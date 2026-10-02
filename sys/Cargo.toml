@@ -29,8 +29,5 @@ qemu = []         # QEMU-only exits (isa-debug-exit, semihosting) and shortcuts
 [dependencies]
 libkern.workspace = true
 
-[target.'cfg(target_os = "none")'.dependencies]
-limine.workspace = true
-
 [lints]
 workspace = true

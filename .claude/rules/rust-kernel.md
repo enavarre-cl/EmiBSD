@@ -29,8 +29,9 @@ paths:
   behind a shared pointer, with a doc line saying which lock protects them.
 - MMIO through `read_volatile`/`write_volatile` behind the `bus_space`-shaped API, never plain derefs.
 - Idiom decisions live in `docs/C_TO_RUST.md`. Follow them; propose a new row rather than improvising.
-- Dependencies allowed in `sys/`: `libkern`, `limine` (only `sys/stand/`), `bitflags`,
-  `intrusive-collections`; dev-only `proptest`. Not allowed: `x86_64`, `aarch64-cpu`, `spin`,
-  `uart_16550`, `fdt`, `linked_list_allocator`, `buddy_system_allocator`, or any crate that replaces
-  code OpenBSD has. Porting that code is the project.
+- Dependencies allowed in `sys/`: `libkern`, `bitflags`, `intrusive-collections`; dev-only
+  `proptest`. Not allowed: `limine` (0.6+ is nightly-only, 0.5 is frozen at base revision 3; the
+  protocol structs are written in `sys/stand/limine.rs` from the spec), `x86_64`, `aarch64-cpu`,
+  `spin`, `uart_16550`, `fdt`, `linked_list_allocator`, `buddy_system_allocator`, or any crate that
+  replaces code OpenBSD has. Porting that code is the project.
 - Every `pub` item has a doc comment (`missing_docs` is warn; `just clippy` uses `-D warnings`).

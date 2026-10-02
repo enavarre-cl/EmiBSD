@@ -16,7 +16,8 @@ rust-version = "1.98"
 # ("Dependencies") and in .claude/rules/rust-kernel.md. Porting OpenBSD code is the
 # project; a crate is acceptable only when it replaces something that is NOT OpenBSD code.
 libkern = { path = "sys/lib/libkern" }
-limine = "0.6"                                                          # boot protocol structs; sys/stand only
+# No `limine` crate: 0.6+ needs nightly (`ptr_metadata`), 0.5 is frozen at base revision 3.
+# The protocol structs live in sys/stand/limine.rs (docs/ARCHITECTURE.md, "Dependencies").
 bitflags = { version = "2", default-features = false }                  # typed flag sets for #define groups
 intrusive-collections = { version = "0.10", default-features = false }  # queue.h / tree.h semantics
 # host tooling only (tools/xtask)

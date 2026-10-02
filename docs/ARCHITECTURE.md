@@ -69,6 +69,10 @@ the arch split focused on real kernel work (traps, pmap, interrupts). OpenBSD al
 bootloader separate from the kernel, so this is faithful in spirit. `bootloader` (crate) is
 x86_64-only; QEMU `-kernel` raw loading on `virt` would mean two unrelated early-boot paths.
 
+The protocol is specified in https://github.com/limine-bootloader/limine-protocol (`PROTOCOL.md`,
+`include/limine.h`); `sys/stand/limine.rs` implements the subset the kernel asks for, at base
+revision 6, with no crate in between (see "Dependencies").
+
 ## Toolchain and targets
 
 Stable Rust, pinned in `rust-toolchain.toml`.
@@ -108,7 +112,7 @@ More appear as they are needed (`multiprocessor`, `small_kernel`, ...), one per 
 
 | Crate | Where | Why it is not OpenBSD code |
 |---|---|---|
-| `limine` | `sys/stand/` only | boot protocol structs; the bootloader is not OpenBSD code here |
+| (none for Limine) | `sys/stand/limine.rs` | the `limine` crate was dropped: 0.6+ needs nightly (`ptr_metadata`), 0.5 is stable but frozen at base revision 3, which Limine has already tried to drop once. The protocol is about twenty `#[repr(C)]` structs; they are written from `PROTOCOL.md` |
 | `bitflags` | `sys/` | typed flag sets for `#define` groups; a macro, no runtime |
 | `intrusive-collections` | `sys/` | `queue.h`/`tree.h` semantics (O(1) unlink, multi-membership, no allocation) with upstream-audited `unsafe`. Decision to revisit at M1: port `queue.h` as our own intrusive lists instead |
 | `proptest` | dev-only | property tests for libkern |
