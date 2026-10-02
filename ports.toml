@@ -4,7 +4,7 @@
 
 [meta]
 upstream = "https://github.com/openbsd/src"
-pinned = "UNPINNED"   # full commit hash, set after cloning (reference/README.md)
+pinned = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 
 # ---------------------------------------------------------------------------
 # M1: sys/sys headers -> types
@@ -56,8 +56,8 @@ rust = "sys/lib/libkern/strnlen.rs"
 status = "todo"
 
 [[file]]
-c = "sys/lib/libkern/crc32.c"
-rust = "sys/lib/libkern/crc32.rs"
+c = "sys/lib/libkern/crc32c.h"
+rust = "sys/lib/libkern/crc32c.rs"
 status = "todo"
 
 [[file]]
@@ -69,6 +69,11 @@ status = "todo"
 c = "sys/lib/libkern/explicit_bzero.c"
 rust = "sys/lib/libkern/explicit_bzero.rs"
 status = "todo"
+
+[[file]]
+c = "sys/lib/libz/crc32.c"
+status = "skipped"
+notes = "license: zlib (not ISC/BSD/MIT); not ported. The kernel's own CRC-32C is lib/libkern/crc32c.h"
 
 [[file]]
 c = "sys/lib/libkern/memcpy.c"
