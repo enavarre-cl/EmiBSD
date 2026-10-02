@@ -124,6 +124,34 @@ upstream_blob = "92d884e2f40499019f0c4b371ecc8ecf64ded35b"
 notes = "only _ALIGN*, _MAX_PAGE_SHIFT and label_t carry over; integer/wchar typedefs are Rust primitives"
 
 # ---------------------------------------------------------------------------
+# M0: what the boot path needs from <machine/*.h>
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/arch/amd64/include/pio.h"
+rust = "sys/arch/amd64/include/pio.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8715a186b193a94e2bddb1cd31a38a85c2aef6ee"
+notes = "immediate-port variants folded (rustc picks the encoding); string forms take slices"
+
+[[file]]
+c = "sys/arch/amd64/include/cpufunc.h"
+rust = "sys/arch/amd64/include/cpufunc.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "96af50a82a5f71bfeb614be5ea187f032a7664d1"
+notes = "M0: read_rflags/write_rflags/intr_enable/intr_disable/intr_restore only; descriptor tables, control registers, MSRs, TLB and cache helpers come with M3/M4"
+
+[[file]]
+c = "sys/arch/arm64/include/cpu.h"
+rust = "sys/arch/arm64/include/cpu.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a50845f609e00860e26eac541a0f05789133506d"
+notes = "M0: DAIF helpers only (restore_daif, enable/disable_irq_daif[_ret], intr_enable/disable/restore); struct cpu_info, curcpu and CTL_MACHDEP come with M5"
+
+# ---------------------------------------------------------------------------
 # M1: libkern
 # ---------------------------------------------------------------------------
 
@@ -256,3 +284,19 @@ notes = "replaced-by-limine: the whole sys/arch/arm64/stand tree (efiboot) is no
 [[extra]]
 rust = "sys/reftest.rs"
 reason = "test helper: reads #define lines from $OPENBSD_SRC for reference-backed tests (cfg(test) only)"
+
+[[extra]]
+rust = "sys/arch/amd64/amd64/earlycons.rs"
+reason = "M0 bootstrap: polled COM1 console; replaced by dev/ic/com.c at M2"
+
+[[extra]]
+rust = "sys/arch/amd64/amd64/qemu.rs"
+reason = "M0 bootstrap: QEMU isa-debug-exit under feature qemu; not OpenBSD code"
+
+[[extra]]
+rust = "sys/arch/arm64/arm64/earlycons.rs"
+reason = "M0 bootstrap: polled PL011 behind a TTBR0 device map; replaced by dev/ic/pluart.c and pmap at M2/M3"
+
+[[extra]]
+rust = "sys/arch/arm64/arm64/qemu.rs"
+reason = "M0 bootstrap: semihosting exit under feature qemu; not OpenBSD code"

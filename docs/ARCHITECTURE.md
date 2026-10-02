@@ -59,9 +59,17 @@ Three implementors:
 
 ## Boot flow
 
-Limine (UEFI, both archs) → `_start` in `sys/stand/limine.rs` → `stand::BootInfo` (arch-neutral:
-memory map, HHDM offset, DTB/RSDP pointers, framebuffer, modules) → `machine::Machine::early_init`
-(console, CPU basics) → `kern::init_main::main` (OpenBSD's `main()`).
+Limine (UEFI, both archs) → `_start` in `sys/stand/mod.rs` (protocol structs in
+`sys/stand/limine.rs`) → `machine::BootInfo` (bootloader-neutral: memory map, HHDM offset, kernel
+load addresses, DTB/RSDP pointers; it lives in `sys/machine/bootinfo.rs` so the machine traits can
+name it) → `machine::Machine::early_init(&BootInfo)` (the polled console; on arm64 also a temporary
+device mapping) → `kern::init_main::main` (OpenBSD's `main()`, milestone M2; until then
+`stand::boot_main` prints the banner and the memory map and leaves).
+
+Leaving the machine goes through `machine::Exit`: under feature `qemu`, amd64 uses the
+`isa-debug-exit` device and arm64 the semihosting `SYS_EXIT` call, both making QEMU exit with
+status 33 for success and 35 for failure, which `xtask smoke` checks. Without the feature the CPU
+halts.
 
 At entry Limine (protocol base revision 6) guarantees: 64-bit mode, MMU on, kernel mapped at
 `0xffffffff80000000`, a higher-half direct map of physical memory (HHDM), a memory map, a stack of
@@ -133,6 +141,10 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
 - `aarch64-unknown-none-softfloat` target; Intel syntax for amd64 inline assembly.
 - `Result<T, Errno>` instead of `int` returns; RAII guards for `spl`/mutex.
 - A host test double (`arch/host`), which OpenBSD does not have.
+- Bootstrap consoles before their drivers exist (M0 to M2): amd64 polls COM1 through `pio.h`;
+  arm64 reaches the PL011 through a one-block identity map of the first GiB installed in
+  `TTBR0_EL1` with Device-nGnRnE attributes (`arch/arm64/arm64/earlycons.rs`), because the Limine
+  protocol maps RAM but not devices. `pmap` (M3) and the FDT (M4) replace it.
 
 Every file-level deviation is in that file's `//! ## Deviations` list and in `ports.toml` `notes`.
 

@@ -7,7 +7,10 @@
 //! Its machine parameters mirror amd64's `<machine/param.h>` and `<machine/_types.h>`, so tests
 //! see the page geometry of a real architecture (`just test-ref` checks that they stay equal).
 
-use crate::machine::api::{MachineInfo, MachineParam};
+use std::io::Write;
+
+use crate::machine::api::{Console, Cpu, Exit, ExitStatus, MachineInfo, MachineParam};
+use crate::machine::bootinfo::BootInfo;
 
 /// The host implementation of the machine interface.
 pub struct Machine;
@@ -36,5 +39,30 @@ impl MachineParam for Machine {
 
     fn aligned_pointer<T>(_p: usize) -> bool {
         true
+    }
+}
+
+impl Cpu for Machine {
+    unsafe fn early_init(_boot: &BootInfo) -> Result<(), &'static str> {
+        Ok(())
+    }
+
+    /// The host has no CPU to park: the process ends instead.
+    fn halt() -> ! {
+        std::process::exit(0)
+    }
+}
+
+impl Console for Machine {
+    fn putc(c: u8) {
+        // A failed write to stdout has nowhere to be reported; the console is best effort.
+        let _ = std::io::stdout().write_all(&[c]);
+    }
+}
+
+impl Exit for Machine {
+    fn exit(status: ExitStatus) -> ! {
+        let _ = std::io::stdout().flush();
+        std::process::exit(status.qemu_status() as i32)
     }
 }

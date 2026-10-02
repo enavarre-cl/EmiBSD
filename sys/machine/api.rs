@@ -1,9 +1,11 @@
 //! Traits every architecture implements.
 //!
-//! Grows with the milestones: M1 adds [`MachineParam`] (`<machine/param.h>` and the alignment
-//! rules of `<machine/_types.h>`); M0 adds `Cpu`, `Console` and `Exit`; M3 adds `Pmap`; M4 adds
-//! `Intr`/`Spl` and trap frames. Keep each trait small and named after the OpenBSD header or
-//! `(9)` interface it stands in for.
+//! Grows with the milestones: M0 adds [`Cpu`], [`Console`] and [`Exit`]; M1 adds
+//! [`MachineParam`] (`<machine/param.h>` and the alignment rules of `<machine/_types.h>`);
+//! M3 adds `Pmap`; M4 adds `Intr`/`Spl` and trap frames. Keep each trait small and named after
+//! the OpenBSD header or `(9)` interface it stands in for.
+
+use crate::machine::bootinfo::BootInfo;
 
 /// Identity of the running architecture: `MACHINE` and `MACHINE_ARCH` of `<machine/param.h>`.
 pub trait MachineInfo {
@@ -55,4 +57,55 @@ pub trait MachineParam {
     /// `_ALIGNED_POINTER(p, t)`: whether a value of type `T` may be fetched from address `p`.
     /// This reflects possibility, not optimal alignment.
     fn aligned_pointer<T>(p: usize) -> bool;
+}
+
+/// The boot CPU, from the bootloader's hand-off until `cpu_startup` exists (milestone M5).
+pub trait Cpu {
+    /// Earliest machine setup, called once by the boot glue before anything prints: whatever the
+    /// polled console needs (on arm64, a temporary mapping of the device). Nothing else is
+    /// touched. The error is a fixed message because there is nowhere to print it yet; the glue
+    /// turns it into a failure exit.
+    ///
+    /// # Safety
+    ///
+    /// Call exactly once, on the boot CPU, with the machine in the state the Limine protocol
+    /// specifies at entry, and `boot` describing the image that was just loaded.
+    unsafe fn early_init(boot: &BootInfo) -> Result<(), &'static str>;
+
+    /// Masks interrupts and parks the CPU forever.
+    fn halt() -> !;
+}
+
+/// The polled early console: what `cnputc(9)` becomes once `dev/cons.c` is ported.
+pub trait Console {
+    /// Writes one byte, blocking until the device accepts it.
+    fn putc(c: u8);
+}
+
+/// How the kernel leaves the machine.
+pub trait Exit {
+    /// Leaves with `status`: under QEMU (feature `qemu`) the emulator exits with
+    /// [`ExitStatus::qemu_status`], which `xtask smoke` checks; without it the CPU is halted.
+    fn exit(status: ExitStatus) -> !;
+}
+
+/// Outcome reported through [`Exit::exit`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExitStatus {
+    /// Everything the run set out to do happened.
+    Success,
+    /// The kernel gave up; the serial transcript says why when a console was available.
+    Failure,
+}
+
+impl ExitStatus {
+    /// The process exit status QEMU reports for this outcome. Odd numbers, because amd64's
+    /// `isa-debug-exit` device can only produce `(v << 1) | 1`; arm64 passes the same values
+    /// through semihosting so `xtask smoke` checks one number on both.
+    pub const fn qemu_status(self) -> u32 {
+        match self {
+            ExitStatus::Success => 33,
+            ExitStatus::Failure => 35,
+        }
+    }
 }
