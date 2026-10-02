@@ -160,9 +160,8 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
 - `Result<T, Errno>` instead of `int` returns; RAII guards for `spl`/mutex.
 - A host test double (`arch/host`), which OpenBSD does not have.
 - Console attach before autoconfiguration exists (M2 to M4): `consinit()` attaches `com(4)` at
-  `CONADDR` (amd64, `consinit.rs`) and `pluart(4)` at QEMU `virt`'s `0x0900_0000` (arm64,
-  `machdep.rs`) directly, instead of `cninit()`'s `constab[]` walk and `pluart_init_cons`'s
-  device-tree lookup. On arm64, `initarm` installs a one-block identity map of the first GiB in
+  `CONADDR` (amd64, `consinit.rs`) directly instead of `cninit()`'s `constab[]` walk; arm64
+  finds its PL011 in the device tree since M4 (`pluart_init_cons`). On arm64, `initarm` installs a one-block identity map of the first GiB in
   `TTBR0_EL1` with Device-nGnRnE attributes, because the Limine protocol maps RAM but not devices;
   `bus_space_map` is the identity inside it until `pmap` maps devices (M3, page tables).
 - `delay(9)` before the clocks: amd64 polls the i8254 (`isa/clock.rs`, as OpenBSD does before the
@@ -200,6 +199,15 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   what `com_isa`'s attach does) for the `selftest=uart` boot, which types a line on the serial
   console and expects it echoed through the hard handler, `softintr_schedule` and the soft
   handler.
+- Interrupts (M4, part b2, arm64): the device tree is the one Limine hands over (`fdt.c`
+  parses it in place); QEMU `virt` boots with `acpi=off`, because EDK2 installs the device
+  tree only when it does not publish ACPI tables, and OpenBSD arm64 needs the tree. The
+  console is found through `/chosen` (`pluart_init_cons`), which retires the fixed PL011
+  address. `cpu_configure` pre-registers the interrupt controllers (`arm_intr_init_fdt`) and
+  attaches the GICv2 (`ampintc`) from fdt attach arguments it builds as `simplebus` would;
+  `ampintc` then owns `spl` through `arm_set_intr_handler`. `do_el1h_sync` enables interrupts
+  as the C does. The console's receive interrupt goes through `arm_intr_establish_fdt`, so the
+  `selftest=uart` boot exercises the same path on arm64 as on amd64.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

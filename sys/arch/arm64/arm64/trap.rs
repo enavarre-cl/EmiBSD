@@ -35,8 +35,6 @@
 //! mode (M6).
 //!
 //! ## Deviations
-//! - `do_el1h_sync` leaves interrupts masked where the C calls `intr_enable()`: there is no
-//!   interrupt controller to take them yet (M4-b restores the call).
 //! - `kdata_abort`: `curcpu()->ci_curpcb` is null before M5, read as "no `pcb_onfault`", and
 //!   the process's `vm_map` does not exist; `pmap_fault_fixup` (M6) and `uvm_fault` (M6) are
 //!   reported, so every kernel data abort ends in the C's `panic("uvm_fault failed: ...")`.
@@ -56,7 +54,7 @@ use crate::arch::arm64::include::armreg::{
     EXCP_SOFTSTP_EL1, EXCP_TRAP_FP, EXCP_WATCHPT_EL1, INSN_SIZE, ISS_BRK_COMMENT_MASK, ISS_DATA_CM,
     ISS_DATA_WNR, esr_elx_exception, read_specialreg,
 };
-use crate::arch::arm64::include::cpu::curcpu;
+use crate::arch::arm64::include::cpu::{curcpu, intr_enable};
 use crate::arch::arm64::include::frame::Trapframe;
 use crate::kern::subr_prf::{Str, db_printf, panic, panicstr_claim, printf, vsnprintf};
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
@@ -162,7 +160,8 @@ pub extern "C" fn do_el1h_sync(frame: &mut Trapframe) {
     let esr = read_specialreg!("esr_el1");
     let far = read_specialreg!("far_el1");
 
-    // intr_enable(): see the module's deviations.
+    // SAFETY: the exception entry masked interrupts; the kernel takes them during a trap.
+    unsafe { intr_enable() };
     UVMEXP.traps.fetch_add(1, Ordering::Relaxed);
 
     let exception = esr_elx_exception(esr);

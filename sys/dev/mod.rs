@@ -5,6 +5,8 @@
 //! ISA bus definitions amd64 still needs.
 
 pub mod cons;
+pub mod fdt;
 pub mod ic;
 pub mod isa;
+pub mod ofw;
 pub mod rnd;

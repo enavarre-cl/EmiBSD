@@ -46,6 +46,7 @@ use crate::machine::bus::{
     BusAddr, BusSize, BusSpaceHandle, BusSpaceTag, bus_space_map, bus_space_read_4,
     bus_space_write_4,
 };
+use crate::machine::cpu::delay;
 use crate::sys::errno::Errno;
 use crate::sys::param::NODEV;
 use crate::sys::termios::{B38400, Tcflag};
@@ -361,4 +362,56 @@ mod tests {
         assert_eq!(uart_ilpr_ilpdvsr(0xff), 0xf);
         assert_eq!(UART_LCR_H_WLEN8, 0x60);
     }
+}
+
+/// What `pluart_attach_common` does for the receive interrupt, on the console registers:
+/// FIFO trigger levels, the receive and receive-timeout interrupts unmasked, pending
+/// interrupts cleared, the FIFO enabled. The softc version comes with the attach (M5).
+pub fn pluartcn_enable_intr() {
+    let Some((iot, ioh)) = pluartcons_io() else {
+        return;
+    };
+    // Flush transmit before enabling FIFO.
+    loop {
+        let fr = bus_space_read_4(iot, ioh, UART_FR);
+        if fr & UART_FR_TXFE != 0 {
+            break;
+        }
+        delay(100);
+    }
+    bus_space_write_4(
+        iot,
+        ioh,
+        UART_IFLS,
+        (UART_IFLS_3_4 << UART_IFLS_RX_SHIFT) | (UART_IFLS_1_4 << UART_IFLS_TX_SHIFT),
+    );
+    let imsc = UART_IMSC_RXIM | UART_IMSC_RTIM;
+    bus_space_write_4(iot, ioh, UART_IMSC, imsc);
+    bus_space_write_4(iot, ioh, UART_ICR, 0x7ff);
+    let lcr = bus_space_read_4(iot, ioh, UART_LCR_H) | UART_LCR_H_FEN;
+    bus_space_write_4(iot, ioh, UART_LCR_H, lcr);
+}
+
+/// The console port's receive interrupt, drained into `sink`: what `pluart_intr` does for a
+/// port with a tty (M7). Returns 1 when the interrupt was the UART's.
+pub fn pluartcn_rx_intr(sink: Option<fn(u8)>) -> i32 {
+    let Some((iot, ioh)) = pluartcons_io() else {
+        return 0;
+    };
+    let is = bus_space_read_4(iot, ioh, UART_MIS);
+    bus_space_write_4(iot, ioh, UART_ICR, is & !UART_IMSC_TXIM);
+    if is & (UART_IMSC_RXIM | UART_IMSC_RTIM | UART_IMSC_TXIM) == 0 {
+        return 0;
+    }
+    while bus_space_read_4(iot, ioh, UART_FR) & UART_FR_RXFE == 0 {
+        let c = bus_space_read_4(iot, ioh, UART_DR);
+        if c & UART_DR_BE != 0 {
+            // a break: db_enter when db_console (M5); nothing to deliver
+            continue;
+        }
+        if let Some(sink) = sink {
+            sink(c as u8);
+        }
+    }
+    1
 }

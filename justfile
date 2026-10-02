@@ -60,6 +60,9 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=trap" --status 35 \
         --expect "panic: uvm_fault failed:" --expect "Starting stack trace..." \
         --expect "End of stack trace." --expect "The operating system has halted."
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=uart" \
+        --send-after "selftest: uart rx interrupt armed" --send 'hello\n' \
+        --expect "selftest: uart rx interrupt armed" --expect "selftest: uart echo: hello"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

@@ -381,3 +381,18 @@ impl Intr for Machine {
 
 /// The host double's interrupt priority level.
 static HOST_IPL: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+
+/// The host has no device tree.
+impl crate::machine::fdt::Fdt for Machine {
+    fn fdt_find_cons(_name: &[u8]) -> crate::dev::ofw::fdt::FdtNode {
+        core::ptr::null()
+    }
+
+    fn stdout_node() -> i32 {
+        0
+    }
+
+    fn fdt_cons_bs_tag() -> crate::machine::bus::BusSpaceTag {
+        HostBusSpace
+    }
+}

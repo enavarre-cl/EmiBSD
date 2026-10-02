@@ -348,7 +348,8 @@ fn qemu_command(root: &Path, arch: Arch, image: &Path, serial: &str) -> Result<C
             cmd.args(["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]);
         }
         Arch::Arm64 => {
-            cmd.args(["-M", "virt", "-cpu", "cortex-a72"]);
+            // acpi=off: EDK2 then installs the device tree, which the arm64 kernel needs (M4).
+            cmd.args(["-M", "virt,acpi=off", "-cpu", "cortex-a72"]);
             cmd.arg("-drive").arg(format!(
                 "if=none,format=raw,file={},id=hd0",
                 image.display()

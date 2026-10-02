@@ -1,7 +1,8 @@
 //! The machine-dependent interface: OpenBSD `<machine/*.h>` and `cpufunc.h` as traits.
 //!
 //! Generic code reaches architecture code ONLY through this module. One module per OpenBSD header
-//! ([`param`], [`vmparam`], [`cpu`], [`cons`], [`bus`], [`pmap`], [`intr`], [`db_machdep`]; [`bootinfo`]
+//! ([`param`], [`vmparam`], [`cpu`], [`cons`], [`bus`], [`pmap`], [`intr`], [`db_machdep`],
+//! [`fdt`]; [`bootinfo`]
 //! is the record the boot glue hands over), all re-exported here. The selected architecture is re-exported as [`Machine`]; the block at the
 //! bottom proves at compile time that it implements every trait. Adding a trait method therefore
 //! means implementing it for amd64, arm64 and the host test double in the same commit.
@@ -11,6 +12,7 @@ pub mod bus;
 pub mod cons;
 pub mod cpu;
 pub mod db_machdep;
+pub mod fdt;
 pub mod intr;
 pub mod param;
 pub mod pmap;
@@ -21,6 +23,7 @@ pub use bus::*;
 pub use cons::*;
 pub use cpu::*;
 pub use db_machdep::*;
+pub use fdt::*;
 pub use intr::*;
 pub use param::*;
 pub use pmap::*;
@@ -41,7 +44,8 @@ const _: () = {
             + BusSpace
             + DbMachdep
             + Pmap
-            + Intr,
+            + Intr
+            + Fdt,
     >() {
     }
     assert_impl::<Machine>();

@@ -293,3 +293,18 @@ impl Intr for Machine {
         amd64::machdep::splassert_check(wantipl, func)
     }
 }
+
+/// amd64 has no device tree: ACPI describes the machine (M5).
+impl crate::machine::fdt::Fdt for Machine {
+    fn fdt_find_cons(_name: &[u8]) -> crate::dev::ofw::fdt::FdtNode {
+        core::ptr::null()
+    }
+
+    fn stdout_node() -> i32 {
+        0
+    }
+
+    fn fdt_cons_bs_tag() -> crate::machine::bus::BusSpaceTag {
+        amd64::bus_space::X86_BUS_SPACE_IO
+    }
+}

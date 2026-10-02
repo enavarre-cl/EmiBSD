@@ -23,7 +23,9 @@
 //! Status: `wip`. Milestone M2 ports what the console and a panic need: the part of `initarm`
 //! that brings up the message buffer and the console, `consinit`, `boot`, `cold`, `waittime`,
 //! `cpuresetfn` and `powerdownfn`; M3 adds the memory setup and `pmap_bootstrap`; M4 adds
-//! `cpu_info_primary` and the per-CPU pointer and vector table setup of `initarm`.
+//! `cpu_info_primary`, the per-CPU pointer and vector table setup of `initarm`, `fdt_init`
+//! of the bootloader's device tree, `stdout_node`/`stdout_speed`, `fdt_find_cons` and the
+//! console's receive interrupt.
 //! `cpu_info[]`, the FDT setup, `dumpsys`, `sendsig`/`setregs`, the sysctl tree and the
 //! bootstrap KVA helpers arrive with M4-b to M6.
 //!
@@ -49,9 +51,9 @@
 //!   `tpidr_el1` first thing instead of after the pmap bootstrap, so `curcpu()` and the
 //!   exception vectors work for everything that follows; `x18` is not loaded, as it is a
 //!   general register here (`arm64/exception.rs`, deviations).
-//! - `consinit` attaches the PL011 at QEMU `virt`'s address directly: `pluart_init_cons`
-//!   (`dev/fdt/pluart_fdt.c`) needs the device tree (M4), and the other `*_init_cons` are
-//!   drivers for hardware QEMU does not have (`deferred-driver`).
+//! - `consinit` runs `pluart_init_cons` only: the other `*_init_cons` are drivers for hardware
+//!   QEMU does not have (`deferred-driver`). `cn_rx_intr_establish` arms the console's
+//!   receive interrupt (what `pluart_fdt_attach` does) until autoconfiguration (M5).
 //! - `boot`: under feature `qemu`, the wait for a key after "The operating system has halted"
 //!   is the emulator exit with the failure status, which `xtask smoke` checks after a panic.
 //!   `vfs_shutdown`, `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys` and
@@ -66,31 +68,35 @@ use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use libkern::StaticCell;
 
-use crate::arch::arm64::arm64::bus_space::FDT_CONS_BS_TAG;
 use crate::arch::arm64::arm64::exception::exception_vectors_addr;
+use crate::arch::arm64::arm64::intr::arm_intr_establish_fdt;
 use crate::arch::arm64::arm64::intr::delay;
 use crate::arch::arm64::arm64::pmap::{
     PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap, pmap_growkernel,
 };
 use crate::arch::arm64::include::cpu::CpuInfo;
+use crate::arch::arm64::include::intr::IPL_TTY;
 use crate::arch::arm64::include::param::PAGE_SIZE;
 use crate::arch::arm64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
-use crate::dev::ic::pluart::pluartcnattach;
+use crate::dev::fdt::pluart_fdt::pluart_init_cons;
+use crate::dev::ic::pluart::{pluartcn_enable_intr, pluartcn_rx_intr};
+use crate::dev::ofw::fdt::{
+    FdtNode, fdt_find_node, fdt_init, fdt_is_compatible, fdt_node_property,
+};
+use crate::dev::ofw::openfirm::OF_finddevice;
 use crate::kern::init_main::BOOTHOWTO;
 use crate::kern::kern_malloc::{kmeminit_nkmempages, nkmempages};
 use crate::kern::subr_log::init_static_msgbuf;
 use crate::kprintf;
 use crate::machine::bootinfo::{BootInfo, MemKind};
-use crate::machine::bus::BusAddr;
 use crate::machine::db_machdep::db_enter;
 use crate::machine::{Cpu, Machine};
+use crate::sys::errno::Errno;
 use crate::sys::param::roundup;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
 };
 use crate::sys::systm::PHYSMEM;
-use crate::sys::termios::B115200;
-use crate::sys::ttydefaults::TTYDEF_CFLAG;
 use crate::sys::types::{Paddr, Vaddr};
 use crate::unported;
 use crate::uvm::uvm_extern::UvmConstraintRange;
@@ -108,9 +114,6 @@ use crate::machine::ExitStatus;
 /// Size of the bootstrap device map: the first GiB of physical space, identity-mapped as
 /// device memory by [`initarm`] (see the module's deviations).
 pub const BOOTSTRAP_DEVICE_MAP_SIZE: usize = 1 << 30;
-
-/// The PL011 of QEMU's `virt` machine. TODO(M4): `fdt_find_cons("arm,pl011")`.
-const QEMU_VIRT_PL011: BusAddr = 0x0900_0000;
 
 // Descriptor bits (Armv8-A VMSA, 4 KiB granule).
 /// Any descriptor: valid.
@@ -279,6 +282,12 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
     // device map below stands in for `pmap_bootstrap_bs_map` (see the module's deviations).
     // SAFETY: forwarded from the caller.
     unsafe { bootstrap_device_map(boot)? };
+
+    // The device tree Limine hands over (the C's `config` from the bootloader).
+    if fdt_init(boot.dtb.map_or(ptr::null(), |p| p.as_ptr())) == 0 {
+        return Err("fdt_init: no device tree");
+    }
+
     init_static_msgbuf();
     consinit();
 
@@ -378,20 +387,109 @@ pub fn consinit() {
         return;
     }
 
-    // amluart, cduart, com_fdt, exuart, imxuart, mvuart, qcuart and simplefb consoles: hardware
-    // QEMU virt does not have (deferred drivers). pluart_init_cons (dev/fdt/pluart_fdt.c)
-    // needs the device tree: M4.
-    // SAFETY: QEMU virt's PL011 is at this address and nothing else drives it.
-    let attached = unsafe {
-        pluartcnattach(
-            FDT_CONS_BS_TAG,
-            QEMU_VIRT_PL011,
-            B115200 as i32,
-            TTYDEF_CFLAG,
-        )
-    };
-    // A failure leaves the kernel without a console; there is nowhere to report it.
-    let _ = attached;
+    // amluart, cduart, com_fdt, exuart, imxuart, mvuart, qcuart and simplefb consoles:
+    // hardware QEMU virt does not have (deferred drivers).
+    pluart_init_cons();
+}
+
+/// `stdout_node`: the console's device tree node.
+pub static STDOUT_NODE: AtomicI32 = AtomicI32::new(0);
+/// `stdout_speed`: the speed `stdout-path` asked for, if any.
+pub static STDOUT_SPEED: AtomicI32 = AtomicI32::new(0);
+
+/// `fdt_find_cons`: the node of the console `/chosen`'s `stdout-path` (or the `serial0`
+/// alias) names, if it is compatible with `name`.
+pub fn fdt_find_cons(name: &[u8]) -> FdtNode {
+    let mut alias: &[u8] = b"serial0";
+    let mut buf = [0u8; 128];
+    let mut stdout: Option<&[u8]> = None;
+
+    // First check if "stdout-path" is set.
+    let node = fdt_find_node(b"/chosen");
+    if !node.is_null()
+        && let Some(prop) = fdt_node_property(node, b"stdout-path")
+        && !prop.is_empty()
+    {
+        let mut path = &prop[..prop.iter().position(|&c| c == 0).unwrap_or(prop.len())];
+        if let Some(colon) = path.iter().position(|&c| c == b':') {
+            let n = colon.min(buf.len() - 1);
+            buf[..n].copy_from_slice(&path[..n]);
+            let speed = &path[colon + 1..];
+            STDOUT_SPEED.store(atoi(speed), Ordering::Relaxed);
+            path = &buf[..n];
+        }
+        if path.first() != Some(&b'/') {
+            // It's an alias.
+            alias = path;
+        } else {
+            stdout = Some(path);
+        }
+    }
+
+    // Perform alias lookup if necessary.
+    let alias_buf;
+    if stdout.is_none() {
+        let node = fdt_find_node(b"/aliases");
+        if !node.is_null()
+            && let Some(prop) = fdt_node_property(node, alias)
+        {
+            alias_buf = prop;
+            stdout = Some(
+                &alias_buf[..alias_buf
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(alias_buf.len())],
+            );
+        }
+    }
+
+    // Lookup the physical address of the interface.
+    if let Some(stdout) = stdout {
+        let node = fdt_find_node(stdout);
+        if !node.is_null() && fdt_is_compatible(node, name) {
+            STDOUT_NODE.store(OF_finddevice(stdout), Ordering::Relaxed);
+            return node;
+        }
+    }
+    ptr::null()
+}
+
+/// `atoi` of the speed after the colon of `stdout-path`.
+fn atoi(s: &[u8]) -> i32 {
+    let mut n: i32 = 0;
+    for &c in s {
+        if !c.is_ascii_digit() {
+            break;
+        }
+        n = n.wrapping_mul(10).wrapping_add(i32::from(c - b'0'));
+    }
+    n
+}
+
+/// The byte sink of the console's receive interrupt.
+static CN_RX_SINK: StaticCell<Option<fn(u8)>> = StaticCell::new(None);
+
+/// The console PL011's interrupt handler: `pluart_intr` into the sink.
+fn cn_rx_intr(_arg: *mut core::ffi::c_void) -> i32 {
+    // SAFETY: written once by `cn_rx_intr_establish` before the interrupt is established.
+    pluartcn_rx_intr(unsafe { CN_RX_SINK.read() })
+}
+
+/// Arms the console PL011's receive interrupt through the device tree, what
+/// `pluart_fdt_attach` does with `fdt_intr_establish` and `pluart_attach_common` with the
+/// UART's registers; until autoconfiguration attaches the port (M5).
+pub fn cn_rx_intr_establish(sink: fn(u8)) -> Result<(), Errno> {
+    let node = STDOUT_NODE.load(Ordering::Relaxed);
+    if node == 0 {
+        return Err(Errno::ENXIO);
+    }
+    // SAFETY: once, before the interrupt is established below.
+    unsafe { CN_RX_SINK.write(Some(sink)) };
+    if arm_intr_establish_fdt(node, IPL_TTY, cn_rx_intr, ptr::null_mut(), "pluart0").is_none() {
+        return Err(Errno::ENXIO);
+    }
+    pluartcn_enable_intr();
+    Ok(())
 }
 
 /// `boot(9)`: halts or reboots according to `howto`.

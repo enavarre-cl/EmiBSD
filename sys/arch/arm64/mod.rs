@@ -6,6 +6,7 @@
 
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/arch/arm64/arm64/
 pub mod arm64;
+pub mod dev;
 pub mod include;
 
 use core::arch::asm;
@@ -155,11 +156,8 @@ impl Console for Machine {
         arm64::machdep::consinit()
     }
 
-    fn cn_rx_intr_establish(_sink: fn(u8)) -> Result<(), Errno> {
-        // pluart_fdt's arm_intr_establish_fdt needs the interrupt controller (M4-b, part 2).
-        Err(crate::unported!(
-            "arm_intr_establish_fdt for the console (ampintc, M4-b part 2)"
-        ))
+    fn cn_rx_intr_establish(sink: fn(u8)) -> Result<(), Errno> {
+        arm64::machdep::cn_rx_intr_establish(sink)
     }
 }
 
@@ -294,5 +292,19 @@ impl Intr for Machine {
 
     fn splassert_check(wantipl: i32, func: &str) {
         arm64::intr::arm_splassert_check(wantipl, func)
+    }
+}
+
+impl crate::machine::fdt::Fdt for Machine {
+    fn fdt_find_cons(name: &[u8]) -> crate::dev::ofw::fdt::FdtNode {
+        arm64::machdep::fdt_find_cons(name)
+    }
+
+    fn stdout_node() -> i32 {
+        arm64::machdep::STDOUT_NODE.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn fdt_cons_bs_tag() -> crate::machine::bus::BusSpaceTag {
+        arm64::bus_space::FDT_CONS_BS_TAG
     }
 }

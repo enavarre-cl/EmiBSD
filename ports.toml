@@ -381,7 +381,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8a91d92d59d67fb4ad0c10f1129996f29bd86a0f"
 deps = ["sys/dev/ic/pluartvar.h", "sys/dev/cons.h", "sys/sys/termios.h", "sys/kern/subr_prf.c"]
-notes = "M2: UART_* register map and the console path (pluartcnprobe/cninit/cnattach/cngetc/cnputc/cnpollc, pluartcons* globals); the cdevsw major lookup and the pluartdev KLUDGE are M7 (cn_dev stays NODEV); spl in M4; the tty side is M7"
+notes = "M2: UART_* register map and the console path (pluartcnprobe/cninit/cnattach/cngetc/cnputc/cnpollc, pluartcons* globals); M4: pluartcn_enable_intr and pluartcn_rx_intr, what pluart_attach_common and pluart_intr do for the receive interrupt, on the console registers; the cdevsw major lookup and the pluartdev KLUDGE are M7 (cn_dev stays NODEV); the softc, pluart_softint and the tty side are M7"
 
 [[file]]
 c = "sys/dev/ic/i8253reg.h"
@@ -609,7 +609,7 @@ rust = "sys/arch/arm64/arm64/intr.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a0624ac0c074a45abac7024b57ac043f8710ed6e"
-notes = "M2: arm_clock_func (StaticCell), arm_clock_register, arm_dflt_delay (spins on yield so the loop survives optimisation), delay, cpu_initclocks, cpu_startclock, setstatclockrate (missing hooks reported unported); M4: arm_dflt_irq/arm_dflt_fiq (panic), arm_irq_dispatch/arm_fiq_dispatch (StaticCell), arm_cpu_irq/arm_cpu_fiq (the exception.S entry), arm_smask, arm_intr_func (StaticCell) with arm_dflt_splraise/spllower/splx/setipl, arm_do_pending_intr, arm_set_intr_handler, arm_init_smask, splraise/spllower/splx/softintr, arm_splassert_check, intr_enable_wakeup/disable_wakeup; the device tree registration (arm_intr_register_fdt, arm_intr_establish_fdt*, the pre-registration, arm_intr_map_msi), intr_barrier/intr_set_wakeup and the IPIs are M4-b2/M5"
+notes = "M2: arm_clock_func, arm_clock_register, arm_dflt_delay, delay, cpu_initclocks, cpu_startclock, setstatclockrate; M4: arm_dflt_irq/fiq, arm_irq/fiq_dispatch, arm_cpu_irq/fiq, arm_smask, arm_intr_func with the arm_dflt_* spl, arm_do_pending_intr, arm_set_intr_handler, arm_init_smask, splraise/spllower/splx/softintr, arm_splassert_check, intr_enable/disable_wakeup, arm_intr_get_parent, the pre-registration (arm_intr_prereg_*, arm_intr_init_fdt), arm_intr_register_fdt, arm_intr_establish_fdt/_cpu/_idx/_idx_cpu, arm_intr_disestablish_fdt, arm_intr_enable/disable, arm_intr_parent_establish/disestablish_fdt, arm_intr_route, arm_intr_cpu_enable, intr_barrier, intr_set_wakeup (lists behind a Sync wrapper, NonNull handles); the imap/msi variants and arm_intr_map_msi come with PCI (M5), the IPIs with MULTIPROCESSOR"
 
 [[file]]
 c = "sys/arch/arm64/arm64/machdep.c"
@@ -618,7 +618,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c9656ebcea23151ba4968b4eab8099c095180027"
 deps = ["sys/arch/arm64/arm64/bus_space.c", "sys/arch/arm64/arm64/intr.c", "sys/dev/ic/pluart.c", "sys/kern/subr_log.c", "sys/sys/reboot.h"]
-notes = "M2: initarm (the 1 GiB TTBR0 Device-nGnRnE identity block for devices until pmap at M3, message buffer, consinit, boot -d -> db_enter; the rest is the boot protocol or M3/M4), consinit (attaches the PL011 at QEMU virt's 0x09000000 directly: pluart_init_cons needs the FDT at M4-b, the other *_init_cons are deferred drivers), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all reported unported), cold, waittime, cpuresetfn, powerdownfn; the bootargs parsing is BootInfo::boothowto (sys/machine/bootinfo.rs); M3: the memory setup and pmap_bootstrap; M4: cpu_info_primary, and initarm switches to SP_EL1, sets tpidr_el1 and VBAR_EL1 first thing (locore.S's job in C); cpu_info[], the FDT setup, dumpsys, sendsig/setregs, sysctl are M4-b to M6"
+notes = "M2: initarm (the 1 GiB TTBR0 Device-nGnRnE identity block for devices until pmap, message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all reported unported), cold, waittime, cpuresetfn, powerdownfn; the bootargs parsing is BootInfo::boothowto; M3: the memory setup and pmap_bootstrap; M4: cpu_info_primary, SP_EL1/tpidr_el1/VBAR_EL1 first thing, fdt_init of the bootloader DTB, consinit = pluart_init_cons (the other *_init_cons are deferred drivers), stdout_node/stdout_speed, fdt_find_cons, cn_rx_intr_establish (the console receive interrupt pluart_fdt_attach would establish, until autoconf M5); cpu_info[], dumpsys, sendsig/setregs, sysctl are M5 to M6"
 
 [[file]]
 c = "sys/arch/arm64/include/frame.h"
@@ -631,9 +631,11 @@ notes = "M2: struct callframe; M4: struct trapframe (trapframe_t), TF_SIZE; swit
 [[file]]
 c = "sys/dev/fdt/pluart_fdt.c"
 rust = "sys/dev/fdt/pluart_fdt.rs"
-status = "todo"
+status = "wip"
 deps = ["sys/dev/ic/pluart.c"]
-notes = "pluart_init_cons: finds the console in the device tree (M4); until then arm64's consinit attaches the PL011 at a fixed address"
+notes = "M4: pluart_init_cons (fdt_find_cons + fdt_get_reg + pluartcnattach); pluart_fdt_match/attach (cfattach, clock_enable_all, pinctrl, pluart_attach_common) come with autoconf (M5)"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c4c173a7fc6f53adda9c7413d8e219da30c83f1e"
 
 [[file]]
 c = "sys/arch/arm64/dev/agtimer.c"
@@ -1145,7 +1147,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a6caf2c6ba99ae93953cf21a8af80db2ff4e95d4"
 deps = ["sys/arch/arm64/include/armreg.h", "sys/arch/arm64/include/frame.h", "sys/arch/arm64/include/cpu.h", "sys/arch/arm64/arm64/db_interface.c"]
-notes = "M4: is_unpriv_ldst, accesstype, fault (writes ci_panicbuf), kdata_abort (no pcb before M5, pmap_fault_fixup and uvm_fault reported, so every kernel abort panics uvm_fault failed), do_el1h_sync (interrupts stay masked until M4-b; the we_re_toast path prints, enters db_ktrap and then panics as the non-DDB build does), serror, do_el1h_error, dumpregs; udata_abort, emulate_msr, do_el0_sync, do_el0_error and the svc path are M6"
+notes = "M4: is_unpriv_ldst, accesstype, fault (writes ci_panicbuf), kdata_abort (no pcb before M5, pmap_fault_fixup and uvm_fault reported, so every kernel abort panics uvm_fault failed), do_el1h_sync (intr_enable as in C; the we_re_toast path prints, enters db_ktrap and then panics as the non-DDB build does), serror, do_el1h_error, dumpregs; udata_abort, emulate_msr, do_el0_sync, do_el0_error and the svc path are M6"
 
 [[file]]
 c = "sys/ddb/db_trap.c"
@@ -1319,7 +1321,54 @@ rust = "sys/arch/arm64/arm64/autoconf.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "5e38a2bc8e6ae08588b523f3eac6a4020b1e2bfa"
-notes = "M4: cpu_configure (splhigh, softintr_init, cold = 0, spl0; bus_dma_init, unmap_startup, cpu_identify_cleanup reported; no config_rootfound until autoconf, M5); diskconf, device_register, the root-device search are M5; cold lives in machdep.rs as in C"
+notes = "M4: cpu_configure (splhigh, softintr_init, arm_intr_init_fdt, the GIC attach simplebus would do (attach_interrupt_controller builds its fdt_attach_args), cold = 0, spl0; bus_dma_init, unmap_startup, cpu_identify_cleanup reported; no config_rootfound until autoconf, M5); diskconf, device_register, the root-device search are M5; cold lives in machdep.rs as in C"
+
+# ---------------------------------------------------------------------------
+# M4-b2: arm64 device tree, GICv2, PL011 receive interrupt
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/dev/ofw/fdt.c"
+rust = "sys/dev/ofw/fdt.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "47a911ac0951c253b4a47d10a8c33ac8f739b937"
+deps = ["sys/dev/ofw/fdt.h"]
+notes = "M4: the read side (fdt_check_head, fdt_init, fdt_get_size, fdt_get_str, skip_*, fdt_node_property(_ints/_int), fdt_next_node, fdt_child_node, fdt_node_name, fdt_find_node, fdt_parent_node, fdt_find_phandle, fdt_get_cells, fdt_translate_reg, fdt_get_reg, fdt_is_compatible) and OF_peer/child/parent/finddevice/getnodebyname/getnodebyphandle/getproplen/getprop/getpropbool/getpropint/getpropintarray/getpropint64(array)/is_compatible/is_enabled/getindex; nodes are pointers into the blob, OF handles offsets as in C, property values slices (None for -1); the write side, fdt_next_property/OF_nextprop, OF_getpropstr, OF_translate and the DEBUG printers come with their users (M5)"
+
+[[file]]
+c = "sys/dev/ofw/fdt.h"
+rust = "sys/dev/ofw/fdt.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d53fd9e97f462ac67adc9830415fe7fb25bd09e4"
+notes = "struct fdt_head, struct fdt, struct fdt_reg, FDT_* tokens and FDT_CODE_VERSION, in fdt.rs with the functions (the header is the parser's private interface)"
+
+[[file]]
+c = "sys/dev/ofw/openfirm.h"
+rust = "sys/dev/ofw/openfirm.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fa960b3baeb64c2da3d252104ceee2c7f6c9f310"
+deps = ["sys/dev/ofw/fdt.c"]
+notes = "re-exports the OF_* functions fdt.c implements, and OFMAXPARAM; struct ofprobe/ofb_softc (autoconf, M5) and the real-OpenFirmware calls are for machines this kernel does not run on"
+
+[[file]]
+c = "sys/arch/arm64/include/fdt.h"
+rust = "sys/arch/arm64/include/fdt.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "af2721fdadabcbf787241bb0c891aeeb9091c54a"
+notes = "M4: struct fdt_attach_args (slices for fa_reg/fa_intr, no fa_dmat until bus_dma M7) and the fdt_intr_* aliases that exist; stdout_node/stdout_speed/fdt_cons_bs_tag/fdt_find_cons are arm64/machdep.rs behind the machine::fdt contract; the imap/msi aliases come with PCI (M5)"
+
+[[file]]
+c = "sys/arch/arm64/dev/ampintc.c"
+rust = "sys/arch/arm64/dev/ampintc.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "08bce9b07b706c55a91266cc792339ccdcb2f2c7"
+deps = ["sys/arch/arm64/arm64/intr.c", "sys/dev/ofw/fdt.c", "sys/kern/subr_evcount.c"]
+notes = "M4: the registers, ampintc_match/attach (from fdt_attach_args autoconf.rs builds; one static softc AMPINTC), init, set_priority, setipl, intr_enable/disable/config, calc_mask/calc_irq, splx/spllower/splraise, iack/eoi, route, cpuinit (the IPI EOI waits for MULTIPROCESSOR), route_irq, intr_barrier (sched_barrier reported, M5), run_handler, irq_handler, intr_establish_fdt, intr_establish, intr_disestablish; ampintc_activate (resume), the IPIs, the GICv2m MSI frame and simplebus_attach of the children are M5"
 
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"

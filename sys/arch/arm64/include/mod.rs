@@ -7,6 +7,7 @@ pub mod armreg;
 pub mod bus;
 pub mod cpu;
 pub mod db_machdep;
+pub mod fdt;
 pub mod frame;
 pub mod intr;
 pub mod mutex;
