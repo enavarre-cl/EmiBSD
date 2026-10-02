@@ -1,6 +1,6 @@
 /*	$OpenBSD: db_trace.c,v 1.60 2025/08/03 11:17:08 sashan Exp $	*/
 /*	$NetBSD: db_trace.c,v 1.1 2003/04/26 18:39:27 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*
  * Mach Operating System
  * Copyright (c) 1991,1990 Carnegie Mellon University
@@ -26,6 +26,7 @@
  * any improvements or extensions that they make and grant Carnegie the
  * rights to redistribute these changes.
  */
+/* </LICENSES> */
 
 //! amd64 stack traces for `ddb(4)`: `arch/amd64/amd64/db_trace.c`.
 //!

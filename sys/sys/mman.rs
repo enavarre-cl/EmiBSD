@@ -1,6 +1,6 @@
 /*	$OpenBSD: mman.h,v 1.36 2026/03/26 21:46:24 daniel Exp $	*/
 /*	$NetBSD: mman.h,v 1.11 1995/03/26 20:24:23 jtc Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -31,6 +31,7 @@
  *
  *	@(#)mman.h	8.1 (Berkeley) 6/2/93
  */
+/* </LICENSES> */
 
 //! Memory mapping flags: `<sys/mman.h>`.
 //!

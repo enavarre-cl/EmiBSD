@@ -1,6 +1,6 @@
 /*	$OpenBSD: db_trap.c,v 1.30 2019/11/06 07:30:08 mpi Exp $	*/
 /*	$NetBSD: db_trap.c,v 1.9 1996/02/05 01:57:18 christos Exp $	*/
-
+/* <LICENSES> */
 /*
  * Mach Operating System
  * Copyright (c) 1993,1992,1991,1990 Carnegie Mellon University
@@ -29,6 +29,7 @@
  * 	Author: David B. Golub, Carnegie Mellon University
  *	Date:	7/90
  */
+/* </LICENSES> */
 
 //! Trap entry point to kernel debugger: `ddb/db_trap.c`.
 //!

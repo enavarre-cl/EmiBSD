@@ -1,6 +1,6 @@
 /*	$OpenBSD: db_interface.c,v 1.17 2025/07/22 09:20:41 kettenis Exp $	*/
 /*	$NetBSD: db_interface.c,v 1.34 2003/10/26 23:11:15 chris Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1996 Scott K. Stevens
  *
@@ -30,6 +30,7 @@
  *
  *	From: db_interface.c,v 2.4 1991/02/05 17:11:13 mrt (CMU)
  */
+/* </LICENSES> */
 
 //! Interface to new debugger: `arch/arm64/arm64/db_interface.c`.
 //!

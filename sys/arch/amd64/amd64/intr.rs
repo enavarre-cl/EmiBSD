@@ -1,5 +1,6 @@
 /*	$OpenBSD: intr.c,v 1.64 2025/11/10 12:34:52 dlg Exp $	*/
 /*	$NetBSD: intr.c,v 1.3 2003/03/03 22:16:20 fvdl Exp $	*/
+/* <LICENSES> */
 /*
  * Copyright 2002 (c) Wasabi Systems, Inc.
  * All rights reserved.
@@ -34,6 +35,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! amd64 interrupt sources and `spl(9)`: `arch/amd64/amd64/intr.c`.
 //!

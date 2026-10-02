@@ -15,8 +15,10 @@ Applies to every port of a C file from `reference/openbsd-src/sys/` into `sys/`.
   the module of the `.c` file, as `impl` blocks or free functions.
 - Re-express semantics in idiomatic Rust; do not transliterate. `docs/C_TO_RUST.md` is the idiom
   table. A new idiom decision is a new row there, in the same commit.
-- Header of every ported file: original `$OpenBSD$` line, full original copyright/license block,
-  then `//!` docs with `Upstream: <c path> @ <12-hex>` and a `## Deviations` list.
+- Header of every ported file: original `$OpenBSD$` line, full original copyright/license block
+  between `/* <LICENSES> */` and `/* </LICENSES> */`, then `//!` docs with
+  `Upstream: <c path> @ <12-hex>` and a `## Deviations` list. When reading a ported file, start
+  at the closing marker (`sed -n '/<\/LICENSES>/,$p' file`); the licence text never changes.
 - Logic that can run on the host gets `#[cfg(test)] mod tests` in the same file, or in
   `<name>/tests.rs` once longer than 50 lines; constants that mirror C headers get a
   reference-backed `#[ignore]` test (see `testing.md`).

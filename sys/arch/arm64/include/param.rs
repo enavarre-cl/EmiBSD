@@ -1,5 +1,5 @@
 /*	$OpenBSD: param.h,v 1.8 2025/07/07 18:33:36 kettenis Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1990 The Regents of the University of California.
  * All rights reserved.
@@ -31,6 +31,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! arm64 `<machine/param.h>`: machine type and page geometry.
 //!

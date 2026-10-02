@@ -37,7 +37,10 @@ paths:
   replaces code OpenBSD has. Porting that code is the project.
 - Every `pub` item has a doc comment (`missing_docs` is warn; `just clippy` uses `-D warnings`).
 - File layout, top to bottom, one blank line between sections, empty sections omitted:
-  1. the `/* $OpenBSD ... */` line(s) and the license block (ported files);
+  1. the `/* $OpenBSD ... */` line(s), then the license block(s) wrapped in `/* <LICENSES> */`
+     and `/* </LICENSES> */` on lines of their own (ported files; the markers only mark, the
+     licence text stays verbatim). Read a ported file from the closing marker on:
+     `sed -n '/<\/LICENSES>/,$p' file`;
   2. `//!` docs: summary, `Upstream:`, prose, `## Deviations`;
   3. `mod` declarations (crate roots and `mod.rs` only), then `use` lines as rustfmt orders them;
   4. constants: `const`, constant-only `pub mod` blocks (`memmap_type`), and `macro_rules!` that

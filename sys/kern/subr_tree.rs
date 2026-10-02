@@ -1,5 +1,5 @@
 /*	$OpenBSD: subr_tree.c,v 1.10 2018/10/09 08:28:43 dlg Exp $ */
-
+/* <LICENSES> */
 /*
  * Copyright 2002 Niels Provos <provos@citi.umich.edu>
  * All rights reserved.
@@ -40,6 +40,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! The red-black tree behind `RBT_*` (and, here, `RB_*`): `kern/subr_tree.c`.
 //!

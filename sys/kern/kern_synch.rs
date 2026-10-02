@@ -1,6 +1,6 @@
 /*	$OpenBSD: kern_synch.c,v 1.234 2026/06/16 19:29:25 bluhm Exp $	*/
 /*	$NetBSD: kern_synch.c,v 1.37 1996/04/22 01:38:37 christos Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1990, 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -36,6 +36,7 @@
  *
  *	@(#)kern_synch.c	8.6 (Berkeley) 1/21/94
  */
+/* </LICENSES> */
 
 //! Sleep and wakeup: `kern/kern_synch.c`.
 //!

@@ -1,4 +1,5 @@
 /*	$OpenBSD: mutex.h,v 1.26 2025/12/11 23:34:44 dlg Exp $	*/
+/* <LICENSES> */
 /*
  * Copyright (c) 2004 Artur Grabowski <art@openbsd.org>
  *
@@ -14,6 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! `<sys/mutex.h>`: the mutex. A mutex is owned by a cpu, non-recursive, spinning, and not
 //! providing mutual exclusion between processes, only cpus.

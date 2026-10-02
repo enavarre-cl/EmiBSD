@@ -1,6 +1,6 @@
 /*	$OpenBSD: uvm_init.c,v 1.46 2026/05/17 10:46:25 mpi Exp $	*/
 /*	$NetBSD: uvm_init.c,v 1.14 2000/06/27 17:29:23 mrg Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.
  * All rights reserved.
@@ -27,6 +27,7 @@
  *
  * from: Id: uvm_init.c,v 1.1.2.3 1998/02/06 05:15:27 chs Exp
  */
+/* </LICENSES> */
 
 //! Init the vm system: `uvm/uvm_init.c`. All global vars are stored in `struct uvm` to make
 //! them easier to spot.

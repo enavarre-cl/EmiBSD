@@ -1,4 +1,5 @@
 /*	$OpenBSD: cpu_full.h,v 1.5 2019/05/17 19:07:47 guenther Exp $	*/
+/* <LICENSES> */
 /*
  * Copyright (c) 2018 Philip Guenther <guenther@openbsd.org>
  *
@@ -14,6 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! amd64 `<machine/cpu_full.h>`: the layout of the full per-CPU information.
 //!

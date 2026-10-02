@@ -1,6 +1,6 @@
 /*	$OpenBSD: crc32c.h,v 1.1 2025/11/01 15:46:40 kettenis Exp $	*/
 /*	$NetBSD: crc16.h,v 1.3 2020/04/16 23:29:53 rin Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 2006 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -29,6 +29,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! CRC-32C (Castagnoli, polynomial `0x1edc6f41`), one byte at a time through a 256-entry table.
 //!

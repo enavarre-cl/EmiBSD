@@ -1,4 +1,5 @@
 /* $OpenBSD: frame.h,v 1.3 2018/06/30 15:23:37 deraadt Exp $ */
+/* <LICENSES> */
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>
  *
@@ -14,6 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! arm64 `<machine/frame.h>`: the stack frames the kernel walks and builds.
 //!

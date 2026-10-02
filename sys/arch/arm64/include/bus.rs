@@ -1,4 +1,5 @@
 /* $OpenBSD: bus.h,v 1.13 2026/06/22 07:54:19 deraadt Exp $ */
+/* <LICENSES> */
 /*
  * Copyright (c) 2003-2004 Opsycon AB Sweden.  All rights reserved.
  *
@@ -22,6 +23,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! arm64 `<machine/bus.h>`: the bus access methods as a table of functions.
 //!

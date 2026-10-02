@@ -1,6 +1,6 @@
 /*	$OpenBSD: machdep.c,v 1.314 2026/09/28 14:14:03 deraadt Exp $	*/
 /*	$NetBSD: machdep.c,v 1.3 2003/05/07 22:58:18 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1996, 1997, 1998, 2000 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -64,6 +64,7 @@
  *
  *	@(#)machdep.c	7.4 (Berkeley) 6/3/91
  */
+/* </LICENSES> */
 
 //! amd64 machine-dependent setup and shutdown: `arch/amd64/amd64/machdep.c`.
 //!

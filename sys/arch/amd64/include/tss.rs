@@ -1,6 +1,6 @@
 /*	$OpenBSD: tss.h,v 1.6 2023/07/27 00:30:07 guenther Exp $	*/
 /*	$NetBSD: tss.h,v 1.1 2003/04/26 18:39:48 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 2001 Wasabi Systems, Inc.
  * All rights reserved.
@@ -35,6 +35,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! amd64 `<machine/tss.h>`: the task state segment.
 //!

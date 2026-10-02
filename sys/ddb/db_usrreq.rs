@@ -1,5 +1,5 @@
 /*	$OpenBSD: db_usrreq.c,v 1.23 2025/05/19 21:48:28 kettenis Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1996 Michael Shalayeff.  All rights reserved.
  *
@@ -23,6 +23,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! The `ddb` sysctl node and its tunables: `ddb/db_usrreq.c`.
 //!

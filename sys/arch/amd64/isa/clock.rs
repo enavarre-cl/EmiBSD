@@ -1,6 +1,6 @@
 /*	$OpenBSD: clock.c,v 1.44 2026/04/11 16:24:13 deraadt Exp $	*/
 /*	$NetBSD: clock.c,v 1.1 2003/04/26 18:39:50 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1993, 1994 Charles M. Hannum.
  * Copyright (c) 1990 The Regents of the University of California.
@@ -81,6 +81,7 @@ LOSS OF USE, DATA OR PROFITS, WHETHER IN ACTION OF CONTRACT,
 NEGLIGENCE, OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION
 WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
+/* </LICENSES> */
 
 //! Primitive clock interrupt routines: `arch/amd64/isa/clock.c`.
 //!

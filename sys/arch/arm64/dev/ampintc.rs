@@ -1,4 +1,5 @@
 /* $OpenBSD: ampintc.c,v 1.35 2025/12/15 12:59:24 dlg Exp $ */
+/* <LICENSES> */
 /*
  * Copyright (c) 2007,2009,2011 Dale Rahn <drahn@openbsd.org>
  *
@@ -14,6 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! The ARM generic interrupt controller, version 2: `arch/arm64/dev/ampintc.c`. This driver
 //! implements the interrupt controller as specified in DDI0407E_cortex_a9_mpcore_r2p0_trm

@@ -2,7 +2,7 @@
 /*	$NetBSD: cons.h,v 1.14 1996/03/14 19:08:35 christos Exp $	*/
 /*	$OpenBSD: cons.c,v 1.31 2025/09/20 13:53:36 mpi Exp $	*/
 /*	$NetBSD: cons.c,v 1.30 1996/04/08 19:57:30 jonathan Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1988 University of Utah.
  * Copyright (c) 1990, 1993
@@ -42,6 +42,7 @@
  *	@(#)cons.h	8.1 (Berkeley) 6/10/93
  *	@(#)cons.c	8.2 (Berkeley) 1/12/94
  */
+/* </LICENSES> */
 
 //! The console framework: `<dev/cons.h>` (the `struct consdev` contract and the `CN_*`
 //! priorities) and `dev/cons.c` (the polled entry points `cngetc`, `cnputc`, `cnpollc`,

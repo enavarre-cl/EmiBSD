@@ -1,5 +1,5 @@
 /*	$OpenBSD: param.h,v 1.147 2026/07/16 06:21:08 deraadt Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1989, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -33,6 +33,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! Machine-independent kernel parameters: `<sys/param.h>`.
 //!

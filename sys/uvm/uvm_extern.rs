@@ -1,6 +1,6 @@
 /*	$OpenBSD: uvm_extern.h,v 1.190 2026/07/24 15:03:50 kettenis Exp $	*/
 /*	$NetBSD: uvm_extern.h,v 1.57 2001/03/09 01:02:12 chs Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.
  * All rights reserved.
@@ -56,6 +56,7 @@
  *
  *	@(#)vm_extern.h	8.5 (Berkeley) 5/3/95
  */
+/* </LICENSES> */
 
 //! The external interface of `uvm`: `<uvm/uvm_extern.h>`.
 //!

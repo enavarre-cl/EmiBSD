@@ -1,6 +1,6 @@
 /*	$OpenBSD: cpu.h,v 1.186 2026/09/08 21:01:59 daniel Exp $	*/
 /*	$NetBSD: cpu.h,v 1.1 2003/04/26 18:39:39 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1990 The Regents of the University of California.
  * All rights reserved.
@@ -34,6 +34,7 @@
  *
  *	@(#)cpu.h	5.4 (Berkeley) 5/9/91
  */
+/* </LICENSES> */
 
 //! amd64 `<machine/cpu.h>`: definitions unique to x86-64 cpu support.
 //!

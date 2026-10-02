@@ -1,5 +1,5 @@
 /*	$OpenBSD: rnd.c,v 1.230 2024/12/30 02:46:00 guenther Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 2011,2020 Theo de Raadt.
  * Copyright (c) 2008 Damien Miller.
@@ -39,6 +39,7 @@
  * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF NOT ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! Random number generation for the kernel: `dev/rnd.c`.
 //!

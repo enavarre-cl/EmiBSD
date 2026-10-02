@@ -1,6 +1,6 @@
 /*	$OpenBSD: init_main.c,v 1.331 2026/01/01 07:00:57 jsg Exp $	*/
 /*	$NetBSD: init_main.c,v 1.84.4.1 1996/06/02 09:08:06 mrg Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1995 Christopher G. Demetriou.  All rights reserved.
  * Copyright (c) 1982, 1986, 1989, 1991, 1992, 1993
@@ -37,6 +37,7 @@
  *
  *	@(#)init_main.c	8.9 (Berkeley) 1/21/94
  */
+/* </LICENSES> */
 
 //! System startup: `kern/init_main.c`. Initialize the world, create process 0, mount root
 //! filesystem, and fork to create init and pagedaemon. Most of the hard work is done in the

@@ -1,6 +1,6 @@
 /*	$OpenBSD: cpu.c,v 1.208 2026/10/01 23:51:29 jsg Exp $	*/
 /* $NetBSD: cpu.c,v 1.1 2003/04/26 18:39:26 fvdl Exp $ */
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -63,6 +63,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! amd64 CPU attachment and per-CPU setup: `arch/amd64/amd64/cpu.c`.
 //!

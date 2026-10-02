@@ -1,6 +1,6 @@
 /*	$OpenBSD: uvm_km.c,v 1.160 2026/06/23 14:40:40 bluhm Exp $	*/
 /*	$NetBSD: uvm_km.c,v 1.42 2001/01/14 02:10:01 thorpej Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.
  * Copyright (c) 1991, 1993, The Regents of the University of California.
@@ -61,6 +61,7 @@
  * any improvements or extensions that they make and grant Carnegie the
  * rights to redistribute these changes.
  */
+/* </LICENSES> */
 
 //! Kernel memory allocation and management: `uvm/uvm_km.c`.
 //!

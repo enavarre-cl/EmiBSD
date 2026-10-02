@@ -1,6 +1,6 @@
 /*	$OpenBSD: errno.h,v 1.25 2017/09/05 03:06:26 jsg Exp $	*/
 /*	$NetBSD: errno.h,v 1.10 1996/01/20 01:33:53 jtc Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1989, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -36,6 +36,7 @@
  *
  *	@(#)errno.h	8.5 (Berkeley) 1/21/94
  */
+/* </LICENSES> */
 
 //! `errno(2)` values as the kernel sees them: `<sys/errno.h>`.
 //!

@@ -2,7 +2,7 @@
 /*	$NetBSD: db_output.c,v 1.13 1996/04/01 17:27:14 christos Exp $	*/
 /*	$OpenBSD: db_output.h,v 1.17 2021/02/09 14:37:13 jcs Exp $ */
 /*	$NetBSD: db_output.h,v 1.9 1996/04/04 05:13:50 cgd Exp $	*/
-
+/* <LICENSES> */
 /*
  * Mach Operating System
  * Copyright (c) 1993,1992,1991,1990 Carnegie Mellon University
@@ -31,6 +31,7 @@
  * 	Author: David B. Golub, Carnegie Mellon University
  *	Date:	8/90
  */
+/* </LICENSES> */
 
 //! Printf and character output for the debugger: `ddb/db_output.c` and `<ddb/db_output.h>`.
 //!

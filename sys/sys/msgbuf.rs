@@ -1,6 +1,6 @@
 /*	$OpenBSD: msgbuf.h,v 1.13 2020/10/25 10:55:42 visa Exp $	*/
 /*	$NetBSD: msgbuf.h,v 1.8 1995/03/26 20:24:27 jtc Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1981, 1984, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -31,6 +31,7 @@
  *
  *	@(#)msgbuf.h	8.1 (Berkeley) 6/2/93
  */
+/* </LICENSES> */
 
 //! The kernel message buffer that `dmesg(8)` reads: `<sys/msgbuf.h>`.
 //!

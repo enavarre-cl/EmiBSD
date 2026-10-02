@@ -1,6 +1,6 @@
 /*	$OpenBSD: types.h,v 1.50 2026/03/26 21:46:24 daniel Exp $	*/
 /*	$NetBSD: types.h,v 1.29 1996/11/15 22:48:25 jtc Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1982, 1986, 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -69,6 +69,7 @@
  *
  *	@(#)types.h	8.3 (Berkeley) 1/5/94
  */
+/* </LICENSES> */
 
 //! Kernel-wide scalar types: `<sys/types.h>` together with `<sys/_types.h>`.
 //!

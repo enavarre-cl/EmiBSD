@@ -1,4 +1,5 @@
 /*	$OpenBSD: autoconf.c,v 1.18 2026/06/23 11:45:54 kettenis Exp $	*/
+/* <LICENSES> */
 /*
  * Copyright (c) 2009 Miodrag Vallat.
  *
@@ -14,6 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! Setup the system to run on the current machine: `arch/arm64/arm64/autoconf.c`.
 //!

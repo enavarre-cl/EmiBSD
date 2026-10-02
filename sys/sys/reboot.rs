@@ -1,6 +1,6 @@
 /*	$OpenBSD: reboot.h,v 1.21 2025/09/16 12:18:10 hshoexer Exp $	*/
 /*	$NetBSD: reboot.h,v 1.9 1996/04/22 01:23:25 christos Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1988, 1993, 1994
  *	The Regents of the University of California.  All rights reserved.
@@ -31,6 +31,7 @@
  *
  *	@(#)reboot.h	8.2 (Berkeley) 7/10/94
  */
+/* </LICENSES> */
 
 //! Arguments to `reboot(2)`, `boot(9)` and the boot loader: `<sys/reboot.h>`.
 //!

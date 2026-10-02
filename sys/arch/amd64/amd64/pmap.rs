@@ -1,6 +1,6 @@
 /*	$OpenBSD: pmap.c,v 1.191 2026/06/04 05:22:04 mlarkin Exp $	*/
 /*	$NetBSD: pmap.c,v 1.3 2003/05/08 18:13:13 thorpej Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.
  * All rights reserved.
@@ -60,6 +60,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! amd64 physical map: `arch/amd64/amd64/pmap.c`.
 //!

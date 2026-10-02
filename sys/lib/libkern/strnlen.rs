@@ -1,5 +1,5 @@
 /*	$OpenBSD: strnlen.c,v 1.3 2019/01/25 00:19:26 millert Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 2010 Todd C. Miller <millert@openbsd.org>
  *
@@ -15,6 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! `strnlen(3)`: bounded string length.
 //!

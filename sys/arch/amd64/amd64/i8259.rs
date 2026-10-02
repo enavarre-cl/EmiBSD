@@ -1,5 +1,6 @@
 /*	$OpenBSD: i8259.c,v 1.13 2026/01/15 15:43:44 sf Exp $	*/
 /*	$NetBSD: i8259.c,v 1.2 2003/03/02 18:27:15 fvdl Exp $	*/
+/* <LICENSES> */
 /*
  * Copyright 2002 (c) Wasabi Systems, Inc.
  * All rights reserved.
@@ -68,6 +69,7 @@
  *
  *	@(#)isa.c	7.2 (Berkeley) 5/13/91
  */
+/* </LICENSES> */
 
 //! The legacy 8259A interrupt controllers: `arch/amd64/amd64/i8259.c`.
 //!

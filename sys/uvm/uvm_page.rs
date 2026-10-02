@@ -2,7 +2,7 @@
 /*	$NetBSD: uvm_page.h,v 1.19 2000/12/28 08:24:55 chs Exp $	*/
 /*	$OpenBSD: uvm_page.c,v 1.190 2026/07/11 13:13:16 kettenis Exp $	*/
 /*	$NetBSD: uvm_page.c,v 1.44 2000/11/27 08:40:04 chs Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.
  * Copyright (c) 1991, 1993, The Regents of the University of California.
@@ -65,6 +65,7 @@
  * any improvements or extensions that they make and grant Carnegie the
  * rights to redistribute these changes.
  */
+/* </LICENSES> */
 
 //! Resident memory system definitions and page ops: `<uvm/uvm_page.h>` and `uvm/uvm_page.c`.
 //!

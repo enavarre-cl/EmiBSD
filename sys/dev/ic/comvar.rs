@@ -1,6 +1,6 @@
 /*	$OpenBSD: comvar.h,v 1.62 2026/04/06 10:27:53 kettenis Exp $	*/
 /*	$NetBSD: comvar.h,v 1.5 1996/05/05 19:50:47 christos Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1997 - 1998, Jason Downs.  All rights reserved.
  *
@@ -55,6 +55,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! The `com(4)` driver's private header: `<dev/ic/comvar.h>`, what `com.c` shares with its bus
 //! front-ends (`com_isa`, `com_pci`, `com_acpi`, `com_fdt`, `commulti`).

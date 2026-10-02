@@ -1,6 +1,6 @@
 /*	$OpenBSD: trap.c,v 1.119 2026/08/19 08:56:28 hshoexer Exp $	*/
 /*	$NetBSD: trap.c,v 1.2 2003/05/04 23:51:56 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1998, 2000 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -63,6 +63,7 @@
  *
  *	@(#)trap.c	7.4 (Berkeley) 5/13/91
  */
+/* </LICENSES> */
 
 //! amd64 trap handling: `arch/amd64/amd64/trap.c`.
 //!

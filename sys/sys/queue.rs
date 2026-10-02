@@ -1,6 +1,6 @@
 /*	$OpenBSD: queue.h,v 1.47 2026/06/12 01:04:42 millert Exp $	*/
 /*	$NetBSD: queue.h,v 1.11 1996/05/16 05:17:14 mycroft Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -31,6 +31,7 @@
  *
  *	@(#)queue.h	8.5 (Berkeley) 8/20/94
  */
+/* </LICENSES> */
 
 //! Intrusive lists and queues: `<sys/queue.h>`, see `queue(3)`.
 //!

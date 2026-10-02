@@ -1,8 +1,10 @@
 /*	$OpenBSD: explicit_bzero.c,v 1.3 2014/06/21 02:34:26 matthew Exp $ */
+/* <LICENSES> */
 /*
  * Public domain.
  * Written by Matthew Dempsky.
  */
+/* </LICENSES> */
 
 //! `explicit_bzero(3)`: zero a buffer in a way the compiler cannot remove.
 //!

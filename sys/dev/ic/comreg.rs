@@ -1,6 +1,6 @@
 /*	$OpenBSD: comreg.h,v 1.21 2022/01/11 11:51:14 uaa Exp $	*/
 /*	$NetBSD: comreg.h,v 1.8 1996/02/05 23:01:50 scottr Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1997 - 1998, Jason Downs.  All rights reserved.
  *
@@ -55,6 +55,7 @@
  *
  *	@(#)comreg.h	7.2 (Berkeley) 5/9/91
  */
+/* </LICENSES> */
 
 //! Register bits of the `com(4)` UARTs: `<dev/ic/comreg.h>`, which includes
 //! `<dev/ic/ns16550reg.h>` (re-exported here, as the include does).

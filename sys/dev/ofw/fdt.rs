@@ -1,4 +1,5 @@
 /*	$OpenBSD: fdt.c,v 1.41 2026/07/19 03:15:38 jsg Exp $	*/
+/* <LICENSES> */
 /*
  * Copyright (c) 2009 Dariusz Swiderski <sfires@sfires.net>
  * Copyright (c) 2009 Mark Kettenis <kettenis@openbsd.org>
@@ -15,6 +16,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! The flattened device tree: `dev/ofw/fdt.c`, with the types of `<dev/ofw/fdt.h>` and the
 //! `OF_*` accessors `<dev/ofw/openfirm.h>` declares (`fdt.c` implements them over the blob).

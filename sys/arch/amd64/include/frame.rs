@@ -1,6 +1,6 @@
 /*	$OpenBSD: frame.h,v 1.11 2024/01/31 06:06:28 guenther Exp $	*/
 /*	$NetBSD: frame.h,v 1.1 2003/04/26 18:39:40 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -67,6 +67,7 @@
 /*
  * Adapted for NetBSD/amd64 by fvdl@wasabisystems.com
  */
+/* </LICENSES> */
 
 //! amd64 `<machine/frame.h>`: the stack frames the kernel walks and builds.
 //!

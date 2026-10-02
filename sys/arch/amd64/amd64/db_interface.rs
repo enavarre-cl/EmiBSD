@@ -1,6 +1,6 @@
 /*	$OpenBSD: db_interface.c,v 1.40 2025/02/12 20:18:31 bluhm Exp $	*/
 /*	$NetBSD: db_interface.c,v 1.1 2003/04/26 18:39:27 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*
  * Mach Operating System
  * Copyright (c) 1991,1990 Carnegie Mellon University
@@ -28,6 +28,7 @@
  *
  *	db_interface.c,v 2.4 1991/02/05 17:11:13 mrt (CMU)
  */
+/* </LICENSES> */
 
 //! Interface to new debugger: `arch/amd64/amd64/db_interface.c`.
 //!

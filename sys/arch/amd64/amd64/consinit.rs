@@ -1,6 +1,6 @@
 /*	$OpenBSD: consinit.c,v 1.7 2017/10/14 04:44:43 jsg Exp $	*/
 /*	$NetBSD: consinit.c,v 1.2 2003/03/02 18:27:14 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1998
  *	Matthias Drochner.  All rights reserved.
@@ -26,6 +26,7 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  */
+/* </LICENSES> */
 
 //! amd64 `consinit()`: `arch/amd64/amd64/consinit.c`.
 //!

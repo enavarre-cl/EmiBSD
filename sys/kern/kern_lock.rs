@@ -1,4 +1,5 @@
 /*	$OpenBSD: kern_lock.c,v 1.87 2026/08/30 23:36:26 gnezdo Exp $	*/
+/* <LICENSES> */
 /*
  * Copyright (c) 2017 Visa Hankala
  * Copyright (c) 2014 David Gwynne <dlg@openbsd.org>
@@ -16,6 +17,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! Kernel lock and mutexes: `kern/kern_lock.c`.
 //!

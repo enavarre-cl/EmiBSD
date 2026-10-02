@@ -1,6 +1,6 @@
 /*	$OpenBSD: db_machdep.h,v 1.8 2025/07/22 09:20:41 kettenis Exp $	*/
 /*	$NetBSD: db_machdep.h,v 1.5 2001/11/22 18:00:00 thorpej Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1996 Scott K Stevens
  *
@@ -28,6 +28,7 @@
  * any improvements or extensions that they make and grant Carnegie Mellon
  * the rights to redistribute these changes.
  */
+/* </LICENSES> */
 
 //! arm64 `<machine/db_machdep.h>`: machine-dependent defines for new kernel debugger.
 //!

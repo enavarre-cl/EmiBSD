@@ -1,4 +1,5 @@
 /*	$OpenBSD: softintr.h,v 1.1 2025/04/23 15:07:00 visa Exp $	*/
+/* <LICENSES> */
 /*
  * Copyright (c) 2025 Visa Hankala
  *
@@ -14,6 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! `<sys/softintr.h>`: the machine-independent soft interrupt levels (`__USE_MI_SOFTINTR`,
 //! which both architectures define).

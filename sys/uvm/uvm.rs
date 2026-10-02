@@ -1,6 +1,6 @@
 /*	$OpenBSD: uvm.h,v 1.73 2024/04/02 08:39:17 deraadt Exp $	*/
 /*	$NetBSD: uvm.h,v 1.24 2000/11/27 08:40:02 chs Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.
  * All rights reserved.
@@ -27,6 +27,7 @@
  *
  * from: Id: uvm.h,v 1.1.2.14 1998/02/02 20:07:19 chuck Exp
  */
+/* </LICENSES> */
 
 //! The `uvm` structure, vm global state collected in one structure for ease of reference:
 //! `<uvm/uvm.h>`.

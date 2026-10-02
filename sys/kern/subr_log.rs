@@ -1,6 +1,6 @@
 /*	$OpenBSD: subr_log.c,v 1.81 2025/06/03 00:20:31 dlg Exp $	*/
 /*	$NetBSD: subr_log.c,v 1.11 1996/03/30 22:24:44 christos Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1982, 1986, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -31,6 +31,7 @@
  *
  *	@(#)subr_log.c	8.1 (Berkeley) 6/10/93
  */
+/* </LICENSES> */
 
 //! Error log buffer for kernel printf's: `kern/subr_log.c`.
 //!

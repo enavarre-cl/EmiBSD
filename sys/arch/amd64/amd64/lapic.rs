@@ -1,5 +1,6 @@
 /*	$OpenBSD: lapic.c,v 1.77 2025/12/30 15:21:05 kettenis Exp $	*/
 /* $NetBSD: lapic.c,v 1.2 2003/05/08 01:04:35 fvdl Exp $ */
+/* <LICENSES> */
 /*-
  * Copyright (c) 2000 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -30,6 +31,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! The local APIC: `arch/amd64/amd64/lapic.c`.
 //!

@@ -1,4 +1,5 @@
 /* $OpenBSD: trap.c,v 1.55 2026/03/08 17:07:31 deraadt Exp $ */
+/* <LICENSES> */
 /*-
  * Copyright (c) 2014 Andrew Turner
  * All rights reserved.
@@ -24,6 +25,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! arm64 exception handling: `arch/arm64/arm64/trap.c`.
 //!

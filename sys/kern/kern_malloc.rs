@@ -1,6 +1,6 @@
 /*	$OpenBSD: kern_malloc.c,v 1.158 2026/02/11 22:34:41 deraadt Exp $	*/
 /*	$NetBSD: kern_malloc.c,v 1.15.4.2 1996/06/13 17:10:56 cgd Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1987, 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -31,6 +31,7 @@
  *
  *	@(#)kern_malloc.c	8.3 (Berkeley) 1/4/94
  */
+/* </LICENSES> */
 
 //! The kernel memory allocator, `malloc(9)`: `kern/kern_malloc.c`.
 //!

@@ -1,6 +1,6 @@
 /*	$OpenBSD: autoconf.c,v 1.61 2026/06/23 14:40:40 bluhm Exp $	*/
 /*	$NetBSD: autoconf.c,v 1.1 2003/04/26 18:39:26 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1990 The Regents of the University of California.
  * All rights reserved.
@@ -34,6 +34,7 @@
  *
  *	@(#)autoconf.c	7.1 (Berkeley) 5/9/91
  */
+/* </LICENSES> */
 
 //! Setup the system to run on the current machine: `arch/amd64/amd64/autoconf.c`.
 //!

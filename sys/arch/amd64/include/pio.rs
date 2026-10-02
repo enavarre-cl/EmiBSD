@@ -1,6 +1,6 @@
 /*	$OpenBSD: pio.h,v 1.5 2015/04/25 21:31:24 guenther Exp $	*/
 /*	$NetBSD: pio.h,v 1.2 2003/02/27 11:22:46 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1998 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -29,6 +29,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! Programmed I/O: the x86 `in` and `out` instructions, `<machine/pio.h>`.
 //!

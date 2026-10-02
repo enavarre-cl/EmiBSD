@@ -1,4 +1,5 @@
 /* $OpenBSD: armreg.h,v 1.45 2026/05/04 20:43:42 kettenis Exp $ */
+/* <LICENSES> */
 /*-
  * Copyright (c) 2013, 2014 Andrew Turner
  * Copyright (c) 2015 The FreeBSD Foundation
@@ -30,6 +31,7 @@
  *
  * $FreeBSD: head/sys/arm64/include/armreg.h 309248 2016-11-28 14:24:07Z andrew $
  */
+/* </LICENSES> */
 
 //! arm64 `<machine/armreg.h>`: the system registers' bit definitions.
 //!

@@ -1,6 +1,6 @@
 /*	$OpenBSD: com.c,v 1.184 2026/08/31 15:40:34 deraadt Exp $	*/
 /*	$NetBSD: com.c,v 1.82.4.1 1996/06/02 09:08:00 mrg Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1997 - 1999, Jason Downs.  All rights reserved.
  *
@@ -57,6 +57,7 @@
  *
  *	@(#)com.c	7.5 (Berkeley) 5/16/91
  */
+/* </LICENSES> */
 
 //! `com(4)`: the NS16450/NS16550 serial port driver, based on the HP dca driver.
 //!

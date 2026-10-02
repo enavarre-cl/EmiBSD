@@ -1,5 +1,6 @@
 /*	$OpenBSD: spl.S,v 1.20 2023/07/27 00:30:07 guenther Exp $	*/
 /*	$NetBSD: spl.S,v 1.3 2004/06/28 09:13:11 fvdl Exp $	*/
+/* <LICENSES> */
 /*
  * Copyright (c) 2003 Wasabi Systems, Inc.
  * All rights reserved.
@@ -63,6 +64,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! The spl loops of `arch/amd64/amd64/spl.S`, pulled in from the `.S` file next to this
 //! module (the file keeps OpenBSD's licence blocks and layout; `NAME` between braces is what

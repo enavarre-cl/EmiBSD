@@ -1,4 +1,5 @@
 /* $OpenBSD: pte.h,v 1.10 2024/10/14 12:02:16 jsg Exp $ */
+/* <LICENSES> */
 /*
  * Copyright (c) 2014 Dale Rahn <drahn@dalerahn.com>
  *
@@ -14,6 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! arm64 `<machine/pte.h>`: the translation table descriptors.
 //!

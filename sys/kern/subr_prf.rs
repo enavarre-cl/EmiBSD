@@ -1,6 +1,6 @@
 /*	$OpenBSD: subr_prf.c,v 1.107 2026/09/16 19:53:45 jan Exp $	*/
 /*	$NetBSD: subr_prf.c,v 1.45 1997/10/24 18:14:25 chuck Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1986, 1988, 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -36,6 +36,7 @@
  *
  *	@(#)subr_prf.c	8.3 (Berkeley) 1/21/94
  */
+/* </LICENSES> */
 
 //! `printf(9)`, `panic(9)`, `log(9)` and the kernel's formatted output engine:
 //! `kern/subr_prf.c`.

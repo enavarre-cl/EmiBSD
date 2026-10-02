@@ -1,6 +1,6 @@
 /*	$OpenBSD: db_trace.c,v 1.20 2025/07/22 09:11:13 kettenis Exp $	*/
 /*	$NetBSD: db_trace.c,v 1.8 2003/01/17 22:28:48 thorpej Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 2000, 2001 Ben Harris
  * Copyright (c) 1996 Scott K. Stevens
@@ -29,6 +29,7 @@
  * any improvements or extensions that they make and grant Carnegie the
  * rights to redistribute these changes.
  */
+/* </LICENSES> */
 
 //! arm64 stack traces for `ddb(4)`: `arch/arm64/arm64/db_trace.c`.
 //!

@@ -1,6 +1,6 @@
 /*	$OpenBSD: param.c,v 1.53 2025/08/06 14:00:33 mvs Exp $	*/
 /*	$NetBSD: param.c,v 1.16 1996/03/12 03:08:40 mrg Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1980, 1986, 1989 Regents of the University of California.
  * All rights reserved.
@@ -36,6 +36,7 @@
  *
  *	@(#)param.c	7.20 (Berkeley) 6/27/91
  */
+/* </LICENSES> */
 
 //! Tunable kernel parameters that `config(8)` lets a kernel configuration override:
 //! `sys/conf/param.c`.

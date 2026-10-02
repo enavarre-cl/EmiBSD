@@ -1,6 +1,6 @@
 /*	$OpenBSD: uvm_object.h,v 1.30 2022/09/04 06:49:11 jsg Exp $	*/
 /*	$NetBSD: uvm_object.h,v 1.11 2001/03/09 01:02:12 chs Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1997 Charles D. Cranor and Washington University.
  * All rights reserved.
@@ -27,6 +27,7 @@
  *
  * from: Id: uvm_object.h,v 1.1.2.2 1998/01/04 22:44:51 chuck Exp
  */
+/* </LICENSES> */
 
 //! The UVM memory object interface: `<uvm/uvm_object.h>`.
 //!

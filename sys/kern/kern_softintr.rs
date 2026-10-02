@@ -1,4 +1,5 @@
 /*	$OpenBSD: kern_softintr.c,v 1.1 2025/04/23 15:07:00 visa Exp $	*/
+/* <LICENSES> */
 /*
  * Copyright (c) 2021, 2025 Visa Hankala
  *
@@ -14,6 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! Machine-independent soft interrupts: `kern/kern_softintr.c` (`__USE_MI_SOFTINTR`).
 //!

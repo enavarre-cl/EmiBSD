@@ -1,4 +1,5 @@
 /* $OpenBSD: intr.c,v 1.39 2026/03/09 06:38:02 tb Exp $ */
+/* <LICENSES> */
 /*
  * Copyright (c) 2011 Dale Rahn <drahn@openbsd.org>
  *
@@ -14,6 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! arm64 interrupt dispatch and the clock hooks: `arch/arm64/arm64/intr.c`.
 //!

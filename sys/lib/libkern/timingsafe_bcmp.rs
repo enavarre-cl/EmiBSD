@@ -1,4 +1,5 @@
 /*	$OpenBSD: timingsafe_bcmp.c,v 1.2 2014/06/10 04:16:57 deraadt Exp $	*/
+/* <LICENSES> */
 /*
  * Copyright (c) 2010 Damien Miller.  All rights reserved.
  *
@@ -14,6 +15,7 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
+/* </LICENSES> */
 
 //! `timingsafe_bcmp(3)`: constant-time byte comparison.
 //!

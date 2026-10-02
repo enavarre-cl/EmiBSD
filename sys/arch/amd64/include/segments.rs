@@ -1,6 +1,6 @@
 /*	$OpenBSD: segments.h,v 1.18 2025/06/27 17:23:49 bluhm Exp $	*/
 /*	$NetBSD: segments.h,v 1.1 2003/04/26 18:39:47 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1995, 1997
  *	Charles M. Hannum.  All rights reserved.
@@ -37,6 +37,7 @@
  *
  *	@(#)segments.h	7.1 (Berkeley) 5/9/91
  */
+/* </LICENSES> */
 
 //! amd64 `<machine/segments.h>`: 386 Segmentation Data Structures and definitions (William F.
 //! Jolitz, 6/20/1989), adapted for NetBSD/amd64 by fvdl@wasabisystems.com.

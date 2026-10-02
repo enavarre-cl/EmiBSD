@@ -1,4 +1,5 @@
 /*	$OpenBSD: evcount.h,v 1.4 2022/11/10 07:05:41 jmatthew Exp $ */
+/* <LICENSES> */
 /*
  * Copyright (c) 2004 Artur Grabowski <art@openbsd.org>
  * Copyright (c) 2004 Aaron Campbell <aaron@openbsd.org>
@@ -24,6 +25,7 @@
  * OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF
  * ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! `<sys/evcount.h>`: event counters, the interrupt counts `vmstat -i` shows.
 //!

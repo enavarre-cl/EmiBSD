@@ -1,6 +1,6 @@
 /*	$OpenBSD: psl.h,v 1.5 2018/07/09 19:20:29 guenther Exp $	*/
 /*	$NetBSD: psl.h,v 1.1 2003/02/26 21:26:11 fvdl Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1990 The Regents of the University of California.
  * All rights reserved.
@@ -34,6 +34,7 @@
  *
  *	@(#)psl.h	5.2 (Berkeley) 1/18/91
  */
+/* </LICENSES> */
 
 //! amd64 `<machine/psl.h>`: the processor status longword (`RFLAGS`).
 //!

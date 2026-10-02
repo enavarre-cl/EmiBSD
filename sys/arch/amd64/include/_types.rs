@@ -1,5 +1,5 @@
 /*	$OpenBSD: _types.h,v 1.20 2026/08/31 10:58:08 tb Exp $	*/
-
+/* <LICENSES> */
 /*-
  * Copyright (c) 1990, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -31,6 +31,7 @@
  *	@(#)types.h	8.3 (Berkeley) 1/5/94
  *	@(#)ansi.h	8.2 (Berkeley) 1/4/94
  */
+/* </LICENSES> */
 
 //! amd64 `<machine/_types.h>`: alignment rules and the `label_t` register save area.
 //!

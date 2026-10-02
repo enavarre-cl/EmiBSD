@@ -1,4 +1,5 @@
 /* $OpenBSD: cpufunc_asm.S,v 1.9 2026/06/23 11:45:54 kettenis Exp $ */
+/* <LICENSES> */
 /*-
  * Copyright (c) 2014 Robin Randhawa
  * Copyright (c) 2015 The FreeBSD Foundation
@@ -28,6 +29,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+/* </LICENSES> */
 
 //! arm64 TLB and cache maintenance: `arch/arm64/arm64/cpufunc_asm.S`.
 //!

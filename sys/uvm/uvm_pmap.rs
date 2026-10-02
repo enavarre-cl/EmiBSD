@@ -1,6 +1,6 @@
 /*	$OpenBSD: uvm_pmap.h,v 1.37 2025/06/02 18:49:04 claudio Exp $	*/
 /*	$NetBSD: uvm_pmap.h,v 1.1 2000/06/27 09:00:14 mrg Exp $	*/
-
+/* <LICENSES> */
 /*
  * Copyright (c) 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
@@ -60,6 +60,7 @@
  * any improvements or extensions that they make and grant Carnegie the
  * rights to redistribute these changes.
  */
+/* </LICENSES> */
 
 //! Machine address mapping definitions, the machine-independent section: `<uvm/uvm_pmap.h>`.
 //! The machine-dependent section is the `machine::Pmap` contract (`sys/machine/pmap.rs`).
