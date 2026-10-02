@@ -21,6 +21,9 @@ pub mod machine;
 pub mod sys;
 pub mod uvm;
 
+#[cfg(test)]
+pub(crate) mod reftest;
+
 /// Kernel panic entry point for bare-metal targets.
 ///
 /// Until `kern/subr_prf.rs` is ported (milestone M2) nothing can be printed, so the CPU is parked.

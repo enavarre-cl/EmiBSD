@@ -13,18 +13,67 @@ pinned = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 [[file]]
 c = "sys/sys/types.h"
 rust = "sys/sys/types.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d81d9eab3a4b5c2efb1c6449f4add4406a2e4bd7"
+deps = ["sys/sys/_types.h"]
+notes = "u_int/u_long/intN_t/caddr_t/size_t are Rust primitives; label_t is per-arch"
+
+[[file]]
+c = "sys/sys/_types.h"
+rust = "sys/sys/types.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "33fa2d88646c523678ae4161311040f42841dab9"
+deps = ["sys/arch/amd64/include/_types.h", "sys/arch/arm64/include/_types.h"]
+notes = "folded into types.rs (namespace-hygiene header); __mbstate_t not applicable"
 
 [[file]]
 c = "sys/sys/errno.h"
 rust = "sys/sys/errno.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cf86be73934fe10e3ed2732893499a8fcd3dc1bb"
+notes = "EWOULDBLOCK and ELAST are associated consts, not variants"
+
+[[file]]
+c = "sys/sys/syslimits.h"
+rust = "sys/sys/syslimits.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d8c98a9ea593fc27b3e974c8c681ee7944c6c59d"
+deps = ["sys/sys/types.h", "sys/sys/limits.h"]
 
 [[file]]
 c = "sys/sys/param.h"
 rust = "sys/sys/param.rs"
-status = "todo"
-deps = ["sys/sys/types.h"]
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4840d2327f5d142f4a623cd2f77716b0281828fd"
+deps = [
+    "sys/sys/types.h",
+    "sys/sys/syslimits.h",
+    "sys/sys/limits.h",
+    "sys/sys/_null.h",
+    "sys/arch/amd64/include/param.h",
+    "sys/arch/arm64/include/param.h",
+]
+notes = "includes of time/resource/ucred/uio/srp/signal.h not re-exported; MIN/MAX/offsetof/nitems/SET/CLR/ISSET are core idioms; NBBY waits for select.h"
+
+[[file]]
+c = "sys/sys/limits.h"
+status = "skipped"
+notes = "provided-by-core: INT_MAX and friends are i32::MAX etc.; CHAR_BIT is u8::BITS"
+
+[[file]]
+c = "sys/sys/_null.h"
+status = "skipped"
+notes = "provided-by-core: NULL is Option::None or core::ptr::null"
+
+[[file]]
+c = "sys/sys/cdefs.h"
+status = "skipped"
+notes = "not-applicable: compiler attribute and visibility (__BSD_VISIBLE) glue; Rust attributes and cfg do this"
 
 [[file]]
 c = "sys/sys/queue.h"
@@ -174,3 +223,11 @@ notes = "replaced-by-limine: the whole sys/arch/amd64/stand tree (boot(8), efibo
 c = "sys/arch/arm64/stand/efiboot/efiboot.c"
 status = "skipped"
 notes = "replaced-by-limine: the whole sys/arch/arm64/stand tree (efiboot) is not ported"
+
+# ---------------------------------------------------------------------------
+# Project helpers under sys/ that port no C file
+# ---------------------------------------------------------------------------
+
+[[extra]]
+rust = "sys/reftest.rs"
+reason = "test helper: reads #define lines from $OPENBSD_SRC for reference-backed tests (cfg(test) only)"

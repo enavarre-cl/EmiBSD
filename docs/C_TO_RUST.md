@@ -29,3 +29,8 @@ Columns: what OpenBSD C does | what we write | why.
 | C strings (`char *`, not UTF-8) | `&[u8]` NUL-terminated or `&CStr`; never `&str` in kernel ABI | kernel strings are bytes |
 | `size_t` / `ssize_t` | `usize` / `isize` | same width, same meaning |
 | `<machine/param.h>`, `<machine/_types.h>` constants (`PAGE_SIZE`, `KERNBASE`, `_ALIGNBYTES`) | associated consts of `machine::MachineParam`, defined per arch in `arch/<arch>/include/{param,_types}.rs`, re-exported by `sys::param` | generic code never names an arch; the compiler proves every arch defines the whole set |
+| `typedef __int32_t pid_t;` and the other scalar typedefs of `<sys/types.h>` | `pub type Pid = i32;` in `sys/sys/types.rs`: CamelCase, no `_t` | the `_t` is C namespace hygiene; the alias keeps the width and the doc comment names the C type |
+| `u_int`, `u_long`, `u_int32_t`, `quad_t`, `int8_t`, ... | `u32`, `u64`, `u32`, `i64`, `i8`, ...: no alias | the primitive already states the width; both archs are LP64 |
+| `#define NAME 42` in a header | `pub const NAME: usize = 42;` in that header's module, with the narrowest honest type (`usize` for sizes and counts, `i32` where C passes an `int`) | names stay grep-able; the type documents the use |
+| function-like macros in capitals: `ALIGN(p)`, `MAXCOMLEN`-style arithmetic, `howmany(x, y)`, `ctod(x)` | snake-case `const fn` in the same module: `align`, `howmany`, `ctod` | untyped macros buy nothing in Rust; lowercase is the only change |
+| `MIN`/`MAX`, `offsetof`, `nitems`, `SET`/`CLR`/`ISSET` | `core::cmp::{min, max}`, `core::mem::offset_of!`, `.len()`, `|=` / `&= !` / `&` | already in core |
