@@ -86,7 +86,21 @@ notes = "own intrusive lists, no crate; FOREACH and FOREACH_SAFE are one iterato
 [[file]]
 c = "sys/sys/tree.h"
 rust = "sys/sys/tree.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5ef8777683804a2b5ecf386e2644813ce50046fa"
+deps = ["sys/sys/queue.h"]
+notes = "SPLAY, RB and RBT with the queue.rs adapter pattern plus a comparator (Ordering) and the augment hook; RB_* is served by the RBT algorithm in kern/subr_tree.rs; FOREACH and FOREACH_SAFE are one iterator; name_SPLAY on an empty tree is a no-op"
+
+# kern/subr_tree.c is the RBT_* (and here RB_*) algorithm that tree.h declares.
+[[file]]
+c = "sys/kern/subr_tree.c"
+rust = "sys/kern/subr_tree.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "63eda7855f0f9a041b91207a6a6c084f2f6ac588"
+deps = ["sys/sys/tree.h"]
+notes = "struct rb_type is the RbType trait (comparator returns Ordering; t_augment == NULL is AUGMENTED); _rb_* take and return references; relinking entry points are unsafe"
 
 # ---------------------------------------------------------------------------
 # M1: <machine/param.h> and <machine/_types.h>, behind machine::MachineParam
