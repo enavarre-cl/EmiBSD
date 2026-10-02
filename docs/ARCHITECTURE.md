@@ -41,9 +41,13 @@ Types live where the **header** is; functions live where the **`.c`** is. Rust a
 ## The `machine` contract
 
 `sys/machine/<header>.rs` holds the traits standing in for `<machine/*.h>` and `cpufunc.h`, one
-module per OpenBSD header (`param.rs`, `cpu.rs`, `cons.rs`, later `pmap.rs`, `intr.rs`, ...), all
-re-exported from `sys/machine/mod.rs`, which also re-exports `crate::arch::current::Machine` and
-asserts at compile time that it implements every trait. Generic code names only `crate::machine`.
+module per OpenBSD header (`param.rs`, `cpu.rs` with `boot(9)` and `delay(9)`, `cons.rs` for
+`consinit()`, `bus.rs` for `bus_space(9)`, `db_machdep.rs` for what `ddb` needs; later `pmap.rs`,
+`intr.rs`, ...), all re-exported from `sys/machine/mod.rs`, which also re-exports
+`crate::arch::current::Machine` and asserts at compile time that it implements every trait. Generic
+code names only `crate::machine`. `bus.rs` also carries the C names as free functions
+(`bus_space_read_1(t, h, o)`), so a driver reads like its original; the tag and handle types are
+the architecture's (`X86BusSpace`/`BusSpaceHandle` on amd64, `&'static BusSpace` on arm64).
 
 Constants travel the same way as functions: `MachineParam` (M1) carries `<machine/param.h>` and
 the alignment rules of `<machine/_types.h>` as associated consts, each arch defines them in
@@ -62,10 +66,20 @@ Three implementors:
 
 Limine (UEFI, both archs) → `_start` in `sys/stand/mod.rs` (protocol structs in
 `sys/stand/limine.rs`) → `machine::BootInfo` (bootloader-neutral: memory map, HHDM offset, kernel
-load addresses, DTB/RSDP pointers; it lives in `sys/machine/bootinfo.rs` so the machine traits can
-name it) → `machine::Machine::early_init(&BootInfo)` (the polled console; on arm64 also a temporary
-device mapping) → `kern::init_main::main` (OpenBSD's `main()`, milestone M2; until then
-`stand::boot_main` prints the banner and the memory map and leaves).
+load addresses, DTB/RSDP pointers, command line; it lives in `sys/machine/bootinfo.rs` so the
+machine traits can name it) → `boothowto` from the command line (`BootInfo::boothowto`, the
+`boot(8)` letters `-a -c -d -s` as arm64's `initarm` parses them) →
+`machine::Machine::early_init(&BootInfo)` (OpenBSD's `init_x86_64` / `initarm` as far as they are
+ported: the message buffer, `consinit()`, and `db_enter()` for `boot -d`) → the `bsd: booted on`
+banner → `kern::init_main::main` (OpenBSD's `main()` in the C's order; every step whose subsystem
+is not here yet reports itself with `unported!`). Under feature `qemu`, `main` ends with the success
+exit where proc0 would go to sleep.
+
+A panic anywhere (`panic!` is `kern::subr_prf::panic` through the crate's panic handler) prints
+`panic: <message>` through `db_printf`, a frame-pointer stack trace (`db_stack_dump` →
+`machine::DbMachdep::db_stack_trace_print`, addresses only; `cargo xtask symbolize --arch A` names
+them offline from the ELF symbol table) and reaches `reboot` → `machine::Cpu::boot`, which, cold,
+halts; under feature `qemu` the "press any key" wait is the failure exit (status 35).
 
 Leaving the machine goes through `machine::Exit`: under feature `qemu`, amd64 uses the
 `isa-debug-exit` device and arm64 the semihosting `SYS_EXIT` call, both making QEMU exit with
@@ -143,10 +157,25 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
 - `aarch64-unknown-none-softfloat` target; Intel syntax for amd64 inline assembly.
 - `Result<T, Errno>` instead of `int` returns; RAII guards for `spl`/mutex.
 - A host test double (`arch/host`), which OpenBSD does not have.
-- Bootstrap consoles before their drivers exist (M0 to M2): amd64 polls COM1 through `pio.h`;
-  arm64 reaches the PL011 through a one-block identity map of the first GiB installed in
-  `TTBR0_EL1` with Device-nGnRnE attributes (`arch/arm64/arm64/earlycons.rs`), because the Limine
-  protocol maps RAM but not devices. `pmap` (M3) and the FDT (M4) replace it.
+- Console attach before autoconfiguration exists (M2 to M4): `consinit()` attaches `com(4)` at
+  `CONADDR` (amd64, `consinit.rs`) and `pluart(4)` at QEMU `virt`'s `0x0900_0000` (arm64,
+  `machdep.rs`) directly, instead of `cninit()`'s `constab[]` walk and `pluart_init_cons`'s
+  device-tree lookup. On arm64, `initarm` installs a one-block identity map of the first GiB in
+  `TTBR0_EL1` with Device-nGnRnE attributes, because the Limine protocol maps RAM but not devices;
+  `bus_space_map` is the identity inside it until `pmap` (M3).
+- `delay(9)` before the clocks: amd64 polls the i8254 (`isa/clock.rs`, as OpenBSD does before the
+  TSC is calibrated); arm64 uses `intr.c`'s `arm_dflt_delay` until `agtimer` attaches (M4).
+- ddb-lite: `db_enter()` panics (there is no trap to land in before M4), so `boot -d` and a panic
+  both end in a stack trace and a halt. `db_panic` therefore defaults to 0. No symbols in the
+  kernel yet (`db_sym.c`): traces are addresses, symbolised by `xtask symbolize`.
+- `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
+  yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
+  honest list of what the kernel skipped.
+- Licences: `ddb/` and the `db_*` arch files carry the Mach licence (Carnegie Mellon);
+  `dev/ic/comvar.h` and amd64 `include/bus.h` have a BSD block with the 4-clause advertising
+  clause. Both were accepted by the user at M2 (`.claude/rules/scope-and-stubs.md`). A translation
+  is still a derivative work, so each ported file keeps its original licence block whatever the
+  language; a licence outside the list is routed around, never rewritten.
 
 Every file-level deviation is in that file's `//! ## Deviations` list and in `ports.toml` `notes`.
 

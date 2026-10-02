@@ -37,6 +37,8 @@ pub mod id {
     pub const EXECUTABLE_ADDRESS: [u64; 2] = [0x71ba_7686_3cc5_5f63, 0xb264_4a48_c516_a487];
     /// Device Tree Blob feature.
     pub const DTB: [u64; 2] = [0xb40d_db48_fb54_bac7, 0x5450_8149_3f81_ffb7];
+    /// Executable Command Line feature.
+    pub const EXECUTABLE_CMDLINE: [u64; 2] = [0x4b16_1536_e598_651e, 0xb390_ad4a_2f1f_303a];
 }
 
 /// `LIMINE_MEMMAP_*`: memory map entry types.
@@ -299,6 +301,23 @@ pub struct DtbResponse {
     pub dtb_ptr: *const c_void,
 }
 
+/// `struct limine_executable_cmdline_response`.
+#[repr(C)]
+pub struct ExecutableCmdlineResponse {
+    /// Response revision.
+    pub revision: u64,
+    cmdline: *const c_char,
+}
+
+impl ExecutableCmdlineResponse {
+    /// The command line given to the executable (`cmdline:` in `limine.conf`), possibly empty.
+    pub fn cmdline(&self) -> &CStr {
+        // SAFETY: the protocol guarantees a non-null, 0-terminated string in
+        // bootloader-reclaimable memory.
+        unsafe { CStr::from_ptr(self.cmdline) }
+    }
+}
+
 // Layouts match the C header: these are the sizes `sizeof` reports there.
 const _: () = {
     use core::mem::size_of;
@@ -314,4 +333,5 @@ const _: () = {
     assert!(size_of::<RsdpResponse>() == 16);
     assert!(size_of::<ExecutableAddressResponse>() == 24);
     assert!(size_of::<DtbResponse>() == 16);
+    assert!(size_of::<ExecutableCmdlineResponse>() == 16);
 };

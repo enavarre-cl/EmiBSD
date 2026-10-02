@@ -1,8 +1,21 @@
-//! The polled early console as a trait: what `cnputc(9)` (`<dev/cons.h>`, `dev/cons.c`) becomes
-//! once the console framework is ported (milestone M2).
+//! `consinit(9)`: the machine-dependent half of the console framework.
+//!
+//! `<dev/cons.h>` and `dev/cons.c` (ported as `dev/cons.rs`) are generic: `cn_tab`, `cnputc`,
+//! `cngetc`. What each `machdep.c` (or `consinit.c`) provides is `consinit()`, declared in
+//! `<sys/systm.h>`: find the console device and attach it, once. `main()` calls it early, and
+//! the architectures call it even earlier, from their first C function, so a panic during boot
+//! has somewhere to print.
 
-/// The polled early console: what `cnputc(9)` becomes once `dev/cons.c` is ported.
+use crate::machine::Machine;
+
+/// The console attach each architecture provides.
 pub trait Console {
-    /// Writes one byte, blocking until the device accepts it.
-    fn putc(c: u8);
+    /// `consinit()`: attaches the console device. Idempotent: the second and later calls do
+    /// nothing, as in every OpenBSD `machdep.c`.
+    fn consinit();
+}
+
+/// `consinit()` on the selected machine.
+pub fn consinit() {
+    Machine::consinit()
 }

@@ -32,9 +32,23 @@ run-amd64: image-amd64
 run-arm64: image-arm64
     cargo xtask qemu --arch arm64
 
-smoke: image-amd64 image-arm64
-    cargo xtask smoke --arch amd64 --expect "bsd: booted on amd64"
-    cargo xtask smoke --arch arm64 --expect "bsd: booted on arm64"
+# Two boots per arch: a plain one that must reach the end of main() (status 33), and `boot -d`,
+# which enters the debugger; ddb-lite turns that into a panic with a stack trace (status 35).
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd \
+        --expect "bsd: booted on amd64" --expect "The Regents of the University of California"
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-d" --status 35 \
+        --expect "panic: db_enter" --expect "Starting stack trace..." --expect "End of stack trace." \
+        --expect "The operating system has halted."
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd \
+        --expect "bsd: booted on arm64" --expect "The Regents of the University of California"
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-d" --status 35 \
+        --expect "panic: db_enter" --expect "Starting stack trace..." --expect "End of stack trace." \
+        --expect "The operating system has halted."
+
+# annotate a stack trace (paste it on stdin) with the debug kernel's symbols
+symbolize arch:
+    cargo xtask symbolize --arch {{arch}}
 
 # --- quality -----------------------------------------------------------------
 

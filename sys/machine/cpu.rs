@@ -1,8 +1,10 @@
-//! `<machine/cpu.h>`, `<machine/cpufunc.h>` and the `boot(9)`-style exit as traits.
+//! `<machine/cpu.h>`, `<machine/cpufunc.h>`, `boot(9)` and `delay(9)` as traits.
 //!
 //! Milestone M0 needs only the earliest setup, a way to park the CPU and a way to leave the
-//! machine; M4 adds interrupt masking (`spl(9)`), M5 context switching.
+//! machine; M2 adds `boot(9)` (the end of `panic`) and `delay(9)` (the polled console); M4 adds
+//! interrupt masking (`spl(9)`), M5 context switching.
 
+use crate::machine::Machine;
 use crate::machine::bootinfo::BootInfo;
 
 /// Outcome reported through [`Exit::exit`].
@@ -28,10 +30,10 @@ impl ExitStatus {
 
 /// The boot CPU, from the bootloader's hand-off until `cpu_startup` exists (milestone M5).
 pub trait Cpu {
-    /// Earliest machine setup, called once by the boot glue before anything prints: whatever the
-    /// polled console needs (on arm64, a temporary mapping of the device). Nothing else is
-    /// touched. The error is a fixed message because there is nowhere to print it yet; the glue
-    /// turns it into a failure exit.
+    /// Earliest machine setup, called once by the boot glue before anything prints: OpenBSD's
+    /// `init_x86_64` / `initarm`, as far as they are ported. It brings up the message buffer and
+    /// the console (`consinit`), so everything after it can `printf`. The error is a fixed
+    /// message because there is nowhere to print it yet; the glue turns it into a failure exit.
     ///
     /// # Safety
     ///
@@ -41,6 +43,23 @@ pub trait Cpu {
 
     /// Masks interrupts and parks the CPU forever.
     fn halt() -> !;
+
+    /// `boot(9)`: halts or reboots the machine according to the `RB_*` flags in `howto`
+    /// (`sys/sys/reboot.rs`). `reboot()` in `kern/kern_xxx.rs` is its only caller.
+    fn boot(howto: i32) -> !;
+
+    /// `delay(9)`: busy-waits for at least `usec` microseconds.
+    fn delay(usec: u32);
+}
+
+/// `boot(9)` on the selected machine.
+pub fn boot(howto: i32) -> ! {
+    Machine::boot(howto)
+}
+
+/// `delay(9)` on the selected machine.
+pub fn delay(usec: u32) {
+    Machine::delay(usec)
 }
 
 /// How the kernel leaves the machine.

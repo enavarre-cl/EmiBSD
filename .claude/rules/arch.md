@@ -7,11 +7,14 @@ paths:
 # Architecture code and the machine contract
 
 - `sys/machine/<header>.rs`, one module per OpenBSD header, is the contract: `param.rs` for
-  `<machine/param.h>` and `<machine/_types.h>`, `cpu.rs` for `<machine/cpu.h>`/`cpufunc.h` and the
-  `boot(9)`-style exit, `cons.rs` for the console (`<dev/cons.h>`'s `cnputc`); more as milestones
-  add them (`pmap.rs`, `intr.rs`, `frame.rs`). Generic code only sees `crate::machine` (every
-  module is re-exported there). Adding a trait method means implementing it for amd64, arm64 AND
-  host in the same commit; `sys/machine/mod.rs` asserts the selected arch implements every trait.
+  `<machine/param.h>` and `<machine/_types.h>`; `cpu.rs` for `<machine/cpu.h>`/`cpufunc.h`, the
+  QEMU exit, `boot(9)` and `delay(9)`; `cons.rs` for `consinit()` (the console framework itself is
+  generic, `dev/cons.rs`); `bus.rs` for `bus_space(9)` (tag and handle types per arch, C-named free
+  functions); `db_machdep.rs` for `ddb`'s needs (`db_stack_trace_print`, `frame_address`,
+  `db_enter`); more as milestones add them (`pmap.rs`, `intr.rs`). Generic code only sees
+  `crate::machine` (every module is re-exported there). Adding a trait method means implementing
+  it for amd64, arm64 AND host in the same commit; `sys/machine/mod.rs` asserts the selected arch
+  implements every trait.
 - Nothing generic lives in `sys/arch/`. If two archs would write the same code, it belongs in
   `kern/` or `uvm/`. If one arch needs a hook the other does not, it is still a trait method with a
   no-op implementation, never a `#[cfg(target_arch)]` in generic code.

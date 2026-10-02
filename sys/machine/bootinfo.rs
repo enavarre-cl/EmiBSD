@@ -8,6 +8,7 @@
 use core::ffi::CStr;
 use core::ptr::NonNull;
 
+use crate::sys::reboot::{RB_ASKNAME, RB_CONFIG, RB_KDB, RB_SINGLE};
 use crate::sys::types::{Paddr, Psize, Vaddr};
 
 /// Upper bound on memory map regions kept in [`MemMap`]; boot fails loudly beyond it.
@@ -119,6 +120,9 @@ pub struct BootInfo {
     pub bootloader_name: &'static CStr,
     /// Version of the bootloader, `"unknown"` if it did not say.
     pub bootloader_version: &'static CStr,
+    /// The kernel command line the bootloader was given (`boot(8)`-style flags such as `-d`),
+    /// empty if none.
+    pub cmdline: &'static CStr,
     /// Offset of the higher-half direct map: physical address `p` is mapped at `p + hhdm_offset`
     /// for every region the bootloader chose to map.
     pub hhdm_offset: usize,
@@ -144,6 +148,29 @@ impl BootInfo {
     /// bootloader mapped (see [`MemKind`]).
     pub fn hhdm(&self, pa: Paddr) -> Vaddr {
         Vaddr::new(pa.as_usize() + self.hhdm_offset)
+    }
+
+    /// `boothowto` from the command line, parsed as arm64's `initarm` parses `bootargs`:
+    /// everything from the first `-` on is `boot(8)` flag letters (`a` asks for the root
+    /// device, `c` enters the device configuration, `d` the debugger, `s` single user). Unknown
+    /// letters are ignored here; the C prints them, which needs a console that does not exist
+    /// yet at this point.
+    pub fn boothowto(&self) -> i32 {
+        let bytes = self.cmdline.to_bytes();
+        let Some(start) = bytes.iter().position(|&b| b == b'-') else {
+            return 0;
+        };
+        let mut howto = 0;
+        for &c in &bytes[start..] {
+            howto |= match c {
+                b'a' => RB_ASKNAME,
+                b'c' => RB_CONFIG,
+                b'd' => RB_KDB,
+                b's' => RB_SINGLE,
+                _ => 0,
+            };
+        }
+        howto
     }
 }
 
@@ -182,6 +209,7 @@ mod tests {
         let boot = BootInfo {
             bootloader_name: c"test",
             bootloader_version: c"0",
+            cmdline: c"",
             hhdm_offset: 0xffff_8000_0000_0000,
             kernel_phys: Paddr::new(0x20_0000),
             kernel_virt: Vaddr::new(0xffff_ffff_8000_0000),
@@ -197,5 +225,27 @@ mod tests {
             boot.hhdm(Paddr::new(0x1000)),
             Vaddr::new(0xffff_8000_0000_1000)
         );
+    }
+
+    #[test]
+    fn boot_flags() {
+        let mut boot = BootInfo {
+            bootloader_name: c"test",
+            bootloader_version: c"0",
+            cmdline: c"",
+            hhdm_offset: 0,
+            kernel_phys: Paddr::new(0),
+            kernel_virt: Vaddr::new(0),
+            rsdp: None,
+            dtb: None,
+            memmap: MemMap::new(),
+        };
+        assert_eq!(boot.boothowto(), 0);
+        boot.cmdline = c"-d";
+        assert_eq!(boot.boothowto(), RB_KDB);
+        boot.cmdline = c"bsd -sc";
+        assert_eq!(boot.boothowto(), RB_SINGLE | RB_CONFIG);
+        boot.cmdline = c"-a -x";
+        assert_eq!(boot.boothowto(), RB_ASKNAME);
     }
 }

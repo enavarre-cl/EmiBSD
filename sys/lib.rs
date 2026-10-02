@@ -25,14 +25,12 @@ pub mod uvm;
 #[cfg(test)]
 pub(crate) mod reftest;
 
-/// Kernel panic entry point for bare-metal targets.
-///
-/// Until `kern/subr_prf.rs` is ported (milestone M2) nothing can be printed, so the CPU is parked.
-/// On the host, std's panic handler is used instead.
+/// Kernel panic entry point for bare-metal targets: `panic!("...")` anywhere in the kernel is
+/// OpenBSD's `panic(9)`, in `kern/subr_prf.rs`. The message is the one `panic!` was given; the
+/// Rust source location is left out, as the C prints only the message. On the host, std's panic
+/// handler is used instead.
 #[cfg(target_os = "none")]
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
-    loop {
-        core::hint::spin_loop();
-    }
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    kern::subr_prf::panic(format_args!("{}", info.message()))
 }

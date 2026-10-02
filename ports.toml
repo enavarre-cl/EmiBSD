@@ -224,8 +224,10 @@ notes = "write_volatile per byte instead of memset + weak hook"
 [[file]]
 c = "sys/lib/libkern/libkern.h"
 rust = "sys/lib/libkern/lib.rs"
-status = "todo"
-notes = "prototypes are lib.rs re-exports; imax/imin/max/min/lmax/lmin/ulmax/ulmin/abs are Ord::max/min and i32::abs; KASSERT/KDASSERT/__assert arrive with subr_prf.c (M2)"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fb5d691f624b79718475c9624f9bf32a4a7f4ba7"
+notes = "prototypes are lib.rs re-exports; imax/imin/max/min/lmax/lmin/ulmax/ulmin/abs are Ord::max/min and i32::abs; KASSERT/KDASSERT/KASSERTMSG and __KASSERTSTR live in sys/kern/subr_prf.rs as kassert!/kdassert! next to __assert (libkern is a leaf crate and cannot call into bsd)"
 
 [[file]]
 c = "sys/lib/libz/crc32.c"
@@ -248,41 +250,10 @@ status = "skipped"
 notes = "provided-by-core: core::ffi::CStr::count_bytes"
 
 # ---------------------------------------------------------------------------
-# M2: console, printf, panic, init
+# M2: console, printf, panic, init, ddb-lite
 # ---------------------------------------------------------------------------
 
-[[file]]
-c = "sys/kern/subr_prf.c"
-rust = "sys/kern/subr_prf.rs"
-status = "todo"
-deps = ["sys/sys/types.h", "sys/sys/param.h"]
-
-[[file]]
-c = "sys/kern/init_main.c"
-rust = "sys/kern/init_main.rs"
-status = "todo"
-deps = ["sys/kern/subr_prf.c"]
-
-[[file]]
-c = "sys/dev/ic/comreg.h"
-rust = "sys/dev/ic/comreg.rs"
-status = "todo"
-
-[[file]]
-c = "sys/dev/ic/com.c"
-rust = "sys/dev/ic/com.rs"
-status = "todo"
-deps = ["sys/dev/ic/comreg.h", "sys/kern/subr_prf.c"]
-
-[[file]]
-c = "sys/dev/ic/pluart.c"
-rust = "sys/dev/ic/pluart.rs"
-status = "todo"
-deps = ["sys/kern/subr_prf.c"]
-
-# ---------------------------------------------------------------------------
-# M2 headers: syslog, msgbuf, reboot, termios, ttydefaults, kernel; conf/param.c
-# ---------------------------------------------------------------------------
+# sys/sys headers the console and panic paths need
 
 [[file]]
 c = "sys/sys/syslog.h"
@@ -342,6 +313,335 @@ upstream_blob = "f7fc6e979c5515b0611ef14130bfba613b2619b3"
 deps = ["sys/sys/kernel.h"]
 notes = "M2: hz, tick, tick_nsec, utc_offset as atomics; maxprocess/maxthread/maxfiles/nmbclust/bufcachepercent/bufpages/fscale, SysV IPC limits and utsname come with their subsystems"
 
+# the console framework and the two UART drivers QEMU exposes
+
+[[file]]
+c = "sys/dev/cons.h"
+rust = "sys/dev/cons.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0626c8037b5c8dae8df0c0764a1be8badb6ae62d"
+notes = "struct consdev with fn pointers and Cell fields, CN_*; cninit/constab wait for each arch's conf.c; cons_decl/cons_init macros are the Consdev literal"
+
+[[file]]
+c = "sys/dev/cons.c"
+rust = "sys/dev/cons.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d4433e6e93f8a14dacbdb6e912e3e363417882ea"
+deps = ["sys/dev/cons.h"]
+notes = "M2: cngetc/cnputc/cnpollc/cnbell/nullcnpollc on an atomic cn_tab; cnopen..cnkqfilter, cnstop, constty, cn_devvp need tty/vnode/cdevsw (M7)"
+
+[[file]]
+c = "sys/dev/ic/ns16550reg.h"
+rust = "sys/dev/ic/ns16550reg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d9f2d58f5ef91f9d02c461657c6f7757be257082"
+notes = "register names upper-cased (com_data -> COM_DATA)"
+
+[[file]]
+c = "sys/dev/ic/comreg.h"
+rust = "sys/dev/ic/comreg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c49cbbea6235c5a9f36098b735800047fc36c9ec"
+deps = ["sys/dev/ic/ns16550reg.h"]
+notes = "re-exports ns16550reg; CPR_FIFO_MODE is cpr_fifo_mode; COM_FREQ/CONADDR are the defaults (no CONADDR_OVERRIDE)"
+
+[[file]]
+c = "sys/dev/ic/comvar.h"
+rust = "sys/dev/ic/comvar.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "81cf7ba3f27c4142365f9095b11c6ed2c8382771"
+notes = "BSD-4-clause block (Demetriou), allowed by the user at M2. M2: COM_IBUFSIZE/COM_IHIGHWATER, COM_UART_*/COM_HW_*/COM_SW_*, struct commulti_attach_args, struct com_softc minus the fields whose types are not ported (sc_dev M4, sc_ih/sc_si M4, sc_tty M7, the two timeouts M5); the input ring's four pointers are an index and a fill count; the prototypes are com.rs's functions and the comcons* externs its globals"
+
+[[file]]
+c = "sys/dev/ic/com.c"
+rust = "sys/dev/ic/com.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4a643f223ae8803857798dbb44fab3be91928fbc"
+deps = ["sys/dev/ic/comreg.h", "sys/dev/ic/comvar.h", "sys/dev/cons.h", "sys/sys/ttydefaults.h", "sys/kern/subr_prf.c"]
+notes = "M2: console path only (comspeed, comprobe1, cominit, comcnprobe, comcninit, comcnattach, comcngetc, comcnputc, comcnpollc, comcn_read_reg, comcn_write_reg, comcons* globals as atomics/StaticCell); comspeed returns Result (Err(EINVAL) for the C's -1); spl in M4; cdevsw lookup in comcnprobe reported unported; the tty side (comopen..comintr, com_attach_subr, com_softc) is M7"
+
+[[file]]
+c = "sys/dev/ic/pluartvar.h"
+rust = "sys/dev/ic/pluart.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f795dd9454d0e5174398f7b42ed0f50798dc586e"
+notes = "M2: the pluartcnattach prototype; struct pluart_softc, pluart_attach_common and pluart_intr are M7"
+
+[[file]]
+c = "sys/dev/ic/pluart.c"
+rust = "sys/dev/ic/pluart.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8a91d92d59d67fb4ad0c10f1129996f29bd86a0f"
+deps = ["sys/dev/ic/pluartvar.h", "sys/dev/cons.h", "sys/sys/termios.h", "sys/kern/subr_prf.c"]
+notes = "M2: UART_* register map and the console path (pluartcnprobe/cninit/cnattach/cngetc/cnputc/cnpollc, pluartcons* globals); the cdevsw major lookup and the pluartdev KLUDGE are M7 (cn_dev stays NODEV); spl in M4; the tty side is M7"
+
+[[file]]
+c = "sys/dev/ic/i8253reg.h"
+rust = "sys/dev/ic/i8253reg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "72c0dc035eb25ae3a812d60eeaf60964c2f5ca90"
+notes = "TIMER_DIV is timer_div"
+
+[[file]]
+c = "sys/dev/isa/isareg.h"
+rust = "sys/dev/isa/isareg.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1a5cd2d5da9e7b5fcff324a7f8b6defaa86384b6"
+notes = "M2: IO_TIMER1, IO_RTC, IO_NMI only; the rest of the port map, the ISA hole and the IRQ names come with the ISA bus"
+
+# printf, panic, the message buffer, main()
+
+[[file]]
+c = "sys/kern/subr_log.c"
+rust = "sys/kern/subr_log.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e957d4b9c02f5cbc8dbab32e99fa3fe148aca202"
+deps = ["sys/sys/msgbuf.h"]
+notes = "M2: initmsgbuf, msgbuf_putchar, msgbuf_putchar_locked, logwakeup, initconsbuf (malloc reported unported), log_open/msgbufmapped/msgbufp/consbufp; init_static_msgbuf (ours) hands a .bss area to initmsgbuf until pmap (M3); log_mtx in M5; /dev/klog, logtick, dosendsyslog, sys_sendsyslog are M7"
+
+[[file]]
+c = "sys/kern/subr_prf.c"
+rust = "sys/kern/subr_prf.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1c62c5118e6832e153562dbf148d9b5b13022c0b"
+deps = ["sys/sys/msgbuf.h", "sys/sys/reboot.h", "sys/sys/syslog.h", "sys/dev/cons.h", "sys/kern/subr_log.c", "sys/kern/kern_xxx.c", "sys/ddb/db_output.c", "sys/ddb/db_usrreq.c"]
+notes = "format engine is core::fmt (fmt::Arguments replaces fmt+va_list, so printf/vprintf and snprintf/vsnprintf pair up); %b is the Bitmask Display adaptor, %s of a byte string is Str; kprintf!/kprintln!/log!/db_printf! macros; kputchar has no tp and constty is always NULL (TOTTY needs tty, M7: uprintf, ttyprintf, tprintf* wait); kprintf_mutex and splhigh in M4/M5; v_putc fixed to cnputc; panicbuf is a single buffer (per-CPU ci_panicbuf in M5); db_panic defaults to 0 (ddb-lite cannot enter a debugger); KASSERT/KDASSERT live here as kassert!/kdassert!"
+
+[[file]]
+c = "sys/kern/kern_xxx.c"
+rust = "sys/kern/kern_xxx.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fa388b8de04b184a5425316e46fe8ed612e012a8"
+deps = ["sys/sys/reboot.h"]
+notes = "M2: reboot() and rebooting; the curproc KASSERT returns with M5, stop_periodic_resettodr reported unported; sys_reboot, __stack_smash_handler, scdebug_*, sys_sysctl come with their subsystems"
+
+[[file]]
+c = "sys/kern/init_main.c"
+rust = "sys/kern/init_main.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
+deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; under feature qemu the run ends with the success exit where proc0 would sleep; proc0/process0, start_init, check_console, kthreads are M5"
+
+# ddb-lite (Mach-licensed sources: Carnegie Mellon)
+
+[[file]]
+c = "sys/ddb/db_output.h"
+rust = "sys/ddb/db_output.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2abbfbba61625c6f63b44e40b86f85d64911af99"
+notes = "db_printf/db_vprintf are implemented in kern/subr_prf.rs as in C; DB_FORMAT_* and db_format are here"
+
+[[file]]
+c = "sys/ddb/db_output.c"
+rust = "sys/ddb/db_output.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d6abed2745b54d54969f09fa35f82a95fdfea32b"
+deps = ["sys/ddb/db_output.h", "sys/dev/cons.h", "sys/kern/subr_prf.c"]
+notes = "M2: db_force_whitespace, db_more, db_putchar, db_print_position, db_end_line, db_format, db_stack_dump, db_resize; counters are atomics; db_stack_dump cannot tell a parallel traceback from a recursive one without cpu_info (M5); db_more's q needs db_error (reported unported); db_format's # alternate form is Rust's"
+
+[[file]]
+c = "sys/ddb/db_usrreq.c"
+rust = "sys/ddb/db_usrreq.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cdf779bd386700a1bbb7d04152d78b31218a954c"
+notes = "M2: db_log only; db_profile, db_suspend and ddb_sysctl come with sysctl(2)"
+
+[[file]]
+c = "sys/ddb/db_access.c"
+rust = "sys/ddb/db_access.rs"
+status = "todo"
+notes = "db_get_value with a faulting-read guard; db_trace reads the stack directly until then"
+
+[[file]]
+c = "sys/ddb/db_sym.c"
+rust = "sys/ddb/db_sym.rs"
+status = "todo"
+notes = "in-kernel symbol table for traces; cargo xtask symbolize does it offline until then"
+
+# amd64: what the console, delay(9), boot(9) and the trace need
+
+[[file]]
+c = "sys/arch/amd64/amd64/autoconf.c"
+rust = "sys/arch/amd64/amd64/autoconf.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "44b9bb496717cc9e5cbade667b3fd255cc9f2131"
+notes = "M2: cold only; cpu_configure, diskconf, device_register, the root-device search come with autoconf (M4+)"
+
+[[file]]
+c = "sys/arch/amd64/include/bus.h"
+rust = "sys/arch/amd64/include/bus.rs"
+status = "todo"
+notes = "one of its two blocks is BSD-4-clause (Demetriou), allowed by the user at M2. The bus_space interface is the machine contract (sys/machine/bus.rs) and the accessors live in bus_space.rs for now; port the ops table (struct x86_bus_space_ops), the flags and bus_space_barrier here when memory space and bus_dma land (M3/M6)"
+
+[[file]]
+c = "sys/arch/amd64/amd64/bus_space.c"
+rust = "sys/arch/amd64/amd64/bus_space.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "57f925ff872e2203b0a1f355345ad520b927f1f3"
+notes = "M2: X86BusSpace enum tag (X86_BUS_SPACE_IO/MEM), BusSpaceHandle, bus_space_map/unmap (I/O space identity, memory space reported unported until pmap), bus_space_subregion, single-register io/mem accessors, bus_space_barrier; extents (ioport_ex/iomem_ex), multi/region/copy accessors, alloc/free, vaddr/mmap, SEV-ES variants are M3+"
+
+[[file]]
+c = "sys/arch/amd64/amd64/consinit.c"
+rust = "sys/arch/amd64/amd64/consinit.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "20be020586fe4779dd0a0c97024d9445789e5200"
+deps = ["sys/dev/ic/com.c"]
+notes = "C is empty (init_x86_64 ran cninit); without constab/cninit this attaches com(4) at CONADDR directly, once; the bootloader console description comes with M4"
+
+[[file]]
+c = "sys/arch/amd64/amd64/db_interface.c"
+rust = "sys/arch/amd64/amd64/db_interface.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f796d11401880e61efa73b9b9d9df31c3f4580c3"
+notes = "M2: db_enter only, and it panics (no IDT for int3 before M4) so the kernel stops with a trace; db_ktrap, db_read_bytes/db_write_bytes, db_machine_init, the MP entry/exit are M4"
+
+[[file]]
+c = "sys/arch/amd64/amd64/db_trace.c"
+rust = "sys/arch/amd64/amd64/db_trace.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "517870306f9fd9faef84b8ad23110d2cd6e36f0b"
+deps = ["sys/arch/amd64/include/frame.h", "sys/arch/amd64/include/vmparam.h"]
+notes = "M2: db_stack_trace_print from a given frame (db_stack_dump); no symbols (addresses printed, six words below the frame as arguments, xtask symbolize offline), db_get_value is a plain read, SMAP not touched; ddb_regs trace, /t (tfind), db_regs[], stacktrace_save_at/utrace are M4/M5"
+
+[[file]]
+c = "sys/arch/amd64/amd64/machdep.c"
+rust = "sys/arch/amd64/amd64/machdep.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "95ffefae93d5b98fae8403a5f8998d77ec55dca8"
+deps = ["sys/arch/amd64/amd64/consinit.c", "sys/arch/amd64/amd64/autoconf.c", "sys/arch/amd64/isa/clock.c", "sys/kern/subr_log.c", "sys/sys/reboot.h"]
+notes = "M2: init_x86_64 (message buffer, consinit, boot -d -> db_enter; the rest is the boot protocol or M3/M4), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all/cpu_reset reported unported), delay (= i8254_delay; delay_func/delay_init/delay_fini M5), cpureset_delay, lid_action, waittime; cpu_startup, descriptor tables, bootinfo parsing, sendsig/setregs, sysctl are M3-M5"
+
+[[file]]
+c = "sys/arch/amd64/isa/clock.c"
+rust = "sys/arch/amd64/isa/clock.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2aa6e1bad8c1318f89dfa2815a2c21f8c060d626"
+deps = ["sys/dev/ic/i8253reg.h", "sys/dev/isa/isareg.h", "sys/conf/param.c"]
+notes = "M2: gettick and i8254_delay (timer_mutex in M5; negative n treated as 0); clock interrupt, timecounter, RTC and startclocks are M4"
+
+[[file]]
+c = "sys/arch/amd64/include/frame.h"
+rust = "sys/arch/amd64/include/frame.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d9b043363ea7fc25368dc3908df3cbc7035033fd"
+notes = "M2: struct callframe; trapframe, intrframe, switchframe are M4/M5"
+
+[[file]]
+c = "sys/arch/amd64/include/vmparam.h"
+rust = "sys/arch/amd64/include/vmparam.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "38488e75c0b9b7d562f2f980aafac3686ff877cd"
+deps = ["sys/arch/amd64/include/param.h"]
+notes = "M2: VM_MIN/MAX_ADDRESS, VM_MAXUSER_ADDRESS, VM_MIN/MAX_KERNEL_ADDRESS; physical segments, page-queue and pmap parameters are M3"
+
+[[file]]
+c = "sys/arch/amd64/amd64/conf.c"
+rust = "sys/arch/amd64/amd64/conf.rs"
+status = "todo"
+notes = "constab[] (and bdevsw/cdevsw, M7); until then consinit.rs attaches com(4) directly"
+
+# arm64: the same, plus the bus_space table and the bootstrap device map
+
+[[file]]
+c = "sys/arch/arm64/include/bus.h"
+rust = "sys/arch/arm64/include/bus.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fa8e2a350c7aad4ea8a246fc150b084fea936a8a"
+notes = "M2: struct bus_space with single-register accessors, map/unmap/subregion/vaddr (fn pointers; _space_map is unsafe fn), BUS_SPACE_MAP_*, bus_space_barrier (dsb sy); raw-multi accessors, _space_mmap, bus_private and bus_dma are M6"
+
+[[file]]
+c = "sys/arch/arm64/arm64/bus_space.c"
+rust = "sys/arch/arm64/arm64/bus_space.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a0adfc49e9583e1cc4d72a1899d4259e4aeadc55"
+deps = ["sys/arch/arm64/include/bus.h"]
+notes = "M2: arm64_bs_tag, fdt_cons_bs_tag, generic_space_read/write_1/2/4/8, generic_space_map (identity inside the 1 GiB bootstrap device map, unported outside until km_alloc/pmap_kenter_cache at M3; flags ignored), unmap, region, vaddr; raw-multi and mmap are M6"
+
+[[file]]
+c = "sys/arch/arm64/arm64/db_interface.c"
+rust = "sys/arch/arm64/arm64/db_interface.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3b8f595b44a2ffedd13b3e9af69d1e6cac099227"
+notes = "M2: db_enter only, and it panics (no exception vectors for brk before M4) so the kernel stops with a trace; db_ktrap, db_read_bytes/db_write_bytes, db_machine_init, the MP entry/exit are M4"
+
+[[file]]
+c = "sys/arch/arm64/arm64/db_trace.c"
+rust = "sys/arch/arm64/arm64/db_trace.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ec8e1b2ef1d4eb20947c721bb5cf60e566d8b3d3"
+deps = ["sys/arch/arm64/include/frame.h"]
+notes = "M2: db_stack_trace_print from a given frame (db_stack_dump); no symbols (addresses printed, no interrupt/trap markers, xtask symbolize offline), db_get_value is a plain read; the C's double count decrement is kept; ddb_regs trace, /t (tfind, switchframe), stacktrace_save_at/utrace are M4/M5"
+
+[[file]]
+c = "sys/arch/arm64/arm64/intr.c"
+rust = "sys/arch/arm64/arm64/intr.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a0624ac0c074a45abac7024b57ac043f8710ed6e"
+notes = "M2: arm_clock_func (StaticCell), arm_clock_register, arm_dflt_delay (spins on yield so the loop survives optimisation), delay, cpu_initclocks, cpu_startclock, setstatclockrate (missing hooks reported unported); the interrupt controller hooks, spl, arm_intr_establish are M4"
+
+[[file]]
+c = "sys/arch/arm64/arm64/machdep.c"
+rust = "sys/arch/arm64/arm64/machdep.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c9656ebcea23151ba4968b4eab8099c095180027"
+deps = ["sys/arch/arm64/arm64/bus_space.c", "sys/arch/arm64/arm64/intr.c", "sys/dev/ic/pluart.c", "sys/kern/subr_log.c", "sys/sys/reboot.h"]
+notes = "M2: initarm (the 1 GiB TTBR0 Device-nGnRnE identity block for devices until pmap at M3, message buffer, consinit, boot -d -> db_enter; the rest is the boot protocol or M3/M4), consinit (attaches the PL011 at QEMU virt's 0x09000000 directly: pluart_init_cons needs the FDT at M4, the other *_init_cons are deferred drivers), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all reported unported), cold, waittime, cpuresetfn, powerdownfn; the bootargs parsing is BootInfo::boothowto (sys/machine/bootinfo.rs); cpu_startup, FDT/memory setup, dumpsys, sendsig/setregs, sysctl are M3-M5"
+
+[[file]]
+c = "sys/arch/arm64/include/frame.h"
+rust = "sys/arch/arm64/include/frame.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0a69dd3403987e520037a73279fb1d8bcfcba146"
+notes = "M2: struct callframe; trapframe and switchframe are M4/M5"
+
+[[file]]
+c = "sys/dev/fdt/pluart_fdt.c"
+rust = "sys/dev/fdt/pluart_fdt.rs"
+status = "todo"
+deps = ["sys/dev/ic/pluart.c"]
+notes = "pluart_init_cons: finds the console in the device tree (M4); until then arm64's consinit attaches the PL011 at a fixed address"
+
+[[file]]
+c = "sys/arch/arm64/dev/agtimer.c"
+rust = "sys/arch/arm64/dev/agtimer.rs"
+status = "todo"
+deps = ["sys/arch/arm64/arm64/intr.c"]
+notes = "the generic timer: registers agtimer_delay from mainbus (M4); until then delay(9) is arm_dflt_delay"
+
 # ---------------------------------------------------------------------------
 # Replaced by project-level decisions (docs/ARCHITECTURE.md, "Deviations")
 # ---------------------------------------------------------------------------
@@ -369,16 +669,12 @@ rust = "sys/lib/libkern/staticcell.rs"
 reason = "project helper: StaticCell<T>, the static-with-interior-mutability that replaces C's mutable statics where no atomic or lock fits (rust-kernel.md)"
 
 [[extra]]
-rust = "sys/arch/amd64/amd64/earlycons.rs"
-reason = "M0 bootstrap: polled COM1 console; replaced by dev/ic/com.c at M2"
+rust = "sys/kern/unported.rs"
+reason = "project helper: unported!(name) prints the gap once and yields ENOSYS (scope-and-stubs.md)"
 
 [[extra]]
 rust = "sys/arch/amd64/amd64/qemu.rs"
 reason = "M0 bootstrap: QEMU isa-debug-exit under feature qemu; not OpenBSD code"
-
-[[extra]]
-rust = "sys/arch/arm64/arm64/earlycons.rs"
-reason = "M0 bootstrap: polled PL011 behind a TTBR0 device map; replaced by dev/ic/pluart.c and pmap at M2/M3"
 
 [[extra]]
 rust = "sys/arch/arm64/arm64/qemu.rs"
