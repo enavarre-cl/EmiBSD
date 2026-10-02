@@ -28,3 +28,4 @@ Columns: what OpenBSD C does | what we write | why.
 | `caddr_t`, `void *` buffers | `&[u8]` / `&mut [u8]`; `NonNull<u8>` only at ABI edges | the length travels with the pointer |
 | C strings (`char *`, not UTF-8) | `&[u8]` NUL-terminated or `&CStr`; never `&str` in kernel ABI | kernel strings are bytes |
 | `size_t` / `ssize_t` | `usize` / `isize` | same width, same meaning |
+| `<machine/param.h>`, `<machine/_types.h>` constants (`PAGE_SIZE`, `KERNBASE`, `_ALIGNBYTES`) | associated consts of `machine::MachineParam`, defined per arch in `arch/<arch>/include/{param,_types}.rs`, re-exported by `sys::param` | generic code never names an arch; the compiler proves every arch defines the whole set |

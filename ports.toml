@@ -37,6 +37,44 @@ rust = "sys/sys/tree.rs"
 status = "todo"
 
 # ---------------------------------------------------------------------------
+# M1: <machine/param.h> and <machine/_types.h>, behind machine::MachineParam
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/arch/amd64/include/param.h"
+rust = "sys/arch/amd64/include/param.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2b73b99f9b1d1dbc44923c40181565f32072f4d1"
+deps = ["sys/arch/amd64/include/_types.h"]
+notes = "MID_MACHINE waits for exec.h; _MACHINE tokens not applicable"
+
+[[file]]
+c = "sys/arch/arm64/include/param.h"
+rust = "sys/arch/arm64/include/param.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3c9052d558658d4581cc7003addffc7e0de3c4c9"
+deps = ["sys/arch/arm64/include/_types.h"]
+notes = "MID_MACHINE waits for exec.h; _MACHINE tokens not applicable"
+
+[[file]]
+c = "sys/arch/amd64/include/_types.h"
+rust = "sys/arch/amd64/include/_types.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6fda1cbd23fc9e7d79a915b6b3a71c7ca0ce8bc0"
+notes = "only _ALIGN*, _MAX_PAGE_SHIFT and label_t carry over; integer/wchar typedefs are Rust primitives"
+
+[[file]]
+c = "sys/arch/arm64/include/_types.h"
+rust = "sys/arch/arm64/include/_types.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "92d884e2f40499019f0c4b371ecc8ecf64ded35b"
+notes = "only _ALIGN*, _MAX_PAGE_SHIFT and label_t carry over; integer/wchar typedefs are Rust primitives"
+
+# ---------------------------------------------------------------------------
 # M1: libkern
 # ---------------------------------------------------------------------------
 

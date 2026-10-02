@@ -4,9 +4,12 @@
 //! `include/` for header ports, `dev/` for arch-only drivers (GIC, generic timer),
 //! `conf/kernel.ld` for the linker script.
 
+pub mod include;
+
 /// The arm64 implementation of the machine interface.
 pub struct Machine;
 
 impl crate::machine::api::MachineInfo for Machine {
-    const MACHINE: &'static str = "arm64";
+    const MACHINE: &'static str = include::param::MACHINE;
+    const MACHINE_ARCH: &'static str = include::param::MACHINE_ARCH;
 }

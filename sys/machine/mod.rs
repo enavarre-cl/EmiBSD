@@ -14,7 +14,7 @@ pub use crate::arch::current::Machine;
 
 // Compile-time proof that the selected architecture implements the whole contract.
 const _: () = {
-    const fn assert_impl<M: api::MachineInfo>() {}
+    const fn assert_impl<M: api::MachineInfo + api::MachineParam>() {}
     assert_impl::<Machine>();
 };
 
@@ -25,5 +25,14 @@ mod tests {
     #[test]
     fn selected_machine_is_the_host_double_under_test() {
         assert_eq!(Machine::MACHINE, "host");
+        assert_eq!(Machine::MACHINE_ARCH, "host");
+    }
+
+    #[test]
+    fn host_page_geometry_is_consistent() {
+        assert_eq!(Machine::PAGE_SIZE, 1 << Machine::PAGE_SHIFT);
+        assert_eq!(Machine::PAGE_MASK, Machine::PAGE_SIZE - 1);
+        assert_eq!(Machine::USPACE, Machine::UPAGES * Machine::PAGE_SIZE);
+        assert!(Machine::MAX_PAGE_SHIFT >= Machine::PAGE_SHIFT);
     }
 }

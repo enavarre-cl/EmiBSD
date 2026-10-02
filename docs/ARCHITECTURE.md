@@ -44,6 +44,11 @@ Types live where the **header** is; functions live where the **`.c`** is. Rust a
 `sys/machine/mod.rs` re-exports `crate::arch::current::Machine` and asserts at compile time that it
 implements every trait. Generic code names only `crate::machine`.
 
+Constants travel the same way as functions: `MachineParam` (M1) carries `<machine/param.h>` and
+the alignment rules of `<machine/_types.h>` as associated consts, each arch defines them in
+`arch/<arch>/include/{param,_types}.rs`, and `sys/sys/param.rs` re-exports them, so generic code
+imports `PAGE_SIZE` from `sys::param` exactly as C includes `<sys/param.h>`.
+
 Three implementors:
 
 - `sys/arch/amd64`: `cfg(all(target_os = "none", target_arch = "x86_64"))`
