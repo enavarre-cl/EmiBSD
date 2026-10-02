@@ -130,6 +130,7 @@ More appear as they are needed (`multiprocessor`, `small_kernel`, ...), one per 
 | `intrusive-collections` | `sys/` | `queue.h`/`tree.h` semantics (O(1) unlink, multi-membership, no allocation) with upstream-audited `unsafe`. Decision to revisit at M1: port `queue.h` as our own intrusive lists instead |
 | `proptest` | dev-only | property tests for libkern |
 | `serde`, `toml` | `tools/xtask` | tracker parsing |
+| `fatfs` | `tools/xtask` | writes the FAT boot image; a host tool, not kernel code |
 
 Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, `uart_16550`,
 `fdt`, `linked_list_allocator`, `buddy_system_allocator`). Porting that code is the project.

@@ -7,7 +7,10 @@
 //! cargo xtask ports status [--write]       counts per subsystem; --write regenerates docs/PORTING.md
 //! cargo xtask ports next                   `todo` entries whose dependencies are all ported
 //! cargo xtask ports drift [--strict|--diff] ported files whose upstream content changed
-//! cargo xtask image | qemu | smoke         boot image and QEMU drivers (milestone M0)
+//! cargo xtask image --arch A --kernel K    build target/openbsd-rs-A.img (Limine + /bsd)
+//! cargo xtask qemu --arch A [--kernel K]   boot the image, serial and monitor on stdio
+//! cargo xtask smoke --arch A --expect L    boot headless; pass if L appears and the kernel
+//!                                          exits QEMU with its success status
 //! ```
 //!
 //! Paths are resolved from the workspace root (derived from `CARGO_MANIFEST_DIR`), never from the
@@ -19,6 +22,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
 use serde::Deserialize;
+
+mod boot;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -32,7 +37,8 @@ const TABLE_BEGIN: &str = "<!-- ports:begin -->";
 const TABLE_END: &str = "<!-- ports:end -->";
 
 const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | ports next | \
-                     ports drift [--strict] [--diff] | image | qemu | smoke>";
+                     ports drift [--strict] [--diff] | image --arch A --kernel K | \
+                     qemu --arch A [--kernel K] | smoke --arch A --expect L>";
 
 #[derive(Deserialize)]
 struct Ports {
@@ -118,12 +124,32 @@ fn run(args: &[String]) -> Result<()> {
             flags.contains(&"--strict"),
             flags.contains(&"--diff"),
         ),
-        [cmd @ ("image" | "qemu" | "smoke"), ..] => Err(format!(
-            "`xtask {cmd}` arrives with milestone M0 (docs/ROADMAP.md); nothing to boot yet"
-        )
-        .into()),
+        ["image", rest @ ..] => {
+            let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
+            let kernel = PathBuf::from(flag(rest, "--kernel")?);
+            boot::image(&root, arch, &kernel).map(|_| ())
+        }
+        ["qemu", rest @ ..] => {
+            let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
+            let kernel = optional_flag(rest, "--kernel").map(PathBuf::from);
+            boot::qemu(&root, arch, kernel.as_deref())
+        }
+        ["smoke", rest @ ..] => {
+            let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
+            boot::smoke(&root, arch, flag(rest, "--expect")?)
+        }
         _ => Err(USAGE.into()),
     }
+}
+
+/// The value following `name` in `args`, if present.
+fn optional_flag<'a>(args: &[&'a str], name: &str) -> Option<&'a str> {
+    args.windows(2).find(|w| w[0] == name).map(|w| w[1])
+}
+
+/// The value following `name` in `args`; an error naming the flag otherwise.
+fn flag<'a>(args: &[&'a str], name: &str) -> Result<&'a str> {
+    optional_flag(args, name).ok_or_else(|| format!("missing `{name} <value>`\n{USAGE}").into())
 }
 
 /// `tools/xtask` → workspace root. Compile-time manifest dir, so the cwd never matters.

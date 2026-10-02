@@ -23,6 +23,7 @@ intrusive-collections = { version = "0.10", default-features = false }  # queue.
 # host tooling only (tools/xtask)
 serde = { version = "1", features = ["derive"] }
 toml = "1"
+fatfs = { version = "0.3", default-features = false, features = ["std", "alloc"] }  # FAT boot images
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
