@@ -7,10 +7,17 @@
 //! cargo xtask ports status [--write]       counts per subsystem; --write regenerates docs/PORTING.md
 //! cargo xtask ports next                   `todo` entries whose dependencies are all ported
 //! cargo xtask ports drift [--strict|--diff] ported files whose upstream content changed
-//! cargo xtask image --arch A --kernel K    build target/openbsd-rs-A.img (Limine + /bsd)
+//! cargo xtask image --arch A --kernel K [--cmdline C]
+//!                                          build target/openbsd-rs-A.img (Limine + /bsd),
+//!                                          C as the kernel command line (boot(8) flags)
 //! cargo xtask qemu --arch A [--kernel K]   boot the image, serial and monitor on stdio
-//! cargo xtask smoke --arch A --expect L    boot headless; pass if L appears and the kernel
-//!                                          exits QEMU with its success status
+//! cargo xtask smoke --arch A [--kernel K] [--cmdline C] [--status N] --expect L...
+//!                                          boot headless; pass if every L appears and QEMU
+//!                                          exits with status N (default: the kernel's success
+//!                                          status); with K the image is rebuilt first
+//! cargo xtask symbolize --arch A [--kernel K]
+//!                                          annotate the addresses of a stack trace on stdin
+//!                                          with K's symbols (default: the debug kernel)
 //! ```
 //!
 //! Paths are resolved from the workspace root (derived from `CARGO_MANIFEST_DIR`), never from the
@@ -24,6 +31,7 @@ use std::process::{Command, ExitCode};
 use serde::Deserialize;
 
 mod boot;
+mod symbolize;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -37,8 +45,10 @@ const TABLE_BEGIN: &str = "<!-- ports:begin -->";
 const TABLE_END: &str = "<!-- ports:end -->";
 
 const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | ports next | \
-                     ports drift [--strict] [--diff] | image --arch A --kernel K | \
-                     qemu --arch A [--kernel K] | smoke --arch A --expect L>";
+                     ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] | \
+                     qemu --arch A [--kernel K] | \
+                     smoke --arch A [--kernel K] [--cmdline C] [--status N] --expect L... | \
+                     symbolize --arch A [--kernel K]>";
 
 #[derive(Deserialize)]
 struct Ports {
@@ -127,7 +137,7 @@ fn run(args: &[String]) -> Result<()> {
         ["image", rest @ ..] => {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
             let kernel = PathBuf::from(flag(rest, "--kernel")?);
-            boot::image(&root, arch, &kernel).map(|_| ())
+            boot::image(&root, arch, &kernel, optional_flag(rest, "--cmdline")).map(|_| ())
         }
         ["qemu", rest @ ..] => {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
@@ -136,7 +146,35 @@ fn run(args: &[String]) -> Result<()> {
         }
         ["smoke", rest @ ..] => {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
-            boot::smoke(&root, arch, flag(rest, "--expect")?)
+            let kernel = optional_flag(rest, "--kernel").map(PathBuf::from);
+            let expects = flags(rest, "--expect");
+            if expects.is_empty() {
+                return Err(format!("missing `--expect <line>`\n{USAGE}").into());
+            }
+            let status = match optional_flag(rest, "--status") {
+                Some(s) => s.parse::<i32>().map_err(|e| format!("--status {s}: {e}"))?,
+                None => boot::QEMU_SUCCESS_STATUS,
+            };
+            boot::smoke(
+                &root,
+                arch,
+                kernel.as_deref(),
+                optional_flag(rest, "--cmdline"),
+                &expects,
+                status,
+            )
+        }
+        ["symbolize", rest @ ..] => {
+            let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
+            let kernel = match optional_flag(rest, "--kernel") {
+                Some(k) => PathBuf::from(k),
+                None => root
+                    .join("target")
+                    .join(arch.target())
+                    .join("debug")
+                    .join("bsd"),
+            };
+            symbolize::symbolize(&kernel)
         }
         _ => Err(USAGE.into()),
     }
@@ -145,6 +183,14 @@ fn run(args: &[String]) -> Result<()> {
 /// The value following `name` in `args`, if present.
 fn optional_flag<'a>(args: &[&'a str], name: &str) -> Option<&'a str> {
     args.windows(2).find(|w| w[0] == name).map(|w| w[1])
+}
+
+/// Every value following an occurrence of `name` in `args`.
+fn flags<'a>(args: &[&'a str], name: &str) -> Vec<&'a str> {
+    args.windows(2)
+        .filter(|w| w[0] == name)
+        .map(|w| w[1])
+        .collect()
 }
 
 /// The value following `name` in `args`; an error naming the flag otherwise.

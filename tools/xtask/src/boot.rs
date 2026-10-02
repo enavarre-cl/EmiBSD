@@ -39,6 +39,14 @@ impl Arch {
         }
     }
 
+    /// The Rust target triple the kernel is built for.
+    pub fn target(self) -> &'static str {
+        match self {
+            Arch::Amd64 => "x86_64-unknown-none",
+            Arch::Arm64 => "aarch64-unknown-none-softfloat",
+        }
+    }
+
     fn qemu(self) -> &'static str {
         match self {
             Arch::Amd64 => "qemu-system-x86_64",
@@ -69,8 +77,8 @@ impl Arch {
 }
 
 /// Exit status QEMU reports when the kernel leaves with `ExitStatus::Success`
-/// (`sys/machine/api.rs`).
-const QEMU_SUCCESS_STATUS: i32 = 33;
+/// (`sys/machine/cpu.rs`).
+pub const QEMU_SUCCESS_STATUS: i32 = 33;
 /// Longest a smoke boot may take, EDK2 and Limine included, under TCG.
 const SMOKE_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -154,12 +162,20 @@ fn read(path: &Path) -> Result<Vec<u8>> {
     fs::read(path).map_err(|e| format!("{}: {e}", path.display()).into())
 }
 
-/// Builds the boot image for `arch` from `kernel`; returns its path.
-pub fn image(root: &Path, arch: Arch, kernel: &Path) -> Result<PathBuf> {
+/// Builds the boot image for `arch` from `kernel`, with `cmdline` (if any) as the kernel
+/// command line; returns its path.
+pub fn image(root: &Path, arch: Arch, kernel: &Path, cmdline: Option<&str>) -> Result<PathBuf> {
     let kernel_bytes = read(kernel)?;
     let efi_path = limine_file(arch.limine_efi())?;
     let efi = read(&efi_path)?;
-    let conf = read(&root.join("sys/stand/limine.conf"))?;
+    let mut conf = read(&root.join("sys/stand/limine.conf"))?;
+    if let Some(cmdline) = cmdline {
+        // The entry is the last block of the file; `cmdline:` is one more key of it.
+        if !conf.ends_with(b"\n") {
+            conf.push(b'\n');
+        }
+        conf.extend_from_slice(format!("    cmdline: {cmdline}\n").as_bytes());
+    }
 
     let path = image_path(root, arch);
     if let Some(dir) = path.parent() {
@@ -193,11 +209,14 @@ pub fn image(root: &Path, arch: Arch, kernel: &Path) -> Result<PathBuf> {
     fs.unmount()?;
 
     println!(
-        "xtask: {} ({} KiB kernel, {} from {})",
+        "xtask: {} ({} KiB kernel, {} from {}{})",
         path.display(),
         kernel_bytes.len() / 1024,
         arch.limine_efi(),
-        efi_path.display()
+        efi_path.display(),
+        cmdline
+            .map(|c| format!(", cmdline `{c}`"))
+            .unwrap_or_default()
     );
     Ok(path)
 }
@@ -357,7 +376,7 @@ fn spawn_error(arch: Arch, e: &io::Error) -> String {
 /// `kernel`, the image is rebuilt first.
 pub fn qemu(root: &Path, arch: Arch, kernel: Option<&Path>) -> Result<()> {
     let image = match kernel {
-        Some(k) => image(root, arch, k)?,
+        Some(k) => image(root, arch, k, None)?,
         None => {
             let p = image_path(root, arch);
             if !p.is_file() {
@@ -385,18 +404,33 @@ pub fn qemu(root: &Path, arch: Arch, kernel: Option<&Path>) -> Result<()> {
     }
 }
 
-/// Boots `arch` headless, captures the serial transcript, and passes when `expect` appears and
-/// QEMU exits with the kernel's success status before the timeout.
-pub fn smoke(root: &Path, arch: Arch, expect: &str) -> Result<()> {
-    let image = image_path(root, arch);
-    if !image.is_file() {
-        return Err(format!(
-            "{} does not exist; run `just image-{}`",
-            image.display(),
-            arch.name()
-        )
-        .into());
-    }
+/// Boots `arch` headless, captures the serial transcript, and passes when every line of
+/// `expects` appears and QEMU exits with `status` before the timeout. With `kernel`, the image
+/// is rebuilt first, with `cmdline` as the kernel command line.
+pub fn smoke(
+    root: &Path,
+    arch: Arch,
+    kernel: Option<&Path>,
+    cmdline: Option<&str>,
+    expects: &[&str],
+    status: i32,
+) -> Result<()> {
+    let image = match kernel {
+        Some(k) => image(root, arch, k, cmdline)?,
+        None => {
+            let p = image_path(root, arch);
+            if !p.is_file() {
+                return Err(format!(
+                    "{} does not exist; run `just image-{}`",
+                    p.display(),
+                    arch.name()
+                )
+                .into());
+            }
+            p
+        }
+    };
+    let expected_status = status;
     let mut cmd = qemu_command(root, arch, &image, "stdio")?;
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -411,7 +445,7 @@ pub fn smoke(root: &Path, arch: Arch, expect: &str) -> Result<()> {
     let err_reader = thread::spawn(move || slurp(stderr));
 
     let mut timed_out = false;
-    let status = loop {
+    let exit = loop {
         if let Some(status) = child.try_wait()? {
             break Some(status);
         }
@@ -426,20 +460,30 @@ pub fn smoke(root: &Path, arch: Arch, expect: &str) -> Result<()> {
     let serial = String::from_utf8_lossy(&out_reader.join().unwrap_or_default()).into_owned();
     let diagnostics = String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned();
 
-    let found = serial.contains(expect);
-    let code = status.and_then(|s| s.code());
-    let ok = found && code == Some(QEMU_SUCCESS_STATUS);
+    let missing: Vec<&str> = expects
+        .iter()
+        .copied()
+        .filter(|e| !serial.contains(e))
+        .collect();
+    let code = exit.and_then(|s| s.code());
+    let ok = missing.is_empty() && code == Some(expected_status);
     let elapsed = started.elapsed().as_secs_f32();
     if ok {
-        // The kernel's own lines, for the record; firmware and bootloader chatter is left out.
+        // The kernel's own lines, for the record; firmware and bootloader chatter before the
+        // first `bsd: ` line is left out.
+        let mut kernel_output = false;
         for line in serial.lines() {
             if let Some(at) = line.find("bsd: ") {
+                kernel_output = true;
                 println!("  {}", line[at..].trim_end());
+            } else if kernel_output {
+                println!("  {}", line.trim_end());
             }
         }
         println!(
-            "smoke {}: ok in {elapsed:.1}s (`{expect}` seen, status {QEMU_SUCCESS_STATUS})",
-            arch.name()
+            "smoke {}: ok in {elapsed:.1}s ({} expected line(s) seen, status {expected_status})",
+            arch.name(),
+            expects.len()
         );
         return Ok(());
     }
@@ -459,10 +503,14 @@ pub fn smoke(root: &Path, arch: Arch, expect: &str) -> Result<()> {
         format!("qemu exited with status {code:?}")
     };
     Err(format!(
-        "smoke {}: {} and `{expect}` {}",
+        "smoke {}: {} (expected {expected_status}); {}",
         arch.name(),
         why,
-        if found { "was seen" } else { "was NOT seen" }
+        if missing.is_empty() {
+            "every expected line was seen".to_string()
+        } else {
+            format!("NOT seen: {}", missing.join(" | "))
+        }
     )
     .into())
 }
