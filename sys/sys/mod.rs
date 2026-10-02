@@ -5,8 +5,14 @@
 //! blocks on the types defined here.
 
 pub mod errno;
+pub mod kernel;
+pub mod msgbuf;
 pub mod param;
 pub mod queue;
+pub mod reboot;
 pub mod syslimits;
+pub mod syslog;
+pub mod termios;
 pub mod tree;
+pub mod ttydefaults;
 pub mod types;

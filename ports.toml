@@ -281,6 +281,68 @@ status = "todo"
 deps = ["sys/kern/subr_prf.c"]
 
 # ---------------------------------------------------------------------------
+# M2 headers: syslog, msgbuf, reboot, termios, ttydefaults, kernel; conf/param.c
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/sys/syslog.h"
+rust = "sys/sys/syslog.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cae25740f7431b79a2fc228e5b169462cc8cf849"
+notes = "LIOCSFD waits for ioccom.h; syslog_data, SYSLOG_NAMES and the userland prototypes are not kernel material"
+
+[[file]]
+c = "sys/sys/msgbuf.h"
+rust = "sys/sys/msgbuf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "62be72c13bb4a93248fc688eff2ef79fb746aec5"
+notes = "struct msgbuf is a repr(C) DST laid over a byte area by Msgbuf::from_raw (the C cast); fields are Cells until log_mtx (M5)"
+
+[[file]]
+c = "sys/sys/reboot.h"
+rust = "sys/sys/reboot.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "19e7963fa90ec2af42452ad0c1fdb3bd1d65b361"
+notes = "B_* and MAKEBOOTDEV are const fns"
+
+[[file]]
+c = "sys/sys/termios.h"
+rust = "sys/sys/termios.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "681c29489138850507516a8ef6bc346bed04e4e9"
+notes = "all flags visible (__BSD_VISIBLE); CCEQ is cceq; tcsetattr family and TCIFLUSH..TCION are userland"
+
+[[file]]
+c = "sys/sys/ttydefaults.h"
+rust = "sys/sys/ttydefaults.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "07ddac23a00f10929baae7a04c77040189bb3692"
+deps = ["sys/sys/termios.h"]
+notes = "ttydefchars is always defined (TTYDEFCHARS); CTRL is ctrl"
+
+[[file]]
+c = "sys/sys/kernel.h"
+rust = "sys/sys/kernel.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "636f853e729216c440d5fb40057c88ba1e8a3937"
+notes = "M2: HZ only; hostname/domainname/hostid come with kern_sysctl.c, the extern ints live where they are defined (conf/param.c, kern_clock.c)"
+
+[[file]]
+c = "sys/conf/param.c"
+rust = "sys/conf/param.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f7fc6e979c5515b0611ef14130bfba613b2619b3"
+deps = ["sys/sys/kernel.h"]
+notes = "M2: hz, tick, tick_nsec, utc_offset as atomics; maxprocess/maxthread/maxfiles/nmbclust/bufcachepercent/bufpages/fscale, SysV IPC limits and utsname come with their subsystems"
+
+# ---------------------------------------------------------------------------
 # Replaced by project-level decisions (docs/ARCHITECTURE.md, "Deviations")
 # ---------------------------------------------------------------------------
 

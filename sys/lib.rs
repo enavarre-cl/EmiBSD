@@ -14,6 +14,7 @@ extern crate std;
 extern crate alloc;
 
 pub mod arch;
+pub mod conf;
 pub mod ddb;
 pub mod dev;
 pub mod kern;
