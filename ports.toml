@@ -158,7 +158,7 @@ rust = "sys/arch/amd64/include/cpufunc.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "96af50a82a5f71bfeb614be5ea187f032a7664d1"
-notes = "read_rflags/write_rflags/intr_enable/intr_disable/intr_restore (M0), rcr3/lcr3/tlbflush/invlpg/rdmsr/wrmsr/wbinvd (M3), rcr2/rdr6/rdr7/lidt/ltr/lldt/breakpoint (M4); the other control registers, invpcid, clflush and the cache helpers come with M4-b"
+notes = "read_rflags/write_rflags/intr_enable/intr_disable/intr_restore (M0), rcr3/lcr3/tlbflush/invlpg/rdmsr/wrmsr/wbinvd (M3), rcr2/rdr6/rdr7/lidt/ltr/lldt/breakpoint/lcr8 (M4); the other control registers, invpcid, clflush and the cache helpers come with M4-b2/M5"
 
 [[file]]
 c = "sys/arch/arm64/include/cpu.h"
@@ -364,7 +364,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "4a643f223ae8803857798dbb44fab3be91928fbc"
 deps = ["sys/dev/ic/comreg.h", "sys/dev/ic/comvar.h", "sys/dev/cons.h", "sys/sys/ttydefaults.h", "sys/kern/subr_prf.c"]
-notes = "M2: console path only (comspeed, comprobe1, cominit, comcnprobe, comcninit, comcnattach, comcngetc, comcnputc, comcnpollc, comcn_read_reg, comcn_write_reg, comcons* globals as atomics/StaticCell); comspeed returns Result (Err(EINVAL) for the C's -1); spl in M4; cdevsw lookup in comcnprobe reported unported; the tty side (comopen..comintr, com_attach_subr, com_softc) is M7"
+notes = "M2: console path only (comspeed, comprobe1, cominit, comcnprobe, comcninit, comcnattach, comcngetc, comcnputc, comcnpollc, comcn_read_reg, comcn_write_reg, comcons* globals as atomics/StaticCell); comspeed returns Result (Err(EINVAL) for the C's -1); M4: com_enable_debugport on the console registers (com_enable_debugport_cn); spl around the polled accesses M4-b2; cdevsw lookup in comcnprobe reported unported; the tty side (comopen..comintr, comsoft, com_attach_subr, com_softc) is M7"
 
 [[file]]
 c = "sys/dev/ic/pluartvar.h"
@@ -397,7 +397,7 @@ rust = "sys/dev/isa/isareg.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1a5cd2d5da9e7b5fcff324a7f8b6defaa86384b6"
-notes = "M2: IO_TIMER1, IO_RTC, IO_NMI only; the rest of the port map, the ISA hole and the IRQ names come with the ISA bus"
+notes = "M2: IO_TIMER1, IO_RTC, IO_NMI; M4: IO_ICU1, IO_ICU2, IO_ICUSIZE; the rest of the port map, the ISA hole and the IRQ names come with the ISA bus"
 
 # printf, panic, the message buffer, main()
 
@@ -484,7 +484,7 @@ rust = "sys/arch/amd64/amd64/autoconf.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "44b9bb496717cc9e5cbade667b3fd255cc9f2131"
-notes = "M2: cold only; cpu_configure, diskconf, device_register, the root-device search come with autoconf (M4+)"
+notes = "M2: cold; M4: cpu_configure as far as the interrupts go (x86_64_proc0_tss_ldt_init, the LAPIC setup mpbios/acpimadt would trigger at the architectural base, cpu_intr_init and intr_enable the cpu0 attach would run, intr_printconfig, lcr8(0), spl0, cold = 0; pmap_randomize, map_tramps, bus_dma_init, mbuf_dma_64bit_enable, unmap_startup, the rnd timeouts reported); diskconf, device_register, the root-device search come with autoconf (M5)"
 
 [[file]]
 c = "sys/arch/amd64/include/bus.h"
@@ -507,7 +507,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "20be020586fe4779dd0a0c97024d9445789e5200"
 deps = ["sys/dev/ic/com.c"]
-notes = "C is empty (init_x86_64 ran cninit); without constab/cninit this attaches com(4) at CONADDR directly, once; the bootloader console description comes with M4"
+notes = "C is empty (init_x86_64 ran cninit); without constab/cninit this attaches com(4) at CONADDR directly, once; M4: cn_rx_intr_establish (the console's receive interrupt on IRQ 4 through isa_intr_establish, what com_isa's attach does) until com_isa attaches the port (M5)"
 
 [[file]]
 c = "sys/arch/amd64/amd64/db_interface.c"
@@ -533,7 +533,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "95ffefae93d5b98fae8403a5f8998d77ec55dca8"
 deps = ["sys/arch/amd64/amd64/consinit.c", "sys/arch/amd64/amd64/autoconf.c", "sys/arch/amd64/isa/clock.c", "sys/kern/subr_log.c", "sys/sys/reboot.h"]
-notes = "M2: init_x86_64 (message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all/cpu_reset reported unported), delay (= i8254_delay; delay_func/delay_init/delay_fini M5), cpureset_delay, lid_action, waittime; M3: the direct map, pmap_bootstrap, the memory clusters, cpu_startup's memory lines; M4: setgate/unsetgate/setregion/set_mem_segment/set_sys_segment, idt (a static page) and idt_allocmap, cpu_init_idt, idt_vec_alloc/alloc_range/set/free, x86_64_proc0_tss_ldt_init (ltr/lldt only, proc0's pcb reported), the GDT/TSS/IDT setup and cpu_init_msrs first thing in init_x86_64, cpu_enter_pages from cpu_startup; the bootinfo parsing, the ACPI/MP tables, cpu_init, dumpsys, sendsig/setregs, sysctl are M4-b to M6"
+notes = "M2: init_x86_64 (message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all/cpu_reset reported unported), delay (= i8254_delay; delay_func/delay_init/delay_fini M5), cpureset_delay, lid_action, waittime; M3: the direct map, pmap_bootstrap, the memory clusters, cpu_startup's memory lines; M4: setgate/unsetgate/setregion/set_mem_segment/set_sys_segment, idt (a static page) and idt_allocmap, cpu_init_idt, idt_vec_alloc/alloc_range/set/free, x86_64_proc0_tss_ldt_init (ltr/lldt only, proc0's pcb reported), splassert_check, the GDT/TSS/IDT setup and cpu_init_msrs first thing in init_x86_64, which ends as the C does (intr_default_setup, softintr_init, splraise(IPL_IPI), intr_enable), cpu_enter_pages from cpu_startup; the bootinfo parsing, the ACPI/MP tables, cpu_init, dumpsys, sendsig/setregs, sysctl are M5 to M6"
 
 [[file]]
 c = "sys/arch/amd64/isa/clock.c"
@@ -609,7 +609,7 @@ rust = "sys/arch/arm64/arm64/intr.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a0624ac0c074a45abac7024b57ac043f8710ed6e"
-notes = "M2: arm_clock_func (StaticCell), arm_clock_register, arm_dflt_delay (spins on yield so the loop survives optimisation), delay, cpu_initclocks, cpu_startclock, setstatclockrate (missing hooks reported unported); M4: arm_dflt_irq/arm_dflt_fiq (panic), arm_irq_dispatch/arm_fiq_dispatch (StaticCell), arm_cpu_irq/arm_cpu_fiq (the exception.S entry, uvmexp.intrs, ci_idepth); arm_intr_func, the controller registration, spl and arm_intr_establish are M4-b"
+notes = "M2: arm_clock_func (StaticCell), arm_clock_register, arm_dflt_delay (spins on yield so the loop survives optimisation), delay, cpu_initclocks, cpu_startclock, setstatclockrate (missing hooks reported unported); M4: arm_dflt_irq/arm_dflt_fiq (panic), arm_irq_dispatch/arm_fiq_dispatch (StaticCell), arm_cpu_irq/arm_cpu_fiq (the exception.S entry), arm_smask, arm_intr_func (StaticCell) with arm_dflt_splraise/spllower/splx/setipl, arm_do_pending_intr, arm_set_intr_handler, arm_init_smask, splraise/spllower/splx/softintr, arm_splassert_check, intr_enable_wakeup/disable_wakeup; the device tree registration (arm_intr_register_fdt, arm_intr_establish_fdt*, the pre-registration, arm_intr_map_msi), intr_barrier/intr_set_wakeup and the IPIs are M4-b2/M5"
 
 [[file]]
 c = "sys/arch/arm64/arm64/machdep.c"
@@ -697,7 +697,7 @@ rust = "sys/arch/amd64/include/specialreg.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "32b156b78a79cb3d0633edbf7b3d3531fa116924"
-notes = "CR0/CR3 bits, MSR_EFER with its flags, the syscall and segment-base MSRs (MSR_STAR/LSTAR/CSTAR/SFMASK/FSBASE/GSBASE/KERNELGSBASE); the CPUID feature words, the other MSRs and the MTRR/PAT definitions come with CPU identification (M4-b)"
+notes = "CR0/CR3 bits, MSR_EFER with its flags, the syscall and segment-base MSRs (MSR_STAR/LSTAR/CSTAR/SFMASK/FSBASE/GSBASE/KERNELGSBASE), MSR_APICBASE and its APICBASE_* bits; the CPUID feature words, the other MSRs and the MTRR/PAT definitions come with CPU identification (M4-b2)"
 
 [[file]]
 c = "sys/arch/arm64/include/pte.h"
@@ -837,7 +837,7 @@ rust = "sys/arch/amd64/include/intrdefs.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2965bf099461c7327b41556dba3da7af879bf5f4"
-notes = "IPL_*, IST_*, LIR_*/SIR_*, MAX_INTR_SOURCES, NUM_LEGACY_IRQS; the IDT gate boundaries and X86_IPI_* with M4; the header has no copyright block"
+notes = "IPL_*, IST_*, LIR_*/SIR_*, MAX_INTR_SOURCES, NUM_LEGACY_IRQS, IDT_INTR_LOW/HIGH, IREENT_MAGIC; X86_IPI_* with MULTIPROCESSOR (M5); the header has no copyright block"
 
 [[file]]
 c = "sys/arch/arm64/include/intr.h"
@@ -845,7 +845,7 @@ rust = "sys/arch/arm64/include/intr.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "195f58ec14bb042144b6b0bd99b76585cd5d8b90"
-notes = "IPL_* and the flag masks; the spl* functions, the handler structures, arm_intr_func and the soft interrupts with M4"
+notes = "M3: the levels; M4: IST_* (with the arm64 extra trigger types), SOFTINTR_XCALL, struct machine_intr_handle, struct arm_intr_func, struct interrupt_controller (ic_establish's name is &str, the cookie a *const ()); the spl*() helpers are the machine::intr contract; ARM_IPI_* with MULTIPROCESSOR (M5)"
 
 [[file]]
 c = "sys/kern/kern_tc.c"
@@ -940,7 +940,7 @@ deps = [
     "sys/uvm/uvmexp.h",
     "sys/uvm/uvm_page.c",
 ]
-notes = "uvm_init: page system, uvm_km_init (bounds only), pmap_init and kmeminit run; uvm_map_init, uvmfault_init, uvm_km_page_init, dma_alloc_init, uvm_pager_init, amap_init, uao_create, uvm_anon_init, the bestfit switch and uvm_init_percpu report themselves unported"
+notes = "uvm_init: page system, uvm_km_init (bounds only), pmap_init and kmeminit run; uvm_map_init, uvmfault_init, uvm_km_page_init, dma_alloc_init, uvm_pager_init, amap_init, uao_create, uvm_anon_init, the bestfit switch and uvm_init_percpu report themselves unported; uvmexp is exported under its C name for the amd64 interrupt stubs' V_INTR"
 
 [[file]]
 c = "sys/uvm/uvm_page.h"
@@ -1059,7 +1059,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c01e81af04eb6552aa6ffc398ea93a75fc2e1857"
 deps = ["sys/arch/amd64/include/intrdefs.h", "sys/arch/amd64/include/tss.h", "sys/arch/amd64/include/pmap.h"]
-notes = "M4: struct cpu_info (the fields the trap and interrupt paths use, in C order, Cells), ci_PAGEALIGN, CPUPF_*, CPUF_*, CI_DDB_*, curcpu (%gs:ci_self), cpu_number, cpu_info_primary, CPU_IS_PRIMARY/RUNNING; the CPU identification fields, ci_isources, the scheduler state, the sensors, vmm, CTL_MACHDEP and the cpu_functions come with M4-b to M6"
+notes = "M4: struct cpu_info (the fields the trap and interrupt paths use, in C order, Cells; ci_isources, ci_ipending as an AtomicU64 the stubs and softintr share), ci_PAGEALIGN, CPUPF_*, CPUF_*, CI_DDB_*, curcpu (%%gs:ci_self), cpu_number, cpu_info_primary, CPU_IS_PRIMARY/RUNNING; the CPU identification fields, the scheduler state, the sensors, vmm, CTL_MACHDEP and the cpu_functions come with M4-b2 to M6"
 
 [[file]]
 c = "sys/arch/amd64/include/cpu_full.h"
@@ -1094,7 +1094,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "68cdf4c1b23fa986d0055f16ee4c4fd90a98099e"
 deps = ["sys/arch/amd64/include/trap.h", "sys/arch/amd64/include/frame.h", "sys/arch/amd64/include/cpu.h", "sys/arch/amd64/amd64/db_interface.c"]
-notes = "M4: trap_type[], trap_types, fault (writes ci_panicbuf), pgex2access, kpageflttrap (returns 0 at the curproc check, as C with p == NULL; the pcb_onfault/SMEP/SMAP/uvm_fault code behind it is ported with uvm_fault reported), kerntrap (x86_nmi reported, verify_smap M4-b, debug_trap is the DEBUG option), trap_print; upageflttrap, usertrap, ast, syscall, frame_dump, verify_pkru, vctrap are M6"
+notes = "M4: trap_type[], trap_types, fault (writes ci_panicbuf), pgex2access, kpageflttrap (returns 0 at the curproc check, as C with p == NULL; the pcb_onfault/SMEP/SMAP/uvm_fault code behind it is ported with uvm_fault reported), kerntrap (x86_nmi from intr.c, verify_smap M4-b2, debug_trap is the DEBUG option), trap_print; upageflttrap, usertrap, ast, syscall, frame_dump, verify_pkru, vctrap are M6"
 
 [[file]]
 c = "sys/arch/amd64/amd64/locore.S"
@@ -1102,7 +1102,7 @@ rust = "sys/arch/amd64/amd64/locore.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2c19fbf0a3095ed1ff256cc877e5efbb6a3bca37"
-notes = "M4: lgdt and intr_fast_exit, in locore.S (AT&T syntax, included by global_asm! with the frame offsets and selectors as placeholders: assym.h); the DIAGNOSTIC interrupts-blocked check of intr_fast_exit is M4-b; the kernel entry is the boot protocol; cpu_switchto, sigcode, the syscall entry/exit, intr_user_exit, the Meltdown trampolines and the copy routines are M5/M6"
+notes = "M4: lgdt and intr_fast_exit, in locore.S (AT&T syntax, included by global_asm! with the frame offsets and selectors as placeholders: assym.h), and an intr_user_exit stub that reports a return to user mode (M6); the DIAGNOSTIC interrupts-blocked check of intr_fast_exit is M4-b2; the kernel entry is the boot protocol; cpu_switchto, sigcode, the syscall entry/exit, the Meltdown trampolines, the copy routines and the local_apic page (lapic.rs has it) are M5/M6"
 
 [[file]]
 c = "sys/arch/amd64/amd64/vector.S"
@@ -1111,7 +1111,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ff7be54de500ccfe3068f58cecddc5939ffd90d3"
 deps = ["sys/arch/amd64/include/trap.h", "sys/arch/amd64/include/frame.h", "sys/arch/amd64/include/segments.h", "sys/arch/amd64/amd64/locore.S"]
-notes = "M4: Xtrap00-Xtrap1f, Xexceptions, alltraps/alltraps_kern (TRAP_ENTRY_KERN, INTR_SAVE_MOST_GPRS_NO_ADJ), in vector.S (AT&T syntax, global_asm! with placeholders); NMI and #DF use alltraps on their IST stacks instead of calltrap_specstk (user GS/cr3, M6), the #GP resume stubs and Xalltraps page are M6, alltraps_kern does not sti (no interrupt stubs, M4-b) nor SMAP_CLAC (M4-b); the Xintr_*/Xrecurse_*/Xresume_*, IPI and soft interrupt stubs are M4-b; #VC (AMDSEV) and DDBPROF not configured"
+notes = "M4: Xtrap00-Xtrap1f, Xexceptions, alltraps/alltraps_kern (TRAP_ENTRY_KERN, INTR_SAVE_MOST_GPRS_NO_ADJ), the frameasm.h entry macros (INTRENTRY with the user path as ud2 until M6, INTR_RECURSE, INTR_SAVE_GPRS, INTR_CLEAR_GPRS), the i8259_asm_* macros, INTRSTUB with the 16 legacy instances, i8259_stubs[], Xsoftclock/Xsoftnet/Xsofttty, in vector.S (AT&T syntax, global_asm! with placeholders); NMI and #DF use alltraps on their IST stacks instead of calltrap_specstk (user GS/cr3, M6), the #GP resume stubs and Xalltraps page are M6, SMAP_CLAC is M4-b2, retpoline_r13 is a plain jmp (no codepatch); the IOAPIC/LAPIC stubs, the IPIs and x2apic_eoi are M5; #VC (AMDSEV) and DDBPROF not configured"
 
 [[file]]
 c = "sys/arch/arm64/include/armreg.h"
@@ -1156,13 +1156,178 @@ upstream_blob = "24a4dd9a16969451f170a203cea94df7233e8e58"
 deps = ["sys/ddb/db_output.c", "sys/kern/subr_prf.c"]
 notes = "M4 (ddb-lite): db_trap prints Stopped at <pc> and the trace from ddb_regs, then returns (continues as c would); db_stop_at_pc/db_restart_at_pc (db_run.c), db_command_loop (reported), db_print_loc_and_inst (the address, no symbols/disassembler), db_show_all_procs (M5) and the ddb.html notice are not here"
 
+# ---------------------------------------------------------------------------
+# M4-b1: interrupts and spl(9) on amd64, MI soft interrupts, mutex, evcount
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/sys/softintr.h"
+rust = "sys/sys/softintr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d6c3c268ed1abeafda6dcb2187b24dd7fa2dc54d"
+notes = "SOFTINTR_CLOCK/NET/TTY, NSOFTINTR (both archs use the MI soft interrupts)"
+
+[[file]]
+c = "sys/kern/kern_softintr.c"
+rust = "sys/kern/kern_softintr.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "af8e9e25806bc897c78e17de05cc696986e31c13"
+deps = ["sys/sys/softintr.h", "sys/sys/mutex.h", "sys/kern/kern_lock.c", "sys/kern/kern_malloc.c"]
+notes = "M4: softintr_init, softintr_dispatch, softintr_establish (NonNull handle), softintr_disestablish, softintr_schedule; sched_barrier and assertwaitok reported (M5); KERNEL_LOCK around a non-MPSAFE handler is nothing without MULTIPROCESSOR"
+
+[[file]]
+c = "sys/sys/mutex.h"
+rust = "sys/sys/mutex.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9b55fc89478e28365c2d5a80c03ee6284ddc3c89"
+notes = "M4: struct mutex (the MI one), MUTEX_INITIALIZER (Mutex::new), __MUTEX_IPL (no MULTIPROCESSOR: the ipl itself), mtx_curcpu/mtx_owner/mtx_owned, MUTEX_ASSERT_LOCKED/UNLOCKED, MTX_NOWITNESS/DUPOK; WITNESS and struct db_mutex are M5"
+
+[[file]]
+c = "sys/kern/kern_lock.c"
+rust = "sys/kern/kern_lock.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f43ffe7da8afc34194b8a379a9598f4f02aed76b"
+deps = ["sys/sys/mutex.h"]
+notes = "M4: the uniprocessor mutex (__mtx_init, _mtx_init, mtx_init, mtx_init_flags, mtx_enter, mtx_enter_try, mtx_leave) through the machine::intr spl and Cpu::curcpu_ptr contracts; the kernel lock (__mp_lock), the MULTIPROCESSOR mutex and parking lots, db_mtx_enter/leave, pc_lock are M5"
+
+[[file]]
+c = "sys/sys/evcount.h"
+rust = "sys/sys/evcount.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "36968fc512b9dd5f39836b1e85c4cb5ca55bd944"
+notes = "M4: struct evcount (ec_count first and atomic: the amd64 stubs increment it; ec_name a &str); ec_percpu is a pointer until percpu (M5)"
+
+[[file]]
+c = "sys/kern/subr_evcount.c"
+rust = "sys/kern/subr_evcount.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a1ed2ee7c3bb6d9833d13fcac0d99c7fe032dbf5"
+deps = ["sys/sys/evcount.h"]
+notes = "M4: evcount_attach/detach/inc, evcount_percpu, evcount_init_percpu (the counters_* per-CPU side reported, M5); the lists are initialised on first use (TAILQ_HEAD_INITIALIZER); evcount_sysctl is M6"
+
+[[file]]
+c = "sys/arch/amd64/include/intr.h"
+rust = "sys/arch/amd64/include/intr.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "02dee1fe377488ae4e85156ff0f24f623af1ed32"
+deps = ["sys/arch/amd64/include/pic.h", "sys/sys/evcount.h"]
+notes = "M4: struct intrstub/intrsource/intrhand (repr(C) with Cells: the stubs read them by offset), IS_*, IMASK/IUNMASK, APIC_LEVEL, IPLSHIFT/IPL; the spl*() helpers are the machine::intr contract; the MULTIPROCESSOR IPI prototypes are M5"
+
+[[file]]
+c = "sys/arch/amd64/include/pic.h"
+rust = "sys/arch/amd64/include/pic.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c5b29937decb9af070cbfab408c95774f8893d76"
+notes = "M4: struct pic (pic_dev reduced to pic_name, no pic_mutex without MULTIPROCESSOR, the stub tables reached through a function since they live in assembly), PIC_*; the header has no copyright block; msi_pic is M5"
+
+[[file]]
+c = "sys/arch/amd64/include/i8259.h"
+rust = "sys/arch/amd64/include/i8259.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e06136de28ff1a79bafa29ebe24d50ea7ffdd426"
+notes = "IRQ_SLAVE, ICU_OFFSET, ICU_LEN, IRQ_BIT/IRQ_BYTE; the i8259_asm_* macros are GAS macros in vector.S; i8259_imen is amd64/i8259.rs"
+
+[[file]]
+c = "sys/arch/amd64/include/mutex.h"
+rust = "sys/arch/amd64/include/mutex.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b5b66f12fb0e3ac54829b019b60177853d9cf9ef"
+notes = "__USE_MI_MUTEX"
+
+[[file]]
+c = "sys/arch/arm64/include/mutex.h"
+rust = "sys/arch/arm64/include/mutex.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "212d863cd4420f5c4ae6cde485d38f7f26f3c0f0"
+notes = "__USE_MI_MUTEX"
+
+[[file]]
+c = "sys/arch/amd64/include/i82489reg.h"
+rust = "sys/arch/amd64/include/i82489reg.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f75ab1c90901bab273ffdbe8b517cae08f69fdfb"
+notes = "M4: the registers and bits lapic.c's boot path uses (ID, version, TPR, EOI, SVR, LVTs, timer, delivery modes, LAPIC_BASE, MSR_X2APIC_BASE); the ICR fields, ESR, LDR/DFR, ISR/TMR/IRR and the x2APIC MSR map are M5"
+
+[[file]]
+c = "sys/arch/amd64/include/i82489var.h"
+rust = "sys/arch/amd64/include/i82489var.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b324e0ea8cfa307ba34f452ee893996d358a93d7"
+notes = "M4: the LAPIC vector numbers; local_apic, lapic_tpr, the lapic_readreg/writereg pointers and the prototypes are amd64/lapic.rs; the IPI and timer stubs are M5"
+
+[[file]]
+c = "sys/arch/amd64/amd64/i8259.c"
+rust = "sys/arch/amd64/amd64/i8259.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "33720d5148b41a5a76eb52990d55e63d06bd1b31"
+deps = ["sys/arch/amd64/include/i8259.h", "sys/arch/amd64/include/pic.h", "sys/dev/isa/isareg.h"]
+notes = "i8259_imen (AtomicU32 under its C name: vector.S reads its bytes), i8259_pic, i8259_default_setup, i8259_hwmask/hwunmask, i8259_reinit_irqs, i8259_setup; i8259_stubs_table wraps vector.S's table"
+
+[[file]]
+c = "sys/arch/amd64/amd64/intr.c"
+rust = "sys/arch/amd64/amd64/intr.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c0cf65cb1452bb88c1cdb5cd89b5c7a8ca8151ef"
+deps = ["sys/arch/amd64/include/intr.h", "sys/arch/amd64/amd64/i8259.c", "sys/arch/amd64/amd64/spl.S", "sys/kern/kern_softintr.c", "sys/kern/subr_evcount.c"]
+notes = "M4: softintr_pic, softintr_to_ssir, intr_default_setup, x86_nmi, intr_calculatemasks, intr_allocate_slot_cpu, intr_allocate_slot, intr_shared_edge (under its C name), intr_establish, intr_disestablish, intr_handler (extern C from the stubs), the fake soft intrhands, cpu_intr_init (the soft sources; the LAPIC timer/IPI/xen/hyperv sources are M5), intr_printconfig (INTRDEBUG body behind feature debug), intr_barrier (sched_barrier reported), intr_set_wakeup, splraise, spllower, softintr, dosoftint; SUSPEND's intr_enable/disable_wakeup not configured; only the primary CPU exists"
+
+[[file]]
+c = "sys/arch/amd64/amd64/spl.S"
+rust = "sys/arch/amd64/amd64/spl.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "078d84063df32fb1be01184da114495e88059927"
+deps = ["sys/arch/amd64/include/intr.h", "sys/arch/amd64/include/frame.h"]
+notes = "Xspllower and Xdoreti, in spl.S (AT&T, global_asm! with the cpu_info/intrsource/intrframe offsets as placeholders); no RETGUARD, no _PROF_PROLOGUE, retpoline_rax is a plain jmp (codepatch.c not ported); the #if 0 profiling splhigh/splx are dead code in C too"
+
+[[file]]
+c = "sys/arch/amd64/amd64/lapic.c"
+rust = "sys/arch/amd64/amd64/lapic.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b19dcb349e3f2cc99235504b28df8c1d330e149e"
+deps = ["sys/arch/amd64/include/i82489reg.h", "sys/arch/amd64/include/i82489var.h", "sys/arch/amd64/include/pic.h", "sys/kern/subr_evcount.c"]
+notes = "M4: local_pic, local_apic (a page-aligned static under its C name; locore.S's .space), the i82489_*/x2apic_* accessors, lapic_readreg/writereg (StaticCell fn pointers), lapic_cpu_number, lapic_map (pmap_kenter_pa with PMAP_NOCACHE instead of whapping the PTE; x2APIC only if the firmware enabled it, cpu_ecxfeature is M4-b2; pmap_enter_special M6; the EOI codepatch reported), lapic_enable/disable, lapic_set_lvt (no MP/ACPI tables: LINT0 = ExtINT, LINT1 = NMI, the MP default configuration, because the firmware leaves LINT0 masked; the AMD C1E workaround is M4-b2), lapic_boot_init (spurious vector set, timer vector reserved only, IPIs M5), lapic_hwmask/hwunmask/setup; the timer, clockintr and IPIs are M5"
+
+[[file]]
+c = "sys/arch/amd64/isa/isa_machdep.c"
+rust = "sys/arch/amd64/isa/isa_machdep.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e3f2e806faaae1fd3e033be5dcbf4ef6db4c9de0"
+deps = ["sys/arch/amd64/amd64/intr.c", "sys/arch/amd64/amd64/i8259.c"]
+notes = "M4: isa_intr_alloc (returns Option), isa_intr_check, isa_intr_establish, isa_intr_disestablish, isa_attach_hook (no device arguments, isa_has_been_seen kept here); the IOAPIC pin lookup (mp_busses) is M5 and the ISA DMA bounce buffers (_isa_bus_dma*, isa_bus_dma_tag) M7"
+
+[[file]]
+c = "sys/arch/arm64/arm64/autoconf.c"
+rust = "sys/arch/arm64/arm64/autoconf.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5e38a2bc8e6ae08588b523f3eac6a4020b1e2bfa"
+notes = "M4: cpu_configure (splhigh, softintr_init, cold = 0, spl0; bus_dma_init, unmap_startup, cpu_identify_cleanup reported; no config_rootfound until autoconf, M5); diskconf, device_register, the root-device search are M5; cold lives in machdep.rs as in C"
+
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"
 reason = "project helper: the Rust GlobalAlloc over malloc(9)/free(9), feature alloc"
 
 [[extra]]
 rust = "sys/kern/selftest.rs"
-reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap on the command line asks for the deliberate bad access (M4)"
+reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access and selftest=uart for the receive-interrupt echo (M4)"
 
 [[extra]]
 rust = "sys/reftest.rs"

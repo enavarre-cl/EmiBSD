@@ -163,3 +163,16 @@ intr_fast_exit:
 	addq	${TF_RIP},%rsp
 	iretq
 	.size	intr_fast_exit, . - intr_fast_exit
+
+/*
+ * intr_user_exit: the AST check and return to user mode. There is no user mode
+ * yet (M6), so reaching this is a bug, reported through Rust (locore.rs).
+ */
+	.globl	intr_user_exit
+	.type	intr_user_exit,@function
+	.p2align 4, 0x90
+intr_user_exit:
+	movq	%rsp,%rdi
+	call	intr_user_exit_unported
+	ud2
+	.size	intr_user_exit, . - intr_user_exit

@@ -1,7 +1,9 @@
-//! `<machine/intr.h>` as a trait: the interrupt priority levels.
+//! `<machine/intr.h>` as a trait: the interrupt priority levels and `spl(9)`.
 //!
-//! Milestone M3 needs the `IPL_*` numbers that pools and mutexes carry around; `splraise`,
-//! `spllower`, `splx`, `splassert` and the handler registration arrive with M4.
+//! Milestone M3 needs the `IPL_*` numbers that pools and mutexes carry around; M4 adds
+//! `splraise`, `spllower`, `splx`, the `spl*()` helpers, `softintr` and `splassert`. The
+//! handler registration stays per architecture (`intr_establish`, `arm_intr_establish_fdt`):
+//! generic code reaches it through the drivers' bus attachments.
 
 use crate::machine::Machine;
 
@@ -41,6 +43,115 @@ pub trait Intr {
     const IPL_MPSAFE: i32;
     /// `IPL_WAKEUP`: a 'wakeup' interrupt.
     const IPL_WAKEUP: i32;
+
+    /// `splraise(ipl)`: raises the current level to at least `ipl`; returns the old level.
+    fn splraise(ipl: i32) -> i32;
+
+    /// `spllower(ipl)`: lowers the level to `ipl`, running the interrupts that were held
+    /// back; returns the old level.
+    fn spllower(ipl: i32) -> i32;
+
+    /// `splx(s)`: restores the level `splraise` returned.
+    fn splx(s: i32);
+
+    /// `softintr(si)`: marks soft interrupt level `si` (`SOFTINTR_*`) pending on this CPU.
+    fn softintr(si: i32);
+
+    /// `splassert_check(wantipl, func)` (`DIAGNOSTIC`): reports through `splassert_fail`
+    /// when the current level is below `wantipl`.
+    fn splassert_check(wantipl: i32, func: &str);
+}
+
+/// `splraise` on the selected machine.
+pub fn splraise(ipl: i32) -> i32 {
+    Machine::splraise(ipl)
+}
+
+/// `spllower` on the selected machine.
+pub fn spllower(ipl: i32) -> i32 {
+    Machine::spllower(ipl)
+}
+
+/// `splx` on the selected machine.
+pub fn splx(s: i32) {
+    Machine::splx(s)
+}
+
+/// `softintr` on the selected machine.
+pub fn softintr(si: i32) {
+    Machine::softintr(si)
+}
+
+/// `splassert(wantipl)`: the `DIAGNOSTIC` check, when `splassert_ctl` is on.
+pub fn splassert(wantipl: i32, func: &str) {
+    #[cfg(feature = "diagnostic")]
+    if crate::kern::subr_prf::SPLASSERT_CTL.load(core::sync::atomic::Ordering::Relaxed) > 0 {
+        Machine::splassert_check(wantipl, func);
+    }
+    #[cfg(not(feature = "diagnostic"))]
+    let _ = (wantipl, func);
+}
+
+/// `splsoftassert(wantipl)`.
+pub fn splsoftassert(wantipl: i32, func: &str) {
+    splassert(wantipl, func)
+}
+
+/// `splbio()`.
+pub fn splbio() -> i32 {
+    splraise(IPL_BIO)
+}
+/// `splnet()`.
+pub fn splnet() -> i32 {
+    splraise(IPL_NET)
+}
+/// `spltty()`.
+pub fn spltty() -> i32 {
+    splraise(IPL_TTY)
+}
+/// `splaudio()`.
+pub fn splaudio() -> i32 {
+    splraise(IPL_AUDIO)
+}
+/// `splclock()`.
+pub fn splclock() -> i32 {
+    splraise(IPL_CLOCK)
+}
+/// `splstatclock()`.
+pub fn splstatclock() -> i32 {
+    splraise(IPL_STATCLOCK)
+}
+/// `splipi()`.
+pub fn splipi() -> i32 {
+    splraise(IPL_IPI)
+}
+/// `splsoftclock()`.
+pub fn splsoftclock() -> i32 {
+    splraise(IPL_SOFTCLOCK)
+}
+/// `splsoftnet()`.
+pub fn splsoftnet() -> i32 {
+    splraise(IPL_SOFTNET)
+}
+/// `splsofttty()`.
+pub fn splsofttty() -> i32 {
+    splraise(IPL_SOFTTTY)
+}
+/// `splvm()`.
+pub fn splvm() -> i32 {
+    splraise(IPL_VM)
+}
+/// `splhigh()`.
+pub fn splhigh() -> i32 {
+    splraise(IPL_HIGH)
+}
+/// `splsched()`.
+pub fn splsched() -> i32 {
+    splraise(IPL_SCHED)
+}
+/// `spl0()`.
+pub fn spl0() -> i32 {
+    spllower(IPL_NONE)
 }
 
 /// `IPL_NONE` on the selected machine.

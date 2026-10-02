@@ -79,8 +79,6 @@
 //!   kernel page fault is fatal, exactly as it is in C when `p == NULL`. The code behind that
 //!   check is ported with `pcb_onfault` always unset and `uvm_fault` reported (M6), for when
 //!   a process exists.
-//! - `x86_nmi` (`isa/isa_machdep.c`) is reported as unported: an NMI the debugger does not
-//!   take is fatal.
 //! - `fault` writes `curcpu()->ci_panicbuf` as the C does; `panic()` itself still uses
 //!   `subr_prf`'s buffer (`kern/subr_prf.rs`, deviations).
 
@@ -88,6 +86,7 @@ use core::fmt;
 use core::sync::atomic::Ordering;
 
 use crate::arch::amd64::amd64::db_interface::db_ktrap;
+use crate::arch::amd64::amd64::intr::x86_nmi;
 use crate::arch::amd64::include::cpu::curcpu;
 use crate::arch::amd64::include::cpufunc::{rcr2, rdmsr, rdr6, rdr7};
 use crate::arch::amd64::include::frame::Trapframe;
@@ -254,8 +253,7 @@ pub extern "C" fn kerntrap(frame: &mut Trapframe) {
                 return;
             }
             // machine/parity/power fail/"kitchen sink" faults
-            let _ = unported!("x86_nmi (isa/isa_machdep.c)");
-            false
+            !x86_nmi()
         }
         // T_VC (AMDSEV): not configured.
         _ => false,

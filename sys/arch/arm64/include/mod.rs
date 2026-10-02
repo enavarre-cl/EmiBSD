@@ -9,6 +9,7 @@ pub mod cpu;
 pub mod db_machdep;
 pub mod frame;
 pub mod intr;
+pub mod mutex;
 pub mod param;
 pub mod pmap;
 pub mod pte;

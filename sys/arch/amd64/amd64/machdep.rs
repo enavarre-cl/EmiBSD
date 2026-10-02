@@ -75,7 +75,9 @@
 //! and the memory clusters; M4 adds the descriptor tables (`setgate`, `unsetgate`,
 //! `setregion`, `set_mem_segment`, `set_sys_segment`), the IDT (`idt`, `idt_allocmap`,
 //! `cpu_init_idt`, `idt_vec_alloc`, `idt_vec_alloc_range`, `idt_vec_set`, `idt_vec_free`),
-//! `x86_64_proc0_tss_ldt_init` and the GDT/TSS/IDT part of `init_x86_64`. `cpu_reset`,
+//! `x86_64_proc0_tss_ldt_init`, `splassert_check` and the GDT/TSS/IDT part of `init_x86_64`,
+//! which now ends as the C does: `intr_default_setup`, `softintr_init`, `splraise(IPL_IPI)`,
+//! `intr_enable`. `cpu_reset`,
 //! `dumpsys`, the bootinfo parsing, `sendsig`/`setregs` and the sysctl tree arrive with M4-b
 //! to M6.
 //!
@@ -93,7 +95,8 @@
 //!   page `init_x86_64` maps at `idt_vaddr`; `idt_allocmap` is an array of atomics.
 //!   `cpu_init_msrs` and the `cpu_info_full_primary` initialiser are the first lines of
 //!   `init_x86_64` because there is no `locore0.S` to run them earlier.
-//!   `x86_64_proc0_tss_ldt_init` loads the task register only: proc0's pcb is M5. The IST
+//!   `x86_64_proc0_tss_ldt_init` loads the task register only (from `cpu_configure`, as in
+//!   C): proc0's pcb is M5. The IST
 //!   stacks are filled by `cpu_enter_pages` from `cpu_startup`, as in C, so an NMI or double
 //!   fault before then has no stack, as in C.
 //! - The message buffer is a static area (`kern/subr_log.rs`, `init_static_msgbuf`) instead of
@@ -115,11 +118,13 @@ use crate::arch::amd64::amd64::consinit::consinit;
 use crate::arch::amd64::amd64::cpu::{
     CPU_INFO_FULL_PRIMARY, cpu_enter_pages, cpu_info_primary_init, cpu_init_msrs,
 };
+use crate::arch::amd64::amd64::intr::{intr_default_setup, splraise};
 use crate::arch::amd64::amd64::locore::lgdt;
 use crate::arch::amd64::amd64::pmap::{PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap};
 use crate::arch::amd64::amd64::vector::Xexceptions;
-use crate::arch::amd64::include::cpu::cpu_info_primary;
-use crate::arch::amd64::include::cpufunc::{lidt, lldt, ltr};
+use crate::arch::amd64::include::cpu::{cpu_info_primary, curcpu};
+use crate::arch::amd64::include::cpufunc::{intr_enable, lidt, lldt, ltr};
+use crate::arch::amd64::include::intrdefs::IPL_IPI;
 use crate::arch::amd64::include::param::PAGE_SIZE;
 use crate::arch::amd64::include::segments::{
     GCODE_SEL, GDATA_SEL, GDT_SIZE, GPROC0_SEL, GUCODE_SEL, GUDATA_SEL, GateDescriptor,
@@ -132,7 +137,9 @@ use crate::arch::amd64::include::vmparam::VM_MAXUSER_ADDRESS;
 use crate::arch::amd64::isa::clock::i8254_delay;
 use crate::kassert;
 use crate::kern::init_main::BOOTHOWTO;
+use crate::kern::kern_softintr::softintr_init;
 use crate::kern::subr_log::init_static_msgbuf;
+use crate::kern::subr_prf::splassert_fail;
 use crate::kprintf;
 use crate::machine::bootinfo::{BootInfo, MemKind};
 use crate::machine::db_machdep::db_enter;
@@ -365,16 +372,35 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
     unsafe { lgdt(&region) };
     cpu_init_idt();
 
-    // intr_default_setup(): M4-b. fpuinit: M6.
+    intr_default_setup();
 
-    x86_64_proc0_tss_ldt_init();
+    // fpuinit(&cpu_info_primary): M6.
 
-    // cpu_init(&cpu_info_primary), the ACPI/MP tables, the memory-map and -b/-c handling of
-    // the bootinfo: M4-b and M5; db_machine_init() and ddb_init() with the command loop.
+    softintr_init();
+    splraise(IPL_IPI);
+    // SAFETY: the IDT has every exception and legacy interrupt gate, the PIC is masked and
+    // the level is IPL_IPI, so nothing can be delivered that has no handler.
+    unsafe { intr_enable() };
+
+    // The ACPI/MP tables, the memory-map and -b/-c handling of the bootinfo: M5;
+    // db_machine_init() and ddb_init() with the command loop.
     if BOOTHOWTO.load(Ordering::Relaxed) & RB_KDB != 0 {
         db_enter();
     }
     Ok(())
+}
+
+/// `splassert_check`: the `DIAGNOSTIC` level check behind `splassert`.
+pub fn splassert_check(wantipl: i32, func: &str) {
+    let cpl = curcpu().ci_ilevel.get();
+    let floor = curcpu().ci_handled_intr_level.get();
+
+    if cpl < wantipl {
+        splassert_fail(wantipl, cpl, func);
+    }
+    if floor > wantipl {
+        splassert_fail(wantipl, floor, func);
+    }
 }
 
 /// `x86_64_proc0_tss_ldt_init`: loads the boot CPU's task register and clears the LDT.

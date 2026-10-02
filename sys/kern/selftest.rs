@@ -6,15 +6,20 @@
 //! (and need feature `alloc` for the allocator stress).
 
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+
+use libkern::StaticCell;
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::kern::kern_malloc::{free, malloc};
+use crate::kern::kern_softintr::{SoftintrHand, softintr_establish, softintr_schedule};
 use crate::kern::subr_pool::{pool_destroy, pool_get, pool_init, pool_put, pool_reclaim};
+use crate::kern::subr_prf::Str;
 use crate::kprintf;
-use crate::machine::intr::IPL_NONE;
+use crate::machine::cons::cn_rx_intr_establish;
+use crate::machine::intr::{IPL_NONE, IPL_TTY};
 use crate::machine::pmap::{
     pmap_extract, pmap_growkernel, pmap_kenter_pa, pmap_kernel, pmap_kremove, pmap_map_direct,
     pmap_update,
@@ -34,14 +39,25 @@ const PATTERN: u64 = 0x5a5a_c3c3_0f0f_a5a5;
 
 /// `selftest=trap` on the kernel command line asks for [`trap_bad_access`].
 static TRAP_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// `selftest=uart` asks for [`uart_echo`].
+static UART_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Reads the self-test requests off the kernel command line: `selftest=trap` asks for the
 /// fatal [`trap_bad_access`], which a plain boot must not run.
 pub fn parse_bootargs(cmdline: &[u8]) {
     const TRAP: &[u8] = b"selftest=trap";
+    const UART: &[u8] = b"selftest=uart";
     if cmdline.windows(TRAP.len()).any(|w| w == TRAP) {
         TRAP_REQUESTED.store(true, Ordering::Relaxed);
     }
+    if cmdline.windows(UART.len()).any(|w| w == UART) {
+        UART_REQUESTED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Whether the command line asked for [`uart_echo`].
+pub fn uart_requested() -> bool {
+    UART_REQUESTED.load(Ordering::Relaxed)
 }
 
 /// Whether the command line asked for [`trap_bad_access`].
@@ -247,4 +263,71 @@ pub fn trap_bad_access() {
     // panics, so the value is never used.
     let seen = unsafe { ptr::read_volatile(va.as_usize() as *const u64) };
     kprintf!("selftest: trap FAILED: read {seen:#x} without a fault\n");
+}
+
+/// The line received by interrupt, filled by the hard handler, read by the soft handler.
+static UART_LINE: StaticCell<[u8; 80]> = StaticCell::new([0; 80]);
+/// How many bytes of `UART_LINE` are filled.
+static UART_LEN: AtomicUsize = AtomicUsize::new(0);
+/// Set by the soft handler when a newline arrived.
+static UART_DONE: AtomicBool = AtomicBool::new(false);
+/// The soft interrupt handler's handle.
+static UART_SI: AtomicPtr<SoftintrHand> = AtomicPtr::new(ptr::null_mut());
+
+/// The hard interrupt's byte sink: stores the byte and schedules the soft handler, as
+/// `comintr` fills `sc_ibuf` and schedules `comsoft`.
+fn uart_rx_sink(c: u8) {
+    let n = UART_LEN.load(Ordering::Relaxed);
+    if n < 80 {
+        // SAFETY: written from the interrupt handler at IPL_TTY, read by the soft handler
+        // after it is scheduled, never both at once on the one CPU.
+        unsafe { UART_LINE.get_mut()[n] = c };
+        UART_LEN.store(n + 1, Ordering::Relaxed);
+    }
+    if let Some(si) = NonNull::new(UART_SI.load(Ordering::Relaxed)) {
+        softintr_schedule(si);
+    }
+}
+
+/// The soft interrupt handler: echoes a complete line.
+fn uart_soft(_arg: *mut core::ffi::c_void) {
+    let n = UART_LEN.load(Ordering::Relaxed);
+    // SAFETY: as for `uart_rx_sink`.
+    let line = unsafe { &UART_LINE.get()[..n] };
+    if let Some(end) = line.iter().position(|&c| c == b'\n' || c == b'\r')
+        && !UART_DONE.swap(true, Ordering::Relaxed)
+    {
+        kprintf!("selftest: uart echo: {}\n", Str(&line[..end]));
+    }
+}
+
+/// Arms the console UART's receive interrupt and a soft interrupt behind it, then waits for
+/// a line to arrive and echoes it: the M4 exit criterion (`smoke` sends the line).
+pub fn uart_echo() {
+    let Some(si) = softintr_establish(IPL_TTY, uart_soft, ptr::null_mut()) else {
+        kprintf!("selftest: uart echo FAILED: softintr_establish\n");
+        return;
+    };
+    UART_SI.store(si.as_ptr(), Ordering::Relaxed);
+    if let Err(e) = cn_rx_intr_establish(uart_rx_sink) {
+        kprintf!(
+            "selftest: uart echo FAILED: cn_rx_intr_establish: {:?}\n",
+            e
+        );
+        return;
+    }
+    kprintf!("selftest: uart rx interrupt armed\n");
+    // No clock yet: a spin count long enough for the test harness to type the line.
+    let mut spins: u64 = 0;
+    while !UART_DONE.load(Ordering::Relaxed) {
+        core::hint::spin_loop();
+        spins += 1;
+        if spins == 300_000_000 {
+            kprintf!(
+                "selftest: uart echo FAILED: no line received ({} bytes so far)\n",
+                UART_LEN.load(Ordering::Relaxed)
+            );
+            return;
+        }
+    }
 }

@@ -39,11 +39,65 @@
 //!
 //! Upstream: sys/arch/amd64/amd64/autoconf.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M2 needs only `cold`, which `boot(9)` consults. `cpu_configure`
-//! (which clears it), `diskconf`, `device_register` and the root-device search arrive with
-//! autoconfiguration (M4+).
+//! Status: `wip`. Milestone M2 needs only `cold`, which `boot(9)` consults; M4 adds
+//! `cpu_configure` as far as the interrupts go. `diskconf`, `device_register` and the
+//! root-device search arrive with autoconfiguration (M5).
+//!
+//! ## Deviations
+//! - `cpu_configure` has no `config_rootfound("mainbus")`: what the `cpu0` attach would do
+//!   for the interrupts (`cpu_intr_init` from `cpu_attach`, `intr_enable` from `cpu_init`) is
+//!   done here directly, as is the LAPIC setup `mpbios`/`acpimadt` would trigger
+//!   (`lapic_boot_init` at the architectural base, `lapic_enable`, `lapic_set_lvt`);
+//!   `pmap_randomize`, `map_tramps`, `bus_dma_init`,
+//!   `mbuf_dma_64bit_enable`, `unmap_startup` and the random-number timeouts are reported.
 
-use core::sync::atomic::AtomicBool;
+use core::sync::atomic::{AtomicBool, Ordering};
+
+use crate::arch::amd64::amd64::intr::{cpu_intr_init, intr_printconfig};
+use crate::arch::amd64::amd64::lapic::{lapic_boot_init, lapic_enable, lapic_set_lvt};
+use crate::arch::amd64::amd64::machdep::x86_64_proc0_tss_ldt_init;
+use crate::arch::amd64::include::cpu::cpu_info_primary;
+use crate::arch::amd64::include::cpufunc::{intr_enable, lcr8};
+use crate::arch::amd64::include::i82489reg::LAPIC_BASE;
+use crate::machine::intr::spl0;
+use crate::sys::types::Paddr;
+use crate::unported;
 
 /// `cold`: if set, still working on cold-start.
 pub static COLD: AtomicBool = AtomicBool::new(true);
+
+/// `cpu_configure`: determine i/o configuration for a machine.
+pub fn cpu_configure() {
+    x86_64_proc0_tss_ldt_init();
+
+    let _ = unported!("pmap_randomize (M6)");
+    let _ = unported!("map_tramps (M6)");
+    let _ = unported!("bus_dma_init (M7)");
+
+    // config_rootfound("mainbus", NULL): autoconfiguration (M5). Of what it would attach:
+    // mpbios/acpimadt find the LAPIC and call lapic_boot_init; the cpu0 attach does
+    // lapic_enable, cpu_intr_init (cpu_attach), lapic_set_lvt and intr_enable (cpu_init).
+    // TODO(M5): the LAPIC base comes from the MADT or the MP tables; this is the
+    // architectural default.
+    lapic_boot_init(Paddr::new(LAPIC_BASE));
+    lapic_enable();
+    cpu_intr_init(cpu_info_primary());
+    lapic_set_lvt();
+    // SAFETY: the IDT, the PIC and the masks are set up.
+    unsafe { intr_enable() };
+
+    intr_printconfig();
+
+    let _ = unported!("mbuf_dma_64bit_enable (M7)");
+
+    // NIOAPIC > 0: lapic_set_lvt, ioapic_enable (M5).
+
+    let _ = unported!("unmap_startup (M6)");
+
+    // SAFETY: 0 lets every interrupt through, the boot value.
+    unsafe { lcr8(0) };
+    spl0();
+    COLD.store(false, Ordering::Relaxed);
+
+    // The viac3_rnd and rdrand timeouts: M5.
+}

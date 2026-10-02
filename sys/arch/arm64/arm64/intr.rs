@@ -23,25 +23,68 @@
 //! (`arm_clock_func`, `arm_clock_register`, `arm_dflt_delay`, `delay`, `cpu_initclocks`,
 //! `cpu_startclock`, `setstatclockrate`); M4 adds the IRQ/FIQ entry from `exception.S`
 //! (`arm_dflt_irq`, `arm_dflt_fiq`, `arm_irq_dispatch`, `arm_fiq_dispatch`, `arm_cpu_irq`,
-//! `arm_cpu_fiq`). The interrupt controller hooks (`arm_intr_func`, `arm_intr_register_fdt`),
-//! `splraise`/`spllower`, `arm_intr_establish` and friends arrive with M4-b; the generic timer
-//! (`agtimer.c`) that replaces `arm_dflt_delay` attaches from `mainbus` (M4-b).
+//! `arm_cpu_fiq`), the `spl` machinery (`arm_smask`, `arm_intr_func` with the `arm_dflt_*`
+//! functions, `arm_do_pending_intr`, `arm_set_intr_handler`, `arm_init_smask`, `splraise`,
+//! `spllower`, `splx`, `softintr`, `arm_splassert_check`) and the wakeup hooks. The device
+//! tree registration (`arm_intr_register_fdt`, `arm_intr_establish_fdt*`, the
+//! pre-registration, `arm_intr_map_msi`) and `intr_barrier` come with the interrupt
+//! controller (M4-b, part 2); the generic timer (`agtimer.c`) that replaces `arm_dflt_delay`
+//! attaches from `mainbus` (M5).
 //!
 //! ## Deviations
 //! - `arm_clock_func` is a [`StaticCell`], written by `arm_clock_register` during
 //!   autoconfiguration on the boot CPU.
 //! - `arm_dflt_delay`'s inner loop spins on `yield` so the compiler keeps it; the C's empty
 //!   loop body relies on the compiler not optimising it away.
+//! - `arm_intr_func` and `arm_smask` are `StaticCell`s written by the controller's attach
+//!   (`arm_set_intr_handler`, `arm_init_smask`) on the boot CPU before interrupts are enabled.
 
 use core::sync::atomic::Ordering;
 
 use libkern::StaticCell;
 
-use crate::arch::arm64::include::cpu::curcpu;
+use crate::arch::arm64::include::cpu::{curcpu, disable_irq_daif_ret, restore_daif};
 use crate::arch::arm64::include::frame::Trapframe;
-use crate::kern::subr_prf::panic;
+use crate::arch::arm64::include::intr::{
+    ArmIntrFunc, IPL_HIGH, IPL_NONE, IPL_SOFTCLOCK, IPL_SOFTNET, IPL_SOFTTTY, NIPL,
+};
+use crate::kern::kern_softintr::softintr_dispatch;
+use crate::kern::subr_prf::{panic, splassert_fail};
+use crate::sys::softintr::{SOFTINTR_CLOCK, SOFTINTR_NET, SOFTINTR_TTY};
 use crate::unported;
 use crate::uvm::uvm_init::UVMEXP;
+
+/// `SI_TO_IRQBIT(x)`: the `ci_ipending` bit of soft interrupt `x`.
+const fn si_to_irqbit(x: i32) -> u32 {
+    1 << x
+}
+
+/// `arm_smask[NIPL]`: the soft interrupts each level leaves unmasked.
+static ARM_SMASK: StaticCell<[u32; NIPL]> = StaticCell::new([0; NIPL]);
+
+/// `arm_intr_func`: the controller's `spl` functions, the defaults until one attaches.
+static ARM_INTR_FUNC: StaticCell<ArmIntrFunc> = StaticCell::new(ArmIntrFunc {
+    raise: arm_dflt_splraise,
+    lower: arm_dflt_spllower,
+    x: arm_dflt_splx,
+    setipl: arm_dflt_setipl,
+    enable_wakeup: None,
+    disable_wakeup: None,
+});
+
+/// The registered `spl` functions.
+fn arm_intr_func() -> &'static ArmIntrFunc {
+    // SAFETY: written only by `arm_set_intr_handler` during autoconfiguration on the boot
+    // CPU, before interrupts are enabled; read afterwards.
+    unsafe { ARM_INTR_FUNC.get() }
+}
+
+/// `arm_smask[level]`.
+fn arm_smask(level: i32) -> u32 {
+    // SAFETY: written only by `arm_init_smask` on the boot CPU before interrupts are
+    // enabled; read afterwards.
+    unsafe { ARM_SMASK.get()[level as usize] }
+}
 
 /// `arm_clock_func`: the clock driver's entry points, registered by the driver that attaches.
 pub struct ArmClockFunc {
@@ -178,4 +221,177 @@ pub extern "C" fn arm_cpu_fiq(frame: &mut Trapframe) {
     let dispatch = unsafe { ARM_FIQ_DISPATCH.read() };
     dispatch(frame);
     ci.ci_idepth.set(ci.ci_idepth.get() - 1);
+}
+
+/// `arm_dflt_splraise`: raise the level in `ci_cpl`.
+pub fn arm_dflt_splraise(newcpl: i32) -> i32 {
+    let ci = curcpu();
+    let oldcpl = ci.ci_cpl.get() as i32;
+    ci.ci_cpl.set(newcpl.max(oldcpl) as u32);
+    oldcpl
+}
+
+/// `arm_dflt_spllower`: lower the level, running what becomes unmasked.
+pub fn arm_dflt_spllower(newcpl: i32) -> i32 {
+    let ci = curcpu();
+    let oldcpl = ci.ci_cpl.get() as i32;
+    splx(newcpl);
+    oldcpl
+}
+
+/// `arm_dflt_splx`: restore the level, running the pending soft interrupts it unmasks.
+pub fn arm_dflt_splx(newcpl: i32) {
+    let ci = curcpu();
+    if ci.ci_ipending.get() & arm_smask(newcpl) != 0 {
+        arm_do_pending_intr(newcpl);
+    }
+    ci.ci_cpl.set(newcpl as u32);
+}
+
+/// `arm_dflt_setipl`: set the level.
+pub fn arm_dflt_setipl(newcpl: i32) {
+    curcpu().ci_cpl.set(newcpl as u32);
+}
+
+/// `arm_do_pending_intr`: runs the soft interrupts pending above `pcpl`, highest first.
+pub fn arm_do_pending_intr(pcpl: i32) {
+    let ci = curcpu();
+
+    let mut oldirqstate = disable_irq_daif_ret();
+
+    let mut do_softint = |si: i32, ipl: i32, ipending: u32| {
+        if ipending & si_to_irqbit(si) != 0 {
+            ci.ci_ipending.set(ci.ci_ipending.get() & !si_to_irqbit(si));
+            (arm_intr_func().setipl)(ipl);
+            // SAFETY: `oldirqstate` is this CPU's DAIF from `disable_irq_daif_ret`.
+            unsafe { restore_daif(oldirqstate) };
+            softintr_dispatch(si);
+            oldirqstate = disable_irq_daif_ret();
+        }
+    };
+
+    loop {
+        let ipending = ci.ci_ipending.get() & arm_smask(pcpl);
+        do_softint(SOFTINTR_TTY, IPL_SOFTTTY, ipending);
+        do_softint(SOFTINTR_NET, IPL_SOFTNET, ipending);
+        do_softint(SOFTINTR_CLOCK, IPL_SOFTCLOCK, ipending);
+        // MULTIPROCESSOR + NXCALL: SOFTINTR_XCALL (M5).
+        if ci.ci_ipending.get() & arm_smask(pcpl) == 0 {
+            break;
+        }
+    }
+
+    // Don't use splx... we are here already!
+    (arm_intr_func().setipl)(pcpl);
+    // SAFETY: as above.
+    unsafe { restore_daif(oldirqstate) };
+}
+
+/// `arm_set_intr_handler`: the interrupt controller registers its `spl` functions and
+/// dispatchers.
+#[allow(clippy::too_many_arguments)] // the C's signature
+pub fn arm_set_intr_handler(
+    raise: fn(i32) -> i32,
+    lower: fn(i32) -> i32,
+    x: fn(i32),
+    setipl: fn(i32),
+    irq_dispatch: Option<fn(&mut Trapframe)>,
+    fiq_dispatch: Option<fn(&mut Trapframe)>,
+    enable_wakeup: Option<fn()>,
+    disable_wakeup: Option<fn()>,
+) {
+    // SAFETY: the controller attaches once, on the boot CPU, before interrupts are enabled.
+    unsafe {
+        ARM_INTR_FUNC.write(ArmIntrFunc {
+            raise,
+            lower,
+            x,
+            setipl,
+            enable_wakeup,
+            disable_wakeup,
+        });
+        if let Some(irq) = irq_dispatch {
+            ARM_IRQ_DISPATCH.write(irq);
+        }
+        if let Some(fiq) = fiq_dispatch {
+            ARM_FIQ_DISPATCH.write(fiq);
+        }
+    }
+}
+
+/// `arm_init_smask`: which soft interrupts each level leaves unmasked, once.
+pub fn arm_init_smask() {
+    static INITED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+    if INITED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    // SAFETY: once, on the boot CPU, before interrupts are enabled.
+    let smask = unsafe { ARM_SMASK.get_mut() };
+    for (i, mask) in smask.iter_mut().enumerate().take(IPL_HIGH as usize + 1) {
+        let i = i as i32;
+        *mask = 0;
+        if i < IPL_SOFTCLOCK {
+            *mask |= si_to_irqbit(SOFTINTR_CLOCK);
+            // MULTIPROCESSOR + NXCALL: SOFTINTR_XCALL (M5).
+        }
+        if i < IPL_SOFTNET {
+            *mask |= si_to_irqbit(SOFTINTR_NET);
+        }
+        if i < IPL_SOFTTTY {
+            *mask |= si_to_irqbit(SOFTINTR_TTY);
+        }
+    }
+    let _ = IPL_NONE;
+}
+
+/// `splraise`: through `arm_intr_func`.
+pub fn splraise(ipl: i32) -> i32 {
+    (arm_intr_func().raise)(ipl)
+}
+
+/// `spllower`: through `arm_intr_func`.
+pub fn spllower(ipl: i32) -> i32 {
+    (arm_intr_func().lower)(ipl)
+}
+
+/// `splx`: through `arm_intr_func`.
+pub fn splx(ipl: i32) {
+    (arm_intr_func().x)(ipl)
+}
+
+/// `softintr`: marks a soft interrupt pending on this CPU.
+pub fn softintr(si: i32) {
+    let ci = curcpu();
+    ci.ci_ipending.set(ci.ci_ipending.get() | si_to_irqbit(si));
+}
+
+/// `arm_splassert_check`: the `DIAGNOSTIC` level check behind `splassert`.
+pub fn arm_splassert_check(wantipl: i32, func: &str) {
+    let oldipl = curcpu().ci_cpl.get() as i32;
+
+    if oldipl < wantipl {
+        splassert_fail(wantipl, oldipl, func);
+        // If the splassert_ctl is set to not panic, raise the ipl in a feeble attempt to
+        // reduce damage.
+        (arm_intr_func().setipl)(wantipl);
+    }
+
+    if wantipl == IPL_NONE && curcpu().ci_idepth.get() != 0 {
+        splassert_fail(-1, curcpu().ci_idepth.get() as i32, func);
+    }
+}
+
+/// `intr_enable_wakeup`.
+pub fn intr_enable_wakeup() {
+    if let Some(f) = arm_intr_func().enable_wakeup {
+        f();
+    }
+}
+
+/// `intr_disable_wakeup`.
+pub fn intr_disable_wakeup() {
+    if let Some(f) = arm_intr_func().disable_wakeup {
+        f();
+    }
 }

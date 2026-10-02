@@ -1,6 +1,5 @@
-/*	$OpenBSD: isareg.h,v 1.5 2025/07/14 10:13:54 jsg Exp $	*/
-/*	$NetBSD: isareg.h,v 1.5 1995/04/17 12:09:13 cgd Exp $	*/
-
+/*	$OpenBSD: i8259.h,v 1.5 2026/01/15 15:43:45 sf Exp $	*/
+/*	$NetBSD: i8259.h,v 1.3 2003/05/04 22:01:56 fvdl Exp $	*/
 /*-
  * Copyright (c) 1990 The Regents of the University of California.
  * All rights reserved.
@@ -32,44 +31,44 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)isa.h	5.7 (Berkeley) 5/9/91
+ *	@(#)icu.h	5.6 (Berkeley) 5/9/91
  */
 
-//! ISA bus conventions: `<dev/isa/isareg.h>`.
+//! amd64 `<machine/i8259.h>`: the legacy 8259A interrupt controllers.
 //!
-//! Upstream: sys/dev/isa/isareg.h @ 3ce1f3f79392
+//! Upstream: sys/arch/amd64/include/i8259.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M2 needs the timer and RTC ports for `delay(9)`; the rest of the
-//! port assignments, the ISA memory hole and the IRQ names arrive with the ISA bus (M4+).
+//! Status: `ported`. `i8259_imen` and `i8259_default_setup` are `amd64/i8259.rs`; the
+//! `i8259_asm_*` macros are GAS macros in `amd64/vector.S`.
 
-/// `IO_ICU1`: 8259A Interrupt Controller #1.
-pub const IO_ICU1: u16 = 0x020;
-/// `IO_ICU2`: 8259A Interrupt Controller #2.
-pub const IO_ICU2: u16 = 0x0a0;
-/// `IO_ICUSIZE`: 8259A interrupt controllers.
-pub const IO_ICUSIZE: u16 = 16;
-/// 8253 Timer #1.
-pub const IO_TIMER1: u16 = 0x040;
-/// RTC.
-pub const IO_RTC: u16 = 0x070;
-/// NMI Control.
-pub const IO_NMI: u16 = IO_RTC;
+/// `IRQ_SLAVE`: the slave's line on the master.
+pub const IRQ_SLAVE: i32 = 2;
+
+/// `ICU_OFFSET`: interrupt control offset into the IDT; 0-31 are processor exceptions.
+pub const ICU_OFFSET: i32 = 32;
+/// `ICU_LEN`: 32-47 are ISA interrupts.
+pub const ICU_LEN: i32 = 16;
+
+/// `IRQ_BIT(num)`: the bit of `num` in its controller's mask.
+pub const fn irq_bit(num: i32) -> u8 {
+    1 << (num % 8)
+}
+
+/// `IRQ_BYTE(num)`: which controller's mask byte holds `num`.
+pub const fn irq_byte(num: i32) -> i32 {
+    num >> 3
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "needs OPENBSD_SRC (just test-ref)"]
-    fn values_match_the_c_header() {
-        let defs = crate::reftest::defines("sys/dev/isa/isareg.h");
-        assert_eq!(
-            crate::reftest::int(&defs, "IO_TIMER1"),
-            Some(IO_TIMER1 as i64)
-        );
-        assert_eq!(crate::reftest::int(&defs, "IO_ICU1"), Some(IO_ICU1 as i64));
-        assert_eq!(crate::reftest::int(&defs, "IO_ICU2"), Some(IO_ICU2 as i64));
-        assert_eq!(crate::reftest::int(&defs, "IO_RTC"), Some(IO_RTC as i64));
-        assert_eq!(crate::reftest::int(&defs, "IO_NMI"), Some(IO_NMI as i64));
+    fn irq_bits() {
+        assert_eq!(irq_bit(4), 0x10);
+        assert_eq!(irq_byte(4), 0);
+        assert_eq!(irq_bit(12), 0x10);
+        assert_eq!(irq_byte(12), 1);
+        assert_eq!(ICU_OFFSET + ICU_LEN, 48);
     }
 }

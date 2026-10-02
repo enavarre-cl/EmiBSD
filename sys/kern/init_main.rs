@@ -62,7 +62,7 @@ use core::sync::atomic::{AtomicBool, AtomicI32};
 use crate::kprintf;
 use crate::machine::Machine;
 use crate::machine::cons::consinit;
-use crate::machine::cpu::cpu_startup;
+use crate::machine::cpu::{cpu_configure, cpu_startup};
 use crate::unported;
 use crate::uvm::uvm_init::uvm_init;
 
@@ -194,7 +194,11 @@ pub fn main() -> ! {
     // NMPATH: not configured.
 
     // Configure the devices
-    let _ = unported!("cpu_configure");
+    cpu_configure();
+    #[cfg(feature = "qemu")]
+    if crate::kern::selftest::uart_requested() {
+        crate::kern::selftest::uart_echo();
+    }
 
     // Configure virtual memory system, set vm rlimits.
     let _ = unported!("uvm_init_limits");

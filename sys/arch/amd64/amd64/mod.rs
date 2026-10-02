@@ -12,10 +12,14 @@ pub mod consinit;
 pub mod cpu;
 pub mod db_interface;
 pub mod db_trace;
+pub mod i8259;
+pub mod intr;
+pub mod lapic;
 pub mod locore;
 pub mod machdep;
 pub mod pmap;
 #[cfg(feature = "qemu")]
 pub mod qemu;
+pub mod spl;
 pub mod trap;
 pub mod vector;

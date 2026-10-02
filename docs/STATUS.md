@@ -1,28 +1,28 @@
 # Status
 
-Milestone: **M3 done; M4 part a (traps) done; M4 part b (interrupts) next**. Updated: 2026-10-02.
+Milestone: **M3 done; M4-a (traps) and M4-b1 (amd64 interrupts) done; M4-b2 (arm64) next**.
+Updated: 2026-10-02.
 
 Done:
-- M4-a: real traps on both archs. amd64: GDT/TSS/IDT built in `init_x86_64`, `vector.S` stubs
-  (`Xtrap00..1f`, `alltraps`), `kerntrap`/`trap_print`, `cpu_info`/`curcpu()` via `%gs`.
-  arm64: `exception.S` vectors (EL1h), `do_el1h_sync`/`kdata_abort`, `cpu_info` via
-  `tpidr_el1`, `SP_EL1` switch in `initarm`. ddb-lite: `db_enter` is `int3`/`brk`, `db_ktrap`
-  saves `ddb_regs`, `db_trap` prints `Stopped at` + trace and continues. `smoke` runs three
-  boots per arch: plain (33), `-d` (33), `selftest=trap` (fatal trap message + panic, 35).
-- M3: page allocator, kernel page tables over the bootloader's tables, `km_alloc`, pools,
-  `malloc(9)`, `GlobalAlloc`; `dev/rnd.rs` is a placeholder PRNG (NOT random).
-- M2: `printf`/`panic`/`log`, message buffer, console framework (`com`, `pluart`), `main()`
-  skeleton, ddb-lite, `boot(9)`/`delay(9)`. M1: `queue.h`/`tree.h`, base headers, libkern.
-  M0: Limine boot on both archs.
+- M4-b1: `spl(9)` on amd64 (`intr.c`, `spl.S`, `i8259.c`, the `INTRSTUB` legacy stubs and
+  `Xsoft*` of `vector.S`, `isa_intr_establish`, the LAPIC subset: `lapic_map`/`enable`/
+  `set_lvt`), the MI soft interrupts (`kern_softintr.c`), the UP mutex (`kern_lock.c`),
+  `evcount`, `cpu_configure` on both archs, the `machine::intr` spl contract and
+  `Console::cn_rx_intr_establish`. `smoke` boots amd64 with `selftest=uart`, types `hello` on
+  the serial console and sees `selftest: uart echo: hello` through hard + soft interrupt.
+  arm64 has the spl machinery and the default handlers; its GIC is next.
+- M4-a: real traps on both archs, `cpu_info`/`curcpu()`, ddb-lite `db_ktrap`/`ddb_regs`,
+  `selftest=trap` (fatal trap message + panic). M3: page allocator, kernel page tables,
+  `km_alloc`/pools/`malloc`/`GlobalAlloc`. M2: printf/panic, console, `main()`, ddb-lite.
+  M1: `queue.h`/`tree.h`, base headers, libkern. M0: Limine boot on both archs.
 
 Next:
-- M4-b: `spl(9)` and the interrupt controllers (amd64 `intr.c`, i8259/LAPIC/IOAPIC; arm64
-  `intr.c` `arm_intr_func`, `ampintc`/`agintc` GICv2, `agtimer`, `dev/ofw/fdt.c`), the
-  `Xintr_*` stubs, `sti` in `alltraps_kern`, `intr_enable` in `do_el1h_sync`, UART RX by
-  interrupt echoing on both archs (the M4 exit criterion). Then stop (user: "para en M4").
-- Carried: `constab`/`cninit`, `pluart_fdt.c`, `db_access.c`/`db_sym.c`, `db_run.c`/
-  `db_command.c` (the real debugger loop), user-mode trap paths (`usertrap`, `do_el0_sync`,
-  `calltrap_specstk`, trampolines) with M6.
+- M4-b2: arm64 `dev/ofw/fdt.c` (the device tree Limine hands over), `ampintc` (GICv2),
+  `arm_intr_register_fdt`/`arm_intr_establish_fdt`, `pluart`'s receive interrupt, `intr_enable`
+  in `do_el1h_sync`, the arm64 `selftest=uart` boot. That closes M4; stop there (user).
+- Carried to M5: `agtimer`/LAPIC timer and clockintr, IOAPIC/MADT/MP tables, `comintr`/
+  `comsoft` and `pluart_intr` on a tty (M7), `constab`/`cninit`, `db_run.c`/`db_command.c`,
+  autoconf (`config_rootfound`, `cpu_attach`), the user-mode trap paths (M6).
 
 Blockers:
 - `kern_tc.c` is beerware: `status = "todo"`, `getnsecuptime` reported; needs the user's

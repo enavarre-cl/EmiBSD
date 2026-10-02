@@ -187,6 +187,19 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   kernel page fault or data abort is fatal (`kpageflttrap` returns 0 when `curproc` is NULL, as
   in C; `kdata_abort` has no `pcb_onfault` and `uvm_fault` is reported), which is what the
   `selftest=trap` boot of `smoke` asserts on both archs.
+- Interrupts (M4, part b1, amd64): `spl(9)` is OpenBSD's: `splraise`/`spllower` in `intr.c`,
+  `Xspllower`/`Xdoreti` in `spl.S`, the per-source masks in `cpu_info`, the `INTRSTUB` stubs of
+  `vector.S` for the sixteen legacy IRQs and the MI soft interrupts (`kern_softintr.c`, the
+  `Xsoft*` stubs). What autoconfiguration would do is done by `cpu_configure` directly until
+  `config_rootfound` exists (M5): `lapic_boot_init` at the architectural LAPIC base (the MADT
+  and MP tables are M5), `cpu_intr_init`, `intr_enable`. `lapic_set_lvt` programs LINT0 as
+  ExtINT and LINT1 as NMI, the MP default configuration, because the firmware leaves LINT0
+  masked and there are no tables to read it from; the IOAPIC stays off, so the 8259 is the
+  PIC. The mutex is the uniprocessor one (`kern_lock.c`), `evcount` has no per-CPU counters
+  yet. The console's receive interrupt is armed by the machine (`Console::cn_rx_intr_establish`,
+  what `com_isa`'s attach does) for the `selftest=uart` boot, which types a line on the serial
+  console and expects it echoed through the hard handler, `softintr_schedule` and the soft
+  handler.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.
@@ -226,8 +239,9 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   ChaCha20 land (M5). `kern/rust_alloc.rs` is the Rust `GlobalAlloc` over `malloc(9)`
   (`M_TEMP`, `M_NOWAIT`); feature `alloc` is on by default. `physmem` lives in `sys/systm.rs`
   (the C defines it per arch) and `<machine/intr.h>`'s `IPL_*` are the `machine::Intr` contract.
-- `uvmexp` is a static of atomics and the page-queue locks (`uvm_lock_pageq`, `uvm_lock_fpageq`)
-  are no-ops until the mutex arrives (M5): the boot CPU is alone. `wakeup` and `uvm_wait` report
+- `uvmexp` is a static of atomics (exported under its C name so the amd64 interrupt stubs can
+  count `V_INTR`) and the page-queue locks (`uvm_lock_pageq`, `uvm_lock_fpageq`) are no-ops
+  until the pools and uvm take the mutex (M5): the boot CPU is alone. `wakeup` and `uvm_wait` report
   themselves unported, so a `UVM_PLA_WAITOK` allocation that cannot be met fails with `ENOMEM`
   instead of sleeping.
 - Licences: `ddb/` and the `db_*` arch files carry the Mach licence (Carnegie Mellon);

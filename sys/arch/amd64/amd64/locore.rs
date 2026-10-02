@@ -4,9 +4,10 @@
 //!
 //! Upstream: sys/arch/amd64/amd64/locore.S @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M4 ports `lgdt` and `intr_fast_exit`; the kernel entry
-//! (`start`, done by the boot protocol), `cpu_switchto`, `sigcode`, the `syscall` entry and
-//! exit, `intr_user_exit`, the Meltdown trampolines and the copy routines come with M5 and M6.
+//! Status: `wip`. Milestone M4 ports `lgdt` and `intr_fast_exit`; `intr_user_exit` is a
+//! stub that reports itself. The kernel entry (`start`, done by the boot protocol),
+//! `cpu_switchto`, `sigcode`, the `syscall` entry and exit, the real `intr_user_exit`, the
+//! Meltdown trampolines and the copy routines come with M5 and M6.
 //!
 //! ## Deviations
 //! - AT&T syntax, as the C file, so the two can be diffed; the rest of the kernel's inline
@@ -51,4 +52,13 @@ unsafe extern "C" {
     /// `rdp` must describe a GDT whose `GCODE_SEL`/`GDATA_SEL` entries are valid 64-bit
     /// kernel segments, and the table must outlive its use.
     pub fn lgdt(rdp: *const RegionDescriptor);
+}
+
+/// What `intr_user_exit` does until user mode exists: a return to user mode is a bug.
+#[unsafe(no_mangle)]
+pub extern "C" fn intr_user_exit_unported(frame: &Trapframe) -> ! {
+    crate::kern::subr_prf::panic(format_args!(
+        "intr_user_exit: return to user mode without user mode (M6): cs {:x} rip {:x}",
+        frame.tf_cs, frame.tf_rip
+    ))
 }

@@ -54,7 +54,8 @@ use crate::uvm::uvmexp::Uvmexp;
 
 /// `uvm`: the VM's global state.
 pub static UVM: Uvm = Uvm::new();
-/// `uvmexp`: the exported statistics.
+/// `uvmexp`: the exported statistics, under its C name for the interrupt stubs' `V_INTR`.
+#[unsafe(export_name = "uvmexp")]
 pub static UVMEXP: Uvmexp = Uvmexp::new();
 /// `vm_min_kernel_address`: base of kernel virtual memory.
 pub static VM_MIN_KERNEL_ADDRESS: AtomicUsize =

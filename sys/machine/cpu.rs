@@ -55,6 +55,22 @@ pub trait Cpu {
     /// after `uvm_init`. It prints the memory sizes; the exec and physio maps, the buffer
     /// cache and the descriptor tables join it in later milestones.
     fn cpu_startup();
+
+    /// `curcpu()` as an opaque pointer: what lock owners and the soft interrupt runner
+    /// record, compared for identity only.
+    fn curcpu_ptr() -> *const ();
+
+    /// `curcpu()->ci_mutex_level += delta` (`DIAGNOSTIC`): the mutex nesting counter.
+    fn curcpu_mutex_level_add(delta: i32);
+
+    /// `cpu_configure()` (`autoconf.c`): the machine-dependent part of autoconfiguration;
+    /// ends with `spl0()` and `cold = 0`.
+    fn cpu_configure();
+}
+
+/// `cpu_configure` on the selected machine.
+pub fn cpu_configure() {
+    Machine::cpu_configure()
 }
 
 /// `cpu_startup` on the selected machine.

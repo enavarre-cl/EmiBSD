@@ -239,3 +239,14 @@ pub fn breakpoint() {
     // past the instruction.
     unsafe { asm!("int3", options(nomem, nostack, preserves_flags)) };
 }
+
+/// `lcr8`: writes `CR8`, the task priority register (0 lets every interrupt through).
+///
+/// # Safety
+///
+/// Changing the task priority changes which interrupts the LAPIC delivers.
+#[inline]
+pub unsafe fn lcr8(val: u64) {
+    // SAFETY: the caller's guarantee.
+    unsafe { asm!("mov cr8, {}", in(reg) val, options(nomem, nostack, preserves_flags)) };
+}

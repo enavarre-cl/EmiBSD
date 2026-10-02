@@ -409,3 +409,14 @@ mod tests {
         );
     }
 }
+
+/// `com_enable_debugport` for the console port, on the `comcons*` registers: enables the
+/// receive interrupt and raises DTR, RTS and OUT2 (`MCR_IENABLE`, which gates the PC's IRQ
+/// line). The softc version comes with `com_attach_subr` (M5).
+pub fn com_enable_debugport_cn() {
+    // Turn on line break interrupt, set carrier up.
+    let ier = IER_ERXRDY;
+    comcn_write_reg(COM_IER, ier);
+    let mcr = MCR_DTR | MCR_RTS | MCR_IENABLE;
+    comcn_write_reg(COM_MCR, mcr);
+}

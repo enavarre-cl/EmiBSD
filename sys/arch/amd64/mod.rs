@@ -53,6 +53,19 @@ impl Cpu for Machine {
     fn cpu_startup() {
         amd64::machdep::cpu_startup()
     }
+
+    fn curcpu_ptr() -> *const () {
+        core::ptr::from_ref(include::cpu::curcpu()).cast()
+    }
+
+    fn curcpu_mutex_level_add(delta: i32) {
+        let ci = include::cpu::curcpu();
+        ci.ci_mutex_level.set(ci.ci_mutex_level.get() + delta);
+    }
+
+    fn cpu_configure() {
+        amd64::autoconf::cpu_configure()
+    }
 }
 
 impl VmParam for Machine {
@@ -140,6 +153,10 @@ impl Pmap for Machine {
 impl Console for Machine {
     fn consinit() {
         amd64::consinit::consinit()
+    }
+
+    fn cn_rx_intr_establish(sink: fn(u8)) -> Result<(), Errno> {
+        amd64::consinit::cn_rx_intr_establish(sink)
     }
 }
 
@@ -255,4 +272,24 @@ impl Intr for Machine {
     const IPL_MPFLOOR: i32 = include::intrdefs::IPL_MPFLOOR;
     const IPL_MPSAFE: i32 = include::intrdefs::IPL_MPSAFE;
     const IPL_WAKEUP: i32 = include::intrdefs::IPL_WAKEUP;
+
+    fn splraise(ipl: i32) -> i32 {
+        amd64::intr::splraise(ipl)
+    }
+
+    fn spllower(ipl: i32) -> i32 {
+        amd64::intr::spllower(ipl)
+    }
+
+    fn splx(s: i32) {
+        amd64::intr::spllower(s);
+    }
+
+    fn softintr(si: i32) {
+        amd64::intr::softintr(si)
+    }
+
+    fn splassert_check(wantipl: i32, func: &str) {
+        amd64::machdep::splassert_check(wantipl, func)
+    }
 }

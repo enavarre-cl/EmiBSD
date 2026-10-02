@@ -5,14 +5,17 @@
 //! blocks on the types defined here.
 
 pub mod errno;
+pub mod evcount;
 pub mod kernel;
 pub mod malloc;
 pub mod mman;
 pub mod msgbuf;
+pub mod mutex;
 pub mod param;
 pub mod pool;
 pub mod queue;
 pub mod reboot;
+pub mod softintr;
 pub mod syslimits;
 pub mod syslog;
 pub mod systm;

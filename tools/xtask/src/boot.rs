@@ -9,6 +9,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -406,7 +407,8 @@ pub fn qemu(root: &Path, arch: Arch, kernel: Option<&Path>) -> Result<()> {
 
 /// Boots `arch` headless, captures the serial transcript, and passes when every line of
 /// `expects` appears and QEMU exits with `status` before the timeout. With `kernel`, the image
-/// is rebuilt first, with `cmdline` as the kernel command line.
+/// is rebuilt first, with `cmdline` as the kernel command line. With `send`, the text is
+/// written to QEMU's stdin (the serial console) once the trigger line has appeared.
 pub fn smoke(
     root: &Path,
     arch: Arch,
@@ -414,6 +416,7 @@ pub fn smoke(
     cmdline: Option<&str>,
     expects: &[&str],
     status: i32,
+    send: Option<(&str, &str)>,
 ) -> Result<()> {
     let image = match kernel {
         Some(k) => image(root, arch, k, cmdline)?,
@@ -432,20 +435,48 @@ pub fn smoke(
     };
     let expected_status = status;
     let mut cmd = qemu_command(root, arch, &image, "stdio")?;
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdin(if send.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped());
     println!("xtask: {}", command_line(&cmd));
 
     let started = Instant::now();
     let mut child = cmd.spawn().map_err(|e| spawn_error(arch, &e))?;
     let stdout = child.stdout.take().ok_or("qemu stdout is not a pipe")?;
     let stderr = child.stderr.take().ok_or("qemu stderr is not a pipe")?;
-    let out_reader = thread::spawn(move || slurp(stdout));
+    let mut stdin = child.stdin.take();
+    // The transcript so far, shared with the reader so `send` can wait for its trigger line.
+    let transcript: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let out_reader = {
+        let transcript = Arc::clone(&transcript);
+        thread::spawn(move || slurp_into(stdout, &transcript))
+    };
     let err_reader = thread::spawn(move || slurp(stderr));
 
     let mut timed_out = false;
+    let mut pending_send = send;
     let exit = loop {
+        if let Some((after, text)) = pending_send {
+            let seen = transcript
+                .lock()
+                .map(|t| String::from_utf8_lossy(&t).contains(after))
+                .unwrap_or(false);
+            if seen {
+                if let Some(stdin) = stdin.as_mut() {
+                    stdin.write_all(text.as_bytes())?;
+                    stdin.flush()?;
+                    println!(
+                        "xtask: sent {text:?} after {:.1}s (saw {after:?})",
+                        started.elapsed().as_secs_f32()
+                    );
+                }
+                pending_send = None;
+            }
+        }
         if let Some(status) = child.try_wait()? {
             break Some(status);
         }
@@ -457,7 +488,12 @@ pub fn smoke(
         }
         thread::sleep(Duration::from_millis(100));
     };
-    let serial = String::from_utf8_lossy(&out_reader.join().unwrap_or_default()).into_owned();
+    drop(stdin);
+    out_reader.join().ok();
+    let serial = transcript
+        .lock()
+        .map(|t| String::from_utf8_lossy(&t).into_owned())
+        .unwrap_or_default();
     let diagnostics = String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned();
 
     let missing: Vec<&str> = expects
@@ -519,6 +555,21 @@ fn slurp(mut r: impl Read) -> Vec<u8> {
     let mut v = Vec::new();
     let _ = r.read_to_end(&mut v);
     v
+}
+
+/// Reads `r` to its end, appending to `into` as the bytes arrive.
+fn slurp_into(mut r: impl Read, into: &Mutex<Vec<u8>>) {
+    let mut buf = [0u8; 4096];
+    loop {
+        match r.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                if let Ok(mut t) = into.lock() {
+                    t.extend_from_slice(&buf[..n]);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -54,9 +54,10 @@
 use core::arch::asm;
 use core::cell::{Cell, UnsafeCell};
 use core::ptr;
-use core::sync::atomic::AtomicU32;
+use core::sync::atomic::{AtomicU32, AtomicU64};
 
-use crate::arch::amd64::include::intrdefs::NIPL;
+use crate::arch::amd64::include::intr::Intrsource;
+use crate::arch::amd64::include::intrdefs::{MAX_INTR_SOURCES, NIPL};
 use crate::arch::amd64::include::pmap::Pmap;
 use crate::arch::amd64::include::tss::X86_64Tss;
 
@@ -106,9 +107,10 @@ pub struct CpuInfo {
     pub ci_idle_pcb: Cell<*const ()>,
     /// \[o\] `CPUPF_*`.
     pub ci_pflags: Cell<u32>,
-    // ci_isources[MAX_INTR_SOURCES]: with intr.c.
-    /// Pending interrupts, by source.
-    pub ci_ipending: Cell<u64>,
+    /// `ci_isources[MAX_INTR_SOURCES]`: the interrupt sources, by stub number.
+    pub ci_isources: [Cell<*const Intrsource>; MAX_INTR_SOURCES],
+    /// Pending interrupts, by source; the stubs set bits under `cli`, `softintr` atomically.
+    pub ci_ipending: AtomicU64,
     /// The current interrupt priority level.
     pub ci_ilevel: Cell<i32>,
     /// The interrupt nesting depth.
@@ -171,7 +173,8 @@ impl CpuInfo {
             ci_curpcb: Cell::new(ptr::null()),
             ci_idle_pcb: Cell::new(ptr::null()),
             ci_pflags: Cell::new(0),
-            ci_ipending: Cell::new(0),
+            ci_isources: [const { Cell::new(ptr::null()) }; MAX_INTR_SOURCES],
+            ci_ipending: AtomicU64::new(0),
             ci_ilevel: Cell::new(0),
             ci_idepth: Cell::new(0),
             ci_handled_intr_level: Cell::new(0),

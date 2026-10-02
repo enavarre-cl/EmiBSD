@@ -5,6 +5,7 @@
 //! (ddb-lite) are partial ports; `qemu` is the emulator exit under feature `qemu`, a project
 //! helper (`ports.toml`, `[[extra]]`).
 
+pub mod autoconf;
 pub mod bus_space;
 pub mod cpufunc;
 pub mod db_interface;

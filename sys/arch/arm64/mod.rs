@@ -51,6 +51,19 @@ impl Cpu for Machine {
     fn cpu_startup() {
         arm64::machdep::cpu_startup()
     }
+
+    fn curcpu_ptr() -> *const () {
+        core::ptr::from_ref(include::cpu::curcpu()).cast()
+    }
+
+    fn curcpu_mutex_level_add(delta: i32) {
+        let ci = include::cpu::curcpu();
+        ci.ci_mutex_level.set(ci.ci_mutex_level.get() + delta);
+    }
+
+    fn cpu_configure() {
+        arm64::autoconf::cpu_configure()
+    }
 }
 
 impl VmParam for Machine {
@@ -140,6 +153,13 @@ impl Pmap for Machine {
 impl Console for Machine {
     fn consinit() {
         arm64::machdep::consinit()
+    }
+
+    fn cn_rx_intr_establish(_sink: fn(u8)) -> Result<(), Errno> {
+        // pluart_fdt's arm_intr_establish_fdt needs the interrupt controller (M4-b, part 2).
+        Err(crate::unported!(
+            "arm_intr_establish_fdt for the console (ampintc, M4-b part 2)"
+        ))
     }
 }
 
@@ -255,4 +275,24 @@ impl Intr for Machine {
     const IPL_MPFLOOR: i32 = include::intr::IPL_MPFLOOR;
     const IPL_MPSAFE: i32 = include::intr::IPL_MPSAFE;
     const IPL_WAKEUP: i32 = include::intr::IPL_WAKEUP;
+
+    fn splraise(ipl: i32) -> i32 {
+        arm64::intr::splraise(ipl)
+    }
+
+    fn spllower(ipl: i32) -> i32 {
+        arm64::intr::spllower(ipl)
+    }
+
+    fn splx(s: i32) {
+        arm64::intr::splx(s)
+    }
+
+    fn softintr(si: i32) {
+        arm64::intr::softintr(si)
+    }
+
+    fn splassert_check(wantipl: i32, func: &str) {
+        arm64::intr::arm_splassert_check(wantipl, func)
+    }
 }

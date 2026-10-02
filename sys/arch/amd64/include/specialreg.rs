@@ -61,6 +61,16 @@ pub const CR3_REUSE_PCID: u64 = 1 << 63;
 /// `CR3_PADDR`: the page-table address bits of `CR3`.
 pub const CR3_PADDR: u64 = 0x7fff_ffff_ffff_f000;
 
+/// `MSR_APICBASE`: the local APIC's base address and mode.
+pub const MSR_APICBASE: u32 = 0x01b;
+/// `APICBASE_BSP`.
+pub const APICBASE_BSP: u64 = 0x100;
+/// `APICBASE_ENABLE_X2APIC`.
+pub const APICBASE_ENABLE_X2APIC: u64 = 0x400;
+/// `APICBASE_GLOBAL_ENABLE`.
+pub const APICBASE_GLOBAL_ENABLE: u64 = 0x800;
+/// `APICBASE_ADDRESS_MASK`.
+pub const APICBASE_ADDRESS_MASK: u64 = 0x000f_ffff_ffff_f000;
 /// `MSR_EFER`: Extended feature enable.
 pub const MSR_EFER: u32 = 0xc000_0080;
 /// `MSR_STAR`: the `syscall`/`sysret` segment selectors.
@@ -103,6 +113,8 @@ mod tests {
             ("EFER_LME", EFER_LME as i64),
             ("EFER_LMA", EFER_LMA as i64),
             ("EFER_NXE", EFER_NXE as i64),
+            ("MSR_APICBASE", i64::from(MSR_APICBASE)),
+            ("APICBASE_ENABLE_X2APIC", APICBASE_ENABLE_X2APIC as i64),
             ("MSR_STAR", i64::from(MSR_STAR)),
             ("MSR_LSTAR", i64::from(MSR_LSTAR)),
             ("MSR_FSBASE", i64::from(MSR_FSBASE)),

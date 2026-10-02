@@ -93,6 +93,14 @@ pub const MAX_INTR_SOURCES: usize = 64;
 /// `NUM_LEGACY_IRQS`.
 pub const NUM_LEGACY_IRQS: usize = 16;
 
+/// `IDT_INTR_LOW`: the first IDT vector the allocator hands out.
+pub const IDT_INTR_LOW: i32 = 0x20 + NUM_LEGACY_IRQS as i32;
+/// `IDT_INTR_HIGH`: the last.
+pub const IDT_INTR_HIGH: i32 = 0xef;
+
+/// `IREENT_MAGIC`: what `tf_err` holds in a frame faked up by `Xrecurse_*`/`Xresume_*`.
+pub const IREENT_MAGIC: i64 = 0x1804_1969;
+
 #[cfg(test)]
 mod tests {
     use super::*;

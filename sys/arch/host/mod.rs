@@ -140,6 +140,16 @@ impl Cpu for Machine {
     }
 
     fn cpu_startup() {}
+
+    fn curcpu_ptr() -> *const () {
+        // Aligned, so bit 0 (the mutex waiter flag) is clear in its address.
+        static HOST_CPU: u64 = 0;
+        core::ptr::from_ref(&HOST_CPU).cast()
+    }
+
+    fn curcpu_mutex_level_add(_delta: i32) {}
+
+    fn cpu_configure() {}
 }
 
 impl VmParam for Machine {
@@ -245,6 +255,10 @@ impl Console for Machine {
     fn consinit() {
         set_cn_tab(&HOSTCONS);
     }
+
+    fn cn_rx_intr_establish(_sink: fn(u8)) -> Result<(), Errno> {
+        Err(Errno::ENODEV)
+    }
 }
 
 impl Exit for Machine {
@@ -344,4 +358,26 @@ impl Intr for Machine {
     const IPL_MPFLOOR: i32 = 0x9;
     const IPL_MPSAFE: i32 = 0x100;
     const IPL_WAKEUP: i32 = 0x200;
+
+    /// The host has no interrupts: the level is a number that is tracked and nothing more.
+    fn splraise(ipl: i32) -> i32 {
+        let old = HOST_IPL.load(core::sync::atomic::Ordering::Relaxed);
+        HOST_IPL.store(old.max(ipl), core::sync::atomic::Ordering::Relaxed);
+        old
+    }
+
+    fn spllower(ipl: i32) -> i32 {
+        HOST_IPL.swap(ipl, core::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn splx(s: i32) {
+        HOST_IPL.store(s, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn softintr(_si: i32) {}
+
+    fn splassert_check(_wantipl: i32, _func: &str) {}
 }
+
+/// The host double's interrupt priority level.
+static HOST_IPL: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
