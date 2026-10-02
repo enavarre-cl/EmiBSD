@@ -494,6 +494,17 @@ pub fn cn_rx_intr_establish(sink: fn(u8)) -> Result<(), Errno> {
     Ok(())
 }
 
+/// `need_resched`: asks `ci` to reschedule.
+pub fn need_resched(ci: &CpuInfo) {
+    ci.ci_want_resched.set(1);
+
+    // There's a risk we'll be called before the idle threads start
+    if !ci.ci_curproc.get().is_null() {
+        // aston(ci->ci_curproc), cpu_kick(ci): struct proc (M5-b), MULTIPROCESSOR.
+        let _ = unported!("need_resched: aston (struct proc, M5-b)");
+    }
+}
+
 /// `boot(9)`: halts or reboots according to `howto`.
 pub fn boot(howto: i32) -> ! {
     let mut howto = howto;

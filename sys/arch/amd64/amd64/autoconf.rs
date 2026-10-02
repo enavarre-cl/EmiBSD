@@ -48,14 +48,17 @@
 //! - `cpu_configure` has no `config_rootfound("mainbus")`: what the `cpu0` attach would do
 //!   for the interrupts (`cpu_intr_init` from `cpu_attach`, `intr_enable` from `cpu_init`) is
 //!   done here directly, as is the LAPIC setup `mpbios`/`acpimadt` would trigger
-//!   (`lapic_boot_init` at the architectural base, `lapic_enable`, `lapic_set_lvt`);
+//!   (`lapic_boot_init` at the architectural base, `lapic_enable`, `lapic_set_lvt`) and the
+//!   timer calibration of the boot CPU's `cpu_attach` (`lapic_calibrate_timer`);
 //!   `pmap_randomize`, `map_tramps`, `bus_dma_init`,
 //!   `mbuf_dma_64bit_enable`, `unmap_startup` and the random-number timeouts are reported.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::arch::amd64::amd64::intr::{cpu_intr_init, intr_printconfig};
-use crate::arch::amd64::amd64::lapic::{lapic_boot_init, lapic_enable, lapic_set_lvt};
+use crate::arch::amd64::amd64::lapic::{
+    lapic_boot_init, lapic_calibrate_timer, lapic_enable, lapic_set_lvt,
+};
 use crate::arch::amd64::amd64::machdep::x86_64_proc0_tss_ldt_init;
 use crate::arch::amd64::include::cpu::cpu_info_primary;
 use crate::arch::amd64::include::cpufunc::{intr_enable, lcr8};
@@ -86,6 +89,8 @@ pub fn cpu_configure() {
     lapic_set_lvt();
     // SAFETY: the IDT, the PIC and the masks are set up.
     unsafe { intr_enable() };
+    // cpu_attach, CPU_ROLE_BP: calibrate the LAPIC timer against the i8254 (M5).
+    lapic_calibrate_timer(cpu_info_primary());
 
     intr_printconfig();
 

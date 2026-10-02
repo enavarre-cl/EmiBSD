@@ -24,8 +24,10 @@ use crate::machine::db_machdep::{DbMachdep, PrFn};
 use crate::machine::{
     BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, MachineParam, Pmap, VmParam,
 };
+use crate::sys::clockintr::Clockqueue;
 use crate::sys::errno::Errno;
 use crate::sys::param::NODEV;
+use crate::sys::sched::SchedstatePercpu;
 use crate::sys::types::{Dev, Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt};
 use crate::uvm::uvm_page::{
@@ -118,7 +120,37 @@ impl MachineParam for Machine {
     }
 }
 
+/// The host's `struct cpu_info`: what the generic clock and scheduler code reaches.
+pub struct HostCpuInfo {
+    /// `ci_queue`.
+    pub ci_queue: Clockqueue,
+    /// `ci_schedstate`.
+    pub ci_schedstate: SchedstatePercpu,
+    /// `ci_randseed`.
+    pub ci_randseed: Cell<u32>,
+    /// `ci_want_resched`.
+    pub ci_want_resched: Cell<i32>,
+}
+
+// SAFETY: the one host CPU; the tests that touch the queue serialise on their own lock.
+unsafe impl Sync for HostCpuInfo {}
+
+/// The host's one CPU.
+static HOST_CPU_INFO: HostCpuInfo = HostCpuInfo {
+    ci_queue: Clockqueue::new(),
+    ci_schedstate: SchedstatePercpu::new(),
+    ci_randseed: Cell::new(1),
+    ci_want_resched: Cell::new(0),
+};
+
+/// The host's `struct clockframe`: nothing to read.
+pub struct HostClockFrame;
+
 impl Cpu for Machine {
+    type CpuInfo = HostCpuInfo;
+    type ClockFrame = HostClockFrame;
+    const MAXCPUS: u32 = 1;
+
     unsafe fn early_init(_boot: &BootInfo) -> Result<(), &'static str> {
         Ok(())
     }
@@ -141,6 +173,10 @@ impl Cpu for Machine {
 
     fn cpu_startup() {}
 
+    fn curcpu() -> &'static HostCpuInfo {
+        &HOST_CPU_INFO
+    }
+
     fn curcpu_ptr() -> *const () {
         // Aligned, so bit 0 (the mutex waiter flag) is clear in its address.
         static HOST_CPU: u64 = 0;
@@ -148,6 +184,56 @@ impl Cpu for Machine {
     }
 
     fn curcpu_mutex_level_add(_delta: i32) {}
+
+    fn cpu_is_primary(_ci: &HostCpuInfo) -> bool {
+        true
+    }
+
+    fn cpu_info_unit(_ci: &HostCpuInfo) -> u32 {
+        0
+    }
+
+    fn ci_queue(ci: &HostCpuInfo) -> &Clockqueue {
+        &ci.ci_queue
+    }
+
+    fn ci_schedstate(ci: &HostCpuInfo) -> &SchedstatePercpu {
+        &ci.ci_schedstate
+    }
+
+    fn ci_randseed(ci: &HostCpuInfo) -> &Cell<u32> {
+        &ci.ci_randseed
+    }
+
+    fn ci_curproc(_ci: &HostCpuInfo) -> *const () {
+        core::ptr::null()
+    }
+
+    fn ci_idepth(_ci: &HostCpuInfo) -> u32 {
+        0
+    }
+
+    fn clkf_usermode(_frame: &HostClockFrame) -> bool {
+        false
+    }
+
+    fn clkf_pc(_frame: &HostClockFrame) -> usize {
+        0
+    }
+
+    fn clkf_intr(_frame: &HostClockFrame) -> bool {
+        false
+    }
+
+    fn need_resched(ci: &HostCpuInfo) {
+        ci.ci_want_resched.set(1);
+    }
+
+    fn cpu_initclocks() {}
+
+    fn cpu_startclock() {}
+
+    fn setstatclockrate(_newhz: i32) {}
 
     fn cpu_configure() {}
 }

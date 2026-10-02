@@ -41,7 +41,8 @@ Types live where the **header** is; functions live where the **`.c`** is. Rust a
 ## The `machine` contract
 
 `sys/machine/<header>.rs` holds the traits standing in for `<machine/*.h>` and `cpufunc.h`, one
-module per OpenBSD header (`param.rs`, `cpu.rs` with `boot(9)` and `delay(9)`, `cons.rs` for
+module per OpenBSD header (`param.rs`, `cpu.rs` with `boot(9)`, `delay(9)` and, since M5, `curcpu()` with the
+`cpu_info` accessors the clock code needs, `cons.rs` for
 `consinit()`, `bus.rs` for `bus_space(9)`, `db_machdep.rs` for what `ddb` needs; later `pmap.rs`,
 `intr.rs`, ...), all re-exported from `sys/machine/mod.rs`, which also re-exports
 `crate::arch::current::Machine` and asserts at compile time that it implements every trait. Generic
@@ -208,6 +209,15 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   `ampintc` then owns `spl` through `arm_set_intr_handler`. `do_el1h_sync` enables interrupts
   as the C does. The console's receive interrupt goes through `arm_intr_establish_fdt`, so the
   `selftest=uart` boot exercises the same path on arm64 as on amd64.
+- Clocks (M5-a, part 1): the time code is OpenBSD's (`kern_tc.c` over the timehands ring,
+  `kern_clockintr.c`'s per-CPU queue, `kern_timeout.c`'s timing wheel, `kern_clock.c`), reached
+  from the machine through the `Cpu` trait's `CpuInfo`/`ClockFrame` associated types and
+  accessors. `main` brings up the wheel, the clock queue and the four per-CPU clock interrupts
+  (`sched_init_cpu`'s binds); amd64 starts the i8254, calibrates the LAPIC timer against it
+  (`lapic_calibrate_timer`, as the boot CPU's `cpu_attach` does) and has the timer stub
+  installed, but `initclocks` stays reported until the arm64 generic timer (`agtimer`) lands,
+  so no clock interrupt runs yet on either arch. The host double owns a `cpu_info` of its own
+  so the clock queue and the wheel are unit-tested over the dummy timecounter.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

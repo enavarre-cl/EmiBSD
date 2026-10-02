@@ -56,9 +56,6 @@
 //!   the mutex and rwlock they stand for arrive with M5. `pl_sleep` cannot sleep: a
 //!   `PR_WAITOK` `pool_get` that finds no memory fails instead of queueing a request and
 //!   sleeping for `pool_runqueue` (a request left queued would outlive the caller's frame).
-//! - `getnsecuptime` (`kern_tc.c`, whose licence needs the user's decision) is not here:
-//!   `ph_timestamp` stays 0 and `pool_put` never frees an idle page on its own;
-//!   `pool_reclaim` does.
 //! - `pool_lock` (the rwlock over the pool list) and `pr_refcnt` wait for M5; the boot CPU
 //!   is alone. `splassert(pr_ipl)` waits for M4; `KERNEL_LOCK` in the `_ni` allocators for M5.
 //! - `poison_mem`/`poison_check` (`subr_poison.c`) are reported where `POOL_DEBUG` would
@@ -72,6 +69,7 @@ use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
 use crate::dev::rnd::{arc4random, arc4random_buf};
 use crate::kern::kern_synch::wakeup_one;
+use crate::kern::kern_tc::getnsecuptime;
 use crate::machine::intr::IPL_HIGH;
 use crate::sys::errno::Errno;
 use crate::sys::param::{PAGE_SIZE, align, roundup};
@@ -298,12 +296,6 @@ fn pl_sleep(pp: &Pool, ident: *const (), lock: &PoolLock, priority: i32, wmesg: 
 /// `POOL_INPGHDR(pp)`: the page header lives inside the page.
 fn pool_inpghdr(pp: &Pool) -> bool {
     pp.pr_phoffset.get() != 0
-}
-
-/// `getnsecuptime` (see the module's deviations).
-fn getnsecuptime() -> u64 {
-    let _ = unported!("getnsecuptime (kern_tc.c)");
-    0
 }
 
 /// `phtree_compare`: by page address, reversed so that `RBT_NFIND` on an item address gives

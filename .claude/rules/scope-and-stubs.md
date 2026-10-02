@@ -15,7 +15,8 @@ The kernel is ported incrementally; most of OpenBSD is not here yet. These rules
 - Drivers for hardware QEMU does not expose: `status = "skipped"`, `notes = "deferred-driver: ..."`.
 - Code whose license is not ISC, BSD (2, 3 or 4 clauses; the 4-clause advertising clause was
   accepted by the user at M2 for `comvar.h` and amd64 `bus.h`), MIT or Mach (Carnegie Mellon, the
-  `ddb/` and `db_*` files, also accepted at M2): stop, tell the user, record `status = "skipped"`,
+  `ddb/` and `db_*` files, also accepted at M2) or beerware (Poul-Henning Kamp's `kern_tc.c`,
+  accepted by the user at M5): stop, tell the user, record `status = "skipped"`,
   `notes = "license: <which>"`. Do not port it. A port in another language is still a derivative
   work, so a skipped file's license is not escaped by rewriting it; route around it (use what a
   permissive file defines, write interfaces from the manual page) or ask.

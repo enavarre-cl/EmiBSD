@@ -13,8 +13,12 @@ use core::arch::asm;
 
 use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::db_machdep::{DbMachdep, PrFn};
+use core::cell::Cell;
+
 use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, Pmap, VmParam};
+use crate::sys::clockintr::Clockqueue;
 use crate::sys::errno::Errno;
+use crate::sys::sched::SchedstatePercpu;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt};
 use crate::uvm::uvm_page::VmPage;
@@ -28,6 +32,10 @@ impl MachineInfo for Machine {
 }
 
 impl Cpu for Machine {
+    type CpuInfo = include::cpu::CpuInfo;
+    type ClockFrame = include::cpu::Clockframe;
+    const MAXCPUS: u32 = include::cpu::MAXCPUS;
+
     unsafe fn early_init(boot: &BootInfo) -> Result<(), &'static str> {
         // SAFETY: forwarded; `_start` calls this once with the machine as Limine left it.
         unsafe { amd64::machdep::init_x86_64(boot) }
@@ -54,6 +62,10 @@ impl Cpu for Machine {
         amd64::machdep::cpu_startup()
     }
 
+    fn curcpu() -> &'static include::cpu::CpuInfo {
+        include::cpu::curcpu()
+    }
+
     fn curcpu_ptr() -> *const () {
         core::ptr::from_ref(include::cpu::curcpu()).cast()
     }
@@ -61,6 +73,62 @@ impl Cpu for Machine {
     fn curcpu_mutex_level_add(delta: i32) {
         let ci = include::cpu::curcpu();
         ci.ci_mutex_level.set(ci.ci_mutex_level.get() + delta);
+    }
+
+    fn cpu_is_primary(ci: &include::cpu::CpuInfo) -> bool {
+        include::cpu::cpu_is_primary(ci)
+    }
+
+    fn cpu_info_unit(ci: &include::cpu::CpuInfo) -> u32 {
+        include::cpu::cpu_info_unit(ci)
+    }
+
+    fn ci_queue(ci: &include::cpu::CpuInfo) -> &Clockqueue {
+        &ci.ci_queue
+    }
+
+    fn ci_schedstate(ci: &include::cpu::CpuInfo) -> &SchedstatePercpu {
+        &ci.ci_schedstate
+    }
+
+    fn ci_randseed(ci: &include::cpu::CpuInfo) -> &Cell<u32> {
+        &ci.ci_randseed
+    }
+
+    fn ci_curproc(ci: &include::cpu::CpuInfo) -> *const () {
+        ci.ci_curproc.get()
+    }
+
+    fn ci_idepth(ci: &include::cpu::CpuInfo) -> u32 {
+        ci.ci_idepth.get().max(0) as u32
+    }
+
+    fn clkf_usermode(frame: &include::cpu::Clockframe) -> bool {
+        include::cpu::clkf_usermode(frame)
+    }
+
+    fn clkf_pc(frame: &include::cpu::Clockframe) -> usize {
+        include::cpu::clkf_pc(frame)
+    }
+
+    fn clkf_intr(frame: &include::cpu::Clockframe) -> bool {
+        include::cpu::clkf_intr(frame)
+    }
+
+    fn need_resched(ci: &include::cpu::CpuInfo) {
+        amd64::machdep::need_resched(ci)
+    }
+
+    fn cpu_initclocks() {
+        amd64::machdep::cpu_initclocks()
+    }
+
+    fn cpu_startclock() {
+        amd64::machdep::cpu_startclock()
+    }
+
+    fn setstatclockrate(newhz: i32) {
+        isa::clock::setstatclockrate(newhz)
     }
 
     fn cpu_configure() {

@@ -24,9 +24,10 @@
 //! Status: `wip`. Milestone M0 ports the DAIF helpers (`restore_daif`, `enable_irq_daif`,
 //! `disable_irq_daif`, `disable_irq_daif_ret`, `intr_enable`, `intr_disable`, `intr_restore`);
 //! M4 adds `struct cpu_info` (the fields the exception and interrupt paths use), `curcpu()`,
-//! `cpu_info_primary`, the `CPUF_*` flags and the `CI_DDB_*` states. The CPU topology, the
-//! scheduler state (M5), the `CTL_MACHDEP` names and the cache helpers arrive with their
-//! subsystems.
+//! `cpu_info_primary`, the `CPUF_*` flags and the `CI_DDB_*` states; M5 adds `ci_schedstate`,
+//! `ci_queue`, `MAXCPUS`, `CPU_INFO_UNIT`, `struct clockframe` (the `trapframe`) and the
+//! `CLKF_*` macros. The CPU topology, the `CTL_MACHDEP` names and the cache helpers arrive
+//! with their subsystems.
 //!
 //! ## Deviations
 //! - DAIF values are `u64`, the width of the register (`mrs`/`msr` move a full X register);
@@ -39,7 +40,10 @@ use core::cell::{Cell, UnsafeCell};
 use core::ptr;
 use core::sync::atomic::AtomicU32;
 
+use crate::arch::arm64::include::frame::Trapframe;
 use crate::arch::arm64::include::pmap::Pmap;
+use crate::sys::clockintr::Clockqueue;
+use crate::sys::sched::SchedstatePercpu;
 
 /// `restore_daif`: writes `daif` back into `DAIF`.
 ///
@@ -118,7 +122,8 @@ pub struct CpuInfo {
     pub ci_dev: Cell<*const ()>,
     /// The next CPU.
     pub ci_next: Cell<*const CpuInfo>,
-    // ci_schedstate: scheduler state (M5).
+    /// Scheduler state.
+    pub ci_schedstate: SchedstatePercpu,
     /// `ci_cpuid`.
     pub ci_cpuid: Cell<u32>,
     /// `ci_mpidr`.
@@ -168,7 +173,9 @@ pub struct CpuInfo {
     pub ci_flags: AtomicU32,
     /// `CI_DDB_*`.
     pub ci_ddb_paused: Cell<i32>,
-    // ci_gmon (GPROF), ci_queue (clockintr): M5.
+    // ci_gmon: GPROF.
+    /// The clock interrupt queue.
+    pub ci_queue: Clockqueue,
     /// The first panic message of this CPU.
     pub ci_panicbuf: UnsafeCell<[u8; 512]>,
 }
@@ -182,6 +189,7 @@ impl CpuInfo {
         Self {
             ci_dev: Cell::new(ptr::null()),
             ci_next: Cell::new(ptr::null()),
+            ci_schedstate: SchedstatePercpu::new(),
             ci_cpuid: Cell::new(0),
             ci_mpidr: Cell::new(0),
             ci_midr: Cell::new(0),
@@ -205,6 +213,7 @@ impl CpuInfo {
             ci_el1_stkend: Cell::new(0),
             ci_flags: AtomicU32::new(0),
             ci_ddb_paused: Cell::new(0),
+            ci_queue: Clockqueue::new(),
             ci_panicbuf: UnsafeCell::new([0; 512]),
         }
     }
@@ -246,6 +255,12 @@ pub const CPUF_PARK: u32 = 1 << 7;
 /// `CPUF_PARKED`.
 pub const CPUF_PARKED: u32 = 1 << 8;
 
+/// `MAXCPUS`: without `MULTIPROCESSOR`, one.
+pub const MAXCPUS: u32 = 1;
+
+/// `struct clockframe`: all the `CLKF_*` macros take a struct clockframe * as an argument.
+pub type Clockframe = Trapframe;
+
 /// `curcpu()`: this CPU's `cpu_info`, from `TPIDR_EL1` (set by `initarm` for the boot CPU
 /// and by `cpu_start_secondary` for the others).
 #[inline]
@@ -276,4 +291,28 @@ pub fn cpu_is_primary(ci: &CpuInfo) -> bool {
 /// `CPU_IS_RUNNING(ci)`.
 pub fn cpu_is_running(ci: &CpuInfo) -> bool {
     ci.ci_flags.load(core::sync::atomic::Ordering::Relaxed) & CPUF_RUNNING != 0
+}
+
+/// `CPU_INFO_UNIT(ci)`: `ci_dev->dv_unit`, 0 without a device (M5-b).
+pub fn cpu_info_unit(_ci: &CpuInfo) -> u32 {
+    0
+}
+
+/// `CLKF_USERMODE(frame)`: return TRUE/FALSE (1/0) depending on whether the frame came from
+/// USR mode or not.
+#[inline]
+pub fn clkf_usermode(frame: &Clockframe) -> bool {
+    (frame.tf_elr as u64) & (1u64 << 63) == 0
+}
+
+/// `CLKF_INTR(frame)`: true if we took the interrupt from inside another interrupt handler.
+#[inline]
+pub fn clkf_intr(_frame: &Clockframe) -> bool {
+    curcpu().ci_idepth.get() > 1
+}
+
+/// `CLKF_PC(frame)`: extract the program counter from a clockframe.
+#[inline]
+pub fn clkf_pc(frame: &Clockframe) -> usize {
+    frame.tf_elr as usize
 }

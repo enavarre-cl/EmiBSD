@@ -22,6 +22,7 @@ pub mod psl;
 pub mod pte;
 pub mod segments;
 pub mod specialreg;
+pub mod timetc;
 pub mod trap;
 pub mod tss;
 pub mod vmparam;

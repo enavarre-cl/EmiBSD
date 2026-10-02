@@ -24,15 +24,21 @@
 //! Upstream: sys/kern/kern_lock.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M4 ports the uniprocessor mutex: `__mtx_init`, `_mtx_init`,
-//! `mtx_init`, `mtx_init_flags`, `mtx_enter`, `mtx_enter_try` and `mtx_leave`. The kernel
-//! lock (`__mp_lock`, `_kernel_lock*`), the `MULTIPROCESSOR` mutex with its parking lots,
-//! `db_mtx_enter`/`db_mtx_leave` and `pc_lock` come with M5; `WITNESS` is not configured.
+//! `mtx_init`, `mtx_init_flags`, `mtx_enter`, `mtx_enter_try` and `mtx_leave`; M5 adds the
+//! `pc_lock` producer/consumer generation lock (`pc_lock_init`, `pc_sprod_*`, `pc_mprod_*`,
+//! `pc_cons_*`). The kernel lock (`__mp_lock`, `_kernel_lock*`), the `MULTIPROCESSOR` mutex
+//! with its parking lots and `db_mtx_enter`/`db_mtx_leave` come later; `WITNESS` is not
+//! configured.
+//!
+//! ## Deviations
+//! - `membar_producer`/`membar_consumer`/`membar_exit` are `fence`s of the matching
+//!   ordering; `pc_mprod_*` are `pc_sprod_*` (the C aliases them without `MULTIPROCESSOR`).
 //!
 //! ## Deviations
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`, as in the C's
 //!   `<sys/systm.h>`, so no function stands in for them.
 
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{Ordering, fence};
 
 use crate::kern::init_main::DB_ACTIVE;
 use crate::kern::subr_prf::panicstr;
@@ -44,6 +50,7 @@ use crate::machine::intr::{IPL_NONE, splraise, splx};
 #[cfg(feature = "diagnostic")]
 use crate::sys::mutex::mtx_owner;
 use crate::sys::mutex::{Mutex, mtx_curcpu, mutex_assert_locked, mutex_ipl};
+use crate::sys::pclock::PcLock;
 
 /// `__mtx_init`: a free mutex raising to `wantipl`.
 pub fn __mtx_init(mtx: &Mutex, wantipl: i32) {
@@ -118,11 +125,97 @@ pub fn mtx_leave(mtx: &Mutex) {
     }
 }
 
+/// `pc_lock_init`.
+pub fn pc_lock_init(pcl: &PcLock) {
+    pcl.pcl_gen.store(0, Ordering::Relaxed);
+}
+
+/// `pc_sprod_enter`: a single (non-interlocking) producer enters; returns the generation.
+pub fn pc_sprod_enter(pcl: &PcLock) -> u32 {
+    let generation = pcl.pcl_gen.load(Ordering::Relaxed).wrapping_add(1);
+    pcl.pcl_gen.store(generation, Ordering::Relaxed);
+    fence(Ordering::Release); // membar_producer()
+
+    generation
+}
+
+/// `pc_sprod_leave`.
+pub fn pc_sprod_leave(pcl: &PcLock, generation: u32) {
+    fence(Ordering::Release); // membar_producer()
+    pcl.pcl_gen
+        .store(generation.wrapping_add(1), Ordering::Relaxed);
+}
+
+/// `pc_mprod_enter`: multiple (interlocking) producers; without `MULTIPROCESSOR` the
+/// single-producer entry.
+pub fn pc_mprod_enter(pcl: &PcLock) -> u32 {
+    pc_sprod_enter(pcl)
+}
+
+/// `pc_mprod_leave`.
+pub fn pc_mprod_leave(pcl: &PcLock, generation: u32) {
+    pc_sprod_leave(pcl, generation)
+}
+
+/// `pc_cons_enter`: a consumer waits for a quiescent generation and records it in `genp`.
+pub fn pc_cons_enter(pcl: &PcLock, genp: &mut u32) {
+    let mut generation = pcl.pcl_gen.load(Ordering::Relaxed);
+    while generation & 1 != 0 {
+        core::hint::spin_loop(); // CPU_BUSY_CYCLE()
+        generation = pcl.pcl_gen.load(Ordering::Relaxed);
+    }
+
+    fence(Ordering::Acquire); // membar_consumer()
+    *genp = generation;
+}
+
+/// `pc_cons_leave`: `false` if the read was consistent; `true` (with `genp` updated) if a
+/// producer intervened and the consumer must retry.
+#[must_use]
+pub fn pc_cons_leave(pcl: &PcLock, genp: &mut u32) -> bool {
+    fence(Ordering::Acquire); // membar_consumer()
+
+    let mut generation = pcl.pcl_gen.load(Ordering::Relaxed);
+    if generation & 1 != 0 {
+        loop {
+            core::hint::spin_loop(); // CPU_BUSY_CYCLE()
+            generation = pcl.pcl_gen.load(Ordering::Relaxed);
+            if generation & 1 == 0 {
+                break;
+            }
+        }
+    } else if generation == *genp {
+        return false;
+    }
+
+    *genp = generation;
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::machine::intr::IPL_HIGH;
     use crate::sys::mutex::mtx_owner;
+
+    #[test]
+    fn pc_lock_generations() {
+        let pcl = PcLock::new();
+        let mut g = 0;
+        pc_cons_enter(&pcl, &mut g);
+        assert_eq!(g, 0);
+        assert!(!pc_cons_leave(&pcl, &mut g), "nothing changed");
+        let generation = pc_sprod_enter(&pcl);
+        assert_eq!(generation, 1);
+        pc_sprod_leave(&pcl, generation);
+        assert_eq!(pcl.pcl_gen.load(Ordering::Relaxed), 2);
+        assert!(pc_cons_leave(&pcl, &mut g), "a producer intervened");
+        assert_eq!(g, 2);
+        let generation = pc_mprod_enter(&pcl);
+        pc_mprod_leave(&pcl, generation);
+        pc_lock_init(&pcl);
+        assert_eq!(pcl.pcl_gen.load(Ordering::Relaxed), 0);
+    }
 
     #[test]
     fn enter_and_leave_track_the_owner() {

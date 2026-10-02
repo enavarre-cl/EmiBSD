@@ -90,7 +90,7 @@
 //!   protocol's usable regions, which already exclude the kernel, the firmware and the
 //!   bootloader's own data. The ISA hole and the `avail_end` bookkeeping have nothing to do.
 //! - `cpu_startup` prints the memory sizes and fills the boot CPU's TSS (`cpu_enter_pages`):
-//!   `version` (generated `vers.c`), `startclocks`, `rtcinit` (M5), the exec and physio maps
+//!   `version` (generated `vers.c`, M5-b), `rtcinit` (M7), the exec and physio maps
 //!   and `bufinit` (M6, M7), `cpu_init_extents` and `cpu_boot_mode` (M4-b) are not there yet.
 //! - The IDT is a static page (`IDT`) instead of the early page `locore0.S` reserves and the
 //!   page `init_x86_64` maps at `idt_vaddr`; `idt_allocmap` is an array of atomics.
@@ -123,7 +123,7 @@ use crate::arch::amd64::amd64::intr::{intr_default_setup, splraise};
 use crate::arch::amd64::amd64::locore::lgdt;
 use crate::arch::amd64::amd64::pmap::{PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap};
 use crate::arch::amd64::amd64::vector::Xexceptions;
-use crate::arch::amd64::include::cpu::{cpu_info_primary, curcpu};
+use crate::arch::amd64::include::cpu::{CpuInfo, cpu_info_primary, curcpu};
 use crate::arch::amd64::include::cpufunc::{intr_enable, lidt, lldt, ltr};
 use crate::arch::amd64::include::intrdefs::IPL_IPI;
 use crate::arch::amd64::include::param::PAGE_SIZE;
@@ -135,7 +135,9 @@ use crate::arch::amd64::include::segments::{
 };
 use crate::arch::amd64::include::tss::X86_64Tss;
 use crate::arch::amd64::include::vmparam::VM_MAXUSER_ADDRESS;
-use crate::arch::amd64::isa::clock::i8254_delay;
+use crate::arch::amd64::isa::clock::{
+    i8254_delay, i8254_initclocks, i8254_start_both_clocks, startclocks,
+};
 use crate::kassert;
 use crate::kern::init_main::BOOTHOWTO;
 use crate::kern::kern_softintr::softintr_init;
@@ -420,8 +422,9 @@ pub fn x86_64_proc0_tss_ldt_init() {
 
 /// `cpu_startup`: machine-dependent startup code (see the module's deviations).
 pub fn cpu_startup() {
-    // msgbuf_vaddr / initmsgbuf: the message buffer is static (M2). version, startclocks,
-    // rtcinit: M5.
+    // msgbuf_vaddr / initmsgbuf: the message buffer is static (M2). version: M5-b.
+    startclocks();
+    let _ = unported!("rtcinit (the mc146818 time-of-day clock, M7)");
 
     let physmem = PHYSMEM.load(Ordering::Relaxed);
     kprintf!(
@@ -527,6 +530,52 @@ pub fn cpu_reset() -> ! {
 /// `delay(9)`: busy-waits `usec` microseconds (`delay_func`, see the module's deviations).
 pub fn delay(usec: u32) {
     i8254_delay(usec.min(i32::MAX as u32) as i32);
+}
+
+/// `initclock_func`: the i8254 until `lapic_calibrate_timer` installs the LAPIC timer.
+static INITCLOCK_FUNC: StaticCell<fn()> = StaticCell::new(i8254_initclocks);
+/// `startclock_func`.
+static STARTCLOCK_FUNC: StaticCell<fn()> = StaticCell::new(i8254_start_both_clocks);
+
+/// `initclock_func = f`: picks the clock hardware (`lapic_calibrate_timer`).
+pub fn set_initclock_func(f: fn()) {
+    // SAFETY: written on the boot CPU during autoconfiguration, before `cpu_initclocks`.
+    unsafe { INITCLOCK_FUNC.write(f) };
+}
+
+/// `startclock_func = f`.
+pub fn set_startclock_func(f: fn()) {
+    // SAFETY: as for `set_initclock_func`.
+    unsafe { STARTCLOCK_FUNC.write(f) };
+}
+
+/// `initclock_func == i8254_initclocks`: whether the i8254 and the RTC drive the clocks.
+pub fn initclock_is_i8254() -> bool {
+    // SAFETY: read after autoconfiguration set it, or the static default.
+    core::ptr::fn_addr_eq(unsafe { INITCLOCK_FUNC.read() }, i8254_initclocks as fn())
+}
+
+/// `cpu_initclocks`.
+pub fn cpu_initclocks() {
+    // SAFETY: as for `initclock_is_i8254`.
+    (unsafe { INITCLOCK_FUNC.read() })();
+}
+
+/// `cpu_startclock`.
+pub fn cpu_startclock() {
+    // SAFETY: as for `initclock_is_i8254`.
+    (unsafe { STARTCLOCK_FUNC.read() })();
+}
+
+/// `need_resched`: asks `ci` to reschedule.
+pub fn need_resched(ci: &CpuInfo) {
+    ci.ci_want_resched.set(1);
+
+    // There's a risk we'll be called before the idle threads start
+    if !ci.ci_curproc.get().is_null() {
+        // aston(ci->ci_curproc), cpu_kick(ci): struct proc (M5-b), MULTIPROCESSOR.
+        let _ = unported!("need_resched: aston (struct proc, M5-b)");
+    }
 }
 
 /// `setgate`: fills an interrupt or trap gate for `func` with `ist`, `type_`, `dpl` and the

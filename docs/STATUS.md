@@ -1,27 +1,28 @@
 # Status
 
-Milestone: **M4 done** (traps and interrupts on both archs). Updated: 2026-10-02.
-The user asked to stop at M4: M5 has not been started.
+Milestone: **M5 in progress** (part a, clocks: MI code done, timers half wired). Updated: 2026-10-02.
 
 Done:
-- M4-b2: arm64 `dev/ofw/fdt.c` over the DTB Limine passes (QEMU `virt,acpi=off`), the
-  `machine::fdt` contract, `pluart_init_cons` (console from `/chosen`, no fixed address),
-  `arm_intr_*_fdt` registration, the GICv2 driver `ampintc`, the PL011 receive interrupt;
-  `do_el1h_sync` enables interrupts. `smoke`'s `selftest=uart` echoes `hello` on both archs.
-- M4-b1: amd64 `spl(9)` (`intr.c`, `spl.S`, `i8259.c`, legacy `INTRSTUB`s, `Xsoft*`, LAPIC
-  subset), MI soft interrupts, UP mutex, `evcount`, `cpu_configure` on both archs.
-- M4-a: real traps on both archs, `cpu_info`/`curcpu()`, ddb-lite `db_ktrap`/`ddb_regs`,
-  `selftest=trap` (OpenBSD's fatal trap message + panic).
-- M3: page allocator, kernel page tables, `km_alloc`/pools/`malloc`/`GlobalAlloc`.
-  M2: printf/panic, console, `main()`, ddb-lite. M1: queues, trees, headers, libkern. M0: boot.
+- M5-a part 1: `sys/time.h`, `timetc.h`, `clockintr.h`, `timeout.h`, `pclock.h`, `sched.h`
+  (clock subset) as types; `kern_tc.c` (beerware, accepted), `kern_clockintr.c`,
+  `kern_timeout.c`, `kern_clock.c`, `roundrobin`, `sched_init_cpu` (the binds), `itimer_update`,
+  `profclock`, `libkern/random.c`, `pc_lock`; `Cpu::{CpuInfo, ClockFrame, curcpu, ci_queue,
+  ci_schedstate, CLKF_*, need_resched, cpu_initclocks/startclock}`; `main` runs
+  `timeout_startup`, `clockqueue_init`, `sched_init_cpu`, `timeout_proc_init`. amd64: i8254
+  timecounter, `startclocks`, LAPIC timer calibrated (`cpu0: apic clock running at`),
+  `Xintr_lapic_ltimer`, `LIR_TIMER` source. Host tests: 124 (timecounters, clockintr queue,
+  timer wheel).
+- Licence blocks of every ported file sit between `/* <LICENSES> */` markers (read from the
+  closing one). M4 done before: traps, interrupts, GICv2/DTB, UART by interrupt.
 
-Next (M5, not started):
-- Clocks (`agtimer`, LAPIC timer, clockintr, `kern_clock`/`kern_timeout`), autoconf
-  (`config_rootfound`, `mainbus`/`simplebus`, `cpu_attach`), IOAPIC/MADT, proc0 and the
-  scheduler, `tsleep`/`wakeup`, the real `arc4random`, `constab`/`cninit`.
-- Carried: `db_run.c`/`db_command.c`, `comintr`/`pluart_intr` on a tty (M7), the user-mode
-  trap paths and trampolines (M6), `agintc` (GICv3) for other machines.
+Next (M5-a part 2, then part b):
+- arm64 `dev/agtimer.c` (generic timer from the DTB, `arm_clock_register`, PPI through
+  `arm_intr_establish_fdt_idx`), `include/timetc.h`, `armreg.h` CNT*/CurrentEL constants;
+  then wire `initclocks()` in `main`, add `selftest=clock` (ticks at `hz`, a `timeout` fires)
+  to `justfile`'s smoke for both archs. The exit criterion "uptime ticks at hz" follows.
+- M5-b: `proc.h` → `Proc`/`Process`, `kern_proc.c`, `kern_synch.c` (tsleep/wakeup, sleep
+  queues), `sched_bsd.c`/`kern_sched.c` (the rest), `cpu_switchto`, `kern_kthread.c`, idle;
+  two kthreads ping-pong via tsleep/wakeup.
 
 Blockers:
-- `kern_tc.c` is beerware: `status = "todo"`, `getnsecuptime` reported; needs the user's
-  decision (M5 needs timecounters). `crc32` is zlib-licensed: `skipped: license: zlib`.
+- None. `crc32` stays `skipped: license: zlib`.

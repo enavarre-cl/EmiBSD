@@ -41,9 +41,10 @@
 //! Upstream: sys/arch/amd64/include/cpu.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M4 ports `struct cpu_info` (the fields the trap and interrupt
-//! paths use), `curcpu()`, `cpu_info_primary` and the `CPUF_*` flags. The CPU identification
-//! fields, the scheduler state (M5), the sensors, the vmm fields and the `CTL_MACHDEP` names
-//! arrive with their subsystems.
+//! paths use), `curcpu()`, `cpu_info_primary` and the `CPUF_*` flags; M5 adds
+//! `ci_schedstate`, `ci_queue`, `MAXCPUS`, `CPU_INFO_UNIT`, `struct clockframe` (the
+//! `intrframe`) and the `CLKF_*` macros. The CPU identification fields, the sensors, the vmm
+//! fields and the `CTL_MACHDEP` names arrive with their subsystems.
 //!
 //! ## Deviations
 //! - The fields kept follow the C's order; the ones left out are named in comments. Nothing
@@ -51,18 +52,23 @@
 //! - `curcpu()` reads `%gs:ci_self`, so it is valid only once `cpu_init_msrs` has set
 //!   `GS.base` (the C's `locore0.S` does that before `init_x86_64`; here `init_x86_64` does it
 //!   first thing).
+//! - `CPU_INFO_UNIT(ci)` is 0 until `struct device` exists (M5-b).
 
 use core::arch::asm;
 use core::cell::{Cell, UnsafeCell};
 use core::ptr;
 use core::sync::atomic::{AtomicU32, AtomicU64};
 
+use crate::arch::amd64::include::frame::Intrframe;
 use crate::arch::amd64::include::intr::Intrsource;
 use crate::arch::amd64::include::intrdefs::{MAX_INTR_SOURCES, NIPL};
 use crate::arch::amd64::include::pmap::Pmap;
+use crate::arch::amd64::include::segments::usermode;
 use crate::arch::amd64::include::tss::X86_64Tss;
+use crate::sys::clockintr::Clockqueue;
+use crate::sys::sched::SchedstatePercpu;
 
-/// `struct cpu_info`: the per-CPU state (the M4 subset, see the module doc).
+/// `struct cpu_info`: the per-CPU state (the M4/M5 subset, see the module doc).
 #[repr(C)]
 pub struct CpuInfo {
     // The beginning of this structure in mapped in the userspace "u-k" page tables, so that
@@ -95,16 +101,17 @@ pub struct CpuInfo {
     /// \[o\] U-K page table.
     pub ci_user_cr3: Cell<u64>,
     // ci_mds_tmp, ci_mds_buf (Micro-architectural Data Sampling): M6.
-    /// \[o\] `struct proc` (M5).
+    /// \[o\] `struct proc` (M5-b).
     pub ci_curproc: Cell<*const ()>,
-    // ci_schedstate: M5.
+    /// Scheduler state.
+    pub ci_schedstate: SchedstatePercpu,
     /// Active, non-kernel pmap.
     pub ci_proc_pmap: Cell<*const Pmap>,
     /// \[o\] last pmap used in userspace.
     pub ci_user_pmap: Cell<*const Pmap>,
-    /// \[o\] `struct pcb` (M5).
+    /// \[o\] `struct pcb` (M5-b).
     pub ci_curpcb: Cell<*const ()>,
-    /// \[o\] `struct pcb` (M5).
+    /// \[o\] `struct pcb` (M5-b).
     pub ci_idle_pcb: Cell<*const ()>,
     /// \[o\] `CPUPF_*`.
     pub ci_pflags: Cell<u32>,
@@ -145,6 +152,8 @@ pub struct CpuInfo {
     /// `CI_DDB_*`.
     pub ci_ddb_paused: Cell<i32>,
     // ci_srp_hazards, ci_xcall, ci_uvm (MULTIPROCESSOR), the sensors, gmon, vmm: later.
+    /// The clock interrupt queue.
+    pub ci_queue: Clockqueue,
     /// The first panic message of this CPU.
     pub ci_panicbuf: UnsafeCell<[u8; 512]>,
 }
@@ -169,6 +178,7 @@ impl CpuInfo {
             ci_intr_rsp: Cell::new(0),
             ci_user_cr3: Cell::new(0),
             ci_curproc: Cell::new(ptr::null()),
+            ci_schedstate: SchedstatePercpu::new(),
             ci_proc_pmap: Cell::new(ptr::null()),
             ci_user_pmap: Cell::new(ptr::null()),
             ci_curpcb: Cell::new(ptr::null()),
@@ -191,6 +201,7 @@ impl CpuInfo {
             ci_tss: Cell::new(ptr::null()),
             ci_gdt: Cell::new(ptr::null()),
             ci_ddb_paused: Cell::new(0),
+            ci_queue: Clockqueue::new(),
             ci_panicbuf: UnsafeCell::new([0; 512]),
         }
     }
@@ -239,6 +250,9 @@ pub const CPUF_PARK: u32 = 0x10000;
 /// `CPUF_VMM`: CPU is executing in VMM mode.
 pub const CPUF_VMM: u32 = 0x20000;
 
+/// `MAXCPUS`: without `MULTIPROCESSOR`, one.
+pub const MAXCPUS: u32 = 1;
+
 /// `CI_DDB_RUNNING`.
 pub const CI_DDB_RUNNING: i32 = 0;
 /// `CI_DDB_SHOULDSTOP`.
@@ -249,6 +263,10 @@ pub const CI_DDB_STOPPED: i32 = 2;
 pub const CI_DDB_ENTERDDB: i32 = 3;
 /// `CI_DDB_INDDB`.
 pub const CI_DDB_INDDB: i32 = 4;
+
+/// `struct clockframe`: arguments to hardclock, softclock and statclock encapsulate the
+/// previous machine state in an opaque clockframe; for now, use generic intrframe.
+pub type Clockframe = Intrframe;
 
 /// `curcpu()`: this CPU's `cpu_info`, through `%gs:ci_self` (see the module's deviations).
 #[inline]
@@ -286,4 +304,27 @@ pub fn cpu_is_primary(ci: &CpuInfo) -> bool {
 /// `CPU_IS_RUNNING(ci)`.
 pub fn cpu_is_running(ci: &CpuInfo) -> bool {
     ci.ci_flags.load(core::sync::atomic::Ordering::Relaxed) & CPUF_RUNNING != 0
+}
+
+/// `CPU_INFO_UNIT(ci)`: `ci_dev->dv_unit`, 0 without a device (see the module's deviations).
+pub fn cpu_info_unit(_ci: &CpuInfo) -> u32 {
+    0
+}
+
+/// `CLKF_USERMODE(frame)`.
+#[inline]
+pub fn clkf_usermode(frame: &Clockframe) -> bool {
+    usermode(frame.if_cs as u64)
+}
+
+/// `CLKF_PC(frame)`.
+#[inline]
+pub fn clkf_pc(frame: &Clockframe) -> usize {
+    frame.if_rip as usize
+}
+
+/// `CLKF_INTR(frame)`: the clock interrupted another interrupt handler.
+#[inline]
+pub fn clkf_intr(_frame: &Clockframe) -> bool {
+    curcpu().ci_idepth.get() > 1
 }

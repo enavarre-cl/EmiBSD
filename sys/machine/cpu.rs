@@ -2,10 +2,18 @@
 //!
 //! Milestone M0 needs only the earliest setup, a way to park the CPU and a way to leave the
 //! machine; M2 adds `boot(9)` (the end of `panic`) and `delay(9)` (the polled console); M4 adds
-//! interrupt masking (`spl(9)`), M5 context switching.
+//! interrupt masking (`spl(9)`); M5 adds `curcpu()` and the `struct cpu_info` members the
+//! clock and scheduler code reach (`ci_queue`, `ci_schedstate`, `ci_randseed`, `ci_curproc`),
+//! the `CLKF_*` macros over the architecture's `struct clockframe`, `need_resched` and the
+//! clock entry points `cpu_initclocks`/`cpu_startclock`/`setstatclockrate`; context switching
+//! comes with part b.
+
+use core::cell::Cell;
 
 use crate::machine::Machine;
 use crate::machine::bootinfo::BootInfo;
+use crate::sys::clockintr::Clockqueue;
+use crate::sys::sched::SchedstatePercpu;
 
 /// Outcome reported through [`Exit::exit`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,8 +36,19 @@ impl ExitStatus {
     }
 }
 
-/// The boot CPU, from the bootloader's hand-off through `cpu_startup`.
+/// The boot CPU, from the bootloader's hand-off through `cpu_startup`, and the per-CPU state.
 pub trait Cpu {
+    /// `struct cpu_info`: the architecture's per-CPU state. Generic code holds `&'static`
+    /// references to it and reaches the members through the accessors below.
+    type CpuInfo: 'static;
+
+    /// `struct clockframe`: what the clock interrupt handlers get (`intrframe` on amd64,
+    /// `trapframe` on arm64).
+    type ClockFrame;
+
+    /// `MAXCPUS`: the most CPUs this kernel supports.
+    const MAXCPUS: u32;
+
     /// Earliest machine setup, called once by the boot glue before anything prints: OpenBSD's
     /// `init_x86_64` / `initarm`, as far as they are ported. It brings up the message buffer and
     /// the console (`consinit`), so everything after it can `printf`. The error is a fixed
@@ -56,6 +75,9 @@ pub trait Cpu {
     /// cache and the descriptor tables join it in later milestones.
     fn cpu_startup();
 
+    /// `curcpu()`: this CPU's `cpu_info`.
+    fn curcpu() -> &'static Self::CpuInfo;
+
     /// `curcpu()` as an opaque pointer: what lock owners and the soft interrupt runner
     /// record, compared for identity only.
     fn curcpu_ptr() -> *const ();
@@ -63,9 +85,67 @@ pub trait Cpu {
     /// `curcpu()->ci_mutex_level += delta` (`DIAGNOSTIC`): the mutex nesting counter.
     fn curcpu_mutex_level_add(delta: i32);
 
+    /// `CPU_IS_PRIMARY(ci)`.
+    fn cpu_is_primary(ci: &Self::CpuInfo) -> bool;
+
+    /// `CPU_INFO_UNIT(ci)`: the CPU's device unit number.
+    fn cpu_info_unit(ci: &Self::CpuInfo) -> u32;
+
+    /// `ci->ci_queue`: the CPU's clock interrupt queue.
+    fn ci_queue(ci: &Self::CpuInfo) -> &Clockqueue;
+
+    /// `ci->ci_schedstate`: the CPU's scheduler state.
+    fn ci_schedstate(ci: &Self::CpuInfo) -> &SchedstatePercpu;
+
+    /// `ci->ci_randseed`: the seed of `random()` (`lib/libkern/random.c`).
+    fn ci_randseed(ci: &Self::CpuInfo) -> &Cell<u32>;
+
+    /// `ci->ci_curproc`: the thread running on the CPU (`struct proc`, M5-b), null when none.
+    fn ci_curproc(ci: &Self::CpuInfo) -> *const ();
+
+    /// `ci->ci_idepth`: the interrupt nesting depth.
+    fn ci_idepth(ci: &Self::CpuInfo) -> u32;
+
+    /// `CLKF_USERMODE(frame)`: whether the clock interrupt came from user mode.
+    fn clkf_usermode(frame: &Self::ClockFrame) -> bool;
+
+    /// `CLKF_PC(frame)`: the interrupted program counter.
+    fn clkf_pc(frame: &Self::ClockFrame) -> usize;
+
+    /// `CLKF_INTR(frame)`: whether the clock interrupt interrupted another interrupt handler.
+    fn clkf_intr(frame: &Self::ClockFrame) -> bool;
+
+    /// `need_resched(ci)`: asks `ci` to reschedule at the next opportunity.
+    fn need_resched(ci: &Self::CpuInfo);
+
+    /// `cpu_initclocks()`: the machine-dependent part of `initclocks`: picks the clock
+    /// hardware, sets `stathz`/`profhz`, registers the timecounter.
+    fn cpu_initclocks();
+
+    /// `cpu_startclock()`: starts dispatching clock interrupts on the calling CPU.
+    fn cpu_startclock();
+
+    /// `setstatclockrate(newhz)`: changes the statistics clock's rate, where the hardware
+    /// has a separate one.
+    fn setstatclockrate(newhz: i32);
+
     /// `cpu_configure()` (`autoconf.c`): the machine-dependent part of autoconfiguration;
     /// ends with `spl0()` and `cold = 0`.
     fn cpu_configure();
+}
+
+/// `struct cpu_info` on the selected machine.
+pub type CpuInfo = <Machine as Cpu>::CpuInfo;
+
+/// `struct clockframe` on the selected machine.
+pub type ClockFrame = <Machine as Cpu>::ClockFrame;
+
+/// `MAXCPUS` on the selected machine.
+pub const MAXCPUS: u32 = <Machine as Cpu>::MAXCPUS;
+
+/// `curcpu()` on the selected machine.
+pub fn curcpu() -> &'static CpuInfo {
+    Machine::curcpu()
 }
 
 /// `cpu_configure` on the selected machine.
@@ -76,6 +156,26 @@ pub fn cpu_configure() {
 /// `cpu_startup` on the selected machine.
 pub fn cpu_startup() {
     Machine::cpu_startup()
+}
+
+/// `cpu_initclocks` on the selected machine.
+pub fn cpu_initclocks() {
+    Machine::cpu_initclocks()
+}
+
+/// `cpu_startclock` on the selected machine.
+pub fn cpu_startclock() {
+    Machine::cpu_startclock()
+}
+
+/// `setstatclockrate` on the selected machine.
+pub fn setstatclockrate(newhz: i32) {
+    Machine::setstatclockrate(newhz)
+}
+
+/// `need_resched` on the selected machine.
+pub fn need_resched(ci: &CpuInfo) {
+    Machine::need_resched(ci)
 }
 
 /// `boot(9)` on the selected machine.

@@ -40,44 +40,61 @@
 //! Status: `wip`. Milestone M4 ports `local_pic`, the register accessors (`i82489_*`,
 //! `x2apic_*`, `lapic_readreg`/`lapic_writereg`, `lapic_cpu_number`), `lapic_map`,
 //! `lapic_enable`, `lapic_disable`, `lapic_set_lvt`, `lapic_boot_init`, `lapic_hwmask`,
-//! `lapic_hwunmask` and `lapic_setup`. The timer (`lapic_calibrate_timer`, `lapic_clockintr`,
-//! `lapic_initclocks`, `lapic_timer_*`, `lapic_startclock`) and the IPIs (`x86_ipi*`,
-//! `i82489_ipi`, `x2apic_ipi`) come with M5.
+//! `lapic_hwunmask` and `lapic_setup`; M5 adds the timer: `lapic_gettick`,
+//! `lapic_timer_rearm/trigger/start/oneshot/periodic`, `lapic_timer_intrclock`,
+//! `lapic_clockintr`, `lapic_startclock`, `lapic_initclocks`, `wait_next_cycle` and
+//! `lapic_calibrate_timer`. The IPIs (`x86_ipi*`, `i82489_ipi`, `x2apic_ipi`) need
+//! `MULTIPROCESSOR`.
 //!
 //! ## Deviations
 //! - `lapic_map` maps the page with `pmap_kenter_pa` (`PMAP_NOCACHE`) instead of whapping the
 //!   PTE by hand: there is no TLB shootdown to avoid yet. `pmap_enter_special` (the u-k
 //!   mapping for the Meltdown trampoline) is M6. x2APIC mode is taken only when the firmware
 //!   enabled it (`cpu_ecxfeature` arrives with CPU identification, M4-b), and the `CODEPATCH`
-//!   of the EOI is not there.
+//!   of the EOI is not there: the timer stub's EOI is the MMIO write.
 //! - `lapic_set_lvt`: the MP/ACPI interrupt tables (`mp_intrs`, M5) do not exist, so LINT0 is
 //!   programmed as ExtINT and LINT1 as NMI, the MP specification's default configuration
 //!   (what `mpbios` would record); the firmware leaves LINT0 masked, which would cut the
 //!   8259 off. The AMD C1E workaround needs `ci_vendor`/`ci_family` (M4-b).
-//! - `lapic_boot_init` reserves `LAPIC_TIMER_VECTOR` but points no gate at it until the
-//!   timer stub exists (M5).
+//! - `lapic_clockintr` takes the interrupt frame by pointer (`vector.S` passes `%rsp`), not
+//!   by value as the C does.
+//! - `lapic_calibrate_timer` always calibrates against the i8254 (`delay_func` is
+//!   `i8254_delay`, `machdep.rs`); `mp_verbose` is off and the CPU is named `cpu0`.
 
 use core::cell::UnsafeCell;
+use core::ffi::c_void;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use libkern::StaticCell;
 
-use crate::arch::amd64::amd64::machdep::{IDT_ALLOCMAP, idt_vec_set};
-use crate::arch::amd64::amd64::vector::Xintrspurious;
-use crate::arch::amd64::include::cpu::CpuInfo;
+use crate::arch::amd64::amd64::machdep::{
+    IDT_ALLOCMAP, idt_vec_set, set_initclock_func, set_startclock_func,
+};
+use crate::arch::amd64::amd64::vector::{Xintr_lapic_ltimer, Xintrspurious};
+use crate::arch::amd64::include::cpu::{CpuInfo, curcpu};
 use crate::arch::amd64::include::cpufunc::{intr_disable, intr_restore, rdmsr, wrmsr};
+use crate::arch::amd64::include::frame::Intrframe;
 use crate::arch::amd64::include::i82489reg::{
-    LAPIC_DLMODE_EXTINT, LAPIC_DLMODE_NMI, LAPIC_ID, LAPIC_ID_SHIFT, LAPIC_LVINT0, LAPIC_LVINT1,
-    LAPIC_LVT_MASKED, LAPIC_LVTT, LAPIC_SVR, LAPIC_SVR_ENABLE, MSR_X2APIC_BASE,
+    LAPIC_CCR_TIMER, LAPIC_DCR_TIMER, LAPIC_DCRT_DIV1, LAPIC_DLMODE_EXTINT, LAPIC_DLMODE_NMI,
+    LAPIC_ICR_TIMER, LAPIC_ID, LAPIC_ID_SHIFT, LAPIC_LVINT0, LAPIC_LVINT1, LAPIC_LVT_MASKED,
+    LAPIC_LVTT, LAPIC_LVTT_M, LAPIC_LVTT_TM_ONESHOT, LAPIC_LVTT_TM_PERIODIC, LAPIC_SVR,
+    LAPIC_SVR_ENABLE, MSR_X2APIC_BASE,
 };
 use crate::arch::amd64::include::i82489var::{LAPIC_SPURIOUS_VECTOR, LAPIC_TIMER_VECTOR};
 use crate::arch::amd64::include::param::PAGE_SIZE;
 use crate::arch::amd64::include::pic::{PIC_LAPIC, Pic};
 use crate::arch::amd64::include::pmap::PMAP_NOCACHE;
 use crate::arch::amd64::include::specialreg::{APICBASE_ENABLE_X2APIC, MSR_APICBASE};
-use crate::kern::subr_evcount::{evcount_attach, evcount_percpu};
+use crate::arch::amd64::isa::clock::{RTCLOCK_TVAL, gettick, i8254_inittimecounter_simple};
+use crate::conf::param::HZ;
+use crate::dev::ic::i8253reg::TIMER_FREQ;
+use crate::kern::kern_clock::{PROFHZ, STATCLOCK_IS_RANDOMIZED, STATHZ};
+use crate::kern::kern_clockintr::{clockintr_cpu_init, clockintr_dispatch, clockintr_trigger};
+use crate::kern::subr_evcount::{evcount_attach, evcount_inc, evcount_percpu};
+use crate::kprintf;
 use crate::machine::pmap::{pmap_kenter_pa, pmap_kernel, pmap_update};
+use crate::sys::clockintr::Intrclock;
 use crate::sys::evcount::Evcount;
 use crate::sys::mman::{PROT_READ, PROT_WRITE};
 use crate::sys::types::{Paddr, Vaddr};
@@ -249,18 +266,184 @@ pub fn lapic_set_lvt() {
 pub fn lapic_boot_init(lapic_base: Paddr) {
     lapic_map(lapic_base);
 
-    // MULTIPROCESSOR: LAPIC_IPI_VECTOR and the invalidation IPIs (M5).
+    // MULTIPROCESSOR: LAPIC_IPI_VECTOR and the invalidation IPIs.
 
     IDT_ALLOCMAP[LAPIC_SPURIOUS_VECTOR as usize].store(true, Ordering::Relaxed);
     idt_vec_set(LAPIC_SPURIOUS_VECTOR, Xintrspurious as *const () as usize);
     IDT_ALLOCMAP[LAPIC_TIMER_VECTOR as usize].store(true, Ordering::Relaxed);
-    // idt_vec_set(LAPIC_TIMER_VECTOR, Xintr_lapic_ltimer): the timer stub (M5).
+    idt_vec_set(LAPIC_TIMER_VECTOR, Xintr_lapic_ltimer as *const () as usize);
 
     // NXEN, NHYPERV: not configured.
 
     evcount_attach(&CLK_COUNT, "clock", ptr::from_ref(&CLK_IRQ).cast::<()>());
     evcount_percpu(&CLK_COUNT);
     // MULTIPROCESSOR: ipi_count.
+}
+
+/// `lapic_gettick`: the timer's current count.
+pub fn lapic_gettick() -> u32 {
+    lapic_readreg(LAPIC_CCR_TIMER)
+}
+
+/*
+ * this gets us up to a 4GHz busclock....
+ */
+
+/// `lapic_per_second`: the timer's clock, in Hz.
+pub static LAPIC_PER_SECOND: AtomicU32 = AtomicU32::new(0);
+/// `lapic_timer_nsec_cycle_ratio`: cycles per nanosecond, as a 32.32 fixed-point number.
+pub static LAPIC_TIMER_NSEC_CYCLE_RATIO: AtomicU64 = AtomicU64::new(0);
+/// `lapic_timer_nsec_max`: the longest interval the timer can be programmed for.
+pub static LAPIC_TIMER_NSEC_MAX: AtomicU64 = AtomicU64::new(0);
+
+/// `lapic_timer_intrclock`.
+pub const LAPIC_TIMER_INTRCLOCK: Intrclock = Intrclock {
+    ic_cookie: ptr::null_mut(),
+    ic_rearm: lapic_timer_rearm,
+    ic_trigger: lapic_timer_trigger,
+};
+
+/// `lapic_timer_rearm`: fires the timer in `nsecs`.
+pub fn lapic_timer_rearm(_unused: *mut c_void, nsecs: u64) {
+    let nsecs = nsecs.min(LAPIC_TIMER_NSEC_MAX.load(Ordering::Relaxed));
+    let mut cycles =
+        ((nsecs.wrapping_mul(LAPIC_TIMER_NSEC_CYCLE_RATIO.load(Ordering::Relaxed))) >> 32) as u32;
+    if cycles == 0 {
+        cycles = 1;
+    }
+    lapic_writereg(LAPIC_ICR_TIMER, cycles);
+}
+
+/// `lapic_timer_trigger`: fires the timer as soon as possible.
+pub fn lapic_timer_trigger(_unused: *mut c_void) {
+    let s = intr_disable();
+    lapic_timer_oneshot(0, 1);
+    // SAFETY: `s` is this CPU's saved flags.
+    unsafe { intr_restore(s) };
+}
+
+/// `lapic_timer_start`: start the local apic countdown timer.
+///
+/// First set the mode, mask, and vector. Then set the divisor. Last, set the cycle count:
+/// this restarts the countdown.
+#[inline]
+fn lapic_timer_start(mode: u32, mask: u32, cycles: u32) {
+    lapic_writereg(LAPIC_LVTT, mode | mask | LAPIC_TIMER_VECTOR as u32);
+    lapic_writereg(LAPIC_DCR_TIMER, LAPIC_DCRT_DIV1);
+    lapic_writereg(LAPIC_ICR_TIMER, cycles);
+}
+
+/// `lapic_timer_oneshot`.
+pub fn lapic_timer_oneshot(mask: u32, cycles: u32) {
+    lapic_timer_start(LAPIC_LVTT_TM_ONESHOT, mask, cycles);
+}
+
+/// `lapic_timer_periodic`.
+pub fn lapic_timer_periodic(mask: u32, cycles: u32) {
+    lapic_timer_start(LAPIC_LVTT_TM_PERIODIC, mask, cycles);
+}
+
+/// `lapic_clockintr`: the timer interrupt, from `Xintr_lapic_ltimer` (see the module's
+/// deviations).
+#[unsafe(no_mangle)]
+pub extern "C" fn lapic_clockintr(_arg: *mut c_void, frame: &mut Intrframe) {
+    let ci = curcpu();
+
+    let floor = ci.ci_handled_intr_level.get();
+    ci.ci_handled_intr_level.set(ci.ci_ilevel.get());
+    clockintr_dispatch(ptr::from_mut(frame).cast::<c_void>());
+    ci.ci_handled_intr_level.set(floor);
+
+    evcount_inc(&CLK_COUNT);
+}
+
+/// `lapic_startclock`.
+pub fn lapic_startclock() {
+    clockintr_cpu_init(Some(&LAPIC_TIMER_INTRCLOCK));
+    clockintr_trigger();
+}
+
+/// `lapic_initclocks`.
+pub fn lapic_initclocks() {
+    i8254_inittimecounter_simple();
+
+    let hz = HZ.load(Ordering::Relaxed);
+    STATHZ.store(hz, Ordering::Relaxed);
+    PROFHZ.store(hz * 10, Ordering::Relaxed);
+    STATCLOCK_IS_RANDOMIZED.store(true, Ordering::Relaxed);
+}
+
+/// `wait_next_cycle`: spins until the i8254 reloads.
+#[inline]
+fn wait_next_cycle() {
+    let mut tlast: u32 = 1 << 16; // i8254 counter has 16 bits at most
+    loop {
+        let tick = gettick() as u32;
+        if tick > tlast {
+            return;
+        }
+        tlast = tick;
+    }
+}
+
+/// `lapic_calibrate_timer`: calibrate the local apic count-down timer (which is running at
+/// bus-clock speed) vs. the i8254 counter/timer (which is running at a fixed rate).
+///
+/// The Intel MP spec says: "An MP operating system may use the IRQ8 real-time clock as a
+/// reference to determine the actual APIC timer clock speed."
+///
+/// We're actually using the IRQ0 timer. Hmm.
+pub fn lapic_calibrate_timer(_ci: &CpuInfo) {
+    if LAPIC_PER_SECOND.load(Ordering::Relaxed) == 0 {
+        // mp_verbose: "cpu0: calibrating local timer".
+
+        // Configure timer to one-shot, interrupt masked, large positive number.
+        lapic_timer_oneshot(LAPIC_LVTT_M, 0x8000_0000);
+
+        // delay_func == i8254_delay: always (see the module's deviations).
+        let s = intr_disable();
+
+        // wait for current cycle to finish
+        wait_next_cycle();
+
+        let startapic = lapic_gettick();
+
+        // wait the next hz cycles
+        let hz = HZ.load(Ordering::Relaxed);
+        for _ in 0..hz {
+            wait_next_cycle();
+        }
+
+        let endapic = lapic_gettick();
+
+        // SAFETY: `s` is this CPU's saved flags.
+        unsafe { intr_restore(s) };
+
+        let dtick = u64::from(hz as u32) * RTCLOCK_TVAL.load(Ordering::Relaxed);
+        let dapic = u64::from(startapic.wrapping_sub(endapic));
+
+        // there are TIMER_FREQ ticks per second. in dtick ticks, there are dapic bus clocks.
+        let tmp = (TIMER_FREQ as u64 * dapic) / dtick;
+
+        LAPIC_PER_SECOND.store(tmp as u32, Ordering::Relaxed);
+    }
+
+    let per_second = LAPIC_PER_SECOND.load(Ordering::Relaxed);
+    kprintf!(
+        "cpu0: apic clock running at {}MHz\n",
+        per_second / (1000 * 1000)
+    );
+
+    // XXX What do we do if this is zero?
+    if per_second == 0 {
+        return;
+    }
+
+    let ratio = u64::from(per_second) * (1u64 << 32) / 1_000_000_000;
+    LAPIC_TIMER_NSEC_CYCLE_RATIO.store(ratio, Ordering::Relaxed);
+    LAPIC_TIMER_NSEC_MAX.store(u64::MAX / ratio, Ordering::Relaxed);
+    set_initclock_func(lapic_initclocks);
+    set_startclock_func(lapic_startclock);
 }
 
 /// `lapic_hwmask`: masks LVT entry `pin`.

@@ -573,3 +573,47 @@ Xsoftclock:
 	decl	%gs:{CI_IDEPTH}
 	jmp	*%r13			/* retpoline_r13 */
 	.size	Xsoftclock, . - Xsoftclock
+
+/*
+ * Local APIC timer interrupt. The handler takes the frame by pointer (%rsi),
+ * where the C passes `struct intrframe' by value; the EOI is the MMIO write
+ * (the x2APIC CODEPATCH is not ported).
+ */
+	.globl	Xrecurse_lapic_ltimer
+	.type	Xrecurse_lapic_ltimer,@function
+	.p2align 4, 0x90
+Xrecurse_lapic_ltimer:
+	INTR_RECURSE
+	jmp	1f
+	.size	Xrecurse_lapic_ltimer, . - Xrecurse_lapic_ltimer
+	.globl	Xintr_lapic_ltimer
+	.type	Xintr_lapic_ltimer,@function
+	.p2align 4, 0x90
+Xintr_lapic_ltimer:
+	INTRENTRY	intr_lapic_ltimer
+	movl	$0,local_apic+{LAPIC_EOI}(%rip)
+	movl	%gs:{CI_ILEVEL},%ebx
+	cmpl	${IPL_CLOCK},%ebx
+	jae	2f
+	.size	Xintr_lapic_ltimer, . - Xintr_lapic_ltimer
+	.globl	Xresume_lapic_ltimer
+	.type	Xresume_lapic_ltimer,@function
+Xresume_lapic_ltimer:
+	endbr64
+1:
+	incl	%gs:{CI_IDEPTH}
+	movl	${IPL_CLOCK},%gs:{CI_ILEVEL}
+	sti
+	cld
+	/* SMAP_CLAC: with CPU identification (M4-b). */
+	movq	%rbx,{IF_PPL}(%rsp)
+	xorq	%rdi,%rdi
+	movq	%rsp,%rsi
+	call	lapic_clockintr
+	movq	$0,-8(%rsp)
+	jmp	Xdoreti
+2:
+	movq	$(1 << {LIR_TIMER}),%rax
+	orq	%rax,%gs:{CI_IPENDING}
+	jmp	intr_fast_exit		/* INTRFASTEXIT */
+	.size	Xresume_lapic_ltimer, . - Xresume_lapic_ltimer

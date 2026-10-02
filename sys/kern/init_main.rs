@@ -60,15 +60,17 @@
 
 use core::sync::atomic::{AtomicBool, AtomicI32};
 
+use crate::kern::kern_clockintr::clockqueue_init;
+use crate::kern::kern_sched::{sched_init, sched_init_cpu};
+use crate::kern::kern_timeout::{timeout_proc_init, timeout_startup};
+use crate::kern::sched_bsd::sched_lock_init;
 use crate::kprintf;
 use crate::machine::Machine;
 use crate::machine::cons::consinit;
-use crate::machine::cpu::{cpu_configure, cpu_startup};
+use crate::machine::cpu::{Cpu, cpu_configure, cpu_startup, curcpu};
 use crate::unported;
 use crate::uvm::uvm_init::uvm_init;
 
-#[cfg(not(feature = "qemu"))]
-use crate::machine::Cpu;
 #[cfg(feature = "qemu")]
 use crate::machine::{Exit, ExitStatus};
 
@@ -94,7 +96,7 @@ pub fn main() -> ! {
     let _ = unported!("proc0 / curproc setup (main)");
 
     // Initialize timeouts.
-    let _ = unported!("timeout_startup");
+    timeout_startup();
 
     // Attempt to find console and initialize in case of early panic or other messages.
     let _ = unported!("config_init"); // init autoconfiguration data structures
@@ -105,7 +107,7 @@ pub fn main() -> ! {
     // KUBSAN and WITNESS are kernel options this configuration does not have.
 
     let _ = unported!("KERNEL_LOCK_INIT");
-    let _ = unported!("SCHED_LOCK_INIT");
+    sched_lock_init(); // SCHED_LOCK_INIT()
 
     let _ = unported!("rw_obj_init");
     uvm_init();
@@ -174,13 +176,13 @@ pub fn main() -> ! {
     let _ = unported!("chgproccnt");
 
     // Initialize run queues
-    let _ = unported!("sched_init");
+    sched_init();
     let _ = unported!("sleep_queue_init");
-    let _ = unported!("clockqueue_init");
-    let _ = unported!("sched_init_cpu");
+    clockqueue_init(Machine::ci_queue(curcpu()));
+    sched_init_cpu(curcpu());
 
     // Initialize timeouts in process context.
-    let _ = unported!("timeout_proc_init");
+    timeout_proc_init();
 
     // Initialize task queues
     let _ = unported!("taskq_init");
@@ -213,8 +215,9 @@ pub fn main() -> ! {
     // Initialize the file systems. NFSSERVER / NFSCLIENT: not configured.
     let _ = unported!("vfsinit");
 
-    // Start real time and statistics clocks.
-    let _ = unported!("initclocks");
+    // Start real time and statistics clocks: initclocks() waits for the arm64 generic timer
+    // (agtimer, M5-a part 2); amd64's LAPIC timer is calibrated and ready.
+    let _ = unported!("initclocks (agtimer on arm64, M5-a part 2)");
 
     // SYSVSHM / SYSVSEM / SYSVMSG: not configured.
 

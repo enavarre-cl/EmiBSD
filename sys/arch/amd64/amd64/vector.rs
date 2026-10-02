@@ -7,7 +7,8 @@
 //! Status: `wip`. Milestone M4 ports the exception stubs `Xtrap00` to `Xtrap1f`, the
 //! `Xexceptions` table, `alltraps`/`alltraps_kern`, the `frameasm.h` entry macros, the
 //! `INTRSTUB` generic stub with the sixteen legacy (i8259) instances, `i8259_stubs[]` and
-//! the soft interrupt stubs `Xsoftclock`/`Xsoftnet`/`Xsofttty`. The IOAPIC and LAPIC stubs,
+//! the soft interrupt stubs `Xsoftclock`/`Xsoftnet`/`Xsofttty`; M5 adds the LAPIC timer stub
+//! `Xintr_lapic_ltimer` with its recurse/resume entries. The IOAPIC and IPI stubs,
 //! the IPIs, `x2apic_eoi` and the `#VC` (AMD SEV) and `DDBPROF` paths come with M5 and later.
 //!
 //! ## Deviations
@@ -28,9 +29,10 @@ use core::mem::offset_of;
 use crate::arch::amd64::include::cpu::CpuInfo;
 use crate::arch::amd64::include::frame::{Intrframe, IretqFrame, Trapframe};
 use crate::arch::amd64::include::i8259::IRQ_SLAVE;
+use crate::arch::amd64::include::i82489reg::LAPIC_EOI;
 use crate::arch::amd64::include::intr::{Intrhand, Intrsource, Intrstub};
 use crate::arch::amd64::include::intrdefs::{
-    IPL_SOFTCLOCK, IPL_SOFTNET, IPL_SOFTTTY, IREENT_MAGIC, NUM_LEGACY_IRQS,
+    IPL_CLOCK, IPL_SOFTCLOCK, IPL_SOFTNET, IPL_SOFTTTY, IREENT_MAGIC, LIR_TIMER, NUM_LEGACY_IRQS,
 };
 use crate::arch::amd64::include::segments::SEL_RPL;
 use crate::arch::amd64::include::trap::{
@@ -108,6 +110,9 @@ global_asm!(
     SOFTINTR_TTY = const SOFTINTR_TTY,
     SOFTINTR_NET = const SOFTINTR_NET,
     SOFTINTR_CLOCK = const SOFTINTR_CLOCK,
+    LAPIC_EOI = const LAPIC_EOI,
+    IPL_CLOCK = const IPL_CLOCK,
+    LIR_TIMER = const LIR_TIMER,
     options(att_syntax)
 );
 
@@ -124,4 +129,10 @@ unsafe extern "C" {
     pub fn Xsoftnet();
     /// `Xsofttty`: the soft tty interrupt stub.
     pub fn Xsofttty();
+    /// `Xintr_lapic_ltimer`: the local APIC timer's interrupt entry (its IDT gate).
+    pub fn Xintr_lapic_ltimer();
+    /// `Xrecurse_lapic_ltimer`: the timer's `is_recurse` entry (from `spllower`).
+    pub fn Xrecurse_lapic_ltimer();
+    /// `Xresume_lapic_ltimer`: the timer's `is_resume` entry (from `Xdoreti`).
+    pub fn Xresume_lapic_ltimer();
 }

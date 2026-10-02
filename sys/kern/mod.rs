@@ -6,18 +6,26 @@
 //! `[[extra]]`).
 
 pub mod init_main;
+pub mod kern_clock;
+pub mod kern_clockintr;
 pub mod kern_lock;
 pub mod kern_malloc;
+pub mod kern_sched;
 pub mod kern_softintr;
 pub mod kern_synch;
+pub mod kern_tc;
+pub mod kern_time;
+pub mod kern_timeout;
 pub mod kern_xxx;
 #[cfg(feature = "alloc")]
 pub mod rust_alloc;
+pub mod sched_bsd;
 #[cfg(feature = "qemu")]
 pub mod selftest;
 pub mod subr_evcount;
 pub mod subr_log;
 pub mod subr_pool;
 pub mod subr_prf;
+pub mod subr_prof;
 pub mod subr_tree;
 pub mod unported;

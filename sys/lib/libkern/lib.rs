@@ -24,6 +24,7 @@ extern crate std;
 
 pub mod crc32c;
 pub mod explicit_bzero;
+pub mod random;
 pub mod staticcell;
 pub mod strlcat;
 pub mod strlcpy;
@@ -32,6 +33,7 @@ pub mod timingsafe_bcmp;
 
 pub use crc32c::crc32c;
 pub use explicit_bzero::explicit_bzero;
+pub use random::random;
 pub use staticcell::StaticCell;
 pub use strlcat::strlcat;
 pub use strlcpy::strlcpy;

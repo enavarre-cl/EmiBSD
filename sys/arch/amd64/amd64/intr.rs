@@ -62,9 +62,12 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 
 use crate::arch::amd64::amd64::autoconf::COLD;
 use crate::arch::amd64::amd64::i8259::{I8259_PIC, i8259_default_setup, i8259_stubs_table};
+use crate::arch::amd64::amd64::lapic::LOCAL_PIC;
 use crate::arch::amd64::amd64::machdep::{IDT, IDT_ALLOCMAP, idt_vec_alloc, idt_vec_free, setgate};
 use crate::arch::amd64::amd64::spl::Xspllower;
-use crate::arch::amd64::amd64::vector::{Xsoftclock, Xsoftnet, Xsofttty};
+use crate::arch::amd64::amd64::vector::{
+    Xrecurse_lapic_ltimer, Xresume_lapic_ltimer, Xsoftclock, Xsoftnet, Xsofttty,
+};
 use crate::arch::amd64::include::cpu::{CpuInfo, cpu_info_primary, cpu_is_primary, curcpu};
 use crate::arch::amd64::include::cpufunc::{intr_disable, intr_restore};
 use crate::arch::amd64::include::frame::Intrframe;
@@ -72,8 +75,8 @@ use crate::arch::amd64::include::i8259::ICU_OFFSET;
 use crate::arch::amd64::include::intr::{IntrFn, Intrhand, Intrsource, Intrstub, apic_level};
 use crate::arch::amd64::include::intrdefs::{
     IDT_INTR_HIGH, IPL_CLOCK, IPL_HIGH, IPL_MPSAFE, IPL_NONE, IPL_SOFTCLOCK, IPL_SOFTNET,
-    IPL_SOFTTTY, IPL_TTY, IPL_WAKEUP, IST_EDGE, IST_LEVEL, IST_NONE, IST_PULSE, MAX_INTR_SOURCES,
-    NIPL, NUM_LEGACY_IRQS, SIR_CLOCK, SIR_NET, SIR_TTY,
+    IPL_SOFTTTY, IPL_TTY, IPL_WAKEUP, IST_EDGE, IST_LEVEL, IST_NONE, IST_PULSE, LIR_TIMER,
+    MAX_INTR_SOURCES, NIPL, NUM_LEGACY_IRQS, SIR_CLOCK, SIR_NET, SIR_TTY,
 };
 use crate::arch::amd64::include::pic::{PIC_SOFT, Pic};
 use crate::arch::amd64::include::pio::inb;
@@ -718,10 +721,19 @@ static FAKE_SOFTCLOCK_INTRHAND: Intrhand = Intrhand::new();
 static FAKE_SOFTNET_INTRHAND: Intrhand = Intrhand::new();
 /// `fake_softtty_intrhand`.
 static FAKE_SOFTTTY_INTRHAND: Intrhand = Intrhand::new();
-// fake_timer_intrhand, fake_ipi_intrhand: with the LAPIC (M5).
+/// `fake_timer_intrhand`.
+static FAKE_TIMER_INTRHAND: Intrhand = Intrhand::new();
+// fake_ipi_intrhand: MULTIPROCESSOR.
 
-/// A fixed source for `cpu_intr_init`.
-fn fixed_source(entry: usize, fake: &'static Intrhand, level: i32) -> &'static Intrsource {
+/// A fixed source for `cpu_intr_init`: `recurse` and `resume` entries, the fake handler at
+/// `level`, on `pic`.
+fn fixed_source(
+    recurse: usize,
+    resume: usize,
+    fake: &'static Intrhand,
+    level: i32,
+    pic: &'static Pic,
+) -> &'static Intrsource {
     let Some(isp) = malloc(size_of::<Intrsource>(), M_DEVBUF, M_NOWAIT | M_ZERO) else {
         panic(format_args!("can't allocate fixed interrupt source"));
     };
@@ -730,11 +742,11 @@ fn fixed_source(entry: usize, fake: &'static Intrhand, level: i32) -> &'static I
     unsafe { isp.write(Intrsource::new()) };
     // SAFETY: as above.
     let src: &'static Intrsource = unsafe { isp.as_ref() };
-    src.is_recurse.set(entry);
-    src.is_resume.set(entry);
+    src.is_recurse.set(recurse);
+    src.is_resume.set(resume);
     fake.ih_level.set(level);
     src.is_handlers.set(ptr::from_ref(fake));
-    src.is_pic.set(&SOFTINTR_PIC);
+    src.is_pic.set(pic);
     src
 }
 
@@ -743,21 +755,34 @@ fn fixed_source(entry: usize, fake: &'static Intrhand, level: i32) -> &'static I
 pub fn cpu_intr_init(ci: &CpuInfo) {
     ci.ci_isources[SIR_CLOCK as usize].set(fixed_source(
         Xsoftclock as *const () as usize,
+        Xsoftclock as *const () as usize,
         &FAKE_SOFTCLOCK_INTRHAND,
         IPL_SOFTCLOCK,
+        &SOFTINTR_PIC,
     ));
     ci.ci_isources[SIR_NET as usize].set(fixed_source(
         Xsoftnet as *const () as usize,
+        Xsoftnet as *const () as usize,
         &FAKE_SOFTNET_INTRHAND,
         IPL_SOFTNET,
+        &SOFTINTR_PIC,
     ));
     ci.ci_isources[SIR_TTY as usize].set(fixed_source(
         Xsofttty as *const () as usize,
+        Xsofttty as *const () as usize,
         &FAKE_SOFTTTY_INTRHAND,
         IPL_SOFTTTY,
+        &SOFTINTR_PIC,
     ));
-    // NLAPIC > 0: LIR_TIMER (Xrecurse/resume_lapic_ltimer), LIR_IPI, SIR_XCALL, xen and
-    // hyperv upcalls: with the LAPIC (M5).
+    // NLAPIC > 0
+    ci.ci_isources[LIR_TIMER as usize].set(fixed_source(
+        Xrecurse_lapic_ltimer as *const () as usize,
+        Xresume_lapic_ltimer as *const () as usize,
+        &FAKE_TIMER_INTRHAND,
+        IPL_CLOCK,
+        &LOCAL_PIC,
+    ));
+    // MULTIPROCESSOR: LIR_IPI, SIR_XCALL. NXEN, NHYPERV: not configured.
 
     intr_calculatemasks(ci);
 }
