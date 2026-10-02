@@ -3,7 +3,7 @@
 
 use super::super::Machine;
 use super::super::include::pio::outb;
-use crate::machine::api::{Cpu, ExitStatus};
+use crate::machine::{Cpu, ExitStatus};
 
 /// The port `xtask qemu` configures: `-device isa-debug-exit,iobase=0xf4,iosize=0x04`.
 const ISA_DEBUG_EXIT_PORT: u16 = 0xf4;

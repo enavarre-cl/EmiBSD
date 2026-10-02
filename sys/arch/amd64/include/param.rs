@@ -46,7 +46,7 @@
 //!   modules of their own when ported.
 
 use super::_types::{_ALIGNBYTES, _MAX_PAGE_SHIFT, _STACKALIGNBYTES, _aligned_pointer};
-use crate::machine::api::MachineParam;
+use crate::machine::MachineParam;
 
 /// `MACHINE`: the OpenBSD machine name.
 pub const MACHINE: &str = "amd64";

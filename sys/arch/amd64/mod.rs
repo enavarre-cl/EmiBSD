@@ -9,8 +9,7 @@ pub mod include;
 
 use core::arch::asm;
 
-use crate::machine::api::{Console, Cpu, Exit, ExitStatus, MachineInfo};
-use crate::machine::bootinfo::BootInfo;
+use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, MachineInfo};
 
 /// The amd64 implementation of the machine interface.
 pub struct Machine;

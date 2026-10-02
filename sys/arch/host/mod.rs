@@ -9,8 +9,7 @@
 
 use std::io::Write;
 
-use crate::machine::api::{Console, Cpu, Exit, ExitStatus, MachineInfo, MachineParam};
-use crate::machine::bootinfo::BootInfo;
+use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, MachineInfo, MachineParam};
 
 /// The host implementation of the machine interface.
 pub struct Machine;

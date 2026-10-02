@@ -40,9 +40,10 @@ Types live where the **header** is; functions live where the **`.c`** is. Rust a
 
 ## The `machine` contract
 
-`sys/machine/api.rs` holds traits standing in for `<machine/*.h>` and `cpufunc.h`.
-`sys/machine/mod.rs` re-exports `crate::arch::current::Machine` and asserts at compile time that it
-implements every trait. Generic code names only `crate::machine`.
+`sys/machine/<header>.rs` holds the traits standing in for `<machine/*.h>` and `cpufunc.h`, one
+module per OpenBSD header (`param.rs`, `cpu.rs`, `cons.rs`, later `pmap.rs`, `intr.rs`, ...), all
+re-exported from `sys/machine/mod.rs`, which also re-exports `crate::arch::current::Machine` and
+asserts at compile time that it implements every trait. Generic code names only `crate::machine`.
 
 Constants travel the same way as functions: `MachineParam` (M1) carries `<machine/param.h>` and
 the alignment rules of `<machine/_types.h>` as associated consts, each arch defines them in

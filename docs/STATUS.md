@@ -7,6 +7,8 @@ Done:
   `bsd: booted on <arch>` (amd64 in 1.7 s, arm64 in 5.7 s), prints the memory map and exits QEMU
   with status 33. The Limine protocol (base revision 6) is `sys/stand/limine.rs`, no crate.
 - Toolchain installed per `docs/SETUP.md` (rustup 1.98.1, just, QEMU 11.1, Limine 12.9.1).
+- Coding standard: fixed section order per file (`.claude/rules/rust-kernel.md`), tests longer
+  than 50 lines in `<name>/tests.rs`, one `machine/<header>.rs` per `<machine/*.h>` header.
 - Reference pinned at `3ce1f3f79392`. Ported: `sys/sys/{types,_types,errno,syslimits,param}.h`,
   `machine/{param,_types}.h` for both archs, `amd64/pio.h`, libkern `strlcpy strlcat strnlen
   crc32c timingsafe_bcmp explicit_bzero`. Wip subsets: `amd64/cpufunc.h`, `arm64/cpu.h`.

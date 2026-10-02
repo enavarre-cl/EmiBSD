@@ -4,7 +4,7 @@
 use core::arch::asm;
 
 use super::super::Machine;
-use crate::machine::api::{Cpu, ExitStatus};
+use crate::machine::{Cpu, ExitStatus};
 
 /// Semihosting operation: exit the application.
 const SYS_EXIT: u32 = 0x18;
