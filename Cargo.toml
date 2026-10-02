@@ -19,7 +19,8 @@ libkern = { path = "sys/lib/libkern" }
 # No `limine` crate: 0.6+ needs nightly (`ptr_metadata`), 0.5 is frozen at base revision 3.
 # The protocol structs live in sys/stand/limine.rs (docs/ARCHITECTURE.md, "Dependencies").
 bitflags = { version = "2", default-features = false }                  # typed flag sets for #define groups
-intrusive-collections = { version = "0.10", default-features = false }  # queue.h / tree.h semantics
+# No `intrusive-collections`: queue.h and tree.h are ported as our own intrusive structures
+# (sys/sys/queue.rs, sys/sys/tree.rs); see docs/ARCHITECTURE.md, "Dependencies".
 # host tooling only (tools/xtask)
 serde = { version = "1", features = ["derive"] }
 toml = "1"

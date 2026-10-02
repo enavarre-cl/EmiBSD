@@ -24,13 +24,14 @@ paths:
 - `static mut` is forbidden. Use atomics, the ported `Mutex<T>`, or `StaticCell<T>` with a
   documented invariant.
 - `#[repr(C)]` only where layout matters (hardware, ABI, bootloader). Otherwise let Rust lay it out.
-- Pointers: `&T`/`&mut T` where aliasing is clear; `NonNull<T>` for intrusive links and manually
-  managed lifetimes; raw pointers only at hardware/ABI edges. `UnsafeCell` for fields the C mutates
+- Pointers: `&T`/`&mut T` where aliasing is clear; `Cell<*const T>` inside the `queue.h`/`tree.h`
+  entries (the list's lock guards them, the API takes and returns `&T`); `NonNull<T>` for other
+  manually managed lifetimes; raw pointers only at hardware/ABI edges. `UnsafeCell` for fields the C mutates
   behind a shared pointer, with a doc line saying which lock protects them.
 - MMIO through `read_volatile`/`write_volatile` behind the `bus_space`-shaped API, never plain derefs.
 - Idiom decisions live in `docs/C_TO_RUST.md`. Follow them; propose a new row rather than improvising.
-- Dependencies allowed in `sys/`: `libkern`, `bitflags`, `intrusive-collections`; dev-only
-  `proptest`. Not allowed: `limine` (0.6+ is nightly-only, 0.5 is frozen at base revision 3; the
+- Dependencies allowed in `sys/`: `libkern`, `bitflags`; dev-only `proptest`. Lists and trees
+  are our own (`sys/sys/queue.rs`, `sys/sys/tree.rs`), not `intrusive-collections`. Not allowed: `limine` (0.6+ is nightly-only, 0.5 is frozen at base revision 3; the
   protocol structs are written in `sys/stand/limine.rs` from the spec), `x86_64`, `aarch64-cpu`,
   `spin`, `uart_16550`, `fdt`, `linked_list_allocator`, `buddy_system_allocator`, or any crate that
   replaces code OpenBSD has. Porting that code is the project.

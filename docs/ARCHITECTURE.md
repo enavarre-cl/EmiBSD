@@ -128,7 +128,7 @@ More appear as they are needed (`multiprocessor`, `small_kernel`, ...), one per 
 |---|---|---|
 | (none for Limine) | `sys/stand/limine.rs` | the `limine` crate was dropped: 0.6+ needs nightly (`ptr_metadata`), 0.5 is stable but frozen at base revision 3, which Limine has already tried to drop once. The protocol is about twenty `#[repr(C)]` structs; they are written from `PROTOCOL.md` |
 | `bitflags` | `sys/` | typed flag sets for `#define` groups; a macro, no runtime |
-| `intrusive-collections` | `sys/` | `queue.h`/`tree.h` semantics (O(1) unlink, multi-membership, no allocation) with upstream-audited `unsafe`. Decision to revisit at M1: port `queue.h` as our own intrusive lists instead |
+| (none for lists and trees) | `sys/sys/queue.rs`, `sys/sys/tree.rs` | `intrusive-collections` was dropped at M1: the OpenBSD macros are short, their semantics are the project's to keep, and a crate's policy changes would bind us as the `limine` crate's did |
 | `proptest` | dev-only | property tests for libkern |
 | `serde`, `toml` | `tools/xtask` | tracker parsing |
 | `fatfs` | `tools/xtask` | writes the FAT boot image; a host tool, not kernel code |
