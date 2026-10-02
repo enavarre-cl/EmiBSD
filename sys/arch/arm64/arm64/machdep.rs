@@ -36,7 +36,8 @@
 //!   exclude the kernel, the device tree, the initrd and the bootloader's own data: the
 //!   `memreg_add`/`memreg_remove` bookkeeping, the EFI memory map walk, `pmap_avail_fixup`
 //!   and `pmap_physload_avail` have nothing left to do, and the direct map `pmap` uses is the
-//!   bootloader's (`arm64/pmap.rs`, deviations).
+//!   bootloader's (`arm64/pmap.rs`, deviations). The memory is loaded before `pmap_bootstrap`
+//!   (after it in the C) because `pmap_bootstrap` steals its tables from `vm_physmem[]`.
 //! - The message buffer is a static area (`kern/subr_log.rs`, `init_static_msgbuf`) instead of
 //!   reserved physical pages, until M3.
 //! - `cpu_startup` prints the memory sizes only: `version` (generated `vers.c`), the exec and
@@ -61,8 +62,11 @@ use libkern::StaticCell;
 
 use crate::arch::arm64::arm64::bus_space::FDT_CONS_BS_TAG;
 use crate::arch::arm64::arm64::intr::delay;
-use crate::arch::arm64::arm64::pmap::{PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap};
+use crate::arch::arm64::arm64::pmap::{
+    PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap, pmap_growkernel,
+};
 use crate::arch::arm64::include::param::PAGE_SIZE;
+use crate::arch::arm64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
 use crate::dev::ic::pluart::pluartcnattach;
 use crate::kern::init_main::BOOTHOWTO;
 use crate::kern::subr_log::init_static_msgbuf;
@@ -81,7 +85,7 @@ use crate::sys::types::{Paddr, Vaddr};
 use crate::unported;
 use crate::uvm::uvm_extern::UvmConstraintRange;
 use crate::uvm::uvm_init::UVMEXP;
-use crate::uvm::uvm_page::{uvm_page_physload, uvm_setpagesize};
+use crate::uvm::uvm_page::{VmPage, uvm_page_physload, uvm_setpagesize};
 use crate::uvm::uvm_param::{atop, ptoa, round_page, trunc_page};
 
 #[cfg(feature = "qemu")]
@@ -247,21 +251,12 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
     );
 
     let usable = || regions.iter().filter(|r| r.kind == MemKind::Usable);
-    let ram_start = usable().map(|r| r.base.as_usize()).min().unwrap_or(0);
-    let ram_end = usable()
-        .map(|r| r.base.as_usize() + r.length.as_usize())
-        .max()
-        .unwrap_or(0);
-    // SAFETY: once, on the boot CPU, with the direct map set above and the MMU on.
-    let _vstart = unsafe { pmap_bootstrap(Paddr::new(ram_start), Paddr::new(ram_end)) };
-
-    // pmap_avail_fixup: nothing to fix up, the map is the bootloader's.
 
     UVMEXP.pagesize.store(PAGE_SIZE as i32, Ordering::Relaxed);
     uvm_setpagesize();
 
     // Make all physical memory available to UVM (pmap_physload_avail and the EFI memory map
-    // loop of the C).
+    // loop of the C); before pmap_bootstrap, which steals from it (see `arm64/pmap.rs`).
     for r in usable() {
         if r.length.as_usize() < PAGE_SIZE {
             kprintf!(" skipped - too small\n");
@@ -276,7 +271,28 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
         PHYSMEM.fetch_add(atop(end - start), Ordering::Relaxed);
     }
 
-    // kmeminit_nkmempages and the pmap_growkernel for the page array: with the page tables.
+    let ram_start = usable().map(|r| r.base.as_usize()).min().unwrap_or(0);
+    let ram_end = usable()
+        .map(|r| r.base.as_usize() + r.length.as_usize())
+        .max()
+        .unwrap_or(0);
+    // SAFETY: once, on the boot CPU, with the direct map set above, the memory loaded and the
+    // MMU on.
+    let _vstart = unsafe { pmap_bootstrap(Paddr::new(ram_start), Paddr::new(ram_end)) };
+
+    // pmap_avail_fixup: nothing to fix up, the map is the bootloader's.
+
+    // Make sure that we have enough KVA to initialize UVM. In particular, we need enough KVA
+    // to be able to allocate the vm_page structures and nkmempages for malloc(9).
+    let _ = unported!("kmeminit_nkmempages (kern_malloc.c)");
+    let nkmempages = 0;
+    pmap_growkernel(Vaddr::new(
+        VM_MIN_KERNEL_ADDRESS
+            + 1024 * 1024 * 1024
+            + PHYSMEM.load(Ordering::Relaxed) * size_of::<VmPage>()
+            + ptoa(nkmempages),
+    ));
+
     // The rest of initarm (cpu_init, the FDT, the console from the device tree, ...) arrives
     // with M4 and M5; db_machine_init() and ddb_init() with M4.
     if BOOTHOWTO.load(Ordering::Relaxed) & RB_KDB != 0 {

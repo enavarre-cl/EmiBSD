@@ -6,6 +6,8 @@
 pub mod init_main;
 pub mod kern_synch;
 pub mod kern_xxx;
+#[cfg(feature = "qemu")]
+pub mod selftest;
 pub mod subr_log;
 pub mod subr_prf;
 pub mod subr_tree;

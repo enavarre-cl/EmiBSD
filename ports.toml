@@ -158,7 +158,7 @@ rust = "sys/arch/amd64/include/cpufunc.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "96af50a82a5f71bfeb614be5ea187f032a7664d1"
-notes = "M0: read_rflags/write_rflags/intr_enable/intr_disable/intr_restore only; descriptor tables, control registers, MSRs, TLB and cache helpers come with M3/M4"
+notes = "read_rflags/write_rflags/intr_enable/intr_disable/intr_restore (M0), rcr3/lcr3/tlbflush/invlpg/rdmsr/wrmsr/wbinvd (M3); descriptor tables, the other control registers, invpcid, clflush and the cache helpers come with M4"
 
 [[file]]
 c = "sys/arch/arm64/include/cpu.h"
@@ -689,7 +689,32 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7d7608efe46d2784b47b60eb6284f205d1d53a9e"
 deps = ["sys/arch/amd64/include/param.h"]
-notes = "pd_entry_t/pt_entry_t, the level shifts, masks and frames, NBPD_*, the PG_* bits; the large-page and PAT helpers come with the page tables"
+notes = "pd_entry_t/pt_entry_t, the level shifts, masks and frames, NBPD_*, the PG_* bits, PG_UCMINUS, x86_round_pdr; the EPT bits and PGK_VALUE come with vmm"
+
+[[file]]
+c = "sys/arch/amd64/include/specialreg.h"
+rust = "sys/arch/amd64/include/specialreg.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "32b156b78a79cb3d0633edbf7b3d3531fa116924"
+notes = "CR0/CR3 bits and MSR_EFER with its flags; the CPUID feature words, the other MSRs and the MTRR/PAT definitions come with CPU identification (M4)"
+
+[[file]]
+c = "sys/arch/arm64/include/pte.h"
+rust = "sys/arch/arm64/include/pte.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "54d1de1de78419bdd44541552a728a3e9c905b3a"
+deps = ["sys/arch/arm64/include/param.h"]
+notes = "descriptor types and attribute bits; PTE_ATTR_* follow the bootloader's MAIR_EL1 layout (0 WB, 1 nGnRE, 2 nGnRnE, 3 CI, 4 WT) until the kernel owns its page tables (deviation in the module)"
+
+[[file]]
+c = "sys/arch/arm64/arm64/cpufunc_asm.S"
+rust = "sys/arch/arm64/arm64/cpufunc.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a1039819b9826ff32ea67aad0cb0c1b1236d6436"
+notes = "TLB invalidations and cpu_setttb as asm! blocks (no RETGUARD, no CPTAG_REPEAT_TLBI codepatch until M4); the cache maintenance by range needs the line sizes cpu.c probes (M4)"
 
 [[file]]
 c = "sys/arch/amd64/include/pmap.h"
@@ -703,7 +728,7 @@ deps = [
     "sys/uvm/uvm_object.h",
     "sys/uvm/uvm_page.h",
 ]
-notes = "struct pmap (bootstrap subset), pv_entry, vm_page_md, the PML4 slot layout and constants; PTE_BASE/L*_BASE, pl*_i, kvtopte and the inline protect helpers come with the page tables; pv_mtx/pm_mtx with M5"
+notes = "struct pmap (bootstrap subset), pv_entry, vm_page_md, the PML4 slot layout, the recursive mapping (PTE_BASE/L*_BASE, pl*_i, kvtopte, ptp_va2o), the nkptp/nbpd initializers; pmap_page_protect/pmap_protect with M6; pv_mtx/pm_mtx with M5"
 
 [[file]]
 c = "sys/arch/amd64/amd64/pmap.c"
@@ -716,7 +741,7 @@ deps = [
     "sys/arch/amd64/include/vmparam.h",
     "sys/uvm/uvm_page.c",
 ]
-notes = "direct map over Limine's HHDM, pmap_bootstrap's kernel-pmap setup, pmap_steal_memory, pmap_zero_page, pmap_copy_page, pmap_init; pmap_kenter_pa/kremove/growkernel unported (page tables next), pmap_extract for the direct map only; deviations listed in the module"
+notes = "direct map over Limine's HHDM, pmap_bootstrap adopts the bootloader's PML4 and installs the recursive slot, pmap_steal_memory (vm_physmem half in uvm_page_physsteal), zero/copy page, pmap_kenter_pa/kremove/extract/pdes_valid/find_pte_direct, pmap_growkernel/alloc_level/get_physpage (bootloader PTPs kept), single-CPU TLB shootdowns; user pmaps, pv lists, PCID, pmap_randomize, MP shootdowns: M4 to M6; deviations listed in the module"
 
 [[file]]
 c = "sys/arch/arm64/include/vmparam.h"
@@ -739,7 +764,7 @@ deps = [
     "sys/uvm/uvm_page.h",
     "sys/sys/queue.h",
 ]
-notes = "struct pmap (bootstrap subset), vm_page_md, VP_IDX* and cache/pv flags; pm_vp tables and pointer authentication keys with the page tables and M6; pv_mtx with M5"
+notes = "struct pmap (kernel subset with pm_vp as an enum of the union), vm_page_md, VP_IDX* and cache/pv flags; pointer authentication keys with M6; pv_mtx/pm_mtx with M5"
 
 [[file]]
 c = "sys/arch/arm64/arm64/pmap.c"
@@ -752,7 +777,7 @@ deps = [
     "sys/arch/arm64/include/vmparam.h",
     "sys/uvm/uvm_page.c",
 ]
-notes = "pte_desc, kernel pmap, pmap_bootstrap's kernel-pmap setup, pmap_zero_page/copy_page via Limine's HHDM (deviation: OpenBSD arm64 has no direct map nor PMAP_STEAL_MEMORY; pmap_steal_memory takes pages with uvm_page_physget), pmap_virtual_space; pmap_init, pmap_kenter_pa/kremove/growkernel unported (page tables next)"
+notes = "pte_desc, the pmapvp tables, kernel pmap, pmap_bootstrap adopting the bootloader's four-level tables (copies of L0 and the kernel slot's L1, TTBR1 switched to them, MAIR indices 2-4), vp lookup/enter/set_l1-3, kvp/kpted allocators over the direct map, pmap_growkernel (populates the first GiB, which the C's pmap_bootstrap does), kenter/kenter_cache/kremove(_pg), fill_pte, pte_insert/update/remove, extract, zero/copy page via the HHDM, pmap_steal_memory (not in the C; OpenBSD arm64 has no direct map nor PMAP_STEAL_MEMORY); pmap_init (pools, TTBR0 switch), pmap_vp_populate, user pmaps, pv lists, ASIDs, fault fixup: M4 to M6"
 
 [[file]]
 c = "sys/uvm/uvm_param.h"
@@ -841,7 +866,7 @@ deps = [
     "sys/uvm/uvmexp.h",
     "sys/uvm/uvm_page.c",
 ]
-notes = "uvm_init: page system and pmap_init run; uvm_map_init, uvm_km_init, uvmfault_init, uvm_km_page_init, kmeminit, dma_alloc_init, uvm_pager_init, amap_init, uao_create, uvm_anon_init, the bestfit switch and uvm_init_percpu report themselves unported"
+notes = "uvm_init: page system, uvm_km_init (bounds only) and pmap_init run; uvm_map_init, uvmfault_init, uvm_km_page_init, kmeminit, dma_alloc_init, uvm_pager_init, amap_init, uao_create, uvm_anon_init, the bestfit switch and uvm_init_percpu report themselves unported"
 
 [[file]]
 c = "sys/uvm/uvm_page.h"
@@ -906,7 +931,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d125775bafe311bad1f791f16fae0434e8703879"
 deps = ["sys/uvm/uvm_extern.h"]
-notes = "no_constraint, the kv_*/kp_*/kd_* allocation modes; km_alloc/km_free, uvm_km_init, uvm_km_suballoc, uvm_km_pgremove and the single-page allocator thread follow"
+notes = "no_constraint, the kv_*/kp_*/kd_* allocation modes, uvm_km_init recording the kernel map bounds (kernel_map waits for uvm_map.c); km_alloc/km_free, uvm_km_suballoc, uvm_km_pgremove and the single-page allocator thread follow"
 
 [[file]]
 c = "sys/uvm/uvm_pdaemon.c"
@@ -916,6 +941,10 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a86642e67fec8c37a791c40cdee7c89eeb2dcfcd"
 deps = ["sys/uvm/uvm_page.h"]
 notes = "uvm_wait reports itself unported: no page daemon before kernel threads (M5); uvm_pageout, uvmpd_scan and the aiodone daemon come with swapping (M7)"
+
+[[extra]]
+rust = "sys/kern/selftest.rs"
+reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke"
 
 [[extra]]
 rust = "sys/reftest.rs"

@@ -43,8 +43,8 @@
 //! The (first generation) amd64 MMU is a 4-level MMU which maps 2^48 bytes of virtual memory.
 //! The pagesize we use is 4K (4096 \[0x1000\] bytes), although 2M pages are also supported.
 //!
-//! Status: `wip`. Milestone M3 ports the entry types, the level geometry and the PDE/PTE
-//! bits; `x86_round_pdr`, the EPT bits and `PGK_VALUE` come with the page tables and vmm.
+//! Status: `wip`. Milestone M3 ports the entry types, the level geometry, the PDE/PTE bits and
+//! `x86_round_pdr`; the EPT bits and `PGK_VALUE` come with vmm.
 
 /// `pd_entry_t`: a page directory entry (levels 2 to 4).
 pub type PdEntry = u64;
@@ -137,6 +137,14 @@ pub const PG_FRAME: u64 = 0x000f_ffff_ffff_f000;
 
 /// `PG_LGFRAME`: large (2M) page frame mask.
 pub const PG_LGFRAME: u64 = 0x000f_ffff_ffe0_0000;
+
+/// `PG_UCMINUS`: UC but mtrr can override.
+pub const PG_UCMINUS: u64 = PG_N;
+
+/// `x86_round_pdr(x)`: rounds up to a 2M page boundary.
+pub const fn x86_round_pdr(x: usize) -> usize {
+    (x + (NBPD_L2 - 1)) & !(NBPD_L2 - 1)
+}
 
 #[cfg(test)]
 mod tests {

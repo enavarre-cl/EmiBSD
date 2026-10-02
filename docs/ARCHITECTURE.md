@@ -182,6 +182,19 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   here it has both, so `uvm_pageboot_alloc` works before any `pmap_kenter_pa` exists. The
   `vm_physmem[]` half of amd64's `pmap_steal_memory` is `uvm_page_physsteal` (`uvm/uvm_page.rs`),
   shared by amd64, arm64 and the host double instead of being written three times.
+- Kernel page tables (M3, part 2): both kernels keep running on the bootloader's tables and
+  extend them. amd64 adopts the PML4 in `CR3` as `pmap_kernel()->pm_pdir`, installs the recursive
+  mapping in slot 255 itself (the C's `locore0.S` does) and counts the kernel's PTPs from
+  `virtual_avail` (above the direct map, which shares PML4 slot 256); `pmap_alloc_level` keeps the
+  page-table pages the bootloader already installed. arm64 copies the bootloader's level-0 table
+  and the level-1 table of the kernel's slot into `pmapvp0`/`pmapvp1` so the vp shadow exists,
+  switches `TTBR1_EL1` to the copy and fills `MAIR_EL1` indices 2 to 4 around the bootloader's
+  0 (write-back) and 1 (device); the kernel pmap is four-level where OpenBSD's is three-level,
+  and `pmap_growkernel` populates the first GiB that the C's `pmap_bootstrap` pre-allocates.
+  The level-2/3 tables of the kernel image and of the direct map stay the bootloader's on both
+  archs. `pg_nx` comes from `EFER.NXE` as the bootloader left it. `uvm_km_init` only records the
+  kernel map's bounds until `uvm_map.c`; `kern/selftest.rs` (feature `qemu`) maps a page there
+  at boot and `smoke` asserts `selftest: pmap kernel mapping ok` on both archs.
 - `uvmexp` is a static of atomics and the page-queue locks (`uvm_lock_pageq`, `uvm_lock_fpageq`)
   are no-ops until the mutex arrives (M5): the boot CPU is alone. `wakeup` and `uvm_wait` report
   themselves unported, so a `UVM_PLA_WAITOK` allocation that cannot be met fails with `ENOMEM`

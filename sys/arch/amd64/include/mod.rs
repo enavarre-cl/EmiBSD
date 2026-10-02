@@ -9,4 +9,5 @@ pub mod param;
 pub mod pio;
 pub mod pmap;
 pub mod pte;
+pub mod specialreg;
 pub mod vmparam;

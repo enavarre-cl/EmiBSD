@@ -66,10 +66,10 @@
 //! Upstream: sys/arch/amd64/include/pmap.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M3 ports `struct pmap` (its bootstrap subset), `struct pv_entry`,
-//! `struct vm_page_md`, the PML4 slot layout, the page-table geometry constants, the PCID and
-//! pmap-type constants and the `PG_PMAP_*` bits. `PTE_BASE`/`L*_BASE` (the recursive
-//! mapping), `pl*_i`, `kvtopte`, `pmap_page_protect`/`pmap_protect` and the prototypes come
-//! with the page tables and M6.
+//! `struct vm_page_md`, the PML4 slot layout, the page-table geometry constants, the recursive
+//! mapping (`PTE_BASE`, `L*_BASE`, `pl*_i`, `kvtopte`), the PCID and pmap-type constants and
+//! the `PG_PMAP_*` bits. `pmap_page_protect`/`pmap_protect` and the user-space prototypes
+//! come with M6.
 //!
 //! ## Deviations
 //! - `pm_mtx` and `pv_mtx` (M5) are not here yet; the boot CPU being alone is the lock.
@@ -79,7 +79,11 @@ use core::cell::Cell;
 use core::ptr;
 
 use crate::arch::amd64::include::param::{PAGE_MASK, PAGE_SIZE};
-use crate::arch::amd64::include::pte::{NBPD_L4, PG_AVAIL1, PG_AVAIL2, PdEntry};
+use crate::arch::amd64::include::pte::{
+    L1_FRAME, L1_MASK, L1_SHIFT, L2_FRAME, L2_MASK, L2_SHIFT, L3_FRAME, L3_MASK, L3_SHIFT,
+    L4_FRAME, L4_MASK, L4_SHIFT, NBPD_L1, NBPD_L2, NBPD_L3, NBPD_L4, PG_AVAIL1, PG_AVAIL2, PdEntry,
+    PtEntry,
+};
 use crate::sys::types::{Paddr, Vaddr};
 use crate::uvm::uvm_object::UvmObject;
 use crate::uvm::uvm_page::{PG_PMAP0, PG_PMAP1, PG_PMAP2, VmPage};
@@ -129,6 +133,104 @@ pub const PDIR_SLOT_PTE: usize = L4_SLOT_PTE;
 pub const PDIR_SLOT_DIRECT: usize = L4_SLOT_DIRECT;
 /// `PDIR_SLOT_EARLY`.
 pub const PDIR_SLOT_EARLY: usize = L4_SLOT_EARLY;
+
+// The following defines give the virtual addresses of the page tables and the page directory
+// through the recursive mapping in slot L4_SLOT_PTE: PTE_BASE is the level-1 table of every
+// address, L2_BASE the level-2 tables, and so on up to the PML4 itself at L4_BASE.
+
+/// `PTE_BASE`: where every level-1 table is visible.
+pub const PTE_BASE: usize = L4_SLOT_PTE * NBPD_L4;
+/// `L1_BASE`.
+pub const L1_BASE: usize = PTE_BASE;
+/// `L2_BASE`: the level-2 tables.
+pub const L2_BASE: usize = L1_BASE + L4_SLOT_PTE * NBPD_L3;
+/// `L3_BASE`: the level-3 tables.
+pub const L3_BASE: usize = L2_BASE + L4_SLOT_PTE * NBPD_L2;
+/// `L4_BASE`: the PML4.
+pub const L4_BASE: usize = L3_BASE + L4_SLOT_PTE * NBPD_L1;
+/// `PDP_PDE`: the recursive entry itself.
+pub const PDP_PDE: usize = L4_BASE + L4_SLOT_PTE * size_of::<PdEntry>();
+/// `PDP_BASE`.
+pub const PDP_BASE: usize = L4_BASE;
+
+/// `pl1_pi(VA)`: the index inside the level-1 table.
+pub const fn pl1_pi(va: usize) -> usize {
+    (va_sign_pos(va) & L1_MASK) >> L1_SHIFT
+}
+
+/// `pl2_pi(VA)`.
+pub const fn pl2_pi(va: usize) -> usize {
+    (va_sign_pos(va) & L2_MASK) >> L2_SHIFT
+}
+
+/// `pl3_pi(VA)`.
+pub const fn pl3_pi(va: usize) -> usize {
+    (va_sign_pos(va) & L3_MASK) >> L3_SHIFT
+}
+
+/// `pl4_pi(VA)`.
+pub const fn pl4_pi(va: usize) -> usize {
+    (va_sign_pos(va) & L4_MASK) >> L4_SHIFT
+}
+
+/// `pl1_i(VA)`: the index of `va`'s level-1 entry counted from `PTE_BASE`.
+pub const fn pl1_i(va: usize) -> usize {
+    (va_sign_pos(va) & L1_FRAME) >> L1_SHIFT
+}
+
+/// `pl2_i(VA)`.
+pub const fn pl2_i(va: usize) -> usize {
+    (va_sign_pos(va) & L2_FRAME) >> L2_SHIFT
+}
+
+/// `pl3_i(VA)`.
+pub const fn pl3_i(va: usize) -> usize {
+    (va_sign_pos(va) & L3_FRAME) >> L3_SHIFT
+}
+
+/// `pl4_i(VA)`.
+pub const fn pl4_i(va: usize) -> usize {
+    (va_sign_pos(va) & L4_FRAME) >> L4_SHIFT
+}
+
+/// `PTP_MASK_INITIALIZER`: `ptp_masks[]`.
+pub const PTP_MASKS: [usize; PTP_LEVELS] = [L1_FRAME, L2_FRAME, L3_FRAME, L4_FRAME];
+/// `PTP_SHIFT_INITIALIZER`: `ptp_shifts[]`.
+pub const PTP_SHIFTS: [u32; PTP_LEVELS] = [L1_SHIFT, L2_SHIFT, L3_SHIFT, L4_SHIFT];
+/// `NKPTP_INITIALIZER`: `nkptp[]` at boot.
+pub const NKPTP_INITIALIZER: [usize; PTP_LEVELS] = [
+    NKL1_START_ENTRIES,
+    NKL2_START_ENTRIES,
+    NKL3_START_ENTRIES,
+    NKL4_START_ENTRIES,
+];
+/// `NKPTPMAX_INITIALIZER`: `nkptpmax[]`.
+pub const NKPTPMAX_INITIALIZER: [usize; PTP_LEVELS] = [
+    NKL1_MAX_ENTRIES,
+    NKL2_MAX_ENTRIES,
+    NKL3_MAX_ENTRIES,
+    NKL4_MAX_ENTRIES,
+];
+/// `NBPD_INITIALIZER`: `nbpd[]`.
+pub const NBPD_INITIALIZER: [usize; PTP_LEVELS] = [NBPD_L1, NBPD_L2, NBPD_L3, NBPD_L4];
+/// `PDES_INITIALIZER`: `normal_pdes[]`, the level 2, 3 and 4 tables through the recursive map.
+pub const PDES_INITIALIZER: [usize; PTP_LEVELS - 1] = [L2_BASE, L3_BASE, L4_BASE];
+
+/// `pl_i(va, lvl)`: the index of `va`'s level-`lvl` entry counted from that level's base.
+pub const fn pl_i(va: usize, lvl: usize) -> usize {
+    (va_sign_pos(va) & PTP_MASKS[lvl - 1]) >> PTP_SHIFTS[lvl - 1]
+}
+
+/// `ptp_va2o(va, lvl)`: the offset of `va`'s level-`lvl` PTP in `pm_obj[lvl - 1]`.
+pub const fn ptp_va2o(va: usize, lvl: usize) -> usize {
+    pl_i(va, lvl + 1) * PAGE_SIZE
+}
+
+/// `kvtopte(va)`: the level-1 entry of `va` through the recursive mapping (`LARGEPAGES` is
+/// not an option here, so there is no 2M case).
+pub fn kvtopte(va: usize) -> *mut PtEntry {
+    (PTE_BASE as *mut PtEntry).wrapping_add(pl1_i(va))
+}
 
 // NK*_MAX_ENTRIES: the maximum number of PTPs per level the kernel may use. NK*_KIMG_ENTRIES
 // and ND*_ENTRIES: how many the kernel image and the direct map take at boot. NK*_START_ENTRIES:
@@ -325,6 +427,16 @@ pub const fn pmap_valid_entry(e: PdEntry) -> bool {
     e & crate::arch::amd64::include::pte::PG_V != 0
 }
 
+/// `pmap_resident_count(pmap)`.
+pub fn pmap_resident_count(pmap: &Pmap) -> i64 {
+    pmap.pm_stats.resident_count.get()
+}
+
+/// `pmap_wired_count(pmap)`.
+pub fn pmap_wired_count(pmap: &Pmap) -> i64 {
+    pmap.pm_stats.wired_count.get()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +448,27 @@ mod tests {
         assert_eq!(DIRECT_MAP_SIZE, 4 << 39);
         assert_eq!(NTOPLEVEL_PDES, 512);
         assert!(DIRECT_MAP_START_CHOICES & DIRECT_MAP_START_MASK == 0);
+    }
+
+    #[test]
+    fn recursive_mapping_indices() {
+        // The PML4 maps itself in slot 255: its own address is L4_BASE + 255 * 8.
+        assert_eq!(PTE_BASE, 0x0000_7f80_0000_0000);
+        assert_eq!(
+            L4_BASE,
+            PTE_BASE + 255 * NBPD_L3 + 255 * NBPD_L2 + 255 * NBPD_L1
+        );
+        assert_eq!(PDP_PDE, L4_BASE + 255 * 8);
+        let va = 0xffff_8000_0040_1000;
+        assert_eq!(pl4_pi(va), 256);
+        assert_eq!(pl3_pi(va), 0);
+        assert_eq!(pl2_pi(va), 2);
+        assert_eq!(pl1_pi(va), 1);
+        assert_eq!(pl1_i(va), (256 << 27) | (2 << 9) | 1);
+        assert_eq!(pl_i(va, 4), pl4_i(va));
+        assert_eq!(pl4_i(va), 256);
+        assert_eq!(kvtopte(va) as usize, PTE_BASE + pl1_i(va) * 8);
+        assert_eq!(ptp_va2o(va, 1), pl2_i(va) * PAGE_SIZE);
     }
 
     #[test]

@@ -19,17 +19,21 @@
 //!
 //! Upstream: sys/arch/arm64/include/pmap.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M3 ports `struct pmap` (its bootstrap subset), `struct vm_page_md`,
-//! the `VP_IDX*` layout and the cache and pv flags. The `pmapvp*` tables (`pm_vp`), the pointer
-//! authentication keys and the zero/copy windows arrive with the page tables and M6.
+//! Status: `wip`. Milestone M3 ports `struct pmap` (its kernel subset, with the `pm_vp`
+//! tables), `struct vm_page_md`, the `VP_IDX*` layout and the cache and pv flags. The pointer
+//! authentication keys and the zero/copy windows arrive with M6.
 //!
 //! ## Deviations
-//! - `pv_mtx` (M5) is not here yet; the pv list is guarded by the boot CPU being alone.
+//! - `pv_mtx` and `pm_mtx` (M5) are not here yet; the boot CPU being alone is the lock.
+//! - `pm_vp` is an enum of the two union members (`l0` for four-level tables, `l1` for three);
+//!   the C picks by `have_4_level_pt`.
 
 use core::cell::Cell;
 use core::sync::atomic::AtomicI32;
 
-use crate::arch::arm64::arm64::pmap::PvList;
+use core::ptr;
+
+use crate::arch::arm64::arm64::pmap::{Pmapvp0, Pmapvp1, PvList};
 use crate::arch::arm64::include::param::PAGE_MASK;
 use crate::sys::queue::ListHead;
 use crate::uvm::uvm_page::{PG_PMAP0, PG_PMAP1, PG_PMAP2};
@@ -98,10 +102,21 @@ pub const PG_PMAP_REF: u32 = PG_PMAP1;
 /// `PG_PMAP_EXE`: the page was mapped executable (and is I-cache clean).
 pub const PG_PMAP_EXE: u32 = PG_PMAP2;
 
-/// `struct pmap`: the bootstrap subset (see the module doc).
+/// `pm_vp`: the virtual to physical tables, 4 lvl (`l0`) or 3 lvl (`l1`).
+#[derive(Clone, Copy, Debug)]
+pub enum PmVp {
+    /// `pm_vp.l0`: four-level tables.
+    L0(*mut Pmapvp0),
+    /// `pm_vp.l1`: three-level tables.
+    L1(*mut Pmapvp1),
+}
+
+/// `struct pmap`: the kernel subset (see the module doc).
 pub struct Pmap {
-    // pm_mtx: M5. pm_vp (the virtual-to-physical tables): with the page tables.
-    /// Physical address of the top-level table.
+    // pm_mtx: M5.
+    /// The virtual to physical tables.
+    pub pm_vp: Cell<PmVp>,
+    /// Physical address of the lower-half (`TTBR0_EL1`) table.
     pub pm_pt0pa: Cell<u64>,
     /// The address space id.
     pub pm_asid: Cell<u64>,
@@ -127,6 +142,7 @@ impl Pmap {
     /// A pmap with nothing mapped.
     pub const fn new() -> Self {
         Self {
+            pm_vp: Cell::new(PmVp::L1(ptr::null_mut())),
             pm_pt0pa: Cell::new(0),
             pm_asid: Cell::new(0),
             pm_guarded: Cell::new(0),

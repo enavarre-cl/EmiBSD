@@ -102,3 +102,72 @@ pub fn rcr3() -> u64 {
     unsafe { asm!("mov {}, cr3", out(reg) val, options(nomem, nostack, preserves_flags)) };
     val
 }
+
+/// `invlpg`: invalidates the TLB entry for `addr`.
+#[inline]
+pub fn invlpg(addr: u64) {
+    // SAFETY: dropping a TLB entry only costs a refetch; no mapping changes.
+    unsafe { asm!("invlpg [{}]", in(reg) addr, options(nostack, preserves_flags)) };
+}
+
+/// `lcr3`: loads `CR3`.
+///
+/// # Safety
+///
+/// `val` must be the physical address of a PML4 (plus PCID bits) that maps the running code
+/// and stack.
+#[inline]
+pub unsafe fn lcr3(val: u64) {
+    // SAFETY: the caller's guarantee.
+    unsafe { asm!("mov cr3, {}", in(reg) val, options(nostack, preserves_flags)) };
+}
+
+/// `tlbflush`: reloads `CR3`, dropping the non-global TLB entries.
+#[inline]
+pub fn tlbflush() {
+    // SAFETY: reloading the current CR3 changes no mapping.
+    unsafe {
+        asm!("mov {tmp}, cr3", "mov cr3, {tmp}", tmp = out(reg) _, options(nostack, preserves_flags))
+    };
+}
+
+/// `rdmsr`: reads a model-specific register.
+///
+/// # Safety
+///
+/// `msr` must exist on this CPU; an unknown one raises `#GP`.
+#[inline]
+pub unsafe fn rdmsr(msr: u32) -> u64 {
+    let (hi, lo): (u32, u32);
+    // SAFETY: the caller's guarantee; reading an MSR has no side effects.
+    unsafe {
+        asm!("rdmsr", in("ecx") msr, out("edx") hi, out("eax") lo, options(nomem, nostack, preserves_flags))
+    };
+    (u64::from(hi) << 32) | u64::from(lo)
+}
+
+/// `wrmsr`: writes a model-specific register.
+///
+/// # Safety
+///
+/// `msr` must exist and `newval` must be a value it accepts; the write changes CPU behaviour.
+#[inline]
+pub unsafe fn wrmsr(msr: u32, newval: u64) {
+    // SAFETY: the caller's guarantee.
+    unsafe {
+        asm!("wrmsr", in("ecx") msr, in("eax") newval as u32, in("edx") (newval >> 32) as u32, options(nostack, preserves_flags))
+    };
+}
+
+/// `wbinvd`: writes back and invalidates the caches.
+#[inline]
+pub fn wbinvd() {
+    // SAFETY: flushing the caches loses no data (write-back first); memory is a clobber.
+    unsafe { asm!("wbinvd", options(nostack, preserves_flags)) };
+}
+
+/// `wbinvd_on_all_cpus`: there is one CPU (no `MULTIPROCESSOR`).
+pub fn wbinvd_on_all_cpus() -> i32 {
+    wbinvd();
+    0
+}

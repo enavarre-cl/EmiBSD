@@ -5,6 +5,7 @@
 //! `qemu`, a project helper (`ports.toml`, `[[extra]]`).
 
 pub mod bus_space;
+pub mod cpufunc;
 pub mod db_interface;
 pub mod db_trace;
 pub mod intr;

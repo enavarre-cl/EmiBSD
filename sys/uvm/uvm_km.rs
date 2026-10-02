@@ -66,15 +66,27 @@
 //!
 //! Upstream: sys/uvm/uvm_km.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M3 starts with the unconstrained range `no_constraint` and the
-//! `kv_*`/`kp_*`/`kd_*` allocation modes; `km_alloc`/`km_free` over the direct map follow once
-//! the pmaps map pages, and `uvm_km_init`, `uvm_km_suballoc` and `uvm_km_pgremove` with
-//! `uvm_map`.
+//! Status: `wip`. Milestone M3 starts with the unconstrained range `no_constraint`, the
+//! `kv_*`/`kp_*`/`kd_*` allocation modes and the bounds `uvm_km_init` records;
+//! `km_alloc`/`km_free` follow, and `uvm_km_suballoc`, `uvm_km_pgremove` and the maps
+//! themselves with `uvm_map`.
+//!
+//! ## Deviations
+//! - `uvm_km_init` only records the kernel map's range: `kernel_map` (`uvm_map_setup`, the
+//!   reservation of `[base, start)`) waits for `uvm_map.c`. `kernel_map_min`/`kernel_map_max`
+//!   stand in for `vm_map_min(kernel_map)`/`vm_map_max(kernel_map)` until then.
 
-use crate::sys::types::Paddr;
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+use crate::sys::types::{Paddr, Vaddr};
 use crate::uvm::uvm_extern::{
     KmemDynMode, KmemPaMode, KmemVaMode, KvMap, UVM_UNKNOWN_OFFSET, UvmConstraintRange,
 };
+
+/// `vm_map_min(kernel_map)` until the map exists (see the module's deviations).
+static KERNEL_MAP_MIN: AtomicUsize = AtomicUsize::new(0);
+/// `vm_map_max(kernel_map)` until the map exists.
+static KERNEL_MAP_MAX: AtomicUsize = AtomicUsize::new(0);
 
 /// `no_constraint`: unconstrained range.
 pub static NO_CONSTRAINT: UvmConstraintRange = UvmConstraintRange {
@@ -171,3 +183,22 @@ pub static KD_TRYLOCK: KmemDynMode = KmemDynMode {
     kd_waitok: false,
     kd_trylock: true,
 };
+
+/// `uvm_km_init`: init kernel virtual memory. `base` is the base of kernel virtual space,
+/// `start` the first free address inside it and `end` its end (see the module's deviations).
+pub fn uvm_km_init(_base: Vaddr, start: Vaddr, end: Vaddr) {
+    // next, init kernel memory objects, uvm_map_setup(&kernel_map_store, pmap_kernel(), base,
+    // end, VM_MAP_PAGEABLE), the reservation of [base, start) with uvm_map(): uvm_map.c.
+    KERNEL_MAP_MIN.store(start.as_usize(), Ordering::Relaxed);
+    KERNEL_MAP_MAX.store(end.as_usize(), Ordering::Relaxed);
+}
+
+/// `vm_map_min(kernel_map)`: the first kernel virtual address available for allocation.
+pub fn kernel_map_min() -> Vaddr {
+    Vaddr::new(KERNEL_MAP_MIN.load(Ordering::Relaxed))
+}
+
+/// `vm_map_max(kernel_map)`: the end of kernel virtual space.
+pub fn kernel_map_max() -> Vaddr {
+    Vaddr::new(KERNEL_MAP_MAX.load(Ordering::Relaxed))
+}

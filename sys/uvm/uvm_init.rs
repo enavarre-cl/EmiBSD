@@ -47,6 +47,7 @@ use crate::machine::{Machine, Pmap, VmParam};
 use crate::sys::types::Vaddr;
 use crate::unported;
 use crate::uvm::uvm::Uvm;
+use crate::uvm::uvm_km::uvm_km_init;
 use crate::uvm::uvm_page::uvm_page_init;
 use crate::uvm::uvmexp::Uvmexp;
 
@@ -85,7 +86,11 @@ pub fn uvm_init() {
 
     // Setup the kernel's virtual memory data structures. This includes setting up the
     // kernel_map/kernel_object.
-    let _ = unported!("uvm_km_init");
+    uvm_km_init(
+        Vaddr::new(VM_MIN_KERNEL_ADDRESS.load(Ordering::Relaxed)),
+        kvm_start,
+        kvm_end,
+    );
 
     // step 4.5: init (tune) the fault recovery code.
     let _ = unported!("uvmfault_init");
