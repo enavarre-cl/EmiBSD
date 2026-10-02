@@ -1,0 +1,107 @@
+/*	$OpenBSD: db_machdep.h,v 1.8 2025/07/22 09:20:41 kettenis Exp $	*/
+/*	$NetBSD: db_machdep.h,v 1.5 2001/11/22 18:00:00 thorpej Exp $	*/
+
+/*
+ * Copyright (c) 1996 Scott K Stevens
+ *
+ * Mach Operating System
+ * Copyright (c) 1991,1990 Carnegie Mellon University
+ * All Rights Reserved.
+ *
+ * Permission to use, copy, modify and distribute this software and its
+ * documentation is hereby granted, provided that both the copyright
+ * notice and this permission notice appear in all copies of the
+ * software, derivative works or modified versions, and any portions
+ * thereof, and that both notices appear in supporting documentation.
+ *
+ * CARNEGIE MELLON ALLOWS FREE USE OF THIS SOFTWARE IN ITS "AS IS"
+ * CONDITION.  CARNEGIE MELLON DISCLAIMS ANY LIABILITY OF ANY KIND FOR
+ * ANY DAMAGES WHATSOEVER RESULTING FROM THE USE OF THIS SOFTWARE.
+ *
+ * Carnegie Mellon requests users of this software to return to
+ *
+ *  Software Distribution Coordinator  or  Software.Distribution@CS.CMU.EDU
+ *  School of Computer Science
+ *  Carnegie Mellon University
+ *  Pittsburgh PA 15213-3890
+ *
+ * any improvements or extensions that they make and grant Carnegie Mellon
+ * the rights to redistribute these changes.
+ */
+
+//! arm64 `<machine/db_machdep.h>`: machine-dependent defines for new kernel debugger.
+//!
+//! Upstream: sys/arch/arm64/include/db_machdep.h @ 3ce1f3f79392
+//!
+//! Status: `wip`. Milestone M4 ports `db_regs_t`, `PC_REGS`/`SET_PC_REGS`, the breakpoint
+//! instruction, the single-step bit helpers and the `IS_BREAKPOINT_TRAP`/
+//! `IS_WATCHPOINT_TRAP` tests. `db_expr_t`, the `inst_*` classifiers (which the C marks
+//! "ALL BROKEN!!!"), the `DDB_STATE_*` values and `DB_MACHINE_COMMANDS` come with the
+//! command loop and the multiprocessor entry. The entry points this header declares
+//! (`db_ktrap`, `db_machine_init`) live in `arm64/db_interface.rs`; what `ddb/` itself needs
+//! is the `machine::DbMachdep` contract.
+
+use crate::arch::arm64::include::armreg::{EXCP_BRK, EXCP_WATCHPT_EL1, INSN_SIZE, PSR_SS};
+use crate::arch::arm64::include::frame::Trapframe;
+
+/// `db_regs_t`: the register state the debugger works on, a trap frame.
+pub type DbRegs = Trapframe;
+
+/// `PC_REGS(regs)`: the program counter of `regs`.
+pub const fn pc_regs(regs: &DbRegs) -> usize {
+    regs.tf_elr as usize
+}
+
+/// `SET_PC_REGS(regs, value)`.
+pub fn set_pc_regs(regs: &mut DbRegs, value: usize) {
+    regs.tf_elr = value as isize;
+}
+
+/// `BKPT_INST`: breakpoint instruction (`brk #0`).
+pub const BKPT_INST: u32 = 0xd420_0000;
+/// `BKPT_SIZE`: size of breakpoint inst.
+pub const BKPT_SIZE: usize = INSN_SIZE;
+/// `BKPT_SET(inst)`.
+pub const fn bkpt_set(_inst: u32) -> u32 {
+    BKPT_INST
+}
+
+/// `db_clear_single_step(regs)`.
+pub fn db_clear_single_step(regs: &mut DbRegs) {
+    regs.tf_spsr &= !(PSR_SS as isize);
+}
+
+/// `db_set_single_step(regs)`.
+pub fn db_set_single_step(regs: &mut DbRegs) {
+    regs.tf_spsr |= PSR_SS as isize;
+}
+
+/// `IS_BREAKPOINT_TRAP(type, code)`.
+pub const fn is_breakpoint_trap(type_: i32, _code: i32) -> bool {
+    type_ == EXCP_BRK as i32
+}
+
+/// `IS_WATCHPOINT_TRAP(type, code)`.
+pub const fn is_watchpoint_trap(type_: i32, _code: i32) -> bool {
+    type_ == EXCP_WATCHPT_EL1 as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pc_and_single_step() {
+        let mut regs = DbRegs::new();
+        set_pc_regs(&mut regs, 0x4000);
+        assert_eq!(pc_regs(&regs), 0x4000);
+        db_set_single_step(&mut regs);
+        assert_ne!(regs.tf_spsr & PSR_SS as isize, 0);
+        db_clear_single_step(&mut regs);
+        assert_eq!(regs.tf_spsr & PSR_SS as isize, 0);
+        assert!(is_breakpoint_trap(EXCP_BRK as i32, 0));
+        assert!(is_watchpoint_trap(EXCP_WATCHPT_EL1 as i32, 0));
+        assert!(!is_breakpoint_trap(EXCP_WATCHPT_EL1 as i32, 0));
+        assert_eq!(BKPT_SIZE, 4);
+    }
+}

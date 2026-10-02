@@ -35,9 +35,9 @@
 //! Upstream: sys/arch/arm64/arm64/db_trace.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M2 ports `db_stack_trace_print` for the "trace from this frame"
-//! case `db_stack_dump` needs. `ddb_regs`, the trace from a trap frame, the `/t` thread trace
-//! (`tfind`, `switchframe`), `stacktrace_save_at` and `stacktrace_save_utrace` arrive with the
-//! exception vectors and the scheduler (M4, M5).
+//! case `db_stack_dump` needs; M4 adds the trace from `ddb_regs` (a trap frame). The `/t`
+//! thread trace (`tfind`, `switchframe`), `stacktrace_save_at` and `stacktrace_save_utrace`
+//! arrive with the scheduler (M5).
 //!
 //! ## Deviations
 //! - No symbol table in memory yet (`db_search_symbol`, `db_printsym`): every frame prints
@@ -51,6 +51,7 @@
 
 use core::ptr;
 
+use crate::arch::arm64::arm64::db_interface::DDB_REGS;
 use crate::machine::db_machdep::PrFn;
 use crate::unported;
 
@@ -66,8 +67,8 @@ fn db_get_value(addr: usize) -> usize {
     unsafe { ptr::read_volatile(addr as *const usize) }
 }
 
-/// `db_stack_trace_print`: prints the frames from `addr` (a `struct callframe`), at most
-/// `count` of them, through `pr`.
+/// `db_stack_trace_print`: prints the frames from `addr` (a `struct callframe`), or from the
+/// trap frame in `ddb_regs` without an address, at most `count` of them, through `pr`.
 pub fn db_stack_trace_print(addr: usize, have_addr: bool, count: usize, modif: &[u8], pr: PrFn) {
     let mut kernel_only = true;
     let mut trace_thread = false;
@@ -86,13 +87,17 @@ pub fn db_stack_trace_print(addr: usize, have_addr: bool, count: usize, modif: &
         return;
     }
 
+    let mut frame;
+    let mut lr;
     if !have_addr {
-        // frame = ddb_regs.tf_x[29]; lr = ddb_regs.tf_elr: the trap frame arrives with M4.
-        let _ = unported!("ddb_regs (trace without an address)");
-        return;
+        // SAFETY: ddb_regs is read while the debugger is active, after db_ktrap wrote it.
+        let regs = unsafe { DDB_REGS.get() };
+        frame = regs.tf_x[29] as usize;
+        lr = regs.tf_elr as usize;
+    } else {
+        frame = db_get_value(addr);
+        lr = db_get_value(addr + 8);
     }
-    let mut frame = db_get_value(addr);
-    let mut lr = db_get_value(addr + 8);
 
     let mut count = count as i64;
     loop {

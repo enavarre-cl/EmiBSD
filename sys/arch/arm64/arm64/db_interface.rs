@@ -35,17 +35,85 @@
 //!
 //! Upstream: sys/arch/arm64/arm64/db_interface.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M2 has `db_enter` only. `db_ktrap`, `db_read_bytes`,
-//! `db_write_bytes`, `db_machine_init` and the multiprocessor entry/exit arrive with the
-//! exception vectors (M4).
+//! Status: `wip`. Milestone M4 ports `ddb_regs`, `db_ktrap` and `db_enter` (ddb-lite: the
+//! trap frame is saved and `db_trap` prints where the kernel stopped). The register table
+//! `db_regs[]`, `db_validate_address`, `db_read_bytes`/`db_write_bytes`, `db_machine_init`,
+//! the machine commands and the multiprocessor entry/exit (`db_enter_ddb`, `db_startcpu`,
+//! `db_stopcpu`) come with the command loop and M5.
 //!
 //! ## Deviations
-//! - `db_enter` is a `brk #0xf000` in C, which lands in `db_ktrap` through `VBAR_EL1`. There
-//!   are no exception vectors before M4, so entering the debugger is a panic with a message
-//!   that says so: the kernel still stops, prints the stack trace and halts.
+//! - `db_ktrap` has no `db_recover` (`db_command.c`'s longjmp target) and no `splhigh`
+//!   (M4-b, reported); `db_active` is the boolean of `init_main.rs`, not a counter.
 
-/// `db_enter`: enters the debugger; in ddb-lite, panics (see the module's deviations).
-#[allow(clippy::panic)] // the only way to stop the kernel until db_ktrap exists (M4)
+use libkern::StaticCell;
+
+use crate::arch::arm64::include::armreg::{
+    DBG_MDSCR_KDE, DBG_MDSCR_SS, EXCP_BRK, EXCP_SOFTSTP_EL1, EXCP_WATCHPT_EL1, PSR_D, PSR_SS,
+    read_specialreg, write_specialreg,
+};
+use crate::arch::arm64::include::db_machdep::DbRegs;
+use crate::ddb::db_trap::db_trap;
+use crate::dev::cons::cnpollc;
+use crate::kern::init_main::DB_ACTIVE;
+use crate::unported;
+
+/// `ddb_regs`: register state. Written by `db_ktrap` on the one CPU that is in the
+/// debugger, read by `db_trace` and `db_trap` while it is.
+pub static DDB_REGS: StaticCell<DbRegs> = StaticCell::new(DbRegs::new());
+
+/// `db_ktrap`: the debugger's entry from an exception of class `type_`; always returns
+/// `true` (the kernel continues with `regs`).
+pub fn db_ktrap(type_: i32, regs: &mut DbRegs) -> bool {
+    // MULTIPROCESSOR: ddb_mp_mutex, db_enter_ddb (M5).
+
+    match type_ {
+        // breakpoint, watchpoint, single-step, keyboard interrupt
+        t if t == EXCP_BRK as i32
+            || t == EXCP_WATCHPT_EL1 as i32
+            || t == EXCP_SOFTSTP_EL1 as i32
+            || t == -1 => {}
+        _ => {
+            // db_recover != 0: db_error("Faulted in DDB; continuing...\n"): no command loop.
+        }
+    }
+
+    // Should switch to kdb`s own stack here.
+
+    // SAFETY: the one CPU entering the debugger writes ddb_regs; the readers (db_trace,
+    // db_trap) run below, on this CPU, before it is written again.
+    unsafe { DDB_REGS.write(*regs) };
+
+    let _ = unported!("splhigh/splx around db_trap (M4-b)");
+    DB_ACTIVE.store(true, core::sync::atomic::Ordering::Relaxed);
+    cnpollc(true);
+    db_trap(type_, 0 /* code */);
+    cnpollc(false);
+    DB_ACTIVE.store(false, core::sync::atomic::Ordering::Relaxed);
+
+    // SAFETY: as above; db_trap has returned and nothing else reads ddb_regs now.
+    *regs = unsafe { DDB_REGS.read() };
+
+    // MULTIPROCESSOR: ddb_state = DDB_STATE_EXITING unless db_switch_cpu (M5).
+
+    // Enable debug exceptions in the kernel when needed.
+    let mut mdscr = read_specialreg!("mdscr_el1");
+    if regs.tf_spsr as u64 & PSR_SS != 0 {
+        mdscr |= DBG_MDSCR_KDE | DBG_MDSCR_SS;
+        regs.tf_spsr &= !(PSR_D as isize);
+    } else {
+        mdscr &= !(DBG_MDSCR_KDE | DBG_MDSCR_SS);
+        regs.tf_spsr |= PSR_D as isize;
+    }
+    // SAFETY: MDSCR_EL1 only arms or disarms software-step debug events for the kernel,
+    // matching the frame about to be restored.
+    unsafe { write_specialreg!("mdscr_el1", mdscr) };
+
+    true
+}
+
+/// `db_enter`: enters the debugger with `brk #0xf000`, which `do_el1h_sync` hands to
+/// `db_ktrap` and then steps over.
 pub fn db_enter() {
-    panic!("db_enter: no debugger loop yet, breakpoint traps arrive with milestone M4");
+    // SAFETY: a breakpoint instruction; the exception handler returns past it.
+    unsafe { core::arch::asm!("brk #0xf000", options(nomem, nostack, preserves_flags)) };
 }

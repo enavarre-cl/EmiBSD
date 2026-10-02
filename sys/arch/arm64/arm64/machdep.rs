@@ -22,8 +22,10 @@
 //!
 //! Status: `wip`. Milestone M2 ports what the console and a panic need: the part of `initarm`
 //! that brings up the message buffer and the console, `consinit`, `boot`, `cold`, `waittime`,
-//! `cpuresetfn` and `powerdownfn`. `cpu_startup`, the FDT and memory setup, `dumpsys`,
-//! `sendsig`/`setregs`, the sysctl tree and the bootstrap KVA helpers arrive with M3 to M5.
+//! `cpuresetfn` and `powerdownfn`; M3 adds the memory setup and `pmap_bootstrap`; M4 adds
+//! `cpu_info_primary` and the per-CPU pointer and vector table setup of `initarm`.
+//! `cpu_info[]`, the FDT setup, `dumpsys`, `sendsig`/`setregs`, the sysctl tree and the
+//! bootstrap KVA helpers arrive with M4-b to M6.
 //!
 //! ## Deviations
 //! - Limine has set up EL1, the MMU and the direct map before `initarm` runs, so the C's
@@ -43,6 +45,10 @@
 //! - `cpu_startup` prints the memory sizes only: `version` (generated `vers.c`), the exec and
 //!   physio maps and `bufinit` (M6, M7), `cpu_init_extents` and `cpu_init_idt` are not there
 //!   yet.
+//! - `initarm` sets `VBAR_EL1` itself (the C's `locore.S` does, before `initarm`) and sets
+//!   `tpidr_el1` first thing instead of after the pmap bootstrap, so `curcpu()` and the
+//!   exception vectors work for everything that follows; `x18` is not loaded, as it is a
+//!   general register here (`arm64/exception.rs`, deviations).
 //! - `consinit` attaches the PL011 at QEMU `virt`'s address directly: `pluart_init_cons`
 //!   (`dev/fdt/pluart_fdt.c`) needs the device tree (M4), and the other `*_init_cons` are
 //!   drivers for hardware QEMU does not have (`deferred-driver`).
@@ -61,10 +67,12 @@ use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use libkern::StaticCell;
 
 use crate::arch::arm64::arm64::bus_space::FDT_CONS_BS_TAG;
+use crate::arch::arm64::arm64::exception::exception_vectors_addr;
 use crate::arch::arm64::arm64::intr::delay;
 use crate::arch::arm64::arm64::pmap::{
     PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap, pmap_growkernel,
 };
+use crate::arch::arm64::include::cpu::CpuInfo;
 use crate::arch::arm64::include::param::PAGE_SIZE;
 use crate::arch::arm64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
 use crate::dev::ic::pluart::pluartcnattach;
@@ -147,6 +155,10 @@ pub static DMA_CONSTRAINT: UvmConstraintRange = UvmConstraintRange {
 pub static UVM_MD_CONSTRAINTS: [&UvmConstraintRange; 1] = [&DMA_CONSTRAINT];
 /// The direct map covers at least this much, by the boot protocol's guarantee.
 const DIRECT_MAP_MIN_SIZE: usize = 4 << 30;
+/// `cpu_info_primary`: the boot CPU's `cpu_info`; `cpu_attach` (M4-b) fills in what
+/// `initarm` does not (`ci_cpuid`, `ci_mpidr`, the flags).
+pub static CPU_INFO_PRIMARY: CpuInfo = CpuInfo::new();
+
 /// `cold`: if set, still working on cold-start.
 pub static COLD: AtomicBool = AtomicBool::new(true);
 /// `waittime`: set once the file systems have been synced on the way down.
@@ -230,6 +242,39 @@ unsafe fn bootstrap_device_map(boot: &BootInfo) -> Result<(), &'static str> {
 /// Call once, on the boot CPU, before anything else runs, with `boot` describing the loaded
 /// image.
 pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
+    // locore.S points VBAR_EL1 at exception_vectors before initarm, and initarm sets
+    // tpidr_el1 (and x18, the C's curcpu register) to cpu_info_primary. Here both come first,
+    // so a fault anywhere below lands in do_el1h_sync and curcpu() works.
+    CPU_INFO_PRIMARY
+        .ci_self
+        .set(ptr::from_ref(&CPU_INFO_PRIMARY));
+    // SAFETY: system register writes that install this kernel's per-CPU pointer and vector
+    // table on the boot CPU, before any exception can be taken. The SPSel switch keeps the
+    // stack pointer's value, so the compiler's view of the stack is unchanged.
+    unsafe {
+        // The kernel runs on SP_EL1 (the "EL1h" vectors), as the C does; the boot protocol
+        // may have entered with SPSel = 0, whose vectors are empty.
+        asm!(
+            "mov {tmp}, sp",
+            "msr spsel, #1",
+            "mov sp, {tmp}",
+            "isb",
+            tmp = out(reg) _,
+            options(nomem, nostack, preserves_flags)
+        );
+        asm!(
+            "msr tpidr_el1, {}",
+            in(reg) ptr::from_ref(&CPU_INFO_PRIMARY) as usize,
+            options(nomem, nostack, preserves_flags)
+        );
+        asm!(
+            "msr vbar_el1, {}",
+            "isb",
+            in(reg) exception_vectors_addr(),
+            options(nostack, preserves_flags)
+        );
+    }
+
     // The FDT, memory-map and page-table work of the C happens in the boot protocol; the
     // device map below stands in for `pmap_bootstrap_bs_map` (see the module's deviations).
     // SAFETY: forwarded from the caller.

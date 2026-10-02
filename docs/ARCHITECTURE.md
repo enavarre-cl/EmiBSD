@@ -167,9 +167,26 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   `bus_space_map` is the identity inside it until `pmap` maps devices (M3, page tables).
 - `delay(9)` before the clocks: amd64 polls the i8254 (`isa/clock.rs`, as OpenBSD does before the
   TSC is calibrated); arm64 uses `intr.c`'s `arm_dflt_delay` until `agtimer` attaches (M4).
-- ddb-lite: `db_enter()` panics (there is no trap to land in before M4), so `boot -d` and a panic
-  both end in a stack trace and a halt. `db_panic` therefore defaults to 0. No symbols in the
-  kernel yet (`db_sym.c`): traces are addresses, symbolised by `xtask symbolize`.
+- ddb-lite: `db_enter()` is a breakpoint trap (`int3`, `brk #0xf000`) that lands in `db_ktrap`
+  and `db_trap`, which print `Stopped at <pc>` and the stack trace from `ddb_regs` and then
+  return, as the `c` command would, because there is no command loop (`db_command.c`,
+  `db_run.c`). A panic prints its trace through `db_stack_dump`. `db_panic` therefore defaults
+  to 0: a fatal trap is printed by `kerntrap`/`do_el1h_sync` and panics instead of entering a
+  debugger that could not be left. No symbols in the kernel yet (`db_sym.c`): traces are
+  addresses, symbolised by `xtask symbolize`.
+- Traps (M4, part a): the entry stubs are OpenBSD's `vector.S`/`locore.S` and `exception.S`,
+  kept as `.S` files and included by `global_asm!` with the `assym.h` symbols (frame offsets,
+  selectors, trap numbers) passed as `const` placeholders. amd64 builds its GDT, TSS and IDT in
+  `init_x86_64` (the IDT is a static page; `cpu_init_msrs` runs first thing because there is no
+  `locore0.S`), NMI and double fault take `alltraps` on their IST stacks (the `calltrap_specstk`
+  path exists for user-mode GS/CR3, M6), and `alltraps_kern` does not re-enable interrupts until
+  the interrupt stubs exist. arm64's `initarm` switches to `SP_EL1` (Limine enters with
+  `SPSel = 0`, whose vectors are empty, as in C), sets `tpidr_el1` and `VBAR_EL1` itself; `x18`
+  is a general register here, so the EL1 paths of `exception.S` save and restore it instead of
+  keeping `curcpu()` in it, and `do_el1h_sync` keeps interrupts masked. Without processes every
+  kernel page fault or data abort is fatal (`kpageflttrap` returns 0 when `curproc` is NULL, as
+  in C; `kdata_abort` has no `pcb_onfault` and `uvm_fault` is reported), which is what the
+  `selftest=trap` boot of `smoke` asserts on both archs.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

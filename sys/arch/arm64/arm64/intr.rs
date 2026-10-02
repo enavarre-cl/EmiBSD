@@ -21,9 +21,11 @@
 //!
 //! Status: `wip`. Milestone M2 ports the clock function table and `delay(9)`
 //! (`arm_clock_func`, `arm_clock_register`, `arm_dflt_delay`, `delay`, `cpu_initclocks`,
-//! `cpu_startclock`, `setstatclockrate`). The interrupt controller hooks, `splraise`/`spllower`,
-//! `arm_intr_establish` and friends arrive with M4; the generic timer (`agtimer.c`) that
-//! replaces `arm_dflt_delay` attaches from `mainbus` (M4).
+//! `cpu_startclock`, `setstatclockrate`); M4 adds the IRQ/FIQ entry from `exception.S`
+//! (`arm_dflt_irq`, `arm_dflt_fiq`, `arm_irq_dispatch`, `arm_fiq_dispatch`, `arm_cpu_irq`,
+//! `arm_cpu_fiq`). The interrupt controller hooks (`arm_intr_func`, `arm_intr_register_fdt`),
+//! `splraise`/`spllower`, `arm_intr_establish` and friends arrive with M4-b; the generic timer
+//! (`agtimer.c`) that replaces `arm_dflt_delay` attaches from `mainbus` (M4-b).
 //!
 //! ## Deviations
 //! - `arm_clock_func` is a [`StaticCell`], written by `arm_clock_register` during
@@ -31,9 +33,15 @@
 //! - `arm_dflt_delay`'s inner loop spins on `yield` so the compiler keeps it; the C's empty
 //!   loop body relies on the compiler not optimising it away.
 
+use core::sync::atomic::Ordering;
+
 use libkern::StaticCell;
 
+use crate::arch::arm64::include::cpu::curcpu;
+use crate::arch::arm64::include::frame::Trapframe;
+use crate::kern::subr_prf::panic;
 use crate::unported;
+use crate::uvm::uvm_init::UVMEXP;
 
 /// `arm_clock_func`: the clock driver's entry points, registered by the driver that attaches.
 pub struct ArmClockFunc {
@@ -127,4 +135,47 @@ pub fn arm_dflt_delay(usecs: u32) {
             core::hint::spin_loop();
         }
     }
+}
+
+/// `arm_dflt_irq`: the IRQ dispatcher before an interrupt controller registers one.
+pub fn arm_dflt_irq(_frame: &mut Trapframe) {
+    panic(format_args!("arm_dflt_irq"));
+}
+
+/// `arm_dflt_fiq`: the FIQ dispatcher before an interrupt controller registers one.
+pub fn arm_dflt_fiq(_frame: &mut Trapframe) {
+    panic(format_args!("arm_dflt_fiq"));
+}
+
+/// `arm_irq_dispatch`: where `arm_cpu_irq` sends an IRQ; set by `arm_intr_register_fdt`
+/// (M4-b) during autoconfiguration on the boot CPU.
+pub static ARM_IRQ_DISPATCH: StaticCell<fn(&mut Trapframe)> = StaticCell::new(arm_dflt_irq);
+
+/// `arm_fiq_dispatch`: as `arm_irq_dispatch`, for FIQs.
+pub static ARM_FIQ_DISPATCH: StaticCell<fn(&mut Trapframe)> = StaticCell::new(arm_dflt_fiq);
+
+/// `arm_cpu_irq`: the IRQ entry, called from `handle_el1h_irq` (`exception.S`).
+#[unsafe(no_mangle)]
+pub extern "C" fn arm_cpu_irq(frame: &mut Trapframe) {
+    let ci = curcpu();
+
+    UVMEXP.intrs.fetch_add(1, Ordering::Relaxed);
+    ci.ci_idepth.set(ci.ci_idepth.get() + 1);
+    // SAFETY: written once during autoconfiguration, read on every interrupt afterwards.
+    let dispatch = unsafe { ARM_IRQ_DISPATCH.read() };
+    dispatch(frame);
+    ci.ci_idepth.set(ci.ci_idepth.get() - 1);
+}
+
+/// `arm_cpu_fiq`: the FIQ entry, called from `handle_el1h_fiq` (`exception.S`).
+#[unsafe(no_mangle)]
+pub extern "C" fn arm_cpu_fiq(frame: &mut Trapframe) {
+    let ci = curcpu();
+
+    UVMEXP.intrs.fetch_add(1, Ordering::Relaxed);
+    ci.ci_idepth.set(ci.ci_idepth.get() + 1);
+    // SAFETY: as for `arm_cpu_irq`.
+    let dispatch = unsafe { ARM_FIQ_DISPATCH.read() };
+    dispatch(frame);
+    ci.ci_idepth.set(ci.ci_idepth.get() - 1);
 }

@@ -1,8 +1,10 @@
 //! `<machine/db_machdep.h>` and `db_trace.c` as a trait: what `ddb(4)` needs from the machine.
 //!
 //! Milestone M2 ("ddb-lite") needs only a stack trace from the current frame, which
-//! `db_stack_dump` (`ddb/db_output.rs`) prints at panic time. Registers, breakpoints and
-//! single-stepping arrive with the trap handlers (M4).
+//! `db_stack_dump` (`ddb/db_output.rs`) prints at panic time. M4 adds the trap frame the
+//! debugger was entered with (`ddb_regs`): the trace without an address starts there and
+//! `PC_REGS(&ddb_regs)` is where the kernel stopped. Breakpoints and single-stepping come
+//! with `db_run.c`.
 
 use core::fmt;
 
@@ -26,9 +28,13 @@ pub trait DbMachdep {
     /// `#[inline(always)]`, so the frame is the one of the function that calls this.
     fn frame_address() -> usize;
 
-    /// `db_enter` (`db_interface.c`): enters the debugger, with a breakpoint instruction once
-    /// the trap handlers exist (M4).
+    /// `db_enter` (`db_interface.c`): enters the debugger with a breakpoint instruction,
+    /// which the trap handler hands to `db_ktrap`.
     fn db_enter();
+
+    /// `PC_REGS(&ddb_regs)`: the program counter of the trap frame the debugger was entered
+    /// with. Valid while `db_active`, after `db_ktrap` saved the frame.
+    fn pc_regs() -> usize;
 }
 
 /// `db_enter` on the selected machine.
@@ -39,4 +45,9 @@ pub fn db_enter() {
 /// `db_stack_trace_print` on the selected machine.
 pub fn db_stack_trace_print(addr: usize, have_addr: bool, count: usize, modif: &[u8], pr: PrFn) {
     Machine::db_stack_trace_print(addr, have_addr, count, modif, pr)
+}
+
+/// `PC_REGS(&ddb_regs)` on the selected machine.
+pub fn pc_regs() -> usize {
+    Machine::pc_regs()
 }

@@ -32,9 +32,10 @@
 //! Upstream: sys/arch/amd64/amd64/db_trace.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M2 ports `db_stack_trace_print` for the "trace from this frame"
-//! case `db_stack_dump` needs. `db_regs[]`, `db_reg_args[]`, the trace from `ddb_regs` (a trap
-//! frame), the `/t` thread trace (`tfind`), `stacktrace_save_at` and `stacktrace_save_utrace`
-//! arrive with the trap handlers and the scheduler (M4, M5).
+//! case `db_stack_dump` needs; M4 adds the trace from `ddb_regs` (a trap frame) with
+//! `db_reg_args[]` and the breakpoint-before-the-frame case. `db_regs[]` (the `$rdi`
+//! variables of the command loop), the `/t` thread trace (`tfind`), `stacktrace_save_at` and
+//! `stacktrace_save_utrace` arrive with the command loop and the scheduler (M5).
 //!
 //! ## Deviations
 //! - No symbol table in memory yet (`db_search_symbol`, `db_ctf_func_numargs`, `db_printsym`):
@@ -49,7 +50,8 @@
 use core::mem::offset_of;
 use core::ptr;
 
-use crate::arch::amd64::include::frame::Callframe;
+use crate::arch::amd64::amd64::db_interface::DDB_REGS;
+use crate::arch::amd64::include::frame::{Callframe, Trapframe};
 use crate::arch::amd64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
 use crate::machine::db_machdep::PrFn;
 use crate::unported;
@@ -59,15 +61,30 @@ fn inkernel(va: usize) -> bool {
     va >= VM_MIN_KERNEL_ADDRESS
 }
 
-/// `db_get_value(addr, 8, 0)`: one word of the stack (see the module's deviations).
+/// `db_get_value(addr, 8, 0)`: one word of the stack, or of the code when the trace peeks
+/// at the instruction at `callpc`, which is not aligned (see the module's deviations).
 fn db_get_value(addr: usize) -> usize {
     // SAFETY: the callers walk the frame chain of the current stack, each frame checked to lie
-    // in kernel space above the previous one, so the word is in mapped stack memory.
-    unsafe { ptr::read_volatile(addr as *const usize) }
+    // in kernel space above the previous one, so the word is in mapped stack memory; the one
+    // code read is at a return address in the mapped kernel text. The read is unaligned, as
+    // the C's is on x86.
+    unsafe { ptr::read_unaligned(addr as *const usize) }
 }
 
-/// `db_stack_trace_print`: prints the frames from `addr` (a `struct callframe`), at most
-/// `count` of them, through `pr`.
+/// `db_reg_args[]`: the registers that carry the first six arguments, from `ddb_regs`.
+fn db_reg_args(regs: &Trapframe) -> [i64; 6] {
+    [
+        regs.tf_rdi,
+        regs.tf_rsi,
+        regs.tf_rdx,
+        regs.tf_rcx,
+        regs.tf_r8,
+        regs.tf_r9,
+    ]
+}
+
+/// `db_stack_trace_print`: prints the frames from `addr` (a `struct callframe`), or from the
+/// trap frame in `ddb_regs` without an address, at most `count` of them, through `pr`.
 pub fn db_stack_trace_print(addr: usize, have_addr: bool, count: usize, modif: &[u8], pr: PrFn) {
     let mut kernel_only = true;
     let mut trace_proc = false;
@@ -86,38 +103,100 @@ pub fn db_stack_trace_print(addr: usize, have_addr: bool, count: usize, modif: &
         return;
     }
 
+    // cr4save = rcr4(); if (cr4save & CR4_SMAP) lcr4(cr4save & ~CR4_SMAP): SMAP is not
+    // enabled before CPU identification (M4-b).
+
+    let mut frame;
+    let mut callpc;
+    let mut tf_rsp = 0usize;
     if !have_addr {
-        // frame = ddb_regs.tf_rbp; callpc = ddb_regs.tf_rip: the trap frame arrives with M4.
-        let _ = unported!("ddb_regs (trace without an address)");
-        return;
+        // SAFETY: ddb_regs is read while the debugger is active, after db_ktrap wrote it.
+        let regs = unsafe { DDB_REGS.get() };
+        frame = regs.tf_rbp as usize;
+        callpc = regs.tf_rip as usize;
+        tf_rsp = regs.tf_rsp as usize;
+    } else {
+        frame = addr;
+        callpc = db_get_value(frame + offset_of!(Callframe, f_retaddr));
+        frame = db_get_value(frame + offset_of!(Callframe, f_frame));
     }
-    let mut frame = addr;
-    let mut callpc = db_get_value(frame + offset_of!(Callframe, f_retaddr));
-    frame = db_get_value(frame + offset_of!(Callframe, f_frame));
 
     let mut lastframe = 0usize;
     let mut count = count;
     while count != 0 && frame != 0 {
-        // No symbol: db_ctf_func_numargs(NULL) < 0, so six arguments are shown.
-        let narg = 6;
+        // No symbol table: sym == NULL and name == NULL for every frame.
+        let mut offset = 1usize;
+        if lastframe == 0 && callpc != 0 {
+            // Symbol not found, peek at code
+            let instr = db_get_value(callpc);
+
+            if instr == 0xe589_4855
+                /* enter: pushq %rbp, movq %rsp, %rbp */
+                || (instr & 0x00ff_ffff) == 0x00e5_8948
+            /* enter+1: movq %rsp, %rbp */
+            {
+                offset = 0;
+            }
+        }
+
+        // db_ctf_func_numargs(NULL) < 0, so six arguments are shown.
+        let mut narg = 6usize;
 
         pr(format_args!("{callpc:x}("));
 
-        // The breakpoint-before-the-frame case needs ddb_regs (M4); the frame is set up.
-        let mut argp = frame;
-        for remaining in (1..=narg).rev() {
-            argp -= core::mem::size_of::<usize>();
+        let arg0;
+        if lastframe == 0 && offset == 0 && !have_addr {
+            // We have a breakpoint before the frame is set up
+            // SAFETY: as above.
+            let args = db_reg_args(unsafe { DDB_REGS.get() });
+            // The C counts `narg` down inside its `i < narg` loop, so four registers are
+            // printed and the last two arguments come from the stack below.
+            let mut i = 0;
+            while i < narg {
+                pr(format_args!("{:x}", args[i]));
+                narg -= 1;
+                if narg != 0 {
+                    pr(format_args!(","));
+                }
+                i += 1;
+            }
+
+            // Use %rsp instead
+            arg0 = tf_rsp - 8 + offset_of!(Callframe, f_arg0);
+        } else {
+            let mut argp = frame;
+            for remaining in (1..=narg).rev() {
+                argp -= core::mem::size_of::<usize>();
+                pr(format_args!("{:x}", db_get_value(argp)));
+                if remaining != 1 {
+                    pr(format_args!(","));
+                }
+            }
+            narg = 0;
+
+            arg0 = frame + offset_of!(Callframe, f_arg0);
+        }
+
+        let mut argp = arg0;
+        while narg > 0 {
             pr(format_args!("{:x}", db_get_value(argp)));
-            if remaining != 1 {
+            argp += core::mem::size_of::<usize>();
+            narg -= 1;
+            if narg != 0 {
                 pr(format_args!(","));
             }
         }
-        // arg0 = &frame->f_arg0; narg is 0 here, so nothing more is printed.
-
         pr(format_args!(") at "));
         // db_printsym(callpc, DB_STGY_PROC, pr) without symbols prints the address.
         pr(format_args!("{callpc:#x}"));
         pr(format_args!("\n"));
+
+        if lastframe == 0 && offset == 0 && !have_addr {
+            // Frame really belongs to next callpc
+            lastframe = tf_rsp - 8;
+            callpc = db_get_value(lastframe + offset_of!(Callframe, f_retaddr));
+            continue;
+        }
 
         lastframe = frame;
         callpc = db_get_value(frame + offset_of!(Callframe, f_retaddr));

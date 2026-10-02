@@ -133,6 +133,8 @@ unsafe extern "C" fn _start() -> ! {
 unsafe fn boot() -> Result<BootInfo, BootError> {
     let boot = gather()?;
     BOOTHOWTO.store(boot.boothowto(), core::sync::atomic::Ordering::Relaxed);
+    #[cfg(feature = "qemu")]
+    bsd::kern::selftest::parse_bootargs(boot.cmdline.to_bytes());
     // SAFETY: forwarded from `_start`; `boot` describes the image the bootloader just loaded.
     unsafe { Machine::early_init(&boot) }.map_err(|_unprintable| BootError::EarlyInit)?;
     Ok(boot)

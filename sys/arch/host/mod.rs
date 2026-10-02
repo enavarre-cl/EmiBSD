@@ -319,6 +319,10 @@ impl DbMachdep for Machine {
     fn db_enter() {
         eprintln!("host: db_enter");
     }
+
+    fn pc_regs() -> usize {
+        0
+    }
 }
 
 /// amd64's interrupt priority levels, so tests see a real machine's numbers.

@@ -248,6 +248,13 @@ pub fn panicstr() -> bool {
     !PANICSTR.load(Ordering::Acquire).is_null()
 }
 
+/// `atomic_cas_ptr(&panicstr, NULL, buf)`: the trap handlers' `fault()` claims `panicstr`
+/// for their CPU's `ci_panicbuf` before the message is formatted, so the `panic()` that
+/// follows counts as the second one (`RB_NOSYNC`).
+pub fn panicstr_claim(buf: *mut u8) {
+    let _ = PANICSTR.compare_exchange(ptr::null_mut(), buf, Ordering::AcqRel, Ordering::Acquire);
+}
+
 /// `panic`: handle an unresolvable fatal error. Prints "panic: \<message\>" and reboots. If
 /// called twice (i.e. a recursive call) we avoid trying to sync the disk and just reboot (to
 /// avoid recursive panics).

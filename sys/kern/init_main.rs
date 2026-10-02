@@ -112,6 +112,9 @@ pub fn main() -> ! {
     {
         crate::kern::selftest::pmap_kernel_mapping();
         crate::kern::selftest::malloc_pool_stress();
+        if crate::kern::selftest::trap_requested() {
+            crate::kern::selftest::trap_bad_access();
+        }
     }
     let _ = unported!("disk_init"); // must come before autoconfiguration
     let _ = unported!("tty_init"); // initialise tty's

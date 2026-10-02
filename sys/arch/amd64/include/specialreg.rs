@@ -37,8 +37,9 @@
 //!
 //! Upstream: sys/arch/amd64/include/specialreg.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M3 ports the `CR0`/`CR3` bits and `MSR_EFER`; the CPUID feature
-//! words, the remaining MSRs and the MTRR/PAT definitions arrive with CPU identification (M4).
+//! Status: `wip`. Milestones M3 and M4 port the `CR0`/`CR3` bits, `MSR_EFER` and the
+//! `syscall`/segment-base MSRs; the CPUID feature words, the remaining MSRs and the MTRR/PAT
+//! definitions arrive with CPU identification.
 
 // Bits in 386 special registers:
 
@@ -62,6 +63,20 @@ pub const CR3_PADDR: u64 = 0x7fff_ffff_ffff_f000;
 
 /// `MSR_EFER`: Extended feature enable.
 pub const MSR_EFER: u32 = 0xc000_0080;
+/// `MSR_STAR`: the `syscall`/`sysret` segment selectors.
+pub const MSR_STAR: u32 = 0xc000_0081;
+/// `MSR_LSTAR`: the 64-bit `syscall` entry point.
+pub const MSR_LSTAR: u32 = 0xc000_0082;
+/// `MSR_CSTAR`: the compatibility-mode `syscall` entry point.
+pub const MSR_CSTAR: u32 = 0xc000_0083;
+/// `MSR_SFMASK`: the `RFLAGS` bits `syscall` clears.
+pub const MSR_SFMASK: u32 = 0xc000_0084;
+/// `MSR_FSBASE`: the `FS` segment base.
+pub const MSR_FSBASE: u32 = 0xc000_0100;
+/// `MSR_GSBASE`: the `GS` segment base.
+pub const MSR_GSBASE: u32 = 0xc000_0101;
+/// `MSR_KERNELGSBASE`: the `GS` base `swapgs` swaps in.
+pub const MSR_KERNELGSBASE: u32 = 0xc000_0102;
 /// `EFER_SCE`: SYSCALL extension.
 pub const EFER_SCE: u64 = 0x0000_0001;
 /// `EFER_LME`: Long Mode Enabled.
@@ -88,6 +103,11 @@ mod tests {
             ("EFER_LME", EFER_LME as i64),
             ("EFER_LMA", EFER_LMA as i64),
             ("EFER_NXE", EFER_NXE as i64),
+            ("MSR_STAR", i64::from(MSR_STAR)),
+            ("MSR_LSTAR", i64::from(MSR_LSTAR)),
+            ("MSR_FSBASE", i64::from(MSR_FSBASE)),
+            ("MSR_GSBASE", i64::from(MSR_GSBASE)),
+            ("MSR_KERNELGSBASE", i64::from(MSR_KERNELGSBASE)),
         ];
         for (name, value) in ours {
             assert_eq!(crate::reftest::int(&defs, name), Some(*value), "{name}");

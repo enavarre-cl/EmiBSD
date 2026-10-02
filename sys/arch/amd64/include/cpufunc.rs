@@ -171,3 +171,71 @@ pub fn wbinvd_on_all_cpus() -> i32 {
     wbinvd();
     0
 }
+
+/// `rcr2`: reads `CR2`, the faulting address of the last page fault.
+#[inline]
+pub fn rcr2() -> u64 {
+    let val: u64;
+    // SAFETY: reading CR2 has no side effects.
+    unsafe { asm!("mov {}, cr2", out(reg) val, options(nomem, nostack, preserves_flags)) };
+    val
+}
+
+/// `rdr6`: reads debug register 6.
+#[inline]
+pub fn rdr6() -> u64 {
+    let val: u64;
+    // SAFETY: reading a debug register has no side effects.
+    unsafe { asm!("mov {}, dr6", out(reg) val, options(nomem, nostack, preserves_flags)) };
+    val
+}
+
+/// `rdr7`: reads debug register 7.
+#[inline]
+pub fn rdr7() -> u64 {
+    let val: u64;
+    // SAFETY: as for `rdr6`.
+    unsafe { asm!("mov {}, dr7", out(reg) val, options(nomem, nostack, preserves_flags)) };
+    val
+}
+
+/// `lidt`: loads the interrupt descriptor table register.
+///
+/// # Safety
+///
+/// `p` must point at a region descriptor naming a valid IDT that outlives its use.
+#[inline]
+pub unsafe fn lidt(p: *const crate::arch::amd64::include::segments::RegionDescriptor) {
+    // SAFETY: the caller's guarantee.
+    unsafe { asm!("lidt [{}]", in(reg) p, options(nostack, preserves_flags)) };
+}
+
+/// `ltr`: loads the task register.
+///
+/// # Safety
+///
+/// `sel` must select an available TSS descriptor in the current GDT.
+#[inline]
+pub unsafe fn ltr(sel: u16) {
+    // SAFETY: the caller's guarantee.
+    unsafe { asm!("ltr {0:x}", in(reg) sel, options(nomem, nostack, preserves_flags)) };
+}
+
+/// `lldt`: loads the local descriptor table register (0: no LDT).
+///
+/// # Safety
+///
+/// `sel` must be 0 or select an LDT descriptor in the current GDT.
+#[inline]
+pub unsafe fn lldt(sel: u16) {
+    // SAFETY: the caller's guarantee.
+    unsafe { asm!("lldt {0:x}", in(reg) sel, options(nomem, nostack, preserves_flags)) };
+}
+
+/// `breakpoint`: `int3`, the debugger's entry.
+#[inline]
+pub fn breakpoint() {
+    // SAFETY: a breakpoint trap; the IDT's `Xtrap03` hands it to `db_ktrap`, which returns
+    // past the instruction.
+    unsafe { asm!("int3", options(nomem, nostack, preserves_flags)) };
+}

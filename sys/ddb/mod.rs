@@ -4,4 +4,5 @@
 //! `ddb(4)` later. Its sources carry the Mach license (Carnegie Mellon).
 
 pub mod db_output;
+pub mod db_trap;
 pub mod db_usrreq;

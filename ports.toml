@@ -158,7 +158,7 @@ rust = "sys/arch/amd64/include/cpufunc.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "96af50a82a5f71bfeb614be5ea187f032a7664d1"
-notes = "read_rflags/write_rflags/intr_enable/intr_disable/intr_restore (M0), rcr3/lcr3/tlbflush/invlpg/rdmsr/wrmsr/wbinvd (M3); descriptor tables, the other control registers, invpcid, clflush and the cache helpers come with M4"
+notes = "read_rflags/write_rflags/intr_enable/intr_disable/intr_restore (M0), rcr3/lcr3/tlbflush/invlpg/rdmsr/wrmsr/wbinvd (M3), rcr2/rdr6/rdr7/lidt/ltr/lldt/breakpoint (M4); the other control registers, invpcid, clflush and the cache helpers come with M4-b"
 
 [[file]]
 c = "sys/arch/arm64/include/cpu.h"
@@ -166,7 +166,7 @@ rust = "sys/arch/arm64/include/cpu.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a50845f609e00860e26eac541a0f05789133506d"
-notes = "M0: DAIF helpers only (restore_daif, enable/disable_irq_daif[_ret], intr_enable/disable/restore); struct cpu_info, curcpu and CTL_MACHDEP come with M5"
+notes = "M0: DAIF helpers (restore_daif, enable/disable_irq_daif[_ret], intr_enable/disable/restore); M4: struct cpu_info (the fields the exception and interrupt paths use, in C order), curcpu (tpidr_el1), cpu_number, cpu_info_primary, CPU_IS_PRIMARY/RUNNING, CPUF_*, CI_DDB_*; the topology fields, the scheduler state, CTL_MACHDEP and the cache helpers come with M4-b/M5"
 
 # ---------------------------------------------------------------------------
 # M1: libkern
@@ -417,7 +417,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1c62c5118e6832e153562dbf148d9b5b13022c0b"
 deps = ["sys/sys/msgbuf.h", "sys/sys/reboot.h", "sys/sys/syslog.h", "sys/dev/cons.h", "sys/kern/subr_log.c", "sys/kern/kern_xxx.c", "sys/ddb/db_output.c", "sys/ddb/db_usrreq.c"]
-notes = "format engine is core::fmt (fmt::Arguments replaces fmt+va_list, so printf/vprintf and snprintf/vsnprintf pair up); %b is the Bitmask Display adaptor, %s of a byte string is Str; kprintf!/kprintln!/log!/db_printf! macros; kputchar has no tp and constty is always NULL (TOTTY needs tty, M7: uprintf, ttyprintf, tprintf* wait); kprintf_mutex and splhigh in M4/M5; v_putc fixed to cnputc; panicbuf is a single buffer (per-CPU ci_panicbuf in M5); db_panic defaults to 0 (ddb-lite cannot enter a debugger); KASSERT/KDASSERT live here as kassert!/kdassert!"
+notes = "format engine is core::fmt (fmt::Arguments replaces fmt+va_list, so printf/vprintf and snprintf/vsnprintf pair up); %b is the Bitmask Display adaptor, %s of a byte string is Str; kprintf!/kprintln!/log!/db_printf! macros; kputchar has no tp and constty is always NULL (TOTTY needs tty, M7: uprintf, ttyprintf, tprintf* wait); kprintf_mutex and splhigh in M4-b/M5; v_putc fixed to cnputc; panicbuf is a single buffer (per-CPU ci_panicbuf in M5) and panicstr_claim is the trap handlers' atomic_cas_ptr on panicstr; db_panic defaults to 0 (ddb-lite has no command loop); KASSERT/KDASSERT live here as kassert!/kdassert!"
 
 [[file]]
 c = "sys/kern/kern_xxx.c"
@@ -515,7 +515,7 @@ rust = "sys/arch/amd64/amd64/db_interface.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "f796d11401880e61efa73b9b9d9df31c3f4580c3"
-notes = "M2: db_enter only, and it panics (no IDT for int3 before M4) so the kernel stops with a trace; db_ktrap, db_read_bytes/db_write_bytes, db_machine_init, the MP entry/exit are M4"
+notes = "M2: db_enter; M4: ddb_regs (StaticCell), db_printtrap, db_ktrap (no db_recover, splhigh reported, db_active is a bool), db_enter = breakpoint() (int3); db_regs[], db_read_bytes/db_write_bytes, db_machine_init, the machine commands and the MP entry/exit (db_enter_ddb, db_startcpu, db_stopcpu, x86_ipi_db) come with the command loop and M5"
 
 [[file]]
 c = "sys/arch/amd64/amd64/db_trace.c"
@@ -524,7 +524,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "517870306f9fd9faef84b8ad23110d2cd6e36f0b"
 deps = ["sys/arch/amd64/include/frame.h", "sys/arch/amd64/include/vmparam.h"]
-notes = "M2: db_stack_trace_print from a given frame (db_stack_dump); no symbols (addresses printed, six words below the frame as arguments, xtask symbolize offline), db_get_value is a plain read, SMAP not touched; ddb_regs trace, /t (tfind), db_regs[], stacktrace_save_at/utrace are M4/M5"
+notes = "M2: db_stack_trace_print from a given frame (db_stack_dump); M4: the trace from ddb_regs with db_reg_args[] and the breakpoint-before-the-frame case; no symbols (addresses printed, six words below the frame as arguments, xtask symbolize offline), db_get_value is an unaligned plain read, SMAP not touched; db_regs[], /t (tfind), stacktrace_save_at/utrace are M5"
 
 [[file]]
 c = "sys/arch/amd64/amd64/machdep.c"
@@ -533,7 +533,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "95ffefae93d5b98fae8403a5f8998d77ec55dca8"
 deps = ["sys/arch/amd64/amd64/consinit.c", "sys/arch/amd64/amd64/autoconf.c", "sys/arch/amd64/isa/clock.c", "sys/kern/subr_log.c", "sys/sys/reboot.h"]
-notes = "M2: init_x86_64 (message buffer, consinit, boot -d -> db_enter; the rest is the boot protocol or M3/M4), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all/cpu_reset reported unported), delay (= i8254_delay; delay_func/delay_init/delay_fini M5), cpureset_delay, lid_action, waittime; cpu_startup, descriptor tables, bootinfo parsing, sendsig/setregs, sysctl are M3-M5"
+notes = "M2: init_x86_64 (message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all/cpu_reset reported unported), delay (= i8254_delay; delay_func/delay_init/delay_fini M5), cpureset_delay, lid_action, waittime; M3: the direct map, pmap_bootstrap, the memory clusters, cpu_startup's memory lines; M4: setgate/unsetgate/setregion/set_mem_segment/set_sys_segment, idt (a static page) and idt_allocmap, cpu_init_idt, idt_vec_alloc/alloc_range/set/free, x86_64_proc0_tss_ldt_init (ltr/lldt only, proc0's pcb reported), the GDT/TSS/IDT setup and cpu_init_msrs first thing in init_x86_64, cpu_enter_pages from cpu_startup; the bootinfo parsing, the ACPI/MP tables, cpu_init, dumpsys, sendsig/setregs, sysctl are M4-b to M6"
 
 [[file]]
 c = "sys/arch/amd64/isa/clock.c"
@@ -550,7 +550,7 @@ rust = "sys/arch/amd64/include/frame.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d9b043363ea7fc25368dc3908df3cbc7035033fd"
-notes = "M2: struct callframe; trapframe, intrframe, switchframe are M4/M5"
+notes = "M2: struct callframe; M4: struct trapframe, intrframe, iretq_frame, FRAMESIZE; switchframe is M5"
 
 [[file]]
 c = "sys/arch/amd64/include/vmparam.h"
@@ -592,7 +592,7 @@ rust = "sys/arch/arm64/arm64/db_interface.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "3b8f595b44a2ffedd13b3e9af69d1e6cac099227"
-notes = "M2: db_enter only, and it panics (no exception vectors for brk before M4) so the kernel stops with a trace; db_ktrap, db_read_bytes/db_write_bytes, db_machine_init, the MP entry/exit are M4"
+notes = "M2: db_enter; M4: ddb_regs (StaticCell), db_ktrap (no db_recover, splhigh reported, db_active is a bool, the MDSCR single-step handling kept), db_enter = brk #0xf000; db_regs[], db_validate_address, db_read_bytes/db_write_bytes, db_machine_init, the machine commands and the MP entry/exit come with the command loop and M5"
 
 [[file]]
 c = "sys/arch/arm64/arm64/db_trace.c"
@@ -601,7 +601,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ec8e1b2ef1d4eb20947c721bb5cf60e566d8b3d3"
 deps = ["sys/arch/arm64/include/frame.h"]
-notes = "M2: db_stack_trace_print from a given frame (db_stack_dump); no symbols (addresses printed, no interrupt/trap markers, xtask symbolize offline), db_get_value is a plain read; the C's double count decrement is kept; ddb_regs trace, /t (tfind, switchframe), stacktrace_save_at/utrace are M4/M5"
+notes = "M2: db_stack_trace_print from a given frame (db_stack_dump); M4: the trace from ddb_regs (tf_x[29], tf_elr); no symbols (addresses printed, no interrupt/trap markers, xtask symbolize offline), db_get_value is a plain read; the C's double count decrement is kept; /t (tfind, switchframe), stacktrace_save_at/utrace are M5"
 
 [[file]]
 c = "sys/arch/arm64/arm64/intr.c"
@@ -609,7 +609,7 @@ rust = "sys/arch/arm64/arm64/intr.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a0624ac0c074a45abac7024b57ac043f8710ed6e"
-notes = "M2: arm_clock_func (StaticCell), arm_clock_register, arm_dflt_delay (spins on yield so the loop survives optimisation), delay, cpu_initclocks, cpu_startclock, setstatclockrate (missing hooks reported unported); the interrupt controller hooks, spl, arm_intr_establish are M4"
+notes = "M2: arm_clock_func (StaticCell), arm_clock_register, arm_dflt_delay (spins on yield so the loop survives optimisation), delay, cpu_initclocks, cpu_startclock, setstatclockrate (missing hooks reported unported); M4: arm_dflt_irq/arm_dflt_fiq (panic), arm_irq_dispatch/arm_fiq_dispatch (StaticCell), arm_cpu_irq/arm_cpu_fiq (the exception.S entry, uvmexp.intrs, ci_idepth); arm_intr_func, the controller registration, spl and arm_intr_establish are M4-b"
 
 [[file]]
 c = "sys/arch/arm64/arm64/machdep.c"
@@ -618,7 +618,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c9656ebcea23151ba4968b4eab8099c095180027"
 deps = ["sys/arch/arm64/arm64/bus_space.c", "sys/arch/arm64/arm64/intr.c", "sys/dev/ic/pluart.c", "sys/kern/subr_log.c", "sys/sys/reboot.h"]
-notes = "M2: initarm (the 1 GiB TTBR0 Device-nGnRnE identity block for devices until pmap at M3, message buffer, consinit, boot -d -> db_enter; the rest is the boot protocol or M3/M4), consinit (attaches the PL011 at QEMU virt's 0x09000000 directly: pluart_init_cons needs the FDT at M4, the other *_init_cons are deferred drivers), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all reported unported), cold, waittime, cpuresetfn, powerdownfn; the bootargs parsing is BootInfo::boothowto (sys/machine/bootinfo.rs); cpu_startup, FDT/memory setup, dumpsys, sendsig/setregs, sysctl are M3-M5"
+notes = "M2: initarm (the 1 GiB TTBR0 Device-nGnRnE identity block for devices until pmap at M3, message buffer, consinit, boot -d -> db_enter; the rest is the boot protocol or M3/M4), consinit (attaches the PL011 at QEMU virt's 0x09000000 directly: pluart_init_cons needs the FDT at M4-b, the other *_init_cons are deferred drivers), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all reported unported), cold, waittime, cpuresetfn, powerdownfn; the bootargs parsing is BootInfo::boothowto (sys/machine/bootinfo.rs); M3: the memory setup and pmap_bootstrap; M4: cpu_info_primary, and initarm switches to SP_EL1, sets tpidr_el1 and VBAR_EL1 first thing (locore.S's job in C); cpu_info[], the FDT setup, dumpsys, sendsig/setregs, sysctl are M4-b to M6"
 
 [[file]]
 c = "sys/arch/arm64/include/frame.h"
@@ -626,7 +626,7 @@ rust = "sys/arch/arm64/include/frame.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "0a69dd3403987e520037a73279fb1d8bcfcba146"
-notes = "M2: struct callframe; trapframe and switchframe are M4/M5"
+notes = "M2: struct callframe; M4: struct trapframe (trapframe_t), TF_SIZE; switchframe is M5"
 
 [[file]]
 c = "sys/dev/fdt/pluart_fdt.c"
@@ -689,7 +689,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7d7608efe46d2784b47b60eb6284f205d1d53a9e"
 deps = ["sys/arch/amd64/include/param.h"]
-notes = "pd_entry_t/pt_entry_t, the level shifts, masks and frames, NBPD_*, the PG_* bits, PG_UCMINUS, x86_round_pdr; the EPT bits and PGK_VALUE come with vmm"
+notes = "pd_entry_t/pt_entry_t, the level shifts, masks and frames, NBPD_*, the PG_* bits, PG_UCMINUS, x86_round_pdr, the PGEX_* error-code bits; the EPT bits and PGK_VALUE come with vmm"
 
 [[file]]
 c = "sys/arch/amd64/include/specialreg.h"
@@ -697,7 +697,7 @@ rust = "sys/arch/amd64/include/specialreg.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "32b156b78a79cb3d0633edbf7b3d3531fa116924"
-notes = "CR0/CR3 bits and MSR_EFER with its flags; the CPUID feature words, the other MSRs and the MTRR/PAT definitions come with CPU identification (M4)"
+notes = "CR0/CR3 bits, MSR_EFER with its flags, the syscall and segment-base MSRs (MSR_STAR/LSTAR/CSTAR/SFMASK/FSBASE/GSBASE/KERNELGSBASE); the CPUID feature words, the other MSRs and the MTRR/PAT definitions come with CPU identification (M4-b)"
 
 [[file]]
 c = "sys/arch/arm64/include/pte.h"
@@ -1016,13 +1016,153 @@ upstream_blob = "a86642e67fec8c37a791c40cdee7c89eeb2dcfcd"
 deps = ["sys/uvm/uvm_page.h"]
 notes = "uvm_wait reports itself unported: no page daemon before kernel threads (M5); uvm_pageout, uvmpd_scan and the aiodone daemon come with swapping (M7)"
 
+# ---------------------------------------------------------------------------
+# M4-a: traps and the debugger entry
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/arch/amd64/include/trap.h"
+rust = "sys/arch/amd64/include/trap.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4bab8127025132d8f73ef3f907a971764d0112d1"
+notes = "the T_* trap numbers (i32, as C passes them in an int)"
+
+[[file]]
+c = "sys/arch/amd64/include/psl.h"
+rust = "sys/arch/amd64/include/psl.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "436f3b50b643e1250b12bb079849a680171269a9"
+notes = "the PSL_* rflags bits and the PSL_USERSET/USERSTATIC/USER masks (u64)"
+
+[[file]]
+c = "sys/arch/amd64/include/tss.h"
+rust = "sys/arch/amd64/include/tss.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d63d6bf062e7a922663aaa4fee9c11da596c6a13"
+notes = "struct x86_64_tss, repr(C, packed), size checked"
+
+[[file]]
+c = "sys/arch/amd64/include/segments.h"
+rust = "sys/arch/amd64/include/segments.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "dd1f108033561141c4e3dd2ce9327367e75e0f02"
+notes = "M4: SEL_*, ISPL/ISLDT/IDXSEL/GSEL/GSYSSEL/LSEL, USERMODE/KERNELMODE, the GDT layout (NGDT_*, SYSSEL_START, GDT_SIZE, G*_SEL, GDT_ADDR_MEM/SYS), the descriptors as u64 packers (sys/mem segment, gate, region), SDT_*, SEGEX_*, NIDT/NRSVIDT; the bit-field structs are replaced by pack() builders (docs/C_TO_RUST.md); the LDT selectors and the gdt/ldt helpers that need processes are M6"
+
+[[file]]
+c = "sys/arch/amd64/include/cpu.h"
+rust = "sys/arch/amd64/include/cpu.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c01e81af04eb6552aa6ffc398ea93a75fc2e1857"
+deps = ["sys/arch/amd64/include/intrdefs.h", "sys/arch/amd64/include/tss.h", "sys/arch/amd64/include/pmap.h"]
+notes = "M4: struct cpu_info (the fields the trap and interrupt paths use, in C order, Cells), ci_PAGEALIGN, CPUPF_*, CPUF_*, CI_DDB_*, curcpu (%gs:ci_self), cpu_number, cpu_info_primary, CPU_IS_PRIMARY/RUNNING; the CPU identification fields, ci_isources, the scheduler state, the sensors, vmm, CTL_MACHDEP and the cpu_functions come with M4-b to M6"
+
+[[file]]
+c = "sys/arch/amd64/include/cpu_full.h"
+rust = "sys/arch/amd64/include/cpu_full.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5c62d218f247bf5e0500bebf610b8a236ea1efc0"
+deps = ["sys/arch/amd64/include/cpu.h", "sys/arch/amd64/include/tss.h", "sys/arch/amd64/include/segments.h"]
+notes = "struct cpu_info_full with its page-alignment checks; SETUP_IST_SPECIAL_STACK is inlined in cpu_enter_pages (amd64/cpu.c)"
+
+[[file]]
+c = "sys/arch/amd64/include/db_machdep.h"
+rust = "sys/arch/amd64/include/db_machdep.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7d3561cc768090df73f836ecfd311cb00d647cdc"
+notes = "M4: db_regs_t, PC_REGS/SET_PC_REGS, BKPT_*, SSF_*, FIXUP_PC_AFTER_BREAK, db_clear/set_single_step, IS_BREAKPOINT_TRAP/IS_WATCHPOINT_TRAP; db_expr_t, the inst_* classifiers, DDB_STATE_*, DB_MACHINE_COMMANDS come with db_run.c/db_command.c; the ddb-wide contract is sys/machine/db_machdep.rs"
+
+[[file]]
+c = "sys/arch/amd64/amd64/cpu.c"
+rust = "sys/arch/amd64/amd64/cpu.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ab3adcd7f2fef559012a5d987d7cc75826808282"
+deps = ["sys/arch/amd64/include/cpu_full.h", "sys/arch/amd64/include/specialreg.h", "sys/arch/amd64/include/psl.h"]
+notes = "M4: cpu_info_full_primary (its static initialiser is cpu_info_primary_init), cpu_info_list, cpu_init_msrs (MSR_LSTAR/CSTAR are 0: no Xsyscall until M6, patinit reported), cpu_enter_pages (the TSS stacks; pmap_enter_special is M6); identifycpu, cpu_match/cpu_attach, cpu_init, cpu_boot_secondary, cpu_hatch, the MDS/TSX/ucode work are M4-b to M6"
+
+[[file]]
+c = "sys/arch/amd64/amd64/trap.c"
+rust = "sys/arch/amd64/amd64/trap.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "68cdf4c1b23fa986d0055f16ee4c4fd90a98099e"
+deps = ["sys/arch/amd64/include/trap.h", "sys/arch/amd64/include/frame.h", "sys/arch/amd64/include/cpu.h", "sys/arch/amd64/amd64/db_interface.c"]
+notes = "M4: trap_type[], trap_types, fault (writes ci_panicbuf), pgex2access, kpageflttrap (returns 0 at the curproc check, as C with p == NULL; the pcb_onfault/SMEP/SMAP/uvm_fault code behind it is ported with uvm_fault reported), kerntrap (x86_nmi reported, verify_smap M4-b, debug_trap is the DEBUG option), trap_print; upageflttrap, usertrap, ast, syscall, frame_dump, verify_pkru, vctrap are M6"
+
+[[file]]
+c = "sys/arch/amd64/amd64/locore.S"
+rust = "sys/arch/amd64/amd64/locore.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2c19fbf0a3095ed1ff256cc877e5efbb6a3bca37"
+notes = "M4: lgdt and intr_fast_exit, in locore.S (AT&T syntax, included by global_asm! with the frame offsets and selectors as placeholders: assym.h); the DIAGNOSTIC interrupts-blocked check of intr_fast_exit is M4-b; the kernel entry is the boot protocol; cpu_switchto, sigcode, the syscall entry/exit, intr_user_exit, the Meltdown trampolines and the copy routines are M5/M6"
+
+[[file]]
+c = "sys/arch/amd64/amd64/vector.S"
+rust = "sys/arch/amd64/amd64/vector.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ff7be54de500ccfe3068f58cecddc5939ffd90d3"
+deps = ["sys/arch/amd64/include/trap.h", "sys/arch/amd64/include/frame.h", "sys/arch/amd64/include/segments.h", "sys/arch/amd64/amd64/locore.S"]
+notes = "M4: Xtrap00-Xtrap1f, Xexceptions, alltraps/alltraps_kern (TRAP_ENTRY_KERN, INTR_SAVE_MOST_GPRS_NO_ADJ), in vector.S (AT&T syntax, global_asm! with placeholders); NMI and #DF use alltraps on their IST stacks instead of calltrap_specstk (user GS/cr3, M6), the #GP resume stubs and Xalltraps page are M6, alltraps_kern does not sti (no interrupt stubs, M4-b) nor SMAP_CLAC (M4-b); the Xintr_*/Xrecurse_*/Xresume_*, IPI and soft interrupt stubs are M4-b; #VC (AMDSEV) and DDBPROF not configured"
+
+[[file]]
+c = "sys/arch/arm64/include/armreg.h"
+rust = "sys/arch/arm64/include/armreg.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fefcb935aea104b7bc8ca93a29509eb11a20b9d3"
+notes = "M4: INSN_SIZE, READ_SPECIALREG/WRITE_SPECIALREG (macros taking the register name as a literal), the ESR_ELx exception classes and the ISS bits the trap handler reads, ISS_BRK_COMMENT_MASK, DBG_MDSCR_*, PSR_*; the ID registers, SCTLR/TCR/CPACR/MAIR fields, the cache, timer and GIC system registers come with CPU identification (M4-b) and their subsystems"
+
+[[file]]
+c = "sys/arch/arm64/include/db_machdep.h"
+rust = "sys/arch/arm64/include/db_machdep.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "42d11165b0e086f4a670e969de3e7ea0aeaf8e6a"
+notes = "M4: db_regs_t, PC_REGS/SET_PC_REGS, BKPT_*, db_clear/set_single_step, IS_BREAKPOINT_TRAP/IS_WATCHPOINT_TRAP; db_expr_t, the inst_* classifiers (broken in C too), DDB_STATE_*, DB_MACHINE_COMMANDS come with db_run.c/db_command.c; the ddb-wide contract is sys/machine/db_machdep.rs"
+
+[[file]]
+c = "sys/arch/arm64/arm64/exception.S"
+rust = "sys/arch/arm64/arm64/exception.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "101de9ef803750f678185be4be2f7ab97077c642"
+deps = ["sys/arch/arm64/include/frame.h"]
+notes = "M4: save_registers/restore_registers, handle_el1h_sync/irq/fiq/error, exception_vectors, in exception.S (global_asm! with the frame offsets as placeholders: assym.h); x18 is a general register here (the C's -ffixed-x18 curcpu register), so the EL1 paths save and restore it and recover sp from the frame size; do_ast, handle_el0_* and the trampoline return are M6 (their vector slots are vempty)"
+
+[[file]]
+c = "sys/arch/arm64/arm64/trap.c"
+rust = "sys/arch/arm64/arm64/trap.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a6caf2c6ba99ae93953cf21a8af80db2ff4e95d4"
+deps = ["sys/arch/arm64/include/armreg.h", "sys/arch/arm64/include/frame.h", "sys/arch/arm64/include/cpu.h", "sys/arch/arm64/arm64/db_interface.c"]
+notes = "M4: is_unpriv_ldst, accesstype, fault (writes ci_panicbuf), kdata_abort (no pcb before M5, pmap_fault_fixup and uvm_fault reported, so every kernel abort panics uvm_fault failed), do_el1h_sync (interrupts stay masked until M4-b; the we_re_toast path prints, enters db_ktrap and then panics as the non-DDB build does), serror, do_el1h_error, dumpregs; udata_abort, emulate_msr, do_el0_sync, do_el0_error and the svc path are M6"
+
+[[file]]
+c = "sys/ddb/db_trap.c"
+rust = "sys/ddb/db_trap.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "24a4dd9a16969451f170a203cea94df7233e8e58"
+deps = ["sys/ddb/db_output.c", "sys/kern/subr_prf.c"]
+notes = "M4 (ddb-lite): db_trap prints Stopped at <pc> and the trace from ddb_regs, then returns (continues as c would); db_stop_at_pc/db_restart_at_pc (db_run.c), db_command_loop (reported), db_print_loc_and_inst (the address, no symbols/disassembler), db_show_all_procs (M5) and the ddb.html notice are not here"
+
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"
 reason = "project helper: the Rust GlobalAlloc over malloc(9)/free(9), feature alloc"
 
 [[extra]]
 rust = "sys/kern/selftest.rs"
-reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke"
+reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap on the command line asks for the deliberate bad access (M4)"
 
 [[extra]]
 rust = "sys/reftest.rs"

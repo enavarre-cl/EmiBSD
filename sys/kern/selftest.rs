@@ -6,7 +6,7 @@
 //! (and need feature `alloc` for the allocator stress).
 
 use core::ptr::{self, NonNull};
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
@@ -31,6 +31,23 @@ use crate::uvm::uvm_page::{uvm_pagealloc, uvm_pagefree, vm_page_to_phys};
 
 /// A value that is neither all zeros nor all ones.
 const PATTERN: u64 = 0x5a5a_c3c3_0f0f_a5a5;
+
+/// `selftest=trap` on the kernel command line asks for [`trap_bad_access`].
+static TRAP_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Reads the self-test requests off the kernel command line: `selftest=trap` asks for the
+/// fatal [`trap_bad_access`], which a plain boot must not run.
+pub fn parse_bootargs(cmdline: &[u8]) {
+    const TRAP: &[u8] = b"selftest=trap";
+    if cmdline.windows(TRAP.len()).any(|w| w == TRAP) {
+        TRAP_REQUESTED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Whether the command line asked for [`trap_bad_access`].
+pub fn trap_requested() -> bool {
+    TRAP_REQUESTED.load(Ordering::Relaxed)
+}
 
 /// Maps a fresh page at the start of the kernel map, writes through the mapping, reads back
 /// through the direct map, checks `pmap_extract` before and after `pmap_kremove`.
@@ -212,4 +229,22 @@ pub fn malloc_pool_stress() {
             free_after
         );
     }
+}
+
+/// Reads a kernel address that is not mapped, so the kernel takes a page fault (amd64) or a
+/// data abort (arm64) in supervisor mode and the trap handler prints OpenBSD's fatal trap
+/// message and panics. Never returns normally: it is the M4 exit criterion, and `smoke`
+/// asserts the panic.
+pub fn trap_bad_access() {
+    // The first page of the kernel map: `pmap_kernel_mapping` mapped it and unmapped it again,
+    // so the page tables exist and the leaf entry does not.
+    let va = kernel_map_min();
+    kprintf!(
+        "selftest: trap: reading unmapped kernel address {:#x}\n",
+        va.as_usize()
+    );
+    // SAFETY: deliberately not sound: `va` is unmapped, the read faults and the trap handler
+    // panics, so the value is never used.
+    let seen = unsafe { ptr::read_volatile(va.as_usize() as *const u64) };
+    kprintf!("selftest: trap FAILED: read {seen:#x} without a fault\n");
 }

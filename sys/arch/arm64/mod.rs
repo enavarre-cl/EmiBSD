@@ -231,6 +231,10 @@ impl DbMachdep for Machine {
     fn db_enter() {
         arm64::db_interface::db_enter()
     }
+    fn pc_regs() -> usize {
+        // SAFETY: a read of ddb_regs while the debugger is active, after db_ktrap wrote it.
+        include::db_machdep::pc_regs(unsafe { arm64::db_interface::DDB_REGS.get() })
+    }
 }
 
 impl Intr for Machine {

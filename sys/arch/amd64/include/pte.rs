@@ -138,6 +138,17 @@ pub const PG_FRAME: u64 = 0x000f_ffff_ffff_f000;
 /// `PG_LGFRAME`: large (2M) page frame mask.
 pub const PG_LGFRAME: u64 = 0x000f_ffff_ffe0_0000;
 
+/// `PGEX_P`: protection violation (vs. no mapping).
+pub const PGEX_P: u64 = 0x01;
+/// `PGEX_W`: exception during a write cycle.
+pub const PGEX_W: u64 = 0x02;
+/// `PGEX_U`: exception while in user mode (upl).
+pub const PGEX_U: u64 = 0x04;
+/// `PGEX_I`: instruction fetch blocked by NX.
+pub const PGEX_I: u64 = 0x10;
+/// `PGEX_PK`: protection-key violation.
+pub const PGEX_PK: u64 = 0x20;
+
 /// `PG_UCMINUS`: UC but mtrr can override.
 pub const PG_UCMINUS: u64 = PG_N;
 
@@ -180,6 +191,9 @@ mod tests {
             ("PG_PATLG", PG_PATLG as i64),
             ("PG_FRAME", PG_FRAME as i64),
             ("PG_LGFRAME", PG_LGFRAME as i64),
+            ("PGEX_P", PGEX_P as i64),
+            ("PGEX_W", PGEX_W as i64),
+            ("PGEX_I", PGEX_I as i64),
         ];
         for (name, value) in ours {
             assert_eq!(crate::reftest::int(&defs, name), Some(*value), "{name}");
