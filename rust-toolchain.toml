@@ -1,0 +1,7 @@
+# Stable, pinned. Bumping is its own commit ("build: bump toolchain to <version>").
+# With rustup installed (docs/SETUP.md) the first `cargo` invocation installs all of this.
+[toolchain]
+channel = "1.98.1"
+profile = "minimal"
+components = ["rustfmt", "clippy", "rust-src", "llvm-tools"]
+targets = ["x86_64-unknown-none", "aarch64-unknown-none-softfloat"]

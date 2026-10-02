@@ -1,0 +1,49 @@
+[workspace]
+resolver = "3"
+members = ["sys", "sys/lib/libkern", "tools/xtask"]
+# `cargo check` / `cargo test` at the root build the kernel and libkern for the HOST
+# (through sys/arch/host). Kernel images always name a target; `just` does that.
+default-members = ["sys", "sys/lib/libkern"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+license = "ISC"
+rust-version = "1.98"
+
+[workspace.dependencies]
+# Dependency allowlist. Adding a crate here requires a line in docs/ARCHITECTURE.md
+# ("Dependencies") and in .claude/rules/rust-kernel.md. Porting OpenBSD code is the
+# project; a crate is acceptable only when it replaces something that is NOT OpenBSD code.
+libkern = { path = "sys/lib/libkern" }
+limine = "0.6"                                                          # boot protocol structs; sys/stand only
+bitflags = { version = "2", default-features = false }                  # typed flag sets for #define groups
+intrusive-collections = { version = "0.10", default-features = false }  # queue.h / tree.h semantics
+# host tooling only (tools/xtask)
+serde = { version = "1", features = ["derive"] }
+toml = "1"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"   # every `unsafe {}` needs a `// SAFETY:` comment
+missing_safety_doc = "deny"           # every `unsafe fn` needs a `# Safety` section
+todo = "deny"
+unimplemented = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+dbg_macro = "deny"
+panic = "warn"                        # allowed only in ported panic() paths, with #[allow] + reason
+module_name_repetitions = "allow"     # `uvm::uvm_fault::uvm_fault` is intentional (grep-ability)
+
+[profile.dev]
+panic = "abort"
+opt-level = 1       # opt-level 0 kernels blow the stack and crawl under QEMU TCG
+
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+debug = true        # never strip: ddb-lite and gdb need symbols

@@ -1,0 +1,4 @@
+/target
+/reference/openbsd-src/
+*.img
+.DS_Store

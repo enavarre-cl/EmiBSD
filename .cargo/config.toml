@@ -1,0 +1,14 @@
+# Deliberately NO [build] target: a plain `cargo test` / `cargo check` builds for the HOST
+# (sys/arch/host). Kernel images always name their target; the justfile does that for you.
+
+[alias]
+xtask = "run -p xtask --"
+
+[target.x86_64-unknown-none]
+# static: non-PIE higher-half kernel at 0xffffffff80000000. frame pointers: panic backtraces.
+rustflags = ["-C", "relocation-model=static", "-C", "force-frame-pointers=yes"]
+runner = ["cargo", "xtask", "qemu", "--arch", "amd64", "--kernel"]
+
+[target.aarch64-unknown-none-softfloat]
+rustflags = ["-C", "relocation-model=static", "-C", "force-frame-pointers=yes"]
+runner = ["cargo", "xtask", "qemu", "--arch", "arm64", "--kernel"]

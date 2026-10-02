@@ -1,0 +1,4 @@
+# Tests may unwrap/expect/panic; kernel and tool code may not (see Cargo.toml [workspace.lints]).
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

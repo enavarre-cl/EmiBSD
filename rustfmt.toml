@@ -1,0 +1,3 @@
+# Defaults, pinned so `cargo fmt` output is stable across toolchain bumps.
+style_edition = "2024"
+max_width = 100

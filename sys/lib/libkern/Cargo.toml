@@ -1,0 +1,20 @@
+[package]
+name = "libkern"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Freestanding kernel C library ports (OpenBSD sys/lib/libkern)"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+# Intentionally empty: libkern is a leaf, as in OpenBSD.
+[dependencies]
+
+[dev-dependencies]
+# proptest = "1"   # enable with the first property test (M1)
+
+[lints]
+workspace = true

@@ -1,0 +1,36 @@
+[package]
+name = "bsd"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The OpenBSD kernel, re-implemented in Rust"
+build = "build.rs"
+publish = false
+
+# No src/: reference/openbsd-src/sys/kern/foo.c <-> sys/kern/foo.rs differ only by extension.
+[lib]
+path = "lib.rs"
+
+[[bin]]
+name = "bsd"
+path = "main.rs"
+test = false
+bench = false
+doc = false
+
+[features]
+default = []
+alloc = []        # enables `extern crate alloc`; becomes default at M3 (uvm/kmem up)
+diagnostic = []   # OpenBSD `option DIAGNOSTIC` -> kassert! active
+debug = []        # OpenBSD `option DEBUG`      -> kdassert! active
+qemu = []         # QEMU-only exits (isa-debug-exit, semihosting) and shortcuts
+
+[dependencies]
+libkern.workspace = true
+
+[target.'cfg(target_os = "none")'.dependencies]
+limine.workspace = true
+
+[lints]
+workspace = true
