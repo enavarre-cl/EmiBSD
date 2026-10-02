@@ -43,7 +43,7 @@ test:
 
 # tests that cross-check constants against the C reference tree
 test-ref:
-    OPENBSD_SRC=reference/openbsd-src cargo test -p bsd -- --ignored
+    OPENBSD_SRC={{justfile_directory()}}/reference/openbsd-src cargo test -p libkern -p bsd -- --ignored
 
 clippy:
     cargo clippy -p bsd --target {{amd64}} -- -D warnings

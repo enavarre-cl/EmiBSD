@@ -130,32 +130,57 @@ notes = "only _ALIGN*, _MAX_PAGE_SHIFT and label_t carry over; integer/wchar typ
 [[file]]
 c = "sys/lib/libkern/strlcpy.c"
 rust = "sys/lib/libkern/strlcpy.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "bb17f7dac322784eb2e0ece7d9285cc7fbdc4bc2"
+deps = ["sys/lib/libkern/strnlen.c"]
+notes = "slices instead of pointer+size"
 
 [[file]]
 c = "sys/lib/libkern/strlcat.c"
 rust = "sys/lib/libkern/strlcat.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "dd6d917516c4f4d27afc757f1a2f744076d82635"
+deps = ["sys/lib/libkern/strnlen.c"]
+notes = "slices instead of pointer+size"
 
 [[file]]
 c = "sys/lib/libkern/strnlen.c"
 rust = "sys/lib/libkern/strnlen.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ab9cd5f51164b291ca1f65f66d521297fa817704"
 
 [[file]]
 c = "sys/lib/libkern/crc32c.h"
 rust = "sys/lib/libkern/crc32c.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "513af59bcdacafbfac164f5593756a73a806c8ce"
+notes = "table generated at compile time from the polynomial, checked against the header by just test-ref"
 
 [[file]]
 c = "sys/lib/libkern/timingsafe_bcmp.c"
 rust = "sys/lib/libkern/timingsafe_bcmp.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0dc43e9813e77919a8789e5a5feb14045524782d"
+notes = "returns bool (true = differ); length mismatch counts as a difference"
 
 [[file]]
 c = "sys/lib/libkern/explicit_bzero.c"
 rust = "sys/lib/libkern/explicit_bzero.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "346c0bac70ec73d76a97abf0c6dc89d42b5cbde2"
+notes = "write_volatile per byte instead of memset + weak hook"
+
+[[file]]
+c = "sys/lib/libkern/libkern.h"
+rust = "sys/lib/libkern/lib.rs"
 status = "todo"
+notes = "prototypes are lib.rs re-exports; imax/imin/max/min/lmax/lmin/ulmax/ulmin/abs are Ord::max/min and i32::abs; KASSERT/KDASSERT/__assert arrive with subr_prf.c (M2)"
 
 [[file]]
 c = "sys/lib/libz/crc32.c"

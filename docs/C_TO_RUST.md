@@ -34,3 +34,6 @@ Columns: what OpenBSD C does | what we write | why.
 | `#define NAME 42` in a header | `pub const NAME: usize = 42;` in that header's module, with the narrowest honest type (`usize` for sizes and counts, `i32` where C passes an `int`) | names stay grep-able; the type documents the use |
 | function-like macros in capitals: `ALIGN(p)`, `MAXCOMLEN`-style arithmetic, `howmany(x, y)`, `ctod(x)` | snake-case `const fn` in the same module: `align`, `howmany`, `ctod` | untyped macros buy nothing in Rust; lowercase is the only change |
 | `MIN`/`MAX`, `offsetof`, `nitems`, `SET`/`CLR`/`ISSET` | `core::cmp::{min, max}`, `core::mem::offset_of!`, `.len()`, `|=` / `&= !` / `&` | already in core |
+| `const char *s` string argument | `&[u8]` ending at the first NUL or at `s.len()`, whichever comes first | no read past the slice is possible; a NUL-free slice is still a string |
+| `int f(...)` that is really a boolean (`timingsafe_bcmp` returns 0 or 1) | `-> bool`, the doc stating `true` where C returns nonzero | `if f(..)` reads the same in both languages |
+| constant tables (`crc32c_lookup[]`) | `const TABLE: [u32; 256] = build_table();` computed by a `const fn` from the defining polynomial; `just test-ref` compares every entry with the C header | the data is reproduced, not copied; the reference test keeps it honest |
