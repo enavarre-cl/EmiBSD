@@ -493,7 +493,8 @@ macro_rules! db_printf {
 }
 
 /// `KASSERT(e)`: with feature `diagnostic`, panics through `__assert` when `e` is false;
-/// otherwise nothing, not even the evaluation of `e`.
+/// otherwise nothing, not even the evaluation of `e` (the expression still type-checks, inside
+/// a closure that is never called, so the names it uses do not become unused).
 #[macro_export]
 macro_rules! kassert {
     ($e:expr) => {
@@ -507,6 +508,10 @@ macro_rules! kassert {
                     ::core::stringify!($e),
                 );
             }
+        }
+        #[cfg(not(feature = "diagnostic"))]
+        {
+            let _ = || -> bool { $e };
         }
     };
 }
@@ -525,6 +530,10 @@ macro_rules! kdassert {
                     ::core::stringify!($e),
                 );
             }
+        }
+        #[cfg(not(feature = "debug"))]
+        {
+            let _ = || -> bool { $e };
         }
     };
 }

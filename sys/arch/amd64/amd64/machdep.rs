@@ -77,8 +77,14 @@
 //!
 //! ## Deviations
 //! - Limine has set up long mode, paging and the direct map before `init_x86_64` runs, so the
-//!   memory-map and page-table work of the C version is replaced by the boot protocol
-//!   (`docs/ARCHITECTURE.md`, "Boot flow"); `pmap_bootstrap` arrives with M3.
+//!   BIOS/EFI memory-map walk and the page-table work of the C version are replaced by the
+//!   boot protocol (`docs/ARCHITECTURE.md`, "Boot flow"): `pmap_direct_base` is the
+//!   bootloader's higher-half direct map, and the memory clusters loaded into `uvm` are the
+//!   protocol's usable regions, which already exclude the kernel, the firmware and the
+//!   bootloader's own data. The ISA hole and the `avail_end` bookkeeping have nothing to do.
+//! - `cpu_startup` prints the memory sizes only: `version` (generated `vers.c`),
+//!   `startclocks`, `rtcinit` (M5), the exec and physio maps and `bufinit` (M6, M7),
+//!   `cpu_init_idt` and `cpu_boot_mode` (M4) are not there yet.
 //! - The message buffer is a static area (`kern/subr_log.rs`, `init_static_msgbuf`) instead of
 //!   reserved physical pages, until M3.
 //! - `cninit()` is replaced by `consinit()` (`consinit.rs`): no `constab[]` yet.
@@ -89,21 +95,29 @@
 //!   `vfs_shutdown`, `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys`,
 //!   `config_suspend_all`, ACPI and `cpu_reset` are reported as unported when reached.
 
-use core::sync::atomic::{AtomicI32, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use crate::arch::amd64::amd64::autoconf::COLD;
 use crate::arch::amd64::amd64::consinit::consinit;
+use crate::arch::amd64::amd64::pmap::{PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap};
+use crate::arch::amd64::include::param::PAGE_SIZE;
 use crate::arch::amd64::isa::clock::i8254_delay;
 use crate::kern::init_main::BOOTHOWTO;
 use crate::kern::subr_log::init_static_msgbuf;
 use crate::kprintf;
-use crate::machine::bootinfo::BootInfo;
+use crate::machine::bootinfo::{BootInfo, MemKind};
 use crate::machine::db_machdep::db_enter;
 use crate::machine::{Cpu, Machine};
+use crate::sys::param::roundup;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
 };
+use crate::sys::types::Paddr;
 use crate::unported;
+use crate::uvm::uvm_extern::UvmConstraintRange;
+use crate::uvm::uvm_init::UVMEXP;
+use crate::uvm::uvm_page::{uvm_page_physload, uvm_setpagesize};
+use crate::uvm::uvm_param::{atop, ptoa, trunc_page};
 
 #[cfg(feature = "qemu")]
 use crate::arch::amd64::amd64::qemu;
@@ -119,24 +133,120 @@ pub static CPURESET_DELAY: AtomicI32 = AtomicI32::new(0);
 pub static LID_ACTION: AtomicI32 = AtomicI32::new(1);
 /// `waittime`: set once the file systems have been synced on the way down.
 static WAITTIME: AtomicI32 = AtomicI32::new(-1);
+/// `physmem`: total physical memory, in pages (an `int` in C).
+pub static PHYSMEM: AtomicUsize = AtomicUsize::new(0);
+/// `isa_constraint`: what ISA DMA can reach.
+pub static ISA_CONSTRAINT: UvmConstraintRange = UvmConstraintRange {
+    ucr_low: Paddr::new(0),
+    ucr_high: Paddr::new(0x00ff_ffff),
+};
+/// `dma_constraint`: what 32-bit DMA can reach.
+pub static DMA_CONSTRAINT: UvmConstraintRange = UvmConstraintRange {
+    ucr_low: Paddr::new(0),
+    ucr_high: Paddr::new(0xffff_ffff),
+};
+/// `uvm_md_constraints[]`: the machine's DMA ranges.
+pub static UVM_MD_CONSTRAINTS: [&UvmConstraintRange; 2] = [&ISA_CONSTRAINT, &DMA_CONSTRAINT];
+/// The direct map covers at least this much, by the boot protocol's guarantee.
+const DIRECT_MAP_MIN_SIZE: usize = 4 << 30;
 
 /// `init_x86_64`: the first C of the kernel, called from `locore` with the machine as the
-/// bootloader left it. Here: the message buffer, the console and the `boot -d` hook.
+/// bootloader left it. Here: the direct map, the message buffer, the console, the pmap
+/// bootstrap, the physical memory and the `boot -d` hook.
 ///
 /// # Safety
 ///
 /// Call once, on the boot CPU, before anything else runs, with `boot` describing the loaded
 /// image.
-pub unsafe fn init_x86_64(_boot: &BootInfo) -> Result<(), &'static str> {
-    // The bootinfo, memory map and page-table work of the C happens in the boot protocol.
+pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
+    // The direct map is the bootloader's (see the module's deviations); the C derives
+    // pmap_direct_base from L4_SLOT_DIRECT here.
+    let regions = boot.memmap.regions();
+    let map_end = regions
+        .iter()
+        .map(|r| r.base.as_usize() + r.length.as_usize())
+        .max()
+        .unwrap_or(0);
+    PMAP_DIRECT_BASE.store(boot.hhdm_offset, Ordering::Relaxed);
+    PMAP_DIRECT_END.store(
+        boot.hhdm_offset + roundup(map_end, 1 << 30).max(DIRECT_MAP_MIN_SIZE),
+        Ordering::Relaxed,
+    );
+
+    // cpu_init_early_vctrap and the early PTE pages: M4 and the page tables.
+
     init_static_msgbuf();
     consinit(); // cninit() in C
-    // The rest of init_x86_64 (descriptor tables, pmap_bootstrap, cpu_init_idt, ...) arrives
-    // with M3 and M4; db_machine_init() and ddb_init() with M4.
+
+    // The memory map is the bootloader's, already flensed (see the module's deviations).
+    let avail_end = regions
+        .iter()
+        .filter(|r| r.kind == MemKind::Usable)
+        .map(|r| r.base.as_usize() + r.length.as_usize())
+        .max()
+        .unwrap_or(0);
+
+    // Call pmap initialization to make new kernel address space.
+    // SAFETY: once, on the boot CPU, with the direct map set above and paging on.
+    let first_avail = unsafe { pmap_bootstrap(Paddr::new(0), Paddr::new(trunc_page(avail_end))) };
+
+    // Now, load the memory clusters (which have already been flensed) into the VM system.
+    for r in regions.iter().filter(|r| r.kind == MemKind::Usable) {
+        let seg_start = r.base.as_usize().max(first_avail.as_usize());
+        let seg_end = r.base.as_usize() + r.length.as_usize();
+
+        if seg_start > seg_end {
+            continue;
+        }
+        if seg_end - seg_start < PAGE_SIZE {
+            continue;
+        }
+
+        PHYSMEM.fetch_add(atop(r.length.as_usize()), Ordering::Relaxed);
+
+        uvm_page_physload(
+            atop(seg_start),
+            atop(seg_end),
+            atop(seg_start),
+            atop(seg_end),
+            0,
+        );
+    }
+    // The memory between the ISA hole and the kernel, and the message buffer pages: the map
+    // has no hole to load around, and the message buffer is static (M2).
+
+    uvm_setpagesize();
+
+    // The rest of init_x86_64 (descriptor tables, cpu_init_idt, the trampolines, ...)
+    // arrives with M4 and M5; db_machine_init() and ddb_init() with M4.
     if BOOTHOWTO.load(Ordering::Relaxed) & RB_KDB != 0 {
         db_enter();
     }
     Ok(())
+}
+
+/// `cpu_startup`: machine-dependent startup code (see the module's deviations).
+pub fn cpu_startup() {
+    // msgbuf_vaddr / initmsgbuf: the message buffer is static (M2). version, startclocks,
+    // rtcinit: M5.
+
+    let physmem = PHYSMEM.load(Ordering::Relaxed);
+    kprintf!(
+        "real mem = {} ({}MB)\n",
+        ptoa(physmem),
+        ptoa(physmem) / 1024 / 1024
+    );
+
+    // exec_map, cpu_init_extents, the physio map, bufinit: M6 and M7.
+
+    let free = UVMEXP.free.load(Ordering::Relaxed).max(0) as usize;
+    kprintf!(
+        "avail mem = {} ({}MB)\n",
+        ptoa(free),
+        ptoa(free) / 1024 / 1024
+    );
+
+    // cpu_init_idt, cpu_boot_mode, the ISA DMA bounce pages: M4 and M6.
 }
 
 /// `boot(9)`: halts or reboots according to `howto`.

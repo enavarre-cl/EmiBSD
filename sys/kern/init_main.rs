@@ -62,7 +62,9 @@ use core::sync::atomic::{AtomicBool, AtomicI32};
 use crate::kprintf;
 use crate::machine::Machine;
 use crate::machine::cons::consinit;
+use crate::machine::cpu::cpu_startup;
 use crate::unported;
+use crate::uvm::uvm_init::uvm_init;
 
 #[cfg(not(feature = "qemu"))]
 use crate::machine::Cpu;
@@ -105,10 +107,10 @@ pub fn main() -> ! {
     let _ = unported!("SCHED_LOCK_INIT");
 
     let _ = unported!("rw_obj_init");
-    let _ = unported!("uvm_init");
+    uvm_init();
     let _ = unported!("disk_init"); // must come before autoconfiguration
     let _ = unported!("tty_init"); // initialise tty's
-    let _ = unported!("cpu_startup");
+    cpu_startup();
 
     let _ = unported!("random_start"); // Start the flow
 

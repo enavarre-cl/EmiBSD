@@ -32,8 +32,16 @@
 //!   Device-nGnRnE memory in `TTBR0_EL1` (the lower half, which the protocol leaves to the
 //!   kernel), through `MAIR_EL1` attribute 2, so `bus_space` can reach the PL011. `pmap` (M3)
 //!   replaces it.
+//! - The physical memory handed to `uvm` is the boot protocol's usable regions, which already
+//!   exclude the kernel, the device tree, the initrd and the bootloader's own data: the
+//!   `memreg_add`/`memreg_remove` bookkeeping, the EFI memory map walk, `pmap_avail_fixup`
+//!   and `pmap_physload_avail` have nothing left to do, and the direct map `pmap` uses is the
+//!   bootloader's (`arm64/pmap.rs`, deviations).
 //! - The message buffer is a static area (`kern/subr_log.rs`, `init_static_msgbuf`) instead of
 //!   reserved physical pages, until M3.
+//! - `cpu_startup` prints the memory sizes only: `version` (generated `vers.c`), the exec and
+//!   physio maps and `bufinit` (M6, M7), `cpu_init_extents` and `cpu_init_idt` are not there
+//!   yet.
 //! - `consinit` attaches the PL011 at QEMU `virt`'s address directly: `pluart_init_cons`
 //!   (`dev/fdt/pluart_fdt.c`) needs the device tree (M4), and the other `*_init_cons` are
 //!   drivers for hardware QEMU does not have (`deferred-driver`).
@@ -47,27 +55,34 @@
 use core::arch::asm;
 use core::cell::UnsafeCell;
 use core::ptr::{self, addr_of, addr_of_mut};
-use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 
 use libkern::StaticCell;
 
 use crate::arch::arm64::arm64::bus_space::FDT_CONS_BS_TAG;
 use crate::arch::arm64::arm64::intr::delay;
+use crate::arch::arm64::arm64::pmap::{PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap};
+use crate::arch::arm64::include::param::PAGE_SIZE;
 use crate::dev::ic::pluart::pluartcnattach;
 use crate::kern::init_main::BOOTHOWTO;
 use crate::kern::subr_log::init_static_msgbuf;
 use crate::kprintf;
-use crate::machine::bootinfo::BootInfo;
+use crate::machine::bootinfo::{BootInfo, MemKind};
 use crate::machine::bus::BusAddr;
 use crate::machine::db_machdep::db_enter;
 use crate::machine::{Cpu, Machine};
+use crate::sys::param::roundup;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
 };
 use crate::sys::termios::B115200;
 use crate::sys::ttydefaults::TTYDEF_CFLAG;
-use crate::sys::types::Vaddr;
+use crate::sys::types::{Paddr, Vaddr};
 use crate::unported;
+use crate::uvm::uvm_extern::UvmConstraintRange;
+use crate::uvm::uvm_init::UVMEXP;
+use crate::uvm::uvm_page::{uvm_page_physload, uvm_setpagesize};
+use crate::uvm::uvm_param::{atop, ptoa, round_page, trunc_page};
 
 #[cfg(feature = "qemu")]
 use crate::arch::arm64::arm64::qemu;
@@ -116,6 +131,18 @@ struct BootstrapTables(UnsafeCell<[PageTable; 2]>);
 // then on only the MMU reads them.
 unsafe impl Sync for BootstrapTables {}
 
+/// `physmem`: total physical memory, in pages (an `int` in C).
+pub static PHYSMEM: AtomicUsize = AtomicUsize::new(0);
+/// `dma_constraint`: every address, until the device tree narrows it
+/// (`openbsd,dma-constraint`, M4).
+pub static DMA_CONSTRAINT: UvmConstraintRange = UvmConstraintRange {
+    ucr_low: Paddr::new(0),
+    ucr_high: Paddr::new(usize::MAX),
+};
+/// `uvm_md_constraints[]`: the machine's DMA ranges.
+pub static UVM_MD_CONSTRAINTS: [&UvmConstraintRange; 1] = [&DMA_CONSTRAINT];
+/// The direct map covers at least this much, by the boot protocol's guarantee.
+const DIRECT_MAP_MIN_SIZE: usize = 4 << 30;
 /// `cold`: if set, still working on cold-start.
 pub static COLD: AtomicBool = AtomicBool::new(true);
 /// `waittime`: set once the file systems have been synced on the way down.
@@ -191,8 +218,8 @@ unsafe fn bootstrap_device_map(boot: &BootInfo) -> Result<(), &'static str> {
 }
 
 /// `initarm`: the first C of the kernel, called from `locore` with the machine as the
-/// bootloader left it. Here: the bootstrap device map, the message buffer, the console and the
-/// `boot -d` hook.
+/// bootloader left it. Here: the bootstrap device map, the message buffer, the console, the
+/// pmap bootstrap, the physical memory and the `boot -d` hook.
 ///
 /// # Safety
 ///
@@ -205,12 +232,81 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
     unsafe { bootstrap_device_map(boot)? };
     init_static_msgbuf();
     consinit();
-    // The rest of initarm (cpu_init, pmap_bootstrap, uvm_setpagesize, ...) arrives with M3 and
-    // M4; db_machine_init() and ddb_init() with M4.
+
+    // The direct map is the bootloader's (see `arm64/pmap.rs`).
+    let regions = boot.memmap.regions();
+    let map_end = regions
+        .iter()
+        .map(|r| r.base.as_usize() + r.length.as_usize())
+        .max()
+        .unwrap_or(0);
+    PMAP_DIRECT_BASE.store(boot.hhdm_offset, Ordering::Relaxed);
+    PMAP_DIRECT_END.store(
+        boot.hhdm_offset + roundup(map_end, 1 << 30).max(DIRECT_MAP_MIN_SIZE),
+        Ordering::Relaxed,
+    );
+
+    let usable = || regions.iter().filter(|r| r.kind == MemKind::Usable);
+    let ram_start = usable().map(|r| r.base.as_usize()).min().unwrap_or(0);
+    let ram_end = usable()
+        .map(|r| r.base.as_usize() + r.length.as_usize())
+        .max()
+        .unwrap_or(0);
+    // SAFETY: once, on the boot CPU, with the direct map set above and the MMU on.
+    let _vstart = unsafe { pmap_bootstrap(Paddr::new(ram_start), Paddr::new(ram_end)) };
+
+    // pmap_avail_fixup: nothing to fix up, the map is the bootloader's.
+
+    UVMEXP.pagesize.store(PAGE_SIZE as i32, Ordering::Relaxed);
+    uvm_setpagesize();
+
+    // Make all physical memory available to UVM (pmap_physload_avail and the EFI memory map
+    // loop of the C).
+    for r in usable() {
+        if r.length.as_usize() < PAGE_SIZE {
+            kprintf!(" skipped - too small\n");
+            continue;
+        }
+        let start = round_page(r.base.as_usize());
+        let end = trunc_page(r.base.as_usize() + r.length.as_usize());
+        if end <= start {
+            continue;
+        }
+        uvm_page_physload(atop(start), atop(end), atop(start), atop(end), 0);
+        PHYSMEM.fetch_add(atop(end - start), Ordering::Relaxed);
+    }
+
+    // kmeminit_nkmempages and the pmap_growkernel for the page array: with the page tables.
+    // The rest of initarm (cpu_init, the FDT, the console from the device tree, ...) arrives
+    // with M4 and M5; db_machine_init() and ddb_init() with M4.
     if BOOTHOWTO.load(Ordering::Relaxed) & RB_KDB != 0 {
         db_enter();
     }
     Ok(())
+}
+
+/// `cpu_startup`: machine-dependent startup code (see the module's deviations).
+pub fn cpu_startup() {
+    // The message buffer mapping and initmsgbuf: the message buffer is static (M2).
+    // version: M5.
+
+    let physmem = PHYSMEM.load(Ordering::Relaxed);
+    kprintf!(
+        "real mem  = {} ({}MB)\n",
+        ptoa(physmem),
+        ptoa(physmem) / 1024 / 1024
+    );
+
+    // exec_map, the physio map, bufinit: M6 and M7.
+
+    let free = UVMEXP.free.load(Ordering::Relaxed).max(0) as usize;
+    kprintf!(
+        "avail mem = {} ({}MB)\n",
+        ptoa(free),
+        ptoa(free) / 1024 / 1024
+    );
+
+    // cpu_init_extents, cpu_init_idt: M4.
 }
 
 /// `consinit`: attaches the console, once.

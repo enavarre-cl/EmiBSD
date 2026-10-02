@@ -1,4 +1,4 @@
-/*	$OpenBSD: vmparam.h,v 1.26 2026/06/22 00:27:33 jsg Exp $	*/
+/*	$OpenBSD: vmparam.h,v 1.9 2023/04/28 18:33:22 robert Exp $	*/
 /*	$NetBSD: vmparam.h,v 1.1 2003/04/26 18:39:49 fvdl Exp $	*/
 
 /*-
@@ -35,33 +35,36 @@
  *	@(#)vmparam.h	5.9 (Berkeley) 5/12/91
  */
 
-//! amd64 `<machine/vmparam.h>`: the virtual address space layout.
+//! arm64 `<machine/vmparam.h>`: the virtual address space layout.
 //!
-//! Upstream: sys/arch/amd64/include/vmparam.h @ 3ce1f3f79392
+//! Upstream: sys/arch/arm64/include/vmparam.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M2 needs the kernel/user boundary for `ddb`'s `INKERNEL`, M3 the
-//! physical segment policy; the user limits (`MAXTSIZ`, `DFLDSIZ`, `MAXDSIZ`, `BRKSIZ`,
-//! `DFLSSIZ`, `MAXSSIZ`, `STACKGAP_RANDOM`, `USRSTACK`, `VM_MIN_STACK_ADDRESS`), `SHMMAXPGS`,
-//! `USRIOSIZE`, `VM_PHYS_SIZE` and the `VM_FREELIST_*` arrive with M6.
+//! Status: `wip`. Milestone M3 needs the address-space bounds and the physical segment
+//! policy; the user limits (`MAXTSIZ`, `DFLDSIZ`, `MAXDSIZ`, `BRKSIZ`, `DFLSSIZ`, `MAXSSIZ`,
+//! `STACKGAP_RANDOM`, `USRSTACK`, `VM_MIN_STACK_ADDRESS`), `SHMMAXPGS`, `USRIOSIZE` and
+//! `VM_PHYS_SIZE` arrive with M6.
 
-use crate::arch::amd64::include::param::PAGE_SIZE;
-use crate::uvm::uvm_page::VM_PSTRAT_BIGFIRST;
+use crate::arch::arm64::include::param::PAGE_SIZE;
+use crate::uvm::uvm_page::VM_PSTRAT_BSEARCH;
 
+/// `KERNEL_BASE`: where the kernel's virtual space starts.
+pub const KERNEL_BASE: usize = 0xffff_ff80_0000_0000;
 /// `VM_MIN_ADDRESS`: the lowest user address.
 pub const VM_MIN_ADDRESS: usize = PAGE_SIZE;
+/// `USER_SPACE_BITS`: user virtual addresses are this wide.
+pub const USER_SPACE_BITS: u32 = 39;
 /// `VM_MAXUSER_ADDRESS`: the highest address user mappings may reach.
-pub const VM_MAXUSER_ADDRESS: usize = 0x0000_7f7f_ffff_c000;
+pub const VM_MAXUSER_ADDRESS: usize = (1 << USER_SPACE_BITS) - 0x8000;
 /// `VM_MAX_ADDRESS`: the end of the user address space.
-pub const VM_MAX_ADDRESS: usize = 0x0000_7fbf_dfef_f000;
-/// `VM_MIN_KERNEL_ADDRESS`: the start of the kernel address space (the direct map).
-pub const VM_MIN_KERNEL_ADDRESS: usize = 0xffff_8000_0000_0000;
+pub const VM_MAX_ADDRESS: usize = VM_MAXUSER_ADDRESS;
+/// `VM_MIN_KERNEL_ADDRESS`: the start of the kernel address space.
+pub const VM_MIN_KERNEL_ADDRESS: usize = 0xffff_ff80_0000_0000;
 /// `VM_MAX_KERNEL_ADDRESS`: the end of the kernel's own virtual space.
-pub const VM_MAX_KERNEL_ADDRESS: usize = 0xffff_8080_0000_0000;
-/// `VM_PHYSSEG_MAX`: how many physical memory segments `uvm_page_physload` accepts (actually
-/// we could have this many segments).
-pub const VM_PHYSSEG_MAX: usize = 16;
-/// `VM_PHYSSEG_STRAT`: `vm_physmem[]` keeps the biggest segment first.
-pub const VM_PHYSSEG_STRAT: i32 = VM_PSTRAT_BIGFIRST;
+pub const VM_MAX_KERNEL_ADDRESS: usize = 0xffff_ff83_ffff_ffff;
+/// `VM_PHYSSEG_MAX`: how many physical memory segments `uvm_page_physload` accepts.
+pub const VM_PHYSSEG_MAX: usize = 32;
+/// `VM_PHYSSEG_STRAT`: `vm_physmem[]` is kept sorted for a binary search.
+pub const VM_PHYSSEG_STRAT: i32 = VM_PSTRAT_BSEARCH;
 /// `VM_PHYSSEG_NOADD`: can't add RAM after `vm_mem_init`.
 pub const VM_PHYSSEG_NOADD: bool = true;
 
@@ -72,12 +75,9 @@ mod tests {
     #[test]
     #[ignore = "needs OPENBSD_SRC (just test-ref)"]
     fn values_match_the_c_header() {
-        let defs = crate::reftest::defines("sys/arch/amd64/include/vmparam.h");
+        let defs = crate::reftest::defines("sys/arch/arm64/include/vmparam.h");
         let ours: &[(&str, i64)] = &[
-            ("VM_MAXUSER_ADDRESS", VM_MAXUSER_ADDRESS as i64),
-            ("VM_MAX_ADDRESS", VM_MAX_ADDRESS as i64),
-            ("VM_MIN_KERNEL_ADDRESS", VM_MIN_KERNEL_ADDRESS as i64),
-            ("VM_MAX_KERNEL_ADDRESS", VM_MAX_KERNEL_ADDRESS as i64),
+            ("USER_SPACE_BITS", i64::from(USER_SPACE_BITS)),
             ("VM_PHYSSEG_MAX", VM_PHYSSEG_MAX as i64),
         ];
         for (name, value) in ours {

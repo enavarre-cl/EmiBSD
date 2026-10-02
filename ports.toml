@@ -660,6 +660,263 @@ notes = "replaced-by-limine: the whole sys/arch/arm64/stand tree (efiboot) is no
 # Project helpers under sys/ that port no C file
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# M3: uvm page allocator, pmap bootstrap over the bootloader's direct map
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/sys/mman.h"
+rust = "sys/sys/mman.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f76d7e382cdb17886985a8ceea50eef0b7e54b95"
+deps = ["sys/sys/types.h"]
+notes = "PROT_*, MAP_PRIVATE/MAP_ANON, MADV_* and MAP_INHERIT_* only; the mmap(2) family prototypes and the remaining MAP_* flags come with M6"
+
+[[file]]
+c = "sys/kern/kern_synch.c"
+rust = "sys/kern/kern_synch.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "099ae26cc628b9d619e464423968547f722f2a09"
+deps = ["sys/sys/param.h", "sys/kern/subr_prf.c"]
+notes = "wakeup(9) reports itself unported: nothing sleeps before the scheduler (M5); tsleep/msleep/wakeup_n/yield/mi_switch arrive then"
+
+[[file]]
+c = "sys/arch/amd64/include/pte.h"
+rust = "sys/arch/amd64/include/pte.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7d7608efe46d2784b47b60eb6284f205d1d53a9e"
+deps = ["sys/arch/amd64/include/param.h"]
+notes = "pd_entry_t/pt_entry_t, the level shifts, masks and frames, NBPD_*, the PG_* bits; the large-page and PAT helpers come with the page tables"
+
+[[file]]
+c = "sys/arch/amd64/include/pmap.h"
+rust = "sys/arch/amd64/include/pmap.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "227e080e05212d6dfb779f77ab250fc2cd4a0fa4"
+deps = [
+    "sys/arch/amd64/include/pte.h",
+    "sys/uvm/uvm_pmap.h",
+    "sys/uvm/uvm_object.h",
+    "sys/uvm/uvm_page.h",
+]
+notes = "struct pmap (bootstrap subset), pv_entry, vm_page_md, the PML4 slot layout and constants; PTE_BASE/L*_BASE, pl*_i, kvtopte and the inline protect helpers come with the page tables; pv_mtx/pm_mtx with M5"
+
+[[file]]
+c = "sys/arch/amd64/amd64/pmap.c"
+rust = "sys/arch/amd64/amd64/pmap.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "845970b90e23c0e6b8b83534d14b61c686ee01e6"
+deps = [
+    "sys/arch/amd64/include/pmap.h",
+    "sys/arch/amd64/include/vmparam.h",
+    "sys/uvm/uvm_page.c",
+]
+notes = "direct map over Limine's HHDM, pmap_bootstrap's kernel-pmap setup, pmap_steal_memory, pmap_zero_page, pmap_copy_page, pmap_init; pmap_kenter_pa/kremove/growkernel unported (page tables next), pmap_extract for the direct map only; deviations listed in the module"
+
+[[file]]
+c = "sys/arch/arm64/include/vmparam.h"
+rust = "sys/arch/arm64/include/vmparam.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "45551c8ddb837b4eaa54d2207bfae50f2909cd4a"
+deps = ["sys/arch/arm64/include/param.h"]
+notes = "address-space bounds and physical segment policy; user limits, USRSTACK, SHMMAXPGS, USRIOSIZE with M6"
+
+[[file]]
+c = "sys/arch/arm64/include/pmap.h"
+rust = "sys/arch/arm64/include/pmap.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c217e48255457d6432b576c1d1a8633a9074e925"
+deps = [
+    "sys/arch/arm64/include/param.h",
+    "sys/uvm/uvm_pmap.h",
+    "sys/uvm/uvm_page.h",
+    "sys/sys/queue.h",
+]
+notes = "struct pmap (bootstrap subset), vm_page_md, VP_IDX* and cache/pv flags; pm_vp tables and pointer authentication keys with the page tables and M6; pv_mtx with M5"
+
+[[file]]
+c = "sys/arch/arm64/arm64/pmap.c"
+rust = "sys/arch/arm64/arm64/pmap.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "810ea5193fbb42ae9e76f80883c9d4df24a03f5c"
+deps = [
+    "sys/arch/arm64/include/pmap.h",
+    "sys/arch/arm64/include/vmparam.h",
+    "sys/uvm/uvm_page.c",
+]
+notes = "pte_desc, kernel pmap, pmap_bootstrap's kernel-pmap setup, pmap_zero_page/copy_page via Limine's HHDM (deviation: OpenBSD arm64 has no direct map nor PMAP_STEAL_MEMORY; pmap_steal_memory takes pages with uvm_page_physget), pmap_virtual_space; pmap_init, pmap_kenter_pa/kremove/growkernel unported (page tables next)"
+
+[[file]]
+c = "sys/uvm/uvm_param.h"
+rust = "sys/uvm/uvm_param.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d0fe8090eb1a3efe343912318ea1b80ae68ec14c"
+deps = [
+    "sys/sys/param.h",
+    "sys/arch/amd64/include/vmparam.h",
+    "sys/arch/arm64/include/vmparam.h",
+]
+notes = "page arithmetic (atop/ptoa/round_page/trunc_page) and the page-size constants; the VM_* sysctl names live in uvmexp.rs; the MIN/MAX address constants are machine::VmParam"
+
+[[file]]
+c = "sys/uvm/uvm_pmap.h"
+rust = "sys/uvm/uvm_pmap.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1e16ce3c07558e556a719c9bfd751b16ff4ce86b"
+deps = ["sys/sys/types.h"]
+notes = "pmap_statistics and the PMAP_* flags; the pmap(9) prototypes are the machine::Pmap trait (sys/machine/pmap.rs)"
+
+[[file]]
+c = "sys/uvm/uvmexp.h"
+rust = "sys/uvm/uvmexp.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "306d5eebc089484d07dee16d23beaa0c0bed7672"
+deps = ["sys/sys/types.h"]
+notes = "struct uvmexp with every field atomic (one static, no lock), the VM_* sysctl ids, the counters enum; uvmexp_counters (per-CPU) wait for percpu (M5)"
+
+[[file]]
+c = "sys/uvm/uvm_extern.h"
+rust = "sys/uvm/uvm_extern.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7b666bc23448467c3e5d74c70b8fa6a3485705e1"
+deps = ["sys/sys/types.h", "sys/sys/mman.h"]
+notes = "vm_fault_t, vm_inherit_t, vm_prot_t, the UVM_FLAG_* encoding, UVM_PGA_*/UVM_PLA_*/UVM_LK_*, uvm_constraint_range, the kmem_*_mode structs; the prototypes land with their .c files"
+
+[[file]]
+c = "sys/uvm/uvm_object.h"
+rust = "sys/uvm/uvm_object.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6a14f501500972901a0a81f70fd18132fd31baf4"
+deps = ["sys/sys/tree.h", "sys/uvm/uvm_page.h"]
+notes = "struct uvm_object (memt, uo_npages, uo_refs), UVM_OBJ_KERN, UVM_OBJ_IS_KERN_OBJECT; vmobjlock (M5), pgops and the UVM_OBJ_IS_* for vnodes/devices/aobjs (M6, M7)"
+
+[[file]]
+c = "sys/uvm/uvm_object.c"
+rust = "sys/uvm/uvm_object.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8e18a7725e057df16d8935c8408f9a132570cd55"
+deps = ["sys/uvm/uvm_object.h"]
+notes = "the object tree generation (uvm_objtree over uvm_pagecmp); uvm_obj_init/destroy/setlock/wire/unwire/free need the pagers and amaps (M6)"
+
+[[file]]
+c = "sys/uvm/uvm_anon.h"
+rust = "sys/uvm/uvm_anon.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ff2d6fe21192846df9abf631bcdb91bff05c95b0"
+deps = ["sys/uvm/uvm_page.h"]
+notes = "struct vm_anon (an_page, an_ref, an_swslot); an_lock (M5), the anon pool and uvm_anon.c with amaps (M6)"
+
+[[file]]
+c = "sys/uvm/uvm.h"
+rust = "sys/uvm/uvm.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "79dd17e35d40fa3d84252b3ace130f87eea2e717"
+deps = ["sys/uvm/uvm_page.h", "sys/uvm/uvm_pmemrange.h"]
+notes = "struct uvm (page queues, page_init_done, pmr_control) and the UVM_ET_* bits; the locks, the aiodone queue, the pager and swap fields arrive with their subsystems"
+
+[[file]]
+c = "sys/uvm/uvm_init.c"
+rust = "sys/uvm/uvm_init.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7703ec138db0f65b7bedc76cdaed1423363db7f0"
+deps = [
+    "sys/uvm/uvm.h",
+    "sys/uvm/uvmexp.h",
+    "sys/uvm/uvm_page.c",
+]
+notes = "uvm_init: page system and pmap_init run; uvm_map_init, uvm_km_init, uvmfault_init, uvm_km_page_init, kmeminit, dma_alloc_init, uvm_pager_init, amap_init, uao_create, uvm_anon_init, the bestfit switch and uvm_init_percpu report themselves unported"
+
+[[file]]
+c = "sys/uvm/uvm_page.h"
+rust = "sys/uvm/uvm_page.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3578dcf4f6297293fa55a23d5c4f7676f5f33054"
+deps = [
+    "sys/sys/queue.h",
+    "sys/sys/tree.h",
+    "sys/uvm/uvm_pmap.h",
+    "sys/uvm/uvm_extern.h",
+]
+notes = "struct vm_page (Cell/atomic fields, pointer-arithmetic helpers add/sub/ptr_add), the PG_*/PQ_* flags, vm_physseg, VM_PSTRAT_*; the page queue locks are no-ops until M5"
+
+[[file]]
+c = "sys/uvm/uvm_page.c"
+rust = "sys/uvm/uvm_page.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e89c58ad8ac48fec0a2742e0391ebc4ffa649598"
+deps = [
+    "sys/uvm/uvm_page.h",
+    "sys/uvm/uvm_pmemrange.c",
+    "sys/uvm/uvm_object.h",
+    "sys/uvm/uvm_anon.h",
+    "sys/uvm/uvm_param.h",
+]
+notes = "page init, physload/physget/physdump, pageboot_alloc (both PMAP_STEAL_MEMORY paths), pagealloc/pagefree/pglistalloc/pglistfree, wire/unwire/activate/deactivate, PHYS_TO_VM_PAGE; uvm_page_physload after uvm_init needs malloc; uvm_pagewait needs rwsleep (M5); uvm_pagezero_thread (M5)"
+
+[[file]]
+c = "sys/uvm/uvm_pmemrange.h"
+rust = "sys/uvm/uvm_pmemrange.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fcf5dfbcb618bc4822009ff886bf70f074238806"
+deps = [
+    "sys/sys/queue.h",
+    "sys/sys/tree.h",
+    "sys/uvm/uvm_page.h",
+]
+notes = "uvm_pmemrange, uvm_pmr_control, the memtype constants and the tree adapters"
+
+[[file]]
+c = "sys/uvm/uvm_pmemrange.c"
+rust = "sys/uvm/uvm_pmemrange.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "db5921336f5bd88fd47d5b18dc2943748024522e"
+deps = [
+    "sys/uvm/uvm_pmemrange.h",
+    "sys/uvm/uvm_page.h",
+    "sys/kern/kern_synch.c",
+    "sys/uvm/uvm_pdaemon.c",
+]
+notes = "the whole allocator (getpages/getone/get1page, freepages/freepageq, split/use_inc, rootupdate, isfree, print, assertvalid under debug); uvm_wait/wakeup report themselves unported so WAITOK fails with ENOMEM; in_pagedaemon is false; the per-CPU cache (MULTIPROCESSOR && __HAVE_UVM_PERCPU) is not configured; uvm_pmr_allocpmr after uvm_init needs malloc"
+
+[[file]]
+c = "sys/uvm/uvm_km.c"
+rust = "sys/uvm/uvm_km.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d125775bafe311bad1f791f16fae0434e8703879"
+deps = ["sys/uvm/uvm_extern.h"]
+notes = "no_constraint, the kv_*/kp_*/kd_* allocation modes; km_alloc/km_free, uvm_km_init, uvm_km_suballoc, uvm_km_pgremove and the single-page allocator thread follow"
+
+[[file]]
+c = "sys/uvm/uvm_pdaemon.c"
+rust = "sys/uvm/uvm_pdaemon.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a86642e67fec8c37a791c40cdee7c89eeb2dcfcd"
+deps = ["sys/uvm/uvm_page.h"]
+notes = "uvm_wait reports itself unported: no page daemon before kernel threads (M5); uvm_pageout, uvmpd_scan and the aiodone daemon come with swapping (M7)"
+
 [[extra]]
 rust = "sys/reftest.rs"
 reason = "test helper: reads #define lines from $OPENBSD_SRC for reference-backed tests (cfg(test) only)"

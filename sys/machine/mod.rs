@@ -1,8 +1,8 @@
 //! The machine-dependent interface: OpenBSD `<machine/*.h>` and `cpufunc.h` as traits.
 //!
 //! Generic code reaches architecture code ONLY through this module. One module per OpenBSD header
-//! ([`param`], [`cpu`], [`cons`], [`bus`], [`db_machdep`]; [`bootinfo`] is the record the boot
-//! glue hands over), all re-exported here. The selected architecture is re-exported as [`Machine`]; the block at the
+//! ([`param`], [`vmparam`], [`cpu`], [`cons`], [`bus`], [`pmap`], [`db_machdep`]; [`bootinfo`]
+//! is the record the boot glue hands over), all re-exported here. The selected architecture is re-exported as [`Machine`]; the block at the
 //! bottom proves at compile time that it implements every trait. Adding a trait method therefore
 //! means implementing it for amd64, arm64 and the host test double in the same commit.
 
@@ -12,6 +12,8 @@ pub mod cons;
 pub mod cpu;
 pub mod db_machdep;
 pub mod param;
+pub mod pmap;
+pub mod vmparam;
 
 pub use bootinfo::*;
 pub use bus::*;
@@ -19,6 +21,8 @@ pub use cons::*;
 pub use cpu::*;
 pub use db_machdep::*;
 pub use param::*;
+pub use pmap::*;
+pub use vmparam::*;
 
 /// The selected architecture's implementation of the machine interface.
 pub use crate::arch::current::Machine;
@@ -26,7 +30,7 @@ pub use crate::arch::current::Machine;
 // Compile-time proof that the selected architecture implements the whole contract.
 const _: () = {
     const fn assert_impl<
-        M: MachineInfo + MachineParam + Cpu + Console + Exit + BusSpace + DbMachdep,
+        M: MachineInfo + MachineParam + VmParam + Cpu + Console + Exit + BusSpace + DbMachdep + Pmap,
     >() {
     }
     assert_impl::<Machine>();

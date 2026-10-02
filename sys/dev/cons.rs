@@ -180,20 +180,25 @@ pub fn cnbell(pitch: u32, period: u32, volume: u32) {
 mod tests {
     use super::*;
     use crate::sys::param::NODEV;
-    use std::sync::Mutex;
+    use core::cell::RefCell;
+    use std::thread_local;
     use std::vec::Vec;
 
-    static OUT: Mutex<Vec<i32>> = Mutex::new(Vec::new());
-    static POLL: Mutex<Vec<bool>> = Mutex::new(Vec::new());
+    // `cn_tab` is global, so a test in another thread may print through this device while
+    // this one runs; recording per thread keeps each test's output its own.
+    thread_local! {
+        static OUT: RefCell<Vec<i32>> = const { RefCell::new(Vec::new()) };
+        static POLL: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
+    }
 
     fn getc(_dev: Dev) -> i32 {
         i32::from(b'x')
     }
     fn putc(_dev: Dev, c: i32) {
-        OUT.lock().unwrap().push(c);
+        OUT.with(|out| out.borrow_mut().push(c));
     }
     fn pollc(_dev: Dev, on: bool) {
-        POLL.lock().unwrap().push(on);
+        POLL.with(|poll| poll.borrow_mut().push(on));
     }
 
     static TESTCONS: Consdev = Consdev {
@@ -213,13 +218,13 @@ mod tests {
         cnputc(0);
         cnputc(i32::from(b'a'));
         cnputc(i32::from(b'\n'));
-        assert_eq!(*OUT.lock().unwrap(), [i32::from(b'a'), 10, 13]);
+        OUT.with(|out| assert_eq!(*out.borrow(), [i32::from(b'a'), 10, 13]));
         assert_eq!(cngetc(), i32::from(b'x'));
         cnpollc(true);
         cnpollc(true);
         cnpollc(false);
         cnpollc(false);
-        assert_eq!(*POLL.lock().unwrap(), [true, false]);
+        POLL.with(|poll| assert_eq!(*poll.borrow(), [true, false]));
         cnbell(1, 2, 3);
     }
 }

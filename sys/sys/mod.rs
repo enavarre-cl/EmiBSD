@@ -6,6 +6,7 @@
 
 pub mod errno;
 pub mod kernel;
+pub mod mman;
 pub mod msgbuf;
 pub mod param;
 pub mod queue;

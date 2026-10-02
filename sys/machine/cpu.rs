@@ -28,7 +28,7 @@ impl ExitStatus {
     }
 }
 
-/// The boot CPU, from the bootloader's hand-off until `cpu_startup` exists (milestone M5).
+/// The boot CPU, from the bootloader's hand-off through `cpu_startup`.
 pub trait Cpu {
     /// Earliest machine setup, called once by the boot glue before anything prints: OpenBSD's
     /// `init_x86_64` / `initarm`, as far as they are ported. It brings up the message buffer and
@@ -50,6 +50,16 @@ pub trait Cpu {
 
     /// `delay(9)`: busy-waits for at least `usec` microseconds.
     fn delay(usec: u32);
+
+    /// `cpu_startup`: machine-dependent startup once the VM system is up; `main` calls it
+    /// after `uvm_init`. It prints the memory sizes; the exec and physio maps, the buffer
+    /// cache and the descriptor tables join it in later milestones.
+    fn cpu_startup();
+}
+
+/// `cpu_startup` on the selected machine.
+pub fn cpu_startup() {
+    Machine::cpu_startup()
 }
 
 /// `boot(9)` on the selected machine.

@@ -162,7 +162,7 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   `machdep.rs`) directly, instead of `cninit()`'s `constab[]` walk and `pluart_init_cons`'s
   device-tree lookup. On arm64, `initarm` installs a one-block identity map of the first GiB in
   `TTBR0_EL1` with Device-nGnRnE attributes, because the Limine protocol maps RAM but not devices;
-  `bus_space_map` is the identity inside it until `pmap` (M3).
+  `bus_space_map` is the identity inside it until `pmap` maps devices (M3, page tables).
 - `delay(9)` before the clocks: amd64 polls the i8254 (`isa/clock.rs`, as OpenBSD does before the
   TSC is calibrated); arm64 uses `intr.c`'s `arm_dflt_delay` until `agtimer` attaches (M4).
 - ddb-lite: `db_enter()` panics (there is no trap to land in before M4), so `boot -d` and a panic
@@ -171,6 +171,21 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.
+- Physical memory and the direct map (M3): the memory handed to `uvm_page_physload` is the boot
+  protocol's usable regions (already without the kernel, the firmware and the bootloader's data),
+  so the BIOS/EFI map walks, `avail_end`, the ISA hole and arm64's `memreg_*` bookkeeping have
+  nothing to do. Both pmaps use the bootloader's higher-half direct map (`BootInfo::hhdm_offset`)
+  as `__HAVE_PMAP_DIRECT` until the kernel owns its page tables: `pmap_direct_base` is that
+  offset, `pmap_bootstrap` does not build the direct map's tables, and `virtual_avail` on amd64
+  starts above the direct map when Limine places it at `VM_MIN_KERNEL_ADDRESS`. OpenBSD arm64 has
+  no direct map and no `PMAP_STEAL_MEMORY` (it uses `pmap_steal_avail` and maps page by page);
+  here it has both, so `uvm_pageboot_alloc` works before any `pmap_kenter_pa` exists. The
+  `vm_physmem[]` half of amd64's `pmap_steal_memory` is `uvm_page_physsteal` (`uvm/uvm_page.rs`),
+  shared by amd64, arm64 and the host double instead of being written three times.
+- `uvmexp` is a static of atomics and the page-queue locks (`uvm_lock_pageq`, `uvm_lock_fpageq`)
+  are no-ops until the mutex arrives (M5): the boot CPU is alone. `wakeup` and `uvm_wait` report
+  themselves unported, so a `UVM_PLA_WAITOK` allocation that cannot be met fails with `ENOMEM`
+  instead of sleeping.
 - Licences: `ddb/` and the `db_*` arch files carry the Mach licence (Carnegie Mellon);
   `dev/ic/comvar.h` and amd64 `include/bus.h` have a BSD block with the 4-clause advertising
   clause. Both were accepted by the user at M2 (`.claude/rules/scope-and-stubs.md`). A translation

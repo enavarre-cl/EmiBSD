@@ -7,4 +7,6 @@ pub mod cpufunc;
 pub mod frame;
 pub mod param;
 pub mod pio;
+pub mod pmap;
+pub mod pte;
 pub mod vmparam;

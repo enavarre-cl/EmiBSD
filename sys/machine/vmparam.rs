@@ -1,0 +1,25 @@
+//! `<machine/vmparam.h>` as a trait: the virtual address space layout and the physical segment
+//! policy of each architecture.
+//!
+//! `uvm/uvm_param.rs` re-exports the values generic code wants, as `<uvm/uvm_param.h>` includes
+//! `<machine/vmparam.h>` in C. The `VM_PSTRAT_*` constants live in `uvm/uvm_page.rs`.
+
+/// The virtual memory layout of the selected architecture.
+pub trait VmParam {
+    /// `VM_MIN_ADDRESS`: the lowest user address.
+    const VM_MIN_ADDRESS: usize;
+    /// `VM_MAXUSER_ADDRESS`: the highest address user mappings may reach.
+    const VM_MAXUSER_ADDRESS: usize;
+    /// `VM_MAX_ADDRESS`: the end of the user address space.
+    const VM_MAX_ADDRESS: usize;
+    /// `VM_MIN_KERNEL_ADDRESS`: the start of the kernel address space.
+    const VM_MIN_KERNEL_ADDRESS: usize;
+    /// `VM_MAX_KERNEL_ADDRESS`: the end of the kernel's own virtual space.
+    const VM_MAX_KERNEL_ADDRESS: usize;
+    /// `VM_PHYSSEG_MAX`: how many physical memory segments `uvm_page_physload` accepts.
+    const VM_PHYSSEG_MAX: usize;
+    /// `VM_PHYSSEG_STRAT`: how `vm_physmem[]` is ordered (one of `VM_PSTRAT_*`).
+    const VM_PHYSSEG_STRAT: i32;
+    /// `VM_PHYSSEG_NOADD`: whether RAM can be added after `uvm_init`.
+    const VM_PHYSSEG_NOADD: bool;
+}

@@ -93,3 +93,12 @@ pub unsafe fn intr_restore(ef: u64) {
     // SAFETY: forwarded.
     unsafe { write_rflags(ef) };
 }
+
+/// `rcr3`: reads `CR3`, the physical address of the current PML4 (with the PCID bits).
+#[inline]
+pub fn rcr3() -> u64 {
+    let val: u64;
+    // SAFETY: reading CR3 has no side effects; the kernel runs at CPL 0, where it is allowed.
+    unsafe { asm!("mov {}, cr3", out(reg) val, options(nomem, nostack, preserves_flags)) };
+    val
+}

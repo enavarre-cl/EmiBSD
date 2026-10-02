@@ -8,18 +8,29 @@
 //! see the page geometry of a real architecture (`just test-ref` checks that they stay equal).
 //! Its console is a `Consdev` that writes to stdout and reads nothing, so `kprintf!` in a test
 //! shows up with `--nocapture`; its bus space accepts every map, reads 0 and drops writes.
+//! Its pmap is a `BTreeMap` of kernel mappings; physical pages are numbers, not memory, so
+//! zeroing and copying them do nothing, and boot memory comes from the host allocator.
 
 use core::cell::Cell;
+use std::collections::BTreeMap;
 use std::eprintln;
 use std::io::Write;
+use std::sync::Mutex;
+use std::vec;
 
 use crate::dev::cons::{CN_LOWPRI, Consdev, set_cn_tab};
 use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::db_machdep::{DbMachdep, PrFn};
-use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, MachineInfo, MachineParam};
+use crate::machine::{
+    BootInfo, Console, Cpu, Exit, ExitStatus, MachineInfo, MachineParam, Pmap, VmParam,
+};
 use crate::sys::errno::Errno;
 use crate::sys::param::NODEV;
-use crate::sys::types::Dev;
+use crate::sys::types::{Dev, Paddr, Vaddr, Vsize};
+use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt};
+use crate::uvm::uvm_page::{
+    PHYS_TO_VM_PAGE, VM_PSTRAT_BIGFIRST, VmPage, uvm_page_physsteal, vm_page_to_phys,
+};
 
 /// The host implementation of the machine interface.
 pub struct Machine;
@@ -31,6 +42,31 @@ pub struct HostBusSpace;
 /// A host bus space handle: the address that was "mapped".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostBusSpaceHandle(usize);
+
+/// The host's `struct pmap`: the kernel mappings, page by page.
+pub struct HostPmap {
+    mappings: Mutex<BTreeMap<usize, usize>>,
+}
+
+/// Where the host pretends kernel virtual space starts (amd64's `VM_MIN_KERNEL_ADDRESS`).
+const HOST_KVA_START: usize = 0xffff_8000_0000_0000;
+/// Where it ends (amd64's `VM_MAX_KERNEL_ADDRESS`).
+const HOST_KVA_END: usize = 0xffff_8080_0000_0000;
+
+/// The host's kernel pmap.
+static HOST_PMAP: HostPmap = HostPmap {
+    mappings: Mutex::new(BTreeMap::new()),
+};
+/// amd64's `isa_constraint`, so the tests see two DMA ranges.
+static ISA_CONSTRAINT: UvmConstraintRange = UvmConstraintRange {
+    ucr_low: Paddr::new(0),
+    ucr_high: Paddr::new(0x00ff_ffff),
+};
+/// amd64's `dma_constraint`.
+static DMA_CONSTRAINT: UvmConstraintRange = UvmConstraintRange {
+    ucr_low: Paddr::new(0),
+    ucr_high: Paddr::new(0xffff_ffff),
+};
 
 fn host_cngetc(_dev: Dev) -> i32 {
     0
@@ -101,6 +137,107 @@ impl Cpu for Machine {
 
     fn delay(usec: u32) {
         std::thread::sleep(std::time::Duration::from_micros(u64::from(usec)));
+    }
+
+    fn cpu_startup() {}
+}
+
+impl VmParam for Machine {
+    const VM_MIN_ADDRESS: usize = Self::PAGE_SIZE;
+    const VM_MAXUSER_ADDRESS: usize = 0x0000_7f7f_ffff_c000;
+    const VM_MAX_ADDRESS: usize = 0x0000_7fbf_dfef_f000;
+    const VM_MIN_KERNEL_ADDRESS: usize = HOST_KVA_START;
+    const VM_MAX_KERNEL_ADDRESS: usize = HOST_KVA_END;
+    const VM_PHYSSEG_MAX: usize = 16;
+    const VM_PHYSSEG_STRAT: i32 = VM_PSTRAT_BIGFIRST;
+    const VM_PHYSSEG_NOADD: bool = true;
+}
+
+impl Pmap for Machine {
+    type VmPageMd = ();
+    type Pmap = HostPmap;
+
+    const VM_MDPAGE_INIT: () = ();
+    const HAVE_PMAP_DIRECT: bool = true;
+    const PMAP_STEAL_MEMORY: bool = true;
+    const UVM_MD_CONSTRAINTS: &'static [&'static UvmConstraintRange] =
+        &[&ISA_CONSTRAINT, &DMA_CONSTRAINT];
+    const DMA_CONSTRAINT: &'static UvmConstraintRange = &DMA_CONSTRAINT;
+
+    fn pmap_kernel() -> &'static HostPmap {
+        &HOST_PMAP
+    }
+
+    /// Page contents are not modelled.
+    fn pmap_zero_page(_pg: &VmPage) {}
+
+    /// Page contents are not modelled.
+    fn pmap_copy_page(_src: &VmPage, _dst: &VmPage) {}
+
+    /// Boot memory comes from the host allocator and is never returned; the frames it stands
+    /// for leave `vm_physmem[]` through `uvm_page_physsteal`, as on a real machine, so
+    /// `uvm_page_init`'s page count adds up.
+    unsafe fn pmap_steal_memory(
+        size: Vsize,
+        start: Option<&mut Vaddr>,
+        end: Option<&mut Vaddr>,
+    ) -> Vaddr {
+        let size = size.round_page().as_usize();
+        // A missing frame is the C's "out of memory" panic; the tests load enough.
+        let _ = uvm_page_physsteal(size / Self::PAGE_SIZE);
+        let words = size.div_ceil(size_of::<u64>());
+        let block: &'static mut [u64] = vec![0u64; words].leak();
+        if let Some(start) = start {
+            *start = Vaddr::new(HOST_KVA_START);
+        }
+        if let Some(end) = end {
+            *end = Vaddr::new(HOST_KVA_END);
+        }
+        Vaddr::new(block.as_mut_ptr() as usize)
+    }
+
+    fn pmap_virtual_space(start: &mut Vaddr, end: &mut Vaddr) {
+        *start = Vaddr::new(HOST_KVA_START);
+        *end = Vaddr::new(HOST_KVA_END);
+    }
+
+    unsafe fn pmap_kenter_pa(va: Vaddr, pa: Paddr, _prot: VmProt) {
+        let mut map = HOST_PMAP.mappings.lock().unwrap_or_else(|e| e.into_inner());
+        map.insert(va.trunc_page().as_usize(), pa.trunc_page().as_usize());
+    }
+
+    unsafe fn pmap_kremove(va: Vaddr, len: Vsize) {
+        let mut map = HOST_PMAP.mappings.lock().unwrap_or_else(|e| e.into_inner());
+        let mut page = va.trunc_page().as_usize();
+        let end = va.as_usize() + len.as_usize();
+        while page < end {
+            map.remove(&page);
+            page += Self::PAGE_SIZE;
+        }
+    }
+
+    fn pmap_extract(pmap: &HostPmap, va: Vaddr) -> Option<Paddr> {
+        let map = pmap.mappings.lock().unwrap_or_else(|e| e.into_inner());
+        map.get(&va.trunc_page().as_usize())
+            .map(|pa| Paddr::new(pa + (va.as_usize() & Self::PAGE_MASK)))
+    }
+
+    fn pmap_update(_pmap: &HostPmap) {}
+
+    /// The host's page tables never run out.
+    fn pmap_growkernel(maxkvaddr: Vaddr) -> Vaddr {
+        maxkvaddr
+    }
+
+    fn pmap_init() {}
+
+    /// The "direct map" is the identity: a frame's address is its number.
+    fn pmap_map_direct(pg: &VmPage) -> Vaddr {
+        Vaddr::new(vm_page_to_phys(pg).as_usize())
+    }
+
+    fn pmap_unmap_direct(va: Vaddr) -> Option<&'static VmPage> {
+        PHYS_TO_VM_PAGE(Paddr::new(va.as_usize()))
     }
 }
 

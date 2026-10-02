@@ -9,5 +9,6 @@ pub mod db_interface;
 pub mod db_trace;
 pub mod intr;
 pub mod machdep;
+pub mod pmap;
 #[cfg(feature = "qemu")]
 pub mod qemu;

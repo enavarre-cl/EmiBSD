@@ -4,6 +4,7 @@
 //! `unported` is the project's visible-stub helper (`ports.toml`, `[[extra]]`).
 
 pub mod init_main;
+pub mod kern_synch;
 pub mod kern_xxx;
 pub mod subr_log;
 pub mod subr_prf;

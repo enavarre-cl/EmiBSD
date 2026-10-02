@@ -10,5 +10,6 @@ pub mod consinit;
 pub mod db_interface;
 pub mod db_trace;
 pub mod machdep;
+pub mod pmap;
 #[cfg(feature = "qemu")]
 pub mod qemu;

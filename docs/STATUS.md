@@ -1,25 +1,25 @@
 # Status
 
-Milestone: **M2 done; M3 next**. Updated: 2026-10-02.
+Milestone: **M3 in progress (part 1 landed)**. Updated: 2026-10-02.
 
 Done:
-- M2 closed: `printf(9)`/`panic(9)`/`log(9)` on `core::fmt` (`kern/subr_prf.rs`), the message
-  buffer, the console framework with `com(4)` (amd64, `bus_space` port I/O) and `pluart(4)`
-  (arm64, MMIO), `main()`'s ordered skeleton with every missing step reported by `unported!`,
-  ddb-lite (`db_output.rs`, per-arch `db_trace`/`db_enter`), `boot(9)`/`delay(9)`, the
-  `machine::{bus,cons,db_machdep}` contracts, `xtask symbolize`, a four-boot `just smoke`
-  (plain boot → status 33; `boot -d` → `panic: db_enter` + stack trace → status 35).
-- M1 closed: `queue.h`, `tree.h` and `kern/subr_tree.c` as in-house intrusive structures; the
-  `sys/sys` base headers; libkern; `just test-ref` cross-checks constants against the C headers.
+- M3 part 1: the physical page allocator (`uvm_page.c`, `uvm_pmemrange.c`, the `uvm/*.h` types,
+  `uvm_init`) runs on both archs from the Limine memory map; `cpu_startup` prints `real mem` /
+  `avail mem` and `just smoke` asserts both; the `machine::{vmparam,pmap}` contracts; per-arch
+  `pmap.c` subsets over Limine's direct map (`pmap_bootstrap`, `pmap_steal_memory`, zero/copy
+  page); host tests drive the allocator over synthetic segments (`uvm_pmemrange/tests.rs`).
+- M2 closed: `printf(9)`/`panic(9)`/`log(9)`, message buffer, console framework with `com(4)`
+  and `pluart(4)`, `main()`'s skeleton with `unported!` markers, ddb-lite, `xtask symbolize`.
+- M1 closed: `queue.h`, `tree.h`, `subr_tree.c`, the `sys/sys` base headers, libkern, `test-ref`.
 - M0: both archs boot under EDK2 and Limine 12.9.1, protocol in `sys/stand/limine.rs`, no crate.
 
 Next:
-- M3: Limine memmap → `uvm_page.c`, `uvm_km.c` subset, per-arch `pmap.c` subset over the HHDM,
-  `subr_pool.c`, `kern_malloc.c`, `#[global_allocator]`; it also replaces the static message buffer
-  area, arm64's bootstrap device map and amd64's unported memory-space `bus_space_map`.
-- Carried from M2 into M4: `constab`/`cninit` (amd64 `conf.c`), `pluart_fdt.c` and `agtimer.c`
-  (arm64), `db_access.c`/`db_sym.c` (in-kernel symbols), `db_ktrap` so `db_enter` is a real trap.
-- `arc4random(9)` for `XSIMPLEQ_INIT` and `label_t`/`cpu_info` for the `wip` headers come with M5.
+- M3 part 2: kernel page tables (`pmap_kenter_pa`/`pmap_kremove`/`pmap_extract`/
+  `pmap_growkernel` on both archs), `uvm_km.c` (`km_alloc`/`km_free`), `subr_pool.c`,
+  `kern_malloc.c`, `#[global_allocator]`, the `alloc` feature on by default, an allocation
+  stress line in `smoke`; then the static message buffer and arm64's bootstrap device map retire.
+- Carried from M2 into M4: `constab`/`cninit`, `pluart_fdt.c`, `agtimer.c`, `db_access.c`/
+  `db_sym.c`, `db_ktrap`. `wakeup`/`uvm_wait`/the page daemon and the uvm locks come with M5.
 
 Blockers:
 - OpenBSD's `crc32` is zlib-licensed (`lib/libz/crc32.c`): `skipped: license: zlib`.

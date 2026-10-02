@@ -12,8 +12,11 @@ use core::arch::asm;
 
 use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::db_machdep::{DbMachdep, PrFn};
-use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, MachineInfo};
+use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, MachineInfo, Pmap, VmParam};
 use crate::sys::errno::Errno;
+use crate::sys::types::{Paddr, Vaddr, Vsize};
+use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt};
+use crate::uvm::uvm_page::VmPage;
 
 /// The arm64 implementation of the machine interface.
 pub struct Machine;
@@ -43,6 +46,94 @@ impl Cpu for Machine {
 
     fn delay(usec: u32) {
         arm64::intr::delay(usec)
+    }
+
+    fn cpu_startup() {
+        arm64::machdep::cpu_startup()
+    }
+}
+
+impl VmParam for Machine {
+    const VM_MIN_ADDRESS: usize = include::vmparam::VM_MIN_ADDRESS;
+    const VM_MAXUSER_ADDRESS: usize = include::vmparam::VM_MAXUSER_ADDRESS;
+    const VM_MAX_ADDRESS: usize = include::vmparam::VM_MAX_ADDRESS;
+    const VM_MIN_KERNEL_ADDRESS: usize = include::vmparam::VM_MIN_KERNEL_ADDRESS;
+    const VM_MAX_KERNEL_ADDRESS: usize = include::vmparam::VM_MAX_KERNEL_ADDRESS;
+    const VM_PHYSSEG_MAX: usize = include::vmparam::VM_PHYSSEG_MAX;
+    const VM_PHYSSEG_STRAT: i32 = include::vmparam::VM_PHYSSEG_STRAT;
+    const VM_PHYSSEG_NOADD: bool = include::vmparam::VM_PHYSSEG_NOADD;
+}
+
+impl Pmap for Machine {
+    type VmPageMd = include::pmap::VmPageMd;
+    type Pmap = include::pmap::Pmap;
+
+    #[allow(clippy::declare_interior_mutable_const)] // an initializer, copied into every vm_page
+    const VM_MDPAGE_INIT: Self::VmPageMd = include::pmap::VM_MDPAGE_INIT;
+    /// The bootloader's direct map, until the kernel owns its page tables
+    /// (`arm64/pmap.rs`, deviations).
+    const HAVE_PMAP_DIRECT: bool = true;
+    const PMAP_STEAL_MEMORY: bool = true;
+    const UVM_MD_CONSTRAINTS: &'static [&'static UvmConstraintRange] =
+        &arm64::machdep::UVM_MD_CONSTRAINTS;
+    const DMA_CONSTRAINT: &'static UvmConstraintRange = &arm64::machdep::DMA_CONSTRAINT;
+
+    fn pmap_kernel() -> &'static Self::Pmap {
+        arm64::pmap::pmap_kernel()
+    }
+
+    fn pmap_zero_page(pg: &VmPage) {
+        arm64::pmap::pmap_zero_page(pg)
+    }
+
+    fn pmap_copy_page(src: &VmPage, dst: &VmPage) {
+        arm64::pmap::pmap_copy_page(src, dst)
+    }
+
+    unsafe fn pmap_steal_memory(
+        size: Vsize,
+        start: Option<&mut Vaddr>,
+        end: Option<&mut Vaddr>,
+    ) -> Vaddr {
+        // SAFETY: forwarded.
+        unsafe { arm64::pmap::pmap_steal_memory(size, start, end) }
+    }
+
+    fn pmap_virtual_space(start: &mut Vaddr, end: &mut Vaddr) {
+        arm64::pmap::pmap_virtual_space(start, end)
+    }
+
+    unsafe fn pmap_kenter_pa(va: Vaddr, pa: Paddr, prot: VmProt) {
+        // SAFETY: forwarded.
+        unsafe { arm64::pmap::pmap_kenter_pa(va, pa, prot) }
+    }
+
+    unsafe fn pmap_kremove(va: Vaddr, len: Vsize) {
+        // SAFETY: forwarded.
+        unsafe { arm64::pmap::pmap_kremove(va, len) }
+    }
+
+    fn pmap_extract(pmap: &Self::Pmap, va: Vaddr) -> Option<Paddr> {
+        arm64::pmap::pmap_extract(pmap, va)
+    }
+
+    /// `pmap_update`: nothing, as the C.
+    fn pmap_update(_pmap: &Self::Pmap) {}
+
+    fn pmap_growkernel(maxkvaddr: Vaddr) -> Vaddr {
+        arm64::pmap::pmap_growkernel(maxkvaddr)
+    }
+
+    fn pmap_init() {
+        arm64::pmap::pmap_init()
+    }
+
+    fn pmap_map_direct(pg: &VmPage) -> Vaddr {
+        arm64::pmap::pmap_map_direct(pg)
+    }
+
+    fn pmap_unmap_direct(va: Vaddr) -> Option<&'static VmPage> {
+        arm64::pmap::pmap_unmap_direct(va)
     }
 }
 
