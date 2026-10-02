@@ -78,7 +78,10 @@ notes = "not-applicable: compiler attribute and visibility (__BSD_VISIBLE) glue;
 [[file]]
 c = "sys/sys/queue.h"
 rust = "sys/sys/queue.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0043af3f63d0bcf099c308bbffe5b4e26dc67860"
+notes = "own intrusive lists, no crate; FOREACH and FOREACH_SAFE are one iterator; empty heads keep a null last-link sentinel; TAILQ_PREV/LAST and STAILQ_LAST go through container_of (prev takes the head); XSIMPLEQ_INIT takes the cookie until arc4random (M5); _Q_INVALIDATE under feature diagnostic"
 
 [[file]]
 c = "sys/sys/tree.h"

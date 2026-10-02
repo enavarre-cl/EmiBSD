@@ -7,8 +7,8 @@ Columns: what OpenBSD C does | what we write | why.
 |---|---|---|
 | `int f(...)` returning `0` or an errno | `fn f(...) -> Result<T, Errno>` | the type carries the contract; `?` replaces `goto out` |
 | errno values (`EINVAL`, `ERESTART = -1`, `EJUSTRETURN = -2`) | `#[repr(i32)] enum Errno` in `sys/sys/errno.rs`, same names and values | ABI-visible numbers; names grep across both trees |
-| `TAILQ_*`, `LIST_*`, `SIMPLEQ_*` (`queue.h`) | `intrusive_collections::{LinkedList, SinglyLinkedList}` behind adapters in `sys/sys/queue.rs` | O(1) unlink by element, one node in several lists, no allocation; `unsafe` audited upstream |
-| `RB_*` (`tree.h`) | `intrusive_collections::RBTree` behind `sys/sys/tree.rs` | same reasons |
+| `LIST_HEAD(name, type)` plus the `field` argument of every `LIST_*` macro (`queue.h`; same for SLIST, SIMPLEQ, XSIMPLEQ, TAILQ, STAILQ) | `ListHead<A>` with `A` a zero-sized `Adapter` from `queue_adapter!(A: Elem, field => ListEntry<Elem>)`; the element embeds `ListEntry<Elem>`; readers are safe, mutators `unsafe` with the C precondition as contract | the field is fixed once and type-checked; O(1) unlink, one element in several lists, no allocation, as in C |
+| `RB_*`, `SPLAY_*` (`tree.h`) | own intrusive trees in `sys/sys/tree.rs` with the same adapter pattern | same reasons |
 | `s = splhigh(); ... splx(s);` | `let _s = IplGuard::raise(Ipl::High);` | drop restores; a forgotten `splx` is impossible |
 | `mtx_enter(&m); ... mtx_leave(&m);` | `let g = m.lock();` on the ported `Mutex<T>` (`kern_lock.c`, IPL-aware) | data lives inside the lock; the guard proves it is held |
 | `KASSERT(x)` / `KDASSERT(x)` | `kassert!(x)` / `kdassert!(x)` behind features `diagnostic` / `debug` | same text: `kernel diagnostic assertion "x" failed: file "f", line n` |
@@ -16,7 +16,7 @@ Columns: what OpenBSD C does | what we write | why.
 | `printf(9)`, `log(9)`, `%b` | `kprintf!`, `kprintln!`, `log!(LOG_x, ...)`; a `Bitmask(value, "\20\1FLAG...")` `Display` helper for `%b` | Rust format strings; `%b` has no counterpart so it is a wrapper |
 | `#ifdef OPTION` | `#[cfg(feature = "option")]` | one knob per `option(4)`, visible in `Cargo.toml` |
 | `struct proc *p` passed down (borrowed) | `&Proc` | no ownership transfer |
-| `struct proc *` in lists or long-lived | `NonNull<Proc>` inside intrusive links; `Arc<Process>` after M3 for `refcnt(9)` | lifetime management is explicit |
+| `struct proc *` in lists or long-lived | `Cell<*const Proc>` inside the list entries, `&Proc` at the API; `Arc<Process>` after M3 for `refcnt(9)` | the link is a raw pointer under the list's lock; every borrow is explicit |
 | fields mutated under a lock through a shared pointer | `UnsafeCell<T>` field with doc `/// Protected by: <lock>` | states the invariant the C only implies |
 | `vaddr_t`, `paddr_t`, `vsize_t`, `psize_t` | `Vaddr(usize)`, `Paddr(usize)`, `Vsize(usize)`, `Psize(usize)` newtypes | the compiler stops VA/PA mix-ups |
 | `#define FOO_X 0x1` flag groups | `bitflags! { struct FooFlags: u32 { const X = 0x1; } }` | typed, same names, same bits |

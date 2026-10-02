@@ -9,12 +9,14 @@ Done:
 - Toolchain installed per `docs/SETUP.md` (rustup 1.98.1, just, QEMU 11.1, Limine 12.9.1).
 - Coding standard: fixed section order per file (`.claude/rules/rust-kernel.md`), tests longer
   than 50 lines in `<name>/tests.rs`, one `machine/<header>.rs` per `<machine/*.h>` header.
+- `queue.h` ported as our own intrusive lists (six families, adapters, 13 tests);
+  `intrusive-collections` dropped.
 - Reference pinned at `3ce1f3f79392`. Ported: `sys/sys/{types,_types,errno,syslimits,param}.h`,
   `machine/{param,_types}.h` for both archs, `amd64/pio.h`, libkern `strlcpy strlcat strnlen
   crc32c timingsafe_bcmp explicit_bzero`. Wip subsets: `amd64/cpufunc.h`, `arm64/cpu.h`.
 
 Next:
-- Decide `queue.h`/`tree.h` (`intrusive-collections` adapters or own lists), port them, close M1.
+- Port `tree.h` (`RB_*`, `SPLAY_*`) with the `queue.rs` adapter pattern; that closes M1.
 - M2: `kern/subr_prf.c` (`kprintf!`, `panic`), `dev/ic/comreg.h` + `com.c`, `dev/ic/pluart.c`,
   `kern/init_main.c`; the M0 early consoles and `stand::boot_main` retire.
 

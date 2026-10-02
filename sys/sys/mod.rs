@@ -6,5 +6,6 @@
 
 pub mod errno;
 pub mod param;
+pub mod queue;
 pub mod syslimits;
 pub mod types;
