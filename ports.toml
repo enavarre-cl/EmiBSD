@@ -1,0 +1,133 @@
+# Porting tracker: the source of truth for what has been ported from OpenBSD.
+# Schema and rules: .claude/rules/ports-tracker.md.  Validate: cargo xtask ports check.
+# Entries are added when a milestone claims them, never by bulk-importing the C tree.
+
+[meta]
+upstream = "https://github.com/openbsd/src"
+pinned = "UNPINNED"   # full commit hash, set after cloning (reference/README.md)
+
+# ---------------------------------------------------------------------------
+# M1: sys/sys headers -> types
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/sys/types.h"
+rust = "sys/sys/types.rs"
+status = "todo"
+
+[[file]]
+c = "sys/sys/errno.h"
+rust = "sys/sys/errno.rs"
+status = "todo"
+
+[[file]]
+c = "sys/sys/param.h"
+rust = "sys/sys/param.rs"
+status = "todo"
+deps = ["sys/sys/types.h"]
+
+[[file]]
+c = "sys/sys/queue.h"
+rust = "sys/sys/queue.rs"
+status = "todo"
+
+[[file]]
+c = "sys/sys/tree.h"
+rust = "sys/sys/tree.rs"
+status = "todo"
+
+# ---------------------------------------------------------------------------
+# M1: libkern
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/lib/libkern/strlcpy.c"
+rust = "sys/lib/libkern/strlcpy.rs"
+status = "todo"
+
+[[file]]
+c = "sys/lib/libkern/strlcat.c"
+rust = "sys/lib/libkern/strlcat.rs"
+status = "todo"
+
+[[file]]
+c = "sys/lib/libkern/strnlen.c"
+rust = "sys/lib/libkern/strnlen.rs"
+status = "todo"
+
+[[file]]
+c = "sys/lib/libkern/crc32.c"
+rust = "sys/lib/libkern/crc32.rs"
+status = "todo"
+
+[[file]]
+c = "sys/lib/libkern/timingsafe_bcmp.c"
+rust = "sys/lib/libkern/timingsafe_bcmp.rs"
+status = "todo"
+
+[[file]]
+c = "sys/lib/libkern/explicit_bzero.c"
+rust = "sys/lib/libkern/explicit_bzero.rs"
+status = "todo"
+
+[[file]]
+c = "sys/lib/libkern/memcpy.c"
+status = "skipped"
+notes = "provided-by-core: core::ptr::copy / slice::copy_from_slice"
+
+[[file]]
+c = "sys/lib/libkern/memset.c"
+status = "skipped"
+notes = "provided-by-core: slice::fill / core::ptr::write_bytes"
+
+[[file]]
+c = "sys/lib/libkern/strlen.c"
+status = "skipped"
+notes = "provided-by-core: core::ffi::CStr::count_bytes"
+
+# ---------------------------------------------------------------------------
+# M2: console, printf, panic, init
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/kern/subr_prf.c"
+rust = "sys/kern/subr_prf.rs"
+status = "todo"
+deps = ["sys/sys/types.h", "sys/sys/param.h"]
+
+[[file]]
+c = "sys/kern/init_main.c"
+rust = "sys/kern/init_main.rs"
+status = "todo"
+deps = ["sys/kern/subr_prf.c"]
+
+[[file]]
+c = "sys/dev/ic/comreg.h"
+rust = "sys/dev/ic/comreg.rs"
+status = "todo"
+
+[[file]]
+c = "sys/dev/ic/com.c"
+rust = "sys/dev/ic/com.rs"
+status = "todo"
+deps = ["sys/dev/ic/comreg.h", "sys/kern/subr_prf.c"]
+
+[[file]]
+c = "sys/dev/ic/pluart.c"
+rust = "sys/dev/ic/pluart.rs"
+status = "todo"
+deps = ["sys/kern/subr_prf.c"]
+
+# ---------------------------------------------------------------------------
+# Replaced by project-level decisions (docs/ARCHITECTURE.md, "Deviations")
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/efiboot.c"
+status = "skipped"
+notes = "replaced-by-limine: the whole sys/arch/amd64/stand tree (boot(8), efiboot) is not ported"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/efiboot.c"
+status = "skipped"
+notes = "replaced-by-limine: the whole sys/arch/arm64/stand tree (efiboot) is not ported"
