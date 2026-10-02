@@ -1,15 +1,20 @@
 # Status
 
-Milestone: **pre-M0 (bootstrap)**. Updated: 2026-10-02.
+Milestone: **M0 done; M1 nearly done** (`queue.h`/`tree.h` pending). Updated: 2026-10-02.
 
 Done:
-- Workspace skeleton (`bsd`, `libkern`, `xtask`) compiles and tests on the host.
-- `CLAUDE.md`, `.claude/rules/`, `docs/` written; `ports.toml` seeded with M1/M2 files.
+- M0: `just ci` green. `just smoke` boots both archs under EDK2 and Limine 12.9.1, sees
+  `bsd: booted on <arch>` (amd64 in 1.7 s, arm64 in 5.7 s), prints the memory map and exits QEMU
+  with status 33. The Limine protocol (base revision 6) is `sys/stand/limine.rs`, no crate.
+- Toolchain installed per `docs/SETUP.md` (rustup 1.98.1, just, QEMU 11.1, Limine 12.9.1).
+- Reference pinned at `3ce1f3f79392`. Ported: `sys/sys/{types,_types,errno,syslimits,param}.h`,
+  `machine/{param,_types}.h` for both archs, `amd64/pio.h`, libkern `strlcpy strlcat strnlen
+  crc32c timingsafe_bcmp explicit_bzero`. Wip subsets: `amd64/cpufunc.h`, `arm64/cpu.h`.
 
 Next:
-- `docs/SETUP.md`: install rustup, QEMU, Limine, just (needs the user's go-ahead).
-- Clone and pin the reference (`reference/README.md`); fill `PINNED.md` and `[meta].pinned`.
-- M0: Limine boot on both archs printing `bsd: booted on <arch>`; `xtask image/qemu/smoke`.
+- Decide `queue.h`/`tree.h` (`intrusive-collections` adapters or own lists), port them, close M1.
+- M2: `kern/subr_prf.c` (`kprintf!`, `panic`), `dev/ic/comreg.h` + `com.c`, `dev/ic/pluart.c`,
+  `kern/init_main.c`; the M0 early consoles and `stand::boot_main` retire.
 
 Blockers:
-- Bare-metal targets cannot be built until rustup replaces Homebrew's rust.
+- None for tooling. OpenBSD's `crc32` is zlib-licensed (`lib/libz/crc32.c`): `skipped: license: zlib`.
