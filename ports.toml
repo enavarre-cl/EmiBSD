@@ -365,6 +365,10 @@ rust = "sys/reftest.rs"
 reason = "test helper: reads #define lines from $OPENBSD_SRC for reference-backed tests (cfg(test) only)"
 
 [[extra]]
+rust = "sys/lib/libkern/staticcell.rs"
+reason = "project helper: StaticCell<T>, the static-with-interior-mutability that replaces C's mutable statics where no atomic or lock fits (rust-kernel.md)"
+
+[[extra]]
 rust = "sys/arch/amd64/amd64/earlycons.rs"
 reason = "M0 bootstrap: polled COM1 console; replaced by dev/ic/com.c at M2"
 

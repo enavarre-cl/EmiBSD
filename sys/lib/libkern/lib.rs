@@ -7,6 +7,9 @@
 //!
 //! String arguments are byte slices: a C string ends at its first NUL or at the end of the
 //! slice, whichever comes first, and a destination's size is its slice length.
+//!
+//! [`StaticCell`] is the one project helper here: the `static`-with-interior-mutability every
+//! ported global that is neither an atomic nor behind a lock needs (`ports.toml`, `[[extra]]`).
 
 #![no_std]
 
@@ -15,6 +18,7 @@ extern crate std;
 
 pub mod crc32c;
 pub mod explicit_bzero;
+pub mod staticcell;
 pub mod strlcat;
 pub mod strlcpy;
 pub mod strnlen;
@@ -22,6 +26,7 @@ pub mod timingsafe_bcmp;
 
 pub use crc32c::crc32c;
 pub use explicit_bzero::explicit_bzero;
+pub use staticcell::StaticCell;
 pub use strlcat::strlcat;
 pub use strlcpy::strlcpy;
 pub use strnlen::strnlen;
