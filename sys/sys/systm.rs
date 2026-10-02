@@ -1,8 +1,8 @@
-/*	$OpenBSD: kern_synch.c,v 1.234 2026/06/16 19:29:25 bluhm Exp $	*/
-/*	$NetBSD: kern_synch.c,v 1.37 1996/04/22 01:38:37 christos Exp $	*/
+/*	$OpenBSD: systm.h,v 1.179 2026/04/22 01:51:37 jsg Exp $	*/
+/*	$NetBSD: systm.h,v 1.50 1996/06/09 04:55:09 briggs Exp $	*/
 
-/*
- * Copyright (c) 1982, 1986, 1990, 1991, 1993
+/*-
+ * Copyright (c) 1982, 1988, 1991, 1993
  *	The Regents of the University of California.  All rights reserved.
  * (c) UNIX System Laboratories, Inc.
  * All or some portions of this file are derived from material licensed
@@ -34,26 +34,22 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)kern_synch.c	8.6 (Berkeley) 1/21/94
+ *	@(#)systm.h	8.4 (Berkeley) 2/23/94
  */
 
-//! Sleep and wakeup: `kern/kern_synch.c`.
+//! `<sys/systm.h>`: the kernel's global declarations.
 //!
-//! Upstream: sys/kern/kern_synch.c @ 3ce1f3f79392
+//! Upstream: sys/sys/systm.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M3 only needs a `wakeup(9)` that callers can name; it reports the
-//! gap, once, because there is nothing to wake before the scheduler (M5), as does
-//! `wakeup_one`: `tsleep`, `msleep`, `wakeup_n`, `yield`, `mi_switch` and the sleep queues arrive
-//! then.
+//! Status: `wip`. Milestone M3 ports `physmem`; the hostname and boot-time globals, the
+//! `copyin`/`copyout` family, `tsleep`/`wakeup`, the `panic`/`printf` prototypes (already in
+//! `kern/subr_prf.rs`) and the rest arrive with their files.
+//!
+//! ## Deviations
+//! - `physmem` is defined here (the C defines it in every `machdep.c` and declares it here),
+//!   so generic code names it without an architecture path; the `machdep`s fill it.
 
-use crate::unported;
+use core::sync::atomic::AtomicUsize;
 
-/// `wakeup(9)`: wakes every thread sleeping on `ident`; nobody sleeps yet.
-pub fn wakeup<T>(_ident: *const T) {
-    let _ = unported!("wakeup (kern_synch.c, M5)");
-}
-
-/// `wakeup_one(9)`: wakes one thread sleeping on `ident`; nobody sleeps yet.
-pub fn wakeup_one<T>(_ident: *const T) {
-    let _ = unported!("wakeup_one (kern_synch.c, M5)");
-}
+/// `physmem`: physical memory, in pages (an `int` in C).
+pub static PHYSMEM: AtomicUsize = AtomicUsize::new(0);

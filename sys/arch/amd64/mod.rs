@@ -13,7 +13,7 @@ use core::arch::asm;
 
 use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::db_machdep::{DbMachdep, PrFn};
-use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, MachineInfo, Pmap, VmParam};
+use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, Pmap, VmParam};
 use crate::sys::errno::Errno;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt};
@@ -231,4 +231,24 @@ impl DbMachdep for Machine {
     fn db_enter() {
         amd64::db_interface::db_enter()
     }
+}
+
+impl Intr for Machine {
+    const IPL_NONE: i32 = include::intrdefs::IPL_NONE;
+    const IPL_SOFTCLOCK: i32 = include::intrdefs::IPL_SOFTCLOCK;
+    const IPL_SOFTNET: i32 = include::intrdefs::IPL_SOFTNET;
+    const IPL_SOFTTTY: i32 = include::intrdefs::IPL_SOFTTTY;
+    const IPL_BIO: i32 = include::intrdefs::IPL_BIO;
+    const IPL_NET: i32 = include::intrdefs::IPL_NET;
+    const IPL_TTY: i32 = include::intrdefs::IPL_TTY;
+    const IPL_VM: i32 = include::intrdefs::IPL_VM;
+    const IPL_AUDIO: i32 = include::intrdefs::IPL_AUDIO;
+    const IPL_CLOCK: i32 = include::intrdefs::IPL_CLOCK;
+    const IPL_SCHED: i32 = include::intrdefs::IPL_SCHED;
+    const IPL_STATCLOCK: i32 = include::intrdefs::IPL_STATCLOCK;
+    const IPL_HIGH: i32 = include::intrdefs::IPL_HIGH;
+    const IPL_IPI: i32 = include::intrdefs::IPL_IPI;
+    const IPL_MPFLOOR: i32 = include::intrdefs::IPL_MPFLOOR;
+    const IPL_MPSAFE: i32 = include::intrdefs::IPL_MPSAFE;
+    const IPL_WAKEUP: i32 = include::intrdefs::IPL_WAKEUP;
 }

@@ -6,13 +6,16 @@
 
 pub mod errno;
 pub mod kernel;
+pub mod malloc;
 pub mod mman;
 pub mod msgbuf;
 pub mod param;
+pub mod pool;
 pub mod queue;
 pub mod reboot;
 pub mod syslimits;
 pub mod syslog;
+pub mod systm;
 pub mod termios;
 pub mod tree;
 pub mod ttydefaults;

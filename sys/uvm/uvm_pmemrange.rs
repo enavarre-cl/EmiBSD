@@ -1904,4 +1904,4 @@ pub fn uvm_pmr_cache_drain() -> u32 {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

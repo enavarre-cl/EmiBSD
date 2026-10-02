@@ -20,10 +20,12 @@ bench = false
 doc = false
 
 [features]
-default = []
-alloc = []        # enables `extern crate alloc`; becomes default at M3 (uvm/kmem up)
+default = ["alloc"]
+alloc = []        # enables `extern crate alloc` and the GlobalAlloc over malloc(9)
 diagnostic = []   # OpenBSD `option DIAGNOSTIC` -> kassert! active
 debug = []        # OpenBSD `option DEBUG`      -> kdassert! active
+kmemstats = []    # OpenBSD `option KMEMSTATS`  -> malloc(9) statistics
+pool_debug = []   # OpenBSD `option POOL_DEBUG` -> pool_debug = 1
 qemu = []         # QEMU-only exits (isa-debug-exit, semihosting) and shortcuts
 
 [dependencies]

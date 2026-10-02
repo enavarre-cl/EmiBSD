@@ -1,0 +1,127 @@
+/*	$OpenBSD: intrdefs.h,v 1.25 2025/11/10 12:34:52 dlg Exp $	*/
+/*	$NetBSD: intrdefs.h,v 1.2 2003/05/04 22:01:56 fvdl Exp $	*/
+
+//! amd64 `<machine/intrdefs.h>`: interrupt priority levels and interrupt source numbers.
+//!
+//! Upstream: sys/arch/amd64/include/intrdefs.h @ 3ce1f3f79392
+//!
+//! There are tty, network and disk drivers that use free() at interrupt time, so imp > (tty
+//! | net | bio). Since run queues may be manipulated by both the statclock and tty, network,
+//! and disk drivers, clock > imp. IPL_HIGH must block everything that can manipulate a run
+//! queue. The level numbers are picked to fit into APIC vector priorities.
+//!
+//! Status: `wip`. Milestone M3 ports the levels and the source numbers; the IDT gate
+//! boundaries and the `X86_IPI_*` numbers arrive with M4.
+
+/// `IPL_NONE`: nothing.
+pub const IPL_NONE: i32 = 0x0;
+/// `IPL_SOFTCLOCK`: timeouts.
+pub const IPL_SOFTCLOCK: i32 = 0x1;
+/// `IPL_SOFTNET`: protocol stacks.
+pub const IPL_SOFTNET: i32 = 0x2;
+/// `IPL_BIO`: block I/O.
+pub const IPL_BIO: i32 = 0x3;
+/// `IPL_NET`: network.
+pub const IPL_NET: i32 = 0x4;
+/// `IPL_SOFTTTY`: delayed terminal handling.
+pub const IPL_SOFTTTY: i32 = 0x8;
+/// `IPL_TTY`: terminal.
+pub const IPL_TTY: i32 = 0x9;
+/// `IPL_VM`: memory allocation.
+pub const IPL_VM: i32 = 0xa;
+/// `IPL_AUDIO`: audio.
+pub const IPL_AUDIO: i32 = 0xb;
+/// `IPL_CLOCK`: clock.
+pub const IPL_CLOCK: i32 = 0xc;
+/// `IPL_SCHED`.
+pub const IPL_SCHED: i32 = IPL_CLOCK;
+/// `IPL_STATCLOCK`.
+pub const IPL_STATCLOCK: i32 = IPL_CLOCK;
+/// `IPL_HIGH`: everything.
+pub const IPL_HIGH: i32 = 0xd;
+/// `IPL_IPI`: inter-processor interrupts.
+pub const IPL_IPI: i32 = 0xe;
+/// `NIPL`: number of levels.
+pub const NIPL: usize = 16;
+
+/// `IPL_MPFLOOR`.
+pub const IPL_MPFLOOR: i32 = IPL_TTY;
+/// `IPL_MPSAFE`.
+pub const IPL_MPSAFE: i32 = 0x100;
+/// `IPL_WAKEUP`.
+pub const IPL_WAKEUP: i32 = 0x200;
+
+// Interrupt sharing types.
+
+/// `IST_NONE`: none.
+pub const IST_NONE: i32 = 0;
+/// `IST_PULSE`: pulsed.
+pub const IST_PULSE: i32 = 1;
+/// `IST_EDGE`: edge-triggered.
+pub const IST_EDGE: i32 = 2;
+/// `IST_LEVEL`: level-triggered.
+pub const IST_LEVEL: i32 = 3;
+
+// Local APIC masks. Must not conflict with SIR_* above, and must be >= NUM_LEGACY_IRQs. Note
+// that LIR_IPI must be first.
+
+/// `LIR_IPI`.
+pub const LIR_IPI: u32 = 63;
+/// `LIR_TIMER`.
+pub const LIR_TIMER: u32 = 62;
+
+// Soft interrupt masks.
+
+/// `SIR_XCALL`.
+pub const SIR_XCALL: u32 = 61;
+/// `SIR_CLOCK`.
+pub const SIR_CLOCK: u32 = 60;
+/// `SIR_NET`.
+pub const SIR_NET: u32 = 59;
+/// `SIR_TTY`.
+pub const SIR_TTY: u32 = 58;
+
+/// `LIR_XEN`.
+pub const LIR_XEN: u32 = 57;
+/// `LIR_HYPERV`.
+pub const LIR_HYPERV: u32 = 56;
+
+/// `MAX_INTR_SOURCES`: maximum # of interrupt sources per CPU. 64 to fit in one word. ioapics
+/// can theoretically produce more, but it's not likely to happen. For multiple ioapics, things
+/// can be routed to different CPUs.
+pub const MAX_INTR_SOURCES: usize = 64;
+/// `NUM_LEGACY_IRQS`.
+pub const NUM_LEGACY_IRQS: usize = 16;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs OPENBSD_SRC (just test-ref)"]
+    fn values_match_the_c_header() {
+        let defs = crate::reftest::defines("sys/arch/amd64/include/intrdefs.h");
+        let ours: &[(&str, i64)] = &[
+            ("IPL_NONE", i64::from(IPL_NONE)),
+            ("IPL_SOFTCLOCK", i64::from(IPL_SOFTCLOCK)),
+            ("IPL_SOFTNET", i64::from(IPL_SOFTNET)),
+            ("IPL_BIO", i64::from(IPL_BIO)),
+            ("IPL_NET", i64::from(IPL_NET)),
+            ("IPL_SOFTTTY", i64::from(IPL_SOFTTTY)),
+            ("IPL_TTY", i64::from(IPL_TTY)),
+            ("IPL_VM", i64::from(IPL_VM)),
+            ("IPL_AUDIO", i64::from(IPL_AUDIO)),
+            ("IPL_CLOCK", i64::from(IPL_CLOCK)),
+            ("IPL_HIGH", i64::from(IPL_HIGH)),
+            ("IPL_IPI", i64::from(IPL_IPI)),
+            ("NIPL", NIPL as i64),
+            ("IPL_MPSAFE", i64::from(IPL_MPSAFE)),
+            ("IPL_WAKEUP", i64::from(IPL_WAKEUP)),
+            ("MAX_INTR_SOURCES", MAX_INTR_SOURCES as i64),
+            ("NUM_LEGACY_IRQS", NUM_LEGACY_IRQS as i64),
+        ];
+        for (name, value) in ours {
+            assert_eq!(crate::reftest::int(&defs, name), Some(*value), "{name}");
+        }
+    }
+}

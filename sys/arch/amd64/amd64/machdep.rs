@@ -95,7 +95,7 @@
 //!   `vfs_shutdown`, `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys`,
 //!   `config_suspend_all`, ACPI and `cpu_reset` are reported as unported when reached.
 
-use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::arch::amd64::amd64::autoconf::COLD;
 use crate::arch::amd64::amd64::consinit::consinit;
@@ -112,6 +112,7 @@ use crate::sys::param::roundup;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
 };
+use crate::sys::systm::PHYSMEM;
 use crate::sys::types::Paddr;
 use crate::unported;
 use crate::uvm::uvm_extern::UvmConstraintRange;
@@ -133,8 +134,6 @@ pub static CPURESET_DELAY: AtomicI32 = AtomicI32::new(0);
 pub static LID_ACTION: AtomicI32 = AtomicI32::new(1);
 /// `waittime`: set once the file systems have been synced on the way down.
 static WAITTIME: AtomicI32 = AtomicI32::new(-1);
-/// `physmem`: total physical memory, in pages (an `int` in C).
-pub static PHYSMEM: AtomicUsize = AtomicUsize::new(0);
 /// `isa_constraint`: what ISA DMA can reach.
 pub static ISA_CONSTRAINT: UvmConstraintRange = UvmConstraintRange {
     ucr_low: Paddr::new(0),

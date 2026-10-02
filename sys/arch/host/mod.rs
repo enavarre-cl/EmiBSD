@@ -22,7 +22,7 @@ use crate::dev::cons::{CN_LOWPRI, Consdev, set_cn_tab};
 use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::db_machdep::{DbMachdep, PrFn};
 use crate::machine::{
-    BootInfo, Console, Cpu, Exit, ExitStatus, MachineInfo, MachineParam, Pmap, VmParam,
+    BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, MachineParam, Pmap, VmParam,
 };
 use crate::sys::errno::Errno;
 use crate::sys::param::NODEV;
@@ -319,4 +319,25 @@ impl DbMachdep for Machine {
     fn db_enter() {
         eprintln!("host: db_enter");
     }
+}
+
+/// amd64's interrupt priority levels, so tests see a real machine's numbers.
+impl Intr for Machine {
+    const IPL_NONE: i32 = 0x0;
+    const IPL_SOFTCLOCK: i32 = 0x1;
+    const IPL_SOFTNET: i32 = 0x2;
+    const IPL_SOFTTTY: i32 = 0x8;
+    const IPL_BIO: i32 = 0x3;
+    const IPL_NET: i32 = 0x4;
+    const IPL_TTY: i32 = 0x9;
+    const IPL_VM: i32 = 0xa;
+    const IPL_AUDIO: i32 = 0xb;
+    const IPL_CLOCK: i32 = 0xc;
+    const IPL_SCHED: i32 = 0xc;
+    const IPL_STATCLOCK: i32 = 0xc;
+    const IPL_HIGH: i32 = 0xd;
+    const IPL_IPI: i32 = 0xe;
+    const IPL_MPFLOOR: i32 = 0x9;
+    const IPL_MPSAFE: i32 = 0x100;
+    const IPL_WAKEUP: i32 = 0x200;
 }

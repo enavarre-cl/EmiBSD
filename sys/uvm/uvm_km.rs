@@ -66,22 +66,37 @@
 //!
 //! Upstream: sys/uvm/uvm_km.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M3 starts with the unconstrained range `no_constraint`, the
-//! `kv_*`/`kp_*`/`kd_*` allocation modes and the bounds `uvm_km_init` records;
-//! `km_alloc`/`km_free` follow, and `uvm_km_suballoc`, `uvm_km_pgremove` and the maps
-//! themselves with `uvm_map`.
+//! Status: `wip`. Milestone M3 ports `km_alloc`/`km_free`, the allocation modes
+//! (`kv_*`, `kp_*`, `kd_*`), `no_constraint` and the bounds `uvm_km_init` records;
+//! `uvm_km_suballoc`, `uvm_km_pgremove`, the single-page thread (`uvm_km_page_*`) and the
+//! maps themselves come with `uvm_map`.
 //!
 //! ## Deviations
 //! - `uvm_km_init` only records the kernel map's range: `kernel_map` (`uvm_map_setup`, the
 //!   reservation of `[base, start)`) waits for `uvm_map.c`. `kernel_map_min`/`kernel_map_max`
 //!   stand in for `vm_map_min(kernel_map)`/`vm_map_max(kernel_map)` until then.
+//! - Without `kernel_map`/`kmem_map`, `km_alloc` serves every request through the direct map
+//!   (`__HAVE_PMAP_DIRECT`), which the C does only for single pages and single segments: a
+//!   `kv_any`/`kv_intrsafe` request is therefore made physically contiguous (`kp_maxseg` 1)
+//!   and reported once as unported, and `km_free` takes every non-pageable block back the
+//!   direct-map way. `kp_nomem` and `kp_pageable` requests need the maps and fail, reported.
+//! - `kd_slowdown` is a value, not a pointer: only the single-page thread writes it, and that
+//!   thread is not used with `__HAVE_PMAP_DIRECT`.
 
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::machine::pmap::{pmap_map_direct, pmap_unmap_direct};
+use crate::machine::{Machine, Pmap};
+use crate::sys::param::PAGE_SIZE;
 use crate::sys::types::{Paddr, Vaddr};
 use crate::uvm::uvm_extern::{
-    KmemDynMode, KmemPaMode, KmemVaMode, KvMap, UVM_UNKNOWN_OFFSET, UvmConstraintRange,
+    KmemDynMode, KmemPaMode, KmemVaMode, KvMap, UVM_PLA_NOWAIT, UVM_PLA_TRYCONTIG, UVM_PLA_WAITOK,
+    UVM_PLA_ZERO, UVM_UNKNOWN_OFFSET, UvmConstraintRange,
 };
+use crate::uvm::uvm_page::{Pglist, uvm_pglistalloc, uvm_pglistfree};
+use crate::uvm::uvm_param::round_page;
+use crate::{kassert, unported};
 
 /// `vm_map_min(kernel_map)` until the map exists (see the module's deviations).
 static KERNEL_MAP_MIN: AtomicUsize = AtomicUsize::new(0);
@@ -138,6 +153,21 @@ pub static KP_DIRTY: KmemPaMode = pa_mode(&NO_CONSTRAINT);
 pub static KP_ZERO: KmemPaMode = KmemPaMode {
     kp_zero: true,
     ..pa_mode(&NO_CONSTRAINT)
+};
+
+/// `kp_dma`: pages every DMA-capable device can reach.
+pub static KP_DMA: KmemPaMode = pa_mode(<Machine as Pmap>::DMA_CONSTRAINT);
+
+/// `kp_dma_contig`: one physically contiguous DMA-reachable segment.
+pub static KP_DMA_CONTIG: KmemPaMode = KmemPaMode {
+    kp_maxseg: 1,
+    ..pa_mode(<Machine as Pmap>::DMA_CONSTRAINT)
+};
+
+/// `kp_dma_zero`: zeroed DMA-reachable pages.
+pub static KP_DMA_ZERO: KmemPaMode = KmemPaMode {
+    kp_zero: true,
+    ..pa_mode(<Machine as Pmap>::DMA_CONSTRAINT)
 };
 
 /// `kp_mbuf_contig`: one physically contiguous segment.
@@ -201,4 +231,113 @@ pub fn kernel_map_min() -> Vaddr {
 /// `vm_map_max(kernel_map)`: the end of kernel virtual space.
 pub fn kernel_map_max() -> Vaddr {
     Vaddr::new(KERNEL_MAP_MAX.load(Ordering::Relaxed))
+}
+
+/// `km_alloc`: `sz` bytes of kernel memory, laid out as `kv`, backed as `kp`, waiting as `kd`
+/// (see the module's deviations).
+pub fn km_alloc(
+    sz: usize,
+    kv: &KmemVaMode,
+    kp: &KmemPaMode,
+    kd: &KmemDynMode,
+) -> Option<NonNull<u8>> {
+    kassert!(sz == round_page(sz));
+
+    let pgl = Pglist::new();
+    pgl.init();
+
+    if kp.kp_nomem || kp.kp_pageable {
+        // alloc_va: uvm_map(map, &va, sz, uobj, kd->kd_prefer, kv->kv_align, ...) and, for
+        // kp_pageable, pmap_enter of each page: uvm_map.c.
+        let _ = unported!("km_alloc: virtual-only and pageable allocations (uvm_map)");
+        return None;
+    }
+
+    let mut pla_flags = if kd.kd_waitok {
+        UVM_PLA_WAITOK
+    } else {
+        UVM_PLA_NOWAIT
+    };
+    pla_flags |= UVM_PLA_TRYCONTIG;
+    if kp.kp_zero {
+        pla_flags |= UVM_PLA_ZERO;
+    }
+
+    let mut pla_align = kp.kp_align.as_usize();
+    if <Machine as Pmap>::HAVE_PMAP_DIRECT && pla_align < kv.kv_align {
+        pla_align = kv.kv_align;
+    }
+    let direct = kv.kv_singlepage || kp.kp_maxseg == 1;
+    let pla_maxseg = if direct {
+        kp.kp_maxseg.max(1)
+    } else {
+        // The C takes as many segments as pages here and maps them from the map; until
+        // uvm_map exists the direct map serves, which needs one segment.
+        let _ = unported!(
+            "km_alloc: kernel_map/kmem_map space (uvm_map); served contiguously through the direct map"
+        );
+        1
+    };
+
+    uvm_pglistalloc(
+        sz,
+        kp.kp_constraint.ucr_low,
+        kp.kp_constraint.ucr_high,
+        Paddr::new(pla_align),
+        kp.kp_boundary,
+        &pgl,
+        pla_maxseg,
+        pla_flags,
+    )
+    .ok()?;
+
+    // __HAVE_PMAP_DIRECT: only use direct mappings for single page or single segment
+    // allocations (and, here, for every other one).
+    let mut sva: Option<Vaddr> = None;
+    while let Some(pg) = pgl.first() {
+        // SAFETY: `pg` is the head of `pgl`.
+        unsafe { pgl.remove(pg) };
+        let va = pmap_map_direct(pg);
+        if sva.is_none() {
+            sva = Some(va);
+        }
+    }
+    NonNull::new(sva?.as_usize() as *mut u8)
+}
+
+/// `km_free`: returns what `km_alloc` gave, with the same modes.
+pub fn km_free(v: NonNull<u8>, sz: usize, kv: &KmemVaMode, kp: &KmemPaMode) {
+    let sva = v.as_ptr() as usize;
+    let eva = sva + sz;
+
+    if kp.kp_nomem {
+        // free_va: uvm_unmap(*kv->kv_map, sva, eva): uvm_map.c.
+        let _ = unported!("km_free: uvm_unmap of virtual-only space (uvm_map)");
+        return;
+    }
+
+    // __HAVE_PMAP_DIRECT: single pages and single segments (and, here, every non-pageable
+    // block) come back through the direct map.
+    if kv.kv_singlepage || kp.kp_maxseg == 1 || !kp.kp_pageable {
+        let pgl = Pglist::new();
+        pgl.init();
+        let mut va = sva;
+        while va < eva {
+            let Some(pg) = pmap_unmap_direct(Vaddr::new(va)) else {
+                #[allow(clippy::panic)] // the C panics on an unmanaged page too
+                {
+                    panic!("km_free: unmanaged page at {:#x}", va);
+                }
+            };
+            // SAFETY: a page given out by km_alloc is on no list.
+            unsafe { pgl.insert_tail(pg) };
+            va += PAGE_SIZE;
+        }
+        uvm_pglistfree(&pgl);
+        return;
+    }
+
+    // kp_pageable: pmap_remove(pmap_kernel(), sva, eva); pmap_update; then uvm_unmap.
+    let _ = unported!("km_free: pageable blocks (pmap_remove, uvm_unmap)");
+    let _ = kv.kv_wait; // wakeup(*kv->kv_map) when the map was waited for
 }

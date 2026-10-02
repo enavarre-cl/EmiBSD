@@ -37,13 +37,15 @@ run-arm64: image-arm64
 smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
-        --expect "real mem = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok"
+        --expect "real mem = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
+        --expect "selftest: malloc/pool stress ok"
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-d" --status 35 \
         --expect "panic: db_enter" --expect "Starting stack trace..." --expect "End of stack trace." \
         --expect "The operating system has halted."
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd \
         --expect "bsd: booted on arm64" --expect "The Regents of the University of California" \
-        --expect "real mem  = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok"
+        --expect "real mem  = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
+        --expect "selftest: malloc/pool stress ok"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-d" --status 35 \
         --expect "panic: db_enter" --expect "Starting stack trace..." --expect "End of stack trace." \
         --expect "The operating system has halted."

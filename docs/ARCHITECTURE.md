@@ -129,10 +129,12 @@ the default and `cargo test` just works.
 
 | Feature | OpenBSD | Effect |
 |---|---|---|
-| `alloc` | — | `extern crate alloc`; default from M3 |
+| `alloc` | — | `extern crate alloc` and the `GlobalAlloc` over `malloc(9)`; default since M3 |
 | `diagnostic` | `option DIAGNOSTIC` | `kassert!` active |
 | `debug` | `option DEBUG` | `kdassert!` active |
-| `qemu` | — | QEMU-only exits (`isa-debug-exit`, semihosting) and shortcuts |
+| `kmemstats` | `option KMEMSTATS` | `malloc(9)` statistics and per-type limits |
+| `pool_debug` | `option POOL_DEBUG` | `pool_debug = 1` (poisoning, once `subr_poison.c` is here) |
+| `qemu` | — | QEMU-only exits (`isa-debug-exit`, semihosting), the boot self-tests |
 
 More appear as they are needed (`multiprocessor`, `small_kernel`, ...), one per `option(4)`.
 
@@ -195,6 +197,18 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   archs. `pg_nx` comes from `EFER.NXE` as the bootloader left it. `uvm_km_init` only records the
   kernel map's bounds until `uvm_map.c`; `kern/selftest.rs` (feature `qemu`) maps a page there
   at boot and `smoke` asserts `selftest: pmap kernel mapping ok` on both archs.
+- Kernel allocators (M3, part 3): `km_alloc` has no `kernel_map`/`kmem_map` yet (`uvm_map.c`
+  is M6), so every request is served physically contiguous through the direct map, which the C
+  does only for single pages and single segments; `kmem_map` is therefore the direct map and
+  `kmemusage` has one entry per loaded page frame. `pool(9)` and `malloc(9)` are ported on top
+  with their locks reduced to assertion flags (M5), no sleeping (`PR_WAITOK`/`M_WAITOK` fail
+  where the C would wait), no idle-page timestamps (`getnsecuptime` is in `kern_tc.c`, whose
+  beerware licence needs the user's decision) and the freelist poison (`subr_poison.c`) reported.
+  `dev/rnd.rs` is a placeholder stream (SplitMix64, constant seed, NOT random) behind
+  `arc4random`, which pools and `XSIMPLEQ` need for their cookies, until the entropy pool and
+  ChaCha20 land (M5). `kern/rust_alloc.rs` is the Rust `GlobalAlloc` over `malloc(9)`
+  (`M_TEMP`, `M_NOWAIT`); feature `alloc` is on by default. `physmem` lives in `sys/systm.rs`
+  (the C defines it per arch) and `<machine/intr.h>`'s `IPL_*` are the `machine::Intr` contract.
 - `uvmexp` is a static of atomics and the page-queue locks (`uvm_lock_pageq`, `uvm_lock_fpageq`)
   are no-ops until the mutex arrives (M5): the boot CPU is alone. `wakeup` and `uvm_wait` report
   themselves unported, so a `UVM_PLA_WAITOK` allocation that cannot be met fails with `ENOMEM`

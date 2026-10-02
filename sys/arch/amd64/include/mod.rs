@@ -5,6 +5,7 @@
 pub mod _types;
 pub mod cpufunc;
 pub mod frame;
+pub mod intrdefs;
 pub mod param;
 pub mod pio;
 pub mod pmap;

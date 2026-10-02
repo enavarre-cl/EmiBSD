@@ -43,6 +43,7 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::kern::kern_malloc::kmeminit;
 use crate::machine::{Machine, Pmap, VmParam};
 use crate::sys::types::Vaddr;
 use crate::unported;
@@ -104,7 +105,7 @@ pub fn uvm_init() {
 
     // Make kernel memory allocators ready for use. After this call the malloc memory allocator
     // can be used.
-    let _ = unported!("kmeminit");
+    kmeminit();
 
     // step 7.5: init the dma allocator, which is backed by pools.
     let _ = unported!("dma_alloc_init");

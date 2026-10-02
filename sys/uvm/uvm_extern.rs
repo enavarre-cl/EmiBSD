@@ -216,6 +216,7 @@ pub enum KvMap {
 }
 
 /// `struct kmem_va_mode`: allocation mode for virtual space.
+#[derive(Clone, Copy)]
 pub struct KmemVaMode {
     /// The map we're allocating from.
     pub kv_map: KvMap,
@@ -230,6 +231,7 @@ pub struct KmemVaMode {
 }
 
 /// `struct kmem_pa_mode`: allocation mode for physical pages.
+#[derive(Clone, Copy)]
 pub struct KmemPaMode {
     /// Allocation constraint for physical pages.
     pub kp_constraint: &'static UvmConstraintRange,
@@ -251,6 +253,7 @@ pub struct KmemPaMode {
 
 /// `struct kmem_dyn_mode`: dynamic allocation parameters. Stuff that changes too often or too
 /// much to create separate va and pa modes for.
+#[derive(Clone, Copy)]
 pub struct KmemDynMode {
     /// Offset to feed to `PMAP_PREFER`.
     pub kd_prefer: Voff,

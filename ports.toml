@@ -680,7 +680,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "099ae26cc628b9d619e464423968547f722f2a09"
 deps = ["sys/sys/param.h", "sys/kern/subr_prf.c"]
-notes = "wakeup(9) reports itself unported: nothing sleeps before the scheduler (M5); tsleep/msleep/wakeup_n/yield/mi_switch arrive then"
+notes = "wakeup(9) and wakeup_one(9) report themselves unported: nothing sleeps before the scheduler (M5); tsleep/msleep/wakeup_n/yield/mi_switch arrive then"
 
 [[file]]
 c = "sys/arch/amd64/include/pte.h"
@@ -780,6 +780,80 @@ deps = [
 notes = "pte_desc, the pmapvp tables, kernel pmap, pmap_bootstrap adopting the bootloader's four-level tables (copies of L0 and the kernel slot's L1, TTBR1 switched to them, MAIR indices 2-4), vp lookup/enter/set_l1-3, kvp/kpted allocators over the direct map, pmap_growkernel (populates the first GiB, which the C's pmap_bootstrap does), kenter/kenter_cache/kremove(_pg), fill_pte, pte_insert/update/remove, extract, zero/copy page via the HHDM, pmap_steal_memory (not in the C; OpenBSD arm64 has no direct map nor PMAP_STEAL_MEMORY); pmap_init (pools, TTBR0 switch), pmap_vp_populate, user pmaps, pv lists, ASIDs, fault fixup: M4 to M6"
 
 [[file]]
+c = "sys/sys/systm.h"
+rust = "sys/sys/systm.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9fb4626fd16812491f6c3904f32ccfe077412cdf"
+notes = "physmem only (defined here, filled by the machdeps; the C defines it per arch); the hostname/boottime globals, copyin/copyout, tsleep/wakeup and the other prototypes come with their files"
+
+[[file]]
+c = "sys/sys/malloc.h"
+rust = "sys/sys/malloc.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "df40c25383197e2f0961d54688bd674ade4f63ef"
+deps = ["sys/sys/queue.h", "sys/sys/param.h"]
+notes = "M_* flags and types with INITKMEMNAMES, MINBUCKET/MINALLOCSIZE/MAXALLOCSAVE/MALLOC_MAX, kmemstats/kmemusage/kmembuckets; CTL_KERN_MALLOC_NAMES and the poison_* prototypes (subr_poison.c) later"
+
+[[file]]
+c = "sys/sys/pool.h"
+rust = "sys/sys/pool.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6b2d9d4350ad12e82914aeca71ce89a990f6f813"
+deps = ["sys/sys/queue.h", "sys/sys/tree.h", "sys/uvm/uvm_extern.h"]
+notes = "struct pool, pool_allocator, pool_request, PR_* and POOL_ALLOC_*; union pool_lock is a flag until the mutex/rwlock (M5); pr_refcnt (M5); kinfo_pool* (sysctl, M7) and the pool_cache fields (MULTIPROCESSOR) not here"
+
+[[file]]
+c = "sys/kern/subr_pool.c"
+rust = "sys/kern/subr_pool.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c965cb859811f0a12dcfd3379fa1a585e57a3dcc"
+deps = ["sys/sys/pool.h", "sys/uvm/uvm_km.c", "sys/dev/rnd.c", "sys/kern/kern_synch.c"]
+notes = "pool_init/destroy/get/put with do_get/do_put, the page management, the request queue, pool_prime, watermarks/limits/constraints, pool_reclaim(_all), the page allocators and the lock ops (flags until M5); a PR_WAITOK get that finds no memory fails instead of sleeping; getnsecuptime (kern_tc.c, licence pending) reported, so pool_put never frees idle pages; poison_* (subr_poison.c) reported; pool_cache (MULTIPROCESSOR), pool_gc_*, ddb printers, pool_chk, pool_walk, sysctl_dopool: M5 to M7"
+
+[[file]]
+c = "sys/kern/kern_malloc.c"
+rust = "sys/kern/kern_malloc.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9a011b29bfce8c2d727484c9536a3954fc5b296d"
+deps = ["sys/sys/malloc.h", "sys/uvm/uvm_km.c", "sys/dev/rnd.c", "sys/sys/systm.h"]
+notes = "malloc/free/mallocarray/kmeminit_nkmempages/kmeminit with BUCKETINDX; KMEMSTATS is feature kmemstats; kmem_map is the direct map (kmembase/kmemlimit span the loaded frames, kmemusage one entry per frame) until uvm_km_suballoc (uvm_map); btokup always range-checks; the ks_limit msleep, poison_*, uvm_map_checkprot and ratecheck reported; sysctl_malloc/malloc_printit and buckstring/memall: M7"
+
+[[file]]
+c = "sys/dev/rnd.c"
+rust = "sys/dev/rnd.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "dab962129c685138168b3f689265f4e998e16b40"
+notes = "PLACEHOLDER: arc4random/arc4random_buf/arc4random_uniform over SplitMix64 from a constant seed (not random) so pools and XSIMPLEQ get their cookies; the entropy pool, ChaCha20, rekeying, random_start, the device and the sysctls come with M5; licence is BSD-3 with a GPL alternative, the BSD terms apply"
+
+[[file]]
+c = "sys/arch/amd64/include/intrdefs.h"
+rust = "sys/arch/amd64/include/intrdefs.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2965bf099461c7327b41556dba3da7af879bf5f4"
+notes = "IPL_*, IST_*, LIR_*/SIR_*, MAX_INTR_SOURCES, NUM_LEGACY_IRQS; the IDT gate boundaries and X86_IPI_* with M4; the header has no copyright block"
+
+[[file]]
+c = "sys/arch/arm64/include/intr.h"
+rust = "sys/arch/arm64/include/intr.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "195f58ec14bb042144b6b0bd99b76585cd5d8b90"
+notes = "IPL_* and the flag masks; the spl* functions, the handler structures, arm_intr_func and the soft interrupts with M4"
+
+[[file]]
+c = "sys/kern/kern_tc.c"
+rust = "sys/kern/kern_tc.rs"
+status = "todo"
+notes = "license: beerware (Poul-Henning Kamp, THE BEER-WARE LICENSE revision 42): needs the user's decision before porting; getnsecuptime is reported as unported by subr_pool.rs meanwhile"
+
+[[file]]
 c = "sys/uvm/uvm_param.h"
 rust = "sys/uvm/uvm_param.rs"
 status = "wip"
@@ -866,7 +940,7 @@ deps = [
     "sys/uvm/uvmexp.h",
     "sys/uvm/uvm_page.c",
 ]
-notes = "uvm_init: page system, uvm_km_init (bounds only) and pmap_init run; uvm_map_init, uvmfault_init, uvm_km_page_init, kmeminit, dma_alloc_init, uvm_pager_init, amap_init, uao_create, uvm_anon_init, the bestfit switch and uvm_init_percpu report themselves unported"
+notes = "uvm_init: page system, uvm_km_init (bounds only), pmap_init and kmeminit run; uvm_map_init, uvmfault_init, uvm_km_page_init, dma_alloc_init, uvm_pager_init, amap_init, uao_create, uvm_anon_init, the bestfit switch and uvm_init_percpu report themselves unported"
 
 [[file]]
 c = "sys/uvm/uvm_page.h"
@@ -931,7 +1005,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d125775bafe311bad1f791f16fae0434e8703879"
 deps = ["sys/uvm/uvm_extern.h"]
-notes = "no_constraint, the kv_*/kp_*/kd_* allocation modes, uvm_km_init recording the kernel map bounds (kernel_map waits for uvm_map.c); km_alloc/km_free, uvm_km_suballoc, uvm_km_pgremove and the single-page allocator thread follow"
+notes = "km_alloc/km_free, the kv_*/kp_*/kd_* modes, no_constraint, uvm_km_init recording the kernel map bounds; without kernel_map/kmem_map (uvm_map.c) every allocation is served physically contiguous through the direct map and reported once; kp_nomem/kp_pageable requests fail reported; uvm_km_suballoc, uvm_km_pgremove and the single-page thread follow uvm_map"
 
 [[file]]
 c = "sys/uvm/uvm_pdaemon.c"
@@ -941,6 +1015,10 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a86642e67fec8c37a791c40cdee7c89eeb2dcfcd"
 deps = ["sys/uvm/uvm_page.h"]
 notes = "uvm_wait reports itself unported: no page daemon before kernel threads (M5); uvm_pageout, uvmpd_scan and the aiodone daemon come with swapping (M7)"
+
+[[extra]]
+rust = "sys/kern/rust_alloc.rs"
+reason = "project helper: the Rust GlobalAlloc over malloc(9)/free(9), feature alloc"
 
 [[extra]]
 rust = "sys/kern/selftest.rs"

@@ -109,7 +109,10 @@ pub fn main() -> ! {
     let _ = unported!("rw_obj_init");
     uvm_init();
     #[cfg(feature = "qemu")]
-    crate::kern::selftest::pmap_kernel_mapping();
+    {
+        crate::kern::selftest::pmap_kernel_mapping();
+        crate::kern::selftest::malloc_pool_stress();
+    }
     let _ = unported!("disk_init"); // must come before autoconfiguration
     let _ = unported!("tty_init"); // initialise tty's
     cpu_startup();

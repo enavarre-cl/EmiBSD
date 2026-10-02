@@ -56,7 +56,7 @@
 use core::arch::asm;
 use core::cell::UnsafeCell;
 use core::ptr::{self, addr_of, addr_of_mut};
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use libkern::StaticCell;
 
@@ -69,6 +69,7 @@ use crate::arch::arm64::include::param::PAGE_SIZE;
 use crate::arch::arm64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
 use crate::dev::ic::pluart::pluartcnattach;
 use crate::kern::init_main::BOOTHOWTO;
+use crate::kern::kern_malloc::{kmeminit_nkmempages, nkmempages};
 use crate::kern::subr_log::init_static_msgbuf;
 use crate::kprintf;
 use crate::machine::bootinfo::{BootInfo, MemKind};
@@ -79,6 +80,7 @@ use crate::sys::param::roundup;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
 };
+use crate::sys::systm::PHYSMEM;
 use crate::sys::termios::B115200;
 use crate::sys::ttydefaults::TTYDEF_CFLAG;
 use crate::sys::types::{Paddr, Vaddr};
@@ -135,8 +137,6 @@ struct BootstrapTables(UnsafeCell<[PageTable; 2]>);
 // then on only the MMU reads them.
 unsafe impl Sync for BootstrapTables {}
 
-/// `physmem`: total physical memory, in pages (an `int` in C).
-pub static PHYSMEM: AtomicUsize = AtomicUsize::new(0);
 /// `dma_constraint`: every address, until the device tree narrows it
 /// (`openbsd,dma-constraint`, M4).
 pub static DMA_CONSTRAINT: UvmConstraintRange = UvmConstraintRange {
@@ -284,8 +284,8 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
 
     // Make sure that we have enough KVA to initialize UVM. In particular, we need enough KVA
     // to be able to allocate the vm_page structures and nkmempages for malloc(9).
-    let _ = unported!("kmeminit_nkmempages (kern_malloc.c)");
-    let nkmempages = 0;
+    kmeminit_nkmempages();
+    let nkmempages = nkmempages();
     pmap_growkernel(Vaddr::new(
         VM_MIN_KERNEL_ADDRESS
             + 1024 * 1024 * 1024
