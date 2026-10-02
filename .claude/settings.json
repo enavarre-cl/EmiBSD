@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(just:*)",
+      "Bash(cargo:*)"
+    ],
+    "deny": [
+      "Edit(/reference/**)",
+      "Write(/reference/**)"
+    ]
+  }
+}
