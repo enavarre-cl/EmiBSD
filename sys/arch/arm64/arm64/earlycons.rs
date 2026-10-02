@@ -26,20 +26,6 @@ const UARTFR: usize = 0x018;
 /// UARTFR: transmit FIFO full.
 const FR_TXFF: u32 = 1 << 5;
 
-/// One translation table: 512 descriptors, 4 KiB aligned.
-#[repr(C, align(4096))]
-struct PageTable([u64; 512]);
-
-/// The two tables of the temporary lower-half map: level 0, then level 1.
-struct EarlyTables(UnsafeCell<[PageTable; 2]>);
-
-// SAFETY: written exactly once by `init`, on the boot CPU, before any other code runs; from then
-// on only the MMU reads them.
-unsafe impl Sync for EarlyTables {}
-
-static TABLES: EarlyTables =
-    EarlyTables(UnsafeCell::new([PageTable([0; 512]), PageTable([0; 512])]));
-
 // Descriptor bits (Armv8-A VMSA, 4 KiB granule).
 /// Any descriptor: valid.
 const DESC_VALID: u64 = 1 << 0;
@@ -63,6 +49,20 @@ const MAIR_ATTR2_DEVICE_NGNRNE: u64 = 0x00 << 16;
 const TCR_T0SZ_MASK: u64 = 0x3f;
 /// `T0SZ` under 4-level paging (48-bit lower half): the walk starts at level 0.
 const T0SZ_4LEVEL: u64 = 16;
+
+/// One translation table: 512 descriptors, 4 KiB aligned.
+#[repr(C, align(4096))]
+struct PageTable([u64; 512]);
+
+/// The two tables of the temporary lower-half map: level 0, then level 1.
+struct EarlyTables(UnsafeCell<[PageTable; 2]>);
+
+// SAFETY: written exactly once by `init`, on the boot CPU, before any other code runs; from then
+// on only the MMU reads them.
+unsafe impl Sync for EarlyTables {}
+
+static TABLES: EarlyTables =
+    EarlyTables(UnsafeCell::new([PageTable([0; 512]), PageTable([0; 512])]));
 
 /// Installs the device mapping the console needs. The PL011 itself is left as the firmware
 /// programmed it.

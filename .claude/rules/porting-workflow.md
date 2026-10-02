@@ -17,8 +17,9 @@ Applies to every port of a C file from `reference/openbsd-src/sys/` into `sys/`.
   table. A new idiom decision is a new row there, in the same commit.
 - Header of every ported file: original `$OpenBSD$` line, full original copyright/license block,
   then `//!` docs with `Upstream: <c path> @ <12-hex>` and a `## Deviations` list.
-- Logic that can run on the host gets `#[cfg(test)] mod tests` in the same file; constants that
-  mirror C headers get a reference-backed `#[ignore]` test (see `testing.md`).
+- Logic that can run on the host gets `#[cfg(test)] mod tests` in the same file, or in
+  `<name>/tests.rs` once longer than 50 lines; constants that mirror C headers get a
+  reference-backed `#[ignore]` test (see `testing.md`).
 - Mark the entry `wip` when starting; `ported` only when `just ci` is green. Fill
   `upstream_commit` (= `[meta].pinned`) and `upstream_blob`
   (`git -C reference/openbsd-src rev-parse HEAD:<c path>`).

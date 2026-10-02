@@ -21,6 +21,46 @@ pub const COMMON_MAGIC: [u64; 2] = [0xc7b1_dd30_df4c_8b88, 0x0a82_e883_a194_f07b
 /// The base revision this kernel is written against.
 pub const BASE_REVISION: u64 = 6;
 
+/// Request IDs: the feature-specific half; [`Request::new`] prepends [`COMMON_MAGIC`].
+pub mod id {
+    /// Bootloader Info feature.
+    pub const BOOTLOADER_INFO: [u64; 2] = [0xf550_38d8_e2a1_202f, 0x2794_26fc_f5f5_9740];
+    /// Stack Size feature.
+    pub const STACK_SIZE: [u64; 2] = [0x224e_f046_0a8e_8926, 0xe1cb_0fc2_5f46_ea3d];
+    /// HHDM (Higher Half Direct Map) feature.
+    pub const HHDM: [u64; 2] = [0x48dc_f1cb_8ad2_b852, 0x6398_4e95_9a98_244b];
+    /// Memory Map feature.
+    pub const MEMMAP: [u64; 2] = [0x67cf_3d9d_378a_806f, 0xe304_acdf_c50c_3c62];
+    /// RSDP feature.
+    pub const RSDP: [u64; 2] = [0xc5e7_7b6b_397e_7b43, 0x2763_7845_accd_cf3c];
+    /// Executable Address feature.
+    pub const EXECUTABLE_ADDRESS: [u64; 2] = [0x71ba_7686_3cc5_5f63, 0xb264_4a48_c516_a487];
+    /// Device Tree Blob feature.
+    pub const DTB: [u64; 2] = [0xb40d_db48_fb54_bac7, 0x5450_8149_3f81_ffb7];
+}
+
+/// `LIMINE_MEMMAP_*`: memory map entry types.
+pub mod memmap_type {
+    /// Usable RAM.
+    pub const USABLE: u64 = 0;
+    /// Reserved.
+    pub const RESERVED: u64 = 1;
+    /// ACPI tables, reclaimable.
+    pub const ACPI_RECLAIMABLE: u64 = 2;
+    /// ACPI non-volatile storage.
+    pub const ACPI_NVS: u64 = 3;
+    /// Bad memory.
+    pub const BAD_MEMORY: u64 = 4;
+    /// Bootloader data, reclaimable.
+    pub const BOOTLOADER_RECLAIMABLE: u64 = 5;
+    /// The executable and its modules.
+    pub const EXECUTABLE_AND_MODULES: u64 = 6;
+    /// A framebuffer.
+    pub const FRAMEBUFFER: u64 = 7;
+    /// Reserved but mapped (base revision 4 and later).
+    pub const RESERVED_MAPPED: u64 = 8;
+}
+
 /// `LIMINE_BASE_REVISION(N)`: tells the bootloader which protocol revision the kernel expects.
 #[repr(C)]
 pub struct BaseRevision {
@@ -118,7 +158,7 @@ pub struct Request<R> {
 unsafe impl<R> Sync for Request<R> {}
 
 impl<R> Request<R> {
-    /// A revision-0 request with the feature-specific half of its ID.
+    /// A revision-0 request for the feature whose [`id`] is given.
     pub const fn new(id: [u64; 2]) -> Self {
         Self {
             id: [COMMON_MAGIC[0], COMMON_MAGIC[1], id[0], id[1]],
@@ -138,9 +178,6 @@ impl<R> Request<R> {
         unsafe { p.as_ref() }
     }
 }
-
-/// Bootloader Info feature ID.
-pub const BOOTLOADER_INFO_ID: [u64; 2] = [0xf550_38d8_e2a1_202f, 0x2794_26fc_f5f5_9740];
 
 /// `struct limine_bootloader_info_response`.
 #[repr(C)]
@@ -166,9 +203,6 @@ impl BootloaderInfoResponse {
     }
 }
 
-/// Stack Size feature ID.
-pub const STACK_SIZE_ID: [u64; 2] = [0x224e_f046_0a8e_8926, 0xe1cb_0fc2_5f46_ea3d];
-
 /// `struct limine_stack_size_request`: asks for a boot stack of at least `stack_size` bytes.
 #[repr(C)]
 pub struct StackSizeRequest {
@@ -182,7 +216,7 @@ impl StackSizeRequest {
     /// A request for `stack_size` bytes.
     pub const fn new(stack_size: u64) -> Self {
         Self {
-            request: Request::new(STACK_SIZE_ID),
+            request: Request::new(id::STACK_SIZE),
             stack_size,
         }
     }
@@ -195,9 +229,6 @@ pub struct StackSizeResponse {
     pub revision: u64,
 }
 
-/// HHDM (Higher Half Direct Map) feature ID.
-pub const HHDM_ID: [u64; 2] = [0x48dc_f1cb_8ad2_b852, 0x6398_4e95_9a98_244b];
-
 /// `struct limine_hhdm_response`.
 #[repr(C)]
 pub struct HhdmResponse {
@@ -206,9 +237,6 @@ pub struct HhdmResponse {
     /// Virtual address at which physical address 0 is mapped.
     pub offset: u64,
 }
-
-/// Memory Map feature ID.
-pub const MEMMAP_ID: [u64; 2] = [0x67cf_3d9d_378a_806f, 0xe304_acdf_c50c_3c62];
 
 /// `struct limine_memmap_entry`.
 #[repr(C)]
@@ -219,28 +247,6 @@ pub struct MemmapEntry {
     pub length: u64,
     /// One of the [`memmap_type`] constants (`type` in C).
     pub kind: u64,
-}
-
-/// `LIMINE_MEMMAP_*`: memory map entry types.
-pub mod memmap_type {
-    /// Usable RAM.
-    pub const USABLE: u64 = 0;
-    /// Reserved.
-    pub const RESERVED: u64 = 1;
-    /// ACPI tables, reclaimable.
-    pub const ACPI_RECLAIMABLE: u64 = 2;
-    /// ACPI non-volatile storage.
-    pub const ACPI_NVS: u64 = 3;
-    /// Bad memory.
-    pub const BAD_MEMORY: u64 = 4;
-    /// Bootloader data, reclaimable.
-    pub const BOOTLOADER_RECLAIMABLE: u64 = 5;
-    /// The executable and its modules.
-    pub const EXECUTABLE_AND_MODULES: u64 = 6;
-    /// A framebuffer.
-    pub const FRAMEBUFFER: u64 = 7;
-    /// Reserved but mapped (base revision 4 and later).
-    pub const RESERVED_MAPPED: u64 = 8;
 }
 
 /// `struct limine_memmap_response`.
@@ -264,9 +270,6 @@ impl MemmapResponse {
     }
 }
 
-/// RSDP feature ID.
-pub const RSDP_ID: [u64; 2] = [0xc5e7_7b6b_397e_7b43, 0x2763_7845_accd_cf3c];
-
 /// `struct limine_rsdp_response`.
 #[repr(C)]
 pub struct RsdpResponse {
@@ -275,9 +278,6 @@ pub struct RsdpResponse {
     /// Address of the RSDP: virtual (HHDM) for base revision 6.
     pub address: *const c_void,
 }
-
-/// Executable Address feature ID.
-pub const EXECUTABLE_ADDRESS_ID: [u64; 2] = [0x71ba_7686_3cc5_5f63, 0xb264_4a48_c516_a487];
 
 /// `struct limine_executable_address_response`.
 #[repr(C)]
@@ -289,9 +289,6 @@ pub struct ExecutableAddressResponse {
     /// Virtual base address of the loaded image.
     pub virtual_base: u64,
 }
-
-/// Device Tree Blob feature ID.
-pub const DTB_ID: [u64; 2] = [0xb40d_db48_fb54_bac7, 0x5450_8149_3f81_ffb7];
 
 /// `struct limine_dtb_response`.
 #[repr(C)]

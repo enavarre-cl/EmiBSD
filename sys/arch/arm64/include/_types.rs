@@ -53,6 +53,15 @@ pub const _STACKALIGNBYTES: usize = 15;
 /// `_MAX_PAGE_SHIFT`: same as `PAGE_SHIFT`.
 pub const _MAX_PAGE_SHIFT: usize = 12;
 
+/// `label_t`: the register save area of the kernel's `setjmp`/`longjmp` (used by ddb).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Label {
+    /// Saved callee-preserved registers, stack pointer and return address; the layout is
+    /// `locore.S`'s.
+    pub val: [isize; 13],
+}
+
 /// `_ALIGN(p)`: rounds `p` (a pointer or byte index) up to a value correctly aligned for all data
 /// types (`int`, `long`, ...).
 pub const fn _align(p: usize) -> usize {
@@ -64,13 +73,4 @@ pub const fn _align(p: usize) -> usize {
 /// `T` wraps the mask to all ones, exactly as it does here.
 pub const fn _aligned_pointer<T>(p: usize) -> bool {
     p & core::mem::size_of::<T>().wrapping_sub(1) == 0
-}
-
-/// `label_t`: the register save area of the kernel's `setjmp`/`longjmp` (used by ddb).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Label {
-    /// Saved callee-preserved registers, stack pointer and return address; the layout is
-    /// `locore.S`'s.
-    pub val: [isize; 13],
 }

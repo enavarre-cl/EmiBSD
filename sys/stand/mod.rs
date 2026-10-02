@@ -17,14 +17,42 @@ use bsd::machine::{
 use bsd::sys::types::{Paddr, Psize, Vaddr};
 
 use limine::{
-    BOOTLOADER_INFO_ID, BaseRevision, BootloaderInfoResponse, DTB_ID, DtbResponse,
-    EXECUTABLE_ADDRESS_ID, ExecutableAddressResponse, HHDM_ID, HhdmResponse, MEMMAP_ID,
-    MemmapResponse, RSDP_ID, Request, RequestsEndMarker, RequestsStartMarker, RsdpResponse,
-    StackSizeRequest, memmap_type,
+    BaseRevision, BootloaderInfoResponse, DtbResponse, ExecutableAddressResponse, HhdmResponse,
+    MemmapResponse, Request, RequestsEndMarker, RequestsStartMarker, RsdpResponse,
+    StackSizeRequest, id, memmap_type,
 };
 
 /// Boot stack for the boot CPU: the protocol's minimum, more than OpenBSD's `USPACE`.
 const STACK_SIZE_BYTES: u64 = 64 * 1024;
+
+/// Why the boot glue gave up before a console existed. Each ends in a failure exit; under QEMU
+/// the exit status (`ExitStatus::Failure`) is the only trace, so the message `early_init`
+/// returns is dropped here until a console-less channel (semihosting, M2's `ddb`) can carry it.
+#[derive(Debug)]
+enum BootError {
+    UnsupportedRevision,
+    MissingHhdm,
+    MissingMemmap,
+    MissingExecutableAddress,
+    TooManyRegions,
+    EarlyInit,
+}
+
+/// The polled console as a `fmt::Write` sink, with `\n` sent as `\r\n`. `kprintf!` (milestone
+/// M2) replaces it.
+struct EarlyConsole;
+
+impl Write for EarlyConsole {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for b in s.bytes() {
+            if b == b'\n' {
+                Machine::putc(b'\r');
+            }
+            Machine::putc(b);
+        }
+        Ok(())
+    }
+}
 
 // The requests. `#[used]` keeps them in the object file and `KEEP(*(.requests*))` in the linker
 // script keeps them in the image; they are also all read below, from `_start`.
@@ -39,7 +67,7 @@ static BASE_REVISION: BaseRevision = BaseRevision::new(limine::BASE_REVISION);
 
 #[used]
 #[unsafe(link_section = ".requests")]
-static BOOTLOADER_INFO: Request<BootloaderInfoResponse> = Request::new(BOOTLOADER_INFO_ID);
+static BOOTLOADER_INFO: Request<BootloaderInfoResponse> = Request::new(id::BOOTLOADER_INFO);
 
 #[used]
 #[unsafe(link_section = ".requests")]
@@ -47,40 +75,28 @@ static STACK_SIZE: StackSizeRequest = StackSizeRequest::new(STACK_SIZE_BYTES);
 
 #[used]
 #[unsafe(link_section = ".requests")]
-static HHDM: Request<HhdmResponse> = Request::new(HHDM_ID);
+static HHDM: Request<HhdmResponse> = Request::new(id::HHDM);
 
 #[used]
 #[unsafe(link_section = ".requests")]
-static MEMMAP: Request<MemmapResponse> = Request::new(MEMMAP_ID);
+static MEMMAP: Request<MemmapResponse> = Request::new(id::MEMMAP);
 
 #[used]
 #[unsafe(link_section = ".requests")]
-static EXECUTABLE_ADDRESS: Request<ExecutableAddressResponse> = Request::new(EXECUTABLE_ADDRESS_ID);
+static EXECUTABLE_ADDRESS: Request<ExecutableAddressResponse> =
+    Request::new(id::EXECUTABLE_ADDRESS);
 
 #[used]
 #[unsafe(link_section = ".requests")]
-static RSDP: Request<RsdpResponse> = Request::new(RSDP_ID);
+static RSDP: Request<RsdpResponse> = Request::new(id::RSDP);
 
 #[used]
 #[unsafe(link_section = ".requests")]
-static DTB: Request<DtbResponse> = Request::new(DTB_ID);
+static DTB: Request<DtbResponse> = Request::new(id::DTB);
 
 #[used]
 #[unsafe(link_section = ".requests_end_marker")]
 static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
-
-/// Why the boot glue gave up before a console existed. Each ends in a failure exit; under QEMU
-/// the exit status (`ExitStatus::Failure`) is the only trace, so the message `early_init`
-/// returns is dropped here until a console-less channel (semihosting, M2's `ddb`) can carry it.
-#[derive(Debug)]
-enum BootError {
-    UnsupportedRevision,
-    MissingHhdm,
-    MissingMemmap,
-    MissingExecutableAddress,
-    TooManyRegions,
-    EarlyInit,
-}
 
 /// Bootloader entry point, named by `ENTRY(_start)` in `arch/*/conf/kernel.ld`.
 ///
@@ -165,22 +181,6 @@ fn mem_kind(raw: u64) -> MemKind {
         memmap_type::FRAMEBUFFER => MemKind::Framebuffer,
         memmap_type::RESERVED_MAPPED => MemKind::ReservedMapped,
         other => MemKind::Unknown(other),
-    }
-}
-
-/// The polled console as a `fmt::Write` sink, with `\n` sent as `\r\n`. `kprintf!` (milestone
-/// M2) replaces it.
-struct EarlyConsole;
-
-impl Write for EarlyConsole {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        for b in s.bytes() {
-            if b == b'\n' {
-                Machine::putc(b'\r');
-            }
-            Machine::putc(b);
-        }
-        Ok(())
     }
 }
 

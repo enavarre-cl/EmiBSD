@@ -51,7 +51,8 @@ When something the file needs is not ported yet, stub it visibly
 
 ## 5. Test
 
-- Pure logic: `#[cfg(test)] mod tests` in the same file, runs with `just test`.
+- Pure logic: `#[cfg(test)] mod tests` in the same file (or `<name>/tests.rs` once longer than
+  50 lines), runs with `just test`.
 - Constants mirrored from C headers: `#[ignore]` reference-backed test, runs with `just test-ref`.
 - Boot, console, trap behaviour: smoke expectation in `tools/xtask`, runs with `just smoke`.
 

@@ -35,3 +35,20 @@ paths:
   `spin`, `uart_16550`, `fdt`, `linked_list_allocator`, `buddy_system_allocator`, or any crate that
   replaces code OpenBSD has. Porting that code is the project.
 - Every `pub` item has a doc comment (`missing_docs` is warn; `just clippy` uses `-D warnings`).
+- File layout, top to bottom, one blank line between sections, empty sections omitted:
+  1. the `/* $OpenBSD ... */` line(s) and the license block (ported files);
+  2. `//!` docs: summary, `Upstream:`, prose, `## Deviations`;
+  3. `mod` declarations (crate roots and `mod.rs` only), then `use` lines as rustfmt orders them;
+  4. constants: `const`, constant-only `pub mod` blocks (`memmap_type`), and `macro_rules!` that
+     define constants or types, placed just before their first use;
+  5. types: `struct`, `enum`, `type`, each followed by its inherent `impl` blocks and `unsafe impl`
+     marker traits;
+  6. `static`s;
+  7. traits;
+  8. free functions and trait `impl`s, in the order of the C file;
+  9. compile-time checks (`const _: () = { assert!(..) };`);
+  10. `#[cfg(test)] mod tests`: inline when it is 50 lines or shorter, otherwise `mod tests;` with
+      the body in `<name>/tests.rs` (`use super::*;` sees the parent's private items either way).
+  Within a section keep the C file's order; the OpenBSD header/implementation split is the
+  interface/implementation split (types in `sys/sys/<header>.rs`, functions in the `.c`'s module,
+  traits in `sys/machine/<header>.rs`).

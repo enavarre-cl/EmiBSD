@@ -190,8 +190,10 @@ fn is_rust_path_under_sys(p: &str) -> bool {
 /// Files that are structure, not ports: never need a `ports.toml` entry.
 fn is_structural(rel: &str) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
-    matches!(name, "mod.rs" | "lib.rs" | "main.rs" | "build.rs")
-        || rel.starts_with("sys/machine/")
+    matches!(
+        name,
+        "mod.rs" | "lib.rs" | "main.rs" | "build.rs" | "tests.rs"
+    ) || rel.starts_with("sys/machine/")
         || rel.starts_with("sys/arch/host/")
         || rel.starts_with("sys/stand/")
 }

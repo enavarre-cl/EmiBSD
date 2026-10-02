@@ -4,7 +4,8 @@ Three tiers. Every change lands with the tier it belongs to.
 
 1. **Host unit tests**: `just test` (`cargo test -p libkern -p bsd`). Pure logic (libkern, errno,
    page-allocator math, queue adapters, formatting) runs on macOS through `sys/arch/host`.
-   Every new `pub fn` with testable logic gets a test in the same file (`#[cfg(test)] mod tests`).
+   Every new `pub fn` with testable logic gets a test in the same file (`#[cfg(test)] mod tests`),
+   or in `<name>/tests.rs` once the tests are longer than 50 lines (`rust-kernel.md`, file layout).
    Table-driven tests for C-compatible behaviour (`strlcpy` return values, `crc32` vectors).
 2. **Reference-backed tests**: `just test-ref`. Marked `#[ignore]`; they read `$OPENBSD_SRC`
    (set by the recipe to `reference/openbsd-src`) and cross-check constants against the C headers
