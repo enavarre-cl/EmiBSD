@@ -1,14 +1,12 @@
-/*	$OpenBSD: ttycom.h,v 1.17 2018/06/16 13:55:03 deraadt Exp $	*/
-/*	$NetBSD: ttycom.h,v 1.4 1996/05/19 17:17:53 jonathan Exp $	*/
+/*	$OpenBSD: lock.h,v 1.27 2016/06/19 11:54:33 natano Exp $	*/
 /* <LICENSES> */
-/*-
- * Copyright (c) 1982, 1986, 1990, 1993, 1994
+/*
+ * Copyright (c) 1995
  *	The Regents of the University of California.  All rights reserved.
- * (c) UNIX System Laboratories, Inc.
- * All or some portions of this file are derived from material licensed
- * to the University of California by American Telephone and Telegraph
- * Co. or Unix System Laboratories, Inc. and are reproduced herein with
- * the permission of UNIX System Laboratories, Inc.
+ *
+ * This code contains ideas from software contributed to Berkeley by
+ * Avadis Tevanian, Jr., Michael Wayne Young, and the Mach Operating
+ * System project at Carnegie-Mellon University.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -34,23 +32,36 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- *	@(#)ttycom.h	8.1 (Berkeley) 3/28/94
+ *	@(#)lock.h	8.12 (Berkeley) 5/19/95
  */
 /* </LICENSES> */
 
-//! `<sys/ttycom.h>`: the tty `ioctl(2)` commands.
+//! `<sys/lock.h>`: the `LK_*` flags of `vn_lock(9)` and `VOP_LOCK(9)`, which are the
+//! `rwlock(9)` operation flags plus `LK_DRAIN` and `LK_RETRY`.
 //!
-//! Upstream: sys/sys/ttycom.h @ 3ce1f3f79392
+//! Upstream: sys/sys/lock.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. `kern_sig.c` needs `TIOCGPGRP` and `TIOCSPGRP` (the process-group
-//! variants of `sigio_getown`/`sigio_setown`), `vfs_vnops.c` `TIOCSCTTY`; `struct winsize`, `struct tstamps` and the
-//! other commands come with the tty layer (M7).
+//! ## Deviations
+//! - The flags are `i32`, the type of the `int flags` argument they travel in.
 
-use crate::sys::ioccom::{_io, _ior, _iow};
+use crate::sys::rwlock::{RW_NOSLEEP, RW_READ, RW_RECURSEFAIL, RW_WRITE, RW_WRITE_OTHER};
 
-/// `TIOCGPGRP`: get pgrp of tty (`_IOR('t', 119, int)`).
-pub const TIOCGPGRP: u64 = _ior::<i32>(b't', 119);
-/// `TIOCSPGRP`: set pgrp of tty (`_IOW('t', 118, int)`).
-pub const TIOCSPGRP: u64 = _iow::<i32>(b't', 118);
-/// `TIOCSCTTY`: become controlling tty (`_IO('t', 97)`).
-pub const TIOCSCTTY: u64 = _io(b't', 97);
+/// `LK_EXCLUSIVE`: exclusive lock.
+pub const LK_EXCLUSIVE: i32 = RW_WRITE;
+/// `LK_SHARED`: shared lock.
+pub const LK_SHARED: i32 = RW_READ;
+/// `LK_TYPE_MASK`: type of lock sought.
+pub const LK_TYPE_MASK: i32 = RW_WRITE | RW_READ;
+/// `LK_NOWAIT`: do not sleep to await lock.
+pub const LK_NOWAIT: i32 = RW_NOSLEEP;
+/// `LK_RECURSEFAIL`: fail if recursive exclusive lock.
+pub const LK_RECURSEFAIL: i32 = RW_RECURSEFAIL;
+/// `LK_EXCLOTHER`: exclusive lock held by some other thread.
+pub const LK_EXCLOTHER: i32 = RW_WRITE_OTHER;
+/// `LK_RWFLAGS`.
+pub const LK_RWFLAGS: i32 = RW_WRITE | RW_READ | RW_NOSLEEP | RW_RECURSEFAIL | RW_WRITE_OTHER;
+
+/// `LK_DRAIN`: wait for all lock activity to end.
+pub const LK_DRAIN: i32 = 0x1000;
+/// `LK_RETRY`: `vn_lock`: retry until locked.
+pub const LK_RETRY: i32 = 0x2000;

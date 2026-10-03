@@ -19,6 +19,9 @@
 //! With `kern_sysctl.c` it asks `sysctl(2)` for `kern.ostype` and `kern.osrelease`, sets and
 //! reads back `kern.hostname`, and prints `init: EmiBSD 7.8` when the system identifies itself
 //! as the user decided.
+//! With the vfs core (`vfs_syscalls.c`) it checks that the path system calls reach `namei`
+//! and fail as they must without a root file system (`ENOENT`), that `umask(2)` swaps the
+//! creation mask and that the console stand-in is not a vnode (`lseek`, `fchdir`).
 
 #![no_std]
 #![no_main]
@@ -87,6 +90,20 @@ const SYS___SET_TCB: usize = 329;
 const SYS___GET_TCB: usize = 330;
 /// `SYS_sysctl`.
 const SYS_SYSCTL: usize = 202;
+/// `SYS_open`.
+const SYS_OPEN: usize = 5;
+/// `SYS_chdir`.
+const SYS_CHDIR: usize = 12;
+/// `SYS_fchdir`.
+const SYS_FCHDIR: usize = 13;
+/// `SYS_stat`.
+const SYS_STAT: usize = 38;
+/// `SYS_umask`.
+const SYS_UMASK: usize = 60;
+/// `SYS_lseek`.
+const SYS_LSEEK: usize = 166;
+/// `SYS___getcwd`.
+const SYS___GETCWD: usize = 304;
 
 /// `CTL_KERN` (`<sys/sysctl.h>`).
 const CTL_KERN: i32 = 1;
@@ -97,8 +114,14 @@ const KERN_OSRELEASE: i32 = 2;
 /// `KERN_HOSTNAME`.
 const KERN_HOSTNAME: i32 = 10;
 
+/// `ENOENT`.
+const ENOENT: usize = 2;
 /// `EBADF`.
 const EBADF: usize = 9;
+/// `ENOTDIR`.
+const ENOTDIR: usize = 20;
+/// `ESPIPE`.
+const ESPIPE: usize = 29;
 /// `EINVAL`.
 const EINVAL: usize = 22;
 /// `F_DUPFD`, `F_GETFD`, `F_SETFD`, `F_GETFL`, `F_DUPFD_CLOEXEC`.
@@ -109,8 +132,11 @@ const F_GETFL: usize = 3;
 const F_DUPFD_CLOEXEC: usize = 10;
 /// `FD_CLOEXEC`.
 const FD_CLOEXEC: usize = 1;
-/// `O_RDWR`.
+/// `O_RDONLY`, `O_RDWR`.
+const O_RDONLY: usize = 0;
 const O_RDWR: usize = 2;
+/// `SEEK_CUR`.
+const SEEK_CUR: usize = 1;
 /// `FIOCLEX`, `FIONCLEX`: `_IO('f', 1)`, `_IO('f', 2)`.
 const FIOCLEX: usize = 0x2000_6601;
 const FIONCLEX: usize = 0x2000_6602;
@@ -338,10 +364,40 @@ pub extern "C" fn _start() -> ! {
     } else {
         status = 6;
     }
+    if vfs() {
+        if write(1, b"init: vfs ok (no root file system)\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 7;
+    }
     if !fds() {
         status = 4;
     }
     exit(status)
+}
+
+/// `vfs_syscalls.c` seen from user mode before a root file system exists: every path ends in
+/// `namei`'s `ENOENT`, no descriptor is left behind by a failed `open`, the creation mask is
+/// the one `fdinit` set (022), and the console stand-in cannot seek nor be a directory.
+fn vfs() -> bool {
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let mut st = [0u64; 16];
+    let mut cwd = [0u8; 64];
+    let mut ok = call(SYS_OPEN, c"/etc/rc".as_ptr() as usize, O_RDONLY, 0) == (ENOENT, true);
+    ok &= call(
+        SYS_STAT,
+        c"/".as_ptr() as usize,
+        st.as_mut_ptr() as usize,
+        0,
+    ) == (ENOENT, true);
+    ok &= call(SYS_CHDIR, c"/".as_ptr() as usize, 0, 0) == (ENOENT, true);
+    ok &= call(SYS___GETCWD, cwd.as_mut_ptr() as usize, cwd.len(), 0) == (ENOENT, true);
+    ok &= call(SYS_UMASK, 0o077, 0, 0) == (0o022, false);
+    ok &= call(SYS_UMASK, 0o022, 0, 0) == (0o077, false);
+    ok &= call(SYS_LSEEK, 1, 0, SEEK_CUR) == (ESPIPE, true);
+    ok &= call(SYS_FCHDIR, 1, 0, 0) == (ENOTDIR, true);
+    ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
 }
 
 /// `kern_descrip.c` seen from user mode. Descriptors 0, 1 and 2 are one console file; the

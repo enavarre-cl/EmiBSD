@@ -55,10 +55,10 @@
 //!   the file is inserted in a table, as in C.
 //! - `FREF`/`FRELE` are the functions [`fref`]/[`frele`]; `frele` takes the thread as
 //!   `impl Into<Option<&Proc>>`, as the C passes NULL from the socket garbage collector.
-//!   `FREF`'s `vfs_stall_barrier()` is not called: there are no file systems to stall
-//!   (`vfs_subr.c`, M10).
+//!   `FREF` calls `vfs_stall_barrier()` (`vfs_subr.rs`) as in C.
 //! - `maxfiles` is `conf/param.rs`'s `MAXFILES`; `numfiles` is `kern_descrip.rs`'s
-//!   `NUMFILES`; `socketops` and `vnops` arrive with sockets and the vfs.
+//!   `NUMFILES`; `vnops` is `kern/vfs_vnops.rs`'s `VNOPS`; `socketops` arrives with
+//!   sockets.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -213,7 +213,7 @@ queue_adapter!(
 
 /// `FREF(fp)`: takes a reference to `fp`.
 pub fn fref(fp: &File) {
-    // vfs_stall_barrier(): no file systems to stall yet (see the module's deviations).
+    crate::kern::vfs_subr::vfs_stall_barrier();
     fp.f_count.fetch_add(1, Ordering::SeqCst);
 }
 

@@ -56,6 +56,10 @@
 //! - `NET_LOCK()` and friends are functions (`net_lock()`); the assertions take the caller's
 //!   name, which the C's macros take from `__func__`. `netlock` itself is defined in
 //!   `net/if_.rs`, where `net/if.c` defines it.
+//! - `mountroot` (declared here, defined NULL in `conf/swapgeneric.c` and pointed at the
+//!   root file system's mount routine by `setroot`, `subr_disk.c`) is a `StaticCell` of an
+//!   `Option<fn() -> Result<(), Errno>>`, defined here like `cold`; nothing sets it until a
+//!   disk driver and a file system exist (stage 2).
 //! - `sy_call_t` returns `Result<(), Errno>` with the two return registers as an out
 //!   parameter; `SCARG(uap, k)` is `sysargs::<T>(v).k.get()` (`sys/syscallargs.rs`).
 
@@ -80,6 +84,13 @@ pub static COLD: AtomicBool = AtomicBool::new(true);
 /// `safepri`: the IPL `tsleep` lowers to while cold or after a panic, to give interrupts a
 /// chance (`int safepri = 0` in each `machdep.c`).
 pub static SAFEPRI: AtomicI32 = AtomicI32::new(0);
+
+/// `mountroot`: the routine that mounts the root file system, NULL while the kernel is
+/// "generic" (no root device chosen). Written once by `setroot` before `main` reads it.
+pub static MOUNTROOT: libkern::StaticCell<Option<MountrootFn>> = libkern::StaticCell::new(None);
+
+/// The type of `mountroot`: mounts the root file system and puts it on `mountlist`.
+pub type MountrootFn = fn() -> Result<(), Errno>;
 
 /// `INFSLP`: sleep forever (`tsleep_nsec` and friends).
 pub const INFSLP: u64 = u64::MAX;

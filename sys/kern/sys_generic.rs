@@ -57,9 +57,8 @@
 //!   so `iovec_free` (`unsafe`: it frees) is only called on a successful result. The user
 //!   array is copied in one iovec at a time, each read through `Iovec::from_bytes`.
 //! - `dofilereadv`/`dofilewritev` take a `Uio` whose iovecs borrow the caller's array; the
-//!   positioned checks (`FO_POSITION`) answer `ESPIPE` for every file that is not a vnode, as
-//!   in C, and report the vnode case (`v_type`, `VISTTY`; `vfs`, M10), which has no caller
-//!   yet (`pread(2)` is `vfs_syscalls.c`).
+//!   positioned checks (`FO_POSITION`) answer `ESPIPE` for every file that is not a vnode
+//!   (and for fifos and ttys), as in C.
 //! - `EPIPE` from a write would post `SIGPIPE` through `ptsignal`, which `kern_sig.c` brings;
 //!   it is reported until then.
 //! - `sys_ioctl`'s `pledge_ioctl` and the socket `SS_DNS` check are reported where the C
@@ -90,8 +89,9 @@ use crate::sys::syscallargs::{
 };
 use crate::sys::syslimits::IOV_MAX;
 use crate::sys::systm::{SysArgs, sysargs};
-use crate::sys::types::Register;
+use crate::sys::types::{Off, Register};
 use crate::sys::uio::{Iovec, UIO_SMALLIOV, Uio, UioRw, UioSeg};
+use crate::sys::vnode::{VCHR, VFIFO, VISTTY};
 use crate::unported;
 
 /// `STK_PARAMS`: the ioctl argument bytes `sys_ioctl` keeps on its stack.
@@ -217,13 +217,19 @@ pub fn sys_readv(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<()
 }
 
 /// The positioned-I/O checks of `dofilereadv`/`dofilewritev` (`FO_POSITION`).
-fn position_check(fp: &File) -> Result<(), Errno> {
+fn position_check(fp: &File, offset: Off) -> Result<(), Errno> {
     if fp.f_type.get() != DTYPE_VNODE {
         return Err(Errno::ESPIPE);
     }
-    // vp->v_type == VFIFO, vp->v_flag & VISTTY, uio_offset < 0 && v_type != VCHR: the vnode
-    // (vfs, M10).
-    Err(unported!("FO_POSITION on a vnode (vfs, M10)"))
+    let vp = fp.vnode();
+    if vp.v_type.get() == VFIFO || vp.v_flag.get() & VISTTY != 0 {
+        return Err(Errno::ESPIPE);
+    }
+
+    if offset < 0 && vp.v_type.get() != VCHR {
+        return Err(Errno::EINVAL);
+    }
+    Ok(())
 }
 
 /// The errors that come after some data was moved are dropped: `ERESTART`, `EINTR` and
@@ -255,7 +261,7 @@ pub fn dofilereadv<'a>(
     let error = 'done: {
         // Checks for positioned read.
         if flags & FO_POSITION != 0
-            && let Err(e) = position_check(fp)
+            && let Err(e) = position_check(fp, uio.uio_offset)
         {
             break 'done Err(e);
         }
@@ -351,7 +357,7 @@ pub fn dofilewritev<'a>(
 
         // Checks for positioned write.
         if flags & FO_POSITION != 0
-            && let Err(e) = position_check(fp)
+            && let Err(e) = position_check(fp, uio.uio_offset)
         {
             break 'done Err(e);
         }

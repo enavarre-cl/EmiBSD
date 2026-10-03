@@ -56,7 +56,8 @@
 //!   through the bounds-checked accessors (`ofile`, `set_ofile`, `ofileflags`, `lomap`, ...),
 //!   so no reference into an array outlives an expansion. The lengths are the C's:
 //!   `fd_nfiles` entries, `NDHISLOTS(fd_nfiles)` and `NDLOSLOTS(fd_nfiles)` words.
-//! - `fd_cdir`/`fd_rdir` are opaque pointers (`struct vnode`, M10) and stay null;
+//! - `fd_cdir`/`fd_rdir` are `Option<&'static Vnode>` (vnodes are never freed; the table
+//!   holds a use count on each); they stay `None` until a root file system is mounted.
 //!   `fd_kqlist` (`struct kqueue`, `kern_event.c`) is left out.
 //! - The macros `NDREDUCE`, `NDHISLOTS`, `NDLOSLOTS` are `const fn`s; `fdplock`,
 //!   `fdpunlock` and `fdpassertlocked` are functions (`NET_ASSERT_UNLOCKED` waits for the
@@ -66,7 +67,6 @@
 //!   are for theirs.
 
 use core::cell::{Cell, UnsafeCell};
-use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicI32, AtomicU32};
 
@@ -79,6 +79,7 @@ use crate::sys::mutex::Mutex;
 use crate::sys::proc::{Proc, Process};
 use crate::sys::rwlock::Rwlock;
 use crate::sys::types::Mode;
+use crate::sys::vnode::Vnode;
 
 /// `NDFILE`: descriptors in the initial table.
 pub const NDFILE: usize = 20;
@@ -130,10 +131,10 @@ pub struct Filedesc {
     pub fd_ofiles: Cell<*mut *const File>,
     /// \[f\] `fd_ofileflags`: per-process open file flags (`fd_nfiles` entries).
     pub fd_ofileflags: Cell<*mut u8>,
-    /// \[K\] `fd_cdir`: current directory (`struct vnode`, M10).
-    pub fd_cdir: Cell<*const c_void>,
-    /// \[K\] `fd_rdir`: root directory (`struct vnode`, M10).
-    pub fd_rdir: Cell<*const c_void>,
+    /// \[K\] `fd_cdir`: current directory.
+    pub fd_cdir: Cell<Option<&'static Vnode>>,
+    /// \[K\] `fd_rdir`: root directory.
+    pub fd_rdir: Cell<Option<&'static Vnode>>,
     /// \[f\] `fd_nfiles`: number of open files allocated.
     pub fd_nfiles: Cell<i32>,
     /// \[f\] `fd_openfd`: number of files currently open.
@@ -167,8 +168,8 @@ impl Filedesc {
         Self {
             fd_ofiles: Cell::new(ptr::null_mut()),
             fd_ofileflags: Cell::new(ptr::null_mut()),
-            fd_cdir: Cell::new(ptr::null()),
-            fd_rdir: Cell::new(ptr::null()),
+            fd_cdir: Cell::new(None),
+            fd_rdir: Cell::new(None),
             fd_nfiles: Cell::new(0),
             fd_openfd: Cell::new(0),
             fd_himap: Cell::new(ptr::null_mut()),

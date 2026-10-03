@@ -347,18 +347,46 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   read/write/ioctl paths of `sys_generic.c` are OpenBSD's: process 0 gets `fdinit()`,
   `fork1` copies or shares the table, `exec` runs `fdprepforexec`, `exit1` runs `fdfree`,
   and every `read`/`write`/`ioctl` goes through `fd_getfile_mode` and the file's
-  `fileops`. What needs the vfs, kqueues or pledge is reported (`VOP_ADVLOCK`,
-  `VOP_PATHCONF`, `knote_fdclose`, `pledge_*`). Pipes (`sys_pipe.c`, `<sys/pipe.h>`) are
+  `fileops`. What needs kqueues or pledge is reported (`knote_fdclose`, `pledge_*`); the
+  vnode paths (`VOP_ADVLOCK`, `VOP_PATHCONF`, `fd_cdir`/`fd_rdir`) are the vfs core's. Pipes (`sys_pipe.c`, `<sys/pipe.h>`) are
   not ported: their licence (John S. Dyson's) is outside the accepted list and waits for
   the user's decision.
 - The console as a file (M7b, stand-in): in OpenBSD `init(8)` opens `/dev/console`, a
-  vnode of the console's character device whose tty does the I/O. Without the vfs and
-  the tty layer (M10), `start_init` installs `sys/dev/consfile.rs` instead: one `struct
+  vnode of the console's character device whose tty does the I/O. Without a root file
+  system, the device switch and the tty layer (M10), `start_init` installs
+  `sys/dev/consfile.rs` instead: one `struct
   file` of type `DTYPE_CONSFILE` (127, outside OpenBSD's range) whose `fileops` write
   through `cnputc` and read a line through polled `cngetc` with echo, put at descriptors
   0, 1 and 2 of process 1 by `falloc`/`fdinsert`/`fdalloc`. It is not a tty (`F_ISATTY`
   and the `termios` ioctls answer `ENOTTY`), and it goes away when `init` can open
   `/dev/console`.
+- The VFS core (M7+, stage 1): `vfs_init.c`, `vfs_subr.c`, `vfs_vops.c`, `vfs_default.c`,
+  `vfs_cache.c`, `vfs_lookup.c`, `vfs_vnops.c`, `vfs_getcwd.c`, `vfs_syscalls.c`,
+  `spec_vnops.c`, `miscfs/deadfs/dead_vnops.c` and their headers (`vnode.h`, `mount.h`,
+  `namei.h`, `specdev.h`, `dirent.h`, `lock.h`, `pledge.h`) are OpenBSD's, with no file
+  system, no buffer cache and no vnode pager yet. A vnode is a `vnode_pool` item that is
+  never freed (`&'static Vnode`, recycled through the free lists); a mount is `malloc`ed
+  and reference counted (`&'static Mount`). A file system plugs in with a `static Vfsops`,
+  a `static Vops` (one `Option<fn(&mut VopXArgs)>` per operation, `None` answering
+  `EOPNOTSUPP`; `docs/C_TO_RUST.md`), its node behind `v_data` (`*mut c_void`, read back with
+  `Vnode::data::<T>`) and a `Vfsconf::new(...)` line in `vfsconflist[]` (`vfs_init.rs`, empty
+  today) behind a cargo feature named after its `option(4)`. `mountroot` (`sys/systm.rs`)
+  is NULL until `setroot` (`subr_disk.c`) and a disk driver exist, so where OpenBSD panics
+  "cannot mount root" `main` prints `cannot mount root: no root file system` and goes on
+  without a `rootvnode`: every `namei` then fails with `ENOENT` (the C never runs one before
+  root is mounted), `check_console` warns that `/dev/console` does not exist, and init is
+  still exec'd from its boot module. The stand-in `init` checks that the path system calls
+  reach `namei` and fail that way (`init: vfs ok (no root file system)` in `smoke`). What
+  stage 2 must bring is reported where the C calls it: the buffer cache (`vfs_bio.c`: the
+  buffer lists of `vinvalbuf`/`vflushbuf`, `bread`/`bwrite`, `bcstats`), the vnode pager
+  (`uvm_vnode.c`: `uvm_vnp_*`), the syncer (`vfs_sync.c`), advisory locks
+  (`vfs_lockf.c`), the device switch (`<sys/conf.h>` and each arch's `conf.c`:
+  `nchrdev`/`nblkdev` are 0, so `spec_open` is `ENXIO`) and the first file system.
+  `pledge` and `unveil` (`kern_pledge.c`, `kern_unveil.c`) are reported for a pledged
+  process or an unveiled vnode, which none can be yet; the unveil hooks of `namei` return
+  at their `ps_uvpaths == NULL` test. The host tests mount `testfs`
+  (`kern/vfs_subr/tests.rs`), a fixed in-memory tree with a real lock discipline, to drive
+  `namei`, the name cache, `getcwd` and the vnode life cycle.
 - The system's identity (the user's decision, 2026-10-03): the system is **EmiBSD**, release
   **7.8** (the release number tracks the OpenBSD release the reference pin follows). OpenBSD's
   `conf/newvers.sh` writes `ostype`, `osrelease`, `osversion`, `sccs` and `version` into a

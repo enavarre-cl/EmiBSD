@@ -69,15 +69,13 @@
 //!   past the array; the C rejects whatever it finds there (`i < last`), so the result is
 //!   the same.
 //! - Not here yet, each reported with `unported!` where the C calls it: `knote_fdclose`
-//!   (`kern_event.c`, no kqueue can exist), `VOP_ADVLOCK` (the vnode paths of `fcntl`'s
-//!   record locks, `flock` and `closef`; no vnode can be open), `VOP_PATHCONF` (`fpathconf`
-//!   of a vnode), `vref`/`vrele` of `fd_cdir`/`fd_rdir` (always null without a root file
-//!   system), the `pledge_fcntl`/`pledge_flock` checks (`kern_pledge.c`; only a process
-//!   with `PS_PLEDGE`, which none can have yet, reaches them). `F_ISATTY` answers 0/`ENOTTY`
-//!   for every file that is not a vnode, as in C, so the console stand-in is not a tty to
-//!   `isatty(3)` until the vnode exists.
-//! - `vfs_stall_barrier()` (`fd_getfile`, `FREF`) is not called: no file system can be
-//!   stalled before the vfs exists. `KTRACE` is not configured. `KASSERTMSG` is `kassert!`.
+//!   (`kern_event.c`, no kqueue can exist), the `pledge_fcntl`/`pledge_flock` checks
+//!   (`kern_pledge.c`; only a process with `PS_PLEDGE`, which none can have yet, reaches
+//!   them). The vnode paths (`VOP_ADVLOCK` of the record locks, `flock` and `closef`,
+//!   `VOP_PATHCONF`, `VISTTY` for `F_ISATTY`, `vref`/`vrele` of `fd_cdir`/`fd_rdir`) are
+//!   the vfs core's (`vfs_vops.rs`, `vfs_subr.rs`). `F_ISATTY` answers 0/`ENOTTY` for every
+//!   file that is not a vnode, as in C, so the console stand-in is not a tty to `isatty(3)`.
+//! - `KTRACE` is not configured. `KASSERTMSG` is `kassert!`.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -91,6 +89,9 @@ use crate::kern::kern_prot::{crfree, crhold, suser};
 use crate::kern::kern_rwlock::rw_init;
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::kern::subr_prf::{panic, tablefull};
+use crate::kern::vfs_subr::{vfs_stall_barrier, vref, vrele};
+use crate::kern::vfs_vnops::vn_lock;
+use crate::kern::vfs_vops::{VOP_ADVLOCK, VOP_PATHCONF, VOP_UNLOCK};
 use crate::machine::copy::{copyin, copyout};
 use crate::machine::cpu::curproc;
 use crate::machine::intr::{IPL_MPFLOOR, IPL_NONE};
@@ -111,6 +112,7 @@ use crate::sys::filedesc::{
     fdpunlock, ndhislots, ndloslots,
 };
 use crate::sys::filio::{FIOASYNC, FIOGETOWN, FIOSETOWN};
+use crate::sys::lock::{LK_EXCLUSIVE, LK_RETRY};
 use crate::sys::malloc::{M_FILEDESC, M_WAITOK, M_ZERO};
 use crate::sys::pool::{PR_WAITOK, PR_ZERO, Pool};
 use crate::sys::proc::{PS_PLEDGE, PS_SUGID, PS_SUGIDEXEC, Proc, Process};
@@ -126,6 +128,7 @@ use crate::sys::syslimits::PIPE_BUF;
 use crate::sys::systm::{SysArgs, sysargs};
 use crate::sys::types::{Dev, Register, minor};
 use crate::sys::unistd::{_PC_PIPE_BUF, SEEK_CUR, SEEK_SET};
+use crate::sys::vnode::VISTTY;
 use crate::unported;
 
 /// `DUPF_CLOEXEC`.
@@ -336,7 +339,7 @@ pub fn fd_iterfile(fp: Option<&'static File>, p: &Proc) -> Option<&'static File>
 
 /// `fd_getfile(fdp, fd)`: the file at descriptor `fd`, with a reference taken, or `None`.
 pub fn fd_getfile(fdp: &Filedesc, fd: i32) -> Option<&'static File> {
-    // vfs_stall_barrier(): see the module's deviations.
+    vfs_stall_barrier();
 
     if fd as u32 >= fdp.fd_nfiles.get() as u32 {
         return None;
@@ -494,18 +497,6 @@ pub fn dodup3(
     }
 }
 
-/// `VOP_ADVLOCK(vp, id, op, fl, flags)`: the vnode's advisory locks, not here until the vfs
-/// (no vnode can be open before it, so no caller reaches this).
-fn vop_advlock(
-    _vp: *mut c_void,
-    _id: *const c_void,
-    _op: i32,
-    _fl: &mut Flock,
-    _flags: i32,
-) -> Result<(), Errno> {
-    Err(unported!("VOP_ADVLOCK (vfs, M10)"))
-}
-
 /// `knote_fdclose(p, fd)`: removes the knotes of descriptor `fd`; `kern_event.c` is not here
 /// and no kqueue can exist.
 fn knote_fdclose(_p: &Proc, _fd: i32) {
@@ -634,12 +625,13 @@ pub fn sys_fcntl(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<()
                 }
 
                 F_ISATTY => {
-                    if fp.f_type.get() == DTYPE_VNODE {
-                        // vp->v_flag & VISTTY: struct vnode (M10).
-                        break 'out Err(unported!("fcntl F_ISATTY: VISTTY (vnode, M10)"));
+                    if fp.f_type.get() == DTYPE_VNODE && fp.vnode().v_flag.get() & VISTTY != 0 {
+                        retval[0] = 1;
+                        Ok(())
+                    } else {
+                        retval[0] = 0;
+                        Err(Errno::ENOTTY)
                     }
-                    retval[0] = 0;
-                    Err(Errno::ENOTTY)
                 }
 
                 F_SETFL => {
@@ -682,7 +674,7 @@ pub fn sys_fcntl(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<()
                     if fp.f_type.get() != DTYPE_VNODE {
                         break 'out Err(Errno::EINVAL);
                     }
-                    let vp = fp.f_data.get();
+                    let vp = fp.vnode();
                     // Copy in the lock structure
                     let mut bytes = [0u8; Flock::SIZE];
                     if let Err(e) = copyin(arg, &mut bytes) {
@@ -697,17 +689,17 @@ pub fn sys_fcntl(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<()
                                 break 'out Err(Errno::EBADF);
                             }
                             fdp.fd_flags.fetch_or(FD_ADVLOCK, Ordering::SeqCst);
-                            vop_advlock(vp, id, F_SETLK, &mut fl, flg)
+                            VOP_ADVLOCK(vp, id, F_SETLK, &mut fl, flg)
                         }
                         F_WRLCK => {
                             if fp.flag() & FWRITE == 0 {
                                 break 'out Err(Errno::EBADF);
                             }
                             fdp.fd_flags.fetch_or(FD_ADVLOCK, Ordering::SeqCst);
-                            vop_advlock(vp, id, F_SETLK, &mut fl, flg)
+                            VOP_ADVLOCK(vp, id, F_SETLK, &mut fl, flg)
                         }
                         F_UNLCK => {
-                            break 'out vop_advlock(vp, id, i32::from(F_UNLCK), &mut fl, F_POSIX);
+                            break 'out VOP_ADVLOCK(vp, id, i32::from(F_UNLCK), &mut fl, F_POSIX);
                         }
                         _ => break 'out Err(Errno::EINVAL),
                     };
@@ -718,7 +710,7 @@ pub fn sys_fcntl(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<()
                         fl.l_whence = SEEK_SET as i16;
                         fl.l_start = 0;
                         fl.l_len = 0;
-                        let _ = vop_advlock(vp, id, i32::from(F_UNLCK), &mut fl, F_POSIX);
+                        let _ = VOP_ADVLOCK(vp, id, i32::from(F_UNLCK), &mut fl, F_POSIX);
                         // fl.l_type = F_UNLCK: F_SETLK copies nothing out, so the C's
                         // assignment is never read.
                     }
@@ -734,7 +726,7 @@ pub fn sys_fcntl(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<()
                     if fp.f_type.get() != DTYPE_VNODE {
                         break 'out Err(Errno::EINVAL);
                     }
-                    let vp = fp.f_data.get();
+                    let vp = fp.vnode();
                     // Copy in the lock structure
                     let mut bytes = [0u8; Flock::SIZE];
                     if let Err(e) = copyin(arg, &mut bytes) {
@@ -750,7 +742,7 @@ pub fn sys_fcntl(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<()
                         break 'out Err(Errno::EINVAL);
                     }
                     let id = ptr::from_ref(fdp).cast::<c_void>();
-                    if let Err(e) = vop_advlock(vp, id, F_GETLK, &mut fl, F_POSIX) {
+                    if let Err(e) = VOP_ADVLOCK(vp, id, F_GETLK, &mut fl, F_POSIX) {
                         break 'out Err(e);
                     }
                     copyout(&fl.to_bytes(), arg)
@@ -932,8 +924,13 @@ pub fn sys_fpathconf(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Resul
                 Ok(())
             }
         }
-        // vn_lock, VOP_PATHCONF, VOP_UNLOCK: the vfs (M10).
-        DTYPE_VNODE => Err(unported!("fpathconf: VOP_PATHCONF (vfs, M10)")),
+        DTYPE_VNODE => {
+            let vp = fp.vnode();
+            let _ = vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+            let error = VOP_PATHCONF(vp, uap.name.get(), &mut retval[0]);
+            let _ = VOP_UNLOCK(vp);
+            error
+        }
         _ => Err(Errno::EOPNOTSUPP),
     };
     let _ = frele(fp, p);
@@ -1208,13 +1205,13 @@ pub fn fdcopy(pr: &Process) -> &'static Filedesc {
     let newfdp = fdinit();
 
     fdplock(fdp);
-    if !fdp.fd_cdir.get().is_null() {
-        let _ = unported!("fdcopy: vref (vfs, M10)");
-        newfdp.fd_cdir.set(fdp.fd_cdir.get());
+    newfdp.fd_cdir.set(fdp.fd_cdir.get());
+    if let Some(cdir) = newfdp.fd_cdir.get() {
+        vref(cdir);
     }
-    if !fdp.fd_rdir.get().is_null() {
-        let _ = unported!("fdcopy: vref (vfs, M10)");
-        newfdp.fd_rdir.set(fdp.fd_rdir.get());
+    newfdp.fd_rdir.set(fdp.fd_rdir.get());
+    if let Some(rdir) = newfdp.fd_rdir.get() {
+        vref(rdir);
     }
 
     // If the number of open files fits in the internal arrays of the open file structure,
@@ -1326,11 +1323,11 @@ pub fn fdfree(p: &Proc) {
             free(l.cast(), M_FILEDESC, ndloslots(nfiles) * size_of::<u32>());
         }
     }
-    if !fdp.fd_cdir.get().is_null() {
-        let _ = unported!("fdfree: vrele (vfs, M10)");
+    if let Some(cdir) = fdp.fd_cdir.get() {
+        vrele(cdir);
     }
-    if !fdp.fd_rdir.get().is_null() {
-        let _ = unported!("fdfree: vrele (vfs, M10)");
+    if let Some(rdir) = fdp.fd_rdir.get() {
+        vrele(rdir);
     }
     kassert!(fdp.fd_nuserevents.load(Ordering::SeqCst) == 0);
     // The table is the `fd_fd` member, at offset 0, of the `struct filedesc0` `fdinit` took
@@ -1360,7 +1357,7 @@ pub fn closef<'a>(fp: &'static File, p: impl Into<Option<&'a Proc>>) -> Result<(
             && fdp.fd_flags.load(Ordering::SeqCst) & FD_ADVLOCK != 0
             && fp.f_type.get() == DTYPE_VNODE
         {
-            let vp = fp.f_data.get();
+            let vp = fp.vnode();
             let mut lf = Flock {
                 l_whence: SEEK_SET as i16,
                 l_start: 0,
@@ -1369,7 +1366,7 @@ pub fn closef<'a>(fp: &'static File, p: impl Into<Option<&'a Proc>>) -> Result<(
                 ..Flock::default()
             };
             let id = ptr::from_ref(fdp).cast::<c_void>();
-            let _ = vop_advlock(vp, id, i32::from(F_UNLCK), &mut lf, F_POSIX);
+            let _ = VOP_ADVLOCK(vp, id, i32::from(F_UNLCK), &mut lf, F_POSIX);
         }
     }
 
@@ -1416,7 +1413,7 @@ pub fn sys_flock(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
         if fp.f_type.get() != DTYPE_VNODE {
             break 'out Err(Errno::EOPNOTSUPP);
         }
-        let vp = fp.f_data.get();
+        let vp = fp.vnode();
         let id = ptr::from_ref(fp).cast::<c_void>();
         let mut lf = Flock {
             l_whence: SEEK_SET as i16,
@@ -1427,7 +1424,7 @@ pub fn sys_flock(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
         if how & LOCK_UN != 0 {
             lf.l_type = F_UNLCK;
             fp.f_iflags.fetch_and(!FIF_HASLOCK, Ordering::SeqCst);
-            break 'out vop_advlock(vp, id, i32::from(F_UNLCK), &mut lf, F_FLOCK);
+            break 'out VOP_ADVLOCK(vp, id, i32::from(F_UNLCK), &mut lf, F_FLOCK);
         }
         if how & LOCK_EX != 0 {
             lf.l_type = F_WRLCK;
@@ -1438,9 +1435,9 @@ pub fn sys_flock(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
         }
         fp.f_iflags.fetch_or(FIF_HASLOCK, Ordering::SeqCst);
         if how & LOCK_NB != 0 {
-            vop_advlock(vp, id, F_SETLK, &mut lf, F_FLOCK)
+            VOP_ADVLOCK(vp, id, F_SETLK, &mut lf, F_FLOCK)
         } else {
-            vop_advlock(vp, id, F_SETLK, &mut lf, F_FLOCK | F_WAIT)
+            VOP_ADVLOCK(vp, id, F_SETLK, &mut lf, F_FLOCK | F_WAIT)
         }
     };
     let _ = frele(fp, p);

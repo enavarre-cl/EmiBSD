@@ -67,19 +67,18 @@
 //!   ([`SysctlPlain`]). `int *valp` is `&AtomicI32`, the C's atomic operations on it are the
 //!   atomic's; a C local passed by address is an `AtomicI32` read back with `into_inner`.
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
-//!   `ENOSYS`: `kern.maxvnodes`/`numvnodes` (`vfs_subr.c`),
-//!   `ttycount` and `tty` (`tty.c`), `somaxconn`/`sominconn` (`uipc_socket.c`),
-//!   `maxlocksperuid` (`vfs_lockf.c`), `nchstats`
-//!   (`vfs_cache.c`), `stackgap_random` (`kern_exec.c` has no stack gap yet),
+//!   `ENOSYS`: `ttycount` and `tty` (`tty.c`), `somaxconn`/`sominconn` (`uipc_socket.c`),
+//!   `maxlocksperuid` (`vfs_lockf.c`), `stackgap_random` (`kern_exec.c` has no stack gap yet),
 //!   `bufcachepercent` (`vfs_bio.c`), `file` (`kern_descrip.c`; `fill_file` is not here),
 //!   `malloc` (`sysctl_malloc`), `pool` (`sysctl_dopool`), `intrcnt` and `evcount`
 //!   (`evcount_sysctl`), `watchdog` (`kern_watchdog.c`), `clockintr`, `timecounter`
-//!   (`sysctl_tc`), `procargs` after its checks (`uvm_io`), `proc_cwd` after its checks
-//!   (`vfs_getcwd_common`), `proc_vmmap` after its checks (`fill_vmmap`); `hw.model`
+//!   (`sysctl_tc`), `procargs` after its checks (`uvm_io`), `proc_vmmap` after its checks
+//!   (`fill_vmmap`); `hw.model`
 //!   (`cpu_model`, `identcpu.c`/arm64 `cpu.c`), `disknames`/`diskstats`/`diskcount`
 //!   (`subr_disk.c`), `sensors` (`kern_sensors.c`), `setperf`/`perfpolicy` (`sched_bsd.c`),
-//!   `smt`/`blockcpu` (`kern_sched.c`); the top-level `net` (`net_sysctl`), `vfs`
-//!   (`vfs_sysctl`), `machdep` (`cpu_sysctl`) and `ddb` (`ddb_sysctl`) trees. `resettodr`
+//!   `smt`/`blockcpu` (`kern_sched.c`); the top-level `net` (`net_sysctl`), `machdep`
+//!   (`cpu_sysctl`) and `ddb` (`ddb_sysctl`) trees. `kern.proc_cwd` of a process without a
+//!   current directory (none has one before a root file system is mounted) is `ENOENT`. `resettodr`
 //!   after a new `kern.utc_offset` is reported and skipped. The tty fields of `kinfo_proc`
 //!   (a controlling terminal cannot exist yet) are reported when a process would have them.
 //! - Options this kernel does not configure are compiled out as in C: `DEBUG_SYSCTL`
@@ -115,6 +114,7 @@ use crate::kern::kern_clock::sysctl_clockrate;
 use crate::kern::kern_descrip::NUMFILES;
 use crate::kern::kern_fork::{FORKSTAT, NPROCESSES, NTHREADS};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave, pc_cons_enter, pc_cons_leave};
+use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_proc::{ALLPROCESS, ZOMBPROCESS, prfind};
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_resource::{calctsru, tuagg_get_proc, tuagg_get_process};
@@ -129,12 +129,16 @@ use crate::kern::subr_log::{consbufp, msgbufp};
 use crate::kern::subr_pool::{POOL_DEBUG, pool_reclaim_all};
 use crate::kern::subr_prf::{SPLASSERT_CTL, panic};
 use crate::kern::uipc_mbuf::{MBSTAT, nmbclust_update};
+use crate::kern::vfs_cache::NCHSTATS;
+use crate::kern::vfs_getcwd::vfs_getcwd_common;
+use crate::kern::vfs_subr::{MAXVNODES, NUMVNODES, vfs_sysctl, vref, vrele};
 use crate::machine::Machine;
 use crate::machine::copy::{copyin, copyout};
 use crate::machine::cpu::{Cpu, CpuInfo, cpu_info_foreach, curproc};
 use crate::machine::param::MachineInfo;
 use crate::machine::pmap::pmap_resident_count;
 use crate::sys::errno::Errno;
+use crate::sys::malloc::{M_TEMP, M_WAITOK};
 use crate::sys::mbuf::{MT_NTYPES, Mbstat, MbstatCounters};
 use crate::sys::mman::{PROT_READ, PROT_WRITE};
 use crate::sys::msgbuf::{MSG_MAGIC, Msgbuf};
@@ -155,6 +159,7 @@ use crate::sys::systm::{PHYSMEM, SysArgs, sysargs};
 use crate::sys::time::timeradd;
 use crate::sys::types::Register;
 use crate::sys::unistd::_POSIX_VERSION;
+use crate::sys::vnode::GETCWD_CHECK_ACCESS;
 use crate::unported;
 use crate::uvm::uvm_extern::Vmspace;
 use crate::uvm::uvm_glue::{uvm_vslock, uvm_vsunlock};
@@ -234,9 +239,9 @@ static CCPU: AtomicI32 = AtomicI32::new(sched_bsd::CCPU as i32);
 
 /// `kern_vars[]`: the `kern` integers `sysctl_bounded_arr` serves. The ones whose variable
 /// lives in an unported file are reported by [`kern_vars`] instead.
-static KERN_VARS: [SysctlBoundedArgs; 25] = [
+static KERN_VARS: [SysctlBoundedArgs; 26] = [
     SysctlBoundedArgs::readonly(KERN_OSREV, &OPENBSD),
-    // KERN_MAXVNODES: maxvnodes (vfs_subr.c).
+    SysctlBoundedArgs::new(KERN_MAXVNODES, &MAXVNODES, 0, i32::MAX),
     SysctlBoundedArgs::new(KERN_MAXPROC, &MAXPROCESS, 0, i32::MAX),
     SysctlBoundedArgs::new(KERN_MAXFILES, &MAXFILES, 0, i32::MAX),
     SysctlBoundedArgs::readonly(KERN_NFILES, &NUMFILES),
@@ -402,7 +407,7 @@ pub fn sys_sysctl(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
         CTL_HW => (false, hw_sysctl),
         CTL_NET => return Err(unported!("net_sysctl (uipc_domain.c)")),
         CTL_VM => (true, uvm_sysctl),
-        CTL_VFS => return Err(unported!("vfs_sysctl (vfs_subr.c)")),
+        CTL_VFS => (true, vfs_sysctl),
         CTL_MACHDEP => return Err(unported!("cpu_sysctl (machdep.c)")),
         // CTL_DEBUG: DEBUG_SYSCTL is not configured.
         CTL_DDB => return Err(unported!("ddb_sysctl (db_usrreq.c)")),
@@ -443,7 +448,6 @@ fn kern_vars(
 ) -> Result<(), Errno> {
     if let [mib] = name {
         match *mib {
-            KERN_MAXVNODES => return Err(unported!("kern.maxvnodes: maxvnodes (vfs_subr.c)")),
             KERN_TTYCOUNT => return Err(unported!("kern.ttycount: tty_count (tty.c)")),
             KERN_SOMAXCONN | KERN_SOMINCONN => {
                 return Err(unported!("kern.somaxconn: somaxconn (uipc_socket.c)"));
@@ -574,7 +578,15 @@ pub fn kern_sysctl(
         KERN_ALLOWKMEM => {
             return sysctl_securelevel_int(oldp, oldlenp, newp, newlen, &ALLOWKMEM);
         }
-        KERN_NUMVNODES => return Err(unported!("kern.numvnodes: numvnodes (vfs_subr.c)")),
+        KERN_NUMVNODES => {
+            // XXX numvnodes is a long
+            return sysctl_rdint(
+                oldp,
+                oldlenp,
+                newp,
+                NUMVNODES.load(Ordering::Relaxed) as i32,
+            );
+        }
         KERN_BOOTTIME => {
             let bt = microboottime();
             return sysctl_rdstruct(oldp, oldlenp, newp, bt.as_bytes());
@@ -750,7 +762,13 @@ fn kern_sysctl_locked(
             }
             error
         }
-        KERN_NCHSTATS => Err(unported!("kern.nchstats: nchstats (vfs_cache.c)")),
+        KERN_NCHSTATS => {
+            let mut bytes = [0u8; 12 * size_of::<u64>()];
+            for (chunk, v) in bytes.chunks_mut(size_of::<u64>()).zip(NCHSTATS.snapshot()) {
+                chunk.copy_from_slice(&v.to_ne_bytes());
+            }
+            sysctl_rdstruct(oldp, oldlenp, newp, &bytes)
+        }
         KERN_FORKSTAT => {
             // struct forkstat: four ints, then four uint64_t.
             let mut fs = [0u8; 48];
@@ -1812,8 +1830,7 @@ pub fn sysctl_proc_args(
     Err(unported!("kern.procargs: uvm_io (uvm_io.c)"))
 }
 
-/// `sysctl_proc_cwd`: `kern.proc_cwd.<pid>`. The checks are the C's; the path walk needs
-/// `vfs_getcwd_common` and is reported.
+/// `sysctl_proc_cwd`: `kern.proc_cwd.<pid>`, the process's current directory.
 pub fn sysctl_proc_cwd(
     name: &[i32],
     oldp: usize,
@@ -1846,11 +1863,51 @@ pub fn sysctl_proc_cwd(
         suser(cp)?;
     }
 
-    if *oldlenp < 2 {
+    let mut len = *oldlenp;
+    if len > MAXPATHLEN * 4 {
+        len = MAXPATHLEN * 4;
+    } else if len < 2 {
         return Err(Errno::ERANGE);
     }
+    *oldlenp = 0;
 
-    Err(unported!("kern.proc_cwd: vfs_getcwd_common (vfs_getcwd.c)"))
+    // snag a reference to the vnode before we can sleep
+    let Some(vp) = findpr.fd().fd_cdir.get() else {
+        // No current directory before a root file system is mounted.
+        return Err(Errno::ENOENT);
+    };
+    vref(vp);
+
+    let Some(mem) = malloc(len, M_TEMP, M_WAITOK) else {
+        vrele(vp);
+        return Err(Errno::ENOMEM);
+    };
+    // SAFETY: a fresh `len`-byte allocation, freed below; every byte is written before it is
+    // read (the path is built backwards from the NUL).
+    let path = unsafe { core::slice::from_raw_parts_mut(mem.as_ptr(), len) };
+
+    let mut bp = len - 1;
+    path[bp] = 0;
+
+    // Same as sys__getcwd
+    let mut error = vfs_getcwd_common(
+        vp,
+        None,
+        Some((&mut *path, &mut bp)),
+        (len / 2) as i32,
+        GETCWD_CHECK_ACCESS,
+        cp,
+    );
+    if error.is_ok() {
+        let lenused = len - bp;
+        *oldlenp = lenused;
+        error = copyout(&path[bp..], oldp);
+    }
+
+    vrele(vp);
+    free(mem, M_TEMP, len);
+
+    error
 }
 
 /// `sysctl_proc_nobroadcastkill`: `kern.proc_nobroadcastkill.<pid>`, the process's

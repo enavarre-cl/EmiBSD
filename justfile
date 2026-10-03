@@ -48,7 +48,9 @@ run-arm64: image-arm64
     cargo xtask qemu --arch arm64
 
 # Boots per arch: a plain one that must reach the end of main() (status 33), printing the
-# EmiBSD 7.8 version banner, with init checking its identity through sysctl(2); `boot -d`, which
+# EmiBSD 7.8 version banner, with init checking its identity through sysctl(2) and the vfs system
+# calls failing as they must with no root file system yet (`main` says it cannot mount root and
+# `check_console` that /dev/console does not exist); `boot -d`, which
 # enters ddb-lite through a breakpoint trap, prints where it stopped and continues (status 33);
 # `selftest=trap`, a deliberate bad access that must print OpenBSD's fatal trap message and
 # panic with a stack trace (status 35); and `selftest=uart`, which arms the console's receive
@@ -69,6 +71,8 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 7.8" \
+        --expect "cannot mount root: no root file system" \
+        --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
         --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
@@ -95,6 +99,8 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 7.8" \
+        --expect "cannot mount root: no root file system" \
+        --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
         --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"

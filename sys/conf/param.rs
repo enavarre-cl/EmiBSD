@@ -76,6 +76,8 @@ pub const NTEXT: i32 = 80 + NPROCESS / 8;
 /// `NVNODE`.
 pub const NVNODE: i32 = NPROCESS * 2 + NTEXT + 100;
 
+/// `initialvnodes`: XXX number of vnodes to start (the vnode and name cache sizes).
+pub static INITIALVNODES: AtomicI32 = AtomicI32::new(NVNODE);
 /// \[a\] `maxprocess`.
 pub static MAXPROCESS: AtomicI32 = AtomicI32::new(NPROCESS);
 /// \[a\] `maxthread`.
