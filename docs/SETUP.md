@@ -88,8 +88,6 @@ ksh's `rksh` and `sh` links), `host/` (`rpcgen`) and `licences.txt` (the licence
 every OpenBSD file compiled or included). The build is incremental (`.d` files and the
 recorded command line of every object).
 
-Known gap (2026-10-03): arm64 programs do not link. `printf`'s `%La` (`gdtoa/hdtoa.c`)
-multiplies a 128-bit `long double`, which needs `__multf3` from OpenBSD's `libcompiler_rt`
-(`gnu/lib/libcompiler_rt` over `gnu/llvm/compiler-rt`, Apache-2.0 WITH LLVM-exception). Neither
-is in the sparse clone; adding them is the user's decision (`.claude/rules/reference-readonly.md`).
-`xtask` builds and links `libcompiler_rt` as soon as the clone has it.
+`libcompiler_rt` (`gnu/lib/libcompiler_rt` over `gnu/llvm/compiler-rt`, Apache-2.0 WITH
+LLVM-exception, in the sparse clone since 2026-10-03) is built and linked on both archs: arm64's
+`printf` `%La` (`gdtoa/hdtoa.c`) multiplies a 128-bit `long double`, which needs `__multf3`.

@@ -16,6 +16,18 @@ fn licence_families_are_recognised() {
         vec!["public domain"]
     );
     assert_eq!(licence_families("int x;"), vec!["no licence text"]);
+    let llvm = "// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception";
+    assert_eq!(
+        licence_families(llvm),
+        vec!["Apache-2.0 WITH LLVM-exception"]
+    );
+    let lucent = "Copyright (C) 1998 by Lucent Technologies\n\
+                  Permission to use, copy, modify, and distribute this software and\n\
+                  its documentation for any purpose and without fee is hereby";
+    assert_eq!(licence_families(lucent), vec!["Lucent (gdtoa)"]);
+    let birgmeier = "Copyright (c) 1993 Martin Birgmeier\n\
+                     * You may redistribute unmodified or modified versions";
+    assert_eq!(licence_families(birgmeier), vec!["Birgmeier (rand48)"]);
 }
 
 #[test]

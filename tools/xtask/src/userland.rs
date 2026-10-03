@@ -22,7 +22,8 @@
 //! `BSD_PROG_MK` and the implicit `.c.o`/`.S.o` rules (`RULE_C_O`, `RULE_S_O`). Every compiler
 //! flag workaround is in `UNSUPPORTED_FLAGS`, `HOST_CFLAGS` and `VARIANTS`, and in
 //! `docs/ARCHITECTURE.md`. `-lcompiler_rt` is linked only when the clone has
-//! `COMPILER_RT_DIR`; without it arm64 programs do not link (`__multf3`).
+//! `COMPILER_RT_DIR` (added to the sparse set on 2026-10-03); without it arm64 programs do
+//! not link (`__multf3`).
 //!
 //! Tools (approved by the user on 2026-10-03): Apple clang (`$EMIBSD_CC`, default
 //! `/usr/bin/clang`) and LLVM's `ld.lld`, `llvm-ar`, `llvm-ranlib`, `llvm-objcopy`,
@@ -47,6 +48,7 @@ use crate::bsdmake::{Locals, Make};
 const BSD_OWN_MK: &str = "\
 YP?=\t\tyes
 COMPILER_VERSION?=\tclang
+BUILD_CLANG?=\tyes
 STATIC?=\t-static
 NOPIE_FLAGS?=\t-fno-pie
 PICFLAG?=\t-fpic
@@ -97,8 +99,9 @@ const VARIANTS: &[Variant] = &[Variant {
 }];
 
 /// OpenBSD's compiler runtime (the `-lcompiler_rt` its clang driver adds to every link): a
-/// Makefile over `gnu/llvm/compiler-rt`, neither of which is in the sparse reference clone
-/// today. When the clone has it, it is built like the other libraries and linked.
+/// Makefile over `gnu/llvm/compiler-rt` (Apache-2.0 WITH LLVM-exception), both in the sparse
+/// clone since 2026-10-03. When the clone has it, it is built like the other libraries and
+/// linked; `BUILD_CLANG` in `BSD_OWN_MK` selects its clang branch.
 const COMPILER_RT_DIR: &str = "gnu/lib/libcompiler_rt";
 
 /// The programs, in build order.
@@ -1238,6 +1241,17 @@ fn licence_families(text: &str) -> Vec<&'static str> {
     {
         f.push("Mach (CMU)");
     }
+    if t.contains("spdx-license-identifier: apache-2.0 with llvm-exception") {
+        f.push("Apache-2.0 WITH LLVM-exception");
+    }
+    if t.contains("lucent technologies")
+        && t.contains("permission to use, copy, modify, and distribute")
+    {
+        f.push("Lucent (gdtoa)");
+    }
+    if t.contains("martin birgmeier") && t.contains("you may redistribute unmodified or modified") {
+        f.push("Birgmeier (rand48)");
+    }
     if f.is_empty() {
         if t.contains("permission to use, copy, modify, and distribute this software")
             || t.contains("permission to use, copy, modify and distribute this software")
@@ -1307,13 +1321,22 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
     for (f, n) in &counts {
         println!("    {n:5}  {f}");
     }
+    // The families the user has accepted (`.claude/rules/scope-and-stubs.md`); the userland
+    // ones (Apache-2.0 WITH LLVM-exception, public domain, no licence text, Lucent,
+    // Birgmeier) only for code compiled unmodified, decided 2026-10-03.
     let usual = [
         "ISC",
         "BSD-2-Clause",
         "BSD-3-Clause",
         "BSD-4-Clause",
         "MIT",
+        "Mach (CMU)",
+        "beerware",
         "public domain",
+        "no licence text",
+        "Apache-2.0 WITH LLVM-exception",
+        "Lucent (gdtoa)",
+        "Birgmeier (rand48)",
     ];
     let unusual: Vec<_> = by_file
         .iter()
@@ -1323,9 +1346,7 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
         })
         .collect();
     if !unusual.is_empty() {
-        println!(
-            "  files outside ISC/BSD/MIT/public domain (review them; nothing is decided here):"
-        );
+        println!("  files outside the accepted licences (review them; nothing is decided here):");
         for (p, f) in unusual {
             println!("    {f}: {}", p.display());
         }

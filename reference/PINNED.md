@@ -2,7 +2,7 @@
 
 Repository: https://github.com/openbsd/src
 Branch: master
-Subtree: sys/ lib/ bin/ sbin/ usr.bin/ libexec/ include/ (sparse)
+Subtree: sys/ lib/ bin/ sbin/ usr.bin/ libexec/ include/ gnu/lib/libcompiler_rt/ gnu/llvm/compiler-rt/ (sparse)
 Commit: 3ce1f3f79392ae4d60ce67bea5835d517caaa2ca
 Date: 2026-10-02
 

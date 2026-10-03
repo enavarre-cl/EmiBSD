@@ -197,9 +197,11 @@ Workarounds, each printed by the build (flags only; no source is edited):
   `libcurses` (ncurses, with host-built generators and `share/termtypes`) is not built yet.
 - macOS file systems ignore case: libc's `_exit.o` stub and `stdlib/_Exit.o` are built in
   separate directories (both are archive members).
-- `-lcompiler_rt` is left out of the link line while `gnu/lib/libcompiler_rt` is not in the
-  clone; amd64 needs nothing from it, arm64 needs `__multf3` and does not link yet
-  (`docs/SETUP.md`, "Userland toolchain").
+- `libcompiler_rt.a` is built from `gnu/lib/libcompiler_rt` over `gnu/llvm/compiler-rt`
+  (in the clone since 2026-10-03, Apache-2.0 WITH LLVM-exception) and linked as
+  `-lcompiler_rt -lc -lcompiler_rt`, as OpenBSD's clang driver does; arm64 needs its
+  quad-float helpers (`__multf3`). The stand-in `bsd.own.mk` sets `BUILD_CLANG=yes`, as the
+  real one does on amd64 and arm64.
 
 Every OpenBSD file compiled or included is classified by licence into `licences.txt`.
 
