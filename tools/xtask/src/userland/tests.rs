@@ -73,6 +73,33 @@ fn depfiles_and_locals() {
     assert_eq!(l[">"], "/s/helper.c");
 }
 
+#[test]
+fn y_c_rule_runs_yacc_d_then_moves_y_tab_c() -> Result<()> {
+    let predefined = [
+        ("YACC", "/out/host/bin/yacc".to_string()),
+        ("YACC.y", "${YACC} -d ${YFLAGS}".to_string()),
+        ("YFLAGS", String::new()),
+    ];
+    let mk = Make::new(Path::new("/nonexistent"), &predefined, &[]);
+    let rule: Vec<String> = RULE_Y_C.iter().map(|c| c.to_string()).collect();
+    let job = Job::from_rule(
+        &mk,
+        &rule,
+        "parse.c",
+        vec![PathBuf::from("/src/parse.y")],
+        Path::new("/obj"),
+    )?;
+    let cmds: Vec<&str> = job.commands.iter().map(|(c, _)| c.as_str()).collect();
+    assert_eq!(
+        cmds.iter()
+            .map(|c| c.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>(),
+        ["/out/host/bin/yacc -d /src/parse.y", "mv y.tab.c parse.c"]
+    );
+    assert_eq!(job.target, PathBuf::from("/obj/parse.c"));
+    Ok(())
+}
+
 /// Evaluates the real `lib/libc` Makefiles for amd64: `cargo test -p xtask -- --ignored`
 /// with `$OPENBSD_SRC` naming the reference clone.
 #[test]

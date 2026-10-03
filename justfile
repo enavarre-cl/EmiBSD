@@ -160,21 +160,23 @@ smoke-shell: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --send-after "# " --send 'uname -a\n' --send-after "GENERIC#" --send 'uname -sr\n' \
         --send-after "EmiBSD 8.0" --send 'cat /etc/motd\n' \
         --send-after "Welcome to EmiBSD" --send 'ls /\n' \
+        --send-after "bin  dev  etc" --send 'ls /sbin\n' \
         --expect "root on rd0a swap on rd0b dump on rd0b" \
         --expect "Enter pathname of shell or RETURN for sh:" \
         --expect " 8.0 GENERIC#" --expect "amd64" \
         --expect "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1)" \
-        --expect "bin  dev  etc  home root sbin tmp  usr  var"
+        --expect "bin  dev  etc  home root sbin tmp  usr  var" --expect "pfctl"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
         --send-after "RETURN for sh:" --send '\n' \
         --send-after "# " --send 'uname -a\n' --send-after "GENERIC#" --send 'uname -sr\n' \
         --send-after "EmiBSD 8.0" --send 'cat /etc/motd\n' \
         --send-after "Welcome to EmiBSD" --send 'ls /\n' \
+        --send-after "bin  dev  etc" --send 'ls /sbin\n' \
         --expect "root on rd0a swap on rd0b dump on rd0b" \
         --expect "Enter pathname of shell or RETURN for sh:" \
         --expect " 8.0 GENERIC#" --expect "arm64" \
         --expect "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1)" \
-        --expect "bin  dev  etc  home root sbin tmp  usr  var"
+        --expect "bin  dev  etc  home root sbin tmp  usr  var" --expect "pfctl"
 
 # M8b: a plain boot of the ramdisk goes multi-user: init(8) runs /etc/rc (`rc: multi-user`),
 # then getty(8) on tty00 prints `login:`; the session logs in as root (the test image's

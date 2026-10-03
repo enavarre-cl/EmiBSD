@@ -63,15 +63,17 @@ arch-specific code, set `rust-analyzer.cargo.target` to one of the bare targets 
 
 `just userland` (`cargo xtask userland --arch amd64|arm64`) cross-compiles OpenBSD's own C,
 unmodified, from `reference/openbsd-src`: `/usr/include`, `lib/csu`, `libc.a`, `libutil.a`,
-`init(8)`, `ksh(1)`, `cat(1)`, `echo(1)`, `ls(1)`, `uname(1)`, `mount(8)`, `getty(8)`, `login(1)` and
-`login_passwd(8)` among others, and the ffs ramdisk image `ramdisk.ffs` (made by
-OpenBSD's makefs(8) and pwd_mkdb(8), built for the Mac with the same clang), into
+`libm.a`, `init(8)`, `ksh(1)`, `cat(1)`, `echo(1)`, `ls(1)`, `uname(1)`, `mount(8)`, `getty(8)`,
+`login(1)`, `login_passwd(8)`, `ifconfig(8)`, `ping(8)` (and `ping6`), `route(8)`, `pfctl(8)` and
+`ipsecctl(8)` among others, and the ffs ramdisk image `ramdisk.ffs` (made by
+OpenBSD's makefs(8) and pwd_mkdb(8), built for the Mac with the same clang, as are rpcgen(1) and
+yacc(1), which `pfctl` and `ipsecctl`'s `parse.y` need), into
 `target/userland/<arch>/`. It is not part of
 `just ci`. The user approved these tools on 2026-10-03; nothing else is installed for it:
 
 | Tool | Default | Override | Use |
 |---|---|---|---|
-| Apple clang 21 (Xcode) | `/usr/bin/clang` | `$EMIBSD_CC` | compiles for `x86_64-unknown-openbsd` and `aarch64-unknown-openbsd` (ELF), and builds `rpcgen` for the Mac |
+| Apple clang 21 (Xcode) | `/usr/bin/clang` | `$EMIBSD_CC` | compiles for `x86_64-unknown-openbsd` and `aarch64-unknown-openbsd` (ELF), and builds `rpcgen` and `yacc` for the Mac |
 | LLD 17 | `~/.swiftly/bin/ld.lld` | `$EMIBSD_LLVM_BIN` (the directory) | links static PIE executables |
 | `llvm-ar`, `llvm-ranlib`, `llvm-objcopy`, `llvm-objdump` | `~/.swiftly/bin/` | `$EMIBSD_LLVM_BIN` | archives, `install -s`, verification |
 
@@ -87,7 +89,7 @@ else `reference/openbsd-src`, else, from a git worktree, the main checkout's
 
 Output: `sysroot/usr/{include,lib}` (what OpenBSD installs in `/usr/include` and `/usr/lib`),
 `obj/` (objects, per source directory), `root/{bin,sbin}` (the executables, stripped, with
-ksh's `rksh` and `sh` links, `/usr/libexec/auth/login_passwd`), `host/` (`rpcgen`, `makefs`,
+ksh's `rksh` and `sh` links, `/usr/libexec/auth/login_passwd`), `host/` (`rpcgen`, `yacc`, `makefs`,
 `pwd_mkdb`, `emibsd-bcrypt`) and `licences.txt` (the licence family of
 every OpenBSD file compiled or included). The build is incremental (`.d` files and the
 recorded command line of every object).

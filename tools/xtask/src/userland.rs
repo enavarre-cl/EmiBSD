@@ -135,6 +135,33 @@ const VARIANTS: &[Variant] = &[
 /// linked; `BUILD_CLANG` in `BSD_OWN_MK` selects its clang branch.
 const COMPILER_RT_DIR: &str = "gnu/lib/libcompiler_rt";
 
+/// OpenBSD's yacc(1), built for this machine the first time a `.y` source is met. It is
+/// never macOS's `/usr/bin/yacc` (bison).
+const YACC_DIR: &str = "usr.bin/yacc";
+
+/// The header force-included into yacc's sources: macOS's libc has no `reallocarray(3)`.
+const YACC_COMPAT_H: &str = "\
+/* EmiBSD: host shim for building OpenBSD's yacc(1) on macOS (tools/xtask, userland.rs). */
+#include <errno.h>
+#include <stdint.h>
+#include <stdlib.h>
+static inline void *
+emibsd_reallocarray(void *p, size_t n, size_t size)
+{
+\tif (size != 0 && n > SIZE_MAX / size) {
+\t\terrno = ENOMEM;
+\t\treturn NULL;
+\t}
+\treturn realloc(p, n * size);
+}
+#define reallocarray emibsd_reallocarray
+";
+
+/// `bsd.sys.mk`'s `.y.c` rule (`YACC.y` is `${YACC} -d ${YFLAGS}`): yacc writes `y.tab.c` (and
+/// `y.tab.h`) into the object directory, where the program's `.y` sources are made one at a
+/// time.
+const RULE_Y_C: [&str; 2] = ["${YACC.y} ${.IMPSRC}", "mv y.tab.c ${.TARGET}"];
+
 /// The programs, in build order.
 const PROGRAMS: &[&str] = &[
     "sbin/init",
@@ -153,6 +180,11 @@ const PROGRAMS: &[&str] = &[
     "libexec/getty",
     "usr.bin/login",
     "libexec/login_passwd",
+    "sbin/ifconfig",
+    "sbin/ping",
+    "sbin/route",
+    "sbin/pfctl",
+    "sbin/ipsecctl",
 ];
 
 /// Flags added to host tools (built for macOS with the same clang) and why.
@@ -253,6 +285,8 @@ struct Ctx<'a> {
     /// Owner, group and mode of installed files whose Makefile sets `BINOWN`, `BINGRP` or
     /// `BINMODE` (the ramdisk image applies them, `ramdisk.rs`).
     owners: Mutex<Vec<ramdisk::Attr>>,
+    /// Where yacc(1) was built, once a `.y` source asked for it.
+    yacc: Mutex<Option<PathBuf>>,
 }
 
 /// `cargo xtask userland --arch A`.
@@ -275,6 +309,7 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
         lower: Mutex::new(HashMap::new()),
         inputs: Mutex::new(BTreeSet::new()),
         owners: Mutex::new(Vec::new()),
+        yacc: Mutex::new(None),
         out,
     };
     println!(
@@ -290,6 +325,7 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
     build_csu(&ctx)?;
     build_lib(&ctx, "lib/libc")?;
     build_lib(&ctx, "lib/libutil")?;
+    build_lib(&ctx, "lib/libm")?;
     if has_compiler_rt(&ctx) {
         build_lib(&ctx, COMPILER_RT_DIR)?;
     } else {
@@ -460,6 +496,9 @@ fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make>
         ("COMPILE.c", "${CC} ${CFLAGS} ${CPPFLAGS} -c".to_string()),
         ("COMPILE.S", "${CC} ${AFLAGS} ${CPPFLAGS} -c".to_string()),
         ("DFLAGS", "-MD -MP".to_string()),
+        ("YACC", ctx.out.join("host/bin/yacc").display().to_string()),
+        ("YACC.y", "${YACC} -d ${YFLAGS}".to_string()),
+        ("YFLAGS", String::new()),
     ];
     let sys_mk = [
         ("bsd.own.mk", BSD_OWN_MK),
@@ -891,6 +930,30 @@ fn build_host_prog(ctx: &Ctx<'_>, dir: &str) -> Result<PathBuf> {
     build_host_prog_with(ctx, dir, |_, _| Ok(()))
 }
 
+/// Builds OpenBSD's yacc(1) for this machine (`$out/host/bin/yacc`, what `YACC` names), with
+/// the `reallocarray(3)` shim of `YACC_COMPAT_H` force-included.
+fn build_yacc(ctx: &Ctx<'_>) -> Result<PathBuf> {
+    let mut built = ctx.yacc.lock().map_err(|_| "lock poisoned")?;
+    if let Some(bindir) = built.as_ref() {
+        return Ok(bindir.clone());
+    }
+    let bindir = build_host_prog_with(ctx, YACC_DIR, |mk, objdir| {
+        let inc = objdir.join("emibsd-compat.h");
+        ramdisk::write_if_changed(&inc, YACC_COMPAT_H)?;
+        let cppflags = mk.var("CPPFLAGS")?;
+        mk.set(
+            "CPPFLAGS",
+            &format!("{cppflags} -include {}", inc.display()),
+        );
+        println!(
+            "  {YACC_DIR} (host tool): OpenBSD's yacc, with a reallocarray(3) shim (macOS has none)"
+        );
+        Ok(())
+    })?;
+    *built = Some(bindir.clone());
+    Ok(bindir)
+}
+
 /// `build_host_prog`, with `adapt` changing the evaluated Makefile (given the object
 /// directory) before anything is compiled: the host portability shims of `ramdisk.rs`.
 fn build_host_prog_with(
@@ -997,7 +1060,7 @@ fn object_jobs(ctx: &Ctx<'_>, mk: &Make, objdir: &Path, extra_objs: &[String]) -
             .cloned()
             .collect();
         let candidates = if named.is_empty() {
-            ["c", "S", "s"]
+            ["c", "S", "s", "y"]
                 .iter()
                 .map(|x| format!("{stem}.{x}"))
                 .collect()
@@ -1006,6 +1069,17 @@ fn object_jobs(ctx: &Ctx<'_>, mk: &Make, objdir: &Path, extra_objs: &[String]) -
         };
         let mut found = None;
         for c in &candidates {
+            if c.ends_with(".y")
+                && let Some(p) = mk.search(c)
+            {
+                // `.y.c`: made by OpenBSD's own yacc, built for this machine.
+                build_yacc(ctx)?;
+                let c_name = format!("{stem}.c");
+                let rule: Vec<String> = RULE_Y_C.iter().map(|c| c.to_string()).collect();
+                generated.push(Job::from_rule(mk, &rule, &c_name, vec![p], objdir)?);
+                found = Some((c_name.clone(), objdir.join(c_name)));
+                break;
+            }
             if let Some(rule) = mk.rule_for(c) {
                 let sources = resolve_sources(mk, &rule.sources)?;
                 generated.push(Job::from_rule(mk, &rule.commands, c, sources, objdir)?);
@@ -1357,7 +1431,21 @@ fn licence_families(text: &str) -> Vec<&'static str> {
     {
         f.push("IPsec (Ioannidis/Keromytis)");
     }
-    if t.contains("developed at sunpro") && t.contains("is freely granted") {
+    if t.contains("carnegie mellon")
+        && t.contains("permission to use, copy, modify, and distribute this software and its documentation is hereby granted")
+    {
+        f.push("CMU (ALTQ)");
+    }
+    if t.contains("massachusetts institute of technology")
+        && t.contains("permission to use, copy, modify, and distribute this software and its documentation for any purpose and without fee")
+    {
+        f.push("M.I.T.");
+    }
+    if (t.contains("developed at sunpro")
+        || t.contains("developed at sunsoft")
+        || t.contains("sun microsystems, inc."))
+        && t.contains("is freely granted")
+    {
         f.push("SunPro (fdlibm)");
     }
     if t.contains("aleksey cheusov") && t.contains("permission to use or copy this software") {
@@ -1458,6 +1546,8 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
         "Cheusov",
         "Boulet/RTMX",
         "IPsec (Ioannidis/Keromytis)",
+        "CMU (ALTQ)",
+        "M.I.T.",
     ];
     let unusual: Vec<_> = by_file
         .iter()

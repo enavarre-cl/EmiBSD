@@ -176,9 +176,12 @@ The userland is OpenBSD's own C, cross-compiled unmodified (the user's M8 decisi
 `target/userland/<arch>/`: the `/usr/include` sysroot as `include/Makefile` installs it
 (`FILES`, `DIRS`, `LFILES`/`MFILES` links, the kernel headers of `LDIRS`, `<machine/*>`, and of
 the `RDIRS` only `lib/libutil`'s headers and `lib/librpcsvc`'s `rpcgen` output, which libc's YP
-code includes); `lib/csu`; `libc.a` (988 objects on amd64, 989 on arm64) and `libutil.a`; and
+code includes); `lib/csu`; `libc.a` (988 objects on amd64, 989 on arm64), `libutil.a`, `libm.a`
+(259 objects on both; the programs' `-lm`) and `libcompiler_rt.a`; and
 `sbin/init`, `bin/ksh`, `bin/cat`, `bin/echo`, `bin/ls`, `usr.bin/uname`, `sbin/mount`,
-`sbin/mount_ffs`, `libexec/getty`, `usr.bin/login`, `libexec/login_passwd` and a few more as static PIE executables, the form
+`sbin/mount_ffs`, `libexec/getty`, `usr.bin/login`, `libexec/login_passwd`, the network tools
+`sbin/ifconfig`, `sbin/ping` (with its `ping6` link, setuid root), `sbin/route`, `sbin/pfctl` and
+`sbin/ipsecctl`, and a few more as static PIE executables, the form
 OpenBSD's `cc -static` gives `/bin` and `/sbin` (`rcrt0.o` relocates the program itself; no
 `PT_INTERP`).
 
@@ -198,8 +201,13 @@ IBT (`-fcf-protection=branch`) on amd64, BTI and return-address signing on arm64
 Workarounds, each printed by the build (flags only; no source is edited):
 
 - `-fret-clean` (amd64 libc) is an OpenBSD-local clang option Apple clang rejects; it is dropped.
-- `rpcgen`, `makefs` and `pwd_mkdb` are built for the Mac with `-D'pledge(p,e)=0'` (macOS has
-  no `pledge(2)`).
+- `rpcgen`, `makefs`, `pwd_mkdb` and `yacc` are built for the Mac with `-D'pledge(p,e)=0'`
+  (macOS has no `pledge(2)`).
+- `.y` sources (`sbin/pfctl/parse.y`, `sbin/ipsecctl/parse.y`) follow `bsd.sys.mk`'s `.y.c` rule:
+  `${YACC.y} parse.y` (`YACC.y` is `${YACC} -d ${YFLAGS}`), then `mv y.tab.c parse.c`, run in the
+  program's object directory. `YACC` is OpenBSD's own `usr.bin/yacc`, built for the Mac the first
+  time a `.y` is met (`host/bin/yacc`, named by its absolute path, so never macOS's bison-based
+  `/usr/bin/yacc`). Its only shim is a force-included `reallocarray(3)`, which macOS's libc lacks.
 - `usr.bin/uname`, `usr.bin/id`, `usr.bin/login`, `libexec/getty` and `libexec/login_passwd`
   are linked `-static` (their Makefiles are dynamic, as `/usr/bin` and `/usr/libexec` are on
   OpenBSD; there is no `ld.so` yet), as the install media's crunched programs are.
