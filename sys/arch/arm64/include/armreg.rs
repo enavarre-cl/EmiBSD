@@ -139,6 +139,18 @@ pub const CURRENTEL_EL_EL2: u64 = 0x2 << CURRENTEL_EL_SHIFT;
 /// `CURRENTEL_EL_EL3`.
 pub const CURRENTEL_EL_EL3: u64 = 0x3 << CURRENTEL_EL_SHIFT;
 
+// MPIDR_EL1 - Multiprocessor Affinity Register
+/// `MPIDR_AFF3`.
+pub const MPIDR_AFF3: u64 = 0xFF << 32;
+/// `MPIDR_AFF2`.
+pub const MPIDR_AFF2: u64 = 0xFF << 16;
+/// `MPIDR_AFF1`.
+pub const MPIDR_AFF1: u64 = 0xFF << 8;
+/// `MPIDR_AFF0`.
+pub const MPIDR_AFF0: u64 = 0xFF;
+/// `MPIDR_AFF`: the four affinity levels, a CPU's address in the device tree.
+pub const MPIDR_AFF: u64 = MPIDR_AFF3 | MPIDR_AFF2 | MPIDR_AFF1 | MPIDR_AFF0;
+
 /// `ESR_ELx_ISS_MASK`: the instruction specific syndrome.
 pub const ESR_ELX_ISS_MASK: u64 = 0x00ff_ffff;
 /// `ISS_INSN_FnV`.

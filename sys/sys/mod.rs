@@ -6,6 +6,7 @@
 
 pub mod acct;
 pub mod clockintr;
+pub mod device;
 pub mod errno;
 pub mod evcount;
 pub mod exec;

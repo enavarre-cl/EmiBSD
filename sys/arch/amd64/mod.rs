@@ -2,10 +2,11 @@
 //!
 //! Layout follows OpenBSD: `amd64/` for `.c`/`.S` ports (`locore`, `machdep`, `pmap`, `trap`),
 //! `include/` for header ports, `isa/` for the ISA-side clock and RTC, `conf/kernel.ld` for the
-//! linker script.
+//! linker script and `conf/ioconf.rs` for the autoconfiguration tables.
 
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/arch/amd64/amd64/
 pub mod amd64;
+pub mod conf;
 pub mod include;
 pub mod isa;
 
@@ -546,6 +547,26 @@ impl crate::machine::fdt::Fdt for Machine {
 
     fn fdt_cons_bs_tag() -> crate::machine::bus::BusSpaceTag {
         amd64::bus_space::X86_BUS_SPACE_IO
+    }
+}
+
+/// The autoconfiguration tables `config(8)` would generate (`conf/ioconf.rs`) and the
+/// `autoconf.c` hook.
+impl crate::machine::autoconf::Autoconf for Machine {
+    fn cfdata() -> &'static [crate::sys::device::Cfdata] {
+        &conf::ioconf::CFDATA
+    }
+
+    fn cfroots() -> &'static [i16] {
+        &conf::ioconf::CFROOTS
+    }
+
+    fn mainbus_cd() -> &'static crate::sys::device::Cfdriver {
+        &amd64::mainbus::MAINBUS_CD
+    }
+
+    fn device_register(dev: &crate::sys::device::Device, aux: *mut c_void) {
+        amd64::autoconf::device_register(dev, aux)
     }
 }
 

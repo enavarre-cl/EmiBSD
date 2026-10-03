@@ -2,10 +2,12 @@
 //!
 //! Layout follows OpenBSD: `arm64/` for `.c`/`.S` ports (`locore`, `machdep`, `pmap`, `trap`),
 //! `include/` for header ports, `dev/` for arch-only drivers (GIC, generic timer),
-//! `conf/kernel.ld` for the linker script.
+//! `conf/kernel.ld` for the linker script and `conf/ioconf.rs` for the autoconfiguration
+//! tables.
 
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/arch/arm64/arm64/
 pub mod arm64;
+pub mod conf;
 pub mod dev;
 pub mod include;
 
@@ -543,6 +545,26 @@ impl crate::machine::fdt::Fdt for Machine {
 
     fn fdt_cons_bs_tag() -> crate::machine::bus::BusSpaceTag {
         arm64::bus_space::FDT_CONS_BS_TAG
+    }
+}
+
+/// The autoconfiguration tables `config(8)` would generate (`conf/ioconf.rs`) and the
+/// `autoconf.c` hook.
+impl crate::machine::autoconf::Autoconf for Machine {
+    fn cfdata() -> &'static [crate::sys::device::Cfdata] {
+        &conf::ioconf::CFDATA
+    }
+
+    fn cfroots() -> &'static [i16] {
+        &conf::ioconf::CFROOTS
+    }
+
+    fn mainbus_cd() -> &'static crate::sys::device::Cfdriver {
+        &dev::mainbus::MAINBUS_CD
+    }
+
+    fn device_register(dev: &crate::sys::device::Device, aux: *mut c_void) {
+        arm64::autoconf::device_register(dev, aux)
     }
 }
 

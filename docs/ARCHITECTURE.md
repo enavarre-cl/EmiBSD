@@ -33,7 +33,7 @@ No `src/` directory (`[lib] path = "lib.rs"`), so C and Rust paths differ only b
 | `sys/arch/amd64/include/pte.h` | `sys/arch/amd64/include/pte.rs` |
 | `sys/lib/libkern/strlcpy.c` | `sys/lib/libkern/strlcpy.rs` |
 | `sys/arch/*/stand/`, `boot(8)`, `efiboot` | `sys/stand/` (Limine glue) until M14, when the user decided (2026-10-03) to port `boot(8)`/`efiboot` and `sys/lib/libsa/`; Limine is scaffolding until `boot(8)` boots the same kernel in QEMU |
-| `sys/conf/`, `config(8)`, Makefiles, `newvers.sh` | Cargo features and `tools/xtask`; not ported |
+| `sys/conf/`, `config(8)`, Makefiles, `newvers.sh` | Cargo features and `tools/xtask`; `ioconf.c` is `sys/arch/<arch>/conf/ioconf.rs`, by hand (M7b); not ported |
 
 Types live where the **header** is; functions live where the **`.c`** is. Rust allows inherent
 `impl` blocks in any module of the defining crate, which is exactly the header/implementation split.
@@ -44,7 +44,8 @@ Types live where the **header** is; functions live where the **`.c`** is. Rust a
 module per OpenBSD header (`param.rs`, `cpu.rs` with `boot(9)`, `delay(9)` and, since M5, `curcpu()` with the
 `cpu_info` accessors the clock code needs, `cons.rs` for
 `consinit()`, `bus.rs` for `bus_space(9)`, `db_machdep.rs` for what `ddb` needs; later `pmap.rs`,
-`intr.rs`, ...), all re-exported from `sys/machine/mod.rs`, which also re-exports
+`intr.rs`, ...; `autoconf.rs` is what `ioconf.c` and the machine's `autoconf.c` give
+`subr_autoconf.c`), all re-exported from `sys/machine/mod.rs`, which also re-exports
 `crate::arch::current::Machine` and asserts at compile time that it implements every trait. Generic
 code names only `crate::machine`. `bus.rs` also carries the C names as free functions
 (`bus_space_read_1(t, h, o)`), so a driver reads like its original; the tag and handle types are
@@ -156,7 +157,9 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
 ## Deviations from OpenBSD (deliberate)
 
 - Limine instead of `boot(8)`/`efiboot`.
-- Cargo features and `xtask` instead of `config(8)`, Makefiles and `newvers.sh`.
+- Cargo features and `xtask` instead of `config(8)`, Makefiles and `newvers.sh`; the
+  autoconfiguration tables `config(8)` generates are written by hand ("Autoconfiguration",
+  below).
 - `aarch64-unknown-none-softfloat` target; Intel syntax for amd64 inline assembly.
 - `Result<T, Errno>` instead of `int` returns; RAII guards for `spl`/mutex.
 - A host test double (`arch/host`), which OpenBSD does not have.
@@ -190,9 +193,10 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
 - Interrupts (M4, part b1, amd64): `spl(9)` is OpenBSD's: `splraise`/`spllower` in `intr.c`,
   `Xspllower`/`Xdoreti` in `spl.S`, the per-source masks in `cpu_info`, the `INTRSTUB` stubs of
   `vector.S` for the sixteen legacy IRQs and the MI soft interrupts (`kern_softintr.c`, the
-  `Xsoft*` stubs). What autoconfiguration would do is done by `cpu_configure` directly until
-  `config_rootfound` exists (M5): `lapic_boot_init` at the architectural LAPIC base (the MADT
-  and MP tables are M5), `cpu_intr_init`, `intr_enable`. `lapic_set_lvt` programs LINT0 as
+  `Xsoft*` stubs). What autoconfiguration would do was done by `cpu_configure` directly until
+  `config_rootfound` existed (M7b, "Autoconfiguration" below): `lapic_boot_init` at the
+  architectural LAPIC base (the MADT and MP tables are not ported), `cpu_intr_init`,
+  `intr_enable`. `lapic_set_lvt` programs LINT0 as
   ExtINT and LINT1 as NMI, the MP default configuration, because the firmware leaves LINT0
   masked and there are no tables to read it from; the IOAPIC stays off, so the 8259 is the
   PIC. The mutex is the uniprocessor one (`kern_lock.c`), `evcount` has no per-CPU counters
@@ -204,9 +208,9 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   parses it in place); QEMU `virt` boots with `acpi=off`, because EDK2 installs the device
   tree only when it does not publish ACPI tables, and OpenBSD arm64 needs the tree. The
   console is found through `/chosen` (`pluart_init_cons`), which retires the fixed PL011
-  address. `cpu_configure` pre-registers the interrupt controllers (`arm_intr_init_fdt`) and
-  attaches the GICv2 (`ampintc`) from fdt attach arguments it builds as `simplebus` would;
-  `ampintc` then owns `spl` through `arm_set_intr_handler`. `do_el1h_sync` enables interrupts
+  address. `mainbus_attach` pre-registers the interrupt controllers (`arm_intr_init_fdt`)
+  and attaches the GICv2 (`ampintc`) from the device tree (built by hand in `cpu_configure`
+  until M7b); `ampintc` then owns `spl` through `arm_set_intr_handler`. `do_el1h_sync` enables interrupts
   as the C does. The console's receive interrupt goes through `arm_intr_establish_fdt`, so the
   `selftest=uart` boot exercises the same path on arm64 as on amd64.
 - Clocks (M5-a): the time code is OpenBSD's (`kern_tc.c` over the timehands ring,
@@ -216,8 +220,8 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   (`sched_init_cpu`'s binds) and `initclocks`. amd64 starts the i8254, calibrates the LAPIC
   timer against it (`lapic_calibrate_timer`, as the boot CPU's `cpu_attach` does) and drives
   `clockintr_dispatch` from `Xintr_lapic_ltimer`; the i8254 is the timecounter (the TSC one,
-  `tsc.c`, is not ported). arm64 attaches `agtimer` from the device tree as `simplebus` would
-  and takes the virtual timer's PPI through `ampintc`. The `selftest=clock` boot waits for
+  `tsc.c`, is not ported). arm64 attaches `agtimer` from the device tree (through mainbus
+  since M7b) and takes the virtual timer's PPI through `ampintc`. The `selftest=clock` boot waits for
   `hz` hardclocks and a `timeout(9)`. The host double owns a `cpu_info` of its own so the
   clock queue and the wheel are unit-tested over the dummy timecounter.
 - Processes (M5-b, part 1): `struct proc`/`struct process` are OpenBSD's with the members
@@ -293,6 +297,24 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   pmaps are three-level, their tables come from the same two-page allocator as the kernel's
   (no `pmap_vp_pool`), and ASIDs are an 8-bit bitmap without rollover. `init` is linked with
   `-z nobtcfi` so `setregs` leaves `pm_guarded` clear (no BTI landing pads yet).
+- Autoconfiguration (M7b): `subr_autoconf.c` and `<sys/device.h>` are OpenBSD's and
+  `cpu_configure` starts them with `config_rootfound("mainbus")` on both archs. `config(8)`
+  is not ported: what it would generate into `ioconf.c` (`cfdata[]` with its locators and
+  parent vectors, `cfroots[]`) is written by hand per architecture in
+  `sys/arch/<arch>/conf/ioconf.rs`, following `config(8)`'s layout, for the GENERIC lines
+  whose drivers exist: `mainbus0 at root` and `cpu0 at mainbus?` on amd64; `mainbus0 at
+  root`, `ampintc* at fdt? early 1` and `agtimer* at fdt?` on arm64. The tables, `mainbus_cd`
+  and `device_register` reach `subr_autoconf.rs` through `machine::autoconf`, so generic code
+  never names an arch; the host double serves whatever table a test installs. A device that
+  GENERIC configures but whose driver is not ported is reported with `unported!` where its bus
+  would probe or attach it (amd64's `bios0`, `pci0`, `isa0`, ...); on arm64 every device-tree
+  node without a driver prints OpenBSD's `"name" at mainbus0 not configured`. The counts
+  `config(8)` writes into `<dev>.h` follow the tables: `NMPATH` is 0, the `hotplug(4)` calls
+  are reported. Without ACPI or MP tables, amd64's mainbus attaches the boot CPU as
+  `CPU_ROLE_SP`, as the C does on such a machine; `cpu_configure` keeps doing around
+  `config_rootfound` what `acpimadt` and the boot processor's attach would add (the LAPIC
+  base, `lapic_enable`, `lapic_set_lvt`, `lapic_calibrate_timer`). Adding a driver means its
+  `cfattach`/`cfdriver` and one `Cfdata` row in each `ioconf.rs` that has it in GENERIC.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

@@ -31,10 +31,10 @@
 //! `agtimer_startclock` and `agtimer_init`.
 //!
 //! ## Deviations
-//! - One static softc (`AGTIMER`, the C's `agtimer_cd.cd_devs[0]`), attached from
-//!   `autoconf.rs` with the `fdt_attach_args` it builds; `agtimer_intrclock`'s cookie stays
-//!   null and the callbacks read the softc directly.
-//! - The attach line prints as `agtimer0: N kHz` (no `config_attach` to print the prefix).
+//! - One static softc (`AGTIMER`, the C's `agtimer_cd.cd_devs[0]`) holds what
+//!   `struct agtimer_softc` adds to the device, so `agtimer_ca`'s `ca_devsize` is a bare
+//!   `struct device`; mainbus attaches it from the device tree (`agtimer* at fdt?`).
+//!   `agtimer_intrclock`'s cookie stays null and the callbacks read the softc directly.
 
 use core::arch::asm;
 use core::cell::Cell;
@@ -62,6 +62,7 @@ use crate::kern::kern_clockintr::{clockintr_cpu_init, clockintr_dispatch, clocki
 use crate::kern::kern_tc::tc_init;
 use crate::kprintf;
 use crate::sys::clockintr::Intrclock;
+use crate::sys::device::{CfMatch, Cfattach, Cfdriver, DV_DULL, Device};
 use crate::sys::timetc::Timecounter;
 
 /// `TIMER_FREQUENCY`: ARM core clock.
@@ -98,6 +99,18 @@ pub struct AgtimerSoftc {
 
 // SAFETY: written at attach on the boot CPU; read by the clock paths afterwards.
 unsafe impl Sync for AgtimerSoftc {}
+
+/// `agtimer_ca`.
+pub static AGTIMER_CA: Cfattach = Cfattach {
+    ca_devsize: size_of::<Device>(),
+    ca_match: Some(agtimer_match),
+    ca_attach: agtimer_attach,
+    ca_detach: None,
+    ca_activate: None,
+};
+
+/// `agtimer_cd`.
+pub static AGTIMER_CD: Cfdriver = Cfdriver::new(b"agtimer", DV_DULL, 0);
 
 /// `agtimer_cd.cd_devs[0]`: the one generic timer.
 static AGTIMER: AgtimerSoftc = AgtimerSoftc {
@@ -205,14 +218,20 @@ fn agtimer_set_tval(val: u32) {
 }
 
 /// `agtimer_match`.
-pub fn agtimer_match(faa: &FdtAttachArgs) -> bool {
-    OF_is_compatible(faa.fa_node, b"arm,armv7-timer")
-        || OF_is_compatible(faa.fa_node, b"arm,armv8-timer")
+pub fn agtimer_match(_parent: Option<&Device>, _cfdata: &CfMatch, aux: *mut c_void) -> i32 {
+    // SAFETY: `agtimer` attaches at `fdt`, whose buses hand over a `FdtAttachArgs`.
+    let faa = unsafe { &*aux.cast::<FdtAttachArgs<'_>>() };
+    i32::from(
+        OF_is_compatible(faa.fa_node, b"arm,armv7-timer")
+            || OF_is_compatible(faa.fa_node, b"arm,armv8-timer"),
+    )
 }
 
 /// `agtimer_attach`.
-pub fn agtimer_attach(faa: &FdtAttachArgs) {
+pub fn agtimer_attach(_parent: Option<&Device>, _self: &Device, aux: *mut c_void) {
     let sc = &AGTIMER;
+    // SAFETY: as in `agtimer_match`.
+    let faa = unsafe { &*aux.cast::<FdtAttachArgs<'_>>() };
 
     sc.sc_node.set(faa.fa_node);
 
@@ -233,7 +252,7 @@ pub fn agtimer_attach(faa: &FdtAttachArgs) {
         .set(u64::from(sc.sc_ticks_per_second.get()) * (1u64 << 32) / 1_000_000_000);
     sc.sc_nsec_max.set(u64::MAX / sc.sc_nsec_cycle_ratio.get());
 
-    kprintf!("agtimer0: {} kHz\n", sc.sc_ticks_per_second.get() / 1000);
+    kprintf!(": {} kHz\n", sc.sc_ticks_per_second.get() / 1000);
 
     // The Allwinner A64 has an erratum where the bottom 9 bits of the counter register can't
     // be trusted if any of the higher bits are rolling over.

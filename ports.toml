@@ -439,7 +439,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs; M7b: config_init, the config_pending wait (tsleep on config_pending) and config_process_deferred_mountroot run (subr_autoconf.c)"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -488,7 +488,7 @@ rust = "sys/arch/amd64/amd64/autoconf.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "44b9bb496717cc9e5cbade667b3fd255cc9f2131"
-notes = "M2: cold; M4: cpu_configure as far as the interrupts go (x86_64_proc0_tss_ldt_init, the LAPIC setup mpbios/acpimadt would trigger at the architectural base, cpu_intr_init and intr_enable the cpu0 attach would run, intr_printconfig, lcr8(0), spl0, cold = 0; pmap_randomize, map_tramps, bus_dma_init, mbuf_dma_64bit_enable, unmap_startup, the rnd timeouts reported); diskconf, device_register, the root-device search come with autoconf (M5); M5: lapic_calibrate_timer of the boot CPU's cpu_attach after intr_enable"
+notes = "M2: cold (now sys/systm.rs); M7b: cpu_configure in the C's order around config_rootfound(\"mainbus\") (panics if it fails); lapic_boot_init at the architectural base before it (what acpimadt/mpbios would do), and after it lapic_enable, lapic_set_lvt, intr_enable and lapic_calibrate_timer (what the boot processor's attach adds to the CPU_ROLE_SP attach mainbus does without tables), intr_printconfig, lcr8(0), spl0, cold = 0; pmap_randomize, map_tramps, bus_dma_init, mbuf_dma_64bit_enable, ioapic_enable, unmap_startup and the viac3/rdrand timeouts reported; device_register (empty, as in C) through machine::autoconf; nam2blk[]; diskconf (setroot, dumpconf, parsedisk) waits for disks"
 
 [[file]]
 c = "sys/arch/amd64/include/bus.h"
@@ -648,7 +648,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9e54031936bbf5f390f112e84bc2502284d1536b"
 deps = ["sys/arch/arm64/arm64/intr.c", "sys/sys/timetc.h", "sys/sys/clockintr.h", "sys/dev/ofw/openfirm.h"]
-notes = "M5: the whole driver (readcnt64 default/sun50i, the register accessors, match/attach, get_timecount, rearm/trigger/intr, set_clockrate, cpu_initclocks with the PPI by EL, delay, setstatclockrate, startclock, init); one static softc attached from autoconf.rs, the intrclock cookie stays null; the attach line is agtimer0: N kHz"
+notes = "M5: the whole driver (readcnt64 default/sun50i, the register accessors, match/attach, get_timecount, rearm/trigger/intr, set_clockrate, cpu_initclocks with the PPI by EL, delay, setstatclockrate, startclock, init); one static softc, the intrclock cookie stays null; M7b: agtimer_ca/agtimer_cd (ca_devsize is a bare struct device, the rest of the softc stays the static AGTIMER), match/attach take the cfattach arguments and mainbus attaches the timer (agtimer* at fdt?): 'agtimer0 at mainbus0: N kHz'"
 
 # ---------------------------------------------------------------------------
 # Replaced by project-level decisions (docs/ARCHITECTURE.md, "Deviations")
@@ -1167,7 +1167,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ab3adcd7f2fef559012a5d987d7cc75826808282"
 deps = ["sys/arch/amd64/include/cpu_full.h", "sys/arch/amd64/include/specialreg.h", "sys/arch/amd64/include/psl.h"]
-notes = "M4: cpu_info_full_primary (its static initialiser is cpu_info_primary_init), cpu_info_list, cpu_init_msrs (MSR_STAR/LSTAR/CSTAR/SFMASK as in C and EFER.SCE, which the C's locore0 sets at boot; patinit reported), cpu_enter_pages (the TSS stacks; pmap_enter_special is M6); identifycpu, cpu_match/cpu_attach, cpu_init, cpu_boot_secondary, cpu_hatch, the MDS/TSX/ucode work are M4-b to M6"
+notes = "M4: cpu_info_full_primary (its static initialiser is cpu_info_primary_init), cpu_info_list, cpu_init_msrs (MSR_STAR/LSTAR/CSTAR/SFMASK as in C and EFER.SCE, which the C's locore0 sets at boot; patinit reported), cpu_enter_pages (the TSS stacks; pmap_enter_special is M6); identifycpu, cpu_match/cpu_attach, cpu_init, cpu_boot_secondary, cpu_hatch, the MDS/TSX/ucode work are M4-b to M6; M7b: struct cpu_softc, cpu_ca/cpu_cd (CD_COCOVM, no cpu_activate), cpu_match (name and MAXCPUS; the SEV-ES check only concerns units MAXCPUS already refuses), cpu_attach for CPU_ROLE_SP and CPU_ROLE_BP (ci_self, sc_info, ci_dev, the ids, ci_handled_intr_level, the CPUF_* flags, cpu_intr_init; BP: lapic_enable and lapic_calibrate_timer); identifycpu, cpu_fix_msrs, mem_range_attach, cpu_init, cpu_init_mwait and cpu_init_vmm reported, an AP is reported (no km_alloc'd cpu_info_full without MULTIPROCESSOR)"
 
 [[file]]
 c = "sys/arch/amd64/amd64/trap.c"
@@ -1201,7 +1201,7 @@ rust = "sys/arch/arm64/include/armreg.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "fefcb935aea104b7bc8ca93a29509eb11a20b9d3"
-notes = "M4: INSN_SIZE, READ_SPECIALREG/WRITE_SPECIALREG (macros taking the register name as a literal), the ESR_ELx exception classes and the ISS bits the trap handler reads, ISS_BRK_COMMENT_MASK, DBG_MDSCR_*, PSR_*; the ID registers, SCTLR/TCR/CPACR/MAIR fields, the cache, timer and GIC system registers come with CPU identification (M4-b) and their subsystems; M5: CNTKCTL_EL0VCTEN, CNTV_CTL_*, CURRENTEL_EL_*; M5-b2: the CPACR_EL1 fields; M6-b: PSR_M_EL0t, PSR_DIT"
+notes = "M4: INSN_SIZE, READ_SPECIALREG/WRITE_SPECIALREG (macros taking the register name as a literal), the ESR_ELx exception classes and the ISS bits the trap handler reads, ISS_BRK_COMMENT_MASK, DBG_MDSCR_*, PSR_*; the ID registers, SCTLR/TCR/CPACR/MAIR fields, the cache, timer and GIC system registers come with CPU identification (M4-b) and their subsystems; M5: CNTKCTL_EL0VCTEN, CNTV_CTL_*, CURRENTEL_EL_*; M5-b2: the CPACR_EL1 fields; M6-b: PSR_M_EL0t, PSR_DIT; M7b: MPIDR_AFF0..3 and MPIDR_AFF (mainbus_match_primary)"
 
 [[file]]
 c = "sys/arch/arm64/include/db_machdep.h"
@@ -1401,7 +1401,7 @@ rust = "sys/arch/arm64/arm64/autoconf.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "5e38a2bc8e6ae08588b523f3eac6a4020b1e2bfa"
-notes = "M4: cpu_configure (splhigh, softintr_init, arm_intr_init_fdt, the GIC attach simplebus would do (attach_interrupt_controller builds its fdt_attach_args), cold = 0, spl0; bus_dma_init, unmap_startup, cpu_identify_cleanup reported; no config_rootfound until autoconf, M5); diskconf, device_register, the root-device search are M5; cold lives in machdep.rs as in C; M5: agtimer_init (mainbus_attach's) and attach_timer, which attaches agtimer from its node as simplebus would"
+notes = "M4/M5: cpu_configure as far as the interrupts go; M7b: cpu_configure in the C's order (splhigh, softintr_init, config_rootfound(\"mainbus\"), cold = 0, spl0; the GIC and the generic timer now attach through mainbus, attach_interrupt_controller and attach_timer are gone); bus_dma_init, unmap_startup (with codepatch_disable) and cpu_identify_cleanup reported; device_register (empty, as in C) through machine::autoconf; nam2blk[]; diskconf waits for disks; cold lives in sys/systm.rs"
 
 # ---------------------------------------------------------------------------
 # M4-b2: arm64 device tree, GICv2, PL011 receive interrupt
@@ -1448,7 +1448,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "08bce9b07b706c55a91266cc792339ccdcb2f2c7"
 deps = ["sys/arch/arm64/arm64/intr.c", "sys/dev/ofw/fdt.c", "sys/kern/subr_evcount.c"]
-notes = "M4: the registers, ampintc_match/attach (from fdt_attach_args autoconf.rs builds; one static softc AMPINTC), init, set_priority, setipl, intr_enable/disable/config, calc_mask/calc_irq, splx/spllower/splraise, iack/eoi, route, cpuinit (the IPI EOI waits for MULTIPROCESSOR), route_irq, intr_barrier (sched_barrier reported, M5), run_handler, irq_handler, intr_establish_fdt, intr_establish, intr_disestablish; ampintc_activate (resume), the IPIs, the GICv2m MSI frame and simplebus_attach of the children are M5"
+notes = "M4: the registers, ampintc_match/attach (from fdt_attach_args autoconf.rs builds; one static softc AMPINTC), init, set_priority, setipl, intr_enable/disable/config, calc_mask/calc_irq, splx/spllower/splraise, iack/eoi, route, cpuinit (the IPI EOI waits for MULTIPROCESSOR), route_irq, intr_barrier (sched_barrier reported, M5), run_handler, irq_handler, intr_establish_fdt, intr_establish, intr_disestablish; ampintc_activate (resume), the IPIs, the GICv2m MSI frame and simplebus_attach of the children are M5; M7b: ampintc_ca/ampintc_cd (ca_devsize is a bare struct device, the rest of the softc stays the static AMPINTC; no ampintc_activate yet), ampintc_match/ampintc_attach take the cfattach arguments and mainbus attaches the GIC (ampintc* at fdt? early 1), printing the C's ' nirq N, ncpu N'"
 
 # ---------------------------------------------------------------------------
 # M5-a: clocks, timecounters, clock interrupts, timeouts
@@ -2171,6 +2171,69 @@ upstream_blob = "d65a7ccd5167c98b025d6af9e2a5235dde2f8bca"
 deps = ["sys/sys/mbuf.h", "sys/kern/uipc_mbuf.c", "sys/kern/subr_pool.c"]
 notes = "M7b: m_pulldown (offp is Option<&mut i32>), m_dup1, m_tag_get, m_tag_prepend, m_tag_delete (unsafe: the tag must be on the mbuf's list), m_tag_delete_chain, m_tag_find, m_tag_copy, m_tag_copy_chain, m_tag_first, m_tag_next; tags borrow from their mbuf; host tests"
 
+# ---------------------------------------------------------------------------
+# M7b: autoconfiguration (config(8) replaced by hand-written ioconf.rs)
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/sys/device.h"
+rust = "sys/sys/device.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4005a747d94f3bc13e74b3e4712af23eb8981942"
+deps = ["sys/sys/queue.h"]
+notes = "M7b: enum devclass (Devclass, DV_* names), DVACT_*, struct device (Cells, dv_ref atomic; repr(C) because softcs start with it), DVF_ACTIVE, TAILQ_HEAD(devicelist) (Devicelist, Sync), struct cfdata (Cfdata::new, Cells for cf_unit/cf_fstate, slices for cf_loc/cf_parents), FSTATE_*, cfmatch_t/cfscan_t (the void *match is the CfMatch enum: a cfdata or a SoftcMatch below a CD_INDIRECT parent), struct cfattach (fn pointers, Option where the C allows NULL), DETACH_*, CD_*, struct cfdriver (cd_devs of Option<NonNull<Device>> slots, cd_dev accessor), cfprint_t, QUIET/UNCONF/UNSUPP, struct pdevinit, SLEEP_*, struct nam2blk, FIRMWARE_MAX; the Softc marker trait and Device::softc for (struct foo_softc *)self; the prototypes belong to their .c files (subr_autoconf.c here; subr_suspend.c, subr_disk.c, firmload.c not ported); reference-backed test of the constants"
+
+[[file]]
+c = "sys/kern/subr_autoconf.c"
+rust = "sys/kern/subr_autoconf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5120a3729e5f853f793e4aa7b68a0e20eb6c4503"
+deps = ["sys/sys/device.h", "sys/kern/kern_malloc.c", "sys/kern/kern_synch.c", "sys/kern/kern_lock.c"]
+notes = "M7b: the whole file: autoconf_verbose, struct matchinfo, mapply, config_init, config_search, config_scan, config_rootsearch, msgs[], config_found_sm (and the config_found macro), config_rootfound, config_attach, config_make_softc, config_detach, config_deactivate, config_defer, config_mountroot, config_process_deferred_children/_mountroot, config_pending_incr/decr, config_detach_children, config_suspend, config_suspend_all, config_activate_children, device_lookup, device_mainbus, device_mpath, device_ref/unref, alldevs, config_pending, autoconf_attdet(_mtx), autoconf_serial; cfdata[]/cfroots[]/mainbus_cd/device_register come from machine::autoconf (hand-written ioconf.rs); config_attach tells a softc match from a cfdata match by the CfMatch variant; NonNull<Device> where the C may free (config_detach and device_unref are unsafe); hotplug_device_attach/detach reported when not cold (GENERIC has hotplug(4), dev/hotplug.c is not ported); NMPATH 0 (mpath(4) is in no ioconf.rs, device_mpath is None); rootvp is always NULL (no VFS), so config_mountroot always queues; the C's store to the terminating cfdata entry in config_detach is not made; host tests over a test ioconf (root and starred child, indirect parent, not-configured print, detach and unit reuse, device_lookup, config_defer/config_mountroot, suspend failure and resume)"
+
+[[file]]
+c = "sys/arch/amd64/amd64/mainbus.c"
+rust = "sys/arch/amd64/amd64/mainbus.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b62c6aa84d31d9d375165ec678f54e72f5a2115a"
+deps = ["sys/kern/subr_autoconf.c", "sys/arch/amd64/include/cpuvar.h", "sys/arch/amd64/amd64/cpu.c"]
+notes = "BSD-4-clause block (Demetriou, NetBSD), accepted at M2. M7b: mainbus_ca/mainbus_cd (CD_COCOVM), union mainbus_attach_args (mba_busname and mba_caa; the other members come with their buses), isa_has_been_seen, mainbus_match, mainbus_attach (cpu0 attached as CPU_ROLE_SP when nothing set CPUF_PRESENT), mainbus_efifb_reattach, mainbus_print; reported: efifb_cnremap, bios0 (acpi0, mpbios0), ipmi_probe, replacemds, setperf_setup, pvbus_probe, pci0 (pci_init_extents), isa0, vmm_enabled, efifb0, codepatch_disable, and the pci bus number in mainbus_print; mp_busses/mp_intrs come with mpbios/acpi"
+
+[[file]]
+c = "sys/arch/amd64/include/cpuvar.h"
+rust = "sys/arch/amd64/include/cpuvar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fb1de0cb1b1e335c4ce23340d6be6cc457c8dce4"
+notes = "BSD-4-clause block (Grefen, NetBSD), accepted at M2. M7b: struct cpu_functions, CPU_ROLE_SP/BP/AP, struct cpu_attach_args (repr(C), caa_name first for mainbus_print); mp_cpu_funcs, x86_ipi and the TSC sync prototypes are MULTIPROCESSOR, identifycpu/cpu_init are cpu.c/identcpu.c"
+
+[[file]]
+c = "sys/arch/arm64/dev/mainbus.c"
+rust = "sys/arch/arm64/dev/mainbus.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "525d03139430f1237e6c74a063c5b56ba6656d5a"
+deps = ["sys/kern/subr_autoconf.c", "sys/dev/ofw/fdt.c", "sys/arch/arm64/include/fdt.h", "sys/arch/arm64/arm64/intr.c", "sys/arch/arm64/dev/agtimer.c"]
+notes = "M7b: struct mainbus_softc (repr(C), no sc_dmat), mainbus_ca/mainbus_cd, mainbus_match, mainbus_attach (arm_intr_init_fdt, agtimer_init, the model line, psci, efi, the CPUs, /firmware, /reserved-memory, ranges, apm, the three early passes, the framebuffer deferred to mountroot), mainbus_print, mainbus_attach_node (fa_reg/fa_intr malloc'd as in C), mainbus_match_status, mainbus_attach_cpus (ncpusfound), mainbus_match_primary/secondary, mainbus_attach_psci/efi/apm/framebuffer/firmware/resvmem; reported: mainbus_dma_tag/dma-coherent/iommu_device_map (bus_dma, M7), hw_prod, hw_serial, thermal_init; efi/apm args carry mainbus's bus tag (FdtAttachArgs has no null tag); a missing early locator reads as 0; a zero-cell reg line is skipped instead of dividing by zero"
+
+[[file]]
+c = "sys/conf/files"
+status = "skipped"
+notes = "replaced-by-ioconf.rs: config(8) is not ported; what it would generate into ioconf.c (cfdata[], cfroots[], the parent vectors and locators) is written by hand per arch in sys/arch/<arch>/conf/ioconf.rs, for the GENERIC devices whose drivers are ported (docs/ARCHITECTURE.md, Deviations)"
+
+[[file]]
+c = "sys/arch/amd64/conf/GENERIC"
+status = "skipped"
+notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root and cpu0 at mainbus?, the GENERIC lines whose drivers exist; the rest join as their drivers are ported"
+
+[[file]]
+c = "sys/arch/arm64/conf/GENERIC"
+status = "skipped"
+notes = "replaced-by-ioconf.rs: sys/arch/arm64/conf/ioconf.rs lists mainbus0 at root, ampintc* at fdt? early 1 and agtimer* at fdt? (the fdt attribute from files.arm64, mainbus its only parent until simplebus), the GENERIC lines whose drivers exist; the rest join as their drivers are ported"
+
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"
 reason = "project helper: the Rust GlobalAlloc over malloc(9)/free(9), feature alloc"
@@ -2198,3 +2261,11 @@ reason = "M0 bootstrap: QEMU isa-debug-exit under feature qemu; not OpenBSD code
 [[extra]]
 rust = "sys/arch/arm64/arm64/qemu.rs"
 reason = "M0 bootstrap: semihosting exit under feature qemu; not OpenBSD code"
+
+[[extra]]
+rust = "sys/arch/amd64/conf/ioconf.rs"
+reason = "replaces config(8)'s generated ioconf.c for amd64 GENERIC: cfdata[] and cfroots[] for the ported devices (mainbus0, cpu0), reached through machine::autoconf"
+
+[[extra]]
+rust = "sys/arch/arm64/conf/ioconf.rs"
+reason = "replaces config(8)'s generated ioconf.c for arm64 GENERIC: cfdata[] and cfroots[] for the ported devices (mainbus0, ampintc*, agtimer*), reached through machine::autoconf"

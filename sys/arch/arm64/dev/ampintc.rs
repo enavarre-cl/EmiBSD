@@ -24,7 +24,8 @@
 //! Upstream: sys/arch/arm64/dev/ampintc.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M4 ports the registers, `ampintc_match`, `ampintc_attach` (from
-//! the device-tree attach arguments; the autoconfiguration glue around them is M5),
+//! the device-tree attach arguments; `ampintc_ca`/`ampintc_cd` attach them through mainbus
+//! since M7b),
 //! `ampintc_init`, `ampintc_set_priority`, `ampintc_setipl`, `ampintc_intr_enable`/`disable`/
 //! `config`, `ampintc_calc_mask`/`calc_irq`, `ampintc_splx`/`spllower`/`splraise`,
 //! `ampintc_iack`/`eoi`, `ampintc_route`, `ampintc_cpuinit`, `ampintc_route_irq`,
@@ -36,8 +37,9 @@
 //!
 //! ## Deviations
 //! - One static softc, `AMPINTC`, stands for the C's `ampintc` pointer to the attached
-//!   device; `ampintc_attach` takes a [`FdtAttachArgs`] that `autoconf.rs` builds from the
-//!   device tree, where `config_found` would.
+//!   device and for the rest of `struct ampintc_softc`: `ampintc_ca`'s `ca_devsize` is a bare
+//!   `struct device`, which mainbus attaches from the device tree (`ampintc* at fdt? early
+//!   1`); `ampintc_activate` (`DVACT_RESUME`) is not in it yet.
 //! - `sched_barrier` (`ampintc_intr_barrier`) is reported until M5.
 
 use core::cell::Cell;
@@ -67,6 +69,7 @@ use crate::machine::bus::{
     bus_space_write_1, bus_space_write_4,
 };
 use crate::queue_adapter;
+use crate::sys::device::{CfMatch, Cfattach, Cfdriver, DV_DULL, Device};
 use crate::sys::evcount::Evcount;
 use crate::sys::malloc::{M_DEVBUF, M_NOWAIT, M_WAITOK, M_ZERO};
 use crate::sys::queue::{ListEntry, TailqEntry, TailqHead};
@@ -308,6 +311,18 @@ pub static AMPINTC: AmpintcSoftc = AmpintcSoftc {
         ic_gic_its_id: Cell::new(0),
     },
 };
+/// `ampintc_ca`.
+pub static AMPINTC_CA: Cfattach = Cfattach {
+    ca_devsize: size_of::<Device>(),
+    ca_match: Some(ampintc_match),
+    ca_attach: ampintc_attach,
+    ca_detach: None,
+    ca_activate: None,
+};
+
+/// `ampintc_cd`.
+pub static AMPINTC_CD: Cfdriver = Cfdriver::new(b"ampintc", DV_DULL, 0);
+
 /// Whether `ampintc_attach` has run (the C's `ampintc != NULL`).
 static ATTACHED: AtomicBool = AtomicBool::new(false);
 
@@ -336,16 +351,22 @@ fn handler(sc: &AmpintcSoftc, irq: i32) -> &'static Intrq {
 }
 
 /// `ampintc_match`: whether the node is a GICv2 this driver drives.
-pub fn ampintc_match(faa: &FdtAttachArgs<'_>) -> bool {
-    AMPINTC_COMPATIBLES
-        .iter()
-        .any(|c| OF_is_compatible(faa.fa_node, c))
+pub fn ampintc_match(_parent: Option<&Device>, _cfdata: &CfMatch, aux: *mut c_void) -> i32 {
+    // SAFETY: `ampintc` attaches at `fdt`, whose buses hand over a `FdtAttachArgs`.
+    let faa = unsafe { &*aux.cast::<FdtAttachArgs<'_>>() };
+    i32::from(
+        AMPINTC_COMPATIBLES
+            .iter()
+            .any(|c| OF_is_compatible(faa.fa_node, c)),
+    )
 }
 
 /// `ampintc_attach`: maps the distributor and CPU interface, resets the controller, takes
 /// over `spl` and the IRQ dispatch, and registers with the device tree.
-pub fn ampintc_attach(faa: &FdtAttachArgs<'_>) {
+pub fn ampintc_attach(_parent: Option<&Device>, _self: &Device, aux: *mut c_void) {
     let sc = &AMPINTC;
+    // SAFETY: as in `ampintc_match`.
+    let faa = unsafe { &*aux.cast::<FdtAttachArgs<'_>>() };
 
     ATTACHED.store(true, Ordering::Relaxed);
     arm_init_smask();
@@ -387,7 +408,7 @@ pub fn ampintc_attach(faa: &FdtAttachArgs<'_>) {
     nintr += 32; // ICD_ICTR + 1, irq 0-31 is SGI, 32+ is PPI
     sc.sc_nintr.set(nintr);
     let ncpu = ((ictr >> ICD_ICTR_CPU_SH) & ICD_ICTR_CPU_M) + 1;
-    kprintf!("ampintc0: nirq {nintr}, ncpu {ncpu}");
+    kprintf!(" nirq {nintr}, ncpu {ncpu}");
 
     kassert!(curcpu().ci_cpuid.get() <= ICD_ICTR_CPU_M);
     sc.sc_cpu_mask[curcpu().ci_cpuid.get() as usize].set(bus_space_read_1(iot, d, icd_iptrn(0)));

@@ -12,6 +12,7 @@
 //! zeroing and copying them do nothing, and boot memory comes from the host allocator.
 
 use core::cell::Cell;
+use core::ffi::c_void;
 use std::boxed::Box;
 use std::collections::BTreeMap;
 use std::eprintln;
@@ -20,6 +21,7 @@ use std::sync::Mutex;
 use std::vec;
 
 use crate::dev::cons::{CN_LOWPRI, Consdev, set_cn_tab};
+use crate::machine::autoconf::Autoconf;
 use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::copy::UserCopy;
 use crate::machine::db_machdep::{DbMachdep, PrFn};
@@ -29,6 +31,7 @@ use crate::machine::{
     BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, MachineParam, Pmap, VmParam,
 };
 use crate::sys::clockintr::Clockqueue;
+use crate::sys::device::{Cfdata, Cfdriver, DV_DULL, Device};
 use crate::sys::errno::Errno;
 use crate::sys::exec::{ExecPackage, PsStrings};
 use crate::sys::exec_elf::{ELFCLASS64, ELFDATA2LSB};
@@ -685,6 +688,46 @@ impl Intr for Machine {
 
 /// The host double's interrupt priority level.
 static HOST_IPL: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+
+/// The host's `ioconf`: empty until a test installs one with `Machine::set_ioconf`.
+static HOST_IOCONF: libkern::StaticCell<(&'static [Cfdata], &'static [i16])> =
+    libkern::StaticCell::new((&[], &[]));
+
+/// The host's `mainbus_cd`, for tests that attach a root named "mainbus".
+static HOST_MAINBUS_CD: Cfdriver = Cfdriver::new(b"mainbus", DV_DULL, 0);
+
+/// The host's autoconfiguration tables are whatever the test installed; `device_register`
+/// does nothing, as on amd64 and arm64.
+impl Autoconf for Machine {
+    fn cfdata() -> &'static [Cfdata] {
+        // SAFETY: written only by `set_ioconf`, under the test's lock.
+        unsafe { HOST_IOCONF.read().0 }
+    }
+
+    fn cfroots() -> &'static [i16] {
+        // SAFETY: as above.
+        unsafe { HOST_IOCONF.read().1 }
+    }
+
+    fn mainbus_cd() -> &'static Cfdriver {
+        &HOST_MAINBUS_CD
+    }
+
+    fn device_register(_dev: &Device, _aux: *mut c_void) {}
+}
+
+#[cfg(test)]
+impl Machine {
+    /// Installs a test's `cfdata[]` and `cfroots[]`.
+    ///
+    /// # Safety
+    ///
+    /// The caller holds the lock that serialises the tests using autoconfiguration.
+    pub unsafe fn set_ioconf(cfdata: &'static [Cfdata], cfroots: &'static [i16]) {
+        // SAFETY: the caller's lock excludes every reader.
+        unsafe { HOST_IOCONF.write((cfdata, cfroots)) };
+    }
+}
 
 /// The host has no device tree.
 impl crate::machine::fdt::Fdt for Machine {

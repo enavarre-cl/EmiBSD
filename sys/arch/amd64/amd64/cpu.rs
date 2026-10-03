@@ -70,25 +70,42 @@
 //! Upstream: sys/arch/amd64/amd64/cpu.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M4 ports `cpu_info_full_primary`,
-//! `cpu_init_msrs` and `cpu_enter_pages`'s TSS part. CPU identification (`identifycpu`), the
-//! `cpu` device (`cpu_match`/`cpu_attach`), the AP boot (`cpu_boot_secondary`), `cpu_hatch`,
-//! `patinit` and the MDS/`cpu_fix_msrs` work come with M4-b to M6.
+//! `cpu_init_msrs` and `cpu_enter_pages`'s TSS part; M7b the `cpu` device (`struct
+//! cpu_softc`, `cpu_ca`, `cpu_cd`, `cpu_match`, `cpu_attach`) for autoconfiguration. CPU
+//! identification (`identifycpu`), `cpu_init`, the AP boot (`cpu_boot_secondary`),
+//! `cpu_hatch`, `patinit` and the MDS/`cpu_fix_msrs` work come later.
 //!
 //! ## Deviations
+//! - `cpu_attach` reports what it cannot do yet: `identifycpu`, `cpu_fix_msrs`,
+//!   `mem_range_attach` (`MTRR`), `cpu_init`, `cpu_init_mwait` and `cpu_init_vmm`; an
+//!   application processor (never attached without `MULTIPROCESSOR` tables) is reported
+//!   instead of getting a `km_alloc`ed `cpu_info_full`. `cpu_ca` has no `cpu_activate`
+//!   (suspend/resume): `config_suspend` walks the CPU's children instead.
+//! - `cpu_match`'s SEV-ES check (`cpu_sev_guestmode`, not ported) only refuses units 1 and
+//!   up, which `MAXCPUS` (1 without `MULTIPROCESSOR`) has already refused.
 //! - `cpu_init_msrs` writes 0 to `MSR_LSTAR`: there is no `Xsyscall` until user mode (M6).
 //!   `patinit` (the PAT MSR for write-combining) is reported as unported.
 //! - `cpu_enter_pages` sets up the TSS stacks only: `pmap_enter_special` (the u-k mappings of
 //!   the Meltdown mitigation) waits for M6.
 
+use core::cell::Cell;
+use core::ffi::c_void;
 use core::ptr;
+use core::sync::atomic::Ordering;
 
+use crate::arch::amd64::amd64::intr::cpu_intr_init;
+use crate::arch::amd64::amd64::lapic::{lapic_calibrate_timer, lapic_enable};
 use crate::arch::amd64::amd64::locore::Xsyscall;
-use crate::arch::amd64::include::cpu::{CPUF_PRIMARY, CpuInfo};
+use crate::arch::amd64::include::cpu::{
+    CPUF_BSP, CPUF_PRESENT, CPUF_PRIMARY, CPUF_SP, CpuInfo, MAXCPUS, cpu_info_primary,
+};
 use crate::arch::amd64::include::cpu_full::{
     CpuInfoFull, DBLFLT_STACK_WORDS, NMI_STACK_WORDS, TRAMP_STACK_WORDS,
 };
 use crate::arch::amd64::include::cpufunc::{rdmsr, wrmsr};
+use crate::arch::amd64::include::cpuvar::{CPU_ROLE_AP, CPU_ROLE_BP, CPU_ROLE_SP, CpuAttachArgs};
 use crate::arch::amd64::include::frame::IretqFrame;
+use crate::arch::amd64::include::intrdefs::IPL_NONE;
 use crate::arch::amd64::include::psl::{PSL_AC, PSL_C, PSL_D, PSL_I, PSL_NT, PSL_T};
 use crate::arch::amd64::include::segments::{GCODE_SEL, GUDATA_SEL, SEL_KPL, SEL_UPL, gsel};
 use crate::arch::amd64::include::specialreg::{
@@ -96,7 +113,33 @@ use crate::arch::amd64::include::specialreg::{
     MSR_STAR,
 };
 use crate::arch::amd64::include::tss::X86_64Tss;
+use crate::kern::subr_prf::{Str, panic, printf};
+use crate::sys::device::{CD_COCOVM, CfMatch, Cfattach, Cfdriver, DV_DULL, Device, Softc};
 use crate::unported;
+
+/// `struct cpu_softc`.
+#[repr(C)]
+pub struct CpuSoftc {
+    /// `sc_dev`: device tree glue.
+    pub sc_dev: Device,
+    /// `sc_info`: pointer to CPU info.
+    pub sc_info: Cell<*const CpuInfo>,
+}
+
+// SAFETY: `#[repr(C)]`, the device first, and a null pointer is the all-zero `sc_info`.
+unsafe impl Softc for CpuSoftc {}
+
+/// `cpu_ca`.
+pub static CPU_CA: Cfattach = Cfattach {
+    ca_devsize: size_of::<CpuSoftc>(),
+    ca_match: Some(cpu_match),
+    ca_attach: cpu_attach,
+    ca_detach: None,
+    ca_activate: None,
+};
+
+/// `cpu_cd`.
+pub static CPU_CD: Cfdriver = Cfdriver::new(b"cpu", DV_DULL, CD_COCOVM);
 
 /// `cpu_info_full_primary`: the boot CPU's pages; `ci_self` and `ci_flags` are set by
 /// `init_x86_64` (the C initialises them statically).
@@ -114,6 +157,95 @@ pub fn cpu_info_primary_init() {
     ci.ci_self.set(ptr::from_ref(ci));
     ci.ci_flags
         .store(CPUF_PRIMARY, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// `cpu_match`: the attach arguments name a `cpu` and the unit fits `MAXCPUS`.
+pub fn cpu_match(_parent: Option<&Device>, match_: &CfMatch, aux: *mut c_void) -> i32 {
+    let cf = match_.cfdata();
+    // SAFETY: mainbus's (and mpbios's, acpimadt's) attach arguments all start with the name
+    // (`caa_name`, `mba_busname`), which is all this reads.
+    let caa_name = unsafe { *aux.cast::<&'static [u8]>() };
+
+    if caa_name != cf.cf_driver.cd_name {
+        return 0;
+    }
+
+    if cf.cf_unit.get() as u32 >= MAXCPUS {
+        return 0;
+    }
+
+    // XXX We don't support MP with SEV-ES, yet: see the module's deviations.
+
+    1
+}
+
+/// `cpu_attach`: fills in the boot CPU's `cpu_info` and brings it up for its role.
+pub fn cpu_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
+    // SAFETY: `self_` was made for `cpu_ca`, whose softc is a `CpuSoftc`.
+    let sc = unsafe { self_.softc::<CpuSoftc>() };
+    // SAFETY: the `cpu` driver is only attached with a `cpu_attach_args` (`cpu_match`).
+    let caa = unsafe { *aux.cast::<CpuAttachArgs>() };
+    let xname = self_.dv_xname.get();
+
+    // If we're an Application Processor, allocate a cpu_info structure, otherwise use the
+    // primary's.
+    if caa.cpu_role == CPU_ROLE_AP {
+        let _ = unported!("cpu_attach: an application processor's cpu_info_full (km_alloc)");
+        printf(format_args!(
+            ": apid {} (application processor)\n",
+            caa.cpu_apicid
+        ));
+        printf(format_args!("{}: not started\n", Str(&xname)));
+        return;
+    }
+    let ci = cpu_info_primary();
+    // MULTIPROCESSOR: the running CPU's apic id is checked against caa.cpu_apicid.
+
+    ci.ci_self.set(ptr::from_ref(ci));
+    sc.sc_info.set(ptr::from_ref(ci));
+
+    ci.ci_dev.set(ptr::from_ref(self_));
+    ci.ci_apicid.set(caa.cpu_apicid as u32);
+    ci.ci_acpi_proc_id.set(caa.cpu_acpi_proc_id as u32);
+    ci.ci_cpuid.set(0); // False for APs, but they're not used anyway
+    // ci_func = caa->cpu_func: the start/stop functions are MULTIPROCESSOR's.
+    ci.ci_handled_intr_level.set(IPL_NONE);
+
+    // !SMALL_KERNEL: ci_sensordev takes the device's name; there are no sensors yet.
+
+    // further PCB init done later.
+
+    printf(format_args!(": "));
+
+    match caa.cpu_role {
+        CPU_ROLE_SP => {
+            printf(format_args!("(uniprocessor)\n"));
+            ci.ci_flags
+                .fetch_or(CPUF_PRESENT | CPUF_SP | CPUF_PRIMARY, Ordering::Relaxed);
+            cpu_intr_init(ci);
+            let _ = unported!("identifycpu, cpu_fix_msrs, mem_range_attach (identcpu.c, mtrr.c)");
+            // XXX SP fpuinit(ci) is done earlier
+            let _ = unported!("cpu_init, cpu_init_mwait (CR4 features, xsave, mwait)");
+        }
+        CPU_ROLE_BP => {
+            printf(format_args!("apid {} (boot processor)\n", caa.cpu_apicid));
+            ci.ci_flags
+                .fetch_or(CPUF_PRESENT | CPUF_BSP | CPUF_PRIMARY, Ordering::Relaxed);
+            cpu_intr_init(ci);
+            let _ = unported!("identifycpu, cpu_fix_msrs, mem_range_attach (identcpu.c, mtrr.c)");
+            // NLAPIC > 0: enable local apic
+            lapic_enable();
+            lapic_calibrate_timer(ci);
+            // XXX BP fpuinit(ci) is done earlier
+            let _ = unported!("cpu_init, cpu_init_mwait (CR4 features, xsave, mwait)");
+            // NIOAPIC > 0: ioapic_bsp_id = caa->cpu_apicid (ioapic.c is not ported).
+        }
+        _ => panic(format_args!("unknown processor type??")),
+    }
+
+    // NVMM > 0
+    let _ = unported!("cpu_init_vmm (vmm)");
+    // !SMALL_KERNEL: sensordev_install when the CPU has sensors; none are attached yet.
 }
 
 /// `cpu_init_msrs`: the `syscall` MSRs and the segment bases of `ci`.

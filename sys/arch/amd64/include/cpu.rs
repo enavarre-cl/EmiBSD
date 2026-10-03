@@ -67,6 +67,7 @@ use crate::arch::amd64::include::pmap::Pmap;
 use crate::arch::amd64::include::segments::usermode;
 use crate::arch::amd64::include::tss::X86_64Tss;
 use crate::sys::clockintr::Clockqueue;
+use crate::sys::device::Device;
 use crate::sys::proc::Proc;
 use crate::sys::sched::SchedstatePercpu;
 
@@ -82,8 +83,8 @@ pub struct CpuInfo {
     /// \[o\] for U<-->K transition.
     pub ci_scratch: Cell<u64>,
     // ci_PAGEALIGN = ci_dev
-    /// \[I\] `struct device` (M6).
-    pub ci_dev: Cell<*const ()>,
+    /// \[I\] `struct device`: the `cpu` device, set by `cpu_attach`.
+    pub ci_dev: Cell<*const Device>,
     /// \[I\] this structure's own address, what `curcpu()` reads.
     pub ci_self: Cell<*const CpuInfo>,
     /// \[I\] the next CPU.

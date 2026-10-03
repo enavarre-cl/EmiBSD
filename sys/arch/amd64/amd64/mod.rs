@@ -18,6 +18,7 @@ pub mod intr;
 pub mod lapic;
 pub mod locore;
 pub mod machdep;
+pub mod mainbus;
 pub mod pmap;
 #[cfg(feature = "qemu")]
 pub mod qemu;

@@ -53,6 +53,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "real mem = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
+        --expect "mainbus0 at root" --expect "cpu0 at mainbus0: (uniprocessor)" \
         --expect "cpu0: apic clock running at" \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
@@ -76,7 +77,8 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "bsd: booted on arm64" --expect "The Regents of the University of California" \
         --expect "real mem  = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
-        --expect "agtimer0: " \
+        --expect "mainbus0 at root" --expect "ampintc0 at mainbus0 nirq " \
+        --expect "agtimer0 at mainbus0: " \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
         --expect "init exited with status 0 (signal 0)"

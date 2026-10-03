@@ -36,6 +36,7 @@ pub mod rust_alloc;
 pub mod sched_bsd;
 #[cfg(feature = "qemu")]
 pub mod selftest;
+pub mod subr_autoconf;
 pub mod subr_evcount;
 pub mod subr_log;
 pub mod subr_pool;

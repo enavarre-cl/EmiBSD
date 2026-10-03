@@ -83,6 +83,7 @@ use crate::kern::kern_synch::{endtsleep, sleep_queue_init, tsleep_nsec, wakeup};
 use crate::kern::kern_task::taskq_init;
 use crate::kern::kern_timeout::{timeout_proc_init, timeout_set, timeout_startup};
 use crate::kern::sched_bsd::{sched_lock_init, scheduler_start};
+use crate::kern::subr_autoconf::{CONFIG_PENDING, config_init, config_process_deferred_mountroot};
 use crate::kern::subr_prf::{Str, panic};
 use crate::kern::uipc_mbuf::{mbcpuinit, mbinit};
 use crate::kprintf;
@@ -153,7 +154,7 @@ pub fn main() -> ! {
     timeout_startup();
 
     // Attempt to find console and initialize in case of early panic or other messages.
-    let _ = unported!("config_init"); // init autoconfiguration data structures
+    config_init(); // init autoconfiguration data structures
     consinit();
 
     kprintf!("{}\n", COPYRIGHT);
@@ -373,8 +374,11 @@ pub fn main() -> ! {
     kthread_run_deferred_queue();
 
     // Now that device driver threads have been created, wait for them to finish any deferred
-    // autoconfiguration.
-    let _ = unported!("config_pending wait");
+    // autoconfiguration. Note we don't need to lock this semaphore, since we haven't booted
+    // any secondary processors, yet.
+    while CONFIG_PENDING.load(Ordering::Relaxed) != 0 {
+        let _ = tsleep_nsec(ptr::from_ref(&CONFIG_PENDING), PWAIT, "cfpend", INFSLP);
+    }
 
     let _ = unported!("dostartuphooks");
 
@@ -420,7 +424,7 @@ pub fn main() -> ! {
     // Now that all CPUs partake in scheduling, start SMR thread.
     let _ = unported!("smr_startup_thread");
 
-    let _ = unported!("config_process_deferred_mountroot");
+    config_process_deferred_mountroot();
 
     // Okay, now we can let init(8) exec! It's off to userland!
     START_INIT_EXEC.store(1, Ordering::Relaxed);

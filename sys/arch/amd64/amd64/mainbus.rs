@@ -1,0 +1,175 @@
+/*	$OpenBSD: mainbus.c,v 1.54 2025/09/16 12:18:10 hshoexer Exp $	*/
+/*	$NetBSD: mainbus.c,v 1.1 2003/04/26 18:39:29 fvdl Exp $	*/
+/* <LICENSES> */
+/*
+ * Copyright (c) 1996 Christopher G. Demetriou.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *      This product includes software developed by Christopher G. Demetriou
+ *	for the NetBSD Project.
+ * 4. The name of the author may not be used to endorse or promote products
+ *    derived from this software without specific prior written permission
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+/* </LICENSES> */
+
+//! The amd64 root bus: `arch/amd64/amd64/mainbus.c`.
+//!
+//! Upstream: sys/arch/amd64/amd64/mainbus.c @ 3ce1f3f79392
+//!
+//! `mainbus0 at root` attaches first (`cpu_configure`'s `config_rootfound`) and attaches, in
+//! the C's order, the BIOS (and through it ACPI and the MP tables), IPMI, the boot CPU when
+//! nothing has attached it yet, the paravirtual bus, PCI, ISA, `vmm` and the EFI framebuffer.
+//!
+//! ## Deviations
+//! - Only the `cpu` child exists (`sys/arch/amd64/conf/ioconf.rs`); every other child GENERIC
+//!   configures is reported with `unported!` where the C would probe or attach it: `bios0`
+//!   (which brings `acpi0` and `mpbios0`), `ipmi_probe`, `pvbus_probe`, `pci0` (with
+//!   `pci_init_extents`), `isa0`, `vmm_enabled`, `efifb`; so are `replacemds`,
+//!   `setperf_setup` and `codepatch_disable`. Without ACPI or MP tables the boot CPU attaches
+//!   here, as `CPU_ROLE_SP`, as the C does on such a machine.
+//! - `union mainbus_attach_args` has the members that exist (`mba_busname`, `mba_caa`); the
+//!   others come with their buses. `mp_busses`/`mp_intrs` (`NMPBIOS`/`NACPI`) come with
+//!   `mpbios`/`acpi`.
+
+use core::ffi::c_void;
+use core::ptr;
+use core::sync::atomic::{AtomicI32, Ordering};
+
+use crate::arch::amd64::include::cpu::{CPUF_PRESENT, cpu_info_primary};
+use crate::arch::amd64::include::cpuvar::{CPU_ROLE_SP, CpuAttachArgs};
+use crate::kern::subr_autoconf::{config_found, device_mainbus};
+use crate::kern::subr_prf::{Str, printf};
+use crate::sys::device::{CD_COCOVM, CfMatch, Cfattach, Cfdriver, DV_DULL, Device, UNCONF};
+use crate::unported;
+
+/// `union mainbus_attach_args`: what mainbus hands its children. Every member starts with the
+/// bus name, which `mainbus_print` reads.
+#[repr(C)]
+pub union MainbusAttachArgs {
+    /// `mba_busname`: first elem of all.
+    pub mba_busname: &'static [u8],
+    /// `mba_caa`.
+    pub mba_caa: CpuAttachArgs,
+    // mba_pba (pci), mba_iba (isa), aaa_caa (ioapic), mba_iaa (ipmi), mba_bios, mba_pvba,
+    // mba_eaa (efifb): with their buses.
+}
+
+/// `mainbus_ca`.
+pub static MAINBUS_CA: Cfattach = Cfattach {
+    ca_devsize: size_of::<Device>(),
+    ca_match: Some(mainbus_match),
+    ca_attach: mainbus_attach,
+    ca_detach: None,
+    ca_activate: None,
+};
+
+/// `mainbus_cd`.
+pub static MAINBUS_CD: Cfdriver = Cfdriver::new(b"mainbus", DV_DULL, CD_COCOVM);
+
+/// `isa_has_been_seen`: this is set when the ISA bus is attached. If it's not set by the time
+/// it's checked below, then mainbus attempts to attach an ISA.
+pub static ISA_HAS_BEEN_SEEN: AtomicI32 = AtomicI32::new(0);
+
+/// `mainbus_match`: probe for the mainbus; always succeeds.
+pub fn mainbus_match(_parent: Option<&Device>, _match: &CfMatch, _aux: *mut c_void) -> i32 {
+    1
+}
+
+/// `mainbus_attach`: attach the mainbus.
+pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_void) {
+    printf(format_args!("\n"));
+
+    // NEFIFB > 0
+    let _ = unported!("efifb_cnremap (efifb0 at mainbus?)");
+
+    // NBIOS > 0
+    let _ = unported!("bios0 at mainbus? (bios.c: acpi0, mpbios0)");
+
+    // NIPMI > 0
+    let _ = unported!("ipmi_probe (ipmi0 at mainbus?)");
+
+    if cpu_info_primary().ci_flags.load(Ordering::Relaxed) & CPUF_PRESENT == 0 {
+        let mut caa = CpuAttachArgs {
+            caa_name: b"cpu",
+            cpu_apicid: 0,
+            cpu_acpi_proc_id: 0,
+            cpu_role: CPU_ROLE_SP,
+            cpu_func: None,
+        };
+
+        let _ = config_found(self_, ptr::from_mut(&mut caa).cast(), Some(mainbus_print));
+    }
+
+    // All CPUs are attached, handle MDS
+    let _ = unported!("replacemds (the MDS mitigation, cpu.c)");
+
+    // NACPI > 0: if !acpi_hasprocfvs, setperf_setup(&cpu_info_primary), which identifycpu
+    // sets.
+    let _ = unported!("setperf_setup (identcpu.c)");
+
+    // MULTIPROCESSOR: mp_setperf_init, not configured.
+
+    // NPVBUS > 0: probe first to hide the "not configured" message.
+    let _ = unported!("pvbus_probe (pvbus0 at mainbus0)");
+
+    // NPCI > 0, NACPI > 0: acpipci_attach_busses when ACPI found PCI, else pci0 here.
+    let _ = unported!("pci0 at mainbus0 (pci_init_extents, dev/pci)");
+
+    // NISA > 0
+    if ISA_HAS_BEEN_SEEN.load(Ordering::Relaxed) == 0 {
+        let _ = unported!("isa0 at mainbus0 (dev/isa)");
+    }
+
+    // NVMM > 0
+    let _ = unported!("vmm_enabled (vmm0 at mainbus0)");
+
+    // NEFIFB > 0
+    let _ = unported!("efifb0 at mainbus? (bios_efiinfo, efifb_cb_found)");
+
+    let _ = unported!("codepatch_disable (codepatch.c)");
+}
+
+/// `mainbus_efifb_reattach` (`NEFIFB > 0`): attaches the EFI framebuffer again after a
+/// display driver gave it up.
+pub fn mainbus_efifb_reattach() {
+    if device_mainbus().is_none() {
+        return;
+    }
+    let _ = unported!("efifb0 at mainbus? (bios_efiinfo, efifb_cb_found)");
+}
+
+/// `mainbus_print`: names a child that found no driver.
+pub fn mainbus_print(aux: *mut c_void, pnp: Option<&[u8]>) -> i32 {
+    // SAFETY: every mainbus child's attach arguments start with the bus name
+    // (`MainbusAttachArgs`, `CpuAttachArgs`), which is all this reads.
+    let busname = unsafe { *aux.cast::<&'static [u8]>() };
+
+    if let Some(pnp) = pnp {
+        printf(format_args!("{} at {}", Str(busname), Str(pnp)));
+    }
+    if busname == b"pci" {
+        let _ = unported!("mainbus_print: pcibus_attach_args (pba_bus)");
+    }
+
+    UNCONF
+}

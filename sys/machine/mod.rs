@@ -2,11 +2,13 @@
 //!
 //! Generic code reaches architecture code ONLY through this module. One module per OpenBSD header
 //! ([`param`], [`vmparam`], [`cpu`], [`cons`], [`bus`], [`pmap`], [`intr`], [`db_machdep`],
-//! [`fdt`], [`proc`], [`tcb`]; [`bootinfo`]
+//! [`fdt`], [`proc`], [`tcb`]; [`autoconf`] is what `ioconf.c` and the machine's `autoconf.c`
+//! give `subr_autoconf.c`; [`bootinfo`]
 //! is the record the boot glue hands over), all re-exported here. The selected architecture is re-exported as [`Machine`]; the block at the
 //! bottom proves at compile time that it implements every trait. Adding a trait method therefore
 //! means implementing it for amd64, arm64 and the host test double in the same commit.
 
+pub mod autoconf;
 pub mod bootinfo;
 pub mod bus;
 pub mod cons;
@@ -22,6 +24,7 @@ pub mod proc;
 pub mod tcb;
 pub mod vmparam;
 
+pub use autoconf::*;
 pub use bootinfo::*;
 pub use bus::*;
 pub use cons::*;
@@ -44,6 +47,7 @@ pub use crate::arch::current::Machine;
 const _: () = {
     const fn assert_impl<
         M: MachineInfo
+            + Autoconf
             + MachineParam
             + VmParam
             + Cpu

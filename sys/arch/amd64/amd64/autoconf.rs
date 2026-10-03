@@ -40,22 +40,25 @@
 //!
 //! Upstream: sys/arch/amd64/amd64/autoconf.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M2 needs only `cold`, which `boot(9)` consults; M4 adds
-//! `cpu_configure` as far as the interrupts go. `diskconf`, `device_register` and the
-//! root-device search arrive with autoconfiguration (M5).
+//! Status: `wip`. `cold` is `sys/systm.rs`'s; `cpu_configure` runs autoconfiguration from
+//! `config_rootfound("mainbus")` (M7b), `device_register` and `nam2blk[]` are here;
+//! `diskconf` and `unmap_startup` wait for disks and the boot-only text.
 //!
 //! ## Deviations
-//! - `cpu_configure` has no `config_rootfound("mainbus")`: what the `cpu0` attach would do
-//!   for the interrupts (`cpu_intr_init` from `cpu_attach`, `intr_enable` from `cpu_init`) is
-//!   done here directly, as is the LAPIC setup `mpbios`/`acpimadt` would trigger
-//!   (`lapic_boot_init` at the architectural base, `lapic_enable`, `lapic_set_lvt`) and the
-//!   timer calibration of the boot CPU's `cpu_attach` (`lapic_calibrate_timer`);
-//!   `pmap_randomize`, `map_tramps`, `bus_dma_init`,
-//!   `mbuf_dma_64bit_enable`, `unmap_startup` and the random-number timeouts are reported.
+//! - What `bios0`/`acpi0` (the MADT) or `mpbios0` would do for the interrupts while mainbus
+//!   attaches is done by `cpu_configure` around `config_rootfound`: `lapic_boot_init` at the
+//!   architectural base before it; and after it, because mainbus attaches the boot CPU as
+//!   `CPU_ROLE_SP` without those tables, what the boot processor's attach would add
+//!   (`lapic_enable`, `lapic_calibrate_timer`), the LVT setup (`lapic_set_lvt`, which the C
+//!   does after mainbus for `NIOAPIC`) and `intr_enable`. `pmap_randomize`, `map_tramps`,
+//!   `bus_dma_init`, `mbuf_dma_64bit_enable`, `ioapic_enable`, `unmap_startup` and the
+//!   random-number timeouts are reported.
 
+use core::ffi::c_void;
+use core::ptr;
 use core::sync::atomic::Ordering;
 
-use crate::arch::amd64::amd64::intr::{cpu_intr_init, intr_printconfig};
+use crate::arch::amd64::amd64::intr::intr_printconfig;
 use crate::arch::amd64::amd64::lapic::{
     lapic_boot_init, lapic_calibrate_timer, lapic_enable, lapic_set_lvt,
 };
@@ -63,12 +66,43 @@ use crate::arch::amd64::amd64::machdep::x86_64_proc0_tss_ldt_init;
 use crate::arch::amd64::include::cpu::cpu_info_primary;
 use crate::arch::amd64::include::cpufunc::{intr_enable, lcr8};
 use crate::arch::amd64::include::i82489reg::LAPIC_BASE;
+use crate::kern::subr_autoconf::config_rootfound;
+use crate::kern::subr_prf::panic;
 use crate::machine::intr::spl0;
+use crate::sys::device::{Device, Nam2blk};
 use crate::sys::types::Paddr;
 use crate::unported;
 
 /// `cold`: if set, still working on cold-start.
 pub use crate::sys::systm::COLD;
+
+/// `nam2blk[]`: the disk drivers' names and block majors (`findblkmajor`, `findblkname`).
+pub static NAM2BLK: [Nam2blk; 6] = [
+    Nam2blk {
+        name: b"wd",
+        maj: 0,
+    },
+    Nam2blk {
+        name: b"fd",
+        maj: 2,
+    },
+    Nam2blk {
+        name: b"sd",
+        maj: 4,
+    },
+    Nam2blk {
+        name: b"cd",
+        maj: 6,
+    },
+    Nam2blk {
+        name: b"vnd",
+        maj: 14,
+    },
+    Nam2blk {
+        name: b"rd",
+        maj: 17,
+    },
+];
 
 /// `cpu_configure`: determine i/o configuration for a machine.
 pub fn cpu_configure() {
@@ -78,25 +112,30 @@ pub fn cpu_configure() {
     let _ = unported!("map_tramps (M6)");
     let _ = unported!("bus_dma_init (M7)");
 
-    // config_rootfound("mainbus", NULL): autoconfiguration (M5). Of what it would attach:
-    // mpbios/acpimadt find the LAPIC and call lapic_boot_init; the cpu0 attach does
-    // lapic_enable, cpu_intr_init (cpu_attach), lapic_set_lvt and intr_enable (cpu_init).
-    // TODO(M5): the LAPIC base comes from the MADT or the MP tables; this is the
+    // What acpimadt (or mpbios) does before attaching the CPUs: find the LAPIC.
+    // TODO(M7b): the LAPIC base comes from the MADT or the MP tables; this is the
     // architectural default.
     lapic_boot_init(Paddr::new(LAPIC_BASE));
+
+    if config_rootfound(b"mainbus", ptr::null_mut()).is_none() {
+        panic(format_args!("configure: mainbus not configured"));
+    }
+
+    // mainbus attached cpu0 as CPU_ROLE_SP (cpu_intr_init); what the boot processor's
+    // attach would add (lapic_enable, lapic_calibrate_timer) and the LVT the C programs for
+    // the IOAPIC below, before the interrupts are let through.
     lapic_enable();
-    cpu_intr_init(cpu_info_primary());
     lapic_set_lvt();
-    // SAFETY: the IDT, the PIC and the masks are set up.
+    // SAFETY: the IDT, the PIC, the LAPIC and the masks are set up.
     unsafe { intr_enable() };
-    // cpu_attach, CPU_ROLE_BP: calibrate the LAPIC timer against the i8254 (M5).
     lapic_calibrate_timer(cpu_info_primary());
 
     intr_printconfig();
 
     let _ = unported!("mbuf_dma_64bit_enable (M7)");
 
-    // NIOAPIC > 0: lapic_set_lvt, ioapic_enable (M5).
+    // NIOAPIC > 0: lapic_set_lvt (done above), ioapic_enable.
+    let _ = unported!("ioapic_enable (ioapic.c)");
 
     let _ = unported!("unmap_startup (M6)");
 
@@ -105,5 +144,13 @@ pub fn cpu_configure() {
     spl0();
     COLD.store(false, Ordering::Relaxed);
 
-    // The viac3_rnd and rdrand timeouts: M5.
+    // At this point the RNG is running, and if FSXR is set we can use it. Here we setup a
+    // periodic timeout to collect the data: the viac3_rnd and rdrand timeouts.
+    let _ = unported!("viac3_rnd/rdrand timeouts (identcpu.c)");
+    // CRYPTO: not configured.
 }
+
+/// `device_register`: nothing to note on amd64.
+pub fn device_register(_dev: &Device, _aux: *mut c_void) {}
+
+// diskconf: setroot, dumpconf and the boot device come with disks (dkcsumattach, parsedisk).

@@ -21,31 +21,49 @@
 //!
 //! Upstream: sys/arch/arm64/arm64/autoconf.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M4 ports `cpu_configure` as far as the interrupts go;
-//! `diskconf`, `device_register` and the root-device search arrive with autoconfiguration
-//! (M5). `cold` lives in `machdep.rs`, where the C defines it.
+//! Status: `wip`. `cpu_configure` runs autoconfiguration from `config_rootfound("mainbus")`
+//! (M7b), which attaches the interrupt controller and the generic timer from the device
+//! tree; `device_register` and `nam2blk[]` are here; `diskconf` and `unmap_startup` wait for
+//! disks and the boot-only text. `cold` lives in `sys/systm.rs`.
 //!
 //! ## Deviations
-//! - `cpu_configure` has no `config_rootfound("mainbus")`: `bus_dma_init`, `unmap_startup`
-//!   and `cpu_identify_cleanup` are reported; `agtimer_init` is called as `mainbus_attach`
-//!   does, and the interrupt controller and the generic timer are attached by
-//!   `attach_interrupt_controller`/`attach_timer`, which find their nodes and build the
-//!   `fdt_attach_args` as `simplebus` would.
+//! - `bus_dma_init`, `unmap_startup` (with its `codepatch_disable`) and
+//!   `cpu_identify_cleanup` are reported.
 
+use core::ffi::c_void;
+use core::ptr;
 use core::sync::atomic::Ordering;
 
-use crate::arch::arm64::arm64::bus_space::ARM64_BS_TAG;
-use crate::arch::arm64::arm64::intr::arm_intr_init_fdt;
 use crate::arch::arm64::arm64::machdep::COLD;
-use crate::arch::arm64::dev::agtimer::{agtimer_attach, agtimer_init, agtimer_match};
-use crate::arch::arm64::dev::ampintc::{ampintc_attach, ampintc_match};
-use crate::arch::arm64::include::fdt::FdtAttachArgs;
-use crate::dev::ofw::fdt::{FdtReg, fdt_get_reg, of_fdt_node};
-use crate::dev::ofw::openfirm::{OF_child, OF_getpropint, OF_peer};
 use crate::kern::kern_softintr::softintr_init;
-use crate::kern::subr_prf::printf;
+use crate::kern::subr_autoconf::config_rootfound;
 use crate::machine::intr::{spl0, splhigh};
+use crate::sys::device::{Device, Nam2blk};
 use crate::unported;
+
+/// `nam2blk[]`: the disk drivers' names and block majors (`findblkmajor`, `findblkname`).
+pub static NAM2BLK: [Nam2blk; 5] = [
+    Nam2blk {
+        name: b"wd",
+        maj: 0,
+    },
+    Nam2blk {
+        name: b"sd",
+        maj: 4,
+    },
+    Nam2blk {
+        name: b"cd",
+        maj: 6,
+    },
+    Nam2blk {
+        name: b"vnd",
+        maj: 14,
+    },
+    Nam2blk {
+        name: b"rd",
+        maj: 17,
+    },
+];
 
 /// `cpu_configure`: determine i/o configuration for a machine.
 pub fn cpu_configure() {
@@ -54,13 +72,7 @@ pub fn cpu_configure() {
     softintr_init();
     let _ = unported!("bus_dma_init (M7)");
 
-    // config_rootfound("mainbus", NULL): autoconfiguration (M5-b). Of what mainbus and
-    // simplebus would attach: mainbus_attach's agtimer_init, then the interrupt controller
-    // and the generic timer.
-    agtimer_init();
-    arm_intr_init_fdt();
-    attach_interrupt_controller();
-    attach_timer();
+    let _ = config_rootfound(b"mainbus", ptr::null_mut());
 
     let _ = unported!("unmap_startup (M6)");
 
@@ -72,57 +84,7 @@ pub fn cpu_configure() {
     spl0();
 }
 
-/// What `mainbus`/`simplebus` do for the interrupt controller until autoconfiguration
-/// (M5): find the GIC's node, build its attach arguments from `reg`, attach it.
-fn attach_interrupt_controller() {
-    let mut node = OF_child(OF_peer(0));
-    while node != 0 {
-        let mut regs = [FdtReg::default(); 2];
-        let mut faa = FdtAttachArgs {
-            fa_name: b"",
-            fa_node: node,
-            fa_iot: &ARM64_BS_TAG,
-            fa_reg: &[],
-            fa_intr: &[],
-            fa_acells: OF_getpropint(OF_peer(0), b"#address-cells", 1) as i32,
-            fa_scells: OF_getpropint(OF_peer(0), b"#size-cells", 1) as i32,
-        };
-        if ampintc_match(&faa) {
-            let fnode = of_fdt_node(node);
-            if fdt_get_reg(fnode, 0, &mut regs[0]).is_err()
-                || fdt_get_reg(fnode, 1, &mut regs[1]).is_err()
-            {
-                printf(format_args!("ampintc0: no registers\n"));
-                return;
-            }
-            faa.fa_reg = &regs;
-            ampintc_attach(&faa);
-            return;
-        }
-        node = OF_peer(node);
-    }
-    printf(format_args!("no interrupt controller in the device tree\n"));
-}
+// diskconf: setroot, dumpconf and the boot device come with disks (parsedisk).
 
-/// What `simplebus` does for the generic timer until autoconfiguration (M5-b): find its
-/// node and attach it (it needs no registers, only the node).
-fn attach_timer() {
-    let mut node = OF_child(OF_peer(0));
-    while node != 0 {
-        let faa = FdtAttachArgs {
-            fa_name: b"",
-            fa_node: node,
-            fa_iot: &ARM64_BS_TAG,
-            fa_reg: &[],
-            fa_intr: &[],
-            fa_acells: OF_getpropint(OF_peer(0), b"#address-cells", 1) as i32,
-            fa_scells: OF_getpropint(OF_peer(0), b"#size-cells", 1) as i32,
-        };
-        if agtimer_match(&faa) {
-            agtimer_attach(&faa);
-            return;
-        }
-        node = OF_peer(node);
-    }
-    printf(format_args!("no generic timer in the device tree\n"));
-}
+/// `device_register`: nothing to note on arm64.
+pub fn device_register(_dev: &Device, _aux: *mut c_void) {}
