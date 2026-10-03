@@ -316,6 +316,22 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   `config_rootfound` what `acpimadt` and the boot processor's attach would add (the LAPIC
   base, `lapic_enable`, `lapic_set_lvt`, `lapic_calibrate_timer`). Adding a driver means its
   `cfattach`/`cfdriver` and one `Cfdata` row in each `ioconf.rs` that has it in GENERIC.
+- File descriptors (M7b): `kern_descrip.c`, `<sys/file.h>`, `<sys/filedesc.h>` and the
+  read/write/ioctl paths of `sys_generic.c` are OpenBSD's: process 0 gets `fdinit()`,
+  `fork1` copies or shares the table, `exec` runs `fdprepforexec`, `exit1` runs `fdfree`,
+  and every `read`/`write`/`ioctl` goes through `fd_getfile_mode` and the file's
+  `fileops`. What needs the vfs, kqueues or pledge is reported (`VOP_ADVLOCK`,
+  `VOP_PATHCONF`, `knote_fdclose`, `pledge_*`). Pipes (`sys_pipe.c`, `<sys/pipe.h>`) are
+  not ported: their licence (John S. Dyson's) is outside the accepted list and waits for
+  the user's decision.
+- The console as a file (M7b, stand-in): in OpenBSD `init(8)` opens `/dev/console`, a
+  vnode of the console's character device whose tty does the I/O. Without the vfs and
+  the tty layer (M10), `start_init` installs `sys/dev/consfile.rs` instead: one `struct
+  file` of type `DTYPE_CONSFILE` (127, outside OpenBSD's range) whose `fileops` write
+  through `cnputc` and read a line through polled `cngetc` with echo, put at descriptors
+  0, 1 and 2 of process 1 by `falloc`/`fdinsert`/`fdalloc`. It is not a tty (`F_ISATTY`
+  and the `termios` ioctls answer `ENOTTY`), and it goes away when `init` can open
+  `/dev/console`.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

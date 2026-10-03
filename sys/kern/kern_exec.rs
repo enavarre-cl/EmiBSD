@@ -43,7 +43,7 @@
 //! the body of `sys_execve` from the point where the executable is in hand, as
 //! [`exec_image`], for an executable that is a memory image (the `init` Limine module).
 //! `sys_execve` itself (`namei`, the `NCARGS` argument copying, `copyargs` with a real
-//! `argv`/`envp`, `fdprepforexec`, `execsigs`, the signal trampoline and the timekeep page,
+//! `argv`/`envp`, `execsigs`, the signal trampoline and the timekeep page,
 //! `exec_md_map`, ptrace), `exec_free_package` and `exec_sigcode_map` come with the file
 //! descriptor table and the filesystems (M6-c, M7). With `kern_prot.c`, `exec_image` does
 //! the credentials part (`PS_SUGIDEXEC`, `PS_SUGID`, the saved ids reset through `crcopy`,
@@ -71,6 +71,7 @@ use core::sync::atomic::Ordering;
 
 use crate::kern::exec_elf::exec_elf_makecmds;
 use crate::kern::exec_subr::exec_process_vmcmds;
+use crate::kern::kern_descrip::fdprepforexec;
 use crate::kern::kern_exit::exit1;
 use crate::kern::kern_prot::{crcopy, crfree, crhold};
 use crate::machine::copy::copyout;
@@ -292,8 +293,9 @@ pub fn exec_image(p: &Proc, name: &[u8], image: &[u8]) -> Result<(), Errno> {
 
     // the pin tables (ps_pin, ps_libcpin): M7.
 
-    // stopprofclock, fdprepforexec, execsigs, the kbind bits and the signal cookie: M6-c.
-    let _ = unported!("exec: fdprepforexec/execsigs (M6-c)");
+    // stopprofclock, the kbind bits and the signal cookie: M6-c.
+    fdprepforexec(p); // handle close on exec and close on fork
+    let _ = unported!("exec: execsigs (M6-c)");
     tcb_set(p, 0); // reset the TCB address
 
     // set command name & other accounting info

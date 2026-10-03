@@ -8,7 +8,10 @@
 //! handler can provide (exec maps them zero-fill and never touches them), the demand-paging
 //! exit criterion. With `kern_prot.c` it checks its ids (`getpid`, `getuid`, `issetugid`)
 //! and sets its thread control block, reading it back through `__get_tcb(2)` and through
-//! the TLS register (`%fs` on amd64, `TPIDR_EL0` on arm64).
+//! the TLS register (`%fs` on amd64, `TPIDR_EL0` on arm64). With `kern_descrip.c` it
+//! exercises its descriptors 0, 1 and 2 (the console stand-in the kernel installs) through
+//! `dup`, `dup2`, `dup3`, `fcntl`, `ioctl`, `fstat`, `close`, `closefrom`,
+//! `getdtablecount` and `writev`.
 
 #![no_std]
 #![no_main]
@@ -37,6 +40,26 @@ static OPENBSD_IDENT: [u8; 24] = [
 const SYS_EXIT: usize = 1;
 /// `SYS_write`.
 const SYS_WRITE: usize = 4;
+/// `SYS_close`.
+const SYS_CLOSE: usize = 6;
+/// `SYS_getdtablecount`.
+const SYS_GETDTABLECOUNT: usize = 18;
+/// `SYS_dup`.
+const SYS_DUP: usize = 41;
+/// `SYS_fstat`.
+const SYS_FSTAT: usize = 53;
+/// `SYS_ioctl`.
+const SYS_IOCTL: usize = 54;
+/// `SYS_dup2`.
+const SYS_DUP2: usize = 90;
+/// `SYS_fcntl`.
+const SYS_FCNTL: usize = 92;
+/// `SYS_dup3`.
+const SYS_DUP3: usize = 102;
+/// `SYS_writev`.
+const SYS_WRITEV: usize = 121;
+/// `SYS_closefrom`.
+const SYS_CLOSEFROM: usize = 287;
 /// `SYS_getpid`.
 const SYS_GETPID: usize = 20;
 /// `SYS_getuid`.
@@ -47,6 +70,27 @@ const SYS_ISSETUGID: usize = 253;
 const SYS___SET_TCB: usize = 329;
 /// `SYS___get_tcb`.
 const SYS___GET_TCB: usize = 330;
+
+/// `EBADF`.
+const EBADF: usize = 9;
+/// `EINVAL`.
+const EINVAL: usize = 22;
+/// `F_DUPFD`, `F_GETFD`, `F_SETFD`, `F_GETFL`, `F_DUPFD_CLOEXEC`.
+const F_DUPFD: usize = 0;
+const F_GETFD: usize = 1;
+const F_SETFD: usize = 2;
+const F_GETFL: usize = 3;
+const F_DUPFD_CLOEXEC: usize = 10;
+/// `FD_CLOEXEC`.
+const FD_CLOEXEC: usize = 1;
+/// `O_RDWR`.
+const O_RDWR: usize = 2;
+/// `FIOCLEX`, `FIONCLEX`: `_IO('f', 1)`, `_IO('f', 2)`.
+const FIOCLEX: usize = 0x2000_6601;
+const FIONCLEX: usize = 0x2000_6602;
+/// `S_IFMT`, `S_IFCHR`.
+const S_IFMT: u32 = 0o170000;
+const S_IFCHR: u32 = 0o020000;
 
 /// The thread control block: its first word points at itself, as the TLS ABIs want, so the
 /// TLS register can be checked by reading through it.
@@ -139,7 +183,51 @@ pub extern "C" fn _start() -> ! {
     } else {
         status = 3;
     }
+    if !fds() {
+        status = 4;
+    }
     exit(status)
+}
+
+/// `kern_descrip.c` seen from user mode. Descriptors 0, 1 and 2 are one console file; the
+/// duplicates take the lowest free numbers, carry their own close-on-exec flag and share
+/// the file. The last check writes "init: fds ok" through a duplicate with `writev`.
+fn fds() -> bool {
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let mut ok = call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false);
+    ok &= call(SYS_DUP, 1, 0, 0) == (3, false);
+    ok &= call(SYS_DUP2, 3, 10, 0) == (10, false);
+    ok &= call(SYS_FCNTL, 10, F_GETFD, 0) == (0, false);
+    ok &= call(SYS_FCNTL, 10, F_SETFD, FD_CLOEXEC) == (0, false);
+    ok &= call(SYS_FCNTL, 10, F_GETFD, 0) == (FD_CLOEXEC, false);
+    ok &= call(SYS_FCNTL, 3, F_DUPFD, 5) == (5, false);
+    ok &= call(SYS_FCNTL, 3, F_DUPFD_CLOEXEC, 5) == (6, false);
+    ok &= call(SYS_FCNTL, 6, F_GETFD, 0) == (FD_CLOEXEC, false);
+    ok &= call(SYS_FCNTL, 1, F_GETFL, 0) == (O_RDWR, false);
+    ok &= call(SYS_DUP3, 3, 3, 0) == (EINVAL, true);
+    ok &= call(SYS_IOCTL, 5, FIOCLEX, 0) == (0, false);
+    ok &= call(SYS_FCNTL, 5, F_GETFD, 0) == (FD_CLOEXEC, false);
+    ok &= call(SYS_IOCTL, 5, FIONCLEX, 0) == (0, false);
+    ok &= call(SYS_FCNTL, 5, F_GETFD, 0) == (0, false);
+    ok &= call(SYS_CLOSE, 5, 0, 0) == (0, false);
+    ok &= call(SYS_CLOSE, 5, 0, 0) == (EBADF, true);
+    ok &= call(SYS_GETDTABLECOUNT, 0, 0, 0) == (6, false);
+
+    let mut st = [0u64; 16];
+    ok &= call(SYS_FSTAT, 3, st.as_mut_ptr() as usize, 0) == (0, false);
+    ok &= (st[0] as u32) & S_IFMT == S_IFCHR;
+
+    ok &= call(SYS_CLOSEFROM, 4, 0, 0) == (0, false);
+    ok &= call(SYS_GETDTABLECOUNT, 0, 0, 0) == (4, false);
+    ok &= call(SYS_WRITE, 10, b"x".as_ptr() as usize, 1) == (EBADF, true);
+
+    if ok {
+        let (a, b) = (b"init: fds", b" ok\n");
+        let iov = [a.as_ptr() as usize, a.len(), b.as_ptr() as usize, b.len()];
+        ok &= call(SYS_WRITEV, 3, iov.as_ptr() as usize, 2) == (a.len() + b.len(), false);
+    }
+    ok &= call(SYS_CLOSE, 3, 0, 0) == (0, false);
+    ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
 }
 
 /// `kern_prot.c` seen from user mode: init is pid 1, root, not set-id; the TCB set with

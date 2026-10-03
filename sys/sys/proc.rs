@@ -79,6 +79,7 @@ use crate::machine::cpu::{CpuInfo, MAXCPUS};
 use crate::machine::intr::IPL_HIGH;
 use crate::machine::proc::{MachineProc, Mdproc};
 use crate::queue_adapter;
+use crate::sys::filedesc::Filedesc;
 use crate::sys::mutex::Mutex;
 use crate::sys::pclock::PcLock;
 use crate::sys::queue::{ListEntry, ListHead, TailqEntry, TailqHead};
@@ -323,8 +324,8 @@ pub struct Process {
     pub ps_sigacts: Cell<*const ()>,
     /// `ps_textvp`: vnode of executable (`struct vnode`, M6).
     pub ps_textvp: Cell<*const ()>,
-    /// `ps_fd`: ptr to open files structure (`struct filedesc`, M6).
-    pub ps_fd: Cell<*const ()>,
+    /// `ps_fd`: ptr to open files structure; the process holds a reference (`fd()`).
+    pub ps_fd: Cell<*const Filedesc>,
     /// `ps_vmspace`: address space.
     pub ps_vmspace: Cell<*const Vmspace>,
     /// \[I\] `ps_pid`: process identifier.
@@ -686,8 +687,8 @@ pub struct Proc {
     pub p_thr_link: TailqEntry<Proc>,
 
     // substructures:
-    /// `p_fd`: copy of `p_p->ps_fd` (`struct filedesc`, M6).
-    pub p_fd: Cell<*const ()>,
+    /// `p_fd`: copy of `p_p->ps_fd` (`fd()`).
+    pub p_fd: Cell<*const Filedesc>,
     /// \[I\] `p_vmspace`: copy of `p_p->ps_vmspace`.
     pub p_vmspace: Cell<*const Vmspace>,
     /// \[o\] `p_spinentry`: cache for SP check.

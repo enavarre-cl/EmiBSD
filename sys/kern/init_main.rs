@@ -56,7 +56,9 @@
 //! - `main()` takes no `framep` (unused in C) and never returns, as the C's loop never does.
 //! - `start_init` execs the `init` Limine module (`stand` hands it over through
 //!   `set_init_module`) instead of trying the `initpaths` on a filesystem; `check_console`
-//!   waits for `namei`. Under feature `qemu` the run ends when init exits (`exit1`), with
+//!   waits for `namei`. Before the exec it installs the console stand-in
+//!   (`dev/consfile.rs`) at descriptors 0, 1 and 2, which `init(8)` would get by opening
+//!   `/dev/console`. Under feature `qemu` the run ends when init exits (`exit1`), with
 //!   the status `xtask smoke` checks; proc0 goes back to sleep as in C.
 
 use core::ffi::c_void;
@@ -65,9 +67,11 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 
 use libkern::StaticCell;
 
+use crate::dev::consfile::consfile_attach;
 use crate::dev::rnd::arc4random;
 use crate::kern::kern_clock::initclocks;
 use crate::kern::kern_clockintr::clockqueue_init;
+use crate::kern::kern_descrip::{fdinit, filedesc_init};
 use crate::kern::kern_exec::exec_image;
 use crate::kern::kern_exit::reaper;
 use crate::kern::kern_fork::{fork1, process_initialize};
@@ -204,7 +208,7 @@ pub fn main() -> ! {
     let _ = unported!("lf_init");
 
     // Initialize filedescriptors.
-    let _ = unported!("filedesc_init");
+    filedesc_init();
 
     // Initialize pipes.
     let _ = unported!("pipe_init");
@@ -262,7 +266,9 @@ pub fn main() -> ! {
 
     // Init signal state, file descriptor table, limits and the prototype map of process 0.
     let _ = unported!("signal_init / siginit");
-    let _ = unported!("fdinit");
+    let fdp = fdinit();
+    pr.ps_fd.set(fdp);
+    p.p_fd.set(fdp);
     lim_startup(&LIMIT0);
     pr.ps_limit.set(&LIMIT0);
     uvmspace_init(
@@ -469,6 +475,12 @@ pub fn start_init(arg: *mut c_void) {
     }
 
     check_console(p);
+
+    // Descriptors 0, 1 and 2: init(8) opens /dev/console itself, which needs the vfs and
+    // the tty layer (M10); until then the console stand-in is installed here.
+    if let Err(e) = consfile_attach(p) {
+        kprintf!("init: console stand-in: error {}\n", e as i32);
+    }
 
     // process 0 ignores SIGCHLD, but we can't: ps_sigacts (kern_sig.c, M6-c).
     let _ = unported!("start_init: ps_sigacts->ps_sigflags = 0 (M6-c)");

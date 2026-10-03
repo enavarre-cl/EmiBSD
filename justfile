@@ -57,7 +57,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "cpu0: apic clock running at" \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
-        --expect "init exited with status 0 (signal 0)"
+        --expect "init: fds ok" --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=trap" --status 35 \
@@ -81,7 +81,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "agtimer0 at mainbus0: " \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
-        --expect "init exited with status 0 (signal 0)"
+        --expect "init: fds ok" --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=trap" --status 35 \

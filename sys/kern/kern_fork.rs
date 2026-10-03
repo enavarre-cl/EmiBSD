@@ -55,9 +55,8 @@
 //!   `ps_startcopy` fields from the parent, instead of `memset`/`memcpy` by field offset.
 //! - `process_initialize` reports what its process does not have yet: `prof_fork` (M6),
 //!   `klist_init_mutex` (M6) and the two timeouts' handlers (`realitexpire`, `rucheck`:
-//!   M6). `process_new` likewise reports `lim_fork`, `fdcopy`, `sigactsinit` and
-//!   `startprofclock` (M6); the shared variant `fdshare` copies the parent's (null)
-//!   pointer. `fork1` skips the `RLIMIT_NPROC` check for root as the C does, reports it for
+//!   M6). `process_new` likewise reports `sigactsinit` and `startprofclock` (M6);
+//!   `fdcopy`/`fdshare` are real since `kern_descrip.c`. `fork1` skips the `RLIMIT_NPROC` check for root as the C does, reports it for
 //!   other users (the limits), and reports `knote_processfork` (M6). The credentials
 //!   (`crhold` in `thread_new` and `process_initialize`, the forking thread's real uid in
 //!   `fork1`) are real since `kern_prot.c`.
@@ -73,6 +72,7 @@ use crate::dev::rnd::{arc4random, arc4random_uniform};
 use crate::kassert;
 use crate::kern::kern_clock::hardclock_period;
 use crate::kern::kern_clockintr::clockintr_advance;
+use crate::kern::kern_descrip::{fdcopy, fdshare};
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_proc::{
     ALLPROC, ALLPROCESS, PROC_POOL, PROCESS_POOL, chgproccnt, pgfind, pidhash, prfind, tfind,
@@ -268,9 +268,9 @@ fn process_new(p: &'static Proc, parent: &'static Process, flags: i32) -> &'stat
 
     // Duplicate sub-structures as needed. Increase reference counts on shared objects.
     if flags & FORK_SHAREFILES != 0 {
-        pr.ps_fd.set(parent.ps_fd.get()); // fdshare(parent): kern_descrip.c (M6)
+        pr.ps_fd.set(fdshare(parent));
     } else {
-        let _ = unported!("process_new: fdcopy (kern_descrip.c, M6)");
+        pr.ps_fd.set(fdcopy(parent));
     }
     // sigactsinit(parent): kern_sig.c (M6).
     let _ = unported!("process_new: sigactsinit (kern_sig.c, M6)");

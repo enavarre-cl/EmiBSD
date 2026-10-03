@@ -61,9 +61,6 @@
 //!   group (`enternewpgrp`, `enterthispgrp`, `kern_proc.c`) is not ported (it needs the
 //!   signals and the terminals): where the C would enter one, they give the pool items back
 //!   and return `unported!` (`ENOSYS`).
-//! - `proc_cansugid` checks `PS_TRACED`; the shared file table test (`p_fd->fd_refcnt > 1`)
-//!   waits for `struct filedesc` and is reported, and until then the answer is "no" (the
-//!   safe one; nothing calls it before exec reads set[ug]id bits from a vnode).
 //! - `sys___set_tcb`/`sys___get_tcb` go through `machine::tcb` (`TCB_SET`, `TCB_GET`,
 //!   `TCB_INVALID`); the TCB is a `usize`.
 //! - `KERNEL_LOCK()` in `dorefreshcreds` is the lack of preemption on one CPU.
@@ -935,10 +932,13 @@ pub fn proc_cansugid(p: &Proc) -> bool {
         return false;
     }
 
-    // processes with shared filedescriptors shouldn't: p_fd->fd_refcnt > 1 needs struct
-    // filedesc (kern_descrip.c); until then the answer is the safe one.
-    let _ = unported!("proc_cansugid: fd_refcnt (struct filedesc)");
-    false
+    // processes with shared filedescriptors shouldn't.
+    if p.fd().fd_refcnt.get() > 1 {
+        return false;
+    }
+
+    // Allow.
+    true
 }
 
 /// `__set_tcb(2)`: set address of the proc's thread-control-block.

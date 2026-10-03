@@ -11,6 +11,7 @@ pub mod init_main;
 pub mod init_sysent;
 pub mod kern_clock;
 pub mod kern_clockintr;
+pub mod kern_descrip;
 pub mod kern_exec;
 pub mod kern_exit;
 pub mod kern_fork;

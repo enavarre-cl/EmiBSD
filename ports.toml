@@ -440,7 +440,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs; M7b: config_init, the config_pending wait (tsleep on config_pending) and config_process_deferred_mountroot run (subr_autoconf.c)"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs; M7b: config_init, the config_pending wait (tsleep on config_pending) and config_process_deferred_mountroot run (subr_autoconf.c); kern_descrip.c: filedesc_init runs, process 0 gets fdinit() as ps_fd/p_fd, start_init installs the console stand-in (dev/consfile.rs) at descriptors 0, 1 and 2 before the exec, where init(8) would open /dev/console"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -1615,7 +1615,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "34f4bcdb97b70e5cf96ace4f826ce3b2a81fde03"
 deps = ["sys/sys/queue.h", "sys/sys/timeout.h", "sys/sys/mutex.h", "sys/sys/pclock.h", "sys/sys/refcnt.h", "sys/sys/resource.h", "sys/sys/user.h"]
-notes = "M5-b1: session, pgrp, tusage, process and proc (the members the scheduler, the sleep queues and the kernel threads use; the sigio/klist/ptrace/unveil/pinsyscall/vnode/ucred/filedesc/plimit/vmspace/sigacts members are opaque pointers or left out, each named in a comment), the S* states, P_*/PS_* flags with their %b strings, THREAD_PID_OFFSET, uidinfo, PID_MAX/TID_MASK/NO_PID, SESS_LEADER, FORK_*/EXIT_*/SINGLE_*, cond, cpuset, tu_enter/tu_leave; the function prototypes live with their .c files; M6-a: refreshcreds (dorefreshcreds reported); M6-b2: ps_vmspace/p_vmspace are *const Vmspace with vmspace() accessors, ps_strings, Proc::set_name; M7a: ps_lock (an Rwlock); M7a-3b: ps_limit/p_limit typed (struct plimit), ps_kbind_cookie/ps_kbind_addr, struct pinsyscall with ps_pin/ps_libcpin, ps_auxinfo/ps_timekeep/ps_sigcode/ps_sigcoderet/ps_sigcookie (zero until exec sets them); kern_prot.c: ps_ucred/p_ucred are *const Ucred with ucred() accessors, refreshcreds calls dorefreshcreds"
+notes = "M5-b1: session, pgrp, tusage, process and proc (the members the scheduler, the sleep queues and the kernel threads use; the sigio/klist/ptrace/unveil/pinsyscall/vnode/ucred/filedesc/plimit/vmspace/sigacts members are opaque pointers or left out, each named in a comment), the S* states, P_*/PS_* flags with their %b strings, THREAD_PID_OFFSET, uidinfo, PID_MAX/TID_MASK/NO_PID, SESS_LEADER, FORK_*/EXIT_*/SINGLE_*, cond, cpuset, tu_enter/tu_leave; the function prototypes live with their .c files; M6-a: refreshcreds (dorefreshcreds reported); M6-b2: ps_vmspace/p_vmspace are *const Vmspace with vmspace() accessors, ps_strings, Proc::set_name; M7a: ps_lock (an Rwlock); M7a-3b: ps_limit/p_limit typed (struct plimit), ps_kbind_cookie/ps_kbind_addr, struct pinsyscall with ps_pin/ps_libcpin, ps_auxinfo/ps_timekeep/ps_sigcode/ps_sigcoderet/ps_sigcookie (zero until exec sets them); kern_prot.c: ps_ucred/p_ucred are *const Ucred with ucred() accessors, refreshcreds calls dorefreshcreds; kern_descrip.c: ps_fd/p_fd are *const Filedesc (the fd() accessors live in sys/sys/filedesc.rs)"
 
 [[file]]
 c = "sys/sys/user.h"
@@ -1736,7 +1736,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "39298a62f1463ba6e2086d5669cfa187f80c4fe2"
 deps = ["sys/sys/ucred.h", "sys/sys/proc.h", "sys/kern/kern_proc.c", "sys/kern/kern_synch.c", "sys/kern/subr_pool.c", "sys/sys/syscallargs.h", "sys/arch/amd64/include/tcb.h", "sys/arch/arm64/include/tcb.h"]
-notes = "every function: crset, the id syscalls (getpid/getthrid/getppid/getpgrp/getpgid/getsid, get/set[res][e]uid/gid, setre[ug]id, issetugid, getgroups/setgroups), groupmember, suser, suser_ucred, crget/crhold/crfree/crcopy/crdup (ucred_pool items as &'static Ucred, like uvmspace_alloc/free), crfromxucred, getlogin_r/setlogin, proc_cansugid, __set_tcb/__get_tcb (machine::tcb), getthrname/setthrname, dorefreshcreds; stubs: sys_setsid and sys_setpgid make every check but report enternewpgrp/enterthispgrp (kern_proc.c, not ported) and return ENOSYS where the C enters a group; proc_cansugid reports fd_refcnt (struct filedesc) and answers no; KERNEL_LOCK is one CPU; host tests"
+notes = "every function: crset, the id syscalls (getpid/getthrid/getppid/getpgrp/getpgid/getsid, get/set[res][e]uid/gid, setre[ug]id, issetugid, getgroups/setgroups), groupmember, suser, suser_ucred, crget/crhold/crfree/crcopy/crdup (ucred_pool items as &'static Ucred, like uvmspace_alloc/free), crfromxucred, getlogin_r/setlogin, proc_cansugid, __set_tcb/__get_tcb (machine::tcb), getthrname/setthrname, dorefreshcreds; stubs: sys_setsid and sys_setpgid make every check but report enternewpgrp/enterthispgrp (kern_proc.c, not ported) and return ENOSYS where the C enters a group; KERNEL_LOCK is one CPU; host tests; kern_descrip.c: proc_cansugid checks p_fd->fd_refcnt > 1 as the C does"
 
 [[file]]
 c = "sys/kern/kern_subr.c"
@@ -1744,8 +1744,8 @@ rust = "sys/kern/kern_subr.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "65bb9b5fa6cdc52a421f82a2c32cacad2165f8d1"
-deps = ["sys/kern/kern_malloc.c"]
-notes = "M5: hashinit (returns the table as a slice) and hashfree; uiomove, ureadc and the hooks are M6/M7"
+deps = ["sys/kern/kern_malloc.c", "sys/sys/uio.h", "sys/kern/sched_bsd.c"]
+notes = "M5: hashinit (returns the table as a slice) and hashfree; the hooks (hook_establish/disestablish, dohooks) wait for their first user; M7b (kern_descrip.c): uiomove (the kernel buffer as a slice; UIO_SYSSPACE through kcopy) and ureadc; PMAP_CHECK_COPYIN not configured; host tests"
 
 [[file]]
 c = "sys/kern/kern_kthread.c"
@@ -1781,7 +1781,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "de3d88871a036e3bab92269561698e00ec6996ba"
 deps = ["sys/sys/proc.h", "sys/kern/kern_proc.c", "sys/kern/kern_synch.c", "sys/dev/rnd.c"]
-notes = "M5-b1: nprocesses/nthreads, process_initialize (crhold, prof_fork, klist_init_mutex and the realitexpire/rucheck timeouts reported; rw_init of ps_lock since M7a), fork_check_maxthread, alloctid, allocpid, ispidtaken, freepid; thread_new, process_new, fork1, fork_thread_start and proc_trampoline_mi are M5-b2, the fork syscalls and thread_fork M6; M5-b2: forkstat, thread_new, process_new (lim_fork, fdcopy, sigactsinit reported; fdshare copies the parent pointer), fork_thread_start, fork1 (returns the new thread; root uid for proc0; knote_processfork/ptrace/psignal reported), proc_trampoline_mi; M6-b2: process_new uses uvmspace_share/uvmspace_fork; fork1 adds vm_dsize + vm_ssize to the forkstat sizes; M7a-3b: lim_fork and the rucheck timeout of process_initialize (realitexpire still reported); kern_prot.c: crhold in thread_new and process_initialize (with the cr_refcnt >= 2 KASSERT), fork1 charges the forking thread's cr_ruid (no more root for everyone)"
+notes = "M5-b1: nprocesses/nthreads, process_initialize (crhold, prof_fork, klist_init_mutex and the realitexpire/rucheck timeouts reported; rw_init of ps_lock since M7a), fork_check_maxthread, alloctid, allocpid, ispidtaken, freepid; thread_new, process_new, fork1, fork_thread_start and proc_trampoline_mi are M5-b2, the fork syscalls and thread_fork M6; M5-b2: forkstat, thread_new, process_new (lim_fork, fdcopy, sigactsinit reported; fdshare copies the parent pointer), fork_thread_start, fork1 (returns the new thread; root uid for proc0; knote_processfork/ptrace/psignal reported), proc_trampoline_mi; M6-b2: process_new uses uvmspace_share/uvmspace_fork; fork1 adds vm_dsize + vm_ssize to the forkstat sizes; M7a-3b: lim_fork and the rucheck timeout of process_initialize (realitexpire still reported); kern_prot.c: crhold in thread_new and process_initialize (with the cr_refcnt >= 2 KASSERT), fork1 charges the forking thread's cr_ruid (no more root for everyone); kern_descrip.c: process_new calls fdshare (FORK_SHAREFILES) or fdcopy"
 
 [[file]]
 c = "sys/sys/vmmeter.h"
@@ -1968,7 +1968,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "93ef328110b1c5aabeb187152a1f357f397ffaf2"
 deps = ["sys/sys/proc.h", "sys/kern/kern_proc.c", "sys/kern/kern_sched.c", "sys/kern/kern_synch.c", "sys/kern/kern_resource.c", "sys/uvm/uvm_glue.c"]
-notes = "M6-b: sys_exit, exit1 (single_thread_set, process_suspend_signal, kqpoll_exit, stopprofclock, fdfree, killjobc, SAS_NOCLDWAIT, lim_free, process_untrace reported), exit2 with deadproc, proc_free (crfree reported), reaper (knote_processexit, prsignal reported), process_clear_orphan, process_reparent, process_zap (leavepgrp, vrele, sigactsfree/lim_free/crfree reported); process 0 adopts orphans while initprocess is null; sys___threxit, dowait6, sys_wait4, sys_waitid, proc_finish_wait, process_untrace are M6-c/M7; M6-b2: exit1 calls uvm_purge for user processes and the reaper uvm_exit; under feature qemu init's exit (pid 1) logs 'init exited with status N' and ends the run with that status instead of the C's panic; M7a-3b: lim_free of p_limit and of ps_limit in process_zap"
+notes = "M6-b: sys_exit, exit1 (single_thread_set, process_suspend_signal, kqpoll_exit, stopprofclock, fdfree, killjobc, SAS_NOCLDWAIT, lim_free, process_untrace reported), exit2 with deadproc, proc_free (crfree reported), reaper (knote_processexit, prsignal reported), process_clear_orphan, process_reparent, process_zap (leavepgrp, vrele, sigactsfree/lim_free/crfree reported); process 0 adopts orphans while initprocess is null; sys___threxit, dowait6, sys_wait4, sys_waitid, proc_finish_wait, process_untrace are M6-c/M7; M6-b2: exit1 calls uvm_purge for user processes and the reaper uvm_exit; under feature qemu init's exit (pid 1) logs 'init exited with status N' and ends the run with that status instead of the C's panic; M7a-3b: lim_free of p_limit and of ps_limit in process_zap; kern_descrip.c: exit1 calls fdfree"
 
 [[file]]
 c = "sys/sys/exec_elf.h"
@@ -2094,7 +2094,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "3f5c94691de23e802f4409d6e295420f160770fb"
 deps = ["sys/sys/exec.h", "sys/kern/exec_elf.c", "sys/kern/exec_subr.c", "sys/uvm/uvm_map.c", "sys/kern/kern_exit.c", "sys/sys/signal.h"]
-notes = "M6-b: execsw (ELF only), check_exec for a memory image (no namei/attributes/mount/access checks, no vn_rdwr; MAXTSIZ checked, the data limit is DFLDSIZ until lim_cur), exec_image = the body of sys_execve from the executable in hand (uvmspace_exec, the vm sizes, exec_process_vmcmds, ps_strings, copyargs with an empty argv/envp and no auxv, ps_comm, PS_EXEC/PS_INEXEC, the thread's runtime reset, setregs, EJUSTRETURN; exec_abort = exit1 with SIGABRT), with uvm_map_protect of the stack top, fdprepforexec/execsigs reported; sys_execve itself (namei, the argument copying, the sigcode/timekeep pages, exec_md_map, ptrace), exec_free_package and exec_sigcode_map are M6-c/M7; TooLs GmbH 4-clause licence accepted at M2; M7a-3b: the PROT_NONE cover of the top of the stack (uvm_map_protect from round_page(ep_execpath + PATH_MAX) to vm_minsaddr); kern_prot.c: TCB_SET(p, NULL) and the credentials part of sys_execve in exec_image (PS_SUGIDEXEC set/cleared, PS_SUGID cleared since an image has no VSUID/VSGID, the saved ids reset through crcopy, ps_ucred updated with crhold/crfree; cancel_all_itimers reported; the pledge/unveil reset waits for pledge/unveil)"
+notes = "M6-b: execsw (ELF only), check_exec for a memory image (no namei/attributes/mount/access checks, no vn_rdwr; MAXTSIZ checked, the data limit is DFLDSIZ until lim_cur), exec_image = the body of sys_execve from the executable in hand (uvmspace_exec, the vm sizes, exec_process_vmcmds, ps_strings, copyargs with an empty argv/envp and no auxv, ps_comm, PS_EXEC/PS_INEXEC, the thread's runtime reset, setregs, EJUSTRETURN; exec_abort = exit1 with SIGABRT), with uvm_map_protect of the stack top, fdprepforexec/execsigs reported; sys_execve itself (namei, the argument copying, the sigcode/timekeep pages, exec_md_map, ptrace), exec_free_package and exec_sigcode_map are M6-c/M7; TooLs GmbH 4-clause licence accepted at M2; M7a-3b: the PROT_NONE cover of the top of the stack (uvm_map_protect from round_page(ep_execpath + PATH_MAX) to vm_minsaddr); kern_prot.c: TCB_SET(p, NULL) and the credentials part of sys_execve in exec_image (PS_SUGIDEXEC set/cleared, PS_SUGID cleared since an image has no VSUID/VSGID, the saved ids reset through crcopy, ps_ucred updated with crhold/crfree; cancel_all_itimers reported; the pledge/unveil reset waits for pledge/unveil); kern_descrip.c: exec_image calls fdprepforexec (execsigs still reported)"
 
 [[file]]
 c = "sys/kern/sys_generic.c"
@@ -2102,8 +2102,8 @@ rust = "sys/kern/sys_generic.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8082cec7af2808ceca1c70dec622cf33d4bd7cf6"
-deps = ["sys/sys/limits.h", "sys/sys/syscallargs.h", "sys/dev/cons.c"]
-notes = "M6-b: sys_write (the SSIZE_MAX check) and dofilewritev for descriptors 1 and 2 only: the console through copyin and cnputc (fd_getfile and the file table reported, EBADF otherwise); read/readv/pread/preadv, writev/pwrite/pwritev, dofilereadv, ioctl, select/pselect, poll/ppoll and the kqueue pollers are M6-c/M7"
+deps = ["sys/sys/limits.h", "sys/sys/syscallargs.h", "sys/kern/kern_descrip.c", "sys/kern/kern_subr.c", "sys/sys/ioccom.h", "sys/sys/filio.h"]
+notes = "M6-b: sys_write for the console (descriptors 1 and 2 straight to cnputc); M7b (kern_descrip.c): iovec_copyin (returns the iovecs and resid, frees its own array on failure; the user array copied one iovec at a time) and iovec_free (unsafe), sys_read, sys_readv, dofilereadv, sys_write, sys_writev, dofilewritev (the 1/2 shortcut is gone: every descriptor goes through fd_getfile_mode and f_ops), sys_ioctl (FIOCLEX/FIONCLEX, IOCPARM_LEN buffer on the stack or malloc(M_IOCTLOPS), FIONBIO/FIOASYNC, fo_ioctl); reported: the FO_POSITION vnode checks (vfs), ptsignal(SIGPIPE) on EPIPE (kern_sig.c), pledge_ioctl (only with PS_PLEDGE), the socket SS_DNS check; KTRACE not configured; select/pselect/poll/ppoll and the kqueue pollers wait for kern_event.c"
 
 [[file]]
 c = "sys/arch/amd64/include/exec.h"
@@ -2392,6 +2392,91 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "fa6792cf185a0d4f2d03a8db414a111edb0f25c2"
 deps = ["sys/netinet/in.h", "sys/sys/socket.h"]
 notes = "M7b: MAX_IPOPTLEN, ipovly, ipstat, ipoption, enum ipstat_counters, ipoffnxt, the ip_output flags, IPMTUDISCTIMEOUT; ipstat_inc/add wait for sys/percpu.h; ip_moptions (in_multi), ipqent/ipq (mbuf), the globals and the prototypes come with ip_input.c/ip_output.c/raw_ip.c"
+
+# ---------------------------------------------------------------------------
+# M7b: file descriptors (kern_descrip.c), uio, the read/write/ioctl paths
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/sys/fcntl.h"
+rust = "sys/sys/fcntl.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "89ce365486d0d13e1316cf7ae29bb5d8fba65c5c"
+deps = ["sys/sys/types.h"]
+notes = "M7b: O_*/F* flags, FFLAGS/OFLAGS as const fns fflags/oflags over i32, FMASK/FCNTLFLAGS, the fcntl commands, FD_CLOEXEC/FD_CLOFORK, F_RDLCK..F_INTR, struct flock (#[repr(C)], from_bytes/to_bytes for copyin/copyout), LOCK_*, AT_*; the userland prototypes are not kernel material; host and reference-backed tests"
+
+[[file]]
+c = "sys/sys/uio.h"
+rust = "sys/sys/uio.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7c826243e597694be4ad1336d333f3825c846caa"
+deps = ["sys/sys/types.h"]
+notes = "M7b: struct iovec (#[repr(C)], from_bytes), enum uio_rw/uio_seg (C variant names), struct uio with uio_iov/uio_iovcnt as one &mut [Iovec] (advancing shortens the slice) and uio_procp as Option<&Proc>, UIO_SMALLIOV, UIO_MAXIOV; the prototypes live with their .c files"
+
+[[file]]
+c = "sys/sys/stat.h"
+rust = "sys/sys/stat.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ce1040fd120ebcc5332ee2cd8ce2cac527ea4fef"
+deps = ["sys/sys/types.h", "sys/sys/time.h"]
+notes = "M7b: struct stat (#[repr(C)], 128 bytes on both archs, to_bytes zeroes the padding for copyout), the S_I* bits and S_IF* types, S_IS*() as const fns, ACCESSPERMS/ALLPERMS/DEFFILEMODE, S_BLKSIZE, UF_*/SF_* file flags, OPAQUE/APPEND/IMMUTABLE, UTIME_*; userland prototypes not kernel material; host and reference-backed tests"
+
+[[file]]
+c = "sys/sys/filio.h"
+rust = "sys/sys/filio.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "19fd80551384ad016e1e01374b66a673f6d0de16"
+deps = ["sys/sys/ioccom.h"]
+notes = "M7b: FIOCLEX, FIONCLEX, FIONREAD, FIONBIO, FIOASYNC, FIOSETOWN, FIOGETOWN; host test of the encoded values"
+
+[[file]]
+c = "sys/sys/file.h"
+rust = "sys/sys/file.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b2f1909169ea92b9f0196bf46ce4b2899a0594af"
+deps = ["sys/sys/queue.h", "sys/sys/mutex.h", "sys/sys/uio.h", "sys/sys/stat.h"]
+notes = "M7b: DTYPE_*, struct fileops (fn pointers returning Result; fo_ioctl data as &mut [u8], fo_kqfilter's knote a raw pointer until kern_event.c, fo_close with Option<&Proc>, fo_seek an Option), FO_POSITION, struct file (pool item handed around as &'static File; f_flag/f_iflags/f_count atomics, the rest Cells), FIF_*, FREF/FRELE as fref/frele (frele takes impl Into<Option<&Proc>>; vfs_stall_barrier not called: no vfs), FDUP_MAX_COUNT, foffset, the filelist adapter; maxfiles is conf/param.rs MAXFILES, numfiles kern_descrip.rs NUMFILES, socketops/vnops wait for sockets and the vfs"
+
+[[file]]
+c = "sys/sys/filedesc.h"
+rust = "sys/sys/filedesc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c532c5eaae772f9f371a65f1695b539afb259b90"
+deps = ["sys/sys/file.h", "sys/sys/mutex.h", "sys/sys/rwlock.h"]
+notes = "M7b: NDFILE/NDEXTENT/NDENTRIES/..., NDREDUCE/NDHISLOTS/NDLOSLOTS as const fns, struct filedesc (the four arrays stay raw pointers that fdexpand swaps, reached only through bounds-checked accessors ofile/set_ofile/ofileflags/lomap/himap; fd_cdir/fd_rdir opaque and null until the vfs; fd_kqlist left out until kern_event.c), struct filedesc0 (#[repr(C)], the internal arrays in UnsafeCells), UF_*, FD_ADVLOCK, OFILESIZE, fdplock/fdpunlock/fdpassertlocked (NET_ASSERT_UNLOCKED waits for the net lock); Process::fd/Proc::fd accessors for ps_fd/p_fd"
+
+[[file]]
+c = "sys/kern/kern_descrip.c"
+rust = "sys/kern/kern_descrip.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f4cc898cdfd53875dd40d40fba56608fdc6d1191"
+deps = ["sys/sys/file.h", "sys/sys/filedesc.h", "sys/sys/fcntl.h", "sys/sys/stat.h", "sys/sys/filio.h", "sys/sys/uio.h", "sys/kern/kern_prot.c", "sys/kern/subr_pool.c", "sys/kern/kern_malloc.c", "sys/kern/kern_rwlock.c", "sys/sys/resourcevar.h", "sys/conf/param.c", "sys/sys/syscallargs.h"]
+notes = "M7b: the whole file: fhdlk, filehead, numfiles, file_pool/fdesc_pool, filedesc_init, find_next_zero (words past a map's end read as full), find_last_set, fd_inuse/fd_used/fd_unused, fd_iterfile, fd_getfile, fd_getfile_mode, fd_checkclosed, sys_dup/dup2/dup3, dodup3, sys_fcntl (all commands), finishdup, fdinsert, fdremove, fdrelease, sys_close, sys_fstat, sys_fpathconf, fdalloc (the search split into fdalloc_search for host tests; returns the fd), fdexpand (ENOMEM instead of sleeping in M_WAITOK), falloc (returns file and fd), fnew (ENFILE when file_pool is empty), fdinit, fdshare, fdcopy, fdfree, closef, fdrop, sys_flock, filedescopen, dupfdopen, fdprepforexec, sys_closefrom, sys_getdtablecount; stubs (unported!): knote_fdclose (kern_event.c), VOP_ADVLOCK (fcntl F_SETLK/F_SETLKW/F_GETLK, flock, closef of a vnode), VOP_PATHCONF (fpathconf of a vnode), F_ISATTY's VISTTY (vnode), vref/vrele of fd_cdir/fd_rdir, pledge_fcntl/pledge_flock (only with PS_PLEDGE); vfs_stall_barrier not called, KTRACE not configured; host tests"
+
+[[file]]
+c = "sys/sys/pipe.h"
+rust = ""
+status = "skipped"
+deps = []
+notes = "license: John S. Dyson's (FreeBSD pipes: keep the notice 'immediately at the beginning of the file', binary notice, no warranty, 'done expressly for inclusion into FreeBSD; other use is allowed if this notation is included'); not in the accepted list (scope-and-stubs.md), waits for the user's decision"
+
+[[file]]
+c = "sys/kern/sys_pipe.c"
+rust = ""
+status = "skipped"
+deps = []
+notes = "license: John S. Dyson's BSD-style four clauses (retain the notice immediately at the beginning, binary notice, no warranty, modifications free); not in the accepted list (scope-and-stubs.md), waits for the user's decision; pipe_init stays reported in main"
+
+[[extra]]
+rust = "sys/dev/consfile.rs"
+reason = "stand-in until /dev/console (vfs + tty, M10): the console as a struct file (DTYPE_CONSFILE, fileops over cnputc/cngetc) that start_init installs at descriptors 0, 1 and 2 of init through falloc/fdinsert"
 
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"

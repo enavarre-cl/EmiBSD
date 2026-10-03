@@ -51,7 +51,7 @@
 //! ## Deviations
 //! - What `exit1` tears down that does not exist yet is reported, each once: the signal
 //!   side (`single_thread_set`, `process_suspend_signal`, `sigio_freelist`,
-//!   `SAS_NOCLDWAIT`, `prsignal`), `kqpoll_exit`, `stopprofclock`/`prof_write`, `fdfree`,
+//!   `SAS_NOCLDWAIT`, `prsignal`), `kqpoll_exit`, `stopprofclock`/`prof_write`,
 //!   `cancel_all_itimers`, `killjobc`, `unveil_destroy`, `uvm_purge`, `lim_free`,
 //!   `process_untrace`; `process_zap` likewise `leavepgrp`, `vrele`, `sigactsfree`,
 //!   `lim_free`; the reaper `knote_processexit`. The credentials (`crfree` in `proc_free`
@@ -65,6 +65,7 @@ use core::sync::atomic::Ordering;
 
 use crate::kassert;
 use crate::kern::init_main::{INITPROCESS, PROCESS0};
+use crate::kern::kern_descrip::fdfree;
 use crate::kern::kern_fork::{NPROCESSES, NTHREADS, freepid};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_proc::{PROC_POOL, PROCESS_POOL, RUSAGE_POOL, ZOMBPROCESS, chgproccnt};
@@ -242,8 +243,8 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
 
         // sigio_freelist(&pr->ps_sigiolst): sigio (M6-c).
 
-        // close open files and release open-file table: fdfree(p) (kern_descrip.c, M6-c).
-        let _ = unported!("exit1: fdfree (kern_descrip.c, M6-c)");
+        // close open files and release open-file table
+        fdfree(p);
 
         // cancel_all_itimers(): kern_time.c (M6-c).
 
