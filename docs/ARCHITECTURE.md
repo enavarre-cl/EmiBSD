@@ -816,6 +816,15 @@ user's group (macOS has no such group, and `pwd_mkdb` insists on one).
   is still a derivative work, so each ported file keeps its original licence block whatever the
   language; a licence outside the list is routed around, never rewritten.
 
+- The crypto framework (`sys/crypto`, M9b/M9c) is the software driver only: `crypto.c`,
+  `cryptosoft.c`, `xform.c`, `criov.c` and the primitives they and WireGuard use. `cryptop_pool`
+  is not ported (a request is a value, see `crypto/crypto.rs`) and the IPCOMP transform
+  (`CRYPTO_DEFLATE_COMP`, `comp_algo_deflate`, `xform_ipcomp.c`) is reported: it needs
+  `deflate_global` from `lib/libz`, which has crc32 only. `crypto_init` and `swcr_init`
+  (`init_main.c` calls them under `#ifdef CRYPTO`) are not wired into `main` yet. Primitives
+  whose C is public domain (`chacha_private.h`, `poly1305`, `rijndael`, `sha1`, `md5`, `cast`)
+  keep their notice verbatim between the licence markers (accepted 2026-10-03).
+
 Every file-level deviation is in that file's `//! ## Deviations` list and in `ports.toml` `notes`.
 
 - rd(4)'s image (M8): OpenBSD links a RAMDISK kernel with an `rd_root_image[]` array that

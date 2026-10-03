@@ -1,4 +1,4 @@
-//! `sys/crypto`: the kernel's cryptographic primitives. Only what ported code calls is here.
+//! `sys/crypto`: the kernel's cryptographic primitives and the crypto framework (`crypto(9)`).
 
 pub mod aes;
 pub mod blake2s;
@@ -6,6 +6,11 @@ pub mod blf;
 pub mod cast;
 pub mod chacha_private;
 pub mod chachapoly;
+pub mod criov;
+#[allow(clippy::module_inception)] // crypto.c, the file, in the crypto directory
+pub mod crypto;
+pub mod cryptodev;
+pub mod cryptosoft;
 pub mod curve25519;
 pub mod des_locl;
 pub mod ecb3_enc;
@@ -25,6 +30,7 @@ pub mod sk;
 pub mod spr;
 #[cfg(test)]
 mod testutil;
+pub mod xform;
 
 /// `explicit_bzero(&x, sizeof(x))` for a context that is a plain value: overwrites it with its
 /// default (all zero) and keeps the compiler from proving the store dead, so the secret it held

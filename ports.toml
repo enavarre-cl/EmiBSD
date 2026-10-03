@@ -3388,6 +3388,75 @@ upstream_blob = "6fdb9f9d4d5baf86780ce59fa0d29ff309b10765"
 deps = ["sys/crypto/des_locl.h", "sys/crypto/ecb_enc.c", "sys/crypto/set_key.c"]
 notes = "des_ecb3_encrypt (3DES-EDE of one block, des3_encrypt/des3_decrypt in xform); the classic DES example as EDE with one key and three-key vectors from openssl tested"
 
+[[file]]
+c = "sys/crypto/cryptodev.h"
+rust = "sys/crypto/cryptodev.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c04845dadfd48014dd3fa39971b516cfab0b6d75"
+notes = "Cryptoini (cri_next as Option<&Cryptoini>, the iv/esn union one array with accessors), Cryptodesc, Cryptop (descriptors in a Vec, crp_buf as CryptoBuf: mbuf or uio, crp_mac an Option slice), Cryptocap, the CRYPTO_*/CRD_F_*/CRYPTO_F_* constants; licence: Keromytis notice plus BSD-2 (Theo de Raadt), accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/criov.c"
+rust = "sys/crypto/criov.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "dc39e3b57b7e5384b1d31ec1baf1b4e634ebd2d7"
+deps = ["sys/crypto/cryptodev.h"]
+notes = "cuio_copydata/copyback/getptr/apply over a uio of kernel buffers (a UIO_USERSPACE uio is refused under diagnostic); cuio_apply takes a closure; empty iovecs are runs of no bytes as in the C; licence: BSD-2 (Theo de Raadt)"
+
+[[file]]
+c = "sys/crypto/crypto.c"
+rust = "sys/crypto/crypto.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ea9f36060b8e0e67f427d4300497cd4ee1e32226"
+deps = ["sys/crypto/cryptodev.h"]
+notes = "crypto_newsession/freesession/get_driverid/register/unregister/invoke/getreq/freereq and the driver table (a StaticCell<Vec<Cryptocap>> behind a closure accessor, under splvm); cryptop_pool is not ported (a request is a value; crypto_init does nothing), the migrate chain is built by recursion, ERESTART/EAGAIN as in the C; crypto_init/swcr_init are not called from main yet; licence: Keromytis notice, accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/xform.h"
+rust = "sys/crypto/xform.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "dd6d8577c8088268c21a7f6bc8af926d0cb2d6d0"
+deps = ["sys/crypto/cryptodev.h"]
+notes = "AuthHash, EncXform, CompAlgo, AuthCtx (union authctx as an enum), Kschedule, AesCtrCtx, AesXtsCtx; shares the module with xform.c; licence: Keromytis notice, accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/xform.c"
+rust = "sys/crypto/xform.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5b22ce02e2206c621048750836f386aee952a895"
+deps = ["sys/crypto/xform.h", "sys/crypto/aes.c", "sys/crypto/rijndael.c", "sys/crypto/blf.c", "sys/crypto/cast.c", "sys/crypto/rmd160.c", "sys/crypto/md5.c", "sys/crypto/sha1.c", "sys/crypto/sha2.c", "sys/crypto/gmac.c", "sys/crypto/chachapoly.c", "sys/crypto/ecb3_enc.c", "sys/crypto/set_key.c"]
+notes = "enc_xform_3des/blf/cast5/aes/aes_ctr/aes_gcm/aes_gmac/aes_xts/chacha20_poly1305/null and auth_hash_hmac_md5_96/sha1_96/ripemd_160_96/sha2_256_128/384_192/512_256, gmac_aes_128/192/256, chacha20_poly1305 with their wrappers; comp_algo_deflate and deflate_compress/decompress/global are not ported (needs zlib's deflate, lib/libz has crc32 only): reported, CompAlgo is the type only; short keys the C would read past are EINVAL; licence: Ioannidis/Keromytis/Provos/Miller/Belopuhov notice, accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/cryptosoft.h"
+rust = "sys/crypto/cryptosoft.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6da392d8c1b370b6c610dfa1458e9263e4471ffb"
+deps = ["sys/crypto/cryptodev.h"]
+notes = "SwcrData with SWCR_UN as an enum (SwcrUn), SwcrList; shares the module with cryptosoft.c; licence: Keromytis notice, accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/cryptosoft.c"
+rust = "sys/crypto/cryptosoft.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1672e4589b25235f224133381499e34bab855aec"
+deps = ["sys/crypto/cryptosoft.h", "sys/crypto/crypto.c", "sys/crypto/criov.c", "sys/crypto/xform.c", "sys/kern/uipc_mbuf.c", "sys/dev/rnd.c"]
+notes = "swcr_encdec (one block routine for the four copies in the C, the chaining value kept in a local), swcr_authcompute, swcr_authenc (AES-GCM and ChaCha20-Poly1305 in an ESP layout tested against the GCM spec and RFC 8439), swcr_newsession/freesession/process/init and the session table; the HMAC key is not modified in place; m_copyback errors the C ignores are returned; CRYPTO_DEFLATE_COMP/swcr_compdec are ENOSYS through unported! and not advertised; AES-CBC/CTR/XTS, 3DES/Blowfish/CAST CBC, HMACs tested over iovecs and mbuf chains with straddling blocks"
+
+[[file]]
+c = "sys/crypto/xform_ipcomp.c"
+rust = "sys/crypto/xform_ipcomp.rs"
+status = "todo"
+deps = ["sys/crypto/xform.c"]
+notes = "reported, not started: IPCOMP needs deflate_global from zlib (lib/libz has crc32 only); comp_algo_deflate is missing from xform.rs for the same reason"
+
 [[extra]]
 rust = "sys/crypto/testutil.rs"
 reason = "host test helper: hex decoding for the known-answer vectors of sys/crypto"

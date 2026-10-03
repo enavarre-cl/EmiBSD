@@ -3,6 +3,7 @@
 
 extern crate std;
 
+use std::sync::{Mutex, MutexGuard};
 use std::vec::Vec;
 
 /// The bytes of a hex string; spaces and line breaks are ignored.
@@ -65,4 +66,11 @@ pub(crate) fn c_table(rel: &str, name: &str) -> Vec<u64> {
             .unwrap_or_else(|_| panic!("{name}: cannot parse `{t}`"))
         })
         .collect()
+}
+
+/// The crypto framework's tables (`crypto_drivers`, `swcr_sessions`) are global: the tests that
+/// touch them hold this lock, one at a time.
+pub(crate) fn serial() -> MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
