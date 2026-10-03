@@ -2886,7 +2886,25 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d8b3695eafc44c4faaa208c08d27ebd2653cfefc"
 deps = ["sys/sys/protosw.h", "sys/sys/domain.h", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c"]
-notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; no pr_usrreqs/pr_ctloutput), inetdomain, ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (in_init, udp_*, tcp_*, rip_input/rip_init, ipip_*, igmp_*) and free the packet; INET6, IPSEC, GRE, MROUTING, CARP, PFSYNC, ETHERIP, PIPEX, divert, MPLS not configured"
+notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; no pr_usrreqs/pr_ctloutput), inetdomain (dom_init is in_pcb.c's in_init since M9a), ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (udp_*, tcp_*, rip_input/rip_init, ipip_*, igmp_*) and free the packet; INET6, IPSEC, GRE, MROUTING, CARP, PFSYNC, ETHERIP, PIPEX, divert, MPLS not configured"
+
+[[file]]
+c = "sys/netinet/in_pcb.h"
+rust = "sys/netinet/in_pcb.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c8b971f23d9348a03258ddcda0c897d7cc45ef09"
+deps = ["sys/netinet/in.h", "sys/netinet/ip.h", "sys/net/route.h", "sys/crypto/siphash.h"]
+notes = "M9a: module with in_pcb.c. struct inpcb (Inpcb, a pool item as &'static, Cells; the INET6 unions keep their IPv4 member only; inp_seclevel, inp_pf_sk, inp_icmp6filt left out: IPSEC, NPF, INET6 not configured), struct inpcb_iterator (InpcbIterator: a whole Inpcb without table or socket), struct inpcbtable (Sync under inpt_mtx; hash tables as hashinit slices), struct baddynamicports (atomic words), every INP_*/IN6P_*/INPLOOKUP_*/IN_PCBLOCK_* constant, DP_MAPBITS/DP_MAPSIZE and DP_SET/CLR/ISSET as functions, DEFBADDYNAMICPORTS_*/DEFROOTONLYPORTS_* as slices without the terminating 0, sotoinpcb (checks the family), in_pcb_is_iterator; the prototypes are in_pcb.c's functions; in6_* not compiled (INET6)"
+
+[[file]]
+c = "sys/netinet/in_pcb.c"
+rust = "sys/netinet/in_pcb.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2ecf458e0811f396eb65e9dc250b1eeada5aa431"
+deps = ["sys/netinet/in_pcb.h", "sys/netinet/in.c", "sys/netinet/ip_output.c", "sys/net/route.c", "sys/net/rtable.c", "sys/kern/uipc_socket.c", "sys/crypto/siphash.c"]
+notes = "M9a: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: zeroin_addr, ipport_firstauto/lastauto/hifirstauto/hilastauto (atomics; the hi ones keep their lowercase C names beside in.h's constants), baddynamicports, rootonlyports, inpcb_pool, in_init, in_pcbhash/in_pcblhash (SipHash24), in_pcbinit (hashinit failure panics), in_baddynamic, in_rootonly, in_pcballoc, in_pcbbind_locked/in_pcbbind, in_pcbaddrisavail_lock/in_pcbaddrisavail (clear the port and sin_zero of a copy), in_pcbpickport, in_pcbconnect, in_pcbdisconnect, in_pcbdetach, in_pcbsolock/sounlock, in_pcbref/unref (the link KASSERTs are not made: queue.rs keeps links private), in_pcb_iterator (unsafe: the iterator sits in the queue)/abort, in_setsockaddr/setpeeraddr, in_sockaddr/peeraddr/flowid (pr_usrreqs), in_pcbnotifyall (notify takes Option<Errno>), in_losing, in_pcbrtchange, in_pcblookup_local_lock, in_pcbrtentry, in_pcbselsrc, in_pcbrehash, in_pcbhash_insert/lookup, in_pcbresize, in_pcblookup_lock/in_pcblookup, in_pcblookup_listen, in_pcbset_rtableid, in_pcbset_addr (sockaddr_in arguments), in_pcbunset_faddr/laddr; in_pcbnotifymiss printfs behind diagnostic; INET6, NPF, IPSEC, NSTOEPLITZ not configured (comments at the sites); host tests (port bitmaps and defaults, bind/EADDRINUSE/SO_REUSEPORT/picked ports, lookups, resize, iterator, detach)"
 
 [[file]]
 c = "sys/netinet/in_var.h"
@@ -2949,7 +2967,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "64c2b79a2b6dd2be2b8258ff6c00dc3d16d7a8d6"
 deps = ["sys/netinet/ip_var.h", "sys/netinet/in.c", "sys/netinet/in_proto.c", "sys/netinet/ip_icmp.c", "sys/netinet/ip_output.c", "sys/netinet/if_ether.c", "sys/net/route.c"]
-notes = "M7b: the sysctl variables (AtomicI32; ipport_* reported: in_pcb.c), ipq/ipq_mutex, ipintrq, the ipqent/ipq pools, ipcounters, the ip_send queues and tasks, inetctlerrmap; ip_init (baddynamicports/rootonlyports reported; arpinit), ip_ours/ip_ours_enqueue, ipintr, ipv4_input, ipv4_check, ip_input_if, ip_fragcheck, ip_deliver, in_ouraddr, ip_reass, ip_freef, ip_slowtimo, ip_flush, ip_dooptions, save_rte, ip_srcroute, ip_stripoptions, ip_forward, ip_sysctl, ip_sysctl_ipstat, ip_send_dispatch/ip_sendraw_dispatch, ip_send, ip_send_raw; IPSEC, pf, carp, MROUTING, INET6, divert not configured (comments at the sites); host tests (header validation, ARP plus echo to the gateway, echo request answered, parameter problem)"
+notes = "M7b: the sysctl variables (AtomicI32; M9a: the ipport_* entries are in_pcb.c's atomics), ipq/ipq_mutex, ipintrq, the ipqent/ipq pools, ipcounters, the ip_send queues and tasks, inetctlerrmap; ip_init (M9a: baddynamicports/rootonlyports filled from in_pcb.h's defaults; arpinit), ip_ours/ip_ours_enqueue, ipintr, ipv4_input, ipv4_check, ip_input_if, ip_fragcheck, ip_deliver, in_ouraddr, ip_reass, ip_freef, ip_slowtimo, ip_flush, ip_dooptions, save_rte, ip_srcroute, ip_stripoptions, ip_forward, ip_sysctl, ip_sysctl_ipstat, ip_send_dispatch/ip_sendraw_dispatch, ip_send, ip_send_raw; IPSEC, pf, carp, MROUTING, INET6, divert not configured (comments at the sites); host tests (header validation, ARP plus echo to the gateway, echo request answered, parameter problem)"
 
 [[file]]
 c = "sys/netinet/ip_output.c"

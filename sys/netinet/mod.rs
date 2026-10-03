@@ -8,6 +8,7 @@ pub mod if_ether;
 pub mod in4_cksum;
 pub mod in_;
 pub mod in_cksum;
+pub mod in_pcb;
 pub mod in_proto;
 pub mod in_systm;
 pub mod in_var;

@@ -61,9 +61,8 @@
 //!   [`mtod_ip_store`]): mbuf data has no 4-byte alignment guarantee, which `struct ip` needs
 //!   in Rust; the reassembly queue keeps a raw pointer to each fragment's header, as the C
 //!   does, and reads it unaligned the same way.
-//! - `in_pcb.c` is not ported: `ip_init`'s `baddynamicports`/`rootonlyports` setup and the
-//!   `net.inet.ip.porthifirst`.. sysctls (`ipport_*`) report themselves; `ip_savecontrol`
-//!   (`struct inpcb`, `sbcreatecontrol`) waits for the socket layer.
+//! - `ip_init` fills `in_pcb.c`'s `baddynamicports`/`rootonlyports` from the default lists
+//!   (slices without the C's terminating 0); the `ipport_*` sysctls are `in_pcb.c`'s atomics.
 //! - Not configured, each a comment at its site: `NPF` (`pf_test`, `pf_ouraddr`), `NCARP`
 //!   (`carp_lsdrop`, `carp_strict_addr_chk`), `MROUTING` (`ip_mforward`,
 //!   `ip_mrouter_active`, the `mrt` sysctls answer `EOPNOTSUPP` as the C's `#else` does),
@@ -118,6 +117,11 @@ use crate::netinet::in_::{
     in_local_group, in_multicast, sintosa,
 };
 use crate::netinet::in_cksum::in_cksum;
+use crate::netinet::in_pcb::{
+    BADDYNAMICPORTS, DEFBADDYNAMICPORTS_TCP, DEFBADDYNAMICPORTS_UDP, DEFROOTONLYPORTS_TCP,
+    DEFROOTONLYPORTS_UDP, IPPORT_FIRSTAUTO, IPPORT_LASTAUTO, ROOTONLYPORTS, dp_set,
+    ipport_hifirstauto, ipport_hilastauto,
+};
 use crate::netinet::in_proto::{INETDOMAIN, INETSW, IP_PROTOX};
 use crate::netinet::in_var::ifatoia;
 use crate::netinet::ip::{
@@ -157,7 +161,6 @@ use crate::sys::systm::{
     net_assert_locked, net_lock, net_lock_shared, net_unlock, net_unlock_shared,
 };
 use crate::sys::task::Task;
-use crate::unported;
 
 /// `struct ip_srcrt`: the IP options of an incoming packet saved in case a protocol wants to
 /// respond to it over the same route if it got here using IP source routing. This allows
@@ -217,14 +220,16 @@ pub static IP_MAXQUEUE: AtomicI32 = AtomicI32::new(300);
 static IP_FRAGS: AtomicI32 = AtomicI32::new(0);
 
 /// `ipctl_vars[]`.
-static IPCTL_VARS: [SysctlBoundedArgs; 8] = [
+static IPCTL_VARS: [SysctlBoundedArgs; 12] = [
     SysctlBoundedArgs::new(IPCTL_FORWARDING, &ip_forwarding, 0, 2),
     SysctlBoundedArgs::new(IPCTL_SENDREDIRECTS, &IP_SENDREDIRECTS, 0, 1),
     SysctlBoundedArgs::new(IPCTL_DIRECTEDBCAST, &IP_DIRECTEDBCAST, 0, 1),
     // MROUTING: IPCTL_MRTPROTO, read only; not configured.
     SysctlBoundedArgs::new(IPCTL_DEFTTL, &IP_DEFTTL, 0, 255),
-    // IPCTL_IPPORT_FIRSTAUTO, _LASTAUTO, _HIFIRSTAUTO, _HILASTAUTO: in_pcb.c's variables,
-    // reported in ip_sysctl.
+    SysctlBoundedArgs::new(IPCTL_IPPORT_FIRSTAUTO, &IPPORT_FIRSTAUTO, 0, 65535),
+    SysctlBoundedArgs::new(IPCTL_IPPORT_LASTAUTO, &IPPORT_LASTAUTO, 0, 65535),
+    SysctlBoundedArgs::new(IPCTL_IPPORT_HIFIRSTAUTO, &ipport_hifirstauto, 0, 65535),
+    SysctlBoundedArgs::new(IPCTL_IPPORT_HILASTAUTO, &ipport_hilastauto, 0, 65535),
     SysctlBoundedArgs::new(IPCTL_IPPORT_MAXQUEUE, &IP_MAXQUEUE, 0, 10000),
     SysctlBoundedArgs::new(IPCTL_MFORWARDING, &IPMFORWARDING, 0, 1),
     SysctlBoundedArgs::new(IPCTL_ARPTIMEOUT, &ARPT_KEEP, 0, INT_MAX),
@@ -325,9 +330,31 @@ pub fn ip_init() {
     }
     IPQ.0.init();
 
-    // Fill in list of ports not to allocate dynamically, and of ports only root can bind to:
-    // baddynamicports and rootonlyports are in_pcb.c's.
-    let _ = unported!("baddynamicports, rootonlyports (netinet/in_pcb.c)");
+    // Fill in list of ports not to allocate dynamically.
+    for m in [&BADDYNAMICPORTS.tcp, &BADDYNAMICPORTS.udp] {
+        for w in m {
+            w.store(0, Ordering::Relaxed);
+        }
+    }
+    for &p in DEFBADDYNAMICPORTS_TCP {
+        dp_set(&BADDYNAMICPORTS.tcp, p);
+    }
+    for &p in DEFBADDYNAMICPORTS_UDP {
+        dp_set(&BADDYNAMICPORTS.udp, p);
+    }
+
+    // Fill in list of ports only root can bind to.
+    for m in [&ROOTONLYPORTS.tcp, &ROOTONLYPORTS.udp] {
+        for w in m {
+            w.store(0, Ordering::Relaxed);
+        }
+    }
+    for &p in DEFROOTONLYPORTS_TCP {
+        dp_set(&ROOTONLYPORTS.tcp, p);
+    }
+    for &p in DEFROOTONLYPORTS_UDP {
+        dp_set(&ROOTONLYPORTS.udp, p);
+    }
 
     mq_init(&IPSEND_MQ, 64, IPL_SOFTNET);
     mq_init(&IPSENDRAW_MQ, 64, IPL_SOFTNET);
@@ -1809,10 +1836,6 @@ pub fn ip_sysctl(
 
             error
         }
-        IPCTL_IPPORT_FIRSTAUTO
-        | IPCTL_IPPORT_LASTAUTO
-        | IPCTL_IPPORT_HIFIRSTAUTO
-        | IPCTL_IPPORT_HILASTAUTO => Err(unported!("ipport_* (netinet/in_pcb.c)")),
         _ => sysctl_bounded_arr(&IPCTL_VARS, name, oldp, oldlenp, newp, newlen),
     }
 }

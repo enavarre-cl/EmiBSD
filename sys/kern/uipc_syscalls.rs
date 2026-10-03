@@ -55,10 +55,9 @@
 //! - `pledge_socket`, `pledge_sendit`, `pledge_sockopt` and `pledge_fail` (`kern_pledge.c`'s
 //!   enforcement is not ported) are reported for a pledged process, as elsewhere.
 //! - `sys_ypconnect`'s binding file name is built on the stack (`MAXPATHLEN`), where the C
-//!   takes a `namei_pool` buffer. The socket it connects is an `AF_INET` one: no internet
-//!   protocol has user requests yet (`sys/protosw.rs`), so `socreate` refuses it with
-//!   `EPROTONOSUPPORT`; `sotoinpcb(so)->inp_flags |= INP_LOWPORT` (`netinet/in_pcb.c`) is
-//!   reported where the C sets it.
+//!   takes a `namei_pool` buffer. Its `SOCK_STREAM` socket needs TCP (`tcp_usrreq.c`, not
+//!   ported), which has no user requests yet, so `socreate` refuses it with
+//!   `EPROTONOSUPPORT`; a `SOCK_DGRAM` one is UDP's.
 //! - `KTRACE` is not configured (`ktrsockaddr`, `ktrmsghdr`, `ktriovec`, `ktrgenio`,
 //!   `ktrfds`, `ktrcmsghdr`); `INET6` is not configured (`dns_portcheck`'s `AF_INET6`).
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
@@ -92,6 +91,7 @@ use crate::kern::vfs_vops::{VOP_ADVLOCK, VOP_GETATTR, VOP_READ};
 use crate::machine::copy::{copyin, copyin_obj, copyout};
 use crate::net::rtable::rtable_exists;
 use crate::netinet::in_::{IPPORT_RESERVED, InAddr, SockaddrIn};
+use crate::netinet::in_pcb::{INP_LOWPORT, sotoinpcb};
 use crate::sys::errno::Errno;
 use crate::sys::fcntl::{F_GETLK, F_POSIX, F_UNLCK, F_WRLCK, FNONBLOCK, FREAD, FWRITE, Flock};
 use crate::sys::file::{DTYPE_SOCKET, File, frele};
@@ -1866,9 +1866,10 @@ pub fn sys_ypconnect(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Resul
     solock(so);
 
     // Secure YP maps require reserved ports
-    if suser(p).is_ok() {
-        // sotoinpcb(so)->inp_flags |= INP_LOWPORT: netinet/in_pcb.c.
-        let _ = unported!("sys_ypconnect: INP_LOWPORT (netinet/in_pcb.c)");
+    if suser(p).is_ok()
+        && let Some(inp) = sotoinpcb(so)
+    {
+        inp.set_flags(INP_LOWPORT);
     }
 
     let mut error = soconnect(so, nam);

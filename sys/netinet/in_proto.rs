@@ -114,7 +114,7 @@
 //! - The protocols whose files are not ported keep their entries, with stand-ins in this
 //!   module named after the C functions: `udp_*` (`netinet/udp_usrreq.c`), `tcp_*`
 //!   (`netinet/tcp_*.c`), `rip_*` (`netinet/raw_ip.c`), `ipip_*` (`netinet/ip_ipip.c`),
-//!   `igmp_*` (`netinet/igmp.c`) and `in_init` (`netinet/in_pcb.c`). Each reports itself with
+//!   `igmp_*` (`netinet/igmp.c`). Each reports itself with
 //!   `unported!`; an input stand-in drops the packet (`IPPROTO_DONE`), a sysctl one fails with
 //!   `ENOSYS`. Raw IP sockets need the socket layer, so `rip_input` stays a stand-in even
 //!   where `icmp_input` passes a message on to it.
@@ -133,6 +133,7 @@ use crate::netinet::in_::{
     IPPROTO_DONE, IPPROTO_ICMP, IPPROTO_IGMP, IPPROTO_IPV4, IPPROTO_MAX, IPPROTO_RAW, IPPROTO_TCP,
     IPPROTO_UDP, SockaddrIn,
 };
+use crate::netinet::in_pcb::in_init;
 use crate::netinet::ip_icmp::{icmp_init, icmp_input, icmp_sysctl};
 use crate::netinet::ip_input::{ip_init, ip_slowtimo, ip_sysctl};
 use crate::sys::domain::Domain;
@@ -253,11 +254,6 @@ pub static INETDOMAIN: Domain = Domain {
 fn unported_input(mp: &mut Option<&'static Mbuf>) -> i32 {
     m_freemp(mp);
     IPPROTO_DONE
-}
-
-/// `in_init` (`netinet/in_pcb.c`, not ported): the `inpcb` pool.
-fn in_init() {
-    let _ = unported!("in_init (netinet/in_pcb.c)");
 }
 
 /// `udp_input` (`netinet/udp_usrreq.c`, not ported).

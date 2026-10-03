@@ -1,0 +1,1944 @@
+/*	$OpenBSD: in_pcb.h,v 1.174 2026/02/05 03:26:00 dlg Exp $	*/
+/*	$NetBSD: in_pcb.h,v 1.14 1996/02/13 23:42:00 christos Exp $	*/
+/*	$OpenBSD: in_pcb.c,v 1.322 2025/12/02 15:52:04 bluhm Exp $	*/
+/*	$NetBSD: in_pcb.c,v 1.25 1996/02/13 23:41:53 christos Exp $	*/
+/* <LICENSES> */
+/*
+ * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the project nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE PROJECT OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+/*
+ * Copyright (c) 1982, 1986, 1990, 1993
+ *	The Regents of the University of California.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ *	@(#)in_pcb.h	8.1 (Berkeley) 6/10/93
+ */
+
+/*
+ * Copyright (c) 1982, 1986, 1991, 1993
+ *	The Regents of the University of California.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ *	@(#)COPYRIGHT	1.1 (NRL) 17 January 1995
+ *
+ * NRL grants permission for redistribution and use in source and binary
+ * forms, with or without modification, of the software and documentation
+ * created at NRL provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgements:
+ *	This product includes software developed by the University of
+ *	California, Berkeley and its contributors.
+ *	This product includes software developed at the Information
+ *	Technology Division, US Naval Research Laboratory.
+ * 4. Neither the name of the NRL nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THE SOFTWARE PROVIDED BY NRL IS PROVIDED BY NRL AND CONTRIBUTORS ``AS
+ * IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+ * PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL NRL OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * The views and conclusions contained in the software and documentation
+ * are those of the authors and should not be interpreted as representing
+ * official policies, either expressed or implied, of the US Naval
+ * Research Laboratory (NRL).
+ */
+/* </LICENSES> */
+
+//! Internet protocol control blocks: `<netinet/in_pcb.h>` and `netinet/in_pcb.c`.
+//!
+//! Upstream: sys/netinet/in_pcb.h @ 3ce1f3f79392
+//! Upstream: sys/netinet/in_pcb.c @ 3ce1f3f79392
+//!
+//! Every UDP and raw IP socket has an [`Inpcb`]: the local and foreign addresses and ports,
+//! the cached route, the IP header prototype and the socket options of the IP layer. The
+//! control blocks of one protocol live in an [`Inpcbtable`]: a queue of all of them and two
+//! SipHash tables, one on the complete address quadruple (`in_pcblookup`, connected sockets)
+//! and one on the local port (`in_pcblookup_local_lock`, bind(2)'s checks and the wildcard
+//! matches). `in_pcblookup_listen` finds a socket bound to the local address or the wildcard
+//! address. Raw IP and UDP input walk the queue with an iterator that marks its place
+//! (`in_pcb_iterator`), so the table mutex can be dropped while a packet is appended to a
+//! socket.
+//!
+//! The pcb table mutex guarantees that all inpcb are consistent and that bind(2) and
+//! connect(2) create unique combinations of laddr/faddr/lport/fport/rtableid. It protects both
+//! address consistency and inpcb lookup during protocol input. All writes to
+//! `inp_[lf]addr` take the table mutex. A per socket lock is needed so that the socket layer
+//! input has a consistent view of these values. In `soconnect()` and `sosend()` a per pcb
+//! mutex cannot be used: they eventually call IP output, which takes sleeping locks, and
+//! connect(2) does a route lookup for source selection. Protocol input should not switch
+//! process per packet, so it spins on the mutex. So there are three locks: the table mutex
+//! for writing `inp_[lf]addr/port` and lookup, the socket rw-lock to separate sockets in
+//! system calls, and the socket buffer mutex for the receive buffer. Changing
+//! `inp_[lf]addr/port` takes both the per socket rw-lock and the global table mutex;
+//! protocol input only reads them during lookup.
+//!
+//! Locks used to protect struct members: \[I\] immutable after creation, \[N\] net lock,
+//! \[t\] `inpt_mtx` (pcb table mutex), \[s\] `so_lock` (socket rwlock), \[a\] atomic.
+//!
+//! ## Deviations
+//! - An `Inpcb` is an `inpcb_pool` item handed around as `&'static Inpcb`, valid while a
+//!   reference is held (`in_pcbref`/`in_pcbunref`, the table mutex, or the socket's
+//!   `so_pcb`); the members the C changes through a pointer are `Cell`s under the locks above.
+//! - `INET6` is not configured: the `inpaddru` unions hold only their IPv4 member
+//!   (`inp_faddr`, `inp_laddr` are `Cell<InAddr>`), the header prototype `inp_hu` only
+//!   `struct ip` (`inp_ip`), the options union only `inp_options` and the multicast union
+//!   only `inp_moptions`; `inp_icmp6filt` is left out. The `IN6P_*` flags and
+//!   `INPLOOKUP_IPV6` are defined; `in6_*` functions are not compiled, as in a kernel without
+//!   `INET6`, and the `ISSET(inp_flags, INP_IPV6)` branches are comments.
+//! - `inp_seclevel` (`struct ipsec_level`, `IPSEC` not configured) and `inp_pf_sk` (`NPF`
+//!   not configured) are left out; `ip_output` takes no security level.
+//! - `struct inpcb_iterator` is [`InpcbIterator`], a whole `Inpcb` whose `inp_table` and
+//!   `inp_socket` are `None`, so it can sit in the table's queue like the C's prefix-compatible
+//!   structure. [`in_pcb_iterator`] is an `unsafe fn`: the iterator must stay in place until
+//!   the walk ends. `inp_socket` is an `Option` for that reason only; [`Inpcb::socket`]
+//!   returns the socket of a real control block.
+//! - `in_pcbunref`'s three `KASSERT`s that the links are cleared are not made: the queue
+//!   links are private to `sys/queue.rs`.
+//! - `baddynamicports` and `rootonlyports` hold atomic words (written under the net lock by
+//!   `ip_init` and the sysctls, read during port selection); `DEFBADDYNAMICPORTS_*` and
+//!   `DEFROOTONLYPORTS_*` are slices without the C's terminating 0.
+//! - `hashinit(M_WAITOK)` cannot fail in C; here its failure in `in_pcbinit` panics.
+//! - `in_pcbaddrisavail_lock` clears the port and `sin_zero` of a copy of the address (the C
+//!   clears them in the caller's mbuf and puts the port back).
+//! - `in_pcbset_addr` takes `sockaddr_in`s: without `INET6` the C asserts `AF_INET`.
+//! - `NSTOEPLITZ` is 0 (`inp_flowid` stays 0) and `NPF` is 0 (`pf_remove_divert_state`,
+//!   `pf_inp_unlink`, the divert and redirected-localhost keys of `in_pcblookup_listen`):
+//!   comments at the sites. `IPSEC`'s `udpencap_port` check in `in_baddynamic` likewise.
+//! - The `DIAGNOSTIC` `in_pcbnotifymiss` printfs are behind the `diagnostic` feature.
+
+use core::cell::Cell;
+use core::ffi::c_void;
+use core::mem::size_of;
+use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+
+use crate::crypto::siphash::{
+    SipHash24_End, SipHash24_Init, SipHash24_Update, SiphashCtx, SiphashKey,
+};
+use crate::dev::rnd::{arc4random_buf, arc4random_uniform};
+use crate::kassert;
+use crate::kern::kern_lock::{mtx_enter, mtx_leave};
+use crate::kern::kern_prot::suser;
+use crate::kern::kern_rwlock::{rw_enter_write, rw_exit_write};
+use crate::kern::kern_subr::{hashfree, hashinit};
+use crate::kern::kern_synch::{refcnt_init, refcnt_rele, refcnt_take};
+use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
+use crate::kern::subr_prf::panic;
+use crate::kern::uipc_mbuf::m_freem;
+use crate::kern::uipc_socket::{sofree, sorele};
+use crate::kern::uipc_socket2::soassertlocked;
+use crate::machine::cpu::curproc;
+use crate::machine::intr::IPL_SOFTNET;
+use crate::net::if_::{IFF_UP, if_get, if_put, ifa_ifwithaddr};
+use crate::net::if_var::Netstack;
+use crate::net::route::{
+    RTF_DYNAMIC, RTF_GATEWAY, Route, Rtentry, route_mpath, rtdeletemsg, rtfree,
+};
+use crate::net::rtable::{rtable_exists, rtable_getsource, rtable_l2};
+use crate::netinet::in_::{
+    INADDR_ANY, INADDR_BROADCAST, IPPORT_HIFIRSTAUTO, IPPORT_HILASTAUTO, IPPORT_RESERVED,
+    IPPORT_USERRESERVED, IPPROTO_TCP, IPPROTO_UDP, InAddr, SockaddrIn, in_broadcast, in_ifp2ia,
+    in_multicast, in_nam2sin, satosin_const, sintosa,
+};
+use crate::netinet::in_var::ifatoia;
+use crate::netinet::ip::Ip;
+use crate::netinet::ip_output::ip_freemoptions;
+use crate::netinet::ip_var::IpMoptions;
+use crate::queue_adapter;
+use crate::sys::endian::htons;
+use crate::sys::errno::Errno;
+use crate::sys::malloc::{M_NOWAIT, M_PCB, M_WAITOK};
+use crate::sys::mbuf::{M_WAIT, Mbuf, mtod};
+use crate::sys::mutex::{Mutex, mutex_assert_locked};
+use crate::sys::pool::{PR_NOWAIT, PR_WAITOK, PR_ZERO, Pool};
+use crate::sys::proc::Proc;
+use crate::sys::protosw::PR_CONNREQUIRED;
+use crate::sys::queue::{ListEntry, ListHead, TailqEntry, TailqHead};
+use crate::sys::refcnt::Refcnt;
+use crate::sys::socket::{
+    AF_INET, SO_ACCEPTCONN, SO_BINDANY, SO_REUSEADDR, SO_REUSEPORT, SOCK_DGRAM,
+};
+use crate::sys::socketvar::{SS_NOFDREF, Socket, soref};
+use crate::sys::systm::net_assert_locked;
+
+// flags in inp_flags:
+
+/// `INP_RECVOPTS`: receive incoming IP options.
+pub const INP_RECVOPTS: i32 = 0x001;
+/// `INP_RECVRETOPTS`: receive IP options for reply.
+pub const INP_RECVRETOPTS: i32 = 0x002;
+/// `INP_RECVDSTADDR`: receive IP dst address.
+pub const INP_RECVDSTADDR: i32 = 0x004;
+
+/// `INP_RXDSTOPTS`.
+pub const INP_RXDSTOPTS: i32 = INP_RECVOPTS;
+/// `INP_RXHOPOPTS`.
+pub const INP_RXHOPOPTS: i32 = INP_RECVRETOPTS;
+/// `INP_RXINFO`.
+pub const INP_RXINFO: i32 = INP_RECVDSTADDR;
+/// `INP_RXSRCRT`.
+pub const INP_RXSRCRT: i32 = 0x010;
+/// `INP_HOPLIMIT`.
+pub const INP_HOPLIMIT: i32 = 0x020;
+
+/// `INP_HDRINCL`: user supplies entire IP header.
+pub const INP_HDRINCL: i32 = 0x008;
+/// `INP_HIGHPORT`: user wants "high" port binding.
+pub const INP_HIGHPORT: i32 = 0x010;
+/// `INP_LOWPORT`: user wants "low" port binding.
+pub const INP_LOWPORT: i32 = 0x020;
+/// `INP_RECVIF`: receive incoming interface.
+pub const INP_RECVIF: i32 = 0x080;
+/// `INP_RECVTTL`: receive incoming IP TTL.
+pub const INP_RECVTTL: i32 = 0x040;
+/// `INP_RECVDSTPORT`: receive IP dst addr before rdr.
+pub const INP_RECVDSTPORT: i32 = 0x200;
+/// `INP_RECVRTABLE`: receive routing table.
+pub const INP_RECVRTABLE: i32 = 0x400;
+/// `INP_IPSECFLOWINFO`: receive IPsec flow info.
+pub const INP_IPSECFLOWINFO: i32 = 0x800;
+
+/// `INP_CONTROLOPTS`.
+pub const INP_CONTROLOPTS: i32 = INP_RECVOPTS
+    | INP_RECVRETOPTS
+    | INP_RECVDSTADDR
+    | INP_RXSRCRT
+    | INP_HOPLIMIT
+    | INP_RECVIF
+    | INP_RECVTTL
+    | INP_RECVDSTPORT
+    | INP_RECVRTABLE;
+
+// These flags' values should be determined by either the transport protocol at PRU_BIND,
+// PRU_LISTEN, PRU_CONNECT, etc, or by in_pcb*().
+
+/// `INP_IPV6`: socket, proto, domain, family is `PF_INET6`.
+pub const INP_IPV6: i32 = 0x100;
+
+// Flags in inp_flags for IPV6
+
+/// `IN6P_HIGHPORT`: user wants "high" port.
+pub const IN6P_HIGHPORT: i32 = INP_HIGHPORT;
+/// `IN6P_LOWPORT`: user wants "low" port.
+pub const IN6P_LOWPORT: i32 = INP_LOWPORT;
+/// `IN6P_RECVDSTPORT`: receive IP dst addr before rdr.
+pub const IN6P_RECVDSTPORT: i32 = INP_RECVDSTPORT;
+/// `IN6P_PKTINFO`: receive IP6 dst and I/F.
+pub const IN6P_PKTINFO: i32 = 0x010000;
+/// `IN6P_HOPLIMIT`: receive hoplimit.
+pub const IN6P_HOPLIMIT: i32 = 0x020000;
+/// `IN6P_HOPOPTS`: receive hop-by-hop options.
+pub const IN6P_HOPOPTS: i32 = 0x040000;
+/// `IN6P_DSTOPTS`: receive dst options after rthdr.
+pub const IN6P_DSTOPTS: i32 = 0x080000;
+/// `IN6P_RTHDR`: receive routing header.
+pub const IN6P_RTHDR: i32 = 0x100000;
+/// `IN6P_TCLASS`: receive traffic class value.
+pub const IN6P_TCLASS: i32 = 0x400000;
+/// `IN6P_AUTOFLOWLABEL`: attach flowlabel automatically.
+pub const IN6P_AUTOFLOWLABEL: i32 = 0x800000;
+
+/// `IN6P_ANONPORT`: port chosen for user.
+pub const IN6P_ANONPORT: i32 = 0x4000000;
+/// `IN6P_RFC2292`: used RFC2292 API on the socket.
+pub const IN6P_RFC2292: i32 = 0x40000000;
+/// `IN6P_MTU`: receive path MTU (bit 31 of the C's `int`).
+pub const IN6P_MTU: i32 = 0x80000000_u32 as i32;
+
+/// `IN6P_MINMTU`: use minimum MTU.
+pub const IN6P_MINMTU: i32 = 0x20000000;
+
+/// `IN6P_CONTROLOPTS`.
+pub const IN6P_CONTROLOPTS: i32 = IN6P_PKTINFO
+    | IN6P_HOPLIMIT
+    | IN6P_HOPOPTS
+    | IN6P_DSTOPTS
+    | IN6P_RTHDR
+    | IN6P_TCLASS
+    | IN6P_AUTOFLOWLABEL
+    | IN6P_RFC2292
+    | IN6P_MTU
+    | IN6P_RECVDSTPORT;
+
+/// `INPLOOKUP_WILDCARD`.
+pub const INPLOOKUP_WILDCARD: i32 = 1;
+/// `INPLOOKUP_SETLOCAL`.
+pub const INPLOOKUP_SETLOCAL: i32 = 2;
+/// `INPLOOKUP_IPV6`.
+pub const INPLOOKUP_IPV6: i32 = 4;
+
+// macros for handling bitmap of ports not to allocate dynamically
+
+/// `DP_MAPBITS`: bits per map word.
+pub const DP_MAPBITS: usize = u32::BITS as usize;
+/// `DP_MAPSIZE`: words per map.
+pub const DP_MAPSIZE: usize = 65536_usize.div_ceil(DP_MAPBITS);
+
+/// `DEFBADDYNAMICPORTS_TCP`: default values for `baddynamicports` (see `ip_init()`).
+pub const DEFBADDYNAMICPORTS_TCP: &[u16] = &[
+    587, 749, 750, 751, 853, 871, 2049, 6000, 6001, 6002, 6003, 6004, 6005, 6006, 6007, 6008, 6009,
+    6010,
+];
+/// `DEFBADDYNAMICPORTS_UDP` (3784, 3785, 7784: BFD/S-BFD ports).
+pub const DEFBADDYNAMICPORTS_UDP: &[u16] = &[623, 664, 749, 750, 751, 2049, 3784, 3785, 7784];
+
+/// `DEFROOTONLYPORTS_TCP`.
+pub const DEFROOTONLYPORTS_TCP: &[u16] = &[2049];
+/// `DEFROOTONLYPORTS_UDP`.
+pub const DEFROOTONLYPORTS_UDP: &[u16] = &[2049];
+
+/// `IN_PCBLOCK_HOLD`: the caller holds the table mutex.
+pub const IN_PCBLOCK_HOLD: i32 = 1;
+/// `IN_PCBLOCK_GRAB`: the lookup takes the table mutex and a reference.
+pub const IN_PCBLOCK_GRAB: i32 = 2;
+
+/// `INPCBHASH_LOADFACTOR(x)`.
+const fn inpcbhash_loadfactor(x: i32) -> i32 {
+    (x * 3) / 4
+}
+
+/// `inp_upcall`: a hook that sees UDP datagrams before the socket buffer
+/// (`(arg, m, ip, ip6, uh, hlen, ns)`); returns the packet to append, or `None` when it took
+/// it.
+pub type InpUpcallFn = fn(
+    *mut c_void,
+    &'static Mbuf,
+    *const Ip,
+    *const c_void,
+    *mut c_void,
+    i32,
+    Option<&Netstack>,
+) -> Option<&'static Mbuf>;
+
+/// The per-pcb hook of `in_pcbnotifyall` and the protocols' `ctlinput`s (`udp_notify`,
+/// `in_pcbrtchange`): the control block and the errno of the event (`None` for 0).
+pub type InpNotifyFn = fn(&'static Inpcb, Option<Errno>);
+
+/// `struct inpcb`: common structure pcb for internet protocol implementation. Here are
+/// stored pointers to local and foreign host table entries, local and foreign socket numbers,
+/// and pointers up (to a socket structure) and down (to a protocol-specific) control block.
+pub struct Inpcb {
+    /// \[I\] `inp_table`: inet queue/hash table (`None` for an iterator).
+    pub inp_table: Option<&'static Inpcbtable>,
+    /// \[t\] `inp_queue`: inet PCB queue.
+    pub inp_queue: TailqEntry<Inpcb>,
+    /// \[t\] `inp_hash`: local and foreign hash.
+    pub inp_hash: ListEntry<Inpcb>,
+    /// \[t\] `inp_lhash`: local port hash.
+    pub inp_lhash: ListEntry<Inpcb>,
+    /// \[t\] `inp_faddr`: foreign address.
+    pub inp_faddr: Cell<InAddr>,
+    /// \[t\] `inp_laddr`: local address.
+    pub inp_laddr: Cell<InAddr>,
+    /// \[t\] `inp_fport`: foreign port, network order.
+    pub inp_fport: Cell<u16>,
+    /// \[t\] `inp_lport`: local port, network order.
+    pub inp_lport: Cell<u16>,
+    /// \[I\] `inp_socket`: back pointer to socket (`None` for an iterator).
+    pub inp_socket: Option<&'static Socket>,
+    /// \[s\] `inp_ppcb`: pointer to per-protocol pcb.
+    pub inp_ppcb: Cell<*mut c_void>,
+    /// \[s\] `inp_route`: cached route.
+    pub inp_route: Route,
+    /// `inp_refcnt`: refcount PCB, delay memory free.
+    pub inp_refcnt: Refcnt,
+    /// `inp_flags`: generic IP/datagram flags.
+    pub inp_flags: Cell<i32>,
+    /// `inp_ip`: header prototype.
+    pub inp_ip: Cell<Ip>,
+    /// `inp_options`: IPv4 options.
+    pub inp_options: Cell<Option<&'static Mbuf>>,
+    /// `inp_hops`.
+    pub inp_hops: Cell<i32>,
+    /// \[N\] `inp_moptions`: IPv4 multicast options (`malloc(M_IPMOPTS)`).
+    pub inp_moptions: Cell<Option<NonNull<IpMoptions>>>,
+    /// `inp_ip_minttl`: minimum TTL or drop.
+    pub inp_ip_minttl: Cell<u8>,
+    /// `inp_cksum6`.
+    pub inp_cksum6: Cell<i32>,
+    /// `inp_upcall`.
+    pub inp_upcall: Cell<Option<InpUpcallFn>>,
+    /// `inp_upcall_arg`.
+    pub inp_upcall_arg: Cell<*mut c_void>,
+    /// \[t\] `inp_rtableid`.
+    pub inp_rtableid: Cell<u32>,
+    /// `inp_pipex`: pipex indication.
+    pub inp_pipex: Cell<i32>,
+    /// \[s\] `inp_flowid`.
+    pub inp_flowid: Cell<u16>,
+}
+
+impl Inpcb {
+    /// A zeroed control block of `table` and `so`, as `pool_get(PR_ZERO)` and the two
+    /// assignments of `in_pcballoc` leave it; both `None` make an iterator.
+    pub const fn new(table: Option<&'static Inpcbtable>, so: Option<&'static Socket>) -> Self {
+        Self {
+            inp_table: table,
+            inp_queue: TailqEntry::new(),
+            inp_hash: ListEntry::new(),
+            inp_lhash: ListEntry::new(),
+            inp_faddr: Cell::new(InAddr { s_addr: 0 }),
+            inp_laddr: Cell::new(InAddr { s_addr: 0 }),
+            inp_fport: Cell::new(0),
+            inp_lport: Cell::new(0),
+            inp_socket: so,
+            inp_ppcb: Cell::new(ptr::null_mut()),
+            inp_route: Route::new(),
+            inp_refcnt: Refcnt::new(),
+            inp_flags: Cell::new(0),
+            inp_ip: Cell::new(Ip {
+                ip_vhl: 0,
+                ip_tos: 0,
+                ip_len: 0,
+                ip_id: 0,
+                ip_off: 0,
+                ip_ttl: 0,
+                ip_p: 0,
+                ip_sum: 0,
+                ip_src: InAddr { s_addr: 0 },
+                ip_dst: InAddr { s_addr: 0 },
+            }),
+            inp_options: Cell::new(None),
+            inp_hops: Cell::new(0),
+            inp_moptions: Cell::new(None),
+            inp_ip_minttl: Cell::new(0),
+            inp_cksum6: Cell::new(0),
+            inp_upcall: Cell::new(None),
+            inp_upcall_arg: Cell::new(ptr::null_mut()),
+            inp_rtableid: Cell::new(0),
+            inp_pipex: Cell::new(0),
+            inp_flowid: Cell::new(0),
+        }
+    }
+
+    /// `inp->inp_socket` of a control block (not an iterator).
+    pub fn socket(&self) -> &'static Socket {
+        match self.inp_socket {
+            Some(so) => so,
+            None => panic(format_args!("inpcb {:p}: no socket", self)),
+        }
+    }
+
+    /// `inp->inp_table` of a control block (not an iterator).
+    pub fn table(&self) -> &'static Inpcbtable {
+        match self.inp_table {
+            Some(t) => t,
+            None => panic(format_args!("inpcb {:p}: no table", self)),
+        }
+    }
+
+    /// `inp->inp_flags & bits`.
+    pub fn has_flags(&self, bits: i32) -> bool {
+        self.inp_flags.get() & bits != 0
+    }
+
+    /// `inp->inp_flags |= bits`.
+    pub fn set_flags(&self, bits: i32) {
+        self.inp_flags.set(self.inp_flags.get() | bits);
+    }
+
+    /// `inp->inp_flags &= ~bits`.
+    pub fn clear_flags(&self, bits: i32) {
+        self.inp_flags.set(self.inp_flags.get() & !bits);
+    }
+
+    /// `inp->inp_moptions` as `ip_output` takes it.
+    pub fn moptions(&self) -> Option<&IpMoptions> {
+        // SAFETY: the options are `ip_setmoptions`'s allocation, owned by this control block
+        // and freed only by `ip_setmoptions` or `in_pcbdetach` under the socket lock, which
+        // the callers of `ip_output` hold for the call.
+        self.inp_moptions.get().map(|imo| unsafe { imo.as_ref() })
+    }
+}
+
+queue_adapter!(
+    /// `TAILQ_HEAD(inpthead, inpcb)`: a table's queue, through `inp_queue`.
+    pub InpQueue: Inpcb, inp_queue => TailqEntry<Inpcb>
+);
+
+queue_adapter!(
+    /// `LIST_HEAD(inpcbhead, inpcb)` of the local and foreign hash, through `inp_hash`.
+    pub InpHash: Inpcb, inp_hash => ListEntry<Inpcb>
+);
+
+queue_adapter!(
+    /// `LIST_HEAD(inpcbhead, inpcb)` of the local port hash, through `inp_lhash`.
+    pub InpLhash: Inpcb, inp_lhash => ListEntry<Inpcb>
+);
+
+/// `struct inpcb_iterator`: a place holder in a table's queue (an `Inpcb` without table).
+pub struct InpcbIterator(Inpcb);
+
+impl InpcbIterator {
+    /// `{ .inp_table = NULL }`.
+    pub const fn new() -> Self {
+        Self(Inpcb::new(None, None))
+    }
+}
+
+impl Default for InpcbIterator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `struct inpcbtable`.
+pub struct Inpcbtable {
+    /// `inpt_mtx`: protect queue and hash.
+    pub inpt_mtx: Mutex,
+    /// \[t\] `inpt_queue`: inet PCB queue.
+    pub inpt_queue: TailqHead<InpQueue>,
+    /// \[t\] `inpt_hashtbl`: local and foreign hash.
+    pub inpt_hashtbl: Cell<&'static [ListHead<InpHash>]>,
+    /// \[t\] `inpt_lhashtbl`: local port hash.
+    pub inpt_lhashtbl: Cell<&'static [ListHead<InpLhash>]>,
+    /// \[I\] `inpt_key`: secret for the hash.
+    pub inpt_key: Cell<SiphashKey>,
+    /// \[I\] `inpt_lkey`: secret for the local port hash.
+    pub inpt_lkey: Cell<SiphashKey>,
+    /// \[t\] `inpt_mask`: hash mask.
+    pub inpt_mask: Cell<u64>,
+    /// \[t\] `inpt_lmask`: local port hash mask.
+    pub inpt_lmask: Cell<u64>,
+    /// \[t\] `inpt_count`: queue count.
+    pub inpt_count: Cell<i32>,
+    /// \[t\] `inpt_size`: hash size.
+    pub inpt_size: Cell<i32>,
+}
+
+impl Inpcbtable {
+    /// An empty table; `in_pcbinit` sets it up.
+    pub const fn new() -> Self {
+        Self {
+            inpt_mtx: Mutex::new(IPL_SOFTNET),
+            inpt_queue: TailqHead::new(),
+            inpt_hashtbl: Cell::new(&[]),
+            inpt_lhashtbl: Cell::new(&[]),
+            inpt_key: Cell::new(SiphashKey { k0: 0, k1: 0 }),
+            inpt_lkey: Cell::new(SiphashKey { k0: 0, k1: 0 }),
+            inpt_mask: Cell::new(0),
+            inpt_lmask: Cell::new(0),
+            inpt_count: Cell::new(0),
+            inpt_size: Cell::new(0),
+        }
+    }
+
+    /// `&table->inpt_hashtbl[hash & table->inpt_mask]`.
+    fn hash_head(&self, hash: u64) -> &'static ListHead<InpHash> {
+        &self.inpt_hashtbl.get()[(hash & self.inpt_mask.get()) as usize]
+    }
+
+    /// `&table->inpt_lhashtbl[lhash & table->inpt_lmask]`.
+    fn lhash_head(&self, lhash: u64) -> &'static ListHead<InpLhash> {
+        &self.inpt_lhashtbl.get()[(lhash & self.inpt_lmask.get()) as usize]
+    }
+}
+
+impl Default for Inpcbtable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// SAFETY: the queue, the hash tables and the counts are read and changed only under
+// `inpt_mtx` ([t]); the keys are written once by `in_pcbinit` before any lookup.
+unsafe impl Sync for Inpcbtable {}
+
+/// `struct baddynamicports`: bitmaps of ports, one bit per port, for TCP and UDP.
+pub struct Baddynamicports {
+    /// `tcp`.
+    pub tcp: [AtomicU32; DP_MAPSIZE],
+    /// `udp`.
+    pub udp: [AtomicU32; DP_MAPSIZE],
+}
+
+impl Baddynamicports {
+    /// Empty maps (the C's zeroed globals).
+    pub const fn new() -> Self {
+        Self {
+            tcp: [const { AtomicU32::new(0) }; DP_MAPSIZE],
+            udp: [const { AtomicU32::new(0) }; DP_MAPSIZE],
+        }
+    }
+}
+
+impl Default for Baddynamicports {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `zeroin_addr`.
+pub static ZEROIN_ADDR: InAddr = InAddr { s_addr: 0 };
+
+// These configure the range of local port addresses assigned to "unspecified" outgoing
+// connections/packets/whatever.
+
+/// \[a\] `ipport_firstauto`.
+pub static IPPORT_FIRSTAUTO: AtomicI32 = AtomicI32::new(IPPORT_RESERVED);
+/// \[a\] `ipport_lastauto`.
+pub static IPPORT_LASTAUTO: AtomicI32 = AtomicI32::new(IPPORT_USERRESERVED);
+/// \[a\] `ipport_hifirstauto`.
+#[allow(non_upper_case_globals)] // the C name; `IPPORT_HIFIRSTAUTO` is `in.h`'s default
+pub static ipport_hifirstauto: AtomicI32 = AtomicI32::new(IPPORT_HIFIRSTAUTO);
+/// \[a\] `ipport_hilastauto`.
+#[allow(non_upper_case_globals)] // the C name; `IPPORT_HILASTAUTO` is `in.h`'s default
+pub static ipport_hilastauto: AtomicI32 = AtomicI32::new(IPPORT_HILASTAUTO);
+
+/// `baddynamicports`: ports not to allocate dynamically.
+pub static BADDYNAMICPORTS: Baddynamicports = Baddynamicports::new();
+/// `rootonlyports`: ports only root can bind to.
+pub static ROOTONLYPORTS: Baddynamicports = Baddynamicports::new();
+/// `inpcb_pool`.
+pub static INPCB_POOL: Pool = Pool::new();
+
+#[cfg(feature = "diagnostic")]
+/// `in_pcbnotifymiss` (`DIAGNOSTIC`): print the lookups that miss.
+pub static IN_PCBNOTIFYMISS: AtomicI32 = AtomicI32::new(0);
+
+/// `in_pcb_is_iterator(inp)`.
+pub fn in_pcb_is_iterator(inp: &Inpcb) -> bool {
+    inp.inp_table.is_none()
+}
+
+/// `sotoinpcb(so)`: the control block of an Internet socket, `None` once detached.
+pub fn sotoinpcb(so: &Socket) -> Option<&'static Inpcb> {
+    if so.dom_family() != i32::from(AF_INET) {
+        panic(format_args!(
+            "sotoinpcb: socket {:p} of family {}",
+            so,
+            so.dom_family()
+        ));
+    }
+    // SAFETY: an `inetdomain` socket's `so_pcb` is NULL or the `inpcb_pool` item
+    // `in_pcballoc` set; `in_pcbdetach` clears it before the item can go back to the pool.
+    unsafe { so.so_pcb.get().cast::<Inpcb>().cast_const().as_ref() }
+}
+
+/// `DP_SET(m, p)`.
+pub fn dp_set(m: &[AtomicU32; DP_MAPSIZE], p: u16) {
+    let p = usize::from(p);
+    m[p / DP_MAPBITS].fetch_or(1 << (p % DP_MAPBITS), Ordering::Relaxed);
+}
+
+/// `DP_CLR(m, p)`.
+pub fn dp_clr(m: &[AtomicU32; DP_MAPSIZE], p: u16) {
+    let p = usize::from(p);
+    m[p / DP_MAPBITS].fetch_and(!(1 << (p % DP_MAPBITS)), Ordering::Relaxed);
+}
+
+/// `DP_ISSET(m, p)`.
+pub fn dp_isset(m: &[AtomicU32; DP_MAPSIZE], p: u16) -> bool {
+    let p = usize::from(p);
+    m[p / DP_MAPBITS].load(Ordering::Relaxed) & (1 << (p % DP_MAPBITS)) != 0
+}
+
+/// A control block linked in a table, with the lifetime of its pool item.
+fn inp_static(inp: &Inpcb) -> &'static Inpcb {
+    // SAFETY: a control block in a table's lists is an `inpcb_pool` item that stays
+    // allocated until its last `in_pcbunref`; the callers hold the table mutex while they
+    // look and a reference (`in_pcbref`) for as long as they keep it, as in C.
+    unsafe { &*ptr::from_ref(inp) }
+}
+
+/// `curproc`, which the socket requests run as.
+fn curproc_or_panic(func: &str) -> &'static Proc {
+    match curproc() {
+        Some(p) => p,
+        None => panic(format_args!("{}: no curproc", func)),
+    }
+}
+
+/// `in_init`: the `inpcb` pool. `in_pcb` is used for inet and inet6, `in6_pcb` only contains
+/// special IPv6 cases, so the internet initializer is used for both domains.
+pub fn in_init() {
+    pool_init(
+        &INPCB_POOL,
+        size_of::<Inpcb>(),
+        0,
+        IPL_SOFTNET,
+        0,
+        "inpcb",
+        None,
+    );
+}
+
+/// `in_pcbhash`: the hash of the complete address quadruple in routing domain `rdomain`.
+pub fn in_pcbhash(
+    table: &Inpcbtable,
+    rdomain: u32,
+    faddr: &InAddr,
+    fport: u16,
+    laddr: &InAddr,
+    lport: u16,
+) -> u64 {
+    let mut ctx = SiphashCtx::default();
+    let nrdom = rdomain.to_be_bytes();
+
+    SipHash24_Init(&mut ctx, &table.inpt_key.get());
+    SipHash24_Update(&mut ctx, &nrdom);
+    SipHash24_Update(&mut ctx, &faddr.s_addr.to_ne_bytes());
+    SipHash24_Update(&mut ctx, &fport.to_ne_bytes());
+    SipHash24_Update(&mut ctx, &laddr.s_addr.to_ne_bytes());
+    SipHash24_Update(&mut ctx, &lport.to_ne_bytes());
+    SipHash24_End(&mut ctx)
+}
+
+/// `in_pcblhash`: the hash of local port `lport` in routing domain `rdomain`.
+pub fn in_pcblhash(table: &Inpcbtable, rdomain: u32, lport: u16) -> u64 {
+    let mut ctx = SiphashCtx::default();
+    let nrdom = rdomain.to_be_bytes();
+
+    SipHash24_Init(&mut ctx, &table.inpt_lkey.get());
+    SipHash24_Update(&mut ctx, &nrdom);
+    SipHash24_Update(&mut ctx, &lport.to_ne_bytes());
+    SipHash24_End(&mut ctx)
+}
+
+/// A fresh random hash key.
+fn random_key() -> SiphashKey {
+    let mut b = [0u8; 16];
+    arc4random_buf(&mut b);
+    let [k0, k1] = [&b[..8], &b[8..]].map(|w| {
+        let mut word = [0u8; 8];
+        word.copy_from_slice(w);
+        u64::from_ne_bytes(word)
+    });
+    SiphashKey { k0, k1 }
+}
+
+/// `in_pcbinit`: sets up `table` with hash tables of `hashsize` buckets and fresh keys.
+pub fn in_pcbinit(table: &Inpcbtable, hashsize: i32) {
+    table.inpt_queue.init();
+    let (Some(hashtbl), Some(lhashtbl)) = (
+        hashinit::<InpHash>(hashsize, M_PCB, M_WAITOK),
+        hashinit::<InpLhash>(hashsize, M_PCB, M_WAITOK),
+    ) else {
+        panic(format_args!("in_pcbinit: hashinit"));
+    };
+    table.inpt_hashtbl.set(hashtbl);
+    table.inpt_mask.set(hashtbl.len() as u64 - 1);
+    table.inpt_lhashtbl.set(lhashtbl);
+    table.inpt_lmask.set(lhashtbl.len() as u64 - 1);
+    table.inpt_count.set(0);
+    table.inpt_size.set(hashsize);
+    table.inpt_key.set(random_key());
+    table.inpt_lkey.set(random_key());
+}
+
+/// `in_baddynamic`: whether `port` is invalid for dynamic allocation.
+pub fn in_baddynamic(port: u16, proto: u16) -> bool {
+    match i32::from(proto) {
+        IPPROTO_TCP => dp_isset(&BADDYNAMICPORTS.tcp, port),
+        // IPSEC: the udpencap_port (a sysctl); not configured.
+        IPPROTO_UDP => dp_isset(&BADDYNAMICPORTS.udp, port),
+        _ => false,
+    }
+}
+
+/// `in_rootonly`: whether only root may bind `port`.
+pub fn in_rootonly(port: u16, proto: u16) -> bool {
+    match i32::from(proto) {
+        IPPROTO_TCP => i32::from(port) < IPPORT_RESERVED || dp_isset(&ROOTONLYPORTS.tcp, port),
+        IPPROTO_UDP => i32::from(port) < IPPORT_RESERVED || dp_isset(&ROOTONLYPORTS.udp, port),
+        _ => false,
+    }
+}
+
+/// `in_pcballoc`: a new control block for `so` in `table`.
+pub fn in_pcballoc(
+    so: &'static Socket,
+    table: &'static Inpcbtable,
+    wait: i32,
+) -> Result<(), Errno> {
+    let Some(mem) = pool_get(
+        &INPCB_POOL,
+        (if wait == M_WAIT { PR_WAITOK } else { PR_NOWAIT }) | PR_ZERO,
+    ) else {
+        return Err(Errno::ENOBUFS);
+    };
+    let raw = mem.cast::<Inpcb>().as_ptr();
+    // SAFETY: a fresh, suitably aligned `inpcb_pool` item, written once before anything else
+    // sees it.
+    unsafe { raw.write(Inpcb::new(Some(table), soref(Some(so)))) };
+    // SAFETY: as above; the item stays allocated until the last `in_pcbunref`.
+    let inp: &'static Inpcb = unsafe { &*raw };
+    refcnt_init(&inp.inp_refcnt); // refcnt_init_trace(DT_REFCNT_IDX_INPCB): dt(4)
+    // IPSEC: inp_seclevel defaults; not configured.
+    inp.inp_rtableid.set(
+        curproc_or_panic("in_pcballoc")
+            .process()
+            .ps_rtableid
+            .load(Ordering::Relaxed),
+    );
+    inp.inp_hops.set(-1);
+    // INET6: INP_IPV6 for PF_INET6 sockets, inp_cksum6 = -1; not configured.
+
+    mtx_enter(&table.inpt_mtx);
+    let count = table.inpt_count.get();
+    table.inpt_count.set(count + 1);
+    if count > inpcbhash_loadfactor(table.inpt_size.get()) {
+        let _ = in_pcbresize(table, table.inpt_size.get() * 2);
+    }
+    // SAFETY: the table mutex is held; the control block is new and stays in place until
+    // `in_pcbdetach` unlinks it.
+    unsafe { table.inpt_queue.insert_head(inp) };
+    in_pcbhash_insert(inp);
+    mtx_leave(&table.inpt_mtx);
+
+    so.so_pcb.set(raw.cast());
+
+    Ok(())
+}
+
+/// The `sockaddr_in` of an address mbuf, read out of it.
+fn nam_sin(nam: &Mbuf) -> Result<SockaddrIn, Errno> {
+    let sin = in_nam2sin(nam)?;
+    // SAFETY: `in_nam2sin` checked the mbuf holds a whole `sockaddr_in`; mbuf data need not be
+    // aligned, so it is read unaligned.
+    Ok(unsafe { sin.read_unaligned() })
+}
+
+/// `in_pcbbind_locked`: binds `inp` to the address in `nam` (or `laddr` and a port picked
+/// here when `nam` is `None`), with the table mutex held.
+pub fn in_pcbbind_locked(
+    inp: &'static Inpcb,
+    nam: Option<&Mbuf>,
+    laddr: &InAddr,
+    p: &Proc,
+) -> Result<(), Errno> {
+    let so = inp.socket();
+    let mut lport: u16 = 0;
+    let mut wild = 0;
+    let mut laddr = *laddr;
+
+    if inp.inp_lport.get() != 0 {
+        return Err(Errno::EINVAL);
+    }
+
+    if !so.has_options(SO_REUSEADDR | SO_REUSEPORT)
+        && (!so.pr_flags(PR_CONNREQUIRED) || !so.has_options(SO_ACCEPTCONN))
+    {
+        wild = INPLOOKUP_WILDCARD;
+    }
+
+    // INET6: the INP_IPV6 branch (in6_nam2sin6, in6_pcbaddrisavail_lock); not configured.
+    {
+        if inp.inp_laddr.get().s_addr != INADDR_ANY {
+            return Err(Errno::EINVAL);
+        }
+
+        if let Some(nam) = nam {
+            let mut sin = nam_sin(nam)?;
+            in_pcbaddrisavail_lock(inp, &mut sin, wild, p, IN_PCBLOCK_HOLD)?;
+            laddr = sin.sin_addr;
+            lport = sin.sin_port;
+        }
+    }
+
+    if lport == 0 {
+        in_pcbpickport(&mut lport, &laddr, wild, inp, p)?;
+    } else if in_rootonly(u16::from_be(lport), so.so_proto.pr_protocol as u16) && suser(p).is_err()
+    {
+        return Err(Errno::EACCES);
+    }
+    if nam.is_some() {
+        inp.inp_laddr.set(laddr);
+    }
+    inp.inp_lport.set(lport);
+    in_pcbrehash(inp);
+
+    Ok(())
+}
+
+/// `in_pcbbind`: binds `inp` to `nam`, or to a port picked here.
+pub fn in_pcbbind(inp: &'static Inpcb, nam: Option<&Mbuf>, p: &Proc) -> Result<(), Errno> {
+    let table = inp.table();
+
+    // keep lookup, modification, and rehash in sync
+    mtx_enter(&table.inpt_mtx);
+    let error = in_pcbbind_locked(inp, nam, &ZEROIN_ADDR, p);
+    mtx_leave(&table.inpt_mtx);
+
+    error
+}
+
+/// `in_pcbaddrisavail_lock`: whether `inp` may bind to `sin` (an address of ours and a port
+/// nobody else has, as `wild` and the reuse options allow); `lock` says whether the table
+/// mutex is held (`IN_PCBLOCK_HOLD`) or taken here (`IN_PCBLOCK_GRAB`).
+pub fn in_pcbaddrisavail_lock(
+    inp: &Inpcb,
+    sin: &mut SockaddrIn,
+    wild: i32,
+    _p: &Proc,
+    lock: i32,
+) -> Result<(), Errno> {
+    let so = inp.socket();
+    let table = inp.table();
+    let lport = sin.sin_port;
+    let mut reuseport = so.so_options.get() & SO_REUSEPORT;
+
+    if in_multicast(sin.sin_addr.s_addr) {
+        // Treat SO_REUSEADDR as SO_REUSEPORT for multicast; allow complete duplication of
+        // binding if SO_REUSEPORT is set, or if SO_REUSEADDR is set and a multicast address is
+        // bound on both new and duplicated sockets.
+        if so.has_options(SO_REUSEADDR | SO_REUSEPORT) {
+            reuseport = SO_REUSEADDR | SO_REUSEPORT;
+        }
+    } else if sin.sin_addr.s_addr != INADDR_ANY {
+        // we must check that we are binding to an address we own except when:
+        // - SO_BINDANY is set or
+        // - we are binding a UDP socket to 255.255.255.255 or
+        // - we are binding a UDP socket to one of our broadcast addresses
+        if !so.has_options(SO_BINDANY)
+            && !(so.so_type.get() == SOCK_DGRAM && sin.sin_addr.s_addr == INADDR_BROADCAST)
+            && !(so.so_type.get() == SOCK_DGRAM
+                && in_broadcast(sin.sin_addr, inp.inp_rtableid.get()))
+        {
+            sin.sin_port = 0;
+            sin.sin_zero = [0; 8];
+            // SAFETY: a local `sockaddr_in`, read for the call.
+            let ia = unsafe { ifa_ifwithaddr(sintosa(sin), inp.inp_rtableid.get()) };
+            sin.sin_port = lport;
+
+            if ia.is_none() {
+                return Err(Errno::EADDRNOTAVAIL);
+            }
+        }
+    }
+    if lport != 0 {
+        let mut error = Ok(());
+
+        if so.so_euid.get() != 0 && !in_multicast(sin.sin_addr.s_addr) {
+            let t = in_pcblookup_local_lock(
+                table,
+                &sin.sin_addr,
+                lport,
+                INPLOOKUP_WILDCARD,
+                inp.inp_rtableid.get(),
+                lock,
+            );
+            if t.is_some_and(|t| so.so_euid.get() != t.socket().so_euid.get()) {
+                error = Err(Errno::EADDRINUSE);
+            }
+            if lock == IN_PCBLOCK_GRAB {
+                in_pcbunref(t);
+            }
+            error?;
+        }
+        let t = in_pcblookup_local_lock(
+            table,
+            &sin.sin_addr,
+            lport,
+            wild,
+            inp.inp_rtableid.get(),
+            lock,
+        );
+        if t.is_some_and(|t| reuseport & t.socket().so_options.get() == 0) {
+            error = Err(Errno::EADDRINUSE);
+        }
+        if lock == IN_PCBLOCK_GRAB {
+            in_pcbunref(t);
+        }
+        error?;
+    }
+
+    Ok(())
+}
+
+/// `in_pcbaddrisavail`: `in_pcbaddrisavail_lock` taking the table mutex.
+pub fn in_pcbaddrisavail(
+    inp: &Inpcb,
+    sin: &mut SockaddrIn,
+    wild: i32,
+    p: &Proc,
+) -> Result<(), Errno> {
+    in_pcbaddrisavail_lock(inp, sin, wild, p, IN_PCBLOCK_GRAB)
+}
+
+/// `in_pcbpickport`: a free local port for `inp` from the range its flags and the sysctls
+/// give, into `lport` (network order).
+pub fn in_pcbpickport(
+    lport: &mut u16,
+    laddr: &InAddr,
+    wild: i32,
+    inp: &Inpcb,
+    p: &Proc,
+) -> Result<(), Errno> {
+    let so = inp.socket();
+    let table = inp.table();
+
+    mutex_assert_locked(&table.inpt_mtx, "in_pcbpickport");
+
+    let (first, last): (u16, u16) = if inp.has_flags(INP_HIGHPORT) {
+        (
+            ipport_hifirstauto.load(Ordering::Relaxed) as u16, // sysctl
+            ipport_hilastauto.load(Ordering::Relaxed) as u16,
+        )
+    } else if inp.has_flags(INP_LOWPORT) {
+        if suser(p).is_err() {
+            return Err(Errno::EACCES);
+        }
+        (IPPORT_RESERVED as u16 - 1, 600) // 1023; not IPPORT_RESERVED/2
+    } else {
+        (
+            IPPORT_FIRSTAUTO.load(Ordering::Relaxed) as u16, // sysctl
+            IPPORT_LASTAUTO.load(Ordering::Relaxed) as u16,
+        )
+    };
+    let (lower, higher) = if first < last {
+        (first, last)
+    } else {
+        (last, first)
+    };
+
+    // Simple check to ensure all ports are not used up causing a deadlock here.
+    let mut count = i32::from(higher - lower);
+    let mut candidate = lower.wrapping_add(arc4random_uniform(count as u32) as u16);
+
+    let localport = loop {
+        let localport = loop {
+            if count < 0 {
+                // completely used?
+                return Err(Errno::EADDRNOTAVAIL);
+            }
+            count -= 1;
+            candidate = candidate.wrapping_add(1);
+            if candidate < lower || candidate > higher {
+                candidate = lower;
+            }
+            let localport = htons(candidate);
+            if !in_baddynamic(candidate, so.so_proto.pr_protocol as u16) {
+                break localport;
+            }
+        };
+        let t = in_pcblookup_local_lock(
+            table,
+            laddr,
+            localport,
+            wild,
+            inp.inp_rtableid.get(),
+            IN_PCBLOCK_HOLD,
+        );
+        if t.is_none() {
+            break localport;
+        }
+    };
+    *lport = localport;
+
+    Ok(())
+}
+
+/// `in_pcbconnect`: connects `inp` to the address in `nam`; both address and port must be
+/// specified. If the socket has no local address yet, one is picked.
+pub fn in_pcbconnect(inp: &'static Inpcb, nam: &Mbuf) -> Result<(), Errno> {
+    let table = inp.table();
+    let mut ina = InAddr::default();
+
+    // INET6: in6_pcbconnect for INP_IPV6; not configured.
+
+    let sin = nam_sin(nam)?;
+    if sin.sin_port == 0 {
+        return Err(Errno::EADDRNOTAVAIL);
+    }
+    in_pcbselsrc(&mut ina, &sin, inp)?;
+
+    // keep lookup, modification, and rehash in sync
+    mtx_enter(&table.inpt_mtx);
+
+    let t = in_pcblookup_lock(
+        table,
+        sin.sin_addr,
+        sin.sin_port,
+        ina,
+        inp.inp_lport.get(),
+        inp.inp_rtableid.get(),
+        IN_PCBLOCK_HOLD,
+    );
+    if t.is_some() {
+        mtx_leave(&table.inpt_mtx);
+        return Err(Errno::EADDRINUSE);
+    }
+
+    kassert!(inp.inp_laddr.get().s_addr == INADDR_ANY || inp.inp_lport.get() != 0);
+
+    if inp.inp_laddr.get().s_addr == INADDR_ANY {
+        if inp.inp_lport.get() == 0 {
+            if let Err(e) = in_pcbbind_locked(inp, None, &ina, curproc_or_panic("in_pcbconnect")) {
+                mtx_leave(&table.inpt_mtx);
+                return Err(e);
+            }
+            let t = in_pcblookup_lock(
+                table,
+                sin.sin_addr,
+                sin.sin_port,
+                ina,
+                inp.inp_lport.get(),
+                inp.inp_rtableid.get(),
+                IN_PCBLOCK_HOLD,
+            );
+            if t.is_some() {
+                inp.inp_lport.set(0);
+                mtx_leave(&table.inpt_mtx);
+                return Err(Errno::EADDRINUSE);
+            }
+        }
+        inp.inp_laddr.set(ina);
+    }
+    inp.inp_faddr.set(sin.sin_addr);
+    inp.inp_fport.set(sin.sin_port);
+    in_pcbrehash(inp);
+
+    mtx_leave(&table.inpt_mtx);
+
+    // NSTOEPLITZ > 0: inp_flowid = stoeplitz_ip4port(...); not configured.
+    Ok(())
+}
+
+/// `in_pcbdisconnect`: forgets the flow; a socket without a file reference goes too.
+pub fn in_pcbdisconnect(inp: &'static Inpcb) {
+    // NPF > 0: pf_remove_divert_state, pf_inp_unlink; not configured.
+    inp.inp_flowid.set(0);
+    if inp.socket().has_state(SS_NOFDREF) {
+        in_pcbdetach(inp);
+    }
+}
+
+/// `in_pcbdetach`: unlinks `inp` from its socket and its table and drops the table's
+/// reference.
+pub fn in_pcbdetach(inp: &'static Inpcb) {
+    let so = inp.socket();
+    let table = inp.table();
+
+    soassertlocked(so);
+
+    so.so_pcb.set(ptr::null_mut());
+    sofree(so, true);
+    if let Some(rt) = inp.inp_route.ro_rt.take() {
+        rtfree(Some(rt));
+    }
+    // INET6: ip6_freepcbopts, ip6_freemoptions for INP_IPV6; not configured.
+    {
+        m_freem(inp.inp_options.take());
+        // SAFETY: the options are this control block's own allocation (`ip_setmoptions`),
+        // taken out of it here and never used again.
+        unsafe { ip_freemoptions(inp.inp_moptions.take()) };
+    }
+    // NPF > 0: pf_remove_divert_state, pf_inp_unlink; not configured.
+    mtx_enter(&table.inpt_mtx);
+    // SAFETY: the table mutex is held and the control block is on the three lists since
+    // `in_pcballoc`.
+    unsafe {
+        ListHead::<InpLhash>::remove(inp);
+        ListHead::<InpHash>::remove(inp);
+        table.inpt_queue.remove(inp);
+    }
+    table.inpt_count.set(table.inpt_count.get() - 1);
+    mtx_leave(&table.inpt_mtx);
+
+    in_pcbunref(Some(inp));
+}
+
+/// `in_pcbsolock`: locks the socket of `inp`; `None` when it is detached.
+pub fn in_pcbsolock(inp: &Inpcb) -> Option<&'static Socket> {
+    let so = inp.inp_socket;
+
+    net_assert_locked("in_pcbsolock");
+
+    let so = so?;
+    rw_enter_write(&so.so_lock);
+    if so.so_pcb.get().is_null() {
+        rw_exit_write(&so.so_lock);
+        return None;
+    }
+    kassert!(sotoinpcb(so).is_some_and(|i| ptr::eq(i, inp)));
+    Some(so)
+}
+
+/// `in_pcbsounlock`: unlocks what `in_pcbsolock` locked.
+pub fn in_pcbsounlock(inp: Option<&Inpcb>, so: Option<&Socket>) {
+    let Some(so) = so else {
+        return;
+    };
+    if let Some(inp) = inp
+        && !so.so_pcb.get().is_null()
+    {
+        kassert!(
+            inp.inp_socket.is_some_and(|s| ptr::eq(s, so))
+                && ptr::eq(so.so_pcb.get().cast_const(), ptr::from_ref(inp).cast())
+        );
+    }
+    rw_exit_write(&so.so_lock);
+}
+
+/// `in_pcbref`: takes a reference to `inp`.
+pub fn in_pcbref(inp: Option<&'static Inpcb>) -> Option<&'static Inpcb> {
+    let inp = inp?;
+    refcnt_take(&inp.inp_refcnt);
+    Some(inp)
+}
+
+/// `in_pcbunref`: drops a reference to `inp`; the last one releases the socket and the
+/// control block.
+pub fn in_pcbunref(inp: Option<&Inpcb>) {
+    let Some(inp) = inp else {
+        return;
+    };
+    if !refcnt_rele(&inp.inp_refcnt) {
+        return;
+    }
+    sorele(inp.socket());
+    // KASSERTs that the links are cleared: see the module's deviations.
+    pool_put(&INPCB_POOL, NonNull::from(inp).cast());
+}
+
+/// `in_pcb_iterator`: the control block after `inp` (the first one for `None`) in `table`,
+/// referenced, with `iter` marking the place; drops the reference to `inp`. `None` ends the
+/// walk.
+///
+/// # Safety
+///
+/// The table mutex is held. `iter` stays valid and in place, and is used for this walk only,
+/// until this function returns `None` or `in_pcb_iterator_abort` is called (it sits in the
+/// table's queue in between).
+pub unsafe fn in_pcb_iterator(
+    table: &Inpcbtable,
+    inp: Option<&Inpcb>,
+    iter: &InpcbIterator,
+) -> Option<&'static Inpcb> {
+    mutex_assert_locked(&table.inpt_mtx, "in_pcb_iterator");
+
+    let mut tmp = if inp.is_some() {
+        TailqHead::<InpQueue>::next(&iter.0)
+    } else {
+        table.inpt_queue.first()
+    };
+
+    while let Some(t) = tmp
+        && t.inp_table.is_none()
+    {
+        tmp = TailqHead::<InpQueue>::next(t);
+    }
+    let tmp = tmp.map(inp_static);
+
+    if inp.is_some() {
+        // SAFETY: the mutex is held and `iter` is in the queue since the previous call.
+        unsafe { table.inpt_queue.remove(&iter.0) };
+        in_pcbunref(inp);
+    }
+    if let Some(tmp) = tmp {
+        // SAFETY: the mutex is held; `tmp` is in the queue and `iter` stays in place until it
+        // is removed (the caller's contract).
+        unsafe { table.inpt_queue.insert_after(tmp, &iter.0) };
+        in_pcbref(Some(tmp));
+    }
+
+    tmp
+}
+
+/// `in_pcb_iterator_abort`: ends a walk before `in_pcb_iterator` returned `None`.
+///
+/// # Safety
+///
+/// The table mutex is held; `iter` is the iterator of the walk that returned `inp`.
+pub unsafe fn in_pcb_iterator_abort(table: &Inpcbtable, inp: Option<&Inpcb>, iter: &InpcbIterator) {
+    mutex_assert_locked(&table.inpt_mtx, "in_pcb_iterator_abort");
+
+    if inp.is_some() {
+        // SAFETY: the caller's contract: `iter` is in the queue after `inp`.
+        unsafe { table.inpt_queue.remove(&iter.0) };
+        in_pcbunref(inp);
+    }
+}
+
+/// Writes `sin` as the address in `nam`.
+fn set_nam(nam: &Mbuf, sin: SockaddrIn) {
+    nam.m_len().set(size_of::<SockaddrIn>() as u32);
+    // SAFETY: `nam` is an `MT_SONAME` mbuf of `MLEN` bytes, more than a `sockaddr_in`;
+    // written unaligned (mbuf data need not be aligned).
+    unsafe { mtod::<SockaddrIn>(nam).write_unaligned(sin) };
+}
+
+/// `in_setsockaddr`: the local address of `inp` into `nam`.
+pub fn in_setsockaddr(inp: &Inpcb, nam: &Mbuf) {
+    // INET6: in6_setsockaddr for INP_IPV6; not configured.
+    set_nam(
+        nam,
+        SockaddrIn {
+            sin_family: AF_INET,
+            sin_len: size_of::<SockaddrIn>() as u8,
+            sin_port: inp.inp_lport.get(),
+            sin_addr: inp.inp_laddr.get(),
+            ..SockaddrIn::default()
+        },
+    );
+}
+
+/// `in_setpeeraddr`: the foreign address of `inp` into `nam`.
+pub fn in_setpeeraddr(inp: &Inpcb, nam: &Mbuf) {
+    // INET6: in6_setpeeraddr for INP_IPV6; not configured.
+    set_nam(
+        nam,
+        SockaddrIn {
+            sin_family: AF_INET,
+            sin_len: size_of::<SockaddrIn>() as u8,
+            sin_port: inp.inp_fport.get(),
+            sin_addr: inp.inp_faddr.get(),
+            ..SockaddrIn::default()
+        },
+    );
+}
+
+/// `sotoinpcb(so)` of a socket the C knows to be attached.
+fn inpcb_of(so: &Socket) -> &'static Inpcb {
+    match sotoinpcb(so) {
+        Some(inp) => inp,
+        None => panic(format_args!("socket {:p}: no inpcb", so)),
+    }
+}
+
+/// `in_sockaddr`: the `pru_sockaddr` of the Internet protocols.
+pub fn in_sockaddr(so: &'static Socket, nam: &'static Mbuf) -> Result<(), Errno> {
+    in_setsockaddr(inpcb_of(so), nam);
+
+    Ok(())
+}
+
+/// `in_peeraddr`: the `pru_peeraddr` of the Internet protocols.
+pub fn in_peeraddr(so: &'static Socket, nam: &'static Mbuf) -> Result<(), Errno> {
+    in_setpeeraddr(inpcb_of(so), nam);
+
+    Ok(())
+}
+
+/// `in_flowid`: the `pru_flowid` of the Internet protocols.
+pub fn in_flowid(so: &'static Socket) -> i32 {
+    match sotoinpcb(so) {
+        Some(inp) => i32::from(inp.inp_flowid.get()),
+        None => 0,
+    }
+}
+
+/// `in_pcbnotifyall`: passes some notification to all connections of a protocol associated
+/// with address `dst`. The "usual action" will be taken, depending on the ctlinput cmd. The
+/// caller must filter any cmds that are uninteresting (e.g., no error in the map). Calls the
+/// protocol specific routine (if any) to report any errors for each matching socket.
+pub fn in_pcbnotifyall(
+    table: &Inpcbtable,
+    dst: &SockaddrIn,
+    rtable: u32,
+    errno: Option<Errno>,
+    notify: Option<InpNotifyFn>,
+) {
+    let iter = InpcbIterator::new();
+    let mut inp: Option<&'static Inpcb> = None;
+
+    if dst.sin_addr.s_addr == INADDR_ANY {
+        return;
+    }
+    let Some(notify) = notify else {
+        return;
+    };
+
+    let rdomain = rtable_l2(rtable);
+    mtx_enter(&table.inpt_mtx);
+    // SAFETY: the mutex is held around every call; `iter` lives on this frame until the walk
+    // ends with `None`.
+    while let Some(i) = unsafe { in_pcb_iterator(table, inp, &iter) } {
+        inp = Some(i);
+        kassert!(!i.has_flags(INP_IPV6));
+
+        if i.inp_faddr.get().s_addr != dst.sin_addr.s_addr
+            || rtable_l2(i.inp_rtableid.get()) != rdomain
+        {
+            continue;
+        }
+        mtx_leave(&table.inpt_mtx);
+        let so = in_pcbsolock(i);
+        if so.is_some() {
+            notify(i, errno);
+        }
+        in_pcbsounlock(Some(i), so);
+        mtx_enter(&table.inpt_mtx);
+    }
+    mtx_leave(&table.inpt_mtx);
+}
+
+/// `in_losing`: checks for alternatives when higher level complains about service problems.
+/// For now, invalidate cached routing information. If the route was created dynamically (by
+/// a redirect), time to try a default gateway again.
+pub fn in_losing(inp: &Inpcb) {
+    let Some(rt) = inp.inp_route.ro_rt.get() else {
+        return;
+    };
+    inp.inp_route.ro_rt.set(None);
+
+    if rt.rt_flags.get() & RTF_DYNAMIC != 0 {
+        let ifp = if_get(rt.rt_ifidx.get());
+        // If the interface is gone, all its attached route entries have been removed from
+        // the table, so we're dealing with a stale cache and have nothing to do.
+        if let Some(ifp) = ifp {
+            let _ = rtdeletemsg(rt, ifp, inp.inp_rtableid.get());
+        }
+        if_put(ifp);
+    }
+    // A new route can be allocated the next time output is attempted. rtfree() needs to be
+    // called in anycase because the inp is still holding a reference to rt.
+    rtfree(Some(rt));
+}
+
+/// `in_pcbrtchange`: after a routing change, flushes the old route; a (hopefully) better one
+/// is allocated the next time output is attempted.
+pub fn in_pcbrtchange(inp: &'static Inpcb, _errno: Option<Errno>) {
+    soassertlocked(inp.socket());
+
+    if let Some(rt) = inp.inp_route.ro_rt.take() {
+        rtfree(Some(rt));
+    }
+}
+
+/// `in_pcblookup_local_lock`: the control block of `table` bound to local port `lport_arg`
+/// and address `laddr` with the fewest wildcards (`INPLOOKUP_WILDCARD` allows some); with
+/// `IN_PCBLOCK_GRAB` the table mutex is taken here and the result referenced.
+pub fn in_pcblookup_local_lock(
+    table: &Inpcbtable,
+    laddr: &InAddr,
+    lport_arg: u16,
+    flags: i32,
+    rtable: u32,
+    lock: i32,
+) -> Option<&'static Inpcb> {
+    let mut matched: Option<&'static Inpcb> = None;
+    let mut matchwild = 3;
+    let lport = lport_arg;
+
+    let rdomain = rtable_l2(rtable);
+    let lhash = in_pcblhash(table, rdomain, lport);
+
+    if lock == IN_PCBLOCK_GRAB {
+        mtx_enter(&table.inpt_mtx);
+    } else {
+        kassert!(lock == IN_PCBLOCK_HOLD);
+        mutex_assert_locked(&table.inpt_mtx, "in_pcblookup_local_lock");
+    }
+    for inp in table.lhash_head(lhash).iter() {
+        if rtable_l2(inp.inp_rtableid.get()) != rdomain {
+            continue;
+        }
+        if inp.inp_lport.get() != lport {
+            continue;
+        }
+        let mut wildcard = 0;
+        // INET6: the INPLOOKUP_IPV6 comparison of the IPv6 addresses; not configured.
+        {
+            kassert!(!inp.has_flags(INP_IPV6));
+
+            if inp.inp_faddr.get().s_addr != INADDR_ANY {
+                wildcard += 1;
+            }
+
+            if inp.inp_laddr.get().s_addr != laddr.s_addr {
+                if inp.inp_laddr.get().s_addr == INADDR_ANY || laddr.s_addr == INADDR_ANY {
+                    wildcard += 1;
+                } else {
+                    continue;
+                }
+            }
+        }
+        if (wildcard == 0 || flags & INPLOOKUP_WILDCARD != 0) && wildcard < matchwild {
+            matched = Some(inp_static(inp));
+            matchwild = wildcard;
+            if matchwild == 0 {
+                break;
+            }
+        }
+    }
+    if lock == IN_PCBLOCK_GRAB {
+        in_pcbref(matched);
+        mtx_leave(&table.inpt_mtx);
+    }
+
+    matched
+}
+
+/// `in_pcbrtentry`: the route to the foreign address of `inp`, from its cache.
+pub fn in_pcbrtentry(inp: &Inpcb) -> Option<&'static Rtentry> {
+    soassertlocked(inp.socket());
+
+    // INET6: in6_pcbrtentry for INP_IPV6; not configured.
+
+    if inp.inp_faddr.get().s_addr == INADDR_ANY {
+        return None;
+    }
+    let faddr = inp.inp_faddr.get();
+    let laddr = inp.inp_laddr.get();
+    route_mpath(&inp.inp_route, &faddr, Some(&laddr), inp.inp_rtableid.get())
+}
+
+/// `in_pcbselsrc`: the IPv4 address most appropriate as the source for destination
+/// `dstsock`, into `insrc`. If necessary, the routing table is looked up and the entry cached
+/// in `inp`.
+pub fn in_pcbselsrc(insrc: &mut InAddr, dstsock: &SockaddrIn, inp: &Inpcb) -> Result<(), Errno> {
+    let dst = &dstsock.sin_addr;
+    let laddr = inp.inp_laddr.get();
+    let rtableid = inp.inp_rtableid.get();
+    let mut ia = None;
+
+    // If the socket(if any) is already bound, use that bound address unless it is
+    // INADDR_ANY or INADDR_BROADCAST.
+    if laddr.s_addr != INADDR_ANY && laddr.s_addr != INADDR_BROADCAST {
+        *insrc = laddr;
+        return Ok(());
+    }
+
+    // If the destination address is multicast or limited broadcast (255.255.255.255) and an
+    // outgoing interface has been set as a multicast option, use the address of that
+    // interface as our source address.
+    if (in_multicast(dst.s_addr) || dst.s_addr == INADDR_BROADCAST)
+        && let Some(mopts) = inp.moptions()
+    {
+        let ifp = if_get(u32::from(mopts.imo_ifidx));
+        if let Some(ifp) = ifp {
+            if ifp.if_rdomain.get() == rtable_l2(rtableid) {
+                ia = in_ifp2ia(ifp);
+            }
+            let Some(ia) = ia else {
+                if_put(Some(ifp));
+                return Err(Errno::EADDRNOTAVAIL);
+            };
+
+            *insrc = ia.ia_addr.get().sin_addr;
+            if_put(Some(ifp));
+            return Ok(());
+        }
+    }
+
+    // If route is known or can be allocated now, our src addr is taken from the i/f, else
+    // punt.
+    let rt = route_mpath(&inp.inp_route, dst, None, rtableid);
+
+    // If we found a route, use the address corresponding to the outgoing interface.
+    if let Some(rt) = rt {
+        ia = Some(ifatoia(rt.ifa()));
+    }
+
+    // Use preferred source address if :
+    // - destination is not onlink
+    // - preferred source address is set
+    // - output interface is UP
+    if let Some(rt) = rt
+        && rt.rt_flags.get() & RTF_GATEWAY != 0
+    {
+        let ip4_source = rtable_getsource(rtableid, AF_INET);
+        if !ip4_source.is_null() {
+            // SAFETY: a source address set on the table is a live `sockaddr_in`, read for
+            // the call.
+            let ifa = unsafe { ifa_ifwithaddr(ip4_source, rtableid) };
+            if let Some(ifa) = ifa
+                && ifa
+                    .ifa_ifp
+                    .get()
+                    .is_some_and(|ifp| ifp.if_flags.get() & IFF_UP != 0)
+            {
+                // SAFETY: as above.
+                *insrc = unsafe { (*satosin_const(ip4_source)).sin_addr };
+                return Ok(());
+            }
+        }
+    }
+
+    let Some(ia) = ia else {
+        return Err(Errno::EADDRNOTAVAIL);
+    };
+
+    *insrc = ia.ia_addr.get().sin_addr;
+    Ok(())
+}
+
+/// `in_pcbrehash`: moves `inp` to the hash buckets of its current addresses.
+pub fn in_pcbrehash(inp: &'static Inpcb) {
+    // SAFETY: the callers hold the table mutex; `inp` is on both hash lists.
+    unsafe {
+        ListHead::<InpLhash>::remove(inp);
+        ListHead::<InpHash>::remove(inp);
+    }
+    in_pcbhash_insert(inp);
+}
+
+/// `in_pcbhash_insert`: links `inp` into the hash buckets of its addresses.
+pub fn in_pcbhash_insert(inp: &'static Inpcb) {
+    let table = inp.table();
+
+    mutex_assert_locked(&table.inpt_mtx, "in_pcbhash_insert");
+
+    let lhash = in_pcblhash(table, inp.inp_rtableid.get(), inp.inp_lport.get());
+    // SAFETY: the table mutex is held; the control block is in no local port list and stays
+    // in place until `in_pcbdetach` unlinks it.
+    unsafe { table.lhash_head(lhash).insert_head(inp) };
+    // INET6: in6_pcbhash for INP_IPV6; not configured.
+    let hash = in_pcbhash(
+        table,
+        rtable_l2(inp.inp_rtableid.get()),
+        &inp.inp_faddr.get(),
+        inp.inp_fport.get(),
+        &inp.inp_laddr.get(),
+        inp.inp_lport.get(),
+    );
+    // SAFETY: as above, for the address hash.
+    unsafe { table.hash_head(hash).insert_head(inp) };
+}
+
+/// `in_pcbhash_lookup`: the control block with exactly these addresses, moved to the head of
+/// its chain.
+pub fn in_pcbhash_lookup(
+    table: &Inpcbtable,
+    hash: u64,
+    rdomain: u32,
+    faddr: &InAddr,
+    fport: u16,
+    laddr: &InAddr,
+    lport: u16,
+) -> Option<&'static Inpcb> {
+    mutex_assert_locked(&table.inpt_mtx, "in_pcbhash_lookup");
+
+    let head = table.hash_head(hash);
+    let inp = head
+        .iter()
+        .find(|inp| {
+            kassert!(!inp.has_flags(INP_IPV6));
+
+            inp.inp_fport.get() == fport
+                && inp.inp_lport.get() == lport
+                && inp.inp_faddr.get().s_addr == faddr.s_addr
+                && inp.inp_laddr.get().s_addr == laddr.s_addr
+                && rtable_l2(inp.inp_rtableid.get()) == rdomain
+        })
+        .map(inp_static)?;
+    // Move this PCB to the head of hash chain so that repeated accesses are quicker. This is
+    // analogous to the historic single-entry PCB cache.
+    if !head.first().is_some_and(|f| ptr::eq(f, inp)) {
+        // SAFETY: the table mutex is held; `inp` is on this chain and stays on it.
+        unsafe {
+            ListHead::<InpHash>::remove(inp);
+            head.insert_head(inp);
+        }
+    }
+    Some(inp)
+}
+
+/// `in_pcbresize`: rehashes `table` into tables of `hashsize` buckets.
+pub fn in_pcbresize(table: &Inpcbtable, hashsize: i32) -> Result<(), Errno> {
+    mutex_assert_locked(&table.inpt_mtx, "in_pcbresize");
+
+    let ohashtbl = table.inpt_hashtbl.get();
+    let olhashtbl = table.inpt_lhashtbl.get();
+    let osize = table.inpt_size.get();
+
+    let Some(nhashtbl) = hashinit::<InpHash>(hashsize, M_PCB, M_NOWAIT) else {
+        return Err(Errno::ENOBUFS);
+    };
+    let Some(nlhashtbl) = hashinit::<InpLhash>(hashsize, M_PCB, M_NOWAIT) else {
+        // SAFETY: just made by hashinit with these arguments, empty and never used.
+        unsafe { hashfree(nhashtbl, hashsize, M_PCB) };
+        return Err(Errno::ENOBUFS);
+    };
+    table.inpt_hashtbl.set(nhashtbl);
+    table.inpt_lhashtbl.set(nlhashtbl);
+    table.inpt_mask.set(nhashtbl.len() as u64 - 1);
+    table.inpt_lmask.set(nlhashtbl.len() as u64 - 1);
+    table.inpt_size.set(hashsize);
+
+    for inp in table.inpt_queue.iter() {
+        if in_pcb_is_iterator(inp) {
+            continue;
+        }
+        let inp = inp_static(inp);
+        // SAFETY: the table mutex is held; `inp` is on the old chains.
+        unsafe {
+            ListHead::<InpLhash>::remove(inp);
+            ListHead::<InpHash>::remove(inp);
+        }
+        in_pcbhash_insert(inp);
+    }
+    // SAFETY: every control block moved to the new tables, so the old ones are empty; they
+    // came from hashinit with `osize`, and the table no longer points at them.
+    unsafe {
+        hashfree(ohashtbl, osize, M_PCB);
+        hashfree(olhashtbl, osize, M_PCB);
+    }
+
+    Ok(())
+}
+
+/// `in_pcblookup_lock`: the connected control block for `faddr.fport <-> laddr.lport`; no
+/// wildcard matching is done, so listening sockets are not found (`in_pcblookup_listen`
+/// finds those). With `IN_PCBLOCK_GRAB` the table mutex is taken here and the result
+/// referenced.
+pub fn in_pcblookup_lock(
+    table: &Inpcbtable,
+    faddr: InAddr,
+    fport: u16,
+    laddr: InAddr,
+    lport: u16,
+    rtable: u32,
+    lock: i32,
+) -> Option<&'static Inpcb> {
+    let rdomain = rtable_l2(rtable);
+    let hash = in_pcbhash(table, rdomain, &faddr, fport, &laddr, lport);
+
+    if lock == IN_PCBLOCK_GRAB {
+        mtx_enter(&table.inpt_mtx);
+    } else {
+        kassert!(lock == IN_PCBLOCK_HOLD);
+        mutex_assert_locked(&table.inpt_mtx, "in_pcblookup_lock");
+    }
+    let inp = in_pcbhash_lookup(table, hash, rdomain, &faddr, fport, &laddr, lport);
+    if lock == IN_PCBLOCK_GRAB {
+        in_pcbref(inp);
+        mtx_leave(&table.inpt_mtx);
+    }
+
+    #[cfg(feature = "diagnostic")]
+    if inp.is_none() && IN_PCBNOTIFYMISS.load(Ordering::Relaxed) != 0 {
+        crate::kprintf!(
+            "in_pcblookup_lock: faddr={:08x} fport={} laddr={:08x} lport={} rdom={}\n",
+            u32::from_be(faddr.s_addr),
+            u16::from_be(fport),
+            u32::from_be(laddr.s_addr),
+            u16::from_be(lport),
+            rdomain
+        );
+    }
+    inp
+}
+
+/// `in_pcblookup`: `in_pcblookup_lock` taking the table mutex; the result is referenced.
+pub fn in_pcblookup(
+    table: &Inpcbtable,
+    faddr: InAddr,
+    fport: u16,
+    laddr: InAddr,
+    lport: u16,
+    rtable: u32,
+) -> Option<&'static Inpcb> {
+    in_pcblookup_lock(table, faddr, fport, laddr, lport, rtable, IN_PCBLOCK_GRAB)
+}
+
+/// `in_pcblookup_listen`: the listening control block for `laddr.lport`: unspecified foreign
+/// address and port, bound to `laddr` or to the wildcard address. The result is referenced.
+pub fn in_pcblookup_listen(
+    table: &Inpcbtable,
+    laddr: InAddr,
+    lport_arg: u16,
+    _m: Option<&Mbuf>,
+    rtable: u32,
+) -> Option<&'static Inpcb> {
+    let key1 = &laddr;
+    let key2 = &ZEROIN_ADDR;
+    let lport = lport_arg;
+
+    // NPF > 0: PF_TAG_DIVERTED (pf_find_divert: divert-to key, divert-reply none) and
+    // PF_TAG_TRANSLATE_LOCALHOST (the keys swapped); not configured.
+
+    let rdomain = rtable_l2(rtable);
+    let hash = in_pcbhash(table, rdomain, &ZEROIN_ADDR, 0, key1, lport);
+
+    mtx_enter(&table.inpt_mtx);
+    let mut inp = in_pcbhash_lookup(table, hash, rdomain, &ZEROIN_ADDR, 0, key1, lport);
+    if inp.is_none() && key1.s_addr != key2.s_addr {
+        let hash = in_pcbhash(table, rdomain, &ZEROIN_ADDR, 0, key2, lport);
+        inp = in_pcbhash_lookup(table, hash, rdomain, &ZEROIN_ADDR, 0, key2, lport);
+    }
+    in_pcbref(inp);
+    mtx_leave(&table.inpt_mtx);
+
+    #[cfg(feature = "diagnostic")]
+    if inp.is_none() && IN_PCBNOTIFYMISS.load(Ordering::Relaxed) != 0 {
+        crate::kprintf!(
+            "in_pcblookup_listen: laddr={:08x} lport={} rdom={}\n",
+            u32::from_be(laddr.s_addr),
+            u16::from_be(lport),
+            rdomain
+        );
+    }
+    inp
+}
+
+/// `in_pcbset_rtableid`: moves an unbound `inp` to routing table `rtableid`.
+pub fn in_pcbset_rtableid(inp: &'static Inpcb, rtableid: u32) -> Result<(), Errno> {
+    let table = inp.table();
+
+    // table must exist
+    if !rtable_exists(rtableid) {
+        return Err(Errno::EINVAL);
+    }
+
+    mtx_enter(&table.inpt_mtx);
+    if inp.inp_lport.get() != 0 {
+        mtx_leave(&table.inpt_mtx);
+        return Err(Errno::EBUSY);
+    }
+    inp.inp_rtableid.set(rtableid);
+    in_pcbrehash(inp);
+    mtx_leave(&table.inpt_mtx);
+
+    Ok(())
+}
+
+/// `in_pcbset_addr`: gives `inp` both addresses at once (a connection accepted from a
+/// listener), unless another control block has them.
+pub fn in_pcbset_addr(
+    inp: &'static Inpcb,
+    fsin: &SockaddrIn,
+    lsin: &SockaddrIn,
+    rtableid: u32,
+) -> Result<(), Errno> {
+    let table = inp.table();
+
+    // INET6: in6_pcbset_addr for INP_IPV6; not configured.
+    kassert!(fsin.sin_family == AF_INET);
+    kassert!(lsin.sin_family == AF_INET);
+
+    mtx_enter(&table.inpt_mtx);
+
+    let t = in_pcblookup_lock(
+        table,
+        fsin.sin_addr,
+        fsin.sin_port,
+        lsin.sin_addr,
+        lsin.sin_port,
+        rtableid,
+        IN_PCBLOCK_HOLD,
+    );
+    if t.is_some() {
+        mtx_leave(&table.inpt_mtx);
+        return Err(Errno::EADDRINUSE);
+    }
+
+    inp.inp_rtableid.set(rtableid);
+    inp.inp_laddr.set(lsin.sin_addr);
+    inp.inp_lport.set(lsin.sin_port);
+    inp.inp_faddr.set(fsin.sin_addr);
+    inp.inp_fport.set(fsin.sin_port);
+    in_pcbrehash(inp);
+
+    mtx_leave(&table.inpt_mtx);
+
+    // NSTOEPLITZ > 0: inp_flowid = stoeplitz_ip4port(...); not configured.
+    Ok(())
+}
+
+/// `in_pcbunset_faddr`: forgets the foreign address.
+pub fn in_pcbunset_faddr(inp: &'static Inpcb) {
+    let table = inp.table();
+
+    mtx_enter(&table.inpt_mtx);
+    // INET6: in6addr_any for INP_IPV6; not configured.
+    inp.inp_faddr.set(InAddr { s_addr: INADDR_ANY });
+    inp.inp_fport.set(0);
+    in_pcbrehash(inp);
+    mtx_leave(&table.inpt_mtx);
+}
+
+/// `in_pcbunset_laddr`: forgets both addresses (the local port stays).
+pub fn in_pcbunset_laddr(inp: &'static Inpcb) {
+    let table = inp.table();
+
+    mtx_enter(&table.inpt_mtx);
+    // INET6: in6addr_any for INP_IPV6; not configured.
+    inp.inp_faddr.set(InAddr { s_addr: INADDR_ANY });
+    inp.inp_laddr.set(InAddr { s_addr: INADDR_ANY });
+    inp.inp_fport.set(0);
+    in_pcbrehash(inp);
+    mtx_leave(&table.inpt_mtx);
+}
+
+#[cfg(test)]
+pub(crate) mod tests;
