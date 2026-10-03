@@ -63,9 +63,9 @@
 //! - The set[ug]id stdin/stdout/stderr fix-up opens `/dev/null` with `cdevvp(getnulldev())`:
 //!   the device switch (`<sys/conf.h>`) is not ported, so a set[ug]id exec with one of the
 //!   three descriptors closed reports it and fails (the C would succeed).
-//! - `prof_exec`, `stopprofclock` (profiling, `subr_prof.c`), the `NOTE_EXEC` knote
-//!   (`kern_event.c`) and `unveil_destroy` (`kern_unveil.c`) are reported or no-ops where
-//!   their subsystem is missing (see each call site); `KTRACE` is not configured.
+//! - `prof_exec`, `stopprofclock` (profiling, `subr_prof.c`) and the `NOTE_EXEC` knote
+//!   (`kern_event.c`) are reported or no-ops where their subsystem is missing (see each call
+//!   site); `KTRACE` is not configured.
 //! - The 4-clause licence (advertising clause) was accepted by the user at M2 for this
 //!   project.
 
@@ -837,8 +837,9 @@ fn execve_common(
         pr.ps_flags.fetch_and(!PS_PLEDGE, Ordering::Relaxed);
         p.p_pledge.set(0);
         pr.ps_pledge.set(0);
-        // Clear our unveil paths out so the child starts afresh: unveil_destroy(pr) and
-        // ps_uvdone = 0 (kern_unveil.c, not ported: no process has unveiled paths).
+        // Clear our unveil paths out so the child starts afresh
+        crate::kern::kern_unveil::unveil_destroy(pr);
+        pr.ps_uvdone.set(0);
     }
 
     // deal with set[ug]id. MNT_NOEXEC has already been used to disable s[ug]id.

@@ -350,7 +350,8 @@ fn process_new(p: &'static Proc, parent: &'static Process, flags: i32) -> &'stat
         crate::kern::vfs_subr::vref(vp);
     }
 
-    // copy unveil if unveil is active: unveil_copy (M7).
+    // copy unveil if unveil is active
+    crate::kern::kern_unveil::unveil_copy(parent, pr);
 
     pr.ps_flags.store(
         parent.ps_flags.load(Ordering::Relaxed) & PS_FLAGS_INHERITED_ON_FORK,

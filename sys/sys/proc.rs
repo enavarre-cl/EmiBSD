@@ -54,11 +54,12 @@
 //! queues and the kernel threads use, the `S*` states, the `P_*`/`PS_*` flags, the `FORK_*`,
 //! `EXIT_*` and `SINGLE_*` constants, `struct cond`, `struct cpuset`, `struct uidinfo` and
 //! `tu_enter`/`tu_leave`. The members that belong to subsystems not here yet (`klist`,
-//! `ptrace`, `unveil`, `pinsyscall`, the `vnode`s, the file descriptors) are opaque pointers
+//! `ptrace`, `pinsyscall`, the `vnode`s, the file descriptors) are opaque pointers
 //! or left out, each named in a comment at its place. The vmspace, (since `kern_prot.c`)
 //! the credentials and (since `kern_sig.c`) the signal actions are typed pointers with
 //! accessors (`vmspace()`, `ucred()`, `sigacts()`); `kern_sig.c` also brought the sigio
-//! lists, `p_sigstk` and `p_sigval`.
+//! lists, `p_sigstk` and `p_sigval`, and `kern_unveil.c` the unveil table (`ps_uvpaths`, a
+//! raw pointer to `kern_unveil.rs`'s `Unveil` slots, with its counts and `ps_uvdone`).
 //!
 //! ## Deviations
 //! - Members the owning thread or a lock mutates are `Cell`s; the flag words `p_flag` and
@@ -78,6 +79,7 @@ use crate::kern::kern_lock::{pc_sprod_enter, pc_sprod_leave};
 use crate::kern::kern_proc::SESSION_POOL;
 use crate::kern::kern_prot::dorefreshcreds;
 use crate::kern::kern_timeout::timeout_del;
+use crate::kern::kern_unveil::Unveil;
 use crate::kern::subr_pool::pool_put;
 use crate::machine::Machine;
 use crate::machine::cpu::{CpuInfo, MAXCPUS};
@@ -395,7 +397,15 @@ pub struct Process {
     /// `ps_wxcounter`.
     pub ps_wxcounter: Cell<u64>,
 
-    // ps_uvpaths, ps_uvvcount, ps_uvncount, ps_uvdone: unveil (M7).
+    /// `ps_uvpaths`: unveil vnodes and names (`UNVEIL_MAX_VNODES` slots from
+    /// `mallocarray(M_PROC)`, NULL until the first `unveil(2)`; `kern_unveil.rs`).
+    pub ps_uvpaths: Cell<*mut Unveil>,
+    /// `ps_uvvcount`: count of unveil vnodes held.
+    pub ps_uvvcount: Cell<isize>,
+    /// `ps_uvncount`: count of unveil names allocated.
+    pub ps_uvncount: Cell<usize>,
+    /// `ps_uvdone`: no more unveil is permitted.
+    pub ps_uvdone: Cell<i32>,
     // End area that is zeroed on creation (ps_endzero = ps_startcopy).
 
     // The following fields are all copied upon creation in process_new (ps_startcopy).
@@ -501,6 +511,10 @@ impl Process {
             ps_rucheck_to: Timeout::zeroed(),
             ps_nextxcpu: Cell::new(0),
             ps_wxcounter: Cell::new(0),
+            ps_uvpaths: Cell::new(ptr::null_mut()),
+            ps_uvvcount: Cell::new(0),
+            ps_uvncount: Cell::new(0),
+            ps_uvdone: Cell::new(0),
             ps_limit: Cell::new(ptr::null()),
             ps_pgrp: Cell::new(ptr::null()),
             ps_comm: UnsafeCell::new([0; _MAXCOMLEN]),

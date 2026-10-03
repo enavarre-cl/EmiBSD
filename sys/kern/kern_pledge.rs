@@ -37,8 +37,7 @@
 //!   needed, and without them a pledged program (`init(8)`, `ksh(1)`) could not run.
 //!   Consequently the "only permit reductions" checks, which the C makes only once
 //!   `PS_PLEDGE` is set, never refuse, and `execve` does not hand execpromises over. The
-//!   unveil clean-up (`unveil_destroy`) is `kern_unveil.c`'s, not ported; no process has
-//!   unveiled paths.
+//!   unveil clean-up (`unveil_destroy`, `kern_unveil.rs`) is real.
 
 use core::sync::atomic::Ordering;
 
@@ -188,8 +187,8 @@ pub fn sys_pledge(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
         // path-accessing pledge. This must be done single-threaded, because another thread
         // may be in a system call sleeping in namei().
         let _ = single_thread_set(p, SINGLE_UNWIND);
-        // KERNEL_LOCK(); unveil_destroy(pr): kern_unveil.c, not ported (no process has
-        // unveiled paths); KERNEL_UNLOCK().
+        // KERNEL_LOCK()/KERNEL_UNLOCK(): nothing without MULTIPROCESSOR.
+        crate::kern::kern_unveil::unveil_destroy(pr);
         single_thread_clear(p);
     }
     error

@@ -49,21 +49,21 @@
 //!   it point at `cn_namelen` readable bytes for the lookup's duration; [`Componentname::name`]
 //!   relies on that, as the C code does.
 //! - `cn_proc`, `cn_cred` are raw pointers with accessors that assert them non-null (the
-//!   thread and its credentials outlive the lookup); `ni_unveil_match` is an opaque pointer
-//!   until `kern_unveil.c` (`struct unveil`).
+//!   thread and its credentials outlive the lookup); `ni_unveil_match` is a raw pointer into
+//!   the process's unveil table (`kern_unveil.rs`), NULL for no match.
 //! - `struct namecache`'s members are `Cell`s; `nc_nlen` is a `u8` (a `char` holding a
 //!   length of at most `NAMECACHE_MAXLEN`).
 //! - `struct nchstats` is a structure of `AtomicU64`s (the C bumps them racily, as `uvmexp`);
 //!   [`Nchstats::snapshot`] is what `kern.nchstats` copies out.
-//! - The prototypes are their functions in `vfs_lookup.rs` and `vfs_cache.rs`; the `unveil_*`
-//!   ones belong to `kern_unveil.c` (not ported), and `namei_pool` is in `vfs_init.rs`.
+//! - The prototypes are their functions in `vfs_lookup.rs`, `vfs_cache.rs` and (the
+//!   `unveil_*` ones) `kern_unveil.rs`; `namei_pool` is in `vfs_init.rs`.
 
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::kassert;
+use crate::kern::kern_unveil::Unveil;
 use crate::kern::vfs_cache::namecache_compare;
 use crate::queue_adapter;
 use crate::sys::proc::Proc;
@@ -192,8 +192,9 @@ pub struct Nameidata<'a> {
     pub ni_next: *const u8,
     /// `ni_loopcnt`: count of symlinks encountered.
     pub ni_loopcnt: u64,
-    /// `ni_unveil_match`: last matching unveil component (`struct unveil`, not ported).
-    pub ni_unveil_match: *mut c_void,
+    /// `ni_unveil_match`: last matching unveil component (a slot of the looking-up
+    /// process's `ps_uvpaths`, or NULL).
+    pub ni_unveil_match: *const Unveil,
     /// `ni_cnd`: lookup parameters.
     pub ni_cnd: Componentname,
 }

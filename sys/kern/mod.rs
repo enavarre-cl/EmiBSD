@@ -36,6 +36,7 @@ pub mod kern_task;
 pub mod kern_tc;
 pub mod kern_time;
 pub mod kern_timeout;
+pub mod kern_unveil;
 pub mod kern_xxx;
 #[cfg(feature = "alloc")]
 pub mod rust_alloc;

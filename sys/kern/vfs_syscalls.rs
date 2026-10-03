@@ -57,11 +57,11 @@
 //!   (`statfs_mnt`); `mnt_stat` is a `Cell` (`sys/mount.rs`).
 //! - `getvnode` returns the file instead of filling `*fpp`; `dorenameat`'s `error = -1` ("the
 //!   same file: nothing to do") is a flag.
-//! - Not here yet, reported with `unported!`: `sys_unveil` (`kern_unveil.c`, whole),
-//!   `pledge_flock`/`pledge_chown` (`kern_pledge.c`, only for a pledged process),
-//!   `unveil_removevnode` (only for an unveiled
-//!   vnode, which none can be), the device
-//!   switch of `sys_revoke` (`conf.c`, through `spec_vnops.rs`).
+//! - Not here yet, reported with `unported!`: `pledge_flock`/`pledge_chown` (`kern_pledge.c`,
+//!   only for a pledged process), the device switch of `sys_revoke` (`conf.c`, through
+//!   `spec_vnops.rs`).
+//! - `sys_unveil`'s body after `single_thread_set` is `unveil_path`, so that every exit
+//!   reaches `single_thread_clear`; the pathname buffer is a `NameiBuf` given back on drop.
 //! - `option FIFO` is not configured (`miscfs/fifofs` is not ported): `mkfifo` answers
 //!   `EOPNOTSUPP` as the C does without it.
 //! - `KTRACE` is not configured; `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without
@@ -77,8 +77,9 @@ use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_proc::ALLPROCESS;
 use crate::kern::kern_prot::{crdup, crfree, suser};
 use crate::kern::kern_resource::lim_cur_proc;
-use crate::kern::kern_sig::psignal;
+use crate::kern::kern_sig::{psignal, single_thread_clear, single_thread_set};
 use crate::kern::kern_tc::{getnanotime, gettime};
+use crate::kern::kern_unveil::{unveil_add, unveil_removevnode};
 use crate::kern::subr_pool::{pool_get, pool_put};
 use crate::kern::subr_prf::panic;
 use crate::kern::sys_generic::{dofilereadv, dofilewritev};
@@ -126,10 +127,11 @@ use crate::sys::namei::{
 };
 use crate::sys::param::MAXPATHLEN;
 use crate::sys::pledge::{
-    PLEDGE_CHOWN, PLEDGE_CPATH, PLEDGE_DPATH, PLEDGE_FATTR, PLEDGE_RPATH, PLEDGE_TTY, PLEDGE_WPATH,
+    PLEDGE_CHOWN, PLEDGE_CPATH, PLEDGE_DPATH, PLEDGE_FATTR, PLEDGE_RPATH, PLEDGE_TTY,
+    PLEDGE_UNVEIL, PLEDGE_WPATH,
 };
 use crate::sys::pool::PR_WAITOK;
-use crate::sys::proc::{PS_CHROOT, PS_PLEDGE, Proc};
+use crate::sys::proc::{PS_CHROOT, PS_PLEDGE, Proc, SINGLE_UNWIND};
 use crate::sys::queue::{SlistHead, TailqHead};
 use crate::sys::resource::RLIMIT_FSIZE;
 use crate::sys::signal::SIGXFSZ;
@@ -179,14 +181,6 @@ fn pledge_chown(p: &Proc, _uid: Uid, _gid: Gid) -> Result<(), Errno> {
         return Ok(());
     }
     Err(unported!("pledge_chown (kern_pledge.c)"))
-}
-
-/// `unveil_removevnode(vp)` (`kern_unveil.c`, not ported): returns at once for a vnode no
-/// unveil references, which is every vnode until `sys_unveil` exists.
-fn unveil_removevnode(vp: &'static Vnode) {
-    if vp.v_uvcount.get() != 0 {
-        let _ = unported!("unveil_removevnode (kern_unveil.c)");
-    }
 }
 
 /// `VFS_STATFS(mp, &mp->mnt_stat, p)`: refreshes the mount's statistics (see the module's
@@ -1038,9 +1032,103 @@ pub fn sys___realpath(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Res
     error
 }
 
-/// `unveil(path, permissions)`: `kern_unveil.c` is not ported.
-pub fn sys_unveil(_p: &Proc, _v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
-    Err(unported!("sys_unveil (kern_unveil.c)"))
+/// `unveil(path, permissions)`: unveils a path to the process (`kern_unveil.c` keeps the
+/// table); both NULL forbids any further `unveil`.
+pub fn sys_unveil(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let uap: &SysUnveilArgs = sysargs(v);
+    let pr = p.process();
+
+    if uap.path.get().is_null() && uap.permissions.get().is_null() {
+        pr.ps_uvdone.set(1);
+        return Ok(());
+    }
+
+    if pr.ps_uvdone.get() != 0 {
+        return Err(Errno::EPERM);
+    }
+
+    let mut permissions = [0u8; 5];
+    copyinstr(uap.permissions.get() as usize, &mut permissions)?;
+
+    // System calls in other threads may sleep between unveil datastructure inspections --
+    // this is the simplest way to provide consistency
+    let _ = single_thread_set(p, SINGLE_UNWIND);
+
+    let error = unveil_path(p, uap.path.get() as usize, &permissions);
+
+    single_thread_clear(p);
+    error
+}
+
+/// The body of `sys_unveil` between `single_thread_set` and `single_thread_clear` (the C's
+/// jumps to `end` are the returns).
+fn unveil_path(p: &Proc, path: usize, permissions: &[u8]) -> Result<(), Errno> {
+    let pathname = NameiBuf::get()?;
+    let pathlen = copyinstr(path, pathname.as_mut())?;
+
+    // KTRACE: not configured.
+    if pathlen < 2 {
+        return Err(Errno::EINVAL);
+    }
+
+    // find root "/" or "//"
+    let mut nd = if pathname.as_str().iter().all(|&c| c == b'/') {
+        // root directory
+        ndinit(
+            LOOKUP,
+            FOLLOW | LOCKLEAF | SAVENAME,
+            NiDirp::Sys(pathname.as_mut()),
+            p,
+        )
+    } else {
+        ndinit(
+            CREATE,
+            FOLLOW | LOCKLEAF | LOCKPARENT | SAVENAME,
+            NiDirp::Sys(pathname.as_mut()),
+            p,
+        )
+    };
+
+    nd.ni_pledge = PLEDGE_UNVEIL;
+    namei(&mut nd)?;
+
+    // XXX Any access to the file or directory will allow us to pledge path it
+    let cred = p.p_ucred.get();
+    let any_access = |vp: &'static Vnode| {
+        [VREAD, VWRITE, VEXEC]
+            .into_iter()
+            .any(|mode| VOP_ACCESS(vp, mode, cred, p).is_ok())
+    };
+    let allow = nd.ni_vp.is_some_and(any_access) || nd.ni_dvp.is_some_and(any_access);
+
+    // release lock from namei, but keep ref
+    if let Some(vp) = nd.ni_vp {
+        let _ = VOP_UNLOCK(vp);
+    }
+    if let Some(dvp) = nd.ni_dvp
+        && !nd.ni_vp.is_some_and(|vp| ptr::eq(vp, dvp))
+    {
+        let _ = VOP_UNLOCK(dvp);
+    }
+
+    let error = if allow {
+        unveil_add(p, &nd, permissions)
+    } else {
+        Err(Errno::EPERM)
+    };
+
+    // release vref from namei, but not vref from unveil_add
+    if let Some(vp) = nd.ni_vp {
+        vrele(vp);
+    }
+    if let Some(dvp) = nd.ni_dvp {
+        vrele(dvp);
+    }
+
+    if let Some(buf) = NonNull::new(nd.ni_cnd.cn_pnbuf) {
+        pool_put(&NAMEI_POOL, buf);
+    }
+    error
 }
 
 /// Check permissions, allocate an open file structure, and call the device open routine if

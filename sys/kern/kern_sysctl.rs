@@ -1678,8 +1678,12 @@ pub fn fill_kproc(pr: &Process, ki: &mut KinfoProc, p: Option<&Proc>, show_point
     if !s.s_ttyvp.get().is_null() {
         ki.p_eflag |= EPROC_CTTY;
     }
-    // ps_uvpaths, ps_uvdone: unveil (kern_unveil.c) is not ported, so no process has any.
-    if flags & PS_PLEDGE != 0 && pr.ps_pledge.get() & PLEDGE_UNVEIL == 0 {
+    if !pr.ps_uvpaths.get().is_null() {
+        ki.p_eflag |= EPROC_UNVEIL;
+    }
+    if pr.ps_uvdone.get() != 0
+        || (flags & PS_PLEDGE != 0 && pr.ps_pledge.get() & PLEDGE_UNVEIL == 0)
+    {
         ki.p_eflag |= EPROC_LKUNVEIL;
     }
 

@@ -35,6 +35,9 @@
 //! point, base 0 and the timekeep page), that `execve(2)` of a path reaches `namei`
 //! (`ENOENT`), and every system call it makes passes `pin_check`: the one `syscall`/`svc`
 //! instruction is pinned for every number in its `PT_OPENBSD_SYSCALLS` table.
+//! With `kern_unveil.c` it checks `unveil(2)`'s arguments (an empty path, a permission string
+//! too long for its buffer), that a path reaches `namei` (`ENOENT` without a root), and that
+//! `unveil(NULL, NULL)` locks the table so that a later call fails with `EPERM`.
 
 #![no_std]
 #![no_main]
@@ -198,6 +201,12 @@ const SYS_LSEEK: usize = 166;
 const SYS___GETCWD: usize = 304;
 /// `SYS_setsid`.
 const SYS_SETSID: usize = 147;
+/// `SYS_unveil`.
+const SYS_UNVEIL: usize = 114;
+/// `EFAULT`.
+const EFAULT: usize = 14;
+/// `ENAMETOOLONG`.
+const ENAMETOOLONG: usize = 63;
 
 /// `CTL_KERN` (`<sys/sysctl.h>`).
 const CTL_KERN: i32 = 1;
@@ -809,7 +818,32 @@ extern "C" fn init_main(sp: *const usize) -> ! {
     } else {
         status = 11;
     }
+    // Last: it locks unveil(2) for this process.
+    if unveil() {
+        if write(1, b"init: unveil ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 12;
+    }
     exit(status)
+}
+
+/// `unveil(2)` (`vfs_syscalls.c`'s `sys_unveil`, `kern_unveil.c`) before a root file system
+/// exists: the argument checks come first (`EINVAL` for an empty path, `ENAMETOOLONG` for
+/// permissions longer than four characters, `EFAULT` for a NULL path), a real path reaches
+/// `namei` (`ENOENT`), and `unveil(NULL, NULL)` locks the table: the next call is `EPERM`.
+fn unveil() -> bool {
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let unveil = |path: usize, perms: usize| call(SYS_UNVEIL, path, perms, 0);
+    let r = c"r".as_ptr() as usize;
+    let mut ok = unveil(c"".as_ptr() as usize, r) == (EINVAL, true);
+    ok &= unveil(c"/".as_ptr() as usize, c"rwxcr".as_ptr() as usize) == (ENAMETOOLONG, true);
+    ok &= unveil(0, r) == (EFAULT, true);
+    ok &= unveil(c"/".as_ptr() as usize, r) == (ENOENT, true);
+    ok &= unveil(c"/etc/rc".as_ptr() as usize, c"rw".as_ptr() as usize) == (ENOENT, true);
+    ok &= unveil(0, 0) == (0, false);
+    ok && unveil(c"/".as_ptr() as usize, r) == (EPERM, true)
 }
 
 /// `vfs_syscalls.c` seen from user mode before a root file system exists: every path ends in

@@ -57,9 +57,8 @@
 //! - `namei_pool` cannot sleep yet (`subr_pool.rs`): when it is empty `namei` fails with
 //!   `ENOMEM` instead of waiting in `pool_get(PR_WAITOK)`.
 //! - `pledge_namei` and `checkzoneinfopath` (`kern_pledge.c`) are reported for a pledged
-//!   process, which none can be yet. The `unveil_*` hooks (`kern_unveil.c`) return at their
-//!   first test, `pr->ps_uvpaths == NULL`, which holds for every process until `sys_unveil`
-//!   exists. `KTRACE` is not configured; `NAMEI_DIAGNOSTIC` neither.
+//!   process, which none can be yet, so they never set `BYPASSUNVEIL`; the `unveil_*` hooks
+//!   are `kern_unveil.rs`'s. `KTRACE` is not configured; `NAMEI_DIAGNOSTIC` neither.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -67,6 +66,7 @@ use core::slice;
 use core::sync::atomic::Ordering;
 
 use crate::kern::kern_descrip::fd_getfile;
+use crate::kern::kern_unveil::{unveil_check_component, unveil_check_final, unveil_start_relative};
 use crate::kern::subr_pool::{pool_get, pool_put};
 use crate::kern::vfs_init::{NAMEI_POOL, rootvnode};
 use crate::kern::vfs_subr::{vfs_busy, vfs_unbusy, vput, vref, vrele};
@@ -175,7 +175,7 @@ pub fn ndinitat<'a>(op: u64, flags: u64, dirfd: i32, namep: NiDirp<'a>, p: &Proc
         ni_pathlen: 0,
         ni_next: ptr::null(),
         ni_loopcnt: 0,
-        ni_unveil_match: ptr::null_mut(),
+        ni_unveil_match: ptr::null(),
         ni_cnd: cnd,
     }
 }
@@ -199,19 +199,6 @@ fn pledge_namei(p: &Proc, _ndp: &Nameidata<'_>) -> Result<(), Errno> {
 /// process sets `BPU_LOCALTIME`.
 fn checkzoneinfopath(_path: &[u8]) -> Result<(), Errno> {
     Err(unported!("checkzoneinfopath (kern_pledge.c)"))
-}
-
-/// `unveil_start_relative(p, ni, dp)` (`kern_unveil.c`): returns at once while the process
-/// has no unveiled paths (`ps_uvpaths == NULL`), which is every process until `sys_unveil`.
-fn unveil_start_relative(_p: &Proc, _ndp: &mut Nameidata<'_>, _dp: &'static Vnode) {}
-
-/// `unveil_check_component(p, ni, dp)` (`kern_unveil.c`): as `unveil_start_relative`.
-fn unveil_check_component(_p: &Proc, _ndp: &mut Nameidata<'_>, _dp: &'static Vnode) {}
-
-/// `unveil_check_final(p, ni)` (`kern_unveil.c`): 0 while the process has no unveiled paths,
-/// as `unveil_start_relative`.
-fn unveil_check_final(_p: &Proc, _ndp: &mut Nameidata<'_>) -> Result<(), Errno> {
-    Ok(())
 }
 
 /// Gives the pathname buffer back and fails the lookup (`fail:` in C).
@@ -489,7 +476,7 @@ pub fn namei(ndp: &mut Nameidata<'_>) -> Result<(), Errno> {
             vrele(dp);
             dp = rootdir;
             vref(dp);
-            ndp.ni_unveil_match = ptr::null_mut();
+            ndp.ni_unveil_match = ptr::null();
             unveil_check_component(p, ndp, dp);
             if ndp.ni_cnd.cn_flags & (REALPATH | EXECPATH) != 0 {
                 let rp = rpbuf(&ndp.ni_cnd);
@@ -752,7 +739,7 @@ fn lookup_walk(
                             ndp.ni_dvp = Some(st.dp);
                             ndp.ni_vp = Some(st.dp);
                             vref(st.dp);
-                            ndp.ni_unveil_match = ptr::null_mut();
+                            ndp.ni_unveil_match = ptr::null();
                             break 'nextname;
                         }
                         if st.dp.v_flag.get() & VROOT == 0

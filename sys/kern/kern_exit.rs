@@ -50,8 +50,8 @@
 //!
 //! ## Deviations
 //! - What `exit1` tears down that does not exist yet is reported, each once: `kqpoll_exit`,
-//!   `stopprofclock`/`prof_write`, `unveil_destroy` (`cancel_all_itimers` is real since
-//!   `kern_time.c`), `process_untrace` (the `SIGKILL` to a traced child is sent);
+//!   `stopprofclock`/`prof_write` (`cancel_all_itimers` is real since `kern_time.c`,
+//!   `unveil_destroy` since `kern_unveil.c`),`process_untrace` (the `SIGKILL` to a traced child is sent);
 //!   `process_zap` likewise `vrele`; the reaper `knote_processexit`. `killjobc` and
 //!   `leavepgrp` are real since the process group management of `kern_proc.c`. The signal side
 //!   (`single_thread_set`, `process_suspend_signal`, `sigio_freelist`, `SAS_NOCLDWAIT`, the
@@ -290,7 +290,7 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
         let _ = crate::kern::kern_acct::acct_process(p);
         // KTRACE: not configured.
 
-        // unveil_destroy(pr): kern_unveil.c (M7).
+        crate::kern::kern_unveil::unveil_destroy(pr);
 
         pin_free(&pr.ps_pin);
         pin_free(&pr.ps_libcpin);
