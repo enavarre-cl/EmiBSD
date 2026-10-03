@@ -53,16 +53,18 @@
 //! tusage`, `struct process` and `struct proc` with the members the scheduler, the sleep
 //! queues and the kernel threads use, the `S*` states, the `P_*`/`PS_*` flags, the `FORK_*`,
 //! `EXIT_*` and `SINGLE_*` constants, `struct cond`, `struct cpuset`, `struct uidinfo` and
-//! `tu_enter`/`tu_leave`. The members that belong to subsystems not here yet (`sigio`,
-//! `klist`, `ptrace`, `unveil`, `pinsyscall`, the `vnode`s, the file descriptors, the
-//! limits, the signal state) are opaque pointers or left out, each named in a comment at its
-//! place. The vmspace and (since `kern_prot.c`) the credentials are typed pointers with
-//! accessors (`vmspace()`, `ucred()`).
+//! `tu_enter`/`tu_leave`. The members that belong to subsystems not here yet (`klist`,
+//! `ptrace`, `unveil`, `pinsyscall`, the `vnode`s, the file descriptors) are opaque pointers
+//! or left out, each named in a comment at its place. The vmspace, (since `kern_prot.c`)
+//! the credentials and (since `kern_sig.c`) the signal actions are typed pointers with
+//! accessors (`vmspace()`, `ucred()`, `sigacts()`); `kern_sig.c` also brought the sigio
+//! lists, `p_sigstk` and `p_sigval`.
 //!
 //! ## Deviations
 //! - Members the owning thread or a lock mutates are `Cell`s; the flag words `p_flag` and
 //!   `ps_flags` (`atomic_setbits_int`) are atomics, as are `p_pctcpu`, `p_siglist` and
-//!   `ps_siglist`.
+//!   `ps_siglist`. The two signal lists are `AtomicU32` (`sigset_t`) where the C declares
+//!   them `int`; the bits are the same.
 //! - `ps_comm`/`p_name` are `[u8; _MAXCOMLEN]` NUL-terminated byte arrays, as in C.
 //! - `p_wmesg` is `Option<&'static str>`; the sleep messages are literals.
 
@@ -87,6 +89,10 @@ use crate::sys::refcnt::Refcnt;
 use crate::sys::resource::Rusage;
 use crate::sys::resourcevar::Plimit;
 use crate::sys::rwlock::Rwlock;
+use crate::sys::siginfo::Sigval;
+use crate::sys::sigio::Sigiolst;
+use crate::sys::signal::{Sigaltstack, Sigset};
+use crate::sys::signalvar::Sigacts;
 use crate::sys::syslimits::LOGIN_NAME_MAX;
 use crate::sys::time::{Timespec, Timeval};
 use crate::sys::timeout::Timeout;
@@ -151,7 +157,8 @@ pub struct Pgrp {
     pub pg_members: ListHead<ProcessPglist>,
     /// `pg_session`: pointer to session.
     pub pg_session: Cell<*const Session>,
-    // pg_sigiolst: list of sigio structures (sys/sigio.h, M6).
+    /// `pg_sigiolst`: list of sigio structures.
+    pub pg_sigiolst: Sigiolst,
     /// `pg_id`: pgrp id.
     pub pg_id: Cell<Pid>,
     /// `pg_jobc`: # procs qualifying pgrp for job control.
@@ -168,6 +175,7 @@ impl Pgrp {
             pg_hash: ListEntry::new(),
             pg_members: ListHead::new(),
             pg_session: Cell::new(ptr::null()),
+            pg_sigiolst: Sigiolst::new(),
             pg_id: Cell::new(0),
             pg_jobc: Cell::new(0),
         }
@@ -319,9 +327,10 @@ pub struct Process {
     /// `ps_orphans`: pointer to list of orphans.
     pub ps_orphans: ListHead<ProcessOrphan>,
 
-    // ps_sigiolst: list of sigio structures (M6).
-    /// \[I\] `ps_sigacts`: signal actions, state (`struct sigacts`, M6).
-    pub ps_sigacts: Cell<*const ()>,
+    /// `ps_sigiolst`: list of sigio structures.
+    pub ps_sigiolst: Sigiolst,
+    /// \[I\] `ps_sigacts`: signal actions, state.
+    pub ps_sigacts: Cell<*const Sigacts>,
     /// `ps_textvp`: vnode of executable (`struct vnode`, M6).
     pub ps_textvp: Cell<*const ()>,
     /// `ps_fd`: ptr to open files structure; the process holds a reference (`fd()`).
@@ -341,7 +350,7 @@ pub struct Process {
     /// \[a\] `ps_flags`: `PS_*` flags.
     pub ps_flags: AtomicU32,
     /// `ps_siglist`: signals pending for the process.
-    pub ps_siglist: AtomicI32,
+    pub ps_siglist: AtomicU32,
 
     /// \[m\] `ps_single`: thread for single-threading.
     pub ps_single: Cell<*const Proc>,
@@ -454,6 +463,7 @@ impl Process {
             ps_hash: ListEntry::new(),
             ps_orphan: ListEntry::new(),
             ps_orphans: ListHead::new(),
+            ps_sigiolst: Sigiolst::new(),
             ps_sigacts: Cell::new(ptr::null()),
             ps_textvp: Cell::new(ptr::null()),
             ps_fd: Cell::new(ptr::null()),
@@ -462,7 +472,7 @@ impl Process {
             ps_lock: Rwlock::new("pslock"),
             ps_mtx: Mutex::new(IPL_HIGH),
             ps_flags: AtomicU32::new(0),
-            ps_siglist: AtomicI32::new(0),
+            ps_siglist: AtomicU32::new(0),
             ps_single: Cell::new(ptr::null()),
             ps_trapped: Cell::new(ptr::null()),
             ps_suspendcnt: Cell::new(0),
@@ -539,6 +549,16 @@ impl Process {
         let n = name.len().min(comm.len() - 1);
         comm[..n].copy_from_slice(&name[..n]);
         comm[n..].fill(0);
+    }
+
+    /// `pr->ps_sigacts`: the process's signal actions, which it holds from `process_new`
+    /// (`sigacts0` for process 0) until `process_zap`.
+    pub fn sigacts(&self) -> &'static Sigacts {
+        let ps = self.ps_sigacts.get();
+        kassert!(!ps.is_null());
+        // SAFETY: non-null while the process exists: `sigactsinit` set it before the process
+        // was visible and `sigactsfree` runs only in `process_zap`.
+        unsafe { &*ps }
     }
 
     /// `ps_session`: `ps_pgrp->pg_session`.
@@ -739,13 +759,13 @@ pub struct Proc {
     pub p_limit: Cell<*const Plimit>,
     // p_kd: kcov device handle; p_sleeplocks: WITNESS; p_kq, p_kq_serial: kqueue (M6).
     /// \[a\] `p_siglist`: signals arrived & not delivered.
-    pub p_siglist: AtomicI32,
+    pub p_siglist: AtomicU32,
 
     // End area that is zeroed on creation (p_endzero = p_startcopy).
 
     // The following fields are all copied upon creation in fork (p_startcopy = p_sigmask).
     /// \[o\] `p_sigmask`: current signal mask.
-    pub p_sigmask: Cell<u32>,
+    pub p_sigmask: Cell<Sigset>,
 
     /// `p_name`: thread name, incl NUL.
     pub p_name: UnsafeCell<[u8; _MAXCOMLEN]>,
@@ -762,7 +782,8 @@ pub struct Proc {
 
     /// \[o\] `p_ucred`: cached credentials; the thread holds a reference.
     pub p_ucred: Cell<*const Ucred>,
-    // p_sigstk: sp & on stack state variable (M6).
+    /// `p_sigstk`: sp & on stack state variable.
+    pub p_sigstk: Cell<Sigaltstack>,
     /// `p_prof_addr`: tmp storage for profiling addr until AST.
     pub p_prof_addr: Cell<u64>,
     /// `p_prof_ticks`: tmp storage for profiling ticks until AST.
@@ -775,12 +796,13 @@ pub struct Proc {
     pub p_md: Mdproc,
 
     /// \[o\] `p_oldmask`: saved mask from before sigpause.
-    pub p_oldmask: Cell<u32>,
+    pub p_oldmask: Cell<Sigset>,
     /// `p_sisig`: for core dump/debugger XXX.
     pub p_sisig: Cell<i32>,
-    // p_sigval: for core dump/debugger (union sigval, M6).
+    /// `p_sigval`: for core dump/debugger XXX.
+    pub p_sigval: Cell<Sigval>,
     /// `p_sitrapno`: for core dump/debugger XXX.
-    pub p_sitrapno: Cell<i64>,
+    pub p_sitrapno: Cell<u64>,
     /// `p_sicode`: for core dump/debugger XXX.
     pub p_sicode: Cell<i32>,
 }
@@ -822,7 +844,7 @@ impl Proc {
             p_ru: Rusage::new(),
             p_tu: Tusage::new(),
             p_limit: Cell::new(ptr::null()),
-            p_siglist: AtomicI32::new(0),
+            p_siglist: AtomicU32::new(0),
             p_sigmask: Cell::new(0),
             p_name: UnsafeCell::new([0; _MAXCOMLEN]),
             p_slppri: Cell::new(0),
@@ -831,12 +853,19 @@ impl Proc {
             p_pledge_syscall: Cell::new(0),
             p_pledge: Cell::new(0),
             p_ucred: Cell::new(ptr::null()),
+            p_sigstk: Cell::new(Sigaltstack {
+                ss_sp: 0,
+                ss_size: 0,
+                ss_flags: 0,
+                _pad: 0,
+            }),
             p_prof_addr: Cell::new(0),
             p_prof_ticks: Cell::new(0),
             p_addr: Cell::new(ptr::null()),
             p_md: <Machine as MachineProc>::MDPROC_INIT,
             p_oldmask: Cell::new(0),
             p_sisig: Cell::new(0),
+            p_sigval: Cell::new(Sigval::from_ptr(0)),
             p_sitrapno: Cell::new(0),
             p_sicode: Cell::new(0),
         }

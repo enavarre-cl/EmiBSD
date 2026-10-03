@@ -55,8 +55,9 @@
 //!   `ps_startcopy` fields from the parent, instead of `memset`/`memcpy` by field offset.
 //! - `process_initialize` reports what its process does not have yet: `prof_fork` (M6),
 //!   `klist_init_mutex` (M6) and the two timeouts' handlers (`realitexpire`, `rucheck`:
-//!   M6). `process_new` likewise reports `sigactsinit` and `startprofclock` (M6);
-//!   `fdcopy`/`fdshare` are real since `kern_descrip.c`. `fork1` skips the `RLIMIT_NPROC` check for root as the C does, reports it for
+//!   M6). `process_new` likewise reports `startprofclock` (M6); `sigactsinit` is real since
+//!   `kern_sig.c`, `fdcopy`/`fdshare` since `kern_descrip.c` and `lim_fork` since the
+//!   `plimit` port. `fork1` skips the `RLIMIT_NPROC` check for root as the C does, reports it for
 //!   other users (the limits), and reports `knote_processfork` (M6). The credentials
 //!   (`crhold` in `thread_new` and `process_initialize`, the forking thread's real uid in
 //!   `fork1`) are real since `kern_prot.c`.
@@ -82,6 +83,7 @@ use crate::kern::kern_prot::crhold;
 use crate::kern::kern_resource::{lim_fork, rucheck};
 use crate::kern::kern_rwlock::rw_init;
 use crate::kern::kern_sched::{sched_choosecpu_fork, setrunqueue};
+use crate::kern::kern_sig::{psignal, sigactsinit};
 use crate::kern::kern_synch::{endtsleep, refcnt_init, tsleep_nsec};
 use crate::kern::kern_tc::nanouptime;
 use crate::kern::kern_time::ratecheck;
@@ -108,6 +110,7 @@ use crate::sys::proc::{
 };
 use crate::sys::queue::ListHead;
 use crate::sys::sched::{SPCF_ITIMER, SPCF_PROFCLOCK};
+use crate::sys::signal::SIGTRAP;
 use crate::sys::systm::INFSLP;
 use crate::sys::time::Timeval;
 use crate::sys::types::{Pid, Uid};
@@ -156,6 +159,7 @@ fn thread_new(parent: &Proc, uaddr: NonNull<u8>) -> &'static Proc {
     p.p_pledge_syscall.set(parent.p_pledge_syscall.get());
     p.p_pledge.set(parent.p_pledge.get());
     p.p_ucred.set(parent.p_ucred.get());
+    p.p_sigstk.set(parent.p_sigstk.get());
     p.p_prof_addr.set(parent.p_prof_addr.get());
     p.p_prof_ticks.set(parent.p_prof_ticks.get());
 
@@ -192,7 +196,7 @@ pub fn process_initialize(pr: &'static Process, p: &'static Proc) {
 
     pr.ps_children.init();
     pr.ps_orphans.init();
-    // LIST_INIT(&pr->ps_sigiolst): sigio (M6).
+    pr.ps_sigiolst.init();
 
     rw_init(&pr.ps_lock, "pslock");
     mtx_init(&pr.ps_mtx, IPL_HIGH);
@@ -272,8 +276,7 @@ fn process_new(p: &'static Proc, parent: &'static Process, flags: i32) -> &'stat
     } else {
         pr.ps_fd.set(fdcopy(parent));
     }
-    // sigactsinit(parent): kern_sig.c (M6).
-    let _ = unported!("process_new: sigactsinit (kern_sig.c, M6)");
+    pr.ps_sigacts.set(sigactsinit(parent));
     if flags & FORK_SHAREVM != 0 {
         pr.ps_vmspace.set(uvmspace_share(parent));
     } else {
@@ -501,9 +504,9 @@ pub fn fork1(
         }
     }
 
-    // If we're tracing the child, alert the parent too: psignal(curp, SIGTRAP) (M6).
+    // If we're tracing the child, alert the parent too.
     if flags & FORK_PTRACE != 0 && curpr.ps_flags.load(Ordering::Relaxed) & PS_TRACED != 0 {
-        let _ = unported!("fork1: psignal SIGTRAP (kern_sig.c, M6)");
+        psignal(curp, SIGTRAP);
     }
 
     // Return child pid to parent process: the caller reads pr->ps_pid.

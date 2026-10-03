@@ -82,6 +82,8 @@
 //!   reported: a kernel page fault is handled only when `pcb_onfault` catches it (the
 //!   `copyin` family).
 //! - `syscall` skips `verify_smap` (M4-b) and `verify_pkru` (PKU, M6-b).
+//! - `usertrap` reports `fputrap` (the FPU, `fpu.c`) and posts `SIGFPE` with code 0 for the
+//!   x87/SSE exceptions; the other user traps go to `kern_sig.c`'s `trapsignal` as in C.
 //! - `fault` writes `curcpu()->ci_panicbuf` as the C does; `panic()` itself still uses
 //!   `subr_prf`'s buffer (`kern/subr_prf.rs`, deviations).
 
@@ -106,14 +108,17 @@ use crate::arch::amd64::include::trap::{
 use crate::arch::amd64::include::vmparam::{VM_MAXUSER_ADDRESS, VM_MIN_KERNEL_ADDRESS};
 use crate::kassert;
 use crate::kern::init_sysent::SYSENT;
-use crate::kern::kern_exit::exit1;
-use crate::kern::kern_sig::userret;
+use crate::kern::kern_sig::{trapsignal, userret};
 use crate::kern::subr_prf::{Str, db_printf, panic, panicstr_claim, printf, vsnprintf};
 use crate::machine::Machine;
 use crate::machine::cpu::Cpu;
 use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
-use crate::sys::proc::{EXIT_NORMAL, Proc, refreshcreds};
+use crate::sys::proc::{Proc, refreshcreds};
+use crate::sys::siginfo::{
+    BUS_ADRALN, BUS_OBJERR, FPE_INTDIV, ILL_BADSTK, ILL_BTCFI, ILL_PRVOPC, SEGV_ACCERR,
+    SEGV_MAPERR, Sigval, TRAP_BRKPT,
+};
 use crate::sys::signal::{SIGBUS, SIGFPE, SIGILL, SIGKILL, SIGSEGV, SIGTRAP};
 use crate::sys::syscall::SYS_MAXSYSCALL;
 use crate::sys::syscall_mi::{mi_ast, mi_child_return, mi_syscall, mi_syscall_return};
@@ -428,46 +433,9 @@ pub fn upageflttrap(frame: &mut Trapframe, cr2: u64) -> bool {
     } else {
         (SIGSEGV, SEGV_MAPERR)
     };
-    trapsignal(p, signal, T_PAGEFLT, sicode, cr2)
-}
-
-/// `SEGV_MAPERR`: address not mapped to object (`<sys/siginfo.h>`, M6-c).
-const SEGV_MAPERR: i32 = 1;
-/// `SEGV_ACCERR`: invalid permissions.
-const SEGV_ACCERR: i32 = 2;
-/// `BUS_ADRALN`: invalid address alignment.
-const BUS_ADRALN: i32 = 1;
-/// `BUS_OBJERR`: object specific hardware error.
-const BUS_OBJERR: i32 = 3;
-/// `ILL_PRVOPC`: privileged opcode.
-const ILL_PRVOPC: i32 = 5;
-/// `ILL_BTCFI`: IBT missing on indirect call.
-const ILL_BTCFI: i32 = 10;
-/// `ILL_BADSTK`: bad stack.
-const ILL_BADSTK: i32 = 8;
-/// `FPE_INTDIV`: integer divide by zero.
-const FPE_INTDIV: i32 = 1;
-/// `TRAP_BRKPT`: process breakpoint.
-const TRAP_BRKPT: i32 = 1;
-
-/// `trapsignal(p, sig, trapno, code, sv)` until `kern_sig.c` lands (M6-c): there is no
-/// handler to run, so the process dies of the signal (what `sigexit` does), after the
-/// `TRAP_SIGDEBUG` dump, so the fault is visible on the console.
-fn trapsignal(p: &Proc, sig: i32, trapno: i32, code: i32, addr: u64) -> ! {
-    let _ = unported!("trapsignal (kern_sig.c, M6-c): the process dies of the signal");
-    // SAFETY: `md_regs` is the trap frame `usertrap` just recorded, on this thread's stack.
-    let rip = unsafe { (*p.p_md.md_regs.get()).tf_rip };
-    printf(format_args!(
-        "pid {} ({}): signal {} (trap {} code {}) at rip {:#x} addr {:#x}\n",
-        p.process().ps_pid.get(),
-        Str(p.process().comm()),
-        sig,
-        trapno,
-        code,
-        rip,
-        addr
-    ));
-    exit1(p, 0, sig, EXIT_NORMAL)
+    let sv = Sigval::from_ptr(cr2 as usize);
+    trapsignal(p, signal, T_PAGEFLT as u64, sicode, sv);
+    true
 }
 
 /// `usertrap(frame)`: handler for exceptions, faults, and traps from user mode. This is
@@ -501,8 +469,11 @@ pub extern "C" fn usertrap(frame: &mut Trapframe) {
         // privileged instruction fault
         T_PRIVINFLT => (SIGILL, ILL_PRVOPC),
         T_DIVIDE => (SIGFPE, FPE_INTDIV),
-        // real arithmetic exceptions: fputrap(type) gives the code (the FPU, M6-c)
-        T_ARITHTRAP | T_XMM => (SIGFPE, 0),
+        // real arithmetic exceptions: fputrap(type) gives the code (fpu.c, not ported)
+        T_ARITHTRAP | T_XMM => {
+            let _ = unported!("usertrap: fputrap (fpu.c)");
+            (SIGFPE, 0)
+        }
         // bpt instruction fault, trace trap
         T_BPTFLT | T_TRCTRAP => (SIGTRAP, TRAP_BRKPT),
         T_CP => (
@@ -528,12 +499,14 @@ pub extern "C" fn usertrap(frame: &mut Trapframe) {
         }
     };
 
-    trapsignal(p, sig, type_, code, frame.tf_rip as u64);
-    // NOTREACHED: userret(p) once signals are delivered instead (M6-c).
+    let sv = Sigval::from_ptr(frame.tf_rip as usize);
+    trapsignal(p, sig, type_ as u64, code, sv);
+
+    // out:
+    userret(p);
 }
 
-/// `frame_dump`: the `TRAP_SIGDEBUG` dump of a faulting user frame; always on here, as the
-/// signal is fatal (see `trapsignal`).
+/// `frame_dump`: the `TRAP_SIGDEBUG` dump of a faulting user frame (always on here).
 fn frame_dump(tf: &Trapframe, p: &Proc, sig: &str, cr2: u64) {
     printf(format_args!(
         "pid {} ({}): {} at rip {:x} addr {:x}\n",

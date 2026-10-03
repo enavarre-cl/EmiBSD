@@ -46,7 +46,8 @@ module per OpenBSD header (`param.rs`, `cpu.rs` with `boot(9)`, `delay(9)` and, 
 `cpu_info` accessors the clock code needs, `cons.rs` for
 `consinit()`, `bus.rs` for `bus_space(9)`, `db_machdep.rs` for what `ddb` needs; later `pmap.rs`,
 `intr.rs`, ...; `autoconf.rs` is what `ioconf.c` and the machine's `autoconf.c` give
-`subr_autoconf.c`), all re-exported from `sys/machine/mod.rs`, which also re-exports
+`subr_autoconf.c`; `signal.rs` is `<machine/signal.h>` plus `sendsig`, `sys_sigreturn` and the
+signal trampoline), all re-exported from `sys/machine/mod.rs`, which also re-exports
 `crate::arch::current::Machine` and asserts at compile time that it implements every trait. Generic
 code names only `crate::machine`. `bus.rs` also carries the C names as free functions
 (`bus_space_read_1(t, h, o)`), so a driver reads like its original; the tag and handle types are
@@ -284,8 +285,21 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   `argv`/`envp` (the boot flags come with a real `sys_execve`, M6-c), and `setregs` builds the
   user trap frame. `start_init` execs the `init` module and returns through
   `proc_trampoline` to the syscall exit path, exactly where a forked user thread would go.
-  Until `kern_sig.c` (M6-c) `trapsignal` is a stand-in in each `trap.c` that prints the fault
-  and lets the process die of the signal through `exit1`.
+- Signals (M7, `kern_sig.c`): the whole file is OpenBSD's, and the traps of both archs call
+  its `trapsignal`. The machine half (`sendsig`, `sys_sigreturn`, the `sigcode` trampoline of
+  each `locore.S`) is the `machine::MachineSignal` contract; `sys_sigreturn` is entered from
+  the table through a forwarding `sys_sigreturn` in `kern_sig.rs`, because the syscall
+  generator only scans `sys/kern` and `sys/uvm`. `exec_image` maps the trampoline with the
+  C's `exec_sigcode_map` (one shared aobj, `PROT_EXEC`, immutable) and draws a new
+  `ps_sigcookie`. amd64 has no FPU code yet (`fpu.c`): `sendsig` copies out the pcb's
+  `fxsave`-sized area as it is and `sigreturn` copies it back without `xrstor`, so a handler
+  shares the interrupted code's FPU/SSE registers. arm64's trampoline saves the `q`
+  registers itself, which needs `fpu_load` (the first FP use of a thread traps): `fpu_save`
+  and `fpu_load` are ported, SVE is reported. The kqueue notes, ptrace stops (the code is
+  there; nothing sets `PS_TRACED`), core dumps (`vn_open` is reported, so no core is ever
+  written) and `pledge_kill` are reported. The stand-in `init` checks `sigaction`, `kill`,
+  delivery on the way back from a system call, `sigreturn`, `sigprocmask` and `sigpending`
+  (`init: signals ok` in `smoke`).
 - User pmaps (M6-b2): amd64 walks a user pmap's tables through the direct map
   (`pmap_get_ptp`, `pmap_enter`, `pmap_do_remove`) instead of borrowing its `%cr3` for the
   recursive mapping (`pmap_map_ptes`), has no pv entries yet and no `pmaps` list, and
@@ -293,7 +307,9 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   `EFER.SCE` (the C's `locore0.S` does). On arm64 the bootstrap device map lived in `TTBR0`
   (the lower half), which user pmaps now own: `pmap_init` initialises the pools, remaps the
   console into the kernel half (`pluartcn_remap`), switches `bus_space_map` to kernel-half
-  mappings from the `vmmap` range, sets `TCR_EL1.T0SZ` for `USER_SPACE_BITS` and points
+  mappings from the `vmmap` range (a 4 MiB window below `virtual_avail`, so device mappings
+  never overlap what `kernel_map` hands out; the C takes them from `kernel_map` with
+  `km_alloc(kv_any)`), sets `TCR_EL1.T0SZ` for `USER_SPACE_BITS` and points
   `TTBR0_EL1` at the empty table, as the C's `locore` and `pmap_init` do between them; user
   pmaps are three-level, their tables come from the same two-page allocator as the kernel's
   (no `pmap_vp_pool`), and ASIDs are an 8-bit bitmap without rollover. `init` is linked with

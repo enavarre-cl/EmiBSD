@@ -43,11 +43,14 @@
 //! the body of `sys_execve` from the point where the executable is in hand, as
 //! [`exec_image`], for an executable that is a memory image (the `init` Limine module).
 //! `sys_execve` itself (`namei`, the `NCARGS` argument copying, `copyargs` with a real
-//! `argv`/`envp`, `execsigs`, the signal trampoline and the timekeep page,
-//! `exec_md_map`, ptrace), `exec_free_package` and `exec_sigcode_map` come with the file
-//! descriptor table and the filesystems (M6-c, M7). With `kern_prot.c`, `exec_image` does
-//! the credentials part (`PS_SUGIDEXEC`, `PS_SUGID`, the saved ids reset through `crcopy`,
-//! the process's copy of the credentials) and `TCB_SET(p, NULL)`.
+//! `argv`/`envp`, the timekeep page, `exec_md_map`, ptrace) and `exec_free_package` come
+//! with the filesystems (M7). With `kern_prot.c`, `exec_image` does the credentials part
+//! (`PS_SUGIDEXEC`, `PS_SUGID`, the saved ids reset through `crcopy`, the process's copy of
+//! the credentials) and `TCB_SET(p, NULL)`; with `kern_descrip.c` `fdprepforexec`; with
+//! `kern_sig.c` the signal part: `single_thread_set`/`single_thread_clear` around the exec,
+//! `execsigs`, the new `ps_sigcookie`, the `PS_PPWAIT` wakeup of a vfork parent and
+//! `exec_sigcode_map`, which maps the signal trampoline (`machine::MachineSignal::sigcode`)
+//! into the new image.
 //!
 //! ## Deviations
 //! - `exec_image(p, name, image)` is this port's name for "`sys_execve` of a memory image":
@@ -67,31 +70,53 @@
 //!   project.
 
 use core::ptr;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
+use crate::dev::rnd::arc4random_buf;
 use crate::kern::exec_elf::exec_elf_makecmds;
 use crate::kern::exec_subr::exec_process_vmcmds;
 use crate::kern::kern_descrip::fdprepforexec;
 use crate::kern::kern_exit::exit1;
 use crate::kern::kern_prot::{crcopy, crfree, crhold};
+use crate::kern::kern_sig::{execsigs, psignal, single_thread_clear, single_thread_set};
+use crate::kern::kern_synch::wakeup;
+use crate::kern::subr_prf::panic;
 use crate::machine::copy::copyout;
 use crate::machine::cpu::Cpu;
 use crate::machine::param::MachineParam;
+use crate::machine::signal::MachineSignal;
 use crate::machine::tcb::tcb_set;
 use crate::machine::{Machine, VmParam};
 use crate::sys::acct::AFORK;
 use crate::sys::errno::Errno;
 use crate::sys::exec::{ExecPackage, Execsw, PsStrings};
 use crate::sys::exec_elf::ElfEhdr;
-use crate::sys::mman::PROT_NONE;
-use crate::sys::proc::{EXIT_NORMAL, PS_EXEC, PS_INEXEC, PS_SUGID, PS_SUGIDEXEC, Proc};
-use crate::sys::signal::SIGABRT;
+use crate::sys::mman::{
+    MADV_RANDOM, MAP_INHERIT_COPY, MAP_INHERIT_SHARE, PROT_EXEC, PROT_NONE, PROT_READ, PROT_WRITE,
+};
+use crate::sys::proc::{
+    EXIT_NORMAL, PS_EXEC, PS_INEXEC, PS_ISPWAIT, PS_PPWAIT, PS_SUGID, PS_SUGIDEXEC, PS_TRACED,
+    PS_WAITEVENT, Proc, Process, SINGLE_DEEP, SINGLE_EXIT, SINGLE_UNWIND,
+};
+use crate::sys::signal::{SIGABRT, SIGTRAP};
 use crate::sys::syslimits::PATH_MAX;
 use crate::sys::time::Timespec;
-use crate::sys::types::{Register, Vaddr};
+use crate::sys::types::{Register, Vaddr, Vsize};
 use crate::unported;
-use crate::uvm::uvm_map::{uvm_map_protect, uvmspace_exec};
+use crate::uvm::uvm_aobj::{uao_create, uao_detach, uao_reference};
+use crate::uvm::uvm_extern::{UVM_FLAG_COPYONW, uvm_mapflag};
+use crate::uvm::uvm_km::kernel_map;
+use crate::uvm::uvm_map::{uvm_map, uvm_map_immutable, uvm_map_protect, uvmspace_exec};
+use crate::uvm::uvm_object::UvmObject;
 use crate::uvm::uvm_param::{atop, round_page, trunc_page};
+
+/// `sigobject`: the shared sigcode object, created by the first `exec_sigcode_map` and
+/// referenced forever after.
+static SIGOBJECT: AtomicPtr<UvmObject> = AtomicPtr::new(ptr::null_mut());
+/// `sigcode_va`: where `sigobject` is mapped (read-only) in `kernel_map`.
+pub static SIGCODE_VA: AtomicUsize = AtomicUsize::new(0);
+/// `sigcode_sz`: the size of that mapping.
+pub static SIGCODE_SZ: AtomicUsize = AtomicUsize::new(0);
 
 /// `execsw[]`: the executable formats, in the order they are tried.
 pub static EXECSW: [Execsw; 1] = [Execsw {
@@ -180,8 +205,14 @@ pub fn exec_image(p: &Proc, name: &[u8], image: &[u8]) -> Result<(), Errno> {
     let mut cred = p.ucred();
     let pr = p.process();
 
-    // get other threads to stop (single_thread_set SINGLE_UNWIND|SINGLE_DEEP): one thread
-    // until M6-c.
+    // Get other threads to stop, if contested return ERESTART, so the syscall is restarted
+    // after halting in userret.
+    if single_thread_set(p, SINGLE_UNWIND | SINGLE_DEEP).is_err() {
+        return Err(Errno::ERESTART);
+    }
+
+    // Cheap solution to complicated problems. Mark this process as "leave me alone, I'm
+    // execing".
     pr.ps_flags.fetch_or(PS_INEXEC, Ordering::Relaxed);
 
     // initialize the fields of the exec package
@@ -189,7 +220,9 @@ pub fn exec_image(p: &Proc, name: &[u8], image: &[u8]) -> Result<(), Errno> {
 
     // see if we can run it.
     if let Err(e) = check_exec(p, &mut pack) {
+        // freehdr:
         pr.ps_flags.fetch_and(!PS_INEXEC, Ordering::Relaxed);
+        single_thread_clear(p);
         return Err(e);
     }
 
@@ -211,14 +244,17 @@ pub fn exec_image(p: &Proc, name: &[u8], image: &[u8]) -> Result<(), Errno> {
     if len > pack.ep_ssize {
         // in effect, compare to initial limit
         pack.ep_vmcmds.kill();
+        // bad: ... freehdr:
         pr.ps_flags.fetch_and(!PS_INEXEC, Ordering::Relaxed);
+        single_thread_clear(p);
         return Err(Errno::ENOMEM);
     }
     // adjust "active stack depth" for process VSZ
     pack.ep_ssize = len; // maybe should go elsewhere, but...
 
     // we're committed: any further errors will kill the process, so kill the other threads
-    // now (single_thread_set SINGLE_EXIT: M6-c).
+    // now.
+    let _ = single_thread_set(p, SINGLE_EXIT);
 
     // Clear profiling state in new image: prof_exec (M6-c).
 
@@ -293,10 +329,15 @@ pub fn exec_image(p: &Proc, name: &[u8], image: &[u8]) -> Result<(), Errno> {
 
     // the pin tables (ps_pin, ps_libcpin): M7.
 
-    // stopprofclock, the kbind bits and the signal cookie: M6-c.
+    // stopprofclock(pr): subr_prof.c (M7); nothing profiles yet.
     fdprepforexec(p); // handle close on exec and close on fork
-    let _ = unported!("exec: execsigs (M6-c)");
+    execsigs(p); // reset caught signals
     tcb_set(p, 0); // reset the TCB address
+    pr.ps_kbind_addr.set(0); // reset the kbind bits
+    pr.ps_kbind_cookie.set(0);
+    let mut cookie = [0u8; 8];
+    arc4random_buf(&mut cookie);
+    pr.ps_sigcookie.set(u64::from_ne_bytes(cookie));
 
     // set command name & other accounting info
     pr.set_comm(name);
@@ -307,7 +348,15 @@ pub fn exec_image(p: &Proc, name: &[u8], image: &[u8]) -> Result<(), Errno> {
     // ps_iflags (PSI_NOBTCFI, PSI_PROFILE, PSI_WXNEEDED): with the flags (M6-c).
 
     pr.ps_flags.fetch_or(PS_EXEC, Ordering::Relaxed);
-    // PS_PPWAIT wakeups (vfork): M6-c.
+    if pr.ps_flags.load(Ordering::Relaxed) & PS_PPWAIT != 0 {
+        pr.ps_flags.fetch_and(!PS_PPWAIT, Ordering::Relaxed);
+        // SAFETY: a process's parent is live while the child is.
+        if let Some(pptr) = unsafe { pr.ps_pptr.get().as_ref() } {
+            pptr.ps_flags.fetch_and(!PS_ISPWAIT, Ordering::Relaxed);
+            pptr.ps_flags.fetch_or(PS_WAITEVENT, Ordering::Relaxed);
+            wakeup(ptr::from_ref(pptr));
+        }
+    }
 
     // If process does execve() while it has a mismatched real, effective, or saved uid/gid,
     // we set PS_SUGIDEXEC.
@@ -360,23 +409,147 @@ pub fn exec_image(p: &Proc, name: &[u8], image: &[u8]) -> Result<(), Errno> {
 
     // km_free(argp), the pathname buffers, vn_close: nothing allocated.
 
-    // notify others that we exec'd: knote (kqueue, M6-c).
+    // notify others that we exec'd: knote(&pr->ps_klist, NOTE_EXEC) (kern_event.c).
+    let _ = unported!("exec: knote NOTE_EXEC (kern_event.c)");
 
-    // map the process's timekeep page, exec_elf_fixup, the signal trampoline, exec_md_map:
-    // M6-c/M7.
+    // map the process's timekeep page (exec_timekeep_map), exec_elf_fixup: M7.
 
     // setup new registers and do misc. setup.
     Machine::setregs(p, &pack, Vaddr::new(stack), &arginfo);
 
-    // PS_TRACED → psignal(SIGTRAP): ptrace (M7).
+    // map the process's signal trampoline code
+    if exec_sigcode_map(pr).is_err() {
+        exec_abort(p, &mut pack);
+    }
+
+    // __HAVE_EXEC_MD_MAP: neither amd64 nor arm64.
+
+    if pr.ps_flags.load(Ordering::Relaxed) & PS_TRACED != 0 {
+        psignal(p, SIGTRAP);
+    }
 
     // p_descfd: EXEC_HASFD never set here.
 
     pr.ps_flags.fetch_and(!PS_INEXEC, Ordering::Relaxed);
-    // single_thread_clear(p): M6-c.
+    single_thread_clear(p);
 
     // setregs() sets up all the registers, so just 'return'
     Err(Errno::EJUSTRETURN)
+}
+
+/// `exec_sigcode_map`: map the signal trampoline into `pr`'s new address space, creating
+/// the shared `sigobject` the first time.
+pub fn exec_sigcode_map(pr: &Process) -> Result<(), Errno> {
+    let sigcode = <Machine as MachineSignal>::sigcode();
+    let sz = sigcode.len();
+
+    // If we don't have a sigobject yet, create one.
+    //
+    // sigobject is an anonymous memory object (just like SYSV shared memory) that we keep a
+    // permanent reference to and that we map in all processes that need this sigcode. The
+    // creation is simple, we create an object, map it in kernel space, copy out the sigcode
+    // to it and map it PROT_READ such that the coredump code can write it out into core
+    // dumps. Then we map it with PROT_EXEC into the process just the way sys_mmap would map
+    // it.
+    // SAFETY: a non-null `sigobject` is the aobj created below, which is never freed.
+    let existing = unsafe { SIGOBJECT.load(Ordering::Acquire).as_ref() };
+    let sigobject: &'static UvmObject = match existing {
+        Some(obj) => obj,
+        None => {
+            let sigfill = <Machine as MachineSignal>::sigfill();
+
+            // permanent reference
+            let Some(obj) = uao_create(Vsize::new(sz), 0) else {
+                panic(format_args!("can't create sigobject"));
+            };
+
+            let mut va = 0usize;
+            if uvm_map(
+                kernel_map(),
+                &mut va,
+                round_page(sz),
+                Some(obj),
+                0,
+                0,
+                uvm_mapflag(
+                    PROT_READ | PROT_WRITE,
+                    PROT_READ | PROT_WRITE,
+                    MAP_INHERIT_SHARE,
+                    MADV_RANDOM,
+                    0,
+                ),
+            )
+            .is_err()
+            {
+                panic(format_args!("can't map sigobject"));
+            }
+
+            let mut off = 0;
+            let mut left = round_page(sz);
+            while left != 0 {
+                let chunk = left.min(sigfill.len());
+                // SAFETY: `[va, va + round_page(sz))` is the fresh, writable kernel mapping of
+                // `sigobject` made above; its pages are faulted in on first touch.
+                unsafe { ptr::copy_nonoverlapping(sigfill.as_ptr(), (va + off) as *mut u8, chunk) };
+                left -= chunk;
+                off += sigfill.len();
+            }
+            // SAFETY: as above; `sz <= round_page(sz)`.
+            unsafe { ptr::copy_nonoverlapping(sigcode.as_ptr(), va as *mut u8, sz) };
+
+            if uvm_map_protect(
+                kernel_map(),
+                va,
+                round_page(va + sz),
+                PROT_READ,
+                0,
+                false,
+                false,
+            )
+            .is_err()
+            {
+                panic(format_args!("can't write-protect sigobject"));
+            }
+
+            SIGCODE_VA.store(va, Ordering::Relaxed);
+            SIGCODE_SZ.store(round_page(sz), Ordering::Relaxed);
+            SIGOBJECT.store(ptr::from_ref(obj).cast_mut(), Ordering::Release);
+            obj
+        }
+    };
+
+    pr.ps_sigcode.set(0); // no hint
+    uao_reference(sigobject);
+    let map = &pr.vmspace().vm_map;
+    let mut addr = pr.ps_sigcode.get();
+    if uvm_map(
+        map,
+        &mut addr,
+        round_page(sz),
+        Some(sigobject),
+        0,
+        0,
+        uvm_mapflag(
+            PROT_EXEC,
+            PROT_READ | PROT_WRITE | PROT_EXEC,
+            MAP_INHERIT_COPY,
+            MADV_RANDOM,
+            UVM_FLAG_COPYONW,
+        ),
+    )
+    .is_err()
+    {
+        uao_detach(sigobject);
+        return Err(Errno::ENOMEM);
+    }
+    pr.ps_sigcode.set(addr);
+    let _ = uvm_map_immutable(map, addr, addr + round_page(sz), true);
+
+    // Calculate PC at point of sigreturn entry
+    pr.ps_sigcoderet
+        .set(addr + <Machine as MachineSignal>::sigcoderet());
+
+    Ok(())
 }
 
 /// `exec_abort:`: the old process is dead: kill it.

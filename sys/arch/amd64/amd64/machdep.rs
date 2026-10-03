@@ -79,8 +79,9 @@
 //! `x86_64_proc0_tss_ldt_init`, `splassert_check` and the GDT/TSS/IDT part of `init_x86_64`,
 //! which now ends as the C does: `intr_default_setup`, `softintr_init`, `splraise(IPL_IPI)`,
 //! `intr_enable`. `cpu_reset`,
-//! `dumpsys`, the bootinfo parsing, `sendsig`/`setregs` and the sysctl tree arrive with M4-b
-//! to M6.
+//! `dumpsys`, the bootinfo parsing and the sysctl tree arrive with M4-b to M6; `kern_sig.c`
+//! brought `sendsig`, `sys_sigreturn`, `copyoutfpu`, `initialize_thread_xstate` and
+//! `signotify`.
 //!
 //! ## Deviations
 //! - Limine has set up long mode, paging and the direct map before `init_x86_64` runs, so the
@@ -107,10 +108,16 @@
 //!   upgrade) arrive with M5.
 //! - `boot`: under feature `qemu`, the wait for a key after "The operating system has halted"
 //!   is the emulator exit with the failure status, which `xtask smoke` checks after a panic.
+//! - `sendsig`/`sys_sigreturn` without the FPU (`fpu.c` is not ported): `fpu_save_len` is the
+//!   `fxsave` size and `cpu_use_xsaves` is false; the save area copied out is the pcb's as it
+//!   is (no `fpusave`, since `CPUPF_USERXSTATE` is never set), `initialize_thread_xstate`,
+//!   `fpureset`, `fpu_cleandata` and `xrstor_user` are reported. A handler therefore runs
+//!   with the interrupted code's FPU/SSE registers and `sigreturn` does not restore them.
 //!   `vfs_shutdown`, `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys`,
 //!   `config_suspend_all`, ACPI and `cpu_reset` are reported as unported when reached.
 
 use core::arch::asm;
+use core::mem::offset_of;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
@@ -125,19 +132,23 @@ use crate::arch::amd64::amd64::intr::{intr_default_setup, splraise};
 use crate::arch::amd64::amd64::locore::lgdt;
 use crate::arch::amd64::amd64::pmap::{PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap};
 use crate::arch::amd64::amd64::vector::Xexceptions;
-use crate::arch::amd64::include::cpu::{CPUPF_USERSEGS, CpuInfo, cpu_info_primary, curcpu};
+use crate::arch::amd64::include::cpu::{
+    CPUPF_USERSEGS, CPUPF_USERXSTATE, CpuInfo, cpu_info_primary, curcpu,
+};
 use crate::arch::amd64::include::cpufunc::{intr_enable, lidt, lldt, ltr, rcr3};
+use crate::arch::amd64::include::fpu::{Fxsave64, Savefpu, XstateHdr};
 use crate::arch::amd64::include::frame::Trapframe;
 use crate::arch::amd64::include::intrdefs::IPL_IPI;
 use crate::arch::amd64::include::param::{PAGE_SIZE, USPACE};
 use crate::arch::amd64::include::proc::MDP_IRET;
-use crate::arch::amd64::include::psl::PSL_USERSET;
+use crate::arch::amd64::include::psl::{PSL_AC, PSL_D, PSL_T, PSL_USERSET, PSL_USERSTATIC, PSL_VM};
 use crate::arch::amd64::include::segments::{
     GCODE_SEL, GDATA_SEL, GDT_SIZE, GPROC0_SEL, GUCODE_SEL, GUDATA_SEL, GateDescriptor,
     MemSegmentDescriptor, NIDT, RegionDescriptor, SDT_MEMERA, SDT_MEMRWA, SDT_SYS386IGT,
     SDT_SYS386TSS, SEL_KPL, SEL_UPL, SysSegmentDescriptor, gdt_addr_mem, gdt_addr_sys, gsel,
-    gsyssel,
+    gsyssel, usermode,
 };
+use crate::arch::amd64::include::signal::Sigcontext;
 use crate::arch::amd64::include::tss::X86_64Tss;
 use crate::arch::amd64::include::vmparam::VM_MAXUSER_ADDRESS;
 use crate::arch::amd64::isa::clock::{
@@ -145,21 +156,30 @@ use crate::arch::amd64::isa::clock::{
 };
 use crate::kassert;
 use crate::kern::init_main::{BOOTHOWTO, PROC0};
+use crate::kern::kern_sig::{sigexit, sigonstack};
 use crate::kern::kern_softintr::softintr_init;
 use crate::kern::subr_log::init_static_msgbuf;
 use crate::kern::subr_prf::splassert_fail;
 use crate::kprintf;
 use crate::machine::bootinfo::{BootInfo, MemKind};
+use crate::machine::copy::{copyin, copyin_obj, copyout, copyout_obj};
+use crate::machine::cpu::curproc;
 use crate::machine::db_machdep::db_enter;
 use crate::machine::{Cpu, Machine};
+use crate::sys::errno::Errno;
 use crate::sys::exec::{ExecPackage, PsStrings};
 use crate::sys::param::roundup;
 use crate::sys::proc::Proc;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
 };
+use crate::sys::siginfo::Siginfo;
+use crate::sys::signal::{SIGILL, SS_DISABLE, Sig, Sigset};
+use crate::sys::signalvar::sigcantmask;
+use crate::sys::syscallargs::SysSigreturnArgs;
 use crate::sys::systm::PHYSMEM;
-use crate::sys::types::{Paddr, Vaddr};
+use crate::sys::systm::{SysArgs, sysargs};
+use crate::sys::types::{Paddr, Register, Vaddr};
 use crate::sys::user::{Uarea, User};
 use crate::unported;
 use crate::uvm::uvm_extern::UvmConstraintRange;
@@ -453,7 +473,7 @@ pub fn reset_segs() {
 
 /// `setregs`: clear registers on exec.
 pub fn setregs(p: &Proc, pack: &ExecPackage<'_>, stack: Vaddr, _arginfo: &PsStrings) {
-    // initialize_thread_xstate(p): the FPU (M6-c).
+    initialize_thread_xstate(p);
 
     // To reset all registers we have to return via iretq
     p.p_md.md_flags.set(p.p_md.md_flags.get() | MDP_IRET);
@@ -525,6 +545,241 @@ pub fn cpu_startup() {
     // SAFETY: once, on the boot CPU, for its own pages (the TSS is loaded; the CPU reads it
     // on the next privilege or stack switch).
     unsafe { cpu_enter_pages(&CPU_INFO_FULL_PRIMARY) };
+}
+
+/// `fpu_save_len`: the size of the FPU state `sendsig` copies out and `sys_sigreturn` copies
+/// back: the `fxsave` area until `fpu.c` (and with it `xsave`) is ported.
+const FPU_SAVE_LEN: usize = size_of::<Fxsave64>();
+
+/// `initialize_thread_xstate`: give the thread a clean FPU state, the user state from now on
+/// (`CPUPF_USERXSTATE`). The FPU is not ported (`fpu.c`: `fpu_cleandata`, `fpureset`,
+/// `xrstors`, `maybe_enable_user_cet`), so it is reported.
+fn initialize_thread_xstate(_p: &Proc) {
+    let _ = unported!("initialize_thread_xstate: the FPU (fpu.c)");
+}
+
+/// `copyoutfpu`: copy out the FPU state, massaging it to be usable from userspace and
+/// acceptable to `xrstor_user()`.
+fn copyoutfpu(sfp: &Savefpu, sp: usize, len: usize) -> Result<(), Errno> {
+    // SAFETY: `Savefpu` is `repr(C)` of packed integer structures and arrays whose sizes add
+    // up to its alignment multiple (no padding), so all its bytes are initialised.
+    let bytes = unsafe {
+        core::slice::from_raw_parts(ptr::from_ref(sfp).cast::<u8>(), size_of::<Savefpu>())
+    };
+    copyout(&bytes[..len], sp)?;
+    if len > offset_of!(Savefpu, fp_xstate) + offset_of!(XstateHdr, xstate_bv) {
+        // The xstate_bv/xstate_xcomp_bv fix-up (XFEATURE_XCR0_MASK, XFEATURE_COMPRESSED):
+        // only an xsave area is longer than the fxsave one (fpu.c).
+        let _ = unported!("copyoutfpu: the xstate_bv fix-up (fpu.c)");
+    }
+    Ok(())
+}
+
+/// `sendsig`: send an interrupt to process.
+///
+/// Stack is set up to allow sigcode to call routine, followed by syscall to sigreturn
+/// routine below. After sigreturn resets the signal mask, the stack, and the frame pointer,
+/// it returns to the user specified pc.
+pub fn sendsig(
+    catcher: Sig,
+    sig: i32,
+    mask: Sigset,
+    ksip: &Siginfo,
+    info: bool,
+    onstack: bool,
+) -> Result<(), Errno> {
+    let Some(p) = curproc() else {
+        return Err(Errno::EFAULT);
+    };
+    let pr = p.process();
+    // SAFETY: `md_regs` is the current thread's trap frame on its kernel stack (the system
+    // call, trap or AST entry recorded it); only this thread touches it, and no other
+    // reference to it is alive while we run.
+    let tf = unsafe { &mut *p.p_md.md_regs.get() };
+    // SAFETY: the thread's own FPU save area, which only this thread reads or writes.
+    let sfp = unsafe { &*p.pcb().pcb_savefpu.get() };
+
+    let mut ksc = Sigcontext {
+        sc_rdi: tf.tf_rdi,
+        sc_rsi: tf.tf_rsi,
+        sc_rdx: tf.tf_rdx,
+        sc_rcx: tf.tf_rcx,
+        sc_r8: tf.tf_r8,
+        sc_r9: tf.tf_r9,
+        sc_r10: tf.tf_r10,
+        sc_r11: tf.tf_r11,
+        sc_r12: tf.tf_r12,
+        sc_r13: tf.tf_r13,
+        sc_r14: tf.tf_r14,
+        sc_r15: tf.tf_r15,
+        sc_rbx: tf.tf_rbx,
+        sc_rax: tf.tf_rax,
+        sc_rbp: tf.tf_rbp,
+        sc_rip: tf.tf_rip,
+        sc_cs: tf.tf_cs,
+        sc_rflags: tf.tf_rflags,
+        sc_rsp: tf.tf_rsp,
+        sc_ss: tf.tf_ss,
+        sc_mask: mask as i32,
+        ..Sigcontext::default()
+    };
+
+    // Allocate space for the signal handler context.
+    let ss = p.p_sigstk.get();
+    let mut sp = if ss.ss_flags & SS_DISABLE == 0 && !sigonstack(tf.tf_rsp as usize) && onstack {
+        trunc_page(ss.ss_sp + ss.ss_size)
+    } else {
+        (tf.tf_rsp as usize).wrapping_sub(128)
+    };
+
+    sp = sp.wrapping_sub(FPU_SAVE_LEN);
+    // cpu_use_xsaves (sp &= ~63): fpu.c, not ported.
+    sp &= !15; // just in case
+
+    // Save FPU state to PCB if necessary, then copy it out
+    if curcpu().ci_pflags.get() & CPUPF_USERXSTATE != 0 {
+        let _ = unported!("sendsig: fpusave (fpu.c)");
+    }
+    copyoutfpu(sfp, sp, FPU_SAVE_LEN)?;
+
+    initialize_thread_xstate(p);
+
+    ksc.sc_fpstate = sp;
+    let mut sss = (size_of::<Sigcontext>() + 15) & !15;
+    let mut sip = 0usize;
+    if info {
+        sip = sp - ((size_of::<Siginfo>() + 15) & !15);
+        sss += (size_of::<Siginfo>() + 15) & !15;
+
+        copyout_obj(ksip, sip)?;
+    }
+    let scp = sp - sss;
+
+    ksc.sc_cookie = (scp as i64) ^ (pr.ps_sigcookie.get() as i64);
+    copyout_obj(&ksc, scp)?;
+
+    // Build context to run handler in.
+    tf.tf_rax = catcher as i64;
+    tf.tf_rdi = i64::from(sig);
+    tf.tf_rsi = sip as i64;
+    tf.tf_rdx = scp as i64;
+
+    tf.tf_rip = pr.ps_sigcode.get() as i64;
+    tf.tf_cs = i64::from(gsel(GUCODE_SEL, SEL_UPL));
+    tf.tf_rflags &= !((PSL_T | PSL_D | PSL_VM | PSL_AC) as i64);
+    tf.tf_rsp = scp as i64;
+    tf.tf_ss = i64::from(gsel(GUDATA_SEL, SEL_UPL));
+
+    Ok(())
+}
+
+/// `sys_sigreturn`: system call to cleanup state after a signal has been taken. Reset
+/// signal mask and stack state from context left by sendsig (above). Return to previous pc
+/// and psl as specified by context left by sendsig. Check carefully to make sure that the
+/// user has not modified the psl to gain improper privileges or to cause a machine fault.
+pub fn sys_sigreturn(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let uap: &SysSigreturnArgs = sysargs(v);
+    let scp = uap.sigcntxp.get() as usize;
+    let pr = p.process();
+
+    if Machine::proc_pc(p) != pr.ps_sigcoderet.get() {
+        sigexit(p, SIGILL);
+        // return (EPERM): sigexit does not return.
+    }
+
+    let mut ksc: Sigcontext = copyin_obj(scp)?;
+
+    if ksc.sc_cookie != ((scp as i64) ^ (pr.ps_sigcookie.get() as i64)) {
+        sigexit(p, SIGILL);
+        // return (EFAULT): sigexit does not return.
+    }
+
+    // Prevent reuse of the sigcontext cookie
+    ksc.sc_cookie = 0;
+    let _ = copyout(
+        &ksc.sc_cookie.to_ne_bytes(),
+        scp + offset_of!(Sigcontext, sc_cookie),
+    );
+
+    // SAFETY: as in `sendsig`: the current thread's trap frame, which the system call entry
+    // recorded.
+    let tf = unsafe { &mut *p.p_md.md_regs.get() };
+
+    if ((ksc.sc_rflags ^ tf.tf_rflags) as u64) & PSL_USERSTATIC != 0 || !usermode(ksc.sc_cs as u64)
+    {
+        return Err(Errno::EINVAL);
+    }
+
+    // Current FPU state is obsolete; toss it and force a reload
+    let ci = curcpu();
+    if ci.ci_pflags.get() & CPUPF_USERXSTATE != 0 {
+        ci.ci_pflags.set(ci.ci_pflags.get() & !CPUPF_USERXSTATE);
+        let _ = unported!("sys_sigreturn: fpureset (fpu.c)");
+    }
+
+    // Copy in the FPU state to restore
+    if ksc.sc_fpstate != 0 {
+        // SAFETY: the thread's own FPU save area, which only this thread reads or writes,
+        // viewed as the bytes `copyin` fills; any bytes are a valid save area.
+        let sfp = unsafe {
+            core::slice::from_raw_parts_mut(
+                p.pcb().pcb_savefpu.get().cast::<u8>(),
+                size_of::<Savefpu>(),
+            )
+        };
+        if let Err(error) = copyin(ksc.sc_fpstate, &mut sfp[..FPU_SAVE_LEN]) {
+            // memcpy(sfp, fpu_cleandata, fpu_save_len): fpu.c.
+            let _ = unported!("sys_sigreturn: fpu_cleandata (fpu.c)");
+            return Err(error);
+        }
+        // xrstor_user(sfp, xsave_mask), maybe_enable_user_cet(p), CPUPF_USERXSTATE: fpu.c.
+        let _ = unported!("sys_sigreturn: xrstor_user (fpu.c)");
+    } else {
+        // shouldn't happen, but handle it
+        initialize_thread_xstate(p);
+    }
+
+    tf.tf_rdi = ksc.sc_rdi;
+    tf.tf_rsi = ksc.sc_rsi;
+    tf.tf_rdx = ksc.sc_rdx;
+    tf.tf_rcx = ksc.sc_rcx;
+    tf.tf_r8 = ksc.sc_r8;
+    tf.tf_r9 = ksc.sc_r9;
+    tf.tf_r10 = ksc.sc_r10;
+    tf.tf_r11 = ksc.sc_r11;
+    tf.tf_r12 = ksc.sc_r12;
+    tf.tf_r13 = ksc.sc_r13;
+    tf.tf_r14 = ksc.sc_r14;
+    tf.tf_r15 = ksc.sc_r15;
+    tf.tf_rbx = ksc.sc_rbx;
+    tf.tf_rax = ksc.sc_rax;
+    tf.tf_rbp = ksc.sc_rbp;
+    tf.tf_rip = ksc.sc_rip;
+    tf.tf_cs = ksc.sc_cs;
+    tf.tf_rflags = ksc.sc_rflags;
+    tf.tf_rsp = ksc.sc_rsp;
+    tf.tf_ss = ksc.sc_ss;
+
+    // Restore signal mask.
+    p.p_sigmask.set(ksc.sc_mask as Sigset & !sigcantmask());
+
+    // sigreturn() needs to return to userspace via the 'iretq' method, so that if the
+    // process was interrupted (by tick, an IPI, whatever) as opposed to already being in the
+    // kernel when a signal was being delivered, the process will be completely restored,
+    // including the userland %rcx and %r11 registers which the 'sysretq' instruction cannot
+    // restore. Also need to make sure we can handle faulting on xrstor.
+    p.p_md.md_flags.set(p.p_md.md_flags.get() | MDP_IRET);
+
+    Err(Errno::EJUSTRETURN)
+}
+
+// cpu_kick: MULTIPROCESSOR.
+
+/// `signotify`: notify the current process (p) that it has a signal pending, process as
+/// soon as possible.
+pub fn signotify(p: &Proc) {
+    aston(p);
+    // cpu_kick(p->p_cpu): MULTIPROCESSOR (a no-op on one CPU).
 }
 
 /// `boot(9)`: halts or reboots according to `howto`.

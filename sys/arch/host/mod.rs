@@ -26,6 +26,7 @@ use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::copy::UserCopy;
 use crate::machine::db_machdep::{DbMachdep, PrFn};
 use crate::machine::proc::MachineProc;
+use crate::machine::signal::MachineSignal;
 use crate::machine::tcb::Tcb;
 use crate::machine::{
     BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, MachineParam, Pmap, VmParam,
@@ -38,7 +39,10 @@ use crate::sys::exec_elf::{ELFCLASS64, ELFDATA2LSB};
 use crate::sys::param::NODEV;
 use crate::sys::proc::{Proc, Process};
 use crate::sys::sched::SchedstatePercpu;
-use crate::sys::types::{Dev, Paddr, Vaddr, Vsize};
+use crate::sys::siginfo::Siginfo;
+use crate::sys::signal::{Sig, Sigset};
+use crate::sys::systm::SysArgs;
+use crate::sys::types::{Dev, Paddr, Register, Vaddr, Vsize};
 use crate::sys::user::User;
 use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt, Vmspace};
 use crate::uvm::uvm_page::{
@@ -336,6 +340,9 @@ impl Cpu for Machine {
 
     /// No user mode to return to.
     fn setregs(_p: &Proc, _pack: &ExecPackage<'_>, _stack: Vaddr, _arginfo: &PsStrings) {}
+
+    /// No user mode, hence no AST to post.
+    fn signotify(_p: &Proc) {}
 
     /// The host double has no user mode: no program counter to report.
     fn proc_pc(_p: &Proc) -> usize {
@@ -743,6 +750,42 @@ impl crate::machine::fdt::Fdt for Machine {
         HostBusSpace
     }
 }
+
+/// The host has no user mode: no handler is ever entered and there is no trampoline.
+impl MachineSignal for Machine {
+    type Sigcontext = HostSigcontext;
+
+    fn sendsig(
+        _catcher: Sig,
+        _sig: i32,
+        _mask: Sigset,
+        _ksip: &Siginfo,
+        _info: bool,
+        _onstack: bool,
+    ) -> Result<(), Errno> {
+        Ok(())
+    }
+
+    fn sys_sigreturn(_p: &Proc, _v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
+        Err(Errno::ENOSYS)
+    }
+
+    fn sigcode() -> &'static [u8] {
+        &[]
+    }
+
+    fn sigcoderet() -> usize {
+        0
+    }
+
+    fn sigfill() -> &'static [u8] {
+        &[]
+    }
+}
+
+/// The host's `struct sigcontext`: nothing to save.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HostSigcontext;
 
 /// The host has one address space: a "user" address is a pointer into the test's memory,
 /// so the copies are plain byte copies and a null address is the one `EFAULT`.

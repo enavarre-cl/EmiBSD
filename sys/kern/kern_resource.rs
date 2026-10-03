@@ -54,7 +54,6 @@
 //! ## Deviations
 //! - `tuagg_sumup` reads the source's fields one by one inside the `pc_cons` loop instead of
 //!   copying the struct: the fields are `Cell`s.
-//! - `rucheck` reports `prsignal` (`kern_sig.c`) instead of sending `SIGKILL`/`SIGXCPU`.
 //!   KTRACE is not configured.
 
 use core::ffi::c_void;
@@ -68,6 +67,7 @@ use crate::kern::kern_lock::{mtx_enter, mtx_leave, pc_cons_enter, pc_cons_leave}
 use crate::kern::kern_proc::{ALLPROCESS, pgfind, prfind};
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_rwlock::{rw_assert_wrlock, rw_enter_write, rw_exit_write};
+use crate::kern::kern_sig::prsignal;
 use crate::kern::kern_synch::{refcnt_init, refcnt_rele, refcnt_shared, refcnt_take};
 use crate::kern::kern_tc::nanouptime;
 use crate::kern::kern_timeout::timeout_add_msec;
@@ -97,6 +97,7 @@ use crate::sys::resource::{
 };
 use crate::sys::resourcevar::{Plimit, lim_read_leave};
 use crate::sys::rwlock::Rwlock;
+use crate::sys::signal::{SIGKILL, SIGXCPU};
 use crate::sys::syscallargs::{
     SysGetpriorityArgs, SysGetrlimitArgs, SysGetrusageArgs, SysSetpriorityArgs, SysSetrlimitArgs,
 };
@@ -106,7 +107,6 @@ use crate::sys::time::{
 };
 use crate::sys::types::Pid;
 use crate::sys::types::{Register, Rlim};
-use crate::unported;
 use crate::uvm::uvm::UVM_ET_STACK;
 use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_map::uvm_map_protect;
@@ -648,11 +648,9 @@ pub fn rucheck(arg: *mut c_void) {
 
     if runtime as Rlim >= rlim.rlim_cur {
         if runtime as Rlim >= rlim.rlim_max {
-            // prsignal(pr, SIGKILL): see the module's deviations.
-            let _ = unported!("rucheck: prsignal(SIGKILL) (kern_sig.c)");
+            prsignal(pr, SIGKILL);
         } else if runtime >= pr.ps_nextxcpu.get() {
-            // prsignal(pr, SIGXCPU): see the module's deviations.
-            let _ = unported!("rucheck: prsignal(SIGXCPU) (kern_sig.c)");
+            prsignal(pr, SIGXCPU);
             pr.ps_nextxcpu.set(runtime + SIGXCPU_INTERVAL);
         }
     }

@@ -80,7 +80,7 @@ use crate::arch::arm64::arm64::pmap::{
     PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap, pmap_growkernel,
 };
 use crate::arch::arm64::include::armreg::{PSR_DIT, PSR_M_EL0t};
-use crate::arch::arm64::include::cpu::{CpuInfo, disable_irq_daif, enable_irq_daif};
+use crate::arch::arm64::include::cpu::{CpuInfo, curcpu, disable_irq_daif, enable_irq_daif};
 use crate::arch::arm64::include::frame::Trapframe;
 use crate::arch::arm64::include::intr::IPL_TTY;
 use crate::arch::arm64::include::param::PAGE_SIZE;
@@ -572,6 +572,21 @@ pub fn need_resched(ci: &CpuInfo) {
 /// `aston(p)`: `p->p_md.md_astpending = 1`.
 pub fn aston(p: &Proc) {
     p.p_md.md_astpending.store(1, Ordering::Relaxed);
+}
+
+/// `setsoftast()`: `aston(curcpu()->ci_curproc)`.
+pub fn setsoftast() {
+    // SAFETY: `ci_curproc` names the thread on this CPU, hence alive.
+    if let Some(p) = unsafe { curcpu().ci_curproc.get().as_ref() } {
+        aston(p);
+    }
+}
+
+/// `signotify(p)` (`<machine/cpu.h>`): notify the current process (p) that it has a signal
+/// pending, process as soon as possible. Without `MULTIPROCESSOR` it is `setsoftast()`, which
+/// posts the AST to the thread on this CPU.
+pub fn signotify(_p: &Proc) {
+    setsoftast();
 }
 
 /// `clear_resched(ci)`.

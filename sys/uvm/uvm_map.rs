@@ -97,9 +97,8 @@
 //! - `vm_map_lock` and friends are the `*_ln` functions without the `VMMAP_DEBUG`
 //!   file/line arguments and `LPRINTF`; the tree checks run under feature `vmmap_debug` (and
 //!   in host tests), as `option VMMAP_DEBUG`.
-//! - [`uvm_map_inentry`] prints with `printf` (no controlling terminal: `uprintf`) and
-//!   reports `trapsignal` (no generic trap signal delivery before M7a-3); its printf
-//!   format becomes two words (`what`, `reason`).
+//! - [`uvm_map_inentry`] prints with `printf` (no controlling terminal: `uprintf`); its
+//!   printf format becomes two words (`what`, `reason`).
 //! - [`uvm_map_protect`] reports the `RLIMIT_DATA` check (`lim_cur` is not ported) instead
 //!   of enforcing it.
 //! - `uvm_map_splitentry` takes the pager reference without `KERNEL_LOCK` (one CPU).
@@ -133,12 +132,13 @@ use crate::kern::kern_rwlock::{
     rw_assert_anylock, rw_assert_wrlock, rw_enter, rw_enter_read, rw_enter_write, rw_exit,
     rw_exit_read, rw_exit_write, rw_init, rw_init_flags,
 };
+use crate::kern::kern_sig::trapsignal;
 use crate::kern::kern_synch::{msleep_nsec, wakeup};
 use crate::kern::kern_time::ratecheck;
 use crate::kern::sched_bsd::r#yield;
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put, pool_sethiwat};
 use crate::kern::subr_prf::panic;
-use crate::machine::cpu::curproc;
+use crate::machine::cpu::{Cpu, curproc};
 use crate::machine::intr::splassert;
 use crate::machine::intr::{IPL_NONE, IPL_VM};
 use crate::machine::pmap::{
@@ -165,6 +165,8 @@ use crate::sys::rwlock::{
     RW_DOWNGRADE, RW_NOSLEEP, RW_UPGRADE, RW_WRITE, RWL_DUPOK, Rwlock, rw_write_held,
 };
 use crate::sys::sched::sched_pause;
+use crate::sys::siginfo::{SEGV_ACCERR, Sigval};
+use crate::sys::signal::SIGSEGV;
 use crate::sys::systm::{COLD, INFSLP};
 use crate::sys::time::Timeval;
 use crate::sys::tree::{RbtEntry, RbtHead};
@@ -2124,9 +2126,8 @@ pub fn uvm_map_inentry(
                 reason
             );
             pr.ps_acflag.set(pr.ps_acflag.get() | AMAP);
-            // sv.sival_ptr = PROC_PC(p); trapsignal(p, SIGSEGV, 0, SEGV_ACCERR, sv): no
-            // generic trap signal delivery yet (M7a-3).
-            let _ = unported!("uvm_map_inentry: trapsignal(SIGSEGV, SEGV_ACCERR)");
+            let sv = Sigval::from_ptr(<Machine as Cpu>::proc_pc(p));
+            trapsignal(p, SIGSEGV, 0, SEGV_ACCERR, sv);
             // KERNEL_UNLOCK().
         }
     }

@@ -8,13 +8,18 @@
 //! `proc_trampoline`; M6-a `Xsyscall` with the AST check and the `sysretq` return; M6-b
 //! `intr_user_exit` (the `iretq` return) and the user-thread bits of `cpu_switchto`; with
 //! `kern_prot.c` (the TCB) the user segment reset of `cpu_switchto` and the FS.base restore
-//! of `intr_user_exit` and `Xsyscall` (`CPUPF_USERSEGS`). The kernel entry (`start`, done by
-//! the boot protocol), `sigcode`, the Meltdown trampolines (`Xsyscall_meltdown`, the U-K
-//! text page), `retpoline_rax` and `savectx`/`setjmp`/`longjmp` come later.
+//! of `intr_user_exit` and `Xsyscall` (`CPUPF_USERSEGS`); with `kern_sig.c` the signal
+//! trampoline (`sigcode`, `sigcodecall`, `sigcoderet`, `esigcode`, `sigfill`,
+//! `sigfillsiz`). The kernel entry (`start`, done by the boot protocol), the Meltdown
+//! trampolines (`Xsyscall_meltdown`, the U-K text page), `retpoline_rax` and
+//! `savectx`/`setjmp`/`longjmp` come later.
 //!
 //! ## Deviations
 //! - AT&T syntax, as the C file, so the two can be diffed; the rest of the kernel's inline
 //!   assembly is Intel syntax.
+//! - `sigcode` keeps the C's retpoline (`JMP_RETPOLINE(rax)`, expanded in place) but not its
+//!   `CODEPATCH_START`/`CODEPATCH_END` markers: there is no `codepatch`, so the retpoline is
+//!   never replaced by a plain `jmp *%rax` on CPUs that do not need it.
 //! - `cpu_switchto` saves and restores the stack pointers, resets the user segment registers
 //!   when the CPU still holds a user thread's (`CPUPF_USERSEGS`), sets `curproc`/`curpcb`/
 //!   `p_cpu`/`p_stat`, reloads `%cr3` when it changes, records `ci_proc_pmap` and, for a
@@ -35,6 +40,7 @@
 use core::arch::global_asm;
 use core::ffi::c_void;
 use core::mem::offset_of;
+use core::ptr;
 
 use crate::arch::amd64::include::cpu::{CPUPF_USERSEGS, CpuInfo};
 use crate::arch::amd64::include::frame::{IretqFrame, Trapframe};
@@ -46,6 +52,7 @@ use crate::arch::amd64::include::segments::{
 use crate::arch::amd64::include::specialreg::MSR_FSBASE;
 use crate::kern::kern_fork::proc_trampoline_mi;
 use crate::sys::proc::{P_SYSTEM, Proc, SONPROC};
+use crate::sys::syscall::SYS_sigreturn;
 
 global_asm!(
     include_str!("locore.S"),
@@ -106,6 +113,7 @@ global_asm!(
     CPUPF_USERSEGS = const CPUPF_USERSEGS,
     PCB_FSBASE = const offset_of!(Pcb, pcb_fsbase),
     MSR_FSBASE = const MSR_FSBASE,
+    SYS_SIGRETURN = const SYS_sigreturn,
     options(att_syntax)
 );
 
@@ -125,6 +133,38 @@ unsafe extern "C" {
     pub fn proc_trampoline();
     /// `Xsyscall`: the `syscall` instruction's entry (`MSR_LSTAR`).
     pub fn Xsyscall();
+    /// `sigcode[]`: the signal trampoline, copied into every process (`exec_sigcode_map`).
+    static sigcode: [u8; 0];
+    /// `sigcoderet[]`: the instruction after the trampoline's `sigreturn` system call.
+    static sigcoderet: [u8; 0];
+    /// `esigcode[]`: the end of the trampoline.
+    static esigcode: [u8; 0];
+    /// `sigfill[]`: the trap instruction the rest of the trampoline's page is filled with.
+    static sigfill: [u8; 0];
+    /// `sigfillsiz`: the size of `sigfill`.
+    static sigfillsiz: i32;
+}
+
+/// `sigcode` .. `esigcode`: the signal trampoline's bytes.
+pub fn sigcode_bytes() -> &'static [u8] {
+    let start = ptr::addr_of!(sigcode).cast::<u8>();
+    let end = ptr::addr_of!(esigcode).cast::<u8>();
+    // SAFETY: `sigcode` and `esigcode` bracket the trampoline in `.rodata` (`locore.S`),
+    // read-only and alive for the kernel's lifetime.
+    unsafe { core::slice::from_raw_parts(start, end as usize - start as usize) }
+}
+
+/// `sigcoderet - sigcode`.
+pub fn sigcoderet_offset() -> usize {
+    ptr::addr_of!(sigcoderet) as usize - ptr::addr_of!(sigcode) as usize
+}
+
+/// `sigfill` .. `sigfill + sigfillsiz`.
+pub fn sigfill_bytes() -> &'static [u8] {
+    // SAFETY: `sigfillsiz` is a constant word in `.rodata`, written by the assembler.
+    let len = unsafe { ptr::addr_of!(sigfillsiz).read() } as usize;
+    // SAFETY: `sigfill` is followed by `sigfillsiz` bytes of instructions in `.rodata`.
+    unsafe { core::slice::from_raw_parts(ptr::addr_of!(sigfill).cast::<u8>(), len) }
 }
 
 /// What `proc_trampoline` calls with the switch frame's `sf_r12`/`sf_r13`: the

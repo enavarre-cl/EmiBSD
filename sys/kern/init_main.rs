@@ -83,6 +83,7 @@ use crate::kern::kern_prot::crget;
 use crate::kern::kern_resource::lim_startup;
 use crate::kern::kern_rwlock::rw_obj_init;
 use crate::kern::kern_sched::{sched_init, sched_init_cpu};
+use crate::kern::kern_sig::{siginit, signal_init};
 use crate::kern::kern_synch::{endtsleep, sleep_queue_init, tsleep_nsec, wakeup};
 use crate::kern::kern_task::taskq_init;
 use crate::kern::kern_timeout::{timeout_proc_init, timeout_set, timeout_startup};
@@ -99,6 +100,7 @@ use crate::sys::errno::Errno;
 use crate::sys::param::{NZERO, PVM, PWAIT};
 use crate::sys::proc::{FORK_FORK, P_SYSTEM, PS_SYSTEM, Pgrp, Proc, Process, SONPROC, Session};
 use crate::sys::resourcevar::Plimit;
+use crate::sys::signalvar::Sigacts;
 use crate::sys::systm::INFSLP;
 use crate::unported;
 use crate::uvm::uvm_extern::Vmspace;
@@ -139,6 +141,9 @@ pub static START_INIT_EXEC: AtomicI32 = AtomicI32::new(0);
 static INIT_MODULE: StaticCell<Option<BootModule>> = StaticCell::new(None);
 /// `process0`: process slot for kernel threads.
 pub static PROCESS0: Process = Process::new();
+
+/// `sigacts0`: process 0's signal actions.
+pub static SIGACTS0: Sigacts = Sigacts::new();
 /// `pgrp0`.
 pub static PGRP0: Pgrp = Pgrp::new();
 /// `session0`.
@@ -265,7 +270,9 @@ pub fn main() -> ! {
     );
 
     // Init signal state, file descriptor table, limits and the prototype map of process 0.
-    let _ = unported!("signal_init / siginit");
+    signal_init();
+    siginit(&SIGACTS0);
+    pr.ps_sigacts.set(&SIGACTS0);
     let fdp = fdinit();
     pr.ps_fd.set(fdp);
     p.p_fd.set(fdp);
@@ -482,8 +489,11 @@ pub fn start_init(arg: *mut c_void) {
         kprintf!("init: console stand-in: error {}\n", e as i32);
     }
 
-    // process 0 ignores SIGCHLD, but we can't: ps_sigacts (kern_sig.c, M6-c).
-    let _ = unported!("start_init: ps_sigacts->ps_sigflags = 0 (M6-c)");
+    // process 0 ignores SIGCHLD, but we can't
+    p.process()
+        .sigacts()
+        .ps_sigflags
+        .store(0, Ordering::Relaxed);
 
     // Need just enough stack to hold the faked-up "execve()" arguments: `exec_image` lays
     // the (empty) arguments out itself (see `kern_exec.rs`); the boot flags (`-s`) will

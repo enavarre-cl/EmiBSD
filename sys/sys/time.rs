@@ -153,6 +153,10 @@ impl Timespec {
     }
 }
 
+// SAFETY: `repr(C)`: two 64-bit integers, no padding; every bit pattern is a valid value
+// (`copyin` of a user `struct timespec`, `kern_sig.c`'s `__thrsigdivert`).
+unsafe impl crate::machine::copy::AbiPod for Timespec {}
+
 /// `struct timezone`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Timezone {

@@ -46,13 +46,12 @@
 //! `tsleep_nsec`, `msleep`, `msleep_nsec`, `sleep_setup`, `sleep_finish`, `wakeup_proc`,
 //! `endtsleep`, `unsleep`, `wakeup_n`, `wakeup`, `wakeup_one`, the reference counts
 //! (`refcnt_*`) and the condition variables (`cond_*`). `rwsleep[_nsec]` wait for
-//! `kern_rwlock.c`; `sleep_signal_check` for the signals (M6); `sys_sched_yield`,
+//! `kern_rwlock.c`; `sleep_signal_check` with `kern_sig.c`; `sys_sched_yield`,
 //! `__thrsleep`/`__thrwakeup` and `tslp_init` for the syscalls (M6).
 //!
 //! ## Deviations
 //! - The sleep functions return `Result<(), Errno>` (`EWOULDBLOCK` on timeout, `EINTR`/
 //!   `ERESTART` from a signal) instead of an `int`.
-//! - `sleep_signal_check` reports the signal machinery (M6) and finds nothing pending.
 //! - The `cold == 2` ddb stack dump is not here (`cold` is a flag, not a counter).
 //! - `safepri` and `cold` are `sys/systm.rs` statics (see there).
 
@@ -64,6 +63,7 @@ use crate::conf::param::TICK_NSEC;
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_rwlock::{rw_assert_anylock, rw_enter, rw_exit, rw_status};
+use crate::kern::kern_sig::{cursig, proc_suspend_check, process_stop, process_suspend_signal};
 use crate::kern::kern_timeout::{timeout_add_nsec, timeout_del};
 use crate::kern::sched_bsd::{
     mi_switch, sched_assert_locked, sched_lock, sched_unlock, setrunnable,
@@ -80,16 +80,17 @@ use crate::sys::param::{PCATCH, PNORELOCK, PRIMASK, PWAIT};
 #[cfg(feature = "diagnostic")]
 use crate::sys::proc::P_CANTSLEEP;
 use crate::sys::proc::{
-    Cond, P_INSCHED, P_SINTR, P_TIMEOUT, P_TIMEOUTRAN, P_WEXIT, Proc, ProcRunq, SONPROC, SSLEEP,
-    SSTOP,
+    Cond, P_INSCHED, P_SINTR, P_SUSPSIG, P_TIMEOUT, P_TIMEOUTRAN, P_WEXIT, PS_STOPPING, Proc,
+    ProcRunq, SINGLE_SUSPEND, SONPROC, SSLEEP, SSTOP,
 };
 use crate::sys::queue::TailqHead;
 use crate::sys::refcnt::Refcnt;
 use crate::sys::rwlock::Rwlock;
+use crate::sys::signal::sigmask;
+use crate::sys::signalvar::Sigctx;
 #[cfg(feature = "diagnostic")]
 use crate::sys::syslog::LOG_WARNING;
 use crate::sys::systm::{COLD, INFSLP, SAFEPRI};
-use crate::unported;
 
 /// `TABLESIZE`: we're only looking at 7 bits of the address; everything is aligned to 4,
 /// lots of things are aligned to greater powers of 2. Shift right by 8, i.e. drop the bottom
@@ -475,9 +476,54 @@ pub fn sleep_finish(nsecs: u64, do_sleep: bool) -> Result<(), Errno> {
 /// 2nd call in `sleep_finish()` sets `after_sleep`. In this case any pending suspend event
 /// came in after the wakeup / unsleep and can therefor be ignored. Once the process hits
 /// userret the event will be picked up again.
-pub fn sleep_signal_check(_p: &Proc, _after_sleep: bool) -> Result<(), Errno> {
-    // proc_suspend_check, process_suspend_signal, cursig, process_stop: the signals (M6).
-    let _ = unported!("sleep_signal_check: signals (kern_sig.c, M6)");
+pub fn sleep_signal_check(p: &Proc, after_sleep: bool) -> Result<(), Errno> {
+    let pr = p.process();
+    let mut ctx = Sigctx::default();
+
+    if let Err(err) = proc_suspend_check(p, true) {
+        if err != Errno::EWOULDBLOCK {
+            return Err(err);
+        }
+
+        // requested to stop
+        if !after_sleep {
+            mtx_enter(&pr.ps_mtx);
+            process_suspend_signal(pr);
+
+            sched_lock();
+            p.p_stat.set(SSTOP);
+            sched_unlock();
+            mtx_leave(&pr.ps_mtx);
+        }
+    }
+
+    let sig = cursig(p, &mut ctx, true);
+    if sig != 0 {
+        if ctx.sig_stop {
+            if !after_sleep {
+                mtx_enter(&pr.ps_mtx);
+                pr.ps_xsig.set(sig);
+                // This is for stop signals delivered before sleep_setup() was called. We need
+                // to do the full dance here before going to sleep.
+                p.p_siglist.fetch_and(!sigmask(sig), Ordering::Relaxed);
+                pr.ps_flags.fetch_or(PS_STOPPING, Ordering::Relaxed);
+                sched_lock();
+                process_stop(pr, P_SUSPSIG, SINGLE_SUSPEND);
+                sched_unlock();
+                p.p_flag.fetch_or(P_SUSPSIG, Ordering::Relaxed);
+                process_suspend_signal(pr);
+                sched_lock();
+                p.p_stat.set(SSTOP);
+                sched_unlock();
+                mtx_leave(&pr.ps_mtx);
+            }
+        } else if ctx.sig_intr && !ctx.sig_ignore {
+            return Err(Errno::EINTR);
+        } else {
+            return Err(Errno::ERESTART);
+        }
+    }
+
     Ok(())
 }
 

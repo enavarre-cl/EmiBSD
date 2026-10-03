@@ -56,19 +56,17 @@
 //! - No file table and no vnodes: `sys_mmap` of a descriptor and `sys_mquery` with `fd >= 0`
 //!   report `fd_getfile`/`getvnode` (`kern_descrip.c`) and fail; `uvm_mmapfile` is not here.
 //! - `uvm_wxcheck`: `ps_textvp` has no mount (no vnodes), so W^X is never allowed; the
-//!   `uvm_wxabort` path reports `log` and `sigexit` (`kern_sig.c`) and exits through
-//!   `exit1`, as the trap stand-ins do.
+//!   `uvm_wxabort` path reports `log` and then `sigexit`s.
 //! - `pledge_protexec`: no process can be pledged before `kern_pledge.c`; a pledged one is
 //!   reported and refused.
-//! - `sys_kbind`'s `sigexit(p, SIGILL)` is `exit1` with the signal (no `kern_sig.c`).
 //! - `pmap_wired_count` exists on both machines, so the `suser` branches of `mlock(2)` and
 //!   friends are not compiled, as in the C.
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use crate::kern::kern_exit::exit1;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, mallocarray};
+use crate::kern::kern_sig::sigexit;
 use crate::machine::copy::{copyin, kcopy};
 use crate::machine::cpu::Cpu;
 use crate::machine::exec::MachineExec;
@@ -84,7 +82,7 @@ use crate::sys::mman::{
     PROT_WRITE,
 };
 use crate::sys::param::PAGE_MASK;
-use crate::sys::proc::{EXIT_NORMAL, PS_PLEDGE, Proc, p_hassibling};
+use crate::sys::proc::{PS_PLEDGE, Proc, p_hassibling};
 use crate::sys::resource::{RLIMIT_DATA, RLIMIT_MEMLOCK};
 use crate::sys::resourcevar::lim_cur;
 use crate::sys::signal::{SIGABRT, SIGILL};
@@ -222,8 +220,7 @@ fn uvm_wxcheck(p: &Proc, call: &str) -> Result<(), Errno> {
             );
         }
         // Send uncatchable SIGABRT for coredump
-        let _ = unported!("uvm_wxcheck: sigexit (kern_sig.c)");
-        exit1(p, 0, SIGABRT, EXIT_NORMAL);
+        sigexit(p, SIGABRT);
     }
 
     Err(Errno::ENOTSUP)
@@ -832,9 +829,8 @@ pub fn sys_kbind(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
 
     // Raise SIGILL if something is off.
     if sigill {
-        // KERNEL_LOCK(); sigexit(p, SIGILL): see the module's deviations.
-        let _ = unported!("sys_kbind: sigexit (kern_sig.c)");
-        exit1(p, 0, SIGILL, EXIT_NORMAL);
+        // KERNEL_LOCK(): one CPU.
+        sigexit(p, SIGILL);
     }
 
     // We're done if we were disabling the syscall.

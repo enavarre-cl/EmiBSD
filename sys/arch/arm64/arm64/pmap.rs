@@ -232,8 +232,15 @@ static PMAP_INITIALIZED: AtomicBool = AtomicBool::new(false);
 static MAPPINGS_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 /// `pted_allocated`: pted pages allocated for the kernel.
 static PTED_ALLOCATED: AtomicUsize = AtomicUsize::new(0);
-/// `vmmap`: a kernel virtual page kept for `pmap_bootstrap_bs_map` (M4).
+/// `vmmap`: the kernel virtual window kept below `virtual_avail` for device mappings
+/// (`pmap_bootstrap_bs_map` in C; `generic_space_map` here, see `bus_space.rs`). The next
+/// free address in it.
 pub static VMMAP: AtomicUsize = AtomicUsize::new(0);
+
+/// The size of the `vmmap` window: the C keeps one page; here `generic_space_map` takes every
+/// device mapping from it, so it is large enough for the devices and lies wholly below
+/// `virtual_avail`, out of `kernel_map`'s way.
+pub const VMMAP_SIZE: usize = 1024 * PAGE_SIZE;
 /// `pmap_kpted_alloc`'s batch: the next pted (`pted`) ...
 static KPTED_NEXT: AtomicUsize = AtomicUsize::new(0);
 /// ... and how many are left in its page (`npted`).
@@ -921,7 +928,7 @@ pub unsafe fn pmap_bootstrap(_ram_start: Paddr, _ram_end: Paddr) -> Vaddr {
 
     let vstart = VM_MIN_KERNEL_ADDRESS;
     VMMAP.store(vstart, Ordering::Relaxed);
-    let vstart = vstart + PAGE_SIZE;
+    let vstart = vstart + VMMAP_SIZE;
     VIRTUAL_AVAIL.store(vstart, Ordering::Relaxed);
 
     Vaddr::new(vstart)

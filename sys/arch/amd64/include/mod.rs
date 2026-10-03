@@ -26,6 +26,7 @@ pub mod proc;
 pub mod psl;
 pub mod pte;
 pub mod segments;
+pub mod signal;
 pub mod specialreg;
 pub mod tcb;
 pub mod timetc;

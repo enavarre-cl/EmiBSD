@@ -34,12 +34,13 @@
 //! Status: `wip`. Milestone M4 ports the EL1 side: `is_unpriv_ldst`, `accesstype`, `fault`,
 //! `kdata_abort`, `do_el1h_sync`, `serror`, `do_el1h_error` and `dumpregs`; M6-a adds
 //! `do_el0_sync` (the `svc` path, `syscall.rs`) and `do_el0_error`, and `kdata_abort`'s
-//! `pcb_onfault` recovery. `udata_abort`, `emulate_msr` and the `trapsignal`s of the other
-//! EL0 exceptions come with user address spaces and signals (M6-b).
+//! `pcb_onfault` recovery; M6-b/M7a `udata_abort`; `kern_sig.c` the `trapsignal`s of every
+//! EL0 exception, `fpu_load` for the FP traps and `sve_load` for the SVE one.
 //!
 //! ## Deviations
-//! - `do_el0_sync`: every exception but `svc` reports its `trapsignal`/`udata_abort` and
-//!   panics (no signals yet, M6-b); the C never panics for user mode.
+//! - `emulate_msr` (the `mrs` of the ID registers from EL0) needs the CPU identification
+//!   (`cpu.c`'s `cpu_id_aa64*`): it is reported and emulates nothing, so such an `mrs` is a
+//!   `SIGILL`, as in C for a register it does not emulate.
 //! - The `we_re_toast` path prints the syndrome and enters `db_ktrap` as the `DDB` build does,
 //!   then panics with the same message as the non-`DDB` build: ddb-lite has no command loop
 //!   to stay in, and returning would re-execute the faulting instruction.
@@ -51,26 +52,31 @@ use core::ptr;
 use core::sync::atomic::Ordering;
 
 use crate::arch::arm64::arm64::db_interface::db_ktrap;
+use crate::arch::arm64::arm64::fpu::{fpu_load, sve_load};
 use crate::arch::arm64::arm64::pmap::pmap_fault_fixup;
 use crate::arch::arm64::arm64::syscall::svc_handler;
 use crate::arch::arm64::include::armreg::{
     EXCP_BRANCH_TGT, EXCP_BRK, EXCP_DATA_ABORT, EXCP_DATA_ABORT_L, EXCP_FP_SIMD, EXCP_FPAC,
-    EXCP_INSN_ABORT, EXCP_INSN_ABORT_L, EXCP_SOFTSTP_EL1, EXCP_SVC, EXCP_TRAP_FP, EXCP_WATCHPT_EL1,
-    INSN_SIZE, ISS_BRK_COMMENT_MASK, ISS_DATA_CM, ISS_DATA_DFSC_ALIGN, ISS_DATA_DFSC_MASK,
-    ISS_DATA_WNR, esr_elx_exception, read_specialreg,
+    EXCP_INSN_ABORT, EXCP_INSN_ABORT_L, EXCP_MSR, EXCP_PC_ALIGN, EXCP_SOFTSTP_EL0,
+    EXCP_SOFTSTP_EL1, EXCP_SP_ALIGN, EXCP_SVC, EXCP_SVE, EXCP_TRAP_FP, EXCP_UNKNOWN,
+    EXCP_WATCHPT_EL1, INSN_SIZE, ISS_BRK_COMMENT_MASK, ISS_DATA_CM, ISS_DATA_DFSC_ALIGN,
+    ISS_DATA_DFSC_MASK, ISS_DATA_WNR, esr_elx_exception, read_specialreg,
 };
 use crate::arch::arm64::include::cpu::{curcpu, intr_enable};
 use crate::arch::arm64::include::frame::Trapframe;
 use crate::arch::arm64::include::vmparam::VM_MAXUSER_ADDRESS;
-use crate::kern::kern_exit::exit1;
-use crate::kern::kern_sig::userret;
+use crate::kern::kern_sig::{sigexit, trapsignal, userret};
 use crate::kern::subr_prf::{Str, db_printf, panic, panicstr_claim, printf, vsnprintf};
 use crate::machine::Machine;
 use crate::machine::cpu::Cpu;
 use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
-use crate::sys::proc::{EXIT_NORMAL, Proc, refreshcreds};
-use crate::sys::signal::{SIGBUS, SIGILL, SIGKILL, SIGSEGV};
+use crate::sys::proc::refreshcreds;
+use crate::sys::siginfo::{
+    BUS_ADRALN, BUS_OBJERR, ILL_BTCFI, ILL_ILLOPC, SEGV_ACCERR, SEGV_MAPERR, Sigval, TRAP_BRKPT,
+    TRAP_TRACE,
+};
+use crate::sys::signal::{SIGBUS, SIGILL, SIGKILL, SIGSEGV, SIGTRAP};
 use crate::sys::types::Vaddr;
 use crate::unported;
 use crate::uvm::uvm_extern::VmProt;
@@ -263,10 +269,9 @@ pub extern "C" fn do_el1h_error(frame: &mut Trapframe) {
     panic(format_args!("do_el1h_error"));
 }
 
-/// `udata_abort`: a data or instruction abort from EL0: `uvm_fault` on the process's map
-/// (M7a); until then every user page is wired by exec, so the fault is a bad address and
-/// the process dies of the signal (see `trapsignal`).
-fn udata_abort(frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
+/// `udata_abort`: a data or instruction abort from EL0: `pmap_fault_fixup`, then
+/// `uvm_fault` on the process's map; a fault that cannot be served is a signal.
+fn udata_abort(_frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
     let ci = curcpu();
     // SAFETY: `ci_curproc` names the thread that trapped from user mode, hence alive.
     let Some(p) = (unsafe { ci.ci_curproc.get().as_ref() }) else {
@@ -282,7 +287,8 @@ fn udata_abort(frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
     }
 
     if esr & ISS_DATA_DFSC_MASK == ISS_DATA_DFSC_ALIGN {
-        trapsignal(p, frame, SIGBUS, esr, BUS_ADRALN, far);
+        trapsignal(p, SIGBUS, esr, BUS_ADRALN, Sigval::from_ptr(far as usize));
+        return;
     }
 
     let map = &p.vmspace().vm_map;
@@ -323,40 +329,14 @@ fn udata_abort(frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
     } else {
         (SIGSEGV, SEGV_MAPERR)
     };
-    trapsignal(p, frame, sig, esr, code, far);
+    trapsignal(p, sig, esr, code, Sigval::from_ptr(far as usize));
 }
 
-/// `SEGV_MAPERR`: address not mapped to object (`<sys/siginfo.h>`, M6-c).
-const SEGV_MAPERR: i32 = 1;
-/// `SEGV_ACCERR`: invalid permissions.
-const SEGV_ACCERR: i32 = 2;
-/// `BUS_ADRALN`: invalid address alignment.
-const BUS_ADRALN: i32 = 1;
-/// `BUS_OBJERR`: object specific hardware error.
-const BUS_OBJERR: i32 = 3;
-
-/// `trapsignal(p, sig, esr, code, sv)` until `kern_sig.c` lands (M6-c): there is no handler
-/// to run, so the process dies of the signal (what `sigexit` does), after a dump of the
-/// frame so the fault is visible on the console.
-fn trapsignal(p: &Proc, frame: &Trapframe, sig: i32, esr: u64, code: i32, addr: u64) -> ! {
-    let _ = unported!("trapsignal (kern_sig.c, M6-c): the process dies of the signal");
-    printf(format_args!(
-        "pid {} ({}): signal {} (esr {:#x} code {}) at elr {:#x} addr {:#x}\n",
-        p.process().ps_pid.get(),
-        Str(p.process().comm()),
-        sig,
-        esr,
-        code,
-        frame.tf_elr,
-        addr
-    ));
-    dumpregs(frame);
-    sigexit(p, sig)
-}
-
-/// `sigexit(p, signum)`: the process dies of `signum` (the core dump is M7).
-fn sigexit(p: &Proc, signum: i32) -> ! {
-    exit1(p, 0, signum, EXIT_NORMAL)
+/// `emulate_msr`: emulate a read of an ID register from EL0 (see the module's deviations):
+/// `true` when the access was emulated and the instruction skipped.
+fn emulate_msr(_frame: &mut Trapframe, _esr: u64) -> bool {
+    let _ = unported!("emulate_msr: the ID registers (cpu.c's cpu_id_aa64*)");
+    false
 }
 
 /// `do_el0_sync`: the synchronous exception handler for EL0, called from `handle_el0_sync`
@@ -380,23 +360,54 @@ pub extern "C" fn do_el0_sync(frame: &mut Trapframe) {
     p.pcb().pcb_tf.set(frame);
     refreshcreds(p);
 
+    let flush_bp = || {
+        if let Some(flush_bp) = ci.ci_flush_bp.get() {
+            flush_bp();
+        }
+    };
+    let elr = Sigval::from_ptr(frame.tf_elr as usize);
+
     match exception {
+        EXCP_UNKNOWN => {
+            flush_bp();
+            trapsignal(p, SIGILL, esr, ILL_ILLOPC, elr);
+        }
+        EXCP_SVE => sve_load(p),
+        EXCP_FP_SIMD | EXCP_TRAP_FP => fpu_load(p),
+        EXCP_BRANCH_TGT => {
+            flush_bp();
+            trapsignal(p, SIGILL, esr, ILL_BTCFI, elr);
+        }
+        EXCP_MSR if emulate_msr(frame, esr) => {}
+        EXCP_MSR | EXCP_FPAC => {
+            flush_bp();
+            trapsignal(p, SIGILL, esr, ILL_ILLOPC, elr);
+        }
         EXCP_SVC => svc_handler(frame),
         EXCP_INSN_ABORT_L => udata_abort(frame, esr, far, true),
+        EXCP_PC_ALIGN => {
+            flush_bp();
+            trapsignal(p, SIGBUS, esr, BUS_ADRALN, elr);
+        }
+        EXCP_SP_ALIGN => {
+            flush_bp();
+            let sv = Sigval::from_ptr(frame.tf_sp as usize);
+            trapsignal(p, SIGBUS, esr, BUS_ADRALN, sv);
+        }
         EXCP_DATA_ABORT_L => udata_abort(frame, esr, far, false),
+        EXCP_BRK => trapsignal(p, SIGTRAP, esr, TRAP_BRKPT, elr),
+        EXCP_SOFTSTP_EL0 => trapsignal(p, SIGTRAP, esr, TRAP_TRACE, elr),
         _ => {
-            // EXCP_UNKNOWN/BRANCH_TGT/MSR/FPAC/PC_ALIGN/SP_ALIGN/BRK/SOFTSTP_EL0: trapsignal;
-            // EXCP_SVE/FP_SIMD/TRAP_FP: sve_load/fpu_load (M6-c); the default: USERLAND
-            // MUST NOT PANIC MACHINE, so sigexit(SIGILL) after the debug print.
-            let _ = unported!("do_el0_sync: trapsignal/fpu_load (M6-c): the process dies");
+            // panic("Unknown userland exception %x esr_el1 %lx", exception, esr);
+            // USERLAND MUST NOT PANIC MACHINE
+            // only here to debug !?!?
             printf(format_args!(
                 "exception {:x} esr_el1 {:x}\n",
                 exception, esr
             ));
             dumpregs(frame);
-            if let Some(flush_bp) = ci.ci_flush_bp.get() {
-                flush_bp();
-            }
+            flush_bp();
+            // KERNEL_LOCK()
             sigexit(p, SIGILL);
         }
     }

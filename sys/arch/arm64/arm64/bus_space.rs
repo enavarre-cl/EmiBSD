@@ -39,7 +39,8 @@
 //! - Until `pmap_init`, `generic_space_map` is the identity inside the bootstrap device map
 //!   the early init installs (the first GiB of physical space as device memory in `TTBR0`,
 //!   `machdep.rs`, `BOOTSTRAP_DEVICE_MAP_SIZE`); afterwards it maps through `pmap_kenter_cache`
-//!   in the kernel half from the `vmmap` range (the C's `km_alloc(kv_any)`), and the console
+//!   in the kernel half from the `vmmap` window below `virtual_avail` (`VMMAP_SIZE`; the
+//!   C's `km_alloc(kv_any)` takes the range from `kernel_map`), and the console
 //!   is remapped so the lower half can go to user address spaces. A map outside the bootstrap
 //!   map before `pmap_init`
 //!   it is reported as unported. The C swaps `_space_map` for `pmap_bootstrap_bs_map` during
@@ -52,7 +53,7 @@ use core::sync::atomic::Ordering;
 
 use crate::arch::arm64::arm64::machdep::BOOTSTRAP_DEVICE_MAP_SIZE;
 use crate::arch::arm64::arm64::pmap::{
-    VMMAP, pmap_growkernel, pmap_initialized, pmap_kenter_cache, pmap_kremove,
+    VMMAP, VMMAP_SIZE, pmap_growkernel, pmap_initialized, pmap_kenter_cache, pmap_kremove,
 };
 use crate::arch::arm64::include::bus::{
     BUS_SPACE_MAP_CACHEABLE, BUS_SPACE_MAP_PREFETCHABLE, BusSpace, BusSpaceHandle,
@@ -169,7 +170,14 @@ pub unsafe fn generic_space_map(
     let startpa = trunc_page(offs);
     let endpa = round_page(offs.checked_add(size).ok_or(Errno::EINVAL)?);
     let len = endpa - startpa;
-    let va = VMMAP.fetch_add(len, Ordering::Relaxed);
+    let va = VMMAP.load(Ordering::Relaxed);
+    if va + len > VM_MIN_KERNEL_ADDRESS + VMMAP_SIZE {
+        // km_alloc(kv_any) from kernel_map, which the C uses, would not run out here.
+        return Err(unported!(
+            "generic_space_map: km_alloc(kv_any) beyond the vmmap window"
+        ));
+    }
+    VMMAP.store(va + len, Ordering::Relaxed);
     let _ = pmap_growkernel(Vaddr::new(va + len));
     let cache = if flags & BUS_SPACE_MAP_CACHEABLE != 0 {
         PMAP_CACHE_WB

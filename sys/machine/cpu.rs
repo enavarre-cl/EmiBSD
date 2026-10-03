@@ -191,6 +191,10 @@ pub trait Cpu {
     /// register zero and the machine state of a fresh thread.
     fn setregs(p: &Proc, pack: &ExecPackage<'_>, stack: Vaddr, arginfo: &PsStrings);
 
+    /// `signotify(p)`: notify the thread `p` that it has a signal pending, to be processed
+    /// as soon as possible (an AST on its way back to user mode).
+    fn signotify(p: &Proc);
+
     /// `PROC_PC(p)`: the user program counter of `p` (its trap frame's).
     fn proc_pc(p: &Proc) -> usize;
 

@@ -49,12 +49,13 @@
 //! syscalls and ptrace (M6-c, M7).
 //!
 //! ## Deviations
-//! - What `exit1` tears down that does not exist yet is reported, each once: the signal
-//!   side (`single_thread_set`, `process_suspend_signal`, `sigio_freelist`,
-//!   `SAS_NOCLDWAIT`, `prsignal`), `kqpoll_exit`, `stopprofclock`/`prof_write`,
-//!   `cancel_all_itimers`, `killjobc`, `unveil_destroy`, `uvm_purge`, `lim_free`,
-//!   `process_untrace`; `process_zap` likewise `leavepgrp`, `vrele`, `sigactsfree`,
-//!   `lim_free`; the reaper `knote_processexit`. The credentials (`crfree` in `proc_free`
+//! - What `exit1` tears down that does not exist yet is reported, each once: `kqpoll_exit`,
+//!   `stopprofclock`/`prof_write`, `cancel_all_itimers`, `killjobc`, `unveil_destroy`,
+//!   `process_untrace` (the `SIGKILL` to a traced child is sent); `process_zap` likewise
+//!   `leavepgrp` and `vrele`; the reaper `knote_processexit`. The signal side
+//!   (`single_thread_set`, `process_suspend_signal`, `sigio_freelist`, `SAS_NOCLDWAIT`, the
+//!   reaper's `SIGCHLD`, `sigactsfree`) is real since `kern_sig.c`, `fdfree` since
+//!   `kern_descrip.c`, `lim_free` since the `plimit` port. The credentials (`crfree` in `proc_free`
 //!   and `process_zap`, the real uid `process_zap` uncharges) are real since `kern_prot.c`.
 //! - `initprocess` is null until `init` exists (M6-b): until then process 0 adopts the
 //!   orphans `exit1` and `process_reparent` would hand to `init`.
@@ -72,6 +73,9 @@ use crate::kern::kern_proc::{PROC_POOL, PROCESS_POOL, RUSAGE_POOL, ZOMBPROCESS, 
 use crate::kern::kern_prot::crfree;
 use crate::kern::kern_resource::{calcru, lim_free, ruadd, tuagg_add_process, tuagg_add_runtime};
 use crate::kern::kern_sched::sched_exit;
+use crate::kern::kern_sig::{
+    process_suspend_signal, prsignal, ptsignal, sigactsfree, sigio_freelist, single_thread_set,
+};
 use crate::kern::kern_synch::{msleep_nsec, refcnt_finalize, wakeup};
 use crate::kern::kern_timeout::timeout_del;
 use crate::kern::sched_bsd::sched_assert_unlocked;
@@ -97,6 +101,8 @@ use crate::sys::proc::{
 };
 use crate::sys::queue::{ListHead, TailqHead};
 use crate::sys::resource::Rusage;
+use crate::sys::signal::{SIGCHLD, SIGKILL};
+use crate::sys::signalvar::{SAS_NOCLDWAIT, SignalType};
 use crate::sys::syscallargs::SysExitArgs;
 use crate::sys::systm::{INFSLP, SysArgs, sysargs};
 use crate::sys::types::Register;
@@ -135,9 +141,7 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
     } else {
         // nope, multi-threaded
         if flags == EXIT_NORMAL {
-            // single_thread_set(p, SINGLE_EXIT): kern_sig.c (M6-c).
-            let _ = unported!("exit1: single_thread_set (M6-c)");
-            let _ = SINGLE_EXIT;
+            let _ = single_thread_set(p, SINGLE_EXIT);
         }
     }
 
@@ -186,7 +190,7 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
     // if somebody else wants to take us to single threaded mode or stop us, count ourselves
     // out.
     if !pr.ps_single.get().is_null() || pr.ps_flags.load(Ordering::Relaxed) & PS_STOPPING != 0 {
-        let _ = unported!("exit1: process_suspend_signal (M6-c)");
+        process_suspend_signal(pr);
     }
 
     // proc is off ps_threads list so update accounting of process now
@@ -241,7 +245,7 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
         }
         // prof_write(p): subr_prof.c (M7).
 
-        // sigio_freelist(&pr->ps_sigiolst): sigio (M6-c).
+        sigio_freelist(&pr.ps_sigiolst);
 
         // close open files and release open-file table
         fdfree(p);
@@ -258,10 +262,9 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
 
         // free(pr->ps_pin.pn_pins), free(pr->ps_libcpin.pn_pins): no pin tables yet.
 
-        // If parent has the SAS_NOCLDWAIT flag set, we're not going to become a zombie:
-        // pr->ps_pptr->ps_sigacts->ps_sigflags (M6-c).
-        if !parent(pr).ps_sigacts.get().is_null() {
-            let _ = unported!("exit1: SAS_NOCLDWAIT (sigacts, M6-c)");
+        // If parent has the SAS_NOCLDWAIT flag set, we're not going to become a zombie.
+        if parent(pr).sigacts().ps_sigflags.load(Ordering::Relaxed) & SAS_NOCLDWAIT != 0 {
+            pr.ps_flags.fetch_or(PS_NOZOMBIE, Ordering::Relaxed);
         }
 
         // Teardown the virtual address space.
@@ -329,9 +332,19 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
             // up.
             mtx_enter(&child.ps_mtx);
             if child.ps_flags.load(Ordering::Relaxed) & PS_TRACED != 0 {
-                // process_untrace(qr); ptsignal/prsignal(SIGKILL): ptrace and signals (M7).
+                // process_untrace(qr): ptrace (sys_process.c, M7).
                 let _ = unported!("exit1: process_untrace of a traced child (M7)");
                 mtx_leave(&child.ps_mtx);
+
+                if child.ps_flags.load(Ordering::Relaxed) & PS_EXITING == 0 {
+                    // If single threading is active, direct the signal to the active thread
+                    // to avoid deadlock.
+                    // SAFETY: a non-null `ps_single` is a live thread of `child`.
+                    match unsafe { child.ps_single.get().as_ref() } {
+                        Some(single) => ptsignal(single, SIGKILL, SignalType::STHREAD),
+                        None => prsignal(child, SIGKILL),
+                    }
+                }
             } else {
                 process_reparent(child, initprocess);
                 mtx_leave(&child.ps_mtx);
@@ -507,9 +520,9 @@ pub fn reaper(_arg: *mut c_void) {
             // Notify listeners of our demise and clean up: knote_processexit (kqueue, M6-c).
 
             if pr.ps_flags.load(Ordering::Relaxed) & PS_ZOMBIE != 0 {
-                // Post SIGCHLD and wake up parent: prsignal(pr->ps_pptr, SIGCHLD) (M6-c).
-                let _ = unported!("reaper: prsignal(SIGCHLD) (M6-c)");
+                // Post SIGCHLD and wake up parent.
                 let pptr = parent(pr);
+                prsignal(pptr, SIGCHLD);
                 pptr.ps_flags.fetch_or(PS_WAITEVENT, Ordering::Relaxed);
                 wakeup(ptr::from_ref(pptr));
             } else {
@@ -588,8 +601,7 @@ pub fn process_zap(pr: &Process) {
         pool_put(&RUSAGE_POOL, ru.cast::<u8>());
     }
     kassert!(pr.ps_threads.is_empty());
-    // sigactsfree(pr->ps_sigacts): M6-c.
-    let _ = unported!("process_zap: sigactsfree (M6-c)");
+    sigactsfree(pr.sigacts());
     // SAFETY: the process's own reference, dropped once as it is freed.
     lim_free(unsafe { &*pr.ps_limit.get() });
     crfree(pr.ucred());

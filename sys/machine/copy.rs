@@ -3,7 +3,11 @@
 //! (`copystr.S` on arm64) with `pcb_onfault` catching the faults.
 //!
 //! Milestone M6 (part a) adds them to the contract; the host double copies within its one
-//! address space.
+//! address space. With `kern_sig.c`, [`copyin_obj`] and [`copyout_obj`] copy a whole ABI
+//! structure (`copyin(uaddr, &sa, sizeof(sa))`) for the types marked [`AbiPod`].
+
+use core::mem::MaybeUninit;
+use core::slice;
 
 use crate::machine::Machine;
 use crate::sys::errno::Errno;
@@ -34,6 +38,36 @@ pub trait UserCopy {
     /// `src` and `dst` are kernel addresses that are mapped for `len` bytes, or whose fault
     /// is the `EFAULT` the caller expects; the ranges may overlap.
     unsafe fn kcopy(src: *const u8, dst: *mut u8, len: usize) -> Result<(), Errno>;
+}
+
+/// A structure the kernel copies to or from user space as it is in memory (`struct
+/// sigaction`, `siginfo_t`, `struct sigcontext`, `struct timespec`).
+///
+/// # Safety
+///
+/// Implement only for `#[repr(C)]` types made of integers (or arrays and structures of
+/// them) without implicit padding: every byte of a value is initialised, and every bit
+/// pattern is a valid value.
+pub unsafe trait AbiPod: Copy + 'static {}
+
+/// `copyin(uaddr, &obj, sizeof(obj))`: copies a `T` in from the user address `uaddr`.
+pub fn copyin_obj<T: AbiPod>(uaddr: usize) -> Result<T, Errno> {
+    let mut obj = MaybeUninit::<T>::zeroed();
+    // SAFETY: `T: AbiPod`, so the all-zero bytes are a valid `T` and every byte of it may be
+    // viewed and overwritten as a `u8`; the slice covers exactly the object.
+    let buf = unsafe { slice::from_raw_parts_mut(obj.as_mut_ptr().cast::<u8>(), size_of::<T>()) };
+    copyin(uaddr, buf)?;
+    // SAFETY: every bit pattern is a valid `T` (`AbiPod`), whatever `copyin` wrote.
+    Ok(unsafe { obj.assume_init() })
+}
+
+/// `copyout(&obj, uaddr, sizeof(obj))`: copies `obj` out to the user address `uaddr`.
+pub fn copyout_obj<T: AbiPod>(obj: &T, uaddr: usize) -> Result<(), Errno> {
+    // SAFETY: `T: AbiPod` has no padding, so all `size_of::<T>()` bytes behind the reference
+    // are initialised and may be read as `u8`s while `obj` is borrowed.
+    let buf =
+        unsafe { slice::from_raw_parts(core::ptr::from_ref(obj).cast::<u8>(), size_of::<T>()) };
+    copyout(buf, uaddr)
 }
 
 /// `copyin` on the selected machine.

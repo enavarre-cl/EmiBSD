@@ -38,14 +38,32 @@
  */
 /* </LICENSES> */
 
-//! `<sys/signal.h>`: the signal numbers.
+//! `<sys/signal.h>`: the signal numbers, `sigset_t`, `struct sigaction`, the `SA_*` and
+//! `SIG_*` values and `struct sigaltstack`.
 //!
 //! Upstream: sys/sys/signal.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M6 (part b) needs the numbers (`exit1` takes one, `exec`
-//! aborts with `SIGABRT`, the traps will kill with `SIGSEGV`/`SIGBUS`/`SIGILL`). `sigset_t`,
-//! `struct sigaction`, `SA_*`, `SIG_DFL`/`SIG_IGN`, `siginfo_t`, the `SIG_*` codes and
-//! `struct sigaltstack` arrive with `kern_sig.c` (M6-c).
+//! Status: `ported`. Milestone M6 (part b) brought the numbers; `kern_sig.c` the rest:
+//! `sigset_t` ([`Sigset`]), `sig_t` ([`Sig`]), `SIG_DFL`/`SIG_IGN`/`SIG_ERR`,
+//! `struct sigaction`, the `SA_*` flags, `SIG_BLOCK`/`SIG_UNBLOCK`/`SIG_SETMASK`,
+//! `struct sigvec` and `SV_*`, `sigmask()`, `struct sigaltstack` (`stack_t`), `SS_*`,
+//! `MINSIGSTKSZ`/`SIGSTKSZ` and `ucontext_t` (the machine's `struct sigcontext`,
+//! `machine::signal`). `siginfo_t` is `<sys/siginfo.h>` (`siginfo.rs`). The userland
+//! `signal()` prototype is not kernel code.
+//!
+//! ## Deviations
+//! - A handler (`sig_t`, `void (*)(int)`) is a user address the kernel never calls: [`Sig`]
+//!   is a `usize`, `SIG_DFL`/`SIG_IGN`/`SIG_ERR` are 0, 1 and -1 as that integer. The union
+//!   `__sigaction_u` is one field, `sa_handler`; [`Sigaction::sa_sigaction`] reads the same
+//!   word, as the C's two names for one union member do.
+//! - `struct sigaltstack` spells out its tail padding (`_pad`) so the structure has no
+//!   implicit padding and can be copied in and out as it is (`AbiPod`).
+//! - `MINSIGSTKSZ`/`SIGSTKSZ` are `usize` constants computed from the machine's
+//!   `_MAX_PAGE_SHIFT`.
+
+use crate::machine::copy::AbiPod;
+use crate::machine::param::MachineParam;
+use crate::machine::{Machine, MachineSignal};
 
 /// `_NSIG`: counting 0 (mask is 1-32).
 pub const _NSIG: i32 = 33;
@@ -119,9 +137,149 @@ pub const SIGUSR2: i32 = 31;
 /// `SIGTHR`: thread library AST.
 pub const SIGTHR: i32 = 32;
 
+/// `sig_t`: type of signal function, `void (*)(int)`: a user address (see the module's
+/// deviations).
+pub type Sig = usize;
+
+/// `SIG_DFL`: the default action.
+pub const SIG_DFL: Sig = 0;
+/// `SIG_IGN`: ignore the signal.
+pub const SIG_IGN: Sig = 1;
+/// `SIG_ERR`: `(void (*)(int))-1`.
+pub const SIG_ERR: Sig = usize::MAX;
+
+/// `sigset_t`: a set of signals, bit `n - 1` for signal `n`.
+pub type Sigset = u32;
+
+/// `struct sigaction`: signal vector "template" used in sigaction call.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Sigaction {
+    /// `__sigaction_u` (`sa_handler`, or `sa_sigaction` with `SA_SIGINFO`): signal handler.
+    pub sa_handler: Sig,
+    /// `sa_mask`: signal mask to apply.
+    pub sa_mask: Sigset,
+    /// `sa_flags`: see signal options below.
+    pub sa_flags: i32,
+}
+
+impl Sigaction {
+    /// `sa_sigaction`: if `SA_SIGINFO` is set, `sa_sigaction` is to be used instead of
+    /// `sa_handler`; both name the one union member.
+    pub const fn sa_sigaction(&self) -> Sig {
+        self.sa_handler
+    }
+}
+
+// SAFETY: `repr(C)`: a pointer-sized integer and two 32-bit ones, no padding; every bit
+// pattern is a valid value.
+unsafe impl AbiPod for Sigaction {}
+
+/// `SA_ONSTACK`: take signal on signal stack.
+pub const SA_ONSTACK: i32 = 0x0001;
+/// `SA_RESTART`: restart system on signal return.
+pub const SA_RESTART: i32 = 0x0002;
+/// `SA_RESETHAND`: reset to SIG_DFL when taking signal.
+pub const SA_RESETHAND: i32 = 0x0004;
+/// `SA_NODEFER`: don't mask the signal we're delivering.
+pub const SA_NODEFER: i32 = 0x0010;
+/// `SA_NOCLDWAIT`: don't create zombies (assign to pid 1).
+pub const SA_NOCLDWAIT: i32 = 0x0020;
+/// `SA_NOCLDSTOP`: do not generate SIGCHLD on child stop.
+pub const SA_NOCLDSTOP: i32 = 0x0008;
+/// `SA_SIGINFO`: generate siginfo_t.
+pub const SA_SIGINFO: i32 = 0x0040;
+
+/// `SIG_BLOCK`: block specified signal set.
+pub const SIG_BLOCK: i32 = 1;
+/// `SIG_UNBLOCK`: unblock specified signal set.
+pub const SIG_UNBLOCK: i32 = 2;
+/// `SIG_SETMASK`: set specified signal set.
+pub const SIG_SETMASK: i32 = 3;
+
+/// `struct sigvec`: 4.3 compatibility: signal vector "template" used in sigvec call.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Sigvec {
+    /// `sv_handler`: signal handler.
+    pub sv_handler: Sig,
+    /// `sv_mask`: signal mask to apply.
+    pub sv_mask: i32,
+    /// `sv_flags` (also `sv_onstack`): see signal options below.
+    pub sv_flags: i32,
+}
+
+/// `SV_ONSTACK`.
+pub const SV_ONSTACK: i32 = SA_ONSTACK;
+/// `SV_INTERRUPT`: same bit, opposite sense.
+pub const SV_INTERRUPT: i32 = SA_RESTART;
+/// `SV_RESETHAND`.
+pub const SV_RESETHAND: i32 = SA_RESETHAND;
+
+/// `sigmask(m)`: macro for converting signal number to a mask suitable for sigblock().
+/// The shift wraps as the hardware's does, so `sigmask(0)`, which the C computes on paths
+/// that then discard it, does not trap.
+pub const fn sigmask(m: i32) -> Sigset {
+    1u32.wrapping_shl((m - 1) as u32)
+}
+
+/// `BADSIG`.
+pub const BADSIG: Sig = SIG_ERR;
+
+/// `struct sigaltstack` (`stack_t`): structure used in sigaltstack call.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Sigaltstack {
+    /// `ss_sp`: signal stack base (a user address).
+    pub ss_sp: usize,
+    /// `ss_size`: signal stack length.
+    pub ss_size: usize,
+    /// `ss_flags`: `SS_DISABLE` and/or `SS_ONSTACK`.
+    pub ss_flags: i32,
+    /// The C structure's tail padding, spelled out (see the module's deviations).
+    pub _pad: i32,
+}
+
+// SAFETY: `repr(C)`: two pointer-sized integers and two 32-bit ones, no padding; every bit
+// pattern is a valid value.
+unsafe impl AbiPod for Sigaltstack {}
+
+/// `stack_t`.
+pub type Stack = Sigaltstack;
+
+/// `SS_ONSTACK`: take signals on alternate stack.
+pub const SS_ONSTACK: i32 = 0x0001;
+/// `SS_DISABLE`: disable taking signals on alternate stack.
+pub const SS_DISABLE: i32 = 0x0004;
+/// `MINSIGSTKSZ`: minimum allowable stack.
+pub const MINSIGSTKSZ: usize = 3 << <Machine as MachineParam>::MAX_PAGE_SHIFT;
+/// `SIGSTKSZ`: recommended stack size.
+pub const SIGSTKSZ: usize = if <Machine as MachineParam>::MAX_PAGE_SHIFT < 14 {
+    MINSIGSTKSZ + (1 << <Machine as MachineParam>::MAX_PAGE_SHIFT) * 4
+} else {
+    MINSIGSTKSZ + (1 << <Machine as MachineParam>::MAX_PAGE_SHIFT) * 2
+};
+
+/// `ucontext_t`: the machine's `struct sigcontext`.
+pub type Ucontext = <Machine as MachineSignal>::Sigcontext;
+
+const _: () = {
+    assert!(size_of::<Sigaction>() == 16);
+    assert!(size_of::<Sigaltstack>() == 24);
+    assert!(size_of::<Sigvec>() == 16);
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sigmask_is_one_bit_per_signal() {
+        assert_eq!(sigmask(SIGHUP), 1);
+        assert_eq!(sigmask(SIGKILL), 0x100);
+        assert_eq!(sigmask(SIGTHR), 0x8000_0000);
+        assert_eq!(sigmask(SIGUSR1) | sigmask(SIGUSR2), 0x6000_0000);
+    }
 
     #[test]
     #[ignore = "needs OPENBSD_SRC (just test-ref)"]
@@ -133,9 +291,22 @@ mod tests {
             ("SIGKILL", SIGKILL as i64),
             ("SIGSEGV", SIGSEGV as i64),
             ("SIGCHLD", SIGCHLD as i64),
+            ("SIGUSR1", SIGUSR1 as i64),
             ("SIGUSR2", SIGUSR2 as i64),
             ("SIGTHR", SIGTHR as i64),
             ("_NSIG", _NSIG as i64),
+            ("SA_ONSTACK", SA_ONSTACK as i64),
+            ("SA_RESTART", SA_RESTART as i64),
+            ("SA_RESETHAND", SA_RESETHAND as i64),
+            ("SA_NODEFER", SA_NODEFER as i64),
+            ("SA_NOCLDWAIT", SA_NOCLDWAIT as i64),
+            ("SA_NOCLDSTOP", SA_NOCLDSTOP as i64),
+            ("SA_SIGINFO", SA_SIGINFO as i64),
+            ("SIG_BLOCK", SIG_BLOCK as i64),
+            ("SIG_UNBLOCK", SIG_UNBLOCK as i64),
+            ("SIG_SETMASK", SIG_SETMASK as i64),
+            ("SS_ONSTACK", SS_ONSTACK as i64),
+            ("SS_DISABLE", SS_DISABLE as i64),
         ];
         for (name, value) in ours {
             assert_eq!(crate::reftest::int(&defs, name), Some(*value), "{name}");

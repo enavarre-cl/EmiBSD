@@ -22,11 +22,15 @@
 //! Upstream: sys/arch/arm64/include/frame.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M2 ports `struct callframe`, M4 `struct trapframe` (`clockframe` is the
-//! same struct); `struct sigframe` and `struct switchframe` come with M5 and M6. M2's note: `struct callframe`, what the frame-pointer chain is made
+//! same struct), M5 `struct switchframe`, `kern_sig.c` `struct sigframe` (with the hole after
+//! `sf_signum` spelled out as `_pad`). M2's note: `struct callframe`, what the frame-pointer chain is made
 //! of (`stp x29, x30, [sp, #-16]!` leaves the caller's frame and the link register at `x29`).
 //! `struct trapframe` and `struct switchframe` arrive with the trap and context-switch code
 //! (M4, M5).
 
+use crate::arch::arm64::include::signal::Sigcontext;
+use crate::machine::copy::AbiPod;
+use crate::sys::siginfo::Siginfo;
 use crate::sys::types::Register;
 
 /// `struct callframe`: one link of the frame-pointer chain.
@@ -78,6 +82,24 @@ impl Default for Trapframe {
     }
 }
 
+/// `struct sigframe`: what `sendsig` builds on the user stack for `sigcode`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Sigframe {
+    /// `sf_signum`.
+    pub sf_signum: i32,
+    /// The C compiler's alignment hole before `sf_sc`.
+    pub _pad: i32,
+    /// `sf_sc`.
+    pub sf_sc: Sigcontext,
+    /// `sf_si`.
+    pub sf_si: Siginfo,
+}
+
+// SAFETY: `repr(C)` of two `i32`s and two `AbiPod` structures whose sizes are multiples of 8:
+// no implicit padding, every bit pattern valid.
+unsafe impl AbiPod for Sigframe {}
+
 /// `struct switchframe`: stack frame inside `cpu_switch()`: the callee-saved registers
 /// `cpu_switchto_asm` stores, `x19` to `x29` and `lr`. `cpu_fork` builds one so a new
 /// thread's first switch returns into `proc_trampoline`.
@@ -120,4 +142,6 @@ const _: () = {
     assert!(TF_SIZE == 34 * 8);
     assert!(core::mem::offset_of!(Trapframe, tf_x) == 32);
     assert!(SWITCHFRAME_SZ == 12 * 8);
+    assert!(core::mem::offset_of!(Sigframe, sf_sc) == 8);
+    assert!(size_of::<Sigframe>() == 8 + size_of::<Sigcontext>() + size_of::<Siginfo>());
 };

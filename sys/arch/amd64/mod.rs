@@ -20,6 +20,7 @@ use crate::machine::db_machdep::{DbMachdep, PrFn};
 use crate::machine::copy::UserCopy;
 use crate::machine::exec::MachineExec;
 use crate::machine::proc::MachineProc;
+use crate::machine::signal::MachineSignal;
 use crate::machine::tcb::Tcb;
 use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, Pmap, VmParam};
 use crate::sys::clockintr::Clockqueue;
@@ -27,7 +28,10 @@ use crate::sys::errno::Errno;
 use crate::sys::exec::{ExecPackage, PsStrings};
 use crate::sys::proc::{Proc, Process};
 use crate::sys::sched::SchedstatePercpu;
-use crate::sys::types::{Paddr, Vaddr, Vsize};
+use crate::sys::siginfo::Siginfo;
+use crate::sys::signal::{Sig, Sigset};
+use crate::sys::systm::SysArgs;
+use crate::sys::types::{Paddr, Register, Vaddr, Vsize};
 use crate::sys::user::User;
 use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt, Vmspace};
 use crate::uvm::uvm_page::VmPage;
@@ -195,6 +199,10 @@ impl Cpu for Machine {
 
     fn setregs(p: &Proc, pack: &ExecPackage<'_>, stack: Vaddr, arginfo: &PsStrings) {
         amd64::machdep::setregs(p, pack, stack, arginfo)
+    }
+
+    fn signotify(p: &Proc) {
+        amd64::machdep::signotify(p)
     }
 
     fn proc_pc(p: &Proc) -> usize {
@@ -611,5 +619,36 @@ impl UserCopy for Machine {
     unsafe fn kcopy(src: *const u8, dst: *mut u8, len: usize) -> Result<(), Errno> {
         // SAFETY: forwarded.
         unsafe { amd64::copy::kcopy(src, dst, len) }
+    }
+}
+
+impl MachineSignal for Machine {
+    type Sigcontext = include::signal::Sigcontext;
+
+    fn sendsig(
+        catcher: Sig,
+        sig: i32,
+        mask: Sigset,
+        ksip: &Siginfo,
+        info: bool,
+        onstack: bool,
+    ) -> Result<(), Errno> {
+        amd64::machdep::sendsig(catcher, sig, mask, ksip, info, onstack)
+    }
+
+    fn sys_sigreturn(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(), Errno> {
+        amd64::machdep::sys_sigreturn(p, v, retval)
+    }
+
+    fn sigcode() -> &'static [u8] {
+        amd64::locore::sigcode_bytes()
+    }
+
+    fn sigcoderet() -> usize {
+        amd64::locore::sigcoderet_offset()
+    }
+
+    fn sigfill() -> &'static [u8] {
+        amd64::locore::sigfill_bytes()
     }
 }

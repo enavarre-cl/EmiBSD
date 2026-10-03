@@ -108,6 +108,48 @@
  * written as NAME between braces are filled in by locore.rs from the Rust definitions (assym.h in C).
  */
 
+/*****************************************************************************/
+
+/*
+ * Signal trampoline; copied to a page mapped into userspace.
+ * gdb's backtrace logic matches against the instructions in this.
+ * The retpoline is JMP_RETPOLINE(rax) expanded; there is no codepatch, so it is
+ * never replaced by a plain jmp *%rax (locore.rs).
+ */
+	.section .rodata
+	.globl	sigcode
+sigcode:
+	endbr64
+	call	1f
+	movq	%rsp,%rdi
+	pushq	%rdi			/* fake return address */
+	movq	${SYS_SIGRETURN},%rax
+	.globl sigcodecall
+sigcodecall:
+	syscall
+	.globl	sigcoderet
+sigcoderet:
+	int3
+1:	/* CODEPATCH_START */
+	call	69f			/* JMP_RETPOLINE(rax) */
+68:	pause
+	lfence
+	jmp	68b
+	.align	16, 0xcc		/* _ALIGN_TRAPS */
+69:	mov	%rax,(%rsp)
+	ret
+	lfence
+	/* CODEPATCH_END(CPTAG_RETPOLINE_RAX) */
+	.globl	esigcode
+esigcode:
+	.globl	sigfill
+sigfill:
+	int3
+esigfill:
+	.globl	sigfillsiz
+sigfillsiz:
+	.long	esigfill - sigfill
+
 	.text
 
 /*

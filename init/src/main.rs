@@ -12,6 +12,10 @@
 //! exercises its descriptors 0, 1 and 2 (the console stand-in the kernel installs) through
 //! `dup`, `dup2`, `dup3`, `fcntl`, `ioctl`, `fstat`, `close`, `closefrom`,
 //! `getdtablecount` and `writev`.
+//! With `kern_sig.c` it installs a `SIGUSR1` handler with `sigaction(2)`, sends itself
+//! the signal with `kill(2)` and checks that the handler ran and that `sigreturn(2)` brought
+//! it back; then it blocks the signal with `sigprocmask(2)`, sees it pending
+//! (`sigpending(2)`) and unblocks it.
 
 #![no_std]
 #![no_main]
@@ -64,6 +68,14 @@ const SYS_CLOSEFROM: usize = 287;
 const SYS_GETPID: usize = 20;
 /// `SYS_getuid`.
 const SYS_GETUID: usize = 24;
+/// `SYS_sigaction`.
+const SYS_SIGACTION: usize = 46;
+/// `SYS_sigprocmask`.
+const SYS_SIGPROCMASK: usize = 48;
+/// `SYS_sigpending`.
+const SYS_SIGPENDING: usize = 52;
+/// `SYS_kill`.
+const SYS_KILL: usize = 122;
 /// `SYS_issetugid`.
 const SYS_ISSETUGID: usize = 253;
 /// `SYS___set_tcb`.
@@ -91,6 +103,23 @@ const FIONCLEX: usize = 0x2000_6602;
 /// `S_IFMT`, `S_IFCHR`.
 const S_IFMT: u32 = 0o170000;
 const S_IFCHR: u32 = 0o020000;
+/// `SIGUSR1`.
+const SIGUSR1: usize = 30;
+/// `SIG_BLOCK`.
+const SIG_BLOCK: usize = 1;
+/// `SIG_SETMASK`.
+const SIG_SETMASK: usize = 3;
+
+/// `struct sigaction`: the handler, the mask to apply while it runs, the `SA_*` flags.
+#[repr(C)]
+struct Sigaction {
+    sa_handler: usize,
+    sa_mask: u32,
+    sa_flags: i32,
+}
+
+/// How many times `on_sigusr1` ran.
+static HANDLED: AtomicUsize = AtomicUsize::new(0);
 
 /// The thread control block: its first word points at itself, as the TLS ABIs want, so the
 /// TLS register can be checked by reading through it.
@@ -183,6 +212,13 @@ pub extern "C" fn _start() -> ! {
     } else {
         status = 3;
     }
+    if signals() {
+        if write(1, b"init: signals ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 5;
+    }
     if !fds() {
         status = 4;
     }
@@ -228,6 +264,52 @@ fn fds() -> bool {
     }
     ok &= call(SYS_CLOSE, 3, 0, 0) == (0, false);
     ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
+}
+
+/// The `SIGUSR1` handler, entered through the kernel's signal trampoline.
+extern "C" fn on_sigusr1(sig: i32) {
+    if sig as usize == SIGUSR1 {
+        HANDLED.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// `kern_sig.c` seen from user mode: a caught signal runs its handler on the way back from
+/// the system call that sent it, and `sigreturn(2)` resumes the interrupted code with its
+/// registers (the system call's return value and error flag included); a blocked signal
+/// stays pending until it is unblocked.
+fn signals() -> bool {
+    let bit = 1usize << (SIGUSR1 - 1);
+    let sa = Sigaction {
+        sa_handler: on_sigusr1 as *const () as usize,
+        sa_mask: 0,
+        sa_flags: 0,
+    };
+    let mut ok =
+        syscall3(SYS_SIGACTION, SIGUSR1, &sa as *const Sigaction as usize, 0) == (0, false);
+    let mut osa = Sigaction {
+        sa_handler: 0,
+        sa_mask: 0,
+        sa_flags: 0,
+    };
+    ok &= syscall3(
+        SYS_SIGACTION,
+        SIGUSR1,
+        0,
+        &mut osa as *mut Sigaction as usize,
+    ) == (0, false);
+    ok &= osa.sa_handler == on_sigusr1 as *const () as usize;
+
+    let (pid, _) = syscall3(SYS_GETPID, 0, 0, 0);
+    ok &= syscall3(SYS_KILL, pid, SIGUSR1, 0) == (0, false);
+    ok &= HANDLED.load(Ordering::Relaxed) == 1;
+
+    // Blocked: pending, not delivered, until the mask lets it through.
+    ok &= syscall3(SYS_SIGPROCMASK, SIG_BLOCK, bit, 0) == (0, false);
+    ok &= syscall3(SYS_KILL, pid, SIGUSR1, 0) == (0, false);
+    ok &= HANDLED.load(Ordering::Relaxed) == 1;
+    ok &= syscall3(SYS_SIGPENDING, 0, 0, 0) == (bit, false);
+    ok &= syscall3(SYS_SIGPROCMASK, SIG_SETMASK, 0, 0) == (bit, false);
+    ok && HANDLED.load(Ordering::Relaxed) == 2
 }
 
 /// `kern_prot.c` seen from user mode: init is pid 1, root, not set-id; the TCB set with
