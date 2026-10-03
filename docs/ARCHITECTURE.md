@@ -32,7 +32,7 @@ No `src/` directory (`[lib] path = "lib.rs"`), so C and Rust paths differ only b
 | `sys/arch/amd64/amd64/pmap.c` | `sys/arch/amd64/amd64/pmap.rs` |
 | `sys/arch/amd64/include/pte.h` | `sys/arch/amd64/include/pte.rs` |
 | `sys/lib/libkern/strlcpy.c` | `sys/lib/libkern/strlcpy.rs` |
-| `sys/arch/*/stand/`, `boot(8)`, `efiboot` | `sys/stand/` (Limine glue); skipped: `replaced-by-limine` |
+| `sys/arch/*/stand/`, `boot(8)`, `efiboot` | `sys/stand/` (Limine glue) until M14, when the user decided (2026-10-03) to port `boot(8)`/`efiboot` and `sys/lib/libsa/`; Limine is scaffolding until `boot(8)` boots the same kernel in QEMU |
 | `sys/conf/`, `config(8)`, Makefiles, `newvers.sh` | Cargo features and `tools/xtask`; not ported |
 
 Types live where the **header** is; functions live where the **`.c`** is. Rust allows inherent
