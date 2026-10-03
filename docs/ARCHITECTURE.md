@@ -212,10 +212,13 @@ The ffs image the kernel boots from (`target/userland/<arch>/ramdisk.ffs`, the `
 made by OpenBSD's own makefs(8), built for the Mac from `usr.sbin/makefs` (in the clone since
 2026-10-03), not by a file system writer of our own (decided by the user on 2026-10-03). The
 on-disk format is then OpenBSD's by construction. makefs runs as OpenBSD's `distrib/` runs it
-for its ramdisks (`-t ffs -o disklabel=rdroot,minfree=0,density=4096`), with `rdroot=1,
-bsize=4096,fsize=512` in place of `disklabel=rdroot` (which reads `/etc/disktab`): FFS1 at
-offset 0 of partition `a`, an `rdroot` disklabel in sector 1, a fixed `-T` timestamp so that
-the image is reproducible, and a size of twice the contents in whole MiB (at least 2 MiB).
+for its ramdisks (`-t ffs -o disklabel=rdroot,minfree=0,density=4096`). The `rdroot` entry
+is read by OpenBSD's own `getdiskbyname` (`lib/libc/gen/disklabel.c`, built in) from a disktab
+xtask writes (`target/userland/<arch>/host/disktab`, OpenBSD's `/etc/disktab` is not in the
+clone): one track of one cylinder spanning the image, partition `a` FFS at offset 0 with
+4096/512 blocks/fragments. makefs's own `rdroot=1` label is not used: it leaves `d_nsectors`
+0, which `checkdisklabel` rejects. The result is FFS1 in `a` and the label in sector 1; the
+size is twice the contents in whole MiB (at least 2 MiB), the timestamps fixed (`-T`).
 Its tree is `root/` plus `/dev/console`, `/dev/tty` and `/dev/null`.
 
 makefs is written for OpenBSD only; the Mac build takes host shims, all in
@@ -224,7 +227,7 @@ makefs is written for OpenBSD only; the Mac build takes host shims, all in
 `srandom_deterministic` as `srandom`), OpenBSD headers macOS lacks taken from the clone
 (`ufs/`, `msdosfs/`, `sys/disklabel.h`, `machine/disklabel.h`, `sys/uuid.h` with `uuid_t`
 renamed), a `sys/endian.h` over `<libkern/OSByteOrder.h>`, `scan_scaled` from
-`lib/libutil/fmt_scaled.c`, and an `lstat` wrapper for device nodes: macOS lets only root
+`lib/libutil/fmt_scaled.c`, `cgetent` pointed at `$EMIBSD_DISKTAB`, and an `lstat` wrapper for device nodes: macOS lets only root
 `mknod` and OpenBSD's makefs has no mtree spec, so a staging file holding one
 `emibsd-makefs-device c <major> <minor> <mode>` line is reported to makefs as that device (with
 OpenBSD's `makedev()` encoding).
