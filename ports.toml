@@ -3075,6 +3075,86 @@ deps = ["sys/crypto/siphash.h"]
 notes = "ffs (ufs_ihash): SipHash_Init/Update/End/Final, SipHash, the rounds; input as slices; End wipes the state by assignment instead of explicit_bzero; reference vectors tested"
 
 [[file]]
+c = "sys/crypto/chacha_private.h"
+rust = "sys/crypto/chacha_private.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8c926ea4b0c324c82eda06cb3dc3f0b0d1f2feb8"
+notes = "WireGuard/IPsec: ChachaCtx, chacha_keysetup/ivsetup/encrypt_bytes (slices; _inplace for the m == c calls), hchacha20, and the KEYSTREAM_ONLY variant dev/rnd.c includes as chacha_keystream_bytes (rnd.rs's ChaCha20 generator is unblocked by it); RFC 8439 2.3.2/2.4.2 and draft-irtf-cfrg-xchacha 2.2.1 vectors tested; licence: public domain (D. J. Bernstein), accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/poly1305.h"
+rust = "sys/crypto/poly1305.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "bd68586c3ec001df847b39d9186c23048ea5a701"
+notes = "Poly1305State (limbs are u64: the C's unsigned long on LP64); shares the module with poly1305.c; licence: public domain (Andrew Moon), accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/poly1305.c"
+rust = "sys/crypto/poly1305.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3f7aec44426416442a1c9e3bb828b024ad24abbf"
+deps = ["sys/crypto/poly1305.h"]
+notes = "poly1305_init/update/finish over the donna 26-bit limbs; RFC 8439 2.5.2 and A.3 vectors and a split-input property tested"
+
+[[file]]
+c = "sys/crypto/chachapoly.h"
+rust = "sys/crypto/chachapoly.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e793cfb7de1fc9ec1fe64da3edb3267600e9a422"
+notes = "Chacha20Ctx, Chacha20Poly1305Ctx (embeds Poly1305State; struct poly1305_ctx, the C's sizing overlay, is not ported), CHACHA20_*/POLY1305_*/CHACHA20POLY1305_* constants; shares the module with chachapoly.c; licence: ISC (Mike Belopuhov)"
+
+[[file]]
+c = "sys/crypto/chachapoly.c"
+rust = "sys/crypto/chachapoly.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b4cdbea7b24e34222cb5c96385dc62261f225141"
+deps = ["sys/crypto/chachapoly.h", "sys/crypto/chacha_private.h", "sys/crypto/poly1305.c", "sys/lib/libkern/explicit_bzero.c", "sys/lib/libkern/timingsafe_bcmp.c"]
+notes = "chacha20_setkey/reinit/crypt and Chacha20_Poly1305_Init/Setkey/Reinit/Update/Final over typed contexts (the xform tables adapt them), chacha20poly1305_encrypt/decrypt and the xchacha20poly1305 pair (separate dst/src slices plus _inplace forms for wg_noise's buf, buf calls; decrypt returns bool); RFC 8439 2.8.2 through the IPsec interface, XChaCha20-Poly1305 draft A.3.1 and 64-bit nonce vectors tested, forgeries rejected"
+
+[[file]]
+c = "sys/crypto/blake2s.h"
+rust = "sys/crypto/blake2s.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a56e82fec960dfa8c7839c367079f3e7f46c9950"
+notes = "Blake2sState, BLAKE2S_*_SIZE; the inline blake2s() is a function; shares the module with blake2s.c; licence: ISC (Donenfeld, Dunwoodie)"
+
+[[file]]
+c = "sys/crypto/blake2s.c"
+rust = "sys/crypto/blake2s.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "82d53ed4a51f0298e6ec4fe78412e9b65f95e8ba"
+deps = ["sys/crypto/blake2s.h", "sys/lib/libkern/explicit_bzero.c"]
+notes = "blake2s_init/init_key/update/final, blake2s_hmac (and blake2s_hmac_inplace for wg_noise's out, out calls); RFC 7693 B and hashlib/hmac vectors around the block size, plain, keyed, split inputs tested"
+
+[[file]]
+c = "sys/crypto/curve25519.h"
+rust = "sys/crypto/curve25519.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2f7892ab5656b1feb5148262e6f9e71841a533ad"
+notes = "curve25519_clamp_secret/generate_secret and the prototypes; shares the module with curve25519.c; generate_secret draws from arc4random_buf (dev/rnd.c); licence: ISC (Dunwoodie)"
+
+[[file]]
+c = "sys/crypto/curve25519.c"
+rust = "sys/crypto/curve25519.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "348890fe78029f62aacff574a4d91b88dd3796af"
+deps = ["sys/crypto/curve25519.h", "sys/lib/libkern/explicit_bzero.c", "sys/lib/libkern/timingsafe_bcmp.c"]
+notes = "the 10x(25.5-bit) limb implementation: the fiat-crypto straight-line fe_mul/fe_sqr/mul121666 are loops over the limb pairs with the same carry chain (identical limbs), fe_freeze/tobytes/frombytes loops, the ladder as written; curve25519 and curve25519_generate_public return bool; RFC 7748 5.2 (both vectors, iterated 1 and 1000) and 6.1 tested, the 1000000 iteration left out for its running time; licence: ISC (Donenfeld, fiat-crypto authors)"
+
+[[extra]]
+rust = "sys/crypto/testutil.rs"
+reason = "host test helper: hex decoding for the known-answer vectors of sys/crypto"
+
+[[file]]
 c = "sys/ufs/ufs/dinode.h"
 rust = "sys/ufs/ufs/dinode.rs"
 status = "ported"
