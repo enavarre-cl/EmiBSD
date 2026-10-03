@@ -47,10 +47,12 @@
 //!
 //! Upstream: sys/arch/amd64/amd64/vm_machdep.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M5 (part b2) ports `cpu_fork` and `cpu_exit`; `vmapbuf` and
-//! `vunmapbuf` (physio) come with the block layer (M7).
+//! Status: `wip`. Milestone M5 (part b2) ports `cpu_fork` and `cpu_exit`; `tcb_get` and
+//! `tcb_set` (`<machine/tcb.h>`'s `TCB_GET`/`TCB_SET`) come with `kern_prot.c`; `vmapbuf`
+//! and `vunmapbuf` (physio) come with the block layer (M7).
 //!
 //! ## Deviations
+//! - The TCB is a `usize` (a user address the kernel never dereferences), not a `void *`.
 //! - `cpu_fork` cannot `fpusave` a parent that ran in user mode (`CPUPF_USERXSTATE`) before
 //!   user mode exists (M6): the case is reported.
 //! - The switch frame's `sf_r12` holds the thread function as a pointer, which
@@ -61,12 +63,14 @@ use core::ffi::c_void;
 use core::ptr;
 
 use crate::arch::amd64::amd64::locore::proc_trampoline;
+use crate::arch::amd64::amd64::machdep::reset_segs;
 use crate::arch::amd64::amd64::pmap::pmap_activate;
 use crate::arch::amd64::include::_types::_STACKALIGNBYTES;
 use crate::arch::amd64::include::cpu::{CPUPF_USERXSTATE, curcpu};
 use crate::arch::amd64::include::frame::{Switchframe, Trapframe};
 use crate::arch::amd64::include::param::{PAGE_MASK, USPACE};
 use crate::dev::rnd::arc4random;
+use crate::kassert;
 use crate::kern::init_main::PROC0;
 use crate::sys::proc::Proc;
 use crate::unported;
@@ -144,3 +148,16 @@ pub fn cpu_fork(
 pub fn cpu_exit(_p: &Proc) {}
 
 // kv_physwait, vmapbuf, vunmapbuf: physio (M7).
+
+/// `tcb_get` (`TCB_GET(p)`): the `%fs` base `p` runs with in user mode.
+pub fn tcb_get(p: &Proc) -> usize {
+    p.pcb().pcb_fsbase.get() as usize
+}
+
+/// `tcb_set` (`TCB_SET(p, addr)`): `p` (the running thread) gets `tcb` as its `%fs` base.
+/// `reset_segs` makes the return to user mode load it from the pcb.
+pub fn tcb_set(p: &Proc, tcb: usize) {
+    kassert!(ptr::eq(p, curcpu().ci_curproc.get()));
+    reset_segs();
+    p.pcb().pcb_fsbase.set(tcb as u64);
+}

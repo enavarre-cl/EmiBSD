@@ -75,6 +75,7 @@ use crate::kern::kern_kthread::{kthread_create, kthread_run_deferred_queue};
 use crate::kern::kern_proc::{
     ALLPROC, ALLPROCESS, chgproccnt, pgrphash, pidhash, procinit, tidhash,
 };
+use crate::kern::kern_prot::crget;
 use crate::kern::kern_resource::lim_startup;
 use crate::kern::kern_rwlock::rw_obj_init;
 use crate::kern::kern_sched::{sched_init, sched_init_cpu};
@@ -212,7 +213,8 @@ pub fn main() -> ! {
     let _ = unported!("tslp_init");
 
     // Create credentials.
-    let _ = unported!("crget (proc0 credentials, kern_prot.c M6)");
+    p.p_ucred.set(crget());
+    p.ucred().cr_ngroups.set(1); // group 0
 
     // Create process 0 (the swapper).
     let pr: &'static Process = &PROCESS0;

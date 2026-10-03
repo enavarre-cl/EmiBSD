@@ -18,5 +18,6 @@ pub mod pmap;
 pub mod proc;
 pub mod pte;
 pub mod reg;
+pub mod tcb;
 pub mod timetc;
 pub mod vmparam;

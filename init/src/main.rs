@@ -6,14 +6,16 @@
 //! What it does is the M6 exit criterion: writes one line through `write(2)` and leaves
 //! through `exit(2)`. Since M7a it also writes to bss pages that nothing but the fault
 //! handler can provide (exec maps them zero-fill and never touches them), the demand-paging
-//! exit criterion.
+//! exit criterion. With `kern_prot.c` it checks its ids (`getpid`, `getuid`, `issetugid`)
+//! and sets its thread control block, reading it back through `__get_tcb(2)` and through
+//! the TLS register (`%fs` on amd64, `TPIDR_EL0` on arm64).
 
 #![no_std]
 #![no_main]
 
 use core::arch::asm;
 use core::panic::PanicInfo;
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 /// The page size of both architectures.
 const PAGE_SIZE: usize = 4096;
@@ -35,6 +37,20 @@ static OPENBSD_IDENT: [u8; 24] = [
 const SYS_EXIT: usize = 1;
 /// `SYS_write`.
 const SYS_WRITE: usize = 4;
+/// `SYS_getpid`.
+const SYS_GETPID: usize = 20;
+/// `SYS_getuid`.
+const SYS_GETUID: usize = 24;
+/// `SYS_issetugid`.
+const SYS_ISSETUGID: usize = 253;
+/// `SYS___set_tcb`.
+const SYS___SET_TCB: usize = 329;
+/// `SYS___get_tcb`.
+const SYS___GET_TCB: usize = 330;
+
+/// The thread control block: its first word points at itself, as the TLS ABIs want, so the
+/// TLS register can be checked by reading through it.
+static TCB: AtomicUsize = AtomicUsize::new(0);
 
 /// A three-argument system call: the return register and whether the carry flag (OpenBSD's
 /// error indication) was set.
@@ -116,7 +132,49 @@ pub extern "C" fn _start() -> ! {
     } else {
         status = 2;
     }
+    if ids_and_tcb() {
+        if write(1, b"init: ids and tcb ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 3;
+    }
     exit(status)
+}
+
+/// `kern_prot.c` seen from user mode: init is pid 1, root, not set-id; the TCB set with
+/// `__set_tcb(2)` comes back from `__get_tcb(2)` and is in the TLS register.
+fn ids_and_tcb() -> bool {
+    let mut ok = syscall3(SYS_GETPID, 0, 0, 0) == (1, false);
+    ok &= syscall3(SYS_GETUID, 0, 0, 0) == (0, false);
+    ok &= syscall3(SYS_ISSETUGID, 0, 0, 0) == (0, false);
+
+    let tcb = &TCB as *const AtomicUsize as usize;
+    TCB.store(tcb, Ordering::Relaxed);
+    ok &= syscall3(SYS___SET_TCB, tcb, 0, 0) == (0, false);
+    ok &= syscall3(SYS___GET_TCB, 0, 0, 0) == (tcb, false);
+    ok && tls_register() == tcb
+}
+
+/// The TCB as the hardware sees it: the first word at `%fs:0`, which the kernel's FS.base
+/// restore makes `TCB`'s own address.
+#[cfg(target_arch = "x86_64")]
+fn tls_register() -> usize {
+    let tcb: usize;
+    // SAFETY: reads one word through %fs. FS.base is the TCB set above, a static that is
+    // mapped; if the kernel failed to load it, it is 0 and the read faults, which ends init
+    // with a signal the smoke test reports.
+    unsafe { asm!("mov {}, fs:[0]", out(reg) tcb, options(nostack, readonly, preserves_flags)) };
+    tcb
+}
+
+/// The TCB as the hardware sees it: `TPIDR_EL0`.
+#[cfg(target_arch = "aarch64")]
+fn tls_register() -> usize {
+    let tcb: usize;
+    // SAFETY: reads the user thread pointer register; no memory is touched.
+    unsafe { asm!("mrs {}, tpidr_el0", out(reg) tcb, options(nomem, nostack, preserves_flags)) };
+    tcb
 }
 
 /// Each bss page reads as zero, then holds what was written to it.

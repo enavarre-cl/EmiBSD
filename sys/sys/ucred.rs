@@ -37,14 +37,28 @@
 //!
 //! Upstream: sys/sys/ucred.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M5 ports `struct ucred` and `struct xucred` (the process
-//! structures point at one); `crget`, `crhold`, `crfree` and the rest are `kern_prot.c` (M6).
+//! Status: `ported`. Milestone M5 ports `struct ucred` and `struct xucred` (the process
+//! structures point at one); `NOCRED` and `FSCRED` come with `kern_prot.c`, whose module
+//! (`kern/kern_prot.rs`) holds the functions this header declares (`crget`, `crhold`,
+//! `crfree`, `crset`, `crcopy`, `crdup`, `crfromxucred`, `suser`, `suser_ucred`).
+//!
+//! ## Deviations
+//! - The members after `cr_refcnt` are `Cell`s: a credential is filled in (`crset`, exec's
+//!   `crcopy`) through the same shared pointer the processes hold, while it is unshared.
+//! - `cr_startcopy` (the `#define` naming where `crset` starts copying) is a comment: `crset`
+//!   copies the members by name.
 
 use core::cell::Cell;
+use core::ptr;
 
 use crate::sys::refcnt::Refcnt;
 use crate::sys::syslimits::NGROUPS_MAX;
 use crate::sys::types::{Gid, Uid};
+
+/// `NOCRED`: no credential available.
+pub const NOCRED: *const Ucred = ptr::without_provenance(usize::MAX);
+/// `FSCRED`: filesystem credential.
+pub const FSCRED: *const Ucred = ptr::without_provenance(usize::MAX - 1);
 
 /// `struct ucred`.
 pub struct Ucred {

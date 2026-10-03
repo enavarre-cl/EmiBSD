@@ -173,9 +173,9 @@ intr_fast_exit:
  *  - switch to the trampoline stack
  *  - swapgs
  *  - iretq
- * The FPU/"extended CPU state" and FS.base restores, the DIAGNOSTIC SPL
- * check, IBPB, pku_xonly, the MDS clear and the Meltdown page-table switch
- * are not here (locore.rs).
+ * The FS.base restore (CPUPF_USERSEGS) is here; the FPU/"extended CPU
+ * state" restore, the DIAGNOSTIC SPL check, IBPB, pku_xonly, the MDS clear
+ * and the Meltdown page-table switch are not (locore.rs).
  */
 	.globl	intr_user_exit
 	.type	intr_user_exit,@function
@@ -196,6 +196,13 @@ intr_user_exit:
 	jmp	intr_user_exit
 
 intr_user_exit_post_ast:
+	/* The xstate restore (CPUPF_USERXSTATE): with the FPU. */
+
+	/* Restore FS.base if it's not already in the CPU */
+	testl	${CPUPF_USERSEGS},%gs:{CI_PFLAGS}
+	jz	.Lintr_restore_fsbase
+
+.Lintr_restore_registers:
 	movq	{TF_R8}(%rsp),%r8
 	movq	{TF_R9}(%rsp),%r9
 	movq	{TF_R10}(%rsp),%r10
@@ -228,14 +235,24 @@ intr_user_exit_post_ast:
 	movq	{TF_RDX}(%rdx),%rdx
 	swapgs
 	iretq
+
+.Lintr_restore_fsbase:		/* CPU doesn't have curproc's FS.base */
+	orl	${CPUPF_USERSEGS},%gs:{CI_PFLAGS}
+	movq	%gs:{CI_CURPCB},%rdx
+	movq	{PCB_FSBASE}(%rdx),%rdx
+	movl	%edx,%eax
+	shrq	$32,%rdx
+	movl	${MSR_FSBASE},%ecx
+	wrmsr
+	jmp	.Lintr_restore_registers
 	.size	intr_user_exit, . - intr_user_exit
 
 /*
  * cpu_switchto(struct proc *old, struct proc *new): switch from old to new.
- * The stack pointers, %cr3, ci_proc_pmap and the kernel stack a user thread
- * enters on (ci_kern_rsp); the FPU/"extended state" save and reset, the user
- * segment reset, the Meltdown CR3 bookkeeping, the RSB refill and retguard
- * are not here (see locore.rs).
+ * The stack pointers, the user segment reset (CPUPF_USERSEGS), %cr3,
+ * ci_proc_pmap and the kernel stack a user thread enters on (ci_kern_rsp);
+ * the FPU/"extended state" save and reset, the Meltdown CR3 bookkeeping, the
+ * RSB refill and retguard are not here (see locore.rs).
  */
 	.globl	cpu_switchto
 	.type	cpu_switchto,@function
@@ -275,6 +292,27 @@ cpu_switchto:
 	movq	%rbp,{PCB_RBP}(%r13)
 
 switch_exited:
+	/* The xstate save and reset (CPUPF_USERXSTATE): with the FPU. */
+
+	/*
+	 * If the segment registers haven't been reset since the old proc
+	 * ran in userspace then reset them now
+	 */
+	testl	${CPUPF_USERSEGS},%gs:{CI_PFLAGS}
+	jz	restore_saved
+	andl	$~{CPUPF_USERSEGS},%gs:{CI_PFLAGS}
+
+	/* set %ds, %es, %fs, and %gs to expected value to prevent info leak */
+	movw	${GSEL_UDATA},%ax
+	movw	%ax,%ds
+	movw	%ax,%es
+	movw	%ax,%fs
+	cli			/* block interrupts when on user GS.base */
+	swapgs			/* switch from kernel to user GS.base */
+	movw	%ax,%gs		/* set %gs to UDATA and GS.base to 0 */
+	swapgs			/* back to kernel GS.base */
+
+restore_saved:
 	/*
 	 * Restore saved context.
 	 *
@@ -366,9 +404,9 @@ proc_trampoline:
  * pagetables, we switch to our kernel stack.  Once that's in place
  * we can save the rest of the syscall frame and unblock interrupts.
  *
- * Xsyscall_meltdown (the U-K page tables), the xstate and FS.base
- * restores, the IBPB/MDS code patches, pku_xonly and the RSB refill
- * are not here (locore.rs).
+ * Xsyscall_meltdown (the U-K page tables), the xstate restore, the
+ * IBPB/MDS code patches, pku_xonly and the RSB refill are not here
+ * (locore.rs); the FS.base restore is.
  */
 	.globl	Xsyscall
 	.type	Xsyscall,@function
@@ -449,7 +487,11 @@ Xsyscall:
 	testl	${MDP_IRET},{P_MD_FLAGS}(%r14)
 	jne	intr_user_exit
 
-	/* The xstate (CPUPF_USERXSTATE) and FS.base (CPUPF_USERSEGS) restores: M6-b. */
+	/* The xstate restore (CPUPF_USERXSTATE): with the FPU. */
+
+	/* Restore FS.base if it's not already in the CPU */
+	testl	${CPUPF_USERSEGS},%gs:{CI_PFLAGS}
+	jz	.Lsyscall_restore_fsbase
 
 .Lsyscall_restore_registers:
 	movq	{TF_R8}(%rsp),%r8
@@ -476,4 +518,14 @@ Xsyscall:
 	movq	{TF_RSP}(%rsp),%rsp
 	swapgs
 	sysretq
+
+.Lsyscall_restore_fsbase:	/* CPU doesn't have curproc's FS.base */
+	orl	${CPUPF_USERSEGS},%gs:{CI_PFLAGS}
+	movq	%gs:{CI_CURPCB},%rdi
+	movq	{PCB_FSBASE}(%rdi),%rdx
+	movl	%edx,%eax
+	shrq	$32,%rdx
+	movl	${MSR_FSBASE},%ecx
+	wrmsr
+	jmp	.Lsyscall_restore_registers
 	.size	Xsyscall, . - Xsyscall

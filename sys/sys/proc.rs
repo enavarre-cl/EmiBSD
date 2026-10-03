@@ -54,9 +54,10 @@
 //! queues and the kernel threads use, the `S*` states, the `P_*`/`PS_*` flags, the `FORK_*`,
 //! `EXIT_*` and `SINGLE_*` constants, `struct cond`, `struct cpuset`, `struct uidinfo` and
 //! `tu_enter`/`tu_leave`. The members that belong to subsystems not here yet (`sigio`,
-//! `klist`, `ptrace`, `unveil`, `pinsyscall`, the `vnode`s, the credentials, the file
-//! descriptors, the limits, the vmspace, the signal state) are opaque pointers or left out,
-//! each named in a comment at its place.
+//! `klist`, `ptrace`, `unveil`, `pinsyscall`, the `vnode`s, the file descriptors, the
+//! limits, the signal state) are opaque pointers or left out, each named in a comment at its
+//! place. The vmspace and (since `kern_prot.c`) the credentials are typed pointers with
+//! accessors (`vmspace()`, `ucred()`).
 //!
 //! ## Deviations
 //! - Members the owning thread or a lock mutates are `Cell`s; the flag words `p_flag` and
@@ -72,6 +73,7 @@ use core::sync::atomic::{AtomicI32, AtomicU32};
 
 use crate::kassert;
 use crate::kern::kern_lock::{pc_sprod_enter, pc_sprod_leave};
+use crate::kern::kern_prot::dorefreshcreds;
 use crate::machine::Machine;
 use crate::machine::cpu::{CpuInfo, MAXCPUS};
 use crate::machine::intr::IPL_HIGH;
@@ -88,6 +90,7 @@ use crate::sys::syslimits::LOGIN_NAME_MAX;
 use crate::sys::time::{Timespec, Timeval};
 use crate::sys::timeout::Timeout;
 use crate::sys::types::{Pid, Uid};
+use crate::sys::ucred::Ucred;
 use crate::sys::user::User;
 use crate::uvm::uvm_extern::Vmspace;
 
@@ -289,8 +292,8 @@ pub struct Process {
     /// `ps_mainproc` is the original thread in the process. It's only still special for the
     /// handling of some signal and ptrace behaviors that need to be fixed.
     pub ps_mainproc: Cell<*const Proc>,
-    /// `ps_ucred`: process owner's identity (`struct ucred`, M6).
-    pub ps_ucred: Cell<*const ()>,
+    /// `ps_ucred`: process owner's identity; the process holds a reference.
+    pub ps_ucred: Cell<*const Ucred>,
 
     /// `ps_list`: list of all processes.
     pub ps_list: ListEntry<Process>,
@@ -514,6 +517,18 @@ impl Process {
         // SAFETY: non-null while the process holds its reference; `uvmspace_free` runs only
         // after `uvm_exit` cleared the pointer.
         unsafe { &*vm }
+    }
+
+    /// `pr->ps_ucred`: the process's credentials, which it holds a reference to from
+    /// `process_initialize` until `process_zap`.
+    pub fn ucred(&self) -> &'static Ucred {
+        let cr = self.ps_ucred.get();
+        kassert!(!cr.is_null());
+        // SAFETY: non-null while the process holds its reference; the set*id calls and exec
+        // replace the pointer under the kernel lock and drop the old reference after, so a
+        // credential read here stays allocated for as long as the caller runs without
+        // sleeping.
+        unsafe { &*cr }
     }
 
     /// `strlcpy(pr->ps_comm, name, sizeof pr->ps_comm)`.
@@ -744,8 +759,8 @@ pub struct Proc {
     /// \[o\] `p_pledge`: copy of `p_p->ps_pledge`.
     pub p_pledge: Cell<u64>,
 
-    /// \[o\] `p_ucred`: cached credentials (`struct ucred`, M6).
-    pub p_ucred: Cell<*const ()>,
+    /// \[o\] `p_ucred`: cached credentials; the thread holds a reference.
+    pub p_ucred: Cell<*const Ucred>,
     // p_sigstk: sp & on stack state variable (M6).
     /// `p_prof_addr`: tmp storage for profiling addr until AST.
     pub p_prof_addr: Cell<u64>,
@@ -833,6 +848,16 @@ impl Proc {
         // SAFETY: as for `Process::vmspace`; the reaper nulls the thread's copy after the
         // thread is dead.
         unsafe { &*vm }
+    }
+
+    /// `p->p_ucred`: the thread's cached credentials, which it holds a reference to from
+    /// `thread_new` (or `main` for `proc0`) until `proc_free`.
+    pub fn ucred(&self) -> &'static Ucred {
+        let cr = self.p_ucred.get();
+        kassert!(!cr.is_null());
+        // SAFETY: non-null while the thread holds its reference; only the thread itself
+        // replaces it (`dorefreshcreds`, exec), dropping the old reference afterwards.
+        unsafe { &*cr }
     }
 
     /// `p->p_p`: the thread's process.
@@ -1142,8 +1167,7 @@ pub fn refreshcreds(p: &Proc) {
     let pr = p.process();
 
     if !ptr::eq(pr.ps_ucred.get(), p.p_ucred.get()) {
-        // dorefreshcreds(pr, p): kern_prot.c (M6-b, with the credentials).
-        let _ = crate::unported!("refreshcreds: dorefreshcreds (kern_prot.c, M6-b)");
+        dorefreshcreds(pr, p);
     }
 }
 

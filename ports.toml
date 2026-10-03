@@ -439,7 +439,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -1184,7 +1184,7 @@ rust = "sys/arch/amd64/amd64/locore.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2c19fbf0a3095ed1ff256cc877e5efbb6a3bca37"
-notes = "M4: lgdt and intr_fast_exit, in locore.S (AT&T syntax, included by global_asm! with the frame offsets and selectors as placeholders: assym.h), and an intr_user_exit stub that reports a return to user mode (M6); the DIAGNOSTIC interrupts-blocked check of intr_fast_exit is M4-b2; the kernel entry is the boot protocol; cpu_switchto, sigcode, the syscall entry/exit, the Meltdown trampolines, the copy routines and the local_apic page (lapic.rs has it) are M5/M6; M5-b2: cpu_switchto (the kernel-thread subset: stack pointers, curproc/curpcb/p_cpu/p_stat, %cr3; the xstate/segment resets, the Meltdown CR3s, RSB refill and retguard are M6) and proc_trampoline (calls proc_trampoline_run, Rust, with the function and argument; the syscall return is M6); M6-a: Xsyscall (SYSCALL_ENTRY, the .Lsyscall_check_asts AST loop with CHECK/CLEAR_ASTPENDING, the register restore and sysretq; without Xsyscall_meltdown, the xstate/FS.base restores, the IBPB/MDS patches, pku_xonly, the RSB refill and DIAGNOSTIC's SPL check); proc_trampoline returns through .Lsyscall_check_asts; M6-b2: intr_user_exit (the AST loop, the register restore, the iretq frame on the trampoline stack, swapgs, iretq; without the xstate/FS.base restores, IBPB, pku_xonly, MDS and Meltdown), cpu_switchto's user bits (ci_proc_pmap, ci_kern_rsp = pcb_kstack - FRAMESIZE; the CPUPF_USERSEGS/USERXSTATE resets are M6-c)"
+notes = "M4: lgdt and intr_fast_exit, in locore.S (AT&T syntax, included by global_asm! with the frame offsets and selectors as placeholders: assym.h), and an intr_user_exit stub that reports a return to user mode (M6); the DIAGNOSTIC interrupts-blocked check of intr_fast_exit is M4-b2; the kernel entry is the boot protocol; cpu_switchto, sigcode, the syscall entry/exit, the Meltdown trampolines, the copy routines and the local_apic page (lapic.rs has it) are M5/M6; M5-b2: cpu_switchto (the kernel-thread subset: stack pointers, curproc/curpcb/p_cpu/p_stat, %cr3; the xstate/segment resets, the Meltdown CR3s, RSB refill and retguard are M6) and proc_trampoline (calls proc_trampoline_run, Rust, with the function and argument; the syscall return is M6); M6-a: Xsyscall (SYSCALL_ENTRY, the .Lsyscall_check_asts AST loop with CHECK/CLEAR_ASTPENDING, the register restore and sysretq; without Xsyscall_meltdown, the xstate/FS.base restores, the IBPB/MDS patches, pku_xonly, the RSB refill and DIAGNOSTIC's SPL check); proc_trampoline returns through .Lsyscall_check_asts; M6-b2: intr_user_exit (the AST loop, the register restore, the iretq frame on the trampoline stack, swapgs, iretq; without the xstate/FS.base restores, IBPB, pku_xonly, MDS and Meltdown), cpu_switchto's user bits (ci_proc_pmap, ci_kern_rsp = pcb_kstack - FRAMESIZE; the CPUPF_USERSEGS/USERXSTATE resets are M6-c); kern_prot.c (the TCB): cpu_switchto's user segment reset (CPUPF_USERSEGS: %ds/%es/%fs/%gs to GUDATA) and the FS.base restore from pcb_fsbase on both exits to user mode (.Lsyscall_restore_fsbase, .Lintr_restore_fsbase); the xstate save/restore (CPUPF_USERXSTATE) waits for the FPU"
 
 [[file]]
 c = "sys/arch/amd64/amd64/vector.S"
@@ -1614,7 +1614,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "34f4bcdb97b70e5cf96ace4f826ce3b2a81fde03"
 deps = ["sys/sys/queue.h", "sys/sys/timeout.h", "sys/sys/mutex.h", "sys/sys/pclock.h", "sys/sys/refcnt.h", "sys/sys/resource.h", "sys/sys/user.h"]
-notes = "M5-b1: session, pgrp, tusage, process and proc (the members the scheduler, the sleep queues and the kernel threads use; the sigio/klist/ptrace/unveil/pinsyscall/vnode/ucred/filedesc/plimit/vmspace/sigacts members are opaque pointers or left out, each named in a comment), the S* states, P_*/PS_* flags with their %b strings, THREAD_PID_OFFSET, uidinfo, PID_MAX/TID_MASK/NO_PID, SESS_LEADER, FORK_*/EXIT_*/SINGLE_*, cond, cpuset, tu_enter/tu_leave; the function prototypes live with their .c files; M6-a: refreshcreds (dorefreshcreds reported); M6-b2: ps_vmspace/p_vmspace are *const Vmspace with vmspace() accessors, ps_strings, Proc::set_name; M7a: ps_lock (an Rwlock); M7a-3b: ps_limit/p_limit typed (struct plimit), ps_kbind_cookie/ps_kbind_addr, struct pinsyscall with ps_pin/ps_libcpin, ps_auxinfo/ps_timekeep/ps_sigcode/ps_sigcoderet/ps_sigcookie (zero until exec sets them)"
+notes = "M5-b1: session, pgrp, tusage, process and proc (the members the scheduler, the sleep queues and the kernel threads use; the sigio/klist/ptrace/unveil/pinsyscall/vnode/ucred/filedesc/plimit/vmspace/sigacts members are opaque pointers or left out, each named in a comment), the S* states, P_*/PS_* flags with their %b strings, THREAD_PID_OFFSET, uidinfo, PID_MAX/TID_MASK/NO_PID, SESS_LEADER, FORK_*/EXIT_*/SINGLE_*, cond, cpuset, tu_enter/tu_leave; the function prototypes live with their .c files; M6-a: refreshcreds (dorefreshcreds reported); M6-b2: ps_vmspace/p_vmspace are *const Vmspace with vmspace() accessors, ps_strings, Proc::set_name; M7a: ps_lock (an Rwlock); M7a-3b: ps_limit/p_limit typed (struct plimit), ps_kbind_cookie/ps_kbind_addr, struct pinsyscall with ps_pin/ps_libcpin, ps_auxinfo/ps_timekeep/ps_sigcode/ps_sigcoderet/ps_sigcookie (zero until exec sets them); kern_prot.c: ps_ucred/p_ucred are *const Ucred with ucred() accessors, refreshcreds calls dorefreshcreds"
 
 [[file]]
 c = "sys/sys/user.h"
@@ -1645,11 +1645,11 @@ notes = "M5: PRIO_*, RUSAGE_*, struct rusage (Cells), RLIMIT_*/RLIM_*, struct rl
 [[file]]
 c = "sys/sys/ucred.h"
 rust = "sys/sys/ucred.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "139812491b361c7ff905e1790defeb24e62bafb6"
 deps = ["sys/sys/refcnt.h", "sys/sys/syslimits.h"]
-notes = "M5: struct ucred, struct xucred; crget/crhold/crfree and the rest are kern_prot.c (M6)"
+notes = "M5: struct ucred (Cells after cr_refcnt), struct xucred; kern_prot.c: NOCRED/FSCRED (sentinel pointers); cr_startcopy is a comment (crset copies by name); the prototypes (crget, crhold, crfree, crset, crcopy, crdup, crfromxucred, suser, suser_ucred) are kern_prot.rs"
 
 [[file]]
 c = "sys/arch/amd64/include/pcb.h"
@@ -1659,6 +1659,24 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d974172cf0fcdf6a8d38ea2710c3ed5e58a3ca54"
 deps = ["sys/arch/amd64/include/fpu.h"]
 notes = "M5: struct pcb (Cells; the save area an UnsafeCell), copy_from for cpu_fork; reset_segs is M6"
+
+[[file]]
+c = "sys/arch/amd64/include/tcb.h"
+rust = "sys/arch/amd64/include/tcb.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8c5ba966791da27b67c401226c89be00cb2be613"
+deps = ["sys/arch/amd64/include/pcb.h"]
+notes = "kern_prot.c: the kernel half: TCB_INVALID (tcb_invalid); TCB_GET/TCB_SET are tcb_get/tcb_set, which the header declares and vm_machdep.rs defines; machine::Tcb names them; the TCB is a usize; the userland half (TLS_VARIANT, __amd64_read_tcb, TCB_GET()) is not kernel code"
+
+[[file]]
+c = "sys/arch/arm64/include/tcb.h"
+rust = "sys/arch/arm64/include/tcb.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6fd09d50c3f8f6ee6f5e340c5aa1cc460ed9b521"
+deps = ["sys/arch/arm64/include/pcb.h"]
+notes = "kern_prot.c: the kernel half: __aarch64_set_tcb (msr tpidr_el0), TCB_GET/TCB_SET as tcb_get/tcb_set over pcb_tcb; machine::Tcb names them (no TCB_INVALID: tcb_invalid answers false); the TCB is a usize; the userland half (TLS_VARIANT, __aarch64_read_tcb, TCB_GET()) is not kernel code"
 
 [[file]]
 c = "sys/arch/amd64/include/fpu.h"
@@ -1711,6 +1729,15 @@ deps = ["sys/sys/proc.h", "sys/kern/kern_subr.c", "sys/kern/subr_pool.c"]
 notes = "M5-b1: the lists, hash tables (slices from hashinit, masks are len-1) and pools (procinit), uid_find/uid_release under uidinfolk (a real rwlock since M7a), chgproccnt, inferior, tfind, tfind_user, prfind, pgfind, zombiefind; the pgrp management (enternewpgrp, enterthispgrp, leavepgrp, pgdelete, zapverauth, fixjobc, killjobc, orphanpg) needs signals/ttys/sigio (M6); proc_printit and the ddb commands are M7"
 
 [[file]]
+c = "sys/kern/kern_prot.c"
+rust = "sys/kern/kern_prot.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "39298a62f1463ba6e2086d5669cfa187f80c4fe2"
+deps = ["sys/sys/ucred.h", "sys/sys/proc.h", "sys/kern/kern_proc.c", "sys/kern/kern_synch.c", "sys/kern/subr_pool.c", "sys/sys/syscallargs.h", "sys/arch/amd64/include/tcb.h", "sys/arch/arm64/include/tcb.h"]
+notes = "every function: crset, the id syscalls (getpid/getthrid/getppid/getpgrp/getpgid/getsid, get/set[res][e]uid/gid, setre[ug]id, issetugid, getgroups/setgroups), groupmember, suser, suser_ucred, crget/crhold/crfree/crcopy/crdup (ucred_pool items as &'static Ucred, like uvmspace_alloc/free), crfromxucred, getlogin_r/setlogin, proc_cansugid, __set_tcb/__get_tcb (machine::tcb), getthrname/setthrname, dorefreshcreds; stubs: sys_setsid and sys_setpgid make every check but report enternewpgrp/enterthispgrp (kern_proc.c, not ported) and return ENOSYS where the C enters a group; proc_cansugid reports fd_refcnt (struct filedesc) and answers no; KERNEL_LOCK is one CPU; host tests"
+
+[[file]]
 c = "sys/kern/kern_subr.c"
 rust = "sys/kern/kern_subr.rs"
 status = "wip"
@@ -1753,7 +1780,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "de3d88871a036e3bab92269561698e00ec6996ba"
 deps = ["sys/sys/proc.h", "sys/kern/kern_proc.c", "sys/kern/kern_synch.c", "sys/dev/rnd.c"]
-notes = "M5-b1: nprocesses/nthreads, process_initialize (crhold, prof_fork, klist_init_mutex and the realitexpire/rucheck timeouts reported; rw_init of ps_lock since M7a), fork_check_maxthread, alloctid, allocpid, ispidtaken, freepid; thread_new, process_new, fork1, fork_thread_start and proc_trampoline_mi are M5-b2, the fork syscalls and thread_fork M6; M5-b2: forkstat, thread_new, process_new (lim_fork, fdcopy, sigactsinit reported; fdshare copies the parent pointer), fork_thread_start, fork1 (returns the new thread; root uid for proc0; knote_processfork/ptrace/psignal reported), proc_trampoline_mi; M6-b2: process_new uses uvmspace_share/uvmspace_fork; fork1 adds vm_dsize + vm_ssize to the forkstat sizes; M7a-3b: lim_fork and the rucheck timeout of process_initialize (realitexpire still reported)"
+notes = "M5-b1: nprocesses/nthreads, process_initialize (crhold, prof_fork, klist_init_mutex and the realitexpire/rucheck timeouts reported; rw_init of ps_lock since M7a), fork_check_maxthread, alloctid, allocpid, ispidtaken, freepid; thread_new, process_new, fork1, fork_thread_start and proc_trampoline_mi are M5-b2, the fork syscalls and thread_fork M6; M5-b2: forkstat, thread_new, process_new (lim_fork, fdcopy, sigactsinit reported; fdshare copies the parent pointer), fork_thread_start, fork1 (returns the new thread; root uid for proc0; knote_processfork/ptrace/psignal reported), proc_trampoline_mi; M6-b2: process_new uses uvmspace_share/uvmspace_fork; fork1 adds vm_dsize + vm_ssize to the forkstat sizes; M7a-3b: lim_fork and the rucheck timeout of process_initialize (realitexpire still reported); kern_prot.c: crhold in thread_new and process_initialize (with the cr_refcnt >= 2 KASSERT), fork1 charges the forking thread's cr_ruid (no more root for everyone)"
 
 [[file]]
 c = "sys/sys/vmmeter.h"
@@ -1802,7 +1829,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6a3ee3f5fb99979fab38ecf58a0365b7e7650ca3"
 deps = ["sys/arch/amd64/amd64/locore.S", "sys/arch/amd64/amd64/pmap.c", "sys/sys/proc.h"]
-notes = "M5-b2: cpu_fork (fpusave of a user-mode parent reported, M6; the function goes into sf_r12 as a pointer for proc_trampoline_run) and cpu_exit; vmapbuf/vunmapbuf are physio (M7)"
+notes = "M5-b2: cpu_fork (fpusave of a user-mode parent reported, M6; the function goes into sf_r12 as a pointer for proc_trampoline_run) and cpu_exit; vmapbuf/vunmapbuf are physio (M7); kern_prot.c: tcb_get and tcb_set (KASSERT curproc, reset_segs, pcb_fsbase; the TCB is a usize)"
 [[file]]
 c = "sys/arch/arm64/arm64/vm_machdep.c"
 rust = "sys/arch/arm64/arm64/vm_machdep.rs"
@@ -1859,7 +1886,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8fa24582fe2defb50069f7f9c5b5c3b2a48516fd"
 deps = ["sys/kern/syscalls.master", "sys/sys/systm.h", "sys/kern/kern_sig.c"]
-notes = "M6-a: generated: sysent[] with every unported syscall at sys_nosys (noted per entry); the generator scans sys/kern and sys/uvm for pub fn sys_*; do not edit"
+notes = "M6-a: generated: sysent[] with every unported syscall at sys_nosys (noted per entry); the generator scans sys/kern and sys/uvm for pub fn sys_*; do not edit; kern_prot.c: regenerated, the 31 kern_prot syscalls point at kern_prot.rs"
 [[file]]
 c = "sys/kern/syscalls.c"
 rust = "sys/kern/syscalls.rs"
@@ -2066,7 +2093,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "3f5c94691de23e802f4409d6e295420f160770fb"
 deps = ["sys/sys/exec.h", "sys/kern/exec_elf.c", "sys/kern/exec_subr.c", "sys/uvm/uvm_map.c", "sys/kern/kern_exit.c", "sys/sys/signal.h"]
-notes = "M6-b: execsw (ELF only), check_exec for a memory image (no namei/attributes/mount/access checks, no vn_rdwr; MAXTSIZ checked, the data limit is DFLDSIZ until lim_cur), exec_image = the body of sys_execve from the executable in hand (uvmspace_exec, the vm sizes, exec_process_vmcmds, ps_strings, copyargs with an empty argv/envp and no auxv, ps_comm, PS_EXEC/PS_INEXEC, the thread's runtime reset, setregs, EJUSTRETURN; exec_abort = exit1 with SIGABRT), with uvm_map_protect of the stack top, fdprepforexec/execsigs/TCB_SET reported; sys_execve itself (namei, the argument copying, credentials, the sigcode/timekeep pages, exec_md_map, ptrace), exec_free_package and exec_sigcode_map are M6-c/M7; TooLs GmbH 4-clause licence accepted at M2; M7a-3b: the PROT_NONE cover of the top of the stack (uvm_map_protect from round_page(ep_execpath + PATH_MAX) to vm_minsaddr)"
+notes = "M6-b: execsw (ELF only), check_exec for a memory image (no namei/attributes/mount/access checks, no vn_rdwr; MAXTSIZ checked, the data limit is DFLDSIZ until lim_cur), exec_image = the body of sys_execve from the executable in hand (uvmspace_exec, the vm sizes, exec_process_vmcmds, ps_strings, copyargs with an empty argv/envp and no auxv, ps_comm, PS_EXEC/PS_INEXEC, the thread's runtime reset, setregs, EJUSTRETURN; exec_abort = exit1 with SIGABRT), with uvm_map_protect of the stack top, fdprepforexec/execsigs reported; sys_execve itself (namei, the argument copying, the sigcode/timekeep pages, exec_md_map, ptrace), exec_free_package and exec_sigcode_map are M6-c/M7; TooLs GmbH 4-clause licence accepted at M2; M7a-3b: the PROT_NONE cover of the top of the stack (uvm_map_protect from round_page(ep_execpath + PATH_MAX) to vm_minsaddr); kern_prot.c: TCB_SET(p, NULL) and the credentials part of sys_execve in exec_image (PS_SUGIDEXEC set/cleared, PS_SUGID cleared since an image has no VSUID/VSGID, the saved ids reset through crcopy, ps_ucred updated with crhold/crfree; cancel_all_itimers reported; the pledge/unveil reset waits for pledge/unveil)"
 
 [[file]]
 c = "sys/kern/sys_generic.c"

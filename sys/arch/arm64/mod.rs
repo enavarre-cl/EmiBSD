@@ -19,6 +19,7 @@ use crate::machine::db_machdep::{DbMachdep, PrFn};
 use crate::machine::copy::UserCopy;
 use crate::machine::exec::MachineExec;
 use crate::machine::proc::MachineProc;
+use crate::machine::tcb::Tcb;
 use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, Pmap, VmParam};
 use crate::sys::clockintr::Clockqueue;
 use crate::sys::errno::Errno;
@@ -550,6 +551,21 @@ impl MachineProc for Machine {
     const MDPROC_INIT: include::proc::Mdproc = include::proc::Mdproc::new();
     type Pcb = include::pcb::Pcb;
     const PCB_INIT: include::pcb::Pcb = include::pcb::Pcb::new();
+}
+
+impl Tcb for Machine {
+    fn tcb_get(p: &Proc) -> usize {
+        include::tcb::tcb_get(p)
+    }
+
+    fn tcb_set(p: &Proc, addr: usize) {
+        include::tcb::tcb_set(p, addr)
+    }
+
+    fn tcb_invalid(_addr: usize) -> bool {
+        // arm64's <machine/tcb.h> has no TCB_INVALID.
+        false
+    }
 }
 
 impl UserCopy for Machine {

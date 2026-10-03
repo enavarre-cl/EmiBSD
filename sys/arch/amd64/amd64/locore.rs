@@ -6,41 +6,44 @@
 //!
 //! Status: `wip`. Milestone M4 ports `lgdt` and `intr_fast_exit`; M5 adds `cpu_switchto` and
 //! `proc_trampoline`; M6-a `Xsyscall` with the AST check and the `sysretq` return; M6-b
-//! `intr_user_exit` (the `iretq` return) and the user-thread bits of `cpu_switchto`. The
-//! kernel entry (`start`, done by the boot protocol), `sigcode`, the Meltdown trampolines
-//! (`Xsyscall_meltdown`, the U-K text page), `retpoline_rax` and `savectx`/`setjmp`/`longjmp`
-//! come later.
+//! `intr_user_exit` (the `iretq` return) and the user-thread bits of `cpu_switchto`; with
+//! `kern_prot.c` (the TCB) the user segment reset of `cpu_switchto` and the FS.base restore
+//! of `intr_user_exit` and `Xsyscall` (`CPUPF_USERSEGS`). The kernel entry (`start`, done by
+//! the boot protocol), `sigcode`, the Meltdown trampolines (`Xsyscall_meltdown`, the U-K
+//! text page), `retpoline_rax` and `savectx`/`setjmp`/`longjmp` come later.
 //!
 //! ## Deviations
 //! - AT&T syntax, as the C file, so the two can be diffed; the rest of the kernel's inline
 //!   assembly is Intel syntax.
-//! - `cpu_switchto` saves and restores the stack pointers, sets `curproc`/`curpcb`/`p_cpu`/
-//!   `p_stat`, reloads `%cr3` when it changes, records `ci_proc_pmap` and, for a user
-//!   thread, `ci_kern_rsp`. The FPU/"extended state" save and reset (`CPUPF_USERXSTATE`),
-//!   the user segment reset (`CPUPF_USERSEGS`, with the FS.base restore of
-//!   `intr_user_exit`/`Xsyscall`: M6-c, the TCB), the Meltdown CR3s, the RSB refill and
-//!   retguard are not here.
-//! - `intr_user_exit` checks for ASTs and returns through `iretq` on the trampoline stack as
-//!   the C does, without the xstate/FS.base restores, `DIAGNOSTIC`'s SPL check, IBPB,
-//!   `pku_xonly`, the MDS clear and the Meltdown page-table switch.
+//! - `cpu_switchto` saves and restores the stack pointers, resets the user segment registers
+//!   when the CPU still holds a user thread's (`CPUPF_USERSEGS`), sets `curproc`/`curpcb`/
+//!   `p_cpu`/`p_stat`, reloads `%cr3` when it changes, records `ci_proc_pmap` and, for a
+//!   user thread, `ci_kern_rsp`. The FPU/"extended state" save and reset
+//!   (`CPUPF_USERXSTATE`), the Meltdown CR3s, the RSB refill and retguard are not here.
+//! - `intr_user_exit` checks for ASTs, restores FS.base from the pcb when the CPU does not
+//!   have it (`CPUPF_USERSEGS`) and returns through `iretq` on the trampoline stack as the C
+//!   does, without the xstate restore, `DIAGNOSTIC`'s SPL check, IBPB, `pku_xonly`, the MDS
+//!   clear and the Meltdown page-table switch.
 //! - `proc_trampoline` calls `proc_trampoline_run` (Rust) with the function and argument
 //!   instead of calling the function itself: Rust `fn` pointers have no C calling
 //!   convention; after it returns the thread takes the syscall exit path, as in C.
-//! - `Xsyscall` is the kernel-thread-era subset: no Meltdown page-table switch, no xstate or
-//!   FS.base restore (`CPUPF_*`), no IBPB/MDS code patches, no `pku_xonly`, no RSB refill,
-//!   and `DIAGNOSTIC`'s "SPL NOT LOWERED" check (a `printf` from assembly) is not here.
+//! - `Xsyscall` is the kernel-thread-era subset plus the FS.base restore: no Meltdown
+//!   page-table switch, no xstate restore (`CPUPF_USERXSTATE`), no IBPB/MDS code patches, no
+//!   `pku_xonly`, no RSB refill, and `DIAGNOSTIC`'s "SPL NOT LOWERED" check (a `printf` from
+//!   assembly) is not here.
 
 use core::arch::global_asm;
 use core::ffi::c_void;
 use core::mem::offset_of;
 
-use crate::arch::amd64::include::cpu::CpuInfo;
+use crate::arch::amd64::include::cpu::{CPUPF_USERSEGS, CpuInfo};
 use crate::arch::amd64::include::frame::{IretqFrame, Trapframe};
 use crate::arch::amd64::include::pcb::Pcb;
 use crate::arch::amd64::include::proc::MDP_IRET;
 use crate::arch::amd64::include::segments::{
     GCODE_SEL, GDATA_SEL, GUCODE_SEL, GUDATA_SEL, RegionDescriptor, SEL_KPL, SEL_UPL, gsel,
 };
+use crate::arch::amd64::include::specialreg::MSR_FSBASE;
 use crate::kern::kern_fork::proc_trampoline_mi;
 use crate::sys::proc::{P_SYSTEM, Proc, SONPROC};
 
@@ -99,6 +102,10 @@ global_asm!(
     P_MD_FLAGS = const offset_of!(Proc, p_md.md_flags),
     P_MD_ASTPENDING = const offset_of!(Proc, p_md.md_astpending),
     MDP_IRET = const MDP_IRET,
+    CI_PFLAGS = const offset_of!(CpuInfo, ci_pflags),
+    CPUPF_USERSEGS = const CPUPF_USERSEGS,
+    PCB_FSBASE = const offset_of!(Pcb, pcb_fsbase),
+    MSR_FSBASE = const MSR_FSBASE,
     options(att_syntax)
 );
 

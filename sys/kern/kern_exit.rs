@@ -54,7 +54,8 @@
 //!   `SAS_NOCLDWAIT`, `prsignal`), `kqpoll_exit`, `stopprofclock`/`prof_write`, `fdfree`,
 //!   `cancel_all_itimers`, `killjobc`, `unveil_destroy`, `uvm_purge`, `lim_free`,
 //!   `process_untrace`; `process_zap` likewise `leavepgrp`, `vrele`, `sigactsfree`,
-//!   `crfree`; the reaper `uvm_exit` and `knote_processexit`.
+//!   `lim_free`; the reaper `knote_processexit`. The credentials (`crfree` in `proc_free`
+//!   and `process_zap`, the real uid `process_zap` uncharges) are real since `kern_prot.c`.
 //! - `initprocess` is null until `init` exists (M6-b): until then process 0 adopts the
 //!   orphans `exit1` and `process_reparent` would hand to `init`.
 
@@ -67,6 +68,7 @@ use crate::kern::init_main::{INITPROCESS, PROCESS0};
 use crate::kern::kern_fork::{NPROCESSES, NTHREADS, freepid};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_proc::{PROC_POOL, PROCESS_POOL, RUSAGE_POOL, ZOMBPROCESS, chgproccnt};
+use crate::kern::kern_prot::crfree;
 use crate::kern::kern_resource::{calcru, lim_free, ruadd, tuagg_add_process, tuagg_add_runtime};
 use crate::kern::kern_sched::sched_exit;
 use crate::kern::kern_synch::{msleep_nsec, refcnt_finalize, wakeup};
@@ -446,8 +448,7 @@ pub fn exit2(p: &Proc) {
 
 /// `proc_free`: returns a dead thread to the pool.
 pub fn proc_free(p: &Proc) {
-    // crfree(p->p_ucred): kern_prot.c (M6-c).
-    let _ = unported!("proc_free: crfree (M6-c)");
+    crfree(p.ucred());
     pool_put(&PROC_POOL, NonNull::from(p).cast::<u8>());
     NTHREADS.fetch_sub(1, Ordering::Relaxed);
 }
@@ -574,9 +575,8 @@ pub fn process_zap(pr: &Process) {
     unsafe { ListHead::<ProcessSibling>::remove(pr) };
     process_clear_orphan(pr);
 
-    // Decrement the count of procs running with this uid: pr->ps_ucred->cr_ruid, root until
-    // the credentials exist (M6-c).
-    chgproccnt(0, -1);
+    // Decrement the count of procs running with this uid.
+    chgproccnt(pr.ucred().cr_ruid.get(), -1);
 
     // Release reference to text vnode: vrele (M7); nothing to release yet.
     pr.ps_textvp.set(ptr::null());
@@ -587,10 +587,11 @@ pub fn process_zap(pr: &Process) {
         pool_put(&RUSAGE_POOL, ru.cast::<u8>());
     }
     kassert!(pr.ps_threads.is_empty());
-    // sigactsfree(pr->ps_sigacts), crfree(pr->ps_ucred): M6-c.
-    let _ = unported!("process_zap: sigactsfree/crfree (M6-c)");
+    // sigactsfree(pr->ps_sigacts): M6-c.
+    let _ = unported!("process_zap: sigactsfree (M6-c)");
     // SAFETY: the process's own reference, dropped once as it is freed.
     lim_free(unsafe { &*pr.ps_limit.get() });
+    crfree(pr.ucred());
     pool_put(&PROCESS_POOL, NonNull::from(pr).cast::<u8>());
     NPROCESSES.fetch_sub(1, Ordering::Relaxed);
 

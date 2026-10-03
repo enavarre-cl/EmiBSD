@@ -24,6 +24,7 @@ use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::copy::UserCopy;
 use crate::machine::db_machdep::{DbMachdep, PrFn};
 use crate::machine::proc::MachineProc;
+use crate::machine::tcb::Tcb;
 use crate::machine::{
     BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, MachineParam, Pmap, VmParam,
 };
@@ -163,15 +164,39 @@ static HOST_PROC0PADDR: User = User::new();
 #[derive(Default)]
 pub struct HostMdproc;
 
-/// The host's `struct pcb`: nothing to switch.
+/// The host's `struct pcb`: nothing to switch; it only stores the TCB address `TCB_SET`
+/// records.
 #[derive(Default)]
-pub struct HostPcb;
+pub struct HostPcb {
+    /// The thread's TCB address (`pcb_tcb` on arm64, `pcb_fsbase` on amd64).
+    pub pcb_tcb: Cell<usize>,
+}
+
+// SAFETY: a thread's pcb is written by that thread (`TCB_SET`) or before it runs; the tests
+// that build threads serialise on their own lock.
+unsafe impl Sync for HostPcb {}
 
 impl MachineProc for Machine {
     type Mdproc = HostMdproc;
     const MDPROC_INIT: HostMdproc = HostMdproc;
     type Pcb = HostPcb;
-    const PCB_INIT: HostPcb = HostPcb;
+    const PCB_INIT: HostPcb = HostPcb {
+        pcb_tcb: Cell::new(0),
+    };
+}
+
+impl Tcb for Machine {
+    fn tcb_get(p: &Proc) -> usize {
+        p.pcb().pcb_tcb.get()
+    }
+
+    fn tcb_set(p: &Proc, addr: usize) {
+        p.pcb().pcb_tcb.set(addr);
+    }
+
+    fn tcb_invalid(_addr: usize) -> bool {
+        false
+    }
 }
 
 /// The host's `struct clockframe`: nothing to read.

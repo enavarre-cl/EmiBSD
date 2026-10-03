@@ -53,13 +53,14 @@
 //!   `retval`/`rnewprocp` out-pointers; `thread_new` and `process_new` write a whole
 //!   `Proc::new()`/`Process::new()` into the pool item and then copy the `p_startcopy`/
 //!   `ps_startcopy` fields from the parent, instead of `memset`/`memcpy` by field offset.
-//! - `process_initialize` reports what its process does not have yet: `crhold` (M6),
-//!   `prof_fork` (M6), `rw_init(ps_lock)` (M5-b3), `klist_init_mutex` (M6) and the two
-//!   timeouts' handlers (`realitexpire`, `rucheck`: M6). `process_new` likewise reports
-//!   `lim_fork`, `fdcopy`, `sigactsinit` and `uvmspace_fork` (M6); the shared variants
-//!   (`fdshare`, `uvmspace_share`) copy the parent's (null) pointers. `fork1` takes root's
-//!   uid for `proc0` (no credentials before M6), skips the `RLIMIT_NPROC` check for root as
-//!   the C does, and reports `knote_processfork` (M6).
+//! - `process_initialize` reports what its process does not have yet: `prof_fork` (M6),
+//!   `klist_init_mutex` (M6) and the two timeouts' handlers (`realitexpire`, `rucheck`:
+//!   M6). `process_new` likewise reports `lim_fork`, `fdcopy`, `sigactsinit` and
+//!   `startprofclock` (M6); the shared variant `fdshare` copies the parent's (null)
+//!   pointer. `fork1` skips the `RLIMIT_NPROC` check for root as the C does, reports it for
+//!   other users (the limits), and reports `knote_processfork` (M6). The credentials
+//!   (`crhold` in `thread_new` and `process_initialize`, the forking thread's real uid in
+//!   `fork1`) are real since `kern_prot.c`.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -77,6 +78,7 @@ use crate::kern::kern_proc::{
     ALLPROC, ALLPROCESS, PROC_POOL, PROCESS_POOL, chgproccnt, pgfind, pidhash, prfind, tfind,
     tidhash, zombiefind,
 };
+use crate::kern::kern_prot::crhold;
 use crate::kern::kern_resource::{lim_fork, rucheck};
 use crate::kern::kern_rwlock::rw_init;
 use crate::kern::kern_sched::{sched_choosecpu_fork, setrunqueue};
@@ -157,7 +159,7 @@ fn thread_new(parent: &Proc, uaddr: NonNull<u8>) -> &'static Proc {
     p.p_prof_addr.set(parent.p_prof_addr.get());
     p.p_prof_ticks.set(parent.p_prof_ticks.get());
 
-    // crhold(p->p_ucred): kern_prot.c (M6).
+    crhold(p.ucred());
     p.p_addr.set(uaddr.as_ptr().cast::<User>());
 
     // Initialize the timeouts.
@@ -181,8 +183,9 @@ pub fn process_initialize(pr: &'static Process, p: &'static Proc) {
 
     // give the process the same creds as the initial thread
     pr.ps_ucred.set(p.p_ucred.get());
-    // crhold(pr->ps_ucred): kern_prot.c (M6); KASSERT(cr_refcnt >= 2) with it.
-    let _ = unported!("process_initialize: crhold (kern_prot.c, M6)");
+    crhold(pr.ucred());
+    // new thread and new process
+    kassert!(p.ucred().cr_refcnt.r_refs.load(Ordering::Relaxed) >= 2);
 
     // prof_fork(pr): subr_prof.c (M6).
     let _ = unported!("process_initialize: prof_fork (M6)");
@@ -353,9 +356,7 @@ pub fn fork1(
     static LASTTFM: StaticCell<Timeval> = StaticCell::new(Timeval::new(0, 0));
 
     let curpr: &'static Process = curp.process();
-    // uid = curp->p_ucred->cr_ruid: no credentials before M6; proc0 and its kernel threads
-    // are root's.
-    let uid: Uid = 0;
+    let uid: Uid = curp.ucred().cr_ruid.get();
 
     kassert!(
         flags

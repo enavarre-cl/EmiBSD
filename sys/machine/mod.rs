@@ -2,7 +2,7 @@
 //!
 //! Generic code reaches architecture code ONLY through this module. One module per OpenBSD header
 //! ([`param`], [`vmparam`], [`cpu`], [`cons`], [`bus`], [`pmap`], [`intr`], [`db_machdep`],
-//! [`fdt`], [`proc`]; [`bootinfo`]
+//! [`fdt`], [`proc`], [`tcb`]; [`bootinfo`]
 //! is the record the boot glue hands over), all re-exported here. The selected architecture is re-exported as [`Machine`]; the block at the
 //! bottom proves at compile time that it implements every trait. Adding a trait method therefore
 //! means implementing it for amd64, arm64 and the host test double in the same commit.
@@ -19,6 +19,7 @@ pub mod intr;
 pub mod param;
 pub mod pmap;
 pub mod proc;
+pub mod tcb;
 pub mod vmparam;
 
 pub use bootinfo::*;
@@ -33,6 +34,7 @@ pub use intr::*;
 pub use param::*;
 pub use pmap::*;
 pub use proc::*;
+pub use tcb::*;
 pub use vmparam::*;
 
 /// The selected architecture's implementation of the machine interface.
@@ -54,7 +56,8 @@ const _: () = {
             + Fdt
             + MachineProc
             + UserCopy
-            + MachineExec,
+            + MachineExec
+            + Tcb,
     >() {
     }
     assert_impl::<Machine>();

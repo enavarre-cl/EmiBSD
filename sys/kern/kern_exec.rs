@@ -43,9 +43,11 @@
 //! the body of `sys_execve` from the point where the executable is in hand, as
 //! [`exec_image`], for an executable that is a memory image (the `init` Limine module).
 //! `sys_execve` itself (`namei`, the `NCARGS` argument copying, `copyargs` with a real
-//! `argv`/`envp`, the credentials, `fdprepforexec`, `execsigs`, the signal trampoline and
-//! the timekeep page, `exec_md_map`, ptrace), `exec_free_package` and `exec_sigcode_map`
-//! come with the file descriptor table and the filesystems (M6-c, M7).
+//! `argv`/`envp`, `fdprepforexec`, `execsigs`, the signal trampoline and the timekeep page,
+//! `exec_md_map`, ptrace), `exec_free_package` and `exec_sigcode_map` come with the file
+//! descriptor table and the filesystems (M6-c, M7). With `kern_prot.c`, `exec_image` does
+//! the credentials part (`PS_SUGIDEXEC`, `PS_SUGID`, the saved ids reset through `crcopy`,
+//! the process's copy of the credentials) and `TCB_SET(p, NULL)`.
 //!
 //! ## Deviations
 //! - `exec_image(p, name, image)` is this port's name for "`sys_execve` of a memory image":
@@ -57,24 +59,31 @@
 //!   auxiliary vector (static executables only); `ps_strings` is written below
 //!   `vm_minsaddr` as in C; `ep_execpath` is a local (nothing copies the path out yet).
 //! - `MAXTSIZ` is checked; the data limit uses `DFLDSIZ` (`limit0`) until `lim_cur` (M6-c).
+//! - A memory image has no vnode attributes, so the set[ug]id branch (`VSUID`/`VSGID`,
+//!   `proc_cansugid`, the stdin/stdout/stderr fix-up) is never taken: `PS_SUGID` is cleared
+//!   as in the C's else branch. `cancel_all_itimers` for a `PS_SUGIDEXEC` exec is reported
+//!   (`kern_time.c`); the pledge/unveil reset waits for `pledge(2)`/`unveil(2)`.
 //! - The 4-clause licence (advertising clause) was accepted by the user at M2 for this
 //!   project.
 
+use core::ptr;
 use core::sync::atomic::Ordering;
 
 use crate::kern::exec_elf::exec_elf_makecmds;
 use crate::kern::exec_subr::exec_process_vmcmds;
 use crate::kern::kern_exit::exit1;
+use crate::kern::kern_prot::{crcopy, crfree, crhold};
 use crate::machine::copy::copyout;
 use crate::machine::cpu::Cpu;
 use crate::machine::param::MachineParam;
+use crate::machine::tcb::tcb_set;
 use crate::machine::{Machine, VmParam};
 use crate::sys::acct::AFORK;
 use crate::sys::errno::Errno;
 use crate::sys::exec::{ExecPackage, Execsw, PsStrings};
 use crate::sys::exec_elf::ElfEhdr;
 use crate::sys::mman::PROT_NONE;
-use crate::sys::proc::{EXIT_NORMAL, PS_EXEC, PS_INEXEC, Proc};
+use crate::sys::proc::{EXIT_NORMAL, PS_EXEC, PS_INEXEC, PS_SUGID, PS_SUGIDEXEC, Proc};
 use crate::sys::signal::SIGABRT;
 use crate::sys::syslimits::PATH_MAX;
 use crate::sys::time::Timespec;
@@ -167,6 +176,7 @@ fn copyargs(_pack: &ExecPackage<'_>, arginfo: &mut PsStrings, stack: usize) -> R
 /// the (empty) arguments and `ps_strings`, names the process `name` and sets the
 /// registers. `Err(EJUSTRETURN)` is success.
 pub fn exec_image(p: &Proc, name: &[u8], image: &[u8]) -> Result<(), Errno> {
+    let mut cred = p.ucred();
     let pr = p.process();
 
     // get other threads to stop (single_thread_set SINGLE_UNWIND|SINGLE_DEEP): one thread
@@ -282,9 +292,9 @@ pub fn exec_image(p: &Proc, name: &[u8], image: &[u8]) -> Result<(), Errno> {
 
     // the pin tables (ps_pin, ps_libcpin): M7.
 
-    // stopprofclock, fdprepforexec, execsigs, TCB_SET, the kbind bits and the signal
-    // cookie: M6-c.
-    let _ = unported!("exec: fdprepforexec/execsigs/TCB_SET (M6-c)");
+    // stopprofclock, fdprepforexec, execsigs, the kbind bits and the signal cookie: M6-c.
+    let _ = unported!("exec: fdprepforexec/execsigs (M6-c)");
+    tcb_set(p, 0); // reset the TCB address
 
     // set command name & other accounting info
     pr.set_comm(name);
@@ -294,11 +304,48 @@ pub fn exec_image(p: &Proc, name: &[u8], image: &[u8]) -> Result<(), Errno> {
 
     // ps_iflags (PSI_NOBTCFI, PSI_PROFILE, PSI_WXNEEDED): with the flags (M6-c).
 
-    // If process does execve() while it has a mismatched real, effective, or saved uid/gid,
-    // we set PS_SUGIDEXEC: no credentials yet (kern_prot.c, M6-c).
-
     pr.ps_flags.fetch_or(PS_EXEC, Ordering::Relaxed);
     // PS_PPWAIT wakeups (vfork): M6-c.
+
+    // If process does execve() while it has a mismatched real, effective, or saved uid/gid,
+    // we set PS_SUGIDEXEC.
+    if cred.cr_uid.get() != cred.cr_ruid.get()
+        || cred.cr_uid.get() != cred.cr_svuid.get()
+        || cred.cr_gid.get() != cred.cr_rgid.get()
+        || cred.cr_gid.get() != cred.cr_svgid.get()
+    {
+        pr.ps_flags.fetch_or(PS_SUGIDEXEC, Ordering::Relaxed);
+    } else {
+        pr.ps_flags.fetch_and(!PS_SUGIDEXEC, Ordering::Relaxed);
+    }
+
+    // PS_EXECPLEDGE / ps_pledge and unveil_destroy: with pledge(2) and unveil(2).
+
+    // deal with set[ug]id. An image has no vnode attributes, so no VSUID/VSGID bits and no
+    // proc_cansugid: the C's else branch.
+    pr.ps_flags.fetch_and(!PS_SUGID, Ordering::Relaxed);
+
+    // Reset the saved ugids and update the process's copy of the creds if the creds have
+    // been changed
+    if cred.cr_uid.get() != cred.cr_svuid.get() || cred.cr_gid.get() != cred.cr_svgid.get() {
+        // make sure we have unshared ucreds
+        cred = crcopy(cred);
+        p.p_ucred.set(cred);
+        cred.cr_svuid.set(cred.cr_uid.get());
+        cred.cr_svgid.set(cred.cr_gid.get());
+    }
+
+    if !ptr::eq(pr.ps_ucred.get(), cred) {
+        let ocred = pr.ucred();
+        crhold(cred);
+        pr.ps_ucred.set(cred);
+        crfree(ocred);
+    }
+
+    if pr.ps_flags.load(Ordering::Relaxed) & PS_SUGIDEXEC != 0 {
+        // cancel_all_itimers(): kern_time.c's interval timers (M6-c).
+        let _ = unported!("exec: cancel_all_itimers (kern_time.c)");
+    }
 
     // reset CPU time usage for the thread, but not the process
     p.p_tu.tu_runtime.set(Timespec::new(0, 0));
