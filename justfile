@@ -66,9 +66,10 @@ run-arm64: image-arm64
 # All of those boot without a ramdisk (`--ramdisk none`, so the kernel says
 # `rd: no ramdisk module`, `--expect-ramdisk`) and run the Rust stand-in init, the kernel's
 # self-test. Then `smoke-shell` (M8's exit criterion) boots the ffs ramdisk `just userland`
-# makes: rd(4) reads its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs
-# from it and falls back to single user (there is no /etc/rc), and ksh(1) answers
-# `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial console.
+# makes, booted `-s` (RB_SINGLE; a plain boot goes multi-user, see `smoke-login`): rd(4) reads
+# its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
+# user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
+# console.
 smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
@@ -154,7 +155,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
 smoke-shell: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-shell: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
         --send-after "RETURN for sh:" --send '\n' \
         --send-after "# " --send 'uname -a\n' --send-after "GENERIC#" --send 'uname -sr\n' \
         --send-after "EmiBSD 8.0" --send 'cat /etc/motd\n' \
@@ -163,8 +164,8 @@ smoke-shell: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "Enter pathname of shell or RETURN for sh:" \
         --expect " 8.0 GENERIC#" --expect "amd64" \
         --expect "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1)" \
-        --expect "bin  dev  etc  sbin usr"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --expect "bin  dev  etc  home root sbin tmp  usr  var"
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
         --send-after "RETURN for sh:" --send '\n' \
         --send-after "# " --send 'uname -a\n' --send-after "GENERIC#" --send 'uname -sr\n' \
         --send-after "EmiBSD 8.0" --send 'cat /etc/motd\n' \
@@ -173,7 +174,26 @@ smoke-shell: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "Enter pathname of shell or RETURN for sh:" \
         --expect " 8.0 GENERIC#" --expect "arm64" \
         --expect "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1)" \
-        --expect "bin  dev  etc  sbin usr"
+        --expect "bin  dev  etc  home root sbin tmp  usr  var"
+
+# M8b: a plain boot of the ramdisk goes multi-user: init(8) runs /etc/rc (`rc: multi-user`),
+# then getty(8) on tty00 prints `login:`; the session logs in as root (the test image's
+# password, docs/SETUP.md) and runs `id` and `uname -a`. Not part of `smoke` yet: login(1)
+# needs BSD Auth's socketpair(2) (AF_UNIX) to talk to login_passwd, which the kernel is
+# getting in parallel work.
+smoke-login: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-login: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send 'id\n' --send-after "uid=0(root)" --send 'uname -a\n' \
+        --expect "rc: multi-user" --expect "EmiBSD/amd64 (Amnesiac) (tty00)" \
+        --expect "uid=0(root)" --expect " 8.0 GENERIC#" --expect "amd64"
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send 'id\n' --send-after "uid=0(root)" --send 'uname -a\n' \
+        --expect "rc: multi-user" --expect "EmiBSD/arm64 (Amnesiac) (tty00)" \
+        --expect "uid=0(root)" --expect " 8.0 GENERIC#" --expect "arm64"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

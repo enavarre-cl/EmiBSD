@@ -177,7 +177,8 @@ The userland is OpenBSD's own C, cross-compiled unmodified (the user's M8 decisi
 (`FILES`, `DIRS`, `LFILES`/`MFILES` links, the kernel headers of `LDIRS`, `<machine/*>`, and of
 the `RDIRS` only `lib/libutil`'s headers and `lib/librpcsvc`'s `rpcgen` output, which libc's YP
 code includes); `lib/csu`; `libc.a` (988 objects on amd64, 989 on arm64) and `libutil.a`; and
-`sbin/init`, `bin/ksh`, `bin/cat`, `bin/echo`, `bin/ls`, `usr.bin/uname` as static PIE executables, the form
+`sbin/init`, `bin/ksh`, `bin/cat`, `bin/echo`, `bin/ls`, `usr.bin/uname`, `sbin/mount`,
+`sbin/mount_ffs`, `libexec/getty`, `usr.bin/login`, `libexec/login_passwd` and a few more as static PIE executables, the form
 OpenBSD's `cc -static` gives `/bin` and `/sbin` (`rcrt0.o` relocates the program itself; no
 `PT_INTERP`).
 
@@ -197,9 +198,14 @@ IBT (`-fcf-protection=branch`) on amd64, BTI and return-address signing on arm64
 Workarounds, each printed by the build (flags only; no source is edited):
 
 - `-fret-clean` (amd64 libc) is an OpenBSD-local clang option Apple clang rejects; it is dropped.
-- `rpcgen` is built for the Mac with `-D'pledge(p,e)=0'` (macOS has no `pledge(2)`).
-- `usr.bin/uname` is linked `-static` (its Makefile is dynamic, as `/usr/bin` is on OpenBSD;
-  there is no `ld.so` yet), as the install media's crunched programs are.
+- `rpcgen`, `makefs` and `pwd_mkdb` are built for the Mac with `-D'pledge(p,e)=0'` (macOS has
+  no `pledge(2)`).
+- `usr.bin/uname`, `usr.bin/id`, `usr.bin/login`, `libexec/getty` and `libexec/login_passwd`
+  are linked `-static` (their Makefiles are dynamic, as `/usr/bin` and `/usr/libexec` are on
+  OpenBSD; there is no `ld.so` yet), as the install media's crunched programs are.
+- A program whose Makefile sets `BINOWN`, `BINGRP` or `BINMODE` (`login_passwd`: root:auth,
+  setuid 4555, in `/usr/libexec/auth`, where `lib/libc/gen/auth_subr.c`'s `_PATH_AUTHPROG`
+  looks for BSD Auth styles) gets them in the image (below).
 - `ksh` is built like OpenBSD's install-media ksh: `-DSMALL`, no `-lcurses`, because
   `libcurses` (ncurses, with host-built generators and `share/termtypes`) is not built yet.
 - macOS file systems ignore case: libc's `_exit.o` stub and `stdlib/_Exit.o` are built in
@@ -225,7 +231,26 @@ clone): one track of one cylinder spanning the image, partition `a` FFS at offse
 4096/512 blocks/fragments. makefs's own `rdroot=1` label is not used: it leaves `d_nsectors`
 0, which `checkdisklabel` rejects. The result is FFS1 in `a` and the label in sector 1; the
 size is twice the contents in whole MiB (at least 2 MiB), the timestamps fixed (`-T`).
-Its tree is `root/` plus `/etc/motd` and `/dev/console`, `/dev/tty` and `/dev/null`.
+Its tree is `root/` plus `/etc`, `/dev` and the directories below.
+
+`/etc` is our own minimal set (OpenBSD's `etc/` is not in the clone), text in `ramdisk.rs`:
+`motd`, `shells`, `fstab` (`/dev/rd0a / ffs rw 1 1`, which `mount -uw /` needs), `ttys` (a
+`getty std.9600` on `tty00`, `console` off), `gettytab`, `login.conf` (a `default` class with
+`auth=passwd`, a `daemon` class), `group`, `master.passwd` (root, daemon, nobody; only root
+has a password, `emibsd`, docs/SETUP.md) and `rc`, a minimal script that runs `mount -uw /`,
+creates `utmp`, `wtmp`, `lastlog` and `failedlogin` and prints `rc: multi-user`. `pwd.db`,
+`spwd.db` and `passwd` are made by OpenBSD's own pwd_mkdb(8) (`-p -d <staging>/etc`), built
+for the Mac like makefs from `usr.sbin/pwd_mkdb` (in the clone since 2026-10-03), over OpenBSD's
+own db(3) (`lib/libc/db`, hash and btree) and `pw_scan` (`lib/libutil/passwd.c`), not macOS's
+`dbopen`, so the databases have OpenBSD's format by construction. The hash is OpenBSD's
+`bcrypt.c` with `blowfish.c`, in a small helper that replaces `arc4random_buf` with a fixed
+salt before including the unmodified source, so the image is reproducible. The directories are
+`/home`, `/root` (0700), `/tmp` and `/var/tmp` (1777), `/var/{log,mail,run}`. `/dev` has
+`console`, `tty`, `mem`, `kmem`, `null`, `zero`, `klog`, `tty00` (the console on both
+architectures: `com0` on amd64, and on arm64 `pluart0` takes `com`'s slot, major 8, in
+`pluartcnattach`), `rd0{a,b,c}` (block 17), `rrd0{a,b,c}` (47), `fd/0..63` and
+`stdin`/`stdout`/`stderr`; the majors and minors, with their `conf.c` lines, are in
+`DEVICES`'s comment.
 
 makefs is written for OpenBSD only; the Mac build takes host shims, all in
 `tools/xtask/src/userland/ramdisk.rs` and none in the sources: a force-included header
@@ -236,7 +261,16 @@ renamed), a `sys/endian.h` over `<libkern/OSByteOrder.h>`, `scan_scaled` from
 `lib/libutil/fmt_scaled.c`, `cgetent` pointed at `$EMIBSD_DISKTAB`, and an `lstat` wrapper for device nodes: macOS lets only root
 `mknod` and OpenBSD's makefs has no mtree spec, so a staging file holding one
 `emibsd-makefs-device c <major> <minor> <mode>` line is reported to makefs as that device (with
-OpenBSD's `makedev()` encoding).
+OpenBSD's `makedev()` encoding). The same wrapper makes every file root:wheel and applies a
+table (`$EMIBSD_OWNERS`, `mode uid gid path`; paths relative to `$EMIBSD_STAGING`) for the
+exceptions (`login_passwd` setuid, `spwd.db` root:_shadow, `master.passwd` 0600, `/tmp`
+sticky, `/dev` modes); makefs would otherwise take owner and group from the host files, the
+building user's. `pwd_mkdb`'s shims (`passwd.rs`) are likewise a force-included header
+(`__BSD_VISIBLE`, OpenBSD's `<pwd.h>` before macOS's, `__dead`, libc's `DEF_WEAK`/`PROTO_*`
+macros as nothing, `explicit_bzero`, a check that the host is little-endian as the db(3) files
+are made in host order), OpenBSD's `<pwd.h>`, `<util.h>`, `<mpool.h>` and `hidden/db.h` from the
+clone in a directory searched first, and a `getgrnam("_shadow")` that answers with the building
+user's group (macOS has no such group, and `pwd_mkdb` insists on one).
 
 ## Deviations from OpenBSD (deliberate)
 

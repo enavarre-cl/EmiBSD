@@ -63,8 +63,10 @@ arch-specific code, set `rust-analyzer.cargo.target` to one of the bare targets 
 
 `just userland` (`cargo xtask userland --arch amd64|arm64`) cross-compiles OpenBSD's own C,
 unmodified, from `reference/openbsd-src`: `/usr/include`, `lib/csu`, `libc.a`, `libutil.a`,
-`init(8)`, `ksh(1)`, `cat(1)`, `echo(1)`, `ls(1)` and `uname(1)`, and the ffs ramdisk image `ramdisk.ffs` (made by
-OpenBSD's makefs(8), built for the Mac with the same clang), into `target/userland/<arch>/`. It is not part of
+`init(8)`, `ksh(1)`, `cat(1)`, `echo(1)`, `ls(1)`, `uname(1)`, `mount(8)`, `getty(8)`, `login(1)` and
+`login_passwd(8)` among others, and the ffs ramdisk image `ramdisk.ffs` (made by
+OpenBSD's makefs(8) and pwd_mkdb(8), built for the Mac with the same clang), into
+`target/userland/<arch>/`. It is not part of
 `just ci`. The user approved these tools on 2026-10-03; nothing else is installed for it:
 
 | Tool | Default | Override | Use |
@@ -85,9 +87,21 @@ else `reference/openbsd-src`, else, from a git worktree, the main checkout's
 
 Output: `sysroot/usr/{include,lib}` (what OpenBSD installs in `/usr/include` and `/usr/lib`),
 `obj/` (objects, per source directory), `root/{bin,sbin}` (the executables, stripped, with
-ksh's `rksh` and `sh` links), `host/` (`rpcgen`) and `licences.txt` (the licence family of
+ksh's `rksh` and `sh` links, `/usr/libexec/auth/login_passwd`), `host/` (`rpcgen`, `makefs`,
+`pwd_mkdb`, `emibsd-bcrypt`) and `licences.txt` (the licence family of
 every OpenBSD file compiled or included). The build is incremental (`.d` files and the
 recorded command line of every object).
+
+### The test image's login
+
+The ramdisk is a test image, not a secure system: root's password is **`emibsd`**, and the
+`/etc/passwd` family is in the repository's sources (`tools/xtask/src/userland/ramdisk.rs`),
+so it is public. The password is hashed with OpenBSD's own `bcrypt.c` (`$2b$`, 8 rounds, what
+`encrypt(1)` gives by default) and a **fixed salt** (`EmiBSD-test-salt`,
+`tools/xtask/src/userland/passwd.rs`) so that `just userland` makes the same hash every time.
+`pwd.db` and `spwd.db` are made by OpenBSD's own `pwd_mkdb -p`, built for the Mac, over OpenBSD's own
+`lib/libc/db`. A plain boot of the image goes multi-user (`/etc/rc`, then `getty` on `tty00` and
+`login:`); `-s` on the kernel command line goes single-user (`just smoke-shell`).
 
 `libcompiler_rt` (`gnu/lib/libcompiler_rt` over `gnu/llvm/compiler-rt`, Apache-2.0 WITH
 LLVM-exception, in the sparse clone since 2026-10-03) is built and linked on both archs: arm64's

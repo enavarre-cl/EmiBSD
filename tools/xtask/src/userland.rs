@@ -14,10 +14,14 @@
 //!    Makefiles with `bsdmake.rs`; the system-call stubs are made by the rules of
 //!    `lib/libc/sys/Makefile.inc` (`GENERATE.*` piped into `FINISH.*`), run through `/bin/sh`
 //!    exactly as make would; generated C (the `lib/libc/hash` helpers) likewise.
-//! 4. `sbin/init`, `bin/ksh`, `bin/cat`, `bin/echo`, `bin/ls` and `usr.bin/uname`, linked as static PIE executables (what
-//!    OpenBSD's `cc -static` makes for `/bin` and `/sbin`), installed stripped into `root/`.
-//! 5. `ramdisk.ffs`: `root/` plus `/dev`, made into an ffs image by OpenBSD's makefs(8) built
-//!    for this machine (`ramdisk.rs`).
+//! 4. The programs of `PROGRAMS` (`sbin/init`, `bin/ksh`, `sbin/mount`, `libexec/getty`,
+//!    `usr.bin/login`, `libexec/login_passwd`, ...), linked as static PIE executables (what
+//!    OpenBSD's `cc -static` makes for `/bin` and `/sbin`), installed stripped into `root/`
+//!    where their Makefile's `BINDIR` says, with the `BINOWN`/`BINGRP`/`BINMODE` it sets.
+//! 5. `ramdisk.ffs`: `root/` plus `/etc`, `/dev` and the directories of a multi-user system,
+//!    made into an ffs image by OpenBSD's makefs(8) built for this machine (`ramdisk.rs`),
+//!    with `pwd.db` and `spwd.db` made by OpenBSD's pwd_mkdb(8), also built for this machine
+//!    (`passwd.rs`).
 //!
 //! `share/mk` is not in the reference clone. `sys.mk` and `bsd.own.mk` are stood in for by
 //! the predefined variables and `BSD_OWN_MK` below; `bsd.prog.mk`/`bsd.lib.mk` by
@@ -95,6 +99,20 @@ struct Variant {
     why: &'static str,
 }
 
+impl Variant {
+    /// A program of a dynamic directory (`/usr/bin`, `/usr/libexec`) linked `-static`.
+    const fn statically(dir: &'static str) -> Self {
+        Variant {
+            dir,
+            add_cflags: "",
+            drop_ldadd: &[],
+            static_link: true,
+            why: "linked -static, as the install media's crunched programs are: /usr/bin and \
+                  /usr/libexec are dynamic on OpenBSD and ld.so is not built yet",
+        }
+    }
+}
+
 const VARIANTS: &[Variant] = &[
     Variant {
         dir: "bin/ksh",
@@ -104,22 +122,11 @@ const VARIANTS: &[Variant] = &[
         why: "built like OpenBSD's install-media ksh (-DSMALL, no -lcurses): libcurses \
               (ncurses, with host-built generators and share/termtypes) is not built yet",
     },
-    Variant {
-        dir: "usr.bin/id",
-        add_cflags: "",
-        drop_ldadd: &[],
-        static_link: true,
-        why: "linked -static, as the install media's crunched programs are: /usr/bin is \
-              dynamic on OpenBSD and ld.so is not built yet",
-    },
-    Variant {
-        dir: "usr.bin/uname",
-        add_cflags: "",
-        drop_ldadd: &[],
-        static_link: true,
-        why: "linked -static, as the install media's crunched programs are: /usr/bin is \
-              dynamic on OpenBSD and ld.so is not built yet",
-    },
+    Variant::statically("usr.bin/id"),
+    Variant::statically("usr.bin/uname"),
+    Variant::statically("libexec/getty"),
+    Variant::statically("usr.bin/login"),
+    Variant::statically("libexec/login_passwd"),
 ];
 
 /// OpenBSD's compiler runtime (the `-lcompiler_rt` its clang driver adds to every link): a
@@ -141,13 +148,18 @@ const PROGRAMS: &[&str] = &[
     "bin/pwd",
     "usr.bin/id",
     "usr.bin/uname",
+    "sbin/mount",
+    "sbin/mount_ffs",
+    "libexec/getty",
+    "usr.bin/login",
+    "libexec/login_passwd",
 ];
 
 /// Flags added to host tools (built for macOS with the same clang) and why.
 const HOST_CFLAGS: &[(&str, &str)] = &[(
     "'-Dpledge(p,e)=0'",
-    "usr.bin/rpcgen calls pledge(2), which macOS does not have; the call only restricts \
-     the tool itself",
+    "rpcgen, makefs and pwd_mkdb call pledge(2), which macOS does not have; the call only \
+     restricts the tool itself",
 )];
 
 /// One architecture's names, as OpenBSD's make sees them.
@@ -238,6 +250,9 @@ struct Ctx<'a> {
     lower: Mutex<HashMap<String, PathBuf>>,
     /// Every input file a compile read (sources and headers), for the licence report.
     inputs: Mutex<BTreeSet<PathBuf>>,
+    /// Owner, group and mode of installed files whose Makefile sets `BINOWN`, `BINGRP` or
+    /// `BINMODE` (the ramdisk image applies them, `ramdisk.rs`).
+    owners: Mutex<Vec<ramdisk::Attr>>,
 }
 
 /// `cargo xtask userland --arch A`.
@@ -259,6 +274,7 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
         installed: Mutex::new(HashMap::new()),
         lower: Mutex::new(HashMap::new()),
         inputs: Mutex::new(BTreeSet::new()),
+        owners: Mutex::new(Vec::new()),
         out,
     };
     println!(
@@ -1156,6 +1172,34 @@ fn build_prog(ctx: &Ctx<'_>, dir: &str) -> Result<Linked> {
                 .map_err(|e| format!("ln {from} {}: {e}", to.display()))?;
         }
     }
+    // `install -o ${BINOWN} -g ${BINGRP} -m ${BINMODE}`, when the Makefile asks for it
+    // (`login_passwd`: root:auth 4555). The defaults are those of `bsd.own.mk`.
+    let attrs = ["BINOWN", "BINGRP", "BINMODE"].map(|v| mk.var(v));
+    if let [Ok(owner), Ok(group), Ok(mode)] = &attrs
+        && [owner, group, mode].iter().any(|v| !v.is_empty())
+    {
+        let attr = ramdisk::Attr::installed(
+            &format!("/{}/{prog}", bindir.trim_matches('/')),
+            if owner.is_empty() { "root" } else { owner },
+            if group.is_empty() { "bin" } else { group },
+            if mode.is_empty() { "555" } else { mode },
+        )?;
+        ctx.owners
+            .lock()
+            .map_err(|_| "lock poisoned")?
+            .push(attr.clone());
+        for pair in links.chunks(2) {
+            if let [_, to] = pair {
+                ctx.owners
+                    .lock()
+                    .map_err(|_| "lock poisoned")?
+                    .push(ramdisk::Attr {
+                        path: to.clone(),
+                        ..attr.clone()
+                    });
+            }
+        }
+    }
     println!("  {dir}: {} objects ({ran} rebuilt), linked", jobs.len());
     Ok(Linked::Yes(prog, exe, installed))
 }
@@ -1431,6 +1475,7 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
     Ok(())
 }
 
+mod passwd;
 mod ramdisk;
 
 #[cfg(test)]

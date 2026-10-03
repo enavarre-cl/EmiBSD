@@ -26,7 +26,17 @@
 //! - `lstat` wrapped (`COMPAT_C`) so that device nodes can be made without root: macOS
 //!   lets only root `mknod`, and OpenBSD's makefs has no mtree spec. A regular file in the
 //!   staging tree that holds exactly one `DEVICE_MAGIC` line is reported as that device,
-//!   with OpenBSD's `makedev()` encoding of `st_rdev`.
+//!   with OpenBSD's `makedev()` encoding of `st_rdev`;
+//! - the same wrapper gives every file an owner, a group and a mode from a table
+//!   (`$EMIBSD_OWNERS`, one `mode uid gid path` line per entry; paths relative to
+//!   `$EMIBSD_STAGING`), root:wheel where the table is silent: makefs takes them from the
+//!   host's files, which are the building user's, and `login_passwd` must be root's setuid
+//!   program, `spwd.db` root:_shadow, `/tmp` sticky.
+//!
+//! The ramdisk's `/etc` (`etc_files`) is our own minimal set, OpenBSD's `etc/` not being in
+//! the clone: enough for `init(8)` to run `/etc/rc` and a `getty(8)` on the console, and for
+//! `login(1)` to check a password. `/etc/pwd.db` and `/etc/spwd.db` are made by OpenBSD's
+//! own pwd_mkdb(8), with the root password's bcrypt hash (`passwd.rs`).
 
 use super::*;
 
@@ -37,15 +47,145 @@ const MAKEFS_DIR: &str = "usr.sbin/makefs";
 const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 
 /// The device nodes the root needs before anything can run MAKEDEV: what `init(8)` opens
-/// (`/dev/console`), what a shell expects (`/dev/tty`, `/dev/null`). Majors and minors are
-/// those of OpenBSD's `MAKEDEV` and of `cdevsw[]` in `sys/arch/{amd64,arm64}/{amd64,arm64}/conf.c`,
-/// the same on both architectures: `cn` 0, `ctty` 1, `mm` 2 (`null` is its minor 2).
-/// (name, kind, major, minor, mode)
-const DEVICES: &[(&str, char, u32, u32, u32)] = &[
-    ("console", 'c', 0, 0, 0o600),
-    ("tty", 'c', 1, 0, 0o666),
-    ("null", 'c', 2, 2, 0o666),
+/// (`/dev/console`), what a shell expects (`/dev/tty`, `/dev/null`), what `getty(8)`,
+/// `login(1)` and `mount(8)` open (the console's tty, `rd0a`, `klog` for `syslog(3)`).
+/// Majors and minors are those of OpenBSD's `MAKEDEV` and of `cdevsw[]`/`bdevsw[]` in
+/// `sys/arch/{amd64,arm64}/{amd64,arm64}/conf.c`, and they are the same on both
+/// architectures, so the table is not per architecture:
+///
+/// - character (`cdevsw[]`, line numbers amd64 / arm64): `cn` 0 (177 / 127), `ctty` 1
+///   (178 / 128), `mm` 2 (179 / 129; minors: `mem` 0, `kmem` 1, `null` 2, `zero` 12),
+///   `log` 7 (184 / 134: `/dev/klog`), `com` 8 (185 / 135: the serial console's tty, minor
+///   = unit) and `rd` 47 (225 / 175: the raw disk). The amd64 console is `com0`, `tty00`.
+///   On arm64 `pluartcnattach` finds the major of `comopen` and puts `pluartdev` in its slot
+///   (`sys/dev/ic/pluart.c:856-863`, "KLUDGE"), so `pluart0` is major 8, minor 0 too:
+///   `tty00` on both;
+/// - block (`bdevsw[]`): `rd` 17 (72 / 70), minor `unit * 16 + partition` (`DISKMINOR`,
+///   `MAXPARTITIONS` 16): `rd0a` 0, `rd0b` 1, `rd0c` 2;
+/// - `fd/N` is `filedesc` 22 (200 / 150), minor N, for N in `0..64` like MAKEDEV;
+///   `stdin`, `stdout` and `stderr` link to `fd/0..2` (`DEV_LINKS`).
+///
+/// `/dev/random` (major 45) is left out: the kernel has no `random` driver yet.
+/// (name, kind, major, minor, mode, group)
+const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
+    ("console", 'c', 0, 0, 0o600, "wheel"),
+    ("tty", 'c', 1, 0, 0o666, "wheel"),
+    ("mem", 'c', 2, 0, 0o640, "kmem"),
+    ("kmem", 'c', 2, 1, 0o640, "kmem"),
+    ("null", 'c', 2, 2, 0o666, "wheel"),
+    ("zero", 'c', 2, 12, 0o666, "wheel"),
+    ("klog", 'c', 7, 0, 0o600, "wheel"),
+    ("tty00", 'c', 8, 0, 0o600, "wheel"),
+    ("rd0a", 'b', 17, 0, 0o640, "operator"),
+    ("rd0b", 'b', 17, 1, 0o640, "operator"),
+    ("rd0c", 'b', 17, 2, 0o640, "operator"),
+    ("rrd0a", 'c', 47, 0, 0o640, "operator"),
+    ("rrd0b", 'c', 47, 1, 0o640, "operator"),
+    ("rrd0c", 'c', 47, 2, 0o640, "operator"),
 ];
+
+/// `/dev/fd/N` exists for N below this (`MAKEDEV fd`).
+const FD_NODES: u32 = 64;
+
+/// `/dev/stdin` and friends, as `MAKEDEV` links them: (name, target).
+const DEV_LINKS: &[(&str, &str)] = &[("stdin", "fd/0"), ("stdout", "fd/1"), ("stderr", "fd/2")];
+
+/// A user of `/etc/master.passwd`: (name, uid, gid, class, gecos, home, shell). OpenBSD's
+/// `root`, `daemon` and `nobody` (the lines of its stock `master.passwd`), no more.
+const USERS: &[(&str, u32, u32, &str, &str, &str, &str)] = &[
+    ("root", 0, 0, "daemon", "Charlie &", "/root", "/bin/ksh"),
+    (
+        "daemon",
+        1,
+        1,
+        "daemon",
+        "The devil himself",
+        "/root",
+        "/sbin/nologin",
+    ),
+    (
+        "nobody",
+        32767,
+        32767,
+        "daemon",
+        "Unprivileged user",
+        "/nonexistent",
+        "/sbin/nologin",
+    ),
+];
+
+/// A group of `/etc/group`: (name, gid, members). The gids OpenBSD's stock `group` gives
+/// (`auth` 11 for `login_passwd`, `utmp` 45, `tty` 4, ...); `_shadow` (the group of
+/// `spwd.db`, which `pwd_mkdb` insists on) is ours.
+const GROUPS: &[(&str, u32, &str)] = &[
+    ("wheel", 0, "root"),
+    ("daemon", 1, "root"),
+    ("kmem", 2, "root"),
+    ("sys", 3, "root"),
+    ("tty", 4, ""),
+    ("operator", 5, "root"),
+    ("bin", 7, ""),
+    ("auth", 11, ""),
+    ("_shadow", 14, ""),
+    ("utmp", 45, ""),
+    ("nogroup", 32766, ""),
+    ("nobody", 32767, ""),
+];
+
+/// The directories the multi-user system needs, with their modes: (path, mode).
+const DIRS: &[(&str, u32)] = &[
+    ("/home", 0o755),
+    ("/root", 0o700),
+    ("/tmp", 0o1777),
+    ("/var", 0o755),
+    ("/var/log", 0o755),
+    ("/var/mail", 0o755),
+    ("/var/run", 0o755),
+    ("/var/tmp", 0o1777),
+];
+
+/// The id of user `name`.
+fn user_id(name: &str) -> Option<u32> {
+    USERS.iter().find(|u| u.0 == name).map(|u| u.1)
+}
+
+/// The id of group `name`.
+fn group_id(name: &str) -> Option<u32> {
+    GROUPS.iter().find(|g| g.0 == name).map(|g| g.1)
+}
+
+/// Owner, group and mode of one path of the image (the makefs shim applies them).
+#[derive(Clone)]
+pub(super) struct Attr {
+    /// Absolute path inside the image.
+    pub(super) path: String,
+    pub(super) uid: u32,
+    pub(super) gid: u32,
+    pub(super) mode: u32,
+}
+
+impl Attr {
+    /// `install -o owner -g group -m mode`: the names are users and groups of this image,
+    /// the mode octal.
+    pub(super) fn installed(path: &str, owner: &str, group: &str, mode: &str) -> Result<Attr> {
+        Ok(Attr {
+            path: path.to_string(),
+            uid: user_id(owner).ok_or_else(|| format!("{path}: unknown owner `{owner}`"))?,
+            gid: group_id(group).ok_or_else(|| format!("{path}: unknown group `{group}`"))?,
+            mode: u32::from_str_radix(mode, 8)
+                .map_err(|e| format!("{path}: bad mode `{mode}`: {e}"))?,
+        })
+    }
+
+    fn root(path: &str, gid: u32, mode: u32) -> Attr {
+        Attr {
+            path: path.to_string(),
+            uid: 0,
+            gid,
+            mode,
+        }
+    }
+}
 
 /// makefs's ffs options: those of OpenBSD's `distrib/` ramdisks.
 const FS_OPTIONS: &str = "disklabel=rdroot,minfree=0,density=4096";
@@ -63,12 +203,147 @@ fn disktab_entry(sectors: u64) -> String {
     )
 }
 
-/// The files the ramdisk's `/etc` holds: `motd`, the text `cat /etc/motd` shows in the smoke
-/// test. Written here (OpenBSD's `etc/` is not in the reference clone).
-const ETC_FILES: &[(&str, &str)] = &[(
-    "motd",
-    "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1) on an ffs ramdisk root.\n",
-)];
+/// The files the ramdisk's `/etc` holds that are plain text: (name, mode, text). Written
+/// here (OpenBSD's `etc/` is not in the reference clone); `motd` is the text `cat /etc/motd`
+/// shows in the smoke test. `group` and `master.passwd` come from `GROUPS` and `USERS`
+/// (`etc_files`), `passwd`, `pwd.db` and `spwd.db` from pwd_mkdb(8).
+const ETC_FILES: &[(&str, u32, &str)] = &[
+    (
+        "motd",
+        0o644,
+        "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1) on an ffs ramdisk root.\n",
+    ),
+    ("shells", 0o644, "/bin/sh\n/bin/ksh\n"),
+    ("fstab", 0o644, FSTAB),
+    ("ttys", 0o644, TTYS),
+    ("gettytab", 0o644, GETTYTAB),
+    ("login.conf", 0o644, LOGIN_CONF),
+    ("rc", 0o644, RC),
+];
+
+/// `fstab(5)`: `mount -uw /` finds the root's entry here (`mount.c` looks the root up by its
+/// mount point because the kernel names it `root_device`).
+const FSTAB: &str = "/dev/rd0a / ffs rw 1 1\n";
+
+/// `ttys(5)`: `init(8)` runs `getty` on the line the kernel's console is, `tty00` on both
+/// architectures (`DEVICES`), and not on `/dev/console` itself, which is the same device.
+const TTYS: &str = "\
+console\t\"/usr/libexec/getty std.9600\"\tvt220\toff secure
+tty00\t\"/usr/libexec/getty std.9600\"\tvt220\ton secure
+";
+
+/// `gettytab(5)`: a `default` entry (8-bit, no parity, the banner) and `std.9600`, the entry
+/// `ttys` names. The banner's `%s/%m (%h) (%t)` is OpenBSD's: system, machine, host, tty.
+const GETTYTAB: &str = "\
+# gettytab(5) of the EmiBSD ramdisk (a minimal version of OpenBSD's).
+default:\\
+\t:np:im=\\r\\n%s/%m (%h) (%t)\\r\\n\\r\\n:sp#1200:
+
+std.9600|9600-baud:\\
+\t:sp#9600:
+";
+
+/// `login.conf(5)`: the default class, which authenticates with `login_passwd`
+/// (`/usr/libexec/auth/login_passwd`) and gives a login the usual `PATH` and `umask`; and the
+/// `daemon` class `init(8)` runs `/etc/rc` in and root and the system users belong to.
+const LOGIN_CONF: &str = "\
+# login.conf(5) of the EmiBSD ramdisk (a minimal version of OpenBSD's).
+default:\\
+\t:path=/usr/bin /bin /usr/sbin /sbin:\\
+\t:umask=022:\\
+\t:auth=passwd:\\
+\t:localcipher=blowfish,8:\\
+\t:welcome=/etc/motd:
+
+daemon:\\
+\t:ignorenologin:\\
+\t:tc=default:
+";
+
+/// `/etc/rc`, run by `init(8)` as `sh /etc/rc autoboot`: ours, minimal (OpenBSD's full `rc`
+/// belongs to later milestones). The root file system comes up read-only from the ramdisk;
+/// the files `login(1)` writes must exist (`utmp`, `wtmp`, `lastlog`, `failedlogin`).
+const RC: &str = "\
+# /etc/rc of the EmiBSD ramdisk: a minimal version, OpenBSD's full rc comes later.
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+umask 022
+
+mount -uw / || echo 'rc: mount -uw / failed; the root stays read-only'
+
+for f in /var/run/utmp /var/log/wtmp /var/log/lastlog /var/log/failedlogin; do
+\t[ -f $f ] || : > $f
+done
+
+echo 'rc: multi-user'
+exit 0
+";
+
+/// The file `name`'s text of `/etc`, for every file of the ramdisk's `/etc` that is not made
+/// by pwd_mkdb(8): (name, mode, text). `root_hash` is the root password's hash.
+fn etc_files(root_hash: &str) -> Vec<(String, u32, String)> {
+    let mut files: Vec<(String, u32, String)> = ETC_FILES
+        .iter()
+        .map(|(n, m, t)| (n.to_string(), *m, t.to_string()))
+        .collect();
+    files.push(("group".into(), 0o644, group_file()));
+    files.push(("master.passwd".into(), 0o600, master_passwd(root_hash)));
+    files
+}
+
+/// `/etc/group` from `GROUPS`.
+fn group_file() -> String {
+    GROUPS
+        .iter()
+        .map(|(name, gid, members)| format!("{name}:*:{gid}:{members}\n"))
+        .collect()
+}
+
+/// `/etc/master.passwd` from `USERS`: `name:passwd:uid:gid:class:change:expire:gecos:home:
+/// shell`; only root has a password, the others cannot log in (`*`).
+fn master_passwd(root_hash: &str) -> String {
+    USERS
+        .iter()
+        .map(|(name, uid, gid, class, gecos, home, shell)| {
+            let pw = if *name == "root" { root_hash } else { "*" };
+            format!("{name}:{pw}:{uid}:{gid}:{class}:0:0:{gecos}:{home}:{shell}\n")
+        })
+        .collect()
+}
+
+/// The owner, group and mode of every path of the image that is not a program installed by
+/// a Makefile (those are `installed`): the `/etc` files (those pwd_mkdb(8) makes too), the
+/// directories and the device nodes.
+fn image_attrs(installed: &[Attr]) -> Vec<Attr> {
+    let mut attrs = installed.to_vec();
+    let wheel = 0;
+    for (name, mode, _) in etc_files("") {
+        attrs.push(Attr::root(&format!("/etc/{name}"), wheel, mode));
+    }
+    let shadow = group_id("_shadow").unwrap_or(wheel);
+    attrs.push(Attr::root("/etc/passwd", wheel, 0o644));
+    attrs.push(Attr::root("/etc/pwd.db", wheel, 0o644));
+    attrs.push(Attr::root("/etc/spwd.db", shadow, 0o640));
+    for (path, mode) in DIRS {
+        attrs.push(Attr::root(path, wheel, *mode));
+    }
+    for (name, _, _, _, mode, group) in DEVICES {
+        attrs.push(Attr::root(
+            &format!("/dev/{name}"),
+            group_id(group).unwrap_or(wheel),
+            *mode,
+        ));
+    }
+    attrs
+}
+
+/// The ownership table the makefs shim reads (`$EMIBSD_OWNERS`): `mode uid gid path` lines.
+fn owners_table(attrs: &[Attr]) -> String {
+    attrs
+        .iter()
+        .map(|a| format!("{:o} {} {} {}\n", a.mode, a.uid, a.gid, a.path))
+        .collect()
+}
 
 /// A fixed timestamp (`makefs -T`: inode times and generation numbers), 2026-10-02, the date
 /// of the reference pin. The image is not bit-for-bit reproducible: makefs gives the label a
@@ -157,8 +432,8 @@ emibsd_cgetent(char **buf, char **db_array, const char *name)
 #define OPENBSD_MAKEDEV(x, y) \
 	((dev_t)((((x) & 0xff) << 8) | ((y) & 0xff) | (((y) & 0xffff00) << 8)))
 
-int
-emibsd_lstat(const char *path, struct stat *sb)
+static int
+lstat_device(const char *path, struct stat *sb)
 {
 	char kind;
 	unsigned int maj, min, mode;
@@ -185,9 +460,106 @@ emibsd_lstat(const char *path, struct stat *sb)
 	sb->st_blocks = 0;
 	return 0;
 }
+
+/*
+ * Ownership: every file is root:wheel, and the table in $EMIBSD_OWNERS (lines of
+ * "mode uid gid /path") overrides the mode, owner and group of the paths it lists. The
+ * paths makefs gives lstat are $EMIBSD_STAGING/./dir/name; both sides are reduced to their
+ * components, without the "." ones.
+ */
+#define MAXATTR 1024
+#define MAXPATHLEN_ATTR 256
+
+static struct attr {
+	char path[MAXPATHLEN_ATTR];
+	unsigned int mode, uid, gid;
+} attrs[MAXATTR];
+static int nattrs = -1;
+static char staging[MAXPATHLEN_ATTR];
+
+/* `a/./b//c` -> `a/b/c`. */
+static void
+normalise(const char *p, char *out, size_t n)
+{
+	size_t o = 0, l;
+	const char *s;
+
+	while (*p != '\0') {
+		while (*p == '/')
+			p++;
+		s = p;
+		while (*p != '\0' && *p != '/')
+			p++;
+		l = p - s;
+		if (l == 0 || (l == 1 && s[0] == '.'))
+			continue;
+		if (o + l + 2 > n)
+			break;
+		if (o != 0)
+			out[o++] = '/';
+		memcpy(out + o, s, l);
+		o += l;
+	}
+	out[o] = '\0';
+}
+
+static void
+load_attrs(void)
+{
+	const char *file = getenv("EMIBSD_OWNERS"), *root = getenv("EMIBSD_STAGING");
+	char line[2 * MAXPATHLEN_ATTR], path[MAXPATHLEN_ATTR];
+	unsigned int mode, uid, gid;
+	FILE *f;
+
+	nattrs = 0;
+	if (file == NULL || root == NULL)
+		return;
+	normalise(root, staging, sizeof(staging));
+	if ((f = fopen(file, "r")) == NULL)
+		return;
+	while (fgets(line, sizeof(line), f) != NULL && nattrs < MAXATTR) {
+		if (sscanf(line, "%o %u %u %255s", &mode, &uid, &gid, path) != 4)
+			continue;
+		normalise(path, attrs[nattrs].path, MAXPATHLEN_ATTR);
+		attrs[nattrs].mode = mode;
+		attrs[nattrs].uid = uid;
+		attrs[nattrs].gid = gid;
+		nattrs++;
+	}
+	fclose(f);
+}
+
+int
+emibsd_lstat(const char *path, struct stat *sb)
+{
+	char norm[MAXPATHLEN_ATTR];
+	size_t sl;
+	int i;
+
+	if (lstat_device(path, sb) == -1)
+		return -1;
+	sb->st_uid = 0;
+	sb->st_gid = 0;
+	if (nattrs < 0)
+		load_attrs();
+	normalise(path, norm, sizeof(norm));
+	sl = strlen(staging);
+	if (strncmp(norm, staging, sl) != 0 || (norm[sl] != '/' && norm[sl] != '\0'))
+		return 0;
+	for (i = 0; i < nattrs; i++) {
+		if (strcmp(attrs[i].path, norm + sl + (norm[sl] == '/')) != 0)
+			continue;
+		sb->st_mode = (sb->st_mode & S_IFMT) | (attrs[i].mode & 07777);
+		sb->st_uid = attrs[i].uid;
+		sb->st_gid = attrs[i].gid;
+		break;
+	}
+	return 0;
+}
 "#;
 
-/// Builds makefs for this machine, stages `root/` plus `/dev`, and writes `ramdisk.ffs`.
+/// Builds makefs and pwd_mkdb for this machine, stages `root/` plus `/etc`, `/dev` and the
+/// directories, and writes `ramdisk.ffs`.
 pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
     if !ctx.src.join(MAKEFS_DIR).join("Makefile").is_file() {
         println!("  {MAKEFS_DIR}: not in the reference clone; no ramdisk image");
@@ -195,6 +567,8 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
     }
     let makefs =
         build_host_prog_with(ctx, MAKEFS_DIR, |mk, objdir| shim(ctx, mk, objdir))?.join("makefs");
+    let pwd_mkdb = passwd::build_pwd_mkdb(ctx)?;
+    let root_hash = passwd::bcrypt_hash(ctx, passwd::ROOT_PASSWORD)?;
 
     let staging = ctx.out.join("ramdisk-root");
     if staging.exists() {
@@ -203,20 +577,44 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
     copy_tree(&ctx.out.join("root"), &staging, &mut HashMap::new())?;
     let etc = staging.join("etc");
     fs::create_dir_all(&etc).map_err(|e| format!("{}: {e}", etc.display()))?;
-    for (name, text) in ETC_FILES {
+    let files = etc_files(&root_hash);
+    for (name, _, text) in &files {
         let p = etc.join(name);
         fs::write(&p, text).map_err(|e| format!("{}: {e}", p.display()))?;
     }
+    passwd::make_databases(&pwd_mkdb, &etc)?;
+    for (dir, _) in DIRS {
+        let p = staging.join(dir.trim_start_matches('/'));
+        fs::create_dir_all(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+    }
     let dev = staging.join("dev");
-    fs::create_dir_all(&dev).map_err(|e| format!("{}: {e}", dev.display()))?;
-    for (name, kind, major, minor, mode) in DEVICES {
+    fs::create_dir_all(dev.join("fd")).map_err(|e| format!("{}: {e}", dev.display()))?;
+    let device = |name: &str, kind: char, major: u32, minor: u32, mode: u32| -> Result<()> {
         let p = dev.join(name);
         fs::write(
             &p,
             format!("{DEVICE_MAGIC} {kind} {major} {minor} {mode:o}\n"),
         )
-        .map_err(|e| format!("{}: {e}", p.display()))?;
+        .map_err(|e| format!("{}: {e}", p.display()).into())
+    };
+    for (name, kind, major, minor, mode, _) in DEVICES {
+        device(name, *kind, *major, *minor, *mode)?;
     }
+    for n in 0..FD_NODES {
+        device(&format!("fd/{n}"), 'c', 22, n, 0o666)?;
+    }
+    for (name, target) in DEV_LINKS {
+        symlink(target, &dev.join(name))?;
+    }
+
+    // Owners, groups and modes (module docs); the programs' own come from their Makefiles.
+    let installed = ctx.owners.lock().map_err(|_| "lock poisoned")?.clone();
+    let mut attrs = image_attrs(&installed);
+    for n in 0..FD_NODES {
+        attrs.push(Attr::root(&format!("/dev/fd/{n}"), 0, 0o666));
+    }
+    let owners = ctx.out.join("host/owners.txt");
+    write_if_changed(&owners, &owners_table(&attrs))?;
 
     // The size (partition `a` of the disktab entry): twice the contents, in whole MiB, at
     // least 2 MiB (inodes, directories and indirect blocks fit with room to spare).
@@ -229,14 +627,24 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
     run(Command::new(&makefs)
         .args(["-t", "ffs", "-T", &TIMESTAMP.to_string()])
         .env("EMIBSD_DISKTAB", &disktab)
+        .env("EMIBSD_OWNERS", &owners)
+        .env("EMIBSD_STAGING", &staging)
         .args(["-o", FS_OPTIONS])
         .arg(&image)
         .arg(&staging))?;
     let size = fs::metadata(&image).map(|m| m.len()).unwrap_or(0);
     println!(
-        "  ramdisk: {} ({size} bytes; makefs -t ffs -o {FS_OPTIONS}; /etc: motd; /dev: {})",
+        "  ramdisk: {} ({size} bytes; makefs -t ffs -o {FS_OPTIONS}; /etc: {} pwd.db spwd.db passwd; \
+         /dev: {} fd/0..{}; root password `{}`, hash {root_hash})",
         image.display(),
-        DEVICES.iter().map(|d| d.0).collect::<Vec<_>>().join(" ")
+        files
+            .iter()
+            .map(|f| f.0.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+        DEVICES.iter().map(|d| d.0).collect::<Vec<_>>().join(" "),
+        FD_NODES - 1,
+        passwd::ROOT_PASSWORD,
     );
     Ok(())
 }
@@ -325,7 +733,7 @@ fn tree_bytes(dir: &Path) -> Result<u64> {
 }
 
 /// Writes `text` to `path` unless it already holds exactly that (keeps rebuilds incremental).
-fn write_if_changed(path: &Path, text: &str) -> Result<()> {
+pub(super) fn write_if_changed(path: &Path, text: &str) -> Result<()> {
     if fs::read_to_string(path).ok().as_deref() == Some(text) {
         return Ok(());
     }
@@ -357,4 +765,100 @@ fn copy_tree(from: &Path, to: &Path, seen: &mut HashMap<(u64, u64), PathBuf>) ->
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn master_passwd_has_ten_fields_and_a_root_hash() {
+        let text = master_passwd("$2b$08$hash");
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), USERS.len());
+        for l in &lines {
+            assert_eq!(l.split(':').count(), 10, "{l}");
+        }
+        assert!(lines[0].starts_with("root:$2b$08$hash:0:0:daemon:0:0:"));
+        assert!(lines[1].starts_with("daemon:*:1:1:"));
+    }
+
+    #[test]
+    fn every_user_has_a_group_and_every_class_exists() {
+        for (name, _, gid, class, ..) in USERS {
+            assert!(GROUPS.iter().any(|g| g.1 == *gid), "{name}: gid {gid}");
+            assert!(
+                LOGIN_CONF.contains(&format!("\n{class}:\\")),
+                "{name}: login class {class}"
+            );
+        }
+    }
+
+    #[test]
+    fn group_file_is_name_star_gid_members() {
+        let text = group_file();
+        assert!(text.starts_with("wheel:*:0:root\n"));
+        assert!(text.contains("\nauth:*:11:\n"));
+        assert!(text.contains("\nutmp:*:45:\n"));
+        assert_eq!(text.lines().count(), GROUPS.len());
+    }
+
+    #[test]
+    fn ids_are_unique() {
+        for (i, g) in GROUPS.iter().enumerate() {
+            assert!(GROUPS[i + 1..].iter().all(|o| o.0 != g.0 && o.1 != g.1));
+        }
+        for (i, u) in USERS.iter().enumerate() {
+            assert!(USERS[i + 1..].iter().all(|o| o.0 != u.0 && o.1 != u.1));
+        }
+    }
+
+    #[test]
+    fn installed_attrs_resolve_names_and_octal_modes() -> Result<()> {
+        let a = Attr::installed("/usr/libexec/auth/login_passwd", "root", "auth", "4555")?;
+        assert_eq!((a.uid, a.gid, a.mode), (0, 11, 0o4555));
+        assert!(Attr::installed("/x", "nobody-such", "auth", "555").is_err());
+        assert!(Attr::installed("/x", "root", "no-such", "555").is_err());
+        assert!(Attr::installed("/x", "root", "auth", "9").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn image_attrs_cover_the_private_and_sticky_paths() {
+        let attrs = image_attrs(&[]);
+        let find = |p: &str| attrs.iter().find(|a| a.path == p);
+        assert_eq!(find("/etc/master.passwd").map(|a| a.mode), Some(0o600));
+        let spwd = find("/etc/spwd.db");
+        assert_eq!(spwd.map(|a| (a.gid, a.mode)), Some((14, 0o640)));
+        assert_eq!(find("/tmp").map(|a| a.mode), Some(0o1777));
+        assert_eq!(find("/dev/kmem").map(|a| a.gid), Some(2));
+        let mut paths: Vec<&str> = attrs.iter().map(|a| a.path.as_str()).collect();
+        let n = paths.len();
+        paths.sort_unstable();
+        paths.dedup();
+        assert_eq!(paths.len(), n, "a path is listed twice");
+        assert!(owners_table(&attrs).contains("600 0 0 /etc/master.passwd\n"));
+    }
+
+    #[test]
+    fn ttys_run_getty_on_the_console_tty() {
+        assert!(TTYS.contains("tty00\t\"/usr/libexec/getty std.9600\"\tvt220\ton secure"));
+        assert!(
+            DEVICES
+                .iter()
+                .any(|d| d.0 == "tty00" && (d.2, d.3) == (8, 0))
+        );
+        assert!(
+            DEVICES
+                .iter()
+                .any(|d| d.0 == "rd0a" && d.1 == 'b' && (d.2, d.3) == (17, 0))
+        );
+    }
+
+    #[test]
+    fn rc_ends_multi_user() {
+        assert!(RC.contains("mount -uw /"));
+        assert!(RC.contains("echo 'rc: multi-user'"));
+        assert!(RC.trim_end().ends_with("exit 0"));
+    }
 }

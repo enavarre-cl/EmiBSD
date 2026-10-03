@@ -16,9 +16,8 @@ Done:
   (`fpu.c`), OpenBSD's makefs for the image, libc/init/ksh/cat/echo/ls/uname.
 
 Next:
-- M8b (multi-user boot and login, `docs/ROADMAP.md`): /etc files, pwd_mkdb for the host,
-  getty/login/login_passwd, AF_UNIX sockets for BSD Auth, a writable root (unveil and the
-  amd64 RTC are in: `af65fa0`, `c7b370d`). Then diagnostic tools stage 2 (libkvm, ps with
+- M8b (multi-user boot and login): the userland side is in (multi-user /etc/rc, getty
+  `login:`, pwd.db, `mount -uw /`); the root login waits for AF_UNIX `socketpair`. Then diagnostic tools stage 2 (libkvm, ps with
   `uvm_io`, fstat, vmstat, df/mount). M9 is split: M9a sockets and network userland, M9b
   WireGuard, M9c IPsec, M9d pf (last: it filters the tunnels too). M14b when no agents run.
 
