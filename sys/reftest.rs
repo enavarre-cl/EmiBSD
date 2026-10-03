@@ -1,9 +1,10 @@
 //! Helpers for reference-backed tests (`just test-ref`).
 //!
 //! They read a header from the C tree at `$OPENBSD_SRC` and collect its `#define NAME VALUE`
-//! lines. Values are evaluated only as far as integer literals, the name of another define, and
-//! one binary operator (`<<`, `*`, `+`, `-`) between two such operands; anything richer is
-//! parsing C, which is not the point. A test that needs more compares the raw text.
+//! lines. Values are evaluated only as far as integer literals, the names of other defines, and
+//! the binary operators `|`, `<<`, `+`, `-` and `*` between such operands (with C's precedence
+//! and associativity); anything richer is parsing C, which is not the point. A test that needs
+//! more compares the raw text.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -52,7 +53,7 @@ pub(crate) fn defines(rel: &str) -> BTreeMap<String, String> {
     out
 }
 
-/// The integer value of `name`, following aliases and evaluating one binary operator; `None`
+/// The integer value of `name`, following aliases and evaluating the operators above; `None`
 /// when the define is absent or too complex.
 pub(crate) fn int(defs: &BTreeMap<String, String>, name: &str) -> Option<i64> {
     eval(defs, defs.get(name)?, 0)
@@ -76,16 +77,20 @@ fn eval(defs: &BTreeMap<String, String>, expr: &str, depth: u32) -> Option<i64> 
     if is_ident(e) {
         return eval(defs, defs.get(e)?, depth + 1);
     }
-    for op in ["<<", "*", "+", "-"] {
+    // Lowest precedence first; `+` and `-` split at their last occurrence, so that a chain
+    // such as `A - B - C` is `(A - B) - C`.
+    for op in ["|", "<<"] {
         if let Some((l, r)) = split_top_level(e, op) {
             let (l, r) = (eval(defs, l, depth + 1)?, eval(defs, r, depth + 1)?);
-            return Some(match op {
-                "<<" => l << r,
-                "*" => l * r,
-                "+" => l + r,
-                _ => l - r,
-            });
+            return Some(if op == "|" { l | r } else { l << r });
         }
+    }
+    if let Some((l, op, r)) = split_last_additive(e) {
+        let (l, r) = (eval(defs, l, depth + 1)?, eval(defs, r, depth + 1)?);
+        return Some(if op == '+' { l + r } else { l - r });
+    }
+    if let Some((l, r)) = split_top_level(e, "*") {
+        return Some(eval(defs, l, depth + 1)? * eval(defs, r, depth + 1)?);
     }
     None
 }
@@ -135,6 +140,27 @@ fn split_top_level<'a>(e: &'a str, op: &str) -> Option<(&'a str, &'a str)> {
     None
 }
 
+/// Splits `e` at the last `+` or `-` outside parentheses that is a binary operator (it follows
+/// an operand, so a unary minus is never taken).
+fn split_last_additive(e: &str) -> Option<(&str, char, &str)> {
+    let mut depth = 0i32;
+    let mut found = None;
+    let mut prev_operand = false;
+    for (i, c) in e.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            '+' | '-' if depth == 0 && prev_operand => found = Some((i, c)),
+            _ => {}
+        }
+        if !c.is_whitespace() {
+            prev_operand = c == ')' || c == '_' || c.is_ascii_alphanumeric();
+        }
+    }
+    let (i, op) = found?;
+    Some((&e[..i], op, &e[i + 1..]))
+}
+
 fn is_ident(e: &str) -> bool {
     let mut chars = e.chars();
     matches!(chars.next(), Some(c) if c == '_' || c.is_ascii_alphabetic())
@@ -161,6 +187,35 @@ pub(crate) fn parse_int(text: &str) -> Option<i64> {
         return None;
     };
     Some(if neg { -n } else { n })
+}
+
+/// Asserts that each named Rust constant equals the C `#define` of the same name in `defs`, and
+/// returns the names it checked (for [`assert_complete`]). The constants must convert to `i64`
+/// with `as`.
+macro_rules! assert_defines {
+    ($defs:expr; $($name:ident),* $(,)?) => {{
+        let defs = &$defs;
+        let mut names: std::vec::Vec<&'static str> = std::vec::Vec::new();
+        $(
+            names.push(stringify!($name));
+            assert_eq!(
+                $crate::reftest::int(defs, stringify!($name)),
+                Some($name as i64),
+                "{}",
+                stringify!($name)
+            );
+        )*
+        names
+    }};
+}
+pub(crate) use assert_defines;
+
+/// Asserts that every C define whose name starts with `prefix` is among `ours`: a constant
+/// added upstream fails the test instead of going unnoticed.
+pub(crate) fn assert_complete(defs: &BTreeMap<String, String>, prefix: &str, ours: &[&str]) {
+    for name in defs.keys().filter(|n| n.starts_with(prefix)) {
+        assert!(ours.contains(&name.as_str()), "{name} is not ported");
+    }
 }
 
 #[cfg(test)]
@@ -215,6 +270,20 @@ mod tests {
         assert_eq!(int(&d, "ERESTART"), Some(-1));
         assert_eq!(int(&d, "LOOP"), None);
         assert_eq!(int(&d, "HARD"), None);
+        let d = defs(&[
+            ("A", "1518"),
+            ("B", "((6 * 2) + 2)"),
+            ("C", "4"),
+            ("MTU", "(A - B - C)"),
+            ("IN", "0x80000000UL"),
+            ("OUT", "0x40000000UL"),
+            ("INOUT", "(IN|OUT)"),
+            ("NEG", "(A - -1)"),
+        ]);
+        assert_eq!(int(&d, "B"), Some(14));
+        assert_eq!(int(&d, "MTU"), Some(1500));
+        assert_eq!(int(&d, "INOUT"), Some(0xc000_0000));
+        assert_eq!(int(&d, "NEG"), Some(1519));
         assert_eq!(int(&d, "MISSING"), None);
     }
 }

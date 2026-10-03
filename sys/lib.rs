@@ -1,8 +1,9 @@
 //! `bsd`: the OpenBSD kernel, re-implemented in Rust.
 //!
 //! The module tree mirrors `reference/openbsd-src/sys/` one directory at a time:
-//! `sys` (headers → types), `kern`, `uvm`, `dev`, `ddb`, `arch/<arch>`, with `machine` as the
-//! `<machine/*.h>` contract between generic and architecture code. See `docs/ARCHITECTURE.md`.
+//! `sys` (headers → types), `kern`, `uvm`, `dev`, `ddb`, `net`, `netinet`, `arch/<arch>`, with
+//! `machine` as the `<machine/*.h>` contract between generic and architecture code. See
+//! `docs/ARCHITECTURE.md`.
 
 #![no_std]
 
@@ -19,6 +20,8 @@ pub mod ddb;
 pub mod dev;
 pub mod kern;
 pub mod machine;
+pub mod net;
+pub mod netinet;
 pub mod sys;
 pub mod uvm;
 

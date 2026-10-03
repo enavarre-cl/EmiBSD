@@ -42,8 +42,13 @@
 //! `logwakeup` in `kern/subr_log.rs`.
 //!
 //! ## Deviations
-//! - `LIOCSFD` (an `ioctl` code) arrives with `sys/ioccom.h`; `struct syslog_data`, the
-//!   `SYSLOG_NAMES` tables and the userland prototypes are not kernel material.
+//! - `struct syslog_data`, the `SYSLOG_NAMES` tables and the userland prototypes are not
+//!   kernel material.
+
+use crate::sys::ioccom::_iow;
+
+/// Set sendsyslog() fd (an `ioctl(2)` on `/dev/log`).
+pub const LIOCSFD: u64 = _iow::<i32>(b'l', 127);
 
 /// Max line length.
 pub const LOG_MAXLINE: usize = 8192;
@@ -170,6 +175,7 @@ mod tests {
         assert_eq!(log_fac(LOG_LOCAL7), 23);
         assert_eq!(log_mask(LOG_ERR), 0b1000);
         assert_eq!(log_upto(LOG_ERR), 0b1111);
+        assert_eq!(LIOCSFD, 0x8004_6c7f);
     }
 
     #[test]

@@ -265,7 +265,8 @@ rust = "sys/sys/syslog.rs"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "cae25740f7431b79a2fc228e5b169462cc8cf849"
-notes = "LIOCSFD waits for ioccom.h; syslog_data, SYSLOG_NAMES and the userland prototypes are not kernel material"
+deps = ["sys/sys/ioccom.h"]
+notes = "syslog_data, SYSLOG_NAMES and the userland prototypes are not kernel material; M7b: LIOCSFD over ioccom.h"
 
 [[file]]
 c = "sys/sys/msgbuf.h"
@@ -2233,6 +2234,164 @@ notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at 
 c = "sys/arch/arm64/conf/GENERIC"
 status = "skipped"
 notes = "replaced-by-ioconf.rs: sys/arch/arm64/conf/ioconf.rs lists mainbus0 at root, ampintc* at fdt? early 1 and agtimer* at fdt? (the fdt attribute from files.arm64, mainbus its only parent until simplebus), the GENERIC lines whose drivers exist; the rest join as their drivers are ported"
+# M7b: socket, net and netinet headers (types and constants for the network stack)
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/sys/endian.h"
+rust = "sys/sys/endian.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "29d59558102b01bd3e938b4ab8583fd095cb4a1c"
+deps = ["sys/sys/_endian.h"]
+notes = "M7b: the public byte-order names (swap16/32/64, swap16_multi over &mut [u16], htobe*/htole*, be*toh/le*toh, betoh*/letoh*, htons/htonl/ntohs/ntohl as const fns; bemtoh*/htobem*/lemtoh*/htolem* over byte arrays); _BYTE_ORDER from cfg!(target_endian) instead of <machine/endian.h>; the in-place NTOHL/NTOHS/HTONL/HTONS are not defined (write x = ntohl(x))"
+
+[[file]]
+c = "sys/sys/_endian.h"
+rust = "sys/sys/endian.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e1ce82e25ff79b47bded727362460c3280f7ba89"
+notes = "M7b: folded into endian.rs; _LITTLE_ENDIAN/_BIG_ENDIAN/_PDP_ENDIAN/_BYTE_ORDER/_QUAD_HIGHWORD/_QUAD_LOWWORD; the __-prefixed internals are the public names (swap_bytes for __swapNNgen/md)"
+
+[[file]]
+c = "sys/sys/ioccom.h"
+rust = "sys/sys/ioccom.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f9607b87a933d525a5a73f0e4abf596de913e006"
+deps = ["sys/sys/param.h"]
+notes = "M7b: IOCPARM_*/IOC_* as u64 (u_long); _IOC/_IO/_IOR/_IOW/_IOWR, IOCPARM_LEN/IOCBASECMD/IOCGROUP as lowercase const fns, the argument type a type parameter (_iow::<Ifreq>(b'i', 12))"
+
+[[file]]
+c = "sys/sys/socket.h"
+rust = "sys/sys/socket.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "79e9cd186067ecbc1f02c7f07ee4662d40e4de8b"
+deps = ["sys/sys/types.h", "sys/sys/time.h", "sys/sys/param.h"]
+notes = "M7b: every constant (AF_*/PF_* as sa_family_t, the rest i32), linger, splice, sockaddr, sockaddr_storage, sockproto, sockpeercred, msghdr (msg_iov a *mut c_void until sys/uio.h), mmsghdr, cmsghdr, CMSG_ALIGN/LEN/SPACE as const fns, CMSG_DATA/FIRSTHDR (address only) and CMSG_NXTHDR (unsafe, reads cmsg_len) over raw pointers, sstosa a pointer cast; the CTL_NET_*_NAMES sysctl tables wait for sys/sysctl.h"
+
+[[file]]
+c = "sys/sys/sockio.h"
+rust = "sys/sys/sockio.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0c790c37aa7e4329d1ca152c03a779c74fcf65ab"
+deps = ["sys/sys/ioccom.h", "sys/net/if.h"]
+notes = "M7b: the 106 socket and interface ioctls whose argument structures are ported (ifreq, ifconf, ifaliasreq, ifmediareq, if_sffpage, if_laddrreq, if_clonereq, ifgroupreq, ifkalivereq, if_afreq, if_parent, int); SIOCBRDG* wait for net/if_bridge.h, SIOCGETVIFCNT/SIOCGETSGCNT for netinet/ip_mroute.h"
+
+[[file]]
+c = "sys/net/if.h"
+rust = "sys/net/if_.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "929896578ee0f18a975a7b7ef0e38576aa12beb8"
+deps = ["sys/sys/socket.h", "sys/net/if_types.h", "sys/net/if_arp.h"]
+notes = "M7b: module if_ (if is a Rust keyword); every constant, if_nameindex, if_clonereq, if_rxring(_info), if_rxrinfo, if_data, if_status_description with LINK_STATE_DESCRIPTIONS (a slice, no NULL terminator), if_msghdr, ifa_msghdr, if_announcemsghdr, if_ieee80211_data/msghdr, if_nameindex_msg, ifg_req, ifg_attrib, ifgroupreq, ifreq, ifaliasreq, ifmediareq, ifkalivereq, ifconf, if_laddrreq, if_afreq, if_parent, if_sffpage; the unions are #[repr(C)] unions with safe accessors for the ifr_*/ifgr_*/ifc_*/ifra_* shorthands; IF_Kbps/Mbps/Gbps, IFQ_PRIO2TOS/TOS2PRIO, LINK_STATE_IS_UP, LINK_STATE_DESC_MATCH as const fns; CTL_IFQ_NAMES waits for sys/sysctl.h; the prototypes come with net/if.c"
+
+[[file]]
+c = "sys/net/if_types.h"
+rust = "sys/net/if_types.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4795dcda7c5efad69fa71e9a5c61ee4acb28c355"
+notes = "M7b: every IFT_* as u8 (ifi_type)"
+
+[[file]]
+c = "sys/net/if_dl.h"
+rust = "sys/net/if_dl.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "92719954884a4203bfb977c94e26303285ad3962"
+deps = ["sys/sys/socket.h"]
+notes = "M7b: sockaddr_dl; LLADDR is an unsafe fn over a raw pointer (the sockaddr may be longer than the struct); satosdl/satosdl_const/sdltosa are pointer casts; link_ntoa is userland"
+
+[[file]]
+c = "sys/net/ethertypes.h"
+rust = "sys/net/ethertypes.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c69fc0f6b6bb9928ad2ef9173d700fe612f27245"
+notes = "M7b: every ETHERTYPE_* as a host-order u16"
+
+[[file]]
+c = "sys/net/if_arp.h"
+rust = "sys/net/if_arp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c7d0811efc7bbd255604acbe0ba7ffab5bc87f27"
+notes = "M7b: struct arphdr, ARPHRD_*, ARPOP_* (host-order u16; the fields are network order)"
+
+[[file]]
+c = "sys/net/route.h"
+rust = "sys/net/route.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4cbfbe94f6db996aeab9c7c90aca5ed884851fb0"
+deps = ["sys/sys/socket.h"]
+notes = "M7b: every constant (RTF_* u32, RTM_* u8, RTA_* i32, RTAX_* usize, RTP_* u8, RTV_* u32), rt_kmetrics, rt_metrics, rtstat, rt_tableinfo, rt_msghdr, sockaddr_rtlabel/rtdns/rtstatic/rtsearch, enum rtstat_counters, ROUTE_FILTER, srtdnstosa; struct rtentry, rt_addrinfo, rttimer_queue and the rtstat/rtgeneration globals come with route.c (they need struct ifaddr from net/if_var.h and struct rttimer), struct route with netinet6/in6.h, rtstat_inc with sys/percpu.h, RTTTOPRHZ with sys/protosw.h (PR_SLOWHZ)"
+
+[[file]]
+c = "sys/net/netisr.h"
+rust = "sys/net/netisr.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3b9b1835c583de3f5a20030a4b761dd6f7de5e45"
+notes = "M7b: NETISR_* bit numbers; the netisr word, if_input_task_locked and schednetisr come with net/if.c (net_tq)"
+
+[[file]]
+c = "sys/netinet/in.h"
+rust = "sys/netinet/in_.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ac61d97379129a2d5833f84ab3ca142bffb04022"
+deps = ["sys/sys/socket.h", "sys/sys/endian.h"]
+notes = "M7b: module in_ (in is a Rust keyword); every constant, the kernel's __IPADDR as htonl so INADDR_*/IN_CLASS*_NET/HOST are network order; in_addr (s_addr u32), sockaddr_in, ip_opts, ip_mreq, ip_mreqn; IN_CLASSA..D, IN_MULTICAST, IN_RFC3021_SUBNET, IN_EXPERIMENTAL, IN_BADCLASS, IN_LOCAL_GROUP, IN_CLASSFULBROADCAST, in_hosteq, in_nullhost as const fns; satosin/satosin_const/sintosa pointer casts; CTL_IPPROTO_NAMES/IPCTL_NAMES wait for sys/sysctl.h, ifatoia for netinet/in_var.h, inetctlerrmap/zeroin_addr and the prototypes for their .c files; INADDR_NONE and bindresvport are userland"
+
+[[file]]
+c = "sys/netinet/in_systm.h"
+rust = "sys/netinet/in_systm.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "222782cf034f7cd361cffac3561f922a4fa34ebf"
+notes = "M7b: n_short/n_long/n_time as NShort/NLong/NTime; iptime() comes with ip_icmp.c"
+
+[[file]]
+c = "sys/netinet/ip.h"
+rust = "sys/netinet/ip.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2d514ac6b364e7044659f83f6a8d6fd44f478a2a"
+deps = ["sys/netinet/in.h"]
+notes = "M7b: struct ip (the ip_hl/ip_v bit-fields are one byte ip_vhl with accessors), ip_timestamp (ipt_flg/ipt_oflw likewise in ipt_oflwflg; the union keeps the one-element arrays), ippseudo, every constant, IPOPT_COPIED/CLASS/NUMBER as const fns"
+
+[[file]]
+c = "sys/netinet/ip_icmp.h"
+rust = "sys/netinet/ip_icmp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ca6607e0288716e490f5fb9a17271e818f4efca6"
+deps = ["sys/netinet/in.h", "sys/netinet/ip.h"]
+notes = "M7b: icmp_ra_addr, struct icmp with icmp_hun/icmp_dun as #[repr(C)] unions and safe accessors for the icmp_* shorthands, icmp_ext_hdr, icmp_ext_obj_hdr, every constant (types/codes u8), ICMP_V6ADVLEN/ICMP_ADVLEN/ICMP_INFOTYPE as const fns; the prototypes come with ip_icmp.c"
+
+[[file]]
+c = "sys/netinet/if_ether.h"
+rust = "sys/netinet/if_ether.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "08013beebd836b2352063dda1aee0351ec3ac810"
+deps = ["sys/net/ethertypes.h", "sys/net/if_arp.h", "sys/net/route.h", "sys/netinet/in.h"]
+notes = "M7b: every constant, ether_addr, ether_header, ether_vlan_header, ether_arp (arp_hrd.. accessors), sockaddr_inarp, EVL_*OFTAG, ETHER_IS_*, ETH64_IS_*, ETHER_MAP_IP(V6)_MULTICAST (returning the address; the IPv6 one over 16 bytes until in6.h); arpcom, ether_port, ether_multi(step), the ETHER_*_MULTI macros and ether_extracted come with if_ethersubr.c/if_ether.c (they need struct ifnet, ip6_hdr, tcphdr, udphdr), as do the globals and prototypes"
+
+[[file]]
+c = "sys/netinet/ip_var.h"
+rust = "sys/netinet/ip_var.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fa6792cf185a0d4f2d03a8db414a111edb0f25c2"
+deps = ["sys/netinet/in.h", "sys/sys/socket.h"]
+notes = "M7b: MAX_IPOPTLEN, ipovly, ipstat, ipoption, enum ipstat_counters, ipoffnxt, the ip_output flags, IPMTUDISCTIMEOUT; ipstat_inc/add wait for sys/percpu.h; ip_moptions (in_multi), ipqent/ipq (mbuf), the globals and the prototypes come with ip_input.c/ip_output.c/raw_ip.c"
 
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"
