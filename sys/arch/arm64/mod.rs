@@ -433,6 +433,29 @@ impl Exit for Machine {
     }
 }
 
+/// `<machine/atomic.h>`'s barriers (`arch/arm64/include/atomic.h`: "virtio needs MP membars
+/// even on SP kernels").
+impl crate::machine::atomic::Atomic for Machine {
+    #[inline]
+    fn virtio_membar_producer() {
+        // SAFETY: a data memory barrier orders memory accesses and changes nothing else; no
+        // `nomem`, so the compiler does not move accesses across it either.
+        unsafe { asm!("dmb st", options(nostack, preserves_flags)) };
+    }
+
+    #[inline]
+    fn virtio_membar_consumer() {
+        // SAFETY: as for `virtio_membar_producer`.
+        unsafe { asm!("dmb ld", options(nostack, preserves_flags)) };
+    }
+
+    #[inline]
+    fn virtio_membar_sync() {
+        // SAFETY: as for `virtio_membar_producer`.
+        unsafe { asm!("dmb sy", options(nostack, preserves_flags)) };
+    }
+}
+
 impl BusSpace for Machine {
     type Tag = &'static include::bus::BusSpace;
     type Handle = include::bus::BusSpaceHandle;
@@ -453,6 +476,15 @@ impl BusSpace for Machine {
 
     fn bus_space_unmap(t: Self::Tag, h: Self::Handle, size: BusSize) {
         (t._space_unmap)(t, h, size)
+    }
+
+    fn bus_space_subregion(
+        t: Self::Tag,
+        h: Self::Handle,
+        offset: BusSize,
+        size: BusSize,
+    ) -> Result<Self::Handle, Errno> {
+        (t._space_subregion)(t, h, offset, size)
     }
 
     fn bus_space_read_1(t: Self::Tag, h: Self::Handle, offset: BusSize) -> u8 {
@@ -644,6 +676,8 @@ impl PciMachdep for Machine {
     type Pcitag = include::pci_machdep::Pcitag;
     type PciIntrHandle = include::pci_machdep::PciIntrHandle;
 
+    const PCI_MSI_PER_BRIDGE: bool = false;
+
     fn pci_attach_hook(parent: &Device, self_: &Device, pba: &PcibusAttachArgs) {
         (pba.pba_pc.pc_attach_hook)(parent, self_, pba)
     }
@@ -805,9 +839,15 @@ impl Intr for Machine {
     fn splassert_check(wantipl: i32, func: &str) {
         arm64::intr::arm_splassert_check(wantipl, func)
     }
+
+    fn intr_barrier(cookie: NonNull<c_void>) {
+        arm64::intr::intr_barrier(cookie.cast())
+    }
 }
 
 impl crate::machine::fdt::Fdt for Machine {
+    type FdtAttachArgs<'a> = include::fdt::FdtAttachArgs<'a>;
+
     fn fdt_find_cons(name: &[u8]) -> crate::dev::ofw::fdt::FdtNode {
         arm64::machdep::fdt_find_cons(name)
     }
@@ -818,6 +858,22 @@ impl crate::machine::fdt::Fdt for Machine {
 
     fn fdt_cons_bs_tag() -> crate::machine::bus::BusSpaceTag {
         arm64::bus_space::FDT_CONS_BS_TAG
+    }
+
+    fn fdt_intr_establish(
+        node: i32,
+        level: i32,
+        func: crate::machine::intr::IntrFn,
+        arg: *mut c_void,
+        name: &'static str,
+    ) -> Option<NonNull<c_void>> {
+        include::fdt::fdt_intr_establish(node, level, func, arg, name).map(NonNull::cast)
+    }
+
+    unsafe fn fdt_intr_disestablish(cookie: NonNull<c_void>) {
+        // SAFETY: the caller's guarantee: the cookie is a `MachineIntrHandle` from
+        // `fdt_intr_establish`.
+        unsafe { include::fdt::fdt_intr_disestablish(cookie.cast()) }
     }
 }
 

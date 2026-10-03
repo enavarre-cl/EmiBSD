@@ -40,8 +40,9 @@
 //!
 //! Upstream: sys/dev/isa/isareg.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M2 needs the timer and RTC ports for `delay(9)`; the rest of the
-//! port assignments, the ISA memory hole and the IRQ names arrive with the ISA bus (M4+).
+//! Status: `wip`. Milestone M2 needs the timer and RTC ports for `delay(9)`; M7b the ISA
+//! memory hole (`bus_space_map`); the rest of the port assignments and the IRQ names arrive
+//! with the ISA bus.
 
 /// `IO_ICU1`: 8259A Interrupt Controller #1.
 pub const IO_ICU1: u16 = 0x020;
@@ -55,6 +56,13 @@ pub const IO_TIMER1: u16 = 0x040;
 pub const IO_RTC: u16 = 0x070;
 /// NMI Control.
 pub const IO_NMI: u16 = IO_RTC;
+
+/// `IOM_BEGIN`: start of I/O Memory "hole".
+pub const IOM_BEGIN: usize = 0x0a0000;
+/// `IOM_END`: end of I/O Memory "hole".
+pub const IOM_END: usize = 0x100000;
+/// `IOM_SIZE`.
+pub const IOM_SIZE: usize = IOM_END - IOM_BEGIN;
 
 #[cfg(test)]
 mod tests {
@@ -72,5 +80,10 @@ mod tests {
         assert_eq!(crate::reftest::int(&defs, "IO_ICU2"), Some(IO_ICU2 as i64));
         assert_eq!(crate::reftest::int(&defs, "IO_RTC"), Some(IO_RTC as i64));
         assert_eq!(crate::reftest::int(&defs, "IO_NMI"), Some(IO_NMI as i64));
+        assert_eq!(
+            crate::reftest::int(&defs, "IOM_BEGIN"),
+            Some(IOM_BEGIN as i64)
+        );
+        assert_eq!(crate::reftest::int(&defs, "IOM_END"), Some(IOM_END as i64));
     }
 }

@@ -327,8 +327,10 @@ impl Seek for Partition {
 }
 
 /// The QEMU command line for `arch` booting `image`, serial on `serial` (`stdio` or
-/// `mon:stdio`), display off, firmware from EDK2. A fresh copy of the EDK2 variable store is
-/// made per run so boots do not depend on what the firmware remembered last time.
+/// `mon:stdio`), display off, firmware from EDK2, and a virtio network card on QEMU's user
+/// mode network (`vio(4)`: virtio-net-pci on amd64's PCI bus, virtio-net-device on one of
+/// arm64 `virt`'s virtio-mmio slots). A fresh copy of the EDK2 variable store is made per run
+/// so boots do not depend on what the firmware remembered last time.
 fn qemu_command(root: &Path, arch: Arch, image: &Path, serial: &str) -> Result<Command> {
     let code = edk2_file(arch.edk2_code())?;
     let vars_src = edk2_file(arch.edk2_vars())?;
@@ -354,12 +356,14 @@ fn qemu_command(root: &Path, arch: Arch, image: &Path, serial: &str) -> Result<C
     ));
     cmd.arg("-drive")
         .arg(format!("if=pflash,format=raw,file={}", vars.display()));
+    cmd.args(["-netdev", "user,id=n0"]);
     match arch {
         Arch::Amd64 => {
             cmd.args(["-M", "q35", "-cpu", "qemu64"]);
             cmd.arg("-drive")
                 .arg(format!("format=raw,file={}", image.display()));
             cmd.args(["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]);
+            cmd.args(["-device", "virtio-net-pci,netdev=n0"]);
         }
         Arch::Arm64 => {
             // acpi=off: EDK2 then installs the device tree, which the arm64 kernel needs (M4).
@@ -369,6 +373,7 @@ fn qemu_command(root: &Path, arch: Arch, image: &Path, serial: &str) -> Result<C
                 image.display()
             ));
             cmd.args(["-device", "virtio-blk-device,drive=hd0"]);
+            cmd.args(["-device", "virtio-net-device,netdev=n0"]);
             cmd.args(["-semihosting-config", "enable=on,target=native"]);
         }
     }

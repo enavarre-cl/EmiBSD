@@ -414,10 +414,8 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   `dma-coherent` copy of `mainbus_dma_tag` per node) and reached through `machine::bus`'s
   `BusDma`. The host double has no DMA (its operations fail with `EOPNOTSUPP`); `bus_dma` is
   tested on the machines instead, by a boot self-test each `cpu_configure` runs on its own tag
-  (`selftest: bus_dma ok`). Mapping virtual-only kernel space (`km_alloc(kv_any, kp_none)`)
-  is still reported by `uvm_km.rs`, so bounce maps and the `bus_dmamem_map` cases that need
-  fresh virtual space (every one on arm64; several segments or `BUS_DMA_NOCACHE` on amd64)
-  fail with `ENOMEM` until it does; buffers in the direct map load and sync.
+  (`selftest: bus_dma ok`). Since `km_alloc` maps `kernel_map` space (`kp_none` gives virtual
+  space only), `bus_dmamem_map` and the bounce maps work on both machines.
 - PCI (M7b): `dev/pci/pci.c`, `pci_map.c`, `pci_subr.c`, `pci_quirks.c` and the headers are
   OpenBSD's; the machine side is `machine::pci_machdep`. On amd64, without ACPI, mainbus
   attaches `pci0` for bus 0 (as the C does when `acpi_haspci` is false) and configuration
@@ -432,7 +430,22 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   lines print IDs (`vendor 0x8086 product 0x29c0 (class bridge subclass host, rev 0x02) at
   pci0 dev 0 function 0 not configured`) and `pcidevs.rs` holds only the IDs ported code
   names. arm64 has the types and dispatch of its `pci_machdep.h` but no host bridge driver
-  yet.
+  yet. Memory BARs are mapped by amd64's `bus_space.c` memory half (`x86_mem_add_mapping`:
+  `km_alloc(kv_any, kp_none)` and uncached `pmap_kenter_pa`, as the C does).
+- virtio (M7b): `dev/pv/virtio.c` and its headers are OpenBSD's, with both transports:
+  `virtio_pci.c` (`virtio* at pci?`, amd64; QEMU's transitional virtio-net-pci attaches with
+  the virtio 1.0 capabilities) and `virtio_mmio.c` (`virtio* at fdt?`, arm64; QEMU `virt`'s
+  32 `virtio,mmio` nodes attach, the empty ones print `Virtio Unknown (0) Device` as OpenBSD
+  does). The rings are DMA memory the device changes, so the core reaches them only through
+  raw pointers with volatile accesses; the barriers `virtio_membar_*` are a new machine
+  contract, `machine::atomic` (amd64 compiler barriers and `mfence`, arm64 `dmb st/ld/sy`).
+  `virtio_mmio`, a machine-independent driver, gets `struct fdt_attach_args` and
+  `fdt_intr_establish` through `machine::fdt` (a generic associated type per machine; amd64
+  and the host double have the members but never attach anything with them), and
+  `intr_barrier` joined `machine::intr`. The C's `#if defined(__amd64__)` around forcing MSI
+  for virtio is `machine::pci_machdep::PCI_MSI_PER_BRIDGE`. Interrupts: amd64 has no MP
+  tables, so `pci_intr_map_msi*` refuse and the device's INTx line (the one the firmware
+  wrote) is established on the 8259; arm64's comes from the node through `ampintc`.
 - Network interfaces (M7b): `net/if.c`, `net/ifq.c`, `net/if_ethersubr.c` and `net/if_loop.c`
   are OpenBSD's. `netlock` lives in `net/if_.rs` (as in `if.c`) and the `NET_LOCK()` family
   is `sys/systm.rs`'s functions over it; `main` runs `ifinit` and `softnet_init` (one softnet

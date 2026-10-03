@@ -4,12 +4,12 @@
 //! (`docs/ARCHITECTURE.md`, "Deviations"); `machine::autoconf` hands them to
 //! `subr_autoconf.rs`.
 //!
-//! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?`, `pci* at mainbus0`;
-//! `pseudo-device loop`.
+//! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?`, `pci* at mainbus0`,
+//! `virtio* at pci?`; `pseudo-device loop`.
 //! GENERIC lines left out until their drivers exist: `bios0`, `ioapic*`, `isa0`, `vmm0`,
-//! `pvbus0`, `ipmi0` and `efifb0` at mainbus, and everything below them; every device at
-//! `pci?` (`pchb*`, `ppb*`, `pcib*`, the network and storage drivers, ...), and `pci*` at
-//! `ppb?` and `pchb?`;
+//! `pvbus0`, `ipmi0` and `efifb0` at mainbus, and everything below them; every other device
+//! at `pci?` (`pchb*`, `ppb*`, `pcib*`, the network and storage drivers, ...), `pci*` at
+//! `ppb?` and `pchb?`, and every device at `virtio?` but `vio*`;
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
 //! layout: attachment, driver, unit, state, locators, flags, parents (indices into
 //! `CFDATA`), the start of its locator names and the first unit a starred entry may take.
@@ -17,6 +17,8 @@
 use crate::arch::amd64::amd64::cpu::{CPU_CA, CPU_CD};
 use crate::arch::amd64::amd64::mainbus::{MAINBUS_CA, MAINBUS_CD};
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
+use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
+use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::net::if_loop::loopattach;
 use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR, Pdevinit};
 
@@ -27,8 +29,15 @@ const PV_MAINBUS: &[i16] = &[0];
 /// {[bus = -1]}`).
 const LOC_PCIBUS_UNK: &[i64] = &[-1];
 
+/// `pv[]` for children of `pci*` (`cfdata[2]`).
+const PV_PCI: &[i16] = &[2];
+
+/// `loc[]` of an entry at `pci` with the defaults `dev = -1, function = -1` (`conf/files`:
+/// `device pci {[dev = -1], [function = -1]}`).
+const LOC_PCI_UNK: &[i64] = &[-1, -1];
+
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 3] = [
+pub static CFDATA: [Cfdata; 4] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -62,6 +71,18 @@ pub static CFDATA: [Cfdata; 3] = [
         LOC_PCIBUS_UNK,
         0,
         PV_MAINBUS,
+        0,
+        0,
+    ),
+    // 3: virtio* at pci?
+    Cfdata::new(
+        &VIRTIO_PCI_CA,
+        &VIRTIO_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
         0,
         0,
     ),

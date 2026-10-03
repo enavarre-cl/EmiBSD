@@ -78,6 +78,14 @@ pub trait BusSpace {
     /// `bus_space_unmap`: releases a mapping made by `bus_space_map`.
     fn bus_space_unmap(t: Self::Tag, h: Self::Handle, size: BusSize);
 
+    /// `bus_space_subregion`: a handle for `[offset, offset + size)` of the mapping `h`.
+    fn bus_space_subregion(
+        t: Self::Tag,
+        h: Self::Handle,
+        offset: BusSize,
+        size: BusSize,
+    ) -> Result<Self::Handle, Errno>;
+
     /// `bus_space_read_1`.
     fn bus_space_read_1(t: Self::Tag, h: Self::Handle, offset: BusSize) -> u8;
     /// `bus_space_read_2`.
@@ -120,6 +128,16 @@ pub unsafe fn bus_space_map(
 /// `bus_space_unmap(9)` on the selected machine.
 pub fn bus_space_unmap(t: BusSpaceTag, h: BusSpaceHandle, size: BusSize) {
     Machine::bus_space_unmap(t, h, size)
+}
+
+/// `bus_space_subregion(9)` on the selected machine.
+pub fn bus_space_subregion(
+    t: BusSpaceTag,
+    h: BusSpaceHandle,
+    offset: BusSize,
+    size: BusSize,
+) -> Result<BusSpaceHandle, Errno> {
+    Machine::bus_space_subregion(t, h, offset, size)
 }
 
 /// `bus_space_read_1(9)`.

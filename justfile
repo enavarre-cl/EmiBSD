@@ -47,8 +47,9 @@ run-amd64: image-amd64
 run-arm64: image-arm64
     cargo xtask qemu --arch arm64
 
-# Boots per arch: a plain one that must reach the end of main() (status 33), printing the
-# EmiBSD 7.8 version banner, with init checking its identity through sysctl(2) and the vfs system
+# Boots per arch, every one with a virtio network card on QEMU's user network: a plain one that
+# must reach the end of main() (status 33), printing the EmiBSD 7.8 version banner and the
+# virtio attach lines, with init checking its identity through sysctl(2) and the vfs system
 # calls failing as they must with no root file system yet (`main` says it cannot mount root and
 # `check_console` that /dev/console does not exist); `boot -d`, which
 # enters ddb-lite through a breakpoint trap, prints where it stopped and continues (status 33);
@@ -67,6 +68,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "selftest: bus_dma ok" --expect "mainbus0 at root" \
         --expect "cpu0 at mainbus0: (uniprocessor)" --expect "pci0 at mainbus0 bus 0" \
         --expect "at pci0 dev 0 function 0 not configured" \
+        --expect "virtio0 at pci0 dev 2 function 0 vendor 0x1af4 product 0x1000 rev 0x00" \
         --expect "cpu0: apic clock running at" \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
@@ -96,6 +98,9 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
         --expect "mainbus0 at root" --expect "ampintc0 at mainbus0 nirq " \
         --expect "agtimer0 at mainbus0: " --expect "selftest: bus_dma ok" \
+        --expect "virtio0 at mainbus0: Virtio Unknown (0) Device" \
+        --expect "virtio30 at mainbus0: Virtio Network Device" \
+        --expect "virtio31 at mainbus0: Virtio Block Device" \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 7.8" \

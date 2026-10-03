@@ -37,10 +37,11 @@
 //! Upstream: sys/arch/amd64/amd64/bus_space.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M2 ports the single-register accessors, `bus_space_map`/`unmap`
-//! for I/O space and `bus_space_subregion`. The multi/region/copy accessors, memory-space
-//! mapping (`x86_mem_add_mapping`, the ISA hole, the direct map), `bus_space_alloc`/`free`,
-//! `bus_space_vaddr`/`mmap`, the extent maps (`x86_bus_space_init`, `x86_bus_space_mallocok`)
-//! and the SEV-ES variants arrive with M3 and the buses that need them.
+//! for I/O space and `bus_space_subregion`; M7b (virtio's BARs) the memory space:
+//! `bus_space_map`/`bus_space_unmap` for it, `x86_mem_add_mapping`, `atdevbase` and the ISA
+//! hole. The multi/region/copy accessors, `bus_space_alloc`/`free`, `_bus_space_map`/`unmap`,
+//! `bus_space_vaddr`/`mmap`, the extent maps (`x86_bus_space_init`,
+//! `x86_bus_space_mallocok`) and the SEV-ES variants arrive with the buses that need them.
 //!
 //! ## Deviations
 //! - The tag is the enum [`X86BusSpace`] instead of a pointer to an ops table; the accessors
@@ -48,16 +49,31 @@
 //! - `<machine/bus.h>` is not ported (one of its licence blocks has an advertising clause, see
 //!   `ports.toml`): the `BUS_SPACE_MAP_*` flags and `bus_space_barrier`, which live there in C,
 //!   are defined here from `bus_space(9)`.
-//! - Without the `ioport_ex`/`iomem_ex` extents (M3) a map does not check for overlapping
-//!   claims, and memory-space maps are reported as unported.
+//! - Without the `ioport_ex`/`iomem_ex` extents (`subr_extent.c`, not ported) a map does not
+//!   check for overlapping claims and an unmap frees no claim: the extent calls are comments
+//!   at their sites.
+//! - `atdevbase`, the kernel virtual address of the ISA hole, is written by the C's
+//!   `locore0.S`, which maps the hole after the kernel; the bootloader's direct map covers it
+//!   here, so [`atdevbase`] is the direct-map address of `IOM_BEGIN`.
 
 use core::arch::asm;
 use core::ptr;
 
+use crate::arch::amd64::amd64::pmap::{
+    pmap_direct_map, pmap_direct_mapped, pmap_direct_unmap, pmap_extract, pmap_initialized,
+    pmap_kenter_pa, pmap_kernel, pmap_kremove,
+};
 use crate::arch::amd64::include::pio::{inb, inl, inw, outb, outl, outw};
+use crate::arch::amd64::include::pmap::{PMAP_NOCACHE, PMAP_WC};
+use crate::dev::isa::isareg::{IOM_BEGIN, IOM_END};
 use crate::machine::bus::{BUS_SPACE_BARRIER_READ, BUS_SPACE_BARRIER_WRITE, BusAddr, BusSize};
+use crate::machine::pmap::pmap_update;
 use crate::sys::errno::Errno;
-use crate::unported;
+use crate::sys::mman::{PROT_READ, PROT_WRITE};
+use crate::sys::param::{PAGE_SIZE, PGOFSET};
+use crate::sys::types::{Paddr, Vaddr, Vsize};
+use crate::uvm::uvm_km::{KD_NOWAIT, KP_NONE, KV_ANY, km_alloc, km_free};
+use crate::uvm::uvm_param::{round_page, trunc_page};
 
 /// `BUS_SPACE_MAP_CACHEABLE`.
 pub const BUS_SPACE_MAP_CACHEABLE: u32 = 0x0001;
@@ -85,8 +101,26 @@ pub const X86_BUS_SPACE_MEM: X86BusSpace = X86BusSpace::Mem;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BusSpaceHandle(usize);
 
+/// `atdevbase`: the kernel virtual address of the ISA I/O memory hole (see the module's
+/// deviations).
+pub fn atdevbase() -> usize {
+    pmap_direct_map(Paddr::new(IOM_BEGIN)).as_usize()
+}
+
+/// `ISA_HOLE_VADDR(p)`: the kernel virtual address of physical address `p` in the ISA hole.
+fn isa_hole_vaddr(p: BusAddr) -> usize {
+    p - IOM_BEGIN + atdevbase()
+}
+
+/// `ISA_PHYSADDR(v)`: the physical address of a kernel virtual address in the ISA hole.
+fn isa_physaddr(v: usize) -> BusAddr {
+    v.wrapping_sub(atdevbase()).wrapping_add(IOM_BEGIN)
+}
+
 /// `bus_space_map`: claims `[bpa, bpa + size)` in space `t`. I/O space needs no mapping, so
-/// the handle is the port base; memory space needs `pmap` (M3).
+/// the handle is the port base; memory space is mapped into kernel virtual space, uncached
+/// unless `flags` say otherwise (the ISA hole and, before `pmap_init`, memory below 4 GB
+/// through the mappings that already exist).
 ///
 /// # Safety
 ///
@@ -97,33 +131,130 @@ pub unsafe fn bus_space_map(
     size: BusSize,
     flags: u32,
 ) -> Result<BusSpaceHandle, Errno> {
-    match t {
-        X86BusSpace::Io => {
-            if flags & BUS_SPACE_MAP_LINEAR != 0 {
-                return Err(Errno::EINVAL);
-            }
-            // extent_alloc_region(ioport_ex, bpa, size, ...): M3.
-            // For I/O space, that's all she wrote.
-            Ok(BusSpaceHandle(bpa))
-        }
-        X86BusSpace::Mem => {
-            // The ISA hole, the direct map and x86_mem_add_mapping need pmap.
-            let _ = size;
-            Err(unported!("bus_space_map (memory space): pmap"))
-        }
+    // Pick the appropriate extent map.
+    if t == X86BusSpace::Io && flags & BUS_SPACE_MAP_LINEAR != 0 {
+        return Err(Errno::EINVAL);
     }
+
+    // Before we go any further, let's make sure that this region is available:
+    // extent_alloc_region(ioport_ex or iomem_ex, bpa, size, ...), see the deviations.
+
+    // For I/O space, that's all she wrote.
+    if t == X86BusSpace::Io {
+        return Ok(BusSpaceHandle(bpa));
+    }
+
+    if bpa >= IOM_BEGIN && bpa + size <= IOM_END {
+        return Ok(BusSpaceHandle(isa_hole_vaddr(bpa)));
+    }
+
+    if !pmap_initialized() && bpa < 0x1_0000_0000 {
+        return Ok(BusSpaceHandle(pmap_direct_map(Paddr::new(bpa)).as_usize()));
+    }
+
+    // For memory space, map the bus physical address to a kernel virtual address.
+    // SAFETY: the caller vouches for the device range.
+    let r = unsafe { x86_mem_add_mapping(bpa, size, flags) };
+    // On error: extent_free(iomem_ex, bpa, size, ...), see the deviations.
+    r
+}
+
+/// `x86_mem_add_mapping`: maps `[bpa, bpa + size)` into fresh kernel virtual space, page by
+/// page, uncached unless `BUS_SPACE_MAP_CACHEABLE` (write-back) or
+/// `BUS_SPACE_MAP_PREFETCHABLE` (write-combining) asks otherwise.
+///
+/// # Safety
+///
+/// As for [`bus_space_map`]: the range is a device the caller owns.
+pub unsafe fn x86_mem_add_mapping(
+    bpa: BusAddr,
+    size: BusSize,
+    flags: u32,
+) -> Result<BusSpaceHandle, Errno> {
+    let mut pa = trunc_page(bpa);
+    let endpa = round_page(bpa + size);
+
+    #[cfg(feature = "diagnostic")]
+    if endpa <= pa && endpa != 0 {
+        crate::kern::subr_prf::panic(format_args!("bus_mem_add_mapping: overflow"));
+    }
+
+    let mut map_size = endpa - pa;
+
+    let Some(va) = km_alloc(map_size, &KV_ANY, &KP_NONE, &KD_NOWAIT) else {
+        return Err(Errno::ENOMEM);
+    };
+    let mut va = va.as_ptr() as usize;
+
+    let bsh = BusSpaceHandle(va + (bpa & PGOFSET));
+
+    let pmap_flags = if flags & BUS_SPACE_MAP_CACHEABLE != 0 {
+        0
+    } else if flags & BUS_SPACE_MAP_PREFETCHABLE != 0 {
+        PMAP_WC as usize
+    } else {
+        PMAP_NOCACHE as usize
+    };
+
+    while map_size > 0 {
+        // SAFETY: `va` is fresh kernel virtual space from km_alloc(kv_any, kp_none), nothing
+        // else maps it; `pa` is the caller's device page.
+        unsafe {
+            pmap_kenter_pa(
+                Vaddr::new(va),
+                Paddr::new(pa | pmap_flags),
+                PROT_READ | PROT_WRITE,
+            )
+        };
+        pa += PAGE_SIZE;
+        va += PAGE_SIZE;
+        map_size -= PAGE_SIZE;
+    }
+    pmap_update(pmap_kernel());
+
+    Ok(bsh)
 }
 
 /// `bus_space_unmap`: releases a mapping.
-pub fn bus_space_unmap(t: X86BusSpace, _bsh: BusSpaceHandle, _size: BusSize) {
-    match t {
-        X86BusSpace::Io => {
-            // extent_free(ioport_ex, ...): M3.
+pub fn bus_space_unmap(t: X86BusSpace, bsh: BusSpaceHandle, size: BusSize) {
+    // Find the correct extent and bus physical address.
+    let _bpa: BusAddr = match t {
+        X86BusSpace::Io => bsh.0,
+        X86BusSpace::Mem => 'mem: {
+            let bpa = isa_physaddr(bsh.0);
+            if (IOM_BEGIN..=IOM_END).contains(&bpa) {
+                break 'mem bpa;
+            }
+
+            if pmap_direct_mapped(Vaddr::new(bsh.0)) {
+                break 'mem pmap_direct_unmap(Vaddr::new(bsh.0)).as_usize();
+            }
+
+            let va = trunc_page(bsh.0);
+            let endva = round_page(bsh.0 + size);
+
+            #[cfg(feature = "diagnostic")]
+            if endva <= va {
+                crate::kern::subr_prf::panic(format_args!("bus_space_unmap: overflow"));
+            }
+
+            let bpa = pmap_extract(pmap_kernel(), Vaddr::new(va)).map_or(0, Paddr::as_usize)
+                + (bsh.0 & PGOFSET);
+
+            // SAFETY: `[va, endva)` is a mapping `x86_mem_add_mapping` made for this handle,
+            // which the caller gives up.
+            unsafe { pmap_kremove(Vaddr::new(va), Vsize::new(endva - va)) };
+            pmap_update(pmap_kernel());
+
+            // Free the kernel virtual mapping.
+            if let Some(v) = core::ptr::NonNull::new(va as *mut u8) {
+                km_free(v, endva - va, &KV_ANY, &KP_NONE);
+            }
+            bpa
         }
-        X86BusSpace::Mem => {
-            let _ = unported!("bus_space_unmap (memory space): pmap");
-        }
-    }
+    };
+
+    // ok: extent_free(ex, bpa, size, ...), see the deviations.
 }
 
 /// `bus_space_subregion`: a handle for `[offset, offset + size)` of an existing mapping.

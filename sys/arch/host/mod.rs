@@ -654,6 +654,21 @@ impl Exit for Machine {
     }
 }
 
+/// The barriers of `<machine/atomic.h>`: the host's fences.
+impl crate::machine::atomic::Atomic for Machine {
+    fn virtio_membar_producer() {
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
+    }
+
+    fn virtio_membar_consumer() {
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Acquire);
+    }
+
+    fn virtio_membar_sync() {
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 impl BusSpace for Machine {
     type Tag = HostBusSpace;
     type Handle = HostBusSpaceHandle;
@@ -672,6 +687,15 @@ impl BusSpace for Machine {
     }
 
     fn bus_space_unmap(_t: Self::Tag, _h: Self::Handle, _size: BusSize) {}
+
+    fn bus_space_subregion(
+        _t: Self::Tag,
+        h: Self::Handle,
+        offset: BusSize,
+        _size: BusSize,
+    ) -> Result<Self::Handle, Errno> {
+        Ok(HostBusSpaceHandle(h.0 + offset))
+    }
 
     fn bus_space_read_1(_t: Self::Tag, _h: Self::Handle, _offset: BusSize) -> u8 {
         0
@@ -840,6 +864,8 @@ impl PciMachdep for Machine {
     type Pcitag = HostPcitag;
     type PciIntrHandle = HostPciIntrHandle;
 
+    const PCI_MSI_PER_BRIDGE: bool = false;
+
     fn pci_attach_hook(_parent: &Device, _self: &Device, _pba: &PcibusAttachArgs) {}
 
     fn pci_bus_maxdevs(_pc: HostPciChipset, _busno: i32) -> i32 {
@@ -1004,6 +1030,8 @@ impl Intr for Machine {
     fn softintr(_si: i32) {}
 
     fn splassert_check(_wantipl: i32, _func: &str) {}
+
+    fn intr_barrier(_cookie: NonNull<c_void>) {}
 }
 
 /// The host double's interrupt priority level.
@@ -1062,6 +1090,8 @@ impl Machine {
 
 /// The host has no device tree.
 impl crate::machine::fdt::Fdt for Machine {
+    type FdtAttachArgs<'a> = crate::machine::fdt::NoFdtAttachArgs<'a>;
+
     fn fdt_find_cons(_name: &[u8]) -> crate::dev::ofw::fdt::FdtNode {
         core::ptr::null()
     }
@@ -1073,6 +1103,18 @@ impl crate::machine::fdt::Fdt for Machine {
     fn fdt_cons_bs_tag() -> crate::machine::bus::BusSpaceTag {
         HostBusSpace
     }
+
+    fn fdt_intr_establish(
+        _node: i32,
+        _level: i32,
+        _func: crate::machine::intr::IntrFn,
+        _arg: *mut c_void,
+        _name: &'static str,
+    ) -> Option<NonNull<c_void>> {
+        None
+    }
+
+    unsafe fn fdt_intr_disestablish(_cookie: NonNull<c_void>) {}
 }
 
 /// The host has no user mode: no handler is ever entered and there is no trampoline.

@@ -435,6 +435,29 @@ impl Exit for Machine {
     }
 }
 
+/// `<machine/atomic.h>`'s barriers (`arch/amd64/include/atomic.h`, the `__membar`
+/// definitions).
+impl crate::machine::atomic::Atomic for Machine {
+    #[inline]
+    fn virtio_membar_producer() {
+        // __membar(""): x86 keeps stores in order; only the compiler must not reorder.
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[inline]
+    fn virtio_membar_consumer() {
+        // __membar(""): x86 keeps loads in order.
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[inline]
+    fn virtio_membar_sync() {
+        // SAFETY: `mfence` orders memory accesses and changes nothing else; no `nomem`, so
+        // the compiler does not move accesses across it either.
+        unsafe { core::arch::asm!("mfence", options(nostack, preserves_flags)) };
+    }
+}
+
 impl BusSpace for Machine {
     type Tag = amd64::bus_space::X86BusSpace;
     type Handle = amd64::bus_space::BusSpaceHandle;
@@ -455,6 +478,15 @@ impl BusSpace for Machine {
 
     fn bus_space_unmap(t: Self::Tag, h: Self::Handle, size: BusSize) {
         amd64::bus_space::bus_space_unmap(t, h, size)
+    }
+
+    fn bus_space_subregion(
+        t: Self::Tag,
+        h: Self::Handle,
+        offset: BusSize,
+        size: BusSize,
+    ) -> Result<Self::Handle, Errno> {
+        amd64::bus_space::bus_space_subregion(t, h, offset, size)
     }
 
     fn bus_space_read_1(t: Self::Tag, h: Self::Handle, offset: BusSize) -> u8 {
@@ -646,6 +678,8 @@ impl PciMachdep for Machine {
     type Pcitag = include::pci_machdep::Pcitag;
     type PciIntrHandle = include::pci_machdep::PciIntrHandle;
 
+    const PCI_MSI_PER_BRIDGE: bool = true;
+
     fn pci_attach_hook(parent: &Device, self_: &Device, pba: &PcibusAttachArgs) {
         pci::pci_machdep::pci_attach_hook(parent, self_, pba)
     }
@@ -811,10 +845,16 @@ impl Intr for Machine {
     fn splassert_check(wantipl: i32, func: &str) {
         amd64::machdep::splassert_check(wantipl, func)
     }
+
+    fn intr_barrier(cookie: NonNull<c_void>) {
+        amd64::intr::intr_barrier(cookie.cast())
+    }
 }
 
 /// amd64 has no device tree: ACPI describes the machine (M5).
 impl crate::machine::fdt::Fdt for Machine {
+    type FdtAttachArgs<'a> = crate::machine::fdt::NoFdtAttachArgs<'a>;
+
     fn fdt_find_cons(_name: &[u8]) -> crate::dev::ofw::fdt::FdtNode {
         core::ptr::null()
     }
@@ -826,6 +866,18 @@ impl crate::machine::fdt::Fdt for Machine {
     fn fdt_cons_bs_tag() -> crate::machine::bus::BusSpaceTag {
         amd64::bus_space::X86_BUS_SPACE_IO
     }
+
+    fn fdt_intr_establish(
+        _node: i32,
+        _level: i32,
+        _func: crate::machine::intr::IntrFn,
+        _arg: *mut c_void,
+        _name: &'static str,
+    ) -> Option<NonNull<c_void>> {
+        None
+    }
+
+    unsafe fn fdt_intr_disestablish(_cookie: NonNull<c_void>) {}
 }
 
 /// The autoconfiguration tables `config(8)` would generate (`conf/ioconf.rs`) and the

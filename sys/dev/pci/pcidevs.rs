@@ -48,15 +48,20 @@
 //! them is ported, with the generated names and values.
 //!
 //! ## Deviations
-//! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`
-//!   and `pci_quirks.c`). The whole header, and `pcidevs_data.h` for `PCIVERBOSE`, wait for a
-//!   generator in `tools/xtask` in the manner of `gen-syscalls` (`docs/ARCHITECTURE.md`).
+//! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
+//!   `pci_quirks.c` and `virtio_pci.c`). The whole header, and `pcidevs_data.h` for
+//!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
+//!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
 
+/// `PCI_VENDOR_OPENBSD`: OpenBSD.
+pub const PCI_VENDOR_OPENBSD: u32 = 0x0b5d;
 /// `PCI_VENDOR_CIRRUS`: Cirrus Logic.
 pub const PCI_VENDOR_CIRRUS: u32 = 0x1013;
 /// `PCI_VENDOR_AMD`: AMD.
 pub const PCI_VENDOR_AMD: u32 = 0x1022;
+/// `PCI_VENDOR_QUMRANET`: Qumranet.
+pub const PCI_VENDOR_QUMRANET: u32 = 0x1af4;
 /// `PCI_VENDOR_INTEL`: Intel.
 pub const PCI_VENDOR_INTEL: u32 = 0x8086;
 /// `PCI_VENDOR_INVALID`: INVALID VENDOR ID.
@@ -75,6 +80,9 @@ pub const PCI_PRODUCT_CIRRUS_CL_PD6729: u32 = 0x1100;
 /// `PCI_PRODUCT_INTEL_82371FB_ISA`: 82371FB ISA.
 pub const PCI_PRODUCT_INTEL_82371FB_ISA: u32 = 0x122e;
 
+/// `PCI_PRODUCT_OPENBSD_CONTROL`: VMM Control.
+pub const PCI_PRODUCT_OPENBSD_CONTROL: u32 = 0x0777;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -84,7 +92,10 @@ mod tests {
     fn ids_match_the_generated_header() {
         let defs = crate::reftest::defines("sys/dev/pci/pcidevs.h");
         for (name, value) in [
+            ("PCI_VENDOR_OPENBSD", PCI_VENDOR_OPENBSD),
             ("PCI_VENDOR_CIRRUS", PCI_VENDOR_CIRRUS),
+            ("PCI_VENDOR_QUMRANET", PCI_VENDOR_QUMRANET),
+            ("PCI_PRODUCT_OPENBSD_CONTROL", PCI_PRODUCT_OPENBSD_CONTROL),
             ("PCI_VENDOR_AMD", PCI_VENDOR_AMD),
             ("PCI_VENDOR_INTEL", PCI_VENDOR_INTEL),
             ("PCI_VENDOR_INVALID", PCI_VENDOR_INVALID),

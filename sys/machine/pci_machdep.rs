@@ -33,6 +33,9 @@ pub type Pcitag = <Machine as PciMachdep>::Pcitag;
 /// `pci_intr_handle_t`: an interrupt `pci_intr_map*` found, for `pci_intr_establish`.
 pub type PciIntrHandle = <Machine as PciMachdep>::PciIntrHandle;
 
+/// [`PciMachdep::PCI_MSI_PER_BRIDGE`] of the selected machine.
+pub const PCI_MSI_PER_BRIDGE: bool = <Machine as PciMachdep>::PCI_MSI_PER_BRIDGE;
+
 /// The interrupt handler `pci_intr_establish` takes: `int (*)(void *)`.
 pub type PciIntrFn = fn(*mut c_void) -> i32;
 
@@ -75,6 +78,11 @@ pub trait PciMachdep {
     type Pcitag: Copy + PartialEq + Default + 'static;
     /// `pci_intr_handle_t`.
     type PciIntrHandle: Copy + 'static;
+
+    /// Whether the machine decides MSI per host bridge (the x86 black and white lists behind
+    /// `PCI_FLAGS_MSI_ENABLED`), which `virtio_pci` overrides: the C's `#if defined(__i386__)
+    /// || defined(__amd64__)` there.
+    const PCI_MSI_PER_BRIDGE: bool;
 
     /// `pci_attach_hook(parent, self, pba)`: the machine's look at a PCI bus being attached.
     fn pci_attach_hook(parent: &Device, self_: &Device, pba: &PcibusAttachArgs);

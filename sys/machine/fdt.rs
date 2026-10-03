@@ -2,14 +2,51 @@
 //!
 //! On OpenBSD arm64 `<machine/fdt.h>` declares `fdt_find_cons`, `stdout_node`, `stdout_speed`
 //! and `fdt_cons_bs_tag`, which the console drivers' `*_init_cons` use to find the console
-//! the bootloader named in `/chosen`. A machine without a device tree answers "no node".
+//! the bootloader named in `/chosen`, `struct fdt_attach_args`, with which a device-tree node's
+//! driver is attached, and the `fdt_intr_*` names of the machine's interrupt functions. A
+//! machine without a device tree answers "no node", never attaches anything with
+//! [`FdtAttachArgs`] (its type only has the members, so the machine-independent `sys/dev/fdt`
+//! drivers compile everywhere) and establishes no interrupt.
 
-use crate::dev::ofw::fdt::FdtNode;
+use core::ffi::c_void;
+use core::ptr::NonNull;
+
+use crate::dev::ofw::fdt::{FdtNode, FdtReg};
 use crate::machine::Machine;
-use crate::machine::bus::BusSpaceTag;
+use crate::machine::bus::{BusDmaTag, BusSpaceTag};
+use crate::machine::intr::IntrFn;
+
+/// `struct fdt_attach_args` of the selected machine.
+pub type FdtAttachArgs<'a> = <Machine as Fdt>::FdtAttachArgs<'a>;
+
+/// The `struct fdt_attach_args` of a machine without a device tree: the members, so the
+/// device-tree drivers compile; nothing ever makes one.
+pub struct NoFdtAttachArgs<'a> {
+    /// `fa_name`.
+    pub fa_name: &'a [u8],
+    /// `fa_node`.
+    pub fa_node: i32,
+    /// `fa_iot`.
+    pub fa_iot: BusSpaceTag,
+    /// `fa_dmat`.
+    pub fa_dmat: BusDmaTag,
+    /// `fa_reg`.
+    pub fa_reg: &'a [FdtReg],
+    /// `fa_intr`.
+    pub fa_intr: &'a [u32],
+    /// `fa_acells`.
+    pub fa_acells: i32,
+    /// `fa_scells`.
+    pub fa_scells: i32,
+}
 
 /// The device-tree side of the machine.
 pub trait Fdt {
+    /// `struct fdt_attach_args`: what a node's driver is attached with (`aux`). Every
+    /// machine names the members `fa_name`, `fa_node`, `fa_iot`, `fa_dmat`, `fa_reg`,
+    /// `fa_intr`, `fa_acells` and `fa_scells` ([`fdt_attach_args_public_members`]).
+    type FdtAttachArgs<'a>;
+
     /// `fdt_find_cons(name)`: the node of the console `/chosen`'s `stdout-path` (or the
     /// `serial0` alias) names, if it is compatible with `name`; sets `stdout_node` and
     /// `stdout_speed` on the way.
@@ -20,6 +57,24 @@ pub trait Fdt {
 
     /// `fdt_cons_bs_tag`: the bus space tag the console is reached through.
     fn fdt_cons_bs_tag() -> BusSpaceTag;
+
+    /// `fdt_intr_establish(node, level, func, arg, name)`: `func(arg)` for the first
+    /// interrupt of `node`; the handle `intr_barrier` and `fdt_intr_disestablish` take, `None`
+    /// for the C's NULL.
+    fn fdt_intr_establish(
+        node: i32,
+        level: i32,
+        func: IntrFn,
+        arg: *mut c_void,
+        name: &'static str,
+    ) -> Option<NonNull<c_void>>;
+
+    /// `fdt_intr_disestablish(cookie)`.
+    ///
+    /// # Safety
+    ///
+    /// `cookie` came from `fdt_intr_establish` and is not used afterwards.
+    unsafe fn fdt_intr_disestablish(cookie: NonNull<c_void>);
 }
 
 /// `fdt_find_cons` on the selected machine.
@@ -35,4 +90,42 @@ pub fn stdout_node() -> i32 {
 /// `fdt_cons_bs_tag` on the selected machine.
 pub fn fdt_cons_bs_tag() -> BusSpaceTag {
     Machine::fdt_cons_bs_tag()
+}
+
+/// `fdt_intr_establish` on the selected machine.
+pub fn fdt_intr_establish(
+    node: i32,
+    level: i32,
+    func: IntrFn,
+    arg: *mut c_void,
+    name: &'static str,
+) -> Option<NonNull<c_void>> {
+    Machine::fdt_intr_establish(node, level, func, arg, name)
+}
+
+/// `fdt_intr_disestablish` on the selected machine.
+///
+/// # Safety
+///
+/// As for [`Fdt::fdt_intr_disestablish`].
+pub unsafe fn fdt_intr_disestablish(cookie: NonNull<c_void>) {
+    // SAFETY: forwarded.
+    unsafe { Machine::fdt_intr_disestablish(cookie) }
+}
+
+/// The members machine-independent drivers read, by the names `<machine/fdt.h>` gives them.
+/// Compiling it for every architecture checks that each defines them.
+pub fn fdt_attach_args_public_members(
+    fa: &FdtAttachArgs<'_>,
+) -> (usize, i32, BusSpaceTag, BusDmaTag, usize, usize, i32, i32) {
+    (
+        fa.fa_name.len(),
+        fa.fa_node,
+        fa.fa_iot,
+        fa.fa_dmat,
+        fa.fa_reg.len(),
+        fa.fa_intr.len(),
+        fa.fa_acells,
+        fa.fa_scells,
+    )
 }

@@ -4,11 +4,12 @@
 //! (`docs/ARCHITECTURE.md`, "Deviations"); `machine::autoconf` hands them to
 //! `subr_autoconf.rs`.
 //!
-//! GENERIC lines present: `mainbus0 at root`, `ampintc* at fdt? early 1`, `agtimer* at fdt?`;
-//! `pseudo-device loop`.
+//! GENERIC lines present: `mainbus0 at root`, `ampintc* at fdt? early 1`, `agtimer* at fdt?`,
+//! `virtio* at fdt?`; `pseudo-device loop`.
 //! The `fdt` attribute (`files.arm64`: `define fdt {[early = 0]}`) is carried by `mainbus`
 //! and `simplebus`; `simplebus` is not ported, so mainbus is the only parent here. Every
-//! other GENERIC line waits for its driver (`cpu0 at mainbus?`, `simplebus* at fdt?`, ...),
+//! other GENERIC line waits for its driver (`cpu0 at mainbus?`, `simplebus* at fdt?`, the
+//! devices at `virtio?` but `vio*`, `virtio* at pci?` with a host bridge driver, ...),
 //! as do the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s layout:
 //! attachment, driver, unit, state, locators, flags, parents (indices into `CFDATA`), the
 //! start of its locator names and the first unit a starred entry may take.
@@ -16,6 +17,8 @@
 use crate::arch::arm64::dev::agtimer::{AGTIMER_CA, AGTIMER_CD};
 use crate::arch::arm64::dev::ampintc::{AMPINTC_CA, AMPINTC_CD};
 use crate::arch::arm64::dev::mainbus::{MAINBUS_CA, MAINBUS_CD};
+use crate::dev::fdt::virtio_mmio::VIRTIO_MMIO_CA;
+use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::net::if_loop::loopattach;
 use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR, Pdevinit};
 
@@ -29,7 +32,7 @@ const LOC_EARLY_1: &[i64] = &[1];
 const LOC_EARLY_0: &[i64] = &[0];
 
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 3] = [
+pub static CFDATA: [Cfdata; 4] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -58,6 +61,18 @@ pub static CFDATA: [Cfdata; 3] = [
     Cfdata::new(
         &AGTIMER_CA,
         &AGTIMER_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_0,
+        0,
+        PV_FDT,
+        0,
+        0,
+    ),
+    // 3: virtio* at fdt?
+    Cfdata::new(
+        &VIRTIO_MMIO_CA,
+        &VIRTIO_CD,
         0,
         FSTATE_STAR,
         LOC_EARLY_0,

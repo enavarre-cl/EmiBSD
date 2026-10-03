@@ -3,9 +3,16 @@
 //! Milestone M3 needs the `IPL_*` numbers that pools and mutexes carry around; M4 adds
 //! `splraise`, `spllower`, `splx`, the `spl*()` helpers, `softintr` and `splassert`. The
 //! handler registration stays per architecture (`intr_establish`, `arm_intr_establish_fdt`):
-//! generic code reaches it through the drivers' bus attachments.
+//! generic code reaches it through the drivers' bus attachments (`pci_intr_establish`,
+//! `fdt_intr_establish`), whose handles are the `void *` cookies [`intr_barrier`] takes back.
+
+use core::ffi::c_void;
+use core::ptr::NonNull;
 
 use crate::machine::Machine;
+
+/// An interrupt handler, `int (*)(void *)`: nonzero when the interrupt was the device's.
+pub type IntrFn = fn(*mut c_void) -> i32;
 
 /// The interrupt priority levels of the selected architecture.
 pub trait Intr {
@@ -60,6 +67,10 @@ pub trait Intr {
     /// `splassert_check(wantipl, func)` (`DIAGNOSTIC`): reports through `splassert_fail`
     /// when the current level is below `wantipl`.
     fn splassert_check(wantipl: i32, func: &str);
+
+    /// `intr_barrier(cookie)`: returns once a handler running for the interrupt `cookie`
+    /// (from a bus's `*_intr_establish`) on any CPU has finished.
+    fn intr_barrier(cookie: NonNull<c_void>);
 }
 
 /// `splraise` on the selected machine.
@@ -90,6 +101,11 @@ pub fn splassert(wantipl: i32, func: &str) {
     }
     #[cfg(not(feature = "diagnostic"))]
     let _ = (wantipl, func);
+}
+
+/// `intr_barrier(9)` on the selected machine.
+pub fn intr_barrier(cookie: NonNull<c_void>) {
+    Machine::intr_barrier(cookie)
 }
 
 /// `splsoftassert(wantipl)`.
