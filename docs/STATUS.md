@@ -1,9 +1,15 @@
 # Status
 
-Milestone: **M6 in progress** (part a, the system call plumbing, done; part b, user address
-spaces and exec, next). Updated: 2026-10-02.
+Milestone: **M6 in progress** (part a, the system call plumbing, done; part b started:
+exit, the init module; user address spaces and exec next). Updated: 2026-10-02.
 
 Done:
+- M6-b (1): `kern_exit.c` (`sys_exit`, `exit1`, `exit2`, `reaper`, `process_zap`,
+  `process_reparent`), `kthread_exit` real, `calcru`/`ruadd`, `initprocess`, the reaper
+  thread in `main`; the `init/` crate (freestanding, static ELF, raw `write`/`exit`
+  syscalls) built for both targets and loaded as a Limine module (`BootInfo::modules`,
+  `module: /init (...)` at boot); `SysArgs` makes every syscall's argument access safe.
+  `selftest=kthread` now exits its threads and checks the reaper took them.
 - M6-a: `cargo xtask gen-syscalls` (`syscalls.master` → `sys/sys/syscall.rs`,
   `syscallargs.rs`, `kern/init_sysent.rs`, `kern/syscalls.rs`; `--check` in `just ci`),
   `struct sysent`/`SCARG` (`systm.rs`), `syscall_mi.h` (`mi_syscall`, `mi_syscall_return`,
@@ -23,10 +29,9 @@ Next (M6-b, user address spaces and exec):
   (`ci_kern_rsp`, `ci_proc_pmap`, segment resets, `TTBR0`), `cpu_fork` with a user stack,
   the trap-from-user paths (amd64 `TRAP_ENTRY_USER`/`INTRENTRY`'s user branch,
   `intr_user_exit`; arm64 `udata_abort`), `setregs`, `exec_elf.c` + `kern_exec.c` for a
-  static ELF, the Limine module carrying a freestanding Rust `init`, `start_init`,
-  `kern_exit.c` (`exit1`/`exit2`, `kthread_exit`), `sys_exit`; decision pending: port
-  `uvm_map`/`uvm_fault` (M6 as planned, 7000+ lines) or wire the first process with wired
-  mappings and defer them.
+  static ELF from the module, `start_init`; decision pending: port `uvm_map`/`uvm_fault`
+  (M6 as planned, 7000+ lines) or wire the first process with wired mappings and defer
+  them to their own milestone.
 - M6-c: `sys_write` to the console for fds 1/2 until the file table exists; the exit
   criterion "init prints via sys_write and exits".
 

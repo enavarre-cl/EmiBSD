@@ -7,6 +7,7 @@
 //! arrives with M6.
 
 use crate::machine::Machine;
+use crate::sys::proc::Proc;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt};
 use crate::uvm::uvm_page::VmPage;
@@ -79,6 +80,13 @@ pub trait Pmap {
     /// `pmap_update`: makes pending mapping changes visible.
     fn pmap_update(pmap: &Self::Pmap);
 
+    /// `pmap_activate(p)`: `p`'s address space is in use by one more thread; switched in now
+    /// when `p` is the running thread.
+    fn pmap_activate(p: &Proc);
+
+    /// `pmap_deactivate(p)`: the inverse, at exit.
+    fn pmap_deactivate(p: &Proc);
+
     /// `pmap_growkernel`: grows the kernel page tables to cover `maxkvaddr`; returns how far
     /// they now reach.
     fn pmap_growkernel(maxkvaddr: Vaddr) -> Vaddr;
@@ -150,6 +158,16 @@ pub unsafe fn pmap_kremove(va: Vaddr, len: Vsize) {
 /// `pmap_extract` on the selected machine.
 pub fn pmap_extract(pmap: &<Machine as Pmap>::Pmap, va: Vaddr) -> Option<Paddr> {
     Machine::pmap_extract(pmap, va)
+}
+
+/// `pmap_activate` on the selected machine.
+pub fn pmap_activate(p: &Proc) {
+    Machine::pmap_activate(p)
+}
+
+/// `pmap_deactivate` on the selected machine.
+pub fn pmap_deactivate(p: &Proc) {
+    Machine::pmap_deactivate(p)
 }
 
 /// `pmap_update` on the selected machine.

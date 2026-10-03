@@ -35,8 +35,7 @@
 //!
 //! ## Deviations
 //! - The `cpuset_*` functions with a `to` output return the new set instead.
-//! - `sched_idle`'s `exit2(dead)` is reported (`kern_exit.c`, M6); `smr_idle` (M7) is not
-//!   called.
+//! - `smr_idle` (M7) is not called from `sched_idle`.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -46,6 +45,7 @@ use crate::kassert;
 use crate::kern::init_main::{NCPUS, PROC0};
 use crate::kern::kern_clock::statclock;
 use crate::kern::kern_clockintr::{clockintr_bind, clockintr_cancel};
+use crate::kern::kern_exit::exit2;
 use crate::kern::kern_fork::fork1;
 use crate::kern::kern_kthread::kthread_create_deferred;
 use crate::kern::kern_resource::tuagg_add_runtime;
@@ -61,7 +61,6 @@ use crate::sys::proc::{
     P_CPUPEG, P_INSCHED, Proc, SRUN, SSLEEP, cpuset_asize,
 };
 use crate::sys::sched::{SCHED_NQS, SPCF_ITIMER, SPCF_PROFCLOCK, SPCF_SWITCHCLEAR};
-use crate::unported;
 use crate::uvm::uvm_init::UVMEXP;
 
 /*
@@ -202,8 +201,7 @@ pub fn sched_idle(v: *mut c_void) {
             while let Some(dead) = spc.spc_deadproc.first() {
                 // SAFETY: `dead` is on this CPU's dead list, which only this thread empties.
                 unsafe { spc.spc_deadproc.remove(dead) };
-                // exit2(dead): kern_exit.c (M6).
-                let _ = unported!("sched_idle: exit2 (kern_exit.c, M6)");
+                exit2(dead);
             }
         }
 

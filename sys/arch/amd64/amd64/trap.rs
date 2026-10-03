@@ -110,6 +110,7 @@ use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
 use crate::sys::proc::{Proc, refreshcreds};
 use crate::sys::syscall::SYS_MAXSYSCALL;
 use crate::sys::syscall_mi::{mi_ast, mi_child_return, mi_syscall, mi_syscall_return};
+use crate::sys::systm::SysArgs;
 use crate::sys::types::Register;
 use crate::unported;
 use crate::uvm::uvm_extern::VmProt;
@@ -296,8 +297,9 @@ pub extern "C" fn syscall(frame: &mut Trapframe) {
 
     let code = frame.tf_rax as Register;
     // The arguments are the first six registers of the frame, in the C ABI's order:
-    // tf_rdi, tf_rsi, tf_rdx, tf_r10, tf_r8, tf_r9.
-    let args = ptr::addr_of!(frame.tf_rdi).cast::<c_void>();
+    // tf_rdi, tf_rsi, tf_rdx, tf_r10, tf_r8, tf_r9 (contiguous, checked below).
+    // SAFETY: the six fields are consecutive `i64`s at the start of the frame.
+    let args: &SysArgs = unsafe { &*ptr::addr_of!(frame.tf_rdi).cast::<SysArgs>() };
 
     let mut rval: [Register; 2] = [0, 0];
 
@@ -427,6 +429,24 @@ fn trap_print(frame: &Trapframe, type_: i32) {
         printf(format_args!("dr6 {:x} dr7 {:x}\n", rdr6(), rdr7()));
     }
 }
+
+const _: () = {
+    assert!(
+        core::mem::offset_of!(Trapframe, tf_rsi) == core::mem::offset_of!(Trapframe, tf_rdi) + 8
+    );
+    assert!(
+        core::mem::offset_of!(Trapframe, tf_rdx) == core::mem::offset_of!(Trapframe, tf_rdi) + 16
+    );
+    assert!(
+        core::mem::offset_of!(Trapframe, tf_r10) == core::mem::offset_of!(Trapframe, tf_rdi) + 24
+    );
+    assert!(
+        core::mem::offset_of!(Trapframe, tf_r8) == core::mem::offset_of!(Trapframe, tf_rdi) + 32
+    );
+    assert!(
+        core::mem::offset_of!(Trapframe, tf_r9) == core::mem::offset_of!(Trapframe, tf_rdi) + 40
+    );
+};
 
 #[cfg(test)]
 mod tests {

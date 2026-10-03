@@ -287,6 +287,8 @@ impl Cpu for Machine {
         crate::kern::subr_prf::panic(format_args!("host: cpu_switchto has no context switch"))
     }
 
+    fn cpu_exit(_p: &Proc) {}
+
     /// Nothing to set up: the host never switches to the thread.
     fn cpu_fork(
         _p1: &Proc,
@@ -386,6 +388,10 @@ impl Pmap for Machine {
         map.get(&va.trunc_page().as_usize())
             .map(|pa| Paddr::new(pa + (va.as_usize() & Self::PAGE_MASK)))
     }
+
+    fn pmap_activate(_p: &Proc) {}
+
+    fn pmap_deactivate(_p: &Proc) {}
 
     fn pmap_update(_pmap: &HostPmap) {}
 

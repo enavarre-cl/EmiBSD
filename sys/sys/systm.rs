@@ -55,7 +55,7 @@
 //! - `sy_call_t` returns `Result<(), Errno>` with the two return registers as an out
 //!   parameter; `SCARG(uap, k)` is `sysargs::<T>(v).k.get()` (`sys/syscallargs.rs`).
 
-use core::ffi::c_void;
+use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize};
 
 use crate::sys::errno::Errno;
@@ -78,9 +78,13 @@ pub const INFSLP: u64 = u64::MAX;
 /// `MAXTSLP`: the longest finite sleep.
 pub const MAXTSLP: u64 = u64::MAX - 1;
 
+/// The argument block of a system call: the six argument registers, in the C ABI's order,
+/// as the machine-dependent entry finds them in the trap frame.
+pub type SysArgs = [Register; 6];
+
 /// `sy_call_t`: every system call: the calling thread, the argument block (see `sysargs`)
 /// and the two return registers (`retval[0]` is what the user sees in its return register).
-pub type SyCall = fn(&Proc, *const c_void, &mut [Register; 2]) -> Result<(), Errno>;
+pub type SyCall = fn(&Proc, &SysArgs, &mut [Register; 2]) -> Result<(), Errno>;
 
 /// `struct sysent`: system call table entry.
 #[derive(Clone, Copy)]
@@ -110,13 +114,15 @@ impl Sysent {
 /// `SY_NOLOCK`: the syscall does not take the kernel lock.
 pub const SY_NOLOCK: i32 = 0x01;
 
-/// `SCARG`'s view of a system call's argument block as its `struct sys_*_args`.
-///
-/// # Safety
-///
-/// `v` is the argument block the machine-dependent syscall entry handed to the `sy_call`:
-/// `sy_narg` registers in a row, read as the `T` of that system call.
-pub unsafe fn sysargs<'a, T>(v: *const c_void) -> &'a T {
-    // SAFETY: the caller's guarantee.
-    unsafe { &*v.cast::<T>() }
+/// `SCARG`'s view of a system call's argument block as its `struct sys_*_args`: `T` is one
+/// of `sys/syscallargs.rs`'s structs, register-wide `Syscallarg` slots in a row that any bit
+/// pattern fills validly, no larger than the six registers.
+pub fn sysargs<T>(args: &SysArgs) -> &T {
+    const {
+        assert!(size_of::<T>() <= size_of::<SysArgs>());
+        assert!(align_of::<T>() <= align_of::<SysArgs>());
+    }
+    // SAFETY: `T` fits in the block (asserted above), shares its alignment, and is made of
+    // `Syscallarg` unions, for which every register value is a valid datum.
+    unsafe { &*ptr::from_ref(args).cast::<T>() }
 }

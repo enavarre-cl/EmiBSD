@@ -14,6 +14,21 @@ use crate::sys::types::{Paddr, Psize, Vaddr};
 /// Upper bound on memory map regions kept in [`MemMap`]; boot fails loudly beyond it.
 pub const MAX_REGIONS: usize = 256;
 
+/// The most boot modules the glue keeps (`init` is the only one so far).
+pub const MAX_MODULES: usize = 4;
+
+/// A file the bootloader loaded next to the kernel (`module_path:` in `limine.conf`): the
+/// `init` the kernel execs until there is a filesystem (M6).
+#[derive(Clone, Copy, Debug)]
+pub struct BootModule {
+    /// The path it was loaded from (`/init`).
+    pub path: &'static CStr,
+    /// The string given with it (`module_string:` in `limine.conf`), possibly empty.
+    pub string: &'static CStr,
+    /// Its contents, mapped for the kernel's lifetime.
+    pub data: &'static [u8],
+}
+
 /// What a region of physical memory holds, as the bootloader reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemKind {
@@ -136,9 +151,24 @@ pub struct BootInfo {
     pub dtb: Option<NonNull<u8>>,
     /// The physical memory map.
     pub memmap: MemMap,
+    /// The boot modules, in load order (`None` past the last).
+    pub modules: [Option<BootModule>; MAX_MODULES],
 }
 
 impl BootInfo {
+    /// The boot modules.
+    pub fn modules(&self) -> impl Iterator<Item = &BootModule> + '_ {
+        self.modules.iter().flatten()
+    }
+
+    /// The module whose path's last component is `name` (`b"init"` for `/init`).
+    pub fn module(&self, name: &[u8]) -> Option<&BootModule> {
+        self.modules().find(|m| {
+            let path = m.path.to_bytes();
+            path.rsplit(|&c| c == b'/').next() == Some(name)
+        })
+    }
+
     /// Physical address of a virtual address inside the kernel image.
     pub fn kernel_virt_to_phys(&self, va: Vaddr) -> Paddr {
         Paddr::new(va.as_usize() - self.kernel_virt.as_usize() + self.kernel_phys.as_usize())
@@ -216,6 +246,7 @@ mod tests {
             rsdp: None,
             dtb: None,
             memmap: MemMap::new(),
+            modules: [None; MAX_MODULES],
         };
         assert_eq!(
             boot.kernel_virt_to_phys(Vaddr::new(0xffff_ffff_8001_2345)),
@@ -239,6 +270,7 @@ mod tests {
             rsdp: None,
             dtb: None,
             memmap: MemMap::new(),
+            modules: [None; MAX_MODULES],
         };
         assert_eq!(boot.boothowto(), 0);
         boot.cmdline = c"-d";

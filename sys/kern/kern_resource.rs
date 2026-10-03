@@ -44,17 +44,20 @@
 //!
 //! Status: `wip`. Milestone M5 (part b2) ports the thread usage aggregation the scheduler
 //! needs: `tuagg_sumup`, `tuagg_get_proc`, `tuagg_get_process`, `tuagg_add_process` and
-//! `tuagg_add_runtime`. The priority and limit syscalls (`sys_getpriority`,
-//! `sys_setpriority`, `donice`, `sys_setrlimit`, `dosetrlimit`, `sys_getrlimit`), the
-//! `plimit` management (`lim_startup`, `lim_fork`, `lim_free`, `lim_copy`, `lim_cur`,
-//! `lim_write_begin/commit`), `calctsru`, `calcru`, `sys_getrusage`, `dogetrusage`,
-//! `ruadd`, `rucheck` and the `rusage` pool come with the syscalls (M6).
+//! `tuagg_add_runtime`; M6-b adds `calctsru`, `calcru` and `ruadd` for `exit1`. The
+//! priority and limit syscalls (`sys_getpriority`, `sys_setpriority`, `donice`,
+//! `sys_setrlimit`, `dosetrlimit`, `sys_getrlimit`), the `plimit` management
+//! (`lim_startup`, `lim_fork`, `lim_free`, `lim_copy`, `lim_cur`, `lim_write_begin/commit`),
+//! `sys_getrusage`, `dogetrusage` and `rucheck` come with the syscalls (M6-c).
 //!
 //! ## Deviations
 //! - `tuagg_sumup` reads the source's fields one by one inside the `pc_cons` loop instead of
 //!   copying the struct: the fields are `Cell`s.
 
+use core::sync::atomic::Ordering;
+
 use crate::kassert;
+use crate::kern::kern_clock::STATHZ;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave, pc_cons_enter, pc_cons_leave};
 use crate::kern::kern_tc::nanouptime;
 use crate::machine::Machine;
@@ -64,7 +67,10 @@ use crate::sys::proc::{
     Proc, ProcThrLink, Process, SDEAD, TU_ITICKS, TU_STICKS, TU_UTICKS, Tusage, tu_enter, tu_leave,
 };
 use crate::sys::queue::TailqHead;
-use crate::sys::time::{Timespec, timespecadd, timespecsub};
+use crate::sys::resource::Rusage;
+use crate::sys::time::{
+    Timespec, Timeval, timeradd, timespec_to_timeval, timespecadd, timespecsub,
+};
 
 /// `tuagg_sumup`: add the counts from `from` to `tu`, ensuring a consistent read of `from`.
 pub fn tuagg_sumup(tu: &Tusage, from: &Tusage) {
@@ -166,4 +172,68 @@ pub fn tuagg_add_runtime() {
         .tu_runtime
         .set(timespecadd(&p.p_tu.tu_runtime.get(), &delta));
     tu_leave(&p.p_tu, generation);
+}
+
+/// `calctsru`: transform the running time and tick information in a struct tusage into
+/// user, system, and interrupt time usage.
+pub fn calctsru(tup: &Tusage) -> (Timespec, Timespec, Timespec) {
+    let st = tup.tu_ticks[TU_STICKS].get();
+    let ut = tup.tu_ticks[TU_UTICKS].get();
+    let it = tup.tu_ticks[TU_ITICKS].get();
+
+    if st + ut + it == 0 {
+        return (
+            Timespec::new(0, 0),
+            Timespec::new(0, 0),
+            Timespec::new(0, 0),
+        );
+    }
+
+    let stathz = u64::try_from(STATHZ.load(Ordering::Relaxed))
+        .unwrap_or(0)
+        .max(1);
+    let to_ts = |ticks: u64| {
+        let ns = ticks * 1_000_000_000 / stathz;
+        Timespec::new((ns / 1_000_000_000) as i64, (ns % 1_000_000_000) as i64)
+    };
+    (to_ts(ut), to_ts(st), to_ts(it))
+}
+
+/// `calcru`: `calctsru` in `timeval`s: (user, system, interrupt).
+pub fn calcru(tup: &Tusage) -> (Timeval, Timeval, Timeval) {
+    let (u, s, i) = calctsru(tup);
+    (
+        timespec_to_timeval(&u),
+        timespec_to_timeval(&s),
+        timespec_to_timeval(&i),
+    )
+}
+
+/// `ruadd`: adds `ru2` into `ru`: the times, the larger `ru_maxrss`, the sums of the rest.
+pub fn ruadd(ru: &Rusage, ru2: &Rusage) {
+    ru.ru_utime
+        .set(timeradd(&ru.ru_utime.get(), &ru2.ru_utime.get()));
+    ru.ru_stime
+        .set(timeradd(&ru.ru_stime.get(), &ru2.ru_stime.get()));
+    if ru.ru_maxrss.get() < ru2.ru_maxrss.get() {
+        ru.ru_maxrss.set(ru2.ru_maxrss.get());
+    }
+    // ru_first .. ru_last: ru_ixrss through ru_nivcsw
+    for (a, b) in [
+        (&ru.ru_ixrss, &ru2.ru_ixrss),
+        (&ru.ru_idrss, &ru2.ru_idrss),
+        (&ru.ru_isrss, &ru2.ru_isrss),
+        (&ru.ru_minflt, &ru2.ru_minflt),
+        (&ru.ru_majflt, &ru2.ru_majflt),
+        (&ru.ru_nswap, &ru2.ru_nswap),
+        (&ru.ru_inblock, &ru2.ru_inblock),
+        (&ru.ru_oublock, &ru2.ru_oublock),
+        (&ru.ru_msgsnd, &ru2.ru_msgsnd),
+        (&ru.ru_msgrcv, &ru2.ru_msgrcv),
+        (&ru.ru_nsignals, &ru2.ru_nsignals),
+        (&ru.ru_nvcsw, &ru2.ru_nvcsw),
+        (&ru.ru_nivcsw, &ru2.ru_nivcsw),
+    ] {
+        a.set(a.get().wrapping_add(b.get()));
+    }
 }

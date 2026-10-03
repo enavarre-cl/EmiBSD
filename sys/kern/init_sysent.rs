@@ -14,6 +14,7 @@
 //!   it (`pub fn sys_<name>(`); the others are `sys_nosys` with a note, so the table
 //!   always compiles. Rerun the generator after porting a syscall.
 
+use crate::kern::kern_exit::sys_exit;
 use crate::kern::kern_sig::sys_nosys;
 use crate::sys::syscall::SYS_MAXSYSCALL;
 use crate::sys::syscallargs::{
@@ -57,7 +58,7 @@ use crate::sys::systm::{SY_NOLOCK, Sysent};
 /// `sysent[]`: the system call switch table, indexed by `SYS_*`.
 pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(0, 0, 0, sys_nosys), // 0 = unimplemented syscall
-    Sysent::new(1, size_of::<SysExitArgs>(), 0, sys_nosys), // 1 = exit (sys_exit not ported)
+    Sysent::new(1, size_of::<SysExitArgs>(), 0, sys_exit), // 1 = exit
     Sysent::new(0, 0, 0, sys_nosys), // 2 = fork (sys_fork not ported)
     Sysent::new(3, size_of::<SysReadArgs>(), SY_NOLOCK, sys_nosys), // 3 = read (sys_read not ported)
     Sysent::new(3, size_of::<SysWriteArgs>(), SY_NOLOCK, sys_nosys), // 4 = write (sys_write not ported)

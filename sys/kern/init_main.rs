@@ -58,13 +58,14 @@
 //!   the scheduler (M5), and the emulator exits with the success status that `xtask smoke`
 //!   checks.
 
-use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 
 use crate::dev::rnd::arc4random;
 use crate::kern::kern_clock::initclocks;
 use crate::kern::kern_clockintr::clockqueue_init;
+use crate::kern::kern_exit::reaper;
 use crate::kern::kern_fork::process_initialize;
-use crate::kern::kern_kthread::kthread_run_deferred_queue;
+use crate::kern::kern_kthread::{kthread_create, kthread_run_deferred_queue};
 use crate::kern::kern_proc::{
     ALLPROC, ALLPROCESS, chgproccnt, pgrphash, pidhash, procinit, tidhash,
 };
@@ -72,6 +73,7 @@ use crate::kern::kern_sched::{sched_init, sched_init_cpu};
 use crate::kern::kern_synch::{endtsleep, sleep_queue_init};
 use crate::kern::kern_timeout::{timeout_proc_init, timeout_set, timeout_startup};
 use crate::kern::sched_bsd::{sched_lock_init, scheduler_start};
+use crate::kern::subr_prf::panic;
 use crate::kprintf;
 use crate::machine::Machine;
 use crate::machine::cons::consinit;
@@ -98,6 +100,8 @@ pub static NCPUS: AtomicI32 = AtomicI32::new(1);
 /// `ncpusfound`: number of CPUs we find.
 pub static NCPUSFOUND: AtomicI32 = AtomicI32::new(1);
 
+/// `initprocess`: the process of `init(8)`, null until `start_init` forks it (M6-b).
+pub static INITPROCESS: AtomicPtr<Process> = AtomicPtr::new(core::ptr::null_mut());
 /// `proc0`: process slot for swapper.
 pub static PROC0: Proc = Proc::new();
 /// `process0`: process slot for kernel threads.
@@ -320,10 +324,6 @@ pub fn main() -> ! {
     // Create any kernel threads whose creation was deferred because initprocess had not yet
     // been created.
     kthread_run_deferred_queue();
-    #[cfg(feature = "qemu")]
-    if crate::kern::selftest::kthread_requested() {
-        crate::kern::selftest::kthread_pingpong();
-    }
 
     // Now that device driver threads have been created, wait for them to finish any deferred
     // autoconfiguration.
@@ -350,7 +350,15 @@ pub fn main() -> ! {
     let _ = unported!("uvm_swap_init");
 
     // Create the pageout, reaper, cleaner, update, aiodone and page zeroing kernel threads.
-    let _ = unported!("kthread_create (pagedaemon, reaper, cleaner, update, aiodoned, zerothread)");
+    let _ = unported!("kthread_create (pagedaemon, M7)");
+    if kthread_create(reaper, core::ptr::null_mut(), b"reaper").is_err() {
+        panic(format_args!("fork reaper"));
+    }
+    let _ = unported!("kthread_create (cleaner, update, aiodoned, zerothread: M7)");
+    #[cfg(feature = "qemu")]
+    if crate::kern::selftest::kthread_requested() {
+        crate::kern::selftest::kthread_pingpong();
+    }
 
     // MULTIPROCESSOR: not configured.
 

@@ -16,14 +16,22 @@ build-amd64 features="":
 build-arm64 features="":
     cargo build -p bsd --target {{arm64}} {{features}}
 
-build: build-amd64 build-arm64
+# The freestanding init(8) stand-in (init/), a static user ELF the image carries as a Limine
+# module (M6).
+build-init-amd64:
+    cargo build -p init --target {{amd64}}
+
+build-init-arm64:
+    cargo build -p init --target {{arm64}}
+
+build: build-amd64 build-arm64 build-init-amd64 build-init-arm64
 
 # --- boot images and QEMU ---------------------------------------------------
 
-image-amd64: (build-amd64 "--features qemu")
+image-amd64: (build-amd64 "--features qemu") build-init-amd64
     cargo xtask image --arch amd64 --kernel target/{{amd64}}/debug/bsd
 
-image-arm64: (build-arm64 "--features qemu")
+image-arm64: (build-arm64 "--features qemu") build-init-arm64
     cargo xtask image --arch arm64 --kernel target/{{arm64}}/debug/bsd
 
 run-amd64: image-amd64
@@ -39,11 +47,12 @@ run-arm64: image-arm64
 # interrupt, gets a line typed on the serial console and echoes it (status 33);
 # `selftest=clock`, which waits for hz clock interrupts and a timeout (status 33); and
 # `selftest=kthread`, two kernel threads passing a turn with msleep/wakeup (status 33).
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "real mem = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
-        --expect "selftest: malloc/pool stress ok" --expect "cpu0: apic clock running at"
+        --expect "selftest: malloc/pool stress ok" --expect "cpu0: apic clock running at" \
+        --expect "module: /init ("
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=trap" --status 35 \
@@ -60,7 +69,8 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd \
         --expect "bsd: booted on arm64" --expect "The Regents of the University of California" \
         --expect "real mem  = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
-        --expect "selftest: malloc/pool stress ok" --expect "agtimer0: "
+        --expect "selftest: malloc/pool stress ok" --expect "agtimer0: " \
+        --expect "module: /init ("
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=trap" --status 35 \
@@ -92,6 +102,8 @@ test-ref:
 clippy:
     cargo clippy -p bsd --target {{amd64}} --features qemu -- -D warnings
     cargo clippy -p bsd --target {{arm64}} --features qemu -- -D warnings
+    cargo clippy -p init --target {{amd64}} -- -D warnings
+    cargo clippy -p init --target {{arm64}} -- -D warnings
     cargo clippy -p libkern -p bsd -p xtask -- -D warnings
 
 fmt:

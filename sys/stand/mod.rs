@@ -14,14 +14,15 @@ use bsd::kern::init_main::{self, BOOTHOWTO};
 use bsd::kern::subr_prf::Str;
 use bsd::kprintf;
 use bsd::machine::{
-    BootInfo, Cpu, Exit, ExitStatus, Machine, MachineInfo, MemKind, MemMap, MemRegion,
+    BootInfo, BootModule, Cpu, Exit, ExitStatus, MAX_MODULES, Machine, MachineInfo, MemKind,
+    MemMap, MemRegion,
 };
 use bsd::sys::types::{Paddr, Psize, Vaddr};
 
 use limine::{
     BaseRevision, BootloaderInfoResponse, DtbResponse, ExecutableAddressResponse,
-    ExecutableCmdlineResponse, HhdmResponse, MemmapResponse, Request, RequestsEndMarker,
-    RequestsStartMarker, RsdpResponse, StackSizeRequest, id, memmap_type,
+    ExecutableCmdlineResponse, HhdmResponse, MemmapResponse, ModuleResponse, Request,
+    RequestsEndMarker, RequestsStartMarker, RsdpResponse, StackSizeRequest, id, memmap_type,
 };
 
 /// Boot stack for the boot CPU: the protocol's minimum, more than OpenBSD's `USPACE`.
@@ -85,6 +86,11 @@ static RSDP: Request<RsdpResponse> = Request::new(id::RSDP);
 #[unsafe(link_section = ".requests")]
 static DTB: Request<DtbResponse> = Request::new(id::DTB);
 
+/// The modules (`init`, M6).
+#[unsafe(link_section = ".requests")]
+#[used]
+static MODULE: Request<ModuleResponse> = Request::new(id::MODULE);
+
 #[used]
 #[unsafe(link_section = ".requests_end_marker")]
 static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
@@ -115,6 +121,15 @@ unsafe extern "C" fn _start() -> ! {
                 boot.memmap.len(),
                 boot.memmap.usable_bytes() >> 20
             );
+            for module in boot.modules() {
+                kprintf!(
+                    "module: {} ({} bytes){}{}\n",
+                    Str(module.path.to_bytes()),
+                    module.data.len(),
+                    if module.string.is_empty() { "" } else { ": " },
+                    Str(module.string.to_bytes())
+                );
+            }
             if !boot.cmdline.is_empty() {
                 kprintf!("bootargs: {}\n", Str(boot.cmdline.to_bytes()));
             }
@@ -173,6 +188,17 @@ fn gather() -> Result<BootInfo, BootError> {
     // The stack size request has no information in its response; it only has to be present.
     let _ = STACK_SIZE.request.response();
 
+    let mut modules: [Option<BootModule>; MAX_MODULES] = [None; MAX_MODULES];
+    if let Some(resp) = MODULE.response() {
+        for (slot, file) in modules.iter_mut().zip(resp.modules()) {
+            *slot = Some(BootModule {
+                path: file.path(),
+                string: file.string(),
+                data: file.data(),
+            });
+        }
+    }
+
     Ok(BootInfo {
         bootloader_name,
         bootloader_version,
@@ -185,6 +211,7 @@ fn gather() -> Result<BootInfo, BootError> {
             .response()
             .and_then(|d| NonNull::new(d.dtb_ptr.cast_mut().cast::<u8>())),
         memmap,
+        modules,
     })
 }
 

@@ -39,6 +39,8 @@ pub mod id {
     pub const DTB: [u64; 2] = [0xb40d_db48_fb54_bac7, 0x5450_8149_3f81_ffb7];
     /// Executable Command Line feature.
     pub const EXECUTABLE_CMDLINE: [u64; 2] = [0x4b16_1536_e598_651e, 0xb390_ad4a_2f1f_303a];
+    /// `LIMINE_MODULE_REQUEST`: the files `module_path:` lines of `limine.conf` loaded.
+    pub const MODULE: [u64; 2] = [0x3e7e_2797_02be_32af, 0xca1c_4f3b_d128_0cee];
 }
 
 /// `LIMINE_MEMMAP_*`: memory map entry types.
@@ -335,3 +337,88 @@ const _: () = {
     assert!(size_of::<DtbResponse>() == 16);
     assert!(size_of::<ExecutableCmdlineResponse>() == 16);
 };
+
+/// `struct limine_uuid`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct Uuid {
+    /// `a`.
+    pub a: u32,
+    /// `b`.
+    pub b: u16,
+    /// `c`.
+    pub c: u16,
+    /// `d`.
+    pub d: [u8; 8],
+}
+
+/// `struct limine_file`: a loaded file (the executable or a module).
+#[repr(C)]
+pub struct File {
+    /// Revision of the structure.
+    pub revision: u64,
+    address: *const u8,
+    size: u64,
+    path: *const c_char,
+    string: *const c_char,
+    /// `media_type`: `LIMINE_MEDIA_TYPE_*`.
+    pub media_type: u64,
+    unused: u32,
+    /// `tftp_ip`.
+    pub tftp_ip: u32,
+    /// `tftp_port`.
+    pub tftp_port: u32,
+    /// `partition_index`.
+    pub partition_index: u32,
+    /// `mbr_disk_id`.
+    pub mbr_disk_id: u32,
+    /// `gpt_disk_uuid`.
+    pub gpt_disk_uuid: Uuid,
+    /// `gpt_part_uuid`.
+    pub gpt_part_uuid: Uuid,
+    /// `part_uuid`.
+    pub part_uuid: Uuid,
+}
+
+impl File {
+    /// The file's contents, in the higher half direct map; the memory is "executable and
+    /// modules" in the memory map, never reclaimed.
+    pub fn data(&self) -> &'static [u8] {
+        // SAFETY: the protocol guarantees `address` points at `size` readable bytes that stay
+        // mapped and untouched for the kernel's lifetime.
+        unsafe { core::slice::from_raw_parts(self.address, self.size as usize) }
+    }
+
+    /// The path the file was loaded from (`/init`).
+    pub fn path(&self) -> &'static CStr {
+        // SAFETY: the protocol guarantees a non-null, 0-terminated string that stays mapped.
+        unsafe { CStr::from_ptr(self.path) }
+    }
+
+    /// The string given with the module (`module_string:`), possibly empty.
+    pub fn string(&self) -> &'static CStr {
+        // SAFETY: as for `path`.
+        unsafe { CStr::from_ptr(self.string) }
+    }
+}
+
+/// `struct limine_module_response`.
+#[repr(C)]
+pub struct ModuleResponse {
+    /// Response revision.
+    pub revision: u64,
+    module_count: u64,
+    modules: *const *const File,
+}
+
+impl ModuleResponse {
+    /// The loaded modules, in `limine.conf` order.
+    pub fn modules(&self) -> impl Iterator<Item = &File> + '_ {
+        (0..self.module_count as usize).map(move |i| {
+            // SAFETY: `modules` points to `module_count` non-null pointers, each to a valid
+            // file structure, all in bootloader-reclaimable memory that stays untouched (see
+            // `Request::response`).
+            unsafe { &**self.modules.add(i) }
+        })
+    }
+}

@@ -174,6 +174,10 @@ impl Cpu for Machine {
         }
     }
 
+    fn cpu_exit(p: &Proc) {
+        amd64::vm_machdep::cpu_exit(p)
+    }
+
     fn cpu_fork(
         p1: &Proc,
         p2: &Proc,
@@ -265,6 +269,14 @@ impl Pmap for Machine {
     }
 
     /// `pmap_update`: nothing (yet), as the C macro.
+    fn pmap_activate(p: &Proc) {
+        amd64::pmap::pmap_activate(p)
+    }
+
+    fn pmap_deactivate(p: &Proc) {
+        amd64::pmap::pmap_deactivate(p)
+    }
+
     fn pmap_update(_pmap: &Self::Pmap) {}
 
     fn pmap_growkernel(maxkvaddr: Vaddr) -> Vaddr {

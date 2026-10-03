@@ -165,6 +165,10 @@ pub trait Cpu {
     /// have a kernel stack and a pcb set up by `cpu_fork` or `locore`.
     unsafe fn cpu_switchto(old: Option<&Proc>, new: &Proc);
 
+    /// `cpu_exit(p)` (`vm_machdep.c`): the machine-dependent part of a thread's exit, before
+    /// its address space goes (nothing on amd64 and arm64).
+    fn cpu_exit(p: &Proc);
+
     /// `cpu_fork(p1, p2, stack, tcb, func, arg)` (`vm_machdep.c`): finish a fork operation,
     /// with process `p2` nearly set up. Copy and update the kernel stack and pcb, making the
     /// child ready to run, and marking it so that it can return differently than the

@@ -36,9 +36,8 @@
 //!
 //! Upstream: sys/kern/kern_kthread.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M5 (part b1) ports `kthread_create_deferred` and
-//! `kthread_run_deferred_queue`, part b2 `kthread_create`; `kthread_exit` waits for `exit1`
-//! (M6), reported.
+//! Status: `ported` (M5-b1: `kthread_create_deferred` and `kthread_run_deferred_queue`;
+//! M5-b2: `kthread_create`; M6-b: `kthread_exit` over `exit1`).
 //!
 //! ## Deviations
 //! - `kthread_create` returns the new thread (`Result<&Proc, Errno>`) instead of an `int`
@@ -49,6 +48,7 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::kern::init_main::PROC0;
+use crate::kern::kern_exit::exit1;
 use crate::kern::kern_fork::fork1;
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::subr_prf::{Str, panic, printf};
@@ -56,9 +56,10 @@ use crate::machine::cpu::curproc;
 use crate::queue_adapter;
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_NOWAIT, M_TEMP, M_ZERO};
-use crate::sys::proc::{FORK_NOZOMBIE, FORK_SHAREFILES, FORK_SHAREVM, FORK_SYSTEM, Proc};
+use crate::sys::proc::{
+    EXIT_NORMAL, FORK_NOZOMBIE, FORK_SHAREFILES, FORK_SHAREVM, FORK_SYSTEM, Proc,
+};
 use crate::sys::queue::{SimpleqEntry, SimpleqHead};
-use crate::unported;
 
 /// `kthread_create_now`: set once the standard kernel threads exist.
 pub static KTHREAD_CREATE_NOW: AtomicBool = AtomicBool::new(false);
@@ -107,9 +108,10 @@ pub fn kthread_exit(ecode: i32) -> ! {
         ));
     }
 
-    // exit1(curproc, ecode, 0, EXIT_NORMAL): kern_exit.c (M6).
-    let _ = unported!("kthread_exit: exit1 (kern_exit.c, M6)");
-    panic(format_args!("kthread_exit: no exit1 yet"));
+    let Some(p) = curproc() else {
+        panic(format_args!("kthread_exit: no curproc"));
+    };
+    exit1(p, ecode, 0, EXIT_NORMAL)
 }
 
 /// `struct kthread_q`: a deferred creation.

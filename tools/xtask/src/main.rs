@@ -46,9 +46,9 @@ const TABLE_BEGIN: &str = "<!-- ports:begin -->";
 const TABLE_END: &str = "<!-- ports:end -->";
 
 const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | ports next | \
-                     ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] | \
-                     qemu --arch A [--kernel K] | gen-syscalls [--check] | \
-                     smoke --arch A [--kernel K] [--cmdline C] [--status N] [--send-after L --send T] --expect L... | \
+                     ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] [--init I] | \
+                     qemu --arch A [--kernel K] [--init I] | gen-syscalls [--check] | \
+                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--status N] [--send-after L --send T] --expect L... | \
                      symbolize --arch A [--kernel K]>";
 
 #[derive(Deserialize)]
@@ -138,12 +138,21 @@ fn run(args: &[String]) -> Result<()> {
         ["image", rest @ ..] => {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
             let kernel = PathBuf::from(flag(rest, "--kernel")?);
-            boot::image(&root, arch, &kernel, optional_flag(rest, "--cmdline")).map(|_| ())
+            let init = init_flag(&root, arch, rest);
+            boot::image(
+                &root,
+                arch,
+                &kernel,
+                optional_flag(rest, "--cmdline"),
+                init.as_deref(),
+            )
+            .map(|_| ())
         }
         ["qemu", rest @ ..] => {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
             let kernel = optional_flag(rest, "--kernel").map(PathBuf::from);
-            boot::qemu(&root, arch, kernel.as_deref())
+            let init = init_flag(&root, arch, rest);
+            boot::qemu(&root, arch, kernel.as_deref(), init.as_deref())
         }
         ["smoke", rest @ ..] => {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
@@ -164,14 +173,18 @@ fn run(args: &[String]) -> Result<()> {
                 (None, None) => None,
                 _ => return Err(format!("--send-after and --send go together\n{USAGE}").into()),
             };
+            let init = init_flag(&root, arch, rest);
             boot::smoke(
                 &root,
                 arch,
-                kernel.as_deref(),
-                optional_flag(rest, "--cmdline"),
-                &expects,
-                status,
-                send.as_ref().map(|(a, t)| (*a, t.as_str())),
+                &boot::SmokeOptions {
+                    kernel: kernel.as_deref(),
+                    cmdline: optional_flag(rest, "--cmdline"),
+                    expects: &expects,
+                    status,
+                    send: send.as_ref().map(|(a, t)| (*a, t.as_str())),
+                    init: init.as_deref(),
+                },
             )
         }
         ["gen-syscalls"] => syscalls::gen_syscalls(&root, false),
@@ -189,6 +202,16 @@ fn run(args: &[String]) -> Result<()> {
             symbolize::symbolize(&kernel)
         }
         _ => Err(USAGE.into()),
+    }
+}
+
+/// `--init <path>`: the init module to put on the image; `--init none` leaves it out; absent,
+/// the one `just build-init-*` built, if any.
+fn init_flag(root: &Path, arch: boot::Arch, args: &[&str]) -> Option<PathBuf> {
+    match optional_flag(args, "--init") {
+        Some("none") => None,
+        Some(p) => Some(PathBuf::from(p)),
+        None => boot::default_init(root, arch),
     }
 }
 

@@ -257,6 +257,16 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   `copy.S` behind the `machine::copy` contract, with `pcb_onfault` recovery in both page fault
   handlers (amd64 validates it against the `.nofault` table the linker script collects);
   amd64 runs without SMAP's `stac`/`clac` (no `codepatch`, `CR4.SMAP` not set).
+- The first user program (M6-b): there is no filesystem, so `init` is a Limine module
+  (`module_path: boot():/init` in `limine.conf`, which `cargo xtask image` adds when the
+  `init` binary exists) that the boot glue hands over as `BootInfo::modules` and `start_init`
+  will exec from memory. `init/` is a freestanding Rust crate (`#![no_std]`, static ELF at
+  `0x400000`, raw `syscall`/`svc` with OpenBSD's carry-flag convention) built for the two
+  bare targets by `just build-init-*`; it is not OpenBSD code and lives outside `sys/`.
+- Process exit (M6-b): `kern_exit.c`'s `exit1`/`exit2`/`reaper`/`process_zap` are OpenBSD's
+  with the pieces that need signals, file descriptors, limits, credentials or a vmspace
+  reported; `initprocess` is null until `init` exists and process 0 adopts orphans meanwhile.
+  The `selftest=kthread` threads now `kthread_exit` and proc0 checks the reaper freed them.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

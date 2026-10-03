@@ -15,7 +15,8 @@ use alloc::vec::Vec;
 
 use crate::conf::param::HZ;
 use crate::kern::kern_clock::ticks;
-use crate::kern::kern_kthread::kthread_create;
+use crate::kern::kern_fork::NTHREADS;
+use crate::kern::kern_kthread::{kthread_create, kthread_exit};
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_softintr::{SoftintrHand, softintr_establish, softintr_schedule};
@@ -427,8 +428,8 @@ static PINGPONG_MTX: Mutex = Mutex::new(IPL_NONE);
 static PINGPONG_TURN: AtomicU32 = AtomicU32::new(0);
 /// How many threads finished.
 static PINGPONG_DONE: AtomicU32 = AtomicU32::new(0);
-/// A channel nobody wakes: where the finished threads park (no `kthread_exit` before M6).
-static PINGPONG_PARK: AtomicU32 = AtomicU32::new(0);
+/// A channel nobody wakes: proc0's timed sleep while the reaper runs.
+static PINGPONG_REAP: AtomicU32 = AtomicU32::new(0);
 /// Turns per thread.
 const PINGPONG_ROUNDS: u32 = 50;
 
@@ -462,21 +463,20 @@ fn pingpong_thread(arg: *mut core::ffi::c_void) {
     }
     mtx_leave(&PINGPONG_MTX);
 
-    loop {
-        let _ = tsleep_nsec(ptr::addr_of!(PINGPONG_PARK), PWAIT, "park", INFSLP);
-    }
+    // Done: exit1 -> sched_exit -> idle's exit2 -> the reaper frees the thread.
+    kthread_exit(0);
 }
 
 /// Creates two kernel threads that pass a turn back and forth with `msleep`/`wakeup` while
 /// proc0 sleeps for them to finish: the M5 exit criterion "two kthreads ping-pong via
 /// tsleep/wakeup". Every hand-over is a context switch through the run queues and the idle
-/// thread.
+/// thread. Both threads then `kthread_exit` and proc0 checks the reaper took them (M6-b).
 pub fn kthread_pingpong() {
     mtx_init(&PINGPONG_MTX, IPL_NONE);
     let start_ns = nsecuptime();
 
-    let ping = match kthread_create(pingpong_thread, ptr::without_provenance_mut(1), b"ping") {
-        Ok(p) => p,
+    let ping_tid = match kthread_create(pingpong_thread, ptr::without_provenance_mut(1), b"ping") {
+        Ok(p) => p.p_tid.get(),
         Err(e) => {
             kprintf!(
                 "selftest: kthread ping-pong FAILED: kthread_create: {:?}\n",
@@ -485,8 +485,8 @@ pub fn kthread_pingpong() {
             return;
         }
     };
-    let pong = match kthread_create(pingpong_thread, ptr::without_provenance_mut(2), b"pong") {
-        Ok(p) => p,
+    let pong_tid = match kthread_create(pingpong_thread, ptr::without_provenance_mut(2), b"pong") {
+        Ok(p) => p.p_tid.get(),
         Err(e) => {
             kprintf!(
                 "selftest: kthread ping-pong FAILED: kthread_create: {:?}\n",
@@ -507,21 +507,30 @@ pub fn kthread_pingpong() {
         );
     }
     mtx_leave(&PINGPONG_MTX);
-
     let elapsed_us = nsecuptime().wrapping_sub(start_ns) / 1000;
+
+    // Give the two exits time to reach the reaper: a timed sleep (endtsleep wakes it).
+    let nthreads_before = NTHREADS.load(Ordering::Relaxed);
+    let _ = tsleep_nsec(ptr::addr_of!(PINGPONG_REAP), PWAIT, "reapwait", 50_000_000);
+    let nthreads_after = NTHREADS.load(Ordering::Relaxed);
+
     let turns = PINGPONG_TURN.load(Ordering::Relaxed);
-    if turns == 2 * PINGPONG_ROUNDS {
+    if turns == 2 * PINGPONG_ROUNDS && nthreads_after == nthreads_before - 2 {
         kprintf!(
-            "selftest: kthread ping-pong ok: {} turns between tid {} ({}) and tid {} ({}) in {} us, {} context switches\n",
+            "selftest: kthread ping-pong ok: {} turns between tid {} and tid {} in {} us, {} context switches, both exited and reaped ({} threads left)\n",
             turns,
-            ping.p_tid.get(),
-            Str(ping.process().comm()),
-            pong.p_tid.get(),
-            Str(pong.process().comm()),
+            ping_tid,
+            pong_tid,
             elapsed_us,
-            UVMEXP.swtch.load(Ordering::Relaxed)
+            UVMEXP.swtch.load(Ordering::Relaxed),
+            nthreads_after
         );
     } else {
-        kprintf!("selftest: kthread ping-pong FAILED: {} turns\n", turns);
+        kprintf!(
+            "selftest: kthread ping-pong FAILED: {} turns, {} threads before the exits, {} after\n",
+            turns,
+            nthreads_before,
+            nthreads_after
+        );
     }
 }

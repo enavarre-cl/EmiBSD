@@ -1,0 +1,19 @@
+[package]
+name = "init"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "EmiBSD's first user process: a freestanding Rust init(8) stand-in for milestone M6"
+build = "build.rs"
+publish = false
+
+[[bin]]
+name = "init"
+path = "src/main.rs"
+test = false
+bench = false
+doc = false
+
+[lints]
+workspace = true

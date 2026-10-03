@@ -170,6 +170,10 @@ impl Cpu for Machine {
         unsafe { arm64::machdep::cpu_switchto(old, new) }
     }
 
+    fn cpu_exit(p: &Proc) {
+        arm64::vm_machdep::cpu_exit(p)
+    }
+
     fn cpu_fork(
         p1: &Proc,
         p2: &Proc,
@@ -263,6 +267,14 @@ impl Pmap for Machine {
     }
 
     /// `pmap_update`: nothing, as the C.
+    fn pmap_activate(p: &Proc) {
+        arm64::pmap::pmap_activate(p)
+    }
+
+    fn pmap_deactivate(p: &Proc) {
+        arm64::pmap::pmap_deactivate(p)
+    }
+
     fn pmap_update(_pmap: &Self::Pmap) {}
 
     fn pmap_growkernel(maxkvaddr: Vaddr) -> Vaddr {

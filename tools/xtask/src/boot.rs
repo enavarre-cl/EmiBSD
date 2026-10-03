@@ -165,17 +165,28 @@ fn read(path: &Path) -> Result<Vec<u8>> {
 
 /// Builds the boot image for `arch` from `kernel`, with `cmdline` (if any) as the kernel
 /// command line; returns its path.
-pub fn image(root: &Path, arch: Arch, kernel: &Path, cmdline: Option<&str>) -> Result<PathBuf> {
+pub fn image(
+    root: &Path,
+    arch: Arch,
+    kernel: &Path,
+    cmdline: Option<&str>,
+    init: Option<&Path>,
+) -> Result<PathBuf> {
     let kernel_bytes = read(kernel)?;
+    let init_bytes = init.map(read).transpose()?;
     let efi_path = limine_file(arch.limine_efi())?;
     let efi = read(&efi_path)?;
     let mut conf = read(&root.join("sys/stand/limine.conf"))?;
+    // The entry is the last block of the file; `cmdline:` and `module_path:` are more keys
+    // of it.
+    if !conf.ends_with(b"\n") {
+        conf.push(b'\n');
+    }
     if let Some(cmdline) = cmdline {
-        // The entry is the last block of the file; `cmdline:` is one more key of it.
-        if !conf.ends_with(b"\n") {
-            conf.push(b'\n');
-        }
         conf.extend_from_slice(format!("    cmdline: {cmdline}\n").as_bytes());
+    }
+    if init_bytes.is_some() {
+        conf.extend_from_slice(b"    module_path: boot():/init\n");
     }
 
     let path = image_path(root, arch);
@@ -206,6 +217,9 @@ pub fn image(root: &Path, arch: Arch, kernel: &Path, cmdline: Option<&str>) -> R
         boot_dir.create_file(arch.limine_efi())?.write_all(&efi)?;
         root_dir.create_file("limine.conf")?.write_all(&conf)?;
         root_dir.create_file("bsd")?.write_all(&kernel_bytes)?;
+        if let Some(init_bytes) = &init_bytes {
+            root_dir.create_file("init")?.write_all(init_bytes)?;
+        }
     }
     fs.unmount()?;
 
@@ -376,9 +390,20 @@ fn spawn_error(arch: Arch, e: &io::Error) -> String {
 
 /// Boots `arch` interactively: serial and the QEMU monitor on stdio (`Ctrl-A X` quits). With
 /// `kernel`, the image is rebuilt first.
-pub fn qemu(root: &Path, arch: Arch, kernel: Option<&Path>) -> Result<()> {
+/// The `init` the image carries unless `--init` says otherwise: the one `just build-init-*`
+/// left in `target/`, if it exists.
+pub fn default_init(root: &Path, arch: Arch) -> Option<PathBuf> {
+    let p = root
+        .join("target")
+        .join(arch.target())
+        .join("debug")
+        .join("init");
+    p.is_file().then_some(p)
+}
+
+pub fn qemu(root: &Path, arch: Arch, kernel: Option<&Path>, init: Option<&Path>) -> Result<()> {
     let image = match kernel {
-        Some(k) => image(root, arch, k, None)?,
+        Some(k) => image(root, arch, k, None, init)?,
         None => {
             let p = image_path(root, arch);
             if !p.is_file() {
@@ -410,17 +435,34 @@ pub fn qemu(root: &Path, arch: Arch, kernel: Option<&Path>) -> Result<()> {
 /// `expects` appears and QEMU exits with `status` before the timeout. With `kernel`, the image
 /// is rebuilt first, with `cmdline` as the kernel command line. With `send`, the text is
 /// written to QEMU's stdin (the serial console) once the trigger line has appeared.
-pub fn smoke(
-    root: &Path,
-    arch: Arch,
-    kernel: Option<&Path>,
-    cmdline: Option<&str>,
-    expects: &[&str],
-    status: i32,
-    send: Option<(&str, &str)>,
-) -> Result<()> {
+/// What a smoke boot runs and expects.
+#[derive(Clone, Copy)]
+pub struct SmokeOptions<'a> {
+    /// The kernel to image, or the existing image when `None`.
+    pub kernel: Option<&'a Path>,
+    /// The kernel command line.
+    pub cmdline: Option<&'a str>,
+    /// Serial lines that must appear.
+    pub expects: &'a [&'a str],
+    /// The QEMU exit status expected.
+    pub status: i32,
+    /// `(after this line, send this text)` on the serial console.
+    pub send: Option<(&'a str, &'a str)>,
+    /// The init module to put on the image.
+    pub init: Option<&'a Path>,
+}
+
+pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
+    let SmokeOptions {
+        kernel,
+        cmdline,
+        expects,
+        status,
+        send,
+        init,
+    } = *opts;
     let image = match kernel {
-        Some(k) => image(root, arch, k, cmdline)?,
+        Some(k) => image(root, arch, k, cmdline, init)?,
         None => {
             let p = image_path(root, arch);
             if !p.is_file() {

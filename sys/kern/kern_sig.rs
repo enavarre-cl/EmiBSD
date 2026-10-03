@@ -54,19 +54,19 @@
 //! - `userret` reports instead of delivering when a signal or suspension is pending; none can
 //!   be before the signal code lands.
 
-use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 
 use crate::machine::Machine;
 use crate::machine::cpu::Cpu;
 use crate::sys::errno::Errno;
 use crate::sys::proc::{P_ALRMPEND, P_PROFPEND, P_SIGSUSPEND, P_SUSPSIG, P_SUSPSINGLE, Proc};
+use crate::sys::systm::SysArgs;
 use crate::sys::types::Register;
 use crate::unported;
 
 /// `sys_nosys`: nonexistent system call-- signal process (may want to handle it). Flag error
 /// in case process won't see signal immediately (blocked or ignored).
-pub fn sys_nosys(_p: &Proc, _v: *const c_void, _retval: &mut [Register; 2]) -> Result<(), Errno> {
+pub fn sys_nosys(_p: &Proc, _v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
     // ptsignal(p, SIGSYS, STHREAD): the signals (M6-b).
     let _ = unported!("sys_nosys: ptsignal(SIGSYS) (M6-b)");
     Err(Errno::ENOSYS)

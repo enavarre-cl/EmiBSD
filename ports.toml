@@ -435,7 +435,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; under feature qemu the run ends with the success exit where proc0 would sleep; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; under feature qemu the run ends with the success exit where proc0 would sleep; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -789,7 +789,7 @@ rust = "sys/sys/systm.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9fb4626fd16812491f6c3904f32ccfe077412cdf"
-notes = "physmem only (defined here, filled by the machdeps; the C defines it per arch); the hostname/boottime globals, copyin/copyout, tsleep/wakeup and the other prototypes come with their files; M5-b2: cold and safepri (defined here like physmem), INFSLP, MAXTSLP; M6-a: struct sysent (Sysent::new for the generated table), sy_call_t (Result plus the retval registers), SY_NOLOCK, SCARG as sysargs"
+notes = "physmem only (defined here, filled by the machdeps; the C defines it per arch); the hostname/boottime globals, copyin/copyout, tsleep/wakeup and the other prototypes come with their files; M5-b2: cold and safepri (defined here like physmem), INFSLP, MAXTSLP; M6-a: struct sysent (Sysent::new for the generated table), sy_call_t (Result plus the retval registers), SY_NOLOCK, SCARG as sysargs; M6-b: sy_call_t takes &SysArgs (the six registers) and sysargs::<T> is safe"
 
 [[file]]
 c = "sys/sys/malloc.h"
@@ -1092,7 +1092,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "68cdf4c1b23fa986d0055f16ee4c4fd90a98099e"
 deps = ["sys/arch/amd64/include/trap.h", "sys/arch/amd64/include/frame.h", "sys/arch/amd64/include/cpu.h", "sys/arch/amd64/amd64/db_interface.c"]
-notes = "M4: trap_type[], trap_types, fault (writes ci_panicbuf), pgex2access, kpageflttrap (returns 0 at the curproc check, as C with p == NULL; the pcb_onfault/SMEP/SMAP/uvm_fault code behind it is ported with uvm_fault reported), kerntrap (x86_nmi from intr.c, verify_smap M4-b2, debug_trap is the DEBUG option), trap_print; upageflttrap, usertrap, ast, syscall, frame_dump, verify_pkru, vctrap are M6; M6-a: syscall, ast, child_return; kpageflttrap checks pcb_onfault against the .nofault table and resumes there (uvm_fault still reported)"
+notes = "M4: trap_type[], trap_types, fault (writes ci_panicbuf), pgex2access, kpageflttrap (returns 0 at the curproc check, as C with p == NULL; the pcb_onfault/SMEP/SMAP/uvm_fault code behind it is ported with uvm_fault reported), kerntrap (x86_nmi from intr.c, verify_smap M4-b2, debug_trap is the DEBUG option), trap_print; upageflttrap, usertrap, ast, syscall, frame_dump, verify_pkru, vctrap are M6; M6-a: syscall, ast, child_return; kpageflttrap checks pcb_onfault against the .nofault table and resumes there (uvm_fault still reported); M6-b: syscall hands the six argument registers as a SysArgs block"
 
 [[file]]
 c = "sys/arch/amd64/amd64/locore.S"
@@ -1475,7 +1475,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "119c441abcca3d81b0c93ce3d3e31780efdd421b"
 deps = ["sys/sys/sched.h", "sys/kern/kern_clockintr.c"]
-notes = "M5-a: sched_init (cpuset_add reported) and sched_init_cpu as far as the four clockintr_binds (the run queues, the idle thread and cpuset_init_cpu reported, M5-b); M5-b1: sched_init_cpu defers sched_kthreads_create (fork1 reported until M5-b2); M5-b2: the cpusets (sched_idle/queued/all_cpus, cpuset_*), the counters, sched_kthreads_create, sched_idle (exit2 reported), sched_exit, sched_toidle, setrunqueue, remrunqueue, sched_chooseproc, sched_choosecpu[_fork]/sched_steal_proc/sched_proc_to_cpu_cost (the UP versions), sched_peg/unpeg_curproc, sched_barrier (UP), sysctl_hwncpuonline, cpu_is_online; MULTIPROCESSOR and __HAVE_CPU_TOPOLOGY paths not configured"
+notes = "M5-a: sched_init (cpuset_add reported) and sched_init_cpu as far as the four clockintr_binds (the run queues, the idle thread and cpuset_init_cpu reported, M5-b); M5-b1: sched_init_cpu defers sched_kthreads_create (fork1 reported until M5-b2); M5-b2: the cpusets (sched_idle/queued/all_cpus, cpuset_*), the counters, sched_kthreads_create, sched_idle (exit2 reported), sched_exit, sched_toidle, setrunqueue, remrunqueue, sched_chooseproc, sched_choosecpu[_fork]/sched_steal_proc/sched_proc_to_cpu_cost (the UP versions), sched_peg/unpeg_curproc, sched_barrier (UP), sysctl_hwncpuonline, cpu_is_online; MULTIPROCESSOR and __HAVE_CPU_TOPOLOGY paths not configured; M6-b: sched_idle calls the real exit2"
 
 [[file]]
 c = "sys/kern/kern_time.c"
@@ -1638,11 +1638,11 @@ notes = "M5: hashinit (returns the table as a slice) and hashfree; uiomove, urea
 [[file]]
 c = "sys/kern/kern_kthread.c"
 rust = "sys/kern/kern_kthread.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "11cf5c027051e37d06c1edfec245084c1cbb28b2"
 deps = ["sys/sys/proc.h", "sys/kern/kern_fork.c"]
-notes = "M5-b1: kthread_create_deferred and kthread_run_deferred_queue; kthread_create reports fork1 (M5-b2) and kthread_exit exit1 (M6); M5-b2: kthread_create over fork1"
+notes = "M5-b1: kthread_create_deferred and kthread_run_deferred_queue; kthread_create reports fork1 (M5-b2) and kthread_exit exit1 (M6); M5-b2: kthread_create over fork1; M6-b: kthread_exit over exit1 (the file is complete)"
 
 [[file]]
 c = "sys/kern/kern_fork.c"
@@ -1676,7 +1676,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "32e2d1e40bff5a8c0457de13d9c542e9c2090358"
 deps = ["sys/sys/proc.h", "sys/kern/kern_tc.c", "sys/kern/kern_lock.c"]
-notes = "M5-b2: tuagg_sumup, tuagg_get_proc, tuagg_get_process, tuagg_add_process, tuagg_add_runtime; the priority/limit/rusage syscalls, the plimit management (lim_*), calcru/calctsru, ruadd, rucheck are M6"
+notes = "M5-b2: tuagg_sumup, tuagg_get_proc, tuagg_get_process, tuagg_add_process, tuagg_add_runtime; the priority/limit/rusage syscalls, the plimit management (lim_*), calcru/calctsru, ruadd, rucheck are M6; M6-b: calctsru, calcru (returning the three times), ruadd"
 [[file]]
 c = "sys/kern/subr_xxx.c"
 rust = "sys/kern/subr_xxx.rs"
@@ -1821,7 +1821,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1657d9674586e2a19dba57475b98626340a918cd"
 deps = ["sys/sys/syscall_mi.h", "sys/kern/init_sysent.c"]
-notes = "M6-a: svc_handler and child_return"
+notes = "M6-a: svc_handler and child_return; M6-b: svc_handler hands x0..x5 as a SysArgs block"
 [[file]]
 c = "sys/arch/arm64/arm64/ast.c"
 rust = "sys/arch/arm64/arm64/ast.rs"
@@ -1830,6 +1830,15 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "689fd18cdfc5fa4641d977012e0507b44c4aac35"
 deps = ["sys/sys/syscall_mi.h"]
 notes = "M6-a: ast"
+
+[[file]]
+c = "sys/kern/kern_exit.c"
+rust = "sys/kern/kern_exit.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "93ef328110b1c5aabeb187152a1f357f397ffaf2"
+deps = ["sys/sys/proc.h", "sys/kern/kern_proc.c", "sys/kern/kern_sched.c", "sys/kern/kern_synch.c", "sys/kern/kern_resource.c", "sys/uvm/uvm_glue.c"]
+notes = "M6-b: sys_exit, exit1 (single_thread_set, process_suspend_signal, kqpoll_exit, stopprofclock, fdfree, killjobc, SAS_NOCLDWAIT, uvm_purge, lim_free, process_untrace reported), exit2 with deadproc, proc_free (crfree reported), reaper (uvm_exit, knote_processexit, prsignal reported), process_clear_orphan, process_reparent, process_zap (leavepgrp, vrele, sigactsfree/lim_free/crfree reported); process 0 adopts orphans while initprocess is null; sys___threxit, dowait6, sys_wait4, sys_waitid, proc_finish_wait, process_untrace are M6-c/M7"
 
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"

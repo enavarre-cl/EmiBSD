@@ -24,7 +24,6 @@
 //! Status: `ported` (M6-a): `svc_handler` and `child_return`.
 
 use core::ffi::c_void;
-use core::ptr;
 use core::sync::atomic::Ordering;
 
 use crate::arch::arm64::include::armreg::{PSR_C, PSR_I};
@@ -36,6 +35,7 @@ use crate::sys::errno::Errno;
 use crate::sys::proc::Proc;
 use crate::sys::syscall::SYS_MAXSYSCALL;
 use crate::sys::syscall_mi::{mi_child_return, mi_syscall, mi_syscall_return};
+use crate::sys::systm::SysArgs;
 use crate::sys::types::Register;
 use crate::uvm::uvm_init::UVMEXP;
 
@@ -58,7 +58,7 @@ pub fn svc_handler(frame: &mut Trapframe) {
     frame.tf_elr += 8;
 
     let code: Register = frame.tf_x[8];
-    let args = ptr::addr_of!(frame.tf_x[0]).cast::<c_void>();
+    let args: &SysArgs = frame.tf_x[..6].try_into().unwrap_or(&[0; 6]);
 
     let mut rval: [Register; 2] = [0, 0];
 

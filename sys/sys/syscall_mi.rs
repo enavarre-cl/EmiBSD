@@ -48,14 +48,13 @@
 //!   M6-b) and skips pledge (`PS_PLEDGE` is never set before `pledge(2)`, M7); `KTRACE`,
 //!   `SYSCALL_DEBUG`, dt(4) and the kernel lock (`MULTIPROCESSOR`) are not configured.
 
-use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 
 use crate::kern::kern_sig::userret;
 use crate::kern::sched_bsd::preempt;
 use crate::sys::errno::Errno;
 use crate::sys::proc::{P_OWEUPC, PS_PLEDGE, Proc, refreshcreds};
-use crate::sys::systm::{SY_NOLOCK, Sysent};
+use crate::sys::systm::{SY_NOLOCK, SysArgs, Sysent};
 use crate::sys::types::Register;
 use crate::unported;
 
@@ -74,7 +73,7 @@ pub fn mi_syscall(
     p: &Proc,
     code: Register,
     callp: &Sysent,
-    argp: *const c_void,
+    argp: &SysArgs,
     retval: &mut [Register; 2],
 ) -> Result<(), Errno> {
     let _lock = callp.sy_flags & SY_NOLOCK == 0; // KERNEL_LOCK(): nothing without MULTIPROCESSOR

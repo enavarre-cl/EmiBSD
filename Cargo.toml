@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["sys", "sys/lib/libkern", "tools/xtask"]
+members = ["sys", "sys/lib/libkern", "tools/xtask", "init"]
 # `cargo check` / `cargo test` at the root build the kernel and libkern for the HOST
 # (through sys/arch/host). Kernel images always name a target; `just` does that.
 default-members = ["sys", "sys/lib/libkern"]
