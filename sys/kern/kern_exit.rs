@@ -50,10 +50,10 @@
 //!
 //! ## Deviations
 //! - What `exit1` tears down that does not exist yet is reported, each once: `kqpoll_exit`,
-//!   `stopprofclock`/`prof_write`, `cancel_all_itimers`, `unveil_destroy`,
-//!   `process_untrace` (the `SIGKILL` to a traced child is sent); `process_zap` likewise
-//!   `vrele`; the reaper `knote_processexit`. `killjobc` and `leavepgrp` are real since the
-//!   process group management of `kern_proc.c`. The signal side
+//!   `stopprofclock`/`prof_write`, `unveil_destroy` (`cancel_all_itimers` is real since
+//!   `kern_time.c`), `process_untrace` (the `SIGKILL` to a traced child is sent);
+//!   `process_zap` likewise `vrele`; the reaper `knote_processexit`. `killjobc` and
+//!   `leavepgrp` are real since the process group management of `kern_proc.c`. The signal side
 //!   (`single_thread_set`, `process_suspend_signal`, `sigio_freelist`, `SAS_NOCLDWAIT`, the
 //!   reaper's `SIGCHLD`, `sigactsfree`) is real since `kern_sig.c`, `fdfree` since
 //!   `kern_descrip.c`, `lim_free` since the `plimit` port. The credentials (`crfree` in `proc_free`
@@ -282,7 +282,7 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
         // close open files and release open-file table
         fdfree(p);
 
-        // cancel_all_itimers(): kern_time.c (M6-c).
+        crate::kern::kern_time::cancel_all_itimers();
 
         timeout_del(&pr.ps_rucheck_to);
         // SYSVSEM: not configured.

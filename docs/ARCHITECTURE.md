@@ -410,6 +410,14 @@ OpenBSD's `makedev()` encoding).
   `ypconnect` answers `EAFNOSUPPORT` without a YP domain. The stand-in `init` forks children
   and waits for them, one of which makes a system call from an unpinned site and dies of
   `SIGABRT` (`pinsyscalls addr ...` and `init: processes ok` in `smoke`).
+- Time system calls (M8): `kern_time.c` is OpenBSD's whole file: `clock_gettime`,
+  `clock_settime`, `clock_getres`, `nanosleep`, `gettimeofday`, `settimeofday`, `adjtime`,
+  `adjfreq`, the interval timers (`setitimer`/`getitimer`; `ITIMER_REAL` through the
+  process's `ps_realit_to` timeout and `realitexpire`, the virtual and profiling timers
+  through `itimer_update` and the machine's `need_proftick`) and the periodic `resettodr`.
+  No time-of-day chip driver is ported (`todr_attach` has no caller), so the clock starts at
+  the epoch and `resettodr` has nothing to write. The stand-in `init` checks the clocks, a
+  sleep and a `SIGALRM` from `ITIMER_REAL` interrupting `nanosleep` (`init: time ok`).
 - Signals (M7, `kern_sig.c`): the whole file is OpenBSD's, and the traps of both archs call
   its `trapsignal`. The machine half (`sendsig`, `sys_sigreturn`, the `sigcode` trampoline of
   each `locore.S`) is the `machine::MachineSignal` contract; `sys_sigreturn` is entered from

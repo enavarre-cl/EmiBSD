@@ -55,8 +55,8 @@
 //!   `Proc::new()`/`Process::new()` into the pool item and then copy the `p_startcopy`/
 //!   `ps_startcopy` fields from the parent, instead of `memset`/`memcpy` by field offset.
 //! - `process_initialize` reports what its process does not have yet: `prof_fork` (M6),
-//!   `klist_init_mutex` (M6) and the two timeouts' handlers (`realitexpire`, `rucheck`:
-//!   M6). `process_new` likewise reports `startprofclock` (M6); `sigactsinit` is real since
+//!   `klist_init_mutex` (M6); the `realitexpire` timeout is real since `kern_time.c` (M8).
+//!   `process_new` likewise reports `startprofclock` (M6); `sigactsinit` is real since
 //!   `kern_sig.c`, `fdcopy`/`fdshare` since `kern_descrip.c` and `lim_fork` since the
 //!   `plimit` port. `fork1` skips the `RLIMIT_NPROC` check for root as the C does, reports it for
 //!   other users (the limits), and reports `knote_processfork` (M6). The credentials
@@ -292,8 +292,13 @@ pub fn process_initialize(pr: &'static Process, p: &'static Proc) {
     mtx_init(&pr.ps_mtx, IPL_HIGH);
     // klist_init_mutex(&pr->ps_klist, &pr->ps_mtx): kqueue (M6).
 
-    // timeout_set_flags(&pr->ps_realit_to, realitexpire, pr, KCLOCK_UPTIME, 0): kern_time.c.
-    let _ = unported!("process_initialize: realitexpire timeout (kern_time.c)");
+    crate::kern::kern_timeout::timeout_set_flags(
+        &pr.ps_realit_to,
+        crate::kern::kern_time::realitexpire,
+        ptr::from_ref(pr).cast_mut().cast::<c_void>(),
+        crate::sys::timeout::KCLOCK_UPTIME,
+        0,
+    );
     timeout_set(
         &pr.ps_rucheck_to,
         rucheck,

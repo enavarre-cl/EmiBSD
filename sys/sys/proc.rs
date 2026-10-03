@@ -451,6 +451,10 @@ pub struct Process {
     pub ps_start: Cell<Timespec>,
     /// \[m\] `ps_realit_to`: `ITIMER_REAL` timeout.
     pub ps_realit_to: Timeout,
+    /// \[m\] `ps_timer[ITIMER_REAL]`, \[T\] `ps_timer[ITIMER_VIRTUAL, ITIMER_PROF]`
+    /// (`itimer_mtx`): the interval timers (kept with the other members here; the C zeroes
+    /// it in `process_new` as part of the zeroed area).
+    pub ps_timer: [Cell<crate::sys::_time::Itimerspec>; 3],
 }
 
 // SAFETY: the members are locked as the C's annotations say; on one CPU the kernel lock
@@ -519,6 +523,7 @@ impl Process {
             ps_threadcnt: Cell::new(0),
             ps_start: Cell::new(Timespec::new(0, 0)),
             ps_realit_to: Timeout::zeroed(),
+            ps_timer: [const { Cell::new(crate::sys::_time::Itimerspec::new()) }; 3],
         }
     }
 

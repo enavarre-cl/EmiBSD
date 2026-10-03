@@ -63,10 +63,9 @@
 //! - The set[ug]id stdin/stdout/stderr fix-up opens `/dev/null` with `cdevvp(getnulldev())`:
 //!   the device switch (`<sys/conf.h>`) is not ported, so a set[ug]id exec with one of the
 //!   three descriptors closed reports it and fails (the C would succeed).
-//! - `prof_exec`, `stopprofclock` (profiling, `subr_prof.c`), `cancel_all_itimers`
-//!   (`kern_time.c`), the `NOTE_EXEC` knote (`kern_event.c`) and `unveil_destroy`
-//!   (`kern_unveil.c`) are reported or no-ops where their subsystem is missing (see each
-//!   call site); `KTRACE` is not configured.
+//! - `prof_exec`, `stopprofclock` (profiling, `subr_prof.c`), the `NOTE_EXEC` knote
+//!   (`kern_event.c`) and `unveil_destroy` (`kern_unveil.c`) are reported or no-ops where
+//!   their subsystem is missing (see each call site); `KTRACE` is not configured.
 //! - The 4-clause licence (advertising clause) was accepted by the user at M2 for this
 //!   project.
 
@@ -83,6 +82,7 @@ use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_prot::{crcopy, crfree, crhold, proc_cansugid};
 use crate::kern::kern_sig::{execsigs, psignal, single_thread_clear, single_thread_set};
 use crate::kern::kern_synch::wakeup;
+use crate::kern::kern_time::cancel_all_itimers;
 use crate::kern::subr_pool::pool_put;
 use crate::kern::subr_prf::panic;
 use crate::kern::vfs_getcwd::vfs_getcwd_common;
@@ -917,8 +917,7 @@ fn execve_common(
     }
 
     if pr.ps_flags.load(Ordering::Relaxed) & PS_SUGIDEXEC != 0 {
-        // cancel_all_itimers(): kern_time.c's interval timers (see the deviations).
-        let _ = unported!("exec: cancel_all_itimers (kern_time.c)");
+        cancel_all_itimers();
     }
 
     // reset CPU time usage for the thread, but not the process

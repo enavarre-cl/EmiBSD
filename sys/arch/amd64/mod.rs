@@ -216,6 +216,10 @@ impl Cpu for Machine {
         amd64::machdep::signotify(p)
     }
 
+    fn need_proftick(p: &Proc) {
+        amd64::machdep::aston(p)
+    }
+
     fn child_return(arg: *mut c_void) {
         amd64::trap::child_return(arg)
     }

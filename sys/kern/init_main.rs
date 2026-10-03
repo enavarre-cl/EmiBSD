@@ -592,7 +592,7 @@ pub fn main() -> ! {
     START_INIT_EXEC.store(1, Ordering::Relaxed);
     wakeup(ptr::from_ref(&START_INIT_EXEC));
 
-    let _ = unported!("start_periodic_resettodr");
+    crate::kern::kern_time::start_periodic_resettodr();
 
     // proc0: nothing to do, back to sleep
     loop {

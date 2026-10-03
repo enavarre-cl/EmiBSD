@@ -195,6 +195,22 @@ pub fn sys_pledge(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
     error
 }
 
+/// `pledge_adjtime`: a pledged process may change the time only with "settime"; reading
+/// it (`delta` NULL) is always allowed.
+pub fn pledge_adjtime(p: &Proc, delta: usize) -> Result<(), Errno> {
+    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE == 0 {
+        return Ok(());
+    }
+
+    if p.process().ps_pledge.get() & PLEDGE_SETTIME != 0 {
+        return Ok(());
+    }
+    if delta != 0 {
+        return Err(Errno::EPERM);
+    }
+    Ok(())
+}
+
 /// `pledgereq_flags`: the flags of the promise `req_name`, 0 when there is no such promise.
 pub fn pledgereq_flags(req_name: &[u8]) -> u64 {
     match PLEDGEREQ.binary_search_by(|(name, _)| (*name).cmp(req_name)) {

@@ -191,6 +191,10 @@ pub trait Cpu {
     /// register zero and the machine state of a fresh thread.
     fn setregs(p: &Proc, pack: &ExecPackage<'_>, stack: Vaddr, arginfo: &PsStrings);
 
+    /// `need_proftick(p)`: an interval timer of the thread `p` expired; it handles that on
+    /// its way back to user mode (an AST).
+    fn need_proftick(p: &Proc);
+
     /// `signotify(p)`: notify the thread `p` that it has a signal pending, to be processed
     /// as soon as possible (an AST on its way back to user mode).
     fn signotify(p: &Proc);

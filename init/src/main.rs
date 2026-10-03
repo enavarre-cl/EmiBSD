@@ -138,6 +138,28 @@ const SYS_PROFIL: usize = 175;
 const SYS_UTRACE: usize = 209;
 /// `SYS_sched_yield`.
 const SYS_SCHED_YIELD: usize = 298;
+/// `SYS_clock_gettime`.
+const SYS_CLOCK_GETTIME: usize = 87;
+/// `SYS_clock_getres`.
+const SYS_CLOCK_GETRES: usize = 89;
+/// `SYS_nanosleep`.
+const SYS_NANOSLEEP: usize = 91;
+/// `SYS_gettimeofday`.
+const SYS_GETTIMEOFDAY: usize = 67;
+/// `SYS_setitimer`.
+const SYS_SETITIMER: usize = 69;
+/// `SYS_getitimer`.
+const SYS_GETITIMER: usize = 70;
+/// `CLOCK_REALTIME`.
+const CLOCK_REALTIME: usize = 0;
+/// `CLOCK_MONOTONIC`.
+const CLOCK_MONOTONIC: usize = 3;
+/// `ITIMER_REAL`.
+const ITIMER_REAL: usize = 0;
+/// `SIGALRM`.
+const SIGALRM: usize = 14;
+/// `EINTR`.
+const EINTR: usize = 4;
 /// `SYS_setrtable`.
 const SYS_SETRTABLE: usize = 310;
 /// `SYS_getrtable`.
@@ -602,6 +624,89 @@ fn processes() -> bool {
     ok
 }
 
+/// How many times `on_sigalrm` ran.
+static ALARMS: AtomicUsize = AtomicUsize::new(0);
+
+/// The `SIGALRM` handler of [`times`].
+extern "C" fn on_sigalrm(sig: i32) {
+    if sig as usize == SIGALRM {
+        ALARMS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// `kern_time.c` seen from user mode: the monotonic clock advances across a 20 ms
+/// `nanosleep(2)`, the clocks have a resolution, `gettimeofday(2)` answers, and a 200 ms
+/// `ITIMER_REAL` timer interrupts a long `nanosleep` with `SIGALRM` (`EINTR`, the time left
+/// copied out) and is then disarmed.
+fn times() -> bool {
+    let mut a = [0i64; 2];
+    let mut b = [0i64; 2];
+    let mut res = [0i64; 2];
+    let mut tv = [0i64; 2];
+    let call = |n, x, y, z| syscall3(n, x, y, z);
+
+    let mut ok = call(
+        SYS_CLOCK_GETTIME,
+        CLOCK_MONOTONIC,
+        a.as_mut_ptr() as usize,
+        0,
+    ) == (0, false);
+    let short = [0i64, 20_000_000];
+    ok &= call(SYS_NANOSLEEP, short.as_ptr() as usize, 0, 0) == (0, false);
+    ok &= call(
+        SYS_CLOCK_GETTIME,
+        CLOCK_MONOTONIC,
+        b.as_mut_ptr() as usize,
+        0,
+    ) == (0, false);
+    // nanosleep(2) measures the time with the coarse getnanouptime(9), a tick behind the
+    // precise clock, so it may end a little before 20 ms of CLOCK_MONOTONIC: ask for half.
+    let elapsed = (b[0] - a[0]) * 1_000_000_000 + (b[1] - a[1]);
+    ok &= elapsed >= 10_000_000;
+    ok &= call(
+        SYS_CLOCK_GETRES,
+        CLOCK_REALTIME,
+        res.as_mut_ptr() as usize,
+        0,
+    ) == (0, false);
+    ok &= res[0] == 0 && res[1] > 0;
+    ok &= call(SYS_GETTIMEOFDAY, tv.as_mut_ptr() as usize, 0, 0) == (0, false);
+    ok &= tv[1] >= 0 && tv[1] < 1_000_000;
+
+    let sa = Sigaction {
+        sa_handler: on_sigalrm as *const () as usize,
+        sa_mask: 0,
+        sa_flags: 0,
+    };
+    ok &= call(SYS_SIGACTION, SIGALRM, &sa as *const Sigaction as usize, 0) == (0, false);
+    // it_interval 0, it_value 200 ms: long enough that the alarm cannot arrive before the
+    // nanosleep below starts, even on a slow emulator.
+    let itv = [0i64, 0, 0, 200_000];
+    let mut old = [1i64; 4];
+    ok &= call(
+        SYS_SETITIMER,
+        ITIMER_REAL,
+        itv.as_ptr() as usize,
+        old.as_mut_ptr() as usize,
+    ) == (0, false);
+    ok &= old == [0; 4];
+    let long = [5i64, 0];
+    let mut left = [0i64; 2];
+    ok &= call(
+        SYS_NANOSLEEP,
+        long.as_ptr() as usize,
+        left.as_mut_ptr() as usize,
+        0,
+    ) == (EINTR, true);
+    ok &= ALARMS.load(Ordering::Relaxed) == 1;
+    ok &= left[0] >= 4 && left[0] <= 5;
+    // one-shot: nothing left to report
+    let mut now = [1i64; 4];
+    ok &= call(SYS_GETITIMER, ITIMER_REAL, now.as_mut_ptr() as usize, 0) == (0, false);
+    ok &= now == [0; 4];
+    ok
+}
+
 /// The program, called by `_start` with the initial stack pointer.
 extern "C" fn init_main(sp: *const usize) -> ! {
     let mut status = match write(1, b"init: hello from user mode\n") {
@@ -673,6 +778,13 @@ extern "C" fn init_main(sp: *const usize) -> ! {
         }
     } else {
         status = 10;
+    }
+    if times() {
+        if write(1, b"init: time ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 11;
     }
     exit(status)
 }

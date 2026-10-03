@@ -415,6 +415,8 @@ impl Cpu for Machine {
     /// No user mode, hence no AST to post.
     fn signotify(_p: &Proc) {}
 
+    fn need_proftick(_p: &Proc) {}
+
     /// The host double has no user mode to return to.
     fn child_return(_arg: *mut c_void) {}
 

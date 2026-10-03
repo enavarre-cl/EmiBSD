@@ -44,18 +44,17 @@
 //! ## Deviations
 //! - `KASSERT((howto & RB_NOSYNC) || curproc != NULL)`: `curproc` arrives with M5; the
 //!   assertion returns with it.
-//! - `stop_periodic_resettodr()` (`kern_time.c`) is reported as unported.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::kern::kern_prot::suser;
+use crate::kern::kern_time::stop_periodic_resettodr;
 use crate::machine::cpu::boot;
 use crate::sys::errno::Errno;
 use crate::sys::proc::Proc;
 use crate::sys::syscallargs::SysRebootArgs;
 use crate::sys::systm::{SysArgs, sysargs};
 use crate::sys::types::Register;
-use crate::unported;
 
 /// `rebooting`: set once the system started to go down, for the benefit of code that must not
 /// sleep any more.
@@ -74,7 +73,7 @@ pub fn sys_reboot(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
 
 /// `reboot`: stops the clock bookkeeping and hands over to the machine's `boot(9)`.
 pub fn reboot(howto: i32) -> ! {
-    let _ = unported!("stop_periodic_resettodr");
+    stop_periodic_resettodr();
 
     REBOOTING.store(true, Ordering::Relaxed);
 

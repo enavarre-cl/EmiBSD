@@ -212,6 +212,10 @@ impl Cpu for Machine {
         arm64::machdep::signotify(p)
     }
 
+    fn need_proftick(p: &Proc) {
+        arm64::machdep::aston(p)
+    }
+
     fn child_return(arg: *mut c_void) {
         arm64::syscall::child_return(arg)
     }

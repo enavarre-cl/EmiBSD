@@ -4,6 +4,7 @@
 //! that the corresponding `.c` file implements live in that file's module (`kern/`), as `impl`
 //! blocks on the types defined here.
 
+pub mod _time;
 pub mod acct;
 pub mod buf;
 pub mod clockintr;

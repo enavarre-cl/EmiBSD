@@ -162,6 +162,7 @@ impl Timespec {
 unsafe impl crate::machine::copy::AbiPod for Timespec {}
 
 /// `struct timezone`.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Timezone {
     /// `tz_minuteswest`: minutes west of Greenwich.
@@ -170,7 +171,11 @@ pub struct Timezone {
     pub tz_dsttime: i32,
 }
 
+// SAFETY: `#[repr(C)]` of two `int`s: no padding, any bit pattern.
+unsafe impl crate::machine::copy::AbiPod for Timezone {}
+
 /// `struct itimerval`: names of the interval timers, and structure defining a timer setting.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Itimerval {
     /// `it_interval`: timer interval.
@@ -178,6 +183,9 @@ pub struct Itimerval {
     /// `it_value`: current value.
     pub it_value: Timeval,
 }
+
+// SAFETY: `#[repr(C)]` of two `Timeval`s: no padding, any bit pattern.
+unsafe impl crate::machine::copy::AbiPod for Itimerval {}
 
 /// `struct clockinfo`: clock information structure for `sysctl({CTL_KERN, KERN_CLOCKRATE})`.
 #[repr(C)]
