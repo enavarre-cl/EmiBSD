@@ -19,3 +19,4 @@ pub mod netisr;
 pub mod route;
 pub mod rtable;
 pub mod rtsock;
+pub mod wg_noise;
