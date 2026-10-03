@@ -21,12 +21,16 @@ use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_softintr::{SoftintrHand, softintr_establish, softintr_schedule};
 use crate::kern::kern_synch::{msleep_nsec, tsleep_nsec, wakeup};
+use crate::kern::kern_task::{
+    task_add, task_del, task_set, taskq_barrier, taskq_create, taskq_destroy,
+};
 use crate::kern::kern_tc::{getuptime, nsecuptime};
 use crate::kern::kern_timeout::{timeout_add_msec, timeout_set};
 use crate::kern::subr_pool::{pool_destroy, pool_get, pool_init, pool_put, pool_reclaim};
 use crate::kern::subr_prf::Str;
 use crate::kprintf;
 use crate::machine::cons::cn_rx_intr_establish;
+use crate::machine::cpu::curproc;
 use crate::machine::intr::{IPL_NONE, IPL_TTY};
 use crate::machine::pmap::{
     pmap_extract, pmap_growkernel, pmap_kenter_pa, pmap_kernel, pmap_kremove, pmap_map_direct,
@@ -37,7 +41,9 @@ use crate::sys::mman::{PROT_READ, PROT_WRITE};
 use crate::sys::mutex::Mutex;
 use crate::sys::param::{PAGE_SIZE, PWAIT};
 use crate::sys::pool::{PR_NOWAIT, PR_ZERO, Pool};
+use crate::sys::proc::Proc;
 use crate::sys::systm::INFSLP;
+use crate::sys::task::{SYSTQ, SYSTQMP, Task, task_pending};
 use crate::sys::timeout::Timeout;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_extern::UVM_PGA_ZERO;
@@ -56,6 +62,8 @@ static UART_REQUESTED: AtomicBool = AtomicBool::new(false);
 static CLOCK_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// `selftest=kthread` was on the command line.
 static KTHREAD_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// `selftest=taskq` was on the command line.
+static TASKQ_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Reads the self-test requests off the kernel command line: `selftest=trap` asks for the
 /// fatal [`trap_bad_access`], which a plain boot must not run.
@@ -64,6 +72,7 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     const UART: &[u8] = b"selftest=uart";
     const CLOCK: &[u8] = b"selftest=clock";
     const KTHREAD: &[u8] = b"selftest=kthread";
+    const TASKQ: &[u8] = b"selftest=taskq";
     if cmdline.windows(TRAP.len()).any(|w| w == TRAP) {
         TRAP_REQUESTED.store(true, Ordering::Relaxed);
     }
@@ -76,6 +85,14 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     if cmdline.windows(KTHREAD.len()).any(|w| w == KTHREAD) {
         KTHREAD_REQUESTED.store(true, Ordering::Relaxed);
     }
+    if cmdline.windows(TASKQ.len()).any(|w| w == TASKQ) {
+        TASKQ_REQUESTED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Whether the command line asked for [`taskq_check`].
+pub fn taskq_requested() -> bool {
+    TASKQ_REQUESTED.load(Ordering::Relaxed)
 }
 
 /// Whether the command line asked for [`kthread_pingpong`].
@@ -529,6 +546,139 @@ pub fn kthread_pingpong() {
         kprintf!(
             "selftest: kthread ping-pong FAILED: {} turns, {} threads before the exits, {} after\n",
             turns,
+            nthreads_before,
+            nthreads_after
+        );
+    }
+}
+
+/// Serialises the task queue check's bookkeeping between the workers and proc0.
+static TASKQ_MTX: Mutex = Mutex::new(IPL_NONE);
+/// One bit per selftest task that ran (its argument is the bit number).
+static TASKQ_RAN: AtomicU32 = AtomicU32::new(0);
+/// The thread that ran each task.
+static TASKQ_RUNNER: [AtomicPtr<Proc>; 4] = [const { AtomicPtr::new(ptr::null_mut()) }; 4];
+/// Queued on `systq` and run.
+static TASKQ_SYS_TASK: Task = Task::zeroed();
+/// Queued on `systq` and deleted before it can run.
+static TASKQ_DEL_TASK: Task = Task::zeroed();
+/// Queued on `systqmp` and run.
+static TASKQ_MP_TASK: Task = Task::zeroed();
+/// Queued on a queue made by `taskq_create`, which is then destroyed.
+static TASKQ_NEW_TASK: Task = Task::zeroed();
+
+/// The selftest tasks' function: records that task `arg` ran, and on which thread.
+fn taskq_selftest_task(arg: *mut core::ffi::c_void) {
+    let bit = arg as usize;
+    mtx_enter(&TASKQ_MTX);
+    TASKQ_RUNNER[bit].store(
+        curproc().map_or(ptr::null_mut(), |p| ptr::from_ref(p).cast_mut()),
+        Ordering::Relaxed,
+    );
+    TASKQ_RAN.fetch_or(1 << bit, Ordering::Relaxed);
+    wakeup(ptr::addr_of!(TASKQ_RAN));
+    mtx_leave(&TASKQ_MTX);
+}
+
+/// Sleeps (at most a second per wait) until task `bit` ran; returns the name of the thread
+/// that ran it, or `None`.
+fn taskq_wait(bit: usize) -> Option<&'static [u8]> {
+    mtx_enter(&TASKQ_MTX);
+    while TASKQ_RAN.load(Ordering::Relaxed) & (1 << bit) == 0 {
+        if msleep_nsec(
+            ptr::addr_of!(TASKQ_RAN),
+            &TASKQ_MTX,
+            PWAIT,
+            "tqtest",
+            1_000_000_000,
+        )
+        .is_err()
+        {
+            break;
+        }
+    }
+    mtx_leave(&TASKQ_MTX);
+    // SAFETY: the thread that ran the task is still alive: the system queues' threads never
+    // exit, and the created queue is destroyed (its thread exits) only after this read.
+    let runner = unsafe { TASKQ_RUNNER[bit].load(Ordering::Relaxed).as_ref() }?;
+    Some(runner.process().comm())
+}
+
+/// The M7b task queue check: `task_add`/`task_del` on a pending task, a task on `systq` run
+/// by the `systq` thread, one on `systqmp` by its thread, a `taskq_barrier` that returns, and
+/// a queue from `taskq_create` that runs a task and is destroyed (its thread exits).
+pub fn taskq_check() {
+    let arg = ptr::without_provenance_mut::<core::ffi::c_void>;
+    task_set(&TASKQ_SYS_TASK, taskq_selftest_task, arg(0));
+    task_set(&TASKQ_DEL_TASK, taskq_selftest_task, arg(1));
+    task_set(&TASKQ_MP_TASK, taskq_selftest_task, arg(2));
+    task_set(&TASKQ_NEW_TASK, taskq_selftest_task, arg(3));
+
+    // proc0 does not sleep between these calls, so the systq thread cannot run in between.
+    let added = task_add(SYSTQ, &TASKQ_DEL_TASK);
+    let readded = task_add(SYSTQ, &TASKQ_DEL_TASK);
+    let pending = task_pending(&TASKQ_DEL_TASK);
+    let deleted = task_del(SYSTQ, &TASKQ_DEL_TASK);
+    let redeleted = task_del(SYSTQ, &TASKQ_DEL_TASK);
+    if !(added && !readded && pending && deleted && !redeleted) {
+        kprintf!(
+            "selftest: taskq FAILED: task_add {} {}, pending {}, task_del {} {}\n",
+            added,
+            readded,
+            pending,
+            deleted,
+            redeleted
+        );
+        return;
+    }
+
+    let _ = task_add(SYSTQ, &TASKQ_SYS_TASK);
+    let sys_runner = taskq_wait(0);
+    let _ = task_add(SYSTQMP, &TASKQ_MP_TASK);
+    let mp_runner = taskq_wait(2);
+    taskq_barrier(SYSTQ);
+
+    let Some(tq) = taskq_create(b"tqtest", 1, IPL_NONE, 0) else {
+        kprintf!("selftest: taskq FAILED: taskq_create\n");
+        return;
+    };
+    let _ = task_add(tq, &TASKQ_NEW_TASK);
+    let new_runner = taskq_wait(3);
+    let nthreads_before = NTHREADS.load(Ordering::Relaxed);
+    // SAFETY: `tq` came from `taskq_create` and nothing uses it after this.
+    unsafe { taskq_destroy(NonNull::from(tq)) };
+    // Give the worker's exit time to reach the reaper, in timed sleeps (endtsleep wakes us),
+    // a second at most.
+    for _ in 0..20 {
+        if NTHREADS.load(Ordering::Relaxed) != nthreads_before {
+            break;
+        }
+        let _ = tsleep_nsec(ptr::addr_of!(TASKQ_RUNNER), PWAIT, "reapwait", 50_000_000);
+    }
+    let nthreads_after = NTHREADS.load(Ordering::Relaxed);
+
+    let ran = TASKQ_RAN.load(Ordering::Relaxed);
+    let ok = ran == 0b1101
+        && sys_runner == Some(b"systq".as_slice())
+        && mp_runner == Some(b"systqmp".as_slice())
+        && new_runner == Some(b"tqtest".as_slice())
+        && nthreads_after == nthreads_before - 1;
+    let name = |r: Option<&'static [u8]>| Str(r.unwrap_or(b"none"));
+    if ok {
+        kprintf!(
+            "selftest: taskq ok: systq ran in {}, task_del took back a pending task, systqmp ran in {}, barrier returned, {} ran and was destroyed ({} threads left)\n",
+            name(sys_runner),
+            name(mp_runner),
+            name(new_runner),
+            nthreads_after
+        );
+    } else {
+        kprintf!(
+            "selftest: taskq FAILED: ran {:#b}, runners {} {} {}, {} threads before the destroy, {} after\n",
+            ran,
+            name(sys_runner),
+            name(mp_runner),
+            name(new_runner),
             nthreads_before,
             nthreads_after
         );

@@ -79,6 +79,7 @@ use crate::kern::kern_resource::lim_startup;
 use crate::kern::kern_rwlock::rw_obj_init;
 use crate::kern::kern_sched::{sched_init, sched_init_cpu};
 use crate::kern::kern_synch::{endtsleep, sleep_queue_init, tsleep_nsec, wakeup};
+use crate::kern::kern_task::taskq_init;
 use crate::kern::kern_timeout::{timeout_proc_init, timeout_set, timeout_startup};
 use crate::kern::sched_bsd::{sched_lock_init, scheduler_start};
 use crate::kern::subr_prf::{Str, panic};
@@ -285,7 +286,7 @@ pub fn main() -> ! {
     timeout_proc_init();
 
     // Initialize task queues
-    let _ = unported!("taskq_init");
+    taskq_init();
 
     // Initialize the interface/address trees
     let _ = unported!("ifinit");
@@ -400,6 +401,12 @@ pub fn main() -> ! {
     if crate::kern::selftest::kthread_requested() {
         // The M5 exit criterion: the run ends here, before init gets to exec.
         crate::kern::selftest::kthread_pingpong();
+        Machine::exit(ExitStatus::Success);
+    }
+    #[cfg(feature = "qemu")]
+    if crate::kern::selftest::taskq_requested() {
+        // The systq and systqmp threads exist since kthread_run_deferred_queue.
+        crate::kern::selftest::taskq_check();
         Machine::exit(ExitStatus::Success);
     }
 

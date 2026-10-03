@@ -35,6 +35,7 @@ pub mod syscallargs;
 pub mod syslimits;
 pub mod syslog;
 pub mod systm;
+pub mod task;
 pub mod termios;
 pub mod time;
 pub mod timeout;

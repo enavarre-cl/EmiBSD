@@ -439,7 +439,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -1727,6 +1727,24 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "11cf5c027051e37d06c1edfec245084c1cbb28b2"
 deps = ["sys/sys/proc.h", "sys/kern/kern_fork.c"]
 notes = "M5-b1: kthread_create_deferred and kthread_run_deferred_queue; kthread_create reports fork1 (M5-b2) and kthread_exit exit1 (M6); M5-b2: kthread_create over fork1; M6-b: kthread_exit over exit1 (the file is complete)"
+
+[[file]]
+c = "sys/sys/task.h"
+rust = "sys/sys/task.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "07a2cd67fce6f9a4824a54e469c9c6d3d406ed03"
+deps = ["sys/sys/queue.h"]
+notes = "M7b: struct task (t_flags an AtomicU32 since task_add/task_del/task_pending read it unlocked; t_func an Option for a zeroed task), TASK_ONQUEUE, task_list, TASKQ_MPSAFE, TASK_INITIALIZER (Task::new), task_pending; struct taskq is opaque, defined in kern_task.rs and re-exported here with systq/systqmp; t_process (kcov) kept but never written"
+
+[[file]]
+c = "sys/kern/kern_task.c"
+rust = "sys/kern/kern_task.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "759b9688e1ce5908e680e8806bd685bc079815c7"
+deps = ["sys/sys/task.h", "sys/sys/mutex.h", "sys/kern/kern_lock.c", "sys/kern/kern_kthread.c", "sys/kern/kern_synch.c", "sys/kern/kern_malloc.c", "sys/kern/sched_bsd.c"]
+notes = "M7b: the whole file: struct taskq (#[repr(C)], tq_state first so the queue's address is a wakeup channel distinct from its counters), taskq_sys/taskq_sys_mp, systq/systqmp, taskq_init, taskq_create (Option<&'static Taskq>), taskq_destroy (unsafe, takes the NonNull back and frees), taskq_create_thread, taskq_barrier_task, taskq_do_barrier, taskq_barrier, taskq_del_barrier, task_set, task_add (&'static Task), task_del, taskq_next_work (returns the copy), taskq_thread; WITNESS and kcov not configured (no lock_object, no kcov_remote_*); without MULTIPROCESSOR KERNEL_LOCK/UNLOCK are empty as in C; a task without t_func panics in taskq_thread; selftest=taskq checks systq, systqmp, task_del, taskq_barrier and taskq_create/destroy"
 
 [[file]]
 c = "sys/kern/kern_fork.c"
