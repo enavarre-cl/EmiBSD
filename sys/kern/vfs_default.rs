@@ -48,7 +48,6 @@
 //! - Each operation takes its own argument structure instead of `void *`. `vop_generic_badop`
 //!   takes nothing and never returns: it fills many slots of different types, so a table
 //!   writes it as a closure, `Some(|_| vop_generic_badop())`.
-//! - `vop_generic_bwrite` is `bwrite(9)` (`vfs_bio.c`, not ported) and reports itself.
 
 use core::ptr;
 
@@ -56,6 +55,7 @@ use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_synch::msleep_nsec;
 use crate::kern::subr_pool::pool_put;
 use crate::kern::subr_prf::panic;
+use crate::kern::vfs_bio::bwrite;
 use crate::kern::vfs_init::NAMEI_POOL;
 use crate::kern::vfs_subr::{VNODE_MTX, vfs_busy, vgonel};
 use crate::kern::vfs_syscalls::dounmount;
@@ -69,7 +69,6 @@ use crate::sys::vnode::{
     REVOKEALL, VALIASED, VBLK, VXLOCK, VXWANT, VopAbortopArgs, VopBmapArgs, VopBwriteArgs,
     VopLookupArgs, VopRevokeArgs,
 };
-use crate::unported;
 
 /// Eliminate all activity associated with the requested vnode and with all vnodes aliased to
 /// the requested vnode.
@@ -167,8 +166,8 @@ pub fn vop_generic_bmap(ap: &mut VopBmapArgs<'_>) -> Result<(), Errno> {
 }
 
 /// `vop_generic_bwrite`: `bwrite(ap->a_bp)`.
-pub fn vop_generic_bwrite(_ap: &mut VopBwriteArgs) -> Result<(), Errno> {
-    Err(unported!("vop_generic_bwrite: bwrite (vfs_bio.c)"))
+pub fn vop_generic_bwrite(ap: &mut VopBwriteArgs) -> Result<(), Errno> {
+    bwrite(ap.a_bp)
 }
 
 /// `vop_generic_abortop`: frees the pathname buffer a lookup left behind, unless the caller

@@ -104,7 +104,9 @@
 //!   fails.
 //! - `uvm_page_unbusy` takes `Option`s where the C accepts NULL or `PGO_DONTCARE`.
 //! - `uvm_maxkaddr` belongs to `uvm_map.c`; it lives here until that file is ported.
-//! - `BUFPAGES_DEFICIT`/`BUFPAGES_INACT` (the buffer cache, M7) count as 0.
+//! - On a machine without an MMU (`PMAP_NOMMU`, the host double) `uvm_pagealloc_multi` asks
+//!   for one physical segment: the buffer cache reaches a buffer's pages through the direct
+//!   map there (`vfs_biomem.rs`).
 
 use core::cell::Cell;
 use core::ptr;
@@ -1058,7 +1060,13 @@ pub fn uvm_pagealloc_multi(
         Paddr::new(0),
         Paddr::new(0),
         &plist,
-        atop(round_page(size)) as i32,
+        // No MMU (the host double): the buffer cache reaches the pages through the direct
+        // map, so they must be one segment (see the module's deviations).
+        if <crate::machine::Machine as crate::machine::pmap::Pmap>::PMAP_NOMMU {
+            1
+        } else {
+            atop(round_page(size)) as i32
+        },
         flags,
     );
     if r.is_ok() {

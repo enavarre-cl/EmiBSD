@@ -104,10 +104,12 @@ use crate::kern::subr_autoconf::{CONFIG_PENDING, config_init, config_process_def
 use crate::kern::subr_prf::{Str, panic};
 use crate::kern::uipc_domain::domaininit;
 use crate::kern::uipc_mbuf::{mbcpuinit, mbinit};
+use crate::kern::vfs_bio::{CLEANERPROC, buf_daemon};
 use crate::kern::vfs_init::{set_rootvnode, vfsinit};
 use crate::kern::vfs_lockf::lf_init;
 use crate::kern::vfs_lookup::{namei, ndinit};
 use crate::kern::vfs_subr::{MOUNTLIST, vref, vrele};
+use crate::kern::vfs_sync::{SYNCERPROC, syncer_thread};
 use crate::kern::vfs_vops::VOP_UNLOCK;
 use crate::kprintf;
 use crate::machine::autoconf::pdevinit;
@@ -212,6 +214,8 @@ pub fn main() -> ! {
     let _ = unported!("disk_init"); // must come before autoconfiguration
     let _ = unported!("tty_init"); // initialise tty's
     cpu_startup();
+    #[cfg(feature = "qemu")]
+    crate::kern::selftest::buffer_cache();
 
     let _ = unported!("random_start"); // Start the flow
 
@@ -486,7 +490,17 @@ pub fn main() -> ! {
     if kthread_create(reaper, core::ptr::null_mut(), b"reaper").is_err() {
         panic(format_args!("fork reaper"));
     }
-    let _ = unported!("kthread_create (cleaner, update, aiodoned, zerothread: M7)");
+    // Create the cleaner daemon kernel thread.
+    match kthread_create(buf_daemon, core::ptr::null_mut(), b"cleaner") {
+        Ok(cp) => CLEANERPROC.store(ptr::from_ref(cp).cast_mut(), Ordering::Relaxed),
+        Err(_) => panic(format_args!("fork cleaner")),
+    }
+    // Create the update daemon kernel thread.
+    match kthread_create(syncer_thread, core::ptr::null_mut(), b"update") {
+        Ok(sp) => SYNCERPROC.store(ptr::from_ref(sp).cast_mut(), Ordering::Relaxed),
+        Err(_) => panic(format_args!("fork update")),
+    }
+    let _ = unported!("kthread_create (aiodoned, zerothread: M7)");
     #[cfg(feature = "qemu")]
     if crate::kern::selftest::kthread_requested() {
         // The M5 exit criterion: the run ends here, before init gets to exec.

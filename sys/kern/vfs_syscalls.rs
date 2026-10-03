@@ -59,7 +59,7 @@
 //!   same file: nothing to do") is a flag.
 //! - Not here yet, reported with `unported!`: `sys_unveil` (`kern_unveil.c`, whole),
 //!   `pledge_flock`/`pledge_chown` (`kern_pledge.c`, only for a pledged process),
-//!   `vfs_allocate_syncvnode` (`vfs_sync.c`), `unveil_removevnode` (only for an unveiled
+//!   `unveil_removevnode` (only for an unveiled
 //!   vnode, which none can be), `uvm_vnp_sync`/`uvm_vnp_uncache` (`uvm_vnode.c`), the device
 //!   switch of `sys_revoke` (`conf.c`, through `spec_vnops.rs`).
 //! - `option FIFO` is not configured (`miscfs/fifofs` is not ported): `mkfifo` answers
@@ -91,6 +91,7 @@ use crate::kern::vfs_subr::{
     MOUNTLIST, uvm_vnp_sync, uvm_vnp_uncache, vattr_null, vfs_busy, vfs_getvfs, vfs_mount_alloc,
     vfs_mount_free, vfs_unbusy, vgone, vinvalbuf, vnoperm, vput, vref, vrele,
 };
+use crate::kern::vfs_sync::vfs_allocate_syncvnode;
 use crate::kern::vfs_vnops::{VNOPS, vn_lock, vn_open, vn_stat, vn_writechk};
 use crate::kern::vfs_vops::{
     VOP_ABORTOP, VOP_ACCESS, VOP_ADVLOCK, VOP_FSYNC, VOP_GETATTR, VOP_LINK, VOP_MKDIR, VOP_MKNOD,
@@ -184,11 +185,6 @@ fn unveil_removevnode(vp: &'static Vnode) {
     if vp.v_uvcount.get() != 0 {
         let _ = unported!("unveil_removevnode (kern_unveil.c)");
     }
-}
-
-/// `vfs_allocate_syncvnode(mp)` (`vfs_sync.c`, not ported).
-fn vfs_allocate_syncvnode(_mp: &'static Mount) -> Result<(), Errno> {
-    Err(unported!("vfs_allocate_syncvnode (vfs_sync.c)"))
 }
 
 /// `VFS_STATFS(mp, &mp->mnt_stat, p)`: refreshes the mount's statistics (see the module's

@@ -46,9 +46,8 @@
 //!   (after it in the C) because `pmap_bootstrap` steals its tables from `vm_physmem[]`.
 //! - The message buffer is a static area (`kern/subr_log.rs`, `init_static_msgbuf`) instead of
 //!   reserved physical pages, until M3.
-//! - `cpu_startup` prints the memory sizes only: `version` (generated `vers.c`), the exec and
-//!   physio maps and `bufinit` (M6, M7), `cpu_init_extents` and `cpu_init_idt` are not there
-//!   yet.
+//! - `cpu_startup` prints the memory sizes and sets up the buffer cache (`bufinit`): the exec
+//!   and physio maps (M6, M7), `cpu_init_extents` and `cpu_init_idt` are not there yet.
 //! - `initarm` sets `VBAR_EL1` itself (the C's `locore.S` does, before `initarm`) and sets
 //!   `tpidr_el1` first thing instead of after the pmap bootstrap, so `curcpu()` and the
 //!   exception vectors work for everything that follows; `x18` is not loaded, as it is a
@@ -98,6 +97,7 @@ use crate::dev::ofw::openfirm::OF_finddevice;
 use crate::kern::init_main::{BOOTHOWTO, PROC0};
 use crate::kern::kern_malloc::{kmeminit_nkmempages, nkmempages};
 use crate::kern::subr_log::init_static_msgbuf;
+use crate::kern::vfs_bio::bufinit;
 use crate::kprintf;
 use crate::machine::bootinfo::{BootInfo, MemKind};
 use crate::machine::db_machdep::db_enter;
@@ -429,7 +429,10 @@ pub fn cpu_startup() {
         ptoa(physmem) / 1024 / 1024
     );
 
-    // exec_map, the physio map, bufinit: M6 and M7.
+    // exec_map, the physio map: M6 and M7.
+
+    // Set up buffers, so they can be used to read disk labels.
+    bufinit();
 
     let free = UVMEXP.free.load(Ordering::Relaxed).max(0) as usize;
     kprintf!(

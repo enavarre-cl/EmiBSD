@@ -91,8 +91,8 @@
 //!   protocol's usable regions, which already exclude the kernel, the firmware and the
 //!   bootloader's own data. The ISA hole and the `avail_end` bookkeeping have nothing to do.
 //! - `cpu_startup` prints the memory sizes and fills the boot CPU's TSS (`cpu_enter_pages`):
-//!   `version` (generated `vers.c`, M5-b), `rtcinit` (M7), the exec and physio maps
-//!   and `bufinit` (M6, M7), `cpu_init_extents` and `cpu_boot_mode` (M4-b) are not there yet.
+//!   `version` (generated `vers.c`, M5-b), `rtcinit` (M7), the exec and physio maps (M6,
+//!   M7), `cpu_init_extents` and `cpu_boot_mode` (M4-b) are not there yet; `bufinit` is.
 //! - The IDT is a static page (`IDT`) instead of the early page `locore0.S` reserves and the
 //!   page `init_x86_64` maps at `idt_vaddr`; `idt_allocmap` is an array of atomics.
 //!   `cpu_init_msrs` and the `cpu_info_full_primary` initialiser are the first lines of
@@ -161,6 +161,7 @@ use crate::kern::kern_sig::{sigexit, sigonstack};
 use crate::kern::kern_softintr::softintr_init;
 use crate::kern::subr_log::init_static_msgbuf;
 use crate::kern::subr_prf::splassert_fail;
+use crate::kern::vfs_bio::bufinit;
 use crate::kprintf;
 use crate::machine::bootinfo::{BootInfo, MemKind};
 use crate::machine::copy::{copyin, copyin_obj, copyout, copyout_obj};
@@ -532,7 +533,7 @@ pub fn cpu_startup() {
         ptoa(physmem) / 1024 / 1024
     );
 
-    // exec_map, cpu_init_extents, the physio map, bufinit: M6 and M7.
+    // exec_map, cpu_init_extents, the physio map: M6 and M7.
 
     let free = UVMEXP.free.load(Ordering::Relaxed).max(0) as usize;
     kprintf!(
@@ -540,6 +541,8 @@ pub fn cpu_startup() {
         ptoa(free),
         ptoa(free) / 1024 / 1024
     );
+
+    bufinit();
 
     // cpu_boot_mode, the ISA DMA bounce pages, the microcode and TSX setup,
     // enter_shared_special_pages (the u-k maps): M4-b and M6.

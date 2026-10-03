@@ -529,6 +529,26 @@ pub struct Bcachestats {
     pub kvaslots_avail: i64,
 }
 
+/// `BUFPAGES_DEFICIT`: how far the buffer cache is below its low water mark, in pages.
+pub fn bufpages_deficit() -> i64 {
+    use crate::kern::vfs_bio::{BCSTATS, BUFLOWPAGES};
+    let d = BUFLOWPAGES.load(core::sync::atomic::Ordering::Relaxed)
+        - BCSTATS
+            .numbufpages
+            .load(core::sync::atomic::Ordering::Relaxed);
+    d.max(0)
+}
+
+/// `BUFPAGES_INACT`: the buffer cache's clean pages above its low water mark.
+pub fn bufpages_inact() -> i64 {
+    use crate::kern::vfs_bio::{BCSTATS, BUFLOWPAGES};
+    let d = BCSTATS
+        .numcleanpages
+        .load(core::sync::atomic::Ordering::Relaxed)
+        - BUFLOWPAGES.load(core::sync::atomic::Ordering::Relaxed);
+    d.max(0)
+}
+
 /// The type of `vfs_mount(mp, path, data, ndp, p)`.
 pub type VfsMountFn =
     fn(&'static Mount, &[u8], &mut [u8], &mut Nameidata<'_>, &Proc) -> Result<(), Errno>;

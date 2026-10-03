@@ -327,6 +327,56 @@ pub fn malloc_pool_stress() {
     }
 }
 
+/// The buffer cache after `bufinit`: anonymous buffers (`geteblk`) mapped in the buffer arena
+/// are written and read back through `b_data`, several at once, then freed; the counters come
+/// back to where they were.
+pub fn buffer_cache() {
+    use crate::kern::vfs_bio::{BCSTATS, brelse, geteblk};
+
+    let numbufs = BCSTATS.numbufs.load(Ordering::Relaxed);
+    let numbufpages = BCSTATS.numbufpages.load(Ordering::Relaxed);
+    let mut ok = true;
+
+    let sizes = [
+        crate::sys::param::MAXPHYS,
+        3 * PAGE_SIZE,
+        PAGE_SIZE,
+        5 * PAGE_SIZE,
+    ];
+    let bufs: Vec<_> = sizes.iter().map(|&sz| geteblk(sz)).collect();
+    for (i, bp) in bufs.iter().enumerate() {
+        // SAFETY: `geteblk` returned the buffer busy and mapped, for this test alone.
+        let data = unsafe { bp.data() };
+        ok &= data.len() == sizes[i];
+        for (j, b) in data.iter_mut().enumerate() {
+            *b = (i * 31 + j) as u8;
+        }
+    }
+    for (i, bp) in bufs.iter().enumerate() {
+        // SAFETY: as above.
+        let data = unsafe { bp.data() };
+        ok &= data
+            .iter()
+            .enumerate()
+            .all(|(j, &b)| b == (i * 31 + j) as u8);
+    }
+    for bp in bufs {
+        brelse(bp);
+    }
+    ok &= BCSTATS.numbufs.load(Ordering::Relaxed) == numbufs;
+    ok &= BCSTATS.numbufpages.load(Ordering::Relaxed) == numbufpages;
+
+    if ok {
+        kprintf!(
+            "selftest: buffer cache ok ({} kva slots, {} pages at most)\n",
+            BCSTATS.kvaslots.load(Ordering::Relaxed),
+            crate::conf::param::bufpages.load(Ordering::Relaxed)
+        );
+    } else {
+        kprintf!("selftest: buffer cache FAILED\n");
+    }
+}
+
 /// Builds, copies, pulls up, splits and frees mbuf chains right after `mbinit`, so the mbuf
 /// and cluster pools allocate real pages through `m_pool_allocator` on the machine, and
 /// checks that every mbuf, cluster and tag goes back to its pool.

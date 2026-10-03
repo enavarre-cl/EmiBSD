@@ -58,16 +58,17 @@
 //! - `ASSERT_VP_ISLOCKED` is compiled only with `VFSLCKDEBUG`, which is not configured; the
 //!   `KASSERT(p == curproc)`s are `kassert!`s. `VOP_PRINT` exists under feature
 //!   `diagnostic` or `debug` (the C's `DEBUG || DIAGNOSTIC`).
-//! - `VOP_BWRITE` needs `bp->b_vp` (`struct buf`, `vfs_bio.c`) and reports itself;
-//!   `VOP_STRATEGY` passes the buffer as an opaque pointer.
+//! - `VOP_BWRITE` panics for a buffer without a vnode, where the C would dereference NULL.
 
 use core::ffi::c_void;
 use core::ptr;
 
 use crate::kassert;
+use crate::kern::subr_prf::panic;
 use crate::kern::vfs_subr::{vput, vrele};
 use crate::machine::cpu::curproc;
 use crate::machine::intr::{splbio, splx};
+use crate::sys::buf::Buf;
 use crate::sys::errno::Errno;
 use crate::sys::fcntl::Flock;
 use crate::sys::namei::Componentname;
@@ -79,13 +80,12 @@ use crate::sys::uio::Uio;
 use crate::sys::unistd::{_PC_ASYNC_IO, _PC_PATH_MAX, _PC_PIPE_BUF, _PC_PRIO_IO, _PC_SYNC_IO};
 use crate::sys::vnode::{
     VBIOERROR, VDIR, Vattr, Vnode, VopAbortopArgs, VopAccessArgs, VopAdvlockArgs, VopBmapArgs,
-    VopCloseArgs, VopCreateArgs, VopFsyncArgs, VopGetattrArgs, VopInactiveArgs, VopIoctlArgs,
-    VopIslockedArgs, VopKqfilterArgs, VopLinkArgs, VopLockArgs, VopLookupArgs, VopMkdirArgs,
-    VopMknodArgs, VopOpenArgs, VopPathconfArgs, VopReadArgs, VopReaddirArgs, VopReadlinkArgs,
-    VopReclaimArgs, VopRemoveArgs, VopRenameArgs, VopRevokeArgs, VopRmdirArgs, VopSetattrArgs,
-    VopStrategyArgs, VopSymlinkArgs, VopUnlockArgs, VopWriteArgs,
+    VopBwriteArgs, VopCloseArgs, VopCreateArgs, VopFsyncArgs, VopGetattrArgs, VopInactiveArgs,
+    VopIoctlArgs, VopIslockedArgs, VopKqfilterArgs, VopLinkArgs, VopLockArgs, VopLookupArgs,
+    VopMkdirArgs, VopMknodArgs, VopOpenArgs, VopPathconfArgs, VopReadArgs, VopReaddirArgs,
+    VopReadlinkArgs, VopReclaimArgs, VopRemoveArgs, VopRenameArgs, VopRevokeArgs, VopRmdirArgs,
+    VopSetattrArgs, VopStrategyArgs, VopSymlinkArgs, VopUnlockArgs, VopWriteArgs,
 };
-use crate::unported;
 
 /// `KASSERT(p == curproc)`.
 fn assert_curproc(p: &Proc) {
@@ -784,9 +784,9 @@ pub fn VOP_ADVLOCK(
     }
 }
 
-/// `VOP_STRATEGY(vp, bp)`: `bp` is a `struct buf *` (`vfs_bio.c`).
+/// `VOP_STRATEGY(vp, bp)`.
 #[allow(non_snake_case)] // the C name
-pub fn VOP_STRATEGY(vp: &'static Vnode, bp: *mut c_void) -> Result<(), Errno> {
+pub fn VOP_STRATEGY(vp: &'static Vnode, bp: &'static Buf) -> Result<(), Errno> {
     let mut a = VopStrategyArgs { a_vp: vp, a_bp: bp };
 
     match vp.op().vop_strategy {
@@ -795,8 +795,16 @@ pub fn VOP_STRATEGY(vp: &'static Vnode, bp: *mut c_void) -> Result<(), Errno> {
     }
 }
 
-/// `VOP_BWRITE(bp)`: dispatches on `bp->b_vp`, which needs `struct buf` (`vfs_bio.c`).
+/// `VOP_BWRITE(bp)`: dispatches on the buffer's vnode.
 #[allow(non_snake_case)] // the C name
-pub fn VOP_BWRITE(_bp: *mut c_void) -> Result<(), Errno> {
-    Err(unported!("VOP_BWRITE: bp->b_vp (struct buf, vfs_bio.c)"))
+pub fn VOP_BWRITE(bp: &'static Buf) -> Result<(), Errno> {
+    let mut a = VopBwriteArgs { a_bp: bp };
+
+    let Some(vp) = bp.b_vp.get() else {
+        panic(format_args!("VOP_BWRITE: buffer {:p} without a vnode", bp));
+    };
+    match vp.op().vop_bwrite {
+        Some(f) => f(&mut a),
+        None => Err(Errno::EOPNOTSUPP),
+    }
 }

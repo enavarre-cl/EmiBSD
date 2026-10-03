@@ -74,6 +74,7 @@ use core::ptr;
 use core::sync::atomic::Ordering;
 
 use crate::sys::errno::Errno;
+use crate::sys::mount::{bufpages_deficit, bufpages_inact};
 use crate::sys::param::powerof2;
 use crate::sys::queue::{TailqEntry, TailqHead};
 use crate::sys::tree::{RbtEntry, RbtHead};
@@ -202,11 +203,6 @@ fn in_pagedaemon(_allowsyncer: bool) -> bool {
     // curcpu()->ci_idepth, uvm.pagedaemon_proc and syncerproc arrive with M5.
     false
 }
-
-/// `BUFPAGES_DEFICIT` (the buffer cache, M7).
-const BUFPAGES_DEFICIT: i32 = 0;
-/// `BUFPAGES_INACT` (the buffer cache, M7).
-const BUFPAGES_INACT: i32 = 0;
 
 /// `uvm_pmr_pg_to_memtype`: memory types. The page flags are used to derive what the current
 /// memory type of a page is.
@@ -898,11 +894,12 @@ pub fn uvm_pmr_getpages(
     // retry: the return point after sleeping is not reachable yet (uvm_wait is unported).
 
     // check to see if we need to generate some free pages waking the pagedaemon.
-    let free = UVMEXP.free.load(Ordering::Relaxed);
-    if (free - BUFPAGES_DEFICIT) < UVMEXP.freemin.load(Ordering::Relaxed)
-        || ((free - BUFPAGES_DEFICIT) < UVMEXP.freetarg.load(Ordering::Relaxed)
-            && (UVMEXP.inactive.load(Ordering::Relaxed) + BUFPAGES_INACT)
-                < UVMEXP.inactarg.load(Ordering::Relaxed))
+    let free = i64::from(UVMEXP.free.load(Ordering::Relaxed));
+    let deficit = bufpages_deficit();
+    if (free - deficit) < i64::from(UVMEXP.freemin.load(Ordering::Relaxed))
+        || ((free - deficit) < i64::from(UVMEXP.freetarg.load(Ordering::Relaxed))
+            && (i64::from(UVMEXP.inactive.load(Ordering::Relaxed)) + bufpages_inact())
+                < i64::from(UVMEXP.inactarg.load(Ordering::Relaxed)))
     {
         crate::kern::kern_synch::wakeup(ptr::from_ref(&UVM));
     }

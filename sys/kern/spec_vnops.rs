@@ -64,10 +64,12 @@
 //!   `d_ioctl`, `d_kqfilter`, `d_strategy`, `d_type`, `d_flags`, `chrtoblk`, `iskmemdev`) is
 //!   reported with `unported!` where the C makes it (the `cdevsw_d_*` helpers answer as for
 //!   a device that is neither a tty, a disk nor a cloning device).
-//! - Block-device I/O goes through the buffer cache (`bread`, `breadn`, `bawrite`,
-//!   `bdwrite`, `brelse`, the dirty list of `spec_fsync`: `vfs_bio.c`) and the disk label
-//!   (`DIOCGPART`, `<sys/disklabel.h>`): reported. `spec_kqfilter`'s `seltrue_kqfilter` is
-//!   `kern_event.c`: reported.
+//! - Block-device reads and writes go through the buffer cache as in C; the block size
+//!   comes from the disk label (`DIOCGPART` through `bdevsw[].d_ioctl`, `<sys/disklabel.h>`),
+//!   which is reported for a configured major and leaves `BLKDEV_IOSIZE`, as when the C's
+//!   ioctl fails. `spec_strategy` reports `bdevsw[].d_strategy` and fails the buffer with
+//!   `ENXIO` through `biodone`, so a waiter does not sleep forever. `spec_kqfilter`'s
+//!   `seltrue_kqfilter` is `kern_event.c`: reported.
 //! - `speclisth[]` is a `static` newtype around the buckets with `unsafe impl Sync`, as the
 //!   other global list heads.
 //! - The operations take their argument structures; the generic ones that fill many slots
@@ -80,9 +82,12 @@ use core::sync::atomic::Ordering;
 
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::malloc;
+use crate::kern::kern_subr::uiomove;
 use crate::kern::kern_sysctl::SECURELEVEL;
 use crate::kern::subr_prf::panic;
 use crate::kern::subr_xxx::nullop;
+use crate::kern::vfs_bio::{bawrite, bdwrite, biodone, bread, breadn, brelse, bufcache_take};
+use crate::kern::vfs_biomem::buf_acquire;
 use crate::kern::vfs_default::{
     vop_generic_badop, vop_generic_bmap, vop_generic_bwrite, vop_generic_lookup, vop_generic_revoke,
 };
@@ -93,17 +98,18 @@ use crate::kern::vfs_subr::{
 use crate::kern::vfs_vnops::vn_lock;
 use crate::kern::vfs_vops::{VOP_ACCESS, VOP_GETATTR, VOP_ISLOCKED, VOP_SETATTR, VOP_UNLOCK};
 use crate::machine::intr::{splbio, splx};
+use crate::sys::buf::{B_BUSY, B_DELWRI, B_ERROR};
 use crate::sys::errno::Errno;
 use crate::sys::fcntl::FWRITE;
 use crate::sys::lock::{LK_EXCLUSIVE, LK_RETRY};
 use crate::sys::malloc::{M_TEMP, M_WAITOK};
 use crate::sys::mount::{MNT_NODEV, MNT_WAIT};
-use crate::sys::param::{clrbit, isclr, setbit};
+use crate::sys::param::{BLKDEV_IOSIZE, btodb, clrbit, isclr, setbit};
 use crate::sys::queue::SlistHead;
 use crate::sys::specdev::{CLONE_MAPSZ, CLONE_SHIFT, Cloneinfo, SPECHSZ, Vnodechain};
 use crate::sys::syslimits::{LINK_MAX, MAX_CANON, MAX_INPUT};
 use crate::sys::systm::INFSLP;
-use crate::sys::types::{Register, major, makedev, minor};
+use crate::sys::types::{Daddr, Register, major, makedev, minor};
 use crate::sys::ucred::FSCRED;
 use crate::sys::uio::UioRw;
 use crate::sys::unistd::{
@@ -112,7 +118,7 @@ use crate::sys::unistd::{
 };
 use crate::sys::vnode::{
     V_SAVE, VBAD, VBLK, VCHR, VCLONE, VCLONED, VDIR, VFIFO, VISTTY, VLNK, VNON, VREG, VSOCK,
-    VXLOCK, VopAccessArgs, VopAdvlockArgs, VopCloseArgs, VopFsyncArgs, VopGetattrArgs,
+    VXLOCK, Vnode, VopAccessArgs, VopAdvlockArgs, VopCloseArgs, VopFsyncArgs, VopGetattrArgs,
     VopInactiveArgs, VopIoctlArgs, VopKqfilterArgs, VopOpenArgs, VopPathconfArgs, VopPrintArgs,
     VopReadArgs, VopSetattrArgs, VopStrategyArgs, VopWriteArgs, Vops,
 };
@@ -296,8 +302,36 @@ pub fn spec_read(ap: &mut VopReadArgs<'_, '_>) -> Result<(), Errno> {
             if uio.uio_offset < 0 {
                 return Err(Errno::EINVAL);
             }
-            // bsize from DIOCGPART (disklabel.h), then bread/breadn per block (vfs_bio.c).
-            Err(unported!("spec_read: block devices (vfs_bio.c, disklabel)"))
+            let bsize = spec_bsize(vp, "spec_read");
+            let bscale = btodb(bsize as usize) as Daddr;
+            let Some(si) = vp.v_specinfo() else {
+                panic(format_args!("spec_read: no specinfo"));
+            };
+            loop {
+                let bn = btodb(uio.uio_offset as usize) as Daddr & !(bscale - 1);
+                let on = (uio.uio_offset % i64::from(bsize)) as usize;
+                let mut n = (bsize as usize - on).min(uio.uio_resid);
+                let (bp, error) = if si.si_lastr.get() + bscale == bn {
+                    let nextbn = bn + bscale;
+                    breadn(vp, bn, bsize, &[nextbn], &[bsize])
+                } else {
+                    bread(vp, bn, bsize)
+                };
+                si.si_lastr.set(bn);
+                n = n.min(bsize as usize - bp.b_resid.get());
+                if let Err(error) = error {
+                    brelse(bp);
+                    return Err(error);
+                }
+                // SAFETY: `bread` returned the buffer busy and mapped, for us alone.
+                let data = unsafe { bp.data() };
+                let error = uiomove(&mut data[on..on + n], uio);
+                brelse(bp);
+                error?;
+                if uio.uio_resid == 0 || n == 0 {
+                    return Ok(());
+                }
+            }
         }
 
         _ => panic(format_args!("spec_read type")),
@@ -335,15 +369,49 @@ pub fn spec_write(ap: &mut VopWriteArgs<'_, '_>) -> Result<(), Errno> {
             if uio.uio_offset < 0 {
                 return Err(Errno::EINVAL);
             }
-            // bsize from DIOCGPART (disklabel.h), then bread + bawrite/bdwrite per block
-            // (vfs_bio.c).
-            Err(unported!(
-                "spec_write: block devices (vfs_bio.c, disklabel)"
-            ))
+            let bsize = spec_bsize(vp, "spec_write");
+            let bscale = btodb(bsize as usize) as Daddr;
+            loop {
+                let bn = btodb(uio.uio_offset as usize) as Daddr & !(bscale - 1);
+                let on = (uio.uio_offset % i64::from(bsize)) as usize;
+                let mut n = (bsize as usize - on).min(uio.uio_resid);
+                let (bp, error) = bread(vp, bn, bsize);
+                n = n.min(bsize as usize - bp.b_resid.get());
+                if let Err(error) = error {
+                    brelse(bp);
+                    return Err(error);
+                }
+                // SAFETY: `bread` returned the buffer busy and mapped, for us alone.
+                let data = unsafe { bp.data() };
+                let error = uiomove(&mut data[on..on + n], uio);
+                if n + on == bsize as usize {
+                    bawrite(bp);
+                } else {
+                    bdwrite(bp);
+                }
+                error?;
+                if uio.uio_resid == 0 || n == 0 {
+                    return Ok(());
+                }
+            }
         }
 
         _ => panic(format_args!("spec_write type")),
     }
+}
+
+/// The block size of a block device's I/O: `BLKDEV_IOSIZE`, or the FFS block of its partition
+/// that `DIOCGPART` reports (`frag * fsize` of an `FS_BSDFFS` partition).
+fn spec_bsize(vp: &'static Vnode, who: &'static str) -> i32 {
+    let bsize = BLKDEV_IOSIZE as i32;
+    if major(vp.v_rdev()) < nblkdev() {
+        // (*bdevsw[majordev].d_ioctl)(vp->v_rdev, DIOCGPART, &dpart, FREAD, p): the device
+        // switch (conf.c) and struct partinfo (disklabel.h). Without them the C's ioctl
+        // failure path: BLKDEV_IOSIZE.
+        let _ = who;
+        let _ = unported!("spec_read/spec_write: DIOCGPART (conf.c, disklabel.h)");
+    }
+    bsize
 }
 
 /// Device ioctl operation.
@@ -371,21 +439,52 @@ pub fn spec_fsync(ap: &mut VopFsyncArgs<'_>) -> Result<(), Errno> {
     if vp.v_type.get() == VCHR {
         return Ok(());
     }
-    // Flush all dirty buffers associated with a block device: the dirty list (vfs_bio.c).
-    let _ = unported!("spec_fsync: v_dirtyblkhd (vfs_bio.c)");
-    let s = splbio();
-    if ap.a_waitfor == MNT_WAIT {
-        let _ = vwaitforio(vp, 0, "spec_fsync", INFSLP);
+    // Flush all dirty buffers associated with a block device.
+    'restart: loop {
+        // loop:
+        let s = splbio();
+        for bp in vp.v_dirtyblkhd.iter() {
+            if bp.isset(B_BUSY) {
+                continue;
+            }
+            if !bp.isset(B_DELWRI) {
+                panic(format_args!("spec_fsync: not dirty"));
+            }
+            bufcache_take(bp);
+            buf_acquire(bp);
+            splx(s);
+            bawrite(bp);
+            continue 'restart;
+        }
+        if ap.a_waitfor == MNT_WAIT {
+            let _ = vwaitforio(vp, 0, "spec_fsync", INFSLP);
+
+            #[cfg(feature = "diagnostic")]
+            if !vp.v_dirtyblkhd.is_empty() {
+                splx(s);
+                crate::kern::vfs_subr::vprint(Some("spec_fsync: dirty"), vp);
+                continue 'restart;
+            }
+        }
+        splx(s);
+        return Ok(());
     }
-    splx(s);
-    Ok(())
 }
 
 /// `spec_strategy`: `bdevsw[major(bp->b_dev)].d_strategy(bp)`.
-pub fn spec_strategy(_ap: &mut VopStrategyArgs) -> Result<(), Errno> {
-    Err(unported!(
-        "spec_strategy: bdevsw[].d_strategy, struct buf (conf.c, vfs_bio.c)"
-    ))
+pub fn spec_strategy(ap: &mut VopStrategyArgs) -> Result<(), Errno> {
+    let bp = ap.a_bp;
+    let _maj = major(bp.b_dev.get());
+
+    // (*bdevsw[maj].d_strategy)(bp): the device switch (conf.c). No driver takes the buffer,
+    // so it completes with an error, as a driver does for a device that is gone.
+    let _ = unported!("spec_strategy: bdevsw[].d_strategy (conf.c)");
+    bp.b_error.set(Some(Errno::ENXIO));
+    bp.set(B_ERROR);
+    let s = splbio();
+    biodone(bp);
+    splx(s);
+    Ok(())
 }
 
 /// Device close routine.

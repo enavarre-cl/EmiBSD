@@ -69,7 +69,7 @@
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
 //!   `ENOSYS`: `ttycount` and `tty` (`tty.c`), `somaxconn`/`sominconn` (`uipc_socket.c`),
 //!   `stackgap_random` (`kern_exec.c` has no stack gap yet),
-//!   `bufcachepercent` (`vfs_bio.c`), `file` (`kern_descrip.c`; `fill_file` is not here),
+//!   `file` (`kern_descrip.c`; `fill_file` is not here),
 //!   `malloc` (`sysctl_malloc`), `pool` (`sysctl_dopool`), `intrcnt` and `evcount`
 //!   (`evcount_sysctl`), `watchdog` (`kern_watchdog.c`), `clockintr`, `timecounter`
 //!   (`sysctl_tc`), `procargs` after its checks (`uvm_io`), `proc_vmmap` after its checks
@@ -128,6 +128,7 @@ use crate::kern::subr_log::{consbufp, msgbufp};
 use crate::kern::subr_pool::{POOL_DEBUG, pool_reclaim_all};
 use crate::kern::subr_prf::{SPLASSERT_CTL, panic};
 use crate::kern::uipc_mbuf::{MBSTAT, nmbclust_update};
+use crate::kern::vfs_bio::{BUFHIGHPAGES, bufadjust};
 use crate::kern::vfs_cache::NCHSTATS;
 use crate::kern::vfs_getcwd::vfs_getcwd_common;
 use crate::kern::vfs_lockf::MAXLOCKSPERUID;
@@ -164,9 +165,11 @@ use crate::unported;
 use crate::uvm::uvm_extern::Vmspace;
 use crate::uvm::uvm_glue::{uvm_vslock, uvm_vsunlock};
 use crate::uvm::uvm_init::UVMEXP;
+use crate::uvm::uvm_km::NO_CONSTRAINT;
 use crate::uvm::uvm_map::{uvmspace_addref, uvmspace_free};
 use crate::uvm::uvm_meter::uvm_sysctl;
 use crate::uvm::uvm_mmap::UVM_WXABORT;
+use crate::uvm::uvm_page::uvm_pagecount;
 use crate::uvm::uvm_param::atop;
 
 /// `MAXPARTITIONS` (`<machine/disklabel.h>`, 16 on amd64 and arm64): number of partitions.
@@ -786,7 +789,25 @@ fn kern_sysctl_locked(
         KERN_STACKGAPRANDOM => Err(unported!(
             "kern.stackgap_random: stackgap_random (kern_exec.c)"
         )),
-        KERN_CACHEPCT => Err(unported!("kern.bufcachepercent: bufadjust (vfs_bio.c)")),
+        KERN_CACHEPCT => {
+            use crate::conf::param::{bufcachepercent, bufpages};
+
+            let opct = bufcachepercent.load(Ordering::Relaxed);
+            sysctl_int(oldp, oldlenp, newp, newlen, &bufcachepercent)?;
+            let pct = bufcachepercent.load(Ordering::Relaxed);
+            if !(5..=90).contains(&pct) {
+                bufcachepercent.store(opct, Ordering::Relaxed);
+                return Err(Errno::EINVAL);
+            }
+            let pages = uvm_pagecount(&NO_CONSTRAINT) as u64;
+            if pct != opct {
+                let pgs = (pct as u64 * pages / 100) as i32;
+                bufadjust(i64::from(pgs)); // adjust bufpages
+                // set high water mark
+                BUFHIGHPAGES.store(bufpages.load(Ordering::Relaxed), Ordering::Relaxed);
+            }
+            Ok(())
+        }
         // KERN_PFSTATUS: NPF is 0.
         KERN_CONSDEV => {
             let dev = cn_tab().map_or(NODEV, |cn| cn.cn_dev.get());

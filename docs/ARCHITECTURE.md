@@ -377,16 +377,29 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   root is mounted), `check_console` warns that `/dev/console` does not exist, and init is
   still exec'd from its boot module. The stand-in `init` checks that the path system calls
   reach `namei` and fail that way (`init: vfs ok (no root file system)` in `smoke`). What
-  stage 2 must bring is reported where the C calls it: the buffer cache (`vfs_bio.c`: the
-  buffer lists of `vinvalbuf`/`vflushbuf`, `bread`/`bwrite`, `bcstats`), the vnode pager
-  (`uvm_vnode.c`: `uvm_vnp_*`), the syncer (`vfs_sync.c`), the device switch (`<sys/conf.h>` and each arch's `conf.c`:
+  stage 2 must bring is reported where the C calls it: the vnode pager
+  (`uvm_vnode.c`: `uvm_vnp_*`), the device switch (`<sys/conf.h>` and each arch's `conf.c`:
   `nchrdev`/`nblkdev` are 0, so `spec_open` is `ENXIO`) and the first file system.
   `pledge` and `unveil` (`kern_pledge.c`, `kern_unveil.c`) are reported for a pledged
   process or an unveiled vnode, which none can be yet; the unveil hooks of `namei` return
   at their `ps_uvpaths == NULL` test. The host tests mount `testfs`
   (`kern/vfs_subr/tests.rs`), a fixed in-memory tree with a real lock discipline, to drive
   `namei`, the name cache, `getcwd` and the vnode life cycle.
-- VFS stage 2 (M7+): advisory record locks (`vfs_lockf.c`, `<sys/lockf.h>`) are OpenBSD's.
+- VFS stage 2 (M7+): the buffer cache (`vfs_bio.c`, `vfs_biomem.c`, `kern_bufq.c`,
+  `<sys/buf.h>`), the syncer (`vfs_sync.c`) and advisory record locks (`vfs_lockf.c`,
+  `<sys/lockf.h>`) are OpenBSD's. Each `cpu_startup` calls `bufinit`, which reserves the
+  buffer arena (`bufkvm`, a tenth of the kernel's space capped at `bufpages` pages) in
+  `kernel_map`; `main` starts the `cleaner` (`buf_daemon`) and `update` (`syncer_thread`)
+  threads; a vnode carries its buffer tree and clean/dirty lists, and `getblk`, `bread`,
+  `bwrite`/`bawrite`/`bdwrite` and `brelse` are what a disk file system calls (its
+  `VOP_STRATEGY` maps `b_lblkno` and hands the buffer to its device vnode's
+  `spec_strategy`). A buffer is a `bufpool` item passed as `&'static Buf` (`docs/C_TO_RUST.md`).
+  Without the device switch `spec_strategy` reports `bdevsw[].d_strategy` and fails the
+  buffer with `ENXIO` through `biodone`, and the `DIOCGPART` block size of
+  `spec_read`/`spec_write` is reported (they use `BLKDEV_IOSIZE`); no disk driver uses
+  `bufq(9)` yet. On the host double (no MMU) the arena is only counted and a buffer's pages
+  are one physical segment reached through the direct map. A boot self-test writes and
+  reads back anonymous buffers (`selftest: buffer cache ok` in `smoke`).
   A device vnode keeps its `struct lockf_state *` in `specinfo` (`si_lockf`, a
   `LockfStateSlot`), so `spec_advlock` and `vgonel`'s purge are the C's; a file system's
   inode will keep one the same way. `pool_get(PR_WAITOK)` cannot sleep yet, so a lock

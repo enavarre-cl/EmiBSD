@@ -45,8 +45,6 @@
 //!   `vop_generic_badop` fill many slots of different types, so the table writes them as
 //!   closures. `chkvnlock` returns `bool`.
 //! - `dead_kqfilter` sets `kn_fop = &dead_filtops` (`kern_event.c`, not ported): reported.
-//! - `dead_strategy` reads `bp->b_vp` and calls `biodone` (`struct buf`, `vfs_bio.c`):
-//!   reported.
 
 use core::ptr;
 
@@ -54,9 +52,12 @@ use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_synch::msleep_nsec;
 use crate::kern::subr_prf::panic;
 use crate::kern::subr_xxx::nullop;
+use crate::kern::vfs_bio::biodone;
 use crate::kern::vfs_default::{vop_generic_badop, vop_generic_lookup};
 use crate::kern::vfs_subr::VNODE_MTX;
-use crate::kern::vfs_vops::{VOP_BMAP, VOP_LOCK, VOP_UNLOCK};
+use crate::kern::vfs_vops::{VOP_BMAP, VOP_LOCK, VOP_STRATEGY, VOP_UNLOCK};
+use crate::machine::intr::{splbio, splx};
+use crate::sys::buf::B_ERROR;
 use crate::sys::errno::Errno;
 use crate::sys::lock::LK_DRAIN;
 use crate::sys::param::PINOD;
@@ -148,9 +149,18 @@ pub fn dead_kqfilter(_ap: &mut VopKqfilterArgs) -> Result<(), Errno> {
 }
 
 /// Just call the device strategy routine.
-pub fn dead_strategy(_ap: &mut VopStrategyArgs) -> Result<(), Errno> {
-    // bp->b_vp, B_ERROR, biodone(bp) or VOP_STRATEGY(bp->b_vp, bp): struct buf (vfs_bio.c).
-    Err(unported!("dead_strategy: struct buf (vfs_bio.c)"))
+pub fn dead_strategy(ap: &mut VopStrategyArgs) -> Result<(), Errno> {
+    let bp = ap.a_bp;
+    match bp.b_vp.get() {
+        Some(vp) if chkvnlock(vp) => VOP_STRATEGY(vp, bp),
+        _ => {
+            bp.set(B_ERROR);
+            let s = splbio();
+            biodone(bp);
+            splx(s);
+            Err(Errno::EIO)
+        }
+    }
 }
 
 /// `dead_inactive`: nothing to do but unlock.

@@ -5,6 +5,7 @@
 //! blocks on the types defined here.
 
 pub mod acct;
+pub mod buf;
 pub mod clockintr;
 pub mod device;
 pub mod dirent;

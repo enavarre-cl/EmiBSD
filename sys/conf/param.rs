@@ -46,12 +46,13 @@
 //! Status: `wip`. Milestone M2 needs the clock rate (`delay(9)` on amd64 divides by `hz`);
 //! M5 adds `maxprocess`, `maxthread` and `maxfiles` from `MAXUSERS` (80, as `GENERIC`
 //! configures); M7b adds `nmbclust` for the mbuf allocator and `kern_sysctl.c` `fscale`;
-//! `bufcachepercent`, `bufpages`, the System V IPC limits and `utsname` arrive with the
-//! subsystems that read them.
+//! the buffer cache adds `bufcachepercent` and `bufpages`; the System V IPC limits and
+//! `utsname` arrive with the subsystems that read them.
 //!
 //! ## Deviations
 //! - The `int` and `long` globals are atomics: `sysctl(8)` writes them at runtime in OpenBSD
-//!   too.
+//!   too. `bufcachepercent` and `bufpages` keep their lowercase names beside the
+//!   `BUFCACHEPERCENT`/`BUFPAGES` defaults.
 
 use core::sync::atomic::{AtomicI32, AtomicI64};
 
@@ -90,3 +91,15 @@ pub static NMBCLUST: AtomicI64 = AtomicI64::new(NMBCLUSTERS as i64);
 /// `fscale`: the kernel uses `FSCALE` (`sys/param.rs`), user programs read `fscale` through
 /// `kern.fscale`.
 pub static FSCALE: AtomicI32 = AtomicI32::new(crate::sys::param::FSCALE as i32);
+
+/// `BUFCACHEPERCENT`: the default share of memory for the buffer cache.
+pub const BUFCACHEPERCENT: i32 = 20;
+/// `bufcachepercent`.
+#[allow(non_upper_case_globals)] // BUFCACHEPERCENT is the default of the same name
+pub static bufcachepercent: AtomicI32 = AtomicI32::new(BUFCACHEPERCENT);
+
+/// `BUFPAGES`: the default buffer cache size in pages (0: `bufinit` decides).
+pub const BUFPAGES: i64 = 0;
+/// `bufpages`: max number of pages for buffers' data.
+#[allow(non_upper_case_globals)] // BUFPAGES is the default of the same name
+pub static bufpages: AtomicI64 = AtomicI64::new(BUFPAGES);
