@@ -45,8 +45,7 @@ use crate::machine::cons::cn_rx_intr_establish;
 use crate::machine::cpu::curproc;
 use crate::machine::intr::{IPL_NONE, IPL_TTY};
 use crate::machine::pmap::{
-    pmap_extract, pmap_growkernel, pmap_kenter_pa, pmap_kernel, pmap_kremove, pmap_map_direct,
-    pmap_update,
+    pmap_extract, pmap_kenter_pa, pmap_kernel, pmap_kremove, pmap_map_direct, pmap_update,
 };
 use crate::sys::malloc::{M_NOWAIT, M_TEMP, M_ZERO};
 use crate::sys::mbuf::{M_COPYALL, M_DONTWAIT, MT_DATA, PACKET_TAG_GRE};
@@ -61,7 +60,7 @@ use crate::sys::timeout::Timeout;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_extern::UVM_PGA_ZERO;
 use crate::uvm::uvm_init::UVMEXP;
-use crate::uvm::uvm_km::kernel_map_min;
+use crate::uvm::uvm_km::{KD_NOWAIT, KP_NONE, KV_ANY, km_alloc, km_free};
 use crate::uvm::uvm_page::{PHYS_TO_VM_PAGE, uvm_pagealloc, uvm_pagefree, vm_page_to_phys};
 
 /// A value that is neither all zeros nor all ones.
@@ -128,20 +127,15 @@ pub fn trap_requested() -> bool {
     TRAP_REQUESTED.load(Ordering::Relaxed)
 }
 
-/// Maps a fresh page at the start of the kernel map, writes through the mapping, reads back
-/// through the direct map, checks `pmap_extract` before and after `pmap_kremove`.
+/// Maps a fresh page into kernel virtual space reserved with `km_alloc(kv_any, kp_none)`,
+/// writes through the mapping, reads back through the direct map, checks `pmap_extract`
+/// before and after `pmap_kremove`.
 pub fn pmap_kernel_mapping() {
-    let va = kernel_map_min();
-    let want = Vaddr::new(va.as_usize() + 2 * PAGE_SIZE);
-    let reached = pmap_growkernel(want);
-    if reached < want {
-        kprintf!(
-            "selftest: pmap kernel mapping FAILED: pmap_growkernel reached {:#x}, wanted {:#x}\n",
-            reached.as_usize(),
-            want.as_usize()
-        );
+    let Some(vp) = km_alloc(PAGE_SIZE, &KV_ANY, &KP_NONE, &KD_NOWAIT) else {
+        kprintf!("selftest: pmap kernel mapping FAILED: no kernel virtual space\n");
         return;
-    }
+    };
+    let va = Vaddr::new(vp.as_ptr() as usize);
 
     let Some(pg) = uvm_pagealloc(None, 0, None, UVM_PGA_ZERO) else {
         kprintf!("selftest: pmap kernel mapping FAILED: no page\n");
@@ -149,8 +143,8 @@ pub fn pmap_kernel_mapping() {
     };
     let pa = vm_page_to_phys(pg);
 
-    // SAFETY: `va` is the first page of the kernel map, which nothing has allocated yet, and
-    // `pa` is the page just taken from the free list.
+    // SAFETY: `va` is kernel virtual space km_alloc reserved for this test, and `pa` is the
+    // page just taken from the free list.
     unsafe { pmap_kenter_pa(va, pa, PROT_READ | PROT_WRITE) };
     pmap_update(pmap_kernel());
 
@@ -166,6 +160,7 @@ pub fn pmap_kernel_mapping() {
     pmap_update(pmap_kernel());
     let gone = pmap_extract(pmap_kernel(), va).is_none();
     uvm_pagefree(pg);
+    km_free(vp, PAGE_SIZE, &KV_ANY, &KP_NONE);
 
     let ok = seen == PATTERN && extracted == Some(Paddr::new(pa.as_usize() + 0x10)) && gone;
     if ok {
@@ -573,9 +568,13 @@ pub fn bus_dma_check(t: BusDmaTag) {
 /// message and panics. Never returns normally: it is the M4 exit criterion, and `smoke`
 /// asserts the panic.
 pub fn trap_bad_access() {
-    // The first page of the kernel map: `pmap_kernel_mapping` mapped it and unmapped it again,
-    // so the page tables exist and the leaf entry does not.
-    let va = kernel_map_min();
+    // Kernel virtual space with nothing behind it: km_alloc(kv_any, kp_none) reserves it in
+    // kernel_map, whose page tables exist, and maps no page.
+    let Some(vp) = km_alloc(PAGE_SIZE, &KV_ANY, &KP_NONE, &KD_NOWAIT) else {
+        kprintf!("selftest: trap FAILED: no kernel virtual space\n");
+        return;
+    };
+    let va = Vaddr::new(vp.as_ptr() as usize);
     kprintf!(
         "selftest: trap: reading unmapped kernel address {:#x}\n",
         va.as_usize()

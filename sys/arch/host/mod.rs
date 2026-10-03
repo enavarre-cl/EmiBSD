@@ -461,6 +461,7 @@ impl Pmap for Machine {
     const VM_MDPAGE_INIT: () = ();
     const HAVE_PMAP_DIRECT: bool = true;
     const PMAP_WC: usize = 0;
+    const PMAP_NOMMU: bool = true;
     const PMAP_STEAL_MEMORY: bool = true;
     const UVM_MD_CONSTRAINTS: &'static [&'static UvmConstraintRange] =
         &[&ISA_CONSTRAINT, &DMA_CONSTRAINT];

@@ -273,6 +273,7 @@ impl Pmap for Machine {
     const HAVE_PMAP_DIRECT: bool = true;
     const PMAP_STEAL_MEMORY: bool = true;
     const PMAP_WC: usize = include::pmap::PMAP_WC as usize;
+    const PMAP_NOMMU: bool = false;
     const UVM_MD_CONSTRAINTS: &'static [&'static UvmConstraintRange] =
         &amd64::machdep::UVM_MD_CONSTRAINTS;
     const DMA_CONSTRAINT: &'static UvmConstraintRange = &amd64::machdep::DMA_CONSTRAINT;

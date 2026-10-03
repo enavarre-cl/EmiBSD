@@ -172,7 +172,9 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   below).
 - `aarch64-unknown-none-softfloat` target; Intel syntax for amd64 inline assembly.
 - `Result<T, Errno>` instead of `int` returns; RAII guards for `spl`/mutex.
-- A host test double (`arch/host`), which OpenBSD does not have.
+- A host test double (`arch/host`), which OpenBSD does not have. It has no MMU: its
+  `Pmap::PMAP_NOMMU` makes `km_alloc` and `kmeminit` serve everything through the direct map
+  (the test process's memory), where amd64 and arm64 map `kernel_map`/`kmem_map` as OpenBSD does.
 - Console attach before autoconfiguration exists (M2 to M4): `consinit()` attaches `com(4)` at
   `CONADDR` (amd64, `consinit.rs`) directly instead of `cninit()`'s `constab[]` walk; arm64
   finds its PL011 in the device tree since M4 (`pluart_init_cons`). On arm64, `initarm` installs a one-block identity map of the first GiB in

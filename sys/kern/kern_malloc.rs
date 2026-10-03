@@ -42,10 +42,9 @@
 //! option is feature `kmemstats`.
 //!
 //! ## Deviations
-//! - `kmem_map` is not a submap (`uvm_km_suballoc` waits for `uvm_map.c`): `km_alloc` serves
-//!   `kv_intrsafe` through the direct map, so `kmembase`/`kmemlimit` are the direct-map
-//!   addresses of the lowest and the highest loaded page frame and `kmemusage` has one entry
-//!   per frame in between, allocated as the C allocates its `nkmempages` entries.
+//! - On a machine without an MMU (`PMAP_NOMMU`: the host test double) `kmem_map` is not
+//!   made: `kmembase`/`kmemlimit` are the direct-map addresses of the lowest and the highest
+//!   loaded page frame and `kmemusage` has one entry per frame in between.
 //! - `btokup` always checks that the address is inside `[kmembase, kmemlimit)` (the C only
 //!   under `DIAGNOSTIC`): it indexes an array.
 //! - `malloc_mtx` (M5) is not here; the boot CPU is alone. A `M_WAITOK` request over a type's
@@ -61,6 +60,7 @@ use core::sync::atomic::{AtomicI64, AtomicPtr, AtomicUsize, Ordering};
 
 use crate::dev::rnd::arc4random_buf;
 use crate::machine::pmap::pmap_map_direct;
+use crate::machine::{Machine, Pmap};
 #[cfg(any(feature = "kmemstats", feature = "diagnostic"))]
 use crate::sys::malloc::INITKMEMNAMES;
 use crate::sys::malloc::{
@@ -74,8 +74,10 @@ use crate::sys::systm::PHYSMEM;
 use crate::unported;
 use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_km::{
-    KD_NOWAIT, KD_WAITOK, KP_DIRTY, KP_ZERO, KV_ANY, KV_INTRSAFE, km_alloc, km_free,
+    KD_NOWAIT, KD_WAITOK, KP_DIRTY, KP_ZERO, KV_ANY, KV_INTRSAFE, kernel_map, km_alloc, km_free,
+    uvm_km_suballoc,
 };
+use crate::uvm::uvm_map::{VM_MAP_INTRSAFE, VmMap};
 use crate::uvm::uvm_page::vm_physmem;
 use crate::uvm::uvm_param::{VM_KERNEL_SPACE_SIZE, atop, ptoa, round_page};
 use crate::{kassert, kprintf, queue_adapter};
@@ -106,7 +108,20 @@ pub fn bucketindx(sz: usize) -> usize {
     b as usize
 }
 
-// static struct vm_map kmem_map_store; struct vm_map *kmem_map: see the module's deviations.
+/// `kmem_map_store`.
+static KMEM_MAP_STORE: VmMap = VmMap::new();
+/// `kmem_map`: null until `kmeminit`.
+static KMEM_MAP: AtomicPtr<VmMap> = AtomicPtr::new(core::ptr::null_mut());
+
+/// `kmem_map`, once `kmeminit` made it.
+pub fn kmem_map() -> &'static VmMap {
+    let map = KMEM_MAP.load(Ordering::Acquire);
+    // SAFETY: a non-null pointer is `KMEM_MAP_STORE`, set up by `uvm_km_suballoc`.
+    match unsafe { map.as_ref() } {
+        Some(map) => map,
+        None => crate::kern::subr_prf::panic(format_args!("kmem_map used before kmeminit")),
+    }
+}
 
 /// `NKMEMPAGES`: the configured number of pages in `kmem_map`; -1 asks for the run-time
 /// calculation.
@@ -631,21 +646,34 @@ pub fn kmeminit() {
     // Compute the number of kmem_map pages, if we have not done so already.
     kmeminit_nkmempages();
 
-    // base = vm_map_min(kernel_map); kmem_map = uvm_km_suballoc(kernel_map, &base, &limit,
-    // nkmempages << PAGE_SHIFT, VM_MAP_INTRSAFE, FALSE, &kmem_map_store): the direct map
-    // stands in (see the module's deviations), from frame 0 to the highest loaded frame.
-    let segs = vm_physmem();
-    let Some(lowest) = segs.iter().min_by_key(|seg| seg.start) else {
-        #[allow(clippy::panic)] // uvm_page_init ran before us
-        {
-            panic!("kmeminit: no physical memory");
-        }
+    let (base, limit, frames) = if <Machine as Pmap>::PMAP_NOMMU {
+        // No MMU (the host double): the direct map stands in for kmem_map, from the lowest
+        // to the highest loaded page frame (see the module's deviations).
+        let segs = vm_physmem();
+        let Some(lowest) = segs.iter().min_by_key(|seg| seg.start) else {
+            crate::kern::subr_prf::panic(format_args!("kmeminit: no physical memory"));
+        };
+        // SAFETY: uvm_page_init set every segment's page array.
+        let pg0 = unsafe { lowest.page(0) };
+        let base = pmap_map_direct(pg0).as_usize();
+        let frames = segs.iter().map(|seg| seg.end).max().unwrap_or(0) - lowest.start;
+        (base, base + ptoa(frames), frames)
+    } else {
+        let npages = NKMEMPAGES.load(Ordering::Relaxed) as usize;
+        let mut base = kernel_map().min_offset.get();
+        let mut limit = 0;
+        let map = uvm_km_suballoc(
+            kernel_map(),
+            &mut base,
+            &mut limit,
+            npages << PAGE_SHIFT,
+            VM_MAP_INTRSAFE,
+            false,
+            Some(&KMEM_MAP_STORE),
+        );
+        KMEM_MAP.store(ptr::from_ref(map).cast_mut(), Ordering::Release);
+        (base, limit, npages)
     };
-    // SAFETY: uvm_page_init set every segment's page array.
-    let pg0 = unsafe { lowest.page(0) };
-    let base = pmap_map_direct(pg0).as_usize();
-    let frames = segs.iter().map(|seg| seg.end).max().unwrap_or(0) - lowest.start;
-    let limit = base + ptoa(frames);
     KMEMBASE.store(base, Ordering::Relaxed);
     KMEMLIMIT.store(limit, Ordering::Relaxed);
     let Some(kmemusage) = km_alloc(

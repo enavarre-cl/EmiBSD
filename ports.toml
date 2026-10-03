@@ -832,7 +832,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9a011b29bfce8c2d727484c9536a3954fc5b296d"
 deps = ["sys/sys/malloc.h", "sys/uvm/uvm_km.c", "sys/dev/rnd.c", "sys/sys/systm.h"]
-notes = "malloc/free/mallocarray/kmeminit_nkmempages/kmeminit with BUCKETINDX; KMEMSTATS is feature kmemstats; kmem_map is the direct map (kmembase/kmemlimit span the loaded frames, kmemusage one entry per frame) until uvm_km_suballoc (uvm_map); btokup always range-checks; the ks_limit msleep, poison_*, uvm_map_checkprot and ratecheck reported; sysctl_malloc/malloc_printit and buckstring/memall: M7"
+notes = "malloc/free/mallocarray/kmeminit_nkmempages/kmeminit with BUCKETINDX; KMEMSTATS is feature kmemstats; kmem_map is the direct map (kmembase/kmemlimit span the loaded frames, kmemusage one entry per frame) until uvm_km_suballoc (uvm_map); btokup always range-checks; the ks_limit msleep, poison_*, uvm_map_checkprot and ratecheck reported; sysctl_malloc/malloc_printit and buckstring/memall: M7; M7b: kmeminit makes kmem_map with uvm_km_suballoc (VM_MAP_INTRSAFE) and kmembase/kmemlimit are its bounds; only the host double (PMAP_NOMMU) keeps the direct-map stand-in"
 
 [[file]]
 c = "sys/dev/rnd.c"
@@ -1090,7 +1090,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d125775bafe311bad1f791f16fae0434e8703879"
 deps = ["sys/uvm/uvm_extern.h", "sys/uvm/uvm_aobj.c", "sys/uvm/uvm_map.c"]
-notes = "km_alloc/km_free, the kv_*/kp_*/kd_* modes, no_constraint; M7a-1: uvm_km_init creates the kernel object (uao_init, uao_create UAO_FLAG_KERNOBJ); M7a-2: uvm_km_init sets kernel_map up (uvm_map_setup, the reservation of [base, start) with uvm_map FIXED; kernel_map() and is_kernel_map stand for the C's pointer), uvm_km_suballoc, uvm_km_pgremove, uvm_km_pgremove_intrsafe; kernel_map_min keeps the first free address past the reservation for the selftests; without kmem_map (kmeminit's uvm_km_suballoc, M7+) km_alloc still serves every request physically contiguous through the direct map and reported once, kp_nomem/kp_pageable requests fail reported; the single-page thread is __HAVE_PMAP_DIRECT: nothing"
+notes = "km_alloc/km_free, the kv_*/kp_*/kd_* modes, no_constraint; M7a-1: uvm_km_init creates the kernel object (uao_init, uao_create UAO_FLAG_KERNOBJ); M7a-2: uvm_km_init sets kernel_map up (uvm_map_setup, the reservation of [base, start) with uvm_map FIXED; kernel_map() and is_kernel_map stand for the C's pointer), uvm_km_suballoc, uvm_km_pgremove, uvm_km_pgremove_intrsafe; kernel_map_min keeps the first free address past the reservation for the selftests; without kmem_map (kmeminit's uvm_km_suballoc, M7+) km_alloc still serves every request physically contiguous through the direct map and reported once, kp_nomem/kp_pageable requests fail reported; the single-page thread is __HAVE_PMAP_DIRECT: nothing; M7b: km_alloc/km_free follow the C (kernel_map/kmem_map space with pmap_kenter_pa or pmap_enter for kp_pageable, kp_nomem virtual-only space, the direct map only for single pages and single segments); the host double (PMAP_NOMMU) keeps the direct map"
 
 [[file]]
 c = "sys/uvm/uvm_pdaemon.c"
