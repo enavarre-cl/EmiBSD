@@ -216,6 +216,10 @@ impl Cpu for Machine {
         amd64::machdep::signotify(p)
     }
 
+    fn child_return(arg: *mut c_void) {
+        amd64::trap::child_return(arg)
+    }
+
     fn proc_pc(p: &Proc) -> usize {
         // SAFETY: `md_regs` is the thread's trap frame at the top of its u-area (`cpu_fork`),
         // set before the thread first runs in user mode; read without a reference kept.
@@ -1051,6 +1055,10 @@ impl UserCopy for Machine {
 
     fn copyinstr(uaddr: usize, kbuf: &mut [u8]) -> Result<usize, Errno> {
         amd64::copy::copyinstr(uaddr, kbuf)
+    }
+
+    fn copyin32(uaddr: usize) -> Result<u32, Errno> {
+        amd64::machdep::copyin32(uaddr)
     }
 
     fn copyoutstr(kbuf: &[u8], uaddr: usize) -> Result<usize, Errno> {

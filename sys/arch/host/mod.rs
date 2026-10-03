@@ -415,6 +415,9 @@ impl Cpu for Machine {
     /// No user mode, hence no AST to post.
     fn signotify(_p: &Proc) {}
 
+    /// The host double has no user mode to return to.
+    fn child_return(_arg: *mut c_void) {}
+
     /// The host double has no user mode: no program counter to report.
     fn proc_pc(_p: &Proc) -> usize {
         0
@@ -1361,6 +1364,14 @@ impl UserCopy for Machine {
             }
         }
         Err(Errno::ENAMETOOLONG)
+    }
+
+    fn copyin32(uaddr: usize) -> Result<u32, Errno> {
+        if uaddr == 0 || uaddr & 0x3 != 0 {
+            return Err(Errno::EFAULT);
+        }
+        // SAFETY: the test passed a pointer to an aligned, readable word.
+        Ok(unsafe { (uaddr as *const u32).read_volatile() })
     }
 
     fn copyoutstr(kbuf: &[u8], uaddr: usize) -> Result<usize, Errno> {

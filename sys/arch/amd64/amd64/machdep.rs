@@ -498,6 +498,18 @@ pub fn setregs(p: &Proc, pack: &ExecPackage<'_>, stack: Vaddr, _arginfo: &PsStri
     }
 }
 
+/// `copyin32`: copies the aligned 32-bit word at `uaddr` in; `copyin(9)` is atomic for it.
+pub fn copyin32(uaddr: usize) -> Result<u32, Errno> {
+    if uaddr & 0x3 != 0 {
+        return Err(Errno::EFAULT);
+    }
+
+    // copyin(9) is atomic
+    let mut word = [0u8; 4];
+    crate::machine::copy::copyin(uaddr, &mut word)?;
+    Ok(u32::from_ne_bytes(word))
+}
+
 /// `x86_64_proc0_tss_ldt_init`: loads the boot CPU's task register and clears the LDT.
 pub fn x86_64_proc0_tss_ldt_init() {
     let pcb = &proc0paddr().u_pcb;

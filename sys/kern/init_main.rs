@@ -304,7 +304,7 @@ pub fn main() -> ! {
     let _ = unported!("kqueue_init");
 
     // Initialize futexes.
-    let _ = unported!("futex_init");
+    crate::kern::sys_futex::futex_init();
     let _ = unported!("tslp_init");
 
     // Create credentials.

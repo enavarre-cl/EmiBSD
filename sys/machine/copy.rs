@@ -26,6 +26,10 @@ pub trait UserCopy {
     /// (NUL included), `ENAMETOOLONG` when the string does not fit.
     fn copyinstr(uaddr: usize, kbuf: &mut [u8]) -> Result<usize, Errno>;
 
+    /// `copyin32(uaddr, kaddr)`: atomically copies the aligned 32-bit word at `uaddr` in
+    /// from user space; `EFAULT` when it is misaligned or not mapped (`futex(2)`).
+    fn copyin32(uaddr: usize) -> Result<u32, Errno>;
+
     /// `copyoutstr(kaddr, uaddr, len, done)`: copies the NUL-terminated string at the start
     /// of `kbuf` to user space (at most `kbuf.len()` bytes); returns the bytes copied.
     fn copyoutstr(kbuf: &[u8], uaddr: usize) -> Result<usize, Errno>;
@@ -87,6 +91,11 @@ pub fn copyout(kbuf: &[u8], uaddr: usize) -> Result<(), Errno> {
 /// `copyinstr` on the selected machine.
 pub fn copyinstr(uaddr: usize, kbuf: &mut [u8]) -> Result<usize, Errno> {
     Machine::copyinstr(uaddr, kbuf)
+}
+
+/// `copyin32` on the selected machine.
+pub fn copyin32(uaddr: usize) -> Result<u32, Errno> {
+    Machine::copyin32(uaddr)
 }
 
 /// `copyoutstr` on the selected machine.

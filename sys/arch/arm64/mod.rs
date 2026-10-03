@@ -212,6 +212,10 @@ impl Cpu for Machine {
         arm64::machdep::signotify(p)
     }
 
+    fn child_return(arg: *mut c_void) {
+        arm64::syscall::child_return(arg)
+    }
+
     fn proc_pc(p: &Proc) -> usize {
         // SAFETY: `pcb_tf` is the thread's trap frame at the top of its u-area (`cpu_fork`),
         // set before the thread first runs in user mode; read without a reference kept.
@@ -1047,6 +1051,10 @@ impl UserCopy for Machine {
 
     fn copyinstr(uaddr: usize, kbuf: &mut [u8]) -> Result<usize, Errno> {
         arm64::copystr::copyinstr(uaddr, kbuf)
+    }
+
+    fn copyin32(uaddr: usize) -> Result<u32, Errno> {
+        arm64::copy::copyin32(uaddr)
     }
 
     fn copyoutstr(kbuf: &[u8], uaddr: usize) -> Result<usize, Errno> {

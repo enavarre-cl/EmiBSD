@@ -51,6 +51,8 @@
 //! rekeying, `random_start`, the `randomread`/`randomwrite` device and the sysctls arrive with
 //! M5, which brings the clock, timeouts and the entropy sources.
 //!
+//! M8: `sys_getentropy` (`getentropy(2)`, `GETENTROPY_MAX` bytes of the stream below).
+//!
 //! ## Deviations
 //! - NOT RANDOM YET. The stream behind `arc4random` is SplitMix64 from a constant seed: it
 //!   gives the pools their freelist order and page magics and `XSIMPLEQ` its cookies with the
@@ -60,6 +62,13 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
+use crate::machine::copy::copyout;
+use crate::sys::errno::Errno;
+use crate::sys::proc::Proc;
+use crate::sys::syscallargs::SysGetentropyArgs;
+use crate::sys::syslimits::GETENTROPY_MAX;
+use crate::sys::systm::{SysArgs, sysargs};
+use crate::sys::types::Register;
 use crate::unported;
 
 /// The constant seed of the placeholder stream (see the module's deviations).
@@ -123,6 +132,23 @@ pub fn enqueue_randomness(_val: u32) {
 /// `random_start`: starts the generator from the entropy pool; the pool arrives with M5.
 pub fn random_start(_goodseed: bool) {
     let _ = unported!("random_start (ChaCha20 and the entropy pool, M5)");
+}
+
+/// `getentropy(2)`: at most `GETENTROPY_MAX` bytes from the kernel's generator (see the
+/// module's deviations: not random yet).
+pub fn sys_getentropy(_p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let uap: &SysGetentropyArgs = sysargs(v);
+    let mut buf = [0u8; GETENTROPY_MAX];
+    let nbyte = uap.nbyte.get();
+
+    if nbyte > buf.len() {
+        return Err(Errno::EINVAL);
+    }
+    arc4random_buf(&mut buf[..nbyte]);
+    copyout(&buf[..nbyte], uap.buf.get() as usize)?;
+    libkern::explicit_bzero(&mut buf);
+    retval[0] = 0;
+    Ok(())
 }
 
 #[cfg(test)]

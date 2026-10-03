@@ -116,6 +116,48 @@ const SYS_SYSCTL: usize = 202;
 const SYS_OPEN: usize = 5;
 /// `SYS_execve`.
 const SYS_EXECVE: usize = 59;
+/// `SYS_fork`.
+const SYS_FORK: usize = 2;
+/// `SYS_wait4`.
+const SYS_WAIT4: usize = 11;
+/// `SYS_getentropy`.
+const SYS_GETENTROPY: usize = 7;
+/// `SYS_acct`.
+const SYS_ACCT: usize = 51;
+/// `SYS_futex`.
+const SYS_FUTEX: usize = 83;
+/// `SYS_pledge`.
+const SYS_PLEDGE: usize = 108;
+/// `SYS_sendsyslog`.
+const SYS_SENDSYSLOG: usize = 112;
+/// `SYS_ypconnect`.
+const SYS_YPCONNECT: usize = 150;
+/// `SYS_profil`.
+const SYS_PROFIL: usize = 175;
+/// `SYS_utrace`.
+const SYS_UTRACE: usize = 209;
+/// `SYS_sched_yield`.
+const SYS_SCHED_YIELD: usize = 298;
+/// `SYS_setrtable`.
+const SYS_SETRTABLE: usize = 310;
+/// `SYS_getrtable`.
+const SYS_GETRTABLE: usize = 311;
+/// `ECHILD`.
+const ECHILD: usize = 10;
+/// `EPERM`.
+const EPERM: usize = 1;
+/// `ENOTCONN`.
+const ENOTCONN: usize = 57;
+/// `EAFNOSUPPORT`.
+const EAFNOSUPPORT: usize = 47;
+/// `SIGABRT`.
+const SIGABRT: usize = 6;
+/// `FUTEX_WAKE`.
+const FUTEX_WAKE: usize = 2;
+/// `LOG_CONS` (`<sys/syslog.h>`).
+const LOG_CONS: usize = 0x02;
+/// `SOCK_STREAM`.
+const SOCK_STREAM: usize = 1;
 /// `SYS_chdir`.
 const SYS_CHDIR: usize = 12;
 /// `SYS_fchdir`.
@@ -189,8 +231,6 @@ const TIOCGETA: usize = 0x402c_7413;
 const TIOCGPGRP: usize = 0x4004_7477;
 /// `ICANON`, in `c_lflag`.
 const ICANON: u32 = 0x0000_0100;
-/// `EPERM`.
-const EPERM: usize = 1;
 /// `S_IFMT`, `S_IFCHR`.
 const S_IFMT: u32 = 0o170000;
 const S_IFCHR: u32 = 0o020000;
@@ -458,6 +498,110 @@ unsafe extern "C" {
     fn _start();
 }
 
+/// `getpid(2)` from a call site of its own, which the `PT_OPENBSD_SYSCALLS` table does not
+/// name: `pin_check` must kill the caller with `SIGABRT`.
+#[cfg(target_arch = "x86_64")]
+#[inline(never)]
+fn unpinned_getpid() -> usize {
+    let ret: usize;
+    // SAFETY: the `syscall` instruction with the OpenBSD register convention; the kernel
+    // kills the process here (the site is not pinned), which is what the caller wants.
+    unsafe {
+        asm!(
+            "syscall",
+            inlateout("rax") SYS_GETPID => ret,
+            out("rcx") _,
+            out("r11") _,
+            options(nostack)
+        );
+    }
+    ret
+}
+
+/// `getpid(2)` from a call site of its own (see the amd64 version).
+#[cfg(target_arch = "aarch64")]
+#[inline(never)]
+fn unpinned_getpid() -> usize {
+    let ret: usize;
+    // SAFETY: the `svc` instruction with the OpenBSD register convention; the kernel kills
+    // the process here (the site is not pinned), which is what the caller wants.
+    unsafe {
+        asm!(
+            "svc #0",
+            "dsb nsh",
+            "isb",
+            in("x8") SYS_GETPID,
+            lateout("x0") ret,
+            options(nostack)
+        );
+    }
+    ret
+}
+
+/// `kern_fork.c`, `kern_exit.c` and the process system calls seen from user mode: a forked
+/// child exits with a status `wait4(2)` reports, a child that makes a system call from an
+/// unpinned site dies of `SIGABRT` (`pin_check`), there are no more children (`ECHILD`),
+/// and `getentropy`, `sched_yield`, `futex`, `utrace`, `pledge`, `acct`, `setrtable`,
+/// `getrtable`, `ypconnect`, `profil` and `sendsyslog` answer as OpenBSD's do here.
+fn processes() -> bool {
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let mut status: i32 = 0;
+    let sp = &mut status as *mut i32 as usize;
+
+    let pid = match call(SYS_FORK, 0, 0, 0) {
+        (0, false) => exit(7),
+        (pid, false) => pid,
+        _ => return false,
+    };
+    let mut ok = call(SYS_WAIT4, pid, sp, 0) == (pid, false);
+    ok &= (status >> 8) & 0xff == 7 && status & 0x7f == 0;
+
+    let pid = match call(SYS_FORK, 0, 0, 0) {
+        (0, false) => {
+            unpinned_getpid();
+            exit(8)
+        }
+        (pid, false) => pid,
+        _ => return false,
+    };
+    ok &= call(SYS_WAIT4, pid, sp, 0) == (pid, false);
+    ok &= status & 0x7f == SIGABRT as i32;
+    ok &= call(SYS_WAIT4, usize::MAX, sp, 0) == (ECHILD, true);
+
+    let mut entropy = [0u8; 32];
+    ok &= call(
+        SYS_GETENTROPY,
+        entropy.as_mut_ptr() as usize,
+        entropy.len(),
+        0,
+    ) == (0, false);
+    ok &= entropy.iter().any(|&b| b != 0);
+    ok &= call(SYS_GETENTROPY, entropy.as_mut_ptr() as usize, 257, 0) == (EINVAL, true);
+    ok &= call(SYS_SCHED_YIELD, 0, 0, 0) == (0, false);
+    let word: u32 = 0;
+    ok &= syscall6(
+        SYS_FUTEX,
+        [&word as *const u32 as usize, FUTEX_WAKE, 1, 0, 0, 0],
+    ) == (0, false);
+    ok &= call(SYS_UTRACE, c"init".as_ptr() as usize, 0, 0) == (0, false);
+    ok &= call(
+        SYS_PLEDGE,
+        c"stdio rpath wpath cpath proc exec".as_ptr() as usize,
+        0,
+        0,
+    ) == (0, false);
+    ok &= call(SYS_PLEDGE, c"stdio bogus".as_ptr() as usize, 0, 0) == (EINVAL, true);
+    ok &= call(SYS_ACCT, 0, 0, 0) == (0, false);
+    ok &= call(SYS_SETRTABLE, 0, 0, 0) == (0, false);
+    ok &= call(SYS_GETRTABLE, 0, 0, 0) == (0, false);
+    ok &= call(SYS_YPCONNECT, SOCK_STREAM, 0, 0) == (EAFNOSUPPORT, true);
+    ok &= syscall6(SYS_PROFIL, [0, 0, 0, 0, 1, usize::MAX]) == (EPERM, true);
+    // No syslogd(8): with LOG_CONS the message goes to the console without its priority.
+    let msg = b"<13>init: sendsyslog ok";
+    ok &= call(SYS_SENDSYSLOG, msg.as_ptr() as usize, msg.len(), LOG_CONS) == (ENOTCONN, true);
+    ok
+}
+
 /// The program, called by `_start` with the initial stack pointer.
 extern "C" fn init_main(sp: *const usize) -> ! {
     let mut status = match write(1, b"init: hello from user mode\n") {
@@ -522,6 +666,13 @@ extern "C" fn init_main(sp: *const usize) -> ! {
         }
     } else {
         status = 8;
+    }
+    if processes() {
+        if write(1, b"init: processes ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 10;
     }
     exit(status)
 }

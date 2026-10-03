@@ -260,6 +260,13 @@ mod tests {
     }
 }
 
+/// `scheduler_wait_hook(parent, child)`: chargeback parents for the sins of their children.
+pub fn scheduler_wait_hook(parent: &Proc, child: &Proc) {
+    parent
+        .p_estcpu
+        .set(estcpulim(parent.p_estcpu.get() + child.p_estcpu.get()));
+}
+
 /// `sched_pause(func)`: calls `func` (a yield) when the CPU's scheduler flags ask the
 /// running thread to give the CPU up (`SPCF_SHOULDYIELD`).
 pub fn sched_pause(func: fn()) {

@@ -441,6 +441,14 @@ pub struct SysSetloginArgs {
     pub namebuf: Syscallarg<*const u8>,
 }
 
+/// `struct sys_acct_args`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SysAcctArgs {
+    /// `path`: `const char *`.
+    pub path: Syscallarg<*const u8>,
+}
+
 /// `struct sys_fstat_args`.
 #[repr(C)]
 #[derive(Clone, Copy)]

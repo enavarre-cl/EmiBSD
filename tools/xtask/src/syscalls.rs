@@ -7,10 +7,11 @@
 //! - `sys/kern/syscalls.rs` (the names, `syscalls.c`).
 //!
 //! The switch table points every entry at `sys_nosys` unless a `pub fn sys_<name>(` exists
-//! under `sys/kern/` or `sys/uvm/`, so porting a syscall is: write the function, rerun the
+//! in a file directly under `sys/kern/`, `sys/uvm/` or `sys/dev/` (`getentropy(2)` lives in
+//! `dev/rnd.c`), so porting a syscall is: write the function, rerun the
 //! generator. `--check` regenerates in memory and fails if the files on disk differ (`just
-//! ci`). Kernel options the master file tests (`PTRACE`, `KTRACE`, `ACCOUNTING`, `NFS*`,
-//! `SYSV*`) are not configured: their `#else` branches are taken.
+//! ci`). Of the kernel options the master file tests only `ACCOUNTING` is configured (as in
+//! GENERIC); for `PTRACE`, `KTRACE`, `NFS*` and `SYSV*` the `#else` branches are taken.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -47,8 +48,9 @@ enum Kind {
     Unimpl,
 }
 
-/// Kernel options the master file may test; none is configured.
-const CONFIGURED_OPTIONS: &[&str] = &[];
+/// Kernel options the master file may test that the kernel configures: `ACCOUNTING`
+/// (`kern_acct.c`, in GENERIC). `KTRACE`, `PTRACE`, `NFS*` and `SYSV*` are not.
+const CONFIGURED_OPTIONS: &[&str] = &["ACCOUNTING"];
 
 /// The C types the master file uses, mapped to Rust. Scalars keep their `sys/types.rs`
 /// alias; pointers to kernel structures the tree does not have yet are opaque.
@@ -166,7 +168,8 @@ fn parse(master: &str) -> Result<(String, Vec<Entry>)> {
                 let Some((active, saved)) = stack.pop() else {
                     return Err(format!("syscalls.master:{lineno}: unbalanced #else").into());
                 };
-                expected = saved;
+                // The #if branch, if it was taken, consumed its numbers; the #else branch
+                // is then skipped and the numbering goes on from where it stopped.
                 stack.push((!active, saved));
                 continue;
             }
@@ -365,7 +368,11 @@ fn join_type(tokens: &[&str]) -> String {
 /// The `sys_*` functions the tree defines: name -> module path.
 fn ported_syscalls(root: &Path) -> Result<BTreeMap<String, String>> {
     let mut found = BTreeMap::new();
-    for (dir, module) in [("sys/kern", "crate::kern"), ("sys/uvm", "crate::uvm")] {
+    for (dir, module) in [
+        ("sys/kern", "crate::kern"),
+        ("sys/uvm", "crate::uvm"),
+        ("sys/dev", "crate::dev"),
+    ] {
         let mut names: Vec<_> = fs::read_dir(root.join(dir))?
             .filter_map(|e| e.ok())
             .map(|e| e.path())

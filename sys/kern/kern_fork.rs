@@ -45,8 +45,9 @@
 //! Status: `wip`. Milestone M5 (part b1) ports `nprocesses`/`nthreads`,
 //! `process_initialize`, `fork_check_maxthread`, `alloctid`, `allocpid`, `ispidtaken` and
 //! `freepid`; part b2 adds `forkstat`, `thread_new`, `process_new`, `fork_thread_start`,
-//! `fork1` and `proc_trampoline_mi`, enough for kernel threads. `sys_fork`, `sys_vfork`,
-//! `sys___tfork`, `thread_fork` and `fork_return` come with the syscalls (M6).
+//! `fork1` and `proc_trampoline_mi`, enough for kernel threads. M8 adds `fork_return`,
+//! `sys_fork`, `sys_vfork`, `sys___tfork` and `thread_fork` (the file is complete); the
+//! child returns to user mode through the machine's `child_return` (`machine::cpu`).
 //!
 //! ## Deviations
 //! - `fork1` returns the new thread (`Result<&Proc, Errno>`) instead of an `int` plus the
@@ -61,6 +62,8 @@
 //!   other users (the limits), and reports `knote_processfork` (M6). The credentials
 //!   (`crhold` in `thread_new` and `process_initialize`, the forking thread's real uid in
 //!   `fork1`) are real since `kern_prot.c`.
+//! - `sys_fork` never asks for `FORK_PTRACE`/`fork_return`: the `ptrace(2)` event mask
+//!   (`ps_ptmask`, `sys_process.c`) is not ported, so no process wants fork reports.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -83,7 +86,7 @@ use crate::kern::kern_prot::crhold;
 use crate::kern::kern_resource::{lim_fork, rucheck};
 use crate::kern::kern_rwlock::rw_init;
 use crate::kern::kern_sched::{sched_choosecpu_fork, setrunqueue};
-use crate::kern::kern_sig::{psignal, sigactsinit};
+use crate::kern::kern_sig::{psignal, sigactsinit, sigstkinit};
 use crate::kern::kern_synch::{endtsleep, refcnt_init, tsleep_nsec};
 use crate::kern::kern_tc::nanouptime;
 use crate::kern::kern_time::ratecheck;
@@ -96,24 +99,29 @@ use crate::kern::subr_prf::{panic, tablefull};
 use crate::kern::subr_prof::profclock_period;
 use crate::kern::subr_xxx::assertwaitok;
 use crate::machine::Machine;
-use crate::machine::cpu::{Cpu, CpuInfo, curcpu, curproc};
+use crate::machine::copy::{copyin, copyout};
+use crate::machine::cpu::{Cpu, CpuInfo, child_return, curcpu, curproc};
 use crate::machine::intr::{IPL_HIGH, spl0};
+use crate::machine::tcb::tcb_invalid;
 use crate::sys::acct::AFORK;
 use crate::sys::errno::Errno;
 use crate::sys::param::PWAIT;
 use crate::sys::pool::PR_WAITOK;
 use crate::sys::proc::{
     FORK_FORK, FORK_IDLE, FORK_NOZOMBIE, FORK_PPWAIT, FORK_PTRACE, FORK_SHAREFILES, FORK_SHAREVM,
-    FORK_SYSTEM, FORK_VFORK, P_CPUPEG, P_SYSTEM, PID_MAX, PS_EMBRYO, PS_FLAGS_INHERITED_ON_FORK,
-    PS_ISPWAIT, PS_ITIMER, PS_NOZOMBIE, PS_PPWAIT, PS_PROFIL, PS_SYSTEM, PS_TRACED, Proc, Process,
-    ProcessPglist, SIDL, TID_MASK,
+    FORK_SYSTEM, FORK_VFORK, P_CPUPEG, P_SUSPSIG, P_SUSPSINGLE, P_SYSTEM, P_THREAD, PID_MAX,
+    PS_EMBRYO, PS_FLAGS_INHERITED_ON_FORK, PS_ISPWAIT, PS_ITIMER, PS_NOZOMBIE, PS_PPWAIT,
+    PS_PROFIL, PS_STOPPING, PS_SYSTEM, PS_TRACED, Proc, Process, ProcessPglist, SIDL,
+    THREAD_PID_OFFSET, TID_MASK,
 };
 use crate::sys::queue::ListHead;
 use crate::sys::sched::{SPCF_ITIMER, SPCF_PROFCLOCK};
-use crate::sys::signal::SIGTRAP;
-use crate::sys::systm::INFSLP;
+use crate::sys::signal::{SIGSEGV, SIGTRAP};
+use crate::sys::syscallargs::SysTforkArgs;
+use crate::sys::systm::{INFSLP, SysArgs, sysargs};
 use crate::sys::time::Timeval;
-use crate::sys::types::{Pid, Uid};
+use crate::sys::types::{Pid, Register, Uid};
+use crate::sys::unistd::Tfork;
 use crate::sys::user::User;
 use crate::sys::vmmeter::Forkstat;
 use crate::unported;
@@ -128,6 +136,88 @@ pub static NTHREADS: AtomicI32 = AtomicI32::new(1);
 
 /// `forkstat`: the fork statistics (`<sys/vmmeter.h>`).
 pub static FORKSTAT: Forkstat = Forkstat::new();
+
+/// The calling thread as the `&'static Proc` `fork1` and `thread_fork` keep (the child's
+/// parent links and `cpu_fork`'s frame copy).
+fn curthread(p: &Proc) -> &'static Proc {
+    // SAFETY: a thread is a `proc_pool` item freed only by the reaper after it exited; the
+    // thread making this system call is running, so it outlives every use made of it here.
+    unsafe { &*ptr::from_ref(p) }
+}
+
+/// `fork_return`: the first thing a forked child runs when the parent asked `ptrace(2)` to
+/// report forks: stop for the tracer, then return to user mode as `child_return` does.
+pub fn fork_return(arg: *mut c_void) {
+    // SAFETY: `fork1` passes the new thread itself as the argument.
+    let p = unsafe { &*arg.cast::<Proc>() };
+
+    if p.process().ps_flags.load(Ordering::Relaxed) & PS_TRACED != 0 {
+        psignal(p, SIGTRAP);
+    }
+
+    child_return(arg);
+}
+
+/// `fork(2)`.
+pub fn sys_fork(p: &Proc, _v: &SysArgs, retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let func: fn(*mut c_void) = child_return;
+    let flags = FORK_FORK;
+
+    // ps_ptmask & PTRACE_FORK (flags |= FORK_PTRACE, func = fork_return): the ptrace event
+    // mask is sys_process.c's, which is not ported, so no process asks for fork reports.
+
+    let child = fork1(curthread(p), flags, func, ptr::null_mut())?;
+    retval[0] = child.process().ps_pid.get() as Register;
+    Ok(())
+}
+
+/// `vfork(2)`: the parent sleeps until the child execs or exits (`FORK_PPWAIT`).
+pub fn sys_vfork(p: &Proc, _v: &SysArgs, retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let child = fork1(
+        curthread(p),
+        FORK_VFORK | FORK_PPWAIT,
+        child_return,
+        ptr::null_mut(),
+    )?;
+    retval[0] = child.process().ps_pid.get() as Register;
+    Ok(())
+}
+
+/// `__tfork(2)`: a new thread in the calling process, with its own stack and TCB.
+#[allow(non_snake_case)] // the C name: sys___tfork
+pub fn sys___tfork(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let uap: &SysTforkArgs = sysargs(v);
+    let psize = uap.psize.get();
+    let mut raw = [0u8; size_of::<Tfork>()];
+
+    if psize == 0 || psize > raw.len() {
+        return Err(Errno::EINVAL);
+    }
+    copyin(uap.param.get() as usize, &mut raw[..psize])?;
+    let word = |i: usize| {
+        const W: usize = size_of::<usize>();
+        let mut w = [0u8; W];
+        w.copy_from_slice(&raw[i * W..(i + 1) * W]);
+        usize::from_ne_bytes(w)
+    };
+    let param = Tfork {
+        tf_tcb: word(0),
+        tf_tid: word(1),
+        tf_stack: word(2),
+    };
+    // KTRACE: not configured.
+    if tcb_invalid(param.tf_tcb) {
+        return Err(Errno::EINVAL);
+    }
+
+    thread_fork(
+        curthread(p),
+        param.tf_stack,
+        param.tf_tcb,
+        param.tf_tid,
+        retval,
+    )
+}
 
 /// `thread_new`: allocates a thread, copying `parent`'s inheritable fields, with its u-area
 /// at `uaddr`.
@@ -546,7 +636,95 @@ pub fn fork1(
     Ok(p)
 }
 
-// thread_fork, sys_fork, sys_vfork, sys___tfork, fork_return: the syscalls (M6).
+/// `thread_fork`: a new thread of `curp`'s process that returns to user mode on `stack`
+/// with `tcb` as its TCB; its id (offset by `THREAD_PID_OFFSET`) is the return value and is
+/// copied out to `tidptr` when that is not NULL.
+pub fn thread_fork(
+    curp: &'static Proc,
+    stack: usize,
+    tcb: usize,
+    tidptr: usize,
+    retval: &mut [Register; 2],
+) -> Result<(), Errno> {
+    let pr = curp.process();
+
+    if stack == 0 {
+        return Err(Errno::EINVAL);
+    }
+
+    fork_check_maxthread(curp.ucred().cr_ruid.get())?;
+
+    let Some(uaddr) = uvm_uarea_alloc() else {
+        NTHREADS.fetch_sub(1, Ordering::Relaxed);
+        return Err(Errno::ENOMEM);
+    };
+
+    // From now on, we're committed to the fork and cannot fail.
+    let p = thread_new(curp, uaddr);
+    p.p_flag.fetch_or(P_THREAD, Ordering::Relaxed);
+    sigstkinit(&p.p_sigstk);
+    p.set_name(b"");
+
+    // other links
+    p.p_p.set(pr);
+
+    // local copies
+    p.p_fd.set(pr.ps_fd.get());
+    p.p_vmspace.set(pr.ps_vmspace.get());
+
+    // Finish creating the child thread. cpu_fork() will copy and update the pcb and make
+    // the child ready to run. The child will exit directly to user mode via child_return()
+    // on its first time slice and will not return here.
+    Machine::cpu_fork(
+        curp,
+        p,
+        stack as *mut u8,
+        tcb as *mut u8,
+        child_return,
+        ptr::from_ref(p).cast_mut().cast::<c_void>(),
+    );
+
+    p.p_tid.set(alloctid());
+
+    // SAFETY: `p` is a static-lived pool item in no list or hash chain yet; the lists are
+    // the kernel lock's.
+    unsafe {
+        ALLPROC.0.insert_head(p);
+        tidhash(p.p_tid.get()).insert_head(p);
+    }
+
+    mtx_enter(&pr.ps_mtx);
+    // SAFETY: `p` is on no thread list yet; `ps_threads` is `ps_mtx`'s, held.
+    unsafe { pr.ps_threads.insert_tail(p) };
+    pr.ps_threadcnt.set(pr.ps_threadcnt.get() + 1);
+
+    // if somebody else wants to take us to single threaded mode or suspend the process,
+    // count ourselves in.
+    if !pr.ps_single.get().is_null() || pr.ps_flags.load(Ordering::Relaxed) & PS_STOPPING != 0 {
+        pr.ps_suspendcnt.set(pr.ps_suspendcnt.get() + 1);
+        p.p_flag.fetch_or(
+            curp.p_flag.load(Ordering::Relaxed) & (P_SUSPSINGLE | P_SUSPSIG),
+            Ordering::Relaxed,
+        );
+    }
+    mtx_leave(&pr.ps_mtx);
+
+    // Return tid to parent thread and copy it out to userspace
+    let tid: Pid = p.p_tid.get() + THREAD_PID_OFFSET;
+    retval[0] = tid as Register;
+    if tidptr != 0 && copyout(&tid.to_ne_bytes(), tidptr).is_err() {
+        psignal(curp, SIGSEGV);
+    }
+
+    fork_thread_start(p, curp, 0);
+
+    // Update stats now that we know the fork was successful.
+    FORKSTAT.cnttfork.fetch_add(1, Ordering::Relaxed);
+    UVMEXP.forks.fetch_add(1, Ordering::Relaxed);
+    UVMEXP.forks_sharevm.fetch_add(1, Ordering::Relaxed);
+
+    Ok(())
+}
 
 /// `alloctid`: find an unused tid.
 pub fn alloctid() -> Pid {

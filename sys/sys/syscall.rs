@@ -151,6 +151,9 @@ pub const SYS_mmap: i32 = 49;
 /// syscall: "setlogin" ret: "int" args: "const char *"
 pub const SYS_setlogin: i32 = 50;
 
+/// syscall: "acct" ret: "int" args: "const char *"
+pub const SYS_acct: i32 = 51;
+
 /// syscall: "sigpending" ret: "int" args:
 pub const SYS_sigpending: i32 = 52;
 

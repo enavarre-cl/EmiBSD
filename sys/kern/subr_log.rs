@@ -39,9 +39,11 @@
 //!
 //! Status: `wip`. Milestone M2 ports the message buffer itself: `initmsgbuf`,
 //! `msgbuf_putchar`, `msgbuf_putchar_locked`, `logwakeup`, `initconsbuf` and the globals
-//! `log_open`, `msgbufmapped`, `msgbufp`, `consbufp`. The `/dev/klog` device (`logopen` through
-//! `logkqfilter`, `logtick`, `dosendsyslog`, `sys_sendsyslog`) needs files, sockets and kqueue
-//! (M7).
+//! `log_open`, `msgbufmapped`, `msgbufp`, `consbufp`. M8: `sendsyslog(2)`: the log stash
+//! (`logstash_full`, `logstash_increment`, `logstash_insert`, `logstash_remove`,
+//! `logstash_sendsyslog`), `sys_sendsyslog` and `dosendsyslog`, with `syslogf` and its
+//! rwlock. The `/dev/klog` device (`logopen` through `logkqfilter`, `logtick`, `logioctl`
+//! with `LIOCSFD`) needs the device switch, sockets and kqueue.
 //!
 //! ## Deviations
 //! - `log_mtx` arrives with M5; until then the single boot CPU is the lock, and
@@ -52,13 +54,37 @@
 //!   to `initmsgbuf` from their early init.
 //! - `logsoftc` is reduced to its `sc_need_wakeup` flag, the only member `logwakeup` touches.
 //! - `initconsbuf` needs `malloc(9)` (M3) and reports the gap instead.
+//! - Nothing sets `syslogf` (that is `logioctl(LIOCSFD)`'s job, with the log device), so
+//!   `dosendsyslog` writes a `LOG_CONS` message to the console through `cnputc` (`constty`
+//!   and `cn_devvp` are NULL without the tty layer) and answers `ENOTCONN`, and the other
+//!   messages are stashed; the `sosend` to `syslogd(8)`'s socket is reported. The stash's
+//!   cursors are indices into the ring, not pointers.
 
-use core::sync::atomic::{AtomicBool, Ordering, fence};
+use core::cell::Cell;
+use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering, fence};
 
 use libkern::StaticCell;
 
+use crate::dev::cons::cnputc;
+use crate::kassert;
+use crate::kern::kern_malloc::{free, malloc};
+use crate::kern::kern_rwlock::{
+    rw_assert_anylock, rw_assert_wrlock, rw_enter_read, rw_enter_write, rw_exit,
+};
+use crate::kern::subr_prf::snprintf;
+use crate::machine::copy::copyin;
 use crate::machine::{Machine, MachineParam};
+use crate::sys::errno::Errno;
+use crate::sys::file::{File, fref, frele};
+use crate::sys::malloc::{M_LOG, M_WAITOK};
 use crate::sys::msgbuf::{CONSBUFSIZE, MSG_MAGIC, Msgbuf};
+use crate::sys::proc::Proc;
+use crate::sys::rwlock::Rwlock;
+use crate::sys::syscallargs::SysSendsyslogArgs;
+use crate::sys::syslog::{LOG_CONS, LOG_KERN, LOG_MAXLINE, LOG_WARNING};
+use crate::sys::systm::{SysArgs, sysargs};
+use crate::sys::types::{Pid, Register};
 use crate::unported;
 
 /// `MSGBUFSIZE` of the selected machine: the static buffer's size.
@@ -201,6 +227,331 @@ pub fn logwakeup() {
     // (membar_producer).
     fence(Ordering::Release);
     LOGSOFTC_NEED_WAKEUP.store(true, Ordering::Relaxed);
+}
+
+/// `LOGSTASH_SIZE`: how many messages the log stash keeps while `syslogd(8)` is away.
+const LOGSTASH_SIZE: usize = 100;
+
+/// `struct logstash_message`: one stashed message (`malloc(M_LOG)` bytes, or none).
+struct LogstashMessage {
+    /// `lgs_buffer`.
+    lgs_buffer: Cell<Option<NonNull<u8>>>,
+    /// `lgs_size`.
+    lgs_size: Cell<usize>,
+}
+
+/// The log stash: `logstash_messages[]`, the `logstash_in`/`logstash_out` cursors (indices
+/// into the ring) and the drop bookkeeping (`logstash_dropped`, `logstash_error`,
+/// `logstash_pid`). Protected by: `logstash_rwlock`.
+struct Logstash {
+    /// `logstash_messages`.
+    messages: [LogstashMessage; LOGSTASH_SIZE],
+    /// `logstash_in`.
+    r#in: Cell<usize>,
+    /// `logstash_out`.
+    out: Cell<usize>,
+    /// `logstash_dropped`.
+    dropped: Cell<i32>,
+    /// `logstash_error`.
+    error: Cell<i32>,
+    /// `logstash_pid`.
+    pid: Cell<Pid>,
+}
+
+// SAFETY: every member is touched only under `logstash_rwlock` (`LOGSTASH_RWLOCK`) held for
+// writing, as in C.
+unsafe impl Sync for Logstash {}
+
+/// The log stash, empty.
+static LOGSTASH: Logstash = Logstash {
+    messages: [const {
+        LogstashMessage {
+            lgs_buffer: Cell::new(None),
+            lgs_size: Cell::new(0),
+        }
+    }; LOGSTASH_SIZE],
+    r#in: Cell::new(0),
+    out: Cell::new(0),
+    dropped: Cell::new(0),
+    error: Cell::new(0),
+    pid: Cell::new(0),
+};
+
+/// `logstash_rwlock`.
+static LOGSTASH_RWLOCK: Rwlock = Rwlock::new("logstash");
+
+/// `syslogf`: the socket `syslogd(8)` hands the log device (`LIOCSFD`); `None` while there
+/// is none, which is always until the log device and sockets are ported.
+static SYSLOGF: AtomicPtr<File> = AtomicPtr::new(ptr::null_mut());
+/// `syslogf_rwlock`.
+static SYSLOGF_RWLOCK: Rwlock = Rwlock::new("syslogf");
+
+/// `logstash_full`.
+fn logstash_full() -> bool {
+    rw_assert_anylock(&LOGSTASH_RWLOCK);
+
+    LOGSTASH.messages[LOGSTASH.out.get()]
+        .lgs_buffer
+        .get()
+        .is_some()
+        && LOGSTASH.r#in.get() == LOGSTASH.out.get()
+}
+
+/// `logstash_increment`: advances a cursor around the ring.
+fn logstash_increment(cursor: &Cell<usize>) {
+    rw_assert_wrlock(&LOGSTASH_RWLOCK);
+
+    kassert!(cursor.get() < LOGSTASH_SIZE);
+    if cursor.get() == LOGSTASH_SIZE - 1 {
+        cursor.set(0);
+    } else {
+        cursor.set(cursor.get() + 1);
+    }
+}
+
+/// `logstash_insert`: keeps a copy of the user message `buf` for later, or counts it as
+/// dropped when the stash is full.
+pub fn logstash_insert(buf: usize, nbyte: usize, logerror: Errno, pid: Pid) -> Result<(), Errno> {
+    rw_enter_write(&LOGSTASH_RWLOCK);
+
+    if logstash_full() {
+        if LOGSTASH.dropped.get() == 0 {
+            LOGSTASH.error.set(logerror as i32);
+            LOGSTASH.pid.set(pid);
+        }
+        LOGSTASH.dropped.set(LOGSTASH.dropped.get() + 1);
+
+        rw_exit(&LOGSTASH_RWLOCK);
+        return Ok(());
+    }
+
+    let slot = &LOGSTASH.messages[LOGSTASH.r#in.get()];
+    let Some(mem) = malloc(nbyte.max(1), M_LOG, M_WAITOK) else {
+        rw_exit(&LOGSTASH_RWLOCK);
+        return Err(Errno::ENOMEM);
+    };
+    // SAFETY: a fresh `nbyte`-byte allocation, owned by the stash from here.
+    let kbuf = unsafe { core::slice::from_raw_parts_mut(mem.as_ptr(), nbyte) };
+    if let Err(error) = copyin(buf, kbuf) {
+        free(mem, M_LOG, nbyte.max(1));
+        slot.lgs_buffer.set(None);
+
+        rw_exit(&LOGSTASH_RWLOCK);
+        return Err(error);
+    }
+    slot.lgs_buffer.set(Some(mem));
+    slot.lgs_size.set(nbyte);
+    logstash_increment(&LOGSTASH.r#in);
+
+    rw_exit(&LOGSTASH_RWLOCK);
+    Ok(())
+}
+
+/// `logstash_remove`: frees the oldest stashed message and, if messages were dropped,
+/// stashes a note saying how many in their place in the sequence.
+pub fn logstash_remove() {
+    rw_assert_wrlock(&LOGSTASH_RWLOCK);
+
+    let out = &LOGSTASH.messages[LOGSTASH.out.get()];
+    kassert!(out.lgs_buffer.get().is_some());
+    if let Some(buf) = out.lgs_buffer.take() {
+        free(buf, M_LOG, out.lgs_size.get().max(1));
+    }
+    logstash_increment(&LOGSTASH.out);
+
+    // Insert dropped message in sequence where messages were dropped.
+    let dropped = LOGSTASH.dropped.get();
+    if dropped != 0 {
+        let mut buf = [0u8; 80];
+        let l = snprintf(
+            &mut buf,
+            format_args!(
+                "<{}>sendsyslog: dropped {} message{}, error {}, pid {}",
+                LOG_KERN | LOG_WARNING,
+                dropped,
+                if dropped == 1 { "" } else { "s" },
+                LOGSTASH.error.get(),
+                LOGSTASH.pid.get()
+            ),
+        );
+        LOGSTASH.dropped.set(0);
+        LOGSTASH.error.set(0);
+        LOGSTASH.pid.set(0);
+
+        // Cannot fail, we have just freed a slot.
+        kassert!(!logstash_full());
+        let nbyte = l.min(buf.len() - 1);
+        let slot = &LOGSTASH.messages[LOGSTASH.r#in.get()];
+        if let Some(mem) = malloc(nbyte.max(1), M_LOG, M_WAITOK) {
+            // SAFETY: a fresh `nbyte`-byte allocation, owned by the stash from here.
+            unsafe { ptr::copy_nonoverlapping(buf.as_ptr(), mem.as_ptr(), nbyte) };
+            slot.lgs_buffer.set(Some(mem));
+            slot.lgs_size.set(nbyte);
+            logstash_increment(&LOGSTASH.r#in);
+        }
+    }
+}
+
+/// `logstash_sendsyslog`: sends the stashed messages, oldest first, until one fails.
+pub fn logstash_sendsyslog(p: &Proc) -> Result<(), Errno> {
+    rw_enter_write(&LOGSTASH_RWLOCK);
+
+    loop {
+        let out = &LOGSTASH.messages[LOGSTASH.out.get()];
+        let Some(buf) = out.lgs_buffer.get() else {
+            break;
+        };
+        let error = dosendsyslog(p, SyslogBuf::Sys(buf.as_ptr()), out.lgs_size.get(), 0);
+        if let Err(error) = error {
+            rw_exit(&LOGSTASH_RWLOCK);
+            return Err(error);
+        }
+        logstash_remove();
+    }
+
+    rw_exit(&LOGSTASH_RWLOCK);
+    Ok(())
+}
+
+/// Send syslog(3) message from userland to socketpair(2) created by syslogd(8). Store
+/// message in kernel log stash for later if syslogd(8) is not available or sending fails.
+/// Send to console if `LOG_CONS` is set and syslogd(8) socket does not exist.
+pub fn sys_sendsyslog(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let uap: &SysSendsyslogArgs = sysargs(v);
+
+    let nbyte = uap.nbyte.get().min(LOG_MAXLINE);
+
+    let _ = logstash_sendsyslog(p);
+    let buf = uap.buf.get() as usize;
+    let error = dosendsyslog(p, SyslogBuf::User(buf), nbyte, uap.flags.get());
+    if let Err(e) = error
+        && e != Errno::EFAULT
+    {
+        let _ = logstash_insert(buf, nbyte, e, p.process().ps_pid.get());
+    }
+    error
+}
+
+/// The message `dosendsyslog` sends: a user address (`UIO_USERSPACE`) or a kernel buffer
+/// (`UIO_SYSSPACE`, a stashed message).
+#[derive(Clone, Copy)]
+pub enum SyslogBuf {
+    /// A user address.
+    User(usize),
+    /// A kernel buffer of at least `nbyte` bytes.
+    Sys(*const u8),
+}
+
+impl SyslogBuf {
+    /// Copies `out.len()` bytes from `off` on into `out`.
+    fn read(self, off: usize, out: &mut [u8]) -> Result<(), Errno> {
+        match self {
+            SyslogBuf::User(addr) => copyin(addr + off, out),
+            SyslogBuf::Sys(ptr) => {
+                // SAFETY: a stashed message holds `lgs_size` bytes, and the callers read
+                // within `nbyte` of it.
+                unsafe { ptr::copy_nonoverlapping(ptr.add(off), out.as_mut_ptr(), out.len()) };
+                Ok(())
+            }
+        }
+    }
+}
+
+/// `dosendsyslog`: sends `nbyte` bytes of `buf` to `syslogd(8)`'s socket, or, when there is
+/// none and `LOG_CONS` is set, to the console without the `<pri>` prefix. `ENOTCONN` when
+/// nothing took the message.
+pub fn dosendsyslog(p: &Proc, buf: SyslogBuf, nbyte: usize, flags: i32) -> Result<(), Errno> {
+    let mut nbyte = nbyte;
+    let mut start = 0usize;
+
+    // Global variable syslogf may change during sleep, use local copy.
+    rw_enter_read(&SYSLOGF_RWLOCK);
+    // SAFETY: a non-null `syslogf` is a file the log device holds a reference on; it is
+    // read under `syslogf_rwlock`.
+    let fp: Option<&'static File> = unsafe { SYSLOGF.load(Ordering::Acquire).as_ref() };
+    if let Some(fp) = fp {
+        fref(fp);
+    }
+    rw_exit(&SYSLOGF_RWLOCK);
+
+    if fp.is_none() {
+        if flags & LOG_CONS == 0 {
+            return Err(Errno::ENOTCONN);
+        }
+        // Strip off syslog priority when logging to console. LOG_PRIMASK | LOG_FACMASK is
+        // 0x03ff, so at most 4 decimal digits may appear in priority as <1023>.
+        let mut pri = [0u8; 6];
+        let len = nbyte.min(pri.len());
+        buf.read(0, &mut pri[..len])?;
+        if 0 < len && pri[0] == b'<' {
+            let mut i = 1;
+            while i < len {
+                if !pri[i].is_ascii_digit() {
+                    break;
+                }
+                i += 1;
+            }
+            if i < len && pri[i] == b'>' {
+                i += 1;
+                // There must be at least one digit <0>.
+                if i >= 3 {
+                    start = i;
+                    nbyte -= i;
+                }
+            }
+        }
+    }
+
+    // KTRACE: not configured.
+    let mut len = nbyte;
+    let error = match fp {
+        Some(_fp) => {
+            // sosend(fp->f_data, NULL, &auio, NULL, NULL, MSG_DONTWAIT if FNONBLOCK) on
+            // syslogd(8)'s socket: sockets are not ported (and nothing sets syslogf).
+            Err(unported!("dosendsyslog: sosend (uipc_socket.c)"))
+        }
+        None => {
+            // KERNEL_LOCK(): one CPU. constty and cn_devvp (the tty layer) are NULL: the
+            // console redirection breaks down and the bytes go to cnputc.
+            // XXX console redirection breaks down...
+            let mut resid = len;
+            let mut error = Ok(());
+            let mut kbuf = [0u8; 256];
+            let mut off = 0;
+            'out: while off < len {
+                let chunk = (len - off).min(kbuf.len());
+                if let Err(e) = buf.read(start + off, &mut kbuf[..chunk]) {
+                    error = Err(e);
+                    break;
+                }
+                for &c in &kbuf[..chunk] {
+                    if c == 0 {
+                        break 'out;
+                    }
+                    cnputc(i32::from(c));
+                    resid -= 1;
+                }
+                off += chunk;
+            }
+            if error.is_ok() {
+                len -= resid;
+            }
+            cnputc(i32::from(b'\n'));
+            error
+        }
+    };
+    let _ = len;
+
+    match fp {
+        Some(fp) => {
+            let _ = frele(fp, p);
+            error
+        }
+        None => match error {
+            Err(Errno::EFAULT) => Err(Errno::EFAULT),
+            _ => Err(Errno::ENOTCONN),
+        },
+    }
 }
 
 #[cfg(test)]

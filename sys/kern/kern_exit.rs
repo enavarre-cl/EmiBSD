@@ -44,9 +44,9 @@
 //!
 //! Status: `wip`. Milestone M6 (part b) ports `sys_exit`, `exit1`, `exit2`, `proc_free`,
 //! `reaper`, `process_clear_orphan`, `process_reparent` and `process_zap`: enough for a
-//! kernel thread (and soon `init`) to die and be reaped. `sys___threxit`, `dowait6`,
-//! `sys_wait4`, `sys_waitid`, `proc_finish_wait` and `process_untrace` come with the
-//! syscalls and ptrace (M6-c, M7).
+//! kernel thread (and soon `init`) to die and be reaped. M8 adds `sys___threxit`,
+//! `dowait6`, `sys_wait4`, `sys_waitid`, `proc_finish_wait` and `process_untrace` (the file
+//! is complete) and the `ACCOUNTING` record (`acct_process`) in `exit1`.
 //!
 //! ## Deviations
 //! - What `exit1` tears down that does not exist yet is reported, each once: `kqpoll_exit`,
@@ -60,6 +60,9 @@
 //!   and `process_zap`, the real uid `process_zap` uncharges) are real since `kern_prot.c`.
 //! - `initprocess` is null until `init` exists (M6-b): until then process 0 adopts the
 //!   orphans `exit1` and `process_reparent` would hand to `init`.
+//! - `dowait6` takes its out-parameters as `Option<&mut>`; `ps_opptr` (ptrace's old parent)
+//!   is always null, since `ptrace(2)` (`sys_process.c`) is not ported, so
+//!   `proc_finish_wait` always takes the zombie's branch.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -77,9 +80,10 @@ use crate::kern::kern_prot::crfree;
 use crate::kern::kern_resource::{calcru, lim_free, ruadd, tuagg_add_process, tuagg_add_runtime};
 use crate::kern::kern_sched::sched_exit;
 use crate::kern::kern_sig::{
-    process_suspend_signal, prsignal, ptsignal, sigactsfree, sigio_freelist, single_thread_set,
+    process_suspend_signal, prsignal, psignal, ptsignal, sigactsfree, sigio_freelist,
+    single_thread_set,
 };
-use crate::kern::kern_synch::{msleep_nsec, refcnt_finalize, wakeup};
+use crate::kern::kern_synch::{msleep_nsec, refcnt_finalize, sleep_finish, sleep_setup, wakeup};
 use crate::kern::kern_timeout::timeout_del;
 use crate::kern::sched_bsd::sched_assert_unlocked;
 use crate::kern::subr_pool::{pool_get, pool_put};
@@ -87,6 +91,7 @@ use crate::kern::subr_prf::panic;
 #[cfg(feature = "qemu")]
 use crate::kprintf;
 use crate::machine::Machine;
+use crate::machine::copy::{copyout, copyout_obj};
 use crate::machine::cpu::Cpu;
 use crate::machine::intr::IPL_NONE;
 use crate::machine::pmap::pmap_deactivate;
@@ -94,21 +99,29 @@ use crate::machine::pmap::pmap_deactivate;
 use crate::machine::{Exit, ExitStatus};
 use crate::sys::errno::Errno;
 use crate::sys::mutex::{MTX_NOWITNESS, Mutex, mutex_assert_locked};
-use crate::sys::param::{PVM, PWAIT};
+use crate::sys::param::{PCATCH, PVM, PWAIT};
 use crate::sys::pool::{PR_WAITOK, PR_ZERO};
 use crate::sys::proc::{
-    EXIT_NORMAL, P_SYSTEM, P_THREAD, P_WEXIT, PS_EXITING, PS_ISPWAIT, PS_NOZOMBIE, PS_ORPHAN,
-    PS_PPWAIT, PS_PROFIL, PS_STOPPING, PS_TRACED, PS_WAITEVENT, PS_ZOMBIE, Proc, ProcHash,
-    ProcList, ProcRunq, Process, ProcessHash, ProcessList, ProcessOrphan, ProcessSibling, SDEAD,
-    SINGLE_EXIT, p_hassibling,
+    EXIT_NORMAL, EXIT_THREAD, P_SYSTEM, P_THREAD, P_WEXIT, PS_CONTINUED, PS_EXITING, PS_ISPWAIT,
+    PS_NOZOMBIE, PS_ORPHAN, PS_PPWAIT, PS_PROFIL, PS_STOPPED, PS_STOPPING, PS_TRACED, PS_TRAPPED,
+    PS_WAITED, PS_WAITEVENT, PS_ZOMBIE, Proc, ProcHash, ProcList, ProcRunq, Process, ProcessHash,
+    ProcessList, ProcessOrphan, ProcessSibling, SDEAD, SINGLE_EXIT, p_hassibling,
 };
 use crate::sys::queue::{ListHead, TailqHead};
 use crate::sys::resource::Rusage;
-use crate::sys::signal::{SIGCHLD, SIGKILL};
+use crate::sys::sched::scheduler_wait_hook;
+use crate::sys::siginfo::{
+    CLD_CONTINUED, CLD_DUMPED, CLD_EXITED, CLD_KILLED, CLD_STOPPED, CLD_TRAPPED, Siginfo,
+};
+use crate::sys::signal::{SIGCHLD, SIGCONT, SIGKILL, SIGSEGV};
 use crate::sys::signalvar::{SAS_NOCLDWAIT, SignalType};
-use crate::sys::syscallargs::SysExitArgs;
+use crate::sys::syscallargs::{SysExitArgs, SysThrexitArgs, SysWait4Args, SysWaitidArgs};
 use crate::sys::systm::{INFSLP, SysArgs, sysargs};
-use crate::sys::types::Register;
+use crate::sys::types::{Pid, Register};
+use crate::sys::wait::{
+    _WCONTINUED, Idtype, P_ALL, P_PGID, P_PID, WAIT_ANY, WAIT_MYPGRP, WCONTINUED, WEXITED, WNOHANG,
+    WNOWAIT, WSTOPPED, WTRAPPED, WUNTRACED, w_exitcode, w_stopcode, wcoredump, wstatus,
+};
 use crate::unported;
 use crate::uvm::uvm_glue::{uvm_exit, uvm_purge, uvm_uarea_free};
 
@@ -120,7 +133,23 @@ pub fn sys_exit(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<()
     // NOTREACHED
 }
 
-// sys___threxit: the thread syscalls (M6-c).
+/// `__threxit(2)`: the calling thread exits; the process goes on unless it was the last
+/// thread. `*notdead` (when not NULL) is cleared first, which is how `pthread_join` learns
+/// the thread is gone.
+#[allow(non_snake_case)] // the C name: sys___threxit
+pub fn sys___threxit(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let uap: &SysThrexitArgs = sysargs(v);
+
+    let notdead = uap.notdead.get() as usize;
+    if notdead != 0 {
+        let zero: Pid = 0;
+        if copyout(&zero.to_ne_bytes(), notdead).is_err() {
+            psignal(p, SIGSEGV);
+        }
+    }
+    exit1(p, 0, 0, EXIT_THREAD)
+    // NOTREACHED
+}
 
 /// `initprocess`, or process 0 while there is no init (see the module's deviations).
 fn initprocess_or_process0() -> &'static Process {
@@ -258,7 +287,8 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
         timeout_del(&pr.ps_rucheck_to);
         // SYSVSEM: not configured.
         killjobc(pr);
-        // ACCOUNTING, KTRACE: not configured.
+        let _ = crate::kern::kern_acct::acct_process(p);
+        // KTRACE: not configured.
 
         // unveil_destroy(pr): kern_unveil.c (M7).
 
@@ -335,8 +365,7 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
             // up.
             mtx_enter(&child.ps_mtx);
             if child.ps_flags.load(Ordering::Relaxed) & PS_TRACED != 0 {
-                // process_untrace(qr): ptrace (sys_process.c, M7).
-                let _ = unported!("exit1: process_untrace of a traced child (M7)");
+                process_untrace(child);
                 mtx_leave(&child.ps_mtx);
 
                 if child.ps_flags.load(Ordering::Relaxed) & PS_EXITING == 0 {
@@ -537,7 +566,318 @@ pub fn reaper(_arg: *mut c_void) {
     }
 }
 
-// dowait6, sys_wait4, sys_waitid, proc_finish_wait, process_untrace: M6-c and M7.
+/// The id `dowait6` compares a process with: its pid or its process group's id.
+fn wait_matches(pr: &Process, idtype: Idtype, id: i64) -> bool {
+    !((idtype == P_PID && id != i64::from(pr.ps_pid.get()))
+        || (idtype == P_PGID && id != i64::from(pr.pgid())))
+}
+
+/// The `siginfo_t` `dowait6` fills for a child: who, as whom, and the `CLD_*` code.
+fn wait_info(pr: &Process, code: i32, status: i32) -> Siginfo {
+    let mut info = Siginfo::zeroed();
+    info.set_si_pid(pr.ps_pid.get());
+    info.set_si_uid(pr.ucred().cr_uid.get());
+    info.si_signo = SIGCHLD;
+    info.si_code = code;
+    info.set_si_status(status);
+    info
+}
+
+/// `dowait6`: the body of `wait4(2)` and `waitid(2)`: finds a child of `q` that matches
+/// `idtype`/`id` and has something to report under `options` (exited, trapped, stopped or
+/// continued), fills `statusp`, `rusage` and `info`, and returns its pid in `retval`;
+/// sleeps for one unless `WNOHANG`. `ECHILD` when no child matches.
+#[allow(clippy::too_many_arguments)] // the C's signature
+pub fn dowait6(
+    q: &Proc,
+    idtype: Idtype,
+    id: i64,
+    mut statusp: Option<&mut i32>,
+    options: i32,
+    rusage: Option<&Rusage>,
+    mut info: Option<&mut Siginfo>,
+    retval: &mut [Register; 2],
+) -> Result<(), Errno> {
+    let qr = q.process();
+
+    if let Some(info) = info.as_deref_mut() {
+        *info = Siginfo::zeroed();
+    }
+
+    loop {
+        qr.ps_flags.fetch_and(!PS_WAITEVENT, Ordering::Relaxed);
+        let mut nfound = 0;
+        for pr in qr.ps_children.iter() {
+            mtx_enter(&pr.ps_mtx);
+            let flags = pr.ps_flags.load(Ordering::Relaxed);
+            if flags & PS_NOZOMBIE != 0 || !wait_matches(pr, idtype, id) {
+                mtx_leave(&pr.ps_mtx);
+                continue;
+            }
+            nfound += 1;
+            if options & WEXITED != 0 && flags & PS_ZOMBIE != 0 {
+                retval[0] = pr.ps_pid.get() as Register;
+                if let Some(info) = info.as_deref_mut() {
+                    let xsig = pr.ps_xsig.get();
+                    *info = if xsig == 0 {
+                        wait_info(pr, CLD_EXITED, pr.ps_xexit.get() as i32)
+                    } else if wcoredump(xsig) {
+                        wait_info(pr, CLD_DUMPED, wstatus(xsig))
+                    } else {
+                        wait_info(pr, CLD_KILLED, wstatus(xsig))
+                    };
+                }
+
+                if let Some(statusp) = statusp.as_deref_mut() {
+                    *statusp = w_exitcode(pr.ps_xexit.get() as i32, pr.ps_xsig.get());
+                }
+                if let Some(rusage) = rusage {
+                    // SAFETY: a zombie keeps its `ps_ru` (a `rusage_pool` item) until
+                    // `process_zap`.
+                    if let Some(ru) = unsafe { pr.ps_ru.get().as_ref() } {
+                        rusage.copy_from(ru);
+                    }
+                }
+                mtx_leave(&pr.ps_mtx);
+                if options & WNOWAIT == 0 {
+                    proc_finish_wait(q, pr);
+                }
+                return Ok(());
+            }
+            if options & WTRAPPED != 0
+                && flags & PS_TRACED != 0
+                && flags & PS_WAITED == 0
+                && flags & PS_STOPPED != 0
+                && flags & PS_TRAPPED != 0
+            {
+                if options & WNOWAIT == 0 {
+                    pr.ps_flags.fetch_or(PS_WAITED, Ordering::Relaxed);
+                }
+
+                retval[0] = pr.ps_pid.get() as Register;
+                if let Some(info) = info.as_deref_mut() {
+                    *info = wait_info(pr, CLD_TRAPPED, pr.ps_xsig.get());
+                }
+
+                if let Some(statusp) = statusp.as_deref_mut() {
+                    *statusp = w_stopcode(pr.ps_xsig.get());
+                }
+                mtx_leave(&pr.ps_mtx);
+                if let Some(rusage) = rusage {
+                    rusage.copy_from(&Rusage::default());
+                }
+                return Ok(());
+            }
+            if (flags & PS_TRACED != 0 || options & WUNTRACED != 0)
+                && flags & PS_WAITED == 0
+                && flags & PS_STOPPED != 0
+                && flags & PS_TRAPPED == 0
+            {
+                if options & WNOWAIT == 0 {
+                    pr.ps_flags.fetch_or(PS_WAITED, Ordering::Relaxed);
+                }
+
+                retval[0] = pr.ps_pid.get() as Register;
+                if let Some(info) = info.as_deref_mut() {
+                    *info = wait_info(pr, CLD_STOPPED, pr.ps_xsig.get());
+                }
+
+                if let Some(statusp) = statusp.as_deref_mut() {
+                    *statusp = w_stopcode(pr.ps_xsig.get());
+                }
+                mtx_leave(&pr.ps_mtx);
+                if let Some(rusage) = rusage {
+                    rusage.copy_from(&Rusage::default());
+                }
+                return Ok(());
+            }
+            if options & WCONTINUED != 0 && flags & PS_CONTINUED != 0 {
+                if options & WNOWAIT == 0 {
+                    pr.ps_flags.fetch_and(!PS_CONTINUED, Ordering::Relaxed);
+                }
+
+                retval[0] = pr.ps_pid.get() as Register;
+                if let Some(info) = info.as_deref_mut() {
+                    *info = wait_info(pr, CLD_CONTINUED, SIGCONT);
+                }
+
+                mtx_leave(&pr.ps_mtx);
+                if let Some(statusp) = statusp.as_deref_mut() {
+                    *statusp = _WCONTINUED;
+                }
+                if let Some(rusage) = rusage {
+                    rusage.copy_from(&Rusage::default());
+                }
+                return Ok(());
+            }
+            mtx_leave(&pr.ps_mtx);
+        }
+        // Look in the orphans list too, to allow the parent to collect its child's exit
+        // status even if child is being debugged.
+        //
+        // Debugger detaches from the parent upon successful switch-over from parent to
+        // child. At this point due to re-parenting the parent loses the child to debugger
+        // and a wait4(2) call would report that it has no children to wait for. By
+        // maintaining a list of orphans we allow the parent to successfully wait until the
+        // child becomes a zombie.
+        if nfound == 0 {
+            for pr in qr.ps_orphans.iter() {
+                if pr.ps_flags.load(Ordering::Relaxed) & PS_NOZOMBIE != 0
+                    || !wait_matches(pr, idtype, id)
+                {
+                    continue;
+                }
+                nfound += 1;
+                break;
+            }
+        }
+        if nfound == 0 {
+            return Err(Errno::ECHILD);
+        }
+        if options & WNOHANG != 0 {
+            retval[0] = 0;
+            return Ok(());
+        }
+        sleep_setup(ptr::from_ref(qr).cast(), PWAIT | PCATCH, "wait");
+        sleep_finish(
+            INFSLP,
+            qr.ps_flags.load(Ordering::Relaxed) & PS_WAITEVENT == 0,
+        )?;
+    }
+}
+
+/// `wait4(2)`.
+pub fn sys_wait4(q: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let uap: &SysWait4Args = sysargs(v);
+    let ru = Rusage::default();
+    let pid = uap.pid.get();
+    let mut options = uap.options.get();
+    let mut status = 0i32;
+
+    if options & !(WUNTRACED | WNOHANG | WCONTINUED) != 0 {
+        return Err(Errno::EINVAL);
+    }
+    options |= WEXITED | WTRAPPED;
+
+    let (idtype, id) = if pid == WAIT_MYPGRP {
+        (P_PGID, i64::from(q.process().pgid()))
+    } else if pid == WAIT_ANY {
+        (P_ALL, 0)
+    } else if pid < 0 {
+        (P_PGID, -i64::from(pid))
+    } else {
+        (P_PID, i64::from(pid))
+    };
+
+    let statusp = uap.status.get() as usize;
+    let rusagep = uap.rusage.get() as usize;
+    dowait6(
+        q,
+        idtype,
+        id,
+        if statusp != 0 {
+            Some(&mut status)
+        } else {
+            None
+        },
+        options,
+        if rusagep != 0 { Some(&ru) } else { None },
+        None,
+        retval,
+    )?;
+    if retval[0] > 0 && statusp != 0 {
+        copyout(&status.to_ne_bytes(), statusp)?;
+    }
+    if retval[0] > 0 && rusagep != 0 {
+        copyout(&ru.to_bytes(), rusagep)?;
+        // KTRACE: not configured.
+    }
+    Ok(())
+}
+
+/// `waitid(2)`.
+pub fn sys_waitid(q: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let uap: &SysWaitidArgs = sysargs(v);
+    let mut info = Siginfo::zeroed();
+    let idtype = uap.idtype.get();
+    let options = uap.options.get();
+
+    if options & !(WSTOPPED | WCONTINUED | WEXITED | WTRAPPED | WNOHANG | WNOWAIT) != 0 {
+        return Err(Errno::EINVAL);
+    }
+    if options & (WSTOPPED | WCONTINUED | WEXITED | WTRAPPED) == 0 {
+        return Err(Errno::EINVAL);
+    }
+    if idtype != P_ALL && idtype != P_PID && idtype != P_PGID {
+        return Err(Errno::EINVAL);
+    }
+
+    dowait6(
+        q,
+        idtype,
+        uap.id.get() as i64,
+        None,
+        options,
+        None,
+        Some(&mut info),
+        retval,
+    )?;
+    copyout_obj(&info, uap.info.get() as usize)?;
+    // KTRACE: not configured.
+    retval[0] = 0;
+    Ok(())
+}
+
+/// `proc_finish_wait`: the waiter collected `pr`: give a ptrace-attached child back to its
+/// old parent, or account for it and free it.
+pub fn proc_finish_wait(waiter: &Proc, pr: &Process) {
+    // If we got the child via a ptrace 'attach', we need to give it back to the old
+    // parent.
+    mtx_enter(&pr.ps_mtx);
+    // SAFETY: a non-null `ps_opptr` is a live process (ptrace keeps it).
+    let opptr = unsafe { pr.ps_opptr.get().as_ref() };
+    match opptr {
+        Some(tr) if !ptr::eq(tr, pr.ps_pptr.get()) => {
+            pr.ps_opptr.set(ptr::null());
+            pr.ps_flags.fetch_and(!PS_TRACED, Ordering::Relaxed);
+            process_reparent(pr, tr);
+            mtx_leave(&pr.ps_mtx);
+            prsignal(tr, SIGCHLD);
+            tr.ps_flags.fetch_or(PS_WAITEVENT, Ordering::Relaxed);
+            wakeup(ptr::from_ref(tr));
+        }
+        _ => {
+            mtx_leave(&pr.ps_mtx);
+            // SAFETY: a zombie keeps its main thread until `process_zap`.
+            if let Some(child) = unsafe { pr.ps_mainproc.get().as_ref() } {
+                scheduler_wait_hook(waiter, child);
+            }
+            let rup = &waiter.process().ps_cru;
+            // SAFETY: as in `dowait6`.
+            if let Some(ru) = unsafe { pr.ps_ru.get().as_ref() } {
+                ruadd(rup, ru);
+            }
+            // SAFETY: a zombie is on `zombprocess`, under the kernel lock.
+            unsafe { ListHead::<ProcessList>::remove(pr) }; // off zombprocess
+            freepid(pr.ps_pid.get());
+            process_zap(pr);
+        }
+    }
+}
+
+/// `process_untrace`: give process back to original parent or init(8).
+pub fn process_untrace(pr: &Process) {
+    kassert!(pr.ps_flags.load(Ordering::Relaxed) & PS_TRACED != 0);
+    mutex_assert_locked(&pr.ps_mtx, "process_untrace");
+
+    // SAFETY: as in `proc_finish_wait`.
+    let ppr = unsafe { pr.ps_opptr.get().as_ref() }.filter(|op| !ptr::eq(*op, pr.ps_pptr.get()));
+
+    // not being traced any more
+    pr.ps_opptr.set(ptr::null());
+    pr.ps_flags.fetch_and(!PS_TRACED, Ordering::Relaxed);
+    process_reparent(pr, ppr.unwrap_or_else(initprocess_or_process0));
+}
 
 /// `process_clear_orphan`.
 pub fn process_clear_orphan(pr: &Process) {

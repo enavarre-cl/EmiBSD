@@ -46,8 +46,8 @@
 //! `tsleep_nsec`, `msleep`, `msleep_nsec`, `sleep_setup`, `sleep_finish`, `wakeup_proc`,
 //! `endtsleep`, `unsleep`, `wakeup_n`, `wakeup`, `wakeup_one`, the reference counts
 //! (`refcnt_*`) and the condition variables (`cond_*`). `rwsleep[_nsec]` wait for
-//! `kern_rwlock.c`; `sleep_signal_check` with `kern_sig.c`; `sys_sched_yield`,
-//! `__thrsleep`/`__thrwakeup` and `tslp_init` for the syscalls (M6).
+//! `kern_rwlock.c`; `sleep_signal_check` with `kern_sig.c`; `__thrsleep`/`__thrwakeup`
+//! and `tslp_init` for the syscalls (M6). M8: `sys_sched_yield`.
 //!
 //! ## Deviations
 //! - The sleep functions return `Result<(), Errno>` (`EWOULDBLOCK` on timeout, `EINTR`/
@@ -63,6 +63,7 @@ use crate::conf::param::TICK_NSEC;
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_rwlock::{rw_assert_anylock, rw_enter, rw_exit, rw_status};
+use crate::kern::kern_sched::setrunqueue;
 use crate::kern::kern_sig::{cursig, proc_suspend_check, process_stop, process_suspend_signal};
 use crate::kern::kern_timeout::{timeout_add_nsec, timeout_del};
 use crate::kern::sched_bsd::{
@@ -90,7 +91,8 @@ use crate::sys::signal::sigmask;
 use crate::sys::signalvar::Sigctx;
 #[cfg(feature = "diagnostic")]
 use crate::sys::syslog::LOG_WARNING;
-use crate::sys::systm::{COLD, INFSLP, SAFEPRI};
+use crate::sys::systm::{COLD, INFSLP, SAFEPRI, SysArgs};
+use crate::sys::types::Register;
 
 /// `TABLESIZE`: we're only looking at 7 bits of the address; everything is aligned to 4,
 /// lots of things are aligned to greater powers of 2. Shift right by 8, i.e. drop the bottom
@@ -637,6 +639,27 @@ pub fn wakeup_n<T: ?Sized>(ident: *const T, n: i32) {
 /// `wakeup`: make all processes sleeping on the specified identifier runnable.
 pub fn wakeup<T: ?Sized>(chan: *const T) {
     wakeup_n(chan, -1);
+}
+
+/// `sched_yield(2)`: give the CPU up; a thread of a multi-threaded process drops to the
+/// lowest priority among its siblings so that they can make some progress.
+pub fn sys_sched_yield(p: &Proc, _v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
+    // If one of the threads of a multi-threaded process called sched_yield(2), drop its
+    // priority to ensure its siblings can make some progress.
+    let pr = p.process();
+    mtx_enter(&pr.ps_mtx);
+    let mut newprio = p.p_usrpri.get();
+    for q in pr.ps_threads.iter() {
+        newprio = newprio.max(q.p_runpri.get());
+    }
+    mtx_leave(&pr.ps_mtx);
+
+    sched_lock();
+    setrunqueue(p.cpu(), p, newprio);
+    p.p_ru.ru_nvcsw.set(p.p_ru.ru_nvcsw.get() + 1);
+    mi_switch();
+
+    Ok(())
 }
 
 /// `wakeup_one(c)`: `wakeup_n((c), 1)` (`<sys/systm.h>`).

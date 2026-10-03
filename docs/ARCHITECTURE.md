@@ -395,6 +395,21 @@ OpenBSD's `makedev()` encoding).
   `VOP_READ`). Reported: the profiling reset, `cancel_all_itimers` until `kern_time.c`, the
   `NOTE_EXEC` knote and the `/dev/null` fix-up of a set[ug]id exec with a closed standard
   descriptor (the device switch).
+- Process system calls (M8): `fork`, `vfork`, `__tfork` (`kern_fork.c`, the child returning
+  through the machine's `child_return`), `wait4`, `waitid`, `__threxit` (`kern_exit.c`),
+  `futex` (`sys_futex.c`), `sched_yield`, `getentropy` (`dev/rnd.c`; the syscall generator
+  also scans `sys/dev`), `reboot`, `utrace` (no `KTRACE`: it succeeds and records nothing),
+  `setrtable`/`getrtable` and `sendsyslog` are OpenBSD's. `option ACCOUNTING` is configured,
+  as in GENERIC: `kern_acct.c` is whole and the generator takes the `#ifdef ACCOUNTING`
+  branch of `syscalls.master`, so `init`'s `acct(NULL)` succeeds. `pledge(2)` parses and
+  records the promises but sets neither `PS_PLEDGE` nor `PS_EXECPLEDGE`: the enforcement
+  (`pledge_syscall`, `pledge_namei`, `pledge_ioctl`, ...) is not ported, and `init(8)` and
+  `ksh(1)` pledge early. `unveil(2)` (`kern_unveil.c`) and `profil(2)` beyond its checks are
+  reported. Without `syslogd(8)` (no log device, no sockets) `sendsyslog` writes a
+  `LOG_CONS` message to the console and answers `ENOTCONN`, the rest goes to the log stash;
+  `ypconnect` answers `EAFNOSUPPORT` without a YP domain. The stand-in `init` forks children
+  and waits for them, one of which makes a system call from an unpinned site and dies of
+  `SIGABRT` (`pinsyscalls addr ...` and `init: processes ok` in `smoke`).
 - Signals (M7, `kern_sig.c`): the whole file is OpenBSD's, and the traps of both archs call
   its `trapsignal`. The machine half (`sendsig`, `sys_sigreturn`, the `sigcode` trampoline of
   each `locore.S`) is the `machine::MachineSignal` contract; `sys_sigreturn` is entered from

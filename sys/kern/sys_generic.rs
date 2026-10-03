@@ -49,7 +49,8 @@
 //! `sys_read`, `sys_readv`, `dofilereadv`, `sys_write`, `sys_writev`, `dofilewritev` and
 //! `sys_ioctl` reach the file through `fd_getfile_mode` and call its `fileops`. `select`,
 //! `pselect`, `poll`, `ppoll` and their kqueue helpers (`pselregister`, `ppollregister`,
-//! `pollout`, ...) wait for `kern_event.c`; `selwakeup` is here since the tty layer.
+//! `pollout`, ...) wait for `kern_event.c`; `selwakeup` is here since the tty layer. M8:
+//! `sys_utrace` (`KTRACE` is not configured: it succeeds and records nothing, the C's `#else`).
 //!
 //! ## Deviations
 //! - `iovec_copyin(uiov, aiov, iovcnt)` returns the iovecs (the caller's `aiov` or a
@@ -505,4 +506,11 @@ pub fn sys_ioctl(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
 pub fn selwakeup(_sip: &Selinfo) {
     // KERNEL_LOCK(); knote_locked(&sip->si_note, NOTE_SUBMIT); KERNEL_UNLOCK(): the list
     // is always empty until kern_event.c attaches knotes (sys/selinfo.rs).
+}
+
+/// `utrace(2)`: a user record for the process's `ktrace(1)` trace. `KTRACE` is not
+/// configured, so there is no trace to add to and the call succeeds, as the C's `#else`.
+pub fn sys_utrace(_curp: &Proc, _v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
+    // KTRACE: ktruser(curp, label, addr, len).
+    Ok(())
 }

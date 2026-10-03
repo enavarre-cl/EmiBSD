@@ -37,9 +37,9 @@
 //!
 //! Upstream: sys/kern/kern_xxx.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M2 ports `reboot()` and `rebooting`, the tail of `panic(9)`.
-//! `sys_reboot` (the system call), `__stack_smash_handler` and `scdebug_call`/`scdebug_ret`
-//! arrive with their subsystems.
+//! Status: `wip`. Milestone M2 ports `reboot()` and `rebooting`, the tail of `panic(9)`;
+//! M8 `sys_reboot` (root only, then `reboot`). `__stack_smash_handler` and
+//! `scdebug_call`/`scdebug_ret` arrive with their subsystems.
 //!
 //! ## Deviations
 //! - `KASSERT((howto & RB_NOSYNC) || curproc != NULL)`: `curproc` arrives with M5; the
@@ -48,12 +48,29 @@
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use crate::kern::kern_prot::suser;
 use crate::machine::cpu::boot;
+use crate::sys::errno::Errno;
+use crate::sys::proc::Proc;
+use crate::sys::syscallargs::SysRebootArgs;
+use crate::sys::systm::{SysArgs, sysargs};
+use crate::sys::types::Register;
 use crate::unported;
 
 /// `rebooting`: set once the system started to go down, for the benefit of code that must not
 /// sleep any more.
 pub static REBOOTING: AtomicBool = AtomicBool::new(false);
+
+/// `reboot(2)`: root only; goes down with the `RB_*` flags `opt` (`<sys/reboot.h>`).
+pub fn sys_reboot(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let uap: &SysRebootArgs = sysargs(v);
+
+    suser(p)?;
+
+    // MULTIPROCESSOR (sched_stop_secondary_cpus): not configured.
+    reboot(uap.opt.get())
+    // NOTREACHED
+}
 
 /// `reboot`: stops the clock bookkeeping and hands over to the machine's `boot(9)`.
 pub fn reboot(howto: i32) -> ! {

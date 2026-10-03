@@ -1611,7 +1611,7 @@ pub fn vfs_unmountall() {
 
 /// Sync and unmount file systems before shutting down.
 pub fn vfs_shutdown(p: &Proc) {
-    // ACCOUNTING: not configured.
+    crate::kern::kern_acct::acct_shutdown();
 
     kprintf!("syncing disks...");
 

@@ -376,7 +376,10 @@ pub struct Process {
 
     /// \[K|m\] `ps_ppid`: cached parent pid.
     pub ps_ppid: Cell<Pid>,
-    // ps_ptmask, ps_ptstat, ps_opptr: ptrace (M6).
+    // ps_ptmask, ps_ptstat: ptrace (sys_process.c, not ported).
+    /// \[K|m\] `ps_opptr`: old parent during ptrace (null: ptrace is not ported, so nothing
+    /// attaches).
+    pub ps_opptr: Cell<*const Process>,
     /// `ps_ru`: sum of stats for dead threads (`struct rusage`, pooled).
     pub ps_ru: Cell<*const Rusage>,
     /// \[m\] `ps_tu`: accumul times of dead threads.
@@ -487,6 +490,7 @@ impl Process {
             ps_xexit: Cell::new(0),
             ps_xsig: Cell::new(0),
             ps_ppid: Cell::new(0),
+            ps_opptr: Cell::new(ptr::null()),
             ps_ru: Cell::new(ptr::null()),
             ps_tu: Tusage::new(),
             ps_cru: Rusage::new(),
