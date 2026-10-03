@@ -17,9 +17,10 @@ Done:
 
 Next:
 - M8b (multi-user boot and login, `docs/ROADMAP.md`): /etc files, pwd_mkdb for the host,
-  getty/login/login_passwd, AF_UNIX sockets for BSD Auth, unveil (agent running), a
-  writable root. Then diagnostic tools stage 2 (libkvm, ps with `uvm_io`, fstat, vmstat,
-  df/mount). Running now: unveil, amd64's mc146818 RTC.
+  getty/login/login_passwd, AF_UNIX sockets for BSD Auth, a writable root (unveil and the
+  amd64 RTC are in: `af65fa0`, `c7b370d`). Then diagnostic tools stage 2 (libkvm, ps with
+  `uvm_io`, fstat, vmstat, df/mount). M9 is split: M9a sockets and network userland, M9b
+  WireGuard, M9c IPsec, M9d pf (last: it filters the tunnels too). M14b when no agents run.
 
 Blockers:
 - amd64's TSC timecounter (`tsc.c`) is deferred.

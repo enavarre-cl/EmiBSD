@@ -22,7 +22,9 @@ The kernel is ported incrementally; most of OpenBSD is not here yet. These rules
   or the IPsec notice of Ioannidis, Keromytis, Provos and Hallqvist (`netinet/ip_ah.h`,
   `ip_esp.h`, `ip_ipsp.h`, ...: permission to use, copy and modify provided the entire
   notice is kept; its optional GPL alternative is not used; accepted by the user on
-  2026-10-03, kernel and userland): stop, tell the user, record `status = "skipped"`,
+  2026-10-03, kernel and userland) or public domain code (`sys/crypto`'s `chacha_private.h`,
+  `poly1305`, `rijndael`, `sha1`, `md5`, `cast`, `idgen`, ...: accepted for kernel ports by the
+  user on 2026-10-03, the original public-domain notice kept): stop, tell the user, record `status = "skipped"`,
   `notes = "license: <which>"`. Do not port it. A port in another language is still a derivative
   work, so a skipped file's license is not escaped by rewriting it; route around it (use what a
   permissive file defines, write interfaces from the manual page) or ask.
