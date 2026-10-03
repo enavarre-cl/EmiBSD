@@ -11,7 +11,7 @@
 use core::ffi::c_void;
 
 use crate::machine::Machine;
-use crate::sys::device::{Cfdata, Cfdriver, Device, Pdevinit};
+use crate::sys::device::{Cfdata, Cfdriver, Device, Nam2blk, Pdevinit};
 
 /// The machine's autoconfiguration tables and hooks.
 pub trait Autoconf {
@@ -32,6 +32,9 @@ pub trait Autoconf {
     /// `pdevinit[]`: the pseudo-devices `main` attaches, in `ioconf.c`'s order (no
     /// terminating entry).
     fn pdevinit() -> &'static [Pdevinit];
+    /// `nam2blk[]`: the disk drivers' names and block majors, from the machine's
+    /// `autoconf.c` (`findblkmajor`, `findblkname`; no terminating entry).
+    fn nam2blk() -> &'static [Nam2blk];
 }
 
 /// `cfdata` on the selected machine.
@@ -57,4 +60,9 @@ pub fn pdevinit() -> &'static [Pdevinit] {
 /// `device_register` on the selected machine.
 pub fn device_register(dev: &Device, aux: *mut c_void) {
     Machine::device_register(dev, aux)
+}
+
+/// `nam2blk` on the selected machine.
+pub fn nam2blk() -> &'static [Nam2blk] {
+    Machine::nam2blk()
 }

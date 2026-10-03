@@ -27,6 +27,7 @@ use crate::dev::pci::pci::{PCI_CA, PCI_CD};
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
+use crate::dev::rd::rdattach;
 use crate::kern::tty_pty::ptyattach;
 use crate::net::if_loop::loopattach;
 use crate::sys::device::{Cfdata, FSTATE_DNOTFOUND, FSTATE_NOTFOUND, FSTATE_STAR, Pdevinit};
@@ -180,14 +181,19 @@ pub static CFROOTS: [i16; 1] = [0];
 
 /// `pdevinit[]`: the pseudo-devices of the MI `conf/GENERIC` whose attach functions are
 /// ported, in `ioconf.c`'s order (`pseudo-device pty 16`, `pseudo-device loop` with a
-/// count of 1).
-pub static PDEVINIT: [Pdevinit; 2] = [
+/// count of 1), then `pseudo-device rd 1`, which is not in GENERIC but in the RAMDISK
+/// kernels (`arch/amd64/conf/RAMDISK*`): this kernel boots its root from rd0a (M8).
+pub static PDEVINIT: [Pdevinit; 3] = [
     Pdevinit {
         pdev_attach: ptyattach,
         pdev_count: 16,
     },
     Pdevinit {
         pdev_attach: loopattach,
+        pdev_count: 1,
+    },
+    Pdevinit {
+        pdev_attach: rdattach,
         pdev_count: 1,
     },
 ];

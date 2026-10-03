@@ -1072,6 +1072,12 @@ impl Autoconf for Machine {
     fn pdevinit() -> &'static [crate::sys::device::Pdevinit] {
         &[]
     }
+
+    fn nam2blk() -> &'static [crate::sys::device::Nam2blk] {
+        // No disk driver names a block major on the host, so `disk_attach` queues no label
+        // read on `systq` in the tests.
+        &[]
+    }
 }
 
 #[cfg(test)]
@@ -1095,6 +1101,31 @@ impl Machine {
 }
 
 /// The host has no device tree.
+/// The host has no disks of its own: the label constants are amd64's, and reading a label
+/// through `readdisklabel` answers `ENODEV` (the disk layer's tests call `readdoslabel`).
+impl crate::machine::disklabel::MachineDisklabel for Machine {
+    const LABELSECTOR: u64 = 1;
+    const LABELOFFSET: usize = 0;
+    const MAXPARTITIONS: usize = 16;
+
+    fn readdisklabel(
+        _dev: crate::sys::types::Dev,
+        _strat: crate::sys::conf::DevTypeStrategy,
+        _lp: &mut crate::sys::disklabel::Disklabel,
+        _spoofonly: bool,
+    ) -> Result<(), crate::sys::errno::Errno> {
+        Err(crate::sys::errno::Errno::ENODEV)
+    }
+
+    fn writedisklabel(
+        _dev: crate::sys::types::Dev,
+        _strat: crate::sys::conf::DevTypeStrategy,
+        _lp: &mut crate::sys::disklabel::Disklabel,
+    ) -> Result<(), crate::sys::errno::Errno> {
+        Err(crate::sys::errno::Errno::ENODEV)
+    }
+}
+
 /// The host's device switch: the generic drivers in amd64's slots (`cn`, `ctty`, the ptys,
 /// `com`, `filedesc`, `ptm`); the memory devices are machine code and are left out.
 impl crate::machine::conf::Conf for Machine {

@@ -63,8 +63,12 @@ run-arm64: image-arm64
 # `selftest=taskq`, tasks run by systq, systqmp and a created then destroyed queue (status 33);
 # and `selftest=vio`, which brings vio0 up, sends an ARP request for QEMU's gateway and waits
 # for a frame through the receive interrupt (status 33).
+# The plain boot also carries the ffs ramdisk `just userland` makes, when it exists
+# (`--expect-ramdisk`): rd(4) attaches, opens rd0a (its disklabel read from the image) and
+# reads the superblock (`rd0: <N> bytes, ffs magic ok`); without one the kernel says
+# `rd: no ramdisk module` and that is expected instead.
 smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd \
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 7.8 (GENERIC) #" \
         --expect "real mem = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
@@ -104,7 +108,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "selftest: taskq ok"
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=vio" \
         --expect "selftest: vio up ok" --expect "selftest: vio rx ok"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd \
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk \
         --expect "bsd: booted on arm64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 7.8 (GENERIC) #" \
         --expect "real mem  = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \

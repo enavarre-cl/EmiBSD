@@ -9,6 +9,7 @@ pub mod cpu_full;
 pub mod cpufunc;
 pub mod cpuvar;
 pub mod db_machdep;
+pub mod disklabel;
 pub mod exec;
 pub mod fpu;
 pub mod frame;

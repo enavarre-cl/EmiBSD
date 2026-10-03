@@ -14,11 +14,12 @@ use crate::sys::types::{Paddr, Psize, Vaddr};
 /// Upper bound on memory map regions kept in [`MemMap`]; boot fails loudly beyond it.
 pub const MAX_REGIONS: usize = 256;
 
-/// The most boot modules the glue keeps (`init` is the only one so far).
+/// The most boot modules the glue keeps (`init` and the ramdisk image so far).
 pub const MAX_MODULES: usize = 4;
 
 /// A file the bootloader loaded next to the kernel (`module_path:` in `limine.conf`): the
-/// `init` the kernel execs until there is a filesystem (M6).
+/// `init` the kernel execs until there is a filesystem (M6) and the root file system image
+/// of rd(4) (`ramdisk.ffs`, M8).
 #[derive(Clone, Copy, Debug)]
 pub struct BootModule {
     /// The path it was loaded from (`/init`).
@@ -27,7 +28,17 @@ pub struct BootModule {
     pub string: &'static CStr,
     /// Its contents, mapped for the kernel's lifetime.
     pub data: &'static [u8],
+    /// The same bytes, writable: the bootloader maps modules read-write in its direct map.
+    /// rd(4) takes its image through this pointer and writes to it, so a module handed to
+    /// rd(4) is not read through `data` afterwards.
+    pub base: *mut u8,
 }
+
+// SAFETY: a module is memory the bootloader handed over for the kernel's lifetime; `base` is
+// only an address of it, and whoever writes through it (rd(4)) owns those bytes alone.
+unsafe impl Send for BootModule {}
+// SAFETY: as for `Send`: shared views read the path, string and length, never `base`'s bytes.
+unsafe impl Sync for BootModule {}
 
 /// What a region of physical memory holds, as the bootloader reports it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -389,6 +389,12 @@ impl File {
         unsafe { core::slice::from_raw_parts(self.address, self.size as usize) }
     }
 
+    /// The file's first byte, writable: the same memory as [`File::data`], which the
+    /// bootloader maps read-write in the direct map.
+    pub fn address(&self) -> *mut u8 {
+        self.address.cast_mut()
+    }
+
     /// The path the file was loaded from (`/init`).
     pub fn path(&self) -> &'static CStr {
         // SAFETY: the protocol guarantees a non-null, 0-terminated string that stays mapped.

@@ -10,6 +10,7 @@ mod limine;
 
 use core::ptr::NonNull;
 
+use bsd::dev::rd::rd_root_image_set;
 use bsd::kern::init_main::{self, BOOTHOWTO};
 use bsd::kern::subr_prf::Str;
 use bsd::kprintf;
@@ -86,7 +87,7 @@ static RSDP: Request<RsdpResponse> = Request::new(id::RSDP);
 #[unsafe(link_section = ".requests")]
 static DTB: Request<DtbResponse> = Request::new(id::DTB);
 
-/// The modules (`init`, M6).
+/// The modules (`init`, M6; `ramdisk.ffs`, the image of rd(4), M8).
 #[unsafe(link_section = ".requests")]
 #[used]
 static MODULE: Request<ModuleResponse> = Request::new(id::MODULE);
@@ -134,6 +135,14 @@ unsafe extern "C" fn _start() -> ! {
                 kprintf!("bootargs: {}\n", Str(boot.cmdline.to_bytes()));
             }
             init_main::set_init_module(boot.module(b"init").copied());
+            match boot.module(b"ramdisk.ffs") {
+                // SAFETY: the module is never reclaimed, is mapped read-write for the
+                // kernel's lifetime, and nothing but rd(4) uses it from here on.
+                Some(rd) => unsafe { rd_root_image_set(rd.base, rd.data.len()) },
+                None => {
+                    kprintf!("rd: no ramdisk module\n");
+                }
+            }
             init_main::main()
         }
         // No console yet: the failure exit status is the only trace.
@@ -196,6 +205,7 @@ fn gather() -> Result<BootInfo, BootError> {
                 path: file.path(),
                 string: file.string(),
                 data: file.data(),
+                base: file.address(),
             });
         }
     }

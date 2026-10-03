@@ -1,7 +1,9 @@
 //! Boot images and QEMU: `xtask image`, `xtask qemu`, `xtask smoke`.
 //!
 //! The image is a raw disk with one MBR partition holding a FAT file system: Limine's UEFI
-//! binary at `EFI/BOOT/BOOT{X64,AA64}.EFI`, `limine.conf` at the root and the kernel at `/bsd`.
+//! binary at `EFI/BOOT/BOOT{X64,AA64}.EFI`, `limine.conf` at the root, the kernel at `/bsd`
+//! and the boot modules: `/init` (the freestanding init of `init/`) and `/ramdisk.ffs` (the
+//! root file system image `just userland` makes, rd(4)'s image), each when it exists.
 //! QEMU boots it with EDK2 firmware; the kernel's serial console is on stdio and, under feature
 //! `qemu`, the kernel ends the emulator with a status `smoke` checks.
 
@@ -89,6 +91,10 @@ const IMAGE_SECTORS: u64 = 64 * 1024 * 1024 / SECTOR;
 /// First partition sector: 1 MiB, the conventional alignment.
 const PART_START: u64 = 2048;
 
+/// The ramdisk module's name on the ESP and in `limine.conf`; `sys/stand` looks it up by
+/// this name and hands it to rd(4).
+pub const RAMDISK_MODULE: &str = "ramdisk.ffs";
+
 fn image_path(root: &Path, arch: Arch) -> PathBuf {
     root.join("target")
         .join(format!("emibsd-{}.img", arch.name()))
@@ -171,9 +177,11 @@ pub fn image(
     kernel: &Path,
     cmdline: Option<&str>,
     init: Option<&Path>,
+    ramdisk: Option<&Path>,
 ) -> Result<PathBuf> {
     let kernel_bytes = read(kernel)?;
     let init_bytes = init.map(read).transpose()?;
+    let ramdisk_bytes = ramdisk.map(read).transpose()?;
     let efi_path = limine_file(arch.limine_efi())?;
     let efi = read(&efi_path)?;
     let mut conf = read(&root.join("sys/stand/limine.conf"))?;
@@ -187,6 +195,9 @@ pub fn image(
     }
     if init_bytes.is_some() {
         conf.extend_from_slice(b"    module_path: boot():/init\n");
+    }
+    if ramdisk_bytes.is_some() {
+        conf.extend_from_slice(format!("    module_path: boot():/{RAMDISK_MODULE}\n").as_bytes());
     }
 
     let path = image_path(root, arch);
@@ -220,18 +231,31 @@ pub fn image(
         if let Some(init_bytes) = &init_bytes {
             root_dir.create_file("init")?.write_all(init_bytes)?;
         }
+        if let Some(ramdisk_bytes) = &ramdisk_bytes {
+            root_dir
+                .create_file(RAMDISK_MODULE)?
+                .write_all(ramdisk_bytes)?;
+        }
     }
     fs.unmount()?;
 
     println!(
-        "xtask: {} ({} KiB kernel, {} from {}{})",
+        "xtask: {} ({} KiB kernel, {} from {}{}{})",
         path.display(),
         kernel_bytes.len() / 1024,
         arch.limine_efi(),
         efi_path.display(),
         cmdline
             .map(|c| format!(", cmdline `{c}`"))
-            .unwrap_or_default()
+            .unwrap_or_default(),
+        match (ramdisk, &ramdisk_bytes) {
+            (Some(p), Some(b)) => format!(
+                ", {RAMDISK_MODULE} ({} KiB) from {}",
+                b.len() / 1024,
+                p.display()
+            ),
+            _ => format!(", no {RAMDISK_MODULE} (run `just userland`)"),
+        }
     );
     Ok(path)
 }
@@ -406,9 +430,26 @@ pub fn default_init(root: &Path, arch: Arch) -> Option<PathBuf> {
     p.is_file().then_some(p)
 }
 
-pub fn qemu(root: &Path, arch: Arch, kernel: Option<&Path>, init: Option<&Path>) -> Result<()> {
+/// The ramdisk the image carries unless `--ramdisk` says otherwise: the one `just userland`
+/// left in `target/userland/<arch>/`, if it exists.
+pub fn default_ramdisk(root: &Path, arch: Arch) -> Option<PathBuf> {
+    let p = root
+        .join("target")
+        .join("userland")
+        .join(arch.name())
+        .join(RAMDISK_MODULE);
+    p.is_file().then_some(p)
+}
+
+pub fn qemu(
+    root: &Path,
+    arch: Arch,
+    kernel: Option<&Path>,
+    init: Option<&Path>,
+    ramdisk: Option<&Path>,
+) -> Result<()> {
     let image = match kernel {
-        Some(k) => image(root, arch, k, None, init)?,
+        Some(k) => image(root, arch, k, None, init, ramdisk)?,
         None => {
             let p = image_path(root, arch);
             if !p.is_file() {
@@ -455,6 +496,11 @@ pub struct SmokeOptions<'a> {
     pub send: Option<(&'a str, &'a str)>,
     /// The init module to put on the image.
     pub init: Option<&'a Path>,
+    /// The ramdisk module to put on the image.
+    pub ramdisk: Option<&'a Path>,
+    /// `--expect-ramdisk`: also expect rd(4)'s line for the ramdisk the image carries
+    /// (`rd0: <N> bytes, ffs magic ok`), or the kernel's `rd: no ramdisk module` without one.
+    pub expect_ramdisk: bool,
 }
 
 pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
@@ -465,9 +511,11 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         status,
         send,
         init,
+        ramdisk,
+        expect_ramdisk,
     } = *opts;
     let image = match kernel {
-        Some(k) => image(root, arch, k, cmdline, init)?,
+        Some(k) => image(root, arch, k, cmdline, init, ramdisk)?,
         None => {
             let p = image_path(root, arch);
             if !p.is_file() {
@@ -544,9 +592,11 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         .unwrap_or_default();
     let diagnostics = String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned();
 
+    let rd_expect = expect_ramdisk.then(|| ramdisk_expectation(ramdisk));
     let missing: Vec<&str> = expects
         .iter()
         .copied()
+        .chain(rd_expect.as_deref())
         .filter(|e| !serial.contains(e))
         .collect();
     let code = exit.and_then(|s| s.code());
@@ -599,6 +649,15 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
     .into())
 }
 
+/// The line rd(4)'s self-test prints for `ramdisk` (its size is the module's), or the line
+/// the boot glue prints without a ramdisk module.
+fn ramdisk_expectation(ramdisk: Option<&Path>) -> String {
+    match ramdisk.and_then(|p| fs::metadata(p).ok()) {
+        Some(m) => format!("rd0: {} bytes, ffs magic ok", m.len()),
+        None => "rd: no ramdisk module".to_string(),
+    }
+}
+
 fn slurp(mut r: impl Read) -> Vec<u8> {
     let mut v = Vec::new();
     let _ = r.read_to_end(&mut v);
@@ -623,6 +682,19 @@ fn slurp_into(mut r: impl Read, into: &Mutex<Vec<u8>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ramdisk_expectation_names_the_size_or_its_absence() {
+        assert_eq!(ramdisk_expectation(None), "rd: no ramdisk module");
+        let missing = Path::new("/nonexistent/ramdisk.ffs");
+        assert_eq!(ramdisk_expectation(Some(missing)), "rd: no ramdisk module");
+        let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let len = fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
+        assert_eq!(
+            ramdisk_expectation(Some(&file)),
+            format!("rd0: {len} bytes, ffs magic ok")
+        );
+    }
 
     #[test]
     fn mbr_layout() {

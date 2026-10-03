@@ -7,14 +7,19 @@
 //! cargo xtask ports status [--write]       counts per subsystem; --write regenerates docs/PORTING.md
 //! cargo xtask ports next                   `todo` entries whose dependencies are all ported
 //! cargo xtask ports drift [--strict|--diff] ported files whose upstream content changed
-//! cargo xtask image --arch A --kernel K [--cmdline C]
+//! cargo xtask image --arch A --kernel K [--cmdline C] [--init I] [--ramdisk R]
 //!                                          build target/emibsd-A.img (Limine + /bsd),
-//!                                          C as the kernel command line (boot(8) flags)
+//!                                          C as the kernel command line (boot(8) flags);
+//!                                          the init and ramdisk modules default to the
+//!                                          built ones (`none` leaves one out)
 //! cargo xtask qemu --arch A [--kernel K]   boot the image, serial and monitor on stdio
-//! cargo xtask smoke --arch A [--kernel K] [--cmdline C] [--status N] [--send-after L --send T] --expect L...
+//! cargo xtask smoke --arch A [--kernel K] [--cmdline C] [--status N] [--send-after L --send T]
+//!                   [--expect-ramdisk] --expect L...
 //!                                          boot headless; pass if every L appears and QEMU
 //!                                          exits with status N (default: the kernel's success
-//!                                          status); with K the image is rebuilt first
+//!                                          status); with K the image is rebuilt first;
+//!                                          --expect-ramdisk adds rd(4)'s line for the
+//!                                          ramdisk on the image (or its absence)
 //! cargo xtask symbolize --arch A [--kernel K]
 //!                                          annotate the addresses of a stack trace on stdin
 //!                                          with K's symbols (default: the debug kernel)
@@ -50,9 +55,9 @@ const TABLE_BEGIN: &str = "<!-- ports:begin -->";
 const TABLE_END: &str = "<!-- ports:end -->";
 
 const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | ports next | \
-                     ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] [--init I] | \
-                     qemu --arch A [--kernel K] [--init I] | gen-syscalls [--check] | \
-                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--status N] [--send-after L --send T] --expect L... | \
+                     ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] [--init I] [--ramdisk R] | \
+                     qemu --arch A [--kernel K] [--init I] [--ramdisk R] | gen-syscalls [--check] | \
+                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--status N] [--send-after L --send T] --expect L... | \
                      symbolize --arch A [--kernel K] | userland --arch A>";
 
 #[derive(Deserialize)]
@@ -143,12 +148,14 @@ fn run(args: &[String]) -> Result<()> {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
             let kernel = PathBuf::from(flag(rest, "--kernel")?);
             let init = init_flag(&root, arch, rest);
+            let ramdisk = ramdisk_flag(&root, arch, rest);
             boot::image(
                 &root,
                 arch,
                 &kernel,
                 optional_flag(rest, "--cmdline"),
                 init.as_deref(),
+                ramdisk.as_deref(),
             )
             .map(|_| ())
         }
@@ -156,7 +163,14 @@ fn run(args: &[String]) -> Result<()> {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
             let kernel = optional_flag(rest, "--kernel").map(PathBuf::from);
             let init = init_flag(&root, arch, rest);
-            boot::qemu(&root, arch, kernel.as_deref(), init.as_deref())
+            let ramdisk = ramdisk_flag(&root, arch, rest);
+            boot::qemu(
+                &root,
+                arch,
+                kernel.as_deref(),
+                init.as_deref(),
+                ramdisk.as_deref(),
+            )
         }
         ["smoke", rest @ ..] => {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
@@ -178,6 +192,7 @@ fn run(args: &[String]) -> Result<()> {
                 _ => return Err(format!("--send-after and --send go together\n{USAGE}").into()),
             };
             let init = init_flag(&root, arch, rest);
+            let ramdisk = ramdisk_flag(&root, arch, rest);
             boot::smoke(
                 &root,
                 arch,
@@ -188,6 +203,8 @@ fn run(args: &[String]) -> Result<()> {
                     status,
                     send: send.as_ref().map(|(a, t)| (*a, t.as_str())),
                     init: init.as_deref(),
+                    ramdisk: ramdisk.as_deref(),
+                    expect_ramdisk: rest.contains(&"--expect-ramdisk"),
                 },
             )
         }
@@ -220,6 +237,16 @@ fn init_flag(root: &Path, arch: boot::Arch, args: &[&str]) -> Option<PathBuf> {
         Some("none") => None,
         Some(p) => Some(PathBuf::from(p)),
         None => boot::default_init(root, arch),
+    }
+}
+
+/// `--ramdisk <path>`: the ramdisk module to put on the image; `--ramdisk none` leaves it
+/// out; absent, the one `just userland` built, if any.
+fn ramdisk_flag(root: &Path, arch: boot::Arch, args: &[&str]) -> Option<PathBuf> {
+    match optional_flag(args, "--ramdisk") {
+        Some("none") => None,
+        Some(p) => Some(PathBuf::from(p)),
+        None => boot::default_ramdisk(root, arch),
     }
 }
 

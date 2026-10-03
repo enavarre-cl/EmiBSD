@@ -41,6 +41,7 @@ pub mod sched_bsd;
 pub mod selftest;
 pub mod spec_vnops;
 pub mod subr_autoconf;
+pub mod subr_disk;
 pub mod subr_evcount;
 pub mod subr_log;
 pub mod subr_pool;

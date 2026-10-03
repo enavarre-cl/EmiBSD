@@ -101,6 +101,7 @@ use crate::kern::kern_task::taskq_init;
 use crate::kern::kern_timeout::{timeout_proc_init, timeout_set, timeout_startup};
 use crate::kern::sched_bsd::{sched_lock_init, scheduler_start};
 use crate::kern::subr_autoconf::{CONFIG_PENDING, config_init, config_process_deferred_mountroot};
+use crate::kern::subr_disk::disk_init;
 use crate::kern::subr_prf::{Str, panic};
 use crate::kern::sys_pipe::pipe_init;
 use crate::kern::tty::tty_init;
@@ -251,7 +252,7 @@ pub fn main() -> ! {
             crate::kern::selftest::trap_bad_access();
         }
     }
-    let _ = unported!("disk_init"); // must come before autoconfiguration
+    disk_init(); // must come before autoconfiguration
     tty_init(); // initialise tty's
     cpu_startup();
     #[cfg(feature = "qemu")]
@@ -427,6 +428,8 @@ pub fn main() -> ! {
         }
     }
     PDEVINIT_DONE.store(true, Ordering::Relaxed);
+    #[cfg(feature = "qemu")]
+    crate::kern::selftest::rd_check();
 
     // CRYPTO: not configured.
 

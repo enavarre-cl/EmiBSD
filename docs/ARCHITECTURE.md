@@ -52,7 +52,8 @@ signal trampoline), all re-exported from `sys/machine/mod.rs`, which also re-exp
 needs; later `pmap.rs`, `intr.rs`, ...; `autoconf.rs` is what `ioconf.c` and the machine's
 `autoconf.c` give `subr_autoconf.c`; `pci_machdep.rs` (M7b) is `<machine/pci_machdep.h>`;
 `conf.rs` (M8) is the device switch each arch's `conf.c` fills; `isa_machdep.rs` (M8) is
-`<machine/isa_machdep.h>`), all re-exported from `sys/machine/mod.rs`, which also re-exports
+`<machine/isa_machdep.h>`; `disklabel.rs` (M8) is `<machine/disklabel.h>` plus the machine's
+`disksubr.c`, `readdisklabel` and `writedisklabel`), all re-exported from `sys/machine/mod.rs`, which also re-exports
 `crate::arch::current::Machine` and asserts at compile time that it implements every trait. Generic
 code names only `crate::machine`. `bus.rs` also carries the C names as free functions
 (`bus_space_read_1(t, h, o)`, `bus_dmamap_load(t, map, ...)`), so a driver reads like its
@@ -701,6 +702,17 @@ OpenBSD's `makedev()` encoding).
   language; a licence outside the list is routed around, never rewritten.
 
 Every file-level deviation is in that file's `//! ## Deviations` list and in `ports.toml` `notes`.
+
+- rd(4)'s image (M8): OpenBSD links a RAMDISK kernel with an `rd_root_image[]` array that
+  `rdsetroot(8)` fills with a file system image. Here the image is a Limine module,
+  `/ramdisk.ffs` on the ESP (`target/userland/<arch>/ramdisk.ffs`, made by `makefs(8)` in
+  `just userland`; `cargo xtask image` adds it when it exists, `--ramdisk none` leaves it out),
+  which `sys/stand` hands to `rd_root_image_set` before `main`. The bootloader maps modules
+  read-write in its direct map and never reclaims them, so rd(4) reads and writes the image in
+  place, as the C does with its array. Why: the kernel stays one ELF whatever the userland,
+  and no tool has to patch it. `pseudo-device rd 1` (from RAMDISK, not GENERIC) is in each
+  `ioconf.rs`; without a module rd0 attaches with an empty image and the boot says
+  `rd: no ramdisk module`.
 
 ## Testing architecture
 

@@ -42,7 +42,7 @@
 //!   writes the driver's initialiser with a count (`cdev_disk_init(NWD,wd)`): its entry points
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
-//!   `filedesc` (22) and `ptm` (81). `log` (7) waits for `subr_log.c`'s `logopen` ..
+//!   `filedesc` (22), `rd` (17 block, 47 character) and `ptm` (81). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
 //!   boot (`machine::conf::cdevsw_set`); `nblkdev`/`nchrdev` are their lengths.
@@ -58,6 +58,7 @@ use core::cell::Cell;
 use crate::arch::amd64::amd64::mem::{mmclose, mmioctl, mmmmap, mmopen, mmrw};
 use crate::dev::cons::{cnclose, cnioctl, cnkqfilter, cnopen, cnread, cnstop, cnwrite};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
+use crate::dev::rd::{NRD, rdclose, rddump, rdioctl, rdopen, rdread, rdsize, rdstrategy, rdwrite};
 use crate::kern::kern_descrip::filedescopen;
 use crate::kern::tty_pty::{
     NPTY, ptcclose, ptckqfilter, ptcopen, ptcread, ptcwrite, ptmclose, ptmioctl, ptmopen, ptsclose,
@@ -66,8 +67,8 @@ use crate::kern::tty_pty::{
 use crate::kern::tty_tty::{cttyioctl, cttykqfilter, cttyopen, cttyread, cttywrite};
 use crate::machine::conf::Devsw;
 use crate::sys::conf::{
-    Bdevsw, Cdevsw, bdev_notdef, cdev_cn_init, cdev_ctty_init, cdev_fd_init, cdev_mm_init,
-    cdev_notdef, cdev_ptc_init, cdev_ptm_init, cdev_tty_init,
+    Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_cn_init, cdev_ctty_init, cdev_disk_init,
+    cdev_fd_init, cdev_mm_init, cdev_notdef, cdev_ptc_init, cdev_ptm_init, cdev_tty_init,
 };
 use crate::sys::param::NODEV;
 use crate::sys::types::{Dev, major, makedev, minor};
@@ -104,7 +105,10 @@ pub static BDEVSW: Devsw<Bdevsw, 20> = Devsw([
     bnotdef(), // 14: vnode disk driver (vnd: not ported)
     bnotdef(), // 15: was: Sony CD-ROM
     bnotdef(), // 16: was: concatenated disk driver
-    bnotdef(), // 17: ram disk driver (rd: not ported)
+    // 17: ram disk driver
+    Cell::new(bdev_disk_init(
+        NRD, rdopen, rdclose, rdstrategy, rdioctl, rddump, rdsize,
+    )),
     bnotdef(), // 18
     bnotdef(), // 19 was: RAIDframe disk driver
 ]);
@@ -189,7 +193,10 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     cnotdef(), // 44: generic video I/O (video: not ported)
     cnotdef(), // 45: random data source (random: rnd.c's randomopen .., not ported)
     cnotdef(), // 46: performance counters (pctr: not ported)
-    cnotdef(), // 47: ram disk driver (rd: not ported)
+    // 47: ram disk driver
+    Cell::new(cdev_disk_init(
+        NRD, rdopen, rdclose, rdread, rdwrite, rdioctl,
+    )),
     cnotdef(), // 48
     cnotdef(), // 49: Bt848 video capture device (bktr: not ported)
     cnotdef(), // 50: Kernel symbols device (ksyms: not ported)

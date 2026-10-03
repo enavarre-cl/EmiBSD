@@ -1384,3 +1384,86 @@ pub fn vio_check() {
     }
     if_put(ifp);
 }
+
+/// rd(4) and the disk layer: `rd0a` opens through the block device switch (which reads the
+/// image's disklabel through `rdstrategy`), and the FFS superblock is read through the
+/// switch's strategy: `rd0: <N> bytes, ffs magic ok` names the image's size, or `rd: no
+/// ramdisk module` (from `stand`) and `rd0: no image` when the boot image carries none (a
+/// checkout without `just userland`).
+pub fn rd_check() {
+    use crate::dev::rd::rd_root_size;
+    use crate::kern::vfs_bio::{biowait, brelse, geteblk};
+    use crate::machine::autoconf::nam2blk;
+    use crate::machine::conf::bdevsw;
+    use crate::sys::buf::{B_BUSY, B_DONE, B_ERROR, B_INVAL, B_RAW, B_READ, B_WRITE};
+    use crate::sys::disklabel::makediskdev;
+    use crate::sys::stat::S_IFBLK;
+
+    // `<ufs/ffs/fs.h>`: where the superblock lives and its magic numbers. The file system
+    // itself is the ffs port's; only these numbers are needed to recognise the image.
+    const SBLOCKSIZE: usize = 8192;
+    const FS_MAGIC_OFFSET: usize = 1372;
+    const SBLOCKS: [(i64, u32, &str); 2] = [
+        (65536, 0x1954_0119, "ffs2"), // SBLOCK_UFS2, FS_UFS2_MAGIC
+        (8192, 0x0001_1954, "ffs1"),  // SBLOCK_UFS1, FS_UFS1_MAGIC
+    ];
+
+    let size = rd_root_size();
+    if size == 0 {
+        kprintf!("rd0: no image\n");
+        return;
+    }
+    let Some(maj) = nam2blk()
+        .iter()
+        .find(|n| n.name == b"rd")
+        .map(|n| n.maj as u32)
+    else {
+        kprintf!("rd0: no block major\n");
+        return;
+    };
+    let dev = makediskdev(maj, 0, 0); // rd0a
+    let sw = bdevsw(maj);
+    if let Err(e) = (sw.d_open)(dev, FREAD, S_IFBLK as i32, &PROC0) {
+        kprintf!("rd0: {} bytes, open rd0a: error {}\n", size, e as i32);
+        return;
+    }
+
+    let bp = geteblk(SBLOCKSIZE);
+    bp.b_dev.set(dev);
+    let mut found = None;
+    for (sblock, magic, name) in SBLOCKS {
+        bp.b_blkno.set(sblock / 512);
+        bp.b_bcount.set(SBLOCKSIZE as i64);
+        bp.b_error.set(None);
+        bp.clr(B_READ | B_WRITE | B_DONE | B_ERROR);
+        bp.set(B_BUSY | B_READ | B_RAW);
+        (sw.d_strategy)(bp);
+        if biowait(bp).is_err() || bp.b_resid.get() != 0 {
+            continue;
+        }
+        // SAFETY: `geteblk` returned the buffer busy and mapped, for this test alone.
+        let data = unsafe { bp.data() };
+        let at = &data[FS_MAGIC_OFFSET..FS_MAGIC_OFFSET + 4];
+        if u32::from_ne_bytes([at[0], at[1], at[2], at[3]]) == magic {
+            found = Some((sblock, name));
+            break;
+        }
+    }
+    bp.set(B_INVAL);
+    brelse(bp);
+    let _ = (sw.d_close)(dev, FREAD, S_IFBLK as i32, Some(&PROC0));
+
+    match found {
+        Some((sblock, name)) => {
+            kprintf!(
+                "rd0: {} bytes, ffs magic ok ({} superblock at {})\n",
+                size,
+                name,
+                sblock
+            );
+        }
+        None => {
+            kprintf!("rd0: {} bytes, no ffs superblock on rd0a\n", size);
+        }
+    }
+}

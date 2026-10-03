@@ -440,7 +440,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs; M7b: config_init, the config_pending wait (tsleep on config_pending) and config_process_deferred_mountroot run (subr_autoconf.c); kern_descrip.c: filedesc_init runs, process 0 gets fdinit() as ps_fd/p_fd, start_init installs the console stand-in (dev/consfile.rs) at descriptors 0, 1 and 2 before the exec, where init(8) would open /dev/console; kern_sig.c: sigacts0, signal_init, siginit(&sigacts0), process 0's ps_sigacts; start_init clears init's ps_sigflags; M7b: ifinit, softnet_init and softnet_percpu run (net/if.c), the pseudo-devices attach from machine::autoconf::pdevinit() (the ioconf.rs tables: loop, so lo0 attaches at boot; M8: pty, NPTY 16), pdevinit_done is an atomic flag; vfs stage 1: vfsinit runs; mountroot (systm.h's MOUNTROOT, NULL: setroot is subr_disk.c) is checked where the C does: with none, main prints 'cannot mount root: no root file system' instead of panicking and goes on without rootvnode (init still execs its boot module); with one, MNT_ROOTFS, VFS_ROOT into rootvnode and the current directories of process 0 and init as in C; check_console looks /dev/console up with namei and warns ('warning: /dev/console does not exist' in smoke); M7b IPv4: rtable_init before the pseudo-devices and domaininit after them (inetdomain, routedomain); selftest ping (feature qemu) after the taskq selftest; vfs stage 2: lf_init; the cleaner (buf_daemon) and update (syncer_thread) kthreads, recorded in cleanerproc/syncerproc; aiodoned and zerothread reported; sys_pipe.c: pipe_init runs; M8: tty_init runs (tty.c); M7b: ifinit, softnet_init and softnet_percpu run (net/if.c), the pseudo-devices attach from machine::autoconf::pdevinit() (the ioconf.rs tables: loop, so lo0 attaches at boot), pdevinit_done is an atomic flag; vfs stage 1: vfsinit runs; mountroot (systm.h's MOUNTROOT, NULL: setroot is subr_disk.c) is checked where the C does: with none, main prints 'cannot mount root: no root file system' instead of panicking and goes on without rootvnode (init still execs its boot module); with one, MNT_ROOTFS, VFS_ROOT into rootvnode and the current directories of process 0 and init as in C; check_console looks /dev/console up with namei and warns ('warning: /dev/console does not exist' in smoke); M7b IPv4: rtable_init before the pseudo-devices and domaininit after them (inetdomain, routedomain); selftest ping (feature qemu) after the taskq selftest; vfs stage 2: lf_init; the cleaner (buf_daemon) and update (syncer_thread) kthreads, recorded in cleanerproc/syncerproc; aiodoned and zerothread reported; sys_pipe.c: pipe_init runs; ffs: rootvp and swapdev_vp (AtomicPtr with rootvp()/set_rootvp() and swapdev_vp()/set_swapdev_vp()), set by ffs_mountroot"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs; M7b: config_init, the config_pending wait (tsleep on config_pending) and config_process_deferred_mountroot run (subr_autoconf.c); kern_descrip.c: filedesc_init runs, process 0 gets fdinit() as ps_fd/p_fd, start_init installs the console stand-in (dev/consfile.rs) at descriptors 0, 1 and 2 before the exec, where init(8) would open /dev/console; kern_sig.c: sigacts0, signal_init, siginit(&sigacts0), process 0's ps_sigacts; start_init clears init's ps_sigflags; M7b: ifinit, softnet_init and softnet_percpu run (net/if.c), the pseudo-devices attach from machine::autoconf::pdevinit() (the ioconf.rs tables: loop, so lo0 attaches at boot; M8: pty, NPTY 16), pdevinit_done is an atomic flag; vfs stage 1: vfsinit runs; mountroot (systm.h's MOUNTROOT, NULL: setroot is subr_disk.c) is checked where the C does: with none, main prints 'cannot mount root: no root file system' instead of panicking and goes on without rootvnode (init still execs its boot module); with one, MNT_ROOTFS, VFS_ROOT into rootvnode and the current directories of process 0 and init as in C; check_console looks /dev/console up with namei and warns ('warning: /dev/console does not exist' in smoke); M7b IPv4: rtable_init before the pseudo-devices and domaininit after them (inetdomain, routedomain); selftest ping (feature qemu) after the taskq selftest; vfs stage 2: lf_init; the cleaner (buf_daemon) and update (syncer_thread) kthreads, recorded in cleanerproc/syncerproc; aiodoned and zerothread reported; sys_pipe.c: pipe_init runs; M8: tty_init runs (tty.c); M7b: ifinit, softnet_init and softnet_percpu run (net/if.c), the pseudo-devices attach from machine::autoconf::pdevinit() (the ioconf.rs tables: loop, so lo0 attaches at boot), pdevinit_done is an atomic flag; vfs stage 1: vfsinit runs; mountroot (systm.h's MOUNTROOT, NULL: setroot is subr_disk.c) is checked where the C does: with none, main prints 'cannot mount root: no root file system' instead of panicking and goes on without rootvnode (init still execs its boot module); with one, MNT_ROOTFS, VFS_ROOT into rootvnode and the current directories of process 0 and init as in C; check_console looks /dev/console up with namei and warns ('warning: /dev/console does not exist' in smoke); M7b IPv4: rtable_init before the pseudo-devices and domaininit after them (inetdomain, routedomain); selftest ping (feature qemu) after the taskq selftest; vfs stage 2: lf_init; the cleaner (buf_daemon) and update (syncer_thread) kthreads, recorded in cleanerproc/syncerproc; aiodoned and zerothread reported; sys_pipe.c: pipe_init runs; ffs: rootvp and swapdev_vp (AtomicPtr with rootvp()/set_rootvp() and swapdev_vp()/set_swapdev_vp()), set by ffs_mountroot; M8: disk_init runs (subr_disk.c), rd(4) attaches from pdevinit and selftest rd_check (feature qemu) opens rd0a through bdevsw and reads the ffs superblock right after"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -574,7 +574,7 @@ rust = "sys/arch/amd64/amd64/conf.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b955775e37a97fb7172fd379cd3be435dc9e3686"
-notes = "M8: bdevsw[] (20 slots) and cdevsw[] (102 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf (nblkdev/nchrdev are their lengths, cdevsw_set lets a console driver take a slot over); the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 4), filedesc 22, ptm 81; every other slot is cdev_notdef()/bdev_notdef() (ENODEV, d_type 0) until its driver is ported (log 7 waits for subr_log.c's entry points, random 45 for rnd.c); mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; constab[] (cninit) and findblkmajor/dev_rawpart (dk_mountroot) are not used: the console is attached directly (consinit.rs) and there is no disk; APERTURE, MTRR and the <machine/conf.h> drivers are not configured"
+notes = "M8: bdevsw[] (20 slots) and cdevsw[] (102 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf (nblkdev/nchrdev are their lengths, cdevsw_set lets a console driver take a slot over); the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 4), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() (ENODEV, d_type 0) until its driver is ported (log 7 waits for subr_log.c's entry points, random 45 for rnd.c); mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; constab[] (cninit) and findblkmajor/dev_rawpart (dk_mountroot) are not used: the console is attached directly (consinit.rs) and there is no disk; APERTURE, MTRR and the <machine/conf.h> drivers are not configured"
 
 # arm64: the same, plus the bus_space table and the bootstrap device map
 
@@ -3663,7 +3663,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a239133825b3a31f6e7fc41fc6aebe446f76ec82"
 deps = ["sys/sys/conf.h"]
-notes = "bdevsw[] (19 slots) and cdevsw[] (101 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf; the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 1, taken over by pluartdev at boot through cdevsw_set: the C's KLUDGE), filedesc 22, ptm 81; every other slot is cdev_notdef()/bdev_notdef() until its driver is ported; mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; findblkmajor/dev_rawpart (dk_mountroot) are not used"
+notes = "bdevsw[] (19 slots) and cdevsw[] (101 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf; the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 1, taken over by pluartdev at boot through cdevsw_set: the C's KLUDGE), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() until its driver is ported; mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; findblkmajor/dev_rawpart (dk_mountroot) are not used"
 
 [[file]]
 c = "sys/arch/arm64/arm64/mem.c"
@@ -3700,3 +3700,88 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "04a0bfd45da50e505afacb050e381d9b41409497"
 deps = ["sys/dev/isa/isavar.h", "sys/dev/ic/com.c"]
 notes = "com_isa_ca, com_isa_probe (comprobe1, the console's port is always present), com_isa_attach (com_attach_subr, isa_intr_establish at IPL_TTY under the device's name); com0 at isa0 is the console on amd64"
+
+# M8: the disk layer and rd(4), the ramdisk root
+
+[[file]]
+c = "sys/arch/amd64/include/disklabel.h"
+rust = "sys/arch/amd64/include/disklabel.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "393f39cef87fac0199adf3e43e7dac08b1357189"
+notes = "LABELSECTOR, LABELOFFSET, MAXPARTITIONS through machine::disklabel (MachineDisklabel), re-exported by sys::disklabel"
+
+[[file]]
+c = "sys/arch/arm64/include/disklabel.h"
+rust = "sys/arch/arm64/include/disklabel.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cdd57e1bbb1dd7dc8df26b2bb4caf839760fb3a9"
+notes = "LABELSECTOR, LABELOFFSET, MAXPARTITIONS through machine::disklabel (MachineDisklabel), re-exported by sys::disklabel"
+
+[[file]]
+c = "sys/sys/disklabel.h"
+rust = "sys/sys/disklabel.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = ["sys/arch/amd64/include/disklabel.h", "sys/arch/arm64/include/disklabel.h"]
+notes = "struct disklabel and struct partition (repr(C), size pinned at compile time; from_bytes/as_bytes for sector I/O, cksum_words for dkcksum), DISKUNIT/DISKPART/DISKMINOR/MAKEDISKDEV/DISKLABELDEV and the DL_* accessors as lower-case const fns, DL_PARTNUM2NAME/DL_PARTNAME2NUM returning Option, DISKLABELV1_FFS_* (trailing_zeros for libkern ffs), DTYPE_*, FS_*, dktypenames/fstypenames/fstypesnames, D_VENDOR, struct partinfo (raw pointers, store/load through an ioctl buffer), the GPT* and DOS* constants, struct dos_partition (DosPartition::table reads an MBR), struct dos_mbr; reference-backed test of the constants; wip: struct gpt_header, struct gpt_partition and GPT_UUID_* wait for sys/uuid.h and subr_disk.c's GPT code (crc32 is skipped: license zlib)"
+
+[[file]]
+c = "sys/sys/disk.h"
+rust = "sys/sys/disk.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "47e0ebe7da8312f2090e58b204f1c1cc2d46c6e5"
+deps = ["sys/sys/device.h", "sys/sys/disklabel.h"]
+notes = "struct diskstats, struct disk (Cells, all-zero valid inside an M_ZERO softc; dk_name a copy of the name instead of a pointer into dv_xname; dk_device/dk_label Option<NonNull>, label() copies the in-core label, unsafe label_mut() for its driver), DKF_*, DK_*, DM_*, TAILQ_HEAD(disklist_head) (DisklistHead, Sync); the prototypes are subr_disk.c's; reference-backed test of the constants"
+
+[[file]]
+c = "sys/sys/dkio.h"
+rust = "sys/sys/dkio.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a547b20da970699de6b42eaa58df15a342c72bec"
+deps = ["sys/sys/ioccom.h", "sys/sys/disklabel.h"]
+notes = "DIOCGDINFO, DIOCSDINFO, DIOCWDINFO, DIOCGPART, DIOCEJECT, DIOCLOCK, DIOCGPDINFO, DIOCRLDINFO, DIOCINQ, DIOCGCACHE, DIOCSCACHE, DIOCMAP, DIOCCACHESYNC; struct dk_inquiry, dk_cache, dk_diskmap (device a raw user address)"
+
+[[file]]
+c = "sys/kern/subr_disk.c"
+rust = "sys/kern/subr_disk.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = ["sys/sys/disk.h", "sys/sys/disklabel.h", "sys/sys/dkio.h", "sys/kern/vfs_bio.c", "sys/kern/kern_task.c"]
+notes = "disklist, disk_count, disk_change, bootduid, rootduid, rootdv; dkcksum, initdisklabel, checkdisklabel (raw and in-core label are two &mut, the copy is unconditional; byte-swapped labels converted), readdisksector, readdoslabel (partoffp Option, spoofonly bool), gpt_chk_mbr, mbr_get_fstype, spoofmbr (EBR walk), spooffat, setdisklabel, bounds_check_with_label (bool for 0/-1), diskerr, disk_init, disk_construct, disk_attach (label malloc, disk_attach_task on systq), disk_attach_callback, disk_detach, disk_openpart, disk_closepart, disk_gone (ptr::fn_addr_eq), disk_busy, disk_unbusy, disk_lock, disk_lock_nointr, disk_unlock, dk_mountroot (FS_BSDFFS and the assume-ffs default call ffs_mountroot under feature ffs; without it the C's panic), findblkmajor/findblkname (nam2blk[] through machine::autoconf), disk_readlabel (Err(DiskReadlabelError) whose Display is the C's errbuf), disk_lookup, duid_equal, duid_iszero, duid_format (by value); stub: spoofgpt stops after gpt_chk_mbr with unported (gpt_get_hdr, gpt_get_parts and gpt_get_fstype need crc32, license zlib), so a GPT disk fails visibly; NSOFTRAID and DEBUG not configured; wip: setroot, getdisk, parsedisk (root/swap/dump choice: rootdev is set by whoever configures the root, as swapbsd.c does) and disk_map (DIOCMAP); host tests (labels, byte swap, bounds, readdoslabel over an in-memory disk: bare, MBR with A6, FAT, protective GPT, setdisklabel, open masks, DUIDs)"
+
+[[file]]
+c = "sys/arch/amd64/amd64/disksubr.c"
+rust = "sys/arch/amd64/amd64/disksubr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "71b141d0e30138905d592f58838c1a0d0830d18a"
+deps = ["sys/kern/subr_disk.c", "sys/arch/amd64/include/disklabel.h"]
+notes = "readdisklabel, writedisklabel through machine::disklabel; the BIOS geometry (bios_getdiskinfo, biosvar.h) does not exist under Limine on UEFI (boot(8) is replaced-by-limine): the driver's geometry stands; CD9660 and UDF not configured"
+
+[[file]]
+c = "sys/arch/arm64/arm64/disksubr.c"
+rust = "sys/arch/arm64/arm64/disksubr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e9d648e85cec4e5a6ff5b5e422bc315b1de8b31b"
+deps = ["sys/kern/subr_disk.c", "sys/arch/arm64/include/disklabel.h"]
+notes = "readdisklabel, writedisklabel through machine::disklabel; CD9660 and UDF not configured"
+
+[[file]]
+c = "sys/kern/kern_physio.c"
+rust = "sys/kern/kern_physio.rs"
+status = "todo"
+notes = "physio(9): raw (character device) I/O; rdread/rdwrite report it unported until then"
+
+[[file]]
+c = "sys/dev/rd.c"
+rust = "sys/dev/rd.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c167f7b63f76738a1d568ec95919f42f76f5222e"
+deps = ["sys/kern/subr_disk.c", "sys/sys/dkio.h"]
+notes = "M8: rd_softc, rd_ca/rd_cd, rdattach (one unit, the fake cfdata a static), rd_match, rd_attach, rd_detach, rdopen, rdclose, rdstrategy, rdioctl (DIOCRLDINFO, DIOCGPDINFO, DIOCGDINFO, DIOCGPART, DIOCWDINFO/DIOCSDINFO), rdgetdisklabel, rddump, rdsize; the image is the Limine module /ramdisk.ffs handed over by stand (rd_root_image_set) instead of the rd_root_image array rdsetroot(8) patches, writable in the bootloader's direct map; without a module rd_root_size is 0 and rd0 attaches with no label; rdgetdisklabel reads into a local and, with no partition open, first publishes the initdisklabel'd spoofed label that rdstrategy checks against (no &mut aliasing the strategy's view); stub: rdread/rdwrite need physio (kern_physio.c), reported unported; pseudo-device rd 1 in pdevinit (from RAMDISK, not GENERIC); bdevsw 17, cdevsw 47 on both archs; host test (attach, spoofed label, reads, writes, end of disk, ENXIO, DIOCGDINFO); smoke: rd0: <N> bytes, ffs magic ok"

@@ -16,4 +16,5 @@ pub mod isa;
 pub mod ofw;
 pub mod pci;
 pub mod pv;
+pub mod rd;
 pub mod rnd;

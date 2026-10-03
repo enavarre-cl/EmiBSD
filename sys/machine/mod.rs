@@ -2,7 +2,7 @@
 //!
 //! Generic code reaches architecture code ONLY through this module. One module per OpenBSD header
 //! ([`param`], [`vmparam`], [`cpu`], [`cons`], [`bus`], [`pmap`], [`intr`], [`db_machdep`],
-//! [`fdt`], [`proc`], [`signal`], [`tcb`], [`pci_machdep`], [`isa_machdep`], [`atomic`];
+//! [`disklabel`], [`fdt`], [`proc`], [`signal`], [`tcb`], [`pci_machdep`], [`isa_machdep`], [`atomic`];
 //! [`autoconf`] is what `ioconf.c` and the machine's `autoconf.c` give `subr_autoconf.c`;
 //! [`conf`] is the device switch the machine's `conf.c` fills (`bdevsw[]`, `cdevsw[]`); [`bootinfo`]
 //! is the record the boot glue hands over), all re-exported here. The selected architecture is re-exported as [`Machine`]; the block at the
@@ -18,6 +18,7 @@ pub mod cons;
 pub mod copy;
 pub mod cpu;
 pub mod db_machdep;
+pub mod disklabel;
 pub mod exec;
 pub mod fdt;
 pub mod intr;
@@ -39,6 +40,7 @@ pub use cons::*;
 pub use copy::*;
 pub use cpu::*;
 pub use db_machdep::*;
+pub use disklabel::*;
 pub use exec::*;
 pub use fdt::*;
 pub use intr::*;
@@ -70,6 +72,7 @@ const _: () = {
             + BusDma
             + PciMachdep
             + DbMachdep
+            + MachineDisklabel
             + Pmap
             + Intr
             + Fdt

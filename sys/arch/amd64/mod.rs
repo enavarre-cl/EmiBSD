@@ -940,6 +940,34 @@ impl crate::machine::autoconf::Autoconf for Machine {
     fn pdevinit() -> &'static [crate::sys::device::Pdevinit] {
         &conf::ioconf::PDEVINIT
     }
+
+    fn nam2blk() -> &'static [crate::sys::device::Nam2blk] {
+        &amd64::autoconf::NAM2BLK
+    }
+}
+
+/// The disk label location (`<machine/disklabel.h>`) and label I/O (`disksubr.c`).
+impl crate::machine::disklabel::MachineDisklabel for Machine {
+    const LABELSECTOR: u64 = include::disklabel::LABELSECTOR;
+    const LABELOFFSET: usize = include::disklabel::LABELOFFSET;
+    const MAXPARTITIONS: usize = include::disklabel::MAXPARTITIONS;
+
+    fn readdisklabel(
+        dev: crate::sys::types::Dev,
+        strat: crate::sys::conf::DevTypeStrategy,
+        lp: &mut crate::sys::disklabel::Disklabel,
+        spoofonly: bool,
+    ) -> Result<(), crate::sys::errno::Errno> {
+        amd64::disksubr::readdisklabel(dev, strat, lp, spoofonly)
+    }
+
+    fn writedisklabel(
+        dev: crate::sys::types::Dev,
+        strat: crate::sys::conf::DevTypeStrategy,
+        lp: &mut crate::sys::disklabel::Disklabel,
+    ) -> Result<(), crate::sys::errno::Errno> {
+        amd64::disksubr::writedisklabel(dev, strat, lp)
+    }
 }
 
 /// The device switch tables (`amd64/amd64/conf.c`).
