@@ -43,3 +43,7 @@ Then (M6-c, interleaved as needed): `kern_sig.c` (`trapsignal`, `sigexit`, `exec
 
 Blockers:
 - None. `crc32` stays `skipped: license: zlib`; amd64's TSC timecounter (`tsc.c`) is deferred.
+
+Decisions pending (the user's, for M8/M9, proposed 2026-10-03 in `docs/ROADMAP.md`): widening
+the reference clone beyond `sys/`; userland as cross-compiled OpenBSD C or a Rust port; Limine
+versus `boot(8)`/`efiboot` for the installable system.
