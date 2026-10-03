@@ -5,8 +5,13 @@ paths:
 
 # The OpenBSD reference tree is read-only
 
-`reference/openbsd-src/` is a sparse, shallow clone of https://github.com/openbsd/src (only `sys/`),
-pinned at the commit in `reference/PINNED.md`. It is the specification, not part of the product.
+`reference/openbsd-src/` is a sparse, shallow clone of https://github.com/openbsd/src, pinned at the
+commit in `reference/PINNED.md`. It holds `sys/` (the kernel: the specification the port follows)
+and, since 2026-10-03 (the user's M8 decision), the userland sources M8 cross-compiles unmodified:
+`lib/`, `bin/`, `sbin/`, `usr.bin/`, `libexec/` and `include/` (the `/usr/include` headers libc
+needs). No `gnu/`, no `xenocara/`. It is the specification, not part of the product.
+Widening or narrowing the sparse set at the same pin is `git -C reference/openbsd-src
+sparse-checkout add|set ...`, a user decision recorded in `docs/ROADMAP.md`.
 
 - Never edit, format, rename, delete or create files under `reference/`. `.claude/settings.json`
   denies Edit/Write there as a backstop; do not work around it.

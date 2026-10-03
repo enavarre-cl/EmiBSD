@@ -16,8 +16,8 @@ Next:
 - M7b: the net headers, bus_dma + PCI, then virtio, `if.c`, ARP, ip/icmp, `if_vio.c`; exit:
   the kernel's ICMP echo to `10.0.2.2` is answered. In parallel for M8: signals, the file
   table, then vfs, ffs, virtio-blk, tty (`docs/ROADMAP.md`).
-- Widen the reference clone to `lib/ bin/ sbin/ usr.bin/ libexec/` (same pin, sparse) in its
-  own `reference:` + `rules:` commit, before M8.
+- `reference/PINNED.md` (`Subtree:`) and `reference/README.md` (the clone command) still say
+  `sys` only: the user edits them (Edit/Write are denied under `reference/`).
 
 Blockers:
 - None. `crc32` stays `skipped: license: zlib`; amd64's TSC timecounter (`tsc.c`) is deferred.
