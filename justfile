@@ -91,7 +91,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "cannot mount root: no root file system" \
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
         --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: kqueue ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
-        --expect "selftest: ping 10.0.2.2: echo reply received" \
+        --expect "selftest: pmap reuse ok" --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "-d" \
@@ -130,7 +130,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "cannot mount root: no root file system" \
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
         --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: kqueue ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
-        --expect "selftest: ping 10.0.2.2: echo reply received" \
+        --expect "selftest: pmap reuse ok" --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "-d" \

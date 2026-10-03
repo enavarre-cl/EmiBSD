@@ -44,11 +44,14 @@ use crate::machine::bus::{
     bus_dmamem_alloc, bus_dmamem_free, bus_dmamem_mmap,
 };
 use crate::machine::conf::cdevsw;
+use crate::machine::copy::copyin;
 use crate::machine::cpu::curproc;
 use crate::machine::intr::IPL_NONE;
 use crate::machine::pmap::{
-    pmap_extract, pmap_kenter_pa, pmap_kernel, pmap_kremove, pmap_map_direct, pmap_update,
+    MachinePmap, pmap_activate, pmap_deactivate, pmap_enter, pmap_extract, pmap_kenter_pa,
+    pmap_kernel, pmap_kremove, pmap_map_direct, pmap_remove, pmap_update,
 };
+use crate::machine::{Machine, VmParam};
 use crate::net::ethertypes::{ETHERTYPE_ARP, ETHERTYPE_IP};
 use crate::net::if_::{
     IFF_RUNNING, IFF_UP, Ifreq, if_enqueue, if_put, if_unit, ifioctl, link_state_is_up,
@@ -75,8 +78,10 @@ use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
 use crate::sys::vnode::IO_NDELAY;
 use crate::uvm::uvm_extern::UVM_PGA_ZERO;
 use crate::uvm::uvm_init::UVMEXP;
-use crate::uvm::uvm_km::{KD_NOWAIT, KP_NONE, KV_ANY, km_alloc, km_free};
+use crate::uvm::uvm_km::{KD_NOWAIT, KD_WAITOK, KP_NONE, KP_PAGEABLE, KV_ANY, km_alloc, km_free};
+use crate::uvm::uvm_map::{uvmspace_alloc, uvmspace_free};
 use crate::uvm::uvm_page::{PHYS_TO_VM_PAGE, uvm_pagealloc, uvm_pagefree, vm_page_to_phys};
+use crate::uvm::uvm_pmap::PMAP_WIRED;
 
 /// A value that is neither all zeros nor all ones.
 const PATTERN: u64 = 0x5a5a_c3c3_0f0f_a5a5;
@@ -198,6 +203,138 @@ pub fn pmap_kernel_mapping() {
             extracted.map(Paddr::as_usize),
             gone
         );
+    }
+}
+
+/// The word at physical address `pa`, read through the direct map; `None` when `pa` is not a
+/// managed page.
+fn read_phys(pa: Paddr) -> Option<u64> {
+    let off = pa.as_usize() & (PAGE_SIZE - 1);
+    let pg = PHYS_TO_VM_PAGE(Paddr::new(pa.as_usize() - off))?;
+    let va = pmap_map_direct(pg).as_usize() + off;
+    // SAFETY: the direct map covers every managed page; a word-aligned read of RAM.
+    Some(unsafe { ptr::read_volatile(va as *const u64) })
+}
+
+/// Pageable kernel memory, as a pipe's buffer: `km_alloc(kv_any, kp_pageable)` faults its
+/// pages in with `pmap_enter(pmap_kernel())` and `km_free` takes them out with
+/// `pmap_remove(pmap_kernel())` and frees them; the next allocation tends to get the same
+/// addresses back. Every word written through the new mapping must land in the page
+/// `pmap_extract` reports, not in a freed page a stale TLB entry still points at.
+fn pmap_reuse_kernel() -> Result<(), &'static str> {
+    const NPAGES: usize = 4;
+    const ROUNDS: u64 = 8;
+
+    for round in 0..ROUNDS {
+        let Some(buf) = km_alloc(NPAGES * PAGE_SIZE, &KV_ANY, &KP_PAGEABLE, &KD_WAITOK) else {
+            return Err("km_alloc");
+        };
+        let mut result = Ok(());
+        for i in 0..NPAGES {
+            let va = buf.as_ptr() as usize + i * PAGE_SIZE;
+            let pattern = PATTERN ^ (round << 8 | i as u64);
+            // SAFETY: a page of the pageable allocation just made; the write faults it in.
+            unsafe { ptr::write_volatile(va as *mut u64, pattern) };
+            let seen = pmap_extract(pmap_kernel(), Vaddr::new(va)).and_then(read_phys);
+            if seen != Some(pattern) {
+                kprintf!(
+                    "selftest: pmap reuse: round {} page {}: wrote {:#x}, the mapped page holds {:?}\n",
+                    round,
+                    i,
+                    pattern,
+                    seen
+                );
+                result = Err("kernel page");
+            }
+        }
+        km_free(buf, NPAGES * PAGE_SIZE, &KV_ANY, &KP_PAGEABLE);
+        result?;
+    }
+    Ok(())
+}
+
+/// A user page mapped, unmapped (which frees the page-table pages that held it, on amd64)
+/// and replaced by another at the same address: `copyin` must read the new page.
+fn pmap_reuse_user(pm: &MachinePmap) -> Result<(), &'static str> {
+    let uva = <Machine as VmParam>::VM_MIN_ADDRESS + 0x1000_0000;
+    let mut pages = [None; 2];
+    let mut result = Ok(());
+
+    for (round, slot) in pages.iter_mut().enumerate() {
+        let Some(pg) = uvm_pagealloc(None, 0, None, UVM_PGA_ZERO) else {
+            result = Err("uvm_pagealloc");
+            break;
+        };
+        *slot = Some(pg);
+        let pattern = PATTERN ^ (0x100 + round as u64);
+        // SAFETY: a fresh page through the direct map, this test's.
+        unsafe { ptr::write_volatile(pmap_map_direct(pg).as_usize() as *mut u64, pattern) };
+
+        let pa = vm_page_to_phys(pg);
+        if pmap_enter(pm, Vaddr::new(uva), pa, PROT_READ, PROT_READ | PMAP_WIRED).is_err() {
+            result = Err("pmap_enter");
+            break;
+        }
+        pmap_update(pm);
+        let mut word = [0u8; 8];
+        let read = copyin(uva, &mut word).map(|()| u64::from_ne_bytes(word));
+        let extracted = pmap_extract(pm, Vaddr::new(uva));
+        pmap_remove(pm, Vaddr::new(uva), Vaddr::new(uva + PAGE_SIZE));
+        pmap_update(pm);
+        if read != Ok(pattern) || extracted != Some(pa) {
+            kprintf!(
+                "selftest: pmap reuse: user round {}: copyin {:?}, extract {:?}, want {:#x} at {:#x}\n",
+                round,
+                read,
+                extracted.map(Paddr::as_usize),
+                pattern,
+                pa.as_usize()
+            );
+            result = Err("user page");
+            break;
+        }
+    }
+
+    for pg in pages.into_iter().flatten() {
+        uvm_pagefree(pg);
+    }
+    result
+}
+
+/// Maps, unmaps and maps again kernel and user pages while a user pmap is loaded, as a
+/// process closing and reopening pipes does, and checks every mapping against what was
+/// entered (`selftest: pmap reuse ok`). proc0 borrows a fresh address space for the test,
+/// switching in and out of it as `uvmspace_exec` does.
+pub fn pmap_reuse() {
+    let Some(p) = curproc() else {
+        kprintf!("selftest: pmap reuse FAILED: no curproc\n");
+        return;
+    };
+    let ovm = p.vmspace();
+    let vm = uvmspace_alloc(
+        <Machine as VmParam>::VM_MIN_ADDRESS,
+        <Machine as VmParam>::VM_MAXUSER_ADDRESS,
+        true,
+        true,
+    );
+    pmap_deactivate(p);
+    p.p_vmspace.set(vm);
+    pmap_activate(p);
+
+    let result = pmap_reuse_kernel().and_then(|()| pmap_reuse_user(vm.vm_map.pmap()));
+
+    pmap_deactivate(p);
+    p.p_vmspace.set(ovm);
+    pmap_activate(p);
+    uvmspace_free(vm);
+
+    match result {
+        Ok(()) => {
+            kprintf!("selftest: pmap reuse ok\n");
+        }
+        Err(what) => {
+            kprintf!("selftest: pmap reuse FAILED: {}\n", what);
+        }
     }
 }
 

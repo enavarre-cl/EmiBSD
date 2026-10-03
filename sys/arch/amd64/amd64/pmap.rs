@@ -114,8 +114,7 @@
 //!   `pmap_pdp_ctor` copies the kernel's whole upper half of the PML4 (the C copies the kernel
 //!   VM, direct-map and `KERNBASE` slots one by one). The pmap list (`pmaps`) waits
 //!   for `pmap_growkernel` to need it. The PDP comes from `uvm_pagealloc` rather than `pmap_pdp_pool`; the pmap pool is
-//!   initialised in `pmap_init`. Freeing a PTP flushes the whole TLB (the C invalidates the
-//!   recursive mapping's page). `cpu_meltdown` is not configured: no `pm_pdir_intel`.
+//!   initialised in `pmap_init`. `cpu_meltdown` is not configured: no `pm_pdir_intel`.
 //! - The pv lists (M7a): `pmap_page_remove`, `pmap_test_attrs`, `pmap_clear_attrs` and
 //!   `pmap_write_protect` reach each PTE through `pmap_find_pte_direct` instead of
 //!   `PTE_BASE` under `pmap_map_ptes`. `pmap_remove_pte` (the single-page shortcut of
@@ -137,7 +136,7 @@ use crate::arch::amd64::include::param::{PAGE_MASK, PAGE_SIZE};
 use crate::arch::amd64::include::pmap::{
     NBPD_INITIALIZER, NKPTP_INITIALIZER, NKPTPMAX_INITIALIZER, NTOPLEVEL_PDES, PDES_INITIALIZER,
     PDIR_SLOT_PTE, PG_PMAP_MOD, PG_PMAP_REF, PG_PVLIST, PG_W, PMAP_NOCACHE, PMAP_NOCRYPT,
-    PMAP_PA_MASK, PMAP_TYPE_NORMAL, PMAP_WC, PTP_LEVELS, Pmap, PvEntry, kvtopte, pl_i,
+    PMAP_PA_MASK, PMAP_TYPE_NORMAL, PMAP_WC, PTE_BASE, PTP_LEVELS, Pmap, PvEntry, kvtopte, pl_i,
     pmap_valid_entry, ptp_va2o, va_sign_pos,
 };
 use crate::arch::amd64::include::pte::{
@@ -998,9 +997,20 @@ const fn pl_pi(va: usize, lvl: usize) -> usize {
     pl_i(va, lvl) & (NTOPLEVEL_PDES - 1)
 }
 
-/// `pmap_is_curpmap`: whether `pm` is the pmap in `%cr3`.
+/// `curpcb->pcb_pmap`: the pmap of the running thread (the kernel's before there is one).
+fn curpcb_pmap() -> &'static Pmap {
+    // SAFETY: `ci_curproc` names the thread running on this CPU, alive by definition; its
+    // `pcb_pmap` is the pmap `pmap_activate` gave it, alive while the thread runs on it.
+    unsafe { curcpu().ci_curproc.get().as_ref() }
+        // SAFETY: as above.
+        .and_then(|p| unsafe { p.pcb().pcb_pmap.get().as_ref() })
+        .unwrap_or(pmap_kernel())
+}
+
+/// `pmap_is_curpmap`: is this pmap the one currently loaded \[in `%cr3`\]? Of course the
+/// kernel is always loaded: its half of the address space is in every page directory.
 fn pmap_is_curpmap(pm: &Pmap) -> bool {
-    pm.pm_pdirpa.get().as_usize() as u64 == rcr3() & pg_frame()
+    ptr::eq(pm, pmap_kernel()) || pm.pm_pdirpa.get().as_usize() as u64 == rcr3() & pg_frame()
 }
 
 /// The direct-map address of the level-`level` table of `pm` that holds `va`'s entry (the
@@ -1081,8 +1091,19 @@ fn pmap_free_ptp(pmap: &Pmap, ptp: &VmPage, va: usize, pagelist: &Pglist) {
         };
         // SAFETY: the parent table through the direct map; the entry is this PTP's.
         unsafe { pde_set(table, index, 0) };
-        // pm_pdir_intel: not configured. The recursive-mapping invalidation
-        // (pmap_tlb_shootpage of invaladdr) is the caller's full flush.
+        // pm_pdir_intel (the Meltdown PML4e): not configured.
+        // The page of the recursive mapping that showed the freed table: `invlpg` on it also
+        // drops the paging-structure caches that still point at the table.
+        let invaladdr = if level == 1 {
+            PTE_BASE
+        } else {
+            NORMAL_PDES[level - 2]
+        };
+        pmap_tlb_shootpage(
+            pmap,
+            invaladdr + pl_i(va, level + 1) * PAGE_SIZE,
+            pmap_is_curpmap(curpcb_pmap()),
+        );
         if level < PTP_LEVELS - 1 {
             let Some(parent) = pmap_find_ptp(pmap, va, None, level + 1) else {
                 #[allow(clippy::panic)] // as above
@@ -1412,7 +1433,7 @@ fn pmap_do_remove(pmap: &Pmap, sva: usize, eva: usize, flags: i32) {
     let is_kernel = ptr::eq(pmap, pmap_kernel());
 
     // The single-page shortcut and the block loop share the same body here.
-    let mut shootall = (eva - sva > 32 * PAGE_SIZE) && sva < VM_MIN_KERNEL_ADDRESS;
+    let shootall = (eva - sva > 32 * PAGE_SIZE) && sva < VM_MIN_KERNEL_ADDRESS;
 
     let mut va = sva;
     while va < eva {
@@ -1470,7 +1491,6 @@ fn pmap_do_remove(pmap: &Pmap, sva: usize, eva: usize, flags: i32) {
             && ptp.wire_count.get() <= 1
         {
             pmap_free_ptp(pmap, ptp, va, &empty_ptps);
-            shootall = true;
         }
         va = blkendva;
     }

@@ -579,10 +579,13 @@ pub fn main() -> ! {
         crate::kern::selftest::taskq_check();
         Machine::exit(ExitStatus::Success);
     }
-    // The network self-test of every default boot: the softnet thread, the timeouts and the
-    // interface's interrupts run from here on.
+    // Kernel pages reused under a user pmap, then the network self-test of every default
+    // boot: the softnet thread, the timeouts and the interface's interrupts run from here on.
     #[cfg(feature = "qemu")]
-    crate::kern::selftest::ping_gateway();
+    {
+        crate::kern::selftest::pmap_reuse();
+        crate::kern::selftest::ping_gateway();
+    }
 
     // MULTIPROCESSOR: not configured.
 
