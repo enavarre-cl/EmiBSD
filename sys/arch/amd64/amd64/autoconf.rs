@@ -51,13 +51,14 @@
 //!   `CPU_ROLE_SP` without those tables, what the boot processor's attach would add
 //!   (`lapic_enable`, `lapic_calibrate_timer`), the LVT setup (`lapic_set_lvt`, which the C
 //!   does after mainbus for `NIOAPIC`) and `intr_enable`. `pmap_randomize`, `map_tramps`,
-//!   `bus_dma_init`, `mbuf_dma_64bit_enable`, `ioapic_enable`, `unmap_startup` and the
-//!   random-number timeouts are reported.
+//!   `ioapic_enable`, `unmap_startup` and the random-number timeouts are reported;
+//!   `mbuf_dma_64bit_enable` runs and reports the interface list it needs itself.
 
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::Ordering;
 
+use crate::arch::amd64::amd64::bus_dma::bus_dma_init;
 use crate::arch::amd64::amd64::intr::intr_printconfig;
 use crate::arch::amd64::amd64::lapic::{
     lapic_boot_init, lapic_calibrate_timer, lapic_enable, lapic_set_lvt,
@@ -68,6 +69,7 @@ use crate::arch::amd64::include::cpufunc::{intr_enable, lcr8};
 use crate::arch::amd64::include::i82489reg::LAPIC_BASE;
 use crate::kern::subr_autoconf::config_rootfound;
 use crate::kern::subr_prf::panic;
+use crate::kern::uipc_mbuf::mbuf_dma_64bit_enable;
 use crate::machine::intr::spl0;
 use crate::sys::device::{Device, Nam2blk};
 use crate::sys::types::Paddr;
@@ -110,7 +112,9 @@ pub fn cpu_configure() {
 
     let _ = unported!("pmap_randomize (M6)");
     let _ = unported!("map_tramps (M6)");
-    let _ = unported!("bus_dma_init (M7)");
+    bus_dma_init();
+    #[cfg(feature = "qemu")]
+    crate::kern::selftest::bus_dma_check(&crate::arch::amd64::pci::pci_machdep::PCI_BUS_DMA_TAG);
 
     // What acpimadt (or mpbios) does before attaching the CPUs: find the LAPIC.
     // TODO(M7b): the LAPIC base comes from the MADT or the MP tables; this is the
@@ -132,7 +136,7 @@ pub fn cpu_configure() {
 
     intr_printconfig();
 
-    let _ = unported!("mbuf_dma_64bit_enable (M7)");
+    mbuf_dma_64bit_enable();
 
     // NIOAPIC > 0: lapic_set_lvt (done above), ioapic_enable.
     let _ = unported!("ioapic_enable (ioapic.c)");

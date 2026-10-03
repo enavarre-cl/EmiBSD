@@ -4,9 +4,10 @@
 //! and MSRs), `locore` and `vector` (the assembly glue and the exception stubs), `trap`,
 //! `bus_space`, `consinit`, `autoconf` (`cold`), `db_trace` and `db_interface` (ddb-lite)
 //! are partial ports; `qemu` is the emulator exit under feature `qemu`, a project helper
-//! (`ports.toml`, `[[extra]]`).
+//! (`ports.toml`, `[[extra]]`). `bus_dma` (M7b) is a whole port.
 
 pub mod autoconf;
+pub mod bus_dma;
 pub mod bus_space;
 pub mod consinit;
 pub mod copy;

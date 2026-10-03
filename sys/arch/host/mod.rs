@@ -10,9 +10,14 @@
 //! shows up with `--nocapture`; its bus space accepts every map, reads 0 and drops writes.
 //! Its pmap is a `BTreeMap` of kernel mappings; physical pages are numbers, not memory, so
 //! zeroing and copying them do nothing, and boot memory comes from the host allocator.
+//! No host device does DMA: its `bus_dma` types carry only the public members and every
+//! operation fails with `EOPNOTSUPP` (the archs' `bus_dma` is exercised by the QEMU boot
+//! self-test). It has no PCI bus either: configuration reads return all ones unless a test
+//! installs a configuration space with `Machine::set_pci_conf`, and no interrupt maps.
 
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::ptr::NonNull;
 use std::boxed::Box;
 use std::collections::BTreeMap;
 use std::eprintln;
@@ -21,10 +26,12 @@ use std::sync::Mutex;
 use std::vec;
 
 use crate::dev::cons::{CN_LOWPRI, Consdev, set_cn_tab};
+use crate::dev::pci::pcivar::{PciAttachArgs, PcibusAttachArgs, Pcireg};
 use crate::machine::autoconf::Autoconf;
-use crate::machine::bus::{BusAddr, BusSize, BusSpace};
+use crate::machine::bus::{BusAddr, BusDma, BusSize, BusSpace};
 use crate::machine::copy::UserCopy;
 use crate::machine::db_machdep::{DbMachdep, PrFn};
+use crate::machine::pci_machdep::{PciIntrFn, PciIntrStr, PciMachdep};
 use crate::machine::proc::MachineProc;
 use crate::machine::signal::MachineSignal;
 use crate::machine::tcb::Tcb;
@@ -36,13 +43,15 @@ use crate::sys::device::{Cfdata, Cfdriver, DV_DULL, Device};
 use crate::sys::errno::Errno;
 use crate::sys::exec::{ExecPackage, PsStrings};
 use crate::sys::exec_elf::{ELFCLASS64, ELFDATA2LSB};
+use crate::sys::mbuf::Mbuf;
 use crate::sys::param::NODEV;
 use crate::sys::proc::{Proc, Process};
 use crate::sys::sched::SchedstatePercpu;
 use crate::sys::siginfo::Siginfo;
 use crate::sys::signal::{Sig, Sigset};
 use crate::sys::systm::SysArgs;
-use crate::sys::types::{Dev, Paddr, Register, Vaddr, Vsize};
+use crate::sys::types::{Dev, Off, Paddr, Register, Vaddr, Vsize};
+use crate::sys::uio::Uio;
 use crate::sys::user::User;
 use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt, Vmspace};
 use crate::uvm::uvm_page::{
@@ -53,12 +62,74 @@ use crate::uvm::uvm_page::{
 pub struct Machine;
 
 /// The host's one bus space.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct HostBusSpace;
 
 /// A host bus space handle: the address that was "mapped".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HostBusSpaceHandle(usize);
+
+/// The host's DMA tag. No host device does DMA: every `bus_dma` operation fails with
+/// `EOPNOTSUPP` (or does nothing), and `bus_dma` is exercised in QEMU by the boot self-test.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostBusDmaTag;
+
+/// The host's `bus_dma_segment_t`: the public members.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostBusDmaSegment {
+    /// `ds_addr`.
+    pub ds_addr: BusAddr,
+    /// `ds_len`.
+    pub ds_len: BusSize,
+}
+
+/// The host's `struct bus_dmamap`: the public members, so generic code compiles against
+/// the same names on every machine. The host never makes one.
+pub struct HostBusDmamap {
+    /// `dm_mapsize`.
+    pub dm_mapsize: Cell<BusSize>,
+    /// `dm_nsegs`.
+    pub dm_nsegs: Cell<i32>,
+    /// `dm_segs`.
+    pub segs: [Cell<HostBusDmaSegment>; 1],
+}
+
+impl HostBusDmamap {
+    /// `dm_segs`.
+    pub fn dm_segs(&self) -> &[Cell<HostBusDmaSegment>] {
+        &self.segs
+    }
+}
+
+/// The host's `pci_chipset_tag_t`: there is no chipset state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostPciChipset;
+
+/// The host's `pcitag_t`: the three numbers, as they are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostPcitag {
+    /// The bus.
+    pub bus: i32,
+    /// The device.
+    pub device: i32,
+    /// The function.
+    pub function: i32,
+}
+
+/// The host's `pci_intr_handle_t`: there are no PCI interrupts on the host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostPciIntrHandle;
+
+/// A configuration space a host test installs, as its read and write functions: the host
+/// has no PCI bus, so `pci_conf_read` returns all ones (no device) unless a test puts
+/// devices there.
+pub type HostPciConf = (
+    Box<dyn FnMut(HostPcitag, i32) -> u32 + Send>,
+    Box<dyn FnMut(HostPcitag, i32, u32) + Send>,
+);
+
+/// The configuration space a test installed.
+static HOST_PCI_CONF: Mutex<Option<HostPciConf>> = Mutex::new(None);
 
 /// The host's `struct pmap`: the kernel mappings, page by page.
 pub struct HostPmap {
@@ -629,6 +700,247 @@ impl BusSpace for Machine {
     }
 }
 
+impl BusDma for Machine {
+    type DmaTag = HostBusDmaTag;
+    type Dmamap = HostBusDmamap;
+    type DmaSegment = HostBusDmaSegment;
+
+    // amd64's values, like the rest of the host's parameters.
+    const BUS_DMA_WAITOK: i32 = 0x0000;
+    const BUS_DMA_NOWAIT: i32 = 0x0001;
+    const BUS_DMA_ALLOCNOW: i32 = 0x0002;
+    const BUS_DMA_COHERENT: i32 = 0x0004;
+    const BUS_DMA_BUS1: i32 = 0x0010;
+    const BUS_DMA_BUS2: i32 = 0x0020;
+    const BUS_DMA_STREAMING: i32 = 0x0100;
+    const BUS_DMA_READ: i32 = 0x0200;
+    const BUS_DMA_WRITE: i32 = 0x0400;
+    const BUS_DMA_NOCACHE: i32 = 0x0800;
+    const BUS_DMA_ZERO: i32 = 0x1000;
+    const BUS_DMA_64BIT: i32 = 0x2000;
+    const BUS_DMASYNC_PREREAD: i32 = 0x01;
+    const BUS_DMASYNC_POSTREAD: i32 = 0x02;
+    const BUS_DMASYNC_PREWRITE: i32 = 0x04;
+    const BUS_DMASYNC_POSTWRITE: i32 = 0x08;
+
+    fn bus_dmamap_create(
+        _t: Self::DmaTag,
+        _size: BusSize,
+        _nsegments: i32,
+        _maxsegsz: BusSize,
+        _boundary: BusSize,
+        _flags: i32,
+    ) -> Result<&'static Self::Dmamap, Errno> {
+        Err(Errno::EOPNOTSUPP)
+    }
+
+    unsafe fn bus_dmamap_destroy(_t: Self::DmaTag, _map: NonNull<Self::Dmamap>) {}
+
+    unsafe fn bus_dmamap_load(
+        _t: Self::DmaTag,
+        _map: &Self::Dmamap,
+        _buf: *mut u8,
+        _buflen: BusSize,
+        _p: Option<&Proc>,
+        _flags: i32,
+    ) -> Result<(), Errno> {
+        Err(Errno::EOPNOTSUPP)
+    }
+
+    unsafe fn bus_dmamap_load_mbuf(
+        _t: Self::DmaTag,
+        _map: &Self::Dmamap,
+        _m: &Mbuf,
+        _flags: i32,
+    ) -> Result<(), Errno> {
+        Err(Errno::EOPNOTSUPP)
+    }
+
+    unsafe fn bus_dmamap_load_uio(
+        _t: Self::DmaTag,
+        _map: &Self::Dmamap,
+        _uio: &Uio<'_>,
+        _flags: i32,
+    ) -> Result<(), Errno> {
+        Err(Errno::EOPNOTSUPP)
+    }
+
+    unsafe fn bus_dmamap_load_raw(
+        _t: Self::DmaTag,
+        _map: &Self::Dmamap,
+        _segs: &[Self::DmaSegment],
+        _size: BusSize,
+        _flags: i32,
+    ) -> Result<(), Errno> {
+        Err(Errno::EOPNOTSUPP)
+    }
+
+    fn bus_dmamap_unload(_t: Self::DmaTag, _map: &Self::Dmamap) {}
+
+    fn bus_dmamap_sync(
+        _t: Self::DmaTag,
+        _map: &Self::Dmamap,
+        _offset: BusAddr,
+        _len: BusSize,
+        _ops: i32,
+    ) {
+    }
+
+    fn bus_dmamem_alloc(
+        _t: Self::DmaTag,
+        _size: BusSize,
+        _alignment: BusSize,
+        _boundary: BusSize,
+        _segs: &mut [Self::DmaSegment],
+        _flags: i32,
+    ) -> Result<usize, Errno> {
+        Err(Errno::EOPNOTSUPP)
+    }
+
+    fn bus_dmamem_alloc_range(
+        _t: Self::DmaTag,
+        _size: BusSize,
+        _alignment: BusSize,
+        _boundary: BusSize,
+        _segs: &mut [Self::DmaSegment],
+        _flags: i32,
+        _low: BusAddr,
+        _high: BusAddr,
+    ) -> Result<usize, Errno> {
+        Err(Errno::EOPNOTSUPP)
+    }
+
+    unsafe fn bus_dmamem_free(_t: Self::DmaTag, _segs: &[Self::DmaSegment]) {}
+
+    fn bus_dmamem_map(
+        _t: Self::DmaTag,
+        _segs: &mut [Self::DmaSegment],
+        _size: usize,
+        _flags: i32,
+    ) -> Result<NonNull<u8>, Errno> {
+        Err(Errno::EOPNOTSUPP)
+    }
+
+    unsafe fn bus_dmamem_unmap(_t: Self::DmaTag, _kva: NonNull<u8>, _size: usize) {}
+
+    fn bus_dmamem_mmap(
+        _t: Self::DmaTag,
+        _segs: &[Self::DmaSegment],
+        _off: Off,
+        _prot: i32,
+        _flags: i32,
+    ) -> Option<Paddr> {
+        None
+    }
+}
+
+impl PciMachdep for Machine {
+    type PciChipsetTag = HostPciChipset;
+    type Pcitag = HostPcitag;
+    type PciIntrHandle = HostPciIntrHandle;
+
+    fn pci_attach_hook(_parent: &Device, _self: &Device, _pba: &PcibusAttachArgs) {}
+
+    fn pci_bus_maxdevs(_pc: HostPciChipset, _busno: i32) -> i32 {
+        32
+    }
+
+    fn pci_make_tag(_pc: HostPciChipset, bus: i32, device: i32, function: i32) -> HostPcitag {
+        HostPcitag {
+            bus,
+            device,
+            function,
+        }
+    }
+
+    fn pci_decompose_tag(_pc: HostPciChipset, tag: HostPcitag) -> (i32, i32, i32) {
+        (tag.bus, tag.device, tag.function)
+    }
+
+    fn pci_conf_size(_pc: HostPciChipset, _tag: HostPcitag) -> i32 {
+        0x100
+    }
+
+    fn pci_conf_read(_pc: HostPciChipset, tag: HostPcitag, reg: i32) -> Pcireg {
+        let mut conf = HOST_PCI_CONF.lock().unwrap_or_else(|e| e.into_inner());
+        conf.as_mut()
+            .map_or(0xffff_ffff, |(read, _)| read(tag, reg))
+    }
+
+    fn pci_conf_write(_pc: HostPciChipset, tag: HostPcitag, reg: i32, data: Pcireg) {
+        let mut conf = HOST_PCI_CONF.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, write)) = conf.as_mut() {
+            write(tag, reg, data);
+        }
+    }
+
+    fn pci_probe_device_hook(_pc: HostPciChipset, _pa: &mut PciAttachArgs) -> i32 {
+        0
+    }
+
+    fn pci_dev_postattach(_dev: &Device, _pa: &PciAttachArgs) {}
+
+    fn pci_min_powerstate(_pc: HostPciChipset, _tag: HostPcitag) -> Pcireg {
+        0
+    }
+
+    fn pci_set_powerstate_md(_pc: HostPciChipset, _tag: HostPcitag, _state: i32, _pre: i32) {}
+
+    fn pci_msix_table_map(
+        _pc: HostPciChipset,
+        _tag: HostPcitag,
+        _memt: HostBusSpace,
+    ) -> Result<HostBusSpaceHandle, Errno> {
+        Err(Errno::EOPNOTSUPP)
+    }
+
+    fn pci_msix_table_unmap(
+        _pc: HostPciChipset,
+        _tag: HostPcitag,
+        _memt: HostBusSpace,
+        _memh: HostBusSpaceHandle,
+    ) {
+    }
+
+    fn pci_intr_enable_msivec(_pa: &PciAttachArgs, _num_vec: i32) -> bool {
+        true
+    }
+
+    fn pci_intr_map_msi(_pa: &PciAttachArgs) -> Option<HostPciIntrHandle> {
+        None
+    }
+
+    fn pci_intr_map_msivec(_pa: &PciAttachArgs, _vec: i32) -> Option<HostPciIntrHandle> {
+        None
+    }
+
+    fn pci_intr_map_msix(_pa: &PciAttachArgs, _vec: i32) -> Option<HostPciIntrHandle> {
+        None
+    }
+
+    fn pci_intr_map(_pa: &PciAttachArgs) -> Option<HostPciIntrHandle> {
+        None
+    }
+
+    fn pci_intr_string(_pc: HostPciChipset, _ih: HostPciIntrHandle) -> PciIntrStr {
+        PciIntrStr::new(format_args!("host"))
+    }
+
+    fn pci_intr_establish_cpu(
+        _pc: HostPciChipset,
+        _ih: HostPciIntrHandle,
+        _level: i32,
+        _ci: Option<&'static HostCpuInfo>,
+        _func: PciIntrFn,
+        _arg: *mut c_void,
+        _what: &'static str,
+    ) -> Option<NonNull<c_void>> {
+        None
+    }
+
+    unsafe fn pci_intr_disestablish(_pc: HostPciChipset, _cookie: NonNull<c_void>) {}
+}
+
 impl DbMachdep for Machine {
     fn db_stack_trace_print(
         _addr: usize,
@@ -733,6 +1045,13 @@ impl Machine {
     pub unsafe fn set_ioconf(cfdata: &'static [Cfdata], cfroots: &'static [i16]) {
         // SAFETY: the caller's lock excludes every reader.
         unsafe { HOST_IOCONF.write((cfdata, cfroots)) };
+    }
+
+    /// Installs (or, with `None`, removes) the configuration space `pci_conf_read` and
+    /// `pci_conf_write` reach.
+    pub fn set_pci_conf(conf: Option<HostPciConf>) {
+        let mut slot = HOST_PCI_CONF.lock().unwrap_or_else(|e| e.into_inner());
+        *slot = conf;
     }
 }
 

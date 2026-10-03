@@ -35,6 +35,12 @@ use crate::kern::uipc_mbuf::{
 };
 use crate::kern::uipc_mbuf2::{m_tag_find, m_tag_get, m_tag_prepend};
 use crate::kprintf;
+use crate::machine::bus::{
+    BUS_DMA_NOWAIT, BUS_DMA_ZERO, BUS_DMASYNC_POSTREAD, BUS_DMASYNC_POSTWRITE, BUS_DMASYNC_PREREAD,
+    BUS_DMASYNC_PREWRITE, BusDmaSegment, BusDmaTag, bus_dmamap_create, bus_dmamap_destroy,
+    bus_dmamap_load, bus_dmamap_load_mbuf, bus_dmamap_load_raw, bus_dmamap_sync, bus_dmamap_unload,
+    bus_dmamem_alloc, bus_dmamem_free, bus_dmamem_mmap,
+};
 use crate::machine::cons::cn_rx_intr_establish;
 use crate::machine::cpu::curproc;
 use crate::machine::intr::{IPL_NONE, IPL_TTY};
@@ -56,7 +62,7 @@ use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_extern::UVM_PGA_ZERO;
 use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_km::kernel_map_min;
-use crate::uvm::uvm_page::{uvm_pagealloc, uvm_pagefree, vm_page_to_phys};
+use crate::uvm::uvm_page::{PHYS_TO_VM_PAGE, uvm_pagealloc, uvm_pagefree, vm_page_to_phys};
 
 /// A value that is neither all zeros nor all ones.
 const PATTERN: u64 = 0x5a5a_c3c3_0f0f_a5a5;
@@ -362,6 +368,203 @@ pub fn mbuf_chains() {
         );
     } else {
         kprintf!("selftest: mbufs FAILED ({} items still out)\n", out);
+    }
+}
+
+/// Exercises `bus_dma(9)` on the machine's own tag (amd64's `pci_bus_dma_tag`, arm64's
+/// `mainbus_dma_tag`), called by `cpu_configure` once the tag exists: allocates four pages of
+/// DMA memory and checks how maps of different shapes load them (coalesced into one segment,
+/// split at `maxsegsz` and at a boundary, refused when the map has too few segments), loads a
+/// linear buffer through the direct map and an mbuf chain, syncs, and gives everything back.
+pub fn bus_dma_check(t: BusDmaTag) {
+    let size = 4 * PAGE_SIZE;
+    let mut failed: Option<&str> = None;
+    let mut fail = |what: &'static str| {
+        if failed.is_none() {
+            failed = Some(what);
+        }
+    };
+
+    let mut segs = [BusDmaSegment::default(); 1];
+    let rsegs = match bus_dmamem_alloc(t, size, size, 0, &mut segs, BUS_DMA_NOWAIT | BUS_DMA_ZERO) {
+        Ok(n) => n,
+        Err(_) => {
+            kprintf!("selftest: bus_dma FAILED (bus_dmamem_alloc)\n");
+            return;
+        }
+    };
+    let seg = segs[0];
+    if rsegs != 1 || seg.ds_len != size || seg.ds_addr % size != 0 {
+        fail("bus_dmamem_alloc segments");
+    }
+    if bus_dmamem_mmap(t, &segs, PAGE_SIZE as i64, PROT_READ, 0)
+        != Some(Paddr::new(seg.ds_addr + PAGE_SIZE))
+    {
+        fail("bus_dmamem_mmap");
+    }
+
+    // Each shape: (maxsegsz, boundary, nsegments) and the segments load_raw must produce, as
+    // (offset into the memory, length).
+    type Shape<'a> = (usize, usize, i32, &'a [(usize, usize)]);
+    let shapes: [Shape<'_>; 3] = [
+        (size, 0, 4, &[(0, size)]),
+        (
+            PAGE_SIZE,
+            0,
+            4,
+            &[
+                (0, PAGE_SIZE),
+                (PAGE_SIZE, PAGE_SIZE),
+                (2 * PAGE_SIZE, PAGE_SIZE),
+                (3 * PAGE_SIZE, PAGE_SIZE),
+            ],
+        ),
+        (
+            size,
+            2 * PAGE_SIZE,
+            4,
+            &[(0, 2 * PAGE_SIZE), (2 * PAGE_SIZE, 2 * PAGE_SIZE)],
+        ),
+    ];
+    let mut maps = Vec::new();
+    for (maxsegsz, boundary, nsegments, want) in shapes {
+        let Ok(map) = bus_dmamap_create(t, size, nsegments, maxsegsz, boundary, BUS_DMA_NOWAIT)
+        else {
+            fail("bus_dmamap_create");
+            continue;
+        };
+        // SAFETY: the segments stay allocated until bus_dmamem_free below, after unload.
+        if unsafe { bus_dmamap_load_raw(t, map, &segs, size, BUS_DMA_NOWAIT) }.is_err() {
+            fail("bus_dmamap_load_raw");
+        } else {
+            let got: Vec<(usize, usize)> = map.dm_segs()[..map.dm_nsegs.get() as usize]
+                .iter()
+                .map(|s| (s.get().ds_addr - seg.ds_addr, s.get().ds_len))
+                .collect();
+            if got != want || map.dm_mapsize.get() != size {
+                fail("bus_dmamap_load_raw segments");
+            }
+        }
+        bus_dmamap_unload(t, map);
+        if map.dm_nsegs.get() != 0 {
+            fail("bus_dmamap_unload");
+        }
+        maps.push(map);
+    }
+
+    // A map with one segment of a page cannot take four pages.
+    if let Ok(small) = bus_dmamap_create(t, size, 1, PAGE_SIZE, 0, BUS_DMA_NOWAIT) {
+        // SAFETY: as above.
+        if unsafe { bus_dmamap_load_raw(t, small, &segs, size, BUS_DMA_NOWAIT) }.is_ok() {
+            fail("bus_dmamap_load_raw overflow");
+        }
+        maps.push(small);
+    } else {
+        fail("bus_dmamap_create (small)");
+    }
+
+    // A linear buffer: the DMA pages through the direct map, from an odd offset.
+    if let (Some(pg), Some(&whole), Some(&paged)) = (
+        PHYS_TO_VM_PAGE(Paddr::new(seg.ds_addr)),
+        maps.first(),
+        maps.get(1),
+    ) {
+        let kva = pmap_map_direct(pg).as_usize() + 100;
+        // SAFETY: the buffer is the DMA memory allocated above, mapped by the direct map,
+        // and stays allocated until after the unload.
+        let r = unsafe {
+            bus_dmamap_load(
+                t,
+                whole,
+                kva as *mut u8,
+                2 * PAGE_SIZE,
+                None,
+                BUS_DMA_NOWAIT,
+            )
+        };
+        if r.is_err()
+            || whole.dm_nsegs.get() != 1
+            || whole.dm_segs()[0].get().ds_addr != seg.ds_addr + 100
+        {
+            fail("bus_dmamap_load (contiguous)");
+        }
+        bus_dmamap_sync(
+            t,
+            whole,
+            0,
+            2 * PAGE_SIZE,
+            BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE,
+        );
+        bus_dmamap_sync(t, whole, 0, 2 * PAGE_SIZE, BUS_DMASYNC_POSTREAD);
+        bus_dmamap_unload(t, whole);
+
+        // SAFETY: as above.
+        let r = unsafe {
+            bus_dmamap_load(
+                t,
+                paged,
+                kva as *mut u8,
+                2 * PAGE_SIZE,
+                None,
+                BUS_DMA_NOWAIT,
+            )
+        };
+        let lens: Vec<usize> = paged.dm_segs()[..paged.dm_nsegs.get().max(0) as usize]
+            .iter()
+            .map(|s| s.get().ds_len)
+            .collect();
+        if r.is_err() || lens[..] != [PAGE_SIZE - 100, PAGE_SIZE, 100] {
+            fail("bus_dmamap_load (maxsegsz)");
+        }
+        bus_dmamap_unload(t, paged);
+    } else {
+        fail("direct map");
+    }
+
+    // An mbuf chain of clusters.
+    let data: Vec<u8> = (0..3000u32).map(|i| i as u8).collect();
+    match (m_gethdr(M_DONTWAIT, MT_DATA), maps.first()) {
+        (Some(m), Some(&whole)) => {
+            if m_copyback(m, 0, &data, M_DONTWAIT).is_err() {
+                fail("m_copyback");
+            }
+            // SAFETY: the chain is freed after the unload.
+            let r = unsafe { bus_dmamap_load_mbuf(t, whole, m, BUS_DMA_NOWAIT) };
+            let total: usize = whole.dm_segs()[..whole.dm_nsegs.get().max(0) as usize]
+                .iter()
+                .map(|s| s.get().ds_len)
+                .sum();
+            if r.is_err() || whole.dm_mapsize.get() != 3000 || total != 3000 {
+                fail("bus_dmamap_load_mbuf");
+            }
+            bus_dmamap_sync(t, whole, 0, 3000, BUS_DMASYNC_PREWRITE);
+            bus_dmamap_sync(t, whole, 0, 3000, BUS_DMASYNC_POSTWRITE);
+            bus_dmamap_unload(t, whole);
+            m_freem(m);
+        }
+        _ => fail("m_gethdr"),
+    }
+
+    let nmaps = maps.len();
+    for map in maps {
+        // SAFETY: made above, unloaded, not used again.
+        unsafe { bus_dmamap_destroy(t, NonNull::from(map)) };
+    }
+    // SAFETY: allocated above, every map that loaded it is unloaded and destroyed.
+    unsafe { bus_dmamem_free(t, &segs) };
+
+    match failed {
+        None => {
+            kprintf!(
+                "selftest: bus_dma ok ({} maps, {} pages at {:#x})\n",
+                nmaps,
+                size / PAGE_SIZE,
+                seg.ds_addr
+            );
+        }
+        Some(what) => {
+            kprintf!("selftest: bus_dma FAILED ({})\n", what);
+        }
     }
 }
 

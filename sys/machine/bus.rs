@@ -4,14 +4,34 @@
 //! Each architecture defines what a tag and a handle are (amd64 distinguishes port and memory
 //! space, arm64 maps everything), the map flags it understands, and the accessors. The free
 //! functions below carry the C names, so a driver reads like its C original; they dispatch to the
-//! selected [`Machine`]. `bus_dma(9)` arrives with milestone M6.
+//! selected [`Machine`].
 //!
 //! The `bus_space_map` method is `unsafe`: the caller asserts that the range is a device this
 //! driver owns, which is what the firmware tables (ACPI, FDT) or a configured address guarantee
 //! in OpenBSD. Reads and writes through a handle returned by it are safe.
+//!
+//! `bus_dma(9)` (M7b) is the [`BusDma`] trait: the tag, map and segment types are the
+//! architecture's (`struct bus_dma_tag`, `struct bus_dmamap`, `bus_dma_segment_t` of its
+//! `<machine/bus.h>`), and the free functions with the C names dispatch through the tag's
+//! function table, as the C macros do. A machine-independent driver reads the public members
+//! of a map and a segment by name, exactly as in C: `map.dm_mapsize`, `map.dm_nsegs`,
+//! `map.dm_segs()`, `seg.ds_addr`, `seg.ds_len`. Every architecture defines them with these
+//! names and types; [`bus_dma_public_members`] makes the compiler check it. The flags whose
+//! values differ between architectures (`BUS_DMA_COHERENT`, `BUS_DMASYNC_*`, ...) come from
+//! the trait's constants.
+//!
+//! Loading a map is `unsafe`: the caller vouches that the memory stays allocated and mapped
+//! until `bus_dmamap_unload`, because `bus_dmamap_sync` may copy to and from it (bounce
+//! buffers) or clean the caches over it; that is the C's contract too.
+
+use core::ptr::NonNull;
 
 use crate::machine::Machine;
 use crate::sys::errno::Errno;
+use crate::sys::mbuf::Mbuf;
+use crate::sys::proc::Proc;
+use crate::sys::types::{Off, Paddr};
+use crate::sys::uio::Uio;
 
 /// `bus_addr_t`: an address on the bus.
 pub type BusAddr = usize;
@@ -141,4 +161,411 @@ pub fn bus_space_barrier(
     flags: u32,
 ) {
     Machine::bus_space_barrier(t, h, offset, length, flags)
+}
+
+/// `bus_dma_tag_t`: the selected architecture's DMA tag (a pointer to its method table).
+pub type BusDmaTag = <Machine as BusDma>::DmaTag;
+/// `struct bus_dmamap`: what a `bus_dmamap_t` points at.
+pub type BusDmamap = <Machine as BusDma>::Dmamap;
+/// `bus_dma_segment_t`: one contiguous DMA transaction.
+pub type BusDmaSegment = <Machine as BusDma>::DmaSegment;
+
+/// `BUS_DMA_WAITOK`: safe to sleep (pseudo-flag).
+pub const BUS_DMA_WAITOK: i32 = <Machine as BusDma>::BUS_DMA_WAITOK;
+/// `BUS_DMA_NOWAIT`: not safe to sleep.
+pub const BUS_DMA_NOWAIT: i32 = <Machine as BusDma>::BUS_DMA_NOWAIT;
+/// `BUS_DMA_ALLOCNOW`: perform resource allocation now.
+pub const BUS_DMA_ALLOCNOW: i32 = <Machine as BusDma>::BUS_DMA_ALLOCNOW;
+/// `BUS_DMA_COHERENT`: hint: map memory DMA coherent.
+pub const BUS_DMA_COHERENT: i32 = <Machine as BusDma>::BUS_DMA_COHERENT;
+/// `BUS_DMA_BUS1`: placeholder for bus functions.
+pub const BUS_DMA_BUS1: i32 = <Machine as BusDma>::BUS_DMA_BUS1;
+/// `BUS_DMA_BUS2`: placeholder for bus functions.
+pub const BUS_DMA_BUS2: i32 = <Machine as BusDma>::BUS_DMA_BUS2;
+/// `BUS_DMA_STREAMING`: hint: sequential, unidirectional.
+pub const BUS_DMA_STREAMING: i32 = <Machine as BusDma>::BUS_DMA_STREAMING;
+/// `BUS_DMA_READ`: mapping is device -> memory only.
+pub const BUS_DMA_READ: i32 = <Machine as BusDma>::BUS_DMA_READ;
+/// `BUS_DMA_WRITE`: mapping is memory -> device only.
+pub const BUS_DMA_WRITE: i32 = <Machine as BusDma>::BUS_DMA_WRITE;
+/// `BUS_DMA_NOCACHE`: map memory uncached.
+pub const BUS_DMA_NOCACHE: i32 = <Machine as BusDma>::BUS_DMA_NOCACHE;
+/// `BUS_DMA_ZERO`: zero memory in dmamem_alloc.
+pub const BUS_DMA_ZERO: i32 = <Machine as BusDma>::BUS_DMA_ZERO;
+/// `BUS_DMA_64BIT`: device handles 64bit dva.
+pub const BUS_DMA_64BIT: i32 = <Machine as BusDma>::BUS_DMA_64BIT;
+
+/// `BUS_DMASYNC_PREREAD`: before the device writes to memory.
+pub const BUS_DMASYNC_PREREAD: i32 = <Machine as BusDma>::BUS_DMASYNC_PREREAD;
+/// `BUS_DMASYNC_POSTREAD`: after the device wrote to memory.
+pub const BUS_DMASYNC_POSTREAD: i32 = <Machine as BusDma>::BUS_DMASYNC_POSTREAD;
+/// `BUS_DMASYNC_PREWRITE`: before the device reads from memory.
+pub const BUS_DMASYNC_PREWRITE: i32 = <Machine as BusDma>::BUS_DMASYNC_PREWRITE;
+/// `BUS_DMASYNC_POSTWRITE`: after the device read from memory.
+pub const BUS_DMASYNC_POSTWRITE: i32 = <Machine as BusDma>::BUS_DMASYNC_POSTWRITE;
+
+/// The `bus_dma(9)` operations: the macros of `<machine/bus.h>` that call through
+/// `struct bus_dma_tag`.
+pub trait BusDma {
+    /// `bus_dma_tag_t`.
+    type DmaTag: Copy + 'static;
+    /// `struct bus_dmamap`; a `bus_dmamap_t` is a `&'static` to one.
+    type Dmamap: 'static;
+    /// `bus_dma_segment_t`.
+    type DmaSegment: Copy + Default + 'static;
+
+    /// `BUS_DMA_WAITOK`.
+    const BUS_DMA_WAITOK: i32;
+    /// `BUS_DMA_NOWAIT`.
+    const BUS_DMA_NOWAIT: i32;
+    /// `BUS_DMA_ALLOCNOW`.
+    const BUS_DMA_ALLOCNOW: i32;
+    /// `BUS_DMA_COHERENT`.
+    const BUS_DMA_COHERENT: i32;
+    /// `BUS_DMA_BUS1`.
+    const BUS_DMA_BUS1: i32;
+    /// `BUS_DMA_BUS2`.
+    const BUS_DMA_BUS2: i32;
+    /// `BUS_DMA_STREAMING`.
+    const BUS_DMA_STREAMING: i32;
+    /// `BUS_DMA_READ`.
+    const BUS_DMA_READ: i32;
+    /// `BUS_DMA_WRITE`.
+    const BUS_DMA_WRITE: i32;
+    /// `BUS_DMA_NOCACHE`.
+    const BUS_DMA_NOCACHE: i32;
+    /// `BUS_DMA_ZERO`.
+    const BUS_DMA_ZERO: i32;
+    /// `BUS_DMA_64BIT`.
+    const BUS_DMA_64BIT: i32;
+    /// `BUS_DMASYNC_PREREAD`.
+    const BUS_DMASYNC_PREREAD: i32;
+    /// `BUS_DMASYNC_POSTREAD`.
+    const BUS_DMASYNC_POSTREAD: i32;
+    /// `BUS_DMASYNC_PREWRITE`.
+    const BUS_DMASYNC_PREWRITE: i32;
+    /// `BUS_DMASYNC_POSTWRITE`.
+    const BUS_DMASYNC_POSTWRITE: i32;
+
+    /// `bus_dmamap_create(t, size, nsegments, maxsegsz, boundary, flags, &map)`: a map for
+    /// transfers of up to `size` bytes in up to `nsegments` segments of up to `maxsegsz`
+    /// bytes, none crossing a `boundary` (0: none).
+    fn bus_dmamap_create(
+        t: Self::DmaTag,
+        size: BusSize,
+        nsegments: i32,
+        maxsegsz: BusSize,
+        boundary: BusSize,
+        flags: i32,
+    ) -> Result<&'static Self::Dmamap, Errno>;
+
+    /// `bus_dmamap_destroy(t, map)`: frees a map.
+    ///
+    /// # Safety
+    ///
+    /// `map` came from `bus_dmamap_create` on `t` and nothing uses it afterwards.
+    unsafe fn bus_dmamap_destroy(t: Self::DmaTag, map: NonNull<Self::Dmamap>);
+
+    /// `bus_dmamap_load(t, map, buf, buflen, p, flags)`: loads a linear buffer, in `p`'s
+    /// address space when `p` is given, in the kernel's otherwise.
+    ///
+    /// # Safety
+    ///
+    /// `[buf, buf + buflen)` is mapped in that address space and stays allocated until
+    /// `bus_dmamap_unload`.
+    unsafe fn bus_dmamap_load(
+        t: Self::DmaTag,
+        map: &Self::Dmamap,
+        buf: *mut u8,
+        buflen: BusSize,
+        p: Option<&Proc>,
+        flags: i32,
+    ) -> Result<(), Errno>;
+
+    /// `bus_dmamap_load_mbuf(t, map, m, flags)`: loads a packet's mbuf chain.
+    ///
+    /// # Safety
+    ///
+    /// The chain's data stays allocated until `bus_dmamap_unload`.
+    unsafe fn bus_dmamap_load_mbuf(
+        t: Self::DmaTag,
+        map: &Self::Dmamap,
+        m: &Mbuf,
+        flags: i32,
+    ) -> Result<(), Errno>;
+
+    /// `bus_dmamap_load_uio(t, map, uio, flags)`: loads the buffers a `struct uio` describes.
+    ///
+    /// # Safety
+    ///
+    /// As for [`BusDma::bus_dmamap_load`], for every iovec.
+    unsafe fn bus_dmamap_load_uio(
+        t: Self::DmaTag,
+        map: &Self::Dmamap,
+        uio: &Uio<'_>,
+        flags: i32,
+    ) -> Result<(), Errno>;
+
+    /// `bus_dmamap_load_raw(t, map, segs, nsegs, size, flags)`: loads memory allocated with
+    /// `bus_dmamem_alloc` (`segs.len()` is the C's `nsegs`).
+    ///
+    /// # Safety
+    ///
+    /// The segments stay allocated (not `bus_dmamem_free`d) until `bus_dmamap_unload`.
+    unsafe fn bus_dmamap_load_raw(
+        t: Self::DmaTag,
+        map: &Self::Dmamap,
+        segs: &[Self::DmaSegment],
+        size: BusSize,
+        flags: i32,
+    ) -> Result<(), Errno>;
+
+    /// `bus_dmamap_unload(t, map)`: the map no longer describes a transfer.
+    fn bus_dmamap_unload(t: Self::DmaTag, map: &Self::Dmamap);
+
+    /// `bus_dmamap_sync(t, map, offset, len, ops)`: makes `[offset, offset + len)` of the
+    /// loaded memory consistent for the `BUS_DMASYNC_*` operations in `ops`.
+    fn bus_dmamap_sync(
+        t: Self::DmaTag,
+        map: &Self::Dmamap,
+        offset: BusAddr,
+        len: BusSize,
+        ops: i32,
+    );
+
+    /// `bus_dmamem_alloc(t, size, alignment, boundary, segs, nsegs, &rsegs, flags)`: DMA-safe
+    /// memory in up to `segs.len()` segments; returns how many were used (`rsegs`).
+    fn bus_dmamem_alloc(
+        t: Self::DmaTag,
+        size: BusSize,
+        alignment: BusSize,
+        boundary: BusSize,
+        segs: &mut [Self::DmaSegment],
+        flags: i32,
+    ) -> Result<usize, Errno>;
+
+    /// `bus_dmamem_alloc_range(t, ..., low, high)`: as `bus_dmamem_alloc`, inside the
+    /// physical range `[low, high]`.
+    #[allow(clippy::too_many_arguments)] // the C's signature
+    fn bus_dmamem_alloc_range(
+        t: Self::DmaTag,
+        size: BusSize,
+        alignment: BusSize,
+        boundary: BusSize,
+        segs: &mut [Self::DmaSegment],
+        flags: i32,
+        low: BusAddr,
+        high: BusAddr,
+    ) -> Result<usize, Errno>;
+
+    /// `bus_dmamem_free(t, segs, nsegs)`: gives memory from `bus_dmamem_alloc` back.
+    ///
+    /// # Safety
+    ///
+    /// The segments came from `bus_dmamem_alloc` on `t`, are unmapped and unloaded, and are
+    /// not used afterwards.
+    unsafe fn bus_dmamem_free(t: Self::DmaTag, segs: &[Self::DmaSegment]);
+
+    /// `bus_dmamem_map(t, segs, nsegs, size, &kva, flags)`: maps the segments into kernel
+    /// virtual space; returns the address.
+    fn bus_dmamem_map(
+        t: Self::DmaTag,
+        segs: &mut [Self::DmaSegment],
+        size: usize,
+        flags: i32,
+    ) -> Result<NonNull<u8>, Errno>;
+
+    /// `bus_dmamem_unmap(t, kva, size)`: undoes `bus_dmamem_map`.
+    ///
+    /// # Safety
+    ///
+    /// `kva` and `size` came from `bus_dmamem_map` on `t` and nothing uses the mapping
+    /// afterwards.
+    unsafe fn bus_dmamem_unmap(t: Self::DmaTag, kva: NonNull<u8>, size: usize);
+
+    /// `bus_dmamem_mmap(t, segs, nsegs, off, prot, flags)`: the physical address (with the
+    /// pmap flags) of the page at `off` for `mmap(2)`; `None` for the C's `-1`.
+    fn bus_dmamem_mmap(
+        t: Self::DmaTag,
+        segs: &[Self::DmaSegment],
+        off: Off,
+        prot: i32,
+        flags: i32,
+    ) -> Option<Paddr>;
+}
+
+/// `bus_dmamap_create(9)` on the selected machine.
+pub fn bus_dmamap_create(
+    t: BusDmaTag,
+    size: BusSize,
+    nsegments: i32,
+    maxsegsz: BusSize,
+    boundary: BusSize,
+    flags: i32,
+) -> Result<&'static BusDmamap, Errno> {
+    Machine::bus_dmamap_create(t, size, nsegments, maxsegsz, boundary, flags)
+}
+
+/// `bus_dmamap_destroy(9)` on the selected machine.
+///
+/// # Safety
+///
+/// As for [`BusDma::bus_dmamap_destroy`].
+pub unsafe fn bus_dmamap_destroy(t: BusDmaTag, map: NonNull<BusDmamap>) {
+    // SAFETY: forwarded.
+    unsafe { Machine::bus_dmamap_destroy(t, map) }
+}
+
+/// `bus_dmamap_load(9)` on the selected machine.
+///
+/// # Safety
+///
+/// As for [`BusDma::bus_dmamap_load`].
+pub unsafe fn bus_dmamap_load(
+    t: BusDmaTag,
+    map: &BusDmamap,
+    buf: *mut u8,
+    buflen: BusSize,
+    p: Option<&Proc>,
+    flags: i32,
+) -> Result<(), Errno> {
+    // SAFETY: forwarded.
+    unsafe { Machine::bus_dmamap_load(t, map, buf, buflen, p, flags) }
+}
+
+/// `bus_dmamap_load_mbuf(9)` on the selected machine.
+///
+/// # Safety
+///
+/// As for [`BusDma::bus_dmamap_load_mbuf`].
+pub unsafe fn bus_dmamap_load_mbuf(
+    t: BusDmaTag,
+    map: &BusDmamap,
+    m: &Mbuf,
+    flags: i32,
+) -> Result<(), Errno> {
+    // SAFETY: forwarded.
+    unsafe { Machine::bus_dmamap_load_mbuf(t, map, m, flags) }
+}
+
+/// `bus_dmamap_load_uio(9)` on the selected machine.
+///
+/// # Safety
+///
+/// As for [`BusDma::bus_dmamap_load_uio`].
+pub unsafe fn bus_dmamap_load_uio(
+    t: BusDmaTag,
+    map: &BusDmamap,
+    uio: &Uio<'_>,
+    flags: i32,
+) -> Result<(), Errno> {
+    // SAFETY: forwarded.
+    unsafe { Machine::bus_dmamap_load_uio(t, map, uio, flags) }
+}
+
+/// `bus_dmamap_load_raw(9)` on the selected machine.
+///
+/// # Safety
+///
+/// As for [`BusDma::bus_dmamap_load_raw`].
+pub unsafe fn bus_dmamap_load_raw(
+    t: BusDmaTag,
+    map: &BusDmamap,
+    segs: &[BusDmaSegment],
+    size: BusSize,
+    flags: i32,
+) -> Result<(), Errno> {
+    // SAFETY: forwarded.
+    unsafe { Machine::bus_dmamap_load_raw(t, map, segs, size, flags) }
+}
+
+/// `bus_dmamap_unload(9)` on the selected machine.
+pub fn bus_dmamap_unload(t: BusDmaTag, map: &BusDmamap) {
+    Machine::bus_dmamap_unload(t, map)
+}
+
+/// `bus_dmamap_sync(9)` on the selected machine.
+pub fn bus_dmamap_sync(t: BusDmaTag, map: &BusDmamap, offset: BusAddr, len: BusSize, ops: i32) {
+    Machine::bus_dmamap_sync(t, map, offset, len, ops)
+}
+
+/// `bus_dmamem_alloc(9)` on the selected machine.
+pub fn bus_dmamem_alloc(
+    t: BusDmaTag,
+    size: BusSize,
+    alignment: BusSize,
+    boundary: BusSize,
+    segs: &mut [BusDmaSegment],
+    flags: i32,
+) -> Result<usize, Errno> {
+    Machine::bus_dmamem_alloc(t, size, alignment, boundary, segs, flags)
+}
+
+/// `bus_dmamem_alloc_range(9)` on the selected machine.
+#[allow(clippy::too_many_arguments)] // the C's signature
+pub fn bus_dmamem_alloc_range(
+    t: BusDmaTag,
+    size: BusSize,
+    alignment: BusSize,
+    boundary: BusSize,
+    segs: &mut [BusDmaSegment],
+    flags: i32,
+    low: BusAddr,
+    high: BusAddr,
+) -> Result<usize, Errno> {
+    Machine::bus_dmamem_alloc_range(t, size, alignment, boundary, segs, flags, low, high)
+}
+
+/// `bus_dmamem_free(9)` on the selected machine.
+///
+/// # Safety
+///
+/// As for [`BusDma::bus_dmamem_free`].
+pub unsafe fn bus_dmamem_free(t: BusDmaTag, segs: &[BusDmaSegment]) {
+    // SAFETY: forwarded.
+    unsafe { Machine::bus_dmamem_free(t, segs) }
+}
+
+/// `bus_dmamem_map(9)` on the selected machine.
+pub fn bus_dmamem_map(
+    t: BusDmaTag,
+    segs: &mut [BusDmaSegment],
+    size: usize,
+    flags: i32,
+) -> Result<NonNull<u8>, Errno> {
+    Machine::bus_dmamem_map(t, segs, size, flags)
+}
+
+/// `bus_dmamem_unmap(9)` on the selected machine.
+///
+/// # Safety
+///
+/// As for [`BusDma::bus_dmamem_unmap`].
+pub unsafe fn bus_dmamem_unmap(t: BusDmaTag, kva: NonNull<u8>, size: usize) {
+    // SAFETY: forwarded.
+    unsafe { Machine::bus_dmamem_unmap(t, kva, size) }
+}
+
+/// `bus_dmamem_mmap(9)` on the selected machine.
+pub fn bus_dmamem_mmap(
+    t: BusDmaTag,
+    segs: &[BusDmaSegment],
+    off: Off,
+    prot: i32,
+    flags: i32,
+) -> Option<Paddr> {
+    Machine::bus_dmamem_mmap(t, segs, off, prot, flags)
+}
+
+/// The public members machine-independent code reads, by the names `bus_dma(9)` gives them:
+/// `(dm_mapsize, dm_nsegs, dm_segs[0].ds_addr, dm_segs[0].ds_len)`. Compiling it for every
+/// architecture checks that each defines them.
+pub fn bus_dma_public_members(map: &BusDmamap) -> (BusSize, i32, BusAddr, BusSize) {
+    let first: BusDmaSegment = map.dm_segs().first().map(|s| s.get()).unwrap_or_default();
+    (
+        map.dm_mapsize.get(),
+        map.dm_nsegs.get(),
+        first.ds_addr,
+        first.ds_len,
+    )
 }

@@ -4,22 +4,29 @@
 //! (`docs/ARCHITECTURE.md`, "Deviations"); `machine::autoconf` hands them to
 //! `subr_autoconf.rs`.
 //!
-//! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?`.
-//! GENERIC lines left out until their drivers exist: `bios0`, `ioapic*`, `isa0`, `pci*`,
-//! `vmm0`, `pvbus0`, `ipmi0` and `efifb0` at mainbus, and everything below them;
+//! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?`, `pci* at mainbus0`.
+//! GENERIC lines left out until their drivers exist: `bios0`, `ioapic*`, `isa0`, `vmm0`,
+//! `pvbus0`, `ipmi0` and `efifb0` at mainbus, and everything below them; every device at
+//! `pci?` (`pchb*`, `ppb*`, `pcib*`, the network and storage drivers, ...), and `pci*` at
+//! `ppb?` and `pchb?`;
 //! `mpath0 at root`; the pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
 //! layout: attachment, driver, unit, state, locators, flags, parents (indices into
 //! `CFDATA`), the start of its locator names and the first unit a starred entry may take.
 
 use crate::arch::amd64::amd64::cpu::{CPU_CA, CPU_CD};
 use crate::arch::amd64::amd64::mainbus::{MAINBUS_CA, MAINBUS_CD};
-use crate::sys::device::{Cfdata, FSTATE_NOTFOUND};
+use crate::dev::pci::pci::{PCI_CA, PCI_CD};
+use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR};
 
 /// `pv[]` for children of `mainbus0` (`cfdata[0]`).
 const PV_MAINBUS: &[i16] = &[0];
 
+/// `loc[]` of an entry at `pcibus` with the default `bus = -1` (`conf/files`: `define pcibus
+/// {[bus = -1]}`).
+const LOC_PCIBUS_UNK: &[i64] = &[-1];
+
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 2] = [
+pub static CFDATA: [Cfdata; 3] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -39,6 +46,18 @@ pub static CFDATA: [Cfdata; 2] = [
         0,
         FSTATE_NOTFOUND,
         &[],
+        0,
+        PV_MAINBUS,
+        0,
+        0,
+    ),
+    // 2: pci* at mainbus0
+    Cfdata::new(
+        &PCI_CA,
+        &PCI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCIBUS_UNK,
         0,
         PV_MAINBUS,
         0,

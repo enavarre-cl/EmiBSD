@@ -48,10 +48,18 @@ module per OpenBSD header (`param.rs`, `cpu.rs` with `boot(9)`, `delay(9)` and, 
 `intr.rs`, ...; `autoconf.rs` is what `ioconf.c` and the machine's `autoconf.c` give
 `subr_autoconf.c`; `signal.rs` is `<machine/signal.h>` plus `sendsig`, `sys_sigreturn` and the
 signal trampoline), all re-exported from `sys/machine/mod.rs`, which also re-exports
+`consinit()`, `bus.rs` for `bus_space(9)` and (M7b) `bus_dma(9)`, `db_machdep.rs` for what `ddb`
+needs; later `pmap.rs`, `intr.rs`, ...; `autoconf.rs` is what `ioconf.c` and the machine's
+`autoconf.c` give `subr_autoconf.c`; `pci_machdep.rs` (M7b) is `<machine/pci_machdep.h>`), all
+re-exported from `sys/machine/mod.rs`, which also re-exports
 `crate::arch::current::Machine` and asserts at compile time that it implements every trait. Generic
 code names only `crate::machine`. `bus.rs` also carries the C names as free functions
-(`bus_space_read_1(t, h, o)`), so a driver reads like its original; the tag and handle types are
-the architecture's (`X86BusSpace`/`BusSpaceHandle` on amd64, `&'static BusSpace` on arm64).
+(`bus_space_read_1(t, h, o)`, `bus_dmamap_load(t, map, ...)`), so a driver reads like its
+original; the tag and handle types are the architecture's (`X86BusSpace`/`BusSpaceHandle` on
+amd64, `&'static BusSpace` on arm64), and so are the DMA tag, map and segment types (each arch's
+`include/bus.rs`; the tag is a table of functions, as in C). MI code reads a map's public
+members by their C names (`dm_nsegs`, `dm_segs()`, `ds_addr`, ...), which every arch must
+define (`bus_dma_public_members` checks it at compile time).
 
 Constants travel the same way as functions: `MachineParam` (M1) carries `<machine/param.h>` and
 the alignment rules of `<machine/_types.h>` as associated consts, each arch defines them in
@@ -319,13 +327,14 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   is not ported: what it would generate into `ioconf.c` (`cfdata[]` with its locators and
   parent vectors, `cfroots[]`) is written by hand per architecture in
   `sys/arch/<arch>/conf/ioconf.rs`, following `config(8)`'s layout, for the GENERIC lines
-  whose drivers exist: `mainbus0 at root` and `cpu0 at mainbus?` on amd64; `mainbus0 at
+  whose drivers exist: `mainbus0 at root`, `cpu0 at mainbus?` and `pci* at mainbus0` on
+  amd64; `mainbus0 at
   root`, `ampintc* at fdt? early 1` and `agtimer* at fdt?` on arm64. The tables, `mainbus_cd`
   and `device_register` reach `subr_autoconf.rs` through `machine::autoconf`, so generic code
   never names an arch; the host double serves whatever table a test installs. A device that
   GENERIC configures but whose driver is not ported is reported with `unported!` where its bus
-  would probe or attach it (amd64's `bios0`, `pci0`, `isa0`, ...); on arm64 every device-tree
-  node without a driver prints OpenBSD's `"name" at mainbus0 not configured`. The counts
+  would probe or attach it (amd64's `bios0`, `isa0`, ...); on arm64 every device-tree node
+  and on amd64 every PCI function without a driver prints OpenBSD's `not configured` line. The counts
   `config(8)` writes into `<dev>.h` follow the tables: `NMPATH` is 0, the `hotplug(4)` calls
   are reported. Without ACPI or MP tables, amd64's mainbus attaches the boot CPU as
   `CPU_ROLE_SP`, as the C does on such a machine; `cpu_configure` keeps doing around
@@ -370,6 +379,30 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   slice; structures are copied out as bytes through `sys::sysctl::SysctlPlain`, which C does
   with a `void *` and a size. Nodes whose variable or subsystem is not here yet report
   themselves with `unported!`, so a walk of the tree prints its gaps on the console.
+- DMA (M7b): `bus_dma.c` is ported per architecture (amd64 bounce pages below
+  `dma_constraint`; arm64 cache maintenance unless the tag is `BUS_DMA_COHERENT`, the
+  `dma-coherent` copy of `mainbus_dma_tag` per node) and reached through `machine::bus`'s
+  `BusDma`. The host double has no DMA (its operations fail with `EOPNOTSUPP`); `bus_dma` is
+  tested on the machines instead, by a boot self-test each `cpu_configure` runs on its own tag
+  (`selftest: bus_dma ok`). Mapping virtual-only kernel space (`km_alloc(kv_any, kp_none)`)
+  is still reported by `uvm_km.rs`, so bounce maps and the `bus_dmamem_map` cases that need
+  fresh virtual space (every one on arm64; several segments or `BUS_DMA_NOCACHE` on amd64)
+  fail with `ENOMEM` until it does; buffers in the direct map load and sync.
+- PCI (M7b): `dev/pci/pci.c`, `pci_map.c`, `pci_subr.c`, `pci_quirks.c` and the headers are
+  OpenBSD's; the machine side is `machine::pci_machdep`. On amd64, without ACPI, mainbus
+  attaches `pci0` for bus 0 (as the C does when `acpi_haspci` is false) and configuration
+  space is reached with mechanism #1 (ports `0xcf8`/`0xcfc`). The extents (`sys/extent.h`)
+  are not ported, so a bus reserves nothing and a BAR the firmware left at 0 cannot be placed.
+  `mp_busses` is NULL (no `mpbios`/`acpimadt`), so interrupts map to the line register and
+  the 8259, and MSI/MSI-X are refused exactly as the C refuses them without tables (the
+  routing functions are ported; their `ioapic_edge_stubs` wait for the I/O APIC half of
+  `vector.S`). `option PCIVERBOSE` is not configured: the 800 KB name tables
+  (`pcidevs_data.h`) and most of `pcidevs.h` are generated by `devlist2h.awk` in C and would
+  need a generator in `tools/xtask` (as `gen-syscalls` is for `syscalls.master`), so the attach
+  lines print IDs (`vendor 0x8086 product 0x29c0 (class bridge subclass host, rev 0x02) at
+  pci0 dev 0 function 0 not configured`) and `pcidevs.rs` holds only the IDs ported code
+  names. arm64 has the types and dispatch of its `pci_machdep.h` but no host bridge driver
+  yet.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

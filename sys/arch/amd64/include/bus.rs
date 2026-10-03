@@ -1,7 +1,13 @@
-/* $OpenBSD: bus.h,v 1.13 2026/06/22 07:54:19 deraadt Exp $ */
+/*	$OpenBSD: bus.h,v 1.38 2026/04/19 09:59:22 kettenis Exp $	*/
+/*	$NetBSD: bus.h,v 1.6 1996/11/10 03:19:25 thorpej Exp $	*/
 /* <LICENSES> */
-/*
- * Copyright (c) 2003-2004 Opsycon AB Sweden.  All rights reserved.
+/*-
+ * Copyright (c) 1996, 1997 The NetBSD Foundation, Inc.
+ * All rights reserved.
+ *
+ * This code is derived from software contributed to The NetBSD Foundation
+ * by Jason R. Thorpe of the Numerical Aerospace Simulation Facility,
+ * NASA Ames Research Center.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -11,6 +17,39 @@
  * 2. Redistributions in binary form must reproduce the above copyright
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
+ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ * Copyright (c) 1996 Charles M. Hannum.  All rights reserved.
+ * Copyright (c) 1996 Jason R. Thorpe.  All rights reserved.
+ * Copyright (c) 1996 Christopher G. Demetriou.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *	This product includes software developed by Christopher G. Demetriou
+ *	for the NetBSD Project.
+ * 4. The name of the author may not be used to endorse or promote products
+ *    derived from this software without specific prior written permission
  *
  * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
  * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
@@ -25,28 +64,32 @@
  */
 /* </LICENSES> */
 
-//! arm64 `<machine/bus.h>`: the bus access methods as a table of functions.
+//! amd64 `<machine/bus.h>`: the `bus_dma(9)` types and flags.
 //!
-//! Upstream: sys/arch/arm64/include/bus.h @ 3ce1f3f79392
+//! Upstream: sys/arch/amd64/include/bus.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M2 ports `struct bus_space` with the single-register accessors,
-//! map, unmap, subregion and vaddr, the `BUS_SPACE_MAP_*` flags and `bus_space_barrier`. The
-//! raw-multi accessors, `_space_mmap` and `bus_private` arrive with the drivers that use them.
-//! M7b adds `bus_dma`: the `BUS_DMA_*` and `BUS_DMASYNC_*` flags, `bus_dma_segment_t`,
-//! `struct bus_dma_tag` and `struct bus_dmamap`; their functions are `arm64/bus_dma.rs`.
+//! Status: `wip`. Milestone M7b ports the `bus_dma` half: the `BUS_DMA_*` and
+//! `BUS_DMASYNC_*` flags, `bus_dma_segment_t`, `struct bus_dma_tag` (the method table the
+//! `bus_dma*` macros call through) and `struct bus_dmamap`; the functions it declares
+//! (`bus_dma_init`, `_bus_dmamap_*`, `_bus_dmamem_*`) are `amd64/bus_dma.rs`. The
+//! `bus_space` half (the address types, `struct x86_bus_space_ops`, the `BUS_SPACE_MAP_*`
+//! flags and `bus_space_barrier`) still lives in `amd64/bus_space.rs` and the machine
+//! contract, where milestone M2 put it.
 //!
 //! ## Deviations
-//! - A tag is a `&'static BusSpace` (C: `bus_space_tag_t`, a pointer to the table).
-//! - `_space_map` is an `unsafe fn`, as in the machine contract.
-//! - `bus_dma_tag_t` is `&'static BusDmaTag`, a table of Rust `fn` pointers that return
-//!   `Result` and take slices for the C's pointer-and-count pairs; the loads are `unsafe fn`,
-//!   as in the machine contract. `_dmamap_load_buffer` keeps the C's in/out state as `&mut`.
-//! - A `bus_dmamap_t` is `&'static BusDmamap`, whose header is followed in the same
-//!   allocation by its segments and bounce-page pointers (the C's trailing `dm_segs[1]`),
-//!   reached through pointers taken from the allocation; members that change after creation
-//!   are `Cell`s. `vaddr_t` members holding `-1` are `usize` with `usize::MAX`.
+//! - `bus_dma_tag_t` is `&'static BusDmaTag`; the table holds Rust `fn` pointers whose
+//!   signatures return `Result` and take slices where the C passes a pointer and a count
+//!   (`segs`/`nsegs`) or an out pointer (`dmamp`, `rsegs`, `kvap`). The loads are `unsafe
+//!   fn`, as in the machine contract.
+//! - A `bus_dmamap_t` is `&'static BusDmamap`. The C ends the map with the variable-length
+//!   `dm_segs[1]` and, for bounce buffers, the page pointers after it; here the map header is
+//!   followed in the same allocation by `_dm_segcnt` segments and `_dm_npages` page pointers,
+//!   which [`BusDmamap::dm_segs`] and `_dm_pages` reach through pointers taken from the
+//!   allocation (a Rust struct cannot end in an unsized array of `Cell`s). The members the
+//!   load, unload and sync functions change after creation are `Cell`s.
+//! - `vaddr_t` members that hold `-1` for "none" (`_ds_va`, `_ds_bounce_va`) are `usize` with
+//!   `usize::MAX`.
 
-use core::arch::asm;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -61,103 +104,43 @@ use crate::sys::types::{Off, Paddr};
 use crate::sys::uio::Uio;
 use crate::uvm::uvm_page::VmPage;
 
-/// `BUS_SPACE_MAP_CACHEABLE`.
-pub const BUS_SPACE_MAP_CACHEABLE: u32 = 0x01;
-/// `BUS_SPACE_MAP_POSTED`: device memory with posted writes (nGnRE).
-pub const BUS_SPACE_MAP_POSTED: u32 = 0x02;
-/// `BUS_SPACE_MAP_LINEAR`.
-pub const BUS_SPACE_MAP_LINEAR: u32 = 0x04;
-/// `BUS_SPACE_MAP_PREFETCHABLE`.
-pub const BUS_SPACE_MAP_PREFETCHABLE: u32 = 0x08;
-
-/// `bus_space_handle_t`: the kernel virtual address of a mapped region, only ever produced by
-/// `_space_map` or `_space_subregion`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BusSpaceHandle(pub(in crate::arch::arm64) usize);
-
-/// `struct bus_space` (`bus_space_t`): one bus's access methods.
-pub struct BusSpace {
-    /// `bus_base`: the bus's base address.
-    pub bus_base: BusAddr,
-    /// `_space_read_1`.
-    pub _space_read_1: fn(&'static BusSpace, BusSpaceHandle, BusSize) -> u8,
-    /// `_space_write_1`.
-    pub _space_write_1: fn(&'static BusSpace, BusSpaceHandle, BusSize, u8),
-    /// `_space_read_2`.
-    pub _space_read_2: fn(&'static BusSpace, BusSpaceHandle, BusSize) -> u16,
-    /// `_space_write_2`.
-    pub _space_write_2: fn(&'static BusSpace, BusSpaceHandle, BusSize, u16),
-    /// `_space_read_4`.
-    pub _space_read_4: fn(&'static BusSpace, BusSpaceHandle, BusSize) -> u32,
-    /// `_space_write_4`.
-    pub _space_write_4: fn(&'static BusSpace, BusSpaceHandle, BusSize, u32),
-    /// `_space_read_8`.
-    pub _space_read_8: fn(&'static BusSpace, BusSpaceHandle, BusSize) -> u64,
-    /// `_space_write_8`.
-    pub _space_write_8: fn(&'static BusSpace, BusSpaceHandle, BusSize, u64),
-    /// `_space_map`.
-    pub _space_map:
-        unsafe fn(&'static BusSpace, BusAddr, BusSize, u32) -> Result<BusSpaceHandle, Errno>,
-    /// `_space_unmap`.
-    pub _space_unmap: fn(&'static BusSpace, BusSpaceHandle, BusSize),
-    /// `_space_subregion`.
-    pub _space_subregion:
-        fn(&'static BusSpace, BusSpaceHandle, BusSize, BusSize) -> Result<BusSpaceHandle, Errno>,
-    /// `_space_vaddr`.
-    pub _space_vaddr: fn(&'static BusSpace, BusSpaceHandle) -> *mut u8,
-}
-
-/// `bus_space_barrier`: a full system barrier (`dsb sy`), whatever the flags.
-pub fn bus_space_barrier(
-    _t: &'static BusSpace,
-    _h: BusSpaceHandle,
-    _offset: BusSize,
-    _length: BusSize,
-    _flags: u32,
-) {
-    // SAFETY: a barrier orders memory accesses and touches nothing else.
-    unsafe { asm!("dsb sy", options(nostack, preserves_flags)) };
-}
-
-/// `BUS_DMA_WAITOK`.
+/// `BUS_DMA_WAITOK`: safe to sleep (pseudo-flag).
 pub const BUS_DMA_WAITOK: i32 = 0x0000;
-/// `BUS_DMA_NOWAIT`.
+/// `BUS_DMA_NOWAIT`: not safe to sleep.
 pub const BUS_DMA_NOWAIT: i32 = 0x0001;
-/// `BUS_DMA_ALLOCNOW`.
+/// `BUS_DMA_ALLOCNOW`: perform resource allocation now.
 pub const BUS_DMA_ALLOCNOW: i32 = 0x0002;
-/// `BUS_DMA_COHERENT`.
-pub const BUS_DMA_COHERENT: i32 = 0x0008;
+/// `BUS_DMA_COHERENT`: hint: map memory DMA coherent.
+pub const BUS_DMA_COHERENT: i32 = 0x0004;
 /// `BUS_DMA_BUS1`: placeholders for bus functions...
 pub const BUS_DMA_BUS1: i32 = 0x0010;
 /// `BUS_DMA_BUS2`.
 pub const BUS_DMA_BUS2: i32 = 0x0020;
-/// `BUS_DMA_BUS3`.
-pub const BUS_DMA_BUS3: i32 = 0x0040;
-/// `BUS_DMA_BUS4`.
-pub const BUS_DMA_BUS4: i32 = 0x0080;
-/// `BUS_DMA_READ`: mapping is device -> memory only.
-pub const BUS_DMA_READ: i32 = 0x0100;
-/// `BUS_DMA_WRITE`: mapping is memory -> device only.
-pub const BUS_DMA_WRITE: i32 = 0x0200;
+/// `BUS_DMA_32BIT`.
+pub const BUS_DMA_32BIT: i32 = 0x0040;
+/// `BUS_DMA_24BIT`: isadma map.
+pub const BUS_DMA_24BIT: i32 = 0x0080;
 /// `BUS_DMA_STREAMING`: hint: sequential, unidirectional.
-pub const BUS_DMA_STREAMING: i32 = 0x0400;
+pub const BUS_DMA_STREAMING: i32 = 0x0100;
+/// `BUS_DMA_READ`: mapping is device -> memory only.
+pub const BUS_DMA_READ: i32 = 0x0200;
+/// `BUS_DMA_WRITE`: mapping is memory -> device only.
+pub const BUS_DMA_WRITE: i32 = 0x0400;
+/// `BUS_DMA_NOCACHE`: map memory uncached.
+pub const BUS_DMA_NOCACHE: i32 = 0x0800;
 /// `BUS_DMA_ZERO`: zero memory in dmamem_alloc.
-pub const BUS_DMA_ZERO: i32 = 0x0800;
-/// `BUS_DMA_NOCACHE`.
-pub const BUS_DMA_NOCACHE: i32 = 0x1000;
+pub const BUS_DMA_ZERO: i32 = 0x1000;
 /// `BUS_DMA_64BIT`: device handles 64bit dva.
 pub const BUS_DMA_64BIT: i32 = 0x2000;
-/// `BUS_DMA_FIXED`: place mapping at specified dva.
-pub const BUS_DMA_FIXED: i32 = 0x4000;
 
+/// `BUS_DMASYNC_PREREAD`: operation performed by `bus_dmamap_sync()`.
+pub const BUS_DMASYNC_PREREAD: i32 = 0x01;
 /// `BUS_DMASYNC_POSTREAD`.
-pub const BUS_DMASYNC_POSTREAD: i32 = 0x0001;
-/// `BUS_DMASYNC_POSTWRITE`.
-pub const BUS_DMASYNC_POSTWRITE: i32 = 0x0002;
-/// `BUS_DMASYNC_PREREAD`.
-pub const BUS_DMASYNC_PREREAD: i32 = 0x0004;
+pub const BUS_DMASYNC_POSTREAD: i32 = 0x02;
 /// `BUS_DMASYNC_PREWRITE`.
-pub const BUS_DMASYNC_PREWRITE: i32 = 0x0008;
+pub const BUS_DMASYNC_PREWRITE: i32 = 0x04;
+/// `BUS_DMASYNC_POSTWRITE`.
+pub const BUS_DMASYNC_POSTWRITE: i32 = 0x08;
 
 /// `bus_dma_tag_t`.
 pub type BusDmaTagT = &'static BusDmaTag;
@@ -173,12 +156,15 @@ pub struct BusDmaSegment {
     pub ds_addr: BusAddr,
     /// `ds_len`: length of transfer.
     pub ds_len: BusSize,
-    /// `_ds_paddr`: CPU address.
-    pub _ds_paddr: usize,
-    /// `_ds_vaddr`: CPU address.
-    pub _ds_vaddr: usize,
+    /// `_ds_va`: mapped loaded data (`usize::MAX`: none).
+    pub _ds_va: usize,
     /// `_ds_bounce_va`: mapped bounced data (`usize::MAX`: none).
     pub _ds_bounce_va: usize,
+    /// `_ds_boundary`: don't cross. Ugh: needed so the alignment can be passed down from
+    /// `bus_dmamem_alloc` to scatter gather maps; only the first segment's is used.
+    pub _ds_boundary: BusSize,
+    /// `_ds_align`: align to me.
+    pub _ds_align: BusSize,
 }
 
 /// `_dmamap_create`.
@@ -196,21 +182,6 @@ pub type DmamapLoadUioFn = unsafe fn(BusDmaTagT, &BusDmamap, &Uio<'_>, i32) -> R
 /// `_dmamap_load_raw`.
 pub type DmamapLoadRawFn =
     unsafe fn(BusDmaTagT, &BusDmamap, &[BusDmaSegment], BusSize, i32) -> Result<(), Errno>;
-/// `_dmamap_load_buffer`: `(t, map, buf, buflen, p, flags, &lastaddr, &seg, &used,
-/// &lastbounce, first)`.
-pub type DmamapLoadBufferFn = unsafe fn(
-    BusDmaTagT,
-    &BusDmamap,
-    usize,
-    BusSize,
-    Option<&Proc>,
-    i32,
-    &mut usize,
-    &mut i32,
-    &mut i32,
-    &mut bool,
-    bool,
-) -> Result<(), Errno>;
 /// `_dmamap_unload`.
 pub type DmamapUnloadFn = fn(BusDmaTagT, &BusDmamap);
 /// `_dmamap_sync`.
@@ -241,12 +212,9 @@ pub type DmamemMmapFn = fn(BusDmaTagT, &[BusDmaSegment], Off, i32, i32) -> Optio
 
 /// `struct bus_dma_tag`: a machine-dependent opaque type describing the implementation of
 /// DMA for a given bus.
-#[derive(Clone, Copy)]
 pub struct BusDmaTag {
     /// `_cookie`: cookie used in the guts.
     pub _cookie: *mut c_void,
-    /// `_flags`: misc. flags (`BUS_DMA_COHERENT` for a cache-coherent bus).
-    pub _flags: i32,
     /// `_dmamap_create`.
     pub _dmamap_create: DmamapCreateFn,
     /// `_dmamap_destroy`.
@@ -259,8 +227,6 @@ pub struct BusDmaTag {
     pub _dmamap_load_uio: DmamapLoadUioFn,
     /// `_dmamap_load_raw`.
     pub _dmamap_load_raw: DmamapLoadRawFn,
-    /// `_dmamap_load_buffer`.
-    pub _dmamap_load_buffer: DmamapLoadBufferFn,
     /// `_dmamap_unload`.
     pub _dmamap_unload: DmamapUnloadFn,
     /// `_dmamap_sync`.
@@ -277,12 +243,10 @@ pub struct BusDmaTag {
     pub _dmamem_unmap: DmamemUnmapFn,
     /// `_dmamem_mmap`.
     pub _dmamem_mmap: DmamemMmapFn,
-    /// `_dma_mask`: internal memory address translation information.
-    pub _dma_mask: BusAddr,
 }
 
-// SAFETY: a tag is written once (statically, or by mainbus before a child sees its copy)
-// and only read afterwards; `_cookie` is only read, by the tag's own functions.
+// SAFETY: a tag is a table of functions written once at compile time; `_cookie` is only
+// read, by the tag's own functions.
 unsafe impl Sync for BusDmaTag {}
 
 /// `struct bus_dmamap`: describes a DMA mapping.
@@ -294,14 +258,14 @@ unsafe impl Sync for BusDmaTag {}
 pub struct BusDmamap {
     /// `_dm_size`: largest DMA transfer mappable.
     pub _dm_size: BusSize,
+    /// `_dm_flags`: misc. flags.
+    pub _dm_flags: i32,
     /// `_dm_segcnt`: number of segs this map can map.
     pub _dm_segcnt: i32,
     /// `_dm_maxsegsz`: largest possible segment.
     pub _dm_maxsegsz: BusSize,
     /// `_dm_boundary`: don't cross this.
     pub _dm_boundary: BusSize,
-    /// `_dm_flags`: misc. flags.
-    pub _dm_flags: i32,
     /// `_dm_cookie`: cookie for bus-specific functions.
     pub _dm_cookie: *mut c_void,
     /// `_dm_pages`: replacement pages (`_dm_npages` of them after the segments; null when
@@ -324,7 +288,7 @@ pub struct BusDmamap {
 impl BusDmamap {
     /// `dm_segs`: the map's `_dm_segcnt` segments; the first `dm_nsegs` are valid.
     pub fn dm_segs(&self) -> &[Cell<BusDmaSegment>] {
-        // SAFETY: `_dmamap_create` allocated `_dm_segcnt` initialised segments at
+        // SAFETY: `_bus_dmamap_create` allocated `_dm_segcnt` initialised segments at
         // `_dm_segs`, in the map's own allocation, which lives as long as the map.
         unsafe { slice::from_raw_parts(self._dm_segs.as_ptr(), self._dm_segcnt as usize) }
     }
@@ -338,7 +302,7 @@ impl BusDmamap {
     pub fn dm_page(&self, i: usize) -> &'static VmPage {
         kassert!(i < self._dm_npages as usize);
         // SAFETY: a bouncing map has `_dm_npages` page pointers at `_dm_pages`, each set by
-        // `_dmamap_create` to a page it allocated and owns until destroy.
+        // `_bus_dmamap_create` to a page it allocated and owns until destroy.
         unsafe { &**self._dm_pages.add(i) }
     }
 }

@@ -14,9 +14,17 @@ pub mod include;
 use core::arch::asm;
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::ptr::NonNull;
 
-use crate::machine::bus::{BusAddr, BusSize, BusSpace};
+use self::include::bus;
+
+use crate::dev::pci::pcivar::{PciAttachArgs, PcibusAttachArgs, Pcireg};
+use crate::machine::bus::{BusAddr, BusDma, BusSize, BusSpace};
+use crate::machine::bus::{BusSpaceHandle, BusSpaceTag};
+use crate::machine::cpu::CpuInfo;
 use crate::machine::db_machdep::{DbMachdep, PrFn};
+use crate::machine::pci_machdep::{PciIntrFn, PciIntrStr, PciMachdep};
+use crate::sys::device::Device;
 
 use crate::machine::copy::UserCopy;
 use crate::machine::exec::MachineExec;
@@ -27,12 +35,14 @@ use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo
 use crate::sys::clockintr::Clockqueue;
 use crate::sys::errno::Errno;
 use crate::sys::exec::{ExecPackage, PsStrings};
+use crate::sys::mbuf::Mbuf;
 use crate::sys::proc::{Proc, Process};
 use crate::sys::sched::SchedstatePercpu;
 use crate::sys::siginfo::Siginfo;
 use crate::sys::signal::{Sig, Sigset};
 use crate::sys::systm::SysArgs;
-use crate::sys::types::{Paddr, Register, Vaddr, Vsize};
+use crate::sys::types::{Off, Paddr, Register, Vaddr, Vsize};
+use crate::sys::uio::Uio;
 use crate::sys::user::User;
 use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt, Vmspace};
 use crate::uvm::uvm_page::VmPage;
@@ -476,6 +486,260 @@ impl BusSpace for Machine {
         flags: u32,
     ) {
         include::bus::bus_space_barrier(t, h, offset, length, flags)
+    }
+}
+
+impl BusDma for Machine {
+    type DmaTag = &'static bus::BusDmaTag;
+    type Dmamap = bus::BusDmamap;
+    type DmaSegment = bus::BusDmaSegment;
+
+    const BUS_DMA_WAITOK: i32 = bus::BUS_DMA_WAITOK;
+    const BUS_DMA_NOWAIT: i32 = bus::BUS_DMA_NOWAIT;
+    const BUS_DMA_ALLOCNOW: i32 = bus::BUS_DMA_ALLOCNOW;
+    const BUS_DMA_COHERENT: i32 = bus::BUS_DMA_COHERENT;
+    const BUS_DMA_BUS1: i32 = bus::BUS_DMA_BUS1;
+    const BUS_DMA_BUS2: i32 = bus::BUS_DMA_BUS2;
+    const BUS_DMA_STREAMING: i32 = bus::BUS_DMA_STREAMING;
+    const BUS_DMA_READ: i32 = bus::BUS_DMA_READ;
+    const BUS_DMA_WRITE: i32 = bus::BUS_DMA_WRITE;
+    const BUS_DMA_NOCACHE: i32 = bus::BUS_DMA_NOCACHE;
+    const BUS_DMA_ZERO: i32 = bus::BUS_DMA_ZERO;
+    const BUS_DMA_64BIT: i32 = bus::BUS_DMA_64BIT;
+    const BUS_DMASYNC_PREREAD: i32 = bus::BUS_DMASYNC_PREREAD;
+    const BUS_DMASYNC_POSTREAD: i32 = bus::BUS_DMASYNC_POSTREAD;
+    const BUS_DMASYNC_PREWRITE: i32 = bus::BUS_DMASYNC_PREWRITE;
+    const BUS_DMASYNC_POSTWRITE: i32 = bus::BUS_DMASYNC_POSTWRITE;
+
+    fn bus_dmamap_create(
+        t: Self::DmaTag,
+        size: BusSize,
+        nsegments: i32,
+        maxsegsz: BusSize,
+        boundary: BusSize,
+        flags: i32,
+    ) -> Result<&'static Self::Dmamap, Errno> {
+        (t._dmamap_create)(t, size, nsegments, maxsegsz, boundary, flags)
+    }
+
+    unsafe fn bus_dmamap_destroy(t: Self::DmaTag, map: NonNull<Self::Dmamap>) {
+        // SAFETY: forwarded.
+        unsafe { (t._dmamap_destroy)(t, map) }
+    }
+
+    unsafe fn bus_dmamap_load(
+        t: Self::DmaTag,
+        map: &Self::Dmamap,
+        buf: *mut u8,
+        buflen: BusSize,
+        p: Option<&Proc>,
+        flags: i32,
+    ) -> Result<(), Errno> {
+        // SAFETY: forwarded.
+        unsafe { (t._dmamap_load)(t, map, buf, buflen, p, flags) }
+    }
+
+    unsafe fn bus_dmamap_load_mbuf(
+        t: Self::DmaTag,
+        map: &Self::Dmamap,
+        m: &Mbuf,
+        flags: i32,
+    ) -> Result<(), Errno> {
+        // SAFETY: forwarded.
+        unsafe { (t._dmamap_load_mbuf)(t, map, m, flags) }
+    }
+
+    unsafe fn bus_dmamap_load_uio(
+        t: Self::DmaTag,
+        map: &Self::Dmamap,
+        uio: &Uio<'_>,
+        flags: i32,
+    ) -> Result<(), Errno> {
+        // SAFETY: forwarded.
+        unsafe { (t._dmamap_load_uio)(t, map, uio, flags) }
+    }
+
+    unsafe fn bus_dmamap_load_raw(
+        t: Self::DmaTag,
+        map: &Self::Dmamap,
+        segs: &[Self::DmaSegment],
+        size: BusSize,
+        flags: i32,
+    ) -> Result<(), Errno> {
+        // SAFETY: forwarded.
+        unsafe { (t._dmamap_load_raw)(t, map, segs, size, flags) }
+    }
+
+    fn bus_dmamap_unload(t: Self::DmaTag, map: &Self::Dmamap) {
+        (t._dmamap_unload)(t, map)
+    }
+
+    fn bus_dmamap_sync(
+        t: Self::DmaTag,
+        map: &Self::Dmamap,
+        offset: BusAddr,
+        len: BusSize,
+        ops: i32,
+    ) {
+        (t._dmamap_sync)(t, map, offset, len, ops)
+    }
+
+    fn bus_dmamem_alloc(
+        t: Self::DmaTag,
+        size: BusSize,
+        alignment: BusSize,
+        boundary: BusSize,
+        segs: &mut [Self::DmaSegment],
+        flags: i32,
+    ) -> Result<usize, Errno> {
+        (t._dmamem_alloc)(t, size, alignment, boundary, segs, flags)
+    }
+
+    fn bus_dmamem_alloc_range(
+        t: Self::DmaTag,
+        size: BusSize,
+        alignment: BusSize,
+        boundary: BusSize,
+        segs: &mut [Self::DmaSegment],
+        flags: i32,
+        low: BusAddr,
+        high: BusAddr,
+    ) -> Result<usize, Errno> {
+        (t._dmamem_alloc_range)(t, size, alignment, boundary, segs, flags, low, high)
+    }
+
+    unsafe fn bus_dmamem_free(t: Self::DmaTag, segs: &[Self::DmaSegment]) {
+        // SAFETY: forwarded.
+        unsafe { (t._dmamem_free)(t, segs) }
+    }
+
+    fn bus_dmamem_map(
+        t: Self::DmaTag,
+        segs: &mut [Self::DmaSegment],
+        size: usize,
+        flags: i32,
+    ) -> Result<NonNull<u8>, Errno> {
+        (t._dmamem_map)(t, segs, size, flags)
+    }
+
+    unsafe fn bus_dmamem_unmap(t: Self::DmaTag, kva: NonNull<u8>, size: usize) {
+        // SAFETY: forwarded.
+        unsafe { (t._dmamem_unmap)(t, kva, size) }
+    }
+
+    fn bus_dmamem_mmap(
+        t: Self::DmaTag,
+        segs: &[Self::DmaSegment],
+        off: Off,
+        prot: i32,
+        flags: i32,
+    ) -> Option<Paddr> {
+        (t._dmamem_mmap)(t, segs, off, prot, flags)
+    }
+}
+
+impl PciMachdep for Machine {
+    type PciChipsetTag = include::pci_machdep::PciChipsetTag;
+    type Pcitag = include::pci_machdep::Pcitag;
+    type PciIntrHandle = include::pci_machdep::PciIntrHandle;
+
+    fn pci_attach_hook(parent: &Device, self_: &Device, pba: &PcibusAttachArgs) {
+        (pba.pba_pc.pc_attach_hook)(parent, self_, pba)
+    }
+
+    fn pci_bus_maxdevs(pc: Self::PciChipsetTag, busno: i32) -> i32 {
+        (pc.pc_bus_maxdevs)(pc.pc_conf_v, busno)
+    }
+
+    fn pci_make_tag(pc: Self::PciChipsetTag, bus: i32, device: i32, function: i32) -> Self::Pcitag {
+        (pc.pc_make_tag)(pc.pc_conf_v, bus, device, function)
+    }
+
+    fn pci_decompose_tag(pc: Self::PciChipsetTag, tag: Self::Pcitag) -> (i32, i32, i32) {
+        (pc.pc_decompose_tag)(pc.pc_conf_v, tag)
+    }
+
+    fn pci_conf_size(pc: Self::PciChipsetTag, tag: Self::Pcitag) -> i32 {
+        (pc.pc_conf_size)(pc.pc_conf_v, tag)
+    }
+
+    fn pci_conf_read(pc: Self::PciChipsetTag, tag: Self::Pcitag, reg: i32) -> Pcireg {
+        (pc.pc_conf_read)(pc.pc_conf_v, tag, reg)
+    }
+
+    fn pci_conf_write(pc: Self::PciChipsetTag, tag: Self::Pcitag, reg: i32, data: Pcireg) {
+        (pc.pc_conf_write)(pc.pc_conf_v, tag, reg, data)
+    }
+
+    fn pci_probe_device_hook(pc: Self::PciChipsetTag, pa: &mut PciAttachArgs) -> i32 {
+        (pc.pc_probe_device_hook)(pc.pc_conf_v, pa)
+    }
+
+    fn pci_dev_postattach(_dev: &Device, _pa: &PciAttachArgs) {}
+
+    fn pci_min_powerstate(_pc: Self::PciChipsetTag, _tag: Self::Pcitag) -> Pcireg {
+        crate::dev::pci::pcireg::PCI_PMCSR_STATE_D3
+    }
+
+    fn pci_set_powerstate_md(_pc: Self::PciChipsetTag, _tag: Self::Pcitag, _s: i32, _p: i32) {}
+
+    fn pci_msix_table_map(
+        _pc: Self::PciChipsetTag,
+        _tag: Self::Pcitag,
+        _memt: BusSpaceTag,
+    ) -> Result<BusSpaceHandle, Errno> {
+        Err(crate::unported!("pci_msix_table_map (arm64/pci_machdep.c)"))
+    }
+
+    fn pci_msix_table_unmap(
+        _pc: Self::PciChipsetTag,
+        _tag: Self::Pcitag,
+        _memt: BusSpaceTag,
+        _memh: BusSpaceHandle,
+    ) {
+        let _ = crate::unported!("pci_msix_table_unmap (arm64/pci_machdep.c)");
+    }
+
+    fn pci_intr_enable_msivec(_pa: &PciAttachArgs, _num_vec: i32) -> bool {
+        let _ = crate::unported!("pci_intr_enable_msivec (arm64/pci_machdep.c)");
+        true
+    }
+
+    fn pci_intr_map_msi(pa: &PciAttachArgs) -> Option<Self::PciIntrHandle> {
+        (pa.pa_pc.pc_intr_map_msi)(pa)
+    }
+
+    fn pci_intr_map_msivec(pa: &PciAttachArgs, vec: i32) -> Option<Self::PciIntrHandle> {
+        (pa.pa_pc.pc_intr_map_msivec)(pa, vec)
+    }
+
+    fn pci_intr_map_msix(pa: &PciAttachArgs, vec: i32) -> Option<Self::PciIntrHandle> {
+        (pa.pa_pc.pc_intr_map_msix)(pa, vec)
+    }
+
+    fn pci_intr_map(pa: &PciAttachArgs) -> Option<Self::PciIntrHandle> {
+        (pa.pa_pc.pc_intr_map)(pa)
+    }
+
+    fn pci_intr_string(pc: Self::PciChipsetTag, ih: Self::PciIntrHandle) -> PciIntrStr {
+        (pc.pc_intr_string)(pc.pc_intr_v, ih)
+    }
+
+    fn pci_intr_establish_cpu(
+        pc: Self::PciChipsetTag,
+        ih: Self::PciIntrHandle,
+        level: i32,
+        ci: Option<&'static CpuInfo>,
+        func: PciIntrFn,
+        arg: *mut c_void,
+        what: &'static str,
+    ) -> Option<NonNull<c_void>> {
+        (pc.pc_intr_establish)(pc.pc_intr_v, ih, level, ci, func, arg, what)
+    }
+
+    unsafe fn pci_intr_disestablish(pc: Self::PciChipsetTag, cookie: NonNull<c_void>) {
+        // SAFETY: forwarded to the bridge that established it.
+        unsafe { (pc.pc_intr_disestablish)(pc.pc_intr_v, cookie) }
     }
 }
 

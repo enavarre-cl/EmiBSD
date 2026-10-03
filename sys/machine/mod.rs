@@ -2,7 +2,7 @@
 //!
 //! Generic code reaches architecture code ONLY through this module. One module per OpenBSD header
 //! ([`param`], [`vmparam`], [`cpu`], [`cons`], [`bus`], [`pmap`], [`intr`], [`db_machdep`],
-//! [`fdt`], [`proc`], [`signal`], [`tcb`]; [`autoconf`] is what `ioconf.c` and the machine's `autoconf.c`
+//! [`fdt`], [`proc`], [`signal`], [`tcb`], [`pci_machdep`]; [`autoconf`] is what `ioconf.c` and the machine's `autoconf.c`
 //! give `subr_autoconf.c`; [`bootinfo`]
 //! is the record the boot glue hands over), all re-exported here. The selected architecture is re-exported as [`Machine`]; the block at the
 //! bottom proves at compile time that it implements every trait. Adding a trait method therefore
@@ -19,6 +19,7 @@ pub mod exec;
 pub mod fdt;
 pub mod intr;
 pub mod param;
+pub mod pci_machdep;
 pub mod pmap;
 pub mod proc;
 pub mod signal;
@@ -36,6 +37,7 @@ pub use exec::*;
 pub use fdt::*;
 pub use intr::*;
 pub use param::*;
+pub use pci_machdep::*;
 pub use pmap::*;
 pub use proc::*;
 pub use signal::*;
@@ -56,6 +58,8 @@ const _: () = {
             + Console
             + Exit
             + BusSpace
+            + BusDma
+            + PciMachdep
             + DbMachdep
             + Pmap
             + Intr

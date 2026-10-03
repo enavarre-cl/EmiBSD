@@ -28,11 +28,13 @@
 //! Upstream: sys/arch/arm64/dev/mainbus.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `bus_dma` is M7: there is no `mainbus_dma_tag`, no `sc_dmat`, no `fa_dmat`, so the
-//!   `dma-coherent` copy of the tag and `iommu_device_map` are not made (reported once).
+//! - `iommu_device_map` (`ofw_misc.c`) is reported; without it every node keeps mainbus's
+//!   tag or its `dma-coherent` copy, which is what the C gets when no IOMMU claims the node.
+//! - `mainbus_dma_tag` is not placed in `.rodata` by hand: a Rust `static` without interior
+//!   mutability already is read-only.
 //! - `thermal_init` (`ofw_thermal.c`) is reported.
 //! - `struct fdt_attach_args` cannot carry a null bus space tag, so the `efi` and `apm`
-//!   arguments, which the C zeroes but for the name, carry mainbus's tag.
+//!   arguments, which the C zeroes but for the name, carry mainbus's bus space and DMA tags.
 //! - `cf_loc[0]` (the `early` locator) of an entry without locators reads as 0, the
 //!   locator's default.
 //! - A node whose `reg` lines would be zero cells long (`#address-cells` and `#size-cells`
@@ -46,10 +48,16 @@ use core::sync::atomic::Ordering;
 
 use libkern::strlcpy;
 
+use crate::arch::arm64::arm64::bus_dma::{
+    _dmamap_create, _dmamap_destroy, _dmamap_load, _dmamap_load_buffer, _dmamap_load_mbuf,
+    _dmamap_load_raw, _dmamap_load_uio, _dmamap_sync, _dmamap_unload, _dmamem_alloc,
+    _dmamem_alloc_range, _dmamem_free, _dmamem_map, _dmamem_mmap, _dmamem_unmap,
+};
 use crate::arch::arm64::arm64::bus_space::ARM64_BS_TAG;
 use crate::arch::arm64::arm64::intr::arm_intr_init_fdt;
 use crate::arch::arm64::dev::agtimer::agtimer_init;
 use crate::arch::arm64::include::armreg::{MPIDR_AFF, read_specialreg};
+use crate::arch::arm64::include::bus::{self, BUS_DMA_COHERENT};
 use crate::arch::arm64::include::fdt::FdtAttachArgs;
 use crate::dev::ofw::fdt::FdtReg;
 use crate::dev::ofw::openfirm::{
@@ -61,11 +69,11 @@ use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_sysctl::{hw_prod, hw_serial};
 use crate::kern::subr_autoconf::{config_found, config_found_sm, config_mountroot};
 use crate::kern::subr_prf::{Str, panic, printf};
-use crate::machine::bus::BusSpaceTag;
+use crate::machine::bus::{BusDmaTag, BusSpaceTag};
 use crate::sys::device::{
     CfMatch, Cfattach, Cfdriver, CfmatchT, CfprintT, DV_DULL, Device, QUIET, Softc, UNCONF,
 };
-use crate::sys::malloc::{M_DEVBUF, M_NOWAIT, M_TEMP, M_WAITOK};
+use crate::sys::malloc::{M_DEVBUF, M_NOWAIT, M_TEMP, M_WAITOK, M_ZERO};
 use crate::unported;
 
 /// `struct mainbus_softc`.
@@ -77,7 +85,8 @@ pub struct MainbusSoftc {
     pub sc_node: Cell<i32>,
     /// `sc_iot`.
     pub sc_iot: Cell<Option<BusSpaceTag>>,
-    // sc_dmat: bus_dma (M7).
+    /// `sc_dmat`.
+    pub sc_dmat: Cell<Option<BusDmaTag>>,
     /// `sc_acells`: the `#address-cells` of the nodes being attached.
     pub sc_acells: Cell<i32>,
     /// `sc_scells`: their `#size-cells`.
@@ -100,6 +109,14 @@ impl MainbusSoftc {
             None => panic(format_args!("mainbus: no bus space")),
         }
     }
+
+    /// `sc->sc_dmat`, set by `mainbus_attach` before any child is offered.
+    fn dmat(&self) -> BusDmaTag {
+        match self.sc_dmat.get() {
+            Some(dmat) => dmat,
+            None => panic(format_args!("mainbus: no dma tag")),
+        }
+    }
 }
 
 // SAFETY: `#[repr(C)]`, the device first; every other field is a `Cell` of an integer, a
@@ -117,6 +134,28 @@ pub static MAINBUS_CA: Cfattach = Cfattach {
 
 /// `mainbus_cd`.
 pub static MAINBUS_CD: Cfdriver = Cfdriver::new(b"mainbus", DV_DULL, 0);
+
+/// `mainbus_dma_tag`: the generic `bus_dma` functions, not cache-coherent.
+pub static MAINBUS_DMA_TAG: bus::BusDmaTag = bus::BusDmaTag {
+    _cookie: ptr::null_mut(),
+    _flags: 0,
+    _dmamap_create,
+    _dmamap_destroy,
+    _dmamap_load,
+    _dmamap_load_mbuf,
+    _dmamap_load_uio,
+    _dmamap_load_raw,
+    _dmamap_load_buffer,
+    _dmamap_unload,
+    _dmamap_sync,
+    _dmamem_alloc,
+    _dmamem_alloc_range,
+    _dmamem_free,
+    _dmamem_map,
+    _dmamem_unmap,
+    _dmamem_mmap,
+    _dma_mask: 0,
+};
 
 /// `(struct mainbus_softc *)self`.
 fn softc(dev: &Device) -> &MainbusSoftc {
@@ -161,7 +200,7 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
 
     sc.sc_node.set(OF_peer(0));
     sc.sc_iot.set(Some(&ARM64_BS_TAG));
-    // sc_dmat = &mainbus_dma_tag: bus_dma (M7), reported below, after the attach line.
+    sc.sc_dmat.set(Some(&MAINBUS_DMA_TAG));
     sc.sc_acells
         .set(OF_getpropint(OF_peer(0), b"#address-cells", 1) as i32);
     sc.sc_scells
@@ -182,7 +221,6 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
         // SAFETY: as for hw_prod.
         unsafe { *hw_serial.get_mut() = kept_string(&prop, len as usize) };
     }
-    let _ = unported!("mainbus_dma_tag (bus_dma, M7)");
 
     mainbus_attach_psci(self_);
     mainbus_attach_efi(self_);
@@ -342,7 +380,26 @@ pub fn mainbus_attach_node(self_: &Device, node: i32, submatch: Option<CfmatchT>
         intr = Some((p, nintr));
     }
 
-    // dma-coherent and iommu_device_map: bus_dma (M7), see the module's deviations.
+    let mut dmat: BusDmaTag = sc.dmat();
+    if OF_getproplen(node, b"dma-coherent") >= 0 {
+        let Some(p) = malloc(size_of::<bus::BusDmaTag>(), M_DEVBUF, M_WAITOK | M_ZERO) else {
+            panic(format_args!("mainbus: out of memory for a dma tag"));
+        };
+        let tag = p.cast::<bus::BusDmaTag>();
+        // SAFETY: a fresh allocation of a tag's size, written once before it is shared and
+        // never freed, as in C: the child keeps it.
+        unsafe {
+            tag.write(bus::BusDmaTag {
+                _flags: dmat._flags | BUS_DMA_COHERENT,
+                ..*dmat
+            });
+            dmat = &*tag.as_ptr();
+        }
+    }
+
+    // iommu_device_map(fa.fa_node, fa.fa_dmat): ofw_misc.c, which hands back the tag
+    // unchanged when no IOMMU claims the node.
+    let _ = unported!("iommu_device_map (ofw_misc.c)");
 
     let print: Option<CfprintT> = if submatch.is_none() && sc.sc_early.get() == 0 {
         Some(mainbus_print)
@@ -356,6 +413,7 @@ pub fn mainbus_attach_node(self_: &Device, node: i32, submatch: Option<CfmatchT>
             fa_name: b"",
             fa_node: node,
             fa_iot: sc.iot(),
+            fa_dmat: dmat,
             // SAFETY: `nreg` entries written above, alive until the frees below.
             fa_reg: reg.map_or(&[], |(p, n)| unsafe {
                 slice::from_raw_parts(p.as_ptr(), n)
@@ -508,6 +566,7 @@ pub fn mainbus_attach_efi(self_: &Device) {
         fa_name: b"efi",
         fa_node: 0,
         fa_iot: sc.iot(),
+        fa_dmat: sc.dmat(),
         fa_reg: &[],
         fa_intr: &[],
         fa_acells: 0,
@@ -523,6 +582,7 @@ pub fn mainbus_attach_apm(self_: &Device) {
         fa_name: b"apm",
         fa_node: 0,
         fa_iot: sc.iot(),
+        fa_dmat: sc.dmat(),
         fa_reg: &[],
         fa_intr: &[],
         fa_acells: 0,

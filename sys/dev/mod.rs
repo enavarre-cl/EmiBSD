@@ -5,6 +5,7 @@
 //! ISA bus definitions amd64 still needs.
 //! `consfile` is the console-as-a-file stand-in until `/dev/console` exists (not OpenBSD
 //! code, `ports.toml` `[[extra]]`).
+//! ISA bus definitions amd64 still needs, `pci/` the PCI bus.
 
 pub mod cons;
 pub mod consfile;
@@ -12,4 +13,5 @@ pub mod fdt;
 pub mod ic;
 pub mod isa;
 pub mod ofw;
+pub mod pci;
 pub mod rnd;

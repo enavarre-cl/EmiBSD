@@ -489,13 +489,15 @@ rust = "sys/arch/amd64/amd64/autoconf.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "44b9bb496717cc9e5cbade667b3fd255cc9f2131"
-notes = "M2: cold (now sys/systm.rs); M7b: cpu_configure in the C's order around config_rootfound(\"mainbus\") (panics if it fails); lapic_boot_init at the architectural base before it (what acpimadt/mpbios would do), and after it lapic_enable, lapic_set_lvt, intr_enable and lapic_calibrate_timer (what the boot processor's attach adds to the CPU_ROLE_SP attach mainbus does without tables), intr_printconfig, lcr8(0), spl0, cold = 0; pmap_randomize, map_tramps, bus_dma_init, mbuf_dma_64bit_enable, ioapic_enable, unmap_startup and the viac3/rdrand timeouts reported; device_register (empty, as in C) through machine::autoconf; nam2blk[]; diskconf (setroot, dumpconf, parsedisk) waits for disks"
+notes = "M2: cold (now sys/systm.rs); M7b: cpu_configure in the C's order around config_rootfound(\"mainbus\") (panics if it fails); lapic_boot_init at the architectural base before it (what acpimadt/mpbios would do), and after it lapic_enable, lapic_set_lvt, intr_enable and lapic_calibrate_timer (what the boot processor's attach adds to the CPU_ROLE_SP attach mainbus does without tables), intr_printconfig, lcr8(0), spl0, cold = 0; pmap_randomize, map_tramps, ioapic_enable, unmap_startup and the viac3/rdrand timeouts reported; device_register (empty, as in C) through machine::autoconf; nam2blk[]; diskconf (setroot, dumpconf, parsedisk) waits for disks; M7b (bus_dma): bus_dma_init runs (then selftest bus_dma_check on pci_bus_dma_tag under feature qemu), mbuf_dma_64bit_enable runs (it reports ifnetlist itself)"
 
 [[file]]
 c = "sys/arch/amd64/include/bus.h"
 rust = "sys/arch/amd64/include/bus.rs"
-status = "todo"
-notes = "one of its two blocks is BSD-4-clause (Demetriou), allowed by the user at M2. The bus_space interface is the machine contract (sys/machine/bus.rs) and the accessors live in bus_space.rs for now; port the ops table (struct x86_bus_space_ops), the flags and bus_space_barrier here when memory space and bus_dma land (M3/M6)"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "53c22813fb4fe59d2bc3a5ee99ccbea5882e53e0"
+notes = "one of its two blocks is BSD-4-clause (Demetriou), allowed by the user at M2. M7b: the bus_dma half: BUS_DMA_* (incl. 32BIT/24BIT), BUS_DMASYNC_*, bus_dma_segment_t (BusDmaSegment, _ds_va/_ds_bounce_va usize with usize::MAX for -1), struct bus_dma_tag (BusDmaTag, a table of fn pointers taking slices and returning Result; loads are unsafe fn), struct bus_dmamap (BusDmamap: Cell members for what load/unload change, the segments and bounce-page pointers after the header in the same allocation, reached through _dm_segs/_dm_pages pointers; dm_segs()/seg()/dm_page()); the bus_space half (bus_addr_t/bus_size_t, struct x86_bus_space_ops, BUS_SPACE_MAP_*, bus_space_barrier) still lives in amd64/bus_space.rs and machine/bus.rs (M2)"
 
 [[file]]
 c = "sys/arch/amd64/amd64/bus_space.c"
@@ -580,7 +582,7 @@ rust = "sys/arch/arm64/include/bus.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "fa8e2a350c7aad4ea8a246fc150b084fea936a8a"
-notes = "M2: struct bus_space with single-register accessors, map/unmap/subregion/vaddr (fn pointers; _space_map is unsafe fn), BUS_SPACE_MAP_*, bus_space_barrier (dsb sy); raw-multi accessors, _space_mmap, bus_private and bus_dma are M6"
+notes = "M2: struct bus_space with single-register accessors, map/unmap/subregion/vaddr (fn pointers; _space_map is unsafe fn), BUS_SPACE_MAP_*, bus_space_barrier (dsb sy); raw-multi accessors, _space_mmap and bus_private come with their drivers; M7b: BUS_DMA_* (incl. BUS3/BUS4/FIXED), BUS_DMASYNC_*, bus_dma_segment_t, struct bus_dma_tag (Clone/Copy for the dma-coherent copy; _flags, _dmamap_load_buffer, _dma_mask), struct bus_dmamap (as amd64's: Cells, segments and bounce pages after the header); the prototypes are arm64/bus_dma.rs and arm64/bus_space.rs"
 
 [[file]]
 c = "sys/arch/arm64/arm64/bus_space.c"
@@ -723,7 +725,7 @@ rust = "sys/arch/arm64/arm64/cpufunc.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a1039819b9826ff32ea67aad0cb0c1b1236d6436"
-notes = "TLB invalidations and cpu_setttb as asm! blocks (no RETGUARD, no CPTAG_REPEAT_TLBI codepatch until M4); M6-b2: cpu_icache_sync_range (line sizes from CTR_EL0); cpu_dcache_*_range and cpu_idcache_wbinv_range when a caller needs them"
+notes = "TLB invalidations and cpu_setttb as asm! blocks (no RETGUARD, no CPTAG_REPEAT_TLBI codepatch until M4); M6-b2: cpu_icache_sync_range (line sizes from CTR_EL0); M7b: cpu_dcache_wb_range, cpu_dcache_wbinv_range, cpu_dcache_inv_range (unsafe: it discards dirty lines) for bus_dma, the cache_handle_range macro as dcache_range! with dcache_line_size read from CTR_EL0; cpu_idcache_wbinv_range when a caller needs it"
 
 [[file]]
 c = "sys/arch/amd64/include/pmap.h"
@@ -1411,7 +1413,7 @@ rust = "sys/arch/arm64/arm64/autoconf.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "5e38a2bc8e6ae08588b523f3eac6a4020b1e2bfa"
-notes = "M4/M5: cpu_configure as far as the interrupts go; M7b: cpu_configure in the C's order (splhigh, softintr_init, config_rootfound(\"mainbus\"), cold = 0, spl0; the GIC and the generic timer now attach through mainbus, attach_interrupt_controller and attach_timer are gone); bus_dma_init, unmap_startup (with codepatch_disable) and cpu_identify_cleanup reported; device_register (empty, as in C) through machine::autoconf; nam2blk[]; diskconf waits for disks; cold lives in sys/systm.rs"
+notes = "M4/M5: cpu_configure as far as the interrupts go; M7b: cpu_configure in the C's order (splhigh, softintr_init, config_rootfound(\"mainbus\"), cold = 0, spl0; the GIC and the generic timer now attach through mainbus, attach_interrupt_controller and attach_timer are gone); unmap_startup (with codepatch_disable) and cpu_identify_cleanup reported; M7b: bus_dma_init runs (then selftest bus_dma_check on mainbus_dma_tag under feature qemu); device_register (empty, as in C) through machine::autoconf; nam2blk[]; diskconf waits for disks; cold lives in sys/systm.rs"
 
 # ---------------------------------------------------------------------------
 # M4-b2: arm64 device tree, GICv2, PL011 receive interrupt
@@ -1449,7 +1451,7 @@ rust = "sys/arch/arm64/include/fdt.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "af2721fdadabcbf787241bb0c891aeeb9091c54a"
-notes = "M4: struct fdt_attach_args (slices for fa_reg/fa_intr, no fa_dmat until bus_dma M7) and the fdt_intr_* aliases that exist; stdout_node/stdout_speed/fdt_cons_bs_tag/fdt_find_cons are arm64/machdep.rs behind the machine::fdt contract; the imap/msi aliases come with PCI (M5)"
+notes = "M4: struct fdt_attach_args (slices for fa_reg/fa_intr; M7b: fa_dmat) and the fdt_intr_* aliases that exist; stdout_node/stdout_speed/fdt_cons_bs_tag/fdt_find_cons are arm64/machdep.rs behind the machine::fdt contract; the imap/msi aliases come with PCI (M5)"
 
 [[file]]
 c = "sys/arch/arm64/dev/ampintc.c"
@@ -2271,7 +2273,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b62c6aa84d31d9d375165ec678f54e72f5a2115a"
 deps = ["sys/kern/subr_autoconf.c", "sys/arch/amd64/include/cpuvar.h", "sys/arch/amd64/amd64/cpu.c"]
-notes = "BSD-4-clause block (Demetriou, NetBSD), accepted at M2. M7b: mainbus_ca/mainbus_cd (CD_COCOVM), union mainbus_attach_args (mba_busname and mba_caa; the other members come with their buses), isa_has_been_seen, mainbus_match, mainbus_attach (cpu0 attached as CPU_ROLE_SP when nothing set CPUF_PRESENT), mainbus_efifb_reattach, mainbus_print; reported: efifb_cnremap, bios0 (acpi0, mpbios0), ipmi_probe, replacemds, setperf_setup, pvbus_probe, pci0 (pci_init_extents), isa0, vmm_enabled, efifb0, codepatch_disable, and the pci bus number in mainbus_print; mp_busses/mp_intrs come with mpbios/acpi"
+notes = "BSD-4-clause block (Demetriou, NetBSD), accepted at M2. M7b: mainbus_ca/mainbus_cd (CD_COCOVM), union mainbus_attach_args (mba_busname, mba_caa and, M7b, mba_pba; the other members come with their buses), isa_has_been_seen, mainbus_match, mainbus_attach (cpu0 attached as CPU_ROLE_SP when nothing set CPUF_PRESENT; M7b: pci0 at mainbus0 bus 0 with pci_bus_dma_tag, no extents, pba_domain from pci_ndomains, as without ACPI), mainbus_efifb_reattach, mainbus_print (M7b: the pci bus number); reported: efifb_cnremap, bios0 (acpi0, mpbios0), ipmi_probe, replacemds, setperf_setup, pvbus_probe, pci_init_extents (from pci_machdep.rs), isa0, vmm_enabled, efifb0, codepatch_disable; mp_busses/mp_intrs come with mpbios/acpi"
 
 [[file]]
 c = "sys/arch/amd64/include/cpuvar.h"
@@ -2288,7 +2290,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "525d03139430f1237e6c74a063c5b56ba6656d5a"
 deps = ["sys/kern/subr_autoconf.c", "sys/dev/ofw/fdt.c", "sys/arch/arm64/include/fdt.h", "sys/arch/arm64/arm64/intr.c", "sys/arch/arm64/dev/agtimer.c"]
-notes = "M7b: struct mainbus_softc (repr(C), no sc_dmat), mainbus_ca/mainbus_cd, mainbus_match, mainbus_attach (arm_intr_init_fdt, agtimer_init, the model line, psci, efi, the CPUs, /firmware, /reserved-memory, ranges, apm, the three early passes, the framebuffer deferred to mountroot), mainbus_print, mainbus_attach_node (fa_reg/fa_intr malloc'd as in C), mainbus_match_status, mainbus_attach_cpus (ncpusfound), mainbus_match_primary/secondary, mainbus_attach_psci/efi/apm/framebuffer/firmware/resvmem; reported: mainbus_dma_tag/dma-coherent/iommu_device_map (bus_dma, M7), thermal_init; hw_prod and hw_serial are kept (malloc'd copies in kern_sysctl.c's statics) since kern_sysctl.c; efi/apm args carry mainbus's bus tag (FdtAttachArgs has no null tag); a missing early locator reads as 0; a zero-cell reg line is skipped instead of dividing by zero"
+notes = "M7b: struct mainbus_softc (repr(C), no sc_dmat), mainbus_ca/mainbus_cd, mainbus_match, mainbus_attach (arm_intr_init_fdt, agtimer_init, the model line, psci, efi, the CPUs, /firmware, /reserved-memory, ranges, apm, the three early passes, the framebuffer deferred to mountroot), mainbus_print, mainbus_attach_node (fa_reg/fa_intr malloc'd as in C), mainbus_match_status, mainbus_attach_cpus (ncpusfound), mainbus_match_primary/secondary, mainbus_attach_psci/efi/apm/framebuffer/firmware/resvmem; reported: mainbus_dma_tag/dma-coherent/iommu_device_map (bus_dma, M7), thermal_init; hw_prod and hw_serial are kept (malloc'd copies in kern_sysctl.c's statics) since kern_sysctl.c; efi/apm args carry mainbus's bus tag (FdtAttachArgs has no null tag); a missing early locator reads as 0; a zero-cell reg line is skipped instead of dividing by zero; M7b: mainbus_dma_tag (a plain static, not placed in .rodata by hand), sc_dmat, fa_dmat, the dma-coherent copy of the tag (malloc'd, never freed, as in C); reported: iommu_device_map (ofw_misc.c; the node keeps its tag), hw_prod, hw_serial, thermal_init; efi/apm args carry mainbus's bus space and DMA tags (FdtAttachArgs has no null tag); a missing early locator reads as 0; a zero-cell reg line is skipped instead of dividing by zero"
 
 [[file]]
 c = "sys/conf/files"
@@ -2298,7 +2300,7 @@ notes = "replaced-by-ioconf.rs: config(8) is not ported; what it would generate 
 [[file]]
 c = "sys/arch/amd64/conf/GENERIC"
 status = "skipped"
-notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root and cpu0 at mainbus?, the GENERIC lines whose drivers exist; the rest join as their drivers are ported"
+notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root, cpu0 at mainbus? and pci* at mainbus0 (M7b), the GENERIC lines whose drivers exist; the rest join as their drivers are ported"
 
 [[file]]
 c = "sys/arch/arm64/conf/GENERIC"
@@ -2583,13 +2585,143 @@ rust = "sys/conf/vers.rs"
 status = "skipped"
 notes = "replaced-by-build.rs: sys/build.rs passes the build's facts (EMIBSD_BUILD, SOURCE_DATE_EPOCH, USER, EMIBSD_BUILD_HOST, the sys/ directory; the justfile derives the first two from the repository's last commit) and sys/conf/vers.rs builds what the generated vers.c holds: ostype EmiBSD, osrelease 7.8 (the user's decision), osversion GENERIC#<n>, sccs, version; STATUS is the release one (empty); reproducible: no clock, no counter file"
 
+# ---------------------------------------------------------------------------
+# M7b: bus_dma(9) and PCI
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/arch/amd64/amd64/bus_dma.c"
+rust = "sys/arch/amd64/amd64/bus_dma.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f4efff95a187188970d51a99385f79a6fe6ac09f"
+deps = ["sys/arch/amd64/include/bus.h", "sys/uvm/uvm_page.c", "sys/uvm/uvm_km.c", "sys/kern/kern_malloc.c", "sys/kern/uipc_mbuf.c", "sys/sys/uio.h"]
+notes = "M7b: the whole file: bus_dma_high_pages/bus_dma_bounce_pages/bus_dma_bounces (atomics), bus_dma_init, _bus_dmamap_create (bounce pages when !BUS_DMA_64BIT and memory above dma_constraint), _bus_dmamap_destroy, _bus_dmamap_load, _bus_dmamap_load_mbuf, _bus_dmamap_load_uio, _bus_dmamap_load_raw, _bus_dmamap_unload, _bus_dmamap_sync (bounce copies), _bus_dmamem_alloc, _bus_dmamem_free, _bus_dmamem_map (direct map for one cacheable segment), _bus_dmamem_unmap, _bus_dmamem_mmap (None for -1), _bus_dmamap_load_buffer, _bus_dmamem_alloc_range; the segment insertion/coalescing shared by load_raw and load_buffer is dmamap_add_chunk; reported: the NKSTAT mainbus0 dma kstat (subr_kstat.c); cpu_sev_guestmode is false (identcpu.c SEV probe not ported); a failed pmap_extract panics (the C reads garbage); km_alloc(kv_any, kp_none) is reported by uvm_km.rs, so bounce maps and multi-segment/NOCACHE bus_dmamem_map fail with ENOMEM until it maps virtual-only space; a map has room for at least one segment; out pointers are return values; QEMU selftest bus_dma_check (load_raw shapes: coalesced, maxsegsz, boundary, overflow; linear and mbuf loads; syncs)"
+
+[[file]]
+c = "sys/arch/arm64/arm64/bus_dma.c"
+rust = "sys/arch/arm64/arm64/bus_dma.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d3acc83729894d6dbc0e76c7c3a63d1c59fd64c1"
+deps = ["sys/arch/arm64/include/bus.h", "sys/arch/arm64/arm64/cpufunc_asm.S", "sys/uvm/uvm_page.c", "sys/uvm/uvm_km.c", "sys/kern/kern_malloc.c", "sys/kern/uipc_mbuf.c", "sys/sys/uio.h"]
+notes = "M7b: the whole file: bus_dma_high_pages/bounce_pages/bounces, bus_dma_init, _dmamap_create (BUS_DMA_64BIT cleared, XXX as in C), _dmamap_destroy, _dmamap_load/_load_mbuf/_load_uio (through t->_dmamap_load_buffer), _dmamap_load_raw, _dmamap_unload, _dmamap_sync_segment (cpu_dcache_wbinv/wb/inv_range, membar_sync as a SeqCst fence), _dmamap_sync (BUS_DMA_COHERENT tags only fence; bounce copies; panics on running off the map), _dmamem_alloc, _dmamem_free, _dmamem_map (pmap_kenter_cache, CI for NOCACHE or a coherent request on a non-coherent tag), _dmamem_unmap, _dmamem_mmap, _dmamap_load_buffer (_dma_mask narrows the boundary mask), _dmamem_alloc_range; reported: the NKSTAT kstat; km_alloc(kv_any, kp_none) is reported by uvm_km.rs, so _dmamem_map and bounce maps fail with ENOMEM until it maps virtual-only space (loads of direct-map buffers work); QEMU selftest bus_dma_check"
+
+[[file]]
+c = "sys/dev/pci/pcireg.h"
+rust = "sys/dev/pci/pcireg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4871e460cc84af0197d5dbe833512b93cb527b67"
+notes = "M7b: the whole header: every register offset (i32), bit, mask and class code (u32; the two 64-bit masks u64), the typedefs (PciVendorId, PciClass, PciIntrPin, ...), the function-like macros as lower-case const fns (PCI_MAPREG_TYPE keeps its capitals: pci_map.c has a function pci_mapreg_type), PCI_COMMAND_STATUS_BITS (%b string, hex escapes), PCI_MSIX_*(i) as usize offsets, the VPD resource structs (repr(C, packed)); host tests of the BAR size decoding and register fields; reference-backed test of every constant"
+
+[[file]]
+c = "sys/dev/pci/ppbreg.h"
+rust = "sys/dev/pci/ppbreg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "50a8b0a755cb802775c709dd11449b2af13bca08"
+notes = "BSD-4-clause block (Demetriou), accepted at M2. M7b: the whole header (PPB_REG_*, PPB_BUSINFO_* and PPB_INTERRUPT_SWIZZLE as const fns, the I/O and memory window constants, PPB_BC_*); host and reference-backed tests"
+
+[[file]]
+c = "sys/dev/pci/pcidevs.h"
+rust = "sys/dev/pci/pcidevs.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8f85c9d2744407eba39360fa2892e4bd178abdd8"
+notes = "generated by devlist2h.awk from sys/dev/pci/pcidevs (BSD-4-clause, Demetriou, accepted at M2; 350 vendors, 9600 products, 640 KB). M7b: only the IDs ported code names (PCI_VENDOR_CIRRUS/AMD/INTEL/INVALID, the three AMD xHCI products pci_set_powerstate knows, PCI_PRODUCT_CIRRUS_CL_PD6729, PCI_PRODUCT_INTEL_82371FB_ISA), as u32, added by hand; the rest waits for a devlist2h-like generator in tools/xtask; reference-backed test"
+
+[[file]]
+c = "sys/dev/pci/pcidevs_data.h"
+rust = "sys/dev/pci/pcidevs_data.rs"
+status = "todo"
+notes = "the PCIVERBOSE vendor/product name tables (generated, 800 KB): pci_findvendor/pci_findproduct find nothing and pci_devinfo prints the IDs until a devlist2h-like generator in tools/xtask produces them (pci_subr.rs, docs/ARCHITECTURE.md)"
+
+[[file]]
+c = "sys/dev/pci/pcivar.h"
+rust = "sys/dev/pci/pcivar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0a89f15053464f012c333798a71550b54d6bb84f"
+deps = ["sys/dev/pci/pcireg.h", "sys/sys/device.h"]
+notes = "BSD-4-clause block (Hannum), accepted at M2. M7b: pcireg_t (Pcireg), PCI_PWR_*, struct pci_matchid, struct pcibus_attach_args (repr(C), bus name first; Copy), struct pci_attach_args (Copy), PCI_FLAGS_*, struct pci_quirkdata, PCI_QUIRK_*, struct pci_softc (repr(C) of Cells; Softc), the pcibuscf_bus/pcicf_dev/pcicf_function locators as functions of the cfdata (a missing locator reads as its wildcard), PCIBUS_UNK_BUS, PCI_UNK_DEV, PCI_UNK_FUNCTION; the extent members (pba_*ex, pa_*ex, sc_*ex) are absent until sys/extent.h (always NULL); bridge tag/handles are Option<&'static>; pci_ndomains/pci_dopm live in pci.rs; the prototypes belong to pci.c, pci_map.c, pci_subr.c, pci_quirks.c; reference-backed test"
+
+[[file]]
+c = "sys/dev/pci/pci_quirks.c"
+rust = "sys/dev/pci/pci_quirks.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1525ee92eecd09d1560df4d520e29624b514de40"
+deps = ["sys/dev/pci/pcivar.h", "sys/dev/pci/pcidevs.h"]
+notes = "BSD-4-clause block (Demetriou), accepted at M2. M7b: pci_quirks[] and pci_lookup_quirkdata (Option); host test"
+
+[[file]]
+c = "sys/dev/pci/pci_subr.c"
+rust = "sys/dev/pci/pci_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b9fac31b4221a3e83fee6414ba4867365c7ec3a4"
+deps = ["sys/dev/pci/pcireg.h", "sys/dev/pci/pcivar.h", "sys/kern/subr_prf.c"]
+notes = "BSD-4-clause block (Hannum), accepted at M2. M7b: struct pci_class and every class/subclass table (slices without the terminator), pci_findvendor, pci_findproduct, pci_devinfo (into a byte buffer); option PCIVERBOSE (in GENERIC) is not configured: pcidevs_data.h is not ported, so the finders return None and the attach lines print vendor/product IDs, as a kernel without the option does; the verbose branches stay behind the PCIVERBOSE const; host test of the attach-line text"
+
+[[file]]
+c = "sys/dev/pci/pci_map.c"
+rust = "sys/dev/pci/pci_map.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "dd469f79707179ce542c053271a6636c6f0e03f5"
+deps = ["sys/dev/pci/pcireg.h", "sys/dev/pci/pcivar.h"]
+notes = "M7b: obsd_pci_io_find, obsd_pci_mem_find (64-bit decoding, bus_addr_t is 64-bit everywhere), pci_mapreg_type, pci_mapreg_probe (Option), pci_mapreg_info, pci_mapreg_assign, pci_mapreg_map (returns bus_space_map's error where the C returns 1); out pointers are return values; a BAR left at 0 cannot be placed without the bus's extent (sys/extent.h): EINVAL, as the C without an extent, and PCI_IO_START..PCI_MEM_END are not needed; DEBUG printfs under feature debug; host tests over a fake configuration space (I/O, 32-bit and 64-bit prefetchable BARs, mismatches, void regions, assign, map)"
+
+[[file]]
+c = "sys/dev/pci/pci.c"
+rust = "sys/dev/pci/pci.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f427c4748292d63d54e008ec5022cd95545f6a24"
+deps = ["sys/dev/pci/pcivar.h", "sys/dev/pci/ppbreg.h", "sys/dev/pci/pci_map.c", "sys/dev/pci/pci_subr.c", "sys/dev/pci/pci_quirks.c", "sys/kern/subr_autoconf.c"]
+notes = "M7b: struct msix_vector, struct pci_dev (repr(C) of Cells, malloc'd, PciDevList adapter), NMAPREG, pci_ca/pci_cd (CD_COCOVM), pci_ndomains, pci_vga_pci (AtomicPtr), pci_vga_tag (StaticCell<Option>), pci_dopm, pcimatch, pciattach, pcidetach, pciactivate, pci_suspend, pci_powerdown, pci_resume, pciprint, pcisubmatch, pci_probe_device, pci_detach_devices, pci_get_capability/pci_get_ht_capability/pci_get_ext_capability (Option<(offset, value)>), pci_requester_id, pci_find_device, pci_get_powerstate, pci_set_powerstate, pci_enumerate_bus, pci_reserve_resources (sizes BARs and the ROM; reserves nothing: the extents are always NULL; the bridge-window half reduced to a comment), pci_vpd_read (slice), pci_matchbyid, pci_disable_legacy_vga, pci_disable_vga/pci_enable_vga/pci_route_vga/pci_unroute_vga, pci_primary_vga, the __HAVE_PCI_MSIX table functions and pci_intr_msix_count; not ported: USER_PCICONF's pciopen/pciclose/pciioctl and pci_vga_proc (sys/pciio.h, cdevsw); a failed M_WAITOK malloc panics; host tests (capability walk, power states, enumeration with multifunction headers and quirks, swizzling)"
+
+[[file]]
+c = "sys/arch/amd64/include/pci_machdep.h"
+rust = "sys/arch/amd64/include/pci_machdep.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c2c97aa28c7106e12d4ac4ed6f11566141077d92"
+notes = "BSD-4-clause block (Hannum), accepted at M2. M7b: pci_chipset_tag_t (Option<NonNull<c_void>>, always None), pcitag_t (u32), pci_intr_handle_t, pci_intr_line (a function), X86_PCI_INTERRUPT_LINE_NO_CONNECTION, PCI_IO_START/END, PCI_MEM_START; the prototypes are amd64/pci/pci_machdep.rs and machine::pci_machdep; the extent externs wait for sys/extent.h"
+
+[[file]]
+c = "sys/arch/amd64/include/i82093var.h"
+rust = "sys/arch/amd64/include/i82093var.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "893dcd5744e56afddb212b4ffe032c03e45fd298"
+notes = "M7b: APIC_INT_VIA_APIC/MSG/MSGX, APIC_INT_APIC/PIN_MASK/SHIFT, APIC_IRQ_* as const fns; struct ioapic_pin, struct ioapic_softc and the ioapic_* prototypes come with ioapic.c"
+
+[[file]]
+c = "sys/arch/amd64/pci/pci_machdep.c"
+rust = "sys/arch/amd64/pci/pci_machdep.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d29e73a43c7dbb7b0999ab237726664ab2f08d08"
+deps = ["sys/arch/amd64/include/pci_machdep.h", "sys/arch/amd64/include/i82093var.h", "sys/arch/amd64/amd64/bus_dma.c", "sys/arch/amd64/amd64/intr.c", "sys/dev/pci/pci.c", "sys/dev/pci/pci_map.c"]
+notes = "BSD-4-clause block (Hannum), accepted at M2. M7b: pci_mcfg_addr/min/max_bus (atomics), pci_mcfgt/pci_mcfgh (StaticCells), pci_conf_lock (IPL_HIGH mutex), PCI_MODE1_*, pci_bus_dma_tag, pci_mcfg_init, pci_lookup_segment, pci_attach_hook, pci_bus_maxdevs, pci_make_tag, pci_decompose_tag (tuple), pci_conf_size, pci_mcfg_map_bus, pci_conf_read, pci_conf_write (mechanism #1 at 0xcf8/0xcfc; ECAM when pci_mcfg_init named a window), pci_msix_table_map/unmap, PCI_MSI_VEC/TAG/PIN, msi_pic and msi_hwmask/hwunmask (the C's MSI-X lookup kept)/addroute/delroute/allocidtvec, pci_intr_enable_msivec, pci_intr_map_msi, pci_intr_map_msivec, msix_pic and msix_hwmask/hwunmask/addroute/delroute, pci_intr_map_msix, pci_intr_map (the firmware's line, 8259), pci_intr_string (by value), pci_intr_establish, pci_intr_establish_cpu, pci_intr_disestablish, pci_probe_device_hook, pci_dev_postattach, pci_min_powerstate, pci_set_powerstate_md (the NACPI == 0 bodies); mp_busses is NULL (mpbios.c/acpimadt.c not ported): the MSI maps refuse, as the C does without tables; msi_pic/msix_pic have no ioapic_edge_stubs (vector.S I/O APIC half) so an MSI establish is reported; ioapic_find reported (APIC_INT_VIA_APIC handles); memory-space bus_space_map (ECAM, MSI-X tables) reported by bus_space.rs; reported: pci_init_extents (subr_extent.c, bios_memmap), acpiprt_route_interrupt/acpidmar_pci_hook/acpi_pci_* left as comments"
+
+[[file]]
+c = "sys/arch/arm64/include/pci_machdep.h"
+rust = "sys/arch/arm64/include/pci_machdep.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2e9d1b552253d367bea7a91ee530756d3f921a46"
+notes = "M7b: pci_chipset_tag_t (&'static MachinePciChipset), pcitag_t (u64), PCITAG_NODE/OFFSET, PCI_NONE/INTX/MSI/MSIX, pci_intr_handle_t, struct machine_pci_chipset (fn pointers; intr maps return Option, pc_intr_string by value); the macros are the machine::pci_machdep impl in arch/arm64/mod.rs (pci_min_powerstate D3, set_powerstate_md and dev_postattach empty); the arm64/pci_machdep.c functions (pci_msix_table_map/unmap, pci_intr_enable_msivec, ...) are reported there; no host bridge driver (pciecam) yet, so no PCI bus attaches on arm64"
+
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"
 reason = "project helper: the Rust GlobalAlloc over malloc(9)/free(9), feature alloc"
 
 [[extra]]
 rust = "sys/kern/selftest.rs"
-reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access, selftest=uart for the receive-interrupt echo (M4) and selftest=clock for hz clock interrupts plus a timeout (M5); mbuf_chains after mbinit (M7b)"
+reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access, selftest=uart for the receive-interrupt echo (M4) and selftest=clock for hz clock interrupts plus a timeout (M5); mbuf_chains after mbinit (M7b); bus_dma_check, called by each cpu_configure after bus_dma_init with the machine's tag (M7b)"
 
 [[extra]]
 rust = "sys/reftest.rs"
@@ -2613,7 +2745,7 @@ reason = "M0 bootstrap: semihosting exit under feature qemu; not OpenBSD code"
 
 [[extra]]
 rust = "sys/arch/amd64/conf/ioconf.rs"
-reason = "replaces config(8)'s generated ioconf.c for amd64 GENERIC: cfdata[] and cfroots[] for the ported devices (mainbus0, cpu0), reached through machine::autoconf"
+reason = "replaces config(8)'s generated ioconf.c for amd64 GENERIC: cfdata[] and cfroots[] for the ported devices (mainbus0, cpu0, pci* at mainbus0 with the pcibus locator bus = -1), reached through machine::autoconf"
 
 [[extra]]
 rust = "sys/arch/arm64/conf/ioconf.rs"

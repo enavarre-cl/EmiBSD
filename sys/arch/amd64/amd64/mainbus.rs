@@ -41,22 +41,28 @@
 //! nothing has attached it yet, the paravirtual bus, PCI, ISA, `vmm` and the EFI framebuffer.
 //!
 //! ## Deviations
-//! - Only the `cpu` child exists (`sys/arch/amd64/conf/ioconf.rs`); every other child GENERIC
-//!   configures is reported with `unported!` where the C would probe or attach it: `bios0`
-//!   (which brings `acpi0` and `mpbios0`), `ipmi_probe`, `pvbus_probe`, `pci0` (with
-//!   `pci_init_extents`), `isa0`, `vmm_enabled`, `efifb`; so are `replacemds`,
-//!   `setperf_setup` and `codepatch_disable`. Without ACPI or MP tables the boot CPU attaches
-//!   here, as `CPU_ROLE_SP`, as the C does on such a machine.
-//! - `union mainbus_attach_args` has the members that exist (`mba_busname`, `mba_caa`); the
-//!   others come with their buses. `mp_busses`/`mp_intrs` (`NMPBIOS`/`NACPI`) come with
-//!   `mpbios`/`acpi`.
+//! - Only the `cpu` and `pci` children exist (`sys/arch/amd64/conf/ioconf.rs`); every other
+//!   child GENERIC configures is reported with `unported!` where the C would probe or attach
+//!   it: `bios0` (which brings `acpi0` and `mpbios0`), `ipmi_probe`, `pvbus_probe`, `isa0`,
+//!   `vmm_enabled`, `efifb`; so are `replacemds`, `setperf_setup` and `codepatch_disable`.
+//!   Without ACPI or MP tables the boot CPU attaches here, as `CPU_ROLE_SP`, and `pci0`
+//!   attaches here for bus 0 (`acpi_haspci` is false), as the C does on such a machine.
+//! - `pci0`'s attach arguments carry no extents (`sys/extent.h` is not ported, so
+//!   `pci_init_extents` is reported and `pciio_ex`, `pcimem_ex`, `pcibus_ex` are NULL).
+//! - `union mainbus_attach_args` has the members that exist (`mba_busname`, `mba_caa`,
+//!   `mba_pba`); the others come with their buses. `mp_busses`/`mp_intrs`
+//!   (`NMPBIOS`/`NACPI`) come with `mpbios`/`acpi`.
 
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicI32, Ordering};
 
+use crate::arch::amd64::amd64::bus_space::{X86_BUS_SPACE_IO, X86_BUS_SPACE_MEM};
 use crate::arch::amd64::include::cpu::{CPUF_PRESENT, cpu_info_primary};
 use crate::arch::amd64::include::cpuvar::{CPU_ROLE_SP, CpuAttachArgs};
+use crate::arch::amd64::pci::pci_machdep::{PCI_BUS_DMA_TAG, pci_init_extents};
+use crate::dev::pci::pci::PCI_NDOMAINS;
+use crate::dev::pci::pcivar::PcibusAttachArgs;
 use crate::kern::subr_autoconf::{config_found, device_mainbus};
 use crate::kern::subr_prf::{Str, printf};
 use crate::sys::device::{CD_COCOVM, CfMatch, Cfattach, Cfdriver, DV_DULL, Device, UNCONF};
@@ -70,8 +76,10 @@ pub union MainbusAttachArgs {
     pub mba_busname: &'static [u8],
     /// `mba_caa`.
     pub mba_caa: CpuAttachArgs,
-    // mba_pba (pci), mba_iba (isa), aaa_caa (ioapic), mba_iaa (ipmi), mba_bios, mba_pvba,
-    // mba_eaa (efifb): with their buses.
+    /// `mba_pba`.
+    pub mba_pba: PcibusAttachArgs,
+    // mba_iba (isa), aaa_caa (ioapic), mba_iaa (ipmi), mba_bios, mba_pvba, mba_eaa (efifb):
+    // with their buses.
 }
 
 /// `mainbus_ca`.
@@ -132,8 +140,31 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
     // NPVBUS > 0: probe first to hide the "not configured" message.
     let _ = unported!("pvbus_probe (pvbus0 at mainbus0)");
 
-    // NPCI > 0, NACPI > 0: acpipci_attach_busses when ACPI found PCI, else pci0 here.
-    let _ = unported!("pci0 at mainbus0 (pci_init_extents, dev/pci)");
+    // NPCI > 0. NACPI > 0: acpipci_attach_busses(self) when ACPI found PCI (acpi_haspci);
+    // without ACPI, pci0 here.
+    {
+        pci_init_extents();
+
+        let mut mba = MainbusAttachArgs {
+            mba_pba: PcibusAttachArgs {
+                pba_busname: b"pci",
+                pba_iot: X86_BUS_SPACE_IO,
+                pba_memt: X86_BUS_SPACE_MEM,
+                pba_dmat: &PCI_BUS_DMA_TAG,
+                pba_pc: None,
+                pba_flags: 0,
+                // pba_ioex = pciio_ex, pba_memex = pcimem_ex, pba_busex = pcibus_ex: NULL
+                // (sys/extent.h).
+                pba_domain: PCI_NDOMAINS.fetch_add(1, Ordering::Relaxed),
+                pba_bus: 0,
+                pba_bridgetag: None,
+                pba_bridgeih: None,
+                pba_intrswiz: 0,
+                pba_intrtag: 0,
+            },
+        };
+        let _ = config_found(self_, ptr::from_mut(&mut mba).cast(), Some(mainbus_print));
+    }
 
     // NISA > 0
     if ISA_HAS_BEEN_SEEN.load(Ordering::Relaxed) == 0 {
@@ -168,7 +199,9 @@ pub fn mainbus_print(aux: *mut c_void, pnp: Option<&[u8]>) -> i32 {
         printf(format_args!("{} at {}", Str(busname), Str(pnp)));
     }
     if busname == b"pci" {
-        let _ = unported!("mainbus_print: pcibus_attach_args (pba_bus)");
+        // SAFETY: a "pci" child was handed `mba_pba`, a pcibus_attach_args.
+        let pba = unsafe { &*aux.cast::<PcibusAttachArgs>() };
+        printf(format_args!(" bus {}", pba.pba_bus));
     }
 
     UNCONF

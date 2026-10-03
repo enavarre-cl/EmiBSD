@@ -62,7 +62,9 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "EmiBSD 7.8 (GENERIC) #" \
         --expect "real mem = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
-        --expect "mainbus0 at root" --expect "cpu0 at mainbus0: (uniprocessor)" \
+        --expect "selftest: bus_dma ok" --expect "mainbus0 at root" \
+        --expect "cpu0 at mainbus0: (uniprocessor)" --expect "pci0 at mainbus0 bus 0" \
+        --expect "at pci0 dev 0 function 0 not configured" \
         --expect "cpu0: apic clock running at" \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
@@ -89,7 +91,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "real mem  = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
         --expect "mainbus0 at root" --expect "ampintc0 at mainbus0 nirq " \
-        --expect "agtimer0 at mainbus0: " \
+        --expect "agtimer0 at mainbus0: " --expect "selftest: bus_dma ok" \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 7.8" \

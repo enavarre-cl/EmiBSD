@@ -38,8 +38,10 @@
 //! Status: `wip`. Milestone M3 ports the TLB invalidations (`cpu_tlb_flush`,
 //! `cpu_tlb_flush_asid`, `cpu_tlb_flush_all_asid`, `cpu_tlb_flush_asid_all`) and `cpu_setttb`.
 //! M6 adds `cpu_icache_sync_range`, which reads the line sizes from `CTR_EL0` itself (the
-//! C takes them from `cpu.c`'s probe). `cpu_dcache_*_range` and `cpu_idcache_wbinv_range`
-//! follow when a caller needs them.
+//! C takes them from `cpu.c`'s probe). M7b adds `cpu_dcache_wb_range`,
+//! `cpu_dcache_wbinv_range` and `cpu_dcache_inv_range` for `bus_dma`, which read
+//! `dcache_line_size` from `CTR_EL0` the same way; `cpu_idcache_wbinv_range` follows when a
+//! caller needs it.
 //!
 //! ## Deviations
 //! - Each routine is an `asm!` block instead of a `.S` entry: they are a few instructions each
@@ -140,6 +142,55 @@ pub fn cpu_tlb_flush_asid_all(asid: u64) {
             options(nostack, preserves_flags)
         )
     };
+}
+
+/// The smallest data cache line, `dcache_line_size`, from `CTR_EL0.DminLine` (log2 of words).
+fn dcache_line_size() -> usize {
+    let ctr: u64;
+    // SAFETY: `ctr_el0` is readable at EL1 and the read has no side effect.
+    unsafe { asm!("mrs {}, ctr_el0", out(reg) ctr, options(nomem, nostack, preserves_flags)) };
+    4usize << ((ctr >> 16) & 0xf)
+}
+
+/// `cache_handle_range dcop`: applies one `dc` operation to every line of `[va, va + len)`,
+/// then `dsb ish`.
+macro_rules! dcache_range {
+    ($op:literal, $va:expr, $len:expr) => {{
+        let line = dcache_line_size();
+        let end = $va + $len;
+        let mut addr = $va & !(line - 1);
+        while addr < end {
+            // SAFETY: cache maintenance by address on a range the caller has mapped; the
+            // caller's contract says whether discarding dirty lines is acceptable.
+            unsafe { asm!(concat!("dc ", $op, ", {}"), in(reg) addr, options(nostack, preserves_flags)) };
+            addr += line;
+        }
+        // SAFETY: a barrier.
+        unsafe { asm!("dsb ish", options(nostack, preserves_flags)) };
+    }};
+}
+
+/// `cpu_dcache_wb_range(va, len)`: writes the dirty data cache lines of `[va, va+len)` back
+/// to memory (`dc cvac`), for a device about to read it.
+pub fn cpu_dcache_wb_range(va: usize, len: usize) {
+    dcache_range!("cvac", va, len);
+}
+
+/// `cpu_dcache_wbinv_range(va, len)`: writes back and invalidates the data cache lines of
+/// `[va, va+len)` (`dc civac`).
+pub fn cpu_dcache_wbinv_range(va: usize, len: usize) {
+    dcache_range!("civac", va, len);
+}
+
+/// `cpu_dcache_inv_range(va, len)`: invalidates the data cache lines of `[va, va+len)`
+/// without writing them back (`dc ivac`), so a device's writes to memory become visible.
+///
+/// # Safety
+///
+/// `[va, va+len)` is mapped and nothing the CPU wrote to it (or to the rest of its first and
+/// last cache lines) is still needed: dirty lines are discarded.
+pub unsafe fn cpu_dcache_inv_range(va: usize, len: usize) {
+    dcache_range!("ivac", va, len);
 }
 
 /// `cpu_icache_sync_range(va, len)`: makes instructions written to `[va, va+len)` visible to

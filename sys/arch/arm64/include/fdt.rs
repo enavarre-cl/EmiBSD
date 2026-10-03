@@ -27,8 +27,7 @@
 //! contract). The `imap`/`msi` aliases come with PCI (M5).
 //!
 //! ## Deviations
-//! - `fa_reg`/`fa_nreg` and `fa_intr`/`fa_nintr` are slices; `fa_dmat` waits for `bus_dma`
-//!   (M7); `fa_name` is a byte string.
+//! - `fa_reg`/`fa_nreg` and `fa_intr`/`fa_nintr` are slices; `fa_name` is a byte string.
 
 pub use crate::arch::arm64::arm64::intr::{
     arm_intr_disable as fdt_intr_disable, arm_intr_disestablish_fdt as fdt_intr_disestablish,
@@ -42,7 +41,7 @@ pub use crate::arch::arm64::arm64::intr::{
     arm_intr_register_fdt as fdt_intr_register,
 };
 use crate::dev::ofw::fdt::FdtReg;
-use crate::machine::bus::BusSpaceTag;
+use crate::machine::bus::{BusDmaTag, BusSpaceTag};
 
 /// `struct fdt_attach_args`: what a device-tree node's driver is attached with.
 pub struct FdtAttachArgs<'a> {
@@ -52,7 +51,8 @@ pub struct FdtAttachArgs<'a> {
     pub fa_node: i32,
     /// `fa_iot`.
     pub fa_iot: BusSpaceTag,
-    // fa_dmat: bus_dma (M7).
+    /// `fa_dmat`: the node's DMA tag (mainbus's, or a `dma-coherent` copy of it).
+    pub fa_dmat: BusDmaTag,
     /// `fa_reg`: the node's `reg` entries (`fa_nreg` of them).
     pub fa_reg: &'a [FdtReg],
     /// `fa_intr`: the node's `interrupts` cells (`fa_nintr` of them).

@@ -27,13 +27,14 @@
 //! disks and the boot-only text. `cold` lives in `sys/systm.rs`.
 //!
 //! ## Deviations
-//! - `bus_dma_init`, `unmap_startup` (with its `codepatch_disable`) and
+//! - `unmap_startup` (with its `codepatch_disable`) and
 //!   `cpu_identify_cleanup` are reported.
 
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::Ordering;
 
+use crate::arch::arm64::arm64::bus_dma::bus_dma_init;
 use crate::arch::arm64::arm64::machdep::COLD;
 use crate::kern::kern_softintr::softintr_init;
 use crate::kern::subr_autoconf::config_rootfound;
@@ -70,7 +71,9 @@ pub fn cpu_configure() {
     splhigh();
 
     softintr_init();
-    let _ = unported!("bus_dma_init (M7)");
+    bus_dma_init();
+    #[cfg(feature = "qemu")]
+    crate::kern::selftest::bus_dma_check(&crate::arch::arm64::dev::mainbus::MAINBUS_DMA_TAG);
 
     let _ = config_rootfound(b"mainbus", ptr::null_mut());
 

@@ -3,10 +3,11 @@
 //! `machdep` (boot, the early init, `consinit`), `exception` (the vector table) and `trap`,
 //! `intr` (`delay`, the IRQ/FIQ entry), `bus_space`, `db_trace` and `db_interface`
 //! (ddb-lite) are partial ports; `qemu` is the emulator exit under feature `qemu`, a project
-//! helper (`ports.toml`, `[[extra]]`).
+//! helper (`ports.toml`, `[[extra]]`). `bus_dma` (M7b) is a whole port.
 
 pub mod ast;
 pub mod autoconf;
+pub mod bus_dma;
 pub mod bus_space;
 pub mod copy;
 pub mod copystr;

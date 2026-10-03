@@ -14,6 +14,7 @@ pub mod intr;
 pub mod mutex;
 pub mod param;
 pub mod pcb;
+pub mod pci_machdep;
 pub mod pmap;
 pub mod proc;
 pub mod pte;
