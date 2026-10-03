@@ -61,9 +61,6 @@
 //!   same protocol right after the allocation in C.
 //! - `so_onq` is the address of the head's `so_q0` or `so_q` (`*const SoqHead`), compared
 //!   with those addresses as the C compares the pointers.
-//! - `struct klist sb_klist` is left out of `struct sockbuf`: `struct klist` is
-//!   `kern_event.c`'s, not ported. `sb_notify` reads the list as empty; the knote calls
-//!   are reported where the C makes them.
 //! - The `sb_startzero`/`sb_endzero` `memset` is [`Sockbuf::zero_counts`].
 //! - `SOCKBUF_DEBUG` (`SBLASTRECORDCHK`, `SBLASTMBUFCHK`, `SBCHECK`) is not configured, as
 //!   in GENERIC: the checks are `uipc_socket2.rs`'s functions, called by nobody.
@@ -82,6 +79,7 @@ use crate::kern::uipc_socket2::{sbmtxassertlocked, soassertlocked_readonly};
 use crate::machine::intr::IPL_MPFLOOR;
 use crate::queue_adapter;
 use crate::sys::errno::Errno;
+use crate::sys::event::{Klist, klist_empty};
 use crate::sys::mbuf::{M_EXT, MSIZE, MT_CONTROL, MT_SONAME, Mbuf};
 use crate::sys::mutex::Mutex;
 use crate::sys::protosw::{PR_ATOMIC, PR_CONNREQUIRED, Protosw};
@@ -222,7 +220,8 @@ pub struct Sockbuf {
     pub sb_state: Cell<u32>,
     /// \[m\] `sb_timeo_nsecs`: timeout for read/write.
     pub sb_timeo_nsecs: Cell<u64>,
-    // sb_klist: struct klist, kern_event.c (see the module's deviations).
+    /// \[m\] `sb_klist`: list of knotes.
+    pub sb_klist: Klist,
 }
 
 impl Sockbuf {
@@ -244,6 +243,7 @@ impl Sockbuf {
             sb_flags: Cell::new(0),
             sb_state: Cell::new(0),
             sb_timeo_nsecs: Cell::new(0),
+            sb_klist: Klist::new(),
         }
     }
 
@@ -507,8 +507,7 @@ pub fn issplicedback(so: &Socket) -> bool {
 /// `sb_notify(sb)`: do we need to notify the other side when I/O is possible?
 pub fn sb_notify(sb: &Sockbuf) -> bool {
     mtx_enter(&sb.sb_mtx);
-    // || !klist_empty(&sb->sb_klist): no knote can be attached (see the deviations).
-    let rv = sb.has_flags(SB_WAIT | SB_ASYNC | SB_SPLICE);
+    let rv = sb.has_flags(SB_WAIT | SB_ASYNC | SB_SPLICE) || !klist_empty(&sb.sb_klist);
     mtx_leave(&sb.sb_mtx);
 
     rv

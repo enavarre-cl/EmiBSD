@@ -44,7 +44,7 @@ use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
 
 /// The vfs setup (memory, pools, a thread with a descriptor table), mbufs, the socket and
 /// control block pools, empty global lists; the thread is `curproc`.
-fn setup() -> (MutexGuard<'static, ()>, &'static Proc) {
+pub(crate) fn setup() -> (MutexGuard<'static, ()>, &'static Proc) {
     let (g, p) = crate::kern::vfs_subr::tests::setup();
     mbinit_again();
     soinit();
@@ -73,7 +73,7 @@ fn setup() -> (MutexGuard<'static, ()>, &'static Proc) {
 }
 
 /// Undoes what outlives the reset memory: the collector's task on `systqmp`, `curproc`.
-fn teardown() {
+pub(crate) fn teardown() {
     let _ = task_del(SYSTQMP, &UNP_GC_TASK);
     UNP_HEAD.0.init();
     UNP_DEFERRED.0.init();
@@ -81,7 +81,7 @@ fn teardown() {
 }
 
 /// `sosend` of `bytes` from kernel space; the bytes taken.
-fn send(so: &'static Socket, bytes: &[u8], flags: i32) -> Result<usize, Errno> {
+pub(crate) fn send(so: &'static Socket, bytes: &[u8], flags: i32) -> Result<usize, Errno> {
     let mut iov = [Iovec {
         iov_base: bytes.as_ptr().cast_mut().cast(),
         iov_len: bytes.len(),
@@ -99,7 +99,7 @@ fn send(so: &'static Socket, bytes: &[u8], flags: i32) -> Result<usize, Errno> {
 }
 
 /// `soreceive` into `buf` in kernel space; the bytes read and the flags returned.
-fn recv(so: &'static Socket, buf: &mut [u8], flags: i32) -> Result<(usize, i32), Errno> {
+pub(crate) fn recv(so: &'static Socket, buf: &mut [u8], flags: i32) -> Result<(usize, i32), Errno> {
     let len = buf.len();
     let mut iov = [Iovec {
         iov_base: buf.as_mut_ptr().cast(),
@@ -389,7 +389,7 @@ fn args(a: &[usize]) -> SysArgs {
 }
 
 /// `socketpair(AF_UNIX, SOCK_STREAM, 0, sv)`.
-fn socketpair(p: &Proc) -> [i32; 2] {
+pub(crate) fn socketpair(p: &Proc) -> [i32; 2] {
     let mut sv = [-1i32; 2];
     let mut retval = [0; 2];
     let v = args(&[
@@ -436,7 +436,7 @@ fn send_fd(p: &Proc, s: i32, fd: i32) {
 }
 
 /// `close(fd)`.
-fn close(p: &Proc, fd: i32) {
+pub(crate) fn close(p: &Proc, fd: i32) {
     let mut retval = [0; 2];
     assert_eq!(sys_close(p, &args(&[fd as usize]), &mut retval), Ok(()));
 }

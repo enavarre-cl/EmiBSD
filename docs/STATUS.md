@@ -16,8 +16,8 @@ Done:
   (`fpu.c`), OpenBSD's makefs for the image, libc/init/ksh/cat/echo/ls/uname.
 
 Next:
-- M9a (sockets in: `9a84a98`; AF_INET/route sockets, ifconfig/ping/route next), kqueue and
-  crypto agents running. Then diagnostic tools stage 2 (libkvm, ps with
+- M9a (sockets in: `9a84a98`; kqueue in, with the pipe, tty, vnode and socket filters;
+  AF_INET/route sockets, ifconfig/ping/route next), crypto agent running. Then diagnostic tools stage 2 (libkvm, ps with
   `uvm_io`, fstat, vmstat, df/mount). M9 is split: M9a sockets and network userland, M9b
   WireGuard, M9c IPsec, M9d pf (last: it filters the tunnels too). M14b when no agents run.
 

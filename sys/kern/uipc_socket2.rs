@@ -69,9 +69,6 @@
 //!   non-zero; `sonewconn` returns `Option`.
 //! - `sbappendaddr` takes the address as its bytes (`asa.sa_len` of them, the first byte
 //!   being `sa_len`), as the C copies them with `memcpy`.
-//! - `sowakeup`'s `knote_locked(&sb->sb_klist, 0)` and `sonewconn`'s `klist_free`s are
-//!   `kern_event.c`'s: the first is reported at its site, the frees are comments (there is no
-//!   `sb_klist`, see `sys/socketvar.rs`).
 //! - `SOCKBUF_DEBUG` is not configured: `sblastrecordchk`, `sblastmbufchk` and `sbcheck`
 //!   are ported but, as in GENERIC, nothing calls them.
 //! - `sosleep_nsec` takes the wait channel as a raw pointer, as `rwsleep_nsec` does.
@@ -81,6 +78,8 @@ use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
+use crate::kassert;
+use crate::kern::kern_event::{klist_free, knote_locked};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_rwlock::{
     rw_assert_unlocked, rw_assert_wrlock, rw_enter, rw_enter_write, rw_exit, rw_exit_write,
@@ -115,7 +114,6 @@ use crate::sys::systm::{
     net_assert_locked, net_assert_locked_exclusive, net_lock, net_lock_shared, net_unlock,
     net_unlock_shared,
 };
-use crate::{kassert, unported};
 
 /// \[I\] `sb_max`: patchable.
 pub static SB_MAX_VAR: AtomicU64 = AtomicU64::new(SB_MAX);
@@ -300,7 +298,8 @@ pub fn sonewconn(head: &'static Socket, connstatus: u32, wait: i32) -> Option<&'
     // fail:
     sounlock_nonet(so);
     sigio_free(&so.so_sigio);
-    // klist_free(&so->so_rcv.sb_klist), klist_free(&so->so_snd.sb_klist): kern_event.c.
+    klist_free(&so.so_rcv.sb_klist);
+    klist_free(&so.so_snd.sb_klist);
     pool_put(&SOCKET_POOL, NonNull::from(so).cast());
 
     None
@@ -578,8 +577,7 @@ pub fn sowakeup(so: &Socket, sb: &Sockbuf) {
         dopgsigio = true;
     }
 
-    // knote_locked(&sb->sb_klist, 0): the kqueue, select and poll waiters (kern_event.c).
-    let _ = unported!("sowakeup: knote_locked (kern_event.c)");
+    knote_locked(&sb.sb_klist, 0);
     mtx_leave(&sb.sb_mtx);
 
     if dowakeup {

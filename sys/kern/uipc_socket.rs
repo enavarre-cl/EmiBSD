@@ -57,13 +57,9 @@
 //! - `soreceive`'s `struct mbuf **` arguments (`paddr`, `mp0`, `controlp`) are
 //!   `Option<&mut Option<&'static Mbuf>>`; the C's walking `mp = &m->m_next` is the private
 //!   `MbufTail`, which remembers the last mbuf of the chain being built.
-//! - `struct filterops soread_filtops`, `sowrite_filtops` and `soexcept_filtops` wait for
-//!   `<sys/event.h>`'s kernel half (`kern_event.c`, not ported): `soo_kqfilter` reports
-//!   itself. The filters are ported over [`SoKnote`], the knote fields they read and write,
-//!   with the socket as an argument (the C reads `kn->kn_fp->f_data`); `filt_sordetach`,
-//!   `filt_sowdetach` and the `*modify`/`*process` routines report `klist_remove`,
-//!   `knote_modify` and `knote_process`. `soalloc`'s `klist_init_mutex` and `sorele`'s
-//!   `klist_free` are comments; `sohasoutofband`'s `knote` is reported.
+//! - `soread_filtops`, `sowrite_filtops` and `soexcept_filtops` are the statics
+//!   [`SOREAD_FILTOPS`], [`SOWRITE_FILTOPS`] and [`SOEXCEPT_FILTOPS`]; the filters find the
+//!   socket through the knote's file (`fp_socket(kn.fp())`, the C's `kn->kn_fp->f_data`).
 //! - `somaxconn`, `sominconn` keep their C names (lowercase statics), beside the
 //!   `SOMAXCONN` constant of `<sys/socket.h>`.
 //! - `WITNESS` is not configured (`soalloc`'s `inet46` lock name); `DIAGNOSTIC`'s panics are
@@ -78,6 +74,8 @@ use core::ptr::{self, NonNull};
 use core::slice;
 use core::sync::atomic::{AtomicI32, Ordering};
 
+use crate::kassert;
+use crate::kern::kern_event::{klist_free, klist_init_mutex, klist_insert, klist_remove, knote};
 use crate::kern::kern_lock::{mtx_enter, mtx_init_flags, mtx_leave};
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_rwlock::{rw_init, rw_init_flags_trace};
@@ -90,6 +88,7 @@ use crate::kern::kern_timeout::{
 };
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::kern::subr_prf::panic;
+use crate::kern::sys_socket::fp_socket;
 use crate::kern::uipc_domain::{pffindproto, pffindtype};
 use crate::kern::uipc_mbuf::{
     MAX_HDR, m_adj, m_align, m_copym, m_free, m_freem, m_get, m_gethdr, m_purge, m_resethdr,
@@ -107,7 +106,11 @@ use crate::machine::db_machdep::PrFn;
 use crate::machine::intr::{IPL_MPFLOOR, IPL_SOFTNET};
 use crate::net::if_::net_tq;
 use crate::sys::errno::Errno;
-use crate::sys::event::{__EV_HUP, __EV_POLL, __EV_SELECT, EV_EOF, Knote, NOTE_LOWAT, NOTE_OOB};
+use crate::sys::event::{
+    __EV_HUP, __EV_POLL, __EV_SELECT, EV_EOF, EVFILT_EXCEPT, EVFILT_READ, EVFILT_WRITE,
+    FILTEROP_ISFD, FILTEROP_MPSAFE, Filterops, Kevent, Knote, NOTE_LOWAT, NOTE_OOB, knote_modify,
+    knote_process,
+};
 use crate::sys::file::{File, frele};
 use crate::sys::limits::SHRT_MAX;
 use crate::sys::mbuf::{
@@ -141,14 +144,12 @@ use crate::sys::socketvar::{
     SS_RCVATMARK, Sockbuf, Socket, SoqHead, Sosplice, isspliced, issplicedback, sb_empty_fixup,
     sbassertlocked, sbfree, sbspace_locked, soreadable, soref, sosendallatonce, sowriteable,
 };
-
 use crate::sys::systm::INFSLP;
 use crate::sys::time::{Timeval, nsec_to_timeval, sec_to_nsec, timeval_to_nsec};
 use crate::sys::timeout::{KCLOCK_NONE, TIMEOUT_MPSAFE, TIMEOUT_PROC};
 use crate::sys::types::{Off, Socklen};
 use crate::sys::uio::Uio;
 use crate::sys::unpcb::{Fdpass, UNP_FEIDS, sotounpcb};
-use crate::{kassert, unported};
 
 /// `SOMINCONN`: the smallest backlog `listen(2)` grants.
 pub const SOMINCONN: i32 = 80;
@@ -157,22 +158,6 @@ pub const SOMINCONN: i32 = 80;
 const SOSP_FREEING_READ: i32 = 1;
 /// `SOSP_FREEING_WRITE`: `sounsplice` must not wake the drain, it is being freed.
 const SOSP_FREEING_WRITE: i32 = 2;
-
-/// The knote fields the socket filters read and write, which `kern_event.c` will hand them
-/// through `struct knote` (see the module's deviations). Not a C type.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SoKnote {
-    /// `kn_flags` (`EV_*`, `__EV_*`).
-    pub kn_flags: u16,
-    /// `kn_sfflags`: the `NOTE_*` filter flags the user asked for.
-    pub kn_sfflags: u32,
-    /// `kn_sdata`: the user's data (`NOTE_LOWAT`'s mark).
-    pub kn_sdata: i64,
-    /// `kn_fflags`: the filter flags returned.
-    pub kn_fflags: u32,
-    /// `kn_data`: the data returned.
-    pub kn_data: i64,
-}
 
 /// An `struct mbuf **mp` the C walks down a chain it builds (`*mp = m; mp = &m->m_next`):
 /// the chain's head and its last mbuf so far.
@@ -224,6 +209,36 @@ pub static sominconn: AtomicI32 = AtomicI32::new(SOMINCONN);
 pub static SOCKET_POOL: Pool = Pool::new();
 /// `sosplice_pool`.
 pub static SOSPLICE_POOL: Pool = Pool::new();
+
+/// `soread_filtops`: `EVFILT_READ` on a socket.
+pub static SOREAD_FILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD | FILTEROP_MPSAFE,
+    f_attach: None,
+    f_detach: Some(filt_sordetach),
+    f_event: Some(filt_soread),
+    f_modify: Some(filt_sormodify),
+    f_process: Some(filt_sorprocess),
+};
+
+/// `sowrite_filtops`: `EVFILT_WRITE` on a socket.
+pub static SOWRITE_FILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD | FILTEROP_MPSAFE,
+    f_attach: None,
+    f_detach: Some(filt_sowdetach),
+    f_event: Some(filt_sowrite),
+    f_modify: Some(filt_sowmodify),
+    f_process: Some(filt_sowprocess),
+};
+
+/// `soexcept_filtops`: `EVFILT_EXCEPT` on a socket.
+pub static SOEXCEPT_FILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD | FILTEROP_MPSAFE,
+    f_attach: None,
+    f_detach: Some(filt_sordetach),
+    f_event: Some(filt_soexcept),
+    f_modify: Some(filt_soemodify),
+    f_process: Some(filt_soeprocess),
+};
 
 /// A queued socket: the first of `q`. Queued sockets are pool items that stay allocated
 /// while they are queued.
@@ -329,7 +344,12 @@ pub fn soalloc(prp: &'static Protosw, wait: i32) -> Option<&'static Socket> {
     rw_init(&so.so_snd.sb_lock, "sbufsnd");
     mtx_init_flags(&so.so_rcv.sb_mtx, IPL_MPFLOOR, Some("sbrcv"), 0);
     mtx_init_flags(&so.so_snd.sb_mtx, IPL_MPFLOOR, Some("sbsnd"), 0);
-    // klist_init_mutex(&so->so_rcv.sb_klist, ...), the same for so_snd: kern_event.c.
+    // SAFETY: each buffer's mutex is a member of the same socket, which outlives its lists
+    // (`sorele` and `sonewconn`'s failure path free them before the socket goes).
+    unsafe {
+        klist_init_mutex(&so.so_rcv.sb_klist, &so.so_rcv.sb_mtx);
+        klist_init_mutex(&so.so_snd.sb_klist, &so.so_snd.sb_mtx);
+    }
     crate::sys::sigio::sigio_init(&so.so_sigio);
     so.so_q0.init();
     so.so_q.init();
@@ -432,7 +452,8 @@ pub fn sorele(so: &'static Socket) {
     }
 
     sigio_free(&so.so_sigio);
-    // klist_free(&so->so_rcv.sb_klist), klist_free(&so->so_snd.sb_klist): kern_event.c.
+    klist_free(&so.so_rcv.sb_klist);
+    klist_free(&so.so_snd.sb_klist);
 
     mtx_enter(&so.so_snd.sb_mtx);
     sbrelease(&so.so_snd);
@@ -2523,27 +2544,36 @@ pub fn sogetopt(
 /// `sohasoutofband(so)`: out-of-band data arrived: `SIGURG` and the except knotes.
 pub fn sohasoutofband(so: &Socket) {
     pgsigio(&so.so_sigio, SIGURG, false);
-    // knote(&so->so_rcv.sb_klist, 0): kern_event.c.
-    let _ = unported!("sohasoutofband: knote (kern_event.c)");
+    knote(&so.so_rcv.sb_klist, 0);
 }
 
 /// `fo_kqfilter` of a socket: attaches a read, write or except knote.
-pub fn soo_kqfilter(_fp: &File, _kn: &Knote) -> Result<(), Errno> {
-    // switch (kn->kn_filter): EVFILT_READ gets soread_filtops on so_rcv, EVFILT_WRITE
-    // sowrite_filtops on so_snd, EVFILT_EXCEPT soexcept_filtops on so_rcv, others EINVAL;
-    // then klist_insert(&sb->sb_klist, kn): struct knote (kern_event.c).
-    Err(unported!("soo_kqfilter: struct knote (kern_event.c)"))
+pub fn soo_kqfilter(_fp: &File, kn: &Knote) -> Result<(), Errno> {
+    let so = fp_socket(kn.fp());
+
+    let (fop, sb): (&'static Filterops, &Sockbuf) = match kn.kn_filter().get() {
+        EVFILT_READ => (&SOREAD_FILTOPS, &so.so_rcv),
+        EVFILT_WRITE => (&SOWRITE_FILTOPS, &so.so_snd),
+        EVFILT_EXCEPT => (&SOEXCEPT_FILTOPS, &so.so_rcv),
+        _ => return Err(Errno::EINVAL),
+    };
+    kn.kn_fop.set(Some(fop));
+
+    klist_insert(&sb.sb_klist, kn);
+
+    Ok(())
 }
 
 /// `filt_sordetach(kn)`: unhooks the knote from `so_rcv`'s list.
-pub fn filt_sordetach(_so: &Socket) {
-    // klist_remove(&so->so_rcv.sb_klist, kn): kern_event.c.
-    let _ = unported!("filt_sordetach: klist_remove (kern_event.c)");
+pub fn filt_sordetach(kn: &Knote) {
+    let so = fp_socket(kn.fp());
+
+    klist_remove(&so.so_rcv.sb_klist, kn);
 }
 
-/// `filt_soread(kn, hint)` for the socket of the knote's file: readable data, or a listener
-/// with connections to accept.
-pub fn filt_soread(so: &Socket, kn: &mut SoKnote, _hint: i64) -> bool {
+/// `filt_soread(kn, hint)`: readable data, or a listener with connections to accept.
+pub fn filt_soread(kn: &Knote, _hint: i64) -> bool {
+    let so = fp_socket(kn.fp());
     let state = so.so_state.get();
     let error = so.so_error.load(Ordering::Relaxed);
 
@@ -2554,12 +2584,12 @@ pub fn filt_soread(so: &Socket, kn: &mut SoKnote, _hint: i64) -> bool {
 
         soassertlocked_readonly(so);
 
-        kn.kn_data = i64::from(qlen);
-        let mut rv = kn.kn_data != 0;
+        kn.kn_data().set(i64::from(qlen));
+        let mut rv = kn.kn_data().get() != 0;
 
-        if kn.kn_flags & (__EV_POLL | __EV_SELECT) != 0 {
+        if kn.has_flags(__EV_POLL | __EV_SELECT) {
             if state & SS_ISDISCONNECTED != 0 {
-                kn.kn_flags |= __EV_HUP;
+                kn.set_flags(__EV_HUP);
                 rv = true;
             } else {
                 rv = qlen != 0 || soreadable(so);
@@ -2569,79 +2599,82 @@ pub fn filt_soread(so: &Socket, kn: &mut SoKnote, _hint: i64) -> bool {
         return rv;
     }
 
-    kn.kn_data = so.so_rcv.sb_cc.get() as i64;
+    kn.kn_data().set(so.so_rcv.sb_cc.get() as i64);
     if isspliced(so) {
         false
     } else if so.so_rcv.has_state(SS_CANTRCVMORE) {
-        kn.kn_flags |= EV_EOF;
-        if kn.kn_flags & __EV_POLL != 0 && state & SS_ISDISCONNECTED != 0 {
-            kn.kn_flags |= __EV_HUP;
+        kn.set_flags(EV_EOF);
+        if kn.has_flags(__EV_POLL) && state & SS_ISDISCONNECTED != 0 {
+            kn.set_flags(__EV_HUP);
         }
-        kn.kn_fflags = error;
+        kn.kn_fflags().set(error);
         true
     } else if error != 0 {
         true
-    } else if kn.kn_sfflags & NOTE_LOWAT != 0 {
-        kn.kn_data >= kn.kn_sdata
+    } else if kn.kn_sfflags.get() & NOTE_LOWAT != 0 {
+        kn.kn_data().get() >= kn.kn_sdata.get()
     } else {
-        kn.kn_data >= so.so_rcv.sb_lowat.get()
+        kn.kn_data().get() >= so.so_rcv.sb_lowat.get()
     }
 }
 
 /// `filt_sowdetach(kn)`: unhooks the knote from `so_snd`'s list.
-pub fn filt_sowdetach(_so: &Socket) {
-    // klist_remove(&so->so_snd.sb_klist, kn): kern_event.c.
-    let _ = unported!("filt_sowdetach: klist_remove (kern_event.c)");
+pub fn filt_sowdetach(kn: &Knote) {
+    let so = fp_socket(kn.fp());
+
+    klist_remove(&so.so_snd.sb_klist, kn);
 }
 
-/// `filt_sowrite(kn, hint)` for the socket of the knote's file: room to send.
-pub fn filt_sowrite(so: &Socket, kn: &mut SoKnote, _hint: i64) -> bool {
+/// `filt_sowrite(kn, hint)`: room to send.
+pub fn filt_sowrite(kn: &Knote, _hint: i64) -> bool {
+    let so = fp_socket(kn.fp());
     let state = so.so_state.get();
     let error = so.so_error.load(Ordering::Relaxed);
 
     crate::sys::mutex::mutex_assert_locked(&so.so_snd.sb_mtx, "filt_sowrite");
 
-    kn.kn_data = sbspace_locked(&so.so_snd);
+    kn.kn_data().set(sbspace_locked(&so.so_snd));
     if so.so_snd.has_state(SS_CANTSENDMORE) {
-        kn.kn_flags |= EV_EOF;
-        if kn.kn_flags & __EV_POLL != 0 && state & SS_ISDISCONNECTED != 0 {
-            kn.kn_flags |= __EV_HUP;
+        kn.set_flags(EV_EOF);
+        if kn.has_flags(__EV_POLL) && state & SS_ISDISCONNECTED != 0 {
+            kn.set_flags(__EV_HUP);
         }
-        kn.kn_fflags = error;
+        kn.kn_fflags().set(error);
         true
     } else if error != 0 {
         true
     } else if state & SS_ISCONNECTED == 0 && so.pr_flags(PR_CONNREQUIRED) {
         false
-    } else if kn.kn_sfflags & NOTE_LOWAT != 0 {
-        kn.kn_data >= kn.kn_sdata
+    } else if kn.kn_sfflags.get() & NOTE_LOWAT != 0 {
+        kn.kn_data().get() >= kn.kn_sdata.get()
     } else {
-        kn.kn_data >= so.so_snd.sb_lowat.get()
+        kn.kn_data().get() >= so.so_snd.sb_lowat.get()
     }
 }
 
-/// `filt_soexcept(kn, hint)` for the socket of the knote's file: out-of-band data, or a
-/// hang-up for poll.
-pub fn filt_soexcept(so: &Socket, kn: &mut SoKnote, _hint: i64) -> bool {
+/// `filt_soexcept(kn, hint)`: out-of-band data, or a hang-up for poll.
+pub fn filt_soexcept(kn: &Knote, _hint: i64) -> bool {
+    let so = fp_socket(kn.fp());
     let mut rv = false;
 
     crate::sys::mutex::mutex_assert_locked(&so.so_rcv.sb_mtx, "filt_soexcept");
 
     if isspliced(so) {
         rv = false;
-    } else if kn.kn_sfflags & NOTE_OOB != 0
+    } else if kn.kn_sfflags.get() & NOTE_OOB != 0
         && (so.so_oobmark.get() != 0 || so.so_rcv.has_state(SS_RCVATMARK))
     {
-        kn.kn_fflags |= NOTE_OOB;
-        kn.kn_data -= so.so_oobmark.get() as i64;
+        kn.kn_fflags().set(kn.kn_fflags().get() | NOTE_OOB);
+        kn.kn_data()
+            .set(kn.kn_data().get() - so.so_oobmark.get() as i64);
         rv = true;
     }
 
-    if kn.kn_flags & __EV_POLL != 0 {
+    if kn.has_flags(__EV_POLL) {
         let state = so.so_state.get();
 
         if state & SS_ISDISCONNECTED != 0 {
-            kn.kn_flags |= __EV_HUP;
+            kn.set_flags(__EV_HUP);
             rv = true;
         }
     }
@@ -2650,71 +2683,83 @@ pub fn filt_soexcept(so: &Socket, kn: &mut SoKnote, _hint: i64) -> bool {
 }
 
 /// `filt_sowmodify(kev, kn)`: `knote_modify` under `so_snd`'s mutex.
-pub fn filt_sowmodify(so: &Socket) -> bool {
+pub fn filt_sowmodify(kev: &mut Kevent, kn: &Knote) -> bool {
+    let so = fp_socket(kn.fp());
+
     mtx_enter(&so.so_snd.sb_mtx);
-    let _ = unported!("filt_sowmodify: knote_modify (kern_event.c)");
+    let rv = knote_modify(kev, kn);
     mtx_leave(&so.so_snd.sb_mtx);
 
-    false
+    rv
 }
 
 /// `filt_sowprocess(kn, kev)`: `knote_process` under `so_snd`'s mutex.
-pub fn filt_sowprocess(so: &Socket) -> bool {
+pub fn filt_sowprocess(kn: &Knote, kev: Option<&mut Kevent>) -> bool {
+    let so = fp_socket(kn.fp());
+
     mtx_enter(&so.so_snd.sb_mtx);
-    let _ = unported!("filt_sowprocess: knote_process (kern_event.c)");
+    let rv = knote_process(kn, kev);
     mtx_leave(&so.so_snd.sb_mtx);
 
-    false
+    rv
 }
 
 /// `filt_sormodify(kev, kn)`: `knote_modify` under `so_rcv`'s mutex (and the socket lock
 /// for a protocol that wants `PRU_RCVD`).
-pub fn filt_sormodify(so: &Socket) -> bool {
+pub fn filt_sormodify(kev: &mut Kevent, kn: &Knote) -> bool {
+    let so = fp_socket(kn.fp());
+
     if so.pr_flags(PR_WANTRCVD) {
         solock_shared(so);
     }
     mtx_enter(&so.so_rcv.sb_mtx);
-    let _ = unported!("filt_sormodify: knote_modify (kern_event.c)");
+    let rv = knote_modify(kev, kn);
     mtx_leave(&so.so_rcv.sb_mtx);
     if so.pr_flags(PR_WANTRCVD) {
         sounlock_shared(so);
     }
 
-    false
+    rv
 }
 
 /// `filt_sorprocess(kn, kev)`: `knote_process` under `so_rcv`'s mutex (and the socket lock
 /// for a protocol that wants `PRU_RCVD`).
-pub fn filt_sorprocess(so: &Socket) -> bool {
+pub fn filt_sorprocess(kn: &Knote, kev: Option<&mut Kevent>) -> bool {
+    let so = fp_socket(kn.fp());
+
     if so.pr_flags(PR_WANTRCVD) {
         solock_shared(so);
     }
     mtx_enter(&so.so_rcv.sb_mtx);
-    let _ = unported!("filt_sorprocess: knote_process (kern_event.c)");
+    let rv = knote_process(kn, kev);
     mtx_leave(&so.so_rcv.sb_mtx);
     if so.pr_flags(PR_WANTRCVD) {
         sounlock_shared(so);
     }
 
-    false
+    rv
 }
 
 /// `filt_soemodify(kev, kn)`: `knote_modify` under `so_rcv`'s mutex.
-pub fn filt_soemodify(so: &Socket) -> bool {
+pub fn filt_soemodify(kev: &mut Kevent, kn: &Knote) -> bool {
+    let so = fp_socket(kn.fp());
+
     mtx_enter(&so.so_rcv.sb_mtx);
-    let _ = unported!("filt_soemodify: knote_modify (kern_event.c)");
+    let rv = knote_modify(kev, kn);
     mtx_leave(&so.so_rcv.sb_mtx);
 
-    false
+    rv
 }
 
 /// `filt_soeprocess(kn, kev)`: `knote_process` under `so_rcv`'s mutex.
-pub fn filt_soeprocess(so: &Socket) -> bool {
+pub fn filt_soeprocess(kn: &Knote, kev: Option<&mut Kevent>) -> bool {
+    let so = fp_socket(kn.fp());
+
     mtx_enter(&so.so_rcv.sb_mtx);
-    let _ = unported!("filt_soeprocess: knote_process (kern_event.c)");
+    let rv = knote_process(kn, kev);
     mtx_leave(&so.so_rcv.sb_mtx);
 
-    false
+    rv
 }
 
 /// An optional mbuf as a pointer, for the printers.
@@ -2837,3 +2882,6 @@ pub fn so_print(so: &Socket, pr: PrFn) {
     ));
     pr(format_args!("so_cpid: {}\n", so.so_cpid.get()));
 }
+
+#[cfg(test)]
+mod tests;

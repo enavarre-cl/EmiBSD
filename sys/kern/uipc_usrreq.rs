@@ -1935,4 +1935,4 @@ pub fn unp_nam2sun(nam: &'static Mbuf) -> Result<usize, Errno> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

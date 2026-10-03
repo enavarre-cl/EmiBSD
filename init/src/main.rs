@@ -1314,7 +1314,8 @@ fn kevent(
 /// `kern_event.c` seen from user mode: a `kqueue(2)` reports a pipe becoming readable (with
 /// its byte count and the caller's `udata`) and its writer going away (`EV_EOF`); `poll(2)`
 /// and `select(2)` see the same pipe readable and writable; `kevent(2)` without a timeout
-/// sleeps until a one-shot `EVFILT_TIMER` fires, which then is gone.
+/// sleeps until a one-shot `EVFILT_TIMER` fires, which then is gone. The socket filters
+/// (`uipc_socket.c`) do the same for a stream socket pair ([`socket_events`]).
 fn kqueues() -> bool {
     let call = |n, a, b, c| syscall3(n, a, b, c);
     let zero = [0i64, 0];
@@ -1409,8 +1410,71 @@ fn kqueues() -> bool {
     ok &= pfd[0].revents == POLLIN | POLLHUP;
 
     ok &= call(SYS_CLOSE, r, 0, 0) == (0, false);
+    ok &= socket_events(kq);
     ok &= call(SYS_CLOSE, kq, 0, 0) == (0, false);
     ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
+}
+
+/// The socket half of [`kqueues`] on the kqueue `kq`: a stream pair's read knote fires on
+/// the peer's write (with the byte count) and on its close (`EV_EOF`); `poll(2)` sees one
+/// end readable and the other writable, then the hang-up.
+fn socket_events(kq: usize) -> bool {
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let zero = [0i64, 0];
+    let mut ev = [Kevent::default(); 2];
+    let mut buf = [0u8; 8];
+
+    let Some([a, b]) = socketpair(SOCK_STREAM) else {
+        return false;
+    };
+
+    // EV_ADD of EVFILT_READ on a: registered, nothing to read yet.
+    let add = [Kevent {
+        ident: a,
+        filter: EVFILT_READ,
+        flags: EV_ADD,
+        udata: 0x50c,
+        ..Kevent::default()
+    }];
+    let mut ok = kevent(kq, &add, &mut [], None) == (0, false);
+    ok &= kevent(kq, &[], &mut ev, Some(&zero)) == (0, false);
+
+    // b writes: the knote fires (sowakeup's knote_locked) with the byte count.
+    ok &= write(b, b"sock") == Ok(4);
+    ok &= kevent(kq, &[], &mut ev, Some(&zero)) == (1, false);
+    ok &= ev[0].ident == a && ev[0].filter == EVFILT_READ;
+    ok &= ev[0].data == 4 && ev[0].udata == 0x50c && ev[0].flags & EV_EOF == 0;
+
+    // poll(2): a is readable, b writable.
+    let mut pfds = [
+        Pollfd {
+            fd: a as i32,
+            events: POLLIN,
+            revents: 0,
+        },
+        Pollfd {
+            fd: b as i32,
+            events: POLLOUT,
+            revents: 0,
+        },
+    ];
+    ok &= call(SYS_POLL, pfds.as_mut_ptr() as usize, 2, 0) == (2, false);
+    ok &= pfds[0].revents == POLLIN && pfds[1].revents == POLLOUT;
+
+    // Drained: nothing pending, and poll(2) finds a not readable.
+    ok &= call(SYS_READ, a, buf.as_mut_ptr() as usize, buf.len()) == (4, false);
+    ok &= kevent(kq, &[], &mut ev, Some(&zero)) == (0, false);
+    ok &= call(SYS_POLL, pfds.as_mut_ptr() as usize, 1, 0) == (0, false);
+    ok &= pfds[0].revents == 0;
+
+    // b goes away: EOF on a's knote, POLLHUP for poll(2) (a is disconnected).
+    ok &= call(SYS_CLOSE, b, 0, 0) == (0, false);
+    ok &= kevent(kq, &[], &mut ev, Some(&zero)) == (1, false);
+    ok &= ev[0].ident == a && ev[0].flags & EV_EOF != 0;
+    ok &= call(SYS_POLL, pfds.as_mut_ptr() as usize, 1, 0) == (1, false);
+    ok &= pfds[0].revents == POLLIN | POLLHUP;
+
+    ok && call(SYS_CLOSE, a, 0, 0) == (0, false)
 }
 
 /// The `SIGUSR1` handler, entered through the kernel's signal trampoline.

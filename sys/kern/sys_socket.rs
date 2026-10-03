@@ -47,7 +47,6 @@
 //!   arguments are read and written in native byte order. `ifioctl` wants its request
 //!   aligned for the structure the command names: a request in `sys_ioctl`'s byte buffer on
 //!   the stack (at most `STK_PARAMS`, 128 bytes) is copied through an aligned buffer here.
-//! - `soo_kqfilter` is `uipc_socket.c`'s and reports `kern_event.c` (see there).
 //! - [`fp_socket`] is `fp->f_data` cast to the socket, checking the type as the C assumes.
 
 use core::ffi::c_void;
