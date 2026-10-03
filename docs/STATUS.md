@@ -1,22 +1,19 @@
 # Status
 
-Milestone: **M7a in progress** (parts 0 to 3a done; 3b, the pmap side and exec through
-`uvm_map`, next). Updated: 2026-10-03.
+Milestone: **M7a done; M7b (the network) in progress**. Updated: 2026-10-03.
 
 Done:
-- M7a-3a (`e527558`): `uvm_fault.c` whole; `uvmexp_counters`, `uvm_swapisfull`, `pmap_unwire`.
-  Host tests serve zero fill, copy-on-write after fork, fault-ahead, wiring. The traps do not
-  call `uvm_fault` yet; swap paths are reported until M7.
-- M7a-2 (`a4f74ba`): `uvm_map.c` and `uvm_addr.c`; a real `kernel_map`, `uvmspace_fork`
-  copying entries; amd64's kernel window fixed above Limine's direct map.
-- M7a-1 (`576f912`): the object layer: `uvm_anon.c`, `uvm_amap.c`, `uvm_aobj.c`, pager ops.
+- M7a (exit met: `init: demand-zero bss ok` on both archs, user pages served by
+  `uvm_fault`): `uvm_map.c`/`uvm_addr.c` (`a4f74ba`), `uvm_fault.c` (`e527558`), the traps
+  calling it (`5d9550b`), pv lists, `pmap_protect`, arm64 R/M emulation (`492c991`), exec
+  through `uvm_map` with the wired stand-ins retired (`5474591`), `uvm_mmap.c`, `uvm_unix.c`
+  and the `plimit` layer of `kern_resource.c` (`65fbb24`).
+- M7b so far: `kern_task.c` (task queues, `selftest=taskq`).
 
 Next:
-- M7a-3b: amd64 pv lists and `pmap_protect`, arm64 `pmap_fault_fixup`, the traps calling
-  `uvm_fault`, exec through `uvm_map` (the wired stand-ins retire), `uvm_mmap.c`. Exit: a user
-  page fault served by `uvm_fault` on both archs.
-- M7b: the network first (mbufs, `if.c`, ARP, ip/icmp, virtio-net); exit: the kernel's ICMP
-  echo to `10.0.2.2` is answered. Then the rest of M7+, then M8 (`docs/ROADMAP.md`).
+- M7b: mbufs, autoconf + mainbus, credentials (`kern_prot.c`), then PCI and virtio, `if.c`,
+  ARP, ip/icmp, `if_vio.c`; exit: the kernel's ICMP echo to `10.0.2.2` is answered. Then
+  the rest of M7+ (vfs, ffs, virtio-blk, signals, tty), then M8 (`docs/ROADMAP.md`).
 - Widen the reference clone to `lib/ bin/ sbin/ usr.bin/ libexec/` (same pin, sparse) in its
   own `reference:` + `rules:` commit, before M8.
 
