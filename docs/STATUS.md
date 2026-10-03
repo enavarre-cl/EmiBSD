@@ -1,10 +1,16 @@
 # Status
 
-Milestone: **M6 done** (2026-10-03): `init` runs in user mode on both architectures, prints
-through `sys_write` and exits; the kernel logs `init exited with status 0 (signal 0)` and
-`just smoke` checks it. Next: **M7a** (`uvm_map`/`uvm_fault`). Updated: 2026-10-03.
+Milestone: **M7a in progress** (part 0, `kern_rwlock.c` and the `vm_map` lock, done).
+M6 closed on 2026-10-03: `init` runs in user mode on both architectures, prints through
+`sys_write` and exits; `just smoke` checks `init exited with status 0 (signal 0)`.
+Updated: 2026-10-03.
 
 Done:
+- M7a-0: `rwlock.h`/`kern_rwlock.c` (`rw_enter`/`rw_exit` and friends, `rrw_*`, the
+  `rw_obj_*` store; host tests), `rwsleep_nsec`/`rwsleep`; the `vm_map` lock is the rwlock
+  with `busy`/`nbusy` and `vm_map_lock_try/lock/lock_read/unlock/unlock_read/upgrade/
+  downgrade/busy/unbusy/assert_*`; `ps_lock`, `uidinfolk`, `tc_lock` and `pool_lock` are
+  real rwlocks; `rw_obj_init` runs in `main`.
 - M6-b2: `exec_elf.h`, `exec.h`, `signal.h` (numbers), `limits.h`; `uvm_map.c` (the map and
   vmspace life cycle, wired-page stand-ins for `uvm_map`/`uvm_fault_wire`), `vmspace`,
   `vmspace0`; `exec_elf.c` (static `ET_EXEC`), `exec_subr.c` (vmcmds over wired pages,
@@ -23,11 +29,12 @@ Done:
   traps, interrupts, GICv2/DTB, UART by interrupt, uvm page system, direct map, console.
 
 Next (M7a):
-- `uvm_map.c` proper (the entry tree, `uvm_map`, `uvm_unmap`, the selectors, `uvm_map_protect`,
-  `uvm_map_pageable`, `uvmspace_fork` copying entries), `uvm_fault.c`, `uvm_amap.c`,
-  `uvm_aobj.c`, `uvm_pager.c`, `uvm_mmap.c`; the pv lists on amd64 (`pmap_enter_pv`,
-  `pmap_page_remove`, `pmap_protect`), `pmap_fault_fixup` on arm64, `kern_rwlock.c` for the
-  map lock; then `exec` through `uvm_map` and the wired-page stand-ins go away.
+- `uvm_map.c` proper (the `vm_map_entry` tree, `uvm_map_setup_entries`/`uvm_map_fix_space`,
+  `uvm_addr.c`'s selectors, `uvm_map`, `uvm_unmap`, `uvm_map_protect`, `uvm_map_pageable`,
+  `uvmspace_fork` copying entries), `uvm_fault.c`, `uvm_amap.c`, `uvm_aobj.c`,
+  `uvm_pager.c`, `uvm_mmap.c`; the pv lists on amd64 (`pmap_enter_pv`, `pmap_page_remove`,
+  `pmap_protect`), `pmap_fault_fixup` on arm64; then `exec` through `uvm_map` and the
+  wired-page stand-ins go away.
 - Exit: `init` runs from a pageable `vmspace`; a user page fault is served by `uvm_fault`.
 
 Then (M6-c, interleaved as needed): `kern_sig.c` (`trapsignal`, `sigexit`, `execsigs`),

@@ -63,6 +63,7 @@ use core::sync::atomic::{AtomicI32, Ordering, fence};
 use crate::conf::param::TICK_NSEC;
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
+use crate::kern::kern_rwlock::{rw_assert_anylock, rw_enter, rw_exit, rw_status};
 use crate::kern::kern_timeout::{timeout_add_nsec, timeout_del};
 use crate::kern::sched_bsd::{
     mi_switch, sched_assert_locked, sched_lock, sched_unlock, setrunnable,
@@ -84,6 +85,7 @@ use crate::sys::proc::{
 };
 use crate::sys::queue::TailqHead;
 use crate::sys::refcnt::Refcnt;
+use crate::sys::rwlock::Rwlock;
 #[cfg(feature = "diagnostic")]
 use crate::sys::syslog::LOG_WARNING;
 use crate::sys::systm::{COLD, INFSLP, SAFEPRI};
@@ -248,7 +250,54 @@ pub fn msleep<T: ?Sized>(
     msleep_nsec(ident, mtx, priority, wmesg, nsecs)
 }
 
-// rwsleep_nsec, rwsleep: kern_rwlock.c (M5-b3).
+/// `rwsleep_nsec`: same as `tsleep`, but if we have a rwlock provided, then once we've
+/// entered the sleep queue we drop the it. After sleeping we re-lock.
+pub fn rwsleep_nsec<T: ?Sized>(
+    ident: *const T,
+    rwl: &Rwlock,
+    priority: i32,
+    wmesg: &'static str,
+    nsecs: u64,
+) -> Result<(), Errno> {
+    let ident = ident.cast::<c_void>();
+    kassert!(priority & !(PRIMASK | PCATCH | PNORELOCK) == 0);
+    kassert!(!ptr::eq(ident, nowake()) || priority & PCATCH != 0 || nsecs != INFSLP);
+    kassert!(!ptr::eq(ident, ptr::from_ref(rwl).cast()));
+    rw_assert_anylock(rwl);
+    let status = rw_status(rwl);
+
+    sleep_setup(ident, priority, wmesg);
+
+    rw_exit(rwl);
+    // signal may stop the process, release rwlock before that
+    let error = sleep_finish(nsecs, true);
+
+    if priority & PNORELOCK == 0 {
+        let _ = rw_enter(rwl, status);
+    }
+
+    error
+}
+
+/// `rwsleep`: `rwsleep_nsec` with the timeout in ticks.
+pub fn rwsleep<T: ?Sized>(
+    ident: *const T,
+    rwl: &Rwlock,
+    priority: i32,
+    wmesg: &'static str,
+    timo: i32,
+) -> Result<(), Errno> {
+    let mut nsecs = INFSLP;
+
+    if timo < 0 {
+        panic(format_args!("rwsleep: negative timo {timo}"));
+    }
+    if timo > 0 {
+        nsecs = timo as u64 * TICK_NSEC.load(Ordering::Relaxed) as u64;
+    }
+
+    rwsleep_nsec(ident, rwl, priority, wmesg, nsecs)
+}
 
 /// `sleep_setup`: puts the current thread on the sleep queue of `ident`.
 pub fn sleep_setup(ident: *const c_void, prio: i32, wmesg: &'static str) {

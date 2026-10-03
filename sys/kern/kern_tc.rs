@@ -52,11 +52,15 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicPtr, AtomicU32,
 use crate::conf::param::{HZ, TICK_NSEC};
 use crate::dev::rnd::enqueue_randomness;
 use crate::kern::kern_lock::{mtx_enter, mtx_enter_try, mtx_leave};
+use crate::kern::kern_rwlock::{
+    rw_assert_anylock, rw_assert_wrlock, rw_enter_write, rw_exit_write,
+};
 use crate::kern::kern_timeout::timeout_adjust_ticks;
 use crate::kern::subr_prf::{log, panic, printf};
 use crate::machine::intr::IPL_CLOCK;
 use crate::sys::mutex::{Mutex, mutex_assert_locked};
 use crate::sys::queue::SlistHead;
+use crate::sys::rwlock::Rwlock;
 use crate::sys::syslog::LOG_INFO;
 use crate::sys::time::{
     Bintime, Timespec, Timeval, bintime_to_nsec, bintime_to_timespec, bintime_to_timeval,
@@ -64,7 +68,6 @@ use crate::sys::time::{
 };
 use crate::sys::timetc::{TcList, Timecounter, Timekeep};
 use crate::sys::types::Time;
-use crate::unported;
 
 /// `dummy_get_timecount`: a counter that advances once per read.
 static DUMMY_NOW: AtomicU32 = AtomicU32::new(0);
@@ -182,10 +185,8 @@ static TH1: Timehands = Timehands::new(ptr::null(), 0, 0, &TH0);
 /// `th0`.
 static TH0: Timehands = Timehands::new(&DUMMY_TIMECOUNTER, u64::MAX / 1_000_000, 1, &TH1);
 
-/// `tc_lock`: an rwlock (see the module's deviations).
-fn tc_lock_unported() {
-    let _ = unported!("tc_lock (rw_enter_write, kern_rwlock.c)");
-}
+/// `tc_lock`: the lock over the timecounter choice and the clock settings.
+pub static TC_LOCK: Rwlock = Rwlock::new("tc_lock");
 
 /// `windup_mtx`: `tc_windup()` must be called before leaving this mutex.
 static WINDUP_MTX: Mutex = Mutex::new(IPL_CLOCK);
@@ -480,7 +481,7 @@ pub fn tc_getprecision() -> u64 {
 pub fn tc_setrealtimeclock(ts: &Timespec) {
     let utc = timespec_to_bintime(ts);
 
-    tc_lock_unported(); // rw_enter_write(&tc_lock)
+    rw_enter_write(&TC_LOCK);
     mtx_enter(&WINDUP_MTX);
 
     let uptime = binuptime();
@@ -490,7 +491,7 @@ pub fn tc_setrealtimeclock(ts: &Timespec) {
     tc_windup(Some(&boottime), None, Some(0));
 
     mtx_leave(&WINDUP_MTX);
-    // rw_exit_write(&tc_lock)
+    rw_exit_write(&TC_LOCK);
 
     enqueue_randomness(ts.tv_sec as u32);
 
@@ -761,11 +762,11 @@ fn ntp_update_second(th: &Timehands) {
 /// `tc_adjfreq`: reads and/or sets the active counter's frequency adjustment.
 pub fn tc_adjfreq(old: Option<&mut i64>, new: Option<i64>) {
     if let Some(old) = old {
-        // rw_assert_anylock(&tc_lock)
+        rw_assert_anylock(&TC_LOCK);
         *old = timecounter().tc_freq_adj.get();
     }
     if let Some(new) = new {
-        tc_lock_unported(); // rw_assert_wrlock(&tc_lock)
+        rw_assert_wrlock(&TC_LOCK);
         mtx_enter(&WINDUP_MTX);
         timecounter().tc_freq_adj.set(new);
         tc_windup(None, None, None);
@@ -779,7 +780,7 @@ pub fn tc_adjtime(old: Option<&mut i64>, new: Option<i64>) {
         *old = read_timehands(|th| th.th_adjtimedelta.get());
     }
     if let Some(new) = new {
-        tc_lock_unported(); // rw_assert_wrlock(&tc_lock)
+        rw_assert_wrlock(&TC_LOCK);
         mtx_enter(&WINDUP_MTX);
         tc_windup(None, None, Some(new));
         mtx_leave(&WINDUP_MTX);

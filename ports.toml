@@ -439,7 +439,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -688,7 +688,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "099ae26cc628b9d619e464423968547f722f2a09"
 deps = ["sys/sys/param.h", "sys/kern/subr_prf.c"]
-notes = "wakeup(9) and wakeup_one(9) report themselves unported: nothing sleeps before the scheduler (M5); tsleep/msleep/wakeup_n/yield/mi_switch arrive then; M5-b1: refcnt_init[_trace], refcnt_take, refcnt_rele[_wake], refcnt_read, refcnt_shared, cond_init, cond_signal_handler; M5-b2: the sleep queues (sleep_queue_init, slpque), tsleep[_nsec], msleep[_nsec], sleep_setup, sleep_finish (sleep_signal_check reports the signals, M6), wakeup_proc, endtsleep, unsleep, wakeup_n/wakeup/wakeup_one, refcnt_finalize, cond_wait; rwsleep is kern_rwlock.c, sys_sched_yield and __thrsleep/__thrwakeup M6"
+notes = "wakeup(9) and wakeup_one(9) report themselves unported: nothing sleeps before the scheduler (M5); tsleep/msleep/wakeup_n/yield/mi_switch arrive then; M5-b1: refcnt_init[_trace], refcnt_take, refcnt_rele[_wake], refcnt_read, refcnt_shared, cond_init, cond_signal_handler; M5-b2: the sleep queues (sleep_queue_init, slpque), tsleep[_nsec], msleep[_nsec], sleep_setup, sleep_finish (sleep_signal_check reports the signals, M6), wakeup_proc, endtsleep, unsleep, wakeup_n/wakeup/wakeup_one, refcnt_finalize, cond_wait; M7a: rwsleep_nsec and rwsleep; sys_sched_yield and __thrsleep/__thrwakeup M6"
 
 [[file]]
 c = "sys/arch/amd64/include/pte.h"
@@ -820,7 +820,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c965cb859811f0a12dcfd3379fa1a585e57a3dcc"
 deps = ["sys/sys/pool.h", "sys/uvm/uvm_km.c", "sys/dev/rnd.c", "sys/kern/kern_synch.c"]
-notes = "pool_init/destroy/get/put with do_get/do_put, the page management, the request queue, pool_prime, watermarks/limits/constraints, pool_reclaim(_all), the page allocators and the lock ops (flags until M5); a PR_WAITOK get that finds no memory fails instead of sleeping; getnsecuptime is kern_tc.c's (M5); poison_* (subr_poison.c) reported; pool_cache (MULTIPROCESSOR), pool_gc_*, ddb printers, pool_chk, pool_walk, sysctl_dopool: M5 to M7"
+notes = "pool_init/destroy/get/put with do_get/do_put, the page management, the request queue, pool_prime, watermarks/limits/constraints, pool_reclaim(_all), the page allocators and the lock ops (flags until M5); a PR_WAITOK get that finds no memory fails instead of sleeping; getnsecuptime is kern_tc.c's (M5); poison_* (subr_poison.c) reported; pool_cache (MULTIPROCESSOR), pool_gc_*, ddb printers, pool_chk, pool_walk, sysctl_dopool: M5 to M7; M7a: pool_lock (the rwlock over the pool list) is real; the per-pool rwlock variant of pool_lock_ops still stands on the flag"
 
 [[file]]
 c = "sys/kern/kern_malloc.c"
@@ -1434,7 +1434,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e8792cab996af20f15c3d060cd8b2e325e283dbd"
 deps = ["sys/sys/timetc.h", "sys/sys/time.h", "sys/kern/kern_lock.c", "sys/kern/kern_timeout.c", "sys/dev/rnd.c"]
-notes = "M5 (beerware, accepted by the user): the dummy timecounter, the timehands ring, every [get]{bin,nano,micro}[boot|up|run]time reader, nsecuptime/getnsecuptime/getnsecruntime, gettime/getuptime (the LP64 branch), tc_init, tc_reset_quality, tc_getfrequency/precision, tc_setrealtimeclock, tc_setclock, tc_update_timekeep (timekeep null until M6), tc_windup, tc_ticktock, inittimecounter, ntp_update_second, tc_adjfreq, tc_adjtime; tc_lock (kern_rwlock.c, M5-b) reported where taken; sysctl_tc/sysctl_tc_hardware/sysctl_tc_choice/tc_vars are kern_sysctl.c (M6)"
+notes = "M5 (beerware, accepted by the user): the dummy timecounter, the timehands ring, every [get]{bin,nano,micro}[boot|up|run]time reader, nsecuptime/getnsecuptime/getnsecruntime, gettime/getuptime (the LP64 branch), tc_init, tc_reset_quality, tc_getfrequency/precision, tc_setrealtimeclock, tc_setclock, tc_update_timekeep (timekeep null until M6), tc_windup, tc_ticktock, inittimecounter, ntp_update_second, tc_adjfreq, tc_adjtime; tc_lock is a real rwlock since M7a (taken in tc_setrealtimeclock, asserted in tc_adjfreq/tc_adjtime); sysctl_tc/sysctl_tc_hardware/sysctl_tc_choice/tc_vars are kern_sysctl.c (M6)"
 
 [[file]]
 c = "sys/kern/kern_clockintr.c"
@@ -1534,7 +1534,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "34f4bcdb97b70e5cf96ace4f826ce3b2a81fde03"
 deps = ["sys/sys/queue.h", "sys/sys/timeout.h", "sys/sys/mutex.h", "sys/sys/pclock.h", "sys/sys/refcnt.h", "sys/sys/resource.h", "sys/sys/user.h"]
-notes = "M5-b1: session, pgrp, tusage, process and proc (the members the scheduler, the sleep queues and the kernel threads use; the sigio/klist/ptrace/unveil/pinsyscall/vnode/ucred/filedesc/plimit/vmspace/sigacts members are opaque pointers or left out, each named in a comment), the S* states, P_*/PS_* flags with their %b strings, THREAD_PID_OFFSET, uidinfo, PID_MAX/TID_MASK/NO_PID, SESS_LEADER, FORK_*/EXIT_*/SINGLE_*, cond, cpuset, tu_enter/tu_leave; the function prototypes live with their .c files; M6-a: refreshcreds (dorefreshcreds reported); M6-b2: ps_vmspace/p_vmspace are *const Vmspace with vmspace() accessors, ps_strings, Proc::set_name"
+notes = "M5-b1: session, pgrp, tusage, process and proc (the members the scheduler, the sleep queues and the kernel threads use; the sigio/klist/ptrace/unveil/pinsyscall/vnode/ucred/filedesc/plimit/vmspace/sigacts members are opaque pointers or left out, each named in a comment), the S* states, P_*/PS_* flags with their %b strings, THREAD_PID_OFFSET, uidinfo, PID_MAX/TID_MASK/NO_PID, SESS_LEADER, FORK_*/EXIT_*/SINGLE_*, cond, cpuset, tu_enter/tu_leave; the function prototypes live with their .c files; M6-a: refreshcreds (dorefreshcreds reported); M6-b2: ps_vmspace/p_vmspace are *const Vmspace with vmspace() accessors, ps_strings, Proc::set_name; M7a: ps_lock (an Rwlock)"
 
 [[file]]
 c = "sys/sys/user.h"
@@ -1628,7 +1628,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "61ff9458c8be92309099321dee46ca48d74e5b6b"
 deps = ["sys/sys/proc.h", "sys/kern/kern_subr.c", "sys/kern/subr_pool.c"]
-notes = "M5-b1: the lists, hash tables (slices from hashinit, masks are len-1) and pools (procinit), uid_find/uid_release (uidinfolk, an rwlock, reported), chgproccnt, inferior, tfind, tfind_user, prfind, pgfind, zombiefind; the pgrp management (enternewpgrp, enterthispgrp, leavepgrp, pgdelete, zapverauth, fixjobc, killjobc, orphanpg) needs signals/ttys/sigio (M6); proc_printit and the ddb commands are M7"
+notes = "M5-b1: the lists, hash tables (slices from hashinit, masks are len-1) and pools (procinit), uid_find/uid_release under uidinfolk (a real rwlock since M7a), chgproccnt, inferior, tfind, tfind_user, prfind, pgfind, zombiefind; the pgrp management (enternewpgrp, enterthispgrp, leavepgrp, pgdelete, zapverauth, fixjobc, killjobc, orphanpg) needs signals/ttys/sigio (M6); proc_printit and the ddb commands are M7"
 
 [[file]]
 c = "sys/kern/kern_subr.c"
@@ -1655,7 +1655,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "de3d88871a036e3bab92269561698e00ec6996ba"
 deps = ["sys/sys/proc.h", "sys/kern/kern_proc.c", "sys/kern/kern_synch.c", "sys/dev/rnd.c"]
-notes = "M5-b1: nprocesses/nthreads, process_initialize (crhold, prof_fork, rw_init ps_lock, klist_init_mutex and the realitexpire/rucheck timeouts reported), fork_check_maxthread, alloctid, allocpid, ispidtaken, freepid; thread_new, process_new, fork1, fork_thread_start and proc_trampoline_mi are M5-b2, the fork syscalls and thread_fork M6; M5-b2: forkstat, thread_new, process_new (lim_fork, fdcopy, sigactsinit reported; fdshare copies the parent pointer), fork_thread_start, fork1 (returns the new thread; root uid for proc0; knote_processfork/ptrace/psignal reported), proc_trampoline_mi; M6-b2: process_new uses uvmspace_share/uvmspace_fork; fork1 adds vm_dsize + vm_ssize to the forkstat sizes"
+notes = "M5-b1: nprocesses/nthreads, process_initialize (crhold, prof_fork, klist_init_mutex and the realitexpire/rucheck timeouts reported; rw_init of ps_lock since M7a), fork_check_maxthread, alloctid, allocpid, ispidtaken, freepid; thread_new, process_new, fork1, fork_thread_start and proc_trampoline_mi are M5-b2, the fork syscalls and thread_fork M6; M5-b2: forkstat, thread_new, process_new (lim_fork, fdcopy, sigactsinit reported; fdshare copies the parent pointer), fork_thread_start, fork1 (returns the new thread; root uid for proc0; knote_processfork/ptrace/psignal reported), proc_trampoline_mi; M6-b2: process_new uses uvmspace_share/uvmspace_fork; fork1 adds vm_dsize + vm_ssize to the forkstat sizes"
 
 [[file]]
 c = "sys/sys/vmmeter.h"
@@ -1878,7 +1878,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c1db58efecd251001691faa9da4ffe341e0c9ed5"
 deps = ["sys/sys/mutex.h", "sys/uvm/uvm_page.h"]
-notes = "M6-b: struct vm_map (pmap, sserial, size, ref_count, flags, timestamp, min/max_offset, b_/s_ ranges, lock/mtx/flags_lock, plus the deviation list of wired pages), VM_MAP_* flags, MAX_KMAPENT; the entry tree (vm_map_entry, uvm_map_addr), the uaddr selectors, check_copyin and the inline helpers are M7a; lock is a Mutex until kern_rwlock.c"
+notes = "M6-b: struct vm_map (pmap, sserial, size, ref_count, flags, timestamp, min/max_offset, b_/s_ ranges, lock/mtx/flags_lock, plus the deviation list of wired pages), VM_MAP_* flags, MAX_KMAPENT; the entry tree (vm_map_entry, uvm_map_addr), the uaddr selectors, check_copyin and the inline helpers are M7a; busy/nbusy and the rwlock (M7a)"
 
 [[file]]
 c = "sys/uvm/uvm_map.c"
@@ -1887,7 +1887,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "459310d59317ecbd29ac1608e5d704f5119f5182"
 deps = ["sys/uvm/uvm_map.h", "sys/uvm/uvm_extern.h", "sys/uvm/uvm_page.c", "sys/kern/subr_pool.c"]
-notes = "M6-b: uvm_map_setup (uvm_map_setup_entries and the selectors reported), uvm_map_teardown, uvm_map_init (the vmspace pool; the entry pools and uvm_addr_init reported), uvmspace_alloc/init/share/exec/addref/purge/free, uvmspace_fork (allocates and copies the statistics; copying a parent's wired pages reported), vm_map_lock/unlock/modflags; the deviation helpers uvm_map_enter_wired (wired zeroed pages, PROT_NONE reserves) and uvm_map_write_wired (copies through the direct map) stand in for uvm_map + uvm_fault_wire until M7a, and uvm_map_remove_wired for uvm_unmap_remove; uvm_map, uvm_unmap, the entry tree, the fork copy functions, uvm_map_protect/immutable/pageable/pie/inentry and the ddb printers are M7a"
+notes = "M6-b: uvm_map_setup (uvm_map_setup_entries and the selectors reported), uvm_map_teardown, uvm_map_init (the vmspace pool; the entry pools and uvm_addr_init reported), uvmspace_alloc/init/share/exec/addref/purge/free, uvmspace_fork (allocates and copies the statistics; copying a parent's wired pages reported), vm_map_lock/unlock/modflags; the deviation helpers uvm_map_enter_wired (wired zeroed pages, PROT_NONE reserves) and uvm_map_write_wired (copies through the direct map) stand in for uvm_map + uvm_fault_wire until M7a, and uvm_map_remove_wired for uvm_unmap_remove; uvm_map, uvm_unmap, the entry tree, the fork copy functions, uvm_map_protect/immutable/pageable/pie/inentry and the ddb printers are M7a; M7a: the map lock is the rwlock (rw_init_flags vmmaplk/kmmaplk) with vm_map_lock_try/lock/lock_read/unlock/unlock_read/upgrade/downgrade/busy/unbusy/assert_anylock/assert_wrlock (the *_ln functions without VMMAP_DEBUG's file/line, LPRINTF and the tree checks), vm_map_modflags"
 
 [[file]]
 c = "sys/kern/exec_elf.c"
@@ -1942,6 +1942,24 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d3e65e8e6f3811b3056858dc84ea20a940f73f98"
 deps = ["sys/sys/exec_elf.h"]
 notes = "M6-b: __LDPGSZ, ARCH_ELFSIZE, ELF_TARG_CLASS/DATA/MACH, through machine::exec::MachineExec; __HAVE_COREDUMP_NOTE_ELF_MD is M7"
+
+[[file]]
+c = "sys/sys/rwlock.h"
+rust = "sys/sys/rwlock.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4e08d82e8a9a92982c3b09a131d2ab98c5429e38"
+deps = ["sys/sys/proc.h"]
+notes = "M7a: struct rwlock (atomics and Cells; RWLOCK_INITIALIZER = Rwlock::new, _TRACE = new_trace), RWL_*, RWLOCK_WRLOCK/MASK/READER_SHIFT/READ_INCR, RWLOCK_OWNER = owner(), RW_* operation and status flags, struct rrwlock, rw_read_held/rw_write_held/rw_lock_held, DT_RWLOCK_IDX_*; WITNESS (lock_object, RWLOCK_LO_FLAGS, the lock_type arguments) not configured"
+
+[[file]]
+c = "sys/kern/kern_rwlock.c"
+rust = "sys/kern/kern_rwlock.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "36373790e7747330b9e89023d9ddff6b5676f616"
+deps = ["sys/sys/rwlock.h", "sys/kern/kern_synch.c", "sys/kern/subr_pool.c"]
+notes = "M7a: rw_self, rw_enter_read/write, rw_exit_read/write, rw_init_flags_trace/rw_init_flags/rw_init (_rw_init_flags without lock_type), rw_enter (Result: EBUSY under RW_NOSLEEP, the sleep's error under RW_INTR), rw_do_enter_write/read (no RW_SPINS: MULTIPROCESSOR not configured), rw_read_incr, rw_downgrade, rw_upgrade, rw_exit, rw_exited, rw_status, rw_assert_wrlock/rdlock/anylock/unlocked (empty without feature diagnostic), rrw_init_flags/rrw_init/rrw_enter/rrw_exit/rrw_status, rwlock_obj and rw_obj_init/rw_obj_alloc_flags/rw_obj_alloc (returns the lock)/rw_obj_hold/rw_obj_free; WITNESS, RWDIAG and the dt tracepoints not configured; host tests"
 
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"

@@ -77,6 +77,7 @@ use crate::kern::kern_proc::{
     ALLPROC, ALLPROCESS, PROC_POOL, PROCESS_POOL, chgproccnt, pgfind, pidhash, prfind, tfind,
     tidhash, zombiefind,
 };
+use crate::kern::kern_rwlock::rw_init;
 use crate::kern::kern_sched::{sched_choosecpu_fork, setrunqueue};
 use crate::kern::kern_synch::{endtsleep, refcnt_init, tsleep_nsec};
 use crate::kern::kern_tc::nanouptime;
@@ -189,7 +190,7 @@ pub fn process_initialize(pr: &'static Process, p: &'static Proc) {
     pr.ps_orphans.init();
     // LIST_INIT(&pr->ps_sigiolst): sigio (M6).
 
-    // rw_init(&pr->ps_lock, "pslock"): kern_rwlock.c (M5-b3).
+    rw_init(&pr.ps_lock, "pslock");
     mtx_init(&pr.ps_mtx, IPL_HIGH);
     // klist_init_mutex(&pr->ps_klist, &pr->ps_mtx): kqueue (M6).
 

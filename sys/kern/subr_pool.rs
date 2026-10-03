@@ -68,6 +68,7 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
 use crate::dev::rnd::{arc4random, arc4random_buf};
+use crate::kern::kern_rwlock::{rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write};
 use crate::kern::kern_synch::wakeup_one;
 use crate::kern::kern_tc::getnsecuptime;
 use crate::machine::intr::IPL_HIGH;
@@ -79,6 +80,7 @@ use crate::sys::pool::{
     pool_alloc_sizes,
 };
 use crate::sys::queue::{SimpleqHead, TailqEntry, TailqHead, XsimpleqEntry, XsimpleqHead};
+use crate::sys::rwlock::Rwlock;
 use crate::sys::tree::RbtEntry;
 use crate::uvm::uvm_extern::{KMEM_DYN_INITIALIZER, KmemPaMode, KmemVaMode};
 use crate::uvm::uvm_km::{KP_DIRTY, KV_ANY, KV_INTRSAFE, KV_PAGE, km_alloc, km_free};
@@ -206,7 +208,8 @@ static POOL_HEAD: PoolHead = PoolHead(SimpleqHead::new());
 static POOL_SERIAL: AtomicU32 = AtomicU32::new(0);
 /// `pool_count`.
 static POOL_COUNT: AtomicU32 = AtomicU32::new(0);
-// pool_lock (the rwlock over the previous variables): M5.
+/// `pool_lock`: the rwlock over the previous variables.
+static POOL_LOCK: Rwlock = Rwlock::new("pools");
 /// `phpool`: private pool for page header structures.
 pub static PHPOOL: Pool = Pool::new();
 /// `pool_debug`: 1 with `POOL_DEBUG`, 2 forces a yield on every waiting get.
@@ -510,7 +513,7 @@ pub fn pool_init(
     pp.pr_crange.set(Some(&KP_DIRTY));
 
     // Insert this into the list of all pools.
-    // rw_enter_write(&pool_lock): M5.
+    rw_enter_write(&POOL_LOCK);
     #[cfg(feature = "diagnostic")]
     for iter in POOL_HEAD.0.iter() {
         if ptr::eq(iter, pp) {
@@ -534,7 +537,7 @@ pub fn pool_init(
     // no list.
     unsafe { POOL_HEAD.0.insert_head(pp) };
     POOL_COUNT.fetch_add(1, Ordering::Relaxed);
-    // rw_exit_write(&pool_lock): M5.
+    rw_exit_write(&POOL_LOCK);
 }
 
 /// `pool_destroy`: decommission a pool resource.
@@ -548,7 +551,7 @@ pub fn pool_destroy(pp: &'static Pool) {
     }
 
     // Remove from global pool list
-    // rw_enter_write(&pool_lock): M5.
+    rw_enter_write(&POOL_LOCK);
     POOL_COUNT.fetch_sub(1, Ordering::Relaxed);
     if POOL_HEAD.0.first().is_some_and(|first| ptr::eq(first, pp)) {
         // SAFETY: `pp` is the head of the list.
@@ -566,7 +569,7 @@ pub fn pool_destroy(pp: &'static Pool) {
             prev = Some(iter);
         }
     }
-    // rw_exit_write(&pool_lock): M5.
+    rw_exit_write(&POOL_LOCK);
 
     // Wait for concurrent sysctl_dopool(): refcnt_finalize(&pp->pr_refcnt, "pooldtor"), M5.
 
@@ -1258,11 +1261,11 @@ pub fn pool_reclaim(pp: &Pool) -> bool {
 /// `pool_reclaim_all`: release all complete pages that have not been used recently from all
 /// pools.
 pub fn pool_reclaim_all() {
-    // rw_enter_read(&pool_lock): M5.
+    rw_enter_read(&POOL_LOCK);
     for pp in POOL_HEAD.0.iter() {
         pool_reclaim(pp);
     }
-    // rw_exit_read(&pool_lock): M5.
+    rw_exit_read(&POOL_LOCK);
 }
 
 /// `pool_count`: how many pools exist.

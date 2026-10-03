@@ -82,6 +82,7 @@ use crate::sys::pclock::PcLock;
 use crate::sys::queue::{ListEntry, ListHead, TailqEntry, TailqHead};
 use crate::sys::refcnt::Refcnt;
 use crate::sys::resource::Rusage;
+use crate::sys::rwlock::Rwlock;
 use crate::sys::syslimits::LOGIN_NAME_MAX;
 use crate::sys::time::{Timespec, Timeval};
 use crate::sys::timeout::Timeout;
@@ -295,7 +296,8 @@ pub struct Process {
     /// \[I\] `ps_pid`: process identifier.
     pub ps_pid: Cell<Pid>,
 
-    // ps_lock: per-process rwlock (kern_rwlock.c, M5-b).
+    /// `ps_lock`: per-process rwlock.
+    pub ps_lock: Rwlock,
     /// `ps_mtx`: per-process mutex.
     pub ps_mtx: Mutex,
 
@@ -406,6 +408,7 @@ impl Process {
             ps_fd: Cell::new(ptr::null()),
             ps_vmspace: Cell::new(ptr::null()),
             ps_pid: Cell::new(0),
+            ps_lock: Rwlock::new("pslock"),
             ps_mtx: Mutex::new(IPL_HIGH),
             ps_flags: AtomicU32::new(0),
             ps_siglist: AtomicI32::new(0),

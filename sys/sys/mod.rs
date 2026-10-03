@@ -24,6 +24,7 @@ pub mod queue;
 pub mod reboot;
 pub mod refcnt;
 pub mod resource;
+pub mod rwlock;
 pub mod sched;
 pub mod signal;
 pub mod softintr;

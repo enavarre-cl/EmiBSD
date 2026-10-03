@@ -99,7 +99,8 @@
 //!   those pages in its `wired` list so `uvm_map_teardown` and `uvmspace_exec` can unmap and
 //!   free them. `uvm_map_setup_entries`, the selectors and the entry pools report
 //!   themselves unported. A `PROT_NONE` range wires nothing: it is a reservation.
-//! - `lock` is a `Mutex` until `kern_rwlock.c` is ported (M7a); `busy`/`nbusy` wait with it.
+//! - `vm_map_lock` and friends are the `*_ln` functions without the `VMMAP_DEBUG` file/line
+//!   arguments, `LPRINTF` and the tree sanity checks.
 //! - `uvmspace_fork` cannot copy a parent's wired pages (the fork copy functions are M7a)
 //!   and reports so; process 0, which has none, forks `init` fine.
 //! - `PMAP_CHECK_COPYIN` is not configured: no `check_copyin` table.
@@ -109,9 +110,16 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::kassert;
-use crate::kern::kern_lock::{mtx_enter, mtx_leave};
+use crate::kern::kern_lock::{mtx_enter, mtx_enter_try, mtx_leave};
+use crate::kern::kern_rwlock::{
+    rw_assert_anylock, rw_assert_wrlock, rw_enter, rw_enter_read, rw_enter_write, rw_exit,
+    rw_exit_read, rw_exit_write, rw_init, rw_init_flags,
+};
+use crate::kern::kern_synch::{msleep_nsec, wakeup};
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::kern::subr_prf::panic;
+use crate::machine::cpu::curproc;
+use crate::machine::intr::splassert;
 use crate::machine::intr::{IPL_NONE, IPL_VM};
 use crate::machine::pmap::{
     MachinePmap, pmap_activate, pmap_create, pmap_deactivate, pmap_destroy, pmap_enter,
@@ -120,10 +128,15 @@ use crate::machine::pmap::{
 };
 use crate::sys::errno::Errno;
 use crate::sys::mman::PROT_NONE;
-use crate::sys::mutex::Mutex;
+use crate::sys::mutex::{Mutex, mutex_assert_locked};
+use crate::sys::param::PVM;
 use crate::sys::param::{PAGE_MASK, PAGE_SIZE};
 use crate::sys::pool::{PR_WAITOK, PR_ZERO, Pool};
 use crate::sys::proc::{Proc, Process};
+use crate::sys::rwlock::{
+    RW_DOWNGRADE, RW_NOSLEEP, RW_UPGRADE, RW_WRITE, RWL_DUPOK, Rwlock, rw_write_held,
+};
+use crate::sys::systm::INFSLP;
 use crate::sys::types::{Vaddr, Vsize};
 use crate::unported;
 use crate::uvm::uvm_extern::{UVM_PGA_ZERO, VmProt, Vmspace};
@@ -169,7 +182,10 @@ pub struct VmMap {
     pub flags: Cell<i32>,
     /// `timestamp`: version number.
     pub timestamp: Cell<u32>,
-    // busy, nbusy: with the rwlock (M7a).
+    /// \[f\] `busy`: thread holding map busy.
+    pub busy: Cell<*const Proc>,
+    /// \[f\] `nbusy`: waiters for busy.
+    pub nbusy: Cell<u32>,
     /// \[I\] `min_offset`: first address in map.
     pub min_offset: Cell<usize>,
     /// \[I\] `max_offset`: last address in map.
@@ -183,8 +199,8 @@ pub struct VmMap {
     /// \[v\] `s_end`: end for stack alloc.
     pub s_end: Cell<usize>,
     // uaddr_exe, uaddr_any[], uaddr_brk_stack: the address selectors (M7a).
-    /// `lock`: non-intrsafe lock (an rwlock in C, see the module's deviations).
-    pub lock: Mutex,
+    /// `lock`: non-intrsafe lock.
+    pub lock: Rwlock,
     /// `mtx`: intrsafe lock.
     pub mtx: Mutex,
     /// `flags_lock`: flags lock.
@@ -204,13 +220,15 @@ impl VmMap {
             ref_count: AtomicI32::new(0),
             flags: Cell::new(0),
             timestamp: Cell::new(0),
+            busy: Cell::new(ptr::null()),
+            nbusy: Cell::new(0),
             min_offset: Cell::new(0),
             max_offset: Cell::new(0),
             b_start: Cell::new(0),
             b_end: Cell::new(0),
             s_start: Cell::new(0),
             s_end: Cell::new(0),
-            lock: Mutex::new(IPL_NONE),
+            lock: Rwlock::new("vmmaplk"),
             mtx: Mutex::new(IPL_VM),
             flags_lock: Mutex::new(IPL_VM),
             wired: Pglist::new(),
@@ -237,14 +255,196 @@ impl Default for VmMap {
 /// `uvm_vmspace_pool`: the pool of `struct vmspace`.
 static UVM_VMSPACE_POOL: Pool = Pool::new();
 
-/// `vm_map_lock(map)`.
-pub fn vm_map_lock(map: &VmMap) {
-    mtx_enter(&map.lock);
+/// `vmmapbsy`: the wait message of a thread waiting for a busy map.
+const VMMAPBSY: &str = "vmmapbsy";
+
+/// `vm_map_lock_try(map)` (`vm_map_lock_try_ln`): takes the write lock without sleeping;
+/// `false` when the map is busy for another thread or already locked.
+pub fn vm_map_lock_try(map: &VmMap) -> bool {
+    if map.flags.get() & VM_MAP_INTRSAFE != 0 {
+        if !mtx_enter_try(&map.mtx) {
+            return false;
+        }
+    } else {
+        mtx_enter(&map.flags_lock);
+        let busy = map.busy.get();
+        mtx_leave(&map.flags_lock);
+        if !busy.is_null() && !ptr::eq(busy, curproc_ptr()) {
+            return false;
+        }
+
+        if rw_enter(&map.lock, RW_WRITE | RW_NOSLEEP).is_err() {
+            return false;
+        }
+
+        // to be sure, to be sure
+        mtx_enter(&map.flags_lock);
+        let busy = map.busy.get();
+        mtx_leave(&map.flags_lock);
+        if !busy.is_null() && !ptr::eq(busy, curproc_ptr()) {
+            rw_exit(&map.lock);
+            return false;
+        }
+    }
+
+    map.timestamp.set(map.timestamp.get() + 1);
+    // LPRINTF, uvm_tree_sanity, uvm_tree_size_chk: VMMAP_DEBUG, not configured.
+
+    true
 }
 
-/// `vm_map_unlock(map)`.
+/// `vm_map_lock(map)` (`vm_map_lock_ln`): takes the write lock, waiting out a thread that
+/// holds the map busy.
+pub fn vm_map_lock(map: &VmMap) {
+    if map.flags.get() & VM_MAP_INTRSAFE == 0 {
+        mtx_enter(&map.flags_lock);
+        loop {
+            while !map.busy.get().is_null() && !ptr::eq(map.busy.get(), curproc_ptr()) {
+                map.nbusy.set(map.nbusy.get() + 1);
+                let _ = msleep_nsec(
+                    ptr::from_ref(&map.busy),
+                    &map.flags_lock,
+                    PVM,
+                    VMMAPBSY,
+                    INFSLP,
+                );
+                map.nbusy.set(map.nbusy.get() - 1);
+            }
+            mtx_leave(&map.flags_lock);
+
+            rw_enter_write(&map.lock);
+
+            // to be sure, to be sure
+            mtx_enter(&map.flags_lock);
+            if !map.busy.get().is_null() && !ptr::eq(map.busy.get(), curproc_ptr()) {
+                // go around again
+                rw_exit_write(&map.lock);
+            } else {
+                // we won
+                break;
+            }
+        }
+        mtx_leave(&map.flags_lock);
+    } else {
+        mtx_enter(&map.mtx);
+    }
+
+    if !ptr::eq(map.busy.get(), curproc_ptr()) {
+        kassert!(map.busy.get().is_null());
+        map.timestamp.set(map.timestamp.get() + 1);
+    }
+    // LPRINTF, uvm_tree_sanity, uvm_tree_size_chk: VMMAP_DEBUG, not configured.
+}
+
+/// `vm_map_lock_read(map)` (`vm_map_lock_read_ln`).
+pub fn vm_map_lock_read(map: &VmMap) {
+    if map.flags.get() & VM_MAP_INTRSAFE == 0 {
+        rw_enter_read(&map.lock);
+    } else {
+        mtx_enter(&map.mtx);
+    }
+}
+
+/// `vm_map_unlock(map)` (`vm_map_unlock_ln`).
 pub fn vm_map_unlock(map: &VmMap) {
-    mtx_leave(&map.lock);
+    kassert!(map.busy.get().is_null() || ptr::eq(map.busy.get(), curproc_ptr()));
+    if map.flags.get() & VM_MAP_INTRSAFE == 0 {
+        rw_exit(&map.lock);
+    } else {
+        mtx_leave(&map.mtx);
+    }
+}
+
+/// `vm_map_unlock_read(map)` (`vm_map_unlock_read_ln`).
+pub fn vm_map_unlock_read(map: &VmMap) {
+    if map.flags.get() & VM_MAP_INTRSAFE == 0 {
+        rw_exit_read(&map.lock);
+    } else {
+        mtx_leave(&map.mtx);
+    }
+}
+
+/// `vm_map_upgrade(map)` (`vm_map_upgrade_ln`): the read lock becomes the write lock
+/// without sleeping; `false` when another thread is in the way.
+pub fn vm_map_upgrade(map: &VmMap) -> bool {
+    if map.flags.get() & VM_MAP_INTRSAFE != 0 {
+        mutex_assert_locked(&map.mtx, "vm_map_upgrade");
+    } else {
+        mtx_enter(&map.flags_lock);
+        let busy = map.busy.get();
+        mtx_leave(&map.flags_lock);
+        if !busy.is_null() && !ptr::eq(busy, curproc_ptr()) {
+            return false;
+        }
+
+        if rw_enter(&map.lock, RW_UPGRADE | RW_NOSLEEP).is_err() {
+            return false;
+        }
+    }
+
+    map.timestamp.set(map.timestamp.get() + 1);
+    true
+}
+
+/// `vm_map_downgrade(map)` (`vm_map_downgrade_ln`): the write lock becomes a read lock.
+pub fn vm_map_downgrade(map: &VmMap) {
+    if map.flags.get() & VM_MAP_INTRSAFE != 0 {
+        mutex_assert_locked(&map.mtx, "vm_map_downgrade");
+    } else {
+        let rv = rw_enter(&map.lock, RW_DOWNGRADE);
+        kassert!(rv.is_ok());
+    }
+}
+
+/// `vm_map_busy(map)` (`vm_map_busy_ln`): the write-locking thread marks the map busy, so it
+/// can drop the lock and keep other lockers out.
+pub fn vm_map_busy(map: &VmMap) {
+    kassert!(map.flags.get() & VM_MAP_INTRSAFE == 0);
+    kassert!(rw_write_held(&map.lock));
+    kassert!(map.busy.get().is_null());
+
+    mtx_enter(&map.flags_lock);
+    map.busy.set(curproc_ptr());
+    mtx_leave(&map.flags_lock);
+}
+
+/// `vm_map_unbusy(map)` (`vm_map_unbusy_ln`).
+pub fn vm_map_unbusy(map: &VmMap) {
+    kassert!(map.flags.get() & VM_MAP_INTRSAFE == 0);
+    kassert!(ptr::eq(map.busy.get(), curproc_ptr()));
+
+    mtx_enter(&map.flags_lock);
+    let nbusy = map.nbusy.get();
+    map.busy.set(ptr::null());
+    mtx_leave(&map.flags_lock);
+
+    if nbusy > 0 {
+        wakeup(ptr::from_ref(&map.busy));
+    }
+}
+
+/// `vm_map_assert_anylock(map)` (`vm_map_assert_anylock_ln`).
+pub fn vm_map_assert_anylock(map: &VmMap) {
+    if map.flags.get() & VM_MAP_INTRSAFE == 0 {
+        rw_assert_anylock(&map.lock);
+    } else {
+        mutex_assert_locked(&map.mtx, "vm_map_assert_anylock");
+    }
+}
+
+/// `vm_map_assert_wrlock(map)` (`vm_map_assert_wrlock_ln`).
+pub fn vm_map_assert_wrlock(map: &VmMap) {
+    if map.flags.get() & VM_MAP_INTRSAFE == 0 {
+        splassert(IPL_NONE, "vm_map_assert_wrlock");
+        rw_assert_wrlock(&map.lock);
+    } else {
+        mutex_assert_locked(&map.mtx, "vm_map_assert_wrlock");
+    }
+}
+
+/// `curproc` as the pointer the map's `busy` holds.
+fn curproc_ptr() -> *const Proc {
+    curproc().map_or(ptr::null(), ptr::from_ref)
 }
 
 /// `vm_map_modflags(map, set, clear)`: changes the map's flags under `flags_lock`.
@@ -285,10 +485,15 @@ pub fn uvm_map_setup(map: &VmMap, pmap: &'static MachinePmap, min: usize, max: u
     map.s_end.set(0);
     map.flags.set(flags);
     map.timestamp.set(0);
+    map.busy.set(ptr::null());
     map.wired.init();
-    // rw_init_flags(&map->lock, "vmmaplk", RWL_DUPOK) / rw_init(&map->lock, "kmmaplk"),
-    // mtx_init(&map->mtx, IPL_VM), mtx_init(&map->flags_lock, IPL_VM): the mutexes are
-    // statically initialised.
+    if flags & VM_MAP_ISVMSPACE != 0 {
+        rw_init_flags(&map.lock, "vmmaplk", RWL_DUPOK);
+    } else {
+        rw_init(&map.lock, "kmmaplk");
+    }
+    // mtx_init(&map->mtx, IPL_VM), mtx_init(&map->flags_lock, IPL_VM): statically
+    // initialised.
 
     // Configure the allocators: uvm_map_setup_md(map) for a vmspace, uaddr_kbootstrap for a
     // kernel map (M7a).

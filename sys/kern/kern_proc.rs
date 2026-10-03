@@ -55,6 +55,7 @@ use libkern::StaticCell;
 
 use crate::conf::param::{MAXPROCESS, MAXTHREAD};
 use crate::kern::kern_malloc::{free, malloc};
+use crate::kern::kern_rwlock::{rw_enter_write, rw_exit_write, rw_init};
 use crate::kern::kern_subr::hashinit;
 use crate::kern::subr_pool::pool_init;
 use crate::kern::subr_prf::panic;
@@ -67,9 +68,9 @@ use crate::sys::proc::{
 };
 use crate::sys::queue::ListHead;
 use crate::sys::resource::Rusage;
+use crate::sys::rwlock::Rwlock;
 use crate::sys::types::{Pid, Uid};
 use crate::sys::ucred::Ucred;
-use crate::unported;
 use core::sync::atomic::Ordering;
 
 /*
@@ -102,10 +103,8 @@ impl<A: crate::sys::queue::ListAdapter + 'static> HashTable<A> {
     }
 }
 
-/// `uidinfolk`: an rwlock (see the module's deviations).
-fn uidinfolk_unported() {
-    let _ = unported!("uidinfolk (rw_enter_write, kern_rwlock.c)");
-}
+/// `uidinfolk`: the lock over the uid hash table.
+static UIDINFOLK: Rwlock = Rwlock::new("uidinfo");
 
 /// \[U\] `uihashtbl`.
 static UIHASHTBL: HashTable<UidinfoHash> = HashTable::new();
@@ -173,7 +172,7 @@ pub fn procinit() {
     ZOMBPROCESS.0.init();
     ALLPROC.0.init();
 
-    // rw_init(&uidinfolk, "uidinfo"): see the module's deviations.
+    rw_init(&UIDINFOLK, "uidinfo");
 
     let maxthread = MAXTHREAD.load(Ordering::Relaxed);
     let maxprocess = MAXPROCESS.load(Ordering::Relaxed);
@@ -252,11 +251,11 @@ pub fn procinit() {
 /// making whatever change they needed.
 pub fn uid_find(uid: Uid) -> &'static Uidinfo {
     let uipp = uihash(uid);
-    uidinfolk_unported(); // rw_enter_write(&uidinfolk)
+    rw_enter_write(&UIDINFOLK);
     if let Some(uip) = uipp.iter().find(|u| u.ui_uid.get() == uid) {
         return uip;
     }
-    // rw_exit_write(&uidinfolk)
+    rw_exit_write(&UIDINFOLK);
     let Some(nuip) = malloc(size_of::<Uidinfo>(), M_PROC, M_WAITOK | M_ZERO) else {
         panic(format_args!("uid_find: no memory"));
     };
@@ -265,7 +264,7 @@ pub fn uid_find(uid: Uid) -> &'static Uidinfo {
     unsafe { nuip.as_ptr().write(Uidinfo::new()) };
     // SAFETY: as above; the entry lives forever once linked.
     let nuip: &'static Uidinfo = unsafe { nuip.as_ref() };
-    // rw_enter_write(&uidinfolk)
+    rw_enter_write(&UIDINFOLK);
     if let Some(uip) = uipp.iter().find(|u| u.ui_uid.get() == uid) {
         // `nuip` was allocated above and is in no list.
         free(
@@ -284,7 +283,7 @@ pub fn uid_find(uid: Uid) -> &'static Uidinfo {
 
 /// `uid_release`.
 pub fn uid_release(_uip: &Uidinfo) {
-    // rw_exit_write(&uidinfolk)
+    rw_exit_write(&UIDINFOLK);
 }
 
 /// `chgproccnt`: change the count associated with number of threads a given user is using.

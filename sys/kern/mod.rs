@@ -19,6 +19,7 @@ pub mod kern_lock;
 pub mod kern_malloc;
 pub mod kern_proc;
 pub mod kern_resource;
+pub mod kern_rwlock;
 pub mod kern_sched;
 pub mod kern_sig;
 pub mod kern_softintr;
