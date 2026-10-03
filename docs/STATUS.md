@@ -1,6 +1,6 @@
 # Status
 
-Milestone: **M8b done** (multi-user boot and root login); M9a next. Updated: 2026-10-03.
+Milestone: **M9a done** (sockets, ifconfig, ping, route on the ramdisk); M9b next. Updated: 2026-10-03.
 
 Done:
 - M7a (exit met: `init: demand-zero bss ok`, user pages served by `uvm_fault`): `uvm_map.c`,

@@ -1488,6 +1488,8 @@ fn socket_events(kq: usize) -> bool {
     ok &= pfds[0].revents == POLLIN | POLLHUP;
 
     ok && call(SYS_CLOSE, a, 0, 0) == (0, false)
+}
+
 /// `AF_INET`.
 const AF_INET: usize = 2;
 /// `SOCK_RAW`.
