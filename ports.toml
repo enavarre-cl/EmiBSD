@@ -1514,6 +1514,33 @@ deps = ["sys/sys/time.h"]
 notes = "M8: struct todr_chip_handle (fn pointers, todr_setwen optional) and the todr_gettime/todr_settime/todr_wenable macros as functions; todr_attach is kern_time.c's; no chip driver is ported"
 
 [[file]]
+c = "sys/sys/poll.h"
+rust = "sys/sys/poll.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f3e16e54fee174512ba8042b193ad051ee8c4801"
+deps = []
+notes = "M8: struct pollfd (AbiPod), nfds_t, the POLL* bits, POLL_NOHUP, INFTIM"
+
+[[file]]
+c = "sys/sys/select.h"
+rust = "sys/sys/select.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3c7aa206326c1a500a9df18b145207886deff2ea"
+deps = []
+notes = "M8: FD_SETSIZE, NBBY, fd_mask, NFDBITS, howmany, struct fd_set, FD_SET/FD_CLR/FD_ISSET over mask slices, FD_ZERO; struct selinfo waits for kern_event.c; host test"
+
+[[file]]
+c = "sys/sys/event.h"
+rust = "sys/sys/event.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1c99632c96075c2b792b3b34f5193ec37deebd2e"
+deps = []
+notes = "M8: the user ABI (EVFILT_*, EV_SET as ev_set, struct kevent, EV_*, every NOTE_*) and __EV_SELECT/__EV_POLL/__EV_HUP/EVFILT_MARKER; struct klist, knote, filterops and the rest of the kernel half come with kern_event.c"
+
+[[file]]
 c = "sys/sys/timetc.h"
 rust = "sys/sys/timetc.rs"
 status = "wip"
@@ -2269,7 +2296,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8082cec7af2808ceca1c70dec622cf33d4bd7cf6"
 deps = ["sys/sys/limits.h", "sys/sys/syscallargs.h", "sys/kern/kern_descrip.c", "sys/kern/kern_subr.c", "sys/sys/ioccom.h", "sys/sys/filio.h"]
-notes = "M6-b: sys_write for the console (descriptors 1 and 2 straight to cnputc); M7b (kern_descrip.c): iovec_copyin (returns the iovecs and resid, frees its own array on failure; the user array copied one iovec at a time) and iovec_free (unsafe), sys_read, sys_readv, dofilereadv, sys_write, sys_writev, dofilewritev (the 1/2 shortcut is gone: every descriptor goes through fd_getfile_mode and f_ops), sys_ioctl (FIOCLEX/FIONCLEX, IOCPARM_LEN buffer on the stack or malloc(M_IOCTLOPS), FIONBIO/FIOASYNC, fo_ioctl); the FO_POSITION vnode checks (VFIFO, VISTTY, negative offsets) are real since vfs stage 1; EPIPE posts SIGPIPE to the thread (ptsignal, since sys_pipe.c); reported: pledge_ioctl (only with PS_PLEDGE), the socket SS_DNS check; KTRACE not configured; select/pselect/poll/ppoll and the kqueue pollers wait for kern_event.c; M8: selwakeup (KNOTE on si_note: with kern_event.c not ported the list is always empty, so it does nothing; struct selinfo has no si_note); M8: sys_utrace (KTRACE not configured: returns 0, the C's #else)"
+notes = "M6-b: sys_write for the console (descriptors 1 and 2 straight to cnputc); M7b (kern_descrip.c): iovec_copyin (returns the iovecs and resid, frees its own array on failure; the user array copied one iovec at a time) and iovec_free (unsafe), sys_read, sys_readv, dofilereadv, sys_write, sys_writev, dofilewritev (the 1/2 shortcut is gone: every descriptor goes through fd_getfile_mode and f_ops), sys_ioctl (FIOCLEX/FIONCLEX, IOCPARM_LEN buffer on the stack or malloc(M_IOCTLOPS), FIONBIO/FIOASYNC, fo_ioctl); the FO_POSITION vnode checks (VFIFO, VISTTY, negative offsets) are real since vfs stage 1; EPIPE posts SIGPIPE to the thread (ptsignal, since sys_pipe.c); reported: pledge_ioctl (only with PS_PLEDGE), the socket SS_DNS check; KTRACE not configured; select/pselect/poll/ppoll and the kqueue pollers wait for kern_event.c; M8: selwakeup (KNOTE on si_note: with kern_event.c not ported the list is always empty, so it does nothing; struct selinfo has no si_note); M8: sys_utrace (KTRACE not configured: returns 0, the C's #else); M8: sys_utrace (KTRACE not configured: returns 0, the C's #else); M8: sys_select, sys_pselect, dopselect, pselregister, pselcollect, selwakeup (reported), pollout, sys_poll, sys_ppoll, doppoll, ppollregister_evts, ppollregister, ppollcollect: the file is complete, but kern_event.c is not ported: kqueue_register is a reporting stand-in (ENOSYS), so with no descriptors the calls sleep for their timeout as in C, select with descriptors fails ENOSYS and poll marks them POLLERR; p_kq_serial is 0; host tests for the conversions"
 
 [[file]]
 c = "sys/arch/amd64/include/exec.h"

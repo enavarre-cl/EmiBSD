@@ -150,6 +150,10 @@ const SYS_GETTIMEOFDAY: usize = 67;
 const SYS_SETITIMER: usize = 69;
 /// `SYS_getitimer`.
 const SYS_GETITIMER: usize = 70;
+/// `SYS_select`.
+const SYS_SELECT: usize = 71;
+/// `SYS_poll`.
+const SYS_POLL: usize = 252;
 /// `CLOCK_REALTIME`.
 const CLOCK_REALTIME: usize = 0;
 /// `CLOCK_MONOTONIC`.
@@ -637,7 +641,8 @@ extern "C" fn on_sigalrm(sig: i32) {
 /// `kern_time.c` seen from user mode: the monotonic clock advances across a 20 ms
 /// `nanosleep(2)`, the clocks have a resolution, `gettimeofday(2)` answers, and a 200 ms
 /// `ITIMER_REAL` timer interrupts a long `nanosleep` with `SIGALRM` (`EINTR`, the time left
-/// copied out) and is then disarmed.
+/// copied out) and is then disarmed. `select(2)` and `poll(2)` with no descriptors sleep for
+/// their timeout (`sys_generic.c`).
 fn times() -> bool {
     let mut a = [0i64; 2];
     let mut b = [0i64; 2];
@@ -704,6 +709,24 @@ fn times() -> bool {
     let mut now = [1i64; 4];
     ok &= call(SYS_GETITIMER, ITIMER_REAL, now.as_mut_ptr() as usize, 0) == (0, false);
     ok &= now == [0; 4];
+
+    // select(2) and poll(2) with no descriptors sleep for their timeout and find nothing.
+    let tv10 = [0i64, 10_000];
+    ok &= syscall6(SYS_SELECT, [0, 0, 0, 0, tv10.as_ptr() as usize, 0]) == (0, false);
+    ok &= call(
+        SYS_CLOCK_GETTIME,
+        CLOCK_MONOTONIC,
+        a.as_mut_ptr() as usize,
+        0,
+    ) == (0, false);
+    ok &= call(SYS_POLL, 0, 0, 10) == (0, false);
+    ok &= call(
+        SYS_CLOCK_GETTIME,
+        CLOCK_MONOTONIC,
+        b.as_mut_ptr() as usize,
+        0,
+    ) == (0, false);
+    ok &= (b[0] - a[0]) * 1_000_000_000 + (b[1] - a[1]) >= 5_000_000;
     ok
 }
 

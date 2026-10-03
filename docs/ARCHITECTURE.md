@@ -418,6 +418,13 @@ OpenBSD's `makedev()` encoding).
   No time-of-day chip driver is ported (`todr_attach` has no caller), so the clock starts at
   the epoch and `resettodr` has nothing to write. The stand-in `init` checks the clocks, a
   sleep and a `SIGALRM` from `ITIMER_REAL` interrupting `nanosleep` (`init: time ok`).
+- `select(2)`, `pselect(2)`, `poll(2)`, `ppoll(2)` (M8, `sys_generic.c`): OpenBSD builds
+  them on the thread's poll kqueue (there is no `fo_poll` in `struct fileops` any more), and
+  `kern_event.c` is not ported. The system calls and their conversions are, with
+  `kqueue_register` a reporting stand-in that fails: without descriptors they sleep for
+  their timeout as OpenBSD's do; with descriptors `select` fails with `ENOSYS` and `poll`
+  answers `POLLERR` for each. They become real with `kern_event.c` and each file type's
+  `kqfilter` (pipes already compute their filters, `PipeFilter`).
 - Signals (M7, `kern_sig.c`): the whole file is OpenBSD's, and the traps of both archs call
   its `trapsignal`. The machine half (`sendsig`, `sys_sigreturn`, the `sigcode` trampoline of
   each `locore.S`) is the `machine::MachineSignal` contract; `sys_sigreturn` is entered from
