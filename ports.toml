@@ -2814,6 +2814,23 @@ deps = ["sys/dev/pv/virtio.c", "sys/dev/ofw/fdt.c", "sys/arch/arm64/include/fdt.
 notes = "M7b: the whole file: VIRTIO_MMIO_* registers, struct virtio_mmio_softc (repr(C), Option tag/handle)/attach_args, virtio_mmio_ca and virtio_mmio_fdt_ca, virtio_mmio_ops, queue size/setup (version 1 PFN, version 2 split addresses), setup_intrs, get/set_status, match (virtio,mmio), attach (32 nodes on QEMU virt; id 0 prints Unknown (0) and stops), attach_finish (fdt_intr_establish through machine::fdt), detach, negotiate_features, the device config accessors, intr, kick, intr_barrier, intr_establish (ENXIO); DEVNAME is unused in C and left out"
 
 [[file]]
+c = "sys/dev/pv/if_vio.c"
+rust = "sys/dev/pv/if_vio.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8942b02857a15646768a8992e68678439fe5575e"
+deps = ["sys/dev/pv/virtio.c", "sys/net/if.c", "sys/net/ifq.c", "sys/net/if_ethersubr.c", "sys/net/if_media.h", "sys/kern/uipc_mbuf.c"]
+notes = "M7b: the whole driver: the if_vioreg.h part (VIRTIO_NET_CONFIG_*, VIRTIO_NET_F_*, CONFFLAG_QEMU_VLAN_BUG, virtio_net_feature_names (empty without VIRTIO_DEBUG), struct virtio_net_hdr (repr(C), copied to and from the DMA area as bytes), the control structures (guest_offloads and mac_tbl repr(C, packed), written unaligned), VIRTIO_NET_* control classes and commands) and the if_viovar.h part (enum vio_ctrl_state, struct vio_queue (repr(C, align(64)), one mallocarray for the dmamap and mbuf arrays as in C, bounds-checked slot accessors), struct vio_softc (repr(C): sc_dev, then the arpcom; Softc)); vio_match, vio_ca/vio_cd, vio_alloc_dmamem/free_dmamem, vio_alloc_mem, vio_dmamem_enqueue, vio_get_lladdr, vio_needs_reset, vio_attach (the feature renegotiation loop, MAC, header size, rx buffer offset, capabilities, hardmtu, tx/rx sizes, queues, control queue, DMA area, ifnet, if_attach + ether_ifattach + queues), vio_link_state, vio_queue_intr/config_intr/ctrl_intr, vio_config_change, vio_media_change/status, vio_set_offloads, vio_init, vio_stop, vio_cksum_update, vio_tx_offload (fills a local header), vio_start, vio_dump, vio_rxr_info, vio_ioctl (ether_ioctl for the rest), vio_add_rx_mbuf, vio_free_rx_mbuf, vio_populate_rx_mbufs, vio_rx_offload, vio_rxeof (the header copied out before m_adj), vio_rx_intr, vio_rxtick, vio_rx_drain, vio_tx_intr, vio_txtick, vio_tx_dequeue, vio_txeof, vio_encap (m_defrag on EFBIG), vio_tx_drain, vio_ctrl_start/submit/finish (tsleep_nsec, polling while cold), vio_ctrl_rx/mq/guest_offloads, vio_ctrl_wakeup, vio_ctrleof, vio_set_rx_filter, vio_iff. Reported: intrmap_create/intrmap_count (kern_intrmap.c; F_MQ is only asked for with more than one CPU, sc_intrmap is always NULL and left out), ifmedia_init/add/set and ifmedia_ioctl (net/if_media.c; sc_media left out, SIOCGIFMEDIA/SIOCSIFMEDIA fail with ENOSYS), tcpstat_inc/tcpstat_add (netinet/tcp_var.h). Not configured: NBPFILTER, NVLAN, INET6. th_sum/uh_sum offsets are constants (tcp.h/udp.h not ported). Host tests (header bytes, checksum fold, control area size, rx offset) and a reference-backed test of the defines in if_vio.c; selftest=vio boots on both machines"
+
+[[file]]
+c = "sys/net/if_media.h"
+rust = "sys/net/if_media.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2db67cda16e783915842bbd7d755e4a981d8da11"
+notes = "BSD-4-clause block (Stone, Thorpe), accepted at M2. M7b: IFM_ETHER, IFM_AUTO, IFM_FDX, IFM_AVALID, IFM_ACTIVE (u64) for vio(4)'s media status; struct ifmedia, the media word tables and if_media.c's ifmedia_* are not ported (drivers report their calls); reference-backed test"
+
+[[file]]
 c = "sys/arch/amd64/pci/pci_machdep.c"
 rust = "sys/arch/amd64/pci/pci_machdep.rs"
 status = "ported"
@@ -3000,7 +3017,7 @@ reason = "project helper: the Rust GlobalAlloc over malloc(9)/free(9), feature a
 
 [[extra]]
 rust = "sys/kern/selftest.rs"
-reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access, selftest=uart for the receive-interrupt echo (M4) and selftest=clock for hz clock interrupts plus a timeout (M5); mbuf_chains after mbinit (M7b); bus_dma_check, called by each cpu_configure after bus_dma_init with the machine's tag (M7b)"
+reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access, selftest=uart for the receive-interrupt echo (M4) and selftest=clock for hz clock interrupts plus a timeout (M5); mbuf_chains after mbinit (M7b); bus_dma_check, called by each cpu_configure after bus_dma_init with the machine's tag (M7b); selftest=vio: vio_check brings vio0 up through ifioctl, sends a hand-built ARP request and waits for a frame through the rx interrupt (M7b)"
 
 [[extra]]
 rust = "sys/reftest.rs"
@@ -3024,8 +3041,8 @@ reason = "M0 bootstrap: semihosting exit under feature qemu; not OpenBSD code"
 
 [[extra]]
 rust = "sys/arch/amd64/conf/ioconf.rs"
-reason = "replaces config(8)'s generated ioconf.c for amd64 GENERIC: cfdata[] and cfroots[] for the ported devices (mainbus0, cpu0, pci* at mainbus0 with the pcibus locator bus = -1, virtio* at pci? with dev = -1, function = -1), reached through machine::autoconf"
+reason = "replaces config(8)'s generated ioconf.c for amd64 GENERIC: cfdata[] and cfroots[] for the ported devices (mainbus0, cpu0, pci* at mainbus0 with the pcibus locator bus = -1, virtio* at pci? with dev = -1, function = -1, vio* at virtio?), reached through machine::autoconf"
 
 [[extra]]
 rust = "sys/arch/arm64/conf/ioconf.rs"
-reason = "replaces config(8)'s generated ioconf.c for arm64 GENERIC: cfdata[] and cfroots[] for the ported devices (mainbus0, ampintc*, agtimer*, virtio* at fdt?), reached through machine::autoconf"
+reason = "replaces config(8)'s generated ioconf.c for arm64 GENERIC: cfdata[] and cfroots[] for the ported devices (mainbus0, ampintc*, agtimer*, virtio* at fdt?, vio* at virtio?), reached through machine::autoconf"

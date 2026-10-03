@@ -58,7 +58,9 @@ run-arm64: image-arm64
 # interrupt, gets a line typed on the serial console and echoes it (status 33);
 # `selftest=clock`, which waits for hz clock interrupts and a timeout (status 33);
 # `selftest=kthread`, two kernel threads passing a turn with msleep/wakeup (status 33); and
-# `selftest=taskq`, tasks run by systq, systqmp and a created then destroyed queue (status 33).
+# `selftest=taskq`, tasks run by systq, systqmp and a created then destroyed queue (status 33);
+# and `selftest=vio`, which brings vio0 up, sends an ARP request for QEMU's gateway and waits
+# for a frame through the receive interrupt (status 33).
 smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
@@ -69,6 +71,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "cpu0 at mainbus0: (uniprocessor)" --expect "pci0 at mainbus0 bus 0" \
         --expect "at pci0 dev 0 function 0 not configured" \
         --expect "virtio0 at pci0 dev 2 function 0 vendor 0x1af4 product 0x1000 rev 0x00" \
+        --expect "vio0 at virtio0: 1 queue, address 52:54:00:12:34:56" --expect "virtio0: irq " \
         --expect "cpu0: apic clock running at" \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
@@ -91,6 +94,8 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "selftest: kthread ping-pong ok"
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=taskq" \
         --expect "selftest: taskq ok"
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=vio" \
+        --expect "selftest: vio up ok" --expect "selftest: vio rx ok"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd \
         --expect "bsd: booted on arm64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 7.8 (GENERIC) #" \
@@ -101,6 +106,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "virtio0 at mainbus0: Virtio Unknown (0) Device" \
         --expect "virtio30 at mainbus0: Virtio Network Device" \
         --expect "virtio31 at mainbus0: Virtio Block Device" \
+        --expect "vio0 at virtio30: 1 queue, address 52:54:00:12:34:56" \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 7.8" \
@@ -121,6 +127,8 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "selftest: kthread ping-pong ok"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=taskq" \
         --expect "selftest: taskq ok"
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=vio" \
+        --expect "selftest: vio up ok" --expect "selftest: vio rx ok"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

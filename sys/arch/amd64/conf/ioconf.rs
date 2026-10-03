@@ -5,7 +5,7 @@
 //! `subr_autoconf.rs`.
 //!
 //! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?`, `pci* at mainbus0`,
-//! `virtio* at pci?`; `pseudo-device loop`.
+//! `virtio* at pci?`, `vio* at virtio?`; `pseudo-device loop`.
 //! GENERIC lines left out until their drivers exist: `bios0`, `ioapic*`, `isa0`, `vmm0`,
 //! `pvbus0`, `ipmi0` and `efifb0` at mainbus, and everything below them; every other device
 //! at `pci?` (`pchb*`, `ppb*`, `pcib*`, the network and storage drivers, ...), `pci*` at
@@ -18,6 +18,7 @@ use crate::arch::amd64::amd64::cpu::{CPU_CA, CPU_CD};
 use crate::arch::amd64::amd64::mainbus::{MAINBUS_CA, MAINBUS_CD};
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
+use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::net::if_loop::loopattach;
 use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR, Pdevinit};
@@ -36,8 +37,11 @@ const PV_PCI: &[i16] = &[2];
 /// `device pci {[dev = -1], [function = -1]}`).
 const LOC_PCI_UNK: &[i64] = &[-1, -1];
 
+/// `pv[]` for children of `virtio*` (`cfdata[3]`).
+const PV_VIRTIO: &[i16] = &[3];
+
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 4] = [
+pub static CFDATA: [Cfdata; 5] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -86,6 +90,8 @@ pub static CFDATA: [Cfdata; 4] = [
         0,
         0,
     ),
+    // 4: vio* at virtio?
+    Cfdata::new(&VIO_CA, &VIO_CD, 0, FSTATE_STAR, &[], 0, PV_VIRTIO, 0, 0),
 ];
 
 /// `cfroots[]`: `mainbus0`.

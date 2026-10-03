@@ -446,6 +446,19 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   for virtio is `machine::pci_machdep::PCI_MSI_PER_BRIDGE`. Interrupts: amd64 has no MP
   tables, so `pci_intr_map_msi*` refuse and the device's INTx line (the one the firmware
   wrote) is established on the 8259; arm64's comes from the node through `ampintc`.
+- `vio(4)` (M7b): `dev/pv/if_vio.c` is OpenBSD's whole driver (`vio* at virtio?`), attached
+  with the NIC API of the network-interface layer (`if_attach`, `ether_ifattach`, one send
+  and one receive queue). QEMU's user-mode network gives it no offloads (slirp has no
+  virtio-net header), so it runs with `MRG_RXBUF`, event indexes, indirect descriptors and
+  the control queue. Not ported and reported where called: `intrmap(9)` (multi-queue is only
+  asked for with more than one CPU), `ifmedia` (`net/if_media.c`: only the five media words
+  of `<net/if_media.h>` it reports are here), `tcpstat`. The interrupts work on both
+  machines: amd64's INTx through the 8259 (q35's firmware routes the PIRQ to IRQ 11),
+  arm64's SPI through `ampintc`; the `selftest=vio` boot brings `vio0` up through `ifioctl`
+  (the control queue's answers arrive only through the interrupt once `cold` is over),
+  stops the receive tick, sends an ARP request built by hand and sees QEMU's answer reach
+  `ifiq_input` through `vio_rx_intr`, where `ether_input` reports `arpinput` until netinet
+  is here.
 - Network interfaces (M7b): `net/if.c`, `net/ifq.c`, `net/if_ethersubr.c` and `net/if_loop.c`
   are OpenBSD's. `netlock` lives in `net/if_.rs` (as in `if.c`) and the `NET_LOCK()` family
   is `sys/systm.rs`'s functions over it; `main` runs `ifinit` and `softnet_init` (one softnet

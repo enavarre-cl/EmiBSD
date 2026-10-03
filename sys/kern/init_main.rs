@@ -490,6 +490,13 @@ pub fn main() -> ! {
         Machine::exit(ExitStatus::Success);
     }
     #[cfg(feature = "qemu")]
+    if crate::kern::selftest::vio_requested() {
+        // The M7b network card check: the softnet thread exists since
+        // kthread_run_deferred_queue.
+        crate::kern::selftest::vio_check();
+        Machine::exit(ExitStatus::Success);
+    }
+    #[cfg(feature = "qemu")]
     if crate::kern::selftest::taskq_requested() {
         // The systq and systqmp threads exist since kthread_run_deferred_queue.
         crate::kern::selftest::taskq_check();

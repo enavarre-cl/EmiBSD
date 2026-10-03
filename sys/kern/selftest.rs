@@ -15,6 +15,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::conf::param::HZ;
+use crate::dev::pv::if_vio::{VioCtrlState, vio_softc};
 use crate::kern::kern_clock::ticks;
 use crate::kern::kern_fork::NTHREADS;
 use crate::kern::kern_kthread::{kthread_create, kthread_exit};
@@ -26,6 +27,7 @@ use crate::kern::kern_task::{
     task_add, task_del, task_set, taskq_barrier, taskq_create, taskq_destroy,
 };
 use crate::kern::kern_tc::{getuptime, nsecuptime};
+use crate::kern::kern_timeout::timeout_del;
 use crate::kern::kern_timeout::{timeout_add_msec, timeout_set};
 use crate::kern::subr_pool::{pool_destroy, pool_get, pool_init, pool_put, pool_reclaim};
 use crate::kern::subr_prf::Str;
@@ -47,13 +49,21 @@ use crate::machine::intr::{IPL_NONE, IPL_TTY};
 use crate::machine::pmap::{
     pmap_extract, pmap_kenter_pa, pmap_kernel, pmap_kremove, pmap_map_direct, pmap_update,
 };
+use crate::net::ethertypes::{ETHERTYPE_ARP, ETHERTYPE_IP};
+use crate::net::if_::{
+    IFF_RUNNING, IFF_UP, Ifreq, if_enqueue, if_put, if_unit, ifioctl, link_state_is_up,
+};
+use crate::net::if_ethersubr::ETHERBROADCASTADDR;
+use crate::netinet::if_ether::ETHER_ADDR_LEN;
 use crate::sys::malloc::{M_NOWAIT, M_TEMP, M_ZERO};
+use crate::sys::mbuf::mtod;
 use crate::sys::mbuf::{M_COPYALL, M_DONTWAIT, MT_DATA, PACKET_TAG_GRE};
 use crate::sys::mman::{PROT_READ, PROT_WRITE};
 use crate::sys::mutex::Mutex;
 use crate::sys::param::{PAGE_SIZE, PWAIT};
 use crate::sys::pool::{PR_NOWAIT, PR_ZERO, Pool};
 use crate::sys::proc::Proc;
+use crate::sys::sockio::SIOCSIFFLAGS;
 use crate::sys::systm::INFSLP;
 use crate::sys::task::{SYSTQ, SYSTQMP, Task, task_pending};
 use crate::sys::timeout::Timeout;
@@ -76,6 +86,8 @@ static CLOCK_REQUESTED: AtomicBool = AtomicBool::new(false);
 static KTHREAD_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// `selftest=taskq` was on the command line.
 static TASKQ_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// `selftest=vio` was on the command line.
+static VIO_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Reads the self-test requests off the kernel command line: `selftest=trap` asks for the
 /// fatal [`trap_bad_access`], which a plain boot must not run.
@@ -85,6 +97,7 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     const CLOCK: &[u8] = b"selftest=clock";
     const KTHREAD: &[u8] = b"selftest=kthread";
     const TASKQ: &[u8] = b"selftest=taskq";
+    const VIO: &[u8] = b"selftest=vio";
     if cmdline.windows(TRAP.len()).any(|w| w == TRAP) {
         TRAP_REQUESTED.store(true, Ordering::Relaxed);
     }
@@ -100,6 +113,14 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     if cmdline.windows(TASKQ.len()).any(|w| w == TASKQ) {
         TASKQ_REQUESTED.store(true, Ordering::Relaxed);
     }
+    if cmdline.windows(VIO.len()).any(|w| w == VIO) {
+        VIO_REQUESTED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Whether the command line asked for [`vio_check`].
+pub fn vio_requested() -> bool {
+    VIO_REQUESTED.load(Ordering::Relaxed)
 }
 
 /// Whether the command line asked for [`taskq_check`].
@@ -953,4 +974,118 @@ pub fn taskq_check() {
             nthreads_after
         );
     }
+}
+
+/// The ARP request [`vio_check`] sends: who has 10.0.2.2 (QEMU's user-mode gateway), tell
+/// 10.0.2.15, from `enaddr`, broadcast; padded to the 60 bytes of a minimal frame. Built by
+/// hand: `netinet/if_ether.c` (`arprequest`) is another port.
+fn vio_arp_request(enaddr: &[u8; ETHER_ADDR_LEN]) -> [u8; 60] {
+    let mut f = [0u8; 60];
+    // Ethernet header.
+    f[0..6].copy_from_slice(&ETHERBROADCASTADDR);
+    f[6..12].copy_from_slice(enaddr);
+    f[12..14].copy_from_slice(&ETHERTYPE_ARP.to_be_bytes());
+    // struct arphdr: Ethernet hardware, IPv4 protocol, 6 and 4 byte addresses, a request.
+    f[14..16].copy_from_slice(&1u16.to_be_bytes()); // ARPHRD_ETHER
+    f[16..18].copy_from_slice(&ETHERTYPE_IP.to_be_bytes());
+    f[18] = ETHER_ADDR_LEN as u8;
+    f[19] = 4;
+    f[20..22].copy_from_slice(&1u16.to_be_bytes()); // ARPOP_REQUEST
+    // struct ether_arp: sender 10.0.2.15, target 10.0.2.2 (hardware address unknown).
+    f[22..28].copy_from_slice(enaddr);
+    f[28..32].copy_from_slice(&[10, 0, 2, 15]);
+    f[38..42].copy_from_slice(&[10, 0, 2, 2]);
+    f
+}
+
+/// The M7b network card check (`selftest=vio`): `vio0` is brought up through `ifioctl`
+/// (`SIOCSIFFLAGS` with `IFF_UP`, so `vio_init` fills the receive ring and programs the
+/// filter over the control queue, whose answers arrive only through the device's interrupt:
+/// `cold` is over), then a broadcast ARP request for 10.0.2.2 is queued with `if_enqueue`
+/// (`vio_start` sends it) and the test waits for any frame to reach the interface's input
+/// queue (`ifiq_input`, where `vio_rxeof` hands frames to the stack; QEMU's slirp answers
+/// from 52:55:0a:00:02:02). The receive tick is stopped first, so a frame can only come
+/// in through the receive interrupt (`vio_rx_intr`); `ether_input` then drops it at the ARP
+/// demux, which `netinet` is not here to take.
+pub fn vio_check() {
+    let Some(ifp) = if_unit(b"vio0") else {
+        kprintf!("selftest: vio FAILED: no vio0\n");
+        return;
+    };
+    let Some(p) = curproc() else {
+        kprintf!("selftest: vio FAILED: no process\n");
+        return;
+    };
+
+    let mut ifr = Ifreq::zeroed();
+    ifr.ifr_name[..4].copy_from_slice(b"vio0");
+    ifr.set_ifr_flags((ifp.if_flags.get() | IFF_UP) as i16);
+    // SAFETY: `data` is a kernel `struct ifreq`, the structure SIOCSIFFLAGS encodes; there
+    // is no socket, which this command does not use.
+    let up = unsafe { ifioctl(ptr::null(), SIOCSIFFLAGS, ptr::from_mut(&mut ifr).cast(), p) };
+    let sc = vio_softc(ifp);
+    let running = ifp.if_flags.get() & IFF_RUNNING != 0;
+    let ctrl = sc.sc_ctrl_inuse.get();
+    if up.is_err() || !running || ctrl != VioCtrlState::FREE {
+        kprintf!(
+            "selftest: vio FAILED: up {:?}, running {}, control queue {:?}\n",
+            up,
+            running,
+            ctrl
+        );
+        if_put(ifp);
+        return;
+    }
+    kprintf!(
+        "selftest: vio up ok: running, link {}, control queue answered\n",
+        if link_state_is_up(ifp.if_link_state.get()) {
+            "up"
+        } else {
+            "down"
+        }
+    );
+
+    // From here on only the receive interrupt can call vio_rxeof.
+    timeout_del(&sc.sc_rxtick);
+    let ifiq = ifp.ifiq(0);
+    let rx_before = ifiq.ifiq_packets.get();
+
+    let frame = vio_arp_request(&sc.sc_ac.ac_enaddr.get());
+    let Some(m) = m_gethdr(M_DONTWAIT, MT_DATA) else {
+        kprintf!("selftest: vio FAILED: m_gethdr\n");
+        if_put(ifp);
+        return;
+    };
+    // SAFETY: a fresh packet header mbuf has MHLEN (> 60) bytes at m_data.
+    unsafe { ptr::copy_nonoverlapping(frame.as_ptr(), mtod::<u8>(m), frame.len()) };
+    m.m_len().set(frame.len() as u32);
+    m.m_pkthdr().len.set(frame.len() as i32);
+    if let Err(e) = if_enqueue(ifp, m) {
+        kprintf!("selftest: vio FAILED: if_enqueue {:?}\n", e);
+        if_put(ifp);
+        return;
+    }
+
+    // Wait up to two seconds, in 10 ms sleeps, for a frame.
+    for _ in 0..200 {
+        if ifiq.ifiq_packets.get() != rx_before {
+            break;
+        }
+        let _ = tsleep_nsec(ptr::addr_of!(VIO_REQUESTED), PWAIT, "viotest", 10_000_000);
+    }
+    let frames = ifiq.ifiq_packets.get() - rx_before;
+    let sent = ifp.if_snd.ifq_packets.get();
+    if frames > 0 {
+        kprintf!(
+            "selftest: vio rx ok: sent {} frame, received {} through the rx interrupt\n",
+            sent,
+            frames
+        );
+    } else {
+        kprintf!(
+            "selftest: vio rx FAILED: sent {} frame, nothing received\n",
+            sent
+        );
+    }
+    if_put(ifp);
 }
