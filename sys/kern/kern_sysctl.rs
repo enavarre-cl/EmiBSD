@@ -42,7 +42,7 @@
 //!
 //! Upstream: sys/kern/kern_sysctl.c @ 3ce1f3f79392
 //!
-//! The system identifies itself as EmiBSD 7.8 (`kern.ostype`, `kern.osrelease`,
+//! The system identifies itself as EmiBSD 8.0 (`kern.ostype`, `kern.osrelease`,
 //! `kern.version`, `kern.osversion` come from `conf/vers.rs`); `kern.osrevision` stays the
 //! `OpenBSD` API date of `<sys/param.h>`, which is what programs test.
 //!

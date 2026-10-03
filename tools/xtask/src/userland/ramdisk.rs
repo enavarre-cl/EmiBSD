@@ -67,7 +67,7 @@ fn disktab_entry(sectors: u64) -> String {
 /// test. Written here (OpenBSD's `etc/` is not in the reference clone).
 const ETC_FILES: &[(&str, &str)] = &[(
     "motd",
-    "Welcome to EmiBSD 7.8: OpenBSD's init(8) and ksh(1) on an ffs ramdisk root.\n",
+    "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1) on an ffs ramdisk root.\n",
 )];
 
 /// A fixed timestamp (`makefs -T`: inode times and generation numbers), 2026-10-02, the date

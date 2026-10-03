@@ -8,7 +8,7 @@ Done:
 - M7b (exit met: `selftest: ping 10.0.2.2: echo reply received` on both archs): task queues,
   mbufs, autoconf, bus_dma + PCI (amd64), `if.c`/`ifq.c`/ether, virtio (pci, mmio) + `vio`,
   routing (art, rtable, route), ARP, IPv4, ICMP. For M8: credentials, limits, signals, the
-  file table, `sysctl` (EmiBSD 7.8), the vfs core.
+  file table, `sysctl` (EmiBSD 8.0), the vfs core.
 - M8 (exit met: `just smoke-shell`, both archs: root on rd0a, OpenBSD's `init(8)` in single
   user, ksh runs `uname -a`, `cat /etc/motd`, `ls /`): buffer cache, vnode pager, pipes, tty,
   ffs (`5506e47`), rd(4) + disk layer (`bd92ac0`), execve/exec_elf/pin_check and the process,

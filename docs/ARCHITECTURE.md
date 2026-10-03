@@ -621,7 +621,9 @@ OpenBSD's `makedev()` encoding).
   on a block device vnode whose strategy reads a `Vec`, use them through the system calls,
   and check the counters of the unmounted image as `fsck` would.
 - The system's identity (the user's decision, 2026-10-03): the system is **EmiBSD**, release
-  **7.8** (the release number tracks the OpenBSD release the reference pin follows). OpenBSD's
+  **8.0** (the release number tracks the OpenBSD release the reference pin follows: the
+  pin's `newvers.sh` has `osr="8.0"` with `STATUS "-current"`; it was 7.8 until
+  2026-10-03, a misreading corrected the same day). OpenBSD's
   `conf/newvers.sh` writes `ostype`, `osrelease`, `osversion`, `sccs` and `version` into a
   generated `vers.c` at every build, from a counter file, `date`, `logname` and `hostname`.
   Here `sys/conf/vers.rs` holds those strings, built by `concat!` from what `sys/build.rs`
@@ -630,14 +632,14 @@ OpenBSD's `makedev()` encoding).
   printed in `date(1)`'s format in UTC), `USER`, `EMIBSD_BUILD_HOST` and the `sys/`
   directory. The justfile exports the commit count, the last commit's time and `hostname
   -s`, so one commit gives one kernel: no clock, no counter file, no network. The result is
-  `EmiBSD 7.8 (GENERIC) #<commits>: <date>\n    <user>@<host>:<dir>\n` (`STATUS` is the
+  `EmiBSD 8.0 (GENERIC) #<commits>: <date>\n    <user>@<host>:<dir>\n` (`STATUS` is the
   release one, empty; the configuration name is always `GENERIC`), `osversion` is
   `GENERIC#<commits>`. `kern.ostype`/`kern.osrelease`/`kern.version`/`kern.osversion`
   (`kern_sysctl.c`) and the line each `cpu_startup` prints after the copyright, as OpenBSD's
   do, come from there; `kern.osrevision` stays the `OpenBSD` API date of `<sys/param.h>`
   that programs test, and the copyright notice stays OpenBSD's text (it is the licence
   notice, not the identity). The stand-in `init` checks the identity through `sysctl(2)`
-  (`init: EmiBSD 7.8` in `smoke`).
+  (`init: EmiBSD 8.0` in `smoke`).
 - `sysctl(2)` (`kern_sysctl.c`): the helpers take user addresses as `usize` and the name as a
   slice; structures are copied out as bytes through `sys::sysctl::SysctlPlain`, which C does
   with a `void *` and a size. Nodes whose variable or subsystem is not here yet report

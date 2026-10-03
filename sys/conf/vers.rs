@@ -40,12 +40,13 @@
 //!
 //! Upstream: sys/conf/newvers.sh @ 3ce1f3f79392 (replaced: see below)
 //!
-//! The system is **EmiBSD**, release **7.8** (the user's decision, 2026-10-03: the release
-//! number tracks the OpenBSD release the reference pin follows). The strings keep
+//! The system is **EmiBSD**, release **8.0** (the user's decision, 2026-10-03: the release
+//! number tracks the OpenBSD release the reference pin follows; the pin's `newvers.sh` says
+//! `osr="8.0"`, `STATUS "-current"`). The strings keep
 //! `newvers.sh`'s layout:
 //!
 //! ```text
-//! version   = "EmiBSD 7.8 (GENERIC) #<n>: <date>\n    <user>@<host>:<dir>\n"
+//! version   = "EmiBSD 8.0 (GENERIC) #<n>: <date>\n    <user>@<host>:<dir>\n"
 //! osversion = "GENERIC#<n>"
 //! ```
 //!
@@ -75,7 +76,7 @@ macro_rules! ost {
 /// The release; a macro for the same reason as [`ost`].
 macro_rules! osr {
     () => {
-        "7.8"
+        "8.0"
     };
 }
 
@@ -151,12 +152,12 @@ mod tests {
     #[test]
     fn the_identity_is_emibsd_7_8() {
         assert_eq!(OSTYPE, "EmiBSD");
-        assert_eq!(OSRELEASE, "7.8");
-        assert!(VERSION.starts_with("EmiBSD 7.8 (GENERIC) #"));
+        assert_eq!(OSRELEASE, "8.0");
+        assert!(VERSION.starts_with("EmiBSD 8.0 (GENERIC) #"));
         assert!(VERSION.ends_with('\n'));
         assert!(VERSION.contains("\n    "));
         assert!(OSVERSION.starts_with("GENERIC#"));
-        assert!(SCCS.starts_with("    @(#)EmiBSD 7.8 (GENERIC) #"));
+        assert!(SCCS.starts_with("    @(#)EmiBSD 8.0 (GENERIC) #"));
         assert!(!VERSION.contains('\0'));
     }
 }

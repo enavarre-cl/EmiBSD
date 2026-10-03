@@ -322,7 +322,7 @@ fn the_kernel_reports_emibsd_7_8() {
         kern_sysctl(&[KERN_OSRELEASE], ua(&mut out), &mut len, 0, 0, p),
         Ok(())
     );
-    assert_eq!(&out[..len], b"7.8\0");
+    assert_eq!(&out[..len], b"8.0\0");
 
     let mut len = 0;
     assert_eq!(kern_sysctl(&[KERN_VERSION], 0, &mut len, 0, 0, p), Ok(()));

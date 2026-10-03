@@ -48,7 +48,7 @@ run-arm64: image-arm64
     cargo xtask qemu --arch arm64
 
 # Boots per arch, every one with a virtio network card on QEMU's user network: a plain one that
-# must reach the end of main() (status 33), printing the EmiBSD 7.8 version banner and the
+# must reach the end of main() (status 33), printing the EmiBSD 8.0 version banner and the
 # virtio attach lines, with init checking its identity through sysctl(2) and the vfs system
 # calls failing as they must with no root file system yet (`main` says it cannot mount root and
 # `check_console` that /dev/console does not exist) and making the console tty its controlling
@@ -72,7 +72,7 @@ run-arm64: image-arm64
 smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
-        --expect "EmiBSD 7.8 (GENERIC) #" \
+        --expect "EmiBSD 8.0 (GENERIC) #" \
         --expect "real mem = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
         --expect "selftest: buffer cache ok" --expect "selftest: pager map ok" \
@@ -86,7 +86,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "cpu0: apic clock running at" \
         --expect "module: /init (" --expect "init: hello from user mode" --expect "init: argv and auxv ok" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
-        --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 7.8" \
+        --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 8.0" \
         --expect "cannot mount root: no root file system" \
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
         --expect "init: pipes ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
@@ -112,7 +112,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "selftest: vio up ok" --expect "selftest: vio rx ok"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on arm64" --expect "The Regents of the University of California" \
-        --expect "EmiBSD 7.8 (GENERIC) #" \
+        --expect "EmiBSD 8.0 (GENERIC) #" \
         --expect "real mem  = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
         --expect "selftest: buffer cache ok" --expect "selftest: pager map ok" \
@@ -125,7 +125,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect ": rev 1, 16 byte fifo" --expect "pluart0: console" \
         --expect "module: /init (" --expect "init: hello from user mode" --expect "init: argv and auxv ok" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
-        --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 7.8" \
+        --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 8.0" \
         --expect "cannot mount root: no root file system" \
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
         --expect "init: pipes ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
@@ -157,22 +157,22 @@ smoke-shell: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "RETURN for sh:" --send '\n' \
         --send-after "# " --send 'uname -a\n' --send-after "GENERIC#" --send 'uname -sr\n' \
-        --send-after "EmiBSD 7.8" --send 'cat /etc/motd\n' \
+        --send-after "EmiBSD 8.0" --send 'cat /etc/motd\n' \
         --send-after "Welcome to EmiBSD" --send 'ls /\n' \
         --expect "root on rd0a swap on rd0b dump on rd0b" \
         --expect "Enter pathname of shell or RETURN for sh:" \
-        --expect " 7.8 GENERIC#" --expect "amd64" \
-        --expect "Welcome to EmiBSD 7.8: OpenBSD's init(8) and ksh(1)" \
+        --expect " 8.0 GENERIC#" --expect "amd64" \
+        --expect "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1)" \
         --expect "bin  dev  etc  sbin usr"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "RETURN for sh:" --send '\n' \
         --send-after "# " --send 'uname -a\n' --send-after "GENERIC#" --send 'uname -sr\n' \
-        --send-after "EmiBSD 7.8" --send 'cat /etc/motd\n' \
+        --send-after "EmiBSD 8.0" --send 'cat /etc/motd\n' \
         --send-after "Welcome to EmiBSD" --send 'ls /\n' \
         --expect "root on rd0a swap on rd0b dump on rd0b" \
         --expect "Enter pathname of shell or RETURN for sh:" \
-        --expect " 7.8 GENERIC#" --expect "arm64" \
-        --expect "Welcome to EmiBSD 7.8: OpenBSD's init(8) and ksh(1)" \
+        --expect " 8.0 GENERIC#" --expect "arm64" \
+        --expect "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1)" \
         --expect "bin  dev  etc  sbin usr"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols

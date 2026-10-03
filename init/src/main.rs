@@ -17,7 +17,7 @@
 //! it back; then it blocks the signal with `sigprocmask(2)`, sees it pending
 //! (`sigpending(2)`) and unblocks it.
 //! With `kern_sysctl.c` it asks `sysctl(2)` for `kern.ostype` and `kern.osrelease`, sets and
-//! reads back `kern.hostname`, and prints `init: EmiBSD 7.8` when the system identifies itself
+//! reads back `kern.hostname`, and prints `init: EmiBSD 8.0` when the system identifies itself
 //! as the user decided.
 //! With the vfs core (`vfs_syscalls.c`) it checks that the path system calls reach `namei`
 //! and fail as they must without a root file system (`ENOENT`), that `umask(2)` swaps the
@@ -403,7 +403,7 @@ fn sysctl_string<'a>(name: &[i32], buf: &'a mut [u8]) -> Option<&'a [u8]> {
     }
 }
 
-/// `kern_sysctl.c` seen from user mode: the system says it is EmiBSD 7.8, and root can set
+/// `kern_sysctl.c` seen from user mode: the system says it is EmiBSD 8.0, and root can set
 /// `kern.hostname` and read it back (the path that wires the caller's buffer under
 /// `sysctl_lock`).
 fn identity() -> bool {
@@ -424,7 +424,7 @@ fn identity() -> bool {
         ],
     );
     sysctl_string(&[CTL_KERN, KERN_OSTYPE], &mut ostype) == Some(b"EmiBSD")
-        && sysctl_string(&[CTL_KERN, KERN_OSRELEASE], &mut osrelease) == Some(b"7.8")
+        && sysctl_string(&[CTL_KERN, KERN_OSRELEASE], &mut osrelease) == Some(b"8.0")
         && set == (0, false)
         && sysctl_string(&name, &mut hostname) == Some(new)
 }
@@ -765,7 +765,7 @@ extern "C" fn init_main(sp: *const usize) -> ! {
         status = 5;
     }
     if identity() {
-        if write(1, b"init: EmiBSD 7.8\n").is_err() {
+        if write(1, b"init: EmiBSD 8.0\n").is_err() {
             status = 1;
         }
     } else {
