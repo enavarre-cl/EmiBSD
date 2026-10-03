@@ -105,6 +105,8 @@ sigfill:
 esigfill:
 
 	.data
+	/* global_asm! shares .data with the Rust objects: align the word (not in the C). */
+	.balign	4
 	.globl	sigfillsiz
 sigfillsiz:
 	.word	esigfill - sigfill

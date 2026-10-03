@@ -57,19 +57,12 @@
 //! Upstream: sys/kern/spec_vnops.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - The device switch (`struct bdevsw`/`struct cdevsw` of `<sys/conf.h>`, the tables of each
-//!   arch's `conf.c`) is not ported. `nchrdev()`/`nblkdev()` answer 0, as for a kernel with
-//!   no device configured, so `spec_open` fails with `ENXIO` exactly where the C checks the
-//!   major; every other access to a switch entry (`d_open`, `d_close`, `d_read`, `d_write`,
-//!   `d_ioctl`, `d_kqfilter`, `d_strategy`, `d_type`, `d_flags`, `chrtoblk`, `iskmemdev`) is
-//!   reported with `unported!` where the C makes it (the `cdevsw_d_*` helpers answer as for
-//!   a device that is neither a tty, a disk nor a cloning device).
+//! - The device switch is each architecture's `conf.c` through `machine::conf`: an entry is a
+//!   copy (`cdevsw(maj)`, `bdevsw(maj)`), read where the C indexes `cdevsw[maj]`.
 //! - Block-device reads and writes go through the buffer cache as in C; the block size
 //!   comes from the disk label (`DIOCGPART` through `bdevsw[].d_ioctl`, `<sys/disklabel.h>`),
 //!   which is reported for a configured major and leaves `BLKDEV_IOSIZE`, as when the C's
-//!   ioctl fails. `spec_strategy` reports `bdevsw[].d_strategy` and fails the buffer with
-//!   `ENXIO` through `biodone`, so a waiter does not sleep forever. `spec_kqfilter`'s
-//!   `seltrue_kqfilter` is `kern_event.c`: reported.
+//!   ioctl fails. `spec_kqfilter`'s `seltrue_kqfilter` is `kern_event.c`: reported.
 //! - `speclisth[]` is a `static` newtype around the buckets with `unsafe impl Sync`, as the
 //!   other global list heads.
 //! - The operations take their argument structures; the generic ones that fill many slots
@@ -85,28 +78,31 @@ use crate::kern::kern_malloc::malloc;
 use crate::kern::kern_subr::uiomove;
 use crate::kern::kern_sysctl::SECURELEVEL;
 use crate::kern::subr_prf::panic;
-use crate::kern::subr_xxx::nullop;
-use crate::kern::vfs_bio::{bawrite, bdwrite, biodone, bread, breadn, brelse, bufcache_take};
+use crate::kern::subr_xxx::{chrtoblk, nullop};
+use crate::kern::vfs_bio::{bawrite, bdwrite, bread, breadn, brelse, bufcache_take};
 use crate::kern::vfs_biomem::buf_acquire;
 use crate::kern::vfs_default::{
     vop_generic_badop, vop_generic_bmap, vop_generic_bwrite, vop_generic_lookup, vop_generic_revoke,
 };
 use crate::kern::vfs_lockf::lf_advlock;
 use crate::kern::vfs_subr::{
-    VNODE_MTX, cdevvp, vcount, vfs_mountedon, vinvalbuf, vput, vrele, vwaitforio,
+    VNODE_MTX, cdevvp, vcount, vfinddev, vfs_mountedon, vinvalbuf, vput, vrele, vwaitforio,
 };
 use crate::kern::vfs_vnops::vn_lock;
 use crate::kern::vfs_vops::{VOP_ACCESS, VOP_GETATTR, VOP_ISLOCKED, VOP_SETATTR, VOP_UNLOCK};
+use crate::machine::conf::{bdevsw, cdevsw, iskmemdev, nblkdev, nchrdev};
 use crate::machine::intr::{splbio, splx};
-use crate::sys::buf::{B_BUSY, B_DELWRI, B_ERROR};
+use crate::sys::buf::{B_BUSY, B_DELWRI};
+use crate::sys::conf::{D_CLONE, D_DISK, D_TTY};
 use crate::sys::errno::Errno;
 use crate::sys::fcntl::FWRITE;
 use crate::sys::lock::{LK_EXCLUSIVE, LK_RETRY};
 use crate::sys::malloc::{M_TEMP, M_WAITOK};
 use crate::sys::mount::{MNT_NODEV, MNT_WAIT};
-use crate::sys::param::{BLKDEV_IOSIZE, btodb, clrbit, isclr, setbit};
+use crate::sys::param::{BLKDEV_IOSIZE, NODEV, btodb, clrbit, isclr, setbit};
 use crate::sys::queue::SlistHead;
 use crate::sys::specdev::{CLONE_MAPSZ, CLONE_SHIFT, Cloneinfo, SPECHSZ, Vnodechain};
+use crate::sys::stat::{S_IFBLK, S_IFCHR};
 use crate::sys::syslimits::{LINK_MAX, MAX_CANON, MAX_INPUT};
 use crate::sys::systm::INFSLP;
 use crate::sys::types::{Daddr, Register, major, makedev, minor};
@@ -171,40 +167,6 @@ pub static SPEC_VOPS: Vops = Vops {
     vop_bwrite: Some(vop_generic_bwrite),
 };
 
-/// `nchrdev`: the entries of `cdevsw[]` (`conf.c`, not ported: none).
-pub fn nchrdev() -> u32 {
-    0
-}
-
-/// `nblkdev`: the entries of `bdevsw[]` (`conf.c`, not ported: none).
-pub fn nblkdev() -> u32 {
-    0
-}
-
-/// `cdevsw[maj].d_type == D_TTY` (`conf.c`, not ported).
-pub fn cdevsw_d_type_tty(_maj: u32) -> bool {
-    let _ = unported!("cdevsw[].d_type (conf.c)");
-    false
-}
-
-/// `cdevsw[maj].d_type == D_DISK` (`conf.c`, not ported).
-fn cdevsw_d_type_disk(_maj: u32) -> bool {
-    let _ = unported!("cdevsw[].d_type D_DISK (conf.c)");
-    false
-}
-
-/// `bdevsw[maj].d_type == D_DISK` (`conf.c`, not ported).
-fn bdevsw_d_type_disk(_maj: u32) -> bool {
-    let _ = unported!("bdevsw[].d_type D_DISK (conf.c)");
-    false
-}
-
-/// `cdevsw[maj].d_flags & D_CLONE` (`conf.c`, not ported).
-pub fn cdevsw_d_flags_clone(_maj: u32) -> bool {
-    let _ = unported!("cdevsw[].d_flags (conf.c)");
-    false
-}
-
 /// Open a special file.
 pub fn spec_open(ap: &mut VopOpenArgs<'_>) -> Result<(), Errno> {
     let p = ap.a_p;
@@ -229,27 +191,34 @@ pub fn spec_open(ap: &mut VopOpenArgs<'_>) -> Result<(), Errno> {
             if !ptr::eq(ap.a_cred, FSCRED) && ap.a_mode & FWRITE != 0 {
                 // When running in very secure mode, do not allow opens for writing of any
                 // disk character devices.
-                if SECURELEVEL.load(Ordering::Relaxed) >= 2 && cdevsw_d_type_disk(maj) {
+                if SECURELEVEL.load(Ordering::Relaxed) >= 2 && cdevsw(maj).d_type == D_DISK {
                     return Err(Errno::EPERM);
                 }
                 // When running in secure mode, do not allow opens for writing of /dev/mem,
                 // /dev/kmem, or character devices whose corresponding block devices are
                 // currently mounted.
                 if SECURELEVEL.load(Ordering::Relaxed) >= 1 {
-                    // chrtoblk(dev), iskmemdev(dev): conf.c.
-                    return Err(unported!("spec_open: chrtoblk, iskmemdev (conf.c)"));
+                    let bdev = chrtoblk(dev);
+                    if bdev != NODEV
+                        && let Some(bvp) = vfinddev(bdev, VBLK)
+                        && bvp.v_usecount.get() > 0
+                    {
+                        vfs_mountedon(bvp)?;
+                    }
+                    if iskmemdev(dev) {
+                        return Err(Errno::EPERM);
+                    }
                 }
             }
-            if cdevsw_d_type_tty(maj) {
+            let sw = cdevsw(maj);
+            if sw.d_type == D_TTY {
                 vp.v_flag.set(vp.v_flag.get() | VISTTY);
             }
-            if cdevsw_d_flags_clone(maj) {
+            if sw.d_flags & D_CLONE != 0 {
                 return spec_open_clone(ap);
             }
             let _ = VOP_UNLOCK(vp);
-            // (*cdevsw[maj].d_open)(dev, ap->a_mode, S_IFCHR, p)
-            let error = Err(unported!("cdevsw[].d_open (conf.c)"));
-            let _ = p;
+            let error = (sw.d_open)(dev, ap.a_mode, S_IFCHR as i32, p);
             let _ = vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
             error
         }
@@ -263,13 +232,13 @@ pub fn spec_open(ap: &mut VopOpenArgs<'_>) -> Result<(), Errno> {
             if SECURELEVEL.load(Ordering::Relaxed) >= 2
                 && !ptr::eq(ap.a_cred, FSCRED)
                 && ap.a_mode & FWRITE != 0
-                && bdevsw_d_type_disk(maj)
+                && bdevsw(maj).d_type == D_DISK
             {
                 return Err(Errno::EPERM);
             }
             // Do not allow opens of block devices that are currently mounted.
             vfs_mountedon(vp)?;
-            Err(unported!("bdevsw[].d_open (conf.c)"))
+            (bdevsw(maj).d_open)(dev, ap.a_mode, S_IFBLK as i32, p)
         }
         VNON | VLNK | VDIR | VREG | VBAD | VFIFO | VSOCK => Ok(()),
     }
@@ -293,7 +262,8 @@ pub fn spec_read(ap: &mut VopReadArgs<'_, '_>) -> Result<(), Errno> {
     match vp.v_type.get() {
         VCHR => {
             let _ = VOP_UNLOCK(vp);
-            let error = Err(unported!("cdevsw[].d_read (conf.c)"));
+            let dev = vp.v_rdev();
+            let error = (cdevsw(major(dev)).d_read)(dev, uio, ap.a_ioflag);
             let _ = vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
             error
         }
@@ -357,7 +327,8 @@ pub fn spec_write(ap: &mut VopWriteArgs<'_, '_>) -> Result<(), Errno> {
     match vp.v_type.get() {
         VCHR => {
             let _ = VOP_UNLOCK(vp);
-            let error = Err(unported!("cdevsw[].d_write (conf.c)"));
+            let dev = vp.v_rdev();
+            let error = (cdevsw(major(dev)).d_write)(dev, uio, ap.a_ioflag);
             let _ = vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
             error
         }
@@ -405,28 +376,36 @@ pub fn spec_write(ap: &mut VopWriteArgs<'_, '_>) -> Result<(), Errno> {
 fn spec_bsize(vp: &'static Vnode, who: &'static str) -> i32 {
     let bsize = BLKDEV_IOSIZE as i32;
     if major(vp.v_rdev()) < nblkdev() {
-        // (*bdevsw[majordev].d_ioctl)(vp->v_rdev, DIOCGPART, &dpart, FREAD, p): the device
-        // switch (conf.c) and struct partinfo (disklabel.h). Without them the C's ioctl
-        // failure path: BLKDEV_IOSIZE.
+        // (*bdevsw[majordev].d_ioctl)(vp->v_rdev, DIOCGPART, &dpart, FREAD, p): struct
+        // partinfo is disklabel.h's, not ported. Without it the C's ioctl failure path:
+        // BLKDEV_IOSIZE.
         let _ = who;
-        let _ = unported!("spec_read/spec_write: DIOCGPART (conf.c, disklabel.h)");
+        let _ = unported!("spec_read/spec_write: DIOCGPART (disklabel.h)");
     }
     bsize
 }
 
 /// Device ioctl operation.
 pub fn spec_ioctl(ap: &mut VopIoctlArgs<'_>) -> Result<(), Errno> {
+    let dev = ap.a_vp.v_rdev();
+    let maj = major(dev);
+
     match ap.a_vp.v_type.get() {
-        VCHR => Err(unported!("cdevsw[].d_ioctl (conf.c)")),
-        VBLK => Err(unported!("bdevsw[].d_ioctl (conf.c)")),
+        VCHR => (cdevsw(maj).d_ioctl)(dev, ap.a_command, ap.a_data, ap.a_fflag, ap.a_p),
+        VBLK => (bdevsw(maj).d_ioctl)(dev, ap.a_command, ap.a_data, ap.a_fflag, ap.a_p),
         _ => panic(format_args!("spec_ioctl")),
     }
 }
 
 /// `spec_kqfilter`: the driver's `d_kqfilter`, or `seltrue_kqfilter` for poll/select.
 pub fn spec_kqfilter(ap: &mut VopKqfilterArgs) -> Result<(), Errno> {
+    let dev = ap.a_vp.v_rdev();
+
     match ap.a_vp.v_type.get() {
-        VCHR => Err(unported!("cdevsw[].d_kqfilter (conf.c)")),
+        VCHR => match cdevsw(major(dev)).d_kqfilter {
+            Some(kqfilter) => kqfilter(dev, ap.a_kn),
+            None => Err(Errno::EOPNOTSUPP),
+        },
         // kn_flags & (__EV_POLL | __EV_SELECT): seltrue_kqfilter (kern_event.c).
         _ => Err(unported!("spec_kqfilter: seltrue_kqfilter (kern_event.c)")),
     }
@@ -474,16 +453,9 @@ pub fn spec_fsync(ap: &mut VopFsyncArgs<'_>) -> Result<(), Errno> {
 /// `spec_strategy`: `bdevsw[major(bp->b_dev)].d_strategy(bp)`.
 pub fn spec_strategy(ap: &mut VopStrategyArgs) -> Result<(), Errno> {
     let bp = ap.a_bp;
-    let _maj = major(bp.b_dev.get());
+    let maj = major(bp.b_dev.get());
 
-    // (*bdevsw[maj].d_strategy)(bp): the device switch (conf.c). No driver takes the buffer,
-    // so it completes with an error, as a driver does for a device that is gone.
-    let _ = unported!("spec_strategy: bdevsw[].d_strategy (conf.c)");
-    bp.b_error.set(Some(Errno::ENXIO));
-    bp.set(B_ERROR);
-    let s = splbio();
-    biodone(bp);
-    splx(s);
+    (bdevsw(maj).d_strategy)(bp);
     Ok(())
 }
 
@@ -512,12 +484,12 @@ pub fn spec_close(ap: &mut VopCloseArgs<'_>) -> Result<(), Errno> {
                 let s = p.process().session();
                 // SAFETY: the process's group and session are alive while it is.
                 let s = unsafe { &*s };
-                if ptr::eq(s.s_ttyvp.get().cast(), vp) {
+                if ptr::eq(s.s_ttyvp.get(), vp) {
                     vrele(vp);
                     s.s_ttyvp.set(ptr::null());
                 }
             }
-            if cdevsw_d_flags_clone(major(dev)) {
+            if cdevsw(major(dev)).d_flags & D_CLONE != 0 {
                 clone = true;
             } else {
                 // If the vnode is locked, then we are in the midst of forcibly closing the
@@ -559,11 +531,11 @@ pub fn spec_close(ap: &mut VopCloseArgs<'_>) -> Result<(), Errno> {
     if relock {
         let _ = VOP_UNLOCK(vp);
     }
-    let error = Err(if vp.v_type.get() == VCHR {
-        unported!("cdevsw[].d_close (conf.c)")
+    let error = if vp.v_type.get() == VCHR {
+        (cdevsw(major(dev)).d_close)(dev, ap.a_fflag, S_IFCHR as i32, p)
     } else {
-        unported!("bdevsw[].d_close (conf.c)")
-    });
+        (bdevsw(major(dev)).d_close)(dev, ap.a_fflag, S_IFBLK as i32, p)
+    };
     if relock {
         let _ = vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
     }
@@ -725,7 +697,7 @@ pub fn spec_open_clone(ap: &mut VopOpenArgs<'_>) -> Result<(), Errno> {
 
     let _ = VOP_UNLOCK(vp);
 
-    let error: Result<(), Errno> = Err(unported!("cdevsw[].d_open (conf.c)"));
+    let error = (cdevsw(major(rdev)).d_open)(cvp.v_rdev(), ap.a_mode, S_IFCHR as i32, ap.a_p);
 
     let _ = vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 

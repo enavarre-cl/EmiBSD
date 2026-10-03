@@ -62,24 +62,47 @@
 //!
 //! Upstream: sys/dev/ic/comvar.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. The constants, `struct commulti_attach_args` and the fields of
-//! `struct com_softc` whose types exist are here. The prototypes it declares are the functions of
-//! `com.rs` (the console ones are there; `comintr`, `comparam`, `comstart`, `com_attach_subr` and
-//! the rest arrive with the tty side, M7), and the `comcons*` externs are the globals `com.rs`
-//! defines.
+//! The prototypes it declares are the functions of `com.rs`, and the `comcons*` externs are
+//! the globals `com.rs` defines.
 //!
 //! ## Deviations
-//! - `sc_dev` (`struct device`, autoconf M4), `sc_ih` and `sc_si` (interrupt and soft-interrupt
-//!   handles, M4), `sc_tty` (M7) and the two `struct timeout`s (`sc_dtr_tmo`, `sc_diag_tmo`, M5)
-//!   are not in [`ComSoftc`] yet; they are added when their types are ported.
-//! - The input ring's four pointers (`sc_ibuf`, `sc_ibufp`, `sc_ibufhigh`, `sc_ibufend`) are an
-//!   index into `sc_ibufs` and a fill count ([`ComSoftc::sc_ibuf`], [`ComSoftc::sc_ibufp`]); the
-//!   high-water mark and the end are the constants `COM_IHIGHWATER` and `COM_IBUFSIZE`.
+//! - [`ComSoftc`] is a softc (`docs/C_TO_RUST.md`): `#[repr(C)]`, the device first, every
+//!   member a `Cell` (the driver, its interrupt handlers and the tty layer change them through
+//!   `struct com_softc *`), all-zero valid for `config_make_softc`'s `M_ZERO`. The bus tag
+//!   and handle are `Option`s (unset before the attachment fills them); `sc_ih`, `sc_si` and
+//!   `sc_tty` are pointers in `Cell`s.
+//! - The input ring's four pointers (`sc_ibuf`, `sc_ibufp`, `sc_ibufhigh`, `sc_ibufend`) are
+//!   the index of the buffer being filled in `sc_ibufs` and its fill count
+//!   ([`ComSoftc::sc_ibuf`], [`ComSoftc::sc_ibufp`]); the high-water mark and the end are the
+//!   constants `COM_IHIGHWATER` and `COM_IBUFSIZE`. The buffers are `Cell<u8>`s, written by
+//!   `comintr` and read by `comsoft`.
 //! - The power-management hooks return `Result` where `enable` returns an `int` errno.
 //! - `ca_noien` is a `bool`; `ca_iobase` is a `BusAddr` (an `int` in C).
 
+use core::cell::Cell;
+use core::ffi::c_void;
+use core::ptr::NonNull;
+
+use crate::kern::kern_softintr::SoftintrHand;
 use crate::machine::bus::{BusAddr, BusSpaceHandle, BusSpaceTag};
+use crate::sys::device::{Device, Softc};
 use crate::sys::errno::Errno;
+use crate::sys::timeout::Timeout;
+use crate::sys::tty::Tty;
+
+/// `struct commulti_attach_args`: how a multi-port board attaches each of its ports.
+pub struct CommultiAttachArgs {
+    /// Slave number.
+    pub ca_slave: i32,
+    /// The board's bus space.
+    pub ca_iot: BusSpaceTag,
+    /// The port's registers.
+    pub ca_ioh: BusSpaceHandle,
+    /// The port's base address.
+    pub ca_iobase: BusAddr,
+    /// Whether the port must not drive OUT2 (`COM_HW_NOIEN`).
+    pub ca_noien: bool,
+}
 
 /// Size of one input ring buffer.
 pub const COM_IBUFSIZE: usize = 32 * 512;
@@ -144,83 +167,98 @@ pub const COM_SW_PPS: u8 = 0x10;
 pub const COM_SW_DEAD: u8 = 0x20;
 
 /// The `enable` power-management hook: powers a port up, with an errno on failure.
-pub type ComEnableFn = fn(&mut ComSoftc) -> Result<(), Errno>;
+pub type ComEnableFn = fn(&ComSoftc) -> Result<(), Errno>;
 /// The `disable` power-management hook: powers a port down.
-pub type ComDisableFn = fn(&mut ComSoftc);
+pub type ComDisableFn = fn(&ComSoftc);
 
-/// `struct commulti_attach_args`: how a multi-port board attaches each of its ports.
-pub struct CommultiAttachArgs {
-    /// Slave number.
-    pub ca_slave: i32,
-    /// The board's bus space.
-    pub ca_iot: BusSpaceTag,
-    /// The port's registers.
-    pub ca_ioh: BusSpaceHandle,
-    /// The port's base address.
-    pub ca_iobase: BusAddr,
-    /// Whether the port must not drive OUT2 (`COM_HW_NOIEN`).
-    pub ca_noien: bool,
-}
-
-/// `struct com_softc`: the state of one `com(4)` port (see the module's deviations for the
-/// fields that are not here yet).
+/// `struct com_softc`: the state of one `com(4)` port.
+#[repr(C)]
 pub struct ComSoftc {
-    /// The port's bus space.
-    pub sc_iot: BusSpaceTag,
-    /// Input ring overflows seen.
-    pub sc_overflows: i32,
-    /// Input floods (high water reached) seen.
-    pub sc_floods: i32,
-    /// Line errors seen.
-    pub sc_errors: i32,
-    /// Output halted (`comstop`).
-    pub sc_halt: i32,
-    /// The port's base address.
-    pub sc_iobase: BusAddr,
-    /// The UART's clock, in Hz.
-    pub sc_frequency: i32,
-    /// The port's registers.
-    pub sc_ioh: BusSpaceHandle,
-    /// Register width in bytes (4 for memory-mapped 32-bit registers).
-    pub sc_reg_width: u8,
-    /// Register stride, as a shift count.
-    pub sc_reg_shift: u8,
-    /// `COM_UART_*`: the chip `com_attach_subr` identified.
-    pub sc_uarttype: u8,
-    /// `COM_HW_*`.
-    pub sc_hwflags: u8,
-    /// `COM_SW_*`.
-    pub sc_swflags: u8,
-    /// Depth of the FIFO, when it works.
-    pub sc_fifolen: i32,
-    /// Last modem status register value.
-    pub sc_msr: u8,
-    /// Modem control register shadow.
-    pub sc_mcr: u8,
-    /// Line control register shadow.
-    pub sc_lcr: u8,
-    /// Interrupt enable register shadow.
-    pub sc_ier: u8,
-    /// The MCR bit that is DTR on this port.
-    pub sc_dtr: u8,
-    /// The port is open through its call-out (cua) device.
-    pub sc_cua: u8,
-    /// Force initialization.
-    pub sc_initialize: u8,
-    /// Which of `sc_ibufs` is being filled.
-    pub sc_ibuf: usize,
-    /// Fill count of the current input buffer.
-    pub sc_ibufp: usize,
-    /// The two input ring buffers (one fills while the other drains).
-    pub sc_ibufs: [[u8; COM_IBUFSIZE]; 2],
+    /// `sc_dev`.
+    pub sc_dev: Device,
+    /// `sc_ih`: the interrupt handle.
+    pub sc_ih: Cell<*mut c_void>,
+    /// `sc_iot`: the port's bus space.
+    pub sc_iot: Cell<Option<BusSpaceTag>>,
+    /// `sc_tty`: NULL until the first open.
+    pub sc_tty: Cell<*const Tty>,
+    /// `sc_dtr_tmo`: raises DTR again after a close.
+    pub sc_dtr_tmo: Timeout,
+    /// `sc_diag_tmo`: reports overflows.
+    pub sc_diag_tmo: Timeout,
+    /// `sc_si`: the soft interrupt that drains the input ring.
+    pub sc_si: Cell<Option<NonNull<SoftintrHand>>>,
+
+    /// `sc_overflows`: input ring overflows seen.
+    pub sc_overflows: Cell<i32>,
+    /// `sc_floods`: input floods (high water reached) seen.
+    pub sc_floods: Cell<i32>,
+    /// `sc_errors`: line errors seen.
+    pub sc_errors: Cell<i32>,
+
+    /// `sc_halt`: output halted (`comparam` waiting for the transmitter).
+    pub sc_halt: Cell<i32>,
+
+    /// `sc_iobase`: the port's base address.
+    pub sc_iobase: Cell<BusAddr>,
+    /// `sc_frequency`: the UART's clock, in Hz.
+    pub sc_frequency: Cell<i32>,
+
+    /// `sc_ioh`: the port's registers.
+    pub sc_ioh: Cell<Option<BusSpaceHandle>>,
+    /// `sc_reg_width`: register width in bytes (4 for memory-mapped 32-bit registers).
+    pub sc_reg_width: Cell<u8>,
+    /// `sc_reg_shift`: register stride, as a shift count.
+    pub sc_reg_shift: Cell<u8>,
+
+    /// `sc_uarttype`: `COM_UART_*`, the chip `com_attach_subr` identified.
+    pub sc_uarttype: Cell<u8>,
+    /// `sc_uartrev`.
+    pub sc_uartrev: Cell<u8>,
+    /// `sc_hwflags`: `COM_HW_*`.
+    pub sc_hwflags: Cell<u8>,
+    /// `sc_swflags`: `COM_SW_*`.
+    pub sc_swflags: Cell<u8>,
+    /// `sc_fifolen`: depth of the FIFO, when it works.
+    pub sc_fifolen: Cell<i32>,
+    /// `sc_msr`: last modem status register value.
+    pub sc_msr: Cell<u8>,
+    /// `sc_mcr`: modem control register shadow.
+    pub sc_mcr: Cell<u8>,
+    /// `sc_lcr`: line control register shadow.
+    pub sc_lcr: Cell<u8>,
+    /// `sc_ier`: interrupt enable register shadow.
+    pub sc_ier: Cell<u8>,
+    /// `sc_dtr`: the MCR bits that are DTR on this port.
+    pub sc_dtr: Cell<u8>,
+
+    /// `sc_cua`: the port is open through its call-out (cua) device.
+    pub sc_cua: Cell<u8>,
+
+    /// `sc_initialize`: force initialization.
+    pub sc_initialize: Cell<u8>,
+
+    /// `sc_ibuf`: which of `sc_ibufs` is being filled (0 or 1).
+    pub sc_ibuf: Cell<usize>,
+    /// `sc_ibufp - sc_ibuf`: the bytes filled in it.
+    pub sc_ibufp: Cell<usize>,
+    /// `sc_ibufs`: the two input ring buffers (one fills while the other drains), data and
+    /// line status bytes in pairs.
+    pub sc_ibufs: [[Cell<u8>; COM_IBUFSIZE]; 2],
+
     // power management hooks
-    /// Powers the port up.
-    pub enable: Option<ComEnableFn>,
-    /// Powers the port down.
-    pub disable: Option<ComDisableFn>,
-    /// Whether the port is powered.
-    pub enabled: i32,
+    /// `enable`: powers the port up.
+    pub enable: Cell<Option<ComEnableFn>>,
+    /// `disable`: powers the port down.
+    pub disable: Cell<Option<ComDisableFn>>,
+    /// `enabled`: whether the port is powered.
+    pub enabled: Cell<i32>,
 }
+
+// SAFETY: `repr(C)` with the device first; every member is a `Cell` of an integer, a raw
+// pointer, an `Option` of a reference, handle or function, or a `Timeout`, all of which are
+// valid all-zero (the `Option`s are `None`, the tag an arbitrary but valid space).
+unsafe impl Softc for ComSoftc {}
 
 #[cfg(test)]
 mod tests {

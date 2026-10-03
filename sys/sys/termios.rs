@@ -39,8 +39,13 @@
 //!
 //! ## Deviations
 //! - Every flag is visible (`__BSD_VISIBLE`); `CCEQ` is [`cceq`].
-//! - The `tcsetattr` family and `TCIFLUSH`..`TCION` are userland (`#ifndef _KERNEL`) and not
-//!   here; `<sys/ttycom.h>` (the tty ioctls) is a module of its own when ported.
+//! - The `tcsetattr` family of prototypes is userland and not here; the `TCIFLUSH`..`TCION`
+//!   constants of the same `#ifndef _KERNEL` block are, so the header is complete for the
+//!   userland that is built against it. `<sys/ttycom.h>` (the tty ioctls) and
+//!   `<sys/ttydefaults.h>` are modules of their own.
+//! - [`Termios`] is an [`AbiPod`]: `TIOCGETA`/`TIOCSETA` copy it whole.
+
+use crate::machine::copy::AbiPod;
 
 /// `tcflag_t`: a set of terminal flags.
 pub type Tcflag = u32;
@@ -246,6 +251,25 @@ pub struct Termios {
     pub c_ospeed: i32,
 }
 
+impl Termios {
+    /// An all-zero termios, what a freshly allocated `struct tty` holds.
+    pub const fn zeroed() -> Self {
+        Self {
+            c_iflag: 0,
+            c_oflag: 0,
+            c_cflag: 0,
+            c_lflag: 0,
+            c_cc: [0; NCCS],
+            c_ispeed: 0,
+            c_ospeed: 0,
+        }
+    }
+}
+
+// SAFETY: `repr(C)`: four `u32`s, twenty bytes and two `i32`s, 44 bytes without padding; every
+// bit pattern is a valid value.
+unsafe impl AbiPod for Termios {}
+
 // Commands passed to tcsetattr() for setting the termios structure.
 
 /// Make change immediate.
@@ -309,6 +333,23 @@ pub const B230400: Speed = 230400;
 pub const EXTA: Speed = 19200;
 /// External B clock (38400).
 pub const EXTB: Speed = 38400;
+
+// tcflush(3) queue selectors and tcflow(3) actions (userland, `#ifndef _KERNEL`).
+
+/// Flush the input queue.
+pub const TCIFLUSH: i32 = 1;
+/// Flush the output queue.
+pub const TCOFLUSH: i32 = 2;
+/// Flush both queues.
+pub const TCIOFLUSH: i32 = 3;
+/// Suspend output.
+pub const TCOOFF: i32 = 1;
+/// Restart output.
+pub const TCOON: i32 = 2;
+/// Send a STOP character.
+pub const TCIOFF: i32 = 3;
+/// Send a START character.
+pub const TCION: i32 = 4;
 
 /// `CCEQ(val, c)`: whether `c` equals the control character `val`, which must be enabled.
 pub const fn cceq(val: Cc, c: Cc) -> bool {
@@ -424,6 +465,13 @@ mod tests {
             ("B230400", B230400 as i64),
             ("EXTA", EXTA as i64),
             ("EXTB", EXTB as i64),
+            ("TCIFLUSH", TCIFLUSH as i64),
+            ("TCOFLUSH", TCOFLUSH as i64),
+            ("TCIOFLUSH", TCIOFLUSH as i64),
+            ("TCOOFF", TCOOFF as i64),
+            ("TCOON", TCOON as i64),
+            ("TCIOFF", TCIOFF as i64),
+            ("TCION", TCION as i64),
         ];
         for (name, value) in ours {
             assert_eq!(crate::reftest::int(&defs, name), Some(*value), "{name}");

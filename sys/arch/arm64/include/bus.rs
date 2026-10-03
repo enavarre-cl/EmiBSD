@@ -107,6 +107,14 @@ pub struct BusSpace {
     pub _space_vaddr: fn(&'static BusSpace, BusSpaceHandle) -> *mut u8,
 }
 
+/// Two tags are equal when they are the same bus space: the C compares `bus_space_tag_t`
+/// pointers (`com_attach_subr`'s `sc->sc_iot == comconsiot`).
+impl PartialEq for BusSpace {
+    fn eq(&self, other: &Self) -> bool {
+        core::ptr::eq(self, other)
+    }
+}
+
 /// `bus_space_barrier`: a full system barrier (`dsb sy`), whatever the flags.
 pub fn bus_space_barrier(
     _t: &'static BusSpace,

@@ -9,6 +9,7 @@ pub mod ast;
 pub mod autoconf;
 pub mod bus_dma;
 pub mod bus_space;
+pub mod conf;
 pub mod copy;
 pub mod copystr;
 pub mod cpufunc;
@@ -20,6 +21,7 @@ pub mod fpu;
 pub mod intr;
 pub mod locore;
 pub mod machdep;
+pub mod mem;
 pub mod pmap;
 #[cfg(feature = "qemu")]
 pub mod qemu;

@@ -63,9 +63,9 @@
 //! - `bufinsvn`/`bufremvn` keep the buffer's `b_onvnbufs` flag in step with its vnode list
 //!   (the C's `NOLIST`, `sys/buf.rs`); `vinvalbuf` panics if it finds dirty buffers with no
 //!   thread to `VOP_FSYNC` them (the C always has `curproc`).
-//! - Not here yet, reported with `unported!` where the C calls them: the device switch
-//!   (`cdevsw[].d_type`/`d_flags`, `nblkdev`: `conf.c`, through `spec_vnops.rs`).
-//!   `VN_KNOTE(vp, NOTE_REVOKE)` has no knotes to post (`kern_event.c`).
+//! - The device switch (`cdevsw[].d_type`/`d_flags`, `nblkdev`) is each architecture's
+//!   `conf.c`, through `machine::conf`. `VN_KNOTE(vp, NOTE_REVOKE)` has no knotes to post
+//!   (`kern_event.c`).
 //! - `copy_statfs_info` never receives the mount's own `mnt_stat` (the callers pass a copy,
 //!   see `sys/mount.rs`), so the C's early return for that case is not needed; the copy has
 //!   the same values, so the result is the same.
@@ -94,9 +94,7 @@ use crate::kern::kern_synch::{
 };
 use crate::kern::kern_sysctl::{sysctl_rdint, sysctl_rdstruct};
 use crate::kern::sched_bsd::r#yield;
-use crate::kern::spec_vnops::{
-    SPEC_VOPS, SPECLISTH, cdevsw_d_flags_clone, cdevsw_d_type_tty, nblkdev,
-};
+use crate::kern::spec_vnops::{SPEC_VOPS, SPECLISTH};
 use crate::kern::subr_pool::{pool_get, pool_init};
 use crate::kern::subr_prf::{panic, panicstr, tablefull};
 use crate::kern::vfs_bio::{BCSTATS, BUFHEAD, bawrite, brelse, bufcache_take, bwrite};
@@ -112,10 +110,12 @@ use crate::kern::vfs_vops::{
     VOP_REVOKE, VOP_UNLOCK,
 };
 use crate::kprintf;
+use crate::machine::conf::{cdevsw, nblkdev};
 use crate::machine::cpu::{curproc, delay};
 use crate::machine::intr::{IPL_BIO, IPL_NONE, splassert, splbio, splx};
 use crate::miscfs::deadfs::dead_vnops::DEAD_VOPS;
 use crate::sys::buf::{B_BUSY, B_DELWRI, B_DONE, B_INVAL, B_READ, B_WANTED, Buf};
+use crate::sys::conf::{D_CLONE, D_TTY};
 use crate::sys::errno::Errno;
 use crate::sys::fcntl::FNONBLOCK;
 use crate::sys::lock::{LK_DRAIN, LK_EXCLUSIVE, LK_NOWAIT, LK_TYPE_MASK};
@@ -573,7 +573,7 @@ pub fn getdevvp(dev: Dev, type_: Vtype) -> Result<Option<&'static Vnode>, Errno>
         vput(vp);
         vp = alias;
     }
-    if vp.v_type.get() == VCHR && cdevsw_d_type_tty(major(vp.v_rdev())) {
+    if vp.v_type.get() == VCHR && cdevsw(major(vp.v_rdev())).d_type == D_TTY {
         vp.v_flag.set(vp.v_flag.get() | VISTTY);
     }
     Ok(Some(vp))
@@ -652,7 +652,7 @@ pub fn checkalias(
             si.si_ci_bitmap.set(ptr::null_mut());
             nvp.v_un.set(VnodeUn::Specinfo(si));
             if nvp.v_type.get() == VCHR
-                && cdevsw_d_flags_clone(major(nvp_rdev))
+                && cdevsw(major(nvp_rdev)).d_flags & D_CLONE != 0
                 && minor(nvp_rdev) >> CLONE_SHIFT == 0
             {
                 if let Some(vp) = vp {
@@ -1150,7 +1150,7 @@ pub fn vgonel(vp: &'static Vnode, p: Option<&Proc>) {
     {
         if vp.v_flag.get() & VALIASED == 0
             && vp.v_type.get() == VCHR
-            && cdevsw_d_flags_clone(major(si.si_rdev.get()))
+            && cdevsw(major(si.si_rdev.get())).d_flags & D_CLONE != 0
             && minor(si.si_rdev.get()) >> CLONE_SHIFT == 0
             && let Some(map) = NonNull::new(si.si_ci_bitmap.get())
         {

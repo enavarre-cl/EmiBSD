@@ -421,10 +421,6 @@ impl Console for Machine {
     fn consinit() {
         arm64::machdep::consinit()
     }
-
-    fn cn_rx_intr_establish(sink: fn(u8)) -> Result<(), Errno> {
-        arm64::machdep::cn_rx_intr_establish(sink)
-    }
 }
 
 impl Exit for Machine {
@@ -853,6 +849,38 @@ impl Intr for Machine {
     }
 }
 
+/// arm64 has no ISA bus: no interrupt line is free and none can be established.
+impl crate::machine::isa_machdep::IsaMachdep for Machine {
+    type IsaChipsetTag = *const c_void;
+
+    const IST_NONE: i32 = 0;
+    const IST_PULSE: i32 = 1;
+    const IST_EDGE: i32 = 2;
+    const IST_LEVEL: i32 = 3;
+
+    fn isa_attach_hook(
+        _parent: Option<&crate::sys::device::Device>,
+        _self: &crate::sys::device::Device,
+    ) {
+    }
+
+    fn isa_intr_check(_ic: Self::IsaChipsetTag, _irq: i32, _type: i32) -> i32 {
+        0
+    }
+
+    fn isa_intr_establish(
+        _ic: Self::IsaChipsetTag,
+        _irq: i32,
+        _type: i32,
+        _level: i32,
+        _ih_fun: fn(*mut c_void) -> i32,
+        _ih_arg: *mut c_void,
+        _ih_what: &'static str,
+    ) -> Option<core::ptr::NonNull<c_void>> {
+        None
+    }
+}
+
 impl crate::machine::fdt::Fdt for Machine {
     type FdtAttachArgs<'a> = include::fdt::FdtAttachArgs<'a>;
 
@@ -906,6 +934,53 @@ impl crate::machine::autoconf::Autoconf for Machine {
 
     fn pdevinit() -> &'static [crate::sys::device::Pdevinit] {
         &conf::ioconf::PDEVINIT
+    }
+}
+
+/// The device switch tables (`arm64/arm64/conf.c`).
+impl crate::machine::conf::Conf for Machine {
+    fn nchrdev() -> u32 {
+        arm64::conf::CDEVSW.len() as u32
+    }
+
+    fn cdevsw(maj: u32) -> Option<crate::sys::conf::Cdevsw> {
+        arm64::conf::CDEVSW.get(maj)
+    }
+
+    fn cdevsw_set(maj: u32, sw: crate::sys::conf::Cdevsw) {
+        arm64::conf::CDEVSW.set(maj, sw)
+    }
+
+    fn nblkdev() -> u32 {
+        arm64::conf::BDEVSW.len() as u32
+    }
+
+    fn bdevsw(maj: u32) -> Option<crate::sys::conf::Bdevsw> {
+        arm64::conf::BDEVSW.get(maj)
+    }
+
+    fn chrtoblktbl() -> &'static [crate::sys::types::Dev] {
+        &arm64::conf::CHRTOBLKTBL
+    }
+
+    fn swapdev() -> crate::sys::types::Dev {
+        arm64::conf::SWAPDEV
+    }
+
+    fn mem_no() -> u32 {
+        arm64::conf::MEM_NO
+    }
+
+    fn iskmemdev(dev: crate::sys::types::Dev) -> bool {
+        arm64::conf::iskmemdev(dev)
+    }
+
+    fn iszerodev(dev: crate::sys::types::Dev) -> bool {
+        arm64::conf::iszerodev(dev)
+    }
+
+    fn getnulldev() -> crate::sys::types::Dev {
+        arm64::conf::getnulldev()
     }
 }
 

@@ -218,6 +218,16 @@ impl Device {
         // device's address is the softc's; the caller guarantees the allocation holds a `T`.
         unsafe { &*core::ptr::from_ref(self).cast::<T>() }
     }
+
+    /// `dv_xname` as a string (`"com0"`), for the messages and interrupt names the C prints
+    /// with `%s` from it.
+    pub fn xname(&self) -> &str {
+        // SAFETY: `config_attach` writes `dv_xname` before the driver sees the device and
+        // never again, so no `set` can overlap this shared view of the cell's bytes.
+        let bytes = unsafe { &*self.dv_xname.as_ptr() };
+        let len = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+        core::str::from_utf8(&bytes[..len]).unwrap_or("?")
+    }
 }
 
 /// A driver's softc: `struct foo_softc { struct device sc_dev; ... }`.

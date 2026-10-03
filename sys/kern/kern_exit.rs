@@ -50,9 +50,10 @@
 //!
 //! ## Deviations
 //! - What `exit1` tears down that does not exist yet is reported, each once: `kqpoll_exit`,
-//!   `stopprofclock`/`prof_write`, `cancel_all_itimers`, `killjobc`, `unveil_destroy`,
+//!   `stopprofclock`/`prof_write`, `cancel_all_itimers`, `unveil_destroy`,
 //!   `process_untrace` (the `SIGKILL` to a traced child is sent); `process_zap` likewise
-//!   `leavepgrp` and `vrele`; the reaper `knote_processexit`. The signal side
+//!   `vrele`; the reaper `knote_processexit`. `killjobc` and `leavepgrp` are real since the
+//!   process group management of `kern_proc.c`. The signal side
 //!   (`single_thread_set`, `process_suspend_signal`, `sigio_freelist`, `SAS_NOCLDWAIT`, the
 //!   reaper's `SIGCHLD`, `sigactsfree`) is real since `kern_sig.c`, `fdfree` since
 //!   `kern_descrip.c`, `lim_free` since the `plimit` port. The credentials (`crfree` in `proc_free`
@@ -69,7 +70,9 @@ use crate::kern::init_main::{INITPROCESS, PROCESS0};
 use crate::kern::kern_descrip::fdfree;
 use crate::kern::kern_fork::{NPROCESSES, NTHREADS, freepid};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
-use crate::kern::kern_proc::{PROC_POOL, PROCESS_POOL, RUSAGE_POOL, ZOMBPROCESS, chgproccnt};
+use crate::kern::kern_proc::{
+    PROC_POOL, PROCESS_POOL, RUSAGE_POOL, ZOMBPROCESS, chgproccnt, killjobc, leavepgrp,
+};
 use crate::kern::kern_prot::crfree;
 use crate::kern::kern_resource::{calcru, lim_free, ruadd, tuagg_add_process, tuagg_add_runtime};
 use crate::kern::kern_sched::sched_exit;
@@ -254,8 +257,7 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
 
         timeout_del(&pr.ps_rucheck_to);
         // SYSVSEM: not configured.
-        // killjobc(pr): kern_proc.c (M7, with the ttys).
-        let _ = unported!("exit1: killjobc (M7)");
+        killjobc(pr);
         // ACCOUNTING, KTRACE: not configured.
 
         // unveil_destroy(pr): kern_unveil.c (M7).
@@ -583,8 +585,7 @@ pub fn process_zap(pr: &Process) {
         panic(format_args!("process_zap: no main thread"));
     };
 
-    // leavepgrp(pr): kern_proc.c (M7, with the process group management).
-    let _ = unported!("process_zap: leavepgrp (M7)");
+    leavepgrp(pr);
     // SAFETY: `pr` is on its parent's children list, under the kernel lock.
     unsafe { ListHead::<ProcessSibling>::remove(pr) };
     process_clear_orphan(pr);

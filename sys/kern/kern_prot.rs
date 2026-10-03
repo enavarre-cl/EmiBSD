@@ -57,10 +57,6 @@
 //! - `suser`, `suser_ucred` and `crfromxucred` return `Result<(), Errno>`; `groupmember` and
 //!   `proc_cansugid` return `bool`. `(uid_t)-1`/`(gid_t)-1` ("leave unchanged") are
 //!   `Uid::MAX`/`Gid::MAX`.
-//! - `sys_setsid` and `sys_setpgid` make every check the C makes, but entering a process
-//!   group (`enternewpgrp`, `enterthispgrp`, `kern_proc.c`) is not ported (it needs the
-//!   signals and the terminals): where the C would enter one, they give the pool items back
-//!   and return `unported!` (`ENOSYS`).
 //! - `sys___set_tcb`/`sys___get_tcb` go through `machine::tcb` (`TCB_SET`, `TCB_GET`,
 //!   `TCB_INVALID`); the TCB is a `usize`.
 //! - `KERNEL_LOCK()` in `dorefreshcreds` is the lack of preemption on one CPU.
@@ -73,7 +69,8 @@ use libkern::strlcpy;
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_proc::{
-    PGRP_POOL, SESSION_POOL, UCRED_POOL, chgproccnt, inferior, pgfind, prfind, tfind_user,
+    PGRP_POOL, SESSION_POOL, UCRED_POOL, chgproccnt, enternewpgrp, enterthispgrp, inferior, pgfind,
+    prfind, tfind_user,
 };
 use crate::kern::kern_synch::{refcnt_init, refcnt_rele, refcnt_shared, refcnt_take};
 use crate::kern::subr_pool::{pool_get, pool_put};
@@ -96,7 +93,6 @@ use crate::sys::syslimits::{LOGIN_NAME_MAX, NGROUPS_MAX};
 use crate::sys::systm::{SysArgs, sysargs};
 use crate::sys::types::{Gid, Register, Uid};
 use crate::sys::ucred::{Ucred, Xucred};
-use crate::unported;
 
 /// `crset`: copies everything after the reference count of `cr` into `newcr`.
 #[inline]
@@ -242,7 +238,7 @@ pub fn sys_getgroups(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Resul
 }
 
 /// `setsid(2)`.
-pub fn sys_setsid(p: &Proc, _v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
+pub fn sys_setsid(p: &Proc, _v: &SysArgs, retval: &mut [Register; 2]) -> Result<(), Errno> {
     let pr = p.process();
     let pid = pr.ps_pid.get();
 
@@ -258,11 +254,9 @@ pub fn sys_setsid(p: &Proc, _v: &SysArgs, _retval: &mut [Register; 2]) -> Result
         pool_put(&SESSION_POOL, newsess);
         Err(Errno::EPERM)
     } else {
-        // enternewpgrp(pr, newpgrp, newsess); *retval = pid: kern_proc.c's process group
-        // management is not ported (signals, terminals), so the items go back.
-        pool_put(&PGRP_POOL, newpgrp);
-        pool_put(&SESSION_POOL, newsess);
-        Err(unported!("sys_setsid: enternewpgrp (kern_proc.c)"))
+        enternewpgrp(pr, newpgrp, Some(newsess));
+        retval[0] = pid as Register;
+        Ok(())
     }
 }
 
@@ -288,6 +282,7 @@ pub fn sys_setpgid(curp: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Res
     let Some(newpgrp) = pool_get(&PGRP_POOL, PR_WAITOK) else {
         panic(format_args!("sys_setpgid: pool_get"));
     };
+    let mut newpgrp = Some(newpgrp);
 
     let result = 'out: {
         let targpr: &Process = if pid != 0 && pid != curpr.ps_pid.get() {
@@ -316,9 +311,11 @@ pub fn sys_setpgid(curp: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Res
                 // can only create a new process group with pgid == pid
                 if pgid != targpr.ps_pid.get() {
                     Err(Errno::EPERM)
+                } else if let Some(pg) = newpgrp.take() {
+                    enternewpgrp(targpr, pg, None);
+                    Ok(())
                 } else {
-                    // enternewpgrp(targpr, newpgrp, NULL): kern_proc.c (not ported).
-                    Err(unported!("sys_setpgid: enternewpgrp (kern_proc.c)"))
+                    Ok(())
                 }
             }
             // anything to do?
@@ -326,16 +323,18 @@ pub fn sys_setpgid(curp: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Res
                 if pgid != targpr.ps_pid.get() && !ptr::eq(pgrp.pg_session.get(), curpr.session()) {
                     Err(Errno::EPERM)
                 } else {
-                    // enterthispgrp(targpr, pgrp): kern_proc.c (not ported).
-                    Err(unported!("sys_setpgid: enterthispgrp (kern_proc.c)"))
+                    enterthispgrp(targpr, pgrp);
+                    Ok(())
                 }
             }
             Some(_) => Ok(()),
         }
     };
 
-    // out: newpgrp was not consumed (enternewpgrp is the only consumer).
-    pool_put(&PGRP_POOL, newpgrp);
+    // out:
+    if let Some(newpgrp) = newpgrp {
+        pool_put(&PGRP_POOL, newpgrp);
+    }
     result
 }
 

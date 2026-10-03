@@ -80,15 +80,16 @@
 //! ## Deviations
 //! - `isa_intr_alloc` returns the IRQ as `Option` where the C returns 0/1 with an out
 //!   parameter.
-//! - `isa_attach_hook` takes no devices (`struct device`, `isabus_attach_args`: M6) and keeps
-//!   `isa_has_been_seen` here (`dev/isa/isa.c` defines it in C).
+//! - `isa_attach_hook` takes no devices (`machine::isa_machdep` passes it none: it uses none)
+//!   and sets `mainbus.rs`'s `isa_has_been_seen`, as the C.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 use crate::arch::amd64::amd64::i8259::I8259_PIC;
 use crate::arch::amd64::amd64::intr::{intr_disestablish, intr_establish};
+use crate::arch::amd64::amd64::mainbus::ISA_HAS_BEEN_SEEN;
 use crate::arch::amd64::include::i8259::ICU_LEN;
 use crate::arch::amd64::include::intr::{IntrFn, Intrhand};
 use crate::arch::amd64::include::intrdefs::{IST_EDGE, IST_LEVEL, IST_NONE, IST_PULSE};
@@ -215,13 +216,10 @@ pub unsafe fn isa_intr_disestablish(_ic: IsaChipsetTag, arg: NonNull<Intrhand>) 
     unsafe { intr_disestablish(arg) };
 }
 
-/// `isa_has_been_seen` (`dev/isa/isa.c`).
-static ISA_HAS_BEEN_SEEN: AtomicBool = AtomicBool::new(false);
-
 /// `isa_attach_hook`: notify others that might need to know that the ISA bus has now been
-/// attached.
+/// attached (`isa_has_been_seen`, which `mainbus.c` defines).
 pub fn isa_attach_hook() {
-    if ISA_HAS_BEEN_SEEN.swap(true, Ordering::Relaxed) {
+    if ISA_HAS_BEEN_SEEN.swap(1, Ordering::Relaxed) != 0 {
         panic(format_args!("isaattach: ISA bus already seen!"));
     }
 }

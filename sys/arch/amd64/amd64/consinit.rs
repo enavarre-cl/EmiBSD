@@ -32,8 +32,8 @@
 //!
 //! Upstream: sys/arch/amd64/amd64/consinit.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. M4 adds `cn_rx_intr_establish`, the console's receive interrupt until
-//! `com_isa` attaches the port (M5).
+//! Status: `wip`. The console's receive interrupt is `com_isa`'s since M8 (`isa0 at
+//! mainbus0`, `com0 at isa?`).
 //!
 //! ## Deviations
 //! - In C the function is empty: `init_x86_64` already ran `cninit()`, the `constab[]` probe
@@ -46,15 +46,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::arch::amd64::amd64::bus_space::X86_BUS_SPACE_IO;
 use crate::dev::ic::com::{COMCONSCFLAG, COMCONSRATE, comcnattach};
-use libkern::StaticCell;
-
-use crate::arch::amd64::include::intrdefs::{IPL_TTY, IST_EDGE};
-use crate::arch::amd64::isa::isa_machdep::isa_intr_establish;
-use crate::dev::ic::com::{com_enable_debugport_cn, comcn_read_reg};
-use crate::dev::ic::comreg::{
-    COM_DATA, COM_FREQ, COM_IIR, COM_LSR, CONADDR, IIR_NOPEND, LSR_RXRDY,
-};
-use crate::sys::errno::Errno;
+use crate::dev::ic::comreg::{COM_FREQ, CONADDR};
 
 /// `consinit`: attaches the console, once.
 pub fn consinit() {
@@ -77,47 +69,4 @@ pub fn consinit() {
     // A failure leaves the kernel without a console, which is also what the C's silent
     // `cninit` does when no constab entry probes; there is nowhere to report it.
     let _ = attached;
-}
-
-/// The byte sink of the console's receive interrupt.
-static CN_RX_SINK: StaticCell<Option<fn(u8)>> = StaticCell::new(None);
-
-/// The console port's receive interrupt handler: drains the UART into the sink. What
-/// `comintr` does for a port with a tty; the tty is M7.
-fn cn_rx_intr(_arg: *mut core::ffi::c_void) -> i32 {
-    if comcn_read_reg(COM_IIR) & IIR_NOPEND != 0 {
-        return 0;
-    }
-    // SAFETY: written once by `cn_rx_intr_establish` before the interrupt is unmasked.
-    let sink = unsafe { CN_RX_SINK.read() };
-    while comcn_read_reg(COM_LSR) & LSR_RXRDY != 0 {
-        let data = comcn_read_reg(COM_DATA);
-        if let Some(sink) = sink {
-            sink(data);
-        }
-    }
-    1
-}
-
-/// Arms COM1's receive interrupt (IRQ 4, as `com0 at isa` is configured): the handler on
-/// the i8259 through `isa_intr_establish`, and the UART's `IER`/`MCR` as
-/// `com_enable_debugport` sets them.
-pub fn cn_rx_intr_establish(sink: fn(u8)) -> Result<(), Errno> {
-    // SAFETY: once, before the interrupt is established below.
-    unsafe { CN_RX_SINK.write(Some(sink)) };
-    // TODO(M5): the IRQ comes from the isa attach args (com_isa.c), 4 for COM1.
-    let ih = isa_intr_establish(
-        core::ptr::null(),
-        4,
-        IST_EDGE,
-        IPL_TTY,
-        cn_rx_intr,
-        core::ptr::null_mut(),
-        "com0",
-    );
-    if ih.is_none() {
-        return Err(Errno::ENXIO);
-    }
-    com_enable_debugport_cn();
-    Ok(())
 }

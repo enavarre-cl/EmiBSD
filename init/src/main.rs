@@ -26,6 +26,10 @@
 //! (a short write, and one large enough to grow the buffer to `BIG_PIPE_SIZE`), reads EOF
 //! after the writer closes, sees `EAGAIN` on an empty non-blocking pipe, and gets `EPIPE`
 //! with a `SIGPIPE` (caught, then ignored) when it writes to a pipe whose reader is gone.
+//! With the tty layer (`tty.c`, `kern_proc.c`'s process groups) it becomes a session leader
+//! with `setsid(2)`, makes its descriptor 0 (the console's tty) its controlling terminal with
+//! `TIOCSCTTY`, reads the terminal's modes with `TIOCGETA` (what `isatty(3)` asks) and
+//! finds itself the terminal's foreground process group (`TIOCGPGRP`).
 
 #![no_std]
 #![no_main]
@@ -114,6 +118,8 @@ const SYS_UMASK: usize = 60;
 const SYS_LSEEK: usize = 166;
 /// `SYS___getcwd`.
 const SYS___GETCWD: usize = 304;
+/// `SYS_setsid`.
+const SYS_SETSID: usize = 147;
 
 /// `CTL_KERN` (`<sys/sysctl.h>`).
 const CTL_KERN: i32 = 1;
@@ -165,6 +171,16 @@ const SEEK_CUR: usize = 1;
 /// `FIOCLEX`, `FIONCLEX`: `_IO('f', 1)`, `_IO('f', 2)`.
 const FIOCLEX: usize = 0x2000_6601;
 const FIONCLEX: usize = 0x2000_6602;
+/// `TIOCSCTTY`: `_IO('t', 97)`.
+const TIOCSCTTY: usize = 0x2000_7461;
+/// `TIOCGETA`: `_IOR('t', 19, struct termios)`, a 44-byte `struct termios`.
+const TIOCGETA: usize = 0x402c_7413;
+/// `TIOCGPGRP`: `_IOR('t', 119, int)`.
+const TIOCGPGRP: usize = 0x4004_7477;
+/// `ICANON`, in `c_lflag`.
+const ICANON: u32 = 0x0000_0100;
+/// `EPERM`.
+const EPERM: usize = 1;
 /// `S_IFMT`, `S_IFCHR`.
 const S_IFMT: u32 = 0o170000;
 const S_IFCHR: u32 = 0o020000;
@@ -406,6 +422,13 @@ pub extern "C" fn _start() -> ! {
     } else {
         status = 7;
     }
+    if tty() {
+        if write(1, b"init: tty ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 9;
+    }
     if !fds() {
         status = 4;
     }
@@ -440,6 +463,24 @@ fn vfs() -> bool {
     ok &= call(SYS_LSEEK, 1, 0, SEEK_CUR) == (ESPIPE, true);
     ok &= call(SYS_FCHDIR, 1, 0, 0) == (ENOTDIR, true);
     ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
+}
+
+/// `tty.c` and the process groups seen from user mode: `setsid(2)` makes a session and a
+/// group named after the process (a second call fails, it already leads one), the console
+/// becomes the session's controlling terminal, answers `TIOCGETA` with canonical input on,
+/// and reports the new group as its foreground group.
+fn tty() -> bool {
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let (pid, _) = call(SYS_GETPID, 0, 0, 0);
+    let mut ok = call(SYS_SETSID, 0, 0, 0) == (pid, false);
+    ok &= call(SYS_SETSID, 0, 0, 0) == (EPERM, true);
+    ok &= call(SYS_IOCTL, 0, TIOCSCTTY, 0) == (0, false);
+    let mut termios = [0u32; 11];
+    ok &= call(SYS_IOCTL, 0, TIOCGETA, termios.as_mut_ptr() as usize) == (0, false);
+    ok &= termios[3] & ICANON != 0;
+    let mut pgrp: i32 = 0;
+    ok &= call(SYS_IOCTL, 0, TIOCGPGRP, &mut pgrp as *mut i32 as usize) == (0, false);
+    ok && pgrp as usize == pid
 }
 
 /// `kern_descrip.c` seen from user mode. Descriptors 0, 1 and 2 are one console file; the

@@ -290,7 +290,7 @@ rust = "sys/sys/termios.rs"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "681c29489138850507516a8ef6bc346bed04e4e9"
-notes = "all flags visible (__BSD_VISIBLE); CCEQ is cceq; tcsetattr family and TCIFLUSH..TCION are userland"
+notes = "all flags visible (__BSD_VISIBLE); CCEQ is cceq; tcsetattr family is userland; tty.c: TCIFLUSH..TCION (TIOCFLUSH's arguments), Termios::zeroed, AbiPod"
 
 [[file]]
 c = "sys/sys/ttydefaults.h"
@@ -326,7 +326,7 @@ rust = "sys/dev/cons.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "0626c8037b5c8dae8df0c0764a1be8badb6ae62d"
-notes = "struct consdev with fn pointers and Cell fields, CN_*; cninit/constab wait for each arch's conf.c; cons_decl/cons_init macros are the Consdev literal"
+notes = "struct consdev with fn pointers and Cell fields, CN_*; cninit/constab are not used (the consoles are attached directly); M8: CONSMAJOR, the cnopen..cnkqfilter prototypes are cons.rs's functions; cons_decl/cons_init macros are the Consdev literal"
 
 [[file]]
 c = "sys/dev/cons.c"
@@ -335,7 +335,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d4433e6e93f8a14dacbdb6e912e3e363417882ea"
 deps = ["sys/dev/cons.h"]
-notes = "M2: cngetc/cnputc/cnpollc/cnbell/nullcnpollc on an atomic cn_tab; cnopen..cnkqfilter, cnstop, constty, cn_devvp need tty/vnode/cdevsw (M7)"
+notes = "M2: cngetc/cnputc/cnpollc/cnbell/nullcnpollc on an atomic cn_tab; M8: cnopen, cnclose, cnread, cnwrite, cnstop, cnioctl, cnkqfilter through the device switch, constty and cn_devvp as atomic pointers (constty()/set_constty()); cninit and constab[] are not used: each architecture attaches its console directly (docs/ARCHITECTURE.md)"
 
 [[file]]
 c = "sys/dev/ic/ns16550reg.h"
@@ -357,36 +357,36 @@ notes = "re-exports ns16550reg; CPR_FIFO_MODE is cpr_fifo_mode; COM_FREQ/CONADDR
 [[file]]
 c = "sys/dev/ic/comvar.h"
 rust = "sys/dev/ic/comvar.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "81cf7ba3f27c4142365f9095b11c6ed2c8382771"
-notes = "BSD-4-clause block (Demetriou), allowed by the user at M2. M2: COM_IBUFSIZE/COM_IHIGHWATER, COM_UART_*/COM_HW_*/COM_SW_*, struct commulti_attach_args, struct com_softc minus the fields whose types are not ported (sc_dev M4, sc_ih/sc_si M4, sc_tty M7, the two timeouts M5); the input ring's four pointers are an index and a fill count; the prototypes are com.rs's functions and the comcons* externs its globals"
+notes = "BSD-4-clause block (Demetriou), allowed by the user at M2. M2: COM_IBUFSIZE/COM_IHIGHWATER, COM_UART_*/COM_HW_*/COM_SW_*, struct commulti_attach_args, M8: struct com_softc whole, a softc (repr(C), the device first, Cells, all-zero valid; tag/handle Options, sc_ih/sc_si/sc_tty pointers in Cells); the input ring's four pointers are an index and a fill count; the prototypes are com.rs's functions and the comcons* externs its globals"
 
 [[file]]
 c = "sys/dev/ic/com.c"
 rust = "sys/dev/ic/com.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "4a643f223ae8803857798dbb44fab3be91928fbc"
-deps = ["sys/dev/ic/comreg.h", "sys/dev/ic/comvar.h", "sys/dev/cons.h", "sys/sys/ttydefaults.h", "sys/kern/subr_prf.c"]
-notes = "M2: console path only (comspeed, comprobe1, cominit, comcnprobe, comcninit, comcnattach, comcngetc, comcnputc, comcnpollc, comcn_read_reg, comcn_write_reg, comcons* globals as atomics/StaticCell); comspeed returns Result (Err(EINVAL) for the C's -1); M4: com_enable_debugport on the console registers (com_enable_debugport_cn); spl around the polled accesses M4-b2; cdevsw lookup in comcnprobe reported unported; the tty side (comopen..comintr, comsoft, com_attach_subr, com_softc) is M7"
+deps = ["sys/dev/ic/comreg.h", "sys/dev/ic/comvar.h", "sys/dev/cons.h", "sys/sys/ttydefaults.h", "sys/kern/subr_prf.c", "sys/kern/tty.c", "sys/sys/conf.h"]
+notes = "M2: console path only (comspeed, comprobe1, cominit, comcnprobe, comcninit, comcnattach, comcngetc, comcnputc, comcnpollc, comcn_read_reg, comcn_write_reg, comcons* globals as atomics/StaticCell); comspeed returns Result (Err(EINVAL) for the C's -1); M4: com_enable_debugport; spl around the polled accesses M4-b2; M8: the whole tty side: com_cd and com_sc (the unit's softc or None: ENXIO where the C would dereference NULL), com_detach (ttyfree is unsafe), com_activate, comopen, comclose, compwroff, com_resume, com_raisedtr, comread, comwrite, comtty, comioctl, comparam, comstart, comstop, comdiag, comsoft, comintr, com_attach_subr (the console's cn_dev, the interrupt established under dv_xname), com_fifo_probe, com_read_reg/com_write_reg; the cdevsw major lookups compare d_open with ptr::fn_addr_eq; com_enable_debugport_cn and the M4 receive-interrupt shortcut are gone"
 
 [[file]]
 c = "sys/dev/ic/pluartvar.h"
 rust = "sys/dev/ic/pluart.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "f795dd9454d0e5174398f7b42ed0f50798dc586e"
-notes = "M2: the pluartcnattach prototype; struct pluart_softc, pluart_attach_common and pluart_intr are M7"
+notes = "M8: struct pluart_softc (a softc: repr(C), the device first, Cells, all-zero valid; the input ring is an index and a fill count as in comvar.h), UART_IBUFSIZE/UART_IHIGHWATER, the pluartcnattach/pluart_attach_common/pluart_intr prototypes are pluart.rs's functions"
 
 [[file]]
 c = "sys/dev/ic/pluart.c"
 rust = "sys/dev/ic/pluart.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8a91d92d59d67fb4ad0c10f1129996f29bd86a0f"
 deps = ["sys/dev/ic/pluartvar.h", "sys/dev/cons.h", "sys/sys/termios.h", "sys/kern/subr_prf.c"]
-notes = "M2: UART_* register map and the console path (pluartcnprobe/cninit/cnattach/cngetc/cnputc/cnpollc, pluartcons* globals); M4: pluartcn_enable_intr and pluartcn_rx_intr, what pluart_attach_common and pluart_intr do for the receive interrupt, on the console registers; the cdevsw major lookup and the pluartdev KLUDGE are M7 (cn_dev stays NODEV); the softc, pluart_softint and the tty side are M7; M6-b2: pluartcn_remap (not in the C: remaps the console registers through bus_space_map when arm64's pmap_init drops the lower-half identity map)"
+notes = "M2: UART_* register map and the console path (pluartcnprobe/cninit/cnattach/cngetc/cnputc/cnpollc, pluartcons* globals); M8: the whole tty side: pluart_cd/pluart_sc, pluartdev (cdev_tty_init), pluart_attach_common, pluart_intr, pluart_param, pluart_start, pluart_diag, pluart_raisedtr, pluart_softint, pluartopen/close/read/write/ioctl/stop/tty; pluartcnattach's KLUDGE (cdevsw[maj] = pluartdev) through machine::conf::cdevsw_set, the major found with ptr::fn_addr_eq, cn_dev = makedev(maj, 0); the M4 pluartcn_enable_intr/pluartcn_rx_intr shortcut is gone; cngetc/cnputc at splhigh; M6-b2: pluartcn_remap (not in the C: remaps the console registers through bus_space_map when arm64's pmap_init drops the lower-half identity map)"
 
 [[file]]
 c = "sys/dev/ic/i8253reg.h"
@@ -402,7 +402,7 @@ rust = "sys/dev/isa/isareg.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1a5cd2d5da9e7b5fcff324a7f8b6defaa86384b6"
-notes = "M2: IO_TIMER1, IO_RTC, IO_NMI; M4: IO_ICU1, IO_ICU2, IO_ICUSIZE; M7b: IOM_BEGIN, IOM_END, IOM_SIZE (the ISA hole, bus_space_map); the rest of the port map and the IRQ names come with the ISA bus"
+notes = "M2: IO_TIMER1, IO_RTC, IO_NMI; M4: IO_ICU1, IO_ICU2, IO_ICUSIZE; M7b: IOM_BEGIN, IOM_END, IOM_SIZE (the ISA hole, bus_space_map); the rest of the port map and the IRQ names come with the ISA bus; M8: IO_DMA1, IO_DMAPG, IO_DMA2 (isa.c)"
 
 # printf, panic, the message buffer, main()
 
@@ -422,7 +422,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1c62c5118e6832e153562dbf148d9b5b13022c0b"
 deps = ["sys/sys/msgbuf.h", "sys/sys/reboot.h", "sys/sys/syslog.h", "sys/dev/cons.h", "sys/kern/subr_log.c", "sys/kern/kern_xxx.c", "sys/ddb/db_output.c", "sys/ddb/db_usrreq.c"]
-notes = "format engine is core::fmt (fmt::Arguments replaces fmt+va_list, so printf/vprintf and snprintf/vsnprintf pair up); %b is the Bitmask Display adaptor, %s of a byte string is Str; kprintf!/kprintln!/log!/db_printf! macros; kputchar has no tp and constty is always NULL (TOTTY needs tty, M7: uprintf, ttyprintf, tprintf* wait); kprintf_mutex and splhigh in M4-b/M5; v_putc fixed to cnputc; panicbuf is a single buffer (per-CPU ci_panicbuf in M5) and panicstr_claim is the trap handlers' atomic_cas_ptr on panicstr; db_panic defaults to 0 (ddb-lite has no command loop); KASSERT/KDASSERT live here as kassert!/kdassert!"
+notes = "format engine is core::fmt (fmt::Arguments replaces fmt+va_list, so printf/vprintf and snprintf/vsnprintf pair up); %b is the Bitmask Display adaptor, %s of a byte string is Str; kprintf!/kprintln!/log!/db_printf! macros; M8 (tty.c): kputchar takes the tty (TOTTY through tputchar, constty redirection with TOCONS), uprintf, ttyprintf; tprintf_open/tprintf_close/tprintf are not configured (only nfs and the swap pager use them); kprintf_mutex and splhigh in M4-b/M5; v_putc fixed to cnputc; panicbuf is a single buffer (per-CPU ci_panicbuf in M5) and panicstr_claim is the trap handlers' atomic_cas_ptr on panicstr; db_panic defaults to 0 (ddb-lite has no command loop); KASSERT/KDASSERT live here as kassert!/kdassert!"
 
 [[file]]
 c = "sys/kern/kern_xxx.c"
@@ -440,7 +440,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs; M7b: config_init, the config_pending wait (tsleep on config_pending) and config_process_deferred_mountroot run (subr_autoconf.c); kern_descrip.c: filedesc_init runs, process 0 gets fdinit() as ps_fd/p_fd, start_init installs the console stand-in (dev/consfile.rs) at descriptors 0, 1 and 2 before the exec, where init(8) would open /dev/console; kern_sig.c: sigacts0, signal_init, siginit(&sigacts0), process 0's ps_sigacts; start_init clears init's ps_sigflags; M7b: ifinit, softnet_init and softnet_percpu run (net/if.c), the pseudo-devices attach from machine::autoconf::pdevinit() (the ioconf.rs tables: loop, so lo0 attaches at boot), pdevinit_done is an atomic flag; vfs stage 1: vfsinit runs; mountroot (systm.h's MOUNTROOT, NULL: setroot is subr_disk.c) is checked where the C does: with none, main prints 'cannot mount root: no root file system' instead of panicking and goes on without rootvnode (init still execs its boot module); with one, MNT_ROOTFS, VFS_ROOT into rootvnode and the current directories of process 0 and init as in C; check_console looks /dev/console up with namei and warns ('warning: /dev/console does not exist' in smoke); M7b IPv4: rtable_init before the pseudo-devices and domaininit after them (inetdomain, routedomain); selftest ping (feature qemu) after the taskq selftest; vfs stage 2: lf_init; the cleaner (buf_daemon) and update (syncer_thread) kthreads, recorded in cleanerproc/syncerproc; aiodoned and zerothread reported; sys_pipe.c: pipe_init runs"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs; M7b: config_init, the config_pending wait (tsleep on config_pending) and config_process_deferred_mountroot run (subr_autoconf.c); kern_descrip.c: filedesc_init runs, process 0 gets fdinit() as ps_fd/p_fd, start_init installs the console stand-in (dev/consfile.rs) at descriptors 0, 1 and 2 before the exec, where init(8) would open /dev/console; kern_sig.c: sigacts0, signal_init, siginit(&sigacts0), process 0's ps_sigacts; start_init clears init's ps_sigflags; M7b: ifinit, softnet_init and softnet_percpu run (net/if.c), the pseudo-devices attach from machine::autoconf::pdevinit() (the ioconf.rs tables: loop, so lo0 attaches at boot; M8: pty, NPTY 16), pdevinit_done is an atomic flag; vfs stage 1: vfsinit runs; mountroot (systm.h's MOUNTROOT, NULL: setroot is subr_disk.c) is checked where the C does: with none, main prints 'cannot mount root: no root file system' instead of panicking and goes on without rootvnode (init still execs its boot module); with one, MNT_ROOTFS, VFS_ROOT into rootvnode and the current directories of process 0 and init as in C; check_console looks /dev/console up with namei and warns ('warning: /dev/console does not exist' in smoke); M7b IPv4: rtable_init before the pseudo-devices and domaininit after them (inetdomain, routedomain); selftest ping (feature qemu) after the taskq selftest; vfs stage 2: lf_init; the cleaner (buf_daemon) and update (syncer_thread) kthreads, recorded in cleanerproc/syncerproc; aiodoned and zerothread reported; sys_pipe.c: pipe_init runs; M8: tty_init runs (tty.c)"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -514,7 +514,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "20be020586fe4779dd0a0c97024d9445789e5200"
 deps = ["sys/dev/ic/com.c"]
-notes = "C is empty (init_x86_64 ran cninit); without constab/cninit this attaches com(4) at CONADDR directly, once; M4: cn_rx_intr_establish (the console's receive interrupt on IRQ 4 through isa_intr_establish, what com_isa's attach does) until com_isa attaches the port (M5)"
+notes = "C is empty (init_x86_64 ran cninit); without constab/cninit this attaches com(4) at CONADDR directly, once; M8: cn_rx_intr_establish is gone: com0 at isa0 (com_isa.c) establishes the console's interrupt and attaches its tty"
 
 [[file]]
 c = "sys/arch/amd64/amd64/db_interface.c"
@@ -571,8 +571,10 @@ notes = "M2: VM_MIN/MAX_ADDRESS, VM_MAXUSER_ADDRESS, VM_MIN/MAX_KERNEL_ADDRESS; 
 [[file]]
 c = "sys/arch/amd64/amd64/conf.c"
 rust = "sys/arch/amd64/amd64/conf.rs"
-status = "todo"
-notes = "constab[] (and bdevsw/cdevsw, M7); until then consinit.rs attaches com(4) directly"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b955775e37a97fb7172fd379cd3be435dc9e3686"
+notes = "M8: bdevsw[] (20 slots) and cdevsw[] (102 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf (nblkdev/nchrdev are their lengths, cdevsw_set lets a console driver take a slot over); the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 4), filedesc 22, ptm 81; every other slot is cdev_notdef()/bdev_notdef() (ENODEV, d_type 0) until its driver is ported (log 7 waits for subr_log.c's entry points, random 45 for rnd.c); mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; constab[] (cninit) and findblkmajor/dev_rawpart (dk_mountroot) are not used: the console is attached directly (consinit.rs) and there is no disk; APERTURE, MTRR and the <machine/conf.h> drivers are not configured"
 
 # arm64: the same, plus the bus_space table and the bootstrap device map
 
@@ -582,7 +584,7 @@ rust = "sys/arch/arm64/include/bus.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "fa8e2a350c7aad4ea8a246fc150b084fea936a8a"
-notes = "M2: struct bus_space with single-register accessors, map/unmap/subregion/vaddr (fn pointers; _space_map is unsafe fn), BUS_SPACE_MAP_*, bus_space_barrier (dsb sy); raw-multi accessors, _space_mmap and bus_private come with their drivers; M7b: BUS_DMA_* (incl. BUS3/BUS4/FIXED), BUS_DMASYNC_*, bus_dma_segment_t, struct bus_dma_tag (Clone/Copy for the dma-coherent copy; _flags, _dmamap_load_buffer, _dma_mask), struct bus_dmamap (as amd64's: Cells, segments and bounce pages after the header); the prototypes are arm64/bus_dma.rs and arm64/bus_space.rs"
+notes = "M2: struct bus_space with single-register accessors, map/unmap/subregion/vaddr (fn pointers; _space_map is unsafe fn), BUS_SPACE_MAP_*, bus_space_barrier (dsb sy); raw-multi accessors, _space_mmap and bus_private come with their drivers; M7b: BUS_DMA_* (incl. BUS3/BUS4/FIXED), BUS_DMASYNC_*, bus_dma_segment_t, struct bus_dma_tag (Clone/Copy for the dma-coherent copy; _flags, _dmamap_load_buffer, _dma_mask), struct bus_dmamap (as amd64's: Cells, segments and bounce pages after the header); the prototypes are arm64/bus_dma.rs and arm64/bus_space.rs; M8: BusSpace compares by identity (PartialEq on the tag's address), for pluart_param's console check"
 
 [[file]]
 c = "sys/arch/arm64/arm64/bus_space.c"
@@ -625,7 +627,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c9656ebcea23151ba4968b4eab8099c095180027"
 deps = ["sys/arch/arm64/arm64/bus_space.c", "sys/arch/arm64/arm64/intr.c", "sys/dev/ic/pluart.c", "sys/kern/subr_log.c", "sys/sys/reboot.h"]
-notes = "M2: initarm (the 1 GiB TTBR0 Device-nGnRnE identity block for devices until pmap, message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all reported unported), cold, waittime, cpuresetfn, powerdownfn; the bootargs parsing is BootInfo::boothowto; M3: the memory setup and pmap_bootstrap; M4: cpu_info_primary, SP_EL1/tpidr_el1/VBAR_EL1 first thing, fdt_init of the bootloader DTB, consinit = pluart_init_cons (the other *_init_cons are deferred drivers), stdout_node/stdout_speed, fdt_find_cons, cn_rx_intr_establish (the console receive interrupt pluart_fdt_attach would establish, until autoconf M5); cpu_info[], dumpsys, sendsig/setregs, sysctl are M5 to M6 (cpu_sysctl still reported by sys_sysctl); cpu_startup prints version (conf/vers.rs) since kern_sysctl.c; M5: need_resched (aston reported, M5-b); M5-b1: proc0paddr and proc0tf statics, cpu_startup sets proc0.p_addr and curpcb (pcb_flags, pcb_tf); M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), cpu_idle_enter/cycle/leave (cpu_wfi), cpu_switchto (fpu_drop then cpuswitch.S), aston, clear_resched, cpu_unidle (UP); cold moved to sys/systm.rs; M6-b2: setregs (pm_guarded from EXEC_NOBTCFI, the FPU state dropped, the EL0 trap frame with PSR_M_EL0t|PSR_DIT; pmap_setpauthkeys M7); vfs stage 2: cpu_startup calls bufinit before avail mem, as the C does"
+notes = "M2: initarm (the 1 GiB TTBR0 Device-nGnRnE identity block for devices until pmap, message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all reported unported), cold, waittime, cpuresetfn, powerdownfn; the bootargs parsing is BootInfo::boothowto; M3: the memory setup and pmap_bootstrap; M4: cpu_info_primary, SP_EL1/tpidr_el1/VBAR_EL1 first thing, fdt_init of the bootloader DTB, consinit = pluart_init_cons (the other *_init_cons are deferred drivers), stdout_node/stdout_speed, fdt_find_cons, (M8: cn_rx_intr_establish is gone; pluart_fdt_attach establishes the console's interrupt); cpu_info[], dumpsys, sendsig/setregs, sysctl are M5 to M6 (cpu_sysctl still reported by sys_sysctl); cpu_startup prints version (conf/vers.rs) since kern_sysctl.c; M5: need_resched (aston reported, M5-b); M5-b1: proc0paddr and proc0tf statics, cpu_startup sets proc0.p_addr and curpcb (pcb_flags, pcb_tf); M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), cpu_idle_enter/cycle/leave (cpu_wfi), cpu_switchto (fpu_drop then cpuswitch.S), aston, clear_resched, cpu_unidle (UP); cold moved to sys/systm.rs; M6-b2: setregs (pm_guarded from EXEC_NOBTCFI, the FPU state dropped, the EL0 trap frame with PSR_M_EL0t|PSR_DIT; pmap_setpauthkeys M7); vfs stage 2: cpu_startup calls bufinit before avail mem, as the C does"
 
 [[file]]
 c = "sys/arch/arm64/include/frame.h"
@@ -640,7 +642,7 @@ c = "sys/dev/fdt/pluart_fdt.c"
 rust = "sys/dev/fdt/pluart_fdt.rs"
 status = "wip"
 deps = ["sys/dev/ic/pluart.c"]
-notes = "M4: pluart_init_cons (fdt_find_cons + fdt_get_reg + pluartcnattach); pluart_fdt_match/attach (cfattach, clock_enable_all, pinctrl, pluart_attach_common) come with autoconf (M5)"
+notes = "M4: pluart_init_cons (fdt_find_cons + fdt_get_reg + pluartcnattach); M8: pluart_fdt_ca, pluart_fdt_match, pluart_fdt_attach (pluart* at fdt? in ioconf.rs; the machine's fdt_attach_args, fdt_intr_establish through machine::fdt); clock_enable_all/clock_get_frequency (ofw_clock.c) and pinctrl_byname (ofw_pinctrl.c) are reported, sc_clkfreq stays 0 so pluart_param keeps the firmware's baud rate"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c4c173a7fc6f53adda9c7413d8e219da30c83f1e"
 
@@ -1423,7 +1425,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e3f2e806faaae1fd3e033be5dcbf4ef6db4c9de0"
 deps = ["sys/arch/amd64/amd64/intr.c", "sys/arch/amd64/amd64/i8259.c"]
-notes = "M4: isa_intr_alloc (returns Option), isa_intr_check, isa_intr_establish, isa_intr_disestablish, isa_attach_hook (no device arguments, isa_has_been_seen kept here); the IOAPIC pin lookup (mp_busses) is M5 and the ISA DMA bounce buffers (_isa_bus_dma*, isa_bus_dma_tag) M7"
+notes = "M4: isa_intr_alloc (returns Option), isa_intr_check, isa_intr_establish, isa_intr_disestablish, isa_attach_hook (no device arguments; M8: sets mainbus.c's isa_has_been_seen as the C; isa.c reaches it through machine::isa_machdep); the IOAPIC pin lookup (mp_busses) is M5 and the ISA DMA bounce buffers (_isa_bus_dma*, isa_bus_dma_tag) M7"
 
 [[file]]
 c = "sys/arch/arm64/arm64/autoconf.c"
@@ -1491,7 +1493,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9c3769e5cd8beeffaa4ce2d170b9d966c3a9e63e"
 deps = ["sys/sys/types.h"]
-notes = "M5: timeval/timespec/bintime/timezone/itimerval/clockinfo, the timer*/timespec*/bintime* operations (cmp is the derived Ord), every conversion and *_TO_NSEC helper, FROMBCD/TOBCD, SECDAY/SECYR; clock_ymdhms and its conversions are dev/clock_subr.c (M7); the function prototypes live with kern_tc.c/kern_time.c; kern_sig.c: struct timespec is AbiPod (copyin_obj)"
+notes = "M5: timeval/timespec/bintime/timezone/itimerval/clockinfo, the timer*/timespec*/bintime* operations (cmp is the derived Ord), every conversion and *_TO_NSEC helper, FROMBCD/TOBCD, SECDAY/SECYR; clock_ymdhms and its conversions are dev/clock_subr.c (M7); the function prototypes live with kern_tc.c/kern_time.c; kern_sig.c: struct timespec is AbiPod (copyin_obj); M8: struct timeval is AbiPod (TIOCGTSTAMP)"
 
 [[file]]
 c = "sys/sys/timetc.h"
@@ -1644,7 +1646,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "34f4bcdb97b70e5cf96ace4f826ce3b2a81fde03"
 deps = ["sys/sys/queue.h", "sys/sys/timeout.h", "sys/sys/mutex.h", "sys/sys/pclock.h", "sys/sys/refcnt.h", "sys/sys/resource.h", "sys/sys/user.h"]
-notes = "M5-b1: session, pgrp, tusage, process and proc (the members the scheduler, the sleep queues and the kernel threads use; the sigio/klist/ptrace/unveil/pinsyscall/vnode/ucred/filedesc/plimit/vmspace/sigacts members are opaque pointers or left out, each named in a comment), the S* states, P_*/PS_* flags with their %b strings, THREAD_PID_OFFSET, uidinfo, PID_MAX/TID_MASK/NO_PID, SESS_LEADER, FORK_*/EXIT_*/SINGLE_*, cond, cpuset, tu_enter/tu_leave; the function prototypes live with their .c files; M6-a: refreshcreds (dorefreshcreds reported); M6-b2: ps_vmspace/p_vmspace are *const Vmspace with vmspace() accessors, ps_strings, Proc::set_name; M7a: ps_lock (an Rwlock); M7a-3b: ps_limit/p_limit typed (struct plimit), ps_kbind_cookie/ps_kbind_addr, struct pinsyscall with ps_pin/ps_libcpin, ps_auxinfo/ps_timekeep/ps_sigcode/ps_sigcoderet/ps_sigcookie (zero until exec sets them); kern_prot.c: ps_ucred/p_ucred are *const Ucred with ucred() accessors, refreshcreds calls dorefreshcreds; kern_descrip.c: ps_fd/p_fd are *const Filedesc (the fd() accessors live in sys/sys/filedesc.rs); kern_sig.c: ps_sigacts typed (sigacts() accessor), ps_sigiolst/pg_sigiolst, p_sigstk, p_sigval, p_sitrapno u_long; p_siglist/ps_siglist are AtomicU32 (sigset_t) where the C has int"
+notes = "M5-b1: session, pgrp, tusage, process and proc (the members the scheduler, the sleep queues and the kernel threads use; the sigio/klist/ptrace/unveil/pinsyscall/vnode/ucred/filedesc/plimit/vmspace/sigacts members are opaque pointers or left out, each named in a comment), the S* states, P_*/PS_* flags with their %b strings, THREAD_PID_OFFSET, uidinfo, PID_MAX/TID_MASK/NO_PID, SESS_LEADER, FORK_*/EXIT_*/SINGLE_*, cond, cpuset, tu_enter/tu_leave; the function prototypes live with their .c files; M8: s_ttyvp/s_ttyp are Cell<*const Vnode>/Cell<*const Tty>, SESSHOLD/SESSRELE are sesshold/sessrele; M6-a: refreshcreds (dorefreshcreds reported); M6-b2: ps_vmspace/p_vmspace are *const Vmspace with vmspace() accessors, ps_strings, Proc::set_name; M7a: ps_lock (an Rwlock); M7a-3b: ps_limit/p_limit typed (struct plimit), ps_kbind_cookie/ps_kbind_addr, struct pinsyscall with ps_pin/ps_libcpin, ps_auxinfo/ps_timekeep/ps_sigcode/ps_sigcoderet/ps_sigcookie (zero until exec sets them); kern_prot.c: ps_ucred/p_ucred are *const Ucred with ucred() accessors, refreshcreds calls dorefreshcreds; kern_descrip.c: ps_fd/p_fd are *const Filedesc (the fd() accessors live in sys/sys/filedesc.rs); kern_sig.c: ps_sigacts typed (sigacts() accessor), ps_sigiolst/pg_sigiolst, p_sigstk, p_sigval, p_sitrapno u_long; p_siglist/ps_siglist are AtomicU32 (sigset_t) where the C has int"
 
 [[file]]
 c = "sys/sys/user.h"
@@ -1764,8 +1766,8 @@ rust = "sys/kern/kern_proc.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "61ff9458c8be92309099321dee46ca48d74e5b6b"
-deps = ["sys/sys/proc.h", "sys/kern/kern_subr.c", "sys/kern/subr_pool.c"]
-notes = "M5-b1: the lists, hash tables (slices from hashinit, masks are len-1) and pools (procinit), uid_find/uid_release under uidinfolk (a real rwlock since M7a), chgproccnt, inferior, tfind, tfind_user, prfind, pgfind, zombiefind; the pgrp management (enternewpgrp, enterthispgrp, leavepgrp, pgdelete, zapverauth, fixjobc, killjobc, orphanpg) needs signals/ttys/sigio (M6); proc_printit and the ddb commands are M7"
+deps = ["sys/sys/proc.h", "sys/kern/kern_subr.c", "sys/kern/subr_pool.c", "sys/sys/tty.h"]
+notes = "M5-b1: the lists, hash tables (slices from hashinit, masks are len-1) and pools (procinit), uid_find/uid_release under uidinfolk (a real rwlock since M7a), chgproccnt, inferior, tfind, tfind_user, prfind, pgfind, zombiefind; M8 (tty.c): the pgrp management: enternewpgrp (takes the pool items its callers got and writes a zeroed Pgrp/Session into them), enterthispgrp, leavepgrp, pgdelete (clears the tty's t_pgrp), zapverauth (the timeout's void *), fixjobc, killjobc (SIGHUP to the foreground group, ttywait, the controlling vnode released), orphanpg; proc_printit and the ddb commands are M7"
 
 [[file]]
 c = "sys/kern/kern_prot.c"
@@ -1774,7 +1776,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "39298a62f1463ba6e2086d5669cfa187f80c4fe2"
 deps = ["sys/sys/ucred.h", "sys/sys/proc.h", "sys/kern/kern_proc.c", "sys/kern/kern_synch.c", "sys/kern/subr_pool.c", "sys/sys/syscallargs.h", "sys/arch/amd64/include/tcb.h", "sys/arch/arm64/include/tcb.h"]
-notes = "every function: crset, the id syscalls (getpid/getthrid/getppid/getpgrp/getpgid/getsid, get/set[res][e]uid/gid, setre[ug]id, issetugid, getgroups/setgroups), groupmember, suser, suser_ucred, crget/crhold/crfree/crcopy/crdup (ucred_pool items as &'static Ucred, like uvmspace_alloc/free), crfromxucred, getlogin_r/setlogin, proc_cansugid, __set_tcb/__get_tcb (machine::tcb), getthrname/setthrname, dorefreshcreds; stubs: sys_setsid and sys_setpgid make every check but report enternewpgrp/enterthispgrp (kern_proc.c, not ported) and return ENOSYS where the C enters a group; KERNEL_LOCK is one CPU; host tests; kern_descrip.c: proc_cansugid checks p_fd->fd_refcnt > 1 as the C does"
+notes = "every function: crset, the id syscalls (getpid/getthrid/getppid/getpgrp/getpgid/getsid, get/set[res][e]uid/gid, setre[ug]id, issetugid, getgroups/setgroups), groupmember, suser, suser_ucred, crget/crhold/crfree/crcopy/crdup (ucred_pool items as &'static Ucred, like uvmspace_alloc/free), crfromxucred, getlogin_r/setlogin, proc_cansugid, __set_tcb/__get_tcb (machine::tcb), getthrname/setthrname, dorefreshcreds; M8: sys_setsid and sys_setpgid enter the new group through kern_proc.c's enternewpgrp/enterthispgrp; KERNEL_LOCK is one CPU; host tests; kern_descrip.c: proc_cansugid checks p_fd->fd_refcnt > 1 as the C does"
 
 [[file]]
 c = "sys/kern/kern_subr.c"
@@ -1852,7 +1854,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1df181a8a8b5ffb8126ef6a16fec8d5f55f02534"
 deps = ["sys/kern/subr_prf.c"]
-notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); bdevsw_lookup, chrtoblk, blktochr need conf.h (M7)"
+notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf"
 [[file]]
 c = "sys/uvm/uvm_glue.c"
 rust = "sys/uvm/uvm_glue.rs"
@@ -1910,7 +1912,7 @@ rust = "sys/arch/arm64/arm64/locore.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 deps = ["sys/arch/arm64/include/frame.h"]
-notes = "kern_sig.c: sigcode/sigcodecall/sigcoderet/esigcode/sigfill/sigfillsiz in locore.S (global_asm! with SF_SC and SYS_sigreturn as placeholders; .arch_extension fp around it); the kernel entry (drop_to_el1, the boot page tables, initstack) is replaced by the boot protocol (Limine)"
+notes = "kern_sig.c: sigcode/sigcodecall/sigcoderet/esigcode/sigfill/sigfillsiz in locore.S (global_asm! with SF_SC and SYS_sigreturn as placeholders; .arch_extension fp around it); the kernel entry (drop_to_el1, the boot page tables, initstack) is replaced by the boot protocol (Limine); M8: .balign 4 before sigfillsiz, which a word load reads (the link failed with an unaligned R_AARCH64_LDST32 once .data moved)"
 [[file]]
 c = "sys/kern/syscalls.master"
 status = "skipped"
@@ -2023,7 +2025,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "93ef328110b1c5aabeb187152a1f357f397ffaf2"
 deps = ["sys/sys/proc.h", "sys/kern/kern_proc.c", "sys/kern/kern_sched.c", "sys/kern/kern_synch.c", "sys/kern/kern_resource.c", "sys/uvm/uvm_glue.c"]
-notes = "M6-b: sys_exit, exit1 (single_thread_set, process_suspend_signal, kqpoll_exit, stopprofclock, fdfree, killjobc, SAS_NOCLDWAIT, lim_free, process_untrace reported), exit2 with deadproc, proc_free (crfree reported), reaper (knote_processexit, prsignal reported), process_clear_orphan, process_reparent, process_zap (leavepgrp, vrele, sigactsfree/lim_free/crfree reported); process 0 adopts orphans while initprocess is null; sys___threxit, dowait6, sys_wait4, sys_waitid, proc_finish_wait, process_untrace are M6-c/M7; M6-b2: exit1 calls uvm_purge for user processes and the reaper uvm_exit; under feature qemu init's exit (pid 1) logs 'init exited with status N' and ends the run with that status instead of the C's panic; M7a-3b: lim_free of p_limit and of ps_limit in process_zap; kern_descrip.c: exit1 calls fdfree; kern_sig.c: single_thread_set(SINGLE_EXIT), process_suspend_signal, sigio_freelist, SAS_NOCLDWAIT, the SIGKILL to a traced child (process_untrace still reported), the reaper's prsignal(SIGCHLD), sigactsfree in process_zap"
+notes = "M6-b: sys_exit, exit1 (single_thread_set, process_suspend_signal, kqpoll_exit, stopprofclock, fdfree, SAS_NOCLDWAIT, lim_free, process_untrace reported), exit2 with deadproc, proc_free (crfree reported), reaper (knote_processexit, prsignal reported), process_clear_orphan, process_reparent, process_zap (vrele, sigactsfree/lim_free/crfree reported); process 0 adopts orphans while initprocess is null; sys___threxit, dowait6, sys_wait4, sys_waitid, proc_finish_wait, process_untrace are M6-c/M7; M6-b2: exit1 calls uvm_purge for user processes and the reaper uvm_exit; under feature qemu init's exit (pid 1) logs 'init exited with status N' and ends the run with that status instead of the C's panic; M7a-3b: lim_free of p_limit and of ps_limit in process_zap; kern_descrip.c: exit1 calls fdfree; kern_sig.c: single_thread_set(SINGLE_EXIT), process_suspend_signal, sigio_freelist, SAS_NOCLDWAIT, the SIGKILL to a traced child (process_untrace still reported), the reaper's prsignal(SIGCHLD), sigactsfree in process_zap; M8: exit1 calls killjobc and process_zap leavepgrp (kern_proc.c)"
 
 [[file]]
 c = "sys/sys/exec_elf.h"
@@ -2083,10 +2085,11 @@ notes = "kern_sig.c: struct sigio_ref, struct sigio (the sio_u union as side-by-
 [[file]]
 c = "sys/sys/ttycom.h"
 rust = "sys/sys/ttycom.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "82af7e8fba72d678f9fbdb15a6e575531daac44e"
 deps = ["sys/sys/ioccom.h"]
-notes = "kern_sig.c: TIOCGPGRP and TIOCSPGRP (sigio_getown/sigio_setown); vfs_vnops.c: TIOCSCTTY; struct winsize, struct tstamps and the other tty ioctls come with the tty layer (M7)"
+notes = "tty.c: the whole header: struct winsize and struct tstamps (AbiPod), every TIOC* command (TIOCUCNTL's UIOCCMD is uioccmd), the *DISC line discipline numbers; host test of the encoded values"
 [[file]]
 c = "sys/uvm/uvm_map.h"
 rust = "sys/uvm/uvm_map.rs"
@@ -2193,7 +2196,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8082cec7af2808ceca1c70dec622cf33d4bd7cf6"
 deps = ["sys/sys/limits.h", "sys/sys/syscallargs.h", "sys/kern/kern_descrip.c", "sys/kern/kern_subr.c", "sys/sys/ioccom.h", "sys/sys/filio.h"]
-notes = "M6-b: sys_write for the console (descriptors 1 and 2 straight to cnputc); M7b (kern_descrip.c): iovec_copyin (returns the iovecs and resid, frees its own array on failure; the user array copied one iovec at a time) and iovec_free (unsafe), sys_read, sys_readv, dofilereadv, sys_write, sys_writev, dofilewritev (the 1/2 shortcut is gone: every descriptor goes through fd_getfile_mode and f_ops), sys_ioctl (FIOCLEX/FIONCLEX, IOCPARM_LEN buffer on the stack or malloc(M_IOCTLOPS), FIONBIO/FIOASYNC, fo_ioctl); the FO_POSITION vnode checks (VFIFO, VISTTY, negative offsets) are real since vfs stage 1; EPIPE posts SIGPIPE to the thread (ptsignal, since sys_pipe.c); reported: pledge_ioctl (only with PS_PLEDGE), the socket SS_DNS check; KTRACE not configured; select/pselect/poll/ppoll and the kqueue pollers wait for kern_event.c"
+notes = "M6-b: sys_write for the console (descriptors 1 and 2 straight to cnputc); M7b (kern_descrip.c): iovec_copyin (returns the iovecs and resid, frees its own array on failure; the user array copied one iovec at a time) and iovec_free (unsafe), sys_read, sys_readv, dofilereadv, sys_write, sys_writev, dofilewritev (the 1/2 shortcut is gone: every descriptor goes through fd_getfile_mode and f_ops), sys_ioctl (FIOCLEX/FIONCLEX, IOCPARM_LEN buffer on the stack or malloc(M_IOCTLOPS), FIONBIO/FIOASYNC, fo_ioctl); the FO_POSITION vnode checks (VFIFO, VISTTY, negative offsets) are real since vfs stage 1; EPIPE posts SIGPIPE to the thread (ptsignal, since sys_pipe.c); reported: pledge_ioctl (only with PS_PLEDGE), the socket SS_DNS check; KTRACE not configured; select/pselect/poll/ppoll and the kqueue pollers wait for kern_event.c; M8: selwakeup (KNOTE on si_note: with kern_event.c not ported the list is always empty, so it does nothing; struct selinfo has no si_note)"
 
 [[file]]
 c = "sys/arch/amd64/include/exec.h"
@@ -2273,7 +2276,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "4005a747d94f3bc13e74b3e4712af23eb8981942"
 deps = ["sys/sys/queue.h"]
-notes = "M7b: enum devclass (Devclass, DV_* names), DVACT_*, struct device (Cells, dv_ref atomic; repr(C) because softcs start with it), DVF_ACTIVE, TAILQ_HEAD(devicelist) (Devicelist, Sync), struct cfdata (Cfdata::new, Cells for cf_unit/cf_fstate, slices for cf_loc/cf_parents), FSTATE_*, cfmatch_t/cfscan_t (the void *match is the CfMatch enum: a cfdata or a SoftcMatch below a CD_INDIRECT parent), struct cfattach (fn pointers, Option where the C allows NULL), DETACH_*, CD_*, struct cfdriver (cd_devs of Option<NonNull<Device>> slots, cd_dev accessor), cfprint_t, QUIET/UNCONF/UNSUPP, struct pdevinit, SLEEP_*, struct nam2blk, FIRMWARE_MAX; the Softc marker trait and Device::softc for (struct foo_softc *)self; the prototypes belong to their .c files (subr_autoconf.c here; subr_suspend.c, subr_disk.c, firmload.c not ported); reference-backed test of the constants"
+notes = "M7b: enum devclass (Devclass, DV_* names), DVACT_*, struct device (Cells, dv_ref atomic; repr(C) because softcs start with it), DVF_ACTIVE, TAILQ_HEAD(devicelist) (Devicelist, Sync), struct cfdata (Cfdata::new, Cells for cf_unit/cf_fstate, slices for cf_loc/cf_parents), FSTATE_*, cfmatch_t/cfscan_t (the void *match is the CfMatch enum: a cfdata or a SoftcMatch below a CD_INDIRECT parent), struct cfattach (fn pointers, Option where the C allows NULL), DETACH_*, CD_*, struct cfdriver (cd_devs of Option<NonNull<Device>> slots, cd_dev accessor), cfprint_t, QUIET/UNCONF/UNSUPP, struct pdevinit, SLEEP_*, struct nam2blk, FIRMWARE_MAX; the Softc marker trait and Device::softc for (struct foo_softc *)self; the prototypes belong to their .c files (subr_autoconf.c here; subr_suspend.c, subr_disk.c, firmload.c not ported); reference-backed test of the constants; M8: Device::xname (dv_xname as a &str)"
 
 [[file]]
 c = "sys/kern/subr_autoconf.c"
@@ -2291,7 +2294,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b62c6aa84d31d9d375165ec678f54e72f5a2115a"
 deps = ["sys/kern/subr_autoconf.c", "sys/arch/amd64/include/cpuvar.h", "sys/arch/amd64/amd64/cpu.c"]
-notes = "BSD-4-clause block (Demetriou, NetBSD), accepted at M2. M7b: mainbus_ca/mainbus_cd (CD_COCOVM), union mainbus_attach_args (mba_busname, mba_caa and, M7b, mba_pba; the other members come with their buses), isa_has_been_seen, mainbus_match, mainbus_attach (cpu0 attached as CPU_ROLE_SP when nothing set CPUF_PRESENT; M7b: pci0 at mainbus0 bus 0 with pci_bus_dma_tag, no extents, pba_domain from pci_ndomains, as without ACPI), mainbus_efifb_reattach, mainbus_print (M7b: the pci bus number); reported: efifb_cnremap, bios0 (acpi0, mpbios0), ipmi_probe, replacemds, setperf_setup, pvbus_probe, pci_init_extents (from pci_machdep.rs), isa0, vmm_enabled, efifb0, codepatch_disable; mp_busses/mp_intrs come with mpbios/acpi"
+notes = "BSD-4-clause block (Demetriou, NetBSD), accepted at M2. M7b: mainbus_ca/mainbus_cd (CD_COCOVM), union mainbus_attach_args (mba_busname, mba_caa and, M7b, mba_pba; the other members come with their buses), isa_has_been_seen, mainbus_match, mainbus_attach (cpu0 attached as CPU_ROLE_SP when nothing set CPUF_PRESENT; M7b: pci0 at mainbus0 bus 0 with pci_bus_dma_tag, no extents, pba_domain from pci_ndomains, as without ACPI), mainbus_efifb_reattach, mainbus_print (M7b: the pci bus number); reported: efifb_cnremap, bios0 (acpi0, mpbios0), ipmi_probe, replacemds, setperf_setup, pvbus_probe, pci_init_extents (from pci_machdep.rs), vmm_enabled, efifb0, codepatch_disable; mp_busses/mp_intrs come with mpbios/acpi; M8: isa0 at mainbus0 (mba_iba: iba_iot/iba_memt/iba_ic) when no PCI bridge attached one (isa_has_been_seen)"
 
 [[file]]
 c = "sys/arch/amd64/include/cpuvar.h"
@@ -2807,7 +2810,7 @@ notes = "licence: John S. Dyson's, accepted by the user on 2026-10-03. The whole
 
 [[extra]]
 rust = "sys/dev/consfile.rs"
-reason = "stand-in until /dev/console (vfs + tty, M10): the console as a struct file (DTYPE_CONSFILE, fileops over cnputc/cngetc) that start_init installs at descriptors 0, 1 and 2 of init through falloc/fdinsert"
+reason = "stand-in until /dev/console can be opened (a root file system with /dev): the console as a struct file (DTYPE_CONSFILE) that start_init installs at descriptors 0, 1 and 2 of init through falloc/fdinsert; since M8 its fileops are what vn_read/vn_write/vn_ioctl/vn_close would do for the console's vnode: cnopen at attach, cnread/cnwrite (IO_NDELAY for FNONBLOCK), cnioctl (FIONBIO/FIOASYNC are the file's), cnkqfilter, cnclose; the polled cnputc/cngetc path is kept for a console that is not a tty"
 
 # kern_sysctl.c: sysctl(2), the kern/hw/vm trees, the system's identity
 
@@ -2827,7 +2830,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "4dfe85726a8960dad7be72e643f1b13c60200750"
 deps = ["sys/sys/sysctl.h", "sys/kern/kern_prot.c", "sys/kern/kern_proc.c", "sys/kern/kern_resource.c", "sys/kern/kern_rwlock.c", "sys/kern/subr_log.c", "sys/kern/kern_clock.c", "sys/kern/kern_timeout.c", "sys/uvm/uvm_glue.c", "sys/uvm/uvm_meter.c"]
-notes = "kern_sysctl.c: sysctl_lock/sysctl_disklock, sysctl_vslock/vsunlock (uvm_vslock), sys_sysctl (pledge_sysctl's unpledged test; net_sysctl, vfs_sysctl, cpu_sysctl, ddb_sysctl reported; DEBUG_SYSCTL not configured), hostname/domainname (StaticCell under sysctl_lock), hostid, securelevel, allowkmem, the morally-const statics and kern_vars/hw_vars (rows whose variable lives in an unported file are reported: maxvnodes, numfiles, tty_count, somaxconn/sominconn, nosuidcoredump, maxlocksperuid, disk_count; ccpu is a read-only copy of sched_bsd's constant), kern_sysctl_dirs(_locked), kern_sysctl, kern_sysctl_locked, hw_sysctl, hw_sysctl_locked, the hw_battery_* hooks and sysctl_hwcharge{mode,start,stop}, sysctl_hwbattery, sysctl_int_lower, sysctl_int, sysctl_rdint, sysctl_securelevel, sysctl_securelevel_int, sysctl_int_bounded, sysctl_bounded_arr, sysctl_rdquad, sysctl_string, sysctl_tstring, sysctl__string, sysctl_rdstring, sysctl_struct, sysctl_rdstruct, sysctl_doproc, fill_kproc (FILL_KPROC expanded; tty and sigacts fields reported when a process would have them; KTRACE/unveil/MULTIPROCESSOR not configured), sysctl_proc_nobroadcastkill, sysctl_cpustats, sysctl_ci_cp_time, sysctl_cptime2, sysctl_utc_offset (resettodr reported); after their C checks, reported: sysctl_file (fill_file not ported: kern_descrip.c), sysctl_proc_args (uvm_io), sysctl_proc_cwd (vfs_getcwd_common), sysctl_proc_vmmap (fill_vmmap), sysctl_diskinit (subr_disk.c), sysctl_intrcnt (evcount_sysctl), sysctl_sensors (kern_sensors.c); reported nodes: kern.numvnodes, nchstats, stackgap_random, bufcachepercent, malloc, pool, watchdog, evcount, clockintr, tty, timecounter, hw.model (cpu_model), setperf, perfpolicy, smt, blockcpu; SYSV*, NAUDIO, NVIDEO, NDT, NPF, NUCOM, GPROF, WITNESS, PTRACE not configured; no KERNEL_LOCK/log_mtx yet; hw_* globals keep their lowercase C names (the uppercase ones are the HW_* ids); the identity strings come from conf/vers.rs (EmiBSD 7.8, user decision); host tests for every helper, the identity nodes, hw nodes, doproc sizing, fill_kproc and sys_sysctl; smoke: init prints 'init: EmiBSD 7.8' on both archs; after the kern_descrip/kern_sig merges: kern.nfiles (numfiles), kern.nosuidcoredump and the sigacts fields of kinfo_proc are real; net_sysctl, cpu_sysctl, ddb_sysctl reported; DEBUG_SYSCTL not configured), hostname/domainname (StaticCell under sysctl_lock), hostid, securelevel, allowkmem, the morally-const statics and kern_vars/hw_vars (rows whose variable lives in an unported file are reported: maxvnodes, numfiles, tty_count, somaxconn/sominconn, nosuidcoredump, maxlocksperuid, disk_count; ccpu is a read-only copy of sched_bsd's constant), kern_sysctl_dirs(_locked), kern_sysctl, kern_sysctl_locked, hw_sysctl, hw_sysctl_locked, the hw_battery_* hooks and sysctl_hwcharge{mode,start,stop}, sysctl_hwbattery, sysctl_int_lower, sysctl_int, sysctl_rdint, sysctl_securelevel, sysctl_securelevel_int, sysctl_int_bounded, sysctl_bounded_arr, sysctl_rdquad, sysctl_string, sysctl_tstring, sysctl__string, sysctl_rdstring, sysctl_struct, sysctl_rdstruct, sysctl_doproc, fill_kproc (FILL_KPROC expanded; tty and sigacts fields reported when a process would have them; KTRACE/unveil/MULTIPROCESSOR not configured), sysctl_proc_nobroadcastkill, sysctl_cpustats, sysctl_ci_cp_time, sysctl_cptime2, sysctl_utc_offset (resettodr reported); after their C checks, reported: sysctl_file (fill_file not ported: kern_descrip.c), sysctl_proc_args (uvm_io), sysctl_proc_cwd (vfs_getcwd_common), sysctl_proc_vmmap (fill_vmmap), sysctl_diskinit (subr_disk.c), sysctl_intrcnt (evcount_sysctl), sysctl_sensors (kern_sensors.c); reported nodes: kern.numvnodes, nchstats, stackgap_random, bufcachepercent, malloc, pool, watchdog, evcount, clockintr, tty, timecounter, hw.model (cpu_model), setperf, perfpolicy, smt, blockcpu; SYSV*, NAUDIO, NVIDEO, NDT, NPF, NUCOM, GPROF, WITNESS, PTRACE not configured; no KERNEL_LOCK/log_mtx yet; hw_* globals keep their lowercase C names (the uppercase ones are the HW_* ids); the identity strings come from conf/vers.rs (EmiBSD 7.8, user decision); host tests for every helper, the identity nodes, hw nodes, doproc sizing, fill_kproc and sys_sysctl; smoke: init prints 'init: EmiBSD 7.8' on both archs; vfs stage 1: CTL_VFS dispatches to vfs_sysctl (with the vslock, as in C), kern.maxvnodes (bounded), kern.numvnodes, kern.nchstats and kern.proc_cwd (vfs_getcwd_common; ENOENT without a current directory) are real; M7b IPv4: CTL_NET is net_sysctl (kern/uipc_domain.c); vfs stage 2: kern.maxlocksperuid (vfs_lockf.c's atomic in kern_vars), kern.bufcachepercent (sysctl_int, the 5..90 check, bufadjust and bufhighpages)"
+notes = "kern_sysctl.c: sysctl_lock/sysctl_disklock, sysctl_vslock/vsunlock (uvm_vslock), sys_sysctl (pledge_sysctl's unpledged test; net_sysctl, vfs_sysctl, cpu_sysctl, ddb_sysctl reported; DEBUG_SYSCTL not configured), hostname/domainname (StaticCell under sysctl_lock), hostid, securelevel, allowkmem, the morally-const statics and kern_vars/hw_vars (rows whose variable lives in an unported file are reported: maxvnodes, numfiles, somaxconn/sominconn, nosuidcoredump, maxlocksperuid, disk_count; ccpu is a read-only copy of sched_bsd's constant), kern_sysctl_dirs(_locked), kern_sysctl, kern_sysctl_locked, hw_sysctl, hw_sysctl_locked, the hw_battery_* hooks and sysctl_hwcharge{mode,start,stop}, sysctl_hwbattery, sysctl_int_lower, sysctl_int, sysctl_rdint, sysctl_securelevel, sysctl_securelevel_int, sysctl_int_bounded, sysctl_bounded_arr, sysctl_rdquad, sysctl_string, sysctl_tstring, sysctl__string, sysctl_rdstring, sysctl_struct, sysctl_rdstruct, sysctl_doproc, fill_kproc (FILL_KPROC expanded; sigacts fields reported when a process would have them; KTRACE/unveil/MULTIPROCESSOR not configured), sysctl_proc_nobroadcastkill, sysctl_cpustats, sysctl_ci_cp_time, sysctl_cptime2, sysctl_utc_offset (resettodr reported); after their C checks, reported: sysctl_file (fill_file not ported: kern_descrip.c), sysctl_proc_args (uvm_io), sysctl_proc_cwd (vfs_getcwd_common), sysctl_proc_vmmap (fill_vmmap), sysctl_diskinit (subr_disk.c), sysctl_intrcnt (evcount_sysctl), sysctl_sensors (kern_sensors.c); reported nodes: kern.numvnodes, nchstats, stackgap_random, bufcachepercent, malloc, pool, watchdog, evcount, clockintr, timecounter, hw.model (cpu_model), setperf, perfpolicy, smt, blockcpu; SYSV*, NAUDIO, NVIDEO, NDT, NPF, NUCOM, GPROF, WITNESS, PTRACE not configured; no KERNEL_LOCK/log_mtx yet; hw_* globals keep their lowercase C names (the uppercase ones are the HW_* ids); the identity strings come from conf/vers.rs (EmiBSD 7.8, user decision); host tests for every helper, the identity nodes, hw nodes, doproc sizing, fill_kproc and sys_sysctl; smoke: init prints 'init: EmiBSD 7.8' on both archs; after the kern_descrip/kern_sig merges: kern.nfiles (numfiles), kern.nosuidcoredump and the sigacts fields of kinfo_proc are real; net_sysctl, cpu_sysctl, ddb_sysctl reported; DEBUG_SYSCTL not configured), hostname/domainname (StaticCell under sysctl_lock), hostid, securelevel, allowkmem, the morally-const statics and kern_vars/hw_vars (rows whose variable lives in an unported file are reported: maxvnodes, numfiles, somaxconn/sominconn, nosuidcoredump, maxlocksperuid, disk_count; ccpu is a read-only copy of sched_bsd's constant), kern_sysctl_dirs(_locked), kern_sysctl, kern_sysctl_locked, hw_sysctl, hw_sysctl_locked, the hw_battery_* hooks and sysctl_hwcharge{mode,start,stop}, sysctl_hwbattery, sysctl_int_lower, sysctl_int, sysctl_rdint, sysctl_securelevel, sysctl_securelevel_int, sysctl_int_bounded, sysctl_bounded_arr, sysctl_rdquad, sysctl_string, sysctl_tstring, sysctl__string, sysctl_rdstring, sysctl_struct, sysctl_rdstruct, sysctl_doproc, fill_kproc (FILL_KPROC expanded; sigacts fields reported when a process would have them; KTRACE/unveil/MULTIPROCESSOR not configured), sysctl_proc_nobroadcastkill, sysctl_cpustats, sysctl_ci_cp_time, sysctl_cptime2, sysctl_utc_offset (resettodr reported); after their C checks, reported: sysctl_file (fill_file not ported: kern_descrip.c), sysctl_proc_args (uvm_io), sysctl_proc_cwd (vfs_getcwd_common), sysctl_proc_vmmap (fill_vmmap), sysctl_diskinit (subr_disk.c), sysctl_intrcnt (evcount_sysctl), sysctl_sensors (kern_sensors.c); reported nodes: kern.numvnodes, nchstats, stackgap_random, bufcachepercent, malloc, pool, watchdog, evcount, clockintr, timecounter, hw.model (cpu_model), setperf, perfpolicy, smt, blockcpu; SYSV*, NAUDIO, NVIDEO, NDT, NPF, NUCOM, GPROF, WITNESS, PTRACE not configured; no KERNEL_LOCK/log_mtx yet; hw_* globals keep their lowercase C names (the uppercase ones are the HW_* ids); the identity strings come from conf/vers.rs (EmiBSD 7.8, user decision); host tests for every helper, the identity nodes, hw nodes, doproc sizing, fill_kproc and sys_sysctl; smoke: init prints 'init: EmiBSD 7.8' on both archs; vfs stage 1: CTL_VFS dispatches to vfs_sysctl (with the vslock, as in C), kern.maxvnodes (bounded), kern.numvnodes, kern.nchstats and kern.proc_cwd (vfs_getcwd_common; ENOENT without a current directory) are real; M7b IPv4: CTL_NET is net_sysctl (kern/uipc_domain.c); vfs stage 2: kern.maxlocksperuid (vfs_lockf.c's atomic in kern_vars), kern.bufcachepercent (sysctl_int, the 5..90 check, bufadjust and bufhighpages); M8 (tty.c): kern.ttycount (tty_count in kern_vars), kern.tty (sysctl_tty), KERN_PROC_TTY and kinfo_proc's p_tdev/p_tpgid/p_tsess from the session's controlling tty"
 
 [[file]]
 c = "sys/uvm/uvm_meter.c"
@@ -3125,7 +3128,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "92ceb716268d3951f9c7f9c56d587a0255404675"
 deps = ["sys/sys/vnode.h", "sys/sys/mount.h", "sys/sys/specdev.h", "sys/kern/subr_pool.c", "sys/kern/kern_malloc.c", "sys/kern/kern_synch.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_lock.c", "sys/kern/kern_sysctl.c", "sys/kern/kern_prot.c"]
-notes = "vfs stage 1: iftovt_tab/vttoif_tab, prtactive, vnode_hold_list/vnode_free_list/mountlist (Sync newtypes), maxvnodes/numvnodes (atomics, kern.maxvnodes/numvnodes), vnode_mtx, vnode_pool, vntblinit, vfs_mount_alloc/take/rele/free, vfs_busy/unbusy/isbusy, vfs_rootmountalloc, vfs_getvfs, vfs_getnewfsid, vattr_null, getnewvnode (returns the vnode; ENFILE when the pool cannot serve PR_WAITOK), insmntque, bdevvp/cdevvp/getdevvp (Option for NODEV), checkalias, vget, vref, vputonfreelist, vput, vrele (bool), vhold, vdrop, vfs_mount_foreach_vnode (closure), vflush_vnode/vflush, vclean, vrecycle, vgone, vgonel, vfinddev (Option), vdevgone, vcount, vprint (diagnostic/debug), printlockedvnodes (debug), vfs_sysctl (CTL_VFS; vfs.generic.conf copies a VfsconfAbi; bcachestat copies bcstats' snapshot), vfs_mountedon, vfs_export/vfs_export_lookup (NFSSERVER not configured: ENOTSUP/NULL), vaccess, vnoperm (bool), vfs_stall/vfs_stall_barrier (now called by fd_getfile and FREF), vfs_unmountall, vfs_shutdown, vfs_syncwait, vwaitforio, vwakeup, vinvalbuf/vflushbuf (the buffer-list walks; vinvalbuf panics on dirty buffers with no thread to fsync them), copy_statfs_info; reported (unported!): the device switch through spec_vnops.rs (cdevsw d_type/d_flags, nblkdev 0: conf.c), the DDB printers wait for ddb; host tests (vattr_null, vaccess, getnewvnode/insmntque, use counts and free/hold lists, vgone, recycling past maxvnodes, vflush, vfs_busy, vfs_getnewfsid) over testfs; vgonel purges a device vnode's advisory locks (lf_purgelocks); vfs stage 2: rb_buf_compare (RBT buf_rb_bufs), bufinsvn/bufremvn (keep b_onvnbufs), getnewvnode's RBT_INIT and bcstats.numbufs, vflush_vnode's dirty-list test, vfs_syncwait's bufhead scan, bgetvp, brelvp, buf_replacevnode, reassignbuf (the syncer worklist), vn_initialize_syncerd in vntblinit; vclean's uvm_vnp_terminate and vfs_stall's uvm_vnp_sync are uvm_vnode.c's"
+notes = "vfs stage 1: iftovt_tab/vttoif_tab, prtactive, vnode_hold_list/vnode_free_list/mountlist (Sync newtypes), maxvnodes/numvnodes (atomics, kern.maxvnodes/numvnodes), vnode_mtx, vnode_pool, vntblinit, vfs_mount_alloc/take/rele/free, vfs_busy/unbusy/isbusy, vfs_rootmountalloc, vfs_getvfs, vfs_getnewfsid, vattr_null, getnewvnode (returns the vnode; ENFILE when the pool cannot serve PR_WAITOK), insmntque, bdevvp/cdevvp/getdevvp (Option for NODEV), checkalias, vget, vref, vputonfreelist, vput, vrele (bool), vhold, vdrop, vfs_mount_foreach_vnode (closure), vflush_vnode/vflush, vclean, vrecycle, vgone, vgonel, vfinddev (Option), vdevgone, vcount, vprint (diagnostic/debug), printlockedvnodes (debug), vfs_sysctl (CTL_VFS; vfs.generic.conf copies a VfsconfAbi; bcachestat copies bcstats' snapshot), vfs_mountedon, vfs_export/vfs_export_lookup (NFSSERVER not configured: ENOTSUP/NULL), vaccess, vnoperm (bool), vfs_stall/vfs_stall_barrier (now called by fd_getfile and FREF), vfs_unmountall, vfs_shutdown, vfs_syncwait, vwaitforio, vwakeup, vinvalbuf/vflushbuf (the buffer-list walks; vinvalbuf panics on dirty buffers with no thread to fsync them), copy_statfs_info; reported (unported!): the DDB printers wait for ddb; host tests (vattr_null, vaccess, getnewvnode/insmntque, use counts and free/hold lists, vgone, recycling past maxvnodes, vflush, vfs_busy, vfs_getnewfsid) over testfs; vgonel purges a device vnode's advisory locks (lf_purgelocks); vfs stage 2: rb_buf_compare (RBT buf_rb_bufs), bufinsvn/bufremvn (keep b_onvnbufs), getnewvnode's RBT_INIT and bcstats.numbufs, vflush_vnode's dirty-list test, vfs_syncwait's bufhead scan, bgetvp, brelvp, buf_replacevnode, reassignbuf (the syncer worklist), vn_initialize_syncerd in vntblinit; vclean's uvm_vnp_terminate and vfs_stall's uvm_vnp_sync are uvm_vnode.c's; M8: the device switch (cdevsw d_type/d_flags, nblkdev) is machine::conf's"
 
 [[file]]
 c = "sys/kern/vfs_vops.c"
@@ -3188,15 +3191,16 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7a9637f54b18ddb884940b930ce62208355a0385"
 deps = ["sys/kern/vfs_lookup.c", "sys/kern/vfs_vnops.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_getcwd.c", "sys/kern/kern_descrip.c", "sys/kern/sys_generic.c", "sys/sys/syscallargs.h"]
-notes = "vfs stage 1: the whole file: sys_mount (MountArgs buffer), checkdirs, sys_unmount, dounmount, dounmount_leaf, sys_sync, sys_quotactl, copyout_statfs, sys_statfs/fstatfs/getfsstat (VFS_STATFS of mnt_stat through a copy written back), sys_fchdir/chdir/chroot, change_dir, sys___realpath, sys_open/__pledge_open/openat, doopenat, sys_getfh/fhopen/fhstat/fhstatfs, sys_mknod/mknodat/domknodat (option FIFO not configured: EOPNOTSUPP), sys_mkfifo/mkfifoat, sys_link/linkat/dolinkat, sys_symlink/symlinkat/dosymlinkat, sys_unlink/unlinkat/dounlinkat, sys_lseek, sys_access/faccessat/dofaccessat, sys_stat/fstatat/lstat/dofstatat, sys_pathconf/pathconfat/dopathconfat, sys_readlink/readlinkat/doreadlinkat, sys_chflags/chflagsat/dochflagsat/fchflags/dovchflags, sys_chmod/fchmodat/dofchmodat/fchmod, sys_chown/fchownat/dofchownat/lchown/fchown (shared chown_vnode), sys_utimes/utimensat/doutimensat/dovutimens/futimes/futimens/dofutimens, dotruncate, sys_truncate/ftruncate, sys_fsync, sys_rename/renameat/dorenameat, sys_mkdir/mkdirat/domkdirat, sys_rmdir, sys_getdents, sys_umask, sys_revoke, getvnode (returns the file), sys_pread/preadv/pwrite/pwritev; reported: sys_unveil (kern_unveil.c), pledge_flock/pledge_chown (only pledged), unveil_removevnode (only unveiled vnodes), the device switch of sys_revoke (conf.c); KTRACE not configured; the init stand-in checks open/stat/chdir/__getcwd (ENOENT without a root), umask, lseek/fchdir of the console stand-in ('init: vfs ok' in smoke); vfs stage 2: vfs_allocate_syncvnode (vfs_sync.c), uvm_vnp_sync/uvm_vnp_uncache (uvm_vnode.c) are real"
+notes = "vfs stage 1: the whole file: sys_mount (MountArgs buffer), checkdirs, sys_unmount, dounmount, dounmount_leaf, sys_sync, sys_quotactl, copyout_statfs, sys_statfs/fstatfs/getfsstat (VFS_STATFS of mnt_stat through a copy written back), sys_fchdir/chdir/chroot, change_dir, sys___realpath, sys_open/__pledge_open/openat, doopenat, sys_getfh/fhopen/fhstat/fhstatfs, sys_mknod/mknodat/domknodat (option FIFO not configured: EOPNOTSUPP), sys_mkfifo/mkfifoat, sys_link/linkat/dolinkat, sys_symlink/symlinkat/dosymlinkat, sys_unlink/unlinkat/dounlinkat, sys_lseek, sys_access/faccessat/dofaccessat, sys_stat/fstatat/lstat/dofstatat, sys_pathconf/pathconfat/dopathconfat, sys_readlink/readlinkat/doreadlinkat, sys_chflags/chflagsat/dochflagsat/fchflags/dovchflags, sys_chmod/fchmodat/dofchmodat/fchmod, sys_chown/fchownat/dofchownat/lchown/fchown (shared chown_vnode), sys_utimes/utimensat/doutimensat/dovutimens/futimes/futimens/dofutimens, dotruncate, sys_truncate/ftruncate, sys_fsync, sys_rename/renameat/dorenameat, sys_mkdir/mkdirat/domkdirat, sys_rmdir, sys_getdents, sys_umask, sys_revoke, getvnode (returns the file), sys_pread/preadv/pwrite/pwritev; reported: sys_unveil (kern_unveil.c), pledge_flock/pledge_chown (only pledged), unveil_removevnode (only unveiled vnodes); KTRACE not configured; the init stand-in checks open/stat/chdir/__getcwd (ENOENT without a root), umask, lseek/fchdir of the console stand-in ('init: vfs ok' in smoke); vfs stage 2: vfs_allocate_syncvnode (vfs_sync.c), uvm_vnp_sync/uvm_vnp_uncache (uvm_vnode.c) are real; M8: sys_revoke's device switch (cdevsw d_type D_TTY / d_flags D_CLONE) is machine::conf's"
 
 [[file]]
 c = "sys/kern/spec_vnops.c"
 rust = "sys/kern/spec_vnops.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a3e8e4bbd0be166d48a4d85c4d0899b66f0f6bf5"
 deps = ["sys/sys/specdev.h", "sys/kern/vfs_subr.c", "sys/kern/vfs_default.c"]
-notes = "vfs stage 1: speclisth (Sync newtype), spec_vops, every spec_* operation and spec_open_clone in the C's shape; the device switch (sys/conf.h + each arch's conf.c) is not ported: nchrdev()/nblkdev() answer 0 (so spec_open is ENXIO where the C checks the major) and every cdevsw/bdevsw access (d_open, d_close, d_read, d_write, d_ioctl, d_kqfilter, d_strategy, d_type, d_flags, chrtoblk, iskmemdev) is reported; block-device read/write/fsync go through the buffer cache as in C (DIOCGPART is reported for a configured major and leaves BLKDEV_IOSIZE, the C's ioctl-failure path; spec_strategy reports d_strategy and fails the buffer with ENXIO through biodone), seltrue_kqfilter (kern_event.c) reported; spec_advlock is lf_advlock on the specinfo's si_lockf; the second licence block (Martelletto/Bjornsson, ISC) kept; wip until conf.c"
+notes = "vfs stage 1: speclisth (Sync newtype), spec_vops, every spec_* operation and spec_open_clone in the C's shape; M8: the device switch is real: spec_open, spec_read/spec_write (character devices), spec_ioctl, spec_kqfilter, spec_close, spec_strategy and spec_open_clone call cdevsw/bdevsw entries (copies from machine::conf), chrtoblk, iskmemdev and vfinddev as the C; block-device read/write/fsync go through the buffer cache as in C (DIOCGPART (struct partinfo, disklabel.h) is reported for a configured major and leaves BLKDEV_IOSIZE, the C's ioctl-failure path), seltrue_kqfilter (kern_event.c) reported; spec_advlock is lf_advlock on the specinfo's si_lockf; the second licence block (Martelletto/Bjornsson, ISC) kept"
 
 [[file]]
 c = "sys/miscfs/deadfs/dead_vnops.c"
@@ -3276,7 +3280,7 @@ reason = "project helper: the Rust GlobalAlloc over malloc(9)/free(9), feature a
 
 [[extra]]
 rust = "sys/kern/selftest.rs"
-reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access, selftest=uart for the receive-interrupt echo (M4) and selftest=clock for hz clock interrupts plus a timeout (M5); mbuf_chains after mbinit (M7b); bus_dma_check, called by each cpu_configure after bus_dma_init with the machine's tag (M7b); selftest=vio: vio_check brings vio0 up through ifioctl, sends a hand-built ARP request and waits for a frame through the rx interrupt (M7b); the kernel ping to 10.0.2.2 (M7b); buffer_cache (mapped anonymous buffers after bufinit) and pager_map (a three-page cluster through uvm_pagermapin) after cpu_startup (vfs stage 2)"
+reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access, selftest=uart for the console echo (M4; since M8 it opens the console's tty through cdevsw and reads a line through the line discipline) and selftest=clock for hz clock interrupts plus a timeout (M5); mbuf_chains after mbinit (M7b); bus_dma_check, called by each cpu_configure after bus_dma_init with the machine's tag (M7b); selftest=vio: vio_check brings vio0 up through ifioctl, sends a hand-built ARP request and waits for a frame through the rx interrupt (M7b); the kernel ping to 10.0.2.2 (M7b); buffer_cache (mapped anonymous buffers after bufinit) and pager_map (a three-page cluster through uvm_pagermapin) after cpu_startup (vfs stage 2)"
 
 [[extra]]
 rust = "sys/reftest.rs"
@@ -3300,7 +3304,7 @@ reason = "M0 bootstrap: semihosting exit under feature qemu; not OpenBSD code"
 
 [[extra]]
 rust = "sys/arch/amd64/conf/ioconf.rs"
-reason = "replaces config(8)'s generated ioconf.c for amd64 GENERIC: cfdata[] and cfroots[] for the ported devices (mainbus0, cpu0, pci* at mainbus0 with the pcibus locator bus = -1, virtio* at pci? with dev = -1, function = -1, vio* at virtio?), reached through machine::autoconf"
+reason = "replaces config(8)'s generated ioconf.c for amd64 GENERIC: cfdata[] and cfroots[] for the ported devices (mainbus0, cpu0, pci* at mainbus0 with the pcibus locator bus = -1, virtio* at pci? with dev = -1, function = -1, vio* at virtio?; M8: isa0 at mainbus0, com0..com3 at isa0 with GENERIC's port and irq locators, com3 disabled as in GENERIC), pdevinit[] (pty 16, loop 1), reached through machine::autoconf"
 
 [[extra]]
 rust = "sys/arch/arm64/conf/ioconf.rs"
@@ -3317,3 +3321,137 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "0ebd934433345f8181d68c1765633dc6e4328937"
 notes = "over a byte slice and a &[u8; 256] table; returns usize; used by tty.c's ttwrite; host test"
+
+[[file]]
+c = "sys/sys/conf.h"
+rust = "sys/sys/conf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "161c144fabe7310926e29aee0603294dae992603"
+deps = ["sys/sys/types.h", "sys/sys/tty.h"]
+notes = "struct bdevsw, struct cdevsw (typed fn pointers returning Result; d_ioctl's data a byte slice, d_kqfilter/d_strategy raw pointers until kern_event.c/vfs_bio.c, d_mmap Option<Paddr> for the C's -1, Option where the C allows NULL), struct linesw (l_ioctl Ok(false) for -1), D_* types and flags, every cdev_*_init/bdev_*_init macro as a const fn taking the count and the driver's functions (no token pasting), cdev_notdef/bdev_notdef; seltrue_kqfilter is a reported stand-in (kern_event.c); the tables are each arch's conf.c behind machine::conf; the cdev_decl prototypes are the drivers' functions; host tests"
+
+[[file]]
+c = "sys/sys/tty.h"
+rust = "sys/sys/tty.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b17e11440597e00c02eb59c26c26dd0a71f45026"
+deps = ["sys/sys/termios.h", "sys/sys/ttycom.h", "sys/sys/selinfo.h", "sys/sys/proc.h"]
+notes = "struct clist (repr(C); c_cf/c_cl are indices, c_ce is c_cs + c_cn), struct tty (every member that changes a Cell; t_termios/t_winsize Cells of the whole struct with t_lflag()/set_t_lflag()-style accessors; t_pgrp/t_session raw pointers in Cells; t_oproc/t_param/t_hwiflow Option<fn>), TtyLink for the tty list, struct itty (padding as named members), struct ptmget/PTMGET, TS_*, the character classes, struct speedtab, DM*, TTY_*, KERN_TTY_* and their names, TTIPRI/TTOPRI, isctty/isbackground; the ppp/nmea/msts/endrun prototypes are not configured"
+
+[[file]]
+c = "sys/sys/ioctl.h"
+rust = "sys/sys/ioctl.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "eee6e34868a00b83ef9748c929e603c3625d460b"
+deps = ["sys/sys/ttycom.h", "sys/sys/filio.h"]
+notes = "the includes are pub uses (ttycom, filio, sockio); ioctl_arg/ioctl_ret are not in the C: the casts of caddr_t data over the byte slice sys_ioctl hands down (AbiPod); the ioctl() prototype is userland"
+
+[[file]]
+c = "sys/sys/selinfo.h"
+rust = "sys/sys/selinfo.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = ["sys/sys/types.h"]
+notes = "struct selinfo without si_note: struct klist is <sys/event.h>'s and kern_event.c is not ported, so no knote can be attached (every *_kqfilter reports the gap) and selwakeup (sys_generic.c) has nothing to do; wip until kern_event.c"
+
+[[file]]
+c = "sys/kern/tty.c"
+rust = "sys/kern/tty.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0aae1c7a91f7c4a09ef375fde439a2781e3808a5"
+deps = ["sys/sys/tty.h", "sys/kern/tty_subr.c", "sys/kern/tty_conf.c", "sys/kern/kern_proc.c", "sys/kern/kern_sig.c", "sys/lib/libkern/scanc.c"]
+notes = "the whole file: char_type[], ttylist/tty_count/ttylist_lock, tk_* (atomics), ttyopen, ttyclose, ttyinput, ttyoutput, ttioctl (Ok(false) for the C's -1; an ERESTART from a background sleep propagates), ttnread, ttywait(_nsec), ttywflush, ttyflush, ttychars, ttyblock, ttrstrt, ttstart, ttylclose, ttymodem, nullmodem, ttypend, ttvtimeout, ttread (the VMIN/VTIME timeout on the stack instead of malloc), ttyunblock, ttycheckoutq, ttwrite, ttyrub, ttyrubo, ttyretype, ttyecho, ttwakeup(wr), ttspeedtab, ttsetwater, process_sum, ttyinfo, tputchar, ttysleep(_nsec), tty_init, ttymalloc (panics if malloc fails), ttyfree (unsafe), ttystats_init, sysctl_tty, ttytstamp; reported: ttkqfilter and the filt_tty* filters (kern_event.c); TIOCCONS checks /dev/console through namei (ENOENT without a root file system); host tests (canonical input, erase/kill/eof, signals, raw mode, output processing, termios and winsize ioctls)"
+
+[[file]]
+c = "sys/kern/tty_subr.c"
+rust = "sys/kern/tty_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3a3179c6a8977b2755f43bdb825a746303f3beca"
+deps = ["sys/sys/tty.h"]
+notes = "the whole file: clalloc (panics if malloc fails), clfree, getc, q_to_b, ndqb, ndflush, putc, clrbits, b_to_q, nextc, firstc, unputc, catq; the ring and the quote bitmap are slices of Cell<u8> (every index bounds-checked), cursors are indices, firstc/nextc hand out Option<usize>; host tests"
+
+[[file]]
+c = "sys/kern/tty_conf.c"
+rust = "sys/kern/tty_conf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3ce329902c323e849ef42b12fe7a69346387d477"
+deps = ["sys/sys/conf.h", "sys/kern/tty.c"]
+notes = "linesw[] and nlinesw, the ttyerr* casts of enodev as small functions, nullioctl (Ok(false) for -1); ppp, nmea, msts and endrun are not configured (their slots hold the C's defunct entries)"
+
+[[file]]
+c = "sys/kern/tty_tty.c"
+rust = "sys/kern/tty_tty.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8198eafc2fa633c35694940d6286a25de0ab6295"
+deps = ["sys/sys/conf.h", "sys/kern/tty.c"]
+notes = "/dev/tty: cttyopen, cttyread, cttywrite, cttyioctl, cttykqfilter; cttyvp returns Option<&Vnode>; cttykqfilter's seltrue_kqfilter/VOP_KQFILTER reported (kern_event.c); no session has a controlling vnode until /dev nodes exist (consfile's TIOCSCTTY records the tty, not a vnode)"
+
+[[file]]
+c = "sys/kern/tty_pty.c"
+rust = "sys/kern/tty_pty.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d7effda2f4d2f393ef096949eab70bd0f5a6db2a"
+deps = ["sys/sys/conf.h", "sys/kern/tty.c", "sys/kern/vfs_syscalls.c"]
+notes = "the whole file: pt_softc[] (grown under pt_softc_lock; pt_softc() answers None past npty), check_pty, ptyattach (pseudo-device pty 16 in ioconf.rs), ptsopen/close/read/write/start/stop, ptcwakeup, ptcopen/close/read/write, ptytty, ptyioctl (master told by fn_addr_eq on d_open), sysctl_pty, pty_isfree(_locked), pty_getfree, ptm_vn_open, ptmattach, ptmopen/close/ioctl (PTMGET opens /dev/ptyXX and /dev/ttyXX through namei: ENOENT without a root file system); reported: ptckqfilter and the filt_ptc* filters (kern_event.c); NPTY is a constant; host test of a line each way between master and slave"
+
+[[file]]
+c = "sys/arch/amd64/amd64/mem.c"
+rust = "sys/arch/amd64/amd64/mem.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "bf92147d71d20c2412bbe4053323c62c4c621fdd"
+deps = ["sys/sys/conf.h", "sys/arch/amd64/amd64/conf.c"]
+notes = "mmopen (securelevel/allowkmem for /dev/mem and /dev/kmem), mmclose, mmrw (/dev/mem through the direct map copied with kcopy through a small buffer, EFAULT where the C would fault; /dev/null; /dev/zero from a stack buffer), mmmmap, mmioctl; reported: /dev/kmem (uvm_kernacc, uvm_glue.c) and mmmmap's amd64_pa_used (machdep.c); APERTURE and MTRR are not configured; wip until uvm_kernacc"
+
+[[file]]
+c = "sys/arch/arm64/arm64/conf.c"
+rust = "sys/arch/arm64/arm64/conf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a239133825b3a31f6e7fc41fc6aebe446f76ec82"
+deps = ["sys/sys/conf.h"]
+notes = "bdevsw[] (19 slots) and cdevsw[] (101 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf; the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 1, taken over by pluartdev at boot through cdevsw_set: the C's KLUDGE), filedesc 22, ptm 81; every other slot is cdev_notdef()/bdev_notdef() until its driver is ported; mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; findblkmajor/dev_rawpart (dk_mountroot) are not used"
+
+[[file]]
+c = "sys/arch/arm64/arm64/mem.c"
+rust = "sys/arch/arm64/arm64/mem.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0c77518247e4c60dbdac765871fe4a3cb42a0ded"
+deps = ["sys/sys/conf.h", "sys/arch/arm64/arm64/conf.c"]
+notes = "mmopen, mmclose, mmrw (/dev/mem a page at a time under physlock through the direct map instead of a pmap_enter at vmmap, copied with kcopy; /dev/null; /dev/zero from a stack buffer), mmmmap, mmioctl; reported: /dev/kmem (uvm_kernacc, uvm_glue.c); APERTURE is not configured; wip until uvm_kernacc"
+
+[[file]]
+c = "sys/dev/isa/isavar.h"
+rust = "sys/dev/isa/isavar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1fe9c1293b667906aae6d1eaf5c1c2546ec73d2c"
+deps = ["sys/sys/device.h"]
+notes = "struct isabus_attach_args, struct isa_attach_args (the ia_* compatibility macros are accessor methods), struct isa_softc, struct isadev, the cf_* locator macros as functions, ISACF_*/IRQUNK/...; NISADMA and NISAPNP are 0 (isadma.c and isapnp.c are not ported): the DMA members and the isapnp_* declarations are left out as for a kernel without them; isapnp_pin's bit-fields are one byte"
+
+[[file]]
+c = "sys/dev/isa/isa.c"
+rust = "sys/dev/isa/isa.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "212ded0a5d2c7098ce9461f051f0b95ae807b348"
+deps = ["sys/dev/isa/isavar.h", "sys/dev/isa/isareg.h", "sys/kern/subr_autoconf.c"]
+notes = "isa_ca/isa_cd, isamatch, isaattach (isa_attach_hook through machine::isa_machdep, the delay port mapped), isaprint, isascan, isa_intr_typename (&'static str); NISADMA, NISAPNP and NACPI are 0"
+
+[[file]]
+c = "sys/dev/isa/com_isa.c"
+rust = "sys/dev/isa/com_isa.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "04a0bfd45da50e505afacb050e381d9b41409497"
+deps = ["sys/dev/isa/isavar.h", "sys/dev/ic/com.c"]
+notes = "com_isa_ca, com_isa_probe (comprobe1, the console's port is always present), com_isa_attach (com_attach_subr, isa_intr_establish at IPL_TTY under the device's name); com0 at isa0 is the console on amd64"

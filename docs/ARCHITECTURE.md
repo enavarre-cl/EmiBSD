@@ -50,8 +50,9 @@ module per OpenBSD header (`param.rs`, `cpu.rs` with `boot(9)`, `delay(9)` and, 
 signal trampoline), all re-exported from `sys/machine/mod.rs`, which also re-exports
 `consinit()`, `bus.rs` for `bus_space(9)` and (M7b) `bus_dma(9)`, `db_machdep.rs` for what `ddb`
 needs; later `pmap.rs`, `intr.rs`, ...; `autoconf.rs` is what `ioconf.c` and the machine's
-`autoconf.c` give `subr_autoconf.c`; `pci_machdep.rs` (M7b) is `<machine/pci_machdep.h>`), all
-re-exported from `sys/machine/mod.rs`, which also re-exports
+`autoconf.c` give `subr_autoconf.c`; `pci_machdep.rs` (M7b) is `<machine/pci_machdep.h>`;
+`conf.rs` (M8) is the device switch each arch's `conf.c` fills; `isa_machdep.rs` (M8) is
+`<machine/isa_machdep.h>`), all re-exported from `sys/machine/mod.rs`, which also re-exports
 `crate::arch::current::Machine` and asserts at compile time that it implements every trait. Generic
 code names only `crate::machine`. `bus.rs` also carries the C names as free functions
 (`bus_space_read_1(t, h, o)`, `bus_dmamap_load(t, map, ...)`), so a driver reads like its
@@ -218,7 +219,10 @@ Every OpenBSD file compiled or included is classified by licence into `licences.
   (the test process's memory), where amd64 and arm64 map `kernel_map`/`kmem_map` as OpenBSD does.
 - Console attach before autoconfiguration exists (M2 to M4): `consinit()` attaches `com(4)` at
   `CONADDR` (amd64, `consinit.rs`) directly instead of `cninit()`'s `constab[]` walk; arm64
-  finds its PL011 in the device tree since M4 (`pluart_init_cons`). On arm64, `initarm` installs a one-block identity map of the first GiB in
+  finds its PL011 in the device tree since M4 (`pluart_init_cons`). This stays after M8: the
+  console's tty is the one autoconfiguration attaches later (`com0 at isa0`, `pluart0 at
+  mainbus0`), which recognises the console's registers and takes it over as OpenBSD's drivers
+  do. On arm64, `initarm` installs a one-block identity map of the first GiB in
   `TTBR0_EL1` with Device-nGnRnE attributes, because the Limine protocol maps RAM but not devices;
   `bus_space_map` is the identity inside it until `pmap` maps devices (M3, page tables).
 - `delay(9)` before the clocks: amd64 polls the i8254 (`isa/clock.rs`, as OpenBSD does before the
@@ -253,10 +257,10 @@ Every OpenBSD file compiled or included is classified by licence into `licences.
   ExtINT and LINT1 as NMI, the MP default configuration, because the firmware leaves LINT0
   masked and there are no tables to read it from; the IOAPIC stays off, so the 8259 is the
   PIC. The mutex is the uniprocessor one (`kern_lock.c`), `evcount` has no per-CPU counters
-  yet. The console's receive interrupt is armed by the machine (`Console::cn_rx_intr_establish`,
-  what `com_isa`'s attach does) for the `selftest=uart` boot, which types a line on the serial
-  console and expects it echoed through the hard handler, `softintr_schedule` and the soft
-  handler.
+  yet. Until M8 the console's receive interrupt was armed by the machine
+  (`Console::cn_rx_intr_establish`) for the `selftest=uart` boot, which types a line on the
+  serial console and expects it echoed; since M8 `com_isa`'s attach establishes it and the
+  boot reads the line through the console's tty (`comintr`, `comsoft`, `ttyinput`, `ttread`).
 - Interrupts (M4, part b2, arm64): the device tree is the one Limine hands over (`fdt.c`
   parses it in place); QEMU `virt` boots with `acpi=off`, because EDK2 installs the device
   tree only when it does not publish ACPI tables, and OpenBSD arm64 needs the tree. The
@@ -264,8 +268,9 @@ Every OpenBSD file compiled or included is classified by licence into `licences.
   address. `mainbus_attach` pre-registers the interrupt controllers (`arm_intr_init_fdt`)
   and attaches the GICv2 (`ampintc`) from the device tree (built by hand in `cpu_configure`
   until M7b); `ampintc` then owns `spl` through `arm_set_intr_handler`. `do_el1h_sync` enables interrupts
-  as the C does. The console's receive interrupt goes through `arm_intr_establish_fdt`, so the
-  `selftest=uart` boot exercises the same path on arm64 as on amd64.
+  as the C does. The console's receive interrupt goes through `arm_intr_establish_fdt` (since
+  M8 from `pluart_fdt_attach`, `fdt_intr_establish`), so the `selftest=uart` boot exercises
+  the same path on arm64 as on amd64.
 - Clocks (M5-a): the time code is OpenBSD's (`kern_tc.c` over the timehands ring,
   `kern_clockintr.c`'s per-CPU queue, `kern_timeout.c`'s timing wheel, `kern_clock.c`), reached
   from the machine through the `Cpu` trait's `CpuInfo`/`ClockFrame` associated types and
@@ -402,13 +407,39 @@ Every OpenBSD file compiled or included is classified by licence into `licences.
   (`init: pipes ok` in `smoke`).
 - The console as a file (M7b, stand-in): in OpenBSD `init(8)` opens `/dev/console`, a
   vnode of the console's character device whose tty does the I/O. Without a root file
-  system, the device switch and the tty layer (M10), `start_init` installs
-  `sys/dev/consfile.rs` instead: one `struct
-  file` of type `DTYPE_CONSFILE` (127, outside OpenBSD's range) whose `fileops` write
-  through `cnputc` and read a line through polled `cngetc` with echo, put at descriptors
-  0, 1 and 2 of process 1 by `falloc`/`fdinsert`/`fdalloc`. It is not a tty (`F_ISATTY`
-  and the `termios` ioctls answer `ENOTTY`), and it goes away when `init` can open
+  system to hold that node, `start_init` installs `sys/dev/consfile.rs` instead: one `struct
+  file` of type `DTYPE_CONSFILE` (127, outside OpenBSD's range), put at descriptors 0, 1 and
+  2 of process 1 by `falloc`/`fdinsert`/`fdalloc`. Since M8 its `fileops` are what
+  `vn_read`/`vn_write`/`vn_ioctl`/`vn_close` would do for the console's vnode: `cnopen` when
+  it is installed, then `cnread`, `cnwrite`, `cnioctl`, `cnkqfilter` and `cnclose` through the
+  device switch, so the descriptors are the console's tty (line discipline, `TIOCGETA`,
+  `TIOCSCTTY`; `init: tty ok` in `smoke`). `TIOCSCTTY` records the tty in the session but no
+  vnode (`s_ttyvp` stays NULL), so `/dev/tty` cannot reach it. A console that is not a tty
+  falls back to the polled `cnputc`/`cngetc` path. It goes away when `init` can open
   `/dev/console`.
+- The device switch (M8): `<sys/conf.h>` is `sys/sys/conf.rs` (`Cdevsw`, `Bdevsw`, `Linesw`,
+  the `cdev_*_init` initialisers as `const fn`s); the tables are each architecture's `conf.c`
+  (`arch/<arch>/<arch>/conf.rs`) behind `machine::conf` (`Conf`: `nchrdev`, `cdevsw`,
+  `cdevsw_set`, `nblkdev`, `bdevsw`, `chrtoblktbl`, `swapdev`, `mem_no`, `iskmemdev`,
+  `iszerodev`, `getnulldev`). Every slot keeps OpenBSD's major number (they are ABI:
+  `MAKEDEV(8)` uses them); a slot whose driver is not ported holds `cdev_notdef()`. Present
+  today on both archs: `cn` 0, `ctty` 1, `mm` 2 (`mem.c`), `pts`/`ptc` 5/6, `com` 8,
+  `filedesc` 22 (its entry points are `kern_descrip.c`'s), `ptm` 81; no block device. The
+  tables are `Cell`s so that arm64's `pluartcnattach` can do the C's KLUDGE
+  (`cdevsw[com's major] = pluartdev`) at boot; entries are read by copy. Generic code reaches
+  them through `crate::machine::conf` (`spec_vnops.rs`, `cons.rs`, `subr_xxx.rs`), never an
+  arch module.
+- The tty layer (M8): `tty.c`, `tty_subr.c`, `tty_conf.c`, `tty_tty.c`, `tty_pty.c` and their
+  headers are OpenBSD's; `struct tty` is a structure of `Cell`s shared by the reading
+  process, the driver's interrupt and soft interrupt and the clock (`docs/C_TO_RUST.md`).
+  The console is a tty on both archs: amd64 attaches `isa0 at mainbus0` and `com0 at isa0`
+  (`isa.c`, `com_isa.c`, the ISA machine hooks behind `machine::isa_machdep`), arm64
+  `pluart* at fdt?` (`pluart_fdt.c`, the attach arguments behind `machine::fdt`'s
+  `FdtAttachArgs`). Kernel `printf` stays polled (`cnputc`) unless `TIOCCONS` redirects it;
+  tty output is interrupt driven (`comstart`/`pluart_start`). What needs `kern_event.c`
+  (`ttkqfilter`, `ptckqfilter`, the `klist` of `struct selinfo`) is reported or left out, and
+  `PTMGET`/`TIOCCONS` look their `/dev` nodes up with `namei`, which fails with `ENOENT` until
+  there is a root file system.
 - The VFS core (M7+, stage 1): `vfs_init.c`, `vfs_subr.c`, `vfs_vops.c`, `vfs_default.c`,
   `vfs_cache.c`, `vfs_lookup.c`, `vfs_vnops.c`, `vfs_getcwd.c`, `vfs_syscalls.c`,
   `spec_vnops.c`, `miscfs/deadfs/dead_vnops.c` and their headers (`vnode.h`, `mount.h`,
@@ -426,8 +457,9 @@ Every OpenBSD file compiled or included is classified by licence into `licences.
   root is mounted), `check_console` warns that `/dev/console` does not exist, and init is
   still exec'd from its boot module. The stand-in `init` checks that the path system calls
   reach `namei` and fail that way (`init: vfs ok (no root file system)` in `smoke`). What
-  stage 2 must bring is reported where the C calls it: the device switch (`<sys/conf.h>` and each arch's `conf.c`:
-  `nchrdev`/`nblkdev` are 0, so `spec_open` is `ENXIO`) and the first file system.
+  stage 2 must bring is reported where the C calls it: the first file system. The device
+  switch arrived in M8 ("The device switch" above), so `spec_open`, the character-device
+  paths of `spec_vnops.c` and `spec_strategy` call the drivers.
   `pledge` and `unveil` (`kern_pledge.c`, `kern_unveil.c`) are reported for a pledged
   process or an unveiled vnode, which none can be yet; the unveil hooks of `namei` return
   at their `ps_uvpaths == NULL` test. The host tests mount `testfs`
@@ -442,9 +474,9 @@ Every OpenBSD file compiled or included is classified by licence into `licences.
   `bwrite`/`bawrite`/`bdwrite` and `brelse` are what a disk file system calls (its
   `VOP_STRATEGY` maps `b_lblkno` and hands the buffer to its device vnode's
   `spec_strategy`). A buffer is a `bufpool` item passed as `&'static Buf` (`docs/C_TO_RUST.md`).
-  Without the device switch `spec_strategy` reports `bdevsw[].d_strategy` and fails the
-  buffer with `ENXIO` through `biodone`, and the `DIOCGPART` block size of
-  `spec_read`/`spec_write` is reported (they use `BLKDEV_IOSIZE`); no disk driver uses
+  `spec_strategy` hands the buffer to `bdevsw[].d_strategy` (the device switch, M8), but no
+  block device is configured yet; the `DIOCGPART` block size of `spec_read`/`spec_write` is
+  reported (`<sys/disklabel.h>`; they use `BLKDEV_IOSIZE`), and no disk driver uses
   `bufq(9)` yet. On the host double (no MMU) the arena is only counted and a buffer's pages
   are one physical segment reached through the direct map. A boot self-test writes and
   reads back anonymous buffers (`selftest: buffer cache ok` in `smoke`).

@@ -49,7 +49,7 @@
 //! `sys_read`, `sys_readv`, `dofilereadv`, `sys_write`, `sys_writev`, `dofilewritev` and
 //! `sys_ioctl` reach the file through `fd_getfile_mode` and call its `fileops`. `select`,
 //! `pselect`, `poll`, `ppoll` and their kqueue helpers (`pselregister`, `ppollregister`,
-//! `pollout`, ...) wait for `kern_event.c`.
+//! `pollout`, ...) wait for `kern_event.c`; `selwakeup` is here since the tty layer.
 //!
 //! ## Deviations
 //! - `iovec_copyin(uiov, aiov, iovcnt)` returns the iovecs (the caller's `aiov` or a
@@ -64,6 +64,8 @@
 //!   them. The argument buffer is a byte slice of `max(IOCPARM_LEN(com), sizeof(caddr_t))`
 //!   bytes, from the 128-byte stack buffer or `malloc(M_IOCTLOPS)`.
 //! - `KTRACE` is not configured.
+//! - `selwakeup`'s `knote_locked(&sip->si_note, NOTE_SUBMIT)` walks a list no knote can be
+//!   on (`sys/selinfo.rs`), so it has nothing to do.
 
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -83,6 +85,7 @@ use crate::sys::ioccom::{IOC_IN, IOC_OUT, IOC_VOID, IOCPARM_MAX, iocparm_len};
 use crate::sys::limits::SSIZE_MAX;
 use crate::sys::malloc::{M_IOCTLOPS, M_IOV, M_WAITOK};
 use crate::sys::proc::{PS_PLEDGE, Proc};
+use crate::sys::selinfo::Selinfo;
 use crate::sys::signal::SIGPIPE;
 use crate::sys::signalvar::SignalType;
 use crate::sys::syscallargs::{
@@ -496,4 +499,10 @@ pub fn sys_ioctl(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
         free(m, M_IOCTLOPS, size);
     }
     error
+}
+
+/// `selwakeup`: do a wakeup when a selectable event occurs.
+pub fn selwakeup(_sip: &Selinfo) {
+    // KERNEL_LOCK(); knote_locked(&sip->si_note, NOTE_SUBMIT); KERNEL_UNLOCK(): the list
+    // is always empty until kern_event.c attaches knotes (sys/selinfo.rs).
 }

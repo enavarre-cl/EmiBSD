@@ -67,7 +67,7 @@
 //!   ([`SysctlPlain`]). `int *valp` is `&AtomicI32`, the C's atomic operations on it are the
 //!   atomic's; a C local passed by address is an `AtomicI32` read back with `into_inner`.
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
-//!   `ENOSYS`: `ttycount` and `tty` (`tty.c`), `somaxconn`/`sominconn` (`uipc_socket.c`),
+//!   `ENOSYS`: `somaxconn`/`sominconn` (`uipc_socket.c`),
 //!   `stackgap_random` (`kern_exec.c` has no stack gap yet),
 //!   `file` (`kern_descrip.c`; `fill_file` is not here),
 //!   `malloc` (`sysctl_malloc`), `pool` (`sysctl_dopool`), `intrcnt` and `evcount`
@@ -78,8 +78,7 @@
 //!   `setperf`/`perfpolicy` (`sched_bsd.c`), `smt`/`blockcpu` (`kern_sched.c`); the top-level
 //!   `machdep` (`cpu_sysctl`) and `ddb` (`ddb_sysctl`) trees. `kern.proc_cwd` of a process
 //!   without a current directory (none has one before a root file system is mounted) is
-//!   `ENOENT`. `resettodr` after a new `kern.utc_offset` is reported and skipped. The tty fields of `kinfo_proc`
-//!   (a controlling terminal cannot exist yet) are reported when a process would have them.
+//!   `ENOENT`. `resettodr` after a new `kern.utc_offset` is reported and skipped.
 //! - Options this kernel does not configure are compiled out as in C: `DEBUG_SYSCTL`
 //!   (`debug_sysctl`, `CTL_DEBUG` is `EOPNOTSUPP`), `SYSVMSG`/`SYSVSEM`/`SYSVSHM`
 //!   (`sysctl_sysvipc`), `NAUDIO`/`NVIDEO`/`NDT`/`NPF`/`NUCOM` (0), `GPROF`, `WITNESS`,
@@ -127,6 +126,7 @@ use crate::kern::subr_autoconf::AUTOCONF_SERIAL;
 use crate::kern::subr_log::{consbufp, msgbufp};
 use crate::kern::subr_pool::{POOL_DEBUG, pool_reclaim_all};
 use crate::kern::subr_prf::{SPLASSERT_CTL, panic};
+use crate::kern::tty::{TTY_COUNT, sysctl_tty};
 use crate::kern::uipc_mbuf::{MBSTAT, nmbclust_update};
 use crate::kern::vfs_bio::{BUFHIGHPAGES, bufadjust};
 use crate::kern::vfs_cache::NCHSTATS;
@@ -158,7 +158,7 @@ use crate::sys::sysctl::*;
 use crate::sys::syslimits;
 use crate::sys::systm::{PHYSMEM, SysArgs, sysargs};
 use crate::sys::time::timeradd;
-use crate::sys::types::Register;
+use crate::sys::types::{Dev, Register};
 use crate::sys::unistd::_POSIX_VERSION;
 use crate::sys::vnode::GETCWD_CHECK_ACCESS;
 use crate::unported;
@@ -242,13 +242,13 @@ static CCPU: AtomicI32 = AtomicI32::new(sched_bsd::CCPU as i32);
 
 /// `kern_vars[]`: the `kern` integers `sysctl_bounded_arr` serves. The ones whose variable
 /// lives in an unported file are reported by [`kern_vars`] instead.
-static KERN_VARS: [SysctlBoundedArgs; 27] = [
+static KERN_VARS: [SysctlBoundedArgs; 28] = [
     SysctlBoundedArgs::readonly(KERN_OSREV, &OPENBSD),
     SysctlBoundedArgs::new(KERN_MAXVNODES, &MAXVNODES, 0, i32::MAX),
     SysctlBoundedArgs::new(KERN_MAXPROC, &MAXPROCESS, 0, i32::MAX),
     SysctlBoundedArgs::new(KERN_MAXFILES, &MAXFILES, 0, i32::MAX),
     SysctlBoundedArgs::readonly(KERN_NFILES, &NUMFILES),
-    // KERN_TTYCOUNT: tty_count (tty.c).
+    SysctlBoundedArgs::readonly(KERN_TTYCOUNT, &TTY_COUNT),
     SysctlBoundedArgs::readonly(KERN_ARGMAX, &ARG_MAX),
     SysctlBoundedArgs::readonly(KERN_POSIX1, &POSIX_VERSION),
     SysctlBoundedArgs::readonly(KERN_NGROUPS, &NGROUPS_MAX),
@@ -449,14 +449,8 @@ fn kern_vars(
     newp: usize,
     newlen: usize,
 ) -> Result<(), Errno> {
-    if let [mib] = name {
-        match *mib {
-            KERN_TTYCOUNT => return Err(unported!("kern.ttycount: tty_count (tty.c)")),
-            KERN_SOMAXCONN | KERN_SOMINCONN => {
-                return Err(unported!("kern.somaxconn: somaxconn (uipc_socket.c)"));
-            }
-            _ => {}
-        }
+    if let [KERN_SOMAXCONN | KERN_SOMINCONN] = name {
+        return Err(unported!("kern.somaxconn: somaxconn (uipc_socket.c)"));
     }
     sysctl_bounded_arr(&KERN_VARS, name, oldp, oldlenp, newp, newlen)
 }
@@ -515,7 +509,7 @@ fn kern_sysctl_dirs_locked(
         KERN_CLOCKINTR => Err(unported!(
             "kern.clockintr: sysctl_clockintr (kern_clockintr.c)"
         )),
-        KERN_TTY => Err(unported!("kern.tty: sysctl_tty (tty.c)")),
+        KERN_TTY => sysctl_tty(name, oldp, oldlenp, newp, newlen),
         // KERN_PROF: GPROF and DDBPROF are not configured.
         KERN_TIMECOUNTER => Err(unported!("kern.timecounter: sysctl_tc (kern_tc.c)")),
         // KERN_WITNESSWATCH, KERN_WITNESS: WITNESS is not configured.
@@ -1515,8 +1509,10 @@ fn doproc_matches(pr: &Process, op: i32, arg: i32) -> Result<bool, Errno> {
             {
                 false
             } else {
-                let _ = unported!("kern.proc: KERN_PROC_TTY t_dev (tty.c)");
-                false
+                // SAFETY: a controlling tty belongs to its driver's softc, which keeps it
+                // until the device detaches (`ttyfree`); the C reads it the same way.
+                sess.and_then(|s| unsafe { s.s_ttyp.get().as_ref() })
+                    .is_some_and(|tp| tp.t_dev.get() == arg as Dev)
             }
         }
         KERN_PROC_UID => pr.ucred().cr_uid.get() == arg as u32,
@@ -1729,11 +1725,13 @@ pub fn fill_kproc(pr: &Process, ki: &mut KinfoProc, p: Option<&Proc>, show_point
         ki.p_sid = leader.ps_pid.get();
     }
 
-    if flags & PS_CONTROLT != 0 && !s.s_ttyp.get().is_null() {
-        // p_tdev, p_tpgid, p_tsess: struct tty is tty.c's.
-        let _ = unported!("kinfo_proc: the controlling tty (tty.c)");
-        ki.p_tdev = NODEV as u32;
-        ki.p_tpgid = -1;
+    // SAFETY: as in `KERN_PROC_TTY`: the driver keeps the tty until it detaches.
+    if let Some(tp) = unsafe { s.s_ttyp.get().as_ref() }
+        && flags & PS_CONTROLT != 0
+    {
+        ki.p_tdev = tp.t_dev.get() as u32;
+        ki.p_tpgid = tp.pgrp().map_or(-1, |pg| pg.pg_id.get());
+        ki.p_tsess = tp.t_session.get() as u64;
     } else {
         ki.p_tdev = NODEV as u32;
         ki.p_tpgid = -1;

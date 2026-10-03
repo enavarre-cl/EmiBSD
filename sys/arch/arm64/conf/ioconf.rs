@@ -5,7 +5,8 @@
 //! `subr_autoconf.rs`.
 //!
 //! GENERIC lines present: `mainbus0 at root`, `ampintc* at fdt? early 1`, `agtimer* at fdt?`,
-//! `virtio* at fdt?`, `vio* at virtio?`; `pseudo-device loop`.
+//! `virtio* at fdt?`, `vio* at virtio?`, `pluart* at fdt?`; `pseudo-device pty 16`,
+//! `pseudo-device loop`.
 //! The `fdt` attribute (`files.arm64`: `define fdt {[early = 0]}`) is carried by `mainbus`
 //! and `simplebus`; `simplebus` is not ported, so mainbus is the only parent here. Every
 //! other GENERIC line waits for its driver (`cpu0 at mainbus?`, `simplebus* at fdt?`, the
@@ -17,9 +18,12 @@
 use crate::arch::arm64::dev::agtimer::{AGTIMER_CA, AGTIMER_CD};
 use crate::arch::arm64::dev::ampintc::{AMPINTC_CA, AMPINTC_CD};
 use crate::arch::arm64::dev::mainbus::{MAINBUS_CA, MAINBUS_CD};
+use crate::dev::fdt::pluart_fdt::PLUART_FDT_CA;
 use crate::dev::fdt::virtio_mmio::VIRTIO_MMIO_CA;
+use crate::dev::ic::pluart::PLUART_CD;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
+use crate::kern::tty_pty::ptyattach;
 use crate::net::if_loop::loopattach;
 use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR, Pdevinit};
 
@@ -36,7 +40,7 @@ const LOC_EARLY_0: &[i64] = &[0];
 const PV_VIRTIO: &[i16] = &[3];
 
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 5] = [
+pub static CFDATA: [Cfdata; 6] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -87,14 +91,33 @@ pub static CFDATA: [Cfdata; 5] = [
     ),
     // 4: vio* at virtio?
     Cfdata::new(&VIO_CA, &VIO_CD, 0, FSTATE_STAR, &[], 0, PV_VIRTIO, 0, 0),
+    // 5: pluart* at fdt?
+    Cfdata::new(
+        &PLUART_FDT_CA,
+        &PLUART_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_0,
+        0,
+        PV_FDT,
+        0,
+        0,
+    ),
 ];
 
 /// `cfroots[]`: `mainbus0`.
 pub static CFROOTS: [i16; 1] = [0];
 
 /// `pdevinit[]`: the pseudo-devices of the MI `conf/GENERIC` whose attach functions are
-/// ported, in `ioconf.c`'s order (`pseudo-device loop` gets a count of 1).
-pub static PDEVINIT: [Pdevinit; 1] = [Pdevinit {
-    pdev_attach: loopattach,
-    pdev_count: 1,
-}];
+/// ported, in `ioconf.c`'s order (`pseudo-device pty 16`, `pseudo-device loop` with a
+/// count of 1).
+pub static PDEVINIT: [Pdevinit; 2] = [
+    Pdevinit {
+        pdev_attach: ptyattach,
+        pdev_count: 16,
+    },
+    Pdevinit {
+        pdev_attach: loopattach,
+        pdev_count: 1,
+    },
+];

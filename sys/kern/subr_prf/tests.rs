@@ -75,12 +75,20 @@ fn constants_match_the_c() {
 fn logpri_writes_the_level_to_the_log() {
     crate::kern::subr_log::init_static_msgbuf();
     let mbp = msgbufp().unwrap();
-    let before = mbp.bufx();
-    logpri(LOG_ERR);
-    let after = mbp.bufx();
-    let text: std::vec::Vec<u8> = (before..after)
-        .map(|i| mbp.bufc()[i as usize].get())
-        .collect();
+    // The message buffer is global: a test printing on another thread can interleave its
+    // bytes. Retry until a window holds only ours; the expectation itself stays exact.
+    let mut text = std::vec::Vec::new();
+    for _ in 0..100 {
+        let before = mbp.bufx();
+        logpri(LOG_ERR);
+        let after = mbp.bufx();
+        text = (before..after)
+            .map(|i| mbp.bufc()[i as usize].get())
+            .collect();
+        if text.len() == 3 {
+            break;
+        }
+    }
     assert_eq!(text, b"<3>");
     let n = kprintf!("{} {}", "hello", 7);
     assert_eq!(n, 7);

@@ -39,38 +39,54 @@
 //!
 //! Status: `wip`. Milestone M5 ports the lists, the hash tables and the pools (`procinit`),
 //! `uid_find`/`uid_release`/`chgproccnt`, `inferior`, `tfind`, `tfind_user`, `prfind`,
-//! `pgfind` and `zombiefind`. The process group management (`enternewpgrp`, `enterthispgrp`,
-//! `leavepgrp`, `pgdelete`, `zapverauth`, `fixjobc`, `killjobc`, `orphanpg`) needs signals,
-//! ttys and `sigio` (M6); `proc_printit` and the `ddb` commands come with the real ddb (M7).
+//! `pgfind` and `zombiefind`; the tty layer (M8) brings the process group management
+//! (`enternewpgrp`, `enterthispgrp`, `leavepgrp`, `pgdelete`, `zapverauth`, `fixjobc`,
+//! `killjobc`, `orphanpg`). `proc_printit` and the `ddb` commands come with the real ddb;
+//! `pgrpdump` is `DEBUG`.
 //!
 //! ## Deviations
+//! - `enternewpgrp` takes the raw `pgrp_pool`/`session_pool` items its callers got (the C
+//!   passes the uninitialised `pool_get` memory too) and writes a zeroed `Pgrp`/`Session`
+//!   into them before filling them; the session's `s_verauth*` start at 0 where the C
+//!   leaves the pool's old bytes.
+//! - `zapverauth` takes the `void *` of its timeout, as the C; a `&Session` caller casts.
 //! - `uidinfolk` is an rwlock (`kern_rwlock.c`, M5-b): `uid_find` reports it; on one CPU
 //!   with nothing sleeping the hash is consistent anyway.
 //! - The hash tables are slices from `hashinit`; the C's `tidhash`/`pidhash`/`pgrphash`
 //!   masks are `len() - 1`.
 
-use core::ptr;
+use core::ffi::c_void;
+use core::ptr::{self, NonNull};
 
 use libkern::StaticCell;
 
 use crate::conf::param::{MAXPROCESS, MAXTHREAD};
+use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_rwlock::{rw_enter_write, rw_exit_write, rw_init};
+use crate::kern::kern_sig::{pgsignal, prsignal, sigio_freelist};
 use crate::kern::kern_subr::hashinit;
-use crate::kern::subr_pool::pool_init;
+use crate::kern::kern_timeout::timeout_set;
+use crate::kern::subr_pool::{pool_init, pool_put};
 use crate::kern::subr_prf::panic;
+use crate::kern::tty::ttywait;
+use crate::kern::vfs_subr::vrele;
+use crate::kern::vfs_vops::VOP_REVOKE;
 use crate::machine::intr::{IPL_MPFLOOR, IPL_NONE};
 use crate::sys::malloc::{M_NOWAIT, M_PROC, M_WAITOK, M_ZERO};
 use crate::sys::pool::{PR_WAITOK, Pool};
 use crate::sys::proc::{
-    Pgrp, PgrpHash, Proc, ProcHash, ProcList, Process, ProcessHash, ProcessList, Session,
-    THREAD_PID_OFFSET, Uidinfo, UidinfoHash,
+    PS_CONTROLT, PS_STOPPED, PS_ZOMBIE, Pgrp, PgrpHash, Proc, ProcHash, ProcList, Process,
+    ProcessHash, ProcessList, ProcessPglist, Session, THREAD_PID_OFFSET, Uidinfo, UidinfoHash,
+    sess_leader, sessrele,
 };
 use crate::sys::queue::ListHead;
 use crate::sys::resource::Rusage;
 use crate::sys::rwlock::Rwlock;
+use crate::sys::signal::{SIGCONT, SIGHUP};
 use crate::sys::types::{Pid, Uid};
 use crate::sys::ucred::Ucred;
+use crate::sys::vnode::REVOKEALL;
 use core::sync::atomic::Ordering;
 
 /*
@@ -347,6 +363,251 @@ pub fn zombiefind(pid: Pid) -> Option<&'static Process> {
     ZOMBPROCESS.0.iter().find(|pr| pr.ps_pid.get() == pid)
 }
 
-// enternewpgrp, enterthispgrp, leavepgrp, pgdelete, zapverauth, fixjobc, killjobc,
-// orphanpg: signals, ttys and sigio (M6). proc_printit, db_kill_cmd, db_stop_cmd,
-// db_show_all_procs: the real ddb (M7). pgrpdump: DEBUG.
+/// `enternewpgrp`: move process to a new process group. If a session is provided then it's
+/// a new session to contain this process group; otherwise the process is staying within its
+/// existing session.
+///
+/// `pgrp` (and `newsess`) are fresh `pgrp_pool` (`session_pool`) items this call takes
+/// over.
+pub fn enternewpgrp(pr: &Process, pgrp: NonNull<u8>, newsess: Option<NonNull<u8>>) {
+    #[cfg(feature = "diagnostic")]
+    if sess_leader(pr) {
+        panic(format_args!(
+            "enternewpgrp: session leader attempted setpgrp"
+        ));
+    }
+
+    let pgrp = pgrp.cast::<Pgrp>();
+    // SAFETY: a fresh, suitably aligned pool item of `size_of::<Pgrp>()` bytes, written once
+    // before anything else sees it; it lives until `pgdelete` puts it back.
+    let pgrp: &'static Pgrp = unsafe {
+        pgrp.as_ptr().write(Pgrp::new());
+        pgrp.as_ref()
+    };
+
+    if let Some(newsess) = newsess {
+        // New session. Initialize it completely
+        let newsess = newsess.cast::<Session>();
+        // SAFETY: as for the group: a fresh `session_pool` item, freed by `SESSRELE`.
+        let newsess: &'static Session = unsafe {
+            newsess.as_ptr().write(Session::new());
+            newsess.as_ref()
+        };
+        timeout_set(
+            &newsess.s_verauthto,
+            zapverauth,
+            ptr::from_ref(newsess).cast_mut().cast::<c_void>(),
+        );
+        newsess.s_leader.set(pr);
+        newsess.s_count.set(1);
+        newsess.s_ttyvp.set(ptr::null());
+        newsess.s_ttyp.set(ptr::null());
+        // SAFETY: the old session lives while `pr` is in it; s_login is written by
+        // setlogin(2) under the kernel lock, and the two sessions are distinct.
+        if let Some(old) = unsafe { pr.session().as_ref() } {
+            // SAFETY: as above.
+            unsafe { *newsess.s_login.get() = *old.s_login.get() };
+        }
+        pr.ps_flags.fetch_and(!PS_CONTROLT, Ordering::SeqCst);
+        pgrp.pg_session.set(newsess);
+        #[cfg(feature = "diagnostic")]
+        if !crate::machine::cpu::curproc().is_some_and(|p| ptr::eq(p.process(), pr)) {
+            panic(format_args!("enternewpgrp: mksession but not curproc"));
+        }
+    } else {
+        pgrp.pg_session.set(pr.session());
+        // SAFETY: as above.
+        let sess = unsafe { &*pgrp.pg_session.get() };
+        sess.s_count.set(sess.s_count.get() + 1);
+    }
+    pgrp.pg_id.set(pr.ps_pid.get());
+    pgrp.pg_members.init();
+    pgrp.pg_sigiolst.init();
+    // SAFETY: a new group in no chain yet; the hash is the kernel lock's.
+    unsafe { pgrphash(pr.ps_pid.get()).insert_head(pgrp) };
+    pgrp.pg_jobc.set(0);
+
+    enterthispgrp(pr, pgrp);
+}
+
+/// `enterthispgrp`: move process to an existing process group.
+pub fn enterthispgrp(pr: &Process, pgrp: &'static Pgrp) {
+    // SAFETY: a process is in a group from `process_new` until `process_zap`.
+    let savepgrp: &'static Pgrp = unsafe { &*pr.ps_pgrp.get() };
+
+    // Adjust eligibility of affected pgrps to participate in job control. Increment
+    // eligibility counts before decrementing, otherwise we could reach 0 spuriously during
+    // the first call.
+    fixjobc(pr, pgrp, true);
+    fixjobc(pr, savepgrp, false);
+
+    // SAFETY: `pr` is on its old group's member list; it joins the new one's.
+    unsafe { ListHead::<ProcessPglist>::remove(pr) };
+    mtx_enter(&pr.ps_mtx);
+    pr.ps_pgrp.set(pgrp);
+    mtx_leave(&pr.ps_mtx);
+    // SAFETY: as above.
+    unsafe { pgrp.pg_members.insert_head(pr) };
+    if savepgrp.pg_members.is_empty() {
+        pgdelete(savepgrp);
+    }
+}
+
+/// `leavepgrp`: remove process from process group.
+pub fn leavepgrp(pr: &Process) {
+    // SAFETY: as for `enterthispgrp`.
+    let savepgrp: &'static Pgrp = unsafe { &*pr.ps_pgrp.get() };
+
+    // SAFETY: the group's session lives while the group does.
+    let sess = unsafe { &*savepgrp.pg_session.get() };
+    if sess.s_verauthppid.get() == pr.ps_pid.get() {
+        zapverauth(ptr::from_ref(sess).cast_mut().cast::<c_void>());
+    }
+    mtx_enter(&pr.ps_mtx);
+    pr.ps_pgrp.set(ptr::null());
+    mtx_leave(&pr.ps_mtx);
+    // SAFETY: `pr` is on the group's member list.
+    unsafe { ListHead::<ProcessPglist>::remove(pr) };
+    if savepgrp.pg_members.is_empty() {
+        pgdelete(savepgrp);
+    }
+}
+
+/// `pgdelete`: delete a process group.
+pub fn pgdelete(pgrp: &'static Pgrp) {
+    sigio_freelist(&pgrp.pg_sigiolst);
+
+    // SAFETY: the group's session lives while the group does.
+    let sess: &'static Session = unsafe { &*pgrp.pg_session.get() };
+    // SAFETY: a session's terminal is freed only by its driver's detach, after `ttyclose`
+    // dropped the session.
+    if let Some(tp) = unsafe { sess.s_ttyp.get().as_ref() }
+        && ptr::eq(tp.t_pgrp.get(), pgrp)
+    {
+        tp.t_pgrp.set(ptr::null());
+    }
+    // SAFETY: the group is on its hash chain since `enternewpgrp`.
+    unsafe { ListHead::<PgrpHash>::remove(pgrp) };
+    sessrele(sess);
+    pool_put(&PGRP_POOL, NonNull::from(pgrp).cast());
+}
+
+/// `zapverauth`: forget a session's verified authentication (the `s_verauthto` timeout).
+pub fn zapverauth(v: *mut c_void) {
+    // SAFETY: the argument is a live session: the timeout's (set by `enternewpgrp`, deleted
+    // by `SESSRELE` before the session is freed) or a caller's.
+    let sess = unsafe { &*v.cast::<Session>() };
+    sess.s_verauthuid.set(0);
+    sess.s_verauthppid.set(0);
+}
+
+/// `fixjobc`: adjust pgrp jobc counters when specified process changes process group.
+///
+/// We count the number of processes in each process group that "qualify" the group for
+/// terminal job control (those with a parent in a different process group of the same
+/// session). If that count reaches zero, the process group becomes orphaned. Check both the
+/// specified process' process group and that of its children. `entering` false: `pr` is
+/// leaving specified group; true: `pr` is entering specified group. XXX need proctree lock
+pub fn fixjobc(pr: &Process, pgrp: &Pgrp, entering: bool) {
+    let mysession = pgrp.pg_session.get();
+
+    // Check pr's parent to see whether pr qualifies its own process group; if so, adjust
+    // count for pr's process group.
+    // SAFETY: a parent outlives its children's group changes; process 0 has none.
+    let parent = unsafe { pr.ps_pptr.get().as_ref() };
+    // SAFETY: a live process is in a live group.
+    let hispgrp = parent.and_then(|pp| unsafe { pp.ps_pgrp.get().as_ref() });
+    if let Some(hispgrp) = hispgrp
+        && !ptr::eq(hispgrp, pgrp)
+        && ptr::eq(hispgrp.pg_session.get(), mysession)
+    {
+        if entering {
+            pgrp.pg_jobc.set(pgrp.pg_jobc.get() + 1);
+        } else {
+            pgrp.pg_jobc.set(pgrp.pg_jobc.get() - 1);
+            if pgrp.pg_jobc.get() == 0 {
+                orphanpg(pgrp);
+            }
+        }
+    }
+
+    // Check this process' children to see whether they qualify their process groups; if
+    // so, adjust counts for children's process groups.
+    for child in pr.ps_children.iter() {
+        // SAFETY: as above.
+        let Some(hispgrp) = (unsafe { child.ps_pgrp.get().as_ref() }) else {
+            continue;
+        };
+        if !ptr::eq(hispgrp, pgrp)
+            && ptr::eq(hispgrp.pg_session.get(), mysession)
+            && child.ps_flags.load(Ordering::Relaxed) & PS_ZOMBIE == 0
+        {
+            if entering {
+                hispgrp.pg_jobc.set(hispgrp.pg_jobc.get() + 1);
+            } else {
+                hispgrp.pg_jobc.set(hispgrp.pg_jobc.get() - 1);
+                if hispgrp.pg_jobc.get() == 0 {
+                    orphanpg(hispgrp);
+                }
+            }
+        }
+    }
+}
+
+/// `killjobc`: a process exits: as a controlling process, hang up its terminal's
+/// foreground group and revoke the terminal; then leave job control.
+pub fn killjobc(pr: &Process) {
+    if sess_leader(pr) {
+        // SAFETY: the leader's session lives while the leader is in it.
+        let sp = unsafe { &*pr.session() };
+
+        if !sp.s_ttyvp.get().is_null() {
+            // Controlling process. Signal foreground pgrp, drain controlling terminal and
+            // revoke access to controlling terminal.
+            // SAFETY: a session's terminal stays allocated while the session refers to it
+            // (see `pgdelete`).
+            if let Some(tp) = unsafe { sp.s_ttyp.get().as_ref() }
+                && ptr::eq(tp.t_session.get(), sp)
+            {
+                if let Some(pg) = tp.pgrp() {
+                    pgsignal(Some(pg), SIGHUP, true);
+                }
+                let _ = ttywait(tp);
+                // The tty could have been revoked if we blocked.
+                // SAFETY: `s_ttyvp` holds a use count on its vnode (never freed).
+                if let Some(vp) = unsafe { sp.s_ttyvp.get().as_ref() } {
+                    let _ = VOP_REVOKE(vp, REVOKEALL);
+                }
+            }
+            let ovp = sp.s_ttyvp.get();
+            sp.s_ttyvp.set(ptr::null());
+            // SAFETY: as above.
+            if let Some(ovp) = unsafe { ovp.as_ref() } {
+                vrele(ovp);
+            }
+            // s_ttyp is not zero'd; we use this to indicate that the session once had a
+            // controlling terminal. (for logging and informational purposes)
+        }
+        sp.s_leader.set(ptr::null());
+    }
+    // SAFETY: an exiting process is still in its group (`leavepgrp` comes in process_zap).
+    let pgrp = unsafe { &*pr.ps_pgrp.get() };
+    fixjobc(pr, pgrp, false);
+}
+
+/// `orphanpg`: a process group has become orphaned; if there are any stopped processes in
+/// the group, hang-up all process in that group.
+fn orphanpg(pg: &Pgrp) {
+    if pg
+        .pg_members
+        .iter()
+        .any(|pr| pr.ps_flags.load(Ordering::Relaxed) & PS_STOPPED != 0)
+    {
+        for pr in pg.pg_members.iter() {
+            prsignal(pr, SIGHUP);
+            prsignal(pr, SIGCONT);
+        }
+    }
+}
+
+// proc_printit, db_kill_cmd, db_stop_cmd, db_show_all_procs: the real ddb. pgrpdump: DEBUG.

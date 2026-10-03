@@ -423,10 +423,6 @@ impl Console for Machine {
     fn consinit() {
         amd64::consinit::consinit()
     }
-
-    fn cn_rx_intr_establish(sink: fn(u8)) -> Result<(), Errno> {
-        amd64::consinit::cn_rx_intr_establish(sink)
-    }
 }
 
 impl Exit for Machine {
@@ -859,6 +855,40 @@ impl Intr for Machine {
     }
 }
 
+/// The ISA bus behind the legacy 8259s (`arch/amd64/isa/isa_machdep.c`).
+impl crate::machine::isa_machdep::IsaMachdep for Machine {
+    type IsaChipsetTag = isa::isa_machdep::IsaChipsetTag;
+
+    const IST_NONE: i32 = include::intrdefs::IST_NONE;
+    const IST_PULSE: i32 = include::intrdefs::IST_PULSE;
+    const IST_EDGE: i32 = include::intrdefs::IST_EDGE;
+    const IST_LEVEL: i32 = include::intrdefs::IST_LEVEL;
+
+    fn isa_attach_hook(
+        _parent: Option<&crate::sys::device::Device>,
+        _self: &crate::sys::device::Device,
+    ) {
+        isa::isa_machdep::isa_attach_hook()
+    }
+
+    fn isa_intr_check(ic: Self::IsaChipsetTag, irq: i32, type_: i32) -> i32 {
+        isa::isa_machdep::isa_intr_check(ic, irq, type_)
+    }
+
+    fn isa_intr_establish(
+        ic: Self::IsaChipsetTag,
+        irq: i32,
+        type_: i32,
+        level: i32,
+        ih_fun: fn(*mut c_void) -> i32,
+        ih_arg: *mut c_void,
+        ih_what: &'static str,
+    ) -> Option<core::ptr::NonNull<c_void>> {
+        isa::isa_machdep::isa_intr_establish(ic, irq, type_, level, ih_fun, ih_arg, ih_what)
+            .map(|ih| ih.cast())
+    }
+}
+
 /// amd64 has no device tree: ACPI describes the machine (M5).
 impl crate::machine::fdt::Fdt for Machine {
     type FdtAttachArgs<'a> = crate::machine::fdt::NoFdtAttachArgs<'a>;
@@ -909,6 +939,53 @@ impl crate::machine::autoconf::Autoconf for Machine {
 
     fn pdevinit() -> &'static [crate::sys::device::Pdevinit] {
         &conf::ioconf::PDEVINIT
+    }
+}
+
+/// The device switch tables (`amd64/amd64/conf.c`).
+impl crate::machine::conf::Conf for Machine {
+    fn nchrdev() -> u32 {
+        amd64::conf::CDEVSW.len() as u32
+    }
+
+    fn cdevsw(maj: u32) -> Option<crate::sys::conf::Cdevsw> {
+        amd64::conf::CDEVSW.get(maj)
+    }
+
+    fn cdevsw_set(maj: u32, sw: crate::sys::conf::Cdevsw) {
+        amd64::conf::CDEVSW.set(maj, sw)
+    }
+
+    fn nblkdev() -> u32 {
+        amd64::conf::BDEVSW.len() as u32
+    }
+
+    fn bdevsw(maj: u32) -> Option<crate::sys::conf::Bdevsw> {
+        amd64::conf::BDEVSW.get(maj)
+    }
+
+    fn chrtoblktbl() -> &'static [crate::sys::types::Dev] {
+        &amd64::conf::CHRTOBLKTBL
+    }
+
+    fn swapdev() -> crate::sys::types::Dev {
+        amd64::conf::SWAPDEV
+    }
+
+    fn mem_no() -> u32 {
+        amd64::conf::MEM_NO
+    }
+
+    fn iskmemdev(dev: crate::sys::types::Dev) -> bool {
+        amd64::conf::iskmemdev(dev)
+    }
+
+    fn iszerodev(dev: crate::sys::types::Dev) -> bool {
+        amd64::conf::iszerodev(dev)
+    }
+
+    fn getnulldev() -> crate::sys::types::Dev {
+        amd64::conf::getnulldev()
     }
 }
 

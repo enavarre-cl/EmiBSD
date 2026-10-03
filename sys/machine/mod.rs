@@ -2,8 +2,9 @@
 //!
 //! Generic code reaches architecture code ONLY through this module. One module per OpenBSD header
 //! ([`param`], [`vmparam`], [`cpu`], [`cons`], [`bus`], [`pmap`], [`intr`], [`db_machdep`],
-//! [`fdt`], [`proc`], [`signal`], [`tcb`], [`pci_machdep`], [`atomic`]; [`autoconf`] is what `ioconf.c` and the machine's `autoconf.c`
-//! give `subr_autoconf.c`; [`bootinfo`]
+//! [`fdt`], [`proc`], [`signal`], [`tcb`], [`pci_machdep`], [`isa_machdep`], [`atomic`];
+//! [`autoconf`] is what `ioconf.c` and the machine's `autoconf.c` give `subr_autoconf.c`;
+//! [`conf`] is the device switch the machine's `conf.c` fills (`bdevsw[]`, `cdevsw[]`); [`bootinfo`]
 //! is the record the boot glue hands over), all re-exported here. The selected architecture is re-exported as [`Machine`]; the block at the
 //! bottom proves at compile time that it implements every trait. Adding a trait method therefore
 //! means implementing it for amd64, arm64 and the host test double in the same commit.
@@ -12,6 +13,7 @@ pub mod atomic;
 pub mod autoconf;
 pub mod bootinfo;
 pub mod bus;
+pub mod conf;
 pub mod cons;
 pub mod copy;
 pub mod cpu;
@@ -19,6 +21,7 @@ pub mod db_machdep;
 pub mod exec;
 pub mod fdt;
 pub mod intr;
+pub mod isa_machdep;
 pub mod param;
 pub mod pci_machdep;
 pub mod pmap;
@@ -31,6 +34,7 @@ pub use atomic::*;
 pub use autoconf::*;
 pub use bootinfo::*;
 pub use bus::*;
+pub use conf::*;
 pub use cons::*;
 pub use copy::*;
 pub use cpu::*;
@@ -38,6 +42,7 @@ pub use db_machdep::*;
 pub use exec::*;
 pub use fdt::*;
 pub use intr::*;
+pub use isa_machdep::*;
 pub use param::*;
 pub use pci_machdep::*;
 pub use pmap::*;
@@ -60,6 +65,7 @@ const _: () = {
             + Cpu
             + Console
             + Exit
+            + Conf
             + BusSpace
             + BusDma
             + PciMachdep
@@ -67,6 +73,7 @@ const _: () = {
             + Pmap
             + Intr
             + Fdt
+            + IsaMachdep
             + MachineProc
             + UserCopy
             + MachineExec

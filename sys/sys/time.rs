@@ -120,6 +120,10 @@ impl Timeval {
     }
 }
 
+// SAFETY: `repr(C)`: two 64-bit integers (`time_t`, `suseconds_t` is a `long`), no padding;
+// every bit pattern is a valid value (`TIOCGTSTAMP` copies one out).
+unsafe impl crate::machine::copy::AbiPod for Timeval {}
+
 /// `struct timespec`: structure defined by POSIX.1b to be like a timeval.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]

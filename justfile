@@ -51,11 +51,13 @@ run-arm64: image-arm64
 # must reach the end of main() (status 33), printing the EmiBSD 7.8 version banner and the
 # virtio attach lines, with init checking its identity through sysctl(2) and the vfs system
 # calls failing as they must with no root file system yet (`main` says it cannot mount root and
-# `check_console` that /dev/console does not exist); `boot -d`, which
+# `check_console` that /dev/console does not exist) and making the console tty its controlling
+# terminal (`init: tty ok`); `boot -d`, which
 # enters ddb-lite through a breakpoint trap, prints where it stopped and continues (status 33);
 # `selftest=trap`, a deliberate bad access that must print OpenBSD's fatal trap message and
-# panic with a stack trace (status 35); and `selftest=uart`, which arms the console's receive
-# interrupt, gets a line typed on the serial console and echoes it (status 33);
+# panic with a stack trace (status 35); and `selftest=uart`, which opens the console's tty through
+# the device switch, gets a line typed on the serial console through the line discipline and
+# echoes it (status 33);
 # `selftest=clock`, which waits for hz clock interrupts and a timeout (status 33);
 # `selftest=kthread`, two kernel threads passing a turn with msleep/wakeup (status 33); and
 # `selftest=taskq`, tasks run by systq, systqmp and a created then destroyed queue (status 33);
@@ -73,6 +75,8 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "at pci0 dev 0 function 0 not configured" \
         --expect "virtio0 at pci0 dev 2 function 0 vendor 0x1af4 product 0x1000 rev 0x00" \
         --expect "vio0 at virtio0: 1 queue, address 52:54:00:12:34:56" --expect "virtio0: irq " \
+        --expect "isa0 at mainbus0" \
+        --expect "com0 at isa0 port 0x3f8/8 irq 4: ns16550a, 16 byte fifo" --expect "com0: console" \
         --expect "cpu0: apic clock running at" \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
@@ -81,6 +85,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
         --expect "init: pipes ok" \
         --expect "selftest: ping 10.0.2.2: echo reply received" \
+        --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
@@ -111,6 +116,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "virtio30 at mainbus0: Virtio Network Device" \
         --expect "virtio31 at mainbus0: Virtio Block Device" \
         --expect "vio0 at virtio30: 1 queue, address 52:54:00:12:34:56" \
+        --expect ": rev 1, 16 byte fifo" --expect "pluart0: console" \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 7.8" \
@@ -118,6 +124,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
         --expect "init: pipes ok" \
         --expect "selftest: ping 10.0.2.2: echo reply received" \
+        --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"

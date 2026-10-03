@@ -53,8 +53,8 @@
 //!   exception vectors work for everything that follows; `x18` is not loaded, as it is a
 //!   general register here (`arm64/exception.rs`, deviations).
 //! - `consinit` runs `pluart_init_cons` only: the other `*_init_cons` are drivers for hardware
-//!   QEMU does not have (`deferred-driver`). `cn_rx_intr_establish` arms the console's
-//!   receive interrupt (what `pluart_fdt_attach` does) until autoconfiguration (M5).
+//!   QEMU does not have (`deferred-driver`). The console's receive interrupt is
+//!   `pluart_fdt_attach`'s since M8 (`pluart* at fdt?`).
 //! - `boot`: under feature `qemu`, the wait for a key after "The operating system has halted"
 //!   is the emulator exit with the failure status, which `xtask smoke` checks after a panic.
 //!   `vfs_shutdown`, `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys` and
@@ -73,7 +73,6 @@ use crate::arch::arm64::arm64::cpufunc::cpu_wfi;
 use crate::arch::arm64::arm64::cpuswitch::cpu_switchto_asm;
 use crate::arch::arm64::arm64::exception::exception_vectors_addr;
 use crate::arch::arm64::arm64::fpu::{fpu_drop, fpu_save};
-use crate::arch::arm64::arm64::intr::arm_intr_establish_fdt;
 use crate::arch::arm64::arm64::intr::delay;
 use crate::arch::arm64::arm64::pmap::{
     PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap, pmap_growkernel,
@@ -81,7 +80,6 @@ use crate::arch::arm64::arm64::pmap::{
 use crate::arch::arm64::include::armreg::{PSR_DIT, PSR_M_EL0t};
 use crate::arch::arm64::include::cpu::{CpuInfo, curcpu, disable_irq_daif, enable_irq_daif};
 use crate::arch::arm64::include::frame::Trapframe;
-use crate::arch::arm64::include::intr::IPL_TTY;
 use crate::arch::arm64::include::param::PAGE_SIZE;
 use crate::arch::arm64::include::pcb::{PCB_FPU, PCB_SVE};
 use crate::arch::arm64::include::pte::ATTR_GP;
@@ -89,7 +87,6 @@ use crate::arch::arm64::include::reg::Fpreg;
 use crate::arch::arm64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
 use crate::conf::vers::VERSION;
 use crate::dev::fdt::pluart_fdt::pluart_init_cons;
-use crate::dev::ic::pluart::{pluartcn_enable_intr, pluartcn_rx_intr};
 use crate::dev::ofw::fdt::{
     FdtNode, fdt_find_node, fdt_init, fdt_is_compatible, fdt_node_property,
 };
@@ -102,7 +99,6 @@ use crate::kprintf;
 use crate::machine::bootinfo::{BootInfo, MemKind};
 use crate::machine::db_machdep::db_enter;
 use crate::machine::{Cpu, Machine};
-use crate::sys::errno::Errno;
 use crate::sys::exec::{EXEC_NOBTCFI, ExecPackage, PsStrings};
 use crate::sys::param::roundup;
 use crate::sys::proc::Proc;
@@ -535,32 +531,6 @@ fn atoi(s: &[u8]) -> i32 {
         n = n.wrapping_mul(10).wrapping_add(i32::from(c - b'0'));
     }
     n
-}
-
-/// The byte sink of the console's receive interrupt.
-static CN_RX_SINK: StaticCell<Option<fn(u8)>> = StaticCell::new(None);
-
-/// The console PL011's interrupt handler: `pluart_intr` into the sink.
-fn cn_rx_intr(_arg: *mut core::ffi::c_void) -> i32 {
-    // SAFETY: written once by `cn_rx_intr_establish` before the interrupt is established.
-    pluartcn_rx_intr(unsafe { CN_RX_SINK.read() })
-}
-
-/// Arms the console PL011's receive interrupt through the device tree, what
-/// `pluart_fdt_attach` does with `fdt_intr_establish` and `pluart_attach_common` with the
-/// UART's registers; until autoconfiguration attaches the port (M5).
-pub fn cn_rx_intr_establish(sink: fn(u8)) -> Result<(), Errno> {
-    let node = STDOUT_NODE.load(Ordering::Relaxed);
-    if node == 0 {
-        return Err(Errno::ENXIO);
-    }
-    // SAFETY: once, before the interrupt is established below.
-    unsafe { CN_RX_SINK.write(Some(sink)) };
-    if arm_intr_establish_fdt(node, IPL_TTY, cn_rx_intr, ptr::null_mut(), "pluart0").is_none() {
-        return Err(Errno::ENXIO);
-    }
-    pluartcn_enable_intr();
-    Ok(())
 }
 
 /// `need_resched`: asks `ci` to reschedule.

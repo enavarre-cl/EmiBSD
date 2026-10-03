@@ -7,22 +7,21 @@
 
 use core::mem::size_of;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
-
-use libkern::StaticCell;
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::conf::param::HZ;
+use crate::dev::cons::cn_tab;
 use crate::dev::pv::if_vio::{VioCtrlState, vio_softc};
+use crate::kern::init_main::PROC0;
 use crate::kern::kern_clock::ticks;
 use crate::kern::kern_fork::NTHREADS;
 use crate::kern::kern_kthread::{kthread_create, kthread_exit};
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
-use crate::kern::kern_softintr::{SoftintrHand, softintr_establish, softintr_schedule};
 use crate::kern::kern_synch::{msleep_nsec, tsleep_nsec, wakeup};
 use crate::kern::kern_task::{
     task_add, task_del, task_set, taskq_barrier, taskq_create, taskq_destroy,
@@ -44,9 +43,9 @@ use crate::machine::bus::{
     bus_dmamap_load, bus_dmamap_load_mbuf, bus_dmamap_load_raw, bus_dmamap_sync, bus_dmamap_unload,
     bus_dmamem_alloc, bus_dmamem_free, bus_dmamem_mmap,
 };
-use crate::machine::cons::cn_rx_intr_establish;
+use crate::machine::conf::cdevsw;
 use crate::machine::cpu::curproc;
-use crate::machine::intr::{IPL_NONE, IPL_TTY};
+use crate::machine::intr::IPL_NONE;
 use crate::machine::pmap::{
     pmap_extract, pmap_kenter_pa, pmap_kernel, pmap_kremove, pmap_map_direct, pmap_update,
 };
@@ -56,19 +55,24 @@ use crate::net::if_::{
 };
 use crate::net::if_ethersubr::ETHERBROADCASTADDR;
 use crate::netinet::if_ether::ETHER_ADDR_LEN;
+use crate::sys::errno::Errno;
+use crate::sys::fcntl::{FNONBLOCK, FREAD, FWRITE};
 use crate::sys::malloc::{M_NOWAIT, M_TEMP, M_ZERO};
 use crate::sys::mbuf::mtod;
 use crate::sys::mbuf::{M_COPYALL, M_DONTWAIT, MT_DATA, PACKET_TAG_GRE};
 use crate::sys::mman::{PROT_READ, PROT_WRITE};
 use crate::sys::mutex::Mutex;
-use crate::sys::param::{PAGE_SIZE, PWAIT};
+use crate::sys::param::{NODEV, PAGE_SIZE, PWAIT};
 use crate::sys::pool::{PR_NOWAIT, PR_ZERO, Pool};
 use crate::sys::proc::Proc;
 use crate::sys::sockio::SIOCSIFFLAGS;
+use crate::sys::stat::S_IFCHR;
 use crate::sys::systm::INFSLP;
 use crate::sys::task::{SYSTQ, SYSTQMP, Task, task_pending};
 use crate::sys::timeout::Timeout;
-use crate::sys::types::{Paddr, Vaddr, Vsize};
+use crate::sys::types::{Paddr, Vaddr, Vsize, major};
+use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
+use crate::sys::vnode::IO_NDELAY;
 use crate::uvm::uvm_extern::UVM_PGA_ZERO;
 use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_km::{KD_NOWAIT, KP_NONE, KV_ANY, km_alloc, km_free};
@@ -712,71 +716,65 @@ pub fn trap_bad_access() {
     kprintf!("selftest: trap FAILED: read {seen:#x} without a fault\n");
 }
 
-/// The line received by interrupt, filled by the hard handler, read by the soft handler.
-static UART_LINE: StaticCell<[u8; 80]> = StaticCell::new([0; 80]);
-/// How many bytes of `UART_LINE` are filled.
-static UART_LEN: AtomicUsize = AtomicUsize::new(0);
-/// Set by the soft handler when a newline arrived.
-static UART_DONE: AtomicBool = AtomicBool::new(false);
-/// The soft interrupt handler's handle.
-static UART_SI: AtomicPtr<SoftintrHand> = AtomicPtr::new(ptr::null_mut());
-
-/// The hard interrupt's byte sink: stores the byte and schedules the soft handler, as
-/// `comintr` fills `sc_ibuf` and schedules `comsoft`.
-fn uart_rx_sink(c: u8) {
-    let n = UART_LEN.load(Ordering::Relaxed);
-    if n < 80 {
-        // SAFETY: written from the interrupt handler at IPL_TTY, read by the soft handler
-        // after it is scheduled, never both at once on the one CPU.
-        unsafe { UART_LINE.get_mut()[n] = c };
-        UART_LEN.store(n + 1, Ordering::Relaxed);
-    }
-    if let Some(si) = NonNull::new(UART_SI.load(Ordering::Relaxed)) {
-        softintr_schedule(si);
-    }
-}
-
-/// The soft interrupt handler: echoes a complete line.
-fn uart_soft(_arg: *mut core::ffi::c_void) {
-    let n = UART_LEN.load(Ordering::Relaxed);
-    // SAFETY: as for `uart_rx_sink`.
-    let line = unsafe { &UART_LINE.get()[..n] };
-    if let Some(end) = line.iter().position(|&c| c == b'\n' || c == b'\r')
-        && !UART_DONE.swap(true, Ordering::Relaxed)
-    {
-        kprintf!("selftest: uart echo: {}\n", Str(&line[..end]));
-    }
-}
-
-/// Arms the console UART's receive interrupt and a soft interrupt behind it, then waits for
-/// a line to arrive and echoes it: the M4 exit criterion (`smoke` sends the line).
+/// Opens the console's tty through the device switch, as `/dev/console` would, then reads
+/// it without blocking until the line discipline hands out a line (the receive interrupt
+/// fills `sc_ibuf`, the soft interrupt runs `ttyinput`) and echoes it: the M4 exit
+/// criterion (`smoke` sends the line), now through the tty layer.
 pub fn uart_echo() {
-    let Some(si) = softintr_establish(IPL_TTY, uart_soft, ptr::null_mut()) else {
-        kprintf!("selftest: uart echo FAILED: softintr_establish\n");
+    let Some(cp) = cn_tab() else {
+        kprintf!("selftest: uart echo FAILED: no console\n");
         return;
     };
-    UART_SI.store(si.as_ptr(), Ordering::Relaxed);
-    if let Err(e) = cn_rx_intr_establish(uart_rx_sink) {
-        kprintf!(
-            "selftest: uart echo FAILED: cn_rx_intr_establish: {:?}\n",
-            e
-        );
+    let dev = cp.cn_dev.get();
+    if dev == NODEV {
+        kprintf!("selftest: uart echo FAILED: the console is not a tty\n");
+        return;
+    }
+    let cdev = cdevsw(major(dev));
+    if let Err(e) = (cdev.d_open)(dev, FREAD | FWRITE | FNONBLOCK, S_IFCHR as i32, &PROC0) {
+        kprintf!("selftest: uart echo FAILED: open: {:?}\n", e);
         return;
     }
     kprintf!("selftest: uart rx interrupt armed\n");
+
+    let mut line = [0u8; 80];
+    let mut len = 0;
     // No clock yet: a spin count long enough for the test harness to type the line.
     let mut spins: u64 = 0;
-    while !UART_DONE.load(Ordering::Relaxed) {
+    while len < line.len() && !line[..len].contains(&b'\n') {
+        let rest = &mut line[len..];
+        let mut iov = [Iovec {
+            iov_base: rest.as_mut_ptr().cast(),
+            iov_len: rest.len(),
+        }];
+        let mut uio = Uio {
+            uio_iov: &mut iov,
+            uio_offset: 0,
+            uio_resid: rest.len(),
+            uio_segflg: UioSeg::UIO_SYSSPACE,
+            uio_rw: UioRw::UIO_READ,
+            uio_procp: None,
+        };
+        let resid = uio.uio_resid;
+        match (cdev.d_read)(dev, &mut uio, IO_NDELAY) {
+            Ok(()) | Err(Errno::EWOULDBLOCK) => len += resid - uio.uio_resid,
+            Err(e) => {
+                kprintf!("selftest: uart echo FAILED: read: {:?}\n", e);
+                return;
+            }
+        }
         core::hint::spin_loop();
         spins += 1;
         if spins == 300_000_000 {
             kprintf!(
                 "selftest: uart echo FAILED: no line received ({} bytes so far)\n",
-                UART_LEN.load(Ordering::Relaxed)
+                len
             );
             return;
         }
     }
+    let end = line[..len].iter().position(|&c| c == b'\n').unwrap_or(len);
+    kprintf!("selftest: uart echo: {}\n", Str(&line[..end]));
 }
 
 /// Set by [`clock_timeout_fired`].

@@ -75,7 +75,10 @@ use core::sync::atomic::{AtomicI32, AtomicU32};
 
 use crate::kassert;
 use crate::kern::kern_lock::{pc_sprod_enter, pc_sprod_leave};
+use crate::kern::kern_proc::SESSION_POOL;
 use crate::kern::kern_prot::dorefreshcreds;
+use crate::kern::kern_timeout::timeout_del;
+use crate::kern::subr_pool::pool_put;
 use crate::machine::Machine;
 use crate::machine::cpu::{CpuInfo, MAXCPUS};
 use crate::machine::intr::IPL_HIGH;
@@ -96,9 +99,11 @@ use crate::sys::signalvar::Sigacts;
 use crate::sys::syslimits::LOGIN_NAME_MAX;
 use crate::sys::time::{Timespec, Timeval};
 use crate::sys::timeout::Timeout;
+use crate::sys::tty::Tty;
 use crate::sys::types::{Pid, Uid};
 use crate::sys::ucred::Ucred;
 use crate::sys::user::User;
+use crate::sys::vnode::Vnode;
 use crate::uvm::uvm_extern::Vmspace;
 
 /// `_MAXCOMLEN`: the command and thread names, NUL included.
@@ -110,10 +115,12 @@ pub struct Session {
     pub s_count: Cell<i32>,
     /// `s_leader`: session leader.
     pub s_leader: Cell<*const Process>,
-    /// `s_ttyvp`: vnode of controlling terminal (`struct vnode`, M7).
-    pub s_ttyvp: Cell<*const ()>,
-    /// `s_ttyp`: controlling terminal (`struct tty`, M7).
-    pub s_ttyp: Cell<*const ()>,
+    /// `s_ttyvp`: vnode of controlling terminal, holding a use count (`vref` in `vn_ioctl`'s
+    /// `TIOCSCTTY`).
+    pub s_ttyvp: Cell<*const Vnode>,
+    /// `s_ttyp`: controlling terminal; not cleared when the session loses it, to remember
+    /// that it once had one.
+    pub s_ttyp: Cell<*const Tty>,
     /// `s_login`: setlogin() name.
     pub s_login: UnsafeCell<[u8; LOGIN_NAME_MAX]>,
     /// `s_verauthppid`.
@@ -1073,6 +1080,22 @@ pub const TID_MASK: Pid = 0x7ffff;
 
 /// `NO_PID`.
 pub const NO_PID: Pid = PID_MAX + 1;
+
+/// `SESSHOLD(s)`: takes a reference on a session.
+pub fn sesshold(s: &Session) {
+    s.s_count.set(s.s_count.get() + 1);
+}
+
+/// `SESSRELE(s)`: drops a reference on a session, which goes back to `session_pool` with
+/// the last one (`session0` never loses its own). The caller does not use `s` afterwards.
+pub fn sessrele(s: &'static Session) {
+    let count = s.s_count.get() - 1;
+    s.s_count.set(count);
+    if count == 0 {
+        timeout_del(&s.s_verauthto);
+        pool_put(&SESSION_POOL, ptr::NonNull::from(s).cast());
+    }
+}
 
 /// `SESS_LEADER(pr)`.
 pub fn sess_leader(pr: &Process) -> bool {

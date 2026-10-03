@@ -79,7 +79,6 @@ use crate::kern::kern_prot::{crdup, crfree, suser};
 use crate::kern::kern_resource::lim_cur_proc;
 use crate::kern::kern_sig::psignal;
 use crate::kern::kern_tc::{getnanotime, gettime};
-use crate::kern::spec_vnops::{cdevsw_d_type_tty, nchrdev};
 use crate::kern::subr_pool::{pool_get, pool_put};
 use crate::kern::subr_prf::panic;
 use crate::kern::sys_generic::{dofilereadv, dofilewritev};
@@ -98,7 +97,9 @@ use crate::kern::vfs_vops::{
     VOP_OPEN, VOP_PATHCONF, VOP_READDIR, VOP_READLINK, VOP_REMOVE, VOP_RENAME, VOP_REVOKE,
     VOP_RMDIR, VOP_SETATTR, VOP_SYMLINK, VOP_UNLOCK,
 };
+use crate::machine::conf::{cdevsw, nchrdev};
 use crate::machine::copy::{copyin, copyin_obj, copyinstr, copyout, copyout_obj, copyoutstr};
+use crate::sys::conf::D_TTY;
 use crate::sys::errno::Errno;
 use crate::sys::fcntl::{
     AT_EACCESS, AT_FDCWD, AT_REMOVEDIR, AT_SYMLINK_FOLLOW, AT_SYMLINK_NOFOLLOW, F_FLOCK, F_RDLCK,
@@ -2881,7 +2882,7 @@ pub fn sys_revoke(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
     let error = 'out: {
         if vp.v_type.get() != VCHR
             || major(vp.v_rdev()) >= nchrdev()
-            || !cdevsw_d_type_tty(major(vp.v_rdev()))
+            || cdevsw(major(vp.v_rdev())).d_type != D_TTY
         {
             break 'out Err(Errno::ENOTTY);
         }

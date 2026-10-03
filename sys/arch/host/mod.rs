@@ -651,10 +651,6 @@ impl Console for Machine {
     fn consinit() {
         set_cn_tab(&HOSTCONS);
     }
-
-    fn cn_rx_intr_establish(_sink: fn(u8)) -> Result<(), Errno> {
-        Err(Errno::ENODEV)
-    }
 }
 
 impl Exit for Machine {
@@ -1099,6 +1095,135 @@ impl Machine {
 }
 
 /// The host has no device tree.
+/// The host's device switch: the generic drivers in amd64's slots (`cn`, `ctty`, the ptys,
+/// `com`, `filedesc`, `ptm`); the memory devices are machine code and are left out.
+impl crate::machine::conf::Conf for Machine {
+    fn nchrdev() -> u32 {
+        HOST_CDEVSW.len() as u32
+    }
+
+    fn cdevsw(maj: u32) -> Option<crate::sys::conf::Cdevsw> {
+        HOST_CDEVSW.get(maj)
+    }
+
+    fn cdevsw_set(maj: u32, sw: crate::sys::conf::Cdevsw) {
+        HOST_CDEVSW.set(maj, sw)
+    }
+
+    fn nblkdev() -> u32 {
+        HOST_BDEVSW.len() as u32
+    }
+
+    fn bdevsw(maj: u32) -> Option<crate::sys::conf::Bdevsw> {
+        HOST_BDEVSW.get(maj)
+    }
+
+    fn chrtoblktbl() -> &'static [crate::sys::types::Dev] {
+        &[]
+    }
+
+    fn swapdev() -> crate::sys::types::Dev {
+        crate::sys::types::makedev(1, 0)
+    }
+
+    fn mem_no() -> u32 {
+        2
+    }
+
+    fn iskmemdev(dev: crate::sys::types::Dev) -> bool {
+        crate::sys::types::major(dev) == 2 && crate::sys::types::minor(dev) < 2
+    }
+
+    fn iszerodev(dev: crate::sys::types::Dev) -> bool {
+        crate::sys::types::major(dev) == 2 && crate::sys::types::minor(dev) == 12
+    }
+
+    fn getnulldev() -> crate::sys::types::Dev {
+        crate::sys::types::makedev(2, 2)
+    }
+}
+
+/// The host's `bdevsw[]`: empty slots.
+static HOST_BDEVSW: crate::machine::conf::Devsw<crate::sys::conf::Bdevsw, 4> =
+    crate::machine::conf::Devsw([const { Cell::new(crate::sys::conf::bdev_notdef()) }; 4]);
+
+/// The host's `cdevsw[]`, amd64's numbering for the generic drivers.
+static HOST_CDEVSW: crate::machine::conf::Devsw<crate::sys::conf::Cdevsw, 82> = {
+    use crate::dev::cons::{cnclose, cnioctl, cnkqfilter, cnopen, cnread, cnstop, cnwrite};
+    use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
+    use crate::kern::kern_descrip::filedescopen;
+    use crate::kern::tty_pty::{
+        NPTY, ptcclose, ptckqfilter, ptcopen, ptcread, ptcwrite, ptmclose, ptmioctl, ptmopen,
+        ptsclose, ptsopen, ptsread, ptsstop, ptswrite, ptyioctl, ptytty,
+    };
+    use crate::kern::tty_tty::{cttyioctl, cttykqfilter, cttyopen, cttyread, cttywrite};
+    use crate::sys::conf::*;
+
+    let mut t = [const { Cell::new(cdev_notdef()) }; 82];
+    t[0] = Cell::new(cdev_cn_init(
+        1, cnopen, cnclose, cnread, cnwrite, cnioctl, cnstop, cnkqfilter,
+    ));
+    t[1] = Cell::new(cdev_ctty_init(
+        1,
+        cttyopen,
+        cttyread,
+        cttywrite,
+        cttyioctl,
+        cttykqfilter,
+    ));
+    t[5] = Cell::new(cdev_tty_init(
+        NPTY, ptsopen, ptsclose, ptsread, ptswrite, ptyioctl, ptsstop, ptytty,
+    ));
+    t[6] = Cell::new(cdev_ptc_init(
+        NPTY,
+        ptcopen,
+        ptcclose,
+        ptcread,
+        ptcwrite,
+        ptyioctl,
+        ptytty,
+        ptckqfilter,
+    ));
+    t[8] = Cell::new(cdev_tty_init(
+        1, comopen, comclose, comread, comwrite, comioctl, comstop, comtty,
+    ));
+    t[22] = Cell::new(cdev_fd_init(1, filedescopen));
+    t[81] = Cell::new(cdev_ptm_init(NPTY, ptmopen, ptmclose, ptmioctl));
+    crate::machine::conf::Devsw(t)
+};
+
+/// The host has no ISA bus: no interrupt line is free and none can be established.
+impl crate::machine::isa_machdep::IsaMachdep for Machine {
+    type IsaChipsetTag = *const c_void;
+
+    const IST_NONE: i32 = 0;
+    const IST_PULSE: i32 = 1;
+    const IST_EDGE: i32 = 2;
+    const IST_LEVEL: i32 = 3;
+
+    fn isa_attach_hook(
+        _parent: Option<&crate::sys::device::Device>,
+        _self: &crate::sys::device::Device,
+    ) {
+    }
+
+    fn isa_intr_check(_ic: Self::IsaChipsetTag, _irq: i32, _type: i32) -> i32 {
+        0
+    }
+
+    fn isa_intr_establish(
+        _ic: Self::IsaChipsetTag,
+        _irq: i32,
+        _type: i32,
+        _level: i32,
+        _ih_fun: fn(*mut c_void) -> i32,
+        _ih_arg: *mut c_void,
+        _ih_what: &'static str,
+    ) -> Option<core::ptr::NonNull<c_void>> {
+        None
+    }
+}
+
 impl crate::machine::fdt::Fdt for Machine {
     type FdtAttachArgs<'a> = crate::machine::fdt::NoFdtAttachArgs<'a>;
 

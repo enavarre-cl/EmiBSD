@@ -41,10 +41,12 @@
 //! nothing has attached it yet, the paravirtual bus, PCI, ISA, `vmm` and the EFI framebuffer.
 //!
 //! ## Deviations
-//! - Only the `cpu` and `pci` children exist (`sys/arch/amd64/conf/ioconf.rs`); every other
-//!   child GENERIC configures is reported with `unported!` where the C would probe or attach
-//!   it: `bios0` (which brings `acpi0` and `mpbios0`), `ipmi_probe`, `pvbus_probe`, `isa0`,
+//! - Only the `cpu`, `pci` and `isa` children exist (`sys/arch/amd64/conf/ioconf.rs`); every
+//!   other child GENERIC configures is reported with `unported!` where the C would probe or
+//!   attach it: `bios0` (which brings `acpi0` and `mpbios0`), `ipmi_probe`, `pvbus_probe`,
 //!   `vmm_enabled`, `efifb`; so are `replacemds`, `setperf_setup` and `codepatch_disable`.
+//!   No PCI-ISA bridge driver (`pcib`) exists, so `isa0` attaches here, as the C does when
+//!   none has.
 //!   Without ACPI or MP tables the boot CPU attaches here, as `CPU_ROLE_SP`, and `pci0`
 //!   attaches here for bus 0 (`acpi_haspci` is false), as the C does on such a machine.
 //! - `pci0`'s attach arguments carry no extents (`sys/extent.h` is not ported, so
@@ -61,6 +63,7 @@ use crate::arch::amd64::amd64::bus_space::{X86_BUS_SPACE_IO, X86_BUS_SPACE_MEM};
 use crate::arch::amd64::include::cpu::{CPUF_PRESENT, cpu_info_primary};
 use crate::arch::amd64::include::cpuvar::{CPU_ROLE_SP, CpuAttachArgs};
 use crate::arch::amd64::pci::pci_machdep::{PCI_BUS_DMA_TAG, pci_init_extents};
+use crate::dev::isa::isavar::IsabusAttachArgs;
 use crate::dev::pci::pci::PCI_NDOMAINS;
 use crate::dev::pci::pcivar::PcibusAttachArgs;
 use crate::kern::subr_autoconf::{config_found, device_mainbus};
@@ -78,8 +81,10 @@ pub union MainbusAttachArgs {
     pub mba_caa: CpuAttachArgs,
     /// `mba_pba`.
     pub mba_pba: PcibusAttachArgs,
-    // mba_iba (isa), aaa_caa (ioapic), mba_iaa (ipmi), mba_bios, mba_pvba, mba_eaa (efifb):
-    // with their buses.
+    /// `mba_iba`.
+    pub mba_iba: IsabusAttachArgs,
+    // aaa_caa (ioapic), mba_iaa (ipmi), mba_bios, mba_pvba, mba_eaa (efifb): with their
+    // buses.
 }
 
 /// `mainbus_ca`.
@@ -168,7 +173,17 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
 
     // NISA > 0
     if ISA_HAS_BEEN_SEEN.load(Ordering::Relaxed) == 0 {
-        let _ = unported!("isa0 at mainbus0 (dev/isa)");
+        let mut mba = MainbusAttachArgs {
+            mba_iba: IsabusAttachArgs {
+                iba_busname: b"isa",
+                iba_iot: X86_BUS_SPACE_IO,
+                iba_memt: X86_BUS_SPACE_MEM,
+                // NISADMA > 0: iba_dmat = &isa_bus_dma_tag (isadma: not configured).
+                iba_ic: ptr::null(),
+            },
+        };
+
+        let _ = config_found(self_, ptr::from_mut(&mut mba).cast(), Some(mainbus_print));
     }
 
     // NVMM > 0

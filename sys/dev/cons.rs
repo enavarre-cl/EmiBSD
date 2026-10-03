@@ -52,24 +52,38 @@
 //! Upstream: sys/dev/cons.c @ 3ce1f3f79392
 //!
 //! A console driver fills a [`Consdev`] with its polled routines and points `cn_tab` at it
-//! (`comcnattach`, `pluartcnattach`). Everything the kernel prints before a tty exists, and
-//! everything `ddb(4)` prints, goes through `cnputc` here.
+//! (`comcnattach`, `pluartcnattach`). Everything the kernel prints, and everything `ddb(4)`
+//! prints, goes through `cnputc` here. `/dev/console` (character major 0, `cnopen` ..
+//! `cnkqfilter`) is the real console device's tty seen through `cn_tab->cn_dev`, or the
+//! terminal a `TIOCCONS` redirected it to (`constty`).
 //!
 //! Status: `wip`.
 //!
 //! ## Deviations
-//! - `cn_tab` is behind [`cn_tab`] / [`set_cn_tab`] (an atomic pointer) instead of a global.
-//! - `cnopen`, `cnclose`, `cnread`, `cnwrite`, `cnstop`, `cnioctl`, `cnkqfilter`, `constty` and
-//!   `cn_devvp` are the `/dev/console` character device; they need `struct tty`, `struct vnode`
-//!   and `cdevsw`, which arrive with milestone M7. `cninit` (the `constab[]` probe loop) waits for
-//!   each architecture's `conf.c`; until then the architectures attach their console directly.
+//! - `cn_tab`, `constty` and `cn_devvp` are behind accessors ([`cn_tab`]/[`set_cn_tab`],
+//!   [`constty`]/[`set_constty`]) over atomic pointers instead of globals.
+//! - `cninit` (the `constab[]` probe loop) is not used: the architectures attach their
+//!   console directly (`docs/ARCHITECTURE.md`, "Console attach").
+//! - `cnkqfilter` hands the knote to the device's `d_kqfilter`; none can be made yet
+//!   (`kern_event.c`).
 //! - `cnpollc` takes a `bool`; its `int on` is only ever 0 or 1.
 
 use core::cell::Cell;
+use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
-use crate::sys::types::Dev;
+use crate::kern::kern_prot::suser;
+use crate::kern::vfs_subr::{cdevvp, vcount, vfinddev, vrele};
+use crate::machine::conf::cdevsw;
+use crate::sys::errno::Errno;
+use crate::sys::param::NODEV;
+use crate::sys::proc::Proc;
+use crate::sys::tty::Tty;
+use crate::sys::ttycom::TIOCCONS;
+use crate::sys::types::{Dev, major};
+use crate::sys::uio::Uio;
+use crate::sys::vnode::{VCHR, Vnode};
 
 /// Values for `cn_pri`: policy for console selection.
 ///
@@ -123,6 +137,145 @@ pub fn cn_tab() -> Option<&'static Consdev> {
 /// Makes `cp` the console device (`cn_tab = cp`).
 pub fn set_cn_tab(cp: &'static Consdev) {
     CN_TAB.store(ptr::from_ref(cp).cast_mut(), Ordering::Release);
+}
+
+/// `constty`: virtual console output device, NULL when none.
+static CONSTTY: AtomicPtr<Tty> = AtomicPtr::new(ptr::null_mut());
+
+/// `cn_devvp`: vnode for underlying device, NULL when none.
+static CN_DEVVP: AtomicPtr<Vnode> = AtomicPtr::new(ptr::null_mut());
+
+/// `constty`: the terminal console output is redirected to (`TIOCCONS`), if any.
+pub fn constty() -> Option<&'static Tty> {
+    // SAFETY: null or a tty stored by `set_constty`; ttys live until `ttyfree`, which runs
+    // after `ttyclose` cleared `constty`.
+    unsafe { CONSTTY.load(Ordering::Acquire).as_ref() }
+}
+
+/// `constty = tp`.
+pub fn set_constty(tp: Option<&Tty>) {
+    CONSTTY.store(
+        tp.map_or(ptr::null_mut(), |t| ptr::from_ref(t).cast_mut()),
+        Ordering::Release,
+    );
+}
+
+/// `cnopen`: always open the 'real' console device, so we don't get nailed later. This
+/// follows normal device semantics; they always get open() calls.
+pub fn cnopen(dev: Dev, flag: i32, mode: i32, p: &Proc) -> Result<(), Errno> {
+    let Some(cp) = cn_tab() else {
+        return Ok(());
+    };
+
+    let cndev = cp.cn_dev.get();
+    if cndev == NODEV {
+        return Err(Errno::ENXIO);
+    }
+    #[cfg(feature = "diagnostic")]
+    if cndev == dev {
+        crate::kern::subr_prf::panic(format_args!("cnopen: recursive"));
+    }
+    let _ = dev;
+    if CN_DEVVP.load(Ordering::Relaxed).is_null() {
+        // try to get a reference on its vnode, but fail silently
+        if let Ok(Some(vp)) = cdevvp(cndev) {
+            CN_DEVVP.store(ptr::from_ref(vp).cast_mut(), Ordering::Relaxed);
+        }
+    }
+    (cdevsw(major(cndev)).d_open)(cndev, flag, mode, p)
+}
+
+/// `cnclose`: if the real console isn't otherwise open, close it. If it's otherwise open,
+/// don't close it, because that'll screw up others who have it open.
+pub fn cnclose(_dev: Dev, flag: i32, mode: i32, p: Option<&Proc>) -> Result<(), Errno> {
+    let Some(cp) = cn_tab() else {
+        return Ok(());
+    };
+
+    let dev = cp.cn_dev.get();
+    let vp = CN_DEVVP.swap(ptr::null_mut(), Ordering::Relaxed);
+    // SAFETY: null or the vnode `cnopen`'s `cdevvp` returned, holding the reference
+    // released here; vnodes are never freed.
+    if let Some(vp) = unsafe { vp.as_ref() } {
+        // release our reference to real dev's vnode
+        vrele(vp);
+    }
+    if vfinddev(dev, VCHR).is_some_and(|vp| vcount(vp) != 0) {
+        return Ok(());
+    }
+    (cdevsw(major(dev)).d_close)(dev, flag, mode, p)
+}
+
+/// `cnread`: if we would redirect input, punt. This will keep strange things from happening
+/// to people who are using the real console. Nothing should be using /dev/console for input
+/// (except a shell in single-user mode, but then, one wouldn't TIOCCONS then).
+pub fn cnread(_dev: Dev, uio: &mut Uio<'_>, flag: i32) -> Result<(), Errno> {
+    if constty().is_some() {
+        return Ok(());
+    }
+    let Some(cp) = cn_tab() else {
+        return Err(Errno::ENXIO);
+    };
+
+    let dev = cp.cn_dev.get();
+    (cdevsw(major(dev)).d_read)(dev, uio, flag)
+}
+
+/// `cnwrite`: redirect output, if that's appropriate. If there's no real console, return
+/// `ENXIO`.
+pub fn cnwrite(_dev: Dev, uio: &mut Uio<'_>, flag: i32) -> Result<(), Errno> {
+    let dev = if let Some(tp) = constty() {
+        tp.t_dev.get()
+    } else if let Some(cp) = cn_tab() {
+        cp.cn_dev.get()
+    } else {
+        return Err(Errno::ENXIO);
+    };
+    (cdevsw(major(dev)).d_write)(dev, uio, flag)
+}
+
+/// `cnstop`.
+pub fn cnstop(_tp: &Tty, _flag: i32) -> Result<(), Errno> {
+    Ok(())
+}
+
+/// `cnioctl`.
+pub fn cnioctl(_dev: Dev, cmd: u64, data: &mut [u8], flag: i32, p: &Proc) -> Result<(), Errno> {
+    // Superuser can always use this to wrest control of console output from the "virtual"
+    // console.
+    if cmd == TIOCCONS && constty().is_some() {
+        suser(p)?;
+        set_constty(None);
+        return Ok(());
+    }
+
+    // Redirect the ioctl, if that's appropriate. Note that strange things can happen, if a
+    // program does ioctls on /dev/console, then the console is redirected out from under
+    // it.
+    let dev = if let Some(tp) = constty() {
+        tp.t_dev.get()
+    } else if let Some(cp) = cn_tab() {
+        cp.cn_dev.get()
+    } else {
+        return Err(Errno::ENXIO);
+    };
+    (cdevsw(major(dev)).d_ioctl)(dev, cmd, data, flag, p)
+}
+
+/// `cnkqfilter`: redirect output, if that's appropriate. If there's no real console,
+/// return `ENXIO`.
+pub fn cnkqfilter(_dev: Dev, kn: *mut c_void) -> Result<(), Errno> {
+    let dev = if let Some(tp) = constty() {
+        tp.t_dev.get()
+    } else if let Some(cp) = cn_tab() {
+        cp.cn_dev.get()
+    } else {
+        return Err(Errno::ENXIO);
+    };
+    match cdevsw(major(dev)).d_kqfilter {
+        Some(kqfilter) => kqfilter(dev, kn),
+        None => Err(Errno::EOPNOTSUPP),
+    }
 }
 
 /// `cngetc`: reads one character from the console, blocking; 0 when there is no console.
@@ -180,7 +333,6 @@ pub fn cnbell(pitch: u32, period: u32, volume: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sys::param::NODEV;
     use core::cell::RefCell;
     use std::thread_local;
     use std::vec::Vec;

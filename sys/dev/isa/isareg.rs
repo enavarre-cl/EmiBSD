@@ -41,9 +41,12 @@
 //! Upstream: sys/dev/isa/isareg.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M2 needs the timer and RTC ports for `delay(9)`; M7b the ISA
-//! memory hole (`bus_space_map`); the rest of the port assignments and the IRQ names arrive
-//! with the ISA bus.
+//! memory hole (`bus_space_map`); the ISA bus (M8) adds the DMA controllers' ports
+//! (`isaattach` maps the delay port among the page registers). The other port assignments
+//! and the IRQ names come with their drivers.
 
+/// `IO_DMA1`: 8237A DMA Controller #1.
+pub const IO_DMA1: u16 = 0x000;
 /// `IO_ICU1`: 8259A Interrupt Controller #1.
 pub const IO_ICU1: u16 = 0x020;
 /// `IO_ICU2`: 8259A Interrupt Controller #2.
@@ -56,6 +59,10 @@ pub const IO_TIMER1: u16 = 0x040;
 pub const IO_RTC: u16 = 0x070;
 /// NMI Control.
 pub const IO_NMI: u16 = IO_RTC;
+/// `IO_DMAPG`: DMA Page Registers.
+pub const IO_DMAPG: u16 = 0x080;
+/// `IO_DMA2`: 8237A DMA Controller #2.
+pub const IO_DMA2: u16 = 0x0c0;
 
 /// `IOM_BEGIN`: start of I/O Memory "hole".
 pub const IOM_BEGIN: usize = 0x0a0000;
@@ -85,5 +92,11 @@ mod tests {
             Some(IOM_BEGIN as i64)
         );
         assert_eq!(crate::reftest::int(&defs, "IOM_END"), Some(IOM_END as i64));
+        assert_eq!(crate::reftest::int(&defs, "IO_DMA1"), Some(IO_DMA1 as i64));
+        assert_eq!(
+            crate::reftest::int(&defs, "IO_DMAPG"),
+            Some(IO_DMAPG as i64)
+        );
+        assert_eq!(crate::reftest::int(&defs, "IO_DMA2"), Some(IO_DMA2 as i64));
     }
 }

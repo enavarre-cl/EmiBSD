@@ -50,6 +50,10 @@ pub trait UserCopy {
 /// pattern is a valid value.
 pub unsafe trait AbiPod: Copy + 'static {}
 
+// SAFETY: a plain `int`: four initialised bytes, any pattern valid (the argument of most tty
+// and file ioctls, `*(int *)data`).
+unsafe impl AbiPod for i32 {}
+
 /// `copyin(uaddr, &obj, sizeof(obj))`: copies a `T` in from the user address `uaddr`.
 pub fn copyin_obj<T: AbiPod>(uaddr: usize) -> Result<T, Errno> {
     let mut obj = MaybeUninit::<T>::zeroed();

@@ -58,10 +58,11 @@
 //!   `%b` is the [`Bitmask`] `Display` adaptor; its `%s` of a NUL-terminated byte string is
 //!   [`Str`].
 //! - `kprintf_mutex` and the `splhigh` in `log`/`addlog` arrive with M4/M5.
-//! - `v_putc` is fixed to `cnputc`; nothing redirects the console yet.
-//! - `kputchar` has no `tp` argument and `constty` is always NULL: `TOTTY` output has no tty to
-//!   go to until M7, so `uprintf`, `ttyprintf`, `tprintf_open`, `tprintf_close` and `tprintf`
-//!   wait with it.
+//! - `v_putc` is fixed to `cnputc`; `constty` (a `TIOCCONS` redirection) takes the console
+//!   output as in C.
+//! - The `struct tty *tp` of `kprintf`/`kputchar` is an `Option<&Tty>`; `kprintf` keeps its
+//!   three arguments and [`kprintf_tp`] is the form with the tty. `tprintf_open`,
+//!   `tprintf_close` and `tprintf` are `NFSSERVER`/`NFSCLIENT` only: not configured.
 //! - `panicstr` is behind [`panicstr`] (a flag); the first message is kept in a single
 //!   `panicbuf`, per CPU from M5 (`ci_panicbuf`).
 //! - `db_panic` defaults to 0: ddb-lite has no debugger to enter, so a panic prints the stack
@@ -77,13 +78,16 @@ use libkern::StaticCell;
 
 use crate::ddb::db_output::{db_putchar, db_stack_dump};
 use crate::ddb::db_usrreq::DB_LOG;
-use crate::dev::cons::cnputc;
+use crate::dev::cons::{cnputc, constty, set_constty};
 use crate::kern::init_main::DB_ACTIVE;
 use crate::kern::kern_xxx::reboot;
 use crate::kern::subr_log::{LOG_OPEN, logwakeup, msgbuf_putchar, msgbufmapped, msgbufp};
+use crate::kern::tty::tputchar;
 use crate::machine::db_machdep::db_enter;
+use crate::sys::proc::PS_CONTROLT;
 use crate::sys::reboot::{RB_AUTOBOOT, RB_DUMP, RB_NOSYNC};
 use crate::sys::syslog::LOG_ERR;
+use crate::sys::tty::Tty;
 
 // flags for kprintf
 
@@ -191,6 +195,7 @@ impl fmt::Display for Bitmask<'_> {
 /// Where [`kprintf`] sends each character: `KPRINTF_PUTCHAR` in C.
 struct Sink<'a> {
     oflags: i32,
+    tp: Option<&'a Tty>,
     buf: Option<&'a mut [u8]>,
     pos: usize,
     ret: usize,
@@ -215,7 +220,7 @@ impl Sink<'_> {
                 }
             }
         } else {
-            kputchar(i32::from(c), self.oflags);
+            kputchar(i32::from(c), self.oflags, self.tp);
         }
         Ok(())
     }
@@ -341,12 +346,12 @@ pub fn log(level: i32, args: fmt::Arguments<'_>) {
 pub fn logpri(level: i32) {
     let mut snbuf = [0u8; KPRINTF_BUFSIZE];
 
-    kputchar(i32::from(b'<'), TOLOG);
+    kputchar(i32::from(b'<'), TOLOG, None);
     snprintf(&mut snbuf, format_args!("{level}"));
     for &p in snbuf.iter().take_while(|&&p| p != 0) {
-        kputchar(i32::from(p), TOLOG);
+        kputchar(i32::from(p), TOLOG, None);
     }
-    kputchar(i32::from(b'>'), TOLOG);
+    kputchar(i32::from(b'>'), TOLOG, None);
 }
 
 /// `addlog`: add info to previous log message.
@@ -360,10 +365,35 @@ pub fn addlog(args: fmt::Arguments<'_>) {
     logwakeup();
 }
 
-/// `kputchar`: print a single character on console or user terminal. Note that the `tp`
-/// argument of the C (the tty) is not here yet (M7).
-pub fn kputchar(c: i32, flags: i32) {
-    // if (panicstr) constty = NULL; TOTTY -> tputchar(c, tp): no tty until M7.
+/// `kputchar`: print a single character on console or user terminal.
+///
+/// If console, then the last `MSGBUFS` chars are saved in msgbuf for inspection later (e.g.
+/// dmesg/syslog).
+pub fn kputchar(c: i32, flags: i32, tp: Option<&Tty>) {
+    let mut flags = flags;
+    let mut tp = tp;
+
+    if panicstr() {
+        set_constty(None);
+    }
+
+    let db_active = DB_ACTIVE.load(Ordering::Relaxed);
+    if flags & TOCONS != 0
+        && tp.is_none()
+        && let Some(cons) = constty()
+        && !db_active
+    {
+        tp = Some(cons);
+        flags |= TOTTY;
+    }
+    if flags & TOTTY != 0
+        && let Some(t) = tp
+        && tputchar(c, t) < 0
+        && flags & TOCONS != 0
+        && constty().is_some_and(|cons| ptr::eq(cons, t))
+    {
+        set_constty(None);
+    }
     if flags & TOLOG != 0
         && c != 0
         && c != i32::from(b'\r')
@@ -373,13 +403,43 @@ pub fn kputchar(c: i32, flags: i32) {
     {
         msgbuf_putchar(mbp, c as u8);
     }
-    if flags & TOCONS != 0 && c != 0 {
-        // (constty == NULL || db_active): there is no constty yet.
+    if flags & TOCONS != 0 && (constty().is_none() || db_active) && c != 0 {
         cnputc(c);
     }
     if flags & TODDB != 0 {
         db_putchar(c);
     }
+}
+
+/// `uprintf`: print to the controlling tty of the current process.
+///
+/// We may block if the tty queue is full; no message is printed if the queue doesn't clear
+/// in a reasonable time.
+pub fn uprintf(args: fmt::Arguments<'_>) {
+    let Some(p) = crate::machine::cpu::curproc() else {
+        return;
+    };
+    let pr = p.process();
+
+    // SAFETY: a process's session lives while the process is in it.
+    let Some(sess) = (unsafe { pr.session().as_ref() }) else {
+        return;
+    };
+    if pr.ps_flags.load(Ordering::Relaxed) & PS_CONTROLT != 0 && !sess.s_ttyvp.get().is_null() {
+        // SAFETY: a session's terminal stays allocated while the session refers to it.
+        let tp = unsafe { sess.s_ttyp.get().as_ref() };
+        kprintf_tp(args, TOTTY, tp, None);
+    }
+}
+
+// tprintf_open, tprintf_close, tprintf: NFSSERVER || NFSCLIENT (not configured).
+
+/// `ttyprintf`: send a message to a specific tty.
+///
+/// Should be used only by tty driver or anything that knows the underlying tty will not be
+/// revoke(2)'d away. \[otherwise, use tprintf\]
+pub fn ttyprintf(tp: &Tty, args: fmt::Arguments<'_>) {
+    kprintf_tp(args, TOTTY, Some(tp), None);
 }
 
 /// `db_printf` / `db_vprintf`: `ddb(4)`'s `printf`, paginated through `db_putchar` and logged
@@ -439,8 +499,19 @@ pub fn vsnprintf(buf: &mut [u8], args: fmt::Arguments<'_>) -> usize {
 /// is left for the terminator). Returns the number of characters produced, counting the ones
 /// `TOCOUNT` dropped.
 pub fn kprintf(args: fmt::Arguments<'_>, oflags: i32, sbuf: Option<&mut [u8]>) -> usize {
+    kprintf_tp(args, oflags, None, sbuf)
+}
+
+/// `kprintf(fmt, oflags, tp, sbuf, ap)`: [`kprintf`] with the tty `TOTTY` output goes to.
+pub fn kprintf_tp(
+    args: fmt::Arguments<'_>,
+    oflags: i32,
+    tp: Option<&Tty>,
+    sbuf: Option<&mut [u8]>,
+) -> usize {
     let mut sink = Sink {
         oflags,
+        tp,
         buf: sbuf,
         pos: 0,
         ret: 0,
