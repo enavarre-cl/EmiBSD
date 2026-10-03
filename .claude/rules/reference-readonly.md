@@ -10,8 +10,8 @@ commit in `reference/PINNED.md`. It holds `sys/` (the kernel: the specification 
 and, since 2026-10-03 (the user's M8 decision), the userland sources M8 cross-compiles unmodified:
 `lib/`, `bin/`, `sbin/`, `usr.bin/`, `libexec/` and `include/` (the `/usr/include` headers libc
 needs), plus `gnu/lib/libcompiler_rt` and `gnu/llvm/compiler-rt` (the compiler runtime, Apache-2.0
-WITH LLVM-exception, compiled unmodified; the user's decision of 2026-10-03). No other `gnu/`, no
-`xenocara/`. It is the specification, not part of the product.
+WITH LLVM-exception, compiled unmodified; the user's decision of 2026-10-03), and `usr.sbin/makefs` (makefs(8), built as a host tool to
+make the ffs ramdisk image; same decision date). No other `gnu/`, no `xenocara/`. It is the specification, not part of the product.
 Widening or narrowing the sparse set at the same pin is `git -C reference/openbsd-src
 sparse-checkout add|set ...`, a user decision recorded in `docs/ROADMAP.md`.
 

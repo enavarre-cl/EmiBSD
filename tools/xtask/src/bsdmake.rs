@@ -131,6 +131,11 @@ impl Make {
         self.vars.insert(name.to_string(), value.to_string());
     }
 
+    /// Appends `dir` to the `.PATH` search list, as `.PATH: dir` would.
+    pub fn add_path(&mut self, dir: &Path) {
+        self.path.push(dir.to_path_buf());
+    }
+
     /// Whether `name` is defined.
     pub fn defined(&self, name: &str) -> bool {
         self.vars.contains_key(name)

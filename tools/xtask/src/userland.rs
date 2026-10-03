@@ -16,6 +16,8 @@
 //!    exactly as make would; generated C (the `lib/libc/hash` helpers) likewise.
 //! 4. `sbin/init`, `bin/ksh`, `bin/echo` and `bin/ls`, linked as static PIE executables (what
 //!    OpenBSD's `cc -static` makes for `/bin` and `/sbin`), installed stripped into `root/`.
+//! 5. `ramdisk.ffs`: `root/` plus `/dev`, made into an ffs image by OpenBSD's makefs(8) built
+//!    for this machine (`ramdisk.rs`).
 //!
 //! `share/mk` is not in the reference clone. `sys.mk` and `bsd.own.mk` are stood in for by
 //! the predefined variables and `BSD_OWN_MK` below; `bsd.prog.mk`/`bsd.lib.mk` by
@@ -263,10 +265,12 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
     for (name, path, installed) in &built {
         verify(&ctx, name, path, installed)?;
     }
-    licence_report(&ctx)?;
     if blocked.is_empty() {
+        ramdisk::build_ramdisk(&ctx)?;
+        licence_report(&ctx)?;
         return Ok(());
     }
+    licence_report(&ctx)?;
     Err(format!(
         "{}: {} not linked: they need compiler builtins that OpenBSD takes from \
          libcompiler_rt ({COMPILER_RT_DIR} over gnu/llvm/compiler-rt, Apache-2.0 WITH \
@@ -834,12 +838,23 @@ fn rpcsvc_headers(ctx: &Ctx<'_>) -> Result<Vec<(PathBuf, String)>> {
 
 /// Builds a program for this machine (a build tool); returns the directory holding it.
 fn build_host_prog(ctx: &Ctx<'_>, dir: &str) -> Result<PathBuf> {
+    build_host_prog_with(ctx, dir, |_, _| Ok(()))
+}
+
+/// `build_host_prog`, with `adapt` changing the evaluated Makefile (given the object
+/// directory) before anything is compiled: the host portability shims of `ramdisk.rs`.
+fn build_host_prog_with(
+    ctx: &Ctx<'_>,
+    dir: &str,
+    adapt: impl FnOnce(&mut Make, &Path) -> Result<()>,
+) -> Result<PathBuf> {
     let objdir = ctx.out.join("host/obj").join(dir);
     let bindir = ctx.out.join("host/bin");
     for d in [&objdir, &bindir] {
         fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
     }
-    let mk = new_host_make(ctx, dir, &objdir)?;
+    let mut mk = new_host_make(ctx, dir, &objdir)?;
+    adapt(&mut mk, &objdir)?;
     let prog = mk.var("PROG")?;
     let jobs = object_jobs(ctx, &mk, &objdir, &[])?;
     run_jobs(ctx, dir, &jobs)?;
@@ -1232,7 +1247,11 @@ fn licence_families(text: &str) -> Vec<&'static str> {
         f.push("ISC");
     }
     if t.contains("permission is hereby granted, free of charge") {
-        f.push("MIT");
+        f.push(if t.contains("unicode, inc") {
+            "Unicode (data files and software)"
+        } else {
+            "MIT"
+        });
     }
     if t.contains("beer-ware") {
         f.push("beerware");
@@ -1251,6 +1270,16 @@ fn licence_families(text: &str) -> Vec<&'static str> {
     }
     if t.contains("martin birgmeier") && t.contains("you may redistribute unmodified or modified") {
         f.push("Birgmeier (rand48)");
+    }
+    if t.contains("developed at sunpro") && t.contains("is freely granted") {
+        f.push("SunPro (fdlibm)");
+    }
+    if t.contains("aleksey cheusov") && t.contains("permission to use or copy this software") {
+        f.push("Cheusov");
+    }
+    if t.contains("daniel boulet") && t.contains("provided that this entire comment appears intact")
+    {
+        f.push("Boulet/RTMX");
     }
     if f.is_empty() {
         if t.contains("permission to use, copy, modify, and distribute this software")
@@ -1323,7 +1352,8 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
     }
     // The families the user has accepted (`.claude/rules/scope-and-stubs.md`); the userland
     // ones (Apache-2.0 WITH LLVM-exception, public domain, no licence text, Lucent,
-    // Birgmeier) only for code compiled unmodified, decided 2026-10-03.
+    // Birgmeier, Unicode, SunPro, Cheusov, Boulet/RTMX) only for code compiled unmodified,
+    // decided 2026-10-03.
     let usual = [
         "ISC",
         "BSD-2-Clause",
@@ -1337,6 +1367,10 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
         "Apache-2.0 WITH LLVM-exception",
         "Lucent (gdtoa)",
         "Birgmeier (rand48)",
+        "Unicode (data files and software)",
+        "SunPro (fdlibm)",
+        "Cheusov",
+        "Boulet/RTMX",
     ];
     let unusual: Vec<_> = by_file
         .iter()
@@ -1353,6 +1387,8 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
     }
     Ok(())
 }
+
+mod ramdisk;
 
 #[cfg(test)]
 mod tests;

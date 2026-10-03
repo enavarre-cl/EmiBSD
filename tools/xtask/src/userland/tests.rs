@@ -28,6 +28,16 @@ fn licence_families_are_recognised() {
     let birgmeier = "Copyright (c) 1993 Martin Birgmeier\n\
                      * You may redistribute unmodified or modified versions";
     assert_eq!(licence_families(birgmeier), vec!["Birgmeier (rand48)"]);
+    let unicode = "Copyright (c) 1991-2015 Unicode, Inc. All rights reserved.\n\
+                   * Permission is hereby granted, free of charge, to any person";
+    assert_eq!(
+        licence_families(unicode),
+        vec!["Unicode (data files and software)"]
+    );
+    let sunpro = "Developed at SunPro, a Sun Microsystems, Inc. business.\n\
+                  * Permission to use, copy, modify, and distribute this\n\
+                  * software is freely granted, provided that this notice";
+    assert_eq!(licence_families(sunpro), vec!["SunPro (fdlibm)"]);
 }
 
 #[test]

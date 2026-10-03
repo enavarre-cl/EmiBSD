@@ -25,7 +25,8 @@ The kernel is ported incrementally; most of OpenBSD is not here yet. These rules
   `status = "skipped"`, `notes = "replaced-by-<what>: ..."`, and the decision is in `docs/ARCHITECTURE.md`.
 - Compiled-not-ported userland (M8) also accepts, by the user's decision of 2026-10-03:
   Apache-2.0 WITH LLVM-exception (`gnu/llvm/compiler-rt`), public domain (pdksh), files with no
-  licence text, and the Lucent (gdtoa) and Birgmeier (rand48) notices. Kernel ports still follow
-  the list above.
+  licence text, the Lucent (gdtoa), Birgmeier (rand48), SunPro (fdlibm), Cheusov (`wcsdup.c`)
+  and Boulet/RTMX (`sys/msg.h`) notices, and the Unicode data-files licence (makefs's
+  `msdosfs_unicode.c`). Kernel ports still follow the list above.
 - Scope changes (dropping an arch, skipping a subsystem, changing the boot protocol) are the
   user's decision. Propose; do not decide.

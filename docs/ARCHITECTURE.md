@@ -206,6 +206,29 @@ Workarounds, each printed by the build (flags only; no source is edited):
 
 Every OpenBSD file compiled or included is classified by licence into `licences.txt`.
 
+### The ramdisk image
+
+The ffs image the kernel boots from (`target/userland/<arch>/ramdisk.ffs`, the `rd(4)` root) is
+made by OpenBSD's own makefs(8), built for the Mac from `usr.sbin/makefs` (in the clone since
+2026-10-03), not by a file system writer of our own (decided by the user on 2026-10-03). The
+on-disk format is then OpenBSD's by construction. makefs runs as OpenBSD's `distrib/` runs it
+for its ramdisks (`-t ffs -o disklabel=rdroot,minfree=0,density=4096`), with `rdroot=1,
+bsize=4096,fsize=512` in place of `disklabel=rdroot` (which reads `/etc/disktab`): FFS1 at
+offset 0 of partition `a`, an `rdroot` disklabel in sector 1, a fixed `-T` timestamp so that
+the image is reproducible, and a size of twice the contents in whole MiB (at least 2 MiB).
+Its tree is `root/` plus `/dev/console`, `/dev/tty` and `/dev/null`.
+
+makefs is written for OpenBSD only; the Mac build takes host shims, all in
+`tools/xtask/src/userland/ramdisk.rs` and none in the sources: a force-included header
+(`daddr_t` is 64-bit, `st_*tim`, OpenBSD's `MAXBSIZE`, no-op `pledge`/`unveil`,
+`srandom_deterministic` as `srandom`), OpenBSD headers macOS lacks taken from the clone
+(`ufs/`, `msdosfs/`, `sys/disklabel.h`, `machine/disklabel.h`, `sys/uuid.h` with `uuid_t`
+renamed), a `sys/endian.h` over `<libkern/OSByteOrder.h>`, `scan_scaled` from
+`lib/libutil/fmt_scaled.c`, and an `lstat` wrapper for device nodes: macOS lets only root
+`mknod` and OpenBSD's makefs has no mtree spec, so a staging file holding one
+`emibsd-makefs-device c <major> <minor> <mode>` line is reported to makefs as that device (with
+OpenBSD's `makedev()` encoding).
+
 ## Deviations from OpenBSD (deliberate)
 
 - Limine instead of `boot(8)`/`efiboot`.
