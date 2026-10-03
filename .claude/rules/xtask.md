@@ -9,7 +9,7 @@ paths:
 - Invoked as `cargo xtask <cmd>` (alias in `.cargo/config.toml`). The workspace root is derived
   from `CARGO_MANIFEST_DIR`, never from the current directory.
 - Subcommands: `image` (FAT ESP with Limine + `/bsd`), `qemu` (run), `smoke` (run, assert serial
-  lines and exit code), `ports {check,status,drift,next}`, `gen-syscalls`, `symbolize`, `userland`
+  lines and exit code), `smoke2` (two VMs on a private link, `twovm.rs`), `ports {check,status,drift,next}`, `gen-syscalls`, `symbolize`, `userland`
   (M8: OpenBSD's libc and programs cross-compiled from the reference sources, `userland.rs` over
   the make-subset evaluator `bsdmake.rs`).
 - External tools (`qemu-system-*`, Limine binaries, EDK2 firmware) are located at runtime via

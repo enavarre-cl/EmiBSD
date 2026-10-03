@@ -223,6 +223,27 @@ smoke-route: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "10.0.2/24" --expect "gateway: 10.0.2.2" --expect "interface: vio0" \
         --expect "lo0: flags=" --expect "vio0: flags="
 
+# M9b/M9c harness: two VMs of one arch at once (`cargo xtask smoke2`), each with vio0 on QEMU's
+# user network and vio1 on a private link between the two (docs/SETUP.md, "Two VMs"). Both log
+# in as root and run `ifconfig vio1`. Passes when each kernel attached vio1 with the MAC of the
+# link NIC (A: 52:54:00:bb:00:01, B: 52:54:00:bb:00:02). TODO: once ifconfig(8) can open an
+# AF_INET socket (today: `ifconfig: socket: Protocol not supported`), also expect
+# `vio1: flags=` from it. Not part of `smoke` yet. A tunnel needs more than this: by hand,
+# `ifconfig vio1 inet 192.168.77.1/24` on A and `.2` on B, then `ping` (docs/SETUP.md).
+smoke-link: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-link: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke2 --arch amd64 --kernel target/{{amd64}}/debug/bsd \
+        --both-send-after "login:" --both-send 'root\n' --both-send-after "Password:" --both-send 'emibsd\n' \
+        --both-send-after "# " --both-send 'ifconfig vio1\n' \
+        --a-expect "vio1 at virtio1: 1 queue, address 52:54:00:bb:00:01" \
+        --b-expect "vio1 at virtio1: 1 queue, address 52:54:00:bb:00:02"
+    cargo xtask smoke2 --arch arm64 --kernel target/{{arm64}}/debug/bsd \
+        --both-send-after "login:" --both-send 'root\n' --both-send-after "Password:" --both-send 'emibsd\n' \
+        --both-send-after "# " --both-send 'ifconfig vio1\n' \
+        --a-expect "vio1 at virtio30: 1 queue, address 52:54:00:bb:00:01" \
+        --b-expect "vio1 at virtio30: 1 queue, address 52:54:00:bb:00:02"
+
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
     cargo xtask symbolize --arch {{arch}}

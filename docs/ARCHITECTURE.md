@@ -843,3 +843,15 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
 See `.claude/rules/testing.md`. Host tests exist because of `arch/host`. QEMU smoke tests exist
 because `custom_test_frameworks` is unstable. Reference-backed tests exist because constants copied
 by hand drift.
+
+Two-machine tests (the M9b/M9c tunnels) are `cargo xtask smoke2` (`tools/xtask/src/twovm.rs`):
+two QEMUs of one arch run at once, each with its own image and EDK2 variable store, each
+driven by its own `send-after`/`expect` script; the run passes when both are done. The second
+virtio-net NIC of each VM (`vio1`) is on QEMU's `dgram` netdev, a pair of UDP sockets on
+localhost: unlike `socket,mcast=` it does not depend on the host's multicast routing, and
+unlike `socket,listen=`/`connect=` neither VM has to start first. No kernel change is needed:
+`vio* at virtio?` already attaches a second device on both archs. One harness detail follows
+from the kernel finding virtio-mmio slots bottom up while QEMU `virt` hands them out top down:
+on arm64 the link NIC is added to QEMU's command line before the user-mode one, so that
+`vio0` is still the user-mode NIC. `just smoke-link` is the first user and is not part of
+`smoke`.

@@ -20,6 +20,11 @@
 //!                                          status); with K the image is rebuilt first;
 //!                                          --expect-ramdisk adds rd(4)'s line for the
 //!                                          ramdisk on the image (or its absence)
+//! cargo xtask smoke2 --arch A [--kernel K] [--cmdline C] [--timeout SECS] [--show-transcripts]
+//!                   [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]...
+//!                                          boot TWO VMs of A at once, each with vio1 on a
+//!                                          private link, each running its own script; pass
+//!                                          when both saw all they expect (twovm.rs)
 //! cargo xtask symbolize --arch A [--kernel K]
 //!                                          annotate the addresses of a stack trace on stdin
 //!                                          with K's symbols (default: the debug kernel)
@@ -41,6 +46,7 @@ mod boot;
 mod bsdmake;
 mod symbolize;
 mod syscalls;
+mod twovm;
 mod userland;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -58,6 +64,7 @@ const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | 
                      ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] [--init I] [--ramdisk R] | \
                      qemu --arch A [--kernel K] [--init I] [--ramdisk R] | gen-syscalls [--check] | \
                      smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--status N] [--send-after L --send T]... [--until-seen] --expect L... | \
+                     smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... | \
                      symbolize --arch A [--kernel K] | userland --arch A>";
 
 #[derive(Deserialize)]
@@ -214,6 +221,22 @@ fn run(args: &[String]) -> Result<()> {
                     ramdisk: ramdisk.as_deref(),
                     expect_ramdisk: rest.contains(&"--expect-ramdisk"),
                 },
+            )
+        }
+        ["smoke2", rest @ ..] => {
+            let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
+            let kernel = optional_flag(rest, "--kernel").map(PathBuf::from);
+            let init = init_flag(&root, arch, rest);
+            let ramdisk = ramdisk_flag(&root, arch, rest);
+            let plan = twovm::parse_plan(rest)?;
+            twovm::smoke2(
+                &root,
+                arch,
+                kernel.as_deref(),
+                optional_flag(rest, "--cmdline"),
+                init.as_deref(),
+                ramdisk.as_deref(),
+                plan,
             )
         }
         ["gen-syscalls"] => syscalls::gen_syscalls(&root, false),

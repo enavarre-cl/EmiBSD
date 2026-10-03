@@ -14,6 +14,8 @@ Done:
   ffs (`5506e47`), rd(4) + disk layer (`bd92ac0`), execve/exec_elf/pin_check and the process,
   time and select/poll syscalls (`a737765`..`e667958`), `setroot`/`diskconf`, amd64 FPU
   (`fpu.c`), OpenBSD's makefs for the image, libc/init/ksh/cat/echo/ls/uname.
+- M9b/M9c harness: `cargo xtask smoke2` boots two VMs with `vio1` on a private link;
+  `just smoke-link` passes on both archs (vio1 attaches; `ifconfig` needs AF_INET sockets).
 
 Next:
 - M9a (sockets in: `9a84a98`; kqueue in, with the pipe, tty, vnode and socket filters;

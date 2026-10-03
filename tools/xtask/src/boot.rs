@@ -83,7 +83,7 @@ impl Arch {
 /// (`sys/machine/cpu.rs`).
 pub const QEMU_SUCCESS_STATUS: i32 = 33;
 /// Longest a smoke boot may take, EDK2 and Limine included, under TCG.
-const SMOKE_TIMEOUT: Duration = Duration::from_secs(180);
+pub(crate) const SMOKE_TIMEOUT: Duration = Duration::from_secs(180);
 
 const SECTOR: u64 = 512;
 /// 64 MiB: room for FAT32 if the formatter picks it, and for modules later.
@@ -95,9 +95,16 @@ const PART_START: u64 = 2048;
 /// this name and hands it to rd(4).
 pub const RAMDISK_MODULE: &str = "ramdisk.ffs";
 
-fn image_path(root: &Path, arch: Arch) -> PathBuf {
+/// The boot image's path. `tag` names one VM of a two-VM run (`smoke2`): `emibsd-<arch>-<tag>.img`,
+/// so concurrent QEMUs never share a writable disk.
+pub(crate) fn image_path(root: &Path, arch: Arch, tag: Option<&str>) -> PathBuf {
     root.join("target")
-        .join(format!("emibsd-{}.img", arch.name()))
+        .join(format!("emibsd-{}{}.img", arch.name(), dash(tag)))
+}
+
+/// `-<tag>` for a tagged VM, nothing for the single-VM commands.
+fn dash(tag: Option<&str>) -> String {
+    tag.map(|t| format!("-{t}")).unwrap_or_default()
 }
 
 /// `brew --prefix <formula>`, if Homebrew is installed and knows the formula.
@@ -179,6 +186,19 @@ pub fn image(
     init: Option<&Path>,
     ramdisk: Option<&Path>,
 ) -> Result<PathBuf> {
+    image_tagged(root, arch, None, kernel, cmdline, init, ramdisk)
+}
+
+/// [`image`] for the VM `tag` of a two-VM run: the image lands in its own file.
+pub fn image_tagged(
+    root: &Path,
+    arch: Arch,
+    tag: Option<&str>,
+    kernel: &Path,
+    cmdline: Option<&str>,
+    init: Option<&Path>,
+    ramdisk: Option<&Path>,
+) -> Result<PathBuf> {
     let kernel_bytes = read(kernel)?;
     let init_bytes = init.map(read).transpose()?;
     let ramdisk_bytes = ramdisk.map(read).transpose()?;
@@ -200,7 +220,7 @@ pub fn image(
         conf.extend_from_slice(format!("    module_path: boot():/{RAMDISK_MODULE}\n").as_bytes());
     }
 
-    let path = image_path(root, arch);
+    let path = image_path(root, arch, tag);
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
@@ -350,17 +370,58 @@ impl Seek for Partition {
     }
 }
 
+/// The private link of one VM in a two-VM run (`smoke2`): a second virtio-net NIC (`vio1`)
+/// on a QEMU `dgram` netdev, a pair of UDP sockets on localhost, one per VM, each sending to
+/// the other's port. `dgram` is symmetric, so neither VM has to start first (`socket,listen=`
+/// and `connect=` would), and it needs no multicast routing (`socket,mcast=` depends on the
+/// host's loopback multicast). Both VMs have their own MACs, on `vio0` as well.
+///
+/// On arm64 the NICs sit on virtio-mmio slots, which QEMU `virt` hands out from the top
+/// down while the kernel attaches them bottom up: the link NIC is therefore added before the
+/// user-mode one there, and `smoke2`'s checks look at the MACs, not only at the names.
+pub struct VmLink {
+    /// `a` or `b`: suffix of the image and EDK2 variable store files.
+    pub tag: &'static str,
+    /// MAC of `vio0`, on QEMU's user-mode network.
+    pub user_mac: String,
+    /// MAC of `vio1`, on the private link.
+    pub link_mac: String,
+    /// UDP port this VM's end of the link listens on (localhost).
+    pub local_port: u16,
+    /// UDP port of the other VM's end.
+    pub remote_port: u16,
+}
+
+impl VmLink {
+    /// The `-netdev` argument of the link NIC (`id=n1`).
+    pub fn netdev(&self) -> String {
+        format!(
+            "dgram,id=n1,local.type=inet,local.host=127.0.0.1,local.port={},\
+             remote.type=inet,remote.host=127.0.0.1,remote.port={}",
+            self.local_port, self.remote_port
+        )
+    }
+}
+
 /// The QEMU command line for `arch` booting `image`, serial on `serial` (`stdio` or
 /// `mon:stdio`), display off, firmware from EDK2, and a virtio network card on QEMU's user
 /// mode network (`vio(4)`: virtio-net-pci on amd64's PCI bus, virtio-net-device on one of
 /// arm64 `virt`'s virtio-mmio slots). A fresh copy of the EDK2 variable store is made per run
 /// so boots do not depend on what the firmware remembered last time.
-fn qemu_command(root: &Path, arch: Arch, image: &Path, serial: &str) -> Result<Command> {
+pub(crate) fn qemu_command(
+    root: &Path,
+    arch: Arch,
+    image: &Path,
+    serial: &str,
+    vm: Option<&VmLink>,
+) -> Result<Command> {
     let code = edk2_file(arch.edk2_code())?;
     let vars_src = edk2_file(arch.edk2_vars())?;
-    let vars = root
-        .join("target")
-        .join(format!("edk2-{}-vars.fd", arch.name()));
+    let vars = root.join("target").join(format!(
+        "edk2-{}{}-vars.fd",
+        arch.name(),
+        dash(vm.map(|v| v.tag))
+    ));
     fs::copy(&vars_src, &vars).map_err(|e| format!("{}: {e}", vars.display()))?;
 
     let mut cmd = Command::new(arch.qemu());
@@ -381,13 +442,23 @@ fn qemu_command(root: &Path, arch: Arch, image: &Path, serial: &str) -> Result<C
     cmd.arg("-drive")
         .arg(format!("if=pflash,format=raw,file={}", vars.display()));
     cmd.args(["-netdev", "user,id=n0"]);
+    // vio0 must be the user-mode NIC. On amd64 that is the one added first (PCI slots go up);
+    // arm64 is the other way round, see below.
+    let nic0 = vm.map_or(String::new(), |v| format!(",mac={}", v.user_mac));
     match arch {
         Arch::Amd64 => {
             cmd.args(["-M", "q35", "-cpu", "qemu64"]);
             cmd.arg("-drive")
                 .arg(format!("format=raw,file={}", image.display()));
             cmd.args(["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]);
-            cmd.args(["-device", "virtio-net-pci,netdev=n0"]);
+            cmd.args(["-device", &format!("virtio-net-pci,netdev=n0{nic0}")]);
+            if let Some(v) = vm {
+                cmd.args(["-netdev", &v.netdev()]);
+                cmd.args([
+                    "-device",
+                    &format!("virtio-net-pci,netdev=n1,mac={}", v.link_mac),
+                ]);
+            }
         }
         Arch::Arm64 => {
             // acpi=off: EDK2 then installs the device tree, which the arm64 kernel needs (M4).
@@ -397,14 +468,24 @@ fn qemu_command(root: &Path, arch: Arch, image: &Path, serial: &str) -> Result<C
                 image.display()
             ));
             cmd.args(["-device", "virtio-blk-device,drive=hd0"]);
-            cmd.args(["-device", "virtio-net-device,netdev=n0"]);
+            // QEMU `virt` hands virtio-mmio slots out from the top down and the kernel
+            // finds them bottom up, so the device added LAST is vio0: the link NIC goes
+            // before the user-mode one.
+            if let Some(v) = vm {
+                cmd.args(["-netdev", &v.netdev()]);
+                cmd.args([
+                    "-device",
+                    &format!("virtio-net-device,netdev=n1,mac={}", v.link_mac),
+                ]);
+            }
+            cmd.args(["-device", &format!("virtio-net-device,netdev=n0{nic0}")]);
             cmd.args(["-semihosting-config", "enable=on,target=native"]);
         }
     }
     Ok(cmd)
 }
 
-fn command_line(cmd: &Command) -> String {
+pub(crate) fn command_line(cmd: &Command) -> String {
     let mut s = cmd.get_program().to_string_lossy().into_owned();
     for a in cmd.get_args() {
         s.push(' ');
@@ -413,7 +494,7 @@ fn command_line(cmd: &Command) -> String {
     s
 }
 
-fn spawn_error(arch: Arch, e: &io::Error) -> String {
+pub(crate) fn spawn_error(arch: Arch, e: &io::Error) -> String {
     format!("{}: {e}; install `qemu` as in docs/SETUP.md", arch.qemu())
 }
 
@@ -451,7 +532,7 @@ pub fn qemu(
     let image = match kernel {
         Some(k) => image(root, arch, k, None, init, ramdisk)?,
         None => {
-            let p = image_path(root, arch);
+            let p = image_path(root, arch, None);
             if !p.is_file() {
                 return Err(format!(
                     "{} does not exist; run `just image-{}`",
@@ -463,7 +544,7 @@ pub fn qemu(
             p
         }
     };
-    let mut cmd = qemu_command(root, arch, &image, "mon:stdio")?;
+    let mut cmd = qemu_command(root, arch, &image, "mon:stdio", None)?;
     println!("xtask: {}", command_line(&cmd));
     let status = cmd.status().map_err(|e| spawn_error(arch, &e))?;
     match status.code() {
@@ -522,7 +603,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
     let image = match kernel {
         Some(k) => image(root, arch, k, cmdline, init, ramdisk)?,
         None => {
-            let p = image_path(root, arch);
+            let p = image_path(root, arch, None);
             if !p.is_file() {
                 return Err(format!(
                     "{} does not exist; run `just image-{}`",
@@ -535,7 +616,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         }
     };
     let expected_status = status;
-    let mut cmd = qemu_command(root, arch, &image, "stdio")?;
+    let mut cmd = qemu_command(root, arch, &image, "stdio", None)?;
     cmd.stdin(if !sends.is_empty() {
         Stdio::piped()
     } else {
@@ -691,14 +772,14 @@ fn ramdisk_expectation(ramdisk: Option<&Path>) -> String {
     }
 }
 
-fn slurp(mut r: impl Read) -> Vec<u8> {
+pub(crate) fn slurp(mut r: impl Read) -> Vec<u8> {
     let mut v = Vec::new();
     let _ = r.read_to_end(&mut v);
     v
 }
 
 /// Reads `r` to its end, appending to `into` as the bytes arrive.
-fn slurp_into(mut r: impl Read, into: &Mutex<Vec<u8>>) {
+pub(crate) fn slurp_into(mut r: impl Read, into: &Mutex<Vec<u8>>) {
     let mut buf = [0u8; 4096];
     loop {
         match r.read(&mut buf) {
