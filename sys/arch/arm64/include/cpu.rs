@@ -41,8 +41,10 @@ use core::ptr;
 use core::sync::atomic::AtomicU32;
 
 use crate::arch::arm64::include::frame::Trapframe;
+use crate::arch::arm64::include::pcb::Pcb;
 use crate::arch::arm64::include::pmap::Pmap;
 use crate::sys::clockintr::Clockqueue;
+use crate::sys::proc::Proc;
 use crate::sys::sched::SchedstatePercpu;
 
 /// `restore_daif`: writes `daif` back into `DAIF`.
@@ -137,10 +139,10 @@ pub struct CpuInfo {
     /// This structure's own address.
     pub ci_self: Cell<*const CpuInfo>,
     // __HAVE_CPU_TOPOLOGY: ci_cputype, ci_smt_id, ci_core_id, ci_pkg_id (M4-b).
-    /// `struct proc` (M5).
-    pub ci_curproc: Cell<*const ()>,
-    /// `struct pcb` (M5).
-    pub ci_curpcb: Cell<*const ()>,
+    /// The thread on this CPU.
+    pub ci_curproc: Cell<*const Proc>,
+    /// The thread's pcb.
+    pub ci_curpcb: Cell<*const Pcb>,
     /// The active pmap.
     pub ci_curpm: Cell<*const Pmap>,
     /// `ci_randseed`.

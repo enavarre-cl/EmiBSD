@@ -137,6 +137,9 @@ pub const PUSER: i32 = 50;
 /// Priorities range from 0 through MAXPRI.
 pub const MAXPRI: i32 = 127;
 
+/// `NZERO`: default \"nice\".
+pub const NZERO: i32 = 20;
+
 /// Mask selecting the priority bits of a `tsleep(9)` priority argument.
 pub const PRIMASK: i32 = 0x0ff;
 /// OR'd with the priority for `tsleep(9)` to check signals.

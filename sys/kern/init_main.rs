@@ -48,9 +48,9 @@
 //!
 //! Status: `wip`. Milestone M2 ports the skeleton of `main()`: the console comes up, the
 //! copyright prints, and every later step is called in the C's order, each one reporting itself
-//! as unported until its subsystem lands. `copyright`, `boothowto`, `db_active`, `ncpus` and
-//! `ncpusfound` are here; `proc0` and its process, `start_init`, `check_console` and the
-//! kernel threads arrive with M5.
+//! as unported until its subsystem lands. `copyright`, `boothowto`, `db_active`, `ncpus`,
+//! `ncpusfound`, `proc0`, `process0`, `pgrp0` and `session0` are here; `start_init`,
+//! `check_console` and the kernel threads arrive with M5-b2 and M6.
 //!
 //! ## Deviations
 //! - `main()` takes no `framep` (unused in C) and never returns, as the C's loop never does.
@@ -58,10 +58,15 @@
 //!   the scheduler (M5), and the emulator exits with the success status that `xtask smoke`
 //!   checks.
 
-use core::sync::atomic::{AtomicBool, AtomicI32};
+use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
+use crate::dev::rnd::arc4random;
 use crate::kern::kern_clock::initclocks;
 use crate::kern::kern_clockintr::clockqueue_init;
+use crate::kern::kern_fork::process_initialize;
+use crate::kern::kern_proc::{
+    ALLPROC, ALLPROCESS, chgproccnt, pgrphash, pidhash, procinit, tidhash,
+};
 use crate::kern::kern_sched::{sched_init, sched_init_cpu};
 use crate::kern::kern_timeout::{timeout_proc_init, timeout_startup};
 use crate::kern::sched_bsd::sched_lock_init;
@@ -69,6 +74,8 @@ use crate::kprintf;
 use crate::machine::Machine;
 use crate::machine::cons::consinit;
 use crate::machine::cpu::{Cpu, cpu_configure, cpu_startup, curcpu};
+use crate::sys::param::NZERO;
+use crate::sys::proc::{P_SYSTEM, PS_SYSTEM, Pgrp, Proc, Process, SONPROC, Session};
 use crate::unported;
 use crate::uvm::uvm_init::uvm_init;
 
@@ -89,12 +96,24 @@ pub static NCPUS: AtomicI32 = AtomicI32::new(1);
 /// `ncpusfound`: number of CPUs we find.
 pub static NCPUSFOUND: AtomicI32 = AtomicI32::new(1);
 
+/// `proc0`: process slot for swapper.
+pub static PROC0: Proc = Proc::new();
+/// `process0`: process slot for kernel threads.
+pub static PROCESS0: Process = Process::new();
+/// `pgrp0`.
+pub static PGRP0: Pgrp = Pgrp::new();
+/// `session0`.
+pub static SESSION0: Session = Session::new();
+
 /// `main`: the machine-independent entry point, called by each architecture's early init once
 /// the machine is set up.
 pub fn main() -> ! {
     // Initialize the current process pointer (curproc) before any possible traps/probes to
-    // simplify trap processing: proc0 and curcpu arrive with M5.
-    let _ = unported!("proc0 / curproc setup (main)");
+    // simplify trap processing.
+    let ci = curcpu();
+    let p: &'static Proc = &PROC0;
+    Machine::set_curproc(ci, p);
+    p.p_cpu.set(ci);
 
     // Initialize timeouts.
     timeout_startup();
@@ -142,7 +161,7 @@ pub fn main() -> ! {
     let _ = unported!("smr_startup");
 
     // Initialize process and pgrp structures.
-    let _ = unported!("procinit");
+    procinit();
 
     // Initialize file locking.
     let _ = unported!("lf_init");
@@ -161,10 +180,43 @@ pub fn main() -> ! {
     let _ = unported!("tslp_init");
 
     // Create credentials.
-    let _ = unported!("crget (proc0 credentials)");
+    let _ = unported!("crget (proc0 credentials, kern_prot.c M6)");
 
     // Create process 0 (the swapper).
-    let _ = unported!("process0 / pgrp0 / session0 setup");
+    let pr: &'static Process = &PROCESS0;
+    process_initialize(pr, p);
+
+    // SAFETY: process0 is static and in no list yet; proc0 and pgrp0 likewise.
+    unsafe {
+        ALLPROCESS.0.insert_head(pr);
+        pidhash(0).insert_head(pr);
+    }
+    pr.ps_flags.fetch_or(PS_SYSTEM, Ordering::Relaxed);
+
+    // Set the default routing table/domain.
+    pr.ps_rtableid.store(0, Ordering::Relaxed);
+
+    // SAFETY: as above.
+    unsafe {
+        ALLPROC.0.insert_head(p);
+        pr.ps_pgrp.set(&PGRP0);
+        tidhash(0).insert_head(p);
+        pgrphash(0).insert_head(&PGRP0);
+        PGRP0.pg_members.init();
+        PGRP0.pg_members.insert_head(pr);
+    }
+
+    PGRP0.pg_session.set(&SESSION0);
+    SESSION0.s_count.set(1);
+    SESSION0.s_leader.set(pr);
+
+    p.p_flag.fetch_or(P_SYSTEM, Ordering::Relaxed);
+    p.p_stat.set(SONPROC);
+    pr.ps_nice.set(NZERO as i8);
+    pr.set_comm(b"swapper");
+
+    // Init timeouts: timeout_set(&p->p_sleep_to, endtsleep, p) (kern_synch.c, M5-b2).
+    let _ = unported!("proc0's p_sleep_to (endtsleep, M5-b2)");
 
     // Init timeouts, signal state, file descriptor table, limits and the prototype map of
     // process 0.
@@ -173,14 +225,17 @@ pub fn main() -> ! {
     let _ = unported!("lim_startup");
     let _ = unported!("uvmspace_init (vmspace0)");
 
+    p.p_addr.set(Machine::proc0paddr()); // XXX
+
     // Charge root for one process.
-    let _ = unported!("chgproccnt");
+    chgproccnt(0, 1);
 
     // Initialize run queues
     sched_init();
     let _ = unported!("sleep_queue_init");
-    clockqueue_init(Machine::ci_queue(curcpu()));
-    sched_init_cpu(curcpu());
+    clockqueue_init(Machine::ci_queue(ci));
+    sched_init_cpu(ci);
+    Machine::ci_randseed(ci).set((arc4random() & 0x7fff_ffff) + 1);
 
     // Initialize timeouts in process context.
     timeout_proc_init();

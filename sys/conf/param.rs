@@ -44,8 +44,9 @@
 //! Upstream: sys/conf/param.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M2 needs the clock rate (`delay(9)` on amd64 divides by `hz`);
-//! `maxprocess`, `maxthread`, `maxfiles`, `nmbclust`, `bufcachepercent`, `bufpages`, `fscale`,
-//! the System V IPC limits and `utsname` arrive with the subsystems that read them.
+//! M5 adds `maxprocess`, `maxthread` and `maxfiles` from `MAXUSERS` (80, as `GENERIC`
+//! configures); `nmbclust`, `bufcachepercent`, `bufpages`, `fscale`, the System V IPC limits
+//! and `utsname` arrive with the subsystems that read them.
 //!
 //! ## Deviations
 //! - The `int` globals are atomics: `sysctl(8)` writes them at runtime in OpenBSD too.
@@ -62,3 +63,19 @@ pub static TICK: AtomicI32 = AtomicI32::new(1_000_000 / DEFAULT_HZ);
 pub static TICK_NSEC: AtomicI32 = AtomicI32::new(1_000_000_000 / DEFAULT_HZ);
 /// `utc_offset`: seconds east of UTC.
 pub static UTC_OFFSET: AtomicI32 = AtomicI32::new(0);
+
+/// `MAXUSERS`: what `GENERIC` configures (`maxusers 80`).
+pub const MAXUSERS: i32 = 80;
+/// `NPROCESS`.
+pub const NPROCESS: i32 = 30 + 16 * MAXUSERS;
+/// `NTEXT`: actually the object cache.
+pub const NTEXT: i32 = 80 + NPROCESS / 8;
+/// `NVNODE`.
+pub const NVNODE: i32 = NPROCESS * 2 + NTEXT + 100;
+
+/// \[a\] `maxprocess`.
+pub static MAXPROCESS: AtomicI32 = AtomicI32::new(NPROCESS);
+/// \[a\] `maxthread`.
+pub static MAXTHREAD: AtomicI32 = AtomicI32::new(2 * NPROCESS);
+/// \[a\] `maxfiles`.
+pub static MAXFILES: AtomicI32 = AtomicI32::new(5 * (NPROCESS + MAXUSERS) + 80);

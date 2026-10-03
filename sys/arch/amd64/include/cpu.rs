@@ -62,10 +62,12 @@ use core::sync::atomic::{AtomicU32, AtomicU64};
 use crate::arch::amd64::include::frame::Intrframe;
 use crate::arch::amd64::include::intr::Intrsource;
 use crate::arch::amd64::include::intrdefs::{MAX_INTR_SOURCES, NIPL};
+use crate::arch::amd64::include::pcb::Pcb;
 use crate::arch::amd64::include::pmap::Pmap;
 use crate::arch::amd64::include::segments::usermode;
 use crate::arch::amd64::include::tss::X86_64Tss;
 use crate::sys::clockintr::Clockqueue;
+use crate::sys::proc::Proc;
 use crate::sys::sched::SchedstatePercpu;
 
 /// `struct cpu_info`: the per-CPU state (the M4/M5 subset, see the module doc).
@@ -101,18 +103,18 @@ pub struct CpuInfo {
     /// \[o\] U-K page table.
     pub ci_user_cr3: Cell<u64>,
     // ci_mds_tmp, ci_mds_buf (Micro-architectural Data Sampling): M6.
-    /// \[o\] `struct proc` (M5-b).
-    pub ci_curproc: Cell<*const ()>,
+    /// \[o\] the thread on this CPU.
+    pub ci_curproc: Cell<*const Proc>,
     /// Scheduler state.
     pub ci_schedstate: SchedstatePercpu,
     /// Active, non-kernel pmap.
     pub ci_proc_pmap: Cell<*const Pmap>,
     /// \[o\] last pmap used in userspace.
     pub ci_user_pmap: Cell<*const Pmap>,
-    /// \[o\] `struct pcb` (M5-b).
-    pub ci_curpcb: Cell<*const ()>,
-    /// \[o\] `struct pcb` (M5-b).
-    pub ci_idle_pcb: Cell<*const ()>,
+    /// \[o\] the thread's pcb.
+    pub ci_curpcb: Cell<*const Pcb>,
+    /// \[o\] the idle thread's pcb.
+    pub ci_idle_pcb: Cell<*const Pcb>,
     /// \[o\] `CPUPF_*`.
     pub ci_pflags: Cell<u32>,
     /// `ci_isources[MAX_INTR_SOURCES]`: the interrupt sources, by stub number.

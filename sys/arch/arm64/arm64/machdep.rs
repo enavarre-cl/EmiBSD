@@ -77,6 +77,7 @@ use crate::arch::arm64::arm64::pmap::{
     PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap, pmap_growkernel,
 };
 use crate::arch::arm64::include::cpu::CpuInfo;
+use crate::arch::arm64::include::frame::Trapframe;
 use crate::arch::arm64::include::intr::IPL_TTY;
 use crate::arch::arm64::include::param::PAGE_SIZE;
 use crate::arch::arm64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
@@ -86,7 +87,7 @@ use crate::dev::ofw::fdt::{
     FdtNode, fdt_find_node, fdt_init, fdt_is_compatible, fdt_node_property,
 };
 use crate::dev::ofw::openfirm::OF_finddevice;
-use crate::kern::init_main::BOOTHOWTO;
+use crate::kern::init_main::{BOOTHOWTO, PROC0};
 use crate::kern::kern_malloc::{kmeminit_nkmempages, nkmempages};
 use crate::kern::subr_log::init_static_msgbuf;
 use crate::kprintf;
@@ -100,6 +101,7 @@ use crate::sys::reboot::{
 };
 use crate::sys::systm::PHYSMEM;
 use crate::sys::types::{Paddr, Vaddr};
+use crate::sys::user::User;
 use crate::unported;
 use crate::uvm::uvm_extern::UvmConstraintRange;
 use crate::uvm::uvm_init::UVMEXP;
@@ -163,6 +165,11 @@ const DIRECT_MAP_MIN_SIZE: usize = 4 << 30;
 /// `cpu_info_primary`: the boot CPU's `cpu_info`; `cpu_attach` (M4-b) fills in what
 /// `initarm` does not (`ci_cpuid`, `ci_mpidr`, the flags).
 pub static CPU_INFO_PRIMARY: CpuInfo = CpuInfo::new();
+
+/// `proc0paddr`: proc0's u-area (its pcb; the boot stack is Limine's).
+pub static PROC0PADDR: User = User::new();
+/// `proc0tf`: dummy trapframe for proc0.
+static PROC0TF: StaticCell<Trapframe> = StaticCell::new(Trapframe::new());
 
 /// `cold`: if set, still working on cold-start.
 pub static COLD: AtomicBool = AtomicBool::new(true);
@@ -359,6 +366,8 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
 
 /// `cpu_startup`: machine-dependent startup code (see the module's deviations).
 pub fn cpu_startup() {
+    PROC0.p_addr.set(&PROC0PADDR);
+
     // The message buffer mapping and initmsgbuf: the message buffer is static (M2).
     // version: M5.
 
@@ -378,7 +387,13 @@ pub fn cpu_startup() {
         ptoa(free) / 1024 / 1024
     );
 
-    // cpu_init_extents, cpu_init_idt: M4.
+    let curpcb = &PROC0PADDR.u_pcb;
+    CPU_INFO_PRIMARY.ci_curpcb.set(curpcb);
+    curpcb.pcb_flags.set(0);
+    curpcb.pcb_tf.set(PROC0TF.as_ptr());
+
+    // sched_blockcpu = CPUTYP_L: __HAVE_CPU_TOPOLOGY (M5-b2). boothowto & RB_CONFIG,
+    // HIBERNATE: not configured.
 }
 
 /// `consinit`: attaches the console, once.

@@ -62,6 +62,7 @@ use libkern::StaticCell;
 use crate::conf::param::{HZ, TICK, TICK_NSEC};
 use crate::kassert;
 use crate::kern::kern_clock::ticks;
+use crate::kern::kern_kthread::kthread_create_deferred;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_softintr::{SoftintrHand, softintr_establish, softintr_schedule};
 use crate::kern::kern_synch::wakeup;
@@ -360,8 +361,7 @@ pub fn timeout_proc_init() {
 
     // WITNESS_INIT: not configured.
 
-    // kthread_create_deferred(softclock_create_thread, NULL)
-    let _ = unported!("kthread_create_deferred (softclock_create_thread, M5-b)");
+    kthread_create_deferred(softclock_create_thread, ptr::null_mut());
 }
 
 /// `timeout_set`.
@@ -836,8 +836,13 @@ pub fn softclock(_arg: *mut c_void) {
     }
 }
 
-// softclock_create_thread, softclock_thread_run, softclock_thread: kthread_create and the
-// sleep queues (M5-b).
+/// `softclock_create_thread`: creates the softclock thread (`kthread_create`, M5-b2).
+pub fn softclock_create_thread(_arg: *mut c_void) {
+    // if (kthread_create(softclock_thread, NULL, NULL, "softclock")) panic("fork softclock");
+    let _ = unported!("softclock_create_thread: kthread_create (M5-b2)");
+}
+
+// softclock_thread_run, softclock_thread: the sleep queues (M5-b2).
 
 /// `timeout_adjust_ticks`: moves the tick wheel forward by `adj` ticks after the clock was
 /// stepped (`tc_setclock`).

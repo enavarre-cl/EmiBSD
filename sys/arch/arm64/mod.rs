@@ -15,11 +15,14 @@ use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::db_machdep::{DbMachdep, PrFn};
 use core::cell::Cell;
 
+use crate::machine::proc::MachineProc;
 use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, Pmap, VmParam};
 use crate::sys::clockintr::Clockqueue;
 use crate::sys::errno::Errno;
+use crate::sys::proc::Proc;
 use crate::sys::sched::SchedstatePercpu;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
+use crate::sys::user::User;
 use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt};
 use crate::uvm::uvm_page::VmPage;
 
@@ -94,8 +97,16 @@ impl Cpu for Machine {
         &ci.ci_randseed
     }
 
-    fn ci_curproc(ci: &include::cpu::CpuInfo) -> *const () {
+    fn ci_curproc(ci: &include::cpu::CpuInfo) -> *const Proc {
         ci.ci_curproc.get()
+    }
+
+    fn set_curproc(ci: &include::cpu::CpuInfo, p: *const Proc) {
+        ci.ci_curproc.set(p);
+    }
+
+    fn proc0paddr() -> &'static User {
+        &arm64::machdep::PROC0PADDR
     }
 
     fn ci_idepth(ci: &include::cpu::CpuInfo) -> u32 {
@@ -375,4 +386,11 @@ impl crate::machine::fdt::Fdt for Machine {
     fn fdt_cons_bs_tag() -> crate::machine::bus::BusSpaceTag {
         arm64::bus_space::FDT_CONS_BS_TAG
     }
+}
+
+impl MachineProc for Machine {
+    type Mdproc = include::proc::Mdproc;
+    const MDPROC_INIT: include::proc::Mdproc = include::proc::Mdproc::new();
+    type Pcb = include::pcb::Pcb;
+    const PCB_INIT: include::pcb::Pcb = include::pcb::Pcb::new();
 }

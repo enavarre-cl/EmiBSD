@@ -110,6 +110,7 @@
 //!   `vfs_shutdown`, `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys`,
 //!   `config_suspend_all`, ACPI and `cpu_reset` are reported as unported when reached.
 
+use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use libkern::StaticCell;
@@ -124,9 +125,10 @@ use crate::arch::amd64::amd64::locore::lgdt;
 use crate::arch::amd64::amd64::pmap::{PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap};
 use crate::arch::amd64::amd64::vector::Xexceptions;
 use crate::arch::amd64::include::cpu::{CpuInfo, cpu_info_primary, curcpu};
-use crate::arch::amd64::include::cpufunc::{intr_enable, lidt, lldt, ltr};
+use crate::arch::amd64::include::cpufunc::{intr_enable, lidt, lldt, ltr, rcr3};
+use crate::arch::amd64::include::frame::Trapframe;
 use crate::arch::amd64::include::intrdefs::IPL_IPI;
-use crate::arch::amd64::include::param::PAGE_SIZE;
+use crate::arch::amd64::include::param::{PAGE_SIZE, USPACE};
 use crate::arch::amd64::include::segments::{
     GCODE_SEL, GDATA_SEL, GDT_SIZE, GPROC0_SEL, GUCODE_SEL, GUDATA_SEL, GateDescriptor,
     MemSegmentDescriptor, NIDT, RegionDescriptor, SDT_MEMERA, SDT_MEMRWA, SDT_SYS386IGT,
@@ -139,7 +141,7 @@ use crate::arch::amd64::isa::clock::{
     i8254_delay, i8254_initclocks, i8254_start_both_clocks, startclocks,
 };
 use crate::kassert;
-use crate::kern::init_main::BOOTHOWTO;
+use crate::kern::init_main::{BOOTHOWTO, PROC0};
 use crate::kern::kern_softintr::softintr_init;
 use crate::kern::subr_log::init_static_msgbuf;
 use crate::kern::subr_prf::splassert_fail;
@@ -153,6 +155,7 @@ use crate::sys::reboot::{
 };
 use crate::sys::systm::PHYSMEM;
 use crate::sys::types::Paddr;
+use crate::sys::user::User;
 use crate::unported;
 use crate::uvm::uvm_extern::UvmConstraintRange;
 use crate::uvm::uvm_init::UVMEXP;
@@ -197,6 +200,9 @@ pub static IDT: StaticCell<Idt> = StaticCell::new(Idt([const { GateDescriptor::z
 
 /// `idt_allocmap[]`: which vectors are taken.
 pub static IDT_ALLOCMAP: [AtomicBool; NIDT] = [const { AtomicBool::new(false) }; NIDT];
+
+/// `proc0paddr`: proc0's u-area (its pcb; the boot stack is Limine's, see the deviations).
+pub static PROC0PADDR: User = User::new();
 /// The direct map covers at least this much, by the boot protocol's guarantee.
 const DIRECT_MAP_MIN_SIZE: usize = 4 << 30;
 
@@ -408,9 +414,17 @@ pub fn splassert_check(wantipl: i32, func: &str) {
 
 /// `x86_64_proc0_tss_ldt_init`: loads the boot CPU's task register and clears the LDT.
 pub fn x86_64_proc0_tss_ldt_init() {
-    // cpu_info_primary.ci_curpcb = pcb = &proc0.p_addr->u_pcb; pcb_fsbase, pcb_kstack and
-    // proc0.p_md.md_regs: proc0 arrives with M5.
-    let _ = unported!("proc0's pcb (x86_64_proc0_tss_ldt_init)");
+    let pcb = &PROC0PADDR.u_pcb;
+    cpu_info_primary().ci_curpcb.set(pcb);
+    pcb.pcb_fsbase.set(0);
+    pcb.pcb_kstack
+        .set(ptr::addr_of!(PROC0PADDR) as u64 + USPACE as u64 - 16);
+    // The kernel's page tables, what cpu_switchto compares %cr3 with (see the deviations).
+    pcb.pcb_cr3.set(rcr3());
+    PROC0
+        .p_md
+        .md_regs
+        .set((pcb.pcb_kstack.get() as *mut Trapframe).wrapping_sub(1));
 
     // SAFETY: GPROC0_SEL holds the available TSS descriptor init_x86_64 set, loaded once;
     // selector 0 means no LDT.

@@ -220,6 +220,13 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   and takes the virtual timer's PPI through `ampintc`. The `selftest=clock` boot waits for
   `hz` hardclocks and a `timeout(9)`. The host double owns a `cpu_info` of its own so the
   clock queue and the wheel are unit-tested over the dummy timecounter.
+- Processes (M5-b, part 1): `struct proc`/`struct process` are OpenBSD's with the members
+  the scheduler and the kernel threads use; the machine-dependent parts (`mdproc`, `pcb`)
+  come through `machine::proc` (associated types with associated-constant initialisers, so
+  `proc0` is a `static`). `proc0paddr` is a static u-area per arch: proc0's kernel stack
+  stays the boot stack Limine gave us, its pcb lives in the static. `main` sets `curproc`
+  first and builds process 0 as `init_main.c` does; `fork1`, the sleep queues and
+  `cpu_switchto` are part 2.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

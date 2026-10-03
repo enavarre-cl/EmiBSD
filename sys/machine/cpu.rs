@@ -5,15 +5,18 @@
 //! interrupt masking (`spl(9)`); M5 adds `curcpu()` and the `struct cpu_info` members the
 //! clock and scheduler code reach (`ci_queue`, `ci_schedstate`, `ci_randseed`, `ci_curproc`),
 //! the `CLKF_*` macros over the architecture's `struct clockframe`, `need_resched` and the
-//! clock entry points `cpu_initclocks`/`cpu_startclock`/`setstatclockrate`; context switching
-//! comes with part b.
+//! clock entry points `cpu_initclocks`/`cpu_startclock`/`setstatclockrate`; M5-b adds
+//! `curproc` (`ci_curproc`, `set_curproc`) and `proc0paddr`; context switching comes with
+//! part b2.
 
 use core::cell::Cell;
 
 use crate::machine::Machine;
 use crate::machine::bootinfo::BootInfo;
 use crate::sys::clockintr::Clockqueue;
+use crate::sys::proc::Proc;
 use crate::sys::sched::SchedstatePercpu;
+use crate::sys::user::User;
 
 /// Outcome reported through [`Exit::exit`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,8 +103,14 @@ pub trait Cpu {
     /// `ci->ci_randseed`: the seed of `random()` (`lib/libkern/random.c`).
     fn ci_randseed(ci: &Self::CpuInfo) -> &Cell<u32>;
 
-    /// `ci->ci_curproc`: the thread running on the CPU (`struct proc`, M5-b), null when none.
-    fn ci_curproc(ci: &Self::CpuInfo) -> *const ();
+    /// `ci->ci_curproc`: the thread running on the CPU, null before `proc0` is set up.
+    fn ci_curproc(ci: &Self::CpuInfo) -> *const Proc;
+
+    /// `ci->ci_curproc = p`: what `cpu_switchto` and `main`'s `curproc = &proc0` do.
+    fn set_curproc(ci: &Self::CpuInfo, p: *const Proc);
+
+    /// `proc0paddr`: the u-area of `proc0` (`locore` reserves it in C).
+    fn proc0paddr() -> &'static User;
 
     /// `ci->ci_idepth`: the interrupt nesting depth.
     fn ci_idepth(ci: &Self::CpuInfo) -> u32;
@@ -146,6 +155,12 @@ pub const MAXCPUS: u32 = <Machine as Cpu>::MAXCPUS;
 /// `curcpu()` on the selected machine.
 pub fn curcpu() -> &'static CpuInfo {
     Machine::curcpu()
+}
+
+/// `curproc`: the thread running on this CPU, `None` before `proc0` is set up.
+pub fn curproc() -> Option<&'static Proc> {
+    // SAFETY: `ci_curproc` names a thread that is on the CPU, hence alive.
+    unsafe { Machine::ci_curproc(Machine::curcpu()).as_ref() }
 }
 
 /// `cpu_configure` on the selected machine.

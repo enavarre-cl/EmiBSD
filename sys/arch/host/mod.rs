@@ -21,14 +21,17 @@ use std::vec;
 use crate::dev::cons::{CN_LOWPRI, Consdev, set_cn_tab};
 use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::db_machdep::{DbMachdep, PrFn};
+use crate::machine::proc::MachineProc;
 use crate::machine::{
     BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, MachineParam, Pmap, VmParam,
 };
 use crate::sys::clockintr::Clockqueue;
 use crate::sys::errno::Errno;
 use crate::sys::param::NODEV;
+use crate::sys::proc::Proc;
 use crate::sys::sched::SchedstatePercpu;
 use crate::sys::types::{Dev, Paddr, Vaddr, Vsize};
+use crate::sys::user::User;
 use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt};
 use crate::uvm::uvm_page::{
     PHYS_TO_VM_PAGE, VM_PSTRAT_BIGFIRST, VmPage, uvm_page_physsteal, vm_page_to_phys,
@@ -130,6 +133,8 @@ pub struct HostCpuInfo {
     pub ci_randseed: Cell<u32>,
     /// `ci_want_resched`.
     pub ci_want_resched: Cell<i32>,
+    /// `ci_curproc`.
+    pub ci_curproc: Cell<*const Proc>,
 }
 
 // SAFETY: the one host CPU; the tests that touch the queue serialise on their own lock.
@@ -141,7 +146,26 @@ static HOST_CPU_INFO: HostCpuInfo = HostCpuInfo {
     ci_schedstate: SchedstatePercpu::new(),
     ci_randseed: Cell::new(1),
     ci_want_resched: Cell::new(0),
+    ci_curproc: Cell::new(core::ptr::null()),
 };
+
+/// The host's `proc0paddr`.
+static HOST_PROC0PADDR: User = User::new();
+
+/// The host's `struct mdproc`: nothing.
+#[derive(Default)]
+pub struct HostMdproc;
+
+/// The host's `struct pcb`: nothing to switch.
+#[derive(Default)]
+pub struct HostPcb;
+
+impl MachineProc for Machine {
+    type Mdproc = HostMdproc;
+    const MDPROC_INIT: HostMdproc = HostMdproc;
+    type Pcb = HostPcb;
+    const PCB_INIT: HostPcb = HostPcb;
+}
 
 /// The host's `struct clockframe`: nothing to read.
 pub struct HostClockFrame;
@@ -205,8 +229,16 @@ impl Cpu for Machine {
         &ci.ci_randseed
     }
 
-    fn ci_curproc(_ci: &HostCpuInfo) -> *const () {
-        core::ptr::null()
+    fn ci_curproc(ci: &HostCpuInfo) -> *const Proc {
+        ci.ci_curproc.get()
+    }
+
+    fn set_curproc(ci: &HostCpuInfo, p: *const Proc) {
+        ci.ci_curproc.set(p);
+    }
+
+    fn proc0paddr() -> &'static User {
+        &HOST_PROC0PADDR
     }
 
     fn ci_idepth(_ci: &HostCpuInfo) -> u32 {
