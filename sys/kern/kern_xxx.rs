@@ -38,17 +38,22 @@
 //! Upstream: sys/kern/kern_xxx.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M2 ports `reboot()` and `rebooting`, the tail of `panic(9)`;
-//! M8 `sys_reboot` (root only, then `reboot`). `__stack_smash_handler` and
-//! `scdebug_call`/`scdebug_ret` arrive with their subsystems.
+//! M8 `sys_reboot` (root only, then `reboot`) and `scdebug_call`/`scdebug_ret` (option
+//! `SYSCALL_DEBUG`, feature `syscall_debug`). `__stack_smash_handler` arrives with its
+//! subsystem.
 //!
 //! ## Deviations
 //! - `KASSERT((howto & RB_NOSYNC) || curproc != NULL)`: `curproc` arrives with M5; the
 //!   assertion returns with it.
 
+#[cfg(feature = "syscall_debug")]
+use core::sync::atomic::AtomicI32;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_time::stop_periodic_resettodr;
+#[cfg(feature = "syscall_debug")]
+use crate::kern::subr_prf::printf;
 use crate::machine::cpu::boot;
 use crate::sys::errno::Errno;
 use crate::sys::proc::Proc;
@@ -78,4 +83,100 @@ pub fn reboot(howto: i32) -> ! {
     REBOOTING.store(true, Ordering::Relaxed);
 
     boot(howto)
+}
+
+/// `SCDEBUG_CALLS`: show calls.
+#[cfg(feature = "syscall_debug")]
+pub const SCDEBUG_CALLS: i32 = 0x0001;
+/// `SCDEBUG_RETURNS`: show returns.
+#[cfg(feature = "syscall_debug")]
+pub const SCDEBUG_RETURNS: i32 = 0x0002;
+/// `SCDEBUG_ALL`: even syscalls that are implemented.
+#[cfg(feature = "syscall_debug")]
+pub const SCDEBUG_ALL: i32 = 0x0004;
+/// `SCDEBUG_SHOWARGS`: show arguments to calls.
+#[cfg(feature = "syscall_debug")]
+pub const SCDEBUG_SHOWARGS: i32 = 0x0008;
+
+/// `scdebug`: what `scdebug_call`/`scdebug_ret` show (`ddb` or a debugger may change it).
+#[cfg(feature = "syscall_debug")]
+pub static SCDEBUG: AtomicI32 = AtomicI32::new(SCDEBUG_CALLS | SCDEBUG_RETURNS | SCDEBUG_SHOWARGS);
+
+/// Whether `scdebug` asks about system call `code`: every call with `SCDEBUG_ALL`, else only
+/// the out-of-range and unimplemented (`sys_nosys`) ones.
+#[cfg(feature = "syscall_debug")]
+fn scdebug_wanted(code: Register) -> bool {
+    use crate::kern::init_sysent::SYSENT;
+    SCDEBUG.load(Ordering::Relaxed) & SCDEBUG_ALL != 0
+        || usize::try_from(code).map_or(true, |c| {
+            SYSENT.get(c).is_none_or(|e| {
+                e.sy_call as *const () == crate::kern::kern_sig::sys_nosys as *const ()
+            })
+        })
+}
+
+/// `scdebug_call`: prints a system call (`SYSCALL_DEBUG`).
+#[cfg(feature = "syscall_debug")]
+pub fn scdebug_call(p: &Proc, code: Register, args: &crate::sys::systm::SysArgs) {
+    use crate::kern::init_sysent::SYSENT;
+    use crate::kern::subr_prf::Str;
+    use crate::kern::syscalls::SYSCALLNAMES;
+
+    let scdebug = SCDEBUG.load(Ordering::Relaxed);
+    if scdebug & SCDEBUG_CALLS == 0 || !scdebug_wanted(code) {
+        return;
+    }
+    let pr = p.process();
+    let _ = printf(format_args!(
+        "proc {} ({}): num ",
+        pr.ps_pid.get(),
+        Str(pr.comm())
+    ));
+    match usize::try_from(code).ok().filter(|&c| c < SYSENT.len()) {
+        None => {
+            let _ = printf(format_args!("OUT OF RANGE ({})", code as i64));
+        }
+        Some(c) => {
+            let _ = printf(format_args!("{c} call: {}", SYSCALLNAMES[c]));
+            if scdebug & SCDEBUG_SHOWARGS != 0 {
+                let _ = printf(format_args!("("));
+                let n = SYSENT[c].sy_argsize as usize / size_of::<Register>();
+                for (i, a) in args.iter().take(n).enumerate() {
+                    let sep = if i == 0 { "" } else { ", " };
+                    let _ = printf(format_args!("{sep}{a:#x}"));
+                }
+                let _ = printf(format_args!(")"));
+            }
+        }
+    }
+    let _ = printf(format_args!("\n"));
+}
+
+/// `scdebug_ret`: prints a system call's return (`SYSCALL_DEBUG`).
+#[cfg(feature = "syscall_debug")]
+pub fn scdebug_ret(p: &Proc, code: Register, error: i32, retval: &[Register; 2]) {
+    use crate::kern::init_sysent::SYSENT;
+
+    if SCDEBUG.load(Ordering::Relaxed) & SCDEBUG_RETURNS == 0 || !scdebug_wanted(code) {
+        return;
+    }
+    let pr = p.process();
+    let _ = printf(format_args!(
+        "proc {} ({}): num ",
+        pr.ps_pid.get(),
+        crate::kern::subr_prf::Str(pr.comm())
+    ));
+    match usize::try_from(code).ok().filter(|&c| c < SYSENT.len()) {
+        None => {
+            let _ = printf(format_args!("OUT OF RANGE ({})", code as i64));
+        }
+        // An off_t fits the one 64-bit register on both architectures.
+        Some(c) => {
+            let _ = printf(format_args!(
+                "{c} ret: err = {error}, rv = {:#x}",
+                retval[0]
+            ));
+        }
+    }
+    let _ = printf(format_args!("\n"));
 }

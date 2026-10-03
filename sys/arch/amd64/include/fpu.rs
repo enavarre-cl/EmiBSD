@@ -6,14 +6,19 @@
 //! Upstream: sys/arch/amd64/include/fpu.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M5 ports `struct fxsave64`, `struct xstate_hdr` and `struct
-//! savefpu` (the `pcb` embeds one) and the initial control words. The FPU functions
-//! (`fpuinit`, `fputrap`, `fpusave`, `xrstor_*`, `xsetbv_user`) and the `xsave_mask`
-//! globals arrive with user-mode threads (M6), which are the first to use the FPU.
+//! savefpu` (the `pcb` embeds one) and the initial control words; M8 the FPU interface:
+//! `fpu_cleandata`, `fpureset`, the `locore.S` routines (`xrstor_user`, `xrstor_kern`,
+//! `fpusave`, `fpusavereset`) and the instruction macros (`fninit`, `fwait`, `fxsave`,
+//! `ldmxcsr`, `fldcw`). `fpuinit`, `fputrap` and the globals are `amd64/fpu.rs`'s.
+//! `xsetbv_user` waits for the XSAVE support (see `amd64/fpu.rs`).
 //!
 //! If the CPU supports xsave/xrstor then we use them so that we can provide AVX support.
 //! Otherwise we require fxsave/fxrstor, as the SSE registers are part of the ABI for
 //! passing floating point values. While fxsave/fxrstor only required 16-byte alignment for
 //! the save area, xsave/xrstor requires the save area to have 64-byte alignment.
+
+use core::arch::asm;
+use core::ptr;
 
 /// `struct fxsave64`.
 #[repr(C, packed)]
@@ -110,6 +115,74 @@ pub const INITIAL_NPXCW: u16 = 0x037f;
 pub const INITIAL_MXCSR: u32 = 0x1f80;
 /// `__INITIAL_MXCSR_MASK__`.
 pub const INITIAL_MXCSR_MASK: u32 = 0xffbf;
+
+unsafe extern "C" {
+    /// `xrstor_user(addr, mask)`: loads the state at `addr`, which might not be trustable
+    /// (a `sigreturn`): a #GP is caught (`trap0d`); returns 0 if it loaded, 1 if it trapped.
+    /// The `fxrstor` form: `mask` is unused until XSAVE.
+    pub fn xrstor_user(addr: *const Savefpu, mask: u64) -> i32;
+    /// `xrstor_kern(addr, mask)`: loads the state at `addr`, assumed trusted (unaltered
+    /// since the kernel saved it).
+    pub fn xrstor_kern(addr: *const Savefpu, mask: u64);
+    /// `fpusave(addr)`: saves the current state, but retains it in the FPU.
+    pub fn fpusave(addr: *mut Savefpu);
+    /// `fpusavereset(addr)`: saves the current state and resets the FPU to the initial
+    /// (kernel) state.
+    pub fn fpusavereset(addr: *mut Savefpu);
+}
+
+/// `fpu_cleandata`: the save area with everything reset (proc0's, filled by `cpu_init`).
+pub fn fpu_cleandata() -> *mut Savefpu {
+    crate::arch::amd64::amd64::machdep::proc0paddr()
+        .u_pcb
+        .pcb_savefpu
+        .get()
+}
+
+/// `fpureset()`: loads the clean state.
+pub fn fpureset() {
+    let mask =
+        crate::arch::amd64::amd64::fpu::XSAVE_MASK.load(core::sync::atomic::Ordering::Relaxed);
+    // SAFETY: fpu_cleandata is a kernel-made save area, valid for the kernel's lifetime.
+    unsafe { xrstor_kern(fpu_cleandata(), mask) };
+}
+
+/// `fninit()`.
+#[inline]
+pub fn fninit() {
+    // SAFETY: resets the x87 unit's control, status and tag words; touches no memory.
+    unsafe { asm!("fninit", options(nomem, nostack)) };
+}
+
+/// `fwait()`.
+#[inline]
+pub fn fwait() {
+    // SAFETY: waits for pending x87 exceptions; touches no memory.
+    unsafe { asm!("fwait", options(nomem, nostack)) };
+}
+
+/// `fxsave(addr)`: "should be fxsave64, but where we use this it doesn't matter". Takes the
+/// `savefpu` whose `fp_fxsave` (at offset 0) it fills: `struct fxsave64` is packed here, and
+/// the instruction needs the 16-byte alignment the C's `aligned(16)` local gives.
+#[inline]
+pub fn fxsave(addr: &mut Savefpu) {
+    // SAFETY: writes the first 512 bytes of `addr`, its `fp_fxsave`, 64-byte aligned.
+    unsafe { asm!("fxsave [{}]", in(reg) ptr::from_mut(addr), options(nostack)) };
+}
+
+/// `ldmxcsr(addr)`.
+#[inline]
+pub fn ldmxcsr(addr: &u32) {
+    // SAFETY: loads MXCSR from `addr`; the callers pass a value with the reserved bits clear.
+    unsafe { asm!("ldmxcsr [{}]", in(reg) ptr::from_ref(addr), options(nostack, readonly)) };
+}
+
+/// `fldcw(addr)`.
+#[inline]
+pub fn fldcw(addr: &u16) {
+    // SAFETY: loads the x87 control word from `addr`.
+    unsafe { asm!("fldcw [{}]", in(reg) ptr::from_ref(addr), options(nostack, readonly)) };
+}
 
 const _: () = {
     assert!(core::mem::size_of::<Fxsave64>() == 512);

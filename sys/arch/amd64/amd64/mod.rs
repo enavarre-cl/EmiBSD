@@ -16,6 +16,7 @@ pub mod cpu;
 pub mod db_interface;
 pub mod db_trace;
 pub mod disksubr;
+pub mod fpu;
 pub mod i8259;
 pub mod intr;
 pub mod lapic;

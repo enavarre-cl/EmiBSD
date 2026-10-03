@@ -954,6 +954,10 @@ impl crate::machine::autoconf::Autoconf for Machine {
     fn nam2blk() -> &'static [crate::sys::device::Nam2blk] {
         &amd64::autoconf::NAM2BLK
     }
+
+    fn diskconf() {
+        amd64::autoconf::diskconf()
+    }
 }
 
 /// The disk label location (`<machine/disklabel.h>`) and label I/O (`disksubr.c`).

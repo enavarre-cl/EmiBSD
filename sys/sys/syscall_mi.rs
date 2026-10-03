@@ -187,7 +187,9 @@ pub fn mi_syscall(
     // refresh the thread's cache of the process's creds
     refreshcreds(p);
 
-    // SYSCALL_DEBUG, dt(4), KTRACE: not configured.
+    #[cfg(feature = "syscall_debug")]
+    crate::kern::kern_xxx::scdebug_call(p, code, argp);
+    // dt(4), KTRACE: not configured.
 
     // SP must be within MAP_STACK space: uvm_map_inentry(p, &p->p_spinentry, PROC_STACK(p),
     // ...) with the user map.
@@ -207,11 +209,14 @@ pub fn mi_syscall(
 #[inline]
 pub fn mi_syscall_return(
     p: &Proc,
-    _code: Register,
-    _error: Result<(), Errno>,
-    _retval: &[Register; 2],
+    code: Register,
+    error: Result<(), Errno>,
+    retval: &[Register; 2],
 ) {
-    // SYSCALL_DEBUG, dt(4), KTRACE: not configured.
+    #[cfg(feature = "syscall_debug")]
+    crate::kern::kern_xxx::scdebug_ret(p, code, error.err().map_or(0, |e| e as i32), retval);
+    let _ = (code, error, retval);
+    // dt(4), KTRACE: not configured.
     userret(p);
 }
 

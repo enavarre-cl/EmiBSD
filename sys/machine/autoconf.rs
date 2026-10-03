@@ -35,6 +35,10 @@ pub trait Autoconf {
     /// `nam2blk[]`: the disk drivers' names and block majors, from the machine's
     /// `autoconf.c` (`findblkmajor`, `findblkname`; no terminating entry).
     fn nam2blk() -> &'static [Nam2blk];
+
+    /// `diskconf()`: finds the boot device and configures the root, swap and dump devices
+    /// (`setroot`); `main` calls it once autoconfiguration is done.
+    fn diskconf();
 }
 
 /// `cfdata` on the selected machine.
@@ -60,6 +64,11 @@ pub fn pdevinit() -> &'static [Pdevinit] {
 /// `device_register` on the selected machine.
 pub fn device_register(dev: &Device, aux: *mut c_void) {
     Machine::device_register(dev, aux)
+}
+
+/// `diskconf` on the selected machine.
+pub fn diskconf() {
+    Machine::diskconf()
 }
 
 /// `nam2blk` on the selected machine.

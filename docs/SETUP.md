@@ -63,7 +63,7 @@ arch-specific code, set `rust-analyzer.cargo.target` to one of the bare targets 
 
 `just userland` (`cargo xtask userland --arch amd64|arm64`) cross-compiles OpenBSD's own C,
 unmodified, from `reference/openbsd-src`: `/usr/include`, `lib/csu`, `libc.a`, `libutil.a`,
-`init(8)`, `ksh(1)`, `echo(1)` and `ls(1)`, and the ffs ramdisk image `ramdisk.ffs` (made by
+`init(8)`, `ksh(1)`, `cat(1)`, `echo(1)`, `ls(1)` and `uname(1)`, and the ffs ramdisk image `ramdisk.ffs` (made by
 OpenBSD's makefs(8), built for the Mac with the same clang), into `target/userland/<arch>/`. It is not part of
 `just ci`. The user approved these tools on 2026-10-03; nothing else is installed for it:
 

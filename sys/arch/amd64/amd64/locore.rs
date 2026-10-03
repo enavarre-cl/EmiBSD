@@ -42,7 +42,7 @@ use core::ffi::c_void;
 use core::mem::offset_of;
 use core::ptr;
 
-use crate::arch::amd64::include::cpu::{CPUPF_USERSEGS, CpuInfo};
+use crate::arch::amd64::include::cpu::{CPUPF_USERSEGS, CPUPF_USERXSTATE, CpuInfo};
 use crate::arch::amd64::include::frame::{IretqFrame, Trapframe};
 use crate::arch::amd64::include::pcb::Pcb;
 use crate::arch::amd64::include::proc::MDP_IRET;
@@ -111,6 +111,10 @@ global_asm!(
     MDP_IRET = const MDP_IRET,
     CI_PFLAGS = const offset_of!(CpuInfo, ci_pflags),
     CPUPF_USERSEGS = const CPUPF_USERSEGS,
+    CPUPF_USERXSTATE = const CPUPF_USERXSTATE,
+    PCB_SAVEFPU = const offset_of!(Pcb, pcb_savefpu),
+    PROC0_UAREA = sym crate::arch::amd64::amd64::machdep::PROC0_UAREA,
+    PROC0_SAVEFPU_OFF = const offset_of!(crate::sys::user::Uarea, u.u_pcb.pcb_savefpu),
     PCB_FSBASE = const offset_of!(Pcb, pcb_fsbase),
     MSR_FSBASE = const MSR_FSBASE,
     SYS_SIGRETURN = const SYS_sigreturn,

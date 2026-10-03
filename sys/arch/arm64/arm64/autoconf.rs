@@ -23,12 +23,15 @@
 //!
 //! Status: `wip`. `cpu_configure` runs autoconfiguration from `config_rootfound("mainbus")`
 //! (M7b), which attaches the interrupt controller and the generic timer from the device
-//! tree; `device_register` and `nam2blk[]` are here; `diskconf` and `unmap_startup` wait for
-//! disks and the boot-only text. `cold` lives in `sys/systm.rs`.
+//! tree; `device_register`, `diskconf` and `nam2blk[]` are here; `unmap_startup` waits for
+//! the boot-only text. `cold` lives in `sys/systm.rs`.
 //!
 //! ## Deviations
 //! - `unmap_startup` (with its `codepatch_disable`) and
 //!   `cpu_identify_cleanup` are reported.
+//! - `diskconf`: `NFSCLIENT` (the boot MAC's interface) is not configured, so `setroot` gets
+//!   no boot device, as in C without it; `dumpconf` (`machdep.c`, crash dumps) is reported;
+//!   `HIBERNATE` is not configured.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -43,6 +46,14 @@ use crate::sys::device::{Device, Nam2blk};
 use crate::unported;
 
 /// `nam2blk[]`: the disk drivers' names and block majors (`findblkmajor`, `findblkname`).
+/// `diskconf`: `setroot` with the boot device (none without `NFSCLIENT`).
+pub fn diskconf() {
+    crate::kern::subr_disk::setroot(None, 0, crate::sys::reboot::RB_USERREQ);
+    let _ = crate::unported!("dumpconf (machdep.c)");
+    // HIBERNATE: not configured.
+}
+
+/// `nam2blk[]`: the disk drivers' names and block majors.
 pub static NAM2BLK: [Nam2blk; 5] = [
     Nam2blk {
         name: b"wd",

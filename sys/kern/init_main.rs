@@ -487,12 +487,13 @@ pub fn main() -> ! {
     // NVSCSI / NSOFTRAID: not configured.
 
     // Configure root/swap devices
-    let _ = unported!("diskconf");
+    crate::machine::autoconf::diskconf();
 
     // Make debug symbols available in ddb.
     let _ = unported!("db_ctf_init");
 
-    // SAFETY: written only by `setroot` (subr_disk.c, not ported), before main.
+    // SAFETY: written only by the boot path (`swapconf_rdroot`) and `setroot`, both before
+    // this read, on this thread.
     let mountroot = unsafe { MOUNTROOT.read() };
     let mounted = match mountroot {
         None => {

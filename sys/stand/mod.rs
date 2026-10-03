@@ -138,7 +138,12 @@ unsafe extern "C" fn _start() -> ! {
             match boot.module(b"ramdisk.ffs") {
                 // SAFETY: the module is never reclaimed, is mapped read-write for the
                 // kernel's lifetime, and nothing but rd(4) uses it from here on.
-                Some(rd) => unsafe { rd_root_image_set(rd.base, rd.data.len()) },
+                // A ramdisk makes this kernel `bsd.rd`: `config bsd root on rd0a swap on rd0b`
+                // (sys/conf/swapgeneric.rs); `swapconf_rdroot` runs before main reads it.
+                Some(rd) => unsafe {
+                    rd_root_image_set(rd.base, rd.data.len());
+                    bsd::conf::swapgeneric::swapconf_rdroot();
+                },
                 None => {
                     kprintf!("rd: no ramdisk module\n");
                 }

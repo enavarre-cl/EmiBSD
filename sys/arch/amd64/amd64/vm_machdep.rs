@@ -73,7 +73,6 @@ use crate::dev::rnd::arc4random;
 use crate::kassert;
 use crate::kern::init_main::PROC0;
 use crate::sys::proc::Proc;
-use crate::unported;
 
 /// `cpu_fork`: finish a fork operation, with process `p2` nearly set up. Copy and update the
 /// kernel stack and pcb, making the child ready to run, and marking it so that it can return
@@ -92,7 +91,9 @@ pub fn cpu_fork(
 
     // Save the fpu h/w state to p1's pcb so that we can copy it.
     if !ptr::eq(p1, &PROC0) && ci.ci_pflags.get() & CPUPF_USERXSTATE != 0 {
-        let _ = unported!("cpu_fork: fpusave of a user-mode parent (M6)");
+        // SAFETY: p1 is curproc (cpu_fork runs in the parent), its own save area; the CPU
+        // holds its state.
+        unsafe { crate::arch::amd64::include::fpu::fpusave(pcb1.pcb_savefpu.get()) };
     }
 
     p2.p_md.md_flags.set(p1.p_md.md_flags.get());

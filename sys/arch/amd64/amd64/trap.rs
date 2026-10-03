@@ -124,7 +124,6 @@ use crate::sys::syscall::SYS_MAXSYSCALL;
 use crate::sys::syscall_mi::{mi_ast, mi_child_return, mi_syscall, mi_syscall_return};
 use crate::sys::systm::SysArgs;
 use crate::sys::types::Register;
-use crate::unported;
 use crate::uvm::uvm_extern::VmProt;
 use crate::uvm::uvm_fault::uvm_fault;
 use crate::uvm::uvm_init::UVMEXP;
@@ -469,11 +468,8 @@ pub extern "C" fn usertrap(frame: &mut Trapframe) {
         // privileged instruction fault
         T_PRIVINFLT => (SIGILL, ILL_PRVOPC),
         T_DIVIDE => (SIGFPE, FPE_INTDIV),
-        // real arithmetic exceptions: fputrap(type) gives the code (fpu.c, not ported)
-        T_ARITHTRAP | T_XMM => {
-            let _ = unported!("usertrap: fputrap (fpu.c)");
-            (SIGFPE, 0)
-        }
+        // real arithmetic exceptions
+        T_ARITHTRAP | T_XMM => (SIGFPE, crate::arch::amd64::amd64::fpu::fputrap(type_)),
         // bpt instruction fault, trace trap
         T_BPTFLT | T_TRCTRAP => (SIGTRAP, TRAP_BRKPT),
         T_CP => (

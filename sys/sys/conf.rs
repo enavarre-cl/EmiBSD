@@ -85,6 +85,10 @@ use crate::sys::types::{Daddr, Dev, Off, Paddr};
 use crate::sys::uio::Uio;
 use crate::unported;
 
+/// `swdevt[]`: the swap device table, defined by the kernel configuration
+/// (`sys/conf/swapgeneric.rs`).
+pub use crate::conf::swapgeneric::SWDEVT;
+
 // Types for d_type
 
 /// A disk.

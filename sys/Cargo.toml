@@ -29,6 +29,7 @@ pool_debug = []   # OpenBSD `option POOL_DEBUG` -> pool_debug = 1
 vmmap_debug = []  # OpenBSD `option VMMAP_DEBUG` -> uvm_tree_sanity, uvm_tree_size_chk, vmspace_validate
 ffs = []          # OpenBSD `option FFS`  -> the fast file system (sys/ufs), in vfsconflist[]
 ffs2 = ["ffs"]    # OpenBSD `option FFS2` -> FFS2 (UFS2 dinodes) support in ffs
+syscall_debug = [] # OpenBSD `option SYSCALL_DEBUG` -> scdebug_call/scdebug_ret print system calls
 qemu = []         # QEMU-only exits (isa-debug-exit, semihosting) and shortcuts
 
 [dependencies]

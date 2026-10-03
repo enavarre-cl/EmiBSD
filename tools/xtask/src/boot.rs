@@ -492,8 +492,12 @@ pub struct SmokeOptions<'a> {
     pub expects: &'a [&'a str],
     /// The QEMU exit status expected.
     pub status: i32,
-    /// `(after this line, send this text)` on the serial console.
-    pub send: Option<(&'a str, &'a str)>,
+    /// `(after this line, send this text)` on the serial console, in order: each pair waits
+    /// for its trigger line after the previous text was sent.
+    pub sends: &'a [(&'a str, &'a str)],
+    /// `--until-seen`: succeed as soon as every expected line is seen, and stop QEMU (a
+    /// shell session has no way to end the emulator).
+    pub until_seen: bool,
     /// The init module to put on the image.
     pub init: Option<&'a Path>,
     /// The ramdisk module to put on the image.
@@ -509,7 +513,8 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         cmdline,
         expects,
         status,
-        send,
+        sends,
+        until_seen,
         init,
         ramdisk,
         expect_ramdisk,
@@ -531,7 +536,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
     };
     let expected_status = status;
     let mut cmd = qemu_command(root, arch, &image, "stdio")?;
-    cmd.stdin(if send.is_some() {
+    cmd.stdin(if !sends.is_empty() {
         Stdio::piped()
     } else {
         Stdio::null()
@@ -553,15 +558,24 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
     };
     let err_reader = thread::spawn(move || slurp(stderr));
 
+    let rd_expect = expect_ramdisk.then(|| ramdisk_expectation(ramdisk));
+    let all_expects: Vec<&str> = expects
+        .iter()
+        .copied()
+        .chain(rd_expect.as_deref())
+        .collect();
     let mut timed_out = false;
-    let mut pending_send = send;
+    let mut stopped_when_seen = false;
+    let mut next_send = 0;
+    // Where in the transcript the next trigger is looked for: after the previous send.
+    let mut search_from = 0;
     let exit = loop {
-        if let Some((after, text)) = pending_send {
-            let seen = transcript
-                .lock()
-                .map(|t| String::from_utf8_lossy(&t).contains(after))
-                .unwrap_or(false);
-            if seen {
+        if let Some((after, text)) = sends.get(next_send).copied() {
+            let found = transcript.lock().ok().and_then(|t| {
+                let s = String::from_utf8_lossy(&t[search_from.min(t.len())..]).into_owned();
+                s.find(after).map(|_| t.len())
+            });
+            if let Some(len) = found {
                 if let Some(stdin) = stdin.as_mut() {
                     stdin.write_all(text.as_bytes())?;
                     stdin.flush()?;
@@ -570,7 +584,23 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
                         started.elapsed().as_secs_f32()
                     );
                 }
-                pending_send = None;
+                search_from = len;
+                next_send += 1;
+            }
+        }
+        if until_seen && next_send == sends.len() {
+            let all = transcript
+                .lock()
+                .map(|t| {
+                    let s = String::from_utf8_lossy(&t);
+                    all_expects.iter().all(|e| s.contains(e))
+                })
+                .unwrap_or(false);
+            if all {
+                stopped_when_seen = true;
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
             }
         }
         if let Some(status) = child.try_wait()? {
@@ -592,15 +622,13 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         .unwrap_or_default();
     let diagnostics = String::from_utf8_lossy(&err_reader.join().unwrap_or_default()).into_owned();
 
-    let rd_expect = expect_ramdisk.then(|| ramdisk_expectation(ramdisk));
-    let missing: Vec<&str> = expects
+    let missing: Vec<&str> = all_expects
         .iter()
         .copied()
-        .chain(rd_expect.as_deref())
         .filter(|e| !serial.contains(e))
         .collect();
     let code = exit.and_then(|s| s.code());
-    let ok = missing.is_empty() && code == Some(expected_status);
+    let ok = missing.is_empty() && (stopped_when_seen || code == Some(expected_status));
     let elapsed = started.elapsed().as_secs_f32();
     if ok {
         // The kernel's own lines, for the record; firmware and bootloader chatter before the
@@ -615,9 +643,14 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
             }
         }
         println!(
-            "smoke {}: ok in {elapsed:.1}s ({} expected line(s) seen, status {expected_status})",
+            "smoke {}: ok in {elapsed:.1}s ({} expected line(s) seen, {})",
             arch.name(),
-            expects.len()
+            all_expects.len(),
+            if stopped_when_seen {
+                "stopped once all were seen".to_string()
+            } else {
+                format!("status {expected_status}")
+            }
         );
         return Ok(());
     }

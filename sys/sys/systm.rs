@@ -85,13 +85,9 @@ pub static COLD: AtomicBool = AtomicBool::new(true);
 /// chance (`int safepri = 0` in each `machdep.c`).
 pub static SAFEPRI: AtomicI32 = AtomicI32::new(0);
 
-/// `rootdev`: the root device, `NODEV` until `setroot` picks one (the C defines it in
-/// `config(8)`'s `swapgeneric.c`).
-pub static ROOTDEV: AtomicI32 = AtomicI32::new(-1);
-
-/// `mountroot`: the routine that mounts the root file system, NULL while the kernel is
-/// "generic" (no root device chosen). Written once by `setroot` before `main` reads it.
-pub static MOUNTROOT: libkern::StaticCell<Option<MountrootFn>> = libkern::StaticCell::new(None);
+/// `rootdev`, `dumpdev`, `mountroot`: defined by the kernel configuration (`config(8)`'s
+/// `swapgeneric.c`, `sys/conf/swapgeneric.rs`).
+pub use crate::conf::swapgeneric::{DUMPDEV, MOUNTROOT, ROOTDEV};
 
 /// The type of `mountroot`: mounts the root file system and puts it on `mountlist`.
 pub type MountrootFn = fn() -> Result<(), Errno>;

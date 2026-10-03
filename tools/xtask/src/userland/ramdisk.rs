@@ -63,6 +63,13 @@ fn disktab_entry(sectors: u64) -> String {
     )
 }
 
+/// The files the ramdisk's `/etc` holds: `motd`, the text `cat /etc/motd` shows in the smoke
+/// test. Written here (OpenBSD's `etc/` is not in the reference clone).
+const ETC_FILES: &[(&str, &str)] = &[(
+    "motd",
+    "Welcome to EmiBSD 7.8: OpenBSD's init(8) and ksh(1) on an ffs ramdisk root.\n",
+)];
+
 /// A fixed timestamp (`makefs -T`: inode times and generation numbers), 2026-10-02, the date
 /// of the reference pin. The image is not bit-for-bit reproducible: makefs gives the label a
 /// random `d_uid` (`arc4random_buf`).
@@ -194,6 +201,12 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
         fs::remove_dir_all(&staging).map_err(|e| format!("{}: {e}", staging.display()))?;
     }
     copy_tree(&ctx.out.join("root"), &staging, &mut HashMap::new())?;
+    let etc = staging.join("etc");
+    fs::create_dir_all(&etc).map_err(|e| format!("{}: {e}", etc.display()))?;
+    for (name, text) in ETC_FILES {
+        let p = etc.join(name);
+        fs::write(&p, text).map_err(|e| format!("{}: {e}", p.display()))?;
+    }
     let dev = staging.join("dev");
     fs::create_dir_all(&dev).map_err(|e| format!("{}: {e}", dev.display()))?;
     for (name, kind, major, minor, mode) in DEVICES {
@@ -221,7 +234,7 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
         .arg(&staging))?;
     let size = fs::metadata(&image).map(|m| m.len()).unwrap_or(0);
     println!(
-        "  ramdisk: {} ({size} bytes; makefs -t ffs -o {FS_OPTIONS}; /dev: {})",
+        "  ramdisk: {} ({size} bytes; makefs -t ffs -o {FS_OPTIONS}; /etc: motd; /dev: {})",
         image.display(),
         DEVICES.iter().map(|d| d.0).collect::<Vec<_>>().join(" ")
     );

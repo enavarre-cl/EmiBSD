@@ -142,11 +142,31 @@ IDTVEC	trap0b
 IDTVEC	trap0c
 	TRAP	{T_STKFLT}
 /*
- * The #GP handler's special cases (faults in iretq to userspace, in xrstor, in xsetbv and in
- * rdmsr_safe, resumed in their stubs) have no takers yet: M6.
+ * General protection fault: a #GP in xrstor_user (an untrusted state from sigreturn) resumes
+ * in xrstor_resume, which returns 1 to its caller; the iretq-to-userspace, xsetbv and
+ * rdmsr_safe cases have no takers yet. The fault came from kernel mode, so returning to
+ * the stub is a plain iretq (the C's jmp doreti_iret).
  */
 IDTVEC	trap0d
+	pushq	%rdx
+	pushq	%rcx
+	movq	24(%rsp),%rdx		/* over %r[cd]x and err to %rip */
+	leaq	xrstor_fault(%rip),%rcx
+	cmpq	%rcx,%rdx
+	je	.Lhandle_xrstor
+	popq	%rcx
+	popq	%rdx
 	TRAP	{T_PROTFLT}
+
+.Lhandle_xrstor:
+	/* xrstor faulted; just resume in xrstor_resume */
+	leaq	xrstor_resume(%rip),%rcx
+	lfence		/* block speculation through conditionals above */
+	movq	%rcx,24(%rsp)		/* over %r[cd]x and err to %rip */
+	popq	%rcx
+	popq	%rdx
+	addq	$8,%rsp			/* pop the err code */
+	iretq
 IDTVEC	trap0e
 	TRAP	{T_PAGEFLT}
 IDTVEC	intrspurious

@@ -6,4 +6,5 @@
 //! `build.rs` passes).
 
 pub mod param;
+pub mod swapgeneric;
 pub mod vers;

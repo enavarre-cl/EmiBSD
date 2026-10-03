@@ -1080,6 +1080,10 @@ impl Autoconf for Machine {
         &[]
     }
 
+    fn diskconf() {
+        // No boot device and no root on the host: the tests mount what they make.
+    }
+
     fn nam2blk() -> &'static [crate::sys::device::Nam2blk] {
         // No disk driver names a block major on the host, so `disk_attach` queues no label
         // read on `systq` in the tests.

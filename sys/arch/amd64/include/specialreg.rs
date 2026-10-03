@@ -57,6 +57,29 @@ pub const CR0_ET: u64 = 0x0000_0010;
 /// `CR0_PG`: PaGing enable.
 pub const CR0_PG: u64 = 0x8000_0000;
 
+/// `CR4_PSE`: large (4MB) page size enable.
+pub const CR4_PSE: u64 = 0x0000_0010;
+/// `CR4_PAE`: physical address extension enable.
+pub const CR4_PAE: u64 = 0x0000_0020;
+/// `CR4_PGE`: page global enable.
+pub const CR4_PGE: u64 = 0x0000_0080;
+/// `CR4_OSFXSR`: enable fxsave/fxrestor and SSE.
+pub const CR4_OSFXSR: u64 = 0x0000_0200;
+/// `CR4_OSXMMEXCPT`: enable unmasked SSE exceptions.
+pub const CR4_OSXMMEXCPT: u64 = 0x0000_0400;
+/// `CR4_UMIP`: user mode instruction prevention.
+pub const CR4_UMIP: u64 = 0x0000_0800;
+/// `CR4_PCIDE`: enable process-context IDs.
+pub const CR4_PCIDE: u64 = 0x0002_0000;
+/// `CR4_OSXSAVE`: enable XSAVE and extended states.
+pub const CR4_OSXSAVE: u64 = 0x0004_0000;
+/// `CR4_SMEP`: supervisor mode exec protection.
+pub const CR4_SMEP: u64 = 0x0010_0000;
+/// `CR4_SMAP`: supervisor mode access prevention.
+pub const CR4_SMAP: u64 = 0x0020_0000;
+/// `CR4_PKE`: user-mode protection keys.
+pub const CR4_PKE: u64 = 0x0040_0000;
+
 /// `CR3_REUSE_PCID`: do not flush the PCID's TLB entries on load.
 pub const CR3_REUSE_PCID: u64 = 1 << 63;
 /// `CR3_PADDR`: the page-table address bits of `CR3`.
@@ -97,6 +120,9 @@ pub const EFER_LMA: u64 = 0x0000_0400;
 /// `EFER_NXE`: No-Execute Enabled.
 pub const EFER_NXE: u64 = 0x0000_0800;
 
+/// `CR4_DEFAULT`: the `CR4` bits every CPU runs with.
+pub const CR4_DEFAULT: u64 = CR4_PAE | CR4_PGE | CR4_PSE | CR4_OSFXSR | CR4_OSXMMEXCPT;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +134,17 @@ mod tests {
         let ours: &[(&str, i64)] = &[
             ("CR0_PE", CR0_PE as i64),
             ("CR0_PG", CR0_PG as i64),
+            ("CR4_PSE", CR4_PSE as i64),
+            ("CR4_PAE", CR4_PAE as i64),
+            ("CR4_PGE", CR4_PGE as i64),
+            ("CR4_OSFXSR", CR4_OSFXSR as i64),
+            ("CR4_OSXMMEXCPT", CR4_OSXMMEXCPT as i64),
+            ("CR4_UMIP", CR4_UMIP as i64),
+            ("CR4_PCIDE", CR4_PCIDE as i64),
+            ("CR4_OSXSAVE", CR4_OSXSAVE as i64),
+            ("CR4_SMEP", CR4_SMEP as i64),
+            ("CR4_SMAP", CR4_SMAP as i64),
+            ("CR4_PKE", CR4_PKE as i64),
             ("CR3_PADDR", CR3_PADDR as i64),
             ("MSR_EFER", i64::from(MSR_EFER)),
             ("EFER_SCE", EFER_SCE as i64),

@@ -77,10 +77,15 @@
 //!
 //! ## Deviations
 //! - `cpu_attach` reports what it cannot do yet: `identifycpu`, `cpu_fix_msrs`,
-//!   `mem_range_attach` (`MTRR`), `cpu_init`, `cpu_init_mwait` and `cpu_init_vmm`; an
+//!   `mem_range_attach` (`MTRR`), `cpu_init_mwait` and `cpu_init_vmm`; an
 //!   application processor (never attached without `MULTIPROCESSOR` tables) is reported
 //!   instead of getting a `km_alloc`ed `cpu_info_full`. `cpu_ca` has no `cpu_activate`
 //!   (suspend/resume): `config_suspend` walks the CPU's children instead.
+//! - `cpu_init` sets `CR4_DEFAULT` (with `CR4_OSFXSR`: user SSE) and fills
+//!   `fpu_cleandata`. Its CPUID-dependent bits wait for `identifycpu`: `CR4_SMEP`,
+//!   `CR4_SMAP`, `CR4_UMIP`, `CR4_PKE` (`pg_xo`), `CR4_PCIDE` (`pmap_use_pcid` is 0) and the
+//!   XSAVE setup (`CR4_OSXSAVE`, `xsave_mask`, `fpu_save_len`, XSAVES), reported; the FPU
+//!   then uses `fxsave` (`amd64/fpu.rs`). `cpu_setup` (vendor quirks) is identcpu's.
 //! - `cpu_match`'s SEV-ES check (`cpu_sev_guestmode`, not ported) only refuses units 1 and
 //!   up, which `MAXCPUS` (1 without `MULTIPROCESSOR`) has already refused.
 //! - `cpu_init_msrs` writes 0 to `MSR_LSTAR`: there is no `Xsyscall` until user mode (M6).
@@ -93,6 +98,7 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::Ordering;
 
+use crate::arch::amd64::amd64::fpu::XSAVE_MASK;
 use crate::arch::amd64::amd64::intr::cpu_intr_init;
 use crate::arch::amd64::amd64::lapic::{lapic_calibrate_timer, lapic_enable};
 use crate::arch::amd64::amd64::locore::Xsyscall;
@@ -102,15 +108,18 @@ use crate::arch::amd64::include::cpu::{
 use crate::arch::amd64::include::cpu_full::{
     CpuInfoFull, DBLFLT_STACK_WORDS, NMI_STACK_WORDS, TRAMP_STACK_WORDS,
 };
-use crate::arch::amd64::include::cpufunc::{rdmsr, wrmsr};
+use crate::arch::amd64::include::cpufunc::{lcr4, rcr4, rdmsr, wrmsr};
 use crate::arch::amd64::include::cpuvar::{CPU_ROLE_AP, CPU_ROLE_BP, CPU_ROLE_SP, CpuAttachArgs};
+use crate::arch::amd64::include::fpu::{
+    INITIAL_MXCSR, INITIAL_NPXCW, Savefpu, fpu_cleandata, fpureset, fpusave, xrstor_user,
+};
 use crate::arch::amd64::include::frame::IretqFrame;
 use crate::arch::amd64::include::intrdefs::IPL_NONE;
 use crate::arch::amd64::include::psl::{PSL_AC, PSL_C, PSL_D, PSL_I, PSL_NT, PSL_T};
 use crate::arch::amd64::include::segments::{GCODE_SEL, GUDATA_SEL, SEL_KPL, SEL_UPL, gsel};
 use crate::arch::amd64::include::specialreg::{
-    EFER_SCE, MSR_CSTAR, MSR_EFER, MSR_FSBASE, MSR_GSBASE, MSR_KERNELGSBASE, MSR_LSTAR, MSR_SFMASK,
-    MSR_STAR,
+    CR4_DEFAULT, EFER_SCE, MSR_CSTAR, MSR_EFER, MSR_FSBASE, MSR_GSBASE, MSR_KERNELGSBASE,
+    MSR_LSTAR, MSR_SFMASK, MSR_STAR,
 };
 use crate::arch::amd64::include::tss::X86_64Tss;
 use crate::kern::subr_prf::{Str, panic, printf};
@@ -225,7 +234,8 @@ pub fn cpu_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
             cpu_intr_init(ci);
             let _ = unported!("identifycpu, cpu_fix_msrs, mem_range_attach (identcpu.c, mtrr.c)");
             // XXX SP fpuinit(ci) is done earlier
-            let _ = unported!("cpu_init, cpu_init_mwait (CR4 features, xsave, mwait)");
+            cpu_init(ci);
+            let _ = unported!("cpu_init_mwait (mwait)");
         }
         CPU_ROLE_BP => {
             printf(format_args!("apid {} (boot processor)\n", caa.cpu_apicid));
@@ -237,7 +247,8 @@ pub fn cpu_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
             lapic_enable();
             lapic_calibrate_timer(ci);
             // XXX BP fpuinit(ci) is done earlier
-            let _ = unported!("cpu_init, cpu_init_mwait (CR4 features, xsave, mwait)");
+            cpu_init(ci);
+            let _ = unported!("cpu_init_mwait (mwait)");
             // NIOAPIC > 0: ioapic_bsp_id = caa->cpu_apicid (ioapic.c is not ported).
         }
         _ => panic(format_args!("unknown processor type??")),
@@ -246,6 +257,40 @@ pub fn cpu_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
     // NVMM > 0
     let _ = unported!("cpu_init_vmm (vmm)");
     // !SMALL_KERNEL: sensordev_install when the CPU has sensors; none are attached yet.
+}
+
+/// `cpu_init`: configure the CPU: `CR4` and, on the primary CPU, the clean FPU state.
+pub fn cpu_init(ci: &CpuInfo) {
+    // configure the CPU if needed: ci->cpu_setup comes from identifycpu (identcpu.c).
+
+    let cr4 = rcr4() | CR4_DEFAULT;
+    let _ = unported!("cpu_init: SMEP/SMAP/UMIP/OSXSAVE/PKE/PCIDE (CPUID features, identcpu.c)");
+    // SAFETY: CR4_DEFAULT adds the paging bits the boot loader already set (PAE, PGE, PSE)
+    // and FXSR/XMM exception support, which every amd64 CPU has.
+    unsafe { lcr4(cr4) };
+
+    // (cpu_ecxfeature & CPUIDECX_XSAVE) && ci->ci_cpuid_level >= 0xd: xsave_mask,
+    // fpu_save_len and XSAVES need identifycpu and the XSAVE codepatches (amd64/fpu.rs).
+
+    if ci.ci_flags.load(Ordering::Relaxed) & CPUF_PRIMARY != 0 {
+        // Clean our FPU save area
+        let sfp = fpu_cleandata();
+        let mask = XSAVE_MASK.load(Ordering::Relaxed);
+        // SAFETY: proc0's save area, which nothing else touches while the boot CPU
+        // configures itself; zeroed and then given the initial control words.
+        unsafe {
+            *sfp = Savefpu::zeroed();
+            (*sfp).fp_fxsave.fx_fcw = INITIAL_NPXCW;
+            (*sfp).fp_fxsave.fx_mxcsr = INITIAL_MXCSR;
+            let _ = xrstor_user(sfp, mask);
+            // cpu_use_xsaves || !xsave_mask: always, without XSAVE
+            fpusave(sfp);
+        }
+    } else {
+        fpureset();
+    }
+
+    // MULTIPROCESSOR: CPUF_RUNNING and the CR4_PGE TLB flush.
 }
 
 /// `cpu_init_msrs`: the `syscall` MSRs and the segment bases of `ci`.

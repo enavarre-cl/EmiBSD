@@ -41,8 +41,8 @@
 //! Upstream: sys/arch/amd64/amd64/autoconf.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. `cold` is `sys/systm.rs`'s; `cpu_configure` runs autoconfiguration from
-//! `config_rootfound("mainbus")` (M7b), `device_register` and `nam2blk[]` are here;
-//! `diskconf` and `unmap_startup` wait for disks and the boot-only text.
+//! `config_rootfound("mainbus")` (M7b), `device_register`, `diskconf` and `nam2blk[]` are
+//! here; `unmap_startup` waits for the boot-only text.
 //!
 //! ## Deviations
 //! - What `bios0`/`acpi0` (the MADT) or `mpbios0` would do for the interrupts while mainbus
@@ -53,6 +53,10 @@
 //!   does after mainbus for `NIOAPIC`) and `intr_enable`. `pmap_randomize`, `map_tramps`,
 //!   `ioapic_enable`, `unmap_startup` and the random-number timeouts are reported;
 //!   `mbuf_dma_64bit_enable` runs and reports the interface list it needs itself.
+//! - `diskconf`: Limine is not boot(8), so there is no `bootdev` (`B_DEVMAGIC`) and no
+//!   `bios_bootmac` (`NFSCLIENT` is not configured either): the boot device is unknown and
+//!   `setroot` gets none. `dkcsumattach` (`dkcsum.c`, the BIOS disk checksums) and
+//!   `dumpconf` (`machdep.c`, crash dumps) are reported; `HIBERNATE` is not configured.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -77,6 +81,16 @@ use crate::unported;
 
 /// `cold`: if set, still working on cold-start.
 pub use crate::sys::systm::COLD;
+
+/// `diskconf`: the boot device (from boot(8)'s `bootdev`, none under Limine) and then
+/// `setroot`.
+pub fn diskconf() {
+    let _ = crate::unported!("dkcsumattach (dkcsum.c)");
+    // bootdev (B_DEVMAGIC) and bios_bootmac come from boot(8): none under Limine.
+    crate::kern::subr_disk::setroot(None, 0, crate::sys::reboot::RB_USERREQ);
+    let _ = crate::unported!("dumpconf (machdep.c)");
+    // HIBERNATE: not configured.
+}
 
 /// `nam2blk[]`: the disk drivers' names and block majors (`findblkmajor`, `findblkname`).
 pub static NAM2BLK: [Nam2blk; 6] = [

@@ -63,12 +63,14 @@ run-arm64: image-arm64
 # `selftest=taskq`, tasks run by systq, systqmp and a created then destroyed queue (status 33);
 # and `selftest=vio`, which brings vio0 up, sends an ARP request for QEMU's gateway and waits
 # for a frame through the receive interrupt (status 33).
-# The plain boot also carries the ffs ramdisk `just userland` makes, when it exists
-# (`--expect-ramdisk`): rd(4) attaches, opens rd0a (its disklabel read from the image) and
-# reads the superblock (`rd0: <N> bytes, ffs magic ok`); without one the kernel says
-# `rd: no ramdisk module` and that is expected instead.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk \
+# All of those boot without a ramdisk (`--ramdisk none`, so the kernel says
+# `rd: no ramdisk module`, `--expect-ramdisk`) and run the Rust stand-in init, the kernel's
+# self-test. Then `smoke-shell` (M8's exit criterion) boots the ffs ramdisk `just userland`
+# makes: rd(4) reads its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs
+# from it and falls back to single user (there is no /etc/rc), and ksh(1) answers
+# `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial console.
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 7.8 (GENERIC) #" \
         --expect "real mem = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
@@ -91,24 +93,24 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-d" \
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=trap" --status 35 \
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=trap" --status 35 \
         --expect "fatal page fault in supervisor mode" --expect "trap type 6 code" \
         --expect "panic: trap type 6, code=" --expect "Starting stack trace..." \
         --expect "End of stack trace." --expect "The operating system has halted."
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=uart" \
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=uart" \
         --send-after "selftest: uart rx interrupt armed" --send 'hello\n' \
         --expect "selftest: uart rx interrupt armed" --expect "selftest: uart echo: hello"
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=clock" \
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=clock" \
         --expect "selftest: clock ok"
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=kthread" \
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=kthread" \
         --expect "selftest: kthread ping-pong ok"
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=taskq" \
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=taskq" \
         --expect "selftest: taskq ok"
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=vio" \
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=vio" \
         --expect "selftest: vio up ok" --expect "selftest: vio rx ok"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk \
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on arm64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 7.8 (GENERIC) #" \
         --expect "real mem  = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
@@ -130,22 +132,48 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-d" \
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=trap" --status 35 \
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=trap" --status 35 \
         --expect "panic: uvm_fault failed:" --expect "Starting stack trace..." \
         --expect "End of stack trace." --expect "The operating system has halted."
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=uart" \
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=uart" \
         --send-after "selftest: uart rx interrupt armed" --send 'hello\n' \
         --expect "selftest: uart rx interrupt armed" --expect "selftest: uart echo: hello"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=clock" \
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=clock" \
         --expect "selftest: clock ok"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=kthread" \
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=kthread" \
         --expect "selftest: kthread ping-pong ok"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=taskq" \
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=taskq" \
         --expect "selftest: taskq ok"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=vio" \
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=vio" \
         --expect "selftest: vio up ok" --expect "selftest: vio rx ok"
+
+# M8: OpenBSD's init(8) and ksh(1) from the ffs ramdisk, driven over the serial console. Needs
+# `just userland` (the ramdisk image); stops once every expected line was seen.
+smoke-shell: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-shell: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "RETURN for sh:" --send '\n' \
+        --send-after "# " --send 'uname -a\n' --send-after "GENERIC#" --send 'uname -sr\n' \
+        --send-after "EmiBSD 7.8" --send 'cat /etc/motd\n' \
+        --send-after "Welcome to EmiBSD" --send 'ls /\n' \
+        --expect "root on rd0a swap on rd0b dump on rd0b" \
+        --expect "Enter pathname of shell or RETURN for sh:" \
+        --expect " 7.8 GENERIC#" --expect "amd64" \
+        --expect "Welcome to EmiBSD 7.8: OpenBSD's init(8) and ksh(1)" \
+        --expect "bin  dev  etc  sbin usr"
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "RETURN for sh:" --send '\n' \
+        --send-after "# " --send 'uname -a\n' --send-after "GENERIC#" --send 'uname -sr\n' \
+        --send-after "EmiBSD 7.8" --send 'cat /etc/motd\n' \
+        --send-after "Welcome to EmiBSD" --send 'ls /\n' \
+        --expect "root on rd0a swap on rd0b dump on rd0b" \
+        --expect "Enter pathname of shell or RETURN for sh:" \
+        --expect " 7.8 GENERIC#" --expect "arm64" \
+        --expect "Welcome to EmiBSD 7.8: OpenBSD's init(8) and ksh(1)" \
+        --expect "bin  dev  etc  sbin usr"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
@@ -153,8 +181,9 @@ symbolize arch:
 
 # --- userland (M8) ---------------------------------------------------------------
 
-# Cross-compile OpenBSD's libc, init(8), ksh(1), echo(1) and ls(1), unmodified, from the reference
-# sources into target/userland/<arch> with Apple clang and LLD 17 (docs/SETUP.md, "Userland
+# Cross-compile OpenBSD's libc, init(8), ksh(1), cat(1), echo(1), ls(1) and uname(1), unmodified,
+# and makefs(8) for the host, from the reference sources into target/userland/<arch> (with the
+# ffs ramdisk image) with Apple clang and LLD 17 (docs/SETUP.md, "Userland
 # toolchain"). Slow and tool-dependent, so not part of `ci`.
 userland:
     cargo xtask userland --arch amd64

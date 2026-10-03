@@ -128,6 +128,7 @@ use crate::arch::amd64::amd64::consinit::consinit;
 use crate::arch::amd64::amd64::cpu::{
     CPU_INFO_FULL_PRIMARY, cpu_enter_pages, cpu_info_primary_init, cpu_init_msrs,
 };
+use crate::arch::amd64::amd64::fpu::{FPU_SAVE_LEN, XSAVE_MASK, fpuinit};
 use crate::arch::amd64::amd64::intr::{intr_default_setup, splraise};
 use crate::arch::amd64::amd64::locore::lgdt;
 use crate::arch::amd64::amd64::pmap::{PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap};
@@ -136,7 +137,9 @@ use crate::arch::amd64::include::cpu::{
     CPUPF_USERSEGS, CPUPF_USERXSTATE, CpuInfo, cpu_info_primary, curcpu,
 };
 use crate::arch::amd64::include::cpufunc::{intr_enable, lidt, lldt, ltr, rcr3};
-use crate::arch::amd64::include::fpu::{Fxsave64, Savefpu, XstateHdr};
+use crate::arch::amd64::include::fpu::{
+    Savefpu, XstateHdr, fpu_cleandata, fpureset, fpusave, xrstor_user,
+};
 use crate::arch::amd64::include::frame::Trapframe;
 use crate::arch::amd64::include::intrdefs::IPL_IPI;
 use crate::arch::amd64::include::param::{PAGE_SIZE, USPACE};
@@ -417,7 +420,7 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
 
     intr_default_setup();
 
-    // fpuinit(&cpu_info_primary): M6.
+    fpuinit();
 
     softintr_init();
     splraise(IPL_IPI);
@@ -582,15 +585,30 @@ pub fn cpu_startup() {
     unsafe { cpu_enter_pages(&CPU_INFO_FULL_PRIMARY) };
 }
 
-/// `fpu_save_len`: the size of the FPU state `sendsig` copies out and `sys_sigreturn` copies
-/// back: the `fxsave` area until `fpu.c` (and with it `xsave`) is ported.
-const FPU_SAVE_LEN: usize = size_of::<Fxsave64>();
-
 /// `initialize_thread_xstate`: give the thread a clean FPU state, the user state from now on
-/// (`CPUPF_USERXSTATE`). The FPU is not ported (`fpu.c`: `fpu_cleandata`, `fpureset`,
-/// `xrstors`, `maybe_enable_user_cet`), so it is reported.
-fn initialize_thread_xstate(_p: &Proc) {
-    let _ = unported!("initialize_thread_xstate: the FPU (fpu.c)");
+/// (`CPUPF_USERXSTATE`).
+fn initialize_thread_xstate(p: &Proc) {
+    // cpu_use_xsaves (xrstors, maybe_enable_user_cet): no XSAVE (amd64/fpu.rs).
+    // Reset FPU state in PCB
+    // SAFETY: the thread's own save area (only it touches it) and the clean one, distinct
+    // and both valid `Savefpu`s; fpu_save_len is at most their size.
+    unsafe {
+        ptr::copy_nonoverlapping(
+            fpu_cleandata().cast::<u8>(),
+            p.pcb().pcb_savefpu.get().cast::<u8>(),
+            FPU_SAVE_LEN.load(Ordering::Relaxed),
+        );
+    }
+
+    if curcpu().ci_pflags.get() & CPUPF_USERXSTATE != 0 {
+        // state in CPU is obsolete; reset it
+        fpureset();
+    }
+
+    // The reset state _is_ the userspace state for this thread now
+    curcpu()
+        .ci_pflags
+        .set(curcpu().ci_pflags.get() | CPUPF_USERXSTATE);
 }
 
 /// `copyoutfpu`: copy out the FPU state, massaging it to be usable from userspace and
@@ -631,9 +649,6 @@ pub fn sendsig(
     // call, trap or AST entry recorded it); only this thread touches it, and no other
     // reference to it is alive while we run.
     let tf = unsafe { &mut *p.p_md.md_regs.get() };
-    // SAFETY: the thread's own FPU save area, which only this thread reads or writes.
-    let sfp = unsafe { &*p.pcb().pcb_savefpu.get() };
-
     let mut ksc = Sigcontext {
         sc_rdi: tf.tf_rdi,
         sc_rsi: tf.tf_rsi,
@@ -667,15 +682,20 @@ pub fn sendsig(
         (tf.tf_rsp as usize).wrapping_sub(128)
     };
 
-    sp = sp.wrapping_sub(FPU_SAVE_LEN);
+    let fpu_save_len = FPU_SAVE_LEN.load(Ordering::Relaxed);
+    sp = sp.wrapping_sub(fpu_save_len);
     // cpu_use_xsaves (sp &= ~63): fpu.c, not ported.
     sp &= !15; // just in case
 
     // Save FPU state to PCB if necessary, then copy it out
     if curcpu().ci_pflags.get() & CPUPF_USERXSTATE != 0 {
-        let _ = unported!("sendsig: fpusave (fpu.c)");
+        // SAFETY: the thread's own save area; the CPU holds its state.
+        unsafe { fpusave(p.pcb().pcb_savefpu.get()) };
     }
-    copyoutfpu(sfp, sp, FPU_SAVE_LEN)?;
+    // SAFETY: the thread's own FPU save area, which only this thread reads or writes; no
+    // write to it happens while this borrow lives.
+    let sfp = unsafe { &*p.pcb().pcb_savefpu.get() };
+    copyoutfpu(sfp, sp, fpu_save_len)?;
 
     initialize_thread_xstate(p);
 
@@ -749,7 +769,7 @@ pub fn sys_sigreturn(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Resu
     let ci = curcpu();
     if ci.ci_pflags.get() & CPUPF_USERXSTATE != 0 {
         ci.ci_pflags.set(ci.ci_pflags.get() & !CPUPF_USERXSTATE);
-        let _ = unported!("sys_sigreturn: fpureset (fpu.c)");
+        fpureset();
     }
 
     // Copy in the FPU state to restore
@@ -762,13 +782,36 @@ pub fn sys_sigreturn(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Resu
                 size_of::<Savefpu>(),
             )
         };
-        if let Err(error) = copyin(ksc.sc_fpstate, &mut sfp[..FPU_SAVE_LEN]) {
-            // memcpy(sfp, fpu_cleandata, fpu_save_len): fpu.c.
-            let _ = unported!("sys_sigreturn: fpu_cleandata (fpu.c)");
+        let fpu_save_len = FPU_SAVE_LEN.load(Ordering::Relaxed);
+        let clean = || {
+            // SAFETY: the clean area and the thread's own, distinct; the byte view above is
+            // not used again.
+            unsafe {
+                ptr::copy_nonoverlapping(
+                    fpu_cleandata().cast::<u8>(),
+                    p.pcb().pcb_savefpu.get().cast::<u8>(),
+                    fpu_save_len,
+                );
+            }
+        };
+        if let Err(error) = copyin(ksc.sc_fpstate, &mut sfp[..fpu_save_len]) {
+            clean();
             return Err(error);
         }
-        // xrstor_user(sfp, xsave_mask), maybe_enable_user_cet(p), CPUPF_USERXSTATE: fpu.c.
-        let _ = unported!("sys_sigreturn: xrstor_user (fpu.c)");
+        // SAFETY: the thread's own save area; a state the CPU rejects raises #GP, which
+        // trap0d turns into a return of 1.
+        if unsafe {
+            xrstor_user(
+                p.pcb().pcb_savefpu.get(),
+                XSAVE_MASK.load(Ordering::Relaxed),
+            )
+        } != 0
+        {
+            clean();
+            return Err(Errno::EINVAL);
+        }
+        // maybe_enable_user_cet(p): CET (XSAVES' CET_U state) is not supported.
+        ci.ci_pflags.set(ci.ci_pflags.get() | CPUPF_USERXSTATE);
     } else {
         // shouldn't happen, but handle it
         initialize_thread_xstate(p);

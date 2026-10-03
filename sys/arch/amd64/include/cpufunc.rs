@@ -104,6 +104,27 @@ pub fn rcr3() -> u64 {
     val
 }
 
+/// `rcr4`: reads `CR4`.
+#[inline]
+pub fn rcr4() -> u64 {
+    let val: u64;
+    // SAFETY: reading CR4 has no side effects; the kernel runs at CPL 0, where it is allowed.
+    unsafe { asm!("mov {}, cr4", out(reg) val, options(nomem, nostack, preserves_flags)) };
+    val
+}
+
+/// `lcr4`: loads `CR4`.
+///
+/// # Safety
+///
+/// `val` must keep the paging bits the running kernel depends on (`CR4_PAE`, `CR4_PGE` as
+/// set by the boot loader) and name only features the CPU has.
+#[inline]
+pub unsafe fn lcr4(val: u64) {
+    // SAFETY: the caller's guarantee.
+    unsafe { asm!("mov cr4, {}", in(reg) val, options(nostack, preserves_flags)) };
+}
+
 /// `invlpg`: invalidates the TLB entry for `addr`.
 #[inline]
 pub fn invlpg(addr: u64) {

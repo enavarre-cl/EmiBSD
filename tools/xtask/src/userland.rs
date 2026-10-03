@@ -14,7 +14,7 @@
 //!    Makefiles with `bsdmake.rs`; the system-call stubs are made by the rules of
 //!    `lib/libc/sys/Makefile.inc` (`GENERATE.*` piped into `FINISH.*`), run through `/bin/sh`
 //!    exactly as make would; generated C (the `lib/libc/hash` helpers) likewise.
-//! 4. `sbin/init`, `bin/ksh`, `bin/echo` and `bin/ls`, linked as static PIE executables (what
+//! 4. `sbin/init`, `bin/ksh`, `bin/cat`, `bin/echo`, `bin/ls` and `usr.bin/uname`, linked as static PIE executables (what
 //!    OpenBSD's `cc -static` makes for `/bin` and `/sbin`), installed stripped into `root/`.
 //! 5. `ramdisk.ffs`: `root/` plus `/dev`, made into an ffs image by OpenBSD's makefs(8) built
 //!    for this machine (`ramdisk.rs`).
@@ -89,16 +89,30 @@ struct Variant {
     dir: &'static str,
     add_cflags: &'static str,
     drop_ldadd: &'static [&'static str],
+    /// Link `-static` although the Makefiles do not say so (`/usr/bin` programs are
+    /// dynamic on OpenBSD; there is no `ld.so` here yet).
+    static_link: bool,
     why: &'static str,
 }
 
-const VARIANTS: &[Variant] = &[Variant {
-    dir: "bin/ksh",
-    add_cflags: "-DSMALL",
-    drop_ldadd: &["-lcurses"],
-    why: "built like OpenBSD's install-media ksh (-DSMALL, no -lcurses): libcurses \
-          (ncurses, with host-built generators and share/termtypes) is not built yet",
-}];
+const VARIANTS: &[Variant] = &[
+    Variant {
+        dir: "bin/ksh",
+        add_cflags: "-DSMALL",
+        drop_ldadd: &["-lcurses"],
+        static_link: false,
+        why: "built like OpenBSD's install-media ksh (-DSMALL, no -lcurses): libcurses \
+              (ncurses, with host-built generators and share/termtypes) is not built yet",
+    },
+    Variant {
+        dir: "usr.bin/uname",
+        add_cflags: "",
+        drop_ldadd: &[],
+        static_link: true,
+        why: "linked -static, as the install media's crunched programs are: /usr/bin is \
+              dynamic on OpenBSD and ld.so is not built yet",
+    },
+];
 
 /// OpenBSD's compiler runtime (the `-lcompiler_rt` its clang driver adds to every link): a
 /// Makefile over `gnu/llvm/compiler-rt` (Apache-2.0 WITH LLVM-exception), both in the sparse
@@ -107,7 +121,14 @@ const VARIANTS: &[Variant] = &[Variant {
 const COMPILER_RT_DIR: &str = "gnu/lib/libcompiler_rt";
 
 /// The programs, in build order.
-const PROGRAMS: &[&str] = &["sbin/init", "bin/ksh", "bin/echo", "bin/ls"];
+const PROGRAMS: &[&str] = &[
+    "sbin/init",
+    "bin/ksh",
+    "bin/cat",
+    "bin/echo",
+    "bin/ls",
+    "usr.bin/uname",
+];
 
 /// Flags added to host tools (built for macOS with the same clang) and why.
 const HOST_CFLAGS: &[(&str, &str)] = &[(
@@ -1048,6 +1069,9 @@ fn build_prog(ctx: &Ctx<'_>, dir: &str) -> Result<Linked> {
         let cflags = mk.var("CFLAGS")?;
         mk.set("CFLAGS", &format!("{cflags} {}", v.add_cflags));
         ldadd.retain(|w| !v.drop_ldadd.contains(&w.as_str()));
+        if v.static_link {
+            mk.set("LDSTATIC", "${STATIC}");
+        }
         println!("  {dir}: {}", v.why);
     }
     if !mk.words("LDSTATIC")?.iter().any(|w| w == "-static") {

@@ -215,9 +215,10 @@ intr_fast_exit:
  *  - switch to the trampoline stack
  *  - swapgs
  *  - iretq
- * The FS.base restore (CPUPF_USERSEGS) is here; the FPU/"extended CPU
- * state" restore, the DIAGNOSTIC SPL check, IBPB, pku_xonly, the MDS clear
- * and the Meltdown page-table switch are not (locore.rs).
+ * The FPU/"extended CPU state" restore (CPUPF_USERXSTATE) and the FS.base
+ * restore (CPUPF_USERSEGS) are here; the DIAGNOSTIC SPL check, IBPB,
+ * pku_xonly, the MDS clear and the Meltdown page-table switch are not
+ * (locore.rs).
  */
 	.globl	intr_user_exit
 	.type	intr_user_exit,@function
@@ -238,7 +239,9 @@ intr_user_exit:
 	jmp	intr_user_exit
 
 intr_user_exit_post_ast:
-	/* The xstate restore (CPUPF_USERXSTATE): with the FPU. */
+	/* Restore FPU/"extended CPU state" if it's not already in the CPU */
+	testl	${CPUPF_USERXSTATE},%gs:{CI_PFLAGS}
+	jz	.Lintr_restore_xstate
 
 	/* Restore FS.base if it's not already in the CPU */
 	testl	${CPUPF_USERSEGS},%gs:{CI_PFLAGS}
@@ -278,6 +281,15 @@ intr_user_exit_post_ast:
 	swapgs
 	iretq
 
+.Lintr_restore_xstate:		/* CPU doesn't have curproc's xstate */
+	orl	${CPUPF_USERXSTATE},%gs:{CI_PFLAGS}
+	movq	%gs:{CI_CURPCB},%rdi
+	addq	${PCB_SAVEFPU},%rdi
+	/*
+	 * The C checks xrstor's result here (commented out there too): the
+	 * state was saved by the kernel or checked by sigreturn's xrstor_user.
+	 */
+	fxrstor64	(%rdi)
 .Lintr_restore_fsbase:		/* CPU doesn't have curproc's FS.base */
 	orl	${CPUPF_USERSEGS},%gs:{CI_PFLAGS}
 	movq	%gs:{CI_CURPCB},%rdx
@@ -291,10 +303,11 @@ intr_user_exit_post_ast:
 
 /*
  * cpu_switchto(struct proc *old, struct proc *new): switch from old to new.
- * The stack pointers, the user segment reset (CPUPF_USERSEGS), %cr3,
- * ci_proc_pmap and the kernel stack a user thread enters on (ci_kern_rsp);
- * the FPU/"extended state" save and reset, the Meltdown CR3 bookkeeping, the
- * RSB refill and retguard are not here (see locore.rs).
+ * The stack pointers, the FPU/"extended state" save and reset
+ * (CPUPF_USERXSTATE, fxsave64/fxrstor64: no XSAVE codepatch), the user
+ * segment reset (CPUPF_USERSEGS), %cr3, ci_proc_pmap and the kernel stack a
+ * user thread enters on (ci_kern_rsp); the Meltdown CR3 bookkeeping, the RSB
+ * refill and retguard are not here (see locore.rs).
  */
 	.globl	cpu_switchto
 	.type	cpu_switchto,@function
@@ -333,8 +346,24 @@ cpu_switchto:
 	movq	%rsp,{PCB_RSP}(%r13)
 	movq	%rbp,{PCB_RBP}(%r13)
 
+	/*
+	 * If the old proc ran in userspace then save the
+	 * floating-point/"extended state" registers
+	 */
+	testl	${CPUPF_USERXSTATE},%gs:{CI_PFLAGS}
+	jz	.Lxstate_reset
+
+	movq	%r13, %rdi
+	addq	${PCB_SAVEFPU},%rdi
+	fxsave64	(%rdi)
+
 switch_exited:
-	/* The xstate save and reset (CPUPF_USERXSTATE): with the FPU. */
+	/* now clear the xstate */
+	leaq	{PROC0_UAREA}+{PROC0_SAVEFPU_OFF}(%rip),%rdi
+	fxrstor64	(%rdi)
+	andl	$~{CPUPF_USERXSTATE},%gs:{CI_PFLAGS}
+
+.Lxstate_reset:
 
 	/*
 	 * If the segment registers haven't been reset since the old proc
@@ -529,7 +558,9 @@ Xsyscall:
 	testl	${MDP_IRET},{P_MD_FLAGS}(%r14)
 	jne	intr_user_exit
 
-	/* The xstate restore (CPUPF_USERXSTATE): with the FPU. */
+	/* Restore FPU/"extended CPU state" if it's not already in the CPU */
+	testl	${CPUPF_USERXSTATE},%gs:{CI_PFLAGS}
+	jz	.Lsyscall_restore_xstate
 
 	/* Restore FS.base if it's not already in the CPU */
 	testl	${CPUPF_USERSEGS},%gs:{CI_PFLAGS}
@@ -564,6 +595,16 @@ Xsyscall:
 .Lsyscall_restore_fsbase:	/* CPU doesn't have curproc's FS.base */
 	orl	${CPUPF_USERSEGS},%gs:{CI_PFLAGS}
 	movq	%gs:{CI_CURPCB},%rdi
+	jmp	.Lsyscall_restore_fsbase_real
+
+.Lsyscall_restore_xstate:	/* CPU doesn't have curproc's xstate */
+	orl	$({CPUPF_USERXSTATE}|{CPUPF_USERSEGS}),%gs:{CI_PFLAGS}
+	movq	%gs:{CI_CURPCB},%rdi
+	addq	${PCB_SAVEFPU},%rdi
+	/* untouched state so can't fault */
+	fxrstor64	(%rdi)
+	subq	${PCB_SAVEFPU},%rdi
+.Lsyscall_restore_fsbase_real:
 	movq	{PCB_FSBASE}(%rdi),%rdx
 	movl	%edx,%eax
 	shrq	$32,%rdx
@@ -571,3 +612,63 @@ Xsyscall:
 	wrmsr
 	jmp	.Lsyscall_restore_registers
 	.size	Xsyscall, . - Xsyscall
+
+/*
+ * FPU/"extended CPU state" handling (fxsave64/fxrstor64 forms; the XSAVE
+ * codepatches are not ported, see amd64/fpu.rs)
+ *	void xrstor_kern(sfp, mask)
+ *		load given state which is assumed to be trusted: i.e.,
+ *		unaltered from fxsave by kernel
+ *	int xrstor_user(sfp, mask)
+ *		load given state which might not be trustable: #GP faults
+ *		will be caught (trap0d); returns 0/1 if okay/it trapped.
+ *	void fpusave(sfp)
+ *		save current state, but retain it in the FPU
+ *	void fpusavereset(sfp)
+ *		save current state and reset FPU to initial/kernel state
+ */
+	.globl	xrstor_kern
+	.type	xrstor_kern,@function
+	.p2align 4, 0x90
+xrstor_kern:
+	fxrstor64	(%rdi)
+	ret
+	lfence
+	.size	xrstor_kern, . - xrstor_kern
+
+	.globl	xrstor_user
+	.type	xrstor_user,@function
+	.p2align 4, 0x90
+xrstor_user:
+	.globl	xrstor_fault
+xrstor_fault:
+	fxrstor64	(%rdi)
+	xorl	%eax, %eax
+	ret
+	lfence
+	.globl	xrstor_resume
+xrstor_resume:
+	movl	$1, %eax
+	ret
+	lfence
+	.size	xrstor_user, . - xrstor_user
+
+	.globl	fpusave
+	.type	fpusave,@function
+	.p2align 4, 0x90
+fpusave:
+	fxsave64	(%rdi)
+	ret
+	lfence
+	.size	fpusave, . - fpusave
+
+	.globl	fpusavereset
+	.type	fpusavereset,@function
+	.p2align 4, 0x90
+fpusavereset:
+	fxsave64	(%rdi)
+	leaq	{PROC0_UAREA}+{PROC0_SAVEFPU_OFF}(%rip),%rdi
+	fxrstor64	(%rdi)
+	ret
+	lfence
+	.size	fpusavereset, . - fpusavereset

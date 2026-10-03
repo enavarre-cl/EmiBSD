@@ -176,7 +176,7 @@ The userland is OpenBSD's own C, cross-compiled unmodified (the user's M8 decisi
 (`FILES`, `DIRS`, `LFILES`/`MFILES` links, the kernel headers of `LDIRS`, `<machine/*>`, and of
 the `RDIRS` only `lib/libutil`'s headers and `lib/librpcsvc`'s `rpcgen` output, which libc's YP
 code includes); `lib/csu`; `libc.a` (988 objects on amd64, 989 on arm64) and `libutil.a`; and
-`sbin/init`, `bin/ksh`, `bin/echo`, `bin/ls` as static PIE executables, the form
+`sbin/init`, `bin/ksh`, `bin/cat`, `bin/echo`, `bin/ls`, `usr.bin/uname` as static PIE executables, the form
 OpenBSD's `cc -static` gives `/bin` and `/sbin` (`rcrt0.o` relocates the program itself; no
 `PT_INTERP`).
 
@@ -197,6 +197,8 @@ Workarounds, each printed by the build (flags only; no source is edited):
 
 - `-fret-clean` (amd64 libc) is an OpenBSD-local clang option Apple clang rejects; it is dropped.
 - `rpcgen` is built for the Mac with `-D'pledge(p,e)=0'` (macOS has no `pledge(2)`).
+- `usr.bin/uname` is linked `-static` (its Makefile is dynamic, as `/usr/bin` is on OpenBSD;
+  there is no `ld.so` yet), as the install media's crunched programs are.
 - `ksh` is built like OpenBSD's install-media ksh: `-DSMALL`, no `-lcurses`, because
   `libcurses` (ncurses, with host-built generators and `share/termtypes`) is not built yet.
 - macOS file systems ignore case: libc's `_exit.o` stub and `stdlib/_Exit.o` are built in
@@ -222,7 +224,7 @@ clone): one track of one cylinder spanning the image, partition `a` FFS at offse
 4096/512 blocks/fragments. makefs's own `rdroot=1` label is not used: it leaves `d_nsectors`
 0, which `checkdisklabel` rejects. The result is FFS1 in `a` and the label in sector 1; the
 size is twice the contents in whole MiB (at least 2 MiB), the timestamps fixed (`-T`).
-Its tree is `root/` plus `/dev/console`, `/dev/tty` and `/dev/null`.
+Its tree is `root/` plus `/etc/motd` and `/dev/console`, `/dev/tty` and `/dev/null`.
 
 makefs is written for OpenBSD only; the Mac build takes host shims, all in
 `tools/xtask/src/userland/ramdisk.rs` and none in the sources: a force-included header
@@ -237,6 +239,20 @@ OpenBSD's `makedev()` encoding).
 
 ## Deviations from OpenBSD (deliberate)
 
+- One kernel is both `bsd` and `bsd.rd` (M8). OpenBSD builds GENERIC (`config bsd swap
+  generic`, `swapgeneric.c`) and RAMDISK (`config bsd root on rd0a swap on rd0b`, with
+  `rd(4)` and its image) and boot(8) loads one. Here `sys/conf/swapgeneric.rs` holds the
+  generic values, and when Limine hands over `ramdisk.ffs` the boot glue (`sys/stand`)
+  installs it in `rd(4)` and switches the root configuration to RAMDISK's
+  (`swapconf_rdroot`) before `main`: `diskconf` (each machine's, no boot device under
+  Limine) then runs `setroot`, which prints `root on rd0a swap on rd0b dump on rd0b`, and
+  `dk_mountroot` mounts ffs from `rd0a`; `start_init` execs `/sbin/init` from it. Without a
+  ramdisk the kernel stays generic and, having no boot device to ask about (`setroot`'s
+  `RB_ASKNAME` prompt is not ported), says it cannot mount root and runs its init boot
+  module (the Rust self-test).
+- amd64's FPU state uses `fxsave64`/`fxrstor64` only (`amd64/fpu.rs`): the XSAVE family and
+  its codepatches are not ported, so there is no AVX state; the switch is eager as in C
+  (`CPUPF_USERXSTATE`, saved in `cpu_switchto`, reloaded on the way back to user mode).
 - Limine instead of `boot(8)`/`efiboot`.
 - Cargo features and `xtask` instead of `config(8)`, Makefiles and `newvers.sh`; the
   autoconfiguration tables `config(8)` generates are written by hand ("Autoconfiguration",

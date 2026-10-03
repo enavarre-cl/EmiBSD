@@ -13,7 +13,7 @@
 //!                                          the init and ramdisk modules default to the
 //!                                          built ones (`none` leaves one out)
 //! cargo xtask qemu --arch A [--kernel K]   boot the image, serial and monitor on stdio
-//! cargo xtask smoke --arch A [--kernel K] [--cmdline C] [--status N] [--send-after L --send T]
+//! cargo xtask smoke --arch A [--kernel K] [--cmdline C] [--status N] [--send-after L --send T]... [--until-seen]
 //!                   [--expect-ramdisk] --expect L...
 //!                                          boot headless; pass if every L appears and QEMU
 //!                                          exits with status N (default: the kernel's success
@@ -57,7 +57,7 @@ const TABLE_END: &str = "<!-- ports:end -->";
 const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | ports next | \
                      ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] [--init I] [--ramdisk R] | \
                      qemu --arch A [--kernel K] [--init I] [--ramdisk R] | gen-syscalls [--check] | \
-                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--status N] [--send-after L --send T] --expect L... | \
+                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--status N] [--send-after L --send T]... [--until-seen] --expect L... | \
                      symbolize --arch A [--kernel K] | userland --arch A>";
 
 #[derive(Deserialize)]
@@ -183,14 +183,18 @@ fn run(args: &[String]) -> Result<()> {
                 Some(s) => s.parse::<i32>().map_err(|e| format!("--status {s}: {e}"))?,
                 None => boot::QEMU_SUCCESS_STATUS,
             };
-            let send = match (
-                optional_flag(rest, "--send-after"),
-                optional_flag(rest, "--send"),
-            ) {
-                (Some(after), Some(text)) => Some((after, text.replace("\\n", "\n"))),
-                (None, None) => None,
-                _ => return Err(format!("--send-after and --send go together\n{USAGE}").into()),
-            };
+            // `--send-after A --send T`, repeatable: each text is sent once its trigger line
+            // has been seen, in order.
+            let afters = flags(rest, "--send-after");
+            let texts = flags(rest, "--send");
+            if afters.len() != texts.len() {
+                return Err(format!("--send-after and --send go together\n{USAGE}").into());
+            }
+            let sends: Vec<(&str, String)> = afters
+                .iter()
+                .zip(&texts)
+                .map(|(a, t)| (*a, t.replace("\\n", "\n")))
+                .collect();
             let init = init_flag(&root, arch, rest);
             let ramdisk = ramdisk_flag(&root, arch, rest);
             boot::smoke(
@@ -201,7 +205,11 @@ fn run(args: &[String]) -> Result<()> {
                     cmdline: optional_flag(rest, "--cmdline"),
                     expects: &expects,
                     status,
-                    send: send.as_ref().map(|(a, t)| (*a, t.as_str())),
+                    sends: &sends
+                        .iter()
+                        .map(|(a, t)| (*a, t.as_str()))
+                        .collect::<Vec<_>>(),
+                    until_seen: rest.contains(&"--until-seen"),
                     init: init.as_deref(),
                     ramdisk: ramdisk.as_deref(),
                     expect_ramdisk: rest.contains(&"--expect-ramdisk"),
