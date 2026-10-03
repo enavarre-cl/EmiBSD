@@ -475,6 +475,17 @@ pub(crate) fn setup() -> (MutexGuard<'static, ()>, &'static Proc) {
     NUMVNODES.store(0, Ordering::SeqCst);
     NUMCACHE.store(0, Ordering::SeqCst);
     NUMNEG.store(0, Ordering::SeqCst);
+    // Device vnodes of an earlier test lived in the memory just reset.
+    for chain in crate::kern::spec_vnops::SPECLISTH.0.iter() {
+        chain.init();
+    }
+    // The file systems' pools and tables live in that memory too: let vfsinit's vfs_init
+    // calls set them up again.
+    #[cfg(feature = "ffs")]
+    {
+        crate::ufs::ffs::ffs_vfsops::FFS_INIT_DONE.store(false, Ordering::SeqCst);
+        crate::ufs::ufs::ufs_vfsops::UFS_INIT_DONE.store(false, Ordering::SeqCst);
+    }
     vfsinit();
     testfs::reset();
     set_rootvnode(None);

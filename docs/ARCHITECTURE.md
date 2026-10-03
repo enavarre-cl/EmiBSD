@@ -147,6 +147,8 @@ the default and `cargo test` just works.
 | `debug` | `option DEBUG` | `kdassert!` active |
 | `kmemstats` | `option KMEMSTATS` | `malloc(9)` statistics and per-type limits |
 | `pool_debug` | `option POOL_DEBUG` | `pool_debug = 1` (poisoning, once `subr_poison.c` is here) |
+| `ffs` | `option FFS` | the fast file system (`sys/ufs`) and its `vfsconflist[]` entry; default |
+| `ffs2` | `option FFS2` | FFS2 (UFS2 dinodes, the 64 KB super-block) in ffs; default |
 | `qemu` | — | QEMU-only exits (`isa-debug-exit`, semihosting), the boot self-tests |
 
 More appear as they are needed (`multiprocessor`, `small_kernel`, ...), one per `option(4)`.
@@ -475,8 +477,8 @@ OpenBSD's `makedev()` encoding).
   and reference counted (`&'static Mount`). A file system plugs in with a `static Vfsops`,
   a `static Vops` (one `Option<fn(&mut VopXArgs)>` per operation, `None` answering
   `EOPNOTSUPP`; `docs/C_TO_RUST.md`), its node behind `v_data` (`*mut c_void`, read back with
-  `Vnode::data::<T>`) and a `Vfsconf::new(...)` line in `vfsconflist[]` (`vfs_init.rs`, empty
-  today) behind a cargo feature named after its `option(4)`. `mountroot` (`sys/systm.rs`)
+  `Vnode::data::<T>`) and a `Vfsconf::new(...)` line in `vfsconflist[]` (`vfs_init.rs`; ffs is
+  the first) behind a cargo feature named after its `option(4)`. `mountroot` (`sys/systm.rs`)
   is NULL until `setroot` (`subr_disk.c`) and a disk driver exist, so where OpenBSD panics
   "cannot mount root" `main` prints `cannot mount root: no root file system` and goes on
   without a `rootvnode`: every `namei` then fails with `ENOENT` (the C never runs one before
@@ -521,6 +523,32 @@ OpenBSD's `makedev()` encoding).
   `LockfStateSlot`), so `spec_advlock` and `vgonel`'s purge are the C's; a file system's
   inode will keep one the same way. `pool_get(PR_WAITOK)` cannot sleep yet, so a lock
   allocation can fail with `ENOLCK` where the C would wait.
+- The fast file system (M8): `sys/ufs/ufs` (the UFS layer: `ufs_bmap.c`, `ufs_ihash.c`,
+  `ufs_inode.c`, `ufs_lookup.c`, `ufs_vfsops.c`, `ufs_vnops.c` and `dinode.h`, `dir.h`,
+  `inode.h`, `quota.h`, `ufsmount.h`, `ufs_extern.h`) and `sys/ufs/ffs` (`ffs_alloc.c`,
+  `ffs_balloc.c`, `ffs_inode.c`, `ffs_subr.c`, `ffs_tables.c`, `ffs_vfsops.c`,
+  `ffs_vnops.c`, `fs.h`, `ffs_extern.h`) are OpenBSD's whole files, FFS1 and FFS2, behind
+  features `ffs`/`ffs2` (both default) with `ffs` in `vfsconflist[]`. OpenBSD has no soft
+  updates any more. The on-disk structures keep their C layout: `struct ufs1_dinode`/
+  `ufs2_dinode` are plain `#[repr(C)]` integers, `struct fs` and `struct cg` are
+  `#[repr(C)]` structures of `Cell`s (the C changes them in place through shared pointers),
+  checked offset by offset at compile time and against the headers in `test-ref`. An inode
+  is an `ffs_ino_pool` item reached by `vtoi(vp)`, its dinode a pool item behind `DIP`-like
+  accessors (`dip_size()`, `dip_set_size()`); the in-core super-block and `ufsmount` are
+  `malloc(M_UFSMNT)`ed and reached by `vfstoufs(mp)`. Mounting the root is
+  `ffs_mountroot`: `bdevvp(rootdev)` (`sys/systm.rs`'s `ROOTDEV`, set by `setroot`), then
+  `ffs_mountfs`, which opens the device (`VOP_OPEN` -> `spec_open` -> `bdevsw[].d_open`),
+  reads the super-block at 64 KB, 8 KB or 256 KB through the buffer cache
+  (`spec_strategy` -> `bdevsw[].d_strategy`) and needs nothing else from the device: no
+  `DIOCGPART`, no disk label. Until the device switch and a disk driver exist,
+  `mountroot` stays NULL. Not configured or not ported, and so reported: `option QUOTA`
+  (`quota.rs` answers as a kernel without quotas; `ufs_quota_stub.c` has no licence block
+  and is skipped), `option UFS_DIRHASH` (directories are searched linearly), `option
+  FIFO` (`fifofs`; a fifo on an FFS is refused with `EOPNOTSUPP`), the knotes of
+  `kern_event.c` (`VN_KNOTE`, `ufs_kqfilter`), `disk_map` and `inittodr`. The host tests
+  build FFS1 and FFS2 images with a `newfs`-like helper (`ffs_vfsops/tests.rs`), mount them
+  on a block device vnode whose strategy reads a `Vec`, use them through the system calls,
+  and check the counters of the unmounted image as `fsck` would.
 - The system's identity (the user's decision, 2026-10-03): the system is **EmiBSD**, release
   **7.8** (the release number tracks the OpenBSD release the reference pin follows). OpenBSD's
   `conf/newvers.sh` writes `ostype`, `osrelease`, `osversion`, `sccs` and `version` into a

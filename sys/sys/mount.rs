@@ -57,8 +57,9 @@
 //!   [`Mount::update_stat`].
 //! - `struct statfs` names the holes the C compiler leaves (`_pad0` after `f_iosize`, `_pad1`
 //!   before `mount_info`), so the structure is plain data that `copyout` may read whole;
-//!   `union mount_info` is its 160 bytes, 8-aligned: the per-filesystem views (`ufs_args`,
-//!   `mfs_args`, ..., the `export_args` they embed) come with their file systems.
+//!   `union mount_info` is its 160 bytes, 8-aligned: the per-filesystem views come with
+//!   their file systems (`ufs_args` and the `export_args` it embeds are here, with ffs;
+//!   `UfsArgs::from_bytes` reads them out of the kernel copy of the mount arguments).
 //! - `struct vfsconf`'s `vfc_refcount` is atomic (`atomic_inc_int` in C).
 //! - `VFS_*` are functions with the macros' names (`#[allow(non_snake_case)]`).
 //! - `struct netcred`/`struct netexport` need `net/radix.h` and `NFSSERVER`, neither of
@@ -107,6 +108,56 @@ pub struct Fid {
     pub fid_reserved: u16,
     /// `fid_data`: data (variable length).
     pub fid_data: [u8; MAXFIDSZ],
+}
+
+/// `struct export_args`: export arguments for local filesystem mount calls. The two
+/// `struct sockaddr *` are user addresses (`usize`), which the kernel copies in when it
+/// exports (`NFSSERVER`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct ExportArgs {
+    /// `ex_flags`: export related flags.
+    pub ex_flags: i32,
+    /// `ex_root`: mapping for root uid.
+    pub ex_root: Uid,
+    /// `ex_anon`: mapping for anonymous user.
+    pub ex_anon: crate::sys::ucred::Xucred,
+    /// `ex_addr`: net address to which exported.
+    pub ex_addr: usize,
+    /// `ex_addrlen`: and the net address length.
+    pub ex_addrlen: i32,
+    /// `ex_mask`: mask of valid bits in saddr.
+    pub ex_mask: usize,
+    /// `ex_masklen`: and the smask length.
+    pub ex_masklen: i32,
+}
+
+/// `struct ufs_args`: arguments to mount UFS-based filesystems. `fspec` is the user address
+/// of the block special device's name.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct UfsArgs {
+    /// `fspec`: block special device to mount.
+    pub fspec: usize,
+    /// `export_info`: network export information.
+    pub export_info: ExportArgs,
+}
+
+impl UfsArgs {
+    /// `sizeof(struct ufs_args)`: the `vfc_datasize` of the UFS file systems.
+    pub const SIZE: usize = size_of::<UfsArgs>();
+
+    /// The arguments in the kernel copy `sys_mount` made of them (at least `SIZE` bytes),
+    /// `None` when there are none (the C's NULL `data`).
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        if data.len() < Self::SIZE {
+            return None;
+        }
+        // SAFETY: `data` holds `SIZE` readable bytes (checked), and the structure is
+        // integers, valid for any bit pattern (its padding bytes are padding); the read is
+        // unaligned.
+        Some(unsafe { ptr::read_unaligned(data.as_ptr().cast::<UfsArgs>()) })
+    }
 }
 
 /// `MFSNAMELEN`: length of fs type name, including nul.
@@ -700,6 +751,8 @@ const _: () = {
     assert!(offset_of!(Statfs, mount_info) == 408);
     assert!(size_of::<Statfs>() == 568);
     assert!(size_of::<Fhandle>() == 28);
+    assert!(size_of::<ExportArgs>() == 120);
+    assert!(UfsArgs::SIZE == 128);
 };
 
 #[cfg(test)]

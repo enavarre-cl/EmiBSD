@@ -440,7 +440,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs; M7b: config_init, the config_pending wait (tsleep on config_pending) and config_process_deferred_mountroot run (subr_autoconf.c); kern_descrip.c: filedesc_init runs, process 0 gets fdinit() as ps_fd/p_fd, start_init installs the console stand-in (dev/consfile.rs) at descriptors 0, 1 and 2 before the exec, where init(8) would open /dev/console; kern_sig.c: sigacts0, signal_init, siginit(&sigacts0), process 0's ps_sigacts; start_init clears init's ps_sigflags; M7b: ifinit, softnet_init and softnet_percpu run (net/if.c), the pseudo-devices attach from machine::autoconf::pdevinit() (the ioconf.rs tables: loop, so lo0 attaches at boot; M8: pty, NPTY 16), pdevinit_done is an atomic flag; vfs stage 1: vfsinit runs; mountroot (systm.h's MOUNTROOT, NULL: setroot is subr_disk.c) is checked where the C does: with none, main prints 'cannot mount root: no root file system' instead of panicking and goes on without rootvnode (init still execs its boot module); with one, MNT_ROOTFS, VFS_ROOT into rootvnode and the current directories of process 0 and init as in C; check_console looks /dev/console up with namei and warns ('warning: /dev/console does not exist' in smoke); M7b IPv4: rtable_init before the pseudo-devices and domaininit after them (inetdomain, routedomain); selftest ping (feature qemu) after the taskq selftest; vfs stage 2: lf_init; the cleaner (buf_daemon) and update (syncer_thread) kthreads, recorded in cleanerproc/syncerproc; aiodoned and zerothread reported; sys_pipe.c: pipe_init runs; M8: tty_init runs (tty.c)"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs; M7b: config_init, the config_pending wait (tsleep on config_pending) and config_process_deferred_mountroot run (subr_autoconf.c); kern_descrip.c: filedesc_init runs, process 0 gets fdinit() as ps_fd/p_fd, start_init installs the console stand-in (dev/consfile.rs) at descriptors 0, 1 and 2 before the exec, where init(8) would open /dev/console; kern_sig.c: sigacts0, signal_init, siginit(&sigacts0), process 0's ps_sigacts; start_init clears init's ps_sigflags; M7b: ifinit, softnet_init and softnet_percpu run (net/if.c), the pseudo-devices attach from machine::autoconf::pdevinit() (the ioconf.rs tables: loop, so lo0 attaches at boot; M8: pty, NPTY 16), pdevinit_done is an atomic flag; vfs stage 1: vfsinit runs; mountroot (systm.h's MOUNTROOT, NULL: setroot is subr_disk.c) is checked where the C does: with none, main prints 'cannot mount root: no root file system' instead of panicking and goes on without rootvnode (init still execs its boot module); with one, MNT_ROOTFS, VFS_ROOT into rootvnode and the current directories of process 0 and init as in C; check_console looks /dev/console up with namei and warns ('warning: /dev/console does not exist' in smoke); M7b IPv4: rtable_init before the pseudo-devices and domaininit after them (inetdomain, routedomain); selftest ping (feature qemu) after the taskq selftest; vfs stage 2: lf_init; the cleaner (buf_daemon) and update (syncer_thread) kthreads, recorded in cleanerproc/syncerproc; aiodoned and zerothread reported; sys_pipe.c: pipe_init runs; M8: tty_init runs (tty.c); M7b: ifinit, softnet_init and softnet_percpu run (net/if.c), the pseudo-devices attach from machine::autoconf::pdevinit() (the ioconf.rs tables: loop, so lo0 attaches at boot), pdevinit_done is an atomic flag; vfs stage 1: vfsinit runs; mountroot (systm.h's MOUNTROOT, NULL: setroot is subr_disk.c) is checked where the C does: with none, main prints 'cannot mount root: no root file system' instead of panicking and goes on without rootvnode (init still execs its boot module); with one, MNT_ROOTFS, VFS_ROOT into rootvnode and the current directories of process 0 and init as in C; check_console looks /dev/console up with namei and warns ('warning: /dev/console does not exist' in smoke); M7b IPv4: rtable_init before the pseudo-devices and domaininit after them (inetdomain, routedomain); selftest ping (feature qemu) after the taskq selftest; vfs stage 2: lf_init; the cleaner (buf_daemon) and update (syncer_thread) kthreads, recorded in cleanerproc/syncerproc; aiodoned and zerothread reported; sys_pipe.c: pipe_init runs; ffs: rootvp and swapdev_vp (AtomicPtr with rootvp()/set_rootvp() and swapdev_vp()/set_swapdev_vp()), set by ffs_mountroot"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -798,7 +798,7 @@ rust = "sys/sys/systm.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9fb4626fd16812491f6c3904f32ccfe077412cdf"
-notes = "physmem only (defined here, filled by the machdeps; the C defines it per arch); the hostname/boottime globals, copyin/copyout, tsleep/wakeup and the other prototypes come with their files; M5-b2: cold and safepri (defined here like physmem), INFSLP, MAXTSLP; M6-a: struct sysent (Sysent::new for the generated table), sy_call_t (Result plus the retval registers), SY_NOLOCK, SCARG as sysargs; M6-b: sy_call_t takes &SysArgs (the six registers) and sysargs::<T> is safe; M7b: NET_LOCK/NET_UNLOCK/NET_LOCK_SHARED/NET_UNLOCK_SHARED and the NET_ASSERT_* (DIAGNOSTIC, splassert_ctl) as functions over netlock (defined in net/if_.rs), the assertions taking the caller's name for __func__; vfs stage 1: mountroot (MOUNTROOT, a StaticCell<Option<MountrootFn>> defined here like cold; NULL until setroot exists)"
+notes = "physmem only (defined here, filled by the machdeps; the C defines it per arch); the hostname/boottime globals, copyin/copyout, tsleep/wakeup and the other prototypes come with their files; M5-b2: cold and safepri (defined here like physmem), INFSLP, MAXTSLP; M6-a: struct sysent (Sysent::new for the generated table), sy_call_t (Result plus the retval registers), SY_NOLOCK, SCARG as sysargs; M6-b: sy_call_t takes &SysArgs (the six registers) and sysargs::<T> is safe; M7b: NET_LOCK/NET_UNLOCK/NET_LOCK_SHARED/NET_UNLOCK_SHARED and the NET_ASSERT_* (DIAGNOSTIC, splassert_ctl) as functions over netlock (defined in net/if_.rs), the assertions taking the caller's name for __func__; vfs stage 1: mountroot (MOUNTROOT, a StaticCell<Option<MountrootFn>> defined here like cold; NULL until setroot exists); ffs: rootdev as the ROOTDEV atomic (NODEV until setroot sets it); swapdev comes from the arch conf.c (machine::conf::swapdev)"
 
 [[file]]
 c = "sys/sys/malloc.h"
@@ -2808,6 +2808,251 @@ upstream_blob = "9aa04dc9ab71a61a942deddd5797d3eab7d29493"
 deps = ["sys/sys/pipe.h", "sys/kern/kern_descrip.c", "sys/kern/kern_sig.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_synch.c", "sys/kern/subr_pool.c", "sys/kern/kern_subr.c", "sys/uvm/uvm_km.c", "sys/sys/file.h", "sys/sys/stat.h", "sys/sys/syscallargs.h"]
 notes = "licence: John S. Dyson's, accepted by the user on 2026-10-03. The whole file: struct pipe_pair (PipePair), pipeops, MINPIPESIZE, LIMITBIGPIPES, nbigpipe/amountpipekva (atomics), pipe_pair_pool, sys_pipe, sys_pipe2, dopipe, pipe_buffer_realloc/pipe_buffer_free (km_alloc kv_any/kp_pageable/kd_waitok: the buffer is faulted in by uvm_fault on kernel_map), pipe_create, pipe_peer, pipe_iolock/iounlock/iosleep, pipe_wakeup, pipe_read, pipe_write (atomic writes of at most PIPE_BUF, wraparound, BIG_PIPE_SIZE growth, DIAGNOSTIC panics), pipe_ioctl (FIOASYNC, FIONREAD, FIOSETOWN/SIOCSPGRP/TIOCSPGRP, FIOGETOWN/SIOCGPGRP/TIOCGPGRP through sigio), pipe_stat, pipe_close, pipe_destroy and pipe_pair_destroy (unsafe, NonNull: the pair is freed with its second pipe), pipe_rundown (bool), pipe_init (wired into main), pipe_pair_create (None when the pool is empty: PR_WAITOK cannot sleep yet); fp_pipe is a port helper (f_data with the DTYPE_PIPE check). Stubs (kern_event.c not ported, so no knotes, select or poll): pipe_wakeup's knote_locked (reported; SIGIO for FIOASYNC still posted), pipe_kqfilter (takes the lock and the peer, then reports struct knote), filt_pipedetach/filt_pipemodify/filt_pipeprocess (report klist_remove/knote_modify/knote_process); filt_piperead/filt_pipewrite/filt_pipeexcept are ported over the pipe and the __EV_POLL flag, returning PipeFilter (active, kn_data, EV_EOF, __EV_HUP) for kern_event.c to apply; the three filterops wait for <sys/event.h>; klist_init_rwlock/klist_insert_locked/klist_free are comments; KTRACE (ktrfds) not configured. SIGPIPE: sys_generic.c's dofilewritev posts it on EPIPE. Host tests (sys_pipe/tests.rs: reads in pieces, wraparound, atomic small writes, EAGAIN, EOF and EPIPE after a close, the pair back to the pool, ioctl, stat, rundown, filters; pipe_pair_create fails on the host, which has no pageable kernel memory); smoke: init's pipes check (init: pipes ok)"
 
+# ---------------------------------------------------------------------------
+# M8: the fast file system (sys/ufs), its libkern and crypto helpers
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/lib/libkern/skpc.c"
+rust = "sys/lib/libkern/skpc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b7274f2bee404ab3067740fb8c8b75770bcb22eb"
+notes = "ffs: skpc over a slice; table-driven test"
+
+[[file]]
+c = "sys/crypto/siphash.h"
+rust = "sys/crypto/siphash.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "980adeb166ad7c75ad35c88e7f5ee2066c0bdace"
+notes = "ffs (ufs_ihash): SIPHASH_CTX/SIPHASH_KEY as SiphashCtx/SiphashKey, the SipHash24_*/SipHash48_* macros as functions; shares the module with siphash.c"
+
+[[file]]
+c = "sys/crypto/siphash.c"
+rust = "sys/crypto/siphash.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "33bb7b4632539b1ceee7713eda2fa433e50aa839"
+deps = ["sys/crypto/siphash.h"]
+notes = "ffs (ufs_ihash): SipHash_Init/Update/End/Final, SipHash, the rounds; input as slices; End wipes the state by assignment instead of explicit_bzero; reference vectors tested"
+
+[[file]]
+c = "sys/ufs/ufs/dinode.h"
+rust = "sys/ufs/ufs/dinode.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7a2d55b45f206227290465503bea26ef8822ea60"
+deps = ["sys/sys/types.h"]
+notes = "ffs: ufsino_t, ROOTINO, NXADDR/NDADDR/NIADDR, struct ufs1_dinode/ufs2_dinode (#[repr(C)], layouts pinned and checked against the header's offset comments in test-ref), di_u union as [u16;2] with di_ouid/di_ogid/di_inumber, MAXSYMLINKLEN_UFS1/2, the I* mode bits; MAXSYMLINKLEN(ip) is Inode::maxsymlinklen"
+
+[[file]]
+c = "sys/ufs/ufs/dir.h"
+rust = "sys/ufs/ufs/dir.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3f5b39e12890bed6be617522c3a2a267e4504d2b"
+deps = ["sys/sys/param.h", "sys/sys/dirent.h"]
+notes = "ffs: doff_t (Doff), MAXDIRSIZE, DIRBLKSIZ, MAXNAMLEN, struct direct (built in memory, write_to), entries in a block read/written at their offsets (d_ino/d_reclen/d_type/d_namlen/d_name accessors, 0 past the end), DT_*/IFTODT/DTTOIF re-exported from dirent.rs, DIRECTSIZ/DIRSIZ as const fns, struct dirtemplate with to_bytes/from_bytes"
+
+[[file]]
+c = "sys/ufs/ufs/quota.h"
+rust = "sys/ufs/ufs/quota.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e9c122abe982c94aabbd5927ccee0af4ef5ca6c6"
+deps = ["sys/sys/types.h"]
+notes = "ffs: constants, struct dqblk, ufs_quota_flags; option QUOTA is not configured (ufs_quota.c not ported) and ufs_quota_stub.c has no licence block (skipped), so the interface functions (getinoquota, ufs_quota_{alloc,free}_{blocks,inode}[2], ufs_quota_delete, quotaoff, qsync, ufs_quotactl=EOPNOTSUPP, ufs_quota_init) are written here with the no-quota answers; struct dquot left out"
+
+[[file]]
+c = "sys/ufs/ufs/ufsmount.h"
+rust = "sys/ufs/ufs/ufsmount.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3ad8938e422520947259abbfb7434c162b532845"
+deps = ["sys/ufs/ffs/fs.h", "sys/ufs/ufs/quota.h"]
+notes = "ffs: struct ufsmount (Cells, malloc(M_UFSMNT), &'static via VFSTOUFS=vfstoufs which checks the mount is ffs/mfs/ext2fs), UM_UFS1/UM_UFS2/UM_EXT2FS, QTF_*, MNINDIR/blkptrtodb/is_sequential as functions; um_e2fs left out (ext2fs), um_export left out (NFSSERVER)"
+
+[[file]]
+c = "sys/ufs/ufs/inode.h"
+rust = "sys/ufs/ufs/inode.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "16aaac8b7ff5086c17ac47b26a7926455f3926b9"
+deps = ["sys/ufs/ufs/dinode.h", "sys/ufs/ufs/dir.h", "sys/ufs/ffs/fs.h", "sys/ufs/ufs/ufsmount.h", "sys/sys/lockf.h", "sys/sys/rwlock.h"]
+notes = "ffs: struct inode (ffs_ino_pool item, Cells, &'static via VTOI=vtoi checking v_tag), dinode_u as one pointer with DIP/DIP_ASSIGN as dip_*/dip_set_* methods (UFS1/UFS2 by um_fstype under feature ffs2), SHORTLINK as with_shortlink, struct inode_vtbl and the UFS_* macros (iv_buf_alloc/iv_bufatoff return the buffer), IN_* flags, struct indir, struct ufid with from_fid/to_fid, DOINGASYNC; helpers for block pointers and dinodes in buffers; ext2fs members, i_dquot (QUOTA) and i_dirhash (UFS_DIRHASH) left out"
+
+[[file]]
+c = "sys/ufs/ufs/ufs_extern.h"
+rust = "sys/ufs/ufs/ufs_extern.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0a5cc52ad9d92b6ad16f32b0bf3e41299a182b9b"
+deps = ["sys/ufs/ufs/inode.h"]
+notes = "ffs: re-exports of the UFS functions (the header has only prototypes); ufsfifo_* wait for fifofs"
+
+[[file]]
+c = "sys/ufs/ufs/dirhash.h"
+rust = "sys/ufs/ufs/dirhash.rs"
+status = "todo"
+deps = ["sys/ufs/ufs/dir.h"]
+notes = "option UFS_DIRHASH (in GENERIC): comes with ufs_dirhash.c"
+
+[[file]]
+c = "sys/ufs/ufs/ufs_dirhash.c"
+rust = "sys/ufs/ufs/ufs_dirhash.rs"
+status = "todo"
+deps = ["sys/ufs/ufs/dirhash.h", "sys/ufs/ufs/inode.h"]
+notes = "option UFS_DIRHASH (in GENERIC): a hash of large directories; until it is ported every lookup is the linear search the C falls back to, and each #ifdef UFS_DIRHASH call site in ufs_lookup.rs/ufs_vnops.rs/ufs_inode.rs/ufs_vfsops.rs/ffs_vfsops.rs (ffs_vars) is a comment naming the call"
+
+[[file]]
+c = "sys/ufs/ufs/ufs_quota.c"
+rust = "sys/ufs/ufs/ufs_quota.rs"
+status = "todo"
+deps = ["sys/ufs/ufs/quota.h", "sys/ufs/ufs/inode.h"]
+notes = "option QUOTA (in GENERIC) is not configured here: quota.rs answers with the no-quota interface; call sites: ufs_access/ufs_chown/ufs_makeinode/ufs_mkdir (getinoquota, ufs_quota_*), ufs_inactive, ufs_reclaim (ufs_quota_delete), ffs_alloc/ffs_realloccg/ffs_balloc/ffs_truncate (blocks), ffs_flushfiles (quotaoff), ffs_sync (qsync), vfs_quotactl (ufs_quotactl)"
+
+[[file]]
+c = "sys/ufs/ufs/ufs_quota_stub.c"
+rust = ""
+status = "skipped"
+notes = "license: none (the file has no licence block); its !QUOTA answers are the no-quota interface written in quota.rs from quota.h and quotactl(2) - user to confirm"
+
+[[file]]
+c = "sys/ufs/ufs/ufs_bmap.c"
+rust = "sys/ufs/ufs/ufs_bmap.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b094e5b9da41a11a21e5534e44f4d15f3330b62a"
+deps = ["sys/ufs/ufs/inode.h", "sys/kern/vfs_bio.c"]
+notes = "ffs: ufs_bmap, ufs_bmaparray (indir array as a slice, nump/ap Options), ufs_getlbns; FFS2 under feature ffs2; ru_inblock skipped without curproc; tested through the mount tests and ufs_getlbns_finds_the_indirect_path"
+
+[[file]]
+c = "sys/ufs/ufs/ufs_ihash.c"
+rust = "sys/ufs/ufs/ufs_ihash.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9253868becc4e2907ae7c9f2c526cc2e2718e0a3"
+deps = ["sys/ufs/ufs/inode.h", "sys/crypto/siphash.c", "sys/kern/kern_subr.c"]
+notes = "ffs: ihashtbl/ihash/ihashkey as StaticCells set once by ufs_ihashinit (hashinit, arc4random_buf), ufs_ihash (SipHash24), ufs_ihashget, ufs_ihashins, ufs_ihashrem (the le_prev==NULL test is the IN_HASHED test); EXT2FS branch left out"
+
+[[file]]
+c = "sys/ufs/ufs/ufs_inode.c"
+rust = "sys/ufs/ufs/ufs_inode.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5e66f0bf26c1daf4d883606ef3cf608d8d7e10dc"
+deps = ["sys/ufs/ufs/inode.h", "sys/ufs/ufs/ufs_ihash.c"]
+notes = "ffs: ufs_inactive, ufs_reclaim; UFS_DIRHASH ufsdirhash_free waits for ufs_dirhash.c; quota calls are quota.rs's"
+
+[[file]]
+c = "sys/ufs/ufs/ufs_lookup.c"
+rust = "sys/ufs/ufs/ufs_lookup.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "35f87c67cd9321b4beb10298d53038c6c7220f79"
+deps = ["sys/ufs/ufs/inode.h", "sys/ufs/ufs/dir.h", "sys/kern/vfs_cache.c", "sys/kern/vfs_lookup.c"]
+notes = "ffs: ufs_lookup (linear search; the UFS_DIRHASH path is a comment until ufs_dirhash.c), ufs_dirbad, ufs_dirbadentry (bool), ufs_makedirentry, ufs_direnter (compaction with copy_within), ufs_dirremove, ufs_dirrewrite, ufs_dirempty (bool), ufs_checkpath; dirchk is an atomic; entries are offsets into the block"
+
+[[file]]
+c = "sys/ufs/ufs/ufs_vfsops.c"
+rust = "sys/ufs/ufs/ufs_vfsops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "40e27be0b22e2b71926a732ff48d38defa141999"
+deps = ["sys/ufs/ufs/inode.h", "sys/ufs/ufs/ufs_ihash.c"]
+notes = "ffs: ufs_start, ufs_root, ufs_check_export (EACCES without NFSSERVER; struct netcred reported), ufs_init (done flag atomic, cleared by the host tests), ufs_fhtovp"
+
+[[file]]
+c = "sys/ufs/ufs/ufs_vnops.c"
+rust = "sys/ufs/ufs/ufs_vnops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "499dfe40e92eca6539339e8e74d67239b9bc4f4c"
+deps = ["sys/ufs/ufs/inode.h", "sys/ufs/ufs/ufs_lookup.c", "sys/kern/spec_vnops.c", "sys/kern/vfs_lockf.c"]
+notes = "ffs: every vnode op of the file (itimes, create, mknod, open, close, access, getattr, setattr, chmod, chown, ioctl, remove, link, rename, mkdir, rmdir, symlink, readdir, readlink, lock/unlock/islocked over rrwlock, strategy, print, ufsspec_read/write/close, pathconf, advlock, makeinode); VN_KNOTE sites are comments and ufs_kqfilter + the filterops/filt_ufs* report (kern_event.c); ufsfifo_* wait for fifofs (option FIFO); EXT2FS branch of ufs_itimes left out; NOCRED/FSCRED dereferences panic via ucred()"
+
+[[file]]
+c = "sys/ufs/ffs/fs.h"
+rust = "sys/ufs/ffs/fs.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0da3ebaf1089cb6649f946f0921c3024869ff98c"
+deps = ["sys/sys/param.h", "sys/ufs/ufs/dinode.h", "sys/ufs/ufs/inode.h"]
+notes = "ffs: struct fs/csum/csum_total/cg with Cell members in the C layout (offsets pinned against clang's for LP64), struct ocg as offsets, CgBuf (a cylinder group in a busy buffer: the cg_* array macros and cg_chkmagic for both layouts), every macro as a lower-case function (fsbtodb, cgtod, ino_to_fsba, blkoff, lblkno, fragroundup, blksize, freespace, CGSIZE=cgsize, NINDIR=nindir, ...), fs_cs/contigdirs/maxcluster as bounds-checked accessors, constants checked in test-ref"
+
+[[file]]
+c = "sys/ufs/ffs/ffs_tables.c"
+rust = "sys/ufs/ffs/ffs_tables.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c3a37b4fcb79fd0fbfb20dfb56f562ee7edfa9b5"
+deps = ["sys/ufs/ffs/fs.h"]
+notes = "ffs: around[]/inside[] literal, fragtbl124/fragtbl8 computed by const fns from their definition (test-ref compares every entry with the C), fragtbl[] of Options"
+
+[[file]]
+c = "sys/ufs/ffs/ffs_extern.h"
+rust = "sys/ufs/ffs/ffs_extern.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "33329f213ec1dd331573a6c870e1fcca03e83dab"
+deps = ["sys/ufs/ffs/fs.h"]
+notes = "ffs: FFS_* sysctl ids, FFS_NAMES, re-exports of the ffs functions, tables and pools; ffs_fifovops/ffsfifo_reclaim wait for fifofs"
+
+[[file]]
+c = "sys/ufs/ffs/ffs_subr.c"
+rust = "sys/ufs/ffs/ffs_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "de81df8b619492a18df873dc4a41d12934b0475f"
+deps = ["sys/ufs/ffs/fs.h", "sys/ufs/ffs/ffs_tables.c", "sys/kern/vfs_bio.c"]
+notes = "ffs: ffs_bufatoff (buffer + offset), ffs_fragacct, ffs_isblock/clrblock/setblock/isfreeblock over slices, ffs_vinit (returns the vnode to use; VFIFO is EOPNOTSUPP until fifofs, the C's !FIFO answer); userland prototypes left out"
+
+[[file]]
+c = "sys/ufs/ffs/ffs_alloc.c"
+rust = "sys/ufs/ffs/ffs_alloc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "14822193a03f705c9b0ff913ac605bea74f49fbb"
+deps = ["sys/ufs/ffs/ffs_subr.c", "sys/lib/libkern/scanc.c", "sys/lib/libkern/skpc.c"]
+notes = "ffs: ffs_alloc, ffs_realloccg, ffs_inode_alloc, ffs_dirpref, ffs1_blkpref/ffs2_blkpref (bap as a reader closure), ffs_hashalloc, ffs_cgread, ffs_fragextend, ffs_alloccg, ffs_alloccgblk, ffs_nodealloccg (FFS2 lazy inode init), ffs_blkfree, ffs_inode_free, ffs_freefile, ffs_mapsearch, ffs_clusteracct; uprintf reported (tty.c); rate limits are StaticCells; counters checked by the test fsck"
+
+[[file]]
+c = "sys/ufs/ffs/ffs_balloc.c"
+rust = "sys/ufs/ffs/ffs_balloc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "807c7f72066839072f42676341198dc115d7cdc5"
+deps = ["sys/ufs/ffs/ffs_alloc.c", "sys/ufs/ufs/ufs_bmap.c"]
+notes = "ffs: ffs1_balloc, ffs2_balloc (feature ffs2), ffs_balloc; allocib as an index; the failure unwind is the C's; VOP_FSYNC of the unwind skipped without curproc"
+
+[[file]]
+c = "sys/ufs/ffs/ffs_inode.c"
+rust = "sys/ufs/ffs/ffs_inode.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f753515eda1d271ac8a90b67e2dbb1270f796130"
+deps = ["sys/ufs/ffs/ffs_alloc.c", "sys/kern/vfs_subr.c"]
+notes = "ffs: ffs_update, ffs_truncate, ffs_indirtrunc (BAP/BAP_ASSIGN as functions, the copy malloc(M_TEMP)); ru_inblock skipped without curproc"
+
+[[file]]
+c = "sys/ufs/ffs/ffs_vnops.c"
+rust = "sys/ufs/ffs/ffs_vnops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9d60628fb533a0ed337c4a3301e34841926928e6"
+deps = ["sys/ufs/ufs/ufs_vnops.c", "sys/ufs/ffs/ffs_inode.c"]
+notes = "ffs: ffs_vops, ffs_specvops, ffs_read (bread/bread_cluster), ffs_write (vn_fsizechk, UFS_BUF_ALLOC), ffs_fsync (B_SCANNED scan), ffs_reclaim; ffs_fifovops/ffsfifo_reclaim wait for fifofs (option FIFO); VN_KNOTE reported as comments"
+
+[[file]]
+c = "sys/ufs/ffs/ffs_vfsops.c"
+rust = "sys/ufs/ffs/ffs_vfsops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1432a9d841b245e6435f2a60208575eef5aeafea"
+deps = ["sys/ufs/ffs/ffs_vnops.c", "sys/ufs/ffs/ffs_alloc.c", "sys/ufs/ffs/ffs_balloc.c", "sys/ufs/ufs/ufs_vfsops.c", "sys/kern/vfs_syscalls.c"]
+notes = "ffs: ffs_vfsops, ffs_vtbl, pools, ffs_checkrange, ffs_mountroot (rootdev in sys/systm.rs, swapdev from machine::conf, rootvp/swapdev_vp in init_main.rs; inittodr reported), ffs_mount (own Nameidata for the device; disk_map reported; nblkdev from machine::conf), ffs_reload, ffs_validate, sbtry, ffs_mountfs (FFS1 and FFS2 super-blocks; the in-core super-block is at least size_of::<Fs>()), ffs_oldfscompat, ffs1_compat_read/write, ffs_unmount, ffs_flushfiles, ffs_statfs, ffs_sync, ffs_vget, ffs_fhtovp, ffs_vptofh, ffs_sbupdate, ffs_init (done flag atomic), ffs_sysctl (ffs_vars empty without UFS_DIRHASH); host tests: newfs-like FFS1/FFS2 images, mount, read, write past the direct blocks, mkdir/rename/unlink/rmdir/symlink/getdents, sync, unmount, fsck-like counter check, remount"
+
 [[extra]]
 rust = "sys/dev/consfile.rs"
 reason = "stand-in until /dev/console can be opened (a root file system with /dev): the console as a struct file (DTYPE_CONSFILE) that start_init installs at descriptors 0, 1 and 2 of init through falloc/fdinsert; since M8 its fileops are what vn_read/vn_write/vn_ioctl/vn_close would do for the console's vnode: cnopen at attach, cnread/cnwrite (IO_NDELAY for FNONBLOCK), cnioctl (FIONBIO/FIOASYNC are the file's), cnkqfilter, cnclose; the polled cnputc/cngetc path is kept for a console that is not a tty"
@@ -3101,7 +3346,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e765164b70433aca6f866a1fc9997627c2ec7f0f"
 deps = ["sys/sys/queue.h", "sys/sys/rwlock.h", "sys/sys/refcnt.h", "sys/sys/ucred.h", "sys/sys/mbuf.h", "sys/sys/sysctl.h"]
-notes = "vfs stage 1: fsid_t (Fsid), struct fid, MFSNAMELEN/MNAMELEN, union mount_info as its 160 aligned bytes (the per-filesystem *_args views, export_args, the NFS/ISO/MSDOS/NTFS/UDF/tmpfs/fuse args and their flags come with their file systems), struct statfs (#[repr(C)], the holes named _pad0/_pad1, AbiPod, 568 bytes checked), MOUNT_* names, struct mount (malloc'd, &'static Mount with mnt_refs; Cells, mnt_op/mnt_vfc Options with accessors, mnt_stat a Cell<Statfs> with update_stat), MntList/MntDounmount adapters, MNT_* flags and MNT_BITS, MNT_OP_FLAGS, MNT_WAIT/NOWAIT/LAZY, struct fhandle (AbiPod), VFS_GENERIC/MAXTYPENUM/CONF/BCACHESTAT, struct vfsconf (vfc_refcount atomic, Vfsconf::new), struct bcachestats, struct vfsops (vfs_root/vfs_vget/vfs_fhtovp return the vnode; vfs_mount gets the arguments as bytes; vfs_init/vfs_sysctl Options), the VFS_* macros as functions, VB_*; struct netcred/netexport (net/radix.h, NFSSERVER) left out; reference-backed test; vfs stage 2: BUFPAGES_DEFICIT/BUFPAGES_INACT as bufpages_deficit()/bufpages_inact() over vfs_bio.c's bcstats and buflowpages"
+notes = "vfs stage 1: fsid_t (Fsid), struct fid, MFSNAMELEN/MNAMELEN, union mount_info as its 160 aligned bytes (the per-filesystem *_args views, export_args, the NFS/ISO/MSDOS/NTFS/UDF/tmpfs/fuse args and their flags come with their file systems), struct statfs (#[repr(C)], the holes named _pad0/_pad1, AbiPod, 568 bytes checked), MOUNT_* names, struct mount (malloc'd, &'static Mount with mnt_refs; Cells, mnt_op/mnt_vfc Options with accessors, mnt_stat a Cell<Statfs> with update_stat), MntList/MntDounmount adapters, MNT_* flags and MNT_BITS, MNT_OP_FLAGS, MNT_WAIT/NOWAIT/LAZY, struct fhandle (AbiPod), VFS_GENERIC/MAXTYPENUM/CONF/BCACHESTAT, struct vfsconf (vfc_refcount atomic, Vfsconf::new), struct bcachestats, struct vfsops (vfs_root/vfs_vget/vfs_fhtovp return the vnode; vfs_mount gets the arguments as bytes; vfs_init/vfs_sysctl Options), the VFS_* macros as functions, VB_*; struct netcred/netexport (net/radix.h, NFSSERVER) left out; reference-backed test; vfs stage 2: BUFPAGES_DEFICIT/BUFPAGES_INACT as bufpages_deficit()/bufpages_inact() over vfs_bio.c's bcstats and buflowpages; ffs: struct export_args (sockaddr pointers as user addresses) and struct ufs_args (UfsArgs::from_bytes reads the kernel copy of the mount arguments)"
 
 [[file]]
 c = "sys/sys/namei.h"
@@ -3119,7 +3364,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8d31047ac94f65c25fff1431e92936deca4f2437"
 deps = ["sys/sys/mount.h", "sys/sys/vnode.h", "sys/kern/subr_pool.c"]
-notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum"
+notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args))"
 
 [[file]]
 c = "sys/kern/vfs_subr.c"
@@ -3320,7 +3565,7 @@ rust = "sys/lib/libkern/scanc.rs"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "0ebd934433345f8181d68c1765633dc6e4328937"
-notes = "over a byte slice and a &[u8; 256] table; returns usize; used by tty.c's ttwrite; host test"
+notes = "over a byte slice and a &[u8; 256] table; returns usize; used by tty.c's ttwrite and ffs_alloc.c's ffs_mapsearch; host test"
 
 [[file]]
 c = "sys/sys/conf.h"

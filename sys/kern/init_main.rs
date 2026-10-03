@@ -163,6 +163,44 @@ pub static PROC0: Proc = Proc::new();
 /// `vmspace0`: the address space of process 0 (the kernel's).
 pub static VMSPACE0: Vmspace = Vmspace::new();
 
+/// `rootvp`: the vnode of the root device (`rootdev`), made by the root file system's
+/// `mountroot` (`ffs_mountroot`).
+pub static ROOTVP: AtomicPtr<crate::sys::vnode::Vnode> = AtomicPtr::new(core::ptr::null_mut());
+/// `swapdev_vp`: the vnode of the swap device (`swapdev`).
+pub static SWAPDEV_VP: AtomicPtr<crate::sys::vnode::Vnode> = AtomicPtr::new(core::ptr::null_mut());
+
+/// `rootvp`, `None` until a root file system is mounted.
+pub fn rootvp() -> Option<&'static crate::sys::vnode::Vnode> {
+    // SAFETY: only `set_rootvp` stores here, and only vnodes, which are never freed.
+    unsafe { ROOTVP.load(core::sync::atomic::Ordering::Acquire).as_ref() }
+}
+
+/// `rootvp = vp`.
+pub fn set_rootvp(vp: Option<&'static crate::sys::vnode::Vnode>) {
+    let p = vp.map_or(core::ptr::null_mut(), |vp| {
+        core::ptr::from_ref(vp).cast_mut()
+    });
+    ROOTVP.store(p, core::sync::atomic::Ordering::Release);
+}
+
+/// `swapdev_vp`, `None` until made.
+pub fn swapdev_vp() -> Option<&'static crate::sys::vnode::Vnode> {
+    // SAFETY: only `set_swapdev_vp` stores here, and only vnodes, which are never freed.
+    unsafe {
+        SWAPDEV_VP
+            .load(core::sync::atomic::Ordering::Acquire)
+            .as_ref()
+    }
+}
+
+/// `swapdev_vp = vp`.
+pub fn set_swapdev_vp(vp: Option<&'static crate::sys::vnode::Vnode>) {
+    let p = vp.map_or(core::ptr::null_mut(), |vp| {
+        core::ptr::from_ref(vp).cast_mut()
+    });
+    SWAPDEV_VP.store(p, core::sync::atomic::Ordering::Release);
+}
+
 /// `limit0`: the resource limits of process 0, shared with its descendants.
 pub static LIMIT0: Plimit = Plimit::new();
 /// `start_init_exec`: semaphore for `start_init()`.

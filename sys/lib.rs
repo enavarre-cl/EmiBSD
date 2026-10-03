@@ -16,6 +16,7 @@ extern crate alloc;
 
 pub mod arch;
 pub mod conf;
+pub mod crypto;
 pub mod ddb;
 pub mod dev;
 pub mod kern;
@@ -24,6 +25,8 @@ pub mod miscfs;
 pub mod net;
 pub mod netinet;
 pub mod sys;
+#[cfg(feature = "ffs")]
+pub mod ufs;
 pub mod uvm;
 
 #[cfg(test)]

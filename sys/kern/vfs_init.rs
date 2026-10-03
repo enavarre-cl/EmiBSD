@@ -45,11 +45,10 @@
 //! Upstream: sys/kern/vfs_init.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `vfsconflist[]` is empty: no file system is ported yet (the buffer cache and the vnode
-//!   pager are there for the first). Each GENERIC entry (`FFS`, `MFS`, `EXT2FS`,
-//!   `CD9660`, `MSDOSFS`, `NFSCLIENT`, `NTFS`, `UDF`, `FUSE`, `TMPFS`) joins as a
-//!   `Vfsconf::new(...)` line when its file system does, behind a cargo feature named after
-//!   the `option(4)`.
+//! - `vfsconflist[]` holds the ported file systems: `ffs` (feature `ffs`, `option FFS`). Each
+//!   other GENERIC entry (`MFS`, `EXT2FS`, `CD9660`, `MSDOSFS`, `NFSCLIENT`, `NTFS`, `UDF`,
+//!   `FUSE`, `TMPFS`) joins as a `Vfsconf::new(...)` line when its file system does, behind
+//!   a cargo feature named after the `option(4)`.
 //! - `rootvnode` is an `AtomicPtr` behind [`rootvnode`]/[`set_rootvnode`]; `maxvfsconf` is an
 //!   `AtomicI32`.
 //! - `vfs_byname` takes the name as bytes (`&[u8]`, NUL or slice end terminated).
@@ -74,7 +73,19 @@ static ROOTVNODE: AtomicPtr<Vnode> = AtomicPtr::new(ptr::null_mut());
 
 /// `vfsconflist[]`: the filesystem types this kernel is configured with (see the module's
 /// deviations).
-static VFSCONFLIST: [Vfsconf; 0] = [];
+static VFSCONFLIST: [Vfsconf; NVFSCONF] = [
+    #[cfg(feature = "ffs")]
+    Vfsconf::new(
+        &crate::ufs::ffs::ffs_vfsops::FFS_VFSOPS,
+        crate::sys::mount::MOUNT_FFS,
+        1,
+        crate::sys::mount::MNT_LOCAL | crate::sys::mount::MNT_SWAPPABLE,
+        crate::sys::mount::UfsArgs::SIZE,
+    ),
+];
+
+/// The number of entries of `vfsconflist[]`: one per configured file system.
+const NVFSCONF: usize = if cfg!(feature = "ffs") { 1 } else { 0 };
 
 /// `maxvfsconf`: initially the size of the list, `vfsinit` will set it to the highest defined
 /// type number.
