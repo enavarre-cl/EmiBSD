@@ -1,9 +1,9 @@
 [workspace]
 resolver = "3"
-members = ["sys", "sys/lib/libkern", "tools/xtask", "init"]
+members = ["sys", "sys/lib/libkern", "sys/lib/libz", "tools/xtask", "init"]
 # `cargo check` / `cargo test` at the root build the kernel and libkern for the HOST
 # (through sys/arch/host). Kernel images always name a target; `just` does that.
-default-members = ["sys", "sys/lib/libkern"]
+default-members = ["sys", "sys/lib/libkern", "sys/lib/libz"]
 
 [workspace.package]
 version = "0.0.1"
@@ -16,6 +16,7 @@ rust-version = "1.98"
 # ("Dependencies") and in .claude/rules/rust-kernel.md. Porting OpenBSD code is the
 # project; a crate is acceptable only when it replaces something that is NOT OpenBSD code.
 libkern = { path = "sys/lib/libkern" }
+libz = { path = "sys/lib/libz" }
 # No `limine` crate: 0.6+ needs nightly (`ptr_metadata`), 0.5 is frozen at base revision 3.
 # The protocol structs live in sys/stand/limine.rs (docs/ARCHITECTURE.md, "Dependencies").
 bitflags = { version = "2", default-features = false }                  # typed flag sets for #define groups

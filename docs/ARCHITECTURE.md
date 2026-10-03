@@ -17,7 +17,8 @@ Reason: kern, uvm and arch are mutually recursive (`trap → uvm_fault → pmap 
 OpenBSD resolves that at link time. Cargo forbids crate cycles, so a crate per subsystem would force
 trait inversions everywhere. One crate resolves the cycles the way C does.
 
-Exceptions are true leaves only: `sys/lib/libkern` (OpenBSD builds it as a library too). A module
+Exceptions are true leaves only: `sys/lib/libkern` and `sys/lib/libz` (OpenBSD builds both as libraries
+too; libz holds only what the kernel calls, today `crc32`, under the zlib licence). A module
 may be promoted to a crate only if it uses nothing from `crate::{kern, uvm, arch, machine}`.
 
 No `src/` directory (`[lib] path = "lib.rs"`), so C and Rust paths differ only by extension.

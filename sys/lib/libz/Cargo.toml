@@ -1,0 +1,17 @@
+[package]
+name = "libz"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "zlib pieces the kernel uses (OpenBSD sys/lib/libz): crc32"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+# Intentionally empty: libz is a leaf, as in OpenBSD.
+[dependencies]
+
+[lints]
+workspace = true

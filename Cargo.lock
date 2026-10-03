@@ -13,6 +13,7 @@ name = "bsd"
 version = "0.0.1"
 dependencies = [
  "libkern",
+ "libz",
 ]
 
 [[package]]
@@ -60,6 +61,10 @@ version = "0.0.1"
 
 [[package]]
 name = "libkern"
+version = "0.0.1"
+
+[[package]]
+name = "libz"
 version = "0.0.1"
 
 [[package]]

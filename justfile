@@ -191,13 +191,13 @@ userland:
 
 # --- quality -----------------------------------------------------------------
 
-# host unit tests (libkern + bsd through sys/arch/host, plus xtask's own)
+# host unit tests (libkern + libz + bsd through sys/arch/host, plus xtask's own)
 test:
-    cargo test -p libkern -p bsd -p xtask
+    cargo test -p libkern -p libz -p bsd -p xtask
 
 # tests that cross-check constants against the C reference tree
 test-ref:
-    OPENBSD_SRC=reference/openbsd-src cargo test -p libkern -p bsd -- --ignored
+    OPENBSD_SRC=reference/openbsd-src cargo test -p libkern -p libz -p bsd -- --ignored
 
 # bare targets with `--features qemu`: a superset of the plain build, which `just build` covers
 clippy:
@@ -205,7 +205,7 @@ clippy:
     cargo clippy -p bsd --target {{arm64}} --features qemu -- -D warnings
     cargo clippy -p init --target {{amd64}} -- -D warnings
     cargo clippy -p init --target {{arm64}} -- -D warnings
-    cargo clippy -p libkern -p bsd -p xtask -- -D warnings
+    cargo clippy -p libkern -p libz -p bsd -p xtask -- -D warnings
 
 fmt:
     cargo fmt --all -- --check
