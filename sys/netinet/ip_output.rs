@@ -61,9 +61,8 @@
 //!   `ip_setmoptions`'s `malloc(M_WAITOK)` cannot fail in C: here its failure panics.
 //!   `IPSEC` is not configured: the security levels answer `EOPNOTSUPP` to a set and
 //!   `IPSEC_LEVEL_NONE` to a get, as the C's `#ifndef IPSEC` branches do.
-//! - `struct tcphdr` and `struct udphdr` (`<netinet/tcp.h>`, `<netinet/udp.h>`) are not ported:
-//!   the offsets of `th_sum` and `uh_sum` are constants here. `tcpstat_inc(tcps_outswcsum)`
-//!   and `udpstat_inc(udps_outswcsum)` are reported (`netinet/tcp_*.c`, `udp_usrreq.c`).
+//! - `struct tcphdr` (`<netinet/tcp.h>`) is not ported: the offset of `th_sum` is a constant
+//!   here, and `tcpstat_inc(tcps_outswcsum)` is reported (`netinet/tcp_*.c`).
 //! - Not configured, each a comment at its site: `IPSEC` (`ip_output_ipsec_lookup`,
 //!   `ip_output_ipsec_pmtu_update`, `ip_output_ipsec_send`, `ipsec_adjust_mtu`), `NPF`
 //!   (`pf_test`, the reroute, `icmp_mtudisc_clone` of a pf table change) and `MROUTING`
@@ -126,6 +125,8 @@ use crate::netinet::ip_var::{
     IP_ALLOWBROADCAST, IP_FORWARDING, IP_MTUDISC, IP_RAWOUTPUT, IpMoptions, Ipoption,
     IpstatCounters, MAX_IPOPTLEN, ipstat_add, ipstat_inc, mtod_ip, mtod_ip_store,
 };
+use crate::netinet::udp::Udphdr;
+use crate::netinet::udp_var::{UdpstatCounters, udpstat_inc};
 use crate::sys::endian::{htonl, htons, ntohl, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_IPMOPTS, M_NOWAIT, M_WAITOK, M_ZERO};
@@ -141,8 +142,8 @@ use crate::{kassert, unported};
 
 /// `offsetof(struct tcphdr, th_sum)` (`<netinet/tcp.h>` is not ported).
 const TH_SUM_OFFSET: usize = 16;
-/// `offsetof(struct udphdr, uh_sum)` (`<netinet/udp.h>` is not ported).
-const UH_SUM_OFFSET: usize = 6;
+/// `offsetof(struct udphdr, uh_sum)`.
+const UH_SUM_OFFSET: usize = core::mem::offset_of!(Udphdr, uh_sum);
 
 /// `ip_output`: IP output. The packet in mbuf chain `m` contains a skeletal IP header (with
 /// len, off, ttl, proto, tos, src, dst). The mbuf chain containing the packet will be freed.
@@ -1550,7 +1551,7 @@ pub fn in_proto_cksum_out(m: &Mbuf, ifp: Option<&Ifnet>) {
         }
     } else if flags & M_UDP_CSUM_OUT != 0 {
         if !in_ifcap_cksum(m, ifp, IFCAP_CSUM_UDPv4) || ip.ip_hl() != 5 {
-            let _ = unported!("udpstat_inc (netinet/udp_usrreq.c)");
+            udpstat_inc(UdpstatCounters::UdpsOutswcsum);
             in_delayed_cksum(m);
             m.m_pkthdr().csum_flags.set(flags & !M_UDP_CSUM_OUT); // Clear
         }

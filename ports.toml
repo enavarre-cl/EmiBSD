@@ -2886,7 +2886,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d8b3695eafc44c4faaa208c08d27ebd2653cfefc"
 deps = ["sys/sys/protosw.h", "sys/sys/domain.h", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c"]
-notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; M9a: rip_usrreqs/rip_ctloutput on the raw, icmp, ipv4-in-ipv4, igmp and wildcard entries), inetdomain (dom_init is in_pcb.c's in_init since M9a), ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (udp_*, tcp_*, ipip_*, igmp_*) and free the packet; INET6, IPSEC, GRE, MROUTING, CARP, PFSYNC, ETHERIP, PIPEX, divert, MPLS not configured"
+notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; M9a: udp_usrreqs/ip_ctloutput on udp, rip_usrreqs/rip_ctloutput on the raw, icmp, ipv4-in-ipv4, igmp and wildcard entries; tcp has neither until tcp_usrreq.c), inetdomain (dom_init is in_pcb.c's in_init since M9a), ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (tcp_*, ipip_*, igmp_*) and free the packet; INET6, IPSEC, GRE, MROUTING, CARP, PFSYNC, ETHERIP, PIPEX, divert, MPLS not configured"
 
 [[file]]
 c = "sys/netinet/in_pcb.h"
@@ -2914,6 +2914,32 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "83c1c184af109db2f55e079bbb22b687974c507f"
 deps = ["sys/netinet/in_pcb.c", "sys/netinet/ip_output.c", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c", "sys/kern/uipc_socket2.c"]
 notes = "M9a: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: rawcbtable, RIPSNDQ/RIPRCVQ and rip_sendspace/rip_recvspace (constants), rip_usrreqs, rip_init, rip_input (the iterator walk; ips_noproto/ips_delivered as two atomic updates), rip_sbappend, rip_output (the destination a sockaddr_in written back with IP_HDRINCL), rip_chkhdr, rip_ctloutput, rip_attach, rip_detach, rip_bind, rip_connect, rip_disconnect, rip_shutdown, rip_send; the MRT_* options (<netinet/ip_mroute.h>, not ported) are defined here and answer EOPNOTSUPP (MROUTING not configured); NPF, INET6, IPSEC not configured (comments at the sites); host tests (a raw ICMP socket pinging the gateway end to end, rip_input's filters, rip_attach's privilege)"
+
+[[file]]
+c = "sys/netinet/udp.h"
+rust = "sys/netinet/udp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "81f3baf8c575d83ee232f7b92c023f5744c29011"
+notes = "M9a: struct udphdr (repr(C), network-order members), size assert"
+
+[[file]]
+c = "sys/netinet/udp_var.h"
+rust = "sys/netinet/udp_var.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4f83182535b360bc6e6559b8cbb1e1463b838523"
+deps = ["sys/netinet/udp.h", "sys/netinet/ip_var.h"]
+notes = "M9a: struct udpiphdr (the ui_* shorthands are member paths), struct udpstat, UDPCTL_* (UDPCTL_NAMES waits for sys/sysctl.h), enum udpstat_counters as UdpstatCounters, udpstat_inc over udpcounters (one atomic array in udp_usrreq.rs: percpu.h not ported); udbtable, udp_usrreqs and the prototypes are udp_usrreq.c's; the INET6 ones are not configured; size asserts and a reference-backed test"
+
+[[file]]
+c = "sys/netinet/udp_usrreq.c"
+rust = "sys/netinet/udp_usrreq.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c189a45a5e6beef498b948c151c93115f86647cd"
+deps = ["sys/netinet/udp_var.h", "sys/netinet/in_pcb.c", "sys/netinet/ip_output.c", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c", "sys/netinet/in4_cksum.c", "sys/kern/uipc_socket2.c", "sys/kern/uipc_mbuf2.c"]
+notes = "M9a: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: udpcksum/udp_sendspace/udp_recvspace (AtomicI32 for sysctl_bounded_arr), udp_usrreqs, udpctl_vars, udbtable, udpcounters (atomics), udp_init, udp_input (the UDP header read and its checksum written unaligned through its address in the mbuf; broadcast/multicast delivery through the iterator; port unreachable), udp_sbappend (inp_upcall gets a copy of the header), udp_notify, udp_ctlinput (unsafe: the returned headers through the raw argument), udp_output (IP_SENDSRCADDR control messages; the udpiphdr written over the prepended space keeping its uh_sum bytes), udp_attach, udp_detach, udp_bind, udp_connect, udp_disconnect, udp_shutdown, udp_send, udp_sysctl (port bitmaps through a stack buffer), udp_sysctl_udpstat; ip6_exthdr_get (netinet6/ip6_input.c) is a private helper; INET6, IPSEC (udpencap, SPD), NPF, PIPEX, NSTOEPLITZ not configured (comments at the sites); host tests (datagrams in, bad checksum, port unreachable, datagram out with picked port and checksums, IP_TTL, connect/disconnect, udp_ctlinput)"
 
 [[file]]
 c = "sys/netinet/in_var.h"
@@ -2985,7 +3011,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2fa2f3f0d8a827987ec4fc5a54de98cde753b817"
 deps = ["sys/netinet/ip_var.h", "sys/netinet/in.c", "sys/net/route.c", "sys/netinet/in_cksum.c"]
-notes = "M7b: ip_output (no seclevel parameter: IPSEC not configured), ip_fragment, ip_insertoptions, ip_optcopy (unsafe: raw headers), ip_freemoptions, ip_mloopback, in_hdr_cksum_out, in_cksum_phdr, in_delayed_cksum, in_proto_cksum_out (tcpstat_inc reported), in_ifcap_cksum; M9a: the socket option half: ip_ctloutput (option values read and written unaligned; !IPSEC levels: EOPNOTSUPP on set, IPSEC_LEVEL_NONE on get), ip_pcbopts (the struct ipoption built in a local buffer large enough for what the C writes past ipopt_list before its length check), ip_multicast_if, ip_setmoptions (malloc(M_WAITOK) failure panics), ip_getmoptions; pf, IPSEC, MROUTING not configured; host tests (fragmentation, EMSGSIZE, optcopy, insertoptions, pcbopts source route, getmoptions defaults)"
+notes = "M7b: ip_output (no seclevel parameter: IPSEC not configured), ip_fragment, ip_insertoptions, ip_optcopy (unsafe: raw headers), ip_freemoptions, ip_mloopback, in_hdr_cksum_out, in_cksum_phdr, in_delayed_cksum, in_proto_cksum_out (tcpstat_inc reported; uh_sum's offset and udpstat_inc from udp.h/udp_var.h since M9a), in_ifcap_cksum; M9a: the socket option half: ip_ctloutput (option values read and written unaligned; !IPSEC levels: EOPNOTSUPP on set, IPSEC_LEVEL_NONE on get), ip_pcbopts (the struct ipoption built in a local buffer large enough for what the C writes past ipopt_list before its length check), ip_multicast_if, ip_setmoptions (malloc(M_WAITOK) failure panics), ip_getmoptions; pf, IPSEC, MROUTING not configured; host tests (fragmentation, EMSGSIZE, optcopy, insertoptions, pcbopts source route, getmoptions defaults)"
 
 [[file]]
 c = "sys/netinet/ip_icmp.c"

@@ -419,7 +419,7 @@ fn icmp_to_us(type_: u8, opts: &[u8]) -> &'static Mbuf {
 }
 
 /// The packets `ip_send` queued, freed after `check` looked at each.
-fn sent(mut check: impl FnMut(&[u8], u16)) -> usize {
+pub(crate) fn sent(mut check: impl FnMut(&[u8], u16)) -> usize {
     let ml = MbufList::new();
     mq_delist(&IPSEND_MQ, &ml);
     let mut n = 0;

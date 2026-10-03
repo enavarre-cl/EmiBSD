@@ -112,8 +112,7 @@
 //!
 //! ## Deviations
 //! - The protocols whose files are not ported keep their entries, with stand-ins in this
-//!   module named after the C functions: `udp_*` (`netinet/udp_usrreq.c`), `tcp_*`
-//!   (`netinet/tcp_*.c`), `ipip_*` (`netinet/ip_ipip.c`), `igmp_*` (`netinet/igmp.c`). Each
+//!   module named after the C functions: `tcp_*` (`netinet/tcp_*.c`), `ipip_*` (`netinet/ip_ipip.c`), `igmp_*` (`netinet/igmp.c`). Each
 //!   reports itself with `unported!`; an input stand-in drops the packet (`IPPROTO_DONE`), a
 //!   sysctl one fails with `ENOSYS`. Their `pr_ctloutput` and `pr_usrreqs` are the C's where
 //!   those are ported (`rip_ctloutput` and `rip_usrreqs` for the raw entries, `IPPROTO_IPV4`
@@ -136,7 +135,9 @@ use crate::netinet::in_::{
 use crate::netinet::in_pcb::in_init;
 use crate::netinet::ip_icmp::{icmp_init, icmp_input, icmp_sysctl};
 use crate::netinet::ip_input::{ip_init, ip_slowtimo, ip_sysctl};
+use crate::netinet::ip_output::ip_ctloutput;
 use crate::netinet::raw_ip::{RIP_USRREQS, rip_ctloutput, rip_init, rip_input};
+use crate::netinet::udp_usrreq::{UDP_USRREQS, udp_ctlinput, udp_init, udp_input, udp_sysctl};
 use crate::sys::domain::Domain;
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::{Mbuf, m_freemp};
@@ -166,6 +167,8 @@ pub static INETSW: [Protosw; 8] = [
         pr_flags: PR_ATOMIC | PR_ADDR | PR_SPLICE | PR_MPINPUT | PR_MPSYSCTL,
         pr_input: Some(udp_input),
         pr_ctlinput: Some(udp_ctlinput),
+        pr_ctloutput: Some(ip_ctloutput),
+        pr_usrreqs: Some(&UDP_USRREQS),
         pr_init: Some(udp_init),
         pr_sysctl: Some(udp_sysctl),
         ..Protosw::new(&INETDOMAIN)
@@ -265,43 +268,6 @@ pub static INETDOMAIN: Domain = Domain {
 fn unported_input(mp: &mut Option<&'static Mbuf>) -> i32 {
     m_freemp(mp);
     IPPROTO_DONE
-}
-
-/// `udp_input` (`netinet/udp_usrreq.c`, not ported).
-fn udp_input(
-    mp: &mut Option<&'static Mbuf>,
-    _offp: &mut i32,
-    _proto: i32,
-    _af: i32,
-    _ns: Option<&Netstack>,
-) -> i32 {
-    let _ = unported!("udp_input (netinet/udp_usrreq.c)");
-    unported_input(mp)
-}
-
-/// `udp_ctlinput` (`netinet/udp_usrreq.c`, not ported).
-///
-/// # Safety
-///
-/// `PrCtlinputFn`'s contract; nothing is read.
-unsafe fn udp_ctlinput(_cmd: i32, _sa: *const Sockaddr, _rdomain: u32, _v: *mut c_void) {
-    let _ = unported!("udp_ctlinput (netinet/udp_usrreq.c)");
-}
-
-/// `udp_init` (`netinet/udp_usrreq.c`, not ported).
-fn udp_init() {
-    let _ = unported!("udp_init (netinet/udp_usrreq.c)");
-}
-
-/// `udp_sysctl` (`netinet/udp_usrreq.c`, not ported).
-fn udp_sysctl(
-    _name: &[i32],
-    _oldp: usize,
-    _oldlenp: &mut usize,
-    _newp: usize,
-    _newlen: usize,
-) -> Result<(), Errno> {
-    Err(unported!("udp_sysctl (netinet/udp_usrreq.c)"))
 }
 
 /// `tcp_input` (`netinet/tcp_input.c`, not ported).
