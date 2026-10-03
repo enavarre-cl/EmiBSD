@@ -464,6 +464,7 @@ fn kv_map_of(kv: &KmemVaMode) -> &'static VmMap {
     match kv.kv_map {
         KvMap::Kernel => kernel_map(),
         KvMap::Kmem => kmem_map(),
+        KvMap::Exec => crate::uvm::uvm_extern::exec_map(),
         KvMap::None => panic(format_args!("km_alloc: single page mode has no map")),
     }
 }

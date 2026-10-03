@@ -45,22 +45,37 @@
 //!
 //! Upstream: sys/sys/exec.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M6 (part b) ports `struct ps_strings`, `struct exec_vmcmd` with
-//! `exec_vmcmd_set`, the `VMCMD_*` flags, `struct exec_package` (the members the ELF loader
-//! and `exec` from a memory image use) and the `EXEC_*` flags. `struct execsw`, the
-//! `exec_maxhdrsz` machinery, `exec_script` and the `NCARGS`/`ARG_MAX` argument copying
-//! come with `sys_execve` (M6-c). `struct execsw` is here.
+//! Status: `wip`. `struct ps_strings`, `struct exec_vmcmd` with `exec_vmcmd_set`, the
+//! `VMCMD_*` flags, `struct exec_package` (every member), `struct execsw`, the `EXEC_*`
+//! flags, `ELF_RANDOMIZE_LIMIT` and `exec_maxhdrsz`. The a.out `MID_*` machine ids and the
+//! a.out `struct exec` are not used by any configured format.
 //!
 //! ## Deviations
-//! - The executable is a memory image (`ep_hdr` is the whole file, a Limine module), not a
-//!   vnode: `ep_vp`, `ep_vap` and `ep_ndp` do not exist yet, and a vmcmd that reads the file
-//!   (`vmcmd_map_readvn`, `vmcmd_map_pagedvn`) copies from `ep_hdr` at its offset.
-//! - `exec_vmcmd_set` is a `Vec` instead of the growable array with `EXEC_DEFAULT_VMCMD_SETSIZE`.
+//! - The executable is a vnode (`ep_vp`, M8) or, for the `init` boot module until a root
+//!   file system exists, a memory image (`ep_image`). A vmcmd that reads the file names it
+//!   with an [`ExecFile`]: the vnode (referenced as `new_vmcmd` does) or the image, read at
+//!   `ev_offset`.
+//! - `exec_vmcmd_set` is a `Vec` instead of the growable array with
+//!   `EXEC_DEFAULT_VMCMD_SETSIZE`; `new_vmcmd`/`vmcmdset_extend`/`kill_vmcmds` are
+//!   `ExecVmcmdSet::{push, kill}`.
+//! - `ep_hdr` is an owned buffer of `exec_maxhdrsz` bytes (the C's `malloc(M_EXEC)`);
+//!   `ep_interp` is a `namei_pool` buffer that gives itself back when dropped; `ep_ndp` is
+//!   passed to the exec switch as an argument instead of being stored (an image has none).
+//! - `ep_fa`, the fake argument vector of `exec_script.c`, is a `Vec` of byte strings;
+//!   `exec_script.c` is not ported, so nothing sets `EXEC_HASARGL` yet.
+//! - `exec_maxhdrsz` is a `const fn` over the constant exec switch instead of the global
+//!   `init_exec` (`exec_conf.c`) computes at boot.
 
+use alloc::vec;
 use alloc::vec::Vec;
+use core::ptr::NonNull;
 
+use crate::kern::vfs_subr::{vref, vrele};
+use crate::kern::vfs_syscalls::NameiBuf;
 use crate::sys::errno::Errno;
+use crate::sys::exec_elf::ElfEhdr;
 use crate::sys::proc::Proc;
+use crate::sys::vnode::{Vattr, Vnode};
 use crate::uvm::uvm_extern::VmProt;
 
 /// `struct ps_strings`: the array of argument and environment strings a process starts with,
@@ -94,8 +109,7 @@ impl PsStrings {
 /// What an `exec_vmcmd` does (`ev_proc`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VmcmdProc {
-    /// `vmcmd_map_pagedvn`: map a range of the file, demand paged (copied, see the module's
-    /// deviations).
+    /// `vmcmd_map_pagedvn`: map a range of the file, demand paged.
     MapPagedvn,
     /// `vmcmd_map_readvn`: read a range of the file into fresh pages.
     MapReadvn,
@@ -120,16 +134,29 @@ pub const VMCMD_IMMUTABLE: u32 = 0x0010;
 /// `VMCMD_TEXTREL`: text relocations.
 pub const VMCMD_TEXTREL: u32 = 0x0020;
 
+/// The file an exec reads: the C's `struct vnode *` (`ep_vp`, `ev_vp`), or the boot
+/// module's memory image (see the module's deviations).
+#[derive(Clone, Copy)]
+pub enum ExecFile<'a> {
+    /// A vnode: a regular file found by `namei`.
+    Vnode(&'static Vnode),
+    /// The whole executable, in kernel memory.
+    Image(&'a [u8]),
+}
+
 /// `struct exec_vmcmd`: one step of building the address space.
-#[derive(Clone, Copy, Debug)]
-pub struct ExecVmcmd {
+#[derive(Clone, Copy)]
+pub struct ExecVmcmd<'a> {
     /// `ev_proc`.
     pub ev_proc: VmcmdProc,
     /// `ev_len`: bytes of memory to be mapped.
     pub ev_len: usize,
     /// `ev_addr`: user virtual address.
     pub ev_addr: usize,
-    /// `ev_offset`: offset in the image (`ev_vp` is the image itself).
+    /// `ev_vp`: the file to read or map (`None` for NULL), referenced while the command
+    /// holds it.
+    pub ev_vp: Option<ExecFile<'a>>,
+    /// `ev_offset`: offset in the file.
     pub ev_offset: usize,
     /// `ev_prot`: protections for the segment.
     pub ev_prot: VmProt,
@@ -138,13 +165,13 @@ pub struct ExecVmcmd {
 }
 
 /// `struct exec_vmcmd_set`: the vmcmds, in order.
-#[derive(Debug, Default)]
-pub struct ExecVmcmdSet {
+#[derive(Default)]
+pub struct ExecVmcmdSet<'a> {
     /// `evs_cmds` (`evs_used` is its length).
-    pub evs_cmds: Vec<ExecVmcmd>,
+    pub evs_cmds: Vec<ExecVmcmd<'a>>,
 }
 
-impl ExecVmcmdSet {
+impl<'a> ExecVmcmdSet<'a> {
     /// `VMCMDSET_INIT`.
     pub const fn new() -> Self {
         Self {
@@ -152,28 +179,42 @@ impl ExecVmcmdSet {
         }
     }
 
-    /// `NEW_VMCMD2(evsp, proc, len, addr, vp, offset, prot, flags)`.
+    /// `new_vmcmd(evsp, proc, len, addr, vp, offset, prot, flags)` (`NEW_VMCMD2`): create a
+    /// new vmcmd structure and fill in its fields based on function call arguments; make
+    /// sure objects ref'd by the vmcmd are 'held'.
+    #[allow(clippy::too_many_arguments)] // the C's signature
     pub fn push(
         &mut self,
         proc: VmcmdProc,
         len: usize,
         addr: usize,
+        vp: Option<ExecFile<'a>>,
         offset: usize,
         prot: VmProt,
         flags: u32,
     ) {
+        if let Some(ExecFile::Vnode(vp)) = vp {
+            vref(vp);
+        }
         self.evs_cmds.push(ExecVmcmd {
             ev_proc: proc,
             ev_len: len,
             ev_addr: addr,
+            ev_vp: vp,
             ev_offset: offset,
             ev_prot: prot,
             ev_flags: flags,
         });
     }
 
-    /// `kill_vmcmds`: drops the commands.
+    /// `kill_vmcmds`: release the commands' vnodes and reset the set.
     pub fn kill(&mut self) {
+        for vcp in &self.evs_cmds {
+            if let Some(ExecFile::Vnode(vp)) = vcp.ev_vp {
+                vrele(vp);
+            }
+        }
+        // Free old vmcmds and reset the array.
         self.evs_cmds.clear();
     }
 }
@@ -182,10 +223,18 @@ impl ExecVmcmdSet {
 pub struct ExecPackage<'a> {
     /// `ep_name`: file's name.
     pub ep_name: &'a [u8],
-    /// `ep_hdr`: file's exec header; here the whole image (`ep_hdrvalid` is its length).
-    pub ep_hdr: &'a [u8],
+    /// `ep_hdr`: file's exec header (`ep_hdrlen` is its length).
+    pub ep_hdr: Vec<u8>,
+    /// `ep_hdrvalid`: bytes of `ep_hdr` that are valid.
+    pub ep_hdrvalid: usize,
     /// `ep_vmcmds`: vmcmds used to build vmspace.
-    pub ep_vmcmds: ExecVmcmdSet,
+    pub ep_vmcmds: ExecVmcmdSet<'a>,
+    /// `ep_vp`: executable's vnode (`None` for a memory image).
+    pub ep_vp: Option<&'static Vnode>,
+    /// The memory image standing in for `ep_vp` (see the module's deviations).
+    pub ep_image: Option<&'a [u8]>,
+    /// `ep_vap`: executable's attributes.
+    pub ep_vap: Vattr,
     /// `ep_taddr`: process's text address.
     pub ep_taddr: usize,
     /// `ep_tsize`: size of process's text.
@@ -210,17 +259,38 @@ pub struct ExecPackage<'a> {
     pub ep_interpaddr: usize,
     /// `ep_flags`: `EXEC_*`.
     pub ep_flags: u32,
+    /// `ep_fa`: a fake args vector for scripts.
+    pub ep_fa: Vec<Vec<u8>>,
+    /// `ep_fd`: a file descriptor we're holding.
+    pub ep_fd: i32,
     /// `ep_auxinfo`: userspace auxinfo address.
     pub ep_auxinfo: usize,
+    /// `ep_interp`: name of interpreter if any (a NUL-terminated `namei_pool` buffer).
+    pub ep_interp: Option<NameiBuf>,
+    /// `ep_pinstart`: executable region start.
+    pub ep_pinstart: usize,
+    /// `ep_pinend`: executable region end.
+    pub ep_pinend: usize,
+    /// `ep_pins`: array of system call offsets (`M_PINSYSCALL`, `ep_npins` entries).
+    pub ep_pins: Option<NonNull<u32>>,
+    /// `ep_npins`: entries in array.
+    pub ep_npins: i32,
+    /// `ep_execpath`: execve path on userland stack (0 for NULL).
+    pub ep_execpath: usize,
 }
 
 impl<'a> ExecPackage<'a> {
-    /// A package for the image `hdr` named `name`, before the exec switch looked at it.
-    pub const fn new(name: &'a [u8], hdr: &'a [u8]) -> Self {
+    /// A package for the file named `name`, before `check_exec` found it: no vnode, no
+    /// image, `ep_hdr` `exec_maxhdrsz` zero bytes.
+    pub fn new(name: &'a [u8]) -> Self {
         Self {
             ep_name: name,
-            ep_hdr: hdr,
+            ep_hdr: vec![0; exec_maxhdrsz()],
+            ep_hdrvalid: 0,
             ep_vmcmds: ExecVmcmdSet::new(),
+            ep_vp: None,
+            ep_image: None,
+            ep_vap: Vattr::default(),
             ep_taddr: 0,
             ep_tsize: 0,
             ep_daddr: 0,
@@ -233,8 +303,30 @@ impl<'a> ExecPackage<'a> {
             ep_phdraddr: 0,
             ep_interpaddr: 0,
             ep_flags: 0,
+            ep_fa: Vec::new(),
+            ep_fd: -1,
             ep_auxinfo: 0,
+            ep_interp: None,
+            ep_pinstart: 0,
+            ep_pinend: 0,
+            ep_pins: None,
+            ep_npins: 0,
+            ep_execpath: 0,
         }
+    }
+
+    /// The executable as the loaders read it: `ep_vp`, or the image standing in for it.
+    pub fn file(&self) -> Option<ExecFile<'a>> {
+        match (self.ep_vp, self.ep_image) {
+            (Some(vp), _) => Some(ExecFile::Vnode(vp)),
+            (None, Some(image)) => Some(ExecFile::Image(image)),
+            (None, None) => None,
+        }
+    }
+
+    /// The valid part of the header, `ep_hdr[..ep_hdrvalid]`.
+    pub fn hdr(&self) -> &[u8] {
+        &self.ep_hdr[..self.ep_hdrvalid.min(self.ep_hdr.len())]
     }
 }
 
@@ -250,7 +342,13 @@ pub struct Execsw {
     pub es_check: ExecMakecmdsFcn,
 }
 
-/// `ELF_RANDOMIZE_LIMIT`: how much `PT_OPENBSD_RANDOMIZE` data one executable may ask for.
+/// `exec_maxhdrsz`: the largest `es_hdrsz` of the exec switch (see the module's
+/// deviations); the switch holds only ELF (`kern_exec.rs`).
+pub const fn exec_maxhdrsz() -> usize {
+    size_of::<ElfEhdr>()
+}
+
+/// `ELF_RANDOMIZE_LIMIT`: limit on total `PT_OPENBSD_RANDOMIZE` bytes.
 pub const ELF_RANDOMIZE_LIMIT: usize = 1024 * 1024;
 
 /// `EXEC_INDIR`: script handling already done.

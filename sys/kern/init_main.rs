@@ -84,7 +84,7 @@ use crate::dev::rnd::arc4random;
 use crate::kern::kern_clock::initclocks;
 use crate::kern::kern_clockintr::clockqueue_init;
 use crate::kern::kern_descrip::{fdinit, filedesc_init};
-use crate::kern::kern_exec::exec_image;
+use crate::kern::kern_exec::{exec_image, sys_execve};
 use crate::kern::kern_exit::reaper;
 use crate::kern::kern_fork::{fork1, process_initialize};
 use crate::kern::kern_kthread::{kthread_create, kthread_run_deferred_queue};
@@ -117,24 +117,32 @@ use crate::kern::vfs_vops::VOP_UNLOCK;
 use crate::kprintf;
 use crate::machine::autoconf::pdevinit;
 use crate::machine::cons::consinit;
+use crate::machine::copy::copyout;
 use crate::machine::cpu::{Cpu, cpu_configure, cpu_startup, curcpu};
+use crate::machine::param::MachineParam;
 use crate::machine::pmap::pmap_kernel;
 use crate::machine::{BootModule, Machine, VmParam};
 use crate::net::if_::{ifinit, softnet_init, softnet_percpu};
 use crate::net::rtable::rtable_init;
 use crate::sys::errno::Errno;
+use crate::sys::mman::{MADV_NORMAL, MAP_INHERIT_COPY, PROT_READ, PROT_WRITE};
 use crate::sys::mount::{MNT_ROOTFS, VFS_ROOT};
 use crate::sys::namei::{FOLLOW, LOOKUP, NiDirp};
-use crate::sys::param::{NZERO, PVM, PWAIT};
+use crate::sys::param::{NZERO, PAGE_SIZE, PVM, PWAIT};
 use crate::sys::proc::{FORK_FORK, P_SYSTEM, PS_SYSTEM, Pgrp, Proc, Process, SONPROC, Session};
+use crate::sys::reboot::RB_SINGLE;
 use crate::sys::resourcevar::Plimit;
 use crate::sys::signalvar::Sigacts;
-use crate::sys::systm::{INFSLP, MOUNTROOT};
+use crate::sys::systm::{INFSLP, MOUNTROOT, SysArgs};
+use crate::sys::types::Register;
 use crate::unported;
-use crate::uvm::uvm_extern::Vmspace;
+use crate::uvm::uvm_extern::{
+    PROT_MASK, UVM_FLAG_COPYONW, UVM_FLAG_FIXED, UVM_FLAG_OVERLAY, UVM_FLAG_STACK,
+    UVM_UNKNOWN_OFFSET, Vmspace, uvm_mapflag,
+};
 use crate::uvm::uvm_glue::uvm_init_limits;
 use crate::uvm::uvm_init::uvm_init;
-use crate::uvm::uvm_map::uvmspace_init;
+use crate::uvm::uvm_map::{uvm_map, uvmspace_init};
 use crate::uvm::uvm_param::{round_page, trunc_page};
 
 #[cfg(feature = "qemu")]
@@ -447,8 +455,8 @@ pub fn main() -> ! {
     let _ = unported!("uvm_init_percpu");
     let _ = unported!("evcount_init_percpu");
 
-    // init exec
-    let _ = unported!("init_exec");
+    // init exec: init_exec (exec_conf.c) computes exec_maxhdrsz from execsw[], which is a
+    // constant table here, so exec_maxhdrsz is a const fn (sys/exec.rs).
 
     // Start the scheduler
     scheduler_start();
@@ -533,6 +541,8 @@ pub fn main() -> ! {
 
     // Create the pageout, reaper, cleaner, update, aiodone and page zeroing kernel threads.
     let _ = unported!("kthread_create (pagedaemon, M7)");
+    // The daemon's first act (uvm_pageout): tune the paging parameters.
+    crate::uvm::uvm_pdaemon::uvmpd_tune();
     if kthread_create(reaper, core::ptr::null_mut(), b"reaper").is_err() {
         panic(format_args!("fork reaper"));
     }
@@ -598,8 +608,8 @@ pub fn set_init_module(module: Option<BootModule>) {
     unsafe { *INIT_MODULE.get_mut() = module };
 }
 
-// List of paths to try when searching for "init" (initpaths[]: /sbin/init, /sbin/oinit,
-// /sbin/init.bak): with a root filesystem (M7); the module stands in.
+/// `initpaths[]`: list of paths to try when searching for "init".
+const INITPATHS: [&[u8]; 3] = [b"/sbin/init\0", b"/sbin/oinit\0", b"/sbin/init.bak\0"];
 
 /// `check_console`: warns when `/dev/console` does not exist.
 pub fn check_console(p: &Proc) {
@@ -619,8 +629,61 @@ pub fn check_console(p: &Proc) {
     }
 }
 
+/// The faked-up `execve()` arguments of one attempt: the boot flags (arg 1, if any), the
+/// file name `path` (arg 0, NUL-terminated) and the argument vector, copied out below the
+/// top of the argument page at `addr`. Returns the user addresses of arg 0 and of the
+/// vector.
+fn start_init_args(addr: usize, path: &[u8]) -> (usize, usize) {
+    let mut ucp = addr + PAGE_SIZE;
+
+    // Construct the boot flag argument.
+    let mut flags = [0u8; 4];
+    let mut flagsp = 0;
+    flags[flagsp] = b'-';
+    flagsp += 1;
+    let mut options = false;
+
+    if BOOTHOWTO.load(Ordering::Relaxed) & RB_SINGLE != 0 {
+        flags[flagsp] = b's';
+        flagsp += 1;
+        options = true;
+    }
+    // notyet: RB_FASTBOOT ('f').
+
+    // Move out the flags (arg 1), if necessary.
+    let mut arg1 = 0usize;
+    if options {
+        flags[flagsp] = 0;
+        flagsp += 1;
+        ucp -= flagsp;
+        let _ = copyout(&flags[..flagsp], ucp);
+        arg1 = ucp;
+    }
+
+    // Move out the file name (also arg 0).
+    ucp -= path.len();
+    let _ = copyout(path, ucp);
+    let arg0 = ucp;
+    let mut uap = ucp & !<Machine as MachineParam>::ALIGNBYTES;
+
+    // Move out the arg pointers.
+    uap -= size_of::<Register>();
+    let _ = copyout(&0usize.to_ne_bytes(), uap); // terminator
+    if options {
+        uap -= size_of::<Register>();
+        let _ = copyout(&arg1.to_ne_bytes(), uap);
+    }
+    uap -= size_of::<Register>();
+    let _ = copyout(&arg0.to_ne_bytes(), uap);
+
+    (arg0, uap)
+}
+
 /// Start the initial user process; try exec'ing each pathname in "initpaths". The program
 /// is invoked with one argument containing the boot flags.
+///
+/// Without a root file system every path fails with `ENOENT`; then the `init` boot module
+/// is exec'd from memory with the same arguments (`exec_image`, `kern_exec.rs`).
 pub fn start_init(arg: *mut c_void) {
     // SAFETY: `fork1` passes the new thread itself when the argument is null; it lives as
     // long as this function runs on it.
@@ -647,21 +710,65 @@ pub fn start_init(arg: *mut c_void) {
         .ps_sigflags
         .store(0, Ordering::Relaxed);
 
-    // Need just enough stack to hold the faked-up "execve()" arguments: `exec_image` lays
-    // the (empty) arguments out itself (see `kern_exec.rs`); the boot flags (`-s`) will
-    // travel with a real argv (M6-c).
+    // Need just enough stack to hold the faked-up "execve()" arguments.
+    // MACHINE_STACK_GROWS_UP: neither amd64 nor arm64.
+    let mut addr = <Machine as VmParam>::USRSTACK - PAGE_SIZE;
+    let vm = p.vmspace();
+    vm.vm_maxsaddr.set(addr);
+    vm.vm_minsaddr.set(addr + PAGE_SIZE);
+    if uvm_map(
+        &vm.vm_map,
+        &mut addr,
+        PAGE_SIZE,
+        None,
+        UVM_UNKNOWN_OFFSET,
+        0,
+        uvm_mapflag(
+            PROT_READ | PROT_WRITE,
+            PROT_MASK,
+            MAP_INHERIT_COPY,
+            MADV_NORMAL,
+            UVM_FLAG_FIXED | UVM_FLAG_OVERLAY | UVM_FLAG_COPYONW | UVM_FLAG_STACK,
+        ),
+    )
+    .is_err()
+    {
+        panic(format_args!("init: couldn't allocate argument space"));
+    }
 
+    for path in INITPATHS {
+        let (arg0, uap) = start_init_args(addr, path);
+
+        // Point at the arguments.
+        let args: SysArgs = [arg0 as Register, uap as Register, 0, 0, 0, 0];
+        let mut retval: [Register; 2] = [0; 2];
+
+        // Now try to exec the program. If can't for any reason other than it doesn't
+        // exist, complain.
+        match sys_execve(p, &args, &mut retval) {
+            Err(Errno::EJUSTRETURN) => return, // KERNEL_UNLOCK(): one CPU
+            Err(Errno::ENOENT) => {}
+            Err(error) => {
+                let name = &path[..path.len() - 1];
+                kprintf!("exec {}: error {}\n", Str(name), error as i32);
+            }
+            Ok(()) => {
+                let name = &path[..path.len() - 1];
+                kprintf!("exec {}: error 0\n", Str(name));
+            }
+        }
+    }
+
+    // No root file system yet: the boot module stands in for the file (see above).
     // SAFETY: written once by `set_init_module` before `main`; only read afterwards.
     let module = unsafe { INIT_MODULE.get() };
     if let Some(module) = module {
-        let path = module.path.to_bytes();
-        let name = path.rsplit(|&c| c == b'/').next().unwrap_or(path);
-        // Now try to exec the program. If can't for any reason other than it doesn't
-        // exist, complain.
-        match exec_image(p, name, module.data) {
+        let path = module.path.to_bytes_with_nul();
+        let (arg0, uap) = start_init_args(addr, path);
+        match exec_image(p, arg0, uap, 0, module.data) {
             Err(Errno::EJUSTRETURN) => return,
             Err(e) if e != Errno::ENOENT => {
-                kprintf!("exec {}: error {}\n", Str(path), e as i32);
+                kprintf!("exec {}: error {}\n", Str(module.path.to_bytes()), e as i32);
             }
             _ => {}
         }

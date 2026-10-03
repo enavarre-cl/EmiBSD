@@ -70,10 +70,47 @@
 //! Status: `wip`. Milestone M3 only needs a `uvm_wait` the allocator can name; it reports the
 //! gap, because there is no daemon to wait for before kernel threads exist (M5). The daemon
 //! itself (`uvm_pageout`, `uvmpd_scan`, the aiodone daemon) arrives with swapping (M7).
+//! `uvmpd_tune` is ported (M8): `uvm_pageout` calls it first thing, and since the daemon
+//! thread is not created, `main` calls it where the C forks the daemon, so `wiredmax`,
+//! `freemin` and `freetarg` have their values (`sysctl(2)` and `mlock(2)` compare against
+//! `wiredmax`).
+//!
+//! ## Deviations
+//! - `uvmpd_tune` runs from `main` instead of from the page daemon's first loop.
 
+use core::sync::atomic::Ordering;
+
+use crate::sys::param::PAGE_SHIFT;
 use crate::unported;
+use crate::uvm::uvm_init::UVMEXP;
 
 /// `uvm_wait`: wait for the page daemon to free memory; nothing can be waited for yet.
 pub fn uvm_wait(_wmsg: &str) {
     let _ = unported!("uvm_wait (uvm_pdaemon.c, M5)");
+}
+
+/// `uvmpd_tune`: tune paging parameters.
+pub fn uvmpd_tune() {
+    let npages = UVMEXP.npages.load(Ordering::Relaxed);
+    let mut val = npages / 30;
+
+    // XXX: what are these values good for?
+    val = val.max((16 * 1024) >> PAGE_SHIFT);
+
+    // Make sure there's always a user page free.
+    let reserve_kernel = UVMEXP.reserve_kernel.load(Ordering::Relaxed);
+    if val < reserve_kernel + 1 {
+        val = reserve_kernel + 1;
+    }
+    UVMEXP.freemin.store(val, Ordering::Relaxed);
+
+    // Calculate free target.
+    let freemin = UVMEXP.freemin.load(Ordering::Relaxed);
+    let mut val = (freemin * 4) / 3;
+    if val <= freemin {
+        val = freemin + 1;
+    }
+    UVMEXP.freetarg.store(val, Ordering::Relaxed);
+
+    UVMEXP.wiredmax.store(npages / 3, Ordering::Relaxed);
 }

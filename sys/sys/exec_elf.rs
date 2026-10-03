@@ -34,8 +34,10 @@
 //! Status: `wip`. Milestone M6 (part b) ports the 64-bit ELF header and program header,
 //! the identification, type, machine, version, segment type and segment flag constants
 //! `exec_elf.c` reads: both targets are 64-bit (`ELFSIZE 64`, so `Elf_Ehdr` is
-//! `Elf64_Ehdr`). Sections, symbols, relocations, notes, dynamic entries and the auxiliary
-//! vector (`AuxInfo`) come with `ld.so` support and core dumps (M7).
+//! `Elf64_Ehdr`). M8 (`sys_execve` of static PIE programs) adds the dynamic entry
+//! (`Elf64_Dyn`, for `DT_TEXTREL`), the kernel-only auxiliary vector (`Aux64Info`, the
+//! `AUX_*` ids, `ELF_AUX_ENTRIES`, `ELF_AUX_WORDS`). Sections, symbols and relocations come
+//! with core dumps.
 
 /// `Elf64_Addr`.
 pub type Elf64Addr = u64;
@@ -211,6 +213,25 @@ pub struct Elf64Note {
 /// `Elf_Note`.
 pub type ElfNote = Elf64Note;
 
+/// `Elf64_Dyn`: an entry of the `_DYNAMIC` array.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct Elf64Dyn {
+    /// `d_tag`: controls meaning of `d_val`.
+    pub d_tag: Elf64Xword,
+    /// `d_un`: the union of `d_ptr` (program virtual address) and `d_val` (multiple
+    /// meanings, see `d_tag`); both are 64-bit words.
+    pub d_un: Elf64Xword,
+}
+
+/// `Elf_Dyn`.
+pub type ElfDyn = Elf64Dyn;
+
+/// `DT_NULL`: marks end of `_DYNAMIC` array.
+pub const DT_NULL: u64 = 0;
+/// `DT_TEXTREL`: allow rel. mod. to unwritable seg.
+pub const DT_TEXTREL: u64 = 22;
+
 /// `NT_OPENBSD_PROF`: the binary is profiled.
 pub const NT_OPENBSD_PROF: u32 = 2;
 /// `NT_OPENBSD_PROCINFO`: note is a "elfcore_procinfo" structure.
@@ -251,8 +272,86 @@ pub const fn elf_round(addr: u64, align: u64) -> u64 {
 /// `ELF_NO_ADDR`: "no address" marker in `exec_elf.c`.
 pub const ELF_NO_ADDR: u64 = u64::MAX;
 
+/// `Elf64_Shalf`.
+pub type Elf64Shalf = i32;
+
+/// `Aux64Info`: one entry of the auxiliary vector `exec_elf_fixup` copies out after the
+/// environment (kernel and `ld.so` only, not part of the ABI headers).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Aux64Info {
+    /// `au_id`: 32-bit id.
+    pub au_id: Elf64Shalf,
+    /// The four bytes the C compiler leaves between `au_id` and `au_v`, zero.
+    pub _pad: u32,
+    /// `au_v`: 64-bit value.
+    pub au_v: Elf64Xword,
+}
+
+impl Aux64Info {
+    /// The entry's bytes as `copyout` writes them: `au_id`, four zero bytes, `au_v`.
+    pub fn to_bytes(&self) -> [u8; 16] {
+        let mut out = [0u8; 16];
+        out[0..4].copy_from_slice(&self.au_id.to_ne_bytes());
+        out[8..16].copy_from_slice(&self.au_v.to_ne_bytes());
+        out
+    }
+}
+
+/// `AuxInfo` (`ELFSIZE 64`).
+pub type AuxInfo = Aux64Info;
+
+/// The `enum AuxID` members, with the C's spelling (`AUX_null`, `AUX_phdr`, ...).
+#[allow(non_upper_case_globals)] // the C enumerators are lower case after the prefix
+pub mod aux_id {
+    /// `AUX_null`.
+    pub const AUX_null: i32 = 0;
+    /// `AUX_ignore`.
+    pub const AUX_ignore: i32 = 1;
+    /// `AUX_execfd`.
+    pub const AUX_execfd: i32 = 2;
+    /// `AUX_phdr`: `&phdr[0]`.
+    pub const AUX_phdr: i32 = 3;
+    /// `AUX_phent`: `sizeof(phdr[0])`.
+    pub const AUX_phent: i32 = 4;
+    /// `AUX_phnum`: # phdr entries.
+    pub const AUX_phnum: i32 = 5;
+    /// `AUX_pagesz`: PAGESIZE.
+    pub const AUX_pagesz: i32 = 6;
+    /// `AUX_base`: base addr for ld.so or static PIE.
+    pub const AUX_base: i32 = 7;
+    /// `AUX_flags`: processor flags.
+    pub const AUX_flags: i32 = 8;
+    /// `AUX_entry`: a.out entry.
+    pub const AUX_entry: i32 = 9;
+    /// `AUX_hwcap`: processor flags.
+    pub const AUX_hwcap: i32 = 25;
+    /// `AUX_hwcap2`: processor flags (continued).
+    pub const AUX_hwcap2: i32 = 26;
+    /// `AUX_sun_uid`: euid.
+    pub const AUX_sun_uid: i32 = 2000;
+    /// `AUX_sun_ruid`: ruid.
+    pub const AUX_sun_ruid: i32 = 2001;
+    /// `AUX_sun_gid`: egid.
+    pub const AUX_sun_gid: i32 = 2002;
+    /// `AUX_sun_rgid`: rgid.
+    pub const AUX_sun_rgid: i32 = 2003;
+    /// `AUX_openbsd_timekeep`: userland clock_gettime.
+    pub const AUX_openbsd_timekeep: i32 = 4000;
+    /// `AUX_openbsd_execpath`: realpath'd executable path.
+    pub const AUX_openbsd_execpath: i32 = 4001;
+}
+
+/// `ELF_AUX_ENTRIES`: how many entries are in the `AuxInfo` array we pass to the process.
+pub const ELF_AUX_ENTRIES: usize = 12;
+/// `ELF_AUX_WORDS`: the same, in pointer-sized words of the new stack.
+pub const ELF_AUX_WORDS: usize = size_of::<AuxInfo>() * ELF_AUX_ENTRIES / size_of::<usize>();
+
 const _: () = {
     assert!(size_of::<Elf64Ehdr>() == 64);
     assert!(size_of::<Elf64Phdr>() == 56);
     assert!(size_of::<Elf64Note>() == 12);
+    assert!(size_of::<Elf64Dyn>() == 16);
+    assert!(size_of::<Aux64Info>() == 16);
+    assert!(ELF_AUX_WORDS == 24);
 };

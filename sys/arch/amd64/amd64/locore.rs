@@ -135,6 +135,8 @@ unsafe extern "C" {
     pub fn Xsyscall();
     /// `sigcode[]`: the signal trampoline, copied into every process (`exec_sigcode_map`).
     static sigcode: [u8; 0];
+    /// `sigcodecall[]`: the trampoline's `syscall` instruction.
+    static sigcodecall: [u8; 0];
     /// `sigcoderet[]`: the instruction after the trampoline's `sigreturn` system call.
     static sigcoderet: [u8; 0];
     /// `esigcode[]`: the end of the trampoline.
@@ -157,6 +159,11 @@ pub fn sigcode_bytes() -> &'static [u8] {
 /// `sigcoderet - sigcode`.
 pub fn sigcoderet_offset() -> usize {
     ptr::addr_of!(sigcoderet) as usize - ptr::addr_of!(sigcode) as usize
+}
+
+/// `sigcodecall - sigcode`: the `syscall` instruction of the trampoline.
+pub fn sigcodecall_offset() -> usize {
+    ptr::addr_of!(sigcodecall) as usize - ptr::addr_of!(sigcode) as usize
 }
 
 /// `sigfill` .. `sigfill + sigfillsiz`.

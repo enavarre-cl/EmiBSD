@@ -262,7 +262,8 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
 
         // unveil_destroy(pr): kern_unveil.c (M7).
 
-        // free(pr->ps_pin.pn_pins), free(pr->ps_libcpin.pn_pins): no pin tables yet.
+        pin_free(&pr.ps_pin);
+        pin_free(&pr.ps_libcpin);
 
         // If parent has the SAS_NOCLDWAIT flag set, we're not going to become a zombie.
         if parent(pr).sigacts().ps_sigflags.load(Ordering::Relaxed) & SAS_NOCLDWAIT != 0 {
@@ -577,6 +578,19 @@ pub fn process_reparent(child: &Process, parent: &Process) {
     // WITNESS_SETCHILD: not configured.
 }
 
+/// `free(pr->ps_pin.pn_pins, M_PINSYSCALL, ...)` (and `ps_libcpin`): gives a process's pin
+/// table back.
+pub fn pin_free(pin: &crate::sys::proc::Pinsyscall) {
+    if let Some(pins) = NonNull::new(pin.pn_pins.get()) {
+        crate::kern::kern_malloc::free(
+            pins.cast::<u8>(),
+            crate::sys::malloc::M_PINSYSCALL,
+            pin.pn_npins.get().max(0) as usize * size_of::<u32>(),
+        );
+    }
+    pin.pn_pins.set(ptr::null_mut());
+}
+
 /// `process_zap`: finally finished with old proc entry. Unlink it from its process group and
 /// free it.
 pub fn process_zap(pr: &Process) {
@@ -593,8 +607,11 @@ pub fn process_zap(pr: &Process) {
     // Decrement the count of procs running with this uid.
     chgproccnt(pr.ucred().cr_ruid.get(), -1);
 
-    // Release reference to text vnode: vrele (M7); nothing to release yet.
-    pr.ps_textvp.set(ptr::null());
+    // Release reference to text vnode
+    let otvp = pr.ps_textvp.take();
+    if let Some(otvp) = otvp {
+        crate::kern::vfs_subr::vrele(otvp);
+    }
 
     kassert!(pr.ps_threadcnt.get() == 0);
     kassert!(pr.ps_exitcnt.get() == 1);

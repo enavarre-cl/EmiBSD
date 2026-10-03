@@ -49,6 +49,11 @@ pub trait MachineSignal {
     /// call in the trampoline (`PROC_PC(p)` during that call).
     fn sigcoderet() -> usize;
 
+    /// `sigcodecall - sigcode`: the offset of the system call instruction itself;
+    /// `sigcoderet - sigcodecall` is how far `PROC_PC(p)` is past any system call
+    /// instruction during the call (`pin_check`).
+    fn sigcodecall() -> usize;
+
     /// `sigfill` .. `esigfill`: the trap instruction(s) the rest of the trampoline's page is
     /// filled with (`sigfillsiz` is the slice's length).
     fn sigfill() -> &'static [u8];

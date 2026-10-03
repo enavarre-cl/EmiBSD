@@ -338,8 +338,8 @@ pub struct Process {
     pub ps_sigiolst: Sigiolst,
     /// \[I\] `ps_sigacts`: signal actions, state.
     pub ps_sigacts: Cell<*const Sigacts>,
-    /// `ps_textvp`: vnode of executable (`struct vnode`, M6).
-    pub ps_textvp: Cell<*const ()>,
+    /// `ps_textvp`: vnode of executable, referenced (`None` for the boot module image).
+    pub ps_textvp: Cell<Option<&'static crate::sys::vnode::Vnode>>,
     /// `ps_fd`: ptr to open files structure; the process holds a reference (`fd()`).
     pub ps_fd: Cell<*const Filedesc>,
     /// `ps_vmspace`: address space.
@@ -472,7 +472,7 @@ impl Process {
             ps_orphans: ListHead::new(),
             ps_sigiolst: Sigiolst::new(),
             ps_sigacts: Cell::new(ptr::null()),
-            ps_textvp: Cell::new(ptr::null()),
+            ps_textvp: Cell::new(None),
             ps_fd: Cell::new(ptr::null()),
             ps_vmspace: Cell::new(ptr::null()),
             ps_pid: Cell::new(0),
@@ -660,6 +660,16 @@ pub const PS_NOBROADCASTKILL: u32 = 0x0008_0000;
 pub const PS_PLEDGE: u32 = 0x0010_0000;
 /// `PS_EXECPLEDGE`: has exec pledges.
 pub const PS_EXECPLEDGE: u32 = 0x0040_0000;
+/// `PSI_WXNEEDED`: process allowed to violate W^X (`ps_iflags`).
+pub const PSI_WXNEEDED: u16 = 0x0001;
+/// `PSI_NOBTCFI`: no Branch Target CFI.
+pub const PSI_NOBTCFI: u16 = 0x0002;
+/// `PSI_PROFILE`: linked with -pg: allow profile(2).
+pub const PSI_PROFILE: u16 = 0x0004;
+
+/// `BOGO_PC`: an address that can't be in userspace or kernelspace (`ps_kbind_addr`).
+pub const BOGO_PC: usize = usize::MAX;
+
 /// `PS_ORPHAN`: process is on an orphan list.
 pub const PS_ORPHAN: u32 = 0x0080_0000;
 /// `PS_CHROOT`: process is chrooted.

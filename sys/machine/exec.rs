@@ -17,4 +17,9 @@ pub trait MachineExec {
     const ELF_TARG_DATA: u8;
     /// `ELF_TARG_MACH`: the `EM_*` value of this architecture.
     const ELF_TARG_MACH: u16;
+    /// `__HAVE_CPU_HWCAP`: the machine sets `hwcap` (`exec_elf.c`'s global) and
+    /// `exec_elf_fixup` passes it as `AUX_hwcap`.
+    const HAVE_CPU_HWCAP: bool;
+    /// `__HAVE_CPU_HWCAP2`: the same for `hwcap2` and `AUX_hwcap2`.
+    const HAVE_CPU_HWCAP2: bool;
 }

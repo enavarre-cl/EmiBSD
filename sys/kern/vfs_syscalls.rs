@@ -902,18 +902,37 @@ fn change_dir(ndp: &mut Nameidata<'_>, p: &Proc) -> Result<(), Errno> {
 }
 
 /// A `MAXPATHLEN`-byte `namei_pool` buffer, given back when dropped.
-struct NameiBuf(NonNull<u8>);
+pub struct NameiBuf(NonNull<u8>);
 
 impl NameiBuf {
     /// `pool_get(&namei_pool, PR_WAITOK)`.
-    fn get() -> Result<NameiBuf, Errno> {
+    pub fn get() -> Result<NameiBuf, Errno> {
         pool_get(&NAMEI_POOL, PR_WAITOK)
             .map(NameiBuf)
             .ok_or(Errno::ENOMEM)
     }
 
+    /// `pool_get(&namei_pool, PR_WAITOK | PR_ZERO)`.
+    pub fn get_zero() -> Result<NameiBuf, Errno> {
+        let buf = Self::get()?;
+        buf.as_mut().fill(0);
+        Ok(buf)
+    }
+
+    /// The buffer's address (`cn_rpbuf`).
+    pub fn as_ptr(&self) -> *mut u8 {
+        self.0.as_ptr()
+    }
+
+    /// The bytes up to the first NUL.
+    pub fn as_str<'b>(&self) -> &'b [u8] {
+        let all = self.as_mut();
+        let len = all.iter().position(|&c| c == 0).unwrap_or(all.len());
+        &all[..len]
+    }
+
     /// The buffer's bytes.
-    fn as_mut<'b>(&self) -> &'b mut [u8] {
+    pub fn as_mut<'b>(&self) -> &'b mut [u8] {
         // SAFETY: a `MAXPATHLEN`-byte pool item owned by this `NameiBuf` until it drops.
         unsafe { slice::from_raw_parts_mut(self.0.as_ptr(), MAXPATHLEN) }
     }

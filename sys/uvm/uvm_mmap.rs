@@ -113,8 +113,7 @@ use crate::uvm::uvm_map::{VM_MAP_PINSYSCALL_ONCE, VM_MAP_WIREFUTURE};
 use crate::uvm::uvm_pager::{PGO_CLEANIT, PGO_DEACTIVATE, PGO_FREE, PGO_SYNCIO};
 use crate::uvm::uvm_param::{atop, ptoa, round_page, trunc_page};
 
-/// `BOGO_PC`: the `ps_kbind_addr` that disables `kbind(2)`.
-const BOGO_PC: usize = usize::MAX;
+use crate::sys::proc::BOGO_PC;
 
 /// `ALIGN_ADDR(addr, size, pageoff)`: page align `addr` and `size`, returning `EINVAL` on
 /// wraparound. Yields the aligned address and size and the page offset taken off.

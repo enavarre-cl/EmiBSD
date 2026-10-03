@@ -82,7 +82,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "isa0 at mainbus0" \
         --expect "com0 at isa0 port 0x3f8/8 irq 4: ns16550a, 16 byte fifo" --expect "com0: console" \
         --expect "cpu0: apic clock running at" \
-        --expect "module: /init (" --expect "init: hello from user mode" \
+        --expect "module: /init (" --expect "init: hello from user mode" --expect "init: argv and auxv ok" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 7.8" \
         --expect "cannot mount root: no root file system" \
@@ -121,7 +121,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "virtio31 at mainbus0: Virtio Block Device" \
         --expect "vio0 at virtio30: 1 queue, address 52:54:00:12:34:56" \
         --expect ": rev 1, 16 byte fifo" --expect "pluart0: console" \
-        --expect "module: /init (" --expect "init: hello from user mode" \
+        --expect "module: /init (" --expect "init: hello from user mode" --expect "init: argv and auxv ok" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 7.8" \
         --expect "cannot mount root: no root file system" \

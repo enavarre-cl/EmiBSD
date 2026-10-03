@@ -18,6 +18,7 @@ use crate::kern::kern_descrip::{
     sys_close, sys_closefrom, sys_dup, sys_dup2, sys_dup3, sys_fcntl, sys_flock, sys_fpathconf,
     sys_fstat, sys_getdtablecount,
 };
+use crate::kern::kern_exec::sys_execve;
 use crate::kern::kern_exit::sys_exit;
 use crate::kern::kern_prot::{
     sys___get_tcb, sys___set_tcb, sys_getegid, sys_geteuid, sys_getgid, sys_getgroups,
@@ -160,7 +161,7 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(1, size_of::<SysRevokeArgs>(), 0, sys_revoke), // 56 = revoke
     Sysent::new(2, size_of::<SysSymlinkArgs>(), 0, sys_symlink), // 57 = symlink
     Sysent::new(3, size_of::<SysReadlinkArgs>(), 0, sys_readlink), // 58 = readlink
-    Sysent::new(3, size_of::<SysExecveArgs>(), 0, sys_nosys), // 59 = execve (sys_execve not ported)
+    Sysent::new(3, size_of::<SysExecveArgs>(), 0, sys_execve), // 59 = execve
     Sysent::new(1, size_of::<SysUmaskArgs>(), SY_NOLOCK, sys_umask), // 60 = umask
     Sysent::new(1, size_of::<SysChrootArgs>(), 0, sys_chroot), // 61 = chroot
     Sysent::new(3, size_of::<SysGetfsstatArgs>(), 0, sys_getfsstat), // 62 = getfsstat

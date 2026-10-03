@@ -417,6 +417,8 @@ impl MachineExec for Machine {
     const ELF_TARG_CLASS: u8 = include::exec::ELF_TARG_CLASS;
     const ELF_TARG_DATA: u8 = include::exec::ELF_TARG_DATA;
     const ELF_TARG_MACH: u16 = include::exec::ELF_TARG_MACH;
+    const HAVE_CPU_HWCAP: bool = false;
+    const HAVE_CPU_HWCAP2: bool = false;
 }
 
 impl Console for Machine {
@@ -1085,6 +1087,10 @@ impl MachineSignal for Machine {
 
     fn sigcoderet() -> usize {
         amd64::locore::sigcoderet_offset()
+    }
+
+    fn sigcodecall() -> usize {
+        amd64::locore::sigcodecall_offset()
     }
 
     fn sigfill() -> &'static [u8] {

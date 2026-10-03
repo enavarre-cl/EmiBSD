@@ -40,8 +40,9 @@
 //! - `tc_lock` is an rwlock (`kern_rwlock.c`, M5-b): the paths that take it
 //!   (`tc_setrealtimeclock`, `tc_adjfreq`, `tc_adjtime`) report it as unported and go on
 //!   under `windup_mtx` alone, which on one CPU with no other thread is the same exclusion.
-//! - `timekeep` (the page shared with userland) is null until M6, so `tc_update_timekeep`
-//!   returns at its null check, as the C does before the page exists.
+//! - `timekeep` (the page shared with userland) is `kern_exec.c`'s global
+//!   (`kern_exec::TIMEKEEP`): null until the first exec maps the page, so
+//!   `tc_update_timekeep` returns at its null check before then, as the C does.
 //! - `getuptime`/`gettime` take the `__LP64__` branch (both architectures are LP64).
 //! - `membar_consumer`/`membar_producer` are `fence(Acquire)`/`fence(Release)`.
 
@@ -220,8 +221,7 @@ pub static TIME_UPTIME: AtomicI64 = AtomicI64::new(0);
 /// `timestepwarnings`.
 static TIMESTEPWARNINGS: AtomicI32 = AtomicI32::new(0);
 
-/// `timekeep`: the page shared with userland (M6), null until then.
-static TIMEKEEP: AtomicPtr<Timekeep> = AtomicPtr::new(ptr::null_mut());
+// `timekeep`: kern_exec.c's global (`kern_exec::TIMEKEEP`).
 
 /// The active timehands.
 fn timehands() -> &'static Timehands {
@@ -547,11 +547,11 @@ pub fn tc_update_timekeep() {
 
     mutex_assert_locked(&WINDUP_MTX, "tc_update_timekeep");
 
-    let tk = TIMEKEEP.load(Ordering::Relaxed);
+    let tk: *mut Timekeep = crate::kern::kern_exec::TIMEKEEP.load(Ordering::Acquire);
     if tk.is_null() {
         return;
     }
-    // SAFETY: a non-null `timekeep` is the page `tc_init_timekeep` (M6) mapped; it is written
+    // SAFETY: a non-null `timekeep` is the wired page `exec_timekeep_map` mapped; it is written
     // only here, under `windup_mtx`, with the generation protocol userland follows.
     let timekeep = unsafe { &mut *tk };
 

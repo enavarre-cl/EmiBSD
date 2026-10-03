@@ -170,7 +170,7 @@ use crate::machine::db_machdep::db_enter;
 use crate::machine::{Cpu, Machine};
 use crate::sys::errno::Errno;
 use crate::sys::exec::{ExecPackage, PsStrings};
-use crate::sys::param::roundup;
+use crate::sys::param::{NCARGS, roundup};
 use crate::sys::proc::Proc;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
@@ -184,8 +184,10 @@ use crate::sys::systm::{SysArgs, sysargs};
 use crate::sys::types::{Paddr, Register, Vaddr};
 use crate::sys::user::{Uarea, User};
 use crate::unported;
-use crate::uvm::uvm_extern::UvmConstraintRange;
+use crate::uvm::uvm_extern::{EXEC_MAP, UvmConstraintRange};
 use crate::uvm::uvm_init::UVMEXP;
+use crate::uvm::uvm_km::{kernel_map, kernel_map_min, uvm_km_suballoc};
+use crate::uvm::uvm_map::VM_MAP_PAGEABLE;
 use crate::uvm::uvm_page::{uvm_page_physload, uvm_setpagesize};
 use crate::uvm::uvm_param::{atop, ptoa, trunc_page};
 
@@ -533,7 +535,22 @@ pub fn cpu_startup() {
         ptoa(physmem) / 1024 / 1024
     );
 
-    // exec_map, cpu_init_extents, the physio map: M6 and M7.
+    // Allocate a submap for exec arguments. This map effectively limits the number of
+    // processes exec'ing at any time.
+    let mut minaddr = kernel_map_min().as_usize();
+    let mut maxaddr = 0;
+    let exec_map = uvm_km_suballoc(
+        kernel_map(),
+        &mut minaddr,
+        &mut maxaddr,
+        16 * NCARGS,
+        VM_MAP_PAGEABLE,
+        false,
+        None,
+    );
+    EXEC_MAP.store(ptr::from_ref(exec_map).cast_mut(), Ordering::Release);
+
+    // cpu_init_extents, the physio map (phys_map): with physio and the extents.
 
     let free = UVMEXP.free.load(Ordering::Relaxed).max(0) as usize;
     kprintf!(

@@ -249,8 +249,11 @@ fn process_new(p: &'static Proc, parent: &'static Process, flags: i32) -> &'stat
     pr.ps_ppid.set(parent.ps_pid.get());
     // WITNESS_SETCHILD: not configured.
 
-    // bump references to the text vnode (for sysctl): vref (M7); nothing to bump yet.
+    // bump references to the text vnode (for sysctl)
     pr.ps_textvp.set(parent.ps_textvp.get());
+    if let Some(vp) = pr.ps_textvp.get() {
+        crate::kern::vfs_subr::vref(vp);
+    }
 
     // copy unveil if unveil is active: unveil_copy (M7).
 
@@ -268,7 +271,8 @@ fn process_new(p: &'static Proc, parent: &'static Process, flags: i32) -> &'stat
         );
     }
 
-    // ps_pin, ps_libcpin: pinsyscalls (M6).
+    pin_copy(&parent.ps_pin, &pr.ps_pin);
+    pin_copy(&parent.ps_libcpin, &pr.ps_libcpin);
 
     // Duplicate sub-structures as needed. Increase reference counts on shared objects.
     if flags & FORK_SHAREFILES != 0 {
@@ -310,6 +314,35 @@ fn process_new(p: &'static Proc, parent: &'static Process, flags: i32) -> &'stat
     unsafe { ALLPROCESS.0.insert_head(pr) };
 
     pr
+}
+
+/// `process_new`'s copy of a pin table (`ps_pin`, `ps_libcpin`): the bounds come with the
+/// copied area, the table itself is duplicated (`mallocarray(M_PINSYSCALL)` + `memcpy`).
+fn pin_copy(from: &crate::sys::proc::Pinsyscall, to: &crate::sys::proc::Pinsyscall) {
+    to.pn_start.set(from.pn_start.get());
+    to.pn_end.set(from.pn_end.get());
+    to.pn_npins.set(from.pn_npins.get());
+    to.pn_pins.set(ptr::null_mut());
+    let Some(src) = NonNull::new(from.pn_pins.get()) else {
+        return;
+    };
+    let n = from.pn_npins.get().max(0) as usize;
+    let Some(mem) = crate::kern::kern_malloc::mallocarray(
+        n,
+        size_of::<u32>(),
+        crate::sys::malloc::M_PINSYSCALL,
+        crate::sys::malloc::M_WAITOK,
+    ) else {
+        // M_WAITOK cannot fail in C; here the child simply has no table (pin_check kills
+        // it at its first system call, as it would a process without one).
+        to.pn_npins.set(0);
+        return;
+    };
+    let dst = mem.cast::<u32>();
+    // SAFETY: `src` is the parent's table of `n` entries (alive while the parent forks),
+    // `dst` a fresh allocation of `n` entries; they do not overlap.
+    unsafe { ptr::copy_nonoverlapping(src.as_ptr(), dst.as_ptr(), n) };
+    to.pn_pins.set(dst.as_ptr());
 }
 
 /// `fork_tfmrate`: print the 'table full' message once per 10 seconds.

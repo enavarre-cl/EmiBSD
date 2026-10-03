@@ -645,6 +645,8 @@ impl crate::machine::exec::MachineExec for Machine {
     const ELF_TARG_MACH: u16 = crate::sys::exec_elf::EM_AARCH64;
     #[cfg(not(target_arch = "aarch64"))]
     const ELF_TARG_MACH: u16 = crate::sys::exec_elf::EM_AMD64;
+    const HAVE_CPU_HWCAP: bool = false;
+    const HAVE_CPU_HWCAP2: bool = false;
 }
 
 impl Console for Machine {
@@ -1307,6 +1309,10 @@ impl MachineSignal for Machine {
     }
 
     fn sigcoderet() -> usize {
+        0
+    }
+
+    fn sigcodecall() -> usize {
         0
     }
 

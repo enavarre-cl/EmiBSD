@@ -36,22 +36,20 @@
 //!
 //! Upstream: sys/kern/exec_subr.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M6 (part b) ports `exec_process_vmcmds`, the five vmcmds and
-//! `exec_setup_stack`. `new_vmcmd`/`vmcmdset_extend`/`kill_vmcmds` are
-//! `ExecVmcmdSet::{push, kill}` in `sys/exec.rs` (the set is a `Vec`).
+//! Status: `ported`. `new_vmcmd`/`vmcmdset_extend`/`kill_vmcmds` are
+//! `ExecVmcmdSet::{push, kill}` in `sys/exec.rs` (the set is a `Vec`); the rest is here:
+//! `exec_process_vmcmds`, the five vmcmds and `exec_setup_stack`.
 //!
 //! ## Deviations
-//! - There is no vnode: the image is a byte slice in kernel memory (`ExecPackage::ep_hdr`).
-//!   `vmcmd_map_pagedvn` therefore cannot `uvn_attach` and map the file copy-on-write; it
-//!   maps anonymous zero-fill memory the way `vmcmd_map_readvn` does and both copy the
-//!   bytes in with `copyout` (the C's `vn_rdwr(UIO_USERSPACE)`), so the pages are faulted
-//!   in by `uvm_fault` from the kernel's copy. A segment that extends past the image reads
-//!   as zeroes. `pagedvn` then lowers the protection with `uvm_map_protect` as `readvn`
-//!   does.
+//! - A vmcmd's file is a vnode, as in C, or the `init` boot module's memory image
+//!   (`ExecFile::Image`, until a root file system exists). For a vnode `vmcmd_map_pagedvn`
+//!   maps the file copy-on-write through `uvn_attach` and `vmcmd_map_readvn` reads it with
+//!   `vn_rdwr(UIO_USERSPACE)`, as the C does. For an image there is no object to map:
+//!   `pagedvn` maps anonymous memory, copies the bytes in with `copyout` (a segment that
+//!   extends past the image reads as zeroes) and lowers the protection as `readvn` does;
+//!   `readvn` copies them out where the C reads the vnode.
 //! - `arc4random_ctx_new` is not ported: `vmcmd_randomize` uses the global generator for
 //!   large regions too.
-//! - `exec_setup_stack` takes the stack limit from `DFLSSIZ` (what `limit0` holds) until
-//!   `lim_cur` exists (M6-c).
 //! - The 4-clause licence (advertising clause) was accepted by the user at M2 for this
 //!   project.
 
@@ -61,24 +59,32 @@ use crate::dev::rnd::{arc4random, arc4random_buf, arc4random_uniform};
 use crate::kassert;
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::sched_bsd::r#yield;
+use crate::kern::vfs_vnops::vn_rdwr;
 use crate::machine::copy::copyout;
 use crate::machine::{Machine, VmParam};
 use crate::sys::errno::Errno;
 use crate::sys::exec::{
-    ELF_RANDOMIZE_LIMIT, ExecPackage, ExecVmcmd, VMCMD_BASE, VMCMD_IMMUTABLE, VMCMD_RELATIVE,
-    VMCMD_STACK, VmcmdProc,
+    ELF_RANDOMIZE_LIMIT, ExecFile, ExecPackage, ExecVmcmd, VMCMD_BASE, VMCMD_IMMUTABLE,
+    VMCMD_RELATIVE, VMCMD_STACK, VmcmdProc,
 };
 use crate::sys::malloc::{M_TEMP, M_WAITOK};
-use crate::sys::mman::{MADV_NORMAL, MAP_INHERIT_COPY, PROT_NONE, PROT_READ, PROT_WRITE};
+use crate::sys::mman::{
+    MADV_NORMAL, MAP_INHERIT_COPY, PROT_EXEC, PROT_NONE, PROT_READ, PROT_WRITE,
+};
 use crate::sys::param::{PAGE_MASK, PAGE_SHIFT, PAGE_SIZE};
 use crate::sys::proc::Proc;
+use crate::sys::resource::RLIMIT_STACK;
+use crate::sys::resourcevar::lim_cur;
 use crate::sys::sched::sched_pause;
+use crate::sys::uio::{UioRw, UioSeg};
+use crate::sys::vnode::IO_UNIT;
 use crate::uvm::uvm_extern::{
     PROT_MASK, UVM_FLAG_COPYONW, UVM_FLAG_FIXED, UVM_FLAG_OVERLAY, UVM_FLAG_STACK,
     UVM_UNKNOWN_OFFSET, uvm_mapflag,
 };
 use crate::uvm::uvm_map::{uvm_map, uvm_map_immutable, uvm_map_protect};
 use crate::uvm::uvm_param::{round_page, trunc_page};
+use crate::uvm::uvm_vnode::uvn_attach;
 
 /// `RANDOMIZE_CTX_THRESHOLD`: below this many bytes `vmcmd_randomize` uses the global
 /// generator directly.
@@ -93,32 +99,32 @@ const MAXSSIZ_GUARD: usize = 1024 * 1024;
 pub fn exec_process_vmcmds(p: &Proc, epp: &mut ExecPackage<'_>) -> Result<(), Errno> {
     let mut base_addr: Option<usize> = None;
     let mut error = Ok(());
-    let image = epp.ep_hdr;
-    let cmds = core::mem::take(&mut epp.ep_vmcmds.evs_cmds);
 
-    for vcp in cmds {
-        let mut vcp = vcp;
+    for vcp in epp.ep_vmcmds.evs_cmds.iter_mut() {
+        if error.is_err() {
+            break;
+        }
         if vcp.ev_flags & VMCMD_RELATIVE != 0 {
             let Some(base) = base_addr else {
                 #[cfg(feature = "diagnostic")]
                 crate::kern::subr_prf::panic(format_args!("exec_process_vmcmds: RELATIVE no base"));
                 #[cfg(not(feature = "diagnostic"))]
-                return Err(Errno::EINVAL);
+                {
+                    error = Err(Errno::EINVAL);
+                    break;
+                }
             };
             vcp.ev_addr = vcp.ev_addr.wrapping_add(base);
         }
         error = match vcp.ev_proc {
-            VmcmdProc::MapPagedvn => vmcmd_map_pagedvn(p, &vcp, image),
-            VmcmdProc::MapReadvn => vmcmd_map_readvn(p, &vcp, image),
-            VmcmdProc::MapZero => vmcmd_map_zero(p, &vcp),
-            VmcmdProc::Mutable => vmcmd_mutable(p, &vcp),
-            VmcmdProc::Randomize => vmcmd_randomize(p, &vcp),
+            VmcmdProc::MapPagedvn => vmcmd_map_pagedvn(p, vcp),
+            VmcmdProc::MapReadvn => vmcmd_map_readvn(p, vcp),
+            VmcmdProc::MapZero => vmcmd_map_zero(p, vcp),
+            VmcmdProc::Mutable => vmcmd_mutable(p, vcp),
+            VmcmdProc::Randomize => vmcmd_randomize(p, vcp),
         };
         if vcp.ev_flags & VMCMD_BASE != 0 {
             base_addr = Some(vcp.ev_addr);
-        }
-        if error.is_err() {
-            break;
         }
     }
 
@@ -129,10 +135,11 @@ pub fn exec_process_vmcmds(p: &Proc, epp: &mut ExecPackage<'_>) -> Result<(), Er
 
 /// `vmcmd_map_pagedvn`: handle vmcmd which specifies that a vnode should be mmap'd.
 /// appropriate for handling demand-paged text and data segments.
-pub fn vmcmd_map_pagedvn(p: &Proc, cmd: &ExecVmcmd, image: &[u8]) -> Result<(), Errno> {
+pub fn vmcmd_map_pagedvn(p: &Proc, cmd: &mut ExecVmcmd<'_>) -> Result<(), Errno> {
     // note that if you're going to map part of a process as being paged from a vnode, that
     // vnode had damn well better be marked as VTEXT. that's handled in the routine which
     // sets up the vmcmd to call this routine.
+    let flags = UVM_FLAG_COPYONW | UVM_FLAG_FIXED;
 
     // map the vnode in using uvm_map.
     if cmd.ev_len == 0 {
@@ -148,40 +155,68 @@ pub fn vmcmd_map_pagedvn(p: &Proc, cmd: &ExecVmcmd, image: &[u8]) -> Result<(), 
         return Err(Errno::EINVAL);
     }
 
-    // first, attach to the object: no vnode (see the module's deviations); the bytes the
-    // file would page in are copied into anonymous memory.
-    let end = cmd.ev_offset.saturating_add(cmd.ev_len).min(image.len());
-    let bytes = image.get(cmd.ev_offset..end).unwrap_or(&[]);
     let map = &p.vmspace().vm_map;
-    let mut addr = cmd.ev_addr;
+    match cmd.ev_vp {
+        Some(ExecFile::Vnode(vp)) => {
+            // first, attach to the object
+            let Some(uobj) = uvn_attach(vp, PROT_READ | PROT_EXEC) else {
+                return Err(Errno::ENOMEM);
+            };
 
-    // do the map
-    uvm_map(
-        map,
-        &mut addr,
-        cmd.ev_len,
-        None,
-        UVM_UNKNOWN_OFFSET,
-        0,
-        uvm_mapflag(
-            cmd.ev_prot | PROT_WRITE,
-            PROT_MASK,
-            MAP_INHERIT_COPY,
-            MADV_NORMAL,
-            UVM_FLAG_COPYONW | UVM_FLAG_FIXED,
-        ),
-    )?;
-    copyout(bytes, cmd.ev_addr)?;
-    if cmd.ev_prot & PROT_WRITE == 0 {
-        uvm_map_protect(
-            map,
-            cmd.ev_addr,
-            cmd.ev_addr + cmd.ev_len,
-            cmd.ev_prot,
-            0,
-            false,
-            true,
-        )?;
+            // do the map
+            let error = uvm_map(
+                map,
+                &mut cmd.ev_addr,
+                cmd.ev_len,
+                Some(uobj),
+                cmd.ev_offset as i64,
+                0,
+                uvm_mapflag(cmd.ev_prot, PROT_MASK, MAP_INHERIT_COPY, MADV_NORMAL, flags),
+            );
+
+            // check for error
+            if error.is_err() {
+                // error: detach from object
+                if let Some(detach) = uobj.pgops().pgo_detach {
+                    detach(uobj);
+                }
+                return error;
+            }
+        }
+        Some(ExecFile::Image(image)) => {
+            // No object to attach (see the module's deviations): anonymous memory with the
+            // bytes the file would page in.
+            let end = cmd.ev_offset.saturating_add(cmd.ev_len).min(image.len());
+            let bytes = image.get(cmd.ev_offset..end).unwrap_or(&[]);
+            uvm_map(
+                map,
+                &mut cmd.ev_addr,
+                cmd.ev_len,
+                None,
+                UVM_UNKNOWN_OFFSET,
+                0,
+                uvm_mapflag(
+                    cmd.ev_prot | PROT_WRITE,
+                    PROT_MASK,
+                    MAP_INHERIT_COPY,
+                    MADV_NORMAL,
+                    flags,
+                ),
+            )?;
+            copyout(bytes, cmd.ev_addr)?;
+            if cmd.ev_prot & PROT_WRITE == 0 {
+                uvm_map_protect(
+                    map,
+                    cmd.ev_addr,
+                    cmd.ev_addr + cmd.ev_len,
+                    cmd.ev_prot,
+                    0,
+                    false,
+                    true,
+                )?;
+            }
+        }
+        None => return Err(Errno::EINVAL),
     }
 
     if cmd.ev_flags & VMCMD_IMMUTABLE != 0 {
@@ -195,7 +230,7 @@ pub fn vmcmd_map_pagedvn(p: &Proc, cmd: &ExecVmcmd, image: &[u8]) -> Result<(), 
 /// `vmcmd_map_readvn`: handle vmcmd which specifies that a vnode should be read from.
 /// appropriate for non-demand-paged text/data segments, i.e. impure objects (a la OMAGIC and
 /// NMAGIC).
-pub fn vmcmd_map_readvn(p: &Proc, cmd: &ExecVmcmd, image: &[u8]) -> Result<(), Errno> {
+pub fn vmcmd_map_readvn(p: &Proc, cmd: &mut ExecVmcmd<'_>) -> Result<(), Errno> {
     if cmd.ev_len == 0 {
         return Ok(());
     }
@@ -206,10 +241,9 @@ pub fn vmcmd_map_readvn(p: &Proc, cmd: &ExecVmcmd, image: &[u8]) -> Result<(), E
     let prot = cmd.ev_prot;
 
     let map = &p.vmspace().vm_map;
-    let mut addr = cmd.ev_addr;
     uvm_map(
         map,
-        &mut addr,
+        &mut cmd.ev_addr,
         round_page(cmd.ev_len),
         None,
         UVM_UNKNOWN_OFFSET,
@@ -223,17 +257,35 @@ pub fn vmcmd_map_readvn(p: &Proc, cmd: &ExecVmcmd, image: &[u8]) -> Result<(), E
         ),
     )?;
 
-    // vn_rdwr(UIO_READ, ..., UIO_USERSPACE): the image's bytes, copied out (a short image
-    // is an I/O error, as a short read).
-    let end = cmd.ev_offset.checked_add(cmd.ev_len).ok_or(Errno::EIO)?;
-    let bytes = image.get(cmd.ev_offset..end).ok_or(Errno::EIO)?;
-    copyout(bytes, cmd.ev_addr)?;
+    match cmd.ev_vp {
+        Some(ExecFile::Vnode(vp)) => vn_rdwr(
+            UioRw::UIO_READ,
+            vp,
+            cmd.ev_addr as *mut core::ffi::c_void,
+            cmd.ev_len,
+            cmd.ev_offset as i64,
+            UioSeg::UIO_USERSPACE,
+            IO_UNIT,
+            p.p_ucred.get(),
+            None,
+            Some(p),
+        )?,
+        Some(ExecFile::Image(image)) => {
+            // The image's bytes, copied out (a short image is an I/O error, as a short
+            // read with no residual count is).
+            let end = cmd.ev_offset.checked_add(cmd.ev_len).ok_or(Errno::EIO)?;
+            let bytes = image.get(cmd.ev_offset..end).ok_or(Errno::EIO)?;
+            copyout(bytes, cmd.ev_addr)?;
+        }
+        None => return Err(Errno::EINVAL),
+    }
 
+    let mut error = Ok(());
     if prot & PROT_WRITE == 0 {
         // we had to map in the area at PROT_WRITE so that vn_rdwr() could write to it.
         // however, the caller seems to want it mapped read-only, so now we are going to
         // have to call uvm_map_protect() to fix up the protection. ICK.
-        uvm_map_protect(
+        error = uvm_map_protect(
             map,
             cmd.ev_addr,
             round_page(cmd.ev_addr + cmd.ev_len),
@@ -241,26 +293,25 @@ pub fn vmcmd_map_readvn(p: &Proc, cmd: &ExecVmcmd, image: &[u8]) -> Result<(), E
             0,
             false,
             true,
-        )?;
+        );
     }
-    if cmd.ev_flags & VMCMD_IMMUTABLE != 0 {
+    if error.is_ok() && cmd.ev_flags & VMCMD_IMMUTABLE != 0 {
         let _ = uvm_map_immutable(map, cmd.ev_addr, round_page(cmd.ev_addr + cmd.ev_len), true);
     }
-    Ok(())
+    error
 }
 
 /// `vmcmd_map_zero`: handle vmcmd which specifies a zero-filled address space region.
-pub fn vmcmd_map_zero(p: &Proc, cmd: &ExecVmcmd) -> Result<(), Errno> {
+pub fn vmcmd_map_zero(p: &Proc, cmd: &mut ExecVmcmd<'_>) -> Result<(), Errno> {
     if cmd.ev_len == 0 {
         return Ok(());
     }
 
     kassert!(cmd.ev_addr & PAGE_MASK == 0);
     let map = &p.vmspace().vm_map;
-    let mut addr = cmd.ev_addr;
     let error = uvm_map(
         map,
-        &mut addr,
+        &mut cmd.ev_addr,
         round_page(cmd.ev_len),
         None,
         UVM_UNKNOWN_OFFSET,
@@ -286,7 +337,7 @@ pub fn vmcmd_map_zero(p: &Proc, cmd: &ExecVmcmd) -> Result<(), Errno> {
 }
 
 /// `vmcmd_mutable`: handle vmcmd which changes an address space region back to mutable.
-pub fn vmcmd_mutable(p: &Proc, cmd: &ExecVmcmd) -> Result<(), Errno> {
+pub fn vmcmd_mutable(p: &Proc, cmd: &mut ExecVmcmd<'_>) -> Result<(), Errno> {
     if cmd.ev_len == 0 {
         return Ok(());
     }
@@ -302,7 +353,7 @@ pub fn vmcmd_mutable(p: &Proc, cmd: &ExecVmcmd) -> Result<(), Errno> {
 }
 
 /// `vmcmd_randomize`: handle vmcmd which specifies a randomized address space region.
-pub fn vmcmd_randomize(_p: &Proc, cmd: &ExecVmcmd) -> Result<(), Errno> {
+pub fn vmcmd_randomize(_p: &Proc, cmd: &mut ExecVmcmd<'_>) -> Result<(), Errno> {
     let mut len = cmd.ev_len;
     let mut off = 0;
 
@@ -360,8 +411,7 @@ pub fn exec_setup_stack(_p: &Proc, epp: &mut ExecPackage<'_>) -> Result<(), Errn
     // MACHINE_STACK_GROWS_UP: neither amd64 nor arm64.
     epp.ep_maxsaddr = USRSTACK - MAXSSIZ - MAXSSIZ_GUARD;
     epp.ep_minsaddr = USRSTACK;
-    // round_page(lim_cur(RLIMIT_STACK)): see the module's deviations.
-    epp.ep_ssize = round_page(<Machine as VmParam>::DFLSSIZ);
+    epp.ep_ssize = round_page(lim_cur(RLIMIT_STACK) as usize);
 
     // VM_MIN_STACK_ADDRESS is defined on both.
     let mut dist: usize = USRSTACK - MAXSSIZ - MAXSSIZ_GUARD - VM_MIN_STACK_ADDRESS;
@@ -385,6 +435,7 @@ pub fn exec_setup_stack(_p: &Proc, epp: &mut ExecPackage<'_>) -> Result<(), Errn
         VmcmdProc::MapZero,
         (epp.ep_minsaddr - epp.ep_ssize) - epp.ep_maxsaddr,
         epp.ep_maxsaddr,
+        None,
         0,
         PROT_NONE,
         VMCMD_IMMUTABLE,
@@ -393,6 +444,7 @@ pub fn exec_setup_stack(_p: &Proc, epp: &mut ExecPackage<'_>) -> Result<(), Errn
         VmcmdProc::MapZero,
         epp.ep_ssize,
         epp.ep_minsaddr - epp.ep_ssize,
+        None,
         0,
         PROT_READ | PROT_WRITE,
         VMCMD_STACK | VMCMD_IMMUTABLE,

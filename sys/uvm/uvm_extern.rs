@@ -72,9 +72,12 @@
 //! - `UVM_MAPFLAG` and its extractors are `const fn`s.
 //! - In `kmem_va_mode`, `kv_map` (a pointer to a map pointer) waits for `vm_map`; the mode
 //!   says which map by name until then.
+//! - `exec_map`, which every machine's `machdep.c` defines and makes identically in
+//!   `cpu_startup`, is one static here ([`EXEC_MAP`]) that the machines set.
 
 use core::cell::Cell;
-use core::sync::atomic::AtomicI32;
+use core::ptr;
+use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
@@ -296,6 +299,21 @@ pub struct UvmConstraintRange {
     pub ucr_high: Paddr,
 }
 
+/// `exec_map`: the submap of `kernel_map` that holds `execve`'s argument buffers (16
+/// `NCARGS`, which effectively limits the number of processes exec'ing at any time); null
+/// until the machine's `cpu_startup` made it.
+pub static EXEC_MAP: AtomicPtr<crate::uvm::uvm_map::VmMap> = AtomicPtr::new(ptr::null_mut());
+
+/// `exec_map`, once `cpu_startup` made it.
+pub fn exec_map() -> &'static crate::uvm::uvm_map::VmMap {
+    let map = EXEC_MAP.load(Ordering::Acquire);
+    // SAFETY: a non-null pointer is the submap `uvm_km_suballoc` returned, never freed.
+    match unsafe { map.as_ref() } {
+        Some(map) => map,
+        None => crate::kern::subr_prf::panic(format_args!("exec_map used before cpu_startup")),
+    }
+}
+
 /// Which kernel map a `kmem_va_mode` allocates from (`kv_map` in C is a pointer to the map
 /// pointer; the maps themselves arrive with `uvm_map`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -304,6 +322,8 @@ pub enum KvMap {
     Kernel,
     /// `kmem_map`.
     Kmem,
+    /// `exec_map` (`kv_exec`, `kern_exec.c`).
+    Exec,
     /// No map: the single page allocator (`kv_singlepage`).
     None,
 }

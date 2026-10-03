@@ -343,8 +343,11 @@ OpenBSD's `makedev()` encoding).
   `mi_syscall` and the AST loop before `sysretq`; arm64 `handle_el0_sync` → `do_el0_sync` →
   `svc_handler`, `do_ast` and `eret`. Not here: the Meltdown U-K page and `Xsyscall_meltdown`,
   the xstate/FS.base restores and the Spectre code patches on amd64; the trampoline vectors
-  (`trampoline.S`) on arm64, so `VBAR_EL1` keeps the kernel vectors; `pin_check` accepts
-  every call site until `exec` reads `PT_OPENBSD_SYSCALLS`. `copyin(9)` is each arch's
+  (`trampoline.S`) on arm64, so `VBAR_EL1` keeps the kernel vectors. `pin_check` is the C's
+  since M8: a system call must come from the site the executable's `PT_OPENBSD_SYSCALLS`
+  (`ps_pin`) or `pinsyscalls(2)` (`ps_libcpin`) names for its number, or be `sigreturn` from
+  the trampoline (`machine::signal`'s `sigcodecall`/`sigcoderet` give the instruction's
+  length), else the process gets `SIGABRT`. `copyin(9)` is each arch's
   `copy.S` behind the `machine::copy` contract, with `pcb_onfault` recovery in both page fault
   handlers (amd64 validates it against the `.nofault` table the linker script collects);
   amd64 runs without SMAP's `stac`/`clac` (no `codepatch`, `CR4.SMAP` not set).
@@ -354,22 +357,44 @@ OpenBSD's `makedev()` encoding).
   will exec from memory. `init/` is a freestanding Rust crate (`#![no_std]`, static ELF at
   `0x400000`, raw `syscall`/`svc` with OpenBSD's carry-flag convention) built for the two
   bare targets by `just build-init-*`; it is not OpenBSD code and lives outside `sys/`.
+  Since `pin_check` is real (M8) it carries a `PT_OPENBSD_SYSCALLS` table like any OpenBSD
+  program: its one system call instruction (`syscall6`, `inline(never)`) emits a
+  `.openbsd.syscalls` entry for every system call number, all naming that instruction,
+  and `init.ld` puts the section in a segment of type `0x65a3dbe9`. Its `_start` is assembly
+  that hands the initial stack pointer to the program, which checks `argc`, `argv` and the
+  auxiliary vector `execve` built (`init: argv and auxv ok` in `smoke`).
 - Process exit (M6-b): `kern_exit.c`'s `exit1`/`exit2`/`reaper`/`process_zap` are OpenBSD's
   with the pieces that need signals, file descriptors, limits, credentials or a vmspace
   reported; `initprocess` is null until `init` exists and process 0 adopts orphans meanwhile.
   The `selftest=kthread` threads now `kthread_exit` and proc0 checks the reaper freed them.
 - User address spaces (M6-b, then M7a): M6 built `exec`'s segments from wired pages outside
-  the entry tree; M7a-3b retired those stand-ins. `exec` now maps each segment with
-  `uvm_map` (anonymous, copy-on-write) and copies the image bytes in with `copyout`, so the
-  pages are faulted in by `uvm_fault`; with no vnode, `vmcmd_map_pagedvn` maps anonymous
-  memory as `vmcmd_map_readvn` does (`sys/kern/exec_subr.rs`).
-- Exec of a memory image (M6-b2): `kern_exec.c`'s `sys_execve` is ported from the point where
-  the executable is in hand as `exec_image(p, name, image)`; `check_exec` runs the exec switch
-  (`exec_elf_makecmds`, which requires the OpenBSD ELF note as the C does) without `namei`,
-  the vmcmds (`exec_subr.c`) act on the image instead of a vnode, `copyargs` lays out an empty
-  `argv`/`envp` (the boot flags come with a real `sys_execve`, M6-c), and `setregs` builds the
-  user trap frame. `start_init` execs the `init` module and returns through
-  `proc_trampoline` to the syscall exit path, exactly where a forked user thread would go.
+  the entry tree; M7a-3b retired those stand-ins. `exec` maps each segment with `uvm_map`:
+  a vnode's text and data copy-on-write from its `uvn_attach` object, as OpenBSD does, and
+  the boot module's anonymous with the image bytes copied in (`sys/kern/exec_subr.rs`);
+  either way the pages are faulted in by `uvm_fault`.
+- Exec (M8): `kern_exec.c`, `exec_elf.c` and `exec_subr.c` are OpenBSD's. `sys_execve`
+  finds the file with `namei` (`EXECPATH`: the realpath becomes `AUX_openbsd_execpath`),
+  checks it (`VOP_GETATTR`, `VOP_ACCESS`, `VOP_OPEN`), reads the header with `vn_rdwr`,
+  copies `argv`/`envp` into an `NCARGS` buffer of `exec_map` (a submap every machine's
+  `cpu_startup` makes, as in C) and builds the stack: `argc`, the vectors, room for the
+  twelve auxiliary vector entries, the strings, a random stack gap (`stackgap_random`),
+  `ps_strings` and the execpath. `exec_elf_makecmds` loads `ET_EXEC` and static PIE
+  (`ET_DYN`, base from `uvm_map_pie`) executables with `PT_OPENBSD_RANDOMIZE`,
+  `PT_OPENBSD_MUTABLE`, `PT_GNU_RELRO`, `DT_TEXTREL` and the `PT_OPENBSD_SYSCALLS` pin
+  table; `exec_elf_fixup` writes the auxiliary vector (`AUX_base` is the executable's own
+  base for a static PIE, which `rcrt0` relocates itself from). A `PT_INTERP` program loads
+  `ld.so` through `elf_load_file`, which fails in `namei` because `ld.so` is not built.
+  `exec_timekeep_map` maps the shared timekeep page (wired in `kernel_map`, written by
+  `tc_update_timekeep`); where the timecounter has no user-mode reader (`tk_user` 0, the
+  i8254 on amd64) libc falls back to `clock_gettime(2)`. Until a root file system exists, `start_init`
+  tries `initpaths[]` through `sys_execve` (each `ENOENT`) and then execs the `init` boot
+  module with the same arguments through `exec_image`, the same body with `ep_image` set
+  (`docs/C_TO_RUST.md`). What a file system must give `execve`: `namei` of the path, a
+  regular-file vnode whose `VOP_GETATTR`, `VOP_ACCESS`, `VOP_OPEN`/`VOP_CLOSE` and
+  `VOP_READ` work, and pages through the vnode pager (`uvn_attach`, `uvn_get` over
+  `VOP_READ`). Reported: the profiling reset, `cancel_all_itimers` until `kern_time.c`, the
+  `NOTE_EXEC` knote and the `/dev/null` fix-up of a set[ug]id exec with a closed standard
+  descriptor (the device switch).
 - Signals (M7, `kern_sig.c`): the whole file is OpenBSD's, and the traps of both archs call
   its `trapsignal`. The machine half (`sendsig`, `sys_sigreturn`, the `sigcode` trampoline of
   each `locore.S`) is the `machine::MachineSignal` contract; `sys_sigreturn` is entered from
@@ -515,10 +540,9 @@ OpenBSD's `makedev()` encoding).
   time through `VOP_READ` and go out in clusters through `VOP_WRITE`, and an unmapped object
   persists with its pages until `vclean` calls `uvm_vnp_terminate`. `pmap_is_modified` and
   `pmap_clear_reference` joined the `machine::pmap` contract for it (and for
-  `uvm_pagedeactivate`). Still missing for exec and `mmap(2)` of files: `sys_execve` and
-  `vmcmd_map_pagedvn` over a vnode (exec runs on a boot module image), `uvm_mmapfile` and the
-  device pager (`uvm_device.c`); the async swap pageout of `uvm_pager.c` waits for the swap
-  pager. A boot self-test maps a three-page cluster through the pager map (`selftest: pager
+  `uvm_pagedeactivate`). `exec` maps executables through it since M8. Still missing for
+  `mmap(2)` of files: `uvm_mmapfile` and the device pager (`uvm_device.c`); the async swap
+  pageout of `uvm_pager.c` waits for the swap pager. A boot self-test maps a three-page cluster through the pager map (`selftest: pager
   map ok`).
   A device vnode keeps its `struct lockf_state *` in `specinfo` (`si_lockf`, a
   `LockfStateSlot`), so `spec_advlock` and `vgonel`'s purge are the C's; a file system's

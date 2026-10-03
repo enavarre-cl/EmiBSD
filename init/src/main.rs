@@ -30,6 +30,11 @@
 //! with `setsid(2)`, makes its descriptor 0 (the console's tty) its controlling terminal with
 //! `TIOCSCTTY`, reads the terminal's modes with `TIOCGETA` (what `isatty(3)` asks) and
 //! finds itself the terminal's foreground process group (`TIOCGPGRP`).
+//! With the real `execve` (M8) it checks the stack `start_init` and `execve` gave it (`argc`
+//! 1, `argv[0]` `/init`, no environment, the auxiliary vector with the page size, the entry
+//! point, base 0 and the timekeep page), that `execve(2)` of a path reaches `namei`
+//! (`ENOENT`), and every system call it makes passes `pin_check`: the one `syscall`/`svc`
+//! instruction is pinned for every number in its `PT_OPENBSD_SYSCALLS` table.
 
 #![no_std]
 #![no_main]
@@ -53,6 +58,9 @@ static BSS: [AtomicU8; 4 * PAGE_SIZE] = [const { AtomicU8::new(0) }; 4 * PAGE_SI
 static OPENBSD_IDENT: [u8; 24] = [
     8, 0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0, b'O', b'p', b'e', b'n', b'B', b'S', b'D', 0, 0, 0, 0, 0,
 ];
+
+/// `SYS_MAXSYSCALL`: one past the last system call number (`<sys/syscall.h>`).
+const SYS_MAXSYSCALL: usize = 331;
 
 /// `SYS_exit`.
 const SYS_EXIT: usize = 1;
@@ -106,6 +114,8 @@ const SYS___GET_TCB: usize = 330;
 const SYS_SYSCTL: usize = 202;
 /// `SYS_open`.
 const SYS_OPEN: usize = 5;
+/// `SYS_execve`.
+const SYS_EXECVE: usize = 59;
 /// `SYS_chdir`.
 const SYS_CHDIR: usize = 12;
 /// `SYS_fchdir`.
@@ -217,67 +227,42 @@ static BIG: [AtomicU8; BIG_WRITE] = [const { AtomicU8::new(0) }; BIG_WRITE];
 static TCB: AtomicUsize = AtomicUsize::new(0);
 
 /// A three-argument system call: the return register and whether the carry flag (OpenBSD's
-/// error indication) was set.
-#[cfg(target_arch = "x86_64")]
+/// error indication) was set. Every system call goes through [`syscall6`], the one call site
+/// the pin table names.
 fn syscall3(number: usize, a: usize, b: usize, c: usize) -> (usize, bool) {
-    let ret: usize;
-    let carry: u8;
-    // SAFETY: the `syscall` instruction with the OpenBSD register convention; the kernel
-    // owns everything that happens, and clobbers only rcx and r11 besides the outputs.
-    unsafe {
-        asm!(
-            "syscall",
-            "setc {carry}",
-            carry = out(reg_byte) carry,
-            inlateout("rax") number => ret,
-            in("rdi") a,
-            in("rsi") b,
-            in("rdx") c,
-            out("rcx") _,
-            out("r11") _,
-            options(nostack)
-        );
-    }
-    (ret, carry != 0)
-}
-
-/// A three-argument system call: `svc #0` followed by the speculation barrier the kernel
-/// skips over (`svc_handler` adds 8 to the return address).
-#[cfg(target_arch = "aarch64")]
-fn syscall3(number: usize, a: usize, b: usize, c: usize) -> (usize, bool) {
-    let ret: usize;
-    let carry: usize;
-    // SAFETY: the `svc` instruction with the OpenBSD register convention; the kernel owns
-    // everything that happens and clobbers nothing but the outputs.
-    unsafe {
-        asm!(
-            "svc #0",
-            "dsb nsh",
-            "isb",
-            "cset {carry}, cs",
-            carry = out(reg) carry,
-            in("x8") number,
-            inlateout("x0") a => ret,
-            in("x1") b,
-            in("x2") c,
-            options(nostack)
-        );
-    }
-    (ret, carry != 0)
+    syscall6(number, [a, b, c, 0, 0, 0])
 }
 
 /// A six-argument system call (`syscall`: the fourth argument in `r10`, as the kernel's
 /// `Xsyscall` reads it).
+///
+/// This is the program's only system call instruction. The kernel's `pin_check` accepts a
+/// system call only from the site the executable's `PT_OPENBSD_SYSCALLS` table names for
+/// its number (libc's stubs each emit one `PINSYSCALL` entry); this function emits one entry
+/// per system call number, all naming this instruction, into `.openbsd.syscalls`, which
+/// `init.ld` puts in that segment. `inline(never)` keeps the instruction single.
 #[cfg(target_arch = "x86_64")]
+#[inline(never)]
 fn syscall6(number: usize, a: [usize; 6]) -> (usize, bool) {
     let ret: usize;
     let carry: u8;
     // SAFETY: the `syscall` instruction with the OpenBSD register convention; the kernel
-    // owns everything that happens, and clobbers only rcx and r11 besides the outputs.
+    // owns everything that happens, and clobbers only rcx and r11 besides the outputs. The
+    // section directives only add data to `.openbsd.syscalls`.
     unsafe {
         asm!(
+            "2:",
             "syscall",
+            ".pushsection .openbsd.syscalls,\"a\"",
+            ".set .Linit_pin_sysno, 1",
+            ".rept {nsys}",
+            ".long 2b",
+            ".long .Linit_pin_sysno",
+            ".set .Linit_pin_sysno, .Linit_pin_sysno + 1",
+            ".endr",
+            ".popsection",
             "setc {carry}",
+            nsys = const SYS_MAXSYSCALL - 1,
             carry = out(reg_byte) carry,
             inlateout("rax") number => ret,
             in("rdi") a[0],
@@ -294,19 +279,33 @@ fn syscall6(number: usize, a: [usize; 6]) -> (usize, bool) {
     (ret, carry != 0)
 }
 
-/// A six-argument system call: `svc #0`, arguments in `x0`..`x5`.
+/// A six-argument system call: `svc #0`, arguments in `x0`..`x5`, followed by the
+/// speculation barrier the kernel skips over (`svc_handler` adds 8 to the return address).
+/// The only system call instruction, pinned for every number as on amd64.
 #[cfg(target_arch = "aarch64")]
+#[inline(never)]
 fn syscall6(number: usize, a: [usize; 6]) -> (usize, bool) {
     let ret: usize;
     let carry: usize;
     // SAFETY: the `svc` instruction with the OpenBSD register convention; the kernel owns
-    // everything that happens and clobbers nothing but the outputs.
+    // everything that happens and clobbers nothing but the outputs. The section directives
+    // only add data to `.openbsd.syscalls`.
     unsafe {
         asm!(
+            "2:",
             "svc #0",
             "dsb nsh",
             "isb",
+            ".pushsection .openbsd.syscalls,\"a\"",
+            ".set .Linit_pin_sysno, 1",
+            ".rept {nsys}",
+            ".long 2b",
+            ".long .Linit_pin_sysno",
+            ".set .Linit_pin_sysno, .Linit_pin_sysno + 1",
+            ".endr",
+            ".popsection",
             "cset {carry}, cs",
+            nsys = const SYS_MAXSYSCALL - 1,
             carry = out(reg) carry,
             in("x8") number,
             inlateout("x0") a[0] => ret,
@@ -380,13 +379,98 @@ fn exit(status: usize) -> ! {
     }
 }
 
-/// The entry point: no stack arguments, no `ps_strings`, nothing to set up.
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
+/// `AUX_null`: the end of the auxiliary vector (`<sys/exec_elf.h>`).
+const AUX_NULL: usize = 0;
+/// `AUX_phdr`.
+const AUX_PHDR: usize = 3;
+/// `AUX_pagesz`.
+const AUX_PAGESZ: usize = 6;
+/// `AUX_base`.
+const AUX_BASE: usize = 7;
+/// `AUX_entry`.
+const AUX_ENTRY: usize = 9;
+/// `AUX_openbsd_timekeep`.
+const AUX_OPENBSD_TIMEKEEP: usize = 4000;
+
+// The entry point: the stack pointer `execve` left points at `argc`, then `argv`, `envp`
+// and the auxiliary vector (`copyargs`, `exec_elf_fixup`); pass it to `init_main`.
+#[cfg(target_arch = "x86_64")]
+core::arch::global_asm!(
+    ".globl _start",
+    "_start:",
+    "mov rdi, rsp",
+    "and rsp, -16",
+    "call {main}",
+    "ud2",
+    main = sym init_main,
+);
+#[cfg(target_arch = "aarch64")]
+core::arch::global_asm!(
+    ".globl _start",
+    "_start:",
+    "mov x0, sp",
+    "bl {main}",
+    "brk #0",
+    main = sym init_main,
+);
+
+/// The new stack as `execve` lays it out: `argc` 1, `argv[0]` the boot module's path,
+/// no environment, and an auxiliary vector that names the page size, the entry point,
+/// the program headers, base 0 (not a PIE) and the timekeep page.
+fn args_and_auxv(sp: *const usize) -> bool {
+    // SAFETY: `execve` wrote these words at the initial stack pointer: argc, argc argument
+    // pointers and a NULL, the environment pointers and a NULL, then the auxiliary vector up
+    // to `AUX_null`; all in the mapped stack.
+    let word = |i: usize| unsafe { sp.add(i).read() };
+    let argc = word(0);
+    if argc != 1 || word(2) != 0 || word(3) != 0 {
+        return false;
+    }
+    // SAFETY: argv[0] points at the NUL-terminated path `start_init` copied out.
+    let arg0 = unsafe { core::ffi::CStr::from_ptr(word(1) as *const core::ffi::c_char) };
+    if arg0.to_bytes() != b"/init" {
+        return false;
+    }
+    let (mut pagesz, mut entry, mut phdr, mut base, mut timekeep) = (0, 0, 0, usize::MAX, 0);
+    let mut i = 4;
+    loop {
+        let (id, v) = (word(i), word(i + 1));
+        match id {
+            AUX_NULL => break,
+            AUX_PAGESZ => pagesz = v,
+            AUX_ENTRY => entry = v,
+            AUX_PHDR => phdr = v,
+            AUX_BASE => base = v,
+            AUX_OPENBSD_TIMEKEEP => timekeep = v,
+            _ => {}
+        }
+        i += 2;
+        if i > 4 + 2 * 12 {
+            return false;
+        }
+    }
+    let start: unsafe extern "C" fn() = _start;
+    pagesz == PAGE_SIZE && entry == start as usize && phdr == 0 && base == 0 && timekeep != 0
+}
+
+unsafe extern "C" {
+    /// The entry point above.
+    fn _start();
+}
+
+/// The program, called by `_start` with the initial stack pointer.
+extern "C" fn init_main(sp: *const usize) -> ! {
     let mut status = match write(1, b"init: hello from user mode\n") {
         Ok(_) => 0,
         Err(_) => 1,
     };
+    if args_and_auxv(sp) {
+        if write(1, b"init: argv and auxv ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 9;
+    }
     if demand_zero_bss() {
         if write(1, b"init: demand-zero bss ok\n").is_err() {
             status = 1;
@@ -458,6 +542,13 @@ fn vfs() -> bool {
     ) == (ENOENT, true);
     ok &= call(SYS_CHDIR, c"/".as_ptr() as usize, 0, 0) == (ENOENT, true);
     ok &= call(SYS___GETCWD, cwd.as_mut_ptr() as usize, cwd.len(), 0) == (ENOENT, true);
+    let argv = [c"init".as_ptr() as usize, 0];
+    ok &= call(
+        SYS_EXECVE,
+        c"/sbin/init".as_ptr() as usize,
+        argv.as_ptr() as usize,
+        0,
+    ) == (ENOENT, true);
     ok &= call(SYS_UMASK, 0o077, 0, 0) == (0o022, false);
     ok &= call(SYS_UMASK, 0o022, 0, 0) == (0o077, false);
     ok &= call(SYS_LSEEK, 1, 0, SEEK_CUR) == (ESPIPE, true);

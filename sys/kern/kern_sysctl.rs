@@ -68,7 +68,6 @@
 //!   atomic's; a C local passed by address is an `AtomicI32` read back with `into_inner`.
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
 //!   `ENOSYS`: `somaxconn`/`sominconn` (`uipc_socket.c`),
-//!   `stackgap_random` (`kern_exec.c` has no stack gap yet),
 //!   `file` (`kern_descrip.c`; `fill_file` is not here),
 //!   `malloc` (`sysctl_malloc`), `pool` (`sysctl_dopool`), `intrcnt` and `evcount`
 //!   (`evcount_sysctl`), `watchdog` (`kern_watchdog.c`), `clockintr`, `timecounter`
@@ -780,9 +779,25 @@ fn kern_sysctl_locked(
             fs[16..].copy_from_slice(siz.as_bytes());
             sysctl_rdstruct(oldp, oldlenp, newp, &fs)
         }
-        KERN_STACKGAPRANDOM => Err(unported!(
-            "kern.stackgap_random: stackgap_random (kern_exec.c)"
-        )),
+        KERN_STACKGAPRANDOM => {
+            use crate::kern::kern_exec::stackgap_random;
+
+            let stackgap = AtomicI32::new(stackgap_random.load(Ordering::Relaxed));
+            sysctl_int(oldp, oldlenp, newp, newlen, &stackgap)?;
+            let stackgap = stackgap.into_inner();
+            // Safety harness.
+            let alignbytes =
+                <crate::machine::Machine as crate::machine::param::MachineParam>::ALIGNBYTES;
+            let maxssiz = <crate::machine::Machine as crate::machine::VmParam>::MAXSSIZ;
+            if (stackgap < alignbytes as i32 && stackgap != 0)
+                || (stackgap.wrapping_sub(1) & stackgap) != 0
+                || stackgap as i64 >= maxssiz as i64
+            {
+                return Err(Errno::EINVAL);
+            }
+            stackgap_random.store(stackgap, Ordering::Relaxed);
+            Ok(())
+        }
         KERN_CACHEPCT => {
             use crate::conf::param::{bufcachepercent, bufpages};
 
