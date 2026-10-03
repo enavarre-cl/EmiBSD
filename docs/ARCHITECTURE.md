@@ -366,7 +366,12 @@ user's group (macOS has no such group, and `pwd_mkdb` insists on one).
   (`sched_init_cpu`'s binds) and `initclocks`. amd64 starts the i8254, calibrates the LAPIC
   timer against it (`lapic_calibrate_timer`, as the boot CPU's `cpu_attach` does) and drives
   `clockintr_dispatch` from `Xintr_lapic_ltimer`; the i8254 is the timecounter (the TSC one,
-  `tsc.c`, is not ported). arm64 attaches `agtimer` from the device tree (through mainbus
+  `tsc.c`, is not ported, and wants an invariant TSC QEMU's TCG does not offer; `acpihpet` and
+  `acpitimer` need the ACPI tables). Behind the LAPIC timer the i8254 counts 15 bits
+  (`i8254_inittimecounter_simple`) and wraps every 27.46 ms: uptime moves forward only while
+  hardclock winds the timehands up within each wrap, so a clock interrupt held off longer (a
+  QEMU vCPU descheduled by a busy host) steps `nanouptime` back a period, as it would on
+  OpenBSD with this counter; the time code keeps the C's modular arithmetic for it. arm64 attaches `agtimer` from the device tree (through mainbus
   since M7b) and takes the virtual timer's PPI through `ampintc`. The `selftest=clock` boot waits for
   `hz` hardclocks and a `timeout(9)`. The host double owns a `cpu_info` of its own so the
   clock queue and the wheel are unit-tested over the dummy timecounter.

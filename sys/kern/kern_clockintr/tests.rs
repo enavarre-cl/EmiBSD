@@ -5,6 +5,8 @@ use core::sync::atomic::{AtomicU32, AtomicU64};
 use std::sync::Mutex as StdMutex;
 
 use super::*;
+use crate::kern::kern_tc::{tc_init, tc_reset_quality, tc_ticktock};
+use crate::sys::timetc::Timecounter;
 
 /// The host has one `cpu_info` and one queue: the tests serialise on it.
 static LOCK: StdMutex<()> = StdMutex::new(());
@@ -98,6 +100,67 @@ fn bind_schedule_dispatch_cancel() {
     assert!(ONCE.cl_queue.get().is_null());
     assert_eq!(cq.cq_all.iter().count(), 0);
     crate::machine::intr::spl0();
+}
+
+/// A 15-bit timecounter (amd64's i8254 behind the LAPIC timer) whose count the test sets.
+static STEP_COUNT: AtomicU32 = AtomicU32::new(0);
+
+fn step_get(_tc: &Timecounter) -> u32 {
+    STEP_COUNT.load(Ordering::Relaxed) & 0x7fff
+}
+
+static STEPTC: Timecounter = Timecounter::new(step_get, 0x7fff, 1_193_182, "steptc", i32::MAX, 0);
+
+/// The clock interrupt was held off past the counter's period: the next reading is 0x100
+/// counts behind the dispatch's `start`.
+fn wrap_the_counter(_cr: &Clockrequest, _frame: *mut c_void, _arg: *mut c_void) {
+    STEP_COUNT.fetch_add(0x8000 - 0x100, Ordering::Relaxed);
+}
+
+#[test]
+fn dispatch_survives_a_counter_that_steps_back() {
+    let _t = crate::kern::kern_tc::tests::LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let ci = curcpu();
+    let cq = Machine::ci_queue(ci);
+    clockqueue_init(cq);
+    clockqueue_intrclock_install(cq, &FAKE_INTRCLOCK);
+
+    // The counter takes over at 0 and is read 0x4000 counts (13.7 ms) after that windup.
+    STEP_COUNT.store(0, Ordering::Relaxed);
+    tc_init(&STEPTC);
+    tc_ticktock();
+    STEP_COUNT.store(0x4000, Ordering::Relaxed);
+
+    // WRAP runs now and wraps the counter; LATER keeps the dispatch looking at the clock again.
+    static WRAP: Clockintr = Clockintr::new();
+    static LATER: Clockintr = Clockintr::new();
+    clockintr_bind(&WRAP, ci, wrap_the_counter, ptr::null_mut());
+    clockintr_bind(&LATER, ci, count_and_reschedule, ptr::null_mut());
+    clockintr_schedule(&WRAP, 0);
+    clockintr_schedule(&LATER, u64::MAX / 2);
+
+    // The other tests count from the statistics they find: give them back afterwards.
+    let saved = cq.cq_stat.get();
+    let dispatched = saved.cs_dispatched;
+    crate::machine::intr::splraise(IPL_CLOCK);
+    assert_eq!(clockintr_dispatch(ptr::null_mut()), 1);
+    // The C's uint64_t sum takes the step back modulo 2^64: 0x100 counts short of 2^64.
+    let back = 0u64.wrapping_sub(cq.cq_stat.get().cs_dispatched.wrapping_sub(dispatched));
+    let counts_0x100 = (0x100u64 * 1_000_000_000) / 1_193_182;
+    assert!(back.abs_diff(counts_0x100) <= 2, "{back} ns back");
+    assert!(ptr::eq(cq.cq_pend.first().unwrap(), &LATER));
+
+    clockintr_cancel(&LATER);
+    clockintr_unbind(&WRAP, 0);
+    clockintr_unbind(&LATER, 0);
+    crate::machine::intr::spl0();
+    cq.cq_stat.set(saved);
+    // Back to the dummy counter.
+    tc_reset_quality(&STEPTC, -1);
+    tc_ticktock();
 }
 
 #[test]

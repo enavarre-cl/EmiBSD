@@ -1,13 +1,60 @@
 //! Host tests for the timecounters, over the dummy counter (one count per read at 1 MHz).
 //!
-//! The timehands are global, so the tests that wind them up serialise on `LOCK`.
+//! The timehands are global, so the tests that wind them up or change the active counter
+//! serialise on `LOCK` (`kern_clockintr`'s tests too).
 
 use std::sync::Mutex as StdMutex;
 
 use super::*;
 
-/// Serialises the tests that call `tc_windup`.
-static LOCK: StdMutex<()> = StdMutex::new(());
+/// Serialises the tests that call `tc_windup` or change the active timecounter.
+pub(crate) static LOCK: StdMutex<()> = StdMutex::new(());
+
+/// The 15-bit counter of amd64's i8254 when the LAPIC timer drives the clock interrupts
+/// (`i8254_inittimecounter_simple`: `tc_counter_mask` 0x7fff at `TIMER_FREQ`): it wraps every
+/// 0x8000 counts, 27.46 ms. Its value is whatever the test stores.
+static WRAP15_COUNT: AtomicU32 = AtomicU32::new(0);
+
+fn wrap15_get(_tc: &Timecounter) -> u32 {
+    WRAP15_COUNT.load(Ordering::Relaxed)
+}
+
+static WRAP15: Timecounter = Timecounter::new(wrap15_get, 0x7fff, 1_193_182, "wrap15", 0, 0);
+
+/// A timehands of its own over [`WRAP15`], outside the global ring.
+static WRAP15_TH: Timehands = Timehands::new(&WRAP15, 0, 1, &WRAP15_TH);
+
+/// `binuptime` over [`WRAP15_TH`] with the counter at `count`, in nanoseconds.
+fn wrap15_uptime(count: u32) -> u64 {
+    WRAP15_COUNT.store(count, Ordering::Relaxed);
+    let th = &WRAP15_TH;
+    let bt = timecount_to_bintime(tc_delta(th), th.th_scale.get());
+    bintime_to_nsec(&bintimeadd(&bt, &th.th_offset.get()))
+}
+
+#[test]
+fn a_counter_read_a_period_after_the_windup_steps_uptime_back() {
+    // tc_windup's scale for this frequency, with no adjustment.
+    let scale = ((1u64 << 63) / 1_193_182).wrapping_mul(2);
+    WRAP15_TH.th_scale.set(scale);
+    WRAP15_TH.th_offset.set(Bintime::new(5, 0));
+    WRAP15_TH.th_offset_count.set(0x7000); // the last windup read 0x7000
+
+    // One hz = 100 tick (11932 counts) after the windup, across the counter's own wrap from
+    // 0x7fff to 0: tc_delta is modular, so the reading is exact.
+    let tick = wrap15_uptime((0x7000 + 11932) & 0x7fff);
+    let ns_11932 = (11932u64 * 1_000_000_000) / 1_193_182;
+    assert!((tick - 5_000_000_000).abs_diff(ns_11932) <= 1, "{tick}");
+
+    // Held off for a period and more, the counter is read 0x10 counts past a full period:
+    // the reading lands 0x10 counts after the windup, behind one taken just before the wrap.
+    let before = wrap15_uptime((0x7000 + 0x7ff0) & 0x7fff);
+    let after = wrap15_uptime((0x7000 + 0x8010) & 0x7fff);
+    assert!(after < before, "{before} then {after}");
+    let lost = before - after;
+    let period_minus_0x20 = (0x7fe0u64 * 1_000_000_000) / 1_193_182;
+    assert!(lost.abs_diff(period_minus_0x20) <= 2, "{lost} ns back");
+}
 
 #[test]
 fn readers_are_monotonic_on_the_dummy_counter() {

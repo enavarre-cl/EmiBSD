@@ -40,6 +40,12 @@
 //!   returns: reported as unported until the sleep queues exist (M5-b); nothing unbinds a
 //!   running callback before then.
 //! - The callback runs with the clock frame as an opaque `*mut c_void`, as in C.
+//! - Not a deviation, a reminder: the `cq_stat` time sums keep the C's modular `uint64_t`
+//!   arithmetic (`wrapping_add`/`wrapping_sub`). `clockintr_dispatch` can read the clock
+//!   behind its own `start`: amd64's only timecounter is the i8254 behind the LAPIC timer,
+//!   whose 15-bit count wraps every 27.46 ms, and a clock interrupt held off longer than that
+//!   (QEMU's vCPU thread descheduled by the host) loses a period in `tc_delta`. OpenBSD on
+//!   the same counter does the same; checked arithmetic would panic where the C goes on.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -273,14 +279,21 @@ pub fn clockintr_dispatch(frame: *mut c_void) -> i32 {
     cq.cq_gen.store(0, Ordering::Relaxed);
     fence(Ordering::Release); // membar_producer()
     let mut stat = cq.cq_stat.get();
-    stat.cs_dispatched += cq.cq_uptime.get() - start;
+    // The C's uint64_t sums are modular, and this one relies on it: nsecuptime() is only
+    // monotonic while hardclock winds the timehands up once per period of the timecounter, so
+    // a dispatch held off longer can read the clock behind `start` (see the deviations).
+    stat.cs_dispatched = stat
+        .cs_dispatched
+        .wrapping_add(cq.cq_uptime.get().wrapping_sub(start));
     if run > 0 {
-        stat.cs_lateness += lateness;
+        stat.cs_lateness = stat.cs_lateness.wrapping_add(lateness);
         stat.cs_prompt += 1;
         stat.cs_run += run;
     } else if !cq.cq_pend.is_empty() {
         stat.cs_early += 1;
-        stat.cs_earliness += clockqueue_next(cq) - cq.cq_uptime.get();
+        stat.cs_earliness = stat
+            .cs_earliness
+            .wrapping_add(clockqueue_next(cq) - cq.cq_uptime.get());
     } else {
         stat.cs_spurious += 1;
     }

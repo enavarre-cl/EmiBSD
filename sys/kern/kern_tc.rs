@@ -788,4 +788,4 @@ pub fn tc_adjtime(old: Option<&mut i64>, new: Option<i64>) {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

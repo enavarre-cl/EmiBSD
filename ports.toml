@@ -1665,7 +1665,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "92fd8a2843ae231452d9354ea67ceef6d184b581"
 deps = ["sys/sys/clockintr.h", "sys/kern/kern_tc.c", "sys/kern/kern_clock.c", "sys/kern/kern_lock.c", "sys/lib/libkern/random.c"]
-notes = "M5: clockintr_cpu_init, clockintr_trigger, clockintr_dispatch, clockintr_advance, clockrequest_advance[_random], clockintr_cancel[_locked], clockintr_bind/unbind (CL_BARRIER's msleep_nsec reported, M5-b), clockintr_schedule[_locked], clockintr_stagger, clockintr_hardclock, clockqueue_init, clockqueue_intrclock_install, clockqueue_next, clockqueue_pend_delete/insert, clockqueue_intrclock_reprogram, intrclock_rearm/trigger, nsec_advance; sysctl_clockintr is kern_sysctl.c (M6), db_show_all_clockintr the real ddb (M7)"
+notes = "M5: clockintr_cpu_init, clockintr_trigger, clockintr_dispatch, clockintr_advance, clockrequest_advance[_random], clockintr_cancel[_locked], clockintr_bind/unbind (CL_BARRIER's msleep_nsec reported, M5-b), clockintr_schedule[_locked], clockintr_stagger, clockintr_hardclock, clockqueue_init, clockqueue_intrclock_install, clockqueue_next, clockqueue_pend_delete/insert, clockqueue_intrclock_reprogram, intrclock_rearm/trigger, nsec_advance; sysctl_clockintr is kern_sysctl.c (M6), db_show_all_clockintr the real ddb (M7); the cq_stat time sums wrap as the C's uint64_t do (a 15-bit i8254 timecounter can step uptime back, tested on the host)"
 
 [[file]]
 c = "sys/kern/kern_timeout.c"
