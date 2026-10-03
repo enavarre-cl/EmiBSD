@@ -37,6 +37,9 @@
 //!   functions do not exist; `RWL_NOWITNESS` is accepted and ignored.
 //! - `RWLOCK_INITIALIZER(name)` is `Rwlock::new(name)`, `RWLOCK_INITIALIZER_TRACE` is
 //!   `Rwlock::new_trace`; the fields are atomics (`volatile` in C) and `Cell`s.
+//! - `rwl_name` is an `Option` so that the all-zero lock is a valid value, as the C's is: a
+//!   lock embedded in an `M_ZERO` allocation (`struct ifnet`'s `if_maddrlock`, a softc) is
+//!   only named by `rw_init` later; [`Rwlock::name`] reads it as the wait message.
 
 use core::cell::Cell;
 use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -100,8 +103,9 @@ pub struct Rwlock {
     pub rwl_waiters: AtomicU32,
     /// `rwl_readers`: threads waiting for a read lock.
     pub rwl_readers: AtomicU32,
-    /// `rwl_name`: the wait message.
-    pub rwl_name: Cell<&'static str>,
+    /// `rwl_name`: the wait message; `None` (the C's NULL) until `rw_init` names a lock that
+    /// was zero-filled (a lock inside an `M_ZERO` allocation, such as `struct ifnet`).
+    pub rwl_name: Cell<Option<&'static str>>,
     // rwl_lock_obj: WITNESS, not configured.
     /// `rwl_traceidx`: the `dt(4)` tracepoint index (`DT_RWLOCK_IDX_*`).
     pub rwl_traceidx: Cell<i32>,
@@ -123,9 +127,14 @@ impl Rwlock {
             rwl_owner: AtomicUsize::new(0),
             rwl_waiters: AtomicU32::new(0),
             rwl_readers: AtomicU32::new(0),
-            rwl_name: Cell::new(name),
+            rwl_name: Cell::new(Some(name)),
             rwl_traceidx: Cell::new(trace),
         }
+    }
+
+    /// `rwl_name` as the wait message: empty for a zero-filled lock `rw_init` has not named.
+    pub fn name(&self) -> &'static str {
+        self.rwl_name.get().unwrap_or("")
     }
 
     /// `RWLOCK_OWNER(rwl)`: the writer, when write locked (null otherwise, or garbage from

@@ -93,9 +93,6 @@
 //! - The `NPF > 0` paths (`pf_mbuf_unlink_state_key`, `pf_mbuf_unlink_inpcb`,
 //!   `pf_mbuf_link_state_key`, `pf_mbuf_link_inpcb`) are not compiled: pf(4) is not ported, so
 //!   `NPF` is 0 and the C compiles them out as well.
-//! - `mbuf_dma_64bit_enable` needs `ifnetlist` (`net/if.c`, not ported) and reports it with
-//!   `unported!`, leaving the pools DMA-reachable, which is what an interface without
-//!   `IFXF_MBUF_64BIT` would decide.
 //! - `mclnames` is built at compile time from `mclsizes` with the C's two formats (`mcl%dk`,
 //!   `mcl%dk%u`) instead of by `snprintf` in `mbinit`, and `m_pool_allocator.pa_pagesz` is
 //!   `pool_allocator_multi`'s from the initialiser instead of copied by `mbinit`.
@@ -129,7 +126,7 @@ use crate::kern::kern_tc::{microboottime, microtime};
 use crate::kern::subr_pool::{
     POOL_ALLOCATOR_MULTI, pool_get, pool_init, pool_put, pool_set_constraints, pool_wakeup,
 };
-use crate::kern::subr_prf::{Bitmask, panic};
+use crate::kern::subr_prf::{Bitmask, panic, printf};
 use crate::kern::uipc_mbuf2::{m_tag_copy_chain, m_tag_delete_chain};
 use crate::machine::db_machdep::PrFn;
 use crate::machine::intr::{IPL_NET, splnet, splx};
@@ -145,7 +142,7 @@ use crate::sys::pool::{PR_NOWAIT, PR_WAITOK, Pool, PoolAllocator};
 use crate::sys::refcnt::Refcnt;
 use crate::sys::time::{Timeval, nsec_to_timeval, timeradd};
 use crate::uvm::uvm_km::{KP_DMA_CONTIG, KP_MBUF_CONTIG};
-use crate::{kassert, kdassert, unported};
+use crate::{kassert, kdassert};
 
 /// `IFQ_DEFPRIO` (`<net/if.h>`, not ported yet): the default packet priority.
 const IFQ_DEFPRIO: u8 = 3;
@@ -1835,10 +1832,18 @@ pub fn m_pool_used() -> u32 {
 /// `mbuf_dma_64bit_enable`: lifts the DMA constraint when every interface can reach all of
 /// memory (see the module's deviations).
 pub fn mbuf_dma_64bit_enable() {
-    // TAILQ_FOREACH(ifp, &ifnetlist, if_list): an interface without IFXF_MBUF_64BIT prints
-    // "%s: restrict all mbufs to low memory" and returns; otherwise "enable mbufs in high
-    // memory" and m_pool_noconstraints().
-    let _ = unported!("mbuf_dma_64bit_enable: ifnetlist (net/if.c)");
+    for ifp in crate::net::if_::IFNETLIST.0.iter() {
+        if ifp.if_xflags.get() & crate::net::if_::IFXF_MBUF_64BIT == 0 {
+            printf(format_args!(
+                "{}: restrict all mbufs to low memory\n",
+                crate::kern::subr_prf::Str(&ifp.if_xname.get())
+            ));
+            return;
+        }
+    }
+
+    printf(format_args!("enable mbufs in high memory\n"));
+    m_pool_noconstraints();
 }
 
 /// The address of an optional mbuf, for `%p`.
@@ -2265,4 +2270,4 @@ const _: () = {
 };
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

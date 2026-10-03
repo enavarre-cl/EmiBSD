@@ -41,12 +41,21 @@
 //! de-multiplex a single software interrupt used for scheduling the network code to calls on
 //! the lowest level routine of each protocol. The constants are bit numbers.
 //!
-//! Status: `wip`.
+//! Status: `ported` (M7b).
 //!
 //! ## Deviations
-//! - `netisr` (the status word), `if_input_task_locked` and `schednetisr(anisr)` come with
-//!   `net/if.c`, which defines the first two and `net_tq()`, which the macro needs; the
-//!   `*intr()` prototypes come with their `.c` files.
+//! - `netisr` (the status word) and `if_input_task_locked` are defined in `net/if_.rs`, where
+//!   `net/if.c` defines them, and re-exported here; `schednetisr(anisr)` is a function. The
+//!   `*intr()` prototypes come with their `.c` files (`arpintr`, `ipintr` are not ported).
+//! - `schednetisr` before `softnet_init` (no softnet task queue yet) sets the bit only; the C
+//!   would dereference the NULL queue.
+
+use core::sync::atomic::Ordering;
+
+use crate::kern::kern_task::task_add;
+use crate::net::if_::net_tq;
+
+pub use crate::net::if_::{IF_INPUT_TASK_LOCKED, NETISR};
 
 /// Same as `AF_INET`.
 pub const NETISR_IP: i32 = 2;
@@ -60,6 +69,15 @@ pub const NETISR_PPP: i32 = 28;
 pub const NETISR_BRIDGE: i32 = 29;
 /// For pppoe processing.
 pub const NETISR_PPPOE: i32 = 30;
+
+/// `schednetisr(anisr)`: marks protocol queue `anisr` (`NETISR_*`) for `if_netisr` and
+/// queues that task on the first softnet task queue.
+pub fn schednetisr(anisr: i32) {
+    NETISR.fetch_or(1 << anisr, Ordering::Relaxed);
+    if let Some(tq) = net_tq(0) {
+        let _ = task_add(tq, &IF_INPUT_TASK_LOCKED);
+    }
+}
 
 #[cfg(test)]
 mod tests {

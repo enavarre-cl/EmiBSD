@@ -11,7 +11,7 @@
 use core::ffi::c_void;
 
 use crate::machine::Machine;
-use crate::sys::device::{Cfdata, Cfdriver, Device};
+use crate::sys::device::{Cfdata, Cfdriver, Device, Pdevinit};
 
 /// The machine's autoconfiguration tables and hooks.
 pub trait Autoconf {
@@ -28,6 +28,10 @@ pub trait Autoconf {
     /// `device_register(dev, aux)`: the machine's look at every device before it attaches
     /// (to find the boot device).
     fn device_register(dev: &Device, aux: *mut c_void);
+
+    /// `pdevinit[]`: the pseudo-devices `main` attaches, in `ioconf.c`'s order (no
+    /// terminating entry).
+    fn pdevinit() -> &'static [Pdevinit];
 }
 
 /// `cfdata` on the selected machine.
@@ -43,6 +47,11 @@ pub fn cfroots() -> &'static [i16] {
 /// `mainbus_cd` on the selected machine.
 pub fn mainbus_cd() -> &'static Cfdriver {
     Machine::mainbus_cd()
+}
+
+/// `pdevinit` on the selected machine.
+pub fn pdevinit() -> &'static [Pdevinit] {
+    Machine::pdevinit()
 }
 
 /// `device_register` on the selected machine.

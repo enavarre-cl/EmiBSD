@@ -4,19 +4,21 @@
 //! (`docs/ARCHITECTURE.md`, "Deviations"); `machine::autoconf` hands them to
 //! `subr_autoconf.rs`.
 //!
-//! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?`, `pci* at mainbus0`.
+//! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?`, `pci* at mainbus0`;
+//! `pseudo-device loop`.
 //! GENERIC lines left out until their drivers exist: `bios0`, `ioapic*`, `isa0`, `vmm0`,
 //! `pvbus0`, `ipmi0` and `efifb0` at mainbus, and everything below them; every device at
 //! `pci?` (`pchb*`, `ppb*`, `pcib*`, the network and storage drivers, ...), and `pci*` at
 //! `ppb?` and `pchb?`;
-//! `mpath0 at root`; the pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
+//! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
 //! layout: attachment, driver, unit, state, locators, flags, parents (indices into
 //! `CFDATA`), the start of its locator names and the first unit a starred entry may take.
 
 use crate::arch::amd64::amd64::cpu::{CPU_CA, CPU_CD};
 use crate::arch::amd64::amd64::mainbus::{MAINBUS_CA, MAINBUS_CD};
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
-use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR};
+use crate::net::if_loop::loopattach;
+use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR, Pdevinit};
 
 /// `pv[]` for children of `mainbus0` (`cfdata[0]`).
 const PV_MAINBUS: &[i16] = &[0];
@@ -67,3 +69,10 @@ pub static CFDATA: [Cfdata; 3] = [
 
 /// `cfroots[]`: `mainbus0`.
 pub static CFROOTS: [i16; 1] = [0];
+
+/// `pdevinit[]`: the pseudo-devices of the MI `conf/GENERIC` whose attach functions are
+/// ported, in `ioconf.c`'s order (`pseudo-device loop` gets a count of 1).
+pub static PDEVINIT: [Pdevinit; 1] = [Pdevinit {
+    pdev_attach: loopattach,
+    pdev_count: 1,
+}];

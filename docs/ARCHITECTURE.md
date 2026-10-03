@@ -405,6 +405,23 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   pci0 dev 0 function 0 not configured`) and `pcidevs.rs` holds only the IDs ported code
   names. arm64 has the types and dispatch of its `pci_machdep.h` but no host bridge driver
   yet.
+- Network interfaces (M7b): `net/if.c`, `net/ifq.c`, `net/if_ethersubr.c` and `net/if_loop.c`
+  are OpenBSD's. `netlock` lives in `net/if_.rs` (as in `if.c`) and the `NET_LOCK()` family
+  is `sys/systm.rs`'s functions over it; `main` runs `ifinit` and `softnet_init` (one softnet
+  task queue, `NET_TASKQ` 1 without `MULTIPROCESSOR`) and attaches the pseudo-devices from
+  `pdevinit[]`, which each `ioconf.rs` lists (only `loop`, so `lo0` attaches at boot) and
+  `machine::autoconf::pdevinit()` hands over. SMR is not ported: the interface index map is
+  read without a lock and replaced under its rwlock as in C, but the old map is freed at once
+  (`smr_call`) and `smr_barrier` is empty, which is sound on one CPU with a kernel that is not
+  preempted. The protocols and the routing table are not here yet, so `ether_input` reports
+  `ipv4_input`/`arpinput` and drops the frame at the demux, `ether_resolve` reports
+  `arpresolve`, `ifioctl` reports `pru_control` (`in_control`), and `struct rtentry` is an
+  uninhabited stand-in (`net/route.rs`). `INET6`, `MPLS` and the pseudo-devices that are not
+  ported (`vlan`, `bridge`, `carp`, `pf`, `bpfilter`, `kstat`, `af_frame`, ...) are not
+  configured: their code is a comment at each site. A driver embeds a `struct arpcom`
+  (all-zero valid, so it fits an `M_ZERO` softc; `Rwlock`'s name became an `Option` for
+  this), calls `if_attach(&ac.ac_if)` and `ether_ifattach(&ac)`, and hands received frames
+  to `if_input`.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

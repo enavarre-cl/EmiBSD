@@ -846,6 +846,10 @@ impl crate::machine::autoconf::Autoconf for Machine {
     fn device_register(dev: &crate::sys::device::Device, aux: *mut c_void) {
         amd64::autoconf::device_register(dev, aux)
     }
+
+    fn pdevinit() -> &'static [crate::sys::device::Pdevinit] {
+        &conf::ioconf::PDEVINIT
+    }
 }
 
 impl MachineProc for Machine {

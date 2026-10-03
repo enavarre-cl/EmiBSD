@@ -16,7 +16,7 @@ use crate::sys::mbuf::{
 };
 
 /// Real memory, the console (so that a kernel panic in a test says why) and a fresh `mbinit`.
-fn setup() -> MutexGuard<'static, ()> {
+pub(crate) fn setup() -> MutexGuard<'static, ()> {
     let guard = setup_real_memory();
     crate::machine::cons::consinit();
     // mbinit registers its two free functions again.

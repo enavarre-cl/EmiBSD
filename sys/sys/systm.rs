@@ -43,7 +43,8 @@
 //! Upstream: sys/sys/systm.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M3 ports `physmem`; M5 adds `cold`, `safepri` and the sleep
-//! limits `INFSLP`/`MAXTSLP`; M6 `struct sysent`, `sy_call_t`, `SY_NOLOCK` and `SCARG`. The
+//! limits `INFSLP`/`MAXTSLP`; M6 `struct sysent`, `sy_call_t`, `SY_NOLOCK` and `SCARG`; M7b
+//! the net lock macros (`NET_LOCK` .. `NET_ASSERT_LOCKED_EXCLUSIVE`) over `netlock`. The
 //! hostname and boot-time globals, the `panic`/`printf` prototypes (already in
 //! `kern/subr_prf.rs`) and the rest arrive with their files. `tsleep`/`wakeup` are in
 //! `kern/kern_synch.rs`; the `copyin`/`copyout` family is `machine::copy`.
@@ -52,12 +53,19 @@
 //! - `physmem`, `cold` and `safepri` are defined here (the C defines each in every
 //!   `machdep.c`/`autoconf.c` and declares them here), so generic code names them without an
 //!   architecture path; the `machdep`s and `cpu_configure` fill them.
+//! - `NET_LOCK()` and friends are functions (`net_lock()`); the assertions take the caller's
+//!   name, which the C's macros take from `__func__`. `netlock` itself is defined in
+//!   `net/if_.rs`, where `net/if.c` defines it.
 //! - `sy_call_t` returns `Result<(), Errno>` with the two return registers as an out
 //!   parameter; `SCARG(uap, k)` is `sysargs::<T>(v).k.get()` (`sys/syscallargs.rs`).
 
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize};
 
+use crate::kern::kern_rwlock::{
+    rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write, rw_status,
+};
+use crate::net::if_::NETLOCK;
 use crate::sys::errno::Errno;
 use crate::sys::proc::Proc;
 use crate::sys::types::Register;
@@ -125,4 +133,78 @@ pub fn sysargs<T>(args: &SysArgs) -> &T {
     // SAFETY: `T` fits in the block (asserted above), shares its alignment, and is made of
     // `Syscallarg` unions, for which every register value is a valid datum.
     unsafe { &*ptr::from_ref(args).cast::<T>() }
+}
+
+/// `NET_LOCK()`: network stack data structures are, unless stated otherwise, protected by the
+/// net lock. It's a single non-recursive lock for the whole subsystem.
+pub fn net_lock() {
+    rw_enter_write(&NETLOCK);
+}
+
+/// `NET_UNLOCK()`.
+pub fn net_unlock() {
+    rw_exit_write(&NETLOCK);
+}
+
+/// `NET_LOCK_SHARED()`: reader version of `NET_LOCK()`. The "softnet" thread should be the
+/// only thread processing packets without holding an exclusive lock. This is done to allow
+/// read-only ioctl(2) to not block. Shared lock can be grabbed instead of the exclusive
+/// version if no field protected by the `NET_LOCK()` is modified by the ioctl/sysctl. Socket
+/// system call can use shared netlock if it has additional locks to protect socket and pcb
+/// data structures.
+pub fn net_lock_shared() {
+    rw_enter_read(&NETLOCK);
+}
+
+/// `NET_UNLOCK_SHARED()`.
+pub fn net_unlock_shared() {
+    rw_exit_read(&NETLOCK);
+}
+
+/// `NET_ASSERT_UNLOCKED()` (`DIAGNOSTIC`): this thread does not hold the net lock exclusively.
+pub fn net_assert_unlocked(func: &str) {
+    #[cfg(feature = "diagnostic")]
+    {
+        let s = rw_status(&NETLOCK);
+        if crate::kern::subr_prf::SPLASSERT_CTL.load(core::sync::atomic::Ordering::Relaxed) > 0
+            && s == crate::sys::rwlock::RW_WRITE
+        {
+            crate::kern::subr_prf::splassert_fail(0, crate::sys::rwlock::RW_WRITE, func);
+        }
+    }
+    #[cfg(not(feature = "diagnostic"))]
+    let _ = (func, rw_status);
+}
+
+/// `NET_ASSERT_LOCKED()` (`DIAGNOSTIC`): the net lock is held, shared or exclusive.
+pub fn net_assert_locked(func: &str) {
+    #[cfg(feature = "diagnostic")]
+    {
+        use crate::sys::rwlock::{RW_READ, RW_WRITE};
+        let s = rw_status(&NETLOCK);
+        if crate::kern::subr_prf::SPLASSERT_CTL.load(core::sync::atomic::Ordering::Relaxed) > 0
+            && s != RW_WRITE
+            && s != RW_READ
+        {
+            crate::kern::subr_prf::splassert_fail(RW_READ, s, func);
+        }
+    }
+    #[cfg(not(feature = "diagnostic"))]
+    let _ = func;
+}
+
+/// `NET_ASSERT_LOCKED_EXCLUSIVE()` (`DIAGNOSTIC`): this thread holds the net lock exclusively.
+pub fn net_assert_locked_exclusive(func: &str) {
+    #[cfg(feature = "diagnostic")]
+    {
+        use crate::sys::rwlock::RW_WRITE;
+        let s = rw_status(&NETLOCK);
+        if crate::kern::subr_prf::SPLASSERT_CTL.load(core::sync::atomic::Ordering::Relaxed) > 0
+            && s != RW_WRITE
+        {
+            crate::kern::subr_prf::splassert_fail(RW_WRITE, s, func);
+        }
+    }
+    #[cfg(not(feature = "diagnostic"))]
+    let _ = func;
 }

@@ -1034,6 +1034,10 @@ impl Autoconf for Machine {
     }
 
     fn device_register(_dev: &Device, _aux: *mut c_void) {}
+
+    fn pdevinit() -> &'static [crate::sys::device::Pdevinit] {
+        &[]
+    }
 }
 
 #[cfg(test)]

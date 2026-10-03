@@ -90,3 +90,253 @@ fn values_match_the_c_header() {
     assert_eq!(defs["IFG_ALL"], "\"all\"");
     assert_eq!(defs["IFG_EGRESS"], "\"egress\"");
 }
+
+// net/if.c
+
+use std::boxed::Box;
+use std::sync::MutexGuard;
+
+use crate::kern::uipc_mbuf::m_gethdr;
+use crate::sys::mbuf::{M_DONTWAIT, MT_DATA};
+
+/// Real memory, `mbinit` and a fresh index map (`ifinit`): everything from earlier tests
+/// lives in their own (leaked) memory, so the map must not be grown from it.
+pub(crate) fn setup_net() -> MutexGuard<'static, ()> {
+    let guard = crate::kern::uipc_mbuf::tests::setup();
+    IF_IDXMAP.count.set(0);
+    ifinit();
+    guard
+}
+
+/// An `ioctl` that accepts nothing: what `if_attach` needs to see.
+///
+/// # Safety
+///
+/// Never dereferences anything.
+pub(crate) unsafe fn test_ioctl(
+    _ifp: &'static Ifnet,
+    _cmd: u64,
+    _data: *mut u8,
+) -> Result<(), Errno> {
+    Err(Errno::ENOTTY)
+}
+
+/// A zero-filled, leaked `T`, as `malloc(M_ZERO)` gives a softc.
+///
+/// # Safety
+///
+/// The all-zero bit pattern is a valid `T`.
+pub(crate) unsafe fn zeroed_static<T>() -> &'static T {
+    // SAFETY: the caller's contract.
+    Box::leak(Box::new(unsafe {
+        MaybeUninit::<T>::zeroed().assume_init()
+    }))
+}
+
+/// A zero-filled interface named `name`, with a test `if_ioctl`.
+pub(crate) fn test_ifnet(name: &[u8]) -> &'static Ifnet {
+    // SAFETY: the all-zero `Ifnet` is valid (`net/if_var.rs`).
+    let ifp: &'static Ifnet = unsafe { zeroed_static() };
+    let mut xname = [0u8; IFNAMSIZ];
+    xname[..name.len()].copy_from_slice(name);
+    ifp.if_xname.set(xname);
+    ifp.if_ioctl.set(Some(test_ioctl));
+    ifp
+}
+
+/// A packet header mbuf holding `bytes`.
+pub(crate) fn test_packet(bytes: &[u8]) -> &'static Mbuf {
+    let m = m_gethdr(M_DONTWAIT, MT_DATA).expect("mbuf");
+    assert!(bytes.len() <= crate::sys::mbuf::MHLEN);
+    // SAFETY: a fresh packet header mbuf has MHLEN bytes at m_data.
+    unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), m.m_data().get(), bytes.len()) };
+    m.m_len().set(bytes.len() as u32);
+    m.m_pkthdr().len.set(bytes.len() as i32);
+    m
+}
+
+#[test]
+fn attached_interfaces_get_unique_indexes_and_the_map_grows() {
+    let _g = setup_net();
+    assert!(if_get(0).is_none(), "index 0 is no interface");
+
+    let mut ifps = std::vec::Vec::new();
+    for i in 0..12u8 {
+        let name = [b't', b'm', b'a', b'p', b'0' + i / 10, b'0' + i % 10];
+        let ifp = test_ifnet(&name);
+        if_attach(ifp);
+        ifps.push(ifp);
+    }
+
+    let mut seen = std::collections::BTreeSet::new();
+    for ifp in &ifps {
+        let index = ifp.if_index.get();
+        assert_ne!(index, 0);
+        assert!(seen.insert(index), "index {index} given twice");
+        let got = if_get(index).expect("attached");
+        assert!(ptr::eq(got, *ifp));
+        if_put(got);
+        assert!(ifp.if_nifqs.get() == 1 && ifp.if_niqs.get() == 1);
+        assert!(ptr::eq(ifp.ifq(0), &ifp.if_snd));
+        assert!(ptr::eq(ifp.ifiq(0), &ifp.if_rcv));
+        // The C's defaults: if_txmit, if_llprio, if_qstart_compat for a non-MPSAFE driver.
+        assert_eq!(ifp.if_txmit.get(), IF_TXMIT_DEFAULT);
+        assert_eq!(u32::from(ifp.if_llprio.get()), IFQ_DEFPRIO);
+        assert!(ifp.if_qstart.get().is_some() && ifp.if_enqueue.get().is_some());
+        assert!(
+            ifp.if_groups
+                .iter()
+                .any(|g| name_eq(&g.ifgl_group.ifg_group, IFG_ALL))
+        );
+    }
+    // Twelve interfaces do not fit the initial map of 8 slots (slot 0 is the length).
+    // SAFETY: the published map.
+    assert!(unsafe { if_idxmap_limit(IF_IDXMAP.map.load(Ordering::Relaxed)) } >= 13);
+
+    let found = if_unit(b"tmap07").expect("by name");
+    assert!(ptr::eq(found, ifps[7]));
+    if_put(found);
+    assert!(if_unit(b"tmap99").is_none());
+
+    // Taking an interface out of the map frees its index; the slot reads NULL.
+    let gone = ifps[3];
+    let index = gone.if_index.get();
+    let _ = if_ref(gone);
+    if_idxmap_remove(gone);
+    assert!(if_get(index).is_none());
+    if_put(gone);
+}
+
+#[test]
+fn input_proto_queues_on_the_netstack_with_the_function_as_cookie() {
+    let _g = setup_net();
+    let ifp = test_ifnet(b"tproto0");
+    if_attach(ifp);
+
+    fn input(_ifp: &'static Ifnet, m: &'static Mbuf, _ns: Option<&Netstack>) {
+        m.m_pkthdr().ph_flowid.set(0x5a5a);
+    }
+
+    let ns = Netstack::new();
+    let m = test_packet(&[1, 2, 3]);
+    if_input_proto(ifp, m, input, Some(&ns));
+    assert_eq!(ml_len(&ns.ns_proto), 1);
+    assert_eq!(m.m_pkthdr().ph_ifidx.get(), ifp.if_index.get());
+    let m = ml_dequeue(&ns.ns_proto).expect("queued");
+    if_input_process_proto(ifp, m, Some(&ns));
+    assert_eq!(
+        m.m_pkthdr().ph_flowid.get(),
+        0x5a5a,
+        "the cookie's function ran"
+    );
+    m_freem(m);
+}
+
+fn clone_create(_ifc: &'static IfClone, _unit: i32) -> Result<(), Errno> {
+    Err(Errno::ENODEV)
+}
+
+static TEST_CLONER: IfClone = IfClone::new(b"tcl", clone_create, None);
+
+#[test]
+fn clone_lookup_splits_name_and_unit() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    // SAFETY: registered once.
+    ONCE.call_once(|| unsafe { if_clone_attach(&TEST_CLONER) });
+
+    let (ifc, unit) = if_clone_lookup(b"tcl12").expect("cloner");
+    assert!(ptr::eq(ifc, &TEST_CLONER));
+    assert_eq!(unit, 12);
+    assert_eq!(if_clone_lookup(b"tcl0\0junk").map(|(_, u)| u), Some(0));
+    assert!(if_clone_lookup(b"tcl").is_none(), "no unit");
+    assert!(if_clone_lookup(b"tcl01").is_none(), "unit number 0 padded");
+    assert!(if_clone_lookup(b"tcl1x").is_none(), "bogus unit");
+    assert!(if_clone_lookup(b"tc1").is_none(), "no such cloner");
+    assert!(
+        if_clone_lookup(b"tcl99999999999").is_none(),
+        "unit overflows an int"
+    );
+    assert_eq!(if_clone_destroy(b"tcl3"), Err(Errno::EOPNOTSUPP));
+}
+
+#[test]
+fn groups_check_names_and_count_members() {
+    let _g = setup_net();
+    let a = test_ifnet(b"tgrp0");
+    let b = test_ifnet(b"tgrp1");
+    if_attach(a);
+    if_attach(b);
+
+    assert_eq!(if_addgroup(a, b""), Err(Errno::EINVAL));
+    assert_eq!(
+        if_addgroup(a, b"bad1"),
+        Err(Errno::EINVAL),
+        "ends in a digit"
+    );
+    assert_eq!(if_addgroup(a, b"waytoolongagroupname"), Err(Errno::EINVAL));
+    assert_eq!(if_addgroup(a, b"tgroup"), Ok(()));
+    assert_eq!(if_addgroup(a, b"tgroup"), Err(Errno::EEXIST));
+    assert_eq!(if_addgroup(b, b"tgroup"), Ok(()));
+
+    let ifg = IFG_HEAD
+        .0
+        .iter()
+        .find(|g| name_eq(&g.ifg_group, b"tgroup"))
+        .expect("group");
+    assert_eq!(ifg.ifg_refcnt.get(), 2);
+    assert_eq!(ifg.ifg_members.iter().count(), 2);
+
+    assert_eq!(if_delgroup(a, b"tgroup"), Ok(()));
+    assert_eq!(if_delgroup(a, b"tgroup"), Err(Errno::ENOENT));
+    assert_eq!(ifg.ifg_refcnt.get(), 1);
+    assert_eq!(if_delgroup(b, b"tgroup"), Ok(()));
+    assert!(!IFG_HEAD.0.iter().any(|g| name_eq(&g.ifg_group, b"tgroup")));
+}
+
+#[test]
+fn header_priority_checks() {
+    assert_eq!(if_txhprio_l2_check(IF_HDRPRIO_PACKET), Ok(()));
+    assert_eq!(if_txhprio_l2_check(IF_HDRPRIO_PAYLOAD), Err(Errno::EINVAL));
+    assert_eq!(if_txhprio_l3_check(IF_HDRPRIO_PAYLOAD), Ok(()));
+    assert_eq!(if_rxhprio_l2_check(IF_HDRPRIO_OUTER), Ok(()));
+    assert_eq!(if_rxhprio_l3_check(IF_HDRPRIO_OUTER), Ok(()));
+    assert_eq!(if_txhprio_l3_check(IF_HDRPRIO_OUTER), Err(Errno::EINVAL));
+    for prio in IF_HDRPRIO_MIN..=IF_HDRPRIO_MAX {
+        assert_eq!(if_rxhprio_l3_check(prio), Ok(()));
+    }
+    assert_eq!(if_txhprio_l2_check(IF_HDRPRIO_MAX + 1), Err(Errno::EINVAL));
+}
+
+#[test]
+fn rx_ring_accounting() {
+    use crate::net::if_var::{if_rxr_cwm, if_rxr_inuse, if_rxr_needrefill, if_rxr_put};
+
+    let mut rxr = IfRxring::default();
+    if_rxr_init(&mut rxr, 2, 8);
+    assert_eq!(if_rxr_cwm(&rxr), 2);
+    // Within the same tick the current watermark is the limit.
+    rxr.rxr_adjusted = TICKS.load(Ordering::Relaxed);
+    assert_eq!(if_rxr_get(&mut rxr, 16), 2);
+    assert_eq!(if_rxr_get(&mut rxr, 16), 0);
+    if_rxr_put(&mut rxr, 2);
+    assert!(if_rxr_needrefill(&rxr));
+    // A tick later an empty ring may grow its watermark by one.
+    rxr.rxr_adjusted = TICKS.load(Ordering::Relaxed).wrapping_sub(1);
+    assert_eq!(if_rxr_get(&mut rxr, 16), 3);
+    assert_eq!(if_rxr_inuse(&rxr), 3);
+    // A livelock shrinks it again, never below the low watermark.
+    rxr.rxr_adjusted = TICKS.load(Ordering::Relaxed).wrapping_sub(1);
+    if_rxr_livelocked(&mut rxr);
+    assert_eq!(rxr.rxr_cwm, 2);
+}
+
+#[test]
+fn congestion_marker_lasts_a_hundredth_of_a_second() {
+    if_congestion();
+    assert!(if_congested());
+    IFQ_CONGESTION.store(
+        TICKS.load(Ordering::Relaxed).wrapping_sub(HZ),
+        Ordering::Relaxed,
+    );
+    assert!(!if_congested());
+}

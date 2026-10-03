@@ -1,5 +1,7 @@
 /*	$OpenBSD: route.h,v 1.218 2025/07/14 08:48:51 dlg Exp $	*/
 /*	$NetBSD: route.h,v 1.9 1996/02/13 22:00:49 christos Exp $	*/
+/*	$OpenBSD: route.c,v 1.451 2026/04/22 15:17:43 claudio Exp $	*/
+/*	$NetBSD: route.c,v 1.14 1996/02/13 22:00:46 christos Exp $	*/
 /* <LICENSES> */
 /*
  * Copyright (c) 1980, 1986, 1993
@@ -31,11 +33,112 @@
  *
  *	@(#)route.h	8.3 (Berkeley) 4/19/94
  */
+
+/*
+ * Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the project nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE PROJECT OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+/*
+ * Copyright (c) 1980, 1986, 1991, 1993
+ *	The Regents of the University of California.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ *	@(#)route.c	8.2 (Berkeley) 11/15/93
+ */
+
+/*
+ *	@(#)COPYRIGHT	1.1 (NRL) 17 January 1995
+ *
+ * NRL grants permission for redistribution and use in source and binary
+ * forms, with or without modification, of the software and documentation
+ * created at NRL provided that the following conditions are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgements:
+ *	This product includes software developed by the University of
+ *	California, Berkeley and its contributors.
+ *	This product includes software developed at the Information
+ *	Technology Division, US Naval Research Laboratory.
+ * 4. Neither the name of the NRL nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THE SOFTWARE PROVIDED BY NRL IS PROVIDED BY NRL AND CONTRIBUTORS ``AS
+ * IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
+ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+ * PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL NRL OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
+ * The views and conclusions contained in the software and documentation
+ * are those of the authors and should not be interpreted as representing
+ * official policies, either expressed or implied, of the US Naval
+ * Research Laboratory (NRL).
+ */
 /* </LICENSES> */
 
 //! Routing tables and the routing socket's messages: `<net/route.h>`.
 //!
 //! Upstream: sys/net/route.h @ 3ce1f3f79392
+//! Upstream: sys/net/route.c @ 3ce1f3f79392
 //!
 //! Kernel resident routing tables. The routing tables are initialized when interface addresses
 //! are set by making entries for all directly connected interfaces. Routes to hosts are
@@ -52,8 +155,11 @@
 //! ## Deviations
 //! - `struct rtentry` (with the `rt_use`, `rt_expire`, `rt_locks`, `rt_mtu` shorthands),
 //!   `struct rt_addrinfo`, `struct rttimer_queue` and the `rtstat`/`rtgeneration` globals come
-//!   with `net/route.c`: they embed `struct ifaddr` (`<net/if_var.h>`) and `struct rttimer`,
-//!   which that port brings.
+//!   with `net/route.c`: they embed `struct rttimer`, which that port brings. Until then
+//!   [`Rtentry`] stands in for the C's forward declaration `struct rtentry;` (which
+//!   `<net/if_var.h>` also makes): an uninhabited type, so every `struct rtentry *` is NULL
+//!   (`None`), with the accessors the interface layer reads (`rt_flags`, `rt_mtu`, `rt_key`,
+//!   `rt_ifa`, `rt_ifidx`, `rt_gateway`), whose bodies can never run.
 //! - `struct route` comes with `<netinet6/in6.h>` (it holds a `sockaddr_in6` and an
 //!   `in6_addr`).
 //! - `rtstat_inc` comes with the per-CPU counters (`<sys/percpu.h>`); the
@@ -61,10 +167,21 @@
 //! - `RTTTOPRHZ(r)` comes with `<sys/protosw.h>` (`PR_SLOWHZ`).
 //! - `srtdnstosa` is a pointer cast (`docs/C_TO_RUST.md`).
 //! - The prototypes (`rtalloc`, `rtrequest`, `rt_timer_*`, `rtm_*`, ...) come with
-//!   `net/route.c` and `net/rtsock.c`.
+//!   `net/route.c` and `net/rtsock.c`. Of `net/route.c` only `ifaref` and `ifafree` are here
+//!   (M7b, for `net/if.c`); the rest of the file is not ported yet. `ifafree` frees the
+//!   address with `free(ifa, M_IFADDR, 0)`, as the C does, so an address that reaches it was
+//!   `malloc`ed by its protocol.
 
+use core::cell::Cell;
 use core::mem::size_of;
+use core::ptr::NonNull;
+use core::sync::atomic::AtomicU32;
 
+use crate::kern::kern_malloc::free;
+use crate::kern::kern_synch::{refcnt_rele, refcnt_take};
+use crate::sys::malloc::M_IFADDR;
+
+use crate::net::if_var::Ifaddr;
 use crate::sys::socket::Sockaddr;
 use crate::sys::types::{Pid, SaFamily};
 
@@ -339,6 +456,43 @@ pub const RTSEARCH_LEN: usize = 128;
 /// Values for additional argument to `rtalloc()`.
 pub const RT_RESOLVE: i32 = 1;
 
+/// `struct rtentry`, as the forward declaration `struct rtentry;`: the routing table entries
+/// come with `net/route.c`. The type has no values yet, so `Option<&Rtentry>` is always
+/// `None`, and the accessors below (the members the interface layer reads) cannot be called.
+pub enum Rtentry {}
+
+impl Rtentry {
+    /// `rt_flags`: up/down?, host/net.
+    pub fn rt_flags(&self) -> &Cell<u32> {
+        match *self {}
+    }
+
+    /// `rt_mtu` (`rt_rmx.rmx_mtu`): MTU for this path, changed with `atomic_cas_uint`.
+    pub fn rt_mtu(&self) -> &AtomicU32 {
+        match *self {}
+    }
+
+    /// `rt_key(rt)` (`rt_dest`): the destination.
+    pub fn rt_key(&self) -> *const Sockaddr {
+        match *self {}
+    }
+
+    /// `rt_gateway`: gateway address.
+    pub fn rt_gateway(&self) -> *const Sockaddr {
+        match *self {}
+    }
+
+    /// `rt_ifa`: interface address to use.
+    pub fn rt_ifa(&self) -> Option<&'static Ifaddr> {
+        match *self {}
+    }
+
+    /// `rt_ifidx`: interface to use.
+    pub fn rt_ifidx(&self) -> u32 {
+        match *self {}
+    }
+}
+
 /// `struct rt_kmetrics`: these numbers are used by reliable protocols for determining
 /// retransmission behavior and are included in the routing structure.
 #[repr(C)]
@@ -529,6 +683,20 @@ pub const fn route_filter(m: u8) -> u32 {
 /// `srtdnstosa(sdns)`: a `sockaddr_rtdns` seen as a generic `sockaddr`.
 pub const fn srtdnstosa(sdns: *mut SockaddrRtdns) -> *mut Sockaddr {
     sdns.cast()
+}
+
+/// `ifaref`: takes a reference to an interface address (a route's `rt_ifa`).
+pub fn ifaref(ifa: &Ifaddr) -> &Ifaddr {
+    refcnt_take(&ifa.ifa_refcnt);
+    ifa
+}
+
+/// `ifafree`: drops a reference to an interface address, freeing it with the last one.
+pub fn ifafree(ifa: &Ifaddr) {
+    if !refcnt_rele(&ifa.ifa_refcnt) {
+        return;
+    }
+    free(NonNull::from(ifa).cast(), M_IFADDR, 0);
 }
 
 // LP64 sizes of the C structures.

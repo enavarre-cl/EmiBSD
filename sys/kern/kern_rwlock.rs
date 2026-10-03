@@ -151,7 +151,7 @@ fn rw_do_exit_read(rwl: &Rwlock, owner: usize) {
         if nowner & RWLOCK_WRLOCK != 0 {
             panic(format_args!(
                 "{} rwlock {:p}: exit read on write locked lock (owner {:#x})",
-                rwl.rwl_name.get(),
+                rwl.name(),
                 rwl,
                 nowner
             ));
@@ -159,7 +159,7 @@ fn rw_do_exit_read(rwl: &Rwlock, owner: usize) {
         if nowner == 0 {
             panic(format_args!(
                 "{} rwlock {:p}: exit read on unlocked lock",
-                rwl.rwl_name.get(),
+                rwl.name(),
                 rwl
             ));
         }
@@ -186,7 +186,7 @@ pub fn rw_exit_write(rwl: &Rwlock) {
     if owner != this {
         panic(format_args!(
             "{} rwlock {:p}: exit write when lock not held (owner {:#x}, self {:#x})",
-            rwl.rwl_name.get(),
+            rwl.name(),
             rwl,
             owner,
             this
@@ -201,7 +201,7 @@ fn rw_init_flags_witness(rwl: &Rwlock, name: &'static str, _lo_flags: i32, trace
     rwl.rwl_owner.store(0, Ordering::Relaxed);
     rwl.rwl_waiters.store(0, Ordering::Relaxed);
     rwl.rwl_readers.store(0, Ordering::Relaxed);
-    rwl.rwl_name.set(name);
+    rwl.rwl_name.set(Some(name));
     rwl.rwl_traceidx.set(trace);
 
     // WITNESS: rwl_lock_obj.lo_flags/lo_name/lo_type and WITNESS_INIT: not configured.
@@ -235,7 +235,7 @@ pub fn rw_enter(rwl: &Rwlock, flags: i32) -> Result<(), Errno> {
         RW_UPGRADE => rw_upgrade(rwl, flags),
         _ => panic(format_args!(
             "{} rwlock {:p}: rw_enter unexpected op {:#x}",
-            rwl.rwl_name.get(),
+            rwl.name(),
             rwl,
             op
         )),
@@ -256,7 +256,7 @@ fn rw_do_enter_write(rwl: &Rwlock, flags: i32) -> Result<(), Errno> {
     if owner == this {
         panic(format_args!(
             "{} rwlock {:p}: enter write deadlock",
-            rwl.rwl_name.get(),
+            rwl.name(),
             rwl
         ));
     }
@@ -275,11 +275,7 @@ fn rw_do_enter_write(rwl: &Rwlock, flags: i32) -> Result<(), Errno> {
     rw_inc(&rwl.rwl_waiters);
     fence(Ordering::Release); // membar_producer()
     loop {
-        sleep_setup(
-            ptr::from_ref(&rwl.rwl_waiters).cast(),
-            prio,
-            rwl.rwl_name.get(),
-        );
+        sleep_setup(ptr::from_ref(&rwl.rwl_waiters).cast(), prio, rwl.name());
         fence(Ordering::Acquire); // membar_consumer()
         owner = rwl.rwl_owner.load(Ordering::SeqCst);
         let error = sleep_finish(RW_SLEEP_TMO, owner != 0);
@@ -339,7 +335,7 @@ fn rw_do_enter_read(rwl: &Rwlock, flags: i32) -> Result<(), Errno> {
         if owner == rw_self() {
             panic(format_args!(
                 "{} rwlock {:p}: enter read deadlock",
-                rwl.rwl_name.get(),
+                rwl.name(),
                 rwl
             ));
         }
@@ -361,11 +357,7 @@ fn rw_do_enter_read(rwl: &Rwlock, flags: i32) -> Result<(), Errno> {
     rw_inc(&rwl.rwl_readers);
     fence(Ordering::Release); // membar_producer()
     loop {
-        sleep_setup(
-            ptr::from_ref(&rwl.rwl_readers).cast(),
-            prio,
-            rwl.rwl_name.get(),
-        );
+        sleep_setup(ptr::from_ref(&rwl.rwl_readers).cast(), prio, rwl.name());
         fence(Ordering::Acquire); // membar_consumer()
         let error = sleep_finish(
             RW_SLEEP_TMO,
@@ -401,7 +393,7 @@ fn rw_downgrade(rwl: &Rwlock, _flags: i32) -> Result<(), Errno> {
     if owner != this {
         panic(format_args!(
             "{} rwlock {:p}: downgrade when lock not held (owner {:#x}, self {:#x})",
-            rwl.rwl_name.get(),
+            rwl.name(),
             rwl,
             owner,
             this
@@ -429,14 +421,14 @@ fn rw_upgrade(rwl: &Rwlock, flags: i32) -> Result<(), Errno> {
         if owner == 0 {
             panic(format_args!(
                 "{} rwlock {:p}: upgrade on unowned lock",
-                rwl.rwl_name.get(),
+                rwl.name(),
                 rwl
             ));
         }
         if owner & RWLOCK_WRLOCK != 0 {
             panic(format_args!(
                 "{} rwlock {:p}: upgrade on write locked lock(owner {:#x}, self {:#x})",
-                rwl.rwl_name.get(),
+                rwl.name(),
                 rwl,
                 owner,
                 this
@@ -456,7 +448,7 @@ pub fn rw_exit(rwl: &Rwlock) {
     if owner == 0 {
         panic(format_args!(
             "{} rwlock {:p}: exit on unlocked lock",
-            rwl.rwl_name.get(),
+            rwl.name(),
             rwl
         ));
     }
@@ -509,7 +501,7 @@ pub fn rw_assert_wrlock(rwl: &Rwlock) {
         if rwl.rwl_owner.load(Ordering::SeqCst) != rw_self() {
             panic(format_args!(
                 "{} rwlock {:p}: lock not held by this process",
-                rwl.rwl_name.get(),
+                rwl.name(),
                 rwl
             ));
         }
@@ -528,7 +520,7 @@ pub fn rw_assert_rdlock(rwl: &Rwlock) {
         if rw_status(rwl) != RW_READ {
             panic(format_args!(
                 "{} rwlock {:p}: lock not shared",
-                rwl.rwl_name.get(),
+                rwl.name(),
                 rwl
             ));
         }
@@ -547,14 +539,14 @@ pub fn rw_assert_anylock(rwl: &Rwlock) {
         match rw_status(rwl) {
             RW_WRITE_OTHER => panic(format_args!(
                 "{} rwlock {:p}: lock held by different process (self {:#x}, owner {:#x})",
-                rwl.rwl_name.get(),
+                rwl.name(),
                 rwl,
                 rw_self(),
                 rwl.rwl_owner.load(Ordering::SeqCst)
             )),
             0 => panic(format_args!(
                 "{} rwlock {:p}: lock not held",
-                rwl.rwl_name.get(),
+                rwl.name(),
                 rwl
             )),
             _ => {}
@@ -572,11 +564,7 @@ pub fn rw_assert_unlocked(rwl: &Rwlock) {
             return;
         }
         if rwl.rwl_owner.load(Ordering::SeqCst) == rw_self() {
-            panic(format_args!(
-                "{} rwlock {:p}: lock held",
-                rwl.rwl_name.get(),
-                rwl
-            ));
+            panic(format_args!("{} rwlock {:p}: lock held", rwl.name(), rwl));
         }
     }
     #[cfg(not(feature = "diagnostic"))]
