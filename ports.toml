@@ -2771,14 +2771,14 @@ notes = "M7b: the whole file: fhdlk, filehead, numfiles, file_pool/fdesc_pool, f
 
 [[file]]
 c = "sys/sys/pipe.h"
-rust = ""
+rust = "sys/sys/pipe.rs"
 status = "todo"
 deps = []
 notes = "licence: John S. Dyson's, accepted by the user on 2026-10-03; ksh needs pipes"
 
 [[file]]
 c = "sys/kern/sys_pipe.c"
-rust = ""
+rust = "sys/kern/sys_pipe.rs"
 status = "todo"
 deps = []
 notes = "licence: John S. Dyson's, accepted by the user on 2026-10-03; ksh needs pipes"
