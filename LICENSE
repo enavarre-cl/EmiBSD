@@ -19,8 +19,18 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 NOTICE: OpenBSD-derived files
 
 Files under sys/ that are ports of OpenBSD sources carry their original
-copyright notice and license (ISC, BSD-2-Clause, BSD-3-Clause or MIT) at the
-top of the file. That license governs that file. Provenance per file is
-recorded in ports.toml; the upstream commit is recorded in reference/PINNED.md.
-The names of OpenBSD contributors may not be used to endorse or promote this
-project without their written permission (BSD-3-Clause, clause 3).
+copyright notice and license at the top of the file, between the
+<LICENSES> and </LICENSES> markers. That license governs that file. The
+licenses accepted for ported files are ISC, BSD-2-Clause, BSD-3-Clause,
+BSD-4-Clause (its advertising clause included), MIT, the Carnegie Mellon
+(Mach) license, Poul-Henning Kamp's beerware license, John S. Dyson's
+license (sys_pipe.c, pipe.h) and the zlib license (sys/lib/libz). Provenance
+per file is recorded in ports.toml; the upstream commit is recorded in
+reference/PINNED.md. The names of OpenBSD contributors may not be used to
+endorse or promote this project without their written permission
+(BSD-3-Clause, clause 3).
+
+Files ported from zlib (Copyright (C) 1995-2026 Jean-loup Gailly and Mark
+Adler) are altered source versions: they are rewritten in Rust and are not
+the original software (zlib license, clause 2). Their license text is kept
+in full in each file.
