@@ -49,6 +49,7 @@ pub mod subr_prof;
 pub mod subr_tree;
 pub mod subr_xxx;
 pub mod sys_generic;
+pub mod sys_pipe;
 pub mod syscalls;
 pub mod uipc_domain;
 pub mod uipc_mbuf;

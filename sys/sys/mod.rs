@@ -33,6 +33,7 @@ pub mod mutex;
 pub mod namei;
 pub mod param;
 pub mod pclock;
+pub mod pipe;
 pub mod pledge;
 pub mod pool;
 pub mod proc;

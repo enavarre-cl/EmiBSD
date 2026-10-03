@@ -22,6 +22,10 @@
 //! With the vfs core (`vfs_syscalls.c`) it checks that the path system calls reach `namei`
 //! and fail as they must without a root file system (`ENOENT`), that `umask(2)` swaps the
 //! creation mask and that the console stand-in is not a vnode (`lseek`, `fchdir`).
+//! With `sys_pipe.c` it makes pipes with `pipe2(2)` and `pipe(2)`, moves bytes through them
+//! (a short write, and one large enough to grow the buffer to `BIG_PIPE_SIZE`), reads EOF
+//! after the writer closes, sees `EAGAIN` on an empty non-blocking pipe, and gets `EPIPE`
+//! with a `SIGPIPE` (caught, then ignored) when it writes to a pipe whose reader is gone.
 
 #![no_std]
 #![no_main]
@@ -48,6 +52,12 @@ static OPENBSD_IDENT: [u8; 24] = [
 
 /// `SYS_exit`.
 const SYS_EXIT: usize = 1;
+/// `SYS_read`.
+const SYS_READ: usize = 3;
+/// `SYS_pipe2`.
+const SYS_PIPE2: usize = 101;
+/// `SYS_pipe`.
+const SYS_PIPE: usize = 263;
 /// `SYS_write`.
 const SYS_WRITE: usize = 4;
 /// `SYS_close`.
@@ -124,6 +134,21 @@ const ENOTDIR: usize = 20;
 const ESPIPE: usize = 29;
 /// `EINVAL`.
 const EINVAL: usize = 22;
+/// `EPIPE`.
+const EPIPE: usize = 32;
+/// `EAGAIN`.
+const EAGAIN: usize = 35;
+/// `O_NONBLOCK`, `O_CLOEXEC`.
+const O_NONBLOCK: usize = 0x4;
+const O_CLOEXEC: usize = 0x10000;
+/// `FIONREAD`: `_IOR('f', 127, int)`.
+const FIONREAD: usize = 0x4004_667f;
+/// `S_IFIFO`.
+const S_IFIFO: u32 = 0o010000;
+/// `SIGPIPE`.
+const SIGPIPE: usize = 13;
+/// `SIG_IGN`.
+const SIG_IGN: usize = 1;
 /// `F_DUPFD`, `F_GETFD`, `F_SETFD`, `F_GETFL`, `F_DUPFD_CLOEXEC`.
 const F_DUPFD: usize = 0;
 const F_GETFD: usize = 1;
@@ -160,6 +185,16 @@ struct Sigaction {
 
 /// How many times `on_sigusr1` ran.
 static HANDLED: AtomicUsize = AtomicUsize::new(0);
+
+/// How many times `on_sigpipe` ran.
+static SIGPIPES: AtomicUsize = AtomicUsize::new(0);
+
+/// Bytes for a write larger than `PIPE_SIZE` (16384), which makes the kernel grow the pipe's
+/// buffer to `BIG_PIPE_SIZE` (65536) instead of blocking.
+const BIG_WRITE: usize = 20000;
+
+/// The bytes of the large write (bss, filled with a pattern before use).
+static BIG: [AtomicU8; BIG_WRITE] = [const { AtomicU8::new(0) }; BIG_WRITE];
 
 /// The thread control block: its first word points at itself, as the TLS ABIs want, so the
 /// TLS register can be checked by reading through it.
@@ -374,6 +409,13 @@ pub extern "C" fn _start() -> ! {
     if !fds() {
         status = 4;
     }
+    if pipes() {
+        if write(1, b"init: pipes ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 8;
+    }
     exit(status)
 }
 
@@ -438,6 +480,122 @@ fn fds() -> bool {
         ok &= call(SYS_WRITEV, 3, iov.as_ptr() as usize, 2) == (a.len() + b.len(), false);
     }
     ok &= call(SYS_CLOSE, 3, 0, 0) == (0, false);
+    ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
+}
+
+/// `pipe2(2)` (or `pipe(2)` with `flags` `None`): the two descriptors.
+fn pipe(flags: Option<usize>) -> Option<[usize; 2]> {
+    let mut fds = [0i32; 2];
+    let fdp = fds.as_mut_ptr() as usize;
+    let r = match flags {
+        Some(flags) => syscall3(SYS_PIPE2, fdp, flags, 0),
+        None => syscall3(SYS_PIPE, fdp, 0, 0),
+    };
+    (r == (0, false)).then_some([fds[0] as usize, fds[1] as usize])
+}
+
+/// The `SIGPIPE` handler.
+extern "C" fn on_sigpipe(sig: i32) {
+    if sig as usize == SIGPIPE {
+        SIGPIPES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// `sys_pipe.c` seen from user mode: bytes written at one end are read at the other, in
+/// pieces and across the growth of the buffer; an empty non-blocking pipe says `EAGAIN`;
+/// the reader sees EOF once the writer is closed; a writer whose reader is gone gets `EPIPE`
+/// and `SIGPIPE`, which kills nobody when it is caught or ignored.
+fn pipes() -> bool {
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let mut buf = [0u8; 16];
+    let mut st = [0u64; 16];
+    let mut nread = 0u32;
+
+    // pipe2 with O_CLOEXEC: the two lowest free descriptors, both close-on-exec.
+    let Some([r, w]) = pipe(Some(O_CLOEXEC)) else {
+        return false;
+    };
+    let mut ok = (r, w) == (3, 4);
+    ok &= call(SYS_FCNTL, r, F_GETFD, 0) == (FD_CLOEXEC, false);
+    ok &= call(SYS_FCNTL, w, F_GETFD, 0) == (FD_CLOEXEC, false);
+    ok &= call(SYS_FSTAT, r, st.as_mut_ptr() as usize, 0) == (0, false);
+    ok &= (st[0] as u32) & S_IFMT == S_IFIFO;
+
+    // A short write, read back in two pieces.
+    ok &= write(w, b"ping!") == Ok(5);
+    ok &= call(SYS_IOCTL, r, FIONREAD, &mut nread as *mut u32 as usize) == (0, false);
+    ok &= nread == 5;
+    ok &= call(SYS_READ, r, buf.as_mut_ptr() as usize, 2) == (2, false) && buf[..2] == *b"pi";
+    ok &= call(SYS_READ, r, buf.as_mut_ptr() as usize, buf.len()) == (3, false);
+    ok &= buf[..3] == *b"ng!";
+
+    // A write larger than PIPE_SIZE grows the buffer and is read back intact.
+    for (i, b) in BIG.iter().enumerate() {
+        b.store((i % 251) as u8, Ordering::Relaxed);
+    }
+    ok &= call(SYS_WRITE, w, BIG.as_ptr() as usize, BIG_WRITE) == (BIG_WRITE, false);
+    let mut got = 0;
+    while ok && got < BIG_WRITE {
+        let mut chunk = [0u8; 512];
+        match call(SYS_READ, r, chunk.as_mut_ptr() as usize, chunk.len()) {
+            (n, false) if n > 0 => {
+                for (j, &c) in chunk[..n].iter().enumerate() {
+                    ok &= c == ((got + j) % 251) as u8;
+                }
+                got += n;
+            }
+            _ => ok = false,
+        }
+    }
+
+    // EOF once the writer is gone.
+    ok &= call(SYS_CLOSE, w, 0, 0) == (0, false);
+    ok &= call(SYS_READ, r, buf.as_mut_ptr() as usize, buf.len()) == (0, false);
+    ok &= call(SYS_CLOSE, r, 0, 0) == (0, false);
+
+    // An empty non-blocking pipe.
+    let Some([r, w]) = pipe(Some(O_NONBLOCK)) else {
+        return false;
+    };
+    ok &= call(SYS_READ, r, buf.as_mut_ptr() as usize, buf.len()) == (EAGAIN, true);
+    ok &= call(SYS_FCNTL, r, F_GETFD, 0) == (0, false);
+    ok &= call(SYS_CLOSE, r, 0, 0) == (0, false);
+    ok &= call(SYS_CLOSE, w, 0, 0) == (0, false);
+
+    // No reader: EPIPE and SIGPIPE, caught by a handler, then ignored.
+    let catch = Sigaction {
+        sa_handler: on_sigpipe as *const () as usize,
+        sa_mask: 0,
+        sa_flags: 0,
+    };
+    let ignore = Sigaction {
+        sa_handler: SIG_IGN,
+        sa_mask: 0,
+        sa_flags: 0,
+    };
+    let Some([r, w]) = pipe(None) else {
+        return false;
+    };
+    ok &= call(SYS_CLOSE, r, 0, 0) == (0, false);
+    ok &= call(
+        SYS_SIGACTION,
+        SIGPIPE,
+        &catch as *const Sigaction as usize,
+        0,
+    ) == (0, false);
+    ok &= write(w, b"lost") == Err(EPIPE);
+    ok &= SIGPIPES.load(Ordering::Relaxed) == 1;
+    ok &= call(
+        SYS_SIGACTION,
+        SIGPIPE,
+        &ignore as *const Sigaction as usize,
+        0,
+    ) == (0, false);
+    ok &= write(w, b"lost") == Err(EPIPE);
+    ok &= SIGPIPES.load(Ordering::Relaxed) == 1;
+    ok &= call(SYS_SIGPENDING, 0, 0, 0) == (0, false);
+    ok &= call(SYS_CLOSE, w, 0, 0) == (0, false);
+
     ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
 }
 

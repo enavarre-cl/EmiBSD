@@ -36,6 +36,7 @@ use crate::kern::kern_sig::{
 };
 use crate::kern::kern_sysctl::sys_sysctl;
 use crate::kern::sys_generic::{sys_ioctl, sys_read, sys_readv, sys_write, sys_writev};
+use crate::kern::sys_pipe::{sys_pipe, sys_pipe2};
 use crate::kern::vfs_getcwd::sys___getcwd;
 use crate::kern::vfs_syscalls::{
     sys___pledge_open, sys___realpath, sys_access, sys_chdir, sys_chflags, sys_chflagsat,
@@ -201,9 +202,9 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(3, size_of::<SysConnectArgs>(), SY_NOLOCK, sys_nosys), // 98 = connect (sys_connect not ported)
     Sysent::new(3, size_of::<SysGetdentsArgs>(), 0, sys_getdents),     // 99 = getdents
     Sysent::new(2, size_of::<SysGetpriorityArgs>(), 0, sys_getpriority), // 100 = getpriority
-    Sysent::new(2, size_of::<SysPipe2Args>(), SY_NOLOCK, sys_nosys), // 101 = pipe2 (sys_pipe2 not ported)
-    Sysent::new(3, size_of::<SysDup3Args>(), SY_NOLOCK, sys_dup3),   // 102 = dup3
-    Sysent::new(1, size_of::<SysSigreturnArgs>(), 0, sys_sigreturn), // 103 = sigreturn
+    Sysent::new(2, size_of::<SysPipe2Args>(), SY_NOLOCK, sys_pipe2),   // 101 = pipe2
+    Sysent::new(3, size_of::<SysDup3Args>(), SY_NOLOCK, sys_dup3),     // 102 = dup3
+    Sysent::new(1, size_of::<SysSigreturnArgs>(), 0, sys_sigreturn),   // 103 = sigreturn
     Sysent::new(3, size_of::<SysBindArgs>(), SY_NOLOCK, sys_nosys), // 104 = bind (sys_bind not ported)
     Sysent::new(5, size_of::<SysSetsockoptArgs>(), SY_NOLOCK, sys_nosys), // 105 = setsockopt (sys_setsockopt not ported)
     Sysent::new(2, size_of::<SysListenArgs>(), SY_NOLOCK, sys_nosys), // 106 = listen (sys_listen not ported)
@@ -368,7 +369,7 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(0, 0, 0, sys_nosys),                                // 260 = unimplemented
     Sysent::new(0, 0, 0, sys_nosys),                                // 261 = unimplemented
     Sysent::new(0, 0, 0, sys_nosys),                                // 262 = unimplemented
-    Sysent::new(1, size_of::<SysPipeArgs>(), SY_NOLOCK, sys_nosys), // 263 = pipe (sys_pipe not ported)
+    Sysent::new(1, size_of::<SysPipeArgs>(), SY_NOLOCK, sys_pipe),  // 263 = pipe
     Sysent::new(2, size_of::<SysFhopenArgs>(), 0, sys_fhopen),      // 264 = fhopen
     Sysent::new(0, 0, 0, sys_nosys),                                // 265 = unimplemented
     Sysent::new(0, 0, 0, sys_nosys),                                // 266 = unimplemented

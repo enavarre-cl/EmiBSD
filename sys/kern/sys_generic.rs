@@ -59,8 +59,6 @@
 //! - `dofilereadv`/`dofilewritev` take a `Uio` whose iovecs borrow the caller's array; the
 //!   positioned checks (`FO_POSITION`) answer `ESPIPE` for every file that is not a vnode
 //!   (and for fifos and ttys), as in C.
-//! - `EPIPE` from a write would post `SIGPIPE` through `ptsignal`, which `kern_sig.c` brings;
-//!   it is reported until then.
 //! - `sys_ioctl`'s `pledge_ioctl` and the socket `SS_DNS` check are reported where the C
 //!   makes them: only a pledged process (none can be yet) or a socket (none exist) reaches
 //!   them. The argument buffer is a byte slice of `max(IOCPARM_LEN(com), sizeof(caddr_t))`
@@ -74,6 +72,7 @@ use crate::kassert;
 use crate::kern::kern_descrip::fd_getfile_mode;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
+use crate::kern::kern_sig::ptsignal;
 use crate::machine::copy::{copyin, copyout};
 use crate::sys::errno::Errno;
 use crate::sys::fcntl::{FASYNC, FNONBLOCK, FREAD, FWRITE};
@@ -84,6 +83,8 @@ use crate::sys::ioccom::{IOC_IN, IOC_OUT, IOC_VOID, IOCPARM_MAX, iocparm_len};
 use crate::sys::limits::SSIZE_MAX;
 use crate::sys::malloc::{M_IOCTLOPS, M_IOV, M_WAITOK};
 use crate::sys::proc::{PS_PLEDGE, Proc};
+use crate::sys::signal::SIGPIPE;
+use crate::sys::signalvar::SignalType;
 use crate::sys::syscallargs::{
     SysIoctlArgs, SysReadArgs, SysReadvArgs, SysWriteArgs, SysWritevArgs,
 };
@@ -369,8 +370,7 @@ pub fn dofilewritev<'a>(
         let error = (fp.ops().fo_write)(fp, uio, flags);
         let error = partial_ok(error, uio.uio_resid, cnt);
         if error == Err(Errno::EPIPE) {
-            // ptsignal(p, SIGPIPE, STHREAD): kern_sig.c.
-            let _ = unported!("dofilewritev: ptsignal(SIGPIPE) (kern_sig.c)");
+            ptsignal(p, SIGPIPE, SignalType::STHREAD);
         }
         let cnt = cnt - uio.uio_resid;
 

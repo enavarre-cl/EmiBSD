@@ -102,6 +102,7 @@ use crate::kern::kern_timeout::{timeout_proc_init, timeout_set, timeout_startup}
 use crate::kern::sched_bsd::{sched_lock_init, scheduler_start};
 use crate::kern::subr_autoconf::{CONFIG_PENDING, config_init, config_process_deferred_mountroot};
 use crate::kern::subr_prf::{Str, panic};
+use crate::kern::sys_pipe::pipe_init;
 use crate::kern::uipc_domain::domaininit;
 use crate::kern::uipc_mbuf::{mbcpuinit, mbinit};
 use crate::kern::vfs_bio::{CLEANERPROC, buf_daemon};
@@ -249,7 +250,7 @@ pub fn main() -> ! {
     filedesc_init();
 
     // Initialize pipes.
-    let _ = unported!("pipe_init");
+    pipe_init();
 
     // Initialize kqueues.
     let _ = unported!("kqueue_init");

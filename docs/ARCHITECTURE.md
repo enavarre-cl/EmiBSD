@@ -348,9 +348,17 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   `fork1` copies or shares the table, `exec` runs `fdprepforexec`, `exit1` runs `fdfree`,
   and every `read`/`write`/`ioctl` goes through `fd_getfile_mode` and the file's
   `fileops`. What needs kqueues or pledge is reported (`knote_fdclose`, `pledge_*`); the
-  vnode paths (`VOP_ADVLOCK`, `VOP_PATHCONF`, `fd_cdir`/`fd_rdir`) are the vfs core's. Pipes (`sys_pipe.c`, `<sys/pipe.h>`) are
-  not ported: their licence (John S. Dyson's) is outside the accepted list and waits for
-  the user's decision.
+  vnode paths (`VOP_ADVLOCK`, `VOP_PATHCONF`, `fd_cdir`/`fd_rdir`) are the vfs core's.
+- Pipes (`sys_pipe.c`, `<sys/pipe.h>`; John S. Dyson's licence, accepted by the user on
+  2026-10-03): OpenBSD's whole file. A pair is a `pipe_pair_pool` item freed with its second
+  pipe (`pipe_destroy` is `unsafe`), the buffers are pageable kernel memory
+  (`km_alloc(kv_any, kp_pageable)`) that `uvm_fault` fills on `kernel_map`, and a write to a
+  pipe without a reader gets `EPIPE` and `SIGPIPE` (`dofilewritev`). Without `kern_event.c`
+  there are no knotes: `pipe_wakeup`'s `knote_locked` and `pipe_kqfilter` are reported, the
+  filter bodies return what they would set (`PipeFilter`) for `kern_event.c` to apply. The
+  host double has no pageable kernel memory, so `pipe_pair_create` fails there and the host
+  tests build their pairs with heap buffers; the stand-in `init` checks pipes from user mode
+  (`init: pipes ok` in `smoke`).
 - The console as a file (M7b, stand-in): in OpenBSD `init(8)` opens `/dev/console`, a
   vnode of the console's character device whose tty does the I/O. Without a root file
   system, the device switch and the tty layer (M10), `start_init` installs
