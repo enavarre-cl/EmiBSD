@@ -239,6 +239,7 @@ impl Pmap for Machine {
     /// (`arm64/pmap.rs`, deviations).
     const HAVE_PMAP_DIRECT: bool = true;
     const PMAP_STEAL_MEMORY: bool = true;
+    const PMAP_WC: usize = include::pmap::PMAP_WC as usize;
     const UVM_MD_CONSTRAINTS: &'static [&'static UvmConstraintRange] =
         &arm64::machdep::UVM_MD_CONSTRAINTS;
     const DMA_CONSTRAINT: &'static UvmConstraintRange = &arm64::machdep::DMA_CONSTRAINT;
@@ -328,6 +329,14 @@ impl Pmap for Machine {
 
     fn pmap_wired_count(pmap: &Self::Pmap) -> i64 {
         pmap.pm_stats.wired_count.get()
+    }
+
+    fn pmap_resident_count(pmap: &Self::Pmap) -> i64 {
+        pmap.pm_stats.resident_count.get()
+    }
+
+    fn pmap_unwire(pmap: &Self::Pmap, va: Vaddr) {
+        arm64::pmap::pmap_unwire(pmap, va)
     }
 
     fn pmap_remove_holes(vm: &Vmspace) {

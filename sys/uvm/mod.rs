@@ -22,4 +22,5 @@ pub mod uvm_param;
 pub mod uvm_pdaemon;
 pub mod uvm_pmap;
 pub mod uvm_pmemrange;
+pub mod uvm_swap;
 pub mod uvmexp;

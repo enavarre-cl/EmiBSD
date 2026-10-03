@@ -344,6 +344,7 @@ impl Pmap for Machine {
 
     const VM_MDPAGE_INIT: () = ();
     const HAVE_PMAP_DIRECT: bool = true;
+    const PMAP_WC: usize = 0;
     const PMAP_STEAL_MEMORY: bool = true;
     const UVM_MD_CONSTRAINTS: &'static [&'static UvmConstraintRange] =
         &[&ISA_CONSTRAINT, &DMA_CONSTRAINT];
@@ -407,6 +408,17 @@ impl Pmap for Machine {
     fn pmap_wired_count(_pmap: &HostPmap) -> i64 {
         0
     }
+
+    /// Every mapping is resident on the host.
+    fn pmap_resident_count(pmap: &HostPmap) -> i64 {
+        pmap.mappings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .len() as i64
+    }
+
+    /// Nothing is wired on the host.
+    fn pmap_unwire(_pmap: &HostPmap, _va: Vaddr) {}
 
     fn pmap_remove_holes(_vm: &Vmspace) {}
 

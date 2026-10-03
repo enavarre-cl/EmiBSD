@@ -875,7 +875,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1e16ce3c07558e556a719c9bfd751b16ff4ce86b"
 deps = ["sys/sys/types.h"]
-notes = "pmap_statistics and the PMAP_* flags; the pmap(9) prototypes are the machine::Pmap trait (sys/machine/pmap.rs); M7a-1: pmap_page_protect and pmap_clear_modify in the trait; M7a-2: the PMAP_PREFER_ALIGN/OFFSET defaults (PMAP_PREFER is not defined on amd64/arm64), pmap_protect and pmap_wired_count in the trait (amd64/arm64 report pmap_protect until the pv lists, M7a-3)"
+notes = "pmap_statistics and the PMAP_* flags; the pmap(9) prototypes are the machine::Pmap trait (sys/machine/pmap.rs); M7a-1: pmap_page_protect and pmap_clear_modify in the trait; M7a-2: the PMAP_PREFER_ALIGN/OFFSET defaults, pmap_protect and pmap_wired_count (amd64/arm64 report pmap_protect until the pv lists); M7a-3: PMAP_WC as a trait constant, pmap_resident_count and pmap_unwire (amd64 and arm64 real)"
 
 [[file]]
 c = "sys/uvm/uvmexp.h"
@@ -884,7 +884,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "306d5eebc089484d07dee16d23beaa0c0bed7672"
 deps = ["sys/sys/types.h"]
-notes = "struct uvmexp with every field atomic (one static, no lock), the VM_* sysctl ids, the counters enum; uvmexp_counters (per-CPU) wait for percpu (M5)"
+notes = "struct uvmexp with every field atomic (one static, no lock), the VM_* sysctl ids, the counters enum; M7a-3: uvmexp_counters as one array for the one CPU with counters_inc/counters_read (per-CPU copies wait for percpu, M11)"
 
 [[file]]
 c = "sys/uvm/uvm_extern.h"
@@ -992,7 +992,25 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "cbeca0a483b6a2268d0cfe545d4a14878438cd0a"
 deps = ["sys/uvm/uvm_map.h"]
-notes = "M7a-1: VM_FAULT_INVALID/PROTECT/WIRE, struct uvm_faultinfo; M7a-2: uvm_fault_wire and uvm_fault_unwire_locked as reported stubs for uvm_map.c; the rest of the prototypes and uvm_fault.c are M7a-3"
+notes = "M7a-1: VM_FAULT_INVALID/PROTECT/WIRE, struct uvm_faultinfo; M7a-3: the prototypes, with uvm_fault.c in the same file"
+
+[[file]]
+c = "sys/uvm/uvm_fault.c"
+rust = "sys/uvm/uvm_fault.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "866b378199e27743b5e8a58ad6424a355bad8a0d"
+deps = ["sys/uvm/uvm_fault.h", "sys/uvm/uvm_map.c", "sys/uvm/uvm_amap.c", "sys/uvm/uvm_anon.c", "sys/uvm/uvm_aobj.c", "sys/uvm/uvm_page.c", "sys/uvm/uvm_swap.c", "sys/uvm/uvmexp.h"]
+notes = "M7a-3: uvmfault_anonflush, uvmfault_init (uvmadvice[] is a const table, the init only checks it), uvmfault_anonget (uvm_swap_get/uvm_swap_markbad reported: no swap until M7), uvmfault_promote, uvmfault_update_stats (pmap_nested is 0), uvm_fault with uvm_faultctx, uvm_fault_check, the upper and lower lock upgrades, uvm_fault_upper_lookup, uvm_fault_upper, uvm_fault_lower_lookup, uvm_fault_lower, uvm_fault_lower_io, uvm_fault_wire, uvm_fault_unwire(_locked), uvmfault_unlockmaps, uvmfault_unlockall, uvmfault_lookup, uvmfault_relock; out parameters are return values, ufi is an Option for the C's NULL; shared upper/lower locks as on amd64/arm64; MULTIPROCESSOR, __HAVE_PMAP_POPULATE, UVM_PAGE_OWN, TRACEPOINT not configured; host tests (zero fill, case 1A/1B after fork, fault-ahead, wire/unwire, EFAULT/EACCES)"
+
+[[file]]
+c = "sys/uvm/uvm_swap.c"
+rust = "sys/uvm/uvm_swap.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5952cabf749abd870b347d48c55621b1c52481f5"
+deps = ["sys/uvm/uvmexp.h"]
+notes = "M7a-3: uvm_swapisfull and SWSLOT_BAD only (uvm_swap_data_lock not taken: nothing else writes the counters); the swap devices, uvm_swap_get/put/free/markbad, the slot allocator, swapctl(2) and swap encryption are M7"
 
 [[file]]
 c = "sys/uvm/uvm.h"
@@ -1010,7 +1028,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7703ec138db0f65b7bedc76cdaed1423363db7f0"
 deps = ["sys/uvm/uvm.h", "sys/uvm/uvmexp.h", "sys/uvm/uvm_page.c", "sys/uvm/uvm_pager.c", "sys/uvm/uvm_amap.c", "sys/uvm/uvm_aobj.c", "sys/uvm/uvm_anon.c", "sys/uvm/uvm_map.c", "sys/uvm/uvm_km.c", "sys/uvm/uvm_addr.c"]
-notes = "uvm_init: page system, uvm_map_init, uvm_km_init (kernel_map), pmap_init, kmeminit, uvm_pager_init, amap_init, uao_create (kernel swap), uvm_anon_init, the bestfit switch of kernel_map (kmem_map waits for kmeminit's suballoc) run; uvmfault_init, uvm_km_page_init, dma_alloc_init, uvm_km_page_lateinit and uvm_init_percpu's counters report themselves unported; uvmexp is exported under its C name for the amd64 interrupt stubs' V_INTR; vm_min_kernel_address is a runtime value (amd64 shifts the kernel map above its direct map) and uvm_maxkaddr is raised to it before uvm_km_init"
+notes = "uvm_init: page system, uvm_map_init, uvm_km_init (kernel_map), uvmfault_init, pmap_init, kmeminit, uvm_pager_init, amap_init, uao_create (kernel swap), uvm_anon_init, the bestfit switch of kernel_map (kmem_map waits for kmeminit's suballoc) run; uvm_km_page_init, dma_alloc_init, uvm_km_page_lateinit and uvm_init_percpu's counters report themselves unported; uvmexp is exported under its C name for the amd64 interrupt stubs' V_INTR; vm_min_kernel_address is a runtime value (amd64 shifts the kernel map above its direct map) and uvm_maxkaddr is raised to it before uvm_km_init"
 
 [[file]]
 c = "sys/uvm/uvm_page.h"

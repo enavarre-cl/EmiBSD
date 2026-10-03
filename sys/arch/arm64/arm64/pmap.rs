@@ -1551,6 +1551,20 @@ pub fn pmap_remove(pm: &Pmap, sva: Vaddr, eva: Vaddr) {
     // pmap_unlock(pm): M5.
 }
 
+/// `pmap_unwire`: clears the wired bit of the mapping at `va`.
+pub fn pmap_unwire(pm: &Pmap, va: Vaddr) {
+    // pmap_lock(pm): M5.
+    let (pted, _) = pmap_vp_lookup(pm, va.as_usize());
+    if let Some(pted) = pted.filter(|pted| pted_wired(pted)) {
+        pm.pm_stats
+            .wired_count
+            .set(pm.pm_stats.wired_count.get() - 1);
+        pted.pted_va
+            .set(pted.pted_va.get() & !(PTED_VA_WIRED_M as usize));
+    }
+    // pmap_unlock(pm): M5.
+}
+
 /// `pmap_remove_pted`: remove a single mapping, notice that this code is O(1).
 pub fn pmap_remove_pted(pm: &Pmap, pted: &PteDesc) {
     pm.pm_stats

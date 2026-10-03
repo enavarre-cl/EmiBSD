@@ -39,6 +39,9 @@ pub trait Pmap {
     const UVM_MD_CONSTRAINTS: &'static [&'static UvmConstraintRange];
     /// `dma_constraint`: the range every DMA-capable device can reach.
     const DMA_CONSTRAINT: &'static UvmConstraintRange;
+    /// `PMAP_WC`: the physical-address flag of a write-combining mapping (0 where the pmap
+    /// has none, as `<uvm/uvm_pmap.h>` defaults it).
+    const PMAP_WC: usize;
 
     /// `pmap_kernel()`: the kernel's pmap.
     fn pmap_kernel() -> &'static Self::Pmap;
@@ -74,6 +77,12 @@ pub trait Pmap {
 
     /// `pmap_wired_count(pmap)`: the number of wired pages in the pmap (`pm_stats`).
     fn pmap_wired_count(pmap: &Self::Pmap) -> i64;
+
+    /// `pmap_resident_count(pmap)`: the number of resident pages in the pmap (`pm_stats`).
+    fn pmap_resident_count(pmap: &Self::Pmap) -> i64;
+
+    /// `pmap_unwire(pmap, va)`: clears the wired bit of the mapping at `va`.
+    fn pmap_unwire(pmap: &Self::Pmap, va: Vaddr);
 
     /// `pmap_page_protect(pg, prot)`: lowers every mapping of `pg` to `prot`; `PROT_NONE`
     /// removes them all (what the object layer does before freeing a page).
@@ -200,6 +209,16 @@ pub fn pmap_protect(pmap: &MachinePmap, sva: Vaddr, eva: Vaddr, prot: VmProt) {
 /// `pmap_wired_count` on the selected machine.
 pub fn pmap_wired_count(pmap: &MachinePmap) -> i64 {
     Machine::pmap_wired_count(pmap)
+}
+
+/// `pmap_resident_count` on the selected machine.
+pub fn pmap_resident_count(pmap: &MachinePmap) -> i64 {
+    Machine::pmap_resident_count(pmap)
+}
+
+/// `pmap_unwire` on the selected machine.
+pub fn pmap_unwire(pmap: &MachinePmap, va: Vaddr) {
+    Machine::pmap_unwire(pmap, va)
 }
 
 /// `pmap_page_protect` on the selected machine.

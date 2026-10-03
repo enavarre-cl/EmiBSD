@@ -160,7 +160,7 @@ use crate::uvm::uvm_page::{
 use crate::uvm::uvm_page::{PG_FAKE, Pglist, uvm_pagefree, uvm_pagelookup, uvm_pagerealloc};
 use crate::uvm::uvm_param::atop;
 use crate::uvm::uvm_pmap::{PMAP_CANFAIL, PMAP_WIRED};
-use crate::{kassert, unported};
+use crate::{kassert, kprintf, unported};
 use core::ptr::NonNull;
 
 /// `normal_pdes[]`: the level 2, 3 and 4 tables of the current pmap through the recursive
@@ -528,6 +528,40 @@ pub fn pmap_find_pte_direct(pm: &Pmap, va: usize) -> (usize, usize, usize) {
     }
 
     (0, pd, offs)
+}
+
+/// `pmap_unwire`: clear the wired bit in the PTE.
+pub fn pmap_unwire(pmap: &Pmap, va: Vaddr) {
+    let va = va.as_usize();
+    let (level, ptes, offs) = pmap_find_pte_direct(pmap, va);
+
+    if level == 0 {
+        // SAFETY: `pmap_find_pte_direct` returned a table page's direct-map address.
+        let pte = unsafe { pde_at(ptes, offs) };
+        if pmap_valid_entry(pte) {
+            if pte & PG_W != 0 {
+                let p = (ptes + offs * size_of::<PtEntry>()) as *mut PtEntry;
+                // SAFETY: the PTE slot `pmap_find_pte_direct` found, in the direct map.
+                unsafe { pmap_pte_set(p, pte & !PG_W) };
+                pmap.pm_stats
+                    .wired_count
+                    .set(pmap.pm_stats.wired_count.get() - 1);
+            } else {
+                kprintf!(
+                    "pmap_unwire: wiring for pmap {:p} va {:#x} didn't change!\n",
+                    ptr::from_ref(pmap),
+                    va
+                );
+            }
+        } else {
+            kprintf!("pmap_unwire: invalid (unmapped) va {:#x}\n", va);
+        }
+    } else {
+        #[allow(clippy::panic)] // the C panics here too
+        {
+            panic!("pmap_unwire: invalid PDE");
+        }
+    }
 }
 
 /// `pmap_kenter_pa`: enter a kernel mapping without R/M (pv_entry) tracking. No need to lock

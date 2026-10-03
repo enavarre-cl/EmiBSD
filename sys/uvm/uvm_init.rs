@@ -53,6 +53,7 @@ use crate::uvm::uvm_addr::uaddr_bestfit_create;
 use crate::uvm::uvm_amap::amap_init;
 use crate::uvm::uvm_anon::{uvm_anon_init, uvm_anon_init_percpu};
 use crate::uvm::uvm_aobj::{UAO_FLAG_KERNSWAP, uao_create};
+use crate::uvm::uvm_fault::uvmfault_init;
 use crate::uvm::uvm_km::{kernel_map, uvm_km_init};
 use crate::uvm::uvm_map::{UVM_MAXKADDR, UvmMapUaddrSlot, uvm_map_init, uvm_map_set_uaddr};
 use crate::uvm::uvm_page::uvm_page_init;
@@ -103,7 +104,7 @@ pub fn uvm_init() {
     uvm_km_init(Vaddr::new(base), kvm_start, kvm_end);
 
     // step 4.5: init (tune) the fault recovery code.
-    let _ = unported!("uvmfault_init");
+    uvmfault_init();
 
     // Init the pmap module. The pmap module is free to allocate memory for its private use
     // (e.g. pvlists).

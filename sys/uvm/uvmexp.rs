@@ -13,7 +13,7 @@
 //!   immutable ones; one type keeps the global sound before the locks exist, and the C's
 //!   locking letters are kept in the comments.
 
-use core::sync::atomic::AtomicI32;
+use core::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 /// `struct vmmeter`.
 pub const VM_METER: i32 = 1;
@@ -308,4 +308,20 @@ pub enum UvmExpCounters {
     FltNoup,
     /// The number of counters.
     ExpNcounters,
+}
+
+/// `uvmexp_counters`: the per-CPU UVM counters, one array for the one CPU until `percpu`
+/// (`counters_alloc`, M11) gives every CPU its own.
+pub static UVMEXP_COUNTERS: [AtomicU64; UvmExpCounters::ExpNcounters as usize] =
+    [const { AtomicU64::new(0) }; UvmExpCounters::ExpNcounters as usize];
+
+/// `counters_inc(uvmexp_counters, c)`: bumps counter `c`.
+#[inline]
+pub fn counters_inc(c: UvmExpCounters) {
+    UVMEXP_COUNTERS[c as usize].fetch_add(1, Ordering::Relaxed);
+}
+
+/// `counters_read(uvmexp_counters, c)`: the value of counter `c`.
+pub fn counters_read(c: UvmExpCounters) -> u64 {
+    UVMEXP_COUNTERS[c as usize].load(Ordering::Relaxed)
 }

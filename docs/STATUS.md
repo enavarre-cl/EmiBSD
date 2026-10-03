@@ -1,9 +1,14 @@
 # Status
 
-Milestone: **M7a in progress** (part 0, the rwlock, part 1, the uvm object layer, and part 2,
-`uvm_map.c` and `uvm_addr.c`, done; part 3, `uvm_fault.c`, next). Updated: 2026-10-03.
+Milestone: **M7a in progress** (parts 0 to 2 done; part 3a, `uvm_fault.c`, done; part 3b,
+the pmap side and exec through `uvm_map`, next). Updated: 2026-10-03.
 
 Done:
+- M7a-3a: `uvm_fault.c` whole (anonget, promote, the upper and lower fault paths, the
+  lock upgrades, fault-ahead, `uvm_fault_wire`/`unwire`, lookup/relock), `uvmfault_init`
+  in `uvm_init`, `uvmexp_counters` as one array, `uvm_swapisfull`, `pmap_unwire` (amd64,
+  arm64) and `pmap_resident_count`/`PMAP_WC` in the trait. Host tests serve zero-fill,
+  copy-on-write after fork, fault-ahead and wiring. The traps do not call `uvm_fault` yet.
 - M7a-2: `uvm_addr.c` (the rnd, kbootstrap, bestfit, pivot and stack/brk selectors) and
   `uvm_map.c` proper: the augmented entry tree, `uvm_map`/`uvm_mapanon`/`uvm_unmap`, the
   clippers, the free lists, `uvm_map_protect`/`inherit`/`immutable`/`advice`/`pageable`/
@@ -34,7 +39,7 @@ Done:
 - M6 closed on 2026-10-03 (`494a597`): init runs in user mode on wired mappings on both archs.
 
 Next:
-- M7a-3: `uvm_fault.c`, amd64 pv lists (`pmap_enter_pv`, `pmap_page_remove`,
+- M7a-3b: amd64 pv lists (`pmap_enter_pv`, `pmap_page_remove`,
   `pmap_page_protect`, `pmap_protect`, the R/M bits), arm64 `pmap_fault_fixup`, exec through
   `uvm_map` (the wired stand-ins retire), `uvm_mmap.c`; exit criterion: a user page fault
   served by `uvm_fault` on both archs.
