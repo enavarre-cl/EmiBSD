@@ -61,15 +61,15 @@
 //! Upstream: sys/kern/kern_clock.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M5 ports the globals, `initclocks`, `hardclock`, `tvtohz`,
-//! `tstohz` and `statclock` as far as there is a CPU to account to. `startprofclock` and
-//! `stopprofclock` take a `struct process` (M5-b); `sysctl_clockrate` came with
-//! `kern_sysctl.c`.
+//! `tstohz` and `statclock`; M7b completes `statclock`'s per-thread accounting
+//! (`p_cpticks`, the `tusage` ticks and sizes, `schedclock`). `startprofclock` and
+//! `stopprofclock` (profiling) are not ported; `sysctl_clockrate` came with `kern_sysctl.c`.
 //!
 //! ## Deviations
-//! - `statclock`: with no `curproc` yet (M5-b) the per-thread accounting (`p_cpticks`, the
-//!   `tusage`, `schedclock`) is the C's `p == NULL` branch; `CP_IDLE` is charged.
+//! - None beyond the module's status: the profiling half of the file is missing.
 
 use core::ffi::c_void;
+use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 use crate::conf::param::{HZ, TICK};
@@ -80,15 +80,17 @@ use crate::kern::kern_sysctl::sysctl_rdstruct;
 use crate::kern::kern_tc::{inittimecounter, tc_ticktock};
 use crate::kern::kern_timeout::timeout_hardclock_update;
 use crate::kern::sched_bsd::ROUNDROBIN_PERIOD;
+use crate::kern::sched_bsd::schedclock;
 use crate::kern::subr_prof::PROFCLOCK_PERIOD;
 use crate::machine::Machine;
 use crate::machine::cpu::{ClockFrame, Cpu, cpu_initclocks, cpu_startclock, curcpu};
 use crate::sys::clockintr::Clockrequest;
 use crate::sys::errno::Errno;
-use crate::sys::sched::{CP_IDLE, CP_INTR, CP_SPIN};
+use crate::sys::param::{NZERO, PAGE_SHIFT};
+use crate::sys::proc::{P_SYSTEM, TU_ITICKS, TU_STICKS, TU_UTICKS, tu_enter, tu_leave};
+use crate::sys::sched::{CP_IDLE, CP_INTR, CP_NICE, CP_SPIN, CP_SYS, CP_USER};
 use crate::sys::sysctl::SysctlPlain;
 use crate::sys::time::{Clockinfo, Timespec, Timeval, timespec_to_timeval};
-use crate::unported;
 
 /// `stathz`: the statistics clock's frequency.
 pub static STATHZ: AtomicI32 = AtomicI32::new(0);
@@ -244,12 +246,20 @@ pub fn statclock(cr: &Clockrequest, cf: *mut c_void, _arg: *mut c_void) {
 
     // SAFETY: the dispatcher passes the clock frame the interrupt entry built.
     let frame = unsafe { cf.cast::<ClockFrame>().as_ref() };
+    // SAFETY: `ci_curproc` names the thread on this CPU, hence alive.
+    let p = unsafe { p.as_ref() };
     let usermode = frame.is_some_and(Machine::clkf_usermode);
-    let cp_time = if usermode {
+    let mut tu_tick: Option<usize> = None;
+    let cp_time = if let (true, Some(p)) = (usermode, p) {
+        let pr = p.process();
         // Came from user mode; CPU was in user state. If this process is being profiled
-        // record the tick: TU_UTICKS, CP_USER/CP_NICE by ps_nice (M5-b).
-        let _ = unported!("statclock: user-mode accounting (struct process, M5-b)");
-        CP_IDLE
+        // record the tick.
+        tu_tick = Some(TU_UTICKS);
+        if i32::from(pr.ps_nice.get()) > NZERO {
+            CP_NICE
+        } else {
+            CP_USER
+        }
     } else {
         // Came from kernel mode, so we were:
         // - spinning on a lock
@@ -260,11 +270,11 @@ pub fn statclock(cr: &Clockrequest, cf: *mut c_void, _arg: *mut c_void) {
         // the current process, regardless of whether they are ``for'' that process, so that we
         // know how much of its real time was spent in ``non-process'' (i.e., interrupt) work.
         let mut cp_time = if frame.is_some_and(Machine::clkf_intr) {
+            tu_tick = Some(TU_ITICKS);
             CP_INTR
-        } else if !p.is_null() {
-            // p != spc->spc_idleproc: TU_STICKS, CP_SYS (M5-b).
-            let _ = unported!("statclock: system-time accounting (struct proc, M5-b)");
-            CP_IDLE
+        } else if p.is_some_and(|p| !ptr::eq(p, spc.spc_idleproc.get())) {
+            tu_tick = Some(TU_STICKS);
+            CP_SYS
         } else {
             CP_IDLE
         };
@@ -279,10 +289,40 @@ pub fn statclock(cr: &Clockrequest, cf: *mut c_void, _arg: *mut c_void) {
     spc.spc_cp_time[cp_time].set(spc.spc_cp_time[cp_time].get() + count);
     pc_sprod_leave(&spc.spc_cp_time_lock, generation);
 
-    if !p.is_null() {
-        // p->p_cpticks, the tusage ticks and sizes, schedclock() every fourth statclock():
-        // struct proc (M5-b).
-        let _ = unported!("statclock: p_cpticks/tusage/schedclock (struct proc, M5-b)");
+    if let Some(p) = p {
+        p.p_cpticks
+            .set(p.p_cpticks.get().wrapping_add(count as u32));
+
+        if p.p_flag.load(Ordering::Relaxed) & P_SYSTEM == 0
+            && let Some(tu_tick) = tu_tick
+        {
+            let vm = p.vmspace();
+            let tu = &p.p_tu;
+
+            let generation = tu_enter(tu);
+            tu.tu_ticks[tu_tick].set(tu.tu_ticks[tu_tick].get().wrapping_add(count));
+
+            // maxrss is handled by uvm
+            if tu_tick != TU_ITICKS {
+                let kb = |pages: i32| ((pages as u64) << (PAGE_SHIFT - 10)).wrapping_mul(count);
+                tu.tu_ixrss
+                    .set(tu.tu_ixrss.get().wrapping_add(kb(vm.vm_tsize.get())));
+                tu.tu_idrss
+                    .set(tu.tu_idrss.get().wrapping_add(kb(vm.vm_dused.get())));
+                tu.tu_isrss
+                    .set(tu.tu_isrss.get().wrapping_add(kb(vm.vm_ssize.get())));
+            }
+            tu_leave(tu, generation);
+        }
+
+        // schedclock() runs every fourth statclock().
+        for _ in 0..count {
+            let ticks = spc.spc_schedticks.get().wrapping_add(1);
+            spc.spc_schedticks.set(ticks);
+            if ticks & 3 == 0 {
+                schedclock(p);
+            }
+        }
     }
 }
 

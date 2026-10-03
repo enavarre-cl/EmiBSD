@@ -1553,7 +1553,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "107e14e2709328e95f35a077f883a2e24cff08ad"
 deps = ["sys/sys/kernel.h", "sys/sys/sched.h", "sys/kern/kern_clockintr.c", "sys/kern/kern_tc.c", "sys/kern/kern_timeout.c"]
-notes = "M5-a: stathz/profhz/profprocs/ticks/jiffies and the period globals, initclocks, hardclock, tvtohz, tstohz, statclock (the per-thread accounting and schedclock wait for struct proc, M5-b: reported); startprofclock/stopprofclock take a struct process (M5-b); sysctl_clockrate came with kern_sysctl.c"
+notes = "M5-a: stathz/profhz/profprocs/ticks/jiffies and the period globals, initclocks, hardclock, tvtohz, tstohz, statclock (the per-thread accounting and schedclock wait for struct proc, M5-b: reported); startprofclock/stopprofclock take a struct process (M5-b); sysctl_clockrate came with kern_sysctl.c; M7b: statclock's user/system/interrupt accounting, p_cpticks, the tusage ticks and sizes and schedclock every fourth tick (its unported! prints from the clock interrupt interleaved with user output and made smoke flaky)"
 
 [[file]]
 c = "sys/kern/sched_bsd.c"
