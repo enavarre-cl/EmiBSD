@@ -202,6 +202,14 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ab9cd5f51164b291ca1f65f66d521297fa817704"
 
 [[file]]
+c = "sys/lib/libkern/strncasecmp.c"
+rust = "sys/lib/libkern/strncasecmp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "905808fb8124f0efb0e9b491b5771a1c893acca3"
+notes = "M9c (ipsec_sysctl_algorithm): slices, a string ends at its NUL or at the end of its slice; the C's sign and value of the result"
+
+[[file]]
 c = "sys/lib/libkern/crc32c.h"
 rust = "sys/lib/libkern/crc32c.rs"
 status = "ported"

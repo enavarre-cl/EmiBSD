@@ -30,6 +30,7 @@ pub mod skpc;
 pub mod staticcell;
 pub mod strlcat;
 pub mod strlcpy;
+pub mod strncasecmp;
 pub mod strnlen;
 pub mod timingsafe_bcmp;
 
@@ -41,5 +42,6 @@ pub use skpc::skpc;
 pub use staticcell::StaticCell;
 pub use strlcat::strlcat;
 pub use strlcpy::strlcpy;
+pub use strncasecmp::strncasecmp;
 pub use strnlen::strnlen;
 pub use timingsafe_bcmp::timingsafe_bcmp;
