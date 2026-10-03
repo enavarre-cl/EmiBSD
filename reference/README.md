@@ -1,13 +1,15 @@
 # reference/
 
-`openbsd-src/` is a sparse, shallow clone of OpenBSD's source mirror restricted to `sys/`.
+`openbsd-src/` is a sparse, shallow clone of OpenBSD's source mirror restricted to `sys/` (the
+kernel, which is ported) and, since M8, `lib/ bin/ sbin/ usr.bin/ libexec/ include/` (the
+userland, compiled unmodified).
 It is gitignored and **read-only**. `PINNED.md` records the exact commit.
 
 ## Clone (first time)
 
 ```sh
 git clone --depth 1 --filter=blob:none --sparse https://github.com/openbsd/src.git reference/openbsd-src
-git -C reference/openbsd-src sparse-checkout set sys
+git -C reference/openbsd-src sparse-checkout set sys lib bin sbin usr.bin libexec include
 git -C reference/openbsd-src log -1 --format='%H %cs'      # -> PINNED.md Commit: and Date:
 ```
 

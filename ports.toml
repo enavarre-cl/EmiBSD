@@ -2772,16 +2772,16 @@ notes = "M7b: the whole file: fhdlk, filehead, numfiles, file_pool/fdesc_pool, f
 [[file]]
 c = "sys/sys/pipe.h"
 rust = ""
-status = "skipped"
+status = "todo"
 deps = []
-notes = "license: John S. Dyson's (FreeBSD pipes: keep the notice 'immediately at the beginning of the file', binary notice, no warranty, 'done expressly for inclusion into FreeBSD; other use is allowed if this notation is included'); not in the accepted list (scope-and-stubs.md), waits for the user's decision"
+notes = "licence: John S. Dyson's, accepted by the user on 2026-10-03; ksh needs pipes"
 
 [[file]]
 c = "sys/kern/sys_pipe.c"
 rust = ""
-status = "skipped"
+status = "todo"
 deps = []
-notes = "license: John S. Dyson's BSD-style four clauses (retain the notice immediately at the beginning, binary notice, no warranty, modifications free); not in the accepted list (scope-and-stubs.md), waits for the user's decision; pipe_init stays reported in main"
+notes = "licence: John S. Dyson's, accepted by the user on 2026-10-03; ksh needs pipes"
 
 [[extra]]
 rust = "sys/dev/consfile.rs"
