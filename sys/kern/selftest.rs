@@ -1244,7 +1244,7 @@ fn ping_sin(a: [u8; 4]) -> crate::netinet::in_::SockaddrIn {
 /// The M7b network check, on every default boot: what `ifconfig vio0 10.0.2.15/24 up`,
 /// `route add default 10.0.2.2` and `ping -c 1 10.0.2.2` do, from the kernel. The first
 /// Ethernet interface (`IFT_ETHER` on `ifnetlist`) gets 10.0.2.15/24 through `ifioctl`
-/// (`SIOCAIFADDR`, which reaches `in_control`, then `SIOCSIFFLAGS` with `IFF_UP`), a default
+/// (`SIOCAIFADDR`, which reaches `in_ioctl`, then `SIOCSIFFLAGS` with `IFF_UP`), a default
 /// route through `rtrequest(RTM_ADD)`, and an ICMP echo request goes to 10.0.2.2 through
 /// `ip_output`, which resolves the gateway with ARP. The test then sleeps until `icmp_input`
 /// counts an echo reply (`icps_inhist[ICMP_ECHOREPLY]`), three seconds at most.

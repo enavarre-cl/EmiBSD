@@ -1,5 +1,5 @@
 //! Host tests for IPv4: header validation in `ipv4_input` on crafted packets, and the whole
-//! path of a ping over a test Ethernet interface: an address through `in_control`, the
+//! path of a ping over a test Ethernet interface: an address through `in_ioctl`, the
 //! routes it makes, a default route, ARP resolution with the held packet sent once the reply
 //! arrives, and an echo reply counted by `icmp_input`.
 
@@ -25,7 +25,7 @@ use crate::net::route::{
 use crate::net::rtable::rtable_init;
 use crate::netinet::icmp_var::IcmpstatCounters;
 use crate::netinet::if_ether::{Arpcom, EtherArp, EtherHeader, arpcom_of, arpintr};
-use crate::netinet::in_::{IPPROTO_ICMP, in_control};
+use crate::netinet::in_::{IPPROTO_ICMP, in_ioctl};
 use crate::netinet::in_var::InAliasreq;
 use crate::netinet::in4_cksum::in4_cksum;
 use crate::netinet::ip_icmp::{ICMP_ECHO, ICMP_ECHOREPLY, ICMPCOUNTERS, IcmpPkt, icmp_init};
@@ -108,11 +108,11 @@ pub(crate) fn configure(ifp: &'static Ifnet, addr: [u8; 4], mask: [u8; 4]) {
     ifra.ifra_mask = sin(mask);
     // SAFETY: an `in_aliasreq`, from the kernel itself.
     unsafe {
-        in_control(
-            ptr::null(),
+        in_ioctl(
             SIOCAIFADDR,
             ptr::from_mut(&mut ifra).cast(),
             Some(ifp),
+            true,
         )
     }
     .expect("SIOCAIFADDR");
@@ -125,11 +125,11 @@ pub(crate) fn unconfigure(ifp: &'static Ifnet, addr: [u8; 4]) {
     *ifra.ifra_addr_mut() = sin(addr);
     // SAFETY: an `in_aliasreq`, from the kernel itself.
     unsafe {
-        in_control(
-            ptr::null(),
+        in_ioctl(
             SIOCDIFADDR,
             ptr::from_mut(&mut ifra).cast(),
             Some(ifp),
+            true,
         )
     }
     .expect("SIOCDIFADDR");

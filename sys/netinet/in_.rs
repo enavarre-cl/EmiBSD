@@ -126,11 +126,11 @@
 //!   name this struct also needs.
 //! - `satosin`, `satosin_const` and `sintosa` are pointer casts (`docs/C_TO_RUST.md`);
 //!   `in_hosteq` and `in_nullhost` are `const fn`s.
-//! - `in_control`'s `struct socket *` stays the raw pointer `ifioctl` hands down: it is read
-//!   as a `Socket` for the `SS_PRIV` test. A NULL socket is the kernel's own request and
-//!   privileged (the boot self-test configures an interface that way). `MROUTING`
-//!   (`mrt_ioctl`) is not configured. `ifioctl`'s `pru_control` (`net/if_.rs`) reaches
-//!   `in_control` for `AF_INET`.
+//! - `in_control` has the `pru_control` signature (`sys/protosw.rs`): the socket, and the
+//!   kernel copy of the request as a byte slice, handed to `in_ioctl` (through an aligned
+//!   copy if needed) with the socket's `SS_PRIV`. The kernel's own requests (the boot
+//!   self-test configures an interface without a socket) call `in_ioctl` as privileged.
+//!   `MROUTING` (`mrt_ioctl`) is not configured.
 //! - The address `ioctl`s are `unsafe fn`s over `caddr_t data` (`docs/C_TO_RUST.md`, the
 //!   `ioctl` row); the `struct sockaddr_in *` the C keeps into the request are copies or raw
 //!   pointers into it. `in_ioctl_set_ifaddr` and `in_ioctl_change_ifaddr` share the
@@ -143,7 +143,6 @@
 //!   igmp_pktinfo`'s `ipi_ifidx` stays 0, as the C's does when IGMP has nothing to send).
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
-use core::ffi::c_void;
 use core::mem::{offset_of, size_of};
 use core::ptr::{self, NonNull};
 
@@ -166,10 +165,12 @@ use crate::net::rtable::rtable_l2;
 use crate::netinet::in_var::{InAliasreq, InIfaddr, InMulti, ifatoia, ifmatoinm};
 use crate::sys::endian::{htonl, ntohl};
 use crate::sys::errno::Errno;
+use crate::sys::ioccom::iocparm_len;
 use crate::sys::malloc::{M_IFADDR, M_IPMADDR, M_WAITOK, M_ZERO};
 use crate::sys::mbuf::{Mbuf, mtod};
 use crate::sys::refcnt::{DT_REFCNT_IDX_IFADDR, DT_REFCNT_IDX_IFMADDR};
 use crate::sys::socket::{AF_INET, Sockaddr};
+use crate::sys::socketvar::{SS_PRIV, Socket};
 use crate::sys::sockio::{
     SIOCADDMULTI, SIOCAIFADDR, SIOCDELMULTI, SIOCDIFADDR, SIOCGIFADDR, SIOCGIFBRDADDR,
     SIOCGIFDSTADDR, SIOCGIFNETMASK, SIOCSIFADDR, SIOCSIFBRDADDR, SIOCSIFDSTADDR, SIOCSIFNETMASK,
@@ -817,28 +818,40 @@ pub fn in_ifp2ia(ifp: &Ifnet) -> Option<&'static InIfaddr> {
 }
 
 /// `in_control`: the `pru_control` of the Internet protocols: the address `ioctl`s on
-/// interface `ifp`.
-///
-/// # Safety
-///
-/// `data` points at the kernel copy of the request, aligned for and as long as the structure
-/// `cmd` encodes (`IfIoctlFn`'s contract). `so` is the `struct socket` the request came
-/// through, or NULL for a request from the kernel itself.
-pub unsafe fn in_control(
-    so: *const c_void,
+/// interface `ifp`. `data` is the kernel copy of the request (`sys_ioctl`), as long as `cmd`
+/// encodes; a request that is not aligned for its structure is handled through an aligned
+/// copy.
+pub fn in_control(
+    so: &'static Socket,
     cmd: u64,
-    data: *mut u8,
+    data: &mut [u8],
     ifp: Option<&'static Ifnet>,
 ) -> Result<(), Errno> {
-    // The kernel's own requests (a NULL socket) are privileged.
-    // SAFETY: a non-NULL `so` is the live socket of the ioctl (the caller's contract).
-    let privileged = so.is_null()
-        || unsafe { &*so.cast::<crate::sys::socketvar::Socket>() }
-            .has_state(crate::sys::socketvar::SS_PRIV);
+    let privileged = so.has_state(SS_PRIV);
 
     // MROUTING: SIOCGETVIFCNT, SIOCGETSGCNT through mrt_ioctl; not configured.
-    // SAFETY: the caller's contract.
-    unsafe { in_ioctl(cmd, data, ifp, privileged) }
+    let len = iocparm_len(cmd) as usize;
+    if data.len() < len {
+        return Err(Errno::EINVAL);
+    }
+    if data.as_ptr().align_offset(align_of::<u64>()) == 0 {
+        // SAFETY: `data` is the request, as long as `cmd` encodes (checked) and aligned
+        // (checked), exclusively ours for the call.
+        return unsafe { in_ioctl(cmd, data.as_mut_ptr(), ifp, privileged) };
+    }
+    // sys_ioctl's on-stack buffer: at most STK_PARAMS bytes.
+    let mut aligned = [0u64; 16];
+    if len > size_of_val(&aligned) {
+        return Err(Errno::EINVAL);
+    }
+    let bytes = aligned.as_mut_ptr().cast::<u8>();
+    // SAFETY: both buffers hold `len` bytes and do not overlap.
+    unsafe { ptr::copy_nonoverlapping(data.as_ptr(), bytes, len) };
+    // SAFETY: an aligned copy of the request, as long as `cmd` encodes.
+    let error = unsafe { in_ioctl(cmd, bytes, ifp, privileged) };
+    // SAFETY: as above, back into the caller's buffer.
+    unsafe { ptr::copy_nonoverlapping(bytes, data.as_mut_ptr(), len) };
+    error
 }
 
 /// The `ifreq` of an address `ioctl`.
@@ -855,7 +868,8 @@ unsafe fn data_ifreq<'a>(data: *mut u8) -> &'a mut Ifreq {
 ///
 /// # Safety
 ///
-/// As for [`in_control`].
+/// `data` points at the kernel copy of the request, aligned for and as long as the structure
+/// `cmd` encodes (`IfIoctlFn`'s contract).
 pub unsafe fn in_ioctl(
     cmd: u64,
     data: *mut u8,
@@ -1029,7 +1043,7 @@ fn in_ifaddr_alloc(ifp: &'static Ifnet) -> &'static InIfaddr {
 ///
 /// # Safety
 ///
-/// As for [`in_control`]: `data` is a `struct ifreq`.
+/// As for [`in_ioctl`]: `data` is a `struct ifreq`.
 unsafe fn in_ioctl_set_ifaddr(cmd: u64, data: *mut u8, ifp: &'static Ifnet) -> Result<(), Errno> {
     if cmd != SIOCSIFADDR {
         panic(format_args!("in_ioctl_set_ifaddr: invalid ioctl {cmd}"));
@@ -1071,7 +1085,7 @@ unsafe fn in_ioctl_set_ifaddr(cmd: u64, data: *mut u8, ifp: &'static Ifnet) -> R
 ///
 /// # Safety
 ///
-/// As for [`in_control`]: `data` is a `struct in_aliasreq`.
+/// As for [`in_ioctl`]: `data` is a `struct in_aliasreq`.
 unsafe fn in_ioctl_change_ifaddr(
     cmd: u64,
     data: *mut u8,
@@ -1211,7 +1225,7 @@ unsafe fn in_ioctl_change_ifaddr(
 ///
 /// # Safety
 ///
-/// As for [`in_control`]: `data` is a `struct ifreq`.
+/// As for [`in_ioctl`]: `data` is a `struct ifreq`.
 unsafe fn in_ioctl_get(cmd: u64, data: *mut u8, ifp: &'static Ifnet) -> Result<(), Errno> {
     // SAFETY: the caller's contract.
     let ifr = unsafe { data_ifreq(data) };

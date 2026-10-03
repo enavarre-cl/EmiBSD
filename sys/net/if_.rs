@@ -139,10 +139,9 @@
 //!   `tcp_if_output_tso` (`netinet/tcp_output.c`) is a local stand-in with the C's first two
 //!   tests: a packet that did not ask for TSO, or whose segments fit, goes back to the caller;
 //!   a TSO packet is reported and dropped with `ENOSYS`.
-//! - `pru_control` (`<sys/protosw.h>`) is a local stand-in: the `inetdomain` protocols have
-//!   no `pr_usrreqs` yet (`udp_usrreq.c`, `raw_ip.c`, `tcp_usrreq.c` are not ported), and the
-//!   kernel's own requests come with a NULL socket, so it is `in_control`, the `pru_control`
-//!   of every `inetdomain` protocol and the only one in the configured domains.
+//! - `ifioctl`'s `pru_control` goes through the socket's protocol (`sys/protosw.rs`), as in
+//!   C; the kernel's own requests come with a NULL socket and go to `in_ioctl` as privileged
+//!   ones (the boot self-test configures an interface that way).
 //! - `ifioctl`'s `struct socket *` is a raw pointer (NULL for the kernel's own requests) and
 //!   `caddr_t data` a raw pointer: `ifioctl` and the `ioctl` helpers are `unsafe fn`s whose contract is
 //!   `sys_ioctl`'s kernel copy of the argument. `SIOCSIFXFLAGS`'s `goto forceup` into the
@@ -224,12 +223,11 @@ use crate::net::rtable::{
 };
 use crate::net::rtsock::{rtm_ifannounce, rtm_ifchg};
 use crate::netinet::if_ether::{ETHER_ADDR_LEN, arpcom_of, arpintr, ether_is_multicast};
-use crate::netinet::in_::{
-    INADDR_ANY, SockaddrIn, in_control, in_ifdetach, satosin_const, sintosa,
-};
+use crate::netinet::in_::{INADDR_ANY, SockaddrIn, in_ifdetach, in_ioctl, satosin_const, sintosa};
 use crate::netinet::ip_input::{ipintr, ipv4_input};
 use crate::netinet::ip_output::{in_hdr_cksum_out, in_proto_cksum_out};
 use crate::sys::errno::Errno;
+use crate::sys::ioccom::iocparm_len;
 use crate::sys::kernel::HZ;
 use crate::sys::limits::USHRT_MAX;
 use crate::sys::malloc::{M_COUNTERS, M_DEVBUF, M_IFADDR, M_IFGROUP, M_NOWAIT, M_WAITOK, M_ZERO};
@@ -241,6 +239,7 @@ use crate::sys::mbuf::{
 use crate::sys::mutex::Mutex;
 use crate::sys::param::{clrbit, howmany, isclr, isset, setbit};
 use crate::sys::proc::Proc;
+use crate::sys::protosw;
 use crate::sys::queue::{ListHead, TailqEntry, TailqHead};
 use crate::sys::refcnt::Refcnt;
 use crate::sys::rwlock::{DT_RWLOCK_IDX_NETLOCK, Rwlock};
@@ -248,6 +247,7 @@ use crate::sys::sched::SPCF_SHOULDYIELD;
 use crate::sys::socket::{
     AF_INET, AF_INET6, AF_LINK, AF_MAX, RT_TABLEID_MAX, Sockaddr, SockaddrStorage,
 };
+use crate::sys::socketvar::Socket;
 use crate::sys::sockio::*;
 use crate::sys::systm::{
     net_assert_locked, net_assert_locked_exclusive, net_lock, net_lock_shared, net_unlock,
@@ -3276,9 +3276,9 @@ pub fn if_setrdomain(ifp: &'static Ifnet, rdomain: i32) -> Result<(), Errno> {
     Ok(())
 }
 
-/// `pru_control(so, cmd, data, ifp)` (`<sys/protosw.h>`): the protocol's `ioctl`. The
-/// request goes to `in_control`, the `pru_control` of every `inetdomain` protocol (see the
-/// module's deviations).
+/// `pru_control(so, cmd, data, ifp)` (`<sys/protosw.h>`) of the socket of the request: the
+/// protocol's `ioctl`. A request of the kernel itself (no socket) goes to `in_ioctl` as a
+/// privileged one (see the module's deviations).
 ///
 /// # Safety
 ///
@@ -3289,8 +3289,17 @@ unsafe fn pru_control(
     data: *mut u8,
     ifp: &'static Ifnet,
 ) -> Result<(), Errno> {
-    // SAFETY: the caller's contract.
-    unsafe { in_control(so, cmd, data, Some(ifp)) }
+    if so.is_null() {
+        // SAFETY: the caller's contract.
+        return unsafe { in_ioctl(cmd, data, Some(ifp), true) };
+    }
+    // SAFETY: a non-NULL `so` is the live socket of the request, which the caller's file
+    // reference keeps for the call (the `fp_socket` idiom).
+    let so: &'static Socket = unsafe { &*so.cast::<Socket>() };
+    // SAFETY: `data` is the kernel copy of the request, as long as `cmd` encodes (the
+    // caller's contract), exclusively ours for the call.
+    let data = unsafe { slice::from_raw_parts_mut(data, iocparm_len(cmd) as usize) };
+    protosw::pru_control(so, cmd, data, Some(ifp))
 }
 
 /// `ifioctl`: interface ioctls (`SIOC*` on a socket).
