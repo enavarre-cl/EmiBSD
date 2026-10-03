@@ -47,18 +47,8 @@
 //!   for `PR_WAITOK` yet, where the C waits and never fails; `dopipe` answers `ENOMEM`, as
 //!   for a failed buffer allocation.
 //! - `pipe_rundown` returns `bool` (the C's "non-zero if a rundown is ongoing").
-//! - `kern_event.c` is not ported, so there are no knotes and no `select(2)`/`poll(2)`:
-//!   `pipe_wakeup` reports its `knote_locked` (the call that wakes kqueue, select and poll
-//!   waiters) and still posts `SIGIO`; `pipe_kqfilter` takes the lock, finds the peer and
-//!   reports the registration (`struct knote`); `klist_init_rwlock`, `klist_insert_locked`,
-//!   `klist_remove` and `klist_free` are comments where the C calls them (`pipe_klist` is
-//!   left out of `struct pipe`). The filter bodies are ported as [`filt_piperead`],
-//!   [`filt_pipewrite`] and [`filt_pipeexcept`] over the pipe and the knote's `__EV_POLL`
-//!   flag, returning a [`PipeFilter`] (whether the event is active, `kn_data`, `EV_EOF`,
-//!   `__EV_HUP`) for `kern_event.c` to apply; `filt_pipedetach`, `filt_pipemodify` and
-//!   `filt_pipeprocess` report `klist_remove`/`knote_modify`/`knote_process`. The three
-//!   `struct filterops` wait for `<sys/event.h>`. The filters read the pipe of the knote's
-//!   file (`kn->kn_fp->f_data`), which callers pass.
+//! - The filters reach the pipe through the knote's file (`fp_pipe(kn.fp())`) and their
+//!   hooked pipe through `kn_hook` ([`kn_pipe`]).
 //! - `fo_ioctl`'s `data` is the kernel copy of the argument (`sys_ioctl`), at least an `int`
 //!   wide; the `int` is read and written in native byte order.
 //! - `KTRACE` is not configured (`ktrfds`).
@@ -70,6 +60,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::kassert;
 use crate::kern::kern_descrip::{closef, falloc, fdinsert, fdrelease, fdremove};
+use crate::kern::kern_event::{
+    klist_free, klist_init_rwlock, klist_insert_locked, klist_remove, knote_locked,
+};
 use crate::kern::kern_rwlock::{
     rw_assert_anylock, rw_assert_wrlock, rw_enter_read, rw_enter_write, rw_exit_read,
     rw_exit_write, rw_init,
@@ -83,7 +76,10 @@ use crate::kern::subr_prf::panic;
 use crate::machine::copy::copyout;
 use crate::machine::intr::IPL_MPFLOOR;
 use crate::sys::errno::Errno;
-use crate::sys::event::Knote;
+use crate::sys::event::{
+    __EV_HUP, __EV_POLL, __EV_SELECT, EV_EOF, EVFILT_EXCEPT, EVFILT_READ, EVFILT_WRITE,
+    FILTEROP_ISFD, FILTEROP_MPSAFE, Filterops, Kevent, Knote, knote_modify, knote_process,
+};
 use crate::sys::fcntl::{FNONBLOCK, FREAD, FWRITE, O_CLOEXEC, O_CLOFORK};
 use crate::sys::file::{DTYPE_PIPE, File, Fileops, frele};
 use crate::sys::filedesc::{UF_EXCLOSE, UF_FORKCLOSE, fdplock, fdpunlock};
@@ -106,7 +102,6 @@ use crate::sys::systm::{INFSLP, SysArgs, sysargs};
 use crate::sys::ttycom::{TIOCGPGRP, TIOCSPGRP};
 use crate::sys::types::{Blkcnt, Blksize, Off, Register};
 use crate::sys::uio::Uio;
-use crate::unported;
 use crate::uvm::uvm_km::{KD_WAITOK, KP_PAGEABLE, KV_ANY, km_alloc, km_free};
 
 /// `MINPIPESIZE`: below this many buffered bytes a reader wakes a blocked writer (write
@@ -144,21 +139,6 @@ impl Default for PipePair {
     }
 }
 
-/// What a pipe filter reports through its knote, for `kern_event.c` to apply once it exists:
-/// the filter's return value, `kn_data`, and whether it sets `EV_EOF` and `__EV_HUP` in
-/// `kn_flags`. Not a C type (see the module's deviations).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PipeFilter {
-    /// The filter's result: the event is active.
-    pub active: bool,
-    /// `kn->kn_data`, when the filter sets it.
-    pub kn_data: Option<i64>,
-    /// `kn->kn_flags |= EV_EOF`.
-    pub eof: bool,
-    /// `kn->kn_flags |= __EV_HUP`.
-    pub hup: bool,
-}
-
 /// `pipeops`: the interfaces to the outside world.
 static PIPEOPS: Fileops = Fileops {
     fo_read: pipe_read,
@@ -168,6 +148,36 @@ static PIPEOPS: Fileops = Fileops {
     fo_stat: pipe_stat,
     fo_close: pipe_close,
     fo_seek: None,
+};
+
+/// `pipe_rfiltops`: `EVFILT_READ` on a pipe.
+pub static PIPE_RFILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD | FILTEROP_MPSAFE,
+    f_attach: None,
+    f_detach: Some(filt_pipedetach),
+    f_event: Some(filt_piperead),
+    f_modify: Some(filt_pipemodify),
+    f_process: Some(filt_pipeprocess),
+};
+
+/// `pipe_wfiltops`: `EVFILT_WRITE` on a pipe.
+pub static PIPE_WFILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD | FILTEROP_MPSAFE,
+    f_attach: None,
+    f_detach: Some(filt_pipedetach),
+    f_event: Some(filt_pipewrite),
+    f_modify: Some(filt_pipemodify),
+    f_process: Some(filt_pipeprocess),
+};
+
+/// `pipe_efiltops`: `EVFILT_EXCEPT` on a pipe (poll's hang-up only).
+pub static PIPE_EFILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD | FILTEROP_MPSAFE,
+    f_attach: None,
+    f_detach: Some(filt_pipedetach),
+    f_event: Some(filt_pipeexcept),
+    f_modify: Some(filt_pipemodify),
+    f_process: Some(filt_pipeprocess),
 };
 
 /// `nbigpipe`: the number of pipes whose buffer is `BIG_PIPE_SIZE`.
@@ -190,6 +200,17 @@ pub fn fp_pipe(fp: &File) -> &Pipe {
     match unsafe { fp.f_data.get().cast::<Pipe>().as_ref() } {
         Some(pipe) => pipe,
         None => panic(format_args!("file {:p}: pipe already closed", fp)),
+    }
+}
+
+/// `kn->kn_hook` of a pipe knote: the pipe whose klist holds it.
+pub fn kn_pipe(kn: &Knote) -> &Pipe {
+    // SAFETY: `pipe_kqfilter` points `kn_hook` at a pipe of the pair the knote's file
+    // belongs to; the knote is detached (`filt_pipedetach`) before that file's last close
+    // destroys the pipe, and the pair outlives both of its pipes.
+    match unsafe { kn.kn_hook.get().cast::<Pipe>().as_ref() } {
+        Some(pipe) => pipe,
+        None => panic(format_args!("knote {:p}: no pipe", kn)),
     }
 }
 
@@ -418,8 +439,7 @@ pub fn pipe_iosleep(cpipe: &Pipe, wmesg: &'static str) -> Result<(), Errno> {
 pub fn pipe_wakeup(cpipe: &Pipe) {
     rw_assert_wrlock(cpipe.lock());
 
-    // knote_locked(&cpipe->pipe_klist, 0): the kqueue, select and poll waiters.
-    let _ = unported!("pipe_wakeup: knote_locked (kern_event.c)");
+    knote_locked(&cpipe.pipe_klist, 0);
 
     if cpipe.has_state(PIPE_ASYNC) {
         pgsigio(&cpipe.pipe_sigio, SIGIO, false);
@@ -874,19 +894,44 @@ pub fn pipe_rundown(cpipe: &Pipe) -> bool {
 }
 
 /// `fo_kqfilter` of a pipe: attaches a read, write or (poll's) except knote.
-pub fn pipe_kqfilter(fp: &File, _kn: &Knote) -> Result<(), Errno> {
-    let rpipe = fp_pipe(fp);
+pub fn pipe_kqfilter(_fp: &File, kn: &Knote) -> Result<(), Errno> {
+    let rpipe = fp_pipe(kn.fp());
     let lock = rpipe.lock();
+    let mut error = Ok(());
 
     rw_enter_write(lock);
-    let _wpipe = pipe_peer(rpipe);
+    let wpipe = pipe_peer(rpipe);
 
-    // switch (kn->kn_filter): EVFILT_READ hooks the knote on `rpipe`; EVFILT_WRITE on the
-    // peer, or on `rpipe` once the other end is closed (the filter then always reports an
-    // event); EVFILT_EXCEPT only for poll (EPERM for select, EINVAL for kevent(2)); others
-    // EINVAL. kn_fop is pipe_rfiltops/pipe_wfiltops/pipe_efiltops, kn_hook the pipe, and
-    // klist_insert_locked(&pipe->pipe_klist, kn): struct knote (kern_event.c).
-    let error = Err(unported!("pipe_kqfilter: struct knote (kern_event.c)"));
+    match kn.kn_filter().get() {
+        EVFILT_READ => {
+            kn.kn_fop.set(Some(&PIPE_RFILTOPS));
+            kn.kn_hook.set(ptr::from_ref(rpipe).cast_mut().cast());
+            klist_insert_locked(&rpipe.pipe_klist, kn);
+        }
+        EVFILT_WRITE => {
+            // The other end of the pipe has been closed. Since the filter now always
+            // indicates a pending event, attach the knote to the current side to proceed
+            // with the registration.
+            let wpipe = wpipe.unwrap_or(rpipe);
+            kn.kn_fop.set(Some(&PIPE_WFILTOPS));
+            kn.kn_hook.set(ptr::from_ref(wpipe).cast_mut().cast());
+            klist_insert_locked(&wpipe.pipe_klist, kn);
+        }
+        EVFILT_EXCEPT => {
+            if kn.has_flags(__EV_SELECT) {
+                // Prevent triggering exceptfds.
+                error = Err(Errno::EPERM);
+            } else if !kn.has_flags(__EV_POLL) {
+                // Disallow usage through kevent(2).
+                error = Err(Errno::EINVAL);
+            } else {
+                kn.kn_fop.set(Some(&PIPE_EFILTOPS));
+                kn.kn_hook.set(ptr::from_ref(rpipe).cast_mut().cast());
+                klist_insert_locked(&rpipe.pipe_klist, kn);
+            }
+        }
+        _ => error = Err(Errno::EINVAL),
+    }
 
     rw_exit_write(lock);
 
@@ -894,91 +939,94 @@ pub fn pipe_kqfilter(fp: &File, _kn: &Knote) -> Result<(), Errno> {
 }
 
 /// `filt_pipedetach(kn)`: unhooks the knote from `kn->kn_hook`'s list.
-pub fn filt_pipedetach(_cpipe: &Pipe) {
-    // klist_remove(&cpipe->pipe_klist, kn): kern_event.c.
-    let _ = unported!("filt_pipedetach: klist_remove (kern_event.c)");
+pub fn filt_pipedetach(kn: &Knote) {
+    let cpipe = kn_pipe(kn);
+
+    klist_remove(&cpipe.pipe_klist, kn);
 }
 
-/// `filt_piperead(kn, hint)` for the pipe of the knote's file; `poll` is
-/// `kn->kn_flags & __EV_POLL`.
-pub fn filt_piperead(rpipe: &Pipe, poll: bool) -> PipeFilter {
+/// `filt_piperead(kn, hint)`: readable when the buffer holds data; EOF (and, for poll, a
+/// hang-up) once the writer is gone.
+pub fn filt_piperead(kn: &Knote, _hint: i64) -> bool {
+    let rpipe = fp_pipe(kn.fp());
+
     rw_assert_wrlock(rpipe.lock());
 
     let wpipe = pipe_peer(rpipe);
 
-    let kn_data = i64::from(rpipe.pipe_buffer.cnt.get());
+    kn.kn_data().set(i64::from(rpipe.pipe_buffer.cnt.get()));
 
     if rpipe.has_state(PIPE_EOF) || wpipe.is_none() {
-        return PipeFilter {
-            active: true,
-            kn_data: Some(kn_data),
-            eof: true,
-            hup: poll,
-        };
+        kn.set_flags(EV_EOF);
+        if kn.has_flags(__EV_POLL) {
+            kn.set_flags(__EV_HUP);
+        }
+        return true;
     }
 
-    PipeFilter {
-        active: kn_data > 0,
-        kn_data: Some(kn_data),
-        ..PipeFilter::default()
-    }
+    kn.kn_data().get() > 0
 }
 
-/// `filt_pipewrite(kn, hint)` for the pipe of the knote's file; `poll` is
-/// `kn->kn_flags & __EV_POLL`.
-pub fn filt_pipewrite(rpipe: &Pipe, poll: bool) -> PipeFilter {
+/// `filt_pipewrite(kn, hint)`: writable when the peer's buffer has room for an atomic
+/// write; EOF (and, for poll, a hang-up) once the reader is gone.
+pub fn filt_pipewrite(kn: &Knote, _hint: i64) -> bool {
+    let rpipe = fp_pipe(kn.fp());
+
     rw_assert_wrlock(rpipe.lock());
 
     let Some(wpipe) = pipe_peer(rpipe) else {
-        return PipeFilter {
-            active: true,
-            kn_data: Some(0),
-            eof: true,
-            hup: poll,
-        };
+        kn.kn_data().set(0);
+        kn.set_flags(EV_EOF);
+        if kn.has_flags(__EV_POLL) {
+            kn.set_flags(__EV_HUP);
+        }
+        return true;
     };
-    let kn_data = i64::from(wpipe.pipe_buffer.size.get() - wpipe.pipe_buffer.cnt.get());
+    kn.kn_data().set(i64::from(
+        wpipe.pipe_buffer.size.get() - wpipe.pipe_buffer.cnt.get(),
+    ));
 
-    PipeFilter {
-        active: kn_data >= PIPE_BUF as i64,
-        kn_data: Some(kn_data),
-        ..PipeFilter::default()
-    }
+    kn.kn_data().get() >= PIPE_BUF as i64
 }
 
-/// `filt_pipeexcept(kn, hint)` for the pipe of the knote's file; `poll` is
-/// `kn->kn_flags & __EV_POLL`.
-pub fn filt_pipeexcept(rpipe: &Pipe, poll: bool) -> PipeFilter {
-    let mut active = PipeFilter::default();
+/// `filt_pipeexcept(kn, hint)`: for poll only, the hang-up of a pipe whose other end is
+/// gone.
+pub fn filt_pipeexcept(kn: &Knote, _hint: i64) -> bool {
+    let rpipe = fp_pipe(kn.fp());
+    let mut active = false;
 
     rw_assert_wrlock(rpipe.lock());
 
     let wpipe = pipe_peer(rpipe);
 
-    if poll && (rpipe.has_state(PIPE_EOF) || wpipe.is_none()) {
-        active.hup = true;
-        active.active = true;
+    if kn.has_flags(__EV_POLL) && (rpipe.has_state(PIPE_EOF) || wpipe.is_none()) {
+        kn.set_flags(__EV_HUP);
+        active = true;
     }
 
     active
 }
 
 /// `filt_pipemodify(kev, kn)`: `knote_modify` under the pipe's lock.
-pub fn filt_pipemodify(rpipe: &Pipe) -> bool {
+pub fn filt_pipemodify(kev: &mut Kevent, kn: &Knote) -> bool {
+    let rpipe = fp_pipe(kn.fp());
+
     rw_enter_write(rpipe.lock());
-    let _ = unported!("filt_pipemodify: knote_modify (kern_event.c)");
+    let active = knote_modify(kev, kn);
     rw_exit_write(rpipe.lock());
 
-    false
+    active
 }
 
 /// `filt_pipeprocess(kn, kev)`: `knote_process` under the pipe's lock.
-pub fn filt_pipeprocess(rpipe: &Pipe) -> bool {
+pub fn filt_pipeprocess(kn: &Knote, kev: Option<&mut Kevent>) -> bool {
+    let rpipe = fp_pipe(kn.fp());
+
     rw_enter_write(rpipe.lock());
-    let _ = unported!("filt_pipeprocess: knote_process (kern_event.c)");
+    let active = knote_process(kn, kev);
     rw_exit_write(rpipe.lock());
 
-    false
+    active
 }
 
 /// `pipe_init`: the pool of pipe pairs.
@@ -1014,8 +1062,11 @@ pub fn pipe_pair_create() -> Option<&'static PipePair> {
     pp.pp_wpipe.pipe_lock.set(&pp.pp_lock);
     pp.pp_rpipe.pipe_lock.set(&pp.pp_lock);
 
-    // klist_init_rwlock(&pp->pp_wpipe.pipe_klist, &pp->pp_lock) and the same for
-    // pp_rpipe: kern_event.c.
+    // SAFETY: `pp_lock` is a member of the same pair, which outlives both of its pipes.
+    unsafe {
+        klist_init_rwlock(&pp.pp_wpipe.pipe_klist, &pp.pp_lock);
+        klist_init_rwlock(&pp.pp_rpipe.pipe_klist, &pp.pp_lock);
+    }
 
     if pipe_create(&pp.pp_wpipe).is_err() || pipe_create(&pp.pp_rpipe).is_err() {
         // err:
@@ -1036,7 +1087,10 @@ pub fn pipe_pair_create() -> Option<&'static PipePair> {
 /// `pp` came from `pipe_pair_create`, both of its pipes are destroyed, and nothing refers
 /// to it any more.
 pub unsafe fn pipe_pair_destroy(pp: NonNull<PipePair>) {
-    // klist_free(&pp->pp_wpipe.pipe_klist) and the same for pp_rpipe: kern_event.c.
+    // SAFETY: the caller's contract: the pair is still allocated and unused.
+    let pair = unsafe { pp.as_ref() };
+    klist_free(&pair.pp_wpipe.pipe_klist);
+    klist_free(&pair.pp_rpipe.pipe_klist);
     pool_put(&PIPE_PAIR_POOL, pp.cast());
 }
 

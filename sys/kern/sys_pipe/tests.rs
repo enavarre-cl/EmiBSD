@@ -1,7 +1,8 @@
 //! Host tests for pipes: the circular buffer through `pipe_read`/`pipe_write` (partial
 //! reads, wraparound, atomic writes of at most `PIPE_BUF` bytes, non-blocking `EAGAIN`),
 //! EOF and `EPIPE` after one side is closed, the pair going back to the pool, `pipe_ioctl`,
-//! `pipe_stat`, `pipe_rundown` and the filter bodies.
+//! `pipe_stat`, `pipe_rundown` and the filters; with `kern_event.c`, a kqueue seeing a pipe
+//! become readable and poll/select on pipes through the kernel functions they run.
 //!
 //! The host double refuses pageable kernel memory (`km_alloc` with `kp_pageable` needs an
 //! MMU), so `pipe_pair_create` fails there, which the first test checks; the others build
@@ -15,10 +16,23 @@ use std::vec::Vec;
 use std::{assert, assert_eq, vec};
 
 use super::*;
+use crate::kern::kern_descrip::fnew;
+use crate::kern::kern_event::tests::thread as fd_thread;
+use crate::kern::kern_event::tests::{close_fd, close_kqueue, install, new_kqueue, scan};
+use crate::kern::kern_event::{
+    kqpoll_done, kqpoll_exit, kqpoll_init, kqueue_register, kqueue_scan, kqueue_scan_finish,
+    kqueue_scan_setup,
+};
 use crate::kern::kern_proc::procinit;
 use crate::kern::kern_prot::crget;
 use crate::kern::subr_pool::tests::setup_real_memory;
+use crate::kern::sys_generic::{ppollcollect, ppollregister, pselcollect, pselregister};
+use crate::sys::event::{EV_ADD, EV_ONESHOT, KqueueScanState, ev_set, klist_empty};
+use crate::sys::eventvar::KQ_NEVENTS;
 use crate::sys::filio::FIONBIO;
+use crate::sys::poll::{POLLHUP, POLLIN, POLLNVAL, POLLOUT, Pollfd};
+use crate::sys::select::FdMask;
+use crate::sys::time::Timespec;
 use crate::sys::uio::{Iovec, UioRw, UioSeg};
 
 /// The size of the test pipes' buffers.
@@ -52,6 +66,8 @@ fn test_pair() -> (&'static PipePair, &'static File, &'static File) {
         pipe.pipe_buffer.buffer.set(buffer.as_mut_ptr());
         pipe.pipe_buffer.size.set(SIZE as u32);
         sigio_init(&pipe.pipe_sigio);
+        // SAFETY: the pair's lock outlives its pipes.
+        unsafe { klist_init_rwlock(&pipe.pipe_klist, &pp.pp_lock) };
     }
     rw_init(&pp.pp_lock, "pipelk");
 
@@ -279,17 +295,21 @@ fn ioctl_and_stat() {
 fn rundown_and_filters() {
     let _g = setup();
     let (pp, rf, wf) = test_pair();
-    let (r, w) = (&pp.pp_rpipe, &pp.pp_wpipe);
+    let w = &pp.pp_wpipe;
 
     assert_eq!(write(wf, b"abc"), (Ok(()), 3));
 
     rw_enter_write(&pp.pp_lock);
     // Readable with 3 bytes; the write side has 16 bytes of room, less than PIPE_BUF.
-    let rd = filt_piperead(r, false);
-    assert_eq!((rd.active, rd.kn_data, rd.eof), (true, Some(3), false));
-    let wr = filt_pipewrite(w, false);
-    assert_eq!((wr.active, wr.kn_data), (false, Some(13)));
-    assert_eq!(filt_pipeexcept(r, true), PipeFilter::default());
+    let rd = knote_on(rf, EVFILT_READ, 0);
+    assert!(filt_piperead(&rd, 0));
+    assert_eq!((rd.kn_data().get(), rd.has_flags(EV_EOF)), (3, false));
+    let wr = knote_on(wf, EVFILT_WRITE, 0);
+    assert!(!filt_pipewrite(&wr, 0));
+    assert_eq!(wr.kn_data().get(), 13);
+    let ex = knote_on(rf, EVFILT_EXCEPT, __EV_POLL);
+    assert!(!filt_pipeexcept(&ex, 0));
+    assert!(!ex.has_flags(__EV_HUP));
 
     w.pipe_busy.set(1);
     w.set_state(PIPE_WANTD | PIPE_WANTR);
@@ -301,20 +321,221 @@ fn rundown_and_filters() {
 
     close(rf);
     rw_enter_write(&pp.pp_lock);
-    let wr = filt_pipewrite(w, true);
-    assert_eq!(
-        wr,
-        PipeFilter {
-            active: true,
-            kn_data: Some(0),
-            eof: true,
-            hup: true
-        }
-    );
-    let ex = filt_pipeexcept(w, true);
-    assert!(ex.active && ex.hup);
-    assert!(!filt_pipeexcept(w, false).active);
+    let wr = knote_on(wf, EVFILT_WRITE, __EV_POLL);
+    assert!(filt_pipewrite(&wr, 0));
+    assert_eq!(wr.kn_data().get(), 0);
+    assert!(wr.has_flags(EV_EOF) && wr.has_flags(__EV_HUP));
+    let ex = knote_on(wf, EVFILT_EXCEPT, __EV_POLL);
+    assert!(filt_pipeexcept(&ex, 0) && ex.has_flags(__EV_HUP));
+    let ex = knote_on(wf, EVFILT_EXCEPT, 0);
+    assert!(!filt_pipeexcept(&ex, 0));
     rw_exit_write(&pp.pp_lock);
 
     close(wf);
+}
+
+/// A knote on `fp` for calling the filters directly: `filter` and `flags` set.
+fn knote_on(fp: &'static File, filter: i16, flags: u16) -> Knote {
+    let kn = Knote::new();
+    kn.kn_fp().set(Some(fp));
+    kn.kn_filter().set(filter);
+    kn.kn_flags().set(flags);
+    kn
+}
+
+/// Real memory, the process, file, kqueue and pipe pools.
+fn setup_kq() -> MutexGuard<'static, ()> {
+    let guard = crate::kern::kern_event::tests::setup();
+    pipe_init();
+    guard
+}
+
+/// A linked pair with `size`-byte heap buffers whose files are descriptors 3 (the read end,
+/// `pp_rpipe`) and 4 (the write end, `pp_wpipe`) of the thread `p`.
+fn installed_pair(p: &Proc, size: usize) -> &'static PipePair {
+    let Some(mem) = pool_get(&PIPE_PAIR_POOL, PR_WAITOK | PR_ZERO) else {
+        panic!("pipe_pair_pool is empty");
+    };
+    let raw = mem.cast::<PipePair>().as_ptr();
+    // SAFETY: a fresh pool item, as in `pipe_pair_create`.
+    unsafe { raw.write(PipePair::new()) };
+    // SAFETY: as above.
+    let pp: &'static PipePair = unsafe { &*raw };
+    for (pipe, peer) in [(&pp.pp_wpipe, &pp.pp_rpipe), (&pp.pp_rpipe, &pp.pp_wpipe)] {
+        pipe.pipe_pair.set(raw);
+        pipe.pipe_peer.set(peer);
+        pipe.pipe_lock.set(&pp.pp_lock);
+        let buffer = vec![0u8; size].leak();
+        pipe.pipe_buffer.buffer.set(buffer.as_mut_ptr());
+        pipe.pipe_buffer.size.set(size as u32);
+        sigio_init(&pipe.pipe_sigio);
+        // SAFETY: the pair's lock outlives its pipes.
+        unsafe { klist_init_rwlock(&pipe.pipe_klist, &pp.pp_lock) };
+    }
+    rw_init(&pp.pp_lock, "pipelk");
+
+    for (fd, pipe) in [(3, &pp.pp_rpipe), (4, &pp.pp_wpipe)] {
+        let fp = fnew(p).unwrap();
+        fp.f_flag.store((FREAD | FWRITE) as u32, Ordering::SeqCst);
+        fp.f_type.set(DTYPE_PIPE);
+        fp.f_data.set(ptr::from_ref(pipe).cast_mut().cast());
+        fp.f_ops.set(Some(&PIPEOPS));
+        install(p, fd, fp);
+    }
+    pp
+}
+
+/// Closes descriptor `fd` of an `installed_pair`, its heap buffer dropped first.
+fn close_pipe_fd(p: &Proc, fd: i32) {
+    let fp = p.fd().ofile(fd as usize).unwrap();
+    fp_pipe(fp).pipe_buffer.buffer.set(ptr::null_mut());
+    close_fd(p, fd);
+}
+
+#[test]
+fn kevent_sees_a_pipe_become_readable() {
+    let _g = setup_kq();
+    let p = fd_thread();
+    let pp = installed_pair(p, PIPE_BUF * 2);
+    let kq = new_kqueue(p);
+    let wf = p.fd().ofile(4).unwrap();
+    let rf = p.fd().ofile(3).unwrap();
+    let mut out = [Kevent::default(); 4];
+
+    let mut kev = ev_set(3, EVFILT_READ, EV_ADD, 0, 0, 7);
+    assert_eq!(kqueue_register(kq, &mut kev, 0, Some(p)), Ok(()));
+    assert!(
+        !klist_empty(&pp.pp_rpipe.pipe_klist),
+        "hooked on the read side"
+    );
+    assert_eq!(scan(p, kq, &mut out), (0, Ok(())), "empty");
+
+    // The write wakes the reader's knote (pipe_wakeup's knote_locked).
+    assert_eq!(write(wf, b"hello"), (Ok(()), 5));
+    assert_eq!(kq.kq_count.get(), 1);
+    assert_eq!(scan(p, kq, &mut out), (1, Ok(())));
+    assert_eq!((out[0].ident, out[0].filter), (3, EVFILT_READ));
+    assert_eq!(
+        (out[0].data, out[0].udata, out[0].flags & EV_EOF),
+        (5, 7, 0)
+    );
+
+    // Drained: the next scan finds nothing.
+    assert_eq!(read(rf, 5).1, b"hello");
+    assert_eq!(scan(p, kq, &mut out), (0, Ok(())));
+
+    // EVFILT_WRITE on the write end: room for PIPE_BUF bytes.
+    let mut kev = ev_set(4, EVFILT_WRITE, EV_ADD | EV_ONESHOT, 0, 0, 8);
+    assert_eq!(kqueue_register(kq, &mut kev, 0, Some(p)), Ok(()));
+    assert_eq!(scan(p, kq, &mut out), (1, Ok(())));
+    assert_eq!((out[0].ident, out[0].data), (4, (PIPE_BUF * 2) as i64));
+    // EVFILT_EXCEPT is poll's only.
+    let mut kev = ev_set(3, EVFILT_EXCEPT, EV_ADD, 0, 0, 0);
+    assert_eq!(
+        kqueue_register(kq, &mut kev, 0, Some(p)),
+        Err(Errno::EINVAL)
+    );
+
+    // The writer goes away: EOF on the reader's knote.
+    close_pipe_fd(p, 4);
+    assert_eq!(scan(p, kq, &mut out), (1, Ok(())));
+    assert_eq!(out[0].flags & EV_EOF, EV_EOF);
+
+    close_pipe_fd(p, 3);
+    assert_eq!(kq.kq_nknotes.get(), 0);
+    close_kqueue(p, kq);
+}
+
+/// `doppoll` without the copies and the limit check (which need a `curproc`): register
+/// the pollfds on the thread's poll kqueue, collect what is ready without sleeping.
+fn poll_once(p: &Proc, pl: &mut [Pollfd]) -> usize {
+    let nfds = pl.len() as u32;
+    assert_eq!(kqpoll_init(p, nfds), Ok(()));
+    let (mut nevents, mut ncollected) = (0, 0);
+    ppollregister(p, pl, &mut nevents, &mut ncollected);
+    if nevents > 0 {
+        let scan = KqueueScanState::new();
+        // SAFETY: `scan` stays in place until `kqueue_scan_finish`.
+        unsafe { kqueue_scan_setup(&scan, p.kq()) };
+        let mut kev = [Kevent::default(); KQ_NEVENTS];
+        let mut ts = Timespec::new(0, 0);
+        let mut error = Ok(());
+        let count = nevents.min(KQ_NEVENTS);
+        let ready = kqueue_scan(&scan, count, &mut kev, Some(&mut ts), p, &mut error);
+        assert_eq!(error, Ok(()));
+        for k in &kev[..ready] {
+            ncollected += ppollcollect(p, k, pl);
+        }
+        kqueue_scan_finish(&scan);
+    }
+    kqpoll_done(p, nfds);
+    ncollected
+}
+
+/// `dopselect` likewise, over one word of each fd set: the three output words.
+fn select_once(p: &Proc, nd: usize, r: FdMask, w: FdMask) -> Result<[FdMask; 3], Errno> {
+    assert_eq!(kqpoll_init(p, nd as u32), Ok(()));
+    let pibits = [r, w, 0];
+    let mut pobits = [0 as FdMask; 3];
+    let mut ncollected = 0;
+    let result = pselregister(p, &pibits, 1, nd).and_then(|nevents| {
+        let scan = KqueueScanState::new();
+        // SAFETY: `scan` stays in place until `kqueue_scan_finish`.
+        unsafe { kqueue_scan_setup(&scan, p.kq()) };
+        let mut kev = [Kevent::default(); KQ_NEVENTS];
+        let mut ts = Timespec::new(0, 0);
+        let mut error = Ok(());
+        let count = nevents.min(KQ_NEVENTS);
+        let ready = kqueue_scan(&scan, count, &mut kev, Some(&mut ts), p, &mut error);
+        for k in &kev[..ready] {
+            if error.is_ok() {
+                error = pselcollect(p, k, &mut pobits, 1, &mut ncollected);
+            }
+        }
+        kqueue_scan_finish(&scan);
+        error
+    });
+    kqpoll_done(p, nd as u32);
+    result.map(|()| pobits)
+}
+
+#[test]
+fn poll_and_select_on_a_pipe() {
+    let _g = setup_kq();
+    let p = fd_thread();
+    installed_pair(p, PIPE_BUF * 2);
+    let wf = p.fd().ofile(4).unwrap();
+    let pfd = |fd, events| Pollfd {
+        fd,
+        events,
+        revents: 0,
+    };
+
+    // Empty: only the write end is ready.
+    let mut pl = [pfd(3, POLLIN), pfd(4, POLLOUT)];
+    assert_eq!(poll_once(p, &mut pl), 1);
+    assert_eq!((pl[0].revents, pl[1].revents), (0, POLLOUT));
+    assert_eq!(select_once(p, 5, 1 << 3, 1 << 4), Ok([0, 1 << 4, 0]));
+
+    // Data in the pipe: both are ready (the knotes of the earlier calls are reused).
+    assert_eq!(write(wf, b"ping"), (Ok(()), 4));
+    let mut pl = [pfd(3, POLLIN), pfd(4, POLLOUT)];
+    assert_eq!(poll_once(p, &mut pl), 2);
+    assert_eq!((pl[0].revents, pl[1].revents), (POLLIN, POLLOUT));
+    assert_eq!(select_once(p, 5, 1 << 3, 1 << 4), Ok([1 << 3, 1 << 4, 0]));
+
+    // The writer is gone: the reader sees EOF as POLLIN | POLLHUP, and select as readable.
+    close_pipe_fd(p, 4);
+    let mut pl = [pfd(3, POLLIN)];
+    assert_eq!(poll_once(p, &mut pl), 1);
+    assert_eq!(pl[0].revents, POLLIN | POLLHUP);
+    assert_eq!(select_once(p, 5, 1 << 3, 0), Ok([1 << 3, 0, 0]));
+    // A closed descriptor: POLLNVAL for poll, EBADF for select.
+    let mut pl = [pfd(4, POLLIN)];
+    assert_eq!(poll_once(p, &mut pl), 1);
+    assert_eq!(pl[0].revents, POLLNVAL);
+    assert_eq!(select_once(p, 5, 1 << 4, 0), Err(Errno::EBADF));
+
+    close_pipe_fd(p, 3);
+    kqpoll_exit(p);
 }

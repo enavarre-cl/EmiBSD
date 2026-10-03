@@ -43,6 +43,10 @@
 //! `fstat(2)` and `getsockopt(2)` know for a socket, `shutdown(2)` gives the peer EOF and the
 //! writer `EPIPE`; a datagram pair keeps message boundaries (a short read truncates); and
 //! `sendmsg(2)`/`recvmsg(2)` pass a descriptor in an `SCM_RIGHTS` message.
+//! With `kern_event.c` it watches a pipe with `kqueue(2)`/`kevent(2)` (`EV_ADD` on the read
+//! end, a write, the event with its byte count; `EV_EOF` once the writer is closed), sees the
+//! same pipe through `poll(2)` and `select(2)`, and sleeps in `kevent(2)` until a one-shot
+//! `EVFILT_TIMER` fires.
 
 #![no_std]
 #![no_main]
@@ -197,6 +201,10 @@ const MSG_DONTWAIT: usize = 0x80;
 const MSG_NOSIGNAL: usize = 0x400;
 /// `S_IFSOCK`.
 const S_IFSOCK: u32 = 0o140000;
+/// `SYS_kevent`.
+const SYS_KEVENT: usize = 72;
+/// `SYS_kqueue`.
+const SYS_KQUEUE: usize = 269;
 /// `CLOCK_REALTIME`.
 const CLOCK_REALTIME: usize = 0;
 /// `CLOCK_MONOTONIC`.
@@ -315,6 +323,44 @@ const SIGUSR1: usize = 30;
 const SIG_BLOCK: usize = 1;
 /// `SIG_SETMASK`.
 const SIG_SETMASK: usize = 3;
+
+/// `EVFILT_READ`.
+const EVFILT_READ: i16 = -1;
+/// `EVFILT_TIMER`.
+const EVFILT_TIMER: i16 = -7;
+/// `EV_ADD`.
+const EV_ADD: u16 = 0x0001;
+/// `EV_ONESHOT`.
+const EV_ONESHOT: u16 = 0x0010;
+/// `EV_EOF`.
+const EV_EOF: u16 = 0x8000;
+/// `POLLIN`.
+const POLLIN: i16 = 0x0001;
+/// `POLLOUT`.
+const POLLOUT: i16 = 0x0004;
+/// `POLLHUP`.
+const POLLHUP: i16 = 0x0010;
+
+/// `struct kevent`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct Kevent {
+    ident: usize,
+    filter: i16,
+    flags: u16,
+    fflags: u32,
+    data: i64,
+    udata: usize,
+}
+
+/// `struct pollfd`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Pollfd {
+    fd: i32,
+    events: i16,
+    revents: i16,
+}
 
 /// `struct sigaction`: the handler, the mask to apply while it runs, the `SA_*` flags.
 #[repr(C)]
@@ -851,6 +897,13 @@ extern "C" fn init_main(sp: *const usize) -> ! {
     } else {
         status = 13;
     }
+    if kqueues() {
+        if write(1, b"init: kqueue ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 14;
+    }
     if processes() {
         if write(1, b"init: processes ok\n").is_err() {
             status = 1;
@@ -1235,6 +1288,128 @@ fn sockets() -> bool {
     for fd in [a, b, c, d, newfd, s] {
         ok &= call(SYS_CLOSE, fd, 0, 0) == (0, false);
     }
+    ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
+}
+
+/// `kevent(kq, changes, nchanges, events, nevents, timeout)`: the number of events.
+fn kevent(
+    kq: usize,
+    changes: &[Kevent],
+    events: &mut [Kevent],
+    timeout: Option<&[i64; 2]>,
+) -> (usize, bool) {
+    syscall6(
+        SYS_KEVENT,
+        [
+            kq,
+            changes.as_ptr() as usize,
+            changes.len(),
+            events.as_mut_ptr() as usize,
+            events.len(),
+            timeout.map_or(0, |t| t.as_ptr() as usize),
+        ],
+    )
+}
+
+/// `kern_event.c` seen from user mode: a `kqueue(2)` reports a pipe becoming readable (with
+/// its byte count and the caller's `udata`) and its writer going away (`EV_EOF`); `poll(2)`
+/// and `select(2)` see the same pipe readable and writable; `kevent(2)` without a timeout
+/// sleeps until a one-shot `EVFILT_TIMER` fires, which then is gone.
+fn kqueues() -> bool {
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let zero = [0i64, 0];
+    let mut ev = [Kevent::default(); 2];
+    let mut buf = [0u8; 8];
+
+    let Some([r, w]) = pipe(None) else {
+        return false;
+    };
+    let (kq, failed) = call(SYS_KQUEUE, 0, 0, 0);
+    if failed {
+        return false;
+    }
+
+    // EV_ADD on the read end: registered, nothing pending yet.
+    let add = [Kevent {
+        ident: r,
+        filter: EVFILT_READ,
+        flags: EV_ADD,
+        udata: 0x5eed,
+        ..Kevent::default()
+    }];
+    let mut ok = kevent(kq, &add, &mut [], None) == (0, false);
+    ok &= kevent(kq, &[], &mut ev, Some(&zero)) == (0, false);
+
+    // A write makes it readable: one event, with the byte count and the udata.
+    ok &= write(w, b"kq!") == Ok(3);
+    ok &= kevent(kq, &[], &mut ev, None) == (1, false);
+    ok &= ev[0].ident == r && ev[0].filter == EVFILT_READ;
+    ok &= ev[0].data == 3 && ev[0].udata == 0x5eed && ev[0].flags & EV_EOF == 0;
+
+    // poll(2): the read end is readable, the write end writable.
+    let mut pfds = [
+        Pollfd {
+            fd: r as i32,
+            events: POLLIN,
+            revents: 0,
+        },
+        Pollfd {
+            fd: w as i32,
+            events: POLLOUT,
+            revents: 0,
+        },
+    ];
+    ok &= call(SYS_POLL, pfds.as_mut_ptr() as usize, 2, 0) == (2, false);
+    ok &= pfds[0].revents == POLLIN && pfds[1].revents == POLLOUT;
+
+    // select(2): the same, through fd sets.
+    let mut rset = [1u32 << r];
+    let mut wset = [1u32 << w];
+    let tv0 = [0i64, 0];
+    let nd = w.max(r) + 1;
+    ok &= syscall6(
+        SYS_SELECT,
+        [
+            nd,
+            rset.as_mut_ptr() as usize,
+            wset.as_mut_ptr() as usize,
+            0,
+            tv0.as_ptr() as usize,
+            0,
+        ],
+    ) == (2, false);
+    ok &= rset[0] == 1 << r && wset[0] == 1 << w;
+
+    // Drained: nothing pending.
+    ok &= call(SYS_READ, r, buf.as_mut_ptr() as usize, buf.len()) == (3, false);
+    ok &= kevent(kq, &[], &mut ev, Some(&zero)) == (0, false);
+
+    // A one-shot 20 ms timer: kevent(2) without a timeout sleeps until it fires.
+    let timer = [Kevent {
+        ident: 1,
+        filter: EVFILT_TIMER,
+        flags: EV_ADD | EV_ONESHOT,
+        data: 20,
+        ..Kevent::default()
+    }];
+    ok &= kevent(kq, &timer, &mut ev[..1], None) == (1, false);
+    ok &= ev[0].ident == 1 && ev[0].filter == EVFILT_TIMER && ev[0].data == 1;
+    ok &= kevent(kq, &[], &mut ev, Some(&zero)) == (0, false);
+
+    // The writer goes away: EOF on the read end, POLLHUP for poll(2).
+    ok &= call(SYS_CLOSE, w, 0, 0) == (0, false);
+    ok &= kevent(kq, &[], &mut ev, Some(&zero)) == (1, false);
+    ok &= ev[0].ident == r && ev[0].flags & EV_EOF != 0;
+    let mut pfd = [Pollfd {
+        fd: r as i32,
+        events: POLLIN,
+        revents: 0,
+    }];
+    ok &= call(SYS_POLL, pfd.as_mut_ptr() as usize, 1, 0) == (1, false);
+    ok &= pfd[0].revents == POLLIN | POLLHUP;
+
+    ok &= call(SYS_CLOSE, r, 0, 0) == (0, false);
+    ok &= call(SYS_CLOSE, kq, 0, 0) == (0, false);
     ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
 }
 
