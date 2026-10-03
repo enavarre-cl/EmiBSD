@@ -77,6 +77,7 @@ use crate::kern::kern_proc::{
     ALLPROC, ALLPROCESS, PROC_POOL, PROCESS_POOL, chgproccnt, pgfind, pidhash, prfind, tfind,
     tidhash, zombiefind,
 };
+use crate::kern::kern_resource::{lim_fork, rucheck};
 use crate::kern::kern_rwlock::rw_init;
 use crate::kern::kern_sched::{sched_choosecpu_fork, setrunqueue};
 use crate::kern::kern_synch::{endtsleep, refcnt_init, tsleep_nsec};
@@ -194,9 +195,13 @@ pub fn process_initialize(pr: &'static Process, p: &'static Proc) {
     mtx_init(&pr.ps_mtx, IPL_HIGH);
     // klist_init_mutex(&pr->ps_klist, &pr->ps_mtx): kqueue (M6).
 
-    // timeout_set_flags(&pr->ps_realit_to, realitexpire, pr, KCLOCK_UPTIME, 0) and
-    // timeout_set(&pr->ps_rucheck_to, rucheck, pr): kern_time.c and kern_resource.c (M6).
-    let _ = unported!("process_initialize: realitexpire/rucheck timeouts (M6)");
+    // timeout_set_flags(&pr->ps_realit_to, realitexpire, pr, KCLOCK_UPTIME, 0): kern_time.c.
+    let _ = unported!("process_initialize: realitexpire timeout (kern_time.c)");
+    timeout_set(
+        &pr.ps_rucheck_to,
+        rucheck,
+        ptr::from_ref(pr).cast_mut().cast::<c_void>(),
+    );
 }
 
 /// `process_new`: allocate and initialize a new process.
@@ -229,8 +234,7 @@ fn process_new(p: &'static Proc, parent: &'static Process, flags: i32) -> &'stat
 
     process_initialize(pr, p);
     pr.ps_pid.set(allocpid());
-    // lim_fork(parent, pr): kern_resource.c (M6).
-    let _ = unported!("process_new: lim_fork (kern_resource.c, M6)");
+    lim_fork(parent, pr);
 
     // post-copy fixups
     pr.ps_pptr.set(parent);

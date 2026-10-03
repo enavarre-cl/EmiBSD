@@ -136,6 +136,57 @@ impl Default for Rusage {
     }
 }
 
+impl Rusage {
+    /// `*self = *other`: the struct assignment of the C.
+    pub fn copy_from(&self, other: &Rusage) {
+        self.ru_utime.set(other.ru_utime.get());
+        self.ru_stime.set(other.ru_stime.get());
+        for (a, b) in self.longs().iter().zip(other.longs().iter()) {
+            a.set(b.get());
+        }
+    }
+
+    /// `ru_maxrss` through `ru_nivcsw` (`ru_first` is `ru_ixrss`), in declaration order.
+    fn longs(&self) -> [&Cell<i64>; 14] {
+        [
+            &self.ru_maxrss,
+            &self.ru_ixrss,
+            &self.ru_idrss,
+            &self.ru_isrss,
+            &self.ru_minflt,
+            &self.ru_majflt,
+            &self.ru_nswap,
+            &self.ru_inblock,
+            &self.ru_oublock,
+            &self.ru_msgsnd,
+            &self.ru_msgrcv,
+            &self.ru_nsignals,
+            &self.ru_nvcsw,
+            &self.ru_nivcsw,
+        ]
+    }
+
+    /// The C layout of `struct rusage` (two `struct timeval`, then fourteen `long`s), native
+    /// endian, for `copyout`.
+    pub fn to_bytes(&self) -> [u8; RUSAGE_SIZE] {
+        let mut b = [0u8; RUSAGE_SIZE];
+        let mut off = 0;
+        for tv in [self.ru_utime.get(), self.ru_stime.get()] {
+            b[off..off + 8].copy_from_slice(&tv.tv_sec.to_ne_bytes());
+            b[off + 8..off + 16].copy_from_slice(&tv.tv_usec.to_ne_bytes());
+            off += 16;
+        }
+        for l in self.longs() {
+            b[off..off + 8].copy_from_slice(&l.get().to_ne_bytes());
+            off += 8;
+        }
+        b
+    }
+}
+
+/// `sizeof(struct rusage)` on LP64: two `struct timeval` and fourteen `long`s.
+pub const RUSAGE_SIZE: usize = 2 * 16 + 14 * 8;
+
 /// `RLIMIT_CPU`: cpu time in milliseconds.
 pub const RLIMIT_CPU: usize = 0;
 /// `RLIMIT_FSIZE`: maximum file size.

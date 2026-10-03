@@ -309,6 +309,16 @@ impl Cpu for Machine {
     /// No user mode to return to.
     fn setregs(_p: &Proc, _pack: &ExecPackage<'_>, _stack: Vaddr, _arginfo: &PsStrings) {}
 
+    /// The host double has no user mode: no program counter to report.
+    fn proc_pc(_p: &Proc) -> usize {
+        0
+    }
+
+    /// The host double has no user mode: no stack pointer to report.
+    fn proc_stack(_p: &Proc) -> usize {
+        0
+    }
+
     fn cpu_initclocks() {}
 
     fn cpu_startclock() {}

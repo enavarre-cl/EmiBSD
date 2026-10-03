@@ -195,6 +195,17 @@ impl Cpu for Machine {
         amd64::machdep::setregs(p, pack, stack, arginfo)
     }
 
+    fn proc_pc(p: &Proc) -> usize {
+        // SAFETY: `md_regs` is the thread's trap frame at the top of its u-area (`cpu_fork`),
+        // set before the thread first runs in user mode; read without a reference kept.
+        unsafe { (*p.p_md.md_regs.get()).tf_rip as usize }
+    }
+
+    fn proc_stack(p: &Proc) -> usize {
+        // SAFETY: as in `proc_pc`.
+        unsafe { (*p.p_md.md_regs.get()).tf_rsp as usize }
+    }
+
     fn cpu_initclocks() {
         amd64::machdep::cpu_initclocks()
     }

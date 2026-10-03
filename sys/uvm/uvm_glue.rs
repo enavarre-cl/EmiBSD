@@ -68,8 +68,8 @@
 //! Upstream: sys/uvm/uvm_glue.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M5 (part b2) ports the u-area allocator the fork path needs:
-//! `kv_uarea`, `uvm_uarea_alloc` and `uvm_uarea_free`. `uvm_kernacc`, `uvm_vslock`,
-//! `uvm_vsunlock`, `uvm_vslock_device`, `uvm_vsunlock_device`, `uvm_exit`, `uvm_init_limits`,
+//! `kv_uarea`, `uvm_uarea_alloc` and `uvm_uarea_free`. M7a adds `uvm_init_limits`.
+//! `uvm_kernacc`, `uvm_vslock`, `uvm_vsunlock`, `uvm_vslock_device`, `uvm_vsunlock_device`,
 //! `uvm_atopg` and the swapper come with user mode and the pager (M6, M7).
 //!
 //! ## Deviations
@@ -79,18 +79,25 @@
 //!   and the u-area has no guard until then.
 
 use core::ptr::{self, NonNull};
+use core::sync::atomic::Ordering;
 
 use crate::kern::subr_prf::panic;
 use crate::machine::Machine;
+use crate::machine::VmParam;
 use crate::machine::cpu::curproc;
 use crate::machine::param::MachineParam;
 use crate::sys::param::{USPACE, USPACE_ALIGN};
 use crate::sys::proc::Proc;
 use crate::sys::proc::Process;
+use crate::sys::resource::{RLIMIT_DATA, RLIMIT_RSS, RLIMIT_STACK};
+use crate::sys::resourcevar::Plimit;
+use crate::sys::types::Rlim;
 use crate::unported;
 use crate::uvm::uvm_extern::{KmemVaMode, KvMap};
+use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_km::{KD_WAITOK, KP_ZERO, km_alloc, km_free};
 use crate::uvm::uvm_map::{uvmspace_free, uvmspace_purge};
+use crate::uvm::uvm_param::ptoa;
 
 /// `kv_uarea`: u-areas come from `kernel_map`, `USPACE_ALIGN`ed.
 pub static KV_UAREA: KmemVaMode = KmemVaMode {
@@ -145,4 +152,37 @@ pub fn uvm_exit(pr: &Process) {
         // pointer after it was cleared above.
         uvmspace_free(unsafe { &*vm });
     }
+}
+
+/// `uvm_init_limits`: init per-process VM limits.
+///
+/// Set up the initial limits on process VM. Set the maximum resident set size to be all of
+/// (reasonably) available memory. This causes any single, large process to start random page
+/// replacement once it fills memory.
+pub fn uvm_init_limits(limit0: &Plimit) {
+    let set = |which: usize, cur: Option<Rlim>, max: Option<Rlim>| {
+        let mut r = limit0.pl_rlimit[which].get();
+        if let Some(c) = cur {
+            r.rlim_cur = c;
+        }
+        if let Some(m) = max {
+            r.rlim_max = m;
+        }
+        limit0.pl_rlimit[which].set(r);
+    };
+    set(
+        RLIMIT_STACK,
+        Some(<Machine as VmParam>::DFLSSIZ as Rlim),
+        Some(<Machine as VmParam>::MAXSSIZ as Rlim),
+    );
+    set(
+        RLIMIT_DATA,
+        Some(<Machine as VmParam>::DFLDSIZ as Rlim),
+        Some(<Machine as VmParam>::MAXDSIZ as Rlim),
+    );
+    set(
+        RLIMIT_RSS,
+        Some(ptoa(UVMEXP.free.load(Ordering::Relaxed) as usize) as Rlim),
+        None,
+    );
 }

@@ -75,6 +75,7 @@ use crate::kern::kern_kthread::{kthread_create, kthread_run_deferred_queue};
 use crate::kern::kern_proc::{
     ALLPROC, ALLPROCESS, chgproccnt, pgrphash, pidhash, procinit, tidhash,
 };
+use crate::kern::kern_resource::lim_startup;
 use crate::kern::kern_rwlock::rw_obj_init;
 use crate::kern::kern_sched::{sched_init, sched_init_cpu};
 use crate::kern::kern_synch::{endtsleep, sleep_queue_init, tsleep_nsec, wakeup};
@@ -89,9 +90,11 @@ use crate::machine::{BootModule, Machine, VmParam};
 use crate::sys::errno::Errno;
 use crate::sys::param::{NZERO, PVM, PWAIT};
 use crate::sys::proc::{FORK_FORK, P_SYSTEM, PS_SYSTEM, Pgrp, Proc, Process, SONPROC, Session};
+use crate::sys::resourcevar::Plimit;
 use crate::sys::systm::INFSLP;
 use crate::unported;
 use crate::uvm::uvm_extern::Vmspace;
+use crate::uvm::uvm_glue::uvm_init_limits;
 use crate::uvm::uvm_init::uvm_init;
 use crate::uvm::uvm_map::uvmspace_init;
 use crate::uvm::uvm_param::{round_page, trunc_page};
@@ -119,6 +122,9 @@ pub static INITPROCESS: AtomicPtr<Process> = AtomicPtr::new(core::ptr::null_mut(
 pub static PROC0: Proc = Proc::new();
 /// `vmspace0`: the address space of process 0 (the kernel's).
 pub static VMSPACE0: Vmspace = Vmspace::new();
+
+/// `limit0`: the resource limits of process 0, shared with its descendants.
+pub static LIMIT0: Plimit = Plimit::new();
 /// `start_init_exec`: semaphore for `start_init()`.
 pub static START_INIT_EXEC: AtomicI32 = AtomicI32::new(0);
 /// The `init` module the bootloader loaded, if any (see the module's deviations).
@@ -250,7 +256,8 @@ pub fn main() -> ! {
     // Init signal state, file descriptor table, limits and the prototype map of process 0.
     let _ = unported!("signal_init / siginit");
     let _ = unported!("fdinit");
-    let _ = unported!("lim_startup");
+    lim_startup(&LIMIT0);
+    pr.ps_limit.set(&LIMIT0);
     uvmspace_init(
         &VMSPACE0,
         Some(pmap_kernel()),
@@ -297,7 +304,7 @@ pub fn main() -> ! {
     }
 
     // Configure virtual memory system, set vm rlimits.
-    let _ = unported!("uvm_init_limits");
+    uvm_init_limits(&LIMIT0);
 
     // Per CPU memory allocation
     let _ = unported!("percpu_init");

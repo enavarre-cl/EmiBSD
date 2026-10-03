@@ -109,6 +109,8 @@ use crate::kern::init_sysent::SYSENT;
 use crate::kern::kern_exit::exit1;
 use crate::kern::kern_sig::userret;
 use crate::kern::subr_prf::{Str, db_printf, panic, panicstr_claim, printf, vsnprintf};
+use crate::machine::Machine;
+use crate::machine::cpu::Cpu;
 use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
 use crate::sys::proc::{EXIT_NORMAL, Proc, refreshcreds};
@@ -121,6 +123,8 @@ use crate::unported;
 use crate::uvm::uvm_extern::VmProt;
 use crate::uvm::uvm_fault::uvm_fault;
 use crate::uvm::uvm_init::UVMEXP;
+use crate::uvm::uvm_map::{uvm_map_inentry, uvm_map_inentry_sp};
+use crate::uvm::uvm_unix::uvm_grow;
 
 use crate::uvm::uvm_param::trunc_page;
 
@@ -233,8 +237,7 @@ pub fn kpageflttrap(frame: &mut Trapframe, cr2: u64) -> bool {
         let error = uvm_fault(map, va, 0, access_type);
         pcb.pcb_onfault.set(onfault);
         if error.is_ok() && !kernel_map {
-            // uvm_grow(p, va): uvm_unix.c, with the stack accounting of M7+.
-            let _ = unported!("uvm_grow (uvm_unix.c)");
+            uvm_grow(p, va);
         }
         error.err()
     } else {
@@ -365,6 +368,23 @@ pub fn child_return(arg: *mut c_void) {
     mi_child_return(p);
 }
 
+/// `uvm_map_inentry(p, &p->p_spinentry, PROC_STACK(p), ..., uvm_map_inentry_sp, sserial)`:
+/// the MAP_STACK check `usertrap` makes before a user page fault.
+fn user_stack_ok(p: &Proc) -> bool {
+    let mut ie = p.p_spinentry.get();
+    let ok = uvm_map_inentry(
+        p,
+        &mut ie,
+        <Machine as Cpu>::proc_stack(p),
+        "sp",
+        "not MAP_STACK",
+        uvm_map_inentry_sp,
+        p.vmspace().vm_map.sserial.get(),
+    );
+    p.p_spinentry.set(ie);
+    ok
+}
+
 /// `upageflttrap(frame, cr2)`: page fault handler. Returns `true` if the fault was handled
 /// (possibly by generating a signal). Returns `false`, possibly still holding the kernel
 /// lock, if something was so broken that we should panic.
@@ -387,8 +407,7 @@ pub fn upageflttrap(frame: &mut Trapframe, cr2: u64) -> bool {
     }
     let error = match result {
         Ok(()) => {
-            // uvm_grow(p, va): uvm_unix.c, with the stack accounting of M7+.
-            let _ = unported!("uvm_grow (uvm_unix.c)");
+            uvm_grow(p, va);
             return true;
         }
         Err(e) => e,
@@ -495,7 +514,10 @@ pub extern "C" fn usertrap(frame: &mut Trapframe) {
             },
         ),
         // AMDSEV's T_VC: not configured.
-        // page fault: uvm_map_inentry (the MAP_STACK check, M7a) precedes it in C
+        T_PAGEFLT if !user_stack_ok(p) => {
+            userret(p);
+            return;
+        }
         T_PAGEFLT if upageflttrap(frame, cr2) => {
             userret(p);
             return;

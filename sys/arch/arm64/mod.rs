@@ -191,6 +191,17 @@ impl Cpu for Machine {
         arm64::machdep::setregs(p, pack, stack, arginfo)
     }
 
+    fn proc_pc(p: &Proc) -> usize {
+        // SAFETY: `pcb_tf` is the thread's trap frame at the top of its u-area (`cpu_fork`),
+        // set before the thread first runs in user mode; read without a reference kept.
+        unsafe { (*p.pcb().pcb_tf.get()).tf_elr as usize }
+    }
+
+    fn proc_stack(p: &Proc) -> usize {
+        // SAFETY: as in `proc_pc`.
+        unsafe { (*p.pcb().pcb_tf.get()).tf_sp as usize }
+    }
+
     fn cpu_initclocks() {
         arm64::intr::cpu_initclocks()
     }

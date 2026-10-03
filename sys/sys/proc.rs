@@ -82,6 +82,7 @@ use crate::sys::pclock::PcLock;
 use crate::sys::queue::{ListEntry, ListHead, TailqEntry, TailqHead};
 use crate::sys::refcnt::Refcnt;
 use crate::sys::resource::Rusage;
+use crate::sys::resourcevar::Plimit;
 use crate::sys::rwlock::Rwlock;
 use crate::sys::syslimits::LOGIN_NAME_MAX;
 use crate::sys::time::{Timespec, Timeval};
@@ -198,6 +199,36 @@ pub const TU_STICKS: usize = 1;
 pub const TU_ITICKS: usize = 2;
 /// `TU_TICKS_COUNT`.
 pub const TU_TICKS_COUNT: usize = 3;
+
+/// `struct pinsyscall`: the system call pin table of a text region.
+pub struct Pinsyscall {
+    /// `pn_start`.
+    pub pn_start: Cell<usize>,
+    /// `pn_end`.
+    pub pn_end: Cell<usize>,
+    /// `pn_pins`: array of offsets indexed by syscall#.
+    pub pn_pins: Cell<*mut u32>,
+    /// `pn_npins`: number of entries in table.
+    pub pn_npins: Cell<i32>,
+}
+
+impl Pinsyscall {
+    /// No table.
+    pub const fn new() -> Self {
+        Self {
+            pn_start: Cell::new(0),
+            pn_end: Cell::new(0),
+            pn_pins: Cell::new(core::ptr::null_mut()),
+            pn_npins: Cell::new(0),
+        }
+    }
+}
+
+impl Default for Pinsyscall {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// `struct tusage`.
 pub struct Tusage {
@@ -345,8 +376,8 @@ pub struct Process {
     // End area that is zeroed on creation (ps_endzero = ps_startcopy).
 
     // The following fields are all copied upon creation in process_new (ps_startcopy).
-    /// \[m,R\] `ps_limit`: process limits (`struct plimit`, M6).
-    pub ps_limit: Cell<*const ()>,
+    /// \[m,R\] `ps_limit`: process limits.
+    pub ps_limit: Cell<*const Plimit>,
     /// \[K|m\] `ps_pgrp`: pointer to process group.
     pub ps_pgrp: Cell<*const Pgrp>,
 
@@ -355,7 +386,16 @@ pub struct Process {
 
     /// `ps_strings`: user pointers to argv/env.
     pub ps_strings: Cell<usize>,
-    // ps_auxinfo, ps_timekeep, ps_sigcode, ps_sigcoderet, ps_sigcookie: exec (M6-c).
+    /// `ps_auxinfo`: user pointer to auxinfo.
+    pub ps_auxinfo: Cell<usize>,
+    /// `ps_timekeep`: user pointer to timekeep.
+    pub ps_timekeep: Cell<usize>,
+    /// \[I\] `ps_sigcode`: user pointer to signal code.
+    pub ps_sigcode: Cell<usize>,
+    /// \[I\] `ps_sigcoderet`: user ptr to sigreturn retPC.
+    pub ps_sigcoderet: Cell<usize>,
+    /// \[I\] `ps_sigcookie`.
+    pub ps_sigcookie: Cell<u64>,
     /// \[a\] `ps_rtableid`: process routing table/domain.
     pub ps_rtableid: AtomicU32,
     /// \[I\] `ps_iflags`: flags set at exec time.
@@ -372,7 +412,14 @@ pub struct Process {
     /// \[m\] `ps_execpledge`: execpledge promises.
     pub ps_execpledge: Cell<u64>,
 
-    // ps_kbind_cookie, ps_kbind_addr, ps_pin, ps_libcpin: M6.
+    /// \[m\] `ps_kbind_cookie`.
+    pub ps_kbind_cookie: Cell<i64>,
+    /// \[m\] `ps_kbind_addr`.
+    pub ps_kbind_addr: Cell<usize>,
+    /// `ps_pin`: static or ld.so.
+    pub ps_pin: Pinsyscall,
+    /// `ps_libcpin`: libc.so, from pinsyscalls(2).
+    pub ps_libcpin: Pinsyscall,
     // End area that is copied on creation (ps_endcopy = ps_threadcnt).
     /// \[m\] `ps_threadcnt`: number of threads.
     pub ps_threadcnt: Cell<u32>,
@@ -429,12 +476,21 @@ impl Process {
             ps_pgrp: Cell::new(ptr::null()),
             ps_comm: UnsafeCell::new([0; _MAXCOMLEN]),
             ps_strings: Cell::new(0),
+            ps_auxinfo: Cell::new(0),
+            ps_timekeep: Cell::new(0),
+            ps_sigcode: Cell::new(0),
+            ps_sigcoderet: Cell::new(0),
+            ps_sigcookie: Cell::new(0),
             ps_rtableid: AtomicU32::new(0),
             ps_iflags: Cell::new(0),
             ps_nice: Cell::new(0),
             ps_acflag: Cell::new(0),
             ps_pledge: Cell::new(0),
             ps_execpledge: Cell::new(0),
+            ps_kbind_cookie: Cell::new(0),
+            ps_kbind_addr: Cell::new(0),
+            ps_pin: Pinsyscall::new(),
+            ps_libcpin: Pinsyscall::new(),
             ps_threadcnt: Cell::new(0),
             ps_start: Cell::new(Timespec::new(0, 0)),
             ps_realit_to: Timeout::zeroed(),
@@ -663,8 +719,8 @@ pub struct Proc {
     /// \[o\] `p_tu`: accumulated times.
     pub p_tu: Tusage,
 
-    /// \[l\] `p_limit`: read ref. of `p_p->ps_limit` (`struct plimit`, M6).
-    pub p_limit: Cell<*const ()>,
+    /// \[l\] `p_limit`: read ref. of `p_p->ps_limit`.
+    pub p_limit: Cell<*const Plimit>,
     // p_kd: kcov device handle; p_sleeplocks: WITNESS; p_kq, p_kq_serial: kqueue (M6).
     /// \[a\] `p_siglist`: signals arrived & not delivered.
     pub p_siglist: AtomicI32,

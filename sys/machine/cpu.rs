@@ -191,6 +191,12 @@ pub trait Cpu {
     /// register zero and the machine state of a fresh thread.
     fn setregs(p: &Proc, pack: &ExecPackage<'_>, stack: Vaddr, arginfo: &PsStrings);
 
+    /// `PROC_PC(p)`: the user program counter of `p` (its trap frame's).
+    fn proc_pc(p: &Proc) -> usize;
+
+    /// `PROC_STACK(p)`: the user stack pointer of `p` (its trap frame's).
+    fn proc_stack(p: &Proc) -> usize;
+
     /// `cpu_initclocks()`: the machine-dependent part of `initclocks`: picks the clock
     /// hardware, sets `stathz`/`profhz`, registers the timecounter.
     fn cpu_initclocks();

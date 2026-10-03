@@ -67,7 +67,7 @@ use crate::kern::init_main::{INITPROCESS, PROCESS0};
 use crate::kern::kern_fork::{NPROCESSES, NTHREADS, freepid};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_proc::{PROC_POOL, PROCESS_POOL, RUSAGE_POOL, ZOMBPROCESS, chgproccnt};
-use crate::kern::kern_resource::{calcru, ruadd, tuagg_add_process, tuagg_add_runtime};
+use crate::kern::kern_resource::{calcru, lim_free, ruadd, tuagg_add_process, tuagg_add_runtime};
 use crate::kern::kern_sched::sched_exit;
 use crate::kern::kern_synch::{msleep_nsec, refcnt_finalize, wakeup};
 use crate::kern::kern_timeout::timeout_del;
@@ -275,9 +275,10 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
     p.p_fd.set(ptr::null()); // zap the thread's copy
 
     // Release the thread's read reference of resource limit structure.
-    if !p.p_limit.get().is_null() {
+    // SAFETY: p_limit is null or a reference this thread holds.
+    if let Some(limit) = unsafe { p.p_limit.get().as_ref() } {
         p.p_limit.set(ptr::null());
-        let _ = unported!("exit1: lim_free (kern_resource.c, M6-c)");
+        lim_free(limit);
     }
 
     // Remove proc from pidhash chain and allproc so looking it up won't work. We will put
@@ -586,8 +587,10 @@ pub fn process_zap(pr: &Process) {
         pool_put(&RUSAGE_POOL, ru.cast::<u8>());
     }
     kassert!(pr.ps_threads.is_empty());
-    // sigactsfree(pr->ps_sigacts), lim_free(pr->ps_limit), crfree(pr->ps_ucred): M6-c.
-    let _ = unported!("process_zap: sigactsfree/lim_free/crfree (M6-c)");
+    // sigactsfree(pr->ps_sigacts), crfree(pr->ps_ucred): M6-c.
+    let _ = unported!("process_zap: sigactsfree/crfree (M6-c)");
+    // SAFETY: the process's own reference, dropped once as it is freed.
+    lim_free(unsafe { &*pr.ps_limit.get() });
     pool_put(&PROCESS_POOL, NonNull::from(pr).cast::<u8>());
     NPROCESSES.fetch_sub(1, Ordering::Relaxed);
 

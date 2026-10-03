@@ -65,6 +65,8 @@ use crate::arch::arm64::include::vmparam::VM_MAXUSER_ADDRESS;
 use crate::kern::kern_exit::exit1;
 use crate::kern::kern_sig::userret;
 use crate::kern::subr_prf::{Str, db_printf, panic, panicstr_claim, printf, vsnprintf};
+use crate::machine::Machine;
+use crate::machine::cpu::Cpu;
 use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
 use crate::sys::proc::{EXIT_NORMAL, Proc, refreshcreds};
@@ -74,7 +76,9 @@ use crate::unported;
 use crate::uvm::uvm_extern::VmProt;
 use crate::uvm::uvm_fault::uvm_fault;
 use crate::uvm::uvm_init::UVMEXP;
+use crate::uvm::uvm_map::{uvm_map_inentry, uvm_map_inentry_sp};
 use crate::uvm::uvm_param::trunc_page;
+use crate::uvm::uvm_unix::uvm_grow;
 
 /// `is_unpriv_ldst`: whether the instruction at `elr` (a kernel address) is an unprivileged
 /// load or store (`ldtr`/`sttr` family), the only way the kernel may touch user addresses.
@@ -157,9 +161,8 @@ fn kdata_abort(frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
 
     let error = uvm_fault(map, va, 0, access_type);
     if error.is_ok() {
-        if !kernel_map {
-            // uvm_grow(p, va): uvm_unix.c, with the stack accounting of M7+.
-            let _ = unported!("uvm_grow (uvm_unix.c)");
+        if !kernel_map && let Some(p) = p {
+            uvm_grow(p, va);
         }
         return;
     }
@@ -283,7 +286,21 @@ fn udata_abort(frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
     }
 
     let map = &p.vmspace().vm_map;
-    // uvm_map_inentry (the MAP_STACK check): with the stack of M7a-3b.
+
+    let mut ie = p.p_spinentry.get();
+    let ok = uvm_map_inentry(
+        p,
+        &mut ie,
+        <Machine as Cpu>::proc_stack(p),
+        "sp",
+        "not MAP_STACK",
+        uvm_map_inentry_sp,
+        p.vmspace().vm_map.sserial.get(),
+    );
+    p.p_spinentry.set(ie);
+    if !ok {
+        return;
+    }
 
     // Handle referenced/modified emulation
     if pmap_fault_fixup(map.pmap(), Vaddr::new(va), access_type) {
@@ -291,8 +308,7 @@ fn udata_abort(frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
     }
     let error = match uvm_fault(map, va, 0, access_type) {
         Ok(()) => {
-            // uvm_grow(p, va): uvm_unix.c, with the stack accounting of M7+.
-            let _ = unported!("uvm_grow (uvm_unix.c)");
+            uvm_grow(p, va);
             return;
         }
         Err(e) => e,

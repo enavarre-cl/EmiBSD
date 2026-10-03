@@ -170,7 +170,7 @@ rust = "sys/arch/arm64/include/cpu.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a50845f609e00860e26eac541a0f05789133506d"
-notes = "M0: DAIF helpers (restore_daif, enable/disable_irq_daif[_ret], intr_enable/disable/restore); M4: struct cpu_info (the fields the exception and interrupt paths use, in C order), curcpu (tpidr_el1), cpu_number, cpu_info_primary, CPU_IS_PRIMARY/RUNNING, CPUF_*, CI_DDB_*; the topology fields, the scheduler state, CTL_MACHDEP and the cache helpers come with M4-b/M5; M5: ci_schedstate, ci_queue, MAXCPUS (1), CPU_INFO_UNIT (0 until struct device), struct clockframe = trapframe, CLKF_USERMODE/PC/INTR; M5-b1: ci_curproc/ci_curpcb typed"
+notes = "M0: DAIF helpers (restore_daif, enable/disable_irq_daif[_ret], intr_enable/disable/restore); M4: struct cpu_info (the fields the exception and interrupt paths use, in C order), curcpu (tpidr_el1), cpu_number, cpu_info_primary, CPU_IS_PRIMARY/RUNNING, CPUF_*, CI_DDB_*; the topology fields, the scheduler state, CTL_MACHDEP and the cache helpers come with M4-b/M5; M5: ci_schedstate, ci_queue, MAXCPUS (1), CPU_INFO_UNIT (0 until struct device), struct clockframe = trapframe, CLKF_USERMODE/PC/INTR; M5-b1: ci_curproc/ci_curpcb typed; M7a-3b: PROC_PC/PROC_STACK through Cpu::proc_pc/proc_stack"
 
 # ---------------------------------------------------------------------------
 # M1: libkern
@@ -439,7 +439,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -679,7 +679,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "f76d7e382cdb17886985a8ceea50eef0b7e54b95"
 deps = ["sys/sys/types.h"]
-notes = "PROT_*, MAP_PRIVATE/MAP_ANON, MADV_*, MAP_INHERIT_* and MCL_CURRENT/MCL_FUTURE only; the mmap(2) family prototypes and the remaining MAP_* flags come with uvm_mmap.c (M7a-3)"
+notes = "PROT_*, MAP_PRIVATE/MAP_ANON, MADV_*, MAP_INHERIT_* and MCL_CURRENT/MCL_FUTURE only; the mmap(2) family prototypes and the remaining MAP_* flags come with uvm_mmap.c (M7a-3); M7a-3b: MAP_SHARED/FIXED/__MAP_NOREPLACE/__MAP_NOFAULT/STACK/CONCEAL, MAP_FLAGMASK, the deprecated MAP_* aliases, MS_*"
 
 [[file]]
 c = "sys/kern/kern_synch.c"
@@ -893,7 +893,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7b666bc23448467c3e5d74c70b8fa6a3485705e1"
 deps = ["sys/sys/types.h", "sys/sys/mman.h"]
-notes = "vm_fault_t, vm_inherit_t, vm_prot_t, the UVM_FLAG_* encoding, UVM_PGA_*/UVM_PLA_*/UVM_LK_*, uvm_constraint_range, the kmem_*_mode structs; the prototypes land with their .c files; M6-b: struct vmspace (vm_shm left out: SYSVSHM not configured) with copy_startcopy_from/clear_startcopy for the vm_startcopy memcpy/memset"
+notes = "vm_fault_t, vm_inherit_t, vm_prot_t, the UVM_FLAG_* encoding, UVM_PGA_*/UVM_PLA_*/UVM_LK_*, uvm_constraint_range, the kmem_*_mode structs; the prototypes land with their .c files; M6-b: struct vmspace (vm_shm left out: SYSVSHM not configured) with copy_startcopy_from/clear_startcopy for the vm_startcopy memcpy/memset; M7a-3b: uvm_coredump_setup_cb/uvm_coredump_walk_cb as fn types returning Result"
 
 [[file]]
 c = "sys/uvm/uvm_object.h"
@@ -1141,7 +1141,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c01e81af04eb6552aa6ffc398ea93a75fc2e1857"
 deps = ["sys/arch/amd64/include/intrdefs.h", "sys/arch/amd64/include/tss.h", "sys/arch/amd64/include/pmap.h"]
-notes = "M4: struct cpu_info (the fields the trap and interrupt paths use, in C order, Cells; ci_isources, ci_ipending as an AtomicU64 the stubs and softintr share), ci_PAGEALIGN, CPUPF_*, CPUF_*, CI_DDB_*, curcpu (%%gs:ci_self), cpu_number, cpu_info_primary, CPU_IS_PRIMARY/RUNNING; the CPU identification fields, the scheduler state, the sensors, vmm, CTL_MACHDEP and the cpu_functions come with M4-b2 to M6; M5: ci_schedstate, ci_queue, MAXCPUS (1), CPU_INFO_UNIT (0 until struct device), struct clockframe = intrframe, CLKF_USERMODE/PC/INTR; M5-b1: ci_curproc/ci_curpcb/ci_idle_pcb typed"
+notes = "M4: struct cpu_info (the fields the trap and interrupt paths use, in C order, Cells; ci_isources, ci_ipending as an AtomicU64 the stubs and softintr share), ci_PAGEALIGN, CPUPF_*, CPUF_*, CI_DDB_*, curcpu (%%gs:ci_self), cpu_number, cpu_info_primary, CPU_IS_PRIMARY/RUNNING; the CPU identification fields, the scheduler state, the sensors, vmm, CTL_MACHDEP and the cpu_functions come with M4-b2 to M6; M5: ci_schedstate, ci_queue, MAXCPUS (1), CPU_INFO_UNIT (0 until struct device), struct clockframe = intrframe, CLKF_USERMODE/PC/INTR; M5-b1: ci_curproc/ci_curpcb/ci_idle_pcb typed; M7a-3b: PROC_PC/PROC_STACK through Cpu::proc_pc/proc_stack"
 
 [[file]]
 c = "sys/arch/amd64/include/cpu_full.h"
@@ -1176,7 +1176,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "68cdf4c1b23fa986d0055f16ee4c4fd90a98099e"
 deps = ["sys/arch/amd64/include/trap.h", "sys/arch/amd64/include/frame.h", "sys/arch/amd64/include/cpu.h", "sys/arch/amd64/amd64/db_interface.c"]
-notes = "M4: trap_type[], trap_types, fault (writes ci_panicbuf), pgex2access, kpageflttrap (returns 0 at the curproc check, as C with p == NULL; the pcb_onfault/SMEP/SMAP/uvm_fault code behind it is ported with uvm_fault reported), kerntrap (x86_nmi from intr.c, verify_smap M4-b2, debug_trap is the DEBUG option), trap_print; upageflttrap, usertrap, ast, syscall, frame_dump, verify_pkru, vctrap are M6; M6-a: syscall, ast, child_return; kpageflttrap checks pcb_onfault against the .nofault table and resumes there (uvm_fault still reported); M6-b: syscall hands the six argument registers as a SysArgs block; M6-b2: usertrap (the signal table; verify_pkru, fputrap and uvm_map_inentry reported), upageflttrap (uvm_fault reported: a user fault is SIGSEGV), frame_dump (always on, as TRAP_SIGDEBUG); trapsignal is a stand-in that prints and lets the process die of the signal through exit1 until kern_sig.c (M6-c); M7a-3b: kpageflttrap and upageflttrap call uvm_fault (kernel_map or the process's vm_map, the PROT_EXEC retry without NX); uvm_grow reported"
+notes = "M4: trap_type[], trap_types, fault (writes ci_panicbuf), pgex2access, kpageflttrap (returns 0 at the curproc check, as C with p == NULL; the pcb_onfault/SMEP/SMAP/uvm_fault code behind it is ported with uvm_fault reported), kerntrap (x86_nmi from intr.c, verify_smap M4-b2, debug_trap is the DEBUG option), trap_print; upageflttrap, usertrap, ast, syscall, frame_dump, verify_pkru, vctrap are M6; M6-a: syscall, ast, child_return; kpageflttrap checks pcb_onfault against the .nofault table and resumes there (uvm_fault still reported); M6-b: syscall hands the six argument registers as a SysArgs block; M6-b2: usertrap (the signal table; verify_pkru, fputrap and uvm_map_inentry reported), upageflttrap (uvm_fault reported: a user fault is SIGSEGV), frame_dump (always on, as TRAP_SIGDEBUG); trapsignal is a stand-in that prints and lets the process die of the signal through exit1 until kern_sig.c (M6-c); M7a-3b: kpageflttrap and upageflttrap call uvm_fault (kernel_map or the process's vm_map, the PROT_EXEC retry without NX); uvm_grow reported; M7a-3b: usertrap's uvm_map_inentry stack check before a user page fault, uvm_grow after a served fault"
 
 [[file]]
 c = "sys/arch/amd64/amd64/locore.S"
@@ -1227,7 +1227,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a6caf2c6ba99ae93953cf21a8af80db2ff4e95d4"
 deps = ["sys/arch/arm64/include/armreg.h", "sys/arch/arm64/include/frame.h", "sys/arch/arm64/include/cpu.h", "sys/arch/arm64/arm64/db_interface.c"]
-notes = "M4: is_unpriv_ldst, accesstype, fault (writes ci_panicbuf), kdata_abort (no pcb before M5, pmap_fault_fixup and uvm_fault reported, so every kernel abort panics uvm_fault failed), do_el1h_sync (intr_enable as in C; the we_re_toast path prints, enters db_ktrap and then panics as the non-DDB build does), serror, do_el1h_error, dumpregs; udata_abort, emulate_msr, do_el0_sync, do_el0_error and the svc path are M6; M6-a: do_el0_sync (svc -> svc_handler), do_el0_error, kdata_abort resumes at pcb_onfault; M6-b2: udata_abort (alignment -> SIGBUS; uvm_map_inentry, pmap_fault_fixup and uvm_fault reported: a user fault is SIGSEGV) and do_el0_sync's default sigexit(SIGILL) after the dump; trapsignal is a stand-in that prints and lets the process die of the signal through exit1 until kern_sig.c (M6-c); emulate_msr, fpu_load/sve_load are M6-c; M7a-3b: kdata_abort and udata_abort call uvm_fault (kernel_map or the process's vm_map); uvm_grow reported; M7a-3b (2): kdata_abort and udata_abort try pmap_fault_fixup first"
+notes = "M4: is_unpriv_ldst, accesstype, fault (writes ci_panicbuf), kdata_abort (no pcb before M5, pmap_fault_fixup and uvm_fault reported, so every kernel abort panics uvm_fault failed), do_el1h_sync (intr_enable as in C; the we_re_toast path prints, enters db_ktrap and then panics as the non-DDB build does), serror, do_el1h_error, dumpregs; udata_abort, emulate_msr, do_el0_sync, do_el0_error and the svc path are M6; M6-a: do_el0_sync (svc -> svc_handler), do_el0_error, kdata_abort resumes at pcb_onfault; M6-b2: udata_abort (alignment -> SIGBUS; uvm_map_inentry, pmap_fault_fixup and uvm_fault reported: a user fault is SIGSEGV) and do_el0_sync's default sigexit(SIGILL) after the dump; trapsignal is a stand-in that prints and lets the process die of the signal through exit1 until kern_sig.c (M6-c); emulate_msr, fpu_load/sve_load are M6-c; M7a-3b: kdata_abort and udata_abort call uvm_fault (kernel_map or the process's vm_map); M7a-3b (2): kdata_abort and udata_abort try pmap_fault_fixup first; M7a-3b (3): udata_abort's uvm_map_inentry stack check, uvm_grow after a served fault"
 
 [[file]]
 c = "sys/ddb/db_trap.c"
@@ -1614,7 +1614,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "34f4bcdb97b70e5cf96ace4f826ce3b2a81fde03"
 deps = ["sys/sys/queue.h", "sys/sys/timeout.h", "sys/sys/mutex.h", "sys/sys/pclock.h", "sys/sys/refcnt.h", "sys/sys/resource.h", "sys/sys/user.h"]
-notes = "M5-b1: session, pgrp, tusage, process and proc (the members the scheduler, the sleep queues and the kernel threads use; the sigio/klist/ptrace/unveil/pinsyscall/vnode/ucred/filedesc/plimit/vmspace/sigacts members are opaque pointers or left out, each named in a comment), the S* states, P_*/PS_* flags with their %b strings, THREAD_PID_OFFSET, uidinfo, PID_MAX/TID_MASK/NO_PID, SESS_LEADER, FORK_*/EXIT_*/SINGLE_*, cond, cpuset, tu_enter/tu_leave; the function prototypes live with their .c files; M6-a: refreshcreds (dorefreshcreds reported); M6-b2: ps_vmspace/p_vmspace are *const Vmspace with vmspace() accessors, ps_strings, Proc::set_name; M7a: ps_lock (an Rwlock)"
+notes = "M5-b1: session, pgrp, tusage, process and proc (the members the scheduler, the sleep queues and the kernel threads use; the sigio/klist/ptrace/unveil/pinsyscall/vnode/ucred/filedesc/plimit/vmspace/sigacts members are opaque pointers or left out, each named in a comment), the S* states, P_*/PS_* flags with their %b strings, THREAD_PID_OFFSET, uidinfo, PID_MAX/TID_MASK/NO_PID, SESS_LEADER, FORK_*/EXIT_*/SINGLE_*, cond, cpuset, tu_enter/tu_leave; the function prototypes live with their .c files; M6-a: refreshcreds (dorefreshcreds reported); M6-b2: ps_vmspace/p_vmspace are *const Vmspace with vmspace() accessors, ps_strings, Proc::set_name; M7a: ps_lock (an Rwlock); M7a-3b: ps_limit/p_limit typed (struct plimit), ps_kbind_cookie/ps_kbind_addr, struct pinsyscall with ps_pin/ps_libcpin, ps_auxinfo/ps_timekeep/ps_sigcode/ps_sigcoderet/ps_sigcookie (zero until exec sets them)"
 
 [[file]]
 c = "sys/sys/user.h"
@@ -1640,7 +1640,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9ca4bb6fc9234b89e3cd067dfef973be8d4392fc"
 deps = ["sys/sys/time.h"]
-notes = "M5: PRIO_*, RUSAGE_*, struct rusage (Cells), RLIMIT_*/RLIM_*, struct rlimit, struct loadavg; dosetrlimit/donice/dogetrusage are kern_resource.c (M6)"
+notes = "M5: PRIO_*, RUSAGE_*, struct rusage (Cells), RLIMIT_*/RLIM_*, struct rlimit, struct loadavg; dosetrlimit/donice/dogetrusage are kern_resource.c (M6); M7a-3b: Rusage::copy_from (the struct assignment) and to_bytes (the C layout for copyout)"
 
 [[file]]
 c = "sys/sys/ucred.h"
@@ -1735,7 +1735,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "de3d88871a036e3bab92269561698e00ec6996ba"
 deps = ["sys/sys/proc.h", "sys/kern/kern_proc.c", "sys/kern/kern_synch.c", "sys/dev/rnd.c"]
-notes = "M5-b1: nprocesses/nthreads, process_initialize (crhold, prof_fork, klist_init_mutex and the realitexpire/rucheck timeouts reported; rw_init of ps_lock since M7a), fork_check_maxthread, alloctid, allocpid, ispidtaken, freepid; thread_new, process_new, fork1, fork_thread_start and proc_trampoline_mi are M5-b2, the fork syscalls and thread_fork M6; M5-b2: forkstat, thread_new, process_new (lim_fork, fdcopy, sigactsinit reported; fdshare copies the parent pointer), fork_thread_start, fork1 (returns the new thread; root uid for proc0; knote_processfork/ptrace/psignal reported), proc_trampoline_mi; M6-b2: process_new uses uvmspace_share/uvmspace_fork; fork1 adds vm_dsize + vm_ssize to the forkstat sizes"
+notes = "M5-b1: nprocesses/nthreads, process_initialize (crhold, prof_fork, klist_init_mutex and the realitexpire/rucheck timeouts reported; rw_init of ps_lock since M7a), fork_check_maxthread, alloctid, allocpid, ispidtaken, freepid; thread_new, process_new, fork1, fork_thread_start and proc_trampoline_mi are M5-b2, the fork syscalls and thread_fork M6; M5-b2: forkstat, thread_new, process_new (lim_fork, fdcopy, sigactsinit reported; fdshare copies the parent pointer), fork_thread_start, fork1 (returns the new thread; root uid for proc0; knote_processfork/ptrace/psignal reported), proc_trampoline_mi; M6-b2: process_new uses uvmspace_share/uvmspace_fork; fork1 adds vm_dsize + vm_ssize to the forkstat sizes; M7a-3b: lim_fork and the rucheck timeout of process_initialize (realitexpire still reported)"
 
 [[file]]
 c = "sys/sys/vmmeter.h"
@@ -1760,7 +1760,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "32e2d1e40bff5a8c0457de13d9c542e9c2090358"
 deps = ["sys/sys/proc.h", "sys/kern/kern_tc.c", "sys/kern/kern_lock.c"]
-notes = "M5-b2: tuagg_sumup, tuagg_get_proc, tuagg_get_process, tuagg_add_process, tuagg_add_runtime; the priority/limit/rusage syscalls, the plimit management (lim_*), calcru/calctsru, ruadd, rucheck are M6; M6-b: calctsru, calcru (returning the three times), ruadd"
+notes = "M5-b2: tuagg_sumup, tuagg_get_proc, tuagg_get_process, tuagg_add_process, tuagg_add_runtime; the priority/limit/rusage syscalls, the plimit management (lim_*), calcru/calctsru, ruadd, rucheck are M6; M6-b: calctsru, calcru (returning the three times), ruadd; M7a-3b: maxdmap/maxsmap, rlimit_lock, sys_setrlimit/dosetrlimit (suser reported: a hard limit cannot be raised until kern_prot.c), sys_getrlimit, sys_getrusage/dogetrusage, rucheck (prsignal reported), plimit_pool, lim_startup/copy/free/fork/write_begin/write_commit/read_enter/cur_proc; the priority syscalls wait for kern_prot.c"
 [[file]]
 c = "sys/kern/subr_xxx.c"
 rust = "sys/kern/subr_xxx.rs"
@@ -1776,7 +1776,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6b849af48cf3f896ae687673f076b96fa37a03d8"
 deps = ["sys/uvm/uvm_km.c", "sys/sys/proc.h"]
-notes = "M5-b2: kv_uarea, uvm_uarea_alloc (the __HAVE_USPACE_GUARD guard page is reported until km_alloc allocates from kernel_map, M6), uvm_uarea_free; uvm_kernacc, uvm_vslock/vsunlock[_device], uvm_exit, uvm_init_limits, uvm_atopg are M6/M7; M6-b: uvm_purge (curproc's vmspace; __HAVE_PMAP_PURGE not set) and uvm_exit"
+notes = "M5-b2: kv_uarea, uvm_uarea_alloc (the __HAVE_USPACE_GUARD guard page is reported until km_alloc allocates from kernel_map, M6), uvm_uarea_free; uvm_kernacc, uvm_vslock/vsunlock[_device], uvm_exit, uvm_init_limits, uvm_atopg are M6/M7; M6-b: uvm_purge (curproc's vmspace; __HAVE_PMAP_PURGE not set) and uvm_exit; M7a-3b: uvm_init_limits"
 [[file]]
 c = "sys/arch/amd64/amd64/vm_machdep.c"
 rust = "sys/arch/amd64/amd64/vm_machdep.rs"
@@ -1922,7 +1922,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "93ef328110b1c5aabeb187152a1f357f397ffaf2"
 deps = ["sys/sys/proc.h", "sys/kern/kern_proc.c", "sys/kern/kern_sched.c", "sys/kern/kern_synch.c", "sys/kern/kern_resource.c", "sys/uvm/uvm_glue.c"]
-notes = "M6-b: sys_exit, exit1 (single_thread_set, process_suspend_signal, kqpoll_exit, stopprofclock, fdfree, killjobc, SAS_NOCLDWAIT, lim_free, process_untrace reported), exit2 with deadproc, proc_free (crfree reported), reaper (knote_processexit, prsignal reported), process_clear_orphan, process_reparent, process_zap (leavepgrp, vrele, sigactsfree/lim_free/crfree reported); process 0 adopts orphans while initprocess is null; sys___threxit, dowait6, sys_wait4, sys_waitid, proc_finish_wait, process_untrace are M6-c/M7; M6-b2: exit1 calls uvm_purge for user processes and the reaper uvm_exit; under feature qemu init's exit (pid 1) logs 'init exited with status N' and ends the run with that status instead of the C's panic"
+notes = "M6-b: sys_exit, exit1 (single_thread_set, process_suspend_signal, kqpoll_exit, stopprofclock, fdfree, killjobc, SAS_NOCLDWAIT, lim_free, process_untrace reported), exit2 with deadproc, proc_free (crfree reported), reaper (knote_processexit, prsignal reported), process_clear_orphan, process_reparent, process_zap (leavepgrp, vrele, sigactsfree/lim_free/crfree reported); process 0 adopts orphans while initprocess is null; sys___threxit, dowait6, sys_wait4, sys_waitid, proc_finish_wait, process_untrace are M6-c/M7; M6-b2: exit1 calls uvm_purge for user processes and the reaper uvm_exit; under feature qemu init's exit (pid 1) logs 'init exited with status N' and ends the run with that status instead of the C's panic; M7a-3b: lim_free of p_limit and of ps_limit in process_zap"
 
 [[file]]
 c = "sys/sys/exec_elf.h"
@@ -1968,6 +1968,42 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "459310d59317ecbd29ac1608e5d704f5119f5182"
 deps = ["sys/uvm/uvm_map.h", "sys/uvm/uvm_extern.h", "sys/uvm/uvm_page.c", "sys/kern/subr_pool.c", "sys/uvm/uvm_addr.c", "sys/uvm/uvm_amap.c", "sys/uvm/uvm_km.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_malloc.c", "sys/dev/rnd.c"]
 notes = "M6-b: uvm_map_setup/teardown/init, uvmspace_alloc/init/share/exec/addref/purge/free/fork; M7a: the rwlock map lock with vm_map_lock_try/lock/lock_read/unlock/unlock_read/upgrade/downgrade/busy/unbusy/assert_anylock/assert_wrlock (the *_ln functions without file/line and LPRINTF), vm_map_modflags; M7a-2: the entry tree (uvm_mapent_copy/free_insert/free_remove/addr_insert/addr_remove, the augmented uvm_map_addr with uvm_map_addr_augment), uvm_map_reference, lock/unlock_entry, uvmspace_dused, entrybyaddr, DEAD_ENTRY_PUSH, isavail, findspace, uvm_mapanon, uvm_map, isjoinable/merge/tryjoin, unmap_detach(_intrsafe), mkentry, mapent_alloc/free (the static kentries, uvm_map_entry_pool, uvm_map_entry_kmem_pool), lookup_entry, inentry_sp/recheck/fix/inentry (printf for uprintf, trapsignal reported, the format is two words), is_stack_remappable, remap_as_stack, uvm_map_pie, uvm_unmap, mkfree, unmap_kill_entry(_withlock), unmap_remove, pageable_pgon/wire/pageable/pageable_all, setup_entries, splitentry, uvm_tree_assert/sanity/size_chk/vmspace_validate under feature vmmap_debug (and in host tests; uvm_map_deallocate zeroes the bounds for them as teardown does), uvm_map_protect (the RLIMIT_DATA lim_cur check reported), the fork copy functions mapent_clone/share/forkshared/forkcopy/forkzero with uvmspace_fork real, uvm_map_hint, submap, checkprot, create, deallocate, inherit, immutable, advice, extract, clean, clip_end/clip_start, boundfix, uaddr/uaddr_e, boundary, vmspace_update, kmem_grow (pmap_growkernel), freelist_update_clear/refill/update, set_uaddr (the slot as an enum), fix_space, mquery, setup_md (__LP64__); uvm_maxkaddr follows the runtime kernel-map base (uvm_init); uvm_map_fill_vmmap (sysctl) and the ddb printers wait for their subsystems; PMAP_CHECK_COPYIN, SYSVSHM, DEADBEEF0, TRACEPOINT, KERNEL_LOCK not configured; host tests; M7a-3b: the wired stand-ins (uvm_map_enter_wired/write_wired/remove_wired, VmMap.wired) are gone: exec goes through uvm_map"
+
+[[file]]
+c = "sys/uvm/uvm_mmap.c"
+rust = "sys/uvm/uvm_mmap.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7c55ec1f71358b0003f82230153ce1317de212cd"
+deps = ["sys/uvm/uvm_map.c", "sys/sys/mman.h", "sys/kern/kern_resource.c", "sys/sys/unistd.h"]
+notes = "M7a-3b: ALIGN_ADDR, sys_mquery, uvm_wxabort/uvm_wxcheck (no vnodes: W^X never allowed; the abort path reports log/sigexit and exits through exit1), sys_mmap (anonymous; file mappings report fd_getfile), sys_msync, sys_munmap, sys_mprotect, sys_pinsyscalls, sys_mimmutable, sys_minherit, sys_madvise, sys_mlock/munlock/mlockall/munlockall (pmap_wired_count exists: no suser), uvm_mmaplock, uvm_mmapanon, sys_kbind (sigexit is exit1 with SIGILL); pledge_protexec reports a pledged process (kern_pledge.c); uvm_mmapfile waits for vnodes; host test for ALIGN_ADDR"
+
+[[file]]
+c = "sys/uvm/uvm_unix.c"
+rust = "sys/uvm/uvm_unix.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "56ee03703171f145ea280a805d2aab4fbe0e8905"
+deps = ["sys/uvm/uvm_map.c", "sys/uvm/uvm_amap.c", "sys/kern/kern_resource.c"]
+notes = "M7a-3b: sys_obreak (printf for uprintf), uvm_grow (called by both archs' traps), uvm_coredump_walk_amap, uvm_should_coredump, uvm_coredump_walkmap (fn-pointer callbacks returning Result)"
+
+[[file]]
+c = "sys/sys/resourcevar.h"
+rust = "sys/sys/resourcevar.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "297a4597671378e5e970166eaa0e42d38e925e69"
+deps = ["sys/sys/resource.h", "sys/sys/refcnt.h"]
+notes = "M7a-3b: struct plimit (pl_rlimit as Cells), lim_read_leave, lim_cur; ADDUPROF waits for addupc_task (subr_prof.c)"
+
+[[file]]
+c = "sys/sys/unistd.h"
+rust = "sys/sys/unistd.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1b90fb1a03c0b203674f733b23014d89f5a5254b"
+deps = []
+notes = "M7a-3b: the POSIX constants, struct __tfork and struct __kbind (#[repr(C)], user pointers as usize), KBIND_*, the _PC_* pathconf names; reference-backed test"
 
 [[file]]
 c = "sys/uvm/uvm_addr.h"

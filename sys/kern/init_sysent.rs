@@ -15,6 +15,7 @@
 //!   always compiles. Rerun the generator after porting a syscall.
 
 use crate::kern::kern_exit::sys_exit;
+use crate::kern::kern_resource::{sys_getrlimit, sys_getrusage, sys_setrlimit};
 use crate::kern::kern_sig::sys_nosys;
 use crate::kern::sys_generic::sys_write;
 use crate::sys::syscall::SYS_MAXSYSCALL;
@@ -55,6 +56,11 @@ use crate::sys::syscallargs::{
     SysWait4Args, SysWaitidArgs, SysWriteArgs, SysWritevArgs, SysYpconnectArgs,
 };
 use crate::sys::systm::{SY_NOLOCK, Sysent};
+use crate::uvm::uvm_mmap::{
+    sys_kbind, sys_madvise, sys_mimmutable, sys_minherit, sys_mlock, sys_mlockall, sys_mmap,
+    sys_mprotect, sys_mquery, sys_msync, sys_munlock, sys_munlockall, sys_munmap, sys_pinsyscalls,
+};
+use crate::uvm::uvm_unix::sys_obreak;
 
 /// `sysent[]`: the system call switch table, indexed by `SYS_*`.
 pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
@@ -75,9 +81,9 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(3, size_of::<SysMknodArgs>(), 0, sys_nosys), // 14 = mknod (sys_mknod not ported)
     Sysent::new(2, size_of::<SysChmodArgs>(), 0, sys_nosys), // 15 = chmod (sys_chmod not ported)
     Sysent::new(3, size_of::<SysChownArgs>(), 0, sys_nosys), // 16 = chown (sys_chown not ported)
-    Sysent::new(1, size_of::<SysObreakArgs>(), 0, sys_nosys), // 17 = break (sys_obreak not ported)
+    Sysent::new(1, size_of::<SysObreakArgs>(), 0, sys_obreak), // 17 = break
     Sysent::new(0, 0, SY_NOLOCK, sys_nosys), // 18 = getdtablecount (sys_getdtablecount not ported)
-    Sysent::new(2, size_of::<SysGetrusageArgs>(), 0, sys_nosys), // 19 = getrusage (sys_getrusage not ported)
+    Sysent::new(2, size_of::<SysGetrusageArgs>(), 0, sys_getrusage), // 19 = getrusage
     Sysent::new(0, 0, SY_NOLOCK, sys_nosys), // 20 = getpid (sys_getpid not ported)
     Sysent::new(4, size_of::<SysMountArgs>(), 0, sys_nosys), // 21 = mount (sys_mount not ported)
     Sysent::new(2, size_of::<SysUnmountArgs>(), 0, sys_nosys), // 22 = unmount (sys_unmount not ported)
@@ -107,7 +113,7 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(3, size_of::<SysSigactionArgs>(), 0, sys_nosys), // 46 = sigaction (sys_sigaction not ported)
     Sysent::new(0, 0, SY_NOLOCK, sys_nosys), // 47 = getgid (sys_getgid not ported)
     Sysent::new(2, size_of::<SysSigprocmaskArgs>(), SY_NOLOCK, sys_nosys), // 48 = sigprocmask (sys_sigprocmask not ported)
-    Sysent::new(6, size_of::<SysMmapArgs>(), SY_NOLOCK, sys_nosys), // 49 = mmap (sys_mmap not ported)
+    Sysent::new(6, size_of::<SysMmapArgs>(), SY_NOLOCK, sys_mmap),         // 49 = mmap
     Sysent::new(1, size_of::<SysSetloginArgs>(), 0, sys_nosys), // 50 = setlogin (sys_setlogin not ported)
     Sysent::new(0, 0, 0, sys_nosys),                            // 51 = unimplemented acct
     Sysent::new(0, 0, 0, sys_nosys), // 52 = sigpending (sys_sigpending not ported)
@@ -131,12 +137,12 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(2, size_of::<SysGetitimerArgs>(), SY_NOLOCK, sys_nosys), // 70 = getitimer (sys_getitimer not ported)
     Sysent::new(5, size_of::<SysSelectArgs>(), SY_NOLOCK, sys_nosys), // 71 = select (sys_select not ported)
     Sysent::new(6, size_of::<SysKeventArgs>(), SY_NOLOCK, sys_nosys), // 72 = kevent (sys_kevent not ported)
-    Sysent::new(2, size_of::<SysMunmapArgs>(), SY_NOLOCK, sys_nosys), // 73 = munmap (sys_munmap not ported)
-    Sysent::new(3, size_of::<SysMprotectArgs>(), SY_NOLOCK, sys_nosys), // 74 = mprotect (sys_mprotect not ported)
-    Sysent::new(3, size_of::<SysMadviseArgs>(), 0, sys_nosys), // 75 = madvise (sys_madvise not ported)
+    Sysent::new(2, size_of::<SysMunmapArgs>(), SY_NOLOCK, sys_munmap), // 73 = munmap
+    Sysent::new(3, size_of::<SysMprotectArgs>(), SY_NOLOCK, sys_mprotect), // 74 = mprotect
+    Sysent::new(3, size_of::<SysMadviseArgs>(), 0, sys_madvise),      // 75 = madvise
     Sysent::new(2, size_of::<SysUtimesArgs>(), 0, sys_nosys), // 76 = utimes (sys_utimes not ported)
     Sysent::new(2, size_of::<SysFutimesArgs>(), 0, sys_nosys), // 77 = futimes (sys_futimes not ported)
-    Sysent::new(6, size_of::<SysMqueryArgs>(), 0, sys_nosys), // 78 = mquery (sys_mquery not ported)
+    Sysent::new(6, size_of::<SysMqueryArgs>(), 0, sys_mquery), // 78 = mquery
     Sysent::new(2, size_of::<SysGetgroupsArgs>(), SY_NOLOCK, sys_nosys), // 79 = getgroups (sys_getgroups not ported)
     Sysent::new(2, size_of::<SysSetgroupsArgs>(), 0, sys_nosys), // 80 = setgroups (sys_setgroups not ported)
     Sysent::new(0, 0, 0, sys_nosys), // 81 = getpgrp (sys_getpgrp not ported)
@@ -144,7 +150,7 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(5, size_of::<SysFutexArgs>(), SY_NOLOCK, sys_nosys), // 83 = futex (sys_futex not ported)
     Sysent::new(4, size_of::<SysUtimensatArgs>(), 0, sys_nosys), // 84 = utimensat (sys_utimensat not ported)
     Sysent::new(2, size_of::<SysFutimensArgs>(), 0, sys_nosys), // 85 = futimens (sys_futimens not ported)
-    Sysent::new(3, size_of::<SysKbindArgs>(), SY_NOLOCK, sys_nosys), // 86 = kbind (sys_kbind not ported)
+    Sysent::new(3, size_of::<SysKbindArgs>(), SY_NOLOCK, sys_kbind), // 86 = kbind
     Sysent::new(2, size_of::<SysClockGettimeArgs>(), SY_NOLOCK, sys_nosys), // 87 = clock_gettime (sys_clock_gettime not ported)
     Sysent::new(2, size_of::<SysClockSettimeArgs>(), SY_NOLOCK, sys_nosys), // 88 = clock_settime (sys_clock_settime not ported)
     Sysent::new(2, size_of::<SysClockGetresArgs>(), SY_NOLOCK, sys_nosys), // 89 = clock_getres (sys_clock_getres not ported)
@@ -216,8 +222,8 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(0, 0, 0, sys_nosys),                                     // 155 = unimplemented
     Sysent::new(0, 0, 0, sys_nosys), // 156 = obsolete ogetdirentries
     Sysent::new(0, 0, 0, sys_nosys), // 157 = obsolete statfs25
-    Sysent::new(4, size_of::<SysPinsyscallsArgs>(), 0, sys_nosys), // 158 = pinsyscalls (sys_pinsyscalls not ported)
-    Sysent::new(2, size_of::<SysMimmutableArgs>(), 0, sys_nosys), // 159 = mimmutable (sys_mimmutable not ported)
+    Sysent::new(4, size_of::<SysPinsyscallsArgs>(), 0, sys_pinsyscalls), // 158 = pinsyscalls
+    Sysent::new(2, size_of::<SysMimmutableArgs>(), 0, sys_mimmutable), // 159 = mimmutable
     Sysent::new(4, size_of::<SysWaitidArgs>(), 0, sys_nosys), // 160 = waitid (sys_waitid not ported)
     Sysent::new(2, size_of::<SysGetfhArgs>(), 0, sys_nosys),  // 161 = getfh (sys_getfh not ported)
     Sysent::new(0, 0, 0, sys_nosys),                          // 162 = obsolete ogetdomainname
@@ -252,19 +258,19 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(2, size_of::<SysPathconfArgs>(), 0, sys_nosys), // 191 = pathconf (sys_pathconf not ported)
     Sysent::new(2, size_of::<SysFpathconfArgs>(), 0, sys_nosys), // 192 = fpathconf (sys_fpathconf not ported)
     Sysent::new(3, size_of::<SysSwapctlArgs>(), 0, sys_nosys), // 193 = swapctl (sys_swapctl not ported)
-    Sysent::new(2, size_of::<SysGetrlimitArgs>(), SY_NOLOCK, sys_nosys), // 194 = getrlimit (sys_getrlimit not ported)
-    Sysent::new(2, size_of::<SysSetrlimitArgs>(), SY_NOLOCK, sys_nosys), // 195 = setrlimit (sys_setrlimit not ported)
-    Sysent::new(0, 0, 0, sys_nosys), // 196 = obsolete ogetdirentries48
-    Sysent::new(0, 0, 0, sys_nosys), // 197 = obsolete pad_mmap
-    Sysent::new(0, 0, 0, sys_nosys), // 198 = obsolete __syscall
-    Sysent::new(0, 0, 0, sys_nosys), // 199 = obsolete pad_lseek
-    Sysent::new(0, 0, 0, sys_nosys), // 200 = obsolete pad_truncate
-    Sysent::new(0, 0, 0, sys_nosys), // 201 = obsolete pad_ftruncate
+    Sysent::new(2, size_of::<SysGetrlimitArgs>(), SY_NOLOCK, sys_getrlimit), // 194 = getrlimit
+    Sysent::new(2, size_of::<SysSetrlimitArgs>(), SY_NOLOCK, sys_setrlimit), // 195 = setrlimit
+    Sysent::new(0, 0, 0, sys_nosys),                           // 196 = obsolete ogetdirentries48
+    Sysent::new(0, 0, 0, sys_nosys),                           // 197 = obsolete pad_mmap
+    Sysent::new(0, 0, 0, sys_nosys),                           // 198 = obsolete __syscall
+    Sysent::new(0, 0, 0, sys_nosys),                           // 199 = obsolete pad_lseek
+    Sysent::new(0, 0, 0, sys_nosys),                           // 200 = obsolete pad_truncate
+    Sysent::new(0, 0, 0, sys_nosys),                           // 201 = obsolete pad_ftruncate
     Sysent::new(6, size_of::<SysSysctlArgs>(), SY_NOLOCK, sys_nosys), // 202 = sysctl (sys_sysctl not ported)
-    Sysent::new(2, size_of::<SysMlockArgs>(), 0, sys_nosys), // 203 = mlock (sys_mlock not ported)
-    Sysent::new(2, size_of::<SysMunlockArgs>(), 0, sys_nosys), // 204 = munlock (sys_munlock not ported)
-    Sysent::new(0, 0, 0, sys_nosys),                           // 205 = unimplemented sys_undelete
-    Sysent::new(0, 0, 0, sys_nosys),                           // 206 = obsolete t32_futimes
+    Sysent::new(2, size_of::<SysMlockArgs>(), 0, sys_mlock),          // 203 = mlock
+    Sysent::new(2, size_of::<SysMunlockArgs>(), 0, sys_munlock),      // 204 = munlock
+    Sysent::new(0, 0, 0, sys_nosys), // 205 = unimplemented sys_undelete
+    Sysent::new(0, 0, 0, sys_nosys), // 206 = obsolete t32_futimes
     Sysent::new(1, size_of::<SysGetpgidArgs>(), 0, sys_nosys), // 207 = getpgid (sys_getpgid not ported)
     Sysent::new(0, 0, 0, sys_nosys),                           // 208 = obsolete nnpfspioctl
     Sysent::new(3, size_of::<SysUtraceArgs>(), SY_NOLOCK, sys_nosys), // 209 = utrace (sys_utrace not ported)
@@ -308,13 +314,13 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(0, 0, 0, sys_nosys), // 247 = unimplemented
     Sysent::new(0, 0, 0, sys_nosys), // 248 = unimplemented
     Sysent::new(0, 0, 0, sys_nosys), // 249 = unimplemented
-    Sysent::new(3, size_of::<SysMinheritArgs>(), SY_NOLOCK, sys_nosys), // 250 = minherit (sys_minherit not ported)
-    Sysent::new(0, 0, 0, sys_nosys),                                    // 251 = obsolete rfork
+    Sysent::new(3, size_of::<SysMinheritArgs>(), SY_NOLOCK, sys_minherit), // 250 = minherit
+    Sysent::new(0, 0, 0, sys_nosys), // 251 = obsolete rfork
     Sysent::new(3, size_of::<SysPollArgs>(), SY_NOLOCK, sys_nosys), // 252 = poll (sys_poll not ported)
     Sysent::new(0, 0, SY_NOLOCK, sys_nosys), // 253 = issetugid (sys_issetugid not ported)
     Sysent::new(3, size_of::<SysLchownArgs>(), 0, sys_nosys), // 254 = lchown (sys_lchown not ported)
     Sysent::new(1, size_of::<SysGetsidArgs>(), 0, sys_nosys), // 255 = getsid (sys_getsid not ported)
-    Sysent::new(3, size_of::<SysMsyncArgs>(), 0, sys_nosys),  // 256 = msync (sys_msync not ported)
+    Sysent::new(3, size_of::<SysMsyncArgs>(), 0, sys_msync),  // 256 = msync
     Sysent::new(0, 0, 0, sys_nosys),                          // 257 = obsolete semctl35
     Sysent::new(0, 0, 0, sys_nosys),                          // 258 = obsolete shmctl35
     Sysent::new(0, 0, 0, sys_nosys),                          // 259 = obsolete msgctl35
@@ -329,8 +335,8 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(0, 0, 0, sys_nosys),                          // 268 = obsolete pad_pwritev
     Sysent::new(0, 0, SY_NOLOCK, sys_nosys), // 269 = kqueue (sys_kqueue not ported)
     Sysent::new(1, size_of::<SysKqueue1Args>(), SY_NOLOCK, sys_nosys), // 270 = kqueue1 (sys_kqueue1 not ported)
-    Sysent::new(1, size_of::<SysMlockallArgs>(), 0, sys_nosys), // 271 = mlockall (sys_mlockall not ported)
-    Sysent::new(0, 0, 0, sys_nosys), // 272 = munlockall (sys_munlockall not ported)
+    Sysent::new(1, size_of::<SysMlockallArgs>(), 0, sys_mlockall),     // 271 = mlockall
+    Sysent::new(0, 0, 0, sys_munlockall),                              // 272 = munlockall
     Sysent::new(0, 0, 0, sys_nosys), // 273 = unimplemented sys_getpeereid
     Sysent::new(0, 0, 0, sys_nosys), // 274 = unimplemented sys_extattrctl
     Sysent::new(0, 0, 0, sys_nosys), // 275 = unimplemented sys_extattr_set_file

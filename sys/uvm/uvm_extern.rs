@@ -76,6 +76,7 @@
 use core::cell::Cell;
 use core::sync::atomic::AtomicI32;
 
+use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
 use crate::sys::types::{Off, Paddr, Segsz};
 use crate::uvm::uvm_map::VmMap;
@@ -366,6 +367,22 @@ pub const KMEM_DYN_INITIALIZER: KmemDynMode = KmemDynMode {
     kd_waitok: false,
     kd_trylock: false,
 };
+
+/// `uvm_coredump_setup_cb`: called once with the number of segments a core dump will hold.
+pub type UvmCoredumpSetupCb =
+    fn(nsegment: i32, cookie: *mut core::ffi::c_void) -> Result<(), Errno>;
+
+/// `uvm_coredump_walk_cb`: called for each segment of a core dump: `[start, realend)` holds
+/// data, `[realend, end)` is absent (zero) memory.
+pub type UvmCoredumpWalkCb = fn(
+    start: usize,
+    realend: usize,
+    end: usize,
+    prot: VmProt,
+    isvnode: bool,
+    nsegment: i32,
+    cookie: *mut core::ffi::c_void,
+) -> Result<(), Errno>;
 
 #[cfg(test)]
 mod tests {
