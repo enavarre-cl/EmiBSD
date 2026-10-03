@@ -1,6 +1,6 @@
 # Status
 
-Milestone: **M8 done** (OpenBSD's init(8) and ksh on an ffs ramdisk root). Updated: 2026-10-03.
+Milestone: **M8b done** (multi-user boot and root login); M9a next. Updated: 2026-10-03.
 
 Done:
 - M7a (exit met: `init: demand-zero bss ok`, user pages served by `uvm_fault`): `uvm_map.c`,
@@ -16,8 +16,8 @@ Done:
   (`fpu.c`), OpenBSD's makefs for the image, libc/init/ksh/cat/echo/ls/uname.
 
 Next:
-- M8b (multi-user boot and login): the userland side is in (multi-user /etc/rc, getty
-  `login:`, pwd.db, `mount -uw /`); the root login waits for AF_UNIX `socketpair`. Then diagnostic tools stage 2 (libkvm, ps with
+- M9a (sockets in: `9a84a98`; AF_INET/route sockets, ifconfig/ping/route next), kqueue and
+  crypto agents running. Then diagnostic tools stage 2 (libkvm, ps with
   `uvm_io`, fstat, vmstat, df/mount). M9 is split: M9a sockets and network userland, M9b
   WireGuard, M9c IPsec, M9d pf (last: it filters the tunnels too). M14b when no agents run.
 
