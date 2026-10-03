@@ -51,11 +51,10 @@
 //! Not yet ported: `disk_map` (the DUID lookup of `opendev(3)`'s `DIOCMAP`).
 //!
 //! ## Deviations
-//! - The GPT half of `readdoslabel` (`gpt_get_hdr`, `gpt_get_parts`, `gpt_get_fstype`, the
-//!   body of `spoofgpt`) is not ported: it checksums the header and the entries with `crc32`
-//!   (`lib/libz`, `skipped: license: zlib`). `spoofgpt` finds a protective MBR as the C does
-//!   (`gpt_chk_mbr`) and then returns `unported!` (`ENOSYS`), so a GPT disk fails to read its
-//!   label visibly; an MBR, FAT or bare disk is handled in full.
+//! - `gpt_get_hdr` returns the header (zeroed when invalid) and `gpt_get_parts` the
+//!   partition array as an `Option<Vec<u8>>` (the C's malloc'd `*gp`, NULL on a bad
+//!   checksum); the array is read entry by entry with `GptPartition::from_bytes`. The
+//!   checksums are `crc32` (`sys/lib/libz`).
 //! - `checkdisklabel` takes the raw label and the in-core label as two `&mut`: the C's
 //!   `lp != dlp` test is always true for its callers (the raw label sits in a sector buffer),
 //!   so the copy is unconditional.
@@ -79,12 +78,14 @@
 //! - `disk_attach_callback`'s `struct disk_attach_task` is a malloc'd [`DiskAttachTask`], as
 //!   in C.
 
+use alloc::vec::Vec;
 use core::ffi::c_void;
 use core::fmt;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 use libkern::StaticCell;
+use libz::crc32;
 
 use crate::dev::rnd::{arc4random_buf, enqueue_randomness};
 use crate::kern::init_main::BOOTHOWTO;
@@ -118,8 +119,9 @@ use crate::sys::disklabel::{
     DISKLABEL_SIZE, DISKMAGIC, DOS_LABELSECTOR, DOS_MAXEBR, DOSBBSECTOR, DOSMBR_SIGNATURE,
     DOSMBR_SIGNATURE_OFF, DOSPTYP_EFI, DOSPTYP_EFISYS, DOSPTYP_EXTEND, DOSPTYP_EXTENDL,
     DOSPTYP_FAT12, DOSPTYP_FAT16B, DOSPTYP_FAT16L, DOSPTYP_FAT16S, DOSPTYP_FAT32, DOSPTYP_FAT32L,
-    DOSPTYP_LINUX, DOSPTYP_NTFS, DOSPTYP_OPENBSD, DOSPTYP_UNUSED, Disklabel, DosPartition,
-    FS_BSDFFS, FS_EXT2FS, FS_MSDOS, FS_NTFS, FS_OTHER, FS_UNUSED, GPTSECTOR, MAXDISKSIZE,
+    DOSPTYP_LINUX, DOSPTYP_NTFS, DOSPTYP_OPENBSD, DOSPTYP_UNUSED, Disklabel, DosPartition, FS_BOOT,
+    FS_BSDFFS, FS_EXT2FS, FS_HFS, FS_MSDOS, FS_NTFS, FS_OTHER, FS_UNUSED, GPTMINHDRSIZE,
+    GPTMINPARTSIZE, GPTREVISION, GPTSECTOR, GPTSIGNATURE, GptHeader, GptPartition, MAXDISKSIZE,
     MAXPARTITIONS, NDOSPART, NSPARE, Partition, RAW_PART, diskminor, diskpart, diskunit,
     dl_blkoffset, dl_blkspersec, dl_blktosec, dl_getbend, dl_getbstart, dl_getdsize, dl_getpoffset,
     dl_getpsize, dl_partname2num, dl_partnum2name, dl_sectoblk, dl_setbend, dl_setbstart,
@@ -141,6 +143,7 @@ use crate::sys::time::sec_to_nsec;
 use crate::sys::time::{timeradd, timersub};
 use crate::sys::types::{Daddr, Dev, major};
 use crate::sys::ucred::NOCRED;
+use crate::sys::uuid::Uuid;
 use crate::sys::vnode::{VBLK, VCHR};
 use crate::unported;
 
@@ -491,14 +494,168 @@ pub fn gpt_chk_mbr(dp: &[DosPartition; NDOSPART], dsize: u64) -> Option<usize> {
     }
 }
 
-/// `spoofgpt`: spoofs a label from a GUID partition table. Only the protective MBR check
-/// is ported (see the module's deviations): a disk without one is left to `spoofmbr`.
+/// `gpt_get_hdr`: reads the GPT header at `sector` and returns it, or a zeroed header when
+/// it is not a valid one (wrong signature, revision, sizes or checksum).
+pub fn gpt_get_hdr(
+    bp: &'static Buf,
+    strat: DevTypeStrategy,
+    lp: &Disklabel,
+    sector: u64,
+) -> Result<GptHeader, Errno> {
+    readdisksector(bp, strat, lp, sector)?;
+
+    let mut raw: [u8; GPTMINHDRSIZE as usize] = buf_bytes(bp, 0);
+    let ngh = GptHeader::from_bytes(&raw);
+
+    let size = u32::from_le(ngh.gh_size);
+    let partsize = u32::from_le(ngh.gh_part_size);
+    let lbaend = u64::from_le(ngh.gh_lba_end);
+    let lbastart = u64::from_le(ngh.gh_lba_start);
+
+    let csum = ngh.gh_csum;
+    raw[GptHeader::CSUM_OFF..GptHeader::CSUM_OFF + 4].fill(0);
+    let ncsum = crc32(0, &raw).to_le();
+
+    if u64::from_le(ngh.gh_sig) == GPTSIGNATURE
+        && u32::from_le(ngh.gh_rev) == GPTREVISION
+        && size == GPTMINHDRSIZE
+        && lbastart <= lbaend
+        && partsize == GPTMINPARTSIZE
+        && lp.d_secsize.is_multiple_of(partsize)
+        && csum == ncsum
+    {
+        Ok(GptHeader {
+            gh_csum: ncsum,
+            ..ngh
+        })
+    } else {
+        Ok(GptHeader::default())
+    }
+}
+
+/// `gpt_get_parts`: reads and checks the partition array `gh` points at; `None` (the C's
+/// NULL `*gp`) when its checksum does not match.
+pub fn gpt_get_parts(
+    bp: &'static Buf,
+    strat: DevTypeStrategy,
+    lp: &Disklabel,
+    gh: &GptHeader,
+) -> Result<Option<Vec<u8>>, Errno> {
+    let partlba = u64::from_le(gh.gh_part_lba);
+    let partnum = u32::from_le(gh.gh_part_num);
+    let partsize = u32::from_le(gh.gh_part_size);
+    let secsize = u64::from(lp.d_secsize);
+
+    let sectors = (u64::from(partnum) * u64::from(partsize)).div_ceil(secsize);
+
+    // mallocarray(sectors, d_secsize, M_DEVBUF, M_NOWAIT | M_ZERO): a fallible Vec.
+    let bytes = sectors
+        .checked_mul(secsize)
+        .and_then(|b| usize::try_from(b).ok())
+        .ok_or(Errno::ENOMEM)?;
+    let mut ngp: Vec<u8> = Vec::new();
+    ngp.try_reserve_exact(bytes).map_err(|_| Errno::ENOMEM)?;
+    ngp.resize(bytes, 0);
+
+    for i in 0..sectors {
+        readdisksector(bp, strat, lp, partlba + i)?;
+        let off = (i * secsize) as usize;
+        // SAFETY: the buffer is busy (geteblk), so its data is ours; `data()` is the
+        // `b_bcount` (one sector) bytes just read.
+        let data = unsafe { bp.data() };
+        let n = data.len().min(secsize as usize);
+        ngp[off..off + n].copy_from_slice(&data[..n]);
+    }
+
+    let len = (partnum as usize) * (partsize as usize);
+    let partcsum = crc32(0, &ngp[..len.min(bytes)]).to_le();
+    if partcsum != gh.gh_part_csum {
+        // DEBUG: DPRINTF("invalid %s GPT partition array @ %llu\n", ...): not configured.
+        return Ok(None);
+    }
+    Ok(Some(ngp))
+}
+
+/// The GPT partition type GUIDs `gpt_get_fstype` knows, in memory order (LE format!), with
+/// their file system types.
+const KNOWNFS: [([u8; 16], u8); 8] = [
+    // GPT_UUID_UNUSED
+    ([0; 16], FS_UNUSED),
+    // GPT_LEUUID_OPENBSD
+    (
+        [
+            0xa0, 0xc7, 0x4c, 0x82, 0xa8, 0x36, 0xe3, 0x11, 0x89, 0x0a, 0x95, 0x25, 0x19, 0xad,
+            0x3f, 0x61,
+        ],
+        FS_BSDFFS,
+    ),
+    // GPT_UUID_MICROSOFT_BASIC_DATA
+    (
+        [
+            0xa2, 0xa0, 0xd0, 0xeb, 0xe5, 0xb9, 0x33, 0x44, 0x87, 0xc0, 0x68, 0xb6, 0xb7, 0x26,
+            0x99, 0xc7,
+        ],
+        FS_MSDOS,
+    ),
+    // GPT_UUID_CHROMEOS_ROOTFS
+    (
+        [
+            0x02, 0xe2, 0xb8, 0x3c, 0x7e, 0x3b, 0xdd, 0x47, 0x8a, 0x3c, 0x7f, 0xf2, 0xa1, 0x3c,
+            0xfc, 0xec,
+        ],
+        FS_EXT2FS,
+    ),
+    // GPT_UUID_LINUX_FILES
+    (
+        [
+            0xaf, 0x3d, 0xc6, 0x0f, 0x83, 0x84, 0x72, 0x47, 0x8e, 0x79, 0x3d, 0x69, 0xd8, 0x47,
+            0x7d, 0xe4,
+        ],
+        FS_EXT2FS,
+    ),
+    // GPT_UUID_MAC_OS_X_HFS
+    (
+        [
+            0x00, 0x53, 0x46, 0x48, 0x00, 0x00, 0xaa, 0x11, 0xaa, 0x11, 0x00, 0x30, 0x65, 0x43,
+            0xec, 0xac,
+        ],
+        FS_HFS,
+    ),
+    // GPT_LEUUID_EFI_SYSTEM
+    (
+        [
+            0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e,
+            0xc9, 0x3b,
+        ],
+        FS_MSDOS,
+    ),
+    // GPT_UUID_BIOS_BOOT
+    (
+        [
+            0x48, 0x61, 0x68, 0x21, 0x49, 0x64, 0x6f, 0x6e, 0x74, 0x4e, 0x65, 0x65, 0x64, 0x45,
+            0x46, 0x49,
+        ],
+        FS_BOOT,
+    ),
+];
+
+/// `gpt_get_fstype`: the file system type of a GPT partition type GUID.
+pub fn gpt_get_fstype(uuid_part: &Uuid) -> u8 {
+    let b = uuid_part.as_bytes();
+    KNOWNFS
+        .iter()
+        .find(|(gptype, _)| *gptype == b)
+        .map_or(FS_OTHER, |&(_, fstype)| fstype)
+}
+
+/// `spoofgpt`: spoof a label from a GPT: the OpenBSD partition's place (where the real
+/// label is) and the other known partitions as `i`, `j`, ...
 pub fn spoofgpt(
-    _bp: &'static Buf,
-    _strat: DevTypeStrategy,
+    bp: &'static Buf,
+    strat: DevTypeStrategy,
     dosbb: &[u8; DEV_BSIZE],
     lp: &mut Disklabel,
-    _partoffp: &mut Daddr,
+    partoffp: &mut Daddr,
 ) -> Result<(), Errno> {
     let dp = DosPartition::table(dosbb);
     let sig = u16::from_ne_bytes([dosbb[DOSMBR_SIGNATURE_OFF], dosbb[DOSMBR_SIGNATURE_OFF + 1]]);
@@ -507,7 +664,114 @@ pub fn spoofgpt(
         return Ok(());
     }
 
-    Err(unported!("spoofgpt: gpt_get_hdr (crc32, license: zlib)"))
+    let mut gp = None;
+    let mut gh = gpt_get_hdr(bp, strat, lp, GPTSECTOR);
+    if let Ok(h) = &gh
+        && u64::from_le(h.gh_sig) == GPTSIGNATURE
+    {
+        match gpt_get_parts(bp, strat, lp, h) {
+            Ok(parts) => gp = parts,
+            Err(e) => gh = Err(e),
+        }
+    }
+
+    let primary_bad = match &gh {
+        Err(_) => true,
+        Ok(h) => u64::from_le(h.gh_sig) != GPTSIGNATURE || gp.is_none(),
+    };
+    if primary_bad {
+        gh = gpt_get_hdr(bp, strat, lp, dl_getdsize(lp) - 1);
+        if let Ok(h) = &gh
+            && u64::from_le(h.gh_sig) == GPTSIGNATURE
+        {
+            match gpt_get_parts(bp, strat, lp, h) {
+                Ok(parts) => gp = parts,
+                Err(e) => gh = Err(e),
+            }
+        }
+    }
+
+    let gh = gh?;
+    let Some(gp) = gp else {
+        return Err(Errno::ENXIO);
+    };
+
+    let lbastart = u64::from_le(gh.gh_lba_start);
+    let lbaend = u64::from_le(gh.gh_lba_end);
+    let partnum = u32::from_le(gh.gh_part_num);
+
+    let mut n = (b'i' - b'a') as usize; // Start spoofing at 'i', a.k.a. 8.
+
+    dl_setbstart(lp, lbastart);
+    dl_setbend(lp, lbaend + 1);
+    let mut partoff = dl_sectoblk(lp, lbastart) as Daddr;
+    let mut obsdfound = false;
+    for i in 0..partnum as usize {
+        let off = i * GPTMINPARTSIZE as usize;
+        let Some(entry) = gp.get(off..off + GPTMINPARTSIZE as usize) else {
+            break;
+        };
+        let mut e = [0u8; GPTMINPARTSIZE as usize];
+        e.copy_from_slice(entry);
+        let part = GptPartition::from_bytes(&e);
+
+        let fstype = gpt_get_fstype(&part.gp_type);
+        if fstype == FS_UNUSED {
+            continue;
+        }
+        if fstype == FS_OTHER {
+            // DEBUG: "spoofgpt: Skipping partition %u (unknown filesystem)".
+            continue;
+        }
+
+        let start = u64::from_le(part.gp_lba_start);
+        if start > lbaend || start < lbastart {
+            continue;
+        }
+
+        let end = u64::from_le(part.gp_lba_end);
+        if start > end {
+            continue;
+        }
+
+        if obsdfound && fstype == FS_BSDFFS {
+            continue;
+        }
+
+        if fstype == FS_BSDFFS {
+            obsdfound = true;
+            partoff = dl_sectoblk(lp, start) as Daddr;
+            let labelsec = dl_blktosec(lp, (partoff + DOS_LABELSECTOR) as u64);
+            if labelsec > end.min(lbaend) {
+                partoff = -1;
+            }
+            dl_setbstart(lp, start);
+            dl_setbend(lp, end + 1);
+            continue;
+        }
+
+        if partoff != -1 {
+            let labelsec = dl_blktosec(lp, (partoff + DOS_LABELSECTOR) as u64);
+            if labelsec >= start && labelsec <= end {
+                partoff = -1;
+            }
+        }
+
+        if n < MAXPARTITIONS && end <= lbaend {
+            let pp = &mut lp.d_partitions[n];
+            n += 1;
+            pp.p_fstype = fstype;
+            dl_setpoffset(pp, start);
+            dl_setpsize(pp, end - start + 1);
+        }
+    }
+
+    lp.d_magic = DISKMAGIC;
+    *partoffp = partoff;
+    // free(gp, M_DEVBUF, gpbytes): the Vec is dropped here.
+
+    // DEBUG: the "readdoslabel: GPT -- ..." print is not configured.
+    Ok(())
 }
 
 /// `mbr_get_fstype`: the file system type of an MBR partition type.

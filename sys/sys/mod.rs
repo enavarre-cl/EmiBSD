@@ -86,6 +86,7 @@ pub mod ucred;
 pub mod uio;
 pub mod unistd;
 pub mod user;
+pub mod uuid;
 pub mod vmmeter;
 pub mod vnode;
 pub mod wait;

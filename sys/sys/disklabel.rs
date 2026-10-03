@@ -60,9 +60,9 @@
 //! - `struct partinfo` holds raw pointers, as in C: `DIOCGPART` hands the in-core label and
 //!   partition to a file system (`ffs_mountfs`); [`Partinfo::store`] and [`Partinfo::load`]
 //!   move it through an `ioctl` data buffer.
-//! - `struct gpt_header`, `struct gpt_partition` and `GPT_UUID_*` wait for `<sys/uuid.h>`
-//!   and the GPT code of `subr_disk.c` (its header checksums are `crc32`, `skipped: license:
-//!   zlib`); the `GPT*` constants are here.
+//! - `struct gpt_header` and `struct gpt_partition` are read from a sector's bytes field by
+//!   field ([`GptHeader::from_bytes`], [`GptPartition::from_bytes`]), the C's `memcpy` into
+//!   the struct; their fields stay little-endian as on disk (the C's `letoh*` at each use).
 //! - [`DosPartition::table`] is the C's `memcpy(dp, dosbb + DOSPARTOFF, sizeof(dp))` from a
 //!   sector buffer.
 //! - `getdiskbyname` is the C library's (`!_KERNEL`); `_PATH_DISKTAB`/`DISKTAB` are kept.
@@ -70,6 +70,7 @@
 use crate::machine::{Machine, MachineDisklabel};
 use crate::sys::param::DEV_BSIZE;
 use crate::sys::types::{Dev, major, makedev, minor};
+use crate::sys::uuid::Uuid;
 
 /// `_PATH_DISKTAB`: disk description table, see disktab(5).
 pub const _PATH_DISKTAB: &str = "/etc/disktab";
@@ -650,6 +651,119 @@ pub const GPTMINHDRSIZE: u32 = 92;
 pub const GPTMINPARTSIZE: u32 = 128;
 /// `GPTPARTNAMESIZE`.
 pub const GPTPARTNAMESIZE: usize = 36;
+
+/// `struct gpt_header`: the fields as on disk (little-endian), read through
+/// [`GptHeader::from_bytes`].
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GptHeader {
+    /// `gh_sig`: "EFI PART".
+    pub gh_sig: u64,
+    /// `gh_rev`: GPT Version 1.0: 0x00000100.
+    pub gh_rev: u32,
+    /// `gh_size`: Little-Endian.
+    pub gh_size: u32,
+    /// `gh_csum`: CRC32: with this field as 0.
+    pub gh_csum: u32,
+    /// `gh_rsvd`: always zero.
+    pub gh_rsvd: u32,
+    /// `gh_lba_self`: LBA of this header.
+    pub gh_lba_self: u64,
+    /// `gh_lba_alt`: LBA of alternate header.
+    pub gh_lba_alt: u64,
+    /// `gh_lba_start`: first usable LBA.
+    pub gh_lba_start: u64,
+    /// `gh_lba_end`: last usable LBA.
+    pub gh_lba_end: u64,
+    /// `gh_guid`: disk GUID used to identify the disk.
+    pub gh_guid: Uuid,
+    /// `gh_part_lba`: starting LBA of GPT partition entries.
+    pub gh_part_lba: u64,
+    /// `gh_part_num`: # of partition entries.
+    pub gh_part_num: u32,
+    /// `gh_part_size`: size per entry, shall be 128*(2**n) with n >= 0.
+    pub gh_part_size: u32,
+    /// `gh_part_csum`: CRC32 checksum of all partition entries: starts at gh_part_lba and
+    /// is computed over a byte length of gh_part_num*gh_part_size.
+    pub gh_part_csum: u32,
+    // the rest of the block is reserved by UEFI and must be zero
+}
+
+/// Reads a native-order integer of `N` bytes at `off` (the C's struct fields over a
+/// `memcpy`'d sector).
+fn ne<const N: usize>(b: &[u8], off: usize) -> [u8; N] {
+    let mut out = [0u8; N];
+    out.copy_from_slice(&b[off..off + N]);
+    out
+}
+
+impl GptHeader {
+    /// The header in the first `GPTMINHDRSIZE` bytes of `b`: the C's
+    /// `memcpy(&ngh, bp->b_data, sizeof(ngh))`.
+    pub fn from_bytes(b: &[u8; GPTMINHDRSIZE as usize]) -> Self {
+        Self {
+            gh_sig: u64::from_ne_bytes(ne(b, 0)),
+            gh_rev: u32::from_ne_bytes(ne(b, 8)),
+            gh_size: u32::from_ne_bytes(ne(b, 12)),
+            gh_csum: u32::from_ne_bytes(ne(b, 16)),
+            gh_rsvd: u32::from_ne_bytes(ne(b, 20)),
+            gh_lba_self: u64::from_ne_bytes(ne(b, 24)),
+            gh_lba_alt: u64::from_ne_bytes(ne(b, 32)),
+            gh_lba_start: u64::from_ne_bytes(ne(b, 40)),
+            gh_lba_end: u64::from_ne_bytes(ne(b, 48)),
+            gh_guid: Uuid::from_bytes(ne(b, 56)),
+            gh_part_lba: u64::from_ne_bytes(ne(b, 72)),
+            gh_part_num: u32::from_ne_bytes(ne(b, 80)),
+            gh_part_size: u32::from_ne_bytes(ne(b, 84)),
+            gh_part_csum: u32::from_ne_bytes(ne(b, 88)),
+        }
+    }
+
+    /// The offset of `gh_csum` in the on-disk header.
+    pub const CSUM_OFF: usize = 16;
+}
+
+/// `struct gpt_partition`, read through [`GptPartition::from_bytes`].
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GptPartition {
+    /// `gp_type`: partition type GUID.
+    pub gp_type: Uuid,
+    /// `gp_guid`: unique partition GUID.
+    pub gp_guid: Uuid,
+    /// `gp_lba_start`: starting LBA of this partition.
+    pub gp_lba_start: u64,
+    /// `gp_lba_end`: ending LBA of this partition, inclusive, usually odd.
+    pub gp_lba_end: u64,
+    /// `gp_attrs`: attribute flags.
+    pub gp_attrs: u64,
+    /// `gp_name`: partition name, utf-16le.
+    pub gp_name: [u16; GPTPARTNAMESIZE],
+    // the rest of the GPT partition entry, if any, is reserved by UEFI and must be zero
+}
+
+impl GptPartition {
+    /// The entry in the first `GPTMINPARTSIZE` bytes of `b`.
+    pub fn from_bytes(b: &[u8; GPTMINPARTSIZE as usize]) -> Self {
+        Self {
+            gp_type: Uuid::from_bytes(ne(b, 0)),
+            gp_guid: Uuid::from_bytes(ne(b, 16)),
+            gp_lba_start: u64::from_ne_bytes(ne(b, 32)),
+            gp_lba_end: u64::from_ne_bytes(ne(b, 40)),
+            gp_attrs: u64::from_ne_bytes(ne(b, 48)),
+            gp_name: core::array::from_fn(|i| u16::from_ne_bytes(ne(b, 56 + 2 * i))),
+        }
+    }
+}
+
+/// `GPT_UUID_EFI_SYSTEM`.
+pub const GPT_UUID_EFI_SYSTEM: [u8; 16] = [
+    0xc1, 0x2a, 0x73, 0x28, 0xf8, 0x1f, 0x11, 0xd2, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b,
+];
+/// `GPT_UUID_OPENBSD`.
+pub const GPT_UUID_OPENBSD: [u8; 16] = [
+    0x82, 0x4c, 0xc7, 0xa0, 0x36, 0xa8, 0x11, 0xe3, 0x89, 0x0a, 0x95, 0x25, 0x19, 0xad, 0x3f, 0x61,
+];
 
 // DOS partition table -- located at start of some disks.
 

@@ -1,6 +1,7 @@
 //! Host tests for the disk layer: label checksums and checks (byte-swapped labels too),
 //! `bounds_check_with_label`, `readdoslabel` over an in-memory disk (a bare disk with a label
-//! at sector 1, an MBR with an OpenBSD partition, a FAT boot sector, a protective GPT MBR),
+//! at sector 1, an MBR with an OpenBSD partition, a FAT boot sector, a GPT disk with its
+//! backup header),
 //! `setdisklabel`, the open masks and the DUID helpers.
 
 use std::boxed::Box;
@@ -292,7 +293,7 @@ fn a_fat_boot_sector_spoofs_partition_i_without_a_label() {
 }
 
 #[test]
-fn a_protective_mbr_is_recognised_and_gpt_reported() {
+fn a_protective_mbr_is_recognised() {
     let mut dp = [DosPartition::default(); NDOSPART];
     dp[0].dp_typ = DOSPTYP_EFI;
     dp[0].dp_start = 1u32.to_le();
@@ -301,15 +302,137 @@ fn a_protective_mbr_is_recognised_and_gpt_reported() {
     dp[1].dp_typ = DOSPTYP_OPENBSD;
     dp[1].dp_size = 5u32.to_le();
     assert_eq!(gpt_chk_mbr(&dp, 2000), None); // a hybrid MBR is not protective
+}
 
-    let (_g, bp) = setup(64);
-    mbr(&[(DOSPTYP_EFI, 1, 63)]);
-    let mut lp = spoofed(64);
+/// GPT test disk geometry: 256 sectors, the entries at LBA 2..34, usable 34..=222.
+const GPT_SECTORS: u64 = 256;
+const GPT_LBA_START: u64 = 34;
+const GPT_LBA_END: u64 = 222;
+
+/// One 128-byte GPT entry of type `ty` (memory order) over `start..=end`.
+fn gpt_entry(ty: [u8; 16], start: u64, end: u64) -> [u8; 128] {
+    let mut e = [0u8; 128];
+    e[..16].copy_from_slice(&ty);
+    e[16] = 0x42; // a non-zero unique GUID
+    e[32..40].copy_from_slice(&start.to_le_bytes());
+    e[40..48].copy_from_slice(&end.to_le_bytes());
+    e
+}
+
+/// Writes a GPT header at `lba` whose 128 entries live at `part_lba`, and returns it.
+fn gpt_header(lba: u64, alt: u64, part_lba: u64, parts: &[u8]) -> [u8; 92] {
+    let mut h = [0u8; 92];
+    h[0..8].copy_from_slice(&GPTSIGNATURE.to_le_bytes());
+    h[8..12].copy_from_slice(&GPTREVISION.to_le_bytes());
+    h[12..16].copy_from_slice(&GPTMINHDRSIZE.to_le_bytes());
+    h[24..32].copy_from_slice(&lba.to_le_bytes());
+    h[32..40].copy_from_slice(&alt.to_le_bytes());
+    h[40..48].copy_from_slice(&GPT_LBA_START.to_le_bytes());
+    h[48..56].copy_from_slice(&GPT_LBA_END.to_le_bytes());
+    h[72..80].copy_from_slice(&part_lba.to_le_bytes());
+    h[80..84].copy_from_slice(&128u32.to_le_bytes());
+    h[84..88].copy_from_slice(&GPTMINPARTSIZE.to_le_bytes());
+    h[88..92].copy_from_slice(&crc32(0, parts).to_le_bytes());
+    let csum = crc32(0, &h);
+    h[16..20].copy_from_slice(&csum.to_le_bytes());
+    poke(lba as usize * 512, &h);
+    h
+}
+
+/// A GPT disk: protective MBR, the EFI system partition 34..=49, OpenBSD 64..=222 with a
+/// label at its sector 1, primary header at LBA 1 and backup at the last sector.
+fn gpt_disk() -> Vec<u8> {
+    mbr(&[(DOSPTYP_EFI, 1, GPT_SECTORS as u32 - 1)]);
+    let efi_le = [
+        0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9,
+        0x3b,
+    ];
+    let obsd_le = [
+        0xa0, 0xc7, 0x4c, 0x82, 0xa8, 0x36, 0xe3, 0x11, 0x89, 0x0a, 0x95, 0x25, 0x19, 0xad, 0x3f,
+        0x61,
+    ];
+    let mut parts = vec![0u8; 128 * 128];
+    parts[..128].copy_from_slice(&gpt_entry(efi_le, 34, 49));
+    parts[128..256].copy_from_slice(&gpt_entry(obsd_le, 64, GPT_LBA_END));
+    poke(2 * 512, &parts);
+    gpt_header(1, GPT_SECTORS - 1, 2, &parts);
+    gpt_header(GPT_SECTORS - 1, 1, 2, &parts);
+
+    let mut inner = label(GPT_SECTORS as u32);
+    dl_setpoffset(&mut inner.d_partitions[0], 64);
+    dl_setpsize(&mut inner.d_partitions[0], GPT_LBA_END - 64 + 1);
+    inner.d_checksum = 0;
+    inner.d_checksum = dkcksum(&inner);
+    poke(65 * 512, &inner.as_bytes()[..512]);
+    parts
+}
+
+#[test]
+fn a_gpt_puts_the_label_in_the_openbsd_partition() {
+    let (_g, bp) = setup(GPT_SECTORS as usize);
+    gpt_disk();
+
+    let mut partoff: Daddr = -1;
+    let mut lp = spoofed(GPT_SECTORS as u32);
+    initdisklabel(&mut lp).expect("geometry");
+    assert_eq!(
+        readdoslabel(bp, img_strategy, &mut lp, Some(&mut partoff), true),
+        Ok(())
+    );
+    assert_eq!(partoff, 64);
+
+    let mut lp = spoofed(GPT_SECTORS as u32);
+    initdisklabel(&mut lp).expect("geometry");
+    assert_eq!(readdoslabel(bp, img_strategy, &mut lp, None, true), Ok(()));
+    let i = usize::from(b'i' - b'a');
+    assert_eq!(lp.d_partitions[i].p_fstype, FS_MSDOS);
+    assert_eq!(dl_getpoffset(&lp.d_partitions[i]), 34);
+    assert_eq!(dl_getpsize(&lp.d_partitions[i]), 16);
+    assert_eq!((dl_getbstart(&lp), dl_getbend(&lp)), (64, GPT_LBA_END + 1));
+
+    let mut lp = spoofed(GPT_SECTORS as u32);
+    initdisklabel(&mut lp).expect("geometry");
+    assert_eq!(readdoslabel(bp, img_strategy, &mut lp, None, false), Ok(()));
+    assert_eq!(dl_getpoffset(&lp.d_partitions[0]), 64);
+    assert_eq!(lp.d_partitions[0].p_fstype, FS_BSDFFS);
+}
+
+#[test]
+fn a_bad_primary_gpt_falls_back_to_the_backup_and_two_bad_ones_fail() {
+    let (_g, bp) = setup(GPT_SECTORS as usize);
+    gpt_disk();
+    poke(512 + 20, &[0xff]); // break the primary header (its checksum no longer matches)
+
+    let mut partoff: Daddr = -1;
+    let mut lp = spoofed(GPT_SECTORS as u32);
+    initdisklabel(&mut lp).expect("geometry");
+    assert_eq!(
+        readdoslabel(bp, img_strategy, &mut lp, Some(&mut partoff), true),
+        Ok(())
+    );
+    assert_eq!(partoff, 64);
+
+    // gpt_get_hdr zeroes an invalid header.
+    let lp = spoofed(GPT_SECTORS as u32);
+    assert_eq!(
+        gpt_get_hdr(bp, img_strategy, &lp, 1),
+        Ok(GptHeader::default())
+    );
+
+    poke((GPT_SECTORS as usize - 1) * 512 + 20, &[0xff]);
+    let mut lp = spoofed(GPT_SECTORS as u32);
     initdisklabel(&mut lp).expect("geometry");
     assert_eq!(
         readdoslabel(bp, img_strategy, &mut lp, None, false),
-        Err(Errno::ENOSYS)
+        Err(Errno::ENXIO)
     );
+}
+
+#[test]
+fn gpt_types_map_to_file_systems() {
+    assert_eq!(gpt_get_fstype(&Uuid::default()), FS_UNUSED);
+    assert_eq!(gpt_get_fstype(&Uuid::from_bytes(KNOWNFS[1].0)), FS_BSDFFS);
+    assert_eq!(gpt_get_fstype(&Uuid::from_bytes([0x5a; 16])), FS_OTHER);
 }
 
 #[test]
