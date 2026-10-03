@@ -441,7 +441,9 @@ pub fn main() -> ! {
     #[cfg(feature = "qemu")]
     crate::kern::selftest::rd_check();
 
-    // CRYPTO: not configured.
+    // CRYPTO (option CRYPTO in GENERIC)
+    crate::crypto::crypto::crypto_init();
+    crate::crypto::cryptosoft::swcr_init();
 
     // Initialize protocols.
     domaininit();

@@ -826,7 +826,8 @@ user's group (macOS has no such group, and `pwd_mkdb` insists on one).
   is not ported (a request is a value, see `crypto/crypto.rs`) and the IPCOMP transform
   (`CRYPTO_DEFLATE_COMP`, `comp_algo_deflate`, `xform_ipcomp.c`) is reported: it needs
   `deflate_global` from `lib/libz`, which has crc32 only. `crypto_init` and `swcr_init`
-  (`init_main.c` calls them under `#ifdef CRYPTO`) are not wired into `main` yet. Primitives
+  run in `main` after the pseudo-devices, as `init_main.c` calls them under `#ifdef CRYPTO`
+  (GENERIC's `option CRYPTO`, M9b). Primitives
   whose C is public domain (`chacha_private.h`, `poly1305`, `rijndael`, `sha1`, `md5`, `cast`)
   keep their notice verbatim between the licence markers (accepted 2026-10-03).
 
