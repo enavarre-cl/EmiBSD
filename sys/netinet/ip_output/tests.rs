@@ -135,3 +135,64 @@ fn inserted_options_grow_the_header() {
     m_freem(m);
     m_freem(opt);
 }
+
+/// An option mbuf holding `opts`.
+fn optm(opts: &[u8]) -> &'static Mbuf {
+    let m = m_get(M_DONTWAIT, MT_SOOPTS).expect("mbuf");
+    m.m_len().set(opts.len() as u32);
+    // SAFETY: a fresh mbuf of `MLEN` bytes, more than any option list here.
+    unsafe { ptr::copy_nonoverlapping(opts.as_ptr(), mtod::<u8>(m), opts.len()) };
+    m
+}
+
+#[test]
+fn ip_pcbopts_pops_the_first_hop_of_a_source_route() {
+    let _g = setup_net();
+    let pcbopt = Cell::new(None);
+
+    // NOP, then LSRR through 10.0.0.1 (first hop) and 10.0.0.2 as the user writes it (the
+    // addresses where the pointer byte goes), then EOL: the first hop moves before the
+    // options and the route shrinks by one address.
+    let m = optm(&[
+        IPOPT_NOP, IPOPT_LSRR, 10, 10, 0, 0, 1, 10, 0, 0, 2, IPOPT_EOL,
+    ]);
+    ip_pcbopts(&pcbopt, Some(m)).expect("options");
+    let n = pcbopt.get().expect("stored");
+    assert_eq!(
+        mtod_bytes(n),
+        &[
+            10, 0, 0, 1, IPOPT_NOP, IPOPT_LSRR, 6, 10, 0, 0, 2, IPOPT_EOL
+        ]
+    );
+
+    // A length that is not a multiple of 4, or an option longer than the list, is refused
+    // (and the old options are gone either way).
+    assert_eq!(
+        ip_pcbopts(&pcbopt, Some(optm(&[IPOPT_NOP; 3]))),
+        Err(Errno::EINVAL)
+    );
+    assert!(pcbopt.get().is_none());
+    assert_eq!(
+        ip_pcbopts(&pcbopt, Some(optm(&[IPOPT_RR, 9, 4, 0]))),
+        Err(Errno::EINVAL)
+    );
+    // No mbuf only turns the options off.
+    ip_pcbopts(&pcbopt, Some(m)).expect("options");
+    ip_pcbopts(&pcbopt, None).expect("off");
+    assert!(pcbopt.get().is_none());
+    m_freem(m);
+}
+
+#[test]
+fn ip_getmoptions_answers_the_defaults_without_options() {
+    let _g = setup_net();
+    let m = optm(&[0; 4]);
+    ip_getmoptions(IP_MULTICAST_TTL, None, m).expect("ttl");
+    assert_eq!(mtod_bytes(m), &[IP_DEFAULT_MULTICAST_TTL]);
+    ip_getmoptions(IP_MULTICAST_LOOP, None, m).expect("loop");
+    assert_eq!(mtod_bytes(m), &[IP_DEFAULT_MULTICAST_LOOP]);
+    ip_getmoptions(IP_MULTICAST_IF, None, m).expect("if");
+    assert_eq!(mtod_bytes(m), &[0, 0, 0, 0]);
+    assert_eq!(ip_getmoptions(IP_TTL, None, m), Err(Errno::EOPNOTSUPP));
+    m_freem(m);
+}

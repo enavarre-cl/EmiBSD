@@ -2972,11 +2972,11 @@ notes = "M7b: the sysctl variables (AtomicI32; M9a: the ipport_* entries are in_
 [[file]]
 c = "sys/netinet/ip_output.c"
 rust = "sys/netinet/ip_output.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2fa2f3f0d8a827987ec4fc5a54de98cde753b817"
 deps = ["sys/netinet/ip_var.h", "sys/netinet/in.c", "sys/net/route.c", "sys/netinet/in_cksum.c"]
-notes = "M7b: ip_output (no seclevel parameter: IPSEC not configured), ip_fragment, ip_insertoptions, ip_optcopy (unsafe: raw headers), ip_freemoptions, ip_mloopback, in_hdr_cksum_out, in_cksum_phdr, in_delayed_cksum, in_proto_cksum_out (tcpstat_inc/udpstat_inc reported), in_ifcap_cksum; the socket option half (ip_ctloutput, ip_pcbopts, ip_setmoptions, ip_getmoptions, ip_multicast_if) waits for sockets, so wip; pf, IPSEC, MROUTING not configured; host tests (fragmentation, EMSGSIZE, optcopy, insertoptions)"
+notes = "M7b: ip_output (no seclevel parameter: IPSEC not configured), ip_fragment, ip_insertoptions, ip_optcopy (unsafe: raw headers), ip_freemoptions, ip_mloopback, in_hdr_cksum_out, in_cksum_phdr, in_delayed_cksum, in_proto_cksum_out (tcpstat_inc reported), in_ifcap_cksum; M9a: the socket option half: ip_ctloutput (option values read and written unaligned; !IPSEC levels: EOPNOTSUPP on set, IPSEC_LEVEL_NONE on get), ip_pcbopts (the struct ipoption built in a local buffer large enough for what the C writes past ipopt_list before its length check), ip_multicast_if, ip_setmoptions (malloc(M_WAITOK) failure panics), ip_getmoptions; pf, IPSEC, MROUTING not configured; host tests (fragmentation, EMSGSIZE, optcopy, insertoptions, pcbopts source route, getmoptions defaults)"
 
 [[file]]
 c = "sys/netinet/ip_icmp.c"
