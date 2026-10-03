@@ -65,16 +65,11 @@
 //!   (none can be yet) reaches it. The argument buffer is a byte slice of `max(IOCPARM_LEN(com), sizeof(caddr_t))`
 //!   bytes, from the 128-byte stack buffer or `malloc(M_IOCTLOPS)`.
 //! - `KTRACE` is not configured.
-//! - `select(2)`/`poll(2)` are OpenBSD's, built on the thread's poll kqueue, but
-//!   `kern_event.c` is not ported: `kqpoll_init`/`kqpoll_done` are not called,
-//!   `kqueue_register` reports itself and fails with `ENOSYS` (a local stand-in), and the
-//!   `kqueue_scan` loop is never entered. So a call without descriptors sleeps for its
-//!   timeout exactly as the C does; with descriptors `select` fails with `ENOSYS` and `poll`
-//!   returns at once with `POLLERR` on each, the C's answers to a registration error.
-//!   `p_kq_serial` is 0. The fd sets and the pollfd
-//!   array are one allocation each (the C keeps small ones on its stack).
-//! - `selwakeup`'s `knote_locked(&sip->si_note, NOTE_SUBMIT)` walks a list no knote can be
-//!   on (`sys/selinfo.rs`), so it has nothing to do.
+//! - `select(2)`/`poll(2)` are OpenBSD's, built on the thread's poll kqueue
+//!   (`kern_event.rs`): `kqpoll_init` and `kqpoll_done` take the thread, and `kqpoll_init`
+//!   can fail (`ENOMEM`, the kqueue pool cannot sleep yet), which fails the call. The fd
+//!   sets and the pollfd array are one allocation each (the C keeps small ones on its
+//!   stack).
 
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -82,6 +77,10 @@ use core::sync::atomic::Ordering;
 use crate::conf::param::MAXFILES;
 use crate::kassert;
 use crate::kern::kern_descrip::fd_getfile_mode;
+use crate::kern::kern_event::{
+    knote_locked, kqpoll_done, kqpoll_init, kqueue_register, kqueue_scan, kqueue_scan_finish,
+    kqueue_scan_setup,
+};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
 use crate::kern::kern_sig::dosigsuspend;
@@ -95,8 +94,9 @@ use crate::machine::copy::{copyin, copyout};
 use crate::sys::errno::Errno;
 use crate::sys::event::{
     __EV_HUP, __EV_POLL, __EV_SELECT, EV_ADD, EV_ENABLE, EV_ERROR, EVFILT_EXCEPT, EVFILT_READ,
-    EVFILT_WRITE, Kevent, NOTE_OOB, ev_set,
+    EVFILT_WRITE, Kevent, KqueueScanState, NOTE_OOB, NOTE_SUBMIT, ev_set,
 };
+use crate::sys::eventvar::KQ_NEVENTS;
 use crate::sys::fcntl::{FASYNC, FNONBLOCK, FREAD, FWRITE};
 use crate::sys::file::{DTYPE_SOCKET, DTYPE_VNODE, FO_POSITION, File, frele};
 use crate::sys::filedesc::{UF_EXCLOSE, UF_PLEDGEOPEN, fdplock, fdpunlock};
@@ -541,9 +541,6 @@ pub fn sys_ioctl(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
     error
 }
 
-/// `KQ_NEVENTS` (`<sys/eventvar.h>`, not ported): kevents per `kqueue_scan` call.
-const KQ_NEVENTS: usize = 8;
-
 /// Select system call.
 pub fn sys_select(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(), Errno> {
     let uap: &SysSelectArgs = sysargs(v);
@@ -637,7 +634,7 @@ pub fn dopselect(
     let mut bits: Vec<FdMask> = vec![0; 6 * words];
     let (pibits, pobits) = bits.split_at_mut(3 * words);
 
-    // kqpoll_init(nd): the thread's poll kqueue (kern_event.c, not ported).
+    kqpoll_init(p, nd as u32)?;
 
     let error = 'done: {
         // getbits
@@ -691,17 +688,17 @@ pub fn dopselect(
         if ncollected > 0 {
             timeout = Some(Timespec::new(0, 0));
         }
-        let _ = timeout;
 
-        // Collect at most `nevents' possibly waiting in kqueue_scan(): kqueue_scan_setup,
-        // kqueue_scan and kqueue_scan_finish are kern_event.c's, not ported; registration
-        // above never succeeds without them, so `nevents` is 0 here.
+        // Collect at most `nevents' possibly waiting in kqueue_scan()
+        let scan = KqueueScanState::new();
+        // SAFETY: `scan` is a local that stays in place until `kqueue_scan_finish` below.
+        unsafe { kqueue_scan_setup(&scan, p.kq()) };
         let mut error = Ok(());
         while nevents > 0 {
-            let kev: [Kevent; KQ_NEVENTS] = [Kevent::default(); KQ_NEVENTS];
+            let mut kev: [Kevent; KQ_NEVENTS] = [Kevent::default(); KQ_NEVENTS];
+            // Maximum number of events per iteration
             let count = kev.len().min(nevents);
-            let ready = 0usize;
-            error = Err(unported!("dopselect: kqueue_scan (kern_event.c)"));
+            let ready = kqueue_scan(&scan, count, &mut kev, timeout.as_mut(), p, &mut error);
 
             // Convert back events that are ready.
             let mut i = 0;
@@ -717,6 +714,7 @@ pub fn dopselect(
 
             nevents -= ready;
         }
+        kqueue_scan_finish(&scan);
         retval[0] = ncollected as Register;
         error
     };
@@ -741,17 +739,9 @@ pub fn dopselect(
         // KTRACE: not configured.
     }
 
-    // kqpoll_done(nd): kern_event.c.
+    kqpoll_done(p, nd as u32);
 
     error
-}
-
-/// `kqueue_register(p->p_kq, kev, pollid, p)` (`kern_event.c`, not ported): every
-/// registration fails, reported.
-fn kqueue_register(_kev: &mut Kevent, _pollid: u32, _p: &Proc) -> Result<(), Errno> {
-    Err(unported!(
-        "kqueue_register (kern_event.c): select/poll on a descriptor"
-    ))
 }
 
 /// Convert fd_set into kqueue events and register them on the per-thread queue; returns how
@@ -773,16 +763,15 @@ pub fn pselregister(p: &Proc, pibits: &[FdMask], words: usize, nfd: usize) -> Re
                 }
                 bits &= !(1 << j);
 
-                // p_kq_serial: kqpoll_init's (not ported), 0 here.
                 let mut kev = ev_set(
                     fd,
                     EVF[msk],
                     EV_ADD | EV_ENABLE | __EV_SELECT,
                     EVFF[msk],
                     0,
-                    0,
+                    p.p_kq_serial.get() as usize,
                 );
-                match kqueue_register(&mut kev, 0, p) {
+                match kqueue_register(p.kq(), &mut kev, 0, Some(p)) {
                     Ok(()) => nevents += 1,
                     // No underlying kqfilter, unimplemented filter, specific to FIFO and
                     // __EV_SELECT
@@ -800,17 +789,18 @@ pub fn pselregister(p: &Proc, pibits: &[FdMask], words: usize, nfd: usize) -> Re
 
 /// Convert given kqueue event into corresponding select(2) bit.
 pub fn pselcollect(
-    _p: &Proc,
+    p: &Proc,
     kevp: &Kevent,
     pobits: &mut [FdMask],
     words: usize,
     ncollected: &mut usize,
 ) -> Result<(), Errno> {
-    // p_kq_serial is 0 (see pselregister).
-    if kevp.udata != 0 {
+    if kevp.udata as u64 != p.p_kq_serial.get() {
         crate::kern::subr_prf::panic(format_args!(
-            "pselcollect: spurious kevp fd {} udata {:#x} serial 0x0",
-            kevp.ident, kevp.udata
+            "pselcollect: spurious kevp fd {} udata {:#x} serial {:#x}",
+            kevp.ident,
+            kevp.udata,
+            p.p_kq_serial.get()
         ));
     }
 
@@ -834,9 +824,10 @@ pub fn pselcollect(
 }
 
 /// `selwakeup`: do a wakeup when a selectable event occurs.
-pub fn selwakeup(_sip: &Selinfo) {
-    // KERNEL_LOCK(); knote_locked(&sip->si_note, NOTE_SUBMIT); KERNEL_UNLOCK(): the list
-    // is always empty until kern_event.c attaches knotes (sys/selinfo.rs).
+pub fn selwakeup(sip: &Selinfo) {
+    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    knote_locked(&sip.si_note, i64::from(NOTE_SUBMIT));
+    // KERNEL_UNLOCK().
 }
 
 /// Only copyout the revents field.
@@ -919,11 +910,15 @@ pub fn doppoll(
     // The array (the C keeps up to four on its stack and mallocs M_CANFAIL beyond).
     let mut pl: Vec<Pollfd> = vec![Pollfd::default(); nfds as usize];
 
-    // kqpoll_init(nfds): kern_event.c, not ported.
+    kqpoll_init(p, nfds)?;
 
     let sz = nfds as usize * size_of::<Pollfd>();
     let mut raw = vec![0u8; sz];
-    copyin(fds, &mut raw)?;
+    if let Err(error) = copyin(fds, &mut raw) {
+        // bad:
+        kqpoll_done(p, nfds);
+        return Err(error);
+    }
     for (pfd, chunk) in pl
         .iter_mut()
         .zip(raw.as_chunks::<{ size_of::<Pollfd>() }>().0)
@@ -974,16 +969,17 @@ pub fn doppoll(
         if ncollected > 0 {
             timeout = Some(Timespec::new(0, 0));
         }
-        let _ = timeout;
 
-        // Collect at most `nevents' possibly waiting in kqueue_scan(): kern_event.c, not
-        // ported (see dopselect).
+        // Collect at most `nevents' possibly waiting in kqueue_scan()
+        let scan = KqueueScanState::new();
+        // SAFETY: `scan` is a local that stays in place until `kqueue_scan_finish` below.
+        unsafe { kqueue_scan_setup(&scan, p.kq()) };
         let mut error = Ok(());
         while nevents > 0 {
-            let kev: [Kevent; KQ_NEVENTS] = [Kevent::default(); KQ_NEVENTS];
+            let mut kev: [Kevent; KQ_NEVENTS] = [Kevent::default(); KQ_NEVENTS];
+            // Maximum number of events per iteration
             let count = kev.len().min(nevents);
-            let ready = 0usize;
-            error = Err(unported!("doppoll: kqueue_scan (kern_event.c)"));
+            let ready = kqueue_scan(&scan, count, &mut kev, timeout.as_mut(), p, &mut error);
 
             // Convert back events that are ready.
             for k in &kev[..ready] {
@@ -998,6 +994,7 @@ pub fn doppoll(
 
             nevents -= ready;
         }
+        kqueue_scan_finish(&scan);
         retval[0] = ncollected as Register;
         error
     };
@@ -1011,7 +1008,7 @@ pub fn doppoll(
     };
     // KTRACE: not configured.
 
-    // kqpoll_done(nfds): kern_event.c.
+    kqpoll_done(p, nfds);
 
     error
 }
@@ -1026,7 +1023,7 @@ pub fn ppollregister_evts(p: &Proc, kev: &mut [Kevent], pl: &mut Pollfd, pollid:
 
     for kevp in kev.iter_mut() {
         loop {
-            match kqueue_register(kevp, pollid, p) {
+            match kqueue_register(p.kq(), kevp, pollid, Some(p)) {
                 Ok(()) => nevents += 1,
                 // No underlying kqfilter, unimplemented filter
                 Err(Errno::EOPNOTSUPP | Errno::EINVAL) => {}
@@ -1069,8 +1066,7 @@ pub fn ppollregister(p: &Proc, pl: &mut [Pollfd], nregistered: &mut usize, ncoll
 
         let mut kev = [Kevent::default(); 3];
         let mut nkev = 0;
-        // p_kq_serial: 0 (see pselregister).
-        let udata = i;
+        let udata = (p.p_kq_serial.get() + i as u64) as usize;
         if pfd.events & (POLLIN | POLLRDNORM) != 0 {
             kev[nkev] = ev_set(
                 pfd.fd as usize,
@@ -1125,18 +1121,20 @@ pub fn ppollcollect(p: &Proc, kevp: &Kevent, pl: &mut [Pollfd]) -> usize {
     static POLL_LASTERR: StaticCell<Timeval> = StaticCell::new(Timeval::new(0, 0));
     const POLL_ERRINTVL: Timeval = Timeval::new(5, 0);
 
-    // Extract poll array index (p_kq_serial is 0, see pselregister)
-    let i = kevp.udata;
+    // Extract poll array index
+    let serial = p.p_kq_serial.get();
+    let i = (kevp.udata as u64).wrapping_sub(serial) as usize;
     let nfds = pl.len();
 
     if i >= nfds {
         crate::kern::subr_prf::panic(format_args!(
-            "ppollcollect: spurious kevp nfds {nfds} udata {i:#x} serial 0x0"
+            "ppollcollect: spurious kevp nfds {nfds} udata {:#x} serial {serial:#x}",
+            kevp.udata
         ));
     }
     if kevp.ident as i32 != pl[i].fd {
         crate::kern::subr_prf::panic(format_args!(
-            "ppollcollect: kevp {}/{} mismatch fd {}!={} serial 0x0",
+            "ppollcollect: kevp {}/{} mismatch fd {}!={} serial {serial:#x}",
             i + 1,
             nfds,
             kevp.ident as i32,

@@ -68,10 +68,9 @@
 //! - `find_next_zero` reads the words past the end of a bitmap as full, where the C reads
 //!   past the array; the C rejects whatever it finds there (`i < last`), so the result is
 //!   the same.
-//! - Not here yet, each reported with `unported!` where the C calls it: `knote_fdclose`
-//!   (`kern_event.c`, no kqueue can exist), the `pledge_fcntl`/`pledge_flock` checks
-//!   (`kern_pledge.c`; only a process with `PS_PLEDGE`, which none can have yet, reaches
-//!   them). The vnode paths (`VOP_ADVLOCK` of the record locks, `flock` and `closef`,
+//! - Not here yet, each reported with `unported!` where the C calls it: the
+//!   `pledge_fcntl`/`pledge_flock` checks (`kern_pledge.c`; only a process with
+//!   `PS_PLEDGE`, which none can have yet, reaches them). The vnode paths (`VOP_ADVLOCK` of the record locks, `flock` and `closef`,
 //!   `VOP_PATHCONF`, `VISTTY` for `F_ISATTY`, `vref`/`vrele` of `fd_cdir`/`fd_rdir`) are
 //!   the vfs core's (`vfs_vops.rs`, `vfs_subr.rs`). `F_ISATTY` answers 0/`ENOTTY` for every
 //!   file that is not a vnode, as in C, so the console stand-in is not a tty to `isatty(3)`.
@@ -83,6 +82,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::conf::param::MAXFILES;
 use crate::kassert;
+use crate::kern::kern_event::knote_fdclose;
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_malloc::{free, mallocarray};
 use crate::kern::kern_prot::{crfree, crhold, suser};
@@ -260,7 +260,7 @@ fn fd_inuse(fdp: &Filedesc, fd: i32) -> bool {
 }
 
 /// `fd_used(fdp, fd)`: marks descriptor `fd` allocated.
-fn fd_used(fdp: &Filedesc, fd: i32) {
+pub(crate) fn fd_used(fdp: &Filedesc, fd: i32) {
     let off = (fd as u32 >> NDENTRYSHIFT) as usize;
 
     fdp.set_lomap(
@@ -495,12 +495,6 @@ pub fn dodup3(
         // No need for FRELE(), finishdup() uses current ref.
         return finishdup(p, fp, old, new, retval, dupflags);
     }
-}
-
-/// `knote_fdclose(p, fd)`: removes the knotes of descriptor `fd`; `kern_event.c` is not here
-/// and no kqueue can exist.
-fn knote_fdclose(_p: &Proc, _fd: i32) {
-    let _ = unported!("knote_fdclose (kern_event.c)");
 }
 
 /// The `l_whence == SEEK_CUR` adjustment `fcntl`'s record locks make against the file
@@ -1174,7 +1168,7 @@ pub fn fdinit() -> &'static Filedesc {
     let fd = &newfdp.fd_fd;
     rw_init(&fd.fd_lock, "fdlock");
     mtx_init(&fd.fd_fplock, IPL_MPFLOOR);
-    // LIST_INIT(&fd_kqlist): kern_event.c.
+    fd.fd_kqlist.init();
 
     // Create the file descriptor table.
     fd.fd_refcnt.set(1);

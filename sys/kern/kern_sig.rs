@@ -57,8 +57,7 @@
 //! (see the deviations). `filt_sig*` (the `EVFILT_SIGNAL` filter) are `kern_event.c`'s.
 //!
 //! ## Deviations
-//! - Calls into subsystems that are not ported are reported with `unported!`: the kqueue
-//!   notes (`knote_locked(&pr->ps_klist, NOTE_SIGNAL | signum)` in `ptsignal_locked`),
+//! - Calls into subsystems that are not ported are reported with `unported!`:
 //!   `pledge_kill` (only when `PS_PLEDGE` is set, which nothing sets yet), and in `coredump`
 //!   the filesystem half: `vn_open` of the core file and everything after it
 //!   (`VOP_GETATTR`/`VOP_SETATTR`, `coredump_elf`, `vn_close`) is reported and the dump fails
@@ -84,6 +83,7 @@ use core::sync::atomic::{AtomicI32, AtomicU32, Ordering, fence};
 
 use crate::kassert;
 use crate::kern::init_main::{INITPROCESS, PROCESS0};
+use crate::kern::kern_event::knote_locked;
 use crate::kern::kern_exit::exit1;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
@@ -101,6 +101,7 @@ use crate::machine::signal::{MachineSignal, sendsig};
 use crate::machine::tcb::tcb_get;
 use crate::sys::acct::{ABTCFI, ATRAP, AXSIG};
 use crate::sys::errno::Errno;
+use crate::sys::event::NOTE_SIGNAL;
 use crate::sys::malloc::{M_SIGIO, M_WAITOK};
 use crate::sys::mutex::{Mutex, mutex_assert_locked};
 use crate::sys::param::{MAXPATHLEN, MAXPHYS, NZERO, PCATCH, PPAUSE, PUSER, PWAIT, USPACE};
@@ -1008,8 +1009,7 @@ pub fn ptsignal_locked(p: &Proc, signum: i32, type_: SignalType) {
         }
     }
 
-    // knote_locked(&pr->ps_klist, NOTE_SIGNAL | signum): kqueue (kern_event.c).
-    let _ = unported!("ptsignal_locked: knote_locked NOTE_SIGNAL (kern_event.c)");
+    knote_locked(&pr.ps_klist, i64::from(NOTE_SIGNAL) | i64::from(signum));
 
     let mut prop = sigprop(signum);
     let mut action;

@@ -58,7 +58,6 @@
 //!   `fd_nfiles` entries, `NDHISLOTS(fd_nfiles)` and `NDLOSLOTS(fd_nfiles)` words.
 //! - `fd_cdir`/`fd_rdir` are `Option<&'static Vnode>` (vnodes are never freed; the table
 //!   holds a use count on each); they stay `None` until a root file system is mounted.
-//!   `fd_kqlist` (`struct kqueue`, `kern_event.c`) is left out.
 //! - The macros `NDREDUCE`, `NDHISLOTS`, `NDLOSLOTS` are `const fn`s; `fdplock`,
 //!   `fdpunlock` and `fdpassertlocked` are functions (`NET_ASSERT_UNLOCKED` waits for the
 //!   network stack's lock).
@@ -74,9 +73,11 @@ use crate::kassert;
 use crate::kern::kern_rwlock::{rw_assert_wrlock, rw_enter_write, rw_exit_write};
 use crate::kern::subr_prf::panic;
 use crate::machine::intr::IPL_MPFLOOR;
+use crate::sys::eventvar::KqList;
 use crate::sys::file::File;
 use crate::sys::mutex::Mutex;
 use crate::sys::proc::{Proc, Process};
+use crate::sys::queue::ListHead;
 use crate::sys::rwlock::Rwlock;
 use crate::sys::types::Mode;
 use crate::sys::vnode::Vnode;
@@ -155,7 +156,8 @@ pub struct Filedesc {
     pub fd_lock: Rwlock,
     /// `fd_fplock`: lock for reading `fd_ofiles` without `fd_lock`.
     pub fd_fplock: Mutex,
-    // fd_kqlist: kqueues attached to this filedesc (struct kqueue, kern_event.c).
+    /// \[f\] `fd_kqlist`: kqueues attached to this filedesc.
+    pub fd_kqlist: ListHead<KqList>,
     /// \[a\] `fd_flags`: flags on this filedesc (`FD_ADVLOCK`).
     pub fd_flags: AtomicI32,
     /// \[a\] `fd_nuserevents`: number of kqueue user events.
@@ -180,6 +182,7 @@ impl Filedesc {
             fd_refcnt: Cell::new(0),
             fd_lock: Rwlock::new("fdlock"),
             fd_fplock: Mutex::new(IPL_MPFLOOR),
+            fd_kqlist: ListHead::new(),
             fd_flags: AtomicI32::new(0),
             fd_nuserevents: AtomicU32::new(0),
         }

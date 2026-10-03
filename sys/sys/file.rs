@@ -46,8 +46,7 @@
 //!
 //! ## Deviations
 //! - `struct fileops` is a struct of `fn` pointers returning `Result<(), Errno>`. `fo_ioctl`'s
-//!   `caddr_t data` is the kernel copy of the argument as a byte slice; `fo_kqfilter`'s
-//!   `struct knote *` is a raw pointer until `kern_event.c` exists; `fo_close` takes
+//!   `caddr_t data` is the kernel copy of the argument as a byte slice; `fo_close` takes
 //!   `Option<&Proc>` (a file passed in a message is closed with no process); `fo_seek` is an
 //!   `Option` because the C leaves it NULL for most types.
 //! - The `[a]`/`[f]`/`[I]` members are atomics (`f_flag`, `f_iflags`, `f_count`) or `Cell`s;
@@ -71,6 +70,7 @@ use crate::machine::cpu::MAXCPUS;
 use crate::machine::intr::IPL_MPFLOOR;
 use crate::queue_adapter;
 use crate::sys::errno::Errno;
+use crate::sys::event::Knote;
 use crate::sys::mutex::Mutex;
 use crate::sys::proc::Proc;
 use crate::sys::queue::ListEntry;
@@ -114,8 +114,8 @@ pub struct Fileops {
     pub fo_write: fn(&File, &mut Uio<'_>, i32) -> Result<(), Errno>,
     /// `fo_ioctl(fp, com, data, p)`: `data` is the kernel copy of the argument.
     pub fo_ioctl: fn(&File, u64, &mut [u8], &Proc) -> Result<(), Errno>,
-    /// `fo_kqfilter(fp, kn)`: `kn` is a `struct knote *` (`kern_event.c`, not ported).
-    pub fo_kqfilter: fn(&File, *mut c_void) -> Result<(), Errno>,
+    /// `fo_kqfilter(fp, kn)`: attaches the knote to the file's object (`kern_event.c`).
+    pub fo_kqfilter: fn(&File, &Knote) -> Result<(), Errno>,
     /// `fo_stat(fp, ub, p)`.
     pub fo_stat: fn(&File, &mut Stat, &Proc) -> Result<(), Errno>,
     /// `fo_close(fp, p)`: `p` is `None` when closing a file that was in a message.

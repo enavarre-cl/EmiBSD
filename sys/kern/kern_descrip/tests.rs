@@ -17,6 +17,7 @@ use super::*;
 use crate::kern::kern_proc::procinit;
 use crate::kern::kern_prot::crget;
 use crate::kern::subr_pool::tests::setup_real_memory;
+use crate::sys::event::Knote;
 use crate::sys::file::Fileops;
 use crate::sys::filedesc::NDENTRIES;
 use crate::sys::uio::Uio;
@@ -56,7 +57,7 @@ fn test_ioctl(_fp: &File, _com: u64, _data: &mut [u8], _p: &Proc) -> Result<(), 
     Err(Errno::ENOTTY)
 }
 
-fn test_kqfilter(_fp: &File, _kn: *mut c_void) -> Result<(), Errno> {
+fn test_kqfilter(_fp: &File, _kn: &Knote) -> Result<(), Errno> {
     Err(Errno::EINVAL)
 }
 

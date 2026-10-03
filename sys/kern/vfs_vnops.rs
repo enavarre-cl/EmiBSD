@@ -72,6 +72,7 @@ use crate::kern::vfs_vops::{
     VOP_KQFILTER, VOP_LOCK, VOP_OPEN, VOP_READ, VOP_SETATTR, VOP_UNLOCK, VOP_WRITE,
 };
 use crate::sys::errno::Errno;
+use crate::sys::event::Knote;
 use crate::sys::fcntl::{
     F_FLOCK, F_UNLCK, FFSYNC, FNONBLOCK, FREAD, FWRITE, Flock, O_APPEND, O_CREAT, O_DIRECTORY,
     O_EXCL, O_NOFOLLOW, O_TRUNC,
@@ -659,8 +660,8 @@ pub fn vn_closefile(fp: &File, p: Option<&Proc>) -> Result<(), Errno> {
     error
 }
 
-/// `vn_kqfilter(fp, kn)`: `kn` is a `struct knote *` (`kern_event.c`).
-pub fn vn_kqfilter(fp: &File, kn: *mut c_void) -> Result<(), Errno> {
+/// `vn_kqfilter(fp, kn)`: the vnode's `VOP_KQFILTER`.
+pub fn vn_kqfilter(fp: &File, kn: &Knote) -> Result<(), Errno> {
     // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
     VOP_KQFILTER(fp.vnode(), fp.flag(), kn)
 }

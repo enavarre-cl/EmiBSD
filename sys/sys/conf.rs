@@ -53,8 +53,7 @@
 //!   where the C returns an `int` errno. `d_close` takes `Option<&Proc>` (`spec_close` may
 //!   have no thread); `d_ioctl`'s `caddr_t data` is the kernel copy of the argument as a
 //!   byte slice, as `fo_ioctl`'s; `d_strategy` takes the `&'static Buf` the buffer cache
-//!   hands out (`sys/buf.rs`); `d_kqfilter`'s `struct knote *` is a raw pointer until
-//!   `kern_event.c` is ported.
+//!   hands out (`sys/buf.rs`).
 //! - `d_mmap` returns `Option<Paddr>`: `None` where the C returns `-1`. The C fills the
 //!   slot of a driver without one with `enodev` cast to `paddr_t (*)()`, which "returns" the
 //!   address 19; here such a slot answers `None`.
@@ -66,24 +65,21 @@
 //!   others are `enodev`, `nullop`, `seltrue_kqfilter`, `ttkqfilter` or NULL as the macro
 //!   writes them. The casts of `enodev`/`enxio`/`nullop` to each pointer type are small
 //!   functions of the right type here.
-//! - `seltrue_kqfilter` belongs to `kern_event.c`, which is not ported: the stand-in here
-//!   reports itself (no `kevent(2)` can reach it yet).
 //! - `l_ioctl` returns `Ok(false)` for the C's `-1` ("not mine, try `ttioctl`"), `Ok(true)`
 //!   for 0 (`docs/C_TO_RUST.md`); `-1` is `ERESTART` in `Errno`.
 //! - The `cdev_decl`/`bdev_decl` prototypes and the `ptstty`/`ptctty`/`ptsioctl`/`ptcioctl`
 //!   aliases are the drivers' own functions in their modules.
 
-use core::ffi::c_void;
-
+use crate::kern::kern_event::seltrue_kqfilter;
 use crate::kern::subr_xxx::{enodev, enxio, nullop};
 use crate::kern::tty::ttkqfilter;
 use crate::sys::buf::Buf;
 use crate::sys::errno::Errno;
+use crate::sys::event::Knote;
 use crate::sys::proc::Proc;
 use crate::sys::tty::Tty;
 use crate::sys::types::{Daddr, Dev, Off, Paddr};
 use crate::sys::uio::Uio;
-use crate::unported;
 
 /// `swdevt[]`: the swap device table, defined by the kernel configuration
 /// (`sys/conf/swapgeneric.rs`).
@@ -124,7 +120,7 @@ pub type DevTypeTty = fn(Dev) -> Option<&'static Tty>;
 /// `dev_type_mmap(n)`: `paddr_t n(dev_t, off_t, int)`, `None` for the C's `-1`.
 pub type DevTypeMmap = fn(Dev, Off, i32) -> Option<Paddr>;
 /// `dev_type_kqfilter(n)`: `int n(dev_t, struct knote *)`.
-pub type DevTypeKqfilter = fn(Dev, *mut c_void) -> Result<(), Errno>;
+pub type DevTypeKqfilter = fn(Dev, &Knote) -> Result<(), Errno>;
 
 /// `struct bdevsw`: block device switch table.
 #[derive(Clone, Copy)]
@@ -259,13 +255,8 @@ fn enodev_mmap(_: Dev, _: Off, _: i32) -> Option<Paddr> {
 fn enxio_mmap(_: Dev, _: Off, _: i32) -> Option<Paddr> {
     None
 }
-fn enxio_kqfilter(_: Dev, _: *mut c_void) -> Result<(), Errno> {
+fn enxio_kqfilter(_: Dev, _: &Knote) -> Result<(), Errno> {
     enxio()
-}
-/// `seltrue_kqfilter(dev, kn)` (`kern_event.c`, not ported): the filter of a device that is
-/// always ready.
-pub fn seltrue_kqfilter(_dev: Dev, _kn: *mut c_void) -> Result<(), Errno> {
-    Err(unported!("seltrue_kqfilter (kern_event.c)"))
 }
 
 /// `dev_init(c, n, open)`.

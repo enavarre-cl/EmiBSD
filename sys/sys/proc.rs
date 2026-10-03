@@ -53,13 +53,15 @@
 //! tusage`, `struct process` and `struct proc` with the members the scheduler, the sleep
 //! queues and the kernel threads use, the `S*` states, the `P_*`/`PS_*` flags, the `FORK_*`,
 //! `EXIT_*` and `SINGLE_*` constants, `struct cond`, `struct cpuset`, `struct uidinfo` and
-//! `tu_enter`/`tu_leave`. The members that belong to subsystems not here yet (`klist`,
-//! `ptrace`, `pinsyscall`, the `vnode`s, the file descriptors) are opaque pointers
+//! `tu_enter`/`tu_leave`. The members that belong to subsystems not here yet (`ptrace`,
+//! `pinsyscall`, the `vnode`s, the file descriptors) are opaque pointers
 //! or left out, each named in a comment at its place. The vmspace, (since `kern_prot.c`)
 //! the credentials and (since `kern_sig.c`) the signal actions are typed pointers with
 //! accessors (`vmspace()`, `ucred()`, `sigacts()`); `kern_sig.c` also brought the sigio
 //! lists, `p_sigstk` and `p_sigval`, and `kern_unveil.c` the unveil table (`ps_uvpaths`, a
-//! raw pointer to `kern_unveil.rs`'s `Unveil` slots, with its counts and `ps_uvdone`).
+//! raw pointer to `kern_unveil.rs`'s `Unveil` slots, with its counts and `ps_uvdone`);
+//! `kern_event.c` the process's `ps_klist` and the thread's poll kqueue (`p_kq`,
+//! `p_kq_serial`).
 //!
 //! ## Deviations
 //! - Members the owning thread or a lock mutates are `Cell`s; the flag words `p_flag` and
@@ -86,6 +88,8 @@ use crate::machine::cpu::{CpuInfo, MAXCPUS};
 use crate::machine::intr::IPL_HIGH;
 use crate::machine::proc::{MachineProc, Mdproc};
 use crate::queue_adapter;
+use crate::sys::event::Klist;
+use crate::sys::eventvar::Kqueue;
 use crate::sys::filedesc::Filedesc;
 use crate::sys::mutex::Mutex;
 use crate::sys::pclock::PcLock;
@@ -355,7 +359,9 @@ pub struct Process {
     pub ps_mtx: Mutex,
 
     // The following fields are all zeroed upon creation in process_new (ps_startzero).
-    // ps_klist: knotes attached to process (kqueue, M6).
+    /// \[Q,m\] `ps_klist`: knotes attached to process (locked by `ps_mtx` once
+    /// `process_initialize` ran `klist_init_mutex`).
+    pub ps_klist: Klist,
     /// \[a\] `ps_flags`: `PS_*` flags.
     pub ps_flags: AtomicU32,
     /// `ps_siglist`: signals pending for the process.
@@ -495,6 +501,7 @@ impl Process {
             ps_pid: Cell::new(0),
             ps_lock: Rwlock::new("pslock"),
             ps_mtx: Mutex::new(IPL_HIGH),
+            ps_klist: Klist::new(),
             ps_flags: AtomicU32::new(0),
             ps_siglist: AtomicU32::new(0),
             ps_single: Cell::new(ptr::null()),
@@ -797,7 +804,12 @@ pub struct Proc {
 
     /// \[l\] `p_limit`: read ref. of `p_p->ps_limit`.
     pub p_limit: Cell<*const Plimit>,
-    // p_kd: kcov device handle; p_sleeplocks: WITNESS; p_kq, p_kq_serial: kqueue (M6).
+    // p_kd: kcov device handle; p_sleeplocks: WITNESS (not configured).
+    /// \[o\] `p_kq`: for select/poll (`kqpoll_init`), null until the first call; the
+    /// thread holds a reference (`p.kq()`).
+    pub p_kq: Cell<*const Kqueue>,
+    /// \[o\] `p_kq_serial`: for select/poll, the first serial of the next call.
+    pub p_kq_serial: Cell<u64>,
     /// \[a\] `p_siglist`: signals arrived & not delivered.
     pub p_siglist: AtomicU32,
 
@@ -884,6 +896,8 @@ impl Proc {
             p_ru: Rusage::new(),
             p_tu: Tusage::new(),
             p_limit: Cell::new(ptr::null()),
+            p_kq: Cell::new(ptr::null()),
+            p_kq_serial: Cell::new(0),
             p_siglist: AtomicU32::new(0),
             p_sigmask: Cell::new(0),
             p_name: UnsafeCell::new([0; _MAXCOMLEN]),

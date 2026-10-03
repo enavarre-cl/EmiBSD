@@ -54,14 +54,15 @@
 //!   `retval`/`rnewprocp` out-pointers; `thread_new` and `process_new` write a whole
 //!   `Proc::new()`/`Process::new()` into the pool item and then copy the `p_startcopy`/
 //!   `ps_startcopy` fields from the parent, instead of `memset`/`memcpy` by field offset.
-//! - `process_initialize` reports what its process does not have yet: `prof_fork` (M6),
-//!   `klist_init_mutex` (M6); the `realitexpire` timeout is real since `kern_time.c` (M8).
-//!   `process_new` likewise reports `startprofclock` (M6); `sigactsinit` is real since
-//!   `kern_sig.c`, `fdcopy`/`fdshare` since `kern_descrip.c` and `lim_fork` since the
-//!   `plimit` port. `fork1` skips the `RLIMIT_NPROC` check for root as the C does, reports it for
-//!   other users (the limits), and reports `knote_processfork` (M6). The credentials
-//!   (`crhold` in `thread_new` and `process_initialize`, the forking thread's real uid in
-//!   `fork1`) are real since `kern_prot.c`.
+//! - `process_initialize` reports what its process does not have yet: `prof_fork` (M6);
+//!   the `realitexpire` timeout is real since `kern_time.c` (M8) and `klist_init_mutex`
+//!   since `kern_event.c`. `process_new` likewise reports `startprofclock` (M6);
+//!   `sigactsinit` is real since `kern_sig.c`, `fdcopy`/`fdshare` since `kern_descrip.c`
+//!   and `lim_fork` since the `plimit` port. `fork1` skips the `RLIMIT_NPROC` check for
+//!   root as the C does, reports it for other users (the limits); `knote_processfork` is
+//!   real since `kern_event.c`. The credentials (`crhold` in `thread_new` and
+//!   `process_initialize`, the forking thread's real uid in `fork1`) are real since
+//!   `kern_prot.c`.
 //! - `sys_fork` never asks for `FORK_PTRACE`/`fork_return`: the `ptrace(2)` event mask
 //!   (`ps_ptmask`, `sys_process.c`) is not ported, so no process wants fork reports.
 
@@ -77,6 +78,7 @@ use crate::kassert;
 use crate::kern::kern_clock::hardclock_period;
 use crate::kern::kern_clockintr::clockintr_advance;
 use crate::kern::kern_descrip::{fdcopy, fdshare};
+use crate::kern::kern_event::{klist_init_mutex, knote_processfork};
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_proc::{
     ALLPROC, ALLPROCESS, PROC_POOL, PROCESS_POOL, chgproccnt, pgfind, pidhash, prfind, tfind,
@@ -290,7 +292,8 @@ pub fn process_initialize(pr: &'static Process, p: &'static Proc) {
 
     rw_init(&pr.ps_lock, "pslock");
     mtx_init(&pr.ps_mtx, IPL_HIGH);
-    // klist_init_mutex(&pr->ps_klist, &pr->ps_mtx): kqueue (M6).
+    // SAFETY: `ps_mtx` is a member of the same process, alive as long as its `ps_klist`.
+    unsafe { klist_init_mutex(&pr.ps_klist, &pr.ps_mtx) };
 
     crate::kern::kern_timeout::timeout_set_flags(
         &pr.ps_realit_to,
@@ -613,7 +616,8 @@ pub fn fork1(
         fork_thread_start(p, curp, flags);
     }
 
-    // Notify any interested parties about the new process: knote_processfork (kqueue, M6).
+    // Notify any interested parties about the new process.
+    knote_processfork(curpr, pr.ps_pid.get());
 
     // Update stats now that we know the fork was successful.
     UVMEXP.forks.fetch_add(1, Ordering::Relaxed);

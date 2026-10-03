@@ -32,25 +32,29 @@
  */
 /* </LICENSES> */
 
-//! `<sys/selinfo.h>`: the record a driver keeps for processes waiting in `select(2)`,
-//! `poll(2)` or `kevent(2)` on one of its objects.
+//! `<sys/selinfo.h>`: used to maintain information about processes that wish to be notified
+//! when I/O becomes possible (`select(2)`, `poll(2)` or `kevent(2)` on one of a driver's
+//! objects).
 //!
 //! Upstream: sys/sys/selinfo.h @ 3ce1f3f79392
 //!
-//! ## Deviations
-//! - `si_note`, the `struct klist` of `<sys/event.h>`, is left out: `kern_event.c` is not
-//!   ported, so no knote can ever be attached (every `*_kqfilter` reports the gap where it
-//!   would insert one) and the list is always empty. `selwakeup`, whose body is
-//!   `KNOTE(&sip->si_note, NOTE_SUBMIT)`, is `sys_generic.rs`'s and therefore has nothing to
-//!   do; the structure stays so the drivers keep their `t_rsel`/`pt_selr` members and calls.
+//! `si_note` is the object's `struct klist`: the driver's `*_kqfilter` hooks knotes on it,
+//! and `selwakeup` (`sys_generic.rs`) posts `NOTE_SUBMIT` to them.
+
+use crate::sys::event::Klist;
 
 /// `struct selinfo`.
-#[derive(Debug, Default)]
-pub struct Selinfo {}
+#[derive(Default)]
+pub struct Selinfo {
+    /// `si_note`: kernel note list.
+    pub si_note: Klist,
+}
 
 impl Selinfo {
-    /// An empty record.
+    /// A zeroed record: no knotes, the list locked by the kernel lock.
     pub const fn new() -> Self {
-        Self {}
+        Self {
+            si_note: Klist::new(),
+        }
     }
 }

@@ -83,6 +83,7 @@ use crate::kern::subr_prf::panic;
 use crate::machine::copy::copyout;
 use crate::machine::intr::IPL_MPFLOOR;
 use crate::sys::errno::Errno;
+use crate::sys::event::Knote;
 use crate::sys::fcntl::{FNONBLOCK, FREAD, FWRITE, O_CLOEXEC, O_CLOFORK};
 use crate::sys::file::{DTYPE_PIPE, File, Fileops, frele};
 use crate::sys::filedesc::{UF_EXCLOSE, UF_FORKCLOSE, fdplock, fdpunlock};
@@ -873,7 +874,7 @@ pub fn pipe_rundown(cpipe: &Pipe) -> bool {
 }
 
 /// `fo_kqfilter` of a pipe: attaches a read, write or (poll's) except knote.
-pub fn pipe_kqfilter(fp: &File, _kn: *mut c_void) -> Result<(), Errno> {
+pub fn pipe_kqfilter(fp: &File, _kn: &Knote) -> Result<(), Errno> {
     let rpipe = fp_pipe(fp);
     let lock = rpipe.lock();
 

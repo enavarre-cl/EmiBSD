@@ -49,10 +49,11 @@
 //! is complete) and the `ACCOUNTING` record (`acct_process`) in `exit1`.
 //!
 //! ## Deviations
-//! - What `exit1` tears down that does not exist yet is reported, each once: `kqpoll_exit`,
+//! - What `exit1` tears down that does not exist yet is reported, each once:
 //!   `stopprofclock`/`prof_write` (`cancel_all_itimers` is real since `kern_time.c`,
-//!   `unveil_destroy` since `kern_unveil.c`),`process_untrace` (the `SIGKILL` to a traced child is sent);
-//!   `process_zap` likewise `vrele`; the reaper `knote_processexit`. `killjobc` and
+//!   `unveil_destroy` since `kern_unveil.c`, `kqpoll_exit` and the reaper's
+//!   `knote_processexit` since `kern_event.c`), `process_untrace` (the `SIGKILL` to a
+//!   traced child is sent); `process_zap` likewise `vrele`. `killjobc` and
 //!   `leavepgrp` are real since the process group management of `kern_proc.c`. The signal side
 //!   (`single_thread_set`, `process_suspend_signal`, `sigio_freelist`, `SAS_NOCLDWAIT`, the
 //!   reaper's `SIGCHLD`, `sigactsfree`) is real since `kern_sig.c`, `fdfree` since
@@ -71,6 +72,7 @@ use core::sync::atomic::Ordering;
 use crate::kassert;
 use crate::kern::init_main::{INITPROCESS, PROCESS0};
 use crate::kern::kern_descrip::fdfree;
+use crate::kern::kern_event::{knote_processexit, kqpoll_exit};
 use crate::kern::kern_fork::{NPROCESSES, NTHREADS, freepid};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_proc::{
@@ -269,7 +271,9 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
         pr.ps_siglist.store(0, Ordering::Relaxed);
     }
 
-    // kqpoll_exit(): kqueue (M6-c). kcov: not configured.
+    kqpoll_exit(p);
+
+    // kcov_exit(p): kcov is not configured.
 
     if p.p_flag.load(Ordering::Relaxed) & P_THREAD == 0 {
         if pr.ps_flags.load(Ordering::Relaxed) & PS_PROFIL != 0 {
@@ -549,7 +553,8 @@ pub fn reaper(_arg: *mut c_void) {
                 pr.ps_flags.fetch_or(PS_ZOMBIE, Ordering::Relaxed);
             }
 
-            // Notify listeners of our demise and clean up: knote_processexit (kqueue, M6-c).
+            // Notify listeners of our demise and clean up.
+            knote_processexit(pr);
 
             if pr.ps_flags.load(Ordering::Relaxed) & PS_ZOMBIE != 0 {
                 // Post SIGCHLD and wake up parent.

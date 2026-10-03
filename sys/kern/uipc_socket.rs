@@ -107,7 +107,7 @@ use crate::machine::db_machdep::PrFn;
 use crate::machine::intr::{IPL_MPFLOOR, IPL_SOFTNET};
 use crate::net::if_::net_tq;
 use crate::sys::errno::Errno;
-use crate::sys::event::{__EV_HUP, __EV_POLL, __EV_SELECT, EV_EOF, NOTE_LOWAT, NOTE_OOB};
+use crate::sys::event::{__EV_HUP, __EV_POLL, __EV_SELECT, EV_EOF, Knote, NOTE_LOWAT, NOTE_OOB};
 use crate::sys::file::{File, frele};
 use crate::sys::limits::SHRT_MAX;
 use crate::sys::mbuf::{
@@ -2528,7 +2528,7 @@ pub fn sohasoutofband(so: &Socket) {
 }
 
 /// `fo_kqfilter` of a socket: attaches a read, write or except knote.
-pub fn soo_kqfilter(_fp: &File, _kn: *mut c_void) -> Result<(), Errno> {
+pub fn soo_kqfilter(_fp: &File, _kn: &Knote) -> Result<(), Errno> {
     // switch (kn->kn_filter): EVFILT_READ gets soread_filtops on so_rcv, EVFILT_WRITE
     // sowrite_filtops on so_snd, EVFILT_EXCEPT soexcept_filtops on so_rcv, others EINVAL;
     // then klist_insert(&sb->sb_klist, kn): struct knote (kern_event.c).

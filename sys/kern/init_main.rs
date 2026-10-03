@@ -303,7 +303,7 @@ pub fn main() -> ! {
     pipe_init();
 
     // Initialize kqueues.
-    let _ = unported!("kqueue_init");
+    crate::kern::kern_event::kqueue_init();
 
     // Initialize futexes.
     crate::kern::sys_futex::futex_init();
@@ -452,7 +452,7 @@ pub fn main() -> ! {
 
     // Enable per-CPU data.
     mbcpuinit();
-    let _ = unported!("kqueue_init_percpu");
+    crate::kern::kern_event::kqueue_init_percpu();
     let _ = unported!("pmap_init_percpu");
     let _ = unported!("uvm_init_percpu");
     let _ = unported!("evcount_init_percpu");

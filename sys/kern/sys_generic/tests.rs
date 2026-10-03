@@ -23,17 +23,21 @@ fn pfd(fd: i32, events: i16) -> Pollfd {
 
 #[test]
 fn ppollregister_reports_failed_registrations() {
-    let p = test_proc();
-    // kqueue_register is not ported: every registration fails (ENOSYS), which poll(2)
-    // reports as POLLERR; a negative fd is skipped.
+    let _g = crate::kern::kern_event::tests::setup();
+    let p = crate::kern::kern_event::tests::thread();
+    assert_eq!(kqpoll_init(p, 3), Ok(()));
+    // No descriptor is open: every registration fails with EBADF, which poll(2) reports as
+    // POLLNVAL; a negative fd is skipped.
     let mut pl = vec![pfd(0, POLLIN), pfd(-1, POLLIN), pfd(1, 0)];
     let (mut nregistered, mut ncollected) = (0, 0);
     ppollregister(p, &mut pl, &mut nregistered, &mut ncollected);
     assert_eq!(nregistered, 0);
     assert_eq!(ncollected, 2);
-    assert_eq!(pl[0].revents, POLLERR);
+    assert_eq!(pl[0].revents, POLLNVAL);
     assert_eq!(pl[1].revents, 0);
-    assert_eq!(pl[2].revents, POLLERR, "POLLHUP is always checked");
+    assert_eq!(pl[2].revents, POLLNVAL, "POLLHUP is always checked");
+    kqpoll_done(p, 3);
+    crate::kern::kern_event::kqpoll_exit(p);
 }
 
 #[test]

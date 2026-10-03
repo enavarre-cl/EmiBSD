@@ -20,6 +20,7 @@ use crate::kern::kern_descrip::{
     sys_close, sys_closefrom, sys_dup, sys_dup2, sys_dup3, sys_fcntl, sys_flock, sys_fpathconf,
     sys_fstat, sys_getdtablecount,
 };
+use crate::kern::kern_event::{sys_kevent, sys_kqueue, sys_kqueue1};
 use crate::kern::kern_exec::sys_execve;
 use crate::kern::kern_exit::{sys___threxit, sys_exit, sys_wait4, sys_waitid};
 use crate::kern::kern_fork::{sys___tfork, sys_fork, sys_vfork};
@@ -216,21 +217,21 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(3, size_of::<SysSetitimerArgs>(), SY_NOLOCK, sys_setitimer), // 69 = setitimer
     Sysent::new(2, size_of::<SysGetitimerArgs>(), SY_NOLOCK, sys_getitimer), // 70 = getitimer
     Sysent::new(5, size_of::<SysSelectArgs>(), SY_NOLOCK, sys_select), // 71 = select
-    Sysent::new(6, size_of::<SysKeventArgs>(), SY_NOLOCK, sys_nosys), // 72 = kevent (sys_kevent not ported)
+    Sysent::new(6, size_of::<SysKeventArgs>(), SY_NOLOCK, sys_kevent), // 72 = kevent
     Sysent::new(2, size_of::<SysMunmapArgs>(), SY_NOLOCK, sys_munmap), // 73 = munmap
     Sysent::new(3, size_of::<SysMprotectArgs>(), SY_NOLOCK, sys_mprotect), // 74 = mprotect
-    Sysent::new(3, size_of::<SysMadviseArgs>(), 0, sys_madvise),      // 75 = madvise
-    Sysent::new(2, size_of::<SysUtimesArgs>(), 0, sys_utimes),        // 76 = utimes
-    Sysent::new(2, size_of::<SysFutimesArgs>(), 0, sys_futimes),      // 77 = futimes
-    Sysent::new(6, size_of::<SysMqueryArgs>(), 0, sys_mquery),        // 78 = mquery
+    Sysent::new(3, size_of::<SysMadviseArgs>(), 0, sys_madvise), // 75 = madvise
+    Sysent::new(2, size_of::<SysUtimesArgs>(), 0, sys_utimes), // 76 = utimes
+    Sysent::new(2, size_of::<SysFutimesArgs>(), 0, sys_futimes), // 77 = futimes
+    Sysent::new(6, size_of::<SysMqueryArgs>(), 0, sys_mquery), // 78 = mquery
     Sysent::new(2, size_of::<SysGetgroupsArgs>(), SY_NOLOCK, sys_getgroups), // 79 = getgroups
-    Sysent::new(2, size_of::<SysSetgroupsArgs>(), 0, sys_setgroups),  // 80 = setgroups
-    Sysent::new(0, 0, 0, sys_getpgrp),                                // 81 = getpgrp
-    Sysent::new(2, size_of::<SysSetpgidArgs>(), 0, sys_setpgid),      // 82 = setpgid
-    Sysent::new(5, size_of::<SysFutexArgs>(), SY_NOLOCK, sys_futex),  // 83 = futex
-    Sysent::new(4, size_of::<SysUtimensatArgs>(), 0, sys_utimensat),  // 84 = utimensat
-    Sysent::new(2, size_of::<SysFutimensArgs>(), 0, sys_futimens),    // 85 = futimens
-    Sysent::new(3, size_of::<SysKbindArgs>(), SY_NOLOCK, sys_kbind),  // 86 = kbind
+    Sysent::new(2, size_of::<SysSetgroupsArgs>(), 0, sys_setgroups), // 80 = setgroups
+    Sysent::new(0, 0, 0, sys_getpgrp), // 81 = getpgrp
+    Sysent::new(2, size_of::<SysSetpgidArgs>(), 0, sys_setpgid), // 82 = setpgid
+    Sysent::new(5, size_of::<SysFutexArgs>(), SY_NOLOCK, sys_futex), // 83 = futex
+    Sysent::new(4, size_of::<SysUtimensatArgs>(), 0, sys_utimensat), // 84 = utimensat
+    Sysent::new(2, size_of::<SysFutimensArgs>(), 0, sys_futimens), // 85 = futimens
+    Sysent::new(3, size_of::<SysKbindArgs>(), SY_NOLOCK, sys_kbind), // 86 = kbind
     Sysent::new(
         2,
         size_of::<SysClockGettimeArgs>(),
@@ -249,9 +250,9 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
         SY_NOLOCK,
         sys_clock_getres,
     ), // 89 = clock_getres
-    Sysent::new(2, size_of::<SysDup2Args>(), SY_NOLOCK, sys_dup2),    // 90 = dup2
+    Sysent::new(2, size_of::<SysDup2Args>(), SY_NOLOCK, sys_dup2), // 90 = dup2
     Sysent::new(2, size_of::<SysNanosleepArgs>(), SY_NOLOCK, sys_nanosleep), // 91 = nanosleep
-    Sysent::new(3, size_of::<SysFcntlArgs>(), SY_NOLOCK, sys_fcntl),  // 92 = fcntl
+    Sysent::new(3, size_of::<SysFcntlArgs>(), SY_NOLOCK, sys_fcntl), // 92 = fcntl
     Sysent::new(4, size_of::<SysAccept4Args>(), SY_NOLOCK, sys_accept4), // 93 = accept4
     Sysent::new(5, size_of::<SysThrsleepArgs>(), SY_NOLOCK, sys_nosys), // 94 = __thrsleep (sys___thrsleep not ported)
     Sysent::new(1, size_of::<SysFsyncArgs>(), 0, sys_fsync),            // 95 = fsync
@@ -433,10 +434,10 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(0, 0, 0, sys_nosys), // 266 = unimplemented
     Sysent::new(0, 0, 0, sys_nosys), // 267 = obsolete pad_preadv
     Sysent::new(0, 0, 0, sys_nosys), // 268 = obsolete pad_pwritev
-    Sysent::new(0, 0, SY_NOLOCK, sys_nosys), // 269 = kqueue (sys_kqueue not ported)
-    Sysent::new(1, size_of::<SysKqueue1Args>(), SY_NOLOCK, sys_nosys), // 270 = kqueue1 (sys_kqueue1 not ported)
-    Sysent::new(1, size_of::<SysMlockallArgs>(), 0, sys_mlockall),     // 271 = mlockall
-    Sysent::new(0, 0, 0, sys_munlockall),                              // 272 = munlockall
+    Sysent::new(0, 0, SY_NOLOCK, sys_kqueue), // 269 = kqueue
+    Sysent::new(1, size_of::<SysKqueue1Args>(), SY_NOLOCK, sys_kqueue1), // 270 = kqueue1
+    Sysent::new(1, size_of::<SysMlockallArgs>(), 0, sys_mlockall), // 271 = mlockall
+    Sysent::new(0, 0, 0, sys_munlockall), // 272 = munlockall
     Sysent::new(0, 0, 0, sys_nosys), // 273 = unimplemented sys_getpeereid
     Sysent::new(0, 0, 0, sys_nosys), // 274 = unimplemented sys_extattrctl
     Sysent::new(0, 0, 0, sys_nosys), // 275 = unimplemented sys_extattr_set_file

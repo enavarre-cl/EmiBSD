@@ -69,7 +69,6 @@
 //! - `cnpollc` takes a `bool`; its `int on` is only ever 0 or 1.
 
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
@@ -77,6 +76,7 @@ use crate::kern::kern_prot::suser;
 use crate::kern::vfs_subr::{cdevvp, vcount, vfinddev, vrele};
 use crate::machine::conf::cdevsw;
 use crate::sys::errno::Errno;
+use crate::sys::event::Knote;
 use crate::sys::param::NODEV;
 use crate::sys::proc::Proc;
 use crate::sys::tty::Tty;
@@ -264,7 +264,7 @@ pub fn cnioctl(_dev: Dev, cmd: u64, data: &mut [u8], flag: i32, p: &Proc) -> Res
 
 /// `cnkqfilter`: redirect output, if that's appropriate. If there's no real console,
 /// return `ENXIO`.
-pub fn cnkqfilter(_dev: Dev, kn: *mut c_void) -> Result<(), Errno> {
+pub fn cnkqfilter(_dev: Dev, kn: &Knote) -> Result<(), Errno> {
     let dev = if let Some(tp) = constty() {
         tp.t_dev.get()
     } else if let Some(cp) = cn_tab() {

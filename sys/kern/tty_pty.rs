@@ -90,6 +90,7 @@ use crate::machine::conf::{cdevsw, nchrdev};
 use crate::machine::cpu::curproc;
 use crate::sys::conf::DevTypeOpen;
 use crate::sys::errno::Errno;
+use crate::sys::event::Knote;
 use crate::sys::fcntl::{FNONBLOCK, FREAD, FWRITE};
 use crate::sys::file::{DTYPE_VNODE, frele};
 use crate::sys::filedesc::{fdplock, fdpunlock};
@@ -740,7 +741,7 @@ pub fn ptcwrite(dev: Dev, uio: &mut Uio<'_>, flag: i32) -> Result<(), Errno> {
 
 /// `ptckqfilter`: attaches a kqueue filter to the master side (`kern_event.c` is not
 /// ported).
-pub fn ptckqfilter(_dev: Dev, _kn: *mut c_void) -> Result<(), Errno> {
+pub fn ptckqfilter(_dev: Dev, _kn: &Knote) -> Result<(), Errno> {
     Err(unported!("ptckqfilter: klist_insert_locked (kern_event.c)"))
 }
 

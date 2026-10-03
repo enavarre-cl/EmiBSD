@@ -70,6 +70,7 @@ use crate::machine::cpu::curproc;
 use crate::machine::intr::{splbio, splx};
 use crate::sys::buf::Buf;
 use crate::sys::errno::Errno;
+use crate::sys::event::Knote;
 use crate::sys::fcntl::Flock;
 use crate::sys::namei::Componentname;
 use crate::sys::proc::Proc;
@@ -356,9 +357,9 @@ pub fn VOP_IOCTL(
     }
 }
 
-/// `VOP_KQFILTER(vp, fflag, kn)`: `kn` is a `struct knote *` (`kern_event.c`).
+/// `VOP_KQFILTER(vp, fflag, kn)`: attaches the knote to the vnode.
 #[allow(non_snake_case)] // the C name
-pub fn VOP_KQFILTER(vp: &'static Vnode, fflag: i32, kn: *mut c_void) -> Result<(), Errno> {
+pub fn VOP_KQFILTER(vp: &'static Vnode, fflag: i32, kn: &Knote) -> Result<(), Errno> {
     let mut a = VopKqfilterArgs {
         a_vp: vp,
         a_fflag: fflag,

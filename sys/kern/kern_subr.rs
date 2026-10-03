@@ -180,7 +180,7 @@ pub fn ureadc(c: i32, uio: &mut Uio<'_>) -> Result<(), Errno> {
 }
 
 /// The power of two the hash table of `elements` rounds up to.
-fn hashsize(elements: i32) -> usize {
+pub fn hashsize(elements: i32) -> usize {
     let elements = elements as usize;
     if elements & (elements - 1) == 0 {
         elements

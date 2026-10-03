@@ -63,9 +63,8 @@
 //! - The set[ug]id stdin/stdout/stderr fix-up opens `/dev/null` with `cdevvp(getnulldev())`:
 //!   the device switch (`<sys/conf.h>`) is not ported, so a set[ug]id exec with one of the
 //!   three descriptors closed reports it and fails (the C would succeed).
-//! - `prof_exec`, `stopprofclock` (profiling, `subr_prof.c`) and the `NOTE_EXEC` knote
-//!   (`kern_event.c`) are reported or no-ops where their subsystem is missing (see each call
-//!   site); `KTRACE` is not configured.
+//! - `prof_exec` and `stopprofclock` (profiling, `subr_prof.c`) are reported or no-ops where
+//!   their subsystem is missing (see each call site); `KTRACE` is not configured.
 //! - The 4-clause licence (advertising clause) was accepted by the user at M2 for this
 //!   project.
 
@@ -77,6 +76,7 @@ use crate::dev::rnd::{arc4random, arc4random_buf};
 use crate::kern::exec_elf::{exec_elf_fixup, exec_elf_makecmds};
 use crate::kern::exec_subr::exec_process_vmcmds;
 use crate::kern::kern_descrip::{closef, falloc, fd_getfile, fdprepforexec, fdrelease, fdremove};
+use crate::kern::kern_event::knote;
 use crate::kern::kern_exit::{exit1, pin_free};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_prot::{crcopy, crfree, crhold, proc_cansugid};
@@ -100,6 +100,7 @@ use crate::machine::tcb::tcb_set;
 use crate::machine::{Machine, VmParam};
 use crate::sys::acct::AFORK;
 use crate::sys::errno::Errno;
+use crate::sys::event::NOTE_EXEC;
 use crate::sys::exec::{
     EXEC_DESTR, EXEC_HASARGL, EXEC_HASFD, EXEC_INDIR, EXEC_NOBTCFI, EXEC_PROFILE, EXEC_SKIPARG,
     EXEC_WXNEEDED, ExecPackage, Execsw, PsStrings,
@@ -937,8 +938,8 @@ fn execve_common(
         let _ = vn_close(vp, FREAD, ptr::from_ref(cred), Some(p));
     }
 
-    // notify others that we exec'd: knote(&pr->ps_klist, NOTE_EXEC) (kern_event.c).
-    let _ = unported!("exec: knote NOTE_EXEC (kern_event.c)");
+    // notify others that we exec'd
+    knote(&pr.ps_klist, i64::from(NOTE_EXEC));
 
     // free_pack_abort: the package and the pathname buffers are dropped; exit noting
     // failure.

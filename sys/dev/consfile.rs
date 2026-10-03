@@ -29,7 +29,6 @@
 //!
 //! It goes away when `init` can open `/dev/console`.
 
-use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::dev::cons::{
@@ -39,6 +38,7 @@ use crate::dev::cons::{
 use crate::kern::kern_descrip::{falloc, fdalloc, fdexpand, fdinsert};
 use crate::kern::kern_subr::{uiomove, ureadc};
 use crate::sys::errno::Errno;
+use crate::sys::event::Knote;
 use crate::sys::fcntl::{FNONBLOCK, FREAD, FWRITE};
 use crate::sys::file::{File, Fileops, fref, frele};
 use crate::sys::filedesc::{fdplock, fdpunlock};
@@ -136,7 +136,7 @@ fn consfile_ioctl(fp: &File, com: u64, data: &mut [u8], p: &Proc) -> Result<(), 
 }
 
 /// The console device's kqueue filter.
-fn consfile_kqfilter(_fp: &File, kn: *mut c_void) -> Result<(), Errno> {
+fn consfile_kqfilter(_fp: &File, kn: &Knote) -> Result<(), Errno> {
     cnkqfilter(CONSDEV, kn)
 }
 

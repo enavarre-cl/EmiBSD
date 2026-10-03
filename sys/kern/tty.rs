@@ -108,6 +108,7 @@ use crate::machine::conf::cdevsw;
 use crate::machine::cpu::curproc;
 use crate::machine::intr::{IPL_TTY, splassert, spltty, splx};
 use crate::sys::errno::Errno;
+use crate::sys::event::Knote;
 use crate::sys::fcntl::{FNONBLOCK, FREAD, FWRITE};
 use crate::sys::filio::{FIOASYNC, FIOGETOWN, FIONREAD, FIOSETOWN};
 use crate::sys::ioctl::{ioctl_arg, ioctl_ret};
@@ -1298,7 +1299,7 @@ pub fn ttioctl(tp: &Tty, cmd: u64, data: &mut [u8], flag: i32, p: &Proc) -> Resu
 // filt_ttywdetach, filt_ttywrite, filt_ttyexcept: struct knote (kern_event.c).
 
 /// `ttkqfilter`: attaches a kqueue filter to a tty (`kern_event.c` is not ported).
-pub fn ttkqfilter(dev: Dev, _kn: *mut c_void) -> Result<(), Errno> {
+pub fn ttkqfilter(dev: Dev, _kn: &Knote) -> Result<(), Errno> {
     let _tp = cdevsw(major(dev)).d_tty.and_then(|t| t(dev));
     Err(unported!("ttkqfilter: klist_insert_locked (kern_event.c)"))
 }

@@ -19,6 +19,7 @@ pub mod endian;
 pub mod errno;
 pub mod evcount;
 pub mod event;
+pub mod eventvar;
 pub mod exec;
 pub mod exec_elf;
 pub mod fcntl;

@@ -67,19 +67,17 @@
 //! - `si_specnext`, the link of the special-device alias chains, is the vnode's own
 //!   `v_specnext` instead of a member of `struct specinfo`: the queue adapters need the link
 //!   inside the element. `vp->v_specnext` reads the same in both.
-//! - `v_klist` (`kern_event.c`) waits for its subsystem: the knote list is left out, and the
-//!   code that walks it reports itself. `v_uvm` is `Option<&'static UvmVnode>`: a
-//!   `uvm_vnode_pool` item is never freed either.
-//! - `struct knote *` (`a_kn`) is a raw pointer until `kern_event.c` exists; `struct buf *`
-//!   (`a_bp`) is a `&'static Buf` (`sys/buf.rs`).
+//! - `v_uvm` is `Option<&'static UvmVnode>`: a `uvm_vnode_pool` item is never freed
+//!   either.
+//! - `struct buf *` (`a_bp`) is a `&'static Buf` (`sys/buf.rs`).
 //! - `RBT_HEAD(buf_rb_bufs, buf)` is the [`BufRbBufs`] adapter, ordered by `vfs_subr.c`'s
 //!   `rb_buf_compare`; `LIST_HEAD(buflists, buf)` is [`Buflists`] through `b_vnbufs`.
 //! - `a_cred` is the C's `struct ucred *`, a raw pointer, since `NOCRED` and `FSCRED` are
 //!   sentinel values; [`cred_ref`] turns a real one into a reference.
 //! - `IFTOVT`, `VTTOIF` and `MAKEIMODE` are functions over the tables `vfs_subr.rs` defines.
-//! - `VN_KNOTE` waits for `kern_event.c`; the prototypes are their functions in `vfs_subr.rs`,
-//!   `vfs_vnops.rs`, `vfs_default.rs`, `vfs_getcwd.rs` and `vfs_syscalls.rs`; `vfs_sync.c`'s
-//!   and the uvm ones are not ported (stage 2).
+//! - The macro `VN_KNOTE` is the function [`VN_KNOTE`]; the prototypes are their functions
+//!   in `vfs_subr.rs`, `vfs_vnops.rs`, `vfs_default.rs`, `vfs_getcwd.rs` and
+//!   `vfs_syscalls.rs`; `vfs_sync.c`'s and the uvm ones are not ported (stage 2).
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -89,6 +87,7 @@ use crate::kern::subr_prf::panic;
 use crate::queue_adapter;
 use crate::sys::buf::Buf;
 use crate::sys::errno::Errno;
+use crate::sys::event::{Klist, Knote};
 use crate::sys::fcntl::Flock;
 use crate::sys::mount::Mount;
 use crate::sys::namei::{Componentname, NamecacheRbCache, NcMe};
@@ -260,7 +259,8 @@ pub struct Vnode {
     pub v_cache_dst: TailqHead<NcMe>,
     /// `v_data`: private data for fs.
     pub v_data: Cell<*mut c_void>,
-    // v_klist: identity of poller(s) (struct klist, kern_event.c).
+    /// `v_klist`: identity of poller(s).
+    pub v_klist: Klist,
 }
 
 // SAFETY: the members are mutated under the kernel lock, `vnode_mtx` or `splbio`, as in C;
@@ -297,6 +297,7 @@ impl Vnode {
             v_nc_tree: RbtHead::new(),
             v_cache_dst: TailqHead::new(),
             v_data: Cell::new(ptr::null_mut()),
+            v_klist: Klist::new(),
         }
     }
 
@@ -582,6 +583,12 @@ pub fn makeimode(indx: Vtype, mode: Mode) -> Mode {
     vttoif(indx) | mode
 }
 
+/// `VN_KNOTE(vp, b)`: posts the vnode event `b` (`NOTE_*`) to the vnode's knotes.
+#[allow(non_snake_case)] // the C name
+pub fn VN_KNOTE(vp: &Vnode, b: u32) {
+    crate::kern::kern_event::knote_locked(&vp.v_klist, i64::from(b));
+}
+
 /// `SKIPSYSTEM`: vflush: skip vnodes marked `VSYSTEM`.
 pub const SKIPSYSTEM: i32 = 0x0001;
 /// `FORCECLOSE`: vflush: force file closure.
@@ -768,13 +775,13 @@ pub struct VopIoctlArgs<'a> {
 }
 
 /// `struct vop_kqfilter_args`.
-pub struct VopKqfilterArgs {
+pub struct VopKqfilterArgs<'a> {
     /// `a_vp`.
     pub a_vp: &'static Vnode,
     /// `a_fflag`.
     pub a_fflag: i32,
-    /// `a_kn`: `struct knote *` (`kern_event.c`, not ported).
-    pub a_kn: *mut c_void,
+    /// `a_kn`.
+    pub a_kn: &'a Knote,
 }
 
 /// `struct vop_revoke_args`.
@@ -1054,7 +1061,7 @@ pub type VopSymlinkFn = fn(&mut VopSymlinkArgs<'_>) -> Result<(), Errno>;
 /// The type of `vop_write`.
 pub type VopWriteFn = fn(&mut VopWriteArgs<'_, '_>) -> Result<(), Errno>;
 /// The type of `vop_kqfilter`.
-pub type VopKqfilterFn = fn(&mut VopKqfilterArgs) -> Result<(), Errno>;
+pub type VopKqfilterFn = fn(&mut VopKqfilterArgs<'_>) -> Result<(), Errno>;
 
 /// `struct vops`: vnode operations. `None` is the C's NULL: the `VOP_*` wrapper answers
 /// `EOPNOTSUPP` without calling anything.

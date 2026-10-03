@@ -55,6 +55,7 @@ use crate::kern::vfs_vnops::vn_lock;
 use crate::kern::vfs_vops::{VOP_IOCTL, VOP_OPEN, VOP_READ, VOP_UNLOCK, VOP_WRITE};
 use crate::machine::cpu::curproc;
 use crate::sys::errno::Errno;
+use crate::sys::event::Knote;
 use crate::sys::ioctl::ioctl_arg;
 use crate::sys::lock::{LK_EXCLUSIVE, LK_RETRY};
 use crate::sys::proc::{PS_CONTROLT, Proc, Session, sess_leader};
@@ -175,7 +176,7 @@ pub fn cttyioctl(_dev: Dev, cmd: u64, addr: &mut [u8], flag: i32, p: &Proc) -> R
 }
 
 /// `cttykqfilter` (`kern_event.c` is not ported).
-pub fn cttykqfilter(_dev: Dev, _kn: *mut c_void) -> Result<(), Errno> {
+pub fn cttykqfilter(_dev: Dev, _kn: &Knote) -> Result<(), Errno> {
     let _ttyvp = curproc().and_then(cttyvp);
     Err(unported!(
         "cttykqfilter: VOP_KQFILTER/seltrue_kqfilter (kern_event.c)"

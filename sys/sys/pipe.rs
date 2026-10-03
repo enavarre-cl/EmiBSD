@@ -38,9 +38,6 @@
 //!   `pipe_peer` and `pipe_pair` are raw pointers into the pair (`Cell<*const T>`), read
 //!   through [`Pipe::lock`] and the functions of `sys_pipe.c`.
 //! - `struct pipebuf`'s member `in` is a Rust keyword: it is the raw identifier `r#in`.
-//! - `pipe_klist` (`struct klist`, `<sys/event.h>`) is left out: `kern_event.c` is not
-//!   ported, so no knote can be attached to a pipe, and every place `sys_pipe.c` touches the
-//!   list says so (`docs/C_TO_RUST.md`, the member of an unported subsystem).
 //! - `PIPE_SIZE` and `BIG_PIPE_SIZE` are `usize` (they size `km_alloc` and compare with
 //!   `uio_resid`); the C's `#ifndef` overrides are not configurable.
 
@@ -49,6 +46,7 @@ use core::ptr;
 
 use crate::kern::subr_prf::panic;
 use crate::kern::sys_pipe::PipePair;
+use crate::sys::event::Klist;
 use crate::sys::rwlock::Rwlock;
 use crate::sys::sigio::SigioRef;
 use crate::sys::time::Timespec;
@@ -119,7 +117,8 @@ pub struct Pipe {
     pub pipe_lock: Cell<*const Rwlock>,
     /// \[p\] `pipe_buffer`: data storage.
     pub pipe_buffer: Pipebuf,
-    // pipe_klist: [p] list of knotes (struct klist, kern_event.c): left out.
+    /// \[p\] `pipe_klist`: list of knotes (locked by the pair's `pp_lock`).
+    pub pipe_klist: Klist,
     /// \[p\] `pipe_atime`: time of last access.
     pub pipe_atime: Cell<Timespec>,
     /// \[p\] `pipe_mtime`: time of last modify.
@@ -144,6 +143,7 @@ impl Pipe {
         Self {
             pipe_lock: Cell::new(ptr::null()),
             pipe_buffer: Pipebuf::new(),
+            pipe_klist: Klist::new(),
             pipe_atime: Cell::new(Timespec::new(0, 0)),
             pipe_mtime: Cell::new(Timespec::new(0, 0)),
             pipe_ctime: Cell::new(Timespec::new(0, 0)),
