@@ -3269,6 +3269,125 @@ upstream_blob = "c69a3e45468e731849fbf73d59651dffd32b2c39"
 deps = ["sys/crypto/gmac.h", "sys/crypto/aes.c", "sys/lib/libkern/explicit_bzero.c"]
 notes = "ghash_gfmul/ghash_update_mi, AES_GMAC_Init/Setkey/Reinit/Update/Final; the ghash_update override pointer (amd64's PCLMULQDQ aesni.c) is not ported: ghash_update is ghash_update_mi; AES_GMAC_Setkey reports a bad key size (Err(EINVAL)) where the C ignores AES_Setkey's result; GCM spec test cases 1-4, 10, 16 and GMAC-only tags tested"
 
+[[file]]
+c = "sys/crypto/rmd160.h"
+rust = "sys/crypto/rmd160.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "26b59e752547ac2b31e05862ab73bea0bc21e879"
+notes = "Rmd160Ctx; shares the module with rmd160.c; licence: BSD-2 (Markus Friedl)"
+
+[[file]]
+c = "sys/crypto/rmd160.c"
+rust = "sys/crypto/rmd160.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e2af9ace7a0332cbaa160cf1ddee61b78ccee304"
+deps = ["sys/crypto/rmd160.h"]
+notes = "RMD160Init/Update/Final/Transform (HMAC-RIPEMD-160 in xform); the 160 R() steps are two loops over message-word and rotation tables taken from the C; Final takes Option for the C's NULL digest; specification vectors and a million a tested"
+
+[[file]]
+c = "sys/crypto/cast.h"
+rust = "sys/crypto/cast.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "22edd110cf915c9de87470f71de9ad33f0ef850b"
+notes = "CastKey; shares the module with cast.c and castsb.h; licence: public domain (Steve Reid), accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/castsb.h"
+rust = "sys/crypto/cast.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0e1fb79623e1806c05c06192b0321103f86cee25"
+notes = "CAST_SBOX1..8, compared with the C tables by a reference-backed test; shares the module with cast.c"
+
+[[file]]
+c = "sys/crypto/cast.c"
+rust = "sys/crypto/cast.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "378d1576623b599fd62e48c48bce0112532011b3"
+deps = ["sys/crypto/cast.h", "sys/crypto/castsb.h"]
+notes = "cast_setkey/cast_encrypt/cast_decrypt (CAST-128 in xform); the sixteen unrolled F1/F2/F3 rounds are a loop; RFC 2144 B.1 vectors for 128, 80 and 40-bit keys tested"
+
+[[file]]
+c = "sys/crypto/blf.h"
+rust = "sys/crypto/blf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7ea350c529ff786167bf0ee11a17f9cedeb8159f"
+notes = "BlfCtx (S as [[u32; 256]; 4]); shares the module with blf.c; licence: BSD-3 (Niels Provos)"
+
+[[file]]
+c = "sys/crypto/blf.c"
+rust = "sys/crypto/blf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c8a04125bd970b1e151287980ad050a5f47d0f84"
+deps = ["sys/crypto/blf.h"]
+notes = "Blowfish_encipher/decipher/initstate/expand0state/expandstate/stream2word, blf_key/enc/dec, blf_ecb_* and blf_cbc_* (Blowfish in xform); the pi-digit initial state is compared with the C by a reference-backed test; Eric Young's vectors and an independent implementation (pi by big integers) for other key sizes and CBC tested; ECB/CBC process whole blocks only (the C overruns len when it is not a multiple of 8)"
+
+[[file]]
+c = "sys/crypto/des_locl.h"
+rust = "sys/crypto/des_locl.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a9f38010692ba841e0c0e7be906c0d0fb878cbc3"
+deps = ["sys/crypto/spr.h"]
+notes = "DesCblock, DesKeySchedule ([u32; 32]), c2l/l2c, PERM_OP, IP/FP, D_ENCRYPT as functions; licence: Eric Young's (BSD-4 style, with the advertising clause), accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/podd.h"
+rust = "sys/crypto/podd.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7dcb7ad97b4a1b9564288407fe8de0ede986a3e7"
+notes = "ODD_PARITY (compared with the C table by a reference-backed test); licence as des_locl.h"
+
+[[file]]
+c = "sys/crypto/sk.h"
+rust = "sys/crypto/sk.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e087471c0cfdd8a68d68d43d0295aed52a5a79c4"
+notes = "DES_SKB (compared with the C table by a reference-backed test); licence as des_locl.h"
+
+[[file]]
+c = "sys/crypto/spr.h"
+rust = "sys/crypto/spr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8be4254c8ca852e1f9e79c202be58de649ef3b03"
+notes = "DES_SPTRANS (compared with the C table by a reference-backed test); licence as des_locl.h"
+
+[[file]]
+c = "sys/crypto/set_key.c"
+rust = "sys/crypto/set_key.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6924b27b670048e3b1f72f4cf4bdf5b60810e701"
+deps = ["sys/crypto/des_locl.h", "sys/crypto/podd.h", "sys/crypto/sk.h"]
+notes = "des_set_key, des_is_weak_key, check_parity, des_check_key (an AtomicI32, 0 as in the C); the -1/-2 results are Err(EINVAL)"
+
+[[file]]
+c = "sys/crypto/ecb_enc.c"
+rust = "sys/crypto/ecb_enc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fa20c81f4fb8dc62c6109a3be6d83ce9f73325a2"
+deps = ["sys/crypto/des_locl.h", "sys/crypto/spr.h"]
+notes = "des_encrypt2 (the 16 DES rounds on an IP-permuted block); DES_USE_PTR is not ported (undefined in the C)"
+
+[[file]]
+c = "sys/crypto/ecb3_enc.c"
+rust = "sys/crypto/ecb3_enc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6fdb9f9d4d5baf86780ce59fa0d29ff309b10765"
+deps = ["sys/crypto/des_locl.h", "sys/crypto/ecb_enc.c", "sys/crypto/set_key.c"]
+notes = "des_ecb3_encrypt (3DES-EDE of one block, des3_encrypt/des3_decrypt in xform); the classic DES example as EDE with one key and three-key vectors from openssl tested"
+
 [[extra]]
 rust = "sys/crypto/testutil.rs"
 reason = "host test helper: hex decoding for the known-answer vectors of sys/crypto"

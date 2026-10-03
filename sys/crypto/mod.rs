@@ -2,17 +2,27 @@
 
 pub mod aes;
 pub mod blake2s;
+pub mod blf;
+pub mod cast;
 pub mod chacha_private;
 pub mod chachapoly;
 pub mod curve25519;
+pub mod des_locl;
+pub mod ecb3_enc;
+pub mod ecb_enc;
 pub mod gmac;
 pub mod hmac;
 pub mod md5;
+pub mod podd;
 pub mod poly1305;
 pub mod rijndael;
+pub mod rmd160;
+pub mod set_key;
 pub mod sha1;
 pub mod sha2;
 pub mod siphash;
+pub mod sk;
+pub mod spr;
 #[cfg(test)]
 mod testutil;
 
