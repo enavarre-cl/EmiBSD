@@ -2873,11 +2873,11 @@ notes = "M7b: afmap/af2idx/rtmap (atomic words: SRP not ported, the old map is f
 [[file]]
 c = "sys/net/rtsock.c"
 rust = "sys/net/rtsock.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ec293b5e085728f36d7d7152169e0e9e98767b90"
-deps = ["sys/net/route.c", "sys/sys/protosw.h", "sys/sys/domain.h"]
-notes = "M7b: what route.c, if.c and netinet need without sockets: struct rtpcb/rtptable, route_src, routesw/routedomain (dom_init route_init), route_prinit, route_input (delivery to routing sockets reported), rtm_msg1 (unsafe: raw sockaddrs), rtm_send, rtm_miss, rtm_ifchg, rtm_addr, rtm_ifannounce, rtm_80211info, rtm_proposal, sysctl_rtable (reported: rtm_msg2, struct walkarg); the socket half (route_usrreqs, route_output, route_ctloutput, rtm_report, rt_setmetrics, ...) waits for sockets"
+deps = ["sys/net/route.c", "sys/sys/protosw.h", "sys/sys/domain.h", "sys/sys/socketvar.h", "sys/kern/uipc_socket.c", "sys/kern/uipc_socket2.c"]
+notes = "M7b, M9a: the whole file: struct rtpcb (Cells under solock, rop_socket &'static Socket)/rtptable (rtp_count atomic), route_src, route_prinit, route_attach/detach/disconnect/shutdown/rcvd/send/sockaddr/peeraddr as route_usrreqs, route_ctloutput (ROUTE_MSGFILTER, ROUTE_TABLEFILTER, ROUTE_PRIOFILTER, ROUTE_FLAGFILTER), rtm_senddesync_timer/rtm_senddesync, route_input (the filters read the header with m_copydata), rtm_sendup, rtm_report, route_output (the message in a malloc(M_RTABLE) RtmBuf, a local copy of its rt_msghdr written back), rtm_output (RTM_ADD/DELETE/CHANGE/GET; the 'change:' label is rtm_output_change), ifa_ifwithroute, rtm_getifa, route_cleargateway, route_arp_conflict, rtm_setmetrics/rtm_getmetrics, rtm_xaddrs (keeps the C's early break after a string address), rtm_msg1, rtm_msg2 (Option<&mut [u8]> for caddr_t cp), rtm_send, rtm_miss, rtm_ifchg, rtm_addr, rtm_ifannounce, rtm_80211info, rtm_proposal, sysctl_dumpentry, sysctl_rtable_rtstat, sysctl_iflist, sysctl_ifnames, sysctl_source, sysctl_rtable (NET_RT_DUMP/FLAGS/IFLIST/IFNAMES/STATS/TABLE/SOURCE; struct walkarg with a user address and Option<NonNull> w_tmem), rtm_validate_proposal (Result), rt_setsource, routesw/routedomain; unsafe fns where raw sockaddrs of a struct rt_addrinfo are read; BFD, MPLS, IPSEC, INET6 not configured (comments at the sites; sizeof(struct sockaddr_in6) a local constant); SMALL_KERNEL not defined; the knote of sorwakeup is the socket layer's (kern_event.c not ported); host tests (rtm_msg2 layout, rtm_xaddrs checks, the sysctl dump/iflist/ifnames/table/stats layouts, a routing socket answering RTM_GET/ADD/DELETE and its options); ramdisk: route -n show and route -n get work on both archs (just smoke-route; ifconfig -a waits for AF_INET datagram sockets)"
 
 [[file]]
 c = "sys/netinet/in_proto.c"

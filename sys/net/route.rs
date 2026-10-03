@@ -687,6 +687,10 @@ pub struct RtTableinfo {
     pub rti_domainid: u16,
 }
 
+// SAFETY: `#[repr(C)]`, two `u16`s without padding; any bit pattern is valid (the
+// `NET_RT_TABLE` sysctl copies it out).
+unsafe impl crate::sys::sysctl::SysctlPlain for RtTableinfo {}
+
 /// `struct rt_msghdr`: structures for routing messages.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
