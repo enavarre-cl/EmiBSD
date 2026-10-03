@@ -139,8 +139,6 @@
 //! - The sysctl variables are `AtomicI32` statics; `icmpcounters` (`struct cpumem *`) is the
 //!   static array of atomics [`ICMPCOUNTERS`]. `icmperrppslim_last`/`icmperrpps_count` are a
 //!   `StaticCell` touched only through `ppsratecheck`, under its mutex.
-//! - `rip_input` (`netinet/raw_ip.c`, raw sockets) is not ported: `netinet/in_proto.rs`'s
-//!   stand-in reports it and frees the message after `icmp_input` has counted and answered it.
 //! - `icmp_error` and `icmp_do_error` take the C's `int type, int code` as `u8`s (the values of
 //!   `icmp_type`/`icmp_code`); `icmp_reflect` returns `Result` (its `ELOOP`/`EHOSTUNREACH`)
 //!   with the options mbuf through an `Option<&mut ...>` out parameter.
@@ -190,7 +188,7 @@ use crate::netinet::in_::{
     IPPROTO_ICMP, IPPROTO_TCP, InAddr, SockaddrIn, in_canforward, in_multicast, satosin_const,
     sintosa,
 };
-use crate::netinet::in_proto::{INETSW, IP_PROTOX, rip_input};
+use crate::netinet::in_proto::{INETSW, IP_PROTOX};
 use crate::netinet::in_var::{InIfaddr, ifatoia};
 use crate::netinet::in4_cksum::in4_cksum;
 use crate::netinet::ip::{
@@ -203,6 +201,7 @@ use crate::netinet::ip_input::{
 };
 use crate::netinet::ip_output::ip_insertoptions;
 use crate::netinet::ip_var::{IpstatCounters, ipstat_inc, mtod_ip, mtod_ip_store};
+use crate::netinet::raw_ip::rip_input;
 use crate::sys::endian::{htonl, htons, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::limits::INT_MAX;

@@ -61,6 +61,9 @@
 //!   [`mtod_ip_store`]): mbuf data has no 4-byte alignment guarantee, which `struct ip` needs
 //!   in Rust; the reassembly queue keeps a raw pointer to each fragment's header, as the C
 //!   does, and reads it unaligned the same way.
+//! - `ip_savecontrol` appends to the control chain through the last message's `m_next`
+//!   (the C's `struct mbuf **` walk); the values are handed to `sbcreatecontrol` as their
+//!   bytes.
 //! - `ip_init` fills `in_pcb.c`'s `baddynamicports`/`rootonlyports` from the default lists
 //!   (slices without the C's terminating 0); the `ipport_*` sysctls are `in_pcb.c`'s atomics.
 //! - Not configured, each a comment at its site: `NPF` (`pf_test`, `pf_ouraddr`), `NCARP`
@@ -72,7 +75,7 @@
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::ffi::c_void;
-use core::mem::size_of;
+use core::mem::{offset_of, size_of};
 use core::ptr;
 use core::slice;
 use core::sync::atomic::{AtomicI32, AtomicU64, Ordering};
@@ -89,14 +92,16 @@ use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::kern::subr_prf::panic;
 use crate::kern::uipc_domain::pffindproto;
 use crate::kern::uipc_mbuf::{
-    m_adj, m_calchdrlen, m_cat, m_copydata, m_freem, m_get, m_gethdr, m_pullup, m_removehdr,
-    ml_dequeue, mq_delist, mq_enqueue, mq_init,
+    m_adj, m_calchdrlen, m_cat, m_copydata, m_freem, m_get, m_gethdr, m_microtime, m_pullup,
+    m_removehdr, ml_dequeue, mq_delist, mq_enqueue, mq_init,
 };
 use crate::kern::uipc_mbuf2::{m_tag_delete, m_tag_find, m_tag_get, m_tag_prepend};
+use crate::kern::uipc_socket2::sbcreatecontrol;
 use crate::machine::intr::IPL_SOFTNET;
 use crate::net::if_::{
     IFF_LOOPBACK, if_get, if_put, ifa_ifwithaddr, ifaof_ifpforaddr, net_tq, niq_enqueue,
 };
+use crate::net::if_dl::SockaddrDl;
 use crate::net::if_types::IFT_ENC;
 use crate::net::if_var::{Ifnet, Netstack, Niqueue, niq_dequeue, sysctl_niq};
 use crate::net::netisr::NETISR_IP;
@@ -107,20 +112,22 @@ use crate::net::route::{
 use crate::net::rtable::{rt_key, rtable_l2};
 use crate::netinet::if_ether::{ARPINQ, ARPT_DOWN, ARPT_KEEP, arpinit, arpproxy, la_hold_total};
 use crate::netinet::in_::{
-    IN_CLASSA_NSHIFT, IN_LOOPBACKNET, INADDR_ANY, INADDR_BROADCAST, IPCTL_ARPDOWN, IPCTL_ARPQUEUE,
-    IPCTL_ARPQUEUED, IPCTL_ARPTIMEOUT, IPCTL_DEFTTL, IPCTL_DIRECTEDBCAST, IPCTL_FORWARDING,
-    IPCTL_IFQUEUE, IPCTL_IPPORT_FIRSTAUTO, IPCTL_IPPORT_HIFIRSTAUTO, IPCTL_IPPORT_HILASTAUTO,
-    IPCTL_IPPORT_LASTAUTO, IPCTL_IPPORT_MAXQUEUE, IPCTL_MFORWARDING, IPCTL_MRTMFC, IPCTL_MRTPROTO,
-    IPCTL_MRTSTATS, IPCTL_MRTVIF, IPCTL_MTUDISC, IPCTL_MTUDISCTIMEOUT, IPCTL_MULTIPATH,
-    IPCTL_SENDREDIRECTS, IPCTL_SOURCEROUTE, IPCTL_STATS, IPPROTO_DONE, IPPROTO_IPV4, IPPROTO_MAX,
+    IN_CLASSA_NSHIFT, IN_LOOPBACKNET, INADDR_ANY, INADDR_BROADCAST, IP_RECVDSTADDR, IP_RECVIF,
+    IP_RECVRTABLE, IP_RECVTTL, IPCTL_ARPDOWN, IPCTL_ARPQUEUE, IPCTL_ARPQUEUED, IPCTL_ARPTIMEOUT,
+    IPCTL_DEFTTL, IPCTL_DIRECTEDBCAST, IPCTL_FORWARDING, IPCTL_IFQUEUE, IPCTL_IPPORT_FIRSTAUTO,
+    IPCTL_IPPORT_HIFIRSTAUTO, IPCTL_IPPORT_HILASTAUTO, IPCTL_IPPORT_LASTAUTO,
+    IPCTL_IPPORT_MAXQUEUE, IPCTL_MFORWARDING, IPCTL_MRTMFC, IPCTL_MRTPROTO, IPCTL_MRTSTATS,
+    IPCTL_MRTVIF, IPCTL_MTUDISC, IPCTL_MTUDISCTIMEOUT, IPCTL_MULTIPATH, IPCTL_SENDREDIRECTS,
+    IPCTL_SOURCEROUTE, IPCTL_STATS, IPPROTO_DONE, IPPROTO_IP, IPPROTO_IPV4, IPPROTO_MAX,
     IPPROTO_RAW, InAddr, SockaddrIn, in_canforward, in_classfulbroadcast, in_hasmulti,
     in_local_group, in_multicast, sintosa,
 };
 use crate::netinet::in_cksum::in_cksum;
 use crate::netinet::in_pcb::{
     BADDYNAMICPORTS, DEFBADDYNAMICPORTS_TCP, DEFBADDYNAMICPORTS_UDP, DEFROOTONLYPORTS_TCP,
-    DEFROOTONLYPORTS_UDP, IPPORT_FIRSTAUTO, IPPORT_LASTAUTO, ROOTONLYPORTS, dp_set,
-    ipport_hifirstauto, ipport_hilastauto,
+    DEFROOTONLYPORTS_UDP, INP_RECVDSTADDR, INP_RECVIF, INP_RECVRTABLE, INP_RECVTTL,
+    IPPORT_FIRSTAUTO, IPPORT_LASTAUTO, Inpcb, ROOTONLYPORTS, dp_set, ipport_hifirstauto,
+    ipport_hilastauto,
 };
 use crate::netinet::in_proto::{INETDOMAIN, INETSW, IP_PROTOX};
 use crate::netinet::in_var::ifatoia;
@@ -155,7 +162,9 @@ use crate::sys::mutex::Mutex;
 use crate::sys::pool::{PR_NOWAIT, Pool};
 use crate::sys::protosw::{PR_MPINPUT, PRC_NCMDS, Protosw};
 use crate::sys::queue::ListHead;
-use crate::sys::socket::{AF_INET, AF_UNSPEC, PF_INET, SOCK_RAW};
+use crate::sys::socket::{
+    AF_INET, AF_LINK, AF_UNSPEC, PF_INET, SCM_TIMESTAMP, SO_TIMESTAMP, SOCK_RAW, SOL_SOCKET,
+};
 use crate::sys::sysctl::SysctlBoundedArgs;
 use crate::sys::systm::{
     net_assert_locked, net_lock, net_lock_shared, net_unlock, net_unlock_shared,
@@ -1850,6 +1859,91 @@ fn ip_sysctl_ipstat(oldp: usize, oldlenp: &mut usize, newp: usize) -> Result<(),
     }
 
     sysctl_rdstruct(oldp, oldlenp, newp, &bytes)
+}
+
+/// The bytes of a plain-data `#[repr(C)]` value without padding.
+fn pod_bytes<T: Copy>(v: &T) -> &[u8] {
+    // SAFETY: the callers pass `#[repr(C)]` structures and integers without padding
+    // (`timeval`, `in_addr`, `sockaddr_dl`, `u8`, `u32`), whose bytes are all initialised.
+    unsafe { core::slice::from_raw_parts(ptr::from_ref(v).cast::<u8>(), size_of::<T>()) }
+}
+
+/// `ip_savecontrol`: the control messages the socket of `inp` asked for about the received
+/// datagram `m` with header `ip`, appended to the chain at `mp`.
+pub fn ip_savecontrol(inp: &Inpcb, mp: &mut Option<&'static Mbuf>, ip: &Ip, m: &Mbuf) {
+    // Where *mp points: `mp` itself, then the m_next of the last message.
+    let mut tail: Option<&'static Mbuf> = None;
+    let mut put = |n: Option<&'static Mbuf>| {
+        match tail {
+            None => *mp = n,
+            Some(t) => t.m_next().set(n),
+        }
+        if n.is_some() {
+            tail = n;
+        }
+    };
+
+    if inp.socket().has_options(SO_TIMESTAMP) {
+        let tv = m_microtime(m);
+        put(sbcreatecontrol(pod_bytes(&tv), SCM_TIMESTAMP, SOL_SOCKET));
+    }
+
+    if inp.has_flags(INP_RECVDSTADDR) {
+        put(sbcreatecontrol(
+            pod_bytes(&ip.ip_dst),
+            IP_RECVDSTADDR,
+            IPPROTO_IP,
+        ));
+    }
+    // notyet: INP_RECVOPTS (the options were tossed already) and INP_RECVRETOPTS
+    // (ip_srcroute doesn't do what we want here); compiled out in C too.
+    if inp.has_flags(INP_RECVIF) {
+        let ifp = if_get(m.m_pkthdr().ph_ifidx.get());
+        let sadl = ifp.map_or(ptr::null_mut(), |ifp| ifp.if_sadl.get());
+        if sadl.is_null() {
+            let sdl = SockaddrDl {
+                sdl_len: offset_of!(SockaddrDl, sdl_data) as u8,
+                sdl_family: AF_LINK,
+                sdl_index: ifp.map_or(0, |ifp| ifp.if_index.get() as u16),
+                sdl_nlen: 0,
+                sdl_alen: 0,
+                sdl_slen: 0,
+                ..SockaddrDl::default()
+            };
+            put(sbcreatecontrol(
+                &pod_bytes(&sdl)[..usize::from(sdl.sdl_len)],
+                IP_RECVIF,
+                IPPROTO_IP,
+            ));
+        } else {
+            // SAFETY: an interface's link address is a live `sockaddr_dl` of `sdl_len` bytes
+            // (`if_alloc_sadl`), read while the interface reference is held.
+            let sdl = unsafe {
+                core::slice::from_raw_parts(sadl.cast::<u8>(), usize::from((*sadl).sdl_len))
+            };
+            put(sbcreatecontrol(sdl, IP_RECVIF, IPPROTO_IP));
+        }
+        if_put(ifp);
+    }
+    if inp.has_flags(INP_RECVTTL) {
+        put(sbcreatecontrol(
+            pod_bytes(&ip.ip_ttl),
+            IP_RECVTTL,
+            IPPROTO_IP,
+        ));
+    }
+    if inp.has_flags(INP_RECVRTABLE) {
+        let rtableid: u32 = inp.inp_rtableid.get();
+
+        // NPF > 0: the routing domain of a diverted packet (pf_find_divert); not
+        // configured.
+
+        put(sbcreatecontrol(
+            pod_bytes(&rtableid),
+            IP_RECVRTABLE,
+            IPPROTO_IP,
+        ));
+    }
 }
 
 // ip_savecontrol: struct inpcb and sbcreatecontrol come with the socket layer (see the

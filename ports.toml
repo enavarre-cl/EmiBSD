@@ -2886,7 +2886,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d8b3695eafc44c4faaa208c08d27ebd2653cfefc"
 deps = ["sys/sys/protosw.h", "sys/sys/domain.h", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c"]
-notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; no pr_usrreqs/pr_ctloutput), inetdomain (dom_init is in_pcb.c's in_init since M9a), ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (udp_*, tcp_*, rip_input/rip_init, ipip_*, igmp_*) and free the packet; INET6, IPSEC, GRE, MROUTING, CARP, PFSYNC, ETHERIP, PIPEX, divert, MPLS not configured"
+notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; M9a: rip_usrreqs/rip_ctloutput on the raw, icmp, ipv4-in-ipv4, igmp and wildcard entries), inetdomain (dom_init is in_pcb.c's in_init since M9a), ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (udp_*, tcp_*, ipip_*, igmp_*) and free the packet; INET6, IPSEC, GRE, MROUTING, CARP, PFSYNC, ETHERIP, PIPEX, divert, MPLS not configured"
 
 [[file]]
 c = "sys/netinet/in_pcb.h"
@@ -2905,6 +2905,15 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2ecf458e0811f396eb65e9dc250b1eeada5aa431"
 deps = ["sys/netinet/in_pcb.h", "sys/netinet/in.c", "sys/netinet/ip_output.c", "sys/net/route.c", "sys/net/rtable.c", "sys/kern/uipc_socket.c", "sys/crypto/siphash.c"]
 notes = "M9a: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: zeroin_addr, ipport_firstauto/lastauto/hifirstauto/hilastauto (atomics; the hi ones keep their lowercase C names beside in.h's constants), baddynamicports, rootonlyports, inpcb_pool, in_init, in_pcbhash/in_pcblhash (SipHash24), in_pcbinit (hashinit failure panics), in_baddynamic, in_rootonly, in_pcballoc, in_pcbbind_locked/in_pcbbind, in_pcbaddrisavail_lock/in_pcbaddrisavail (clear the port and sin_zero of a copy), in_pcbpickport, in_pcbconnect, in_pcbdisconnect, in_pcbdetach, in_pcbsolock/sounlock, in_pcbref/unref (the link KASSERTs are not made: queue.rs keeps links private), in_pcb_iterator (unsafe: the iterator sits in the queue)/abort, in_setsockaddr/setpeeraddr, in_sockaddr/peeraddr/flowid (pr_usrreqs), in_pcbnotifyall (notify takes Option<Errno>), in_losing, in_pcbrtchange, in_pcblookup_local_lock, in_pcbrtentry, in_pcbselsrc, in_pcbrehash, in_pcbhash_insert/lookup, in_pcbresize, in_pcblookup_lock/in_pcblookup, in_pcblookup_listen, in_pcbset_rtableid, in_pcbset_addr (sockaddr_in arguments), in_pcbunset_faddr/laddr; in_pcbnotifymiss printfs behind diagnostic; INET6, NPF, IPSEC, NSTOEPLITZ not configured (comments at the sites); host tests (port bitmaps and defaults, bind/EADDRINUSE/SO_REUSEPORT/picked ports, lookups, resize, iterator, detach)"
+
+[[file]]
+c = "sys/netinet/raw_ip.c"
+rust = "sys/netinet/raw_ip.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "83c1c184af109db2f55e079bbb22b687974c507f"
+deps = ["sys/netinet/in_pcb.c", "sys/netinet/ip_output.c", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c", "sys/kern/uipc_socket2.c"]
+notes = "M9a: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: rawcbtable, RIPSNDQ/RIPRCVQ and rip_sendspace/rip_recvspace (constants), rip_usrreqs, rip_init, rip_input (the iterator walk; ips_noproto/ips_delivered as two atomic updates), rip_sbappend, rip_output (the destination a sockaddr_in written back with IP_HDRINCL), rip_chkhdr, rip_ctloutput, rip_attach, rip_detach, rip_bind, rip_connect, rip_disconnect, rip_shutdown, rip_send; the MRT_* options (<netinet/ip_mroute.h>, not ported) are defined here and answer EOPNOTSUPP (MROUTING not configured); NPF, INET6, IPSEC not configured (comments at the sites); host tests (a raw ICMP socket pinging the gateway end to end, rip_input's filters, rip_attach's privilege)"
 
 [[file]]
 c = "sys/netinet/in_var.h"
@@ -2967,7 +2976,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "64c2b79a2b6dd2be2b8258ff6c00dc3d16d7a8d6"
 deps = ["sys/netinet/ip_var.h", "sys/netinet/in.c", "sys/netinet/in_proto.c", "sys/netinet/ip_icmp.c", "sys/netinet/ip_output.c", "sys/netinet/if_ether.c", "sys/net/route.c"]
-notes = "M7b: the sysctl variables (AtomicI32; M9a: the ipport_* entries are in_pcb.c's atomics), ipq/ipq_mutex, ipintrq, the ipqent/ipq pools, ipcounters, the ip_send queues and tasks, inetctlerrmap; ip_init (M9a: baddynamicports/rootonlyports filled from in_pcb.h's defaults; arpinit), ip_ours/ip_ours_enqueue, ipintr, ipv4_input, ipv4_check, ip_input_if, ip_fragcheck, ip_deliver, in_ouraddr, ip_reass, ip_freef, ip_slowtimo, ip_flush, ip_dooptions, save_rte, ip_srcroute, ip_stripoptions, ip_forward, ip_sysctl, ip_sysctl_ipstat, ip_send_dispatch/ip_sendraw_dispatch, ip_send, ip_send_raw; IPSEC, pf, carp, MROUTING, INET6, divert not configured (comments at the sites); host tests (header validation, ARP plus echo to the gateway, echo request answered, parameter problem)"
+notes = "M7b: the sysctl variables (AtomicI32; M9a: the ipport_* entries are in_pcb.c's atomics), ipq/ipq_mutex, ipintrq, the ipqent/ipq pools, ipcounters, the ip_send queues and tasks, inetctlerrmap; ip_init (M9a: baddynamicports/rootonlyports filled from in_pcb.h's defaults; arpinit), ip_ours/ip_ours_enqueue, ipintr, ipv4_input, ipv4_check, ip_input_if, ip_fragcheck, ip_deliver, in_ouraddr, ip_reass, ip_freef, ip_slowtimo, ip_flush, ip_dooptions, save_rte, ip_srcroute, ip_stripoptions, ip_forward, ip_sysctl, ip_sysctl_ipstat, ip_send_dispatch/ip_sendraw_dispatch, ip_send, ip_send_raw, ip_savecontrol (M9a; the control chain built through the last message's m_next); IPSEC, pf, carp, MROUTING, INET6, divert not configured (comments at the sites); host tests (header validation, ARP plus echo to the gateway, echo request answered, parameter problem)"
 
 [[file]]
 c = "sys/netinet/ip_output.c"
@@ -2985,7 +2994,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1b26f841137e0930981385496027ffaa4950e6bc"
 deps = ["sys/netinet/ip_icmp.h", "sys/netinet/icmp_var.h", "sys/netinet/ip_output.c", "sys/netinet/in_cksum.c", "sys/net/route.c"]
-notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). icmpmaskrepl and the other sysctl variables, icmperrppslim, the mtudisc/redirect timer queues, icmpcounters, icmp_init, icmp_do_error, icmp_error, icmp_input, icmp_input_if (echo, timestamp, mask, redirects, unreachables; raw delivery through in_proto's reporting rip_input), icmp_reflect, icmp_send, iptime, icmp_sysctl, icmp_sysctl_icmpstat, icmp_mtudisc_clone, icmp_mtudisc, icmp_mtudisc_timeout, icmp_ratelimit, icmp_do_exthdr; packet data through IcmpPkt (bounds-checked view: mbuf data need not be aligned); IPSEC, pf, carp not configured; host tests in ip_input"
+notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). icmpmaskrepl and the other sysctl variables, icmperrppslim, the mtudisc/redirect timer queues, icmpcounters, icmp_init, icmp_do_error, icmp_error, icmp_input, icmp_input_if (echo, timestamp, mask, redirects, unreachables; raw delivery through raw_ip.c's rip_input (M9a)), icmp_reflect, icmp_send, iptime, icmp_sysctl, icmp_sysctl_icmpstat, icmp_mtudisc_clone, icmp_mtudisc, icmp_mtudisc_timeout, icmp_ratelimit, icmp_do_exthdr; packet data through IcmpPkt (bounds-checked view: mbuf data need not be aligned); IPSEC, pf, carp not configured; host tests in ip_input"
 
 [[file]]
 c = "sys/netinet/if_ether.c"

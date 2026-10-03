@@ -113,12 +113,12 @@
 //! ## Deviations
 //! - The protocols whose files are not ported keep their entries, with stand-ins in this
 //!   module named after the C functions: `udp_*` (`netinet/udp_usrreq.c`), `tcp_*`
-//!   (`netinet/tcp_*.c`), `rip_*` (`netinet/raw_ip.c`), `ipip_*` (`netinet/ip_ipip.c`),
-//!   `igmp_*` (`netinet/igmp.c`). Each reports itself with
-//!   `unported!`; an input stand-in drops the packet (`IPPROTO_DONE`), a sysctl one fails with
-//!   `ENOSYS`. Raw IP sockets need the socket layer, so `rip_input` stays a stand-in even
-//!   where `icmp_input` passes a message on to it.
-//! - `pr_ctloutput` and `pr_usrreqs` are not members here (`sys/protosw.rs`).
+//!   (`netinet/tcp_*.c`), `ipip_*` (`netinet/ip_ipip.c`), `igmp_*` (`netinet/igmp.c`). Each
+//!   reports itself with `unported!`; an input stand-in drops the packet (`IPPROTO_DONE`), a
+//!   sysctl one fails with `ENOSYS`. Their `pr_ctloutput` and `pr_usrreqs` are the C's where
+//!   those are ported (`rip_ctloutput` and `rip_usrreqs` for the raw entries, `IPPROTO_IPV4`
+//!   and `IPPROTO_IGMP` included); without `tcp_usrreqs` a `SOCK_STREAM` socket is refused
+//!   with `EPROTONOSUPPORT` by `socreate`.
 //! - `NGIF` is 0 (`ipip_input` serves `IPPROTO_IPV4`); `INET6`, `MPLS`, `IPSEC`, `NGRE`,
 //!   `NCARP`, `NPFSYNC`, `NPF` and `NETHERIP` are not configured: their entries are comments.
 //!   `SMALL_KERNEL` is not set, so the sysctl handlers are in the table.
@@ -136,6 +136,7 @@ use crate::netinet::in_::{
 use crate::netinet::in_pcb::in_init;
 use crate::netinet::ip_icmp::{icmp_init, icmp_input, icmp_sysctl};
 use crate::netinet::ip_input::{ip_init, ip_slowtimo, ip_sysctl};
+use crate::netinet::raw_ip::{RIP_USRREQS, rip_ctloutput, rip_init, rip_input};
 use crate::sys::domain::Domain;
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::{Mbuf, m_freemp};
@@ -190,6 +191,8 @@ pub static INETSW: [Protosw; 8] = [
         pr_protocol: IPPROTO_RAW as i16,
         pr_flags: PR_ATOMIC | PR_ADDR | PR_MPINPUT,
         pr_input: Some(rip_input),
+        pr_ctloutput: Some(rip_ctloutput),
+        pr_usrreqs: Some(&RIP_USRREQS),
         ..Protosw::new(&INETDOMAIN)
     },
     Protosw {
@@ -197,6 +200,8 @@ pub static INETSW: [Protosw; 8] = [
         pr_protocol: IPPROTO_ICMP as i16,
         pr_flags: PR_ATOMIC | PR_ADDR | PR_MPSYSCTL,
         pr_input: Some(icmp_input),
+        pr_ctloutput: Some(rip_ctloutput),
+        pr_usrreqs: Some(&RIP_USRREQS),
         pr_init: Some(icmp_init),
         pr_sysctl: Some(icmp_sysctl),
         ..Protosw::new(&INETDOMAIN)
@@ -207,6 +212,8 @@ pub static INETSW: [Protosw; 8] = [
         pr_flags: PR_ATOMIC | PR_ADDR | PR_MPSYSCTL,
         // NGIF > 0: in_gif_input; not configured.
         pr_input: Some(ipip_input),
+        pr_ctloutput: Some(rip_ctloutput),
+        pr_usrreqs: Some(&RIP_USRREQS),
         pr_sysctl: Some(ipip_sysctl),
         pr_init: Some(ipip_init),
         ..Protosw::new(&INETDOMAIN)
@@ -218,6 +225,8 @@ pub static INETSW: [Protosw; 8] = [
         pr_protocol: IPPROTO_IGMP as i16,
         pr_flags: PR_ATOMIC | PR_ADDR | PR_MPSYSCTL,
         pr_input: Some(igmp_input),
+        pr_ctloutput: Some(rip_ctloutput),
+        pr_usrreqs: Some(&RIP_USRREQS),
         pr_init: Some(igmp_init),
         pr_fasttimo: Some(igmp_fasttimo),
         pr_slowtimo: Some(igmp_slowtimo),
@@ -232,6 +241,8 @@ pub static INETSW: [Protosw; 8] = [
         pr_type: SOCK_RAW as i16,
         pr_flags: PR_ATOMIC | PR_ADDR | PR_MPINPUT,
         pr_input: Some(rip_input),
+        pr_ctloutput: Some(rip_ctloutput),
+        pr_usrreqs: Some(&RIP_USRREQS),
         pr_init: Some(rip_init),
         ..Protosw::new(&INETDOMAIN)
     },
@@ -333,24 +344,6 @@ fn tcp_sysctl(
     _newlen: usize,
 ) -> Result<(), Errno> {
     Err(unported!("tcp_sysctl (netinet/tcp_usrreq.c)"))
-}
-
-/// `rip_input` (`netinet/raw_ip.c`, not ported: raw sockets need the socket layer). Also the
-/// end of `icmp_input`, which hands every message to the raw listeners.
-pub fn rip_input(
-    mp: &mut Option<&'static Mbuf>,
-    _offp: &mut i32,
-    _proto: i32,
-    _af: i32,
-    _ns: Option<&Netstack>,
-) -> i32 {
-    let _ = unported!("rip_input (netinet/raw_ip.c)");
-    unported_input(mp)
-}
-
-/// `rip_init` (`netinet/raw_ip.c`, not ported).
-fn rip_init() {
-    let _ = unported!("rip_init (netinet/raw_ip.c)");
 }
 
 /// `ipip_input` (`netinet/ip_ipip.c`, not ported).
