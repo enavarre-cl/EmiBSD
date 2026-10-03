@@ -24,7 +24,8 @@ copyright notice and license at the top of the file, between the
 licenses accepted for ported files are ISC, BSD-2-Clause, BSD-3-Clause,
 BSD-4-Clause (its advertising clause included), MIT, the Carnegie Mellon
 (Mach) license, Poul-Henning Kamp's beerware license, John S. Dyson's
-license (sys_pipe.c, pipe.h) and the zlib license (sys/lib/libz). Provenance
+license (sys_pipe.c, pipe.h), the zlib license (sys/lib/libz) and the
+IPsec notice of Ioannidis, Keromytis, Provos and Hallqvist (sys/netinet). Provenance
 per file is recorded in ports.toml; the upstream commit is recorded in
 reference/PINNED.md. The names of OpenBSD contributors may not be used to
 endorse or promote this project without their written permission

@@ -105,6 +105,14 @@ const VARIANTS: &[Variant] = &[
               (ncurses, with host-built generators and share/termtypes) is not built yet",
     },
     Variant {
+        dir: "usr.bin/id",
+        add_cflags: "",
+        drop_ldadd: &[],
+        static_link: true,
+        why: "linked -static, as the install media's crunched programs are: /usr/bin is \
+              dynamic on OpenBSD and ld.so is not built yet",
+    },
+    Variant {
         dir: "usr.bin/uname",
         add_cflags: "",
         drop_ldadd: &[],
@@ -123,10 +131,15 @@ const COMPILER_RT_DIR: &str = "gnu/lib/libcompiler_rt";
 /// The programs, in build order.
 const PROGRAMS: &[&str] = &[
     "sbin/init",
+    "sbin/sysctl",
     "bin/ksh",
     "bin/cat",
+    "bin/date",
     "bin/echo",
+    "bin/hostname",
     "bin/ls",
+    "bin/pwd",
+    "usr.bin/id",
     "usr.bin/uname",
 ];
 
@@ -1295,6 +1308,11 @@ fn licence_families(text: &str) -> Vec<&'static str> {
     if t.contains("martin birgmeier") && t.contains("you may redistribute unmodified or modified") {
         f.push("Birgmeier (rand48)");
     }
+    if t.contains("angelos d. keromytis")
+        && t.contains("permission to use, copy, and modify this software with or without fee")
+    {
+        f.push("IPsec (Ioannidis/Keromytis)");
+    }
     if t.contains("developed at sunpro") && t.contains("is freely granted") {
         f.push("SunPro (fdlibm)");
     }
@@ -1377,7 +1395,7 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
     // The families the user has accepted (`.claude/rules/scope-and-stubs.md`); the userland
     // ones (Apache-2.0 WITH LLVM-exception, public domain, no licence text, Lucent,
     // Birgmeier, Unicode, SunPro, Cheusov, Boulet/RTMX) only for code compiled unmodified,
-    // decided 2026-10-03.
+    // decided 2026-10-03; the IPsec notice for the kernel too.
     let usual = [
         "ISC",
         "BSD-2-Clause",
@@ -1395,6 +1413,7 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
         "SunPro (fdlibm)",
         "Cheusov",
         "Boulet/RTMX",
+        "IPsec (Ioannidis/Keromytis)",
     ];
     let unusual: Vec<_> = by_file
         .iter()
