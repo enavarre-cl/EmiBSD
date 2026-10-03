@@ -69,23 +69,31 @@
 //! Status: `wip`. Milestone M3 ports `struct pmap` (its bootstrap subset), `struct pv_entry`,
 //! `struct vm_page_md`, the PML4 slot layout, the page-table geometry constants, the recursive
 //! mapping (`PTE_BASE`, `L*_BASE`, `pl*_i`, `kvtopte`), the PCID and pmap-type constants and
-//! the `PG_PMAP_*` bits. `pmap_page_protect`/`pmap_protect` and the user-space prototypes
-//! come with M6.
+//! the `PG_PMAP_*` bits. M7a adds the inline frontends `pmap_page_protect`, `pmap_protect`
+//! and the attribute macros (`pmap_clear_modify`, `pmap_is_modified`, ...).
 //!
 //! ## Deviations
-//! - `pm_mtx` and `pv_mtx` (M5) are not here yet; the boot CPU being alone is the lock.
+//! - `pm_mtx` (M5) is not here yet; the boot CPU being alone is the lock. `pv_mtx` is.
 //! - `pm_obj` has no pager (`pmap_pager`, M6): the objects are built with `UvmObject::new`.
 
 use core::cell::Cell;
 use core::ptr;
 
+use crate::arch::amd64::amd64::pmap::{
+    pmap_clear_attrs, pmap_page_remove, pmap_remove, pmap_test_attrs, pmap_write_protect,
+};
 use crate::arch::amd64::include::param::{PAGE_MASK, PAGE_SIZE};
 use crate::arch::amd64::include::pte::{
     L1_FRAME, L1_MASK, L1_SHIFT, L2_FRAME, L2_MASK, L2_SHIFT, L3_FRAME, L3_MASK, L3_SHIFT,
-    L4_FRAME, L4_MASK, L4_SHIFT, NBPD_L1, NBPD_L2, NBPD_L3, NBPD_L4, PG_AVAIL1, PG_AVAIL2, PdEntry,
-    PtEntry,
+    L4_FRAME, L4_MASK, L4_SHIFT, NBPD_L1, NBPD_L2, NBPD_L3, NBPD_L4, PG_AVAIL1, PG_AVAIL2, PG_M,
+    PG_RW, PG_U, PdEntry, PtEntry,
 };
+use crate::kassert;
+use crate::machine::intr::IPL_VM;
+use crate::sys::mman::{PROT_NONE, PROT_READ};
+use crate::sys::mutex::Mutex;
 use crate::sys::types::{Paddr, Vaddr};
+use crate::uvm::uvm_extern::VmProt;
 use crate::uvm::uvm_object::UvmObject;
 use crate::uvm::uvm_page::{PG_PMAP0, PG_PMAP1, PG_PMAP2, VmPage};
 use crate::uvm::uvm_pmap::{PMAP_MD0, PMAP_MD1, PmapStatistics};
@@ -412,7 +420,8 @@ pub struct PvEntry {
 
 /// `struct vm_page_md`: the pmap's per-page data.
 pub struct VmPageMd {
-    // pv_mtx: M5.
+    /// Protects `pv_list`.
+    pub pv_mtx: Mutex,
     /// The mappings of this page.
     pub pv_list: Cell<*const PvEntry>,
 }
@@ -420,8 +429,56 @@ pub struct VmPageMd {
 /// `VM_MDPAGE_INIT`: no mappings.
 #[allow(clippy::declare_interior_mutable_const)] // an initializer, copied into every vm_page
 pub const VM_MDPAGE_INIT: VmPageMd = VmPageMd {
+    pv_mtx: Mutex::new(IPL_VM),
     pv_list: Cell::new(ptr::null()),
 };
+
+/// `pmap_clear_modify(pg)`.
+pub fn pmap_clear_modify(pg: &VmPage) -> bool {
+    pmap_clear_attrs(pg, PG_M)
+}
+
+/// `pmap_clear_reference(pg)`.
+pub fn pmap_clear_reference(pg: &VmPage) -> bool {
+    pmap_clear_attrs(pg, PG_U)
+}
+
+/// `pmap_is_modified(pg)`.
+pub fn pmap_is_modified(pg: &VmPage) -> bool {
+    pmap_test_attrs(pg, PG_M)
+}
+
+/// `pmap_is_referenced(pg)`.
+pub fn pmap_is_referenced(pg: &VmPage) -> bool {
+    pmap_test_attrs(pg, PG_U)
+}
+
+/// `pmap_page_protect`: change the protection of all recorded mappings of a managed page.
+///
+/// This function is a frontend for `pmap_page_remove`/`pmap_clear_attrs`. We only have to
+/// worry about making the page more protected; unprotecting a page is done on-demand at
+/// fault time.
+pub fn pmap_page_protect(pg: &VmPage, prot: VmProt) {
+    if prot == PROT_READ {
+        let _ = pmap_clear_attrs(pg, PG_RW);
+    } else {
+        kassert!(prot == PROT_NONE);
+        pmap_page_remove(pg);
+    }
+}
+
+/// `pmap_protect`: change the protection of pages in a pmap.
+///
+/// This function is a frontend for `pmap_remove`/`pmap_write_protect`. We only have to
+/// worry about making the page more protected; unprotecting a page is done on-demand at
+/// fault time.
+pub fn pmap_protect(pmap: &Pmap, sva: Vaddr, eva: Vaddr, prot: VmProt) {
+    if prot != PROT_NONE {
+        pmap_write_protect(pmap, sva, eva, prot);
+    } else {
+        pmap_remove(pmap, sva, eva);
+    }
+}
 
 /// `pmap_valid_entry(E)`: is PDE or PTE valid?
 pub const fn pmap_valid_entry(e: PdEntry) -> bool {

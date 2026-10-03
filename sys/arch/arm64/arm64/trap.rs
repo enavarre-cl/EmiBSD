@@ -38,10 +38,6 @@
 //! EL0 exceptions come with user address spaces and signals (M6-b).
 //!
 //! ## Deviations
-//! - `kdata_abort`: the process's `vm_map` does not exist before M6-b; `pmap_fault_fixup`
-//!   and `uvm_fault` are reported, so a kernel data abort is recovered only through
-//!   `pcb_onfault` (the `copyin` family) and ends otherwise in the C's `panic("uvm_fault
-//!   failed: ...")`.
 //! - `do_el0_sync`: every exception but `svc` reports its `trapsignal`/`udata_abort` and
 //!   panics (no signals yet, M6-b); the C never panics for user mode.
 //! - The `we_re_toast` path prints the syndrome and enters `db_ktrap` as the `DDB` build does,
@@ -55,6 +51,7 @@ use core::ptr;
 use core::sync::atomic::Ordering;
 
 use crate::arch::arm64::arm64::db_interface::db_ktrap;
+use crate::arch::arm64::arm64::pmap::pmap_fault_fixup;
 use crate::arch::arm64::arm64::syscall::svc_handler;
 use crate::arch::arm64::include::armreg::{
     EXCP_BRANCH_TGT, EXCP_BRK, EXCP_DATA_ABORT, EXCP_DATA_ABORT_L, EXCP_FP_SIMD, EXCP_FPAC,
@@ -72,6 +69,7 @@ use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
 use crate::sys::proc::{EXIT_NORMAL, Proc, refreshcreds};
 use crate::sys::signal::{SIGBUS, SIGILL, SIGKILL, SIGSEGV};
+use crate::sys::types::Vaddr;
 use crate::unported;
 use crate::uvm::uvm_extern::VmProt;
 use crate::uvm::uvm_fault::uvm_fault;
@@ -152,9 +150,11 @@ fn kdata_abort(frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
         _ => crate::uvm::uvm_km::kernel_map(),
     };
 
-    // Handle referenced/modified emulation: pmap_fault_fixup(map->pmap, va, access_type)
-    // waits for the pmap's R/M emulation (M7a-3b); every mapping carries its access bits.
-    let _ = unported!("pmap_fault_fixup (M7a-3b)");
+    // Handle referenced/modified emulation
+    if pmap_fault_fixup(map.pmap(), Vaddr::new(va), access_type) {
+        return;
+    }
+
     let error = uvm_fault(map, va, 0, access_type);
     if error.is_ok() {
         if !kernel_map {
@@ -285,8 +285,10 @@ fn udata_abort(frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
     let map = &p.vmspace().vm_map;
     // uvm_map_inentry (the MAP_STACK check): with the stack of M7a-3b.
 
-    // Handle referenced/modified emulation: pmap_fault_fixup waits for the pmap's R/M
-    // emulation (M7a-3b); every mapping carries its access bits.
+    // Handle referenced/modified emulation
+    if pmap_fault_fixup(map.pmap(), Vaddr::new(va), access_type) {
+        return;
+    }
     let error = match uvm_fault(map, va, 0, access_type) {
         Ok(()) => {
             // uvm_grow(p, va): uvm_unix.c, with the stack accounting of M7+.

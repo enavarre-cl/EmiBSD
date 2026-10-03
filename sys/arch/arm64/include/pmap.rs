@@ -26,7 +26,7 @@
 //! authentication keys and the zero/copy windows arrive with M6.
 //!
 //! ## Deviations
-//! - `pv_mtx` and `pm_mtx` (M5) are not here yet; the boot CPU being alone is the lock.
+//! - `pm_mtx` (M5) is not here yet; the boot CPU being alone is the lock. `pv_mtx` is.
 //! - `pm_vp` is an enum of the two union members (`l0` for four-level tables, `l1` for three);
 //!   the C picks by `have_4_level_pt`.
 
@@ -37,6 +37,8 @@ use core::ptr;
 
 use crate::arch::arm64::arm64::pmap::{Pmapvp0, Pmapvp1, PvList};
 use crate::arch::arm64::include::param::PAGE_MASK;
+use crate::machine::intr::IPL_VM;
+use crate::sys::mutex::Mutex;
 use crate::sys::queue::ListHead;
 use crate::uvm::uvm_page::{PG_PMAP0, PG_PMAP1, PG_PMAP2};
 use crate::uvm::uvm_pmap::{PMAP_MD0, PMAP_MD1, PMAP_MD2, PMAP_MD3, PmapStatistics};
@@ -165,7 +167,8 @@ impl Default for Pmap {
 
 /// `struct vm_page_md`: the pmap's per-page data.
 pub struct VmPageMd {
-    // pv_mtx: M5.
+    /// Protects `pv_list`.
+    pub pv_mtx: Mutex,
     /// The mappings of this page.
     pub pv_list: ListHead<PvList>,
 }
@@ -173,5 +176,6 @@ pub struct VmPageMd {
 /// `VM_MDPAGE_INIT`: no mappings.
 #[allow(clippy::declare_interior_mutable_const)] // an initializer, copied into every vm_page
 pub const VM_MDPAGE_INIT: VmPageMd = VmPageMd {
+    pv_mtx: Mutex::new(IPL_VM),
     pv_list: ListHead::new(),
 };

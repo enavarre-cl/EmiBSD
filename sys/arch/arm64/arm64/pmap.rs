@@ -103,10 +103,11 @@ use crate::arch::arm64::include::pte::{
 use crate::arch::arm64::include::vmparam::USER_SPACE_BITS;
 use crate::arch::arm64::include::vmparam::{VM_MAX_KERNEL_ADDRESS, VM_MIN_KERNEL_ADDRESS};
 use crate::dev::ic::pluart::pluartcn_remap;
+use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::machine::intr::IPL_VM;
 use crate::sys::errno::Errno;
-use crate::sys::mman::{PROT_EXEC, PROT_WRITE};
+use crate::sys::mman::{PROT_EXEC, PROT_NONE, PROT_READ, PROT_WRITE};
 use crate::sys::pool::{PR_NOWAIT, PR_WAITOK, PR_ZERO, Pool};
 use crate::sys::proc::Proc;
 use crate::sys::proc::Process;
@@ -1391,18 +1392,25 @@ pub fn pmap_free_asid(pm: &Pmap) {
 
 /// `pmap_enter_pv`: puts the mapping on its page's pv list.
 fn pmap_enter_pv(pted: &PteDesc, pg: &VmPage) {
-    // mtx_enter(&pg->mdpage.pv_mtx): M5.
-    // SAFETY: a pted on no list yet; the page's list is the pmap's (one CPU).
+    mtx_enter(&pg.mdpage.pv_mtx);
+    // SAFETY: a pted on no list yet; the page's list is protected by `pv_mtx`.
     unsafe { pg.mdpage.pv_list.insert_head(pted) };
     pted.pted_va
         .set(pted.pted_va.get() | PTED_VA_MANAGED_M as usize);
+    mtx_leave(&pg.mdpage.pv_mtx);
 }
 
 /// `pmap_remove_pv`: takes the mapping off its page's pv list.
 fn pmap_remove_pv(pted: &PteDesc) {
-    // pg = PHYS_TO_VM_PAGE(pted->pted_pte & PTE_RPGN); mtx_enter(&pg->mdpage.pv_mtx): M5.
-    // SAFETY: a managed pted is on its page's list.
+    let pg = PHYS_TO_VM_PAGE(Paddr::new((pted.pted_pte.get() & PTE_RPGN) as usize));
+    if let Some(pg) = pg {
+        mtx_enter(&pg.mdpage.pv_mtx);
+    }
+    // SAFETY: a managed pted is on its page's list, protected by that page's `pv_mtx`.
     unsafe { ListHead::<PvList>::remove(pted) };
+    if let Some(pg) = pg {
+        mtx_leave(&pg.mdpage.pv_mtx);
+    }
 }
 
 /// `pmap_icache_sync_page`: makes the page's contents visible to instruction fetch, through
@@ -1549,6 +1557,222 @@ pub fn pmap_remove(pm: &Pmap, sva: Vaddr, eva: Vaddr) {
         va += PAGE_SIZE;
     }
     // pmap_unlock(pm): M5.
+}
+
+/// `pmap_page_ro`: lowers the mapping at `va` of `pm` to read-only, and to `prot`.
+pub fn pmap_page_ro(pm: &Pmap, va: usize, prot: VmProt) {
+    // Every VA needs a pted, even unmanaged ones.
+    let (pted, pl3) = pmap_vp_lookup(pm, va);
+    let (Some(pted), Some(pl3)) = (pted, pl3) else {
+        return;
+    };
+    if !pted_valid(pted) {
+        return;
+    }
+
+    let mut clear = PROT_WRITE as usize;
+    if prot & PROT_READ == 0 {
+        clear |= PROT_READ as usize;
+    }
+    if prot & PROT_EXEC == 0 {
+        clear |= PROT_EXEC as usize;
+    }
+    pted.pted_va.set(pted.pted_va.get() & !clear);
+    pted.pted_pte.set(pted.pted_pte.get() & !(clear as u64));
+    pmap_pte_update(pted, pl3);
+    ttlb_flush(pm, pted.pted_va.get() & !PAGE_MASK);
+}
+
+/// `pmap_page_protect`: lower the protection on the specified physical page.
+pub fn pmap_page_protect(pg: &VmPage, prot: VmProt) {
+    if prot != PROT_NONE {
+        mtx_enter(&pg.mdpage.pv_mtx);
+        for pted in pg.mdpage.pv_list.iter() {
+            pmap_page_ro(pted_pmap(pted), pted.pted_va.get(), prot);
+        }
+        mtx_leave(&pg.mdpage.pv_mtx);
+        return;
+    }
+
+    mtx_enter(&pg.mdpage.pv_mtx);
+    while let Some(pted) = pg.mdpage.pv_list.first() {
+        let pm = pted_pmap(pted);
+        pmap_reference(pm);
+        mtx_leave(&pg.mdpage.pv_mtx);
+
+        // pmap_lock(pm): M5.
+
+        // We dropped the pvlist lock before grabbing the pmap lock to avoid lock ordering
+        // problems. This means we have to check the pvlist again since somebody else might
+        // have modified it. All we care about is that the pvlist entry matches the pmap we
+        // just locked. If it doesn't, unlock the pmap and try again.
+        mtx_enter(&pg.mdpage.pv_mtx);
+        let pted = pg.mdpage.pv_list.first();
+        let Some(pted) = pted.filter(|pted| ptr::eq(pted_pmap(pted), pm)) else {
+            mtx_leave(&pg.mdpage.pv_mtx);
+            // pmap_unlock(pm): M5.
+            pmap_destroy(pm);
+            mtx_enter(&pg.mdpage.pv_mtx);
+            continue;
+        };
+        mtx_leave(&pg.mdpage.pv_mtx);
+
+        pmap_remove_pted(pm, pted);
+        // pmap_unlock(pm): M5.
+        pmap_destroy(pm);
+
+        mtx_enter(&pg.mdpage.pv_mtx);
+    }
+    // page is being reclaimed, sync icache next use
+    pg.clear_bits(PG_PMAP_EXE);
+    mtx_leave(&pg.mdpage.pv_mtx);
+}
+
+/// `pmap_protect`: lowers the protection of the mappings in `[sva, eva)` of `pm`.
+pub fn pmap_protect(pm: &Pmap, sva: Vaddr, eva: Vaddr, prot: VmProt) {
+    if prot & (PROT_READ | PROT_EXEC) != 0 {
+        // pmap_lock(pm): M5.
+        let mut va = sva.as_usize();
+        while va < eva.as_usize() {
+            pmap_page_ro(pm, va, prot);
+            va += PAGE_SIZE;
+        }
+        // pmap_unlock(pm): M5.
+        return;
+    }
+    pmap_remove(pm, sva, eva);
+}
+
+/// `pmap_fault_fixup`: this function exists to do software referenced/modified emulation.
+/// Its purpose is to tell the caller that a fault was generated either for this emulation,
+/// or to tell the caller that it's a legit fault.
+pub fn pmap_fault_fixup(pm: &Pmap, va: Vaddr, ftype: VmProt) -> bool {
+    let va = va.as_usize();
+    // pmap_lock(pm): M5.
+
+    // Every VA needs a pted, even unmanaged ones.
+    let (pted, pl3) = pmap_vp_lookup(pm, va);
+    let (Some(pted), Some(pl3)) = (pted, pl3) else {
+        return false;
+    };
+    if !pted_valid(pted) {
+        return false;
+    }
+
+    // There has to be a PA for the VA, get it.
+    let pa = (pted.pted_pte.get() & PTE_RPGN) as usize;
+
+    // If it's unmanaged, it must not fault.
+    let Some(pg) = PHYS_TO_VM_PAGE(Paddr::new(pa)) else {
+        return false;
+    };
+
+    let pte_prot = pted.pted_pte.get() as usize;
+    let va_prot = pted.pted_va.get();
+    let (rd, wr, ex) = (PROT_READ as usize, PROT_WRITE as usize, PROT_EXEC as usize);
+
+    // Check the fault types to find out if we were doing any mod/ref emulation and fixup the
+    // PTE if we were.
+    if ftype & PROT_WRITE != 0 // fault caused by a write
+        && pte_prot & wr == 0 // and write is disabled now
+        && va_prot & wr != 0
+    // but is supposedly allowed
+    {
+        // Page modified emulation. A write always includes a reference. This means that we
+        // can enable read and exec as well, akin to the page reference emulation.
+        pg.set_bits(PG_PMAP_MOD | PG_PMAP_REF);
+        pg.clear_bits(PG_PMAP_EXE);
+
+        // Thus, enable read, write and exec.
+        pted.pted_pte
+            .set(pted.pted_pte.get() | (va_prot & (rd | wr | ex)) as u64);
+    } else if ftype & PROT_EXEC != 0 // fault caused by an exec
+        && pte_prot & ex == 0 // and exec is disabled now
+        && va_prot & ex != 0
+    // but is supposedly allowed
+    {
+        // Exec always includes a reference. Since we now know the page has been accessed,
+        // we can enable read as well if UVM allows it.
+        pg.set_bits(PG_PMAP_REF);
+
+        // Thus, enable read and exec.
+        pted.pted_pte
+            .set(pted.pted_pte.get() | (va_prot & (rd | ex)) as u64);
+    } else if ftype & PROT_READ != 0 // fault caused by a read
+        && pte_prot & rd == 0 // and read is disabled now
+        && va_prot & rd != 0
+    // but is supposedly allowed
+    {
+        // Page referenced emulation. Since we now know the page has been accessed, we can
+        // enable exec as well if UVM allows it.
+        pg.set_bits(PG_PMAP_REF);
+
+        // Thus, enable read and exec.
+        pted.pted_pte
+            .set(pted.pted_pte.get() | (va_prot & (rd | ex)) as u64);
+    } else {
+        // didn't catch it, so probably broken
+        return false;
+    }
+
+    // If this is a page that can be executed, make sure to invalidate the instruction cache
+    // if the page has been modified or not used yet.
+    if va_prot & ex != 0 {
+        if pg.flags() & PG_PMAP_EXE == 0 {
+            pmap_icache_sync_page(pm, pa);
+        }
+        pg.set_bits(PG_PMAP_EXE);
+    }
+
+    // We actually made a change, so flush it and sync.
+    pmap_pte_update(pted, pl3);
+    ttlb_flush(pm, va & !PAGE_MASK);
+
+    // pmap_unlock(pm): M5.
+    true
+}
+
+/// `pmap_is_referenced`.
+pub fn pmap_is_referenced(pg: &VmPage) -> bool {
+    pg.flags() & PG_PMAP_REF != 0
+}
+
+/// `pmap_is_modified`.
+pub fn pmap_is_modified(pg: &VmPage) -> bool {
+    pg.flags() & PG_PMAP_MOD != 0
+}
+
+/// `pmap_clear_modify`: drops write access from every mapping of `pg`, so the next write is
+/// seen by `pmap_fault_fixup`. Always returns false, as the C.
+pub fn pmap_clear_modify(pg: &VmPage) -> bool {
+    pg.clear_bits(PG_PMAP_MOD);
+
+    mtx_enter(&pg.mdpage.pv_mtx);
+    for pted in pg.mdpage.pv_list.iter() {
+        pted.pted_pte
+            .set(pted.pted_pte.get() & !(PROT_WRITE as u64));
+        pmap_pte_insert(pted);
+        ttlb_flush(pted_pmap(pted), pted.pted_va.get() & !PAGE_MASK);
+    }
+    mtx_leave(&pg.mdpage.pv_mtx);
+
+    false
+}
+
+/// `pmap_clear_reference`: when this turns off read permissions it also disables write
+/// permissions so that mod is correctly tracked after clear_ref; FAULT_READ; FAULT_WRITE.
+pub fn pmap_clear_reference(pg: &VmPage) -> bool {
+    pg.clear_bits(PG_PMAP_REF);
+
+    mtx_enter(&pg.mdpage.pv_mtx);
+    for pted in pg.mdpage.pv_list.iter() {
+        pted.pted_pte.set(pted.pted_pte.get() & !(PROT_MASK as u64));
+        pmap_pte_insert(pted);
+        ttlb_flush(pted_pmap(pted), pted.pted_va.get() & !PAGE_MASK);
+    }
+    mtx_leave(&pg.mdpage.pv_mtx);
+
+    false
 }
 
 /// `pmap_unwire`: clears the wired bit of the mapping at `va`.

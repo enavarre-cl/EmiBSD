@@ -27,7 +27,6 @@ use crate::sys::proc::{Proc, Process};
 use crate::sys::sched::SchedstatePercpu;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::sys::user::User;
-use crate::unported;
 use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt, Vmspace};
 use crate::uvm::uvm_page::VmPage;
 
@@ -258,16 +257,12 @@ impl Pmap for Machine {
         amd64::pmap::pmap_copy_page(src, dst)
     }
 
-    /// Reported until the pv lists exist (M7a part 3): no page of an anon or an aobj is
-    /// mapped in a user pmap before then (exec uses the wired stand-ins).
-    fn pmap_page_protect(_pg: &VmPage, _prot: VmProt) {
-        let _ = unported!("pmap_page_protect (pv lists, M7a-3)");
+    fn pmap_page_protect(pg: &VmPage, prot: VmProt) {
+        include::pmap::pmap_page_protect(pg, prot)
     }
 
-    /// Reported until the pv lists exist (M7a part 3); nothing is modified.
-    fn pmap_clear_modify(_pg: &VmPage) -> bool {
-        let _ = unported!("pmap_clear_modify (pv lists, M7a-3)");
-        false
+    fn pmap_clear_modify(pg: &VmPage) -> bool {
+        include::pmap::pmap_clear_modify(pg)
     }
 
     unsafe fn pmap_steal_memory(
@@ -323,10 +318,8 @@ impl Pmap for Machine {
         amd64::pmap::pmap_remove(pmap, sva, eva)
     }
 
-    /// Reported until the pv lists exist (M7a part 3): nothing maps a user range that
-    /// `uvm_map_protect` or the fork copy functions would lower before then.
-    fn pmap_protect(_pmap: &Self::Pmap, _sva: Vaddr, _eva: Vaddr, _prot: VmProt) {
-        let _ = unported!("pmap_protect (M7a-3)");
+    fn pmap_protect(pmap: &Self::Pmap, sva: Vaddr, eva: Vaddr, prot: VmProt) {
+        include::pmap::pmap_protect(pmap, sva, eva, prot)
     }
 
     fn pmap_wired_count(pmap: &Self::Pmap) -> i64 {

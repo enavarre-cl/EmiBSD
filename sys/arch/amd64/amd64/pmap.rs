@@ -112,12 +112,14 @@
 //!   tables through the direct map instead of `pmap_map_ptes` (the recursive mapping of a
 //!   borrowed `%cr3`), so `pmap_pdes_valid`/`normal_pdes` are only used on the current pmap.
 //!   `pmap_pdp_ctor` copies the kernel's whole upper half of the PML4 (the C copies the kernel
-//!   VM, direct-map and `KERNBASE` slots one by one). There are no pv entries yet
-//!   (`pmap_pv_pool`, `pmap_enter_pv`, `pmap_page_remove`, `pmap_page_protect`: M7a), so no
-//!   PTE carries `PG_PVLIST`, and the pmap list (`pmaps`) waits for `pmap_growkernel` to need
-//!   it. The PDP comes from `uvm_pagealloc` rather than `pmap_pdp_pool`; the pmap pool is
+//!   VM, direct-map and `KERNBASE` slots one by one). The pmap list (`pmaps`) waits
+//!   for `pmap_growkernel` to need it. The PDP comes from `uvm_pagealloc` rather than `pmap_pdp_pool`; the pmap pool is
 //!   initialised in `pmap_init`. Freeing a PTP flushes the whole TLB (the C invalidates the
 //!   recursive mapping's page). `cpu_meltdown` is not configured: no `pm_pdir_intel`.
+//! - The pv lists (M7a): `pmap_page_remove`, `pmap_test_attrs`, `pmap_clear_attrs` and
+//!   `pmap_write_protect` reach each PTE through `pmap_find_pte_direct` instead of
+//!   `PTE_BASE` under `pmap_map_ptes`. `pmap_remove_pte` (the single-page shortcut of
+//!   `pmap_do_remove`) is folded into the block loop over `pmap_remove_ptes`.
 //! - `pmap_growkernel` has no user pmaps to update yet (`pmaps`, M6); the `splhigh` around
 //!   it waits for `spl(9)` (M4). `pmap_get_physpage` after `uvm_init` allocates the PTP from
 //!   `pm_obj`, whose objects have no pager yet.
@@ -134,21 +136,23 @@ use crate::arch::amd64::include::cpufunc::{
 use crate::arch::amd64::include::param::{PAGE_MASK, PAGE_SIZE};
 use crate::arch::amd64::include::pmap::{
     NBPD_INITIALIZER, NKPTP_INITIALIZER, NKPTPMAX_INITIALIZER, NTOPLEVEL_PDES, PDES_INITIALIZER,
-    PDIR_SLOT_PTE, PG_PVLIST, PG_W, PMAP_NOCACHE, PMAP_NOCRYPT, PMAP_PA_MASK, PMAP_TYPE_NORMAL,
-    PMAP_WC, PTP_LEVELS, Pmap, kvtopte, pl_i, pmap_valid_entry, ptp_va2o, va_sign_pos,
+    PDIR_SLOT_PTE, PG_PMAP_MOD, PG_PMAP_REF, PG_PVLIST, PG_W, PMAP_NOCACHE, PMAP_NOCRYPT,
+    PMAP_PA_MASK, PMAP_TYPE_NORMAL, PMAP_WC, PTP_LEVELS, Pmap, PvEntry, kvtopte, pl_i,
+    pmap_valid_entry, ptp_va2o, va_sign_pos,
 };
 use crate::arch::amd64::include::pte::{
-    L4_MASK, L4_SHIFT, NBPD_L2, PAGE_MASK_L2, PG_FRAME, PG_LGFRAME, PG_N, PG_NX, PG_PS, PG_RO,
-    PG_RW, PG_UCMINUS, PG_V, PG_u, PdEntry, PtEntry, x86_round_pdr,
+    L4_MASK, L4_SHIFT, NBPD_L2, PAGE_MASK_L2, PG_FRAME, PG_LGFRAME, PG_M, PG_N, PG_NX, PG_PS,
+    PG_RO, PG_RW, PG_U, PG_UCMINUS, PG_V, PG_u, PdEntry, PtEntry, x86_round_pdr,
 };
 use crate::arch::amd64::include::specialreg::{EFER_NXE, MSR_EFER};
 use crate::arch::amd64::include::vmparam::{VM_MAX_ADDRESS, VM_MAXUSER_ADDRESS};
 use crate::arch::amd64::include::vmparam::{VM_MAX_KERNEL_ADDRESS, VM_MIN_KERNEL_ADDRESS};
+use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::machine::intr::IPL_VM;
 use crate::sys::errno::Errno;
-use crate::sys::mman::{PROT_EXEC, PROT_WRITE};
-use crate::sys::pool::{PR_WAITOK, Pool};
+use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
+use crate::sys::pool::{PR_NOWAIT, PR_WAITOK, Pool};
 use crate::sys::proc::{P_SYSTEM, Proc, Process};
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_extern::Vmspace;
@@ -161,6 +165,7 @@ use crate::uvm::uvm_page::{PG_FAKE, Pglist, uvm_pagefree, uvm_pagelookup, uvm_pa
 use crate::uvm::uvm_param::atop;
 use crate::uvm::uvm_pmap::{PMAP_CANFAIL, PMAP_WIRED};
 use crate::{kassert, kprintf, unported};
+use core::cell::Cell;
 use core::ptr::NonNull;
 
 /// `normal_pdes[]`: the level 2, 3 and 4 tables of the current pmap through the recursive
@@ -211,6 +216,8 @@ static PMAP_KVA_START: AtomicUsize = AtomicUsize::new(VM_MIN_KERNEL_ADDRESS);
 static KERNEL_PMAP_STORE: Pmap = Pmap::new();
 /// `pmap_pmap_pool`: the pool of `struct pmap`.
 static PMAP_PMAP_POOL: Pool = Pool::new();
+/// `pmap_pv_pool`: pool for pv entries.
+static PMAP_PV_POOL: Pool = Pool::new();
 
 /// `PMAP_REMOVE_ALL`: `pmap_do_remove` removes every mapping.
 const PMAP_REMOVE_ALL: i32 = 0;
@@ -320,6 +327,39 @@ unsafe fn pmap_pte_set(p: *mut PtEntry, n: PtEntry) -> PtEntry {
     // SAFETY: the caller's guarantee; entries are 8-byte aligned and live as long as their
     // table page.
     unsafe { AtomicU64::from_ptr(p) }.swap(n, Ordering::SeqCst)
+}
+
+/// `pmap_pte_setbits(p, set)`: `atomic_setbits_u64`.
+///
+/// # Safety
+///
+/// As for [`pmap_pte_set`].
+unsafe fn pmap_pte_setbits(p: *mut PtEntry, set: PtEntry) {
+    // SAFETY: the caller's guarantee.
+    unsafe { AtomicU64::from_ptr(p) }.fetch_or(set, Ordering::SeqCst);
+}
+
+/// `pmap_pte_clearbits(p, clr)`: `atomic_clearbits_u64`.
+///
+/// # Safety
+///
+/// As for [`pmap_pte_set`].
+unsafe fn pmap_pte_clearbits(p: *mut PtEntry, clr: PtEntry) {
+    // SAFETY: the caller's guarantee.
+    unsafe { AtomicU64::from_ptr(p) }.fetch_and(!clr, Ordering::SeqCst);
+}
+
+/// `pmap_pte2flags`: the `PG_PMAP_*` page flags matching a PTE's R/M bits.
+fn pmap_pte2flags(pte: u64) -> u32 {
+    (if pte & PG_U != 0 { PG_PMAP_REF } else { 0 })
+        | (if pte & PG_M != 0 { PG_PMAP_MOD } else { 0 })
+}
+
+/// `pmap_sync_flags_pte`: copies a PTE's R/M bits into the page's flags.
+fn pmap_sync_flags_pte(pg: &VmPage, pte: u64) {
+    if pte & (PG_U | PG_M) != 0 {
+        pg.set_bits(pmap_pte2flags(pte));
+    }
 }
 
 /// Reads entry `index` of the page-directory page at `base`.
@@ -453,6 +493,15 @@ pub fn pmap_init() {
         IPL_VM,
         PR_WAITOK,
         "pmappl",
+        None,
+    );
+    pool_init(
+        &PMAP_PV_POOL,
+        size_of::<PvEntry>(),
+        0,
+        IPL_VM,
+        0,
+        "pvpl",
         None,
     );
     PMAP_INITIALIZED.store(true, Ordering::Relaxed);
@@ -890,6 +939,59 @@ pub fn pmap_tlb_shoottlb(_pm: &Pmap, shootself: bool) {
 /// `pmap_tlb_shootwait`: nothing without `MULTIPROCESSOR`.
 pub fn pmap_tlb_shootwait() {}
 
+// main pv_entry manipulation functions:
+//   pmap_enter_pv: enter a mapping onto a pv list
+//   pmap_remove_pv: remove a mapping from a pv list
+
+/// `pmap_enter_pv`: enter a mapping onto a pv list.
+///
+/// The caller should adjust ptp's wire_count before calling. `pve` is a preallocated pve for
+/// us to use; `ptp` the PTP in pmap that maps this VA (`None` for the kernel pmap).
+fn pmap_enter_pv(pg: &VmPage, pve: NonNull<PvEntry>, pmap: &Pmap, va: usize, ptp: Option<&VmPage>) {
+    // SAFETY: `pve` is a pool item the caller owns and has initialised; nothing else sees it
+    // until it is on the list, which `pv_mtx` protects.
+    let pve = unsafe { pve.as_ref() };
+    pve.pv_pmap.set(pmap);
+    pve.pv_va.set(Vaddr::new(va));
+    pve.pv_ptp.set(ptp.map_or(ptr::null(), ptr::from_ref));
+    mtx_enter(&pg.mdpage.pv_mtx);
+    pve.pv_next.set(pg.mdpage.pv_list.get()); // add to ...
+    pg.mdpage.pv_list.set(pve); // ... list
+    mtx_leave(&pg.mdpage.pv_mtx);
+}
+
+/// `pmap_remove_pv`: try to remove a mapping from a pv_list.
+///
+/// The caller should adjust ptp's wire_count and free PTP if needed. We return the removed
+/// pve.
+fn pmap_remove_pv(pg: &VmPage, pmap: &Pmap, va: usize) -> Option<NonNull<PvEntry>> {
+    mtx_enter(&pg.mdpage.pv_mtx);
+    let mut prevptr: &Cell<*const PvEntry> = &pg.mdpage.pv_list;
+    let mut found = None;
+    while let Some(pve) = NonNull::new(prevptr.get().cast_mut()) {
+        // SAFETY: entries on a pv list are live pool items, protected by `pv_mtx`.
+        let e = unsafe { pve.as_ref() };
+        if ptr::eq(e.pv_pmap.get(), pmap) && e.pv_va.get().as_usize() == va {
+            // match?
+            prevptr.set(e.pv_next.get()); // remove it!
+            found = Some(pve);
+            break;
+        }
+        prevptr = &e.pv_next; // previous pointer
+    }
+    mtx_leave(&pg.mdpage.pv_mtx);
+    found // return removed pve
+}
+
+/// Puts a list of pv entries linked through `pv_next` back into `pmap_pv_pool`.
+fn pmap_free_pvs(mut free_pvs: *const PvEntry) {
+    while let Some(pve) = NonNull::new(free_pvs.cast_mut()) {
+        // SAFETY: the entries were unlinked from their pv list by the caller, which owns them.
+        free_pvs = unsafe { pve.as_ref() }.pv_next.get();
+        pool_put(&PMAP_PV_POOL, pve.cast::<u8>());
+    }
+}
+
 /// `pl<lvl>_pi(va)`: the index of `va`'s entry within one level-`lvl` table (`pl_i` gives the
 /// index into the recursive mapping's linear view of the whole level).
 const fn pl_pi(va: usize, lvl: usize) -> usize {
@@ -1222,6 +1324,7 @@ fn pmap_remove_ptes(
     startva: usize,
     endva: usize,
     flags: i32,
+    free_pvs: &mut *const PvEntry,
 ) {
     let mut pte = ptpva as *mut PtEntry;
     let mut va = startva;
@@ -1253,9 +1356,36 @@ fn pmap_remove_ptes(
             ptp.wire_count.set(ptp.wire_count.get() - 1); // dropping a PTE
         }
 
-        // if we are not on a pv list we are done: no PTE is (see the module's deviations).
-        kassert!(opte & PG_PVLIST == 0);
+        let pg = PHYS_TO_VM_PAGE(Paddr::new((opte & pg_frame()) as usize));
 
+        // if we are not on a pv list we are done.
+        if opte & PG_PVLIST == 0 {
+            #[cfg(feature = "diagnostic")]
+            if pg.is_some() {
+                crate::kern::subr_prf::panic(format_args!(
+                    "pmap_remove_ptes: managed page without PG_PVLIST: va {va:#x}, opte {opte:#x}"
+                ));
+            }
+            pte = pte.wrapping_add(1);
+            va += PAGE_SIZE;
+            continue;
+        }
+
+        let Some(pg) = pg else {
+            crate::kern::subr_prf::panic(format_args!(
+                "pmap_remove_ptes: unmanaged page marked PG_PVLIST: va {va:#x}, opte {opte:#x}"
+            ));
+        };
+
+        // sync R/M bits
+        pmap_sync_flags_pte(pg, opte);
+        if let Some(pve) = pmap_remove_pv(pg, pmap, va) {
+            // SAFETY: just unlinked; this function owns it now.
+            unsafe { pve.as_ref() }.pv_next.set(*free_pvs);
+            *free_pvs = pve.as_ptr();
+        }
+
+        // end of "for" loop: time for next pte
         pte = pte.wrapping_add(1);
         va += PAGE_SIZE;
     }
@@ -1273,6 +1403,7 @@ pub fn pmap_remove(pmap: &Pmap, sva: Vaddr, eva: Vaddr) {
 ///
 /// caller should not be holding any pmap locks
 fn pmap_do_remove(pmap: &Pmap, sva: usize, eva: usize, flags: i32) {
+    let mut free_pvs: *const PvEntry = ptr::null();
     let empty_ptps = Pglist::new();
     empty_ptps.init();
 
@@ -1331,6 +1462,7 @@ fn pmap_do_remove(pmap: &Pmap, sva: usize, eva: usize, flags: i32) {
             va,
             blkendva,
             flags,
+            &mut free_pvs,
         );
 
         // if PTP is no longer being used, free it!
@@ -1352,13 +1484,286 @@ fn pmap_do_remove(pmap: &Pmap, sva: usize, eva: usize, flags: i32) {
     // pmap_unmap_ptes(pmap, scr3): nothing borrowed.
     pmap_tlb_shootwait();
 
-    // cleanup: no pv entries to return; the empty PTPs
+    // cleanup:
+    pmap_free_pvs(free_pvs);
+
     while let Some(ptp) = empty_ptps.first() {
         // SAFETY: the page is on this list, which only this function sees.
         unsafe { empty_ptps.remove(ptp) };
         uvm_pagefree(ptp);
     }
 }
+
+/// `pmap_page_remove`: remove a managed vm_page from all pmaps that map it.
+///
+/// R/M bits are sync'd back to attrs.
+pub fn pmap_page_remove(pg: &VmPage) {
+    let empty_ptps = Pglist::new();
+    empty_ptps.init();
+
+    mtx_enter(&pg.mdpage.pv_mtx);
+    while let Some(pve) = NonNull::new(pg.mdpage.pv_list.get().cast_mut()) {
+        // SAFETY: an entry on the pv list, protected by `pv_mtx`.
+        let pmp = unsafe { pve.as_ref() }.pv_pmap.get();
+        // SAFETY: a pmap with a mapping on a pv list is live; the reference taken here keeps it
+        // so until the `pmap_destroy` below.
+        let pm: &'static Pmap = unsafe { &*pmp };
+        pmap_reference(pm);
+        mtx_leave(&pg.mdpage.pv_mtx);
+
+        // pmap_map_ptes(pm): the direct-map walk needs no borrowed %cr3 (see the module's
+        // deviations); locks pmap.
+        let shootself = pmap_is_curpmap(pm);
+
+        // We dropped the pvlist lock before grabbing the pmap lock to avoid lock ordering
+        // problems. This means we have to check the pvlist again since somebody else might
+        // have modified it. All we care about is that the pvlist entry matches the pmap we
+        // just locked. If it doesn't, unlock the pmap and try again.
+        mtx_enter(&pg.mdpage.pv_mtx);
+        let Some(pve) = NonNull::new(pg.mdpage.pv_list.get().cast_mut()) else {
+            mtx_leave(&pg.mdpage.pv_mtx);
+            pmap_destroy(pm);
+            mtx_enter(&pg.mdpage.pv_mtx);
+            continue;
+        };
+        // SAFETY: as above.
+        let e = unsafe { pve.as_ref() };
+        if !ptr::eq(e.pv_pmap.get(), pm) {
+            mtx_leave(&pg.mdpage.pv_mtx);
+            pmap_destroy(pm);
+            mtx_enter(&pg.mdpage.pv_mtx);
+            continue;
+        }
+
+        pg.mdpage.pv_list.set(e.pv_next.get());
+        mtx_leave(&pg.mdpage.pv_mtx);
+
+        let va = e.pv_va.get().as_usize();
+        // SAFETY: a PTP recorded in a pv entry stays allocated while the mapping exists.
+        let ptp = unsafe { e.pv_ptp.get().as_ref() };
+        let (level, table, offs) = pmap_find_pte_direct(pm, va);
+
+        #[cfg(feature = "diagnostic")]
+        if let Some(ptp) = ptp
+            && level == 0
+            && pmap_direct_unmap(Vaddr::new(table)) != vm_page_to_phys(ptp)
+        {
+            kprintf!(
+                "pmap_page_remove: pg={:p}: va={:#x}, pv_ptp={:p}\n",
+                ptr::from_ref(pg),
+                va,
+                ptr::from_ref(ptp)
+            );
+            crate::kern::subr_prf::panic(format_args!(
+                "pmap_page_remove: mapped managed page has invalid pv_ptp field"
+            ));
+        }
+        kassert!(level == 0);
+
+        // atomically save the old PTE and zap it
+        // SAFETY: the PTE of a mapping on the pv list, through the direct map.
+        let opte =
+            unsafe { pmap_pte_set((table + offs * size_of::<PtEntry>()) as *mut PtEntry, 0) };
+
+        if opte & PG_W != 0 {
+            pm.pm_stats
+                .wired_count
+                .set(pm.pm_stats.wired_count.get() - 1);
+        }
+        pm.pm_stats
+            .resident_count
+            .set(pm.pm_stats.resident_count.get() - 1);
+
+        pmap_tlb_shootpage(pm, va, shootself);
+
+        pmap_sync_flags_pte(pg, opte);
+
+        // update the PTP reference count. free if last reference.
+        if let Some(ptp) = ptp {
+            ptp.wire_count.set(ptp.wire_count.get() - 1);
+            if ptp.wire_count.get() <= 1 {
+                pmap_free_ptp(pm, ptp, va, &empty_ptps);
+            }
+        }
+        // pmap_unmap_ptes(pm, scr3): unlocks pmap.
+        pmap_destroy(pm);
+        pool_put(&PMAP_PV_POOL, pve.cast::<u8>());
+        mtx_enter(&pg.mdpage.pv_mtx);
+    }
+    mtx_leave(&pg.mdpage.pv_mtx);
+
+    pmap_tlb_shootwait();
+
+    while let Some(ptp) = empty_ptps.first() {
+        // SAFETY: the page is on this list, which only this function sees.
+        unsafe { empty_ptps.remove(ptp) };
+        uvm_pagefree(ptp);
+    }
+}
+
+// p m a p   a t t r i b u t e  f u n c t i o n s
+// functions that test/change managed page's attributes
+// since a page can be mapped multiple times we must check each PTE that maps it by going
+// down the pv lists.
+
+/// `pmap_test_attrs`: test a page's attributes.
+pub fn pmap_test_attrs(pg: &VmPage, testbits: u64) -> bool {
+    let testflags = pmap_pte2flags(testbits);
+
+    if pg.flags() & testflags != 0 {
+        return true;
+    }
+
+    let mut mybits = 0;
+    mtx_enter(&pg.mdpage.pv_mtx);
+    let mut cur = pg.mdpage.pv_list.get();
+    // SAFETY: entries on the pv list are live pool items, protected by `pv_mtx`.
+    while let Some(pve) = unsafe { cur.as_ref() }
+        && mybits == 0
+    {
+        // SAFETY: the pmap of a mapping on the pv list is live.
+        let pm = unsafe { &*pve.pv_pmap.get() };
+        let (_level, ptes, offs) = pmap_find_pte_direct(pm, pve.pv_va.get().as_usize());
+        // SAFETY: the table holding the mapping's PTE, through the direct map.
+        mybits |= unsafe { pde_at(ptes, offs) } & testbits;
+        cur = pve.pv_next.get();
+    }
+    mtx_leave(&pg.mdpage.pv_mtx);
+
+    if mybits == 0 {
+        return false;
+    }
+
+    pg.set_bits(pmap_pte2flags(mybits));
+
+    true
+}
+
+/// `pmap_clear_attrs`: change a page's attributes.
+///
+/// We return true if we cleared one of the bits we were asked to.
+pub fn pmap_clear_attrs(pg: &VmPage, clearbits: u64) -> bool {
+    let clearflags = pmap_pte2flags(clearbits);
+
+    let mut result = pg.flags() & clearflags != 0;
+    if result {
+        pg.clear_bits(clearflags);
+    }
+
+    mtx_enter(&pg.mdpage.pv_mtx);
+    let mut cur = pg.mdpage.pv_list.get();
+    // SAFETY: entries on the pv list are live pool items, protected by `pv_mtx`.
+    while let Some(pve) = unsafe { cur.as_ref() } {
+        // SAFETY: the pmap of a mapping on the pv list is live.
+        let pm = unsafe { &*pve.pv_pmap.get() };
+        let va = pve.pv_va.get().as_usize();
+        let (_level, ptes, offs) = pmap_find_pte_direct(pm, va);
+        // SAFETY: the table holding the mapping's PTE, through the direct map.
+        let opte = unsafe { pde_at(ptes, offs) };
+        if opte & clearbits != 0 {
+            result = true;
+            // SAFETY: as above.
+            unsafe {
+                pmap_pte_clearbits(
+                    (ptes + offs * size_of::<PtEntry>()) as *mut PtEntry,
+                    opte & clearbits,
+                );
+            }
+            pmap_tlb_shootpage(pm, va, pmap_is_curpmap(pm));
+        }
+        cur = pve.pv_next.get();
+    }
+    mtx_leave(&pg.mdpage.pv_mtx);
+
+    pmap_tlb_shootwait();
+
+    result
+}
+
+// p m a p   p r o t e c t i o n   f u n c t i o n s
+//
+// pmap_page_protect and pmap_protect are the inline functions of `include/pmap.rs`.
+
+/// `pmap_write_protect`: write-protect pages in a pmap.
+pub fn pmap_write_protect(pmap: &Pmap, sva: Vaddr, eva: Vaddr, prot: VmProt) {
+    let (sva, eva) = (sva.as_usize(), eva.as_usize());
+    let mut clear: PtEntry = 0;
+    let mut set: PtEntry = 0;
+
+    // pmap_map_ptes(pmap): the direct-map walk needs no borrowed %cr3.
+    let shootself = pmap_is_curpmap(pmap);
+
+    if prot & PROT_READ == 0 {
+        set |= PG_XO_BITS.load(Ordering::Relaxed);
+    }
+    if prot & PROT_WRITE == 0 {
+        clear = PG_RW;
+    }
+    if prot & PROT_EXEC == 0 {
+        set |= pg_nx();
+    }
+
+    let shootall = (eva - sva > 32 * PAGE_SIZE) && sva < VM_MIN_KERNEL_ADDRESS;
+
+    let mut va = sva;
+    while va < eva {
+        // determine range of block
+        let mut blkendva = x86_round_pdr(va + 1);
+        if blkendva > eva {
+            blkendva = eva;
+        }
+
+        // XXXCDC: our PTE mappings should never be write-protected!
+        //
+        // long term solution is to move the PTEs out of user address space. and into kernel
+        // address space (up with APTE). then we can set VM_MAXUSER_ADDRESS to be
+        // VM_MAX_ADDRESS.
+
+        // XXXCDC: ugly hack to avoid freeing PDP here
+        if pl_i(va, PTP_LEVELS) == PDIR_SLOT_PTE {
+            va = blkendva;
+            continue;
+        }
+
+        // empty block?
+        let (level, table, offs) = pmap_find_pte_direct(pmap, va);
+        if level != 0 {
+            va = blkendva;
+            continue;
+        }
+
+        #[cfg(feature = "diagnostic")]
+        if (VM_MAXUSER_ADDRESS..VM_MAX_ADDRESS).contains(&va) {
+            crate::kern::subr_prf::panic(format_args!("pmap_write_protect: PTE space"));
+        }
+
+        let mut spte = (table + offs * size_of::<PtEntry>()) as *mut PtEntry;
+        let epte = spte.wrapping_add((blkendva - va) / PAGE_SIZE);
+
+        while spte < epte {
+            // SAFETY: entries of the level-1 table of this block, through the direct map.
+            unsafe {
+                if pmap_valid_entry(ptr::read_volatile(spte)) {
+                    pmap_pte_clearbits(spte, clear);
+                    pmap_pte_setbits(spte, set);
+                }
+            }
+            spte = spte.wrapping_add(1);
+        }
+        va = blkendva;
+    }
+
+    if shootall {
+        pmap_tlb_shoottlb(pmap, shootself);
+    } else {
+        pmap_tlb_shootrange(pmap, sva, eva, shootself);
+    }
+
+    // pmap_unmap_ptes(pmap, scr3): nothing borrowed.
+    pmap_tlb_shootwait();
+}
+
+// end of protection functions
 
 /// `pmap_enter`: enter a mapping into a pmap.
 ///
@@ -1400,7 +1805,25 @@ pub fn pmap_enter(
         }
     }
 
-    // pve = pool_get(&pmap_pv_pool, PR_NOWAIT): no pv entries (see the module's deviations).
+    let Some(pvmem) = pool_get(&PMAP_PV_POOL, PR_NOWAIT) else {
+        if flags & PMAP_CANFAIL != 0 {
+            return Err(Errno::ENOMEM);
+        }
+        crate::kern::subr_prf::panic(format_args!("pmap_enter: no pv entries available"));
+    };
+    let pve_new = pvmem.cast::<PvEntry>();
+    // SAFETY: a fresh pool item of `size_of::<PvEntry>()` bytes, suitably aligned; written
+    // once before use.
+    unsafe {
+        pve_new.as_ptr().write(PvEntry {
+            pv_next: Cell::new(ptr::null()),
+            pv_pmap: Cell::new(ptr::null()),
+            pv_va: Cell::new(Vaddr::new(0)),
+            pv_ptp: Cell::new(ptr::null()),
+        });
+    }
+    let mut pve = Some(pve_new);
+    let mut opve: Option<NonNull<PvEntry>> = None;
 
     // map in ptes and get a pointer to our PTP (unless we are the kernel)
     let shootself = pmap_is_curpmap(pmap);
@@ -1411,6 +1834,8 @@ pub fn pmap_enter(
             Some(ptp) => Some(ptp),
             None => {
                 if flags & PMAP_CANFAIL != 0 {
+                    // pmap_unmap_ptes(pmap, scr3): nothing borrowed.
+                    pool_put(&PMAP_PV_POOL, pve_new.cast::<u8>());
                     return Err(Errno::ENOMEM);
                 }
                 crate::kern::subr_prf::panic(format_args!("pmap_enter: get ptp failed"));
@@ -1427,6 +1852,8 @@ pub fn pmap_enter(
     let resdelta: i64;
     let wireddelta: i64;
     let ptpdelta: u32;
+    let mut pg: Option<&VmPage> = None;
+    let mut enter_now = false;
     // is there currently a valid mapping at our VA?
     if pmap_valid_entry(opte) {
         // first, calculate pm_stats updates. resident count will not change since we are
@@ -1441,9 +1868,42 @@ pub fn pmap_enter(
         };
         ptpdelta = 0;
 
-        // is the currently mapped PA the same as the one we want to map? if so, nothing to
-        // remove; changing PAs: the old one was on no pv list (see the module's deviations).
-        kassert!(opte & PG_PVLIST == 0);
+        // is the currently mapped PA the same as the one we want to map?
+        if (opte & pg_frame()) as usize == pa {
+            // if this is on the PVLIST, sync R/M bit
+            if opte & PG_PVLIST != 0 {
+                pg = PHYS_TO_VM_PAGE(Paddr::new(pa));
+                let Some(p) = pg else {
+                    crate::kern::subr_prf::panic(format_args!(
+                        "pmap_enter: same pa, PG_PVLIST mapping with unmanaged page: \
+                         va {va:#x}, opte {opte:#x}, pa {pa:#x}"
+                    ));
+                };
+                pmap_sync_flags_pte(p, opte);
+            } else {
+                #[cfg(feature = "diagnostic")]
+                if PHYS_TO_VM_PAGE(Paddr::new(pa)).is_some() {
+                    crate::kern::subr_prf::panic(format_args!(
+                        "pmap_enter: same pa, no PG_PVLIST mapping with managed page: \
+                         va {va:#x}, opte {opte:#x}, pa {pa:#x}"
+                    ));
+                }
+            }
+            enter_now = true;
+        } else if opte & PG_PVLIST != 0 {
+            // changing PAs: we must remove the old one first
+
+            // if current mapping is on a pvlist, remove it (sync R/M bits)
+            let Some(opg) = PHYS_TO_VM_PAGE(Paddr::new((opte & pg_frame()) as usize)) else {
+                crate::kern::subr_prf::panic(format_args!(
+                    "pmap_enter: PG_PVLIST mapping with unmanaged page: \
+                     va {va:#x}, opte {opte:#x}, pa {pa:#x}"
+                ));
+            };
+            pmap_sync_flags_pte(opg, opte);
+            opve = pmap_remove_pv(opg, pmap, va);
+            // pg = NULL: this is not the page we are looking for
+        }
     } else {
         // opte not valid
         resdelta = 1;
@@ -1451,11 +1911,24 @@ pub fn pmap_enter(
         ptpdelta = if ptp.is_some() { 1 } else { 0 };
     }
 
-    // if this entry is to be on a pvlist, enter it now: pmap_enter_pv (M7a); `pg` stays
-    // NULL and the PTE carries no PG_PVLIST.
-    let pg: Option<&VmPage> = None;
+    // pve is either NULL or points to a now-free pv_entry structure (the latter case is if
+    // we called pmap_remove_pv above).
+    //
+    // if this entry is to be on a pvlist, enter it now.
+    if !enter_now {
+        if PMAP_INITIALIZED.load(Ordering::Relaxed) {
+            pg = PHYS_TO_VM_PAGE(Paddr::new(pa));
+        }
+
+        if let Some(p) = pg
+            && let Some(e) = pve.take()
+        {
+            pmap_enter_pv(p, e, pmap, va, ptp);
+        }
+    }
 
     // enter_now:
+    // at this point pg is !NULL if we want the PG_PVLIST bit set
     pmap.pm_stats
         .resident_count
         .set(pmap.pm_stats.resident_count.get() + resdelta);
@@ -1465,6 +1938,11 @@ pub fn pmap_enter(
     if let Some(ptp) = ptp {
         ptp.wire_count.set(ptp.wire_count.get() + ptpdelta);
     }
+
+    kassert!(
+        pg.map(ptr::from_ref) == PHYS_TO_VM_PAGE(Paddr::new(pa)).map(ptr::from_ref)
+            || !PMAP_INITIALIZED.load(Ordering::Relaxed)
+    );
 
     // SAFETY: `pmap_bootstrap` filled the table once, before any mapping.
     let protection_codes = unsafe { PROTECTION_CODES.get() };
@@ -1533,7 +2011,14 @@ pub fn pmap_enter(
     // pmap_unmap_ptes(pmap, scr3): nothing borrowed.
     pmap_tlb_shootwait();
 
-    // out: no pv entry to return.
+    // out:
+    if let Some(e) = pve {
+        pool_put(&PMAP_PV_POOL, e.cast::<u8>());
+    }
+    if let Some(e) = opve {
+        pool_put(&PMAP_PV_POOL, e.cast::<u8>());
+    }
+
     Ok(())
 }
 
