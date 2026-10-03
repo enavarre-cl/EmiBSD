@@ -29,11 +29,12 @@ Next:
   served by `uvm_fault` on both archs.
 - After M7: `docs/ROADMAP.md` carries, as proposals of 2026-10-03, the "What 'complete'
   means" scope section and the rows M9 security, M10 file systems, M11 SMP, M12 devices and
-  vmm, M13 installable (was M9), M14 real hardware (was M10). Eight decisions are the user's
-  before M8 starts: the M7+ order (vfs first, or the network as M7b with the ping criterion),
-  widening the reference clone, C or Rust userland, Limine or `boot(8)`, the scope section,
-  the new order, the vmm test rig (SVM under TCG on the Apple M3 Pro, or the reduced
-  criterion) and the M14 machines.
+  vmm, M13 storage/firmware/console (everything QEMU 11.1 emulates: ahci, nvme, scsi, ACPI,
+  RTC, efifb/wscons, em/re), M14 installable (was M9), M15 real hardware (was M10, only what
+  QEMU does not emulate). Eight decisions are the user's before M8 starts: the M7+ order (vfs
+  first, or the network as M7b with the ping criterion), widening the reference clone, C or
+  Rust userland, Limine or `boot(8)`, the scope section, the new order, the vmm test rig (SVM
+  under TCG on the Apple M3 Pro, or the reduced criterion) and the M15 machines.
 
 Blockers:
 - None. `crc32` stays `skipped: license: zlib`; amd64's TSC timecounter (`tsc.c`) is deferred.
