@@ -64,8 +64,6 @@
 //!   [`constty`]/[`set_constty`]) over atomic pointers instead of globals.
 //! - `cninit` (the `constab[]` probe loop) is not used: the architectures attach their
 //!   console directly (`docs/ARCHITECTURE.md`, "Console attach").
-//! - `cnkqfilter` hands the knote to the device's `d_kqfilter`; none can be made yet
-//!   (`kern_event.c`).
 //! - `cnpollc` takes a `bool`; its `int on` is only ever 0 or 1.
 
 use core::cell::Cell;

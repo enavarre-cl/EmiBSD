@@ -4252,7 +4252,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "0aae1c7a91f7c4a09ef375fde439a2781e3808a5"
 deps = ["sys/sys/tty.h", "sys/kern/tty_subr.c", "sys/kern/tty_conf.c", "sys/kern/kern_proc.c", "sys/kern/kern_sig.c", "sys/lib/libkern/scanc.c"]
-notes = "the whole file: char_type[], ttylist/tty_count/ttylist_lock, tk_* (atomics), ttyopen, ttyclose, ttyinput, ttyoutput, ttioctl (Ok(false) for the C's -1; an ERESTART from a background sleep propagates), ttnread, ttywait(_nsec), ttywflush, ttyflush, ttychars, ttyblock, ttrstrt, ttstart, ttylclose, ttymodem, nullmodem, ttypend, ttvtimeout, ttread (the VMIN/VTIME timeout on the stack instead of malloc), ttyunblock, ttycheckoutq, ttwrite, ttyrub, ttyrubo, ttyretype, ttyecho, ttwakeup(wr), ttspeedtab, ttsetwater, process_sum, ttyinfo, tputchar, ttysleep(_nsec), tty_init, ttymalloc (panics if malloc fails), ttyfree (unsafe), ttystats_init, sysctl_tty, ttytstamp; reported: ttkqfilter and the filt_tty* filters (kern_event.c); TIOCCONS checks /dev/console through namei (ENOENT without a root file system); host tests (canonical input, erase/kill/eof, signals, raw mode, output processing, termios and winsize ioctls)"
+notes = "the whole file: char_type[], ttylist/tty_count/ttylist_lock, tk_* (atomics), ttyopen, ttyclose, ttyinput, ttyoutput, ttioctl (Ok(false) for the C's -1; an ERESTART from a background sleep propagates), ttnread, ttywait(_nsec), ttywflush, ttyflush, ttychars, ttyblock, ttrstrt, ttstart, ttylclose, ttymodem, nullmodem, ttypend, ttvtimeout, ttread (the VMIN/VTIME timeout on the stack instead of malloc), ttyunblock, ttycheckoutq, ttwrite, ttyrub, ttyrubo, ttyretype, ttyecho, ttwakeup(wr), ttspeedtab, ttsetwater, process_sum, ttyinfo, tputchar, ttysleep(_nsec), tty_init, ttymalloc (panics if malloc fails), ttyfree (unsafe), ttystats_init, sysctl_tty, ttytstamp; kern_event.c: ttyread/ttywrite/ttyexcept_filtops, ttkqfilter (ENXIO for a device without a tty where the C dereferences NULL), filt_ttyrdetach/filt_ttyread/filt_ttywdetach/filt_ttywrite/filt_ttyexcept (kn_tty reads kn_hook), and ttyfree's klist_invalidate are real; TIOCCONS checks /dev/console through namei (ENOENT without a root file system); host tests (canonical input, erase/kill/eof, signals, raw mode, output processing, termios and winsize ioctls, the kqueue filters following input, output and the carrier)"
 
 [[file]]
 c = "sys/kern/tty_subr.c"
@@ -4279,7 +4279,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8198eafc2fa633c35694940d6286a25de0ab6295"
 deps = ["sys/sys/conf.h", "sys/kern/tty.c"]
-notes = "/dev/tty: cttyopen, cttyread, cttywrite, cttyioctl, cttykqfilter; cttyvp returns Option<&Vnode>; cttykqfilter's seltrue_kqfilter/VOP_KQFILTER reported (kern_event.c); no session has a controlling vnode until /dev nodes exist (consfile's TIOCSCTTY records the tty, not a vnode)"
+notes = "/dev/tty: cttyopen, cttyread, cttywrite, cttyioctl, cttykqfilter (VOP_KQFILTER of the controlling vnode, seltrue_kqfilter for poll/select without one); cttyvp returns Option<&Vnode>; no session has a controlling vnode until /dev nodes exist (consfile's TIOCSCTTY records the tty, not a vnode)"
 
 [[file]]
 c = "sys/kern/tty_pty.c"
@@ -4288,7 +4288,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d7effda2f4d2f393ef096949eab70bd0f5a6db2a"
 deps = ["sys/sys/conf.h", "sys/kern/tty.c", "sys/kern/vfs_syscalls.c"]
-notes = "the whole file: pt_softc[] (grown under pt_softc_lock; pt_softc() answers None past npty), check_pty, ptyattach (pseudo-device pty 16 in ioconf.rs), ptsopen/close/read/write/start/stop, ptcwakeup, ptcopen/close/read/write, ptytty, ptyioctl (master told by fn_addr_eq on d_open), sysctl_pty, pty_isfree(_locked), pty_getfree, ptm_vn_open, ptmattach, ptmopen/close/ioctl (PTMGET opens /dev/ptyXX and /dev/ttyXX through namei: ENOENT without a root file system); reported: ptckqfilter and the filt_ptc* filters (kern_event.c); NPTY is a constant; host test of a line each way between master and slave"
+notes = "the whole file: pt_softc[] (grown under pt_softc_lock; pt_softc() answers None past npty), check_pty, ptyattach (pseudo-device pty 16 in ioconf.rs), ptsopen/close/read/write/start/stop, ptcwakeup, ptcopen/close/read/write, ptytty, ptyioctl (master told by fn_addr_eq on d_open), sysctl_pty, pty_isfree(_locked), pty_getfree, ptm_vn_open, ptmattach, ptmopen/close/ioctl (PTMGET opens /dev/ptyXX and /dev/ttyXX through namei: ENOENT without a root file system); kern_event.c: ptcread/ptcwrite/ptcexcept_filtops, ptckqfilter (ENXIO for a minor without a softc), filt_ptcrdetach/filt_ptcread/filt_ptcwdetach/filt_ptcwrite/filt_ptcexcept (kn_pti reads kn_hook) are real; NPTY is a constant; host test of a line each way between master and slave"
 
 [[file]]
 c = "sys/arch/amd64/amd64/mem.c"

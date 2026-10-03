@@ -1,6 +1,7 @@
 //! Host tests for the line discipline: canonical input (erase, kill, end of file), signals,
-//! raw input, output processing, and the termios ioctls, on a tty with no driver behind it
-//! (`t_oproc` NULL, `t_dev` the console's major, whose `d_stop` does nothing).
+//! raw input, output processing, the termios ioctls and the kqueue filters, on a tty with no
+//! driver behind it (`t_oproc` NULL, `t_dev` the console's major, whose `d_stop` does
+//! nothing).
 
 use super::*;
 use crate::kern::tty_subr::qmem;
@@ -284,4 +285,58 @@ fn char_type_classes() {
     assert_ne!(isalpha(i32::from(b'_')), 0);
     assert_eq!(isalpha(i32::from(b'-')), 0);
     assert_eq!(CHAR_TYPE[0x80], ORDINARY | ALPHA);
+}
+
+#[test]
+fn kqueue_filters_follow_input_output_and_carrier() {
+    use crate::kern::kern_event::tests::{new_kqueue, setup, thread};
+    use crate::kern::kern_event::{klist_insert_locked, knote_dequeue};
+    use crate::kern::kern_lock::{mtx_enter, mtx_leave};
+    use crate::sys::event::{__EV_HUP, __EV_POLL, EV_EOF, EVFILT_READ, EVFILT_WRITE, Knote};
+
+    let _g = setup();
+    let p = thread();
+    let kq = new_kqueue(p);
+    let tp = test_tty();
+
+    // A read knote hooked as ttkqfilter hooks it (the test tty has no device switch entry).
+    let kn = Knote::new();
+    kn.kn_kq.set(kq);
+    kn.kn_filter().set(EVFILT_READ);
+    kn.kn_fop.set(Some(&TTYREAD_FILTOPS));
+    kn.kn_hook.set(ptr::from_ref(tp).cast_mut().cast());
+    klist_insert_locked(&tp.t_rsel.si_note, &kn);
+
+    // Canonical input: nothing to read until the line ends; then ttwakeup's selwakeup
+    // queues the knote with the line's length.
+    type_in(tp, b"ab");
+    assert_eq!(kq.kq_count.get(), 0);
+    type_in(tp, b"\n");
+    assert_eq!(kq.kq_count.get(), 1);
+    assert_eq!(kn.kn_data().get(), 3);
+    mtx_enter(&kq.kq_lock);
+    knote_dequeue(&kn);
+    mtx_leave(&kq.kq_lock);
+
+    // Writable below the low-water mark; the room is the output queue's (the echo of the
+    // line is in it).
+    let wkn = Knote::new();
+    wkn.kn_hook.set(ptr::from_ref(tp).cast_mut().cast());
+    wkn.kn_filter().set(EVFILT_WRITE);
+    wkn.kn_flags().set(__EV_POLL);
+    assert!(filt_ttywrite(&wkn, 0));
+    assert_eq!(wkn.kn_data().get(), i64::from(1024 - tp.t_outq.c_cc.get()));
+
+    // The carrier drops on a line that watches it: EOF for the reader, a hang-up for poll.
+    tp.t_state_clr(TS_CARR_ON);
+    assert!(filt_ttyread(&kn, 0));
+    assert!(kn.has_flags(EV_EOF) && !kn.has_flags(__EV_HUP));
+    assert!(filt_ttywrite(&wkn, 0) && wkn.has_flags(__EV_HUP));
+    tp.t_state_set(TS_CARR_ON);
+    assert!(filt_ttyread(&kn, 0), "the line is still readable");
+    assert!(!kn.has_flags(EV_EOF));
+
+    filt_ttyrdetach(&kn);
+    assert!(tp.t_rsel.si_note.kl_list.is_empty());
+    crate::kern::kern_event::tests::close_kqueue(p, kq);
 }

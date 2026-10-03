@@ -21,7 +21,7 @@
 //!   but no vnode is recorded in the session (`s_ttyvp`), so `/dev/tty` cannot reach it.
 //! - stat: a character device, mode `0600`, `st_rdev` the console's device number.
 //! - close: `cnclose` on the last reference.
-//! - kqueue: `cnkqfilter` (which reports `kern_event.c`).
+//! - kqueue: `cnkqfilter`, the console tty's `ttkqfilter`.
 //!
 //! When the console device cannot be opened (no console attached as a tty), the stand-in
 //! falls back to the polled console it was before the tty layer: writes go to `cnputc`, a

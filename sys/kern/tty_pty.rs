@@ -51,8 +51,8 @@
 //!   first error wins.
 //! - `ptsread`'s remote mode tests `ureadc(..) < 0`, which no errno is, so the C ignores a
 //!   copy error there; so does this port.
-//! - The kqueue filters (`ptckqfilter`, `filt_ptc*`) need `struct knote` (`kern_event.c`):
-//!   `ptckqfilter` reports itself.
+//! - `ptckqfilter` answers `ENXIO` for a minor without a softc, where the C would
+//!   dereference NULL; the filters reach the softc through `kn_hook` ([`kn_pti`]).
 //! - `ptyioctl` recognises the master by comparing `cdevsw[major(dev)].d_open` with
 //!   `ptcopen` as the C does, with `ptr::fn_addr_eq` (`docs/C_TO_RUST.md`).
 //! - `PTMGET` opens `/dev/ptyXX` and `/dev/ttyXX` through `namei`, as the C does; without a
@@ -66,6 +66,7 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::kern::kern_descrip::{closef, falloc, fdinsert, fdremove};
+use crate::kern::kern_event::{klist_insert_locked, klist_remove_locked};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_prot::{crfree, crget, suser};
 use crate::kern::kern_rwlock::{rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write};
@@ -88,9 +89,13 @@ use crate::kern::vfs_vnops::VNOPS;
 use crate::kern::vfs_vops::{VOP_OPEN, VOP_REVOKE, VOP_SETATTR, VOP_UNLOCK};
 use crate::machine::conf::{cdevsw, nchrdev};
 use crate::machine::cpu::curproc;
+use crate::machine::intr::{spltty, splx};
 use crate::sys::conf::DevTypeOpen;
 use crate::sys::errno::Errno;
-use crate::sys::event::Knote;
+use crate::sys::event::{
+    __EV_HUP, __EV_POLL, __EV_SELECT, EV_EOF, EVFILT_EXCEPT, EVFILT_READ, EVFILT_WRITE,
+    FILTEROP_ISFD, Filterops, Knote, NOTE_OOB,
+};
 use crate::sys::fcntl::{FNONBLOCK, FREAD, FWRITE};
 use crate::sys::file::{DTYPE_VNODE, frele};
 use crate::sys::filedesc::{fdplock, fdpunlock};
@@ -123,7 +128,6 @@ use crate::sys::ttydefaults::{TTYDEF_CFLAG, TTYDEF_IFLAG, TTYDEF_LFLAG, TTYDEF_O
 use crate::sys::types::{Dev, major, makedev, minor};
 use crate::sys::uio::Uio;
 use crate::sys::vnode::{IO_NDELAY, REVOKEALL, VA_UTIMES_NULL, VALIASED, VCHR, Vattr};
-use crate::unported;
 
 /// Chunk size iomoved to/from user.
 const BUFSIZ: usize = 100;
@@ -206,6 +210,36 @@ pub static PT_SOFTC_LOCK: Rwlock = Rwlock::new("ptarrlk");
 
 /// `tty_gid`.
 static TTY_GID_: u32 = TTY_GID;
+
+/// `ptcread_filtops`.
+pub static PTCREAD_FILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD,
+    f_attach: None,
+    f_detach: Some(filt_ptcrdetach),
+    f_event: Some(filt_ptcread),
+    f_modify: None,
+    f_process: None,
+};
+
+/// `ptcwrite_filtops`.
+pub static PTCWRITE_FILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD,
+    f_attach: None,
+    f_detach: Some(filt_ptcwdetach),
+    f_event: Some(filt_ptcwrite),
+    f_modify: None,
+    f_process: None,
+};
+
+/// `ptcexcept_filtops`.
+pub static PTCEXCEPT_FILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD,
+    f_attach: None,
+    f_detach: Some(filt_ptcrdetach),
+    f_event: Some(filt_ptcexcept),
+    f_modify: None,
+    f_process: None,
+};
 
 /// `pt_softc[minor]`, `None` for a slot not made yet.
 pub fn pt_softc(minor: u32) -> Option<&'static PtSoftc> {
@@ -736,13 +770,157 @@ pub fn ptcwrite(dev: Dev, uio: &mut Uio<'_>, flag: i32) -> Result<(), Errno> {
     error
 }
 
-// filt_ptcrdetach, filt_ptcread, filt_ptcwdetach, filt_ptcwrite, filt_ptcexcept and the
-// ptc*_filtops: struct knote (kern_event.c).
+/// `kn->kn_hook` of a master-side knote: its pty.
+pub fn kn_pti(kn: &Knote) -> &PtSoftc {
+    // SAFETY: `ptckqfilter` points `kn_hook` at a softc, and softcs are never freed (the
+    // array only grows).
+    match unsafe { kn.kn_hook.get().cast::<PtSoftc>().as_ref() } {
+        Some(pti) => pti,
+        None => panic(format_args!("knote {:p}: no pty", kn)),
+    }
+}
 
-/// `ptckqfilter`: attaches a kqueue filter to the master side (`kern_event.c` is not
-/// ported).
-pub fn ptckqfilter(_dev: Dev, _kn: &Knote) -> Result<(), Errno> {
-    Err(unported!("ptckqfilter: klist_insert_locked (kern_event.c)"))
+/// `filt_ptcrdetach`: unhooks a read or except knote.
+pub fn filt_ptcrdetach(kn: &Knote) {
+    let pti = kn_pti(kn);
+
+    let s = spltty();
+    klist_remove_locked(&pti.pt_selr.si_note, kn);
+    splx(s);
+}
+
+/// `filt_ptcread`: the master is readable when the slave has output (or a packet-mode or
+/// user-control byte) for it; EOF (and, for poll, a hang-up) once the carrier is gone.
+pub fn filt_ptcread(kn: &Knote, _hint: i64) -> bool {
+    let pti = kn_pti(kn);
+    let tp = pti.pt_tty;
+    kn.kn_data().set(0);
+
+    if tp.t_state_isset(TS_ISOPEN) {
+        if !tp.t_state_isset(TS_TTSTOP) {
+            kn.kn_data().set(i64::from(tp.t_outq.c_cc.get()));
+        }
+        if (pti.pt_flags.get() & PF_PKT != 0 && pti.pt_send.get() != 0)
+            || (pti.pt_flags.get() & PF_UCNTL != 0 && pti.pt_ucntl.get() != 0)
+        {
+            kn.kn_data().set(kn.kn_data().get() + 1);
+        }
+    }
+    let mut active = kn.kn_data().get() > 0;
+
+    if !tp.t_state_isset(TS_CARR_ON) {
+        kn.set_flags(EV_EOF);
+        if kn.has_flags(__EV_POLL) {
+            kn.set_flags(__EV_HUP);
+        }
+        active = true;
+    } else {
+        kn.clear_flags(EV_EOF | __EV_HUP);
+    }
+
+    active
+}
+
+/// `filt_ptcwdetach`: unhooks a write knote.
+pub fn filt_ptcwdetach(kn: &Knote) {
+    let pti = kn_pti(kn);
+
+    let s = spltty();
+    klist_remove_locked(&pti.pt_selw.si_note, kn);
+    splx(s);
+}
+
+/// `filt_ptcwrite`: the master is writable when the slave's input has room.
+pub fn filt_ptcwrite(kn: &Knote, _hint: i64) -> bool {
+    let pti = kn_pti(kn);
+    let tp = pti.pt_tty;
+    kn.kn_data().set(0);
+
+    if tp.t_state_isset(TS_ISOPEN) {
+        let (rawcc, cancc) = (tp.t_rawq.c_cc.get(), tp.t_canq.c_cc.get());
+        if pti.pt_flags.get() & PF_REMOTE != 0 {
+            if cancc == 0 {
+                kn.kn_data().set(i64::from(tp.t_canq.c_cn.get()));
+            }
+        } else if rawcc + cancc < ttyhog(tp) - 2 || (cancc == 0 && tp.t_lflag() & ICANON != 0) {
+            kn.kn_data()
+                .set(i64::from(tp.t_canq.c_cn.get() - (rawcc + cancc)));
+        }
+    }
+    let mut active = kn.kn_data().get() > 0;
+
+    // Write-side HUP condition is only for poll(2) and select(2).
+    if kn.has_flags(__EV_POLL | __EV_SELECT) {
+        if !tp.t_state_isset(TS_CARR_ON) {
+            kn.set_flags(__EV_HUP);
+            active = true;
+        } else {
+            kn.clear_flags(__EV_HUP);
+        }
+    }
+
+    active
+}
+
+/// `filt_ptcexcept`: out-of-band data (packet or user-control mode) and, for poll, the
+/// hang-up.
+pub fn filt_ptcexcept(kn: &Knote, _hint: i64) -> bool {
+    let pti = kn_pti(kn);
+    let tp = pti.pt_tty;
+    let mut active = false;
+
+    if kn.kn_sfflags.get() & NOTE_OOB != 0 {
+        // If in packet or user control mode, check for data.
+        if (pti.pt_flags.get() & PF_PKT != 0 && pti.pt_send.get() != 0)
+            || (pti.pt_flags.get() & PF_UCNTL != 0 && pti.pt_ucntl.get() != 0)
+        {
+            kn.kn_fflags().set(kn.kn_fflags().get() | NOTE_OOB);
+            kn.kn_data().set(1);
+            active = true;
+        }
+    }
+
+    if kn.has_flags(__EV_POLL) {
+        if !tp.t_state_isset(TS_CARR_ON) {
+            kn.set_flags(__EV_HUP);
+            active = true;
+        } else {
+            kn.clear_flags(__EV_HUP);
+        }
+    }
+
+    active
+}
+
+/// `ptckqfilter`: attaches a kqueue filter to the master side.
+pub fn ptckqfilter(dev: Dev, kn: &Knote) -> Result<(), Errno> {
+    let Some(pti) = pt_softc(minor(dev)) else {
+        return Err(Errno::ENXIO);
+    };
+
+    let klist = match kn.kn_filter().get() {
+        EVFILT_READ => {
+            kn.kn_fop.set(Some(&PTCREAD_FILTOPS));
+            &pti.pt_selr.si_note
+        }
+        EVFILT_WRITE => {
+            kn.kn_fop.set(Some(&PTCWRITE_FILTOPS));
+            &pti.pt_selw.si_note
+        }
+        EVFILT_EXCEPT => {
+            kn.kn_fop.set(Some(&PTCEXCEPT_FILTOPS));
+            &pti.pt_selr.si_note
+        }
+        _ => return Err(Errno::EINVAL),
+    };
+
+    kn.kn_hook.set(ptr::from_ref(pti).cast_mut().cast());
+
+    let s = spltty();
+    klist_insert_locked(klist, kn);
+    splx(s);
+
+    Ok(())
 }
 
 /// `ptytty` (also `ptstty` and `ptctty`): the tty of a pty.

@@ -42,20 +42,20 @@
 //!
 //! ## Deviations
 //! - `cttyvp(p)` is a function returning `Option<&'static Vnode>`.
-//! - `cttykqfilter`'s `seltrue_kqfilter` and `VOP_KQFILTER` need `struct knote`
-//!   (`kern_event.c`): reported.
 
 use core::ffi::c_void;
 use core::sync::atomic::Ordering;
 
+use crate::kern::kern_event::seltrue_kqfilter;
 use crate::kern::kern_proc::zapverauth;
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_timeout::{timeout_add_sec, timeout_del};
 use crate::kern::vfs_vnops::vn_lock;
-use crate::kern::vfs_vops::{VOP_IOCTL, VOP_OPEN, VOP_READ, VOP_UNLOCK, VOP_WRITE};
+use crate::kern::vfs_vops::{VOP_IOCTL, VOP_KQFILTER, VOP_OPEN, VOP_READ, VOP_UNLOCK, VOP_WRITE};
 use crate::machine::cpu::curproc;
 use crate::sys::errno::Errno;
-use crate::sys::event::Knote;
+use crate::sys::event::{__EV_POLL, __EV_SELECT, Knote};
+use crate::sys::fcntl::{FREAD, FWRITE};
 use crate::sys::ioctl::ioctl_arg;
 use crate::sys::lock::{LK_EXCLUSIVE, LK_RETRY};
 use crate::sys::proc::{PS_CONTROLT, Proc, Session, sess_leader};
@@ -64,7 +64,6 @@ use crate::sys::types::Dev;
 use crate::sys::ucred::NOCRED;
 use crate::sys::uio::Uio;
 use crate::sys::vnode::Vnode;
-use crate::unported;
 
 /// `cttyvp(p)`: the vnode of `p`'s controlling terminal, if it has one.
 fn cttyvp(p: &Proc) -> Option<&'static Vnode> {
@@ -175,10 +174,14 @@ pub fn cttyioctl(_dev: Dev, cmd: u64, addr: &mut [u8], flag: i32, p: &Proc) -> R
     VOP_IOCTL(ttyvp, cmd, addr, flag, NOCRED, p)
 }
 
-/// `cttykqfilter` (`kern_event.c` is not ported).
-pub fn cttykqfilter(_dev: Dev, _kn: &Knote) -> Result<(), Errno> {
-    let _ttyvp = curproc().and_then(cttyvp);
-    Err(unported!(
-        "cttykqfilter: VOP_KQFILTER/seltrue_kqfilter (kern_event.c)"
-    ))
+/// `cttykqfilter`: the controlling terminal's `VOP_KQFILTER`; without one, poll and select
+/// see an always-ready device and `kevent(2)` gets `ENXIO`.
+pub fn cttykqfilter(dev: Dev, kn: &Knote) -> Result<(), Errno> {
+    let Some(ttyvp) = curproc().and_then(cttyvp) else {
+        if kn.has_flags(__EV_POLL | __EV_SELECT) {
+            return seltrue_kqfilter(dev, kn);
+        }
+        return Err(Errno::ENXIO);
+    };
+    VOP_KQFILTER(ttyvp, FREAD | FWRITE, kn)
 }

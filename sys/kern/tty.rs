@@ -59,9 +59,8 @@
 //!   pointer, re-read where a sleep could have changed it (`ttread` after `ttysleep`).
 //! - `CCEQ` and `TTBREAKC` compare the `int` character, `TTY_QUOTE` included, as the C
 //!   does ([`cceq`] on an `int`); `sys::termios::cceq` takes bytes and is for drivers.
-//! - The kqueue filters (`ttkqfilter`, `filt_tty*`, the `filterops`) need `struct knote`
-//!   (`kern_event.c`): `ttkqfilter` reports itself, and `ttyfree`'s `klist_invalidate` has
-//!   nothing to invalidate.
+//! - `ttkqfilter` answers `ENXIO` for a device whose `d_tty` has no tty, where the C would
+//!   dereference NULL; the filters reach the tty through `kn_hook` ([`kn_tty`]).
 //! - `ttread`'s `VMIN`/`VTIME` timer is a `struct timeout` on `ttread`'s stack instead of a
 //!   `malloc(M_TEMP)` one; it is deleted on every way out, as the C frees it.
 //! - `ttyinfo`'s resident set size is `vm_rssize` (`vm_resident_count` reads the pmap's
@@ -79,6 +78,7 @@ use libkern::{explicit_bzero, scanc};
 
 use crate::dev::cons::{cn_tab, constty, set_constty};
 use crate::dev::rnd::enqueue_randomness;
+use crate::kern::kern_event::{klist_insert_locked, klist_invalidate, klist_remove_locked};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_proc::{pgfind, prfind};
 use crate::kern::kern_prot::suser;
@@ -108,7 +108,10 @@ use crate::machine::conf::cdevsw;
 use crate::machine::cpu::curproc;
 use crate::machine::intr::{IPL_TTY, splassert, spltty, splx};
 use crate::sys::errno::Errno;
-use crate::sys::event::Knote;
+use crate::sys::event::{
+    __EV_HUP, __EV_POLL, __EV_SELECT, EV_EOF, EVFILT_EXCEPT, EVFILT_READ, EVFILT_WRITE,
+    FILTEROP_ISFD, Filterops, Knote,
+};
 use crate::sys::fcntl::{FNONBLOCK, FREAD, FWRITE};
 use crate::sys::filio::{FIOASYNC, FIOGETOWN, FIONREAD, FIOSETOWN};
 use crate::sys::ioctl::{ioctl_arg, ioctl_ret};
@@ -157,7 +160,6 @@ use crate::sys::ttydefaults::{CEOT, TTYDEFCHARS, ctrl};
 use crate::sys::types::{Dev, Fixpt, major};
 use crate::sys::uio::Uio;
 use crate::sys::vnode::{IO_NDELAY, VREAD};
-use crate::unported;
 
 // Symbolic sleep message strings.
 
@@ -390,6 +392,36 @@ pub static TK_NIN: AtomicI64 = AtomicI64::new(0);
 pub static TK_NOUT: AtomicI64 = AtomicI64::new(0);
 /// `tk_rawcc`: input characters in raw mode.
 pub static TK_RAWCC: AtomicI64 = AtomicI64::new(0);
+
+/// `ttyread_filtops`.
+pub static TTYREAD_FILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD,
+    f_attach: None,
+    f_detach: Some(filt_ttyrdetach),
+    f_event: Some(filt_ttyread),
+    f_modify: None,
+    f_process: None,
+};
+
+/// `ttywrite_filtops`.
+pub static TTYWRITE_FILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD,
+    f_attach: None,
+    f_detach: Some(filt_ttywdetach),
+    f_event: Some(filt_ttywrite),
+    f_modify: None,
+    f_process: None,
+};
+
+/// `ttyexcept_filtops`.
+pub static TTYEXCEPT_FILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD,
+    f_attach: None,
+    f_detach: Some(filt_ttyrdetach),
+    f_event: Some(filt_ttyexcept),
+    f_modify: None,
+    f_process: None,
+};
 
 /// `CCEQ(val, c)` on an `int` character: `c` equals the enabled control character `val`.
 fn cceq(val: Cc, c: i32) -> bool {
@@ -1295,13 +1327,134 @@ pub fn ttioctl(tp: &Tty, cmd: u64, data: &mut [u8], flag: i32, p: &Proc) -> Resu
     Ok(true)
 }
 
-// ttyread_filtops, ttywrite_filtops, ttyexcept_filtops and filt_ttyrdetach, filt_ttyread,
-// filt_ttywdetach, filt_ttywrite, filt_ttyexcept: struct knote (kern_event.c).
+/// `ttkqfilter`: attaches a kqueue filter to a tty: read and (poll's) except knotes on
+/// `t_rsel`, write knotes on `t_wsel`.
+pub fn ttkqfilter(dev: Dev, kn: &Knote) -> Result<(), Errno> {
+    let Some(tp) = cdevsw(major(dev)).d_tty.and_then(|t| t(dev)) else {
+        return Err(Errno::ENXIO);
+    };
 
-/// `ttkqfilter`: attaches a kqueue filter to a tty (`kern_event.c` is not ported).
-pub fn ttkqfilter(dev: Dev, _kn: &Knote) -> Result<(), Errno> {
-    let _tp = cdevsw(major(dev)).d_tty.and_then(|t| t(dev));
-    Err(unported!("ttkqfilter: klist_insert_locked (kern_event.c)"))
+    let klist = match kn.kn_filter().get() {
+        EVFILT_READ => {
+            kn.kn_fop.set(Some(&TTYREAD_FILTOPS));
+            &tp.t_rsel.si_note
+        }
+        EVFILT_WRITE => {
+            kn.kn_fop.set(Some(&TTYWRITE_FILTOPS));
+            &tp.t_wsel.si_note
+        }
+        EVFILT_EXCEPT => {
+            if kn.has_flags(__EV_SELECT) {
+                // Prevent triggering exceptfds.
+                return Err(Errno::EPERM);
+            }
+            if !kn.has_flags(__EV_POLL) {
+                // Disallow usage through kevent(2).
+                return Err(Errno::EINVAL);
+            }
+            kn.kn_fop.set(Some(&TTYEXCEPT_FILTOPS));
+            &tp.t_rsel.si_note
+        }
+        _ => return Err(Errno::EINVAL),
+    };
+
+    kn.kn_hook.set(ptr::from_ref(tp).cast_mut().cast());
+
+    let s = spltty();
+    klist_insert_locked(klist, kn);
+    splx(s);
+
+    Ok(())
+}
+
+/// `kn->kn_hook` of a tty knote: its tty.
+pub fn kn_tty(kn: &Knote) -> &Tty {
+    // SAFETY: `ttkqfilter` points `kn_hook` at the tty whose klist holds the knote; `ttyfree`
+    // invalidates both klists (`klist_invalidate`, which detaches every knote) before the
+    // tty is freed.
+    match unsafe { kn.kn_hook.get().cast::<Tty>().as_ref() } {
+        Some(tp) => tp,
+        None => panic(format_args!("knote {:p}: no tty", kn)),
+    }
+}
+
+/// `filt_ttyrdetach`: unhooks a read or except knote.
+pub fn filt_ttyrdetach(kn: &Knote) {
+    let tp = kn_tty(kn);
+
+    let s = spltty();
+    klist_remove_locked(&tp.t_rsel.si_note, kn);
+    splx(s);
+}
+
+/// `filt_ttyread`: readable when a read would return characters; EOF (and, for poll, a
+/// hang-up) when the carrier is gone on a line that watches it.
+pub fn filt_ttyread(kn: &Knote, _hint: i64) -> bool {
+    let tp = kn_tty(kn);
+
+    let s = spltty();
+    kn.kn_data().set(i64::from(ttnread(tp)));
+    let mut active = kn.kn_data().get() > 0;
+    if tp.t_cflag() & CLOCAL == 0 && !tp.t_state_isset(TS_CARR_ON) {
+        kn.set_flags(EV_EOF);
+        if kn.has_flags(__EV_POLL) {
+            kn.set_flags(__EV_HUP);
+        }
+        active = true;
+    } else {
+        kn.clear_flags(EV_EOF | __EV_HUP);
+    }
+    splx(s);
+    active
+}
+
+/// `filt_ttywdetach`: unhooks a write knote.
+pub fn filt_ttywdetach(kn: &Knote) {
+    let tp = kn_tty(kn);
+
+    let s = spltty();
+    klist_remove_locked(&tp.t_wsel.si_note, kn);
+    splx(s);
+}
+
+/// `filt_ttywrite`: writable when the output queue is below its low-water mark.
+pub fn filt_ttywrite(kn: &Knote, _hint: i64) -> bool {
+    let tp = kn_tty(kn);
+
+    let s = spltty();
+    kn.kn_data()
+        .set(i64::from(tp.t_outq.c_cn.get() - tp.t_outq.c_cc.get()));
+    let mut active = tp.t_outq.c_cc.get() <= i32::from(tp.t_lowat.get());
+
+    // Write-side HUP condition is only for poll(2) and select(2).
+    if kn.has_flags(__EV_POLL | __EV_SELECT) {
+        if tp.t_cflag() & CLOCAL == 0 && !tp.t_state_isset(TS_CARR_ON) {
+            kn.set_flags(__EV_HUP);
+            active = true;
+        } else {
+            kn.clear_flags(__EV_HUP);
+        }
+    }
+    splx(s);
+    active
+}
+
+/// `filt_ttyexcept`: for poll only, the hang-up of a line whose carrier is gone.
+pub fn filt_ttyexcept(kn: &Knote, _hint: i64) -> bool {
+    let tp = kn_tty(kn);
+    let mut active = false;
+
+    let s = spltty();
+    if kn.has_flags(__EV_POLL) {
+        if tp.t_cflag() & CLOCAL == 0 && !tp.t_state_isset(TS_CARR_ON) {
+            kn.set_flags(__EV_HUP);
+            active = true;
+        } else {
+            kn.clear_flags(__EV_HUP);
+        }
+    }
+    splx(s);
+    active
 }
 
 /// `ttnread`: the characters a read would return now.
@@ -2481,8 +2634,10 @@ pub unsafe fn ttyfree(tp: NonNull<Tty>) {
     unsafe { TTYLIST.0.remove(t) };
     rw_exit_write(&TTYLIST_LOCK);
 
-    // klist_invalidate(&tp->t_rsel.si_note), (&tp->t_wsel.si_note): no knote can be on
-    // them (kern_event.c is not ported).
+    let s = spltty();
+    klist_invalidate(&t.t_rsel.si_note);
+    klist_invalidate(&t.t_wsel.si_note);
+    splx(s);
 
     clfree(&t.t_rawq);
     clfree(&t.t_canq);
