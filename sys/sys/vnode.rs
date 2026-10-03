@@ -67,9 +67,9 @@
 //! - `si_specnext`, the link of the special-device alias chains, is the vnode's own
 //!   `v_specnext` instead of a member of `struct specinfo`: the queue adapters need the link
 //!   inside the element. `vp->v_specnext` reads the same in both.
-//! - `v_uvm` (`struct uvm_vnode`, `uvm_vnode.c`) and `v_klist` (`kern_event.c`) wait for
-//!   their subsystems: `v_uvm` is an opaque pointer that stays null, the knote list is left
-//!   out, and the code that walks it reports itself.
+//! - `v_klist` (`kern_event.c`) waits for its subsystem: the knote list is left out, and the
+//!   code that walks it reports itself. `v_uvm` is `Option<&'static UvmVnode>`: a
+//!   `uvm_vnode_pool` item is never freed either.
 //! - `struct knote *` (`a_kn`) is a raw pointer until `kern_event.c` exists; `struct buf *`
 //!   (`a_bp`) is a `&'static Buf` (`sys/buf.rs`).
 //! - `RBT_HEAD(buf_rb_bufs, buf)` is the [`BufRbBufs`] adapter, ordered by `vfs_subr.c`'s
@@ -101,6 +101,7 @@ use crate::sys::types::{Daddr, Dev, Gid, Mode, Nlink, Register, Uid};
 use crate::sys::ucred::{FSCRED, NOCRED, Ucred};
 use crate::sys::uio::Uio;
 use crate::tree_adapter;
+use crate::uvm::uvm_vnode::UvmVnode;
 
 /// `enum vtype`: vnode types. `VNON` means no type.
 #[repr(i32)]
@@ -206,8 +207,8 @@ pub enum VnodeUn {
 ///
 /// Locks: \[a\] atomic, \[V\] `vnode_mtx`, \[B\] `IPL_BIO`; the rest the kernel lock.
 pub struct Vnode {
-    /// `v_uvm`: uvm data (`struct uvm_vnode`, `uvm_vnode.c`, not ported: always null).
-    pub v_uvm: Cell<*mut c_void>,
+    /// `v_uvm`: uvm data (the vnode pager's object, kept across recycling).
+    pub v_uvm: Cell<Option<&'static UvmVnode>>,
     /// `v_op`: vnode operations vector.
     pub v_op: Cell<Option<&'static Vops>>,
     /// `v_type`: vnode type.
@@ -269,7 +270,7 @@ impl Vnode {
     /// A zeroed vnode, as `pool_get(&vnode_pool, PR_ZERO)` returns it.
     pub const fn new() -> Self {
         Self {
-            v_uvm: Cell::new(ptr::null_mut()),
+            v_uvm: Cell::new(None),
             v_op: Cell::new(None),
             v_type: Cell::new(VNON),
             v_tag: Cell::new(VT_NON),

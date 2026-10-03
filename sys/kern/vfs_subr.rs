@@ -63,8 +63,7 @@
 //! - `bufinsvn`/`bufremvn` keep the buffer's `b_onvnbufs` flag in step with its vnode list
 //!   (the C's `NOLIST`, `sys/buf.rs`); `vinvalbuf` panics if it finds dirty buffers with no
 //!   thread to `VOP_FSYNC` them (the C always has `curproc`).
-//! - Not here yet, reported with `unported!` where the C calls them:
-//!   `uvm_vnp_terminate`/`uvm_vnp_sync` (`uvm_vnode.c`), the device switch
+//! - Not here yet, reported with `unported!` where the C calls them: the device switch
 //!   (`cdevsw[].d_type`/`d_flags`, `nblkdev`: `conf.c`, through `spec_vnops.rs`).
 //!   `VN_KNOTE(vp, NOTE_REVOKE)` has no knotes to post (`kern_event.c`).
 //! - `copy_statfs_info` never receives the mount's own `mnt_stat` (the callers pass a copy,
@@ -147,7 +146,7 @@ use crate::sys::vnode::{
     VFIFO, VFreelist, VISTTY, VLNK, VNON, VNOVAL, VREAD, VREG, VROOT, VSOCK, VSYSTEM, VSynclist,
     VT_NON, VWRITE, VXLOCK, VXWANT, Vattr, Vnode, VnodeUn, Vops, Vtagtype, Vtype, WRITECLOSE,
 };
-use crate::unported;
+use crate::uvm::uvm_vnode::{uvm_vnp_sync, uvm_vnp_terminate};
 
 /// `iftovt_tab[]`: the vnode type of each inode format (`IFTOVT`).
 pub const IFTOVT_TAB: [Vtype; 16] = [
@@ -1110,14 +1109,6 @@ pub fn vclean(vp: &'static Vnode, flags: i32, p: Option<&Proc>) {
     }
 }
 
-/// `uvm_vnp_terminate(vp)`: the vnode pager (`uvm_vnode.c`) is not ported, so no vnode has
-/// VM data to clean out.
-fn uvm_vnp_terminate(vp: &Vnode) {
-    if !vp.v_uvm.get().is_null() {
-        let _ = unported!("uvm_vnp_terminate (uvm_vnode.c)");
-    }
-}
-
 /// Recycle an unused vnode to the front of the free list.
 pub fn vrecycle(vp: &'static Vnode, p: Option<&Proc>) -> bool {
     if vp.v_usecount.get() == 0 {
@@ -1549,7 +1540,7 @@ pub fn vfs_stall(p: &Proc, stall: bool) -> Result<(), Errno> {
                 allerror = Err(error);
                 continue;
             }
-            uvm_vnp_sync(mp);
+            uvm_vnp_sync(Some(mp));
             if let Err(error) = VFS_SYNC(mp, MNT_WAIT, 1, p.p_ucred.get(), p) {
                 kprintf!("{}: failed to sync\n", name);
                 vfs_unbusy(mp);
@@ -1569,18 +1560,6 @@ pub fn vfs_stall(p: &Proc, stall: bool) -> Result<(), Errno> {
     }
 
     allerror
-}
-
-/// `uvm_vnp_sync(mp)`: the vnode pager (`uvm_vnode.c`) is not ported.
-pub fn uvm_vnp_sync(_mp: &'static Mount) {
-    let _ = unported!("uvm_vnp_sync (uvm_vnode.c)");
-}
-
-/// `uvm_vnp_uncache(vp)`: drops the vnode's cached pages, true when nothing maps it. The
-/// vnode pager (`uvm_vnode.c`) is not ported, so no vnode has pages to drop.
-pub fn uvm_vnp_uncache(_vp: &'static Vnode) -> bool {
-    let _ = unported!("uvm_vnp_uncache (uvm_vnode.c)");
-    true
 }
 
 /// `vfs_stall_barrier()`: waits while the file systems are stalled.

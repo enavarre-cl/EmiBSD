@@ -60,7 +60,7 @@
 //! - Not here yet, reported with `unported!`: `sys_unveil` (`kern_unveil.c`, whole),
 //!   `pledge_flock`/`pledge_chown` (`kern_pledge.c`, only for a pledged process),
 //!   `unveil_removevnode` (only for an unveiled
-//!   vnode, which none can be), `uvm_vnp_sync`/`uvm_vnp_uncache` (`uvm_vnode.c`), the device
+//!   vnode, which none can be), the device
 //!   switch of `sys_revoke` (`conf.c`, through `spec_vnops.rs`).
 //! - `option FIFO` is not configured (`miscfs/fifofs` is not ported): `mkfifo` answers
 //!   `EOPNOTSUPP` as the C does without it.
@@ -88,8 +88,8 @@ use crate::kern::vfs_getcwd::vfs_getcwd_common;
 use crate::kern::vfs_init::{NAMEI_POOL, rootvnode, set_rootvnode, vfs_byname};
 use crate::kern::vfs_lookup::{namei, ndinit, ndinitat};
 use crate::kern::vfs_subr::{
-    MOUNTLIST, uvm_vnp_sync, uvm_vnp_uncache, vattr_null, vfs_busy, vfs_getvfs, vfs_mount_alloc,
-    vfs_mount_free, vfs_unbusy, vgone, vinvalbuf, vnoperm, vput, vref, vrele,
+    MOUNTLIST, vattr_null, vfs_busy, vfs_getvfs, vfs_mount_alloc, vfs_mount_free, vfs_unbusy,
+    vgone, vinvalbuf, vnoperm, vput, vref, vrele,
 };
 use crate::kern::vfs_sync::vfs_allocate_syncvnode;
 use crate::kern::vfs_vnops::{VNOPS, vn_lock, vn_open, vn_stat, vn_writechk};
@@ -147,6 +147,7 @@ use crate::sys::vnode::{
     VCHR, VDIR, VEXEC, VNOVAL, VREAD, VROOT, VSGID, VSUID, VWRITE, Vattr, Vnode,
 };
 use crate::unported;
+use crate::uvm::uvm_vnode::{uvm_vnp_sync, uvm_vnp_uncache};
 
 /// The user address of a pathname argument.
 fn upath(path: *const u8) -> NiDirp<'static> {
@@ -647,7 +648,7 @@ pub fn sys_sync(p: &Proc, _v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
         if mp.mnt_flag.get() & MNT_RDONLY == 0 {
             let asyncflag = mp.mnt_flag.get() & MNT_ASYNC;
             mp.mnt_flag.set(mp.mnt_flag.get() & !MNT_ASYNC);
-            uvm_vnp_sync(mp);
+            uvm_vnp_sync(Some(mp));
             let _ = VFS_SYNC(mp, MNT_NOWAIT, 0, p.p_ucred.get(), p);
             if asyncflag != 0 {
                 mp.mnt_flag.set(mp.mnt_flag.get() | MNT_ASYNC);

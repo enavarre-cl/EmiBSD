@@ -96,6 +96,13 @@ pub trait Pmap {
     /// was set.
     fn pmap_clear_modify(pg: &VmPage) -> bool;
 
+    /// `pmap_clear_reference(pg)`: clears the referenced bit of every mapping of `pg`; whether
+    /// any was set.
+    fn pmap_clear_reference(pg: &VmPage) -> bool;
+
+    /// `pmap_is_modified(pg)`: whether any mapping of `pg` has its modified bit set.
+    fn pmap_is_modified(pg: &VmPage) -> bool;
+
     /// `pmap_remove_holes(vm)`: makes the MMU's unmappable holes unavailable in the map
     /// (nothing on amd64 and arm64).
     fn pmap_remove_holes(vm: &Vmspace);
@@ -233,6 +240,16 @@ pub fn pmap_page_protect(pg: &VmPage, prot: VmProt) {
 /// `pmap_clear_modify` on the selected machine.
 pub fn pmap_clear_modify(pg: &VmPage) -> bool {
     Machine::pmap_clear_modify(pg)
+}
+
+/// `pmap_clear_reference` on the selected machine.
+pub fn pmap_clear_reference(pg: &VmPage) -> bool {
+    Machine::pmap_clear_reference(pg)
+}
+
+/// `pmap_is_modified` on the selected machine.
+pub fn pmap_is_modified(pg: &VmPage) -> bool {
+    Machine::pmap_is_modified(pg)
 }
 
 /// `pmap_remove_holes` on the selected machine.

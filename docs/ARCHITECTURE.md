@@ -377,8 +377,7 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   root is mounted), `check_console` warns that `/dev/console` does not exist, and init is
   still exec'd from its boot module. The stand-in `init` checks that the path system calls
   reach `namei` and fail that way (`init: vfs ok (no root file system)` in `smoke`). What
-  stage 2 must bring is reported where the C calls it: the vnode pager
-  (`uvm_vnode.c`: `uvm_vnp_*`), the device switch (`<sys/conf.h>` and each arch's `conf.c`:
+  stage 2 must bring is reported where the C calls it: the device switch (`<sys/conf.h>` and each arch's `conf.c`:
   `nchrdev`/`nblkdev` are 0, so `spec_open` is `ENXIO`) and the first file system.
   `pledge` and `unveil` (`kern_pledge.c`, `kern_unveil.c`) are reported for a pledged
   process or an unveiled vnode, which none can be yet; the unveil hooks of `namei` return
@@ -400,6 +399,17 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   `bufq(9)` yet. On the host double (no MMU) the arena is only counted and a buffer's pages
   are one physical segment reached through the direct map. A boot self-test writes and
   reads back anonymous buffers (`selftest: buffer cache ok` in `smoke`).
+  The vnode pager (`uvm_vnode.c`, `<uvm/uvm_vnode.h>`) and the vnode half of `uvm_pager.c`
+  (the pager map `uvm_pseg_*`/`uvm_pagermapin`, `uvm_mk_pcluster`, `uvm_pager_put`) are
+  OpenBSD's: `uvn_attach(vp, prot)` gives the object a mapping uses, pages come in one at a
+  time through `VOP_READ` and go out in clusters through `VOP_WRITE`, and an unmapped object
+  persists with its pages until `vclean` calls `uvm_vnp_terminate`. `pmap_is_modified` and
+  `pmap_clear_reference` joined the `machine::pmap` contract for it (and for
+  `uvm_pagedeactivate`). Still missing for exec and `mmap(2)` of files: `sys_execve` and
+  `vmcmd_map_pagedvn` over a vnode (exec runs on a boot module image), `uvm_mmapfile` and the
+  device pager (`uvm_device.c`); the async swap pageout of `uvm_pager.c` waits for the swap
+  pager. A boot self-test maps a three-page cluster through the pager map (`selftest: pager
+  map ok`).
   A device vnode keeps its `struct lockf_state *` in `specinfo` (`si_lockf`, a
   `LockfStateSlot`), so `spec_advlock` and `vgonel`'s purge are the C's; a file system's
   inode will keep one the same way. `pool_get(PR_WAITOK)` cannot sleep yet, so a lock

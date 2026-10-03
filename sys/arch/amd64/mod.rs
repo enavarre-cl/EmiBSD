@@ -298,6 +298,14 @@ impl Pmap for Machine {
         include::pmap::pmap_clear_modify(pg)
     }
 
+    fn pmap_clear_reference(pg: &VmPage) -> bool {
+        include::pmap::pmap_clear_reference(pg)
+    }
+
+    fn pmap_is_modified(pg: &VmPage) -> bool {
+        include::pmap::pmap_is_modified(pg)
+    }
+
     unsafe fn pmap_steal_memory(
         size: Vsize,
         start: Option<&mut Vaddr>,

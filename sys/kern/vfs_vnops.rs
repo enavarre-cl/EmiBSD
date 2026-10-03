@@ -66,7 +66,7 @@ use crate::kern::kern_sig::psignal;
 use crate::kern::kern_synch::{msleep_nsec, wakeup_one};
 use crate::kern::vfs_getcwd::vfs_getcwd_common;
 use crate::kern::vfs_lookup::namei;
-use crate::kern::vfs_subr::{VNODE_MTX, uvm_vnp_uncache, vattr_null, vput, vref, vrele};
+use crate::kern::vfs_subr::{VNODE_MTX, vattr_null, vput, vref, vrele};
 use crate::kern::vfs_vops::{
     VOP_ABORTOP, VOP_ACCESS, VOP_ADVLOCK, VOP_CLOSE, VOP_CREATE, VOP_GETATTR, VOP_IOCTL,
     VOP_KQFILTER, VOP_LOCK, VOP_OPEN, VOP_READ, VOP_SETATTR, VOP_UNLOCK, VOP_WRITE,
@@ -104,6 +104,7 @@ use crate::sys::vnode::{
     VCHR, VCLONED, VDIR, VFIFO, VLNK, VNON, VREAD, VREG, VSOCK, VTEXT, VWRITE, VXLOCK, VXWANT,
     Vattr, Vnode,
 };
+use crate::uvm::uvm_vnode::uvm_vnp_uncache;
 
 /// `vnops`: the file operations of a `DTYPE_VNODE` file.
 pub static VNOPS: Fileops = Fileops {

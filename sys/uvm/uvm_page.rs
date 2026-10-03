@@ -97,8 +97,6 @@
 //! - The page queue locks (`uvm_lock_pageq`, `uvm_lock_fpageq`) are documented no-ops until the
 //!   mutex arrives (M5); the owner-lock assertions (`rw_write_held`) answer true for the same
 //!   reason, and `uvm_pagewait` reports `rwsleep` as unported.
-//! - `pmap_page_protect`, `pmap_clear_reference` and `pmap_is_modified` (the managed-mapping
-//!   side of the pmap, M6) are reported as unported where the queue code calls them.
 //! - `uvm_page_physload` after `uvm_init` needs `km_alloc` (`uvm_km.c`, later in M3): the
 //!   non-preload path reports it and ignores the segment, as the C does when the allocation
 //!   fails.
@@ -1337,7 +1335,7 @@ pub fn uvm_pagedeactivate(pg: &VmPage) {
     }
 
     // Make sure next access to this page will fault.
-    let _ = unported!("pmap_page_protect (uvm_pagedeactivate)");
+    Machine::pmap_page_protect(pg, PROT_NONE);
 
     uvm_pagedequeue(pg);
     // SAFETY: the page was dequeued just above, so it is on no queue.
@@ -1346,10 +1344,12 @@ pub fn uvm_pagedeactivate(pg: &VmPage) {
     UVMEXP.inactive.fetch_add(1, Ordering::Relaxed);
     uvm_unlock_pageq();
 
-    let _ = unported!("pmap_clear_reference (uvm_pagedeactivate)");
+    let _ = crate::machine::pmap::pmap_clear_reference(pg);
     // update the "clean" bit. this isn't 100% accurate, and doesn't have to be. we'll re-sync
     // it after we zap all mappings when scanning the inactive list.
-    // if ((pg->pg_flags & PG_CLEAN) != 0 && pmap_is_modified(pg)) clear PG_CLEAN: M6.
+    if pg.flags() & PG_CLEAN != 0 && crate::machine::pmap::pmap_is_modified(pg) {
+        pg.clear_bits(PG_CLEAN);
+    }
 }
 
 /// `uvm_pageactivate`: activate page (unless wired).

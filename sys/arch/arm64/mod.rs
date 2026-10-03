@@ -296,6 +296,14 @@ impl Pmap for Machine {
         arm64::pmap::pmap_clear_modify(pg)
     }
 
+    fn pmap_clear_reference(pg: &VmPage) -> bool {
+        arm64::pmap::pmap_clear_reference(pg)
+    }
+
+    fn pmap_is_modified(pg: &VmPage) -> bool {
+        arm64::pmap::pmap_is_modified(pg)
+    }
+
     unsafe fn pmap_steal_memory(
         size: Vsize,
         start: Option<&mut Vaddr>,

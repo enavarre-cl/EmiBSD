@@ -45,8 +45,8 @@
 //! Upstream: sys/kern/vfs_init.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `vfsconflist[]` is empty: no file system is ported yet (stage 2 brings the first, with
-//!   the buffer cache and the vnode pager). Each GENERIC entry (`FFS`, `MFS`, `EXT2FS`,
+//! - `vfsconflist[]` is empty: no file system is ported yet (the buffer cache and the vnode
+//!   pager are there for the first). Each GENERIC entry (`FFS`, `MFS`, `EXT2FS`,
 //!   `CD9660`, `MSDOSFS`, `NFSCLIENT`, `NTFS`, `UDF`, `FUSE`, `TMPFS`) joins as a
 //!   `Vfsconf::new(...)` line when its file system does, behind a cargo feature named after
 //!   the `option(4)`.

@@ -377,6 +377,61 @@ pub fn buffer_cache() {
     }
 }
 
+/// The pager map: three busy pages, filled through the direct map, are mapped together in a
+/// pager segment (`uvm_pagermapin`, the vnode pager's path for a cluster) and read back
+/// through it; a single page uses the direct map. Then everything is given back.
+pub fn pager_map() {
+    use crate::uvm::uvm_page::{uvm_pagealloc, uvm_pagefree};
+    use crate::uvm::uvm_pager::{UVMPAGER_MAPIN_READ, uvm_pagermapin, uvm_pagermapout};
+
+    let mut pages: Vec<&'static crate::uvm::uvm_page::VmPage> = Vec::new();
+    for _ in 0..3 {
+        match uvm_pagealloc(None, 0, None, 0) {
+            Some(pg) => pages.push(pg),
+            None => {
+                kprintf!("selftest: pager map FAILED (uvm_pagealloc)\n");
+                return;
+            }
+        }
+    }
+    for (i, pg) in pages.iter().enumerate() {
+        pg.set_bits(crate::uvm::uvm_page::PG_BUSY);
+        let va = pmap_map_direct(pg).as_usize();
+        // SAFETY: a page this test just allocated, reached through the direct map.
+        unsafe { ptr::write_bytes(va as *mut u8, 0x40 + i as u8, PAGE_SIZE) };
+    }
+    let pps: Vec<*const crate::uvm::uvm_page::VmPage> =
+        pages.iter().map(|pg| ptr::from_ref(*pg)).collect();
+
+    let mut ok = true;
+    let kva = uvm_pagermapin(&pps, 3, UVMPAGER_MAPIN_READ);
+    if kva == 0 {
+        kprintf!("selftest: pager map FAILED (uvm_pagermapin)\n");
+        ok = false;
+    } else {
+        for i in 0..3 {
+            // SAFETY: `kva` maps the three pages in order (uvm_pagermapin).
+            let b = unsafe { ptr::read_volatile((kva + i * PAGE_SIZE + 17) as *const u8) };
+            ok &= b == 0x40 + i as u8;
+        }
+        uvm_pagermapout(kva, 3);
+    }
+    let one = uvm_pagermapin(&pps[2..], 1, UVMPAGER_MAPIN_READ);
+    // SAFETY: the single page's mapping (the direct map).
+    ok &= one != 0 && unsafe { ptr::read_volatile(one as *const u8) } == 0x42;
+    uvm_pagermapout(one, 1);
+
+    for pg in pages {
+        pg.clear_bits(crate::uvm::uvm_page::PG_BUSY);
+        uvm_pagefree(pg);
+    }
+    if ok {
+        kprintf!("selftest: pager map ok\n");
+    } else {
+        kprintf!("selftest: pager map FAILED\n");
+    }
+}
+
 /// Builds, copies, pulls up, splits and frees mbuf chains right after `mbinit`, so the mbuf
 /// and cluster pools allocate real pages through `m_pool_allocator` on the machine, and
 /// checks that every mbuf, cluster and tag goes back to its pool.

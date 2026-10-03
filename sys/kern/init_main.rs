@@ -215,7 +215,10 @@ pub fn main() -> ! {
     let _ = unported!("tty_init"); // initialise tty's
     cpu_startup();
     #[cfg(feature = "qemu")]
-    crate::kern::selftest::buffer_cache();
+    {
+        crate::kern::selftest::buffer_cache();
+        crate::kern::selftest::pager_map();
+    }
 
     let _ = unported!("random_start"); // Start the flow
 

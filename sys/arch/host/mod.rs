@@ -555,6 +555,16 @@ impl Pmap for Machine {
         false
     }
 
+    /// Nothing is ever referenced on the host.
+    fn pmap_clear_reference(_pg: &VmPage) -> bool {
+        false
+    }
+
+    /// Nothing is ever modified on the host.
+    fn pmap_is_modified(_pg: &VmPage) -> bool {
+        false
+    }
+
     /// Boot memory comes from the host allocator and is never returned; the frames it stands
     /// for leave `vm_physmem[]` through `uvm_page_physsteal`, as on a real machine, so
     /// `uvm_page_init`'s page count adds up.

@@ -54,8 +54,9 @@
 //! the `UVM_OBJ_IS_*` tests that have a pager to compare with.
 //!
 //! ## Deviations
-//! - `UVM_OBJ_IS_VNODE`/`IS_DEVICE`/`IS_VTEXT` answer false: `uvm_vnodeops` and
-//!   `uvm_deviceops` do not exist yet (M7).
+//! - `UVM_OBJ_IS_DEVICE` answers false: `uvm_deviceops` (`uvm_device.c`) does not exist yet.
+//! - `UVM_OBJ_IS_VTEXT` tests `VTEXT` on the object's vnode (`uvn->u_vnode`): the C casts the
+//!   object itself to `struct vnode *`, which reads a member of the `uvm_vnode` instead.
 //! - `UvmObject::new(refs)` is the `const` form of `uvm_obj_init(uobj, &pmap_pager, refs)`
 //!   for the objects that live in statics (the pmaps' PTP objects): a dummy, lockless object.
 
@@ -69,6 +70,7 @@ use crate::sys::mman::{MADV_SEQUENTIAL, PROT_READ, PROT_WRITE};
 use crate::sys::param::{PAGE_SHIFT, PAGE_SIZE};
 use crate::sys::rwlock::{RW_DUPOK, RW_WRITE, Rwlock};
 use crate::sys::tree::{RbtEntry, RbtHead};
+use crate::sys::vnode::VTEXT;
 use crate::tree_adapter;
 use crate::uvm::uvm_aobj::{AOBJ_PAGER, uao_dropswap};
 use crate::uvm::uvm_extern::Voff;
@@ -77,6 +79,7 @@ use crate::uvm::uvm_page::{
     uvm_pagelookup, uvm_pageunwire, uvm_pagewire, uvm_pglistfree,
 };
 use crate::uvm::uvm_pager::{PGO_ALLPAGES, PGO_SYNCIO, UvmPagerops};
+use crate::uvm::uvm_vnode::{UVM_VNODEOPS, uvn_of};
 
 /// `UVM_OBJ_KERN` is a 'special' `uo_refs` value which indicates that the object is a kernel
 /// memory object rather than a normal one (kernel memory objects don't have reference counts:
@@ -171,10 +174,9 @@ pub fn uvm_obj_is_kern_object(uobj: &UvmObject) -> bool {
     uobj.uo_refs.get() == UVM_OBJ_KERN
 }
 
-/// `UVM_OBJ_IS_VNODE(uobj)`: false until the vnode pager exists (see the module's
-/// deviations).
-pub fn uvm_obj_is_vnode(_uobj: &UvmObject) -> bool {
-    false
+/// `UVM_OBJ_IS_VNODE(uobj)`.
+pub fn uvm_obj_is_vnode(uobj: &UvmObject) -> bool {
+    pgops_is(uobj, &UVM_VNODEOPS)
 }
 
 /// `UVM_OBJ_IS_DEVICE(uobj)`: false until the device pager exists.
@@ -182,9 +184,10 @@ pub fn uvm_obj_is_device(_uobj: &UvmObject) -> bool {
     false
 }
 
-/// `UVM_OBJ_IS_VTEXT(uobj)`: false until the vnode pager exists.
-pub fn uvm_obj_is_vtext(_uobj: &UvmObject) -> bool {
-    false
+/// `UVM_OBJ_IS_VTEXT(uobj)`: a vnode object whose vnode is a running text (`VTEXT`; see the
+/// module's deviations).
+pub fn uvm_obj_is_vtext(uobj: &UvmObject) -> bool {
+    uvn_of(uobj).is_some_and(|uvn| uvn.vnode().v_flag.get() & VTEXT != 0)
 }
 
 /// `UVM_OBJ_IS_AOBJ(uobj)`.
