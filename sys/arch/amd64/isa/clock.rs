@@ -91,38 +91,60 @@ WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 //! polls with before the TSC is calibrated; M5 adds the i8254 timecounter (`i8254_timecounter`,
 //! `i8254_get_timecount`, `i8254_simple_get_timecount`, `i8254_inittimecounter[_simple]`),
 //! `timer_mutex`, `startclocks`, `i8254_startclock`, `clockintr`, `i8254_initclocks`,
-//! `i8254_start_both_clocks` and `setstatclockrate`. The mc146818 real-time clock
-//! (`mc146818_read/write`, `rtcintr`, `rtcstart/stop`, `rtcget/put`, `rtcgettime/settime`,
-//! `rtcinit`, `rtcalarm_*`, `cmoscheck`, `clock_expandyear`, `bcdtobin/bintobcd`) comes with
-//! the time-of-day clocks (`todr_attach`, M7).
+//! `i8254_start_both_clocks` and `setstatclockrate`. M8 adds the mc146818 time-of-day clock:
+//! `mc146818_read/write`, `rtcget/put`, `bcdtobin/bintobcd`, `cmoscheck`, `rtc_update_century`,
+//! `clock_expandyear`, `rtcgettime/settime`, `rtc_todr`, `rtcinit` (called from `cpu_startup`)
+//! and `rtcalarm_suspend/resume/fired`. What is left of the RTC is its periodic interrupt
+//! (`rtcintr`, `rtcdrain`, `rtcstart`, `rtcstop`), which is the statclock on the i8254 path.
 //!
 //! ## Deviations
-//! - The RTC is not here (M7): `i8254_start_both_clocks` establishes IRQ0 and reports the
-//!   RTC's IRQ8 statclock and `rtcstart`; `setstatclockrate` on the i8254 path reports the
-//!   rate change (an RTC register write).
+//! - The RTC's periodic interrupt is not here: `i8254_start_both_clocks` establishes IRQ0 and
+//!   reports the RTC's IRQ8 statclock and `rtcstart`; `setstatclockrate` on the i8254 path
+//!   reports the rate change (an RTC register write).
 //! - A negative `n` in `i8254_delay` is treated as 0 (the C indexes `delaytab` with it).
+//! - `mc146818_read/write` drop the `sc` argument (the C always passes NULL: "XXX softc").
+//! - `rtcget` returns `Err(EINVAL)` where the C returns -1, and fills the registers in place.
+//!   The century byte is the plain `NVRAM_CENTURY` where the C keeps it in the `centb` variable.
+//! - `rtc_update_century` is an atomic (the C's patchable `int`); `rtc_todr` is a `static`
+//!   [`TodrChipHandle`] handed to `todr_attach`.
+//! - `CLOCK_DEBUG` is not configured.
+//! - The `#[cfg(test)]` tests below are not compiled by `just test`: amd64's modules build
+//!   only for the bare target, as for the rest of `sys/arch/amd64/`.
 
 use core::ffi::c_void;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
-use crate::arch::amd64::amd64::machdep::initclock_is_i8254;
+use crate::arch::amd64::amd64::machdep::{delay, initclock_is_i8254};
 use crate::arch::amd64::include::cpufunc::{intr_disable, intr_restore};
 use crate::arch::amd64::include::intr::IntrFn;
 use crate::arch::amd64::include::intrdefs::{IPL_CLOCK, IPL_HIGH, IPL_MPSAFE, IST_PULSE};
 use crate::arch::amd64::include::pio::{inb, outb};
 use crate::arch::amd64::isa::isa_machdep::isa_intr_establish;
-use crate::conf::param::HZ;
+use crate::arch::amd64::isa::nvram::NVRAM_CENTURY;
+use crate::conf::param::{HZ, UTC_OFFSET};
+use crate::dev::clock_subr::TodrChipHandle;
 use crate::dev::ic::i8253reg::{
     TIMER_16BIT, TIMER_CNTR0, TIMER_FREQ, TIMER_LATCH, TIMER_MODE, TIMER_RATEGEN, TIMER_SEL0,
     timer_div,
 };
-use crate::dev::isa::isareg::IO_TIMER1;
+use crate::dev::ic::mc146818reg::{
+    MC_AHOUR, MC_AMIN, MC_ASEC, MC_DOM, MC_DOW, MC_HOUR, MC_MIN, MC_MONTH, MC_NTODREGS, MC_REGB,
+    MC_REGB_24HR, MC_REGB_AIE, MC_REGC, MC_REGC_AF, MC_REGD, MC_REGD_VRT, MC_SEC, MC_YEAR,
+    McTodregs, mc146818_gettod, mc146818_puttod,
+};
+use crate::dev::isa::isareg::{IO_RTC, IO_TIMER1};
+use crate::kern::clock_subr::{clock_secs_to_ymdhms, clock_ymdhms_to_secs};
 use crate::kern::kern_clock::{PROFHZ, STATHZ};
 use crate::kern::kern_clockintr::{clockintr_cpu_init, clockintr_dispatch};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_tc::{tc_init, timecounter};
+use crate::kern::kern_time::todr_attach;
+use crate::kprintf;
+use crate::machine::intr::{splclock, splx};
+use crate::sys::errno::Errno;
 use crate::sys::mutex::Mutex;
+use crate::sys::time::{ClockYmdhms, Timeval, timeradd};
 use crate::sys::timetc::{Timecounter, TimecounterGet};
 use crate::unported;
 
@@ -145,7 +167,27 @@ static TIMER_MUTEX: Mutex = Mutex::new(IPL_HIGH);
 /// `rtclock_tval`: the reload value timer 0 counts down from.
 pub static RTCLOCK_TVAL: AtomicU64 = AtomicU64::new(0);
 
-// mc146818_read, mc146818_write: the RTC (M7).
+/// `mc146818_read`: reads RTC register or NVRAM byte `reg`.
+pub fn mc146818_read(reg: u32) -> u32 {
+    // SAFETY: the mc146818 answers at IO_RTC (index) and IO_RTC + 1 (data) on every PC;
+    // selecting a register and reading it is the chip's documented access sequence.
+    unsafe {
+        outb(IO_RTC, reg as u8);
+        delay(1);
+        u32::from(inb(IO_RTC + 1))
+    }
+}
+
+/// `mc146818_write`: writes `datum` to RTC register or NVRAM byte `reg`.
+pub fn mc146818_write(reg: u32, datum: u32) {
+    // SAFETY: as for `mc146818_read`; the caller chose the register and the value.
+    unsafe {
+        outb(IO_RTC, reg as u8);
+        delay(1);
+        outb(IO_RTC + 1, datum as u8);
+        delay(1);
+    }
+}
 
 /// `startclocks`: starts timer 0 at `hz`.
 pub fn startclocks() {
@@ -180,7 +222,7 @@ pub fn clockintr(frame: *mut c_void) -> i32 {
     1
 }
 
-// rtcintr: the RTC's periodic interrupt (M7).
+// rtcintr: the RTC's periodic interrupt (not ported, see the module's deviations).
 
 /// `gettick`: the current value of timer 0, latched.
 pub fn gettick() -> i32 {
@@ -233,7 +275,7 @@ pub fn i8254_delay(n: i32) {
     }
 }
 
-// rtcdrain: the RTC (M7).
+// rtcdrain: the RTC's periodic interrupt (not ported, see the module's deviations).
 
 /// `i8254_initclocks`: the i8254 drives hardclock and the RTC the statclock.
 pub fn i8254_initclocks() {
@@ -266,9 +308,227 @@ pub fn i8254_start_both_clocks() {
     let _ = unported!("rtcstart (the mc146818 clock, M7)");
 }
 
-// rtcstart, rtcstop, rtcget, rtcput, bcdtobin, bintobcd, cmoscheck, rtc_update_century,
-// clock_expandyear, rtcgettime, rtcsettime, rtc_todr, rtcinit, rtcalarm_suspend,
-// rtcalarm_resume, rtcalarm_fired: the RTC (M7).
+// rtcstart, rtcstop: the RTC's periodic interrupt (not ported, see the module's deviations).
+
+/// `rtcget`: reads the TOD/alarm registers; fails when the chip's battery is dead (VRT clear).
+pub fn rtcget(regs: &mut McTodregs) -> Result<(), Errno> {
+    if (mc146818_read(MC_REGD) & MC_REGD_VRT) == 0 {
+        // XXX softc
+        return Err(Errno::EINVAL);
+    }
+    mc146818_gettod(regs, mc146818_read);
+    Ok(())
+}
+
+/// `rtcput`: writes the TOD/alarm registers.
+pub fn rtcput(regs: &McTodregs) {
+    mc146818_puttod(regs, mc146818_read, mc146818_write);
+}
+
+/// `bcdtobin`.
+pub fn bcdtobin(n: i32) -> i32 {
+    ((n >> 4) & 0x0f) * 10 + (n & 0x0f)
+}
+
+/// `bintobcd`.
+pub fn bintobcd(n: i32) -> i32 {
+    ((((n / 10) << 4) & 0xf0) as u8 as i32) | ((n % 10) & 0x0f)
+}
+
+/// `cmoscheck`: check whether the CMOS layout is "standard"-like (ie, not PS/2-like), to be
+/// called at `splclock()`.
+fn cmoscheck() -> bool {
+    let mut cksum: u16 = 0;
+
+    for i in 0x10..=0x2d {
+        cksum = cksum.wrapping_add(mc146818_read(i) as u16);
+    }
+
+    u32::from(cksum) == (mc146818_read(0x2e) << 8) + mc146818_read(0x2f)
+}
+
+/// `rtc_update_century`: patchable to control century byte handling:
+/// 1: always update
+/// -1: never touch
+/// 0: try to figure out itself
+pub static RTC_UPDATE_CENTURY: AtomicI32 = AtomicI32::new(0);
+
+/// `clock_expandyear`: expand a two-digit year as read from the clock chip into full width.
+/// Being here, deal with the CMOS century byte.
+fn clock_expandyear(clockyear: i32) -> i32 {
+    let clockcentury = if clockyear < 70 { 20 } else { 19 };
+    let clockyear = clockyear + 100 * clockcentury;
+
+    if RTC_UPDATE_CENTURY.load(Ordering::Relaxed) < 0 {
+        return clockyear;
+    }
+
+    let s = splclock();
+    let cmoscentury = if cmoscheck() {
+        mc146818_read(NVRAM_CENTURY) as i32
+    } else {
+        0
+    };
+    splx(s);
+    if cmoscentury == 0 {
+        return clockyear;
+    }
+
+    let cmoscentury = bcdtobin(cmoscentury);
+
+    if cmoscentury != clockcentury {
+        // XXX note: saying "century is 20" might confuse the naive.
+        kprintf!(
+            "WARNING: NVRAM century is {} but RTC year is {}\n",
+            cmoscentury,
+            clockyear
+        );
+
+        // Kludge to roll over century.
+        if RTC_UPDATE_CENTURY.load(Ordering::Relaxed) > 0
+            || (cmoscentury == 19 && clockcentury == 20 && clockyear == 2000)
+        {
+            kprintf!("WARNING: Setting NVRAM century to {}\n", clockcentury);
+            let s = splclock();
+            mc146818_write(NVRAM_CENTURY, bintobcd(clockcentury) as u32);
+            splx(s);
+        }
+    } else if cmoscentury == 19 && RTC_UPDATE_CENTURY.load(Ordering::Relaxed) == 0 {
+        RTC_UPDATE_CENTURY.store(1, Ordering::Relaxed); // will update later in resettodr()
+    }
+
+    clockyear
+}
+
+/// The date and time the TOD registers hold (`rtcgettime` and `rtcalarm_suspend` both decode
+/// them this way); the day of the week is not read.
+fn rtc_decode(rtclk: &McTodregs) -> ClockYmdhms {
+    ClockYmdhms {
+        dt_sec: bcdtobin(rtclk[MC_SEC as usize] as i32) as u8,
+        dt_min: bcdtobin(rtclk[MC_MIN as usize] as i32) as u8,
+        dt_hour: bcdtobin(rtclk[MC_HOUR as usize] as i32) as u8,
+        dt_day: bcdtobin(rtclk[MC_DOM as usize] as i32) as u8,
+        dt_mon: bcdtobin(rtclk[MC_MONTH as usize] as i32) as u8,
+        dt_year: clock_expandyear(bcdtobin(rtclk[MC_YEAR as usize] as i32)) as u16,
+        dt_wday: 0,
+    }
+}
+
+/// `rtcgettime`: the chip's time, as the `todr_gettime` of `rtc_todr`.
+pub fn rtcgettime(_handle: &TodrChipHandle, tv: &mut Timeval) -> Result<(), Errno> {
+    let mut rtclk: McTodregs = [0; MC_NTODREGS];
+
+    let s = splclock();
+    if let Err(e) = rtcget(&mut rtclk) {
+        splx(s);
+        return Err(e);
+    }
+    splx(s);
+
+    let dt = rtc_decode(&rtclk);
+
+    tv.tv_sec = clock_ymdhms_to_secs(&dt) - i64::from(UTC_OFFSET.load(Ordering::Relaxed));
+    tv.tv_usec = 0;
+    Ok(())
+}
+
+/// `rtcsettime`: sets the chip's time, as the `todr_settime` of `rtc_todr`.
+pub fn rtcsettime(_handle: &TodrChipHandle, tv: &mut Timeval) -> Result<(), Errno> {
+    let mut rtclk: McTodregs = [0; MC_NTODREGS];
+
+    let s = splclock();
+    if rtcget(&mut rtclk).is_err() {
+        rtclk = [0; MC_NTODREGS];
+    }
+    splx(s);
+
+    let dt = clock_secs_to_ymdhms(tv.tv_sec + i64::from(UTC_OFFSET.load(Ordering::Relaxed)));
+
+    rtclk[MC_SEC as usize] = bintobcd(i32::from(dt.dt_sec)) as u32;
+    rtclk[MC_MIN as usize] = bintobcd(i32::from(dt.dt_min)) as u32;
+    rtclk[MC_HOUR as usize] = bintobcd(i32::from(dt.dt_hour)) as u32;
+    rtclk[MC_DOW as usize] = u32::from(dt.dt_wday) + 1;
+    rtclk[MC_YEAR as usize] = bintobcd(i32::from(dt.dt_year) % 100) as u32;
+    rtclk[MC_MONTH as usize] = bintobcd(i32::from(dt.dt_mon)) as u32;
+    rtclk[MC_DOM as usize] = bintobcd(i32::from(dt.dt_day)) as u32;
+
+    let s = splclock();
+    rtcput(&rtclk);
+    if RTC_UPDATE_CENTURY.load(Ordering::Relaxed) > 0 {
+        let century = bintobcd(i32::from(dt.dt_year) / 100);
+        mc146818_write(NVRAM_CENTURY, century as u32); // XXX softc
+    }
+    splx(s);
+    Ok(())
+}
+
+/// `rtc_todr`: the mc146818 as a time-of-day clock chip.
+static RTC_TODR: TodrChipHandle = TodrChipHandle {
+    cookie: ptr::null_mut(),
+    bus_cookie: ptr::null_mut(),
+    todr_quality: 0,
+    todr_gettime: rtcgettime,
+    todr_settime: rtcsettime,
+    todr_setwen: None,
+};
+
+/// `rtcinit`: attaches the mc146818 as a time-of-day clock.
+pub fn rtcinit() {
+    todr_attach(&RTC_TODR);
+}
+
+/// `rtcalarm_suspend`: arms the RTC's alarm `delta` from now, to wake the machine.
+pub fn rtcalarm_suspend(delta: &Timeval) -> Result<(), Errno> {
+    let mut rtclk: McTodregs = [0; MC_NTODREGS];
+
+    let s = splclock();
+    if let Err(e) = rtcget(&mut rtclk) {
+        splx(s);
+        return Err(e);
+    }
+    splx(s);
+
+    let dt = rtc_decode(&rtclk);
+
+    let tv = Timeval {
+        tv_sec: clock_ymdhms_to_secs(&dt),
+        tv_usec: 0,
+    };
+
+    let tv = timeradd(&tv, delta);
+
+    let dt = clock_secs_to_ymdhms(tv.tv_sec);
+
+    let s = splclock();
+    if let Err(e) = rtcget(&mut rtclk) {
+        splx(s);
+        return Err(e);
+    }
+    rtclk[MC_ASEC as usize] = bintobcd(i32::from(dt.dt_sec)) as u32;
+    rtclk[MC_AMIN as usize] = bintobcd(i32::from(dt.dt_min)) as u32;
+    rtclk[MC_AHOUR as usize] = bintobcd(i32::from(dt.dt_hour)) as u32;
+    rtcput(&rtclk);
+    splx(s);
+
+    while mc146818_read(MC_REGC) & MC_REGC_AF != 0 {}
+    mc146818_write(MC_REGB, MC_REGB_24HR | MC_REGB_AIE);
+
+    Ok(())
+}
+
+/// `rtcalarm_resume`.
+pub fn rtcalarm_resume() {
+    mc146818_write(MC_REGB, MC_REGB_24HR);
+}
+
+/// `rtcalarm_fired`: whether the RTC's alarm went off.
+pub fn rtcalarm_fired() -> bool {
+    if (mc146818_read(MC_REGB) & MC_REGB_AIE) == 0 {
+        return false;
+    }
+
+    (mc146818_read(MC_REGC) & MC_REGC_AF) != 0
+}
 
 /// `setstatclockrate`: on the i8254 path the RTC's rate register (see the module's
 /// deviations); nothing on the LAPIC path.
@@ -349,4 +609,28 @@ pub fn i8254_get_timecount(_tc: &Timecounter) -> u32 {
     unsafe { intr_restore(s) };
 
     count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bcd_conversions() {
+        assert_eq!(bcdtobin(0x00), 0);
+        assert_eq!(bcdtobin(0x09), 9);
+        assert_eq!(bcdtobin(0x10), 10);
+        assert_eq!(bcdtobin(0x26), 26);
+        assert_eq!(bcdtobin(0x59), 59);
+        assert_eq!(bcdtobin(0x99), 99);
+        assert_eq!(bintobcd(0), 0x00);
+        assert_eq!(bintobcd(9), 0x09);
+        assert_eq!(bintobcd(10), 0x10);
+        assert_eq!(bintobcd(26), 0x26);
+        assert_eq!(bintobcd(59), 0x59);
+        assert_eq!(bintobcd(99), 0x99);
+        for n in 0..100 {
+            assert_eq!(bcdtobin(bintobcd(n)), n);
+        }
+    }
 }

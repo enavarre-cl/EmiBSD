@@ -2,3 +2,4 @@
 
 pub mod clock;
 pub mod isa_machdep;
+pub mod nvram;

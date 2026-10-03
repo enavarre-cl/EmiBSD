@@ -5,6 +5,7 @@
 //! `malloc(9)` and `selftest` the boot-time checks under feature `qemu` (`ports.toml`,
 //! `[[extra]]`).
 
+pub mod clock_subr;
 pub mod exec_elf;
 pub mod exec_subr;
 pub mod init_main;

@@ -409,6 +409,14 @@ upstream_blob = "72c0dc035eb25ae3a812d60eeaf60964c2f5ca90"
 notes = "TIMER_DIV is timer_div"
 
 [[file]]
+c = "sys/dev/ic/mc146818reg.h"
+rust = "sys/dev/ic/mc146818reg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "517af982e86ada4cce4c1ac07f9f177629ce4ac5"
+notes = "M8 (Mach licence): the register and rate/base constants (lower-case units upper-cased: MC_RATE_1024_HZ, MC_BASE_32_KHZ), mc_todregs as McTodregs, MC146818_GETTOD/PUTTOD as mc146818_gettod/mc146818_puttod taking the read/write functions as closures; mc146818_read/write are arch/amd64/isa/clock.c's; host tests with a fake chip and a reference-backed constants test"
+
+[[file]]
 c = "sys/dev/isa/isareg.h"
 rust = "sys/dev/isa/isareg.rs"
 status = "wip"
@@ -560,8 +568,17 @@ rust = "sys/arch/amd64/isa/clock.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2aa6e1bad8c1318f89dfa2815a2c21f8c060d626"
-deps = ["sys/dev/ic/i8253reg.h", "sys/dev/isa/isareg.h", "sys/conf/param.c"]
-notes = "M2: gettick and i8254_delay (timer_mutex in M5; negative n treated as 0); clock interrupt, timecounter, RTC and startclocks are M4; M5: the i8254 timecounter (i8254_timecounter, i8254_get_timecount, i8254_simple_get_timecount, i8254_inittimecounter[_simple]), timer_mutex (gettick takes it now), rtclock_tval, startclocks, i8254_startclock, clockintr, i8254_initclocks, i8254_start_both_clocks (IRQ0 established; the RTC's IRQ8 and rtcstart reported), setstatclockrate (the RTC rate register reported); the mc146818 RTC functions are M7"
+deps = ["sys/dev/ic/i8253reg.h", "sys/dev/isa/isareg.h", "sys/conf/param.c", "sys/dev/ic/mc146818reg.h", "sys/arch/amd64/isa/nvram.h", "sys/kern/clock_subr.c", "sys/dev/clock_subr.h"]
+notes = "M2: gettick and i8254_delay (timer_mutex in M5; negative n treated as 0); clock interrupt, timecounter, RTC and startclocks are M4; M5: the i8254 timecounter (i8254_timecounter, i8254_get_timecount, i8254_simple_get_timecount, i8254_inittimecounter[_simple]), timer_mutex (gettick takes it now), rtclock_tval, startclocks, i8254_startclock, clockintr, i8254_initclocks, i8254_start_both_clocks (IRQ0 established; the RTC's IRQ8 and rtcstart reported), setstatclockrate (the RTC rate register reported); M8: the mc146818 time-of-day clock: mc146818_read/write (no sc argument), rtcget/rtcput, bcdtobin/bintobcd, cmoscheck, rtc_update_century (atomic), clock_expandyear, rtcgettime/rtcsettime, rtc_todr (static handle), rtcinit (called from cpu_startup), rtcalarm_suspend/resume/fired; rtcintr, rtcdrain, rtcstart and rtcstop (the RTC periodic interrupt, the i8254 path's statclock) stay reported; the arch's cfg(test) tests do not run on the host"
+
+[[file]]
+c = "sys/arch/amd64/isa/nvram.h"
+rust = "sys/arch/amd64/isa/nvram.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b3ae74feb7a0cc0086559858ca293846fa002d41"
+deps = ["sys/dev/ic/mc146818reg.h"]
+notes = "M8: every NVRAM_* offset and value (MVRAM_EQUIPMENT_NFDS keeps the header's typo), NVRAM_DIAG_BITS as a byte string; clock.rs needs NVRAM_CENTURY; the reference test (compiled with the bare target only, as all of arch/amd64) is not run by just test-ref"
 
 [[file]]
 c = "sys/arch/amd64/include/frame.h"
@@ -1514,7 +1531,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9c3769e5cd8beeffaa4ce2d170b9d966c3a9e63e"
 deps = ["sys/sys/types.h"]
-notes = "M5: timeval/timespec/bintime/timezone/itimerval/clockinfo, the timer*/timespec*/bintime* operations (cmp is the derived Ord), every conversion and *_TO_NSEC helper, FROMBCD/TOBCD, SECDAY/SECYR; clock_ymdhms and its conversions are dev/clock_subr.c (M7); the function prototypes live with kern_tc.c/kern_time.c; kern_sig.c: struct timespec is AbiPod (copyin_obj); M8: struct timeval (TIOCGTSTAMP), struct timezone and struct itimerval are #[repr(C)] AbiPod (copied in and out by tty.c and kern_time.c)"
+notes = "M5: timeval/timespec/bintime/timezone/itimerval/clockinfo, the timer*/timespec*/bintime* operations (cmp is the derived Ord), every conversion and *_TO_NSEC helper, FROMBCD/TOBCD, SECDAY/SECYR; M8: struct clock_ymdhms (ClockYmdhms); its conversions are kern/clock_subr.c; the function prototypes live with kern_tc.c/kern_time.c; kern_sig.c: struct timespec is AbiPod (copyin_obj); M8: struct timeval (TIOCGTSTAMP), struct timezone and struct itimerval are #[repr(C)] AbiPod (copied in and out by tty.c and kern_time.c)"
 
 [[file]]
 c = "sys/sys/_time.h"
@@ -1532,7 +1549,16 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "67d7f50cf6d0716add70c17f82f56796c16f6224"
 deps = ["sys/sys/time.h"]
-notes = "M8: struct todr_chip_handle (fn pointers, todr_setwen optional) and the todr_gettime/todr_settime/todr_wenable macros as functions; todr_attach is kern_time.c's; no chip driver is ported"
+notes = "M8: struct todr_chip_handle (fn pointers, todr_setwen optional) and the todr_gettime/todr_settime/todr_wenable macros as functions; todr_attach is kern_time.c's; amd64's mc146818 (arch/amd64/isa/clock.c) is the first chip driver; arm64's PL031 is not ported"
+
+[[file]]
+c = "sys/kern/clock_subr.c"
+rust = "sys/kern/clock_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "dd371c336ccf71c0cefae173d992cd79f2e33be4"
+deps = ["sys/sys/time.h"]
+notes = "M8: clock_ymdhms_to_secs, clock_secs_to_ymdhms (returns the ClockYmdhms), leapyear and the month table; i64 day count (the C's int overflows past year 6000), a month above 12 adds no days; host tests: known dates, 1970 to 2105 round trip"
 
 [[file]]
 c = "sys/sys/poll.h"

@@ -39,8 +39,8 @@
 //!
 //! Status: `wip`. Milestone M5 ports the three time structures, `timezone`, `itimerval`,
 //! `clockinfo`, the `timer*`/`timespec*`/`bintime*` operations, the conversions between the
-//! representations and the `*_TO_NSEC` helpers. `clock_ymdhms` and its conversions belong to
-//! `dev/clock_subr.c` (M7, with the time-of-day clocks); the prototypes of the time functions
+//! representations and the `*_TO_NSEC` helpers. `struct clock_ymdhms` is here; its conversions
+//! are `kern/clock_subr.c`'s (`kern/clock_subr.rs`); the prototypes of the time functions
 //! (`bintime()`, `nanouptime()`, ...) are in `kern/kern_tc.rs`, `clock_gettime` and
 //! `itimer_update` in `kern/kern_time.rs`, `ratecheck`/`ppsratecheck` with it.
 //!
@@ -385,6 +385,25 @@ pub const fn timeval_to_bintime(tv: &Timeval) -> Bintime {
         // 18446744073709 = int(2^64 / 1000000)
         frac: (tv.tv_usec as u64).wrapping_mul(18_446_744_073_709),
     }
+}
+
+/// `struct clock_ymdhms`: "POSIX time" to/from "YY/MM/DD/hh/mm/ss".
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ClockYmdhms {
+    /// `dt_year`.
+    pub dt_year: u16,
+    /// `dt_mon`.
+    pub dt_mon: u8,
+    /// `dt_day`.
+    pub dt_day: u8,
+    /// `dt_wday`: day of week.
+    pub dt_wday: u8,
+    /// `dt_hour`.
+    pub dt_hour: u8,
+    /// `dt_min`.
+    pub dt_min: u8,
+    /// `dt_sec`.
+    pub dt_sec: u8,
 }
 
 /// `FROMBCD(x)`: BCD to decimal.

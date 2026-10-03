@@ -1,0 +1,228 @@
+/*	$OpenBSD: mc146818reg.h,v 1.8 2019/04/29 15:46:11 cheloha Exp $	*/
+/*	$NetBSD: mc146818reg.h,v 1.1 1995/05/04 19:31:18 cgd Exp $	*/
+/* <LICENSES> */
+/*
+ * Copyright (c) 1995 Carnegie-Mellon University.
+ * All rights reserved.
+ *
+ * Permission to use, copy, modify and distribute this software and
+ * its documentation is hereby granted, provided that both the copyright
+ * notice and this permission notice appear in all copies of the
+ * software, derivative works or modified versions, and any portions
+ * thereof, and that both notices appear in supporting documentation.
+ *
+ * CARNEGIE MELLON ALLOWS FREE USE OF THIS SOFTWARE IN ITS "AS IS"
+ * CONDITION.  CARNEGIE MELLON DISCLAIMS ANY LIABILITY OF ANY KIND
+ * FOR ANY DAMAGES WHATSOEVER RESULTING FROM THE USE OF THIS SOFTWARE.
+ *
+ * Carnegie Mellon requests users of this software to return to
+ *
+ *  Software Distribution Coordinator  or  Software.Distribution@CS.CMU.EDU
+ *  School of Computer Science
+ *  Carnegie Mellon University
+ *  Pittsburgh PA 15213-3890
+ *
+ * any improvements or extensions that they make and grant Carnegie the
+ * rights to redistribute these changes.
+ */
+/* </LICENSES> */
+
+//! Definitions for the Motorola MC146818A Real Time Clock: `<dev/ic/mc146818reg.h>`.
+//!
+//! Upstream: sys/dev/ic/mc146818reg.h @ 3ce1f3f79392
+//!
+//! They also apply for the (compatible) Dallas Semiconductor DS1287A RTC. The MC146818A has 16
+//! registers. The first 10 contain time-of-year and alarm data. The rest contain various
+//! control and status bits.
+//!
+//! To read or write the registers, one writes the register number to the RTC's control port,
+//! then either reads from or writes the new data to the RTC's data port. Since the locations
+//! of these ports and the method used to access them can be machine-dependent, the low-level
+//! details of reading and writing the RTC's registers are handled by machine-specific
+//! functions (`mc146818_read` and `mc146818_write`; amd64's are in `isa/clock.rs`).
+//!
+//! The time-of-year and alarm data can be expressed in either binary or BCD, and they are
+//! selected by a bit in register B. The "hour" fields can either be expressed in AM/PM format
+//! or in 24-hour format, again selected by a bit in register B. It is assumed that if systems
+//! are going to use BCD (rather than binary) mode, or AM/PM hour format, they will do the
+//! appropriate conversions in machine-dependent code. Also, if the clock is switched between
+//! BCD and binary mode, or between AM/PM mode and 24-hour mode, the time-of-day and alarm
+//! registers are NOT automatically reset; they must be reprogrammed with correct values.
+//!
+//! Status: `ported`.
+//!
+//! ## Deviations
+//! - `mc146818_read`/`mc146818_write` are not declared here: Rust has no prototypes, and the
+//!   machine-dependent definitions are what [`mc146818_gettod`] and [`mc146818_puttod`] are
+//!   handed, as closures (the `sc` argument of the C macros is whatever the closures capture).
+//! - `MC146818_GETTOD(sc, regs)` and `MC146818_PUTTOD(sc, regs)` are those two functions.
+//! - The constants with a lower-case unit in their C name are upper case (`MC_RATE_1024_Hz` is
+//!   `MC_RATE_1024_HZ`, `MC_BASE_32_KHz` is `MC_BASE_32_KHZ`, `MC_BASE_4_MHz` is
+//!   `MC_BASE_4_MHZ`), as Rust's naming lint wants.
+//! - `mc_todregs` is [`McTodregs`], an array of `u32` (`u_int`).
+
+/// Time of year: seconds (0-59).
+pub const MC_SEC: u32 = 0x0;
+/// Alarm: seconds.
+pub const MC_ASEC: u32 = 0x1;
+/// Time of year: minutes (0-59).
+pub const MC_MIN: u32 = 0x2;
+/// Alarm: minutes.
+pub const MC_AMIN: u32 = 0x3;
+/// Time of year: hour.
+pub const MC_HOUR: u32 = 0x4;
+/// Alarm: hour.
+pub const MC_AHOUR: u32 = 0x5;
+/// Time of year: day of week (1-7).
+pub const MC_DOW: u32 = 0x6;
+/// Time of year: day of month (1-31).
+pub const MC_DOM: u32 = 0x7;
+/// Time of year: month (1-12).
+pub const MC_MONTH: u32 = 0x8;
+/// Time of year: year in century (0-99).
+pub const MC_YEAR: u32 = 0x9;
+
+/// Control register A.
+pub const MC_REGA: u32 = 0xa;
+
+/// Interrupt rate select mask (see below).
+pub const MC_REGA_RSMASK: u32 = 0x0f;
+/// Divisor select mask (see below).
+pub const MC_REGA_DVMASK: u32 = 0x70;
+/// Update in progress; read only.
+pub const MC_REGA_UIP: u32 = 0x80;
+
+/// Control register B.
+pub const MC_REGB: u32 = 0xb;
+
+/// Daylight Saving Enable.
+pub const MC_REGB_DSE: u32 = 0x01;
+/// 24-hour mode (AM/PM mode when clear).
+pub const MC_REGB_24HR: u32 = 0x02;
+/// Binary mode (BCD mode when clear).
+pub const MC_REGB_BINARY: u32 = 0x04;
+/// Square wave enable, ONLY in BQ3285E.
+pub const MC_REGB_SQWE: u32 = 0x08;
+/// Update End interrupt enable.
+pub const MC_REGB_UIE: u32 = 0x10;
+/// Alarm interrupt enable.
+pub const MC_REGB_AIE: u32 = 0x20;
+/// Periodic interrupt enable.
+pub const MC_REGB_PIE: u32 = 0x40;
+/// Allow time to be set; stops updates.
+pub const MC_REGB_SET: u32 = 0x80;
+
+/// Control register C.
+pub const MC_REGC: u32 = 0xc;
+
+/// Update End interrupt flag.
+pub const MC_REGC_UF: u32 = 0x10;
+/// Alarm interrupt flag.
+pub const MC_REGC_AF: u32 = 0x20;
+/// Periodic interrupt flag.
+pub const MC_REGC_PF: u32 = 0x40;
+/// Interrupt request pending flag.
+pub const MC_REGC_IRQF: u32 = 0x80;
+
+/// Control register D.
+pub const MC_REGD: u32 = 0xd;
+
+/// Valid RAM and Time bit.
+pub const MC_REGD_VRT: u32 = 0x80;
+
+/// 14 registers; CMOS follows.
+pub const MC_NREGS: u32 = 0xe;
+/// 10 of those regs are for TOD and alarm.
+pub const MC_NTODREGS: usize = 0xa;
+
+/// Start of NVRAM: offset 14.
+pub const MC_NVRAM_START: u32 = 0xe;
+/// 50 bytes of NVRAM.
+pub const MC_NVRAM_SIZE: u32 = 50;
+
+// Periodic Interrupt Rate Select constants (Control register A).
+
+/// No periodic interrupt.
+pub const MC_RATE_NONE: u32 = 0x0;
+/// 256 Hz if `MC_BASE_32_KHZ`, else 32768 Hz.
+pub const MC_RATE_1: u32 = 0x1;
+/// 128 Hz if `MC_BASE_32_KHZ`, else 16384 Hz.
+pub const MC_RATE_2: u32 = 0x2;
+/// 122.070 us period.
+pub const MC_RATE_8192_HZ: u32 = 0x3;
+/// 244.141 us period.
+pub const MC_RATE_4096_HZ: u32 = 0x4;
+/// 488.281 us period.
+pub const MC_RATE_2048_HZ: u32 = 0x5;
+/// 976.562 us period.
+pub const MC_RATE_1024_HZ: u32 = 0x6;
+/// 1.953125 ms period.
+pub const MC_RATE_512_HZ: u32 = 0x7;
+/// 3.90625 ms period.
+pub const MC_RATE_256_HZ: u32 = 0x8;
+/// 7.8125 ms period.
+pub const MC_RATE_128_HZ: u32 = 0x9;
+/// 15.625 ms period.
+pub const MC_RATE_64_HZ: u32 = 0xa;
+/// 31.25 ms period.
+pub const MC_RATE_32_HZ: u32 = 0xb;
+/// 62.5 ms period.
+pub const MC_RATE_16_HZ: u32 = 0xc;
+/// 125 ms period.
+pub const MC_RATE_8_HZ: u32 = 0xd;
+/// 250 ms period.
+pub const MC_RATE_4_HZ: u32 = 0xe;
+/// 500 ms period.
+pub const MC_RATE_2_HZ: u32 = 0xf;
+
+// Time base (divisor select) constants (Control register A).
+
+/// 4MHz crystal.
+pub const MC_BASE_4_MHZ: u32 = 0x00;
+/// 1MHz crystal.
+pub const MC_BASE_1_MHZ: u32 = 0x10;
+/// 32KHz crystal.
+pub const MC_BASE_32_KHZ: u32 = 0x20;
+/// Actually, both of these reset.
+pub const MC_BASE_NONE: u32 = 0x60;
+/// Reset the divider.
+pub const MC_BASE_RESET: u32 = 0x70;
+
+/// `mc_todregs`: a collection of TOD/Alarm registers.
+pub type McTodregs = [u32; MC_NTODREGS];
+
+/// `MC146818_GETTOD`: get all of the TOD/Alarm registers. Must be called at `splhigh()`, and
+/// with the RTC properly set up. `read` is `mc146818_read(sc, _)`.
+pub fn mc146818_gettod(regs: &mut McTodregs, read: impl Fn(u32) -> u32) {
+    // update in progress; spin loop
+    while read(MC_REGA) & MC_REGA_UIP != 0 {}
+
+    loop {
+        // read all of the tod/alarm regs
+        for (i, reg) in regs.iter_mut().enumerate() {
+            *reg = read(i as u32);
+        }
+        if regs[MC_SEC as usize] == read(MC_SEC) {
+            break;
+        }
+    }
+}
+
+/// `MC146818_PUTTOD`: set all of the TOD/Alarm registers. Must be called at `splhigh()`, and
+/// with the RTC properly set up. `read` and `write` are `mc146818_read(sc, _)` and
+/// `mc146818_write(sc, _, _)`.
+pub fn mc146818_puttod(regs: &McTodregs, read: impl Fn(u32) -> u32, write: impl Fn(u32, u32)) {
+    // stop updates while setting
+    write(MC_REGB, read(MC_REGB) | MC_REGB_SET);
+
+    // write all of the tod/alarm regs
+    for (i, reg) in regs.iter().enumerate() {
+        write(i as u32, *reg);
+    }
+
+    // reenable updates
+    write(MC_REGB, read(MC_REGB) & !MC_REGB_SET);
+}
+
+#[cfg(test)]
+mod tests;

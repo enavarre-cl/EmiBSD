@@ -91,7 +91,7 @@
 //!   protocol's usable regions, which already exclude the kernel, the firmware and the
 //!   bootloader's own data. The ISA hole and the `avail_end` bookkeeping have nothing to do.
 //! - `cpu_startup` prints the memory sizes and fills the boot CPU's TSS (`cpu_enter_pages`):
-//!   `version` (generated `vers.c`, M5-b), `rtcinit` (M7), the exec and physio maps (M6,
+//!   `version` (generated `vers.c`, M5-b), the exec and physio maps (M6,
 //!   M7), `cpu_init_extents` and `cpu_boot_mode` (M4-b) are not there yet; `bufinit` is.
 //! - The IDT is a static page (`IDT`) instead of the early page `locore0.S` reserves and the
 //!   page `init_x86_64` maps at `idt_vaddr`; `idt_allocmap` is an array of atomics.
@@ -155,7 +155,7 @@ use crate::arch::amd64::include::signal::Sigcontext;
 use crate::arch::amd64::include::tss::X86_64Tss;
 use crate::arch::amd64::include::vmparam::VM_MAXUSER_ADDRESS;
 use crate::arch::amd64::isa::clock::{
-    i8254_delay, i8254_initclocks, i8254_start_both_clocks, startclocks,
+    i8254_delay, i8254_initclocks, i8254_start_both_clocks, rtcinit, startclocks,
 };
 use crate::conf::vers::VERSION;
 use crate::kassert;
@@ -541,7 +541,7 @@ pub fn cpu_startup() {
 
     kprintf!("{}", VERSION);
     startclocks();
-    let _ = unported!("rtcinit (the mc146818 time-of-day clock, M7)");
+    rtcinit();
 
     let physmem = PHYSMEM.load(Ordering::Relaxed);
     kprintf!(
