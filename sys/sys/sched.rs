@@ -75,11 +75,10 @@
 //! cpustats`, the `SPCF_*` flags, `SCHED_NQS`/`SCHED_PPQ`/`NICE_WEIGHT`/`ESTCPULIM` and the
 //! members of `struct schedstate_percpu` the clock interrupts use: the four clockintr
 //! handles, `spc_cp_time` with its lock, `spc_schedticks`, `spc_schedflags`, `spc_nrun`,
-//! `spc_whichqs`, `spc_spinning`, `spc_curpriority`, `spc_runtime`. The run queues
-//! (`spc_qs`, `spc_idleproc`, `spc_deadproc`) need `struct proc` and the SMR members
-//! (`spc_deferred` and company) `kern_smr.c`: part b. The functions are in
-//! `kern/kern_sched.rs` and `kern/sched_bsd.rs`; `sched_lock` and the `SCHED_LOCK*` macros
-//! in `sched_bsd.rs`.
+//! `spc_whichqs`, `spc_spinning`, `spc_curpriority`, `spc_runtime`; part b adds the run
+//! queues (`spc_qs`, `spc_idleproc`, `spc_deadproc`). The SMR members (`spc_deferred` and
+//! company) wait for `kern_smr.c` (M7). The functions are in `kern/kern_sched.rs` and
+//! `kern/sched_bsd.rs`; `sched_lock` and the `SCHED_LOCK*` macros in `sched_bsd.rs`.
 //!
 //! ## Deviations
 //! - `spc_schedflags` (`volatile int`, set with `atomic_setbits_int`) is an `AtomicI32`;
@@ -90,6 +89,8 @@ use core::sync::atomic::{AtomicI32, AtomicU32};
 
 use crate::sys::clockintr::Clockintr;
 use crate::sys::pclock::PcLock;
+use crate::sys::proc::{Proc, ProcRunq};
+use crate::sys::queue::TailqHead;
 use crate::sys::time::Timespec;
 
 /*
@@ -132,7 +133,12 @@ pub const SCHED_NQS: usize = 32;
 ///
 /// - o: owned (modified only) by this CPU.
 pub struct SchedstatePercpu {
-    // spc_idleproc, spc_qs[SCHED_NQS], spc_deadproc: struct proc (M5-b).
+    /// `spc_idleproc`: idle proc for this cpu.
+    pub spc_idleproc: Cell<*const Proc>,
+    /// `spc_qs`: the run queues, one per `SCHED_PPQ` priorities.
+    pub spc_qs: [TailqHead<ProcRunq>; SCHED_NQS],
+    /// `spc_deadproc`: the dead threads waiting for the reaper.
+    pub spc_deadproc: TailqHead<ProcRunq>,
     /// `spc_runtime`: time curproc started running.
     pub spc_runtime: Cell<Timespec>,
     /// `spc_schedflags` (volatile): flags; see below.
@@ -167,13 +173,17 @@ pub struct SchedstatePercpu {
 }
 
 // SAFETY: one CPU's scheduler state, touched by that CPU (the clock handles under their
-// queue's mutex); the flag words other CPUs read are atomics.
+// queue's mutex, the run queues under `sched_lock`); the flag words other CPUs read are
+// atomics.
 unsafe impl Sync for SchedstatePercpu {}
 
 impl SchedstatePercpu {
     /// A CPU's scheduler state before `sched_init_cpu`: all zero, as the C's static.
     pub const fn new() -> Self {
         Self {
+            spc_idleproc: Cell::new(core::ptr::null()),
+            spc_qs: [const { TailqHead::new() }; SCHED_NQS],
+            spc_deadproc: TailqHead::new(),
             spc_runtime: Cell::new(Timespec::new(0, 0)),
             spc_schedflags: AtomicI32::new(0),
             spc_schedticks: Cell::new(0),

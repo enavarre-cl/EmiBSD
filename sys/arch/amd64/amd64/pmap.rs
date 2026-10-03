@@ -114,7 +114,10 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use libkern::StaticCell;
 
-use crate::arch::amd64::include::cpufunc::{invlpg, rcr3, rdmsr, tlbflush, wbinvd_on_all_cpus};
+use crate::arch::amd64::include::cpu::curcpu;
+use crate::arch::amd64::include::cpufunc::{
+    invlpg, lcr3, rcr3, rdmsr, tlbflush, wbinvd_on_all_cpus,
+};
 use crate::arch::amd64::include::param::{PAGE_MASK, PAGE_SIZE};
 use crate::arch::amd64::include::pmap::{
     NBPD_INITIALIZER, NKPTP_INITIALIZER, NKPTPMAX_INITIALIZER, PDES_INITIALIZER, PDIR_SLOT_PTE,
@@ -128,6 +131,7 @@ use crate::arch::amd64::include::pte::{
 use crate::arch::amd64::include::specialreg::{EFER_NXE, MSR_EFER};
 use crate::arch::amd64::include::vmparam::{VM_MAX_KERNEL_ADDRESS, VM_MIN_KERNEL_ADDRESS};
 use crate::sys::mman::{PROT_EXEC, PROT_WRITE};
+use crate::sys::proc::{P_SYSTEM, Proc};
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_extern::{UVM_PGA_USERESERVE, UVM_PGA_ZERO, VmProt, Voff};
 use crate::uvm::uvm_init::UVM;
@@ -188,6 +192,36 @@ static KERNEL_PMAP_STORE: Pmap = Pmap::new();
 pub fn pmap_kernel() -> &'static Pmap {
     &KERNEL_PMAP_STORE
 }
+
+/// `pmap_activate`: activate the address space of `p`: its pcb gets the pmap and `%cr3`
+/// value `cpu_switchto` loads; if `p` is the running thread the switch happens now.
+///
+/// Kernel threads run on the kernel pmap (there is no `vmspace` before user mode, M6).
+pub fn pmap_activate(p: &Proc) {
+    let pcb = p.pcb();
+    // pmap = p->p_vmspace->vm_map.pmap: the kernel pmap until user address spaces exist.
+    let pmap = pmap_kernel();
+
+    pcb.pcb_pmap.set(pmap);
+    // PCID is not enabled (cr3_pcid_proc, PCID_KERN and cr3_reuse_pcid are 0).
+    pcb.pcb_cr3.set(pmap.pm_pdirpa.get().as_usize() as u64);
+
+    if !ptr::eq(p, curcpu().ci_curproc.get()) {
+        return;
+    }
+
+    if p.p_flag.load(Ordering::Relaxed) & P_SYSTEM == 0 {
+        // mark the pmap in use by this processor
+        curcpu().ci_proc_pmap.set(pmap);
+        // cpu_meltdown: ci_kern_cr3 / ci_user_cr3 (M6).
+    }
+
+    // SAFETY: `pcb_cr3` is the kernel pmap's page directory, the one in use.
+    unsafe { lcr3(pcb.pcb_cr3.get()) };
+}
+
+/// `pmap_deactivate`: nothing to do on amd64.
+pub fn pmap_deactivate(_p: &Proc) {}
 
 /// `pmap_initialized`.
 pub fn pmap_initialized() -> bool {

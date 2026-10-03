@@ -70,16 +70,20 @@ use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use libkern::StaticCell;
 
+use crate::arch::arm64::arm64::cpufunc::cpu_wfi;
+use crate::arch::arm64::arm64::cpuswitch::cpu_switchto_asm;
 use crate::arch::arm64::arm64::exception::exception_vectors_addr;
+use crate::arch::arm64::arm64::fpu::{fpu_drop, fpu_save};
 use crate::arch::arm64::arm64::intr::arm_intr_establish_fdt;
 use crate::arch::arm64::arm64::intr::delay;
 use crate::arch::arm64::arm64::pmap::{
     PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap, pmap_growkernel,
 };
-use crate::arch::arm64::include::cpu::CpuInfo;
+use crate::arch::arm64::include::cpu::{CpuInfo, disable_irq_daif, enable_irq_daif};
 use crate::arch::arm64::include::frame::Trapframe;
 use crate::arch::arm64::include::intr::IPL_TTY;
 use crate::arch::arm64::include::param::PAGE_SIZE;
+use crate::arch::arm64::include::pcb::PCB_FPU;
 use crate::arch::arm64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
 use crate::dev::fdt::pluart_fdt::pluart_init_cons;
 use crate::dev::ic::pluart::{pluartcn_enable_intr, pluartcn_rx_intr};
@@ -96,12 +100,13 @@ use crate::machine::db_machdep::db_enter;
 use crate::machine::{Cpu, Machine};
 use crate::sys::errno::Errno;
 use crate::sys::param::roundup;
+use crate::sys::proc::Proc;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
 };
 use crate::sys::systm::PHYSMEM;
 use crate::sys::types::{Paddr, Vaddr};
-use crate::sys::user::User;
+use crate::sys::user::{Uarea, User};
 use crate::unported;
 use crate::uvm::uvm_extern::UvmConstraintRange;
 use crate::uvm::uvm_init::UVMEXP;
@@ -167,12 +172,17 @@ const DIRECT_MAP_MIN_SIZE: usize = 4 << 30;
 pub static CPU_INFO_PRIMARY: CpuInfo = CpuInfo::new();
 
 /// `proc0paddr`: proc0's u-area (its pcb; the boot stack is Limine's).
-pub static PROC0PADDR: User = User::new();
+pub static PROC0_UAREA: Uarea = Uarea::new();
+
+/// `proc0paddr`: proc0's `struct user`, at the bottom of its u-area.
+pub fn proc0paddr() -> &'static User {
+    &PROC0_UAREA.u
+}
 /// `proc0tf`: dummy trapframe for proc0.
 static PROC0TF: StaticCell<Trapframe> = StaticCell::new(Trapframe::new());
 
 /// `cold`: if set, still working on cold-start.
-pub static COLD: AtomicBool = AtomicBool::new(true);
+pub use crate::sys::systm::COLD;
 /// `waittime`: set once the file systems have been synced on the way down.
 static WAITTIME: AtomicI32 = AtomicI32::new(-1);
 /// `cpuresetfn`: the platform's reset hook, registered by its driver.
@@ -366,7 +376,7 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
 
 /// `cpu_startup`: machine-dependent startup code (see the module's deviations).
 pub fn cpu_startup() {
-    PROC0.p_addr.set(&PROC0PADDR);
+    PROC0.p_addr.set(proc0paddr());
 
     // The message buffer mapping and initmsgbuf: the message buffer is static (M2).
     // version: M5.
@@ -387,7 +397,7 @@ pub fn cpu_startup() {
         ptoa(free) / 1024 / 1024
     );
 
-    let curpcb = &PROC0PADDR.u_pcb;
+    let curpcb = &proc0paddr().u_pcb;
     CPU_INFO_PRIMARY.ci_curpcb.set(curpcb);
     curpcb.pcb_flags.set(0);
     curpcb.pcb_tf.set(PROC0TF.as_ptr());
@@ -514,10 +524,74 @@ pub fn need_resched(ci: &CpuInfo) {
     ci.ci_want_resched.set(1);
 
     // There's a risk we'll be called before the idle threads start
-    if !ci.ci_curproc.get().is_null() {
-        // aston(ci->ci_curproc), cpu_kick(ci): struct proc (M5-b), MULTIPROCESSOR.
-        let _ = unported!("need_resched: aston (struct proc, M5-b)");
+    // SAFETY: `ci_curproc` names a thread on the CPU, hence alive.
+    if let Some(p) = unsafe { ci.ci_curproc.get().as_ref() } {
+        aston(p);
+        // cpu_kick(ci): MULTIPROCESSOR.
     }
+}
+
+/// `aston(p)`: `p->p_md.md_astpending = 1`.
+pub fn aston(p: &Proc) {
+    p.p_md.md_astpending.store(1, Ordering::Relaxed);
+}
+
+/// `clear_resched(ci)`.
+pub fn clear_resched(ci: &CpuInfo) {
+    ci.ci_want_resched.set(0);
+}
+
+/// `cpu_unidle(ci)`: with `MULTIPROCESSOR` an IPI; on one CPU the idle loop sees the run
+/// queue itself.
+pub fn cpu_unidle(_ci: &CpuInfo) {}
+
+/// `cpu_idle_enter`: the idle thread checks the run queues with interrupts masked, so an
+/// interrupt between the check and the `wfi` wakes the `wfi`.
+pub fn cpu_idle_enter() {
+    disable_irq_daif();
+}
+
+/// `cpu_idle_cycle`: `(*cpu_idle_cycle_fcn)()` (`cpu_wfi` until a driver installs another),
+/// then let the pending interrupt in and mask again for the next check.
+pub fn cpu_idle_cycle() {
+    cpu_wfi();
+    // SAFETY: the idle thread runs at IPL_NONE with nothing held: interrupts may come in.
+    unsafe { enable_irq_daif() };
+    disable_irq_daif();
+}
+
+/// `cpu_idle_leave`.
+pub fn cpu_idle_leave() {
+    // SAFETY: as for `cpu_idle_cycle`.
+    unsafe { enable_irq_daif() };
+}
+
+/// `cpu_switchto(old, new)`: drops `old`'s FPU state (saving it first if it was in use) and
+/// switches (`cpuswitch.S`).
+///
+/// # Safety
+///
+/// As `machine::cpu::Cpu::cpu_switchto`: the scheduler lock is held, `new` is runnable and
+/// off every queue, `old` (when given) is the running thread.
+pub unsafe fn cpu_switchto(old: Option<&Proc>, new: &Proc) {
+    if let Some(old) = old {
+        let pcb = old.pcb();
+
+        if pcb.pcb_flags.get() & PCB_FPU != 0 {
+            fpu_save(old);
+        }
+
+        fpu_drop();
+    }
+
+    // SAFETY: forwarded from the caller; the assembly only touches the pcbs, the stacks and
+    // the per-CPU pointers.
+    unsafe {
+        cpu_switchto_asm(
+            old.map_or(ptr::null(), |p| ptr::from_ref(p).cast()),
+            ptr::from_ref(new).cast(),
+        )
+    };
 }
 
 /// `boot(9)`: halts or reboots according to `howto`.

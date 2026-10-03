@@ -41,9 +41,15 @@
 //!
 //! Status: `ported` (M5). The u-area is the first part of a thread's kernel stack
 //! (`USPACE` bytes from `p_addr`).
+//!
+//! ## Deviations
+//! - `Uarea` is the u-area of `proc0` as each `locore` reserves it in C (`proc0paddr`: the
+//!   `struct user` at the bottom, `USPACE` bytes, page aligned); a type here so both
+//!   architectures define the static the same way.
 
 use crate::machine::Machine;
 use crate::machine::proc::{MachineProc, Pcb};
+use crate::sys::param::{PAGE_SIZE, USPACE};
 
 /// `struct user`.
 #[repr(C)]
@@ -66,3 +72,34 @@ impl Default for User {
         Self::new()
     }
 }
+
+/// The u-area `locore` reserves for `proc0`: `USPACE` bytes, page aligned, the `struct user`
+/// at the bottom and the kernel stack above it (`proc0paddr` in C).
+#[repr(C, align(4096))]
+pub struct Uarea {
+    /// `proc0paddr`: the `struct user`.
+    pub u: User,
+    /// The rest: proc0's kernel stack and the trap frame `cpu_fork` copies.
+    _stack: [u8; USPACE - size_of::<User>()],
+}
+
+impl Uarea {
+    /// A zero u-area.
+    pub const fn new() -> Self {
+        Self {
+            u: User::new(),
+            _stack: [0; USPACE - size_of::<User>()],
+        }
+    }
+}
+
+impl Default for Uarea {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+const _: () = {
+    assert!(PAGE_SIZE == 4096);
+    assert!(size_of::<Uarea>() == USPACE);
+};

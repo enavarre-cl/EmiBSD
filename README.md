@@ -8,7 +8,7 @@ The OpenBSD kernel, re-implemented in Rust, one file at a time.
   The Rust tree mirrors them path for path.
 - Stable Rust only.
 
-Status: M0 done (boots on amd64 and arm64 under QEMU), M1 nearly done. See `docs/STATUS.md` and `docs/ROADMAP.md`.
+Status: M5 done (boot, memory, traps, clocks, processes and a scheduler with kernel threads on amd64 and arm64 under QEMU); M6 (syscalls, a minimal init) is next. See `docs/STATUS.md` and `docs/ROADMAP.md`.
 
 | Question | Where |
 |---|---|

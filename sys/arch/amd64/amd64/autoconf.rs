@@ -53,7 +53,7 @@
 //!   `pmap_randomize`, `map_tramps`, `bus_dma_init`,
 //!   `mbuf_dma_64bit_enable`, `unmap_startup` and the random-number timeouts are reported.
 
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::Ordering;
 
 use crate::arch::amd64::amd64::intr::{cpu_intr_init, intr_printconfig};
 use crate::arch::amd64::amd64::lapic::{
@@ -68,7 +68,7 @@ use crate::sys::types::Paddr;
 use crate::unported;
 
 /// `cold`: if set, still working on cold-start.
-pub static COLD: AtomicBool = AtomicBool::new(true);
+pub use crate::sys::systm::COLD;
 
 /// `cpu_configure`: determine i/o configuration for a machine.
 pub fn cpu_configure() {

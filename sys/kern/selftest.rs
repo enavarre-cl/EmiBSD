@@ -6,7 +6,7 @@
 //! (and need feature `alloc` for the allocator stress).
 
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 
 use libkern::StaticCell;
 
@@ -15,8 +15,11 @@ use alloc::vec::Vec;
 
 use crate::conf::param::HZ;
 use crate::kern::kern_clock::ticks;
+use crate::kern::kern_kthread::kthread_create;
+use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_softintr::{SoftintrHand, softintr_establish, softintr_schedule};
+use crate::kern::kern_synch::{msleep_nsec, tsleep_nsec, wakeup};
 use crate::kern::kern_tc::{getuptime, nsecuptime};
 use crate::kern::kern_timeout::{timeout_add_msec, timeout_set};
 use crate::kern::subr_pool::{pool_destroy, pool_get, pool_init, pool_put, pool_reclaim};
@@ -30,8 +33,10 @@ use crate::machine::pmap::{
 };
 use crate::sys::malloc::{M_NOWAIT, M_TEMP, M_ZERO};
 use crate::sys::mman::{PROT_READ, PROT_WRITE};
-use crate::sys::param::PAGE_SIZE;
+use crate::sys::mutex::Mutex;
+use crate::sys::param::{PAGE_SIZE, PWAIT};
 use crate::sys::pool::{PR_NOWAIT, PR_ZERO, Pool};
+use crate::sys::systm::INFSLP;
 use crate::sys::timeout::Timeout;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_extern::UVM_PGA_ZERO;
@@ -48,6 +53,8 @@ static TRAP_REQUESTED: AtomicBool = AtomicBool::new(false);
 static UART_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// `selftest=clock` asks for [`clock_check`].
 static CLOCK_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// `selftest=kthread` was on the command line.
+static KTHREAD_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Reads the self-test requests off the kernel command line: `selftest=trap` asks for the
 /// fatal [`trap_bad_access`], which a plain boot must not run.
@@ -55,6 +62,7 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     const TRAP: &[u8] = b"selftest=trap";
     const UART: &[u8] = b"selftest=uart";
     const CLOCK: &[u8] = b"selftest=clock";
+    const KTHREAD: &[u8] = b"selftest=kthread";
     if cmdline.windows(TRAP.len()).any(|w| w == TRAP) {
         TRAP_REQUESTED.store(true, Ordering::Relaxed);
     }
@@ -64,6 +72,14 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     if cmdline.windows(CLOCK.len()).any(|w| w == CLOCK) {
         CLOCK_REQUESTED.store(true, Ordering::Relaxed);
     }
+    if cmdline.windows(KTHREAD.len()).any(|w| w == KTHREAD) {
+        KTHREAD_REQUESTED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Whether the command line asked for [`kthread_pingpong`].
+pub fn kthread_requested() -> bool {
+    KTHREAD_REQUESTED.load(Ordering::Relaxed)
 }
 
 /// Whether the command line asked for [`clock_check`].
@@ -402,5 +418,110 @@ pub fn clock_check() {
             hz,
             fired
         );
+    }
+}
+
+/// The mutex the ping-pong threads hand the turn under (`msleep`'s interlock).
+static PINGPONG_MTX: Mutex = Mutex::new(IPL_NONE);
+/// Whose turn it is: even for ping, odd for pong; `2 * PINGPONG_ROUNDS` ends the game.
+static PINGPONG_TURN: AtomicU32 = AtomicU32::new(0);
+/// How many threads finished.
+static PINGPONG_DONE: AtomicU32 = AtomicU32::new(0);
+/// A channel nobody wakes: where the finished threads park (no `kthread_exit` before M6).
+static PINGPONG_PARK: AtomicU32 = AtomicU32::new(0);
+/// Turns per thread.
+const PINGPONG_ROUNDS: u32 = 50;
+
+/// One ping-pong thread: `arg` is 1 (ping) or 2 (pong), as an address (`fork1` would
+/// replace a null one with the thread). Waits for its turn under the mutex, passes the turn,
+/// wakes the other, and parks forever once the rounds are done.
+fn pingpong_thread(arg: *mut core::ffi::c_void) {
+    let me = (arg as usize as u32) - 1;
+
+    mtx_enter(&PINGPONG_MTX);
+    loop {
+        let turn = PINGPONG_TURN.load(Ordering::Relaxed);
+        if turn >= 2 * PINGPONG_ROUNDS {
+            break;
+        }
+        if turn % 2 != me {
+            let _ = msleep_nsec(
+                ptr::addr_of!(PINGPONG_TURN),
+                &PINGPONG_MTX,
+                PWAIT,
+                "pingpong",
+                INFSLP,
+            );
+            continue;
+        }
+        PINGPONG_TURN.store(turn + 1, Ordering::Relaxed);
+        wakeup(ptr::addr_of!(PINGPONG_TURN));
+    }
+    if PINGPONG_DONE.fetch_add(1, Ordering::Relaxed) + 1 == 2 {
+        wakeup(ptr::addr_of!(PINGPONG_DONE));
+    }
+    mtx_leave(&PINGPONG_MTX);
+
+    loop {
+        let _ = tsleep_nsec(ptr::addr_of!(PINGPONG_PARK), PWAIT, "park", INFSLP);
+    }
+}
+
+/// Creates two kernel threads that pass a turn back and forth with `msleep`/`wakeup` while
+/// proc0 sleeps for them to finish: the M5 exit criterion "two kthreads ping-pong via
+/// tsleep/wakeup". Every hand-over is a context switch through the run queues and the idle
+/// thread.
+pub fn kthread_pingpong() {
+    mtx_init(&PINGPONG_MTX, IPL_NONE);
+    let start_ns = nsecuptime();
+
+    let ping = match kthread_create(pingpong_thread, ptr::without_provenance_mut(1), b"ping") {
+        Ok(p) => p,
+        Err(e) => {
+            kprintf!(
+                "selftest: kthread ping-pong FAILED: kthread_create: {:?}\n",
+                e
+            );
+            return;
+        }
+    };
+    let pong = match kthread_create(pingpong_thread, ptr::without_provenance_mut(2), b"pong") {
+        Ok(p) => p,
+        Err(e) => {
+            kprintf!(
+                "selftest: kthread ping-pong FAILED: kthread_create: {:?}\n",
+                e
+            );
+            return;
+        }
+    };
+
+    mtx_enter(&PINGPONG_MTX);
+    while PINGPONG_DONE.load(Ordering::Relaxed) < 2 {
+        let _ = msleep_nsec(
+            ptr::addr_of!(PINGPONG_DONE),
+            &PINGPONG_MTX,
+            PWAIT,
+            "selftest",
+            INFSLP,
+        );
+    }
+    mtx_leave(&PINGPONG_MTX);
+
+    let elapsed_us = nsecuptime().wrapping_sub(start_ns) / 1000;
+    let turns = PINGPONG_TURN.load(Ordering::Relaxed);
+    if turns == 2 * PINGPONG_ROUNDS {
+        kprintf!(
+            "selftest: kthread ping-pong ok: {} turns between tid {} ({}) and tid {} ({}) in {} us, {} context switches\n",
+            turns,
+            ping.p_tid.get(),
+            Str(ping.process().comm()),
+            pong.p_tid.get(),
+            Str(pong.process().comm()),
+            elapsed_us,
+            UVMEXP.swtch.load(Ordering::Relaxed)
+        );
+    } else {
+        kprintf!("selftest: kthread ping-pong FAILED: {} turns\n", turns);
     }
 }

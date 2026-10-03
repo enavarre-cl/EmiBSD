@@ -36,8 +36,9 @@ run-arm64: image-arm64
 # enters ddb-lite through a breakpoint trap, prints where it stopped and continues (status 33);
 # `selftest=trap`, a deliberate bad access that must print OpenBSD's fatal trap message and
 # panic with a stack trace (status 35); and `selftest=uart`, which arms the console's receive
-# interrupt, gets a line typed on the serial console and echoes it (status 33); and
-# `selftest=clock`, which waits for hz clock interrupts and a timeout (status 33).
+# interrupt, gets a line typed on the serial console and echoes it (status 33);
+# `selftest=clock`, which waits for hz clock interrupts and a timeout (status 33); and
+# `selftest=kthread`, two kernel threads passing a turn with msleep/wakeup (status 33).
 smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
@@ -54,6 +55,8 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "selftest: uart rx interrupt armed" --expect "selftest: uart echo: hello"
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=clock" \
         --expect "selftest: clock ok"
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=kthread" \
+        --expect "selftest: kthread ping-pong ok"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd \
         --expect "bsd: booted on arm64" --expect "The Regents of the University of California" \
         --expect "real mem  = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
@@ -68,6 +71,8 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "selftest: uart rx interrupt armed" --expect "selftest: uart echo: hello"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=clock" \
         --expect "selftest: clock ok"
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=kthread" \
+        --expect "selftest: kthread ping-pong ok"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

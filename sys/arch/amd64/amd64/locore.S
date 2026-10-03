@@ -176,3 +176,101 @@ intr_user_exit:
 	call	intr_user_exit_unported
 	ud2
 	.size	intr_user_exit, . - intr_user_exit
+
+/*
+ * cpu_switchto(struct proc *old, struct proc *new): switch from old to new.
+ * The subset for kernel threads: the stack pointers and %cr3; the FPU/"extended
+ * state" reset, the user segment reset, the Meltdown CR3 bookkeeping, the RSB
+ * refill and retguard come with user mode (see locore.rs).
+ */
+	.globl	cpu_switchto
+	.type	cpu_switchto,@function
+	.p2align 4, 0x90
+cpu_switchto:
+	pushq	%rbx
+	pushq	%rbp
+	pushq	%r12
+	pushq	%r13
+	pushq	%r14
+	pushq	%r15
+
+	movq	%rdi,%r13
+	movq	%rsi,%r12
+
+	/* Record new proc. */
+	movb	${SONPROC},{P_STAT}(%r12)	# p->p_stat = SONPROC
+	movq	%gs:{CI_SELF},%rcx		# SET_CURPROC(%r12,%rcx)
+	movq	%r12,%gs:{CI_CURPROC}
+	movq	%rcx,{P_CPU}(%r12)
+
+	/* If old proc exited, don't bother. */
+	testq	%r13,%r13
+	jz	switch_exited
+
+	/*
+	 * Save old context.
+	 *
+	 * Registers:
+	 *   %r13 - old proc, then old pcb
+	 *   %r12 - new proc
+	 */
+	movq	{P_ADDR}(%r13),%r13
+
+	/* Save stack pointers. */
+	movq	%rsp,{PCB_RSP}(%r13)
+	movq	%rbp,{PCB_RBP}(%r13)
+
+switch_exited:
+	/*
+	 * Restore saved context.
+	 *
+	 * Registers:
+	 *   %rax, %rdi - scratch
+	 *   %r12 - new process
+	 *   %r13 - new pcb
+	 */
+	movq	{P_ADDR}(%r12),%r13
+
+	/* No interrupts while loading new state. */
+	cli
+
+	/* Restore stack pointers. */
+	movq	{PCB_RSP}(%r13),%rsp
+	movq	{PCB_RBP}(%r13),%rbp
+
+	/* don't switch cr3 to the same thing it already was */
+	movq	{PCB_CR3}(%r13),%rax
+	movq	%cr3,%rdi
+	xorq	%rax,%rdi
+	testq	%rdi,%rdi
+	jz	.Lsame_cr3
+	movq	%rax,%cr3
+.Lsame_cr3:
+	movq	%r13,%gs:{CI_CURPCB}		# SET_CURPCB(%r13)
+
+	/* Interrupts are okay again. */
+	sti
+	popq	%r15
+	popq	%r14
+	popq	%r13
+	popq	%r12
+	popq	%rbp
+	popq	%rbx
+	ret
+	.size	cpu_switchto, . - cpu_switchto
+
+/*
+ * proc_trampoline: where a thread built by cpu_fork starts, with the switch
+ * frame's sf_r12 (the function) and sf_r13 (its argument) in %r12 and %r13.
+ * The Rust side (proc_trampoline_run) runs proc_trampoline_mi and then the
+ * function; the return to user mode (syscall_return) comes with M6.
+ */
+	.globl	proc_trampoline
+	.type	proc_trampoline,@function
+	.p2align 4, 0x90
+proc_trampoline:
+	movq	%r12,%rdi
+	movq	%r13,%rsi
+	call	proc_trampoline_run
+	ud2
+	.size	proc_trampoline, . - proc_trampoline

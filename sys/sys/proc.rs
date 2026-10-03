@@ -355,7 +355,7 @@ pub struct Process {
     /// \[I\] `ps_iflags`: flags set at exec time.
     pub ps_iflags: Cell<u16>,
     /// `ps_nice`: process "nice" value.
-    pub ps_nice: Cell<i8>,
+    pub ps_nice: Cell<u8>,
 
     // ps_prof: profile arguments (M6).
     /// `ps_acflag`: accounting flags.

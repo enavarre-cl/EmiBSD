@@ -223,10 +223,27 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
 - Processes (M5-b, part 1): `struct proc`/`struct process` are OpenBSD's with the members
   the scheduler and the kernel threads use; the machine-dependent parts (`mdproc`, `pcb`)
   come through `machine::proc` (associated types with associated-constant initialisers, so
-  `proc0` is a `static`). `proc0paddr` is a static u-area per arch: proc0's kernel stack
-  stays the boot stack Limine gave us, its pcb lives in the static. `main` sets `curproc`
-  first and builds process 0 as `init_main.c` does; `fork1`, the sleep queues and
-  `cpu_switchto` are part 2.
+  `proc0` is a `static`). `proc0paddr` is a static u-area per arch (`Uarea`, `USPACE` bytes,
+  page aligned, as `locore` reserves it in C): proc0's kernel stack stays the boot stack
+  Limine gave us, its pcb and the trap frame `cpu_fork` copies live in the static. `main`
+  sets `curproc` first and builds process 0 as `init_main.c` does.
+- Processes (M5-b, part 2, the scheduler): the sleep queues, `mi_switch`, the run queues,
+  `fork1` and the kernel threads are OpenBSD's, single-CPU (`MULTIPROCESSOR` paths such as
+  stealing, `SPCF_SHOULDHALT` and the barrier task are not configured, `sched_choosecpu` is
+  `curcpu()`). The machine contract gained `cpu_switchto`, `cpu_fork`, `clear_resched`,
+  `cpu_unidle`, the idle hooks, `cpu_info_foreach` and the mutex nesting counter. The
+  context switches are the kernel-thread subsets of `locore.S`/`cpuswitch.S`: stack
+  pointers, `curproc`/`curpcb`/`p_cpu`/`p_stat` and, on amd64, `%cr3`; the FPU/xstate and
+  user segment handling, the Meltdown CR3s, retguard and the RSB refill come with user
+  mode. `proc_trampoline` hands the thread function and its argument to a Rust
+  `proc_trampoline_run` instead of calling the function itself (Rust `fn` pointers have no C
+  calling convention); the syscall return path after it is M6. Every thread runs on the
+  kernel pmap until vmspaces exist: amd64 `pmap_activate` loads it, arm64 `pmap_setttb`
+  records `ci_curpm` and leaves `TTBR0_EL1` (still the bootloader's) alone. `uvm_uarea_alloc`
+  hands out `USPACE` blocks from the direct map without the guard page (`km_alloc` cannot
+  punch a hole in the direct map; the guard returns with `kernel_map`). `cold` and `safepri`
+  are `sys/systm.rs` statics like `physmem`. The `selftest=kthread` boot runs two kernel
+  threads passing a turn with `msleep`/`wakeup` through the run queues and the idle thread.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

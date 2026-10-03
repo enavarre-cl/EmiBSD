@@ -209,6 +209,14 @@ impl Cpu for Machine {
 
     fn curcpu_mutex_level_add(_delta: i32) {}
 
+    fn curcpu_mutex_level() -> i32 {
+        0
+    }
+
+    fn cpu_info_foreach(f: &mut dyn FnMut(&'static HostCpuInfo)) {
+        f(&HOST_CPU_INFO);
+    }
+
     fn cpu_is_primary(_ci: &HostCpuInfo) -> bool {
         true
     }
@@ -259,6 +267,34 @@ impl Cpu for Machine {
 
     fn need_resched(ci: &HostCpuInfo) {
         ci.ci_want_resched.set(1);
+    }
+
+    fn clear_resched(ci: &HostCpuInfo) {
+        ci.ci_want_resched.set(0);
+    }
+
+    fn cpu_unidle(_ci: &HostCpuInfo) {}
+
+    fn cpu_idle_enter() {}
+
+    fn cpu_idle_cycle() {}
+
+    fn cpu_idle_leave() {}
+
+    /// The host has one thread of execution and no kernel stacks to switch between.
+    unsafe fn cpu_switchto(_old: Option<&Proc>, _new: &Proc) {
+        crate::kern::subr_prf::panic(format_args!("host: cpu_switchto has no context switch"))
+    }
+
+    /// Nothing to set up: the host never switches to the thread.
+    fn cpu_fork(
+        _p1: &Proc,
+        _p2: &Proc,
+        _stack: *mut u8,
+        _tcb: *mut u8,
+        _func: fn(*mut core::ffi::c_void),
+        _arg: *mut core::ffi::c_void,
+    ) {
     }
 
     fn cpu_initclocks() {}

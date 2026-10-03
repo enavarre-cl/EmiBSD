@@ -10,10 +10,11 @@ pub mod dev;
 pub mod include;
 
 use core::arch::asm;
+use core::cell::Cell;
+use core::ffi::c_void;
 
 use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::db_machdep::{DbMachdep, PrFn};
-use core::cell::Cell;
 
 use crate::machine::proc::MachineProc;
 use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, Pmap, VmParam};
@@ -77,6 +78,19 @@ impl Cpu for Machine {
         ci.ci_mutex_level.set(ci.ci_mutex_level.get() + delta);
     }
 
+    fn curcpu_mutex_level() -> i32 {
+        include::cpu::curcpu().ci_mutex_level.get()
+    }
+
+    fn cpu_info_foreach(f: &mut dyn FnMut(&'static include::cpu::CpuInfo)) {
+        let mut ci: *const include::cpu::CpuInfo = include::cpu::cpu_info_primary();
+        // SAFETY: `cpu_info_list` links static cpu_infos (just the primary before MP).
+        while let Some(info) = unsafe { ci.as_ref() } {
+            f(info);
+            ci = info.ci_next.get();
+        }
+    }
+
     fn cpu_is_primary(ci: &include::cpu::CpuInfo) -> bool {
         include::cpu::cpu_is_primary(ci)
     }
@@ -106,7 +120,7 @@ impl Cpu for Machine {
     }
 
     fn proc0paddr() -> &'static User {
-        &arm64::machdep::PROC0PADDR
+        arm64::machdep::proc0paddr()
     }
 
     fn ci_idepth(ci: &include::cpu::CpuInfo) -> u32 {
@@ -127,6 +141,43 @@ impl Cpu for Machine {
 
     fn need_resched(ci: &include::cpu::CpuInfo) {
         arm64::machdep::need_resched(ci)
+    }
+
+    fn clear_resched(ci: &include::cpu::CpuInfo) {
+        arm64::machdep::clear_resched(ci)
+    }
+
+    fn cpu_unidle(ci: &include::cpu::CpuInfo) {
+        arm64::machdep::cpu_unidle(ci)
+    }
+
+    fn cpu_idle_enter() {
+        arm64::machdep::cpu_idle_enter()
+    }
+
+    fn cpu_idle_cycle() {
+        arm64::machdep::cpu_idle_cycle()
+    }
+
+    fn cpu_idle_leave() {
+        arm64::machdep::cpu_idle_leave()
+    }
+
+    unsafe fn cpu_switchto(old: Option<&Proc>, new: &Proc) {
+        // SAFETY: forwarded: the caller holds the scheduler lock with `old`/`new` as the
+        // contract asks.
+        unsafe { arm64::machdep::cpu_switchto(old, new) }
+    }
+
+    fn cpu_fork(
+        p1: &Proc,
+        p2: &Proc,
+        stack: *mut u8,
+        tcb: *mut u8,
+        func: fn(*mut c_void),
+        arg: *mut c_void,
+    ) {
+        arm64::vm_machdep::cpu_fork(p1, p2, stack, tcb, func, arg)
     }
 
     fn cpu_initclocks() {

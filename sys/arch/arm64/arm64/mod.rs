@@ -8,12 +8,15 @@
 pub mod autoconf;
 pub mod bus_space;
 pub mod cpufunc;
+pub mod cpuswitch;
 pub mod db_interface;
 pub mod db_trace;
 pub mod exception;
+pub mod fpu;
 pub mod intr;
 pub mod machdep;
 pub mod pmap;
 #[cfg(feature = "qemu")]
 pub mod qemu;
 pub mod trap;
+pub mod vm_machdep;

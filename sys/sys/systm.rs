@@ -42,15 +42,30 @@
 //!
 //! Upstream: sys/sys/systm.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M3 ports `physmem`; the hostname and boot-time globals, the
-//! `copyin`/`copyout` family, `tsleep`/`wakeup`, the `panic`/`printf` prototypes (already in
-//! `kern/subr_prf.rs`) and the rest arrive with their files.
+//! Status: `wip`. Milestone M3 ports `physmem`; M5 adds `cold`, `safepri` and the sleep
+//! limits `INFSLP`/`MAXTSLP`; the hostname and boot-time globals, the `copyin`/`copyout`
+//! family, the `panic`/`printf` prototypes (already in `kern/subr_prf.rs`) and the rest arrive
+//! with their files. `tsleep`/`wakeup` are in `kern/kern_synch.rs`.
 //!
 //! ## Deviations
-//! - `physmem` is defined here (the C defines it in every `machdep.c` and declares it here),
-//!   so generic code names it without an architecture path; the `machdep`s fill it.
+//! - `physmem`, `cold` and `safepri` are defined here (the C defines each in every
+//!   `machdep.c`/`autoconf.c` and declares them here), so generic code names them without an
+//!   architecture path; the `machdep`s and `cpu_configure` fill them.
 
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize};
 
 /// `physmem`: physical memory, in pages (an `int` in C).
 pub static PHYSMEM: AtomicUsize = AtomicUsize::new(0);
+
+/// `cold`: cold start flag, set in locore, cleared by `cpu_configure` once the devices are
+/// attached and interrupts can be taken.
+pub static COLD: AtomicBool = AtomicBool::new(true);
+
+/// `safepri`: the IPL `tsleep` lowers to while cold or after a panic, to give interrupts a
+/// chance (`int safepri = 0` in each `machdep.c`).
+pub static SAFEPRI: AtomicI32 = AtomicI32::new(0);
+
+/// `INFSLP`: sleep forever (`tsleep_nsec` and friends).
+pub const INFSLP: u64 = u64::MAX;
+/// `MAXTSLP`: the longest finite sleep.
+pub const MAXTSLP: u64 = u64::MAX - 1;

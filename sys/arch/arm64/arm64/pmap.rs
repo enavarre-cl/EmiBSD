@@ -75,6 +75,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::arch::arm64::arm64::cpufunc::{
     cpu_tlb_flush, cpu_tlb_flush_all_asid, cpu_tlb_flush_asid,
 };
+use crate::arch::arm64::include::cpu::curcpu;
 use crate::arch::arm64::include::param::{PAGE_MASK, PAGE_SHIFT, PAGE_SIZE};
 use crate::arch::arm64::include::pmap::{
     PMAP_CACHE_BITS, PMAP_CACHE_CI, PMAP_CACHE_DEV_NGNRE, PMAP_CACHE_DEV_NGNRNE, PMAP_CACHE_WB,
@@ -89,6 +90,7 @@ use crate::arch::arm64::include::pte::{
 };
 use crate::arch::arm64::include::vmparam::{VM_MAX_KERNEL_ADDRESS, VM_MIN_KERNEL_ADDRESS};
 use crate::sys::errno::Errno;
+use crate::sys::proc::Proc;
 use crate::sys::queue::ListEntry;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_extern::{PROT_MASK, UVM_PLA_NOWAIT, UVM_PLA_ZERO, VmProt};
@@ -243,6 +245,52 @@ const AP_BITS_KERN: [u64; 8] = [
 /// `pmap_kernel()`.
 pub fn pmap_kernel() -> &'static Pmap {
     &KERNEL_PMAP
+}
+
+/// `pmap_activate`: activate a pmap entry: `p`'s address space is in use by one more thread,
+/// and switched in now if `p` is the running thread.
+pub fn pmap_activate(p: &Proc) {
+    // pm = p->p_vmspace->vm_map.pmap: the kernel pmap until user address spaces exist (M6).
+    let pm = pmap_kernel();
+
+    pm.pm_active.fetch_add(1, Ordering::Relaxed);
+    if ptr::eq(p, curcpu().ci_curproc.get()) && !ptr::eq(pm, curcpu().ci_curpm.get()) {
+        pmap_setttb(ptr::from_ref(p).cast());
+    }
+}
+
+/// `pmap_deactivate`: deactivate a pmap entry.
+pub fn pmap_deactivate(_p: &Proc) {
+    // pm = p->p_vmspace->vm_map.pmap: as for `pmap_activate`.
+    pmap_kernel().pm_active.fetch_sub(1, Ordering::Relaxed);
+}
+
+/// `pmap_setttb`: loads `p`'s address space: called by `cpu_switchto_asm` for every switch
+/// (hence `extern "C"` by its C name) and by `pmap_activate`.
+///
+/// Every thread runs on the kernel pmap until user address spaces exist (M6), and that one
+/// is live since `locore`: the ASID generation check (`pmap_allocate_asid`), the pointer
+/// authentication keys (`pmap_setpauthkeys`) and the `TTBR0_EL1`/`cpu_setttb` switch are
+/// reported when a thread with a vmspace shows up; `ci_curpm` and the branch predictor
+/// flush are the C's.
+#[unsafe(no_mangle)]
+pub extern "C" fn pmap_setttb(p: *const core::ffi::c_void) {
+    let ci = curcpu();
+    // SAFETY: the switch hands over the thread it makes current (a `struct proc *`, opaque
+    // to the ABI), alive by definition.
+    let p = unsafe { &*p.cast::<Proc>() };
+
+    if !p.p_vmspace.get().is_null() {
+        let _ = unported!(
+            "pmap_setttb: user pmaps (pmap_allocate_asid, pmap_setpauthkeys, cpu_setttb; M6)"
+        );
+    }
+    let pm = pmap_kernel();
+
+    ci.ci_curpm.set(pm);
+    if let Some(flush_bp) = ci.ci_flush_bp.get() {
+        flush_bp();
+    }
 }
 
 /// `pmap_initialized`.

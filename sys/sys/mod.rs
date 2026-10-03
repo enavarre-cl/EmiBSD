@@ -4,6 +4,7 @@
 //! that the corresponding `.c` file implements live in that file's module (`kern/`), as `impl`
 //! blocks on the types defined here.
 
+pub mod acct;
 pub mod clockintr;
 pub mod errno;
 pub mod evcount;
@@ -34,3 +35,4 @@ pub mod ttydefaults;
 pub mod types;
 pub mod ucred;
 pub mod user;
+pub mod vmmeter;

@@ -37,8 +37,8 @@
 //! Upstream: sys/kern/kern_kthread.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M5 (part b1) ports `kthread_create_deferred` and
-//! `kthread_run_deferred_queue`; `kthread_create` waits for `fork1` (part b2) and
-//! `kthread_exit` for `exit1` (M6), both reported.
+//! `kthread_run_deferred_queue`, part b2 `kthread_create`; `kthread_exit` waits for `exit1`
+//! (M6), reported.
 //!
 //! ## Deviations
 //! - `kthread_create` returns the new thread (`Result<&Proc, Errno>`) instead of an `int`
@@ -48,13 +48,15 @@ use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use crate::kern::init_main::PROC0;
+use crate::kern::kern_fork::fork1;
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::subr_prf::{Str, panic, printf};
 use crate::machine::cpu::curproc;
 use crate::queue_adapter;
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_NOWAIT, M_TEMP, M_ZERO};
-use crate::sys::proc::Proc;
+use crate::sys::proc::{FORK_NOZOMBIE, FORK_SHAREFILES, FORK_SHAREVM, FORK_SYSTEM, Proc};
 use crate::sys::queue::{SimpleqEntry, SimpleqHead};
 use crate::unported;
 
@@ -62,19 +64,31 @@ use crate::unported;
 pub static KTHREAD_CREATE_NOW: AtomicBool = AtomicBool::new(false);
 
 /// `kthread_create`: fork a kernel thread. Any process can request this to be done. The VM
-/// space and limits, etc. will be shared with proc0.
+/// space and limits, etc. will be shared with proc0. Returns the new thread (the C's
+/// `*newpp`).
 pub fn kthread_create(
-    _func: fn(*mut c_void),
-    _arg: *mut c_void,
-    _name: &[u8],
+    func: fn(*mut c_void),
+    arg: *mut c_void,
+    name: &[u8],
 ) -> Result<&'static Proc, Errno> {
     // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
 
     // First, create the new process. Share the memory, file descriptors and don't leave the
-    // exit status around for the parent to wait for:
-    // fork1(&proc0, FORK_SHAREVM|FORK_SHAREFILES|FORK_NOZOMBIE|FORK_SYSTEM, func, arg, NULL, &p)
-    // then name it as specified (strlcpy ps_comm).
-    Err(unported!("kthread_create: fork1 (kern_fork.c, M5-b2)"))
+    // exit status around for the parent to wait for.
+    let p = fork1(
+        &PROC0,
+        FORK_SHAREVM | FORK_SHAREFILES | FORK_NOZOMBIE | FORK_SYSTEM,
+        func,
+        arg,
+    )?;
+
+    // Name it as specified.
+    p.process().set_comm(name);
+
+    // KERNEL_UNLOCK().
+
+    // All done!
+    Ok(p)
 }
 
 /// `kthread_exit`: cause a kernel thread to exit. Assumes the exiting thread is the current

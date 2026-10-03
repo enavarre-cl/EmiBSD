@@ -7,6 +7,7 @@
 pub mod uvm;
 pub mod uvm_anon;
 pub mod uvm_extern;
+pub mod uvm_glue;
 pub mod uvm_init;
 pub mod uvm_km;
 pub mod uvm_object;

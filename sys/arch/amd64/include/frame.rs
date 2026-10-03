@@ -217,6 +217,28 @@ pub struct IretqFrame {
     pub iretq_ss: i64,
 }
 
+/// `struct switchframe`: stack frame inside `cpu_switchto`: the callee-saved registers it
+/// pushes, then the return address `ret` pops. `cpu_fork` builds one so a new thread's first
+/// `cpu_switchto` returns into `proc_trampoline`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Switchframe {
+    /// `sf_r15`.
+    pub sf_r15: i64,
+    /// `sf_r14`.
+    pub sf_r14: i64,
+    /// `sf_r13`.
+    pub sf_r13: i64,
+    /// `sf_r12`.
+    pub sf_r12: i64,
+    /// `sf_rbp`.
+    pub sf_rbp: i64,
+    /// `sf_rbx`.
+    pub sf_rbx: i64,
+    /// `sf_rip`.
+    pub sf_rip: i64,
+}
+
 /// `FRAMESIZE`: the size of a trap frame.
 pub const FRAMESIZE: usize = size_of::<Trapframe>();
 
@@ -226,4 +248,5 @@ const _: () = {
     assert!(core::mem::offset_of!(Trapframe, tf_rip) == 136);
     assert!(size_of::<Intrframe>() == 22 * 8);
     assert!(size_of::<IretqFrame>() == 5 * 8);
+    assert!(size_of::<Switchframe>() == 7 * 8);
 };

@@ -78,10 +78,46 @@ impl Default for Trapframe {
     }
 }
 
+/// `struct switchframe`: stack frame inside `cpu_switch()`: the callee-saved registers
+/// `cpu_switchto_asm` stores, `x19` to `x29` and `lr`. `cpu_fork` builds one so a new
+/// thread's first switch returns into `proc_trampoline`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Switchframe {
+    /// `sf_x19`.
+    pub sf_x19: Register,
+    /// `sf_x20`.
+    pub sf_x20: Register,
+    /// `sf_x21`.
+    pub sf_x21: Register,
+    /// `sf_x22`.
+    pub sf_x22: Register,
+    /// `sf_x23`.
+    pub sf_x23: Register,
+    /// `sf_x24`.
+    pub sf_x24: Register,
+    /// `sf_x25`.
+    pub sf_x25: Register,
+    /// `sf_x26`.
+    pub sf_x26: Register,
+    /// `sf_x27`.
+    pub sf_x27: Register,
+    /// `sf_x28`.
+    pub sf_x28: Register,
+    /// `sf_x29`.
+    pub sf_x29: Register,
+    /// `sf_lr`.
+    pub sf_lr: Register,
+}
+
 /// `TF_SIZE`: the size of a trap frame.
 pub const TF_SIZE: usize = size_of::<Trapframe>();
+
+/// `SWITCHFRAME_SZ`: the size of a switch frame.
+pub const SWITCHFRAME_SZ: usize = size_of::<Switchframe>();
 
 const _: () = {
     assert!(TF_SIZE == 34 * 8);
     assert!(core::mem::offset_of!(Trapframe, tf_x) == 32);
+    assert!(SWITCHFRAME_SZ == 12 * 8);
 };

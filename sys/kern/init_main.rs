@@ -64,12 +64,14 @@ use crate::dev::rnd::arc4random;
 use crate::kern::kern_clock::initclocks;
 use crate::kern::kern_clockintr::clockqueue_init;
 use crate::kern::kern_fork::process_initialize;
+use crate::kern::kern_kthread::kthread_run_deferred_queue;
 use crate::kern::kern_proc::{
     ALLPROC, ALLPROCESS, chgproccnt, pgrphash, pidhash, procinit, tidhash,
 };
 use crate::kern::kern_sched::{sched_init, sched_init_cpu};
-use crate::kern::kern_timeout::{timeout_proc_init, timeout_startup};
-use crate::kern::sched_bsd::sched_lock_init;
+use crate::kern::kern_synch::{endtsleep, sleep_queue_init};
+use crate::kern::kern_timeout::{timeout_proc_init, timeout_set, timeout_startup};
+use crate::kern::sched_bsd::{sched_lock_init, scheduler_start};
 use crate::kprintf;
 use crate::machine::Machine;
 use crate::machine::cons::consinit;
@@ -212,14 +214,17 @@ pub fn main() -> ! {
 
     p.p_flag.fetch_or(P_SYSTEM, Ordering::Relaxed);
     p.p_stat.set(SONPROC);
-    pr.ps_nice.set(NZERO as i8);
+    pr.ps_nice.set(NZERO as u8);
     pr.set_comm(b"swapper");
 
-    // Init timeouts: timeout_set(&p->p_sleep_to, endtsleep, p) (kern_synch.c, M5-b2).
-    let _ = unported!("proc0's p_sleep_to (endtsleep, M5-b2)");
+    // Init timeouts
+    timeout_set(
+        &p.p_sleep_to,
+        endtsleep,
+        core::ptr::from_ref(p).cast_mut().cast(),
+    );
 
-    // Init timeouts, signal state, file descriptor table, limits and the prototype map of
-    // process 0.
+    // Init signal state, file descriptor table, limits and the prototype map of process 0.
     let _ = unported!("signal_init / siginit");
     let _ = unported!("fdinit");
     let _ = unported!("lim_startup");
@@ -232,7 +237,7 @@ pub fn main() -> ! {
 
     // Initialize run queues
     sched_init();
-    let _ = unported!("sleep_queue_init");
+    sleep_queue_init();
     clockqueue_init(Machine::ci_queue(ci));
     sched_init_cpu(ci);
     Machine::ci_randseed(ci).set((arc4random() & 0x7fff_ffff) + 1);
@@ -306,7 +311,7 @@ pub fn main() -> ! {
     let _ = unported!("init_exec");
 
     // Start the scheduler
-    let _ = unported!("scheduler_start");
+    scheduler_start();
 
     // Create process 1 (init(8)). We do this now, as Unix has historically had init be
     // process 1, and changing this would probably upset a lot of people.
@@ -314,7 +319,11 @@ pub fn main() -> ! {
 
     // Create any kernel threads whose creation was deferred because initprocess had not yet
     // been created.
-    let _ = unported!("kthread_run_deferred_queue");
+    kthread_run_deferred_queue();
+    #[cfg(feature = "qemu")]
+    if crate::kern::selftest::kthread_requested() {
+        crate::kern::selftest::kthread_pingpong();
+    }
 
     // Now that device driver threads have been created, wait for them to finish any deferred
     // autoconfiguration.
@@ -361,8 +370,12 @@ pub fn main() -> ! {
         Machine::exit(ExitStatus::Success)
     }
     #[cfg(not(feature = "qemu"))]
-    {
-        let _ = unported!("tsleep_nsec (proc0 loop)");
-        Machine::halt()
+    loop {
+        let _ = crate::kern::kern_synch::tsleep_nsec(
+            core::ptr::from_ref(p),
+            crate::sys::param::PVM,
+            "scheduler",
+            crate::sys::systm::INFSLP,
+        );
     }
 }

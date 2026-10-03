@@ -1,4 +1,4 @@
-/*	$OpenBSD: kern_synch.c,v 1.234 2026/06/16 19:29:25 bluhm Exp $	*/
+/*	$OpenBSD: kern_synch.c,v 1.217 2026/08/19 13:05:12 claudio Exp $	*/
 /*	$NetBSD: kern_synch.c,v 1.37 1996/04/22 01:38:37 christos Exp $	*/
 /* <LICENSES> */
 /*
@@ -42,29 +42,515 @@
 //!
 //! Upstream: sys/kern/kern_synch.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M3 only needs a `wakeup(9)` that callers can name; it reports the
-//! gap, once, because there is nothing to wake before the scheduler, as does `wakeup_one`.
-//! M5 (part b1) adds the reference counts (`refcnt_init[_trace]`, `refcnt_take`,
-//! `refcnt_rele[_wake]`, `refcnt_read`, `refcnt_shared`) and `cond_init`/
-//! `cond_signal_handler`; `tsleep`, `msleep`, `sleep_setup`/`sleep_finish`, the sleep queues,
-//! `wakeup_n`, `endtsleep`, `unsleep`, `refcnt_finalize` and `cond_wait` arrive with part b2.
+//! Status: `wip`. Milestone M5 ports the sleep queues (`sleep_queue_init`), `tsleep`,
+//! `tsleep_nsec`, `msleep`, `msleep_nsec`, `sleep_setup`, `sleep_finish`, `wakeup_proc`,
+//! `endtsleep`, `unsleep`, `wakeup_n`, `wakeup`, `wakeup_one`, the reference counts
+//! (`refcnt_*`) and the condition variables (`cond_*`). `rwsleep[_nsec]` wait for
+//! `kern_rwlock.c`; `sleep_signal_check` for the signals (M6); `sys_sched_yield`,
+//! `__thrsleep`/`__thrwakeup` and `tslp_init` for the syscalls (M6).
+//!
+//! ## Deviations
+//! - The sleep functions return `Result<(), Errno>` (`EWOULDBLOCK` on timeout, `EINTR`/
+//!   `ERESTART` from a signal) instead of an `int`.
+//! - `sleep_signal_check` reports the signal machinery (M6) and finds nothing pending.
+//! - The `cold == 2` ddb stack dump is not here (`cold` is a flag, not a counter).
+//! - `safepri` and `cold` are `sys/systm.rs` statics (see there).
 
-use core::sync::atomic::{Ordering, fence};
+use core::ffi::c_void;
+use core::ptr;
+use core::sync::atomic::{AtomicI32, Ordering, fence};
 
+use crate::conf::param::TICK_NSEC;
 use crate::kassert;
-use crate::sys::proc::Cond;
+use crate::kern::kern_lock::{mtx_enter, mtx_leave};
+use crate::kern::kern_timeout::{timeout_add_nsec, timeout_del};
+use crate::kern::sched_bsd::{
+    mi_switch, sched_assert_locked, sched_lock, sched_unlock, setrunnable,
+};
+#[cfg(feature = "diagnostic")]
+use crate::kern::subr_prf::{Str, log};
+use crate::kern::subr_prf::{panic, panicstr};
+use crate::machine::Machine;
+use crate::machine::cpu::{Cpu, curproc};
+use crate::machine::intr::{splhigh, splx};
+use crate::sys::errno::Errno;
+use crate::sys::mutex::Mutex;
+use crate::sys::param::{PCATCH, PNORELOCK, PRIMASK, PWAIT};
+#[cfg(feature = "diagnostic")]
+use crate::sys::proc::P_CANTSLEEP;
+use crate::sys::proc::{
+    Cond, P_INSCHED, P_SINTR, P_TIMEOUT, P_TIMEOUTRAN, P_WEXIT, Proc, ProcRunq, SONPROC, SSLEEP,
+    SSTOP,
+};
+use crate::sys::queue::TailqHead;
 use crate::sys::refcnt::Refcnt;
+#[cfg(feature = "diagnostic")]
+use crate::sys::syslog::LOG_WARNING;
+use crate::sys::systm::{COLD, INFSLP, SAFEPRI};
 use crate::unported;
 
-/// `wakeup(9)`: wakes every thread sleeping on `ident`; nobody sleeps yet.
-pub fn wakeup<T>(_ident: *const T) {
-    let _ = unported!("wakeup (kern_synch.c, M5)");
+/// `TABLESIZE`: we're only looking at 7 bits of the address; everything is aligned to 4,
+/// lots of things are aligned to greater powers of 2. Shift right by 8, i.e. drop the bottom
+/// 256 worth.
+const TABLESIZE: usize = 128;
+
+/// `LOOKUP(x)`.
+fn lookup(x: *const c_void) -> usize {
+    ((x as usize) >> 8) & (TABLESIZE - 1)
 }
 
-/// `wakeup_one(9)`: wakes one thread sleeping on `ident`; nobody sleeps yet.
-pub fn wakeup_one<T>(_ident: *const T) {
-    let _ = unported!("wakeup_one (kern_synch.c, M5)");
+/// `slpque[TABLESIZE]`'s table, made `Sync`: touched under the scheduler lock.
+struct Slpque([TailqHead<ProcRunq>; TABLESIZE]);
+// SAFETY: see the type's doc.
+unsafe impl Sync for Slpque {}
+
+/// `slpque`: the sleep queues.
+static SLPQUE: Slpque = Slpque([const { TailqHead::new() }; TABLESIZE]);
+
+/// `sleep_queue_init`.
+pub fn sleep_queue_init() {
+    for q in SLPQUE.0.iter() {
+        q.init();
+    }
 }
+
+/// `nowake`: global sleep channel for threads that do not want to receive wakeup(9)
+/// broadcasts.
+pub static NOWAKE: AtomicI32 = AtomicI32::new(0);
+
+/// `&nowake` as an ident.
+pub fn nowake() -> *const c_void {
+    ptr::from_ref(&NOWAKE).cast()
+}
+
+/// `curproc`, which every sleeper has.
+fn sleeper() -> &'static Proc {
+    let Some(p) = curproc() else {
+        panic(format_args!("sleep: no curproc"));
+    };
+    p
+}
+
+/// `tsleep_nsec`: general sleep call. Suspends the current process until a wakeup is
+/// performed on the specified identifier. The process will then be made runnable with the
+/// specified priority. Sleeps at most `nsecs` (`INFSLP` means no timeout). If `priority`
+/// includes the `PCATCH` flag, signals are checked before and after sleeping, else signals
+/// are not checked. Returns `Ok` if awakened, `EWOULDBLOCK` if the timeout expires. If
+/// `PCATCH` is set and a signal needs to be delivered, `ERESTART` is returned if the current
+/// system call should be restarted if possible, and `EINTR` is returned if the system call
+/// should be interrupted by the signal.
+pub fn tsleep_nsec<T: ?Sized>(
+    ident: *const T,
+    priority: i32,
+    wmesg: &'static str,
+    nsecs: u64,
+) -> Result<(), Errno> {
+    let ident = ident.cast::<c_void>();
+    kassert!(priority & !(PRIMASK | PCATCH) == 0);
+    kassert!(!ptr::eq(ident, nowake()) || priority & PCATCH != 0 || nsecs != INFSLP);
+
+    // MULTIPROCESSOR: KASSERT(ident == &nowake || nsecs != INFSLP || _kernel_lock_held()).
+
+    if COLD.load(Ordering::Relaxed) || panicstr() {
+        // After a panic, or during autoconfiguration, just give interrupts a chance, then just
+        // return; don't run any other procs or panic below, in case this is the idle process
+        // and already asleep.
+        let s = splhigh();
+        splx(SAFEPRI.load(Ordering::Relaxed));
+        // MULTIPROCESSOR: release and reacquire the kernel lock.
+        splx(s);
+        return Ok(());
+    }
+
+    sleep_setup(ident, priority, wmesg);
+    sleep_finish(nsecs, true)
+}
+
+/// `tsleep`: `tsleep_nsec` with the timeout in ticks.
+pub fn tsleep<T: ?Sized>(
+    ident: *const T,
+    priority: i32,
+    wmesg: &'static str,
+    timo: i32,
+) -> Result<(), Errno> {
+    let mut nsecs = INFSLP;
+
+    if timo < 0 {
+        panic(format_args!("tsleep: negative timo {timo}"));
+    }
+    if timo > 0 {
+        nsecs = timo as u64 * TICK_NSEC.load(Ordering::Relaxed) as u64;
+    }
+
+    tsleep_nsec(ident, priority, wmesg, nsecs)
+}
+
+/// `msleep_nsec`: same as `tsleep`, but if we have a mutex provided, then once we've entered
+/// the sleep queue we drop the mutex. After sleeping we re-lock.
+pub fn msleep_nsec<T: ?Sized>(
+    ident: *const T,
+    mtx: &Mutex,
+    priority: i32,
+    wmesg: &'static str,
+    nsecs: u64,
+) -> Result<(), Errno> {
+    let ident = ident.cast::<c_void>();
+    kassert!(priority & !(PRIMASK | PCATCH | PNORELOCK) == 0);
+    kassert!(!ptr::eq(ident, nowake()) || priority & PCATCH != 0 || nsecs != INFSLP);
+
+    if COLD.load(Ordering::Relaxed) || panicstr() {
+        // After a panic, or during autoconfiguration, just give interrupts a chance, then just
+        // return; don't run any other procs or panic below, in case this is the idle process
+        // and already asleep.
+        let spl = mtx.mtx_oldipl.get();
+        mtx.mtx_oldipl.set(SAFEPRI.load(Ordering::Relaxed));
+        mtx_leave(mtx);
+        // MULTIPROCESSOR: release and reacquire the kernel lock.
+        if priority & PNORELOCK == 0 {
+            mtx_enter(mtx);
+            mtx.mtx_oldipl.set(spl);
+        } else {
+            splx(spl);
+        }
+        return Ok(());
+    }
+
+    sleep_setup(ident, priority, wmesg);
+
+    mtx_leave(mtx);
+    // signal may stop the process, release mutex before that
+    let error = sleep_finish(nsecs, true);
+
+    if priority & PNORELOCK == 0 {
+        mtx_enter(mtx);
+    }
+
+    error
+}
+
+/// `msleep`: `msleep_nsec` with the timeout in ticks.
+pub fn msleep<T: ?Sized>(
+    ident: *const T,
+    mtx: &Mutex,
+    priority: i32,
+    wmesg: &'static str,
+    timo: i32,
+) -> Result<(), Errno> {
+    let mut nsecs = INFSLP;
+
+    if timo < 0 {
+        panic(format_args!("msleep: negative timo {timo}"));
+    }
+    if timo > 0 {
+        nsecs = timo as u64 * TICK_NSEC.load(Ordering::Relaxed) as u64;
+    }
+
+    msleep_nsec(ident, mtx, priority, wmesg, nsecs)
+}
+
+// rwsleep_nsec, rwsleep: kern_rwlock.c (M5-b3).
+
+/// `sleep_setup`: puts the current thread on the sleep queue of `ident`.
+pub fn sleep_setup(ident: *const c_void, prio: i32, wmesg: &'static str) {
+    let p = sleeper();
+    let mut prio = prio;
+
+    #[cfg(feature = "diagnostic")]
+    {
+        if p.p_flag.load(Ordering::Relaxed) & P_CANTSLEEP != 0 {
+            panic(format_args!(
+                "sleep: {} failed insomnia",
+                Str(p.process().comm())
+            ));
+        }
+        if p.p_flag.load(Ordering::Relaxed) & P_SINTR != 0 {
+            panic(format_args!("sleep: stale P_SINTR"));
+        }
+        if ident.is_null() {
+            panic(format_args!("sleep: no ident"));
+        }
+        if p.p_stat.get() != SONPROC {
+            panic(format_args!("sleep: not SONPROC but {}", p.p_stat.get()));
+        }
+    }
+    // exiting processes are not allowed to catch signals
+    if p.p_flag.load(Ordering::Relaxed) & P_WEXIT != 0 {
+        prio &= !PCATCH;
+    }
+
+    sched_lock();
+
+    // TRACEPOINT(sched, sleep, NULL): dt(4), not configured.
+
+    p.p_wchan.set(ident);
+    p.p_wmesg.set(Some(wmesg));
+    p.p_slptime.set(0);
+    p.p_slppri.set((prio & PRIMASK) as u8);
+    p.p_flag.fetch_or(P_INSCHED, Ordering::Relaxed);
+    // SAFETY: `p` is on no run or sleep queue (it is SONPROC), and stays valid: a thread
+    // outlives its sleeps.
+    unsafe { SLPQUE.0[lookup(ident)].insert_tail(p) };
+    if prio & PCATCH != 0 {
+        p.p_flag.fetch_or(P_SINTR, Ordering::Relaxed);
+    }
+    p.p_stat.set(SSLEEP);
+
+    sched_unlock();
+}
+
+/// `sleep_finish`: sleeps (or not) after `sleep_setup`; returns the sleep's error.
+pub fn sleep_finish(nsecs: u64, do_sleep: bool) -> Result<(), Errno> {
+    let p = sleeper();
+    let mut do_sleep = do_sleep;
+    let mut error: Result<(), Errno> = Ok(());
+    let mut error1: Result<(), Errno> = Ok(());
+
+    #[cfg(feature = "diagnostic")]
+    if nsecs == 0 {
+        log(
+            LOG_WARNING,
+            format_args!(
+                "sleep_finish: {}[{}]: {}: trying to sleep zero nanoseconds\n",
+                Str(p.process().comm()),
+                p.process().ps_pid.get(),
+                p.p_wmesg.get().unwrap_or("")
+            ),
+        );
+    }
+
+    if nsecs != INFSLP {
+        kassert!(p.p_flag.load(Ordering::Relaxed) & (P_TIMEOUT | P_TIMEOUTRAN) == 0);
+        timeout_add_nsec(&p.p_sleep_to, nsecs);
+    }
+
+    let mut catch = p.p_flag.load(Ordering::Relaxed) & P_SINTR != 0;
+    if catch {
+        error = sleep_signal_check(p, false);
+        if error.is_err() {
+            catch = false;
+            do_sleep = false;
+        }
+    }
+
+    sched_lock();
+    // A few checks need to happen before going to sleep:
+    // - If the wakeup happens while going to sleep, p->p_wchan will be NULL. In that case
+    //   unwind immediately but still check for possible signals and timeouts.
+    // - If the sleep is aborted call unsleep and take us of the sleep queue.
+    // - If requested to stop force a switch even if the sleep condition got cleared.
+    if p.p_wchan.get().is_null() {
+        do_sleep = false;
+    }
+    if !do_sleep {
+        unsleep(p);
+    }
+    if p.p_stat.get() == SSTOP {
+        do_sleep = true;
+    }
+    p.p_flag.fetch_and(!P_INSCHED, Ordering::Relaxed);
+
+    if do_sleep {
+        kassert!(p.p_stat.get() == SSLEEP || p.p_stat.get() == SSTOP);
+        p.p_ru.ru_nvcsw.set(p.p_ru.ru_nvcsw.get() + 1);
+        mi_switch();
+    } else {
+        kassert!(p.p_stat.get() == SONPROC || p.p_stat.get() == SSLEEP);
+        p.p_stat.set(SONPROC);
+        sched_unlock();
+    }
+
+    #[cfg(feature = "diagnostic")]
+    if p.p_stat.get() != SONPROC {
+        panic(format_args!("sleep_finish !SONPROC"));
+    }
+
+    if let Some(ci) = p.cpu() {
+        Machine::ci_schedstate(ci)
+            .spc_curpriority
+            .set(p.p_usrpri.get());
+    }
+
+    // Even though this belongs to the signal handling part of sleep, we need to clear it
+    // before the ktrace.
+    p.p_flag.fetch_and(!P_SINTR, Ordering::Relaxed);
+
+    // There are three situations to handle when cancelling the p_sleep_to timeout:
+    //
+    // 1. The timeout has not fired yet
+    // 2. The timeout is running
+    // 3. The timeout has run
+    //
+    // If timeout_del succeeds then the timeout won't run and situation 1 is dealt with.
+    //
+    // If timeout_del does not remove the timeout, then we're handling 2 or 3, but it won't
+    // tell us which one. Instead, the P_TIMEOUTRAN flag is used to figure out when we move
+    // from 2 to 3. endtsleep() (the p_sleep_to handler) sets the flag when it's finished
+    // running, so we spin waiting for it.
+    //
+    // We spin instead of sleeping because endtsleep() takes the sched lock to do all it's
+    // work. If we wanted to go to sleep to wait for endtsleep to run, we'd also have to take
+    // the sched lock, so we'd be spinning against it anyway.
+    if nsecs != INFSLP && !timeout_del(&p.p_sleep_to) {
+        // Wait for endtsleep timeout to finish running
+        let mut flag;
+        loop {
+            flag = p.p_flag.load(Ordering::Relaxed);
+            if flag & P_TIMEOUTRAN != 0 {
+                break;
+            }
+            core::hint::spin_loop(); // CPU_BUSY_CYCLE()
+        }
+        p.p_flag
+            .fetch_and(!(P_TIMEOUT | P_TIMEOUTRAN), Ordering::Relaxed);
+
+        if flag & P_TIMEOUT != 0 {
+            error1 = Err(Errno::EWOULDBLOCK);
+        }
+    }
+
+    // Check if thread was woken up because of a unwind or signal but ignore any pending stop
+    // condition.
+    if catch {
+        error = sleep_signal_check(p, true);
+    }
+
+    // Signal errors are higher priority than timeouts.
+    if error.is_ok() && error1.is_err() {
+        error = error1;
+    }
+
+    error
+}
+
+/// `sleep_signal_check`: check and handle signals and suspensions around a sleep cycle. The
+/// 2nd call in `sleep_finish()` sets `after_sleep`. In this case any pending suspend event
+/// came in after the wakeup / unsleep and can therefor be ignored. Once the process hits
+/// userret the event will be picked up again.
+pub fn sleep_signal_check(_p: &Proc, _after_sleep: bool) -> Result<(), Errno> {
+    // proc_suspend_check, process_suspend_signal, cursig, process_stop: the signals (M6).
+    let _ = unported!("sleep_signal_check: signals (kern_sig.c, M6)");
+    Ok(())
+}
+
+/// `wakeup_proc`: if process hasn't been awakened (wchan non-zero), undo the sleep. If proc is
+/// stopped, just unsleep so it will remain stopped.
+pub fn wakeup_proc(p: &Proc) -> bool {
+    let mut awakened = false;
+
+    sched_assert_locked();
+
+    if !p.p_wchan.get().is_null() {
+        awakened = true;
+        #[cfg(feature = "diagnostic")]
+        if p.p_stat.get() != SSLEEP && p.p_stat.get() != SSTOP {
+            panic(format_args!(
+                "thread {} p_stat is {}",
+                p.p_tid.get(),
+                p.p_stat.get()
+            ));
+        }
+        unsleep(p);
+        if p.p_stat.get() == SSLEEP {
+            setrunnable(p);
+        }
+    }
+
+    awakened
+}
+
+/// `endtsleep`: this is the timeout handler that wakes up procs that only want to sleep for a
+/// period of time rather than forever (until they get a wakeup from somewhere else). It is
+/// only scheduled and used by `sleep_finish()`, which coordinates with this handler via the
+/// `P_TIMEOUT` and `P_TIMEOUTRAN` flags.
+pub fn endtsleep(arg: *mut c_void) {
+    // SAFETY: `arg` is the thread that armed its `p_sleep_to`, alive while it sleeps.
+    let p = unsafe { &*arg.cast::<Proc>() };
+
+    sched_lock();
+    let awakened = wakeup_proc(p);
+    sched_unlock();
+
+    let mut flags = P_TIMEOUTRAN;
+    if awakened {
+        flags |= P_TIMEOUT;
+    }
+
+    // Let sleep_finish() proceed.
+    p.p_flag.fetch_or(flags, Ordering::Relaxed);
+    // Do not alter the proc after this point.
+}
+
+/// `unsleep`: remove a process from its wait queue.
+pub fn unsleep(p: &Proc) {
+    sched_assert_locked();
+
+    if !p.p_wchan.get().is_null() {
+        // SAFETY: a thread with a wchan is on that channel's sleep queue, under the
+        // scheduler lock.
+        unsafe { SLPQUE.0[lookup(p.p_wchan.get())].remove(p) };
+        p.p_wchan.set(ptr::null());
+        p.p_wmesg.set(None);
+        // TRACEPOINT(sched, unsleep, ...): dt(4), not configured.
+    }
+}
+
+/// `wakeup_n`: make a number of processes sleeping on the specified identifier runnable.
+pub fn wakeup_n<T: ?Sized>(ident: *const T, n: i32) {
+    let ident = ident.cast::<c_void>();
+    let wakeq: TailqHead<ProcRunq> = TailqHead::new();
+    let mut n = n;
+
+    sched_lock();
+    let qp = &SLPQUE.0[lookup(ident)];
+    let mut next = qp.first();
+    while let Some(p) = next
+        && n != 0
+    {
+        next = TailqHead::<ProcRunq>::next(p);
+        #[cfg(feature = "diagnostic")]
+        if p.p_stat.get() != SSLEEP && p.p_stat.get() != SSTOP {
+            panic(format_args!(
+                "thread {} p_stat is {}",
+                p.p_tid.get(),
+                p.p_stat.get()
+            ));
+        }
+        kassert!(!p.p_wchan.get().is_null());
+        if ptr::eq(p.p_wchan.get(), ident) {
+            // SAFETY: `p` is on `qp`, under the scheduler lock; it moves to `wakeq`, a local
+            // queue that is emptied below before it goes out of scope.
+            unsafe {
+                qp.remove(p);
+                p.p_wchan.set(ptr::null());
+                p.p_wmesg.set(None);
+                wakeq.insert_tail(p);
+            }
+            n -= 1;
+        }
+    }
+    while let Some(p) = wakeq.first() {
+        // SAFETY: `p` is on `wakeq`.
+        unsafe { wakeq.remove(p) };
+        // TRACEPOINT(sched, unsleep, ...): dt(4), not configured.
+        if p.p_stat.get() == SSLEEP {
+            setrunnable(p);
+        }
+    }
+    sched_unlock();
+}
+
+/// `wakeup`: make all processes sleeping on the specified identifier runnable.
+pub fn wakeup<T: ?Sized>(chan: *const T) {
+    wakeup_n(chan, -1);
+}
+
+/// `wakeup_one(c)`: `wakeup_n((c), 1)` (`<sys/systm.h>`).
+pub fn wakeup_one<T: ?Sized>(chan: *const T) {
+    wakeup_n(chan, 1);
+}
+
+// sys_sched_yield, thrsleep_unlock, tslp_init, thrsleep_bucket, thrsleep, sys___thrsleep,
+// tslp_wakeups, sys___thrwakeup: the syscalls (M6).
 
 /// `refcnt_init`.
 pub fn refcnt_init(r: &Refcnt) {
@@ -99,11 +585,23 @@ pub fn refcnt_rele(r: &Refcnt) -> bool {
 /// `refcnt_rele_wake`.
 pub fn refcnt_rele_wake(r: &Refcnt) {
     if refcnt_rele(r) {
-        wakeup_one(core::ptr::from_ref(r));
+        wakeup_one(ptr::from_ref(r));
     }
 }
 
-// refcnt_finalize: sleeps for the last reference (M5-b2).
+/// `refcnt_finalize`: drops the caller's reference and sleeps until every other one is gone.
+pub fn refcnt_finalize(r: &Refcnt, wmesg: &'static str) {
+    fence(Ordering::Release); // membar_exit_before_atomic()
+    let mut refs = r.r_refs.fetch_sub(1, Ordering::Relaxed).wrapping_sub(1);
+    kassert!(refs != u32::MAX);
+    while refs != 0 {
+        sleep_setup(ptr::from_ref(r).cast(), PWAIT, wmesg);
+        refs = r.r_refs.load(Ordering::Relaxed);
+        let _ = sleep_finish(INFSLP, refs != 0);
+    }
+    // Order subsequent loads and stores after refs == 0 load.
+    fence(Ordering::SeqCst); // membar_sync()
+}
 
 /// `refcnt_read`.
 pub fn refcnt_read(r: &Refcnt) -> u32 {
@@ -121,13 +619,21 @@ pub fn cond_init(c: &Cond) {
 }
 
 /// `cond_signal_handler`: the timeout/task handler that signals a `cond`.
-pub fn cond_signal_handler(arg: *mut core::ffi::c_void) {
+pub fn cond_signal_handler(arg: *mut c_void) {
     // SAFETY: `arg` is the `cond` its waiter armed the handler with, alive while it waits.
     let c = unsafe { &*arg.cast::<Cond>() };
 
     c.c_wait.store(0, Ordering::Relaxed);
 
-    wakeup_one(core::ptr::from_ref(c));
+    wakeup_one(ptr::from_ref(c));
 }
 
-// cond_wait: sleeps until the cond is signalled (M5-b2).
+/// `cond_wait`: sleeps until the cond is signalled.
+pub fn cond_wait(c: &Cond, wmesg: &'static str) {
+    let mut wait = c.c_wait.load(Ordering::Relaxed);
+    while wait != 0 {
+        sleep_setup(ptr::from_ref(c).cast(), PWAIT, wmesg);
+        wait = c.c_wait.load(Ordering::Relaxed);
+        let _ = sleep_finish(INFSLP, wait != 0);
+    }
+}

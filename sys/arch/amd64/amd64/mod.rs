@@ -23,3 +23,4 @@ pub mod qemu;
 pub mod spl;
 pub mod trap;
 pub mod vector;
+pub mod vm_machdep;

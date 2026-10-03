@@ -73,6 +73,13 @@ pub unsafe fn cpu_setttb(asid: u64, pt0pa: u64) {
     };
 }
 
+/// `cpu_wfi`: `dsb sy; wfi`: waits for an interrupt, the default `cpu_idle_cycle_fcn`.
+pub fn cpu_wfi() {
+    // SAFETY: waiting for an interrupt has no effect on memory or registers; the barrier
+    // only completes pending stores first.
+    unsafe { asm!("dsb sy", "wfi", options(nomem, nostack, preserves_flags)) };
+}
+
 /// `cpu_tlb_flush`: invalidates every TLB entry of this inner-shareable domain.
 pub fn cpu_tlb_flush() {
     // SAFETY: TLB invalidation only forces refetches; the barriers complete pending table

@@ -435,7 +435,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; under feature qemu the run ends with the success exit where proc0 would sleep; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; under feature qemu the run ends with the success exit where proc0 would sleep; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -533,7 +533,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "95ffefae93d5b98fae8403a5f8998d77ec55dca8"
 deps = ["sys/arch/amd64/amd64/consinit.c", "sys/arch/amd64/amd64/autoconf.c", "sys/arch/amd64/isa/clock.c", "sys/kern/subr_log.c", "sys/sys/reboot.h"]
-notes = "M2: init_x86_64 (message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all/cpu_reset reported unported), delay (= i8254_delay; delay_func/delay_init/delay_fini M5), cpureset_delay, lid_action, waittime; M3: the direct map, pmap_bootstrap, the memory clusters, cpu_startup's memory lines; M4: setgate/unsetgate/setregion/set_mem_segment/set_sys_segment, idt (a static page) and idt_allocmap, cpu_init_idt, idt_vec_alloc/alloc_range/set/free, x86_64_proc0_tss_ldt_init (ltr/lldt only, proc0's pcb reported), splassert_check, the GDT/TSS/IDT setup and cpu_init_msrs first thing in init_x86_64, which ends as the C does (intr_default_setup, softintr_init, splraise(IPL_IPI), intr_enable), cpu_enter_pages from cpu_startup; the bootinfo parsing, the ACPI/MP tables, cpu_init, dumpsys, sendsig/setregs, sysctl are M5 to M6; M5: startclocks in cpu_startup (rtcinit reported, M7), initclock_func/startclock_func (StaticCells with setters), cpu_initclocks, cpu_startclock, need_resched (aston reported, M5-b); M5-b1: proc0paddr (a static u-area; the boot stack stays Limine's), x86_64_proc0_tss_ldt_init sets ci_curpcb, pcb_fsbase, pcb_kstack, md_regs and (a deviation, for cpu_switchto) pcb_cr3 = %cr3"
+notes = "M2: init_x86_64 (message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all/cpu_reset reported unported), delay (= i8254_delay; delay_func/delay_init/delay_fini M5), cpureset_delay, lid_action, waittime; M3: the direct map, pmap_bootstrap, the memory clusters, cpu_startup's memory lines; M4: setgate/unsetgate/setregion/set_mem_segment/set_sys_segment, idt (a static page) and idt_allocmap, cpu_init_idt, idt_vec_alloc/alloc_range/set/free, x86_64_proc0_tss_ldt_init (ltr/lldt only, proc0's pcb reported), splassert_check, the GDT/TSS/IDT setup and cpu_init_msrs first thing in init_x86_64, which ends as the C does (intr_default_setup, softintr_init, splraise(IPL_IPI), intr_enable), cpu_enter_pages from cpu_startup; the bootinfo parsing, the ACPI/MP tables, cpu_init, dumpsys, sendsig/setregs, sysctl are M5 to M6; M5: startclocks in cpu_startup (rtcinit reported, M7), initclock_func/startclock_func (StaticCells with setters), cpu_initclocks, cpu_startclock, need_resched (aston reported, M5-b); M5-b1: proc0paddr (a static u-area; the boot stack stays Limine's), x86_64_proc0_tss_ldt_init sets ci_curpcb, pcb_fsbase, pcb_kstack, md_regs and (a deviation, for cpu_switchto) pcb_cr3 = %cr3; M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), aston, clear_resched, cpu_unidle (UP), cpu_idle_cycle_hlt/cpu_idle_cycle (cpu_idle_cycle_fcn is a direct call until acpicpu); cold moved to sys/systm.rs"
 
 [[file]]
 c = "sys/arch/amd64/isa/clock.c"
@@ -550,7 +550,7 @@ rust = "sys/arch/amd64/include/frame.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d9b043363ea7fc25368dc3908df3cbc7035033fd"
-notes = "M2: struct callframe; M4: struct trapframe, intrframe, iretq_frame, FRAMESIZE; switchframe is M5"
+notes = "M2: struct callframe; M4: struct trapframe, intrframe, iretq_frame, FRAMESIZE; switchframe is M5; M5-b2: struct switchframe"
 
 [[file]]
 c = "sys/arch/amd64/include/vmparam.h"
@@ -618,7 +618,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c9656ebcea23151ba4968b4eab8099c095180027"
 deps = ["sys/arch/arm64/arm64/bus_space.c", "sys/arch/arm64/arm64/intr.c", "sys/dev/ic/pluart.c", "sys/kern/subr_log.c", "sys/sys/reboot.h"]
-notes = "M2: initarm (the 1 GiB TTBR0 Device-nGnRnE identity block for devices until pmap, message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all reported unported), cold, waittime, cpuresetfn, powerdownfn; the bootargs parsing is BootInfo::boothowto; M3: the memory setup and pmap_bootstrap; M4: cpu_info_primary, SP_EL1/tpidr_el1/VBAR_EL1 first thing, fdt_init of the bootloader DTB, consinit = pluart_init_cons (the other *_init_cons are deferred drivers), stdout_node/stdout_speed, fdt_find_cons, cn_rx_intr_establish (the console receive interrupt pluart_fdt_attach would establish, until autoconf M5); cpu_info[], dumpsys, sendsig/setregs, sysctl are M5 to M6; M5: need_resched (aston reported, M5-b); M5-b1: proc0paddr and proc0tf statics, cpu_startup sets proc0.p_addr and curpcb (pcb_flags, pcb_tf)"
+notes = "M2: initarm (the 1 GiB TTBR0 Device-nGnRnE identity block for devices until pmap, message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all reported unported), cold, waittime, cpuresetfn, powerdownfn; the bootargs parsing is BootInfo::boothowto; M3: the memory setup and pmap_bootstrap; M4: cpu_info_primary, SP_EL1/tpidr_el1/VBAR_EL1 first thing, fdt_init of the bootloader DTB, consinit = pluart_init_cons (the other *_init_cons are deferred drivers), stdout_node/stdout_speed, fdt_find_cons, cn_rx_intr_establish (the console receive interrupt pluart_fdt_attach would establish, until autoconf M5); cpu_info[], dumpsys, sendsig/setregs, sysctl are M5 to M6; M5: need_resched (aston reported, M5-b); M5-b1: proc0paddr and proc0tf statics, cpu_startup sets proc0.p_addr and curpcb (pcb_flags, pcb_tf); M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), cpu_idle_enter/cycle/leave (cpu_wfi), cpu_switchto (fpu_drop then cpuswitch.S), aston, clear_resched, cpu_unidle (UP); cold moved to sys/systm.rs"
 
 [[file]]
 c = "sys/arch/arm64/include/frame.h"
@@ -626,7 +626,7 @@ rust = "sys/arch/arm64/include/frame.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "0a69dd3403987e520037a73279fb1d8bcfcba146"
-notes = "M2: struct callframe; M4: struct trapframe (trapframe_t), TF_SIZE; switchframe is M5"
+notes = "M2: struct callframe; M4: struct trapframe (trapframe_t), TF_SIZE; switchframe is M5; M5-b2: struct switchframe, SWITCHFRAME_SZ"
 
 [[file]]
 c = "sys/dev/fdt/pluart_fdt.c"
@@ -684,7 +684,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "099ae26cc628b9d619e464423968547f722f2a09"
 deps = ["sys/sys/param.h", "sys/kern/subr_prf.c"]
-notes = "wakeup(9) and wakeup_one(9) report themselves unported: nothing sleeps before the scheduler (M5); tsleep/msleep/wakeup_n/yield/mi_switch arrive then; M5-b1: refcnt_init[_trace], refcnt_take, refcnt_rele[_wake], refcnt_read, refcnt_shared, cond_init, cond_signal_handler"
+notes = "wakeup(9) and wakeup_one(9) report themselves unported: nothing sleeps before the scheduler (M5); tsleep/msleep/wakeup_n/yield/mi_switch arrive then; M5-b1: refcnt_init[_trace], refcnt_take, refcnt_rele[_wake], refcnt_read, refcnt_shared, cond_init, cond_signal_handler; M5-b2: the sleep queues (sleep_queue_init, slpque), tsleep[_nsec], msleep[_nsec], sleep_setup, sleep_finish (sleep_signal_check reports the signals, M6), wakeup_proc, endtsleep, unsleep, wakeup_n/wakeup/wakeup_one, refcnt_finalize, cond_wait; rwsleep is kern_rwlock.c, sys_sched_yield and __thrsleep/__thrwakeup M6"
 
 [[file]]
 c = "sys/arch/amd64/include/pte.h"
@@ -745,7 +745,7 @@ deps = [
     "sys/arch/amd64/include/vmparam.h",
     "sys/uvm/uvm_page.c",
 ]
-notes = "direct map over Limine's HHDM, pmap_bootstrap adopts the bootloader's PML4 and installs the recursive slot, pmap_steal_memory (vm_physmem half in uvm_page_physsteal), zero/copy page, pmap_kenter_pa/kremove/extract/pdes_valid/find_pte_direct, pmap_growkernel/alloc_level/get_physpage (bootloader PTPs kept), single-CPU TLB shootdowns; user pmaps, pv lists, PCID, pmap_randomize, MP shootdowns: M4 to M6; deviations listed in the module"
+notes = "direct map over Limine's HHDM, pmap_bootstrap adopts the bootloader's PML4 and installs the recursive slot, pmap_steal_memory (vm_physmem half in uvm_page_physsteal), zero/copy page, pmap_kenter_pa/kremove/extract/pdes_valid/find_pte_direct, pmap_growkernel/alloc_level/get_physpage (bootloader PTPs kept), single-CPU TLB shootdowns; user pmaps, pv lists, PCID, pmap_randomize, MP shootdowns: M4 to M6; deviations listed in the module; M5-b2: pmap_activate (the kernel pmap for every thread until vmspaces exist; PCID off) and pmap_deactivate"
 
 [[file]]
 c = "sys/arch/arm64/include/vmparam.h"
@@ -781,7 +781,7 @@ deps = [
     "sys/arch/arm64/include/vmparam.h",
     "sys/uvm/uvm_page.c",
 ]
-notes = "pte_desc, the pmapvp tables, kernel pmap, pmap_bootstrap adopting the bootloader's four-level tables (copies of L0 and the kernel slot's L1, TTBR1 switched to them, MAIR indices 2-4), vp lookup/enter/set_l1-3, kvp/kpted allocators over the direct map, pmap_growkernel (populates the first GiB, which the C's pmap_bootstrap does), kenter/kenter_cache/kremove(_pg), fill_pte, pte_insert/update/remove, extract, zero/copy page via the HHDM, pmap_steal_memory (not in the C; OpenBSD arm64 has no direct map nor PMAP_STEAL_MEMORY); pmap_init (pools, TTBR0 switch), pmap_vp_populate, user pmaps, pv lists, ASIDs, fault fixup: M4 to M6"
+notes = "pte_desc, the pmapvp tables, kernel pmap, pmap_bootstrap adopting the bootloader's four-level tables (copies of L0 and the kernel slot's L1, TTBR1 switched to them, MAIR indices 2-4), vp lookup/enter/set_l1-3, kvp/kpted allocators over the direct map, pmap_growkernel (populates the first GiB, which the C's pmap_bootstrap does), kenter/kenter_cache/kremove(_pg), fill_pte, pte_insert/update/remove, extract, zero/copy page via the HHDM, pmap_steal_memory (not in the C; OpenBSD arm64 has no direct map nor PMAP_STEAL_MEMORY); pmap_init (pools, TTBR0 switch), pmap_vp_populate, user pmaps, pv lists, ASIDs, fault fixup: M4 to M6; M5-b2: pmap_activate, pmap_deactivate, pmap_setttb (extern C for cpuswitch.S; every thread runs on the kernel pmap, already live, so the ASID/pauth/TTBR0 switch is reported until user pmaps exist, M6)"
 
 [[file]]
 c = "sys/sys/systm.h"
@@ -789,7 +789,7 @@ rust = "sys/sys/systm.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9fb4626fd16812491f6c3904f32ccfe077412cdf"
-notes = "physmem only (defined here, filled by the machdeps; the C defines it per arch); the hostname/boottime globals, copyin/copyout, tsleep/wakeup and the other prototypes come with their files"
+notes = "physmem only (defined here, filled by the machdeps; the C defines it per arch); the hostname/boottime globals, copyin/copyout, tsleep/wakeup and the other prototypes come with their files; M5-b2: cold and safepri (defined here like physmem), INFSLP, MAXTSLP"
 
 [[file]]
 c = "sys/sys/malloc.h"
@@ -1100,7 +1100,7 @@ rust = "sys/arch/amd64/amd64/locore.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2c19fbf0a3095ed1ff256cc877e5efbb6a3bca37"
-notes = "M4: lgdt and intr_fast_exit, in locore.S (AT&T syntax, included by global_asm! with the frame offsets and selectors as placeholders: assym.h), and an intr_user_exit stub that reports a return to user mode (M6); the DIAGNOSTIC interrupts-blocked check of intr_fast_exit is M4-b2; the kernel entry is the boot protocol; cpu_switchto, sigcode, the syscall entry/exit, the Meltdown trampolines, the copy routines and the local_apic page (lapic.rs has it) are M5/M6"
+notes = "M4: lgdt and intr_fast_exit, in locore.S (AT&T syntax, included by global_asm! with the frame offsets and selectors as placeholders: assym.h), and an intr_user_exit stub that reports a return to user mode (M6); the DIAGNOSTIC interrupts-blocked check of intr_fast_exit is M4-b2; the kernel entry is the boot protocol; cpu_switchto, sigcode, the syscall entry/exit, the Meltdown trampolines, the copy routines and the local_apic page (lapic.rs has it) are M5/M6; M5-b2: cpu_switchto (the kernel-thread subset: stack pointers, curproc/curpcb/p_cpu/p_stat, %cr3; the xstate/segment resets, the Meltdown CR3s, RSB refill and retguard are M6) and proc_trampoline (calls proc_trampoline_run, Rust, with the function and argument; the syscall return is M6)"
 
 [[file]]
 c = "sys/arch/amd64/amd64/vector.S"
@@ -1117,7 +1117,7 @@ rust = "sys/arch/arm64/include/armreg.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "fefcb935aea104b7bc8ca93a29509eb11a20b9d3"
-notes = "M4: INSN_SIZE, READ_SPECIALREG/WRITE_SPECIALREG (macros taking the register name as a literal), the ESR_ELx exception classes and the ISS bits the trap handler reads, ISS_BRK_COMMENT_MASK, DBG_MDSCR_*, PSR_*; the ID registers, SCTLR/TCR/CPACR/MAIR fields, the cache, timer and GIC system registers come with CPU identification (M4-b) and their subsystems; M5: CNTKCTL_EL0VCTEN, CNTV_CTL_*, CURRENTEL_EL_*"
+notes = "M4: INSN_SIZE, READ_SPECIALREG/WRITE_SPECIALREG (macros taking the register name as a literal), the ESR_ELx exception classes and the ISS bits the trap handler reads, ISS_BRK_COMMENT_MASK, DBG_MDSCR_*, PSR_*; the ID registers, SCTLR/TCR/CPACR/MAIR fields, the cache, timer and GIC system registers come with CPU identification (M4-b) and their subsystems; M5: CNTKCTL_EL0VCTEN, CNTV_CTL_*, CURRENTEL_EL_*; M5-b2: the CPACR_EL1 fields"
 
 [[file]]
 c = "sys/arch/arm64/include/db_machdep.h"
@@ -1412,7 +1412,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6814a6bbd6b76b1b69876614163d7b777d6728ff"
 deps = ["sys/sys/clockintr.h", "sys/sys/pclock.h", "sys/sys/time.h"]
-notes = "M5-a: CP_*/CPUSTATES, struct cpustats, SCHED_NQS/SCHED_PPQ/NICE_WEIGHT/ESTCPULIM, the SPCF_* flags, CPUTYP_*, and the clock members of struct schedstate_percpu (the four clockintr handles, spc_cp_time with its pc_lock, spc_schedticks/schedflags/nrun/whichqs/spinning/curpriority/runtime); spc_idleproc, spc_qs, spc_deadproc (struct proc) and the SMR members are M5-b; sched_lock and SCHED_LOCK_INIT are in sched_bsd.rs"
+notes = "M5-a: CP_*/CPUSTATES, struct cpustats, SCHED_NQS/SCHED_PPQ/NICE_WEIGHT/ESTCPULIM, the SPCF_* flags, CPUTYP_*, and the clock members of struct schedstate_percpu (the four clockintr handles, spc_cp_time with its pc_lock, spc_schedticks/schedflags/nrun/whichqs/spinning/curpriority/runtime); spc_idleproc, spc_qs, spc_deadproc (struct proc) and the SMR members are M5-b; sched_lock and SCHED_LOCK_INIT are in sched_bsd.rs; M5-b2: spc_idleproc, spc_qs, spc_deadproc"
 
 [[file]]
 c = "sys/sys/timeout.h"
@@ -1448,7 +1448,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "903b7b9de6e2212f1da3abd01dc831f8966adc00"
 deps = ["sys/sys/timeout.h", "sys/kern/kern_clock.c", "sys/kern/kern_tc.c", "sys/kern/kern_softintr.c", "sys/kern/kern_lock.c"]
-notes = "M5: the circq operations, timeout_startup, timeout_proc_init (kthread_create_deferred reported), timeout_set[_flags|_proc], timeout_add[_sec|_msec|_usec|_nsec], timeout_abs_ts, timeout_del, timeout_del_barrier, timeout_barrier (queues the barrier but cannot cond_wait: reported, M5-b), timeout_bucket, timeout_maskwheel, timeout_hardclock_update, timeout_run, softclock_process_{kclock,tick}_timeout, softclock, timeout_adjust_ticks; softclock_create_thread/softclock_thread[_run] are M5-b (kthreads), timeout_sysctl M6, the ddb show callout printers M7; WITNESS and kcov not configured; M5-b1: timeout_proc_init defers softclock_create_thread (kthread_create reported until M5-b2)"
+notes = "M5: the circq operations, timeout_startup, timeout_proc_init (kthread_create_deferred reported), timeout_set[_flags|_proc], timeout_add[_sec|_msec|_usec|_nsec], timeout_abs_ts, timeout_del, timeout_del_barrier, timeout_barrier (queues the barrier but cannot cond_wait: reported, M5-b), timeout_bucket, timeout_maskwheel, timeout_hardclock_update, timeout_run, softclock_process_{kclock,tick}_timeout, softclock, timeout_adjust_ticks; softclock_create_thread/softclock_thread[_run] are M5-b (kthreads), timeout_sysctl M6, the ddb show callout printers M7; WITNESS and kcov not configured; M5-b1: timeout_proc_init defers softclock_create_thread (kthread_create reported until M5-b2); M5-b2: timeout_barrier with the real cond_wait, softclock_create_thread, softclock_thread_run, softclock_thread (pegged to the primary CPU)"
 
 [[file]]
 c = "sys/kern/kern_clock.c"
@@ -1466,7 +1466,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ddd1132e7faaadf84e11b45c125398f48acf6479"
 deps = ["sys/sys/sched.h", "sys/kern/kern_clockintr.c"]
-notes = "M5-a: roundrobin_period, sched_lock with SCHED_LOCK_INIT, roundrobin; the load average, schedcpu, decay_aftersleep, yield, mi_switch, setrunnable, schedclock and the rest arrive with struct proc (M5-b)"
+notes = "M5-a: roundrobin_period, sched_lock with SCHED_LOCK_INIT, roundrobin; the load average, schedcpu, decay_aftersleep, yield, mi_switch, setrunnable, schedclock and the rest arrive with struct proc (M5-b); M5-b2: SCHED_LOCK/UNLOCK/ASSERT_*, cexp/averunnable/update_loadavg (atomics), ccpu/schedcpu, decay_aftersleep, yield (r#yield), preempt, mi_switch (smr_idle and the kernel lock not here), setrunnable, setpriority, schedclock, scheduler_start; the CPU throttling (cpu_setperf, perflevel, setperf_auto, sysctl_hw*) is M7"
 
 [[file]]
 c = "sys/kern/kern_sched.c"
@@ -1475,7 +1475,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "119c441abcca3d81b0c93ce3d3e31780efdd421b"
 deps = ["sys/sys/sched.h", "sys/kern/kern_clockintr.c"]
-notes = "M5-a: sched_init (cpuset_add reported) and sched_init_cpu as far as the four clockintr_binds (the run queues, the idle thread and cpuset_init_cpu reported, M5-b); M5-b1: sched_init_cpu defers sched_kthreads_create (fork1 reported until M5-b2)"
+notes = "M5-a: sched_init (cpuset_add reported) and sched_init_cpu as far as the four clockintr_binds (the run queues, the idle thread and cpuset_init_cpu reported, M5-b); M5-b1: sched_init_cpu defers sched_kthreads_create (fork1 reported until M5-b2); M5-b2: the cpusets (sched_idle/queued/all_cpus, cpuset_*), the counters, sched_kthreads_create, sched_idle (exit2 reported), sched_exit, sched_toidle, setrunqueue, remrunqueue, sched_chooseproc, sched_choosecpu[_fork]/sched_steal_proc/sched_proc_to_cpu_cost (the UP versions), sched_peg/unpeg_curproc, sched_barrier (UP), sysctl_hwncpuonline, cpu_is_online; MULTIPROCESSOR and __HAVE_CPU_TOPOLOGY paths not configured"
 
 [[file]]
 c = "sys/kern/kern_time.c"
@@ -1539,7 +1539,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7ab72052ea33a9667b35840e336176646bf29cf8"
 deps = ["sys/sys/proc.h"]
-notes = "M5: struct user { u_pcb } over machine::proc::Pcb"
+notes = "M5: struct user { u_pcb } over machine::proc::Pcb; M5-b2: Uarea, the USPACE-sized page-aligned u-area each locore reserves for proc0 (proc0paddr), as a type so both archs define the static alike"
 
 [[file]]
 c = "sys/sys/refcnt.h"
@@ -1642,7 +1642,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "11cf5c027051e37d06c1edfec245084c1cbb28b2"
 deps = ["sys/sys/proc.h", "sys/kern/kern_fork.c"]
-notes = "M5-b1: kthread_create_deferred and kthread_run_deferred_queue; kthread_create reports fork1 (M5-b2) and kthread_exit exit1 (M6)"
+notes = "M5-b1: kthread_create_deferred and kthread_run_deferred_queue; kthread_create reports fork1 (M5-b2) and kthread_exit exit1 (M6); M5-b2: kthread_create over fork1"
 
 [[file]]
 c = "sys/kern/kern_fork.c"
@@ -1651,7 +1651,80 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "de3d88871a036e3bab92269561698e00ec6996ba"
 deps = ["sys/sys/proc.h", "sys/kern/kern_proc.c", "sys/kern/kern_synch.c", "sys/dev/rnd.c"]
-notes = "M5-b1: nprocesses/nthreads, process_initialize (crhold, prof_fork, rw_init ps_lock, klist_init_mutex and the realitexpire/rucheck timeouts reported), fork_check_maxthread, alloctid, allocpid, ispidtaken, freepid; thread_new, process_new, fork1, fork_thread_start and proc_trampoline_mi are M5-b2, the fork syscalls and thread_fork M6"
+notes = "M5-b1: nprocesses/nthreads, process_initialize (crhold, prof_fork, rw_init ps_lock, klist_init_mutex and the realitexpire/rucheck timeouts reported), fork_check_maxthread, alloctid, allocpid, ispidtaken, freepid; thread_new, process_new, fork1, fork_thread_start and proc_trampoline_mi are M5-b2, the fork syscalls and thread_fork M6; M5-b2: forkstat, thread_new, process_new (lim_fork, fdcopy, sigactsinit, uvmspace_fork reported; the shared variants copy the parent pointers), fork_thread_start, fork1 (returns the new thread; root uid for proc0; knote_processfork/ptrace/psignal reported), proc_trampoline_mi"
+
+[[file]]
+c = "sys/sys/vmmeter.h"
+rust = "sys/sys/vmmeter.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2da08364251286114b6d4f93579deb35d967ba8b"
+deps = []
+notes = "M5-b2: struct vmtotal and struct forkstat (atomic counters); forkstat itself is in kern_fork.rs"
+[[file]]
+c = "sys/sys/acct.h"
+rust = "sys/sys/acct.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "35f311a603b815dc468c129a645e689ecc393729"
+deps = ["sys/sys/syslimits.h"]
+notes = "M5-b2: comp_t, struct acct, the A* flags, AHZ; acct_process/acct_shutdown are kern_acct.c (M7)"
+[[file]]
+c = "sys/kern/kern_resource.c"
+rust = "sys/kern/kern_resource.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "32e2d1e40bff5a8c0457de13d9c542e9c2090358"
+deps = ["sys/sys/proc.h", "sys/kern/kern_tc.c", "sys/kern/kern_lock.c"]
+notes = "M5-b2: tuagg_sumup, tuagg_get_proc, tuagg_get_process, tuagg_add_process, tuagg_add_runtime; the priority/limit/rusage syscalls, the plimit management (lim_*), calcru/calctsru, ruadd, rucheck are M6"
+[[file]]
+c = "sys/kern/subr_xxx.c"
+rust = "sys/kern/subr_xxx.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1df181a8a8b5ffb8126ef6a16fec8d5f55f02534"
+deps = ["sys/kern/subr_prf.c"]
+notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); bdevsw_lookup, chrtoblk, blktochr need conf.h (M7)"
+[[file]]
+c = "sys/uvm/uvm_glue.c"
+rust = "sys/uvm/uvm_glue.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6b849af48cf3f896ae687673f076b96fa37a03d8"
+deps = ["sys/uvm/uvm_km.c", "sys/sys/proc.h"]
+notes = "M5-b2: kv_uarea, uvm_uarea_alloc (the __HAVE_USPACE_GUARD guard page is reported until km_alloc allocates from kernel_map, M6), uvm_uarea_free; uvm_kernacc, uvm_vslock/vsunlock[_device], uvm_exit, uvm_init_limits, uvm_atopg are M6/M7"
+[[file]]
+c = "sys/arch/amd64/amd64/vm_machdep.c"
+rust = "sys/arch/amd64/amd64/vm_machdep.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6a3ee3f5fb99979fab38ecf58a0365b7e7650ca3"
+deps = ["sys/arch/amd64/amd64/locore.S", "sys/arch/amd64/amd64/pmap.c", "sys/sys/proc.h"]
+notes = "M5-b2: cpu_fork (fpusave of a user-mode parent reported, M6; the function goes into sf_r12 as a pointer for proc_trampoline_run) and cpu_exit; vmapbuf/vunmapbuf are physio (M7)"
+[[file]]
+c = "sys/arch/arm64/arm64/vm_machdep.c"
+rust = "sys/arch/arm64/arm64/vm_machdep.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "16373552031692e8432f7c6ff8565d5aa72b73c4"
+deps = ["sys/arch/arm64/arm64/cpuswitch.S", "sys/arch/arm64/arm64/pmap.c", "sys/arch/arm64/arm64/fpu.c", "sys/sys/proc.h"]
+notes = "M5-b2: cpu_fork (the pauth keys wait for user pmaps, M6; the function goes into sf_x19 as a pointer for proc_trampoline_run) and cpu_exit; kv_physwait, vmapbuf/vunmapbuf are physio (M7)"
+[[file]]
+c = "sys/arch/arm64/arm64/cpuswitch.S"
+rust = "sys/arch/arm64/arm64/cpuswitch.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "68943c938008d3a8e6661fd579daf7a11dcbf12a"
+deps = ["sys/arch/arm64/include/frame.h", "sys/arch/arm64/include/pcb.h", "sys/sys/proc.h"]
+notes = "M5-b2: cpu_switchto_asm and proc_trampoline, in cpuswitch.S (included by global_asm! with the frame, pcb, proc and cpu_info offsets as placeholders: assym.h), without retguard; proc_trampoline calls proc_trampoline_run (Rust) with the function and argument, the syscall return is M6"
+[[file]]
+c = "sys/arch/arm64/arm64/fpu.c"
+rust = "sys/arch/arm64/arm64/fpu.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "908f949f3faa70b01be624fe981d8fe8174e4430"
+deps = ["sys/arch/arm64/include/armreg.h", "sys/arch/arm64/include/pcb.h"]
+notes = "M5-b2: fpu_drop; fpu_save, fpu_load (the str q/ldr q register blocks) and fpu_kernel_enter/exit are user FP state (M6), reported"
 
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"

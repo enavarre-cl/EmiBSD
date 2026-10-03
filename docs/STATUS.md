@@ -1,32 +1,33 @@
 # Status
 
-Milestone: **M5 in progress** (part a, clocks, done; part b1, process structures and proc0,
-done; part b2, sleep/scheduler/switch, next). Updated: 2026-10-02.
+Milestone: **M5 done**; next is M6. Updated: 2026-10-02.
 
 Done:
-- M5-b1: `proc.h` (`Proc`, `Process`, `Pgrp`, `Session`, `Tusage`, flags, states), `user.h`,
-  `refcnt.h`, `resource.h`, `ucred.h`, per-arch `pcb.h`/`proc.h`/`fpu.h`/`reg.h` through
-  `machine::proc`; `kern_proc.c` (lists, hashes, pools, `tfind`/`prfind`/`chgproccnt`),
-  `hashinit`, `kern_kthread.c`'s deferred queue, `process_initialize` and the pid/tid
-  allocators, `refcnt_*`; `main` sets `curproc` and builds process 0; `maxprocess`.
-- M5-a: `sys/time.h`, `timetc.h`, `clockintr.h`, `timeout.h`, `pclock.h`, `sched.h` (clock
-  subset); `kern_tc.c` (beerware, accepted), `kern_clockintr.c`, `kern_timeout.c`,
-  `kern_clock.c`, `roundrobin`, `sched_init_cpu` (the binds), `itimer_update`, `profclock`,
-  `libkern/random.c`, `pc_lock`; `Cpu::{CpuInfo, ClockFrame, curcpu, ci_queue, ci_schedstate,
-  CLKF_*, need_resched, cpu_initclocks/startclock}`. amd64: i8254 timecounter, LAPIC timer
-  (calibrated, `Xintr_lapic_ltimer`). arm64: `agtimer` from the DTB through `ampintc`.
-  `main` runs `initclocks`; `selftest=clock` sees `hz` ticks in ~1 s and a timeout on both.
-- Licence blocks of every ported file sit between `/* <LICENSES> */` markers (read from the
-  closing one). M4 done before: traps, interrupts, GICv2/DTB, UART by interrupt.
+- M5-b part 2 (the exit criterion): `kern_synch.c` (sleep queues, `tsleep`/`msleep`/`wakeup`,
+  `refcnt_finalize`, `cond_wait`), `sched_bsd.c` (load average, `schedcpu`, `mi_switch`,
+  `setrunnable`, `scheduler_start`), `kern_sched.c` (run queues, cpusets, idle thread,
+  `setrunqueue`/`remrunqueue`/`sched_chooseproc`), `kern_fork.c` (`thread_new`,
+  `process_new`, `fork1` for kernel threads, `proc_trampoline_mi`), `kthread_create`, the
+  softclock thread, `timeout_barrier`, `kern_resource.c` (`tuagg_*`), `uvm_glue.c`
+  (u-areas), `subr_xxx.c`, `vmmeter.h`, `acct.h`; `machine::cpu` grew `cpu_switchto`,
+  `cpu_fork`, `clear_resched`, `cpu_unidle`, `cpu_idle_*`, `cpu_info_foreach`,
+  `curcpu_mutex_level`; amd64 `cpu_switchto`/`proc_trampoline` in `locore.S`, `cpu_fork`,
+  `pmap_activate`, `hlt` idle; arm64 `cpuswitch.S`, `cpu_fork`, `fpu_drop`, `pmap_setttb`,
+  `wfi` idle. `selftest=kthread` (two kthreads, 100 turns over `msleep`/`wakeup`, about
+  100 context switches) passes in `just smoke` on both archs. Host tests: 130.
+- Earlier in M5: clocks on both archs (`selftest=clock`), `struct proc`/`process`, proc0,
+  the process lists. Project renamed to EmiBSD.
 
-Next (M5-b2):
-- `kern_synch.c` (`tsleep`/`msleep`, `sleep_setup`/`sleep_finish`, the sleep queues,
-  `wakeup_n`, `endtsleep`), the rest of `sched_bsd.c`/`kern_sched.c` (`mi_switch`,
-  `setrunnable`, `setrunqueue`, `sched_chooseproc`, `sched_idle`, cpusets), `switchframe` +
-  `cpu_switchto` per arch (`locore.S`/`cpuswitch.S`), `vm_machdep.c`'s `cpu_fork`,
-  `uvm_uarea_alloc`, `fork1` for kernel threads, `kthread_create`, `kthread_run_deferred_queue`
-  in `main`, the softclock thread; then `timeout_barrier`/`clockintr_unbind` get their sleeps.
-- Exit: two kthreads ping-pong via `tsleep`/`wakeup` (`selftest=kthread`).
+Next (M6, syscalls + minimal init):
+- `syscalls.master` → `xtask gen-syscalls` → `sys/sys/syscall.rs` + `init_sysent`, the
+  per-arch syscall entry and `syscall_return`/`intr_user_exit` (the trampolines now panic
+  after a thread function returns), `exec_elf.c`, user `uvm_map`/`uvm_fault`,
+  `sys_generic.c` (`write`), `kern_exit.c` (`exit1`/`exit2`, `kthread_exit`,
+  `sched_idle`'s dead list), `kern_sig.c` (`sleep_signal_check`), credentials (`crget`),
+  `lim_startup`/`lim_fork`, `uvmspace_init`; a freestanding Rust `init` loaded as a Limine
+  module. Exit criterion: `init` prints via `sys_write` and exits on both archs.
+- Known M5 leftovers reported at boot: the u-area guard page (needs `km_alloc` from
+  `kernel_map`), arm64 `pmap_setttb`'s TTBR0 switch (user pmaps), `exit2` from idle.
 
 Blockers:
-- None. `crc32` stays `skipped: license: zlib`; amd64's TSC timecounter (`tsc.c`) is deferred.
+- None. `crc32` stays `skipped: license: zlib`.

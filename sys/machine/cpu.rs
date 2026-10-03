@@ -6,10 +6,13 @@
 //! clock and scheduler code reach (`ci_queue`, `ci_schedstate`, `ci_randseed`, `ci_curproc`),
 //! the `CLKF_*` macros over the architecture's `struct clockframe`, `need_resched` and the
 //! clock entry points `cpu_initclocks`/`cpu_startclock`/`setstatclockrate`; M5-b adds
-//! `curproc` (`ci_curproc`, `set_curproc`) and `proc0paddr`; context switching comes with
-//! part b2.
+//! `curproc` (`ci_curproc`, `set_curproc`), `proc0paddr`, the context switch
+//! (`cpu_switchto`, `cpu_fork`), `clear_resched`, `cpu_unidle`, the idle loop hooks
+//! (`cpu_idle_enter`/`cpu_idle_cycle`/`cpu_idle_leave`), `CPU_INFO_FOREACH` and the mutex
+//! nesting counter.
 
 use core::cell::Cell;
+use core::ffi::c_void;
 
 use crate::machine::Machine;
 use crate::machine::bootinfo::BootInfo;
@@ -88,6 +91,12 @@ pub trait Cpu {
     /// `curcpu()->ci_mutex_level += delta` (`DIAGNOSTIC`): the mutex nesting counter.
     fn curcpu_mutex_level_add(delta: i32);
 
+    /// `curcpu()->ci_mutex_level`: how many mutexes this CPU holds (`assertwaitok`).
+    fn curcpu_mutex_level() -> i32;
+
+    /// `CPU_INFO_FOREACH(cii, ci)`: calls `f` for every CPU, the boot CPU first.
+    fn cpu_info_foreach(f: &mut dyn FnMut(&'static Self::CpuInfo));
+
     /// `CPU_IS_PRIMARY(ci)`.
     fn cpu_is_primary(ci: &Self::CpuInfo) -> bool;
 
@@ -126,6 +135,50 @@ pub trait Cpu {
 
     /// `need_resched(ci)`: asks `ci` to reschedule at the next opportunity.
     fn need_resched(ci: &Self::CpuInfo);
+
+    /// `clear_resched(ci)`: `ci->ci_want_resched = 0`, once a switch happened.
+    fn clear_resched(ci: &Self::CpuInfo);
+
+    /// `cpu_unidle(ci)`: kicks an idle CPU that just got work (an IPI with
+    /// `MULTIPROCESSOR`; nothing on one CPU, whose idle loop sees the run queue itself).
+    fn cpu_unidle(ci: &Self::CpuInfo);
+
+    /// `cpu_idle_enter()`: what the idle thread does before checking the run queues.
+    fn cpu_idle_enter();
+
+    /// `cpu_idle_cycle()`: waits for an interrupt (`hlt`, `wfi`) with nothing to run.
+    fn cpu_idle_cycle();
+
+    /// `cpu_idle_leave()`: the idle thread found work.
+    fn cpu_idle_leave();
+
+    /// `cpu_switchto(old, new)` (`locore.S`, `cpuswitch.S`): saves `old`'s kernel context
+    /// into its pcb (none to save when `old` is `None`: the thread is dead), makes `new`
+    /// `curproc` with `p_stat = SONPROC` and `p_cpu = curcpu()`, loads its pcb, stack and
+    /// address space and resumes it. Returns on `old`'s stack once `old` is switched back
+    /// to.
+    ///
+    /// # Safety
+    ///
+    /// Called with the scheduler lock held, from `mi_switch`/`sched_toidle` only: `new` is
+    /// runnable and off every queue, `old` (when given) is the running thread, and both
+    /// have a kernel stack and a pcb set up by `cpu_fork` or `locore`.
+    unsafe fn cpu_switchto(old: Option<&Proc>, new: &Proc);
+
+    /// `cpu_fork(p1, p2, stack, tcb, func, arg)` (`vm_machdep.c`): finish a fork operation,
+    /// with process `p2` nearly set up. Copy and update the kernel stack and pcb, making the
+    /// child ready to run, and marking it so that it can return differently than the
+    /// parent: the first time `p2` is switched to it runs `proc_trampoline`, which calls
+    /// `proc_trampoline_mi` and then `func(arg)`. A non-null `stack`/`tcb` give a user
+    /// thread its own stack and TCB.
+    fn cpu_fork(
+        p1: &Proc,
+        p2: &Proc,
+        stack: *mut u8,
+        tcb: *mut u8,
+        func: fn(*mut c_void),
+        arg: *mut c_void,
+    );
 
     /// `cpu_initclocks()`: the machine-dependent part of `initclocks`: picks the clock
     /// hardware, sets `stathz`/`profhz`, registers the timecounter.
@@ -191,6 +244,11 @@ pub fn setstatclockrate(newhz: i32) {
 /// `need_resched` on the selected machine.
 pub fn need_resched(ci: &CpuInfo) {
     Machine::need_resched(ci)
+}
+
+/// `CPU_INFO_FOREACH` on the selected machine.
+pub fn cpu_info_foreach(f: &mut dyn FnMut(&'static CpuInfo)) {
+    Machine::cpu_info_foreach(f)
 }
 
 /// `boot(9)` on the selected machine.

@@ -85,6 +85,31 @@ macro_rules! write_specialreg {
 }
 pub(crate) use write_specialreg;
 
+/* CPACR_EL1 */
+
+/// `CPACR_ZEN_MASK`.
+pub const CPACR_ZEN_MASK: u64 = 0x3 << 16;
+/// `CPACR_ZEN_TRAP_ALL1`: traps from EL0 and EL1.
+pub const CPACR_ZEN_TRAP_ALL1: u64 = 0x0 << 16;
+/// `CPACR_ZEN_TRAP_EL0`: traps from EL0.
+pub const CPACR_ZEN_TRAP_EL0: u64 = 0x1 << 16;
+/// `CPACR_ZEN_TRAP_ALL2`: traps from EL0 and EL1.
+pub const CPACR_ZEN_TRAP_ALL2: u64 = 0x2 << 16;
+/// `CPACR_ZEN_TRAP_NONE`: no traps.
+pub const CPACR_ZEN_TRAP_NONE: u64 = 0x3 << 16;
+/// `CPACR_FPEN_MASK`.
+pub const CPACR_FPEN_MASK: u64 = 0x3 << 20;
+/// `CPACR_FPEN_TRAP_ALL1`: traps from EL0 and EL1.
+pub const CPACR_FPEN_TRAP_ALL1: u64 = 0x0 << 20;
+/// `CPACR_FPEN_TRAP_EL0`: traps from EL0.
+pub const CPACR_FPEN_TRAP_EL0: u64 = 0x1 << 20;
+/// `CPACR_FPEN_TRAP_ALL2`: traps from EL0 and EL1.
+pub const CPACR_FPEN_TRAP_ALL2: u64 = 0x2 << 20;
+/// `CPACR_FPEN_TRAP_NONE`: no traps.
+pub const CPACR_FPEN_TRAP_NONE: u64 = 0x3 << 20;
+/// `CPACR_TTA`.
+pub const CPACR_TTA: u64 = 0x1 << 28;
+
 /* CNTKCTL_EL1 - Counter-timer Kernel Control Register */
 
 /// `CNTKCTL_EL0VCTEN`: allow EL0 virtual counter access.

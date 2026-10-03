@@ -38,19 +38,14 @@
 //! `timeout_add[_sec|_msec|_usec|_nsec]`, `timeout_abs_ts`, `timeout_del`,
 //! `timeout_del_barrier`, `timeout_barrier` (reported), `timeout_bucket`,
 //! `timeout_maskwheel`, `timeout_hardclock_update`, `timeout_run`,
-//! `softclock_process_{kclock,tick}_timeout`, `softclock` and `timeout_adjust_ticks`. The
-//! process-context side (`softclock_create_thread`, `softclock_thread[_run]`) needs
-//! `kthread_create` and the sleep queues (M5-b); `timeout_sysctl` comes with
-//! `kern_sysctl.c` (M6) and the `ddb` `show callout` printers with the real ddb (M7).
+//! `softclock_process_{kclock,tick}_timeout`, `softclock` and `timeout_adjust_ticks`; part
+//! b2 adds the process-context side (`softclock_create_thread`, `softclock_thread[_run]`)
+//! and the real `timeout_barrier`; `timeout_sysctl` comes with `kern_sysctl.c` (M6) and
+//! the `ddb` `show callout` printers with the real ddb (M7).
 //!
 //! ## Deviations
-//! - `timeout_barrier` queues its barrier timeout as the C does but cannot `cond_wait` on it
-//!   (`kern_synch.c`, M5-b): it reports the gap, unlinks the barrier again and returns;
-//!   nothing runs timeouts concurrently with their deletion before the softclock thread
-//!   exists.
-//! - `timeout_proc_init` reports `kthread_create_deferred`; `softclock` still queues
-//!   `TIMEOUT_PROC` timeouts on `timeout_proc` and calls `wakeup`, which reports itself.
-//! - `WITNESS` and `kcov` are not configured: `timeout_sync_*` and `to_process` are no-ops.
+//! - `WITNESS` and `kcov` are not configured: `timeout_sync_*` are no-ops and `to_process`
+//!   is only recorded.
 //! - `timeout_level_width` is a `const` (the C fills it once at startup).
 
 use core::ffi::c_void;
@@ -62,20 +57,27 @@ use libkern::StaticCell;
 use crate::conf::param::{HZ, TICK, TICK_NSEC};
 use crate::kassert;
 use crate::kern::kern_clock::ticks;
-use crate::kern::kern_kthread::kthread_create_deferred;
+use crate::kern::kern_kthread::{kthread_create, kthread_create_deferred};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
+use crate::kern::kern_sched::sched_peg_curproc;
 use crate::kern::kern_softintr::{SoftintrHand, softintr_establish, softintr_schedule};
-use crate::kern::kern_synch::wakeup;
+use crate::kern::kern_synch::{
+    cond_init, cond_signal_handler, cond_wait, sleep_finish, sleep_setup, wakeup,
+};
 use crate::kern::kern_tc::nanouptime;
 use crate::kern::subr_prf::panic;
-use crate::machine::intr::{IPL_HIGH, IPL_SOFTCLOCK};
+use crate::machine::Machine;
+use crate::machine::cpu::{Cpu, CpuInfo, cpu_info_foreach, curproc};
+use crate::machine::intr::{IPL_HIGH, IPL_SOFTCLOCK, splsoftclock, splx};
 use crate::sys::mutex::{Mutex, mutex_assert_locked};
+use crate::sys::param::PSWP;
+use crate::sys::proc::Cond;
+use crate::sys::systm::INFSLP;
 use crate::sys::time::{Timespec, nsec_to_timespec, timespecadd, timespecsub};
 use crate::sys::timeout::{
     Circq, KCLOCK_MAX, KCLOCK_NONE, KCLOCK_UPTIME, TIMEOUT_INITIALIZED, TIMEOUT_MPSAFE,
     TIMEOUT_ONQUEUE, TIMEOUT_PROC, TIMEOUT_TRIGGERED, Timeout, TimeoutFn, Timeoutstat,
 };
-use crate::unported;
 
 /// `WHEELCOUNT`.
 const WHEELCOUNT: usize = 4;
@@ -568,8 +570,20 @@ pub fn timeout_del_barrier(to: &Timeout) -> bool {
 
 /// `timeout_barrier`: waits for a running `to` to finish (see the module's deviations).
 pub fn timeout_barrier(to: &Timeout) {
+    let c = Cond::new();
     let flags = to.to_flags.get() & (TIMEOUT_PROC | TIMEOUT_MPSAFE);
     // timeout_sync_order: WITNESS.
+
+    let barrier = Timeout::new_flags(
+        cond_signal_handler,
+        ptr::from_ref(&c).cast_mut().cast(),
+        KCLOCK_NONE,
+        flags,
+    );
+    barrier
+        .to_process
+        .set(curproc().map_or(ptr::null(), |p| p.p_p.get().cast()));
+    cond_init(&c);
 
     mtx_enter(&TIMEOUT_MUTEX);
     let tctx = if flags & TIMEOUT_PROC != 0 {
@@ -584,34 +598,20 @@ pub fn timeout_barrier(to: &Timeout) {
         return;
     }
 
-    // The barrier: a timeout whose handler signals the condition (`cond_signal_handler`,
-    // `kern_synch.c`), queued ahead of everything else the context has to run.
-    let barrier = Timeout::new_flags(barrier_handler, ptr::null_mut(), KCLOCK_NONE, flags);
     barrier.to_time.set(ticks());
     barrier
         .to_flags
         .set(barrier.to_flags.get() | TIMEOUT_ONQUEUE);
-    // SAFETY: `barrier` is in no list; it is unlinked below before it goes out of scope;
-    // under `timeout_mutex`.
+    // SAFETY: `barrier` is in no list; the context unlinks it (`timeout_run`) before
+    // signalling `c`, so it is off the list before `cond_wait` returns and it goes out of
+    // scope; under `timeout_mutex`.
     unsafe { circq_insert_head(tctx.tctx_todo, &barrier.to_list) };
     mtx_leave(&TIMEOUT_MUTEX);
 
     // We know the relevant timeout context was running something and now also has the
-    // barrier to run, so we just have to wait for it to pick up the barrier task now:
-    // cond_wait(&c, "tmobar"), the condition variables and the sleep queues (M5-b). Until
-    // then nothing runs timeouts concurrently with their caller, so the barrier is taken
-    // back out (see the module's deviations).
-    let _ = unported!("timeout_barrier: cond_wait on a running timeout (M5-b)");
-    mtx_enter(&TIMEOUT_MUTEX);
-    if barrier.to_flags.get() & TIMEOUT_ONQUEUE != 0 {
-        // SAFETY: linked above, under `timeout_mutex`.
-        unsafe { circq_remove(&barrier.to_list) };
-    }
-    mtx_leave(&TIMEOUT_MUTEX);
+    // barrier to run, so we just have to wait for it to pick up the barrier task now.
+    cond_wait(&c, "tmobar");
 }
-
-/// `cond_signal_handler` stands in: the barrier's handler, which would signal the waiter.
-fn barrier_handler(_arg: *mut c_void) {}
 
 /// `timeout_bucket`: the clock wheel's bucket for `to`.
 pub fn timeout_bucket(to: &Timeout) -> u32 {
@@ -836,13 +836,65 @@ pub fn softclock(_arg: *mut c_void) {
     }
 }
 
-/// `softclock_create_thread`: creates the softclock thread (`kthread_create`, M5-b2).
+/// `softclock_create_thread`: creates the softclock thread (deferred from
+/// `timeout_proc_init`).
 pub fn softclock_create_thread(_arg: *mut c_void) {
-    // if (kthread_create(softclock_thread, NULL, NULL, "softclock")) panic("fork softclock");
-    let _ = unported!("softclock_create_thread: kthread_create (M5-b2)");
+    if kthread_create(softclock_thread, ptr::null_mut(), b"softclock").is_err() {
+        panic(format_args!("fork softclock"));
+    }
+    // MULTIPROCESSOR: softclock_thread_mp, "softclockmp".
 }
 
-// softclock_thread_run, softclock_thread: the sleep queues (M5-b2).
+/// `softclock_thread_run`: the softclock thread's loop: sleeps on the context's list and
+/// runs what `softclock` queued there.
+fn softclock_thread_run(tctx: &TimeoutCtx) {
+    let todo = tctx.tctx_todo;
+
+    loop {
+        // Avoid holding both timeout_mutex and SCHED_LOCK at the same time.
+        sleep_setup(ptr::from_ref(todo).cast(), PSWP, "tmoslp");
+        let _ = sleep_finish(INFSLP, circq_empty(todo));
+
+        mtx_enter(&TIMEOUT_MUTEX);
+        TOSTAT
+            .tos_thread_wakeups
+            .set(TOSTAT.tos_thread_wakeups.get() + 1);
+        while !circq_empty(todo) {
+            // SAFETY: the first node of a non-empty list is a linked timeout's `to_list`,
+            // under `timeout_mutex`.
+            let to = unsafe { timeout_from_circq(circq_first(todo)) };
+            // SAFETY: linked, under `timeout_mutex`.
+            unsafe { circq_remove(&to.to_list) };
+            timeout_run(tctx, to);
+            TOSTAT.tos_run_thread.set(TOSTAT.tos_run_thread.get() + 1);
+        }
+        mtx_leave(&TIMEOUT_MUTEX);
+    }
+}
+
+/// `softclock_thread`: the thread that runs the `TIMEOUT_PROC` timeouts, pegged to the
+/// primary CPU.
+pub fn softclock_thread(_arg: *mut c_void) {
+    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+
+    // Be conservative for the moment
+    let mut primary: Option<&'static CpuInfo> = None;
+    cpu_info_foreach(&mut |ci| {
+        if primary.is_none() && Machine::cpu_is_primary(ci) {
+            primary = Some(ci);
+        }
+    });
+    let Some(ci) = primary else {
+        panic(format_args!("softclock_thread: no primary CPU"));
+    };
+    sched_peg_curproc(ci);
+
+    let s = splsoftclock();
+    softclock_thread_run(&TIMEOUT_CTX_PROC);
+    splx(s);
+}
+
+// softclock_thread_mp: MULTIPROCESSOR.
 
 /// `timeout_adjust_ticks`: moves the tick wheel forward by `adj` ticks after the clock was
 /// stepped (`tc_setclock`).

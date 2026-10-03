@@ -110,6 +110,7 @@
 //!   `vfs_shutdown`, `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys`,
 //!   `config_suspend_all`, ACPI and `cpu_reset` are reported as unported when reached.
 
+use core::arch::asm;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
@@ -150,12 +151,13 @@ use crate::machine::bootinfo::{BootInfo, MemKind};
 use crate::machine::db_machdep::db_enter;
 use crate::machine::{Cpu, Machine};
 use crate::sys::param::roundup;
+use crate::sys::proc::Proc;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
 };
 use crate::sys::systm::PHYSMEM;
 use crate::sys::types::Paddr;
-use crate::sys::user::User;
+use crate::sys::user::{Uarea, User};
 use crate::unported;
 use crate::uvm::uvm_extern::UvmConstraintRange;
 use crate::uvm::uvm_init::UVMEXP;
@@ -202,7 +204,12 @@ pub static IDT: StaticCell<Idt> = StaticCell::new(Idt([const { GateDescriptor::z
 pub static IDT_ALLOCMAP: [AtomicBool; NIDT] = [const { AtomicBool::new(false) }; NIDT];
 
 /// `proc0paddr`: proc0's u-area (its pcb; the boot stack is Limine's, see the deviations).
-pub static PROC0PADDR: User = User::new();
+pub static PROC0_UAREA: Uarea = Uarea::new();
+
+/// `proc0paddr`: proc0's `struct user`, at the bottom of its u-area.
+pub fn proc0paddr() -> &'static User {
+    &PROC0_UAREA.u
+}
 /// The direct map covers at least this much, by the boot protocol's guarantee.
 const DIRECT_MAP_MIN_SIZE: usize = 4 << 30;
 
@@ -414,11 +421,11 @@ pub fn splassert_check(wantipl: i32, func: &str) {
 
 /// `x86_64_proc0_tss_ldt_init`: loads the boot CPU's task register and clears the LDT.
 pub fn x86_64_proc0_tss_ldt_init() {
-    let pcb = &PROC0PADDR.u_pcb;
+    let pcb = &proc0paddr().u_pcb;
     cpu_info_primary().ci_curpcb.set(pcb);
     pcb.pcb_fsbase.set(0);
     pcb.pcb_kstack
-        .set(ptr::addr_of!(PROC0PADDR) as u64 + USPACE as u64 - 16);
+        .set(ptr::addr_of!(PROC0_UAREA) as u64 + USPACE as u64 - 16);
     // The kernel's page tables, what cpu_switchto compares %cr3 with (see the deviations).
     pcb.pcb_cr3.set(rcr3());
     PROC0
@@ -586,10 +593,38 @@ pub fn need_resched(ci: &CpuInfo) {
     ci.ci_want_resched.set(1);
 
     // There's a risk we'll be called before the idle threads start
-    if !ci.ci_curproc.get().is_null() {
-        // aston(ci->ci_curproc), cpu_kick(ci): struct proc (M5-b), MULTIPROCESSOR.
-        let _ = unported!("need_resched: aston (struct proc, M5-b)");
+    // SAFETY: `ci_curproc` names a thread on the CPU, hence alive.
+    if let Some(p) = unsafe { ci.ci_curproc.get().as_ref() } {
+        aston(p);
+        // cpu_kick(ci): MULTIPROCESSOR.
     }
+}
+
+/// `aston(p)`: `p->p_md.md_astpending = 1`.
+pub fn aston(p: &Proc) {
+    p.p_md.md_astpending.store(1, Ordering::Relaxed);
+}
+
+/// `clear_resched(ci)`.
+pub fn clear_resched(ci: &CpuInfo) {
+    ci.ci_want_resched.set(0);
+}
+
+/// `cpu_unidle(ci)`: with `MULTIPROCESSOR` an IPI (or clearing `MWAIT_KEEP_IDLING`); on one
+/// CPU the idle loop sees the run queue itself.
+pub fn cpu_unidle(_ci: &CpuInfo) {}
+
+/// `cpu_idle_cycle_hlt`: `sti; hlt`, what `cpu_idle_cycle_fcn` points at by default.
+pub fn cpu_idle_cycle_hlt() {
+    // SAFETY: enabling interrupts and halting until one arrives is what the idle thread is
+    // for; `sti` takes effect after `hlt`, so no interrupt is lost in between.
+    unsafe { asm!("sti", "hlt", options(nomem, nostack)) };
+}
+
+/// `cpu_idle_cycle()`: `(*cpu_idle_cycle_fcn)()`, the `hlt` loop until a driver (acpicpu)
+/// installs `mwait`.
+pub fn cpu_idle_cycle() {
+    cpu_idle_cycle_hlt();
 }
 
 /// `setgate`: fills an interrupt or trap gate for `func` with `ist`, `type_`, `dpl` and the
