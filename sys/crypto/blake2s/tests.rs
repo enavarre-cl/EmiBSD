@@ -3,7 +3,7 @@
 //! Python's `hashlib.blake2s` and `hmac`.
 
 use super::*;
-use crate::crypto::testutil::hex;
+use crate::crypto::testutil::{c_table, hex};
 
 extern crate std;
 use std::vec::Vec;
@@ -194,4 +194,18 @@ fn hmac_blake2s() {
         blake2s_hmac(&mut short, &d[..77], &k, 20);
         assert_eq!(short.to_vec(), hex(want)[..20].to_vec());
     }
+}
+
+#[test]
+#[ignore = "reads the C tables from $OPENBSD_SRC (just test-ref)"]
+fn constants_match_the_c_file() {
+    let f = "sys/crypto/blake2s.c";
+    let iv: Vec<u64> = BLAKE2S_IV.iter().map(|w| u64::from(*w)).collect();
+    assert_eq!(c_table(f, "blake2s_iv"), iv);
+    let sigma: Vec<u64> = BLAKE2S_SIGMA
+        .iter()
+        .flatten()
+        .map(|b| u64::from(*b))
+        .collect();
+    assert_eq!(c_table(f, "blake2s_sigma"), sigma);
 }

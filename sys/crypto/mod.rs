@@ -1,10 +1,17 @@
 //! `sys/crypto`: the kernel's cryptographic primitives. Only what ported code calls is here.
 
+pub mod aes;
 pub mod blake2s;
 pub mod chacha_private;
 pub mod chachapoly;
 pub mod curve25519;
+pub mod gmac;
+pub mod hmac;
+pub mod md5;
 pub mod poly1305;
+pub mod rijndael;
+pub mod sha1;
+pub mod sha2;
 pub mod siphash;
 #[cfg(test)]
 mod testutil;

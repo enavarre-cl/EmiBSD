@@ -1,4 +1,5 @@
-//! Host test helper for `sys/crypto`: the known-answer vectors are written as hex strings.
+//! Host test helpers for `sys/crypto`: the known-answer vectors are written as hex strings,
+//! and the reference-backed tests read the constant tables of the C files.
 
 extern crate std;
 
@@ -26,4 +27,42 @@ pub(crate) fn hexn<const N: usize>(s: &str) -> [u8; N] {
     let mut a = [0u8; N];
     a.copy_from_slice(&v);
     a
+}
+
+/// The integers of the table `name` of the C file `rel` (below `$OPENBSD_SRC`): every number
+/// between the `{` that follows `name[` and the closing `};`, comments dropped, in order. For
+/// the reference-backed tests (`just test-ref`).
+pub(crate) fn c_table(rel: &str, name: &str) -> Vec<u64> {
+    let path = crate::reftest::openbsd_src().join(rel);
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+
+    // Drop the comments.
+    let mut clean = std::string::String::new();
+    let mut rest = text.as_str();
+    while let Some(i) = rest.find("/*") {
+        clean.push_str(&rest[..i]);
+        match rest[i..].find("*/") {
+            Some(j) => rest = &rest[i + j + 2..],
+            None => rest = "",
+        }
+    }
+    clean.push_str(rest);
+
+    let start = clean
+        .find(&std::format!("{name}["))
+        .unwrap_or_else(|| panic!("{name}: not in {rel}"));
+    let open = start + clean[start..].find('{').expect("no table body");
+    let close = open + clean[open..].find("};").expect("no end of table");
+    clean[open + 1..close]
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| {
+            let t = t.trim_end_matches(['U', 'L', 'u', 'l']);
+            match t.strip_prefix("0x") {
+                Some(h) => u64::from_str_radix(h, 16),
+                None => t.parse(),
+            }
+            .unwrap_or_else(|_| panic!("{name}: cannot parse `{t}`"))
+        })
+        .collect()
 }

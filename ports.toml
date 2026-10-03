@@ -3150,6 +3150,125 @@ upstream_blob = "348890fe78029f62aacff574a4d91b88dd3796af"
 deps = ["sys/crypto/curve25519.h", "sys/lib/libkern/explicit_bzero.c", "sys/lib/libkern/timingsafe_bcmp.c"]
 notes = "the 10x(25.5-bit) limb implementation: the fiat-crypto straight-line fe_mul/fe_sqr/mul121666 are loops over the limb pairs with the same carry chain (identical limbs), fe_freeze/tobytes/frombytes loops, the ladder as written; curve25519 and curve25519_generate_public return bool; RFC 7748 5.2 (both vectors, iterated 1 and 1000) and 6.1 tested, the 1000000 iteration left out for its running time; licence: ISC (Donenfeld, fiat-crypto authors)"
 
+[[file]]
+c = "sys/crypto/sha1.h"
+rust = "sys/crypto/sha1.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "66171aba5d594c1e500e55f19f134757279f46b3"
+notes = "Sha1Ctx; shares the module with sha1.c; licence: public domain (Steve Reid), accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/sha1.c"
+rust = "sys/crypto/sha1.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1e910ae5a97935558bf7fc184ed898147a7dca59"
+deps = ["sys/crypto/sha1.h"]
+notes = "SHA1Init/Update/Final/Transform over slices, the 80-word schedule in a loop (SHA1HANDSOFF always); the 32-bit len << 3 of the C is 64-bit; FIPS 180 vectors, a million a, every length around the blocks tested"
+
+[[file]]
+c = "sys/crypto/md5.h"
+rust = "sys/crypto/md5.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "24f5c4e0d537d833f74e6262a45fbbd13768b8d1"
+notes = "Md5Ctx; shares the module with md5.c; licence: public domain (Colin Plumb), accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/md5.c"
+rust = "sys/crypto/md5.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a896aa1f2302b42fc5b25d86058bd228d53bb614"
+deps = ["sys/crypto/md5.h"]
+notes = "MD5Init/Update/Final/Transform; the 64 MD5STEPs are a loop over the constant and shift tables; RFC 1321 suite tested (HMAC-MD5 in xform)"
+
+[[file]]
+c = "sys/crypto/sha2.h"
+rust = "sys/crypto/sha2.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "461b49b9810d3e51ddc46f0466d6ffe989c4acaf"
+notes = "Sha2Ctx with Sha2State holding st32 and st64 side by side (the C union); shares the module with sha2.c; licence: BSD-3 (Aaron D. Gifford)"
+
+[[file]]
+c = "sys/crypto/sha2.c"
+rust = "sys/crypto/sha2.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "79e9f436dda9b8adb019e1510ef3bdc7eb022db3"
+deps = ["sys/crypto/sha2.h"]
+notes = "SHA256/384/512 Init/Update/Final/Transform and SHA512Last, compact transform only (SHA2_UNROLL_TRANSFORM, amd64's macro-unrolled one, is not ported: same function); K and H constants written as consts and compared with the C tables by a reference-backed test; FIPS 180 vectors, a million a, splits tested"
+
+[[file]]
+c = "sys/crypto/hmac.h"
+rust = "sys/crypto/hmac.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "886bb49d0f0b6233eee48157b827c7b26be9dca8"
+notes = "HmacMd5Ctx, HmacSha1Ctx, HmacSha256Ctx (one macro_rules family per hash); shares the module with hmac.c; licence: ISC (Damien Bergamini)"
+
+[[file]]
+c = "sys/crypto/hmac.c"
+rust = "sys/crypto/hmac.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ea2c173814292233be1eda4cc2e1f5e6d529b488"
+deps = ["sys/crypto/hmac.h", "sys/crypto/md5.c", "sys/crypto/sha1.c", "sys/crypto/sha2.c", "sys/lib/libkern/explicit_bzero.c"]
+notes = "HMAC_MD5/SHA1/SHA256 Init/Update/Final; only net80211 and softraid-style callers use it (IPsec's HMACs are cryptosoft's own); RFC 2202 and RFC 4231 SHA-256 vectors tested"
+
+[[file]]
+c = "sys/crypto/rijndael.h"
+rust = "sys/crypto/rijndael.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "845d23076dafa6b0a39fecdcff781aa7b69be6ef"
+notes = "RijndaelCtx; shares the module with rijndael.c; licence: public domain (Rijmen, Bosselaers, Barreto), accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/rijndael.c"
+rust = "sys/crypto/rijndael.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0b706504fd2616a23b4ad3a1d4280125e41f0621"
+deps = ["sys/crypto/rijndael.h"]
+notes = "rijndaelKeySetupEnc/Dec, rijndaelEncrypt/Decrypt, rijndael_set_key(_enc_only), rijndael_encrypt/decrypt (enc_xform_aes_xts); the Te/Td tables are const fn generated and compared with the C tables by a reference-backed test; FULL_UNROLL (undefined in the C) not ported; FIPS 197 vectors tested"
+
+[[file]]
+c = "sys/crypto/aes.h"
+rust = "sys/crypto/aes.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8c685ef058765b9fd48f905e4269a9cec799f07a"
+notes = "AesCtx; shares the module with aes.c; licence: MIT (Thomas Pornin), accepted 2026-10-03"
+
+[[file]]
+c = "sys/crypto/aes.c"
+rust = "sys/crypto/aes.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f885e145cb1fca43572505c6c571f1a9439a4362"
+deps = ["sys/crypto/aes.h"]
+notes = "the constant-time bitsliced AES (what enc_xform_aes, AES-CTR, GCM and GMAC use): the Boyar-Peralta S-box circuit, ortho, key schedule, encrypt/decrypt over two blocks, AES_Setkey/Encrypt/Decrypt(_ECB), AES_KeySetup_Encrypt/Decrypt; bad key sizes are Err(EINVAL); FIPS 197, SP 800-38A and cross-checks against rijndael.rs tested"
+
+[[file]]
+c = "sys/crypto/gmac.h"
+rust = "sys/crypto/gmac.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7ebc53a3e4bc98a69857e73f612683345e013881"
+notes = "GhashCtx, AesGmacCtx; shares the module with gmac.c; licence: ISC (Mike Belopuhov)"
+
+[[file]]
+c = "sys/crypto/gmac.c"
+rust = "sys/crypto/gmac.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c69a3e45468e731849fbf73d59651dffd32b2c39"
+deps = ["sys/crypto/gmac.h", "sys/crypto/aes.c", "sys/lib/libkern/explicit_bzero.c"]
+notes = "ghash_gfmul/ghash_update_mi, AES_GMAC_Init/Setkey/Reinit/Update/Final; the ghash_update override pointer (amd64's PCLMULQDQ aesni.c) is not ported: ghash_update is ghash_update_mi; AES_GMAC_Setkey reports a bad key size (Err(EINVAL)) where the C ignores AES_Setkey's result; GCM spec test cases 1-4, 10, 16 and GMAC-only tags tested"
+
 [[extra]]
 rust = "sys/crypto/testutil.rs"
 reason = "host test helper: hex decoding for the known-answer vectors of sys/crypto"
