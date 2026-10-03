@@ -47,16 +47,15 @@
 //! `tuagg_add_runtime`; M6-b adds `calctsru`, `calcru` and `ruadd` for `exit1`. M7a adds the
 //! `plimit` management (`lim_startup`, `lim_copy`, `lim_free`, `lim_fork`,
 //! `lim_write_begin`/`lim_write_commit`, `lim_read_enter`, `lim_cur_proc`), `rucheck`,
-//! `dosetrlimit`, `sys_setrlimit`, `sys_getrlimit`, `sys_getrusage` and `dogetrusage`. The
-//! priority syscalls (`sys_getpriority`, `sys_setpriority`, `donice`) wait for the
-//! credentials (`kern_prot.c`).
+//! `dosetrlimit`, `sys_setrlimit`, `sys_getrlimit`, `sys_getrusage` and `dogetrusage`, and
+//! with the credentials the priority syscalls (`sys_getpriority`, `sys_setpriority`,
+//! `donice`). The file is complete but for the KTRACE hooks, which are not configured.
 //!
 //! ## Deviations
 //! - `tuagg_sumup` reads the source's fields one by one inside the `pc_cons` loop instead of
 //!   copying the struct: the fields are `Cell`s.
-//! - `dosetrlimit` reports `suser` (`kern_prot.c`) and refuses to raise a hard limit until
-//!   credentials exist; `rucheck` reports `prsignal` (`kern_sig.c`) instead of sending
-//!   `SIGKILL`/`SIGXCPU`. KTRACE is not configured.
+//! - `rucheck` reports `prsignal` (`kern_sig.c`) instead of sending `SIGKILL`/`SIGXCPU`.
+//!   KTRACE is not configured.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -66,10 +65,13 @@ use crate::conf::param::{MAXFILES, MAXPROCESS};
 use crate::kassert;
 use crate::kern::kern_clock::STATHZ;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave, pc_cons_enter, pc_cons_leave};
+use crate::kern::kern_proc::{ALLPROCESS, pgfind, prfind};
+use crate::kern::kern_prot::suser;
 use crate::kern::kern_rwlock::{rw_assert_wrlock, rw_enter_write, rw_exit_write};
 use crate::kern::kern_synch::{refcnt_init, refcnt_rele, refcnt_shared, refcnt_take};
 use crate::kern::kern_tc::nanouptime;
 use crate::kern::kern_timeout::timeout_add_msec;
+use crate::kern::sched_bsd::{sched_lock, sched_unlock, setpriority};
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::machine::Machine;
 use crate::machine::copy::{copyin, copyout};
@@ -79,6 +81,7 @@ use crate::machine::{Machine as Md, VmParam};
 use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_NONE, PROT_READ, PROT_WRITE};
 use crate::sys::mutex::mutex_assert_locked;
+use crate::sys::param::NZERO;
 use crate::sys::param::{MAXUPRC, NOFILE, NOFILE_MAX};
 use crate::sys::pool::{PR_WAITOK, Pool};
 use crate::sys::proc::p_hassibling;
@@ -87,17 +90,21 @@ use crate::sys::proc::{
 };
 use crate::sys::queue::TailqHead;
 use crate::sys::resource::Rusage;
+use crate::sys::resource::{PRIO_MAX, PRIO_MIN, PRIO_PGRP, PRIO_PROCESS, PRIO_USER};
 use crate::sys::resource::{
     RLIM_INFINITY, RLIM_NLIMITS, RLIMIT_CPU, RLIMIT_DATA, RLIMIT_MEMLOCK, RLIMIT_NOFILE,
     RLIMIT_NPROC, RLIMIT_RSS, RLIMIT_STACK, RUSAGE_CHILDREN, RUSAGE_SELF, RUSAGE_THREAD, Rlimit,
 };
 use crate::sys::resourcevar::{Plimit, lim_read_leave};
 use crate::sys::rwlock::Rwlock;
-use crate::sys::syscallargs::{SysGetrlimitArgs, SysGetrusageArgs, SysSetrlimitArgs};
+use crate::sys::syscallargs::{
+    SysGetpriorityArgs, SysGetrlimitArgs, SysGetrusageArgs, SysSetpriorityArgs, SysSetrlimitArgs,
+};
 use crate::sys::systm::{SysArgs, sysargs};
 use crate::sys::time::{
     Timespec, Timeval, timeradd, timespec_to_timeval, timespecadd, timespecsub,
 };
+use crate::sys::types::Pid;
 use crate::sys::types::{Register, Rlim};
 use crate::unported;
 use crate::uvm::uvm::UVM_ET_STACK;
@@ -288,6 +295,150 @@ pub static MAXSMAP: core::sync::atomic::AtomicU64 =
 /// `ps_mtx` when updating the process' `ps_limit`.
 pub static RLIMIT_LOCK: Rwlock = Rwlock::new("rlimitlk");
 
+/// `sys_getpriority`.
+pub fn sys_getpriority(curp: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let uap: &SysGetpriorityArgs = sysargs(v);
+    let mut low = NZERO + PRIO_MAX + 1;
+    let who = uap.who.get();
+
+    match uap.which.get() {
+        PRIO_PROCESS => {
+            let pr = if who == 0 {
+                Some(curp.process())
+            } else {
+                prfind(who as Pid)
+            };
+            if let Some(pr) = pr
+                && i32::from(pr.ps_nice.get()) < low
+            {
+                low = i32::from(pr.ps_nice.get());
+            }
+        }
+
+        PRIO_PGRP => {
+            let pg = if who == 0 {
+                // SAFETY: a live process's pgrp outlives it while it is a member.
+                unsafe { curp.process().ps_pgrp.get().as_ref() }
+            } else {
+                pgfind(who as Pid)
+            };
+            if let Some(pg) = pg {
+                for pr in pg.pg_members.iter() {
+                    if i32::from(pr.ps_nice.get()) < low {
+                        low = i32::from(pr.ps_nice.get());
+                    }
+                }
+            }
+        }
+
+        PRIO_USER => {
+            let who = if who == 0 {
+                curp.ucred().cr_uid.get()
+            } else {
+                who
+            };
+            for pr in ALLPROCESS.0.iter() {
+                if pr.ucred().cr_uid.get() == who && i32::from(pr.ps_nice.get()) < low {
+                    low = i32::from(pr.ps_nice.get());
+                }
+            }
+        }
+
+        _ => return Err(Errno::EINVAL),
+    }
+    if low == NZERO + PRIO_MAX + 1 {
+        return Err(Errno::ESRCH);
+    }
+    retval[0] = (low - NZERO) as Register;
+    Ok(())
+}
+
+/// `sys_setpriority`.
+pub fn sys_setpriority(curp: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
+    let uap: &SysSetpriorityArgs = sysargs(v);
+    let who = uap.who.get();
+    let prio = uap.prio.get();
+    let mut found = false;
+    let mut error = Ok(());
+
+    match uap.which.get() {
+        PRIO_PROCESS => {
+            let pr = if who == 0 {
+                Some(curp.process())
+            } else {
+                prfind(who as Pid)
+            };
+            if let Some(pr) = pr {
+                error = donice(curp, pr, prio);
+                found = true;
+            }
+        }
+
+        PRIO_PGRP => {
+            let pg = if who == 0 {
+                // SAFETY: a live process's pgrp outlives it while it is a member.
+                unsafe { curp.process().ps_pgrp.get().as_ref() }
+            } else {
+                pgfind(who as Pid)
+            };
+            if let Some(pg) = pg {
+                for pr in pg.pg_members.iter() {
+                    error = donice(curp, pr, prio);
+                    found = true;
+                }
+            }
+        }
+
+        PRIO_USER => {
+            let who = if who == 0 {
+                curp.ucred().cr_uid.get()
+            } else {
+                who
+            };
+            for pr in ALLPROCESS.0.iter() {
+                if pr.ucred().cr_uid.get() == who {
+                    error = donice(curp, pr, prio);
+                    found = true;
+                }
+            }
+        }
+
+        _ => return Err(Errno::EINVAL),
+    }
+    if !found {
+        return Err(Errno::ESRCH);
+    }
+    error
+}
+
+/// `donice`: sets the nice value of `chgpr` to `n` on behalf of `curp`.
+pub fn donice(curp: &Proc, chgpr: &Process, n: i32) -> Result<(), Errno> {
+    let ucred = curp.ucred();
+
+    if ucred.cr_uid.get() != 0
+        && ucred.cr_ruid.get() != 0
+        && ucred.cr_uid.get() != chgpr.ucred().cr_uid.get()
+        && ucred.cr_ruid.get() != chgpr.ucred().cr_uid.get()
+    {
+        return Err(Errno::EPERM);
+    }
+    let n = n.clamp(PRIO_MIN, PRIO_MAX) + NZERO;
+    if n < i32::from(chgpr.ps_nice.get()) && suser(curp).is_err() {
+        return Err(Errno::EACCES);
+    }
+    chgpr.ps_nice.set(n as u8);
+    mtx_enter(&chgpr.ps_mtx);
+    sched_lock();
+    let mut q = chgpr.ps_threads.first();
+    while let Some(p) = q {
+        setpriority(p, p.p_estcpu.get(), n as u8);
+        q = TailqHead::<ProcThrLink>::next(p);
+    }
+    sched_unlock();
+    mtx_leave(&chgpr.ps_mtx);
+    Ok(())
+}
+
 /// `sys_setrlimit`.
 pub fn sys_setrlimit(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
     let uap: &SysSetrlimitArgs = sysargs(v);
@@ -311,11 +462,11 @@ pub fn dosetrlimit(p: &Proc, which: u32, limp: &mut Rlimit) -> Result<(), Errno>
     // SAFETY: a process's ps_limit is set at creation and replaced only under rlimit_lock,
     // which we hold.
     let alimp = unsafe { &*p.process().ps_limit.get() }.pl_rlimit[which].get();
-    if limp.rlim_max > alimp.rlim_max {
-        // suser(p): see the module's deviations.
-        let e = unported!("dosetrlimit: suser (kern_prot.c)");
+    if limp.rlim_max > alimp.rlim_max
+        && let Err(error) = suser(p)
+    {
         rw_exit_write(&RLIMIT_LOCK);
-        return Err(e);
+        return Err(error);
     }
 
     // Get exclusive write access to the limit structure.

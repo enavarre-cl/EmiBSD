@@ -1805,7 +1805,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "32e2d1e40bff5a8c0457de13d9c542e9c2090358"
 deps = ["sys/sys/proc.h", "sys/kern/kern_tc.c", "sys/kern/kern_lock.c"]
-notes = "M5-b2: tuagg_sumup, tuagg_get_proc, tuagg_get_process, tuagg_add_process, tuagg_add_runtime; the priority/limit/rusage syscalls, the plimit management (lim_*), calcru/calctsru, ruadd, rucheck are M6; M6-b: calctsru, calcru (returning the three times), ruadd; M7a-3b: maxdmap/maxsmap, rlimit_lock, sys_setrlimit/dosetrlimit (suser reported: a hard limit cannot be raised until kern_prot.c), sys_getrlimit, sys_getrusage/dogetrusage, rucheck (prsignal reported), plimit_pool, lim_startup/copy/free/fork/write_begin/write_commit/read_enter/cur_proc; the priority syscalls wait for kern_prot.c"
+notes = "M5-b2: tuagg_sumup, tuagg_get_proc, tuagg_get_process, tuagg_add_process, tuagg_add_runtime; the priority/limit/rusage syscalls, the plimit management (lim_*), calcru/calctsru, ruadd, rucheck are M6; M6-b: calctsru, calcru (returning the three times), ruadd; M7a-3b: maxdmap/maxsmap, rlimit_lock, sys_setrlimit/dosetrlimit, sys_getrlimit, sys_getrusage/dogetrusage, rucheck (prsignal reported), plimit_pool, lim_startup/copy/free/fork/write_begin/write_commit/read_enter/cur_proc; with kern_prot.c: suser in dosetrlimit, sys_getpriority/sys_setpriority/donice"
 [[file]]
 c = "sys/kern/subr_xxx.c"
 rust = "sys/kern/subr_xxx.rs"

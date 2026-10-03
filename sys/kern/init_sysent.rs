@@ -22,7 +22,9 @@ use crate::kern::kern_prot::{
     sys_setegid, sys_seteuid, sys_setgid, sys_setgroups, sys_setlogin, sys_setpgid, sys_setregid,
     sys_setresgid, sys_setresuid, sys_setreuid, sys_setsid, sys_setthrname, sys_setuid,
 };
-use crate::kern::kern_resource::{sys_getrlimit, sys_getrusage, sys_setrlimit};
+use crate::kern::kern_resource::{
+    sys_getpriority, sys_getrlimit, sys_getrusage, sys_setpriority, sys_setrlimit,
+};
 use crate::kern::kern_sig::sys_nosys;
 use crate::kern::sys_generic::sys_write;
 use crate::sys::syscall::SYS_MAXSYSCALL;
@@ -167,11 +169,11 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(4, size_of::<SysAccept4Args>(), SY_NOLOCK, sys_nosys), // 93 = accept4 (sys_accept4 not ported)
     Sysent::new(5, size_of::<SysThrsleepArgs>(), SY_NOLOCK, sys_nosys), // 94 = __thrsleep (sys___thrsleep not ported)
     Sysent::new(1, size_of::<SysFsyncArgs>(), 0, sys_nosys), // 95 = fsync (sys_fsync not ported)
-    Sysent::new(3, size_of::<SysSetpriorityArgs>(), 0, sys_nosys), // 96 = setpriority (sys_setpriority not ported)
+    Sysent::new(3, size_of::<SysSetpriorityArgs>(), 0, sys_setpriority), // 96 = setpriority
     Sysent::new(3, size_of::<SysSocketArgs>(), SY_NOLOCK, sys_nosys), // 97 = socket (sys_socket not ported)
     Sysent::new(3, size_of::<SysConnectArgs>(), SY_NOLOCK, sys_nosys), // 98 = connect (sys_connect not ported)
     Sysent::new(3, size_of::<SysGetdentsArgs>(), 0, sys_nosys), // 99 = getdents (sys_getdents not ported)
-    Sysent::new(2, size_of::<SysGetpriorityArgs>(), 0, sys_nosys), // 100 = getpriority (sys_getpriority not ported)
+    Sysent::new(2, size_of::<SysGetpriorityArgs>(), 0, sys_getpriority), // 100 = getpriority
     Sysent::new(2, size_of::<SysPipe2Args>(), SY_NOLOCK, sys_nosys), // 101 = pipe2 (sys_pipe2 not ported)
     Sysent::new(3, size_of::<SysDup3Args>(), SY_NOLOCK, sys_nosys), // 102 = dup3 (sys_dup3 not ported)
     Sysent::new(1, size_of::<SysSigreturnArgs>(), 0, sys_nosys), // 103 = sigreturn (sys_sigreturn not ported)
