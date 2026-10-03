@@ -258,3 +258,19 @@ mod tests {
         assert_eq!(estcpulim(1000), 36);
     }
 }
+
+/// `sched_pause(func)`: calls `func` (a yield) when the CPU's scheduler flags ask the
+/// running thread to give the CPU up (`SPCF_SHOULDYIELD`).
+pub fn sched_pause(func: fn()) {
+    let spc = <crate::machine::Machine as crate::machine::cpu::Cpu>::ci_schedstate(
+        crate::machine::cpu::curcpu(),
+    );
+    if spc
+        .spc_schedflags
+        .load(core::sync::atomic::Ordering::Relaxed)
+        & SPCF_SHOULDYIELD
+        != 0
+    {
+        func();
+    }
+}

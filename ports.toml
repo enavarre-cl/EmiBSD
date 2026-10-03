@@ -679,7 +679,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "f76d7e382cdb17886985a8ceea50eef0b7e54b95"
 deps = ["sys/sys/types.h"]
-notes = "PROT_*, MAP_PRIVATE/MAP_ANON, MADV_* and MAP_INHERIT_* only; the mmap(2) family prototypes and the remaining MAP_* flags come with M6"
+notes = "PROT_*, MAP_PRIVATE/MAP_ANON, MADV_*, MAP_INHERIT_* and MCL_CURRENT/MCL_FUTURE only; the mmap(2) family prototypes and the remaining MAP_* flags come with uvm_mmap.c (M7a-3)"
 
 [[file]]
 c = "sys/kern/kern_synch.c"
@@ -875,7 +875,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1e16ce3c07558e556a719c9bfd751b16ff4ce86b"
 deps = ["sys/sys/types.h"]
-notes = "pmap_statistics and the PMAP_* flags; the pmap(9) prototypes are the machine::Pmap trait (sys/machine/pmap.rs); M7a-1: pmap_page_protect and pmap_clear_modify in the trait"
+notes = "pmap_statistics and the PMAP_* flags; the pmap(9) prototypes are the machine::Pmap trait (sys/machine/pmap.rs); M7a-1: pmap_page_protect and pmap_clear_modify in the trait; M7a-2: the PMAP_PREFER_ALIGN/OFFSET defaults (PMAP_PREFER is not defined on amd64/arm64), pmap_protect and pmap_wired_count in the trait (amd64/arm64 report pmap_protect until the pv lists, M7a-3)"
 
 [[file]]
 c = "sys/uvm/uvmexp.h"
@@ -992,7 +992,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "cbeca0a483b6a2268d0cfe545d4a14878438cd0a"
 deps = ["sys/uvm/uvm_map.h"]
-notes = "M7a-1: VM_FAULT_INVALID/PROTECT/WIRE, struct uvm_faultinfo; the prototypes and uvm_fault.c are M7a-3"
+notes = "M7a-1: VM_FAULT_INVALID/PROTECT/WIRE, struct uvm_faultinfo; M7a-2: uvm_fault_wire and uvm_fault_unwire_locked as reported stubs for uvm_map.c; the rest of the prototypes and uvm_fault.c are M7a-3"
 
 [[file]]
 c = "sys/uvm/uvm.h"
@@ -1001,7 +1001,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "79dd17e35d40fa3d84252b3ace130f87eea2e717"
 deps = ["sys/uvm/uvm_page.h", "sys/uvm/uvm_pmemrange.h"]
-notes = "struct uvm (page queues, page_init_done, pmr_control) and the UVM_ET_* bits; the locks, the aiodone queue, the pager and swap fields arrive with their subsystems; M7a-1: kernel_object and the UVM_ET_IS* tests"
+notes = "struct uvm (page queues, page_init_done, pmr_control) and the UVM_ET_* bits; the locks, the aiodone queue, the pager and swap fields arrive with their subsystems; M7a-1: kernel_object and the UVM_ET_IS* tests; M7a-2: kentry_free"
 
 [[file]]
 c = "sys/uvm/uvm_init.c"
@@ -1009,8 +1009,8 @@ rust = "sys/uvm/uvm_init.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7703ec138db0f65b7bedc76cdaed1423363db7f0"
-deps = ["sys/uvm/uvm.h", "sys/uvm/uvmexp.h", "sys/uvm/uvm_page.c", "sys/uvm/uvm_pager.c", "sys/uvm/uvm_amap.c", "sys/uvm/uvm_aobj.c", "sys/uvm/uvm_anon.c"]
-notes = "uvm_init: page system, uvm_km_init (bounds only), pmap_init and kmeminit run; uvm_map_init runs (M6-b); uvmfault_init, uvm_km_page_init, dma_alloc_init, uvm_pager_init, amap_init, uao_create, uvm_anon_init, the bestfit switch and uvm_init_percpu report themselves unported; uvmexp is exported under its C name for the amd64 interrupt stubs' V_INTR; M7a-1: uvm_pager_init, amap_init, uao_create (kernel swap), uvm_anon_init and uvm_anon_init_percpu run"
+deps = ["sys/uvm/uvm.h", "sys/uvm/uvmexp.h", "sys/uvm/uvm_page.c", "sys/uvm/uvm_pager.c", "sys/uvm/uvm_amap.c", "sys/uvm/uvm_aobj.c", "sys/uvm/uvm_anon.c", "sys/uvm/uvm_map.c", "sys/uvm/uvm_km.c", "sys/uvm/uvm_addr.c"]
+notes = "uvm_init: page system, uvm_map_init, uvm_km_init (kernel_map), pmap_init, kmeminit, uvm_pager_init, amap_init, uao_create (kernel swap), uvm_anon_init, the bestfit switch of kernel_map (kmem_map waits for kmeminit's suballoc) run; uvmfault_init, uvm_km_page_init, dma_alloc_init, uvm_km_page_lateinit and uvm_init_percpu's counters report themselves unported; uvmexp is exported under its C name for the amd64 interrupt stubs' V_INTR; vm_min_kernel_address is a runtime value (amd64 shifts the kernel map above its direct map) and uvm_maxkaddr is raised to it before uvm_km_init"
 
 [[file]]
 c = "sys/uvm/uvm_page.h"
@@ -1068,8 +1068,8 @@ rust = "sys/uvm/uvm_km.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d125775bafe311bad1f791f16fae0434e8703879"
-deps = ["sys/uvm/uvm_extern.h", "sys/uvm/uvm_aobj.c"]
-notes = "km_alloc/km_free, the kv_*/kp_*/kd_* modes, no_constraint, uvm_km_init recording the kernel map bounds; without kernel_map/kmem_map (uvm_map.c) every allocation is served physically contiguous through the direct map and reported once; kp_nomem/kp_pageable requests fail reported; uvm_km_suballoc, uvm_km_pgremove and the single-page thread follow uvm_map; M7a-1: uvm_km_init creates the kernel object (uao_init, uao_create UAO_FLAG_KERNOBJ); the map setup and the reservation of [base, start) follow uvm_map (M7a-2)"
+deps = ["sys/uvm/uvm_extern.h", "sys/uvm/uvm_aobj.c", "sys/uvm/uvm_map.c"]
+notes = "km_alloc/km_free, the kv_*/kp_*/kd_* modes, no_constraint; M7a-1: uvm_km_init creates the kernel object (uao_init, uao_create UAO_FLAG_KERNOBJ); M7a-2: uvm_km_init sets kernel_map up (uvm_map_setup, the reservation of [base, start) with uvm_map FIXED; kernel_map() and is_kernel_map stand for the C's pointer), uvm_km_suballoc, uvm_km_pgremove, uvm_km_pgremove_intrsafe; kernel_map_min keeps the first free address past the reservation for the selftests; without kmem_map (kmeminit's uvm_km_suballoc, M7+) km_alloc still serves every request physically contiguous through the direct map and reported once, kp_nomem/kp_pageable requests fail reported; the single-page thread is __HAVE_PMAP_DIRECT: nothing"
 
 [[file]]
 c = "sys/uvm/uvm_pdaemon.c"
@@ -1478,7 +1478,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6814a6bbd6b76b1b69876614163d7b777d6728ff"
 deps = ["sys/sys/clockintr.h", "sys/sys/pclock.h", "sys/sys/time.h"]
-notes = "M5-a: CP_*/CPUSTATES, struct cpustats, SCHED_NQS/SCHED_PPQ/NICE_WEIGHT/ESTCPULIM, the SPCF_* flags, CPUTYP_*, and the clock members of struct schedstate_percpu (the four clockintr handles, spc_cp_time with its pc_lock, spc_schedticks/schedflags/nrun/whichqs/spinning/curpriority/runtime); spc_idleproc, spc_qs, spc_deadproc (struct proc) and the SMR members are M5-b; sched_lock and SCHED_LOCK_INIT are in sched_bsd.rs; M5-b2: spc_idleproc, spc_qs, spc_deadproc"
+notes = "M5-a: CP_*/CPUSTATES, struct cpustats, SCHED_NQS/SCHED_PPQ/NICE_WEIGHT/ESTCPULIM, the SPCF_* flags, CPUTYP_*, and the clock members of struct schedstate_percpu (the four clockintr handles, spc_cp_time with its pc_lock, spc_schedticks/schedflags/nrun/whichqs/spinning/curpriority/runtime); spc_idleproc, spc_qs, spc_deadproc (struct proc) and the SMR members are M5-b; sched_lock and SCHED_LOCK_INIT are in sched_bsd.rs; M5-b2: spc_idleproc, spc_qs, spc_deadproc; M7a-2: sched_pause"
 
 [[file]]
 c = "sys/sys/timeout.h"
@@ -1936,11 +1936,11 @@ notes = "M6-b: the signal numbers and _NSIG/NSIG; sigset_t, sigaction, SA_*, SIG
 [[file]]
 c = "sys/uvm/uvm_map.h"
 rust = "sys/uvm/uvm_map.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c1db58efecd251001691faa9da4ffe341e0c9ed5"
-deps = ["sys/sys/mutex.h", "sys/uvm/uvm_page.h", "sys/uvm/uvm_anon.h", "sys/sys/tree.h"]
-notes = "M6-b: struct vm_map (pmap, sserial, size, ref_count, flags, timestamp, min/max_offset, b_/s_ ranges, lock/mtx/flags_lock, plus the deviation list of wired pages), VM_MAP_* flags, MAX_KMAPENT; the entry tree (vm_map_entry, uvm_map_addr), the uaddr selectors, check_copyin and the inline helpers are M7a; busy/nbusy and the rwlock (M7a); M7a-1: struct vm_map_entry (the daddrs/dfree unions as side-by-side links, object as the VmMapEntryObject enum), UVM_MAP_STATIC/KMEM, VM_MAPENT_ISWIRED, uvm_mapentry_addrcmp, the uvm_map_addr tree and uvm_map_deadq adapters, the addr tree in struct vm_map"
+deps = ["sys/sys/mutex.h", "sys/sys/rwlock.h", "sys/uvm/uvm_page.h", "sys/uvm/uvm_anon.h", "sys/sys/tree.h", "sys/uvm/uvm_addr.h"]
+notes = "M6-b: struct vm_map (pmap, sserial, size, ref_count, flags, timestamp, min/max_offset, b_/s_ ranges, lock/mtx/flags_lock, plus the deviation list of wired pages), VM_MAP_* flags, MAX_KMAPENT; M7a-1: struct vm_map_entry (the daddrs/dfree unions as side-by-side links, object as the VmMapEntryObject enum), UVM_MAP_STATIC/KMEM, VM_MAPENT_ISWIRED, uvm_mapentry_addrcmp, the uvm_map_addr tree and uvm_map_deadq adapters; M7a-2: uaddr_exe/uaddr_any[4]/uaddr_brk_stack, busy/nbusy, UVM_MAP_CLIP_START/END as uvm_map_clip_start_at/end_at, UVM_EXTRACT_FIXPROT, VMMAP_FREE_START/END, uvm_maxkaddr, the inline lock helpers; check_copyin (PMAP_CHECK_COPYIN) not configured"
 
 [[file]]
 c = "sys/uvm/uvm_map.c"
@@ -1948,8 +1948,26 @@ rust = "sys/uvm/uvm_map.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "459310d59317ecbd29ac1608e5d704f5119f5182"
-deps = ["sys/uvm/uvm_map.h", "sys/uvm/uvm_extern.h", "sys/uvm/uvm_page.c", "sys/kern/subr_pool.c"]
-notes = "M6-b: uvm_map_setup (uvm_map_setup_entries and the selectors reported), uvm_map_teardown, uvm_map_init (the vmspace pool; the entry pools and uvm_addr_init reported), uvmspace_alloc/init/share/exec/addref/purge/free, uvmspace_fork (allocates and copies the statistics; copying a parent's wired pages reported), vm_map_lock/unlock/modflags; the deviation helpers uvm_map_enter_wired (wired zeroed pages, PROT_NONE reserves) and uvm_map_write_wired (copies through the direct map) stand in for uvm_map + uvm_fault_wire until M7a, and uvm_map_remove_wired for uvm_unmap_remove; uvm_map, uvm_unmap, the entry tree, the fork copy functions, uvm_map_protect/immutable/pageable/pie/inentry and the ddb printers are M7a; M7a: the map lock is the rwlock (rw_init_flags vmmaplk/kmmaplk) with vm_map_lock_try/lock/lock_read/unlock/unlock_read/upgrade/downgrade/busy/unbusy/assert_anylock/assert_wrlock (the *_ln functions without VMMAP_DEBUG's file/line, LPRINTF and the tree checks), vm_map_modflags"
+deps = ["sys/uvm/uvm_map.h", "sys/uvm/uvm_extern.h", "sys/uvm/uvm_page.c", "sys/kern/subr_pool.c", "sys/uvm/uvm_addr.c", "sys/uvm/uvm_amap.c", "sys/uvm/uvm_km.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_malloc.c", "sys/dev/rnd.c"]
+notes = "M6-b: uvm_map_setup/teardown/init, uvmspace_alloc/init/share/exec/addref/purge/free/fork and the deviation stand-ins uvm_map_enter_wired/uvm_map_write_wired/uvm_map_remove_wired (exec still uses them, M7a-3 retires them); M7a: the rwlock map lock with vm_map_lock_try/lock/lock_read/unlock/unlock_read/upgrade/downgrade/busy/unbusy/assert_anylock/assert_wrlock (the *_ln functions without file/line and LPRINTF), vm_map_modflags; M7a-2: the entry tree (uvm_mapent_copy/free_insert/free_remove/addr_insert/addr_remove, the augmented uvm_map_addr with uvm_map_addr_augment), uvm_map_reference, lock/unlock_entry, uvmspace_dused, entrybyaddr, DEAD_ENTRY_PUSH, isavail, findspace, uvm_mapanon, uvm_map, isjoinable/merge/tryjoin, unmap_detach(_intrsafe), mkentry, mapent_alloc/free (the static kentries, uvm_map_entry_pool, uvm_map_entry_kmem_pool), lookup_entry, inentry_sp/recheck/fix/inentry (printf for uprintf, trapsignal reported, the format is two words), is_stack_remappable, remap_as_stack, uvm_map_pie, uvm_unmap, mkfree, unmap_kill_entry(_withlock), unmap_remove, pageable_pgon/wire/pageable/pageable_all, setup_entries, splitentry, uvm_tree_assert/sanity/size_chk/vmspace_validate under feature vmmap_debug (and in host tests; uvm_map_deallocate zeroes the bounds for them as teardown does), uvm_map_protect (the RLIMIT_DATA lim_cur check reported), the fork copy functions mapent_clone/share/forkshared/forkcopy/forkzero with uvmspace_fork real, uvm_map_hint, submap, checkprot, create, deallocate, inherit, immutable, advice, extract, clean, clip_end/clip_start, boundfix, uaddr/uaddr_e, boundary, vmspace_update, kmem_grow (pmap_growkernel), freelist_update_clear/refill/update, set_uaddr (the slot as an enum), fix_space, mquery, setup_md (__LP64__); uvm_maxkaddr follows the runtime kernel-map base (uvm_init); uvm_map_fill_vmmap (sysctl) and the ddb printers wait for their subsystems; PMAP_CHECK_COPYIN, SYSVSHM, DEADBEEF0, TRACEPOINT, KERNEL_LOCK not configured; host tests"
+
+[[file]]
+c = "sys/uvm/uvm_addr.h"
+rust = "sys/uvm/uvm_addr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "987fcbad9ccec41c7c683b31b5164431a8a482c3"
+deps = ["sys/uvm/uvm_map.h"]
+notes = "M7a-2: struct uvm_addr_state, struct uvm_addr_functions (uaddr_print, DEBUG/DDB, omitted until ddb), the prototypes, uaddr_free_rbtree, uaddr_kbootstrap"
+
+[[file]]
+c = "sys/uvm/uvm_addr.c"
+rust = "sys/uvm/uvm_addr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d2e8c8d7c11c4c2fc9d318facbb0feaa51a21216"
+deps = ["sys/uvm/uvm_addr.h", "sys/uvm/uvm_map.c", "sys/kern/subr_pool.c", "sys/dev/rnd.c"]
+notes = "M7a-2: uvm_addr_entrybyspace, align_forward/backward, uvm_addr_fitspace, uvm_addr_init, uvm_addr_destroy, uvm_addr_linsearch, uvm_addr_invoke, the rnd, kbootstrap, bestfit, pivot and stack/brk selectors with their create/insert/remove/destroy, uaddr_pivot_random/newpivot, uvm_mapent_fspace_cmp and the uaddr_free_rbtree; the sub-states are #[repr(C)] with the base state first, cast back after checking the function table; out parameters are Result/tuples; uaddr_lin_* and uaddr_rnd_print are #if 0; uvm_addr_print/uaddr_pivot_print (DEBUG/DDB) wait for ddb; SMALL_KERNEL and MACHINE_STACK_GROWS_UP not configured; host tests"
 
 [[file]]
 c = "sys/kern/exec_elf.c"

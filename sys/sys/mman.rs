@@ -74,6 +74,13 @@ pub const MADV_SPACEAVAIL: i32 = 5;
 /// Pages are empty, free them.
 pub const MADV_FREE: i32 = 6;
 
+// Flags to mlockall
+
+/// `MCL_CURRENT`: lock all pages currently mapped.
+pub const MCL_CURRENT: i32 = 0x01;
+/// `MCL_FUTURE`: lock all pages mapped in the future.
+pub const MCL_FUTURE: i32 = 0x02;
+
 // Flags to minherit
 
 /// Share with child.

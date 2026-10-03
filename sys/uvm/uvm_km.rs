@@ -68,15 +68,17 @@
 //! Upstream: sys/uvm/uvm_km.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M3 ports `km_alloc`/`km_free`, the allocation modes
-//! (`kv_*`, `kp_*`, `kd_*`), `no_constraint` and the bounds `uvm_km_init` records;
-//! `uvm_km_suballoc`, `uvm_km_pgremove`, the single-page thread (`uvm_km_page_*`) and the
-//! maps themselves come with `uvm_map`.
+//! (`kv_*`, `kp_*`, `kd_*`) and `no_constraint`; M7a-2 `uvm_km_init` with `kernel_map`,
+//! `uvm_km_suballoc`, `uvm_km_pgremove` and `uvm_km_pgremove_intrsafe`. The single-page
+//! thread (`uvm_km_page_*`) is `__HAVE_PMAP_DIRECT`: nothing.
 //!
 //! ## Deviations
-//! - `uvm_km_init` only records the kernel map's range: `kernel_map` (`uvm_map_setup`, the
-//!   reservation of `[base, start)`) waits for `uvm_map.c`. `kernel_map_min`/`kernel_map_max`
-//!   stand in for `vm_map_min(kernel_map)`/`vm_map_max(kernel_map)` until then.
-//! - Without `kernel_map`/`kmem_map`, `km_alloc` serves every request through the direct map
+//! - `kernel_map` is [`kernel_map()`] (a panic before `uvm_km_init`) and the C's
+//!   `map == kernel_map` is [`is_kernel_map`]; `kmem_map` waits for `kmeminit`'s
+//!   `uvm_km_suballoc` (the malloc arena is still the direct map).
+//! - [`kernel_map_min`] is the first address the kernel map can hand out after the bootstrap
+//!   reservation (the selftests probe it), not `vm_map_min(kernel_map)`.
+//! - Without `kmem_map`, `km_alloc` serves every request through the direct map
 //!   (`__HAVE_PMAP_DIRECT`), which the C does only for single pages and single segments: a
 //!   `kv_any`/`kv_intrsafe` request is therefore made physically contiguous (`kp_maxseg` 1)
 //!   and reported once as unported, and `km_free` takes every non-pageable block back the
@@ -84,28 +86,62 @@
 //! - `kd_slowdown` is a value, not a pointer: only the single-page thread writes it, and that
 //!   thread is not used with `__HAVE_PMAP_DIRECT`.
 
-use core::ptr::NonNull;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
+use crate::kern::kern_rwlock::rw_enter_write;
 use crate::kern::subr_prf::panic;
-use crate::machine::pmap::{pmap_map_direct, pmap_unmap_direct};
-use crate::machine::{Machine, Pmap};
-use crate::sys::param::PAGE_SIZE;
-use crate::sys::types::{Paddr, Vaddr, Vsize};
-use crate::uvm::uvm_aobj::{UAO_FLAG_KERNOBJ, uao_create, uao_init};
-use crate::uvm::uvm_extern::{
-    KmemDynMode, KmemPaMode, KmemVaMode, KvMap, UVM_PLA_NOWAIT, UVM_PLA_TRYCONTIG, UVM_PLA_WAITOK,
-    UVM_PLA_ZERO, UVM_UNKNOWN_OFFSET, UvmConstraintRange,
+use crate::machine::pmap::{
+    pmap_extract, pmap_kernel, pmap_kremove, pmap_map_direct, pmap_reference, pmap_remove,
+    pmap_unmap_direct,
 };
-use crate::uvm::uvm_init::UVM;
-use crate::uvm::uvm_page::{Pglist, uvm_pglistalloc, uvm_pglistfree};
+use crate::machine::{Machine, Pmap};
+use crate::sys::mman::{MADV_RANDOM, MAP_INHERIT_NONE, PROT_READ, PROT_WRITE};
+use crate::sys::param::{PAGE_SHIFT, PAGE_SIZE};
+use crate::sys::rwlock::rw_write_held;
+use crate::sys::types::{Paddr, Vaddr, Vsize};
+use crate::uvm::uvm_aobj::{UAO_FLAG_KERNOBJ, uao_create, uao_dropswap, uao_init};
+use crate::uvm::uvm_extern::{
+    KmemDynMode, KmemPaMode, KmemVaMode, KvMap, UVM_FLAG_FIXED, UVM_FLAG_NOMERGE, UVM_PLA_NOWAIT,
+    UVM_PLA_TRYCONTIG, UVM_PLA_WAITOK, UVM_PLA_ZERO, UVM_UNKNOWN_OFFSET, UvmConstraintRange, Voff,
+    uvm_mapflag,
+};
+use crate::uvm::uvm_init::{UVM, UVMEXP};
+use crate::uvm::uvm_map::{
+    VM_MAP_PAGEABLE, VmMap, uvm_map, uvm_map_create, uvm_map_setup, uvm_map_submap,
+};
+use crate::uvm::uvm_object::{UvmObject, uvm_obj_is_aobj};
+use crate::uvm::uvm_page::{
+    PG_BUSY, PHYS_TO_VM_PAGE, Pglist, uvm_pagefree, uvm_pagelookup, uvm_pagewait, uvm_pglistalloc,
+    uvm_pglistfree,
+};
 use crate::uvm::uvm_param::{VM_KERNEL_SPACE_SIZE, round_page};
 use crate::{kassert, unported};
 
-/// `vm_map_min(kernel_map)` until the map exists (see the module's deviations).
+/// `kernel_map_store`: the kernel map.
+static KERNEL_MAP_STORE: VmMap = VmMap::new();
+/// `kernel_map`: null until `uvm_km_init` set the store up.
+static KERNEL_MAP: AtomicPtr<VmMap> = AtomicPtr::new(ptr::null_mut());
+/// The first free kernel virtual address at `uvm_km_init` (see the module's deviations).
 static KERNEL_MAP_MIN: AtomicUsize = AtomicUsize::new(0);
-/// `vm_map_max(kernel_map)` until the map exists.
+/// `vm_map_max(kernel_map)`, kept for the selftests.
 static KERNEL_MAP_MAX: AtomicUsize = AtomicUsize::new(0);
+
+/// `kernel_map`: the kernel's map, once `uvm_km_init` set it up.
+pub fn kernel_map() -> &'static VmMap {
+    let map = KERNEL_MAP.load(Ordering::Relaxed);
+    if map.is_null() {
+        panic(format_args!("kernel_map used before uvm_km_init"));
+    }
+    // SAFETY: the pointer is `&KERNEL_MAP_STORE`, a static, stored once by `uvm_km_init`.
+    unsafe { &*map }
+}
+
+/// `map == kernel_map`: whether `map` is the kernel map (false before `uvm_km_init`, as
+/// the C's null `kernel_map` compares).
+pub fn is_kernel_map(map: &VmMap) -> bool {
+    ptr::eq(KERNEL_MAP.load(Ordering::Relaxed), map)
+}
 
 /// `no_constraint`: unconstrained range.
 pub static NO_CONSTRAINT: UvmConstraintRange = UvmConstraintRange {
@@ -218,9 +254,13 @@ pub static KD_TRYLOCK: KmemDynMode = KmemDynMode {
     kd_trylock: true,
 };
 
-/// `uvm_km_init`: init kernel virtual memory. `base` is the base of kernel virtual space,
-/// `start` the first free address inside it and `end` its end (see the module's deviations).
-pub fn uvm_km_init(_base: Vaddr, start: Vaddr, end: Vaddr) {
+/// `uvm_km_init`: init kernel maps and objects to reflect reality (i.e. KVM already
+/// allocated for text, data, bss, and static data structures).
+///
+/// - KVM is defined by `[base.. base + VM_KERNEL_SPACE_SIZE]`. we assume that
+///   `[base -> start]` has already been allocated and that "end" is the end of the kernel
+///   image span.
+pub fn uvm_km_init(base: Vaddr, start: Vaddr, end: Vaddr) {
     // kernel_object: for pageable anonymous kernel memory
     uao_init();
     let Some(kernel_object) = uao_create(Vsize::new(VM_KERNEL_SPACE_SIZE), UAO_FLAG_KERNOBJ) else {
@@ -228,14 +268,51 @@ pub fn uvm_km_init(_base: Vaddr, start: Vaddr, end: Vaddr) {
     };
     UVM.kernel_object.set(kernel_object);
 
-    // init the map and reserve already allocated kernel space before installing:
-    // uvm_map_setup(&kernel_map_store, pmap_kernel(), base, end, VM_MAP_PAGEABLE), the
-    // reservation of [base, start) with uvm_map(): uvm_map.c (M7a part 2).
+    // init the map and reserve already allocated kernel space before installing.
+    // KVA_GUARDPAGES is not configured.
+    uvm_map_setup(
+        &KERNEL_MAP_STORE,
+        pmap_kernel(),
+        base.as_usize(),
+        end.as_usize(),
+        VM_MAP_PAGEABLE,
+    );
+    let mut reserve = base.as_usize();
+    if base != start
+        && uvm_map(
+            &KERNEL_MAP_STORE,
+            &mut reserve,
+            start.as_usize() - base.as_usize(),
+            None,
+            UVM_UNKNOWN_OFFSET,
+            0,
+            uvm_mapflag(
+                PROT_READ | PROT_WRITE,
+                PROT_READ | PROT_WRITE,
+                MAP_INHERIT_NONE,
+                MADV_RANDOM,
+                UVM_FLAG_FIXED,
+            ),
+        )
+        .is_err()
+    {
+        panic(format_args!(
+            "uvm_km_init: could not reserve space for kernel"
+        ));
+    }
+
+    KERNEL_MAP.store(
+        ptr::from_ref(&KERNEL_MAP_STORE).cast_mut(),
+        Ordering::Relaxed,
+    );
     KERNEL_MAP_MIN.store(start.as_usize(), Ordering::Relaxed);
     KERNEL_MAP_MAX.store(end.as_usize(), Ordering::Relaxed);
+
+    // __HAVE_PMAP_DIRECT: no uvm_km_pages.mtx.
 }
 
-/// `vm_map_min(kernel_map)`: the first kernel virtual address available for allocation.
+/// The first kernel virtual address past the bootstrap reservation of `uvm_km_init` (see
+/// the module's deviations).
 pub fn kernel_map_min() -> Vaddr {
     Vaddr::new(KERNEL_MAP_MIN.load(Ordering::Relaxed))
 }
@@ -243,6 +320,134 @@ pub fn kernel_map_min() -> Vaddr {
 /// `vm_map_max(kernel_map)`: the end of kernel virtual space.
 pub fn kernel_map_max() -> Vaddr {
     Vaddr::new(KERNEL_MAP_MAX.load(Ordering::Relaxed))
+}
+
+/// `uvm_km_suballoc`: allocate a submap in the kernel map. once a submap is allocated all
+/// references to that area of VM must go through it. this allows the locking of VAs in
+/// kernel_map to be broken up into regions.
+///
+/// - if `fixed` is true, `*min` specifies where the region described by the submap must
+///   start
+/// - if submap is given we use that as the submap, otherwise we alloc a new map
+pub fn uvm_km_suballoc(
+    map: &VmMap,
+    min: &mut usize,
+    max: &mut usize,
+    size: usize,
+    flags: i32,
+    fixed: bool,
+    submap: Option<&'static VmMap>,
+) -> &'static VmMap {
+    let mapflags = UVM_FLAG_NOMERGE | if fixed { UVM_FLAG_FIXED } else { 0 };
+
+    let size = round_page(size); // round up to pagesize
+
+    // first allocate a blank spot in the parent map
+    if uvm_map(
+        map,
+        min,
+        size,
+        None,
+        UVM_UNKNOWN_OFFSET,
+        0,
+        uvm_mapflag(
+            PROT_READ | PROT_WRITE,
+            PROT_READ | PROT_WRITE,
+            MAP_INHERIT_NONE,
+            MADV_RANDOM,
+            mapflags,
+        ),
+    )
+    .is_err()
+    {
+        panic(format_args!(
+            "uvm_km_suballoc: unable to allocate space in parent map"
+        ));
+    }
+
+    // set VM bounds (min is filled in by uvm_map)
+    *max = *min + size;
+
+    // add references to pmap and create or init the submap
+    pmap_reference(map.pmap());
+    let submap = match submap {
+        None => match uvm_map_create(map.pmap(), *min, *max, flags) {
+            Some(submap) => submap,
+            None => panic(format_args!("uvm_km_suballoc: unable to create submap")),
+        },
+        Some(submap) => {
+            uvm_map_setup(submap, map.pmap(), *min, *max, flags);
+            submap
+        }
+    };
+
+    // now let uvm_map_submap plug in it...
+    if uvm_map_submap(map, *min, *max, submap).is_err() {
+        panic(format_args!("uvm_km_suballoc: submap allocation failed"));
+    }
+
+    submap
+}
+
+/// `uvm_km_pgremove`: remove pages from a kernel uvm_object.
+///
+/// - when you unmap a part of anonymous kernel memory you want to toss the pages right
+///   away. (this gets called from uvm_unmap_...).
+pub fn uvm_km_pgremove(uobj: &UvmObject, startva: Vaddr, endva: Vaddr) {
+    let start = (startva.as_usize() - kernel_map().min_offset.get()) as Voff;
+    let end = (endva.as_usize() - kernel_map().min_offset.get()) as Voff;
+    let mut swpgonlydelta = 0;
+
+    kassert!(uvm_obj_is_aobj(uobj));
+    kassert!(rw_write_held(uobj.vmobjlock()));
+
+    pmap_remove(pmap_kernel(), startva, endva);
+    let mut curoff = start;
+    while curoff < end {
+        let pp = uvm_pagelookup(uobj, curoff);
+        if let Some(pg) = pp.filter(|pg| pg.flags() & PG_BUSY != 0) {
+            uvm_pagewait(pg, uobj.vmobjlock(), "km_pgrm");
+            rw_enter_write(uobj.vmobjlock());
+            continue; // loop back to us
+        }
+
+        // free the swap slot, then the page
+        let slot = uao_dropswap(uobj, (curoff >> PAGE_SHIFT) as i32);
+
+        match pp {
+            Some(pg) => uvm_pagefree(pg),
+            None if slot != 0 => swpgonlydelta += 1,
+            None => {}
+        }
+        curoff += PAGE_SIZE as Voff;
+    }
+
+    if swpgonlydelta > 0 {
+        kassert!(UVMEXP.swpgonly.load(Ordering::Relaxed) >= swpgonlydelta);
+        UVMEXP.swpgonly.fetch_sub(swpgonlydelta, Ordering::Relaxed);
+    }
+}
+
+/// `uvm_km_pgremove_intrsafe`: like `uvm_km_pgremove()`, but for "intrsafe" objects.
+///
+/// - when you unmap a part of anonymous kernel memory you want to toss the pages right
+///   away. (this gets called from uvm_unmap_...).
+/// - none of the pages will ever be busy, and none of them will ever be on the active or
+///   inactive queues (because these objects are never allowed to "page").
+pub fn uvm_km_pgremove_intrsafe(start: Vaddr, end: Vaddr) {
+    let mut va = start.as_usize();
+    while va < end.as_usize() {
+        if let Some(pa) = pmap_extract(pmap_kernel(), Vaddr::new(va)) {
+            let Some(pg) = PHYS_TO_VM_PAGE(pa) else {
+                panic(format_args!("uvm_km_pgremove_intrsafe: no page"));
+            };
+            uvm_pagefree(pg);
+        }
+        va += PAGE_SIZE;
+    }
+    // SAFETY: `[start, end)` is a range of the intrsafe kernel map whose pages were just
+    // freed; the entry that described it is being killed under the map lock.
+    unsafe { pmap_kremove(start, Vsize::new(end.as_usize() - start.as_usize())) };
 }
 
 /// `km_alloc`: `sz` bytes of kernel memory, laid out as `kv`, backed as `kp`, waiting as `kd`

@@ -40,8 +40,10 @@
 
 use core::ptr;
 
+use crate::sys::errno::Errno;
 use crate::sys::types::{Vaddr, Vsize};
-use crate::uvm::uvm_extern::VmFault;
+use crate::unported;
+use crate::uvm::uvm_extern::{VmFault, VmProt};
 use crate::uvm::uvm_map::{VmMap, VmMapEntry};
 
 /// `VM_FAULT_INVALID`: invalid mapping.
@@ -83,4 +85,21 @@ impl UvmFaultinfo {
             size: Vsize::new(0),
         }
     }
+}
+
+/// `uvm_fault_wire(map, start, end, access_type)`: wires the pages of `[start, end)` in;
+/// reported until the fault handler exists (M7a-3).
+pub fn uvm_fault_wire(
+    _map: &VmMap,
+    _start: usize,
+    _end: usize,
+    _access_type: VmProt,
+) -> Result<(), Errno> {
+    Err(unported!("uvm_fault_wire (uvm_fault.c, M7a-3)"))
+}
+
+/// `uvm_fault_unwire_locked(map, start, end)`: unwires the pages of `[start, end)` with the
+/// map locked; reported until the fault handler exists (M7a-3).
+pub fn uvm_fault_unwire_locked(_map: &VmMap, _start: usize, _end: usize) {
+    let _ = unported!("uvm_fault_unwire_locked (uvm_fault.c, M7a-3)");
 }

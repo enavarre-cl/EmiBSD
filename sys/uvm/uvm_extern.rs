@@ -200,6 +200,9 @@ pub const PHYSLOAD_DEVICE: i32 = 0x01;
 ///
 /// Locks used to protect struct members: `K` kernel lock, `I` immutable after creation, `a`
 /// atomic operations, `v` `vm_map`'s lock.
+///
+/// `#[repr(C)]` so that `vm_map` is at offset 0, as the C relies on (`(struct vmspace *)map`).
+#[repr(C)]
 pub struct Vmspace {
     /// `vm_map`: VM address map.
     pub vm_map: VmMap,

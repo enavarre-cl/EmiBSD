@@ -49,11 +49,12 @@ use crate::machine::{Machine, Pmap, VmParam};
 use crate::sys::types::{Vaddr, Vsize};
 use crate::unported;
 use crate::uvm::uvm::Uvm;
+use crate::uvm::uvm_addr::uaddr_bestfit_create;
 use crate::uvm::uvm_amap::amap_init;
 use crate::uvm::uvm_anon::{uvm_anon_init, uvm_anon_init_percpu};
 use crate::uvm::uvm_aobj::{UAO_FLAG_KERNSWAP, uao_create};
-use crate::uvm::uvm_km::uvm_km_init;
-use crate::uvm::uvm_map::uvm_map_init;
+use crate::uvm::uvm_km::{kernel_map, uvm_km_init};
+use crate::uvm::uvm_map::{UVM_MAXKADDR, UvmMapUaddrSlot, uvm_map_init, uvm_map_set_uaddr};
 use crate::uvm::uvm_page::uvm_page_init;
 use crate::uvm::uvm_pager::uvm_pager_init;
 use crate::uvm::uvm_param::VM_KERNEL_SPACE_SIZE;
@@ -95,11 +96,11 @@ pub fn uvm_init() {
 
     // Setup the kernel's virtual memory data structures. This includes setting up the
     // kernel_map/kernel_object.
-    uvm_km_init(
-        Vaddr::new(VM_MIN_KERNEL_ADDRESS.load(Ordering::Relaxed)),
-        kvm_start,
-        kvm_end,
-    );
+    // uvm_maxkaddr's static initialiser is VM_MIN_KERNEL_ADDRESS; where that base is a
+    // runtime value (amd64 above its direct map) uvm_maxkaddr starts there too.
+    let base = VM_MIN_KERNEL_ADDRESS.load(Ordering::Relaxed);
+    UVM_MAXKADDR.fetch_max(base, Ordering::Relaxed);
+    uvm_km_init(Vaddr::new(base), kvm_start, kvm_end);
 
     // step 4.5: init (tune) the fault recovery code.
     let _ = unported!("uvmfault_init");
@@ -135,8 +136,17 @@ pub fn uvm_init() {
     // Init anonymous memory systems.
     uvm_anon_init();
 
-    // Switch kernel and kmem_map over to a best-fit allocator, instead of walking the tree.
-    let _ = unported!("uvm_map_set_uaddr (bestfit)");
+    // Switch kernel and kmem_map over to a best-fit allocator, instead of walking the tree
+    // (SMALL_KERNEL is not configured; kmem_map waits for kmeminit's uvm_km_suballoc).
+    let kmap = kernel_map();
+    uvm_map_set_uaddr(
+        kmap,
+        UvmMapUaddrSlot::Any(3),
+        Some(uaddr_bestfit_create(
+            kmap.min_offset.get(),
+            kmap.max_offset.get(),
+        )),
+    );
 }
 
 /// `uvm_init_percpu`: the per-CPU parts, once the CPUs are known.

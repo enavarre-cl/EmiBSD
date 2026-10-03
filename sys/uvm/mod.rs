@@ -5,6 +5,7 @@
 
 #[allow(clippy::module_inception)] // OpenBSD's name: uvm/uvm.h
 pub mod uvm;
+pub mod uvm_addr;
 pub mod uvm_amap;
 pub mod uvm_anon;
 pub mod uvm_aobj;

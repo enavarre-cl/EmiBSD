@@ -36,8 +36,8 @@
 //!
 //! Status: `wip`. Milestone M3 has the page queues, `page_init_done` and the pmemrange
 //! control; M7a adds `kernel_object` and the `UVM_ET_*` entry types; the locks (M5), the
-//! daemons' triggers (M5), `kentry_free` and `aio_done` arrive with the map and the buffer
-//! cache.
+//! daemons' triggers (M5) and `aio_done` arrive with the buffer cache; M7a-2 adds
+//! `kentry_free`.
 //!
 //! Locks used to protect struct members in this file: `Q` `uvm.pageqlock`, `F`
 //! `uvm.fpageqlock`.
@@ -46,7 +46,8 @@ use core::cell::Cell;
 use core::ptr;
 use core::sync::atomic::AtomicBool;
 
-use crate::uvm::uvm_map::VmMapEntry;
+use crate::sys::queue::SlistHead;
+use crate::uvm::uvm_map::{UvmKentryFree, VmMapEntry};
 use crate::uvm::uvm_object::UvmObject;
 
 use crate::uvm::uvm_page::Pglist;
@@ -64,6 +65,9 @@ pub struct Uvm {
     pub page_init_done: AtomicBool,
     /// \[F\] pmemrange data.
     pub pmr_control: UvmPmrControl,
+    /// `kentry_free`: free page pool (the static kernel map entries, guarded by
+    /// `uvm_kmapent_mtx`).
+    pub kentry_free: SlistHead<UvmKentryFree>,
     // kernel object
     /// `kernel_object`: the kernel's anonymous object (`uao_create` with
     /// `UAO_FLAG_KERNOBJ`), null before `uvm_km_init`.
@@ -82,6 +86,7 @@ impl Uvm {
             page_inactive: Pglist::new(),
             page_init_done: AtomicBool::new(false),
             pmr_control: UvmPmrControl::new(),
+            kentry_free: SlistHead::new(),
             kernel_object: Cell::new(ptr::null()),
         }
     }

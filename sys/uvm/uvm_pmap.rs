@@ -72,6 +72,8 @@
 
 use core::cell::Cell;
 
+use crate::uvm::uvm_extern::Voff;
+
 /// `struct pmap_statistics`.
 pub struct PmapStatistics {
     /// Number of pages mapped (total).
@@ -108,3 +110,17 @@ pub const PMAP_MD1: i32 = 0x0000_0080;
 pub const PMAP_MD2: i32 = 0x0000_0100;
 /// Machine dependant.
 pub const PMAP_MD3: i32 = 0x0000_0200;
+
+/// `PMAP_PREFER_ALIGN()`: the alignment the pmap prefers for a mapping; 0 where `PMAP_PREFER`
+/// is not defined (amd64, arm64).
+#[inline]
+pub const fn pmap_prefer_align() -> usize {
+    0
+}
+
+/// `PMAP_PREFER_OFFSET(off)`: the offset inside that alignment; 0 where `PMAP_PREFER` is not
+/// defined (amd64, arm64).
+#[inline]
+pub const fn pmap_prefer_offset(_off: Voff) -> usize {
+    0
+}

@@ -320,6 +320,16 @@ impl Pmap for Machine {
         arm64::pmap::pmap_remove(pmap, sva, eva)
     }
 
+    /// Reported until the pv lists exist (M7a part 3): nothing maps a user range that
+    /// `uvm_map_protect` or the fork copy functions would lower before then.
+    fn pmap_protect(_pmap: &Self::Pmap, _sva: Vaddr, _eva: Vaddr, _prot: VmProt) {
+        let _ = unported!("pmap_protect (M7a-3)");
+    }
+
+    fn pmap_wired_count(pmap: &Self::Pmap) -> i64 {
+        pmap.pm_stats.wired_count.get()
+    }
+
     fn pmap_remove_holes(vm: &Vmspace) {
         arm64::pmap::pmap_remove_holes(vm)
     }

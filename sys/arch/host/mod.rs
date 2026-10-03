@@ -396,6 +396,18 @@ impl Pmap for Machine {
         map.retain(|&va, _| va < sva.trunc_page().as_usize() || va >= eva.as_usize());
     }
 
+    /// Mappings have no protection on the host; `PROT_NONE` removes them, as the C does.
+    fn pmap_protect(pmap: &HostPmap, sva: Vaddr, eva: Vaddr, prot: VmProt) {
+        if prot == crate::sys::mman::PROT_NONE {
+            Self::pmap_remove(pmap, sva, eva);
+        }
+    }
+
+    /// Nothing is wired on the host.
+    fn pmap_wired_count(_pmap: &HostPmap) -> i64 {
+        0
+    }
+
     fn pmap_remove_holes(_vm: &Vmspace) {}
 
     fn pmap_proc_iflush(_pr: &Process, _va: Vaddr, _len: Vsize) {}

@@ -26,6 +26,7 @@ diagnostic = []   # OpenBSD `option DIAGNOSTIC` -> kassert! active
 debug = []        # OpenBSD `option DEBUG`      -> kdassert! active
 kmemstats = []    # OpenBSD `option KMEMSTATS`  -> malloc(9) statistics
 pool_debug = []   # OpenBSD `option POOL_DEBUG` -> pool_debug = 1
+vmmap_debug = []  # OpenBSD `option VMMAP_DEBUG` -> uvm_tree_sanity, uvm_tree_size_chk, vmspace_validate
 qemu = []         # QEMU-only exits (isa-debug-exit, semihosting) and shortcuts
 
 [dependencies]

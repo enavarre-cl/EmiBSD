@@ -68,6 +68,13 @@ pub trait Pmap {
     /// `pmap_remove(pmap, sva, eva)`: removes the mappings in `[sva, eva)`.
     fn pmap_remove(pmap: &Self::Pmap, sva: Vaddr, eva: Vaddr);
 
+    /// `pmap_protect(pmap, sva, eva, prot)`: lowers the protection of the mappings in
+    /// `[sva, eva)` to `prot`; `PROT_NONE` removes them.
+    fn pmap_protect(pmap: &Self::Pmap, sva: Vaddr, eva: Vaddr, prot: VmProt);
+
+    /// `pmap_wired_count(pmap)`: the number of wired pages in the pmap (`pm_stats`).
+    fn pmap_wired_count(pmap: &Self::Pmap) -> i64;
+
     /// `pmap_page_protect(pg, prot)`: lowers every mapping of `pg` to `prot`; `PROT_NONE`
     /// removes them all (what the object layer does before freeing a page).
     fn pmap_page_protect(pg: &VmPage, prot: VmProt);
@@ -183,6 +190,16 @@ pub fn pmap_enter(
 /// `pmap_remove` on the selected machine.
 pub fn pmap_remove(pmap: &MachinePmap, sva: Vaddr, eva: Vaddr) {
     Machine::pmap_remove(pmap, sva, eva)
+}
+
+/// `pmap_protect` on the selected machine.
+pub fn pmap_protect(pmap: &MachinePmap, sva: Vaddr, eva: Vaddr, prot: VmProt) {
+    Machine::pmap_protect(pmap, sva, eva, prot)
+}
+
+/// `pmap_wired_count` on the selected machine.
+pub fn pmap_wired_count(pmap: &MachinePmap) -> i64 {
+    Machine::pmap_wired_count(pmap)
 }
 
 /// `pmap_page_protect` on the selected machine.

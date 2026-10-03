@@ -1,9 +1,23 @@
 # Status
 
-Milestone: **M7a in progress** (part 0, the rwlock, and part 1, the uvm object layer, done;
-part 2, `uvm_map.c` and `uvm_addr.c`, next). Updated: 2026-10-03.
+Milestone: **M7a in progress** (part 0, the rwlock, part 1, the uvm object layer, and part 2,
+`uvm_map.c` and `uvm_addr.c`, done; part 3, `uvm_fault.c`, next). Updated: 2026-10-03.
 
 Done:
+- M7a-2: `uvm_addr.c` (the rnd, kbootstrap, bestfit, pivot and stack/brk selectors) and
+  `uvm_map.c` proper: the augmented entry tree, `uvm_map`/`uvm_mapanon`/`uvm_unmap`, the
+  clippers, the free lists, `uvm_map_protect`/`inherit`/`immutable`/`advice`/`pageable`/
+  `extract`/`clean`/`submap`/`mquery`, the fork copy functions (`uvmspace_fork` is real),
+  `uvmspace_exec` through `uvm_unmap_remove`, `uvm_map_pie`, the static kernel entries and
+  the entry pools, `VMMAP_DEBUG` as feature `vmmap_debug` (on in host tests); `uvm_km_init`
+  sets up `kernel_map` with the bootstrap reservation, `uvm_km_suballoc`,
+  `uvm_km_pgremove(_intrsafe)`, the kernel map's bestfit switch in `uvm_init`;
+  `pmap_protect`/`pmap_wired_count` in the `machine::Pmap` trait (amd64/arm64 report
+  `pmap_protect` until the pv lists). amd64's kernel window is now consistent: it starts
+  at `virtual_avail` above Limine's direct map and keeps the C's 512 GiB size. Exec still
+  uses the wired stand-ins (M7a-3 retires them); `uvm_fault_wire`/`unwire_locked` are
+  reported stubs; `uvm_map_inentry` reports `trapsignal`; `uvm_map_protect` reports the
+  `RLIMIT_DATA` check.
 - M7a-1: the object layer: `uvm_anon.c` (the anon pool, `uvm_analloc`/`uvm_anfree`/
   `uvm_anon_release`/`uvm_anon_dropswap`), `uvm_amap.c` (chunks, buckets, ppref, `amap_copy`,
   `amap_cow_now`, `amap_ref`/`amap_unref`, `amap_swap_off`; one chunk pool instead of the
@@ -20,9 +34,6 @@ Done:
 - M6 closed on 2026-10-03 (`494a597`): init runs in user mode on wired mappings on both archs.
 
 Next:
-- M7a-2: `uvm_map.c` proper (entry pools, `uvm_map_setup_entries`, `uvm_map`/`uvm_unmap`,
-  clip, the fork copy functions, `uvm_map_protect`/`pageable`/`inentry`) and `uvm_addr.c`;
-  `uvm_km_init`'s map setup and the kernel map reservation.
 - M7a-3: `uvm_fault.c`, amd64 pv lists (`pmap_enter_pv`, `pmap_page_remove`,
   `pmap_page_protect`, `pmap_protect`, the R/M bits), arm64 `pmap_fault_fixup`, exec through
   `uvm_map` (the wired stand-ins retire), `uvm_mmap.c`; exit criterion: a user page fault

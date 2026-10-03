@@ -129,6 +129,7 @@ use crate::uvm::uvm_extern::{
     UVM_PLA_WAITOK, UVM_PLA_ZERO, UvmConstraintRange, Voff,
 };
 use crate::uvm::uvm_init::{UVM, UVMEXP};
+use crate::uvm::uvm_map::UVM_MAXKADDR;
 use crate::uvm::uvm_object::{UvmObject, uvm_obj_is_dummy, uvm_obj_is_kern_object};
 use crate::uvm::uvm_param::{DEFAULT_PAGE_SIZE, atop, ptoa, round_page, trunc_page};
 use crate::uvm::uvm_pmemrange::{
@@ -417,9 +418,6 @@ pub static VM_NPHYSSEG: AtomicUsize = AtomicUsize::new(0);
 /// internally.
 static VIRTUAL_SPACE_START: AtomicUsize = AtomicUsize::new(0);
 static VIRTUAL_SPACE_END: AtomicUsize = AtomicUsize::new(0);
-
-/// `uvm_maxkaddr` (`uvm_map.c`): how far the kernel page tables reach.
-pub static UVM_MAXKADDR: AtomicUsize = AtomicUsize::new(0);
 
 /// `vm_physmem[0..vm_nphysseg]`.
 pub fn vm_physmem() -> &'static [VmPhysseg] {

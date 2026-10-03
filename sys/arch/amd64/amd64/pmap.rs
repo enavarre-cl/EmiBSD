@@ -95,7 +95,10 @@
 //!   placement does; `pmap_growkernel` counts its PTPs from there (`pmap_kva_start`), not from
 //!   `VM_MIN_KERNEL_ADDRESS`, and `pmap_alloc_level` keeps the page-table pages the bootloader
 //!   already installed on the way (the direct map shares the PML4 slot). A large page met
-//!   there is a panic.
+//!   there is a panic. The window keeps the C's size: `pmap_virtual_space` ends at
+//!   `pmap_kva_start + (VM_MAX_KERNEL_ADDRESS - VM_MIN_KERNEL_ADDRESS)` and `pmap_bootstrap`
+//!   moves `uvm`'s runtime `vm_min_kernel_address` (the kernel map's base) up to
+//!   `virtual_avail`, so the kernel map is `[virtual_avail, virtual_avail + 512 GiB)`.
 //! - `pg_nx` comes from `EFER.NXE` as the bootloader left it; the C's `locore0.S` probes CPUID
 //!   and enables it. `pg_g_kern`, `pg_xo` (PKU), `pg_crypt` (SEV) and `pmap_pg_wc` (PAT) keep
 //!   their "not available" values until CPU identification (M4); PCID is off.
@@ -367,6 +370,9 @@ pub unsafe fn pmap_bootstrap(first_avail: Paddr, _max_pa: Paddr) -> Paddr {
     VIRTUAL_AVAIL.store(virtual_avail, Ordering::Relaxed); // first free KVA
     PMAP_KVA_START.store(virtual_avail, Ordering::Relaxed);
     PMAP_MAXKVADDR.store(virtual_avail, Ordering::Relaxed);
+    // The kernel map's base follows (`vm_min_kernel_address`, as sparc64's runtime
+    // VM_MIN_KERNEL_ADDRESS): the window is [virtual_avail, virtual_avail + the C's size).
+    crate::uvm::uvm_init::VM_MIN_KERNEL_ADDRESS.store(virtual_avail, Ordering::Relaxed);
 
     // pg_nx: whether the bootloader enabled NX (the C's locore0.S does, after CPUID).
     // SAFETY: MSR_EFER exists on every x86-64 CPU.
@@ -661,7 +667,7 @@ pub unsafe fn pmap_steal_memory(
         *start = Vaddr::new(VIRTUAL_AVAIL.load(Ordering::Relaxed));
     }
     if let Some(end) = end {
-        *end = Vaddr::new(VM_MAX_KERNEL_ADDRESS);
+        *end = Vaddr::new(kernel_virtual_end());
     }
 
     va
@@ -670,7 +676,14 @@ pub unsafe fn pmap_steal_memory(
 /// `pmap_virtual_space`: the free kernel virtual range (see the module's deviations).
 pub fn pmap_virtual_space(start: &mut Vaddr, end: &mut Vaddr) {
     *start = Vaddr::new(VIRTUAL_AVAIL.load(Ordering::Relaxed));
-    *end = Vaddr::new(VM_MAX_KERNEL_ADDRESS);
+    *end = Vaddr::new(kernel_virtual_end());
+}
+
+/// The end of the managed kernel window: it keeps the C's size but starts at
+/// `pmap_kva_start` (see the module's deviations), so it is `VM_MAX_KERNEL_ADDRESS` when the
+/// direct map does not overlap.
+fn kernel_virtual_end() -> usize {
+    PMAP_KVA_START.load(Ordering::Relaxed) + (VM_MAX_KERNEL_ADDRESS - VM_MIN_KERNEL_ADDRESS)
 }
 
 /// `pmap_get_physpage`: a zeroed page for a level-`level` PTP mapping `va`.
