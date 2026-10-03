@@ -1,0 +1,50 @@
+/*	$OpenBSD: lockf.h,v 1.17 2019/04/20 08:28:59 anton Exp $	*/
+/*	$NetBSD: lockf.h,v 1.5 1994/06/29 06:44:33 cgd Exp $	*/
+/* <LICENSES> */
+/*
+ * Copyright (c) 1991, 1993
+ *	The Regents of the University of California.  All rights reserved.
+ *
+ * This code is derived from software contributed to Berkeley by
+ * Scooter Morris at Genentech Inc.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ *
+ *	@(#)lockf.h	8.1 (Berkeley) 6/11/93
+ */
+/* </LICENSES> */
+
+//! `<sys/lockf.h>`: the interface of the advisory record locks, `lf_init`, `lf_advlock` and
+//! `lf_purgelocks`, over an opaque `struct lockf_state`.
+//!
+//! Upstream: sys/sys/lockf.h @ 3ce1f3f79392
+//!
+//! ## Deviations
+//! - The header only forward-declares `struct lockf_state`; `vfs_lockf.c` defines it, so the
+//!   type and the functions live in `kern/vfs_lockf.rs` and are re-exported here.
+//! - `struct lockf_state **` (the slot a vnode or an inode keeps, `v_speclockf`, `i_lockf`)
+//!   is [`LockfStateSlot`], a `Cell` holding `Option<&'static LockfState>`.
+
+pub use crate::kern::vfs_lockf::{LockfState, LockfStateSlot, lf_advlock, lf_init, lf_purgelocks};

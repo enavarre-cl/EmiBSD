@@ -105,6 +105,7 @@ use crate::kern::subr_prf::{Str, panic};
 use crate::kern::uipc_domain::domaininit;
 use crate::kern::uipc_mbuf::{mbcpuinit, mbinit};
 use crate::kern::vfs_init::{set_rootvnode, vfsinit};
+use crate::kern::vfs_lockf::lf_init;
 use crate::kern::vfs_lookup::{namei, ndinit};
 use crate::kern::vfs_subr::{MOUNTLIST, vref, vrele};
 use crate::kern::vfs_vops::VOP_UNLOCK;
@@ -235,7 +236,7 @@ pub fn main() -> ! {
     procinit();
 
     // Initialize file locking.
-    let _ = unported!("lf_init");
+    lf_init();
 
     // Initialize filedescriptors.
     filedesc_init();

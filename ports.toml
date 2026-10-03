@@ -3058,7 +3058,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "107c2c9b18db3538cfb42f2361d045fa3da2bda4"
 deps = ["sys/sys/queue.h", "sys/sys/types.h"]
-notes = "vfs stage 1: struct specinfo (Cells; si_specnext is the vnode's v_specnext because the queue adapters need the link inside the element; the si_ci union as side-by-side si_ci_parent/si_ci_bitmap; si_lockf opaque until vfs_lockf.c), struct cloneinfo, CLONE_SHIFT/CLONE_MAPSZ, SPECHSZ, SPECHASH as a const fn, vnodechain; the v_rdev/v_specmountpoint/v_specparent shorthands are Vnode accessors; speclisth[] and the spec_* prototypes are spec_vnops.c's"
+notes = "vfs stage 1: struct specinfo (Cells; si_specnext is the vnode's v_specnext because the queue adapters need the link inside the element; the si_ci union as side-by-side si_ci_parent/si_ci_bitmap; si_lockf a LockfStateSlot of vfs_lockf.c), struct cloneinfo, CLONE_SHIFT/CLONE_MAPSZ, SPECHSZ, SPECHASH as a const fn, vnodechain; the v_rdev/v_specmountpoint/v_specparent shorthands are Vnode accessors; speclisth[] and the spec_* prototypes are spec_vnops.c's"
 
 [[file]]
 c = "sys/sys/vnode.h"
@@ -3103,7 +3103,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "92ceb716268d3951f9c7f9c56d587a0255404675"
 deps = ["sys/sys/vnode.h", "sys/sys/mount.h", "sys/sys/specdev.h", "sys/kern/subr_pool.c", "sys/kern/kern_malloc.c", "sys/kern/kern_synch.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_lock.c", "sys/kern/kern_sysctl.c", "sys/kern/kern_prot.c"]
-notes = "vfs stage 1: iftovt_tab/vttoif_tab, prtactive, vnode_hold_list/vnode_free_list/mountlist (Sync newtypes), maxvnodes/numvnodes (atomics, kern.maxvnodes/numvnodes), vnode_mtx, vnode_pool, vntblinit, vfs_mount_alloc/take/rele/free, vfs_busy/unbusy/isbusy, vfs_rootmountalloc, vfs_getvfs, vfs_getnewfsid, vattr_null, getnewvnode (returns the vnode; ENFILE when the pool cannot serve PR_WAITOK), insmntque, bdevvp/cdevvp/getdevvp (Option for NODEV), checkalias, vget, vref, vputonfreelist, vput, vrele (bool), vhold, vdrop, vfs_mount_foreach_vnode (closure), vflush_vnode/vflush, vclean, vrecycle, vgone, vgonel, vfinddev (Option), vdevgone, vcount, vprint (diagnostic/debug), printlockedvnodes (debug), vfs_sysctl (CTL_VFS; vfs.generic.conf copies a VfsconfAbi; bcachestat reported), vfs_mountedon, vfs_export/vfs_export_lookup (NFSSERVER not configured: ENOTSUP/NULL), vaccess, vnoperm (bool), vfs_stall/vfs_stall_barrier (now called by fd_getfile and FREF), vfs_unmountall, vfs_shutdown, vfs_syncwait, vwaitforio, vwakeup, vinvalbuf/vflushbuf (wait for output; the buffer-list walks reported), copy_statfs_info; reported (unported!): vn_initialize_syncerd/vn_syncer_add_to_worklist (vfs_sync.c), uvm_vnp_terminate (only with v_uvm)/uvm_vnp_sync/uvm_vnp_uncache (uvm_vnode.c), lf_purgelocks (only with locks), the device switch through spec_vnops.rs (cdevsw d_type/d_flags, nblkdev 0: conf.c), bcstats (vfs_bio.c; numbufs 0), the bufhead scan of vfs_syncwait, bgetvp/brelvp/buf_replacevnode/reassignbuf (struct buf as an opaque pointer), rb_buf_compare; the DDB printers wait for ddb; host tests (vattr_null, vaccess, getnewvnode/insmntque, use counts and free/hold lists, vgone, recycling past maxvnodes, vflush, vfs_busy, vfs_getnewfsid) over testfs"
+notes = "vfs stage 1: iftovt_tab/vttoif_tab, prtactive, vnode_hold_list/vnode_free_list/mountlist (Sync newtypes), maxvnodes/numvnodes (atomics, kern.maxvnodes/numvnodes), vnode_mtx, vnode_pool, vntblinit, vfs_mount_alloc/take/rele/free, vfs_busy/unbusy/isbusy, vfs_rootmountalloc, vfs_getvfs, vfs_getnewfsid, vattr_null, getnewvnode (returns the vnode; ENFILE when the pool cannot serve PR_WAITOK), insmntque, bdevvp/cdevvp/getdevvp (Option for NODEV), checkalias, vget, vref, vputonfreelist, vput, vrele (bool), vhold, vdrop, vfs_mount_foreach_vnode (closure), vflush_vnode/vflush, vclean, vrecycle, vgone, vgonel, vfinddev (Option), vdevgone, vcount, vprint (diagnostic/debug), printlockedvnodes (debug), vfs_sysctl (CTL_VFS; vfs.generic.conf copies a VfsconfAbi; bcachestat reported), vfs_mountedon, vfs_export/vfs_export_lookup (NFSSERVER not configured: ENOTSUP/NULL), vaccess, vnoperm (bool), vfs_stall/vfs_stall_barrier (now called by fd_getfile and FREF), vfs_unmountall, vfs_shutdown, vfs_syncwait, vwaitforio, vwakeup, vinvalbuf/vflushbuf (wait for output; the buffer-list walks reported), copy_statfs_info; reported (unported!): vn_initialize_syncerd/vn_syncer_add_to_worklist (vfs_sync.c), uvm_vnp_terminate (only with v_uvm)/uvm_vnp_sync/uvm_vnp_uncache (uvm_vnode.c), the device switch through spec_vnops.rs (cdevsw d_type/d_flags, nblkdev 0: conf.c), bcstats (vfs_bio.c; numbufs 0), the bufhead scan of vfs_syncwait, bgetvp/brelvp/buf_replacevnode/reassignbuf (struct buf as an opaque pointer), rb_buf_compare; the DDB printers wait for ddb; host tests (vattr_null, vaccess, getnewvnode/insmntque, use counts and free/hold lists, vgone, recycling past maxvnodes, vflush, vfs_busy, vfs_getnewfsid) over testfs; vgonel purges a device vnode's advisory locks (lf_purgelocks)"
 
 [[file]]
 c = "sys/kern/vfs_vops.c"
@@ -3174,7 +3174,7 @@ rust = "sys/kern/spec_vnops.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 deps = ["sys/sys/specdev.h", "sys/kern/vfs_subr.c", "sys/kern/vfs_default.c"]
-notes = "vfs stage 1: speclisth (Sync newtype), spec_vops, every spec_* operation and spec_open_clone in the C's shape; the device switch (sys/conf.h + each arch's conf.c) is not ported: nchrdev()/nblkdev() answer 0 (so spec_open is ENXIO where the C checks the major) and every cdevsw/bdevsw access (d_open, d_close, d_read, d_write, d_ioctl, d_kqfilter, d_strategy, d_type, d_flags, chrtoblk, iskmemdev) is reported; block-device read/write/fsync (bread/breadn/bawrite/bdwrite/brelse, DIOCGPART: vfs_bio.c, disklabel), spec_advlock (lf_advlock, vfs_lockf.c) and seltrue_kqfilter (kern_event.c) reported; the second licence block (Martelletto/Bjornsson, ISC) kept; wip until conf.c and vfs_bio.c"
+notes = "vfs stage 1: speclisth (Sync newtype), spec_vops, every spec_* operation and spec_open_clone in the C's shape; the device switch (sys/conf.h + each arch's conf.c) is not ported: nchrdev()/nblkdev() answer 0 (so spec_open is ENXIO where the C checks the major) and every cdevsw/bdevsw access (d_open, d_close, d_read, d_write, d_ioctl, d_kqfilter, d_strategy, d_type, d_flags, chrtoblk, iskmemdev) is reported; block-device read/write/fsync (bread/breadn/bawrite/bdwrite/brelse, DIOCGPART: vfs_bio.c, disklabel), seltrue_kqfilter (kern_event.c) reported; spec_advlock is lf_advlock on the specinfo's si_lockf; the second licence block (Martelletto/Bjornsson, ISC) kept; wip until conf.c and vfs_bio.c"
 
 [[file]]
 c = "sys/miscfs/deadfs/dead_vnops.c"
@@ -3184,6 +3184,24 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "26a1a58f10643cd844b7b8d277854d9047333b6d"
 deps = ["sys/sys/vnode.h", "sys/kern/vfs_default.c"]
 notes = "vfs stage 1: dead_vops, dead_open, dead_read, dead_write, dead_ioctl, dead_inactive, dead_lock, dead_bmap, dead_print, dead_ebadf (no arguments: tables use it through closures), chkvnlock (bool); reported: dead_kqfilter (dead_filtops, kern_event.c), dead_strategy (struct buf, vfs_bio.c)"
+
+[[file]]
+c = "sys/sys/lockf.h"
+rust = "sys/sys/lockf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "86063391aaf0e9a485a418bcff2e61f25d7aea27"
+deps = []
+notes = "vfs stage 2: the header only forward-declares struct lockf_state and prototypes lf_init/lf_advlock/lf_purgelocks; vfs_lockf.c defines them, so the module re-exports them (and LockfStateSlot, the struct lockf_state * a vnode or inode keeps)"
+
+[[file]]
+c = "sys/kern/vfs_lockf.c"
+rust = "sys/kern/vfs_lockf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "daae1275ae2f3c8b59ea0997ed56ff9857a3609c"
+deps = ["sys/sys/lockf.h", "sys/sys/fcntl.h", "sys/kern/kern_proc.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_synch.c", "sys/kern/subr_pool.c"]
+notes = "vfs stage 2: struct lockf and struct lockf_state (pool items as &'static with Cells under lockf_lock; the LfEntry/LfBlock tailq adapters), lockf_state_pool/lockf_pool, lockf_lock, maxlocksperuid (atomic, kern.maxlocksperuid), lf_init (main calls it), ls_ref/ls_rele, lf_alloc/lf_free (uidinfo ui_lockcnt), lf_advlock (the slot is a LockfStateSlot, ls_owner a raw pointer to it), lf_setlock, lf_clearlock, lf_getlock, lf_getblock (Option), lf_findoverlap (returns (case, overlap)), lf_purgelocks, lf_split, lf_wakelock, lf_deadlock (bool); spec_advlock and vgonel use it; pool_get(PR_WAITOK) cannot sleep yet, so lf_alloc can fail (ENOLCK) and lf_split panics then; LOCKF_DEBUG not configured; host tests (splitting, the six overlap cases, owner conflicts, F_GETLK, whence/negative lengths, purge, the uid charge)"
 
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"

@@ -66,8 +66,8 @@
 //!   a device that is neither a tty, a disk nor a cloning device).
 //! - Block-device I/O goes through the buffer cache (`bread`, `breadn`, `bawrite`,
 //!   `bdwrite`, `brelse`, the dirty list of `spec_fsync`: `vfs_bio.c`) and the disk label
-//!   (`DIOCGPART`, `<sys/disklabel.h>`): reported. `spec_advlock` is `lf_advlock`
-//!   (`vfs_lockf.c`) and `spec_kqfilter`'s `seltrue_kqfilter` is `kern_event.c`: reported.
+//!   (`DIOCGPART`, `<sys/disklabel.h>`): reported. `spec_kqfilter`'s `seltrue_kqfilter` is
+//!   `kern_event.c`: reported.
 //! - `speclisth[]` is a `static` newtype around the buckets with `unsafe impl Sync`, as the
 //!   other global list heads.
 //! - The operations take their argument structures; the generic ones that fill many slots
@@ -86,6 +86,7 @@ use crate::kern::subr_xxx::nullop;
 use crate::kern::vfs_default::{
     vop_generic_badop, vop_generic_bmap, vop_generic_bwrite, vop_generic_lookup, vop_generic_revoke,
 };
+use crate::kern::vfs_lockf::lf_advlock;
 use crate::kern::vfs_subr::{
     VNODE_MTX, cdevvp, vcount, vfs_mountedon, vinvalbuf, vput, vrele, vwaitforio,
 };
@@ -574,9 +575,14 @@ pub fn spec_pathconf(ap: &mut VopPathconfArgs<'_>) -> Result<(), Errno> {
     Ok(())
 }
 
-/// Special device advisory byte-level locks: `lf_advlock(&vp->v_speclockf, 0, ...)`.
-pub fn spec_advlock(_ap: &mut VopAdvlockArgs<'_>) -> Result<(), Errno> {
-    Err(unported!("spec_advlock: lf_advlock (vfs_lockf.c)"))
+/// Special device advisory byte-level locks.
+pub fn spec_advlock(ap: &mut VopAdvlockArgs<'_>) -> Result<(), Errno> {
+    let vp = ap.a_vp;
+
+    let Some(si) = vp.v_specinfo() else {
+        panic(format_args!("spec_advlock: no specinfo"));
+    };
+    lf_advlock(&si.si_lockf, 0, ap.a_id, ap.a_op, ap.a_fl, ap.a_flags)
 }
 
 /// `spec_open_clone(ap)`: opens a new instance of a `D_CLONE` character device: a new vnode

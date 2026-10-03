@@ -22,6 +22,7 @@ pub mod ioccom;
 pub mod kernel;
 pub mod limits;
 pub mod lock;
+pub mod lockf;
 pub mod malloc;
 pub mod mbuf;
 pub mod mman;

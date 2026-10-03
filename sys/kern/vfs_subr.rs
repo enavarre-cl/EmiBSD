@@ -67,8 +67,7 @@
 //!   opaque pointer and report themselves.
 //! - Not here yet, reported with `unported!` where the C calls them: `vn_initialize_syncerd`
 //!   and `vn_syncer_add_to_worklist` (`vfs_sync.c`), `uvm_vnp_terminate`/`uvm_vnp_sync`
-//!   (`uvm_vnode.c`), `lf_purgelocks` (`vfs_lockf.c`, only when a device vnode has locks,
-//!   which none can), the device switch (`cdevsw[].d_type`/`d_flags`, `nblkdev`: `conf.c`,
+//!   (`uvm_vnode.c`), the device switch (`cdevsw[].d_type`/`d_flags`, `nblkdev`: `conf.c`,
 //!   through `spec_vnops.rs`), `bcstats` for `vfs.generic.bcachestat`. `VN_KNOTE(vp,
 //!   NOTE_REVOKE)` has no knotes to post (`kern_event.c`).
 //! - `copy_statfs_info` never receives the mount's own `mnt_stat` (the callers pass a copy,
@@ -105,6 +104,7 @@ use crate::kern::subr_pool::{pool_get, pool_init};
 use crate::kern::subr_prf::{panic, panicstr, tablefull};
 use crate::kern::vfs_cache::{cache_purge, cache_tree_init};
 use crate::kern::vfs_init::{MAXVFSCONF, vfs_byname, vfs_bytypenum};
+use crate::kern::vfs_lockf::lf_purgelocks;
 use crate::kern::vfs_syscalls::{dounmount, sys_sync};
 use crate::kern::vfs_vnops::vn_lock;
 use crate::kern::vfs_vops::{
@@ -622,7 +622,7 @@ pub fn checkalias(
             si.si_rdev.set(nvp_rdev);
             si.si_hashchain.set(Some(vchain));
             si.si_mountpoint.set(None);
-            si.si_lockf.set(ptr::null_mut());
+            si.si_lockf.set(None);
             si.si_ci_bitmap.set(ptr::null_mut());
             nvp.v_un.set(VnodeUn::Specinfo(si));
             if nvp.v_type.get() == VCHR
@@ -1163,8 +1163,8 @@ pub fn vgonel(vp: &'static Vnode, p: Option<&Proc>) {
                 vp.v_flag.set(vp.v_flag.get() & !VALIASED);
             }
         }
-        if !si.si_lockf.get().is_null() {
-            let _ = unported!("lf_purgelocks (vfs_lockf.c)");
+        if si.si_lockf.get().is_some() {
+            lf_purgelocks(&si.si_lockf);
         }
         vp.v_un.set(VnodeUn::None);
         free(NonNull::from(si).cast(), M_VNODE, size_of::<Specinfo>());

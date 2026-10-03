@@ -57,6 +57,7 @@ pub mod vfs_cache;
 pub mod vfs_default;
 pub mod vfs_getcwd;
 pub mod vfs_init;
+pub mod vfs_lockf;
 pub mod vfs_lookup;
 pub mod vfs_subr;
 pub mod vfs_syscalls;

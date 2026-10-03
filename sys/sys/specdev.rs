@@ -43,7 +43,6 @@
 //!   shorthands (`v_rdev`, `v_specmountpoint`, `v_specparent`) are `Vnode` accessors.
 //! - The union `si_ci` is two side-by-side members, `si_ci_parent` and `si_ci_bitmap`: a
 //!   clone uses the first, its parent the second.
-//! - `si_lockf` is an opaque pointer until `vfs_lockf.c` (`struct lockf_state`).
 //! - `SPECHASH` is a `const fn`; `speclisth[]` is `SPECLISTH` in `kern/spec_vnops.rs`, where
 //!   the C defines it; the `spec_*` prototypes are its functions.
 
@@ -51,6 +50,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
 
+use crate::sys::lockf::LockfStateSlot;
 use crate::sys::mount::Mount;
 use crate::sys::queue::SlistHead;
 use crate::sys::types::{Daddr, Dev};
@@ -77,8 +77,8 @@ pub struct Specinfo {
     pub si_mountpoint: Cell<Option<&'static Mount>>,
     /// `si_rdev`: the device.
     pub si_rdev: Cell<Dev>,
-    /// `si_lockf`: advisory locks (`struct lockf_state`, `vfs_lockf.c`).
-    pub si_lockf: Cell<*mut c_void>,
+    /// `si_lockf`: advisory locks.
+    pub si_lockf: LockfStateSlot,
     /// `si_lastr`: last read block, for read-ahead.
     pub si_lastr: Cell<Daddr>,
     /// `si_ci.ci_parent`: pointer back to parent device (a clone).
@@ -94,7 +94,7 @@ impl Specinfo {
             si_hashchain: Cell::new(None),
             si_mountpoint: Cell::new(None),
             si_rdev: Cell::new(0),
-            si_lockf: Cell::new(ptr::null_mut()),
+            si_lockf: Cell::new(None),
             si_lastr: Cell::new(0),
             si_ci_parent: Cell::new(None),
             si_ci_bitmap: Cell::new(ptr::null_mut()),

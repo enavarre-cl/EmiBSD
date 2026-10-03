@@ -68,7 +68,7 @@
 //!   atomic's; a C local passed by address is an `AtomicI32` read back with `into_inner`.
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
 //!   `ENOSYS`: `ttycount` and `tty` (`tty.c`), `somaxconn`/`sominconn` (`uipc_socket.c`),
-//!   `maxlocksperuid` (`vfs_lockf.c`), `stackgap_random` (`kern_exec.c` has no stack gap yet),
+//!   `stackgap_random` (`kern_exec.c` has no stack gap yet),
 //!   `bufcachepercent` (`vfs_bio.c`), `file` (`kern_descrip.c`; `fill_file` is not here),
 //!   `malloc` (`sysctl_malloc`), `pool` (`sysctl_dopool`), `intrcnt` and `evcount`
 //!   (`evcount_sysctl`), `watchdog` (`kern_watchdog.c`), `clockintr`, `timecounter`
@@ -130,6 +130,7 @@ use crate::kern::subr_prf::{SPLASSERT_CTL, panic};
 use crate::kern::uipc_mbuf::{MBSTAT, nmbclust_update};
 use crate::kern::vfs_cache::NCHSTATS;
 use crate::kern::vfs_getcwd::vfs_getcwd_common;
+use crate::kern::vfs_lockf::MAXLOCKSPERUID;
 use crate::kern::vfs_subr::{MAXVNODES, NUMVNODES, vfs_sysctl, vref, vrele};
 use crate::machine::Machine;
 use crate::machine::copy::{copyin, copyout};
@@ -238,7 +239,7 @@ static CCPU: AtomicI32 = AtomicI32::new(sched_bsd::CCPU as i32);
 
 /// `kern_vars[]`: the `kern` integers `sysctl_bounded_arr` serves. The ones whose variable
 /// lives in an unported file are reported by [`kern_vars`] instead.
-static KERN_VARS: [SysctlBoundedArgs; 26] = [
+static KERN_VARS: [SysctlBoundedArgs; 27] = [
     SysctlBoundedArgs::readonly(KERN_OSREV, &OPENBSD),
     SysctlBoundedArgs::new(KERN_MAXVNODES, &MAXVNODES, 0, i32::MAX),
     SysctlBoundedArgs::new(KERN_MAXPROC, &MAXPROCESS, 0, i32::MAX),
@@ -265,7 +266,7 @@ static KERN_VARS: [SysctlBoundedArgs; 26] = [
     SysctlBoundedArgs::readonly(KERN_CCPU, &CCPU),
     SysctlBoundedArgs::readonly(KERN_NPROCS, &NPROCESSES),
     SysctlBoundedArgs::new(KERN_SPLASSERT, &SPLASSERT_CTL, 0, 3),
-    // KERN_MAXLOCKSPERUID: maxlocksperuid (vfs_lockf.c).
+    SysctlBoundedArgs::new(KERN_MAXLOCKSPERUID, &MAXLOCKSPERUID, 0, i32::MAX),
     SysctlBoundedArgs::new(KERN_WXABORT, &UVM_WXABORT, 0, 1),
     SysctlBoundedArgs::readonly(KERN_NETLIVELOCKS, &INT_ZERO),
     // KERN_GLOBAL_PTRACE: PTRACE is not configured.
@@ -450,11 +451,6 @@ fn kern_vars(
             KERN_TTYCOUNT => return Err(unported!("kern.ttycount: tty_count (tty.c)")),
             KERN_SOMAXCONN | KERN_SOMINCONN => {
                 return Err(unported!("kern.somaxconn: somaxconn (uipc_socket.c)"));
-            }
-            KERN_MAXLOCKSPERUID => {
-                return Err(unported!(
-                    "kern.maxlocksperuid: maxlocksperuid (vfs_lockf.c)"
-                ));
             }
             _ => {}
         }
