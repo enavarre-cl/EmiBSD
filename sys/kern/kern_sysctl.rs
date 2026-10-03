@@ -67,9 +67,9 @@
 //!   ([`SysctlPlain`]). `int *valp` is `&AtomicI32`, the C's atomic operations on it are the
 //!   atomic's; a C local passed by address is an `AtomicI32` read back with `into_inner`.
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
-//!   `ENOSYS`: `kern.maxvnodes`/`numvnodes` (`vfs_subr.c`), `nfiles` (`kern_descrip.c`),
+//!   `ENOSYS`: `kern.maxvnodes`/`numvnodes` (`vfs_subr.c`),
 //!   `ttycount` and `tty` (`tty.c`), `somaxconn`/`sominconn` (`uipc_socket.c`),
-//!   `nosuidcoredump` (`kern_sig.c`), `maxlocksperuid` (`vfs_lockf.c`), `nchstats`
+//!   `maxlocksperuid` (`vfs_lockf.c`), `nchstats`
 //!   (`vfs_cache.c`), `stackgap_random` (`kern_exec.c` has no stack gap yet),
 //!   `bufcachepercent` (`vfs_bio.c`), `file` (`kern_descrip.c`; `fill_file` is not here),
 //!   `malloc` (`sysctl_malloc`), `pool` (`sysctl_dopool`), `intrcnt` and `evcount`
@@ -81,8 +81,7 @@
 //!   `smt`/`blockcpu` (`kern_sched.c`); the top-level `net` (`net_sysctl`), `vfs`
 //!   (`vfs_sysctl`), `machdep` (`cpu_sysctl`) and `ddb` (`ddb_sysctl`) trees. `resettodr`
 //!   after a new `kern.utc_offset` is reported and skipped. The tty fields of `kinfo_proc`
-//!   (a controlling terminal cannot exist yet) and `sigacts` (`kern_sig.c`) are reported
-//!   when a process would have them.
+//!   (a controlling terminal cannot exist yet) are reported when a process would have them.
 //! - Options this kernel does not configure are compiled out as in C: `DEBUG_SYSCTL`
 //!   (`debug_sysctl`, `CTL_DEBUG` is `EOPNOTSUPP`), `SYSVMSG`/`SYSVSEM`/`SYSVSHM`
 //!   (`sysctl_sysvipc`), `NAUDIO`/`NVIDEO`/`NDT`/`NPF`/`NUCOM` (0), `GPROF`, `WITNESS`,
@@ -113,6 +112,7 @@ use crate::conf::vers::{OSRELEASE, OSTYPE, OSVERSION, VERSION};
 use crate::dev::cons::cn_tab;
 use crate::kern::init_main::{NCPUS, NCPUSFOUND};
 use crate::kern::kern_clock::sysctl_clockrate;
+use crate::kern::kern_descrip::NUMFILES;
 use crate::kern::kern_fork::{FORKSTAT, NPROCESSES, NTHREADS};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave, pc_cons_enter, pc_cons_leave};
 use crate::kern::kern_proc::{ALLPROCESS, ZOMBPROCESS, prfind};
@@ -120,6 +120,7 @@ use crate::kern::kern_prot::suser;
 use crate::kern::kern_resource::{calctsru, tuagg_get_proc, tuagg_get_process};
 use crate::kern::kern_rwlock::{rw_enter, rw_enter_write, rw_exit_write};
 use crate::kern::kern_sched::{cpu_is_online, sysctl_hwncpuonline};
+use crate::kern::kern_sig::NOSUIDCOREDUMP;
 use crate::kern::kern_tc::{microboottime, nanoboottime, nanotime, tc_setrealtimeclock};
 use crate::kern::kern_timeout::timeout_sysctl;
 use crate::kern::sched_bsd;
@@ -233,12 +234,13 @@ static CCPU: AtomicI32 = AtomicI32::new(sched_bsd::CCPU as i32);
 
 /// `kern_vars[]`: the `kern` integers `sysctl_bounded_arr` serves. The ones whose variable
 /// lives in an unported file are reported by [`kern_vars`] instead.
-static KERN_VARS: [SysctlBoundedArgs; 23] = [
+static KERN_VARS: [SysctlBoundedArgs; 25] = [
     SysctlBoundedArgs::readonly(KERN_OSREV, &OPENBSD),
     // KERN_MAXVNODES: maxvnodes (vfs_subr.c).
     SysctlBoundedArgs::new(KERN_MAXPROC, &MAXPROCESS, 0, i32::MAX),
     SysctlBoundedArgs::new(KERN_MAXFILES, &MAXFILES, 0, i32::MAX),
-    // KERN_NFILES: numfiles (kern_descrip.c). KERN_TTYCOUNT: tty_count (tty.c).
+    SysctlBoundedArgs::readonly(KERN_NFILES, &NUMFILES),
+    // KERN_TTYCOUNT: tty_count (tty.c).
     SysctlBoundedArgs::readonly(KERN_ARGMAX, &ARG_MAX),
     SysctlBoundedArgs::readonly(KERN_POSIX1, &POSIX_VERSION),
     SysctlBoundedArgs::readonly(KERN_NGROUPS, &NGROUPS_MAX),
@@ -249,7 +251,7 @@ static KERN_VARS: [SysctlBoundedArgs; 23] = [
     SysctlBoundedArgs::new(KERN_MAXTHREAD, &MAXTHREAD, 0, i32::MAX),
     SysctlBoundedArgs::readonly(KERN_NTHREADS, &NTHREADS),
     // KERN_SOMAXCONN, KERN_SOMINCONN: somaxconn, sominconn (uipc_socket.c).
-    // KERN_NOSUIDCOREDUMP: nosuidcoredump (kern_sig.c).
+    SysctlBoundedArgs::new(KERN_NOSUIDCOREDUMP, &NOSUIDCOREDUMP, 0, 3),
     SysctlBoundedArgs::readonly(KERN_FSYNC, &INT_ONE),
     // SYSVMSG, SYSVSEM, SYSVSHM: not configured.
     SysctlBoundedArgs::readonly(KERN_SYSVMSG, &INT_ZERO),
@@ -442,15 +444,9 @@ fn kern_vars(
     if let [mib] = name {
         match *mib {
             KERN_MAXVNODES => return Err(unported!("kern.maxvnodes: maxvnodes (vfs_subr.c)")),
-            KERN_NFILES => return Err(unported!("kern.nfiles: numfiles (kern_descrip.c)")),
             KERN_TTYCOUNT => return Err(unported!("kern.ttycount: tty_count (tty.c)")),
             KERN_SOMAXCONN | KERN_SOMINCONN => {
                 return Err(unported!("kern.somaxconn: somaxconn (uipc_socket.c)"));
-            }
-            KERN_NOSUIDCOREDUMP => {
-                return Err(unported!(
-                    "kern.nosuidcoredump: nosuidcoredump (kern_sig.c)"
-                ));
             }
             KERN_MAXLOCKSPERUID => {
                 return Err(unported!(
@@ -1610,9 +1606,10 @@ pub fn fill_kproc(pr: &Process, ki: &mut KinfoProc, p: Option<&Proc>, show_point
 
     mtx_enter(&pr.ps_mtx); // PR_LOCK(pr)
     ki.p_ppid = pr.ps_ppid.get();
-    if !pr.ps_sigacts.get().is_null() {
-        // p_sigignore, p_sigcatch: struct sigacts is kern_sig.c's.
-        let _ = unported!("kinfo_proc: ps_sigignore/ps_sigcatch (kern_sig.c)");
+    // SAFETY: a live process's sigacts stays allocated until process_zap; ps_mtx is held.
+    if let Some(sa) = unsafe { pr.ps_sigacts.get().as_ref() } {
+        ki.p_sigignore = sa.ps_sigignore.get();
+        ki.p_sigcatch = sa.ps_sigcatch.get();
     }
 
     // SAFETY: a process holds a reference to its limits; ps_mtx keeps them from changing.
