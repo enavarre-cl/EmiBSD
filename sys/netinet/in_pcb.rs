@@ -172,8 +172,8 @@
 //!   only `inp_moptions`; `inp_icmp6filt` is left out. The `IN6P_*` flags and
 //!   `INPLOOKUP_IPV6` are defined; `in6_*` functions are not compiled, as in a kernel without
 //!   `INET6`, and the `ISSET(inp_flags, INP_IPV6)` branches are comments.
-//! - `inp_seclevel` (`struct ipsec_level`, `IPSEC` not configured) is left out; `ip_output`
-//!   takes no security level. `inp_pf_sk` is pf(4)'s state key.
+//! - `inp_pf_sk` is pf(4)'s state key. `inp_seclevel` is a `Cell` (`IPSEC` is configured
+//!   since M9c).
 //! - `struct inpcb_iterator` is [`InpcbIterator`], a whole `Inpcb` whose `inp_table` and
 //!   `inp_socket` are `None`, so it can sit in the table's queue like the C's prefix-compatible
 //!   structure. [`in_pcb_iterator`] is an `unsafe fn`: the iterator must stay in place until
@@ -190,8 +190,8 @@
 //! - `in_pcbset_addr` takes `sockaddr_in`s: without `INET6` the C asserts `AF_INET`.
 //! - `NSTOEPLITZ` (`pseudo-device pf` needs `stoeplitz`) and `NPF` (pf(4)) are configured:
 //!   the flow id of a connected or bound socket, `pf_remove_divert_state`, `pf_inp_unlink`,
-//!   and the divert and redirected-localhost keys of `in_pcblookup_listen`. `IPSEC` is not:
-//!   its `udpencap_port` check in `in_baddynamic` is a comment at the site.
+//!   and the divert and redirected-localhost keys of `in_pcblookup_listen`. So is `IPSEC`
+//!   (M9c): `in_baddynamic` refuses the `udpencap_port`.
 //! - The `DIAGNOSTIC` `in_pcbnotifymiss` printfs are behind the `diagnostic` feature.
 
 use core::cell::Cell;
@@ -228,13 +228,16 @@ use crate::net::rtable::{rtable_exists, rtable_getsource, rtable_l2};
 use crate::net::toeplitz::stoeplitz_ip4port;
 use crate::netinet::in_::{
     INADDR_ANY, INADDR_BROADCAST, IPPORT_HIFIRSTAUTO, IPPORT_HILASTAUTO, IPPORT_RESERVED,
-    IPPORT_USERRESERVED, IPPROTO_TCP, IPPROTO_UDP, InAddr, SockaddrIn, in_broadcast, in_ifp2ia,
-    in_multicast, in_nam2sin, satosin_const, sintosa,
+    IPPORT_USERRESERVED, IPPROTO_TCP, IPPROTO_UDP, IPSEC_AUTH_LEVEL_DEFAULT,
+    IPSEC_ESP_NETWORK_LEVEL_DEFAULT, IPSEC_ESP_TRANS_LEVEL_DEFAULT, IPSEC_IPCOMP_LEVEL_DEFAULT,
+    InAddr, SockaddrIn, in_broadcast, in_ifp2ia, in_multicast, in_nam2sin, satosin_const, sintosa,
 };
 use crate::netinet::in_var::ifatoia;
 use crate::netinet::ip::Ip;
+use crate::netinet::ip_ipsp::IpsecLevel;
 use crate::netinet::ip_output::ip_freemoptions;
 use crate::netinet::ip_var::IpMoptions;
+use crate::netinet::ipsec_output::UDPENCAP_PORT;
 use crate::queue_adapter;
 use crate::sys::endian::htons;
 use crate::sys::errno::Errno;
@@ -448,6 +451,8 @@ pub struct Inpcb {
     pub inp_hops: Cell<i32>,
     /// \[N\] `inp_moptions`: IPv4 multicast options (`malloc(M_IPMOPTS)`).
     pub inp_moptions: Cell<Option<NonNull<IpMoptions>>>,
+    /// \[N\] `inp_seclevel`: IPsec level of socket.
+    pub inp_seclevel: Cell<IpsecLevel>,
     /// `inp_ip_minttl`: minimum TTL or drop.
     pub inp_ip_minttl: Cell<u8>,
     /// `inp_cksum6`.
@@ -499,6 +504,12 @@ impl Inpcb {
             inp_options: Cell::new(None),
             inp_hops: Cell::new(0),
             inp_moptions: Cell::new(None),
+            inp_seclevel: Cell::new(IpsecLevel {
+                sl_auth: 0,
+                sl_esp_trans: 0,
+                sl_esp_network: 0,
+                sl_ipcomp: 0,
+            }),
             inp_ip_minttl: Cell::new(0),
             inp_cksum6: Cell::new(0),
             inp_upcall: Cell::new(None),
@@ -829,8 +840,11 @@ pub fn in_pcbinit(table: &Inpcbtable, hashsize: i32) {
 pub fn in_baddynamic(port: u16, proto: u16) -> bool {
     match i32::from(proto) {
         IPPROTO_TCP => dp_isset(&BADDYNAMICPORTS.tcp, port),
-        // IPSEC: the udpencap_port (a sysctl); not configured.
-        IPPROTO_UDP => dp_isset(&BADDYNAMICPORTS.udp, port),
+        IPPROTO_UDP => {
+            // Cannot preset this as it is a sysctl
+            i32::from(port) == UDPENCAP_PORT.load(Ordering::Relaxed)
+                || dp_isset(&BADDYNAMICPORTS.udp, port)
+        }
         _ => false,
     }
 }
@@ -863,7 +877,12 @@ pub fn in_pcballoc(
     // SAFETY: as above; the item stays allocated until the last `in_pcbunref`.
     let inp: &'static Inpcb = unsafe { &*raw };
     refcnt_init(&inp.inp_refcnt); // refcnt_init_trace(DT_REFCNT_IDX_INPCB): dt(4)
-    // IPSEC: inp_seclevel defaults; not configured.
+    inp.inp_seclevel.set(IpsecLevel {
+        sl_auth: IPSEC_AUTH_LEVEL_DEFAULT as u8,
+        sl_esp_trans: IPSEC_ESP_TRANS_LEVEL_DEFAULT as u8,
+        sl_esp_network: IPSEC_ESP_NETWORK_LEVEL_DEFAULT as u8,
+        sl_ipcomp: IPSEC_IPCOMP_LEVEL_DEFAULT as u8,
+    });
     inp.inp_rtableid.set(
         curproc_or_panic("in_pcballoc")
             .process()

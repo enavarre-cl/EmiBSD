@@ -101,9 +101,10 @@
 //! - `udp_sysctl`'s port bitmaps are copied through a byte buffer on the stack (the C's
 //!   `malloc(M_SYSCTL)`), as `sysctl_struct` takes bytes.
 //! - Not configured, each a comment at its site: `INET6` (`udb6table`, `udp6_usrreqs`,
-//!   `udp6_ctlinput`, `udp6_output`, the IPv6 paths), `IPSEC` (UDP encapsulation of ESP, the
-//!   SPD lookup, `IP_IPSECFLOWINFO` control messages) and `PIPEX`. `NPF` (`pf_inp_lookup`,
-//!   `pf_inp_link`, `pf_mbuf_link_inpcb`) and `NSTOEPLITZ` (the flow id) are configured.
+//!   `udp6_ctlinput`, `udp6_output`, the IPv6 paths) and `PIPEX`. `NPF` (`pf_inp_lookup`,
+//!   `pf_inp_link`, `pf_mbuf_link_inpcb`), `NSTOEPLITZ` (the flow id) and `IPSEC` (M9c: UDP
+//!   encapsulation of ESP, the SPD lookup, `IP_IPSECFLOWINFO` control messages) are
+//!   configured.
 //! - `SMALL_KERNEL` is not set: the sysctl handlers are compiled.
 
 use core::ffi::c_void;
@@ -115,8 +116,8 @@ use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_sysctl::{SECURELEVEL, sysctl_bounded_arr, sysctl_rdstruct, sysctl_struct};
 use crate::kern::subr_prf::panic;
-use crate::kern::uipc_mbuf::{m_adj, m_copym, m_freem, m_prepend};
-use crate::kern::uipc_mbuf2::m_pulldown;
+use crate::kern::uipc_mbuf::{m_adj, m_copydata, m_copym, m_freem, m_prepend, m_pullup};
+use crate::kern::uipc_mbuf2::{m_pulldown, m_tag_find};
 use crate::kern::uipc_socket::{sorwakeup, sowwakeup};
 use crate::kern::uipc_socket2::{
     sbappendaddr, sbcreatecontrol, soassertlocked, soassertlocked_readonly, socantsendmore,
@@ -127,23 +128,28 @@ use crate::net::if_var::Netstack;
 use crate::net::pf::{pf_inp_link, pf_inp_lookup, pf_mbuf_link_inpcb};
 use crate::net::rtable::rtable_l2;
 use crate::netinet::in_::{
-    INADDR_ANY, IP_RECVDSTPORT, IP_SENDSRCADDR, IPPROTO_DONE, IPPROTO_IP, IPPROTO_UDP, InAddr,
-    SockaddrIn, in_control, in_nam2sin,
+    INADDR_ANY, IP_IPSECFLOWINFO, IP_RECVDSTPORT, IP_SENDSRCADDR, IPPROTO_DONE, IPPROTO_ESP,
+    IPPROTO_IP, IPPROTO_UDP, InAddr, SockaddrIn, in_control, in_nam2sin,
 };
 use crate::netinet::in_pcb::{
-    BADDYNAMICPORTS, DP_MAPSIZE, INP_CONTROLOPTS, INP_IPV6, INP_RECVDSTPORT, InpNotifyFn, Inpcb,
-    InpcbIterator, Inpcbtable, ROOTONLYPORTS, in_flowid, in_pcb_iterator, in_pcb_iterator_abort,
-    in_pcbaddrisavail, in_pcballoc, in_pcbbind, in_pcbconnect, in_pcbdetach, in_pcbdisconnect,
-    in_pcbinit, in_pcblookup, in_pcblookup_listen, in_pcbnotifyall, in_pcbref, in_pcbrtchange,
-    in_pcbselsrc, in_pcbsolock, in_pcbsounlock, in_pcbunref, in_pcbunset_laddr, in_peeraddr,
-    in_sockaddr, sotoinpcb,
+    BADDYNAMICPORTS, DP_MAPSIZE, INP_CONTROLOPTS, INP_IPSECFLOWINFO, INP_IPV6, INP_RECVDSTPORT,
+    InpNotifyFn, Inpcb, InpcbIterator, Inpcbtable, ROOTONLYPORTS, in_flowid, in_pcb_iterator,
+    in_pcb_iterator_abort, in_pcbaddrisavail, in_pcballoc, in_pcbbind, in_pcbconnect, in_pcbdetach,
+    in_pcbdisconnect, in_pcbinit, in_pcblookup, in_pcblookup_listen, in_pcbnotifyall, in_pcbref,
+    in_pcbrtchange, in_pcbselsrc, in_pcbsolock, in_pcbsounlock, in_pcbunref, in_pcbunset_laddr,
+    in_peeraddr, in_sockaddr, sotoinpcb,
 };
 use crate::netinet::in4_cksum::in4_cksum;
 use crate::netinet::ip::{IP_MAXPACKET, Ip};
+use crate::netinet::ip_esp::{EspstatCounters, espstat_inc};
 use crate::netinet::ip_icmp::{ICMP_UNREACH, ICMP_UNREACH_PORT, icmp_error};
-use crate::netinet::ip_input::{INETCTLERRMAP, IP_DEFTTL, ip_savecontrol};
+use crate::netinet::ip_input::{INETCTLERRMAP, IP_DEFTTL, ip_mtudisc, ip_savecontrol};
+use crate::netinet::ip_ipsp::{IPSEC_IN_USE, IPSP_DIRECTION_IN, TdbIdent, gettdb, tdb_unref};
 use crate::netinet::ip_output::ip_output;
+use crate::netinet::ip_spd::ipsp_spd_lookup;
 use crate::netinet::ip_var::{mtod_ip, mtod_ip_store};
+use crate::netinet::ipsec_input::{ESP_ENABLE, ipsec_common_input, udpencap_ctlinput};
+use crate::netinet::ipsec_output::{UDPENCAP_ENABLE, UDPENCAP_PORT};
 use crate::netinet::udp::Udphdr;
 use crate::netinet::udp_var::{
     UDPCTL_BADDYNAMIC, UDPCTL_CHECKSUM, UDPCTL_RECVSPACE, UDPCTL_ROOTONLY, UDPCTL_SENDSPACE,
@@ -152,10 +158,10 @@ use crate::netinet::udp_var::{
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::{
     M_BCAST, M_COPYALL, M_DONTWAIT, M_MCAST, M_UDP_CSUM_IN_BAD, M_UDP_CSUM_IN_OK, M_UDP_CSUM_OUT,
-    Mbuf, mtod,
+    Mbuf, PACKET_TAG_IPSEC_IN_DONE, m_freemp, mtod,
 };
 use crate::sys::proc::Proc;
-use crate::sys::protosw::{PRC_HOSTDEAD, PRC_NCMDS, PrUsrreqs, prc_is_redirect};
+use crate::sys::protosw::{PRC_HOSTDEAD, PRC_MSGSIZE, PRC_NCMDS, PrUsrreqs, prc_is_redirect};
 use crate::sys::socket::{
     AF_INET, Cmsghdr, SO_BROADCAST, SO_REUSEADDR, SO_REUSEPORT, SO_TIMESTAMP, Sockaddr, cmsg_align,
     cmsg_data, cmsg_len,
@@ -275,8 +281,8 @@ pub fn udp_input(
 ) -> i32 {
     let iphlen = *offp;
     let mut inp: Option<&'static Inpcb> = None;
-    let ipsecflowinfo: u32 = 0;
-    // IPSEC: udpencap_port_local; not configured.
+    let mut ipsecflowinfo: u32 = 0;
+    let udpencap_port_local = UDPENCAP_PORT.load(Ordering::Relaxed);
 
     udpstat_inc(UdpstatCounters::UdpsIpackets);
 
@@ -345,8 +351,46 @@ pub fn udp_input(
             .csum_flags
             .set(m.m_pkthdr().csum_flags.get() & !M_UDP_CSUM_OUT);
 
-        // IPSEC: UDP encapsulated ESP (udpencap_enable, udpencap_port, the SPI check and
-        // ipsec_common_input); not configured.
+        // NPF > 0: !(m->m_pkthdr.pf.flags & PF_TAG_DIVERTED); not configured.
+        if UDPENCAP_ENABLE.load(Ordering::Relaxed) != 0
+            && udpencap_port_local != 0
+            && ESP_ENABLE.load(Ordering::Relaxed) != 0
+            && hdr.uh_dport == (udpencap_port_local as u16).to_be()
+        {
+            let mut skip = iphlen + size_of::<Udphdr>() as i32;
+
+            if m.m_pkthdr().len.get() - skip < size_of::<u32>() as i32 {
+                // packet too short
+                m_freemp(mp);
+                return IPPROTO_DONE;
+            }
+            let mut spi = [0u8; 4];
+            m_copydata(m, skip, &mut spi);
+            // decapsulate if the SPI is not zero, otherwise pass to userland
+            if spi != [0; 4] {
+                let Some(m) = m_pullup(m, skip) else {
+                    *mp = None;
+                    udpstat_inc(UdpstatCounters::UdpsHdrops);
+                    return IPPROTO_DONE;
+                };
+                *mp = Some(m);
+
+                // remove the UDP header
+                // SAFETY: `m_pullup` made the first `skip` bytes contiguous; the IP header
+                // moves up over the UDP header (an overlapping copy).
+                unsafe {
+                    let p = mtod::<u8>(m);
+                    ptr::copy(p, p.add(size_of::<Udphdr>()), iphlen as usize);
+                }
+                m_adj(m, size_of::<Udphdr>() as i32);
+                skip -= size_of::<Udphdr>() as i32;
+
+                espstat_inc(EspstatCounters::EspsUdpencin);
+                // INET6: offsetof(struct ip6_hdr, ip6_nxt); not configured.
+                let protoff = offset_of!(Ip, ip_p) as i32;
+                return ipsec_common_input(mp, skip, protoff, af, IPPROTO_ESP, true, ns);
+            }
+        }
 
         let srcsa = SockaddrIn {
             sin_len: size_of::<SockaddrIn>() as u8,
@@ -477,8 +521,37 @@ pub fn udp_input(
             }
         }
 
-        // IPSEC: the PACKET_TAG_IPSEC_IN_DONE tdb, ipsp_spd_lookup and the flow info;
-        // not configured.
+        if IPSEC_IN_USE.load(Ordering::Relaxed) != 0 {
+            let tdb = match m_tag_find(m, PACKET_TAG_IPSEC_IN_DONE, None) {
+                Some(mtag) => {
+                    // SAFETY: `IPSEC_IN_DONE` tags carry a `struct tdb_ident`.
+                    let tdbi = unsafe { TdbIdent::read(mtag.data()) };
+                    gettdb(tdbi.rdomain, tdbi.spi, &tdbi.dst, tdbi.proto)
+                }
+                None => None,
+            };
+            let seclevel = inp.map(|i| i.inp_seclevel.get());
+            let error = ipsp_spd_lookup(
+                m,
+                af,
+                iphlen,
+                IPSP_DIRECTION_IN,
+                tdb,
+                seclevel.as_ref(),
+                None,
+                None,
+            );
+            if error.is_err() {
+                udpstat_inc(UdpstatCounters::UdpsNosec);
+                tdb_unref(tdb);
+                break 'bad;
+            }
+            // create ipsec options, id is not modified after creation
+            if let Some(ids) = tdb.and_then(|t| t.tdb_ids.get()) {
+                ipsecflowinfo = ids.id_flow.get();
+            }
+            tdb_unref(tdb);
+        }
 
         let Some(i) = inp else {
             udpstat_inc(UdpstatCounters::UdpsNoport);
@@ -531,7 +604,7 @@ pub fn udp_sbappend(
     hlen: i32,
     uh: &Udphdr,
     srcaddr: &SockaddrIn,
-    _ipsecflowinfo: u32,
+    ipsecflowinfo: u32,
     ns: Option<&Netstack>,
 ) {
     let so = inp.socket();
@@ -580,7 +653,18 @@ pub fn udp_sbappend(
             }
         }
     }
-    // IPSEC: IP_IPSECFLOWINFO; not configured.
+    if ipsecflowinfo != 0 && inp.has_flags(INP_IPSECFLOWINFO) {
+        let n = sbcreatecontrol(&ipsecflowinfo.to_ne_bytes(), IP_IPSECFLOWINFO, IPPROTO_IP);
+        match opts {
+            None => opts = n,
+            Some(mut t) => {
+                while let Some(next) = t.m_next().get() {
+                    t = next;
+                }
+                t.m_next().set(n);
+            }
+        }
+    }
     m_adj(m, hlen);
 
     mtx_enter(&so.so_rcv.sb_mtx);
@@ -650,7 +734,18 @@ pub unsafe fn udp_ctlinput(cmd: i32, sa: *const Sockaddr, rdomain: u32, v: *mut 
         let iph = unsafe { ip.cast::<Ip>().read_unaligned() };
         // SAFETY: as above, at the header's length.
         let uhp = unsafe { uh_read(ip.add(usize::from(iph.ip_hl()) << 2)) };
-        // IPSEC: PMTU discovery for udpencap (udpencap_ctlinput); not configured.
+        let udpencap_port_local = UDPENCAP_PORT.load(Ordering::Relaxed);
+        // PMTU discovery for udpencap
+        if cmd == PRC_MSGSIZE
+            && ip_mtudisc.load(Ordering::Relaxed) != 0
+            && UDPENCAP_ENABLE.load(Ordering::Relaxed) != 0
+            && udpencap_port_local != 0
+            && i32::from(uhp.uh_sport) == udpencap_port_local
+        {
+            // SAFETY: this function's own contract, passed on.
+            unsafe { udpencap_ctlinput(cmd, sa, rdomain, v) };
+            return;
+        }
         let inp = in_pcblookup(
             &UDBTABLE,
             iph.ip_dst,
@@ -679,7 +774,7 @@ pub fn udp_output(
     control: Option<&'static Mbuf>,
 ) -> Result<(), Errno> {
     let mut sin: Option<SockaddrIn> = None;
-    let ipsecflowinfo: u32 = 0;
+    let mut ipsecflowinfo: u32 = 0;
     let mut src_sin = SockaddrIn::default();
     let len = m.m_pkthdr().len.get();
     let mut laddr = InAddr::default();
@@ -712,8 +807,16 @@ pub fn udp_output(
                 if cmlen < cmsg_len(0) || cmsg_align(cmlen) > clen {
                     break 'release Err(Errno::EINVAL);
                 }
-                // IPSEC: IP_IPSECFLOWINFO with INP_IPSECFLOWINFO; not configured.
-                if cmlen == cmsg_len(size_of::<InAddr>())
+                if inp.has_flags(INP_IPSECFLOWINFO)
+                    && cmlen == cmsg_len(size_of::<u32>())
+                    && cm.cmsg_level == IPPROTO_IP
+                    && cm.cmsg_type == IP_IPSECFLOWINFO
+                {
+                    // SAFETY: the message holds a `uint32_t` after its header (its length
+                    // says so and fits in the mbuf, checked).
+                    ipsecflowinfo =
+                        unsafe { cmsg_data(cmsgs.cast()).cast::<u32>().read_unaligned() };
+                } else if cmlen == cmsg_len(size_of::<InAddr>())
                     && cm.cmsg_level == IPPROTO_IP
                     && cm.cmsg_type == IP_SENDSRCADDR
                 {
@@ -841,6 +944,7 @@ pub fn udp_output(
         Some(&inp.inp_route),
         inp.socket().so_options.get() & SO_BROADCAST,
         inp.moptions(),
+        Some(&inp.inp_seclevel.get()),
         ipsecflowinfo,
     );
 

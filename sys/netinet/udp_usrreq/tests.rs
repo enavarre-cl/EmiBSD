@@ -1,7 +1,7 @@
 //! Host tests for UDP over the test Ethernet interface: a datagram in to a bound socket
 //! (with the sender's address), a port unreachable for a closed port, a bad checksum, a
 //! datagram out from an unbound socket (a port picked, the headers and the checksum right
-//! once ARP has the gateway), connect/disconnect, an IP option through `ip_ctloutput`, and an
+//! once ARP has the gateway), connect/disconnect, an IP option and the IPsec levels through `ip_ctloutput`, and an
 //! ICMP error passed on by `udp_ctlinput`.
 
 use std::{assert, assert_eq, vec, vec::Vec};
@@ -264,6 +264,64 @@ fn datagrams_out_options_and_errors() {
     assert_eq!(udp_disconnect(so), Err(Errno::ENOTCONN));
     sounlock(so);
     assert!(!so.has_state(SS_ISCONNECTED));
+
+    soclose(so, 0).expect("close");
+    teardown();
+}
+
+/// `setsockopt`/`getsockopt` of an `int` option through `ip_ctloutput`.
+fn int_opt(so: &'static Socket, op: i32, name: i32, v: i32) -> Result<i32, Errno> {
+    let opt = crate::kern::uipc_mbuf::m_get(M_DONTWAIT, MT_SOOPTS).expect("mbuf");
+    opt.m_len().set(4);
+    // SAFETY: a fresh mbuf of `MLEN` bytes.
+    unsafe { mtod::<i32>(opt).write_unaligned(v) };
+    let r = ip_ctloutput(op, so, IPPROTO_IP, name, Some(opt));
+    // SAFETY: as above.
+    let out = unsafe { mtod::<i32>(opt).read_unaligned() };
+    m_freem(opt);
+    r.map(|()| out)
+}
+
+#[test]
+fn ipsec_levels_and_the_udpencap_port() {
+    use crate::netinet::in_::{
+        IP_AUTH_LEVEL, IP_ESP_TRANS_LEVEL, IPSEC_LEVEL_BYPASS, IPSEC_LEVEL_DEFAULT,
+        IPSEC_LEVEL_REQUIRE,
+    };
+
+    let (_g, _t, _p) = setup();
+    let _ifp = net();
+    let so = udp_socket();
+
+    // in_pcballoc's defaults.
+    assert_eq!(
+        int_opt(so, PRCO_GETOPT, IP_AUTH_LEVEL, 0),
+        Ok(IPSEC_LEVEL_DEFAULT)
+    );
+    // Root may set any level, the bypass included.
+    for level in [IPSEC_LEVEL_REQUIRE, IPSEC_LEVEL_BYPASS] {
+        int_opt(so, PRCO_SETOPT, IP_ESP_TRANS_LEVEL, level).expect("set");
+        assert_eq!(int_opt(so, PRCO_GETOPT, IP_ESP_TRANS_LEVEL, 0), Ok(level));
+    }
+    let inp = sotoinpcb(so).expect("attached");
+    assert_eq!(
+        i32::from(inp.inp_seclevel.get().sl_esp_trans),
+        IPSEC_LEVEL_BYPASS
+    );
+    assert_eq!(
+        int_opt(so, PRCO_SETOPT, IP_ESP_TRANS_LEVEL, 5),
+        Err(Errno::EINVAL)
+    );
+
+    // udpencap_port is never handed out as a dynamic port.
+    assert!(crate::netinet::in_pcb::in_baddynamic(
+        4500,
+        IPPROTO_UDP as u16
+    ));
+    assert!(!crate::netinet::in_pcb::in_baddynamic(
+        4501,
+        IPPROTO_UDP as u16
+    ));
 
     soclose(so, 0).expect("close");
     teardown();

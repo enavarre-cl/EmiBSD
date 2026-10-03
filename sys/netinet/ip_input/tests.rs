@@ -300,7 +300,7 @@ fn a_ping_to_the_gateway_resolves_it_and_counts_the_reply() {
     icp.set_icmp_id(htons(7));
     icp.set_icmp_seq(htons(1));
     m.m_pkthdr().csum_flags.set(M_ICMP_CSUM_OUT);
-    ip_output(m, None, None, 0, None, 0).expect("held by ARP");
+    ip_output(m, None, None, 0, None, None, 0).expect("held by ARP");
 
     let req = ifq_dequeue(&ifp.if_snd).expect("ARP request");
     let b = bytes(req);

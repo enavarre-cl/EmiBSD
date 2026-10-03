@@ -47,7 +47,7 @@
 //! ## Deviations
 //! - `domains[]` is a slice without the C's NULL terminator. It holds `inetdomain`
 //!   (`netinet/in_proto.rs`), `unixdomain` (`kern/uipc_proto.rs`, local sockets) and
-//!   `routedomain` (`net/rtsock.rs`). `MPLS`, `IPSEC`/`TCP_SIGNATURE` (`pfkeydomain`),
+//!   `routedomain` (`net/rtsock.rs`), with `pfkeydomain` (`net/pfkeyv2.rs`, `IPSEC`) first. `MPLS`,
 //!   `INET6` and `NAF_FRAME` are not configured; their entries are comments, and so are the
 //!   `NBPFILTER`, `NPFLOW` and `PIPEX` branches of `net_sysctl`.
 //! - The two timeouts are statics initialised in `domaininit` with their own address as the
@@ -67,6 +67,7 @@ use crate::kern::uipc_mbuf::{MAX_HDR, MAX_LINKHDR, MAX_PROTOHDR};
 use crate::kern::uipc_proto::UNIXDOMAIN;
 use crate::kern::uipc_usrreq::uipc_sysctl;
 use crate::net::ifq::net_ifiq_sysctl;
+use crate::net::pfkeyv2::PFKEYDOMAIN;
 use crate::net::rtsock::ROUTEDOMAIN;
 use crate::netinet::in_proto::INETDOMAIN;
 use crate::sys::domain::Domain;
@@ -78,9 +79,9 @@ use crate::sys::systm::net_assert_locked;
 use crate::sys::timeout::{KCLOCK_NONE, TIMEOUT_MPSAFE, TIMEOUT_PROC, Timeout};
 
 /// `domains[]`: the configured communication domains.
-pub static DOMAINS: [&Domain; 3] = [
+pub static DOMAINS: [&Domain; 4] = [
     // MPLS: &mplsdomain, not configured.
-    // IPSEC, TCP_SIGNATURE: &pfkeydomain, not configured.
+    &PFKEYDOMAIN,
     // INET6: &inet6domain, not configured.
     &INETDOMAIN,
     &UNIXDOMAIN,

@@ -29,7 +29,7 @@ pub mod siphash;
 pub mod sk;
 pub mod spr;
 #[cfg(test)]
-mod testutil;
+pub(crate) mod testutil;
 pub mod xform;
 
 /// `explicit_bzero(&x, sizeof(x))` for a context that is a plain value: overwrites it with its

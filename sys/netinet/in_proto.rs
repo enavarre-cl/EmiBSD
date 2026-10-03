@@ -103,7 +103,7 @@
 //!
 //! Upstream: sys/netinet/in_proto.c @ 3ce1f3f79392
 //!
-//! IP, ICMP, UDP, TCP, raw IP, IP-in-IP and IGMP, in the C's order. `ip_init` fills
+//! IP, ICMP, UDP, TCP, raw IP, IP-in-IP, IGMP, AH, ESP and IPComp, in the C's order. `ip_init` fills
 //! `ip_protox[]`, which maps an IP protocol number to its entry in `inetsw[]`; every number
 //! without an entry goes to the raw IP handler.
 //!
@@ -112,13 +112,14 @@
 //!
 //! ## Deviations
 //! - The protocols whose files are not ported keep their entries, with stand-ins in this
-//!   module named after the C functions: `tcp_*` (`netinet/tcp_*.c`), `ipip_*` (`netinet/ip_ipip.c`), `igmp_*` (`netinet/igmp.c`). Each
-//!   reports itself with `unported!`; an input stand-in drops the packet (`IPPROTO_DONE`), a
-//!   sysctl one fails with `ENOSYS`. Their `pr_ctloutput` and `pr_usrreqs` are the C's where
-//!   those are ported (`rip_ctloutput` and `rip_usrreqs` for the raw entries, `IPPROTO_IPV4`
-//!   and `IPPROTO_IGMP` included); without `tcp_usrreqs` a `SOCK_STREAM` socket is refused
-//!   with `EPROTONOSUPPORT` by `socreate`.
-//! - `NGIF` is 0 (`ipip_input` serves `IPPROTO_IPV4`); `INET6`, `MPLS`, `IPSEC`, `NGRE`,
+//!   module named after the C functions: `tcp_*` (`netinet/tcp_*.c`) and `igmp_*`
+//!   (`netinet/igmp.c`). Each reports itself with `unported!`; an input stand-in drops the
+//!   packet (`IPPROTO_DONE`), a sysctl one fails with `ENOSYS`. Their `pr_ctloutput` and
+//!   `pr_usrreqs` are the C's where those are ported (`rip_ctloutput` and `rip_usrreqs` for
+//!   the raw entries, `IPPROTO_IPV4`, `IPPROTO_IGMP`, AH, ESP and IPComp included); without
+//!   `tcp_usrreqs` a `SOCK_STREAM` socket is refused with `EPROTONOSUPPORT` by `socreate`.
+//! - `IPSEC` is configured (M9c): AH, ESP and IPComp come after IGMP, as in C.
+//! - `NGIF` is 0 (`ipip_input` serves `IPPROTO_IPV4`); `INET6`, `MPLS`, `NGRE`,
 //!   `NCARP`, `NPFSYNC`, `NPF` and `NETHERIP` are not configured: their entries are comments.
 //!   `SMALL_KERNEL` is not set, so the sysctl handlers are in the table.
 //! - `ip_protox[]` holds atomics (`ip_init` writes it once, every input reads it).
@@ -129,13 +130,18 @@ use core::sync::atomic::AtomicU8;
 
 use crate::net::if_var::Netstack;
 use crate::netinet::in_::{
-    IPPROTO_DONE, IPPROTO_ICMP, IPPROTO_IGMP, IPPROTO_IPV4, IPPROTO_MAX, IPPROTO_RAW, IPPROTO_TCP,
-    IPPROTO_UDP, SockaddrIn,
+    IPPROTO_AH, IPPROTO_DONE, IPPROTO_ESP, IPPROTO_ICMP, IPPROTO_IGMP, IPPROTO_IPCOMP,
+    IPPROTO_IPV4, IPPROTO_MAX, IPPROTO_RAW, IPPROTO_TCP, IPPROTO_UDP, SockaddrIn,
 };
 use crate::netinet::in_pcb::in_init;
 use crate::netinet::ip_icmp::{icmp_init, icmp_input, icmp_sysctl};
 use crate::netinet::ip_input::{ip_init, ip_slowtimo, ip_sysctl};
+use crate::netinet::ip_ipip::{ipip_init, ipip_input, ipip_sysctl};
 use crate::netinet::ip_output::ip_ctloutput;
+use crate::netinet::ipsec_input::{
+    ah_sysctl, ah4_ctlinput, ah46_input, esp_sysctl, esp4_ctlinput, esp46_input, ipcomp_sysctl,
+    ipcomp46_input,
+};
 use crate::netinet::raw_ip::{RIP_USRREQS, rip_ctloutput, rip_init, rip_input};
 use crate::netinet::udp_usrreq::{UDP_USRREQS, udp_ctlinput, udp_init, udp_input, udp_sysctl};
 use crate::sys::domain::Domain;
@@ -153,7 +159,7 @@ pub static IP_PROTOX: [AtomicU8; IPPROTO_MAX as usize] =
     [const { AtomicU8::new(0) }; IPPROTO_MAX as usize];
 
 /// `inetsw[]`: the internet protocols.
-pub static INETSW: [Protosw; 8] = [
+pub static INETSW: [Protosw; 11] = [
     Protosw {
         pr_init: Some(ip_init),
         pr_slowtimo: Some(ip_slowtimo),
@@ -236,7 +242,38 @@ pub static INETSW: [Protosw; 8] = [
         pr_sysctl: Some(igmp_sysctl),
         ..Protosw::new(&INETDOMAIN)
     },
-    // IPSEC: IPPROTO_AH, IPPROTO_ESP, IPPROTO_IPCOMP; not configured.
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_AH as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPSYSCTL,
+        pr_input: Some(ah46_input),
+        pr_ctlinput: Some(ah4_ctlinput),
+        pr_ctloutput: Some(rip_ctloutput),
+        pr_usrreqs: Some(&RIP_USRREQS),
+        pr_sysctl: Some(ah_sysctl),
+        ..Protosw::new(&INETDOMAIN)
+    },
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_ESP as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPSYSCTL,
+        pr_input: Some(esp46_input),
+        pr_ctlinput: Some(esp4_ctlinput),
+        pr_ctloutput: Some(rip_ctloutput),
+        pr_usrreqs: Some(&RIP_USRREQS),
+        pr_sysctl: Some(esp_sysctl),
+        ..Protosw::new(&INETDOMAIN)
+    },
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_IPCOMP as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPSYSCTL,
+        pr_input: Some(ipcomp46_input),
+        pr_ctloutput: Some(rip_ctloutput),
+        pr_usrreqs: Some(&RIP_USRREQS),
+        pr_sysctl: Some(ipcomp_sysctl),
+        ..Protosw::new(&INETDOMAIN)
+    },
     // NGRE > 0: IPPROTO_GRE; NCARP > 0: IPPROTO_CARP; NPFSYNC > 0: IPPROTO_PFSYNC;
     // NPF > 0: IPPROTO_DIVERT; NETHERIP > 0: IPPROTO_ETHERIP; none configured.
     Protosw {
@@ -310,34 +347,6 @@ fn tcp_sysctl(
     _newlen: usize,
 ) -> Result<(), Errno> {
     Err(unported!("tcp_sysctl (netinet/tcp_usrreq.c)"))
-}
-
-/// `ipip_input` (`netinet/ip_ipip.c`, not ported).
-fn ipip_input(
-    mp: &mut Option<&'static Mbuf>,
-    _offp: &mut i32,
-    _proto: i32,
-    _af: i32,
-    _ns: Option<&Netstack>,
-) -> i32 {
-    let _ = unported!("ipip_input (netinet/ip_ipip.c)");
-    unported_input(mp)
-}
-
-/// `ipip_sysctl` (`netinet/ip_ipip.c`, not ported).
-fn ipip_sysctl(
-    _name: &[i32],
-    _oldp: usize,
-    _oldlenp: &mut usize,
-    _newp: usize,
-    _newlen: usize,
-) -> Result<(), Errno> {
-    Err(unported!("ipip_sysctl (netinet/ip_ipip.c)"))
-}
-
-/// `ipip_init` (`netinet/ip_ipip.c`, not ported).
-fn ipip_init() {
-    let _ = unported!("ipip_init (netinet/ip_ipip.c)");
 }
 
 /// `igmp_input` (`netinet/igmp.c`, not ported).

@@ -2512,12 +2512,12 @@ notes = "replaced-by-ioconf.rs: config(8) is not ported; what it would generate 
 [[file]]
 c = "sys/arch/amd64/conf/GENERIC"
 status = "skipped"
-notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root, cpu0 at mainbus? and pci* at mainbus0 (M7b), the GENERIC lines whose drivers exist; the rest join as their drivers are ported"
+notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root, cpu0 at mainbus? and pci* at mainbus0 (M7b), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it)"
 
 [[file]]
 c = "sys/arch/arm64/conf/GENERIC"
 status = "skipped"
-notes = "replaced-by-ioconf.rs: sys/arch/arm64/conf/ioconf.rs lists mainbus0 at root, ampintc* at fdt? early 1 and agtimer* at fdt? (the fdt attribute from files.arm64, mainbus its only parent until simplebus), the GENERIC lines whose drivers exist; the rest join as their drivers are ported"
+notes = "replaced-by-ioconf.rs: sys/arch/arm64/conf/ioconf.rs lists mainbus0 at root, ampintc* at fdt? early 1 and agtimer* at fdt? (the fdt attribute from files.arm64, mainbus its only parent until simplebus), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it)"
 # M7b: socket, net and netinet headers (types and constants for the network stack)
 # ---------------------------------------------------------------------------
 
@@ -2768,7 +2768,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d76bdcce649a48bf5e91b43d09fb2e0ea5256f3d"
 deps = ["sys/sys/domain.h", "sys/sys/protosw.h", "sys/netinet/in_proto.c", "sys/kern/uipc_proto.c", "sys/net/rtsock.c", "sys/kern/kern_timeout.c"]
-notes = "M7b: domains[] (a slice: inetdomain, unixdomain, routedomain; INET6, MPLS, pfkey, BLUETOOTH not configured), domaininit (runs in main; max_linkhdr/max_hdr, the pffast/pfslow timeouts as statics), pffinddomain, pffindtype, pffindproto, net_sysctl (PF_UNIX is uipc_sysctl; CTL_NET in kern_sysctl), net_link_sysctl, pfctlinput (unsafe: raw sockaddr), pfslowtimo, pffasttimo; host test"
+notes = "M7b: domains[] (a slice: pfkeydomain (M9c), inetdomain, unixdomain, routedomain; INET6, MPLS, BLUETOOTH not configured), domaininit (runs in main; max_linkhdr/max_hdr, the pffast/pfslow timeouts as statics), pffinddomain, pffindtype, pffindproto, net_sysctl (PF_UNIX is uipc_sysctl; CTL_NET in kern_sysctl), net_link_sysctl, pfctlinput (unsafe: raw sockaddr), pfslowtimo, pffasttimo; host test"
 
 [[file]]
 c = "sys/sys/socketvar.h"
@@ -2861,6 +2861,60 @@ deps = ["sys/net/art.h", "sys/kern/subr_pool.c", "sys/kern/kern_task.c"]
 notes = "M7b: ISC. The whole file: art_boot, art_init, art_alloc, art_bindex, art_match, art_node_check, art_lookup, art_is_empty, art_insert, art_delete, art_table_ref/rele/free, art_iter_open/next/close/descend, art_walk via art_foreach, art_table_get/put, art_allot (recursive, as the C's loop over the subtables), art_get, art_node_init, art_put, art_gc with its task and list; SMR is not ported (SMR_PTR_* plain accesses, smr_barrier empty, smr_call at once: one CPU, no preemption); host tests (bindex, longest prefix match, delete, iteration)"
 
 [[file]]
+c = "sys/net/if_enc.h"
+rust = "sys/net/if_enc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "26fea18354d4d765e354f679cc569ffafbeb24e4"
+deps = ["sys/net/if_var.h"]
+notes = "M9c: ISC (Reyk Floeter). Module with if_enc.c. ENCMTU, ENC_HDRLEN, struct enchdr (repr(C)), struct enc_softc (repr(C), sc_if first)"
+
+[[file]]
+c = "sys/net/if_enc.c"
+rust = "sys/net/if_enc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e835a8b31e36ec59a7a6d2e439c010ff0dd8ffea"
+deps = ["sys/net/if_enc.h", "sys/net/if.c"]
+notes = "M9c: ISC (Reyk Floeter). The whole file: enc_ifs/enc_allifs (in a StaticCell under the net lock), enc_cloner, encattach (enc0 from pdevinit in both ioconf.rs), enc_clone_create, enc_clone_destroy, enc_output (unsafe: if_output's contract; frees the packet), enc_ioctl, enc_getif, enc_getifa, enc_setif, enc_unsetif; NBPFILTER not configured (bpfattach a comment)"
+
+[[file]]
+c = "sys/net/pfkeyv2.h"
+rust = "sys/net/pfkeyv2.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0e3f9c5b0b3729c6f591dbf5311430d5621da666"
+deps = ["sys/sys/types.h"]
+notes = "M9c: NRL licence notice (advertising clause, accepted as BSD-4). Module with pfkeyv2.c. Every SADB_* constant, struct sadb_msg and every extension (repr(C), size asserts), SADB_X_GETSPROTO, PF_KEY_V2, the PFKEYV2_* lifetime and key kinds; the prototypes are the three pfkeyv2 files'"
+
+[[file]]
+c = "sys/net/pfkeyv2.c"
+rust = "sys/net/pfkeyv2.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b680611f6215a2a7563aded95b219f34f5252ecf"
+deps = ["sys/net/pfkeyv2.h", "sys/net/pfkeyv2_parsemessage.c", "sys/net/pfkeyv2_convert.c", "sys/netinet/ip_ipsp.c", "sys/netinet/ip_spd.c", "sys/net/radix.c", "sys/kern/uipc_socket.c", "sys/kern/uipc_socket2.c", "sys/kern/uipc_domain.c"]
+notes = "M9c: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: ealgs/aalgs/calgs, pkpcb_pool, pfkeyv2_mtx, pkptable, pfkeyv2_seq, nregistered/npromisc (atomics), pfkeysw/pfkeydomain (first in domains[]), pfkeyv2_usrreqs, pfkey_init, pfkeyv2_attach/detach/disconnect/shutdown/send/sockaddr/peeraddr, pfkeyv2_output, pfkey_sendup, pfkeyv2_sendmessage (unsafe: header pointers), pfkeyv2_policy, pfkeyv2_get, pfkeyv2_dump_walker, pfkeyv2_sa_flush, pfkeyv2_get_proto_alg, pfkeyv2_newsa, pfkeyv2_dosend (messages are Vec<u8> buffers, the headers an array of raw pointers into them), pfkeyv2_flow (ADDFLOW/DELFLOW split out of dosend), pfkeyv2_acquire, pfkeyv2_expire, pfkeyv2_sysctl_walker, pfkeyv2_dump_policy, pfkeyv2_sysctl_policydumper, pfkeyv2_policy_flush, pfkeyv2_sysctl (net.key SADB_DUMP and SPD_DUMP); NBPFILTER, NPF (pf tags), NPFSYNC, INET6 not configured (comments at the sites); host tests (parse and convert of SADB_ADD and SADB_X_ADDFLOW; a PF_KEY socket registering, adding an SA and a flow that ipsp_spd_lookup then finds, SADB_GET, the net.key dumps, SADB_DELETE, SADB_FLUSH)"
+
+[[file]]
+c = "sys/net/pfkeyv2_parsemessage.c"
+rust = "sys/net/pfkeyv2_parsemessage.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "897273f849c2c4b7c0c134e7f5f6c0764db88bd2"
+deps = ["sys/net/pfkeyv2.h", "sys/netinet/ip_ipsp.h"]
+notes = "M9c: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: the BITMAP_* masks, sadb_exts_allowed_in/required_in/allowed_out/required_out, pfkeyv2_parsemessage (a mutable byte slice instead of a pointer and length; the headers array of raw pointers into it; unaligned reads); the per-extension checks are a helper"
+
+[[file]]
+c = "sys/net/pfkeyv2_convert.c"
+rust = "sys/net/pfkeyv2_convert.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fe97530842a7a949fa32baf149b30dddf74db7be"
+deps = ["sys/net/pfkeyv2.h", "sys/netinet/ip_ipsp.c", "sys/net/if_enc.c"]
+notes = "M9c: Keromytis/NRL licence notices (BSD-4 accepted). The whole file: import_sa, export_sa, import_lifetime, export_lifetime, import_flow, export_encap, export_flow, import_address, export_address, import_identity, import_identities, export_identity, export_identities, import_key, export_key, import_udpencap, export_udpencap, export_replay, export_mtu, import_rdomain, export_rdomain, import_iface, export_iface, export_satype, export_counter; extension pointers stay raw (unsafe fns, unaligned access), keys borrowed into IpsecInit; host tests in pfkeyv2/tests.rs"
+
+[[file]]
 c = "sys/net/rtable.h"
 rust = "sys/net/rtable.rs"
 status = "ported"
@@ -2885,7 +2939,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ec293b5e085728f36d7d7152169e0e9e98767b90"
 deps = ["sys/net/route.c", "sys/sys/protosw.h", "sys/sys/domain.h", "sys/sys/socketvar.h", "sys/kern/uipc_socket.c", "sys/kern/uipc_socket2.c"]
-notes = "M7b, M9a: the whole file: struct rtpcb (Cells under solock, rop_socket &'static Socket)/rtptable (rtp_count atomic), route_src, route_prinit, route_attach/detach/disconnect/shutdown/rcvd/send/sockaddr/peeraddr as route_usrreqs, route_ctloutput (ROUTE_MSGFILTER, ROUTE_TABLEFILTER, ROUTE_PRIOFILTER, ROUTE_FLAGFILTER), rtm_senddesync_timer/rtm_senddesync, route_input (the filters read the header with m_copydata), rtm_sendup, rtm_report, route_output (the message in a malloc(M_RTABLE) RtmBuf, a local copy of its rt_msghdr written back), rtm_output (RTM_ADD/DELETE/CHANGE/GET; the 'change:' label is rtm_output_change), ifa_ifwithroute, rtm_getifa, route_cleargateway, route_arp_conflict, rtm_setmetrics/rtm_getmetrics, rtm_xaddrs (keeps the C's early break after a string address), rtm_msg1, rtm_msg2 (Option<&mut [u8]> for caddr_t cp), rtm_send, rtm_miss, rtm_ifchg, rtm_addr, rtm_ifannounce, rtm_80211info, rtm_proposal, sysctl_dumpentry, sysctl_rtable_rtstat, sysctl_iflist, sysctl_ifnames, sysctl_source, sysctl_rtable (NET_RT_DUMP/FLAGS/IFLIST/IFNAMES/STATS/TABLE/SOURCE; struct walkarg with a user address and Option<NonNull> w_tmem), rtm_validate_proposal (Result), rt_setsource, routesw/routedomain; unsafe fns where raw sockaddrs of a struct rt_addrinfo are read; BFD, MPLS, IPSEC, INET6 not configured (comments at the sites; sizeof(struct sockaddr_in6) a local constant); SMALL_KERNEL not defined; the knote of sorwakeup is the socket layer's (kern_event.c not ported); host tests (rtm_msg2 layout, rtm_xaddrs checks, the sysctl dump/iflist/ifnames/table/stats layouts, a routing socket answering RTM_GET/ADD/DELETE and its options); ramdisk: route -n show and route -n get work on both archs (just smoke-route; ifconfig -a waits for AF_INET datagram sockets)"
+notes = "M7b, M9a: the whole file: struct rtpcb (Cells under solock, rop_socket &'static Socket)/rtptable (rtp_count atomic), route_src, route_prinit, route_attach/detach/disconnect/shutdown/rcvd/send/sockaddr/peeraddr as route_usrreqs, route_ctloutput (ROUTE_MSGFILTER, ROUTE_TABLEFILTER, ROUTE_PRIOFILTER, ROUTE_FLAGFILTER), rtm_senddesync_timer/rtm_senddesync, route_input (the filters read the header with m_copydata), rtm_sendup, rtm_report, route_output (the message in a malloc(M_RTABLE) RtmBuf, a local copy of its rt_msghdr written back), rtm_output (RTM_ADD/DELETE/CHANGE/GET; the 'change:' label is rtm_output_change), ifa_ifwithroute, rtm_getifa, route_cleargateway, route_arp_conflict, rtm_setmetrics/rtm_getmetrics, rtm_xaddrs (keeps the C's early break after a string address), rtm_msg1, rtm_msg2 (Option<&mut [u8]> for caddr_t cp), rtm_send, rtm_miss, rtm_ifchg, rtm_addr, rtm_ifannounce, rtm_80211info, rtm_proposal, sysctl_dumpentry, sysctl_rtable_rtstat, sysctl_iflist, sysctl_ifnames, sysctl_source, sysctl_rtable (NET_RT_DUMP/FLAGS/IFLIST/IFNAMES/STATS/TABLE/SOURCE; struct walkarg with a user address and Option<NonNull> w_tmem), rtm_validate_proposal (Result), rt_setsource, routesw/routedomain; unsafe fns where raw sockaddrs of a struct rt_addrinfo are read; IPSEC (M9c: a PF_KEY destination gets enc0 through enc_getifa in rtm_getifa); BFD, MPLS, INET6 not configured (comments at the sites; sizeof(struct sockaddr_in6) a local constant); SMALL_KERNEL not defined; the knote of sorwakeup is the socket layer's (kern_event.c not ported); host tests (rtm_msg2 layout, rtm_xaddrs checks, the sysctl dump/iflist/ifnames/table/stats layouts, a routing socket answering RTM_GET/ADD/DELETE and its options); ramdisk: route -n show and route -n get work on both archs (just smoke-route; ifconfig -a waits for AF_INET datagram sockets)"
 
 # M9b: WireGuard (wg(4))
 
@@ -2950,7 +3004,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d8b3695eafc44c4faaa208c08d27ebd2653cfefc"
 deps = ["sys/sys/protosw.h", "sys/sys/domain.h", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c"]
-notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; M9a: udp_usrreqs/ip_ctloutput on udp, rip_usrreqs/rip_ctloutput on the raw, icmp, ipv4-in-ipv4, igmp and wildcard entries; tcp has neither until tcp_usrreq.c), inetdomain (dom_init is in_pcb.c's in_init since M9a), ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (tcp_*, ipip_*, igmp_*) and free the packet; INET6, IPSEC, GRE, MROUTING, CARP, PFSYNC, ETHERIP, PIPEX, divert, MPLS not configured"
+notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; M9a: udp_usrreqs/ip_ctloutput on udp, rip_usrreqs/rip_ctloutput on the raw, icmp, ipv4-in-ipv4, igmp and wildcard entries; tcp has neither until tcp_usrreq.c), inetdomain (dom_init is in_pcb.c's in_init since M9a), ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (tcp_*, igmp_*) and free the packet; INET6, GRE, MROUTING, CARP, PFSYNC, ETHERIP, PIPEX, divert, MPLS not configured; M9c: IPSEC configured: ah, esp and ipcomp entries after igmp (with rip_ctloutput/rip_usrreqs), ipv4-in-ipv4 through ip_ipip.c"
 
 [[file]]
 c = "sys/netinet/in_pcb.h"
@@ -2959,7 +3013,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c8b971f23d9348a03258ddcda0c897d7cc45ef09"
 deps = ["sys/netinet/in.h", "sys/netinet/ip.h", "sys/net/route.h", "sys/crypto/siphash.h"]
-notes = "M9a: module with in_pcb.c. struct inpcb (Inpcb, a pool item as &'static, Cells; the INET6 unions keep their IPv4 member only; inp_seclevel, inp_icmp6filt left out: IPSEC, INET6 not configured; M9d: inp_pf_sk (NPF) is a member), struct inpcb_iterator (InpcbIterator: a whole Inpcb without table or socket), struct inpcbtable (Sync under inpt_mtx; hash tables as hashinit slices), struct baddynamicports (atomic words), every INP_*/IN6P_*/INPLOOKUP_*/IN_PCBLOCK_* constant, DP_MAPBITS/DP_MAPSIZE and DP_SET/CLR/ISSET as functions, DEFBADDYNAMICPORTS_*/DEFROOTONLYPORTS_* as slices without the terminating 0, sotoinpcb (checks the family), in_pcb_is_iterator; the prototypes are in_pcb.c's functions; in6_* not compiled (INET6)"
+notes = "M9a: module with in_pcb.c. struct inpcb (Inpcb, a pool item as &'static, Cells; the INET6 unions keep their IPv4 member only; inp_icmp6filt left out: INET6 not configured; M9c: inp_seclevel as a Cell<IpsecLevel>; M9d: inp_pf_sk (NPF) is a member), struct inpcb_iterator (InpcbIterator: a whole Inpcb without table or socket), struct inpcbtable (Sync under inpt_mtx; hash tables as hashinit slices), struct baddynamicports (atomic words), every INP_*/IN6P_*/INPLOOKUP_*/IN_PCBLOCK_* constant, DP_MAPBITS/DP_MAPSIZE and DP_SET/CLR/ISSET as functions, DEFBADDYNAMICPORTS_*/DEFROOTONLYPORTS_* as slices without the terminating 0, sotoinpcb (checks the family), in_pcb_is_iterator; the prototypes are in_pcb.c's functions; in6_* not compiled (INET6)"
 
 [[file]]
 c = "sys/netinet/in_pcb.c"
@@ -2968,7 +3022,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2ecf458e0811f396eb65e9dc250b1eeada5aa431"
 deps = ["sys/netinet/in_pcb.h", "sys/netinet/in.c", "sys/netinet/ip_output.c", "sys/net/route.c", "sys/net/rtable.c", "sys/kern/uipc_socket.c", "sys/crypto/siphash.c"]
-notes = "M9a: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: zeroin_addr, ipport_firstauto/lastauto/hifirstauto/hilastauto (atomics; the hi ones keep their lowercase C names beside in.h's constants), baddynamicports, rootonlyports, inpcb_pool, in_init, in_pcbhash/in_pcblhash (SipHash24), in_pcbinit (hashinit failure panics), in_baddynamic, in_rootonly, in_pcballoc, in_pcbbind_locked/in_pcbbind, in_pcbaddrisavail_lock/in_pcbaddrisavail (clear the port and sin_zero of a copy), in_pcbpickport, in_pcbconnect, in_pcbdisconnect, in_pcbdetach, in_pcbsolock/sounlock, in_pcbref/unref (the link KASSERTs are not made: queue.rs keeps links private), in_pcb_iterator (unsafe: the iterator sits in the queue)/abort, in_setsockaddr/setpeeraddr, in_sockaddr/peeraddr/flowid (pr_usrreqs), in_pcbnotifyall (notify takes Option<Errno>), in_losing, in_pcbrtchange, in_pcblookup_local_lock, in_pcbrtentry, in_pcbselsrc, in_pcbrehash, in_pcbhash_insert/lookup, in_pcbresize, in_pcblookup_lock/in_pcblookup, in_pcblookup_listen, in_pcbset_rtableid, in_pcbset_addr (sockaddr_in arguments), in_pcbunset_faddr/laddr; in_pcbnotifymiss printfs behind diagnostic; INET6, IPSEC not configured (comments at the sites); host tests (port bitmaps and defaults, bind/EADDRINUSE/SO_REUSEPORT/picked ports, lookups, resize, iterator, detach); M9d: NPF and NSTOEPLITZ configured: pf_remove_divert_state and pf_inp_unlink in in_pcbdisconnect and in_pcbdetach, the divert-to and translate-localhost keys in in_pcblookup_listen, the stoeplitz flowid in in_pcbconnect and in_pcbset_addr"
+notes = "M9a: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: zeroin_addr, ipport_firstauto/lastauto/hifirstauto/hilastauto (atomics; the hi ones keep their lowercase C names beside in.h's constants), baddynamicports, rootonlyports, inpcb_pool, in_init, in_pcbhash/in_pcblhash (SipHash24), in_pcbinit (hashinit failure panics), in_baddynamic, in_rootonly, in_pcballoc, in_pcbbind_locked/in_pcbbind, in_pcbaddrisavail_lock/in_pcbaddrisavail (clear the port and sin_zero of a copy), in_pcbpickport, in_pcbconnect, in_pcbdisconnect, in_pcbdetach, in_pcbsolock/sounlock, in_pcbref/unref (the link KASSERTs are not made: queue.rs keeps links private), in_pcb_iterator (unsafe: the iterator sits in the queue)/abort, in_setsockaddr/setpeeraddr, in_sockaddr/peeraddr/flowid (pr_usrreqs), in_pcbnotifyall (notify takes Option<Errno>), in_losing, in_pcbrtchange, in_pcblookup_local_lock, in_pcbrtentry, in_pcbselsrc, in_pcbrehash, in_pcbhash_insert/lookup, in_pcbresize, in_pcblookup_lock/in_pcblookup, in_pcblookup_listen, in_pcbset_rtableid, in_pcbset_addr (sockaddr_in arguments), in_pcbunset_faddr/laddr; in_pcbnotifymiss printfs behind diagnostic; INET6 not configured (comments at the sites); M9c: IPSEC: in_pcballoc sets the default inp_seclevel, in_baddynamic refuses udpencap_port; host tests (port bitmaps and defaults, bind/EADDRINUSE/SO_REUSEPORT/picked ports, lookups, resize, iterator, detach); M9d: NPF and NSTOEPLITZ configured: pf_remove_divert_state and pf_inp_unlink in in_pcbdisconnect and in_pcbdetach, the divert-to and translate-localhost keys in in_pcblookup_listen, the stoeplitz flowid in in_pcbconnect and in_pcbset_addr"
 
 [[file]]
 c = "sys/netinet/raw_ip.c"
@@ -2977,7 +3031,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "83c1c184af109db2f55e079bbb22b687974c507f"
 deps = ["sys/netinet/in_pcb.c", "sys/netinet/ip_output.c", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c", "sys/kern/uipc_socket2.c"]
-notes = "M9a: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: rawcbtable, RIPSNDQ/RIPRCVQ and rip_sendspace/rip_recvspace (constants), rip_usrreqs, rip_init, rip_input (the iterator walk; ips_noproto/ips_delivered as two atomic updates), rip_sbappend, rip_output (the destination a sockaddr_in written back with IP_HDRINCL), rip_chkhdr, rip_ctloutput, rip_attach, rip_detach, rip_bind, rip_connect, rip_disconnect, rip_shutdown, rip_send; the MRT_* options (<netinet/ip_mroute.h>, not ported) are defined here and answer EOPNOTSUPP (MROUTING not configured); INET6, IPSEC not configured; M9d: NPF configured (the divert-to address in rip_input, pf_mbuf_link_inpcb in rip_output) (comments at the sites); host tests (a raw ICMP socket pinging the gateway end to end, rip_input's filters, rip_attach's privilege)"
+notes = "M9a: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: rawcbtable, RIPSNDQ/RIPRCVQ and rip_sendspace/rip_recvspace (constants), rip_usrreqs, rip_init, rip_input (the iterator walk; ips_noproto/ips_delivered as two atomic updates), rip_sbappend, rip_output (the destination a sockaddr_in written back with IP_HDRINCL), rip_chkhdr, rip_ctloutput, rip_attach, rip_detach, rip_bind, rip_connect, rip_disconnect, rip_shutdown, rip_send; the MRT_* options (<netinet/ip_mroute.h>, not ported) are defined here and answer EOPNOTSUPP (MROUTING not configured); INET6 not configured; M9c: rip_output passes inp_seclevel to ip_output; M9d: NPF configured (the divert-to address in rip_input, pf_mbuf_link_inpcb in rip_output) (comments at the sites); host tests (a raw ICMP socket pinging the gateway end to end, rip_input's filters, rip_attach's privilege)"
 
 [[file]]
 c = "sys/netinet/udp.h"
@@ -3003,7 +3057,141 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c189a45a5e6beef498b948c151c93115f86647cd"
 deps = ["sys/netinet/udp_var.h", "sys/netinet/in_pcb.c", "sys/netinet/ip_output.c", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c", "sys/netinet/in4_cksum.c", "sys/kern/uipc_socket2.c", "sys/kern/uipc_mbuf2.c"]
-notes = "M9a: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: udpcksum/udp_sendspace/udp_recvspace (AtomicI32 for sysctl_bounded_arr), udp_usrreqs, udpctl_vars, udbtable, udpcounters (atomics), udp_init, udp_input (the UDP header read and its checksum written unaligned through its address in the mbuf; broadcast/multicast delivery through the iterator; port unreachable), udp_sbappend (inp_upcall gets a copy of the header), udp_notify, udp_ctlinput (unsafe: the returned headers through the raw argument), udp_output (IP_SENDSRCADDR control messages; the udpiphdr written over the prepended space keeping its uh_sum bytes), udp_attach, udp_detach, udp_bind, udp_connect, udp_disconnect, udp_shutdown, udp_send, udp_sysctl (port bitmaps through a stack buffer), udp_sysctl_udpstat; ip6_exthdr_get (netinet6/ip6_input.c) is a private helper; INET6, IPSEC (udpencap, SPD), PIPEX not configured; M9d: NPF and NSTOEPLITZ configured (pf_inp_lookup/pf_inp_link in udp_input, pf_mbuf_link_inpcb and the stoeplitz flowid in udp_output) (comments at the sites); host tests (datagrams in, bad checksum, port unreachable, datagram out with picked port and checksums, IP_TTL, connect/disconnect, udp_ctlinput)"
+notes = "M9a: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: udpcksum/udp_sendspace/udp_recvspace (AtomicI32 for sysctl_bounded_arr), udp_usrreqs, udpctl_vars, udbtable, udpcounters (atomics), udp_init, udp_input (the UDP header read and its checksum written unaligned through its address in the mbuf; broadcast/multicast delivery through the iterator; port unreachable), udp_sbappend (inp_upcall gets a copy of the header), udp_notify, udp_ctlinput (unsafe: the returned headers through the raw argument), udp_output (IP_SENDSRCADDR control messages; the udpiphdr written over the prepended space keeping its uh_sum bytes), udp_attach, udp_detach, udp_bind, udp_connect, udp_disconnect, udp_shutdown, udp_send, udp_sysctl (port bitmaps through a stack buffer), udp_sysctl_udpstat; ip6_exthdr_get (netinet6/ip6_input.c) is a private helper; INET6, PIPEX not configured; M9c: IPSEC: UDP-encapsulated ESP to ipsec_common_input, the inbound SPD check (udps_nosec) and the flow id, IP_IPSECFLOWINFO control messages in and out, udpencap_ctlinput for PMTU, inp_seclevel to ip_output; M9d: NPF and NSTOEPLITZ configured (pf_inp_lookup/pf_inp_link in udp_input, pf_mbuf_link_inpcb and the stoeplitz flowid in udp_output) (comments at the sites); host tests (datagrams in, bad checksum, port unreachable, datagram out with picked port and checksums, IP_TTL, connect/disconnect, udp_ctlinput)"
+
+# M9c: IPsec
+
+[[file]]
+c = "sys/netinet/ip_ipsp.h"
+rust = "sys/netinet/ip_ipsp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "bb9f57db8308d75f208aabedc02c61d88d251e8c"
+deps = ["sys/netinet/in.h", "sys/sys/queue.h", "sys/sys/tree.h", "sys/sys/timeout.h", "sys/net/radix.h", "sys/crypto/cryptodev.h", "sys/crypto/xform.h"]
+notes = "M9c: Ioannidis/Keromytis licence notice. Module with ip_ipsp.c. union sockaddr_union (SockaddrUnion, a 28-byte image with sa/sin views), struct sockaddr_encap (SockaddrEncap, the 48-byte radix key with sen_* accessors at the C offsets), struct ipsecstat, enum ipsec_counters, struct ipsec_level, ipsec_id/ipsec_ids (trees through tree.rs adapters), ipsec_acquire, ipsec_policy (ipo_nodes first, the radix nodes), struct tdb (Cells documented with their lock, counters as atomics in the TDB, the key buffers lent through unsafe accessors), tdb_ident, tdb_crypto, ipsecinit (IpsecInit with key slices), xformsw (fn pointers with Rust signatures), every constant; DPRINTF is ipsec_dprintf!, active with feature encdebug"
+
+[[file]]
+c = "sys/netinet/ip_ipsp.c"
+rust = "sys/netinet/ip_ipsp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ed482d55324c9aee393f4098e5cf975062c02d0a"
+deps = ["sys/netinet/ip_ipsp.h", "sys/netinet/ip_spd.c", "sys/netinet/ip_esp.c", "sys/netinet/ip_ah.c", "sys/netinet/ip_ipip.c", "sys/netinet/ip_ipcomp.h", "sys/kern/kern_timeout.c", "sys/kern/subr_pool.c", "sys/crypto/siphash.c", "sys/net/pfkeyv2.c"]
+notes = "M9c: Ioannidis/Keromytis licence notice. The whole file: ipsec_in_use, ipsec_last_added, ipsec_ids_idle, tdb_sadb_mtx and the three hash tables (TdbTables in a StaticCell: Vecs grown by tdb_rehash with try_reserve), tdb_pool, ipsec_flows/ipsec_ids_tree/ipsec_ids_gc_list under ipsec_flows_mtx, xformsw[] (IP4, AH, ESP, IPCOMP; TCP_SIGNATURE's transform is in tcp_subr.c, not ported), ipsp_init, tdb_hash, reserve_spi, gettdb_dir, gettdbbysrcdst_dir, ipsp_aux_match, gettdbbydst, gettdbbysrc, tdb_hashstats, tdb_printit, tdb_walk (closure), the four lifetime timers and their tasks, tdb_addtimeouts, tdb_rehash, puttdb/puttdb_locked, tdb_unlink/_locked, tdb_cleanspd, tdb_unbundle, tdb_deltimeouts, tdb_ref/unref, tdb_delete, tdb_alloc, tdb_free, tdb_init, ipsp_address (inet_ntop is not ported: reported, a placeholder for AF_INET), ipsp_is_unspecified, ipsp_ids_match/insert/lookup/gc/free and the tree comparators; NSEC, NPF, NPFSYNC, INET6, TCP_SIGNATURE not configured (comments at the sites); host tests (lookups by spi/dst/src, rehash, reserve_spi, identities, sockaddr_encap offsets)"
+
+[[file]]
+c = "sys/netinet/ip_spd.c"
+rust = "sys/netinet/ip_spd.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f711cd50330cbad53c97664c57f70168739ebfb5"
+deps = ["sys/netinet/ip_ipsp.h", "sys/net/radix.c", "sys/net/pfkeyv2.c", "sys/kern/subr_pool.c", "sys/kern/kern_timeout.c"]
+notes = "M9c: Keromytis licence notice. The whole file: spd_tables (a Vec of radix heads in a StaticCell, under the net lock), ipsec_policy_pool, ipsec_acquire_pool, ipo_tdb_mtx, ipsec_acquire_mtx and head, spd_table_get, spd_table_add, spd_table_walk (closure, EAGAIN restart), ipsp_spd_lookup (Result<(), SpdError>: the C's -EINVAL is SpdError::Drop; tdbout an Option<&mut Option<&Tdb>>), ipsec_delete_policy, the acquire timer, lookup, reference and deletion functions, ipsp_pending_acquire, ipsp_acquire_sa, ipsp_spd_inp, ipsec_get_acquire; INET6 not configured (comments at the sites); tested through PF_KEY (sys/net/pfkeyv2/tests.rs)"
+
+[[file]]
+c = "sys/netinet/ipsec_input.c"
+rust = "sys/netinet/ipsec_input.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d067d1460ea472bfb4c4a5224d224b7c17cde204"
+deps = ["sys/netinet/ip_ipsp.c", "sys/netinet/ip_spd.c", "sys/netinet/ip_esp.c", "sys/netinet/ip_ah.c", "sys/netinet/ip_ipip.c", "sys/netinet/ip_ecn.c", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c", "sys/netinet/raw_ip.c", "sys/netinet/udp.h", "sys/net/if_enc.c", "sys/kern/uipc_mbuf2.c", "sys/lib/libkern/strncasecmp.c"]
+notes = "M9c: Ioannidis/Keromytis licence notice. The whole file: encdebug and the ipsec_* sysctl variables (AtomicI32; esp_enable and ah_enable 1, ipcomp_enable 0 as in C), ipsecctl_vars/espctl_vars/ahctl_vars/ipcompctl_vars, espcounters/ahcounters/ipcompcounters/ipseccounters (atomic arrays), ipsec_def_enc/auth/comp, ipsec_init, ipsec_common_input, ipsec_common_input_cb (the IPSEC_ISTAT macro a local helper), ipsec_sysctl, ipsec_sysctl_algorithm, esp/ah/ipcomp_sysctl with their stats, ah46_input, ah4_ctlinput, esp46_input, ipcomp46_input, ipsec_set_mtu, ipsec_common_ctlinput, udpencap_ctlinput, esp4_ctlinput, ipsec_protoff, ipsec_forward_check, ipsec_local_check (Result<(), SpdError>); disabled protocols go to raw_ip.c's rip_input; NBPFILTER, NSEC, NPF, INET6 not configured (comments at the sites)"
+
+[[file]]
+c = "sys/netinet/ipsec_output.c"
+rust = "sys/netinet/ipsec_output.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0384fbcf7e9d81118e37d17f29bc7b220164f3f5"
+deps = ["sys/netinet/ip_ipsp.c", "sys/netinet/ip_ipip.c", "sys/netinet/ip_output.c", "sys/netinet/ip_ecn.c", "sys/netinet/udp.h"]
+notes = "M9c: Keromytis licence notice. The whole file: udpencap_enable/udpencap_port (AtomicI32), ipsp_process_packet (tunnel encapsulation through ipip_output, DF handling, the transform's xf_output), ipsp_process_done (UDP encapsulation as a Udphdr written unaligned, the IPSEC_OUT_DONE tag, the next SA of a bundle, ip_output with IP_RAWOUTPUT), ipsec_hdrsz (isize), ipsec_adjust_mtu; INET6 (ip6_output) and NPF not configured (comments at the sites); host tests through ip_esp"
+
+[[file]]
+c = "sys/netinet/ip_esp.h"
+rust = "sys/netinet/ip_esp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5248576c1e739fe559692f17d6c69a218b5c6889"
+deps = ["sys/netinet/ip_ipsp.h"]
+notes = "M9c: Ioannidis/Keromytis licence notice. Module with ip_esp.c. struct espstat, ESPCTL_*, enum espstat_counters as EspstatCounters, espstat_inc/espstat_add over espcounters (ipsec_input.rs)"
+
+[[file]]
+c = "sys/netinet/ip_esp.c"
+rust = "sys/netinet/ip_esp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "44a50bbb740962d49fbf02d5ad363178a0d64f3f"
+deps = ["sys/netinet/ip_esp.h", "sys/netinet/ip_ipsp.c", "sys/netinet/ipsec_input.c", "sys/netinet/ipsec_output.c", "sys/crypto/crypto.c", "sys/crypto/cryptosoft.c", "sys/crypto/xform.c", "sys/kern/uipc_mbuf.c"]
+notes = "M9c: Ioannidis/Keromytis licence notice. The whole file: esp_attach, esp_init (every C cipher and MAC, AES-GCM/GMAC and ChaCha20-Poly1305 with their nonce salt), esp_zeroize, esp_input, esp_output, checkreplaywindow (commit flag as bool); the synchronous crypto_invoke of crypto.c replaces the C's dispatch and callback with the same results; host tests (replay window; ESP round trip through the crypto framework with AES-CBC+HMAC-SHA2-256 and AES-GCM in transport and tunnel mode, replay and tamper drops, ipsec_hdrsz)"
+
+[[file]]
+c = "sys/netinet/ip_ah.h"
+rust = "sys/netinet/ip_ah.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "32a8d91d6d4756d184e1875e22ba7ffd22f9dd4b"
+deps = ["sys/netinet/ip_ipsp.h"]
+notes = "M9c: Ioannidis/Keromytis licence notice. Module with ip_ah.c. struct ahstat, struct ah (repr(C)), AH_FLENGTH, AHCTL_*, enum ahstat_counters as AhstatCounters, ahstat_inc/ahstat_add over ahcounters (ipsec_input.rs)"
+
+[[file]]
+c = "sys/netinet/ip_ah.c"
+rust = "sys/netinet/ip_ah.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "09bad465dbd573ad9a69f41df3a87b071956ef43"
+deps = ["sys/netinet/ip_ah.h", "sys/netinet/ip_ipsp.c", "sys/netinet/ipsec_input.c", "sys/netinet/ipsec_output.c", "sys/crypto/crypto.c", "sys/crypto/xform.c"]
+notes = "M9c: Ioannidis/Keromytis licence notice. The whole file: ipseczeroes, ah_attach, ah_init, ah_zeroize, ah_massage_headers (IPv4 mutable fields and options; the INET6 extension header walk is not configured, a comment), ah_input, ah_output; the synchronous crypto_invoke replaces the dispatch and callback"
+
+[[file]]
+c = "sys/netinet/ip_ipip.h"
+rust = "sys/netinet/ip_ipip.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "dc9aa6d1150d5bae267bb28c3f41a12ba985482f"
+deps = ["sys/netinet/ip_var.h"]
+notes = "M9c: Ioannidis/Keromytis licence notice. Module with ip_ipip.c. struct ipipstat, IPIPCTL_*, enum ipipstat_counters as IpipstatCounters"
+
+[[file]]
+c = "sys/netinet/ip_ipip.c"
+rust = "sys/netinet/ip_ipip.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f09ccc277c00298bb1b5ba93c33db79796c3fec2"
+deps = ["sys/netinet/ip_ipip.h", "sys/netinet/ip_ipsp.h", "sys/netinet/ip_ecn.c", "sys/netinet/ip_input.c", "sys/net/if.c"]
+notes = "M9c: Ioannidis/Keromytis licence notice. The whole file: ipip_allow, ipipcounters, ipip_init, ipip_input (replaces in_proto.rs's stand-ins), ipip_input_if, ipip_output (&mut Option<&Mbuf>), ipe4_attach/init/zeroize/input, ipip_sysctl and ipip_sysctl_ipipstat; NBPFILTER, NPF, INET6, MPLS not configured (comments at the sites)"
+
+[[file]]
+c = "sys/netinet/ip_ecn.h"
+rust = "sys/netinet/ip_ecn.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6f3d552468f6772dbe20bdba438ecd3ce335f702"
+notes = "M9c: BSD-3 (WIDE). Module with ip_ecn.c. ECN_ALLOWED, ECN_FORBIDDEN, ECN_NOCARE, ECN_ALLOWED_IPSEC"
+
+[[file]]
+c = "sys/netinet/ip_ecn.c"
+rust = "sys/netinet/ip_ecn.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5cbc0c103892babb427025cd16030f3b9795e01b"
+deps = ["sys/netinet/ip_ecn.h", "sys/netinet/ip.h"]
+notes = "M9c: BSD-3 (WIDE). The whole file: ip_ecn_ingress, ip_ecn_egress (bool), ip_tos_patch (&mut Ip, updates ip_sum incrementally); host tests"
+
+[[file]]
+c = "sys/netinet/ip_ipcomp.h"
+rust = "sys/netinet/ip_ipcomp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d05ff484642b0b86122fa3604428671692c58718"
+deps = ["sys/netinet/ip_ipsp.h"]
+notes = "M9c: BSD-2 (Jean-Jacques Bernard-Gundol). struct ipcompstat, struct ipcomp, IPCOMP_HLENGTH, IPCOMPCTL_*, enum ipcompstat_counters as IpcompCounters, ipcompstat_inc/ipcompstat_add over ipcompcounters (ipsec_input.rs)"
+
+[[file]]
+c = "sys/netinet/ip_ipcomp.c"
+rust = "sys/netinet/ip_ipcomp.rs"
+status = "todo"
+deps = ["sys/netinet/ip_ipcomp.h", "sys/crypto/xform_ipcomp.c"]
+notes = "reported, not started: IPComp needs deflate (crypto/xform_ipcomp.c, zlib's deflate_global); ipcomp_attach/init/zeroize/input/output are stand-ins in ip_ipcomp.rs that report themselves (ENOSYS), so an IPComp SA fails at tdb_init, and ipcomp_enable stays 0 as in C"
 
 [[file]]
 c = "sys/netinet/in_var.h"
@@ -3066,7 +3254,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "64c2b79a2b6dd2be2b8258ff6c00dc3d16d7a8d6"
 deps = ["sys/netinet/ip_var.h", "sys/netinet/in.c", "sys/netinet/in_proto.c", "sys/netinet/ip_icmp.c", "sys/netinet/ip_output.c", "sys/netinet/if_ether.c", "sys/net/route.c"]
-notes = "M7b: the sysctl variables (AtomicI32; M9a: the ipport_* entries are in_pcb.c's atomics), ipq/ipq_mutex, ipintrq, the ipqent/ipq pools, ipcounters, the ip_send queues and tasks, inetctlerrmap; ip_init (M9a: baddynamicports/rootonlyports filled from in_pcb.h's defaults; arpinit), ip_ours/ip_ours_enqueue, ipintr, ipv4_input, ipv4_check, ip_input_if, ip_fragcheck, ip_deliver, in_ouraddr, ip_reass, ip_freef, ip_slowtimo, ip_flush, ip_dooptions, save_rte, ip_srcroute, ip_stripoptions, ip_forward, ip_sysctl, ip_sysctl_ipstat, ip_send_dispatch/ip_sendraw_dispatch, ip_send, ip_send_raw, ip_savecontrol (M9a; the control chain built through the last message's m_next); IPSEC, carp, MROUTING, INET6, divert not configured (comments at the sites); host tests (header validation, ARP plus echo to the gateway, echo request answered, parameter problem); M9d: pf configured: pf_test(PF_IN) in ip_input_if, pf_ouraddr in in_ouraddr, the divert rdomain; divert (netinet/ip_divert.c) still not ported"
+notes = "M7b: the sysctl variables (AtomicI32; M9a: the ipport_* entries are in_pcb.c's atomics), ipq/ipq_mutex, ipintrq, the ipqent/ipq pools, ipcounters, the ip_send queues and tasks, inetctlerrmap; ip_init (M9a: baddynamicports/rootonlyports filled from in_pcb.h's defaults; arpinit), ip_ours/ip_ours_enqueue, ipintr, ipv4_input, ipv4_check, ip_input_if, ip_fragcheck, ip_deliver, in_ouraddr, ip_reass, ip_freef, ip_slowtimo, ip_flush, ip_dooptions, save_rte, ip_srcroute, ip_stripoptions, ip_forward, ip_sysctl, ip_sysctl_ipstat, ip_send_dispatch/ip_sendraw_dispatch, ip_send, ip_send_raw, ip_savecontrol (M9a; the control chain built through the last message's m_next); carp, MROUTING, INET6, divert not configured; M9c: IPSEC: ipsec_init in ip_init, ipsec_forward_check and ipsec_local_check, the IPCTL_IPSEC_* and IPCTL_ENCDEBUG sysctls through ipsec_sysctl (comments at the sites); host tests (header validation, ARP plus echo to the gateway, echo request answered, parameter problem); M9d: pf configured: pf_test(PF_IN) in ip_input_if, pf_ouraddr in in_ouraddr, the divert rdomain; divert (netinet/ip_divert.c) still not ported"
 
 [[file]]
 c = "sys/netinet/ip_output.c"
@@ -3075,7 +3263,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2fa2f3f0d8a827987ec4fc5a54de98cde753b817"
 deps = ["sys/netinet/ip_var.h", "sys/netinet/in.c", "sys/net/route.c", "sys/netinet/in_cksum.c"]
-notes = "M7b: ip_output (no seclevel parameter: IPSEC not configured), ip_fragment, ip_insertoptions, ip_optcopy (unsafe: raw headers), ip_freemoptions, ip_mloopback, in_hdr_cksum_out, in_cksum_phdr, in_delayed_cksum, in_proto_cksum_out (tcpstat_inc reported; uh_sum's offset and udpstat_inc from udp.h/udp_var.h since M9a), in_ifcap_cksum; M9a: the socket option half: ip_ctloutput (option values read and written unaligned; !IPSEC levels: EOPNOTSUPP on set, IPSEC_LEVEL_NONE on get), ip_pcbopts (the struct ipoption built in a local buffer large enough for what the C writes past ipopt_list before its length check), ip_multicast_if, ip_setmoptions (malloc(M_WAITOK) failure panics), ip_getmoptions; IPSEC, MROUTING not configured; host tests (fragmentation, EMSGSIZE, optcopy, insertoptions, pcbopts source route, getmoptions defaults); M9d: pf configured: pf_test(PF_OUT) with the reroute loop (PF_TAG_REROUTE) and orig_rtableid for the MTU; pf_test on enc0 (ip_output_ipsec_send) waits for IPSEC"
+notes = "M7b: ip_output (M9c: a seclevel parameter), ip_fragment, ip_insertoptions, ip_optcopy (unsafe: raw headers), ip_freemoptions, ip_mloopback, in_hdr_cksum_out, in_cksum_phdr, in_delayed_cksum, in_proto_cksum_out (tcpstat_inc reported; uh_sum's offset and udpstat_inc from udp.h/udp_var.h since M9a), in_ifcap_cksum; M9a: the socket option half: ip_ctloutput (option values read and written unaligned; M9c: the IPsec levels in inp_seclevel, below the defaults for root only), ip_pcbopts (the struct ipoption built in a local buffer large enough for what the C writes past ipopt_list before its length check), ip_multicast_if, ip_setmoptions (malloc(M_WAITOK) failure panics), ip_getmoptions; MROUTING not configured; M9c: IPSEC: ip_output_ipsec_lookup, ip_output_ipsec_pmtu_update, ip_output_ipsec_send (pf_test on the SA enc(4) interface; a TSO packet needs tcp_softtso_chop: reported, dropped), the IP_FORWARDING_IPSEC check, ipsec_adjust_mtu; host tests (fragmentation, EMSGSIZE, optcopy, insertoptions, pcbopts source route, getmoptions defaults); M9d: pf configured: pf_test(PF_OUT) with the reroute loop (PF_TAG_REROUTE) and orig_rtableid for the MTU; pf_test on enc0 (ip_output_ipsec_send) waits for IPSEC"
 
 [[file]]
 c = "sys/netinet/ip_icmp.c"

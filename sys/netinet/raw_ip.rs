@@ -93,9 +93,9 @@
 //!   atomic updates.
 //! - `rip_chkhdr` reads the options as a byte slice of the pulled-up header.
 //! - `rip_sendspace`/`rip_recvspace` (`u_long`, no sysctl) are constants of the same names.
-//! - `NPF` (pf(4)) is configured: the divert-to key and `pf_mbuf_link_inpcb`.
-//! - Not configured, each a comment at its site:
-//!   `INET6`, `IPSEC`.
+//! - `NPF` (pf(4)) is configured: the divert-to key and `pf_mbuf_link_inpcb`. So is `IPSEC`
+//!   (M9c): `rip_output` passes the socket's `inp_seclevel` to `ip_output`.
+//! - Not configured, a comment at its site: `INET6`.
 
 use core::mem::size_of;
 use core::slice;
@@ -428,6 +428,7 @@ pub fn rip_output(
         Some(&inp.inp_route),
         flags,
         inp.moptions(),
+        Some(&inp.inp_seclevel.get()),
         0,
     )
 }
@@ -687,7 +688,7 @@ pub fn rip_send(
                 Err(e) => break 'out Err(e),
             }
         }
-        // IPSEC: XXX Find an IPsec TDB; not configured.
+        // XXX Find an IPsec TDB
         // sosend always hands over a packet (a pkthdr mbuf, empty or not).
         let Some(m) = m else {
             break 'out Err(Errno::EINVAL);

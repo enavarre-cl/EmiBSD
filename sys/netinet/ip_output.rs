@@ -50,25 +50,25 @@
 //! Status: `ported` (M7b output path, M9a socket options).
 //!
 //! ## Deviations
-//! - `ip_output`'s `const struct ipsec_level *seclevel` is not a parameter: IPsec is not
-//!   configured and every caller passes NULL. Its `struct route *` and `struct ip_moptions *`
-//!   are `Option`s; the error is a `Result`. The packet (and `opt`) are `&'static Mbuf`s.
+//! - `ip_output`'s `struct route *`, `struct ip_moptions *` and `const struct ipsec_level
+//!   *seclevel` are `Option`s; the error is a `Result`. The packet (and `opt`) are
+//!   `&'static Mbuf`s.
+//! - IPsec (M9c): `ip_output_ipsec_lookup` returns the SA (`Ok(None)` for no IPsec) or the
+//!   SPD's verdict (`SpdError::Drop` is the C's `-EINVAL`, a silent drop);
+//!   `ip_output_ipsec_send` reports `tcp_softtso_chop` (`netinet/tcp_output.c`, not ported)
+//!   for a TSO packet and drops it, and `tcpstat_inc(tcps_outswtso)` is a comment.
 //! - The IP header is read and written as a copy (`ip_var.rs`'s `mtod_ip`/`mtod_ip_store`),
 //!   since mbuf data has no 4-byte alignment guarantee.
 //! - `ip_ctloutput`'s option values are read and written unaligned in the option mbuf;
 //!   `ip_pcbopts` builds the `struct ipoption` in a local buffer, large enough for what the
 //!   C may write past `ipopt_list` before its final length check, and copies it into the mbuf.
 //!   `ip_setmoptions`'s `malloc(M_WAITOK)` cannot fail in C: here its failure panics.
-//!   `IPSEC` is not configured: the security levels answer `EOPNOTSUPP` to a set and
-//!   `IPSEC_LEVEL_NONE` to a get, as the C's `#ifndef IPSEC` branches do.
 //! - `struct tcphdr` (`<netinet/tcp.h>`) is not ported: the offset of `th_sum` is a constant
 //!   here, and `tcpstat_inc(tcps_outswcsum)` is reported (`netinet/tcp_*.c`).
 //! - `NPF` (pf(4)) is configured: `pf_test` filters the packet before it is sent, and a
 //!   packet pf tagged `PF_TAG_REROUTE` reruns the route lookup (the C's `goto reroute` is a
-//!   labelled loop). The `pf_test` on `enc0` in `ip_output_ipsec_send` comes with `IPSEC`.
-//! - Not configured, each a comment at its site: `IPSEC` (`ip_output_ipsec_lookup`,
-//!   `ip_output_ipsec_pmtu_update`, `ip_output_ipsec_send`, `ipsec_adjust_mtu`) and
-//!   `MROUTING` (`ip_mforward`).
+//!   labelled loop). `ip_output_ipsec_send` runs `pf_test` on the SA's `enc(4)` interface.
+//! - Not configured, a comment at its site: `MROUTING` (`ip_mforward`).
 //! - `in_cksum_phdr`, `in_delayed_cksum` and `in_proto_cksum_out` write the checksum through
 //!   `m_copyback` or, when it lies in the first mbuf, an unaligned store; `in_ifcap_cksum`
 //!   answers `bool`.
@@ -81,17 +81,20 @@ use core::sync::atomic::Ordering;
 
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
 use crate::kern::kern_prot::suser;
+use crate::kern::kern_tc::gettime;
 use crate::kern::subr_prf::panic;
 use crate::kern::uipc_mbuf::{
     MAX_LINKHDR, m_adj, m_copyback, m_copym, m_dup_pkt, m_dup_pkthdr, m_freem, m_get, m_gethdr,
-    ml_enqueue, ml_init, ml_purge,
+    ml_dequeue, ml_enqueue, ml_init, ml_purge,
 };
+use crate::kern::uipc_mbuf2::{m_tag_first, m_tag_next};
 use crate::machine::cpu::curproc;
 use crate::net::if_::{
     IFCAP_CSUM_IPv4, IFCAP_CSUM_TCPv4, IFCAP_CSUM_UDPv4, IFCAP_TSOv4, IFF_BROADCAST, IFF_LOOPBACK,
     IFF_MULTICAST, IFF_SIMPLEX, if_get, if_input_local, if_output_ml, if_output_tso, if_put,
     ifa_ifwithaddr,
 };
+use crate::net::if_enc::enc_getif;
 use crate::net::if_var::Ifnet;
 use crate::net::pf::pf_test;
 use crate::net::pfvar::{PF_FWD, PF_OUT, PF_PASS};
@@ -108,8 +111,10 @@ use crate::netinet::in_::{
     IP_MULTICAST_LOOP, IP_MULTICAST_TTL, IP_OPTIONS, IP_PIPEX, IP_PORTRANGE, IP_PORTRANGE_DEFAULT,
     IP_PORTRANGE_HIGH, IP_PORTRANGE_LOW, IP_RECVDSTADDR, IP_RECVDSTPORT, IP_RECVIF, IP_RECVOPTS,
     IP_RECVRETOPTS, IP_RECVRTABLE, IP_RECVTTL, IP_RETOPTS, IP_TOS, IP_TTL, IPPROTO_ICMP,
-    IPPROTO_IP, IPPROTO_TCP, IPPROTO_UDP, IPSEC_LEVEL_NONE, InAddr, IpMreq, IpMreqn, SockaddrIn,
-    in_addmulti, in_delmulti, in_hasmulti, in_ifp2ia, in_multicast, satosin, sintosa,
+    IPPROTO_IP, IPPROTO_TCP, IPPROTO_UDP, IPSEC_AUTH_LEVEL_DEFAULT,
+    IPSEC_ESP_NETWORK_LEVEL_DEFAULT, IPSEC_ESP_TRANS_LEVEL_DEFAULT, IPSEC_IPCOMP_LEVEL_DEFAULT,
+    IPSEC_LEVEL_BYPASS, IPSEC_LEVEL_UNIQUE, InAddr, IpMreq, IpMreqn, SockaddrIn, in_addmulti,
+    in_delmulti, in_hasmulti, in_ifp2ia, in_multicast, satosin, sintosa,
 };
 use crate::netinet::in_cksum::in_cksum;
 use crate::netinet::in_pcb::{
@@ -124,20 +129,27 @@ use crate::netinet::ip::{
 };
 use crate::netinet::ip_icmp::{ICMP_CKSUM_OFFSET, icmp_mtudisc_clone};
 use crate::netinet::ip_id::ip_randomid;
-use crate::netinet::ip_input::IP_DEFTTL;
-use crate::netinet::ip_var::{
-    IP_ALLOWBROADCAST, IP_FORWARDING, IP_MTUDISC, IP_RAWOUTPUT, IpMoptions, Ipoption,
-    IpstatCounters, MAX_IPOPTLEN, ipstat_add, ipstat_inc, mtod_ip, mtod_ip_store,
+use crate::netinet::ip_input::{IP_DEFTTL, ip_mtudisc};
+use crate::netinet::ip_ipsp::{
+    IPSEC_IN_USE, IPSP_DF_INHERIT, IPSP_DIRECTION_OUT, IpsecCounters, IpsecLevel, Tdb, TdbCounters,
+    TdbIdent, ipsecstat_inc, ipsp_ids_free, ipsp_ids_lookup, tdb_unref, tdbstat_inc,
 };
+use crate::netinet::ip_spd::{SpdError, ipsp_spd_lookup};
+use crate::netinet::ip_var::{
+    IP_ALLOWBROADCAST, IP_FORWARDING, IP_FORWARDING_IPSEC, IP_MTUDISC, IP_RAWOUTPUT, IpMoptions,
+    Ipoption, IpstatCounters, MAX_IPOPTLEN, ipstat_add, ipstat_inc, mtod_ip, mtod_ip_store,
+};
+use crate::netinet::ipsec_output::{ipsec_adjust_mtu, ipsp_process_packet};
 use crate::netinet::udp::Udphdr;
 use crate::netinet::udp_var::{UdpstatCounters, udpstat_inc};
 use crate::sys::endian::{htonl, htons, ntohl, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_IPMOPTS, M_NOWAIT, M_WAITOK, M_ZERO};
 use crate::sys::mbuf::{
-    M_BCAST, M_DONTWAIT, M_EXT, M_ICMP_CSUM_OUT, M_IPV4_CSUM_OUT, M_MCAST, M_TCP_CSUM_OUT,
-    M_TCP_TSO, M_UDP_CSUM_OUT, MT_HEADER, MT_SOOPTS, Mbuf, MbufList, PF_TAG_GENERATED,
-    PF_TAG_REROUTE, m_move_hdr, ml_len, mtod,
+    M_BCAST, M_DONTWAIT, M_EXT, M_ICMP_CSUM_OUT, M_IPV4_CSUM_OUT, M_IPV6_DF_OUT, M_MCAST,
+    M_TCP_CSUM_OUT, M_TCP_TSO, M_UDP_CSUM_OUT, MT_HEADER, MT_SOOPTS, Mbuf, MbufList,
+    PACKET_TAG_IPSEC_IN_DONE, PACKET_TAG_IPSEC_OUT_DONE, PF_TAG_GENERATED, PF_TAG_REROUTE,
+    m_move_hdr, ml_len, mtod,
 };
 use crate::sys::protosw::{PRCO_GETOPT, PRCO_SETOPT};
 use crate::sys::socket::{AF_INET, SO_RTABLE};
@@ -159,10 +171,12 @@ pub fn ip_output(
     ro: Option<&Route>,
     flags: i32,
     imo: Option<&IpMoptions>,
-    _ipsecflowinfo: u32,
+    seclevel: Option<&IpsecLevel>,
+    ipsecflowinfo: u32,
 ) -> Result<(), Errno> {
     let mut m = m;
     let mut ifp: Option<&'static Ifnet> = None;
+    let mut tdb: Option<&'static Tdb> = None;
     let ml = MbufList::new();
     let mut hlen = size_of::<Ip>() as i32;
     let iproute = Route::new();
@@ -191,7 +205,6 @@ pub fn ip_output(
         hlen = i32::from(ip.ip_hl()) << 2;
     }
     mtod_ip_store(m, &ip);
-    let _ = hlen; // read by the IPsec lookup, which is not configured
 
     let mut ro = ro.unwrap_or(&iproute);
     let error: Result<(), Errno> = 'done: {
@@ -278,8 +291,19 @@ pub fn ip_output(
                     }
                 }
 
-                // IPSEC: ip_output_ipsec_lookup when ipsec_in_use or seclevel; not configured,
-                // so there is never a tdb below.
+                if IPSEC_IN_USE.load(Ordering::Relaxed) != 0 || seclevel.is_some() {
+                    // Do we have any pending SAs to apply ?
+                    match ip_output_ipsec_lookup(m, hlen, seclevel, ipsecflowinfo) {
+                        // Should silently drop packet
+                        Err(SpdError::Drop) => break 'bad Ok(()),
+                        Err(SpdError::Errno(e)) => break 'bad Err(e),
+                        Ok(t) => tdb = t,
+                    }
+                    if tdb.is_some() {
+                        // If it needs TCP/UDP hardware-checksumming, do the computation now.
+                        in_proto_cksum_out(m, None);
+                    }
+                }
 
                 if in_multicast(ip.ip_dst.s_addr) || ip.ip_dst.s_addr == INADDR_BROADCAST {
                     m.m_flags().set(
@@ -311,9 +335,10 @@ pub fn ip_output(
 
                     // Confirm that the outgoing interface supports multicast, but only if the
                     // packet actually is going out on that interface (i.e., no IPsec is applied).
-                    if (m.m_flags().get() & M_MCAST != 0 && i.if_flags.get() & IFF_MULTICAST == 0)
+                    if ((m.m_flags().get() & M_MCAST != 0 && i.if_flags.get() & IFF_MULTICAST == 0)
                         || (m.m_flags().get() & M_BCAST != 0
-                            && i.if_flags.get() & IFF_BROADCAST == 0)
+                            && i.if_flags.get() & IFF_BROADCAST == 0))
+                        && tdb.is_none()
                     {
                         ipstat_inc(IpstatCounters::IpsNoroute);
                         break 'bad Err(Errno::ENETUNREACH);
@@ -356,11 +381,12 @@ pub fn ip_output(
                 // the packet is going in an IPsec tunnel, skip this check.
                 // SAFETY: `dst` is the route's destination or gateway `sockaddr_in`.
                 let dst_addr = unsafe { (*dst).sin_addr.s_addr };
-                if dst_addr == INADDR_BROADCAST
-                    || ro
-                        .ro_rt
-                        .get()
-                        .is_some_and(|rt| rt.rt_flags.get() & RTF_BROADCAST != 0)
+                if tdb.is_none()
+                    && (dst_addr == INADDR_BROADCAST
+                        || ro
+                            .ro_rt
+                            .get()
+                            .is_some_and(|rt| rt.rt_flags.get() & RTF_BROADCAST != 0))
                 {
                     if i.if_flags.get() & IFF_BROADCAST == 0 {
                         break 'bad Err(Errno::EADDRNOTAVAIL);
@@ -390,7 +416,17 @@ pub fn ip_output(
                     mtod_ip_store(m, &ip);
                 }
 
-                // IPSEC: ip_output_ipsec_send when a tdb applies; not configured.
+                // Check if the packet needs encapsulation.
+                if let Some(t) = tdb {
+                    // Callee frees mbuf
+                    break 'done ip_output_ipsec_send(
+                        t,
+                        m,
+                        Some(ro),
+                        orig_rtableid,
+                        flags & IP_FORWARDING != 0,
+                    );
+                }
 
                 // Packet filter.
                 let mut mp = Some(m);
@@ -410,7 +446,7 @@ pub fn ip_output(
                 m = mm;
                 ip = mtod_ip(m);
                 hlen = i32::from(ip.ip_hl()) << 2;
-                let _ = hlen; // read by the IPsec code, which is not configured
+                let _ = hlen; // the C recomputes it here; nothing reads it below
                 let pf = &m.m_pkthdr().pf;
                 if pf.flags.get() & (PF_TAG_REROUTE | PF_TAG_GENERATED)
                     == (PF_TAG_REROUTE | PF_TAG_GENERATED)
@@ -432,7 +468,12 @@ pub fn ip_output(
                     continue 'reroute;
                 }
 
-                // IPSEC: the IP_FORWARDING_IPSEC check; not configured.
+                if flags & IP_FORWARDING != 0
+                    && flags & IP_FORWARDING_IPSEC != 0
+                    && m.m_pkthdr().ph_tagsset.get() & PACKET_TAG_IPSEC_IN_DONE == 0
+                {
+                    break 'bad Err(Errno::EHOSTUNREACH);
+                }
 
                 // If TSO or small enough for interface, can just send directly.
                 let mut mp = Some(m);
@@ -459,7 +500,9 @@ pub fn ip_output(
                 // bytes per fragment.
                 let ip = mtod_ip(m);
                 if ip.ip_off & htons(IP_DF) != 0 {
-                    // IPSEC: ipsec_adjust_mtu when ip_mtudisc; not configured.
+                    if ip_mtudisc.load(Ordering::Relaxed) != 0 {
+                        ipsec_adjust_mtu(m, i.if_mtu.get());
+                    }
                     // pf changed routing table, use orig rtable for path MTU.
                     if ro.ro_tableid.get() != u64::from(orig_rtableid) {
                         rtfree(ro.ro_rt.get());
@@ -515,12 +558,206 @@ pub fn ip_output(
         rtfree(ro.ro_rt.get());
     }
     if_put(ifp);
-    // IPSEC: tdb_unref(tdb); not configured.
+    tdb_unref(tdb);
     error
 }
 
-// IPSEC: ip_output_ipsec_lookup, ip_output_ipsec_pmtu_update and ip_output_ipsec_send; not
-// configured.
+/// `ip_output_ipsec_lookup`: the SA the policy wants applied to `m`, with a reference;
+/// `None` when no IPsec is needed (no SA, or the packet already went through this one).
+fn ip_output_ipsec_lookup(
+    m: &Mbuf,
+    hlen: i32,
+    seclevel: Option<&IpsecLevel>,
+    ipsecflowinfo: u32,
+) -> Result<Option<&'static Tdb>, SpdError> {
+    let mut tdb = None;
+
+    // Do we have any pending SAs to apply ?
+    let ids = if ipsecflowinfo != 0 {
+        ipsp_ids_lookup(ipsecflowinfo)
+    } else {
+        None
+    };
+    let error = ipsp_spd_lookup(
+        m,
+        i32::from(AF_INET),
+        hlen,
+        IPSP_DIRECTION_OUT,
+        None,
+        seclevel,
+        Some(&mut tdb),
+        ids,
+    );
+    ipsp_ids_free(ids);
+    error?;
+    let Some(t) = tdb else {
+        return Ok(None);
+    };
+    // Loop detection
+    let mut mtag = m_tag_first(m);
+    while let Some(tag) = mtag {
+        if tag.m_tag_id.get() == PACKET_TAG_IPSEC_OUT_DONE {
+            // SAFETY: `IPSEC_OUT_DONE` tags carry a `struct tdb_ident`.
+            let tdbi = unsafe { TdbIdent::read(tag.data()) };
+            if tdbi.spi == t.tdb_spi.get()
+                && tdbi.proto == t.tdb_sproto.get()
+                && tdbi.rdomain == t.tdb_rdomain.get()
+                && tdbi.dst == t.tdb_dst.get()
+            {
+                // no IPsec needed
+                tdb_unref(Some(t));
+                return Ok(None);
+            }
+        }
+        mtag = m_tag_next(m, tag);
+    }
+    Ok(Some(t))
+}
+
+/// `ip_output_ipsec_pmtu_update`: stores the SA's MTU in a host route to `dst` (cloned when
+/// needed), but not for transport mode SAs.
+fn ip_output_ipsec_pmtu_update(tdb: &Tdb, ro: Option<&Route>, dst: InAddr, rtableid: u32) {
+    let mut rt_mtucloned = false;
+    let tdst = tdb.tdb_dst.get();
+    let transportmode = tdst.sa_family() == AF_INET && tdst.sin_addr().s_addr == dst.s_addr;
+
+    // Find a host route to store the mtu in
+    let mut rt = ro.and_then(|ro| ro.ro_rt.get());
+    // but don't add a PMTU route for transport mode SAs
+    if transportmode {
+        rt = None;
+    } else if rt.is_none_or(|r| r.rt_flags.get() & RTF_HOST == 0) {
+        rt = icmp_mtudisc_clone(dst, rtableid, true);
+        rt_mtucloned = true;
+    }
+    crate::ipsec_dprintf!(
+        "ip_output_ipsec_pmtu_update",
+        "spi {:08x} mtu {} rt {:p} cloned {}",
+        ntohl(tdb.tdb_spi.get()),
+        tdb.tdb_mtu.get(),
+        rt.map_or(ptr::null(), ptr::from_ref),
+        rt_mtucloned
+    );
+    if let Some(r) = rt {
+        r.rt_mtu().store(tdb.tdb_mtu.get(), Ordering::Relaxed);
+        if let Some(ro) = ro
+            && ro.ro_rt.get().is_some()
+        {
+            rtfree(ro.ro_rt.get());
+            ro.ro_tableid.set(rtableid as _);
+            // SAFETY: `ro_dstsa` is the route's destination `sockaddr_in`.
+            ro.ro_rt
+                .set(unsafe { rtalloc(ro.ro_dstsa(), RT_RESOLVE, rtableid) });
+        }
+        if rt_mtucloned {
+            rtfree(Some(r));
+        }
+    }
+}
+
+/// `ip_output_ipsec_send`: hands `m` to the SA `tdb` (after the path MTU check), as many
+/// packets as TSO chopping makes. Consumes the packet.
+fn ip_output_ipsec_send(
+    tdb: &'static Tdb,
+    m: &'static Mbuf,
+    ro: Option<&Route>,
+    rtableid: u32,
+    fwd: bool,
+) -> Result<(), Errno> {
+    let ml = MbufList::new();
+    let ip_mtudisc_local = ip_mtudisc.load(Ordering::Relaxed);
+    let mut tso = false;
+
+    // Packet filter
+    let encif = enc_getif(tdb.tdb_rdomain.get(), tdb.tdb_tap.get());
+    let mut mp = Some(m);
+    let Some(e) = encif else {
+        m_freem(m);
+        return Err(Errno::EACCES);
+    };
+    if pf_test(AF_INET, if fwd { PF_FWD } else { PF_OUT }, e, &mut mp) != PF_PASS {
+        m_freem(mp);
+        return Err(Errno::EACCES);
+    }
+    let Some(m) = mp else {
+        return Ok(());
+    };
+    // PF_TAG_REROUTE handling or not... Packet is entering IPsec so the routing is already
+    // overruled by the IPsec policy. Until now the change was not reconsidered. What's the
+    // behaviour?
+
+    // Check if we can chop the TCP packet
+    let ip = mtod_ip(m);
+    let len: u32 = if m.m_pkthdr().csum_flags.get() & M_TCP_TSO != 0
+        && u32::from(m.m_pkthdr().ph_mss.get()) <= tdb.tdb_mtu.get()
+    {
+        tso = true;
+        u32::from(m.m_pkthdr().ph_mss.get())
+    } else {
+        u32::from(ntohs(ip.ip_len))
+    };
+
+    // Check if we are allowed to fragment
+    let dst = ip.ip_dst;
+    if ip_mtudisc_local != 0
+        && ip.ip_off & htons(IP_DF) != 0
+        && tdb.tdb_mtu.get() != 0
+        && len > tdb.tdb_mtu.get()
+        && tdb.tdb_mtutimeout.get() > gettime() as u64
+    {
+        ip_output_ipsec_pmtu_update(tdb, ro, dst, rtableid);
+        ipsec_adjust_mtu(m, tdb.tdb_mtu.get());
+        m_freem(m);
+        return Err(Errno::EMSGSIZE);
+    }
+    // propagate IP_DF for v4-over-v6
+    if ip_mtudisc_local != 0 && ip.ip_off & htons(IP_DF) != 0 {
+        m.m_pkthdr()
+            .csum_flags
+            .set(m.m_pkthdr().csum_flags.get() | M_IPV6_DF_OUT);
+    }
+
+    // Clear these -- they'll be set in the recursive invocation as needed.
+    m.m_flags().set(m.m_flags().get() & !(M_MCAST | M_BCAST));
+
+    let mut error: Result<(), Errno> = Ok(());
+    'done: {
+        if tso {
+            // tcp_softtso_chop (netinet/tcp_output.c) is not ported.
+            m_freem(m);
+            error = Err(unported!("tcp_softtso_chop (netinet/tcp_output.c)"));
+            break 'done;
+        }
+        m.m_pkthdr()
+            .csum_flags
+            .set(m.m_pkthdr().csum_flags.get() & !M_TCP_TSO);
+        in_proto_cksum_out(m, encif);
+        ml_init(&ml);
+        ml_enqueue(&ml, m);
+
+        // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+        while let Some(m) = ml_dequeue(&ml) {
+            // Callee frees mbuf
+            error = ipsp_process_packet(m, tdb, i32::from(AF_INET), false, IPSP_DF_INHERIT);
+            if error.is_err() {
+                break;
+            }
+        }
+        // KERNEL_UNLOCK()
+    }
+    // done:
+    if error.is_err() {
+        ml_purge(&ml);
+        ipsecstat_inc(IpsecCounters::IpsecOdrops);
+        tdbstat_inc(tdb, TdbCounters::TdbOdrops);
+    }
+    // !error && tso: tcpstat_inc(tcps_outswtso) (netinet/tcp_input.c, not ported); TSO
+    // packets are reported above.
+    if ip_mtudisc_local != 0 && error == Err(Errno::EMSGSIZE) {
+        ip_output_ipsec_pmtu_update(tdb, ro, dst, rtableid);
+    }
+    error
+}
 
 /// `ip_fragment`: splits `m0` into fragments for `mtu` on `ml`, the first (trimmed) one
 /// first; on failure every fragment is freed.
@@ -871,9 +1108,37 @@ pub fn ip_ctloutput(
                     _ => error = Err(Errno::EINVAL),
                 }
             }
-            // !IPSEC: the security levels cannot be set.
-            IP_AUTH_LEVEL | IP_ESP_TRANS_LEVEL | IP_ESP_NETWORK_LEVEL | IP_IPCOMP_LEVEL => {
-                error = Err(Errno::EOPNOTSUPP);
+            IP_AUTH_LEVEL | IP_ESP_TRANS_LEVEL | IP_ESP_NETWORK_LEVEL | IP_IPCOMP_LEVEL => 'level: {
+                let Some(m) = m.filter(|m| m.m_len().get() as usize == size_of::<i32>()) else {
+                    error = Err(Errno::EINVAL);
+                    break 'level;
+                };
+                let optval = mtod_int(m);
+
+                if !(IPSEC_LEVEL_BYPASS..=IPSEC_LEVEL_UNIQUE).contains(&optval) {
+                    error = Err(Errno::EINVAL);
+                    break 'level;
+                }
+
+                let default = match optname {
+                    IP_AUTH_LEVEL => IPSEC_AUTH_LEVEL_DEFAULT,
+                    IP_ESP_TRANS_LEVEL => IPSEC_ESP_TRANS_LEVEL_DEFAULT,
+                    IP_ESP_NETWORK_LEVEL => IPSEC_ESP_NETWORK_LEVEL_DEFAULT,
+                    _ => IPSEC_IPCOMP_LEVEL_DEFAULT, // IP_IPCOMP_LEVEL
+                };
+                if optval < default && suser(p).is_err() {
+                    error = Err(Errno::EACCES);
+                    break 'level;
+                }
+                let mut sl = inp.inp_seclevel.get();
+                let level = optval as u8;
+                match optname {
+                    IP_AUTH_LEVEL => sl.sl_auth = level,
+                    IP_ESP_TRANS_LEVEL => sl.sl_esp_trans = level,
+                    IP_ESP_NETWORK_LEVEL => sl.sl_esp_network = level,
+                    _ => sl.sl_ipcomp = level, // IP_IPCOMP_LEVEL
+                }
+                inp.inp_seclevel.set(sl);
             }
 
             IP_IPSEC_LOCAL_ID | IP_IPSEC_REMOTE_ID => error = Err(Errno::EOPNOTSUPP),
@@ -953,9 +1218,15 @@ pub fn ip_ctloutput(
                     set_mtod_int(m, optval);
                 }
 
-                // !IPSEC: every level reads as IPSEC_LEVEL_NONE.
                 IP_AUTH_LEVEL | IP_ESP_TRANS_LEVEL | IP_ESP_NETWORK_LEVEL | IP_IPCOMP_LEVEL => {
-                    set_mtod_int(m, IPSEC_LEVEL_NONE);
+                    let sl = inp.inp_seclevel.get();
+                    let optval = match optname {
+                        IP_AUTH_LEVEL => sl.sl_auth,
+                        IP_ESP_TRANS_LEVEL => sl.sl_esp_trans,
+                        IP_ESP_NETWORK_LEVEL => sl.sl_esp_network,
+                        _ => sl.sl_ipcomp, // IP_IPCOMP_LEVEL
+                    };
+                    set_mtod_int(m, i32::from(optval));
                 }
                 IP_IPSEC_LOCAL_ID | IP_IPSEC_REMOTE_ID => error = Err(Errno::EOPNOTSUPP),
                 SO_RTABLE => set_mtod_int(m, inp.inp_rtableid.get() as i32),

@@ -70,9 +70,10 @@
 //!   the addresses pf redirected, and a diverted packet's routing domain comes from its tag.
 //! - Not configured, each a comment at its site: `NCARP`
 //!   (`carp_lsdrop`, `carp_strict_addr_chk`), `MROUTING` (`ip_mforward`,
-//!   `ip_mrouter_active`, the `mrt` sysctls answer `EOPNOTSUPP` as the C's `#else` does),
-//!   `IPSEC` (`ipsec_forward_check`, `ipsec_local_check`, `ipsec_init`, `ipsec_sysctl`) and
-//!   `INET6` (`ip6_protox`, the IPv6 delivery loop).
+//!   `ip_mrouter_active`, the `mrt` sysctls answer `EOPNOTSUPP` as the C's `#else` does)
+//!   and `INET6` (`ip6_protox`, the IPv6 delivery loop). `IPSEC` is (M9c):
+//!   `ipsec_forward_check`, `ipsec_local_check` (any `SpdError` drops the packet, as the C's
+//!   non-zero), `ipsec_init` and `ipsec_sysctl`.
 //! - `ip_forward`'s 68-byte `icmp_buf` is an array on the stack, as in C.
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
@@ -118,9 +119,14 @@ use crate::netinet::if_ether::{ARPINQ, ARPT_DOWN, ARPT_KEEP, arpinit, arpproxy, 
 use crate::netinet::in_::{
     IN_CLASSA_NSHIFT, IN_LOOPBACKNET, INADDR_ANY, INADDR_BROADCAST, IP_RECVDSTADDR, IP_RECVIF,
     IP_RECVRTABLE, IP_RECVTTL, IPCTL_ARPDOWN, IPCTL_ARPQUEUE, IPCTL_ARPQUEUED, IPCTL_ARPTIMEOUT,
-    IPCTL_DEFTTL, IPCTL_DIRECTEDBCAST, IPCTL_FORWARDING, IPCTL_IFQUEUE, IPCTL_IPPORT_FIRSTAUTO,
-    IPCTL_IPPORT_HIFIRSTAUTO, IPCTL_IPPORT_HILASTAUTO, IPCTL_IPPORT_LASTAUTO,
-    IPCTL_IPPORT_MAXQUEUE, IPCTL_MFORWARDING, IPCTL_MRTMFC, IPCTL_MRTPROTO, IPCTL_MRTSTATS,
+    IPCTL_DEFTTL, IPCTL_DIRECTEDBCAST, IPCTL_ENCDEBUG, IPCTL_FORWARDING, IPCTL_IFQUEUE,
+    IPCTL_IPPORT_FIRSTAUTO, IPCTL_IPPORT_HIFIRSTAUTO, IPCTL_IPPORT_HILASTAUTO,
+    IPCTL_IPPORT_LASTAUTO, IPCTL_IPPORT_MAXQUEUE, IPCTL_IPSEC_ALLOCATIONS,
+    IPCTL_IPSEC_AUTH_ALGORITHM, IPCTL_IPSEC_BYTES, IPCTL_IPSEC_EMBRYONIC_SA_TIMEOUT,
+    IPCTL_IPSEC_ENC_ALGORITHM, IPCTL_IPSEC_EXPIRE_ACQUIRE, IPCTL_IPSEC_FIRSTUSE,
+    IPCTL_IPSEC_IPCOMP_ALGORITHM, IPCTL_IPSEC_REQUIRE_PFS, IPCTL_IPSEC_SOFT_ALLOCATIONS,
+    IPCTL_IPSEC_SOFT_BYTES, IPCTL_IPSEC_SOFT_FIRSTUSE, IPCTL_IPSEC_SOFT_TIMEOUT, IPCTL_IPSEC_STATS,
+    IPCTL_IPSEC_TIMEOUT, IPCTL_MFORWARDING, IPCTL_MRTMFC, IPCTL_MRTPROTO, IPCTL_MRTSTATS,
     IPCTL_MRTVIF, IPCTL_MTUDISC, IPCTL_MTUDISCTIMEOUT, IPCTL_MULTIPATH, IPCTL_SENDREDIRECTS,
     IPCTL_SOURCEROUTE, IPCTL_STATS, IPPROTO_DONE, IPPROTO_IP, IPPROTO_IPV4, IPPROTO_MAX,
     IPPROTO_RAW, InAddr, SockaddrIn, in_canforward, in_classfulbroadcast, in_hasmulti,
@@ -147,11 +153,15 @@ use crate::netinet::ip_icmp::{
     IP_MTUDISC_TIMEOUT_Q, icmp_error, iptime,
 };
 use crate::netinet::ip_id::ip_randomid_init;
+use crate::netinet::ip_ipsp::IPSEC_IN_USE;
 use crate::netinet::ip_output::ip_output;
 use crate::netinet::ip_var::{
     IP_ALLOWBROADCAST, IP_FORWARDING, IP_FORWARDING_IPSEC, IP_RAWOUTPUT, IP_REDIRECT,
     IPMTUDISCTIMEOUT, Ipoffnxt, Ipq, IpqList, Ipqent, Ipstat, IpstatCounters, MAX_IPOPTLEN,
     ipstat_dec, ipstat_inc, mtod_ip, mtod_ip_store,
+};
+use crate::netinet::ipsec_input::{
+    ipsec_forward_check, ipsec_init, ipsec_local_check, ipsec_sysctl,
 };
 use crate::sys::endian::{htons, ntohl, ntohs};
 use crate::sys::errno::Errno;
@@ -375,7 +385,8 @@ pub fn ip_init() {
 
     // NETHER > 0
     arpinit();
-    // IPSEC: ipsec_init(); MROUTING: mrt_init(); not configured.
+    ipsec_init();
+    // MROUTING: mrt_init(); not configured.
 }
 
 /// `ip_ours`: enqueue packet for local delivery. Queuing is used as a boundary between the
@@ -685,7 +696,14 @@ pub fn ip_input_if(
                 ipstat_inc(IpstatCounters::IpsCantforward);
                 break 'bad;
             }
-            // IPSEC: ipsec_forward_check when ipsec_in_use; not configured.
+            if IPSEC_IN_USE.load(Ordering::Relaxed) != 0
+                && ipsec_forward_check(m, hlen as i32, i32::from(AF_INET)).is_err()
+            {
+                ipstat_inc(IpstatCounters::IpsCantforward);
+                break 'bad;
+            }
+            // Fall through, forward packet. Outbound IPsec policy checking will occur in
+            // ip_output().
 
             ip_forward(m, ifp, Some(ro), flags);
             *mp = None;
@@ -862,7 +880,14 @@ pub fn ip_deliver(
             return IPPROTO_DONE;
         }
 
-        // IPSEC: ipsec_local_check when ipsec_in_use; not configured.
+        if IPSEC_IN_USE.load(Ordering::Relaxed) != 0
+            && ipsec_local_check(m, *offp, nxt, af).is_err()
+        {
+            ipstat_inc(IpstatCounters::IpsCantforward);
+            m_freemp(mp);
+            return IPPROTO_DONE;
+        }
+        // Otherwise, just fall through and deliver the packet
 
         let naf = match nxt {
             IPPROTO_IPV4 => {
@@ -1710,7 +1735,7 @@ pub fn ip_forward(m: &'static Mbuf, ifp: &Ifnet, ro: Option<&Route>, flags: i32)
             }
         }
 
-        let error = ip_output(m, None, Some(ro), flags | IP_FORWARDING, None, 0);
+        let error = ip_output(m, None, Some(ro), flags | IP_FORWARDING, None, None, 0);
         let rt = ro.ro_rt.get();
         if error.is_err() {
             ipstat_inc(IpstatCounters::IpsCantforward);
@@ -1839,8 +1864,22 @@ pub fn ip_sysctl(
 
             error
         }
-        // IPSEC: the IPCTL_ENCDEBUG .. IPCTL_IPSEC_IPCOMP_ALGORITHM names through
-        // ipsec_sysctl; not configured, they fall to the table below as unknown names.
+        IPCTL_ENCDEBUG
+        | IPCTL_IPSEC_STATS
+        | IPCTL_IPSEC_EXPIRE_ACQUIRE
+        | IPCTL_IPSEC_EMBRYONIC_SA_TIMEOUT
+        | IPCTL_IPSEC_REQUIRE_PFS
+        | IPCTL_IPSEC_SOFT_ALLOCATIONS
+        | IPCTL_IPSEC_ALLOCATIONS
+        | IPCTL_IPSEC_SOFT_BYTES
+        | IPCTL_IPSEC_BYTES
+        | IPCTL_IPSEC_TIMEOUT
+        | IPCTL_IPSEC_SOFT_TIMEOUT
+        | IPCTL_IPSEC_SOFT_FIRSTUSE
+        | IPCTL_IPSEC_FIRSTUSE
+        | IPCTL_IPSEC_ENC_ALGORITHM
+        | IPCTL_IPSEC_AUTH_ALGORITHM
+        | IPCTL_IPSEC_IPCOMP_ALGORITHM => ipsec_sysctl(name, oldp, oldlenp, newp, newlen),
         IPCTL_IFQUEUE => sysctl_niq(&name[1..], oldp, oldlenp, newp, newlen, &IPINTRQ),
         IPCTL_ARPQUEUE => sysctl_niq(&name[1..], oldp, oldlenp, newp, newlen, &ARPINQ),
         IPCTL_ARPQUEUED => sysctl_rdint(
@@ -1995,7 +2034,7 @@ fn ip_send_do_dispatch(xmq: *mut c_void, flags: i32) {
             // SAFETY: the tag is on this packet's list.
             unsafe { m_tag_delete(m, mtag) };
         }
-        let _ = ip_output(m, None, None, flags, None, ipsecflowinfo);
+        let _ = ip_output(m, None, None, flags, None, None, ipsecflowinfo);
     }
     net_unlock_shared();
 }

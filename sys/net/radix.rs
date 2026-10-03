@@ -1614,5 +1614,16 @@ pub fn rn_init(keylen: u32) {
     RN_ONES.store(ones, Ordering::Relaxed);
 }
 
+/// Host tests of other modules (the IPsec SPD, PF_KEY): the radix globals back to "never
+/// initialised" after `setup_real_memory`, as the old ones point into the previous test's
+/// memory. The next `rn_init` starts over.
+#[cfg(test)]
+pub(crate) fn rn_test_reset() {
+    MAX_KEYLEN.store(0, Ordering::Relaxed);
+    MASK_RNHEAD.store(ptr::null_mut(), Ordering::Relaxed);
+    RN_ZEROS.store(ptr::null_mut(), Ordering::Relaxed);
+    RN_ONES.store(ptr::null_mut(), Ordering::Relaxed);
+}
+
 #[cfg(test)]
 mod tests;

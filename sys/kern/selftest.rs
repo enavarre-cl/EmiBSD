@@ -1382,7 +1382,7 @@ pub fn ping_gateway() {
     m.m_pkthdr().csum_flags.set(M_ICMP_CSUM_OUT);
 
     net_lock();
-    let error = ip_output(m, None, None, 0, None, 0);
+    let error = ip_output(m, None, None, 0, None, None, 0);
     net_unlock();
     if let Err(e) = error {
         kprintf!(

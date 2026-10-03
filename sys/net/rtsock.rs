@@ -103,7 +103,7 @@
 //!   and `rtm_validate_proposal` checks it outside `INET6`.
 //! - `ifp->if_rtrequest` is an `Option`, called when set (`if_attach` always sets it).
 //! - Not configured: `BFD` (`rtm_bfd`, `RTM_BFD`'s header, `RTAX_BFD`), `MPLS`
-//!   (`RTAX_SRC` labels, `rt_mpls_set`/`rt_mpls_clear`), `IPSEC` (`enc_getifa`) and `INET6`
+//!   (`RTAX_SRC` labels, `rt_mpls_set`/`rt_mpls_clear`) and `INET6`
 //!   (the `AF_INET6` cases under `#ifdef INET6`); comments at their sites. `SMALL_KERNEL` is
 //!   not defined, so `NET_RT_STATS` and `NET_RT_TABLE` are answered. `KERNEL_LOCK()` is
 //!   nothing on one CPU.
@@ -186,8 +186,8 @@ use crate::sys::queue::{TailqEntry, TailqHead};
 use crate::sys::rwlock::Rwlock;
 use crate::sys::socket::{
     AF_INET, AF_LINK, AF_MAX, AF_ROUTE, AF_UNSPEC, NET_RT_DUMP, NET_RT_FLAGS, NET_RT_IFLIST,
-    NET_RT_IFNAMES, NET_RT_SOURCE, NET_RT_STATS, NET_RT_TABLE, PF_ROUTE, SO_USELOOPBACK, SOCK_RAW,
-    Sockaddr, SockaddrStorage,
+    NET_RT_IFNAMES, NET_RT_SOURCE, NET_RT_STATS, NET_RT_TABLE, PF_KEY, PF_ROUTE, SO_USELOOPBACK,
+    SOCK_RAW, Sockaddr, SockaddrStorage,
 };
 use crate::sys::socketvar::{SS_CANTRCVMORE, SS_ISCONNECTED, SS_NOFDREF, Socket, sbspace_locked};
 use crate::sys::sysctl::SysctlPlain;
@@ -1610,7 +1610,14 @@ unsafe fn rtm_getifa(info: &mut RtAddrinfo, rtid: u32) -> Result<(), Errno> {
         ifp = if_get(u32::from(index));
     }
 
-    // IPSEC: a PF_KEY destination's enc_getifa, not configured.
+    // If the destination is a PF_KEY address, we'll look for the existence of a encap
+    // interface number or address in the options list of the gateway. By default, we'll
+    // return enc0.
+    let dst = info.rti_info[RTAX_DST];
+    // SAFETY: a non-null `RTAX_DST` is a socket address (the caller's contract).
+    if !dst.is_null() && unsafe { (*dst).sa_family } == PF_KEY {
+        info.rti_ifa = crate::net::if_enc::enc_getifa(rtid, 0);
+    }
 
     if info.rti_ifa.is_none() && !info.rti_info[RTAX_IFA].is_null() {
         // SAFETY: the caller's contract.
