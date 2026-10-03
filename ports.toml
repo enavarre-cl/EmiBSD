@@ -3305,3 +3305,15 @@ reason = "replaces config(8)'s generated ioconf.c for amd64 GENERIC: cfdata[] an
 [[extra]]
 rust = "sys/arch/arm64/conf/ioconf.rs"
 reason = "replaces config(8)'s generated ioconf.c for arm64 GENERIC: cfdata[] and cfroots[] for the ported devices (mainbus0, ampintc*, agtimer*, virtio* at fdt?, vio* at virtio?), reached through machine::autoconf"
+
+# ---------------------------------------------------------------------------
+# M8: the device switch, the memory devices and the tty layer
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/lib/libkern/scanc.c"
+rust = "sys/lib/libkern/scanc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0ebd934433345f8181d68c1765633dc6e4328937"
+notes = "over a byte slice and a &[u8; 256] table; returns usize; used by tty.c's ttwrite; host test"
