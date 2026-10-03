@@ -62,7 +62,7 @@
 //! - Block-device reads and writes go through the buffer cache as in C; the block size
 //!   comes from the disk label (`DIOCGPART` through `bdevsw[].d_ioctl`, `<sys/disklabel.h>`),
 //!   which is reported for a configured major and leaves `BLKDEV_IOSIZE`, as when the C's
-//!   ioctl fails. `spec_kqfilter`'s `seltrue_kqfilter` is `kern_event.c`: reported.
+//!   ioctl fails.
 //! - `speclisth[]` is a `static` newtype around the buckets with `unsafe impl Sync`, as the
 //!   other global list heads.
 //! - The operations take their argument structures; the generic ones that fill many slots
@@ -73,6 +73,7 @@ use core::ptr::{self, NonNull};
 use core::slice;
 use core::sync::atomic::Ordering;
 
+use crate::kern::kern_event::seltrue_kqfilter;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::malloc;
 use crate::kern::kern_subr::uiomove;
@@ -95,6 +96,7 @@ use crate::machine::intr::{splbio, splx};
 use crate::sys::buf::{B_BUSY, B_DELWRI};
 use crate::sys::conf::{D_CLONE, D_DISK, D_TTY};
 use crate::sys::errno::Errno;
+use crate::sys::event::{__EV_POLL, __EV_SELECT};
 use crate::sys::fcntl::FWRITE;
 use crate::sys::lock::{LK_EXCLUSIVE, LK_RETRY};
 use crate::sys::malloc::{M_TEMP, M_WAITOK};
@@ -406,8 +408,8 @@ pub fn spec_kqfilter(ap: &mut VopKqfilterArgs) -> Result<(), Errno> {
             Some(kqfilter) => kqfilter(dev, ap.a_kn),
             None => Err(Errno::EOPNOTSUPP),
         },
-        // kn_flags & (__EV_POLL | __EV_SELECT): seltrue_kqfilter (kern_event.c).
-        _ => Err(unported!("spec_kqfilter: seltrue_kqfilter (kern_event.c)")),
+        _ if ap.a_kn.has_flags(__EV_POLL | __EV_SELECT) => seltrue_kqfilter(dev, ap.a_kn),
+        _ => Err(Errno::EOPNOTSUPP),
     }
 }
 

@@ -44,10 +44,10 @@
 //! - The operations take their argument structures; `dead_ebadf`, `nullop` and
 //!   `vop_generic_badop` fill many slots of different types, so the table writes them as
 //!   closures. `chkvnlock` returns `bool`.
-//! - `dead_kqfilter` sets `kn_fop = &dead_filtops` (`kern_event.c`, not ported): reported.
 
 use core::ptr;
 
+use crate::kern::kern_event::DEAD_FILTOPS;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_synch::msleep_nsec;
 use crate::kern::subr_prf::panic;
@@ -59,6 +59,7 @@ use crate::kern::vfs_vops::{VOP_BMAP, VOP_LOCK, VOP_STRATEGY, VOP_UNLOCK};
 use crate::machine::intr::{splbio, splx};
 use crate::sys::buf::B_ERROR;
 use crate::sys::errno::Errno;
+use crate::sys::event::{__EV_POLL, EVFILT_EXCEPT, EVFILT_READ, EVFILT_WRITE};
 use crate::sys::lock::LK_DRAIN;
 use crate::sys::param::PINOD;
 use crate::sys::systm::INFSLP;
@@ -66,7 +67,6 @@ use crate::sys::vnode::{
     VISTTY, VXLOCK, VXWANT, Vnode, VopBmapArgs, VopInactiveArgs, VopIoctlArgs, VopKqfilterArgs,
     VopLockArgs, VopOpenArgs, VopPrintArgs, VopReadArgs, VopStrategyArgs, VopWriteArgs, Vops,
 };
-use crate::unported;
 
 /// `dead_vops`: the operations of a revoked vnode.
 pub static DEAD_VOPS: Vops = Vops {
@@ -143,9 +143,21 @@ pub fn dead_ioctl(ap: &mut VopIoctlArgs<'_>) -> Result<(), Errno> {
 }
 
 /// `dead_kqfilter`: read, write and (poll's) except filters see the dead filter ops.
-pub fn dead_kqfilter(_ap: &mut VopKqfilterArgs) -> Result<(), Errno> {
-    // kn_filter, kn_flags, kn_fop = &dead_filtops: struct knote (kern_event.c).
-    Err(unported!("dead_kqfilter: dead_filtops (kern_event.c)"))
+pub fn dead_kqfilter(ap: &mut VopKqfilterArgs<'_>) -> Result<(), Errno> {
+    let kn = ap.a_kn;
+
+    match kn.kn_filter().get() {
+        EVFILT_READ | EVFILT_WRITE => kn.kn_fop.set(Some(&DEAD_FILTOPS)),
+        EVFILT_EXCEPT => {
+            if !kn.has_flags(__EV_POLL) {
+                return Err(Errno::EINVAL);
+            }
+            kn.kn_fop.set(Some(&DEAD_FILTOPS));
+        }
+        _ => return Err(Errno::EINVAL),
+    }
+
+    Ok(())
 }
 
 /// Just call the device strategy routine.

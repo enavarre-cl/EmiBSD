@@ -46,11 +46,8 @@
 //! Upstream: sys/ufs/ufs/ufs_vnops.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `VN_KNOTE(vp, hint)` posts to the vnode's knotes, which do not exist before
-//!   `kern_event.c`: each site is a comment. `ufs_kqfilter` reports itself; the filter
-//!   operations (`ufsread_filtops`, `ufswrite_filtops`, `ufsvnode_filtops`) and their
-//!   functions (`filt_ufsdetach`, `filt_ufsread`, `filt_ufswrite`, `filt_ufsvnode`) need
-//!   `struct knote` and `<sys/event.h>`, and come with `kern_event.c`.
+//! - The filters reach their vnode through `kn_hook` (`kn_vnode`); `filt_ufsread`'s
+//!   `EXT2FS` branch is left out with the rest of `ext2fs`.
 //! - `option FIFO` is in GENERIC, but `miscfs/fifofs` is not ported: `ufsfifo_read`,
 //!   `ufsfifo_write`, `ufsfifo_close` (and `ffs_fifovops`, `ffsfifo_reclaim`) come with it;
 //!   until then `ffs_vinit` refuses a fifo with `EOPNOTSUPP`, as a kernel without `FIFO`
@@ -61,9 +58,10 @@
 //!   on `NOCRED`/`FSCRED`, where the C would follow a bad pointer.
 //! - `UFS_DIRHASH`'s `ufsdirhash_free` in `ufs_rmdir` waits for `ufs_dirhash.c`.
 
-use core::ptr::NonNull;
+use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
+use crate::kern::kern_event::{klist_insert_locked, klist_remove_locked};
 use crate::kern::kern_prot::{groupmember, suser_ucred};
 use crate::kern::kern_rwlock::{rrw_enter, rrw_exit, rrw_status};
 use crate::kern::kern_subr::uiomove;
@@ -86,7 +84,13 @@ use crate::machine::intr::{splbio, splx};
 use crate::sys::buf::{B_CLRBUF, B_ERROR, clrbuf};
 use crate::sys::dirent::Dirent;
 use crate::sys::errno::Errno;
+use crate::sys::event::{
+    __EV_POLL, __EV_SELECT, EV_EOF, EV_ONESHOT, EVFILT_READ, EVFILT_VNODE, EVFILT_WRITE,
+    FILTEROP_ISFD, Filterops, Knote, NOTE_ATTRIB, NOTE_DELETE, NOTE_EOF, NOTE_LINK, NOTE_RENAME,
+    NOTE_REVOKE, NOTE_TRUNCATE, NOTE_WRITE,
+};
 use crate::sys::fcntl::{FWRITE, O_APPEND, O_TRUNC};
+use crate::sys::file::foffset;
 use crate::sys::lock::{LK_EXCLUSIVE, LK_RWFLAGS};
 use crate::sys::lockf::lf_advlock;
 use crate::sys::mount::{MNT_NOATIME, MNT_RDONLY, Mount};
@@ -110,7 +114,7 @@ use crate::sys::unistd::{
 };
 use crate::sys::vnode::{
     IO_NODELOCKED, IO_SYNC, VA_UTIMES_CHANGE, VA_UTIMES_NULL, VBAD, VBLK, VCHR, VDIR, VEXEC, VFIFO,
-    VLNK, VNON, VNOVAL, VREG, VSOCK, VTEXT, VWRITE, Vnode, VopAccessArgs, VopAdvlockArgs,
+    VLNK, VN_KNOTE, VNON, VNOVAL, VREG, VSOCK, VTEXT, VWRITE, Vnode, VopAccessArgs, VopAdvlockArgs,
     VopCloseArgs, VopCreateArgs, VopGetattrArgs, VopIoctlArgs, VopIslockedArgs, VopKqfilterArgs,
     VopLinkArgs, VopLockArgs, VopMkdirArgs, VopMknodArgs, VopOpenArgs, VopPathconfArgs,
     VopPrintArgs, VopReadArgs, VopReaddirArgs, VopReadlinkArgs, VopRemoveArgs, VopRenameArgs,
@@ -145,6 +149,36 @@ pub const MASTERTEMPLATE: Dirtemplate = Dirtemplate {
     dotdot_type: DT_DIR,
     dotdot_namlen: 2,
     dotdot_name: *b"..\0\0",
+};
+
+/// `ufsread_filtops`.
+pub static UFSREAD_FILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD,
+    f_attach: None,
+    f_detach: Some(filt_ufsdetach),
+    f_event: Some(filt_ufsread),
+    f_modify: None,
+    f_process: None,
+};
+
+/// `ufswrite_filtops`.
+pub static UFSWRITE_FILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD,
+    f_attach: None,
+    f_detach: Some(filt_ufsdetach),
+    f_event: Some(filt_ufswrite),
+    f_modify: None,
+    f_process: None,
+};
+
+/// `ufsvnode_filtops`.
+pub static UFSVNODE_FILTOPS: Filterops = Filterops {
+    f_flags: FILTEROP_ISFD,
+    f_attach: None,
+    f_detach: Some(filt_ufsdetach),
+    f_event: Some(filt_ufsvnode),
+    f_modify: None,
+    f_process: None,
 };
 
 /// The vnode's mount, which a UFS vnode always has.
@@ -230,7 +264,9 @@ pub fn ufs_create(ap: &mut VopCreateArgs<'_>) -> Result<(), Errno> {
         ap.a_vpp,
         ap.a_cnp,
     );
-    // VN_KNOTE(ap->a_dvp, NOTE_WRITE) on success: no knotes before kern_event.c.
+    if error.is_ok() {
+        VN_KNOTE(ap.a_dvp, NOTE_WRITE);
+    }
     error
 }
 
@@ -243,7 +279,7 @@ pub fn ufs_mknod(ap: &mut VopMknodArgs<'_>) -> Result<(), Errno> {
         ap.a_vpp,
         ap.a_cnp,
     )?;
-    // VN_KNOTE(ap->a_dvp, NOTE_WRITE): no knotes before kern_event.c.
+    VN_KNOTE(ap.a_dvp, NOTE_WRITE);
     let Some(vp) = *ap.a_vpp else {
         panic(format_args!("ufs_mknod: no vnode"));
     };
@@ -375,7 +411,7 @@ pub fn ufs_setattr(ap: &mut VopSetattrArgs<'_>) -> Result<(), Errno> {
     let vp = ap.a_vp;
     let ip = vtoi(vp);
     let cred = ap.a_cred;
-    // long hint = NOTE_ATTRIB (and NOTE_TRUNCATE below): for VN_KNOTE.
+    let mut hint = NOTE_ATTRIB;
 
     // Check for unsettable attributes.
     if vap.va_type != VNON
@@ -429,6 +465,7 @@ pub fn ufs_setattr(ap: &mut VopSetattrArgs<'_>) -> Result<(), Errno> {
         ufs_chown(vp, vap.va_uid, vap.va_gid, cred)?;
     }
     if vap.va_size != VNOVAL as u64 {
+        let oldsize = ip.dip_size();
         // Disallow write attempts on read-only file systems; unless the file is a socket,
         // fifo, or a block or character device resident on the file system.
         match vp.v_type.get() {
@@ -437,7 +474,9 @@ pub fn ufs_setattr(ap: &mut VopSetattrArgs<'_>) -> Result<(), Errno> {
             _ => {}
         }
         UFS_TRUNCATE(ip, vap.va_size as i64, 0, cred)?;
-        // if (vap->va_size < oldsize) hint |= NOTE_TRUNCATE: for VN_KNOTE.
+        if vap.va_size < oldsize {
+            hint |= NOTE_TRUNCATE;
+        }
     }
     if vap.va_vaflags & VA_UTIMES_CHANGE != 0
         || vap.va_atime.tv_nsec != i64::from(VNOVAL)
@@ -485,7 +524,7 @@ pub fn ufs_setattr(ap: &mut VopSetattrArgs<'_>) -> Result<(), Errno> {
         }
         error = ufs_chmod(vp, vap.va_mode as i32, cred);
     }
-    // VN_KNOTE(vp, hint): no knotes before kern_event.c.
+    VN_KNOTE(vp, hint);
     error
 }
 
@@ -624,7 +663,8 @@ pub fn ufs_remove(ap: &mut VopRemoveArgs<'_>) -> Result<(), Errno> {
         return Err(Errno::EPERM);
     }
     let error = ufs_dirremove(dvp, Some(ip), ap.a_cnp.cn_flags, 0);
-    // VN_KNOTE(vp, NOTE_DELETE), VN_KNOTE(dvp, NOTE_WRITE): no knotes before kern_event.c.
+    VN_KNOTE(vp, NOTE_DELETE);
+    VN_KNOTE(dvp, NOTE_WRITE);
     error
 }
 
@@ -670,8 +710,8 @@ pub fn ufs_link(ap: &mut VopLinkArgs<'_>) -> Result<(), Errno> {
                 ip.set_flag(IN_CHANGE);
             }
             pnbuf_free(cnp);
-            // VN_KNOTE(vp, NOTE_LINK), VN_KNOTE(dvp, NOTE_WRITE): no knotes before
-            // kern_event.c.
+            VN_KNOTE(vp, NOTE_LINK);
+            VN_KNOTE(dvp, NOTE_WRITE);
             error
         };
         // out1:
@@ -844,7 +884,7 @@ pub fn ufs_rename(ap: &mut VopRenameArgs<'_>) -> Result<(), Errno> {
         oldparent = dp.i_number.get();
         doingdirectory = true;
     }
-    // VN_KNOTE(fdvp, NOTE_WRITE): no knotes before kern_event.c. XXX right place?
+    VN_KNOTE(fdvp, NOTE_WRITE); // XXX right place?
 
     // When the target exists, both the directory and target vnodes are returned locked.
     dp = vtoi(tdvp);
@@ -937,7 +977,7 @@ pub fn ufs_rename(ap: &mut VopRenameArgs<'_>) -> Result<(), Errno> {
                     }
                     break 'body Err(RenameExit::Bad(e));
                 }
-                // VN_KNOTE(tdvp, NOTE_WRITE): no knotes before kern_event.c.
+                VN_KNOTE(tdvp, NOTE_WRITE);
                 vput(tdvp);
             }
             Some(x) => {
@@ -1013,10 +1053,10 @@ pub fn ufs_rename(ap: &mut VopRenameArgs<'_>) -> Result<(), Errno> {
                         break 'body Err(RenameExit::Bad(e));
                     }
                 }
-                // VN_KNOTE(tdvp, NOTE_WRITE): no knotes before kern_event.c.
+                VN_KNOTE(tdvp, NOTE_WRITE);
                 vput(tdvp);
-                // VN_KNOTE(tvp, NOTE_DELETE): no knotes before kern_event.c.
                 if let Some(t) = tvp {
+                    VN_KNOTE(t, NOTE_DELETE);
                     vput(t);
                 }
                 // xp = NULL: step 3 looks the source up again.
@@ -1085,7 +1125,7 @@ pub fn ufs_rename(ap: &mut VopRenameArgs<'_>) -> Result<(), Errno> {
         error = ufs_dirremove(fdvp, Some(xp), fcnp.cn_flags, 0);
         xp.clr_flag(IN_RENAME);
     }
-    // VN_KNOTE(fvp, NOTE_RENAME): no knotes before kern_event.c.
+    VN_KNOTE(fvp, NOTE_RENAME);
     vput(fdvp);
     vput(fvp);
     vrele(ap.a_fvp);
@@ -1208,7 +1248,7 @@ pub fn ufs_mkdir(ap: &mut VopMkdirArgs<'_>) -> Result<(), Errno> {
 
         // bad:
         if error.is_ok() {
-            // VN_KNOTE(dvp, NOTE_WRITE | NOTE_LINK): no knotes before kern_event.c.
+            VN_KNOTE(dvp, NOTE_WRITE | NOTE_LINK);
             *ap.a_vpp = Some(tvp);
         } else {
             dp.i_effnlink.set(dp.i_effnlink.get() - 1);
@@ -1261,7 +1301,7 @@ pub fn ufs_rmdir(ap: &mut VopRmdirArgs<'_>) -> Result<(), Errno> {
             break 'out Err(e);
         }
 
-        // VN_KNOTE(dvp, NOTE_WRITE | NOTE_LINK): no knotes before kern_event.c.
+        VN_KNOTE(dvp, NOTE_WRITE | NOTE_LINK);
         cache_purge(dvp);
         // Truncate inode. The only stuff left in the directory is "." and "..". The "."
         // reference is inconsequential since we are quashing it.
@@ -1276,7 +1316,7 @@ pub fn ufs_rmdir(ap: &mut VopRmdirArgs<'_>) -> Result<(), Errno> {
         error
     };
     // out:
-    // VN_KNOTE(vp, NOTE_DELETE): no knotes before kern_event.c.
+    VN_KNOTE(vp, NOTE_DELETE);
     vput(dvp);
     vput(vp);
     error
@@ -1290,7 +1330,7 @@ pub fn ufs_symlink(ap: &mut VopSymlinkArgs<'_>) -> Result<(), Errno> {
         vput(ap.a_dvp);
         return Err(e);
     }
-    // VN_KNOTE(ap->a_dvp, NOTE_WRITE): no knotes before kern_event.c.
+    VN_KNOTE(ap.a_dvp, NOTE_WRITE);
     vput(ap.a_dvp);
     let Some(vp) = *vpp else {
         panic(format_args!("ufs_symlink: no vnode"));
@@ -1705,11 +1745,110 @@ pub fn ufs_makeinode(
     error
 }
 
-/// `ufs_kqfilter` (`vop_kqfilter`): attach a knote to the vnode; the filters
-/// (`ufsread_filtops`, `ufswrite_filtops`, `ufsvnode_filtops`) and their functions need
-/// `struct knote` (`kern_event.c`, not ported).
-pub fn ufs_kqfilter(_ap: &mut VopKqfilterArgs) -> Result<(), Errno> {
-    Err(crate::unported!(
-        "ufs_kqfilter: struct knote, filterops (kern_event.c)"
-    ))
+/// `ufs_kqfilter` (`vop_kqfilter`): attach a knote to the vnode.
+pub fn ufs_kqfilter(ap: &mut VopKqfilterArgs<'_>) -> Result<(), Errno> {
+    let vp = ap.a_vp;
+    let kn = ap.a_kn;
+
+    match kn.kn_filter().get() {
+        EVFILT_READ => kn.kn_fop.set(Some(&UFSREAD_FILTOPS)),
+        EVFILT_WRITE => kn.kn_fop.set(Some(&UFSWRITE_FILTOPS)),
+        EVFILT_VNODE => kn.kn_fop.set(Some(&UFSVNODE_FILTOPS)),
+        _ => return Err(Errno::EINVAL),
+    }
+
+    kn.kn_hook.set(ptr::from_ref(vp).cast_mut().cast());
+
+    klist_insert_locked(&vp.v_klist, kn);
+
+    Ok(())
+}
+
+/// `kn->kn_hook` of a UFS knote: its vnode.
+fn kn_vnode(kn: &Knote) -> &'static Vnode {
+    // SAFETY: `ufs_kqfilter` points `kn_hook` at the vnode, a `vnode_pool` item that is never
+    // freed.
+    match unsafe { kn.kn_hook.get().cast::<Vnode>().as_ref() } {
+        Some(vp) => vp,
+        None => panic(format_args!("knote {:p}: no vnode", kn)),
+    }
+}
+
+/// `filt_ufsdetach`: unhooks the knote from the vnode.
+pub fn filt_ufsdetach(kn: &Knote) {
+    let vp = kn_vnode(kn);
+
+    klist_remove_locked(&vp.v_klist, kn);
+}
+
+/// `filt_ufsread`: the bytes past the file offset; always ready for poll and select.
+pub fn filt_ufsread(kn: &Knote, hint: i64) -> bool {
+    let vp = kn_vnode(kn);
+    let ip = vtoi(vp);
+
+    // filesystem is gone, so set the EOF flag and schedule the knote for deletion.
+    if hint == i64::from(NOTE_REVOKE) {
+        kn.set_flags(EV_EOF | EV_ONESHOT);
+        return true;
+    }
+
+    // EXT2FS: not ported.
+    kn.kn_data().set(ip.dip_size() as i64 - foffset(kn.fp()));
+    if kn.kn_data().get() == 0 && kn.kn_sfflags.get() & NOTE_EOF != 0 {
+        kn.kn_fflags().set(kn.kn_fflags().get() | NOTE_EOF);
+        return true;
+    }
+
+    if kn.has_flags(__EV_POLL | __EV_SELECT) {
+        return true;
+    }
+
+    kn.kn_data().get() != 0
+}
+
+/// `filt_ufswrite`: a file is always writable.
+pub fn filt_ufswrite(kn: &Knote, hint: i64) -> bool {
+    // filesystem is gone, so set the EOF flag and schedule the knote for deletion.
+    if hint == i64::from(NOTE_REVOKE) {
+        kn.set_flags(EV_EOF | EV_ONESHOT);
+        return true;
+    }
+
+    kn.kn_data().set(0);
+    true
+}
+
+/// `filt_ufsvnode`: records the vnode events (`NOTE_*`) the user asked for.
+pub fn filt_ufsvnode(kn: &Knote, hint: i64) -> bool {
+    let hint32 = hint as u32;
+    if kn.kn_sfflags.get() & hint32 != 0 {
+        kn.kn_fflags().set(kn.kn_fflags().get() | hint32);
+    }
+    if hint == i64::from(NOTE_REVOKE) {
+        kn.set_flags(EV_EOF);
+        return true;
+    }
+    kn.kn_fflags().get() != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vnode_filters_record_the_events_asked_for() {
+        // EVFILT_VNODE: only the subscribed notes are recorded; revocation ends it.
+        let kn = Knote::new();
+        kn.kn_sfflags.set(NOTE_WRITE | NOTE_DELETE);
+        assert!(!filt_ufsvnode(&kn, i64::from(NOTE_ATTRIB)));
+        assert!(filt_ufsvnode(&kn, i64::from(NOTE_WRITE)));
+        assert_eq!(kn.kn_fflags().get(), NOTE_WRITE);
+        assert!(filt_ufsvnode(&kn, i64::from(NOTE_REVOKE)) && kn.has_flags(EV_EOF));
+
+        // EVFILT_WRITE: always writable, EOF and one-shot once revoked.
+        let kn = Knote::new();
+        assert!(filt_ufswrite(&kn, 0) && kn.kn_data().get() == 0);
+        assert!(filt_ufswrite(&kn, i64::from(NOTE_REVOKE)));
+        assert!(kn.has_flags(EV_EOF) && kn.has_flags(EV_ONESHOT));
+    }
 }

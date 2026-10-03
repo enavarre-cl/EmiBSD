@@ -46,8 +46,6 @@
 //!   (`ffs_subr.rs`).
 //! - The helpers the C installs in many slots (`vop_generic_badop`) are closures, as in
 //!   `spec_vops` (`docs/C_TO_RUST.md`).
-//! - `VN_KNOTE(vp, NOTE_WRITE | ...)` in `ffs_write` has no knotes to post before
-//!   `kern_event.c`.
 //! - `ffs_fsync`'s `LIST_FOREACH_SAFE` that restarts from the head after each write is a
 //!   scan that starts again from the head; the `B_SCANNED` marks keep it from visiting a
 //!   buffer twice, as in C.
@@ -71,11 +69,13 @@ use crate::kern::vfs_vnops::vn_fsizechk;
 use crate::machine::intr::{splbio, splx};
 use crate::sys::buf::{B_BUSY, B_CLRBUF, B_DELWRI, B_NOCACHE, B_SCANNED, B_SYNC};
 use crate::sys::errno::Errno;
+use crate::sys::event::{NOTE_EXTEND, NOTE_WRITE};
 use crate::sys::mount::{MNT_NOATIME, MNT_WAIT};
 use crate::sys::stat::APPEND;
 use crate::sys::systm::INFSLP;
 #[cfg(feature = "diagnostic")]
 use crate::sys::uio::UioRw;
+use crate::sys::vnode::VN_KNOTE;
 use crate::sys::vnode::{
     IO_APPEND, IO_NOCACHE, IO_SYNC, IO_UNIT, VDIR, VLNK, VREG, VopFsyncArgs, VopReadArgs,
     VopReclaimArgs, VopWriteArgs, Vops, cred_ref,
@@ -401,9 +401,9 @@ pub fn ffs_write(ap: &mut VopWriteArgs<'_, '_>) -> Result<(), Errno> {
     if resid > uio.uio_resid && cred.is_some_and(|c| c.cr_uid.get() != 0) && !vnoperm(vp) {
         ip.dip_set_mode(ip.dip_mode() & !(ISUID | ISGID));
     }
-    // if (resid > uio->uio_resid) VN_KNOTE(vp, NOTE_WRITE | (extended ? NOTE_EXTEND : 0)):
-    // no knotes before kern_event.c.
-    let _ = extended;
+    if resid > uio.uio_resid {
+        VN_KNOTE(vp, NOTE_WRITE | if extended { NOTE_EXTEND } else { 0 });
+    }
     if error.is_err() {
         if ioflag & IO_UNIT != 0 {
             let _ = UFS_TRUNCATE(ip, osize, ioflag & IO_SYNC, ap.a_cred);

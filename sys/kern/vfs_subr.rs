@@ -64,8 +64,7 @@
 //!   (the C's `NOLIST`, `sys/buf.rs`); `vinvalbuf` panics if it finds dirty buffers with no
 //!   thread to `VOP_FSYNC` them (the C always has `curproc`).
 //! - The device switch (`cdevsw[].d_type`/`d_flags`, `nblkdev`) is each architecture's
-//!   `conf.c`, through `machine::conf`. `VN_KNOTE(vp, NOTE_REVOKE)` has no knotes to post
-//!   (`kern_event.c`).
+//!   `conf.c`, through `machine::conf`.
 //! - `copy_statfs_info` never receives the mount's own `mnt_stat` (the callers pass a copy,
 //!   see `sys/mount.rs`), so the C's early return for that case is not needed; the copy has
 //!   the same values, so the result is the same.
@@ -117,6 +116,7 @@ use crate::miscfs::deadfs::dead_vnops::DEAD_VOPS;
 use crate::sys::buf::{B_BUSY, B_DELWRI, B_DONE, B_INVAL, B_READ, B_WANTED, Buf};
 use crate::sys::conf::{D_CLONE, D_TTY};
 use crate::sys::errno::Errno;
+use crate::sys::event::NOTE_REVOKE;
 use crate::sys::fcntl::FNONBLOCK;
 use crate::sys::lock::{LK_DRAIN, LK_EXCLUSIVE, LK_NOWAIT, LK_TYPE_MASK};
 use crate::sys::malloc::{M_MOUNT, M_VNODE, M_WAITOK, M_ZERO};
@@ -140,6 +140,7 @@ use crate::sys::stat::{
 use crate::sys::systm::INFSLP;
 use crate::sys::types::{Dev, Gid, Mode, Uid, major, makedev, minor};
 use crate::sys::ucred::{NOCRED, Ucred};
+use crate::sys::vnode::VN_KNOTE;
 use crate::sys::vnode::{
     BVnbufs, Buflists, DOCLOSE, FORCECLOSE, IGNORECLEAN, REVOKEALL, SKIPSYSTEM, V_SAVE, V_SAVEMETA,
     VALIASED, VBAD, VBIOERROR, VBIOONFREELIST, VBIOONSYNCLIST, VBIOWAIT, VBLK, VCHR, VDIR, VEXEC,
@@ -1094,7 +1095,7 @@ pub fn vclean(vp: &'static Vnode, flags: i32, p: Option<&Proc>) {
 
     // Done with purge, notify sleepers of the grim news.
     vp.v_op.set(Some(&DEAD_VOPS));
-    // VN_KNOTE(vp, NOTE_REVOKE): no knotes before kern_event.c.
+    VN_KNOTE(vp, NOTE_REVOKE);
     vp.v_tag.set(VT_NON);
     // VFSLCKDEBUG: not configured.
     mtx_enter(&VNODE_MTX);
