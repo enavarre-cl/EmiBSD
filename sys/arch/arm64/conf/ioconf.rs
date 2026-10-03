@@ -5,7 +5,8 @@
 //! `subr_autoconf.rs`.
 //!
 //! GENERIC lines present: `mainbus0 at root`, `ampintc* at fdt? early 1`, `agtimer* at fdt?`,
-//! `virtio* at fdt?`, `vio* at virtio?`, `pluart* at fdt?`; `pseudo-device pty 16`,
+//! `virtio* at fdt?`, `vio* at virtio?`, `pluart* at fdt?`, `plrtc* at fdt?`;
+//! `pseudo-device pty 16`,
 //! `pseudo-device loop`.
 //! The `fdt` attribute (`files.arm64`: `define fdt {[early = 0]}`) is carried by `mainbus`
 //! and `simplebus`; `simplebus` is not ported, so mainbus is the only parent here. Every
@@ -18,6 +19,7 @@
 use crate::arch::arm64::dev::agtimer::{AGTIMER_CA, AGTIMER_CD};
 use crate::arch::arm64::dev::ampintc::{AMPINTC_CA, AMPINTC_CD};
 use crate::arch::arm64::dev::mainbus::{MAINBUS_CA, MAINBUS_CD};
+use crate::dev::fdt::plrtc::{PLRTC_CA, PLRTC_CD};
 use crate::dev::fdt::pluart_fdt::PLUART_FDT_CA;
 use crate::dev::fdt::virtio_mmio::VIRTIO_MMIO_CA;
 use crate::dev::ic::pluart::PLUART_CD;
@@ -41,7 +43,7 @@ const LOC_EARLY_0: &[i64] = &[0];
 const PV_VIRTIO: &[i16] = &[3];
 
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 6] = [
+pub static CFDATA: [Cfdata; 7] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -96,6 +98,18 @@ pub static CFDATA: [Cfdata; 6] = [
     Cfdata::new(
         &PLUART_FDT_CA,
         &PLUART_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_0,
+        0,
+        PV_FDT,
+        0,
+        0,
+    ),
+    // 6: plrtc* at fdt?
+    Cfdata::new(
+        &PLRTC_CA,
+        &PLRTC_CD,
         0,
         FSTATE_STAR,
         LOC_EARLY_0,

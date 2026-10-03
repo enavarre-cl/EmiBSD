@@ -659,6 +659,15 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c4c173a7fc6f53adda9c7413d8e219da30c83f1e"
 
 [[file]]
+c = "sys/dev/fdt/plrtc.c"
+rust = "sys/dev/fdt/plrtc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f63d91fc39100c70d950e330145680adf00b9ef0"
+deps = ["sys/dev/clock_subr.h", "sys/kern/kern_time.c"]
+notes = "the whole file: plrtc_gettime/settime, match (arm,pl031), attach (todr_attach, RTCCR_START); plrtc* at fdt? in arm64 ioconf.rs. Under QEMU with EDK2 the firmware disables the pl031 node (it keeps the RTC for its runtime services), so it does not attach there; the time then comes from the root file system (inittodr)"
+
+[[file]]
 c = "sys/arch/arm64/dev/agtimer.c"
 rust = "sys/arch/arm64/dev/agtimer.rs"
 status = "wip"
@@ -3172,7 +3181,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1432a9d841b245e6435f2a60208575eef5aeafea"
 deps = ["sys/ufs/ffs/ffs_vnops.c", "sys/ufs/ffs/ffs_alloc.c", "sys/ufs/ffs/ffs_balloc.c", "sys/ufs/ufs/ufs_vfsops.c", "sys/kern/vfs_syscalls.c"]
-notes = "ffs: ffs_vfsops, ffs_vtbl, pools, ffs_checkrange, ffs_mountroot (rootdev in sys/systm.rs, swapdev from machine::conf, rootvp/swapdev_vp in init_main.rs; inittodr reported), ffs_mount (own Nameidata for the device; disk_map reported; nblkdev from machine::conf), ffs_reload, ffs_validate, sbtry, ffs_mountfs (FFS1 and FFS2 super-blocks; the in-core super-block is at least size_of::<Fs>()), ffs_oldfscompat, ffs1_compat_read/write, ffs_unmount, ffs_flushfiles, ffs_statfs, ffs_sync, ffs_vget, ffs_fhtovp, ffs_vptofh, ffs_sbupdate, ffs_init (done flag atomic), ffs_sysctl (ffs_vars empty without UFS_DIRHASH); host tests: newfs-like FFS1/FFS2 images, mount, read, write past the direct blocks, mkdir/rename/unlink/rmdir/symlink/getdents, sync, unmount, fsck-like counter check, remount"
+notes = "ffs: ffs_vfsops, ffs_vtbl, pools, ffs_checkrange, ffs_mountroot (rootdev in sys/systm.rs, swapdev from machine::conf, rootvp/swapdev_vp in init_main.rs; inittodr(fs_time) runs), ffs_mount (own Nameidata for the device; disk_map reported; nblkdev from machine::conf), ffs_reload, ffs_validate, sbtry, ffs_mountfs (FFS1 and FFS2 super-blocks; the in-core super-block is at least size_of::<Fs>()), ffs_oldfscompat, ffs1_compat_read/write, ffs_unmount, ffs_flushfiles, ffs_statfs, ffs_sync, ffs_vget, ffs_fhtovp, ffs_vptofh, ffs_sbupdate, ffs_init (done flag atomic), ffs_sysctl (ffs_vars empty without UFS_DIRHASH); host tests: newfs-like FFS1/FFS2 images, mount, read, write past the direct blocks, mkdir/rename/unlink/rmdir/symlink/getdents, sync, unmount, fsck-like counter check, remount"
 
 [[extra]]
 rust = "sys/dev/consfile.rs"

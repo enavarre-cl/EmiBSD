@@ -49,8 +49,6 @@
 //!   lifetime cannot hold a local name. `disk_map` (`subr_disk.c`, DUID names) is reported
 //!   and the name is used as given, the C's answer when `disk_map` fails. `swapdev` and
 //!   `nblkdev` come from the machine's `conf.c` (`crate::machine::conf`).
-//! - `inittodr(fs->fs_time)` (the clock from the root file system's time) is reported: the
-//!   machine-dependent `inittodr` is not ported.
 //! - `um_export` (`NFSSERVER`) is not kept, so the export update of `ffs_mount` passes a
 //!   NULL table to `vfs_export`, which answers `ENOTSUP` without `NFSSERVER`.
 //! - `ffs_vars[]` holds only the `UFS_DIRHASH` variables, so with `ufs_dirhash.c` not ported
@@ -291,8 +289,7 @@ pub fn ffs_mountroot() -> Result<(), Errno> {
     let _ = ffs_statfs(mp, &mut st, p);
     mp.mnt_stat.set(st);
     vfs_unbusy(mp);
-    // inittodr(fs->fs_time): the machine-dependent clock set-up is not ported.
-    let _ = crate::unported!("inittodr (machdep clock.c)");
+    crate::kern::kern_time::inittodr(fs.fs_time.get());
 
     Ok(())
 }
