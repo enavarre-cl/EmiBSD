@@ -46,10 +46,8 @@
 //!
 //! ## Deviations
 //! - `domains[]` is a slice without the C's NULL terminator. It holds `inetdomain`
-//!   (`netinet/in_proto.rs`) and `routedomain` (`net/rtsock.rs`). `unixdomain`
-//!   (`kern/uipc_proto.c`, local sockets) is not ported: `domaininit` reports it with
-//!   `unported!` where it would initialise it, and `net_sysctl`'s `PF_UNIX` branch
-//!   (`uipc_sysctl`) is reported too. `MPLS`, `IPSEC`/`TCP_SIGNATURE` (`pfkeydomain`),
+//!   (`netinet/in_proto.rs`), `unixdomain` (`kern/uipc_proto.rs`, local sockets) and
+//!   `routedomain` (`net/rtsock.rs`). `MPLS`, `IPSEC`/`TCP_SIGNATURE` (`pfkeydomain`),
 //!   `INET6` and `NAF_FRAME` are not configured; their entries are comments, and so are the
 //!   `NBPFILTER`, `NPFLOW` and `PIPEX` branches of `net_sysctl`.
 //! - The two timeouts are statics initialised in `domaininit` with their own address as the
@@ -66,6 +64,8 @@ use core::sync::atomic::Ordering;
 use crate::kern::kern_sysctl::{sysctl_vslock, sysctl_vsunlock};
 use crate::kern::kern_timeout::{timeout_add, timeout_add_msec, timeout_set_flags};
 use crate::kern::uipc_mbuf::{MAX_HDR, MAX_LINKHDR, MAX_PROTOHDR};
+use crate::kern::uipc_proto::UNIXDOMAIN;
+use crate::kern::uipc_usrreq::uipc_sysctl;
 use crate::net::ifq::net_ifiq_sysctl;
 use crate::net::rtsock::ROUTEDOMAIN;
 use crate::netinet::in_proto::INETDOMAIN;
@@ -76,15 +76,14 @@ use crate::sys::protosw::{PR_MPSYSCTL, Protosw};
 use crate::sys::socket::{NET_LINK_IFRXQ, PF_LINK, PF_UNIX, PF_UNSPEC, SOCK_RAW, Sockaddr};
 use crate::sys::systm::net_assert_locked;
 use crate::sys::timeout::{KCLOCK_NONE, TIMEOUT_MPSAFE, TIMEOUT_PROC, Timeout};
-use crate::unported;
 
 /// `domains[]`: the configured communication domains.
-pub static DOMAINS: [&Domain; 2] = [
+pub static DOMAINS: [&Domain; 3] = [
     // MPLS: &mplsdomain, not configured.
     // IPSEC, TCP_SIGNATURE: &pfkeydomain, not configured.
     // INET6: &inet6domain, not configured.
     &INETDOMAIN,
-    // &unixdomain: kern/uipc_proto.c is not ported (see the module's deviations).
+    &UNIXDOMAIN,
     &ROUTEDOMAIN,
     // NAF_FRAME: &framedomain, not configured.
 ];
@@ -96,8 +95,6 @@ static PFSLOW_TIMEOUT: Timeout = Timeout::new(pfslowtimo, ptr::null_mut());
 
 /// `domaininit`: initialises the domains and their protocols.
 pub fn domaininit() {
-    // &unixdomain, between inetdomain and routedomain in the C's table, would run unp_init.
-    let _ = unported!("unixdomain (kern/uipc_proto.c)");
     for dp in DOMAINS {
         if let Some(init) = dp.dom_init {
             init();
@@ -221,8 +218,7 @@ pub fn net_sysctl(
         return net_link_sysctl(&name[1..], oldp, oldlenp, newp, newlen);
     }
     if family == i32::from(PF_UNIX) {
-        // uipc_sysctl: kern/uipc_usrreq.c is not ported.
-        return Err(unported!("uipc_sysctl (kern/uipc_usrreq.c)"));
+        return uipc_sysctl(&name[1..], oldp, oldlenp, newp, newlen);
     }
     // NBPFILTER (PF_BPF), NPFLOW (PF_PFLOW), PIPEX (PF_PIPEX), MPLS (PF_MPLS): not configured.
     let Some(dp) = pffinddomain(family) else {
@@ -305,12 +301,14 @@ pub fn pffasttimo(arg: *mut c_void) {
 mod tests {
     use super::*;
     use crate::netinet::in_::{IPPROTO_ICMP, IPPROTO_RAW, IPPROTO_UDP};
-    use crate::sys::socket::{AF_INET, AF_ROUTE, SOCK_DGRAM};
+    use crate::sys::socket::{AF_INET, AF_ROUTE, AF_UNIX, SOCK_DGRAM, SOCK_SEQPACKET};
 
     #[test]
     fn the_inet_protocols_are_found_by_number_and_type() {
         assert!(pffinddomain(i32::from(AF_INET)).is_some());
         assert!(pffinddomain(i32::from(AF_ROUTE)).is_some());
+        let unix = pffindtype(i32::from(AF_UNIX), SOCK_SEQPACKET).expect("seqpacket");
+        assert!(core::ptr::eq(unix.pr_domain, &UNIXDOMAIN));
         assert!(pffinddomain(i32::from(PF_UNSPEC)).is_none());
 
         let icmp = pffindproto(i32::from(AF_INET), IPPROTO_ICMP, SOCK_RAW).expect("icmp");

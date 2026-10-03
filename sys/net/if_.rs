@@ -139,11 +139,12 @@
 //!   `tcp_if_output_tso` (`netinet/tcp_output.c`) is a local stand-in with the C's first two
 //!   tests: a packet that did not ask for TSO, or whose segments fit, goes back to the caller;
 //!   a TSO packet is reported and dropped with `ENOSYS`.
-//! - `pru_control` (`<sys/protosw.h>`) cannot read the socket's protocol (sockets are not
-//!   ported): it is `in_control`, the `pru_control` of every `inetdomain` protocol and the
-//!   only one in the configured domains.
-//! - `ifioctl`'s `struct socket *` is an opaque pointer (sockets are not ported) and `caddr_t
-//!   data` a raw pointer: `ifioctl` and the `ioctl` helpers are `unsafe fn`s whose contract is
+//! - `pru_control` (`<sys/protosw.h>`) is a local stand-in: the `inetdomain` protocols have
+//!   no `pr_usrreqs` yet (`udp_usrreq.c`, `raw_ip.c`, `tcp_usrreq.c` are not ported), and the
+//!   kernel's own requests come with a NULL socket, so it is `in_control`, the `pru_control`
+//!   of every `inetdomain` protocol and the only one in the configured domains.
+//! - `ifioctl`'s `struct socket *` is a raw pointer (NULL for the kernel's own requests) and
+//!   `caddr_t data` a raw pointer: `ifioctl` and the `ioctl` helpers are `unsafe fn`s whose contract is
 //!   `sys_ioctl`'s kernel copy of the argument. `SIOCSIFXFLAGS`'s `goto forceup` into the
 //!   `SIOCSIFFLAGS` case is a flag checked after the `match`.
 //! - SMR (`kern/kern_smr.c`) is not ported: the index map is read without a lock and
@@ -3275,10 +3276,9 @@ pub fn if_setrdomain(ifp: &'static Ifnet, rdomain: i32) -> Result<(), Errno> {
     Ok(())
 }
 
-/// `pru_control(so, cmd, data, ifp)` (`<sys/protosw.h>`): the protocol's `ioctl`. Sockets
-/// are not ported, so the socket's protocol cannot be read: the request goes to `in_control`,
-/// the `pru_control` of every `inetdomain` protocol (the only domain here whose protocols have
-/// one).
+/// `pru_control(so, cmd, data, ifp)` (`<sys/protosw.h>`): the protocol's `ioctl`. The
+/// request goes to `in_control`, the `pru_control` of every `inetdomain` protocol (see the
+/// module's deviations).
 ///
 /// # Safety
 ///
@@ -3298,7 +3298,7 @@ unsafe fn pru_control(
 /// # Safety
 ///
 /// `data` points at the kernel copy of the request, aligned for and as long as the structure
-/// `cmd` encodes; `so` is the socket (`struct socket *`, opaque until sockets are ported).
+/// `cmd` encodes; `so` is the live `struct socket` of the request, or NULL.
 pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> Result<(), Errno> {
     // SAFETY: every interface command's argument starts with the interface name (`ifreq`,
     // `ifgroupreq`, `if_afreq`), per the caller's contract.

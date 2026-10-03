@@ -94,6 +94,7 @@ use crate::sys::mount::Mount;
 use crate::sys::namei::{Componentname, NamecacheRbCache, NcMe};
 use crate::sys::proc::Proc;
 use crate::sys::queue::{ListEntry, ListHead, SlistEntry, TailqEntry, TailqHead};
+use crate::sys::socketvar::Socket;
 use crate::sys::specdev::Specinfo;
 use crate::sys::time::Timespec;
 use crate::sys::tree::{RbtEntry, RbtHead};
@@ -195,8 +196,8 @@ pub enum VnodeUn {
     None,
     /// `vu_mountedhere`: ptr to mounted vfs (`VDIR`).
     Mountedhere(&'static Mount),
-    /// `vu_socket`: unix ipc (`VSOCK`; `struct socket`, `uipc_socket.c`).
-    Socket(*mut c_void),
+    /// `vu_socket`: unix ipc (`VSOCK`; the socket bound to the name, `uipc_usrreq.c`).
+    Socket(&'static Socket),
     /// `vu_specinfo`: device (`VCHR`, `VBLK`).
     Specinfo(&'static Specinfo),
     /// `vu_fifoinfo`: fifo (`VFIFO`; `struct fifoinfo`, `fifo_vnops.c`).
@@ -319,6 +320,19 @@ impl Vnode {
     pub fn set_v_mountedhere(&self, mp: Option<&'static Mount>) {
         self.v_un
             .set(mp.map_or(VnodeUn::None, VnodeUn::Mountedhere));
+    }
+
+    /// `vp->v_socket`: the socket bound to a `VSOCK` vnode's name.
+    pub fn v_socket(&self) -> Option<&'static Socket> {
+        match self.v_un.get() {
+            VnodeUn::Socket(so) => Some(so),
+            _ => None,
+        }
+    }
+
+    /// `vp->v_socket = so`.
+    pub fn set_v_socket(&self, so: Option<&'static Socket>) {
+        self.v_un.set(so.map_or(VnodeUn::None, VnodeUn::Socket));
     }
 
     /// `vp->v_specinfo`.

@@ -19,13 +19,19 @@ use crate::sys::mbuf::{
 pub(crate) fn setup() -> MutexGuard<'static, ()> {
     let guard = setup_real_memory();
     crate::machine::cons::consinit();
+    mbinit_again();
+    guard
+}
+
+/// `mbinit` over memory a test has just reset (`setup_real_memory`), for the tests of other
+/// files that need mbufs.
+pub(crate) fn mbinit_again() {
     // mbinit registers its two free functions again.
     NUM_EXTFREE_FNS.store(0, Ordering::Relaxed);
     mbinit();
     // The host's test memory lies above amd64's 4 GiB DMA constraint, which the host double
     // mirrors; lift it as mbuf_dma_64bit_enable would.
     m_pool_noconstraints();
-    guard
 }
 
 /// The bytes the tests write: position `i` holds a value that differs from its neighbours.

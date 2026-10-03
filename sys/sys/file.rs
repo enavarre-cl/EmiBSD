@@ -57,8 +57,8 @@
 //!   `impl Into<Option<&Proc>>`, as the C passes NULL from the socket garbage collector.
 //!   `FREF` calls `vfs_stall_barrier()` (`vfs_subr.rs`) as in C.
 //! - `maxfiles` is `conf/param.rs`'s `MAXFILES`; `numfiles` is `kern_descrip.rs`'s
-//!   `NUMFILES`; `vnops` is `kern/vfs_vnops.rs`'s `VNOPS`; `socketops` arrives with
-//!   sockets.
+//!   `NUMFILES`; `vnops` is `kern/vfs_vnops.rs`'s `VNOPS`; `socketops` is
+//!   `kern/sys_socket.rs`'s `SOCKETOPS`.
 
 use core::cell::Cell;
 use core::ffi::c_void;

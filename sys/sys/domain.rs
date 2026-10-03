@@ -48,6 +48,8 @@
 //! - `domaininit` and `domains[]` are `kern/uipc_domain.rs`'s, which defines them; the domains
 //!   themselves (`inetdomain`, `routedomain`, ...) are their protocol files' statics, as the
 //!   C's `extern` declarations name them. `socklen_t` is `crate::sys::types::Socklen`.
+//! - `dom_dispose` takes `Option<&'static Mbuf>`: `sorele` and `sorflush` hand it the
+//!   receive buffer's chain, NULL when the buffer is empty.
 
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::Mbuf;
@@ -57,8 +59,9 @@ use crate::sys::types::Socklen;
 /// `int (*dom_externalize)(struct mbuf *, socklen_t, int)`: externalize access rights.
 pub type DomExternalizeFn = fn(&'static Mbuf, Socklen, i32) -> Result<(), Errno>;
 
-/// `void (*dom_dispose)(struct mbuf *)`: dispose of internalized rights.
-pub type DomDisposeFn = fn(&'static Mbuf);
+/// `void (*dom_dispose)(struct mbuf *)`: dispose of internalized rights; the chain may be
+/// empty (a socket buffer without records).
+pub type DomDisposeFn = fn(Option<&'static Mbuf>);
 
 /// `struct domain`.
 pub struct Domain {

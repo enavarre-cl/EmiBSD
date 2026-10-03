@@ -126,11 +126,11 @@
 //!   name this struct also needs.
 //! - `satosin`, `satosin_const` and `sintosa` are pointer casts (`docs/C_TO_RUST.md`);
 //!   `in_hosteq` and `in_nullhost` are `const fn`s.
-//! - `in_control`'s `struct socket *` is an opaque pointer: sockets are not ported, so the
-//!   `SS_PRIV` test cannot be made. A NULL socket is the kernel's own request and privileged
-//!   (the boot self-test configures an interface that way); any other socket is reported and
-//!   unprivileged. `MROUTING` (`mrt_ioctl`) is not configured. `ifioctl`'s `pru_control`
-//!   (`net/if_.rs`) reaches `in_control` for `AF_INET`.
+//! - `in_control`'s `struct socket *` stays the raw pointer `ifioctl` hands down: it is read
+//!   as a `Socket` for the `SS_PRIV` test. A NULL socket is the kernel's own request and
+//!   privileged (the boot self-test configures an interface that way). `MROUTING`
+//!   (`mrt_ioctl`) is not configured. `ifioctl`'s `pru_control` (`net/if_.rs`) reaches
+//!   `in_control` for `AF_INET`.
 //! - The address `ioctl`s are `unsafe fn`s over `caddr_t data` (`docs/C_TO_RUST.md`, the
 //!   `ioctl` row); the `struct sockaddr_in *` the C keeps into the request are copies or raw
 //!   pointers into it. `in_ioctl_set_ifaddr` and `in_ioctl_change_ifaddr` share the
@@ -822,20 +822,19 @@ pub fn in_ifp2ia(ifp: &Ifnet) -> Option<&'static InIfaddr> {
 /// # Safety
 ///
 /// `data` points at the kernel copy of the request, aligned for and as long as the structure
-/// `cmd` encodes (`IfIoctlFn`'s contract). `so` is the socket (opaque until sockets are
-/// ported); NULL is a request from the kernel itself.
+/// `cmd` encodes (`IfIoctlFn`'s contract). `so` is the `struct socket` the request came
+/// through, or NULL for a request from the kernel itself.
 pub unsafe fn in_control(
     so: *const c_void,
     cmd: u64,
     data: *mut u8,
     ifp: Option<&'static Ifnet>,
 ) -> Result<(), Errno> {
-    // so->so_state & SS_PRIV: struct socket is not ported. The kernel's own requests (a NULL
-    // socket) are privileged; a socket's privilege cannot be read yet.
-    let privileged = so.is_null() || {
-        let _ = unported!("in_control: struct socket (SS_PRIV)");
-        false
-    };
+    // The kernel's own requests (a NULL socket) are privileged.
+    // SAFETY: a non-NULL `so` is the live socket of the ioctl (the caller's contract).
+    let privileged = so.is_null()
+        || unsafe { &*so.cast::<crate::sys::socketvar::Socket>() }
+            .has_state(crate::sys::socketvar::SS_PRIV);
 
     // MROUTING: SIOCGETVIFCNT, SIOCGETSGCNT through mrt_ioctl; not configured.
     // SAFETY: the caller's contract.

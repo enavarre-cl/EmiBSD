@@ -67,8 +67,7 @@
 //!   ([`SysctlPlain`]). `int *valp` is `&AtomicI32`, the C's atomic operations on it are the
 //!   atomic's; a C local passed by address is an `AtomicI32` read back with `into_inner`.
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
-//!   `ENOSYS`: `somaxconn`/`sominconn` (`uipc_socket.c`),
-//!   `file` (`kern_descrip.c`; `fill_file` is not here),
+//!   `ENOSYS`: `file` (`kern_descrip.c`; `fill_file` is not here),
 //!   `malloc` (`sysctl_malloc`), `pool` (`sysctl_dopool`), `intrcnt` and `evcount`
 //!   (`evcount_sysctl`), `watchdog` (`kern_watchdog.c`), `clockintr`, `timecounter`
 //!   (`sysctl_tc`), `procargs` after its checks (`uvm_io`), `proc_vmmap` after its checks
@@ -127,6 +126,7 @@ use crate::kern::subr_pool::{POOL_DEBUG, pool_reclaim_all};
 use crate::kern::subr_prf::{SPLASSERT_CTL, panic};
 use crate::kern::tty::{TTY_COUNT, sysctl_tty};
 use crate::kern::uipc_mbuf::{MBSTAT, nmbclust_update};
+use crate::kern::uipc_socket::{somaxconn, sominconn};
 use crate::kern::vfs_bio::{BUFHIGHPAGES, bufadjust};
 use crate::kern::vfs_cache::NCHSTATS;
 use crate::kern::vfs_getcwd::vfs_getcwd_common;
@@ -138,6 +138,7 @@ use crate::machine::cpu::{Cpu, CpuInfo, cpu_info_foreach, curproc};
 use crate::machine::param::MachineInfo;
 use crate::machine::pmap::pmap_resident_count;
 use crate::sys::errno::Errno;
+use crate::sys::limits::SHRT_MAX;
 use crate::sys::malloc::{M_TEMP, M_WAITOK};
 use crate::sys::mbuf::{MT_NTYPES, Mbstat, MbstatCounters};
 use crate::sys::mman::{PROT_READ, PROT_WRITE};
@@ -239,9 +240,8 @@ static RAW_PART: AtomicI32 = AtomicI32::new(RAW_PART_C);
 /// `ccpu`, read-only (see the module's deviations).
 static CCPU: AtomicI32 = AtomicI32::new(sched_bsd::CCPU as i32);
 
-/// `kern_vars[]`: the `kern` integers `sysctl_bounded_arr` serves. The ones whose variable
-/// lives in an unported file are reported by [`kern_vars`] instead.
-static KERN_VARS: [SysctlBoundedArgs; 28] = [
+/// `kern_vars[]`: the `kern` integers `sysctl_bounded_arr` serves.
+static KERN_VARS: [SysctlBoundedArgs; 30] = [
     SysctlBoundedArgs::readonly(KERN_OSREV, &OPENBSD),
     SysctlBoundedArgs::new(KERN_MAXVNODES, &MAXVNODES, 0, i32::MAX),
     SysctlBoundedArgs::new(KERN_MAXPROC, &MAXPROCESS, 0, i32::MAX),
@@ -257,7 +257,8 @@ static KERN_VARS: [SysctlBoundedArgs; 28] = [
     SysctlBoundedArgs::readonly(KERN_RAWPARTITION, &RAW_PART),
     SysctlBoundedArgs::new(KERN_MAXTHREAD, &MAXTHREAD, 0, i32::MAX),
     SysctlBoundedArgs::readonly(KERN_NTHREADS, &NTHREADS),
-    // KERN_SOMAXCONN, KERN_SOMINCONN: somaxconn, sominconn (uipc_socket.c).
+    SysctlBoundedArgs::new(KERN_SOMAXCONN, &somaxconn, 0, SHRT_MAX as i32),
+    SysctlBoundedArgs::new(KERN_SOMINCONN, &sominconn, 0, SHRT_MAX as i32),
     SysctlBoundedArgs::new(KERN_NOSUIDCOREDUMP, &NOSUIDCOREDUMP, 0, 3),
     SysctlBoundedArgs::readonly(KERN_FSYNC, &INT_ONE),
     // SYSVMSG, SYSVSEM, SYSVSHM: not configured.
@@ -440,7 +441,7 @@ pub fn sys_sysctl(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
     Ok(())
 }
 
-/// `sysctl_bounded_arr(kern_vars, ...)`, with the variables of unported files reported.
+/// `sysctl_bounded_arr(kern_vars, ...)`.
 fn kern_vars(
     name: &[i32],
     oldp: usize,
@@ -448,9 +449,6 @@ fn kern_vars(
     newp: usize,
     newlen: usize,
 ) -> Result<(), Errno> {
-    if let [KERN_SOMAXCONN | KERN_SOMINCONN] = name {
-        return Err(unported!("kern.somaxconn: somaxconn (uipc_socket.c)"));
-    }
     sysctl_bounded_arr(&KERN_VARS, name, oldp, oldlenp, newp, newlen)
 }
 

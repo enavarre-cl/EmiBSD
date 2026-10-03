@@ -54,7 +54,12 @@ use crate::kern::sys_generic::{
     sys_write, sys_writev,
 };
 use crate::kern::sys_pipe::{sys_pipe, sys_pipe2};
-use crate::kern::uipc_syscalls::{sys_getrtable, sys_setrtable, sys_ypconnect};
+use crate::kern::uipc_syscalls::{
+    sys_accept, sys_accept4, sys_bind, sys_connect, sys_getpeername, sys_getrtable,
+    sys_getsockname, sys_getsockopt, sys_listen, sys_recvfrom, sys_recvmmsg, sys_recvmsg,
+    sys_sendmmsg, sys_sendmsg, sys_sendto, sys_setrtable, sys_setsockopt, sys_shutdown, sys_socket,
+    sys_socketpair, sys_ypconnect,
+};
 use crate::kern::vfs_getcwd::sys___getcwd;
 use crate::kern::vfs_syscalls::{
     sys___pledge_open, sys___realpath, sys_access, sys_chdir, sys_chflags, sys_chflagsat,
@@ -141,23 +146,33 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(0, 0, SY_NOLOCK, sys_getuid), // 24 = getuid
     Sysent::new(0, 0, SY_NOLOCK, sys_geteuid), // 25 = geteuid
     Sysent::new(0, 0, 0, sys_nosys), // 26 = unimplemented ptrace
-    Sysent::new(3, size_of::<SysRecvmsgArgs>(), SY_NOLOCK, sys_nosys), // 27 = recvmsg (sys_recvmsg not ported)
-    Sysent::new(3, size_of::<SysSendmsgArgs>(), SY_NOLOCK, sys_nosys), // 28 = sendmsg (sys_sendmsg not ported)
-    Sysent::new(6, size_of::<SysRecvfromArgs>(), SY_NOLOCK, sys_nosys), // 29 = recvfrom (sys_recvfrom not ported)
-    Sysent::new(3, size_of::<SysAcceptArgs>(), SY_NOLOCK, sys_nosys), // 30 = accept (sys_accept not ported)
-    Sysent::new(3, size_of::<SysGetpeernameArgs>(), SY_NOLOCK, sys_nosys), // 31 = getpeername (sys_getpeername not ported)
-    Sysent::new(3, size_of::<SysGetsocknameArgs>(), SY_NOLOCK, sys_nosys), // 32 = getsockname (sys_getsockname not ported)
-    Sysent::new(2, size_of::<SysAccessArgs>(), 0, sys_access),             // 33 = access
-    Sysent::new(2, size_of::<SysChflagsArgs>(), 0, sys_chflags),           // 34 = chflags
-    Sysent::new(2, size_of::<SysFchflagsArgs>(), 0, sys_fchflags),         // 35 = fchflags
-    Sysent::new(0, 0, 0, sys_sync),                                        // 36 = sync
-    Sysent::new(0, 0, 0, sys_nosys),                                       // 37 = obsolete msyscall
-    Sysent::new(2, size_of::<SysStatArgs>(), SY_NOLOCK, sys_stat),         // 38 = stat
-    Sysent::new(0, 0, SY_NOLOCK, sys_getppid),                             // 39 = getppid
-    Sysent::new(2, size_of::<SysLstatArgs>(), SY_NOLOCK, sys_lstat),       // 40 = lstat
-    Sysent::new(1, size_of::<SysDupArgs>(), SY_NOLOCK, sys_dup),           // 41 = dup
-    Sysent::new(4, size_of::<SysFstatatArgs>(), SY_NOLOCK, sys_fstatat),   // 42 = fstatat
-    Sysent::new(0, 0, SY_NOLOCK, sys_getegid),                             // 43 = getegid
+    Sysent::new(3, size_of::<SysRecvmsgArgs>(), SY_NOLOCK, sys_recvmsg), // 27 = recvmsg
+    Sysent::new(3, size_of::<SysSendmsgArgs>(), SY_NOLOCK, sys_sendmsg), // 28 = sendmsg
+    Sysent::new(6, size_of::<SysRecvfromArgs>(), SY_NOLOCK, sys_recvfrom), // 29 = recvfrom
+    Sysent::new(3, size_of::<SysAcceptArgs>(), SY_NOLOCK, sys_accept), // 30 = accept
+    Sysent::new(
+        3,
+        size_of::<SysGetpeernameArgs>(),
+        SY_NOLOCK,
+        sys_getpeername,
+    ), // 31 = getpeername
+    Sysent::new(
+        3,
+        size_of::<SysGetsocknameArgs>(),
+        SY_NOLOCK,
+        sys_getsockname,
+    ), // 32 = getsockname
+    Sysent::new(2, size_of::<SysAccessArgs>(), 0, sys_access), // 33 = access
+    Sysent::new(2, size_of::<SysChflagsArgs>(), 0, sys_chflags), // 34 = chflags
+    Sysent::new(2, size_of::<SysFchflagsArgs>(), 0, sys_fchflags), // 35 = fchflags
+    Sysent::new(0, 0, 0, sys_sync),  // 36 = sync
+    Sysent::new(0, 0, 0, sys_nosys), // 37 = obsolete msyscall
+    Sysent::new(2, size_of::<SysStatArgs>(), SY_NOLOCK, sys_stat), // 38 = stat
+    Sysent::new(0, 0, SY_NOLOCK, sys_getppid), // 39 = getppid
+    Sysent::new(2, size_of::<SysLstatArgs>(), SY_NOLOCK, sys_lstat), // 40 = lstat
+    Sysent::new(1, size_of::<SysDupArgs>(), SY_NOLOCK, sys_dup), // 41 = dup
+    Sysent::new(4, size_of::<SysFstatatArgs>(), SY_NOLOCK, sys_fstatat), // 42 = fstatat
+    Sysent::new(0, 0, SY_NOLOCK, sys_getegid), // 43 = getegid
     Sysent::new(0, 0, 0, sys_nosys), // 44 = unimplemented oprofil
     Sysent::new(0, 0, 0, sys_nosys), // 45 = unimplemented ktrace
     Sysent::new(3, size_of::<SysSigactionArgs>(), 0, sys_sigaction), // 46 = sigaction
@@ -237,56 +252,56 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(2, size_of::<SysDup2Args>(), SY_NOLOCK, sys_dup2),    // 90 = dup2
     Sysent::new(2, size_of::<SysNanosleepArgs>(), SY_NOLOCK, sys_nanosleep), // 91 = nanosleep
     Sysent::new(3, size_of::<SysFcntlArgs>(), SY_NOLOCK, sys_fcntl),  // 92 = fcntl
-    Sysent::new(4, size_of::<SysAccept4Args>(), SY_NOLOCK, sys_nosys), // 93 = accept4 (sys_accept4 not ported)
+    Sysent::new(4, size_of::<SysAccept4Args>(), SY_NOLOCK, sys_accept4), // 93 = accept4
     Sysent::new(5, size_of::<SysThrsleepArgs>(), SY_NOLOCK, sys_nosys), // 94 = __thrsleep (sys___thrsleep not ported)
     Sysent::new(1, size_of::<SysFsyncArgs>(), 0, sys_fsync),            // 95 = fsync
     Sysent::new(3, size_of::<SysSetpriorityArgs>(), 0, sys_setpriority), // 96 = setpriority
-    Sysent::new(3, size_of::<SysSocketArgs>(), SY_NOLOCK, sys_nosys), // 97 = socket (sys_socket not ported)
-    Sysent::new(3, size_of::<SysConnectArgs>(), SY_NOLOCK, sys_nosys), // 98 = connect (sys_connect not ported)
-    Sysent::new(3, size_of::<SysGetdentsArgs>(), 0, sys_getdents),     // 99 = getdents
+    Sysent::new(3, size_of::<SysSocketArgs>(), SY_NOLOCK, sys_socket),  // 97 = socket
+    Sysent::new(3, size_of::<SysConnectArgs>(), SY_NOLOCK, sys_connect), // 98 = connect
+    Sysent::new(3, size_of::<SysGetdentsArgs>(), 0, sys_getdents),      // 99 = getdents
     Sysent::new(2, size_of::<SysGetpriorityArgs>(), 0, sys_getpriority), // 100 = getpriority
-    Sysent::new(2, size_of::<SysPipe2Args>(), SY_NOLOCK, sys_pipe2),   // 101 = pipe2
-    Sysent::new(3, size_of::<SysDup3Args>(), SY_NOLOCK, sys_dup3),     // 102 = dup3
-    Sysent::new(1, size_of::<SysSigreturnArgs>(), 0, sys_sigreturn),   // 103 = sigreturn
-    Sysent::new(3, size_of::<SysBindArgs>(), SY_NOLOCK, sys_nosys), // 104 = bind (sys_bind not ported)
-    Sysent::new(5, size_of::<SysSetsockoptArgs>(), SY_NOLOCK, sys_nosys), // 105 = setsockopt (sys_setsockopt not ported)
-    Sysent::new(2, size_of::<SysListenArgs>(), SY_NOLOCK, sys_nosys), // 106 = listen (sys_listen not ported)
-    Sysent::new(4, size_of::<SysChflagsatArgs>(), 0, sys_chflagsat),  // 107 = chflagsat
-    Sysent::new(2, size_of::<SysPledgeArgs>(), SY_NOLOCK, sys_pledge), // 108 = pledge
-    Sysent::new(4, size_of::<SysPpollArgs>(), SY_NOLOCK, sys_ppoll),  // 109 = ppoll
+    Sysent::new(2, size_of::<SysPipe2Args>(), SY_NOLOCK, sys_pipe2),    // 101 = pipe2
+    Sysent::new(3, size_of::<SysDup3Args>(), SY_NOLOCK, sys_dup3),      // 102 = dup3
+    Sysent::new(1, size_of::<SysSigreturnArgs>(), 0, sys_sigreturn),    // 103 = sigreturn
+    Sysent::new(3, size_of::<SysBindArgs>(), SY_NOLOCK, sys_bind),      // 104 = bind
+    Sysent::new(5, size_of::<SysSetsockoptArgs>(), SY_NOLOCK, sys_setsockopt), // 105 = setsockopt
+    Sysent::new(2, size_of::<SysListenArgs>(), SY_NOLOCK, sys_listen),  // 106 = listen
+    Sysent::new(4, size_of::<SysChflagsatArgs>(), 0, sys_chflagsat),    // 107 = chflagsat
+    Sysent::new(2, size_of::<SysPledgeArgs>(), SY_NOLOCK, sys_pledge),  // 108 = pledge
+    Sysent::new(4, size_of::<SysPpollArgs>(), SY_NOLOCK, sys_ppoll),    // 109 = ppoll
     Sysent::new(6, size_of::<SysPselectArgs>(), SY_NOLOCK, sys_pselect), // 110 = pselect
     Sysent::new(1, size_of::<SysSigsuspendArgs>(), SY_NOLOCK, sys_sigsuspend), // 111 = sigsuspend
     Sysent::new(3, size_of::<SysSendsyslogArgs>(), SY_NOLOCK, sys_sendsyslog), // 112 = sendsyslog
-    Sysent::new(0, 0, 0, sys_nosys),                                  // 113 = unimplemented fktrace
-    Sysent::new(2, size_of::<SysUnveilArgs>(), 0, sys_unveil),        // 114 = unveil
+    Sysent::new(0, 0, 0, sys_nosys), // 113 = unimplemented fktrace
+    Sysent::new(2, size_of::<SysUnveilArgs>(), 0, sys_unveil), // 114 = unveil
     Sysent::new(2, size_of::<SysRealpathArgs>(), SY_NOLOCK, sys___realpath), // 115 = __realpath
-    Sysent::new(5, size_of::<SysRecvmmsgArgs>(), SY_NOLOCK, sys_nosys), // 116 = recvmmsg (sys_recvmmsg not ported)
-    Sysent::new(4, size_of::<SysSendmmsgArgs>(), SY_NOLOCK, sys_nosys), // 117 = sendmmsg (sys_sendmmsg not ported)
-    Sysent::new(5, size_of::<SysGetsockoptArgs>(), SY_NOLOCK, sys_nosys), // 118 = getsockopt (sys_getsockopt not ported)
-    Sysent::new(3, size_of::<SysThrkillArgs>(), 0, sys_thrkill),          // 119 = thrkill
-    Sysent::new(3, size_of::<SysReadvArgs>(), SY_NOLOCK, sys_readv),      // 120 = readv
-    Sysent::new(3, size_of::<SysWritevArgs>(), SY_NOLOCK, sys_writev),    // 121 = writev
-    Sysent::new(2, size_of::<SysKillArgs>(), 0, sys_kill),                // 122 = kill
-    Sysent::new(3, size_of::<SysFchownArgs>(), 0, sys_fchown),            // 123 = fchown
-    Sysent::new(2, size_of::<SysFchmodArgs>(), 0, sys_fchmod),            // 124 = fchmod
+    Sysent::new(5, size_of::<SysRecvmmsgArgs>(), SY_NOLOCK, sys_recvmmsg), // 116 = recvmmsg
+    Sysent::new(4, size_of::<SysSendmmsgArgs>(), SY_NOLOCK, sys_sendmmsg), // 117 = sendmmsg
+    Sysent::new(5, size_of::<SysGetsockoptArgs>(), SY_NOLOCK, sys_getsockopt), // 118 = getsockopt
+    Sysent::new(3, size_of::<SysThrkillArgs>(), 0, sys_thrkill), // 119 = thrkill
+    Sysent::new(3, size_of::<SysReadvArgs>(), SY_NOLOCK, sys_readv), // 120 = readv
+    Sysent::new(3, size_of::<SysWritevArgs>(), SY_NOLOCK, sys_writev), // 121 = writev
+    Sysent::new(2, size_of::<SysKillArgs>(), 0, sys_kill), // 122 = kill
+    Sysent::new(3, size_of::<SysFchownArgs>(), 0, sys_fchown), // 123 = fchown
+    Sysent::new(2, size_of::<SysFchmodArgs>(), 0, sys_fchmod), // 124 = fchmod
     Sysent::new(
         3,
         size_of::<SysPledgeOpenArgs>(),
         SY_NOLOCK,
         sys___pledge_open,
     ), // 125 = __pledge_open
-    Sysent::new(2, size_of::<SysSetreuidArgs>(), 0, sys_setreuid),        // 126 = setreuid
-    Sysent::new(2, size_of::<SysSetregidArgs>(), 0, sys_setregid),        // 127 = setregid
-    Sysent::new(2, size_of::<SysRenameArgs>(), 0, sys_rename),            // 128 = rename
+    Sysent::new(2, size_of::<SysSetreuidArgs>(), 0, sys_setreuid), // 126 = setreuid
+    Sysent::new(2, size_of::<SysSetregidArgs>(), 0, sys_setregid), // 127 = setregid
+    Sysent::new(2, size_of::<SysRenameArgs>(), 0, sys_rename), // 128 = rename
     Sysent::new(0, 0, 0, sys_nosys), // 129 = obsolete otruncate
     Sysent::new(0, 0, 0, sys_nosys), // 130 = obsolete oftruncate
     Sysent::new(2, size_of::<SysFlockArgs>(), SY_NOLOCK, sys_flock), // 131 = flock
     Sysent::new(2, size_of::<SysMkfifoArgs>(), 0, sys_mkfifo), // 132 = mkfifo
-    Sysent::new(6, size_of::<SysSendtoArgs>(), SY_NOLOCK, sys_nosys), // 133 = sendto (sys_sendto not ported)
-    Sysent::new(2, size_of::<SysShutdownArgs>(), SY_NOLOCK, sys_nosys), // 134 = shutdown (sys_shutdown not ported)
-    Sysent::new(4, size_of::<SysSocketpairArgs>(), SY_NOLOCK, sys_nosys), // 135 = socketpair (sys_socketpair not ported)
-    Sysent::new(2, size_of::<SysMkdirArgs>(), 0, sys_mkdir),              // 136 = mkdir
-    Sysent::new(1, size_of::<SysRmdirArgs>(), 0, sys_rmdir),              // 137 = rmdir
+    Sysent::new(6, size_of::<SysSendtoArgs>(), SY_NOLOCK, sys_sendto), // 133 = sendto
+    Sysent::new(2, size_of::<SysShutdownArgs>(), SY_NOLOCK, sys_shutdown), // 134 = shutdown
+    Sysent::new(4, size_of::<SysSocketpairArgs>(), SY_NOLOCK, sys_socketpair), // 135 = socketpair
+    Sysent::new(2, size_of::<SysMkdirArgs>(), 0, sys_mkdir), // 136 = mkdir
+    Sysent::new(1, size_of::<SysRmdirArgs>(), 0, sys_rmdir), // 137 = rmdir
     Sysent::new(0, 0, 0, sys_nosys), // 138 = obsolete t32_utimes
     Sysent::new(0, 0, 0, sys_nosys), // 139 = obsolete 4.2 sigreturn
     Sysent::new(2, size_of::<SysAdjtimeArgs>(), SY_NOLOCK, sys_adjtime), // 140 = adjtime

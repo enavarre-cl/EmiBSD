@@ -57,8 +57,8 @@
 //! - Nothing sets `syslogf` (that is `logioctl(LIOCSFD)`'s job, with the log device), so
 //!   `dosendsyslog` writes a `LOG_CONS` message to the console through `cnputc` (`constty`
 //!   and `cn_devvp` are NULL without the tty layer) and answers `ENOTCONN`, and the other
-//!   messages are stashed; the `sosend` to `syslogd(8)`'s socket is reported. The stash's
-//!   cursors are indices into the ring, not pointers.
+//!   messages are stashed; once a socket is set, the message goes to it through `sosend`. The
+//!   stash's cursors are indices into the ring, not pointers.
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
@@ -73,18 +73,23 @@ use crate::kern::kern_rwlock::{
     rw_assert_anylock, rw_assert_wrlock, rw_enter_read, rw_enter_write, rw_exit,
 };
 use crate::kern::subr_prf::snprintf;
+use crate::kern::sys_socket::fp_socket;
+use crate::kern::uipc_socket::sosend;
 use crate::machine::copy::copyin;
 use crate::machine::{Machine, MachineParam};
 use crate::sys::errno::Errno;
+use crate::sys::fcntl::FNONBLOCK;
 use crate::sys::file::{File, fref, frele};
 use crate::sys::malloc::{M_LOG, M_WAITOK};
 use crate::sys::msgbuf::{CONSBUFSIZE, MSG_MAGIC, Msgbuf};
 use crate::sys::proc::Proc;
 use crate::sys::rwlock::Rwlock;
+use crate::sys::socket::MSG_DONTWAIT;
 use crate::sys::syscallargs::SysSendsyslogArgs;
 use crate::sys::syslog::{LOG_CONS, LOG_KERN, LOG_MAXLINE, LOG_WARNING};
 use crate::sys::systm::{SysArgs, sysargs};
 use crate::sys::types::{Pid, Register};
+use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
 use crate::unported;
 
 /// `MSGBUFSIZE` of the selected machine: the static buffer's size.
@@ -505,10 +510,33 @@ pub fn dosendsyslog(p: &Proc, buf: SyslogBuf, nbyte: usize, flags: i32) -> Resul
     // KTRACE: not configured.
     let mut len = nbyte;
     let error = match fp {
-        Some(_fp) => {
-            // sosend(fp->f_data, NULL, &auio, NULL, NULL, MSG_DONTWAIT if FNONBLOCK) on
-            // syslogd(8)'s socket: sockets are not ported (and nothing sets syslogf).
-            Err(unported!("dosendsyslog: sosend (uipc_socket.c)"))
+        Some(fp) => {
+            let (base, segflg) = match buf {
+                SyslogBuf::User(addr) => (addr + start, UioSeg::UIO_USERSPACE),
+                SyslogBuf::Sys(ptr) => (ptr as usize + start, UioSeg::UIO_SYSSPACE),
+            };
+            let mut aiov = [Iovec {
+                iov_base: ptr::without_provenance_mut(base),
+                iov_len: nbyte,
+            }];
+            let mut auio = Uio {
+                uio_iov: &mut aiov,
+                uio_offset: 0,
+                uio_resid: nbyte,
+                uio_segflg: segflg,
+                uio_rw: UioRw::UIO_WRITE,
+                uio_procp: Some(p),
+            };
+            let flags = if fp.flag() & FNONBLOCK != 0 {
+                MSG_DONTWAIT
+            } else {
+                0
+            };
+            let error = sosend(fp_socket(fp), None, Some(&mut auio), None, None, flags);
+            if error.is_ok() {
+                len -= auio.uio_resid;
+            }
+            error
         }
         None => {
             // KERNEL_LOCK(): one CPU. constty and cn_devvp (the tty layer) are NULL: the

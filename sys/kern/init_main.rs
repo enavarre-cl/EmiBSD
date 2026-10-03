@@ -52,7 +52,8 @@
 //! `ncpusfound`, `proc0`, `process0`, `pgrp0` and `session0` are here; `start_init`,
 //! `check_console` and the kernel threads arrive with M5-b2 and M6; M7b brings `ifinit`,
 //! `softnet_init` and the pseudo-device attach (`pdevinit[]`, `pdevinit_done`), then
-//! `rtable_init` and `domaininit` (the IPv4 and routing domains).
+//! `rtable_init` and `domaininit` (the IPv4 and routing domains); the socket layer adds
+//! `soinit` and the UNIX domain.
 //!
 //! ## Deviations
 //! - `main()` takes no `framep` (unused in C) and never returns, as the C's loop never does.
@@ -107,6 +108,7 @@ use crate::kern::sys_pipe::pipe_init;
 use crate::kern::tty::tty_init;
 use crate::kern::uipc_domain::domaininit;
 use crate::kern::uipc_mbuf::{mbcpuinit, mbinit};
+use crate::kern::uipc_socket::soinit;
 use crate::kern::vfs_bio::{CLEANERPROC, buf_daemon};
 use crate::kern::vfs_init::{set_rootvnode, vfsinit};
 use crate::kern::vfs_lockf::lf_init;
@@ -280,7 +282,7 @@ pub fn main() -> ! {
     // NSTOEPLITZ: not configured.
 
     // Initialize sockets.
-    let _ = unported!("soinit");
+    soinit();
 
     // Initialize SRP subsystem.
     let _ = unported!("srp_startup");

@@ -61,9 +61,8 @@
 //! - `dofilereadv`/`dofilewritev` take a `Uio` whose iovecs borrow the caller's array; the
 //!   positioned checks (`FO_POSITION`) answer `ESPIPE` for every file that is not a vnode
 //!   (and for fifos and ttys), as in C.
-//! - `sys_ioctl`'s `pledge_ioctl` and the socket `SS_DNS` check are reported where the C
-//!   makes them: only a pledged process (none can be yet) or a socket (none exist) reaches
-//!   them. The argument buffer is a byte slice of `max(IOCPARM_LEN(com), sizeof(caddr_t))`
+//! - `sys_ioctl`'s `pledge_ioctl` is reported where the C makes it: only a pledged process
+//!   (none can be yet) reaches it. The argument buffer is a byte slice of `max(IOCPARM_LEN(com), sizeof(caddr_t))`
 //!   bytes, from the 128-byte stack buffer or `malloc(M_IOCTLOPS)`.
 //! - `KTRACE` is not configured.
 //! - `select(2)`/`poll(2)` are OpenBSD's, built on the thread's poll kqueue, but
@@ -443,8 +442,11 @@ pub fn sys_ioctl(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
 
     let error = 'out: {
         if fp.f_type.get() == DTYPE_SOCKET {
-            // so->so_state & SS_DNS: sockets (M7b).
-            break 'out Err(unported!("ioctl: SS_DNS (sockets)"));
+            let so = crate::kern::sys_socket::fp_socket(fp);
+
+            if so.has_state(crate::sys::socketvar::SS_DNS) {
+                break 'out Err(Errno::EINVAL);
+            }
         }
 
         // pledge_ioctl(p, com, fp): kern_pledge.c.

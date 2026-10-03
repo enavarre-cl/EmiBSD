@@ -38,6 +38,11 @@
 //! With `kern_unveil.c` it checks `unveil(2)`'s arguments (an empty path, a permission string
 //! too long for its buffer), that a path reaches `namei` (`ENOENT` without a root), and that
 //! `unveil(NULL, NULL)` locks the table so that a later call fails with `EPERM`.
+//! With the socket layer (`uipc_socket.c`, `uipc_usrreq.c`, `uipc_syscalls.c`) it makes
+//! `AF_UNIX` socket pairs with `socketpair(2)`: bytes go both ways on a stream pair, which
+//! `fstat(2)` and `getsockopt(2)` know for a socket, `shutdown(2)` gives the peer EOF and the
+//! writer `EPIPE`; a datagram pair keeps message boundaries (a short read truncates); and
+//! `sendmsg(2)`/`recvmsg(2)` pass a descriptor in an `SCM_RIGHTS` message.
 
 #![no_std]
 #![no_main]
@@ -157,6 +162,41 @@ const SYS_GETITIMER: usize = 70;
 const SYS_SELECT: usize = 71;
 /// `SYS_poll`.
 const SYS_POLL: usize = 252;
+/// `SYS_recvmsg`.
+const SYS_RECVMSG: usize = 27;
+/// `SYS_sendmsg`.
+const SYS_SENDMSG: usize = 28;
+/// `SYS_recvfrom`.
+const SYS_RECVFROM: usize = 29;
+/// `SYS_getpeername`.
+const SYS_GETPEERNAME: usize = 31;
+/// `SYS_socket`.
+const SYS_SOCKET: usize = 97;
+/// `SYS_getsockopt`.
+const SYS_GETSOCKOPT: usize = 118;
+/// `SYS_sendto`.
+const SYS_SENDTO: usize = 133;
+/// `SYS_shutdown`.
+const SYS_SHUTDOWN: usize = 134;
+/// `SYS_socketpair`.
+const SYS_SOCKETPAIR: usize = 135;
+/// `AF_UNIX`.
+const AF_UNIX: usize = 1;
+/// `SOCK_DGRAM`.
+const SOCK_DGRAM: usize = 2;
+/// `SOL_SOCKET`.
+const SOL_SOCKET: u32 = 0xffff;
+/// `SO_TYPE`.
+const SO_TYPE: usize = 0x1008;
+/// `SCM_RIGHTS`.
+const SCM_RIGHTS: u32 = 0x01;
+/// `SHUT_WR`.
+const SHUT_WR: usize = 1;
+/// `MSG_DONTWAIT`, `MSG_NOSIGNAL`.
+const MSG_DONTWAIT: usize = 0x80;
+const MSG_NOSIGNAL: usize = 0x400;
+/// `S_IFSOCK`.
+const S_IFSOCK: u32 = 0o140000;
 /// `CLOCK_REALTIME`.
 const CLOCK_REALTIME: usize = 0;
 /// `CLOCK_MONOTONIC`.
@@ -804,6 +844,13 @@ extern "C" fn init_main(sp: *const usize) -> ! {
     } else {
         status = 8;
     }
+    if sockets() {
+        if write(1, b"init: sockets ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 13;
+    }
     if processes() {
         if write(1, b"init: processes ok\n").is_err() {
             status = 1;
@@ -1048,6 +1095,146 @@ fn pipes() -> bool {
     ok &= call(SYS_SIGPENDING, 0, 0, 0) == (0, false);
     ok &= call(SYS_CLOSE, w, 0, 0) == (0, false);
 
+    ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
+}
+
+/// `struct msghdr`: the C layout (`#[repr(C)]` pads it the same way).
+#[repr(C)]
+struct Msghdr {
+    msg_name: usize,
+    msg_namelen: u32,
+    msg_iov: usize,
+    msg_iovlen: u32,
+    msg_control: usize,
+    msg_controllen: u32,
+    msg_flags: i32,
+}
+
+/// `socketpair(AF_UNIX, type, 0)`: the two descriptors.
+fn socketpair(type_: usize) -> Option<[usize; 2]> {
+    let mut sv = [0i32; 2];
+    let r = syscall6(
+        SYS_SOCKETPAIR,
+        [AF_UNIX, type_, 0, sv.as_mut_ptr() as usize, 0, 0],
+    );
+    (r == (0, false)).then_some([sv[0] as usize, sv[1] as usize])
+}
+
+/// The socket layer seen from user mode: `AF_UNIX` socket pairs (stream and datagram),
+/// `shutdown(2)`, the socket options and names, and a descriptor passed with `SCM_RIGHTS`.
+fn sockets() -> bool {
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let mut buf = [0u8; 16];
+    let mut st = [0u64; 16];
+
+    // A stream pair: the two lowest free descriptors, bytes both ways.
+    let Some([a, b]) = socketpair(SOCK_STREAM) else {
+        return false;
+    };
+    let mut ok = (a, b) == (3, 4);
+    ok &= write(a, b"ping") == Ok(4);
+    ok &= call(SYS_READ, b, buf.as_mut_ptr() as usize, buf.len()) == (4, false);
+    ok &= buf[..4] == *b"ping";
+    ok &= write(b, b"pong!") == Ok(5);
+    ok &= call(SYS_READ, a, buf.as_mut_ptr() as usize, buf.len()) == (5, false);
+    ok &= buf[..5] == *b"pong!";
+    // Nothing to read: a non-blocking receive says EAGAIN.
+    ok &= syscall6(
+        SYS_RECVFROM,
+        [b, buf.as_mut_ptr() as usize, buf.len(), MSG_DONTWAIT, 0, 0],
+    ) == (EAGAIN, true);
+
+    // fstat(2) and getsockopt(2) know a socket; getpeername(2) an unbound peer.
+    ok &= call(SYS_FSTAT, a, st.as_mut_ptr() as usize, 0) == (0, false);
+    ok &= (st[0] as u32) & S_IFMT == S_IFSOCK;
+    let mut val: i32 = 0;
+    let mut len: u32 = 4;
+    ok &= syscall6(
+        SYS_GETSOCKOPT,
+        [
+            a,
+            SOL_SOCKET as usize,
+            SO_TYPE,
+            &mut val as *mut i32 as usize,
+            &mut len as *mut u32 as usize,
+            0,
+        ],
+    ) == (0, false);
+    ok &= val as usize == SOCK_STREAM && len == 4;
+    let mut name = [0u8; 16];
+    let mut namelen: u32 = name.len() as u32;
+    ok &= call(
+        SYS_GETPEERNAME,
+        a,
+        name.as_mut_ptr() as usize,
+        &mut namelen as *mut u32 as usize,
+    ) == (0, false);
+    ok &= namelen == 16 && name[1] as usize == AF_UNIX;
+
+    // shutdown(2): the peer reads EOF, the writer gets EPIPE (no SIGPIPE asked).
+    ok &= call(SYS_SHUTDOWN, a, SHUT_WR, 0) == (0, false);
+    ok &= call(SYS_READ, b, buf.as_mut_ptr() as usize, buf.len()) == (0, false);
+    ok &= syscall6(
+        SYS_SENDTO,
+        [a, b"x".as_ptr() as usize, 1, MSG_NOSIGNAL, 0, 0],
+    ) == (EPIPE, true);
+
+    // A datagram pair keeps the boundaries; a short read truncates the datagram.
+    let Some([c, d]) = socketpair(SOCK_DGRAM) else {
+        return false;
+    };
+    ok &= write(c, b"first") == Ok(5);
+    ok &= write(c, b"second") == Ok(6);
+    ok &= call(SYS_READ, d, buf.as_mut_ptr() as usize, buf.len()) == (5, false);
+    ok &= buf[..5] == *b"first";
+    ok &= call(SYS_READ, d, buf.as_mut_ptr() as usize, 3) == (3, false);
+    ok &= buf[..3] == *b"sec";
+    ok &= syscall6(
+        SYS_RECVFROM,
+        [d, buf.as_mut_ptr() as usize, buf.len(), MSG_DONTWAIT, 0, 0],
+    ) == (EAGAIN, true);
+
+    // SCM_RIGHTS: b goes over the datagram pair and comes back as a new descriptor, which
+    // writes to a.
+    let mut cmsg = [20u32, SOL_SOCKET, SCM_RIGHTS, 0, b as u32, 0];
+    let iov = [b"!".as_ptr() as usize, 1];
+    let msg = Msghdr {
+        msg_name: 0,
+        msg_namelen: 0,
+        msg_iov: iov.as_ptr() as usize,
+        msg_iovlen: 1,
+        msg_control: cmsg.as_mut_ptr() as usize,
+        msg_controllen: 24,
+        msg_flags: 0,
+    };
+    ok &= call(SYS_SENDMSG, c, &msg as *const Msghdr as usize, 0) == (1, false);
+    let mut rcmsg = [0u32; 8];
+    let riov = [buf.as_mut_ptr() as usize, buf.len()];
+    let mut rmsg = Msghdr {
+        msg_name: 0,
+        msg_namelen: 0,
+        msg_iov: riov.as_ptr() as usize,
+        msg_iovlen: 1,
+        msg_control: rcmsg.as_mut_ptr() as usize,
+        msg_controllen: 32,
+        msg_flags: 0,
+    };
+    ok &= call(SYS_RECVMSG, d, &mut rmsg as *mut Msghdr as usize, 0) == (1, false);
+    ok &= buf[0] == b'!' && rmsg.msg_controllen == 20;
+    ok &= rcmsg[..3] == [20, SOL_SOCKET, SCM_RIGHTS];
+    let newfd = rcmsg[4] as usize;
+    ok &= newfd == 7;
+    ok &= write(newfd, b"fd") == Ok(2);
+    ok &= call(SYS_READ, a, buf.as_mut_ptr() as usize, buf.len()) == (2, false);
+    ok &= buf[..2] == *b"fd";
+
+    // socket(2) of the local domain, closed at once.
+    let (s, err) = call(SYS_SOCKET, AF_UNIX, SOCK_STREAM, 0);
+    ok &= !err && s == 8;
+
+    for fd in [a, b, c, d, newfd, s] {
+        ok &= call(SYS_CLOSE, fd, 0, 0) == (0, false);
+    }
     ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
 }
 
