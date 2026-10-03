@@ -36,10 +36,12 @@
 //!
 //! Upstream: sys/sys/select.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. `FD_SETSIZE`, `fd_mask`, `NFDBITS`, `NBBY`, `struct fd_set` and
+//! `FD_SETSIZE`, `fd_mask`, `NFDBITS`, `NBBY`, `struct fd_set` and
 //! `FD_SET`/`FD_CLR`/`FD_ISSET`/`FD_ZERO`/`FD_COPY`; the bit operations also work on a
 //! slice of masks, the variable-size sets `dopselect` builds for `nd` descriptors. The
-//! kernel's `struct selinfo` (a `struct klist`) waits for `kern_event.c`.
+//! kernel's `struct selinfo` is `<sys/selinfo.h>`'s (`sys/selinfo.rs`); `struct timeval` and
+//! `struct timespec` are `<sys/time.h>`'s; the `select`/`pselect` prototypes are user
+//! space's.
 
 /// `FD_SETSIZE`.
 pub const FD_SETSIZE: usize = 1024;

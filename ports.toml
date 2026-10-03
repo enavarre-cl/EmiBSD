@@ -1572,11 +1572,11 @@ notes = "M8: struct pollfd (AbiPod), nfds_t, the POLL* bits, POLL_NOHUP, INFTIM"
 [[file]]
 c = "sys/sys/select.h"
 rust = "sys/sys/select.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "3c7aa206326c1a500a9df18b145207886deff2ea"
 deps = []
-notes = "M8: FD_SETSIZE, NBBY, fd_mask, NFDBITS, howmany, struct fd_set, FD_SET/FD_CLR/FD_ISSET over mask slices, FD_ZERO; struct selinfo waits for kern_event.c; host test"
+notes = "M8: FD_SETSIZE, NBBY, fd_mask, NFDBITS, howmany, struct fd_set, FD_SET/FD_CLR/FD_ISSET over mask slices, FD_ZERO, FD_COPY; struct selinfo is <sys/selinfo.h>'s, struct timeval/timespec <sys/time.h>'s, the select/pselect prototypes user space's; host test"
 
 [[file]]
 c = "sys/sys/eventvar.h"
