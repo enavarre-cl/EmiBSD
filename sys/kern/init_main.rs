@@ -75,6 +75,7 @@ use crate::kern::kern_kthread::{kthread_create, kthread_run_deferred_queue};
 use crate::kern::kern_proc::{
     ALLPROC, ALLPROCESS, chgproccnt, pgrphash, pidhash, procinit, tidhash,
 };
+use crate::kern::kern_rwlock::rw_obj_init;
 use crate::kern::kern_sched::{sched_init, sched_init_cpu};
 use crate::kern::kern_synch::{endtsleep, sleep_queue_init, tsleep_nsec, wakeup};
 use crate::kern::kern_timeout::{timeout_proc_init, timeout_set, timeout_startup};
@@ -153,7 +154,7 @@ pub fn main() -> ! {
     let _ = unported!("KERNEL_LOCK_INIT");
     sched_lock_init(); // SCHED_LOCK_INIT()
 
-    let _ = unported!("rw_obj_init");
+    rw_obj_init();
     uvm_init();
     #[cfg(feature = "qemu")]
     {

@@ -94,11 +94,6 @@
 //! `uvm_fault_unwire_locked`) is M7a part 3.
 //!
 //! ## Deviations
-//! - `exec` still builds the address space with wired pages through
-//!   [`uvm_map_enter_wired`] and [`uvm_map_write_wired`] (M6), outside the entry tree; the
-//!   map remembers those pages in its `wired` list so `uvm_map_teardown` and
-//!   `uvmspace_exec` free them, and `uvmspace_fork` reports a parent that holds them. M7a-3
-//!   routes exec through [`uvm_map`] and retires the three.
 //! - `vm_map_lock` and friends are the `*_ln` functions without the `VMMAP_DEBUG`
 //!   file/line arguments and `LPRINTF`; the tree checks run under feature `vmmap_debug` (and
 //!   in host tests), as `option VMMAP_DEBUG`.
@@ -147,9 +142,8 @@ use crate::machine::cpu::curproc;
 use crate::machine::intr::splassert;
 use crate::machine::intr::{IPL_NONE, IPL_VM};
 use crate::machine::pmap::{
-    MachinePmap, pmap_activate, pmap_create, pmap_deactivate, pmap_destroy, pmap_enter,
-    pmap_extract, pmap_kernel, pmap_map_direct, pmap_protect, pmap_reference, pmap_remove,
-    pmap_remove_holes, pmap_update, pmap_wired_count,
+    MachinePmap, pmap_activate, pmap_create, pmap_deactivate, pmap_destroy, pmap_kernel,
+    pmap_protect, pmap_reference, pmap_remove, pmap_remove_holes, pmap_update, pmap_wired_count,
 };
 use crate::machine::vmparam::VmParam;
 use crate::machine::{Machine, Pmap};
@@ -193,9 +187,9 @@ use crate::uvm::uvm_anon::{VmAref, uvm_anfree};
 use crate::uvm::uvm_extern::{
     PROT_MASK, UVM_FLAG_CONCEAL, UVM_FLAG_COPYONW, UVM_FLAG_FIXED, UVM_FLAG_HOLE, UVM_FLAG_NOFAULT,
     UVM_FLAG_NOMERGE, UVM_FLAG_OVERLAY, UVM_FLAG_QUERY, UVM_FLAG_SIGALTSTACK, UVM_FLAG_STACK,
-    UVM_FLAG_TRYLOCK, UVM_FLAG_UNMAP, UVM_FLAG_WC, UVM_LK_ENTER, UVM_LK_EXIT, UVM_PGA_ZERO,
-    UVM_UNKNOWN_OFFSET, VmInherit, VmProt, Vmspace, Voff, uvm_advice, uvm_inherit, uvm_mapflag,
-    uvm_maxprotection, uvm_protection,
+    UVM_FLAG_TRYLOCK, UVM_FLAG_UNMAP, UVM_FLAG_WC, UVM_LK_ENTER, UVM_LK_EXIT, UVM_UNKNOWN_OFFSET,
+    VmInherit, VmProt, Vmspace, Voff, uvm_advice, uvm_inherit, uvm_mapflag, uvm_maxprotection,
+    uvm_protection,
 };
 use crate::uvm::uvm_fault::{uvm_fault_unwire_locked, uvm_fault_wire};
 use crate::uvm::uvm_init::{UVM, UVMEXP};
@@ -204,13 +198,10 @@ use crate::uvm::uvm_km::{
     uvm_km_pgremove_intrsafe,
 };
 use crate::uvm::uvm_object::{UvmObject, uvm_obj_is_kern_object};
-use crate::uvm::uvm_page::{
-    PG_BUSY, PG_FAKE, PHYS_TO_VM_PAGE, PQ_ANON, Pglist, uvm_pagealloc, uvm_pagedeactivate,
-    uvm_pagefree, uvm_pageunwire, uvm_pagewire, uvm_pglistfree, vm_page_to_phys,
-};
+use crate::uvm::uvm_page::{PQ_ANON, uvm_pagedeactivate};
 use crate::uvm::uvm_pager::{PGO_CLEANIT, PGO_DEACTIVATE, PGO_FREE};
 use crate::uvm::uvm_param::{atop, ptoa, round_page, trunc_page};
-use crate::uvm::uvm_pmap::{PMAP_CANFAIL, PMAP_WIRED, pmap_prefer_align, pmap_prefer_offset};
+use crate::uvm::uvm_pmap::{pmap_prefer_align, pmap_prefer_offset};
 use crate::{kassert, kdassert, kprintf, queue_adapter, tree_adapter, unported};
 
 /// `VM_MAP_PAGEABLE`: ro: entries are pageable.
@@ -462,9 +453,6 @@ pub struct VmMap {
     pub mtx: Mutex,
     /// `flags_lock`: flags lock.
     pub flags_lock: Mutex,
-    /// \[v\] The pages wired into the map by `uvm_map_enter_wired` (see the module's
-    /// deviations).
-    pub wired: Pglist,
 }
 
 impl VmMap {
@@ -492,7 +480,6 @@ impl VmMap {
             lock: Rwlock::new("vmmaplk"),
             mtx: Mutex::new(IPL_VM),
             flags_lock: Mutex::new(IPL_VM),
-            wired: Pglist::new(),
         }
     }
 
@@ -2893,7 +2880,6 @@ pub fn uvm_map_setup(map: &VmMap, pmap: &'static MachinePmap, min: usize, max: u
     map.flags.set(flags);
     map.timestamp.set(0);
     map.busy.set(ptr::null());
-    map.wired.init();
     if flags & VM_MAP_ISVMSPACE != 0 {
         rw_init_flags(&map.lock, "vmmaplk", RWL_DUPOK);
     } else {
@@ -2954,9 +2940,6 @@ pub fn uvm_map_teardown(map: &VmMap) {
         // Update wave-front.
         entry = UvmMapDeadq::next(e);
     }
-
-    // The pages `uvm_map_enter_wired` wired outside the tree (see the module's deviations).
-    uvm_map_remove_wired(map);
 
     #[cfg(any(test, feature = "vmmap_debug"))]
     {
@@ -3617,9 +3600,7 @@ pub fn uvmspace_exec(p: &Proc, start: usize, end: usize) {
         // uvm_map_setup to reinitialize the map to the new boundaries.
         //
         // uvm_unmap_remove will actually nuke all entries for us (as in, not replace them
-        // with free-memory entries). The pages `uvm_map_enter_wired` wired outside the tree
-        // go first (see the module's deviations).
-        uvm_map_remove_wired(map);
+        // with free-memory entries).
         let _ = uvm_unmap_remove(
             map,
             map.min_offset.get(),
@@ -4066,11 +4047,6 @@ pub fn uvmspace_fork(pr: &Process) -> &'static Vmspace {
                     + uvmspace_dused(new_map, new_entry.start.get(), new_entry.end.get()) as i32,
             );
         }
-    }
-    // The pages `uvm_map_enter_wired` wired outside the tree cannot be copied (see the
-    // module's deviations).
-    if !old_map.wired.is_empty() {
-        let _ = unported!("uvmspace_fork: copying the parent's wired stand-in pages (M7a-3)");
     }
     new_map
         .flags
@@ -5369,98 +5345,6 @@ pub fn uvm_map_setup_md(map: &VmMap) {
     // SMALL_KERNEL is not configured.
     map.uaddr_brk_stack
         .set(Some(uaddr_stack_brk_create(min, max)));
-}
-
-/// Wires `len` bytes of fresh zeroed pages at `va` in `map` with protection `prot` (see the
-/// module's deviations: what `uvm_map` + `uvm_fault_wire` will do once exec goes through
-/// the entry tree). A `PROT_NONE` range reserves without wiring. The map must not be
-/// locked.
-pub fn uvm_map_enter_wired(map: &VmMap, va: usize, len: usize, prot: VmProt) -> Result<(), Errno> {
-    kassert!(va & PAGE_MASK == 0 && len & PAGE_MASK == 0);
-    if va < map.min_offset.get() || len > map.max_offset.get() - va {
-        return Err(Errno::EINVAL);
-    }
-    if prot == PROT_NONE {
-        return Ok(());
-    }
-
-    let pmap = map.pmap();
-    let mut off = 0;
-    while off < len {
-        let Some(pg) = uvm_pagealloc(None, 0, None, UVM_PGA_ZERO) else {
-            return Err(Errno::ENOMEM);
-        };
-        pg.clear_bits(PG_BUSY | PG_FAKE);
-        uvm_pagewire(pg);
-        if let Err(e) = pmap_enter(
-            pmap,
-            Vaddr::new(va + off),
-            vm_page_to_phys(pg),
-            prot,
-            prot | PMAP_WIRED | PMAP_CANFAIL,
-        ) {
-            uvm_pageunwire(pg);
-            uvm_pagefree(pg);
-            return Err(e);
-        }
-        vm_map_lock(map);
-        // SAFETY: a page `uvm_pagealloc` just handed out is on no queue; the map's lock
-        // guards its `wired` list.
-        unsafe { map.wired.insert_tail(pg) };
-        map.size
-            .set(Vsize::new(map.size.get().as_usize() + PAGE_SIZE));
-        vm_map_unlock(map);
-        off += PAGE_SIZE;
-    }
-    pmap_update(pmap);
-    Ok(())
-}
-
-/// Copies `src` to `va` in `map` through the direct map of the pages `uvm_map_enter_wired`
-/// wired there, whatever their user protection (what `vn_rdwr` into a writable mapping does
-/// in C). `EFAULT` where no page is wired.
-pub fn uvm_map_write_wired(map: &VmMap, va: usize, src: &[u8]) -> Result<(), Errno> {
-    let pmap = map.pmap();
-    let mut done = 0;
-    while done < src.len() {
-        let cur = va + done;
-        let Some(pa) = pmap_extract(pmap, Vaddr::new(cur)) else {
-            return Err(Errno::EFAULT);
-        };
-        let Some(pg) = PHYS_TO_VM_PAGE(pa.trunc_page()) else {
-            return Err(Errno::EFAULT);
-        };
-        let in_page = cur & PAGE_MASK;
-        let n = (PAGE_SIZE - in_page).min(src.len() - done);
-        let dst = (pmap_map_direct(pg).as_usize() + in_page) as *mut u8;
-        // SAFETY: `dst` is inside the direct map of a page this map owns (wired by
-        // `uvm_map_enter_wired`), writable by the kernel; `n` stays within that page and
-        // within `src`.
-        unsafe { ptr::copy_nonoverlapping(src[done..].as_ptr(), dst, n) };
-        done += n;
-    }
-    Ok(())
-}
-
-/// Unmaps and frees every page `uvm_map_enter_wired` wired into `map` (the M6 stand-in for
-/// `uvm_unmap_remove` over those pages). Called with the map locked.
-fn uvm_map_remove_wired(map: &VmMap) {
-    if map.wired.is_empty() {
-        return;
-    }
-    let pmap = map.pmap();
-    pmap_remove(
-        pmap,
-        Vaddr::new(map.min_offset.get()),
-        Vaddr::new(map.max_offset.get()),
-    );
-    pmap_update(pmap);
-    for pg in map.wired.iter() {
-        uvm_pageunwire(pg);
-    }
-    uvm_pglistfree(&map.wired);
-    map.wired.init();
-    map.size.set(Vsize::new(0));
 }
 
 #[cfg(test)]

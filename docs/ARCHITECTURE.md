@@ -267,14 +267,11 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   with the pieces that need signals, file descriptors, limits, credentials or a vmspace
   reported; `initprocess` is null until `init` exists and process 0 adopts orphans meanwhile.
   The `selftest=kthread` threads now `kthread_exit` and proc0 checks the reaper freed them.
-- User address spaces without `uvm_map` (M6-b, decided with the user on 2026-10-02): the
-  first process gets a `vmspace` whose `vm_map` is OpenBSD's structure but holds no entry
-  tree; `exec` maps the ELF segments and the stack with `pmap_enter` on freshly allocated,
-  wired pages (`uvm_map_enter_wired`), writes the image into them through the direct map
-  (`uvm_map_write_wired`) and keeps them on the map's `wired` list so `uvmspace_exec` and
-  `uvm_exit` can unmap and free them. There is no `uvm_fault`: a user page fault kills the
-  process. `uvm_map.c`, `uvm_fault.c`, `uvm_amap.c`, `uvm_aobj.c` and the pager are milestone
-  M7a and replace this.
+- User address spaces (M6-b, then M7a): M6 built `exec`'s segments from wired pages outside
+  the entry tree; M7a-3b retired those stand-ins. `exec` now maps each segment with
+  `uvm_map` (anonymous, copy-on-write) and copies the image bytes in with `copyout`, so the
+  pages are faulted in by `uvm_fault`; with no vnode, `vmcmd_map_pagedvn` maps anonymous
+  memory as `vmcmd_map_readvn` does (`sys/kern/exec_subr.rs`).
 - Exec of a memory image (M6-b2): `kern_exec.c`'s `sys_execve` is ported from the point where
   the executable is in hand as `exec_image(p, name, image)`; `check_exec` runs the exec switch
   (`exec_elf_makecmds`, which requires the OpenBSD ELF note as the C does) without `namei`,

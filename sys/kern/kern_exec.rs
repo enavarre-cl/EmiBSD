@@ -55,8 +55,7 @@
 //!   user mode.
 //! - `copyargs` lays out an empty `argv`/`envp` (`argc` 0, two NULL terminators) and no
 //!   auxiliary vector (static executables only); `ps_strings` is written below
-//!   `vm_minsaddr` as in C, `ep_execpath` and the `PROT_NONE` cover of the top of the stack
-//!   (`uvm_map_protect`) wait for M7a.
+//!   `vm_minsaddr` as in C; `ep_execpath` is a local (nothing copies the path out yet).
 //! - `MAXTSIZ` is checked; the data limit uses `DFLDSIZ` (`limit0`) until `lim_cur` (M6-c).
 //! - The 4-clause licence (advertising clause) was accepted by the user at M2 for this
 //!   project.
@@ -74,13 +73,14 @@ use crate::sys::acct::AFORK;
 use crate::sys::errno::Errno;
 use crate::sys::exec::{ExecPackage, Execsw, PsStrings};
 use crate::sys::exec_elf::ElfEhdr;
+use crate::sys::mman::PROT_NONE;
 use crate::sys::proc::{EXIT_NORMAL, PS_EXEC, PS_INEXEC, Proc};
 use crate::sys::signal::SIGABRT;
 use crate::sys::syslimits::PATH_MAX;
 use crate::sys::time::Timespec;
 use crate::sys::types::{Register, Vaddr};
 use crate::unported;
-use crate::uvm::uvm_map::uvmspace_exec;
+use crate::uvm::uvm_map::{uvm_map_protect, uvmspace_exec};
 use crate::uvm::uvm_param::{atop, round_page, trunc_page};
 
 /// `execsw[]`: the executable formats, in the order they are tried.
@@ -244,9 +244,20 @@ pub fn exec_image(p: &Proc, name: &[u8], image: &[u8]) -> Result<(), Errno> {
     // MACHINE_STACK_GROWS_UP: neither amd64 nor arm64.
     pr.ps_strings
         .set(vm.vm_minsaddr.get() - sgap - PATH_MAX - size_of::<PsStrings>());
-    // pack.ep_execpath = vm_minsaddr - sgap - PATH_MAX, and uvm_map_protect(PROT_NONE) from
-    // round_page(execpath + PATH_MAX) to vm_minsaddr: M7a.
-    let _ = unported!("exec: uvm_map_protect of the stack top (M7a)");
+    let ep_execpath = vm.vm_minsaddr.get() - sgap - PATH_MAX;
+    if uvm_map_protect(
+        &vm.vm_map,
+        round_page(ep_execpath + PATH_MAX),
+        vm.vm_minsaddr.get(),
+        PROT_NONE,
+        0,
+        true,
+        false,
+    )
+    .is_err()
+    {
+        exec_abort(p, &mut pack);
+    }
 
     // remember information about the process
     let mut arginfo = PsStrings {

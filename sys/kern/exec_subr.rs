@@ -41,12 +41,15 @@
 //! `ExecVmcmdSet::{push, kill}` in `sys/exec.rs` (the set is a `Vec`).
 //!
 //! ## Deviations
-//! - No `uvm_map` until M7a: every vmcmd wires zeroed pages with `uvm_map_enter_wired` and
-//!   the two file-backed ones copy the image bytes in through the direct map
-//!   (`uvm_map_write_wired`) instead of mapping the vnode copy-on-write or `vn_rdwr`-ing into
-//!   a writable mapping. `VMCMD_IMMUTABLE` (`uvm_map_immutable`) and `vmcmd_mutable` report
-//!   themselves unported; a `PROT_NONE` command wires nothing. `vmcmd_randomize` writes
-//!   through the direct map too, so the random bytes land whatever the segment's protection.
+//! - There is no vnode: the image is a byte slice in kernel memory (`ExecPackage::ep_hdr`).
+//!   `vmcmd_map_pagedvn` therefore cannot `uvn_attach` and map the file copy-on-write; it
+//!   maps anonymous zero-fill memory the way `vmcmd_map_readvn` does and both copy the
+//!   bytes in with `copyout` (the C's `vn_rdwr(UIO_USERSPACE)`), so the pages are faulted
+//!   in by `uvm_fault` from the kernel's copy. A segment that extends past the image reads
+//!   as zeroes. `pagedvn` then lowers the protection with `uvm_map_protect` as `readvn`
+//!   does.
+//! - `arc4random_ctx_new` is not ported: `vmcmd_randomize` uses the global generator for
+//!   large regions too.
 //! - `exec_setup_stack` takes the stack limit from `DFLSSIZ` (what `limit0` holds) until
 //!   `lim_cur` exists (M6-c).
 //! - The 4-clause licence (advertising clause) was accepted by the user at M2 for this
@@ -57,7 +60,8 @@ use core::ptr::NonNull;
 use crate::dev::rnd::{arc4random, arc4random_buf, arc4random_uniform};
 use crate::kassert;
 use crate::kern::kern_malloc::{free, malloc};
-use crate::machine::pmap::pmap_proc_iflush;
+use crate::kern::sched_bsd::r#yield;
+use crate::machine::copy::copyout;
 use crate::machine::{Machine, VmParam};
 use crate::sys::errno::Errno;
 use crate::sys::exec::{
@@ -65,12 +69,15 @@ use crate::sys::exec::{
     VMCMD_STACK, VmcmdProc,
 };
 use crate::sys::malloc::{M_TEMP, M_WAITOK};
-use crate::sys::mman::{PROT_EXEC, PROT_NONE, PROT_READ, PROT_WRITE};
+use crate::sys::mman::{MADV_NORMAL, MAP_INHERIT_COPY, PROT_NONE, PROT_READ, PROT_WRITE};
 use crate::sys::param::{PAGE_MASK, PAGE_SHIFT, PAGE_SIZE};
 use crate::sys::proc::Proc;
-use crate::sys::types::{Vaddr, Vsize};
-use crate::unported;
-use crate::uvm::uvm_map::{uvm_map_enter_wired, uvm_map_write_wired};
+use crate::sys::sched::sched_pause;
+use crate::uvm::uvm_extern::{
+    PROT_MASK, UVM_FLAG_COPYONW, UVM_FLAG_FIXED, UVM_FLAG_OVERLAY, UVM_FLAG_STACK,
+    UVM_UNKNOWN_OFFSET, uvm_mapflag,
+};
+use crate::uvm::uvm_map::{uvm_map, uvm_map_immutable, uvm_map_protect};
 use crate::uvm::uvm_param::{round_page, trunc_page};
 
 /// `RANDOMIZE_CTX_THRESHOLD`: below this many bytes `vmcmd_randomize` uses the global
@@ -141,21 +148,44 @@ pub fn vmcmd_map_pagedvn(p: &Proc, cmd: &ExecVmcmd, image: &[u8]) -> Result<(), 
         return Err(Errno::EINVAL);
     }
 
-    // first, attach to the object (uvn_attach), then do the map: here wired pages holding
-    // the image bytes (see the module's deviations). A segment that extends past the image
-    // reads as zeroes, as a short file would.
-    let map = &p.vmspace().vm_map;
-    uvm_map_enter_wired(map, cmd.ev_addr, cmd.ev_len, cmd.ev_prot)?;
+    // first, attach to the object: no vnode (see the module's deviations); the bytes the
+    // file would page in are copied into anonymous memory.
     let end = cmd.ev_offset.saturating_add(cmd.ev_len).min(image.len());
-    if cmd.ev_offset < end {
-        uvm_map_write_wired(map, cmd.ev_addr, &image[cmd.ev_offset..end])?;
-    }
-    if cmd.ev_prot & PROT_EXEC != 0 {
-        pmap_proc_iflush(p.process(), Vaddr::new(cmd.ev_addr), Vsize::new(cmd.ev_len));
+    let bytes = image.get(cmd.ev_offset..end).unwrap_or(&[]);
+    let map = &p.vmspace().vm_map;
+    let mut addr = cmd.ev_addr;
+
+    // do the map
+    uvm_map(
+        map,
+        &mut addr,
+        cmd.ev_len,
+        None,
+        UVM_UNKNOWN_OFFSET,
+        0,
+        uvm_mapflag(
+            cmd.ev_prot | PROT_WRITE,
+            PROT_MASK,
+            MAP_INHERIT_COPY,
+            MADV_NORMAL,
+            UVM_FLAG_COPYONW | UVM_FLAG_FIXED,
+        ),
+    )?;
+    copyout(bytes, cmd.ev_addr)?;
+    if cmd.ev_prot & PROT_WRITE == 0 {
+        uvm_map_protect(
+            map,
+            cmd.ev_addr,
+            cmd.ev_addr + cmd.ev_len,
+            cmd.ev_prot,
+            0,
+            false,
+            true,
+        )?;
     }
 
     if cmd.ev_flags & VMCMD_IMMUTABLE != 0 {
-        let _ = unported!("vmcmd_map_pagedvn: uvm_map_immutable (M7a)");
+        let _ = uvm_map_immutable(map, cmd.ev_addr, round_page(cmd.ev_addr + cmd.ev_len), true);
     }
     // PMAP_CHECK_COPYIN: not configured.
 
@@ -175,23 +205,46 @@ pub fn vmcmd_map_readvn(p: &Proc, cmd: &ExecVmcmd, image: &[u8]) -> Result<(), E
 
     let prot = cmd.ev_prot;
 
-    // The C maps the area PROT_WRITE so that vn_rdwr() could write to it and fixes the
-    // protection up afterwards (uvm_map_protect); the direct-map copy needs no such thing.
     let map = &p.vmspace().vm_map;
-    uvm_map_enter_wired(map, cmd.ev_addr, round_page(cmd.ev_len), prot)?;
+    let mut addr = cmd.ev_addr;
+    uvm_map(
+        map,
+        &mut addr,
+        round_page(cmd.ev_len),
+        None,
+        UVM_UNKNOWN_OFFSET,
+        0,
+        uvm_mapflag(
+            prot | PROT_WRITE,
+            PROT_MASK,
+            MAP_INHERIT_COPY,
+            MADV_NORMAL,
+            UVM_FLAG_FIXED | UVM_FLAG_OVERLAY | UVM_FLAG_COPYONW,
+        ),
+    )?;
 
-    let end = cmd
-        .ev_offset
-        .checked_add(cmd.ev_len)
-        .ok_or(Errno::ENOEXEC)?;
-    let bytes = image.get(cmd.ev_offset..end).ok_or(Errno::ENOEXEC)?;
-    uvm_map_write_wired(map, cmd.ev_addr, bytes)?;
-    if prot & PROT_EXEC != 0 {
-        pmap_proc_iflush(p.process(), Vaddr::new(cmd.ev_addr), Vsize::new(cmd.ev_len));
+    // vn_rdwr(UIO_READ, ..., UIO_USERSPACE): the image's bytes, copied out (a short image
+    // is an I/O error, as a short read).
+    let end = cmd.ev_offset.checked_add(cmd.ev_len).ok_or(Errno::EIO)?;
+    let bytes = image.get(cmd.ev_offset..end).ok_or(Errno::EIO)?;
+    copyout(bytes, cmd.ev_addr)?;
+
+    if prot & PROT_WRITE == 0 {
+        // we had to map in the area at PROT_WRITE so that vn_rdwr() could write to it.
+        // however, the caller seems to want it mapped read-only, so now we are going to
+        // have to call uvm_map_protect() to fix up the protection. ICK.
+        uvm_map_protect(
+            map,
+            cmd.ev_addr,
+            round_page(cmd.ev_addr + cmd.ev_len),
+            prot,
+            0,
+            false,
+            true,
+        )?;
     }
-
     if cmd.ev_flags & VMCMD_IMMUTABLE != 0 {
-        let _ = unported!("vmcmd_map_readvn: uvm_map_immutable (M7a)");
+        let _ = uvm_map_immutable(map, cmd.ev_addr, round_page(cmd.ev_addr + cmd.ev_len), true);
     }
     Ok(())
 }
@@ -204,33 +257,52 @@ pub fn vmcmd_map_zero(p: &Proc, cmd: &ExecVmcmd) -> Result<(), Errno> {
 
     kassert!(cmd.ev_addr & PAGE_MASK == 0);
     let map = &p.vmspace().vm_map;
-    // UVM_FLAG_STACK marks the entry (M7a); the wired pages are the same either way.
-    let _ = VMCMD_STACK;
-    uvm_map_enter_wired(map, cmd.ev_addr, round_page(cmd.ev_len), cmd.ev_prot)?;
-    if cmd.ev_flags & VMCMD_IMMUTABLE != 0 && cmd.ev_prot != PROT_NONE {
-        let _ = unported!("vmcmd_map_zero: uvm_map_immutable (M7a)");
+    let mut addr = cmd.ev_addr;
+    let error = uvm_map(
+        map,
+        &mut addr,
+        round_page(cmd.ev_len),
+        None,
+        UVM_UNKNOWN_OFFSET,
+        0,
+        uvm_mapflag(
+            cmd.ev_prot,
+            PROT_MASK,
+            MAP_INHERIT_COPY,
+            MADV_NORMAL,
+            UVM_FLAG_FIXED
+                | UVM_FLAG_COPYONW
+                | if cmd.ev_flags & VMCMD_STACK != 0 {
+                    UVM_FLAG_STACK
+                } else {
+                    0
+                },
+        ),
+    );
+    if cmd.ev_flags & VMCMD_IMMUTABLE != 0 {
+        let _ = uvm_map_immutable(map, cmd.ev_addr, round_page(cmd.ev_addr + cmd.ev_len), true);
     }
-    Ok(())
+    error
 }
 
 /// `vmcmd_mutable`: handle vmcmd which changes an address space region back to mutable.
-pub fn vmcmd_mutable(_p: &Proc, cmd: &ExecVmcmd) -> Result<(), Errno> {
+pub fn vmcmd_mutable(p: &Proc, cmd: &ExecVmcmd) -> Result<(), Errno> {
     if cmd.ev_len == 0 {
         return Ok(());
     }
 
-    // ev_addr, ev_len may be misaligned, so maximize the region: uvm_map_immutable(map,
-    // trunc_page(ev_addr), round_page(ev_addr + ev_len), 0) (M7a).
-    let _ = (
+    // ev_addr, ev_len may be misaligned, so maximize the region
+    let _ = uvm_map_immutable(
+        &p.vmspace().vm_map,
         trunc_page(cmd.ev_addr),
         round_page(cmd.ev_addr + cmd.ev_len),
+        false,
     );
-    let _ = unported!("vmcmd_mutable: uvm_map_immutable (M7a)");
     Ok(())
 }
 
 /// `vmcmd_randomize`: handle vmcmd which specifies a randomized address space region.
-pub fn vmcmd_randomize(p: &Proc, cmd: &ExecVmcmd) -> Result<(), Errno> {
+pub fn vmcmd_randomize(_p: &Proc, cmd: &ExecVmcmd) -> Result<(), Errno> {
     let mut len = cmd.ev_len;
     let mut off = 0;
 
@@ -246,25 +318,24 @@ pub fn vmcmd_randomize(p: &Proc, cmd: &ExecVmcmd) -> Result<(), Errno> {
     };
     // SAFETY: a fresh `PAGE_SIZE`-byte allocation, ours until `free` below.
     let buf: &mut [u8] = unsafe { core::slice::from_raw_parts_mut(mem.as_ptr(), PAGE_SIZE) };
-    let map = &p.vmspace().vm_map;
     let error = if len < RANDOMIZE_CTX_THRESHOLD {
         arc4random_buf(&mut buf[..len]);
-        let e = uvm_map_write_wired(map, cmd.ev_addr, &buf[..len]);
+        let e = copyout(&buf[..len], cmd.ev_addr);
         libkern::explicit_bzero(&mut buf[..len]);
         e
     } else {
-        // arc4random_ctx_new(): a private generator context (M7); the global one serves.
+        // arc4random_ctx_new(): see the module's deviations.
         let mut e = Ok(());
         while len > 0 {
             let sublen = len.min(PAGE_SIZE);
             arc4random_buf(&mut buf[..sublen]);
-            e = uvm_map_write_wired(map, cmd.ev_addr + off, &buf[..sublen]);
+            e = copyout(&buf[..sublen], cmd.ev_addr + off);
             if e.is_err() {
                 break;
             }
             off += sublen;
             len -= sublen;
-            // sched_pause(yield): one page at a time is short.
+            sched_pause(r#yield);
         }
         libkern::explicit_bzero(buf);
         e
