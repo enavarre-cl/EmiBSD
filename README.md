@@ -1,4 +1,4 @@
-# openbsd-rs
+# EmiBSD
 
 The OpenBSD kernel, re-implemented in Rust, one file at a time.
 

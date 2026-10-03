@@ -1,4 +1,4 @@
-# openbsd-rs task runner. `just` lists recipes. Never call qemu or `cargo --target` by hand.
+# EmiBSD task runner. `just` lists recipes. Never call qemu or `cargo --target` by hand.
 set shell := ["zsh", "-cu"]
 
 amd64 := "x86_64-unknown-none"

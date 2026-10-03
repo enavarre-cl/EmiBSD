@@ -91,7 +91,7 @@ const PART_START: u64 = 2048;
 
 fn image_path(root: &Path, arch: Arch) -> PathBuf {
     root.join("target")
-        .join(format!("openbsd-rs-{}.img", arch.name()))
+        .join(format!("emibsd-{}.img", arch.name()))
 }
 
 /// `brew --prefix <formula>`, if Homebrew is installed and knows the formula.
@@ -141,7 +141,7 @@ fn locate(env: &str, formula: &str, rel: &str, extra: &[&str], file: &str) -> Re
 
 fn limine_file(file: &str) -> Result<PathBuf> {
     locate(
-        "OPENBSD_RS_LIMINE_DIR",
+        "EMIBSD_LIMINE_DIR",
         "limine",
         "share/limine",
         &["/usr/share/limine", "/usr/local/share/limine"],
@@ -151,7 +151,7 @@ fn limine_file(file: &str) -> Result<PathBuf> {
 
 fn edk2_file(file: &str) -> Result<PathBuf> {
     locate(
-        "OPENBSD_RS_EDK2_DIR",
+        "EMIBSD_EDK2_DIR",
         "qemu",
         "share/qemu",
         &["/usr/share/qemu", "/usr/local/share/qemu"],
@@ -197,7 +197,7 @@ pub fn image(root: &Path, arch: Arch, kernel: &Path, cmdline: Option<&str>) -> R
     let mut part = Partition::new(file, PART_START * SECTOR, part_sectors * SECTOR);
     fatfs::format_volume(
         &mut part,
-        fatfs::FormatVolumeOptions::new().volume_label(*b"OPENBSD-RS "),
+        fatfs::FormatVolumeOptions::new().volume_label(*b"EMIBSD     "),
     )?;
     let fs = fatfs::FileSystem::new(part, fatfs::FsOptions::new())?;
     {

@@ -1,4 +1,4 @@
-/* openbsd-rs arm64 linker script (Limine protocol). Identical to amd64's except OUTPUT_FORMAT. */
+/* EmiBSD arm64 linker script (Limine protocol). Identical to amd64's except OUTPUT_FORMAT. */
 OUTPUT_FORMAT(elf64-littleaarch64)
 ENTRY(_start)
 

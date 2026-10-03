@@ -1,4 +1,4 @@
-//! `xtask`: host-side developer tooling for openbsd-rs.
+//! `xtask`: host-side developer tooling for EmiBSD.
 //!
 //! Invoked through the cargo alias in `.cargo/config.toml`:
 //!
@@ -8,7 +8,7 @@
 //! cargo xtask ports next                   `todo` entries whose dependencies are all ported
 //! cargo xtask ports drift [--strict|--diff] ported files whose upstream content changed
 //! cargo xtask image --arch A --kernel K [--cmdline C]
-//!                                          build target/openbsd-rs-A.img (Limine + /bsd),
+//!                                          build target/emibsd-A.img (Limine + /bsd),
 //!                                          C as the kernel command line (boot(8) flags)
 //! cargo xtask qemu --arch A [--kernel K]   boot the image, serial and monitor on stdio
 //! cargo xtask smoke --arch A [--kernel K] [--cmdline C] [--status N] [--send-after L --send T] --expect L...

@@ -1,4 +1,4 @@
-# openbsd-rs
+# EmiBSD
 
 A re-implementation of the OpenBSD kernel in Rust: a standalone `#![no_std]` kernel, booted by
 Limine, running on amd64 and arm64 in QEMU. The OpenBSD C sources under `reference/openbsd-src/sys`
