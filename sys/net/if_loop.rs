@@ -116,15 +116,9 @@
 //! Status: `ported` (M7b).
 //!
 //! ## Deviations
-//! - `net/rtable.c` is not ported: `rtable_l2set` (recording `lo0` as routing domain 0's
-//!   loopback) is reported, and `loop_clone_destroy` reports `rtable_loindex` and fails with
-//!   `ENOSYS`, since it cannot tell whether the interface is a routing domain's loopback
-//!   (which must not go away).
 //! - `bpf(4)` is not configured: `bpfattach(&ifp->if_bpf, ifp, DLT_LOOP, ...)` is not called.
 //! - `loioctl` and `looutput` are `unsafe fn`s, the signatures of `if_ioctl` and `if_output`
 //!   (`net/if_var.rs`).
-//! - `struct rtentry` has no values yet (`net/route.rs`), so the reject/blackhole check of
-//!   `looutput` and `lortrequest`'s MTU never run.
 
 use core::ptr;
 use core::sync::atomic::Ordering;
@@ -142,12 +136,12 @@ use crate::net::if_::{
 use crate::net::if_types::IFT_LOOP;
 use crate::net::if_var::{IfClone, IfCounters, Ifnet, Netstack};
 use crate::net::route::{RTF_BLACKHOLE, RTF_HOST, RTF_REJECT, Rtentry};
+use crate::net::rtable::{rtable_l2set, rtable_loindex};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_DEVBUF, M_WAITOK, M_ZERO};
 use crate::sys::mbuf::{M_PKTHDR, Mbuf};
 use crate::sys::socket::Sockaddr;
 use crate::sys::sockio::{SIOCADDMULTI, SIOCDELMULTI, SIOCSIFADDR, SIOCSIFFLAGS, SIOCSIFMTU};
-use crate::unported;
 
 /// `LOMTU`.
 pub const LOMTU: u32 = 32768;
@@ -202,8 +196,7 @@ pub fn loop_clone_create(ifc: &'static IfClone, unit: i32) -> Result<(), Errno> 
     if unit == 0 {
         if_attachhead(ifp);
         let _ = if_addgroup(ifp, ifc.ifc_name);
-        // rtable_l2set(0, 0, ifp->if_index): net/rtable.c is not ported.
-        let _ = unported!("rtable_l2set");
+        rtable_l2set(0, 0, ifp.if_index.get());
     } else {
         if_attach(ifp);
     }
@@ -219,13 +212,7 @@ pub fn loop_clone_create(ifc: &'static IfClone, unit: i32) -> Result<(), Errno> 
 pub fn loop_clone_destroy(ifp: &'static Ifnet) -> Result<(), Errno> {
     let mut rdomain = 0;
 
-    // rtable_loindex(ifp->if_rdomain): net/rtable.c is not ported, so whether `ifp` is a
-    // routing domain's loopback is unknown; refuse.
-    let error: Result<(), Errno> = Err(unported!("rtable_loindex"));
-    error?;
-    let loindex = 0;
-
-    if ifp.if_index.get() == loindex {
+    if ifp.if_index.get() == rtable_loindex(ifp.if_rdomain.get()) {
         // rdomain 0 always needs a loopback
         if ifp.if_rdomain.get() == 0 {
             return Err(Errno::EPERM);
@@ -249,8 +236,7 @@ pub fn loop_clone_destroy(ifp: &'static Ifnet) -> Result<(), Errno> {
     free(ptr::NonNull::from(ifp).cast(), M_DEVBUF, size_of::<Ifnet>());
 
     if rdomain != 0 {
-        // rtable_l2set(rdomain, 0, 0): not ported.
-        let _ = unported!("rtable_l2set");
+        rtable_l2set(rdomain, 0, 0);
     }
     Ok(())
 }
@@ -289,10 +275,10 @@ pub unsafe fn looutput(
     }
 
     if let Some(rt) = rt
-        && rt.rt_flags().get() & (RTF_REJECT | RTF_BLACKHOLE) != 0
+        && rt.rt_flags.get() & (RTF_REJECT | RTF_BLACKHOLE) != 0
     {
         m_freem(m);
-        let flags = rt.rt_flags().get();
+        let flags = rt.rt_flags.get();
         return if flags & RTF_BLACKHOLE != 0 {
             Ok(())
         } else if flags & RTF_HOST != 0 {

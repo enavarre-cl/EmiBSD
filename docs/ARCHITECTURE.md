@@ -467,15 +467,27 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   `machine::autoconf::pdevinit()` hands over. SMR is not ported: the interface index map is
   read without a lock and replaced under its rwlock as in C, but the old map is freed at once
   (`smr_call`) and `smr_barrier` is empty, which is sound on one CPU with a kernel that is not
-  preempted. The protocols and the routing table are not here yet, so `ether_input` reports
-  `ipv4_input`/`arpinput` and drops the frame at the demux, `ether_resolve` reports
-  `arpresolve`, `ifioctl` reports `pru_control` (`in_control`), and `struct rtentry` is an
-  uninhabited stand-in (`net/route.rs`). `INET6`, `MPLS` and the pseudo-devices that are not
+  preempted. `INET6`, `MPLS` and the pseudo-devices that are not
   ported (`vlan`, `bridge`, `carp`, `pf`, `bpfilter`, `kstat`, `af_frame`, ...) are not
   configured: their code is a comment at each site. A driver embeds a `struct arpcom`
   (all-zero valid, so it fits an `M_ZERO` softc; `Rwlock`'s name became an `Option` for
   this), calls `if_attach(&ac.ac_if)` and `ether_ifattach(&ac)`, and hands received frames
   to `if_input`.
+- IPv4 and routing (M7b): `net/art.c`, `net/rtable.c`, `net/route.c`, `netinet/in.c`,
+  `if_ether.c` (ARP), `ip_input.c`, `ip_output.c`, `ip_icmp.c` and the checksums are OpenBSD's.
+  `main` calls `rtable_init` before the pseudo-devices and `domaininit` after them, as in C;
+  `domains[]` (`kern/uipc_domain.rs`) holds `inetdomain` and `routedomain`, and `unixdomain`
+  is reported until sockets exist. There are no sockets: the routing socket half of
+  `net/rtsock.c` that `route.c` calls (`rtm_miss`, `rtm_addr`, `rtm_ifchg`, ...) builds its
+  messages and reports their delivery, and a kernel caller of `in_control` passes a NULL
+  socket, which counts as privileged. SMR and SRP are not ported, so routes and ART tables
+  are freed at once instead of after a grace period, sound on one CPU with a kernel that is
+  not preempted. `ip_ctloutput` and the other socket options wait for sockets; TCP, UDP, raw IP, IGMP, IPv6, IPsec, `pf`, `carp`, multicast routing and divert
+  are not configured or report themselves (`netinet/in_proto.rs`). ARP's `rt_expire` 0 means
+  "permanent", so an entry made while `time_uptime` is still 0 never expires and never
+  re-asks; the boot ping selftest (`kern/selftest.rs`, feature `qemu`) waits for the first
+  second of uptime before it configures `10.0.2.15/24` on the first Ethernet interface,
+  adds the default route through `10.0.2.2` and sends an ICMP echo.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

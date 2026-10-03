@@ -5,6 +5,7 @@
 //! OpenBSD would run until there is a user space; they are compiled only with feature `qemu`
 //! (and need feature `alloc` for the allocator stress).
 
+use core::mem::size_of;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering};
 
@@ -976,9 +977,200 @@ pub fn taskq_check() {
     }
 }
 
+/// The address the ping self-test gives the interface: QEMU's user-mode network (slirp)
+/// assigns 10.0.2.15 to its guest.
+const PING_ADDR: [u8; 4] = [10, 0, 2, 15];
+/// The gateway and the address pinged: slirp's router, 10.0.2.2, answers ICMP echo.
+const PING_GATEWAY: [u8; 4] = [10, 0, 2, 2];
+/// The echo payload, as ping(8)'s default.
+const PING_DATALEN: usize = 56;
+/// How long the self-test waits for the reply: 30 tries of 100 ms.
+const PING_TRIES: u32 = 30;
+/// What the ping self-test sleeps on (nothing wakes it: the sleeps time out).
+static PING_WCHAN: u8 = 0;
+
+/// A `sockaddr_in` for `a`.
+fn ping_sin(a: [u8; 4]) -> crate::netinet::in_::SockaddrIn {
+    crate::netinet::in_::SockaddrIn {
+        sin_len: size_of::<crate::netinet::in_::SockaddrIn>() as u8,
+        sin_family: crate::sys::socket::AF_INET,
+        sin_addr: crate::netinet::in_::InAddr {
+            s_addr: u32::from_ne_bytes(a),
+        },
+        ..Default::default()
+    }
+}
+
+/// The M7b network check, on every default boot: what `ifconfig vio0 10.0.2.15/24 up`,
+/// `route add default 10.0.2.2` and `ping -c 1 10.0.2.2` do, from the kernel. The first
+/// Ethernet interface (`IFT_ETHER` on `ifnetlist`) gets 10.0.2.15/24 through `ifioctl`
+/// (`SIOCAIFADDR`, which reaches `in_control`, then `SIOCSIFFLAGS` with `IFF_UP`), a default
+/// route through `rtrequest(RTM_ADD)`, and an ICMP echo request goes to 10.0.2.2 through
+/// `ip_output`, which resolves the gateway with ARP. The test then sleeps until `icmp_input`
+/// counts an echo reply (`icps_inhist[ICMP_ECHOREPLY]`), three seconds at most.
+pub fn ping_gateway() {
+    use crate::net::if_::{IFF_UP, IFNETLIST, ifioctl};
+    use crate::net::if_types::IFT_ETHER;
+    use crate::net::route::{
+        RTAX_DST, RTAX_GATEWAY, RTAX_NETMASK, RTF_GATEWAY, RTF_STATIC, RTM_ADD, RtAddrinfo, rtfree,
+        rtrequest,
+    };
+    use crate::netinet::icmp_var::IcmpstatCounters;
+    use crate::netinet::in_::{IPPROTO_ICMP, sintosa};
+    use crate::netinet::in_var::InAliasreq;
+    use crate::netinet::ip::{Ip, MAXTTL};
+    use crate::netinet::ip_icmp::{ICMP_ECHO, ICMP_ECHOREPLY, ICMPCOUNTERS, IcmpPkt};
+    use crate::netinet::ip_output::ip_output;
+    use crate::netinet::ip_var::mtod_ip_store;
+    use crate::sys::endian::htons;
+    use crate::sys::mbuf::{M_ICMP_CSUM_OUT, MHLEN};
+    use crate::sys::sockio::{SIOCAIFADDR, SIOCSIFFLAGS};
+    use crate::sys::systm::{net_lock, net_unlock};
+
+    let Some(ifp) = IFNETLIST
+        .0
+        .iter()
+        .find(|ifp| ifp.if_type.get() == IFT_ETHER)
+    else {
+        kprintf!("selftest: ping skipped: no interface\n");
+        return;
+    };
+    let xname = ifp.if_xname.get();
+    let Some(p) = curproc() else {
+        kprintf!("selftest: ping 10.0.2.2: FAILED: no process context\n");
+        return;
+    };
+    // ARP reads an expiry time of 0 as "permanent" (`arpresolve`), and a route's expiry is the
+    // uptime in seconds when it was made: as on any OpenBSD system, networking is configured
+    // after the first second of uptime.
+    while getuptime() == 0 {
+        let _ = tsleep_nsec(ptr::addr_of!(PING_WCHAN), PWAIT, "uptime", 100_000_000);
+    }
+
+    // ifconfig <if> inet 10.0.2.15/24
+    let mut ifra = InAliasreq::zeroed();
+    ifra.ifra_name = xname;
+    *ifra.ifra_addr_mut() = ping_sin(PING_ADDR);
+    ifra.ifra_mask = ping_sin([255, 255, 255, 0]);
+    // SAFETY: `ifra` is a `struct in_aliasreq`, what SIOCAIFADDR takes; the socket is the
+    // kernel's own (NULL).
+    let error = unsafe { ifioctl(ptr::null(), SIOCAIFADDR, ptr::from_mut(&mut ifra).cast(), p) };
+    if let Err(e) = error {
+        kprintf!(
+            "selftest: ping 10.0.2.2: FAILED: SIOCAIFADDR on {}: error {}\n",
+            Str(&xname),
+            e as i32
+        );
+        return;
+    }
+
+    // ... up
+    let mut ifr = crate::net::if_::Ifreq::zeroed();
+    ifr.ifr_name = xname;
+    ifr.set_ifr_flags((ifp.if_flags.get() | IFF_UP) as i16);
+    // SAFETY: `ifr` is a `struct ifreq`, what SIOCSIFFLAGS takes.
+    let error = unsafe { ifioctl(ptr::null(), SIOCSIFFLAGS, ptr::from_mut(&mut ifr).cast(), p) };
+    if let Err(e) = error {
+        kprintf!(
+            "selftest: ping 10.0.2.2: FAILED: SIOCSIFFLAGS on {}: error {}\n",
+            Str(&xname),
+            e as i32
+        );
+        return;
+    }
+
+    // route add default 10.0.2.2
+    let mut dst = ping_sin([0, 0, 0, 0]);
+    let mut mask = ping_sin([0, 0, 0, 0]);
+    let mut gw = ping_sin(PING_GATEWAY);
+    let mut info = RtAddrinfo::new();
+    info.rti_info[RTAX_DST] = sintosa(&mut dst);
+    info.rti_info[RTAX_NETMASK] = sintosa(&mut mask);
+    info.rti_info[RTAX_GATEWAY] = sintosa(&mut gw);
+    info.rti_flags = RTF_GATEWAY | RTF_STATIC;
+    net_lock();
+    // The interface address whose subnet holds the gateway (route(8)'s rtm_getifa).
+    // SAFETY: a local `sockaddr_in`.
+    info.rti_ifa = unsafe { crate::net::if_::ifaof_ifpforaddr(sintosa(&mut gw), ifp) };
+    let mut rt = None;
+    // SAFETY: the addresses are locals that live across the call.
+    let error = unsafe { rtrequest(RTM_ADD, &mut info, 0, Some(&mut rt), 0) };
+    rtfree(rt);
+    net_unlock();
+    if let Err(e) = error {
+        kprintf!(
+            "selftest: ping 10.0.2.2: FAILED: default route: error {}\n",
+            e as i32
+        );
+        return;
+    }
+
+    // ping -c 1 10.0.2.2: an echo request with a skeletal IP header for ip_output.
+    let before = ICMPCOUNTERS[IcmpstatCounters::IcpsInhist as usize + usize::from(ICMP_ECHOREPLY)]
+        .load(Ordering::Relaxed);
+    let Some(m) = m_gethdr(M_DONTWAIT, MT_DATA) else {
+        kprintf!("selftest: ping 10.0.2.2: FAILED: no mbuf\n");
+        return;
+    };
+    let hlen = size_of::<Ip>();
+    let len = hlen + 8 + PING_DATALEN;
+    // Leave room in front for the link header, as a socket's send would.
+    let lead = MHLEN - len;
+    m.m_data().set(m.m_data().get().wrapping_add(lead & !7));
+    m.m_len().set(len as u32);
+    m.m_pkthdr().len.set(len as i32);
+    m.m_pkthdr().ph_rtableid.set(0);
+    let ip = Ip {
+        ip_len: htons(len as u16),
+        ip_ttl: MAXTTL,
+        ip_p: IPPROTO_ICMP as u8,
+        ip_dst: ping_sin(PING_GATEWAY).sin_addr,
+        ..Ip::default()
+    };
+    mtod_ip_store(m, &ip);
+    let icp = IcmpPkt::of(m, hlen);
+    icp.set_icmp_type(ICMP_ECHO);
+    icp.set_icmp_code(0);
+    icp.set_icmp_cksum(0);
+    icp.set_icmp_id(htons(0x4242));
+    icp.set_icmp_seq(htons(1));
+    for i in 0..PING_DATALEN {
+        // SAFETY: the mbuf holds `len` bytes at its data, the payload after the headers.
+        unsafe { *crate::sys::mbuf::mtod::<u8>(m).add(hlen + 8 + i) = i as u8 };
+    }
+    // The checksum is computed on output, as icmp_send asks for it.
+    m.m_pkthdr().csum_flags.set(M_ICMP_CSUM_OUT);
+
+    net_lock();
+    let error = ip_output(m, None, None, 0, None, 0);
+    net_unlock();
+    if let Err(e) = error {
+        kprintf!(
+            "selftest: ping 10.0.2.2: FAILED: ip_output: error {}\n",
+            e as i32
+        );
+        return;
+    }
+
+    let counter =
+        &ICMPCOUNTERS[IcmpstatCounters::IcpsInhist as usize + usize::from(ICMP_ECHOREPLY)];
+    for _ in 0..PING_TRIES {
+        if counter.load(Ordering::Relaxed) != before {
+            kprintf!("selftest: ping 10.0.2.2: echo reply received\n");
+            return;
+        }
+        let _ = tsleep_nsec(ptr::addr_of!(PING_WCHAN), PWAIT, "ping", 100_000_000);
+    }
+    kprintf!(
+        "selftest: ping 10.0.2.2: FAILED: no echo reply on {} within {} ms\n",
+        Str(&xname),
+        PING_TRIES * 100
+    );
+}
+
 /// The ARP request [`vio_check`] sends: who has 10.0.2.2 (QEMU's user-mode gateway), tell
 /// 10.0.2.15, from `enaddr`, broadcast; padded to the 60 bytes of a minimal frame. Built by
-/// hand: `netinet/if_ether.c` (`arprequest`) is another port.
+/// hand, so the check needs no IPv4 address (`arprequest` sends from one).
 fn vio_arp_request(enaddr: &[u8; ETHER_ADDR_LEN]) -> [u8; 60] {
     let mut f = [0u8; 60];
     // Ethernet header.
@@ -1005,8 +1197,8 @@ fn vio_arp_request(enaddr: &[u8; ETHER_ADDR_LEN]) -> [u8; 60] {
 /// (`vio_start` sends it) and the test waits for any frame to reach the interface's input
 /// queue (`ifiq_input`, where `vio_rxeof` hands frames to the stack; QEMU's slirp answers
 /// from 52:55:0a:00:02:02). The receive tick is stopped first, so a frame can only come
-/// in through the receive interrupt (`vio_rx_intr`); `ether_input` then drops it at the ARP
-/// demux, which `netinet` is not here to take.
+/// in through the receive interrupt (`vio_rx_intr`); `ether_input` then hands it to
+/// `arpinput`, which drops it: `vio0` has no IPv4 address yet.
 pub fn vio_check() {
     let Some(ifp) = if_unit(b"vio0") else {
         kprintf!("selftest: vio FAILED: no vio0\n");

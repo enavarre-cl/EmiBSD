@@ -64,3 +64,103 @@ fn values_match_the_c_header() {
     assert_eq!(defs["RTF_USETRAILERS"], "RTF_PROTO1");
     assert_eq!(defs["RTF_PERMANENT_ARP"], "RTF_PROTO3");
 }
+
+/// An ARP packet of `op` from the gateway (`sha`/`spa`) to `tha`/`tpa`, as bytes.
+fn arp_packet(op: u16, tha: [u8; 6], tpa: [u8; 4]) -> std::vec::Vec<u8> {
+    use crate::netinet::ip_input::tests::{GATEWAY, PEER};
+    let ea = EtherArp {
+        ea_hdr: Arphdr {
+            ar_hrd: htons(ARPHRD_ETHER),
+            ar_pro: htons(ETHERTYPE_IP),
+            ar_hln: 6,
+            ar_pln: 4,
+            ar_op: htons(op),
+        },
+        arp_sha: PEER,
+        arp_spa: GATEWAY,
+        arp_tha: tha,
+        arp_tpa: tpa,
+    };
+    // SAFETY: an `ether_arp` is 28 bytes of integers without padding.
+    let b: [u8; 28] = unsafe { core::mem::transmute(ea) };
+    b.to_vec()
+}
+
+#[test]
+fn an_arp_entry_is_made_resolved_answered_and_aged_out() {
+    use crate::kern::kern_tc::TIME_UPTIME;
+    use crate::kern::uipc_mbuf::m_freem;
+    use crate::net::if_ethersubr::ether_input;
+    use crate::net::ifq::ifq_dequeue;
+    use crate::netinet::in_::sintosa;
+    use crate::netinet::ip_input::tests::{
+        ADDR, GATEWAY, OURS, PEER, bytes, configure, frame, setup, sin, test_ether, unconfigure,
+    };
+
+    let _g = setup();
+    let ifp = test_ether();
+    configure(ifp, ADDR, [255, 255, 255, 0]);
+    while let Some(m) = ifq_dequeue(&ifp.if_snd) {
+        m_freem(m);
+    }
+
+    // The gateway asks for our address: we learn its, and answer.
+    ether_input(
+        ifp,
+        frame(
+            ifp,
+            [0xff; 6],
+            ETHERTYPE_ARP,
+            &arp_packet(ARPOP_REQUEST, [0; 6], ADDR),
+        ),
+        None,
+    );
+    arpintr();
+    let reply = ifq_dequeue(&ifp.if_snd).expect("ARP reply");
+    let b = bytes(reply);
+    m_freem(reply);
+    assert_eq!(&b[0..6], &PEER, "to the asker");
+    assert_eq!(&b[20..22], &ARPOP_REPLY.to_be_bytes());
+    assert_eq!(&b[22..28], &OURS);
+    assert_eq!(&b[28..32], &ADDR);
+    assert_eq!(&b[32..38], &PEER);
+    assert_eq!(&b[38..42], &GATEWAY);
+
+    let entry = || {
+        let mut s = sin(GATEWAY);
+        // SAFETY: a local `sockaddr_in`.
+        let rt = unsafe { rtalloc(sintosa(&mut s), 0, 0) }.expect("route");
+        let flags = rt.rt_flags.get();
+        // SAFETY: an ARP route's gateway is a `sockaddr_dl`.
+        let (alen, hw) = unsafe {
+            let sdl = satosdl(rt.rt_gateway.get());
+            let mut hw = [0u8; 6];
+            if (*sdl).sdl_alen == 6 {
+                ptr::copy_nonoverlapping(lladdr(sdl), hw.as_mut_ptr(), 6);
+            }
+            ((*sdl).sdl_alen, hw)
+        };
+        let expire = rt.rt_expire().get();
+        rtfree(Some(rt));
+        (flags, alen, hw, expire)
+    };
+    let (flags, alen, hw, expire) = entry();
+    assert_ne!(flags & RTF_LLINFO, 0, "a cloned ARP entry");
+    assert_eq!((alen, hw), (6, PEER), "resolved to the gateway's address");
+    assert_eq!(
+        expire,
+        TIME_UPTIME.load(Ordering::Relaxed) + i64::from(ARPT_KEEP.load(Ordering::Relaxed))
+    );
+
+    // Past arpt_keep, arptimer removes the entry: the subnet's cloning route is what is left.
+    TIME_UPTIME.store(expire + 1, Ordering::Relaxed);
+    arptimer(ptr::from_ref(&ARPTIMER_TO).cast_mut().cast());
+    let (flags, _, _, _) = entry();
+    assert_eq!(flags & RTF_LLINFO, 0, "the entry is gone");
+    assert_ne!(flags & RTF_CLONING, 0);
+
+    unconfigure(ifp, ADDR);
+    while let Some(m) = ifq_dequeue(&ifp.if_snd) {
+        m_freem(m);
+    }
+}

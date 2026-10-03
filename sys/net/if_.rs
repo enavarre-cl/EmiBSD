@@ -134,16 +134,14 @@
 //!   `NCARP`, `NBPFILTER`, `NPPP`, `NPPPOE` as 0. `NETHER` is configured (`if_ethersubr.c`
 //!   is here).
 //! - Calls into files that are not ported report themselves with `unported!` and go on as
-//!   the C would with an empty subsystem: `rtm_ifannounce`, `rtm_ifchg` (`net/rtsock.c`);
-//!   `rt_if_track`, `rtlabel_*` (`net/route.c`); `rtable_l2` (answers routing domain 0),
-//!   `rtable_loindex`, `rtable_exists`, `rtable_add`, `rtable_l2set`, `rtable_lookup`
-//!   (`net/rtable.c`); `rti_delete` (`netinet/igmp.c`); `in_ifdetach` (`netinet/in.c`);
-//!   `ipv4_input`, `ipintr` (`netinet/ip_input.c`: an IPv4 packet that reaches
-//!   `if_input_local` or `p2p_input` is dropped); `arpintr` (`netinet/if_ether.c`);
-//!   `tcp_input_mlist`, `tcp_if_output_tso`, `tcpstat_inc`; `in_hdr_cksum_out`,
-//!   `in_proto_cksum_out` (`netinet/ip_output.c`); `inet_ntop` (`ifa_print_all`).
-//!   `pru_control` (`<sys/protosw.h>`, `in_control` for `AF_INET`) is reported and fails with
-//!   `ENOSYS`, so `SIOCAIFADDR` and the other address `ioctl`s do not reach a protocol yet.
+//!   the C would with an empty subsystem: `rti_delete` (`netinet/igmp.c`);
+//!   `tcp_input_mlist`, `tcpstat_inc` (`netinet/tcp_input.c`); `inet_ntop` (`ifa_print_all`).
+//!   `tcp_if_output_tso` (`netinet/tcp_output.c`) is a local stand-in with the C's first two
+//!   tests: a packet that did not ask for TSO, or whose segments fit, goes back to the caller;
+//!   a TSO packet is reported and dropped with `ENOSYS`.
+//! - `pru_control` (`<sys/protosw.h>`) cannot read the socket's protocol (sockets are not
+//!   ported): it is `in_control`, the `pru_control` of every `inetdomain` protocol and the
+//!   only one in the configured domains.
 //! - `ifioctl`'s `struct socket *` is an opaque pointer (sockets are not ported) and `caddr_t
 //!   data` a raw pointer: `ifioctl` and the `ioctl` helpers are `unsafe fn`s whose contract is
 //!   `sys_ioctl`'s kernel copy of the argument. `SIOCSIFXFLAGS`'s `goto forceup` into the
@@ -215,9 +213,21 @@ use crate::net::ifq::{
     ifq_enqueue, ifq_idx, ifq_init, ifq_init_maxlen, ifq_is_oactive, ifq_purge, ifq_start,
 };
 use crate::net::netisr::{NETISR_ARP, NETISR_IP, schednetisr};
-use crate::net::route::{RTF_LLINFO, RTF_LOCAL, RTLABEL_LEN, RTM_ADD, Rtentry, ifafree, ifaref};
-use crate::netinet::if_ether::{ETHER_ADDR_LEN, arpcom_of, ether_is_multicast};
-use crate::netinet::in_::{INADDR_ANY, satosin_const};
+use crate::net::route::{
+    RTF_BLACKHOLE, RTF_LLINFO, RTF_LOCAL, RTF_REJECT, RTLABEL_LEN, RTM_ADD, RTP_ANY, Rtentry,
+    ifafree, ifaref, rt_if_track, rtlabel_id2name, rtlabel_name2id, rtlabel_unref,
+};
+use crate::net::rtable::{
+    rt_key, rtable_add, rtable_empty, rtable_exists, rtable_iterate, rtable_l2, rtable_l2set,
+    rtable_loindex, rtable_lookup,
+};
+use crate::net::rtsock::{rtm_ifannounce, rtm_ifchg};
+use crate::netinet::if_ether::{ETHER_ADDR_LEN, arpcom_of, arpintr, ether_is_multicast};
+use crate::netinet::in_::{
+    INADDR_ANY, SockaddrIn, in_control, in_ifdetach, satosin_const, sintosa,
+};
+use crate::netinet::ip_input::{ipintr, ipv4_input};
+use crate::netinet::ip_output::{in_hdr_cksum_out, in_proto_cksum_out};
 use crate::sys::errno::Errno;
 use crate::sys::kernel::HZ;
 use crate::sys::limits::USHRT_MAX;
@@ -1295,7 +1305,7 @@ unsafe fn bytes_of<T>(v: &T) -> &[u8] {
 /// # Safety
 ///
 /// As for [`IfIoctlFn`].
-unsafe fn ifp_ioctl(ifp: &'static Ifnet, cmd: u64, data: *mut u8) -> Result<(), Errno> {
+pub unsafe fn ifp_ioctl(ifp: &'static Ifnet, cmd: u64, data: *mut u8) -> Result<(), Errno> {
     match ifp.if_ioctl.get() {
         // SAFETY: the caller's contract is the hook's.
         Some(ioctl) => unsafe { ioctl(ifp, cmd, data) },
@@ -1658,8 +1668,7 @@ fn if_attachsetup(ifp: &'static Ifnet) {
     );
 
     // Announce the interface.
-    // rtm_ifannounce(ifp, IFAN_ARRIVAL): net/rtsock.c is not ported.
-    let _ = unported!("rtm_ifannounce");
+    rtm_ifannounce(ifp, IFAN_ARRIVAL);
 }
 
 /// `if_alloc_sadl`: allocate the link level name for the specified interface. This is an
@@ -2023,11 +2032,8 @@ pub fn if_input_local(
             if keepcksum & M_IPV4_CSUM_OUT != 0 {
                 ph.csum_flags.set(ph.csum_flags.get() | M_IPV4_CSUM_IN_OK);
             }
-            // input = ipv4_input; if_input_proto(ifp, m, input, ns): netinet/ip_input.c is
-            // not ported, so the packet is dropped.
-            let _ = ns;
-            m_freem(m);
-            Err(unported!("ipv4_input"))
+            if_input_proto(ifp, m, ipv4_input, ns);
+            Ok(())
         }
         // INET6: AF_INET6 goes to ipv6_input; IPv6 is not configured.
         // MPLS: AF_MPLS goes to mpls_input; MPLS is not configured.
@@ -2089,6 +2095,28 @@ unsafe fn ifp_output(
     }
 }
 
+/// `tcp_if_output_tso` (`netinet/tcp_output.c`, not ported): its first two tests are here,
+/// which leave every packet that did not ask for TCP segmentation offload (or whose segments
+/// fit) to the caller; a TSO packet reports the function and fails with `ENOSYS`.
+fn tcp_if_output_tso(mp: &mut Option<&'static Mbuf>, mtu: u32) -> Result<(), Errno> {
+    let Some(m) = *mp else {
+        return Ok(());
+    };
+    let ph = m.m_pkthdr();
+    // caller must fail later or fragment
+    if ph.csum_flags.get() & M_TCP_TSO == 0 {
+        return Ok(());
+    }
+    if u32::from(ph.ph_mss.get()) > mtu {
+        ph.csum_flags.set(ph.csum_flags.get() & !M_TCP_TSO);
+        return Ok(());
+    }
+    // The hardware TSO (in_ifcap_cksum) and software chopping (tcp_softtso_chop) paths.
+    m_freem(m);
+    *mp = None;
+    Err(unported!("tcp_if_output_tso"))
+}
+
 /// `if_output_tso`: sends a TCP packet with TSO, or chops it, or sends it whole when it fits
 /// `mtu`; `*mp` is left set when the packet still has to be fragmented or dropped.
 ///
@@ -2104,7 +2132,7 @@ pub unsafe fn if_output_tso(
 ) -> Result<(), Errno> {
     // SAFETY: `dst` is readable per the contract.
     let family = unsafe { (*dst).sa_family };
-    let _ifcap = match family {
+    let _ifcap: u32 = match family {
         AF_INET => IFCAP_TSOv4,
         // INET6: AF_INET6 uses IFCAP_TSOv6; IPv6 is not configured.
         _ => unhandled_af(i32::from(family)),
@@ -2113,20 +2141,15 @@ pub unsafe fn if_output_tso(
     // Try to send with TSO first. When forwarding LRO may set maximum segment size in mbuf
     // header. Chop TCP segment even if it would fit interface MTU to preserve maximum path
     // MTU.
-    // error = tcp_if_output_tso(ifp, mp, dst, rt, ifcap, mtu): netinet/tcp_output.c is not
-    // ported.
-    let error: Result<(), Errno> = Err(unported!("tcp_if_output_tso"));
-    error?;
+    tcp_if_output_tso(mp, mtu)?;
     let Some(m) = *mp else {
         return Ok(());
     };
 
     if m.m_pkthdr().len.get() as u32 <= mtu {
         if family == AF_INET {
-            // in_hdr_cksum_out(m, ifp), in_proto_cksum_out(m, ifp): netinet/ip_output.c is
-            // not ported.
-            let _ = unported!("in_hdr_cksum_out");
-            let _ = unported!("in_proto_cksum_out");
+            in_hdr_cksum_out(m, Some(ifp));
+            in_proto_cksum_out(m, Some(ifp));
         }
         // INET6: in6_proto_cksum_out(m, ifp) for AF_INET6; not configured.
         // SAFETY: the caller's contract is `if_output`'s.
@@ -2325,12 +2348,10 @@ fn if_netisr(_unused: *mut c_void) {
 
         // NETHER > 0
         if n & (1 << NETISR_ARP) != 0 {
-            // arpintr(): netinet/if_ether.c is not ported.
-            let _ = unported!("arpintr");
+            arpintr();
         }
         if n & (1 << NETISR_IP) != 0 {
-            // ipintr(): netinet/ip_input.c is not ported.
-            let _ = unported!("ipintr");
+            ipintr();
         }
         // INET6: NETISR_IPV6 runs ip6intr(); IPv6 is not configured.
         // NPPP > 0: NETISR_PPP runs pppintr() under the kernel lock; ppp(4) is not configured.
@@ -2461,8 +2482,7 @@ pub fn if_detach(ifp: &'static Ifnet) {
     let _ = unported!("rti_delete");
     // NETHER > 0 && NFSCLIENT: revarp_ifidx is cleared; NFSCLIENT is not configured.
     // MROUTING: vif_delete(ifp); not configured.
-    // in_ifdetach(ifp): netinet/in.c is not ported.
-    let _ = unported!("in_ifdetach");
+    in_ifdetach(ifp);
     // INET6: in6_ifdetach(ifp); IPv6 is not configured.
     // NPF > 0: pfi_detach_ifnet(ifp); pf(4) is not configured.
 
@@ -2497,8 +2517,7 @@ pub fn if_detach(ifp: &'static Ifnet) {
     // INET6: nd6_ifdetach(ifp); not configured.
 
     // Announce that the interface is gone.
-    // rtm_ifannounce(ifp, IFAN_DEPARTURE): net/rtsock.c is not ported.
-    let _ = unported!("rtm_ifannounce");
+    rtm_ifannounce(ifp, IFAN_DEPARTURE);
 
     if ifp.if_counters.get().is_some() {
         if_counters_free(ifp);
@@ -2761,14 +2780,6 @@ fn ifa_static(ifa: &Ifaddr) -> &'static Ifaddr {
     unsafe { &*ptr::from_ref(ifa) }
 }
 
-/// `rtable_l2(rtableid)` (`net/rtable.c`, not ported): every table is in routing domain 0,
-/// which is what the C answers for a table it does not know.
-fn rtable_l2_unported(rtableid: u32) -> u32 {
-    let _ = unported!("rtable_l2");
-    let _ = rtableid;
-    0
-}
-
 /// `ifa_ifwithaddr`: locate an interface based on a complete address.
 ///
 /// # Safety
@@ -2778,7 +2789,7 @@ fn rtable_l2_unported(rtableid: u32) -> u32 {
 pub unsafe fn ifa_ifwithaddr(addr: *const Sockaddr, rtableid: u32) -> Option<&'static Ifaddr> {
     net_assert_locked("ifa_ifwithaddr");
 
-    let rdomain = rtable_l2_unported(rtableid);
+    let rdomain = rtable_l2(rtableid);
     for ifp in IFNETLIST.0.iter() {
         if ifp.if_rdomain.get() != rdomain {
             continue;
@@ -2810,7 +2821,7 @@ pub unsafe fn ifa_ifwithaddr(addr: *const Sockaddr, rtableid: u32) -> Option<&'s
 pub unsafe fn ifa_ifwithdstaddr(addr: *const Sockaddr, rdomain: u32) -> Option<&'static Ifaddr> {
     net_assert_locked("ifa_ifwithdstaddr");
 
-    let rdomain = rtable_l2_unported(rdomain);
+    let rdomain = rtable_l2(rdomain);
     for ifp in IFNETLIST.0.iter() {
         if ifp.if_rdomain.get() != rdomain {
             continue;
@@ -2897,11 +2908,11 @@ pub fn p2p_rtrequest(ifp: &'static Ifnet, req: i32, rt: Option<&'static Rtentry>
         // RTM_DELETE, RTM_RESOLVE, default: nothing.
         return;
     }
-    if rt.rt_flags().get() & RTF_LOCAL == 0 {
+    if rt.rt_flags.get() & RTF_LOCAL == 0 {
         return;
     }
 
-    let key = rt.rt_key();
+    let key = rt_key(rt);
     let Some(ifa) = ifp.if_addrlist.iter().find(|ifa| {
         // SAFETY: a route's key and an interface's addresses are valid sockaddrs.
         unsafe {
@@ -2913,11 +2924,9 @@ pub fn p2p_rtrequest(ifp: &'static Ifnet, req: i32, rt: Option<&'static Rtentry>
         return;
     };
 
-    kassert!(rt.rt_ifa().is_some_and(|rifa| ptr::eq(rifa, ifa)));
+    kassert!(rt.rt_ifa.get().is_some_and(|rifa| ptr::eq(rifa, ifa)));
 
-    // lo0ifp = if_get(rtable_loindex(ifp->if_rdomain)): net/rtable.c is not ported.
-    let _ = unported!("rtable_loindex");
-    let lo0ifp = if_get(0);
+    let lo0ifp = if_get(rtable_loindex(ifp.if_rdomain.get()));
     kassert!(lo0ifp.is_some());
     let family = {
         // SAFETY: as above.
@@ -2937,7 +2946,7 @@ pub fn p2p_rtrequest(ifp: &'static Ifnet, req: i32, rt: Option<&'static Rtentry>
         return;
     }
 
-    rt.rt_flags().set(rt.rt_flags().get() & !RTF_LLINFO);
+    rt.rt_flags.set(rt.rt_flags.get() & !RTF_LLINFO);
 }
 
 /// `p2p_bpf_mtap`: a point-to-point interface's tap, by the packet's address family.
@@ -2949,13 +2958,7 @@ pub fn p2p_bpf_mtap(_if_bpf: *mut u8, _m: &Mbuf, _dir: u32) -> bool {
 /// `p2p_input`: a point-to-point interface's input, by the packet's address family.
 pub fn p2p_input(ifp: &'static Ifnet, m: &'static Mbuf, ns: Option<&Netstack>) {
     match m.m_pkthdr().ph_family.get() {
-        AF_INET => {
-            // input = ipv4_input; if_input_proto(ifp, m, input, ns): netinet/ip_input.c is
-            // not ported, so the packet is dropped.
-            let _ = (ifp, ns);
-            let _ = unported!("ipv4_input");
-            m_freem(m);
-        }
+        AF_INET => if_input_proto(ifp, m, ipv4_input, ns),
         // INET6: ipv6_input; MPLS: mpls_input; neither is configured.
         _ => {
             m_freem(m);
@@ -3028,9 +3031,8 @@ pub fn if_linkstate(ifp: &Ifnet) {
     net_assert_locked("if_linkstate");
 
     if !panicstr() {
-        // rtm_ifchg(ifp), rt_if_track(ifp): net/rtsock.c and net/route.c are not ported.
-        let _ = unported!("rtm_ifchg");
-        let _ = unported!("rt_if_track");
+        rtm_ifchg(ifp);
+        let _ = rt_if_track(ifp);
     }
 
     if_hooks_run(&ifp.if_linkstatehooks);
@@ -3184,9 +3186,10 @@ unsafe fn lladdr_of(sdl: *mut SockaddrDl) -> *mut u8 {
 
 /// `if_createrdomain`: creates routing domain `rdomain` with its loopback `lo<rdomain>`.
 pub fn if_createrdomain(rdomain: i32, ifp: &Ifnet) -> Result<(), Errno> {
-    // rtable_add(rdomain), rtable_empty(rdomain): net/rtable.c is not ported.
-    let error: Result<(), Errno> = Err(unported!("rtable_add"));
-    error?;
+    rtable_add(rdomain as u32)?;
+    if !rtable_empty(rdomain as u32) {
+        return Err(Errno::EEXIST);
+    }
 
     // Create rdomain including its loopback if with unit == rdomain
     let mut loifname = [0u8; IFNAMSIZ];
@@ -3202,8 +3205,7 @@ pub fn if_createrdomain(rdomain: i32, ifp: &Ifnet) -> Result<(), Errno> {
         return Err(e);
     }
 
-    // rtable_l2set(rdomain, rdomain, loifp->if_index): not ported.
-    let _ = unported!("rtable_l2set");
+    rtable_l2set(rdomain as u32, rdomain as u32, loifp.if_index.get());
     loifp.if_rdomain.set(rdomain as u32);
     if_put(loifp);
 
@@ -3219,24 +3221,19 @@ pub fn if_setrdomain(ifp: &'static Ifnet, rdomain: i32) -> Result<(), Errno> {
     }
     let rdomain = rdomain as u32;
 
-    // rtable_loindex(ifp->if_rdomain), rtable_exists(rdomain), rtable_l2(rdomain):
-    // net/rtable.c is not ported; only table 0 exists, whose loopback is unknown.
-    let _ = unported!("rtable_loindex");
-    let loindex = 0;
     if rdomain != ifp.if_rdomain.get()
         && ifp.if_flags.get() & IFF_LOOPBACK != 0
-        && ifp.if_index.get() == loindex
+        && ifp.if_index.get() == rtable_loindex(ifp.if_rdomain.get())
     {
         return Err(Errno::EPERM);
     }
 
-    let _ = unported!("rtable_exists");
-    if rdomain != 0 {
+    if !rtable_exists(rdomain) {
         return Err(Errno::ESRCH);
     }
 
     // make sure that the routing table is a real rdomain
-    if rdomain != rtable_l2_unported(rdomain) {
+    if rdomain != rtable_l2(rdomain) {
         return Err(Errno::EINVAL);
     }
 
@@ -3249,10 +3246,10 @@ pub fn if_setrdomain(ifp: &'static Ifnet, rdomain: i32) -> Result<(), Errno> {
             up = true;
             if_down(ifp);
         }
-        // rti_delete(ifp), in_ifdetach(ifp): not ported; MROUTING vif_delete and INET6
+        // rti_delete(ifp): netinet/igmp.c is not ported. MROUTING vif_delete and INET6
         // in6_ifdetach are not configured.
         let _ = unported!("rti_delete");
-        let _ = unported!("in_ifdetach");
+        in_ifdetach(ifp);
         splx(s);
     }
 
@@ -3278,10 +3275,22 @@ pub fn if_setrdomain(ifp: &'static Ifnet, rdomain: i32) -> Result<(), Errno> {
     Ok(())
 }
 
-/// `pru_control(so, cmd, data, ifp)` (`<sys/protosw.h>`): the protocol's `ioctl`
-/// (`in_control` for `AF_INET`). Sockets and protocols are not ported.
-fn pru_control(_so: *const c_void, _cmd: u64, _data: *mut u8, _ifp: &Ifnet) -> Result<(), Errno> {
-    Err(unported!("pru_control (in_control)"))
+/// `pru_control(so, cmd, data, ifp)` (`<sys/protosw.h>`): the protocol's `ioctl`. Sockets
+/// are not ported, so the socket's protocol cannot be read: the request goes to `in_control`,
+/// the `pru_control` of every `inetdomain` protocol (the only domain here whose protocols have
+/// one).
+///
+/// # Safety
+///
+/// As for [`ifioctl`].
+unsafe fn pru_control(
+    so: *const c_void,
+    cmd: u64,
+    data: *mut u8,
+    ifp: &'static Ifnet,
+) -> Result<(), Errno> {
+    // SAFETY: the caller's contract.
+    unsafe { in_control(so, cmd, data, Some(ifp)) }
 }
 
 /// `ifioctl`: interface ioctls (`SIOC*` on a socket).
@@ -3348,8 +3357,7 @@ pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> R
                 AF_INET => {
                     // attach is a noop for AF_INET
                     if cmd == SIOCIFAFDETACH {
-                        // in_ifdetach(ifp): netinet/in.c is not ported.
-                        let _ = unported!("in_ifdetach");
+                        in_ifdetach(ifp);
                     }
                 }
                 // INET6: AF_INET6 attaches with in6_ifattach and detaches with
@@ -3450,8 +3458,7 @@ pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> R
             error = unsafe { ifp_ioctl(ifp, cmd, data) };
             net_unlock();
             if error.is_ok() {
-                // rtm_ifchg(ifp): net/rtsock.c is not ported.
-                let _ = unported!("rtm_ifchg");
+                rtm_ifchg(ifp);
             }
         }
 
@@ -3477,9 +3484,8 @@ pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> R
             let mut ifrtlabelbuf = [0u8; RTLABEL_LEN];
             error = copyinstr(ifr.ifr_data() as usize, &mut ifrtlabelbuf).map(|_| ());
             if error.is_ok() {
-                // rtlabel_unref(ifp->if_rtlabelid); ifp->if_rtlabelid =
-                // rtlabel_name2id(ifrtlabelbuf): net/route.c is not ported.
-                error = Err(unported!("rtlabel_name2id"));
+                rtlabel_unref(ifp.if_rtlabelid.get());
+                ifp.if_rtlabelid.set(rtlabel_name2id(&ifrtlabelbuf));
             }
         }
 
@@ -3582,8 +3588,7 @@ pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> R
             }
             net_unlock();
             if error.is_ok() {
-                // rtm_ifchg(ifp): net/rtsock.c is not ported.
-                let _ = unported!("rtm_ifchg");
+                rtm_ifchg(ifp);
             }
         }
 
@@ -3665,7 +3670,8 @@ pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> R
                 error = Err(e);
                 break 'out;
             }
-            error = pru_control(so, cmd, data, ifp);
+            // SAFETY: the caller's contract.
+            error = unsafe { pru_control(so, cmd, data, ifp) };
             if error != Err(Errno::EOPNOTSUPP) {
                 break 'out;
             }
@@ -3713,8 +3719,7 @@ pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> R
     if oif_flags != ifp.if_flags.get() || oif_xflags != ifp.if_xflags.get() {
         // if_up() and if_down() already sent an update, skip here
         if (oif_flags ^ ifp.if_flags.get()) & IFF_UP == 0 {
-            // rtm_ifchg(ifp): net/rtsock.c is not ported.
-            let _ = unported!("rtm_ifchg");
+            rtm_ifchg(ifp);
         }
     }
 
@@ -3808,10 +3813,9 @@ unsafe fn ifioctl_get(cmd: u64, data: *mut u8) -> Result<(), Errno> {
         SIOCGIFRTLABEL => {
             let rtlabelid = ifp.if_rtlabelid.get();
 
-            // rtlabel_id2name(rtlabelid, ifrtlabelbuf, RTLABEL_LEN): net/route.c is not
-            // ported, so no label has a name.
-            error = if rtlabelid != 0 {
-                Err(unported!("rtlabel_id2name"))
+            let mut ifrtlabelbuf = [0u8; RTLABEL_LEN];
+            error = if rtlabelid != 0 && rtlabel_id2name(rtlabelid, &mut ifrtlabelbuf).is_some() {
+                copyoutstr(&ifrtlabelbuf, ifr.ifr_data() as usize).map(|_| ())
             } else {
                 Err(Errno::ENOENT)
             };
@@ -4574,10 +4578,32 @@ pub fn if_group_egress_build() -> Result<(), Errno> {
         }
     }
 
-    // rtable_lookup(0, 0.0.0.0/0, ...) and rtable_iterate over the default routes, adding
-    // each route's interface to the group (if_addgroup(ifp, IFG_EGRESS)): net/rtable.c is not
-    // ported, so there is no default route. INET6: the same for ::/0; not configured.
-    let _ = unported!("rtable_lookup");
+    let mut sa_in = SockaddrIn {
+        sin_len: size_of::<SockaddrIn>() as u8,
+        sin_family: AF_INET,
+        ..SockaddrIn::default()
+    };
+    // SAFETY: a local `sockaddr_in`, the destination and the mask (`0.0.0.0/0`).
+    let mut rt = unsafe {
+        rtable_lookup(
+            0,
+            sintosa(&mut sa_in),
+            sintosa(&mut sa_in),
+            ptr::null(),
+            RTP_ANY,
+        )
+    };
+    while let Some(r) = rt {
+        if r.rt_flags.get() & (RTF_REJECT | RTF_BLACKHOLE) == 0
+            && let Some(ifp) = if_get(r.rt_ifidx.get())
+        {
+            let _ = if_addgroup(ifp, IFG_EGRESS);
+            if_put(ifp);
+        }
+        rt = rtable_iterate(r);
+    }
+
+    // INET6: the same for ::/0 (sa6_any); not configured.
 
     Ok(())
 }

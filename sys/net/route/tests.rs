@@ -46,3 +46,73 @@ fn values_match_the_c_header() {
     assert_complete(&defs, "RT_", &rest);
     assert_eq!(RtstatCounters::RtsNcounters as usize, 5);
 }
+
+/// A `sockaddr_in` for `a` with length `len`.
+fn sin(a: [u8; 4], len: u8) -> crate::netinet::in_::SockaddrIn {
+    crate::netinet::in_::SockaddrIn {
+        sin_len: len,
+        sin_family: crate::sys::socket::AF_INET,
+        sin_addr: crate::netinet::in_::InAddr {
+            s_addr: u32::from_ne_bytes(a),
+        },
+        ..Default::default()
+    }
+}
+
+#[test]
+fn masked_copies_and_prefix_masks() {
+    use crate::netinet::in_::sintosa;
+    let mut src = sin([10, 0, 2, 77], 16);
+    let mut mask = sin([255, 255, 255, 0], 7);
+    let mut dst = sin([0xaa; 4], 0);
+    dst.sin_zero = [0x55; 8];
+    // SAFETY: local `sockaddr_in`s of 16 bytes.
+    unsafe { rt_maskedcopy(sintosa(&mut src), sintosa(&mut dst), sintosa(&mut mask)) };
+    assert_eq!(dst.sin_len, 16);
+    assert_eq!(dst.sin_addr.s_addr.to_ne_bytes(), [10, 0, 2, 0]);
+    assert_eq!(
+        dst.sin_zero, [0; 8],
+        "past the mask's length the copy is zero"
+    );
+
+    let mut buf = SockaddrStorage::zeroed();
+    let m = rt_plentosa(crate::sys::socket::AF_INET, 20, &mut buf);
+    // SAFETY: rt_plentosa wrote a `sockaddr_in` into the buffer it returned.
+    let m = unsafe { *m.cast::<crate::netinet::in_::SockaddrIn>() };
+    assert_eq!(m.sin_addr.s_addr.to_ne_bytes(), [255, 255, 240, 0]);
+    assert!(rt_plentosa(crate::sys::socket::AF_INET, -1, &mut buf).is_null());
+    assert!(rt_plentosa(crate::sys::socket::AF_UNIX, 8, &mut buf).is_null());
+}
+
+#[test]
+fn labels_are_named_counted_and_reused() {
+    let _g = crate::netinet::ip_input::tests::setup();
+    let a = rtlabel_name2id(b"uplink\0");
+    let b = rtlabel_name2id(b"backup\0");
+    assert_ne!(a, 0);
+    assert_ne!(b, 0);
+    assert_ne!(a, b);
+    assert_eq!(
+        rtlabel_name2id(b"uplink\0"),
+        a,
+        "the same name, another reference"
+    );
+    assert_eq!(rtlabel_name2id(b"\0"), 0);
+
+    let mut buf = [0u8; RTLABEL_LEN];
+    assert_eq!(rtlabel_id2name(a, &mut buf), Some(&b"uplink"[..]));
+    let mut sa = SockaddrRtlabel::default();
+    let p = rtlabel_id2sa(b, &mut sa);
+    assert!(!p.is_null());
+    assert_eq!(&sa.sr_label[..7], b"backup\0");
+
+    rtlabel_unref(a);
+    assert!(rtlabel_id2name(a, &mut buf).is_some(), "one reference left");
+    rtlabel_unref(a);
+    assert!(rtlabel_id2name(a, &mut buf).is_none());
+    rtlabel_unref(b);
+    // The freed ids are free slots again.
+    let c = rtlabel_name2id(b"again\0");
+    assert_eq!(c, a.min(b));
+    rtlabel_unref(c);
+}

@@ -73,13 +73,12 @@
 //!   `malloc` (`sysctl_malloc`), `pool` (`sysctl_dopool`), `intrcnt` and `evcount`
 //!   (`evcount_sysctl`), `watchdog` (`kern_watchdog.c`), `clockintr`, `timecounter`
 //!   (`sysctl_tc`), `procargs` after its checks (`uvm_io`), `proc_vmmap` after its checks
-//!   (`fill_vmmap`); `hw.model`
-//!   (`cpu_model`, `identcpu.c`/arm64 `cpu.c`), `disknames`/`diskstats`/`diskcount`
-//!   (`subr_disk.c`), `sensors` (`kern_sensors.c`), `setperf`/`perfpolicy` (`sched_bsd.c`),
-//!   `smt`/`blockcpu` (`kern_sched.c`); the top-level `net` (`net_sysctl`), `machdep`
-//!   (`cpu_sysctl`) and `ddb` (`ddb_sysctl`) trees. `kern.proc_cwd` of a process without a
-//!   current directory (none has one before a root file system is mounted) is `ENOENT`. `resettodr`
-//!   after a new `kern.utc_offset` is reported and skipped. The tty fields of `kinfo_proc`
+//!   (`fill_vmmap`); `hw.model` (`cpu_model`, `identcpu.c`/arm64 `cpu.c`),
+//!   `disknames`/`diskstats`/`diskcount` (`subr_disk.c`), `sensors` (`kern_sensors.c`),
+//!   `setperf`/`perfpolicy` (`sched_bsd.c`), `smt`/`blockcpu` (`kern_sched.c`); the top-level
+//!   `machdep` (`cpu_sysctl`) and `ddb` (`ddb_sysctl`) trees. `kern.proc_cwd` of a process
+//!   without a current directory (none has one before a root file system is mounted) is
+//!   `ENOENT`. `resettodr` after a new `kern.utc_offset` is reported and skipped. The tty fields of `kinfo_proc`
 //!   (a controlling terminal cannot exist yet) are reported when a process would have them.
 //! - Options this kernel does not configure are compiled out as in C: `DEBUG_SYSCTL`
 //!   (`debug_sysctl`, `CTL_DEBUG` is `EOPNOTSUPP`), `SYSVMSG`/`SYSVSEM`/`SYSVSHM`
@@ -405,7 +404,7 @@ pub fn sys_sysctl(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
     let (dolock, f): (bool, Sysctlfn) = match name[0] {
         CTL_KERN => (false, kern_sysctl),
         CTL_HW => (false, hw_sysctl),
-        CTL_NET => return Err(unported!("net_sysctl (uipc_domain.c)")),
+        CTL_NET => (false, crate::kern::uipc_domain::net_sysctl),
         CTL_VM => (true, uvm_sysctl),
         CTL_VFS => (true, vfs_sysctl),
         CTL_MACHDEP => return Err(unported!("cpu_sysctl (machdep.c)")),

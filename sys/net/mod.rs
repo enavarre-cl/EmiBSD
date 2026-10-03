@@ -4,6 +4,7 @@
 //! is the module of its name (`ifq.c` → `ifq.rs`, with `ifq.h`). `if.h` and `if.c` are
 //! `if_.rs` because `if` is a Rust keyword (`docs/C_TO_RUST.md`).
 
+pub mod art;
 pub mod ethertypes;
 pub mod if_;
 pub mod if_arp;
@@ -16,3 +17,5 @@ pub mod if_var;
 pub mod ifq;
 pub mod netisr;
 pub mod route;
+pub mod rtable;
+pub mod rtsock;

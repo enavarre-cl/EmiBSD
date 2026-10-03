@@ -440,7 +440,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs; M7b: config_init, the config_pending wait (tsleep on config_pending) and config_process_deferred_mountroot run (subr_autoconf.c); kern_descrip.c: filedesc_init runs, process 0 gets fdinit() as ps_fd/p_fd, start_init installs the console stand-in (dev/consfile.rs) at descriptors 0, 1 and 2 before the exec, where init(8) would open /dev/console; kern_sig.c: sigacts0, signal_init, siginit(&sigacts0), process 0's ps_sigacts; start_init clears init's ps_sigflags; M7b: ifinit, softnet_init and softnet_percpu run (net/if.c), the pseudo-devices attach from machine::autoconf::pdevinit() (the ioconf.rs tables: loop, so lo0 attaches at boot), pdevinit_done is an atomic flag; vfs stage 1: vfsinit runs; mountroot (systm.h's MOUNTROOT, NULL: setroot is subr_disk.c) is checked where the C does: with none, main prints 'cannot mount root: no root file system' instead of panicking and goes on without rootvnode (init still execs its boot module); with one, MNT_ROOTFS, VFS_ROOT into rootvnode and the current directories of process 0 and init as in C; check_console looks /dev/console up with namei and warns ('warning: /dev/console does not exist' in smoke)"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs; M7b: config_init, the config_pending wait (tsleep on config_pending) and config_process_deferred_mountroot run (subr_autoconf.c); kern_descrip.c: filedesc_init runs, process 0 gets fdinit() as ps_fd/p_fd, start_init installs the console stand-in (dev/consfile.rs) at descriptors 0, 1 and 2 before the exec, where init(8) would open /dev/console; kern_sig.c: sigacts0, signal_init, siginit(&sigacts0), process 0's ps_sigacts; start_init clears init's ps_sigflags; M7b: ifinit, softnet_init and softnet_percpu run (net/if.c), the pseudo-devices attach from machine::autoconf::pdevinit() (the ioconf.rs tables: loop, so lo0 attaches at boot), pdevinit_done is an atomic flag; vfs stage 1: vfsinit runs; mountroot (systm.h's MOUNTROOT, NULL: setroot is subr_disk.c) is checked where the C does: with none, main prints 'cannot mount root: no root file system' instead of panicking and goes on without rootvnode (init still execs its boot module); with one, MNT_ROOTFS, VFS_ROOT into rootvnode and the current directories of process 0 and init as in C; check_console looks /dev/console up with namei and warns ('warning: /dev/console does not exist' in smoke); M7b IPv4: rtable_init before the pseudo-devices and domaininit after them (inetdomain, routedomain); selftest ping (feature qemu) after the taskq selftest"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -2402,7 +2402,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "4cbfbe94f6db996aeab9c7c90aca5ed884851fb0"
 deps = ["sys/sys/socket.h"]
-notes = "M7b: every constant (RTF_* u32, RTM_* u8, RTA_* i32, RTAX_* usize, RTP_* u8, RTV_* u32), rt_kmetrics, rt_metrics, rtstat, rt_tableinfo, rt_msghdr, sockaddr_rtlabel/rtdns/rtstatic/rtsearch, enum rtstat_counters, ROUTE_FILTER, srtdnstosa; Rtentry is an uninhabited stand-in for the forward declaration (no routes exist until route.c; accessors rt_flags/rt_mtu/rt_key/rt_gateway/rt_ifa/rt_ifidx for the interface layer); struct rtentry, rt_addrinfo, rttimer_queue and the rtstat/rtgeneration globals come with route.c (they need struct ifaddr from net/if_var.h and struct rttimer), struct route with netinet6/in6.h, rtstat_inc with sys/percpu.h, RTTTOPRHZ with sys/protosw.h (PR_SLOWHZ)"
+notes = "M7b: every constant (RTF_* u32, RTM_* u8, RTA_* i32, RTAX_* usize, RTP_* u8, RTV_* u32), rt_kmetrics (Cells, rmx_mtu atomic, assign for the structure copy), rt_metrics, rtstat, rt_tableinfo, rt_msghdr, sockaddr_rtlabel/rtdns/rtstatic/rtsearch, enum rtstat_counters, ROUTE_FILTER, srtdnstosa; struct rtentry (&'static pool item, Cells and atomics, all-zero valid; rt_use/rt_expire/rt_locks/rt_mtu methods, ifa() panics without an address), rt_addrinfo (rti_flags u32), struct route (Cells; ro_dstsin6/ro_srcin6 are byte arrays until netinet6/in6.h, so wip), rttimer_queue, rttimer (private to route.c in C, here with its queue), rt_label, rtstat_inc (one atomic array: percpu.h not ported); MPLS/BFD/INET6 parts not configured"
 
 [[file]]
 c = "sys/net/netisr.h"
@@ -2420,7 +2420,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "91b83cdd260e08896adb793fd4b63b9775537725"
 deps = ["sys/net/if.h", "sys/net/ifq.h", "sys/net/route.h", "sys/sys/mbuf.h", "sys/sys/task.h", "sys/sys/timeout.h", "sys/sys/refcnt.h", "sys/sys/rwlock.h", "sys/sys/queue.h"]
-notes = "M7b: struct netstack (ns_route waits for netinet6/in6.h), struct if_clone with IF_CLONE_INITIALIZER, enum if_counters as IfCounters (ifc_* = IfCounters::Ifc*; the if_ipackets.. shorthands are methods), struct ifnet (&'static, Cells, all-zero valid; Option<fn> hooks with Result returns; if_ioctl and if_output are unsafe fns over raw caddr_t/sockaddr pointers; if_flags int-wide; if_carp_ptr union side by side; if_counters an array of atomics (percpu.h not ported); one extra flag set by ether_ifattach for the checked arpcom cast), struct ifaddr (#[repr(C)]), ifmaddr, ifg_group/member/list with their list adapters, ifnet_head as IfnetHead, the constants, struct niqueue with NIQUEUE_INITIALIZER and the niq_* macros, sysctl_niq, if_input_process_proto (panics on a NULL cookie), the if_rxr_* macros; ifnetlist/if_tmplist_lock are if.c's (re-exported); reference-backed test"
+notes = "M7b: struct netstack (ns_route a struct route), struct if_clone with IF_CLONE_INITIALIZER, enum if_counters as IfCounters (ifc_* = IfCounters::Ifc*; the if_ipackets.. shorthands are methods), struct ifnet (&'static, Cells, all-zero valid; Option<fn> hooks with Result returns; if_ioctl and if_output are unsafe fns over raw caddr_t/sockaddr pointers; if_flags int-wide; if_carp_ptr union side by side; if_counters an array of atomics (percpu.h not ported); one extra flag set by ether_ifattach for the checked arpcom cast), struct ifaddr (#[repr(C)]), ifmaddr, ifg_group/member/list with their list adapters, ifnet_head as IfnetHead, the constants, struct niqueue with NIQUEUE_INITIALIZER and the niq_* macros, sysctl_niq, if_input_process_proto (panics on a NULL cookie), the if_rxr_* macros; ifnetlist/if_tmplist_lock are if.c's (re-exported); reference-backed test"
 
 [[file]]
 c = "sys/net/ifq.h"
@@ -2447,7 +2447,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ce7ee8203710648cae225d5882da189fb3e1e598"
 deps = ["sys/net/if.h", "sys/net/if_var.h", "sys/net/ifq.c", "sys/net/if_dl.h", "sys/net/route.h", "sys/net/netisr.h", "sys/sys/sockio.h", "sys/sys/systm.h", "sys/kern/kern_task.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_timeout.c", "sys/kern/kern_prot.c", "sys/kern/uipc_mbuf.c"]
-notes = "M7b: module if_ with if.h; the whole file: the index map (if_idxmap_*; no SMR: smr_call runs at once and smr_barrier is empty, sound on one CPU with no kernel preemption), ifinit, softnet_init/softnet_percpu/softnet_count/net_sn/net_tq/net_tq_barriers (NET_TASKQ 1), netlock, ifnetlist, if_attach/if_attachhead (panic on a second attach)/if_attachsetup/if_attach_common/if_attach_queues/if_attach_iqueues/if_attach_ifq, if_alloc_sadl/if_free_sadl, if_start/if_qstart_compat, if_enqueue/if_enqueue_ifq, if_input/if_input_local/if_input_proto/if_input_process/if_vinput, if_output_ml/tso/mq/local, if_netisr, if_hooks_run and the hook add/del (unsafe fns), if_remove/if_deactivate/if_detach, if_isconnected, cloners (if_clone_create/destroy/lookup/attach/list), if_congestion/if_congested, ifa_ifwithaddr/ifa_ifwithdstaddr/ifaof_ifpforaddr (unsafe: raw sockaddrs), if_rtrequest_dummy, p2p_rtrequest/p2p_bpf_mtap/p2p_input, if_downall/if_down/if_up, if_linkstate(_task)/if_link_state_change, if_slowtimo/if_watchdog_task, if_unit/if_get/if_get_smr/if_ref/if_put, if_setlladdr, if_createrdomain/if_setrdomain, ifioctl/ifioctl_get (unsafe fns over the kernel copy of the argument; the socket is opaque; goto forceup is a flag), if_sffpage_check, if_*hprio_*_check, ifconf, if_counters_alloc/free (malloc'd atomics), if_getdata, if_detached_qstart/ioctl, groups (if_creategroup/addgroup/delgroup/getgroup/getgroupmembers/getgroupattribs/setgroupattribs/getgrouplist/group_routechange/group_egress_build), ifpromisc, ifsetlro, ifa_add (unsafe)/ifa_del/ifa_update_broadaddr, ifa_print_all, ifnewlladdr, if_addrhook_*, if_rxr_*, niq_enqueue (true when dropped), unhandled_af; reported with unported!: rtm_ifannounce/rtm_ifchg (rtsock.c), rt_if_track/rtlabel_* (route.c), rtable_l2 (answers rdomain 0)/rtable_loindex/rtable_exists/rtable_add/rtable_l2set/rtable_lookup (rtable.c), rti_delete (igmp.c), in_ifdetach (in.c), ipv4_input/ipintr (ip_input.c), arpintr (if_ether.c), tcp_input_mlist/tcp_if_output_tso/tcpstat_inc, in_hdr_cksum_out/in_proto_cksum_out (ip_output.c), inet_ntop, pru_control (in_control: SIOCAIFADDR and the address ioctls fail with ENOSYS); INET6, MPLS, MROUTING, NFSCLIENT, NPF, NBRIDGE, NCARP, NBPFILTER, NPPP, NPPPOE not configured (comments at the sites); KERNEL_LOCK is nothing on one CPU; malloc(M_WAITOK) failures panic; host tests (index map growth, if_get/if_unit/if_idxmap_remove, attach defaults, if_input_proto cookie, cloner name parsing, groups, hprio checks, rx rings, congestion)"
+notes = "M7b: module if_ with if.h; the whole file: the index map (if_idxmap_*; no SMR: smr_call runs at once and smr_barrier is empty, sound on one CPU with no kernel preemption), ifinit, softnet_init/softnet_percpu/softnet_count/net_sn/net_tq/net_tq_barriers (NET_TASKQ 1), netlock, ifnetlist, if_attach/if_attachhead (panic on a second attach)/if_attachsetup/if_attach_common/if_attach_queues/if_attach_iqueues/if_attach_ifq, if_alloc_sadl/if_free_sadl, if_start/if_qstart_compat, if_enqueue/if_enqueue_ifq, if_input/if_input_local/if_input_proto/if_input_process/if_vinput, if_output_ml/tso/mq/local, if_netisr (arpintr, ipintr), if_hooks_run and the hook add/del (unsafe fns), if_remove/if_deactivate/if_detach, if_isconnected, cloners (if_clone_create/destroy/lookup/attach/list), if_congestion/if_congested, ifa_ifwithaddr/ifa_ifwithdstaddr/ifaof_ifpforaddr (unsafe: raw sockaddrs), if_rtrequest_dummy, p2p_rtrequest/p2p_bpf_mtap/p2p_input, if_downall/if_down/if_up, if_linkstate(_task)/if_link_state_change, if_slowtimo/if_watchdog_task, if_unit/if_get/if_get_smr/if_ref/if_put, if_setlladdr, if_createrdomain/if_setrdomain, ifioctl/ifioctl_get (unsafe fns over the kernel copy of the argument; the socket is opaque; goto forceup is a flag), if_sffpage_check, if_*hprio_*_check, ifconf, if_counters_alloc/free (malloc'd atomics), if_getdata, if_detached_qstart/ioctl, groups (if_creategroup/addgroup/delgroup/getgroup/getgroupmembers/getgroupattribs/setgroupattribs/getgrouplist/group_routechange/group_egress_build), ifpromisc, ifsetlro, ifa_add (unsafe)/ifa_del/ifa_update_broadaddr, ifa_print_all, ifnewlladdr, if_addrhook_*, if_rxr_*, niq_enqueue (true when dropped), unhandled_af; M7b IPv4: the routing (rtable.c, route.c, rtsock.c) and netinet (in_control as pru_control, in_ifdetach, ipv4_input, in_hdr/proto_cksum_out) calls are real; reported with unported!: rti_delete (igmp.c), tcp_input_mlist/tcpstat_inc (tcp_input.c), inet_ntop; tcp_if_output_tso is a local stand-in with the C's first two tests (TSO packets reported and dropped with ENOSYS); pru_control is in_control (sockets are not ported, so the protocol cannot be read); INET6, MPLS, MROUTING, NFSCLIENT, NPF, NBRIDGE, NCARP, NBPFILTER, NPPP, NPPPOE not configured (comments at the sites); KERNEL_LOCK is nothing on one CPU; malloc(M_WAITOK) failures panic; host tests (index map growth, if_get/if_unit/if_idxmap_remove, attach defaults, if_input_proto cookie, cloner name parsing, groups, hprio checks, rx rings, congestion)"
 
 [[file]]
 c = "sys/net/if_ethersubr.c"
@@ -2456,7 +2456,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d67e791e7fa54d0eb9e3cdd4736ef5f5d6c0ed06"
 deps = ["sys/net/if.c", "sys/netinet/if_ether.h", "sys/net/ethertypes.h", "sys/kern/uipc_mbuf.c"]
-notes = "M7b: licence includes the NRL portions notice (NRL licence 1.1, BSD with the advertising clause, accepted family); etherbroadcastaddr/etheranyaddr/ether_ipmulticast_min/max, ether_ioctl (unsafe: raw ifreq), ether_rtrequest (arp_rtrequest reported), ether_resolve (arpresolve reported: the packet is dropped; AF_UNSPEC/pseudo_AF_HDRCMPLT work; DIAGNOSTIC rtable_l2 reported), ether_encap (Ok(None) for the C's EAGAIN), ether_output, ether_port_input, ether_input (all six phases; vlan(4) not configured so tagged frames are service delimited; ipv4_input/arpinput/revarpinput reported and the frame dropped at the demux), ether_brport_isset/set/clr/get/get_locked, ether_sprintf (by value), ether_fakeaddr, ether_ifattach (takes the arpcom and marks the ifnet), ether_ifdetach, ether_crc32_le/be(_update) with compile-time tables, ether_multiaddr (returns the range), ether_addmulti/delmulti (ENETRESET as the C's error), ether_addr_to_e64/ether_e64_to_addr (on [u8; 6]), ether_extract_headers (tcphdr/udphdr by wire offsets), ether_offload_ifcap (in_hdr/proto_cksum_out reported); NVLAN, NCARP, NPPPOE, PIPEX, NBPE, NBPFILTER, INET6, MPLS and NAF_FRAME (frame sockets) not configured; host tests (sprintf, e64, CRC tables and values against the C's bit loops, ether_ifattach, ether_input filtering on crafted frames, the multicast list, resolve/encap, extract_headers)"
+notes = "M7b: licence includes the NRL portions notice (NRL licence 1.1, BSD with the advertising clause, accepted family); etherbroadcastaddr/etheranyaddr/ether_ipmulticast_min/max, ether_ioctl (unsafe: raw ifreq), ether_rtrequest (arp_rtrequest), ether_resolve (arpresolve; AF_UNSPEC/pseudo_AF_HDRCMPLT; DIAGNOSTIC rtable_l2), ether_encap (Ok(None) for the C's EAGAIN), ether_output, ether_port_input, ether_input (all six phases; vlan(4) not configured so tagged frames are service delimited; IPv4/ARP/RARP to ipv4_input/arpinput/revarpinput), ether_brport_isset/set/clr/get/get_locked, ether_sprintf (by value), ether_fakeaddr, ether_ifattach (takes the arpcom and marks the ifnet), ether_ifdetach, ether_crc32_le/be(_update) with compile-time tables, ether_multiaddr (returns the range), ether_addmulti/delmulti (ENETRESET as the C's error), ether_addr_to_e64/ether_e64_to_addr (on [u8; 6]), ether_extract_headers (tcphdr/udphdr by wire offsets), ether_offload_ifcap (in_hdr/proto_cksum_out); NVLAN, NCARP, NPPPOE, PIPEX, NBPE, NBPFILTER, INET6, MPLS and NAF_FRAME (frame sockets) not configured; host tests (sprintf, e64, CRC tables and values against the C's bit loops, ether_ifattach, ether_input filtering on crafted frames, the multicast list, resolve/encap, extract_headers)"
 
 [[file]]
 c = "sys/net/if_loop.c"
@@ -2465,15 +2465,16 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7323534c71ffdc14002598e5edef4d16bd4b9eae"
 deps = ["sys/net/if.c"]
-notes = "M7b: LOMTU, loop_cloner, loopattach (pdevinit, lo0 at boot), loop_clone_create, loop_clone_destroy (rtable_loindex reported: refuses with ENOSYS until net/rtable.c), lo_bpf_mtap, loinput, looutput, lortrequest, loioctl; rtable_l2set reported; bpfattach not configured"
+notes = "M7b: LOMTU, loop_cloner, loopattach (pdevinit, lo0 at boot), loop_clone_create (rtable_l2set for lo0), loop_clone_destroy (refuses a routing domain's loopback through rtable_loindex), lo_bpf_mtap, loinput, looutput (reject/blackhole routes), lortrequest (the route's MTU), loioctl; bpfattach not configured"
 
 [[file]]
 c = "sys/net/route.c"
 rust = "sys/net/route.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = ["sys/net/route.h", "sys/net/if_var.h"]
-notes = "M7b: ifaref and ifafree only (for net/if.c), in route.rs with route.h; the routing table code (rtalloc, rtrequest, rt_timer_*, rtlabel_*, rt_if_track, ...) is not ported yet"
+deps = ["sys/net/route.h", "sys/net/if_var.h", "sys/net/rtable.c", "sys/net/rtsock.c", "sys/netinet/in.c", "sys/netinet/if_ether.c", "sys/kern/subr_pool.c", "sys/kern/kern_timeout.c"]
+notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: rtcounters/rtstat_inc, rttrash, rtgeneration, rt_hashjitter, the rtentry/rttimer pools, route_init, route_cache, route_mpath, rtisvalid, rt_match, rt_clone, rt_hash (None for -1), rtalloc_mpath, rtalloc, rt_setgwroute/rt_putgwroute, rtref/rtfree, ifaref/ifafree, rtredirect, rtdeletemsg, rtequal, rtflushclone(1), rtrequest_delete, rtrequest (ret_nrt as Option<&mut Option<..>>), rt_setgate, rt_getll, rt_maskedcopy, rt_copysa (returns the copy), rt_ifa_add/del/addlocal/dellocal/purge, rt_timer_* (rttimer_callout, rt_timer_init/queue_init/queue_change/queue_flush/queue_count/remove_all/add/timer), rtlabel_name2id/id2name (fills a buffer)/id2sa/unref, rt_if_track, rt_if_linkstate_change, rt_plentosa/rt_plen2mask (sockaddr_storage buffer), ddb db_print_sa/db_print_ifa/db_show_rtentry/db_show_rtable; SMR/SRP not ported: entries are freed at once (one CPU, no preemption); KERNEL_LOCK is nothing; MPLS, BFD and INET6 paths not configured; host tests (masked copy, prefix masks, labels; routes through netinet/ip_input tests)"
+upstream_blob = "0d29b1654199385bcafb175890b5a3ad762afd38"
 
 [[file]]
 c = "sys/netinet/in.h"
@@ -2482,7 +2483,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ac61d97379129a2d5833f84ab3ca142bffb04022"
 deps = ["sys/sys/socket.h", "sys/sys/endian.h"]
-notes = "M7b: module in_ (in is a Rust keyword); every constant, the kernel's __IPADDR as htonl so INADDR_*/IN_CLASS*_NET/HOST are network order; in_addr (s_addr u32), sockaddr_in, ip_opts, ip_mreq, ip_mreqn; IN_CLASSA..D, IN_MULTICAST, IN_RFC3021_SUBNET, IN_EXPERIMENTAL, IN_BADCLASS, IN_LOCAL_GROUP, IN_CLASSFULBROADCAST, in_hosteq, in_nullhost as const fns; satosin/satosin_const/sintosa pointer casts; CTL_IPPROTO_NAMES/IPCTL_NAMES wait for sys/sysctl.h, ifatoia for netinet/in_var.h, inetctlerrmap/zeroin_addr and the prototypes for their .c files; INADDR_NONE and bindresvport are userland"
+notes = "M7b: module in_ (in is a Rust keyword), with in.c; every constant, the kernel's __IPADDR as htonl so INADDR_*/IN_CLASS*_NET/HOST are network order; in_addr (s_addr u32), sockaddr_in, ip_opts, ip_mreq, ip_mreqn; IN_CLASSA..D, IN_MULTICAST, IN_RFC3021_SUBNET, IN_EXPERIMENTAL, IN_BADCLASS, IN_LOCAL_GROUP, IN_CLASSFULBROADCAST, in_hosteq, in_nullhost as const fns; satosin/satosin_const/sintosa pointer casts; inetctlerrmap and the ip_* globals are netinet/ip_input.rs; CTL_IPPROTO_NAMES/IPCTL_NAMES wait for sys/sysctl.h (so wip); INADDR_NONE and bindresvport are userland"
 
 [[file]]
 c = "sys/netinet/in_systm.h"
@@ -2508,7 +2509,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ca6607e0288716e490f5fb9a17271e818f4efca6"
 deps = ["sys/netinet/in.h", "sys/netinet/ip.h"]
-notes = "M7b: icmp_ra_addr, struct icmp with icmp_hun/icmp_dun as #[repr(C)] unions and safe accessors for the icmp_* shorthands, icmp_ext_hdr, icmp_ext_obj_hdr, every constant (types/codes u8), ICMP_V6ADVLEN/ICMP_ADVLEN/ICMP_INFOTYPE as const fns; the prototypes come with ip_icmp.c"
+notes = "M7b: icmp_ra_addr, struct icmp with icmp_hun/icmp_dun as #[repr(C)] unions and safe accessors for the icmp_* shorthands, icmp_ext_hdr, icmp_ext_obj_hdr, every constant (types/codes u8), ICMP_V6ADVLEN/ICMP_ADVLEN/ICMP_INFOTYPE as const fns; the prototypes are ip_icmp.c's functions in the same module (IcmpPkt is the view over packet data)"
 
 [[file]]
 c = "sys/netinet/if_ether.h"
@@ -2517,16 +2518,189 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "08013beebd836b2352063dda1aee0351ec3ac810"
 deps = ["sys/net/ethertypes.h", "sys/net/if_arp.h", "sys/net/route.h", "sys/netinet/in.h", "sys/net/if_var.h"]
-notes = "M7b: every constant, ether_addr, ether_header, ether_vlan_header, ether_arp (arp_hrd.. accessors), sockaddr_inarp, EVL_*OFTAG, ETHER_IS_*, ETH64_IS_*, ETHER_MAP_IP(V6)_MULTICAST (returning the address; the IPv6 one over 16 bytes until in6.h); struct arpcom (#[repr(C)], ac_if first, ac__pad as ac_pad, ac_trport/ac_brport atomics; arpcom_of is the checked (struct arpcom *)ifp cast: ether_ifattach marks the ifnet), ether_port, ether_multi, ether_multistep, ETHER_LOOKUP/FIRST/NEXT_MULTI as functions returning the record, ether_extracted (ip6/tcp/udp byte pointers: those headers are not ported); arpt_keep/arpt_down/revarp_ifidx and the ARP prototypes come with netinet/if_ether.c, the ether_* globals and functions are net/if_ethersubr.rs"
+notes = "M7b: every constant, ether_addr, ether_header, ether_vlan_header, ether_arp (arp_hrd.. accessors), sockaddr_inarp, EVL_*OFTAG, ETHER_IS_*, ETH64_IS_*, ETHER_MAP_IP(V6)_MULTICAST (returning the address; the IPv6 one over 16 bytes until in6.h); struct arpcom (#[repr(C)], ac_if first, ac__pad as ac_pad, ac_trport/ac_brport atomics; arpcom_of is the checked (struct arpcom *)ifp cast: ether_ifattach marks the ifnet), ether_port, ether_multi, ether_multistep, ETHER_LOOKUP/FIRST/NEXT_MULTI as functions returning the record, ether_extracted (ip6/tcp/udp byte pointers: those headers are not ported); arpt_keep/arpt_down/revarp_ifidx and the ARP functions are if_ether.c's in the same module; the ether_* globals and functions are net/if_ethersubr.rs"
 
 [[file]]
 c = "sys/netinet/ip_var.h"
 rust = "sys/netinet/ip_var.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "fa6792cf185a0d4f2d03a8db414a111edb0f25c2"
 deps = ["sys/netinet/in.h", "sys/sys/socket.h"]
-notes = "M7b: MAX_IPOPTLEN, ipovly, ipstat, ipoption, enum ipstat_counters, ipoffnxt, the ip_output flags, IPMTUDISCTIMEOUT; ipstat_inc/add wait for sys/percpu.h; ip_moptions (in_multi), ipqent/ipq (mbuf), the globals and the prototypes come with ip_input.c/ip_output.c/raw_ip.c"
+notes = "M7b: MAX_IPOPTLEN, ipovly, ipstat, ipoption, ip_moptions, ipqent, ipqehead, ipq, ipqhead, enum ipstat_counters, ipoffnxt, the ip_output flags, IPMTUDISCTIMEOUT, ipstat_inc/add/dec over ipcounters (one atomic array in ip_input.rs: percpu.h not ported); mtod_ip/mtod_ip_store copy the header out of and into mbuf data (it need not be aligned); the globals and prototypes are their .c files' (ip_input.rs, ip_output.rs, ip_icmp.rs)"
+
+# M7b: IPv4 (routing, ARP, ip, icmp) and the protocol switch
+
+[[file]]
+c = "sys/sys/domain.h"
+rust = "sys/sys/domain.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d0137b88e996c89aedca15d5a9383d17a5b02cc2"
+deps = ["sys/sys/socket.h"]
+notes = "M7b: struct domain (dom_protosw one slice for the table and its end; dom_init an Option<fn>; dom_name a byte string; dom_externalize/dom_dispose untyped until sockets); domains[] and the *domain globals are kern/uipc_domain.rs and their protocol files"
+
+[[file]]
+c = "sys/sys/protosw.h"
+rust = "sys/sys/protosw.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "68369467b57a6931ba183395aa77e5e8ff288521"
+deps = ["sys/sys/domain.h"]
+notes = "M7b: PR_* flags, PRU_* requests, PRC_* control commands with prc_is_redirect (PRC_IS_REDIRECT), PRCO_*, PR_SLOWHZ/PR_FASTHZ, struct protosw without pr_usrreqs and pr_ctloutput (struct socket and struct pr_usrreqs wait for sockets, so wip); pr_input takes &mut Option<&'static Mbuf> for struct mbuf **mp; pr_ctlinput is an unsafe fn over a raw sockaddr; reference-backed constants test"
+
+[[file]]
+c = "sys/kern/uipc_domain.c"
+rust = "sys/kern/uipc_domain.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d76bdcce649a48bf5e91b43d09fb2e0ea5256f3d"
+deps = ["sys/sys/domain.h", "sys/sys/protosw.h", "sys/netinet/in_proto.c", "sys/net/rtsock.c", "sys/kern/kern_timeout.c"]
+notes = "M7b: domains[] (a slice: inetdomain and routedomain; unixdomain is reported until kern/uipc_proto.c and sockets; INET6, MPLS, pfkey, BLUETOOTH not configured), domaininit (runs in main; max_linkhdr/max_hdr, the pffast/pfslow timeouts as statics), pffinddomain, pffindtype, pffindproto, net_sysctl (PF_UNIX's uipc_sysctl reported; CTL_NET in kern_sysctl), net_link_sysctl, pfctlinput (unsafe: raw sockaddr), pfslowtimo, pffasttimo; host test"
+
+[[file]]
+c = "sys/net/art.h"
+rust = "sys/net/art.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "40078b0586abe96ca2343726676c511e19a453b1"
+deps = []
+notes = "M7b: struct art (Cells under the rtable lock), art_table, art_node (an_value raw, an_addr bytes), art_iter, ART_MAXLVL, AN_EXCLUSIVE, ART_FOREACH as art_foreach with a closure; the heap entries are tagged usize words (art_heap_entry_* helpers)"
+
+[[file]]
+c = "sys/net/art.c"
+rust = "sys/net/art.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ab770a831a046c15e7bb78bb89ad33a30d5999e7"
+deps = ["sys/net/art.h", "sys/kern/subr_pool.c", "sys/kern/kern_task.c"]
+notes = "M7b: ISC. The whole file: art_boot, art_init, art_alloc, art_bindex, art_match, art_node_check, art_lookup, art_is_empty, art_insert, art_delete, art_table_ref/rele/free, art_iter_open/next/close/descend, art_walk via art_foreach, art_table_get/put, art_allot (recursive, as the C's loop over the subtables), art_get, art_node_init, art_put, art_gc with its task and list; SMR is not ported (SMR_PTR_* plain accesses, smr_barrier empty, smr_call at once: one CPU, no preemption); host tests (bindex, longest prefix match, delete, iteration)"
+
+[[file]]
+c = "sys/net/rtable.h"
+rust = "sys/net/rtable.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d08edc3f32f7c89b3cee7b980dc833d3a955d5a3"
+deps = ["sys/net/art.h"]
+notes = "M7b: rt_key/rt_plen/rtable_* prototypes live with rtable.c in the same module; RT_TABLEID_MAX/RT_TABLEID_BITS/RT_TABLEID_MASK are net/route.rs's"
+
+[[file]]
+c = "sys/net/rtable.c"
+rust = "sys/net/rtable.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "833e68b6b8c7c3b03512d9f837fb903123a97a03"
+deps = ["sys/net/rtable.h", "sys/net/art.c", "sys/net/route.h", "sys/kern/kern_rwlock.c", "sys/kern/kern_malloc.c"]
+notes = "M7b: afmap/af2idx/rtmap (atomic words: SRP not ported, the old map is freed at once), rtmap_init/grow/dtor, rtable_init (runs in main), rtable_add, rtable_get, rtable_exists, rtable_empty, rtable_l2, rtable_loindex, rtable_l2set, rtable_init_backend, rtable_alloc, rtable_setsource/getsource/clearsource, rtable_lookup, rtable_match, rtable_insert, rtable_delete, rtable_walk/rtable_read/rtable_iterate (closures for the C's callback and arg), rtable_mpath_capable, rtable_mpath_reprio, rtable_mpath_insert ('struct rtentry **' links as an enum), an_match, satoaddr, rtable_satoplen (Result), sa_equal; host tests"
+
+[[file]]
+c = "sys/net/rtsock.c"
+rust = "sys/net/rtsock.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ec293b5e085728f36d7d7152169e0e9e98767b90"
+deps = ["sys/net/route.c", "sys/sys/protosw.h", "sys/sys/domain.h"]
+notes = "M7b: what route.c, if.c and netinet need without sockets: struct rtpcb/rtptable, route_src, routesw/routedomain (dom_init route_init), route_prinit, route_input (delivery to routing sockets reported), rtm_msg1 (unsafe: raw sockaddrs), rtm_send, rtm_miss, rtm_ifchg, rtm_addr, rtm_ifannounce, rtm_80211info, rtm_proposal, sysctl_rtable (reported: rtm_msg2, struct walkarg); the socket half (route_usrreqs, route_output, route_ctloutput, rtm_report, rt_setmetrics, ...) waits for sockets"
+
+[[file]]
+c = "sys/netinet/in_proto.c"
+rust = "sys/netinet/in_proto.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d8b3695eafc44c4faaa208c08d27ebd2653cfefc"
+deps = ["sys/sys/protosw.h", "sys/sys/domain.h", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c"]
+notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; no pr_usrreqs/pr_ctloutput), inetdomain, ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (in_init, udp_*, tcp_*, rip_input/rip_init, ipip_*, igmp_*) and free the packet; INET6, IPSEC, GRE, MROUTING, CARP, PFSYNC, ETHERIP, PIPEX, divert, MPLS not configured"
+
+[[file]]
+c = "sys/netinet/in_var.h"
+rust = "sys/netinet/in_var.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9a5dcc5a6398a230bfabdec2f87312144a802956"
+deps = ["sys/netinet/in.h", "sys/net/if_var.h"]
+notes = "M7b: struct in_ifaddr (#[repr(C)], ia_ifa first, Cells), in_aliasreq, in_multi (#[repr(C)], inm_ifma first), ifatoia (checked by family, panics otherwise), ifmatoinm, IN_LOOKUP_MULTI as in_lookupmulti in in.c; size assert"
+
+[[file]]
+c = "sys/netinet/in.c"
+rust = "sys/netinet/in_.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f2fe3a669eea034ac5340b75c08f5c57f3ada084"
+deps = ["sys/netinet/in.h", "sys/netinet/in_var.h", "sys/net/route.c", "sys/net/if.c"]
+notes = "M7b: module in_ with in.h. The whole file: in_canforward, in_socktrim, in_mask2len, in_len2mask, in_nam2sin, in_sa2sin, in_control (unsafe: raw caddr_t; a NULL socket is a privileged kernel caller, a real one reports SS_PRIV until sockets), in_ioctl, in_ioctl_set_ifaddr, in_ioctl_change_ifaddr, in_ioctl_get, in_ifscrub, in_ifinit, in_purgeaddr, in_addhost/in_scrubhost, in_insert_prefix/in_remove_prefix, in_broadcast, in_addmulti/in_delmulti/in_hasmulti (igmp_joingroup/leavegroup reported), in_ifdetach, in_prefixlen2mask; CARP, MROUTING, INET6 not configured"
+
+[[file]]
+c = "sys/netinet/in_cksum.c"
+rust = "sys/netinet/in_cksum.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3131ff67e3fb683b5576e7b065cdba515a1b0c23"
+deps = ["sys/kern/uipc_mbuf.c"]
+notes = "M7b: in_cksum over an mbuf chain; the word sum keeps the byte parity across mbufs instead of the C's unaligned-word swapping (same result); cksum_add/cksum_fold shared with in4_cksum.c; host tests (RFC 1071 vector, an IP header, split chains)"
+
+[[file]]
+c = "sys/netinet/in4_cksum.c"
+rust = "sys/netinet/in4_cksum.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "bbbf50b39c34e53391976ded48d3c15b69c6ddb5"
+deps = ["sys/netinet/in_cksum.c", "sys/netinet/ip.h"]
+notes = "M7b: in4_cksum (pseudo header from the packet's IP header when nxt is non-zero), over in_cksum.rs's word loop; host test"
+
+[[file]]
+c = "sys/netinet/icmp_var.h"
+rust = "sys/netinet/icmp_var.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "76cf4de4adae06671b7c3e4aa56c615ac9e3bda4"
+deps = ["sys/netinet/ip_icmp.h"]
+notes = "M7b: ICMPCTL_*, struct icmpstat, enum icmpstat_counters (IcmpstatCounters with the C's values, the histograms by offset), icmpstat_inc/icmpstat_inc_hist over icmpcounters (one atomic array in ip_icmp.rs); CTL_ICMPCTL_NAMES waits for sys/sysctl.h"
+
+[[file]]
+c = "sys/netinet/ip_id.c"
+rust = "sys/netinet/ip_id.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "847006806f71915ee8494cc130c747901e22d3ff"
+deps = []
+notes = "M7b: ip_shuffle/isindex as atomics, ip_randomid (the Knuth shuffle), ip_randomid_init (arc4random is dev/rnd.rs's placeholder stream until the real pool); host test"
+
+[[file]]
+c = "sys/netinet/ip_input.c"
+rust = "sys/netinet/ip_input.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "64c2b79a2b6dd2be2b8258ff6c00dc3d16d7a8d6"
+deps = ["sys/netinet/ip_var.h", "sys/netinet/in.c", "sys/netinet/in_proto.c", "sys/netinet/ip_icmp.c", "sys/netinet/ip_output.c", "sys/netinet/if_ether.c", "sys/net/route.c"]
+notes = "M7b: the sysctl variables (AtomicI32; ipport_* reported: in_pcb.c), ipq/ipq_mutex, ipintrq, the ipqent/ipq pools, ipcounters, the ip_send queues and tasks, inetctlerrmap; ip_init (baddynamicports/rootonlyports reported; arpinit), ip_ours/ip_ours_enqueue, ipintr, ipv4_input, ipv4_check, ip_input_if, ip_fragcheck, ip_deliver, in_ouraddr, ip_reass, ip_freef, ip_slowtimo, ip_flush, ip_dooptions, save_rte, ip_srcroute, ip_stripoptions, ip_forward, ip_sysctl, ip_sysctl_ipstat, ip_send_dispatch/ip_sendraw_dispatch, ip_send, ip_send_raw; IPSEC, pf, carp, MROUTING, INET6, divert not configured (comments at the sites); host tests (header validation, ARP plus echo to the gateway, echo request answered, parameter problem)"
+
+[[file]]
+c = "sys/netinet/ip_output.c"
+rust = "sys/netinet/ip_output.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2fa2f3f0d8a827987ec4fc5a54de98cde753b817"
+deps = ["sys/netinet/ip_var.h", "sys/netinet/in.c", "sys/net/route.c", "sys/netinet/in_cksum.c"]
+notes = "M7b: ip_output (no seclevel parameter: IPSEC not configured), ip_fragment, ip_insertoptions, ip_optcopy (unsafe: raw headers), ip_freemoptions, ip_mloopback, in_hdr_cksum_out, in_cksum_phdr, in_delayed_cksum, in_proto_cksum_out (tcpstat_inc/udpstat_inc reported), in_ifcap_cksum; the socket option half (ip_ctloutput, ip_pcbopts, ip_setmoptions, ip_getmoptions, ip_multicast_if) waits for sockets, so wip; pf, IPSEC, MROUTING not configured; host tests (fragmentation, EMSGSIZE, optcopy, insertoptions)"
+
+[[file]]
+c = "sys/netinet/ip_icmp.c"
+rust = "sys/netinet/ip_icmp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1b26f841137e0930981385496027ffaa4950e6bc"
+deps = ["sys/netinet/ip_icmp.h", "sys/netinet/icmp_var.h", "sys/netinet/ip_output.c", "sys/netinet/in_cksum.c", "sys/net/route.c"]
+notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). icmpmaskrepl and the other sysctl variables, icmperrppslim, the mtudisc/redirect timer queues, icmpcounters, icmp_init, icmp_do_error, icmp_error, icmp_input, icmp_input_if (echo, timestamp, mask, redirects, unreachables; raw delivery through in_proto's reporting rip_input), icmp_reflect, icmp_send, iptime, icmp_sysctl, icmp_sysctl_icmpstat, icmp_mtudisc_clone, icmp_mtudisc, icmp_mtudisc_timeout, icmp_ratelimit, icmp_do_exthdr; packet data through IcmpPkt (bounds-checked view: mbuf data need not be aligned); IPSEC, pf, carp not configured; host tests in ip_input"
+
+[[file]]
+c = "sys/netinet/if_ether.c"
+rust = "sys/netinet/if_ether.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "653499a05c5b0d9baaba4461a7f39c1e5f98e341"
+deps = ["sys/netinet/if_ether.h", "sys/net/route.c", "sys/netinet/in.c", "sys/net/if_ethersubr.c", "sys/kern/kern_timeout.c"]
+notes = "M7b: module with if_ether.h. llinfo_arp, la_hold_total, arpt_prune/keep/down, arpinq, arp_mtx, arp_list, arp_pool, arptimer_to, arpinit, arptimer, arp_rtrequest, arprequest, arpresolve (unsafe: raw sockaddr), arppullup, arpinput, arpintr, in_arpinput, arpcache, arpinvalidate, arptfree, arplookup, arpproxy, revarpinput, in_revarpinput, la_put; revarprequest/revarpwhoarewe/revarpwhoami are NFSCLIENT (not configured: comments); rt_expire 0 means permanent, so entries made at uptime 0 never expire (the boot selftest waits for uptime); CARP, bridge not configured; host tests (entry learned, reply sent, aged out by arptimer)"
 
 # ---------------------------------------------------------------------------
 # M7b: file descriptors (kern_descrip.c), uio, the read/write/ioctl paths
@@ -2631,7 +2805,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "4dfe85726a8960dad7be72e643f1b13c60200750"
 deps = ["sys/sys/sysctl.h", "sys/kern/kern_prot.c", "sys/kern/kern_proc.c", "sys/kern/kern_resource.c", "sys/kern/kern_rwlock.c", "sys/kern/subr_log.c", "sys/kern/kern_clock.c", "sys/kern/kern_timeout.c", "sys/uvm/uvm_glue.c", "sys/uvm/uvm_meter.c"]
-notes = "kern_sysctl.c: sysctl_lock/sysctl_disklock, sysctl_vslock/vsunlock (uvm_vslock), sys_sysctl (pledge_sysctl's unpledged test; net_sysctl, vfs_sysctl, cpu_sysctl, ddb_sysctl reported; DEBUG_SYSCTL not configured), hostname/domainname (StaticCell under sysctl_lock), hostid, securelevel, allowkmem, the morally-const statics and kern_vars/hw_vars (rows whose variable lives in an unported file are reported: maxvnodes, numfiles, tty_count, somaxconn/sominconn, nosuidcoredump, maxlocksperuid, disk_count; ccpu is a read-only copy of sched_bsd's constant), kern_sysctl_dirs(_locked), kern_sysctl, kern_sysctl_locked, hw_sysctl, hw_sysctl_locked, the hw_battery_* hooks and sysctl_hwcharge{mode,start,stop}, sysctl_hwbattery, sysctl_int_lower, sysctl_int, sysctl_rdint, sysctl_securelevel, sysctl_securelevel_int, sysctl_int_bounded, sysctl_bounded_arr, sysctl_rdquad, sysctl_string, sysctl_tstring, sysctl__string, sysctl_rdstring, sysctl_struct, sysctl_rdstruct, sysctl_doproc, fill_kproc (FILL_KPROC expanded; tty and sigacts fields reported when a process would have them; KTRACE/unveil/MULTIPROCESSOR not configured), sysctl_proc_nobroadcastkill, sysctl_cpustats, sysctl_ci_cp_time, sysctl_cptime2, sysctl_utc_offset (resettodr reported); after their C checks, reported: sysctl_file (fill_file not ported: kern_descrip.c), sysctl_proc_args (uvm_io), sysctl_proc_cwd (vfs_getcwd_common), sysctl_proc_vmmap (fill_vmmap), sysctl_diskinit (subr_disk.c), sysctl_intrcnt (evcount_sysctl), sysctl_sensors (kern_sensors.c); reported nodes: kern.numvnodes, nchstats, stackgap_random, bufcachepercent, malloc, pool, watchdog, evcount, clockintr, tty, timecounter, hw.model (cpu_model), setperf, perfpolicy, smt, blockcpu; SYSV*, NAUDIO, NVIDEO, NDT, NPF, NUCOM, GPROF, WITNESS, PTRACE not configured; no KERNEL_LOCK/log_mtx yet; hw_* globals keep their lowercase C names (the uppercase ones are the HW_* ids); the identity strings come from conf/vers.rs (EmiBSD 7.8, user decision); host tests for every helper, the identity nodes, hw nodes, doproc sizing, fill_kproc and sys_sysctl; smoke: init prints 'init: EmiBSD 7.8' on both archs; after the kern_descrip/kern_sig merges: kern.nfiles (numfiles), kern.nosuidcoredump and the sigacts fields of kinfo_proc are real; net_sysctl, cpu_sysctl, ddb_sysctl reported; DEBUG_SYSCTL not configured), hostname/domainname (StaticCell under sysctl_lock), hostid, securelevel, allowkmem, the morally-const statics and kern_vars/hw_vars (rows whose variable lives in an unported file are reported: maxvnodes, numfiles, tty_count, somaxconn/sominconn, nosuidcoredump, maxlocksperuid, disk_count; ccpu is a read-only copy of sched_bsd's constant), kern_sysctl_dirs(_locked), kern_sysctl, kern_sysctl_locked, hw_sysctl, hw_sysctl_locked, the hw_battery_* hooks and sysctl_hwcharge{mode,start,stop}, sysctl_hwbattery, sysctl_int_lower, sysctl_int, sysctl_rdint, sysctl_securelevel, sysctl_securelevel_int, sysctl_int_bounded, sysctl_bounded_arr, sysctl_rdquad, sysctl_string, sysctl_tstring, sysctl__string, sysctl_rdstring, sysctl_struct, sysctl_rdstruct, sysctl_doproc, fill_kproc (FILL_KPROC expanded; tty and sigacts fields reported when a process would have them; KTRACE/unveil/MULTIPROCESSOR not configured), sysctl_proc_nobroadcastkill, sysctl_cpustats, sysctl_ci_cp_time, sysctl_cptime2, sysctl_utc_offset (resettodr reported); after their C checks, reported: sysctl_file (fill_file not ported: kern_descrip.c), sysctl_proc_args (uvm_io), sysctl_proc_cwd (vfs_getcwd_common), sysctl_proc_vmmap (fill_vmmap), sysctl_diskinit (subr_disk.c), sysctl_intrcnt (evcount_sysctl), sysctl_sensors (kern_sensors.c); reported nodes: kern.numvnodes, nchstats, stackgap_random, bufcachepercent, malloc, pool, watchdog, evcount, clockintr, tty, timecounter, hw.model (cpu_model), setperf, perfpolicy, smt, blockcpu; SYSV*, NAUDIO, NVIDEO, NDT, NPF, NUCOM, GPROF, WITNESS, PTRACE not configured; no KERNEL_LOCK/log_mtx yet; hw_* globals keep their lowercase C names (the uppercase ones are the HW_* ids); the identity strings come from conf/vers.rs (EmiBSD 7.8, user decision); host tests for every helper, the identity nodes, hw nodes, doproc sizing, fill_kproc and sys_sysctl; smoke: init prints 'init: EmiBSD 7.8' on both archs; vfs stage 1: CTL_VFS dispatches to vfs_sysctl (with the vslock, as in C), kern.maxvnodes (bounded), kern.numvnodes, kern.nchstats and kern.proc_cwd (vfs_getcwd_common; ENOENT without a current directory) are real"
+notes = "kern_sysctl.c: sysctl_lock/sysctl_disklock, sysctl_vslock/vsunlock (uvm_vslock), sys_sysctl (pledge_sysctl's unpledged test; net_sysctl, vfs_sysctl, cpu_sysctl, ddb_sysctl reported; DEBUG_SYSCTL not configured), hostname/domainname (StaticCell under sysctl_lock), hostid, securelevel, allowkmem, the morally-const statics and kern_vars/hw_vars (rows whose variable lives in an unported file are reported: maxvnodes, numfiles, tty_count, somaxconn/sominconn, nosuidcoredump, maxlocksperuid, disk_count; ccpu is a read-only copy of sched_bsd's constant), kern_sysctl_dirs(_locked), kern_sysctl, kern_sysctl_locked, hw_sysctl, hw_sysctl_locked, the hw_battery_* hooks and sysctl_hwcharge{mode,start,stop}, sysctl_hwbattery, sysctl_int_lower, sysctl_int, sysctl_rdint, sysctl_securelevel, sysctl_securelevel_int, sysctl_int_bounded, sysctl_bounded_arr, sysctl_rdquad, sysctl_string, sysctl_tstring, sysctl__string, sysctl_rdstring, sysctl_struct, sysctl_rdstruct, sysctl_doproc, fill_kproc (FILL_KPROC expanded; tty and sigacts fields reported when a process would have them; KTRACE/unveil/MULTIPROCESSOR not configured), sysctl_proc_nobroadcastkill, sysctl_cpustats, sysctl_ci_cp_time, sysctl_cptime2, sysctl_utc_offset (resettodr reported); after their C checks, reported: sysctl_file (fill_file not ported: kern_descrip.c), sysctl_proc_args (uvm_io), sysctl_proc_cwd (vfs_getcwd_common), sysctl_proc_vmmap (fill_vmmap), sysctl_diskinit (subr_disk.c), sysctl_intrcnt (evcount_sysctl), sysctl_sensors (kern_sensors.c); reported nodes: kern.numvnodes, nchstats, stackgap_random, bufcachepercent, malloc, pool, watchdog, evcount, clockintr, tty, timecounter, hw.model (cpu_model), setperf, perfpolicy, smt, blockcpu; SYSV*, NAUDIO, NVIDEO, NDT, NPF, NUCOM, GPROF, WITNESS, PTRACE not configured; no KERNEL_LOCK/log_mtx yet; hw_* globals keep their lowercase C names (the uppercase ones are the HW_* ids); the identity strings come from conf/vers.rs (EmiBSD 7.8, user decision); host tests for every helper, the identity nodes, hw nodes, doproc sizing, fill_kproc and sys_sysctl; smoke: init prints 'init: EmiBSD 7.8' on both archs; after the kern_descrip/kern_sig merges: kern.nfiles (numfiles), kern.nosuidcoredump and the sigacts fields of kinfo_proc are real; net_sysctl, cpu_sysctl, ddb_sysctl reported; DEBUG_SYSCTL not configured), hostname/domainname (StaticCell under sysctl_lock), hostid, securelevel, allowkmem, the morally-const statics and kern_vars/hw_vars (rows whose variable lives in an unported file are reported: maxvnodes, numfiles, tty_count, somaxconn/sominconn, nosuidcoredump, maxlocksperuid, disk_count; ccpu is a read-only copy of sched_bsd's constant), kern_sysctl_dirs(_locked), kern_sysctl, kern_sysctl_locked, hw_sysctl, hw_sysctl_locked, the hw_battery_* hooks and sysctl_hwcharge{mode,start,stop}, sysctl_hwbattery, sysctl_int_lower, sysctl_int, sysctl_rdint, sysctl_securelevel, sysctl_securelevel_int, sysctl_int_bounded, sysctl_bounded_arr, sysctl_rdquad, sysctl_string, sysctl_tstring, sysctl__string, sysctl_rdstring, sysctl_struct, sysctl_rdstruct, sysctl_doproc, fill_kproc (FILL_KPROC expanded; tty and sigacts fields reported when a process would have them; KTRACE/unveil/MULTIPROCESSOR not configured), sysctl_proc_nobroadcastkill, sysctl_cpustats, sysctl_ci_cp_time, sysctl_cptime2, sysctl_utc_offset (resettodr reported); after their C checks, reported: sysctl_file (fill_file not ported: kern_descrip.c), sysctl_proc_args (uvm_io), sysctl_proc_cwd (vfs_getcwd_common), sysctl_proc_vmmap (fill_vmmap), sysctl_diskinit (subr_disk.c), sysctl_intrcnt (evcount_sysctl), sysctl_sensors (kern_sensors.c); reported nodes: kern.numvnodes, nchstats, stackgap_random, bufcachepercent, malloc, pool, watchdog, evcount, clockintr, tty, timecounter, hw.model (cpu_model), setperf, perfpolicy, smt, blockcpu; SYSV*, NAUDIO, NVIDEO, NDT, NPF, NUCOM, GPROF, WITNESS, PTRACE not configured; no KERNEL_LOCK/log_mtx yet; hw_* globals keep their lowercase C names (the uppercase ones are the HW_* ids); the identity strings come from conf/vers.rs (EmiBSD 7.8, user decision); host tests for every helper, the identity nodes, hw nodes, doproc sizing, fill_kproc and sys_sysctl; smoke: init prints 'init: EmiBSD 7.8' on both archs; vfs stage 1: CTL_VFS dispatches to vfs_sysctl (with the vslock, as in C), kern.maxvnodes (bounded), kern.numvnodes, kern.nchstats and kern.proc_cwd (vfs_getcwd_common; ENOENT without a current directory) are real; M7b IPv4: CTL_NET is net_sysctl (kern/uipc_domain.c)"
 
 [[file]]
 c = "sys/uvm/uvm_meter.c"

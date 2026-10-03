@@ -33,26 +33,40 @@
  */
 /* </LICENSES> */
 
-//! IP implementation variables: statistics, the header overlay, `ip_output` flags:
-//! `<netinet/ip_var.h>`.
+//! IP implementation variables: statistics, the header overlay, `ip_output` flags, the
+//! multicast options and the reassembly queues: `<netinet/ip_var.h>`.
 //!
 //! Upstream: sys/netinet/ip_var.h @ 3ce1f3f79392
 //!
-//! Status: `wip`.
+//! Status: `ported` (M7b).
 //!
 //! ## Deviations
-//! - `ipstat_inc`/`ipstat_add` and the `ipcounters` they bump come with the per-CPU counters
-//!   (`<sys/percpu.h>`); the [`IpstatCounters`] they index are here.
-//! - `struct ip_moptions` (it points at `struct in_multi`, `<netinet/in_var.h>`), `struct
-//!   ipqent`, `struct ipq` and `ipqehead` (they hold `struct mbuf` and `queue.h` links) come
-//!   with `netinet/ip_input.c`.
-//! - The globals (`ipstat`, `ip_defttl`, `ip_mtudisc`, `ipport_*`, `ip_forwarding`,
-//!   `ipqent_pool`, `rip_usrreqs`, ...) and the prototypes (`ip_output`, `ip_input_if`,
-//!   `rip_*`, ...) come with `netinet/ip_input.c`, `ip_output.c` and `raw_ip.c`.
+//! - `ipcounters` (`struct cpumem *`, `<sys/percpu.h>` not ported) is the static array of
+//!   atomics `IPCOUNTERS` in `netinet/ip_input.rs`, which defines the C's pointer;
+//!   `ipstat_inc`/`ipstat_add` bump it by [`IpstatCounters`], and `ipstat_dec` is
+//!   `ip_deliver`'s `counters_dec`.
+//! - `struct ip_moptions`'s `imo_membership` is a raw array of `Option<&InMulti>` (it grows
+//!   with `imo_max_memberships`, as the C's does); `struct ipqent` and `struct ipq` hold
+//!   `Cell`s (they change under `ipq_mutex`); `ipqe_ip` points at the fragment's header in its
+//!   mbuf, read unaligned (`netinet/ip_input.rs`).
+//! - The globals (`ip_defttl`, `ip_mtudisc`, `ipport_*`, `ip_forwarding`, `ipmultipath`,
+//!   `ip_directedbcast`, `la_hold_total`, `ip_mtudisc_timeout_q`, `ipqent_pool`, ...) and the
+//!   prototypes (`ip_output`, `ip_input_if`, ...) are defined by `netinet/ip_input.rs`,
+//!   `ip_output.rs`, `ip_icmp.rs` and `if_ether.rs`; `rip_usrreqs` and the `rip_*`
+//!   functions by `netinet/raw_ip.c`, which is not ported (`netinet/in_proto.rs` has the
+//!   `rip_input` stand-in). `struct ipstat` as `sysctl(2)` returns it is here.
 
+use core::cell::Cell;
 use core::mem::size_of;
+use core::sync::atomic::Ordering;
 
 use crate::netinet::in_::InAddr;
+use crate::netinet::in_var::InMulti;
+use crate::netinet::ip::Ip;
+use crate::netinet::ip_input::IPCOUNTERS;
+use crate::queue_adapter;
+use crate::sys::mbuf::{Mbuf, mtod};
+use crate::sys::queue::{ListEntry, ListHead};
 use crate::sys::socket::SO_BROADCAST;
 
 /// Structure stored in mbuf in `inpcb.ip_options` and passed to `ip_output` when ip options
@@ -263,6 +277,67 @@ pub enum IpstatCounters {
     IpsNcounters,
 }
 
+/// `struct ip_moptions`: attached to `inpcb.ip_moptions` and passed to `ip_output` when IP
+/// multicast options are in use.
+pub struct IpMoptions {
+    /// `imo_membership`: group memberships, `imo_max_memberships` slots.
+    pub imo_membership: *mut Option<&'static InMulti>,
+    /// `imo_ifidx`: ifp index for outgoing multicasts.
+    pub imo_ifidx: u16,
+    /// `imo_ttl`: TTL for outgoing multicasts.
+    pub imo_ttl: u8,
+    /// `imo_loop`: 1 => hear sends if a member.
+    pub imo_loop: u8,
+    /// `imo_num_memberships`: no. memberships this socket.
+    pub imo_num_memberships: u16,
+    /// `imo_max_memberships`: max memberships this socket.
+    pub imo_max_memberships: u16,
+}
+
+/// `struct ipqent`: a fragment on a reassembly queue.
+pub struct Ipqent {
+    /// `ipqe_q`.
+    pub ipqe_q: ListEntry<Ipqent>,
+    /// `ipqe_ip`: the fragment's IP header, in `ipqe_m`.
+    pub ipqe_ip: Cell<*mut Ip>,
+    /// `ipqe_m`: mbuf contains packet.
+    pub ipqe_m: Cell<Option<&'static Mbuf>>,
+    /// `ipqe_mff`: for IP fragmentation.
+    pub ipqe_mff: Cell<u16>,
+}
+
+queue_adapter!(
+    /// `LIST_HEAD(ipqehead, ipqent)`: a datagram's fragments.
+    pub Ipqehead: Ipqent, ipqe_q => ListEntry<Ipqent>
+);
+
+/// `struct ipq`: an IP reassembly queue. Each fragment being reassembled is attached to one
+/// of these structures. They are timed out after `ipq_ttl` drops to 0, and may also be
+/// reclaimed if memory becomes tight.
+pub struct Ipq {
+    /// `ipq_q`: to other reass headers.
+    pub ipq_q: ListEntry<Ipq>,
+    /// `ipq_rdomain`: routing domain for reassembly.
+    pub ipq_rdomain: Cell<u32>,
+    /// `ipq_id`: sequence id for reassembly.
+    pub ipq_id: Cell<u16>,
+    /// `ipq_ttl`: time for reass q to live.
+    pub ipq_ttl: Cell<u8>,
+    /// `ipq_p`: protocol of this fragment.
+    pub ipq_p: Cell<u8>,
+    /// `ipq_fragq`: to ip fragment queue.
+    pub ipq_fragq: ListHead<Ipqehead>,
+    /// `ipq_src`.
+    pub ipq_src: Cell<InAddr>,
+    /// `ipq_dst`.
+    pub ipq_dst: Cell<InAddr>,
+}
+
+queue_adapter!(
+    /// `LIST_HEAD(, ipq) ipq`: the reassembly queues.
+    pub IpqList: Ipq, ipq_q => ListEntry<Ipq>
+);
+
 /// `struct ipoffnxt`: a fragment's offset and next header.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -271,6 +346,44 @@ pub struct Ipoffnxt {
     pub ion_off: i32,
     /// Next header.
     pub ion_nxt: i32,
+}
+
+/// `ipstat_inc(c)`.
+pub fn ipstat_inc(c: IpstatCounters) {
+    IPCOUNTERS[c as usize].fetch_add(1, Ordering::Relaxed);
+}
+
+/// `ipstat_add(c, v)`.
+pub fn ipstat_add(c: IpstatCounters, v: u64) {
+    IPCOUNTERS[c as usize].fetch_add(v, Ordering::Relaxed);
+}
+
+/// `counters_dec(ipcounters, c)` (`ip_deliver` takes back a delivery it queues).
+pub fn ipstat_dec(c: IpstatCounters) {
+    IPCOUNTERS[c as usize].fetch_sub(1, Ordering::Relaxed);
+}
+
+/// `*mtod(m, struct ip *)`: the IP header at the start of `m`'s data, as a value. The data
+/// may sit at any alignment in the mbuf, so the header is copied out (`docs/C_TO_RUST.md`).
+/// Panics if the first mbuf is shorter than a header.
+pub fn mtod_ip(m: &Mbuf) -> Ip {
+    if (m.m_len().get() as usize) < size_of::<Ip>() {
+        crate::kern::subr_prf::panic(format_args!("mtod_ip: mbuf shorter than an ip header"));
+    }
+    // SAFETY: the first mbuf holds at least `size_of::<Ip>()` bytes (checked above); an `Ip`
+    // is integers, valid for any bytes.
+    unsafe { core::ptr::read_unaligned(mtod::<Ip>(m)) }
+}
+
+/// Writes `ip` back as the IP header at the start of `m`'s data (see [`mtod_ip`]).
+pub fn mtod_ip_store(m: &Mbuf, ip: &Ip) {
+    if (m.m_len().get() as usize) < size_of::<Ip>() {
+        crate::kern::subr_prf::panic(format_args!(
+            "mtod_ip_store: mbuf shorter than an ip header"
+        ));
+    }
+    // SAFETY: as in `mtod_ip`.
+    unsafe { core::ptr::write_unaligned(mtod::<Ip>(m), *ip) };
 }
 
 // LP64 sizes of the C structures.

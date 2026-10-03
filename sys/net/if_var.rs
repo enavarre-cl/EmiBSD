@@ -75,16 +75,14 @@
 //!   per interface, [`IfCounterArray`]; there is one CPU. `counters_inc` and `counters_pkt`
 //!   for it are in `net/if_.rs`, where `if_counters_alloc`/`if_counters_free` make and free
 //!   it.
-//! - `struct netstack`'s `ns_route` (`struct route`, which comes with `<netinet6/in6.h>`) is
-//!   not here yet; nothing outside `ip_output` reads it.
 //! - `enum if_counters` is [`IfCounters`] (`ifc_ipackets` is `IfCounters::IfcIpackets`, as
 //!   `enum mbstat_counters` is in `<sys/mbuf.h>`); the `if_ipackets` .. `if_noproto` shorthands
 //!   are methods returning the counter's `Cell`.
 //! - One member that the C does not have: a flag set by `ether_ifattach`, which receives the
 //!   `struct arpcom`, so that the C's `(struct arpcom *)ifp` cast ([`Ifnet::is_arpcom`],
 //!   `netinet/if_ether.rs`) is checked instead of trusted.
-//! - `struct rtentry` is [`Rtentry`] (`net/route.rs`), which has no values until `net/route.c`
-//!   is ported: every `struct rtentry *` the interface layer sees is NULL.
+//! - `struct rtentry *` is `Option<&'static Rtentry>` (`net/route.rs`); a route's reference
+//!   is taken with `rtref` and dropped with `rtfree`, as in C.
 //! - `ifnetlist`, `if_tmplist_lock` and the functions are defined in `net/if_.rs`, where
 //!   `net/if.c` defines them; `if_input_process_proto` panics on a packet without an input
 //!   function, where the C would call through NULL.
@@ -99,7 +97,7 @@ use crate::machine::intr::IPL_NET;
 use crate::net::if_::{IFDESCRSIZE, IFNAMSIZ, IfRxring};
 use crate::net::if_dl::SockaddrDl;
 use crate::net::ifq::{Ifiqueue, Ifqueue};
-use crate::net::route::Rtentry;
+use crate::net::route::{Route, Rtentry};
 use crate::queue_adapter;
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::{Mbuf, MbufList, MbufQueue, mq_drops, mq_len};
@@ -141,7 +139,9 @@ pub struct Netstack {
     pub ns_input: MbufList,
     /// `ns_proto`: packets for a protocol's input function (`if_input_proto`).
     pub ns_proto: MbufList,
-    // ns_route: struct route, see the module's deviations.
+    /// `ns_route`: the route cache of the packets this softnet thread delivers
+    /// (`ip_input_if`).
+    pub ns_route: Route,
     /// `ns_tcp_ml`: TCP segments gathered for `tcp_input_mlist`.
     pub ns_tcp_ml: MbufList,
     /// `ns_tcp6_ml`: the same for IPv6.
@@ -154,6 +154,7 @@ impl Netstack {
         Self {
             ns_input: MbufList::new(),
             ns_proto: MbufList::new(),
+            ns_route: Route::new(),
             ns_tcp_ml: MbufList::new(),
             ns_tcp6_ml: MbufList::new(),
         }
@@ -578,7 +579,9 @@ queue_adapter!(
     pub IfaTmplist: Ifaddr, ifa_tmplist => TailqEntry<Ifaddr>
 );
 
-/// `struct ifmaddr`: interface multicast address.
+/// `struct ifmaddr`: interface multicast address. A protocol's record (`struct in_multi`)
+/// embeds it first, hence `#[repr(C)]`.
+#[repr(C)]
 pub struct Ifmaddr {
     /// \[m\] `ifma_list`: per-interface list.
     pub ifma_list: TailqEntry<Ifmaddr>,

@@ -51,7 +51,8 @@
 //! as unported until its subsystem lands. `copyright`, `boothowto`, `db_active`, `ncpus`,
 //! `ncpusfound`, `proc0`, `process0`, `pgrp0` and `session0` are here; `start_init`,
 //! `check_console` and the kernel threads arrive with M5-b2 and M6; M7b brings `ifinit`,
-//! `softnet_init` and the pseudo-device attach (`pdevinit[]`, `pdevinit_done`).
+//! `softnet_init` and the pseudo-device attach (`pdevinit[]`, `pdevinit_done`), then
+//! `rtable_init` and `domaininit` (the IPv4 and routing domains).
 //!
 //! ## Deviations
 //! - `main()` takes no `framep` (unused in C) and never returns, as the C's loop never does.
@@ -101,6 +102,7 @@ use crate::kern::kern_timeout::{timeout_proc_init, timeout_set, timeout_startup}
 use crate::kern::sched_bsd::{sched_lock_init, scheduler_start};
 use crate::kern::subr_autoconf::{CONFIG_PENDING, config_init, config_process_deferred_mountroot};
 use crate::kern::subr_prf::{Str, panic};
+use crate::kern::uipc_domain::domaininit;
 use crate::kern::uipc_mbuf::{mbcpuinit, mbinit};
 use crate::kern::vfs_init::{set_rootvnode, vfsinit};
 use crate::kern::vfs_lookup::{namei, ndinit};
@@ -113,6 +115,7 @@ use crate::machine::cpu::{Cpu, cpu_configure, cpu_startup, curcpu};
 use crate::machine::pmap::pmap_kernel;
 use crate::machine::{BootModule, Machine, VmParam};
 use crate::net::if_::{ifinit, softnet_init, softnet_percpu};
+use crate::net::rtable::rtable_init;
 use crate::sys::errno::Errno;
 use crate::sys::mount::{MNT_ROOTFS, VFS_ROOT};
 use crate::sys::namei::{FOLLOW, LOOKUP, NiDirp};
@@ -367,7 +370,7 @@ pub fn main() -> ! {
     // SYSVSHM / SYSVSEM / SYSVMSG: not configured.
 
     // Create default routing table before attaching lo0.
-    let _ = unported!("rtable_init");
+    rtable_init();
 
     // Attach pseudo-devices.
     for pdev in pdevinit() {
@@ -380,7 +383,7 @@ pub fn main() -> ! {
     // CRYPTO: not configured.
 
     // Initialize protocols.
-    let _ = unported!("domaininit");
+    domaininit();
 
     crate::kern::subr_log::initconsbuf();
 
@@ -502,6 +505,10 @@ pub fn main() -> ! {
         crate::kern::selftest::taskq_check();
         Machine::exit(ExitStatus::Success);
     }
+    // The network self-test of every default boot: the softnet thread, the timeouts and the
+    // interface's interrupts run from here on.
+    #[cfg(feature = "qemu")]
+    crate::kern::selftest::ping_gateway();
 
     // MULTIPROCESSOR: not configured.
 

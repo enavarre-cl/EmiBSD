@@ -96,13 +96,8 @@ didn't get a copy, you may request one from <license@ipv6.nrl.navy.mil>.
 //! Status: `ported` (M7b).
 //!
 //! ## Deviations
-//! - The protocols are not ported: `ether_input` reports `ipv4_input` (`ETHERTYPE_IP`),
-//!   `arpinput` (`ETHERTYPE_ARP`) and `revarpinput` (`ETHERTYPE_REVARP`) and drops the frame
-//!   where the C hands it to them; `ether_resolve` reports `arpresolve` and drops the packet
-//!   (which `arpresolve` would own); `ether_rtrequest` reports `arp_rtrequest`;
-//!   `ether_offload_ifcap` reports `in_hdr_cksum_out`/`in_proto_cksum_out`. When
-//!   `netinet/if_ether.c` and `netinet/ip_input.c` land, their arms in `ether_input`'s
-//!   `match` name the input functions.
+//! - `ether_input` hands IPv4, ARP and RARP frames to `ipv4_input`, `arpinput` and
+//!   `revarpinput` (`netinet/`); the IPv6 and MPLS arms are comments (not configured).
 //! - Options and pseudo-devices that are not ported are not configured, their code a comment
 //!   at each site: `vlan(4)` (`NVLAN` 0, so a tagged frame is service delimited and dropped
 //!   unless a bridge takes it, as the C does without vlan), `carp(4)`, `pppoe(4)`/`PIPEX`,
@@ -133,6 +128,7 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 use crate::dev::rnd::arc4random;
+use crate::kassert;
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_synch::{refcnt_init_trace, refcnt_rele, refcnt_take};
 use crate::kern::subr_prf::{Str, panic, printf};
@@ -150,14 +146,18 @@ use crate::net::if_dl::lladdr;
 use crate::net::if_types::IFT_ETHER;
 use crate::net::if_var::{IfInputFn, Ifnet, Netstack};
 use crate::net::route::Rtentry;
+use crate::net::rtable::rt_key;
 use crate::netinet::if_ether::{
     Arpcom, ETHER_ADDR_LEN, ETHER_ALIGN, ETHER_HDR_LEN, ETHERMIN, ETHERMTU, EtherExtracted,
     EtherHeader, EtherMulti, EtherMultiList, EtherPort, EtherVlanHeader, arpcom_of,
     eth64_is_broadcast, eth64_is_multicast, ether_is_multicast, ether_lookup_multi,
     ether_map_ip_multicast,
 };
+use crate::netinet::if_ether::{arp_rtrequest, arpinput, arpresolve, revarpinput};
 use crate::netinet::in_::{INADDR_ANY, IPPROTO_TCP, IPPROTO_UDP, SockaddrIn};
 use crate::netinet::ip::{IP_MF, IP_OFFMASK, Ip};
+use crate::netinet::ip_input::ipv4_input;
+use crate::netinet::ip_output::{in_hdr_cksum_out, in_proto_cksum_out};
 use crate::sys::endian::{htons, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_IFMADDR, M_NOWAIT};
@@ -169,7 +169,6 @@ use crate::sys::queue::ListHead;
 use crate::sys::refcnt::{DT_REFCNT_IDX_ETHMULTI, Refcnt};
 use crate::sys::socket::{AF_INET, AF_UNSPEC, Sockaddr, pseudo_AF_HDRCMPLT};
 use crate::sys::sockio::{SIOCADDMULTI, SIOCDELMULTI, SIOCSIFADDR, SIOCSIFMTU};
-use crate::{kassert, unported};
 
 /// `ETHER_CRC_POLY_LE` as the table generator uses it.
 const CRC_POLY_LE: u32 = 0xedb8_8320;
@@ -250,10 +249,8 @@ pub fn ether_rtrequest(ifp: &'static Ifnet, req: i32, rt: Option<&'static Rtentr
     };
 
     // SAFETY: a route's key is a valid sockaddr.
-    if unsafe { (*rt.rt_key()).sa_family } == AF_INET {
-        // arp_rtrequest(ifp, req, rt): netinet/if_ether.c is not ported.
-        let _ = (ifp, req);
-        let _ = unported!("arp_rtrequest");
+    if unsafe { (*rt_key(rt)).sa_family } == AF_INET {
+        arp_rtrequest(ifp, req, rt);
     }
     // INET6: nd6_rtrequest(ifp, req, rt) for AF_INET6; IPv6 is not configured.
 }
@@ -289,29 +286,20 @@ pub unsafe fn ether_resolve(
         );
 
         #[cfg(feature = "diagnostic")]
-        {
-            // rtable_l2(m->m_pkthdr.ph_rtableid): net/rtable.c is not ported; every table is
-            // in routing domain 0.
-            let _ = unported!("rtable_l2");
-            if ifp.if_rdomain.get() != 0 {
-                printf(format_args!(
-                    "{}: trying to send packet on wrong domain. if {} vs. mbuf {}\n",
-                    Str(&ifp.if_xname.get()),
-                    ifp.if_rdomain.get(),
-                    0
-                ));
-            }
+        if ifp.if_rdomain.get() != crate::net::rtable::rtable_l2(m.m_pkthdr().ph_rtableid.get()) {
+            printf(format_args!(
+                "{}: trying to send packet on wrong domain. if {} vs. mbuf {}\n",
+                Str(&ifp.if_xname.get()),
+                ifp.if_rdomain.get(),
+                crate::net::rtable::rtable_l2(m.m_pkthdr().ph_rtableid.get())
+            ));
         }
 
         match af {
             AF_INET => {
-                // error = arpresolve(ifp, rt, m, dst, eh->ether_dhost): netinet/if_ether.c
-                // is not ported; arpresolve owns the packet when it fails.
-                let error: Result<(), Errno> = Err(unported!("arpresolve"));
-                if let Err(e) = error {
-                    m_freem(m);
-                    return Err(e);
-                }
+                // arpresolve owns the packet when it fails (or holds it: EAGAIN).
+                // SAFETY: the caller's contract: an `AF_INET` destination is a `sockaddr_in`.
+                unsafe { arpresolve(ifp, rt, m, dst, &mut eh.ether_dhost) }?;
                 eh.ether_type = htons(ETHERTYPE_IP);
 
                 // If broadcasting on a simplex interface, loopback a copy. The checksum must
@@ -566,28 +554,20 @@ pub fn ether_input(ifp: &'static Ifnet, m: &'static Mbuf, ns: Option<&Netstack>)
             let etype = ntohs(eh.ether_type);
 
             match etype {
-                ETHERTYPE_IP => {
-                    // input = ipv4_input: netinet/ip_input.c is not ported.
-                    let _ = unported!("ipv4_input");
-                    None
-                }
+                ETHERTYPE_IP => Some(ipv4_input as IfInputFn),
 
                 ETHERTYPE_ARP => {
                     if ifp.if_flags.get() & IFF_NOARP != 0 {
                         break 'drop None;
                     }
-                    // input = arpinput: netinet/if_ether.c is not ported.
-                    let _ = unported!("arpinput");
-                    None
+                    Some(arpinput as IfInputFn)
                 }
 
                 ETHERTYPE_REVARP => {
                     if ifp.if_flags.get() & IFF_NOARP != 0 {
                         break 'drop None;
                     }
-                    // input = revarpinput: netinet/if_ether.c is not ported.
-                    let _ = unported!("revarpinput");
-                    None
+                    Some(revarpinput as IfInputFn)
                 }
 
                 // INET6: ETHERTYPE_IPV6 goes to ipv6_input; IPv6 is not configured.
@@ -1170,10 +1150,8 @@ pub fn ether_offload_ifcap(ifp: &Ifnet, m: &'static Mbuf) -> Option<&'static Mbu
         m.m_pkthdr().len.set(m.m_pkthdr().len.get() - ethlen as i32);
 
         if !ext.ip4.is_null() {
-            // in_hdr_cksum_out(m, ifp), in_proto_cksum_out(m, ifp): netinet/ip_output.c is
-            // not ported.
-            let _ = unported!("in_hdr_cksum_out");
-            let _ = unported!("in_proto_cksum_out");
+            in_hdr_cksum_out(m, Some(ifp));
+            in_proto_cksum_out(m, Some(ifp));
         }
         // INET6: in6_proto_cksum_out(m, ifp) for an IPv6 packet; not configured.
 
