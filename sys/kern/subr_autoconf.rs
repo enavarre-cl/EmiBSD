@@ -79,7 +79,7 @@
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::kern::init_main::BOOTHOWTO;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
@@ -169,7 +169,7 @@ static AUTOCONF_ATTDET_MTX: Mutex = Mutex::new(IPL_HIGH);
 static AUTOCONF_ATTDET: AtomicI32 = AtomicI32::new(0);
 
 /// `autoconf_serial`: versioned state of the devices tree so that changes can be detected.
-pub static AUTOCONF_SERIAL: AtomicU32 = AtomicU32::new(0);
+pub static AUTOCONF_SERIAL: AtomicI32 = AtomicI32::new(0);
 
 /// A C string argument up to its first NUL.
 fn cstr(s: &[u8]) -> &[u8] {

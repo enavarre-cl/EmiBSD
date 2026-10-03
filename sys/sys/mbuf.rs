@@ -614,7 +614,9 @@ pub enum MbstatCounters {
 }
 
 /// `struct mbstat`: mbuf statistics. For statistics related to mbuf and cluster allocations,
-/// see also the pool headers (`mbpool` and `mclpool`).
+/// see also the pool headers (`mbpool` and `mclpool`). `#[repr(C)]`: `kern.mbstat` copies it
+/// out.
+#[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Mbstat {
     /// `m_drops`: times failed to find space.

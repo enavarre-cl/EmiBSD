@@ -34,7 +34,7 @@ No `src/` directory (`[lib] path = "lib.rs"`), so C and Rust paths differ only b
 | `sys/lib/libkern/strlcpy.c` | `sys/lib/libkern/strlcpy.rs` |
 | `sys/net/if.h`, `sys/netinet/in.h` (Rust keywords) | `sys/net/if_.rs`, `sys/netinet/in_.rs` (`docs/C_TO_RUST.md`) |
 | `sys/arch/*/stand/`, `boot(8)`, `efiboot` | `sys/stand/` (Limine glue) until M14, when the user decided (2026-10-03) to port `boot(8)`/`efiboot` and `sys/lib/libsa/`; Limine is scaffolding until `boot(8)` boots the same kernel in QEMU |
-| `sys/conf/`, `config(8)`, Makefiles, `newvers.sh` | Cargo features and `tools/xtask`; `ioconf.c` is `sys/arch/<arch>/conf/ioconf.rs`, by hand (M7b); not ported |
+| `sys/conf/`, `config(8)`, Makefiles, `newvers.sh` | Cargo features and `tools/xtask`; `ioconf.c` is `sys/arch/<arch>/conf/ioconf.rs`, by hand (M7b); the `vers.c` that `newvers.sh` generates is `sys/conf/vers.rs`, fed by `sys/build.rs` ("The system's identity", below); not ported |
 
 Types live where the **header** is; functions live where the **`.c`** is. Rust allows inherent
 `impl` blocks in any module of the defining crate, which is exactly the header/implementation split.
@@ -348,6 +348,28 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   0, 1 and 2 of process 1 by `falloc`/`fdinsert`/`fdalloc`. It is not a tty (`F_ISATTY`
   and the `termios` ioctls answer `ENOTTY`), and it goes away when `init` can open
   `/dev/console`.
+- The system's identity (the user's decision, 2026-10-03): the system is **EmiBSD**, release
+  **7.8** (the release number tracks the OpenBSD release the reference pin follows). OpenBSD's
+  `conf/newvers.sh` writes `ostype`, `osrelease`, `osversion`, `sccs` and `version` into a
+  generated `vers.c` at every build, from a counter file, `date`, `logname` and `hostname`.
+  Here `sys/conf/vers.rs` holds those strings, built by `concat!` from what `sys/build.rs`
+  passes as `EMIBSD_VERS_*` compile-time variables, and `build.rs` reads only its
+  environment: `EMIBSD_BUILD` (the build number), `SOURCE_DATE_EPOCH` (the build date,
+  printed in `date(1)`'s format in UTC), `USER`, `EMIBSD_BUILD_HOST` and the `sys/`
+  directory. The justfile exports the commit count, the last commit's time and `hostname
+  -s`, so one commit gives one kernel: no clock, no counter file, no network. The result is
+  `EmiBSD 7.8 (GENERIC) #<commits>: <date>\n    <user>@<host>:<dir>\n` (`STATUS` is the
+  release one, empty; the configuration name is always `GENERIC`), `osversion` is
+  `GENERIC#<commits>`. `kern.ostype`/`kern.osrelease`/`kern.version`/`kern.osversion`
+  (`kern_sysctl.c`) and the line each `cpu_startup` prints after the copyright, as OpenBSD's
+  do, come from there; `kern.osrevision` stays the `OpenBSD` API date of `<sys/param.h>`
+  that programs test, and the copyright notice stays OpenBSD's text (it is the licence
+  notice, not the identity). The stand-in `init` checks the identity through `sysctl(2)`
+  (`init: EmiBSD 7.8` in `smoke`).
+- `sysctl(2)` (`kern_sysctl.c`): the helpers take user addresses as `usize` and the name as a
+  slice; structures are copied out as bytes through `sys::sysctl::SysctlPlain`, which C does
+  with a `void *` and a size. Nodes whose variable or subsystem is not here yet report
+  themselves with `unported!`, so a walk of the tree prints its gaps on the console.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

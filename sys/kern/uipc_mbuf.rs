@@ -96,8 +96,6 @@
 //! - `mbuf_dma_64bit_enable` needs `ifnetlist` (`net/if.c`, not ported) and reports it with
 //!   `unported!`, leaving the pools DMA-reachable, which is what an interface without
 //!   `IFXF_MBUF_64BIT` would decide.
-//! - `sysctl_mq` reports `sysctl_rdint`/`sysctl_int` (`kern_sysctl.c`, not ported) with
-//!   `unported!`; its name checks and the `mq_set_maxlen` call are ported.
 //! - `mclnames` is built at compile time from `mclsizes` with the C's two formats (`mcl%dk`,
 //!   `mcl%dk%u`) instead of by `snprintf` in `mbinit`, and `m_pool_allocator.pa_pagesz` is
 //!   `pool_allocator_multi`'s from the initialiser instead of copied by `mbinit`.
@@ -126,6 +124,7 @@ use libkern::{StaticCell, explicit_bzero};
 use crate::conf::param::NMBCLUST;
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_synch::{refcnt_init, refcnt_rele, refcnt_shared, refcnt_take};
+use crate::kern::kern_sysctl::{sysctl_int, sysctl_rdint};
 use crate::kern::kern_tc::{microboottime, microtime};
 use crate::kern::subr_pool::{
     POOL_ALLOCATOR_MULTI, pool_get, pool_init, pool_put, pool_set_constraints, pool_wakeup,
@@ -2226,43 +2225,33 @@ pub fn mq_set_maxlen(mq: &MbufQueue, maxlen: u32) {
 }
 
 /// `sysctl_mq` (`!SMALL_KERNEL`): the `IFQCTL_*` nodes of a queue. `oldp` and `newp` are user
-/// addresses (see the module's deviations).
+/// addresses, 0 for NULL (`kern/kern_sysctl.rs`).
 pub fn sysctl_mq(
     name: &[i32],
     oldp: usize,
-    oldlenp: Option<&mut usize>,
+    oldlenp: &mut usize,
     newp: usize,
     newlen: usize,
     mq: &MbufQueue,
 ) -> Result<(), Errno> {
-    let _ = (oldp, oldlenp, newp, newlen);
-
     // All sysctl names at this level are terminal.
-    if name.len() != 1 {
+    let [mib] = name else {
         return Err(Errno::ENOTDIR);
-    }
+    };
 
-    match name[0] {
-        IFQCTL_LEN => {
-            // sysctl_rdint(oldp, oldlenp, newp, mq_len(mq))
-            let _ = mq_len(mq);
-            Err(unported!("sysctl_mq: sysctl_rdint (kern_sysctl.c)"))
-        }
+    match *mib {
+        IFQCTL_LEN => sysctl_rdint(oldp, oldlenp, newp, mq_len(mq) as i32),
         IFQCTL_MAXLEN => {
             let oldval = mq.mq_maxlen.load(Ordering::Relaxed);
-            let newval = oldval;
-            // sysctl_int(oldp, oldlenp, newp, newlen, &newval)
-            let error: Result<(), Errno> = Err(unported!("sysctl_mq: sysctl_int (kern_sysctl.c)"));
+            let newval = AtomicI32::new(oldval as i32);
+            let error = sysctl_int(oldp, oldlenp, newp, newlen, &newval);
+            let newval = newval.into_inner() as u32;
             if error.is_ok() && oldval != newval {
                 mq_set_maxlen(mq, newval);
             }
             error
         }
-        IFQCTL_DROPS => {
-            // sysctl_rdint(oldp, oldlenp, newp, mq_drops(mq))
-            let _ = mq_drops(mq);
-            Err(unported!("sysctl_mq: sysctl_rdint (kern_sysctl.c)"))
-        }
+        IFQCTL_DROPS => sysctl_rdint(oldp, oldlenp, newp, mq_drops(mq) as i32),
         _ => Err(Errno::EOPNOTSUPP),
     }
 }

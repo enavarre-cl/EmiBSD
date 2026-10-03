@@ -62,8 +62,8 @@
 //!
 //! Status: `wip`. Milestone M5 ports the globals, `initclocks`, `hardclock`, `tvtohz`,
 //! `tstohz` and `statclock` as far as there is a CPU to account to. `startprofclock` and
-//! `stopprofclock` take a `struct process` (M5-b); `sysctl_clockrate` comes with
-//! `kern_sysctl.c` (M6).
+//! `stopprofclock` take a `struct process` (M5-b); `sysctl_clockrate` came with
+//! `kern_sysctl.c`.
 //!
 //! ## Deviations
 //! - `statclock`: with no `curproc` yet (M5-b) the per-thread accounting (`p_cpticks`, the
@@ -76,6 +76,7 @@ use crate::conf::param::{HZ, TICK};
 use crate::kassert;
 use crate::kern::kern_clockintr::{clockrequest_advance, clockrequest_advance_random};
 use crate::kern::kern_lock::{pc_sprod_enter, pc_sprod_leave};
+use crate::kern::kern_sysctl::sysctl_rdstruct;
 use crate::kern::kern_tc::{inittimecounter, tc_ticktock};
 use crate::kern::kern_timeout::timeout_hardclock_update;
 use crate::kern::sched_bsd::ROUNDROBIN_PERIOD;
@@ -83,8 +84,10 @@ use crate::kern::subr_prof::PROFCLOCK_PERIOD;
 use crate::machine::Machine;
 use crate::machine::cpu::{ClockFrame, Cpu, cpu_initclocks, cpu_startclock, curcpu};
 use crate::sys::clockintr::Clockrequest;
+use crate::sys::errno::Errno;
 use crate::sys::sched::{CP_IDLE, CP_INTR, CP_SPIN};
-use crate::sys::time::{Timespec, Timeval, timespec_to_timeval};
+use crate::sys::sysctl::SysctlPlain;
+use crate::sys::time::{Clockinfo, Timespec, Timeval, timespec_to_timeval};
 use crate::unported;
 
 /// `stathz`: the statistics clock's frequency.
@@ -283,7 +286,17 @@ pub fn statclock(cr: &Clockrequest, cf: *mut c_void, _arg: *mut c_void) {
     }
 }
 
-// sysctl_clockrate: kern_sysctl.c (M6).
+/// `sysctl_clockrate`: return information about system clocks (`kern.clockrate`).
+pub fn sysctl_clockrate(where_: usize, sizep: &mut usize, newp: usize) -> Result<(), Errno> {
+    // Construct clockinfo structure.
+    let clkinfo = Clockinfo {
+        tick: TICK.load(Ordering::Relaxed),
+        hz: HZ.load(Ordering::Relaxed),
+        profhz: PROFHZ.load(Ordering::Relaxed),
+        stathz: STATHZ.load(Ordering::Relaxed),
+    };
+    sysctl_rdstruct(where_, sizep, newp, clkinfo.as_bytes())
+}
 
 #[cfg(test)]
 mod tests {

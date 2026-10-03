@@ -30,8 +30,7 @@
 //! ## Deviations
 //! - `bus_dma` is M7: there is no `mainbus_dma_tag`, no `sc_dmat`, no `fa_dmat`, so the
 //!   `dma-coherent` copy of the tag and `iommu_device_map` are not made (reported once).
-//! - `hw_prod` and `hw_serial` (`kern_sysctl.c`) do not exist: the model is printed but not
-//!   kept, and both are reported; `thermal_init` (`ofw_thermal.c`) is reported.
+//! - `thermal_init` (`ofw_thermal.c`) is reported.
 //! - `struct fdt_attach_args` cannot carry a null bus space tag, so the `efi` and `apm`
 //!   arguments, which the C zeroes but for the name, carry mainbus's tag.
 //! - `cf_loc[0]` (the `early` locator) of an entry without locators reads as 0, the
@@ -45,6 +44,8 @@ use core::ptr::{self, NonNull};
 use core::slice;
 use core::sync::atomic::Ordering;
 
+use libkern::strlcpy;
+
 use crate::arch::arm64::arm64::bus_space::ARM64_BS_TAG;
 use crate::arch::arm64::arm64::intr::arm_intr_init_fdt;
 use crate::arch::arm64::dev::agtimer::agtimer_init;
@@ -57,13 +58,14 @@ use crate::dev::ofw::openfirm::{
 };
 use crate::kern::init_main::NCPUSFOUND;
 use crate::kern::kern_malloc::{free, malloc};
+use crate::kern::kern_sysctl::{hw_prod, hw_serial};
 use crate::kern::subr_autoconf::{config_found, config_found_sm, config_mountroot};
 use crate::kern::subr_prf::{Str, panic, printf};
 use crate::machine::bus::BusSpaceTag;
 use crate::sys::device::{
     CfMatch, Cfattach, Cfdriver, CfmatchT, CfprintT, DV_DULL, Device, QUIET, Softc, UNCONF,
 };
-use crate::sys::malloc::{M_DEVBUF, M_TEMP, M_WAITOK};
+use crate::sys::malloc::{M_DEVBUF, M_NOWAIT, M_TEMP, M_WAITOK};
 use crate::unported;
 
 /// `struct mainbus_softc`.
@@ -138,6 +140,17 @@ pub fn mainbus_match(_parent: Option<&Device>, _cfdata: &CfMatch, _aux: *mut c_v
     1
 }
 
+/// `s = malloc(len, M_DEVBUF, M_NOWAIT); if (s) strlcpy(s, prop, len);`: a copy of a
+/// device-tree string that lives as long as the kernel, or `None` when memory is short.
+fn kept_string(prop: &[u8], len: usize) -> Option<&'static [u8]> {
+    let buf = malloc(len, M_DEVBUF, M_NOWAIT)?;
+    // SAFETY: malloc returned `len` bytes that nothing else references; they are never
+    // freed, as the C never frees hw_prod and hw_serial.
+    let dst: &'static mut [u8] = unsafe { slice::from_raw_parts_mut(buf.as_ptr(), len) };
+    strlcpy(dst, prop);
+    Some(dst)
+}
+
 /// `mainbus_attach`.
 pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_void) {
     let sc = softc(self_);
@@ -157,14 +170,17 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
     let len = OF_getprop(sc.sc_node.get(), b"model", &mut prop);
     if len > 0 {
         printf(format_args!(": {}\n", Str(&prop)));
-        let _ = unported!("hw_prod (kern_sysctl.c)");
+        // SAFETY: mainbus attaches once, on the boot CPU, before any process can read
+        // hw_prod through sysctl(2).
+        unsafe { *hw_prod.get_mut() = kept_string(&prop, len as usize) };
     } else {
         printf(format_args!(": unknown model\n"));
     }
 
     let len = OF_getprop(sc.sc_node.get(), b"serial-number", &mut prop);
     if len > 0 {
-        let _ = unported!("hw_serial (kern_sysctl.c)");
+        // SAFETY: as for hw_prod.
+        unsafe { *hw_serial.get_mut() = kept_string(&prop, len as usize) };
     }
     let _ = unported!("mainbus_dma_tag (bus_dma, M7)");
 

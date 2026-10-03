@@ -34,6 +34,7 @@ use crate::kern::kern_sig::{
     sys___thrsigdivert, sys_kill, sys_sigaction, sys_sigaltstack, sys_sigpending, sys_sigprocmask,
     sys_sigreturn, sys_sigsuspend, sys_thrkill,
 };
+use crate::kern::kern_sysctl::sys_sysctl;
 use crate::kern::sys_generic::{sys_ioctl, sys_read, sys_readv, sys_write, sys_writev};
 use crate::sys::syscall::SYS_MAXSYSCALL;
 use crate::sys::syscallargs::{
@@ -288,13 +289,13 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(0, 0, 0, sys_nosys),                           // 199 = obsolete pad_lseek
     Sysent::new(0, 0, 0, sys_nosys),                           // 200 = obsolete pad_truncate
     Sysent::new(0, 0, 0, sys_nosys),                           // 201 = obsolete pad_ftruncate
-    Sysent::new(6, size_of::<SysSysctlArgs>(), SY_NOLOCK, sys_nosys), // 202 = sysctl (sys_sysctl not ported)
-    Sysent::new(2, size_of::<SysMlockArgs>(), 0, sys_mlock),          // 203 = mlock
-    Sysent::new(2, size_of::<SysMunlockArgs>(), 0, sys_munlock),      // 204 = munlock
-    Sysent::new(0, 0, 0, sys_nosys), // 205 = unimplemented sys_undelete
-    Sysent::new(0, 0, 0, sys_nosys), // 206 = obsolete t32_futimes
+    Sysent::new(6, size_of::<SysSysctlArgs>(), SY_NOLOCK, sys_sysctl), // 202 = sysctl
+    Sysent::new(2, size_of::<SysMlockArgs>(), 0, sys_mlock),   // 203 = mlock
+    Sysent::new(2, size_of::<SysMunlockArgs>(), 0, sys_munlock), // 204 = munlock
+    Sysent::new(0, 0, 0, sys_nosys),                           // 205 = unimplemented sys_undelete
+    Sysent::new(0, 0, 0, sys_nosys),                           // 206 = obsolete t32_futimes
     Sysent::new(1, size_of::<SysGetpgidArgs>(), 0, sys_getpgid), // 207 = getpgid
-    Sysent::new(0, 0, 0, sys_nosys), // 208 = obsolete nnpfspioctl
+    Sysent::new(0, 0, 0, sys_nosys),                           // 208 = obsolete nnpfspioctl
     Sysent::new(3, size_of::<SysUtraceArgs>(), SY_NOLOCK, sys_nosys), // 209 = utrace (sys_utrace not ported)
     Sysent::new(0, 0, 0, sys_nosys),                                  // 210 = unimplemented
     Sysent::new(0, 0, 0, sys_nosys),                                  // 211 = unimplemented

@@ -45,8 +45,9 @@
 //!
 //! Status: `wip`. Milestone M2 needs the clock rate (`delay(9)` on amd64 divides by `hz`);
 //! M5 adds `maxprocess`, `maxthread` and `maxfiles` from `MAXUSERS` (80, as `GENERIC`
-//! configures); M7b adds `nmbclust` for the mbuf allocator; `bufcachepercent`, `bufpages`,
-//! `fscale`, the System V IPC limits and `utsname` arrive with the subsystems that read them.
+//! configures); M7b adds `nmbclust` for the mbuf allocator and `kern_sysctl.c` `fscale`;
+//! `bufcachepercent`, `bufpages`, the System V IPC limits and `utsname` arrive with the
+//! subsystems that read them.
 //!
 //! ## Deviations
 //! - The `int` and `long` globals are atomics: `sysctl(8)` writes them at runtime in OpenBSD
@@ -83,3 +84,7 @@ pub static MAXTHREAD: AtomicI32 = AtomicI32::new(2 * NPROCESS);
 pub static MAXFILES: AtomicI32 = AtomicI32::new(5 * (NPROCESS + MAXUSERS) + 80);
 /// \[a\] `nmbclust`: the limit on the number of mbuf clusters.
 pub static NMBCLUST: AtomicI64 = AtomicI64::new(NMBCLUSTERS as i64);
+
+/// `fscale`: the kernel uses `FSCALE` (`sys/param.rs`), user programs read `fscale` through
+/// `kern.fscale`.
+pub static FSCALE: AtomicI32 = AtomicI32::new(crate::sys::param::FSCALE as i32);

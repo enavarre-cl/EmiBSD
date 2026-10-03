@@ -38,8 +38,8 @@
 //! Upstream: sys/kern/kern_xxx.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M2 ports `reboot()` and `rebooting`, the tail of `panic(9)`.
-//! `sys_reboot` (the system call), `__stack_smash_handler`, `scdebug_call`/`scdebug_ret` and
-//! `sys_sysctl` arrive with their subsystems.
+//! `sys_reboot` (the system call), `__stack_smash_handler` and `scdebug_call`/`scdebug_ret`
+//! arrive with their subsystems.
 //!
 //! ## Deviations
 //! - `KASSERT((howto & RB_NOSYNC) || curproc != NULL)`: `curproc` arrives with M5; the

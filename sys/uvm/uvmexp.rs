@@ -12,8 +12,13 @@
 //! - Every field is an `AtomicI32`: the C mixes atomics (`[a]`), lock-protected fields and
 //!   immutable ones; one type keeps the global sound before the locks exist, and the C's
 //!   locking letters are kept in the comments.
+//! - The same member list also declares [`UvmexpCopy`], the plain `#[repr(C)]` structure of
+//!   `int`s that `sysctl(2)` copies out (the C copies `uvmexp` itself), and
+//!   [`Uvmexp::snapshot`] fills it.
 
 use core::sync::atomic::{AtomicI32, AtomicU64, Ordering};
+
+use crate::sys::sysctl::SysctlPlain;
 
 /// `struct vmmeter`.
 pub const VM_METER: i32 = 1;
@@ -56,6 +61,20 @@ macro_rules! uvmexp_struct {
             pub const fn new() -> Self {
                 Self { $( $field: AtomicI32::new(0), )* }
             }
+
+            /// `memcpy(uexp, &uvmexp, sizeof(*uexp))`: a snapshot of every member, each read
+            /// atomically, as `uvmexp_read` starts with.
+            pub fn snapshot(&self) -> UvmexpCopy {
+                UvmexpCopy { $( $field: self.$field.load(Ordering::Relaxed), )* }
+            }
+        }
+
+        /// A plain copy of `struct uvmexp`, the C's layout (`#[repr(C)]`, every member an
+        /// `int`): what `uvmexp_read` fills and `sysctl({CTL_VM, VM_UVMEXP})` copies out.
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug, Default)]
+        pub struct UvmexpCopy {
+            $( $(#[$doc])* pub $field: i32, )*
         }
     };
 }
@@ -250,6 +269,9 @@ uvmexp_struct! {
     kmapent,
 }
 
+// SAFETY: `#[repr(C)]` and nothing but `i32`s: no padding, every bit pattern valid.
+unsafe impl SysctlPlain for UvmexpCopy {}
+
 impl Default for Uvmexp {
     fn default() -> Self {
         Self::new()
@@ -325,3 +347,8 @@ pub fn counters_inc(c: UvmExpCounters) {
 pub fn counters_read(c: UvmExpCounters) -> u64 {
     UVMEXP_COUNTERS[c as usize].load(Ordering::Relaxed)
 }
+
+const _: () = {
+    // `struct uvmexp` is 86 `int`s.
+    assert!(core::mem::size_of::<UvmexpCopy>() == 86 * 4);
+};

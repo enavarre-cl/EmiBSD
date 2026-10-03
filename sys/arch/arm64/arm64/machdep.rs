@@ -88,6 +88,7 @@ use crate::arch::arm64::include::pcb::{PCB_FPU, PCB_SVE};
 use crate::arch::arm64::include::pte::ATTR_GP;
 use crate::arch::arm64::include::reg::Fpreg;
 use crate::arch::arm64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
+use crate::conf::vers::VERSION;
 use crate::dev::fdt::pluart_fdt::pluart_init_cons;
 use crate::dev::ic::pluart::{pluartcn_enable_intr, pluartcn_rx_intr};
 use crate::dev::ofw::fdt::{
@@ -417,7 +418,9 @@ pub fn cpu_startup() {
     PROC0.p_addr.set(proc0paddr());
 
     // The message buffer mapping and initmsgbuf: the message buffer is static (M2).
-    // version: M5.
+
+    // Identify ourselves for the msgbuf (everything printed earlier will not be buffered).
+    kprintf!("{}", VERSION);
 
     let physmem = PHYSMEM.load(Ordering::Relaxed);
     kprintf!(

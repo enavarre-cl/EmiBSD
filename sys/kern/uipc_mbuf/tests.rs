@@ -551,8 +551,33 @@ fn mbuf_lists_and_queues() {
     assert_eq!(MBPOOL.pr_nout.get(), 0);
 
     let name = [IFQCTL_LEN, 0];
-    assert_eq!(sysctl_mq(&name, 0, None, 0, 0, &mq), Err(Errno::ENOTDIR));
-    assert_eq!(sysctl_mq(&[99], 0, None, 0, 0, &mq), Err(Errno::EOPNOTSUPP));
+    let mut len = 0;
+    assert_eq!(
+        sysctl_mq(&name, 0, &mut len, 0, 0, &mq),
+        Err(Errno::ENOTDIR)
+    );
+    assert_eq!(
+        sysctl_mq(&[99], 0, &mut len, 0, 0, &mq),
+        Err(Errno::EOPNOTSUPP)
+    );
+
+    // The nodes through the kern_sysctl.c helpers: a length, a new maximum, the drops.
+    let mut val = [0u8; 4];
+    let mut len = val.len();
+    let oldp = val.as_mut_ptr() as usize;
+    assert_eq!(sysctl_mq(&[IFQCTL_LEN], oldp, &mut len, 0, 0, &mq), Ok(()));
+    assert_eq!((len, i32::from_ne_bytes(val)), (4, mq_len(&mq) as i32));
+    let newmax = 7i32.to_ne_bytes();
+    let newp = newmax.as_ptr() as usize;
+    assert_eq!(
+        sysctl_mq(&[IFQCTL_MAXLEN], 0, &mut len, newp, 4, &mq),
+        Ok(())
+    );
+    assert_eq!(mq.mq_maxlen.load(Ordering::Relaxed), 7);
+    assert_eq!(
+        sysctl_mq(&[IFQCTL_DROPS], oldp, &mut len, newp, 4, &mq),
+        Err(Errno::EPERM)
+    );
 }
 
 #[test]

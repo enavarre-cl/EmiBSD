@@ -69,8 +69,9 @@
 //!
 //! Status: `wip`. Milestone M5 (part b2) ports the u-area allocator the fork path needs:
 //! `kv_uarea`, `uvm_uarea_alloc` and `uvm_uarea_free`. M7a adds `uvm_init_limits`.
-//! `uvm_kernacc`, `uvm_vslock`, `uvm_vsunlock`, `uvm_vslock_device`, `uvm_vsunlock_device`,
-//! `uvm_atopg` and the swapper come with user mode and the pager (M6, M7).
+//! `kern_sysctl.c` brings `uvm_vslock` and `uvm_vsunlock`. `uvm_kernacc`,
+//! `uvm_vslock_device`, `uvm_vsunlock_device`, `uvm_atopg` and the swapper come with the
+//! pager and physio (M7).
 //!
 //! ## Deviations
 //! - `__HAVE_USPACE_GUARD`'s guard page is not carved out yet: `km_alloc` hands out
@@ -86,18 +87,19 @@ use crate::machine::Machine;
 use crate::machine::VmParam;
 use crate::machine::cpu::curproc;
 use crate::machine::param::MachineParam;
+use crate::sys::errno::Errno;
 use crate::sys::param::{USPACE, USPACE_ALIGN};
 use crate::sys::proc::Proc;
 use crate::sys::proc::Process;
 use crate::sys::resource::{RLIMIT_DATA, RLIMIT_RSS, RLIMIT_STACK};
 use crate::sys::resourcevar::Plimit;
 use crate::sys::types::Rlim;
-use crate::unported;
-use crate::uvm::uvm_extern::{KmemVaMode, KvMap};
+use crate::uvm::uvm_extern::{KmemVaMode, KvMap, VmProt};
 use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_km::{KD_WAITOK, KP_ZERO, km_alloc, km_free};
-use crate::uvm::uvm_map::{uvmspace_free, uvmspace_purge};
-use crate::uvm::uvm_param::ptoa;
+use crate::uvm::uvm_map::{uvm_map_pageable, uvmspace_free, uvmspace_purge};
+use crate::uvm::uvm_param::{ptoa, round_page, trunc_page};
+use crate::{kassert, unported};
 
 /// `kv_uarea`: u-areas come from `kernel_map`, `USPACE_ALIGN`ed.
 pub static KV_UAREA: KmemVaMode = KmemVaMode {
@@ -106,6 +108,33 @@ pub static KV_UAREA: KmemVaMode = KmemVaMode {
     kv_wait: false,
     kv_singlepage: false,
 };
+
+/// `uvm_vslock`: wires the user memory `[addr, addr + len)` of `p` for I/O, so that it
+/// cannot fault while a lock is held (`sys_sysctl`). `access_type` is the C's argument,
+/// which the wiring does not use either.
+pub fn uvm_vslock(p: &Proc, addr: usize, len: usize, access_type: VmProt) -> Result<(), Errno> {
+    let _ = access_type;
+    let map = &p.vmspace().vm_map;
+
+    let start = trunc_page(addr);
+    let end = round_page(addr.wrapping_add(len));
+    if end <= start {
+        return Err(Errno::EINVAL);
+    }
+
+    uvm_map_pageable(map, start, end, false, 0)
+}
+
+/// `uvm_vsunlock`: unwires the user memory wired by [`uvm_vslock`] (`sys_sysctl`).
+pub fn uvm_vsunlock(p: &Proc, addr: usize, len: usize) {
+    let map = &p.vmspace().vm_map;
+
+    let start = trunc_page(addr);
+    let end = round_page(addr.wrapping_add(len));
+    kassert!(end > start);
+
+    let _ = uvm_map_pageable(map, start, end, true, 0);
+}
 
 /// `uvm_uarea_alloc`: allocates a u-area (`USPACE` bytes of zeroed, wired kernel memory for
 /// a thread's `struct user` and kernel stack). `None` (the C's `0`) when memory is short.

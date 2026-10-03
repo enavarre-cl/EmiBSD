@@ -1,6 +1,13 @@
 # EmiBSD task runner. `just` lists recipes. Never call qemu or `cargo --target` by hand.
 set shell := ["zsh", "-cu"]
 
+# What `newvers.sh` reads, made reproducible: `sys/build.rs` builds the kernel's `version`
+# string (`sys/conf/vers.rs`) from these. The build number is the commit count, the date the
+# last commit's; both come from the local repository, so the same commit gives the same kernel.
+export EMIBSD_BUILD := `git rev-list --count HEAD 2>/dev/null || echo 0`
+export SOURCE_DATE_EPOCH := `git log -1 --format=%ct 2>/dev/null || echo 0`
+export EMIBSD_BUILD_HOST := `hostname -s 2>/dev/null || echo localhost`
+
 amd64 := "x86_64-unknown-none"
 arm64 := "aarch64-unknown-none-softfloat"
 
@@ -40,7 +47,8 @@ run-amd64: image-amd64
 run-arm64: image-arm64
     cargo xtask qemu --arch arm64
 
-# Boots per arch: a plain one that must reach the end of main() (status 33); `boot -d`, which
+# Boots per arch: a plain one that must reach the end of main() (status 33), printing the
+# EmiBSD 7.8 version banner, with init checking its identity through sysctl(2); `boot -d`, which
 # enters ddb-lite through a breakpoint trap, prints where it stopped and continues (status 33);
 # `selftest=trap`, a deliberate bad access that must print OpenBSD's fatal trap message and
 # panic with a stack trace (status 35); and `selftest=uart`, which arms the console's receive
@@ -51,13 +59,14 @@ run-arm64: image-arm64
 smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
+        --expect "EmiBSD 7.8 (GENERIC) #" \
         --expect "real mem = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
         --expect "mainbus0 at root" --expect "cpu0 at mainbus0: (uniprocessor)" \
         --expect "cpu0: apic clock running at" \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
-        --expect "init: fds ok" --expect "init: signals ok" \
+        --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 7.8" \
         --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
@@ -76,13 +85,14 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "selftest: taskq ok"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd \
         --expect "bsd: booted on arm64" --expect "The Regents of the University of California" \
+        --expect "EmiBSD 7.8 (GENERIC) #" \
         --expect "real mem  = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
         --expect "mainbus0 at root" --expect "ampintc0 at mainbus0 nirq " \
         --expect "agtimer0 at mainbus0: " \
         --expect "module: /init (" --expect "init: hello from user mode" \
         --expect "init: demand-zero bss ok" --expect "init: ids and tcb ok" \
-        --expect "init: fds ok" --expect "init: signals ok" \
+        --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 7.8" \
         --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"

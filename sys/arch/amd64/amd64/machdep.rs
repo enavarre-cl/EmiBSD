@@ -154,6 +154,7 @@ use crate::arch::amd64::include::vmparam::VM_MAXUSER_ADDRESS;
 use crate::arch::amd64::isa::clock::{
     i8254_delay, i8254_initclocks, i8254_start_both_clocks, startclocks,
 };
+use crate::conf::vers::VERSION;
 use crate::kassert;
 use crate::kern::init_main::{BOOTHOWTO, PROC0};
 use crate::kern::kern_sig::{sigexit, sigonstack};
@@ -518,7 +519,9 @@ pub fn x86_64_proc0_tss_ldt_init() {
 
 /// `cpu_startup`: machine-dependent startup code (see the module's deviations).
 pub fn cpu_startup() {
-    // msgbuf_vaddr / initmsgbuf: the message buffer is static (M2). version: M5-b.
+    // msgbuf_vaddr / initmsgbuf: the message buffer is static (M2).
+
+    kprintf!("{}", VERSION);
     startclocks();
     let _ = unported!("rtcinit (the mc146818 time-of-day clock, M7)");
 

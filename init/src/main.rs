@@ -16,6 +16,9 @@
 //! the signal with `kill(2)` and checks that the handler ran and that `sigreturn(2)` brought
 //! it back; then it blocks the signal with `sigprocmask(2)`, sees it pending
 //! (`sigpending(2)`) and unblocks it.
+//! With `kern_sysctl.c` it asks `sysctl(2)` for `kern.ostype` and `kern.osrelease`, sets and
+//! reads back `kern.hostname`, and prints `init: EmiBSD 7.8` when the system identifies itself
+//! as the user decided.
 
 #![no_std]
 #![no_main]
@@ -82,6 +85,17 @@ const SYS_ISSETUGID: usize = 253;
 const SYS___SET_TCB: usize = 329;
 /// `SYS___get_tcb`.
 const SYS___GET_TCB: usize = 330;
+/// `SYS_sysctl`.
+const SYS_SYSCTL: usize = 202;
+
+/// `CTL_KERN` (`<sys/sysctl.h>`).
+const CTL_KERN: i32 = 1;
+/// `KERN_OSTYPE`.
+const KERN_OSTYPE: i32 = 1;
+/// `KERN_OSRELEASE`.
+const KERN_OSRELEASE: i32 = 2;
+/// `KERN_HOSTNAME`.
+const KERN_HOSTNAME: i32 = 10;
 
 /// `EBADF`.
 const EBADF: usize = 9;
@@ -175,6 +189,104 @@ fn syscall3(number: usize, a: usize, b: usize, c: usize) -> (usize, bool) {
     (ret, carry != 0)
 }
 
+/// A six-argument system call (`syscall`: the fourth argument in `r10`, as the kernel's
+/// `Xsyscall` reads it).
+#[cfg(target_arch = "x86_64")]
+fn syscall6(number: usize, a: [usize; 6]) -> (usize, bool) {
+    let ret: usize;
+    let carry: u8;
+    // SAFETY: the `syscall` instruction with the OpenBSD register convention; the kernel
+    // owns everything that happens, and clobbers only rcx and r11 besides the outputs.
+    unsafe {
+        asm!(
+            "syscall",
+            "setc {carry}",
+            carry = out(reg_byte) carry,
+            inlateout("rax") number => ret,
+            in("rdi") a[0],
+            in("rsi") a[1],
+            in("rdx") a[2],
+            in("r10") a[3],
+            in("r8") a[4],
+            in("r9") a[5],
+            out("rcx") _,
+            out("r11") _,
+            options(nostack)
+        );
+    }
+    (ret, carry != 0)
+}
+
+/// A six-argument system call: `svc #0`, arguments in `x0`..`x5`.
+#[cfg(target_arch = "aarch64")]
+fn syscall6(number: usize, a: [usize; 6]) -> (usize, bool) {
+    let ret: usize;
+    let carry: usize;
+    // SAFETY: the `svc` instruction with the OpenBSD register convention; the kernel owns
+    // everything that happens and clobbers nothing but the outputs.
+    unsafe {
+        asm!(
+            "svc #0",
+            "dsb nsh",
+            "isb",
+            "cset {carry}, cs",
+            carry = out(reg) carry,
+            in("x8") number,
+            inlateout("x0") a[0] => ret,
+            in("x1") a[1],
+            in("x2") a[2],
+            in("x3") a[3],
+            in("x4") a[4],
+            in("x5") a[5],
+            options(nostack)
+        );
+    }
+    (ret, carry != 0)
+}
+
+/// `sysctl(2)` for a string: the bytes before the NUL, in `buf`.
+fn sysctl_string<'a>(name: &[i32], buf: &'a mut [u8]) -> Option<&'a [u8]> {
+    let mut len = buf.len();
+    let args = [
+        name.as_ptr() as usize,
+        name.len(),
+        buf.as_mut_ptr() as usize,
+        &mut len as *mut usize as usize,
+        0,
+        0,
+    ];
+    match syscall6(SYS_SYSCTL, args) {
+        (0, false) if len > 0 && len <= buf.len() && buf[len - 1] == 0 => Some(&buf[..len - 1]),
+        _ => None,
+    }
+}
+
+/// `kern_sysctl.c` seen from user mode: the system says it is EmiBSD 7.8, and root can set
+/// `kern.hostname` and read it back (the path that wires the caller's buffer under
+/// `sysctl_lock`).
+fn identity() -> bool {
+    let mut ostype = [0u8; 32];
+    let mut osrelease = [0u8; 32];
+    let mut hostname = [0u8; 32];
+    let new = b"emibsd";
+    let name = [CTL_KERN, KERN_HOSTNAME];
+    let set = syscall6(
+        SYS_SYSCTL,
+        [
+            name.as_ptr() as usize,
+            2,
+            0,
+            0,
+            new.as_ptr() as usize,
+            new.len(),
+        ],
+    );
+    sysctl_string(&[CTL_KERN, KERN_OSTYPE], &mut ostype) == Some(b"EmiBSD")
+        && sysctl_string(&[CTL_KERN, KERN_OSRELEASE], &mut osrelease) == Some(b"7.8")
+        && set == (0, false)
+        && sysctl_string(&name, &mut hostname) == Some(new)
+}
+
 /// `write(2)`.
 fn write(fd: usize, buf: &[u8]) -> Result<usize, usize> {
     match syscall3(SYS_WRITE, fd, buf.as_ptr() as usize, buf.len()) {
@@ -218,6 +330,13 @@ pub extern "C" fn _start() -> ! {
         }
     } else {
         status = 5;
+    }
+    if identity() {
+        if write(1, b"init: EmiBSD 7.8\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 6;
     }
     if !fds() {
         status = 4;

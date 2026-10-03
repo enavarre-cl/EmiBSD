@@ -27,6 +27,7 @@ pub mod kern_sig;
 pub mod kern_softintr;
 pub mod kern_subr;
 pub mod kern_synch;
+pub mod kern_sysctl;
 pub mod kern_task;
 pub mod kern_tc;
 pub mod kern_time;

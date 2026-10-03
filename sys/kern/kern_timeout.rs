@@ -40,8 +40,8 @@
 //! `timeout_maskwheel`, `timeout_hardclock_update`, `timeout_run`,
 //! `softclock_process_{kclock,tick}_timeout`, `softclock` and `timeout_adjust_ticks`; part
 //! b2 adds the process-context side (`softclock_create_thread`, `softclock_thread[_run]`)
-//! and the real `timeout_barrier`; `timeout_sysctl` comes with `kern_sysctl.c` (M6) and
-//! the `ddb` `show callout` printers with the real ddb (M7).
+//! and the real `timeout_barrier`; `timeout_sysctl` came with `kern_sysctl.c`; the `ddb`
+//! `show callout` printers come with the real ddb (M7).
 //!
 //! ## Deviations
 //! - `WITNESS` and `kcov` are not configured: `timeout_sync_*` are no-ops and `to_process`
@@ -64,14 +64,17 @@ use crate::kern::kern_softintr::{SoftintrHand, softintr_establish, softintr_sche
 use crate::kern::kern_synch::{
     cond_init, cond_signal_handler, cond_wait, sleep_finish, sleep_setup, wakeup,
 };
+use crate::kern::kern_sysctl::sysctl_rdstruct;
 use crate::kern::kern_tc::nanouptime;
 use crate::kern::subr_prf::panic;
 use crate::machine::Machine;
 use crate::machine::cpu::{Cpu, CpuInfo, cpu_info_foreach, curproc};
 use crate::machine::intr::{IPL_HIGH, IPL_SOFTCLOCK, splsoftclock, splx};
+use crate::sys::errno::Errno;
 use crate::sys::mutex::{Mutex, mutex_assert_locked};
 use crate::sys::param::PSWP;
 use crate::sys::proc::Cond;
+use crate::sys::sysctl::SysctlPlain;
 use crate::sys::systm::INFSLP;
 use crate::sys::time::{Timespec, nsec_to_timespec, timespecadd, timespecsub};
 use crate::sys::timeout::{
@@ -930,8 +933,39 @@ pub fn timeout_adjust_ticks(adj: i32) {
     mtx_leave(&TIMEOUT_MUTEX);
 }
 
-// timeout_sysctl: kern_sysctl.c (M6). db_kclock, db_timespec, db_show_callout_bucket,
-// db_show_timeout, db_show_callout: the real ddb (M7).
+/// `timeout_sysctl` (`!SMALL_KERNEL`): `kern.timeout_stats`, a copy of `tostat` taken under
+/// `timeout_mutex`.
+pub fn timeout_sysctl(
+    oldp: usize,
+    oldlenp: &mut usize,
+    newp: usize,
+    newlen: usize,
+) -> Result<(), Errno> {
+    let _ = newlen;
+
+    // struct timeoutstat: twelve uint64_t, in the C's order.
+    mtx_enter(&TIMEOUT_MUTEX);
+    let status: [u64; 12] = [
+        TOSTAT.tos_added.get(),
+        TOSTAT.tos_cancelled.get(),
+        TOSTAT.tos_deleted.get(),
+        TOSTAT.tos_late.get(),
+        TOSTAT.tos_pending.get(),
+        TOSTAT.tos_readded.get(),
+        TOSTAT.tos_rescheduled.get(),
+        TOSTAT.tos_run_softclock.get(),
+        TOSTAT.tos_run_thread.get(),
+        TOSTAT.tos_scheduled.get(),
+        TOSTAT.tos_softclocks.get(),
+        TOSTAT.tos_thread_wakeups.get(),
+    ];
+    mtx_leave(&TIMEOUT_MUTEX);
+
+    sysctl_rdstruct(oldp, oldlenp, newp, status.as_bytes())
+}
+
+// db_kclock, db_timespec, db_show_callout_bucket, db_show_timeout, db_show_callout: the real
+// ddb (M7).
 
 #[cfg(test)]
 pub(crate) mod tests;

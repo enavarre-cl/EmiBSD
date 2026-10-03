@@ -46,6 +46,7 @@ pub mod stat;
 pub mod syscall;
 pub mod syscall_mi;
 pub mod syscallargs;
+pub mod sysctl;
 pub mod syslimits;
 pub mod syslog;
 pub mod systm;

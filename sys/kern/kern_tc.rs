@@ -33,8 +33,8 @@
 //! reader, `tc_init`, `tc_reset_quality`, `tc_getfrequency`/`tc_getprecision`,
 //! `tc_setrealtimeclock`, `tc_setclock`, `tc_update_timekeep`, `tc_windup`, `tc_ticktock`,
 //! `inittimecounter`, `ntp_update_second`, `tc_adjfreq` and `tc_adjtime`. The sysctl side
-//! (`sysctl_tc`, `sysctl_tc_hardware`, `sysctl_tc_choice`, `tc_vars`) comes with
-//! `kern_sysctl.c` (M6).
+//! (`sysctl_tc`, `sysctl_tc_hardware`, `sysctl_tc_choice`, `tc_vars`) is not here yet:
+//! `kern_sysctl.rs` reports `kern.timecounter`.
 //!
 //! ## Deviations
 //! - `tc_lock` is an rwlock (`kern_rwlock.c`, M5-b): the paths that take it

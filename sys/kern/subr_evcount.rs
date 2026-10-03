@@ -33,7 +33,8 @@
 //!
 //! Status: `wip`. Milestone M4 ports `evcount_attach`, `evcount_detach`, `evcount_inc`,
 //! `evcount_percpu` and `evcount_init_percpu` (the `counters_*` per-CPU side is reported
-//! until `percpu` arrives, M5); `evcount_sysctl` comes with `sysctl(2)` (M6).
+//! until `percpu` arrives, M5); `evcount_sysctl` is not here yet (`kern_sysctl.rs` reports
+//! `kern.evcount` and `kern.intrcnt`).
 
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 

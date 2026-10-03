@@ -15,6 +15,7 @@ pub mod uvm_glue;
 pub mod uvm_init;
 pub mod uvm_km;
 pub mod uvm_map;
+pub mod uvm_meter;
 pub mod uvm_mmap;
 pub mod uvm_object;
 pub mod uvm_page;

@@ -114,7 +114,8 @@ pub const CP_IDLE: usize = 5;
 /// `CPUSTATES`.
 pub const CPUSTATES: usize = 6;
 
-/// `struct cpustats`.
+/// `struct cpustats`: what `kern.cpustats` copies out (`#[repr(C)]`: ABI).
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Cpustats {
     /// `cs_time`: CPU state statistics.

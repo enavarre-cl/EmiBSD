@@ -44,8 +44,8 @@
 //!
 //! Status: `wip`. The header only declares globals that `conf/param.c` (`hz`, `tick`,
 //! `tick_nsec`, `utc_offset`: `conf/param.rs`) and `kern_clock.c` (`ticks`, `stathz`, `profhz`)
-//! define; the one value it defines itself is [`HZ`]. `hostname`, `domainname` and `hostid` come
-//! with `kern_sysctl.c`.
+//! define; the one value it defines itself is [`HZ`]. `hostname`, `domainname` and `hostid` are
+//! defined in `kern/kern_sysctl.rs`, where the C defines them.
 
 /// `HZ`: the default system clock frequency, in ticks per second, when the kernel
 /// configuration does not set one.

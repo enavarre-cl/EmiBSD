@@ -31,8 +31,9 @@
 //! `clockintr_unbind`, `clockintr_schedule[_locked]`, `clockintr_stagger`,
 //! `clockintr_hardclock`, `clockqueue_init`, `clockqueue_intrclock_install`,
 //! `clockqueue_next`, `clockqueue_pend_delete/insert`, `clockqueue_intrclock_reprogram`,
-//! `intrclock_rearm/trigger` and `nsec_advance`. `sysctl_clockintr` comes with
-//! `kern_sysctl.c` (M6); the `ddb` `show all clockintr` printers with the real ddb (M7).
+//! `intrclock_rearm/trigger` and `nsec_advance`. `sysctl_clockintr` is not here yet
+//! (`kern_sysctl.rs` reports `kern.clockintr`); the `ddb` `show all clockintr` printers come
+//! with the real ddb (M7).
 //!
 //! ## Deviations
 //! - `clockintr_unbind` with `CL_BARRIER` sleeps (`msleep_nsec`) until the running callback
