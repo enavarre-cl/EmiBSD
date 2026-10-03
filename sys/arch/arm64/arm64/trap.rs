@@ -74,6 +74,7 @@ use crate::sys::proc::{EXIT_NORMAL, Proc, refreshcreds};
 use crate::sys::signal::{SIGBUS, SIGILL, SIGKILL, SIGSEGV};
 use crate::unported;
 use crate::uvm::uvm_extern::VmProt;
+use crate::uvm::uvm_fault::uvm_fault;
 use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_param::trunc_page;
 
@@ -144,16 +145,24 @@ fn kdata_abort(frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
         true
     };
 
-    // Handle referenced/modified emulation: pmap_fault_fixup(map->pmap, va, access_type),
-    // then uvm_fault(map, va, 0, access_type) and uvm_grow for a user map (M6). Both are
-    // reported; the result is the C's error path.
-    let _ = unported!("pmap_fault_fixup (M6)");
-    let _ = unported!(if kernel_map {
-        "uvm_fault(kernel_map) (M6)"
-    } else {
-        "uvm_fault(vm_map) (M6)"
-    });
-    let _ = (va, access_type);
+    // SAFETY: `ci_curproc` names the thread on this CPU, hence alive.
+    let p = unsafe { ci.ci_curproc.get().as_ref() };
+    let map = match p {
+        Some(p) if !kernel_map => &p.vmspace().vm_map,
+        _ => crate::uvm::uvm_km::kernel_map(),
+    };
+
+    // Handle referenced/modified emulation: pmap_fault_fixup(map->pmap, va, access_type)
+    // waits for the pmap's R/M emulation (M7a-3b); every mapping carries its access bits.
+    let _ = unported!("pmap_fault_fixup (M7a-3b)");
+    let error = uvm_fault(map, va, 0, access_type);
+    if error.is_ok() {
+        if !kernel_map {
+            // uvm_grow(p, va): uvm_unix.c, with the stack accounting of M7+.
+            let _ = unported!("uvm_grow (uvm_unix.c)");
+        }
+        return;
+    }
 
     // error != 0:
     if ci.ci_idepth.get() == 0 && pcb_onfault != 0 {
@@ -273,13 +282,19 @@ fn udata_abort(frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
         trapsignal(p, frame, SIGBUS, esr, BUS_ADRALN, far);
     }
 
-    // map = &p->p_vmspace->vm_map; uvm_map_inentry (the MAP_STACK check, M7a).
+    let map = &p.vmspace().vm_map;
+    // uvm_map_inentry (the MAP_STACK check): with the stack of M7a-3b.
 
-    // Handle referenced/modified emulation (pmap_fault_fixup): every wired mapping carries
-    // its access bits, so nothing to fix up until uvm_fault (M7a).
-
-    let error = unported!("udata_abort: uvm_fault (M7a)");
-    let _ = access_type;
+    // Handle referenced/modified emulation: pmap_fault_fixup waits for the pmap's R/M
+    // emulation (M7a-3b); every mapping carries its access bits.
+    let error = match uvm_fault(map, va, 0, access_type) {
+        Ok(()) => {
+            // uvm_grow(p, va): uvm_unix.c, with the stack accounting of M7+.
+            let _ = unported!("uvm_grow (uvm_unix.c)");
+            return;
+        }
+        Err(e) => e,
+    };
 
     let (sig, code) = if error == Errno::ENOMEM {
         (SIGKILL, 0)

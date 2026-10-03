@@ -119,7 +119,9 @@ use crate::sys::systm::SysArgs;
 use crate::sys::types::Register;
 use crate::unported;
 use crate::uvm::uvm_extern::VmProt;
+use crate::uvm::uvm_fault::uvm_fault;
 use crate::uvm::uvm_init::UVMEXP;
+
 use crate::uvm::uvm_param::trunc_page;
 
 /// `trap_type[]`: the name of each `T_*` trap.
@@ -221,11 +223,20 @@ pub fn kpageflttrap(frame: &mut Trapframe, cr2: u64) -> bool {
     let kernel_map = va >= VM_MIN_KERNEL_ADDRESS;
 
     let error = if curcpu().ci_inatomic.get() == 0 || kernel_map {
-        // onfault = pcb->pcb_onfault; pcb->pcb_onfault = NULL;
-        // error = uvm_fault(map, va, 0, access_type); pcb->pcb_onfault = onfault;
-        // if (error == 0 && map != kernel_map) uvm_grow(p, va): the kernel map's faults
-        // (pageable kernel memory) and the user maps (M6-b).
-        Some(unported!("uvm_fault (M6-b)"))
+        let map = if kernel_map {
+            crate::uvm::uvm_km::kernel_map()
+        } else {
+            &p.vmspace().vm_map
+        };
+        let onfault = pcb.pcb_onfault.get();
+        pcb.pcb_onfault.set(0);
+        let error = uvm_fault(map, va, 0, access_type);
+        pcb.pcb_onfault.set(onfault);
+        if error.is_ok() && !kernel_map {
+            // uvm_grow(p, va): uvm_unix.c, with the stack accounting of M7+.
+            let _ = unported!("uvm_grow (uvm_unix.c)");
+        }
+        error.err()
     } else {
         Some(Errno::EFAULT)
     };
@@ -364,11 +375,24 @@ pub fn upageflttrap(frame: &mut Trapframe, cr2: u64) -> bool {
     let va = trunc_page(cr2 as usize);
     let access_type = pgex2access(frame.tf_err as u64);
 
-    // uvm_fault(&p->p_vmspace->vm_map, va, 0, access_type), retried with PROT_EXEC when NX
-    // is off, then uvm_grow: the fault handler is M7a. Every user page is wired by exec
-    // until then, so a fault is a bad address (SEGV_MAPERR).
-    let error = unported!("upageflttrap: uvm_fault (M7a)");
-    let _ = (va, access_type);
+    // We used to set PROT_EXEC when CPU NX bit was not set, but the pmap now treats them
+    // as read-only and PROT_EXEC access, so try both.
+    let map = &p.vmspace().vm_map;
+    let mut result = uvm_fault(map, va, 0, access_type);
+    if crate::arch::amd64::amd64::pmap::PG_NX_BIT.load(core::sync::atomic::Ordering::Relaxed) == 0
+        && result == Err(Errno::EACCES)
+        && access_type == PROT_READ
+    {
+        result = uvm_fault(map, va, 0, PROT_EXEC);
+    }
+    let error = match result {
+        Ok(()) => {
+            // uvm_grow(p, va): uvm_unix.c, with the stack accounting of M7+.
+            let _ = unported!("uvm_grow (uvm_unix.c)");
+            return true;
+        }
+        Err(e) => e,
+    };
 
     let (signal, sicode) = if error == Errno::ENOMEM {
         printf(format_args!(
