@@ -70,20 +70,24 @@
 //! Upstream: sys/arch/amd64/amd64/trap.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M4 ports `trap_type[]`, `fault`, `pgex2access`, the kernel page
-//! fault entry (`kpageflttrap`), `kerntrap` and `trap_print`. `upageflttrap`, `usertrap`,
-//! `ast`, `syscall`, `frame_dump`, `verify_pkru` and the `#VC` handler come with user mode
-//! (M6); `verify_smap` with CPU identification (M4-b); `debug_trap` is the `DEBUG` option's
+//! fault entry (`kpageflttrap`), `kerntrap` and `trap_print`; M6-a `syscall`, `ast` and
+//! `child_return`, and `kpageflttrap`'s `pcb_onfault` handling. `upageflttrap`, `usertrap`,
+//! `frame_dump`, `verify_pkru` and the `#VC` handler come with user mode (M6-b);
+//! `verify_smap` with CPU identification (M4-b); `debug_trap` is the `DEBUG` option's
 //! `trapdebug` print.
 //!
 //! ## Deviations
-//! - `kpageflttrap` returns at the C's first check: there is no `curproc` before M5, so every
-//!   kernel page fault is fatal, exactly as it is in C when `p == NULL`. The code behind that
-//!   check is ported with `pcb_onfault` always unset and `uvm_fault` reported (M6), for when
-//!   a process exists.
+//! - `kpageflttrap`: `p->p_vmspace` does not exist before M6-b, so a fault outside the
+//!   kernel map with no `pcb_onfault` is fatal, and `uvm_fault` on the kernel map is
+//!   reported: a kernel page fault is handled only when `pcb_onfault` catches it (the
+//!   `copyin` family).
+//! - `syscall` skips `verify_smap` (M4-b) and `verify_pkru` (PKU, M6-b).
 //! - `fault` writes `curcpu()->ci_panicbuf` as the C does; `panic()` itself still uses
 //!   `subr_prf`'s buffer (`kern/subr_prf.rs`, deviations).
 
+use core::ffi::c_void;
 use core::fmt;
+use core::ptr;
 use core::sync::atomic::Ordering;
 
 use crate::arch::amd64::amd64::db_interface::db_ktrap;
@@ -91,14 +95,22 @@ use crate::arch::amd64::amd64::intr::x86_nmi;
 use crate::arch::amd64::include::cpu::curcpu;
 use crate::arch::amd64::include::cpufunc::{rcr2, rdmsr, rdr6, rdr7};
 use crate::arch::amd64::include::frame::Trapframe;
+use crate::arch::amd64::include::psl::PSL_C;
 use crate::arch::amd64::include::pte::{PGEX_I, PGEX_P, PGEX_W};
 use crate::arch::amd64::include::segments::kernelmode;
 use crate::arch::amd64::include::specialreg::{MSR_GSBASE, MSR_KERNELGSBASE};
 use crate::arch::amd64::include::trap::{T_NMI, T_PAGEFLT, T_TRCTRAP};
 use crate::arch::amd64::include::vmparam::{VM_MAXUSER_ADDRESS, VM_MIN_KERNEL_ADDRESS};
+use crate::kassert;
+use crate::kern::init_sysent::SYSENT;
+use crate::kern::kern_sig::userret;
 use crate::kern::subr_prf::{Str, db_printf, panic, panicstr_claim, printf, vsnprintf};
 use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
+use crate::sys::proc::{Proc, refreshcreds};
+use crate::sys::syscall::SYS_MAXSYSCALL;
+use crate::sys::syscall_mi::{mi_ast, mi_child_return, mi_syscall, mi_syscall_return};
+use crate::sys::types::Register;
 use crate::unported;
 use crate::uvm::uvm_extern::VmProt;
 use crate::uvm::uvm_init::UVMEXP;
@@ -163,32 +175,31 @@ pub fn kpageflttrap(frame: &mut Trapframe, cr2: u64) -> bool {
     let va = trunc_page(cr2 as usize);
     let access_type = pgex2access(frame.tf_err as u64);
 
-    // struct proc *p = curproc; if (p == NULL || p->p_addr == NULL || p->p_vmspace == NULL)
-    // return 0: there is no proc before M5 (see the module's deviations), so nothing below
-    // runs yet.
-    if curcpu().ci_curproc.get().is_null() {
+    // SAFETY: `ci_curproc` names a thread on the CPU, hence alive.
+    let Some(p) = (unsafe { curcpu().ci_curproc.get().as_ref() }) else {
+        return false;
+    };
+    if p.p_addr.get().is_null() {
+        return false;
+    }
+    // p->p_vmspace == NULL: no user address spaces before M6-b; see below.
+
+    let pcb = p.pcb();
+    let pcb_onfault = pcb.pcb_onfault.get();
+    if pcb_onfault != 0 && !nofault_table_has(pcb_onfault) {
+        fault(format_args!("invalid pcb_nofault={pcb_onfault:#x}"));
         return false;
     }
 
-    // pcb = &p->p_addr->u_pcb; the __nofault_start/__nofault_end check of pcb_onfault: M5.
-    let pcb_onfault: Option<usize> = None;
-    let _ = unported!("pcb_onfault (kpageflttrap, M5)");
-
     // This will only trigger if SMEP is enabled
-    if pcb_onfault.is_none()
-        && cr2 <= VM_MAXUSER_ADDRESS as u64
-        && frame.tf_err as u64 & PGEX_I != 0
-    {
+    if pcb_onfault == 0 && cr2 <= VM_MAXUSER_ADDRESS as u64 && frame.tf_err as u64 & PGEX_I != 0 {
         fault(format_args!(
             "attempt to execute user address {cr2:#x} in supervisor mode"
         ));
         return false;
     }
     // This will only trigger if SMAP is enabled
-    if pcb_onfault.is_none()
-        && cr2 <= VM_MAXUSER_ADDRESS as u64
-        && frame.tf_err as u64 & PGEX_P != 0
-    {
+    if pcb_onfault == 0 && cr2 <= VM_MAXUSER_ADDRESS as u64 && frame.tf_err as u64 & PGEX_P != 0 {
         fault(format_args!(
             "attempt to access user address {cr2:#x} in supervisor mode"
         ));
@@ -206,15 +217,16 @@ pub fn kpageflttrap(frame: &mut Trapframe, cr2: u64) -> bool {
     let error = if curcpu().ci_inatomic.get() == 0 || kernel_map {
         // onfault = pcb->pcb_onfault; pcb->pcb_onfault = NULL;
         // error = uvm_fault(map, va, 0, access_type); pcb->pcb_onfault = onfault;
-        // if (error == 0 && map != kernel_map) uvm_grow(p, va): M6.
-        Some(unported!("uvm_fault (M6)"))
+        // if (error == 0 && map != kernel_map) uvm_grow(p, va): the kernel map's faults
+        // (pageable kernel memory) and the user maps (M6-b).
+        Some(unported!("uvm_fault (M6-b)"))
     } else {
         Some(Errno::EFAULT)
     };
 
-    match (error, pcb_onfault) {
-        (None, _) => true,
-        (Some(error), None) => {
+    match error {
+        None => true,
+        Some(error) if pcb_onfault == 0 => {
             // bad memory access in the kernel
             fault(format_args!(
                 "uvm_fault({}, {:#x}, 0, {}) -> {:x}",
@@ -225,11 +237,120 @@ pub fn kpageflttrap(frame: &mut Trapframe, cr2: u64) -> bool {
             ));
             false
         }
-        (Some(_), Some(onfault)) => {
-            frame.tf_rip = onfault as i64;
+        Some(_) => {
+            frame.tf_rip = pcb_onfault as i64;
             true
         }
     }
+}
+
+unsafe extern "C" {
+    /// `__nofault_start[]`: the `.nofault` table of fault handlers (`DECLARE_ONFAULT` in
+    /// `copy.S`), from the linker script.
+    static __nofault_start: [usize; 0];
+    /// `__nofault_end[]`.
+    static __nofault_end: [usize; 0];
+}
+
+/// Whether `onfault` is one of the handlers `copy.S` declared in `.nofault`.
+fn nofault_table_has(onfault: usize) -> bool {
+    let mut nf = ptr::addr_of!(__nofault_start).cast::<usize>();
+    let end = ptr::addr_of!(__nofault_end).cast::<usize>();
+    while nf < end {
+        // SAFETY: the linker script lays the `.nofault` words out between the two symbols.
+        if unsafe { nf.read() } == onfault {
+            return true;
+        }
+        nf = nf.wrapping_add(1);
+    }
+    false
+}
+
+/// `ast(frame)`: AST handler. This is called from assembly language stubs when returning to
+/// userspace after a syscall or interrupt.
+#[unsafe(no_mangle)]
+pub extern "C" fn ast(frame: &mut Trapframe) {
+    let Some(p) = current() else {
+        panic(format_args!("ast: no curproc"));
+    };
+
+    UVMEXP.traps.fetch_add(1, Ordering::Relaxed);
+    kassert!(!kernelmode(frame.tf_cs as u64));
+    p.p_md.md_regs.set(frame);
+    refreshcreds(p);
+    UVMEXP.softs.fetch_add(1, Ordering::Relaxed);
+    mi_ast(p, curcpu().ci_want_resched.get() != 0);
+    userret(p);
+}
+
+/// `syscall(frame)`: system call request from POSIX system call gate interface to kernel.
+#[unsafe(no_mangle)]
+pub extern "C" fn syscall(frame: &mut Trapframe) {
+    // verify_smap(__func__): CPU identification (M4-b).
+    UVMEXP.syscalls.fetch_add(1, Ordering::Relaxed);
+    let Some(p) = current() else {
+        panic(format_args!("syscall: no curproc"));
+    };
+
+    // verify_pkru(p): PKU (M6-b).
+
+    let code = frame.tf_rax as Register;
+    // The arguments are the first six registers of the frame, in the C ABI's order:
+    // tf_rdi, tf_rsi, tf_rdx, tf_r10, tf_r8, tf_r9.
+    let args = ptr::addr_of!(frame.tf_rdi).cast::<c_void>();
+
+    let mut rval: [Register; 2] = [0, 0];
+
+    let error = if code <= 0 || code as usize >= SYS_MAXSYSCALL {
+        Err(Errno::ENOSYS)
+    } else {
+        let callp = &SYSENT[code as usize];
+        mi_syscall(p, code, callp, args, &mut rval)
+    };
+
+    match error {
+        Ok(()) => {
+            frame.tf_rax = rval[0] as i64;
+            frame.tf_rflags &= !(PSL_C as i64); // carry bit
+        }
+        Err(Errno::ERESTART) => {
+            // Back up over the syscall instruction (2 bytes)
+            frame.tf_rip -= 2;
+        }
+        Err(Errno::EJUSTRETURN) => {
+            // nothing to do
+        }
+        Err(e) => {
+            frame.tf_rax = i64::from(e as i32);
+            frame.tf_rflags |= PSL_C as i64; // carry bit
+        }
+    }
+
+    mi_syscall_return(p, code, error, &rval);
+}
+
+/// `child_return`: the first thing a forked user thread runs: a `fork` return of 0 in the
+/// child, then the user-mode return.
+pub fn child_return(arg: *mut c_void) {
+    // SAFETY: `fork1` passes the new thread itself as the argument.
+    let p = unsafe { &*arg.cast::<Proc>() };
+    let tf = p.p_md.md_regs.get();
+
+    // SAFETY: `cpu_fork` set `md_regs` to the trap frame at the top of the thread's u-area.
+    unsafe {
+        (*tf).tf_rax = 0;
+        (*tf).tf_rflags &= !(PSL_C as i64);
+    }
+
+    // KERNEL_UNLOCK(): nothing without MULTIPROCESSOR.
+
+    mi_child_return(p);
+}
+
+/// `curproc`, as a reference.
+fn current() -> Option<&'static Proc> {
+    // SAFETY: `ci_curproc` names a thread on the CPU, hence alive.
+    unsafe { curcpu().ci_curproc.get().as_ref() }
 }
 
 /// `kerntrap(frame)`: handler for exceptions, faults, and traps from supervisor mode. This is

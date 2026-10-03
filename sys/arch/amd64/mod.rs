@@ -16,6 +16,7 @@ use core::ffi::c_void;
 use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::db_machdep::{DbMachdep, PrFn};
 
+use crate::machine::copy::UserCopy;
 use crate::machine::proc::MachineProc;
 use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, Pmap, VmParam};
 use crate::sys::clockintr::Clockqueue;
@@ -447,4 +448,27 @@ impl MachineProc for Machine {
     const MDPROC_INIT: include::proc::Mdproc = include::proc::Mdproc::new();
     type Pcb = include::pcb::Pcb;
     const PCB_INIT: include::pcb::Pcb = include::pcb::Pcb::new();
+}
+
+impl UserCopy for Machine {
+    fn copyin(uaddr: usize, kbuf: &mut [u8]) -> Result<(), Errno> {
+        amd64::copy::copyin(uaddr, kbuf)
+    }
+
+    fn copyout(kbuf: &[u8], uaddr: usize) -> Result<(), Errno> {
+        amd64::copy::copyout(kbuf, uaddr)
+    }
+
+    fn copyinstr(uaddr: usize, kbuf: &mut [u8]) -> Result<usize, Errno> {
+        amd64::copy::copyinstr(uaddr, kbuf)
+    }
+
+    fn copyoutstr(kbuf: &[u8], uaddr: usize) -> Result<usize, Errno> {
+        amd64::copy::copyoutstr(kbuf, uaddr)
+    }
+
+    unsafe fn kcopy(src: *const u8, dst: *mut u8, len: usize) -> Result<(), Errno> {
+        // SAFETY: forwarded.
+        unsafe { amd64::copy::kcopy(src, dst, len) }
+    }
 }

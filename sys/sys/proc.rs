@@ -1043,6 +1043,18 @@ pub fn tu_leave(tu: &Tusage, generation: u32) {
     pc_sprod_leave(&tu.tu_pcl, generation)
 }
 
+/// `refreshcreds(p)`: refresh the thread's cache of the process's creds. This is an unlocked
+/// access to `ps_ucred`, but the result is benign.
+#[inline]
+pub fn refreshcreds(p: &Proc) {
+    let pr = p.process();
+
+    if !ptr::eq(pr.ps_ucred.get(), p.p_ucred.get()) {
+        // dorefreshcreds(pr, p): kern_prot.c (M6-b, with the credentials).
+        let _ = crate::unported!("refreshcreds: dorefreshcreds (kern_prot.c, M6-b)");
+    }
+}
+
 /// A `Timeval`-typed helper the resource code shares: the zero interval.
 pub const ZERO_TIMEVAL: Timeval = Timeval::new(0, 0);
 

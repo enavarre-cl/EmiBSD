@@ -9,6 +9,7 @@
 pub mod autoconf;
 pub mod bus_space;
 pub mod consinit;
+pub mod copy;
 pub mod cpu;
 pub mod db_interface;
 pub mod db_trace;

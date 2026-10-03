@@ -244,6 +244,19 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   punch a hole in the direct map; the guard returns with `kernel_map`). `cold` and `safepri`
   are `sys/systm.rs` statics like `physmem`. The `selftest=kthread` boot runs two kernel
   threads passing a turn with `msleep`/`wakeup` through the run queues and the idle thread.
+- System calls (M6-a): the tables are generated, as in C, but by `cargo xtask gen-syscalls`
+  from `syscalls.master` instead of `makesyscalls.sh`; every syscall the tree does not define
+  is `sys_nosys` in `init_sysent.rs`, and the generator's `--check` keeps the four files
+  current in `just ci`. The entry paths are OpenBSD's: amd64 `Xsyscall` (`syscall`
+  instruction, `MSR_LSTAR`) building the trap frame on `ci_kern_rsp`, `syscall()`,
+  `mi_syscall` and the AST loop before `sysretq`; arm64 `handle_el0_sync` → `do_el0_sync` →
+  `svc_handler`, `do_ast` and `eret`. Not here: the Meltdown U-K page and `Xsyscall_meltdown`,
+  the xstate/FS.base restores and the Spectre code patches on amd64; the trampoline vectors
+  (`trampoline.S`) on arm64, so `VBAR_EL1` keeps the kernel vectors; `pin_check` accepts
+  every call site until `exec` reads `PT_OPENBSD_SYSCALLS`. `copyin(9)` is each arch's
+  `copy.S` behind the `machine::copy` contract, with `pcb_onfault` recovery in both page fault
+  handlers (amd64 validates it against the `.nofault` table the linker script collects);
+  amd64 runs without SMAP's `stac`/`clac` (no `codepatch`, `CR4.SMAP` not set).
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

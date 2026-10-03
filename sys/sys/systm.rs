@@ -43,16 +43,24 @@
 //! Upstream: sys/sys/systm.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M3 ports `physmem`; M5 adds `cold`, `safepri` and the sleep
-//! limits `INFSLP`/`MAXTSLP`; the hostname and boot-time globals, the `copyin`/`copyout`
-//! family, the `panic`/`printf` prototypes (already in `kern/subr_prf.rs`) and the rest arrive
-//! with their files. `tsleep`/`wakeup` are in `kern/kern_synch.rs`.
+//! limits `INFSLP`/`MAXTSLP`; M6 `struct sysent`, `sy_call_t`, `SY_NOLOCK` and `SCARG`. The
+//! hostname and boot-time globals, the `panic`/`printf` prototypes (already in
+//! `kern/subr_prf.rs`) and the rest arrive with their files. `tsleep`/`wakeup` are in
+//! `kern/kern_synch.rs`; the `copyin`/`copyout` family is `machine::copy`.
 //!
 //! ## Deviations
 //! - `physmem`, `cold` and `safepri` are defined here (the C defines each in every
 //!   `machdep.c`/`autoconf.c` and declares them here), so generic code names them without an
 //!   architecture path; the `machdep`s and `cpu_configure` fill them.
+//! - `sy_call_t` returns `Result<(), Errno>` with the two return registers as an out
+//!   parameter; `SCARG(uap, k)` is `sysargs::<T>(v).k.get()` (`sys/syscallargs.rs`).
 
+use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize};
+
+use crate::sys::errno::Errno;
+use crate::sys::proc::Proc;
+use crate::sys::types::Register;
 
 /// `physmem`: physical memory, in pages (an `int` in C).
 pub static PHYSMEM: AtomicUsize = AtomicUsize::new(0);
@@ -69,3 +77,46 @@ pub static SAFEPRI: AtomicI32 = AtomicI32::new(0);
 pub const INFSLP: u64 = u64::MAX;
 /// `MAXTSLP`: the longest finite sleep.
 pub const MAXTSLP: u64 = u64::MAX - 1;
+
+/// `sy_call_t`: every system call: the calling thread, the argument block (see `sysargs`)
+/// and the two return registers (`retval[0]` is what the user sees in its return register).
+pub type SyCall = fn(&Proc, *const c_void, &mut [Register; 2]) -> Result<(), Errno>;
+
+/// `struct sysent`: system call table entry.
+#[derive(Clone, Copy)]
+pub struct Sysent {
+    /// `sy_narg`: number of args.
+    pub sy_narg: i16,
+    /// `sy_argsize`: total size of arguments.
+    pub sy_argsize: i16,
+    /// `sy_flags`: `SY_*`.
+    pub sy_flags: i32,
+    /// `sy_call`: implementing function.
+    pub sy_call: SyCall,
+}
+
+impl Sysent {
+    /// One table entry (`init_sysent.rs` is generated with these).
+    pub const fn new(narg: i16, argsize: usize, flags: i32, call: SyCall) -> Self {
+        Self {
+            sy_narg: narg,
+            sy_argsize: argsize as i16,
+            sy_flags: flags,
+            sy_call: call,
+        }
+    }
+}
+
+/// `SY_NOLOCK`: the syscall does not take the kernel lock.
+pub const SY_NOLOCK: i32 = 0x01;
+
+/// `SCARG`'s view of a system call's argument block as its `struct sys_*_args`.
+///
+/// # Safety
+///
+/// `v` is the argument block the machine-dependent syscall entry handed to the `sy_call`:
+/// `sy_narg` registers in a row, read as the `T` of that system call.
+pub unsafe fn sysargs<'a, T>(v: *const c_void) -> &'a T {
+    // SAFETY: the caller's guarantee.
+    unsafe { &*v.cast::<T>() }
+}

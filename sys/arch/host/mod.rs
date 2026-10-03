@@ -20,6 +20,7 @@ use std::vec;
 
 use crate::dev::cons::{CN_LOWPRI, Consdev, set_cn_tab};
 use crate::machine::bus::{BusAddr, BusSize, BusSpace};
+use crate::machine::copy::UserCopy;
 use crate::machine::db_machdep::{DbMachdep, PrFn};
 use crate::machine::proc::MachineProc;
 use crate::machine::{
@@ -548,5 +549,64 @@ impl crate::machine::fdt::Fdt for Machine {
 
     fn fdt_cons_bs_tag() -> crate::machine::bus::BusSpaceTag {
         HostBusSpace
+    }
+}
+
+/// The host has one address space: a "user" address is a pointer into the test's memory,
+/// so the copies are plain byte copies and a null address is the one `EFAULT`.
+impl UserCopy for Machine {
+    fn copyin(uaddr: usize, kbuf: &mut [u8]) -> Result<(), Errno> {
+        if uaddr == 0 {
+            return Err(Errno::EFAULT);
+        }
+        // SAFETY: the test passed a pointer to `kbuf.len()` readable bytes.
+        unsafe {
+            core::ptr::copy_nonoverlapping(uaddr as *const u8, kbuf.as_mut_ptr(), kbuf.len())
+        };
+        Ok(())
+    }
+
+    fn copyout(kbuf: &[u8], uaddr: usize) -> Result<(), Errno> {
+        if uaddr == 0 {
+            return Err(Errno::EFAULT);
+        }
+        // SAFETY: the test passed a pointer to `kbuf.len()` writable bytes.
+        unsafe { core::ptr::copy_nonoverlapping(kbuf.as_ptr(), uaddr as *mut u8, kbuf.len()) };
+        Ok(())
+    }
+
+    fn copyinstr(uaddr: usize, kbuf: &mut [u8]) -> Result<usize, Errno> {
+        if uaddr == 0 {
+            return Err(Errno::EFAULT);
+        }
+        for (i, slot) in kbuf.iter_mut().enumerate() {
+            // SAFETY: the test passed a pointer to a NUL-terminated string.
+            let c = unsafe { (uaddr as *const u8).add(i).read() };
+            *slot = c;
+            if c == 0 {
+                return Ok(i + 1);
+            }
+        }
+        Err(Errno::ENAMETOOLONG)
+    }
+
+    fn copyoutstr(kbuf: &[u8], uaddr: usize) -> Result<usize, Errno> {
+        if uaddr == 0 {
+            return Err(Errno::EFAULT);
+        }
+        for (i, &c) in kbuf.iter().enumerate() {
+            // SAFETY: the test passed a pointer to `kbuf.len()` writable bytes.
+            unsafe { (uaddr as *mut u8).add(i).write(c) };
+            if c == 0 {
+                return Ok(i + 1);
+            }
+        }
+        Err(Errno::ENAMETOOLONG)
+    }
+
+    unsafe fn kcopy(src: *const u8, dst: *mut u8, len: usize) -> Result<(), Errno> {
+        // SAFETY: the caller's guarantee; the host has no faults to catch.
+        unsafe { core::ptr::copy(src, dst, len) };
+        Ok(())
     }
 }

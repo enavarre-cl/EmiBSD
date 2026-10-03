@@ -10,6 +10,7 @@
 pub mod bootinfo;
 pub mod bus;
 pub mod cons;
+pub mod copy;
 pub mod cpu;
 pub mod db_machdep;
 pub mod fdt;
@@ -22,6 +23,7 @@ pub mod vmparam;
 pub use bootinfo::*;
 pub use bus::*;
 pub use cons::*;
+pub use copy::*;
 pub use cpu::*;
 pub use db_machdep::*;
 pub use fdt::*;
@@ -48,7 +50,8 @@ const _: () = {
             + Pmap
             + Intr
             + Fdt
-            + MachineProc,
+            + MachineProc
+            + UserCopy,
     >() {
     }
     assert_impl::<Machine>();

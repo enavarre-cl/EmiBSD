@@ -32,6 +32,7 @@ use serde::Deserialize;
 
 mod boot;
 mod symbolize;
+mod syscalls;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -46,7 +47,7 @@ const TABLE_END: &str = "<!-- ports:end -->";
 
 const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | ports next | \
                      ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] | \
-                     qemu --arch A [--kernel K] | \
+                     qemu --arch A [--kernel K] | gen-syscalls [--check] | \
                      smoke --arch A [--kernel K] [--cmdline C] [--status N] [--send-after L --send T] --expect L... | \
                      symbolize --arch A [--kernel K]>";
 
@@ -173,6 +174,8 @@ fn run(args: &[String]) -> Result<()> {
                 send.as_ref().map(|(a, t)| (*a, t.as_str())),
             )
         }
+        ["gen-syscalls"] => syscalls::gen_syscalls(&root, false),
+        ["gen-syscalls", "--check"] => syscalls::gen_syscalls(&root, true),
         ["symbolize", rest @ ..] => {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
             let kernel = match optional_flag(rest, "--kernel") {

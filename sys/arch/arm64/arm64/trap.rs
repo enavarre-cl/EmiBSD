@@ -32,14 +32,18 @@
 //! Upstream: sys/arch/arm64/arm64/trap.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M4 ports the EL1 side: `is_unpriv_ldst`, `accesstype`, `fault`,
-//! `kdata_abort`, `do_el1h_sync`, `serror`, `do_el1h_error` and `dumpregs`. `udata_abort`,
-//! `emulate_msr`, `do_el0_sync`, `do_el0_error` and the `svc` system call path come with user
-//! mode (M6).
+//! `kdata_abort`, `do_el1h_sync`, `serror`, `do_el1h_error` and `dumpregs`; M6-a adds
+//! `do_el0_sync` (the `svc` path, `syscall.rs`) and `do_el0_error`, and `kdata_abort`'s
+//! `pcb_onfault` recovery. `udata_abort`, `emulate_msr` and the `trapsignal`s of the other
+//! EL0 exceptions come with user address spaces and signals (M6-b).
 //!
 //! ## Deviations
-//! - `kdata_abort`: `curcpu()->ci_curpcb` is null before M5, read as "no `pcb_onfault`", and
-//!   the process's `vm_map` does not exist; `pmap_fault_fixup` (M6) and `uvm_fault` (M6) are
-//!   reported, so every kernel data abort ends in the C's `panic("uvm_fault failed: ...")`.
+//! - `kdata_abort`: the process's `vm_map` does not exist before M6-b; `pmap_fault_fixup`
+//!   and `uvm_fault` are reported, so a kernel data abort is recovered only through
+//!   `pcb_onfault` (the `copyin` family) and ends otherwise in the C's `panic("uvm_fault
+//!   failed: ...")`.
+//! - `do_el0_sync`: every exception but `svc` reports its `trapsignal`/`udata_abort` and
+//!   panics (no signals yet, M6-b); the C never panics for user mode.
 //! - The `we_re_toast` path prints the syndrome and enters `db_ktrap` as the `DDB` build does,
 //!   then panics with the same message as the non-`DDB` build: ddb-lite has no command loop
 //!   to stay in, and returning would re-execute the faulting instruction.
@@ -51,15 +55,18 @@ use core::ptr;
 use core::sync::atomic::Ordering;
 
 use crate::arch::arm64::arm64::db_interface::db_ktrap;
+use crate::arch::arm64::arm64::syscall::svc_handler;
 use crate::arch::arm64::include::armreg::{
-    EXCP_BRANCH_TGT, EXCP_BRK, EXCP_DATA_ABORT, EXCP_FP_SIMD, EXCP_FPAC, EXCP_INSN_ABORT,
-    EXCP_SOFTSTP_EL1, EXCP_TRAP_FP, EXCP_WATCHPT_EL1, INSN_SIZE, ISS_BRK_COMMENT_MASK, ISS_DATA_CM,
-    ISS_DATA_WNR, esr_elx_exception, read_specialreg,
+    EXCP_BRANCH_TGT, EXCP_BRK, EXCP_DATA_ABORT, EXCP_DATA_ABORT_L, EXCP_FP_SIMD, EXCP_FPAC,
+    EXCP_INSN_ABORT, EXCP_INSN_ABORT_L, EXCP_SOFTSTP_EL1, EXCP_SVC, EXCP_TRAP_FP, EXCP_WATCHPT_EL1,
+    INSN_SIZE, ISS_BRK_COMMENT_MASK, ISS_DATA_CM, ISS_DATA_WNR, esr_elx_exception, read_specialreg,
 };
 use crate::arch::arm64::include::cpu::{curcpu, intr_enable};
 use crate::arch::arm64::include::frame::Trapframe;
+use crate::kern::kern_sig::userret;
 use crate::kern::subr_prf::{Str, db_printf, panic, panicstr_claim, printf, vsnprintf};
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
+use crate::sys::proc::refreshcreds;
 use crate::unported;
 use crate::uvm::uvm_extern::VmProt;
 use crate::uvm::uvm_init::UVMEXP;
@@ -107,9 +114,9 @@ fn kdata_abort(frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
     let ci = curcpu();
     let access_type = accesstype(esr, exe);
 
-    // pcb = curcpu()->ci_curpcb; p = curcpu()->ci_curproc: none before M5 (see the module's
-    // deviations), so pcb_onfault is never set.
-    let pcb_onfault: usize = 0;
+    // SAFETY: `ci_curpcb` is the running thread's pcb, alive while it runs.
+    let pcb_onfault: usize =
+        unsafe { ci.ci_curpcb.get().as_ref() }.map_or(0, |pcb| pcb.pcb_onfault.get());
 
     let va = trunc_page(far as usize);
 
@@ -237,6 +244,76 @@ fn serror(frame: &Trapframe) {
 pub extern "C" fn do_el1h_error(frame: &mut Trapframe) {
     serror(frame);
     panic(format_args!("do_el1h_error"));
+}
+
+/// `do_el0_sync`: the synchronous exception handler for EL0, called from `handle_el0_sync`
+/// (`exception.S`) with the saved registers.
+#[unsafe(no_mangle)]
+pub extern "C" fn do_el0_sync(frame: &mut Trapframe) {
+    let ci = curcpu();
+    // SAFETY: `ci_curproc` names the thread that trapped from user mode, hence alive.
+    let Some(p) = (unsafe { ci.ci_curproc.get().as_ref() }) else {
+        panic(format_args!("do_el0_sync: no curproc"));
+    };
+
+    let esr = read_specialreg!("esr_el1");
+    let exception = esr_elx_exception(esr);
+    let far = read_specialreg!("far_el1");
+
+    // SAFETY: the exception entry masked interrupts; the kernel takes them during a trap.
+    unsafe { intr_enable() };
+    UVMEXP.traps.fetch_add(1, Ordering::Relaxed);
+
+    p.pcb().pcb_tf.set(frame);
+    refreshcreds(p);
+
+    match exception {
+        EXCP_SVC => svc_handler(frame),
+        EXCP_INSN_ABORT_L | EXCP_DATA_ABORT_L => {
+            // udata_abort(frame, esr, far, exe): user address spaces (M6-b).
+            let _ = unported!("do_el0_sync: udata_abort (uvm_fault on the user map, M6-b)");
+            printf(format_args!(
+                "exception {:x} esr_el1 {:x} far {:x}\n",
+                exception, esr, far
+            ));
+            dumpregs(frame);
+            panic(format_args!(
+                "user {} abort without uvm_fault (M6-b)",
+                if exception == EXCP_INSN_ABORT_L {
+                    "instruction"
+                } else {
+                    "data"
+                }
+            ));
+        }
+        _ => {
+            // EXCP_UNKNOWN/BRANCH_TGT/MSR/FPAC/PC_ALIGN/SP_ALIGN/BRK/SOFTSTP_EL0: trapsignal;
+            // EXCP_SVE/FP_SIMD/TRAP_FP: sve_load/fpu_load; the default: sigexit(SIGILL).
+            // USERLAND MUST NOT PANIC MACHINE: it does until the signals land (M6-b).
+            let _ = unported!("do_el0_sync: trapsignal/fpu_load/sigexit (M6-b)");
+            printf(format_args!(
+                "exception {:x} esr_el1 {:x}\n",
+                exception, esr
+            ));
+            dumpregs(frame);
+            if let Some(flush_bp) = ci.ci_flush_bp.get() {
+                flush_bp();
+            }
+            panic(format_args!(
+                "user exception {:x} without signals (M6-b)",
+                exception
+            ));
+        }
+    }
+
+    userret(p);
+}
+
+/// `do_el0_error`: an SError taken at EL0, called from `handle_el0_error` (`exception.S`).
+#[unsafe(no_mangle)]
+pub extern "C" fn do_el0_error(frame: &mut Trapframe) {
+    serror(frame);
+    panic(format_args!("do_el0_error"));
 }
 
 /// `dumpregs`: prints a trap frame.

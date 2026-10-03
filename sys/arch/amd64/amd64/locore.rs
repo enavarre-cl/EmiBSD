@@ -5,9 +5,11 @@
 //! Upstream: sys/arch/amd64/amd64/locore.S @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M4 ports `lgdt` and `intr_fast_exit`; `intr_user_exit` is a
-//! stub that reports itself. M5 adds `cpu_switchto` and `proc_trampoline`. The kernel entry
-//! (`start`, done by the boot protocol), `sigcode`, the `syscall` entry and exit, the real
-//! `intr_user_exit`, the Meltdown trampolines and the copy routines come with M6.
+//! stub that reports itself. M5 adds `cpu_switchto` and `proc_trampoline`; M6-a `Xsyscall`
+//! with the AST check and the `sysretq` return. The kernel entry (`start`, done by the boot
+//! protocol), `sigcode`, the real `intr_user_exit`, the Meltdown trampolines
+//! (`Xsyscall_meltdown`, the U-K text page) and `savectx`/`setjmp`/`longjmp` come with
+//! M6-b and later.
 //!
 //! ## Deviations
 //! - AT&T syntax, as the C file, so the two can be diffed; the rest of the kernel's inline
@@ -19,8 +21,10 @@
 //!   retguard come with user mode (M6).
 //! - `proc_trampoline` calls `proc_trampoline_run` (Rust) with the function and argument
 //!   instead of calling the function itself: Rust `fn` pointers have no C calling
-//!   convention. After the function returns the C goes to the syscall return path; here it
-//!   is a panic until M6.
+//!   convention; after it returns the thread takes the syscall exit path, as in C.
+//! - `Xsyscall` is the kernel-thread-era subset: no Meltdown page-table switch, no xstate or
+//!   FS.base restore (`CPUPF_*`), no IBPB/MDS code patches, no `pku_xonly`, no RSB refill,
+//!   and `DIAGNOSTIC`'s "SPL NOT LOWERED" check (a `printf` from assembly) is not here.
 
 use core::arch::global_asm;
 use core::ffi::c_void;
@@ -29,11 +33,11 @@ use core::mem::offset_of;
 use crate::arch::amd64::include::cpu::CpuInfo;
 use crate::arch::amd64::include::frame::Trapframe;
 use crate::arch::amd64::include::pcb::Pcb;
+use crate::arch::amd64::include::proc::MDP_IRET;
 use crate::arch::amd64::include::segments::{
-    GCODE_SEL, GDATA_SEL, RegionDescriptor, SEL_KPL, gsel,
+    GCODE_SEL, GDATA_SEL, GUCODE_SEL, GUDATA_SEL, RegionDescriptor, SEL_KPL, SEL_UPL, gsel,
 };
 use crate::kern::kern_fork::proc_trampoline_mi;
-use crate::kern::subr_prf::panic;
 use crate::sys::proc::{Proc, SONPROC};
 
 global_asm!(
@@ -66,6 +70,19 @@ global_asm!(
     CI_SELF = const offset_of!(CpuInfo, ci_self),
     CI_CURPROC = const offset_of!(CpuInfo, ci_curproc),
     CI_CURPCB = const offset_of!(CpuInfo, ci_curpcb),
+    CI_KERN_RSP = const offset_of!(CpuInfo, ci_kern_rsp),
+    CI_SCRATCH = const offset_of!(CpuInfo, ci_scratch),
+    TF_RSP = const offset_of!(Trapframe, tf_rsp),
+    TF_SS = const offset_of!(Trapframe, tf_ss),
+    TF_CS = const offset_of!(Trapframe, tf_cs),
+    TF_RFLAGS = const offset_of!(Trapframe, tf_rflags),
+    TF_ERR = const offset_of!(Trapframe, tf_err),
+    GSEL_UDATA = const gsel(GUDATA_SEL, SEL_UPL),
+    GSEL_UCODE = const gsel(GUCODE_SEL, SEL_UPL),
+    P_MD_REGS = const offset_of!(Proc, p_md.md_regs),
+    P_MD_FLAGS = const offset_of!(Proc, p_md.md_flags),
+    P_MD_ASTPENDING = const offset_of!(Proc, p_md.md_astpending),
+    MDP_IRET = const MDP_IRET,
     options(att_syntax)
 );
 
@@ -83,26 +100,26 @@ unsafe extern "C" {
     pub fn cpu_switchto(old: *const c_void, new: *const c_void);
     /// `proc_trampoline`: the first instructions of a thread built by `cpu_fork`.
     pub fn proc_trampoline();
+    /// `Xsyscall`: the `syscall` instruction's entry (`MSR_LSTAR`).
+    pub fn Xsyscall();
 }
 
 /// What `proc_trampoline` calls with the switch frame's `sf_r12`/`sf_r13`: the
-/// machine-independent start of a thread, then its function. The function never returns for
-/// a kernel thread; a user thread's return to user mode (`syscall_return`) is M6.
+/// machine-independent start of a thread, then its function. A kernel thread's function
+/// never returns; a user thread's (`child_return`) does, and the assembly then takes the
+/// syscall exit path to user mode.
 ///
 /// # Safety
 ///
 /// Only `proc_trampoline` calls this, on a thread `cpu_fork` built: `func` is the
 /// `fn(*mut c_void)` it stored in the switch frame, as a pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn proc_trampoline_run(func: *const (), arg: *mut c_void) -> ! {
+pub unsafe extern "C" fn proc_trampoline_run(func: *const (), arg: *mut c_void) {
     proc_trampoline_mi();
-    // SAFETY: the caller's guarantee: `cpu_fork` stored a `fn(*mut c_void)` in `sf_r12` as a pointer; this is the
-    // inverse cast.
+    // SAFETY: the caller's guarantee: `cpu_fork` stored a `fn(*mut c_void)` in `sf_r12` as
+    // a pointer; this is the inverse cast.
     let func: fn(*mut c_void) = unsafe { core::mem::transmute::<*const (), fn(*mut c_void)>(func) };
     func(arg);
-    panic(format_args!(
-        "proc_trampoline: the thread function returned (the user-mode return is M6)"
-    ))
 }
 
 /// What `intr_user_exit` does until user mode exists: a return to user mode is a bug.

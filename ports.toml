@@ -789,7 +789,7 @@ rust = "sys/sys/systm.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9fb4626fd16812491f6c3904f32ccfe077412cdf"
-notes = "physmem only (defined here, filled by the machdeps; the C defines it per arch); the hostname/boottime globals, copyin/copyout, tsleep/wakeup and the other prototypes come with their files; M5-b2: cold and safepri (defined here like physmem), INFSLP, MAXTSLP"
+notes = "physmem only (defined here, filled by the machdeps; the C defines it per arch); the hostname/boottime globals, copyin/copyout, tsleep/wakeup and the other prototypes come with their files; M5-b2: cold and safepri (defined here like physmem), INFSLP, MAXTSLP; M6-a: struct sysent (Sysent::new for the generated table), sy_call_t (Result plus the retval registers), SY_NOLOCK, SCARG as sysargs"
 
 [[file]]
 c = "sys/sys/malloc.h"
@@ -1092,7 +1092,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "68cdf4c1b23fa986d0055f16ee4c4fd90a98099e"
 deps = ["sys/arch/amd64/include/trap.h", "sys/arch/amd64/include/frame.h", "sys/arch/amd64/include/cpu.h", "sys/arch/amd64/amd64/db_interface.c"]
-notes = "M4: trap_type[], trap_types, fault (writes ci_panicbuf), pgex2access, kpageflttrap (returns 0 at the curproc check, as C with p == NULL; the pcb_onfault/SMEP/SMAP/uvm_fault code behind it is ported with uvm_fault reported), kerntrap (x86_nmi from intr.c, verify_smap M4-b2, debug_trap is the DEBUG option), trap_print; upageflttrap, usertrap, ast, syscall, frame_dump, verify_pkru, vctrap are M6"
+notes = "M4: trap_type[], trap_types, fault (writes ci_panicbuf), pgex2access, kpageflttrap (returns 0 at the curproc check, as C with p == NULL; the pcb_onfault/SMEP/SMAP/uvm_fault code behind it is ported with uvm_fault reported), kerntrap (x86_nmi from intr.c, verify_smap M4-b2, debug_trap is the DEBUG option), trap_print; upageflttrap, usertrap, ast, syscall, frame_dump, verify_pkru, vctrap are M6; M6-a: syscall, ast, child_return; kpageflttrap checks pcb_onfault against the .nofault table and resumes there (uvm_fault still reported)"
 
 [[file]]
 c = "sys/arch/amd64/amd64/locore.S"
@@ -1100,7 +1100,7 @@ rust = "sys/arch/amd64/amd64/locore.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2c19fbf0a3095ed1ff256cc877e5efbb6a3bca37"
-notes = "M4: lgdt and intr_fast_exit, in locore.S (AT&T syntax, included by global_asm! with the frame offsets and selectors as placeholders: assym.h), and an intr_user_exit stub that reports a return to user mode (M6); the DIAGNOSTIC interrupts-blocked check of intr_fast_exit is M4-b2; the kernel entry is the boot protocol; cpu_switchto, sigcode, the syscall entry/exit, the Meltdown trampolines, the copy routines and the local_apic page (lapic.rs has it) are M5/M6; M5-b2: cpu_switchto (the kernel-thread subset: stack pointers, curproc/curpcb/p_cpu/p_stat, %cr3; the xstate/segment resets, the Meltdown CR3s, RSB refill and retguard are M6) and proc_trampoline (calls proc_trampoline_run, Rust, with the function and argument; the syscall return is M6)"
+notes = "M4: lgdt and intr_fast_exit, in locore.S (AT&T syntax, included by global_asm! with the frame offsets and selectors as placeholders: assym.h), and an intr_user_exit stub that reports a return to user mode (M6); the DIAGNOSTIC interrupts-blocked check of intr_fast_exit is M4-b2; the kernel entry is the boot protocol; cpu_switchto, sigcode, the syscall entry/exit, the Meltdown trampolines, the copy routines and the local_apic page (lapic.rs has it) are M5/M6; M5-b2: cpu_switchto (the kernel-thread subset: stack pointers, curproc/curpcb/p_cpu/p_stat, %cr3; the xstate/segment resets, the Meltdown CR3s, RSB refill and retguard are M6) and proc_trampoline (calls proc_trampoline_run, Rust, with the function and argument; the syscall return is M6); M6-a: Xsyscall (SYSCALL_ENTRY, the .Lsyscall_check_asts AST loop with CHECK/CLEAR_ASTPENDING, the register restore and sysretq; without Xsyscall_meltdown, the xstate/FS.base restores, the IBPB/MDS patches, pku_xonly, the RSB refill and DIAGNOSTIC's SPL check); proc_trampoline returns through .Lsyscall_check_asts"
 
 [[file]]
 c = "sys/arch/amd64/amd64/vector.S"
@@ -1134,7 +1134,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "101de9ef803750f678185be4be2f7ab97077c642"
 deps = ["sys/arch/arm64/include/frame.h"]
-notes = "M4: save_registers/restore_registers, handle_el1h_sync/irq/fiq/error, exception_vectors, in exception.S (global_asm! with the frame offsets as placeholders: assym.h); x18 is a general register here (the C's -ffixed-x18 curcpu register), so the EL1 paths save and restore it and recover sp from the frame size; do_ast, handle_el0_* and the trampoline return are M6 (their vector slots are vempty)"
+notes = "M4: save_registers/restore_registers, handle_el1h_sync/irq/fiq/error, exception_vectors, in exception.S (global_asm! with the frame offsets as placeholders: assym.h); x18 is a general register here (the C's -ffixed-x18 curcpu register), so the EL1 paths save and restore it and recover sp from the frame size; do_ast, handle_el0_* and the trampoline return are M6 (their vector slots are vempty); M6-a: do_ast, disable_ss/allow_ss, handle_el0_sync/irq/fiq/error, syscall_return, the 64-bit EL0 vector slots; the return macro is an eret (trampoline.S not ported)"
 
 [[file]]
 c = "sys/arch/arm64/arm64/trap.c"
@@ -1143,7 +1143,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a6caf2c6ba99ae93953cf21a8af80db2ff4e95d4"
 deps = ["sys/arch/arm64/include/armreg.h", "sys/arch/arm64/include/frame.h", "sys/arch/arm64/include/cpu.h", "sys/arch/arm64/arm64/db_interface.c"]
-notes = "M4: is_unpriv_ldst, accesstype, fault (writes ci_panicbuf), kdata_abort (no pcb before M5, pmap_fault_fixup and uvm_fault reported, so every kernel abort panics uvm_fault failed), do_el1h_sync (intr_enable as in C; the we_re_toast path prints, enters db_ktrap and then panics as the non-DDB build does), serror, do_el1h_error, dumpregs; udata_abort, emulate_msr, do_el0_sync, do_el0_error and the svc path are M6"
+notes = "M4: is_unpriv_ldst, accesstype, fault (writes ci_panicbuf), kdata_abort (no pcb before M5, pmap_fault_fixup and uvm_fault reported, so every kernel abort panics uvm_fault failed), do_el1h_sync (intr_enable as in C; the we_re_toast path prints, enters db_ktrap and then panics as the non-DDB build does), serror, do_el1h_error, dumpregs; udata_abort, emulate_msr, do_el0_sync, do_el0_error and the svc path are M6; M6-a: do_el0_sync (svc -> svc_handler; udata_abort and the trapsignals reported and fatal until M6-b), do_el0_error, kdata_abort resumes at pcb_onfault"
 
 [[file]]
 c = "sys/ddb/db_trap.c"
@@ -1530,7 +1530,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "34f4bcdb97b70e5cf96ace4f826ce3b2a81fde03"
 deps = ["sys/sys/queue.h", "sys/sys/timeout.h", "sys/sys/mutex.h", "sys/sys/pclock.h", "sys/sys/refcnt.h", "sys/sys/resource.h", "sys/sys/user.h"]
-notes = "M5-b1: session, pgrp, tusage, process and proc (the members the scheduler, the sleep queues and the kernel threads use; the sigio/klist/ptrace/unveil/pinsyscall/vnode/ucred/filedesc/plimit/vmspace/sigacts members are opaque pointers or left out, each named in a comment), the S* states, P_*/PS_* flags with their %b strings, THREAD_PID_OFFSET, uidinfo, PID_MAX/TID_MASK/NO_PID, SESS_LEADER, FORK_*/EXIT_*/SINGLE_*, cond, cpuset, tu_enter/tu_leave; the function prototypes live with their .c files"
+notes = "M5-b1: session, pgrp, tusage, process and proc (the members the scheduler, the sleep queues and the kernel threads use; the sigio/klist/ptrace/unveil/pinsyscall/vnode/ucred/filedesc/plimit/vmspace/sigacts members are opaque pointers or left out, each named in a comment), the S* states, P_*/PS_* flags with their %b strings, THREAD_PID_OFFSET, uidinfo, PID_MAX/TID_MASK/NO_PID, SESS_LEADER, FORK_*/EXIT_*/SINGLE_*, cond, cpuset, tu_enter/tu_leave; the function prototypes live with their .c files; M6-a: refreshcreds (dorefreshcreds reported)"
 
 [[file]]
 c = "sys/sys/user.h"
@@ -1725,6 +1725,111 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "908f949f3faa70b01be624fe981d8fe8174e4430"
 deps = ["sys/arch/arm64/include/armreg.h", "sys/arch/arm64/include/pcb.h"]
 notes = "M5-b2: fpu_drop; fpu_save, fpu_load (the str q/ldr q register blocks) and fpu_kernel_enter/exit are user FP state (M6), reported"
+
+[[file]]
+c = "sys/kern/syscalls.master"
+status = "skipped"
+notes = "replaced-by-xtask: the input of cargo xtask gen-syscalls (tools/xtask/src/syscalls.rs), which does what makesyscalls.sh does for the C tree"
+[[file]]
+c = "sys/kern/makesyscalls.sh"
+status = "skipped"
+notes = "replaced-by-xtask: cargo xtask gen-syscalls (host Rust, with tests) generates sys/sys/syscall.rs, sys/sys/syscallargs.rs, sys/kern/init_sysent.rs and sys/kern/syscalls.rs from syscalls.master; --check keeps them current in CI"
+[[file]]
+c = "sys/sys/syscall.h"
+rust = "sys/sys/syscall.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ae54566c08bc950f949be7c3745e10bc95d65c7b"
+deps = ["sys/kern/syscalls.master"]
+notes = "M6-a: generated (cargo xtask gen-syscalls): the SYS_* numbers and SYS_MAXSYSCALL; do not edit"
+[[file]]
+c = "sys/sys/syscallargs.h"
+rust = "sys/sys/syscallargs.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1d2c696798745f3d83c5e3d161f13f383c85324f"
+deps = ["sys/kern/syscalls.master", "sys/sys/types.h"]
+notes = "M6-a: generated: the sys_*_args structs over the Syscallarg<T> union (syscallarg(x)); pointers to unported structures are opaque c_void pointers; do not edit"
+[[file]]
+c = "sys/kern/init_sysent.c"
+rust = "sys/kern/init_sysent.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8fa24582fe2defb50069f7f9c5b5c3b2a48516fd"
+deps = ["sys/kern/syscalls.master", "sys/sys/systm.h", "sys/kern/kern_sig.c"]
+notes = "M6-a: generated: sysent[] with every unported syscall at sys_nosys (noted per entry); the generator scans sys/kern and sys/uvm for pub fn sys_*; do not edit"
+[[file]]
+c = "sys/kern/syscalls.c"
+rust = "sys/kern/syscalls.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8c29d60b562201aca355b8970db52312aacf66c1"
+deps = ["sys/kern/syscalls.master"]
+notes = "M6-a: generated: syscallnames[]; do not edit"
+[[file]]
+c = "sys/sys/syscall_mi.h"
+rust = "sys/sys/syscall_mi.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e152f14712f309732038b85e5772983bf029cc91"
+deps = ["sys/sys/systm.h", "sys/kern/kern_sig.c", "sys/kern/sched_bsd.c"]
+notes = "M6-a: mi_syscall (uvm_map_inentry and pledge reported), mi_syscall_return, mi_child_return, mi_ast (ADDUPROF reported), pin_check accepting every call site (no pin tables until exec, M7); KTRACE/SYSCALL_DEBUG/dt not configured"
+[[file]]
+c = "sys/kern/kern_sig.c"
+rust = "sys/kern/kern_sig.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "40ebf21aa155b9199b0888e31b14e2ec81007586"
+deps = ["sys/sys/proc.h"]
+notes = "M6-a: sys_nosys (ptsignal reported) and userret (suspensions and signals reported); the signal machinery is M6-b/M7"
+[[file]]
+c = "sys/arch/amd64/amd64/copy.S"
+rust = "sys/arch/amd64/amd64/copy.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fda317bec35ee81c86b4f186138907242e69c9e3"
+deps = ["sys/arch/amd64/include/pcb.h", "sys/arch/amd64/include/vmparam.h"]
+notes = "M6-a: kcopy, copyout, _copyin, copy_fault, copyoutstr, _copyinstr, copystr_fault and the .nofault table, in copy.S (global_asm! with the pcb/cpu_info offsets); no SMAP stac/clac code patches, no retguard; copy.rs gives the machine::copy entry points over slices"
+[[file]]
+c = "sys/arch/amd64/include/frameasm.h"
+rust = "sys/arch/amd64/amd64/locore.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "18840bc7180ae907bfc73d46ba0e8e7ca9771815"
+deps = []
+notes = "M4/M6-a: the entry macros are expanded where they are used: INTRENTRY, INTR_SAVE_*, INTR_CLEAR_GPRS, TRAP_ENTRY_KERN, INTR_RECURSE in vector.S; SYSCALL_ENTRY, CHECK_ASTPENDING, CLEAR_ASTPENDING in locore.S (Xsyscall); TRAP_ENTRY_USER and INTRENTRY's user path are M6-b"
+[[file]]
+c = "sys/arch/arm64/arm64/copy.S"
+rust = "sys/arch/arm64/arm64/copy.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "bc7a3c71c0519a3a1b94592c9f38a9f2c6e94dbe"
+deps = ["sys/arch/arm64/include/pcb.h"]
+notes = "M6-a: copyin, copyin32, copyout, kcopy in copy.S (global_asm! with the pcb/cpu_info offsets), no retguard; copy.rs gives the machine::copy entry points over slices"
+[[file]]
+c = "sys/arch/arm64/arm64/copystr.S"
+rust = "sys/arch/arm64/arm64/copystr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9ab67d94cbf55a4aa1ab281537d47b243733cebe"
+deps = ["sys/arch/arm64/include/pcb.h"]
+notes = "M6-a: copyinstr, copyoutstr in copystr.S, no retguard"
+[[file]]
+c = "sys/arch/arm64/arm64/syscall.c"
+rust = "sys/arch/arm64/arm64/syscall.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1657d9674586e2a19dba57475b98626340a918cd"
+deps = ["sys/sys/syscall_mi.h", "sys/kern/init_sysent.c"]
+notes = "M6-a: svc_handler and child_return"
+[[file]]
+c = "sys/arch/arm64/arm64/ast.c"
+rust = "sys/arch/arm64/arm64/ast.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "689fd18cdfc5fa4641d977012e0507b44c4aac35"
+deps = ["sys/sys/syscall_mi.h"]
+notes = "M6-a: ast"
 
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"

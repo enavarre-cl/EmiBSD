@@ -22,6 +22,14 @@ SECTIONS
 
     .rodata : {
         *(.rodata .rodata.*)
+
+        /* The fault handlers copy.S declares (DECLARE_ONFAULT); the page fault handler
+         * accepts a pcb_onfault only from this table. */
+        . = ALIGN(8);
+        __nofault_start = .;
+        KEEP(*(.nofault.*))
+        KEEP(*(.nofault))
+        __nofault_end = .;
     } :rodata
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));

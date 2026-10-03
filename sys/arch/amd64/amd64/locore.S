@@ -263,7 +263,8 @@ switch_exited:
  * proc_trampoline: where a thread built by cpu_fork starts, with the switch
  * frame's sf_r12 (the function) and sf_r13 (its argument) in %r12 and %r13.
  * The Rust side (proc_trampoline_run) runs proc_trampoline_mi and then the
- * function; the return to user mode (syscall_return) comes with M6.
+ * function; a user thread's function (child_return) comes back here and the
+ * thread leaves for user mode through the syscall exit path.
  */
 	.globl	proc_trampoline
 	.type	proc_trampoline,@function
@@ -272,5 +273,129 @@ proc_trampoline:
 	movq	%r12,%rdi
 	movq	%r13,%rsi
 	call	proc_trampoline_run
-	ud2
+	movq	%gs:{CI_CURPROC},%r14
+	jmp	.Lsyscall_check_asts
 	.size	proc_trampoline, . - proc_trampoline
+
+/*
+ * syscall insn entry.
+ * Enter here with interrupts blocked; %rcx contains the caller's
+ * %rip and the original rflags has been copied to %r11.  %cs and
+ * %ss have been updated to the kernel segments, but %rsp is still
+ * the user-space value.
+ * First order of business is to swap to the kernel GS.base so that
+ * we can access our struct cpu_info.  After possibly mucking with
+ * pagetables, we switch to our kernel stack.  Once that's in place
+ * we can save the rest of the syscall frame and unblock interrupts.
+ *
+ * Xsyscall_meltdown (the U-K page tables), the xstate and FS.base
+ * restores, the IBPB/MDS code patches, pku_xonly and the RSB refill
+ * are not here (locore.rs).
+ */
+	.globl	Xsyscall
+	.type	Xsyscall,@function
+	.p2align 4, 0x90
+Xsyscall:
+	swapgs
+	movq	%rax,%gs:{CI_SCRATCH}
+	/* SYSCALL_ENTRY: create trapframe */
+	movq	%gs:{CI_KERN_RSP},%rax
+	xchgq	%rax,%rsp
+	movq	%rcx,{TF_RCX}(%rsp)
+	movq	%rcx,{TF_RIP}(%rsp)
+	movq	${GSEL_UDATA},{TF_SS}(%rsp)
+	movq	%rax,{TF_RSP}(%rsp)
+	movq	%gs:{CI_SCRATCH},%rax
+	/* INTR_SAVE_MOST_GPRS_NO_ADJ */
+	movq	%r15,{TF_R15}(%rsp)
+	movq	%r14,{TF_R14}(%rsp)
+	movq	%r13,{TF_R13}(%rsp)
+	movq	%r12,{TF_R12}(%rsp)
+	movq	%r11,{TF_R11}(%rsp)
+	movq	%r10,{TF_R10}(%rsp)
+	movq	%r9,{TF_R9}(%rsp)
+	movq	%r8,{TF_R8}(%rsp)
+	movq	%rdi,{TF_RDI}(%rsp)
+	movq	%rsi,{TF_RSI}(%rsp)
+	movq	%rbp,{TF_RBP}(%rsp)
+	leaq	{TF_RBP}(%rsp),%rbp
+	movq	%rbx,{TF_RBX}(%rsp)
+	movq	%rdx,{TF_RDX}(%rsp)
+	movq	%rax,{TF_RAX}(%rsp)
+	movq	%r11,{TF_RFLAGS}(%rsp)
+	movq	${GSEL_UCODE},{TF_CS}(%rsp)
+	movq	%rax,{TF_ERR}(%rsp)	/* the syscall # stashed for the SPL check */
+	/* INTR_CLEAR_GPRS */
+	xorl	%eax,%eax
+	xorl	%ebx,%ebx
+	xorl	%ecx,%ecx
+	xorl	%edx,%edx
+	xorl	%esi,%esi
+	xorl	%edi,%edi
+	xorl	%r8d,%r8d
+	xorl	%r9d,%r9d
+	xorl	%r10d,%r10d
+	xorl	%r11d,%r11d
+	xorl	%r12d,%r12d
+	xorl	%r13d,%r13d
+	xorl	%r14d,%r14d
+	xorl	%r15d,%r15d
+	sti
+
+	movq	%gs:{CI_CURPROC},%r14
+	movq	%rsp,{P_MD_REGS}(%r14)	# save pointer to frame
+	andl	$~{MDP_IRET},{P_MD_FLAGS}(%r14)
+	movq	%rsp,%rdi
+	call	syscall
+
+.Lsyscall_check_asts:
+	/* Check for ASTs on exit to user mode. */
+	cli
+	/* CHECK_ASTPENDING(%r11) */
+	movq	%gs:{CI_CURPROC},%r11
+	cmpq	$0,%r11
+	je	99f
+	cmpl	$0,{P_MD_ASTPENDING}(%r11)
+99:
+	je	2f
+	movl	$0,{P_MD_ASTPENDING}(%r11)	/* CLEAR_ASTPENDING(%r11) */
+	sti
+	movq	%rsp,%rdi
+	call	ast
+	jmp	.Lsyscall_check_asts
+
+2:
+	/* DIAGNOSTIC's "SPL NOT LOWERED ON SYSCALL" check: M6-b (printf from assembly). */
+
+	/* Could registers have been changed that require an iretq? */
+	testl	${MDP_IRET},{P_MD_FLAGS}(%r14)
+	jne	intr_user_exit
+
+	/* The xstate (CPUPF_USERXSTATE) and FS.base (CPUPF_USERSEGS) restores: M6-b. */
+
+.Lsyscall_restore_registers:
+	movq	{TF_R8}(%rsp),%r8
+	movq	{TF_R9}(%rsp),%r9
+	movq	{TF_R10}(%rsp),%r10
+	movq	{TF_R12}(%rsp),%r12
+	movq	{TF_R13}(%rsp),%r13
+	movq	{TF_R14}(%rsp),%r14
+	movq	{TF_R15}(%rsp),%r15
+	movq	{TF_RBX}(%rsp),%rbx
+	movq	{TF_RDX}(%rsp),%rdx
+
+	movq	{TF_RDI}(%rsp),%rdi
+	movq	{TF_RSI}(%rsp),%rsi
+	movq	{TF_RBP}(%rsp),%rbp
+
+	/*
+	 * We need to finish reading from the trapframe, then swapgs and
+	 * return (the user page table switch is the Meltdown path, M6-b).
+	 */
+	movq	{TF_RAX}(%rsp),%rax
+	movq	{TF_RIP}(%rsp),%rcx
+	movq	{TF_RFLAGS}(%rsp),%r11
+	movq	{TF_RSP}(%rsp),%rsp
+	swapgs
+	sysretq
+	.size	Xsyscall, . - Xsyscall

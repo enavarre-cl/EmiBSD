@@ -1,33 +1,34 @@
 # Status
 
-Milestone: **M5 done**; next is M6. Updated: 2026-10-02.
+Milestone: **M6 in progress** (part a, the system call plumbing, done; part b, user address
+spaces and exec, next). Updated: 2026-10-02.
 
 Done:
-- M5-b part 2 (the exit criterion): `kern_synch.c` (sleep queues, `tsleep`/`msleep`/`wakeup`,
-  `refcnt_finalize`, `cond_wait`), `sched_bsd.c` (load average, `schedcpu`, `mi_switch`,
-  `setrunnable`, `scheduler_start`), `kern_sched.c` (run queues, cpusets, idle thread,
-  `setrunqueue`/`remrunqueue`/`sched_chooseproc`), `kern_fork.c` (`thread_new`,
-  `process_new`, `fork1` for kernel threads, `proc_trampoline_mi`), `kthread_create`, the
-  softclock thread, `timeout_barrier`, `kern_resource.c` (`tuagg_*`), `uvm_glue.c`
-  (u-areas), `subr_xxx.c`, `vmmeter.h`, `acct.h`; `machine::cpu` grew `cpu_switchto`,
-  `cpu_fork`, `clear_resched`, `cpu_unidle`, `cpu_idle_*`, `cpu_info_foreach`,
-  `curcpu_mutex_level`; amd64 `cpu_switchto`/`proc_trampoline` in `locore.S`, `cpu_fork`,
-  `pmap_activate`, `hlt` idle; arm64 `cpuswitch.S`, `cpu_fork`, `fpu_drop`, `pmap_setttb`,
-  `wfi` idle. `selftest=kthread` (two kthreads, 100 turns over `msleep`/`wakeup`, about
-  100 context switches) passes in `just smoke` on both archs. Host tests: 130.
-- Earlier in M5: clocks on both archs (`selftest=clock`), `struct proc`/`process`, proc0,
-  the process lists. Project renamed to EmiBSD.
+- M6-a: `cargo xtask gen-syscalls` (`syscalls.master` → `sys/sys/syscall.rs`,
+  `syscallargs.rs`, `kern/init_sysent.rs`, `kern/syscalls.rs`; `--check` in `just ci`),
+  `struct sysent`/`SCARG` (`systm.rs`), `syscall_mi.h` (`mi_syscall`, `mi_syscall_return`,
+  `mi_child_return`, `mi_ast`, `pin_check`), `kern_sig.c`'s `sys_nosys` and `userret`,
+  `refreshcreds`; amd64 `Xsyscall` with the AST loop and `sysretq`, `syscall()`, `ast()`,
+  `child_return`, `copy.S` with the `.nofault` table and `pcb_onfault` recovery in
+  `kpageflttrap`, `MSR_LSTAR`; arm64 `handle_el0_*`/`do_ast`/`syscall_return`,
+  `do_el0_sync` (`svc` only), `svc_handler`, `ast`, `copy.S`/`copystr.S`, `pcb_onfault`
+  recovery in `kdata_abort`; the `machine::copy` contract (`copyin`/`copyout`/`copyinstr`/
+  `copyoutstr`/`kcopy`) on all three machines. Nothing runs in user mode yet: the paths are
+  inert until M6-b.
+- M5 done before: clocks, processes, scheduler, kernel threads (`selftest=kthread`).
 
-Next (M6, syscalls + minimal init):
-- `syscalls.master` → `xtask gen-syscalls` → `sys/sys/syscall.rs` + `init_sysent`, the
-  per-arch syscall entry and `syscall_return`/`intr_user_exit` (the trampolines now panic
-  after a thread function returns), `exec_elf.c`, user `uvm_map`/`uvm_fault`,
-  `sys_generic.c` (`write`), `kern_exit.c` (`exit1`/`exit2`, `kthread_exit`,
-  `sched_idle`'s dead list), `kern_sig.c` (`sleep_signal_check`), credentials (`crget`),
-  `lim_startup`/`lim_fork`, `uvmspace_init`; a freestanding Rust `init` loaded as a Limine
-  module. Exit criterion: `init` prints via `sys_write` and exits on both archs.
-- Known M5 leftovers reported at boot: the u-area guard page (needs `km_alloc` from
-  `kernel_map`), arm64 `pmap_setttb`'s TTBR0 switch (user pmaps), `exit2` from idle.
+Next (M6-b, user address spaces and exec):
+- `vmspace` (`uvm_extern.h`), `uvmspace_init/alloc/free`, user `pmap_create/destroy/enter`
+  on both archs, `pmap_activate` with a real user pmap and `cpu_switchto`'s user bits
+  (`ci_kern_rsp`, `ci_proc_pmap`, segment resets, `TTBR0`), `cpu_fork` with a user stack,
+  the trap-from-user paths (amd64 `TRAP_ENTRY_USER`/`INTRENTRY`'s user branch,
+  `intr_user_exit`; arm64 `udata_abort`), `setregs`, `exec_elf.c` + `kern_exec.c` for a
+  static ELF, the Limine module carrying a freestanding Rust `init`, `start_init`,
+  `kern_exit.c` (`exit1`/`exit2`, `kthread_exit`), `sys_exit`; decision pending: port
+  `uvm_map`/`uvm_fault` (M6 as planned, 7000+ lines) or wire the first process with wired
+  mappings and defer them.
+- M6-c: `sys_write` to the console for fds 1/2 until the file table exists; the exit
+  criterion "init prints via sys_write and exits".
 
 Blockers:
 - None. `crc32` stays `skipped: license: zlib`.

@@ -6,6 +6,7 @@
 //! `[[extra]]`).
 
 pub mod init_main;
+pub mod init_sysent;
 pub mod kern_clock;
 pub mod kern_clockintr;
 pub mod kern_fork;
@@ -15,6 +16,7 @@ pub mod kern_malloc;
 pub mod kern_proc;
 pub mod kern_resource;
 pub mod kern_sched;
+pub mod kern_sig;
 pub mod kern_softintr;
 pub mod kern_subr;
 pub mod kern_synch;
@@ -34,4 +36,5 @@ pub mod subr_prf;
 pub mod subr_prof;
 pub mod subr_tree;
 pub mod subr_xxx;
+pub mod syscalls;
 pub mod unported;

@@ -82,6 +82,7 @@
 
 use core::ptr;
 
+use crate::arch::amd64::amd64::locore::Xsyscall;
 use crate::arch::amd64::include::cpu::{CPUF_PRIMARY, CpuInfo};
 use crate::arch::amd64::include::cpu_full::{
     CpuInfoFull, DBLFLT_STACK_WORDS, NMI_STACK_WORDS, TRAMP_STACK_WORDS,
@@ -127,8 +128,8 @@ pub unsafe fn cpu_init_msrs(ci: &CpuInfo) {
             (u64::from(gsel(GCODE_SEL, SEL_KPL)) << 32)
                 | (u64::from(gsel(GUDATA_SEL - 1, SEL_UPL)) << 48),
         );
-        // Xsyscall (and Xsyscall_meltdown): M6.
-        wrmsr(MSR_LSTAR, 0);
+        // cpu_meltdown ? Xsyscall_meltdown : Xsyscall: the U-K trampoline page is M6-b.
+        wrmsr(MSR_LSTAR, Xsyscall as *const () as usize as u64);
         wrmsr(MSR_CSTAR, 0);
         wrmsr(MSR_SFMASK, PSL_NT | PSL_T | PSL_I | PSL_C | PSL_D | PSL_AC);
 

@@ -100,7 +100,15 @@ fmt:
 check-ports:
     cargo xtask ports check
 
+# Regenerate the system call tables from reference/.../syscalls.master (sys/sys/syscall.rs,
+# syscallargs.rs, kern/init_sysent.rs, kern/syscalls.rs). Rerun after porting a sys_* function.
+gen-syscalls:
+    cargo xtask gen-syscalls
+
+check-syscalls:
+    cargo xtask gen-syscalls --check
+
 drift:
     cargo xtask ports drift
 
-ci: fmt clippy test build smoke check-ports
+ci: fmt clippy test build smoke check-ports check-syscalls
