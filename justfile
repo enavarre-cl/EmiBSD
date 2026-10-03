@@ -197,6 +197,32 @@ smoke-login: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "rc: multi-user" --expect "EmiBSD/arm64 (Amnesiac) (tty00)" \
         --expect "uid=0(root)" --expect " 8.0 GENERIC#" --expect "arm64"
 
+# M9a: the routing socket and the `net.route` sysctl from userland. Logs in as `smoke-login`
+# does, then runs OpenBSD's route(8) (`show`: a routing socket, then NET_RT_DUMP through
+# sysctl(2); `get`: RTM_GET written to the routing socket and its answer read back) and
+# ifconfig(8) (getifaddrs(3): NET_RT_IFLIST, then interface ioctls on an AF_INET socket). The kernel's network self-test configured vio0 (10.0.2.15) and the default route
+# through 10.0.2.2 before init ran. Not part of `smoke` yet: ifconfig needs the inet socket
+# protocols (UDP), ported in parallel work.
+smoke-route: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-route: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send 'route -n show -inet\n' \
+        --send-after "# " --send 'route -n get 8.8.8.8\n' \
+        --send-after "# " --send 'ifconfig -a\n' \
+        --expect "rc: multi-user" --expect "Internet:" --expect "default            10.0.2.2" \
+        --expect "10.0.2/24" --expect "gateway: 10.0.2.2" --expect "interface: vio0" \
+        --expect "lo0: flags=" --expect "vio0: flags="
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send 'route -n show -inet\n' \
+        --send-after "# " --send 'route -n get 8.8.8.8\n' \
+        --send-after "# " --send 'ifconfig -a\n' \
+        --expect "rc: multi-user" --expect "Internet:" --expect "default            10.0.2.2" \
+        --expect "10.0.2/24" --expect "gateway: 10.0.2.2" --expect "interface: vio0" \
+        --expect "lo0: flags=" --expect "vio0: flags="
+
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
     cargo xtask symbolize --arch {{arch}}
