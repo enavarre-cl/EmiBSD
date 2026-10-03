@@ -11,6 +11,7 @@ use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicUsize, Ordering
 use libkern::StaticCell;
 
 use alloc::boxed::Box;
+use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::conf::param::HZ;
@@ -28,6 +29,11 @@ use crate::kern::kern_tc::{getuptime, nsecuptime};
 use crate::kern::kern_timeout::{timeout_add_msec, timeout_set};
 use crate::kern::subr_pool::{pool_destroy, pool_get, pool_init, pool_put, pool_reclaim};
 use crate::kern::subr_prf::Str;
+use crate::kern::uipc_mbuf::{
+    MBPOOL, MBUF_MEM_ALLOC, MBUF_MEM_LIMIT, MCLPOOLS, MTAGPOOL, m_adj, m_copyback, m_copydata,
+    m_copym, m_dup_pkt, m_freem, m_gethdr, m_pullup, m_split,
+};
+use crate::kern::uipc_mbuf2::{m_tag_find, m_tag_get, m_tag_prepend};
 use crate::kprintf;
 use crate::machine::cons::cn_rx_intr_establish;
 use crate::machine::cpu::curproc;
@@ -37,6 +43,7 @@ use crate::machine::pmap::{
     pmap_update,
 };
 use crate::sys::malloc::{M_NOWAIT, M_TEMP, M_ZERO};
+use crate::sys::mbuf::{M_COPYALL, M_DONTWAIT, MT_DATA, PACKET_TAG_GRE};
 use crate::sys::mman::{PROT_READ, PROT_WRITE};
 use crate::sys::mutex::Mutex;
 use crate::sys::param::{PAGE_SIZE, PWAIT};
@@ -294,6 +301,67 @@ pub fn malloc_pool_stress() {
             free_before,
             free_after
         );
+    }
+}
+
+/// Builds, copies, pulls up, splits and frees mbuf chains right after `mbinit`, so the mbuf
+/// and cluster pools allocate real pages through `m_pool_allocator` on the machine, and
+/// checks that every mbuf, cluster and tag goes back to its pool.
+pub fn mbuf_chains() {
+    let data: Vec<u8> = (0..3000u32).map(|i| (i * 7 + 3) as u8).collect();
+    let mut ok = true;
+
+    let run = || -> Option<bool> {
+        let mut ok = true;
+        // a packet header mbuf grown by m_copyback into clusters
+        let m = m_gethdr(M_DONTWAIT, MT_DATA)?;
+        m_copyback(m, 0, &data, M_DONTWAIT).ok()?;
+        ok &= m.m_pkthdr().len.get() == 3000;
+
+        // a copy shares the clusters; both read back the same bytes
+        let copy = m_copym(m, 0, M_COPYALL, M_DONTWAIT)?;
+        let mut back = vec![0u8; 3000];
+        m_copydata(copy, 0, &mut back);
+        ok &= back == data;
+
+        // a tag survives the copy of the header
+        let tag = m_tag_get(PACKET_TAG_GRE, 0, M_DONTWAIT)?;
+        m_tag_prepend(m, tag);
+        let dup = m_dup_pkt(m, 2, M_DONTWAIT)?;
+        ok &= m_tag_find(dup, PACKET_TAG_GRE, None).is_some();
+
+        // pull the head up, split the packet, trim both ends
+        let m = m_pullup(m, 200)?;
+        let tail = m_split(m, 1000, M_DONTWAIT)?;
+        m_adj(tail, 10);
+        m_adj(tail, -10);
+        ok &= m.m_pkthdr().len.get() == 1000 && tail.m_pkthdr().len.get() == 1980;
+        let mut part = vec![0u8; 1980];
+        m_copydata(tail, 0, &mut part);
+        ok &= part[..] == data[1010..2990];
+
+        m_freem(m);
+        m_freem(tail);
+        m_freem(copy);
+        m_freem(dup);
+        Some(ok)
+    };
+    match run() {
+        Some(r) => ok &= r,
+        None => ok = false,
+    }
+
+    let out = MBPOOL.pr_nout.get()
+        + MTAGPOOL.pr_nout.get()
+        + MCLPOOLS.iter().map(|pp| pp.pr_nout.get()).sum::<u32>();
+    if ok && out == 0 {
+        kprintf!(
+            "selftest: mbufs ok ({} KiB of mbuf memory in use, limit {} KiB)\n",
+            MBUF_MEM_ALLOC.load(Ordering::Relaxed) / 1024,
+            MBUF_MEM_LIMIT.load(Ordering::Relaxed) / 1024
+        );
+    } else {
+        kprintf!("selftest: mbufs FAILED ({} items still out)\n", out);
     }
 }
 

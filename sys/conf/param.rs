@@ -45,15 +45,17 @@
 //!
 //! Status: `wip`. Milestone M2 needs the clock rate (`delay(9)` on amd64 divides by `hz`);
 //! M5 adds `maxprocess`, `maxthread` and `maxfiles` from `MAXUSERS` (80, as `GENERIC`
-//! configures); `nmbclust`, `bufcachepercent`, `bufpages`, `fscale`, the System V IPC limits
-//! and `utsname` arrive with the subsystems that read them.
+//! configures); M7b adds `nmbclust` for the mbuf allocator; `bufcachepercent`, `bufpages`,
+//! `fscale`, the System V IPC limits and `utsname` arrive with the subsystems that read them.
 //!
 //! ## Deviations
-//! - The `int` globals are atomics: `sysctl(8)` writes them at runtime in OpenBSD too.
+//! - The `int` and `long` globals are atomics: `sysctl(8)` writes them at runtime in OpenBSD
+//!   too.
 
-use core::sync::atomic::AtomicI32;
+use core::sync::atomic::{AtomicI32, AtomicI64};
 
 use crate::sys::kernel::HZ as DEFAULT_HZ;
+use crate::sys::param::NMBCLUSTERS;
 
 /// `hz`: the system clock's frequency, in ticks per second.
 pub static HZ: AtomicI32 = AtomicI32::new(DEFAULT_HZ);
@@ -79,3 +81,5 @@ pub static MAXPROCESS: AtomicI32 = AtomicI32::new(NPROCESS);
 pub static MAXTHREAD: AtomicI32 = AtomicI32::new(2 * NPROCESS);
 /// \[a\] `maxfiles`.
 pub static MAXFILES: AtomicI32 = AtomicI32::new(5 * (NPROCESS + MAXUSERS) + 80);
+/// \[a\] `nmbclust`: the limit on the number of mbuf clusters.
+pub static NMBCLUST: AtomicI64 = AtomicI64::new(NMBCLUSTERS as i64);

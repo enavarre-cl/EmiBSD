@@ -84,6 +84,7 @@ use crate::kern::kern_task::taskq_init;
 use crate::kern::kern_timeout::{timeout_proc_init, timeout_set, timeout_startup};
 use crate::kern::sched_bsd::{sched_lock_init, scheduler_start};
 use crate::kern::subr_prf::{Str, panic};
+use crate::kern::uipc_mbuf::{mbcpuinit, mbinit};
 use crate::kprintf;
 use crate::machine::cons::consinit;
 use crate::machine::cpu::{Cpu, cpu_configure, cpu_startup, curcpu};
@@ -180,7 +181,9 @@ pub fn main() -> ! {
 
     // Initialize mbuf's. Do this now because we might attempt to allocate mbufs or mbuf
     // clusters during autoconfiguration.
-    let _ = unported!("mbinit");
+    mbinit();
+    #[cfg(feature = "qemu")]
+    crate::kern::selftest::mbuf_chains();
 
     // NSTOEPLITZ: not configured.
 
@@ -343,7 +346,7 @@ pub fn main() -> ! {
     // GPROF / DDBPROF: not configured.
 
     // Enable per-CPU data.
-    let _ = unported!("mbcpuinit");
+    mbcpuinit();
     let _ = unported!("kqueue_init_percpu");
     let _ = unported!("pmap_init_percpu");
     let _ = unported!("uvm_init_percpu");

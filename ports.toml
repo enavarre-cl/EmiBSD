@@ -314,8 +314,8 @@ rust = "sys/conf/param.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "f7fc6e979c5515b0611ef14130bfba613b2619b3"
-deps = ["sys/sys/kernel.h"]
-notes = "M2: hz, tick, tick_nsec, utc_offset as atomics; maxprocess/maxthread/maxfiles/nmbclust/bufcachepercent/bufpages/fscale, SysV IPC limits and utsname come with their subsystems; M5: MAXUSERS (80, GENERIC), NPROCESS/NTEXT/NVNODE, maxprocess, maxthread, maxfiles"
+deps = ["sys/sys/kernel.h", "sys/sys/param.h"]
+notes = "M2: hz, tick, tick_nsec, utc_offset as atomics; maxprocess/maxthread/maxfiles/nmbclust/bufcachepercent/bufpages/fscale, SysV IPC limits and utsname come with their subsystems; M5: MAXUSERS (80, GENERIC), NPROCESS/NTEXT/NVNODE, maxprocess, maxthread, maxfiles; M7b: nmbclust (AtomicI64, NMBCLUSTERS)"
 
 # the console framework and the two UART drivers QEMU exposes
 
@@ -439,7 +439,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a51ecb9a39f6a6983aed871ee646c96515e24e75"
 deps = ["sys/kern/subr_prf.c", "sys/dev/cons.h"]
-notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real"
+notes = "M2: main() skeleton in the C's order (consinit, copyright, then every step reports itself unported until its subsystem lands), copyright, boothowto, db_active, ncpus, ncpusfound; main takes no framep and never returns; proc0/process0, start_init, check_console, kthreads are M5; M5-a: timeout_startup, SCHED_LOCK_INIT, sched_init, clockqueue_init, sched_init_cpu and timeout_proc_init are called; initclocks runs (the LAPIC timer on amd64, agtimer on arm64) and selftest=clock checks it; M5-b1: proc0/process0/pgrp0/session0 are statics here; main sets curproc first, calls procinit, builds process 0 as the C does (process_initialize, the lists and hashes, PS_SYSTEM/P_SYSTEM, SONPROC, nice, the name), p_addr = proc0paddr, chgproccnt(0, 1), ci_randseed; crget, the p_sleep_to timeout (endtsleep, M5-b2), signal_init/siginit, fdinit, lim_startup and uvmspace_init stay reported; M5-b2: proc0 p_sleep_to (endtsleep), sleep_queue_init, scheduler_start, kthread_run_deferred_queue (idle and softclock threads), the proc0 tsleep loop (without feature qemu) and selftest=kthread; M6-b: initprocess (null until start_init), the reaper kthread, the boot modules printed (init as a Limine module); the kthread selftest runs after the reaper exists; M6-b2: vmspace0 (uvmspace_init over pmap_kernel, process0/proc0 point at it), fork1 of init (FORK_FORK, start_init) sets initprocess, start_init_exec with its wakeup, start_init (waits for main, check_console reported, execs the init module through exec_image and returns to user mode; 'init: not found' panics as in C), set_init_module from stand; proc0 sleeps in its tsleep loop under qemu too (init's exit ends the run); the kthread selftest still exits early; M7a: rw_obj_init runs; M7a-3b: limit0 with lim_startup and uvm_init_limits; M7b: taskq_init runs (systq and systqmp threads from kthread_run_deferred_queue), selftest=taskq after the reaper exists; kern_prot.c: proc0's credentials (crget, cr_ngroups = 1) are real; M7b: mbinit runs (followed by selftest mbufs under feature qemu), mbcpuinit runs"
 
 # ddb-lite (Mach-licensed sources: Carnegie Mellon)
 
@@ -2140,13 +2140,44 @@ upstream_blob = "36373790e7747330b9e89023d9ddff6b5676f616"
 deps = ["sys/sys/rwlock.h", "sys/kern/kern_synch.c", "sys/kern/subr_pool.c"]
 notes = "M7a: rw_self, rw_enter_read/write, rw_exit_read/write, rw_init_flags_trace/rw_init_flags/rw_init (_rw_init_flags without lock_type), rw_enter (Result: EBUSY under RW_NOSLEEP, the sleep's error under RW_INTR), rw_do_enter_write/read (no RW_SPINS: MULTIPROCESSOR not configured), rw_read_incr, rw_downgrade, rw_upgrade, rw_exit, rw_exited, rw_status, rw_assert_wrlock/rdlock/anylock/unlocked (empty without feature diagnostic), rrw_init_flags/rrw_init/rrw_enter/rrw_exit/rrw_status, rwlock_obj and rw_obj_init/rw_obj_alloc_flags/rw_obj_alloc (returns the lock)/rw_obj_hold/rw_obj_free; WITNESS, RWDIAG and the dt tracepoints not configured; host tests"
 
+# ---------------------------------------------------------------------------
+# M7b: the network (mbufs first)
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/sys/mbuf.h"
+rust = "sys/sys/mbuf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "aa18a13ceb43581022514839d4ea6f873b1074ea"
+deps = ["sys/sys/queue.h", "sys/sys/malloc.h", "sys/sys/mutex.h"]
+notes = "M7b: MSIZE/MLEN/MHLEN/MAXMCLBYTES/MINCLSIZE/MCLSHIFT/MCLBYTES, struct m_tag (data after the struct), struct m_hdr (Cells; m_next/m_nextpkt are Option<&'static Mbuf>), struct pkthdr_pf (statekey/inp untyped until pf(4)/netinet), struct pkthdr, struct mbuf_ext (DEBUG fields under feature debug), struct mbuf (#[repr(C)], MSIZE bytes; the M_dat union is one byte area with m_pkthdr/m_ext views and m_pkthdr_assign/m_pkthdr_zero/m_ext_assign for the structure copies), the m_next/m_len/... macros as methods returning the Cell, M_*/PF_TAG_*/MT_*/checksum flags and the %b strings, M_COPYFLAGS, M_DONTWAIT/M_WAIT, MCLREFDEBUGN/O (track_caller), m_extreferenced (false without M_EXT), MCLISREFERENCED, MCLINITREFERENCE, MEXTADD, MCLGET/MCLGETL, MEXTFREE_POOL, M_MOVE_HDR/M_MOVE_PKTHDR, M_READONLY, M_COPYALL, enum mbstat_counters, struct mbstat, struct mbuf_list/mbuf_queue (ml_len atomic for mq_len's READ_ONCE), m_freemp, mbstat_inc (one atomic array: percpu.h not ported), PACKET_TAG_*/MTAG_BITS/PACKET_TAG_MAXSIZE/M_MAXLOOP, ml_len/ml_empty/MBUF_LIST_FIRST/NEXT/FOREACH (iter), mq_len/mq_empty/mq_full/mq_drops; MGET/MGETHDR/M_PREPEND are plain assignments at the call site; host layout test and a reference-backed constants test"
+
+[[file]]
+c = "sys/kern/uipc_mbuf.c"
+rust = "sys/kern/uipc_mbuf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7ce8a38cbd2beaa8c0e36c675339e24ce1e82930"
+deps = ["sys/sys/mbuf.h", "sys/kern/subr_pool.c", "sys/kern/kern_synch.c", "sys/kern/kern_lock.c", "sys/kern/kern_tc.c", "sys/conf/param.c", "sys/uvm/uvm_km.c", "sys/lib/libkern/explicit_bzero.c"]
+notes = "M7b: mbstat (one atomic array: percpu.h not ported), mbpool, mtagpool, mclsizes/mclnames (names built at compile time)/mclpools, max_linkhdr/max_protohdr/max_hdr, struct m_ext_refs and m_ext_refs_pool, m_extfree_refs_fn, mbuf_mem_limit/alloc, m_pool_allocator (pa_pagesz from pool_allocator_multi's initialiser), mextfree_fns/num_extfree_fns (StaticCell), M_DATABUF/M_SIZE, mbinit (runs in main), mbcpuinit (nothing to do without MULTIPROCESSOR), nmbclust_update, m_get, m_gethdr, m_inithdr, m_clearhdr, m_removehdr, m_resethdr, m_calchdrlen, m_getclr, m_clpool, m_clget, m_extfree_pool, m_ext_refs_shared, m_extfree_refs, m_free, m_extref, mextfree_register, m_extfree, m_freem, m_purge, m_defrag, m_prepend, m_copym, m_copydata (slice), m_copyback (slice), m_cat, m_adj, m_pullup, m_getptr (returns the offset), m_split, m_makespace (returns the offset), m_devget (slice), m_zero, m_apply (closure), m_leadingspace, m_trailingspace, m_align, m_dup_pkthdr, m_dup_pkt, m_microtime (returns the timeval), m_pool_alloc, m_pool_free, m_pool_init, m_pool_noconstraints, m_pool_used, m_print/m_types/m_print_chain/m_print_packet (ddb, PrFn), ml_* and mq_* functions; reported: mbuf_dma_64bit_enable (ifnetlist, net/if.c), sysctl_mq's sysctl_rdint/sysctl_int (kern_sysctl.c); NPF paths not compiled (pf(4) not ported); IFQ_DEFPRIO/IFQCTL_* (net/if.h) and CACHELINESIZE (sys/percpu.h) are private constants; PR_WAITOK allocations fail instead of sleeping (pool_get); host tests (chains, copydata/copyback, adj, pullup, split with shared clusters, prepend, cat, copym, defrag, dup_pkt, getptr, apply, devget, pulldown, makespace, lists, queues, tags, ddb printers) and selftest 'mbufs ok' on both archs"
+
+[[file]]
+c = "sys/kern/uipc_mbuf2.c"
+rust = "sys/kern/uipc_mbuf2.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d65a7ccd5167c98b025d6af9e2a5235dde2f8bca"
+deps = ["sys/sys/mbuf.h", "sys/kern/uipc_mbuf.c", "sys/kern/subr_pool.c"]
+notes = "M7b: m_pulldown (offp is Option<&mut i32>), m_dup1, m_tag_get, m_tag_prepend, m_tag_delete (unsafe: the tag must be on the mbuf's list), m_tag_delete_chain, m_tag_find, m_tag_copy, m_tag_copy_chain, m_tag_first, m_tag_next; tags borrow from their mbuf; host tests"
+
 [[extra]]
 rust = "sys/kern/rust_alloc.rs"
 reason = "project helper: the Rust GlobalAlloc over malloc(9)/free(9), feature alloc"
 
 [[extra]]
 rust = "sys/kern/selftest.rs"
-reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access, selftest=uart for the receive-interrupt echo (M4) and selftest=clock for hz clock interrupts plus a timeout (M5)"
+reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access, selftest=uart for the receive-interrupt echo (M4) and selftest=clock for hz clock interrupts plus a timeout (M5); mbuf_chains after mbinit (M7b)"
 
 [[extra]]
 rust = "sys/reftest.rs"

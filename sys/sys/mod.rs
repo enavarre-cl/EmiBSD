@@ -13,6 +13,7 @@ pub mod exec_elf;
 pub mod kernel;
 pub mod limits;
 pub mod malloc;
+pub mod mbuf;
 pub mod mman;
 pub mod msgbuf;
 pub mod mutex;
