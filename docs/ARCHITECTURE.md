@@ -164,6 +164,45 @@ More appear as they are needed (`multiprocessor`, `small_kernel`, ...), one per 
 Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, `uart_16550`,
 `fdt`, `linked_list_allocator`, `buddy_system_allocator`). Porting that code is the project.
 
+## The userland build (M8)
+
+The userland is OpenBSD's own C, cross-compiled unmodified (the user's M8 decision), not ported.
+`cargo xtask userland --arch A` (`tools/xtask/src/userland.rs`, `just userland`) builds, into
+`target/userland/<arch>/`: the `/usr/include` sysroot as `include/Makefile` installs it
+(`FILES`, `DIRS`, `LFILES`/`MFILES` links, the kernel headers of `LDIRS`, `<machine/*>`, and of
+the `RDIRS` only `lib/libutil`'s headers and `lib/librpcsvc`'s `rpcgen` output, which libc's YP
+code includes); `lib/csu`; `libc.a` (988 objects on amd64, 989 on arm64) and `libutil.a`; and
+`sbin/init`, `bin/ksh`, `bin/echo`, `bin/ls` as static PIE executables, the form
+OpenBSD's `cc -static` gives `/bin` and `/sbin` (`rcrt0.o` relocates the program itself; no
+`PT_INTERP`).
+
+Nothing is listed by hand. `tools/xtask/src/bsdmake.rs` evaluates the subset of `make(1)` the
+Makefiles use (assignments, lazy expansion, the `:L :M :N :R :S :old=new` modifiers, `.if`,
+`.for`, `.include`, `.PATH`, explicit rules) and fails on anything else. `SRCS`, `OBJS`, `.PATH`
+and `CFLAGS` come from it; explicit rules are run through `/bin/sh` as make would, so the
+system-call stubs are made exactly as `lib/libc/sys/Makefile.inc` makes them (`GENERATE.*`
+piped into `FINISH.*`), and so are the generated hash helpers and the `rpcsvc` headers.
+`share/mk` is not in the reference clone: `sys.mk` and `bsd.own.mk` are stood in for by
+predefined variables (`CFLAGS?= -O2 -pipe ${DEBUG}`, `COMPILE.c`, `YP=yes`, `STATIC=-static`,
+...), `bsd.prog.mk`/`bsd.lib.mk` by their variable effects (`../Makefile.inc`, `COPTS`) and the
+implicit `.c.o`/`.S.o` rules; `CDIAGFLAGS` (warnings only) is empty. Apple clang's OpenBSD
+target supplies the rest of OpenBSD's defaults by itself: PIE, `-fstack-protector-strong`,
+IBT (`-fcf-protection=branch`) on amd64, BTI and return-address signing on arm64, emulated TLS.
+
+Workarounds, each printed by the build (flags only; no source is edited):
+
+- `-fret-clean` (amd64 libc) is an OpenBSD-local clang option Apple clang rejects; it is dropped.
+- `rpcgen` is built for the Mac with `-D'pledge(p,e)=0'` (macOS has no `pledge(2)`).
+- `ksh` is built like OpenBSD's install-media ksh: `-DSMALL`, no `-lcurses`, because
+  `libcurses` (ncurses, with host-built generators and `share/termtypes`) is not built yet.
+- macOS file systems ignore case: libc's `_exit.o` stub and `stdlib/_Exit.o` are built in
+  separate directories (both are archive members).
+- `-lcompiler_rt` is left out of the link line while `gnu/lib/libcompiler_rt` is not in the
+  clone; amd64 needs nothing from it, arm64 needs `__multf3` and does not link yet
+  (`docs/SETUP.md`, "Userland toolchain").
+
+Every OpenBSD file compiled or included is classified by licence into `licences.txt`.
+
 ## Deviations from OpenBSD (deliberate)
 
 - Limine instead of `boot(8)`/`efiboot`.

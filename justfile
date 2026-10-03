@@ -140,6 +140,15 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
 symbolize arch:
     cargo xtask symbolize --arch {{arch}}
 
+# --- userland (M8) ---------------------------------------------------------------
+
+# Cross-compile OpenBSD's libc, init(8), ksh(1), echo(1) and ls(1), unmodified, from the reference
+# sources into target/userland/<arch> with Apple clang and LLD 17 (docs/SETUP.md, "Userland
+# toolchain"). Slow and tool-dependent, so not part of `ci`.
+userland:
+    cargo xtask userland --arch amd64
+    cargo xtask userland --arch arm64
+
 # --- quality -----------------------------------------------------------------
 
 # host unit tests (libkern + bsd through sys/arch/host, plus xtask's own)

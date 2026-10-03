@@ -18,6 +18,8 @@
 //! cargo xtask symbolize --arch A [--kernel K]
 //!                                          annotate the addresses of a stack trace on stdin
 //!                                          with K's symbols (default: the debug kernel)
+//! cargo xtask userland --arch A            cross-compile OpenBSD's libc, init, ksh, echo and
+//!                                          ls from the reference sources (target/userland/A)
 //! ```
 //!
 //! Paths are resolved from the workspace root (derived from `CARGO_MANIFEST_DIR`), never from the
@@ -31,8 +33,10 @@ use std::process::{Command, ExitCode};
 use serde::Deserialize;
 
 mod boot;
+mod bsdmake;
 mod symbolize;
 mod syscalls;
+mod userland;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -49,7 +53,7 @@ const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | 
                      ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] [--init I] | \
                      qemu --arch A [--kernel K] [--init I] | gen-syscalls [--check] | \
                      smoke --arch A [--kernel K] [--cmdline C] [--init I] [--status N] [--send-after L --send T] --expect L... | \
-                     symbolize --arch A [--kernel K]>";
+                     symbolize --arch A [--kernel K] | userland --arch A>";
 
 #[derive(Deserialize)]
 struct Ports {
@@ -200,6 +204,10 @@ fn run(args: &[String]) -> Result<()> {
                     .join("bsd"),
             };
             symbolize::symbolize(&kernel)
+        }
+        ["userland", rest @ ..] => {
+            let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
+            userland::userland(&root, arch)
         }
         _ => Err(USAGE.into()),
     }

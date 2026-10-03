@@ -58,3 +58,38 @@ arch-specific code, set `rust-analyzer.cargo.target` to one of the bare targets 
 - `qemu-system-x86_64`, `qemu-system-aarch64` on `PATH`.
 - EDK2 firmware and Limine binaries located via `brew --prefix qemu` / `brew --prefix limine`
   at runtime by `xtask` (no hardcoded paths).
+
+## Userland toolchain (M8)
+
+`just userland` (`cargo xtask userland --arch amd64|arm64`) cross-compiles OpenBSD's own C,
+unmodified, from `reference/openbsd-src`: `/usr/include`, `lib/csu`, `libc.a`, `libutil.a`,
+`init(8)`, `ksh(1)`, `echo(1)` and `ls(1)`, into `target/userland/<arch>/`. It is not part of
+`just ci`. The user approved these tools on 2026-10-03; nothing else is installed for it:
+
+| Tool | Default | Override | Use |
+|---|---|---|---|
+| Apple clang 21 (Xcode) | `/usr/bin/clang` | `$EMIBSD_CC` | compiles for `x86_64-unknown-openbsd` and `aarch64-unknown-openbsd` (ELF), and builds `rpcgen` for the Mac |
+| LLD 17 | `~/.swiftly/bin/ld.lld` | `$EMIBSD_LLVM_BIN` (the directory) | links static PIE executables |
+| `llvm-ar`, `llvm-ranlib`, `llvm-objcopy`, `llvm-objdump` | `~/.swiftly/bin/` | `$EMIBSD_LLVM_BIN` | archives, `install -s`, verification |
+
+`~/.swiftly/bin` is the Swift toolchain manager's directory; its LLVM tools are proxies that
+`swiftly` resolves to the selected toolchain. Any LLVM 17 or newer `ld.lld` with OpenBSD
+support (it must emit `PT_OPENBSD_SYSCALLS`) and matching binutils work through
+`$EMIBSD_LLVM_BIN`. `/bin/sh`, `sed` and `/usr/bin/cpp` (Apple clang's, run by `rpcgen`) are the
+system's.
+
+The OpenBSD sources come from `$OPENBSD_SRC` if set (absolute, or relative to the repository),
+else `reference/openbsd-src`, else, from a git worktree, the main checkout's
+`reference/openbsd-src`. They are never written to.
+
+Output: `sysroot/usr/{include,lib}` (what OpenBSD installs in `/usr/include` and `/usr/lib`),
+`obj/` (objects, per source directory), `root/{bin,sbin}` (the executables, stripped, with
+ksh's `rksh` and `sh` links), `host/` (`rpcgen`) and `licences.txt` (the licence family of
+every OpenBSD file compiled or included). The build is incremental (`.d` files and the
+recorded command line of every object).
+
+Known gap (2026-10-03): arm64 programs do not link. `printf`'s `%La` (`gdtoa/hdtoa.c`)
+multiplies a 128-bit `long double`, which needs `__multf3` from OpenBSD's `libcompiler_rt`
+(`gnu/lib/libcompiler_rt` over `gnu/llvm/compiler-rt`, Apache-2.0 WITH LLVM-exception). Neither
+is in the sparse clone; adding them is the user's decision (`.claude/rules/reference-readonly.md`).
+`xtask` builds and links `libcompiler_rt` as soon as the clone has it.

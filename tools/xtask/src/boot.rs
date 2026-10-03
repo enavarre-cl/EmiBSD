@@ -33,7 +33,7 @@ impl Arch {
         }
     }
 
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Arch::Amd64 => "amd64",
             Arch::Arm64 => "arm64",
