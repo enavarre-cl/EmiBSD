@@ -47,6 +47,12 @@
 //! end, a write, the event with its byte count; `EV_EOF` once the writer is closed), sees the
 //! same pipe through `poll(2)` and `select(2)`, and sleeps in `kevent(2)` until a one-shot
 //! `EVFILT_TIMER` fires.
+//! With the Internet protocols' sockets (`in_pcb.c`, `udp_usrreq.c`, `raw_ip.c`, M9a) and
+//! the address the boot self-test gave the first Ethernet interface, it asks a UDP socket for
+//! `vio0`'s address (`SIOCGIFADDR`, through `ifioctl` and `in_control`), pings the gateway
+//! from a raw `IPPROTO_ICMP` socket as ping(8) does (`sendto(2)`, then `recvfrom(2)` with a
+//! receive timeout) and reads the echo reply with its IP header, and sends a UDP datagram
+//! from one socket to another bound to its own address.
 
 #![no_std]
 #![no_main]
@@ -904,6 +910,13 @@ extern "C" fn init_main(sp: *const usize) -> ! {
     } else {
         status = 14;
     }
+    if inet() {
+        if write(1, b"init: inet sockets ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 15;
+    }
     if processes() {
         if write(1, b"init: processes ok\n").is_err() {
             status = 1;
@@ -1475,6 +1488,161 @@ fn socket_events(kq: usize) -> bool {
     ok &= pfds[0].revents == POLLIN | POLLHUP;
 
     ok && call(SYS_CLOSE, a, 0, 0) == (0, false)
+/// `AF_INET`.
+const AF_INET: usize = 2;
+/// `SOCK_RAW`.
+const SOCK_RAW: usize = 3;
+/// `IPPROTO_ICMP`.
+const IPPROTO_ICMP: usize = 1;
+/// `SO_RCVTIMEO`.
+const SO_RCVTIMEO: usize = 0x1006;
+/// `SIOCGIFADDR`: `_IOWR('i', 33, struct ifreq)`.
+const SIOCGIFADDR: usize = 0xc020_6921;
+/// `bind(2)`.
+const SYS_BIND: usize = 104;
+/// `setsockopt(2)`.
+const SYS_SETSOCKOPT: usize = 105;
+/// The guest's address under QEMU's user network, which the boot self-test configures.
+const INET_ADDR: [u8; 4] = [10, 0, 2, 15];
+/// QEMU's gateway, which answers ICMP echo.
+const INET_GATEWAY: [u8; 4] = [10, 0, 2, 2];
+
+/// A `struct sockaddr_in` for `addr:port`, as its 16 bytes.
+fn sockaddr_in(addr: [u8; 4], port: u16) -> [u8; 16] {
+    let mut sin = [0u8; 16];
+    sin[0] = 16;
+    sin[1] = AF_INET as u8;
+    sin[2..4].copy_from_slice(&port.to_be_bytes());
+    sin[4..8].copy_from_slice(&addr);
+    sin
+}
+
+/// The Internet sockets from user mode: an interface address through a UDP socket's
+/// `ioctl(2)`, an ICMP echo to the gateway and its reply through a raw socket, and a UDP
+/// datagram between two sockets of this host.
+fn inet() -> bool {
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let mut ok = true;
+
+    // ioctl(SIOCGIFADDR) on a UDP socket: the address of vio0.
+    let (u1, err) = call(SYS_SOCKET, AF_INET, SOCK_DGRAM, 0);
+    if err {
+        return false;
+    }
+    let mut ifr = [0u8; 32];
+    ifr[..4].copy_from_slice(b"vio0");
+    ok &= call(SYS_IOCTL, u1, SIOCGIFADDR, ifr.as_mut_ptr() as usize) == (0, false);
+    ok &= ifr[16..24] == sockaddr_in(INET_ADDR, 0)[..8];
+
+    // ping -c 1 10.0.2.2: an echo request from a raw ICMP socket, the reply read back with
+    // its IP header (at most three seconds).
+    let (r, err) = call(SYS_SOCKET, AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if err {
+        return false;
+    }
+    let tv = [3u64, 0];
+    ok &= syscall6(
+        SYS_SETSOCKOPT,
+        [
+            r,
+            SOL_SOCKET as usize,
+            SO_RCVTIMEO,
+            tv.as_ptr() as usize,
+            16,
+            0,
+        ],
+    ) == (0, false);
+    // type 8 (echo), code 0, checksum, id 0x4d39, sequence 1, eight bytes of data.
+    let mut echo = [
+        8u8, 0, 0, 0, 0x4d, 0x39, 0, 1, b'E', b'm', b'i', b'B', b'S', b'D', b'!', 0,
+    ];
+    let mut sum = 0u32;
+    for w in echo.chunks(2) {
+        sum += u32::from(u16::from_be_bytes([w[0], w[1]]));
+    }
+    while sum > 0xffff {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    echo[2..4].copy_from_slice(&(!(sum as u16)).to_be_bytes());
+    let gw = sockaddr_in(INET_GATEWAY, 0);
+    ok &= syscall6(
+        SYS_SENDTO,
+        [
+            r,
+            echo.as_ptr() as usize,
+            echo.len(),
+            0,
+            gw.as_ptr() as usize,
+            16,
+        ],
+    ) == (echo.len(), false);
+    let mut buf = [0u8; 128];
+    let mut from = [0u8; 16];
+    let mut fromlen: u32 = 16;
+    let (n, err) = syscall6(
+        SYS_RECVFROM,
+        [
+            r,
+            buf.as_mut_ptr() as usize,
+            buf.len(),
+            0,
+            from.as_mut_ptr() as usize,
+            &mut fromlen as *mut u32 as usize,
+        ],
+    );
+    ok &= !err && n == 20 + echo.len();
+    ok &= buf[0] == 0x45 && buf[9] == IPPROTO_ICMP as u8 && buf[12..16] == INET_GATEWAY;
+    ok &= buf[20] == 0 && buf[24..28] == echo[4..8] && buf[28..36] == echo[8..];
+    ok &= fromlen == 16 && from[4..8] == INET_GATEWAY;
+
+    // A UDP datagram from one socket to another bound to our address.
+    let (u2, err) = call(SYS_SOCKET, AF_INET, SOCK_DGRAM, 0);
+    if err {
+        return false;
+    }
+    let to = sockaddr_in(INET_ADDR, 7777);
+    ok &= call(SYS_BIND, u1, to.as_ptr() as usize, 16) == (0, false);
+    ok &= syscall6(
+        SYS_SETSOCKOPT,
+        [
+            u1,
+            SOL_SOCKET as usize,
+            SO_RCVTIMEO,
+            tv.as_ptr() as usize,
+            16,
+            0,
+        ],
+    ) == (0, false);
+    ok &= syscall6(
+        SYS_SENDTO,
+        [
+            u2,
+            b"udp!".as_ptr() as usize,
+            4,
+            0,
+            to.as_ptr() as usize,
+            16,
+        ],
+    ) == (4, false);
+    let mut fromlen: u32 = 16;
+    let (n, err) = syscall6(
+        SYS_RECVFROM,
+        [
+            u1,
+            buf.as_mut_ptr() as usize,
+            buf.len(),
+            0,
+            from.as_mut_ptr() as usize,
+            &mut fromlen as *mut u32 as usize,
+        ],
+    );
+    ok &= !err && n == 4 && buf[..4] == *b"udp!";
+    ok &= from[4..8] == INET_ADDR && from[2..4] != [0, 0];
+
+    for fd in [u1, r, u2] {
+        ok &= call(SYS_CLOSE, fd, 0, 0) == (0, false);
+    }
+    ok
 }
 
 /// The `SIGUSR1` handler, entered through the kernel's signal trampoline.

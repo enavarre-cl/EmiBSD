@@ -63,6 +63,8 @@ run-arm64: image-arm64
 # `selftest=taskq`, tasks run by systq, systqmp and a created then destroyed queue (status 33);
 # and `selftest=vio`, which brings vio0 up, sends an ARP request for QEMU's gateway and waits
 # for a frame through the receive interrupt (status 33).
+# The default boot's init stand-in also checks the Internet sockets (`init: inet sockets ok`:
+# vio0's address through SIOCGIFADDR, a ping from a raw ICMP socket, a local UDP datagram).
 # All of those boot without a ramdisk (`--ramdisk none`, so the kernel says
 # `rd: no ramdisk module`, `--expect-ramdisk`) and run the Rust stand-in init, the kernel's
 # self-test. Then `smoke-shell` (M8's exit criterion) boots the ffs ramdisk `just userland`
@@ -90,7 +92,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 8.0" \
         --expect "cannot mount root: no root file system" \
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
-        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: kqueue ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
+        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
         --expect "selftest: pmap reuse ok" --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
@@ -129,7 +131,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 8.0" \
         --expect "cannot mount root: no root file system" \
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
-        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: kqueue ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
+        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
         --expect "selftest: pmap reuse ok" --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
@@ -243,6 +245,30 @@ smoke-link: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --both-send-after "# " --both-send 'ifconfig vio1\n' \
         --a-expect "vio1 at virtio30: 1 queue, address 52:54:00:bb:00:01" \
         --b-expect "vio1 at virtio30: 1 queue, address 52:54:00:bb:00:02"
+
+# M9a: OpenBSD's ifconfig(8) and ping(8) from the ramdisk, multi-user, logged in as root
+# (`smoke-login`'s sends). vio0's address (10.0.2.15/24) and the default route through QEMU's
+# gateway come from the kernel's boot self-test (`selftest: ping`), so no /etc/hostname.vio0
+# is needed. Not part of `smoke` yet: `ifconfig vio0` lists the addresses through
+# getifaddrs(3), whose sysctl(NET_RT_IFLIST) is rtsock.c's (in progress elsewhere), and ping
+# waits for its reply with poll(2) on the raw socket, which needs kqueue's socket filters
+# (kern_event.c, in progress elsewhere). The init stand-in's `init: inet sockets ok` (in
+# `smoke`) checks the same protocol paths without them.
+smoke-net: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-net: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send 'ifconfig vio0\n' --send-after "# " --send 'ping -c 1 10.0.2.2\n' \
+        --expect "rc: multi-user" --expect "vio0: flags=" --expect "inet 10.0.2.15 netmask 0xffffff00" \
+        --expect "PING 10.0.2.2 (10.0.2.2): 56 data bytes" \
+        --expect "1 packets transmitted, 1 packets received, 0.0% packet loss"
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send 'ifconfig vio0\n' --send-after "# " --send 'ping -c 1 10.0.2.2\n' \
+        --expect "rc: multi-user" --expect "vio0: flags=" --expect "inet 10.0.2.15 netmask 0xffffff00" \
+        --expect "PING 10.0.2.2 (10.0.2.2): 56 data bytes" \
+        --expect "1 packets transmitted, 1 packets received, 0.0% packet loss"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
