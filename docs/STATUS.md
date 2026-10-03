@@ -16,13 +16,13 @@ Done:
   (`fpu.c`), OpenBSD's makefs for the image, libc/init/ksh/cat/echo/ls/uname.
 
 Next:
-- After M8 (estimates given 2026-10-03): crc32 (zlib, accepted) then GPT in `subr_disk.c`;
-  diagnostic tools stage 1 (sysctl, hostname, date, pwd, id), stage 2 (libkvm, ps with
-  `uvm_io`, fstat, vmstat, df/mount, passwd/pwd.db); `/etc/rc` and multi-user later.
+- M8b (multi-user boot and login, `docs/ROADMAP.md`): /etc files, pwd_mkdb for the host,
+  getty/login/login_passwd, AF_UNIX sockets for BSD Auth, unveil (agent running), a
+  writable root. Then diagnostic tools stage 2 (libkvm, ps with `uvm_io`, fstat, vmstat,
+  df/mount). Running now: unveil, amd64's mc146818 RTC.
 
 Blockers:
-- amd64's TSC timecounter (`tsc.c`) is deferred. (`crc32`'s zlib licence was accepted on
-  2026-10-03; its port and GPT follow M8.)
+- amd64's TSC timecounter (`tsc.c`) is deferred.
 
 Decisions pending (the user's): the scope section (open until M13); the PC's CPU (Intel VMX
 or AMD SVM) for vmm and M15; the exact Raspberry Pi 4 model; networking in M15.
