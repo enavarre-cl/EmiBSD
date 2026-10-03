@@ -35,13 +35,19 @@
 //! Upstream: sys/uvm/uvm.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M3 has the page queues, `page_init_done` and the pmemrange
-//! control; the locks (M5), the daemons' triggers (M5), `kentry_free`, `aio_done` and
-//! `kernel_object` arrive with the map, the buffer cache and the kernel object (M6).
+//! control; M7a adds `kernel_object` and the `UVM_ET_*` entry types; the locks (M5), the
+//! daemons' triggers (M5), `kentry_free` and `aio_done` arrive with the map and the buffer
+//! cache.
 //!
 //! Locks used to protect struct members in this file: `Q` `uvm.pageqlock`, `F`
 //! `uvm.fpageqlock`.
 
+use core::cell::Cell;
+use core::ptr;
 use core::sync::atomic::AtomicBool;
+
+use crate::uvm::uvm_map::VmMapEntry;
+use crate::uvm::uvm_object::UvmObject;
 
 use crate::uvm::uvm_page::Pglist;
 use crate::uvm::uvm_pmemrange::UvmPmrControl;
@@ -58,6 +64,10 @@ pub struct Uvm {
     pub page_init_done: AtomicBool,
     /// \[F\] pmemrange data.
     pub pmr_control: UvmPmrControl,
+    // kernel object
+    /// `kernel_object`: the kernel's anonymous object (`uao_create` with
+    /// `UAO_FLAG_KERNOBJ`), null before `uvm_km_init`.
+    pub kernel_object: Cell<*const UvmObject>,
 }
 
 // SAFETY: every field is guarded by one of the locks named in the module doc (M5); until then
@@ -72,7 +82,14 @@ impl Uvm {
             page_inactive: Pglist::new(),
             page_init_done: AtomicBool::new(false),
             pmr_control: UvmPmrControl::new(),
+            kernel_object: Cell::new(ptr::null()),
         }
+    }
+
+    /// `uvm.kernel_object`, once `uvm_km_init` made it.
+    pub fn kernel_object(&self) -> Option<&'static UvmObject> {
+        // SAFETY: the kernel object is a static (`kernel_object_store`), alive forever.
+        unsafe { self.kernel_object.get().as_ref() }
     }
 }
 
@@ -84,25 +101,70 @@ impl Default for Uvm {
 
 // vm_map_entry etype bits:
 
-/// It is a uvm_object.
+/// `UVM_ET_OBJ`: it is a uvm_object.
 pub const UVM_ET_OBJ: i32 = 0x0001;
-/// It is a vm_map submap.
+/// `UVM_ET_SUBMAP`: it is a vm_map submap.
 pub const UVM_ET_SUBMAP: i32 = 0x0002;
-/// Copy_on_write.
+/// `UVM_ET_COPYONWRITE`: copy_on_write.
 pub const UVM_ET_COPYONWRITE: i32 = 0x0004;
-/// Needs_copy.
+/// `UVM_ET_NEEDSCOPY`: needs_copy.
 pub const UVM_ET_NEEDSCOPY: i32 = 0x0008;
-/// No backend.
+/// `UVM_ET_HOLE`: no backend.
 pub const UVM_ET_HOLE: i32 = 0x0010;
-/// Don't fault.
+/// `UVM_ET_NOFAULT`: don't fault.
 pub const UVM_ET_NOFAULT: i32 = 0x0020;
-/// This is a stack.
+/// `UVM_ET_STACK`: this is a stack.
 pub const UVM_ET_STACK: i32 = 0x0040;
-/// Write combining.
+/// `UVM_ET_WC`: write combining.
 pub const UVM_ET_WC: i32 = 0x0080;
-/// Omit from dumps.
+/// `UVM_ET_CONCEAL`: omit from dumps.
 pub const UVM_ET_CONCEAL: i32 = 0x0100;
-/// Entry may not be changed.
+/// `UVM_ET_IMMUTABLE`: entry may not be changed.
 pub const UVM_ET_IMMUTABLE: i32 = 0x0400;
-/// Map entry is on free list (DEBUG).
+/// `UVM_ET_FREEMAPPED`: map entry is on free list (DEBUG).
 pub const UVM_ET_FREEMAPPED: i32 = 0x8000;
+
+/// `UVM_ET_ISOBJ(E)`.
+pub fn uvm_et_isobj(e: &VmMapEntry) -> bool {
+    e.etype.get() & UVM_ET_OBJ != 0
+}
+
+/// `UVM_ET_ISSUBMAP(E)`.
+pub fn uvm_et_issubmap(e: &VmMapEntry) -> bool {
+    e.etype.get() & UVM_ET_SUBMAP != 0
+}
+
+/// `UVM_ET_ISCOPYONWRITE(E)`.
+pub fn uvm_et_iscopyonwrite(e: &VmMapEntry) -> bool {
+    e.etype.get() & UVM_ET_COPYONWRITE != 0
+}
+
+/// `UVM_ET_ISNEEDSCOPY(E)`.
+pub fn uvm_et_isneedscopy(e: &VmMapEntry) -> bool {
+    e.etype.get() & UVM_ET_NEEDSCOPY != 0
+}
+
+/// `UVM_ET_ISHOLE(E)`.
+pub fn uvm_et_ishole(e: &VmMapEntry) -> bool {
+    e.etype.get() & UVM_ET_HOLE != 0
+}
+
+/// `UVM_ET_ISNOFAULT(E)`.
+pub fn uvm_et_isnofault(e: &VmMapEntry) -> bool {
+    e.etype.get() & UVM_ET_NOFAULT != 0
+}
+
+/// `UVM_ET_ISSTACK(E)`.
+pub fn uvm_et_isstack(e: &VmMapEntry) -> bool {
+    e.etype.get() & UVM_ET_STACK != 0
+}
+
+/// `UVM_ET_ISWC(E)`.
+pub fn uvm_et_iswc(e: &VmMapEntry) -> bool {
+    e.etype.get() & UVM_ET_WC != 0
+}
+
+/// `UVM_ET_ISCONCEAL(E)`.
+pub fn uvm_et_isconceal(e: &VmMapEntry) -> bool {
+    e.etype.get() & UVM_ET_CONCEAL != 0
+}

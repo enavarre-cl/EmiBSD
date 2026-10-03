@@ -4,8 +4,9 @@
 //! Milestone M3 needs the direct map, boot-time memory stealing, page zeroing and the kernel
 //! mapping entry points (`pmap_kenter_pa`, `pmap_kremove`, `pmap_extract`). M6 adds the
 //! user-space side: `pmap_create`/`pmap_destroy`/`pmap_reference`, `pmap_enter`/`pmap_remove`
-//! and activation. Protection changes (`pmap_protect`, `pmap_page_protect`), the reference and
-//! modified bits and `pmap_unwire` arrive with `uvm_fault` (M7a).
+//! and activation. M7a (part 1) adds `pmap_page_protect` and `pmap_clear_modify`, which the
+//! object layer calls; `pmap_protect`, the reference bit and `pmap_unwire` arrive with
+//! `uvm_fault` (M7a part 3).
 
 use crate::machine::Machine;
 use crate::sys::errno::Errno;
@@ -66,6 +67,14 @@ pub trait Pmap {
 
     /// `pmap_remove(pmap, sva, eva)`: removes the mappings in `[sva, eva)`.
     fn pmap_remove(pmap: &Self::Pmap, sva: Vaddr, eva: Vaddr);
+
+    /// `pmap_page_protect(pg, prot)`: lowers every mapping of `pg` to `prot`; `PROT_NONE`
+    /// removes them all (what the object layer does before freeing a page).
+    fn pmap_page_protect(pg: &VmPage, prot: VmProt);
+
+    /// `pmap_clear_modify(pg)`: clears the modified bit of every mapping of `pg`; whether any
+    /// was set.
+    fn pmap_clear_modify(pg: &VmPage) -> bool;
 
     /// `pmap_remove_holes(vm)`: makes the MMU's unmappable holes unavailable in the map
     /// (nothing on amd64 and arm64).
@@ -174,6 +183,16 @@ pub fn pmap_enter(
 /// `pmap_remove` on the selected machine.
 pub fn pmap_remove(pmap: &MachinePmap, sva: Vaddr, eva: Vaddr) {
     Machine::pmap_remove(pmap, sva, eva)
+}
+
+/// `pmap_page_protect` on the selected machine.
+pub fn pmap_page_protect(pg: &VmPage, prot: VmProt) {
+    Machine::pmap_page_protect(pg, prot)
+}
+
+/// `pmap_clear_modify` on the selected machine.
+pub fn pmap_clear_modify(pg: &VmPage) -> bool {
+    Machine::pmap_clear_modify(pg)
 }
 
 /// `pmap_remove_holes` on the selected machine.

@@ -87,16 +87,19 @@
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::kern::subr_prf::panic;
 use crate::machine::pmap::{pmap_map_direct, pmap_unmap_direct};
 use crate::machine::{Machine, Pmap};
 use crate::sys::param::PAGE_SIZE;
-use crate::sys::types::{Paddr, Vaddr};
+use crate::sys::types::{Paddr, Vaddr, Vsize};
+use crate::uvm::uvm_aobj::{UAO_FLAG_KERNOBJ, uao_create, uao_init};
 use crate::uvm::uvm_extern::{
     KmemDynMode, KmemPaMode, KmemVaMode, KvMap, UVM_PLA_NOWAIT, UVM_PLA_TRYCONTIG, UVM_PLA_WAITOK,
     UVM_PLA_ZERO, UVM_UNKNOWN_OFFSET, UvmConstraintRange,
 };
+use crate::uvm::uvm_init::UVM;
 use crate::uvm::uvm_page::{Pglist, uvm_pglistalloc, uvm_pglistfree};
-use crate::uvm::uvm_param::round_page;
+use crate::uvm::uvm_param::{VM_KERNEL_SPACE_SIZE, round_page};
 use crate::{kassert, unported};
 
 /// `vm_map_min(kernel_map)` until the map exists (see the module's deviations).
@@ -218,8 +221,16 @@ pub static KD_TRYLOCK: KmemDynMode = KmemDynMode {
 /// `uvm_km_init`: init kernel virtual memory. `base` is the base of kernel virtual space,
 /// `start` the first free address inside it and `end` its end (see the module's deviations).
 pub fn uvm_km_init(_base: Vaddr, start: Vaddr, end: Vaddr) {
-    // next, init kernel memory objects, uvm_map_setup(&kernel_map_store, pmap_kernel(), base,
-    // end, VM_MAP_PAGEABLE), the reservation of [base, start) with uvm_map(): uvm_map.c.
+    // kernel_object: for pageable anonymous kernel memory
+    uao_init();
+    let Some(kernel_object) = uao_create(Vsize::new(VM_KERNEL_SPACE_SIZE), UAO_FLAG_KERNOBJ) else {
+        panic(format_args!("uvm_km_init: no kernel object"));
+    };
+    UVM.kernel_object.set(kernel_object);
+
+    // init the map and reserve already allocated kernel space before installing:
+    // uvm_map_setup(&kernel_map_store, pmap_kernel(), base, end, VM_MAP_PAGEABLE), the
+    // reservation of [base, start) with uvm_map(): uvm_map.c (M7a part 2).
     KERNEL_MAP_MIN.store(start.as_usize(), Ordering::Relaxed);
     KERNEL_MAP_MAX.store(end.as_usize(), Ordering::Relaxed);
 }

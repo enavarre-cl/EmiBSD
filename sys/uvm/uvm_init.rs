@@ -46,12 +46,17 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::kern::kern_malloc::kmeminit;
 use crate::machine::{Machine, Pmap, VmParam};
-use crate::sys::types::Vaddr;
+use crate::sys::types::{Vaddr, Vsize};
 use crate::unported;
 use crate::uvm::uvm::Uvm;
+use crate::uvm::uvm_amap::amap_init;
+use crate::uvm::uvm_anon::{uvm_anon_init, uvm_anon_init_percpu};
+use crate::uvm::uvm_aobj::{UAO_FLAG_KERNSWAP, uao_create};
 use crate::uvm::uvm_km::uvm_km_init;
 use crate::uvm::uvm_map::uvm_map_init;
 use crate::uvm::uvm_page::uvm_page_init;
+use crate::uvm::uvm_pager::uvm_pager_init;
+use crate::uvm::uvm_param::VM_KERNEL_SPACE_SIZE;
 use crate::uvm::uvmexp::Uvmexp;
 
 /// `uvm`: the VM's global state.
@@ -114,21 +119,21 @@ pub fn uvm_init() {
     let _ = unported!("dma_alloc_init");
 
     // Init all pagers and the pager_map.
-    let _ = unported!("uvm_pager_init");
+    uvm_pager_init();
 
     // step 9: init anonymous memory system
-    let _ = unported!("amap_init");
+    amap_init(); // init amap module
 
     // step 10: start uvm_km_page allocator thread.
     let _ = unported!("uvm_km_page_lateinit");
 
     // the VM system is now up! now that malloc is up we can enable paging of kernel objects.
-    let _ = unported!("uao_create (kernel swap)");
+    let _ = uao_create(Vsize::new(VM_KERNEL_SPACE_SIZE), UAO_FLAG_KERNSWAP);
 
     // DEADBEEF0 / DEADBEEF1: not configured.
 
     // Init anonymous memory systems.
-    let _ = unported!("uvm_anon_init");
+    uvm_anon_init();
 
     // Switch kernel and kmem_map over to a best-fit allocator, instead of walking the tree.
     let _ = unported!("uvm_map_set_uaddr (bestfit)");
@@ -137,5 +142,5 @@ pub fn uvm_init() {
 /// `uvm_init_percpu`: the per-CPU parts, once the CPUs are known.
 pub fn uvm_init_percpu() {
     let _ = unported!("counters_alloc_ncpus (uvmexp_counters)");
-    let _ = unported!("uvm_anon_init_percpu");
+    uvm_anon_init_percpu();
 }

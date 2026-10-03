@@ -106,8 +106,9 @@
 //! - `PMAP_CHECK_COPYIN` is not configured: no `check_copyin` table.
 
 use core::cell::Cell;
+use core::cmp::Ordering;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicI32, Ordering};
+use core::sync::atomic::{AtomicI32, Ordering as AtomicOrdering};
 
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_enter_try, mtx_leave};
@@ -133,18 +134,22 @@ use crate::sys::param::PVM;
 use crate::sys::param::{PAGE_MASK, PAGE_SIZE};
 use crate::sys::pool::{PR_WAITOK, PR_ZERO, Pool};
 use crate::sys::proc::{Proc, Process};
+use crate::sys::queue::{SlistEntry, TailqEntry};
 use crate::sys::rwlock::{
     RW_DOWNGRADE, RW_NOSLEEP, RW_UPGRADE, RW_WRITE, RWL_DUPOK, Rwlock, rw_write_held,
 };
 use crate::sys::systm::INFSLP;
+use crate::sys::tree::{RbtEntry, RbtHead};
 use crate::sys::types::{Vaddr, Vsize};
-use crate::unported;
-use crate::uvm::uvm_extern::{UVM_PGA_ZERO, VmProt, Vmspace};
+use crate::uvm::uvm_anon::VmAref;
+use crate::uvm::uvm_extern::{UVM_PGA_ZERO, VmInherit, VmProt, Vmspace, Voff};
+use crate::uvm::uvm_object::UvmObject;
 use crate::uvm::uvm_page::{
     PG_BUSY, PG_FAKE, PHYS_TO_VM_PAGE, Pglist, uvm_pagealloc, uvm_pagefree, uvm_pageunwire,
     uvm_pagewire, uvm_pglistfree, vm_page_to_phys,
 };
 use crate::uvm::uvm_pmap::{PMAP_CANFAIL, PMAP_WIRED};
+use crate::{queue_adapter, tree_adapter, unported};
 
 /// `VM_MAP_PAGEABLE`: ro: entries are pageable.
 pub const VM_MAP_PAGEABLE: i32 = 0x01;
@@ -163,6 +168,142 @@ pub const VM_MAP_PINSYSCALL_ONCE: i32 = 0x100;
 /// make it to the scheduler).
 pub const MAX_KMAPENT: usize = 1024;
 
+/// `UVM_MAP_STATIC`: static map entry.
+pub const UVM_MAP_STATIC: u8 = 0x01;
+/// `UVM_MAP_KMEM`: from kmem entry pool.
+pub const UVM_MAP_KMEM: u8 = 0x02;
+
+/// `object`: what a map entry points to (the C's `object` union).
+#[derive(Clone, Copy)]
+pub enum VmMapEntryObject {
+    /// Neither: anonymous memory or a hole.
+    None,
+    /// `uvm_obj`: uvm object.
+    Obj(&'static UvmObject),
+    /// `sub_map`: belongs to another map.
+    SubMap(&'static VmMap),
+}
+
+/// `struct vm_map_entry`: address map entries consist of start and end addresses, a VM
+/// object (or sharing map) and offset into that object, and user-exported inheritance and
+/// protection information. Also included is control information for virtual copy
+/// operations.
+///
+/// Every field is guarded by the map's lock (`vm_map_lock`); the `dfree` links by whichever
+/// tree, queue or dead queue the entry is on.
+pub struct VmMapEntry {
+    /// `daddrs.addr_entry`: address tree.
+    pub addr_entry: RbtEntry,
+    /// `daddrs.addr_kentry`: the static kernel entries' free list.
+    pub addr_kentry: SlistEntry<VmMapEntry>,
+    /// `dfree.rbtree`: link freespace tree.
+    pub rbtree: RbtEntry,
+    /// `dfree.tailq` / `dfree.deadq`: link freespace queue / dead entry queue.
+    pub dfree_tailq: TailqEntry<VmMapEntry>,
+    /// `start`: start address.
+    pub start: Cell<usize>,
+    /// `end`: end address.
+    pub end: Cell<usize>,
+    /// `guard`: bytes in guard.
+    pub guard: Cell<usize>,
+    /// `fspace`: free space.
+    pub fspace: Cell<usize>,
+    /// `object`: object I point to.
+    pub object: Cell<VmMapEntryObject>,
+    /// `offset`: offset into object.
+    pub offset: Cell<Voff>,
+    /// `aref`: anonymous overlay.
+    pub aref: VmAref,
+    /// `etype`: entry type.
+    pub etype: Cell<i32>,
+    /// `protection`: protection code.
+    pub protection: Cell<VmProt>,
+    /// `max_protection`: maximum protection.
+    pub max_protection: Cell<VmProt>,
+    /// `inheritance`: inheritance.
+    pub inheritance: Cell<VmInherit>,
+    /// `wired_count`: can be paged if == 0.
+    pub wired_count: Cell<i32>,
+    /// `advice`: madvise advice.
+    pub advice: Cell<i32>,
+    /// `flags`: `UVM_MAP_STATIC`, `UVM_MAP_KMEM`.
+    pub flags: Cell<u8>,
+    /// `fspace_augment`: max(fspace) in subtree.
+    pub fspace_augment: Cell<usize>,
+}
+
+// SAFETY: the map lock guards every field (see the struct doc).
+unsafe impl Sync for VmMapEntry {}
+
+impl VmMapEntry {
+    /// A zero entry, on no tree (what the entry pools hand out with `PR_ZERO`).
+    pub const fn new() -> Self {
+        Self {
+            addr_entry: RbtEntry::new(),
+            addr_kentry: SlistEntry::new(),
+            rbtree: RbtEntry::new(),
+            dfree_tailq: TailqEntry::new(),
+            start: Cell::new(0),
+            end: Cell::new(0),
+            guard: Cell::new(0),
+            fspace: Cell::new(0),
+            object: Cell::new(VmMapEntryObject::None),
+            offset: Cell::new(0),
+            aref: VmAref::new(),
+            etype: Cell::new(0),
+            protection: Cell::new(0),
+            max_protection: Cell::new(0),
+            inheritance: Cell::new(0),
+            wired_count: Cell::new(0),
+            advice: Cell::new(0),
+            flags: Cell::new(0),
+            fspace_augment: Cell::new(0),
+        }
+    }
+
+    /// `object.uvm_obj`, when the entry maps an object (`UVM_ET_ISOBJ`).
+    pub fn uvm_obj(&self) -> Option<&'static UvmObject> {
+        match self.object.get() {
+            VmMapEntryObject::Obj(o) => Some(o),
+            _ => None,
+        }
+    }
+
+    /// `object.sub_map`, when the entry is a submap (`UVM_ET_ISSUBMAP`).
+    pub fn sub_map(&self) -> Option<&'static VmMap> {
+        match self.object.get() {
+            VmMapEntryObject::SubMap(m) => Some(m),
+            _ => None,
+        }
+    }
+}
+
+impl Default for VmMapEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `VM_MAPENT_ISWIRED(entry)`.
+pub fn vm_mapent_iswired(entry: &VmMapEntry) -> bool {
+    entry.wired_count.get() != 0
+}
+
+/// `uvm_mapentry_addrcmp`: orders the entries of the address tree by start address.
+pub fn uvm_mapentry_addrcmp(e1: &VmMapEntry, e2: &VmMapEntry) -> Ordering {
+    e1.start.get().cmp(&e2.start.get())
+}
+
+tree_adapter!(
+    /// `uvm_map_addr`: the entry tree of a map, by address (`daddrs.addr_entry`).
+    pub UvmMapAddr: VmMapEntry, addr_entry => RbtEntry, uvm_mapentry_addrcmp
+);
+
+queue_adapter!(
+    /// `uvm_map_deadq`: dead entry queue (`dfree.deadq`).
+    pub UvmMapDeadq: VmMapEntry, dfree_tailq => TailqEntry<VmMapEntry>
+);
+
 /// `struct vm_map`: a virtual address space, the entries that describe it and the pmap that
 /// backs it.
 ///
@@ -173,7 +314,8 @@ pub struct VmMap {
     pub pmap: Cell<*const MachinePmap>,
     /// \[v\] `sserial`: # stack changes.
     pub sserial: Cell<u64>,
-    // addr: the entry tree, by address (M7a).
+    /// \[v\] `addr`: entry tree, by addr.
+    pub addr: RbtHead<UvmMapAddr>,
     /// `size`: virtual size.
     pub size: Cell<Vsize>,
     /// \[a\] `ref_count`: reference count.
@@ -216,6 +358,7 @@ impl VmMap {
         Self {
             pmap: Cell::new(ptr::null()),
             sserial: Cell::new(0),
+            addr: RbtHead::new(),
             size: Cell::new(Vsize::new(0)),
             ref_count: AtomicI32::new(0),
             flags: Cell::new(0),
@@ -474,7 +617,7 @@ pub fn uvm_map_setup(map: &VmMap, pmap: &'static MachinePmap, min: usize, max: u
     // RBT_INIT(uvm_map_addr, &map->addr), the uaddr selectors: M7a.
     map.pmap.set(pmap);
     map.size.set(Vsize::new(0));
-    map.ref_count.store(0, Ordering::Relaxed);
+    map.ref_count.store(0, AtomicOrdering::Relaxed);
     map.min_offset.set(min);
     map.max_offset.set(max);
     // Empty brk() area by default.
@@ -502,7 +645,7 @@ pub fn uvm_map_setup(map: &VmMap, pmap: &'static MachinePmap, min: usize, max: u
     // thread sees it right now. Initialize ref_count to 0 above to avoid bogus triggering of
     // lock-not-held assertions.
     let _ = unported!("uvm_map_setup_entries (the entry tree, M7a)");
-    map.ref_count.store(1, Ordering::Relaxed);
+    map.ref_count.store(1, AtomicOrdering::Relaxed);
 }
 
 /// Destroy the map. This is the inverse operation to `uvm_map_setup`.
@@ -592,7 +735,7 @@ pub fn uvmspace_init(
         (if pageable { VM_MAP_PAGEABLE } else { 0 }) | VM_MAP_ISVMSPACE,
     );
 
-    vm.vm_refcnt.store(1, Ordering::Relaxed);
+    vm.vm_refcnt.store(1, AtomicOrdering::Relaxed);
 
     if remove_holes {
         pmap_remove_holes(vm);
@@ -624,7 +767,7 @@ pub fn uvmspace_exec(p: &Proc, start: usize, end: usize) {
     // pmap_unuse_final(p) before stack addresses go away: nothing on amd64 and arm64.
 
     // see if more than one process is using this vmspace...
-    if ovm.vm_refcnt.load(Ordering::Relaxed) == 1 {
+    if ovm.vm_refcnt.load(AtomicOrdering::Relaxed) == 1 {
         // If pr is the only process using its vmspace then we can safely recycle that
         // vmspace for the program that is being exec'd.
 
@@ -679,8 +822,8 @@ pub fn uvmspace_exec(p: &Proc, start: usize, end: usize) {
 
 /// `uvmspace_addref`: add a reference to a vmspace.
 pub fn uvmspace_addref(vm: &Vmspace) {
-    kassert!(vm.vm_refcnt.load(Ordering::Relaxed) > 0);
-    vm.vm_refcnt.fetch_add(1, Ordering::Relaxed);
+    kassert!(vm.vm_refcnt.load(AtomicOrdering::Relaxed) > 0);
+    vm.vm_refcnt.fetch_add(1, AtomicOrdering::Relaxed);
 }
 
 /// `uvmspace_purge`: tears the address space down: locks the map, to wait out all other
@@ -692,7 +835,7 @@ pub fn uvmspace_purge(vm: &Vmspace) {
 
 /// `uvmspace_free`: free a vmspace data structure.
 pub fn uvmspace_free(vm: &'static Vmspace) {
-    if vm.vm_refcnt.fetch_sub(1, Ordering::Relaxed) - 1 == 0 {
+    if vm.vm_refcnt.fetch_sub(1, AtomicOrdering::Relaxed) - 1 == 0 {
         // Sanity check. Kernel threads never end up here and userland ones already tear
         // down there VM space in exit1().
         uvmspace_purge(vm);

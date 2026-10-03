@@ -406,6 +406,14 @@ impl Pmap for Machine {
     /// Page contents are not modelled.
     fn pmap_copy_page(_src: &VmPage, _dst: &VmPage) {}
 
+    /// Mappings have no protection on the host.
+    fn pmap_page_protect(_pg: &VmPage, _prot: VmProt) {}
+
+    /// Nothing is ever modified on the host.
+    fn pmap_clear_modify(_pg: &VmPage) -> bool {
+        false
+    }
+
     /// Boot memory comes from the host allocator and is never returned; the frames it stands
     /// for leave `vm_physmem[]` through `uvm_page_physsteal`, as on a real machine, so
     /// `uvm_page_init`'s page count adds up.

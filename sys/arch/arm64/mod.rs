@@ -27,6 +27,7 @@ use crate::sys::proc::{Proc, Process};
 use crate::sys::sched::SchedstatePercpu;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::sys::user::User;
+use crate::unported;
 use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt, Vmspace};
 use crate::uvm::uvm_page::VmPage;
 
@@ -252,6 +253,18 @@ impl Pmap for Machine {
 
     fn pmap_copy_page(src: &VmPage, dst: &VmPage) {
         arm64::pmap::pmap_copy_page(src, dst)
+    }
+
+    /// Reported until the pv lists exist (M7a part 3): no page of an anon or an aobj is
+    /// mapped in a user pmap before then (exec uses the wired stand-ins).
+    fn pmap_page_protect(_pg: &VmPage, _prot: VmProt) {
+        let _ = unported!("pmap_page_protect (pv lists, M7a-3)");
+    }
+
+    /// Reported until the pv lists exist (M7a part 3); nothing is modified.
+    fn pmap_clear_modify(_pg: &VmPage) -> bool {
+        let _ = unported!("pmap_clear_modify (pv lists, M7a-3)");
+        false
     }
 
     unsafe fn pmap_steal_memory(

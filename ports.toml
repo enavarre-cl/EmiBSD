@@ -736,7 +736,7 @@ deps = [
     "sys/uvm/uvm_object.h",
     "sys/uvm/uvm_page.h",
 ]
-notes = "struct pmap (bootstrap subset), pv_entry, vm_page_md, the PML4 slot layout, the recursive mapping (PTE_BASE/L*_BASE, pl*_i, kvtopte, ptp_va2o), the nkptp/nbpd initializers; pmap_page_protect/pmap_protect with M6; pv_mtx/pm_mtx with M5"
+notes = "struct pmap (bootstrap subset), pv_entry, vm_page_md, the PML4 slot layout, the recursive mapping (PTE_BASE/L*_BASE, pl*_i, kvtopte, ptp_va2o), the nkptp/nbpd initializers; pmap_page_protect/pmap_protect with M6; pv_mtx/pm_mtx with M5; M7a-1: pmap_page_protect and pmap_clear_modify report themselves until the pv lists (M7a-3)"
 
 [[file]]
 c = "sys/arch/amd64/amd64/pmap.c"
@@ -772,7 +772,7 @@ deps = [
     "sys/uvm/uvm_page.h",
     "sys/sys/queue.h",
 ]
-notes = "struct pmap (kernel subset with pm_vp as an enum of the union), vm_page_md, VP_IDX* and cache/pv flags; pointer authentication keys with M6; pv_mtx/pm_mtx with M5"
+notes = "struct pmap (kernel subset with pm_vp as an enum of the union), vm_page_md, VP_IDX* and cache/pv flags; pointer authentication keys with M6; pv_mtx/pm_mtx with M5; M7a-1: pmap_page_protect and pmap_clear_modify report themselves until the pv lists (M7a-3)"
 
 [[file]]
 c = "sys/arch/arm64/arm64/pmap.c"
@@ -875,7 +875,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1e16ce3c07558e556a719c9bfd751b16ff4ce86b"
 deps = ["sys/sys/types.h"]
-notes = "pmap_statistics and the PMAP_* flags; the pmap(9) prototypes are the machine::Pmap trait (sys/machine/pmap.rs)"
+notes = "pmap_statistics and the PMAP_* flags; the pmap(9) prototypes are the machine::Pmap trait (sys/machine/pmap.rs); M7a-1: pmap_page_protect and pmap_clear_modify in the trait"
 
 [[file]]
 c = "sys/uvm/uvmexp.h"
@@ -898,29 +898,101 @@ notes = "vm_fault_t, vm_inherit_t, vm_prot_t, the UVM_FLAG_* encoding, UVM_PGA_*
 [[file]]
 c = "sys/uvm/uvm_object.h"
 rust = "sys/uvm/uvm_object.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6a14f501500972901a0a81f70fd18132fd31baf4"
-deps = ["sys/sys/tree.h", "sys/uvm/uvm_page.h"]
-notes = "struct uvm_object (memt, uo_npages, uo_refs), UVM_OBJ_KERN, UVM_OBJ_IS_KERN_OBJECT; vmobjlock (M5), pgops and the UVM_OBJ_IS_* for vnodes/devices/aobjs (M6, M7)"
+deps = ["sys/sys/tree.h", "sys/uvm/uvm_page.h", "sys/sys/rwlock.h", "sys/uvm/uvm_pager.h"]
+notes = "struct uvm_object (vmobjlock, pgops, memt, uo_npages, uo_refs), UVM_OBJ_KERN, the UVM_OBJ_IS_* tests; M7a-1: IS_VNODE/IS_DEVICE/IS_VTEXT answer false until the vnode and device pagers exist (M7); UvmObject::new(refs) is the const form of uvm_obj_init(&pmap_pager) for the pmaps' static PTP objects"
 
 [[file]]
 c = "sys/uvm/uvm_object.c"
 rust = "sys/uvm/uvm_object.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8e18a7725e057df16d8935c8408f9a132570cd55"
-deps = ["sys/uvm/uvm_object.h"]
-notes = "the object tree generation (uvm_objtree over uvm_pagecmp); uvm_obj_init/destroy/setlock/wire/unwire/free need the pagers and amaps (M6)"
+deps = ["sys/uvm/uvm_object.h", "sys/kern/kern_rwlock.c", "sys/uvm/uvm_aobj.c", "sys/uvm/uvm_pager.h"]
+notes = "uvm_pagecmp and the uvm_objtree generation; M7a-1: pmap_pager/bufcache_pager, uvm_obj_init/destroy/setlock/wire/unwire/free (KERNEL_ASSERT_LOCKED not configured)"
 
 [[file]]
 c = "sys/uvm/uvm_anon.h"
 rust = "sys/uvm/uvm_anon.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ff2d6fe21192846df9abf631bcdb91bff05c95b0"
-deps = ["sys/uvm/uvm_page.h"]
-notes = "struct vm_anon (an_page, an_ref, an_swslot); an_lock (M5), the anon pool and uvm_anon.c with amaps (M6)"
+deps = ["sys/uvm/uvm_page.h", "sys/sys/rwlock.h"]
+notes = "struct vm_anon (an_lock, an_page, an_ref, an_swslot), struct vm_aref, the prototypes; MULTIPROCESSOR padding not configured (M7a-1)"
+
+[[file]]
+c = "sys/uvm/uvm_anon.c"
+rust = "sys/uvm/uvm_anon.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "77a6005b43e5cdf9d67bcfd390b80a6fa649b43f"
+deps = ["sys/uvm/uvm_anon.h", "sys/kern/subr_pool.c", "sys/kern/kern_rwlock.c", "sys/uvm/uvm_page.c"]
+notes = "M7a-1: uvm_anon_init (the pool, hiwat free/16), uvm_anon_init_percpu (pool_cache_init: MULTIPROCESSOR not configured), uvm_analloc, uvm_anfree, uvm_anwait, uvm_anon_dropswap (uvm_swap_free reported: swap, M7), uvm_anon_release; uvm_anon_pagein reports uvmfault_anonget (M7a-3); UVM_PAGE_OWN not configured"
+
+[[file]]
+c = "sys/uvm/uvm_amap.h"
+rust = "sys/uvm/uvm_amap.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3097e5b3a48e9dd6a9134415e90f58ab99d9693a"
+deps = ["sys/uvm/uvm_anon.h", "sys/sys/queue.h", "sys/sys/rwlock.h"]
+notes = "M7a-1: struct vm_amap_chunk (always UVM_AMAP_CHUNK slots), struct vm_amap (the am_impl union as the normal fields beside am_small), AMAP_SHARED/REFALL/SWAPOFF, UVM_AMAP_LARGE/CHUNK, UVM_AMAP_SMALL/SLOTIDX/BUCKET, AMAP_B2SLOT, AMAP_BASE_SLOT, AMAP_CHUNK_FOREACH as first_chunk/next_chunk, amap_flags/refs/lock/unlock, the prototypes"
+
+[[file]]
+c = "sys/uvm/uvm_amap.c"
+rust = "sys/uvm/uvm_amap.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "616caf8fe3223a8242eced34b6d6f330f7e572e4"
+deps = ["sys/uvm/uvm_amap.h", "sys/uvm/uvm_anon.c", "sys/kern/kern_malloc.c", "sys/kern/subr_pool.c", "sys/kern/kern_rwlock.c", "sys/uvm/uvm_map.h"]
+notes = "M7a-1: amap_list_insert/remove, amap_chunk_get/free, pp_getreflen/setreflen, amap_init (one amap pool and one chunk pool instead of uvm_small_amap_pool[] by slot count), amap_alloc1 (bucket strategy as the C), amap_lock_alloc, amap_alloc, amap_free, amap_wipeout, amap_copy (the UVM_MAP_CLIP_START/END chunking of a large amap reports uvm_map_clip_* and falls back to a lazily allocated amap: M7a-2), amap_cow_now, amap_splitref, amap_pp_establish, amap_pp_adjref, amap_wiperange_chunk, amap_wiperange, amap_swap_off (over uvm_anon_pagein, which reports its fault path), amap_lookup, amap_lookups, amap_populate, amap_add (bool for the C's 0/1), amap_unadd, amap_adjref_anons, amap_ref, amap_unref; ffs is trailing_zeros; UVM_PAGE_OWN not configured; host tests"
+
+[[file]]
+c = "sys/uvm/uvm_aobj.h"
+rust = "sys/uvm/uvm_aobj.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "203609019fc6f24d14ff7f4e628fe65b9e2f37b2"
+deps = ["sys/uvm/uvm_object.h", "sys/uvm/uvm_pager.h"]
+notes = "M7a-1: UAO_FLAG_KERNOBJ/KERNSWAP/CANFAIL/NOSWAP, aobj_pager, the prototypes (uao_shrink/uao_grow are TMPFS, not configured)"
+
+[[file]]
+c = "sys/uvm/uvm_aobj.c"
+rust = "sys/uvm/uvm_aobj.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0ac9cd8a057aac56699f7794d8b23d48e9191854"
+deps = ["sys/uvm/uvm_aobj.h", "sys/uvm/uvm_object.c", "sys/uvm/uvm_page.c", "sys/kern/kern_subr.c", "sys/kern/kern_malloc.c", "sys/kern/subr_pool.c", "sys/kern/kern_rwlock.c", "sys/uvm/uvm_pmap.h"]
+notes = "M7a-1: struct uao_swhash_elt, struct uvm_aobj (#[repr(C)], u_obj first; u_swhash keeps hashinit's slice, u_swhashmask is its length - 1), the UAO_SWHASH_* macros, uao_find_swhash_elt, uao_find_swslot, uao_set_swslot, uao_free, uao_create (kernel_object_store, bootstrap_kernel_object_lock, kobj_alloced as statics), uao_init, uao_reference/uao_detach (uo_refs a Cell, not atomic: one CPU), uao_flush, uao_get_validate, uao_get (uvm_swap_get, SWSLOT_BAD and uvm_swap_markbad reported: a slot is an I/O error; swap, M7), uao_dropswap and uao_dropswap_range (uvm_swap_free reported, swpgonly accounted), uao_swap_off, uao_pagein, uao_pagein_page; uao_shrink*/uao_grow* are TMPFS, not configured; UVM_PAGE_OWN not configured; host tests"
+
+[[file]]
+c = "sys/uvm/uvm_pager.h"
+rust = "sys/uvm/uvm_pager.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "90f5246917aa83f47e7f929741427db176600dfe"
+deps = ["sys/uvm/uvm_object.h", "sys/uvm/uvm_fault.h"]
+notes = "M7a-1: struct uvm_pagerops (every op an Option<fn> with the Pgo* aliases), PGO_*, PGO_DONTCARE (a raw-pointer sentinel in &mut [*const VmPage] arrays), UVMPAGER_MAPIN_*, VM_PAGER_*, PAGER_MAP_SIZE; the uvm_pagermapin/out, uvm_mk_pcluster, uvm_pager_put/dropcluster and uvm_aio_* prototypes come with their code (M7)"
+
+[[file]]
+c = "sys/uvm/uvm_pager.c"
+rust = "sys/uvm/uvm_pager.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2c41002bf6f60c160e34bd3d7134e2245d3594cf"
+deps = ["sys/uvm/uvm_pager.h", "sys/uvm/uvm_aobj.c", "sys/sys/mutex.h"]
+notes = "M7a-1: uvmpagerops[] (the aobj pager only: no device or vnode pager yet), uvm_pseg_lck, uvm_pager_init (the pager map and uvm.aio_done reported; calls the pgo_init of every pager); uvm_pseg_init/get/release, uvm_pagermapin/out, uvm_mk_pcluster, uvm_pager_put, uvm_pager_dropcluster, uvm_aio_aiodone are swap and vnode I/O (M7)"
+
+[[file]]
+c = "sys/uvm/uvm_fault.h"
+rust = "sys/uvm/uvm_fault.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cbeca0a483b6a2268d0cfe545d4a14878438cd0a"
+deps = ["sys/uvm/uvm_map.h"]
+notes = "M7a-1: VM_FAULT_INVALID/PROTECT/WIRE, struct uvm_faultinfo; the prototypes and uvm_fault.c are M7a-3"
 
 [[file]]
 c = "sys/uvm/uvm.h"
@@ -929,7 +1001,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "79dd17e35d40fa3d84252b3ace130f87eea2e717"
 deps = ["sys/uvm/uvm_page.h", "sys/uvm/uvm_pmemrange.h"]
-notes = "struct uvm (page queues, page_init_done, pmr_control) and the UVM_ET_* bits; the locks, the aiodone queue, the pager and swap fields arrive with their subsystems"
+notes = "struct uvm (page queues, page_init_done, pmr_control) and the UVM_ET_* bits; the locks, the aiodone queue, the pager and swap fields arrive with their subsystems; M7a-1: kernel_object and the UVM_ET_IS* tests"
 
 [[file]]
 c = "sys/uvm/uvm_init.c"
@@ -937,12 +1009,8 @@ rust = "sys/uvm/uvm_init.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7703ec138db0f65b7bedc76cdaed1423363db7f0"
-deps = [
-    "sys/uvm/uvm.h",
-    "sys/uvm/uvmexp.h",
-    "sys/uvm/uvm_page.c",
-]
-notes = "uvm_init: page system, uvm_km_init (bounds only), pmap_init and kmeminit run; uvm_map_init runs (M6-b); uvmfault_init, uvm_km_page_init, dma_alloc_init, uvm_pager_init, amap_init, uao_create, uvm_anon_init, the bestfit switch and uvm_init_percpu report themselves unported; uvmexp is exported under its C name for the amd64 interrupt stubs' V_INTR"
+deps = ["sys/uvm/uvm.h", "sys/uvm/uvmexp.h", "sys/uvm/uvm_page.c", "sys/uvm/uvm_pager.c", "sys/uvm/uvm_amap.c", "sys/uvm/uvm_aobj.c", "sys/uvm/uvm_anon.c"]
+notes = "uvm_init: page system, uvm_km_init (bounds only), pmap_init and kmeminit run; uvm_map_init runs (M6-b); uvmfault_init, uvm_km_page_init, dma_alloc_init, uvm_pager_init, amap_init, uao_create, uvm_anon_init, the bestfit switch and uvm_init_percpu report themselves unported; uvmexp is exported under its C name for the amd64 interrupt stubs' V_INTR; M7a-1: uvm_pager_init, amap_init, uao_create (kernel swap), uvm_anon_init and uvm_anon_init_percpu run"
 
 [[file]]
 c = "sys/uvm/uvm_page.h"
@@ -964,14 +1032,8 @@ rust = "sys/uvm/uvm_page.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e89c58ad8ac48fec0a2742e0391ebc4ffa649598"
-deps = [
-    "sys/uvm/uvm_page.h",
-    "sys/uvm/uvm_pmemrange.c",
-    "sys/uvm/uvm_object.h",
-    "sys/uvm/uvm_anon.h",
-    "sys/uvm/uvm_param.h",
-]
-notes = "page init, physload/physget/physdump, pageboot_alloc (both PMAP_STEAL_MEMORY paths), pagealloc/pagefree/pglistalloc/pglistfree, wire/unwire/activate/deactivate, PHYS_TO_VM_PAGE; uvm_page_physload after uvm_init needs malloc; uvm_pagewait needs rwsleep (M5); uvm_pagezero_thread (M5)"
+deps = ["sys/uvm/uvm_page.h", "sys/uvm/uvm_pmemrange.c", "sys/uvm/uvm_object.h", "sys/uvm/uvm_anon.h", "sys/uvm/uvm_param.h", "sys/kern/kern_rwlock.c"]
+notes = "page init, physload/physget/physdump, pageboot_alloc (both PMAP_STEAL_MEMORY paths), pagealloc/pagefree/pglistalloc/pglistfree, wire/unwire/activate/deactivate, PHYS_TO_VM_PAGE; uvm_page_physload after uvm_init needs malloc; uvm_pagewait needs rwsleep (M5); uvm_pagezero_thread (M5); M7a-1: uvm_pagewait sleeps on the owner lock (rwsleep_nsec), uvm_page_unbusy calls pmap_page_protect, uvm_page_owner_locked_p checks vmobjlock/an_lock"
 
 [[file]]
 c = "sys/uvm/uvm_pmemrange.h"
@@ -1006,8 +1068,8 @@ rust = "sys/uvm/uvm_km.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d125775bafe311bad1f791f16fae0434e8703879"
-deps = ["sys/uvm/uvm_extern.h"]
-notes = "km_alloc/km_free, the kv_*/kp_*/kd_* modes, no_constraint, uvm_km_init recording the kernel map bounds; without kernel_map/kmem_map (uvm_map.c) every allocation is served physically contiguous through the direct map and reported once; kp_nomem/kp_pageable requests fail reported; uvm_km_suballoc, uvm_km_pgremove and the single-page thread follow uvm_map"
+deps = ["sys/uvm/uvm_extern.h", "sys/uvm/uvm_aobj.c"]
+notes = "km_alloc/km_free, the kv_*/kp_*/kd_* modes, no_constraint, uvm_km_init recording the kernel map bounds; without kernel_map/kmem_map (uvm_map.c) every allocation is served physically contiguous through the direct map and reported once; kp_nomem/kp_pageable requests fail reported; uvm_km_suballoc, uvm_km_pgremove and the single-page thread follow uvm_map; M7a-1: uvm_km_init creates the kernel object (uao_init, uao_create UAO_FLAG_KERNOBJ); the map setup and the reservation of [base, start) follow uvm_map (M7a-2)"
 
 [[file]]
 c = "sys/uvm/uvm_pdaemon.c"
@@ -1877,8 +1939,8 @@ rust = "sys/uvm/uvm_map.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c1db58efecd251001691faa9da4ffe341e0c9ed5"
-deps = ["sys/sys/mutex.h", "sys/uvm/uvm_page.h"]
-notes = "M6-b: struct vm_map (pmap, sserial, size, ref_count, flags, timestamp, min/max_offset, b_/s_ ranges, lock/mtx/flags_lock, plus the deviation list of wired pages), VM_MAP_* flags, MAX_KMAPENT; the entry tree (vm_map_entry, uvm_map_addr), the uaddr selectors, check_copyin and the inline helpers are M7a; busy/nbusy and the rwlock (M7a)"
+deps = ["sys/sys/mutex.h", "sys/uvm/uvm_page.h", "sys/uvm/uvm_anon.h", "sys/sys/tree.h"]
+notes = "M6-b: struct vm_map (pmap, sserial, size, ref_count, flags, timestamp, min/max_offset, b_/s_ ranges, lock/mtx/flags_lock, plus the deviation list of wired pages), VM_MAP_* flags, MAX_KMAPENT; the entry tree (vm_map_entry, uvm_map_addr), the uaddr selectors, check_copyin and the inline helpers are M7a; busy/nbusy and the rwlock (M7a); M7a-1: struct vm_map_entry (the daddrs/dfree unions as side-by-side links, object as the VmMapEntryObject enum), UVM_MAP_STATIC/KMEM, VM_MAPENT_ISWIRED, uvm_mapentry_addrcmp, the uvm_map_addr tree and uvm_map_deadq adapters, the addr tree in struct vm_map"
 
 [[file]]
 c = "sys/uvm/uvm_map.c"

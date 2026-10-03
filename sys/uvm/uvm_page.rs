@@ -112,10 +112,15 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use libkern::StaticCell;
 
+use crate::kern::kern_synch::rwsleep_nsec;
+use crate::kern::subr_prf::panic;
 use crate::machine::{Machine, Pmap, VmPageMd, VmParam};
 use crate::sys::errno::Errno;
-use crate::sys::param::{PAGE_MASK, PAGE_SHIFT, PAGE_SIZE};
+use crate::sys::mman::PROT_NONE;
+use crate::sys::param::{PAGE_MASK, PAGE_SHIFT, PAGE_SIZE, PNORELOCK, PVM};
 use crate::sys::queue::{TailqEntry, TailqHead};
+use crate::sys::rwlock::{Rwlock, rw_lock_held, rw_write_held};
+use crate::sys::systm::INFSLP;
 use crate::sys::tree::RbtEntry;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_anon::VmAnon;
@@ -1192,7 +1197,7 @@ pub fn uvm_page_unbusy(pgs: &[Option<&VmPage>]) {
         if pg.flags() & PG_RELEASED != 0 {
             kassert!(pg.uobject().is_some() || pg.uanon().is_some_and(|a| a.an_ref.get() > 0));
             pg.clear_bits(PG_WANTED);
-            let _ = unported!("pmap_page_protect (uvm_page_unbusy)");
+            Machine::pmap_page_protect(pg, PROT_NONE);
             uvm_pagefree(pg);
         } else {
             kassert!(pg.flags() & PG_FAKE == 0);
@@ -1204,12 +1209,13 @@ pub fn uvm_page_unbusy(pgs: &[Option<&VmPage>]) {
 
 /// `uvm_pagewait`: wait for a busy page. Page must be known `PG_BUSY`; object must be locked;
 /// object will be unlocked on return.
-pub fn uvm_pagewait(pg: &VmPage, _wmesg: &str) {
+pub fn uvm_pagewait(pg: &VmPage, lock: &Rwlock, wmesg: &'static str) {
+    kassert!(rw_lock_held(lock));
     kassert!(pg.flags() & PG_BUSY != 0);
     kassert!(uvm_page_owner_locked_p(pg, false));
 
     pg.set_bits(PG_WANTED);
-    let _ = unported!("rwsleep_nsec (uvm_pagewait)");
+    let _ = rwsleep_nsec(ptr::from_ref(pg), lock, PVM | PNORELOCK, wmesg, INFSLP);
 }
 
 /// `vm_physseg_find`: find the vm_physseg structure that belongs to a PA: the segment index
@@ -1392,17 +1398,26 @@ pub fn uvm_pagecopy(src: &VmPage, dst: &VmPage) {
 
 /// `uvm_page_owner_locked_p`: return true if object associated with page is locked. This is a
 /// weak check for runtime assertions only.
-pub fn uvm_page_owner_locked_p(pg: &VmPage, _exclusive: bool) -> bool {
+pub fn uvm_page_owner_locked_p(pg: &VmPage, exclusive: bool) -> bool {
     if let Some(obj) = pg.uobject() {
         if uvm_obj_is_dummy(obj) {
             return true;
         }
-        // rw_write_held / rw_lock_held (vmobjlock): M5.
-        return true;
+        return if exclusive {
+            rw_write_held(obj.vmobjlock())
+        } else {
+            rw_lock_held(obj.vmobjlock())
+        };
     }
-    if pg.uanon().is_some() {
-        // rw_write_held / rw_lock_held (an_lock): M5.
-        return true;
+    if let Some(anon) = pg.uanon() {
+        let Some(lock) = anon.an_lock() else {
+            panic(format_args!("uvm_page_owner_locked_p: anon without a lock"));
+        };
+        return if exclusive {
+            rw_write_held(lock)
+        } else {
+            rw_lock_held(lock)
+        };
     }
     true
 }
