@@ -209,15 +209,17 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   `ampintc` then owns `spl` through `arm_set_intr_handler`. `do_el1h_sync` enables interrupts
   as the C does. The console's receive interrupt goes through `arm_intr_establish_fdt`, so the
   `selftest=uart` boot exercises the same path on arm64 as on amd64.
-- Clocks (M5-a, part 1): the time code is OpenBSD's (`kern_tc.c` over the timehands ring,
+- Clocks (M5-a): the time code is OpenBSD's (`kern_tc.c` over the timehands ring,
   `kern_clockintr.c`'s per-CPU queue, `kern_timeout.c`'s timing wheel, `kern_clock.c`), reached
   from the machine through the `Cpu` trait's `CpuInfo`/`ClockFrame` associated types and
-  accessors. `main` brings up the wheel, the clock queue and the four per-CPU clock interrupts
-  (`sched_init_cpu`'s binds); amd64 starts the i8254, calibrates the LAPIC timer against it
-  (`lapic_calibrate_timer`, as the boot CPU's `cpu_attach` does) and has the timer stub
-  installed, but `initclocks` stays reported until the arm64 generic timer (`agtimer`) lands,
-  so no clock interrupt runs yet on either arch. The host double owns a `cpu_info` of its own
-  so the clock queue and the wheel are unit-tested over the dummy timecounter.
+  accessors. `main` brings up the wheel, the clock queue, the four per-CPU clock interrupts
+  (`sched_init_cpu`'s binds) and `initclocks`. amd64 starts the i8254, calibrates the LAPIC
+  timer against it (`lapic_calibrate_timer`, as the boot CPU's `cpu_attach` does) and drives
+  `clockintr_dispatch` from `Xintr_lapic_ltimer`; the i8254 is the timecounter (the TSC one,
+  `tsc.c`, is not ported). arm64 attaches `agtimer` from the device tree as `simplebus` would
+  and takes the virtual timer's PPI through `ampintc`. The `selftest=clock` boot waits for
+  `hz` hardclocks and a `timeout(9)`. The host double owns a `cpu_info` of its own so the
+  clock queue and the wheel are unit-tested over the dummy timecounter.
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

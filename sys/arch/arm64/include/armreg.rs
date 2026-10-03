@@ -85,6 +85,35 @@ macro_rules! write_specialreg {
 }
 pub(crate) use write_specialreg;
 
+/* CNTKCTL_EL1 - Counter-timer Kernel Control Register */
+
+/// `CNTKCTL_EL0VCTEN`: allow EL0 virtual counter access.
+pub const CNTKCTL_EL0VCTEN: u64 = 1 << 1;
+
+/* CNTV_CTL_EL0 */
+
+/// `CNTV_CTL_ENABLE`.
+pub const CNTV_CTL_ENABLE: u32 = 1 << 0;
+/// `CNTV_CTL_IMASK`.
+pub const CNTV_CTL_IMASK: u32 = 1 << 1;
+/// `CNTV_CTL_ISTATUS`.
+pub const CNTV_CTL_ISTATUS: u32 = 1 << 2;
+
+/* CurrentEL - Current Exception Level */
+
+/// `CURRENTEL_EL_SHIFT`.
+pub const CURRENTEL_EL_SHIFT: u64 = 2;
+/// `CURRENTEL_EL_MASK`.
+pub const CURRENTEL_EL_MASK: u64 = 0x3 << CURRENTEL_EL_SHIFT;
+/// `CURRENTEL_EL_EL0`.
+pub const CURRENTEL_EL_EL0: u64 = 0x0 << CURRENTEL_EL_SHIFT;
+/// `CURRENTEL_EL_EL1`.
+pub const CURRENTEL_EL_EL1: u64 = 0x1 << CURRENTEL_EL_SHIFT;
+/// `CURRENTEL_EL_EL2`.
+pub const CURRENTEL_EL_EL2: u64 = 0x2 << CURRENTEL_EL_SHIFT;
+/// `CURRENTEL_EL_EL3`.
+pub const CURRENTEL_EL_EL3: u64 = 0x3 << CURRENTEL_EL_SHIFT;
+
 /// `ESR_ELx_ISS_MASK`: the instruction specific syndrome.
 pub const ESR_ELX_ISS_MASK: u64 = 0x00ff_ffff;
 /// `ISS_INSN_FnV`.

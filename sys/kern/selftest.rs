@@ -13,8 +13,12 @@ use libkern::StaticCell;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use crate::conf::param::HZ;
+use crate::kern::kern_clock::ticks;
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_softintr::{SoftintrHand, softintr_establish, softintr_schedule};
+use crate::kern::kern_tc::{getuptime, nsecuptime};
+use crate::kern::kern_timeout::{timeout_add_msec, timeout_set};
 use crate::kern::subr_pool::{pool_destroy, pool_get, pool_init, pool_put, pool_reclaim};
 use crate::kern::subr_prf::Str;
 use crate::kprintf;
@@ -28,6 +32,7 @@ use crate::sys::malloc::{M_NOWAIT, M_TEMP, M_ZERO};
 use crate::sys::mman::{PROT_READ, PROT_WRITE};
 use crate::sys::param::PAGE_SIZE;
 use crate::sys::pool::{PR_NOWAIT, PR_ZERO, Pool};
+use crate::sys::timeout::Timeout;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_extern::UVM_PGA_ZERO;
 use crate::uvm::uvm_init::UVMEXP;
@@ -41,18 +46,29 @@ const PATTERN: u64 = 0x5a5a_c3c3_0f0f_a5a5;
 static TRAP_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// `selftest=uart` asks for [`uart_echo`].
 static UART_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// `selftest=clock` asks for [`clock_check`].
+static CLOCK_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Reads the self-test requests off the kernel command line: `selftest=trap` asks for the
 /// fatal [`trap_bad_access`], which a plain boot must not run.
 pub fn parse_bootargs(cmdline: &[u8]) {
     const TRAP: &[u8] = b"selftest=trap";
     const UART: &[u8] = b"selftest=uart";
+    const CLOCK: &[u8] = b"selftest=clock";
     if cmdline.windows(TRAP.len()).any(|w| w == TRAP) {
         TRAP_REQUESTED.store(true, Ordering::Relaxed);
     }
     if cmdline.windows(UART.len()).any(|w| w == UART) {
         UART_REQUESTED.store(true, Ordering::Relaxed);
     }
+    if cmdline.windows(CLOCK.len()).any(|w| w == CLOCK) {
+        CLOCK_REQUESTED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Whether the command line asked for [`clock_check`].
+pub fn clock_requested() -> bool {
+    CLOCK_REQUESTED.load(Ordering::Relaxed)
 }
 
 /// Whether the command line asked for [`uart_echo`].
@@ -329,5 +345,62 @@ pub fn uart_echo() {
             );
             return;
         }
+    }
+}
+
+/// Set by [`clock_timeout_fired`].
+static CLOCK_TIMEOUT_FIRED: AtomicBool = AtomicBool::new(false);
+/// The timeout `clock_check` arms.
+static CLOCK_TIMEOUT: Timeout = Timeout::zeroed();
+
+/// The timeout's handler: runs from `softclock`.
+fn clock_timeout_fired(_arg: *mut core::ffi::c_void) {
+    CLOCK_TIMEOUT_FIRED.store(true, Ordering::Relaxed);
+}
+
+/// Waits for `hz` hardclock ticks with the clock interrupt running and checks that the
+/// timecounter saw about a second go by and that a `timeout(9)` armed for half a second fired:
+/// the M5 exit criterion "uptime ticks at hz".
+pub fn clock_check() {
+    let hz = HZ.load(Ordering::Relaxed);
+    let start_ticks = ticks();
+    let start_ns = nsecuptime();
+    timeout_set(&CLOCK_TIMEOUT, clock_timeout_fired, ptr::null_mut());
+    timeout_add_msec(&CLOCK_TIMEOUT, 500);
+
+    // A bound on the wait in case nothing ticks: a few seconds of spinning.
+    let mut spins: u64 = 0;
+    while ticks().wrapping_sub(start_ticks) < hz {
+        core::hint::spin_loop();
+        spins += 1;
+        if spins == 2_000_000_000 {
+            kprintf!(
+                "selftest: clock FAILED: {} ticks after {} spins (hz={})\n",
+                ticks().wrapping_sub(start_ticks),
+                spins,
+                hz
+            );
+            return;
+        }
+    }
+    let elapsed_ms = nsecuptime().wrapping_sub(start_ns) / 1_000_000;
+    let fired = CLOCK_TIMEOUT_FIRED.load(Ordering::Relaxed);
+    // hz ticks should take a second give or take the tick the wait started in.
+    if fired && (900..=1200).contains(&elapsed_ms) {
+        kprintf!(
+            "selftest: clock ok: {} ticks in {} ms (hz={}), timeout fired, uptime {} s\n",
+            hz,
+            elapsed_ms,
+            hz,
+            getuptime()
+        );
+    } else {
+        kprintf!(
+            "selftest: clock FAILED: {} ticks in {} ms (hz={}), timeout fired: {}\n",
+            hz,
+            elapsed_ms,
+            hz,
+            fired
+        );
     }
 }

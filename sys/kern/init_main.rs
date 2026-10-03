@@ -60,6 +60,7 @@
 
 use core::sync::atomic::{AtomicBool, AtomicI32};
 
+use crate::kern::kern_clock::initclocks;
 use crate::kern::kern_clockintr::clockqueue_init;
 use crate::kern::kern_sched::{sched_init, sched_init_cpu};
 use crate::kern::kern_timeout::{timeout_proc_init, timeout_startup};
@@ -215,9 +216,12 @@ pub fn main() -> ! {
     // Initialize the file systems. NFSSERVER / NFSCLIENT: not configured.
     let _ = unported!("vfsinit");
 
-    // Start real time and statistics clocks: initclocks() waits for the arm64 generic timer
-    // (agtimer, M5-a part 2); amd64's LAPIC timer is calibrated and ready.
-    let _ = unported!("initclocks (agtimer on arm64, M5-a part 2)");
+    // Start real time and statistics clocks.
+    initclocks();
+    #[cfg(feature = "qemu")]
+    if crate::kern::selftest::clock_requested() {
+        crate::kern::selftest::clock_check();
+    }
 
     // SYSVSHM / SYSVSEM / SYSVMSG: not configured.
 

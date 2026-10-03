@@ -14,4 +14,5 @@ pub mod mutex;
 pub mod param;
 pub mod pmap;
 pub mod pte;
+pub mod timetc;
 pub mod vmparam;

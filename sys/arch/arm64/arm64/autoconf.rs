@@ -27,8 +27,9 @@
 //!
 //! ## Deviations
 //! - `cpu_configure` has no `config_rootfound("mainbus")`: `bus_dma_init`, `unmap_startup`
-//!   and `cpu_identify_cleanup` are reported, and the interrupt controller is attached by
-//!   `attach_interrupt_controller`, which finds the GIC's node and builds its
+//!   and `cpu_identify_cleanup` are reported; `agtimer_init` is called as `mainbus_attach`
+//!   does, and the interrupt controller and the generic timer are attached by
+//!   `attach_interrupt_controller`/`attach_timer`, which find their nodes and build the
 //!   `fdt_attach_args` as `simplebus` would.
 
 use core::sync::atomic::Ordering;
@@ -36,6 +37,7 @@ use core::sync::atomic::Ordering;
 use crate::arch::arm64::arm64::bus_space::ARM64_BS_TAG;
 use crate::arch::arm64::arm64::intr::arm_intr_init_fdt;
 use crate::arch::arm64::arm64::machdep::COLD;
+use crate::arch::arm64::dev::agtimer::{agtimer_attach, agtimer_init, agtimer_match};
 use crate::arch::arm64::dev::ampintc::{ampintc_attach, ampintc_match};
 use crate::arch::arm64::include::fdt::FdtAttachArgs;
 use crate::dev::ofw::fdt::{FdtReg, fdt_get_reg, of_fdt_node};
@@ -52,10 +54,13 @@ pub fn cpu_configure() {
     softintr_init();
     let _ = unported!("bus_dma_init (M7)");
 
-    // config_rootfound("mainbus", NULL): autoconfiguration (M5). Of what mainbus and
-    // simplebus would attach, the interrupt controller:
+    // config_rootfound("mainbus", NULL): autoconfiguration (M5-b). Of what mainbus and
+    // simplebus would attach: mainbus_attach's agtimer_init, then the interrupt controller
+    // and the generic timer.
+    agtimer_init();
     arm_intr_init_fdt();
     attach_interrupt_controller();
+    attach_timer();
 
     let _ = unported!("unmap_startup (M6)");
 
@@ -97,4 +102,27 @@ fn attach_interrupt_controller() {
         node = OF_peer(node);
     }
     printf(format_args!("no interrupt controller in the device tree\n"));
+}
+
+/// What `simplebus` does for the generic timer until autoconfiguration (M5-b): find its
+/// node and attach it (it needs no registers, only the node).
+fn attach_timer() {
+    let mut node = OF_child(OF_peer(0));
+    while node != 0 {
+        let faa = FdtAttachArgs {
+            fa_name: b"",
+            fa_node: node,
+            fa_iot: &ARM64_BS_TAG,
+            fa_reg: &[],
+            fa_intr: &[],
+            fa_acells: OF_getpropint(OF_peer(0), b"#address-cells", 1) as i32,
+            fa_scells: OF_getpropint(OF_peer(0), b"#size-cells", 1) as i32,
+        };
+        if agtimer_match(&faa) {
+            agtimer_attach(&faa);
+            return;
+        }
+        node = OF_peer(node);
+    }
+    printf(format_args!("no generic timer in the device tree\n"));
 }
