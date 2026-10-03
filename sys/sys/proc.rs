@@ -70,6 +70,7 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicI32, AtomicU32};
 
+use crate::kassert;
 use crate::kern::kern_lock::{pc_sprod_enter, pc_sprod_leave};
 use crate::machine::Machine;
 use crate::machine::cpu::{CpuInfo, MAXCPUS};
@@ -86,6 +87,7 @@ use crate::sys::time::{Timespec, Timeval};
 use crate::sys::timeout::Timeout;
 use crate::sys::types::{Pid, Uid};
 use crate::sys::user::User;
+use crate::uvm::uvm_extern::Vmspace;
 
 /// `_MAXCOMLEN`: the command and thread names, NUL included.
 pub const _MAXCOMLEN: usize = crate::sys::syslimits::_MAXCOMLEN;
@@ -288,8 +290,8 @@ pub struct Process {
     pub ps_textvp: Cell<*const ()>,
     /// `ps_fd`: ptr to open files structure (`struct filedesc`, M6).
     pub ps_fd: Cell<*const ()>,
-    /// `ps_vmspace`: address space (`struct vmspace`, M6).
-    pub ps_vmspace: Cell<*const ()>,
+    /// `ps_vmspace`: address space.
+    pub ps_vmspace: Cell<*const Vmspace>,
     /// \[I\] `ps_pid`: process identifier.
     pub ps_pid: Cell<Pid>,
 
@@ -349,7 +351,9 @@ pub struct Process {
     /// `ps_comm`: command name, incl NUL.
     pub ps_comm: UnsafeCell<[u8; _MAXCOMLEN]>,
 
-    // ps_strings, ps_auxinfo, ps_timekeep, ps_sigcode, ps_sigcoderet, ps_sigcookie: exec (M6).
+    /// `ps_strings`: user pointers to argv/env.
+    pub ps_strings: Cell<usize>,
+    // ps_auxinfo, ps_timekeep, ps_sigcode, ps_sigcoderet, ps_sigcookie: exec (M6-c).
     /// \[a\] `ps_rtableid`: process routing table/domain.
     pub ps_rtableid: AtomicU32,
     /// \[I\] `ps_iflags`: flags set at exec time.
@@ -421,6 +425,7 @@ impl Process {
             ps_limit: Cell::new(ptr::null()),
             ps_pgrp: Cell::new(ptr::null()),
             ps_comm: UnsafeCell::new([0; _MAXCOMLEN]),
+            ps_strings: Cell::new(0),
             ps_rtableid: AtomicU32::new(0),
             ps_iflags: Cell::new(0),
             ps_nice: Cell::new(0),
@@ -440,6 +445,16 @@ impl Process {
         let comm = unsafe { &*self.ps_comm.get() };
         let n = comm.iter().position(|&c| c == 0).unwrap_or(comm.len());
         &comm[..n]
+    }
+
+    /// `pr->ps_vmspace`: the address space, which the process holds a reference to from
+    /// `fork1` (or `main` for process 0) until the reaper's `uvm_exit`.
+    pub fn vmspace(&self) -> &'static Vmspace {
+        let vm = self.ps_vmspace.get();
+        kassert!(!vm.is_null());
+        // SAFETY: non-null while the process holds its reference; `uvmspace_free` runs only
+        // after `uvm_exit` cleared the pointer.
+        unsafe { &*vm }
     }
 
     /// `strlcpy(pr->ps_comm, name, sizeof pr->ps_comm)`.
@@ -599,8 +614,8 @@ pub struct Proc {
     // substructures:
     /// `p_fd`: copy of `p_p->ps_fd` (`struct filedesc`, M6).
     pub p_fd: Cell<*const ()>,
-    /// \[I\] `p_vmspace`: copy of `p_p->ps_vmspace` (`struct vmspace`, M6).
-    pub p_vmspace: Cell<*const ()>,
+    /// \[I\] `p_vmspace`: copy of `p_p->ps_vmspace`.
+    pub p_vmspace: Cell<*const Vmspace>,
     /// \[o\] `p_spinentry`: cache for SP check.
     pub p_spinentry: Cell<PInentry>,
 
@@ -752,6 +767,15 @@ impl Proc {
         }
     }
 
+    /// `p->p_vmspace`: the thread's copy of its process's address space pointer.
+    pub fn vmspace(&self) -> &'static Vmspace {
+        let vm = self.p_vmspace.get();
+        kassert!(!vm.is_null());
+        // SAFETY: as for `Process::vmspace`; the reaper nulls the thread's copy after the
+        // thread is dead.
+        unsafe { &*vm }
+    }
+
     /// `p->p_p`: the thread's process.
     pub fn process(&self) -> &Process {
         // SAFETY: `p_p` is set before the thread is visible and the process outlives its
@@ -777,6 +801,15 @@ impl Proc {
         let name = unsafe { &*self.p_name.get() };
         let n = name.iter().position(|&c| c == 0).unwrap_or(name.len());
         &name[..n]
+    }
+
+    /// `strlcpy(p->p_name, name, sizeof p->p_name)` (`memset` when `name` is empty).
+    pub fn set_name(&self, name: &[u8]) {
+        // SAFETY: as for `name`: the thread writes its own name under the kernel lock.
+        let buf = unsafe { &mut *self.p_name.get() };
+        let n = name.len().min(buf.len() - 1);
+        buf[..n].copy_from_slice(&name[..n]);
+        buf[n..].fill(0);
     }
 }
 

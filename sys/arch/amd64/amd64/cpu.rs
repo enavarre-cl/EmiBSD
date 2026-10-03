@@ -87,12 +87,13 @@ use crate::arch::amd64::include::cpu::{CPUF_PRIMARY, CpuInfo};
 use crate::arch::amd64::include::cpu_full::{
     CpuInfoFull, DBLFLT_STACK_WORDS, NMI_STACK_WORDS, TRAMP_STACK_WORDS,
 };
-use crate::arch::amd64::include::cpufunc::wrmsr;
+use crate::arch::amd64::include::cpufunc::{rdmsr, wrmsr};
 use crate::arch::amd64::include::frame::IretqFrame;
 use crate::arch::amd64::include::psl::{PSL_AC, PSL_C, PSL_D, PSL_I, PSL_NT, PSL_T};
 use crate::arch::amd64::include::segments::{GCODE_SEL, GUDATA_SEL, SEL_KPL, SEL_UPL, gsel};
 use crate::arch::amd64::include::specialreg::{
-    MSR_CSTAR, MSR_FSBASE, MSR_GSBASE, MSR_KERNELGSBASE, MSR_LSTAR, MSR_SFMASK, MSR_STAR,
+    EFER_SCE, MSR_CSTAR, MSR_EFER, MSR_FSBASE, MSR_GSBASE, MSR_KERNELGSBASE, MSR_LSTAR, MSR_SFMASK,
+    MSR_STAR,
 };
 use crate::arch::amd64::include::tss::X86_64Tss;
 use crate::unported;
@@ -132,6 +133,9 @@ pub unsafe fn cpu_init_msrs(ci: &CpuInfo) {
         wrmsr(MSR_LSTAR, Xsyscall as *const () as usize as u64);
         wrmsr(MSR_CSTAR, 0);
         wrmsr(MSR_SFMASK, PSL_NT | PSL_T | PSL_I | PSL_C | PSL_D | PSL_AC);
+        // EFER.SCE enables the syscall/sysret pair: the C's locore0 sets it with LME and NXE
+        // at boot, before paging; the boot protocol leaves it clear.
+        wrmsr(MSR_EFER, rdmsr(MSR_EFER) | EFER_SCE);
 
         wrmsr(MSR_FSBASE, 0);
         wrmsr(MSR_GSBASE, ptr::from_ref(ci) as u64);

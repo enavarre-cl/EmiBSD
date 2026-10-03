@@ -5,10 +5,13 @@
 //! `malloc(9)` and `selftest` the boot-time checks under feature `qemu` (`ports.toml`,
 //! `[[extra]]`).
 
+pub mod exec_elf;
+pub mod exec_subr;
 pub mod init_main;
 pub mod init_sysent;
 pub mod kern_clock;
 pub mod kern_clockintr;
+pub mod kern_exec;
 pub mod kern_exit;
 pub mod kern_fork;
 pub mod kern_kthread;
@@ -37,5 +40,6 @@ pub mod subr_prf;
 pub mod subr_prof;
 pub mod subr_tree;
 pub mod subr_xxx;
+pub mod sys_generic;
 pub mod syscalls;
 pub mod unported;

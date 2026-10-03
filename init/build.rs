@@ -11,5 +11,10 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     let ld = format!("{manifest_dir}/init.ld");
     println!("cargo:rustc-link-arg-bins=-T{ld}");
+    // The kernel's setregs enables branch target identification (PT_OPENBSD_NOBTCFI opts
+    // out); this binary carries no BTI landing pads yet.
+    if env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default() == "aarch64" {
+        println!("cargo:rustc-link-arg-bins=-znobtcfi");
+    }
     println!("cargo:rerun-if-changed={ld}");
 }

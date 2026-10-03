@@ -5,6 +5,7 @@ PHDRS
 {
     text    PT_LOAD;
     rodata  PT_LOAD;
+    note    PT_NOTE;
     data    PT_LOAD;
 }
 
@@ -22,6 +23,10 @@ SECTIONS
         *(.rodata .rodata.*)
     } :rodata
 
+    .note.openbsd.ident : {
+        KEEP(*(.note.openbsd.ident))
+    } :rodata :note
+
     . = ALIGN(4096);
 
     .data : {
@@ -35,7 +40,7 @@ SECTIONS
 
     /DISCARD/ : {
         *(.eh_frame*)
-        *(.note .note.*)
+        *(.note.GNU-stack .note.gnu.*)
         *(.comment)
     }
 }

@@ -12,6 +12,15 @@
 use core::arch::asm;
 use core::panic::PanicInfo;
 
+/// The `.note.openbsd.ident` note every OpenBSD executable carries (`crt0`'s), which the
+/// kernel's `elf_os_pt_note` insists on: `namesz` 8, `descsz` 4, type 1, "OpenBSD\0", a
+/// zero descriptor.
+#[unsafe(link_section = ".note.openbsd.ident")]
+#[used]
+static OPENBSD_IDENT: [u8; 24] = [
+    8, 0, 0, 0, 4, 0, 0, 0, 1, 0, 0, 0, b'O', b'p', b'e', b'n', b'B', b'S', b'D', 0, 0, 0, 0, 0,
+];
+
 /// `SYS_exit`.
 const SYS_EXIT: usize = 1;
 /// `SYS_write`.

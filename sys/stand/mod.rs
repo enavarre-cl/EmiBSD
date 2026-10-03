@@ -133,6 +133,7 @@ unsafe extern "C" fn _start() -> ! {
             if !boot.cmdline.is_empty() {
                 kprintf!("bootargs: {}\n", Str(boot.cmdline.to_bytes()));
             }
+            init_main::set_init_module(boot.module(b"init").copied());
             init_main::main()
         }
         // No console yet: the failure exit status is the only trace.

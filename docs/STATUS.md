@@ -1,39 +1,38 @@
 # Status
 
-Milestone: **M6 in progress** (part a, the system call plumbing, done; part b started:
-exit, the init module; user address spaces and exec next). Updated: 2026-10-02.
+Milestone: **M6 done** (2026-10-03): `init` runs in user mode on both architectures, prints
+through `sys_write` and exits; the kernel logs `init exited with status 0 (signal 0)` and
+`just smoke` checks it. Next: **M7a** (`uvm_map`/`uvm_fault`). Updated: 2026-10-03.
 
 Done:
-- M6-b (1): `kern_exit.c` (`sys_exit`, `exit1`, `exit2`, `reaper`, `process_zap`,
-  `process_reparent`), `kthread_exit` real, `calcru`/`ruadd`, `initprocess`, the reaper
-  thread in `main`; the `init/` crate (freestanding, static ELF, raw `write`/`exit`
-  syscalls) built for both targets and loaded as a Limine module (`BootInfo::modules`,
-  `module: /init (...)` at boot); `SysArgs` makes every syscall's argument access safe.
-  `selftest=kthread` now exits its threads and checks the reaper took them.
-- M6-a: `cargo xtask gen-syscalls` (`syscalls.master` → `sys/sys/syscall.rs`,
-  `syscallargs.rs`, `kern/init_sysent.rs`, `kern/syscalls.rs`; `--check` in `just ci`),
-  `struct sysent`/`SCARG` (`systm.rs`), `syscall_mi.h` (`mi_syscall`, `mi_syscall_return`,
-  `mi_child_return`, `mi_ast`, `pin_check`), `kern_sig.c`'s `sys_nosys` and `userret`,
-  `refreshcreds`; amd64 `Xsyscall` with the AST loop and `sysretq`, `syscall()`, `ast()`,
-  `child_return`, `copy.S` with the `.nofault` table and `pcb_onfault` recovery in
-  `kpageflttrap`, `MSR_LSTAR`; arm64 `handle_el0_*`/`do_ast`/`syscall_return`,
-  `do_el0_sync` (`svc` only), `svc_handler`, `ast`, `copy.S`/`copystr.S`, `pcb_onfault`
-  recovery in `kdata_abort`; the `machine::copy` contract (`copyin`/`copyout`/`copyinstr`/
-  `copyoutstr`/`kcopy`) on all three machines. Nothing runs in user mode yet: the paths are
-  inert until M6-b.
-- M5 done before: clocks, processes, scheduler, kernel threads (`selftest=kthread`).
+- M6-b2: `exec_elf.h`, `exec.h`, `signal.h` (numbers), `limits.h`; `uvm_map.c` (the map and
+  vmspace life cycle, wired-page stand-ins for `uvm_map`/`uvm_fault_wire`), `vmspace`,
+  `vmspace0`; `exec_elf.c` (static `ET_EXEC`), `exec_subr.c` (vmcmds over wired pages,
+  `exec_setup_stack`), `kern_exec.c` (`check_exec`, `exec_image`), `sys_write` to the
+  console, `start_init` + `fork1` of init, `uvm_purge`/`uvm_exit`, `uvmspace_fork/share`;
+  `machine::exec` (`ELF_TARG_*`), `setregs`, `pmap_create/destroy/reference/enter/remove`,
+  `pmap_proc_iflush`, `VmParam`'s user limits. amd64: user pmaps through the direct map,
+  `alltraps`/`INTRENTRY` from user mode, `intr_user_exit` (`iretq`), `usertrap`,
+  `EFER.SCE`. arm64: user pmaps (three-level, ASIDs), `TTBR0`/`T0SZ` switch in
+  `pmap_init` with the console and `bus_space_map` moved to the kernel half,
+  `udata_abort`, `cpu_icache_sync_range`, `proc_trampoline` → `syscall_return`. `init`
+  carries the OpenBSD ELF note and (arm64) `-z nobtcfi`.
+- M6-b1: `kern_exit.c`, the reaper, `init` as a Limine module. M6-a: generated syscall
+  tables, `syscall_mi.h`, per-arch syscall entry, `copyin` family.
+- M5: clocks, process structures, sleep/scheduler/switch, kernel threads. M4 and before:
+  traps, interrupts, GICv2/DTB, UART by interrupt, uvm page system, direct map, console.
 
-Next (M6-b, user address spaces and exec):
-- `vmspace` (`uvm_extern.h`), `uvmspace_init/alloc/free`, user `pmap_create/destroy/enter`
-  on both archs, `pmap_activate` with a real user pmap and `cpu_switchto`'s user bits
-  (`ci_kern_rsp`, `ci_proc_pmap`, segment resets, `TTBR0`), `cpu_fork` with a user stack,
-  the trap-from-user paths (amd64 `TRAP_ENTRY_USER`/`INTRENTRY`'s user branch,
-  `intr_user_exit`; arm64 `udata_abort`), `setregs`, `exec_elf.c` + `kern_exec.c` for a
-  static ELF from the module, `start_init`; decision pending: port `uvm_map`/`uvm_fault`
-  (M6 as planned, 7000+ lines) or wire the first process with wired mappings and defer
-  them to their own milestone.
-- M6-c: `sys_write` to the console for fds 1/2 until the file table exists; the exit
-  criterion "init prints via sys_write and exits".
+Next (M7a):
+- `uvm_map.c` proper (the entry tree, `uvm_map`, `uvm_unmap`, the selectors, `uvm_map_protect`,
+  `uvm_map_pageable`, `uvmspace_fork` copying entries), `uvm_fault.c`, `uvm_amap.c`,
+  `uvm_aobj.c`, `uvm_pager.c`, `uvm_mmap.c`; the pv lists on amd64 (`pmap_enter_pv`,
+  `pmap_page_remove`, `pmap_protect`), `pmap_fault_fixup` on arm64, `kern_rwlock.c` for the
+  map lock; then `exec` through `uvm_map` and the wired-page stand-ins go away.
+- Exit: `init` runs from a pageable `vmspace`; a user page fault is served by `uvm_fault`.
+
+Then (M6-c, interleaved as needed): `kern_sig.c` (`trapsignal`, `sigexit`, `execsigs`),
+`kern_descrip.c` (the file table, `fdprepforexec`), `kern_resource.c` (`lim_cur`), a real
+`sys_execve` with `copyargs`, the FPU on exec, `CPUPF_USERSEGS`/FS.base on amd64.
 
 Blockers:
-- None. `crc32` stays `skipped: license: zlib`.
+- None. `crc32` stays `skipped: license: zlib`; amd64's TSC timecounter (`tsc.c`) is deferred.

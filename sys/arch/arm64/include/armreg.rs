@@ -263,6 +263,11 @@ pub const PSR_M_MASK: u64 = 0x0000_001f;
 pub const PSR_F: u64 = 0x0000_0040;
 /// `PSR_I`: IRQ masked.
 pub const PSR_I: u64 = 0x0000_0080;
+/// `PSR_M_EL0t`: the EL0 mode (`SPSR_EL1.M`).
+#[allow(non_upper_case_globals)]
+pub const PSR_M_EL0t: u64 = 0x0000_0000;
+/// `PSR_DIT`: data independent timing.
+pub const PSR_DIT: u64 = 0x0100_0000;
 /// `PSR_A`: SError masked.
 pub const PSR_A: u64 = 0x0000_0100;
 /// `PSR_D`: debug exceptions masked.

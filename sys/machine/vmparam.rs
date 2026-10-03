@@ -22,4 +22,22 @@ pub trait VmParam {
     const VM_PHYSSEG_STRAT: i32;
     /// `VM_PHYSSEG_NOADD`: whether RAM can be added after `uvm_init`.
     const VM_PHYSSEG_NOADD: bool;
+    /// `USRSTACK`: the top (end) of the user stack.
+    const USRSTACK: usize;
+    /// `MAXTSIZ`: max text size.
+    const MAXTSIZ: usize;
+    /// `DFLDSIZ`: initial data size limit.
+    const DFLDSIZ: usize;
+    /// `MAXDSIZ`: max data size.
+    const MAXDSIZ: usize;
+    /// `BRKSIZ`: heap gap size.
+    const BRKSIZ: usize;
+    /// `DFLSSIZ`: initial stack size limit.
+    const DFLSSIZ: usize;
+    /// `MAXSSIZ`: max stack size.
+    const MAXSSIZ: usize;
+    /// `STACKGAP_RANDOM`: the range of the random gap below the stack.
+    const STACKGAP_RANDOM: usize;
+    /// `VM_MIN_STACK_ADDRESS`: the lowest address the stack may be placed at.
+    const VM_MIN_STACK_ADDRESS: usize;
 }

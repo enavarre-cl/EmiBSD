@@ -165,23 +165,77 @@ intr_fast_exit:
 	.size	intr_fast_exit, . - intr_fast_exit
 
 /*
- * intr_user_exit: the AST check and return to user mode. There is no user mode
- * yet (M6), so reaching this is a bug, reported through Rust (locore.rs).
+ * Returning to userspace via iretq.  We do things in this order:
+ *  - check for ASTs
+ *  - restore most registers
+ *  - update the iret frame from the trapframe
+ *  - finish reading from the trapframe
+ *  - switch to the trampoline stack
+ *  - swapgs
+ *  - iretq
+ * The FPU/"extended CPU state" and FS.base restores, the DIAGNOSTIC SPL
+ * check, IBPB, pku_xonly, the MDS clear and the Meltdown page-table switch
+ * are not here (locore.rs).
  */
 	.globl	intr_user_exit
 	.type	intr_user_exit,@function
 	.p2align 4, 0x90
 intr_user_exit:
+	/* Check for ASTs */
+	movq	%gs:{CI_CURPROC},%r11		/* CHECK_ASTPENDING(%r11) */
+	cmpq	$0,%r11
+	je	99f
+	cmpl	$0,{P_MD_ASTPENDING}(%r11)
+99:
+	je	intr_user_exit_post_ast
+	movl	$0,{P_MD_ASTPENDING}(%r11)	/* CLEAR_ASTPENDING(%r11) */
+	sti
 	movq	%rsp,%rdi
-	call	intr_user_exit_unported
-	ud2
+	call	ast
+	cli
+	jmp	intr_user_exit
+
+intr_user_exit_post_ast:
+	movq	{TF_R8}(%rsp),%r8
+	movq	{TF_R9}(%rsp),%r9
+	movq	{TF_R10}(%rsp),%r10
+	movq	{TF_R12}(%rsp),%r12
+	movq	{TF_R13}(%rsp),%r13
+	movq	{TF_R14}(%rsp),%r14
+	movq	{TF_R15}(%rsp),%r15
+	movq	{TF_RBX}(%rsp),%rbx
+
+	movq	{TF_RDI}(%rsp),%rdi
+	movq	{TF_RSI}(%rsp),%rsi
+	movq	{TF_RBP}(%rsp),%rbp
+
+	/* update iret frame */
+	movq	%gs:{CI_INTR_RSP},%rdx
+	movq	${GSEL_UCODE},{IRETQ_CS}(%rdx)
+	movq	{TF_RIP}(%rsp),%rax
+	movq	%rax,{IRETQ_RIP}(%rdx)
+	movq	{TF_RFLAGS}(%rsp),%rax
+	movq	%rax,{IRETQ_RFLAGS}(%rdx)
+	movq	{TF_RSP}(%rsp),%rax
+	movq	%rax,{IRETQ_RSP}(%rdx)
+	movq	${GSEL_UDATA},{IRETQ_SS}(%rdx)
+	/* finish with the trap frame */
+	movq	{TF_RAX}(%rsp),%rax
+	movq	{TF_RCX}(%rsp),%rcx
+	movq	{TF_R11}(%rsp),%r11
+	/* switch to the trampoline stack */
+	xchgq	%rdx,%rsp
+	movq	{TF_RDX}(%rdx),%rdx
+	swapgs
+	iretq
 	.size	intr_user_exit, . - intr_user_exit
 
 /*
  * cpu_switchto(struct proc *old, struct proc *new): switch from old to new.
- * The subset for kernel threads: the stack pointers and %cr3; the FPU/"extended
- * state" reset, the user segment reset, the Meltdown CR3 bookkeeping, the RSB
- * refill and retguard come with user mode (see locore.rs).
+ * The stack pointers, %cr3, ci_proc_pmap and the kernel stack a user thread
+ * enters on (ci_kern_rsp); the FPU/"extended state" save and reset, the user
+ * segment reset, the Meltdown CR3 bookkeeping, the RSB refill and retguard
+ * are not here (see locore.rs).
  */
 	.globl	cpu_switchto
 	.type	cpu_switchto,@function
@@ -225,11 +279,19 @@ switch_exited:
 	 * Restore saved context.
 	 *
 	 * Registers:
-	 *   %rax, %rdi - scratch
+	 *   %rax, %rdi, %rdx - scratch
 	 *   %r12 - new process
 	 *   %r13 - new pcb
+	 *   %rbx - new pmap if not P_SYSTEM
 	 */
 	movq	{P_ADDR}(%r12),%r13
+
+	/* remember the pmap if not P_SYSTEM */
+	xorl	%ebx,%ebx
+	testl	${P_SYSTEM},{P_FLAG}(%r12)
+	jnz	1f
+	movq	{PCB_PMAP}(%r13),%rbx
+1:
 
 	/* No interrupts while loading new state. */
 	cli
@@ -244,8 +306,24 @@ switch_exited:
 	xorq	%rax,%rdi
 	testq	%rdi,%rdi
 	jz	.Lsame_cr3
+
+	/* record which pmap this CPU should get IPIs for */
+	movq	%rbx,%gs:{CI_PROC_PMAP}
+
 	movq	%rax,%cr3
 .Lsame_cr3:
+	/* Don't bother with the rest if switching to a system process. */
+	testq	%rbx,%rbx
+	jz	switch_restored
+
+	/* record the bits needed for future U-->K transition */
+	movq	{PCB_KSTACK}(%r13),%rdx
+	subq	${FRAMESIZE},%rdx
+	movq	%rdx,%gs:{CI_KERN_RSP}
+
+	/* Meltdown (ci_kern_cr3/ci_user_cr3): not configured. */
+
+switch_restored:
 	movq	%r13,%gs:{CI_CURPCB}		# SET_CURPCB(%r13)
 
 	/* Interrupts are okay again. */

@@ -79,11 +79,14 @@ use crate::arch::arm64::arm64::intr::delay;
 use crate::arch::arm64::arm64::pmap::{
     PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap, pmap_growkernel,
 };
+use crate::arch::arm64::include::armreg::{PSR_DIT, PSR_M_EL0t};
 use crate::arch::arm64::include::cpu::{CpuInfo, disable_irq_daif, enable_irq_daif};
 use crate::arch::arm64::include::frame::Trapframe;
 use crate::arch::arm64::include::intr::IPL_TTY;
 use crate::arch::arm64::include::param::PAGE_SIZE;
-use crate::arch::arm64::include::pcb::PCB_FPU;
+use crate::arch::arm64::include::pcb::{PCB_FPU, PCB_SVE};
+use crate::arch::arm64::include::pte::ATTR_GP;
+use crate::arch::arm64::include::reg::Fpreg;
 use crate::arch::arm64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
 use crate::dev::fdt::pluart_fdt::pluart_init_cons;
 use crate::dev::ic::pluart::{pluartcn_enable_intr, pluartcn_rx_intr};
@@ -99,13 +102,14 @@ use crate::machine::bootinfo::{BootInfo, MemKind};
 use crate::machine::db_machdep::db_enter;
 use crate::machine::{Cpu, Machine};
 use crate::sys::errno::Errno;
+use crate::sys::exec::{EXEC_NOBTCFI, ExecPackage, PsStrings};
 use crate::sys::param::roundup;
 use crate::sys::proc::Proc;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
 };
 use crate::sys::systm::PHYSMEM;
-use crate::sys::types::{Paddr, Vaddr};
+use crate::sys::types::{Paddr, Register, Vaddr};
 use crate::sys::user::{Uarea, User};
 use crate::unported;
 use crate::uvm::uvm_extern::UvmConstraintRange;
@@ -372,6 +376,40 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
         db_enter();
     }
     Ok(())
+}
+
+/// `setregs`: clear registers on exec: `p` returns to EL0 at the entry point with the stack
+/// at `stack`.
+pub fn setregs(p: &Proc, pack: &ExecPackage<'_>, stack: Vaddr, _arginfo: &PsStrings) {
+    let pm = p.vmspace().vm_map.pmap();
+    let pcb = p.pcb();
+    let tf = pcb.pcb_tf.get();
+
+    pm.pm_guarded.set(if pack.ep_flags & EXEC_NOBTCFI != 0 {
+        0
+    } else {
+        ATTR_GP
+    });
+
+    // pm_apiakey/apdakey/apibkey/apdbkey/apgakey and pmap_setpauthkeys: pointer
+    // authentication (M7; QEMU's default virt CPU has none).
+
+    // If we were using the FPU, forget about it.
+    // SAFETY: the thread's own pcb, with no reference to the FP state alive.
+    unsafe { ptr::write_bytes(pcb.pcb_fpstate.get().cast::<u8>(), 0, size_of::<Fpreg>()) };
+    pcb.pcb_flags
+        .set(pcb.pcb_flags.get() & !(PCB_FPU | PCB_SVE));
+    fpu_drop();
+
+    // SAFETY: `pcb_tf` is the thread's trap frame at the top of its u-area (`cpu_fork`),
+    // which only this thread writes, with no reference to it alive here.
+    unsafe {
+        tf.write(Trapframe::default());
+        (*tf).tf_sp = stack.as_usize() as Register;
+        (*tf).tf_lr = pack.ep_entry as Register;
+        (*tf).tf_elr = pack.ep_entry as Register; // ???
+        (*tf).tf_spsr = (PSR_M_EL0t | PSR_DIT) as Register;
+    }
 }
 
 /// `cpu_startup`: machine-dependent startup code (see the module's deviations).

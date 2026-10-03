@@ -37,8 +37,9 @@
 //!
 //! Status: `wip`. Milestone M3 ports the TLB invalidations (`cpu_tlb_flush`,
 //! `cpu_tlb_flush_asid`, `cpu_tlb_flush_all_asid`, `cpu_tlb_flush_asid_all`) and `cpu_setttb`.
-//! The cache maintenance by range (`cpu_dcache_*_range`, `cpu_icache_sync_range`,
-//! `cpu_idcache_wbinv_range`) needs the cache line sizes `cpu.c` probes (M4).
+//! M6 adds `cpu_icache_sync_range`, which reads the line sizes from `CTR_EL0` itself (the
+//! C takes them from `cpu.c`'s probe). `cpu_dcache_*_range` and `cpu_idcache_wbinv_range`
+//! follow when a caller needs them.
 //!
 //! ## Deviations
 //! - Each routine is an `asm!` block instead of a `.S` entry: they are a few instructions each
@@ -139,4 +140,34 @@ pub fn cpu_tlb_flush_asid_all(asid: u64) {
             options(nostack, preserves_flags)
         )
     };
+}
+
+/// `cpu_icache_sync_range(va, len)`: makes instructions written to `[va, va+len)` visible to
+/// instruction fetch: cleans the data cache to the point of unification and invalidates the
+/// instruction cache, line by line, then `dsb ish; isb`.
+pub fn cpu_icache_sync_range(va: usize, len: usize) {
+    let ctr: u64;
+    // SAFETY: `ctr_el0` is readable at EL1 and the read has no side effect.
+    unsafe { asm!("mrs {}, ctr_el0", out(reg) ctr, options(nomem, nostack, preserves_flags)) };
+    // CTR_EL0.DminLine and IminLine: log2 of the line size in words.
+    let dline = 4usize << ((ctr >> 16) & 0xf);
+    let iline = 4usize << (ctr & 0xf);
+    let end = va + len;
+
+    let mut addr = va & !(dline - 1);
+    while addr < end {
+        // SAFETY: cache maintenance by address on a mapped range the caller owns.
+        unsafe { asm!("dc cvau, {}", in(reg) addr, options(nostack, preserves_flags)) };
+        addr += dline;
+    }
+    // SAFETY: a barrier.
+    unsafe { asm!("dsb ish", options(nostack, preserves_flags)) };
+    let mut addr = va & !(iline - 1);
+    while addr < end {
+        // SAFETY: as above.
+        unsafe { asm!("ic ivau, {}", in(reg) addr, options(nostack, preserves_flags)) };
+        addr += iline;
+    }
+    // SAFETY: barriers.
+    unsafe { asm!("dsb ish", "isb", options(nostack, preserves_flags)) };
 }

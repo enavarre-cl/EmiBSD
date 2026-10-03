@@ -50,6 +50,7 @@ use crate::sys::types::Vaddr;
 use crate::unported;
 use crate::uvm::uvm::Uvm;
 use crate::uvm::uvm_km::uvm_km_init;
+use crate::uvm::uvm_map::uvm_map_init;
 use crate::uvm::uvm_page::uvm_page_init;
 use crate::uvm::uvmexp::Uvmexp;
 
@@ -85,7 +86,7 @@ pub fn uvm_init() {
 
     // Init the map sub-system. Allocates the static pool of vm_map_entry structures that are
     // used for "special" kernel maps (e.g. kernel_map, kmem_map, etc...).
-    let _ = unported!("uvm_map_init");
+    uvm_map_init();
 
     // Setup the kernel's virtual memory data structures. This includes setting up the
     // kernel_map/kernel_object.

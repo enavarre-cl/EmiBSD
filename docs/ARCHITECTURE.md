@@ -267,6 +267,35 @@ Not allowed: crates that replace OpenBSD code (`x86_64`, `aarch64-cpu`, `spin`, 
   with the pieces that need signals, file descriptors, limits, credentials or a vmspace
   reported; `initprocess` is null until `init` exists and process 0 adopts orphans meanwhile.
   The `selftest=kthread` threads now `kthread_exit` and proc0 checks the reaper freed them.
+- User address spaces without `uvm_map` (M6-b, decided with the user on 2026-10-02): the
+  first process gets a `vmspace` whose `vm_map` is OpenBSD's structure but holds no entry
+  tree; `exec` maps the ELF segments and the stack with `pmap_enter` on freshly allocated,
+  wired pages (`uvm_map_enter_wired`), writes the image into them through the direct map
+  (`uvm_map_write_wired`) and keeps them on the map's `wired` list so `uvmspace_exec` and
+  `uvm_exit` can unmap and free them. There is no `uvm_fault`: a user page fault kills the
+  process. `uvm_map.c`, `uvm_fault.c`, `uvm_amap.c`, `uvm_aobj.c` and the pager are milestone
+  M7a and replace this.
+- Exec of a memory image (M6-b2): `kern_exec.c`'s `sys_execve` is ported from the point where
+  the executable is in hand as `exec_image(p, name, image)`; `check_exec` runs the exec switch
+  (`exec_elf_makecmds`, which requires the OpenBSD ELF note as the C does) without `namei`,
+  the vmcmds (`exec_subr.c`) act on the image instead of a vnode, `copyargs` lays out an empty
+  `argv`/`envp` (the boot flags come with a real `sys_execve`, M6-c), and `setregs` builds the
+  user trap frame. `start_init` execs the `init` module and returns through
+  `proc_trampoline` to the syscall exit path, exactly where a forked user thread would go.
+  Until `kern_sig.c` (M6-c) `trapsignal` is a stand-in in each `trap.c` that prints the fault
+  and lets the process die of the signal through `exit1`.
+- User pmaps (M6-b2): amd64 walks a user pmap's tables through the direct map
+  (`pmap_get_ptp`, `pmap_enter`, `pmap_do_remove`) instead of borrowing its `%cr3` for the
+  recursive mapping (`pmap_map_ptes`), has no pv entries yet and no `pmaps` list, and
+  `pmap_pdp_ctor` copies the kernel's whole upper half of the PML4; `cpu_init_msrs` sets
+  `EFER.SCE` (the C's `locore0.S` does). On arm64 the bootstrap device map lived in `TTBR0`
+  (the lower half), which user pmaps now own: `pmap_init` initialises the pools, remaps the
+  console into the kernel half (`pluartcn_remap`), switches `bus_space_map` to kernel-half
+  mappings from the `vmmap` range, sets `TCR_EL1.T0SZ` for `USER_SPACE_BITS` and points
+  `TTBR0_EL1` at the empty table, as the C's `locore` and `pmap_init` do between them; user
+  pmaps are three-level, their tables come from the same two-page allocator as the kernel's
+  (no `pmap_vp_pool`), and ASIDs are an 8-bit bitmap without rollover. `init` is linked with
+  `-z nobtcfi` so `setregs` leaves `pm_guarded` clear (no BTI landing pads yet).
 - `unported!("name")` (`sys/kern/unported.rs`) marks every call into a subsystem that is not here
   yet: it prints once per site and yields `ENOSYS`. The serial transcript of a boot is therefore an
   honest list of what the kernel skipped.

@@ -58,6 +58,24 @@ pub const USER_SPACE_BITS: u32 = 39;
 pub const VM_MAXUSER_ADDRESS: usize = (1 << USER_SPACE_BITS) - 0x8000;
 /// `VM_MAX_ADDRESS`: the end of the user address space.
 pub const VM_MAX_ADDRESS: usize = VM_MAXUSER_ADDRESS;
+/// `USRSTACK`: the top (end) of the user stack.
+pub const USRSTACK: usize = VM_MAXUSER_ADDRESS;
+/// `MAXTSIZ`: max text size.
+pub const MAXTSIZ: usize = 256 * 1024 * 1024;
+/// `DFLDSIZ`: initial data size limit.
+pub const DFLDSIZ: usize = 512 * 1024 * 1024;
+/// `MAXDSIZ`: max data size.
+pub const MAXDSIZ: usize = 64 * 1024 * 1024 * 1024;
+/// `BRKSIZ`: heap gap size.
+pub const BRKSIZ: usize = 16 * 1024 * 1024 * 1024;
+/// `DFLSSIZ`: initial stack size limit.
+pub const DFLSSIZ: usize = 2 * 1024 * 1024;
+/// `MAXSSIZ`: max stack size.
+pub const MAXSSIZ: usize = 32 * 1024 * 1024;
+/// `STACKGAP_RANDOM`.
+pub const STACKGAP_RANDOM: usize = 256 * 1024;
+/// `VM_MIN_STACK_ADDRESS`.
+pub const VM_MIN_STACK_ADDRESS: usize = 3 << (USER_SPACE_BITS - 2);
 /// `VM_MIN_KERNEL_ADDRESS`: the start of the kernel address space.
 pub const VM_MIN_KERNEL_ADDRESS: usize = 0xffff_ff80_0000_0000;
 /// `VM_MAX_KERNEL_ADDRESS`: the end of the kernel's own virtual space.

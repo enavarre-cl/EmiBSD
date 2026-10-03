@@ -200,8 +200,7 @@ Xexceptions:
  * b) coming from supervisor mode and can directly jump to kernel
  *    trap handling before returning sans AST or other handling.
  *
- * There is no user mode yet (M6): a trap whose CS has the user RPL takes the kernel path
- * too, and kerntrap reports the mode it came from.
+ * The Meltdown alltraps page (Xalltraps, the U-K text) is not here (vector.rs).
  */
 	.text
 	.globl	alltraps
@@ -210,8 +209,9 @@ Xexceptions:
 alltraps:
 	testb	${SEL_RPL},24(%rsp)	/* trapno, err, rip, then cs */
 	je	alltraps_kern
-	/* Traps from userspace: TRAP_ENTRY_USER, usertrap, intr_user_exit (M6). */
-	jmp	alltraps_kern
+	swapgs
+	movq	%rax,%gs:{CI_SCRATCH}
+	jmp	alltraps_user
 	.size	alltraps, . - alltraps
 
 /*
@@ -314,23 +314,83 @@ alltraps_kern:
 .endm
 
 /*
+ * Traps from userspace: TRAP_ENTRY_USER, usertrap, then intr_user_exit.
+ * %rax is in CPUVAR(SCRATCH) and the kernel GS.base is loaded (alltraps).
+ */
+	.globl	alltraps_user
+	.type	alltraps_user,@function
+	.p2align 4, 0x90
+alltraps_user:
+	/* TRAP_ENTRY_USER */
+	movq	%gs:{CI_KERN_RSP},%rax
+	xchgq	%rax,%rsp
+	movq	%rcx,{TF_RCX}(%rsp)
+	/* copy trapno+err to the trap frame */
+	movq	0(%rax),%rcx
+	movq	%rcx,{TF_TRAPNO}(%rsp)
+	movq	8(%rax),%rcx
+	movq	%rcx,{TF_ERR}(%rsp)
+	/* copy iretq frame to the trap frame */
+	movq	({IRETQ_RIP}+16)(%rax),%rcx
+	movq	%rcx,{TF_RIP}(%rsp)
+	movq	({IRETQ_CS}+16)(%rax),%rcx
+	movq	%rcx,{TF_CS}(%rsp)
+	movq	({IRETQ_RFLAGS}+16)(%rax),%rcx
+	movq	%rcx,{TF_RFLAGS}(%rsp)
+	movq	({IRETQ_RSP}+16)(%rax),%rcx
+	movq	%rcx,{TF_RSP}(%rsp)
+	movq	({IRETQ_SS}+16)(%rax),%rcx
+	movq	%rcx,{TF_SS}(%rsp)
+	movq	%gs:{CI_SCRATCH},%rax
+	INTR_SAVE_MOST_GPRS_NO_ADJ
+	INTR_CLEAR_GPRS
+	sti
+	cld
+	/* SMAP_CLAC: with CPU identification (M4-b). */
+	movq	%rsp,%rdi
+	call	usertrap
+	movq	$0,-8(%rsp)
+	cli
+	jmp	intr_user_exit
+	.size	alltraps_user, . - alltraps_user
+
+/*
  * For real interrupt code paths, where we can come from userspace.
- * We only have an iretq_frame on entry. The userspace path (swapgs, the
- * Meltdown CR3 switch, the kernel stack) is M6: there is no user mode, so
- * a user CS here is a bug and stops in ud2.
+ * We only have an iretq_frame on entry. The Meltdown CR3 switch of the
+ * userspace path is not here (vector.rs).
  */
 .macro	INTRENTRY	label
 	endbr64
 	testb	${SEL_RPL},{IRETQ_CS}(%rsp)
 	je	X\label\()_untramp
-	ud2
+	swapgs
+	movq	%rax,%gs:{CI_SCRATCH}
+	jmp	98f
 	.size	X\label, . - X\label
 	.globl	X\label\()_untramp
 	.type	X\label\()_untramp,@function
 X\label\()_untramp:	/* from kernel */
 	subq	${TF_RIP},%rsp
 	movq	%rcx,{TF_RCX}(%rsp)
-	INTR_SAVE_MOST_GPRS_NO_ADJ
+	jmp	99f
+	.p2align 4, 0x90
+98:	/* from userspace */
+	movq	%gs:{CI_KERN_RSP},%rax
+	xchgq	%rax,%rsp
+	movq	%rcx,{TF_RCX}(%rsp)
+	/* copy iretq frame to the trap frame */
+	movq	{IRETQ_RIP}(%rax),%rcx
+	movq	%rcx,{TF_RIP}(%rsp)
+	movq	{IRETQ_CS}(%rax),%rcx
+	movq	%rcx,{TF_CS}(%rsp)
+	movq	{IRETQ_RFLAGS}(%rax),%rcx
+	movq	%rcx,{TF_RFLAGS}(%rsp)
+	movq	{IRETQ_RSP}(%rax),%rcx
+	movq	%rcx,{TF_RSP}(%rsp)
+	movq	{IRETQ_SS}(%rax),%rcx
+	movq	%rcx,{TF_SS}(%rsp)
+	movq	%gs:{CI_SCRATCH},%rax
+99:	INTR_SAVE_MOST_GPRS_NO_ADJ
 	INTR_CLEAR_GPRS
 	movq	%rax,{TF_ERR}(%rsp)
 .endm

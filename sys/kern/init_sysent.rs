@@ -16,6 +16,7 @@
 
 use crate::kern::kern_exit::sys_exit;
 use crate::kern::kern_sig::sys_nosys;
+use crate::kern::sys_generic::sys_write;
 use crate::sys::syscall::SYS_MAXSYSCALL;
 use crate::sys::syscallargs::{
     SysAccept4Args, SysAcceptArgs, SysAccessArgs, SysAdjfreqArgs, SysAdjtimeArgs, SysBindArgs,
@@ -61,7 +62,7 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(1, size_of::<SysExitArgs>(), 0, sys_exit), // 1 = exit
     Sysent::new(0, 0, 0, sys_nosys), // 2 = fork (sys_fork not ported)
     Sysent::new(3, size_of::<SysReadArgs>(), SY_NOLOCK, sys_nosys), // 3 = read (sys_read not ported)
-    Sysent::new(3, size_of::<SysWriteArgs>(), SY_NOLOCK, sys_nosys), // 4 = write (sys_write not ported)
+    Sysent::new(3, size_of::<SysWriteArgs>(), SY_NOLOCK, sys_write), // 4 = write
     Sysent::new(3, size_of::<SysOpenArgs>(), SY_NOLOCK, sys_nosys), // 5 = open (sys_open not ported)
     Sysent::new(1, size_of::<SysCloseArgs>(), SY_NOLOCK, sys_nosys), // 6 = close (sys_close not ported)
     Sysent::new(2, size_of::<SysGetentropyArgs>(), SY_NOLOCK, sys_nosys), // 7 = getentropy (sys_getentropy not ported)

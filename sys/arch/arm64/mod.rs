@@ -17,15 +17,17 @@ use crate::machine::bus::{BusAddr, BusSize, BusSpace};
 use crate::machine::db_machdep::{DbMachdep, PrFn};
 
 use crate::machine::copy::UserCopy;
+use crate::machine::exec::MachineExec;
 use crate::machine::proc::MachineProc;
 use crate::machine::{BootInfo, Console, Cpu, Exit, ExitStatus, Intr, MachineInfo, Pmap, VmParam};
 use crate::sys::clockintr::Clockqueue;
 use crate::sys::errno::Errno;
-use crate::sys::proc::Proc;
+use crate::sys::exec::{ExecPackage, PsStrings};
+use crate::sys::proc::{Proc, Process};
 use crate::sys::sched::SchedstatePercpu;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::sys::user::User;
-use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt};
+use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt, Vmspace};
 use crate::uvm::uvm_page::VmPage;
 
 /// The arm64 implementation of the machine interface.
@@ -185,6 +187,10 @@ impl Cpu for Machine {
         arm64::vm_machdep::cpu_fork(p1, p2, stack, tcb, func, arg)
     }
 
+    fn setregs(p: &Proc, pack: &ExecPackage<'_>, stack: Vaddr, arginfo: &PsStrings) {
+        arm64::machdep::setregs(p, pack, stack, arginfo)
+    }
+
     fn cpu_initclocks() {
         arm64::intr::cpu_initclocks()
     }
@@ -211,6 +217,15 @@ impl VmParam for Machine {
     const VM_PHYSSEG_MAX: usize = include::vmparam::VM_PHYSSEG_MAX;
     const VM_PHYSSEG_STRAT: i32 = include::vmparam::VM_PHYSSEG_STRAT;
     const VM_PHYSSEG_NOADD: bool = include::vmparam::VM_PHYSSEG_NOADD;
+    const USRSTACK: usize = include::vmparam::USRSTACK;
+    const MAXTSIZ: usize = include::vmparam::MAXTSIZ;
+    const DFLDSIZ: usize = include::vmparam::DFLDSIZ;
+    const MAXDSIZ: usize = include::vmparam::MAXDSIZ;
+    const BRKSIZ: usize = include::vmparam::BRKSIZ;
+    const DFLSSIZ: usize = include::vmparam::DFLSSIZ;
+    const MAXSSIZ: usize = include::vmparam::MAXSSIZ;
+    const STACKGAP_RANDOM: usize = include::vmparam::STACKGAP_RANDOM;
+    const VM_MIN_STACK_ADDRESS: usize = include::vmparam::VM_MIN_STACK_ADDRESS;
 }
 
 impl Pmap for Machine {
@@ -266,6 +281,40 @@ impl Pmap for Machine {
         arm64::pmap::pmap_extract(pmap, va)
     }
 
+    fn pmap_create() -> &'static Self::Pmap {
+        arm64::pmap::pmap_create()
+    }
+
+    fn pmap_destroy(pmap: &'static Self::Pmap) {
+        arm64::pmap::pmap_destroy(pmap)
+    }
+
+    fn pmap_reference(pmap: &Self::Pmap) {
+        arm64::pmap::pmap_reference(pmap)
+    }
+
+    fn pmap_enter(
+        pmap: &Self::Pmap,
+        va: Vaddr,
+        pa: Paddr,
+        prot: VmProt,
+        flags: i32,
+    ) -> Result<(), Errno> {
+        arm64::pmap::pmap_enter(pmap, va, pa, prot, flags)
+    }
+
+    fn pmap_remove(pmap: &Self::Pmap, sva: Vaddr, eva: Vaddr) {
+        arm64::pmap::pmap_remove(pmap, sva, eva)
+    }
+
+    fn pmap_remove_holes(vm: &Vmspace) {
+        arm64::pmap::pmap_remove_holes(vm)
+    }
+
+    fn pmap_proc_iflush(pr: &Process, va: Vaddr, len: Vsize) {
+        arm64::pmap::pmap_proc_iflush(pr, va, len)
+    }
+
     /// `pmap_update`: nothing, as the C.
     fn pmap_activate(p: &Proc) {
         arm64::pmap::pmap_activate(p)
@@ -292,6 +341,14 @@ impl Pmap for Machine {
     fn pmap_unmap_direct(va: Vaddr) -> Option<&'static VmPage> {
         arm64::pmap::pmap_unmap_direct(va)
     }
+}
+
+impl MachineExec for Machine {
+    const LDPGSZ: usize = include::exec::LDPGSZ;
+    const ARCH_ELFSIZE: usize = include::exec::ARCH_ELFSIZE;
+    const ELF_TARG_CLASS: u8 = include::exec::ELF_TARG_CLASS;
+    const ELF_TARG_DATA: u8 = include::exec::ELF_TARG_DATA;
+    const ELF_TARG_MACH: u16 = include::exec::ELF_TARG_MACH;
 }
 
 impl Console for Machine {

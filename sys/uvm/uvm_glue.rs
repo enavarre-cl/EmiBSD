@@ -80,13 +80,17 @@
 
 use core::ptr::{self, NonNull};
 
+use crate::kern::subr_prf::panic;
 use crate::machine::Machine;
+use crate::machine::cpu::curproc;
 use crate::machine::param::MachineParam;
 use crate::sys::param::{USPACE, USPACE_ALIGN};
 use crate::sys::proc::Proc;
+use crate::sys::proc::Process;
 use crate::unported;
 use crate::uvm::uvm_extern::{KmemVaMode, KvMap};
 use crate::uvm::uvm_km::{KD_WAITOK, KP_ZERO, km_alloc, km_free};
+use crate::uvm::uvm_map::{uvmspace_free, uvmspace_purge};
 
 /// `kv_uarea`: u-areas come from `kernel_map`, `USPACE_ALIGN`ed.
 pub static KV_UAREA: KmemVaMode = KmemVaMode {
@@ -117,4 +121,28 @@ pub fn uvm_uarea_free(p: &Proc) {
         km_free(va, USPACE, &KV_UAREA, &KP_ZERO);
     }
     p.p_addr.set(ptr::null());
+}
+
+/// `uvm_purge`: teardown a virtual address space. If multi-threaded, must be called by the
+/// last thread of a process.
+pub fn uvm_purge() {
+    let Some(p) = curproc() else {
+        panic(format_args!("uvm_purge: no curproc"));
+    };
+    let vm = p.vmspace();
+
+    // KERNEL_ASSERT_UNLOCKED(); __HAVE_PMAP_PURGE: neither amd64 nor arm64.
+    uvmspace_purge(vm);
+}
+
+/// `uvm_exit`: exit a virtual address space.
+pub fn uvm_exit(pr: &Process) {
+    let vm = pr.ps_vmspace.get();
+
+    pr.ps_vmspace.set(ptr::null());
+    if !vm.is_null() {
+        // SAFETY: the process's reference, which this drop releases; nothing else reads the
+        // pointer after it was cleared above.
+        uvmspace_free(unsafe { &*vm });
+    }
 }

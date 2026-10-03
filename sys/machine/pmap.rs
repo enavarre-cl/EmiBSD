@@ -2,19 +2,24 @@
 //! physical map, what `uvm` asks the MMU code to do.
 //!
 //! Milestone M3 needs the direct map, boot-time memory stealing, page zeroing and the kernel
-//! mapping entry points (`pmap_kenter_pa`, `pmap_kremove`, `pmap_extract`). The user-space side
-//! (`pmap_enter`, `pmap_remove`, `pmap_create`, activation, protection and attribute bits)
-//! arrives with M6.
+//! mapping entry points (`pmap_kenter_pa`, `pmap_kremove`, `pmap_extract`). M6 adds the
+//! user-space side: `pmap_create`/`pmap_destroy`/`pmap_reference`, `pmap_enter`/`pmap_remove`
+//! and activation. Protection changes (`pmap_protect`, `pmap_page_protect`), the reference and
+//! modified bits and `pmap_unwire` arrive with `uvm_fault` (M7a).
 
 use crate::machine::Machine;
-use crate::sys::proc::Proc;
+use crate::sys::errno::Errno;
+use crate::sys::proc::{Proc, Process};
 use crate::sys::types::{Paddr, Vaddr, Vsize};
-use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt};
+use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt, Vmspace};
 use crate::uvm::uvm_page::VmPage;
 
 /// `struct vm_page_md` of the selected architecture: the pmap's per-page data inside
 /// `struct vm_page`.
 pub type VmPageMd = <Machine as Pmap>::VmPageMd;
+
+/// `struct pmap` of the selected architecture (what a `pmap_t` points at).
+pub type MachinePmap = <Machine as Pmap>::Pmap;
 
 /// The physical map interface.
 pub trait Pmap {
@@ -36,6 +41,40 @@ pub trait Pmap {
 
     /// `pmap_kernel()`: the kernel's pmap.
     fn pmap_kernel() -> &'static Self::Pmap;
+
+    /// `pmap_create()`: a new, empty user pmap with one reference; its top-level table maps
+    /// the kernel half.
+    fn pmap_create() -> &'static Self::Pmap;
+
+    /// `pmap_destroy(pmap)`: drops a reference; the last one frees the page tables and the
+    /// pmap itself (the caller must have removed every mapping).
+    fn pmap_destroy(pmap: &'static Self::Pmap);
+
+    /// `pmap_reference(pmap)`: one more reference.
+    fn pmap_reference(pmap: &Self::Pmap);
+
+    /// `pmap_enter(pmap, va, pa, prot, flags)`: maps `pa` at `va` with `prot`; `flags` carries
+    /// `PMAP_WIRED`, `PMAP_CANFAIL` and the access type. Fails with `ENOMEM` only under
+    /// `PMAP_CANFAIL`.
+    fn pmap_enter(
+        pmap: &Self::Pmap,
+        va: Vaddr,
+        pa: Paddr,
+        prot: VmProt,
+        flags: i32,
+    ) -> Result<(), Errno>;
+
+    /// `pmap_remove(pmap, sva, eva)`: removes the mappings in `[sva, eva)`.
+    fn pmap_remove(pmap: &Self::Pmap, sva: Vaddr, eva: Vaddr);
+
+    /// `pmap_remove_holes(vm)`: makes the MMU's unmappable holes unavailable in the map
+    /// (nothing on amd64 and arm64).
+    fn pmap_remove_holes(vm: &Vmspace);
+
+    /// `pmap_proc_iflush(pr, va, len)`: makes instructions just written to `[va, va+len)` of
+    /// `pr`'s address space visible to instruction fetch (an I-cache sync where the caches
+    /// are not coherent).
+    fn pmap_proc_iflush(pr: &Process, va: Vaddr, len: Vsize);
 
     /// `pmap_zero_page`: zero-fills the page.
     fn pmap_zero_page(pg: &VmPage);
@@ -104,6 +143,47 @@ pub trait Pmap {
 /// `pmap_kernel()` on the selected machine.
 pub fn pmap_kernel() -> &'static <Machine as Pmap>::Pmap {
     Machine::pmap_kernel()
+}
+
+/// `pmap_create` on the selected machine.
+pub fn pmap_create() -> &'static MachinePmap {
+    Machine::pmap_create()
+}
+
+/// `pmap_destroy` on the selected machine.
+pub fn pmap_destroy(pmap: &'static MachinePmap) {
+    Machine::pmap_destroy(pmap)
+}
+
+/// `pmap_reference` on the selected machine.
+pub fn pmap_reference(pmap: &MachinePmap) {
+    Machine::pmap_reference(pmap)
+}
+
+/// `pmap_enter` on the selected machine.
+pub fn pmap_enter(
+    pmap: &MachinePmap,
+    va: Vaddr,
+    pa: Paddr,
+    prot: VmProt,
+    flags: i32,
+) -> Result<(), Errno> {
+    Machine::pmap_enter(pmap, va, pa, prot, flags)
+}
+
+/// `pmap_remove` on the selected machine.
+pub fn pmap_remove(pmap: &MachinePmap, sva: Vaddr, eva: Vaddr) {
+    Machine::pmap_remove(pmap, sva, eva)
+}
+
+/// `pmap_remove_holes` on the selected machine.
+pub fn pmap_remove_holes(vm: &Vmspace) {
+    Machine::pmap_remove_holes(vm)
+}
+
+/// `pmap_proc_iflush` on the selected machine.
+pub fn pmap_proc_iflush(pr: &Process, va: Vaddr, len: Vsize) {
+    Machine::pmap_proc_iflush(pr, va, len)
 }
 
 /// `pmap_zero_page` on the selected machine.

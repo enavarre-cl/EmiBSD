@@ -74,10 +74,14 @@ use crate::kern::kern_timeout::timeout_del;
 use crate::kern::sched_bsd::sched_assert_unlocked;
 use crate::kern::subr_pool::{pool_get, pool_put};
 use crate::kern::subr_prf::panic;
+#[cfg(feature = "qemu")]
+use crate::kprintf;
 use crate::machine::Machine;
 use crate::machine::cpu::Cpu;
 use crate::machine::intr::IPL_NONE;
 use crate::machine::pmap::pmap_deactivate;
+#[cfg(feature = "qemu")]
+use crate::machine::{Exit, ExitStatus};
 use crate::sys::errno::Errno;
 use crate::sys::mutex::{MTX_NOWITNESS, Mutex, mutex_assert_locked};
 use crate::sys::param::{PVM, PWAIT};
@@ -94,7 +98,7 @@ use crate::sys::syscallargs::SysExitArgs;
 use crate::sys::systm::{INFSLP, SysArgs, sysargs};
 use crate::sys::types::Register;
 use crate::unported;
-use crate::uvm::uvm_glue::uvm_uarea_free;
+use crate::uvm::uvm_glue::{uvm_exit, uvm_purge, uvm_uarea_free};
 
 /// `sys_exit`: death of process.
 pub fn sys_exit(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(), Errno> {
@@ -136,6 +140,18 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
 
     if flags == EXIT_NORMAL && pr.ps_flags.load(Ordering::Relaxed) & PS_EXITING == 0 {
         if pr.ps_pid.get() == 1 {
+            // Under QEMU init's exit ends the run: the M6 exit criterion (see the module's
+            // deviations). The C panics, as it has nothing to run.
+            #[cfg(feature = "qemu")]
+            {
+                kprintf!("init exited with status {xexit} (signal {xsig})\n");
+                Machine::exit(if xexit == 0 && xsig == 0 {
+                    ExitStatus::Success
+                } else {
+                    ExitStatus::Failure
+                });
+            }
+            #[cfg(not(feature = "qemu"))]
             panic(format_args!("init died (signal {xsig}, exit {xexit})"));
         }
 
@@ -251,7 +267,7 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
             // ensure the costly operation of tearing down the VM space is performed
             // unlocked. It is safe to release them all since exit1() will not return.
             // MULTIPROCESSOR: __mp_release_all(&kernel_lock).
-            let _ = unported!("exit1: uvm_purge (M6-b)");
+            uvm_purge();
             // KERNEL_LOCK().
         }
     }
@@ -476,10 +492,8 @@ pub fn reaper(_arg: *mut c_void) {
         } else {
             let pr = p.process();
 
-            // Release the rest of the process's vmspace: uvm_exit(pr) (M6-b).
-            if !pr.ps_vmspace.get().is_null() {
-                let _ = unported!("reaper: uvm_exit (M6-b)");
-            }
+            // Release the rest of the process's vmspace
+            uvm_exit(pr);
 
             // KERNEL_LOCK().
             if pr.ps_flags.load(Ordering::Relaxed) & PS_NOZOMBIE == 0 {

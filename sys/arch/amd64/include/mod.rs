@@ -7,6 +7,7 @@ pub mod cpu;
 pub mod cpu_full;
 pub mod cpufunc;
 pub mod db_machdep;
+pub mod exec;
 pub mod fpu;
 pub mod frame;
 pub mod i82489reg;

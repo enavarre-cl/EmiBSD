@@ -17,8 +17,10 @@ use core::ffi::c_void;
 use crate::machine::Machine;
 use crate::machine::bootinfo::BootInfo;
 use crate::sys::clockintr::Clockqueue;
+use crate::sys::exec::{ExecPackage, PsStrings};
 use crate::sys::proc::Proc;
 use crate::sys::sched::SchedstatePercpu;
+use crate::sys::types::Vaddr;
 use crate::sys::user::User;
 
 /// Outcome reported through [`Exit::exit`].
@@ -183,6 +185,11 @@ pub trait Cpu {
         func: fn(*mut c_void),
         arg: *mut c_void,
     );
+
+    /// `setregs(p, pack, stack, arginfo)` (`machdep.c`): clear registers on exec: `p` will
+    /// return to user mode at `pack.ep_entry` with the stack pointer at `stack`, every other
+    /// register zero and the machine state of a fresh thread.
+    fn setregs(p: &Proc, pack: &ExecPackage<'_>, stack: Vaddr, arginfo: &PsStrings);
 
     /// `cpu_initclocks()`: the machine-dependent part of `initclocks`: picks the clock
     /// hardware, sets `stathz`/`profhz`, registers the timecounter.

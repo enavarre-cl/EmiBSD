@@ -13,6 +13,7 @@ pub mod cons;
 pub mod copy;
 pub mod cpu;
 pub mod db_machdep;
+pub mod exec;
 pub mod fdt;
 pub mod intr;
 pub mod param;
@@ -26,6 +27,7 @@ pub use cons::*;
 pub use copy::*;
 pub use cpu::*;
 pub use db_machdep::*;
+pub use exec::*;
 pub use fdt::*;
 pub use intr::*;
 pub use param::*;
@@ -51,7 +53,8 @@ const _: () = {
             + Intr
             + Fdt
             + MachineProc
-            + UserCopy,
+            + UserCopy
+            + MachineExec,
     >() {
     }
     assert_impl::<Machine>();

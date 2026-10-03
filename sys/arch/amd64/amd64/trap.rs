@@ -99,15 +99,20 @@ use crate::arch::amd64::include::psl::PSL_C;
 use crate::arch::amd64::include::pte::{PGEX_I, PGEX_P, PGEX_W};
 use crate::arch::amd64::include::segments::kernelmode;
 use crate::arch::amd64::include::specialreg::{MSR_GSBASE, MSR_KERNELGSBASE};
-use crate::arch::amd64::include::trap::{T_NMI, T_PAGEFLT, T_TRCTRAP};
+use crate::arch::amd64::include::trap::{
+    T_ALIGNFLT, T_ARITHTRAP, T_BPTFLT, T_CP, T_DIVIDE, T_NMI, T_PAGEFLT, T_PRIVINFLT, T_PROTFLT,
+    T_SEGNPFLT, T_STKFLT, T_TRCTRAP, T_TSSFLT, T_XMM,
+};
 use crate::arch::amd64::include::vmparam::{VM_MAXUSER_ADDRESS, VM_MIN_KERNEL_ADDRESS};
 use crate::kassert;
 use crate::kern::init_sysent::SYSENT;
+use crate::kern::kern_exit::exit1;
 use crate::kern::kern_sig::userret;
 use crate::kern::subr_prf::{Str, db_printf, panic, panicstr_claim, printf, vsnprintf};
 use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
-use crate::sys::proc::{Proc, refreshcreds};
+use crate::sys::proc::{EXIT_NORMAL, Proc, refreshcreds};
+use crate::sys::signal::{SIGBUS, SIGFPE, SIGILL, SIGKILL, SIGSEGV, SIGTRAP};
 use crate::sys::syscall::SYS_MAXSYSCALL;
 use crate::sys::syscall_mi::{mi_ast, mi_child_return, mi_syscall, mi_syscall_return};
 use crate::sys::systm::SysArgs;
@@ -347,6 +352,183 @@ pub fn child_return(arg: *mut c_void) {
     // KERNEL_UNLOCK(): nothing without MULTIPROCESSOR.
 
     mi_child_return(p);
+}
+
+/// `upageflttrap(frame, cr2)`: page fault handler. Returns `true` if the fault was handled
+/// (possibly by generating a signal). Returns `false`, possibly still holding the kernel
+/// lock, if something was so broken that we should panic.
+pub fn upageflttrap(frame: &mut Trapframe, cr2: u64) -> bool {
+    let Some(p) = current() else {
+        return false;
+    };
+    let va = trunc_page(cr2 as usize);
+    let access_type = pgex2access(frame.tf_err as u64);
+
+    // uvm_fault(&p->p_vmspace->vm_map, va, 0, access_type), retried with PROT_EXEC when NX
+    // is off, then uvm_grow: the fault handler is M7a. Every user page is wired by exec
+    // until then, so a fault is a bad address (SEGV_MAPERR).
+    let error = unported!("upageflttrap: uvm_fault (M7a)");
+    let _ = (va, access_type);
+
+    let (signal, sicode) = if error == Errno::ENOMEM {
+        printf(format_args!(
+            "UVM: pid {} ({}), uid {} killed: out of swap\n",
+            p.process().ps_pid.get(),
+            Str(p.process().comm()),
+            -1
+        ));
+        (SIGKILL, 0)
+    } else if error == Errno::EACCES {
+        (SIGSEGV, SEGV_ACCERR)
+    } else if error == Errno::EIO {
+        (SIGBUS, BUS_OBJERR)
+    } else {
+        (SIGSEGV, SEGV_MAPERR)
+    };
+    trapsignal(p, signal, T_PAGEFLT, sicode, cr2)
+}
+
+/// `SEGV_MAPERR`: address not mapped to object (`<sys/siginfo.h>`, M6-c).
+const SEGV_MAPERR: i32 = 1;
+/// `SEGV_ACCERR`: invalid permissions.
+const SEGV_ACCERR: i32 = 2;
+/// `BUS_ADRALN`: invalid address alignment.
+const BUS_ADRALN: i32 = 1;
+/// `BUS_OBJERR`: object specific hardware error.
+const BUS_OBJERR: i32 = 3;
+/// `ILL_PRVOPC`: privileged opcode.
+const ILL_PRVOPC: i32 = 5;
+/// `ILL_BTCFI`: IBT missing on indirect call.
+const ILL_BTCFI: i32 = 10;
+/// `ILL_BADSTK`: bad stack.
+const ILL_BADSTK: i32 = 8;
+/// `FPE_INTDIV`: integer divide by zero.
+const FPE_INTDIV: i32 = 1;
+/// `TRAP_BRKPT`: process breakpoint.
+const TRAP_BRKPT: i32 = 1;
+
+/// `trapsignal(p, sig, trapno, code, sv)` until `kern_sig.c` lands (M6-c): there is no
+/// handler to run, so the process dies of the signal (what `sigexit` does), after the
+/// `TRAP_SIGDEBUG` dump, so the fault is visible on the console.
+fn trapsignal(p: &Proc, sig: i32, trapno: i32, code: i32, addr: u64) -> ! {
+    let _ = unported!("trapsignal (kern_sig.c, M6-c): the process dies of the signal");
+    // SAFETY: `md_regs` is the trap frame `usertrap` just recorded, on this thread's stack.
+    let rip = unsafe { (*p.p_md.md_regs.get()).tf_rip };
+    printf(format_args!(
+        "pid {} ({}): signal {} (trap {} code {}) at rip {:#x} addr {:#x}\n",
+        p.process().ps_pid.get(),
+        Str(p.process().comm()),
+        sig,
+        trapno,
+        code,
+        rip,
+        addr
+    ));
+    exit1(p, 0, sig, EXIT_NORMAL)
+}
+
+/// `usertrap(frame)`: handler for exceptions, faults, and traps from user mode. This is
+/// called from the assembly language IDT gate entries which prepare a suitable stack frame
+/// and restores the CPU state after the fault has been processed.
+#[unsafe(no_mangle)]
+pub extern "C" fn usertrap(frame: &mut Trapframe) {
+    let Some(p) = current() else {
+        panic(format_args!("usertrap: no curproc"));
+    };
+    let type_ = frame.tf_trapno as i32;
+    let cr2 = rcr2();
+
+    // verify_smap(__func__): SMAP arrives with CPU identification (M4-b).
+    UVMEXP.traps.fetch_add(1, Ordering::Relaxed);
+    // debug_trap(frame, p, type): the DEBUG option's trapdebug print.
+
+    p.p_md.md_regs.set(frame);
+    refreshcreds(p);
+
+    // verify_pkru(p): PKU (M7).
+
+    let (sig, code) = match type_ {
+        T_TSSFLT => (SIGBUS, BUS_OBJERR),
+        // protection fault
+        T_PROTFLT | T_SEGNPFLT | T_STKFLT => {
+            frame_dump(frame, p, "SEGV", 0);
+            (SIGSEGV, SEGV_MAPERR)
+        }
+        T_ALIGNFLT => (SIGBUS, BUS_ADRALN),
+        // privileged instruction fault
+        T_PRIVINFLT => (SIGILL, ILL_PRVOPC),
+        T_DIVIDE => (SIGFPE, FPE_INTDIV),
+        // real arithmetic exceptions: fputrap(type) gives the code (the FPU, M6-c)
+        T_ARITHTRAP | T_XMM => (SIGFPE, 0),
+        // bpt instruction fault, trace trap
+        T_BPTFLT | T_TRCTRAP => (SIGTRAP, TRAP_BRKPT),
+        T_CP => (
+            SIGILL,
+            if frame.tf_err & 0x7fff < 4 {
+                ILL_BTCFI
+            } else {
+                ILL_BADSTK
+            },
+        ),
+        // AMDSEV's T_VC: not configured.
+        // page fault: uvm_map_inentry (the MAP_STACK check, M7a) precedes it in C
+        T_PAGEFLT if upageflttrap(frame, cr2) => {
+            userret(p);
+            return;
+        }
+        _ => {
+            trap_print(frame, type_);
+            panic(format_args!("impossible trap"));
+        }
+    };
+
+    trapsignal(p, sig, type_, code, frame.tf_rip as u64);
+    // NOTREACHED: userret(p) once signals are delivered instead (M6-c).
+}
+
+/// `frame_dump`: the `TRAP_SIGDEBUG` dump of a faulting user frame; always on here, as the
+/// signal is fatal (see `trapsignal`).
+fn frame_dump(tf: &Trapframe, p: &Proc, sig: &str, cr2: u64) {
+    printf(format_args!(
+        "pid {} ({}): {} at rip {:x} addr {:x}\n",
+        p.process().ps_pid.get(),
+        Str(p.process().comm()),
+        sig,
+        tf.tf_rip,
+        cr2
+    ));
+    printf(format_args!(
+        "rip {:#x}  cs {:#x}  rfl {:#x}  rsp {:#x}  ss {:#x}\n",
+        tf.tf_rip,
+        tf.tf_cs & 0xffff,
+        tf.tf_rflags,
+        tf.tf_rsp,
+        tf.tf_ss & 0xffff
+    ));
+    printf(format_args!(
+        "err {:#x}  trapno {:#x}\n",
+        tf.tf_err, tf.tf_trapno
+    ));
+    printf(format_args!(
+        "rdi {:#x}  rsi {:#x}  rdx {:#x}\n",
+        tf.tf_rdi, tf.tf_rsi, tf.tf_rdx
+    ));
+    printf(format_args!(
+        "rcx {:#x}  r8  {:#x}  r9  {:#x}\n",
+        tf.tf_rcx, tf.tf_r8, tf.tf_r9
+    ));
+    printf(format_args!(
+        "r10 {:#x}  r11 {:#x}  r12 {:#x}\n",
+        tf.tf_r10, tf.tf_r11, tf.tf_r12
+    ));
+    printf(format_args!(
+        "r13 {:#x}  r14 {:#x}  r15 {:#x}\n",
+        tf.tf_r13, tf.tf_r14, tf.tf_r15
+    ));
+    printf(format_args!(
+        "rbp {:#x}  rbx {:#x}  rax {:#x}\n",
+        tf.tf_rbp, tf.tf_rbx, tf.tf_rax
+    ));
 }
 
 /// `curproc`, as a reference.

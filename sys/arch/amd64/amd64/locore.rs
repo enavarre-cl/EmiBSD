@@ -4,21 +4,25 @@
 //!
 //! Upstream: sys/arch/amd64/amd64/locore.S @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M4 ports `lgdt` and `intr_fast_exit`; `intr_user_exit` is a
-//! stub that reports itself. M5 adds `cpu_switchto` and `proc_trampoline`; M6-a `Xsyscall`
-//! with the AST check and the `sysretq` return. The kernel entry (`start`, done by the boot
-//! protocol), `sigcode`, the real `intr_user_exit`, the Meltdown trampolines
-//! (`Xsyscall_meltdown`, the U-K text page) and `savectx`/`setjmp`/`longjmp` come with
-//! M6-b and later.
+//! Status: `wip`. Milestone M4 ports `lgdt` and `intr_fast_exit`; M5 adds `cpu_switchto` and
+//! `proc_trampoline`; M6-a `Xsyscall` with the AST check and the `sysretq` return; M6-b
+//! `intr_user_exit` (the `iretq` return) and the user-thread bits of `cpu_switchto`. The
+//! kernel entry (`start`, done by the boot protocol), `sigcode`, the Meltdown trampolines
+//! (`Xsyscall_meltdown`, the U-K text page), `retpoline_rax` and `savectx`/`setjmp`/`longjmp`
+//! come later.
 //!
 //! ## Deviations
 //! - AT&T syntax, as the C file, so the two can be diffed; the rest of the kernel's inline
 //!   assembly is Intel syntax.
-//! - `cpu_switchto` is the kernel-thread subset: it saves and restores the stack pointers,
-//!   sets `curproc`/`curpcb`/`p_cpu`/`p_stat` and reloads `%cr3` when it changes. The
-//!   FPU/"extended state" save and reset (`CPUPF_USERXSTATE`), the user segment reset
-//!   (`CPUPF_USERSEGS`), `ci_proc_pmap`/`ci_kern_rsp`/the Meltdown CR3s, the RSB refill and
-//!   retguard come with user mode (M6).
+//! - `cpu_switchto` saves and restores the stack pointers, sets `curproc`/`curpcb`/`p_cpu`/
+//!   `p_stat`, reloads `%cr3` when it changes, records `ci_proc_pmap` and, for a user
+//!   thread, `ci_kern_rsp`. The FPU/"extended state" save and reset (`CPUPF_USERXSTATE`),
+//!   the user segment reset (`CPUPF_USERSEGS`, with the FS.base restore of
+//!   `intr_user_exit`/`Xsyscall`: M6-c, the TCB), the Meltdown CR3s, the RSB refill and
+//!   retguard are not here.
+//! - `intr_user_exit` checks for ASTs and returns through `iretq` on the trampoline stack as
+//!   the C does, without the xstate/FS.base restores, `DIAGNOSTIC`'s SPL check, IBPB,
+//!   `pku_xonly`, the MDS clear and the Meltdown page-table switch.
 //! - `proc_trampoline` calls `proc_trampoline_run` (Rust) with the function and argument
 //!   instead of calling the function itself: Rust `fn` pointers have no C calling
 //!   convention; after it returns the thread takes the syscall exit path, as in C.
@@ -31,14 +35,14 @@ use core::ffi::c_void;
 use core::mem::offset_of;
 
 use crate::arch::amd64::include::cpu::CpuInfo;
-use crate::arch::amd64::include::frame::Trapframe;
+use crate::arch::amd64::include::frame::{IretqFrame, Trapframe};
 use crate::arch::amd64::include::pcb::Pcb;
 use crate::arch::amd64::include::proc::MDP_IRET;
 use crate::arch::amd64::include::segments::{
     GCODE_SEL, GDATA_SEL, GUCODE_SEL, GUDATA_SEL, RegionDescriptor, SEL_KPL, SEL_UPL, gsel,
 };
 use crate::kern::kern_fork::proc_trampoline_mi;
-use crate::sys::proc::{Proc, SONPROC};
+use crate::sys::proc::{P_SYSTEM, Proc, SONPROC};
 
 global_asm!(
     include_str!("locore.S"),
@@ -72,6 +76,18 @@ global_asm!(
     CI_CURPCB = const offset_of!(CpuInfo, ci_curpcb),
     CI_KERN_RSP = const offset_of!(CpuInfo, ci_kern_rsp),
     CI_SCRATCH = const offset_of!(CpuInfo, ci_scratch),
+    CI_INTR_RSP = const offset_of!(CpuInfo, ci_intr_rsp),
+    CI_PROC_PMAP = const offset_of!(CpuInfo, ci_proc_pmap),
+    IRETQ_RIP = const offset_of!(IretqFrame, iretq_rip),
+    IRETQ_CS = const offset_of!(IretqFrame, iretq_cs),
+    IRETQ_RFLAGS = const offset_of!(IretqFrame, iretq_rflags),
+    IRETQ_RSP = const offset_of!(IretqFrame, iretq_rsp),
+    IRETQ_SS = const offset_of!(IretqFrame, iretq_ss),
+    P_FLAG = const offset_of!(Proc, p_flag),
+    P_SYSTEM = const P_SYSTEM,
+    PCB_PMAP = const offset_of!(Pcb, pcb_pmap),
+    PCB_KSTACK = const offset_of!(Pcb, pcb_kstack),
+    FRAMESIZE = const size_of::<Trapframe>(),
     TF_RSP = const offset_of!(Trapframe, tf_rsp),
     TF_SS = const offset_of!(Trapframe, tf_ss),
     TF_CS = const offset_of!(Trapframe, tf_cs),
@@ -120,13 +136,4 @@ pub unsafe extern "C" fn proc_trampoline_run(func: *const (), arg: *mut c_void) 
     // a pointer; this is the inverse cast.
     let func: fn(*mut c_void) = unsafe { core::mem::transmute::<*const (), fn(*mut c_void)>(func) };
     func(arg);
-}
-
-/// What `intr_user_exit` does until user mode exists: a return to user mode is a bug.
-#[unsafe(no_mangle)]
-pub extern "C" fn intr_user_exit_unported(frame: &Trapframe) -> ! {
-    crate::kern::subr_prf::panic(format_args!(
-        "intr_user_exit: return to user mode without user mode (M6): cs {:x} rip {:x}",
-        frame.tf_cs, frame.tf_rip
-    ))
 }

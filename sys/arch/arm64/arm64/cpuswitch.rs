@@ -13,8 +13,7 @@
 //!   this kernel yet.
 //! - `proc_trampoline` calls `proc_trampoline_run` (Rust) with the function and argument
 //!   instead of `blr`ing the function itself: Rust `fn` pointers have no C calling
-//!   convention. After the function returns the C goes to `syscall_return`; here it is a
-//!   panic until user mode exists (M6).
+//!   convention. After the function returns both go to `syscall_return`.
 
 use core::arch::global_asm;
 use core::ffi::c_void;
@@ -24,7 +23,6 @@ use crate::arch::arm64::include::cpu::CpuInfo;
 use crate::arch::arm64::include::frame::{SWITCHFRAME_SZ, Switchframe};
 use crate::arch::arm64::include::pcb::Pcb;
 use crate::kern::kern_fork::proc_trampoline_mi;
-use crate::kern::subr_prf::panic;
 use crate::sys::proc::{Proc, SONPROC};
 
 global_asm!(
@@ -58,20 +56,18 @@ unsafe extern "C" {
 
 /// What `proc_trampoline` calls with the switch frame's `sf_x19`/`sf_x20`: the
 /// machine-independent start of a thread, then its function. The function never returns for
-/// a kernel thread; a user thread's return to user mode (`syscall_return`) is M6.
+/// a kernel thread; a user thread's (`child_return`, or `start_init` after its exec) does,
+/// and the assembly then takes `syscall_return` to user mode.
 ///
 /// # Safety
 ///
 /// Only `proc_trampoline` calls this, on a thread `cpu_fork` built: `func` is the
 /// `fn(*mut c_void)` it stored in the switch frame, as a pointer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn proc_trampoline_run(func: *const (), arg: *mut c_void) -> ! {
+pub unsafe extern "C" fn proc_trampoline_run(func: *const (), arg: *mut c_void) {
     proc_trampoline_mi();
-    // SAFETY: the caller's guarantee: `cpu_fork` stored a `fn(*mut c_void)` in `sf_x19` as a pointer; this is the
-    // inverse cast.
+    // SAFETY: the caller's guarantee: `cpu_fork` stored a `fn(*mut c_void)` in `sf_x19` as a
+    // pointer; this is the inverse cast.
     let func: fn(*mut c_void) = unsafe { core::mem::transmute::<*const (), fn(*mut c_void)>(func) };
     func(arg);
-    panic(format_args!(
-        "proc_trampoline: the thread function returned (the user-mode return is M6)"
-    ))
 }

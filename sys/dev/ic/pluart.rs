@@ -324,6 +324,23 @@ pub unsafe fn pluartcnattach(
     Ok(())
 }
 
+/// Maps the console's registers again through `bus_space_map` and switches the console to
+/// the new handle: the arm64 `pmap_init` calls it when the bootstrap identity map of the
+/// lower half goes away (not in the C, whose early console already lives in the kernel
+/// half; see `arch/arm64/arm64/pmap.rs`).
+pub fn pluartcn_remap() {
+    let Some((iot, _)) = pluartcons_io() else {
+        return;
+    };
+    let iobase = PLUARTCONSADDR.load(Ordering::Relaxed);
+    // SAFETY: the same device registers `pluartcnattach` mapped, mapped once more.
+    if let Ok(ioh) = unsafe { bus_space_map(iot, iobase, UART_SPACE, 0) } {
+        // SAFETY: single writer, on the boot CPU, between two console writes (see
+        // `pluartcons_io`).
+        unsafe { PLUARTCONSIOH.write(Some(ioh)) };
+    }
+}
+
 /// `pluartcngetc`: blocks until a character arrives and returns it.
 pub fn pluartcngetc(_dev: Dev) -> i32 {
     // s = splhigh(): M4.

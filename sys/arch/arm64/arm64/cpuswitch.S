@@ -83,7 +83,7 @@ cpu_switchto_asm:
  * proc_trampoline: where a thread built by cpu_fork starts, with the switch
  * frame's sf_x19 (the function) and sf_x20 (its argument) restored. The Rust
  * side (proc_trampoline_run) runs proc_trampoline_mi and then the function;
- * the return to user mode (syscall_return) comes with M6.
+ * when it returns the thread leaves for user mode through syscall_return.
  */
 	.globl	proc_trampoline
 	.type	proc_trampoline, %function
@@ -92,5 +92,5 @@ proc_trampoline:
 	mov	x0, x19
 	mov	x1, x20
 	bl	proc_trampoline_run
-	brk	#0
+	b	syscall_return
 	.size	proc_trampoline, . - proc_trampoline

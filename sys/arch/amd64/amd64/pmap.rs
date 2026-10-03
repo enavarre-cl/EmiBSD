@@ -105,6 +105,16 @@
 //!   (`ci_cflushsz`, M5).
 //! - `pmap_virtual_space` is not in the C (amd64 has `PMAP_STEAL_MEMORY`); the trait needs one
 //!   and it reports the range `pmap_steal_memory` reports.
+//! - User pmaps (M6): `pmap_create`/`pmap_destroy`/`pmap_enter`/`pmap_remove` walk the
+//!   tables through the direct map instead of `pmap_map_ptes` (the recursive mapping of a
+//!   borrowed `%cr3`), so `pmap_pdes_valid`/`normal_pdes` are only used on the current pmap.
+//!   `pmap_pdp_ctor` copies the kernel's whole upper half of the PML4 (the C copies the kernel
+//!   VM, direct-map and `KERNBASE` slots one by one). There are no pv entries yet
+//!   (`pmap_pv_pool`, `pmap_enter_pv`, `pmap_page_remove`, `pmap_page_protect`: M7a), so no
+//!   PTE carries `PG_PVLIST`, and the pmap list (`pmaps`) waits for `pmap_growkernel` to need
+//!   it. The PDP comes from `uvm_pagealloc` rather than `pmap_pdp_pool`; the pmap pool is
+//!   initialised in `pmap_init`. Freeing a PTP flushes the whole TLB (the C invalidates the
+//!   recursive mapping's page). `cpu_meltdown` is not configured: no `pm_pdir_intel`.
 //! - `pmap_growkernel` has no user pmaps to update yet (`pmaps`, M6); the `splhigh` around
 //!   it waits for `spl(9)` (M4). `pmap_get_physpage` after `uvm_init` allocates the PTP from
 //!   `pm_obj`, whose objects have no pager yet.
@@ -120,26 +130,35 @@ use crate::arch::amd64::include::cpufunc::{
 };
 use crate::arch::amd64::include::param::{PAGE_MASK, PAGE_SIZE};
 use crate::arch::amd64::include::pmap::{
-    NBPD_INITIALIZER, NKPTP_INITIALIZER, NKPTPMAX_INITIALIZER, PDES_INITIALIZER, PDIR_SLOT_PTE,
-    PG_PVLIST, PMAP_NOCACHE, PMAP_NOCRYPT, PMAP_PA_MASK, PMAP_TYPE_NORMAL, PMAP_WC, PTP_LEVELS,
-    Pmap, kvtopte, pl_i, pmap_valid_entry, ptp_va2o, va_sign_pos,
+    NBPD_INITIALIZER, NKPTP_INITIALIZER, NKPTPMAX_INITIALIZER, NTOPLEVEL_PDES, PDES_INITIALIZER,
+    PDIR_SLOT_PTE, PG_PVLIST, PG_W, PMAP_NOCACHE, PMAP_NOCRYPT, PMAP_PA_MASK, PMAP_TYPE_NORMAL,
+    PMAP_WC, PTP_LEVELS, Pmap, kvtopte, pl_i, pmap_valid_entry, ptp_va2o, va_sign_pos,
 };
 use crate::arch::amd64::include::pte::{
     L4_MASK, L4_SHIFT, NBPD_L2, PAGE_MASK_L2, PG_FRAME, PG_LGFRAME, PG_N, PG_NX, PG_PS, PG_RO,
-    PG_RW, PG_UCMINUS, PG_V, PdEntry, PtEntry, x86_round_pdr,
+    PG_RW, PG_UCMINUS, PG_V, PG_u, PdEntry, PtEntry, x86_round_pdr,
 };
 use crate::arch::amd64::include::specialreg::{EFER_NXE, MSR_EFER};
+use crate::arch::amd64::include::vmparam::{VM_MAX_ADDRESS, VM_MAXUSER_ADDRESS};
 use crate::arch::amd64::include::vmparam::{VM_MAX_KERNEL_ADDRESS, VM_MIN_KERNEL_ADDRESS};
+use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
+use crate::machine::intr::IPL_VM;
+use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_EXEC, PROT_WRITE};
-use crate::sys::proc::{P_SYSTEM, Proc};
+use crate::sys::pool::{PR_WAITOK, Pool};
+use crate::sys::proc::{P_SYSTEM, Proc, Process};
 use crate::sys::types::{Paddr, Vaddr, Vsize};
+use crate::uvm::uvm_extern::Vmspace;
 use crate::uvm::uvm_extern::{UVM_PGA_USERESERVE, UVM_PGA_ZERO, VmProt, Voff};
 use crate::uvm::uvm_init::UVM;
 use crate::uvm::uvm_page::{
     PG_BUSY, PHYS_TO_VM_PAGE, VmPage, uvm_page_physsteal, uvm_pagealloc, vm_page_to_phys,
 };
+use crate::uvm::uvm_page::{PG_FAKE, Pglist, uvm_pagefree, uvm_pagelookup, uvm_pagerealloc};
 use crate::uvm::uvm_param::atop;
+use crate::uvm::uvm_pmap::{PMAP_CANFAIL, PMAP_WIRED};
 use crate::{kassert, unported};
+use core::ptr::NonNull;
 
 /// `normal_pdes[]`: the level 2, 3 and 4 tables of the current pmap through the recursive
 /// mapping.
@@ -187,6 +206,13 @@ static PMAP_MAXKVADDR: AtomicUsize = AtomicUsize::new(VM_MIN_KERNEL_ADDRESS);
 static PMAP_KVA_START: AtomicUsize = AtomicUsize::new(VM_MIN_KERNEL_ADDRESS);
 /// `kernel_pmap_store`: the kernel's pmap (proc 0).
 static KERNEL_PMAP_STORE: Pmap = Pmap::new();
+/// `pmap_pmap_pool`: the pool of `struct pmap`.
+static PMAP_PMAP_POOL: Pool = Pool::new();
+
+/// `PMAP_REMOVE_ALL`: `pmap_do_remove` removes every mapping.
+const PMAP_REMOVE_ALL: i32 = 0;
+/// `PMAP_REMOVE_SKIPWIRED`: `pmap_do_remove` leaves wired mappings alone.
+const PMAP_REMOVE_SKIPWIRED: i32 = 1;
 
 /// `pmap_kernel()`.
 pub fn pmap_kernel() -> &'static Pmap {
@@ -199,8 +225,7 @@ pub fn pmap_kernel() -> &'static Pmap {
 /// Kernel threads run on the kernel pmap (there is no `vmspace` before user mode, M6).
 pub fn pmap_activate(p: &Proc) {
     let pcb = p.pcb();
-    // pmap = p->p_vmspace->vm_map.pmap: the kernel pmap until user address spaces exist.
-    let pmap = pmap_kernel();
+    let pmap = p.vmspace().vm_map.pmap();
 
     pcb.pcb_pmap.set(pmap);
     // PCID is not enabled (cr3_pcid_proc, PCID_KERN and cr3_reuse_pcid are 0).
@@ -213,15 +238,25 @@ pub fn pmap_activate(p: &Proc) {
     if p.p_flag.load(Ordering::Relaxed) & P_SYSTEM == 0 {
         // mark the pmap in use by this processor
         curcpu().ci_proc_pmap.set(pmap);
-        // cpu_meltdown: ci_kern_cr3 / ci_user_cr3 (M6).
+        // in case we return to userspace without context switching: cpu_meltdown's
+        // ci_kern_cr3/ci_user_cr3 (not configured).
     }
 
-    // SAFETY: `pcb_cr3` is the kernel pmap's page directory, the one in use.
+    // SAFETY: `pcb_cr3` is a page directory `pmap_pdp_ctor` or `pmap_bootstrap` built, with
+    // the kernel half this code runs in.
     unsafe { lcr3(pcb.pcb_cr3.get()) };
 }
 
-/// `pmap_deactivate`: nothing to do on amd64.
-pub fn pmap_deactivate(_p: &Proc) {}
+/// `pmap_deactivate`: deactivate a process' pmap.
+pub fn pmap_deactivate(p: &Proc) {
+    if p.p_flag.load(Ordering::Relaxed) & P_SYSTEM == 0 {
+        let this = curcpu();
+
+        // mark the pmap no longer in use by this processor.
+        kassert!(ptr::eq(this.ci_proc_pmap.get(), p.vmspace().vm_map.pmap()));
+        this.ci_proc_pmap.set(ptr::null());
+    }
+}
 
 /// `pmap_initialized`.
 pub fn pmap_initialized() -> bool {
@@ -402,8 +437,18 @@ pub unsafe fn pmap_bootstrap(first_avail: Paddr, _max_pa: Paddr) -> Paddr {
     first_avail
 }
 
-/// `pmap_init`: no further initialization required on this platform.
+/// `pmap_init`: no further initialization required on this platform (the C); here the
+/// pmap pool, which the C's `pmap_bootstrap` initialises (see the module's deviations).
 pub fn pmap_init() {
+    pool_init(
+        &PMAP_PMAP_POOL,
+        size_of::<Pmap>(),
+        0,
+        IPL_VM,
+        PR_WAITOK,
+        "pmappl",
+        None,
+    );
     PMAP_INITIALIZED.store(true, Ordering::Relaxed);
 }
 
@@ -797,3 +842,656 @@ pub fn pmap_tlb_shoottlb(_pm: &Pmap, shootself: bool) {
 
 /// `pmap_tlb_shootwait`: nothing without `MULTIPROCESSOR`.
 pub fn pmap_tlb_shootwait() {}
+
+/// `pl<lvl>_pi(va)`: the index of `va`'s entry within one level-`lvl` table (`pl_i` gives the
+/// index into the recursive mapping's linear view of the whole level).
+const fn pl_pi(va: usize, lvl: usize) -> usize {
+    pl_i(va, lvl) & (NTOPLEVEL_PDES - 1)
+}
+
+/// `pmap_is_curpmap`: whether `pm` is the pmap in `%cr3`.
+fn pmap_is_curpmap(pm: &Pmap) -> bool {
+    pm.pm_pdirpa.get().as_usize() as u64 == rcr3() & pg_frame()
+}
+
+/// The direct-map address of the level-`level` table of `pm` that holds `va`'s entry (the
+/// PML4 for level 4), or `None` where a higher level is not valid.
+fn pmap_table_direct(pm: &Pmap, va: usize, level: usize) -> Option<usize> {
+    let mut table = pmap_direct_map(pm.pm_pdirpa.get()).as_usize();
+    for lvl in ((level + 1)..=PTP_LEVELS).rev() {
+        // SAFETY: a page-table page in RAM, reached through the direct map.
+        let pde = unsafe { pde_at(table, pl_pi(va, lvl)) };
+        if pde & (PG_PS | PG_V) != PG_V {
+            return None;
+        }
+        table = pmap_direct_map(Paddr::new((pde & pg_frame()) as usize)).as_usize();
+    }
+    Some(table)
+}
+
+/// `pmap_find_ptp`: the PTP of level `level` that maps `va`, by `pa` when the hint has it,
+/// else by looking it up in the pmap's object for that level.
+fn pmap_find_ptp(
+    pmap: &Pmap,
+    va: usize,
+    pa: Option<Paddr>,
+    level: usize,
+) -> Option<&'static VmPage> {
+    let lidx = level - 1;
+
+    if let Some(pa) = pa {
+        // SAFETY: a non-null hint is a PTP of this pmap, alive until `pmap_freepage` drops
+        // it (which resets the hint).
+        if let Some(hint) = unsafe { pmap.pm_ptphint[lidx].get().as_ref() }
+            && pa == vm_page_to_phys(hint)
+        {
+            return Some(hint);
+        }
+    }
+
+    uvm_pagelookup(&pmap.pm_obj[lidx], ptp_va2o(va, level) as Voff)
+        // SAFETY: the object's pages are the pmap's PTPs, alive while the pmap is.
+        .map(|pg| unsafe { &*ptr::from_ref(pg) })
+}
+
+/// `pmap_freepage`: drops the PTP `ptp` of level `level` from its object and queues it for
+/// freeing once the TLB is flushed.
+fn pmap_freepage(pmap: &Pmap, ptp: &VmPage, level: usize, pagelist: &Pglist) {
+    let lidx = level - 1;
+
+    let obj = &pmap.pm_obj[lidx];
+    pmap.pm_stats
+        .resident_count
+        .set(pmap.pm_stats.resident_count.get() - 1);
+    if ptr::eq(pmap.pm_ptphint[lidx].get(), ptp) {
+        pmap.pm_ptphint[lidx].set(obj.memt.root().map_or(ptr::null(), ptr::from_ref));
+    }
+    ptp.wire_count.set(0);
+    uvm_pagerealloc(ptp, None, 0);
+    // SAFETY: the page just left its object and is on no queue; the list is the caller's.
+    unsafe { pagelist.insert_tail(ptp) };
+}
+
+/// `pmap_free_ptp`: frees the level-1 PTP `ptp` (which no longer maps anything) and, level
+/// by level, the tables above it that it was the last user of.
+fn pmap_free_ptp(pmap: &Pmap, ptp: &VmPage, va: usize, pagelist: &Pglist) {
+    let mut ptp = ptp;
+    let mut level = 1;
+    loop {
+        pmap_freepage(pmap, ptp, level, pagelist);
+        let index = pl_pi(va, level + 1);
+        let Some(table) = pmap_table_direct(pmap, va, level + 1) else {
+            #[allow(clippy::panic)] // a PTP whose parent vanished: the tables are corrupt
+            {
+                panic!(
+                    "pmap_free_ptp: level {} table of {:#x} is gone",
+                    level + 1,
+                    va
+                );
+            }
+        };
+        // SAFETY: the parent table through the direct map; the entry is this PTP's.
+        unsafe { pde_set(table, index, 0) };
+        // pm_pdir_intel: not configured. The recursive-mapping invalidation
+        // (pmap_tlb_shootpage of invaladdr) is the caller's full flush.
+        if level < PTP_LEVELS - 1 {
+            let Some(parent) = pmap_find_ptp(pmap, va, None, level + 1) else {
+                #[allow(clippy::panic)] // as above
+                {
+                    panic!(
+                        "pmap_free_ptp: missing level {} PTP of {:#x}",
+                        level + 1,
+                        va
+                    );
+                }
+            };
+            parent.wire_count.set(parent.wire_count.get() - 1);
+            if parent.wire_count.get() > 1 {
+                break;
+            }
+            ptp = parent;
+        }
+        level += 1;
+        if level >= PTP_LEVELS {
+            break;
+        }
+    }
+}
+
+/// `pmap_get_ptp`: get a PTP (if there isn't one, allocate a new one).
+///
+/// pmap should NOT be `pmap_kernel()`.
+fn pmap_get_ptp(pmap: &Pmap, va: usize) -> Option<&'static VmPage> {
+    let mut ptp: Option<&'static VmPage> = None;
+    let mut pa: Option<Paddr> = None;
+    let mut table = pmap_direct_map(pmap.pm_pdirpa.get()).as_usize();
+
+    // Loop through all page table levels seeing if we need to add a new page to that level.
+    for i in (2..=PTP_LEVELS).rev() {
+        // Save values from previous round.
+        let pptp = ptp;
+        let ppa = pa;
+
+        let index = pl_pi(va, i);
+
+        // SAFETY: a page-table page in RAM, reached through the direct map.
+        let pde = unsafe { pde_at(table, index) };
+        if pmap_valid_entry(pde) {
+            pa = Some(Paddr::new((pde & pg_frame()) as usize));
+            ptp = None;
+            table = pmap_direct_map(Paddr::new((pde & pg_frame()) as usize)).as_usize();
+            continue;
+        }
+
+        let obj = &pmap.pm_obj[i - 2];
+        let new = uvm_pagealloc(
+            Some(obj),
+            ptp_va2o(va, i - 1) as Voff,
+            None,
+            UVM_PGA_USERESERVE | UVM_PGA_ZERO,
+        )?;
+
+        new.clear_bits(PG_BUSY | PG_FAKE);
+        new.wire_count.set(1);
+        pmap.pm_ptphint[i - 2].set(new);
+        let newpa = vm_page_to_phys(new);
+        pa = Some(newpa);
+        // SAFETY: as above; the entry is empty, so it is ours.
+        unsafe {
+            pde_set(
+                table,
+                index,
+                newpa.as_usize() as u64 | PG_u | PG_RW | PG_V | pg_crypt(),
+            )
+        };
+        // Meltdown special case (pm_pdir_intel): not configured.
+
+        pmap.pm_stats
+            .resident_count
+            .set(pmap.pm_stats.resident_count.get() + 1);
+        // If we're not in the top level, increase the wire count of the parent page.
+        if i < PTP_LEVELS {
+            let parent = match pptp {
+                Some(p) => Some(p),
+                None => pmap_find_ptp(pmap, va, ppa, i),
+            };
+            let Some(parent) = parent else {
+                #[allow(clippy::panic)] // the C panics here too (DIAGNOSTIC)
+                {
+                    panic!("pmap_get_ptp: pde page disappeared");
+                }
+            };
+            parent.wire_count.set(parent.wire_count.get() + 1);
+        }
+        ptp = Some(new);
+        table = pmap_direct_map(newpa).as_usize();
+    }
+
+    // ptp is not NULL if we just allocated a new ptp. If it's still NULL, we must look up
+    // the existing one.
+    let ptp = match ptp {
+        Some(p) => p,
+        None => {
+            let Some(p) = pmap_find_ptp(pmap, va, pa, 1) else {
+                #[allow(clippy::panic)] // the C panics here too (DIAGNOSTIC)
+                {
+                    panic!("pmap_get_ptp: unmanaged user PTP for va {:#x}", va);
+                }
+            };
+            p
+        }
+    };
+
+    pmap.pm_ptphint[0].set(ptp);
+    Some(ptp)
+}
+
+/// `pmap_pdp_ctor`: constructor for the PDP cache: the page directory at `pdir` (physical
+/// `pdirpa`) gets the recursive entry and the kernel half.
+fn pmap_pdp_ctor(pdir: usize, pdirpa: Paddr) {
+    let kpm = pmap_kernel();
+    let kpdir = kpm.pm_pdir.get() as usize;
+
+    // zero init area
+    // SAFETY: a fresh page through the direct map, ours.
+    unsafe { ptr::write_bytes(pdir as *mut PdEntry, 0, PDIR_SLOT_PTE) };
+
+    // put in recursive PDE to map the PTEs
+    // SAFETY: as above.
+    unsafe {
+        pde_set(
+            pdir,
+            PDIR_SLOT_PTE,
+            pdirpa.as_usize() as u64 | PG_V | PG_RW | pg_nx() | pg_crypt(), // PG_KW
+        )
+    };
+
+    // put in kernel VM PDEs, the direct map and KERNBASE: the whole upper half of the
+    // kernel's PML4 (see the module's deviations); the rest of the lower half stays zero.
+    for i in (PDIR_SLOT_PTE + 1)..NTOPLEVEL_PDES {
+        // SAFETY: the kernel's PML4 is readable at `pm_pdir`; the new one is ours.
+        unsafe { pde_set(pdir, i, pde_at(kpdir, i)) };
+    }
+}
+
+/// `pmap_create`: create a pmap.
+///
+/// Note: old pmap interface took a "size" args which allowed for the creation of "software
+/// only" pmaps (not in bsd).
+pub fn pmap_create() -> &'static Pmap {
+    let Some(mem) = pool_get(&PMAP_PMAP_POOL, PR_WAITOK) else {
+        crate::kern::subr_prf::panic(format_args!("pmap_create: pmap_pmap_pool is empty"));
+    };
+    let pp = mem.cast::<Pmap>();
+    // SAFETY: a fresh, suitably aligned pool item of `size_of::<Pmap>()` bytes, written once
+    // before anything else sees it; it lives until `pmap_destroy` returns it.
+    let pmap: &'static Pmap = unsafe {
+        pp.as_ptr().write(Pmap::new());
+        pp.as_ref()
+    };
+
+    // mtx_init(&pmap->pm_mtx, IPL_VM): the pmap lock (M5 note). The uvm_objects are
+    // initialised with one reference by `Pmap::new` (uvm_obj_init(&pm_obj[i], &pmap_pager,
+    // 1)); the hints are null.
+    pmap.pm_stats.wired_count.set(0);
+    pmap.pm_stats.resident_count.set(1); // count the PDP allocd below
+    pmap.pm_type.set(PMAP_TYPE_NORMAL);
+    pmap.eptp.set(0);
+
+    // allocate PDP: a zeroed page through the direct map (pmap_pdp_pool in C).
+    let Some(pdp) = uvm_pagealloc(None, 0, None, UVM_PGA_USERESERVE | UVM_PGA_ZERO) else {
+        crate::kern::subr_prf::panic(format_args!("pmap_create: no page for the PDP"));
+    };
+    pdp.clear_bits(PG_BUSY | PG_FAKE);
+    pdp.wire_count.set(1);
+    let pdirpa = vm_page_to_phys(pdp);
+    let pdir = pmap_direct_map(pdirpa).as_usize();
+    pmap_pdp_ctor(pdir, pdirpa);
+
+    pmap.pm_pdir.set(pdir as *mut PdEntry);
+    pmap.pm_pdirpa.set(pdirpa);
+
+    // Intel CPUs need a special page table to be used during usermode execution, one that
+    // lacks all kernel mappings: cpu_meltdown is not configured.
+    pmap.pm_pdir_intel.set(ptr::null_mut());
+    pmap.pm_pdirpa_intel.set(Paddr::new(0));
+
+    // LIST_INSERT_HEAD(&pmaps, pmap, pm_list): see the module's deviations.
+    pmap
+}
+
+/// `pmap_destroy`: drop reference count on pmap. free pmap if reference count goes to zero.
+pub fn pmap_destroy(pmap: &'static Pmap) {
+    // drop reference count
+    let refs = pmap.pm_obj[0].uo_refs.get() - 1;
+    pmap.pm_obj[0].uo_refs.set(refs);
+    if refs > 0 {
+        return;
+    }
+
+    // remove it from global list of pmaps: see the module's deviations.
+
+    // free any remaining PTPs
+    for obj in &pmap.pm_obj {
+        while let Some(pg) = obj.memt.root() {
+            kassert!(pg.flags() & PG_BUSY == 0);
+
+            pg.wire_count.set(0);
+            pmap.pm_stats
+                .resident_count
+                .set(pmap.pm_stats.resident_count.get() - 1);
+
+            uvm_pagefree(pg);
+        }
+    }
+
+    // pool_put(&pmap_pdp_pool, pmap->pm_pdir): the PDP page.
+    if let Some(pdp) = pmap_unmap_direct(Vaddr::new(pmap.pm_pdir.get() as usize)) {
+        pdp.wire_count.set(0);
+        uvm_pagefree(pdp);
+    }
+    pmap.pm_pdir.set(ptr::null_mut());
+
+    // pm_pdir_intel: not configured.
+
+    pool_put(&PMAP_PMAP_POOL, NonNull::from(pmap).cast::<u8>());
+}
+
+/// Add a reference to the specified pmap.
+pub fn pmap_reference(pmap: &Pmap) {
+    pmap.pm_obj[0].uo_refs.set(pmap.pm_obj[0].uo_refs.get() + 1);
+}
+
+/// `pmap_remove_ptes`: remove a range of PTEs from a PTP.
+///
+/// Note that `ptpva` points to the PTE that maps `startva`. This may or may not be the first
+/// PTE in the PTP. We loop through the PTP while there are still PTEs to look at and the
+/// wire_count is greater than 1 (because we use the wire_count to keep track of the number of
+/// real PTEs in the PTP).
+fn pmap_remove_ptes(
+    pmap: &Pmap,
+    ptp: Option<&VmPage>,
+    ptpva: usize,
+    startva: usize,
+    endva: usize,
+    flags: i32,
+) {
+    let mut pte = ptpva as *mut PtEntry;
+    let mut va = startva;
+    while va < endva && ptp.is_none_or(|ptp| ptp.wire_count.get() > 1) {
+        // SAFETY: `pte` walks the level-1 table through the direct map, within the block
+        // `pmap_do_remove` bounded.
+        let cur = unsafe { ptr::read_volatile(pte) };
+        if !pmap_valid_entry(cur) || (flags & PMAP_REMOVE_SKIPWIRED != 0 && cur & PG_W != 0) {
+            // VA not mapped, or wired and skipped
+            pte = pte.wrapping_add(1);
+            va += PAGE_SIZE;
+            continue;
+        }
+
+        // atomically save the old PTE and zap! it
+        // SAFETY: as above.
+        let opte = unsafe { pmap_pte_set(pte, 0) };
+
+        if opte & PG_W != 0 {
+            pmap.pm_stats
+                .wired_count
+                .set(pmap.pm_stats.wired_count.get() - 1);
+        }
+        pmap.pm_stats
+            .resident_count
+            .set(pmap.pm_stats.resident_count.get() - 1);
+
+        if let Some(ptp) = ptp {
+            ptp.wire_count.set(ptp.wire_count.get() - 1); // dropping a PTE
+        }
+
+        // if we are not on a pv list we are done: no PTE is (see the module's deviations).
+        kassert!(opte & PG_PVLIST == 0);
+
+        pte = pte.wrapping_add(1);
+        va += PAGE_SIZE;
+    }
+}
+
+/// `pmap_remove`: top level mapping removal function.
+///
+/// caller should not be holding any pmap locks
+pub fn pmap_remove(pmap: &Pmap, sva: Vaddr, eva: Vaddr) {
+    // NVMM: pmap_is_ept → pmap_remove_ept: vmm is not configured.
+    pmap_do_remove(pmap, sva.as_usize(), eva.as_usize(), PMAP_REMOVE_ALL);
+}
+
+/// `pmap_do_remove`: mapping removal guts.
+///
+/// caller should not be holding any pmap locks
+fn pmap_do_remove(pmap: &Pmap, sva: usize, eva: usize, flags: i32) {
+    let empty_ptps = Pglist::new();
+    empty_ptps.init();
+
+    // pmap_map_ptes(pmap): the direct-map walk needs no borrowed %cr3.
+    let shootself = pmap_is_curpmap(pmap);
+    let is_kernel = ptr::eq(pmap, pmap_kernel());
+
+    // The single-page shortcut and the block loop share the same body here.
+    let mut shootall = (eva - sva > 32 * PAGE_SIZE) && sva < VM_MIN_KERNEL_ADDRESS;
+
+    let mut va = sva;
+    while va < eva {
+        // determine range of block
+        let mut blkendva = x86_round_pdr(va + 1);
+        if blkendva > eva {
+            blkendva = eva;
+        }
+
+        // XXXCDC: our PTE mappings should never be removed with pmap_remove! if we allow
+        // this (and why would we?) then we end up freeing the pmap's page directory page
+        // (PDP) before we are finished using it when we hit it in the recursive mapping.
+        // this is BAD.
+        if pl_i(va, PTP_LEVELS) == PDIR_SLOT_PTE {
+            // XXXCDC: ugly hack to avoid freeing PDP here
+            va = blkendva;
+            continue;
+        }
+
+        // pmap_pdes_valid(va, &pde), through the direct map
+        let (level, table, offs) = pmap_find_pte_direct(pmap, va);
+        if level != 0 {
+            va = blkendva;
+            continue;
+        }
+
+        // PA of the PTP
+        let ptppa = pmap_direct_unmap(Vaddr::new(table));
+
+        // get PTP if non-kernel mapping
+        let ptp = if is_kernel {
+            // we never free kernel PTPs
+            None
+        } else {
+            let Some(ptp) = pmap_find_ptp(pmap, va, Some(ptppa), 1) else {
+                #[allow(clippy::panic)] // the C panics here too (DIAGNOSTIC)
+                {
+                    panic!("pmap_do_remove: unmanaged PTP detected");
+                }
+            };
+            Some(ptp)
+        };
+        pmap_remove_ptes(
+            pmap,
+            ptp,
+            table + offs * size_of::<PtEntry>(),
+            va,
+            blkendva,
+            flags,
+        );
+
+        // if PTP is no longer being used, free it!
+        if let Some(ptp) = ptp
+            && ptp.wire_count.get() <= 1
+        {
+            pmap_free_ptp(pmap, ptp, va, &empty_ptps);
+            shootall = true;
+        }
+        va = blkendva;
+    }
+
+    if shootall {
+        pmap_tlb_shoottlb(pmap, shootself);
+    } else {
+        pmap_tlb_shootrange(pmap, sva, eva, shootself);
+    }
+
+    // pmap_unmap_ptes(pmap, scr3): nothing borrowed.
+    pmap_tlb_shootwait();
+
+    // cleanup: no pv entries to return; the empty PTPs
+    while let Some(ptp) = empty_ptps.first() {
+        // SAFETY: the page is on this list, which only this function sees.
+        unsafe { empty_ptps.remove(ptp) };
+        uvm_pagefree(ptp);
+    }
+}
+
+/// `pmap_enter`: enter a mapping into a pmap.
+///
+/// Returns `ENOMEM` under `PMAP_CANFAIL` when a page-table page cannot be had; panics
+/// otherwise, as the C.
+pub fn pmap_enter(
+    pmap: &Pmap,
+    va: Vaddr,
+    pa: Paddr,
+    prot: VmProt,
+    flags: i32,
+) -> Result<(), Errno> {
+    let va = va.as_usize();
+    let pa_raw = pa.as_usize();
+    let wired = flags & PMAP_WIRED != 0;
+    let crypt = flags & PMAP_NOCRYPT == 0;
+    let nocache = pa_raw & PMAP_NOCACHE as usize != 0;
+    let mut wc = pa_raw & PMAP_WC as usize != 0;
+    let is_kernel = ptr::eq(pmap, pmap_kernel());
+
+    // NVMM: pmap_is_ept → pmap_enter_ept: vmm is not configured.
+
+    kassert!(!(wc && nocache));
+    let pa = pa_raw & PMAP_PA_MASK;
+
+    #[cfg(feature = "diagnostic")]
+    {
+        if va == crate::arch::amd64::include::pmap::PDP_BASE {
+            crate::kern::subr_prf::panic(format_args!("pmap_enter: trying to map over PDP!"));
+        }
+        // sanity check: kernel PTPs should already have been pre-allocated
+        if va >= VM_MIN_KERNEL_ADDRESS
+            // SAFETY: the kernel PML4 is readable at `pm_pdir`.
+            && !pmap_valid_entry(unsafe { pde_at(pmap.pm_pdir.get() as usize, pl_i(va, PTP_LEVELS)) })
+        {
+            crate::kern::subr_prf::panic(format_args!(
+                "pmap_enter: missing kernel PTP for va {va:#x}!"
+            ));
+        }
+    }
+
+    // pve = pool_get(&pmap_pv_pool, PR_NOWAIT): no pv entries (see the module's deviations).
+
+    // map in ptes and get a pointer to our PTP (unless we are the kernel)
+    let shootself = pmap_is_curpmap(pmap);
+    let ptp = if is_kernel {
+        None
+    } else {
+        match pmap_get_ptp(pmap, va) {
+            Some(ptp) => Some(ptp),
+            None => {
+                if flags & PMAP_CANFAIL != 0 {
+                    return Err(Errno::ENOMEM);
+                }
+                crate::kern::subr_prf::panic(format_args!("pmap_enter: get ptp failed"));
+            }
+        }
+    };
+    let (level, table, offs) = pmap_find_pte_direct(pmap, va);
+    kassert!(level == 0);
+    let pte = (table + offs * size_of::<PtEntry>()) as *mut PtEntry;
+    // SAFETY: the level-1 table of `va` exists (the kernel's were pre-allocated, the user
+    // one `pmap_get_ptp` just made or found), reached through the direct map.
+    let opte = unsafe { ptr::read_volatile(pte) }; // old PTE
+
+    let resdelta: i64;
+    let wireddelta: i64;
+    let ptpdelta: u32;
+    // is there currently a valid mapping at our VA?
+    if pmap_valid_entry(opte) {
+        // first, calculate pm_stats updates. resident count will not change since we are
+        // replacing/changing a valid mapping. wired count might change...
+        resdelta = 0;
+        wireddelta = if wired && opte & PG_W == 0 {
+            1
+        } else if !wired && opte & PG_W != 0 {
+            -1
+        } else {
+            0
+        };
+        ptpdelta = 0;
+
+        // is the currently mapped PA the same as the one we want to map? if so, nothing to
+        // remove; changing PAs: the old one was on no pv list (see the module's deviations).
+        kassert!(opte & PG_PVLIST == 0);
+    } else {
+        // opte not valid
+        resdelta = 1;
+        wireddelta = if wired { 1 } else { 0 };
+        ptpdelta = if ptp.is_some() { 1 } else { 0 };
+    }
+
+    // if this entry is to be on a pvlist, enter it now: pmap_enter_pv (M7a); `pg` stays
+    // NULL and the PTE carries no PG_PVLIST.
+    let pg: Option<&VmPage> = None;
+
+    // enter_now:
+    pmap.pm_stats
+        .resident_count
+        .set(pmap.pm_stats.resident_count.get() + resdelta);
+    pmap.pm_stats
+        .wired_count
+        .set(pmap.pm_stats.wired_count.get() + wireddelta);
+    if let Some(ptp) = ptp {
+        ptp.wire_count.set(ptp.wire_count.get() + ptpdelta);
+    }
+
+    // SAFETY: `pmap_bootstrap` filled the table once, before any mapping.
+    let protection_codes = unsafe { PROTECTION_CODES.get() };
+    let mut npte = pa as u64 | protection_codes[(prot & 7) as usize] | PG_V;
+    if let Some(pg) = pg {
+        npte |= PG_PVLIST;
+        // make sure that if the page is write combined all instances of pmap_enter make it
+        // so.
+        if pg.flags() & crate::arch::amd64::include::pmap::PG_PMAP_WC != 0 {
+            kassert!(!nocache);
+            wc = true;
+        }
+    }
+    if wc {
+        npte |= PMAP_PG_WC.load(Ordering::Relaxed);
+    }
+    if wired {
+        npte |= PG_W;
+    }
+    if nocache {
+        npte |= PG_N;
+    }
+    if va < VM_MAXUSER_ADDRESS {
+        npte |= PG_u; // PMAP_EFI is never set here
+    } else if va < VM_MAX_ADDRESS {
+        npte |= PG_u | PG_RW; // XXXCDC: no longer needed?
+    }
+    if is_kernel {
+        npte |= PG_G_KERN.load(Ordering::Relaxed);
+    }
+    if crypt {
+        npte |= pg_crypt();
+    }
+
+    // If the old entry wasn't valid, we can just update it and go. If it was valid, and
+    // this isn't a read->write transition, then we can safely just update it and flush any
+    // old TLB entries.
+    //
+    // If it _was_ valid and this _is_ a read->write transition, then this could be a CoW
+    // resolution and we need to make sure no CPU can see the new writable mapping while
+    // another still has the old mapping in its TLB, so insert a correct but unwritable
+    // mapping, flush any old TLB entries, then make it writable.
+    // SAFETY: as for the read above; the entry is this pmap's.
+    unsafe {
+        if !pmap_valid_entry(opte) {
+            ptr::write_volatile(pte, npte);
+        } else if (opte | (npte ^ PG_RW)) & PG_RW != 0 {
+            // previously writable or not making writable
+            ptr::write_volatile(pte, npte);
+            if nocache && opte & PG_N == 0 {
+                wbinvd_on_all_cpus();
+            }
+            pmap_tlb_shootpage(pmap, va, shootself);
+        } else {
+            ptr::write_volatile(pte, npte ^ PG_RW);
+            if nocache && opte & PG_N == 0 {
+                // XXX impossible?
+                wbinvd_on_all_cpus();
+            }
+            pmap_tlb_shootpage(pmap, va, shootself);
+            pmap_tlb_shootwait();
+            ptr::write_volatile(pte, npte);
+        }
+    }
+
+    // pmap_unmap_ptes(pmap, scr3): nothing borrowed.
+    pmap_tlb_shootwait();
+
+    // out: no pv entry to return.
+    Ok(())
+}
+
+/// `pmap_remove_holes`: nothing on amd64 (the C macro).
+pub fn pmap_remove_holes(_vm: &Vmspace) {}
+
+/// `pmap_proc_iflush`: nothing on amd64: the instruction cache is coherent.
+pub fn pmap_proc_iflush(_pr: &Process, _va: Vaddr, _len: Vsize) {}

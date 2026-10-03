@@ -65,16 +65,20 @@
 //! Status: `wip`. Milestone M3 has the types and flags the page allocator and `km_alloc` use:
 //! `voff_t`, `vm_prot_t`, the map flag encoding, the `UVM_PGA_*`/`UVM_PLA_*` flags,
 //! `PHYSLOAD_DEVICE`, `struct uvm_constraint_range` and the `kmem_*_mode` structures.
-//! `struct vmspace` (needs `vm_map`), the kernel maps and the prototypes arrive with the files
-//! that implement them.
+//! M6 adds `struct vmspace`. The kernel maps and the prototypes arrive with the files that
+//! implement them.
 //!
 //! ## Deviations
 //! - `UVM_MAPFLAG` and its extractors are `const fn`s.
 //! - In `kmem_va_mode`, `kv_map` (a pointer to a map pointer) waits for `vm_map`; the mode
 //!   says which map by name until then.
 
+use core::cell::Cell;
+use core::sync::atomic::AtomicI32;
+
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
-use crate::sys::types::{Off, Paddr};
+use crate::sys::types::{Off, Paddr, Segsz};
+use crate::uvm::uvm_map::VmMap;
 
 /// `vm_fault_t`.
 pub type VmFault = i32;
@@ -190,6 +194,90 @@ pub const UVM_LK_EXIT: i32 = 0x0000_0002;
 
 /// Flag to `uvm_page_physload`: don't add to the page queue.
 pub const PHYSLOAD_DEVICE: i32 = 0x01;
+
+/// `struct vmspace`: shareable process virtual address space. May eventually be merged with
+/// `vm_map`. Several fields are temporary (text, data stuff).
+///
+/// Locks used to protect struct members: `K` kernel lock, `I` immutable after creation, `a`
+/// atomic operations, `v` `vm_map`'s lock.
+pub struct Vmspace {
+    /// `vm_map`: VM address map.
+    pub vm_map: VmMap,
+    /// \[a\] `vm_refcnt`: number of references.
+    pub vm_refcnt: AtomicI32,
+    // vm_shm: SYSVSHM is not configured.
+    // We copy from vm_startcopy (= vm_rssize) to the end of the structure on fork.
+    /// `vm_rssize`: current resident set size in pages.
+    pub vm_rssize: Cell<Segsz>,
+    /// `vm_swrss`: resident set size before last swap.
+    pub vm_swrss: Cell<Segsz>,
+    /// `vm_tsize`: text size (pages) XXX.
+    pub vm_tsize: Cell<Segsz>,
+    /// `vm_dsize`: data size (pages) XXX.
+    pub vm_dsize: Cell<Segsz>,
+    /// `vm_dused`: data segment length (pages) XXX.
+    pub vm_dused: Cell<Segsz>,
+    /// \[v\] `vm_ssize`: stack size (pages).
+    pub vm_ssize: Cell<Segsz>,
+    /// \[I\] `vm_taddr`: user virtual address of text.
+    pub vm_taddr: Cell<usize>,
+    /// \[I\] `vm_daddr`: user virtual address of data.
+    pub vm_daddr: Cell<usize>,
+    /// \[I\] `vm_maxsaddr`: user VA at max stack growth.
+    pub vm_maxsaddr: Cell<usize>,
+    /// \[I\] `vm_minsaddr`: user VA at top of stack.
+    pub vm_minsaddr: Cell<usize>,
+}
+
+impl Vmspace {
+    /// A zero vmspace, before `uvmspace_init` (what a `static struct vmspace` holds).
+    pub const fn new() -> Self {
+        Self {
+            vm_map: VmMap::new(),
+            vm_refcnt: AtomicI32::new(0),
+            vm_rssize: Cell::new(0),
+            vm_swrss: Cell::new(0),
+            vm_tsize: Cell::new(0),
+            vm_dsize: Cell::new(0),
+            vm_dused: Cell::new(0),
+            vm_ssize: Cell::new(0),
+            vm_taddr: Cell::new(0),
+            vm_daddr: Cell::new(0),
+            vm_maxsaddr: Cell::new(0),
+            vm_minsaddr: Cell::new(0),
+        }
+    }
+
+    /// `memcpy(&vm2->vm_startcopy, &vm1->vm_startcopy, ...)`: copies the statistics and
+    /// boundaries from `other` (fork).
+    pub fn copy_startcopy_from(&self, other: &Vmspace) {
+        self.vm_rssize.set(other.vm_rssize.get());
+        self.vm_swrss.set(other.vm_swrss.get());
+        self.vm_tsize.set(other.vm_tsize.get());
+        self.vm_dsize.set(other.vm_dsize.get());
+        self.vm_dused.set(other.vm_dused.get());
+        self.vm_ssize.set(other.vm_ssize.get());
+        self.vm_taddr.set(other.vm_taddr.get());
+        self.vm_daddr.set(other.vm_daddr.get());
+        self.vm_maxsaddr.set(other.vm_maxsaddr.get());
+        self.vm_minsaddr.set(other.vm_minsaddr.get());
+    }
+
+    /// `memset(&vm->vm_startcopy, 0, ...)`: nukes the statistics and boundaries (exec).
+    pub fn clear_startcopy(&self) {
+        self.copy_startcopy_from(&Vmspace::new());
+    }
+}
+
+impl Default for Vmspace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// SAFETY: a vmspace is shared between the threads of its process; the fields are `Cell`s and
+// atomics whose protection the field docs name (the map's lock, the kernel lock).
+unsafe impl Sync for Vmspace {}
 
 /// `struct uvm_constraint_range`: MD code is allowed to setup constraint ranges for memory
 /// allocators, the primary use for this is to keep allocation for certain memory consumers such

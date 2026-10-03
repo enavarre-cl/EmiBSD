@@ -18,7 +18,8 @@
 //!   Meltdown `Xalltraps` page are M6 too.
 //! - `alltraps_kern` and the interrupt stubs skip `SMAP_CLAC` (no CPU identification yet).
 //! - `INTRENTRY`'s path from user space (swapgs, the Meltdown CR3 switch and the kernel
-//!   stack) is `ud2` until user mode exists (M6); `intr_user_exit` is `locore.S`'s stub.
+//!   stack) is ported (M6-b), without the Meltdown CR3 switch; `intr_user_exit` is in
+//!   `locore.S`.
 //! - `retpoline_r13` (a `CODEPATCH`ed Spectre thunk) is a plain `jmp *%r13`: `codepatch.c`
 //!   is not ported. `uvmexp` is reached by its C name (`export_name`) for `V_INTR`.
 //! - AT&T syntax, as the C file, so the two can be diffed.
@@ -89,6 +90,15 @@ global_asm!(
     TF_RAX = const offset_of!(Trapframe, tf_rax),
     TF_CS = const offset_of!(Trapframe, tf_cs),
     IRETQ_CS = const offset_of!(IretqFrame, iretq_cs),
+    IRETQ_RIP = const offset_of!(IretqFrame, iretq_rip),
+    IRETQ_RFLAGS = const offset_of!(IretqFrame, iretq_rflags),
+    IRETQ_RSP = const offset_of!(IretqFrame, iretq_rsp),
+    IRETQ_SS = const offset_of!(IretqFrame, iretq_ss),
+    TF_RSP = const offset_of!(Trapframe, tf_rsp),
+    TF_SS = const offset_of!(Trapframe, tf_ss),
+    TF_RFLAGS = const offset_of!(Trapframe, tf_rflags),
+    CI_SCRATCH = const offset_of!(CpuInfo, ci_scratch),
+    CI_KERN_RSP = const offset_of!(CpuInfo, ci_kern_rsp),
     IF_PPL = const offset_of!(Intrframe, if_ppl),
     IS_MAXLEVEL = const offset_of!(Intrsource, is_maxlevel),
     IS_HANDLERS = const offset_of!(Intrsource, is_handlers),

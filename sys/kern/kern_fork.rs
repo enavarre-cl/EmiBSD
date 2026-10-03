@@ -112,6 +112,7 @@ use crate::sys::vmmeter::Forkstat;
 use crate::unported;
 use crate::uvm::uvm_glue::uvm_uarea_alloc;
 use crate::uvm::uvm_init::UVMEXP;
+use crate::uvm::uvm_map::{uvmspace_fork, uvmspace_share};
 
 /// `nprocesses`: process 0.
 pub static NPROCESSES: AtomicI32 = AtomicI32::new(1);
@@ -266,9 +267,9 @@ fn process_new(p: &'static Proc, parent: &'static Process, flags: i32) -> &'stat
     // sigactsinit(parent): kern_sig.c (M6).
     let _ = unported!("process_new: sigactsinit (kern_sig.c, M6)");
     if flags & FORK_SHAREVM != 0 {
-        pr.ps_vmspace.set(parent.ps_vmspace.get()); // uvmspace_share(parent): M6
+        pr.ps_vmspace.set(uvmspace_share(parent));
     } else {
-        let _ = unported!("process_new: uvmspace_fork (uvm_map.c, M6)");
+        pr.ps_vmspace.set(uvmspace_fork(parent));
     }
 
     if parent.ps_flags.load(Ordering::Relaxed) & PS_PROFIL != 0 {
@@ -423,13 +424,17 @@ pub fn fork1(
     };
     Machine::cpu_fork(curp, p, ptr::null_mut(), ptr::null_mut(), func, arg);
 
-    // vm->vm_dsize + vm->vm_ssize: the vmspace (M6); the size counters stay 0.
+    let vm = pr.vmspace();
+    let vmsize = (vm.vm_dsize.get() + vm.vm_ssize.get()) as u64;
     if flags & FORK_FORK != 0 {
         FORKSTAT.cntfork.fetch_add(1, Ordering::Relaxed);
+        FORKSTAT.sizfork.fetch_add(vmsize, Ordering::Relaxed);
     } else if flags & FORK_VFORK != 0 {
         FORKSTAT.cntvfork.fetch_add(1, Ordering::Relaxed);
+        FORKSTAT.sizvfork.fetch_add(vmsize, Ordering::Relaxed);
     } else {
         FORKSTAT.cntkthread.fetch_add(1, Ordering::Relaxed);
+        FORKSTAT.sizkthread.fetch_add(vmsize, Ordering::Relaxed);
     }
 
     p.p_tid.set(alloctid());

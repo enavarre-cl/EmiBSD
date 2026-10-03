@@ -12,6 +12,7 @@
 //! zeroing and copying them do nothing, and boot memory comes from the host allocator.
 
 use core::cell::Cell;
+use std::boxed::Box;
 use std::collections::BTreeMap;
 use std::eprintln;
 use std::io::Write;
@@ -28,12 +29,14 @@ use crate::machine::{
 };
 use crate::sys::clockintr::Clockqueue;
 use crate::sys::errno::Errno;
+use crate::sys::exec::{ExecPackage, PsStrings};
+use crate::sys::exec_elf::{ELFCLASS64, ELFDATA2LSB};
 use crate::sys::param::NODEV;
-use crate::sys::proc::Proc;
+use crate::sys::proc::{Proc, Process};
 use crate::sys::sched::SchedstatePercpu;
 use crate::sys::types::{Dev, Paddr, Vaddr, Vsize};
 use crate::sys::user::User;
-use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt};
+use crate::uvm::uvm_extern::{UvmConstraintRange, VmProt, Vmspace};
 use crate::uvm::uvm_page::{
     PHYS_TO_VM_PAGE, VM_PSTRAT_BIGFIRST, VmPage, uvm_page_physsteal, vm_page_to_phys,
 };
@@ -52,6 +55,8 @@ pub struct HostBusSpaceHandle(usize);
 /// The host's `struct pmap`: the kernel mappings, page by page.
 pub struct HostPmap {
     mappings: Mutex<BTreeMap<usize, usize>>,
+    /// `pm_obj.uo_refs`: how many vmspaces hold the pmap.
+    refs: core::sync::atomic::AtomicI32,
 }
 
 /// Where the host pretends kernel virtual space starts (amd64's `VM_MIN_KERNEL_ADDRESS`).
@@ -62,6 +67,7 @@ const HOST_KVA_END: usize = 0xffff_8080_0000_0000;
 /// The host's kernel pmap.
 static HOST_PMAP: HostPmap = HostPmap {
     mappings: Mutex::new(BTreeMap::new()),
+    refs: core::sync::atomic::AtomicI32::new(1),
 };
 /// amd64's `isa_constraint`, so the tests see two DMA ranges.
 static ISA_CONSTRAINT: UvmConstraintRange = UvmConstraintRange {
@@ -300,6 +306,9 @@ impl Cpu for Machine {
     ) {
     }
 
+    /// No user mode to return to.
+    fn setregs(_p: &Proc, _pack: &ExecPackage<'_>, _stack: Vaddr, _arginfo: &PsStrings) {}
+
     fn cpu_initclocks() {}
 
     fn cpu_startclock() {}
@@ -318,6 +327,15 @@ impl VmParam for Machine {
     const VM_PHYSSEG_MAX: usize = 16;
     const VM_PHYSSEG_STRAT: i32 = VM_PSTRAT_BIGFIRST;
     const VM_PHYSSEG_NOADD: bool = true;
+    const USRSTACK: usize = Self::VM_MAXUSER_ADDRESS;
+    const MAXTSIZ: usize = 256 * 1024 * 1024;
+    const DFLDSIZ: usize = 128 * 1024 * 1024;
+    const MAXDSIZ: usize = 128 * 1024 * 1024 * 1024;
+    const BRKSIZ: usize = 8 * 1024 * 1024 * 1024;
+    const DFLSSIZ: usize = 2 * 1024 * 1024;
+    const MAXSSIZ: usize = 32 * 1024 * 1024;
+    const STACKGAP_RANDOM: usize = 256 * 1024;
+    const VM_MIN_STACK_ADDRESS: usize = 0x0000_6000_0000_0000;
 }
 
 impl Pmap for Machine {
@@ -334,6 +352,53 @@ impl Pmap for Machine {
     fn pmap_kernel() -> &'static HostPmap {
         &HOST_PMAP
     }
+
+    /// A user pmap is another map; it is leaked on destroy (a test double).
+    fn pmap_create() -> &'static HostPmap {
+        Box::leak(Box::new(HostPmap {
+            mappings: Mutex::new(BTreeMap::new()),
+            refs: core::sync::atomic::AtomicI32::new(1),
+        }))
+    }
+
+    fn pmap_destroy(pmap: &'static HostPmap) {
+        if pmap
+            .refs
+            .fetch_sub(1, core::sync::atomic::Ordering::Relaxed)
+            == 1
+        {
+            pmap.mappings
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear();
+        }
+    }
+
+    fn pmap_reference(pmap: &HostPmap) {
+        pmap.refs
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn pmap_enter(
+        pmap: &HostPmap,
+        va: Vaddr,
+        pa: Paddr,
+        _prot: VmProt,
+        _flags: i32,
+    ) -> Result<(), Errno> {
+        let mut map = pmap.mappings.lock().unwrap_or_else(|e| e.into_inner());
+        map.insert(va.trunc_page().as_usize(), pa.trunc_page().as_usize());
+        Ok(())
+    }
+
+    fn pmap_remove(pmap: &HostPmap, sva: Vaddr, eva: Vaddr) {
+        let mut map = pmap.mappings.lock().unwrap_or_else(|e| e.into_inner());
+        map.retain(|&va, _| va < sva.trunc_page().as_usize() || va >= eva.as_usize());
+    }
+
+    fn pmap_remove_holes(_vm: &Vmspace) {}
+
+    fn pmap_proc_iflush(_pr: &Process, _va: Vaddr, _len: Vsize) {}
 
     /// Page contents are not modelled.
     fn pmap_zero_page(_pg: &VmPage) {}
@@ -410,6 +475,17 @@ impl Pmap for Machine {
     fn pmap_unmap_direct(va: Vaddr) -> Option<&'static VmPage> {
         PHYS_TO_VM_PAGE(Paddr::new(va.as_usize()))
     }
+}
+
+impl crate::machine::exec::MachineExec for Machine {
+    const LDPGSZ: usize = 4096;
+    const ARCH_ELFSIZE: usize = 64;
+    const ELF_TARG_CLASS: u8 = ELFCLASS64;
+    const ELF_TARG_DATA: u8 = ELFDATA2LSB;
+    #[cfg(target_arch = "aarch64")]
+    const ELF_TARG_MACH: u16 = crate::sys::exec_elf::EM_AARCH64;
+    #[cfg(not(target_arch = "aarch64"))]
+    const ELF_TARG_MACH: u16 = crate::sys::exec_elf::EM_AMD64;
 }
 
 impl Console for Machine {

@@ -125,11 +125,13 @@ use crate::arch::amd64::amd64::intr::{intr_default_setup, splraise};
 use crate::arch::amd64::amd64::locore::lgdt;
 use crate::arch::amd64::amd64::pmap::{PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap};
 use crate::arch::amd64::amd64::vector::Xexceptions;
-use crate::arch::amd64::include::cpu::{CpuInfo, cpu_info_primary, curcpu};
+use crate::arch::amd64::include::cpu::{CPUPF_USERSEGS, CpuInfo, cpu_info_primary, curcpu};
 use crate::arch::amd64::include::cpufunc::{intr_enable, lidt, lldt, ltr, rcr3};
 use crate::arch::amd64::include::frame::Trapframe;
 use crate::arch::amd64::include::intrdefs::IPL_IPI;
 use crate::arch::amd64::include::param::{PAGE_SIZE, USPACE};
+use crate::arch::amd64::include::proc::MDP_IRET;
+use crate::arch::amd64::include::psl::PSL_USERSET;
 use crate::arch::amd64::include::segments::{
     GCODE_SEL, GDATA_SEL, GDT_SIZE, GPROC0_SEL, GUCODE_SEL, GUDATA_SEL, GateDescriptor,
     MemSegmentDescriptor, NIDT, RegionDescriptor, SDT_MEMERA, SDT_MEMRWA, SDT_SYS386IGT,
@@ -150,13 +152,14 @@ use crate::kprintf;
 use crate::machine::bootinfo::{BootInfo, MemKind};
 use crate::machine::db_machdep::db_enter;
 use crate::machine::{Cpu, Machine};
+use crate::sys::exec::{ExecPackage, PsStrings};
 use crate::sys::param::roundup;
 use crate::sys::proc::Proc;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
 };
 use crate::sys::systm::PHYSMEM;
-use crate::sys::types::Paddr;
+use crate::sys::types::{Paddr, Vaddr};
 use crate::sys::user::{Uarea, User};
 use crate::unported;
 use crate::uvm::uvm_extern::UvmConstraintRange;
@@ -416,6 +419,58 @@ pub fn splassert_check(wantipl: i32, func: &str) {
     }
     if floor > wantipl {
         splassert_fail(wantipl, floor, func);
+    }
+}
+
+/// `reset_segs`: force the userspace FS.base to be reloaded from the PCB on return from the
+/// kernel, and reset the segment registers (`%ds`, `%es`, `%fs`, and `%gs`) to their expected
+/// userspace value.
+pub fn reset_segs() {
+    // This operates like the cpu_switchto() sequence: if we haven't reset %[defg]s already,
+    // do so now.
+    let ci = curcpu();
+    if ci.ci_pflags.get() & CPUPF_USERSEGS != 0 {
+        ci.ci_pflags.set(ci.ci_pflags.get() & !CPUPF_USERSEGS);
+        // SAFETY: loads the user data selector into the data segment registers and, between
+        // swapgs pairs with interrupts blocked, into %gs (which zeroes the user GS.base); the
+        // kernel's GS.base is back before interrupts are allowed again.
+        unsafe {
+            asm!(
+                "mov ds, ax",
+                "mov es, ax",
+                "mov fs, ax",
+                "cli",    // block intr when on user GS.base
+                "swapgs", // swap from kernel to user GS.base
+                "mov gs, ax", // set %gs to UDATA and GS.base to 0
+                "swapgs", // back to kernel GS.base
+                "sti",
+                in("ax") gsel(GUDATA_SEL, SEL_UPL),
+                options(nostack)
+            );
+        }
+    }
+}
+
+/// `setregs`: clear registers on exec.
+pub fn setregs(p: &Proc, pack: &ExecPackage<'_>, stack: Vaddr, _arginfo: &PsStrings) {
+    // initialize_thread_xstate(p): the FPU (M6-c).
+
+    // To reset all registers we have to return via iretq
+    p.p_md.md_flags.set(p.p_md.md_flags.get() | MDP_IRET);
+
+    reset_segs();
+    p.pcb().pcb_fsbase.set(0);
+
+    let tf = p.p_md.md_regs.get();
+    // SAFETY: `md_regs` is the thread's trap frame at the top of its u-area (`cpu_fork`),
+    // which only this thread writes, with no reference to it alive here.
+    unsafe {
+        tf.write(Trapframe::default());
+        (*tf).tf_rip = pack.ep_entry as i64;
+        (*tf).tf_cs = i64::from(gsel(GUCODE_SEL, SEL_UPL));
+        (*tf).tf_rflags = PSL_USERSET as i64;
+        (*tf).tf_rsp = stack.as_usize() as i64;
+        (*tf).tf_ss = i64::from(gsel(GUDATA_SEL, SEL_UPL));
     }
 }
 

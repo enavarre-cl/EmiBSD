@@ -41,9 +41,9 @@
 //! Upstream: sys/arch/amd64/include/vmparam.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M2 needs the kernel/user boundary for `ddb`'s `INKERNEL`, M3 the
-//! physical segment policy; the user limits (`MAXTSIZ`, `DFLDSIZ`, `MAXDSIZ`, `BRKSIZ`,
-//! `DFLSSIZ`, `MAXSSIZ`, `STACKGAP_RANDOM`, `USRSTACK`, `VM_MIN_STACK_ADDRESS`), `SHMMAXPGS`,
-//! `USRIOSIZE`, `VM_PHYS_SIZE` and the `VM_FREELIST_*` arrive with M6.
+//! physical segment policy, M6 the user limits (`MAXTSIZ`, `DFLDSIZ`, `MAXDSIZ`, `BRKSIZ`,
+//! `DFLSSIZ`, `MAXSSIZ`, `STACKGAP_RANDOM`, `USRSTACK`, `VM_MIN_STACK_ADDRESS`);
+//! `SHMMAXPGS`, `USRIOSIZE`, `VM_PHYS_SIZE` and the `VM_FREELIST_*` arrive with M7.
 
 use crate::arch::amd64::include::param::PAGE_SIZE;
 use crate::uvm::uvm_page::VM_PSTRAT_BIGFIRST;
@@ -54,6 +54,26 @@ pub const VM_MIN_ADDRESS: usize = PAGE_SIZE;
 pub const VM_MAXUSER_ADDRESS: usize = 0x0000_7f7f_ffff_c000;
 /// `VM_MAX_ADDRESS`: the end of the user address space.
 pub const VM_MAX_ADDRESS: usize = 0x0000_7fbf_dfef_f000;
+/// `USRSTACK`: the top (end) of the user stack. Immediately above the user stack
+/// resides the user structure, which is `USPACE` bytes long and contains the kernel stack
+/// of the process (C's description; the u-area is kernel memory here).
+pub const USRSTACK: usize = VM_MAXUSER_ADDRESS;
+/// `MAXTSIZ`: max text size.
+pub const MAXTSIZ: usize = 256 * 1024 * 1024;
+/// `DFLDSIZ`: initial data size limit.
+pub const DFLDSIZ: usize = 128 * 1024 * 1024;
+/// `MAXDSIZ`: max data size.
+pub const MAXDSIZ: usize = 128 * 1024 * 1024 * 1024;
+/// `BRKSIZ`: heap gap size.
+pub const BRKSIZ: usize = 8 * 1024 * 1024 * 1024;
+/// `DFLSSIZ`: initial stack size limit.
+pub const DFLSSIZ: usize = 2 * 1024 * 1024;
+/// `MAXSSIZ`: max stack size.
+pub const MAXSSIZ: usize = 32 * 1024 * 1024;
+/// `STACKGAP_RANDOM`.
+pub const STACKGAP_RANDOM: usize = 256 * 1024;
+/// `VM_MIN_STACK_ADDRESS`.
+pub const VM_MIN_STACK_ADDRESS: usize = 0x0000_6000_0000_0000;
 /// `VM_MIN_KERNEL_ADDRESS`: the start of the kernel address space (the direct map).
 pub const VM_MIN_KERNEL_ADDRESS: usize = 0xffff_8000_0000_0000;
 /// `VM_MAX_KERNEL_ADDRESS`: the end of the kernel's own virtual space.
@@ -80,6 +100,7 @@ mod tests {
             ("VM_MIN_KERNEL_ADDRESS", VM_MIN_KERNEL_ADDRESS as i64),
             ("VM_MAX_KERNEL_ADDRESS", VM_MAX_KERNEL_ADDRESS as i64),
             ("VM_PHYSSEG_MAX", VM_PHYSSEG_MAX as i64),
+            ("VM_MIN_STACK_ADDRESS", VM_MIN_STACK_ADDRESS as i64),
         ];
         for (name, value) in ours {
             assert_eq!(crate::reftest::int(&defs, name), Some(*value), "{name}");

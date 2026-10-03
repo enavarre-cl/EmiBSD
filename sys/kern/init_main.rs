@@ -54,34 +54,46 @@
 //!
 //! ## Deviations
 //! - `main()` takes no `framep` (unused in C) and never returns, as the C's loop never does.
-//! - Under feature `qemu` the run ends where proc0 would go back to sleep: `tsleep_nsec` needs
-//!   the scheduler (M5), and the emulator exits with the success status that `xtask smoke`
-//!   checks.
+//! - `start_init` execs the `init` Limine module (`stand` hands it over through
+//!   `set_init_module`) instead of trying the `initpaths` on a filesystem; `check_console`
+//!   waits for `namei`. Under feature `qemu` the run ends when init exits (`exit1`), with
+//!   the status `xtask smoke` checks; proc0 goes back to sleep as in C.
 
+use core::ffi::c_void;
+use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
+
+use libkern::StaticCell;
 
 use crate::dev::rnd::arc4random;
 use crate::kern::kern_clock::initclocks;
 use crate::kern::kern_clockintr::clockqueue_init;
+use crate::kern::kern_exec::exec_image;
 use crate::kern::kern_exit::reaper;
-use crate::kern::kern_fork::process_initialize;
+use crate::kern::kern_fork::{fork1, process_initialize};
 use crate::kern::kern_kthread::{kthread_create, kthread_run_deferred_queue};
 use crate::kern::kern_proc::{
     ALLPROC, ALLPROCESS, chgproccnt, pgrphash, pidhash, procinit, tidhash,
 };
 use crate::kern::kern_sched::{sched_init, sched_init_cpu};
-use crate::kern::kern_synch::{endtsleep, sleep_queue_init};
+use crate::kern::kern_synch::{endtsleep, sleep_queue_init, tsleep_nsec, wakeup};
 use crate::kern::kern_timeout::{timeout_proc_init, timeout_set, timeout_startup};
 use crate::kern::sched_bsd::{sched_lock_init, scheduler_start};
-use crate::kern::subr_prf::panic;
+use crate::kern::subr_prf::{Str, panic};
 use crate::kprintf;
-use crate::machine::Machine;
 use crate::machine::cons::consinit;
 use crate::machine::cpu::{Cpu, cpu_configure, cpu_startup, curcpu};
-use crate::sys::param::NZERO;
-use crate::sys::proc::{P_SYSTEM, PS_SYSTEM, Pgrp, Proc, Process, SONPROC, Session};
+use crate::machine::pmap::pmap_kernel;
+use crate::machine::{BootModule, Machine, VmParam};
+use crate::sys::errno::Errno;
+use crate::sys::param::{NZERO, PVM, PWAIT};
+use crate::sys::proc::{FORK_FORK, P_SYSTEM, PS_SYSTEM, Pgrp, Proc, Process, SONPROC, Session};
+use crate::sys::systm::INFSLP;
 use crate::unported;
+use crate::uvm::uvm_extern::Vmspace;
 use crate::uvm::uvm_init::uvm_init;
+use crate::uvm::uvm_map::uvmspace_init;
+use crate::uvm::uvm_param::{round_page, trunc_page};
 
 #[cfg(feature = "qemu")]
 use crate::machine::{Exit, ExitStatus};
@@ -104,6 +116,12 @@ pub static NCPUSFOUND: AtomicI32 = AtomicI32::new(1);
 pub static INITPROCESS: AtomicPtr<Process> = AtomicPtr::new(core::ptr::null_mut());
 /// `proc0`: process slot for swapper.
 pub static PROC0: Proc = Proc::new();
+/// `vmspace0`: the address space of process 0 (the kernel's).
+pub static VMSPACE0: Vmspace = Vmspace::new();
+/// `start_init_exec`: semaphore for `start_init()`.
+pub static START_INIT_EXEC: AtomicI32 = AtomicI32::new(0);
+/// The `init` module the bootloader loaded, if any (see the module's deviations).
+static INIT_MODULE: StaticCell<Option<BootModule>> = StaticCell::new(None);
 /// `process0`: process slot for kernel threads.
 pub static PROCESS0: Process = Process::new();
 /// `pgrp0`.
@@ -232,7 +250,16 @@ pub fn main() -> ! {
     let _ = unported!("signal_init / siginit");
     let _ = unported!("fdinit");
     let _ = unported!("lim_startup");
-    let _ = unported!("uvmspace_init (vmspace0)");
+    uvmspace_init(
+        &VMSPACE0,
+        Some(pmap_kernel()),
+        round_page(0),
+        trunc_page(<Machine as VmParam>::VM_MAX_ADDRESS),
+        true,
+        true,
+    );
+    PROCESS0.ps_vmspace.set(&VMSPACE0);
+    p.p_vmspace.set(&VMSPACE0);
 
     p.p_addr.set(Machine::proc0paddr()); // XXX
 
@@ -319,7 +346,13 @@ pub fn main() -> ! {
 
     // Create process 1 (init(8)). We do this now, as Unix has historically had init be
     // process 1, and changing this would probably upset a lot of people.
-    let _ = unported!("fork1 (init(8))");
+    let Ok(initproc) = fork1(&PROC0, FORK_FORK, start_init, ptr::null_mut()) else {
+        panic(format_args!("fork init"));
+    };
+    INITPROCESS.store(
+        ptr::from_ref(initproc.process()).cast_mut(),
+        Ordering::Relaxed,
+    );
 
     // Create any kernel threads whose creation was deferred because initprocess had not yet
     // been created.
@@ -357,7 +390,9 @@ pub fn main() -> ! {
     let _ = unported!("kthread_create (cleaner, update, aiodoned, zerothread: M7)");
     #[cfg(feature = "qemu")]
     if crate::kern::selftest::kthread_requested() {
+        // The M5 exit criterion: the run ends here, before init gets to exec.
         crate::kern::selftest::kthread_pingpong();
+        Machine::exit(ExitStatus::Success);
     }
 
     // MULTIPROCESSOR: not configured.
@@ -368,22 +403,71 @@ pub fn main() -> ! {
     let _ = unported!("config_process_deferred_mountroot");
 
     // Okay, now we can let init(8) exec! It's off to userland!
-    let _ = unported!("start_init_exec wakeup");
+    START_INIT_EXEC.store(1, Ordering::Relaxed);
+    wakeup(ptr::from_ref(&START_INIT_EXEC));
 
     let _ = unported!("start_periodic_resettodr");
 
     // proc0: nothing to do, back to sleep
-    #[cfg(feature = "qemu")]
-    {
-        Machine::exit(ExitStatus::Success)
-    }
-    #[cfg(not(feature = "qemu"))]
     loop {
-        let _ = crate::kern::kern_synch::tsleep_nsec(
-            core::ptr::from_ref(p),
-            crate::sys::param::PVM,
-            "scheduler",
-            crate::sys::systm::INFSLP,
-        );
+        let _ = tsleep_nsec(ptr::from_ref(p), PVM, "scheduler", INFSLP);
     }
+}
+
+/// Records the `init` module the bootloader loaded, for `start_init`. Called once by
+/// `stand`, on the boot CPU, before `main`.
+pub fn set_init_module(module: Option<BootModule>) {
+    // SAFETY: the single writer, before any thread but the boot CPU's exists; every reader
+    // (`start_init`) runs after `main` started.
+    unsafe { *INIT_MODULE.get_mut() = module };
+}
+
+// List of paths to try when searching for "init" (initpaths[]: /sbin/init, /sbin/oinit,
+// /sbin/init.bak): with a root filesystem (M7); the module stands in.
+
+/// `check_console`: warns when `/dev/console` does not exist. Needs `namei` (M7).
+pub fn check_console(_p: &Proc) {
+    let _ = unported!("check_console: namei of /dev/console (M7)");
+}
+
+/// Start the initial user process; try exec'ing each pathname in "initpaths". The program
+/// is invoked with one argument containing the boot flags.
+pub fn start_init(arg: *mut c_void) {
+    // SAFETY: `fork1` passes the new thread itself when the argument is null; it lives as
+    // long as this function runs on it.
+    let p: &Proc = unsafe { &*arg.cast::<Proc>() };
+
+    // Now in process 1.
+
+    // Wait for main() to tell us that it's safe to exec.
+    while START_INIT_EXEC.load(Ordering::Relaxed) == 0 {
+        let _ = tsleep_nsec(ptr::from_ref(&START_INIT_EXEC), PWAIT, "initexec", INFSLP);
+    }
+
+    check_console(p);
+
+    // process 0 ignores SIGCHLD, but we can't: ps_sigacts (kern_sig.c, M6-c).
+    let _ = unported!("start_init: ps_sigacts->ps_sigflags = 0 (M6-c)");
+
+    // Need just enough stack to hold the faked-up "execve()" arguments: `exec_image` lays
+    // the (empty) arguments out itself (see `kern_exec.rs`); the boot flags (`-s`) will
+    // travel with a real argv (M6-c).
+
+    // SAFETY: written once by `set_init_module` before `main`; only read afterwards.
+    let module = unsafe { INIT_MODULE.get() };
+    if let Some(module) = module {
+        let path = module.path.to_bytes();
+        let name = path.rsplit(|&c| c == b'/').next().unwrap_or(path);
+        // Now try to exec the program. If can't for any reason other than it doesn't
+        // exist, complain.
+        match exec_image(p, name, module.data) {
+            Err(Errno::EJUSTRETURN) => return,
+            Err(e) if e != Errno::ENOENT => {
+                kprintf!("exec {}: error {}\n", Str(path), e as i32);
+            }
+            _ => {}
+        }
+    }
+    kprintf!("init: not found\n");
+    panic(format_args!("no init"));
 }
