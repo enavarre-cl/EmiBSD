@@ -27,8 +27,13 @@ Next:
   `pmap_page_protect`, `pmap_protect`, the R/M bits), arm64 `pmap_fault_fixup`, exec through
   `uvm_map` (the wired stand-ins retire), `uvm_mmap.c`; exit criterion: a user page fault
   served by `uvm_fault` on both archs.
-- M8 waits for M7+ and the user's decisions (`docs/ROADMAP.md`); the M7+ order (vfs first,
-  or networking first as M7b with the ping criterion) is the user's call, proposed there.
+- After M7: `docs/ROADMAP.md` carries, as proposals of 2026-10-03, the "What 'complete'
+  means" scope section and the rows M9 security, M10 file systems, M11 SMP, M12 devices and
+  vmm, M13 installable (was M9), M14 real hardware (was M10). Eight decisions are the user's
+  before M8 starts: the M7+ order (vfs first, or the network as M7b with the ping criterion),
+  widening the reference clone, C or Rust userland, Limine or `boot(8)`, the scope section,
+  the new order, the vmm test rig (SVM under TCG on the Apple M3 Pro, or the reduced
+  criterion) and the M14 machines.
 
 Blockers:
 - None. `crc32` stays `skipped: license: zlib`; amd64's TSC timecounter (`tsc.c`) is deferred.
