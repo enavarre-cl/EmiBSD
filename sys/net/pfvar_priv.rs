@@ -59,6 +59,7 @@
 
 use core::cell::Cell;
 use core::ptr;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::kassert;
 use crate::net::pfvar::{
@@ -121,6 +122,53 @@ crate::queue_adapter!(
     pub PfStatelisthead: PfStateItem, si_entry => TailqEntry<PfStateItem>
 );
 
+/// `sk_reverse`: the key of the other direction of a forwarded connection, linked with
+/// `atomic_cas_ptr` by the packets of either direction (`pf_state_key_link_reverse`).
+pub struct PfSkReverse(AtomicPtr<PfStateKey>);
+
+impl PfSkReverse {
+    /// No reverse key.
+    pub const fn new() -> Self {
+        Self(AtomicPtr::new(ptr::null_mut()))
+    }
+
+    /// The reverse key.
+    pub fn get(&self) -> Option<&'static PfStateKey> {
+        // SAFETY: NULL or a key this one holds a reference on (`pf_state_key_link_reverse`),
+        // which keeps it alive until `pf_state_key_unlink_reverse` clears the link.
+        unsafe { self.0.load(Ordering::Acquire).as_ref() }
+    }
+
+    /// Sets the link (`pf_state_key_unlink_reverse` clears it).
+    pub fn set(&self, sk: Option<&'static PfStateKey>) {
+        self.0.store(
+            sk.map_or(ptr::null_mut(), |k| ptr::from_ref(k).cast_mut()),
+            Ordering::Release,
+        );
+    }
+
+    /// `atomic_cas_ptr(&sk_reverse, NULL, sk)`: links `sk` if there is no link yet and
+    /// returns the link that was there (`None` when this call linked `sk`).
+    pub fn cas_null(&self, sk: &'static PfStateKey) -> Option<&'static PfStateKey> {
+        match self.0.compare_exchange(
+            ptr::null_mut(),
+            ptr::from_ref(sk).cast_mut(),
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => None,
+            // SAFETY: as for `get`.
+            Err(old) => unsafe { old.as_ref() },
+        }
+    }
+}
+
+impl Default for PfSkReverse {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// `struct pf_state_key`: looks up states by address. Its first members are
 /// `struct pf_state_key_cmp`'s.
 pub struct PfStateKey {
@@ -141,7 +189,7 @@ pub struct PfStateKey {
     /// `sk_states`.
     pub sk_states: TailqHead<PfStatelisthead>,
     /// `sk_reverse`.
-    pub sk_reverse: Cell<Option<&'static PfStateKey>>,
+    pub sk_reverse: PfSkReverse,
     /// `sk_inp`: \[L\] the socket.
     pub sk_inp: Cell<Option<&'static crate::netinet::in_pcb::Inpcb>>,
     /// `sk_refcnt`.
@@ -165,7 +213,7 @@ impl PfStateKey {
             proto: Cell::new(c.proto),
             sk_entry: RbtEntry::new(),
             sk_states: TailqHead::new(),
-            sk_reverse: Cell::new(None),
+            sk_reverse: PfSkReverse::new(),
             sk_inp: Cell::new(None),
             sk_refcnt: Refcnt::new(),
             sk_removed: Cell::new(0),
@@ -297,7 +345,7 @@ pub struct PfState {
     pub linkage: SlistHead<PfStateLinkage>,
 }
 
-// SAFETY: changed under the locks the members' docs name, as in C (one CPU).
+// SAFETY: changed under the locks the members' docs name, as in C.
 unsafe impl Sync for PfState {}
 
 crate::queue_adapter!(
@@ -1045,10 +1093,11 @@ pub const PF_NEXT_RULE: i32 = 0;
 pub const PF_NEXT_CHILD: i32 = 1;
 
 /// The anchor stack: `PF_ANCHOR_STACK_MAX + 2` frames (`pf_anchor_stack`, a per-CPU array in
-/// the C; there is one CPU).
+/// the C; one array here, used only under `pf_lock`, see `net/pf.rs`).
 pub struct PfAnchorStack(pub [PfAnchorStackframe; PF_ANCHOR_STACK_MAX + 2]);
 
-// SAFETY: used only by pf_test's rule evaluation, under the net lock, on one CPU.
+// SAFETY: used only by pf_test's rule evaluation (`pf_match_rule`), with `pf_lock` held
+// exclusively.
 unsafe impl Sync for PfAnchorStack {}
 
 /// `enum pf_trans_type`.
@@ -1154,7 +1203,7 @@ pub fn pf_frag_unlock() {
 
 /// One of pf's global heads or tables (`pf_statetbl`, `tree_id`, `pf_anchors`, ...), made
 /// `Sync`: like the C globals, they are changed under the net lock, `pf_lock` and
-/// `pf_state_lock`, on one CPU.
+/// `pf_state_lock` (or the list's own lock or SMR, as its doc says).
 pub struct PfGlobal<T>(pub T);
 
 // SAFETY: see the type's doc.

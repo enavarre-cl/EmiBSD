@@ -38,10 +38,12 @@
 //!
 //! ## Deviations
 //! - SRP (`kern/kern_srp.c`) is not ported. `afmap`'s slots are atomics read without a
-//!   reference and replaced under the kernel lock, as in C; the old map is freed at once
-//!   (`rtmap_dtor` is not deferred through `srp_gc`), which is sound on one CPU with a kernel
-//!   that is not preempted, as `net/if_.rs` argues for the interface index map. SMR around the
-//!   ART lookups is the same (`net/art.rs`).
+//!   reference (`srp_enter`/`srp_leave` around a read that cannot sleep) and replaced under
+//!   the kernel lock, as in C; `srp_update_locked`'s deferred `rtmap_dtor` is an `smr_call`
+//!   through an [`SmrEntry`] in the old map (`rtm_smr`, which `struct rtmap` does not have),
+//!   so the map is freed once every CPU has left the reads that may still see it, as the
+//!   SRP garbage collector waits for its references. The lookups run inside SMR read
+//!   sections around the ART (`net/art.rs`) and `rt_next` (`net/route.rs`), as in C.
 //! - `struct rtmap` and `struct dommp` have the same layout in C (`rtable_init` asserts it)
 //!   and `afmap[0]` is a `rtmap` read as a `dommp`; here both are [`Rtmap`], an array of words
 //!   that hold a table pointer or a domain value.
@@ -54,8 +56,7 @@
 //!   `rtable_insert`, `rtable_delete`, `rtable_mpath_reprio`, `rtable_clearsource`,
 //!   `rtable_satoplen`) are `unsafe fn`s: the addresses are raw pointers of any flavour
 //!   (`docs/C_TO_RUST.md`).
-//! - `KERNEL_LOCK()`/`KERNEL_ASSERT_LOCKED()` are nothing without `MULTIPROCESSOR`;
-//!   `malloc(M_WAITOK)` that fails panics (`malloc(9)` does not sleep yet).
+//! - `malloc(M_WAITOK)` that fails panics (`malloc(9)` does not sleep yet).
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -67,6 +68,7 @@ use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU32, AtomicUsize, Ordering};
 use crate::kassert;
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
 use crate::kern::kern_rwlock::{rw_enter_write, rw_exit_write, rw_init};
+use crate::kern::kern_smr::{smr_read_enter, smr_read_leave};
 use crate::kern::kern_synch::refcnt_read;
 use crate::kern::subr_prf::panic;
 use crate::kern::uipc_domain::DOMAINS;
@@ -80,8 +82,12 @@ use crate::net::route::{
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_NOWAIT, M_RTABLE, M_WAITOK, M_ZERO};
 use crate::sys::rwlock::Rwlock;
+use crate::sys::smr::{SmrEntry, smr_call};
 use crate::sys::socket::{AF_MAX, RT_TABLEID_BITS, RT_TABLEID_MASK, RT_TABLEID_MAX, Sockaddr};
-use crate::sys::systm::{net_assert_locked, net_assert_locked_exclusive};
+use crate::sys::systm::{
+    kernel_assert_locked, kernel_lock, kernel_unlock, net_assert_locked,
+    net_assert_locked_exclusive,
+};
 use crate::sys::types::SaFamily;
 
 /// `struct rtable`: a routing table of one address family.
@@ -107,6 +113,8 @@ pub struct Rtmap {
     pub limit: u32,
     /// `tbl` / `value`: `limit` words.
     tbl: *const AtomicUsize,
+    /// The deferred `rtmap_dtor` once the map is replaced (see the module's deviations).
+    rtm_smr: SmrEntry,
 }
 
 impl Rtmap {
@@ -159,9 +167,10 @@ fn afmap(idx: u8) -> &'static AtomicPtr<Rtmap> {
 
 /// The current map of `afmap[idx]`, NULL before its first `rtmap_grow`.
 fn afmap_get(idx: u8) -> Option<&'static Rtmap> {
-    // SAFETY: a map in `afmap` was written whole by `rtmap_grow` and is freed only after it
-    // was replaced (see the module's deviations).
-    unsafe { afmap(idx).load(Ordering::Relaxed).as_ref() }
+    // SAFETY: a map in `afmap` was written whole by `rtmap_grow` before it was published
+    // (the `Release` store pairs with this `Acquire` load), and is freed by `smr_call` only
+    // after it was replaced and every CPU left its reads (see the module's deviations).
+    unsafe { afmap(idx).load(Ordering::Acquire).as_ref() }
 }
 
 /// `rtmap_init`.
@@ -183,7 +192,7 @@ fn rtmap_init() {
 
 /// `rtmap_grow`: grows the array of routing tables for `af` to `nlimit` entries.
 fn rtmap_grow(nlimit: u32, af: SaFamily) {
-    // KERNEL_ASSERT_LOCKED(): no kernel lock without MULTIPROCESSOR.
+    kernel_assert_locked();
 
     kassert!(nlimit > RTMAP_LIMIT.load(Ordering::Relaxed));
 
@@ -205,6 +214,7 @@ fn rtmap_grow(nlimit: u32, af: SaFamily) {
         nmap.write(Rtmap {
             limit: nlimit,
             tbl: tbl.cast::<AtomicUsize>().as_ptr(),
+            rtm_smr: SmrEntry::new(),
         })
     };
     // SAFETY: just written.
@@ -223,15 +233,20 @@ fn rtmap_grow(nlimit: u32, af: SaFamily) {
         }
     }
 
-    // srp_update_locked(&rtmap_gc, ...): the old map is freed at once.
-    slot.store(nmap, Ordering::Relaxed);
-    if !map.is_null() {
-        rtmap_dtor(map);
+    // srp_update_locked(&rtmap_gc, ...): publish the new map, free the old one once no CPU
+    // can still be reading it.
+    slot.store(nmap, Ordering::Release);
+    // SAFETY: the old map is out of `afmap`; it lives until `rtmap_dtor` runs.
+    if let Some(m) = unsafe { map.as_ref() } {
+        // SAFETY: as above: the entry lives in the map, which only the deferred call frees.
+        let smr: &'static SmrEntry = unsafe { &*ptr::from_ref(&m.rtm_smr) };
+        smr_call(smr, rtmap_dtor, map.cast());
     }
 }
 
 /// `rtmap_dtor`: frees a map that is no longer in `afmap`.
-fn rtmap_dtor(xmap: *mut Rtmap) {
+fn rtmap_dtor(xmap: *mut c_void) {
+    let xmap = xmap.cast::<Rtmap>();
     // doesn't need to be serialized since this is the last reference to this map. there's
     // nothing to race against.
     // SAFETY: `xmap` was allocated by `rtmap_grow` and has just left `afmap`.
@@ -297,47 +312,52 @@ pub fn rtable_add(id: u32) -> Result<(), Errno> {
         return Err(Errno::EINVAL);
     }
 
-    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+    kernel_lock();
 
-    if rtable_exists(id) {
-        return Ok(());
-    }
-
-    for dp in DOMAINS {
-        if dp.dom_rtoffset == 0 {
-            continue;
+    let error = 'out: {
+        if rtable_exists(id) {
+            break 'out Ok(());
         }
 
-        let af = dp.dom_family as SaFamily;
-        let off = dp.dom_rtoffset;
-        let alen = dp.dom_maxplen;
+        for dp in DOMAINS {
+            if dp.dom_rtoffset == 0 {
+                continue;
+            }
 
+            let af = dp.dom_family as SaFamily;
+            let off = dp.dom_rtoffset;
+            let alen = dp.dom_maxplen;
+
+            if id >= RTMAP_LIMIT.load(Ordering::Relaxed) {
+                rtmap_grow(id + 1, af);
+            }
+
+            let Some(tbl) = rtable_alloc(id, alen, off) else {
+                break 'out Err(Errno::ENOMEM);
+            };
+
+            if let Some(map) = afmap_get(AF2IDX[usize::from(af)].load(Ordering::Relaxed)) {
+                map.slot(id)
+                    .store(ptr::from_ref(tbl) as usize, Ordering::Release);
+            }
+        }
+
+        // Reflect possible growth.
         if id >= RTMAP_LIMIT.load(Ordering::Relaxed) {
-            rtmap_grow(id + 1, af);
+            rtmap_grow(id + 1, 0);
+            RTMAP_LIMIT.store(id + 1, Ordering::Relaxed);
         }
 
-        let Some(tbl) = rtable_alloc(id, alen, off) else {
-            return Err(Errno::ENOMEM);
-        };
-
-        if let Some(map) = afmap_get(AF2IDX[usize::from(af)].load(Ordering::Relaxed)) {
-            map.slot(id)
-                .store(ptr::from_ref(tbl) as usize, Ordering::Relaxed);
+        // Use main rtable/rdomain by default.
+        if let Some(dmm) = afmap_get(0) {
+            dmm.slot(id).store(0, Ordering::Relaxed);
         }
-    }
 
-    // Reflect possible growth.
-    if id >= RTMAP_LIMIT.load(Ordering::Relaxed) {
-        rtmap_grow(id + 1, 0);
-        RTMAP_LIMIT.store(id + 1, Ordering::Relaxed);
-    }
+        Ok(())
+    };
+    kernel_unlock();
 
-    // Use main rtable/rdomain by default.
-    if let Some(dmm) = afmap_get(0) {
-        dmm.slot(id).store(0, Ordering::Relaxed);
-    }
-
-    Ok(())
+    error
 }
 
 /// `rtable_get`: the table of `af` with id `rtableid`.
@@ -351,8 +371,10 @@ pub fn rtable_get(rtableid: u32, af: SaFamily) -> Option<&'static Rtable> {
     if rtableid >= map.limit {
         return None;
     }
-    // SAFETY: a non-zero slot holds a table `rtable_alloc` made; tables are never freed.
-    unsafe { (map.slot(rtableid).load(Ordering::Relaxed) as *const Rtable).as_ref() }
+    // SAFETY: a non-zero slot holds a table `rtable_alloc` made, written whole before
+    // `rtable_add` published it (`Release`, paired with this `Acquire`); tables are never
+    // freed.
+    unsafe { (map.slot(rtableid).load(Ordering::Acquire) as *const Rtable).as_ref() }
 }
 
 /// `rtable_exists`.
@@ -410,7 +432,7 @@ pub fn rtable_loindex(rtableid: u32) -> u32 {
 /// `rtable_l2set`: puts table `rtableid` in routing domain `rdomain` with loopback
 /// interface `loifidx`.
 pub fn rtable_l2set(rtableid: u32, rdomain: u32, loifidx: u32) {
-    // KERNEL_ASSERT_LOCKED(): no kernel lock without MULTIPROCESSOR.
+    kernel_assert_locked();
 
     if !rtable_exists(rtableid) || !rtable_exists(rdomain) {
         return;
@@ -528,7 +550,7 @@ impl RtLink<'_> {
 
     fn set(self, rt: Option<&'static Rtentry>) {
         match self {
-            RtLink::Head(an) => an.an_value.set(rt.map_or(ptr::null_mut(), |r| {
+            RtLink::Head(an) => an.an_value.set_locked(rt.map_or(ptr::null_mut(), |r| {
                 ptr::from_ref(r).cast_mut().cast::<c_void>()
             })),
             RtLink::Next(prev) => prev.rt_next.set(rt),
@@ -556,32 +578,37 @@ pub unsafe fn rtable_lookup(
     // SAFETY: the caller's contract.
     let addr = unsafe { satoaddr(tbl, dst) };
 
-    // smr_read_enter(): no SMR.
-    let an = if mask.is_null() {
-        // No need for a perfect match.
-        art_match(tbl.r_art, addr)
-    } else {
-        // SAFETY: the caller's contract.
-        let plen = unsafe { rtable_satoplen((*dst).sa_family, mask) }.ok()?;
-        art_lookup(tbl.r_art, addr, plen)
-    }?;
+    smr_read_enter();
+    let rt = (|| {
+        let an = if mask.is_null() {
+            // No need for a perfect match.
+            art_match(tbl.r_art, addr)
+        } else {
+            // SAFETY: the caller's contract.
+            let plen = unsafe { rtable_satoplen((*dst).sa_family, mask) }.ok()?;
+            art_lookup(tbl.r_art, addr, plen)
+        }?;
 
-    let mut rt = an_rt(an);
-    while let Some(r) = rt {
-        if prio != RTP_ANY && (r.rt_priority.get() & RTP_MASK) != (prio & RTP_MASK) {
+        let mut rt = an_rt(an);
+        while let Some(r) = rt {
+            if prio != RTP_ANY && (r.rt_priority.get() & RTP_MASK) != (prio & RTP_MASK) {
+                rt = r.rt_next.get();
+                continue;
+            }
+
+            // SAFETY: the caller's contract for `gateway`; a route's gateway is `sa_len`
+            // bytes.
+            if gateway.is_null() || unsafe { sa_equal(r.rt_gateway.get(), gateway) } {
+                break;
+            }
             rt = r.rt_next.get();
-            continue;
         }
-
-        // SAFETY: the caller's contract for `gateway`; a route's gateway is `sa_len` bytes.
-        if gateway.is_null() || unsafe { sa_equal(r.rt_gateway.get(), gateway) } {
-            break;
+        if let Some(r) = rt {
+            rtref(r);
         }
-        rt = r.rt_next.get();
-    }
-    if let Some(r) = rt {
-        rtref(r);
-    }
+        rt
+    })();
+    smr_read_leave();
 
     rt
 }
@@ -604,7 +631,24 @@ pub unsafe fn rtable_match(
     // SAFETY: the caller's contract.
     let addr = unsafe { satoaddr(tbl, dst) };
 
-    // smr_read_enter(): no SMR.
+    smr_read_enter();
+    // SAFETY: the caller's contract.
+    let rt = unsafe { rtable_match_smr(tbl, dst, addr, src) };
+    smr_read_leave();
+    rt
+}
+
+/// The part of [`rtable_match`] inside its SMR read section.
+///
+/// # Safety
+///
+/// As for [`rtable_match`].
+unsafe fn rtable_match_smr(
+    tbl: &Rtable,
+    dst: *const Sockaddr,
+    addr: &[u8],
+    src: Option<&[u32]>,
+) -> Option<&'static Rtentry> {
     let an = art_match(tbl.r_art, addr)?;
 
     let Some(mut rt) = an_rt(an) else {
@@ -771,8 +815,10 @@ pub unsafe fn rtable_delete(
     let plen = unsafe { rtable_satoplen(family, mask) }?;
 
     rw_enter_write(&tbl.r_lock);
-    // smr_read_enter(): no SMR.
-    let Some(an) = art_lookup(tbl.r_art, addr, plen) else {
+    smr_read_enter();
+    let an = art_lookup(tbl.r_art, addr, plen);
+    smr_read_leave();
+    let Some(an) = an else {
         rw_exit_write(&tbl.r_lock);
         return Err(Errno::ESRCH);
     };
@@ -852,12 +898,13 @@ pub fn rtable_walk(
 
         rw_exit_write(&tbl.r_lock);
         loop {
-            // smr_read_enter(): no SMR.
+            smr_read_enter();
             // Get ready for the next entry.
             let nrt = rt.rt_next.get();
             if let Some(n) = nrt {
                 rtref(n);
             }
+            smr_read_leave();
 
             if let Err(error) = func(rt, rtableid) {
                 match prt.as_deref_mut() {
@@ -921,11 +968,12 @@ pub fn rtable_read(
 
 /// `rtable_iterate`: the next route of `rt0`'s multipath list, referenced; drops `rt0`.
 pub fn rtable_iterate(rt0: &'static Rtentry) -> Option<&'static Rtentry> {
-    // smr_read_enter(): no SMR.
+    smr_read_enter();
     let rt = rt0.rt_next.get();
     if let Some(r) = rt {
         rtref(r);
     }
+    smr_read_leave();
     rtfree(Some(rt0));
     rt
 }
@@ -958,8 +1006,9 @@ pub unsafe fn rtable_mpath_reprio(
 
     let mut error = Ok(());
     rw_enter_write(&tbl.r_lock);
-    // smr_read_enter(): no SMR.
+    smr_read_enter();
     let an = art_lookup(tbl.r_art, addr, plen as u32);
+    smr_read_leave();
     match an {
         None => error = Err(Errno::ESRCH),
         Some(an) if an_rt(an).is_some_and(|f| ptr::eq(f, rt)) && rt.rt_next.get().is_none() => {

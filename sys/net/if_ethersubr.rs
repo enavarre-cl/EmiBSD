@@ -131,6 +131,7 @@ use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 use crate::dev::rnd::arc4random;
 use crate::kassert;
 use crate::kern::kern_malloc::{free, malloc};
+use crate::kern::kern_smr::{smr_read_enter, smr_read_leave};
 use crate::kern::kern_synch::{refcnt_init_trace, refcnt_rele, refcnt_take};
 use crate::kern::subr_prf::{Str, panic, printf};
 use crate::kern::uipc_mbuf::{m_adj, m_copym, m_freem, m_getptr, m_prepend, m_pullup};
@@ -183,10 +184,12 @@ use crate::sys::mbuf::{
 };
 use crate::sys::queue::ListHead;
 use crate::sys::refcnt::{DT_REFCNT_IDX_ETHMULTI, Refcnt};
+use crate::sys::smr::smr_assert_critical;
 #[cfg(feature = "inet6")]
 use crate::sys::socket::AF_INET6;
 use crate::sys::socket::{AF_INET, AF_UNSPEC, Sockaddr, pseudo_AF_HDRCMPLT};
 use crate::sys::sockio::{SIOCADDMULTI, SIOCDELMULTI, SIOCSIFADDR, SIOCSIFMTU};
+use crate::sys::systm::kernel_assert_locked;
 
 /// `ETHER_CRC_POLY_LE` as the table generator uses it.
 const CRC_POLY_LE: u32 = 0xedb8_8320;
@@ -465,14 +468,15 @@ fn ether_port_input(
     epp: &AtomicPtr<EtherPort>,
     ns: Option<&Netstack>,
 ) -> Option<&'static Mbuf> {
-    // smr_read_enter(): no SMR; the port stays installed while its reference is held.
+    smr_read_enter();
     let ep = epp.load(Ordering::Acquire);
     // SAFETY: an installed port is a `&'static EtherPort` (`ether_brport_set`).
     let Some(ep) = (unsafe { ep.as_ref() }) else {
+        smr_read_leave();
         return Some(m);
     };
     let reference = (ep.ep_port_take)(ep.ep_port);
-    // smr_read_leave()
+    smr_read_leave();
     let m = (ep.ep_input)(ifp, m, dst, ep.ep_port, ns);
     (ep.ep_port_rele)(reference, ep.ep_port);
 
@@ -634,7 +638,7 @@ pub fn ether_input(ifp: &'static Ifnet, m: &'static Mbuf, ns: Option<&Netstack>)
 pub fn ether_brport_isset(ifp: &Ifnet) -> Result<(), Errno> {
     let ac = arpcom_of(ifp);
 
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
     if !ac.ac_brport.load(Ordering::Relaxed).is_null() {
         return Err(Errno::EBUSY);
     }
@@ -646,7 +650,7 @@ pub fn ether_brport_isset(ifp: &Ifnet) -> Result<(), Errno> {
 pub fn ether_brport_set(ifp: &Ifnet, ep: &'static EtherPort) {
     let ac = arpcom_of(ifp);
 
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
     if !ac.ac_brport.load(Ordering::Relaxed).is_null() {
         panic(format_args!(
             "{} setting an already set brport",
@@ -662,7 +666,7 @@ pub fn ether_brport_set(ifp: &Ifnet, ep: &'static EtherPort) {
 pub fn ether_brport_clr(ifp: &Ifnet) {
     let ac = arpcom_of(ifp);
 
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
     if ac.ac_brport.load(Ordering::Relaxed).is_null() {
         panic(format_args!(
             "{} clearing an already clear brport",
@@ -676,7 +680,7 @@ pub fn ether_brport_clr(ifp: &Ifnet) {
 /// `ether_brport_get`: the bridge port, inside an SMR read section in C.
 pub fn ether_brport_get(ifp: &Ifnet) -> Option<&'static EtherPort> {
     let ac = arpcom_of(ifp);
-    // SMR_ASSERT_CRITICAL(): no SMR.
+    smr_assert_critical();
     // SAFETY: an installed port is a `&'static EtherPort` (`ether_brport_set`).
     unsafe { ac.ac_brport.load(Ordering::Acquire).as_ref() }
 }
@@ -684,7 +688,7 @@ pub fn ether_brport_get(ifp: &Ifnet) -> Option<&'static EtherPort> {
 /// `ether_brport_get_locked`: the bridge port, with the kernel lock held.
 pub fn ether_brport_get_locked(ifp: &Ifnet) -> Option<&'static EtherPort> {
     let ac = arpcom_of(ifp);
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
     // SAFETY: as above.
     unsafe { ac.ac_brport.load(Ordering::Relaxed).as_ref() }
 }

@@ -673,7 +673,7 @@ pub struct PfiDynaddr {
     pub pfid_iflags: Cell<u8>,
 }
 
-// SAFETY: pf's objects change under the net lock and `pf_lock`, as in C (one CPU).
+// SAFETY: pf's objects change under the net lock and `pf_lock`, as in C.
 unsafe impl Sync for PfiDynaddr {}
 
 crate::queue_adapter!(
@@ -2820,7 +2820,7 @@ pub struct PfStatus {
     pub _pad: [u8; 4],
 }
 
-// SAFETY: changed under the net lock, `pf_lock` and `pf_frag_mtx`, as in C (one CPU).
+// SAFETY: changed under the net lock, `pf_lock` and `pf_frag_mtx`, as in C.
 unsafe impl Sync for PfStatus {}
 
 // SAFETY: `#[repr(C)]` `Cell`s of integers and byte arrays, the tail hole named `_pad`.
@@ -3895,7 +3895,7 @@ pub fn pf_abi_read<T: PfAbi>(data: &[u8]) -> Box<T> {
 /// The bytes of `v`.
 pub fn pf_abi_bytes<T: PfAbi>(v: &T) -> &[u8] {
     // SAFETY: `T: PfAbi` has no implicit padding, so every byte is initialised; nothing
-    // changes `v` while the slice is borrowed (the callers hold pf's locks; one CPU).
+    // changes `v` while the slice is borrowed (the callers hold pf's locks or own `v`).
     unsafe { core::slice::from_raw_parts(ptr::from_ref(v).cast::<u8>(), size_of::<T>()) }
 }
 

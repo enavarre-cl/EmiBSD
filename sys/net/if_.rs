@@ -160,9 +160,9 @@
 //! - Without `MULTIPROCESSOR` `NET_TASKQ` is 1 and `softnet_percpu` has nothing to do. With
 //!   it (M11d) `softnet_init` makes eight softnet queues and `softnet_percpu` destroys those
 //!   past `softnet_count()`, one per CPU; the `KERNEL_LOCK()`/`KERNEL_UNLOCK()` pairs and
-//!   `KERNEL_ASSERT_LOCKED()` are real (`sys/systm.rs`, nothing on one CPU). `TASKQ_MPSAFE`
-//!   and `SY_NOLOCK` are ignored until M11e, so the softnet threads and the ioctls already
-//!   hold the kernel lock there and the pairs only nest.
+//!   `KERNEL_ASSERT_LOCKED()` are real (`sys/systm.rs`; nothing without `MULTIPROCESSOR`).
+//!   Since M11e the softnet threads run without the kernel lock (`TASKQ_MPSAFE`), under the
+//!   net lock as in C: `if_input_process` shared, `if_netisr` exclusive.
 //! - `malloc(M_WAITOK)` that fails panics where the C would sleep (the index map,
 //!   `if_alloc_sadl`, `if_attach_queues`, `if_counters_alloc`; `malloc(9)` does not sleep yet).
 //! - The hook lists (`if_*hook_add`) and `if_clone_attach`, `ifa_add` are `unsafe fn`s: they
@@ -1404,8 +1404,8 @@ pub fn ifinit() {
 /// needs softnet tasks.
 pub fn softnet_init() {
     for (i, sn) in SOFTNETS.iter().enumerate() {
-        // SAFETY: written once, here, during `main` on one CPU, before the queue that names
-        // it exists; never written again.
+        // SAFETY: written once, here, during `main` before the application processors run
+        // and before the queue that names it exists; never written again.
         let name: &'static mut [u8; 16] = unsafe { &mut *sn.sn_name.get() };
         let _ = snprintf(name, format_args!("softnet{i}"));
         let name: &'static [u8] = cstr(name);

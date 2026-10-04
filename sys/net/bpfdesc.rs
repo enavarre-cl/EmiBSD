@@ -44,14 +44,12 @@
 //! Upstream: sys/net/bpfdesc.h @ 3ce1f3f79392
 //!
 //! Locks used to protect struct members in this file: \[m\] the per-descriptor mutex
-//! (`bd_mtx`); the others the kernel lock, which is the single CPU here.
+//! (`bd_mtx`); the others the kernel lock. The taps read the listener list and the filters
+//! inside SMR read sections, as in C.
 //!
 //! ## Deviations
-//! - SMR is not ported (as in `net/if_.rs`): `SMR_SLIST_ENTRY`/`SMR_SLIST_HEAD` are plain
-//!   `SlistEntry`/`SlistHead`, `bd_rfilter`/`bd_wfilter` plain `Cell`s, and the `smr_entry`
-//!   members (`bps_smr`, `bd_smr`) do not exist: `smr_call` runs its callback at once, which
-//!   is sound on one CPU with no kernel preemption (a tap never runs inside the list update,
-//!   which holds `bd_mtx` at `IPL_NET`).
+//! - `bd_rfilter`/`bd_wfilter` (`struct bpf_program_smr *`, `SMR_PTR_GET` and
+//!   `SMR_PTR_SET_LOCKED`) are [`BpfFilterPtr`]s; the old program is freed by `smr_call`.
 //! - `struct bpf_program_smr` holds the kernel copy of the program as a pointer and a count
 //!   (`bps_bf.bf_insns`, `bps_bf.bf_len`), handed out as a slice by [`BpfProgramSmr::insns`];
 //!   the user-visible `struct bpf_program` (`net/bpf.rs`) carries a user address instead.
@@ -63,7 +61,7 @@
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::AtomicU64;
+use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
 use crate::machine::intr::IPL_NONE;
 use crate::net::bpf::BpfInsn;
@@ -71,9 +69,10 @@ use crate::net::if_::IFNAMSIZ;
 use crate::net::if_var::Ifnet;
 use crate::sys::event::Klist;
 use crate::sys::mutex::Mutex;
-use crate::sys::queue::{ListEntry, SlistEntry, SlistHead, TailqEntry};
+use crate::sys::queue::{ListEntry, TailqEntry};
 use crate::sys::refcnt::Refcnt;
 use crate::sys::sigio::SigioRef;
+use crate::sys::smr::{SmrEntry, SmrSlistEntry, SmrSlistHead};
 use crate::sys::task::Task;
 use crate::sys::timeout::Timeout;
 
@@ -83,6 +82,8 @@ pub struct BpfProgramSmr {
     pub bf_len: u32,
     /// `bps_bf.bf_insns`: the instructions, a `mallocarray(M_DEVBUF)` block of `bf_len`.
     pub bf_insns: NonNull<BpfInsn>,
+    /// `bps_smr`: the deferred free once the program is replaced.
+    pub bps_smr: SmrEntry,
 }
 
 impl BpfProgramSmr {
@@ -91,6 +92,38 @@ impl BpfProgramSmr {
         // SAFETY: `bf_insns` is the block `bpf_setf` allocated and filled with `bf_len`
         // instructions; it lives until `bpf_prog_smr` frees it with this structure.
         unsafe { core::slice::from_raw_parts(self.bf_insns.as_ptr(), self.bf_len as usize) }
+    }
+}
+
+/// A descriptor's SMR-protected filter (`struct bpf_program_smr *bd_rfilter`).
+pub struct BpfFilterPtr(AtomicPtr<BpfProgramSmr>);
+
+impl BpfFilterPtr {
+    /// No filter.
+    pub const fn new() -> Self {
+        Self(AtomicPtr::new(ptr::null_mut()))
+    }
+
+    /// `SMR_PTR_GET`: the filter, for a reader inside a read section or for the writer.
+    pub fn get(&self) -> Option<&'static BpfProgramSmr> {
+        // SAFETY: the pointer is NULL or a program `bpf_setf` wrote whole before publishing
+        // it; a replaced program is freed by `smr_call` only after the readers that may see
+        // it have left their read sections, and the last one with the descriptor.
+        unsafe { self.0.load(Ordering::Acquire).as_ref() }
+    }
+
+    /// `old = SMR_PTR_GET_LOCKED(p); SMR_PTR_SET_LOCKED(p, bps)`: installs `bps` and returns
+    /// the old program, which the caller frees after a grace period.
+    pub fn replace(&self, bps: Option<&'static BpfProgramSmr>) -> Option<&'static BpfProgramSmr> {
+        let new = bps.map_or(ptr::null_mut(), |b| ptr::from_ref(b).cast_mut());
+        // SAFETY: as for `get`; the caller now owns the old program.
+        unsafe { self.0.swap(new, Ordering::AcqRel).as_ref() }
+    }
+}
+
+impl Default for BpfFilterPtr {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -103,7 +136,7 @@ impl BpfProgramSmr {
 /// is dropped.
 pub struct BpfD {
     /// `bd_next`: linked list of descriptors (the interface's `bif_dlist`).
-    pub bd_next: SlistEntry<BpfD>,
+    pub bd_next: SmrSlistEntry<BpfD>,
     /// `bd_mtx`: protects the buffer slots below.
     pub bd_mtx: Mutex,
     /// \[m\] `bd_sbuf`: store slot.
@@ -129,9 +162,9 @@ pub struct BpfD {
     /// \[m\] `bd_nreaders`: number of threads asleep in `bpfread()`.
     pub bd_nreaders: Cell<u64>,
     /// `bd_rfilter`: read filter code.
-    pub bd_rfilter: Cell<Option<&'static BpfProgramSmr>>,
+    pub bd_rfilter: BpfFilterPtr,
     /// `bd_wfilter`: write filter code.
-    pub bd_wfilter: Cell<Option<&'static BpfProgramSmr>>,
+    pub bd_wfilter: BpfFilterPtr,
     /// `bd_rcount`: number of packets received.
     pub bd_rcount: AtomicU64,
     /// \[m\] `bd_dcount`: number of packets dropped.
@@ -166,6 +199,8 @@ pub struct BpfD {
     pub bd_wake_task: Task,
     /// `bd_wait_tmo`: delay wakeup after catching pkt.
     pub bd_wait_tmo: Timeout,
+    /// `bd_smr`: the deferred free of the descriptor.
+    pub bd_smr: SmrEntry,
 }
 
 impl BpfD {
@@ -173,7 +208,7 @@ impl BpfD {
     /// `bpfopen`, which initialises the rest.
     pub const fn new() -> Self {
         Self {
-            bd_next: SlistEntry::new(),
+            bd_next: SmrSlistEntry::new(),
             bd_mtx: Mutex::new(IPL_NONE),
             bd_sbuf: Cell::new(ptr::null_mut()),
             bd_hbuf: Cell::new(ptr::null_mut()),
@@ -186,8 +221,8 @@ impl BpfD {
             bd_rtout: Cell::new(0),
             bd_wtout: Cell::new(0),
             bd_nreaders: Cell::new(0),
-            bd_rfilter: Cell::new(None),
-            bd_wfilter: Cell::new(None),
+            bd_rfilter: BpfFilterPtr::new(),
+            bd_wfilter: BpfFilterPtr::new(),
             bd_rcount: AtomicU64::new(0),
             bd_dcount: Cell::new(0),
             bd_promisc: Cell::new(0),
@@ -205,6 +240,7 @@ impl BpfD {
             bd_list: ListEntry::new(),
             bd_wake_task: Task::zeroed(),
             bd_wait_tmo: Timeout::zeroed(),
+            bd_smr: SmrEntry::new(),
         }
     }
 }
@@ -215,12 +251,14 @@ impl Default for BpfD {
     }
 }
 
-// SAFETY: the members change under `bd_mtx` (\[m\]) or the kernel lock, as in C.
+// SAFETY: the members change under `bd_mtx` (\[m\]) or the kernel lock, as in C; the taps
+// read `bd_next` and the filters (atomics) inside SMR read sections, and `bd_dirfilt` and
+// `bd_fildrop` without a lock, as the C does.
 unsafe impl Sync for BpfD {}
 
 crate::queue_adapter!(
     /// `SMR_SLIST_HEAD(, bpf_d)` through `bd_next`: an interface's listeners.
-    pub BpfDlist: BpfD, bd_next => SlistEntry<BpfD>
+    pub BpfDlist: BpfD, bd_next => SmrSlistEntry<BpfD>
 );
 
 crate::queue_adapter!(
@@ -232,8 +270,8 @@ crate::queue_adapter!(
 pub struct BpfIf {
     /// `bif_next`: list of all interfaces.
     pub bif_next: TailqEntry<BpfIf>,
-    /// `bif_dlist`: descriptor list.
-    pub bif_dlist: SlistHead<BpfDlist>,
+    /// `bif_dlist`: descriptor list, SMR-protected.
+    pub bif_dlist: SmrSlistHead<BpfDlist>,
     /// `bif_driverp`: the driver's `if_bpf` (pointer into softc).
     pub bif_driverp: &'static Cell<*mut u8>,
     /// `bif_dlt`: link layer type.
@@ -247,7 +285,7 @@ pub struct BpfIf {
 }
 
 // SAFETY: changed only under the kernel lock (the listener list also under each
-// descriptor's `bd_mtx`), as in C.
+// descriptor's `bd_mtx`), as in C; the taps walk the listener list inside SMR read sections.
 unsafe impl Sync for BpfIf {}
 
 crate::queue_adapter!(

@@ -105,8 +105,8 @@
 //! - Not configured: `BFD` (`rtm_bfd`, `RTM_BFD`'s header, `RTAX_BFD`), `MPLS`
 //!   (`RTAX_SRC` labels, `rt_mpls_set`/`rt_mpls_clear`); comments at their
 //!   sites. `INET6`'s `AF_INET6` cases are under the `inet6` feature. `SMALL_KERNEL` is
-//!   not defined, so `NET_RT_STATS` and `NET_RT_TABLE` are answered. `KERNEL_LOCK()` is
-//!   nothing on one CPU.
+//!   not defined, so `NET_RT_STATS` and `NET_RT_TABLE` are answered. The C's
+//!   `KERNEL_LOCK()` sites are all `BFD` code.
 //! - kqueue: `rtm_sendup` and `rtm_senddesync` wake the reader with `sorwakeup`, whose knote
 //!   (`KNOTE(&so->so_rcv.sb_klist, 0)`) is the socket layer's, not ported yet.
 

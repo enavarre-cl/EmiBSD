@@ -83,8 +83,6 @@
 //!   dereferences it; `pf_create_queues` never adds such a queue).
 //! - `struct hfsc_if`'s `hif_next` (interface state list) is left out: nothing in the C sets
 //!   or reads it.
-//! - `KERNEL_ASSERT_LOCKED()` in `hfsc_free` is a comment: it checks nothing without
-//!   `MULTIPROCESSOR`.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -112,6 +110,7 @@ use crate::sys::malloc::{M_DEVBUF, M_WAITOK, M_ZERO};
 use crate::sys::mbuf::{Mbuf, MbufList, mbuf_list_first, ml_empty, ml_len};
 use crate::sys::pool::{PR_WAITOK, Pool};
 use crate::sys::queue::{TailqEntry, TailqHead};
+use crate::sys::systm::kernel_assert_locked;
 use crate::sys::timeout::{Timeout, timeout_pending};
 
 // hfsc class flags
@@ -918,7 +917,7 @@ unsafe fn hfsc_free(idx: u32, q: *mut c_void) {
     // SAFETY: the caller's contract.
     let hif = unsafe { hif_of(q) };
 
-    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_locked();
     kassert!(idx == 0); // when hfsc is enabled we only use the first ifq
     let _ = idx;
 

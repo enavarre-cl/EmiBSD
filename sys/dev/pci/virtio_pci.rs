@@ -53,8 +53,6 @@
 //!   nonzero.
 //! - `virtio_pci_adjust_config_region` returns `true` where the C returns 1 (failure).
 //! - Interrupt names are handed over as copies (`virtio_intr_name`, `dev/pv/virtio.rs`).
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` in `virtio_pci_legacy_intr` are comments: nothing
-//!   without `MULTIPROCESSOR`.
 //! - On the machines here MSI and MSI-X are refused by `pci_intr_map_msi*` (no MP tables,
 //!   `arch/amd64/pci/pci_machdep.rs`), so `virtio_pci_attach_finish` falls back to the INTx
 //!   line the firmware routed, as the C does on such a machine.
@@ -113,6 +111,7 @@ use crate::machine::pci_machdep::{
 use crate::sys::device::{CfMatch, Cfattach, Device, Softc};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_DEVBUF, M_WAITOK, M_ZERO};
+use crate::sys::systm::{kernel_lock, kernel_unlock};
 
 /// `MAX_MSIX_VECS`.
 const MAX_MSIX_VECS: i32 = 16;
@@ -1364,14 +1363,14 @@ pub fn virtio_pci_legacy_intr(arg: *mut c_void) -> i32 {
     if isr == 0 {
         return 0;
     }
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     if isr & VIRTIO_CONFIG_ISR_CONFIG_CHANGE != 0
         && let Some(config_change) = vsc.sc_config_change.get()
     {
         r = config_change(vsc);
     }
     r |= virtio_check_vqs(vsc);
-    // KERNEL_UNLOCK()
+    kernel_unlock();
 
     r
 }

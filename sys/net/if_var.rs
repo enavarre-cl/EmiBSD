@@ -72,7 +72,8 @@
 //!   `SMR_LIST_HEAD` of `carp(4)` (not configured, kept as its first pointer), and
 //!   `if_carpdevidx`. The `ifq_ifqs`/`ifiq_ifiqs` one-element maps likewise (`net/ifq.rs`).
 //! - `if_counters` (`struct cpumem *`, `<sys/percpu.h>`, not ported) is one array of atomics
-//!   per interface, [`IfCounterArray`]; there is one CPU. `counters_inc` and `counters_pkt`
+//!   per interface, [`IfCounterArray`]: the CPUs share it instead of each having its own
+//!   copy, which costs contention but not correctness. `counters_inc` and `counters_pkt`
 //!   for it are in `net/if_.rs`, where `if_counters_alloc`/`if_counters_free` make and free
 //!   it.
 //! - `enum if_counters` is [`IfCounters`] (`ifc_ipackets` is `IfCounters::IfcIpackets`, as
@@ -189,7 +190,8 @@ pub struct IfClone {
 }
 
 // SAFETY: `ifc_list` is written only by `if_clone_attach`, while `main` attaches the
-// pseudo-devices on one CPU; the cloner list is immutable afterwards.
+// pseudo-devices before the application processors run; the cloner list is immutable
+// afterwards.
 unsafe impl Sync for IfClone {}
 
 impl IfClone {

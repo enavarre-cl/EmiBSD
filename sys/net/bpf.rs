@@ -115,8 +115,9 @@
 //!   `bpf_tap_hdr`, whose stack header has none, as the C's `M_PKTHDR` test finds.
 //! - The taps and `bpf_mtap` return `bool` (the C's `int` "drop it"); the descriptor and tap
 //!   handed to drivers stay `caddr_t` (`*mut u8`), as `if_bpf` and `if_bpf_mtap` are.
-//! - SMR is not ported (`net/bpfdesc.rs`): `smr_read_enter`/`smr_read_leave` are nothing and
-//!   `smr_call` runs at once (`bpf_put` frees the descriptor, `bpf_setf` the old program).
+//! - SMR as in C (M11e): the taps walk `bif_dlist` (`SMR_SLIST`) and read `bd_rfilter`
+//!   inside read sections, `bpf_put` frees the descriptor and `bpf_setf` the old program
+//!   through `smr_call`. The deferred functions take the C's `void *`.
 //! - `bpf_allocbufs` and `bpf_setf`'s copy of the program ask `malloc` for zeroed memory
 //!   (`M_ZERO`), so no uninitialised byte (the padding between a `bpf_hdr` and its packet,
 //!   which the C hands to user space as it is) is ever read.
@@ -130,8 +131,8 @@
 //!   fail in the C; a failure here answers `ENOBUFS`. `bpfwrite` panics on an interface
 //!   without `if_output`, where the C would call NULL.
 //! - `NVLAN` is not configured: `bpf_mtap_ether` passes the packet as it is. `SMALL_KERNEL`
-//!   is not defined: `bpf_sysctl` is in. `KERNEL_LOCK`/`KERNEL_ASSERT_LOCKED` are nothing on
-//!   one CPU.
+//!   is not defined: `bpf_sysctl` is in. `KERNEL_ASSERT_LOCKED` is the kernel lock's
+//!   assertion (`sys/systm.rs`; it checks with `MULTIPROCESSOR` and `DIAGNOSTIC`).
 
 use core::cell::Cell;
 use core::cmp::{max, min};
@@ -148,6 +149,7 @@ use crate::kern::kern_event::{
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
 use crate::kern::kern_sig::{pgsigio, sigio_free, sigio_getown, sigio_setown};
+use crate::kern::kern_smr::{smr_read_enter, smr_read_leave};
 use crate::kern::kern_subr::uiomove;
 use crate::kern::kern_synch::{msleep_nsec, refcnt_init, refcnt_rele, refcnt_take, wakeup};
 use crate::kern::kern_sysctl::sysctl_int_bounded;
@@ -183,15 +185,16 @@ use crate::sys::mbuf::{
 use crate::sys::mutex::{mutex_assert_locked, mutex_assert_unlocked};
 use crate::sys::param::PCATCH;
 use crate::sys::proc::Proc;
-use crate::sys::queue::{ListHead, SlistHead, TailqEntry, TailqHead};
+use crate::sys::queue::{ListHead, TailqEntry, TailqHead};
 use crate::sys::sigio::sigio_init;
 use crate::sys::signal::{NSIG, SIGIO};
+use crate::sys::smr::{SmrEntry, SmrSlistHead, smr_call, smr_init};
 use crate::sys::socket::{
     AF_INET, AF_UNSPEC, NET_BPF_BUFSIZE, NET_BPF_MAXBUFSIZE, Sockaddr, SockaddrStorage,
     pseudo_AF_HDRCMPLT, sstosa,
 };
 use crate::sys::specdev::CLONE_SHIFT;
-use crate::sys::systm::{INFSLP, MAXTSLP, net_lock, net_unlock};
+use crate::sys::systm::{INFSLP, MAXTSLP, kernel_assert_locked, net_lock, net_unlock};
 use crate::sys::time::{Timeval, nsec_to_timeval, sec_to_nsec, timeval_to_nsec};
 use crate::sys::ttycom::{TIOCGPGRP, TIOCSPGRP};
 use crate::sys::types::{Dev, SaFamily, minor};
@@ -679,7 +682,7 @@ struct BpfSegs<'a> {
 /// `bpf_iflist`'s type.
 pub struct BpfIflistHead(TailqHead<BpfIfList>);
 
-// SAFETY: changed only under the kernel lock (one CPU), as in C.
+// SAFETY: changed only under the kernel lock, as in C.
 unsafe impl Sync for BpfIflistHead {}
 
 impl core::ops::Deref for BpfIflistHead {
@@ -693,7 +696,7 @@ impl core::ops::Deref for BpfIflistHead {
 /// `bpf_d_list`'s type.
 pub struct BpfDListHead(ListHead<BpfDList>);
 
-// SAFETY: changed only under the kernel lock (one CPU), as in C.
+// SAFETY: changed only under the kernel lock, as in C.
 unsafe impl Sync for BpfDListHead {}
 
 impl core::ops::Deref for BpfDListHead {
@@ -892,8 +895,9 @@ fn bpf_movein(
         return Err(e);
     }
 
-    // smr_read_enter()/smr_read_leave(): no SMR (`net/bpfdesc.rs`).
+    smr_read_enter();
     let slen = bpf_mfilter(d.bd_wfilter.get(), &BpfPkt::mbuf(m), len);
+    smr_read_leave();
 
     if slen < len {
         m_freem(m);
@@ -948,9 +952,10 @@ fn bpf_attachd(d: &'static BpfD, bp: &'static BpfIf) {
 
     d.bd_bif.set(Some(bp));
 
-    // KERNEL_ASSERT_LOCKED(): one CPU.
-    // SAFETY: `d` is on no interface's list (`bpf_detachd` took it off, or it is new).
-    unsafe { bp.bif_dlist.insert_head(d) };
+    kernel_assert_locked();
+    // SAFETY: the kernel lock is the list's; `d` is on no interface's list (`bpf_detachd`
+    // took it off, or it is new) and lives until `bpf_d_smr`, a grace period after it left.
+    unsafe { bp.bif_dlist.insert_head_locked(d) };
 
     bp.bif_driverp.set(ptr::from_ref(bp).cast_mut().cast());
 }
@@ -966,10 +971,11 @@ fn bpf_detachd(d: &'static BpfD) {
     };
 
     // Remove ``d'' from the interface's descriptor list.
-    // SAFETY: `bpf_attachd` put `d` on `bp`'s list.
-    unsafe { bp.bif_dlist.remove(d) };
+    kernel_assert_locked();
+    // SAFETY: the kernel lock is the list's; `bpf_attachd` put `d` on `bp`'s list.
+    unsafe { bp.bif_dlist.remove_locked(d) };
 
-    if bp.bif_dlist.is_empty() {
+    if bp.bif_dlist.is_empty_locked() {
         // Let the driver know that there are no more listeners.
         bp.bif_driverp.set(ptr::null_mut());
     }
@@ -1037,7 +1043,7 @@ pub fn bpfopen(dev: Dev, _flag: i32, _mode: i32, _p: &Proc) -> Result<(), Errno>
     mtx_init(&bd.bd_mtx, IPL_NET);
     task_set(&bd.bd_wake_task, bpf_wakeup_cb, bd_ptr.cast());
     timeout_set(&bd.bd_wait_tmo, bpf_wait_cb, bd_ptr.cast());
-    // smr_init(&bd->bd_smr): no SMR.
+    smr_init(&bd.bd_smr);
     sigio_init(&bd.bd_sigio);
     // SAFETY: `bd_mtx` is a member of the same descriptor, which outlives its klist.
     unsafe { klist_init_mutex(&bd.bd_klist, &bd.bd_mtx) };
@@ -1089,7 +1095,7 @@ fn rotate_buffers(d: &BpfD) {
 
 /// `bpfread`: reads the next chunk of packets from the buffers.
 pub fn bpfread(dev: Dev, uio: &mut Uio<'_>, ioflag: i32) -> Result<(), Errno> {
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
 
     let d = bpf_d_of(dev)?;
     if d.bd_bif.get().is_none() {
@@ -1270,7 +1276,7 @@ fn bpf_wait_cb(xd: *mut c_void) {
 
 /// `bpfwrite`: sends the packet a writer hands on the descriptor's interface.
 pub fn bpfwrite(dev: Dev, uio: &mut Uio<'_>, _ioflag: i32) -> Result<(), Errno> {
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
 
     let d = bpf_d_of(dev)?;
     let Some(bif) = d.bd_bif.get() else {
@@ -1689,7 +1695,7 @@ pub fn bpfioctl(dev: Dev, cmd: u64, addr: &mut [u8], _flag: i32, _p: &Proc) -> R
 /// `bpf_setf`: sets `d`'s packet filter program to `fp`. If this file already has a filter,
 /// free it and replace it. Returns `EINVAL` for bogus requests.
 pub fn bpf_setf(d: &'static BpfD, fp: &BpfProgram, cmd: u64) -> Result<(), Errno> {
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
 
     let bps = if fp.bf_insns == 0 {
         if fp.bf_len != 0 {
@@ -1732,14 +1738,16 @@ pub fn bpf_setf(d: &'static BpfD, fp: &BpfProgram, cmd: u64) -> Result<(), Errno
             panic(format_args!("bpf_setf: malloc(M_WAITOK) failed"));
         };
         let bps_ptr = mem.as_ptr().cast::<BpfProgramSmr>();
-        // smr_init(&bps->bps_smr): no SMR.
         // SAFETY: a fresh block of the structure's size, aligned by `malloc`.
         unsafe {
             bps_ptr.write(BpfProgramSmr {
                 bf_len: flen,
                 bf_insns: fcode.cast(),
+                bps_smr: SmrEntry::new(),
             });
         }
+        // SAFETY: initialised above.
+        smr_init(unsafe { &(*bps_ptr).bps_smr });
         // SAFETY: initialised above; freed by `bpf_prog_smr` once replaced or with `d`.
         Some(unsafe { &*bps_ptr })
     };
@@ -1757,8 +1765,11 @@ pub fn bpf_setf(d: &'static BpfD, fp: &BpfProgram, cmd: u64) -> Result<(), Errno
     }
 
     if let Some(old_bps) = old_bps {
-        // smr_call(&old_bps->bps_smr, bpf_prog_smr, old_bps): at once (no SMR).
-        bpf_prog_smr(old_bps);
+        smr_call(
+            &old_bps.bps_smr,
+            bpf_prog_smr,
+            ptr::from_ref(old_bps).cast_mut().cast(),
+        );
     }
 
     Ok(())
@@ -1813,7 +1824,7 @@ fn bpf_ifname(bif: &BpfIf, ifr: &mut [u8]) {
 
 /// `bpfkqfilter`: attaches a knote to the descriptor (`EVFILT_READ` only).
 pub fn bpfkqfilter(dev: Dev, kn: &Knote) -> Result<(), Errno> {
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
 
     let Some(d) = bpfilter_lookup(minor(dev) as i32) else {
         return Err(Errno::ENXIO);
@@ -1927,7 +1938,7 @@ pub fn _bpf_mtap(arg: *mut u8, mp: Option<&Mbuf>, m: BpfPkt<'_>, direction: u32)
     let mut tbh: Option<BpfHdr> = None;
     let mut drop = false;
 
-    // smr_read_enter()/smr_read_leave(): no SMR (`net/bpfdesc.rs`).
+    smr_read_enter();
     for d in bp.bif_dlist.iter() {
         d.bd_rcount.fetch_add(1, Ordering::Relaxed);
 
@@ -1951,6 +1962,7 @@ pub fn _bpf_mtap(arg: *mut u8, mp: Option<&Mbuf>, m: BpfPkt<'_>, direction: u32)
             mtx_leave(&d.bd_mtx);
         }
     }
+    smr_read_leave();
 
     drop
 }
@@ -2133,8 +2145,11 @@ fn bpf_allocbufs(d: &BpfD) -> Result<(), Errno> {
     Ok(())
 }
 
-/// `bpf_prog_smr`: frees a program and its instructions.
-fn bpf_prog_smr(bps: &'static BpfProgramSmr) {
+/// `bpf_prog_smr`: frees a program and its instructions (an `smr_call` callback).
+fn bpf_prog_smr(bps_arg: *mut c_void) {
+    // SAFETY: the argument is a program `bpf_setf` made, out of every descriptor and past
+    // its grace period (or freed with its descriptor): this is its last use.
+    let bps = unsafe { &*bps_arg.cast::<BpfProgramSmr>() };
     free(
         bps.bf_insns.cast(),
         M_DEVBUF,
@@ -2147,8 +2162,12 @@ fn bpf_prog_smr(bps: &'static BpfProgramSmr) {
     );
 }
 
-/// `bpf_d_smr`: frees a descriptor and everything it holds, once the last reference is gone.
-fn bpf_d_smr(bd: &'static BpfD) {
+/// `bpf_d_smr`: frees a descriptor and everything it holds, once the last reference is gone
+/// and no tap can still see it (an `smr_call` callback).
+fn bpf_d_smr(smr: *mut c_void) {
+    // SAFETY: `bpf_put` passes the descriptor whose last reference it dropped, a grace period
+    // ago: nothing else refers to it.
+    let bd = unsafe { &*smr.cast::<BpfD>() };
     sigio_free(&bd.bd_sigio);
     let size = bd.bd_bufsize.get() as usize;
     for buf in [bd.bd_sbuf.get(), bd.bd_hbuf.get(), bd.bd_fbuf.get()] {
@@ -2158,10 +2177,10 @@ fn bpf_d_smr(bd: &'static BpfD) {
     }
 
     if let Some(bps) = bd.bd_rfilter.get() {
-        bpf_prog_smr(bps);
+        bpf_prog_smr(ptr::from_ref(bps).cast_mut().cast());
     }
     if let Some(bps) = bd.bd_wfilter.get() {
-        bpf_prog_smr(bps);
+        bpf_prog_smr(ptr::from_ref(bps).cast_mut().cast());
     }
 
     klist_free(&bd.bd_klist);
@@ -2180,8 +2199,7 @@ fn bpf_put(bd: &'static BpfD) {
         return;
     }
 
-    // smr_call(&bd->bd_smr, bpf_d_smr, bd): at once (no SMR).
-    bpf_d_smr(bd);
+    smr_call(&bd.bd_smr, bpf_d_smr, ptr::from_ref(bd).cast_mut().cast());
 }
 
 /// `bpfsattach`: attaches a tap named `name` (at most `IFNAMSIZ` bytes) whose listeners
@@ -2208,7 +2226,7 @@ pub fn bpfsattach(
     unsafe {
         bp_ptr.write(BpfIf {
             bif_next: TailqEntry::new(),
-            bif_dlist: SlistHead::new(),
+            bif_dlist: SmrSlistHead::new(),
             bif_driverp: bpfp,
             bif_dlt: dlt,
             // Compute the length of the bpf header. This is not necessarily equal to
@@ -2253,7 +2271,7 @@ pub fn bpfattach(driverp: &'static Cell<*mut u8>, ifp: &'static Ifnet, dlt: u32,
 
 /// `bpfdetach`: detaches an interface from its attached bpf device.
 pub fn bpfdetach(ifp: &Ifnet) {
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
 
     // TAILQ_FOREACH_SAFE: each pass detaches one tap and looks again from the start.
     while let Some(bp) = BPF_IFLIST
@@ -2267,14 +2285,14 @@ pub fn bpfdetach(ifp: &Ifnet) {
 
 /// `bpfsdetach`: detaches a tap: revokes every descriptor listening on it, then frees it.
 pub fn bpfsdetach(bp: &'static BpfIf) {
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
 
     // Locate the major number.
     let maj = (0..nchrdev())
         .find(|&maj| ptr::fn_addr_eq(cdevsw(maj).d_open, bpfopen as DevTypeOpen))
         .unwrap_or(nchrdev());
 
-    while let Some(bd) = bp.bif_dlist.first() {
+    while let Some(bd) = bp.bif_dlist.first_locked() {
         bpf_get(bd);
         let unit = bd.bd_unit.get() as u32;
         vdevgone(maj, unit, unit, VCHR);
@@ -2325,7 +2343,7 @@ pub fn bpf_sysctl(
 
 /// `bpfilter_lookup`: the open descriptor of `unit`.
 pub fn bpfilter_lookup(unit: i32) -> Option<&'static BpfD> {
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
 
     BPF_D_LIST.iter().find(|bd| bd.bd_unit.get() == unit)
 }

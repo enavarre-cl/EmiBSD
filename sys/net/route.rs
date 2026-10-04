@@ -193,8 +193,14 @@
 //!   atomics, as `uvmexp` and `mbstat` are; `rtstat_inc` bumps it.
 //! - `MPLS` and `BFD` are not configured: `rt_mpls_set`/`rt_mpls_clear`, `bfdinit` and
 //!   `bfdclear` are comments at their sites.
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`; `membar_producer()`
-//!   before bumping `rtgeneration` is a release fence.
+//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are the kernel lock's functions (`sys/systm.rs`; real
+//!   with `MULTIPROCESSOR`, nothing without); `membar_producer()` before bumping
+//!   `rtgeneration` is a release fence.
+//! - `rt_next`, which the C reads with `SMR_PTR_GET` inside SMR read sections and writes with
+//!   `SMR_PTR_SET_LOCKED` under the rtable lock, is an [`RtNext`] (an [`SmrPtr`]). The other
+//!   members stay `Cell`s read and written as the C does under the locks above; the C reads
+//!   some of them (`rt_flags`, `rt_priority`, `rt_gateway`) unlocked from the softnet
+//!   threads, and so does the port.
 //! - The routing socket side (`rtm_send`, `rtm_miss`, `rtm_addr`, ...) is `net/rtsock.rs`;
 //!   `rtlabel_id2name` fills a caller's byte buffer and returns the name's slice.
 //! - `ifafree` frees the address with `free(ifa, M_IFADDR, 0)`, as the C does, so an address
@@ -245,8 +251,9 @@ use crate::sys::mutex::Mutex;
 use crate::sys::pool::{PR_NOWAIT, PR_ZERO, Pool};
 use crate::sys::queue::{ListEntry, ListHead, TailqEntry, TailqHead};
 use crate::sys::refcnt::{DT_REFCNT_IDX_RTENTRY, Refcnt};
+use crate::sys::smr::SmrPtr;
 use crate::sys::socket::{AF_INET, AF_LINK, AF_MAX, AF_UNSPEC, Sockaddr, SockaddrStorage};
-use crate::sys::systm::net_assert_locked;
+use crate::sys::systm::{kernel_lock, kernel_unlock, net_assert_locked};
 use crate::sys::timeout::Timeout;
 use crate::sys::types::{Pid, SaFamily};
 
@@ -558,13 +565,45 @@ impl RtKmetrics {
     }
 }
 
+/// `rt_next`: the SMR-protected link of a node's multipath list (`net/rtable.rs`).
+pub struct RtNext(SmrPtr<Rtentry>);
+
+impl RtNext {
+    /// A NULL link.
+    pub const fn new() -> Self {
+        Self(SmrPtr::new())
+    }
+
+    /// `SMR_PTR_GET(&rt->rt_next)`: the next route, for a reader inside a read section or the
+    /// writer that holds the rtable lock.
+    pub fn get(&self) -> Option<&'static Rtentry> {
+        // SAFETY: the link holds NULL or a route of the same list, which the table keeps
+        // referenced while it is listed; an unlinked route stays alive for the readers that
+        // still see it until the exclusive net lock's holder frees it (the C's "XXX" in
+        // `rtable_delete`).
+        unsafe { self.0.get().as_ref() }
+    }
+
+    /// `SMR_PTR_SET_LOCKED(&rt->rt_next, nrt)`, under the rtable lock.
+    pub fn set(&self, nrt: Option<&'static Rtentry>) {
+        self.0
+            .set_locked(nrt.map_or(ptr::null_mut(), |r| ptr::from_ref(r).cast_mut()));
+    }
+}
+
+impl Default for RtNext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// `struct rtentry`: a route. All-zero is a valid value (`PR_ZERO`; see the module's
 /// deviations).
 pub struct Rtentry {
     /// \[I\] `rt_dest`: destination (`rt_key(rt)`).
     pub rt_dest: Cell<*mut Sockaddr>,
     /// \[R\] `rt_next`: next mpath entry to our dst.
-    pub rt_next: Cell<Option<&'static Rtentry>>,
+    pub rt_next: RtNext,
     /// \[X\] `rt_gateway`: gateway address.
     pub rt_gateway: Cell<*mut Sockaddr>,
     /// \[N\] `rt_ifa`: interface addr to use.
@@ -1322,10 +1361,11 @@ unsafe fn rt_clone(
     // The priority of cloned route should be different to avoid conflict with /32 cloning
     // routes. It should also be higher to let the ARP layer find cloned routes instead of the
     // cloning one.
-    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+    kernel_lock();
     let prio = rtp.rt_priority.get().wrapping_sub(1);
     // SAFETY: `dst` is the caller's; the other addresses are `rtrequest`'s own.
     let error = unsafe { rtrequest(RTM_RESOLVE, &mut info, prio, Some(&mut rt), rtableid) };
+    kernel_unlock();
     match (error, rt) {
         (Err(e), _) => {
             // The gateway and label `rtrequest` put in `info` were its locals: the C's message
@@ -1793,7 +1833,7 @@ pub fn rtdeletemsg(rt: &'static Rtentry, ifp: &Ifnet, tableid: u32) -> Result<()
     info.rti_flags = rt.rt_flags.get();
     info.rti_info[RTAX_IFP] = sdltosa(ifp.if_sadl.get());
     info.rti_info[RTAX_IFA] = rt.ifa().ifa_addr.get();
-    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+    kernel_lock();
     let mut nrt = Some(rt);
     // SAFETY: every address in `info` is the route's, the interface's or a local buffer, all
     // alive for the call.
@@ -1806,6 +1846,7 @@ pub fn rtdeletemsg(rt: &'static Rtentry, ifp: &Ifnet, tableid: u32) -> Result<()
             tableid,
         )
     };
+    kernel_unlock();
     let rt = nrt.unwrap_or(rt);
     let errno = error.err().map_or(0, |e| e as i32);
     let flags = info.rti_flags;
@@ -2217,7 +2258,7 @@ pub unsafe fn rt_setgate(
     // SAFETY: `glen >= gate_len` fresh bytes; the caller's contract for `gate`.
     unsafe { ptr::copy_nonoverlapping(gate.cast::<u8>(), sa.cast::<u8>(), gate_len) };
 
-    // KERNEL_LOCK(): see [X] in route.h; no kernel lock without MULTIPROCESSOR.
+    kernel_lock(); // see [X] in route.h
     let osa = rt.rt_gateway.get();
     rt.rt_gateway.set(sa);
 
@@ -2226,6 +2267,7 @@ pub unsafe fn rt_setgate(
         // SAFETY: the caller's contract.
         error = unsafe { rt_setgwroute(rt, gate, rtableid) };
     }
+    kernel_unlock();
 
     rt_free_sa(osa, true);
 
@@ -2435,10 +2477,11 @@ pub unsafe fn rt_ifa_del(
 
     // SAFETY: the address's own socket address.
     unsafe { rtable_clearsource(rdomain, ifa.ifa_addr.get()) };
-    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+    kernel_lock();
     let mut rt = None;
     // SAFETY: the caller's contract, the mbuf copy and the local label.
     let error = unsafe { rtrequest_delete(&mut info, prio, ifp, Some(&mut rt), rdomain) };
+    kernel_unlock();
     if error.is_ok()
         && let Some(r) = rt
     {

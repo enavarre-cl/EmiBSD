@@ -54,8 +54,15 @@
 //!   [`PfLoc`], as the descriptor's other pointers into headers.
 //! - `carp(4)` (`NCARP`) is not configured: `carp_lsdrop` is a comment at its site. `pfsync(4)`
 //!   (`net/if_pfsync.rs`) and `pflow(4)` (`net/if_pflow.rs`) are.
-//! - `pf_anchor_stack` and `pf_status_fcounters` are per-CPU (`cpumem`) in the C; there is one
-//!   CPU, so they are one static array each.
+//! - `pf_anchor_stack` and `pf_status_fcounters` are per-CPU (`cpumem`) in the C; here they
+//!   are one static array each: the counters are atomics, and the anchor stack is used only
+//!   by `pf_match_rule`, which `pf_test_rule` runs with `pf_lock` held exclusively, so one
+//!   CPU at a time evaluates rules.
+//! - `pf_counters_inc` adds to the statistics of the interface, the rules, the state, its
+//!   source nodes and tables from every softnet thread at once, holding only the shared net
+//!   lock: the C's plain `++`, which may lose counts. They stay `Cell`s here (an open
+//!   deviation of the MP audit, M11e): making them atomics is a change of every counter's
+//!   type, and losing a count is what the C accepts.
 //! - `pf_test`'s `struct mbuf **m0` is `&mut Option<&'static Mbuf>`, as `ip_input_if` passes
 //!   its packet; the action is returned as `u8` (`PF_PASS`, `PF_DROP`, ...).
 //! - The `STATE_INC_COUNTERS`, `BOUND_IFACE` and `REASON_SET` macros are functions.
@@ -76,11 +83,12 @@ use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_rwlock::{
     rw_assert_wrlock, rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write,
 };
+use crate::kern::kern_smr::{smr_read_enter, smr_read_leave};
 use crate::kern::kern_synch::{refcnt_init, refcnt_rele, refcnt_take};
 use crate::kern::kern_tc::{gettime, getuptime};
 use crate::kern::subr_prf::{addlog, log, panic};
 use crate::machine::intr::{IPL_NET, IPL_SOFTNET};
-use crate::net::if_::{IFF_LOOPBACK, if_get, if_put, unhandled_af};
+use crate::net::if_::{IFF_LOOPBACK, if_get, if_get_smr, if_put, unhandled_af};
 use crate::net::if_var::Ifnet;
 use crate::net::pf_if::{pfi_all, pfi_kif_ref, pfi_kif_unref};
 use crate::net::pf_table::{pfr_insert_kentry, pfr_remove_kentry};
@@ -4088,15 +4096,15 @@ pub fn pf_match_rcvif(m: &Mbuf, r: &'static PfRule) -> bool {
         return false;
     }
 
-    // smr_read_enter/leave: one CPU, nothing to do (if.c's SMR is the same).
-    let ifp = if_get(m.m_pkthdr().ph_ifidx.get());
+    smr_read_enter();
+    let ifp = if_get_smr(m.m_pkthdr().ph_ifidx.get());
     let kif = ifp.and_then(|ifp| {
         // NCARP > 0: a carp interface's parent's kif; not configured.
         // SAFETY: `if_pf_kif` is null or the kif `pfi_attach_ifnet` set, which lives until
         // `pfi_detach_ifnet`.
         unsafe { ifp.if_pf_kif.get().cast::<PfiKif>().cast_const().as_ref() }
     });
-    if_put(ifp);
+    smr_read_leave();
 
     let Some(kif) = kif else {
         crate::dpfprintf!(
@@ -4969,8 +4977,8 @@ pub fn pf_match_rule(ctx: &mut PfTestCtx<'_>, ruleset: &'static PfRuleset) -> Pf
                 None => {
                     if rr.rule_flag.get() & PFRULE_ONCE != 0 {
                         let rule_flag = rr.rule_flag.get();
-                        // atomic_cas_uint on one CPU under the net lock: a compare and a
-                        // store.
+                        // atomic_cas_uint: a compare and a store, both under `pf_lock`
+                        // (exclusive), which every writer of `rule_flag` holds.
                         if rule_flag & PFRULE_EXPIRED == 0 && rr.rule_flag.get() == rule_flag {
                             rr.rule_flag.set(rule_flag | PFRULE_EXPIRED);
                             rr.exptime.set(gettime());
@@ -9993,22 +10001,17 @@ pub fn pf_inp_unlink(inp: &'static Inpcb) {
 
 /// `pf_state_key_link_reverse`: links the two keys of a forwarded connection to each other.
 pub fn pf_state_key_link_reverse(sk: &'static PfStateKey, skrev: &'static PfStateKey) {
-    // atomic_cas_ptr on one CPU under the net lock: a compare and a store.
-    let old_reverse = sk.sk_reverse.get();
+    let old_reverse = sk.sk_reverse.cas_null(skrev);
     if let Some(old) = old_reverse {
         kassert!(ptr::eq(old, skrev));
     } else {
-        sk.sk_reverse.set(Some(skrev));
         pf_state_key_ref(skrev);
 
         // NOTE: if sk == skrev, then the KASSERT below holds true; we still want to grab a
         // reference in such case, because pf_state_key_unlink_reverse() does not check
         // whether keys are identical or not.
-        match skrev.sk_reverse.get() {
-            Some(old) => {
-                kassert!(ptr::eq(old, sk));
-            }
-            None => skrev.sk_reverse.set(Some(sk)),
+        if let Some(old) = skrev.sk_reverse.cas_null(sk) {
+            kassert!(ptr::eq(old, sk));
         }
 
         pf_state_key_ref(sk);

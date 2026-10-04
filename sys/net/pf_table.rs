@@ -286,7 +286,7 @@ fn accept_flags(flags: i32, oklist: i32) -> Result<(), Errno> {
 /// The bytes of `v`.
 fn io_bytes<T: PfrIo>(v: &T) -> &[u8] {
     // SAFETY: `T: PfrIo` has no implicit padding, so every byte is initialised; nothing
-    // changes `v` while the slice is borrowed (pf's locks; one CPU).
+    // changes `v` while the slice is borrowed (pf's locks, or the caller owns `v`).
     unsafe { core::slice::from_raw_parts(ptr::from_ref(v).cast::<u8>(), size_of::<T>()) }
 }
 

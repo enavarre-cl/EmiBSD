@@ -246,7 +246,7 @@ fn a_state_leaves_as_netflow_5_and_ipfix_records() {
     // Off the list again, so that later tests see no interface.
     ifp.if_flags.set(ifp.if_flags.get() & !IFF_RUNNING);
     // SAFETY: created above, on the list.
-    unsafe { PFLOWIF_LIST.remove(sc) };
+    unsafe { PFLOWIF_LIST.remove_locked(sc) };
 }
 
 /// `ntohs` of a field read out of a packed structure.

@@ -60,7 +60,9 @@
 //!   packet it queues; so is `INET6` (feature `inet6`: TSO of IPv6 segments).
 //! - `offsetof(struct tcphdr, th_sum)` and `offsetof(struct udphdr, uh_sum)` are the
 //!   constants 16 and 6: `netinet/tcp.h` and `netinet/udp.h` are not ported.
-//! - `KERNEL_LOCK()` is a comment (nothing without `MULTIPROCESSOR`).
+//! - The interrupt is established `IPL_NET | IPL_MPSAFE` as in C, so since M11e it runs
+//!   without the kernel lock: the rings are under `viq_rxmtx`/`viq_txmtx`, and
+//!   `vio_config_change` and `vio_ctrleof` take the kernel lock as the C does.
 //! - Functions returning 0 or an errno return `Result`; `vio_alloc_mem` and
 //!   `vio_alloc_dmamem` (the C's -1 and 1) return `Err(ENOMEM)`.
 
@@ -135,7 +137,7 @@ use crate::sys::param::{PRIBIO, howmany};
 use crate::sys::sockio::{
     SIOCGIFMEDIA, SIOCGIFRXR, SIOCSIFADDR, SIOCSIFFLAGS, SIOCSIFMEDIA, SIOCSIFXFLAGS,
 };
-use crate::sys::systm::{COLD, INFSLP};
+use crate::sys::systm::{COLD, INFSLP, kernel_lock, kernel_unlock};
 use crate::sys::timeout::Timeout;
 use crate::{kassert, unported};
 
@@ -1702,10 +1704,10 @@ pub fn vio_ctrl_intr(arg: *mut c_void) -> i32 {
 /// `vio_config_change`: the link state may have changed, or the device needs a reset.
 pub fn vio_config_change(vsc: &VirtioSoftc) -> i32 {
     let sc = vio_child(vsc);
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     vio_link_state(sc.ifp());
     vio_needs_reset(sc);
-    // KERNEL_UNLOCK()
+    kernel_unlock();
     1
 }
 
@@ -2941,7 +2943,7 @@ pub fn vio_ctrleof(vq: &Virtqueue) -> i32 {
     let sc = vio_child(vsc);
     let mut r = 0;
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     let s = splnet();
     // again:
     while let Ok((slot, _)) = virtio_dequeue(vsc, vq) {
@@ -2955,7 +2957,7 @@ pub fn vio_ctrleof(vq: &Virtqueue) -> i32 {
 
     // out:
     splx(s);
-    // KERNEL_UNLOCK()
+    kernel_unlock();
     r
 }
 

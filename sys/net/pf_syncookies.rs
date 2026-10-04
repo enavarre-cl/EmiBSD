@@ -158,8 +158,8 @@ pub struct PfSyncookieStatus {
     pub lowat: Cell<u32>,
 }
 
-// SAFETY: changed under the net lock and `pf_lock` (and by the key timeout, which runs with
-// the net lock held off by the same single CPU), as in C.
+// SAFETY: changed under the net lock and `pf_lock`, and by the key timeout, which writes the
+// key slot `oddeven` (an atomic) does not select before it flips it, as the C does.
 unsafe impl Sync for PfSyncookieStatus {}
 
 /// `pf_syncookie_status`.

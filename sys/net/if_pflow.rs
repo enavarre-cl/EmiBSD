@@ -58,8 +58,9 @@
 //!
 //! ## Deviations
 //! - The header and the file share this module.
-//! - SMR (`kern/kern_smr.c`) is not ported (see `net/if_.rs`): `pflowif_list` is a plain list
-//!   changed under the kernel lock, read without one; `smr_barrier` is empty.
+//! - `pflowif_list` is an `SMR_SLIST` ([`SmrSlistHead`]) changed under the kernel lock and
+//!   read by `export_pflow` without one, as in C; `pflow_clone_destroy` waits with
+//!   `smr_barrier` before it frees the softc.
 //! - `pflow_counters` (a `cpumem`) is a static array of atomics (`docs/C_TO_RUST.md`).
 //! - `sc_flowsrc` and `sc_flowdst` are `Option<SockaddrStorage>`s holding the address (only
 //!   its `sa_len` bytes are meaningful) instead of `malloc`ed `struct sockaddr`s, so the
@@ -127,8 +128,8 @@ use crate::sys::mbuf::{
     M_DONTWAIT, M_EXT, M_WAIT, MCLBYTES, MT_DATA, MT_SONAME, Mbuf, MbufList, MbufQueue, mclget,
 };
 use crate::sys::mutex::{Mutex, mutex_assert_locked};
-use crate::sys::queue::{SlistEntry, SlistHead};
 use crate::sys::rwlock::Rwlock;
+use crate::sys::smr::{SmrSlistEntry, SmrSlistHead, smr_barrier};
 use crate::sys::socket::{
     AF_INET, AF_INET6, MSG_DONTWAIT, NET_PFLOW_STATS, SOCK_DGRAM, Sockaddr, SockaddrStorage,
 };
@@ -136,7 +137,7 @@ use crate::sys::socketvar::Socket;
 use crate::sys::sockio::{
     SIOCGETPFLOW, SIOCSETPFLOW, SIOCSIFADDR, SIOCSIFDSTADDR, SIOCSIFFLAGS, SIOCSIFMTU,
 };
-use crate::sys::systm::{net_lock, net_unlock};
+use crate::sys::systm::{kernel_assert_locked, net_lock, net_unlock};
 use crate::sys::task::Task;
 use crate::sys::timeout::Timeout;
 use crate::sys::types::SaFamily;
@@ -736,7 +737,7 @@ pub struct PflowSoftc {
     /// `sc_mbuf_nat`: \[m\] current cumulative mbuf.
     pub sc_mbuf_nat: Cell<Option<&'static Mbuf>>,
     /// `sc_next`.
-    pub sc_next: SlistEntry<PflowSoftc>,
+    pub sc_next: SmrSlistEntry<PflowSoftc>,
 }
 
 // SAFETY: the members change under the locks their docs name, as in C; the interface as
@@ -766,7 +767,7 @@ impl PflowSoftc {
 
 crate::queue_adapter!(
     /// `SMR_SLIST_HEAD(, pflow_softc)` through `sc_next`.
-    pub PflowifList: PflowSoftc, sc_next => SlistEntry<PflowSoftc>
+    pub PflowifList: PflowSoftc, sc_next => SmrSlistEntry<PflowSoftc>
 );
 
 /// `PFLOW_MINMTU`.
@@ -791,8 +792,8 @@ pub enum PflowstatCounters {
 /// `pflow_ncounters`.
 pub const PFLOW_NCOUNTERS: usize = PflowstatCounters::PflowNcounters as usize;
 
-/// `pflowif_list`: the `pflow` interfaces, changed under the kernel lock.
-pub static PFLOWIF_LIST: PfGlobal<SlistHead<PflowifList>> = PfGlobal(SlistHead::new());
+/// `pflowif_list`: the `pflow` interfaces, changed under the kernel lock, SMR-protected.
+pub static PFLOWIF_LIST: PfGlobal<SmrSlistHead<PflowifList>> = PfGlobal(SmrSlistHead::new());
 
 /// `pflow_counters`.
 pub static PFLOW_COUNTERS: [AtomicU64; PFLOW_NCOUNTERS] =
@@ -997,10 +998,10 @@ pub fn pflow_clone_create(_ifc: &'static IfClone, unit: i32) -> Result<(), Errno
     if_alloc_sadl(ifp);
 
     // Insert into list of pflows
-    // KERNEL_ASSERT_LOCKED(): one CPU.
-    // SAFETY: the new softc is on no list; it stays allocated until `pflow_clone_destroy`
-    // takes it off.
-    unsafe { PFLOWIF_LIST.insert_head(pflowif) };
+    kernel_assert_locked();
+    // SAFETY: the kernel lock is the list's; the new softc is on no list and stays allocated
+    // until `pflow_clone_destroy` takes it off and waits for the readers.
+    unsafe { PFLOWIF_LIST.insert_head_locked(pflowif) };
     Ok(())
 }
 
@@ -1013,10 +1014,10 @@ pub fn pflow_clone_destroy(ifp: &'static Ifnet) -> Result<(), Errno> {
     sc.sc_dying.set(1);
     rw_exit_write(&sc.sc_lock);
 
-    // KERNEL_ASSERT_LOCKED(): one CPU.
-    // SAFETY: `pflow_clone_create` put the softc on the list.
-    unsafe { PFLOWIF_LIST.remove(sc) };
-    // smr_barrier(): no SMR (see the module's deviations).
+    kernel_assert_locked();
+    // SAFETY: the kernel lock is the list's; `pflow_clone_create` put the softc on it.
+    unsafe { PFLOWIF_LIST.remove_locked(sc) };
+    smr_barrier();
 
     let _ = timeout_del(&sc.sc_tmo);
     let _ = timeout_del(&sc.sc_tmo6);

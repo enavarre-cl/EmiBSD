@@ -74,11 +74,11 @@
 //! Status: `ported` (M7b).
 //!
 //! ## Deviations
-//! - SMR (`kern/kern_smr.c`) is not ported. `SMR_PTR_GET`/`SMR_PTR_SET_LOCKED` are plain
-//!   loads and stores of `Cell`s, `SMR_ASSERT_CRITICAL` is nothing and `smr_barrier` in the
-//!   garbage collectors is empty: on one CPU with a kernel that is not preempted, no reader is
-//!   inside a lookup when the collector task runs, as `net/if_.rs` argues for its index map.
-//! - A heap is reached through a raw pointer to its first word (`*const Cell<usize>`): its
+//! - SMR as in C (M11e): the heap words are [`ArtHeapWord`]s, `art_root` and `an_value` are
+//!   [`SmrPtr`]s; their `get` is `SMR_PTR_GET` (an `Acquire` load, which the writer's locked
+//!   reads also use) and `set` `SMR_PTR_SET_LOCKED` (a `Release` store). The lookups assert
+//!   the read section and the garbage collectors wait with `smr_barrier` before they free.
+//! - A heap is reached through a raw pointer to its first word (`*const ArtHeapWord`): its
 //!   size is `1 << (bits + 1)` words, which only its table knows, and the lookups do not read
 //!   the table (the C's point). The slot accessor is `unsafe` with that bound as its contract;
 //!   every index comes from [`art_bindex`], which stays below the size by construction.
@@ -99,7 +99,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::size_of;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
@@ -111,13 +111,30 @@ use crate::machine::intr::IPL_SOFTNET;
 use crate::sys::malloc::{M_NOWAIT, M_RTABLE, M_ZERO};
 use crate::sys::mutex::Mutex;
 use crate::sys::pool::{PR_NOWAIT, PR_ZERO, Pool};
+use crate::sys::smr::{SmrPtr, smr_assert_critical, smr_barrier};
 use crate::sys::task::Task;
 
 /// `art_heap_entry`: a word of a heap, a node pointer or a tagged heap pointer.
 pub type ArtHeapEntry = usize;
 
+/// A word of a heap: an SMR-protected [`ArtHeapEntry`]. All-zero is the NULL entry.
+pub struct ArtHeapWord(AtomicUsize);
+
+impl ArtHeapWord {
+    /// `SMR_PTR_GET(&heap[i])`: the entry, for a reader inside a read section or for the
+    /// writer that holds the tree's lock.
+    pub fn get(&self) -> ArtHeapEntry {
+        self.0.load(Ordering::Acquire)
+    }
+
+    /// `SMR_PTR_SET_LOCKED(&heap[i], ahe)`: publishes `ahe` once what it points to is written.
+    pub fn set(&self, ahe: ArtHeapEntry) {
+        self.0.store(ahe, Ordering::Release);
+    }
+}
+
 /// A heap: the address of its first word (see the module's deviations).
-pub type ArtHeap = *const Cell<ArtHeapEntry>;
+pub type ArtHeap = *const ArtHeapWord;
 
 /// `ART_HEAP_IDX_TABLE`: `heap[0]`, the table of the heap.
 pub const ART_HEAP_IDX_TABLE: usize = 0;
@@ -141,7 +158,7 @@ const ART_PLEN20_LEVELS: [u32; 5] = [4, 4, 4, 4, 4];
 /// `struct art`: the root of the ART, equivalent to the radix head.
 pub struct Art {
     /// `art_root`: the root heap, NULL while the tree is empty.
-    pub art_root: Cell<ArtHeap>,
+    pub art_root: SmrPtr<ArtHeapWord>,
     /// `art_levels`: the stride of each level.
     pub art_levels: Cell<&'static [u32]>,
     /// `art_nlevels`: the number of levels.
@@ -154,7 +171,7 @@ impl Art {
     /// An empty tree with no levels, for `art_init` to configure.
     pub const fn new() -> Self {
         Self {
-            art_root: Cell::new(ptr::null()),
+            art_root: SmrPtr::new(),
             art_levels: Cell::new(&[]),
             art_nlevels: Cell::new(0),
             art_alen: Cell::new(0),
@@ -169,7 +186,8 @@ impl Default for Art {
 }
 
 // SAFETY: the tree is changed by callers that serialise themselves (the rtable lock), as the
-// C's locking comment requires; lookups only load words.
+// C's locking comment requires; lookups only load the SMR words (`art_root`, the heaps), and
+// `art_levels`, `art_nlevels` and `art_alen` are set by `art_init` before the tree is shared.
 unsafe impl Sync for Art {}
 
 /// `struct art_table`: an allotment table. All-zero is a valid value (`PR_ZERO`).
@@ -195,8 +213,9 @@ pub struct ArtTable {
 /// `struct art_node`: the internal representation of a route entry. All-zero is a valid
 /// value (`PR_ZERO`).
 pub struct ArtNode {
-    /// `an_value`: the data of the prefix (the routing table's list of `rtentry`s).
-    pub an_value: Cell<*mut c_void>,
+    /// `an_value`: the data of the prefix (the routing table's list of `rtentry`s), read
+    /// inside SMR read sections.
+    pub an_value: SmrPtr<c_void>,
     /// `an_gc` (`an__u.an__gc`): the garbage collector's link, after `art_put`.
     pub an_gc: Cell<*const ArtNode>,
     /// `an_addr` (`an__u.an__addr`): the prefix.
@@ -258,7 +277,7 @@ static ART_NODE_GC_TASK: Task = Task::new(art_gc, ptr::null_mut());
 /// # Safety
 ///
 /// `heap` is a live heap and `i` is below its size, `1 << (bits + 1)` for its table's stride.
-unsafe fn heap_slot<'a>(heap: ArtHeap, i: usize) -> &'a Cell<ArtHeapEntry> {
+unsafe fn heap_slot<'a>(heap: ArtHeap, i: usize) -> &'a ArtHeapWord {
     // SAFETY: the caller's contract.
     unsafe { &*heap.add(i) }
 }
@@ -375,7 +394,7 @@ pub fn art_init(art: &Art, alen: u32) {
         }
     }
 
-    art.art_root.set(ptr::null());
+    art.art_root.set_locked(ptr::null_mut());
     art.art_levels.set(levels);
     art.art_nlevels.set(levels.len() as u32);
     art.art_alen.set(alen);
@@ -445,9 +464,9 @@ pub fn art_match(art: &Art, addr: &[u8]) -> Option<&'static ArtNode> {
     let mut level = 0usize;
     let mut dahe: ArtHeapEntry = 0;
 
-    // SMR_ASSERT_CRITICAL(): no SMR (the module's deviations).
+    smr_assert_critical();
 
-    let mut heap = art.art_root.get();
+    let mut heap = art.art_root.get().cast_const();
     if heap.is_null() {
         return None;
     }
@@ -515,9 +534,9 @@ pub fn art_lookup(art: &Art, addr: &[u8], plen: u32) -> Option<&'static ArtNode>
 
     kassert!(plen <= art.art_alen.get());
 
-    // SMR_ASSERT_CRITICAL(): no SMR.
+    smr_assert_critical();
 
-    let mut heap = art.art_root.get();
+    let mut heap = art.art_root.get().cast_const();
     if heap.is_null() {
         return None;
     }
@@ -578,7 +597,7 @@ pub fn art_lookup(art: &Art, addr: &[u8], plen: u32) -> Option<&'static ArtNode>
 
 /// `art_is_empty`.
 pub fn art_is_empty(art: &Art) -> bool {
-    art.art_root.get().is_null()
+    art.art_root.get_locked().is_null()
 }
 
 /// `art_insert`: insertion. Inserts node `an`, or returns an existing node with the same
@@ -589,12 +608,12 @@ pub fn art_insert(art: &Art, an: &'static ArtNode) -> Option<&'static ArtNode> {
 
     kassert!(plen <= art.art_alen.get());
 
-    let mut heap = art.art_root.get();
+    let mut heap = art.art_root.get().cast_const();
     let mut at: &ArtTable;
     if heap.is_null() {
         at = art_table_get(art, None, u32::MAX)?;
         heap = at.at_heap.get();
-        art.art_root.set(heap);
+        art.art_root.set_locked(heap.cast_mut());
     } else {
         // SAFETY: the root heap is live.
         at = unsafe { art_heap_to_table(heap) };
@@ -683,7 +702,7 @@ pub fn art_insert(art: &Art, an: &'static ArtNode) -> Option<&'static ArtNode> {
 pub fn art_delete(art: &Art, addr: &[u8], plen: u32) -> Option<&'static ArtNode> {
     kassert!(plen <= art.art_alen.get());
 
-    let mut heap = art.art_root.get();
+    let mut heap = art.art_root.get().cast_const();
     if heap.is_null() {
         return None;
     }
@@ -834,7 +853,7 @@ fn art_iter_descend(
 
 /// `art_iter_open`: starts iterating over `art`, returning its first node.
 pub fn art_iter_open(art: &Art, ai: &mut ArtIter) -> Option<&'static ArtNode> {
-    let heap = art.art_root.get();
+    let heap = art.art_root.get().cast_const();
 
     ai.ai_art = art;
 
@@ -999,7 +1018,7 @@ pub fn art_table_get(art: &Art, parent: Option<&ArtTable>, j: u32) -> Option<&'s
         return None;
     };
     // A zeroed block of `at_heapsize(bits)` bytes is `1 << (bits + 1)` zero words.
-    let heap: ArtHeap = heap_mem.as_ptr().cast::<Cell<ArtHeapEntry>>();
+    let heap: ArtHeap = heap_mem.as_ptr().cast::<ArtHeapWord>();
 
     // SAFETY: slot 0 of the new heap.
     unsafe { heap_slot(heap, ART_HEAP_IDX_TABLE) }.set(ptr::from_ref(at) as ArtHeapEntry);
@@ -1050,7 +1069,7 @@ pub fn art_table_put<'a>(art: &Art, at: &ArtTable) -> Option<&'a ArtTable> {
     } else {
         kassert!(j == u32::MAX);
         kassert!(at.at_level.get() == 0);
-        art.art_root.set(ptr::null());
+        art.art_root.set_locked(ptr::null_mut());
     }
 
     mtx_enter(&ART_TABLE_GC_MTX);
@@ -1069,7 +1088,7 @@ pub fn art_table_gc(_null: *mut c_void) {
     let mut at = ART_TABLE_GC_LIST.swap(ptr::null_mut(), Ordering::Relaxed);
     mtx_leave(&ART_TABLE_GC_MTX);
 
-    // smr_barrier(): no SMR (the module's deviations).
+    smr_barrier();
 
     while let Some(t) = NonNull::new(at) {
         // SAFETY: a table on the collector's list is out of every tree; this task is its only
@@ -1166,7 +1185,7 @@ pub fn art_gc(_null: *mut c_void) {
     let mut an = ART_NODE_GC_LIST.swap(ptr::null_mut(), Ordering::Relaxed);
     mtx_leave(&ART_NODE_GC_MTX);
 
-    // smr_barrier(): no SMR (the module's deviations).
+    smr_barrier();
 
     while let Some(n) = NonNull::new(an) {
         // SAFETY: a node on the collector's list is out of every tree; this task is its only

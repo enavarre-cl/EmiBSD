@@ -106,10 +106,13 @@
 //! ## Deviations
 //! - The header and the file share this module. `PFSYNCCTL_NAMES` (a `struct ctlname` table)
 //!   comes with `<sys/sysctl.h>`.
-//! - SMR (`kern/kern_smr.c`) is not ported (see `net/if_.rs`): `pfsyncif` is an `AtomicPtr`,
-//!   the read sections are empty and `smr_call(&smr, refcnt_rele_wake, &sc->sc_refs)` in
-//!   `pfsync_down` releases the reference at once, which is what the call does once the
-//!   readers are gone on this one-CPU kernel.
+//! - `pfsyncif` is an `AtomicPtr` (`SMR_PTR_GET`/`SMR_PTR_SET_LOCKED`), and `pfsync_down`
+//!   gives SMR's reference back with `smr_call(&smr, refcnt_rele_wake, &sc->sc_refs)` on its
+//!   own stack, as in C (M11e). The read sections are explicit where the C's ends with its
+//!   block; in `pfsync_defer` and `pfsync_input` the C's section spans early returns and is
+//!   left implicit: `smr_read_enter`/`smr_read_leave` only count under `DIAGNOSTIC`, and a
+//!   grace period waits for every CPU to switch, which code that does not sleep (both
+//!   sections, as in C) never does.
 //! - `pfsynccounters` (a `cpumem`) is a static array of atomics (`docs/C_TO_RUST.md`), so
 //!   `pfsyncattach` allocates nothing.
 //! - `kstat(4)` is not configured (`NKSTAT` 0): the slices have no `s_kstat`, and
@@ -119,7 +122,9 @@
 //!   `if_addgroup(ifp, "carp")` are comments at their sites. `bpf(4)` is configured:
 //!   `pfsync_clone_create` attaches a `DLT_PFSYNC` tap and `pfsync_sendout` taps each frame.
 //! - `PFSYNC_DEBUG` is not defined: its `KASSERT` in `pfsync_slice_drop` is not ported.
-//! - `struct pfsync_slice`'s `__aligned(CACHELINESIZE)` is left out: there is one CPU.
+//! - `struct pfsync_slice`'s `__aligned(CACHELINESIZE)` is left out: it keeps the slices'
+//!   mutexes on separate cache lines (a performance matter), and `<machine/param.h>`'s
+//!   `CACHELINESIZE` is not ported.
 //! - The message writers (`struct pfsync_q`'s `write`) and readers (`struct pfsync_act`'s
 //!   `in`) take the message bytes as a slice of the mbuf data instead of a `caddr_t`; the
 //!   readers get all `count` messages of a subheader at once, as in C.
@@ -144,6 +149,7 @@ use crate::kern::kern_prot::suser;
 use crate::kern::kern_rwlock::{
     rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write, rw_init,
 };
+use crate::kern::kern_smr::{smr_read_enter, smr_read_leave};
 use crate::kern::kern_synch::{
     msleep_nsec, refcnt_finalize, refcnt_init, refcnt_rele_wake, refcnt_take, wakeup_one,
 };
@@ -218,6 +224,7 @@ use crate::sys::param::PWAIT;
 use crate::sys::pool::{PR_NOWAIT, Pool};
 use crate::sys::queue::{TailqEntry, TailqHead};
 use crate::sys::rwlock::Rwlock;
+use crate::sys::smr::{SmrEntry, smr_call, smr_init};
 use crate::sys::socket::{AF_INET, AF_INET6, Sockaddr};
 use crate::sys::sockio::{
     SIOCDIFPARENT, SIOCGETPFSYNC, SIOCGIFPARENT, SIOCSETPFSYNC, SIOCSIFADDR, SIOCSIFFLAGS,
@@ -1876,6 +1883,14 @@ fn pfsync_bulk_req_tmo(arg: *mut c_void) {
     net_unlock();
 }
 
+/// `(void (*)(void *))refcnt_rele_wake`: `pfsync_down`'s deferred release of the reference
+/// it gave SMR when `pfsync_up` published the softc.
+fn pfsync_refcnt_rele_wake(refs: *mut c_void) {
+    // SAFETY: `pfsync_down` passes its softc's `sc_refs`, which it keeps alive in
+    // `refcnt_finalize` until this release has run.
+    refcnt_rele_wake(unsafe { &*refs.cast::<crate::sys::refcnt::Refcnt>() });
+}
+
 /// `pfsync_down`: withdraws the softc from pf, waits for every context still running pfsync
 /// and drops what is queued; the deferred packets go out. Called with the net lock held,
 /// which it lets go of while it waits.
@@ -1918,9 +1933,17 @@ fn pfsync_down(sc: &'static PfsyncSoftc) -> Result<(), Errno> {
         ));
     }
     PFSYNCIF.store(ptr::null_mut(), Ordering::Release);
-    // smr_init(&smr); smr_call(&smr, refcnt_rele_wake, &sc->sc_refs): no SMR (see the
-    // module's deviations), the readers are gone.
-    refcnt_rele_wake(&sc.sc_refs);
+    let smr = SmrEntry::new();
+    smr_init(&smr);
+    // SAFETY: `smr` stays on this frame until `refcnt_finalize` below returns, which is after
+    // the SMR thread called `refcnt_rele_wake` through it, its last use of the entry: for that
+    // long it may be lent as `'static` (as `smr_barrier` lends its own).
+    let smr_static: &'static SmrEntry = unsafe { &*ptr::from_ref(&smr) };
+    smr_call(
+        smr_static,
+        pfsync_refcnt_rele_wake,
+        ptr::from_ref(&sc.sc_refs).cast_mut().cast(),
+    );
 
     // stop pf producing work before cleaning up the timeouts and tasks
     refcnt_finalize(&sc.sc_refs, "pfsyncfini");
@@ -2009,8 +2032,10 @@ fn pd_static(pd: &PfsyncDeferral) -> &'static PfsyncDeferral {
 
 /// `pfsync_is_up`: whether a pfsync interface is running.
 pub fn pfsync_is_up() -> bool {
-    // smr_read_enter(): no SMR (see the module's deviations).
-    pfsync_if().is_some()
+    smr_read_enter();
+    let rv = pfsync_if().is_some();
+    smr_read_leave();
+    rv
 }
 
 /// `pfsync_start`: nothing is sent through the interface's queue.
@@ -2455,7 +2480,7 @@ pub fn pfsync_insert_state(st: &'static PfState) {
         return;
     }
 
-    // smr_read_enter(): no SMR.
+    smr_read_enter();
     if let Some(sc) = pfsync_if() {
         let s = pfsync_slice_enter(sc, st);
 
@@ -2486,6 +2511,7 @@ pub fn pfsync_insert_state(st: &'static PfState) {
 
         pfsync_slice_leave(sc, s);
     }
+    smr_read_leave();
 }
 
 /// `pfsync_update_state`: a state changed.
@@ -2496,6 +2522,7 @@ pub fn pfsync_update_state(st: &'static PfState) {
         return;
     }
 
+    smr_read_enter();
     if let Some(sc) = pfsync_if() {
         let s = pfsync_slice_enter(sc, st);
         let mut sync = false;
@@ -2540,6 +2567,7 @@ pub fn pfsync_update_state(st: &'static PfState) {
         }
         pfsync_slice_leave(sc, s);
     }
+    smr_read_leave();
 }
 
 /// `pfsync_delete_state`: a state is being removed.
@@ -2550,6 +2578,7 @@ pub fn pfsync_delete_state(st: &'static PfState) {
         return;
     }
 
+    smr_read_enter();
     if let Some(sc) = pfsync_if() {
         let s = pfsync_slice_enter(sc, st);
 
@@ -2579,16 +2608,18 @@ pub fn pfsync_delete_state(st: &'static PfState) {
 
         pfsync_slice_leave(sc, s);
     }
+    smr_read_leave();
 }
 
 /// `pfsync_clear_states`: tells the peers to clear the states of `creatorid` (on interface
 /// `ifname`, or all of them when it is empty).
 pub fn pfsync_clear_states(creatorid: u32, ifname: &[u8]) {
-    // smr_read_enter(): no SMR.
+    smr_read_enter();
     let sc = pfsync_if();
     if let Some(sc) = sc {
         refcnt_take(&sc.sc_refs);
     }
+    smr_read_leave();
 
     let Some(sc) = sc else {
         return;
@@ -2645,6 +2676,7 @@ pub fn pfsync_clear_states(creatorid: u32, ifname: &[u8]) {
 pub fn pfsync_state_in_use(st: &PfState) -> bool {
     let mut rv = false;
 
+    smr_read_enter();
     if let Some(sc) = pfsync_if() {
         // pfsync bulk sends run inside rw_enter_read(&pf_state_list.pfs_rwl), and this code
         // (pfsync_state_in_use) is only called from the purge code inside
@@ -2658,6 +2690,7 @@ pub fn pfsync_state_in_use(st: &PfState) -> bool {
             rv = true;
         }
     }
+    smr_read_leave();
 
     rv
 }
@@ -2669,6 +2702,7 @@ pub fn pfsync_defer(st: &'static PfState, m: &'static Mbuf) -> bool {
         return false;
     }
 
+    // smr_read_enter(): the read section is implicit here (see the module's deviations).
     let Some(sc) = pfsync_if() else {
         return false;
     };
@@ -3220,6 +3254,7 @@ pub fn pfsync_update_tdb(tdb: &Tdb, output: bool) {
     mutex_assert_unlocked(&tdb.tdb_mtx, "pfsync_update_tdb");
     let _ = output;
 
+    smr_read_enter();
     if let Some(sc) = pfsync_if() {
         let s = pfsync_slice_enter_tdb(sc, tdb);
 
@@ -3241,6 +3276,7 @@ pub fn pfsync_update_tdb(tdb: &Tdb, output: bool) {
 
         pfsync_slice_leave(sc, s);
     }
+    smr_read_leave();
 }
 
 /// `pfsync_delete_tdb`: the TDB is being freed: take it off the queue, and wait for a
@@ -3248,6 +3284,7 @@ pub fn pfsync_update_tdb(tdb: &Tdb, output: bool) {
 pub fn pfsync_delete_tdb(tdb: &Tdb) {
     mutex_assert_unlocked(&tdb.tdb_mtx, "pfsync_delete_tdb");
 
+    smr_read_enter();
     if let Some(sc) = pfsync_if() {
         let s = pfsync_slice_enter_tdb(sc, tdb);
 
@@ -3262,6 +3299,7 @@ pub fn pfsync_delete_tdb(tdb: &Tdb) {
 
         pfsync_slice_leave(sc, s);
     }
+    smr_read_leave();
 
     // handle pfsync_slice_drop being called from pfsync_down and the smr/slice access above
     // won't work.
@@ -3297,7 +3335,7 @@ fn pfsync_input(m: &'static Mbuf, ttl: u8, hlen: usize) -> Option<&'static Mbuf>
     }
 
     // pfsyncif is only set if it is up and running correctly.
-    // smr_read_enter(): no SMR.
+    // smr_read_enter(): the read section is implicit here (see the module's deviations).
     let Some(sc) = pfsync_if() else {
         return Some(m);
     };
@@ -3342,7 +3380,7 @@ fn pfsync_input(m: &'static Mbuf, ttl: u8, hlen: usize) -> Option<&'static Mbuf>
 
     // ok, it's serious now
     refcnt_take(&sc.sc_refs);
-    // smr_read_leave()
+    // smr_read_leave(): implicit, as above.
 
     ifp_counters_pkt(
         &sc.sc_if,

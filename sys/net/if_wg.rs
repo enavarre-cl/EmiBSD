@@ -91,8 +91,10 @@
 //!   (`ENOBUFS`), where the C would cast its NULL to a `wg_aip`.
 //! - `wg_index_drop` of an index that is not in the table panics, where the C dereferences the
 //!   NULL its search ends with.
-//! - `wg_last_underload` is a `StaticCell`: only the handshake task queue touches it, and a
-//!   task does not sleep between reading and writing it on this uniprocessor kernel.
+//! - `wg_last_underload` is a `StaticCell` guarded by a mutex the C does not have
+//!   (`wg_last_underload_mtx`): the C's function-static `struct timeval` is read and written
+//!   unlocked by the two threads of `wg_handshake_taskq`, a race the C tolerates and Rust
+//!   does not.
 //! - `explicit_bzero(peer, sizeof(*peer))` before `pool_put` clears the peer's secrets (keys,
 //!   handshake, cookie state) member by member.
 //! - `WGTEST` (`cookie_test`, `noise_test` in `wgattach`) is the host test modules of
@@ -204,7 +206,7 @@ use crate::sys::socket::{
 use crate::sys::socketvar::Socket;
 use crate::sys::sockio::{SIOCADDMULTI, SIOCDELMULTI, SIOCSIFADDR, SIOCSIFFLAGS, SIOCSIFMTU};
 use crate::sys::syslog::{LOG_DEBUG, LOG_INFO, LOG_WARNING};
-use crate::sys::systm::{net_assert_locked, net_lock, net_unlock};
+use crate::sys::systm::{kernel_assert_locked, net_assert_locked, net_lock, net_unlock};
 use crate::sys::task::{TASKQ_MPSAFE, Task, Taskq};
 use crate::sys::time::{Timespec, Timeval, timespecadd};
 use crate::sys::timeout::{Timeout, timeout_pending};
@@ -1120,8 +1122,10 @@ pub static WG_CRYPT_TASKQ: AtomicPtr<Taskq> = AtomicPtr::new(ptr::null_mut());
 pub static WG_CLONER: IfClone = IfClone::new(b"wg", wg_clone_create, Some(wg_clone_destroy));
 
 /// `wg_handshake`'s `static struct timeval wg_last_underload` (microuptime; see the module's
-/// deviations).
+/// deviations). Protected by: `WG_LAST_UNDERLOAD_MTX`.
 static WG_LAST_UNDERLOAD: StaticCell<Timeval> = StaticCell::new(Timeval::new(0, 0));
+/// Guards `WG_LAST_UNDERLOAD` (not in the C, see the module's deviations).
+static WG_LAST_UNDERLOAD_MTX: Mutex = Mutex::new(IPL_NET);
 
 /// The interface name up to its NUL.
 fn cstr(s: &[u8]) -> &[u8] {
@@ -2330,8 +2334,8 @@ unsafe fn pkt_read<T: WgPkt>(m: &Mbuf) -> T {
 pub fn wg_handshake(sc: &'static WgSoftc, m: &'static Mbuf) {
     let mut underload = false;
 
-    // SAFETY: only the handshake task queue runs this, and nothing between the read and the
-    // write sleeps (see the module's deviations).
+    mtx_enter(&WG_LAST_UNDERLOAD_MTX);
+    // SAFETY: `WG_LAST_UNDERLOAD_MTX` is held until the reference's last use below.
     let last_underload = unsafe { WG_LAST_UNDERLOAD.get_mut() };
     if mq_len(&sc.sc_handshake_queue) >= MAX_QUEUED_HANDSHAKES / 8 {
         *last_underload = getmicrouptime();
@@ -2343,6 +2347,7 @@ pub fn wg_handshake(sc: &'static WgSoftc, m: &'static Mbuf) {
             *last_underload = Timeval::new(0, 0);
         }
     }
+    mtx_leave(&WG_LAST_UNDERLOAD_MTX);
 
     let Some(t) = wg_tag_get(m) else {
         m_freem(m);
@@ -3867,7 +3872,7 @@ pub fn wg_down(sc: &WgSoftc) {
 
 /// `wg_clone_create`: creates `wg<unit>`.
 pub fn wg_clone_create(_ifc: &'static IfClone, unit: i32) -> Result<(), Errno> {
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
 
     if WG_COUNTER.load(Ordering::Relaxed) == 0 {
         let handshake = taskq_create(b"wg_handshake", 2, IPL_NET, TASKQ_MPSAFE);
@@ -4047,7 +4052,7 @@ pub fn wg_clone_create(_ifc: &'static IfClone, unit: i32) -> Result<(), Errno> {
 pub fn wg_clone_destroy(ifp: &'static Ifnet) -> Result<(), Errno> {
     let sc = WgSoftc::of_ifp(ifp);
 
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
 
     rw_enter_write(&sc.sc_lock);
     for peer in sc.sc_peer_seq.iter() {

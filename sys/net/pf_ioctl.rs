@@ -55,8 +55,8 @@
 //! ## Deviations
 //! - `kstat(4)` (`NKSTAT`) is not configured: the limiter kstats (`pf_statelim_kstat_*`,
 //!   `pf_sourcelim_kstat_*`) are a comment at the end of the file and at their call sites.
-//! - `pf_anchor_stack` is `net/pf.rs`'s static (one CPU, no `cpumem`); `pfattach` sets its
-//!   bottom frame through `pf_anchor_stack_init`.
+//! - `pf_anchor_stack` is `net/pf.rs`'s static (no `cpumem`: only `pf_lock`'s holder uses
+//!   it, see `net/pf.rs`); `pfattach` sets its bottom frame through `pf_anchor_stack_init`.
 //! - `pf_default_rule`'s plain members (`action` = `PF_PASS`, `rtableid` = -1) are set by its
 //!   static initialiser, the members that are `Cell`s by `pfattach` as in the C.
 //!   `pf_default_rule_new = pf_default_rule` copies the `Cell` members (`pf_default_rule_copy`):
