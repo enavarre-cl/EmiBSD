@@ -5426,7 +5426,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a62b6ea883bd98f4cd47256fe79da33ada3d2ccd"
 deps = ["sys/sys/queue.h", "sys/sys/timeout.h", "sys/sys/mutex.h", "sys/scsi/scsi_all.h"]
-notes = "M10a: license: Hannum BSD-4 plus the TRW notice; struct scsi_link/scsi_xfer/scsi_iopool/scsi_iohandler/scsi_xshandler/scsibus_softc are Cell-membered and reached as &'static (links, pools and softcs live until detach; a scsi_xfer is a scsi_xfer_pool item from scsi_xs_get to scsi_xs_put); xs->data/datalen private behind unsafe set_data (the issuer vouches for the buffer) with data()/datalen()/data_slice(); cmd is Cell<ScsiGeneric> with set_cmd/cmd_as/with_cmd views; link->device_softc is Option<NonNull<Device>>; interpret_sense a non-NULL fn set to scsi_interpret_sense by ScsiLink::new; scsi_iohandler has a private is_xsh flag guarding scsi_link_shutdown's cast (fn addresses are not unique in Rust); io is ScsiIo = NonNull<c_void>, io_get/io_put/handlers unsafe fns over their cookie; struct devid header with unsafe id()/devid_cmp (DEVID_CMP); scsi_inquiry_pattern strings are &[u8]; _lto2b.._8btol const fns over slices; SID_ANSII_REV/SID_RESPONSE_FORMAT const fns; scsiconf.c's scsi_probe and scsi_detach (called by scsi_base.c) are unported! stubs here until scsiconf.c is ported; reference test of every define"
+notes = "M10a: license: Hannum BSD-4 plus the TRW notice; struct scsi_link/scsi_xfer/scsi_iopool/scsi_iohandler/scsi_xshandler/scsibus_softc are Cell-membered and reached as &'static (links, pools and softcs live until detach; a scsi_xfer is a scsi_xfer_pool item from scsi_xs_get to scsi_xs_put); xs->data/datalen private behind unsafe set_data (the issuer vouches for the buffer) with data()/datalen()/data_slice(); cmd is Cell<ScsiGeneric> with set_cmd/cmd_as/with_cmd views; link->device_softc is Option<NonNull<Device>>; interpret_sense a non-NULL fn set to scsi_interpret_sense by ScsiLink::new; scsi_iohandler has a private is_xsh flag guarding scsi_link_shutdown's cast (fn addresses are not unique in Rust); io is ScsiIo = NonNull<c_void>, io_get/io_put/handlers unsafe fns over their cookie; struct devid header with unsafe id()/devid_cmp (DEVID_CMP); scsi_inquiry_pattern strings are &[u8]; _lto2b.._8btol const fns over slices; SID_ANSII_REV/SID_RESPONSE_FORMAT const fns; shares scsiconf.rs with scsiconf.c (both $OpenBSD$ lines and both notices in one LICENSES block); reference test of every define"
 
 [[file]]
 c = "sys/scsi/scsi_base.c"
@@ -5460,3 +5460,39 @@ c = "sys/scsi/scsi_message.h"
 rust = "sys/scsi/scsi_message.rs"
 status = "todo"
 notes = "no licence text; unused in M10a, only parallel-SCSI adapter drivers use it"
+
+[[file]]
+c = "sys/scsi/scsiconf.c"
+rust = "sys/scsi/scsiconf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "97212446c8a6ce38b5226301cc1bf9d2e6d02e3a"
+deps = ["sys/scsi/scsiconf.h", "sys/scsi/scsi_all.h", "sys/scsi/scsi_base.c", "sys/sys/scsiio.h", "sys/kern/subr_autoconf.c", "sys/kern/kern_malloc.c", "sys/sys/device.h", "sys/sys/ioctl.h"]
+notes = "M10a: license: Hannum BSD-4 plus the TRW notice, kept whole beside scsiconf.h's in scsiconf.rs; all of it: SCSIBUS_CA/SCSIBUS_CD, scsiprint, scsibusmatch/attach (calls scsi_init, probes the bus)/activate/detach, scsibussubmatch (target/lun locators)/subprint, scsibusbioctl, scsi_activate*, scsi_probe/_bus/_target/_lun/_link, scsi_detach/_bus/_target/_lun/_link, scsi_get_link/add_link/remove_link, scsi_get_target_luns, scsi_strvis, scsi_print_link, scsi_inqmatch, scsi_quirk_patterns, scsi_devid/_pg83/_pg80/_wwn, devid_alloc/copy/free; replaces the scsi_probe/scsi_detach stubs of the header port; stubs and gaps: NBIO is 0 (dev/bio.c not ported): no bio_register/bio_unregister, scsibusbioctl ported but uncalled; NMPATH unused; SCSIDEBUG not configured (scsi_debug.h not ported): SC_DEBUG and #ifdef SCSIDEBUG blocks are comments; dma_alloc(9) (kern/dma_alloc.c) not ported: the INQUIRY/REPORT LUNS/VPD buffers (and pg80's M_TEMP id buffer) come from malloc(9) M_DEVBUF through the RAII DmaBuf; scsi_autoconf is a lowercase static AtomicI32 (the C name, beside SCSI_AUTOCONF); scsi_inqmatch takes &[T: AsRef<ScsiInquiryPattern>] and returns (Option<&T>, priority), long patterns compare on into the following fields as the C's bcmp; scsi_strvis stops at the end of dst; scsi_activate_link skips a link without a device; REPORT LUNS lists longer than the 256-entry buffer are clamped; scsi_detach_link is unsafe (frees the link); errno results are Result<(), Errno>; host tests (strvis, inqmatch over the quirk table, devid helpers, wwn, the whole probe/attach/detach against a fake adapter and a test ioconf, submatch locators)"
+
+[[file]]
+c = "sys/sys/scsiio.h"
+rust = "sys/sys/scsiio.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a217355934c2cc181c034ffdcb87877a26601d00"
+deps = ["sys/sys/ioccom.h"]
+notes = "M10a: license: none (only the $OpenBSD$/$NetBSD$ lines, kept; accepted by the user 2026-10-04); scsireq_t (Scsireq, the hole after cmdlen named _pad0, databuf a usize user address), struct scsi_addr (type is r#type), struct sbioc_device (sd_cookie a raw pointer as biovar's bio_cookie), all AbiPod with LP64 sizes and offsets asserted; SENSEBUFLEN, CMDBUFLEN, SCCMD_* (flags u64, retsts u8), SC_DB_*, TYPE_*, SCIOCCOMMAND/SCIOCDEBUG/SCIOCRESET/SCIOCIDENTIFY/SBIOCPROBE/SBIOCDETACH via _iowr/_iow/_io/_ior; host test of the ioctl numbers, test-ref of the defines"
+
+[[file]]
+c = "sys/sys/ataio.h"
+rust = "sys/sys/ataio.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fe79794876094b7657c14abe1a3e0cc48f2a89a2"
+deps = ["sys/sys/ioccom.h"]
+notes = "M10a: license: none (only the $OpenBSD$/$NetBSD$ lines, kept; every notice in the reference tree accepted by the user 2026-10-04); atareq_t (Atareq, holes named _pad0/_pad1, databuf a usize user address) and atagettrace_t (Atagettrace, buf a usize), AbiPod with LP64 sizes and offsets asserted; ATACMD_* (flags u64, retsts u8), ATAIOCCOMMAND, ATAIOGETTRACE; needed by scsi_ioctl.c; host test of the ioctl numbers, test-ref of the defines"
+
+[[file]]
+c = "sys/scsi/scsi_ioctl.c"
+rust = "sys/scsi/scsi_ioctl.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ae5370bccab79de3b0c8e69fdeadc2f5297766a0"
+deps = ["sys/scsi/scsiconf.h", "sys/scsi/scsi_all.h", "sys/scsi/scsi_base.c", "sys/scsi/scsiconf.c", "sys/sys/scsiio.h", "sys/sys/ataio.h", "sys/sys/ioctl.h", "sys/sys/fcntl.h"]
+notes = "M10a: license: Hannum BSD-4 plus HD Associates' 'Berkeley style copyright' line, both kept whole (accepted by the user 2026-10-04); all of it: scsi_readsafe_cmd (a const [bool; 256] built from the opcode list), scsi_ioc_cmd, scsi_ioc_ata_cmd (ATA PASS-THROUGH(12)), scsi_do_ioctl(link, cmd: u64, addr: &mut [u8], flag) -> Result; addr is d_ioctl's kernel copy as a byte slice, requests read and written back with ioctl_arg/ioctl_ret, the adapter's ioctl gets addr.as_mut_ptr(); dma_alloc(9) not ported: data buffers from malloc(9) via scsiconf.rs's DmaBuf, freed after scsi_xs_put; SCSIDEBUG not configured: SC_DEBUG/SC_DEBUG_SENSE are comments, SCIOCDEBUG sets SDEV_DB1..4 from the level's bits as in C; the DIAGNOSTIC impossible-command panic is behind the diagnostic feature; host tests (read-safe table, FWRITE checks, SCIOCIDENTIFY, SCIOCDEBUG, raw commands with status and sense, ATA pass-through, length checks) against a completing fake adapter"

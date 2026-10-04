@@ -10,4 +10,5 @@ pub mod scsi_all;
 pub mod scsi_base;
 pub mod scsi_debug;
 pub mod scsi_disk;
+pub mod scsi_ioctl;
 pub mod scsiconf;

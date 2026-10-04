@@ -6,6 +6,7 @@
 
 pub mod _time;
 pub mod acct;
+pub mod ataio;
 pub mod buf;
 pub mod clockintr;
 pub mod conf;
@@ -56,6 +57,7 @@ pub mod resource;
 pub mod resourcevar;
 pub mod rwlock;
 pub mod sched;
+pub mod scsiio;
 pub mod select;
 pub mod selinfo;
 pub mod siginfo;
