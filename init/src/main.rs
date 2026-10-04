@@ -956,7 +956,7 @@ extern "C" fn init_main(sp: *const usize) -> ! {
             status = 1;
         }
     } else {
-        status = 9;
+        status = 23;
     }
     if !fds() {
         status = 4;
