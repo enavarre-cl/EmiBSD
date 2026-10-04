@@ -4662,7 +4662,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8d31047ac94f65c25fff1431e92936deca4f2437"
 deps = ["sys/sys/mount.h", "sys/sys/vnode.h", "sys/kern/subr_pool.c"]
-notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries; M10c: tmpfs (feature tmpfs, option TMPFS commented out in GENERIC; typenum 19, MNT_LOCAL, sizeof(struct tmpfs_args)) joins vfsconflist[] after mfs, in vfs_init.c's order"
+notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries; M10c: msdos (feature msdosfs, typenum 4, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct msdosfs_args)) and tmpfs (feature tmpfs, option TMPFS commented out in GENERIC; typenum 19, MNT_LOCAL, sizeof(struct tmpfs_args)) join vfsconflist[] after mfs, in vfs_init.c's order"
 
 [[file]]
 c = "sys/kern/vfs_subr.c"
@@ -6061,16 +6061,16 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7948bc6b50ce18c5eca882c607c04cd57e274a13"
 deps = ["sys/msdosfs/denode.h", "sys/msdosfs/msdosfs_fat.c", "sys/crypto/siphash.c", "sys/kern/kern_subr.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_bio.c", "sys/kern/kern_malloc.c", "sys/uvm/uvm_vnode.c"]
-notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; msdosfs_init (dehashtbl/dehash/dehashkey as StaticCells set once, hashinit, arc4random_buf), msdosfs_dehash (SipHash24), msdosfs_hashget/hashins/hashrem (queue.h list; de_prev == NULL is de_hashed, cleared on removal as under DIAGNOSTIC), deget (returns the denode; a failing readep leaves the vnode locked as in C), deupdat, detrunc, deextend, reinsert, msdosfs_reclaim, msdosfs_inactive (prtactive reports behind feature diagnostic); MSDOSFS_DEBUG printfs left out; readep/readde and MSDOSFS_VOPS come from the msdosfs_lookup.rs/msdosfs_vnops.rs M10C-SHIMs until those ports"
+notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; msdosfs_init (dehashtbl/dehash/dehashkey as StaticCells set once, hashinit, arc4random_buf), msdosfs_dehash (SipHash24), msdosfs_hashget/hashins/hashrem (queue.h list; de_prev == NULL is de_hashed, cleared on removal as under DIAGNOSTIC), deget (returns the denode; a failing readep leaves the vnode locked as in C), deupdat, detrunc, deextend, reinsert, msdosfs_reclaim, msdosfs_inactive (prtactive reports behind feature diagnostic); MSDOSFS_DEBUG printfs left out; MSDOSFS_VOPS comes from the msdosfs_vnops.rs M10C-SHIM until that port"
 
 [[file]]
 c = "sys/msdosfs/msdosfs_lookup.c"
 rust = "sys/msdosfs/msdosfs_lookup.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d081a614951716853400c9154927b1019305c5e1"
-deps = ["sys/msdosfs/denode.h", "sys/msdosfs/msdosfsmount.h"]
-notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; M10C-SHIM: only readep and readde, as unported! stubs (ENOSYS) with their final signatures, until the port of this file"
+deps = ["sys/msdosfs/bpb.h", "sys/msdosfs/direntry.h", "sys/msdosfs/denode.h", "sys/msdosfs/msdosfsmount.h", "sys/msdosfs/fat.h", "sys/msdosfs/msdosfs_conv.c", "sys/msdosfs/msdosfs_fat.c", "sys/msdosfs/msdosfs_denode.c", "sys/sys/namei.h", "sys/kern/vfs_bio.c", "sys/kern/vfs_cache.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_vnops.c", "sys/kern/vfs_vops.c"]
+notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; msdosfs_lookup (its directory search up to the found/foundroot/notfound labels is the private msdosfs_lookup_search returning a Search enum, so host tests run it without deget), createde (depp an Option<&mut Option<&'static Denode>>, set to None when deget fails), dosdirempty (bool), doscheckpath (DIAGNOSTIC same-filesystem check behind feature diagnostic), readep/readde (return the busy buffer and the entry's offset in b_data; on error the buffer is already released), removede (checks for the block start before stepping back where the C steps back first), uniqdosname; struct direntry * as offsets into b_data viewed with Direntry/Winentry::at(_mut); MSDOSFS_DEBUG printfs left out; host tests over a FAT12 image on a fake disk (short/long/volume-label search, slots for new entries, readep incl. a short last root block, uniqdosname, createde/removede in one block, across a block boundary and growing a full directory, dosdirempty, msdosfs_lookup's paths that need no new denode); finding a name needs deget, which needs msdosfs_vnops.c's vop_lock"
 
 [[file]]
 c = "sys/msdosfs/msdosfs_vnops.c"
@@ -6080,3 +6080,12 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "54605addf2e0b6331426bac1c66e2f9b7f4b5e49"
 deps = ["sys/msdosfs/denode.h"]
 notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; M10C-SHIM: only MSDOSFS_VOPS, with vop_inactive and vop_reclaim (msdosfs_denode.c's) and every other slot None, until the port of this file"
+
+[[file]]
+c = "sys/msdosfs/msdosfs_vfsops.c"
+rust = "sys/msdosfs/msdosfs_vfsops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b0e12dbffd38568d4ca12dfff94df375d7532d39"
+deps = ["sys/msdosfs/bpb.h", "sys/msdosfs/bootsect.h", "sys/msdosfs/direntry.h", "sys/msdosfs/denode.h", "sys/msdosfs/msdosfsmount.h", "sys/msdosfs/fat.h", "sys/msdosfs/msdosfs_denode.c", "sys/msdosfs/msdosfs_fat.c", "sys/sys/mount.h", "sys/sys/dkio.h", "sys/kern/vfs_subr.c", "sys/kern/vfs_bio.c", "sys/kern/vfs_lookup.c", "sys/kern/vfs_vnops.c", "sys/kern/vfs_vops.c", "sys/kern/subr_disk.c", "sys/kern/kern_malloc.c"]
+notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; MSDOSFS_VFSOPS (vfs_quotactl/vfs_vget closures answering EOPNOTSUPP, vfs_sysctl None, vfs_init msdosfs_denode.rs's msdosfs_init), msdosfs_mount (args via MsdosfsArgs::from_bytes, own Nameidata via ndinit as ffs_mount, no args on a new mount -> EINVAL, the args' bytes copied into mnt_stat.mount_info), msdosfs_mountfs (BPB parsing, FAT12/16/32, FSInfo check, pm_inusemap mallocarray'd after pm_maxcluster is final, ffs(x)-1 as trailing_zeros), msdosfs_start, msdosfs_unmount, msdosfs_root, msdosfs_statfs, msdosfs_sync_vnode/msdosfs_sync (struct msdosfs_sync_arg as MsdosfsSyncArgs, a closure for vfs_mount_foreach_vnode, VNON checked before VTODE), msdosfs_fhtovp/msdosfs_vptofh (Defid), msdosfs_check_export; pm_export/struct netcred (NFSSERVER) not kept: export updates get vfs_export's ENOTSUP, check_export answers EACCES (unported! past the NULL lookup, as ufs_check_export); MSDOSFS_DEBUG printfs/vprint left out; host tests (mkfat image builder, FAT12/16/32 geometry, FSInfo and active FAT, bad boot sectors, statfs, sync, dounmount)"
