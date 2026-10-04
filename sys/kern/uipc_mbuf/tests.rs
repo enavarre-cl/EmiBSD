@@ -149,10 +149,13 @@ fn cluster_pools_have_the_c_names_and_sizes() {
     assert!(ptr::eq(m_clpool(9000).expect("a pool"), &MCLPOOLS[4]));
     assert!(m_clpool(64 * 1024 + 1).is_none());
     assert_eq!(nmbclust_update(0), Err(Errno::ERANGE));
-    assert_eq!(nmbclust_update(1024), Ok(()));
+    // Raise the limit rather than lower it: tests running at the same time allocate mbufs,
+    // and a limit below what they hold would fail their allocations.
+    let raised = 2 * crate::sys::param::NMBCLUSTERS as i64;
+    assert_eq!(nmbclust_update(raised), Ok(()));
     assert_eq!(
         MBUF_MEM_LIMIT.load(Ordering::Relaxed),
-        1024 * MCLBYTES as u64
+        raised as u64 * MCLBYTES as u64
     );
     nmbclust_update(crate::sys::param::NMBCLUSTERS as i64).expect("the default limit");
 }
