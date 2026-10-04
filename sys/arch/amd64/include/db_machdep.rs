@@ -34,11 +34,11 @@
 //!
 //! Status: `wip`. Milestone M4 ports `db_regs_t`, `PC_REGS`/`SET_PC_REGS`, the breakpoint
 //! instruction, `FIXUP_PC_AFTER_BREAK`, the single-step bit helpers and the
-//! `IS_BREAKPOINT_TRAP`/`IS_WATCHPOINT_TRAP` tests. `db_expr_t`, the `inst_*` classifiers
-//! (`db_run.c`), the `DDB_STATE_*` values and `DB_MACHINE_COMMANDS` come with the command
-//! loop and the multiprocessor entry. The entry points this header declares (`db_ktrap`,
-//! `db_machine_init`, ...) live in `amd64/db_interface.rs`; what `ddb/` itself needs is the
-//! `machine::DbMachdep` contract.
+//! `IS_BREAKPOINT_TRAP`/`IS_WATCHPOINT_TRAP` tests; M11c `db_expr_t` and the `inst_*`
+//! classifiers (`db_run.c`). `DB_MACHINE_COMMANDS` is defined: the table is
+//! `amd64/db_interface.rs`'s. The `DDB_STATE_*` values come with the multiprocessor entry.
+//! The entry points this header declares (`db_ktrap`, `db_machine_init`, ...) live in
+//! `amd64/db_interface.rs`; what `ddb/` itself needs is the `machine::DbMachdep` contract.
 
 use crate::arch::amd64::include::frame::Trapframe;
 use crate::arch::amd64::include::psl::PSL_T;
@@ -107,6 +107,30 @@ pub const fn is_watchpoint_trap(type_: i32, code: i32) -> bool {
     type_ == T_TRCTRAP && (code & 15) != 0
 }
 
+/// `I_CALL`: `call rel32`.
+pub const I_CALL: i64 = 0xe8;
+/// `I_CALLI`: the `0xff` group, a call through a register or memory with `/2`.
+pub const I_CALLI: i64 = 0xff;
+/// `I_RET`: `ret`.
+pub const I_RET: i64 = 0xc3;
+/// `I_IRET`: `iret`.
+pub const I_IRET: i64 = 0xcf;
+
+/// `inst_trap_return(ins)`.
+pub const fn inst_trap_return(ins: DbExpr) -> bool {
+    (ins & 0xff) == I_IRET
+}
+
+/// `inst_return(ins)`.
+pub const fn inst_return(ins: DbExpr) -> bool {
+    (ins & 0xff) == I_RET
+}
+
+/// `inst_call(ins)`: `call rel32`, or `0xff /2` (the ModRM reg field is 2).
+pub const fn inst_call(ins: DbExpr) -> bool {
+    (ins & 0xff) == I_CALL || ((ins & 0xff) == I_CALLI && (ins & 0x3800) == 0x1000)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +153,7 @@ mod tests {
         assert!(!is_breakpoint_trap(T_TRCTRAP, 0));
         assert!(is_watchpoint_trap(T_TRCTRAP, 2));
         assert!(!is_watchpoint_trap(T_TRCTRAP, 0x4000));
+        assert!(inst_call(0xe8) && inst_call(0x10ff) && !inst_call(0x20ff));
+        assert!(inst_return(0x12c3) && inst_trap_return(0xcf) && !inst_return(0xcf));
     }
 }

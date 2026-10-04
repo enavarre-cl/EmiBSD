@@ -54,6 +54,7 @@ use crate::arch::arm64::include::armreg::{
 };
 use crate::arch::arm64::include::db_machdep::DbRegs;
 use crate::db_reg_var;
+use crate::ddb::db_command::DbCommand;
 use crate::ddb::db_trap::db_trap;
 use crate::ddb::db_variables::DbVariable;
 use crate::dev::cons::cnpollc;
@@ -161,3 +162,13 @@ pub static DB_REGS: [DbVariable; 35] = [
     db_reg_var!(DDB_REGS, "elr", tf_elr),
     db_reg_var!(DDB_REGS, "lr", tf_lr),
 ];
+
+/// `db_machine_command_table[]`: the `machine` commands. All of arm64's are
+/// `MULTIPROCESSOR` ones (`cpuinfo`, `startcpu`, `stopcpu`, `ddbcpu`), so the table is empty
+/// in this kernel.
+pub const DB_MACHINE_COMMAND_TABLE: &[DbCommand] = &[];
+
+/// `db_machine_init`: machine-dependent debugger set-up.
+pub fn db_machine_init() {
+    // MULTIPROCESSOR: ci_ddb_paused = CI_DDB_RUNNING for every CPU (the coordinator).
+}

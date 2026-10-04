@@ -35,10 +35,11 @@
 //! Upstream: sys/arch/amd64/amd64/db_interface.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M4 ports `ddb_regs`, `db_printtrap`, `db_ktrap` and `db_enter`
-//! (ddb-lite: the trap frame is saved and `db_trap` prints where the kernel stopped). The
-//! register table `db_regs[]`, `db_read_bytes`/`db_write_bytes`, `db_machine_init`, the
-//! machine commands and the multiprocessor entry/exit (`db_enter_ddb`, `db_startcpu`,
-//! `db_stopcpu`, `x86_ipi_db`) come with the command loop and M5.
+//! (ddb-lite: the trap frame is saved and `db_trap` prints where the kernel stopped); M11c
+//! `db_sysregs_cmd`, the machine command table and `db_machine_init` (the register table
+//! `db_regs[]` is `db_trace.rs`'s, as in C). `db_read_bytes`/`db_write_bytes` and the
+//! multiprocessor entry/exit (`db_enter_ddb`, `db_startcpu`, `db_stopcpu`, `x86_ipi_db`)
+//! come with M11c's multiprocessor half.
 //!
 //! ## Deviations
 //! - `db_ktrap` has no `db_recover` (`db_command.c`'s longjmp target) and no `splhigh`
@@ -50,9 +51,12 @@
 use libkern::StaticCell;
 
 use crate::arch::amd64::amd64::trap::{TRAP_TYPE, TRAP_TYPES};
-use crate::arch::amd64::include::cpufunc::breakpoint;
-use crate::arch::amd64::include::db_machdep::DbRegs;
+use crate::arch::amd64::include::cpufunc::{breakpoint, rcr0, rcr2, rcr3, rcr4, rdmsr};
+use crate::arch::amd64::include::db_machdep::{DbExpr, DbRegs};
+use crate::arch::amd64::include::segments::RegionDescriptor;
+use crate::arch::amd64::include::specialreg::{MSR_GSBASE, MSR_KERNELGSBASE};
 use crate::arch::amd64::include::trap::{T_BPTFLT, T_NMI, T_TRCTRAP};
+use crate::ddb::db_command::{DbCommand, DbResult};
 use crate::ddb::db_trap::db_trap;
 use crate::dev::cons::cnpollc;
 use crate::kern::init_main::DB_ACTIVE;
@@ -143,4 +147,70 @@ pub fn db_ktrap(type_: i32, code: i32, regs: &mut DbRegs) -> bool {
 /// `db_ktrap`.
 pub fn db_enter() {
     breakpoint();
+}
+
+/// `db_sysregs_cmd`: `machine sysregs`, prints the descriptor table registers, the control
+/// registers and the GS bases.
+pub fn db_sysregs_cmd(_addr: DbExpr, _have_addr: bool, _count: DbExpr, _modif: &[u8]) -> DbResult {
+    let mut idtr = RegionDescriptor {
+        rd_limit: 0,
+        rd_base: 0,
+    };
+    let mut gdtr = idtr;
+    let ldtr: u16;
+    let tr: u16;
+
+    // SAFETY: sidt stores the 10-byte IDT register into `idtr`, a packed region descriptor of
+    // exactly that layout; it has no other effect.
+    unsafe {
+        core::arch::asm!("sidt [{}]", in(reg) &raw mut idtr, options(nostack, preserves_flags))
+    };
+    let (base, limit) = (idtr.rd_base, idtr.rd_limit);
+    db_printf(format_args!("idtr:   {base:#010x}/{limit:04x}\n"));
+
+    // SAFETY: as above, for the GDT register.
+    unsafe {
+        core::arch::asm!("sgdt [{}]", in(reg) &raw mut gdtr, options(nostack, preserves_flags))
+    };
+    let (base, limit) = (gdtr.rd_base, gdtr.rd_limit);
+    db_printf(format_args!("gdtr:   {base:#010x}/{limit:04x}\n"));
+
+    // SAFETY: sldt reads the LDT selector into a register; no memory, no flags.
+    unsafe {
+        core::arch::asm!("sldt {0:x}", out(reg) ldtr, options(nomem, nostack, preserves_flags))
+    };
+    db_printf(format_args!("ldtr:   {ldtr:#06x}\n"));
+
+    // SAFETY: str reads the task register's selector into a register; no memory, no flags.
+    unsafe { core::arch::asm!("str {0:x}", out(reg) tr, options(nomem, nostack, preserves_flags)) };
+    db_printf(format_args!("tr:     {tr:#06x}\n"));
+
+    db_printf(format_args!("cr0:    {:#018x}\n", rcr0()));
+    db_printf(format_args!("cr2:    {:#018x}\n", rcr2()));
+    db_printf(format_args!("cr3:    {:#018x}\n", rcr3()));
+    db_printf(format_args!("cr4:    {:#018x}\n", rcr4()));
+
+    // SAFETY: every amd64 CPU has the GS base MSRs (long mode requires them).
+    let gsb = unsafe { rdmsr(MSR_GSBASE) };
+    db_printf(format_args!("gsb:    {gsb:#018x}\n"));
+
+    // SAFETY: as above.
+    let gsb = unsafe { rdmsr(MSR_KERNELGSBASE) };
+    db_printf(format_args!("kgsb:   {gsb:#018x}\n"));
+    Ok(())
+}
+
+/// `db_machine_command_table[]`: the `machine` commands. The `acpi` commands need
+/// `NACPI > 0`, which this kernel does not configure, so they are left out as the C's `#if`
+/// does.
+pub const DB_MACHINE_COMMAND_TABLE: &[DbCommand] = &[DbCommand {
+    name: "sysregs",
+    fcn: Some(db_sysregs_cmd),
+    flag: 0,
+    more: None,
+}];
+
+/// `db_machine_init`: machine-dependent debugger set-up.
+pub fn db_machine_init() {
+    // MULTIPROCESSOR: ci_ddb_paused = CI_DDB_RUNNING for every CPU (the coordinator).
 }

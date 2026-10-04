@@ -24,22 +24,23 @@
 //! Upstream: sys/nfs/nfs_debug.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `db_show_all_nfsreqs` and `db_show_all_nfsnodes` take `db_expr_t` as `i64` and the
-//!   modifier string as bytes; they print with `db_printf` as the C does. The printers take
+//! - `db_show_all_nfsreqs` and `db_show_all_nfsnodes` are `ddb` commands
+//!   (`ddb::db_command::DbCmdFn`: `db_expr_t` is `DbExpr`, the modifier string bytes, the
+//!   result a `DbResult`); they print with `db_printf` as the C does. The printers take
 //!   the printer as a `fn(fmt::Arguments) -> usize` (`db_printf`'s type) and, being the
 //!   `func` of `pool_walk`, an item pointer: `nfs_request_print`/`nfs_node_print` read it as a
 //!   `struct nfsreq`/`struct nfsnode`.
-//! - `ddb/db_command.c` is not ported (there is no command table), so `show all nfsreqs`,
-//!   `show all nfsnodes` and the `nfsreq`/`nfsnode` commands (`db_nfsreq_print_cmd`,
-//!   `db_nfsnode_print_cmd`, which are `db_command.c`'s) are not reachable from a prompt: the
-//!   functions here are what its table names. `pool_walk` is `subr_pool.rs`'s, added with
-//!   this file.
+//! - `pool_walk` is `subr_pool.rs`'s, added with this file. `show all nfsreqs`,
+//!   `show all nfsnodes`, `show nfsreq` and `show nfsnode` reach these from the `ddb>`
+//!   prompt (`ddb/db_command.rs`, M11c).
 
 use core::fmt;
 use core::ptr;
 
+use crate::ddb::db_command::DbResult;
 use crate::kern::subr_pool::pool_walk;
 use crate::kern::subr_prf::db_printf;
+use crate::machine::db_machdep::DbExpr;
 use crate::nfs::nfs::{NFS_NODE_POOL, NfsReq};
 use crate::nfs::nfs_subs::NFSREQPL;
 use crate::nfs::nfsnode::NfsNode;
@@ -49,10 +50,11 @@ pub type DbPrintf = fn(fmt::Arguments<'_>) -> usize;
 
 /// `db_show_all_nfsreqs(expr, haddr, count, modif)`: `show all nfsreqs[/f]`: every request in
 /// the `nfsreqpl` pool, in full with `/f`.
-pub fn db_show_all_nfsreqs(_expr: i64, _haddr: i32, _count: i64, modif: &[u8]) {
+pub fn db_show_all_nfsreqs(_expr: DbExpr, _haddr: bool, _count: DbExpr, modif: &[u8]) -> DbResult {
     let full = modif.first() == Some(&b'f');
 
     pool_walk(&NFSREQPL, full, db_printf, nfs_request_print);
+    Ok(())
 }
 
 /// `nfs_request_print(v, full, pr)`: prints the `struct nfsreq` at `v`.
@@ -87,10 +89,11 @@ pub fn nfs_request_print(v: *const u8, full: bool, pr: DbPrintf) {
 
 /// `db_show_all_nfsnodes(expr, haddr, count, modif)`: `show all nfsnodes[/f]`: every node in
 /// the `nfs_node_pool` pool, in full with `/f`.
-pub fn db_show_all_nfsnodes(_expr: i64, _haddr: i32, _count: i64, modif: &[u8]) {
+pub fn db_show_all_nfsnodes(_expr: DbExpr, _haddr: bool, _count: DbExpr, modif: &[u8]) -> DbResult {
     let full = modif.first() == Some(&b'f');
 
     pool_walk(&NFS_NODE_POOL, full, db_printf, nfs_node_print);
+    Ok(())
 }
 
 /// `nfs_node_print(v, full, pr)`: prints the `struct nfsnode` at `v`.

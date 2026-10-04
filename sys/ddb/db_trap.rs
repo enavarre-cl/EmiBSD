@@ -35,24 +35,31 @@
 //!
 //! Upstream: sys/ddb/db_trap.c @ 3ce1f3f79392
 //!
-//! Status: `wip` (ddb-lite). The per-arch `db_ktrap` lands here with the trap frame saved in
-//! `ddb_regs`; `db_trap` says where the kernel stopped, prints the stack trace the user would
-//! ask for and returns, which continues the kernel as the `c` command would.
+//! The per-arch `db_ktrap` lands here with the trap frame saved in `ddb_regs`. `db_trap` asks
+//! `db_stop_at_pc` whether to stop (a run command may want to go on silently), says where the
+//! kernel stopped, prints the stack trace when the kernel panicked, and runs the command
+//! loop; `db_restart_at_pc` then arms the run mode before the trap handler resumes.
 //!
 //! ## Deviations
-//! - `db_stop_at_pc`/`db_restart_at_pc` (`db_run.c`: breakpoints, watchpoints, single
-//!   stepping, `db_inst_count`) are not here: the kernel always stops, and a breakpoint trap
-//!   that is not one of ddb's own (there are none) is reported as "Stopped at", as the C
-//!   does after `db_find_breakpoint` fails. `db_command_loop` (`db_command.c`) is reported as
-//!   unported; the `trace` the C's panic path runs by itself is printed in every case.
-//! - `db_print_loc_and_inst` (`db_sym.c`, the symbol table and the disassembler) prints the
-//!   address. `db_show_all_procs` waits for processes (M5); the "ddb.html" notice, which asks
-//!   for an OpenBSD bug report, is not printed by this kernel.
+//! - `db_print_loc_and_inst` (`db_examine.c`, the symbol table and the disassembler) prints
+//!   the address (`db_command.rs`'s stand-in). `db_show_all_procs(0, 0, 0, "o")`, which lists
+//!   the threads on a CPU after a panic, is `kern_proc.c`'s and a visible stub.
+//! - The "ddb.html" notice, which asks for an OpenBSD bug report, is not printed by this
+//!   kernel; `ddb_msg_shown` is still set, so the thread list prints once.
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
+use crate::ddb::db_command::{DB_DOT, db_command_loop, db_print_loc_and_inst, db_show_all_procs};
 use crate::ddb::db_output::db_print_position;
+use crate::ddb::db_run::{DB_INST_COUNT, db_restart_at_pc, db_stop_at_pc};
 use crate::kern::subr_prf::{db_printf, panicstr};
-use crate::machine::db_machdep::{db_stack_trace_print, pc_regs};
-use crate::unported;
+use crate::machine::db_machdep::{
+    db_stack_trace_print, is_breakpoint_trap, is_watchpoint_trap, pc_regs,
+};
+
+/// `ddb_msg_shown`: the thread list (and, in OpenBSD, the bug-report notice) was printed
+/// after a panic.
+static DDB_MSG_SHOWN: AtomicBool = AtomicBool::new(false);
 
 /// `db_trap`: the debugger's entry from a trap of `type_` with `code`, with the registers in
 /// `ddb_regs`.
@@ -61,32 +68,42 @@ pub fn db_trap(type_: i32, code: i32) {
         db_printf(args);
     }
 
-    // bkpt = IS_BREAKPOINT_TRAP(type, code); watchpt = IS_WATCHPOINT_TRAP(type, code):
-    // db_stop_at_pc clears `bkpt` when the breakpoint is not one of ddb's (see the module's
-    // deviations), and ddb sets none, so the stop is always reported as "Stopped at".
-    let _ = (type_, code);
-    let bkpt = false;
-    let watchpt = false;
+    let mut bkpt = is_breakpoint_trap(type_, code);
+    let watchpt = is_watchpoint_trap(type_, code);
 
-    // if (db_stop_at_pc(&ddb_regs, &bkpt)): always.
-    if bkpt {
-        db_printf(format_args!("Breakpoint at\t"));
-    } else if watchpt {
-        db_printf(format_args!("Watchpoint at\t"));
-    } else {
-        db_printf(format_args!("Stopped at\t"));
+    if db_stop_at_pc(&mut bkpt) {
+        let inst_count = DB_INST_COUNT.load(Ordering::Relaxed);
+        if inst_count != 0 {
+            db_printf(format_args!("After {inst_count} instructions\n"));
+        }
+        if bkpt {
+            db_printf(format_args!("Breakpoint at\t"));
+        } else if watchpt {
+            db_printf(format_args!("Watchpoint at\t"));
+        } else {
+            db_printf(format_args!("Stopped at\t"));
+        }
+        let db_dot = pc_regs();
+        DB_DOT.store(db_dot, Ordering::Relaxed);
+        db_print_loc_and_inst(db_dot);
+
+        if panicstr() {
+            if !DDB_MSG_SHOWN.load(Ordering::Relaxed) {
+                // show on-proc threads
+                let _ = db_show_all_procs(0, false, 0, b"o");
+            }
+            // then the backtrace
+            db_stack_trace_print(db_dot, false, 14 /* arbitrary */, b"", pr);
+
+            if db_print_position() != 0 {
+                db_printf(format_args!("\n"));
+            }
+            // The ddb.html notice: not printed (see the deviations).
+            DDB_MSG_SHOWN.store(true, Ordering::Relaxed);
+        }
+
+        db_command_loop();
     }
-    let db_dot = pc_regs();
-    // db_print_loc_and_inst(db_dot)
-    db_printf(format_args!("{db_dot:#x}\n"));
-    if panicstr() {
-        // show on-proc threads: db_show_all_procs(0, 0, 0, "o") (M5)
-    }
-    // then the backtrace (the C prints it when panicstr != NULL; ddb-lite always)
-    db_stack_trace_print(db_dot, false, 14 /* arbitrary */, b"", pr);
-    if db_print_position() != 0 {
-        db_printf(format_args!("\n"));
-    }
-    let _ = unported!("db_command_loop (ddb-lite continues as `c` would)");
-    // db_restart_at_pc(&ddb_regs, watchpt): db_run.c.
+
+    db_restart_at_pc(watchpt);
 }

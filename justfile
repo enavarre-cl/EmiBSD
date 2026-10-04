@@ -61,7 +61,12 @@ run-arm64: image-arm64
 # calls failing as they must with no root file system yet (`main` says it cannot mount root and
 # `check_console` that /dev/console does not exist) and making the console tty its controlling
 # terminal (`init: tty ok`); `boot -d`, which
-# enters ddb-lite through a breakpoint trap, prints where it stopped and continues (status 33);
+# enters ddb(4) through a breakpoint trap, prints where it stopped and gives the `ddb> ` prompt,
+# where the smoke types an empty line (arm64 reads the first line typed at that early stop as
+# newlines: the PL011 is still as the firmware left it), `help` (the command list), `machine`
+# (amd64 lists `sysregs`; arm64's table holds only MULTIPROCESSOR commands), `set $lines = 0`
+# (no `--db_more--` pager), `show registers`, `trace` and `continue`, after which the boot goes
+# on (status 33);
 # `selftest=trap`, a deliberate bad access that must print OpenBSD's fatal trap message and
 # panic with a stack trace (status 35); and `selftest=uart`, which opens the console's tty through
 # the device switch, gets a line typed on the serial console through the line discipline and
@@ -110,7 +115,12 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "-d" \
-        --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
+        --send-after "ddb> " --send '\n' --send-after "ddb> " --send 'help\n' \
+        --send-after "ddb> " --send 'machine\n' --send-after "ddb> " --send 'set $lines = 0\n' \
+        --send-after "ddb> " --send 'show registers\n' --send-after "ddb> " --send 'trace\n' \
+        --send-after "ddb> " --send 'continue\n' \
+        --expect "Stopped at" --expect "hangman" --expect " at 0x" --expect "sysregs" --expect "rflags" \
+        --expect "selftest: malloc/pool stress ok"
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=trap" --status 35 \
         --expect "fatal page fault in supervisor mode" --expect "trap type 6 code" \
         --expect "panic: trap type 6, code=" --expect "Starting stack trace..." \
@@ -153,7 +163,12 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "-d" \
-        --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
+        --send-after "ddb> " --send '\n' --send-after "ddb> " --send 'help\n' \
+        --send-after "ddb> " --send 'machine\n' --send-after "ddb> " --send 'set $lines = 0\n' \
+        --send-after "ddb> " --send 'show registers\n' --send-after "ddb> " --send 'trace\n' \
+        --send-after "ddb> " --send 'continue\n' \
+        --expect "Stopped at" --expect "hangman" --expect " at 0x" --expect "spsr" \
+        --expect "selftest: malloc/pool stress ok"
     cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=trap" --status 35 \
         --expect "panic: uvm_fault failed:" --expect "Starting stack trace..." \
         --expect "End of stack trace." --expect "The operating system has halted."

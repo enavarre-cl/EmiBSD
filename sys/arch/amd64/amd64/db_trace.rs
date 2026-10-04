@@ -256,7 +256,9 @@ pub fn db_stack_trace_print(addr: usize, have_addr: bool, count: usize, modif: &
         count -= 1;
     }
     let _ = lastframe;
+    // `%d` of the C's signed counter: `trace` without a count starts it at -1.
     pr(format_args!(
-        "end trace frame: {frame:#x}, count: {count}\n"
+        "end trace frame: {frame:#x}, count: {}\n",
+        count as i32
     ));
 }

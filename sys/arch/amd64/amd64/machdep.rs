@@ -180,7 +180,7 @@ use crate::kprintf;
 use crate::machine::bootinfo::{BootInfo, MemKind};
 use crate::machine::copy::{copyin, copyin_obj, copyout, copyout_obj};
 use crate::machine::cpu::curproc;
-use crate::machine::db_machdep::db_enter;
+use crate::machine::db_machdep::{db_enter, db_machine_init};
 use crate::machine::{Cpu, Machine};
 use crate::sys::errno::Errno;
 use crate::sys::exec::{ExecPackage, PsStrings};
@@ -488,8 +488,9 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
     // boot(8) booted from, copied into `sr_bootuuid`/`sr_bootkey` under NSOFTRAID):
     // replaced-by-limine. Limine hands no softraid key over, so `dev/softraid.rs`'s
     // `SR_BOOTUUID`/`SR_BOOTKEY` stay zero and a crypto volume is unlocked with bioctl(8).
-    // The ACPI/MP tables, the memory-map and -b/-c handling of the bootinfo: M5;
-    // db_machine_init() and ddb_init() with the command loop.
+    // The ACPI/MP tables, the memory-map and -b/-c handling of the bootinfo: M5.
+    db_machine_init();
+    // ddb_init() (db_sym.c, db_elf.c: the kernel's symbol table) is not ported.
     if BOOTHOWTO.load(Ordering::Relaxed) & RB_KDB != 0 {
         db_enter();
     }

@@ -711,7 +711,7 @@ rust = "sys/ddb/db_command.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "dee1538a0266c3dc45b8fd4d19bda2e3fba4bc87"
-notes = "license: Mach notice, kept whole; M11c: struct db_command and CS_* (with the command loop)"
+notes = "license: Mach notice, kept whole; M11c: struct db_command (DbCommand: fcn and more are Options, tables are &'static [DbCommand] without the NULL entry), DbCmdFn, CS_OWN/CS_MORE/CS_SET_DOT, db_dot/db_last_addr/db_prev/db_next (AtomicUsize)"
 
 [[file]]
 c = "sys/ddb/db_command.c"
@@ -720,7 +720,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a0aeb5e33e22ec3fac424372352e0fc015fd959a"
 deps = ["sys/ddb/db_command.h", "sys/ddb/db_lex.c"]
-notes = "license: Mach notice, kept whole; M11c: db_error returns DbError (no db_recover longjmp) and db_skip_to_eol so far"
+notes = "license: Mach notice, kept whole; M11c: the whole file: db_command_loop (ddb> / ddb{N}> with multiprocessor), db_command, db_cmd_search (with the C's found-ambiguous-found quirk), db_cmd_list, db_help_cmd, db_error (returns DbError: no db_recover longjmp, DB_RECOVER says a loop runs), db_skip_to_eol, db_fncall, the boot commands, db_dmesg_cmd, db_stack_trace_cmd, db_show_panic_cmd (one panic buffer), db_show_regs, db_write_cmd, every table (machine = the machine's const table); wired printers: mbuf, socket, route, all routes, tdb, all tdbs, uvmexp, nfsreq/nfsnode/all nfsreqs/all nfsnodes; visible stubs (db_stub!): db_examine.c, db_break.c, db_watch.c, db_ctf.c, db_hangman.c, kern_proc.c (kill, stop, ps, proc_printit), kern_timeout.c, kern_clockintr.c, subr_pool.c printers, vfs_subr.c printers, uvm printers, malloc, extents, bcstats; stand-ins for db_get_value/db_put_value (db_access.c: fail the command), db_printsym and db_print_loc_and_inst (print the address), db_find_xtrn_sym_and_offset (no symbol); WITNESS not configured"
 
 [[file]]
 c = "sys/ddb/db_variables.h"
@@ -747,6 +747,23 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "bd9099ae352401495a9b3322906815e2efaac11d"
 deps = ["sys/ddb/db_lex.c", "sys/ddb/db_variables.c"]
 notes = "license: Mach notice, kept whole; M11c: the whole grammar, each rule DbResult<Option<DbExpr>>; visible stubs: db_symbol_by_name (db_sym.c: Symbol not found) and db_get_value for '*' (db_access.c); arithmetic wraps, over-wide shifts give 0"
+
+[[file]]
+c = "sys/ddb/db_run.h"
+rust = "sys/ddb/db_run.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e3f50336bfff40bd0bffa63552588eaba9553f0b"
+notes = "license: Mach notice, kept whole; M11c: the db_run.c prototypes and db_inst_count; db_set/clear_single_step are the machine's (header macros), SOFTWARE_SSTEP is not defined on amd64/arm64"
+
+[[file]]
+c = "sys/ddb/db_run.c"
+rust = "sys/ddb/db_run.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "351f7f60dac12c5f5dce2654c03c56d336ef18ee"
+deps = ["sys/ddb/db_run.h", "sys/ddb/db_command.c"]
+notes = "license: Mach notice, kept whole; M11c: db_stop_at_pc, db_restart_at_pc, db_single_step, db_single_step_cmd, db_trace_until_call_cmd, db_trace_until_matching_cmd, db_continue_cmd; regs is always ddb_regs (machine accessors); visible stubs: db_find/set/clear_breakpoints (db_break.c) and db_set/clear_watchpoints (db_watch.c) with an empty table; STEP_RETURN/STEP_CALLT stop at once (db_get_value, db_access.c, is a stub); SOFTWARE_SSTEP not compiled (not defined on amd64/arm64)"
 
 # amd64: what the console, delay(9), boot(9) and the trace need
 
@@ -789,7 +806,7 @@ rust = "sys/arch/amd64/amd64/db_interface.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "f796d11401880e61efa73b9b9d9df31c3f4580c3"
-notes = "M2: db_enter; M4: ddb_regs (StaticCell), db_printtrap, db_ktrap (no db_recover, splhigh reported, db_active is a bool), db_enter = breakpoint() (int3); db_regs[], db_read_bytes/db_write_bytes, db_machine_init, the machine commands and the MP entry/exit (db_enter_ddb, db_startcpu, db_stopcpu, x86_ipi_db) come with the command loop and M5"
+notes = "M2: db_enter; M4: ddb_regs (StaticCell), db_printtrap, db_ktrap (no db_recover, splhigh reported, db_active is a bool), db_enter = breakpoint() (int3); M11c: db_sysregs_cmd, db_machine_command_table (sysregs; the acpi commands need NACPI > 0, not configured) as a const, db_machine_init (its body is MULTIPROCESSOR only); db_read_bytes/db_write_bytes and the MP entry/exit (db_enter_ddb, db_startcpu, db_stopcpu, x86_ipi_db, the MP commands) come with M11c's MP half"
 
 [[file]]
 c = "sys/arch/amd64/amd64/db_trace.c"
@@ -798,7 +815,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "517870306f9fd9faef84b8ad23110d2cd6e36f0b"
 deps = ["sys/arch/amd64/include/frame.h", "sys/arch/amd64/include/vmparam.h"]
-notes = "M2: db_stack_trace_print from a given frame (db_stack_dump); M4: the trace from ddb_regs with db_reg_args[] and the breakpoint-before-the-frame case; no symbols (addresses printed, six words below the frame as arguments, xtask symbolize offline), db_get_value is an unaligned plain read, SMAP not touched; db_regs[], /t (tfind), stacktrace_save_at/utrace are M5"
+notes = "M2: db_stack_trace_print from a given frame (db_stack_dump); M4: the trace from ddb_regs with db_reg_args[] and the breakpoint-before-the-frame case; M11c: db_regs[] (db_reg_var! entries over DDB_REGS); no symbols (addresses printed, six words below the frame as arguments, xtask symbolize offline), db_get_value is an unaligned plain read, SMAP not touched; /t (tfind), stacktrace_save_at/utrace are M5"
 
 [[file]]
 c = "sys/arch/amd64/amd64/machdep.c"
@@ -878,7 +895,7 @@ rust = "sys/arch/arm64/arm64/db_interface.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "3b8f595b44a2ffedd13b3e9af69d1e6cac099227"
-notes = "M2: db_enter; M4: ddb_regs (StaticCell), db_ktrap (no db_recover, splhigh reported, db_active is a bool, the MDSCR single-step handling kept), db_enter = brk #0xf000; db_regs[], db_validate_address, db_read_bytes/db_write_bytes, db_machine_init, the machine commands and the MP entry/exit come with the command loop and M5"
+notes = "M2: db_enter; M4: ddb_regs (StaticCell), db_ktrap (no db_recover, splhigh reported, db_active is a bool, the MDSCR single-step handling kept), db_enter = brk #0xf000; M11c: db_regs[] (db_reg_var! entries; x30 is tf_lr, the C's tf_x[30] is past the array), db_machine_command_table (empty: all of arm64's are MULTIPROCESSOR), db_machine_init (MULTIPROCESSOR body); db_validate_address, db_read_bytes/db_write_bytes and the MP entry/exit come with M11c's MP half"
 
 [[file]]
 c = "sys/arch/arm64/arm64/db_trace.c"
@@ -1520,7 +1537,7 @@ rust = "sys/arch/amd64/include/db_machdep.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7d3561cc768090df73f836ecfd311cb00d647cdc"
-notes = "M4: db_regs_t, PC_REGS/SET_PC_REGS, BKPT_*, SSF_*, FIXUP_PC_AFTER_BREAK, db_clear/set_single_step, IS_BREAKPOINT_TRAP/IS_WATCHPOINT_TRAP; db_expr_t, the inst_* classifiers, DDB_STATE_*, DB_MACHINE_COMMANDS come with db_run.c/db_command.c; the ddb-wide contract is sys/machine/db_machdep.rs"
+notes = "M4: db_regs_t, PC_REGS/SET_PC_REGS, BKPT_*, SSF_*, FIXUP_PC_AFTER_BREAK, db_clear/set_single_step, IS_BREAKPOINT_TRAP/IS_WATCHPOINT_TRAP; M11c: db_expr_t (DbExpr = i64, and DbAddr = usize), I_CALL/I_CALLI/I_RET/I_IRET and the inst_* classifiers; DB_MACHINE_COMMANDS is the machine table in db_interface.rs; DDB_STATE_* come with the MP entry; the ddb-wide contract is sys/machine/db_machdep.rs"
 
 [[file]]
 c = "sys/arch/amd64/amd64/cpu.c"
@@ -1604,7 +1621,7 @@ rust = "sys/arch/arm64/include/db_machdep.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "42d11165b0e086f4a670e969de3e7ea0aeaf8e6a"
-notes = "M4: db_regs_t, PC_REGS/SET_PC_REGS, BKPT_*, db_clear/set_single_step, IS_BREAKPOINT_TRAP/IS_WATCHPOINT_TRAP; db_expr_t, the inst_* classifiers (broken in C too), DDB_STATE_*, DB_MACHINE_COMMANDS come with db_run.c/db_command.c; the ddb-wide contract is sys/machine/db_machdep.rs"
+notes = "M4: db_regs_t, PC_REGS/SET_PC_REGS, BKPT_*, db_clear/set_single_step, IS_BREAKPOINT_TRAP/IS_WATCHPOINT_TRAP; M11c: db_expr_t (DbExpr = i64, and DbAddr = usize), the inst_* classifiers (never true, as the C's 'ALL BROKEN' macros); DB_MACHINE_COMMANDS is the machine table in db_interface.rs; DDB_STATE_* come with the MP entry; the ddb-wide contract is sys/machine/db_machdep.rs"
 
 [[file]]
 c = "sys/arch/arm64/arm64/exception.S"
@@ -1630,8 +1647,8 @@ rust = "sys/ddb/db_trap.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "24a4dd9a16969451f170a203cea94df7233e8e58"
-deps = ["sys/ddb/db_output.c", "sys/kern/subr_prf.c"]
-notes = "M4 (ddb-lite): db_trap prints Stopped at <pc> and the trace from ddb_regs, then returns (continues as c would); db_stop_at_pc/db_restart_at_pc (db_run.c), db_command_loop (reported), db_print_loc_and_inst (the address, no symbols/disassembler), db_show_all_procs (M5) and the ddb.html notice are not here"
+deps = ["sys/ddb/db_output.c", "sys/kern/subr_prf.c", "sys/ddb/db_run.c", "sys/ddb/db_command.c"]
+notes = "license: Mach notice, kept whole; M4 (ddb-lite), M11c: the whole db_trap: db_stop_at_pc, Stopped/Breakpoint/Watchpoint at, the trace after a panic, db_command_loop, db_restart_at_pc; visible stubs: db_print_loc_and_inst (db_examine.c: prints the address) and db_show_all_procs (kern_proc.c); the ddb.html bug-report notice is not printed"
 
 # ---------------------------------------------------------------------------
 # M4-b1: interrupts and spl(9) on amd64, MI soft interrupts, mutex, evcount
@@ -6789,7 +6806,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "3f35948c017ed98ebdc9968a79d5fe5fcf045ec1"
 deps = ["sys/nfs/nfs.h", "sys/nfs/nfsnode.h", "sys/kern/subr_pool.c", "sys/kern/subr_prf.c"]
-notes = "M10e (nfsclient and ddb): db_show_all_nfsreqs, nfs_request_print, db_show_all_nfsnodes, nfs_node_print over pool_walk (added to subr_pool.rs with this file), printing through a fn(Arguments) -> usize printer (db_printf); host tests of both printers (short and full); ddb/db_command.c is not ported (no command table), so show all nfsreqs, show all nfsnodes and the nfsreq/nfsnode commands (db_nfsreq_print_cmd, db_nfsnode_print_cmd) are not reachable from a prompt: gap recorded here"
+notes = "M10e (nfsclient and ddb): db_show_all_nfsreqs, nfs_request_print, db_show_all_nfsnodes, nfs_node_print over pool_walk (added to subr_pool.rs with this file), printing through a fn(Arguments) -> usize printer (db_printf); host tests of both printers (short and full); M11c: db_show_all_nfsreqs/nfsnodes are DbCmdFn commands (DbExpr, bool, DbExpr, &[u8]) -> DbResult, reached from the ddb prompt with show all nfsreqs/nfsnodes and show nfsreq/nfsnode (db_command.rs)"
 
 [[file]]
 c = "sys/nfs/nfs_serv.c"

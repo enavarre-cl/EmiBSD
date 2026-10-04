@@ -36,9 +36,10 @@
 //!
 //! Status: `wip`. Milestone M4 ports `db_regs_t`, `PC_REGS`/`SET_PC_REGS`, the breakpoint
 //! instruction, the single-step bit helpers and the `IS_BREAKPOINT_TRAP`/
-//! `IS_WATCHPOINT_TRAP` tests. `db_expr_t`, the `inst_*` classifiers (which the C marks
-//! "ALL BROKEN!!!"), the `DDB_STATE_*` values and `DB_MACHINE_COMMANDS` come with the
-//! command loop and the multiprocessor entry. The entry points this header declares
+//! `IS_WATCHPOINT_TRAP` tests; M11c `db_expr_t` and the `inst_*` classifiers (which the C
+//! marks "ALL BROKEN!!!": they are never true). `DB_MACHINE_COMMANDS` is defined: the table
+//! is `arm64/db_interface.rs`'s. The `DDB_STATE_*` values come with the multiprocessor
+//! entry. The entry points this header declares
 //! (`db_ktrap`, `db_machine_init`) live in `arm64/db_interface.rs`; what `ddb/` itself needs
 //! is the `machine::DbMachdep` contract.
 
@@ -92,6 +93,21 @@ pub const fn is_breakpoint_trap(type_: i32, _code: i32) -> bool {
 /// `IS_WATCHPOINT_TRAP(type, code)`.
 pub const fn is_watchpoint_trap(type_: i32, _code: i32) -> bool {
     type_ == EXCP_WATCHPT_EL1 as i32
+}
+
+/// `inst_trap_return(ins)`: `((ins) == 0 && (ins) == 1)` in C ("ALL BROKEN!!!"), never true.
+pub const fn inst_trap_return(_ins: DbExpr) -> bool {
+    false
+}
+
+/// `inst_return(ins)`: never true, as in C.
+pub const fn inst_return(_ins: DbExpr) -> bool {
+    false
+}
+
+/// `inst_call(ins)`: never true, as in C.
+pub const fn inst_call(_ins: DbExpr) -> bool {
+    false
 }
 
 #[cfg(test)]

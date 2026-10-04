@@ -1057,6 +1057,42 @@ impl DbMachdep for Machine {
     fn db_regs() -> &'static [crate::ddb::db_variables::DbVariable] {
         &[]
     }
+
+    const DB_MACHINE_COMMAND_TABLE: &'static [crate::ddb::db_command::DbCommand] = &[];
+
+    fn db_machine_command_table() -> &'static [crate::ddb::db_command::DbCommand] {
+        Self::DB_MACHINE_COMMAND_TABLE
+    }
+
+    fn db_machine_init() {}
+
+    fn set_pc_regs(_pc: usize) {}
+
+    fn fixup_pc_after_break() {}
+
+    fn db_set_single_step() {}
+
+    fn db_clear_single_step() {}
+
+    fn is_breakpoint_trap(_type: i32, _code: i32) -> bool {
+        false
+    }
+
+    fn is_watchpoint_trap(_type: i32, _code: i32) -> bool {
+        false
+    }
+
+    fn inst_trap_return(_ins: i64) -> bool {
+        false
+    }
+
+    fn inst_return(_ins: i64) -> bool {
+        false
+    }
+
+    fn inst_call(_ins: i64) -> bool {
+        false
+    }
 }
 
 /// amd64's interrupt priority levels, so tests see a real machine's numbers.

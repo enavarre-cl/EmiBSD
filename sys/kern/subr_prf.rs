@@ -67,8 +67,11 @@
 //!   reference (`sys/sys/tprintf.rs`), and `tprintf` takes `fmt::Arguments`.
 //! - `panicstr` is behind [`panicstr`] (a flag); the first message is kept in a single
 //!   `panicbuf`, per CPU from M5 (`ci_panicbuf`).
-//! - `db_panic` defaults to 0: ddb-lite has no debugger to enter, so a panic prints the stack
-//!   trace, as OpenBSD does with `ddb.panic=0`.
+//! - `db_panic` defaults to 0: a panic prints the stack trace and reboots, as OpenBSD does with
+//!   `ddb.panic=0`, instead of waiting at the `ddb>` prompt (the headless boots and smokes
+//!   expect the reboot); `sysctl ddb.panic=1` enables the debugger. `db_panic` and
+//!   `db_console` stay `AtomicBool`s; `ddb_sysctl` (`db_usrreq.rs`) reads and writes them as
+//!   `int`s.
 //! - `KASSERT`/`KDASSERT` (`libkern.h`) live here as [`kassert!`]/[`kdassert!`], next to the
 //!   `__assert` they call; `libkern` is a leaf crate that cannot reach it.
 
@@ -262,6 +265,30 @@ pub fn tablefull(tab: &str) {
 /// `panicstr`: whether `panic` has been called.
 pub fn panicstr() -> bool {
     !PANICSTR.load(Ordering::Acquire).is_null()
+}
+
+/// The message `panicstr` points at, copied into `buf` (NUL-terminated, truncated to fit);
+/// `false` before any panic. For `ddb`'s `show panic`.
+pub fn panicstr_message(buf: &mut [u8]) -> bool {
+    let p = PANICSTR.load(Ordering::Acquire);
+    if p.is_null() || buf.is_empty() {
+        return false;
+    }
+    let max = buf.len().min(size_of::<[u8; 512]>()) - 1;
+    let mut i = 0;
+    while i < max {
+        // SAFETY: panicstr only ever points at a 512-byte panic buffer (PANICBUF or a
+        // ci_panicbuf), which lives forever; `i` stays inside it. The reads are volatile:
+        // another CPU may still be writing it.
+        let c = unsafe { ptr::read_volatile(p.add(i)) };
+        if c == 0 {
+            break;
+        }
+        buf[i] = c;
+        i += 1;
+    }
+    buf[i] = 0;
+    true
 }
 
 /// `atomic_cas_ptr(&panicstr, NULL, buf)`: the trap handlers' `fault()` claims `panicstr`

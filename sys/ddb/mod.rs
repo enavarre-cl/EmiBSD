@@ -9,6 +9,7 @@ pub mod db_expr;
 pub mod db_input;
 pub mod db_lex;
 pub mod db_output;
+pub mod db_run;
 pub mod db_trap;
 pub mod db_usrreq;
 pub mod db_var;

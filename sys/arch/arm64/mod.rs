@@ -858,6 +858,59 @@ impl DbMachdep for Machine {
     fn db_regs() -> &'static [crate::ddb::db_variables::DbVariable] {
         &arm64::db_interface::DB_REGS
     }
+
+    const DB_MACHINE_COMMAND_TABLE: &'static [crate::ddb::db_command::DbCommand] =
+        arm64::db_interface::DB_MACHINE_COMMAND_TABLE;
+
+    fn db_machine_command_table() -> &'static [crate::ddb::db_command::DbCommand] {
+        Self::DB_MACHINE_COMMAND_TABLE
+    }
+
+    fn db_machine_init() {
+        arm64::db_interface::db_machine_init()
+    }
+
+    fn set_pc_regs(pc: usize) {
+        // SAFETY: ddb_regs is only used by the CPU in the debugger, and no other reference
+        // to it is live during this access.
+        include::db_machdep::set_pc_regs(unsafe { arm64::db_interface::DDB_REGS.get_mut() }, pc)
+    }
+
+    fn fixup_pc_after_break() {
+        // The arm64 header defines no FIXUP_PC_AFTER_BREAK: `brk` traps with the PC on it.
+    }
+
+    fn db_set_single_step() {
+        // SAFETY: as in set_pc_regs.
+        include::db_machdep::db_set_single_step(unsafe { arm64::db_interface::DDB_REGS.get_mut() })
+    }
+
+    fn db_clear_single_step() {
+        // SAFETY: as in set_pc_regs.
+        include::db_machdep::db_clear_single_step(unsafe {
+            arm64::db_interface::DDB_REGS.get_mut()
+        })
+    }
+
+    fn is_breakpoint_trap(type_: i32, code: i32) -> bool {
+        include::db_machdep::is_breakpoint_trap(type_, code)
+    }
+
+    fn is_watchpoint_trap(type_: i32, code: i32) -> bool {
+        include::db_machdep::is_watchpoint_trap(type_, code)
+    }
+
+    fn inst_trap_return(ins: i64) -> bool {
+        include::db_machdep::inst_trap_return(ins)
+    }
+
+    fn inst_return(ins: i64) -> bool {
+        include::db_machdep::inst_return(ins)
+    }
+
+    fn inst_call(ins: i64) -> bool {
+        include::db_machdep::inst_call(ins)
+    }
 }
 
 impl Intr for Machine {

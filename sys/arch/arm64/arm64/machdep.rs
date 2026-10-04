@@ -114,7 +114,7 @@ use crate::kprintf;
 #[cfg(feature = "multiprocessor")]
 use crate::machine::bootinfo::BootMp;
 use crate::machine::bootinfo::{BootInfo, MemKind};
-use crate::machine::db_machdep::db_enter;
+use crate::machine::db_machdep::{db_enter, db_machine_init};
 use crate::machine::{Cpu, Machine};
 use crate::sys::exec::{EXEC_NOBTCFI, ExecPackage, PsStrings};
 use crate::sys::param::{NCARGS, roundup};
@@ -458,7 +458,11 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
     ));
 
     // The rest of initarm (cpu_init, the FDT, the console from the device tree, ...) arrives
-    // with M4 and M5; db_machine_init() and ddb_init() with M4.
+    // with M4 and M5.
+    db_machine_init();
+
+    // Firmware doesn't load symbols: ddb_init() (db_sym.c, db_elf.c) is not ported.
+
     if BOOTHOWTO.load(Ordering::Relaxed) & RB_KDB != 0 {
         db_enter();
     }
