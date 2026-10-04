@@ -60,8 +60,18 @@
 //!   a dinode where the C would follow NULL. A getter returns the wider of the two members'
 //!   types (`DIP`'s conditional expression does the same); a setter truncates to the
 //!   member's type, as the assignment does. `SHORTLINK(ip)` is [`Inode::with_shortlink`].
-//! - `inode_u` is `i_fs` alone and the `ext2fs` members (`struct ext2fs_inode_ext`, the
-//!   `i_e2fs_*` shorthands, `EXT2FS_ITIMES`) are left out: `ext2fs` is not ported.
+//! - `inode_u` is `i_fs`; with feature `ext2fs` (`option EXT2FS`) the union's other member is
+//!   the separate field `i_e2fs` (`Cell<Option<&'static MExt2fs>>`, [`Inode::e2fs`]): an inode is
+//!   FFS's or ext2fs's, never both. Likewise `inode_ext.e2fs` (`struct ext2fs_inode_ext`,
+//!   [`Ext2fsInodeExt`]) is the field `i_e2fs_ext`, beside `i_dirhash`, and the `i_e2fs_*`
+//!   shorthands are methods: `i_e2fs_last_lblk()`, `i_e2fs_last_blk()`, `i_e2fs_uid()`,
+//!   `i_e2fs_gid()`, `i_e2fs_ext_cache()` return the member's `&Cell`; `i_e2din` is
+//!   [`Inode::with_e2din`] (the one dinode pointer cast to `ext2fs_dinode`) and the shorthands
+//!   through it (`i_e2fs_mode`, `i_e2fs_size`, ...) are `i_e2fs_<name>()` getters and
+//!   `set_i_e2fs_<name>(v)` setters; `i_e2fs_blocks` is `i_e2fs_blocks()` (a copy of the 15
+//!   pointers), `i_e2fs_block(i)` and `set_i_e2fs_block(i, v)`. The C's `i_e2fs_faddr_hi`
+//!   names a member that does not exist and is left out. `EXT2FS_ITIMES` is
+//!   [`Inode::ext2fs_itimes`].
 //! - `i_dquot[]` exists only with feature `quota` (`option QUOTA`), whose `ufs_quota.rs`
 //!   defines `struct dquot`; `NODQUOT` is `None`.
 //! - `i_dirhash` is `inode_ext` alone, a `Cell<Option<NonNull<Dirhash>>>`, NULL without
@@ -79,6 +89,8 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 
+#[cfg(feature = "ext2fs")]
+use crate::kern::kern_tc::gettime;
 use crate::kern::subr_prf::panic;
 use crate::queue_adapter;
 use crate::sys::buf::{Buf, ClusterInfo};
@@ -90,10 +102,18 @@ use crate::sys::rwlock::Rrwlock;
 use crate::sys::types::{Daddr, Dev, Mode, Off};
 use crate::sys::ucred::Ucred;
 use crate::sys::vnode::{VT_EXT2FS, VT_MFS, VT_UFS, Vnode};
+#[cfg(feature = "ext2fs")]
+use crate::ufs::ext2fs::ext2fs::MExt2fs;
+#[cfg(feature = "ext2fs")]
+use crate::ufs::ext2fs::ext2fs_dinode::Ext2fsDinode;
+#[cfg(feature = "ext2fs")]
+use crate::ufs::ext2fs::ext2fs_extents::Ext4ExtentCache;
 use crate::ufs::ffs::fs::Fs;
 use crate::ufs::ufs::dinode::{
     MAXSYMLINKLEN_UFS1, MAXSYMLINKLEN_UFS2, Ufs1Dinode, Ufs2Dinode, Ufsino,
 };
+#[cfg(feature = "ext2fs")]
+use crate::ufs::ufs::dinode::{NDADDR, NIADDR};
 use crate::ufs::ufs::dir::Doff;
 use crate::ufs::ufs::dirhash::Dirhash;
 #[cfg(feature = "quota")]
@@ -103,6 +123,47 @@ use crate::ufs::ufs::ufs_quota::Dquot;
 #[cfg(feature = "ffs2")]
 use crate::ufs::ufs::ufsmount::UM_UFS2;
 use crate::ufs::ufs::ufsmount::{UM_UFS1, Ufsmount};
+
+/// `struct ext2fs_inode_ext`: the ext2fs members of an inode.
+#[cfg(feature = "ext2fs")]
+pub struct Ext2fsInodeExt {
+    /// `ext2fs_last_lblk`: last logical blk allocated.
+    pub ext2fs_last_lblk: Cell<u32>,
+    /// `ext2fs_last_blk`: last blk allocated on disk.
+    pub ext2fs_last_blk: Cell<u32>,
+    /// `ext2fs_effective_uid`: effective inode uid.
+    pub ext2fs_effective_uid: Cell<u32>,
+    /// `ext2fs_effective_gid`: effective inode gid.
+    pub ext2fs_effective_gid: Cell<u32>,
+    /// `ext2fs_extent_cache`.
+    pub ext2fs_extent_cache: Cell<Ext4ExtentCache>,
+}
+
+#[cfg(feature = "ext2fs")]
+impl Ext2fsInodeExt {
+    /// A zeroed structure.
+    pub const fn new() -> Self {
+        Self {
+            ext2fs_last_lblk: Cell::new(0),
+            ext2fs_last_blk: Cell::new(0),
+            ext2fs_effective_uid: Cell::new(0),
+            ext2fs_effective_gid: Cell::new(0),
+            ext2fs_extent_cache: Cell::new(Ext4ExtentCache {
+                ec_start: 0,
+                ec_blk: 0,
+                ec_len: 0,
+                ec_type: 0,
+            }),
+        }
+    }
+}
+
+#[cfg(feature = "ext2fs")]
+impl Default for Ext2fsInodeExt {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// `struct inode`.
 ///
@@ -124,6 +185,10 @@ pub struct Inode {
     pub i_effnlink: Cell<i32>,
     /// `i_fs` (`inode_u.fs`): associated filesystem.
     pub i_fs: Cell<Option<&'static Fs>>,
+    /// `i_e2fs` (`inode_u.e2fs`): associated ext2fs file system (feature `ext2fs`), in place of
+    /// `i_fs` for an ext2fs inode.
+    #[cfg(feature = "ext2fs")]
+    pub i_e2fs: Cell<Option<&'static MExt2fs>>,
     /// `i_ci`.
     pub i_ci: Cell<ClusterInfo>,
     /// `i_dquot`: dquot structures.
@@ -151,6 +216,10 @@ pub struct Inode {
     /// `i_dirhash` (`inode_ext.dirhash`): hashing for large directories, a `malloc`ed
     /// `struct dirhash` (`ufs_dirhash.rs`, feature `ufs_dirhash`).
     pub i_dirhash: Cell<Option<NonNull<Dirhash>>>,
+    /// `inode_ext.e2fs`: the ext2fs members (feature `ext2fs`), in place of `i_dirhash` for an
+    /// ext2fs inode.
+    #[cfg(feature = "ext2fs")]
+    pub i_e2fs_ext: Ext2fsInodeExt,
     /// `dinode_u`: the on-disk dinode itself (`i_din1`, `i_din2`), a pool item.
     pub dinode_u: Cell<*mut c_void>,
     /// `i_vtbl`.
@@ -184,6 +253,23 @@ macro_rules! dip_field {
     };
 }
 
+/// Generates a getter and a setter of a member of the ext2fs dinode (feature `ext2fs`).
+macro_rules! e2din_field {
+    ($(#[$doc:meta])* $get:ident, $set:ident, $t:ty, $field:ident) => {
+        $(#[$doc])*
+        #[cfg(feature = "ext2fs")]
+        pub fn $get(&self) -> $t {
+            self.with_e2din(|d| d.$field)
+        }
+
+        $(#[$doc])*
+        #[cfg(feature = "ext2fs")]
+        pub fn $set(&self, v: $t) {
+            self.with_e2din(|d| d.$field = v)
+        }
+    };
+}
+
 impl Inode {
     /// A zeroed inode, as `pool_get(&ffs_ino_pool, PR_ZERO)` returns it.
     pub const fn new() -> Self {
@@ -196,6 +282,8 @@ impl Inode {
             i_number: Cell::new(0),
             i_effnlink: Cell::new(0),
             i_fs: Cell::new(None),
+            #[cfg(feature = "ext2fs")]
+            i_e2fs: Cell::new(None),
             i_ci: Cell::new(ClusterInfo {
                 ci_lastr: 0,
                 ci_lastw: 0,
@@ -217,6 +305,8 @@ impl Inode {
             i_ino: Cell::new(0),
             i_reclen: Cell::new(0),
             i_dirhash: Cell::new(None),
+            #[cfg(feature = "ext2fs")]
+            i_e2fs_ext: Ext2fsInodeExt::new(),
             dinode_u: Cell::new(ptr::null_mut()),
             i_vtbl: Cell::new(None),
         }
@@ -243,6 +333,15 @@ impl Inode {
         match self.i_fs.get() {
             Some(fs) => fs,
             None => panic(format_args!("inode {:p}: no fs", self)),
+        }
+    }
+
+    /// `ip->i_e2fs`: the inode's in-core ext2fs super block (feature `ext2fs`).
+    #[cfg(feature = "ext2fs")]
+    pub fn e2fs(&self) -> &'static MExt2fs {
+        match self.i_e2fs.get() {
+            Some(fs) => fs,
+            None => panic(format_args!("inode {:p}: no e2fs", self)),
         }
     }
 
@@ -441,6 +540,164 @@ impl Inode {
             };
             f(s)
         })
+    }
+
+    /// `f(ip->i_e2din)`: the ext2fs dinode, for the duration of `f`.
+    #[cfg(feature = "ext2fs")]
+    pub fn with_e2din<R>(&self, f: impl FnOnce(&mut Ext2fsDinode) -> R) -> R {
+        let p = self.dinode_u.get().cast::<Ext2fsDinode>();
+        if p.is_null() {
+            panic(format_args!("inode {:p}: no dinode", self));
+        }
+        // SAFETY: `ext2fs_vget` points `dinode_u` at the inode's own pool `ext2fs_dinode`
+        // before the inode is used, and `ext2fs_reclaim` frees it with the inode; the
+        // reference does not outlive `f`, and no other one is alive meanwhile (the accessors
+        // are the only way in, none of them nests, and the kernel runs one CPU).
+        f(unsafe { &mut *p })
+    }
+
+    /// `ip->i_e2fs_last_lblk` (`inode_ext.e2fs.ext2fs_last_lblk`).
+    #[cfg(feature = "ext2fs")]
+    pub fn i_e2fs_last_lblk(&self) -> &Cell<u32> {
+        &self.i_e2fs_ext.ext2fs_last_lblk
+    }
+
+    /// `ip->i_e2fs_last_blk`.
+    #[cfg(feature = "ext2fs")]
+    pub fn i_e2fs_last_blk(&self) -> &Cell<u32> {
+        &self.i_e2fs_ext.ext2fs_last_blk
+    }
+
+    /// `ip->i_e2fs_uid`: the effective uid.
+    #[cfg(feature = "ext2fs")]
+    pub fn i_e2fs_uid(&self) -> &Cell<u32> {
+        &self.i_e2fs_ext.ext2fs_effective_uid
+    }
+
+    /// `ip->i_e2fs_gid`: the effective gid.
+    #[cfg(feature = "ext2fs")]
+    pub fn i_e2fs_gid(&self) -> &Cell<u32> {
+        &self.i_e2fs_ext.ext2fs_effective_gid
+    }
+
+    /// `ip->i_e2fs_ext_cache`: the extent cache.
+    #[cfg(feature = "ext2fs")]
+    pub fn i_e2fs_ext_cache(&self) -> &Cell<Ext4ExtentCache> {
+        &self.i_e2fs_ext.ext2fs_extent_cache
+    }
+
+    e2din_field!(
+        /// `ip->i_e2fs_mode`.
+        i_e2fs_mode, set_i_e2fs_mode, u16, e2di_mode
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_size`.
+        i_e2fs_size, set_i_e2fs_size, u32, e2di_size
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_atime`.
+        i_e2fs_atime, set_i_e2fs_atime, u32, e2di_atime
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_ctime`.
+        i_e2fs_ctime, set_i_e2fs_ctime, u32, e2di_ctime
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_mtime`.
+        i_e2fs_mtime, set_i_e2fs_mtime, u32, e2di_mtime
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_dtime`.
+        i_e2fs_dtime, set_i_e2fs_dtime, u32, e2di_dtime
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_nlink`.
+        i_e2fs_nlink, set_i_e2fs_nlink, u16, e2di_nlink
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_nblock`.
+        i_e2fs_nblock, set_i_e2fs_nblock, u32, e2di_nblock
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_flags`.
+        i_e2fs_flags, set_i_e2fs_flags, u32, e2di_flags
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_gen`.
+        i_e2fs_gen, set_i_e2fs_gen, u32, e2di_gen
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_facl`.
+        i_e2fs_facl, set_i_e2fs_facl, u32, e2di_facl
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_size_hi`.
+        i_e2fs_size_hi, set_i_e2fs_size_hi, u32, e2di_size_hi
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_faddr`.
+        i_e2fs_faddr, set_i_e2fs_faddr, u32, e2di_faddr
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_nblock_hi`.
+        i_e2fs_nblock_hi, set_i_e2fs_nblock_hi, u16, e2di_nblock_hi
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_uid_low`.
+        i_e2fs_uid_low, set_i_e2fs_uid_low, u16, e2di_uid_low
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_gid_low`.
+        i_e2fs_gid_low, set_i_e2fs_gid_low, u16, e2di_gid_low
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_uid_high`.
+        i_e2fs_uid_high, set_i_e2fs_uid_high, u16, e2di_uid_high
+    );
+    e2din_field!(
+        /// `ip->i_e2fs_gid_high`.
+        i_e2fs_gid_high, set_i_e2fs_gid_high, u16, e2di_gid_high
+    );
+
+    /// `ip->i_e2fs_blocks`: a copy of the block pointers (`NDADDR + NIADDR` of them).
+    #[cfg(feature = "ext2fs")]
+    pub fn i_e2fs_blocks(&self) -> [u32; NDADDR + NIADDR] {
+        self.with_e2din(|d| d.e2di_blocks)
+    }
+
+    /// `ip->i_e2fs_blocks[i]`.
+    #[cfg(feature = "ext2fs")]
+    pub fn i_e2fs_block(&self, i: usize) -> u32 {
+        self.with_e2din(|d| d.e2di_blocks[i])
+    }
+
+    /// `ip->i_e2fs_blocks[i] = v`.
+    #[cfg(feature = "ext2fs")]
+    pub fn set_i_e2fs_block(&self, i: usize, v: u32) {
+        self.with_e2din(|d| d.e2di_blocks[i] = v)
+    }
+
+    /// `EXT2FS_ITIMES(ip)`: updates the access, modification and change times the flags ask
+    /// for, as `UFS_ITIMES` does for an FFS inode.
+    #[cfg(feature = "ext2fs")]
+    pub fn ext2fs_itimes(&self) {
+        let flag = self.i_flag.get();
+        if flag & (IN_ACCESS | IN_CHANGE | IN_UPDATE) == 0 {
+            return;
+        }
+        self.i_flag.set(flag | IN_MODIFIED);
+        if flag & IN_ACCESS != 0 {
+            self.set_i_e2fs_atime(gettime() as u32);
+        }
+        if flag & IN_UPDATE != 0 {
+            self.set_i_e2fs_mtime(gettime() as u32);
+        }
+        if flag & IN_CHANGE != 0 {
+            self.set_i_e2fs_ctime(gettime() as u32);
+            self.i_modrev.set(self.i_modrev.get().wrapping_add(1));
+        }
+        self.i_flag
+            .set(self.i_flag.get() & !(IN_ACCESS | IN_CHANGE | IN_UPDATE));
     }
 
     /// `*ip->i_din1`: a copy of the UFS1 dinode.

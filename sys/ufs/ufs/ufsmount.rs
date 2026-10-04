@@ -42,8 +42,12 @@
 //! - The structure is `malloc(M_UFSMNT)`ed by `ffs_mountfs` and freed by `ffs_unmount`; it is
 //!   reached as `&'static Ufsmount` through [`vfstoufs`] (the C's `VFSTOUFS` cast), whose one
 //!   `unsafe` checks that the mount is a UFS one. The members are `Cell`s.
-//! - `ufsmount_u` (the super-block pointer of FFS or of EXT2FS) is `um_fs` alone:
-//!   `ext2fs` is not ported.
+//! - `ufsmount_u` (the super-block pointer of FFS or of EXT2FS) is `um_fs`; with feature
+//!   `ext2fs` (`option EXT2FS`) the union's other member is the separate field `um_e2fs`
+//!   (`Cell<Option<&'static MExt2fs>>`, [`Ufsmount::e2fs`]): a mount is FFS's or ext2fs's,
+//!   never both. The C's `um_e2fsb` (`um_e2fs->s_es`) names a member that does not exist
+//!   (nothing uses it); [`Ufsmount::with_e2fsb`] is its meaning, the in-core super block
+//!   `um_e2fs->e2fs` for the duration of a closure.
 //! - `um_export` (`struct netexport`) is kept whether or not `nfsserver` is configured, as the
 //!   C does; without the feature `vfs_export` answers `ENOTSUP` and the list stays empty.
 //! - The quota members (`um_quotas`, `um_cred`, `um_btime`, `um_itime`, `um_qflags`) exist
@@ -60,6 +64,8 @@ use crate::sys::mount::{Mount, Netexport};
 use crate::sys::types::{Daddr, Dev, Time};
 use crate::sys::ucred::Ucred;
 use crate::sys::vnode::Vnode;
+#[cfg(feature = "ext2fs")]
+use crate::ufs::ext2fs::ext2fs::{Ext2fs, MExt2fs};
 use crate::ufs::ffs::fs::Fs;
 use crate::ufs::ufs::quota::MAXQUOTAS;
 
@@ -75,6 +81,10 @@ pub struct Ufsmount {
     pub um_fstype: Cell<u64>,
     /// `um_fs`: pointer to superblock (FFS).
     pub um_fs: Cell<Option<&'static Fs>>,
+    /// `um_e2fs` (`ufsmount_u.e2fs`): pointer to the in-core super block (EXT2FS), in place
+    /// of `um_fs` for an ext2fs mount.
+    #[cfg(feature = "ext2fs")]
+    pub um_e2fs: Cell<Option<&'static MExt2fs>>,
     /// `um_quotas`: pointer to quota files.
     pub um_quotas: [Cell<Option<&'static Vnode>>; MAXQUOTAS],
     /// `um_cred`: quota file access cred.
@@ -112,6 +122,8 @@ impl Ufsmount {
             um_devvp: Cell::new(None),
             um_fstype: Cell::new(0),
             um_fs: Cell::new(None),
+            #[cfg(feature = "ext2fs")]
+            um_e2fs: Cell::new(None),
             um_quotas: [const { Cell::new(None) }; MAXQUOTAS],
             um_cred: [const { Cell::new(ptr::null()) }; MAXQUOTAS],
             um_nindir: Cell::new(0),
@@ -132,6 +144,21 @@ impl Ufsmount {
             Some(fs) => fs,
             None => panic(format_args!("ufsmount {:p}: no um_fs", self)),
         }
+    }
+
+    /// `ump->um_e2fs`, which every mounted ext2fs has (feature `ext2fs`).
+    #[cfg(feature = "ext2fs")]
+    pub fn e2fs(&self) -> &'static MExt2fs {
+        match self.um_e2fs.get() {
+            Some(fs) => fs,
+            None => panic(format_args!("ufsmount {:p}: no um_e2fs", self)),
+        }
+    }
+
+    /// `f(&ump->um_e2fsb)`: the in-core ext2fs super block, for the duration of `f`.
+    #[cfg(feature = "ext2fs")]
+    pub fn with_e2fsb<R>(&self, f: impl FnOnce(&Ext2fs) -> R) -> R {
+        self.e2fs().with_e2fs(f)
     }
 
     /// `ump->um_devvp`, which every mounted UFS has.
