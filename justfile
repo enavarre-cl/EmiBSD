@@ -273,6 +273,33 @@ internet_check := "--send-after login: --send 'root\\n' --send-after Password: -
     "--send-after '# ' --send 'ftp -o - https://www.openbsd.org/robots.txt\\n' " + \
     "--expect 'rc: multi-user' --expect 'User-agent:'"
 
+# Diagnostic tools stage 2: OpenBSD's ps(1), fstat(1) and vmstat(8) over libkvm's sysctl(2)
+# paths (kern.proc, kern.proc_args, kern.file, vm.uvmexp, kern.intrcnt, kern.pool,
+# kern.malloc), df(1) and mount(8) over getfsstat(2). Logs in as `smoke-login` does.
+smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-diag: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send 'ps -ax\n' \
+        --send-after "# " --send 'fstat\n' \
+        --send-after "# " --send 'vmstat\n' \
+        --send-after "# " --send 'vmstat -i\n' \
+        --send-after "# " --send 'df\n' \
+        --send-after "# " --send 'mount\n' \
+        --send-after "# " --send 'echo diag-$((40+2))\n' \
+        --expect "rc: multi-user" --expect "diag-42"
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send 'ps -ax\n' \
+        --send-after "# " --send 'fstat\n' \
+        --send-after "# " --send 'vmstat\n' \
+        --send-after "# " --send 'vmstat -i\n' \
+        --send-after "# " --send 'df\n' \
+        --send-after "# " --send 'mount\n' \
+        --send-after "# " --send 'echo diag-$((40+2))\n' \
+        --expect "rc: multi-user" --expect "diag-42"
+
 # M9b/M9c harness: two VMs of one arch at once (`cargo xtask smoke2`), each with vio0 on QEMU's
 # user network and vio1 on a private link between the two (docs/SETUP.md, "Two VMs"). Both log
 # in as root, give vio1 an address on 192.168.77.0/24 and ping each other across the link.

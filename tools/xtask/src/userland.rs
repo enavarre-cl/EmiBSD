@@ -139,6 +139,8 @@ const VARIANTS: &[Variant] = &[
     Variant::statically("libexec/login_passwd"),
     Variant::statically("usr.bin/ftp"),
     Variant::statically("usr.bin/nc"),
+    Variant::statically("usr.bin/fstat"),
+    Variant::statically("usr.bin/vmstat"),
 ];
 
 /// OpenBSD's compiler runtime (the `-lcompiler_rt` its clang driver adds to every link): a
@@ -200,6 +202,11 @@ const PROGRAMS: &[&str] = &[
     // M9+: HTTPS clients over LIBRARIES.
     "usr.bin/ftp",
     "usr.bin/nc",
+    // Diagnostic tools stage 2, over libkvm.
+    "bin/ps",
+    "bin/df",
+    "usr.bin/fstat",
+    "usr.bin/vmstat",
 ];
 
 /// Libraries built after libc, libutil, libm and libcompiler_rt (M9+), in link order of
@@ -356,6 +363,7 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
     build_lib(&ctx, "lib/libc")?;
     build_lib(&ctx, "lib/libutil")?;
     build_lib(&ctx, "lib/libm")?;
+    build_lib(&ctx, "lib/libkvm")?;
     if has_compiler_rt(&ctx) {
         build_lib(&ctx, COMPILER_RT_DIR)?;
     } else {
