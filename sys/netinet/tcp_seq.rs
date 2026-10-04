@@ -47,12 +47,12 @@
 //! - `SEQ_LT`, `SEQ_LEQ`, `SEQ_GT`, `SEQ_GEQ` are `const fn`s over [`TcpSeq`]. The C's
 //!   `(int)((a)-(b))` is `a.wrapping_sub(b) as i32`: the unsigned difference wraps and is read
 //!   as a signed number, exactly as the C cast does.
-//! - `tcp_rcvseqinit(tp)` and `tcp_sendseqinit(tp)` assign members of `struct tcpcb`
-//!   (`netinet/tcp_var.h`), which is not ported; they are left for that port, where they
-//!   become methods of the control block.
-//! - `extern tcp_seq tcp_iss` is defined in `netinet/tcp_subr.c` and is ported with it.
+//! - `tcp_rcvseqinit(tp)` and `tcp_sendseqinit(tp)` are functions over the control block of
+//!   `netinet/tcp_var.rs`.
+//! - `extern tcp_seq tcp_iss` is `TCP_ISS` in `netinet/tcp_subr.rs`, where the C defines it.
 
 use crate::netinet::tcp::TcpSeq;
+use crate::netinet::tcp_var::Tcpcb;
 
 /// `TCP_ISSINCR`: increment for `tcp_iss` each second.
 pub const TCP_ISSINCR: u32 = 125 * 1024;
@@ -81,6 +81,24 @@ pub const fn seq_gt(a: TcpSeq, b: TcpSeq) -> bool {
 #[inline]
 pub const fn seq_geq(a: TcpSeq, b: TcpSeq) -> bool {
     (a.wrapping_sub(b) as i32) >= 0
+}
+
+/// `tcp_rcvseqinit(tp)`: initialize the receive sequence numbers from the initial receive
+/// sequence number.
+pub fn tcp_rcvseqinit(tp: &Tcpcb) {
+    let v = tp.irs.get().wrapping_add(1);
+    tp.rcv_nxt.set(v);
+    tp.rcv_adv.set(v);
+}
+
+/// `tcp_sendseqinit(tp)`: initialize the send sequence numbers from the initial send
+/// sequence number.
+pub fn tcp_sendseqinit(tp: &Tcpcb) {
+    let iss = tp.iss.get();
+    tp.snd_up.set(iss);
+    tp.snd_max.set(iss);
+    tp.snd_nxt.set(iss);
+    tp.snd_una.set(iss);
 }
 
 #[cfg(test)]

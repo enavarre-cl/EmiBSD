@@ -4771,7 +4771,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "70ab75ff9a5ffa54273b5cf95d48c0f42851febe"
 deps = ["sys/netinet/tcp.h"]
-notes = "M9d: SEQ_LT/LEQ/GT/GEQ as const fn seq_lt.. (wrapping_sub as i32); tcp_rcvseqinit/tcp_sendseqinit left for the tcpcb port (tcp_var.h not ported); tcp_iss belongs to tcp_subr.c"
+notes = "M9d: SEQ_LT/LEQ/GT/GEQ as const fn seq_lt.. (wrapping_sub as i32); M9+: tcp_rcvseqinit/tcp_sendseqinit as functions over the Tcpcb of tcp_var.rs; tcp_iss is TCP_ISS in tcp_subr.rs"
 
 [[file]]
 c = "sys/netinet/tcp_fsm.h"
@@ -4780,6 +4780,31 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b41c7e417d47577b7adb937647eefb50fa594cd4"
 notes = "M9d: TCPS_* states; TCPS_HAVE* as const fns; tcp_outflags/tcpstates (C: #ifdef TCPOUTFLAGS/TCPSTATES) always present as statics TCP_OUTFLAGS and TCPSTATES (&[u8] names, no NUL)"
+
+[[file]]
+c = "sys/netinet/tcp_var.h"
+rust = "sys/netinet/tcp_var.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "888b813fdf1779366ae3d3ac6fbcc5a01245c3af"
+deps = ["sys/netinet/tcp.h", "sys/netinet/in_pcb.h"]
+notes = "M9+: struct tcpcb (pool item of Cells; t_state i32, t_force bool, t_softerror Option<Errno>, sackblks [Cell<Sackblk>]), sackblk, sackhole, tcpqent (tcpqe_tcp a host-order Tcphdr copy) with TcpqeQ, tcp_opt_info (ts_present bool), syn_cache (sc_*_scale bit-fields as u8s), syn_cache_head, syn_cache_set (Sync: syn_cache_mtx), union syn_cache_sa = SockaddrUnion, struct tcpstat (repr(C), layout asserts) and enum tcpstat_counters, tcpstat_inc/add/pkt over TCPCOUNTERS atomics, tcp_now, TCP_TIME/TCP_REXMTVAL as functions, intotcpcb/sototcpcb, TF_*, TCPOOB_*, SCF_*, TCP_RTT_*, TCPCTL_* (TCPCTL_NAMES not compiled), tcp_ident_mapping (AbiPod, trailing pad named); INET6 not configured; TCP_ECN, TCP_SIGNATURE configured (GENERIC)"
+
+[[file]]
+c = "sys/netinet/tcp_timer.h"
+rust = "sys/netinet/tcp_timer.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = ["sys/netinet/tcp_var.h"]
+notes = "M9+: TCPT_*, TCPTV_*, TCP_LINGERTIME, TCP_MAXRXTSHIFT, TCP_DELACK_MSECS; TCP_TIMER_ARM/DISARM/ISARMED and TCPT_RANGESET as functions; TCP_TIMER_INIT comes with tcp_timer.c (it names tcp_timer_funcs)"
+
+[[file]]
+c = "sys/netinet/tcp_subr.c"
+rust = "sys/netinet/tcp_subr.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = ["sys/netinet/tcp_var.h", "sys/netinet/tcp_timer.h", "sys/netinet/in_pcb.c", "sys/crypto/sha2.c"]
+notes = "M9+: the globals first (sysctl ints as AtomicI32, pools, tcpcounters, tcp_iss, tcp_starttime, tcp_secret in StaticCells); the functions follow"
 
 [[file]]
 c = "sys/net/radix.h"
