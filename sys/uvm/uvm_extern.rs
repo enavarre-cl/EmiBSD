@@ -196,6 +196,9 @@ pub const UVM_LK_ENTER: i32 = 0x0000_0001;
 /// Leave map locked on exit.
 pub const UVM_LK_EXIT: i32 = 0x0000_0002;
 
+/// `uvm_io` flag: extract the mappings with their maximum protection (`UVM_EXTRACT_FIXPROT`).
+pub const UVM_IO_FIXPROT: i32 = 0x01;
+
 /// Flag to `uvm_page_physload`: don't add to the page queue.
 pub const PHYSLOAD_DEVICE: i32 = 0x01;
 

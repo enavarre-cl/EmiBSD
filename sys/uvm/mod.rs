@@ -13,6 +13,7 @@ pub mod uvm_extern;
 pub mod uvm_fault;
 pub mod uvm_glue;
 pub mod uvm_init;
+pub mod uvm_io;
 pub mod uvm_km;
 pub mod uvm_map;
 pub mod uvm_meter;

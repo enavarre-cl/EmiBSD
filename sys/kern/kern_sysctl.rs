@@ -70,7 +70,7 @@
 //!   `ENOSYS`: `file` (`kern_descrip.c`; `fill_file` is not here),
 //!   `malloc` (`sysctl_malloc`), `pool` (`sysctl_dopool`), `intrcnt` and `evcount`
 //!   (`evcount_sysctl`), `watchdog` (`kern_watchdog.c`), `clockintr`, `timecounter`
-//!   (`sysctl_tc`), `procargs` after its checks (`uvm_io`), `proc_vmmap` after its checks
+//!   (`sysctl_tc`), `proc_vmmap` after its checks
 //!   (`fill_vmmap`); `hw.model` (`cpu_model`, `identcpu.c`/arm64 `cpu.c`),
 //!   `disknames`/`diskstats`/`diskcount` (`subr_disk.c`), `sensors` (`kern_sensors.c`),
 //!   `setperf`/`perfpolicy` (`sched_bsd.c`), `smt`/`blockcpu` (`kern_sched.c`); the top-level
@@ -138,12 +138,13 @@ use crate::machine::cpu::{Cpu, CpuInfo, cpu_info_foreach, curproc};
 use crate::machine::param::MachineInfo;
 use crate::machine::pmap::pmap_resident_count;
 use crate::sys::errno::Errno;
+use crate::sys::exec::PsStrings;
 use crate::sys::limits::SHRT_MAX;
 use crate::sys::malloc::{M_TEMP, M_WAITOK};
 use crate::sys::mbuf::{MT_NTYPES, Mbstat, MbstatCounters};
 use crate::sys::mman::{PROT_READ, PROT_WRITE};
 use crate::sys::msgbuf::{MSG_MAGIC, Msgbuf};
-use crate::sys::param::{MAXPATHLEN, MAXPHYS, NODEV, OpenBSD, PAGE_SIZE};
+use crate::sys::param::{MAXPATHLEN, MAXPHYS, NODEV, OpenBSD, PAGE_MASK, PAGE_SIZE};
 use crate::sys::proc::{
     PS_CONTROLT, PS_EMBRYO, PS_EXITING, PS_INEXEC, PS_NOBROADCASTKILL, PS_PLEDGE, PS_SYSTEM,
     PS_ZOMBIE, Proc, ProcThrLink, Process, SDEAD, SIDL, SONPROC, SRUN, SSLEEP, SSTOP,
@@ -158,15 +159,17 @@ use crate::sys::sysctl::*;
 use crate::sys::syslimits;
 use crate::sys::systm::{PHYSMEM, SysArgs, sysargs};
 use crate::sys::time::timeradd;
-use crate::sys::types::{Dev, Register};
+use crate::sys::types::{Dev, Off, Register};
+use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
 use crate::sys::unistd::_POSIX_VERSION;
 use crate::sys::vnode::GETCWD_CHECK_ACCESS;
 use crate::unported;
 use crate::uvm::uvm_extern::Vmspace;
 use crate::uvm::uvm_glue::{uvm_vslock, uvm_vsunlock};
 use crate::uvm::uvm_init::UVMEXP;
+use crate::uvm::uvm_io::uvm_io;
 use crate::uvm::uvm_km::NO_CONSTRAINT;
-use crate::uvm::uvm_map::{uvmspace_addref, uvmspace_free};
+use crate::uvm::uvm_map::{VmMap, uvmspace_addref, uvmspace_free};
 use crate::uvm::uvm_meter::uvm_sysctl;
 use crate::uvm::uvm_mmap::UVM_WXABORT;
 use crate::uvm::uvm_page::uvm_pagecount;
@@ -1807,8 +1810,8 @@ pub fn fill_kproc(pr: &Process, ki: &mut KinfoProc, p: Option<&Proc>, show_point
     }
 }
 
-/// `sysctl_proc_args`: `kern.procargs.<pid>.<op>`. The checks are the C's; reading the
-/// victim's `ps_strings` and strings needs `uvm_io` and is reported.
+/// `sysctl_proc_args`: `kern.procargs.<pid>.<op>`: the victim's argument or environment
+/// strings (or their count), read from its address space with `uvm_io`.
 pub fn sysctl_proc_args(
     name: &[i32],
     oldp: usize,
@@ -1858,7 +1861,150 @@ pub fn sysctl_proc_args(
         suser(cp)?;
     }
 
-    Err(unported!("kern.procargs: uvm_io (uvm_io.c)"))
+    let ps_strings = vpr.ps_strings.get();
+    let vm = vpr.vmspace();
+    uvmspace_addref(vm);
+
+    let Some(mem) = malloc(PAGE_SIZE, M_TEMP, M_WAITOK) else {
+        uvmspace_free(vm);
+        return Err(Errno::ENOMEM);
+    };
+    // SAFETY: a fresh PAGE_SIZE allocation, freed below and not shared; uvm_io writes it
+    // before it is read.
+    let buf = unsafe { core::slice::from_raw_parts_mut(mem.as_ptr(), PAGE_SIZE) };
+
+    let error = proc_args_copy(&vm.vm_map, ps_strings, op, oldp, oldlenp, buf, cp);
+
+    uvmspace_free(vm);
+    free(mem, M_TEMP, PAGE_SIZE);
+    error
+}
+
+/// The body of `sysctl_proc_args` past its checks (its `goto out` paths are the `?`s; the
+/// caller drops the vmspace reference and the buffer): reads the victim's `ps_strings`, then
+/// lays out an `argv`-style array of `cnt` pointers, a NULL and the strings in the reader's
+/// buffer at `oldp`.
+fn proc_args_copy(
+    map: &VmMap,
+    ps_strings: usize,
+    op: i32,
+    oldp: usize,
+    oldlenp: &mut usize,
+    buf: &mut [u8],
+    cp: &Proc,
+) -> Result<(), Errno> {
+    const PTR: usize = size_of::<usize>();
+
+    // Reads `dst.len()` bytes of the victim's address space at `va`.
+    let victim_read = |va: usize, dst: &mut [u8]| -> Result<(), Errno> {
+        let mut iov = [Iovec {
+            iov_base: dst.as_mut_ptr().cast(),
+            iov_len: dst.len(),
+        }];
+        let mut uio = Uio {
+            uio_iov: &mut iov,
+            uio_offset: va as Off,
+            uio_resid: dst.len(),
+            uio_segflg: UioSeg::UIO_SYSSPACE,
+            uio_rw: UioRw::UIO_READ,
+            uio_procp: Some(cp),
+        };
+        uvm_io(map, &mut uio, 0)
+    };
+
+    let mut pss = [0u8; size_of::<PsStrings>()];
+    victim_read(ps_strings, &mut pss)?;
+    let word = |b: &[u8]| usize::from_ne_bytes(b[..PTR].try_into().unwrap_or([0; PTR]));
+    let int = |b: &[u8]| i32::from_ne_bytes(b[..4].try_into().unwrap_or([0; 4]));
+    // struct ps_strings: ps_argvstr, ps_nargvstr, ps_envstr, ps_nenvstr (PsStrings::to_bytes).
+    let (argvstr, nargvstr) = (word(&pss[0..]), int(&pss[PTR..]));
+    let (envstr, nenvstr) = (word(&pss[2 * PTR..]), int(&pss[3 * PTR..]));
+
+    if op == KERN_PROC_NARGV {
+        return sysctl_rdint(oldp, oldlenp, 0, nargvstr);
+    }
+    if op == KERN_PROC_NENV {
+        return sysctl_rdint(oldp, oldlenp, 0, nenvstr);
+    }
+
+    let (cnt, mut vargv) = if op == KERN_PROC_ARGV {
+        (nargvstr, argvstr)
+    } else {
+        (nenvstr, envstr)
+    };
+
+    // Clamp to avoid overflow, using ARG_MAX is only an approximation. It is not possible
+    // to execve() with this many elements, so this only happens if a process has changed
+    // its strings. A hard cap, so not ENOMEM: the caller cannot retry. (The C's count is
+    // unsigned: a negative one is over the cap too.)
+    if cnt < 0 || cnt as usize > syslimits::ARG_MAX {
+        return Err(Errno::EINVAL);
+    }
+    let mut cnt = cnt as usize;
+
+    // -1 to have space for a terminating NUL
+    let limit = oldlenp.wrapping_sub(1);
+    *oldlenp = 0;
+
+    // *oldlenp: bytes copied out into the reader's buffer; limit: the most allowed there;
+    // rarg: where the next string goes in the reader's buffer; rargv: where the next rarg
+    // pointer goes; vargv: where the next argument pointer is read in the victim.
+    let mut rargv = oldp;
+    // space for cnt pointers and a NULL
+    let mut rarg = rargv + (cnt + 1) * PTR;
+    *oldlenp += (cnt + 1) * PTR;
+
+    while cnt > 0 && *oldlenp < limit {
+        // Write to the reader's argv.
+        copyout(&rarg.to_ne_bytes(), rargv)?;
+
+        // Read the victim's argv.
+        let mut vargb = [0u8; PTR];
+        victim_read(vargv, &mut vargb)?;
+        let mut varg = usize::from_ne_bytes(vargb);
+        if varg == 0 {
+            break;
+        }
+
+        // Read the victim's string a page at a time, so as not to cross a page boundary
+        // too much and return an error.
+        loop {
+            let len = PAGE_SIZE - (varg & PAGE_MASK);
+            victim_read(varg, &mut buf[..len])?;
+            let vstrlen = buf[..len].iter().position(|&c| c == 0).unwrap_or(len);
+
+            // Don't overflow the reader's buffer.
+            if *oldlenp + vstrlen + 1 >= limit {
+                return Err(Errno::ENOMEM);
+            }
+            copyout(&buf[..vstrlen], rarg)?;
+            *oldlenp += vstrlen;
+            rarg += vstrlen;
+
+            // The string didn't end in this page?
+            if vstrlen == len {
+                varg += vstrlen;
+                continue;
+            }
+            break;
+        }
+
+        // End of string. Terminate it with a NUL.
+        copyout(&[0], rarg)?;
+        *oldlenp += 1;
+        rarg += 1;
+
+        vargv += PTR;
+        rargv += PTR;
+        cnt -= 1;
+    }
+
+    if *oldlenp >= limit {
+        return Err(Errno::ENOMEM);
+    }
+
+    // Write the terminating null.
+    copyout(&0usize.to_ne_bytes(), rargv)
 }
 
 /// `sysctl_proc_cwd`: `kern.proc_cwd.<pid>`, the process's current directory.
