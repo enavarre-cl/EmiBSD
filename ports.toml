@@ -5689,10 +5689,11 @@ notes = "M9+: BSD-3. in6_cksum over an mbuf chain with the pseudo header (summed
 [[file]]
 c = "sys/netinet6/ip6_input.c"
 rust = "sys/netinet6/ip6_input.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "be48cf30ca86c3ff184b5e1d9f901f1d6acc56c2"
+deps = ["sys/netinet6/ip6_output.c", "sys/netinet6/ip6_forward.c", "sys/netinet6/frag6.c", "sys/netinet6/nd6.c", "sys/netinet6/in6.c", "sys/netinet6/icmp6.c", "sys/netinet6/in6_proto.c", "sys/netinet/ip_input.c", "sys/net/pf.c", "sys/net/route.c", "sys/netinet/ipsec_input.c", "sys/net/if.c"]
+notes = "M9+: the whole file: ip6_init (ip6_protox, ip6_randomid_init, nd6_init, frag6_init), ipv6_input/ipv6_check/ip6_input_if (pf_test AF_INET6, scope embedding, RH0 rejection, multicast via in6_hasmulti, RTF_LOCAL delivery, forwarding with ipsec_forward_check), ip6_ours/ip6_ours_enqueue/ip6intr, ip6_hbhchcheck/ip6_hopopts_input/ip6_process_hopopts/ip6_unknown_opt (bool for the C's -1), ip6_savecontrol, ip6_pullexthdr, ip6_get_prevhdr/ip6_nexthdr/ip6_lasthdr (Option for -1), ip6_sysctl (ip6stat, ifqueue, multipath, mtudisctimeout), ip6_send; headers as unaligned copies, a consumed mbuf leaves None in the caller's slot; local delivery is ip_input.c's ip_deliver; NCARP and MROUTING not configured (comments); host tests (header checks, payload trimming, hop-by-hop options, unknown option actions, header chain walk, RH0)"
 
 [[file]]
 c = "sys/netinet6/ip6_output.c"
@@ -5706,10 +5707,11 @@ notes = "M9+: the whole file: ip6_output (extension headers via MAKE_EXTHDR/MAKE
 [[file]]
 c = "sys/netinet6/ip6_forward.c"
 rust = "sys/netinet6/ip6_forward.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "dd21408124527f4612df045b81c9b2656556df47"
+deps = ["sys/netinet6/ip6_output.c", "sys/netinet6/icmp6.c", "sys/netinet6/in6.c", "sys/netinet6/nd6.c", "sys/net/route.c", "sys/net/pf.c", "sys/net/if.c", "sys/netinet/ip_ipsp.c"]
+notes = "M9+: ip6_forward: hop limit, the ICMPv6 copy on the stack (MHLEN) or m_copym, the IPsec lookup and send, route6_mpath, the scope check, redirects (icmp6_redirect_output), pf PF_FWD with the reroute loop, if_output_tso; labelled exits for senderr/icmperror/freecopy; frees the packet on the IPV6_FORWARDING_IPSEC drop, where the C leaks it"
 
 [[file]]
 c = "sys/netinet6/ip6_id.c"
@@ -5723,10 +5725,11 @@ notes = "M9+: struct randomtab (Randomtab), randomtab_20 as a StaticCell under a
 [[file]]
 c = "sys/netinet6/frag6.c"
 rust = "sys/netinet6/frag6.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "fa4cc221bc6ddb43aee1d1a898bbe9f7296a7948"
+deps = ["sys/netinet6/icmp6.c", "sys/netinet6/ip6_input.c", "sys/netinet6/in6_proto.c", "sys/kern/subr_pool.c", "sys/net/rtable.c"]
+notes = "M9+: the whole file: frag6_init, frag6_input (RFC 6946 atomic fragments, RFC 5722 overlap discard, ECN merge, the 65535 limit with ICMPv6 errors; *mp cleared once queued), frag6_deletefraghdr (&'static Mbuf, Result), frag6_freef, frag6_unlink, frag6_slowtimo (timeout and maxfragpackets); the queue a Sync TAILQ wrapper, counters atomics under frag6_mutex; host tests (in order, out of order, overlap, atomic fragment, timer, header deletion)"
 
 [[file]]
 c = "sys/netinet6/dest6.c"
