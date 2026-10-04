@@ -830,6 +830,13 @@ deps = ["sys/arch/arm64/arm64/bus_space.c", "sys/arch/arm64/arm64/intr.c", "sys/
 notes = "M2: initarm (the 1 GiB TTBR0 Device-nGnRnE identity block for devices until pmap, message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all reported unported), cold, waittime, cpuresetfn, powerdownfn; the bootargs parsing is BootInfo::boothowto; M3: the memory setup and pmap_bootstrap; M4: cpu_info_primary, SP_EL1/tpidr_el1/VBAR_EL1 first thing, fdt_init of the bootloader DTB, consinit = pluart_init_cons (the other *_init_cons are deferred drivers), stdout_node/stdout_speed, fdt_find_cons, (M8: cn_rx_intr_establish is gone; pluart_fdt_attach establishes the console's interrupt); cpu_info[], dumpsys, sendsig/setregs, sysctl are M5 to M6 (cpu_sysctl still reported by sys_sysctl); cpu_startup prints version (conf/vers.rs) since kern_sysctl.c; M5: need_resched (aston reported, M5-b); M5-b1: proc0paddr and proc0tf statics, cpu_startup sets proc0.p_addr and curpcb (pcb_flags, pcb_tf); M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), cpu_idle_enter/cycle/leave (cpu_wfi), cpu_switchto (fpu_drop then cpuswitch.S), aston, clear_resched, cpu_unidle (UP); cold moved to sys/systm.rs; M6-b2: setregs (pm_guarded from EXEC_NOBTCFI, the FPU state dropped, the EL0 trap frame with PSR_M_EL0t|PSR_DIT; pmap_setpauthkeys M7); vfs stage 2: cpu_startup calls bufinit before avail mem, as the C does; M4: cpu_info_primary, SP_EL1/tpidr_el1/VBAR_EL1 first thing, fdt_init of the bootloader DTB, consinit = pluart_init_cons (the other *_init_cons are deferred drivers), stdout_node/stdout_speed, fdt_find_cons, cn_rx_intr_establish (the console receive interrupt pluart_fdt_attach would establish, until autoconf M5); cpu_info[], dumpsys, sendsig/setregs, sysctl are M5 to M6 (cpu_sysctl still reported by sys_sysctl); cpu_startup prints version (conf/vers.rs) since kern_sysctl.c; M5: need_resched (aston reported, M5-b); M5-b1: proc0paddr and proc0tf statics, cpu_startup sets proc0.p_addr and curpcb (pcb_flags, pcb_tf); M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), cpu_idle_enter/cycle/leave (cpu_wfi), cpu_switchto (fpu_drop then cpuswitch.S), aston, clear_resched, cpu_unidle (UP); cold moved to sys/systm.rs; M6-b2: setregs (pm_guarded from EXEC_NOBTCFI, the FPU state dropped, the EL0 trap frame with PSR_M_EL0t|PSR_DIT; pmap_setpauthkeys M7); vfs stage 2: cpu_startup calls bufinit before avail mem, as the C does; M8: cpu_startup makes exec_map (uvm_km_suballoc of 16 * NCARGS, VM_MAP_PAGEABLE); efi(4): mmap/mmap_size/mmap_desc_size/mmap_desc_ver (the UEFI memory map from the boot protocol, relocated into a static buffer, efi_mmap) and system_table (SYSTEM_TABLE, an initarm local in C) instead of efiboot's openbsd,uefi-* properties; M10a: cpu_startup makes phys_map (uvm_km_suballoc of VM_PHYS_SIZE, flags 0) and stores it in uvm_extern's PHYS_MAP, as it does exec_map"
 
 [[file]]
+c = "sys/arch/arm64/arm64/cpu.c"
+rust = "sys/arch/arm64/arm64/cpu.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+notes = "M11a: the machine contract's entry points first: cpu_boot_secondary_processors (reported with MULTIPROCESSOR) and cpu_hatch_entry (the boot glue's AP entry, replacing PSCI CPU_ON and locore.S's cpu_hatch); the rest of the file follows in M11a"
+
+[[file]]
 c = "sys/arch/arm64/include/frame.h"
 rust = "sys/arch/arm64/include/frame.rs"
 status = "wip"
@@ -1034,7 +1041,7 @@ rust = "sys/sys/systm.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9fb4626fd16812491f6c3904f32ccfe077412cdf"
-notes = "physmem only (defined here, filled by the machdeps; the C defines it per arch); the hostname/boottime globals, copyin/copyout, tsleep/wakeup and the other prototypes come with their files; M5-b2: cold and safepri (defined here like physmem), INFSLP, MAXTSLP; M6-a: struct sysent (Sysent::new for the generated table), sy_call_t (Result plus the retval registers), SY_NOLOCK, SCARG as sysargs; M6-b: sy_call_t takes &SysArgs (the six registers) and sysargs::<T> is safe; M7b: NET_LOCK/NET_UNLOCK/NET_LOCK_SHARED/NET_UNLOCK_SHARED and the NET_ASSERT_* (DIAGNOSTIC, splassert_ctl) as functions over netlock (defined in net/if_.rs), the assertions taking the caller's name for __func__; vfs stage 1: mountroot (MOUNTROOT, a StaticCell<Option<MountrootFn>> defined here like cold; NULL until setroot exists); ffs: rootdev as the ROOTDEV atomic (NODEV until setroot sets it); swapdev comes from the arch conf.c (machine::conf::swapdev)"
+notes = "physmem only (defined here, filled by the machdeps; the C defines it per arch); the hostname/boottime globals, copyin/copyout, tsleep/wakeup and the other prototypes come with their files; M5-b2: cold and safepri (defined here like physmem), INFSLP, MAXTSLP; M6-a: struct sysent (Sysent::new for the generated table), sy_call_t (Result plus the retval registers), SY_NOLOCK, SCARG as sysargs; M6-b: sy_call_t takes &SysArgs (the six registers) and sysargs::<T> is safe; M7b: NET_LOCK/NET_UNLOCK/NET_LOCK_SHARED/NET_UNLOCK_SHARED and the NET_ASSERT_* (DIAGNOSTIC, splassert_ctl) as functions over netlock (defined in net/if_.rs), the assertions taking the caller's name for __func__; vfs stage 1: mountroot (MOUNTROOT, a StaticCell<Option<MountrootFn>> defined here like cold; NULL until setroot exists); ffs: rootdev as the ROOTDEV atomic (NODEV until setroot sets it); swapdev comes from the arch conf.c (machine::conf::swapdev); M11a: KERNEL_LOCK_INIT/KERNEL_LOCK/KERNEL_UNLOCK/KERNEL_ASSERT_LOCKED/KERNEL_ASSERT_UNLOCKED as kernel_lock_init()..kernel_assert_unlocked(), nothing without MULTIPROCESSOR"
 
 [[file]]
 c = "sys/sys/malloc.h"
@@ -1473,6 +1480,12 @@ upstream_blob = "2c19fbf0a3095ed1ff256cc877e5efbb6a3bca37"
 notes = "M4: lgdt and intr_fast_exit, in locore.S (AT&T syntax, included by global_asm! with the frame offsets and selectors as placeholders: assym.h), and an intr_user_exit stub that reports a return to user mode (M6); the DIAGNOSTIC interrupts-blocked check of intr_fast_exit is M4-b2; the kernel entry is the boot protocol; cpu_switchto, sigcode, the syscall entry/exit, the Meltdown trampolines, the copy routines and the local_apic page (lapic.rs has it) are M5/M6; M5-b2: cpu_switchto (the kernel-thread subset: stack pointers, curproc/curpcb/p_cpu/p_stat, %cr3; the xstate/segment resets, the Meltdown CR3s, RSB refill and retguard are M6) and proc_trampoline (calls proc_trampoline_run, Rust, with the function and argument; the syscall return is M6); M6-a: Xsyscall (SYSCALL_ENTRY, the .Lsyscall_check_asts AST loop with CHECK/CLEAR_ASTPENDING, the register restore and sysretq; without Xsyscall_meltdown, the xstate/FS.base restores, the IBPB/MDS patches, pku_xonly, the RSB refill and DIAGNOSTIC's SPL check); proc_trampoline returns through .Lsyscall_check_asts; M6-b2: intr_user_exit (the AST loop, the register restore, the iretq frame on the trampoline stack, swapgs, iretq; without the xstate/FS.base restores, IBPB, pku_xonly, MDS and Meltdown), cpu_switchto's user bits (ci_proc_pmap, ci_kern_rsp = pcb_kstack - FRAMESIZE; the CPUPF_USERSEGS/USERXSTATE resets are M6-c); kern_prot.c (the TCB): cpu_switchto's user segment reset (CPUPF_USERSEGS: %ds/%es/%fs/%gs to GUDATA) and the FS.base restore from pcb_fsbase on both exits to user mode (.Lsyscall_restore_fsbase, .Lintr_restore_fsbase); the xstate save/restore (CPUPF_USERXSTATE) waits for the FPU; kern_sig.c: sigcode/sigcodecall/sigcoderet/esigcode/sigfill/sigfillsiz in .rodata (SYS_sigreturn as a placeholder), JMP_RETPOLINE(rax) expanded without the CODEPATCH markers (no codepatch); M8: sigcodecall exported to Rust (machine::signal sigcodecall, for pin_check); M8: the xstate handling: cpu_switchto saves (fxsave64) and resets to proc0's clean state, intr_user_exit and the syscall return reload curproc's (CPUPF_USERXSTATE), xrstor_kern, xrstor_user (xrstor_fault/xrstor_resume), fpusave, fpusavereset; fxsave64/fxrstor64 only (no XSAVE codepatch)"
 
 [[file]]
+c = "sys/arch/amd64/amd64/mptramp.S"
+rust = ""
+status = "skipped"
+notes = "replaced-by-limine: the Limine MP request parks the application processors in long mode and machine::BootMp::start releases one into Cpu::cpu_hatch (stand/mod.rs), so there is no real-mode INIT/SIPI trampoline (docs/ARCHITECTURE.md, deviations)"
+
+[[file]]
 c = "sys/arch/amd64/amd64/vector.S"
 rust = "sys/arch/amd64/amd64/vector.rs"
 status = "wip"
@@ -1560,7 +1573,15 @@ rust = "sys/sys/mutex.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9b55fc89478e28365c2d5a80c03ee6284ddc3c89"
-notes = "M4: struct mutex (the MI one), MUTEX_INITIALIZER (Mutex::new), __MUTEX_IPL (no MULTIPROCESSOR: the ipl itself), mtx_curcpu/mtx_owner/mtx_owned, MUTEX_ASSERT_LOCKED/UNLOCKED, MTX_NOWITNESS/DUPOK; WITNESS and struct db_mutex are M5"
+notes = "M4: struct mutex (the MI one), MUTEX_INITIALIZER (Mutex::new), __MUTEX_IPL (the ipl without MULTIPROCESSOR; M11a: at least IPL_MPFLOOR with it), mtx_curcpu/mtx_owner/mtx_owned, MUTEX_ASSERT_LOCKED/UNLOCKED, MTX_NOWITNESS/DUPOK; WITNESS and struct db_mutex are M5"
+
+[[file]]
+c = "sys/sys/mplock.h"
+rust = "sys/sys/mplock.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b28ac240d944879f1be8314ab3dadbcffe5070f7"
+notes = "M11a: struct __mp_lock_cpu (MpLockCpu) and struct __mp_lock (MpLock: mpl_cpus[MAXCPUS], mpl_ticket, mpl_users as atomics; WITNESS's mpl_lock_obj not configured); __mp_lock_init and the functions are kern_lock.c's (kern_lock.rs); kernel_lock is defined there"
 
 [[file]]
 c = "sys/kern/kern_lock.c"
@@ -1569,7 +1590,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "f43ffe7da8afc34194b8a379a9598f4f02aed76b"
 deps = ["sys/sys/mutex.h"]
-notes = "M4: the uniprocessor mutex (__mtx_init, _mtx_init, mtx_init, mtx_init_flags, mtx_enter, mtx_enter_try, mtx_leave) through the machine::intr spl and Cpu::curcpu_ptr contracts; the kernel lock (__mp_lock), the MULTIPROCESSOR mutex and parking lots, db_mtx_enter/leave, pc_lock are M5; M5: pc_lock_init, pc_sprod_enter/leave, pc_mprod_enter/leave (= sprod without MULTIPROCESSOR), pc_cons_enter/leave (membar_* are fences)"
+notes = "M4: the uniprocessor mutex (__mtx_init, _mtx_init, mtx_init, mtx_init_flags, mtx_enter, mtx_enter_try, mtx_leave) through the machine::intr spl and Cpu::curcpu_ptr contracts; M5: pc_lock_init, pc_sprod_enter/leave, pc_mprod_enter/leave (= sprod without MULTIPROCESSOR), pc_cons_enter/leave (membar_* are fences); M11a (feature multiprocessor): kernel_lock (KERNEL_LOCK static), _kernel_lock_init/_kernel_lock/_kernel_unlock/_kernel_lock_held, the ticket lock (___mp_lock_init, __mp_lock_spin, __mp_lock, __mp_unlock, __mp_release_all, __mp_acquire_count, __mp_lock_held indexed by ci_cpuid), the spinning mutex with its 128 parking lots (mtx_init_parking, mtx_park, mtx_enter_park/leave_park, mtx_cas, mtx_enter with the slow path split out as mtx_enter_slow, mtx_enter_try, mtx_leave), the interlocking pc_mprod_enter/leave; db_mtx_enter/leave and mtx_print_parks are ddb on MP (M11c); WITNESS and MP_LOCKDEBUG not configured"
 
 [[file]]
 c = "sys/sys/evcount.h"
@@ -1622,12 +1643,28 @@ upstream_blob = "b5b66f12fb0e3ac54829b019b60177853d9cf9ef"
 notes = "__USE_MI_MUTEX"
 
 [[file]]
+c = "sys/arch/amd64/include/mplock.h"
+rust = "sys/arch/amd64/include/mplock.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a215816bccd65babd291a4e356d146ba7f5048ef"
+notes = "license: public domain, kept whole; __USE_MI_MPLOCK"
+
+[[file]]
 c = "sys/arch/arm64/include/mutex.h"
 rust = "sys/arch/arm64/include/mutex.rs"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "212d863cd4420f5c4ae6cde485d38f7f26f3c0f0"
 notes = "__USE_MI_MUTEX"
+
+[[file]]
+c = "sys/arch/arm64/include/mplock.h"
+rust = "sys/arch/arm64/include/mplock.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "60c464f4f84da45801b0ea76a79936f12423c9c1"
+notes = "license: public domain, kept whole; __USE_MI_MPLOCK"
 
 [[file]]
 c = "sys/arch/amd64/include/i82489reg.h"

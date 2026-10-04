@@ -45,6 +45,9 @@ pub mod id {
     pub const EFI_SYSTEM_TABLE: [u64; 2] = [0x5ceb_a516_3eaa_f6d6, 0x0a69_8161_0cf6_5fcc];
     /// EFI Memory Map feature.
     pub const EFI_MEMMAP: [u64; 2] = [0x7df6_2a43_1d68_72d5, 0xa4fc_dfb3_e573_06c8];
+    #[cfg_attr(not(feature = "multiprocessor"), allow(dead_code))] // asked by the MP kernel only
+    /// MP (multiprocessor) feature.
+    pub const MP: [u64; 2] = [0x95a6_7b81_9a1b_857e, 0xa0b6_1b72_3b6a_73e0];
 }
 
 /// `LIMINE_MEMMAP_*`: memory map entry types.
@@ -357,9 +360,138 @@ impl EfiMemmapResponse {
     }
 }
 
+/// `struct limine_mp_request`: asks the bootloader to start the application processors and
+/// park them until the kernel hands each a `goto_address`.
+#[repr(C)]
+pub struct MpRequest {
+    /// The common request members.
+    pub request: Request<MpResponse>,
+    /// `LIMINE_MP_REQUEST_X86_64_X2APIC` (bit 0) asks for x2APIC mode on x86-64; 0 here.
+    pub flags: u64,
+}
+
+#[cfg_attr(not(feature = "multiprocessor"), allow(dead_code))] // made by the MP kernel only
+impl MpRequest {
+    /// A request with `flags`.
+    pub const fn new(flags: u64) -> Self {
+        Self {
+            request: Request::new(id::MP),
+            flags,
+        }
+    }
+}
+
+/// `struct limine_mp_info` (x86-64 layout): one processor.
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+pub struct MpInfo {
+    /// ACPI processor UID, as in the MADT.
+    pub processor_id: u32,
+    /// Local APIC ID, as in the MADT.
+    pub lapic_id: u32,
+    reserved: u64,
+    /// Where the parked processor jumps once this is written (atomically), with `%rdi`
+    /// pointing at this structure; it polls the word until then.
+    pub goto_address: core::sync::atomic::AtomicU64,
+    /// Free for the kernel; written before `goto_address`.
+    pub extra_argument: core::sync::atomic::AtomicU64,
+}
+
+/// `struct limine_mp_info` (AArch64 layout): one processor.
+#[cfg(not(target_arch = "x86_64"))]
+#[repr(C)]
+pub struct MpInfo {
+    /// ACPI processor UID, as in the MADT (the boot glue's index without ACPI).
+    pub processor_id: u32,
+    reserved1: u32,
+    /// The processor's `MPIDR_EL1`.
+    pub mpidr: u64,
+    reserved: u64,
+    /// Where the parked processor jumps once this is written (atomically), with `x0`
+    /// pointing at this structure; it polls the word until then.
+    pub goto_address: core::sync::atomic::AtomicU64,
+    /// Free for the kernel; written before `goto_address`.
+    pub extra_argument: core::sync::atomic::AtomicU64,
+}
+
+#[cfg_attr(not(feature = "multiprocessor"), allow(dead_code))] // read by the MP kernel only
+impl MpInfo {
+    /// The hardware ID: the local APIC ID on x86-64, `MPIDR_EL1` on AArch64.
+    pub fn hwid(&self) -> u64 {
+        #[cfg(target_arch = "x86_64")]
+        return u64::from(self.lapic_id);
+        #[cfg(not(target_arch = "x86_64"))]
+        return self.mpidr;
+    }
+}
+
+/// `struct limine_mp_response` (x86-64 layout).
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+pub struct MpResponse {
+    /// Response revision.
+    pub revision: u64,
+    /// `LIMINE_MP_RESPONSE_X86_64_X2APIC` (bit 0) when x2APIC was enabled.
+    pub flags: u32,
+    /// The boot processor's local APIC ID.
+    pub bsp_lapic_id: u32,
+    cpu_count: u64,
+    cpus: *const *const MpInfo,
+}
+
+/// `struct limine_mp_response` (AArch64 layout).
+#[cfg(not(target_arch = "x86_64"))]
+#[repr(C)]
+pub struct MpResponse {
+    /// Response revision.
+    pub revision: u64,
+    /// Always 0.
+    pub flags: u64,
+    /// The boot processor's `MPIDR_EL1`.
+    pub bsp_mpidr: u64,
+    cpu_count: u64,
+    cpus: *const *const MpInfo,
+}
+
+#[cfg_attr(not(feature = "multiprocessor"), allow(dead_code))] // read by the MP kernel only
+impl MpResponse {
+    /// The boot processor's hardware ID (see [`MpInfo::hwid`]).
+    pub fn bsp_hwid(&self) -> u64 {
+        #[cfg(target_arch = "x86_64")]
+        return u64::from(self.bsp_lapic_id);
+        #[cfg(not(target_arch = "x86_64"))]
+        return self.bsp_mpidr;
+    }
+
+    /// How many processors there are, the boot processor included.
+    pub fn cpu_count(&self) -> usize {
+        self.cpu_count as usize
+    }
+
+    /// Processor `i`; `None` past the last.
+    pub fn cpu(&self, i: usize) -> Option<&'static MpInfo> {
+        if i >= self.cpu_count() {
+            return None;
+        }
+        // SAFETY: `cpus` points to `cpu_count` non-null pointers, each to a processor's
+        // structure, in bootloader-reclaimable memory the kernel never reclaims (only usable
+        // memory goes to uvm); the parked processors poll their `goto_address` there.
+        unsafe { (*self.cpus.add(i)).as_ref() }
+    }
+}
+
 // Layouts match the C header: these are the sizes `sizeof` reports there.
 const _: () = {
     use core::mem::size_of;
+    assert!(size_of::<MpRequest>() == 56);
+    #[cfg(target_arch = "x86_64")]
+    assert!(size_of::<MpInfo>() == 32);
+    #[cfg(not(target_arch = "x86_64"))]
+    assert!(size_of::<MpInfo>() == 40);
+    #[cfg(target_arch = "x86_64")]
+    assert!(size_of::<MpResponse>() == 32);
+    #[cfg(not(target_arch = "x86_64"))]
+    assert!(size_of::<MpResponse>() == 40);
     assert!(size_of::<BaseRevision>() == 24);
     assert!(size_of::<RequestsStartMarker>() == 32);
     assert!(size_of::<RequestsEndMarker>() == 16);

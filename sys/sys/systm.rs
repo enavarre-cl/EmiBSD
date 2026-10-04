@@ -44,7 +44,8 @@
 //!
 //! Status: `wip`. Milestone M3 ports `physmem`; M5 adds `cold`, `safepri` and the sleep
 //! limits `INFSLP`/`MAXTSLP`; M6 `struct sysent`, `sy_call_t`, `SY_NOLOCK` and `SCARG`; M7b
-//! the net lock macros (`NET_LOCK` .. `NET_ASSERT_LOCKED_EXCLUSIVE`) over `netlock`. The
+//! the net lock macros (`NET_LOCK` .. `NET_ASSERT_LOCKED_EXCLUSIVE`) over `netlock`; M11a the
+//! kernel lock macros (`KERNEL_LOCK_INIT` .. `KERNEL_ASSERT_UNLOCKED`) as functions. The
 //! hostname and boot-time globals, the `panic`/`printf` prototypes (already in
 //! `kern/subr_prf.rs`) and the rest arrive with their files. `tsleep`/`wakeup` are in
 //! `kern/kern_synch.rs`; the `copyin`/`copyout` family is `machine::copy`.
@@ -144,6 +145,47 @@ pub fn sysargs<T>(args: &SysArgs) -> &T {
     // SAFETY: `T` fits in the block (asserted above), shares its alignment, and is made of
     // `Syscallarg` unions, for which every register value is a valid datum.
     unsafe { &*ptr::from_ref(args).cast::<T>() }
+}
+
+/// `KERNEL_LOCK_INIT()`: `_kernel_lock_init()` with `MULTIPROCESSOR`, nothing without.
+#[inline]
+pub fn kernel_lock_init() {
+    #[cfg(feature = "multiprocessor")]
+    crate::kern::kern_lock::_kernel_lock_init();
+}
+
+/// `KERNEL_LOCK()`: `_kernel_lock()` with `MULTIPROCESSOR`, nothing without.
+#[inline]
+pub fn kernel_lock() {
+    #[cfg(feature = "multiprocessor")]
+    crate::kern::kern_lock::_kernel_lock();
+}
+
+/// `KERNEL_UNLOCK()`: `_kernel_unlock()` with `MULTIPROCESSOR`, nothing without.
+#[inline]
+pub fn kernel_unlock() {
+    #[cfg(feature = "multiprocessor")]
+    crate::kern::kern_lock::_kernel_unlock();
+}
+
+/// `KERNEL_ASSERT_LOCKED()`: `KASSERT(_kernel_lock_held())` with `MULTIPROCESSOR`, nothing
+/// without.
+#[inline]
+pub fn kernel_assert_locked() {
+    #[cfg(feature = "multiprocessor")]
+    crate::kassert!(crate::kern::kern_lock::_kernel_lock_held());
+}
+
+/// `KERNEL_ASSERT_UNLOCKED()`: `KASSERT(panicstr || db_active || !_kernel_lock_held())` with
+/// `MULTIPROCESSOR`, nothing without.
+#[inline]
+pub fn kernel_assert_unlocked() {
+    #[cfg(feature = "multiprocessor")]
+    crate::kassert!(
+        crate::kern::subr_prf::panicstr()
+            || crate::kern::init_main::DB_ACTIVE.load(core::sync::atomic::Ordering::Relaxed)
+            || !crate::kern::kern_lock::_kernel_lock_held()
+    );
 }
 
 /// `NET_LOCK()`: network stack data structures are, unless stated otherwise, protected by the

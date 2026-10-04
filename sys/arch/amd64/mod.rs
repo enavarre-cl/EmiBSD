@@ -259,6 +259,37 @@ impl Cpu for Machine {
     fn cpu_configure() {
         amd64::autoconf::cpu_configure()
     }
+
+    fn cpu_number() -> u32 {
+        include::cpu::cpu_number()
+    }
+
+    fn ci_cpuid(ci: &include::cpu::CpuInfo) -> u32 {
+        ci.ci_cpuid.get()
+    }
+
+    fn cpu_is_running(ci: &include::cpu::CpuInfo) -> bool {
+        include::cpu::cpu_is_running(ci)
+    }
+
+    fn intr_disable() -> u64 {
+        include::cpufunc::intr_disable()
+    }
+
+    unsafe fn intr_restore(s: u64) {
+        // SAFETY: forwarded: `s` came from `intr_disable` on this CPU.
+        unsafe { include::cpufunc::intr_restore(s) }
+    }
+
+    fn cpu_boot_secondary_processors() {
+        amd64::cpu::cpu_boot_secondary_processors()
+    }
+
+    unsafe fn cpu_hatch(arg: usize) -> ! {
+        // SAFETY: forwarded from the boot glue, with the `cpu_info` `cpu_start_secondary`
+        // passed.
+        unsafe { amd64::cpu::cpu_hatch_entry(arg) }
+    }
 }
 
 impl VmParam for Machine {

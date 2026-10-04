@@ -45,7 +45,7 @@ syscall_debug = [] # OpenBSD `option SYSCALL_DEBUG` -> scdebug_call/scdebug_ret 
 qemu = []         # QEMU-only exits (isa-debug-exit, semihosting) and shortcuts
 encdebug = []     # OpenBSD `option ENCDEBUG` -> the IPsec DPRINTF messages (net.inet.ip.encdebug)
 tcp_sack_debug = [] # OpenBSD `option TCP_SACK_DEBUG` -> tcp_print_holes in tcp_output
-multiprocessor = [] # OpenBSD `option MULTIPROCESSOR` -> so far only tsc.c's TSC sync test (M11b); off
+multiprocessor = [] # OpenBSD `option MULTIPROCESSOR` -> the kernel lock, the spinning mutex, the APs (M11a), the TSC sync test (M11b); off until M11e
 scsiterse = []    # OpenBSD `option SCSITERSE` -> sense codes printed as numbers, no adesc[] table
 inet6 = []        # OpenBSD option INET6 -> IPv6 (sys/netinet6); default (GENERIC has it)
 

@@ -3,7 +3,7 @@
 //!
 //! `sys/stand/` fills it from the Limine responses; nothing here names Limine, so the kernel
 //! could be booted by anything able to produce the same facts. Grows with the milestones (M3 adds
-//! what `uvm_page` needs).
+//! what `uvm_page` needs; M11a the processors and the way to start them, [`BootMp`]).
 
 use core::ffi::CStr;
 use core::ptr::NonNull;
@@ -152,6 +152,60 @@ pub struct EfiMemmap {
     pub desc_ver: u32,
 }
 
+/// One processor the bootloader found, the boot processor included.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BootCpu {
+    /// The bootloader's number for it (the ACPI processor UID where there is ACPI).
+    pub processor_id: u32,
+    /// Its hardware ID: the local APIC ID on amd64, `MPIDR_EL1`'s affinity fields on arm64.
+    pub hwid: u64,
+}
+
+/// The processors and how to start them (`MULTIPROCESSOR`): the bootloader parked every
+/// application processor, and [`BootMp::start`] releases one into [`Cpu::cpu_hatch`]. This
+/// replaces amd64's `mptramp.S` with its INIT/SIPI sequence and arm64's PSCI `CPU_ON` call
+/// (`docs/ARCHITECTURE.md`, "Deviations").
+///
+/// [`Cpu::cpu_hatch`]: crate::machine::Cpu::cpu_hatch
+#[derive(Clone, Copy)]
+pub struct BootMp {
+    /// The boot processor's hardware ID (as [`BootCpu::hwid`]).
+    pub bsp_hwid: u64,
+    /// How many processors there are, the boot processor included.
+    pub ncpus: usize,
+    /// Processor `i`, `i < ncpus`.
+    pub cpu: fn(usize) -> BootCpu,
+    /// Releases application processor `i` into `Cpu::cpu_hatch(arg)`, on a bootloader stack
+    /// of 64 KiB with interrupts masked. Returns at once; the processor runs from then on.
+    ///
+    /// # Safety
+    ///
+    /// `i < ncpus`, `i` is not the boot processor and was not started before, and `arg` is
+    /// what the machine's `cpu_hatch` expects for that processor.
+    pub start: unsafe fn(usize, usize),
+}
+
+impl BootMp {
+    /// The processors, the boot processor included, in the bootloader's order.
+    pub fn cpus(&self) -> impl Iterator<Item = BootCpu> + '_ {
+        (0..self.ncpus).map(|i| (self.cpu)(i))
+    }
+
+    /// The index of the processor whose hardware ID is `hwid`.
+    pub fn index_of(&self, hwid: u64) -> Option<usize> {
+        self.cpus().position(|c| c.hwid == hwid)
+    }
+}
+
+impl core::fmt::Debug for BootMp {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("BootMp")
+            .field("bsp_hwid", &self.bsp_hwid)
+            .field("ncpus", &self.ncpus)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Facts about the loaded image and the machine, gathered by the boot glue before anything else
 /// runs.
 pub struct BootInfo {
@@ -182,6 +236,8 @@ pub struct BootInfo {
     pub efi_memmap: Option<EfiMemmap>,
     /// The boot modules, in load order (`None` past the last).
     pub modules: [Option<BootModule>; MAX_MODULES],
+    /// The processors, when the kernel is built `MULTIPROCESSOR` and the bootloader found them.
+    pub mp: Option<BootMp>,
 }
 
 impl BootInfo {
@@ -278,6 +334,7 @@ mod tests {
             efi_system_table: None,
             efi_memmap: None,
             modules: [None; MAX_MODULES],
+            mp: None,
         };
         assert_eq!(
             boot.kernel_virt_to_phys(Vaddr::new(0xffff_ffff_8001_2345)),
@@ -287,6 +344,27 @@ mod tests {
             boot.hhdm(Paddr::new(0x1000)),
             Vaddr::new(0xffff_8000_0000_1000)
         );
+    }
+
+    #[test]
+    fn boot_mp_lookup() {
+        fn cpu(i: usize) -> BootCpu {
+            BootCpu {
+                processor_id: i as u32,
+                hwid: 0x100 + i as u64,
+            }
+        }
+        // SAFETY: never called by the test.
+        unsafe fn start(_i: usize, _arg: usize) {}
+        let mp = BootMp {
+            bsp_hwid: 0x100,
+            ncpus: 4,
+            cpu,
+            start,
+        };
+        assert_eq!(mp.cpus().count(), 4);
+        assert_eq!(mp.index_of(0x102), Some(2));
+        assert_eq!(mp.index_of(0x104), None);
     }
 
     #[test]
@@ -304,6 +382,7 @@ mod tests {
             efi_system_table: None,
             efi_memmap: None,
             modules: [None; MAX_MODULES],
+            mp: None,
         };
         assert_eq!(boot.boothowto(), 0);
         boot.cmdline = c"-d";

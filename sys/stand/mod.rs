@@ -14,9 +14,11 @@ use bsd::dev::rd::rd_root_image_set;
 use bsd::kern::init_main::{self, BOOTHOWTO};
 use bsd::kern::subr_prf::Str;
 use bsd::kprintf;
+#[cfg(feature = "multiprocessor")]
+use bsd::machine::BootCpu;
 use bsd::machine::{
-    BootInfo, BootModule, Cpu, EfiMemmap, Exit, ExitStatus, MAX_MODULES, Machine, MachineInfo,
-    MemKind, MemMap, MemRegion,
+    BootInfo, BootModule, BootMp, Cpu, EfiMemmap, Exit, ExitStatus, MAX_MODULES, Machine,
+    MachineInfo, MemKind, MemMap, MemRegion,
 };
 use bsd::sys::types::{Paddr, Psize, Vaddr};
 
@@ -101,6 +103,13 @@ static EFI_MEMMAP: Request<EfiMemmapResponse> = Request::new(id::EFI_MEMMAP);
 #[used]
 static MODULE: Request<ModuleResponse> = Request::new(id::MODULE);
 
+/// The application processors (`MULTIPROCESSOR` only: without the request the bootloader
+/// leaves them halted, as the uniprocessor kernel expects). xAPIC mode on amd64.
+#[cfg(feature = "multiprocessor")]
+#[used]
+#[unsafe(link_section = ".requests")]
+static MP: limine::MpRequest = limine::MpRequest::new(0);
+
 #[used]
 #[unsafe(link_section = ".requests_end_marker")]
 static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
@@ -142,6 +151,13 @@ unsafe extern "C" fn _start() -> ! {
             }
             if !boot.cmdline.is_empty() {
                 kprintf!("bootargs: {}\n", Str(boot.cmdline.to_bytes()));
+            }
+            if let Some(mp) = boot.mp {
+                kprintf!(
+                    "bsd: {} processors, boot processor hwid {:#x}\n",
+                    mp.ncpus,
+                    mp.bsp_hwid
+                );
             }
             init_main::set_init_module(boot.module(b"init").copied());
             match boot.module(b"ramdisk.ffs") {
@@ -249,7 +265,72 @@ fn gather() -> Result<BootInfo, BootError> {
             desc_ver: r.desc_version as u32,
         }),
         modules,
+        mp: boot_mp(),
     })
+}
+
+/// The processors from the MP response, `None` without one (or without `MULTIPROCESSOR`).
+fn boot_mp() -> Option<BootMp> {
+    #[cfg(feature = "multiprocessor")]
+    if let Some(r) = MP.request.response() {
+        return Some(BootMp {
+            bsp_hwid: r.bsp_hwid(),
+            ncpus: r.cpu_count(),
+            cpu: mp_cpu,
+            start: mp_start,
+        });
+    }
+    None
+}
+
+/// [`BootMp::cpu`]: processor `i` of the MP response.
+#[cfg(feature = "multiprocessor")]
+fn mp_cpu(i: usize) -> BootCpu {
+    match MP.request.response().and_then(|r| r.cpu(i)) {
+        Some(info) => BootCpu {
+            processor_id: info.processor_id,
+            hwid: info.hwid(),
+        },
+        None => BootCpu {
+            processor_id: u32::MAX,
+            hwid: u64::MAX,
+        },
+    }
+}
+
+/// [`BootMp::start`]: hands processor `i` the argument, then the address of [`ap_start`].
+///
+/// # Safety
+///
+/// As [`BootMp::start`] states.
+#[cfg(feature = "multiprocessor")]
+unsafe fn mp_start(i: usize, arg: usize) {
+    use core::sync::atomic::Ordering;
+    let Some(info) = MP.request.response().and_then(|r| r.cpu(i)) else {
+        return;
+    };
+    info.extra_argument.store(arg as u64, Ordering::Relaxed);
+    // The protocol: an atomic write of the address releases the parked processor; Release
+    // orders the argument (and everything the boot processor prepared) before it.
+    let entry: unsafe extern "C" fn(*const limine::MpInfo) -> ! = ap_start;
+    info.goto_address
+        .store(entry as usize as u64, Ordering::Release);
+}
+
+/// Where an application processor enters the kernel, on the 64 KiB stack the bootloader gave
+/// it (the stack size request covers the application processors too), with the bootloader's
+/// page tables, interrupts masked, and `info` its MP structure.
+///
+/// # Safety
+///
+/// Only the bootloader jumps here, once per processor [`mp_start`] released.
+#[cfg(feature = "multiprocessor")]
+unsafe extern "C" fn ap_start(info: *const limine::MpInfo) -> ! {
+    use core::sync::atomic::Ordering;
+    // SAFETY: the protocol passes the processor's own structure, which stays mapped.
+    let arg = unsafe { (*info).extra_argument.load(Ordering::Acquire) } as usize;
+    // SAFETY: `arg` is what the machine passed to `mp_start` for this processor.
+    unsafe { Machine::cpu_hatch(arg) }
 }
 
 fn mem_kind(raw: u64) -> MemKind {

@@ -41,6 +41,7 @@ pub mod malloc;
 pub mod mbuf;
 pub mod mman;
 pub mod mount;
+pub mod mplock;
 pub mod msgbuf;
 pub mod mtio;
 pub mod mutex;

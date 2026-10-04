@@ -450,6 +450,32 @@ impl Cpu for Machine {
     fn setstatclockrate(_newhz: i32) {}
 
     fn cpu_configure() {}
+
+    fn cpu_number() -> u32 {
+        0
+    }
+
+    fn ci_cpuid(_ci: &HostCpuInfo) -> u32 {
+        0
+    }
+
+    fn cpu_is_running(_ci: &HostCpuInfo) -> bool {
+        true
+    }
+
+    /// The host cannot mask interrupts; the state is always "enabled" (0).
+    fn intr_disable() -> u64 {
+        0
+    }
+
+    unsafe fn intr_restore(_s: u64) {}
+
+    fn cpu_boot_secondary_processors() {}
+
+    /// The host has no application processors to enter.
+    unsafe fn cpu_hatch(_arg: usize) -> ! {
+        std::process::exit(1)
+    }
 }
 
 impl VmParam for Machine {

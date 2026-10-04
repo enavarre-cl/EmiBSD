@@ -35,7 +35,11 @@ build-init-amd64:
 build-init-arm64:
     cargo build -p init --target {{arm64}}
 
-build: build-amd64 build-arm64 build-init-amd64 build-init-arm64
+build: build-amd64 build-arm64 build-init-amd64 build-init-arm64 build-mp
+
+# The MULTIPROCESSOR kernels (option MULTIPROCESSOR, M11a), so the MP paths build on every
+# commit; the default kernel stays uniprocessor until M11e.
+build-mp: (build-amd64 "--features multiprocessor") (build-arm64 "--features multiprocessor")
 
 # --- boot images and QEMU ---------------------------------------------------
 
@@ -1146,6 +1150,8 @@ test-ref:
 clippy:
     cargo clippy -p bsd --target {{amd64}} --features qemu -- -D warnings
     cargo clippy -p bsd --target {{arm64}} --features qemu -- -D warnings
+    cargo clippy -p bsd --target {{amd64}} --features qemu,multiprocessor -- -D warnings
+    cargo clippy -p bsd --target {{arm64}} --features qemu,multiprocessor -- -D warnings
     cargo clippy -p init --target {{amd64}} -- -D warnings
     cargo clippy -p init --target {{arm64}} -- -D warnings
     cargo clippy -p libkern -p libz -p bsd -p xtask -- -D warnings

@@ -154,7 +154,7 @@ the default and `cargo test` just works.
 | `ffs2` | `option FFS2` | FFS2 (UFS2 dinodes, the 64 KB super-block) in ffs; default |
 | `qemu` | — | QEMU-only exits (`isa-debug-exit`, semihosting), the boot self-tests, the TSC under TCG and the `uptime went backwards` check |
 | `inet6` | `option INET6` | IPv6: the `#ifdef INET6` sites outside `sys/netinet6` and `inet6domain` in `domains[]`; default, as in GENERIC. `sys/netinet6` itself (and the IPv6 tables and usrreqs it names, `route6_cache`, `tcp6_usrreqs`, ...) always compiles, like a library nothing reaches without the option, so the tree builds both ways |
-| `multiprocessor` | `option MULTIPROCESSOR` | off; so far only `tsc.c`'s TSC synchronisation test, for M11b |
+| `multiprocessor` | `option MULTIPROCESSOR` | off by default until M11e; `just build` and `just clippy` also build it. M11a: `MAXCPUS` 255/256, the kernel lock and the spinning mutex (`kern_lock.c`), the Limine MP request and the application processors' start (see "Deviations"); `just smoke-mp` boots it with `-smp 4` |
 | `ntfs` | `option NTFS` | the read-only NTFS file system (`sys/ntfs`) and its `vfsconflist[]` entry; default, but compiled only where the architecture's GENERIC has it (amd64): see below |
 | `fuse` | `option FUSE` | FUSE (`sys/miscfs/fuse`), its `vfsconflist[]` entry, `cdevsw[]` 92 (`/dev/fuse0`) and `fuseattach` in `pdevinit[]`; default, as in GENERIC |
 
@@ -409,6 +409,20 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   its codepatches are not ported, so there is no AVX state; the switch is eager as in C
   (`CPUPF_USERXSTATE`, saved in `cpu_switchto`, reloaded on the way back to user mode).
 - Limine instead of `boot(8)`/`efiboot`.
+- The application processors are started by Limine (M11a), not by the kernel's own
+  trampoline: amd64's `mptramp.S` (real mode, INIT/SIPI/SIPI from `cpu_start_secondary`)
+  and arm64's PSCI `CPU_ON` into `locore.S`'s `cpu_hatch` are replaced. The
+  `MULTIPROCESSOR` kernel puts the MP request in `.requests` (the uniprocessor one does not,
+  so the bootloader leaves the other processors halted); Limine brings each processor to
+  long mode or EL1 with the boot page tables and parks it on its `goto_address`.
+  `sys/stand` turns the response into `machine::BootMp` (the processors' hardware IDs and a
+  `start(i, arg)`), and the machine's `cpu_start_secondary` calls `start` with the
+  processor's `struct cpu_info`; the AP runs `stand::ap_start` on the bootloader's 64 KiB
+  stack, which calls `Cpu::cpu_hatch(arg)`, the machine's `cpu_hatch`. Why: Limine already
+  owns the boot path (above), and a real-mode or MMU-off trampoline would need identity
+  mappings the kernel otherwise never makes. With no ACPI MADT (M13) the processor list
+  comes from the same response on amd64; arm64 still enumerates `/cpus` from the device
+  tree and matches each `reg` to a response entry by MPIDR.
 - Cargo features and `xtask` instead of `config(8)`, Makefiles and `newvers.sh`; the
   autoconfiguration tables `config(8)` generates are written by hand ("Autoconfiguration",
   below).

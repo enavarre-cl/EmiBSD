@@ -303,8 +303,12 @@ pub const CPUF_PARK: u32 = 0x10000;
 /// `CPUF_VMM`: CPU is executing in VMM mode.
 pub const CPUF_VMM: u32 = 0x20000;
 
-/// `MAXCPUS`: without `MULTIPROCESSOR`, one.
+/// `MAXCPUS`: 1 without `MULTIPROCESSOR`.
+#[cfg(not(feature = "multiprocessor"))]
 pub const MAXCPUS: u32 = 1;
+/// `MAXCPUS`: 255 with `MULTIPROCESSOR` (the xAPIC broadcast ID is the 256th).
+#[cfg(feature = "multiprocessor")]
+pub const MAXCPUS: u32 = 255;
 
 /// `CPU_CHR2BLK`: convert chr maj into blk one (a `CTL_MACHDEP` name).
 pub const CPU_CHR2BLK: i32 = 4;

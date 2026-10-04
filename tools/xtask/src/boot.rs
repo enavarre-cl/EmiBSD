@@ -116,6 +116,19 @@ pub(crate) fn disk_path(root: &Path, arch: Arch, tag: Option<&str>) -> PathBuf {
 /// The most persistent disks a VM can have (`--disks`, M10f's softraid smokes).
 pub(crate) const MAX_DISKS: usize = 4;
 
+/// The most processors a VM can have (`--smp`, M11): `q35` and `virt`'s GICv2 take eight.
+pub(crate) const MAX_SMP: u32 = 8;
+
+/// `--smp N` for every VM this run starts (set once by `main`, read by [`qemu_command`]).
+static SMP: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+
+/// Records `--smp N`; `None` leaves QEMU's default of one processor.
+pub(crate) fn set_smp(n: Option<u32>) {
+    if let Some(n) = n {
+        let _ = SMP.set(n);
+    }
+}
+
 /// The path of persistent disk `k` (`sd<k>`): disk 0 is [`disk_path`], the others are
 /// `disk-<arch>[-<tag>]-sd<k>.img`.
 pub(crate) fn disk_path_n(root: &Path, arch: Arch, tag: Option<&str>, k: usize) -> PathBuf {
@@ -523,6 +536,9 @@ pub(crate) fn qemu_command(
         "-no-reboot",
     ]);
     cmd.args(["-serial", serial]);
+    if let Some(n) = SMP.get() {
+        cmd.args(["-smp", &n.to_string()]);
+    }
     cmd.arg("-drive").arg(format!(
         "if=pflash,format=raw,readonly=on,file={}",
         code.display()

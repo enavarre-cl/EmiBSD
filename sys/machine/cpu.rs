@@ -10,7 +10,10 @@
 //! (`cpu_switchto`, `cpu_fork`), `clear_resched`, `cpu_unidle`, the idle loop hooks
 //! (`cpu_idle_enter`/`cpu_idle_cycle`/`cpu_idle_leave`), `CPU_INFO_FOREACH` and the mutex
 //! nesting counter. M10a adds physio's `vmapbuf`/`vunmapbuf` (`vm_machdep.c`, declared in
-//! `<uvm/uvm_extern.h>`).
+//! `<uvm/uvm_extern.h>`). M11a adds the `MULTIPROCESSOR` contract: `cpu_number`,
+//! `ci_cpuid`, `CPU_IS_RUNNING`, `intr_disable`/`intr_restore` (the kernel lock and the
+//! mutex's parking lots), `cpu_boot_secondary_processors` and the application processor's
+//! entry from the boot glue, `cpu_hatch`.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -251,6 +254,46 @@ pub trait Cpu {
     /// `cpu_configure()` (`autoconf.c`): the machine-dependent part of autoconfiguration;
     /// ends with `spl0()` and `cold = 0`.
     fn cpu_configure();
+
+    /// `cpu_number()`: the running CPU's `ci_cpuid`, 0 on the boot CPU. The index of the
+    /// per-CPU arrays (`__mp_lock`'s `mpl_cpus`, `struct cpumem`).
+    fn cpu_number() -> u32;
+
+    /// `ci->ci_cpuid`: the index [`Cpu::cpu_number`] returns on `ci`, `0..ncpusfound`.
+    fn ci_cpuid(ci: &Self::CpuInfo) -> u32;
+
+    /// `CPU_IS_RUNNING(ci)`: `ci` has hatched and runs the scheduler (`CPUF_RUNNING`).
+    fn cpu_is_running(ci: &Self::CpuInfo) -> bool;
+
+    /// `intr_disable()` (`<machine/cpufunc.h>`, arm64 `<machine/cpu.h>`): masks every
+    /// interrupt on this CPU; returns the previous state for [`Cpu::intr_restore`].
+    fn intr_disable() -> u64;
+
+    /// `intr_restore(s)`: puts back the interrupt state [`Cpu::intr_disable`] returned.
+    ///
+    /// # Safety
+    ///
+    /// `s` comes from the matching `intr_disable` on this CPU, and the code between the two
+    /// has not switched threads.
+    unsafe fn intr_restore(s: u64);
+
+    /// `cpu_boot_secondary_processors()` (`MULTIPROCESSOR`): `main` calls it once the
+    /// scheduler and the idle threads exist; lets every attached application processor run
+    /// (`CPUF_GO`) and waits until each reports `CPUF_RUNNING`. Without `MULTIPROCESSOR`
+    /// there is nothing to start.
+    fn cpu_boot_secondary_processors();
+
+    /// The application processor's first kernel code: what `mptramp.S` jumps to on amd64
+    /// (`cpu_hatch`) and arm64's `locore.S` `cpu_hatch`/`cpu_init_secondary`. The boot glue
+    /// (`stand`) calls it on the AP, on the bootloader's stack with interrupts masked, with
+    /// the `arg` the machine passed to [`BootMp::start`](crate::machine::BootMp::start)
+    /// (its `struct cpu_info`).
+    ///
+    /// # Safety
+    ///
+    /// Called once per application processor by the boot glue, with `arg` exactly what the
+    /// machine passed when it started that processor.
+    unsafe fn cpu_hatch(arg: usize) -> !;
 }
 
 /// `struct cpu_info` on the selected machine.
@@ -333,6 +376,39 @@ pub fn need_resched(ci: &CpuInfo) {
 /// `CPU_INFO_FOREACH` on the selected machine.
 pub fn cpu_info_foreach(f: &mut dyn FnMut(&'static CpuInfo)) {
     Machine::cpu_info_foreach(f)
+}
+
+/// `cpu_number()` on the selected machine.
+#[inline]
+pub fn cpu_number() -> u32 {
+    Machine::cpu_number()
+}
+
+/// `CPU_IS_RUNNING(ci)` on the selected machine.
+pub fn cpu_is_running(ci: &CpuInfo) -> bool {
+    Machine::cpu_is_running(ci)
+}
+
+/// `intr_disable()` on the selected machine.
+#[inline]
+pub fn intr_disable() -> u64 {
+    Machine::intr_disable()
+}
+
+/// `intr_restore(s)` on the selected machine.
+///
+/// # Safety
+///
+/// As for [`Cpu::intr_restore`].
+#[inline]
+pub unsafe fn intr_restore(s: u64) {
+    // SAFETY: forwarded.
+    unsafe { Machine::intr_restore(s) }
+}
+
+/// `cpu_boot_secondary_processors()` on the selected machine.
+pub fn cpu_boot_secondary_processors() {
+    Machine::cpu_boot_secondary_processors()
 }
 
 /// `boot(9)` on the selected machine.

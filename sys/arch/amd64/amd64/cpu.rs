@@ -378,3 +378,23 @@ pub unsafe fn cpu_enter_pages(cif: &CpuInfoFull) {
     // an empty iomap, by setting its offset to the TSS limit
     tss.tss_iobase = size_of::<X86_64Tss>() as u16;
 }
+
+/// `cpu_boot_secondary_processors`: without `MULTIPROCESSOR` there are no application
+/// processors to start.
+pub fn cpu_boot_secondary_processors() {
+    #[cfg(feature = "multiprocessor")]
+    let _ = unported!("cpu_boot_secondary_processors (amd64 cpu.c, M11a)");
+}
+
+/// The application processor's entry from the boot glue (`Cpu::cpu_hatch`), standing in for
+/// `mptramp.S`'s jump to `cpu_hatch`; `arg` is its `struct cpu_info`.
+///
+/// # Safety
+///
+/// Called once per application processor by the boot glue, with the `arg` the boot processor
+/// passed to `BootMp::start`.
+pub unsafe fn cpu_hatch_entry(_arg: usize) -> ! {
+    // Nothing starts an application processor yet (`cpu_start_secondary` is not ported), and
+    // one that got here could not print: its `curcpu()` is not set up.
+    <crate::machine::Machine as crate::machine::cpu::Cpu>::halt()
+}

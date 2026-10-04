@@ -26,10 +26,10 @@
 //! architectures' `<machine/mutex.h>` say `__USE_MI_MUTEX`), `MUTEX_INITIALIZER`,
 //! `mtx_curcpu`, `mtx_owner`, `mtx_owned`, `MUTEX_ASSERT_LOCKED`/`UNLOCKED` and the `MTX_*`
 //! flags. `WITNESS` (`lock_object`, `MTX_LO_INITIALIZER`) and `struct db_mutex` come with M5.
-//! The functions live in `kern/kern_lock.rs`.
+//! The functions live in `kern/kern_lock.rs`. M11a: `__MUTEX_IPL(ipl)` raises to at least
+//! `IPL_MPFLOOR` with `MULTIPROCESSOR`, as in the C.
 //!
 //! ## Deviations
-//! - `__MUTEX_IPL(ipl)` is `ipl`: there is no `MULTIPROCESSOR`, so no `IPL_MPFLOOR` raise.
 //! - The fields are an atomic and `Cell`s, so a `static` mutex is entered through `&`.
 
 use core::cell::Cell;
@@ -46,6 +46,10 @@ use core::hint as _;
 
 /// `__MUTEX_IPL(ipl)`: the level a mutex of `ipl` raises to (see the module's deviations).
 pub const fn mutex_ipl(ipl: i32) -> i32 {
+    #[cfg(feature = "multiprocessor")]
+    if ipl < crate::machine::intr::IPL_MPFLOOR {
+        return crate::machine::intr::IPL_MPFLOOR;
+    }
     ipl
 }
 

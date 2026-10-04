@@ -23,7 +23,9 @@
 //!                                          gets N); a run with fewer disks than the last
 //!                                          keeps the extra files, unattached;
 //!                                          --disk-set NAME (qemu, smoke) uses the set
-//!                                          target/disk-A-NAME[-sdK].img instead
+//!                                          target/disk-A-NAME[-sdK].img instead;
+//!                                          --smp N (1..=8; qemu, smoke, smoke2) gives
+//!                                          every VM N processors
 //! cargo xtask smoke --arch A [--kernel K] [--cmdline C] [--status N] [--send-after L --send T]... [--until-seen]
 //!                   [--expect-ramdisk] --expect L...
 //!                                          boot headless; pass if every L appears and QEMU
@@ -166,6 +168,7 @@ fn main() -> ExitCode {
 fn run(args: &[String]) -> Result<()> {
     let root = workspace_root()?;
     let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+    boot::set_smp(smp_flag(&argv)?);
     match argv.as_slice() {
         ["ports", "check"] => ports_check(&root),
         ["ports", "status"] => ports_status(&root, false),
@@ -348,6 +351,18 @@ fn disks_flag(args: &[&str]) -> Result<usize> {
             boot::MAX_DISKS
         )
         .into()),
+    }
+}
+
+/// `--smp N` (qemu, smoke, smoke2): QEMU's `-smp N`, 1 to `boot::MAX_SMP`; absent, QEMU's
+/// default of one processor.
+fn smp_flag(args: &[&str]) -> Result<Option<u32>> {
+    let Some(s) = optional_flag(args, "--smp") else {
+        return Ok(None);
+    };
+    match s.parse::<u32>() {
+        Ok(n) if (1..=boot::MAX_SMP).contains(&n) => Ok(Some(n)),
+        _ => Err(format!("--smp {s}: expected a number from 1 to {}", boot::MAX_SMP).into()),
     }
 }
 
@@ -719,6 +734,18 @@ fn git(repo: &Path, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn smp_is_optional_and_bounded() {
+        assert_eq!(smp_flag(&[]).unwrap(), None);
+        assert_eq!(
+            smp_flag(&["--arch", "arm64", "--smp", "4"]).unwrap(),
+            Some(4)
+        );
+        for bad in ["0", "9", "x"] {
+            assert!(smp_flag(&["--smp", bad]).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn disks_defaults_to_one_and_stops_at_four() {

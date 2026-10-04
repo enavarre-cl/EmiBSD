@@ -13,6 +13,7 @@ pub mod exec;
 pub mod fdt;
 pub mod frame;
 pub mod intr;
+pub mod mplock;
 pub mod mutex;
 pub mod param;
 pub mod pcb;

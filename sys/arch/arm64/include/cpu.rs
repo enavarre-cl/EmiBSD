@@ -257,8 +257,12 @@ pub const CPUF_PARK: u32 = 1 << 7;
 /// `CPUF_PARKED`.
 pub const CPUF_PARKED: u32 = 1 << 8;
 
-/// `MAXCPUS`: without `MULTIPROCESSOR`, one.
+/// `MAXCPUS`: 1 without `MULTIPROCESSOR`.
+#[cfg(not(feature = "multiprocessor"))]
 pub const MAXCPUS: u32 = 1;
+/// `MAXCPUS`: 256 with `MULTIPROCESSOR`.
+#[cfg(feature = "multiprocessor")]
+pub const MAXCPUS: u32 = 256;
 
 /// `CPU_ID_AA64ISAR0`: a `CTL_MACHDEP` name (`ID_AA64ISAR0_EL1`).
 pub const CPU_ID_AA64ISAR0: i32 = 2;

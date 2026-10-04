@@ -19,6 +19,7 @@ pub mod i82489var;
 pub mod i8259;
 pub mod intr;
 pub mod intrdefs;
+pub mod mplock;
 pub mod mutex;
 pub mod param;
 pub mod pcb;
