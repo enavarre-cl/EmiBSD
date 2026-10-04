@@ -4546,3 +4546,32 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c167f7b63f76738a1d568ec95919f42f76f5222e"
 deps = ["sys/kern/subr_disk.c", "sys/sys/dkio.h"]
 notes = "M8: rd_softc, rd_ca/rd_cd, rdattach (one unit, the fake cfdata a static), rd_match, rd_attach, rd_detach, rdopen, rdclose, rdstrategy, rdioctl (DIOCRLDINFO, DIOCGPDINFO, DIOCGDINFO, DIOCGPART, DIOCWDINFO/DIOCSDINFO), rdgetdisklabel, rddump, rdsize; the image is the Limine module /ramdisk.ffs handed over by stand (rd_root_image_set) instead of the rd_root_image array rdsetroot(8) patches, writable in the bootloader's direct map; without a module rd_root_size is 0 and rd0 attaches with no label; rdgetdisklabel reads into a local and, with no partition open, first publishes the initdisklabel'd spoofed label that rdstrategy checks against (no &mut aliasing the strategy's view); stub: rdread/rdwrite need physio (kern_physio.c), reported unported; pseudo-device rd 1 in pdevinit (from RAMDISK, not GENERIC); bdevsw 17, cdevsw 47 on both archs; host test (attach, spoofed label, reads, writes, end of disk, ENXIO, DIOCGDINFO); smoke: rd0: <N> bytes, ffs magic ok"
+
+# ---------------------------------------------------------------------------
+# M9d: pf(4), the packet filter, and what it needs (radix, toeplitz, TCP headers)
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/netinet/tcp.h"
+rust = "sys/netinet/tcp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9783d731bdf80b667039f83e95eb469197a84418"
+notes = "M9d: struct tcphdr (Tcphdr, wire order); th_x2/th_off bit-fields as one u8 th_x2_off with th_off()/set_th_off()/th_x2()/set_th_x2(); th_reseqlen #define as accessors over th_urp; tcp_seq is TcpSeq; TH_*, TCPOPT_*, TCP_MSS and the socket options; struct tcp_info ported as #[repr(C)] TcpInfo; host tests and a reference-backed test"
+
+[[file]]
+c = "sys/netinet/tcp_seq.h"
+rust = "sys/netinet/tcp_seq.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "70ab75ff9a5ffa54273b5cf95d48c0f42851febe"
+deps = ["sys/netinet/tcp.h"]
+notes = "M9d: SEQ_LT/LEQ/GT/GEQ as const fn seq_lt.. (wrapping_sub as i32); tcp_rcvseqinit/tcp_sendseqinit left for the tcpcb port (tcp_var.h not ported); tcp_iss belongs to tcp_subr.c"
+
+[[file]]
+c = "sys/netinet/tcp_fsm.h"
+rust = "sys/netinet/tcp_fsm.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b41c7e417d47577b7adb937647eefb50fa594cd4"
+notes = "M9d: TCPS_* states; TCPS_HAVE* as const fns; tcp_outflags/tcpstates (C: #ifdef TCPOUTFLAGS/TCPSTATES) always present as statics TCP_OUTFLAGS and TCPSTATES (&[u8] names, no NUL)"
