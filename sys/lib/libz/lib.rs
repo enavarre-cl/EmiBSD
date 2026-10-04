@@ -20,6 +20,7 @@ extern crate alloc;
 extern crate std;
 
 pub mod adler32;
+pub mod compress;
 pub mod crc32;
 pub mod deflate;
 mod inffixed;
@@ -31,6 +32,7 @@ pub mod zopenbsd;
 pub mod zutil;
 
 pub use adler32::{adler32, adler32_combine};
+pub use compress::{compress, compress2, compressBound, compressBound_z};
 pub use crc32::crc32;
 pub use deflate::{
     deflate, deflateBound, deflateBound_z, deflateCopy, deflateEnd, deflateGetDictionary,
