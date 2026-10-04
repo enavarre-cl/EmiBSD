@@ -24,13 +24,20 @@ use super::*;
 
 /// The `install(1)` stand-in for `includes` rules: options dropped, every source recorded
 /// (made absolute) with the destination, one `source destination` line each, into
-/// `@MANIFEST@`.
+/// `@MANIFEST@`. `install -d dir...` (libfuse's rule makes `/usr/include/fuse` so) records a
+/// `-d dir` line per directory, which xtask creates, so that a later `install file dir`
+/// lands inside it.
 const INSTALL_SH: &str = "\
 #!/bin/sh
 # EmiBSD: install(1) for a library's `includes` rule (tools/xtask, userland/libraries.rs).
 # Records what would be installed; xtask installs it.
-while getopts Cco:g:m: opt; do :; done
+d=
+while getopts Ccdo:g:m: opt; do [ \"$opt\" = d ] && d=1; done
 shift $((OPTIND - 1))
+if [ -n \"$d\" ]; then
+\tfor dir; do echo \"-d $dir\" >> '@MANIFEST@'; done
+\texit 0
+fi
 eval \"dest=\\${$#}\"
 while [ $# -gt 1 ]; do
 \tcase $1 in /*) src=$1 ;; *) src=$(pwd)/$1 ;; esac
@@ -139,6 +146,14 @@ pub(super) fn library_includes(ctx: &Ctx<'_>, dir: &str) -> Result<Vec<bool>> {
         if !dest.starts_with(&ctx.sysroot) {
             return Err(format!("{dir}: `includes` installs outside the sysroot: {line}").into());
         }
+        // `install -d dest`: a directory (an earlier build may have left a file there).
+        if src == Path::new("-d") {
+            if dest.is_file() {
+                fs::remove_file(&dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+            }
+            fs::create_dir_all(&dest).map_err(|e| format!("{}: {e}", dest.display()))?;
+            continue;
+        }
         if dest.is_dir() {
             dest = dest.join(src.file_name().ok_or("bad header name")?);
         }
@@ -174,10 +189,29 @@ mod tests {
             .unwrap()
             .success();
         assert!(ok);
+        // `install -d` (libfuse's `includes`) records the directory to make.
+        let ok = Command::new("/bin/sh")
+            .arg(&sh)
+            .args([
+                "-d",
+                "-o",
+                "root",
+                "-g",
+                "bin",
+                "-m",
+                "755",
+                "/dest/include/fuse",
+            ])
+            .current_dir(&dir)
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
         let text = fs::read_to_string(&manifest).unwrap();
         let cwd = fs::canonicalize(&dir).unwrap();
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 2);
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[2], "-d /dest/include/fuse");
         assert!(
             lines[0] == format!("{}/a.h /dest/include", cwd.display())
                 || lines[0] == format!("{}/a.h /dest/include", dir.display())

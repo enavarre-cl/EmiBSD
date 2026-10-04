@@ -154,6 +154,26 @@ uses ports 8443 (trusted), 8444 (echo) and 8445 (untrusted); they must be free.
 `cargo test -p xtask -- --ignored servers_answer` checks the three modes against
 `openssl s_client` on the Mac alone.
 
+## e2fsprogs (M10d)
+
+`just smoke-ext2fs` checks the ext2 file system the guest made with OpenBSD's
+`newfs_ext2fs(8)` a second time, on the Mac, with an independent implementation: e2fsprogs'
+`e2fsck -fn` must find it clean (exit status 0) and `debugfs -R 'cat PATH'` must read the guest's
+files back (`cargo xtask e2fsck`, `tools/xtask/src/e2fs.rs`). Install it once (the user did on
+2026-10-04):
+
+```sh
+brew install e2fsprogs
+```
+
+The formula is keg-only (macOS has no ext2 of its own, but Homebrew keeps it off `PATH`), so
+xtask never looks in `PATH` or a fixed directory: it runs `brew --prefix e2fsprogs` and uses
+`<prefix>/sbin/e2fsck` and `<prefix>/sbin/debugfs`. When the formula is missing, the command
+fails with an `xtask: e2fsprogs not found ...` line naming it. Both tools only read the disk
+image (`target/disk-<arch>-ext2fs.img`): e2fsck runs with `-n`, and they reach the ext2
+partition through e2fsprogs' `image?offset=BYTES` syntax, the offset found from the image's
+MBR and OpenBSD disklabel, so nothing is copied or written.
+
 ## NTFS check (M10d)
 
 `just userland` for amd64 makes `/root/images/ntfs.img` with our own generator and checks it

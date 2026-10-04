@@ -371,6 +371,26 @@ in it. First user: `tools/sr6create` (`/usr/sbin/sr6create`), which creates a so
 volume through `BIOCCREATERAID`; OpenBSD's bioctl(8) refuses `-c 6` ("unsupported RAID level")
 although `softraid_raid6.c` is in the kernel, and the userland is compiled unmodified, so
 the test program does what bioctl's `bio_createraid()` does for a non-crypto level, for level 6.
+Second user (M10d): `tools/fusehello` (`/usr/sbin/fusehello`), a read-only FUSE file system
+with a fixed tree (`/hello.txt`, `/sub/deep.txt`) over OpenBSD's own libfuse (`fuse_main` with
+`getattr`, `readdir`, `open`, `read` and `statfs`), for `smoke-fuse`: OpenBSD has no FUSE file
+system of its own in base, only the library. Its Makefile adds `-I${DESTDIR}/usr/include/fuse`
+and `-lfuse`, what libfuse's `fuse.pc` gives its users.
+
+M10d adds `lib/libfuse` to `LIBRARIES`. Its `includes` rule makes `/usr/include/fuse` with
+`install -d` before installing its headers there; the `install(1)` stand-in records a `-d dir`
+line for that, and xtask makes the directory. Its sources include the kernel's
+`<sys/fusebuf.h>` from the sysroot. ext2fs's `newfs_ext2fs(8)`, `fsck_ext2fs(8)` and
+`mount_ext2fs(8)` and `mount_ntfs(8)` are in `PROGRAMS`; mount_ntfs's Makefile sets `NOPROG=`
+unless `MACHINE` is alpha, amd64 or i386, and `build_prog` then builds nothing, as
+`bsd.prog.mk` does, so arm64's ramdisk has no mount_ntfs. The ramdisk has `/dev/fuse0`
+(character 92, minor 0, 0600, as `MAKEDEV` makes it), the one node libfuse opens.
+
+`smoke-ext2fs` checks the guest's ext2 file system twice: with OpenBSD's `fsck_ext2fs(8)` in
+the guest and with e2fsprogs on the Mac (`cargo xtask e2fsck`, `tools/xtask/src/e2fs.rs`;
+docs/SETUP.md, "e2fsprogs"), an independent implementation, so a bug shared by our kernel and
+OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` does (the MBR's
+0xA6 partition, its label in sector 1) and hands e2fsck and debugfs `image?offset=BYTES`.
 
 ## Deviations from OpenBSD (deliberate)
 

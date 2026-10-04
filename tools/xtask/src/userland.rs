@@ -295,14 +295,23 @@ const PROGRAMS: &[&str] = &[
     "sbin/nfsd",
     "sbin/mount_nfs",
     "usr.bin/showmount",
+    // M10d: the other disk file systems. ext2fs's tools (newfs_ext2fs and fsck_ext2fs take
+    // `ext2fs_bswap.c` from sys/ufs/ext2fs, fsck_ext2fs `fsutil.c` from sbin/fsck), and
+    // mount_ntfs(8), whose Makefile builds it only for alpha, amd64 and i386 (`NOPROG=`
+    // elsewhere: skipped on arm64, `build_prog`).
+    "sbin/newfs_ext2fs",
+    "sbin/fsck_ext2fs",
+    "sbin/mount_ext2fs",
+    "sbin/mount_ntfs",
 ];
 
 /// EmiBSD's own test programs, built after `PROGRAMS` the same way (an OpenBSD-style Makefile,
 /// `build_prog`) from directories of this repository instead of the reference tree: paths
 /// relative to the workspace root. `tools/sr6create` makes a RAID 6 softraid(4) volume, which
-/// OpenBSD's own bioctl(8) refuses to. Their sources are not OpenBSD's, so the licence report
-/// (which lists only the reference tree's files) does not name them.
-const OWN_PROGRAMS: &[&str] = &["tools/sr6create"];
+/// OpenBSD's own bioctl(8) refuses to; `tools/fusehello` (M10d) is a read-only FUSE file
+/// system over OpenBSD's libfuse (`LIBRARIES`). Their sources are not OpenBSD's, so the
+/// licence report (which lists only the reference tree's files) does not name them.
+const OWN_PROGRAMS: &[&str] = &["tools/sr6create", "tools/fusehello"];
 
 /// Programs whose Makefile embeds their manual page in a generated `manual.c` (`disklabel`'s
 /// and `fdisk`'s `-h`/`help` pager): the Makefile renders `*.8` with mandoc(1), which this
@@ -319,6 +328,8 @@ const NOMAN_PROGRAMS: &[&str] = &["sbin/disklabel", "sbin/fdisk"];
 /// running its rules (`make_target`). `libpcap` (tcpdump(8)) has its scanner made by
 /// OpenBSD's lex and its grammar by OpenBSD's yacc, both built for this machine. `librpcsvc`
 /// (quota(1), M10b) has its sources made from its `.x` files by OpenBSD's `rpcgen`.
+/// `libfuse` (M10d) is the FUSE library our own `tools/fusehello` links; its `includes` rule
+/// installs `<fuse/*.h>`, and its sources include the kernel's `<sys/fusebuf.h>`.
 const LIBRARIES: &[&str] = &[
     "lib/libcrypto",
     "lib/libssl",
@@ -327,6 +338,7 @@ const LIBRARIES: &[&str] = &[
     "lib/libedit",
     "lib/libpcap",
     "lib/librpcsvc",
+    "lib/libfuse",
 ];
 
 /// Flags added to host tools (built for macOS with the same clang) and why.
@@ -495,6 +507,10 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
                 );
                 blocked.push(*dir);
             }
+            Linked::NoProg => println!(
+                "  {dir}: NOPROG: its Makefile builds nothing for MACHINE={}",
+                ctx.m.machine
+            ),
         }
     }
     if !built.is_empty() {
@@ -531,6 +547,9 @@ enum Linked {
     /// Every undefined symbol is a compiler builtin (`__multf3`, ...): libcompiler_rt is
     /// missing.
     NeedsCompilerRt(Vec<String>),
+    /// The Makefile builds nothing for this `MACHINE` (`NOPROG` and no `PROG`, as
+    /// `bsd.prog.mk` reads it): mount_ntfs(8) on arm64.
+    NoProg,
 }
 
 /// Whether `sym` is a compiler-rt builtin (soft quad float, 128-bit integer, emulated TLS).
@@ -1402,6 +1421,11 @@ fn build_prog(ctx: &Ctx<'_>, dir: &str) -> Result<Linked> {
     fs::create_dir_all(&objdir).map_err(|e| format!("{}: {e}", objdir.display()))?;
     let mut mk = new_make(ctx, dir, &objdir)?;
     let prog = mk.var("PROG")?;
+    // `bsd.prog.mk` builds no program when the Makefile defines `NOPROG` (even empty) and no
+    // `PROG`: it has nothing for this `MACHINE`.
+    if prog.is_empty() && mk.defined("NOPROG") {
+        return Ok(Linked::NoProg);
+    }
     if prog.is_empty() {
         return Err(format!("{dir}/Makefile: no PROG").into());
     }

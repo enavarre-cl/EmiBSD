@@ -47,6 +47,10 @@
 //!                                          ls from the reference sources (target/userland/A)
 //! cargo xtask ntfs-image OUT [--check]     write M10d's NTFS test volume to OUT (ntfsgen.rs);
 //!                                          --check mounts it with macOS's NTFS driver
+//! cargo xtask e2fsck --arch A [--disk-set NAME] [--cat PATH=TEXT]...
+//!                                          check the ext2 file system on partition a of
+//!                                          the persistent disk with e2fsprogs' e2fsck -fn;
+//!                                          debugfs must cat PATH and print TEXT (e2fs.rs)
 //! ```
 //!
 //! Paths are resolved from the workspace root (derived from `CARGO_MANIFEST_DIR`), never from the
@@ -61,6 +65,7 @@ use serde::Deserialize;
 
 mod boot;
 mod bsdmake;
+mod e2fs;
 mod https;
 mod ntfsgen;
 mod symbolize;
@@ -84,7 +89,8 @@ const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | 
                      qemu --arch A [--kernel K] [--init I] [--ramdisk R] [--disk-fresh] [--disks N] [--disk-set NAME] | gen-syscalls [--check] | \
                      smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--disk-fresh] [--disks N] [--disk-set NAME] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
                      smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--disk-fresh] [--disks N] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
-                     symbolize --arch A [--kernel K] | userland --arch A | ntfs-image OUT [--check]>";
+                     symbolize --arch A [--kernel K] | userland --arch A | ntfs-image OUT [--check] | \
+                     e2fsck --arch A [--disk-set NAME] [--cat PATH=TEXT]...>";
 
 #[derive(Deserialize)]
 struct Ports {
@@ -292,6 +298,15 @@ fn run(args: &[String]) -> Result<()> {
         }
         ["ntfs-image", out] => ntfsgen::ntfs_image(&root.join(out), false),
         ["ntfs-image", out, "--check"] => ntfsgen::ntfs_image(&root.join(out), true),
+        ["e2fsck", rest @ ..] => {
+            let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
+            e2fs::e2fsck(
+                &root,
+                arch,
+                optional_flag(rest, "--disk-set"),
+                &flags(rest, "--cat"),
+            )
+        }
         _ => Err(USAGE.into()),
     }
 }

@@ -74,6 +74,8 @@ const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 /// - vnode disks (`vnd`, M10c), made by `devices()` from `VND_UNITS` the same way: block 14
 ///   (`bdev_disk_init(NVND,vnd)`, 69 / 67), character 41 (219 / 169), `vnd0`..`vnd3`;
 /// - `bio` is major 79 (`bio` 79 / 79: `/dev/bio`, `MAKEDEV` makes it 0600), minor 0;
+/// - `fuse` is major 92 (`cdev_fuse_init`, 277 / 227: `/dev/fuse0`, cloning, the one node
+///   libfuse opens; `MAKEDEV`'s `_mcdev(fuse, ...)` makes it 0600), minor 0;
 /// - `fd/N` is `filedesc` 22 (200 / 150), minor N, for N in `0..64` like MAKEDEV;
 ///   `stdin`, `stdout` and `stderr` link to `fd/0..2` (`DEV_LINKS`).
 ///
@@ -99,6 +101,9 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     // M10f: `bio` 79 (`MAKEDEV`'s `_mkdev(bio, bio, {-M bio c major_bio_c 0 600-})`):
     // bioctl(8) and the softraid tools.
     ("bio", 'c', 79, 0, 0o600, "wheel"),
+    // M10d: `fuse` 92 (`MAKEDEV`'s `_mcdev(fuse, fuse, fuse, {-major_fuse_c-}, 600)`):
+    // libfuse opens `/dev/fuse0` (`lib/libfuse/fuse.c`, `fuse_mount`).
+    ("fuse0", 'c', 92, 0, 0o600, "wheel"),
 ];
 
 /// The `sd` units the image has nodes for (module docs of `DEVICES`): M10f's four vioblk
@@ -1106,6 +1111,11 @@ mod tests {
         assert_eq!(
             find("bio").map(|d| (d.1, d.2, d.3, d.4)),
             Some(('c', 79, 0, 0o600))
+        );
+        // M10d: /dev/fuse0 is cdevsw 92, minor 0, 0600 root:wheel.
+        assert_eq!(
+            find("fuse0").map(|d| (d.1, d.2, d.3, d.4, d.5)),
+            Some(('c', 92, 0, 0o600, "wheel"))
         );
         // Every name once, and the attributes table gets them and /mnt.
         let mut names: Vec<&str> = all.iter().map(|d| d.0.as_str()).collect();
