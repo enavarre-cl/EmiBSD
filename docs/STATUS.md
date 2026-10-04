@@ -14,8 +14,9 @@ Done:
   family, pflog, hfsc, fq_codel, pfctl (`smoke-pf`, a pf rule on wg0 in `smoke-wg`).
 
 Next:
-- pfsync and pflow (added to M9 by the user; agent running). Then M9+ (TCP, bpf, INET6,
-  divert, IGMP, IPComp; ROADMAP) beside diagnostic tools stage 2; then M10. M14b when idle.
+- pfsync and pflow (added to M9 by the user; agent running), then amd64's `tsc.c`. M9+
+  (TCP, bpf, INET6, divert, IGMP, IPComp, HTTPS with LibreSSL and ftp) beside diagnostic
+  tools stage 2; then M10. M14b when idle.
 
 Blockers:
 - amd64's TSC timecounter (`tsc.c`) is deferred.
@@ -24,5 +25,4 @@ Blockers:
   another interface as `ips_wrongif`; `smoke-esp`'s VMs forward. Fixed once bpf is ported.
 
 Decisions pending (the user's): the scope section (open until M13); the PC's CPU (Intel VMX
-or AMD SVM) for vmm and M15; the exact Raspberry Pi 4 model; networking in M15; for M9+:
-LibreSSL for `nc`, `usr.sbin/tcpdump` in the clone, zlib for all of `sys/lib/libz`.
+or AMD SVM) for vmm and M15; the exact Raspberry Pi 4 model; networking in M15.
