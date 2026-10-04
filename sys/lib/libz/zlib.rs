@@ -155,6 +155,8 @@ pub(crate) enum InternalState {
     /// No state: before an init function or after an end function.
     #[default]
     None,
+    /// A compression stream (`deflate.rs`).
+    Deflate(alloc::boxed::Box<crate::deflate::DeflateState>),
 }
 
 /// `struct z_stream_s` (`z_stream`): a compression or decompression stream.

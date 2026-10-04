@@ -21,8 +21,10 @@ extern crate std;
 
 pub mod adler32;
 pub mod crc32;
+pub mod deflate;
 mod inffixed;
 mod inftrees;
+mod trees;
 pub mod zconf;
 pub mod zlib;
 pub mod zopenbsd;
