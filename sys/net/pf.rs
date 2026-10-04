@@ -56,8 +56,6 @@
 //!   translation reports `unported!("inet6")` and drops the packet with `PFRES_TRANSLATE`.
 //! - `carp(4)` (`NCARP`) is not configured: `carp_lsdrop` is a comment at its site. `pfsync(4)`
 //!   (`net/if_pfsync.rs`) and `pflow(4)` (`net/if_pflow.rs`) are.
-//! - Divert sockets (`netinet/ip_divert.c`) are not ported: `divert_packet` reports itself
-//!   with `unported!` and frees the packet, as the C does when the socket is gone.
 //! - `pf_anchor_stack` and `pf_status_fcounters` are per-CPU (`cpumem`) in the C; there is one
 //!   CPU, so they are one static array each.
 //! - `pf_test`'s `struct mbuf **m0` is `&mut Option<&'static Mbuf>`, as `ip_input_if` passes
@@ -8004,10 +8002,9 @@ pub fn pf_test(af: SaFamily, fwdir: u8, ifp: &'static Ifnet, m0: &mut Option<&'s
         }
         PF_DIVERT => {
             if pd.af == AF_INET {
-                // Divert sockets (netinet/ip_divert.c) are not ported: divert_packet
-                // would queue the packet on the socket bound to the port.
-                let _ = unported!("divert_packet");
-                crate::kern::uipc_mbuf::m_freem(pd.m);
+                if let Some(m) = pd.m {
+                    crate::netinet::ip_divert::divert_packet(m, pd.dir, r.divert.port);
+                }
                 pd.m = None;
             }
             // INET6: divert6_packet; not configured.

@@ -117,8 +117,9 @@
 //!   raw ones, as in C. TCP's entry has the functions of `netinet/tcp_*.rs` (M9+).
 //! - `IPSEC` is configured (M9c): AH, ESP and IPComp come after IGMP, as in C.
 //! - `NGIF` is 0 (`ipip_input` serves `IPPROTO_IPV4`); `INET6`, `MPLS`, `NGRE`,
-//!   `NCARP`, `NPF` and `NETHERIP` are not configured: their entries are comments. `NPFSYNC`
-//!   is: `IPPROTO_PFSYNC` goes to `pfsync_input4` (`net/if_pfsync.rs`).
+//!   `NCARP` and `NETHERIP` are not configured: their entries are comments. `NPFSYNC` is:
+//!   `IPPROTO_PFSYNC` goes to `pfsync_input4` (`net/if_pfsync.rs`); so is `NPF`:
+//!   `IPPROTO_DIVERT` (`netinet/ip_divert.c`) has its entry.
 //!   `SMALL_KERNEL` is not set, so the sysctl handlers are in the table.
 //! - `ip_protox[]` holds atomics (`ip_init` writes it once, every input reads it).
 
@@ -128,10 +129,12 @@ use core::sync::atomic::AtomicU8;
 use crate::net::if_pfsync::{pfsync_input4, pfsync_sysctl};
 use crate::net::if_var::Netstack;
 use crate::netinet::in_::{
-    IPPROTO_AH, IPPROTO_DONE, IPPROTO_ESP, IPPROTO_ICMP, IPPROTO_IGMP, IPPROTO_IPCOMP,
-    IPPROTO_IPV4, IPPROTO_MAX, IPPROTO_PFSYNC, IPPROTO_RAW, IPPROTO_TCP, IPPROTO_UDP, SockaddrIn,
+    IPPROTO_AH, IPPROTO_DIVERT, IPPROTO_DONE, IPPROTO_ESP, IPPROTO_ICMP, IPPROTO_IGMP,
+    IPPROTO_IPCOMP, IPPROTO_IPV4, IPPROTO_MAX, IPPROTO_PFSYNC, IPPROTO_RAW, IPPROTO_TCP,
+    IPPROTO_UDP, SockaddrIn,
 };
 use crate::netinet::in_pcb::in_init;
+use crate::netinet::ip_divert::{DIVERT_USRREQS, divert_init, divert_sysctl};
 use crate::netinet::ip_icmp::{icmp_init, icmp_input, icmp_sysctl};
 use crate::netinet::ip_input::{ip_init, ip_slowtimo, ip_sysctl};
 use crate::netinet::ip_ipip::{ipip_init, ipip_input, ipip_sysctl};
@@ -161,7 +164,7 @@ pub static IP_PROTOX: [AtomicU8; IPPROTO_MAX as usize] =
     [const { AtomicU8::new(0) }; IPPROTO_MAX as usize];
 
 /// `inetsw[]`: the internet protocols.
-pub static INETSW: [Protosw; 12] = [
+pub static INETSW: [Protosw; 13] = [
     Protosw {
         pr_init: Some(ip_init),
         pr_slowtimo: Some(ip_slowtimo),
@@ -289,7 +292,17 @@ pub static INETSW: [Protosw; 12] = [
         pr_sysctl: Some(pfsync_sysctl),
         ..Protosw::new(&INETDOMAIN)
     },
-    // NPF > 0: IPPROTO_DIVERT; NETHERIP > 0: IPPROTO_ETHERIP; neither configured.
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_DIVERT as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPSYSCTL,
+        pr_ctloutput: Some(rip_ctloutput),
+        pr_usrreqs: Some(&DIVERT_USRREQS),
+        pr_init: Some(divert_init),
+        pr_sysctl: Some(divert_sysctl),
+        ..Protosw::new(&INETDOMAIN)
+    },
+    // NETHERIP > 0: IPPROTO_ETHERIP; not configured.
     Protosw {
         // raw wildcard
         pr_type: SOCK_RAW as i16,

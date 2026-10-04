@@ -3238,7 +3238,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d8b3695eafc44c4faaa208c08d27ebd2653cfefc"
 deps = ["sys/sys/protosw.h", "sys/sys/domain.h", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c"]
-notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; M9a: udp_usrreqs/ip_ctloutput on udp, rip_usrreqs/rip_ctloutput on the raw, icmp, ipv4-in-ipv4, igmp and wildcard entries; tcp has neither until tcp_usrreq.c), inetdomain (dom_init is in_pcb.c's in_init since M9a), ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (tcp_*, igmp_*) and free the packet; INET6, GRE, MROUTING, CARP, ETHERIP, PIPEX, divert, MPLS not configured; M9: the IPPROTO_PFSYNC entry (pfsync_input4, pfsync_sysctl); M9c: IPSEC configured: ah, esp and ipcomp entries after igmp (with rip_ctloutput/rip_usrreqs), ipv4-in-ipv4 through ip_ipip.c"
+notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; M9a: udp_usrreqs/ip_ctloutput on udp, rip_usrreqs/rip_ctloutput on the raw, icmp, ipv4-in-ipv4, igmp and wildcard entries; tcp has neither until tcp_usrreq.c), inetdomain (dom_init is in_pcb.c's in_init since M9a), ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (tcp_*, igmp_*) and free the packet; INET6, GRE, MROUTING, CARP, ETHERIP, PIPEX, MPLS not configured; M9: the IPPROTO_PFSYNC entry (pfsync_input4, pfsync_sysctl); M9c: IPSEC configured: ah, esp and ipcomp entries after igmp (with rip_ctloutput/rip_usrreqs), ipv4-in-ipv4 through ip_ipip.c; M9+: NPF: the IPPROTO_DIVERT entry (divert_usrreqs, divert_init, divert_sysctl)"
 
 [[file]]
 c = "sys/netinet/in_pcb.h"
@@ -3266,6 +3266,24 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "83c1c184af109db2f55e079bbb22b687974c507f"
 deps = ["sys/netinet/in_pcb.c", "sys/netinet/ip_output.c", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c", "sys/kern/uipc_socket2.c"]
 notes = "M9a: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: rawcbtable, RIPSNDQ/RIPRCVQ and rip_sendspace/rip_recvspace (constants), rip_usrreqs, rip_init, rip_input (the iterator walk; ips_noproto/ips_delivered as two atomic updates), rip_sbappend, rip_output (the destination a sockaddr_in written back with IP_HDRINCL), rip_chkhdr, rip_ctloutput, rip_attach, rip_detach, rip_bind, rip_connect, rip_disconnect, rip_shutdown, rip_send; the MRT_* options (<netinet/ip_mroute.h>, not ported) are defined here and answer EOPNOTSUPP (MROUTING not configured); INET6 not configured; M9c: rip_output passes inp_seclevel to ip_output; M9d: NPF configured (the divert-to address in rip_input, pf_mbuf_link_inpcb in rip_output) (comments at the sites); host tests (a raw ICMP socket pinging the gateway end to end, rip_input's filters, rip_attach's privilege)"
+
+[[file]]
+c = "sys/netinet/ip_divert.h"
+rust = "sys/netinet/ip_divert.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9c5751d8f37dac285576cdcb9811a3a7820e5cec"
+deps = ["sys/netinet/in_pcb.h"]
+notes = "M9+: module ip_divert with ip_divert.c; ISC (Michele Marchetto); struct divstat (u_long as u64, LP64), DIVERTCTL_*, DIVERT_SENDSPACE/RECVSPACE/HASHSIZE, enum divstat_counters as DivstatCounters with divstat_inc; DIVERTCTL_NAMES is userland's; the INET6 prototypes (divert6_*) not configured"
+
+[[file]]
+c = "sys/netinet/ip_divert.c"
+rust = "sys/netinet/ip_divert.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2e8f171130f0aafd643117ce7c30b55ecd4ace7f"
+deps = ["sys/netinet/ip_divert.h", "sys/netinet/raw_ip.c", "sys/netinet/in_pcb.c", "sys/netinet/ip_output.c", "sys/netinet/ip_input.c", "sys/net/pf.c"]
+notes = "M9+: ISC (Michele Marchetto). The whole file: divbtable, divcounters (a static array of atomics), divert_sendspace/divert_recvspace (AtomicI32 for sysctl_bounded_arr), divertctl_vars, divert_usrreqs, divert_init, divert_output (inbound into ipv4_input for a local address, outbound through ip_output; no address answers EINVAL where the C would dereference NULL), divert_packet (skips in_pcb_iterator markers), divert_attach/detach/bind/shutdown/send, divert_sysctl_divstat, divert_sysctl; pf's PF_DIVERT calls divert_packet, inetsw has the IPPROTO_DIVERT entry; kern.file's FILLINPTABLE(&divbtable) belongs to the fill_file port of kern_sysctl.c; INET6 (divb6table, ip6_divert.c) not configured; host test (divert_packet in and out to a bound divert socket, no port, a refused reinjection, net.inet.divert.stats)"
 
 [[file]]
 c = "sys/netinet/udp.h"
@@ -3490,7 +3508,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "64c2b79a2b6dd2be2b8258ff6c00dc3d16d7a8d6"
 deps = ["sys/netinet/ip_var.h", "sys/netinet/in.c", "sys/netinet/in_proto.c", "sys/netinet/ip_icmp.c", "sys/netinet/ip_output.c", "sys/netinet/if_ether.c", "sys/net/route.c"]
-notes = "M7b: the sysctl variables (AtomicI32; M9a: the ipport_* entries are in_pcb.c's atomics), ipq/ipq_mutex, ipintrq, the ipqent/ipq pools, ipcounters, the ip_send queues and tasks, inetctlerrmap; ip_init (M9a: baddynamicports/rootonlyports filled from in_pcb.h's defaults; arpinit), ip_ours/ip_ours_enqueue, ipintr, ipv4_input, ipv4_check, ip_input_if, ip_fragcheck, ip_deliver, in_ouraddr, ip_reass, ip_freef, ip_slowtimo, ip_flush, ip_dooptions, save_rte, ip_srcroute, ip_stripoptions, ip_forward, ip_sysctl, ip_sysctl_ipstat, ip_send_dispatch/ip_sendraw_dispatch, ip_send, ip_send_raw, ip_savecontrol (M9a; the control chain built through the last message's m_next); carp, MROUTING, INET6, divert not configured; M9c: IPSEC: ipsec_init in ip_init, ipsec_forward_check and ipsec_local_check, the IPCTL_IPSEC_* and IPCTL_ENCDEBUG sysctls through ipsec_sysctl (comments at the sites); host tests (header validation, ARP plus echo to the gateway, echo request answered, parameter problem); M9d: pf configured: pf_test(PF_IN) in ip_input_if, pf_ouraddr in in_ouraddr, the divert rdomain; divert (netinet/ip_divert.c) still not ported"
+notes = "M7b: the sysctl variables (AtomicI32; M9a: the ipport_* entries are in_pcb.c's atomics), ipq/ipq_mutex, ipintrq, the ipqent/ipq pools, ipcounters, the ip_send queues and tasks, inetctlerrmap; ip_init (M9a: baddynamicports/rootonlyports filled from in_pcb.h's defaults; arpinit), ip_ours/ip_ours_enqueue, ipintr, ipv4_input, ipv4_check, ip_input_if, ip_fragcheck, ip_deliver, in_ouraddr, ip_reass, ip_freef, ip_slowtimo, ip_flush, ip_dooptions, save_rte, ip_srcroute, ip_stripoptions, ip_forward, ip_sysctl, ip_sysctl_ipstat, ip_send_dispatch/ip_sendraw_dispatch, ip_send, ip_send_raw, ip_savecontrol (M9a; the control chain built through the last message's m_next); carp, MROUTING, INET6 not configured; M9c: IPSEC: ipsec_init in ip_init, ipsec_forward_check and ipsec_local_check, the IPCTL_IPSEC_* and IPCTL_ENCDEBUG sysctls through ipsec_sysctl (comments at the sites); host tests (header validation, ARP plus echo to the gateway, echo request answered, parameter problem); M9d: pf configured: pf_test(PF_IN) in ip_input_if, pf_ouraddr in in_ouraddr, the divert rdomain"
 
 [[file]]
 c = "sys/netinet/ip_output.c"
@@ -5150,7 +5168,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b465a77b487e3490033bbf895b543f32fb6de0f7"
 deps = ["sys/net/pfvar.h", "sys/net/pfvar_priv.h", "sys/netinet/tcp.h", "sys/netinet/tcp_seq.h", "sys/netinet/tcp_fsm.h", "sys/netinet/udp.h", "sys/netinet/ip_icmp.h", "sys/netinet/in_pcb.c", "sys/net/toeplitz.c", "sys/crypto/sha2.c", "sys/crypto/siphash.c", "sys/kern/kern_timeout.c"]
-notes = "M9d: the whole file for IPv4: rule evaluation (pf_match_rule/pf_test_rule, anchors via the one-CPU pf_anchor_stack), the state table (state keys, pf_state_insert/remove, purge), TCP window tracking and sloppy states, scrub hooks, NAT/RDR/BINAT via pf_lb, route-to/reply-to (pf_route), source tracking and the state/source limiters, pf_test with pf_tag/queue/prio/delay, the inpcb/state key links for netinet. Stubs: INET6 not configured (AF_INET6, pf_test6, pf_route6, ICMPv6, af-to: pf_translate_icmp_af/pf_change_icmp_af and the af-to translation report unported! and drop with PFRES_TRANSLATE); pf_socket_lookup for TCP reports unported!(tcbtable) (netinet TCP not ported; user/group rules never match TCP); divert_packet reports unported! (netinet/ip_divert.c) and frees the packet; tcp_mssdflt is TCP_MSS; tcpstat_inc calls are comments. Not configured: NCARP, NBPFILTER (comments at the sites); NPFLOW configured (export_pflow in pf_remove_state); NPFSYNC configured (the pfsync hooks, pf_state_import, PF_DEFER through pfsync_defer). pf_anchor_stack and pf_status_fcounters (per-CPU cpumem) are one static each; pf_test takes &mut Option<&'static Mbuf> and returns the action as u8; host tests"
+notes = "M9d: the whole file for IPv4: rule evaluation (pf_match_rule/pf_test_rule, anchors via the one-CPU pf_anchor_stack), the state table (state keys, pf_state_insert/remove, purge), TCP window tracking and sloppy states, scrub hooks, NAT/RDR/BINAT via pf_lb, route-to/reply-to (pf_route), source tracking and the state/source limiters, pf_test with pf_tag/queue/prio/delay, the inpcb/state key links for netinet. Stubs: INET6 not configured (AF_INET6, pf_test6, pf_route6, ICMPv6, af-to: pf_translate_icmp_af/pf_change_icmp_af and the af-to translation report unported! and drop with PFRES_TRANSLATE); pf_socket_lookup for TCP reports unported!(tcbtable) (netinet TCP not ported; user/group rules never match TCP); M9+: PF_DIVERT hands an IPv4 packet to divert_packet (netinet/ip_divert.c); tcp_mssdflt is TCP_MSS; tcpstat_inc calls are comments. Not configured: NCARP, NBPFILTER (comments at the sites); NPFLOW configured (export_pflow in pf_remove_state); NPFSYNC configured (the pfsync hooks, pf_state_import, PF_DEFER through pfsync_defer). pf_anchor_stack and pf_status_fcounters (per-CPU cpumem) are one static each; pf_test takes &mut Option<&'static Mbuf> and returns the action as u8; host tests"
 
 [[file]]
 c = "sys/net/pf_ioctl.c"

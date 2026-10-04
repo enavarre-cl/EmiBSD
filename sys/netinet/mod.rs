@@ -14,6 +14,7 @@ pub mod in_systm;
 pub mod in_var;
 pub mod ip;
 pub mod ip_ah;
+pub mod ip_divert;
 pub mod ip_ecn;
 pub mod ip_esp;
 pub mod ip_icmp;
