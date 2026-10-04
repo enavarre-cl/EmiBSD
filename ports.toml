@@ -5761,26 +5761,29 @@ notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-modu
 [[file]]
 c = "sys/netinet6/nd6.c"
 rust = "sys/netinet6/nd6.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "58bcc1f809f255d78f35e93ab9afa0b131d071d5"
+deps = ["sys/netinet6/nd6.h", "sys/netinet6/nd6_nbr.c", "sys/netinet6/nd6_rtr.c", "sys/netinet6/in6.c", "sys/netinet6/icmp6.c", "sys/netinet6/in6_proto.c", "sys/net/route.c", "sys/net/rtable.c", "sys/net/if.c", "sys/net/if_ethersubr.c", "sys/netinet/if_ether.h"]
+notes = "M9+: module with nd6.h. The whole file: nd6_init, nd6_ifattach/ifdetach (clears if_nd), nd6_options (byte slice, bool), the neighbour cache in the routing table (llinfo_nd6, nd6_list, stack iterators), nd6_llinfo_settimer/nd6_timer/nd6_llinfo_timer (INCOMPLETE..PROBE), nd6_expire/expire_timer(_update), nd6_slowtimo, nd6_purge, nd6_lookup (ifp an Option<&Ifnet>), nd6_is_addr_neighbor, nd6_invalidate, nd6_free (no NULL rt_llinfo dereference), nd6_rtrequest (pool, nd6_inuse collection, proxy-ND groups), nd6_ioctl, nd6_cache_lladdr, nd6_resolve with the ln_mq hold queue, nd6_need_cache; helpers shared with nd6_nbr.c (rt_ln, nd6_llchanged, ...); In6Ntop stands in for inet_ntop(AF_INET6); KERNEL_LOCK a comment; host tests (options, In6Ntop, the state machine on a hand-built route, a silent neighbour)"
 
 [[file]]
 c = "sys/netinet6/nd6_nbr.c"
 rust = "sys/netinet6/nd6_nbr.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "be526d25b2975bcbb13d4712eca3e9c0e7f22b3c"
+deps = ["sys/netinet6/nd6.c", "sys/netinet6/nd6_rtr.c", "sys/netinet6/ip6_output.c", "sys/netinet6/in6.c", "sys/netinet6/in6_proto.c", "sys/netinet/icmp6.h", "sys/net/route.c", "sys/net/rtsock.c", "sys/net/if.c", "sys/netinet/if_ether.h"]
+notes = "M9+: the whole file: nd6_ns_input/nd6_ns_output (RFC 2461 7.2.2 source), nd6_na_input (the cache update split out as nd6_na_cache)/nd6_na_output, nd6_ifptomac (None for a non-arpcom), DAD (dadq, dad_maxtry, nd6_dad_find/destroy/reaper/starttimer/stoptimer/start/stop/timer with the RFC 9131 NA, duplicated, ns_output, ns_input), nd6_isneighbor; messages copied unaligned, short ones counted tooshort; the proxy gateway's sockaddr_dl copied (the C uses it after rtfree); NCARP a comment; host tests (bad NS/NA, DAD success/duplicate/down/anycast, ifptomac)"
 
 [[file]]
 c = "sys/netinet6/nd6_rtr.c"
 rust = "sys/netinet6/nd6_rtr.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "029b801d5b7e83058eb396ead28ec3902cec4fc0"
+deps = ["sys/netinet6/nd6.c", "sys/netinet6/in6_proto.c", "sys/net/route.c", "sys/net/rtable.c", "sys/netinet/ip6.h"]
+notes = "M9+: the whole file: nd6_rtr_cache (an RS/RA source link-layer address into the neighbour cache), rt6_flush with rt6_deleteroute as the rtable_walk closure; KERNEL_LOCK a comment; no host test of its own (covered through nd6's)"
 
 [[file]]
 c = "sys/netinet6/raw_ip6.c"
