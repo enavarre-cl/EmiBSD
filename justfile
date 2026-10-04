@@ -78,7 +78,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -649,6 +649,53 @@ ipcomp_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24\\n
 ipcomp_sa := "--send-after '# ' --send 'c=\"ipcomp tunnel from 192.168.77.1 to 192.168.77.2\"\\n' --send-after '# ' --send 'echo $c spi 0x2001:0x2002 comp deflate bundle x >>ipsec.conf\\n' " + \
     "--send-after '# ' --send 'a=\"esp transport from 192.168.77.1 to 192.168.77.2\"\\n' --send-after '# ' --send 'b=\"spi 0x1001:0x1002 auth hmac-sha2-256 enc aes\"\\n' " + \
     "--send-after '# ' --send 'echo $a $b authkey file ak:ak enckey file ek:ek bundle x >>ipsec.conf\\n'"
+
+# M9+: TCP between the two VMs of `smoke-link`, with OpenBSD's nc(1), three ways: directly on
+# vio1, through wg0 (`smoke-wg`'s interfaces and keys) and through the ESP tunnel
+# (`smoke-esp`'s flows, SAs and inner addresses on lo1). B listens with `nc -l` on one address
+# and port per path, one after the other; A's `t` sends a line with `nc -N` (shut down after
+# stdin's EOF) and retries every second until B's listener takes it (`-w 5` bounds a connect
+# that gets no answer while wg handshakes). B's nc prints the line and exits on A's FIN.
+# The markers are built with `$((3+4))`, so that the typed commands do not match them. Part
+# of `smoke`.
+smoke-tcp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-tcp: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke2 {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --timeout 300 \
+        {{tcp_both}} {{tcp_a}} {{tcp_b}} {{tcp_expect}}
+    cargo xtask smoke2 {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --timeout 300 \
+        {{tcp_both}} {{tcp_a}} {{tcp_b}} {{tcp_expect}}
+
+# `smoke-tcp`'s sends: the login and the ESP keys (`esp_both` without forwarding), each VM's
+# vio1, wg0, lo1 and ipsec.conf (`esp_sa`), then the transfers.
+tcp_both := "--both-send-after 'login:' --both-send 'root\\n' --both-send-after 'Password:' --both-send 'emibsd\\n' " + \
+    "--both-send-after '# ' --both-send 'cd /tmp; umask 077\\n' " + \
+    "--both-send-after '# ' --both-send 'k=0123456789abcdef; echo $k$k$k$k >ak; e=fedcba9876543210; echo $e$e >ek\\n'"
+tcp_a := "--a-send-after '# ' --a-send 'ifconfig vio1 inet 192.168.77.1/24 up\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig wg0 create wgport 51820 wgkey dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig wg0 wgpeer 3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08= wgendpoint 192.168.77.2 51820 wgaip 10.77.0.2/32\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig wg0 inet 10.77.0.1/24 up\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig lo1 create; ifconfig lo1 inet 10.77.1.1/32\\n' " + \
+    "--a-send-after '# ' --a-send 'echo flow esp from 10.77.1.0/24 to 10.77.2.0/24 peer 192.168.77.2 >ipsec.conf\\n' " + \
+    replace(replace(esp_sa, "--send-after", "--a-send-after"), "--send ", "--a-send ") + \
+    " --a-send-after '# ' --a-send 'ipsecctl -f ipsec.conf\\n' " + \
+    "--a-send-after '# ' --a-send 't(){ until echo tcp-$1-$((3+4)) | nc -N -w 5 $4 $2 $3; do sleep 1; done; }\\n' " + \
+    "--a-send-after '# ' --a-send 't direct 192.168.77.2 7001\\n' " + \
+    "--a-send-after '# ' --a-send 't wg 10.77.0.2 7002\\n' " + \
+    "--a-send-after '# ' --a-send 't esp 10.77.2.1 7003 \"-s 10.77.1.1\"\\n' " + \
+    "--a-send-after '# ' --a-send 'echo tcp-sent-$((4+4))\\n'"
+tcp_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24 up\\n' " + \
+    "--b-send-after '# ' --b-send 'ifconfig wg0 create wgport 51820 wgkey XasIfmJKikt54X+Lg4AO5m87sSkmGLb9HC+LJ/+I4Os=\\n' " + \
+    "--b-send-after '# ' --b-send 'ifconfig wg0 wgpeer hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo= wgendpoint 192.168.77.1 51820 wgaip 10.77.0.1/32\\n' " + \
+    "--b-send-after '# ' --b-send 'ifconfig wg0 inet 10.77.0.2/24 up\\n' " + \
+    "--b-send-after '# ' --b-send 'ifconfig lo1 create; ifconfig lo1 inet 10.77.2.1/32\\n' " + \
+    "--b-send-after '# ' --b-send 'echo flow esp from 10.77.2.0/24 to 10.77.1.0/24 peer 192.168.77.1 >ipsec.conf\\n' " + \
+    replace(replace(esp_sa, "--send-after", "--b-send-after"), "--send ", "--b-send ") + \
+    " --b-send-after '# ' --b-send 'ipsecctl -f ipsec.conf\\n' " + \
+    "--b-send-after '# ' --b-send 'nc -l 192.168.77.2 7001\\n' " + \
+    "--b-send-after '# ' --b-send 'nc -l 10.77.0.2 7002\\n' " + \
+    "--b-send-after '# ' --b-send 'nc -l 10.77.2.1 7003\\n'"
+tcp_expect := "--b-expect 'tcp-direct-7' --b-expect 'tcp-wg-7' --b-expect 'tcp-esp-7' --a-expect 'tcp-sent-8'"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
