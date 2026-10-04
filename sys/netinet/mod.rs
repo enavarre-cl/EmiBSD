@@ -5,6 +5,8 @@
 
 pub mod icmp_var;
 pub mod if_ether;
+pub mod igmp;
+pub mod igmp_var;
 pub mod in4_cksum;
 pub mod in_;
 pub mod in_cksum;

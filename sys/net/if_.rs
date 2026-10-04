@@ -135,8 +135,7 @@
 //!   of `pf_if.c`, `pf_delay_pkt`, `pf_pkt_addr_changed`) and `NBPFILTER` (bpf(4): the taps
 //!   of `if_input_local`, `if_vinput` and `p2p_bpf_mtap`, `bpfdetach`) are configured.
 //! - Calls into files that are not ported report themselves with `unported!` and go on as
-//!   the C would with an empty subsystem: `rti_delete` (`netinet/igmp.c`);
-//!   `inet_ntop` (`ifa_print_all`).
+//!   the C would with an empty subsystem: `inet_ntop` (`ifa_print_all`).
 //! - `ifioctl`'s `pru_control` goes through the socket's protocol (`sys/protosw.rs`), as in
 //!   C; the kernel's own requests come with a NULL socket and go to `in_ioctl` as privileged
 //!   ones (the boot self-test configures an interface that way).
@@ -229,6 +228,7 @@ use crate::net::rtable::{
 };
 use crate::net::rtsock::{rtm_ifannounce, rtm_ifchg};
 use crate::netinet::if_ether::{ETHER_ADDR_LEN, arpcom_of, arpintr, ether_is_multicast};
+use crate::netinet::igmp::rti_delete;
 use crate::netinet::in_::{INADDR_ANY, SockaddrIn, in_ifdetach, in_ioctl, satosin_const, sintosa};
 use crate::netinet::ip_input::{ipintr, ipv4_input};
 use crate::netinet::ip_output::{in_hdr_cksum_out, in_proto_cksum_out};
@@ -2480,8 +2480,7 @@ pub fn if_detach(ifp: &'static Ifnet) {
         let _ = task_del(tq, &ifp.if_linkstatetask);
     }
 
-    // rti_delete(ifp): netinet/igmp.c is not ported.
-    let _ = unported!("rti_delete");
+    rti_delete(ifp);
     // NETHER > 0 && NFSCLIENT: revarp_ifidx is cleared; NFSCLIENT is not configured.
     // MROUTING: vif_delete(ifp); not configured.
     in_ifdetach(ifp);
@@ -3247,9 +3246,8 @@ pub fn if_setrdomain(ifp: &'static Ifnet, rdomain: i32) -> Result<(), Errno> {
             up = true;
             if_down(ifp);
         }
-        // rti_delete(ifp): netinet/igmp.c is not ported. MROUTING vif_delete and INET6
-        // in6_ifdetach are not configured.
-        let _ = unported!("rti_delete");
+        rti_delete(ifp);
+        // MROUTING vif_delete and INET6 in6_ifdetach are not configured.
         in_ifdetach(ifp);
         splx(s);
     }

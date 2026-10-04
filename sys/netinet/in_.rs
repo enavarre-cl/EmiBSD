@@ -138,9 +138,6 @@
 //! - `in_nam2sin` and `in_sa2sin` return the `sockaddr_in` pointer instead of storing it
 //!   through an out parameter. Booleans are `bool` (`in_canforward`, `in_broadcast`,
 //!   `in_hasmulti`, `in_ifinit`'s `newaddr`, `in_ioctl`'s `privileged`).
-//! - IGMP (`netinet/igmp.c`) is not ported: `in_addmulti` and `in_delmulti` report
-//!   `igmp_joingroup` and `igmp_leavegroup`, so no membership report is sent (`struct
-//!   igmp_pktinfo`'s `ipi_ifidx` stays 0, as the C's does when IGMP has nothing to send).
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::mem::{offset_of, size_of};
@@ -162,6 +159,8 @@ use crate::net::route::{
     rt_ifa_addlocal, rt_ifa_del, rt_ifa_dellocal, rt_ifa_purge,
 };
 use crate::net::rtable::rtable_l2;
+use crate::netinet::igmp::{igmp_joingroup, igmp_leavegroup, igmp_sendpkt};
+use crate::netinet::igmp_var::IgmpPktinfo;
 use crate::netinet::in_var::{InAliasreq, InIfaddr, InMulti, ifatoia, ifmatoinm};
 use crate::sys::endian::{htonl, ntohl};
 use crate::sys::errno::Errno;
@@ -179,7 +178,6 @@ use crate::sys::systm::{
     net_assert_locked, net_lock, net_lock_shared, net_unlock, net_unlock_shared,
 };
 use crate::sys::types::{InPort, SaFamily};
-use crate::unported;
 
 // Protocols
 
@@ -1613,11 +1611,13 @@ pub fn in_addmulti(addr: &InAddr, ifp: &'static Ifnet) -> Option<&'static InMult
     // Let IGMP know that we have joined a new IP multicast group.
     // SAFETY: the record lives until `in_delmulti`, which unlinks it first.
     unsafe { ifp.if_maddrlist.insert_head(&inm.inm_ifma) };
-    // struct igmp_pktinfo pkt; igmp_joingroup(inm, ifp, &pkt): netinet/igmp.c is not ported,
-    // so no membership report is queued (pkt.ipi_ifidx stays 0 and igmp_sendpkt is not
-    // reached).
-    let _ = unported!("igmp_joingroup (netinet/igmp.c)");
+    let mut pkt = IgmpPktinfo::default(); // pkt.ipi_ifidx = 0
+    igmp_joingroup(inm, ifp, &mut pkt);
     rw_exit_write(&ifp.if_maddrlock);
+
+    if pkt.ipi_ifidx != 0 {
+        igmp_sendpkt(&pkt);
+    }
 
     Some(inm)
 }
@@ -1632,11 +1632,16 @@ pub fn in_delmulti(inm: &'static InMulti) {
     if let Some(ifp) = ifp {
         rw_enter_write(&ifp.if_maddrlock);
         // No remaining claims to this record; let IGMP know that we are leaving the multicast
-        // group. igmp_leavegroup(inm, ifp, &pkt): netinet/igmp.c is not ported.
-        let _ = unported!("igmp_leavegroup (netinet/igmp.c)");
+        // group.
+        let mut pkt = IgmpPktinfo::default(); // pkt.ipi_ifidx = 0
+        igmp_leavegroup(inm, ifp, &mut pkt);
         // SAFETY: the record is on this interface's list (`in_addmulti`).
         unsafe { ifp.if_maddrlist.remove(&inm.inm_ifma) };
         rw_exit_write(&ifp.if_maddrlock);
+
+        if pkt.ipi_ifidx != 0 {
+            igmp_sendpkt(&pkt);
+        }
 
         // Notify the network driver to update its multicast reception filter.
         let mut ifr = Ifreq::zeroed();
