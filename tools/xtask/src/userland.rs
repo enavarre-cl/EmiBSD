@@ -187,6 +187,7 @@ const PROGRAMS: &[&str] = &[
     "bin/hostname",
     "bin/ls",
     "bin/pwd",
+    "bin/sleep",
     "usr.bin/id",
     "usr.bin/uname",
     "sbin/mount",
