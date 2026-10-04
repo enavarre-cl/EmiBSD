@@ -116,9 +116,9 @@
 //!   `pfsync_kstat_data`, `pfsync_kstat_tpl` and `pfsync_kstat_copy` are compiled out. The
 //!   slices keep their `s_stat_*` counters, which the C keeps either way.
 //! - `carp(4)` is not configured (`NCARP` 0): the `carp_group_demote_adj` calls and
-//!   `if_addgroup(ifp, "carp")` are comments at their sites. `bpf(4)` is not configured
-//!   (`NBPFILTER` 0): `bpfattach(DLT_PFSYNC)` and the `bpf_mtap` of `pfsync_sendout` are
-//!   comments. `INET6` is not configured: the `AF_INET6` branch of `pfsync_defer_output`
+//!   `if_addgroup(ifp, "carp")` are comments at their sites. `bpf(4)` is configured:
+//!   `pfsync_clone_create` attaches a `DLT_PFSYNC` tap and `pfsync_sendout` taps each frame.
+//!   `INET6` is not configured: the `AF_INET6` branch of `pfsync_defer_output`
 //!   (`pf_route6`, `ip6_output`) is a comment; such a state cannot exist here.
 //! - `PFSYNC_DEBUG` is not defined: its `KASSERT` in `pfsync_slice_drop` is not ported.
 //! - `struct pfsync_slice`'s `__aligned(CACHELINESIZE)` is left out: there is one CPU.
@@ -165,6 +165,7 @@ use crate::kern::uipc_mbuf::{
 use crate::machine::copy::{AbiPod, copyin_obj, copyout_obj};
 use crate::machine::cpu::curproc;
 use crate::machine::intr::{IPL_MPFLOOR, IPL_SOFTNET};
+use crate::net::bpf::{BPF_DIRECTION_OUT, DLT_PFSYNC, bpf_mtap, bpfattach};
 use crate::net::if_::{
     IFF_DEBUG, IFF_MULTICAST, IFF_RUNNING, IFF_UP, IFNAMSIZ, IFXF_CLONED, IFXF_MPSAFE, IfParent,
     Ifreq, counters_inc, counters_pkt, if_alloc_sadl, if_attach, if_clone_attach,
@@ -1262,8 +1263,7 @@ pub fn pfsync_clone_create(_ifc: &'static IfClone, unit: i32) -> Result<(), Errn
 
     // NCARP > 0: if_addgroup(ifp, "carp"); carp(4) is not configured.
 
-    // NBPFILTER > 0: bpfattach(&sc->sc_if.if_bpf, ifp, DLT_PFSYNC, PFSYNC_HDRLEN); bpf is
-    // not configured.
+    bpfattach(&sc.sc_if.if_bpf, ifp, DLT_PFSYNC, PFSYNC_HDRLEN as u32);
 
     Ok(())
 }
@@ -2276,7 +2276,10 @@ fn pfsync_slice_write(s: &PfsyncSlice) -> Option<&'static Mbuf> {
 /// `pfsync_sendout`: sends a frame to the sync peer out of the sync interface.
 fn pfsync_sendout(sc: &PfsyncSoftc, m: &'static Mbuf) {
     let len = m.m_pkthdr().len.get() as u64;
-    // NBPFILTER > 0: bpf_mtap(sc->sc_if.if_bpf, m, BPF_DIRECTION_OUT); not configured.
+    let if_bpf = sc.sc_if.if_bpf.get();
+    if !if_bpf.is_null() {
+        let _ = bpf_mtap(if_bpf, m, BPF_DIRECTION_OUT);
+    }
 
     let imo = IpMoptions {
         imo_membership: ptr::null_mut(),

@@ -89,9 +89,9 @@
 //! - `kern.file`: `fill_file` leaves the TCP members of `kinfo_file` (`t_state`, the
 //!   windows) zero and reports `struct tcpcb` (`tcp_usrreq.c`) if a TCP socket ever shows
 //!   up (none can be created yet); an `AF_INET6` socket cannot exist (`INET6` is not
-//!   configured) and is reported likewise. `KERN_FILE_BYFILE` of sockets walks `udbtable`
-//!   and `rawcbtable`; `tcbtable` (`tcp_usrreq.c`) and `divbtable` (`ip_divert.c`) are
-//!   reported, and the `INET6` tables are compiled out. `ps_tracevp` does not exist
+//!   configured) and is reported likewise. `KERN_FILE_BYFILE` of sockets walks `udbtable`,
+//!   `rawcbtable` and `divbtable` (`NPF`); `tcbtable` (`tcp_usrreq.c`) is reported, and the
+//!   `INET6` tables are compiled out. `ps_tracevp` does not exist
 //!   (`KTRACE`), so no `KERN_FILE_TRACE` entry is made. The C's `FILLIT` macros are the
 //!   methods of a private `FileWalk` (the C's `kf`, `dp`, `buflen`, `elem_count`,
 //!   `needed`); `kf` lives in it instead of an `M_TEMP` allocation. A `copyout` error ends
@@ -170,6 +170,7 @@ use crate::netinet::in_pcb::{
     Inpcb, InpcbIterator, Inpcbtable, in_pcb_iterator, in_pcb_iterator_abort, in_pcbsolock,
     in_pcbsounlock, sotoinpcb,
 };
+use crate::netinet::ip_divert::DIVBTABLE;
 use crate::netinet::raw_ip::RAWCBTABLE;
 use crate::netinet::udp_usrreq::UDBTABLE;
 use crate::sys::disk::{DS_DISKNAMELEN, Disk, Diskstats};
@@ -1925,8 +1926,8 @@ pub fn sysctl_file(name: &[i32], where_: usize, sizep: &mut usize, p: &Proc) -> 
                 // INET6 is not configured: no tcb6table, udb6table, rawin6pcbtable.
                 w.fillinptable(&UDBTABLE)?;
                 w.fillinptable(&RAWCBTABLE)?;
-                // NPF > 0: divbtable (and divb6table).
-                let _ = unported!("kern.file: divbtable (ip_divert.c)");
+                // NPF > 0: divbtable (INET6: divb6table, not configured).
+                w.fillinptable(&DIVBTABLE)?;
             }
             let mut fp = None;
             loop {

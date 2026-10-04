@@ -54,8 +54,9 @@
 //!   `m_pullup` (the C reads it through `mtod`).
 //! - A TDB whose `tdb_compalgxform` is not set drops the packet and counts `ipsec_noxform`
 //!   (the C dereferences it; `ipcomp_init` always sets it first).
-//! - Not configured, each a comment at its site: `NBPFILTER` (the `enc(4)` counters and
-//!   `bpf_mtap_hdr` of `ipcomp_output`), `INET6`; `ENCDEBUG`'s `DPRINTF` is
+//! - `NBPFILTER` is configured: `ipcomp_output` counts the packet on the SA's `enc(4)`
+//!   interface (rdomain 0, as the C asks) and taps it.
+//! - Not configured, each a comment at its site: `INET6`; `ENCDEBUG`'s `DPRINTF` is
 //!   `ipsec_dprintf!`. `KERNEL_LOCK` is nothing without `MULTIPROCESSOR`.
 
 use core::ptr;
@@ -68,6 +69,8 @@ use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::uipc_mbuf::{
     m_copyback, m_copydata, m_dup_pkt, m_freem, m_getptr, m_makespace, m_pullup,
 };
+use crate::net::bpf::{BPF_DIRECTION_OUT, bpf_mtap_hdr};
+use crate::net::if_enc::{Enchdr, enc_getif};
 use crate::net::if_var::Netstack;
 use crate::net::pfkeyv2::{
     SADB_EXT_LIFETIME_HARD, SADB_EXT_LIFETIME_SOFT, SADB_X_CALG_DEFLATE, pfkeyv2_expire,
@@ -383,8 +386,23 @@ pub fn ipcomp_output(
 ) -> Result<(), Errno> {
     let mut m = m;
 
-    // NBPFILTER > 0: the enc(4) interface of tdb_tap counts the packet and taps it with an
-    // enchdr; not configured.
+    if let Some(encif) = enc_getif(0, tdb.tdb_tap.get()) {
+        encif.if_opackets().set(encif.if_opackets().get() + 1);
+        encif
+            .if_obytes()
+            .set(encif.if_obytes().get() + m.m_pkthdr().len.get() as u64);
+
+        let if_bpf = encif.if_bpf.get();
+        if !if_bpf.is_null() {
+            let hdr = Enchdr {
+                af: u32::from(tdb.tdb_dst.get().sa_family()).to_be(),
+                spi: tdb.tdb_spi.get(),
+                flags: 0,
+            };
+
+            let _ = bpf_mtap_hdr(if_bpf, &hdr.to_bytes(), m, BPF_DIRECTION_OUT);
+        }
+    }
 
     let hlen = IPCOMP_HLENGTH as i32;
 
