@@ -82,7 +82,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-mp
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -1121,6 +1121,42 @@ ntfs_steps := disk_login + " " + \
     "--send-after '# ' --send 'umount /mnt && vnconfig -u vnd0 && echo ntfs-done-$((40+2))\\n' " + \
     "--expect '/dev/vnd0c on /mnt type ntfs (local, read-only)' --expect 'm10d-ntfs-42' " + \
     "--expect 'lines 500 m10d-ntfs-big-line-0499' --expect 'ntfs-done-42'"
+
+# M11a: the MULTIPROCESSOR kernel on four processors (`-smp 4`), per arch: every CPU attaches
+# and runs (`selftest: 4 cpus running`, the IPI and TLB shootdown check of each machine), the
+# default boot's init stand-in passes on it, `selftest=kthread` ping-pongs across two CPUs and
+# `selftest=mpstress` hammers the pools (with their per-CPU caches) and uvm_pmemrange from a
+# thread pegged to each CPU. The MP kernels are kept as `bsd.mp` and the uniprocessor ones
+# rebuilt, so the rest of `smoke` boots the default kernel. Part of `smoke`.
+smoke-mp: build-init-amd64 build-init-arm64
+    cargo build -p bsd --target {{amd64}} --features qemu,multiprocessor
+    cp target/{{amd64}}/debug/bsd target/{{amd64}}/debug/bsd.mp
+    cargo build -p bsd --target {{arm64}} --features qemu,multiprocessor
+    cp target/{{arm64}}/debug/bsd target/{{arm64}}/debug/bsd.mp
+    cargo build -p bsd --target {{amd64}} --features qemu
+    cargo build -p bsd --target {{arm64}} --features qemu
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd.mp --ramdisk none --smp 4 \
+        --expect "bsd: 4 processors" --expect "cpu0 at mainbus0: apid 0 (boot processor)" \
+        --expect "cpu3 at mainbus0: apid 3 (application processor)" \
+        --expect "x86_ipi_selftest: X86_IPI_NOP taken by 3 cpus, tlb shootdowns acknowledged" \
+        --expect "selftest: 4 cpus running" --expect "init: processes ok" \
+        --expect "init exited with status 0 (signal 0)"
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd.mp --ramdisk none --smp 4 \
+        --cmdline "selftest=kthread" --expect "selftest: kthread ping-pong ok" --expect ", across cpu"
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd.mp --ramdisk none --smp 4 \
+        --cmdline "selftest=mpstress" --expect "selftest: mpstress pool ok (4 cpus" \
+        --expect "selftest: mpstress pmemrange ok (4 cpus"
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd.mp --ramdisk none --smp 4 \
+        --expect "bsd: 4 processors" --expect "cpu0 at mainbus0 mpidr 0: ARM Cortex-A72" \
+        --expect "cpu3 at mainbus0 mpidr 3: ARM Cortex-A72" \
+        --expect "cpu: 3 of 3 application processors running, tlb shootdown seen by 3, ipi nop seen by 3" \
+        --expect "selftest: 4 cpus running" --expect "init: processes ok" \
+        --expect "init exited with status 0 (signal 0)"
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd.mp --ramdisk none --smp 4 \
+        --cmdline "selftest=kthread" --expect "selftest: kthread ping-pong ok" --expect ", across cpu"
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd.mp --ramdisk none --smp 4 \
+        --cmdline "selftest=mpstress" --expect "selftest: mpstress pool ok (4 cpus" \
+        --expect "selftest: mpstress pmemrange ok (4 cpus"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
