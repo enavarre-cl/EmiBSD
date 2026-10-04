@@ -21,7 +21,7 @@
 
 ## Status
 
-Status: M11c (ddb on MP) met, after M11a and M11b; M11d (network parallelism) next.
+Status: M11d (network parallelism) met, after M11a, M11b and M11c; M11e (the MP audit) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -45,7 +45,8 @@ Status: M11c (ddb on MP) met, after M11a and M11b; M11d (network parallelism) ne
 | M11a | MP bring-up: APs started through Limine, the kernel lock, per-CPU run queues, SMR, percpu and pool caches, IPIs and TLB shootdowns | met |
 | M11b | MP timekeeping: the TSC synchronisation test per AP, clock interrupts on every CPU | met |
 | M11c | ddb on MP: the command loop, the other CPUs stopped by IPI, `machine cpuinfo`, `machine ddbcpu` | met |
-| M11d, M11e | SMP: network parallelism, the MP audit | next |
+| M11d | Network parallelism: one softnet task queue per CPU (up to 8), `kern_intrmap.c`, SMR for the interface index | met |
+| M11e | SMP: the MP audit | next |
 | M12 | Devices (audio, USB), in QEMU | next |
 | M13 | Storage, firmware and console | next |
 | M14, M14b | Installable; code and test layout | next |
@@ -110,6 +111,9 @@ Between two VMs on a private link (`cargo xtask smoke2`):
 - NFS over UDP and TCP with OpenBSD's portmap(8), mountd(8), nfsd(8), mount_nfs(8) and
   showmount(8): one VM exports a directory, the other lists and mounts it, reads a file and
   writes files the first one reads (`smoke-nfs`).
+- Both VMs on the `multiprocessor` kernel with `-smp 4`: four softnet threads (eight with
+  `-smp 8`), a ping across the link and through `wg0`, TCP with nc(1) directly and through
+  `wg0`, loopback interfaces created and destroyed (`smoke-net-mp`).
 
 An excerpt of the serial console, from `smoke-login` on amd64 (trimmed):
 
@@ -185,6 +189,22 @@ ddb{1}> continue
 ddb.trigger: 0 -> 1
 ```
 
+And from `smoke-net-mp`, VM A on amd64 with `-smp 4` (trimmed):
+
+```
+# ifconfig lo3 destroy && echo if-destroyed-$((3+3))
+if-destroyed-6
+# ps -axk -o pid,cpuid,comm
+  PID    CPUID COMMAND
+97671        1 softnet0
+13175        1 softnet1
+72457        1 softnet2
+92012        1 softnet3
+81307        2 smr
+38591        3 wg_crypt
+softnets-4
+```
+
 The real console also prints `unported: <name>` lines. Each one is a known gap, reported once.
 
 ## Quick start (macOS)
@@ -229,7 +249,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 4 | 139 | 640 | 16 | 799 |
+| 4 | 139 | 642 | 16 | 801 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).

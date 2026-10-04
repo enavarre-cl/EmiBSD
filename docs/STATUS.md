@@ -1,22 +1,22 @@
 # Status
 
-Milestone: **M10 done**; **M11a**, **M11b** and **M11c done** (MP bring-up, timekeeping, ddb
-on MP: four CPUs per VM with the `multiprocessor` kernel); M11d next. Updated: 2026-10-04.
+Milestone: **M10 done**; **M11a**..**M11d done** (MP bring-up, timekeeping, ddb on MP,
+network parallelism); M11e next. Updated: 2026-10-04.
 
 Done:
-- M7a..M10f: uvm, mbufs, virtio, IPv4/6, TCP; ffs root, init, ksh, login; sockets, kqueue,
-  wg(4), IPsec, pf, bpf, HTTPS; disks, UFS options, tmpfs/msdosfs/cd9660/udf/vnd, softraid,
-  NFS, ext2fs, ntfs (amd64), fuse. Each has its `smoke-*` recipe.
+- M7a..M10f: uvm, virtio, IPv4/6, TCP, ffs root, init, login, sockets, wg, IPsec, pf, bpf;
+  disks, quotas, tmpfs/msdosfs/cd9660/udf/vnd, softraid, NFS, ext2fs, ntfs, fuse (`smoke-*`).
 - M11a: APs started through the Limine MP request, the kernel lock, kern_sched.c, SMR, percpu,
   per-CPU pool caches; IPIs and TLB shootdowns on both archs; `smoke-mp`. Default kernel: UP.
 - M11b: tsc.c's sync test runs against each AP (TCG passes it); every CPU dispatches its own
   clockintr with a monotonic uptime; kern_tc.c (tc_lock) and arm64 agtimer.c ported.
-- M11c: the ddb command loop (db_lex, db_input, db_expr, db_variables, db_command, db_run,
-  ddb_sysctl); on MP the other CPUs stop by IPI, `machine cpuinfo`/`ddbcpu`/`startcpu`/
-  `stopcpu`, `continue` resumes all; `smoke-ddbmp` (`-smp 4`, `ddb.trigger`, both archs).
+- M11c: the ddb command loop (db_command.c and friends); on MP the other CPUs stop by IPI,
+  `machine cpuinfo`/`ddbcpu`/`startcpu`/`stopcpu`; `smoke-ddbmp` (`-smp 4`, both archs).
+- M11d: 8 softnet queues, one kept per CPU, kern_intrmap.c, SMR for the interface index map;
+  `smoke-net-mp` (two MP VMs, `-smp 4`: softnets-4, ping, wg, TCP; `-smp 8`: softnets-8).
 
 Next:
-- M11d (softnet x8), M11e (the audit; then every smoke runs MP), then M12.
+- M11e (the audit; then every smoke runs MP), then M12.
 
 Blockers:
 - Until M11e, unaudited paths run under the kernel lock (MPSAFE flags and SY_NOLOCK ignored,
