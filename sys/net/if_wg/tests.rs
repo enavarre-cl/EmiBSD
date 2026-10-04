@@ -2,7 +2,8 @@
 //! and `SIOCGWG` through the host's `copyin`/`copyout`, the dispatch of `wg_ioctl`, and two
 //! interfaces exchanging a handshake initiation (`wg_input`, the handshake worker, the MAC
 //! check and the peer lookup) and data both ways (`wg_output`, `wg_qstart`, `wg_encap`,
-//! `wg_input`, `wg_decap` with the allowed-IPs source check).
+//! `wg_input`, `wg_decap` with the allowed-IPs source check), and the same over IPv6
+//! (endpoints, allowed IPs, the cookie source address).
 //!
 //! The task queues have no threads on the host and `taskq_barrier` would wait for one
 //! forever, so the tests run the workers by hand and never destroy an interface that has
@@ -131,6 +132,54 @@ fn sin(a: [u8; 4], port: u16) -> SockaddrIn {
     }
 }
 
+/// A remote endpoint for `a`:`port` (a `sockaddr_in` in the union).
+fn ep(a: [u8; 4], port: u16) -> WgPeerEndpoint {
+    let mut e = WgPeerEndpoint::default();
+    e.set_sa_sin(&sin(a, port));
+    e
+}
+
+/// An IPv6 address from its eight 16-bit words.
+#[cfg(feature = "inet6")]
+fn a6(w: [u16; 8]) -> In6Addr {
+    let mut a = [0u8; 16];
+    for (i, w) in w.iter().enumerate() {
+        a[2 * i..2 * i + 2].copy_from_slice(&w.to_be_bytes());
+    }
+    In6Addr::new(a)
+}
+
+/// A remote endpoint for `a`:`port` (a `sockaddr_in6` in the union).
+#[cfg(feature = "inet6")]
+fn ep6(a: In6Addr, port: u16) -> WgPeerEndpoint {
+    let mut e = WgPeerEndpoint::default();
+    e.set_sa_sin6(&SockaddrIn6 {
+        sin6_len: size_of::<SockaddrIn6>() as u8,
+        sin6_family: AF_INET6,
+        sin6_port: htons(port),
+        sin6_addr: a,
+        ..SockaddrIn6::default()
+    });
+    e
+}
+
+/// An IPv6 allowed IP.
+#[cfg(feature = "inet6")]
+fn aip6(a: In6Addr, cidr: i32) -> WgAipIo {
+    let mut d = WgAipIo {
+        a_af: AF_INET6,
+        a_cidr: cidr,
+        ..WgAipIo::default()
+    };
+    d.a_addr.set_addr_ipv6(a);
+    d
+}
+
+#[cfg(feature = "inet6")]
+fn lookup6(sc: &WgSoftc, a: In6Addr) -> Option<&'static WgPeer> {
+    wg_aip_lookup(sc.aip6(), &a.s6_addr)
+}
+
 fn lookup(sc: &WgSoftc, a: [u8; 4]) -> Option<&'static WgPeer> {
     wg_aip_lookup(sc.aip4(), &a)
 }
@@ -152,8 +201,52 @@ fn ioctl_numbers_and_layouts() {
     assert_eq!(MAX_TIMER_HANDSHAKES, 18);
     let mut s = std::string::String::new();
     use core::fmt::Write;
-    let _ = write!(s, "{}", SaNtop::of(&sin([192, 168, 77, 2], 51820)));
+    let _ = write!(s, "{}", SaNtop::of(&ep([192, 168, 77, 2], 51820)));
     assert_eq!(s, "192.168.77.2");
+    #[cfg(feature = "inet6")]
+    {
+        s.clear();
+        let _ = write!(
+            s,
+            "{}",
+            SaNtop::of(&ep6(a6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 1]), 51820))
+        );
+        assert_eq!(s, "2001:db8::1");
+    }
+    s.clear();
+    let _ = write!(s, "{}", SaNtop::of(&WgPeerEndpoint::default()));
+    assert_eq!(s, "bad sa");
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn endpoint_unions_are_c_sized() {
+    // union wg_remote is a sockaddr_in6 (28 bytes) and union wg_local an in6_pktinfo (20).
+    assert_eq!(size_of::<WgPeerEndpoint>(), 28);
+    assert_eq!(size_of::<WgLocal>(), 20);
+    assert_eq!(size_of::<WgEndpoint>(), 48);
+    let e = ep6(a6([0xfd00, 0, 0, 0, 0, 0, 0, 2]), 51820);
+    assert_eq!(e.sa_len(), 28);
+    assert_eq!(e.sa_family(), AF_INET6);
+    let sin6 = e.sa_sin6();
+    assert_eq!(sin6.sin6_port, htons(51820));
+    assert_eq!(sin6.sin6_addr, a6([0xfd00, 0, 0, 0, 0, 0, 0, 2]));
+    // The cookie functions get it as a sockaddr_storage.
+    let ss = e.as_storage();
+    assert_eq!(ss.ss_family, AF_INET6);
+    assert_eq!(ss.ss_len, 28);
+
+    let mut l = WgLocal::default();
+    l.set_l_in6(a6([0xfd00, 0, 0, 0, 0, 0, 0, 1]));
+    assert_eq!(l.l_in6(), a6([0xfd00, 0, 0, 0, 0, 0, 0, 1]));
+    assert_eq!(l.as_bytes()[..2], [0xfd, 0x00]);
+    l.set_l_in(InAddr { s_addr: 0 });
+    assert_eq!(l.l_in(), InAddr { s_addr: 0 });
+    assert_eq!(
+        l.l_in6().s6_addr[..4],
+        [0; 4],
+        "l_in is the first four bytes"
+    );
 }
 
 #[test]
@@ -203,10 +296,14 @@ fn allowed_ips_route_to_their_peer() {
     assert!(lookup(sc, [10, 1, 2, 3]).is_none());
     assert_eq!(sc.sc_aip_num.get(), 3);
 
-    // No IPv6 without INET6; prefix lengths beyond the address are refused.
-    let mut v6 = aip([0x20, 0x01, 0x0d, 0xb8], 32);
-    v6.a_af = AF_INET6;
-    assert_eq!(wg_aip_add(sc, pa, &v6), Err(Errno::EAFNOSUPPORT));
+    // Without INET6 an IPv6 allowed IP is not supported; prefix lengths beyond the address
+    // are refused.
+    #[cfg(not(feature = "inet6"))]
+    {
+        let mut v6 = aip([0x20, 0x01, 0x0d, 0xb8], 32);
+        v6.a_af = AF_INET6;
+        assert_eq!(wg_aip_add(sc, pa, &v6), Err(Errno::EAFNOSUPPORT));
+    }
     assert_eq!(
         wg_aip_add(sc, pa, &aip([10, 0, 0, 0], 33)),
         Err(Errno::EINVAL)
@@ -215,6 +312,114 @@ fn allowed_ips_route_to_their_peer() {
         wg_aip_add(sc, pa, &aip([10, 0, 0, 0], -1)),
         Err(Errno::EINVAL)
     );
+    teardown();
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn ipv6_allowed_ips_route_to_their_peer() {
+    let _g = setup();
+    let sc = create(0);
+
+    rw_enter_write(&sc.sc_lock);
+    let pa = wg_peer_create(sc, &[1; WG_KEY_SIZE]).expect("peer a");
+    let pb = wg_peer_create(sc, &[2; WG_KEY_SIZE]).expect("peer b");
+    rw_exit_write(&sc.sc_lock);
+
+    let net = a6([0xfd77, 0, 0, 0, 0, 0, 0, 0]);
+    let host = a6([0xfd77, 0, 0, 0, 0, 0, 0, 2]);
+    let other = a6([0xfd77, 0, 0, 0x0001, 0, 0, 0, 2]);
+    wg_aip_add(sc, pa, &aip6(host, 128)).expect("add /128");
+    wg_aip_add(sc, pa, &aip6(net, 32)).expect("add /32");
+    wg_aip_add(sc, pb, &aip6(a6([0xfd77, 0, 0, 0, 0, 0, 0, 0]), 64)).expect("add /64");
+    wg_aip_add(sc, pb, &aip6(a6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 0]), 32)).expect("add");
+    assert_eq!(sc.sc_aip_num.get(), 4);
+
+    // The longest prefix wins, and the two families have separate tables.
+    assert!(same(lookup6(sc, host), pa));
+    assert!(same(lookup6(sc, a6([0xfd77, 0, 0, 0, 0, 0, 0, 3])), pb));
+    assert!(same(lookup6(sc, other), pa));
+    assert!(same(lookup6(sc, a6([0x2001, 0xdb8, 5, 5, 5, 5, 5, 5])), pb));
+    assert!(lookup6(sc, a6([0xfe80, 0, 0, 0, 0, 0, 0, 1])).is_none());
+    assert!(lookup(sc, [0xfd, 0x77, 0, 0]).is_none());
+
+    // The prefix length may go to 128 (and not beyond); removal as for IPv4.
+    assert_eq!(wg_aip_add(sc, pa, &aip6(host, 129)), Err(Errno::EINVAL));
+    assert_eq!(wg_aip_remove(sc, pa, &aip6(net, 32)), Ok(()));
+    assert_eq!(wg_aip_remove(sc, pa, &aip6(net, 32)), Err(Errno::ENOENT));
+    assert_eq!(
+        wg_aip_remove(sc, pa, &aip6(a6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 0]), 32)),
+        Err(Errno::EXDEV)
+    );
+    // Outside the /64, nothing is left once the /32 is gone.
+    assert!(lookup6(sc, other).is_none());
+    assert_eq!(sc.sc_aip_num.get(), 3);
+
+    // Adding a prefix another peer has moves it.
+    wg_aip_add(sc, pa, &aip6(a6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 0]), 32)).expect("move");
+    assert!(same(lookup6(sc, a6([0x2001, 0xdb8, 5, 5, 5, 5, 5, 5])), pa));
+    assert_eq!(sc.sc_aip_num.get(), 3);
+    teardown();
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn peer_endpoints_keep_their_family() {
+    let _g = setup();
+    let sc = create(0);
+    rw_enter_write(&sc.sc_lock);
+    let p = wg_peer_create(sc, &[1; WG_KEY_SIZE]).expect("peer");
+    rw_exit_write(&sc.sc_lock);
+
+    let mut got = WgPeerEndpoint::default();
+    assert_eq!(wg_peer_get_sockaddr(p, &mut got), Err(Errno::ENOENT));
+
+    let e6 = ep6(a6([0xfd00, 0, 0, 0, 0, 0, 0, 2]), 51820);
+    let mut e = p.p_endpoint.get();
+    e.e_local.set_l_in6(a6([0xfd00, 0, 0, 0, 0, 0, 0, 1]));
+    p.p_endpoint.set(e);
+    wg_peer_set_sockaddr(p, &e6);
+    assert_eq!(wg_peer_get_sockaddr(p, &mut got), Ok(()));
+    assert_eq!(got, e6);
+    assert_eq!(got.sa_family(), AF_INET6);
+    assert_eq!(
+        wg_peer_get_endpoint(p).e_local,
+        WgLocal::default(),
+        "a new remote forgets the local address"
+    );
+
+    // Back to IPv4, and the local address can be cleared on its own.
+    wg_peer_set_sockaddr(p, &ep([192, 168, 77, 2], 51820));
+    let mut e = p.p_endpoint.get();
+    e.e_local.set_l_in(InAddr { s_addr: 1 });
+    p.p_endpoint.set(e);
+    wg_peer_clear_src(p);
+    assert_eq!(wg_peer_get_endpoint(p).e_local, WgLocal::default());
+    assert_eq!(
+        wg_peer_get_endpoint(p).e_remote,
+        ep([192, 168, 77, 2], 51820)
+    );
+    teardown();
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn wg_send_needs_a_socket_of_the_family() {
+    let _g = setup();
+    let sc = create(0);
+    let mut e = WgEndpoint {
+        e_remote: ep6(a6([0xfd00, 0, 0, 0, 0, 0, 0, 2]), 51820),
+        ..WgEndpoint::default()
+    };
+    // No socket: an IPv6 endpoint (with or without a source address) is not connected.
+    assert_eq!(wg_send(sc, &e, packet(b"x")), Err(Errno::ENOTCONN));
+    e.e_local.set_l_in6(a6([0xfd00, 0, 0, 0, 0, 0, 0, 1]));
+    assert_eq!(wg_send(sc, &e, packet(b"x")), Err(Errno::ENOTCONN));
+    e.e_remote = ep([192, 168, 77, 2], 51820);
+    assert_eq!(wg_send(sc, &e, packet(b"x")), Err(Errno::ENOTCONN));
+    // An endpoint of no family cannot be sent to.
+    e.e_remote = WgPeerEndpoint::default();
+    assert_eq!(wg_send(sc, &e, packet(b"x")), Err(Errno::EAFNOSUPPORT));
     teardown();
 }
 
@@ -263,7 +468,7 @@ fn configure(
     private: &[u8; WG_KEY_LEN],
     port: u16,
     peer: &[u8; WG_KEY_LEN],
-    endpoint: SockaddrIn,
+    endpoint: WgPeerEndpoint,
     aips: &[WgAipIo],
 ) {
     let len =
@@ -290,7 +495,7 @@ fn configure(
         p_aips_count: aips.len(),
         ..WgPeerIo::default()
     };
-    p.p_endpoint.set_sa_sin(&endpoint);
+    p.p_endpoint = endpoint;
     p.p_description[..4].copy_from_slice(b"peer");
     buf.put(size_of::<WgInterfaceIo>(), &p);
     for (i, a) in aips.iter().enumerate() {
@@ -313,7 +518,7 @@ fn siocswg_and_siocgwg_round_trip() {
     let sc = create(0);
     let alice = key(ALICE_PRIVATE);
     let bob = key(BOB_PUBLIC);
-    let endpoint = sin([192, 168, 77, 2], 51820);
+    let endpoint = ep([192, 168, 77, 2], 51820);
 
     configure(
         sc,
@@ -361,7 +566,7 @@ fn siocswg_and_siocgwg_round_trip() {
     assert_eq!(p.p_public, bob);
     assert_eq!(p.p_psk, [7; WG_KEY_LEN]);
     assert_eq!(p.p_pka, 25);
-    assert_eq!(p.p_endpoint.sa_sin(), endpoint);
+    assert_eq!(p.p_endpoint, endpoint);
     assert_eq!(&p.p_description[..5], b"peer\0");
     assert_eq!(p.p_aips_count, 2);
     let aips: Vec<WgAipIo> = (0..2)
@@ -532,7 +737,7 @@ fn two_interfaces_handshake_and_carry_data() {
         &key(ALICE_PRIVATE),
         51820,
         &key(BOB_PUBLIC),
-        sin(b, 51820),
+        ep(b, 51820),
         &[aip(tb, 32)],
     );
     configure(
@@ -540,7 +745,7 @@ fn two_interfaces_handshake_and_carry_data() {
         &key(BOB_PRIVATE),
         51820,
         &key(ALICE_PUBLIC),
-        sin(a, 51820),
+        ep(a, 51820),
         &[aip(ta, 32)],
     );
     let bob0 = wg_peer_lookup(sc0, &key(BOB_PUBLIC)).expect("bob on wg0");
@@ -579,7 +784,7 @@ fn two_interfaces_handshake_and_carry_data() {
     wg_handshake_worker(ptr::from_ref(sc1).cast_mut().cast());
     assert_eq!(mq_len(&sc1.sc_handshake_queue), 0);
     assert!(alice1.p_remote.r_next.get().is_some(), "responder session");
-    assert_eq!(alice1.p_endpoint.get().e_remote, sin(a, 51820));
+    assert_eq!(alice1.p_endpoint.get().e_remote, ep(a, 51820));
     assert_eq!(alice1.p_counters_rx.get(), 148);
     noise_remote_clear(&alice1.p_remote);
 
@@ -655,5 +860,239 @@ fn two_interfaces_handshake_and_carry_data() {
         }
         m_freem(m);
     }
+    teardown();
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn siocswg_and_siocgwg_round_trip_ipv6() {
+    let _g = setup();
+    let sc = create(0);
+    let endpoint = ep6(a6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 2]), 51820);
+    let aips = [
+        aip6(a6([0xfd77, 0, 0, 0, 0, 0, 0, 2]), 128),
+        aip6(a6([0xfd88, 0, 0, 0, 0, 0, 0, 0]), 48),
+        aip([10, 88, 0, 0], 16),
+    ];
+
+    configure(
+        sc,
+        &key(ALICE_PRIVATE),
+        51820,
+        &key(BOB_PUBLIC),
+        endpoint,
+        &aips,
+    );
+    assert_eq!(sc.sc_peer_num.get(), 1);
+    assert_eq!(sc.sc_aip_num.get(), 3);
+
+    let mut data = WgDataIo::default();
+    wg_ioctl_get(sc, &mut data).expect("SIOCGWG size");
+    let want = size_of::<WgInterfaceIo>() + size_of::<WgPeerIo>() + 3 * size_of::<WgAipIo>();
+    assert_eq!(data.wgd_size, want);
+
+    let buf = UserBuf::new(want);
+    data.wgd_interface = buf.addr();
+    wg_ioctl_get(sc, &mut data).expect("SIOCGWG");
+    let p: WgPeerIo = buf.get(size_of::<WgInterfaceIo>());
+    assert_eq!(p.p_flags & WG_PEER_HAS_ENDPOINT, WG_PEER_HAS_ENDPOINT);
+    assert_eq!(p.p_endpoint, endpoint);
+    assert_eq!(
+        p.p_endpoint.sa_sin6().sin6_addr,
+        a6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 2])
+    );
+    assert_eq!(p.p_aips_count, 3);
+    let got: Vec<WgAipIo> = (0..3)
+        .map(|i| {
+            buf.get(size_of::<WgInterfaceIo>() + size_of::<WgPeerIo>() + i * size_of::<WgAipIo>())
+        })
+        .collect();
+    for a in &aips {
+        assert!(got.contains(a), "{a:?}");
+    }
+
+    let bob = wg_peer_lookup(sc, &key(BOB_PUBLIC)).expect("bob");
+    assert!(same(lookup6(sc, a6([0xfd77, 0, 0, 0, 0, 0, 0, 2])), bob));
+    assert!(same(lookup6(sc, a6([0xfd88, 0, 0, 5, 0, 0, 0, 2])), bob));
+    assert!(lookup6(sc, a6([0xfd88, 0, 1, 0, 0, 0, 0, 2])).is_none());
+    assert!(same(lookup(sc, [10, 88, 1, 1]), bob));
+    teardown();
+}
+
+/// An IPv6 header of a `plen`-byte payload (UDP) from `src` to `dst`.
+#[cfg(feature = "inet6")]
+fn ip6_header(src: In6Addr, dst: In6Addr, plen: usize) -> Vec<u8> {
+    let mut h = vec![0x60, 0, 0, 0];
+    h.extend_from_slice(&(plen as u16).to_be_bytes());
+    h.extend_from_slice(&[17, 64]);
+    h.extend_from_slice(&src.s6_addr);
+    h.extend_from_slice(&dst.s6_addr);
+    h
+}
+
+/// What the UDP socket's upcall gets over IPv6: `payload` from `src`:`sport` to `dst`:51820.
+#[cfg(feature = "inet6")]
+fn deliver6(sc: &'static WgSoftc, src: In6Addr, sport: u16, dst: In6Addr, payload: &[u8]) {
+    let mut d = ip6_header(src, dst, 8 + payload.len());
+    d.extend_from_slice(&sport.to_be_bytes());
+    d.extend_from_slice(&51820u16.to_be_bytes());
+    d.extend_from_slice(&((8 + payload.len()) as u16).to_be_bytes());
+    d.extend_from_slice(&[0, 0]);
+    d.extend_from_slice(payload);
+    let m = packet(&d);
+    let ip6 = mtod::<u8>(m).cast_const().cast::<c_void>();
+    let uh = mtod::<u8>(m).cast_const().wrapping_add(40).cast::<c_void>();
+    // SAFETY: `ip6` and `uh` point at the headers just written into the packet.
+    let r = unsafe {
+        wg_input(
+            ptr::from_ref(sc).cast_mut().cast(),
+            m,
+            ptr::null(),
+            ip6,
+            uh,
+            48,
+            None,
+        )
+    };
+    assert!(r.is_none(), "wg_input consumes the packet");
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn two_interfaces_over_ipv6() {
+    let _g = setup();
+    let sc0 = create(0);
+    let sc1 = create(1);
+    let (a, b) = (
+        a6([0xfd00, 0, 0, 0, 0, 0, 0, 1]),
+        a6([0xfd00, 0, 0, 0, 0, 0, 0, 2]),
+    );
+    let (ta, tb) = (
+        a6([0xfd77, 0, 0, 0, 0, 0, 0, 1]),
+        a6([0xfd77, 0, 0, 0, 0, 0, 0, 2]),
+    );
+
+    configure(
+        sc0,
+        &key(ALICE_PRIVATE),
+        51820,
+        &key(BOB_PUBLIC),
+        ep6(b, 51820),
+        &[aip6(tb, 128)],
+    );
+    configure(
+        sc1,
+        &key(BOB_PRIVATE),
+        51820,
+        &key(ALICE_PUBLIC),
+        ep6(a, 51820),
+        &[aip6(ta, 128)],
+    );
+    let bob0 = wg_peer_lookup(sc0, &key(BOB_PUBLIC)).expect("bob on wg0");
+    let alice1 = wg_peer_lookup(sc1, &key(ALICE_PUBLIC)).expect("alice on wg1");
+
+    // An initiation from an IPv6 source (a different port than configured): wg1's upcall
+    // fills the tag's endpoint from the IPv6 header, the handshake worker accepts it and the
+    // peer's endpoint becomes that source, with the destination as its local address.
+    let mut init = WgPktInitiation::zeroed();
+    noise_create_initiation(
+        &bob0.p_remote,
+        &mut init.s_idx,
+        &mut init.ue,
+        &mut init.es,
+        &mut init.ets,
+    )
+    .expect("initiation");
+    init.t = WG_PKT_INITIATION;
+    let mut macs = CookieMacs::default();
+    cookie_maker_mac(&bob0.p_cookie, &mut macs, &pkt_bytes(&init)[..116]);
+    init.m = macs;
+
+    deliver6(sc1, a, 40000, b, pkt_bytes(&init));
+    assert_eq!(mq_len(&sc1.sc_handshake_queue), 1);
+    wg_handshake_worker(ptr::from_ref(sc1).cast_mut().cast());
+    assert_eq!(mq_len(&sc1.sc_handshake_queue), 0);
+    assert!(alice1.p_remote.r_next.get().is_some(), "responder session");
+    let e = alice1.p_endpoint.get();
+    assert_eq!(e.e_remote, ep6(a, 40000));
+    assert_eq!(e.e_local.l_in6(), b);
+    assert_eq!(alice1.p_counters_rx.get(), 148);
+    noise_remote_clear(&alice1.p_remote);
+
+    // A whole handshake through the index tables, then data.
+    advance_uptime(2 * crate::net::wg_noise::REJECT_INTERVAL);
+    let mut s_idx = 0;
+    let (mut ue, mut es, mut ets) = ([0; 32], [0; 48], [0; 28]);
+    noise_create_initiation(&bob0.p_remote, &mut s_idx, &mut ue, &mut es, &mut ets)
+        .expect("initiation");
+    let remote = noise_consume_initiation(&sc1.sc_local, s_idx, &ue, &es, &ets).expect("consume");
+    assert!(ptr::eq(remote, &alice1.p_remote));
+    let (mut rs, mut rr, mut rue, mut en) = (0, 0, [0; 32], [0; 16]);
+    noise_create_response(&alice1.p_remote, &mut rs, &mut rr, &mut rue, &mut en).expect("response");
+    noise_remote_begin_session(&alice1.p_remote).expect("responder keys");
+    noise_consume_response(&bob0.p_remote, rs, rr, &rue, &en).expect("consume response");
+    noise_remote_begin_session(&bob0.p_remote).expect("initiator keys");
+
+    // Alice sends fd77::1 -> fd77::2: wg_output finds Bob by the IPv6 destination.
+    let mut inner = ip6_header(ta, tb, 13);
+    inner.extend_from_slice(b"hello, tunnel");
+    let m = packet(&inner);
+    let dst = SockaddrIn6 {
+        sin6_len: size_of::<SockaddrIn6>() as u8,
+        sin6_family: AF_INET6,
+        sin6_addr: tb,
+        ..SockaddrIn6::default()
+    };
+    net_lock();
+    // SAFETY: `dst` is a `sockaddr_in6`, readable as the `sockaddr` it starts with.
+    let r = unsafe { wg_output(&sc0.sc_if, m, ptr::from_ref(&dst).cast(), None) };
+    net_unlock();
+    assert_eq!(r, Ok(()));
+    wg_qstart(&sc0.sc_if.if_snd);
+    wg_encap_worker(ptr::from_ref(sc0).cast_mut().cast());
+    let (m, t) = wg_queue_dequeue(&bob0.p_encap_queue).expect("encrypted");
+    let wire = bytes(t.t_mbuf.get().expect("data message"));
+    assert_eq!(wire.len(), 16 + wg_pkt_with_padding(inner.len()) + 16);
+    assert_eq!(&wire[..4], &[4, 0, 0, 0]);
+    m_freem(t.t_mbuf.get());
+    m_freem(m);
+
+    // Bob receives it from the IPv6 endpoint: decrypted, trimmed to ip6_plen and checked
+    // against Alice's allowed IPs.
+    deliver6(sc1, a, 40000, b, &wire);
+    wg_decap_worker(ptr::from_ref(sc1).cast_mut().cast());
+    let (m, t) = wg_queue_dequeue(&alice1.p_decap_queue).expect("decrypted");
+    assert!(ptr::eq(t.t_mbuf.get().expect("inner packet"), m));
+    assert_eq!(bytes(m), inner, "the padding is trimmed to ip6_plen");
+    assert_eq!(m.m_pkthdr().ph_family.get(), AF_INET6);
+    assert!(alice1.p_remote.r_current.get().is_some(), "confirmed");
+    m_freem(m);
+
+    // Bob answers; a forged inner source is refused on the way in.
+    let forged = a6([0xfd99, 0, 0, 0, 0, 0, 0, 1]);
+    for (src, ok) in [(tb, true), (forged, false)] {
+        let mut reply = ip6_header(src, ta, 4);
+        reply.extend_from_slice(b"pong");
+        let m = packet(&reply);
+        let t = wg_tag_get(m).expect("tag");
+        t.t_peer.set(Some(alice1));
+        let _ = mq_push(&alice1.p_stage_queue, m);
+        wg_queue_out(sc1, alice1);
+        wg_encap_worker(ptr::from_ref(sc1).cast_mut().cast());
+        let (m, t) = wg_queue_dequeue(&alice1.p_encap_queue).expect("encrypted");
+        let wire = bytes(t.t_mbuf.get().expect("data message"));
+        m_freem(t.t_mbuf.get());
+        m_freem(m);
+
+        deliver6(sc0, b, 51820, a, &wire);
+        wg_decap_worker(ptr::from_ref(sc0).cast_mut().cast());
+        let (m, t) = wg_queue_dequeue(&bob0.p_decap_queue).expect("decrypted");
+        assert_eq!(t.t_mbuf.get().is_some(), ok, "src {src:?}");
+        if ok {
+            assert_eq!(bytes(m), reply);
+        }
+        m_freem(m);
+    }
+
     teardown();
 }

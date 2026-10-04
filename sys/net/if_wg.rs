@@ -49,12 +49,16 @@
 //! Status: `ported` (M9b).
 //!
 //! ## Deviations
-//! - The header and the file share this module. `INET6` is not configured: `sc_so6`,
-//!   `sc_aip6`, the endpoint's `sockaddr_in6`/`in6_pktinfo` and every `AF_INET6` branch are
-//!   comments at their sites (an IPv6 allowed IP is `EAFNOSUPPORT`, as the C's `default`).
-//!   The ABI structures keep the IPv6 members' room: `netinet6/in6.h` is not ported, so the
-//!   `in6_addr` of [`WgAipAddr`] and the `sockaddr_in6` of [`WgPeerEndpoint`] are their sizes
-//!   (16 and 28 bytes, 4-byte aligned). Holes the C compiler leaves are named `_pad*` fields.
+//! - The header and the file share this module. `INET6` is configured (feature `inet6`):
+//!   `sc_so6` and `sc_aip6`, the endpoint's `sockaddr_in6` and `in6_pktinfo`, the IPv6 cases
+//!   of `wg_input`, `wg_decap`, `wg_deliver_in`, `wg_output`, `wg_send`, `wg_bind` and
+//!   `wg_aip_*`. The C unions are byte images with accessors: [`WgAipAddr`] (an `in_addr` or
+//!   an `in6_addr`), [`WgPeerEndpoint`] (a `sockaddr`, `sockaddr_in` or `sockaddr_in6`, also
+//!   the `e_remote` of a [`WgEndpoint`]) and [`WgLocal`] (an `in_addr` or an `in6_pktinfo`).
+//!   Without the feature an IPv6 allowed IP is `EAFNOSUPPORT`, as the C's `default`. Holes the
+//!   C compiler leaves are named `_pad*` fields.
+//! - The cookie functions take the source address as a `&SockaddrStorage`
+//!   (see `wg_cookie.rs`): [`WgPeerEndpoint::as_storage`] makes one.
 //! - `NBPFILTER` and `NPF` are configured: `wg_clone_create` attaches a `DLT_LOOP` tap and
 //!   `wg_deliver_in`/`wg_qstart` tap with `bpf_mtap_af`; `wg_decap` calls
 //!   `pf_pkt_addr_changed`.
@@ -77,7 +81,8 @@
 //!   byte order (`htole32` constants, indices copied raw); the data nonce is little-endian.
 //! - `wg_tag` lives in the `m_tag`'s data as `Cell`s (`t_done` a `bool`).
 //! - `sockaddr_ntop` (`netinet/inet_ntop.c`) is not ported: the log lines format the address
-//!   with [`SaNtop`], which prints what it would (`a.b.c.d`, or the family and the bytes).
+//!   with [`SaNtop`], which prints what it would (`a.b.c.d`, an IPv6 address through
+//!   `In6Ntop`, or the family and the bytes).
 //! - `wg_timers_expired_handshake_last_sent`, `wg_timers_check_handshake_last_sent` answer
 //!   `bool` (`ETIMEDOUT` is `true`); `wg_timers_get_persistent_keepalive`, the ioctls,
 //!   `wg_aip_*`, `wg_send`, `wg_bind` and the cloner return `Result`.
@@ -163,10 +168,21 @@ use crate::net::wg_noise::{
     noise_remote_expire_current, noise_remote_init, noise_remote_keys, noise_remote_precompute,
     noise_remote_ready, noise_remote_set_psk,
 };
+#[cfg(feature = "inet6")]
+use crate::netinet::in_::IPPROTO_IPV6;
 use crate::netinet::in_::{INADDR_ANY, IP_SENDSRCADDR, IPPROTO_IP, InAddr, SockaddrIn};
 use crate::netinet::in_pcb::sotoinpcb;
 use crate::netinet::ip::{IPVERSION, Ip};
 use crate::netinet::ip_input::ipv4_input;
+#[cfg(feature = "inet6")]
+use crate::netinet::ip6::{IPV6_VERSION, IPV6_VERSION_MASK, Ip6Hdr};
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::{IN6ADDR_ANY, IPV6_PKTINFO, in6_is_addr_unspecified};
+use crate::netinet6::in6::{In6Addr, In6Pktinfo, SockaddrIn6};
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_input::ipv6_input;
+#[cfg(feature = "inet6")]
+use crate::netinet6::nd6::In6Ntop;
 use crate::queue_adapter;
 use crate::sys::endian::{htons, ntohs};
 use crate::sys::errno::Errno;
@@ -183,7 +199,7 @@ use crate::sys::pool::{PR_NOWAIT, PR_ZERO, Pool};
 use crate::sys::queue::{ListEntry, ListHead, SlistEntry, SlistHead, TailqEntry, TailqHead};
 use crate::sys::rwlock::Rwlock;
 use crate::sys::socket::{
-    AF_INET, AF_INET6, AF_UNSPEC, SO_RTABLE, SOCK_DGRAM, SOL_SOCKET, Sockaddr,
+    AF_INET, AF_INET6, AF_UNSPEC, SO_RTABLE, SOCK_DGRAM, SOL_SOCKET, Sockaddr, SockaddrStorage,
 };
 use crate::sys::socketvar::Socket;
 use crate::sys::sockio::{SIOCADDMULTI, SIOCDELMULTI, SIOCSIFADDR, SIOCSIFFLAGS, SIOCSIFMTU};
@@ -205,10 +221,12 @@ pub const SIOCSWG: u64 = _iowr::<WgDataIo>(b'i', 210);
 /// `SIOCGWG`: read the configuration back.
 pub const SIOCGWG: u64 = _iowr::<WgDataIo>(b'i', 211);
 
-/// `sizeof(struct in6_addr)`: `netinet6/in6.h` is not ported.
-const IN6_ADDR_LEN: usize = 16;
-/// `sizeof(struct sockaddr_in6)`: `netinet6/in6.h` is not ported.
-const SOCKADDR_IN6_LEN: usize = 28;
+/// `sizeof(struct in6_addr)`.
+const IN6_ADDR_LEN: usize = size_of::<In6Addr>();
+/// `sizeof(struct sockaddr_in6)`.
+const SOCKADDR_IN6_LEN: usize = size_of::<SockaddrIn6>();
+/// `sizeof(struct in6_pktinfo)`.
+const IN6_PKTINFO_LEN: usize = size_of::<In6Pktinfo>();
 
 /// `union wg_aip_addr`: `addr_bytes` (the first byte of the others), `addr_ipv4` (`struct
 /// in_addr`) and `addr_ipv6` (`struct in6_addr`), as the bytes of the longest.
@@ -235,6 +253,16 @@ impl WgAipAddr {
     /// Stores `a_ipv4`.
     pub fn set_addr_ipv4(&mut self, a: InAddr) {
         self.addr_bytes[..4].copy_from_slice(&a.s_addr.to_ne_bytes());
+    }
+
+    /// `a_ipv6` (`a_addr.addr_ipv6`).
+    pub fn addr_ipv6(&self) -> In6Addr {
+        In6Addr::new(self.addr_bytes)
+    }
+
+    /// Stores `a_ipv6`.
+    pub fn set_addr_ipv6(&mut self, a: In6Addr) {
+        self.addr_bytes = a.s6_addr;
     }
 }
 
@@ -304,6 +332,55 @@ impl WgPeerEndpoint {
                 .cast::<SockaddrIn>()
                 .write_unaligned(*sin)
         };
+    }
+
+    /// `p_sin6`: the `struct sockaddr_in6` view.
+    pub fn sa_sin6(&self) -> SockaddrIn6 {
+        // SAFETY: the union is as long as a `sockaddr_in6` (integers and bytes only);
+        // unaligned read.
+        unsafe {
+            self.sa_bytes
+                .as_ptr()
+                .cast::<SockaddrIn6>()
+                .read_unaligned()
+        }
+    }
+
+    /// Stores a `struct sockaddr_in6`.
+    pub fn set_sa_sin6(&mut self, sin6: &SockaddrIn6) {
+        // SAFETY: the union is as long as a `sockaddr_in6`; unaligned write of a `Copy` value.
+        unsafe {
+            self.sa_bytes
+                .as_mut_ptr()
+                .cast::<SockaddrIn6>()
+                .write_unaligned(*sin6)
+        };
+    }
+
+    /// `p_sa.sa_len`.
+    pub const fn sa_len(&self) -> u8 {
+        self.sa_bytes[0]
+    }
+
+    /// `p_sa.sa_family`.
+    pub const fn sa_family(&self) -> SaFamily {
+        self.sa_bytes[1]
+    }
+
+    /// The address as a `struct sockaddr_storage` (the source address of the cookie
+    /// functions): the union's bytes, the rest zero.
+    pub fn as_storage(&self) -> SockaddrStorage {
+        let mut ss = SockaddrStorage::zeroed();
+        // SAFETY: a `sockaddr_storage` is longer than the union (asserted at the end of the
+        // file) and made of integers; the bytes are copied over its start.
+        unsafe {
+            ptr::copy_nonoverlapping(
+                self.sa_bytes.as_ptr(),
+                ptr::from_mut(&mut ss).cast::<u8>(),
+                SOCKADDR_IN6_LEN,
+            )
+        };
+        ss
     }
 }
 
@@ -600,25 +677,60 @@ pub struct WgPktData {
 // SAFETY: `repr(C)`: two `u32`s and a byte array, 16 bytes: no padding.
 unsafe impl WgPkt for WgPktData {}
 
-/// `struct wg_endpoint`: a peer's address (`e_remote`: `r_sa`, `r_sin`) and the local
-/// address to send from (`e_local`: `l_in`). The `sockaddr_in6` and `in6_pktinfo` members are
-/// `INET6`, not configured.
+/// `union wg_local` (`e_local`): `l_in` (`struct in_addr`) and `l_pktinfo6` (`struct
+/// in6_pktinfo`, `l_in6` its address), as the bytes of the longest.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WgLocal {
+    bytes: [u8; IN6_PKTINFO_LEN],
+}
+
+impl WgLocal {
+    /// `l_in`.
+    pub fn l_in(&self) -> InAddr {
+        InAddr {
+            s_addr: u32::from_ne_bytes([
+                self.bytes[0],
+                self.bytes[1],
+                self.bytes[2],
+                self.bytes[3],
+            ]),
+        }
+    }
+
+    /// Stores `l_in`, the rest unchanged.
+    pub fn set_l_in(&mut self, a: InAddr) {
+        self.bytes[..4].copy_from_slice(&a.s_addr.to_ne_bytes());
+    }
+
+    /// `l_in6` (`l_pktinfo6.ipi6_addr`).
+    pub fn l_in6(&self) -> In6Addr {
+        let mut a = [0u8; IN6_ADDR_LEN];
+        a.copy_from_slice(&self.bytes[..IN6_ADDR_LEN]);
+        In6Addr::new(a)
+    }
+
+    /// Stores `l_in6`, the rest unchanged.
+    pub fn set_l_in6(&mut self, a: In6Addr) {
+        self.bytes[..IN6_ADDR_LEN].copy_from_slice(&a.s6_addr);
+    }
+
+    /// The union's bytes: `l_pktinfo6`, which is what the `IPV6_PKTINFO` control message
+    /// carries (`l_in` is its first four bytes).
+    pub const fn as_bytes(&self) -> &[u8; IN6_PKTINFO_LEN] {
+        &self.bytes
+    }
+}
+
+/// `struct wg_endpoint`: a peer's address (`e_remote`: the `r_sa`, `r_sin` and `r_sin6` views
+/// of a [`WgPeerEndpoint`]) and the local address to send from (`e_local`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WgEndpoint {
-    /// `e_remote` (`r_sin`).
-    pub e_remote: SockaddrIn,
-    /// `e_local` (`l_in`).
-    pub e_local: InAddr,
-}
-
-impl WgEndpoint {
-    /// `&e->e_remote.r_sa`.
-    pub fn r_sa(&self) -> &Sockaddr {
-        // SAFETY: `sockaddr_in` is as long as `sockaddr` (asserted at the end of the file) and
-        // `Sockaddr` is byte-aligned: the reference covers the same 16 bytes.
-        unsafe { &*ptr::from_ref(&self.e_remote).cast::<Sockaddr>() }
-    }
+    /// `e_remote`.
+    pub e_remote: WgPeerEndpoint,
+    /// `e_local`.
+    pub e_local: WgLocal,
 }
 
 /// `struct wg_tag`: what a packet carries through the queues, in its `PACKET_TAG_WIREGUARD`
@@ -876,14 +988,18 @@ pub struct WgSoftc {
     pub sc_so_lock: Rwlock,
     /// `sc_so4`. Protected by: `sc_so_lock`.
     pub sc_so4: Cell<Option<&'static Socket>>,
-    // sc_so6: INET6, not configured.
+    /// `sc_so6`. Protected by: `sc_so_lock`.
+    #[cfg(feature = "inet6")]
+    pub sc_so6: Cell<Option<&'static Socket>>,
     /// `sc_aip_lock`.
     pub sc_aip_lock: Rwlock,
     /// `sc_aip_num`. Protected by: `sc_aip_lock`.
     pub sc_aip_num: Cell<usize>,
     /// `sc_aip4`.
     pub sc_aip4: Cell<Option<&'static Art>>,
-    // sc_aip6: INET6, not configured.
+    /// `sc_aip6`.
+    #[cfg(feature = "inet6")]
+    pub sc_aip6: Cell<Option<&'static Art>>,
     /// `sc_peer_lock`.
     pub sc_peer_lock: Rwlock,
     /// `sc_peer_num`. Protected by: `sc_peer_lock`.
@@ -937,31 +1053,43 @@ impl WgSoftc {
             None => panic(format_args!("wg {:p}: no aip table", self)),
         }
     }
+
+    /// `sc->sc_aip6`, made by `wg_clone_create`.
+    #[cfg(feature = "inet6")]
+    fn aip6(&self) -> &'static Art {
+        match self.sc_aip6.get() {
+            Some(art) => art,
+            None => panic(format_args!("wg {:p}: no aip6 table", self)),
+        }
+    }
 }
 
 /// `sockaddr_ntop(sa, buf, len)`, as a `Display` (see the module's deviations).
-pub struct SaNtop(Sockaddr);
+pub struct SaNtop(WgPeerEndpoint);
 
 impl SaNtop {
     /// The text of a remote address.
-    pub fn of(sin: &SockaddrIn) -> Self {
-        // SAFETY: `sockaddr_in` and `sockaddr` have the same size and are made of integers.
-        Self(unsafe { ptr::from_ref(sin).cast::<Sockaddr>().read_unaligned() })
+    pub fn of(e: &WgPeerEndpoint) -> Self {
+        Self(*e)
     }
 }
 
 impl fmt::Display for SaNtop {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let sa = &self.0;
-        if sa.sa_len < 2 {
+        let e = &self.0;
+        if e.sa_len() < 2 {
             return f.write_str("bad sa");
         }
-        if sa.sa_family == AF_INET {
-            let b = &sa.sa_data[2..6];
+        if e.sa_family() == AF_INET {
+            let b = e.sa_sin().sin_addr.s_addr.to_ne_bytes();
             return write!(f, "{}.{}.{}.{}", b[0], b[1], b[2], b[3]);
         }
-        // INET6: inet_ntop6 of sin6_addr; not configured.
-        write!(f, "{} ", sa.sa_family)?;
+        #[cfg(feature = "inet6")]
+        if e.sa_family() == AF_INET6 {
+            return write!(f, "{}", In6Ntop(e.sa_sin6().sin6_addr));
+        }
+        write!(f, "{} ", e.sa_family())?;
+        let sa = e.sa_sa();
         let n = (usize::from(sa.sa_len) - 2).min(sa.sa_data.len());
         for b in &sa.sa_data[..n] {
             write!(f, "{b:02x}")?;
@@ -1215,22 +1343,22 @@ pub fn wg_peer_set_endpoint_from_tag(peer: &WgPeer, t: &WgTag) {
 }
 
 /// `wg_peer_set_sockaddr`: the peer's remote address, and no local one.
-pub fn wg_peer_set_sockaddr(peer: &WgPeer, remote: &SockaddrIn) {
+pub fn wg_peer_set_sockaddr(peer: &WgPeer, remote: &WgPeerEndpoint) {
     mtx_enter(&peer.p_endpoint_mtx);
     let mut e = peer.p_endpoint.get();
     e.e_remote = *remote;
-    e.e_local = InAddr::default();
+    e.e_local = WgLocal::default();
     peer.p_endpoint.set(e);
     mtx_leave(&peer.p_endpoint_mtx);
 }
 
 /// `wg_peer_get_sockaddr`: the peer's remote address; `ENOENT` when it has none.
-pub fn wg_peer_get_sockaddr(peer: &WgPeer, remote: &mut SockaddrIn) -> Result<(), Errno> {
+pub fn wg_peer_get_sockaddr(peer: &WgPeer, remote: &mut WgPeerEndpoint) -> Result<(), Errno> {
     let mut ret = Ok(());
 
     mtx_enter(&peer.p_endpoint_mtx);
     let e = peer.p_endpoint.get();
-    if e.e_remote.sin_family != AF_UNSPEC {
+    if e.e_remote.sa_family() != AF_UNSPEC {
         *remote = e.e_remote;
     } else {
         ret = Err(Errno::ENOENT);
@@ -1243,7 +1371,7 @@ pub fn wg_peer_get_sockaddr(peer: &WgPeer, remote: &mut SockaddrIn) -> Result<()
 pub fn wg_peer_clear_src(peer: &WgPeer) {
     mtx_enter(&peer.p_endpoint_mtx);
     let mut e = peer.p_endpoint.get();
-    e.e_local = InAddr::default();
+    e.e_local = WgLocal::default();
     peer.p_endpoint.set(e);
     mtx_leave(&peer.p_endpoint_mtx);
 }
@@ -1268,7 +1396,8 @@ pub fn wg_peer_counters_add(peer: &WgPeer, tx: u64, rx: u64) {
 pub fn wg_aip_add(sc: &WgSoftc, peer: &'static WgPeer, d: &WgAipIo) -> Result<(), Errno> {
     let root = match d.a_af {
         AF_INET => sc.aip4(),
-        // INET6: AF_INET6 uses sc_aip6; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => sc.aip6(),
         _ => return Err(Errno::EAFNOSUPPORT),
     };
 
@@ -1330,7 +1459,8 @@ pub fn wg_aip_lookup(root: &Art, addr: &[u8]) -> Option<&'static WgPeer> {
 pub fn wg_aip_remove(sc: &WgSoftc, peer: &WgPeer, d: &WgAipIo) -> Result<(), Errno> {
     let root = match d.a_af {
         AF_INET => sc.aip4(),
-        // INET6: AF_INET6 uses sc_aip6; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => sc.aip6(),
         _ => return Err(Errno::EAFNOSUPPORT),
     };
     if d.a_cidr < 0 || d.a_cidr as u32 > root.art_alen.get() {
@@ -1405,7 +1535,8 @@ pub fn wg_socket_open(
         // SAFETY: as above, for a `sockaddr_in`.
         unsafe { mtod::<SockaddrIn>(mhostnam).write_unaligned(sin) };
         mhostnam.m_len().set(u32::from(sin.sin_len));
-    // INET6: AF_INET6 binds a sockaddr_in6 to in6addr_any; not configured.
+    } else if wg_hostnam_in6(af, mhostnam, *port) {
+        // The sockaddr_in6 of in6addr_any is in `mhostnam`.
     } else {
         m_free(mhostnam);
         m_free(mrtable);
@@ -1458,6 +1589,32 @@ pub fn wg_socket_open(
     ret
 }
 
+/// The `AF_INET6` half of `wg_socket_open`'s address: a `sockaddr_in6` of `in6addr_any` and
+/// `port` in `mhostnam`; `false` when `af` is not `AF_INET6` (always, without `INET6`).
+#[cfg(feature = "inet6")]
+fn wg_hostnam_in6(af: SaFamily, mhostnam: &'static Mbuf, port: InPort) -> bool {
+    if af != AF_INET6 {
+        return false;
+    }
+    let sin6 = SockaddrIn6 {
+        sin6_len: size_of::<SockaddrIn6>() as u8,
+        sin6_family: AF_INET6,
+        sin6_port: port,
+        sin6_addr: IN6ADDR_ANY,
+        ..SockaddrIn6::default()
+    };
+    // SAFETY: a fresh mbuf's data area holds far more than a `sockaddr_in6`.
+    unsafe { mtod::<SockaddrIn6>(mhostnam).write_unaligned(sin6) };
+    mhostnam.m_len().set(u32::from(sin6.sin6_len));
+    true
+}
+
+/// The `AF_INET6` half of `wg_socket_open`'s address (without `INET6`: never).
+#[cfg(not(feature = "inet6"))]
+fn wg_hostnam_in6(_af: SaFamily, _mhostnam: &'static Mbuf, _port: InPort) -> bool {
+    false
+}
+
 /// `wg_socket_close`.
 pub fn wg_socket_close(so: &Cell<Option<&'static Socket>>) {
     if let Some(s) = so.get()
@@ -1472,19 +1629,40 @@ pub fn wg_socket_close(so: &Cell<Option<&'static Socket>>) {
 /// ones; the port and table actually bound go back through the pointers.
 pub fn wg_bind(sc: &WgSoftc, portp: &mut InPort, rtablep: &mut i32) -> Result<(), Errno> {
     let so4: Cell<Option<&'static Socket>> = Cell::new(None);
-    // INET6: so6 and the retries for an ephemeral port both families accept; not configured.
+    #[cfg(feature = "inet6")]
+    let so6: Cell<Option<&'static Socket>> = Cell::new(None);
+    #[cfg(feature = "inet6")]
+    let mut retries = 0;
 
-    let mut port = *portp;
-    let mut rtable = *rtablep;
+    let mut port;
+    let mut rtable;
     let arg = ptr::from_ref(sc).cast_mut().cast::<c_void>();
-    wg_socket_open(&so4, AF_INET, &mut port, &mut rtable, arg)?;
+    loop {
+        // retry:
+        port = *portp;
+        rtable = *rtablep;
+        wg_socket_open(&so4, AF_INET, &mut port, &mut rtable, arg)?;
 
-    // INET6: wg_socket_open(&so6, AF_INET6, ...); not configured.
+        #[cfg(feature = "inet6")]
+        if let Err(ret) = wg_socket_open(&so6, AF_INET6, &mut port, &mut rtable, arg) {
+            wg_socket_close(&so4);
+            if ret == Errno::EADDRINUSE && *portp == 0 && retries < 100 {
+                retries += 1;
+                continue;
+            }
+            return Err(ret);
+        }
+        break;
+    }
 
     rw_enter_write(&sc.sc_so_lock);
     wg_socket_close(&sc.sc_so4);
     sc.sc_so4.set(so4.get());
-    // INET6: sc_so6 likewise; not configured.
+    #[cfg(feature = "inet6")]
+    {
+        wg_socket_close(&sc.sc_so6);
+        sc.sc_so6.set(so6.get());
+    }
     rw_exit_write(&sc.sc_so_lock);
 
     *portp = port;
@@ -1496,7 +1674,8 @@ pub fn wg_bind(sc: &WgSoftc, portp: &mut InPort, rtablep: &mut i32) -> Result<()
 pub fn wg_unbind(sc: &WgSoftc) {
     rw_enter_write(&sc.sc_so_lock);
     wg_socket_close(&sc.sc_so4);
-    // INET6: wg_socket_close(&sc->sc_so6); not configured.
+    #[cfg(feature = "inet6")]
+    wg_socket_close(&sc.sc_so6);
     rw_exit_write(&sc.sc_so_lock);
 }
 
@@ -1506,14 +1685,23 @@ pub fn wg_send(sc: &WgSoftc, e: &WgEndpoint, m: &'static Mbuf) -> Result<(), Err
     let mut control: Option<&'static Mbuf> = None;
 
     // Get local control address before locking
-    if e.e_remote.sin_family == AF_INET {
-        if e.e_local.s_addr != INADDR_ANY {
-            control = sbcreatecontrol(&in_bytes(&e.e_local), IP_SENDSRCADDR, IPPROTO_IP);
+    let family = e.e_remote.sa_family();
+    match family {
+        AF_INET => {
+            if e.e_local.l_in().s_addr != INADDR_ANY {
+                control = sbcreatecontrol(&in_bytes(&e.e_local.l_in()), IP_SENDSRCADDR, IPPROTO_IP);
+            }
         }
-    // INET6: AF_INET6 sends an IPV6_PKTINFO control message; not configured.
-    } else {
-        m_freem(m);
-        return Err(Errno::EAFNOSUPPORT);
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            if !in6_is_addr_unspecified(&e.e_local.l_in6()) {
+                control = sbcreatecontrol(e.e_local.as_bytes(), IPV6_PKTINFO, IPPROTO_IPV6);
+            }
+        }
+        _ => {
+            m_freem(m);
+            return Err(Errno::EAFNOSUPPORT);
+        }
     }
 
     // Get remote address
@@ -1522,19 +1710,22 @@ pub fn wg_send(sc: &WgSoftc, e: &WgEndpoint, m: &'static Mbuf) -> Result<(), Err
         m_freem(m);
         return Err(Errno::ENOBUFS);
     };
-    // SAFETY: a fresh mbuf's data area holds far more than a `sockaddr_in`.
-    unsafe { mtod::<SockaddrIn>(peernam).write_unaligned(e.e_remote) };
+    // SAFETY: a fresh mbuf's data area holds far more than a `sockaddr_in6`.
+    unsafe { mtod::<WgPeerEndpoint>(peernam).write_unaligned(e.e_remote) };
     peernam
         .m_len()
-        .set(u32::from(e.e_remote.sin_len).min(size_of::<SockaddrIn>() as u32));
+        .set(u32::from(e.e_remote.sa_len()).min(size_of::<WgPeerEndpoint>() as u32));
 
     rw_enter_read(&sc.sc_so_lock);
-    let ret = match sc.sc_so4.get() {
-        Some(so4) if e.e_remote.sin_family == AF_INET => {
-            sosend(so4, Some(peernam), None, Some(m), control, 0)
-        }
-        // INET6: sc_so6 for AF_INET6; not configured.
-        _ => {
+    let so = match family {
+        AF_INET => sc.sc_so4.get(),
+        #[cfg(feature = "inet6")]
+        AF_INET6 => sc.sc_so6.get(),
+        _ => None,
+    };
+    let ret = match so {
+        Some(so) => sosend(so, Some(peernam), None, Some(m), control, 0),
+        None => {
             m_freem(control);
             m_freem(m);
             Err(Errno::ENOTCONN)
@@ -1579,7 +1770,7 @@ pub fn wg_send_buf(sc: &WgSoftc, e: &mut WgEndpoint, buf: &[u8]) {
             ret = wg_send(sc, e, m);
             // Retry if we couldn't bind to e->e_local
             if ret == Err(Errno::EADDRNOTAVAIL) {
-                e.e_local = InAddr::default();
+                e.e_local = WgLocal::default();
                 continue;
             }
         } else {
@@ -2071,7 +2262,13 @@ pub fn wg_send_cookie(sc: &WgSoftc, cm: &CookieMacs, idx: u32, e: &mut WgEndpoin
     pkt.t = WG_PKT_COOKIE;
     pkt.r_idx = idx;
 
-    cookie_checker_create_payload(&sc.sc_cookie, cm, &mut pkt.nonce, &mut pkt.ec, e.r_sa());
+    cookie_checker_create_payload(
+        &sc.sc_cookie,
+        cm,
+        &mut pkt.nonce,
+        &mut pkt.ec,
+        &e.e_remote.as_storage(),
+    );
 
     wg_send_buf(sc, e, pkt_bytes(&pkt));
 }
@@ -2166,7 +2363,7 @@ pub fn wg_handshake(sc: &'static WgSoftc, m: &'static Mbuf) {
                     &init.m,
                     &pkt_bytes(&init)[..size_of::<WgPktInitiation>() - size_of::<CookieMacs>()],
                     underload,
-                    t.t_endpoint.get().r_sa(),
+                    &t.t_endpoint.get().e_remote.as_storage(),
                 );
 
                 match res {
@@ -2230,7 +2427,7 @@ pub fn wg_handshake(sc: &'static WgSoftc, m: &'static Mbuf) {
                     &resp.m,
                     &pkt_bytes(&resp)[..size_of::<WgPktResponse>() - size_of::<CookieMacs>()],
                     underload,
-                    t.t_endpoint.get().r_sa(),
+                    &t.t_endpoint.get().e_remote.as_storage(),
                 );
 
                 match res {
@@ -2552,19 +2749,20 @@ pub fn wg_decap(sc: &WgSoftc, m: &'static Mbuf) {
 
                 wg_aip_lookup(sc.aip4(), &in_bytes(&ip.ip_src))
             }
-            // INET6: an IPv6 packet is trimmed to ip6_plen and checked against sc_aip6; not
-            // configured.
-            _ => {
-                wgprintf!(
-                    LOG_WARNING,
-                    sc,
-                    Some(&peer.p_endpoint_mtx),
-                    "Packet is neither IPv4 nor IPv6 from peer {} ({})\n",
-                    peer.p_id.get(),
-                    SaNtop::of(&peer.p_endpoint.get().e_remote)
-                );
-                break 'error;
-            }
+            _ => match wg_decap_ip6(sc, m, len) {
+                Some(allowed_peer) => allowed_peer,
+                None => {
+                    wgprintf!(
+                        LOG_WARNING,
+                        sc,
+                        Some(&peer.p_endpoint_mtx),
+                        "Packet is neither IPv4 nor IPv6 from peer {} ({})\n",
+                        peer.p_id.get(),
+                        SaNtop::of(&peer.p_endpoint.get().e_remote)
+                    );
+                    break 'error;
+                }
+            },
         };
 
         if !allowed_peer.is_some_and(|p| ptr::eq(p, peer)) {
@@ -2595,6 +2793,36 @@ pub fn wg_decap(sc: &WgSoftc, m: &'static Mbuf) {
     if let Some(tq) = net_tq(sc.sc_if.if_index.get()) {
         task_add(tq, &peer.p_deliver_in);
     }
+}
+
+/// The IPv6 case of `wg_decap`: if `m` (`len` bytes) is an IPv6 packet, trims it to its
+/// `ip6_plen`, sets its family and answers the peer the source address belongs to (`Some`,
+/// which may be `None` inside); `None` when it is not an IPv6 packet (always, without
+/// `INET6`).
+#[cfg(feature = "inet6")]
+fn wg_decap_ip6(sc: &WgSoftc, m: &'static Mbuf, len: usize) -> Option<Option<&'static WgPeer>> {
+    if len < size_of::<Ip6Hdr>() {
+        return None;
+    }
+    // SAFETY: the decrypted packet is contiguous and at least an IPv6 header long.
+    let ip6: Ip6Hdr = unsafe { mtod::<Ip6Hdr>(m).read_unaligned() };
+    if ip6.ip6_vfc() & IPV6_VERSION_MASK != IPV6_VERSION {
+        return None;
+    }
+    m.m_pkthdr().ph_family.set(AF_INET6);
+
+    let plen = usize::from(ntohs(ip6.ip6_plen)) + size_of::<Ip6Hdr>();
+    if plen < len {
+        m_adj(m, plen as i32 - len as i32);
+    }
+
+    Some(wg_aip_lookup(sc.aip6(), &ip6.ip6_src.s6_addr))
+}
+
+/// The IPv6 case of `wg_decap` (without `INET6`: never an IPv6 packet).
+#[cfg(not(feature = "inet6"))]
+fn wg_decap_ip6(_sc: &WgSoftc, _m: &'static Mbuf, _len: usize) -> Option<Option<&'static WgPeer>> {
+    None
 }
 
 /// The softc a task was set with.
@@ -2689,11 +2917,11 @@ pub fn wg_deliver_in(arg: *mut c_void) {
         }
 
         net_lock();
-        if m.m_pkthdr().ph_family.get() == AF_INET {
-            ipv4_input(&sc.sc_if, m, None);
-        // INET6: AF_INET6 goes to ipv6_input; not configured.
-        } else {
-            panic(format_args!("invalid ph_family"));
+        match m.m_pkthdr().ph_family.get() {
+            AF_INET => ipv4_input(&sc.sc_if, m, None),
+            #[cfg(feature = "inet6")]
+            AF_INET6 => ipv6_input(&sc.sc_if, m, None),
+            _ => panic(format_args!("invalid ph_family")),
         }
         net_unlock();
 
@@ -2916,7 +3144,7 @@ pub unsafe fn wg_input(
     arg: *mut c_void,
     m: &'static Mbuf,
     ip: *const Ip,
-    _ip6: *const c_void,
+    ip6: *const c_void,
     uh: *const c_void,
     hlen: i32,
     _ns: Option<&Netstack>,
@@ -2935,14 +3163,17 @@ pub unsafe fn wg_input(
         // `struct udphdr`, are readable.
         let (ip, sport) = unsafe { (ip.read_unaligned(), uh.cast::<u16>().read_unaligned()) };
         let mut e = t.t_endpoint.get();
-        e.e_remote.sin_len = size_of::<SockaddrIn>() as u8;
-        e.e_remote.sin_family = AF_INET;
-        e.e_remote.sin_port = sport;
-        e.e_remote.sin_addr = ip.ip_src;
-        e.e_local = ip.ip_dst;
+        e.e_remote.set_sa_sin(&SockaddrIn {
+            sin_len: size_of::<SockaddrIn>() as u8,
+            sin_family: AF_INET,
+            sin_port: sport,
+            sin_addr: ip.ip_src,
+            ..SockaddrIn::default()
+        });
+        e.e_local.set_l_in(ip.ip_dst);
         t.t_endpoint.set(e);
-    // INET6: an IPv6 datagram fills r_sin6 and l_in6 from ip6; not configured.
-    } else {
+    // SAFETY: the caller's contract: `ip6` is null or a readable IPv6 header, `uh` a UDP header.
+    } else if !unsafe { wg_input_ip6(t, ip6, uh) } {
         m_freem(m);
         return None;
     }
@@ -3003,6 +3234,48 @@ pub unsafe fn wg_input(
     None
 }
 
+/// The IPv6 case of `wg_input`: fills the tag's endpoint from the datagram's IPv6 header and
+/// UDP source port; `false` when there is no IPv6 header (always, without `INET6`).
+///
+/// # Safety
+///
+/// `ip6` is null or points at a readable IPv6 header, `uh` at a readable UDP header.
+#[cfg(feature = "inet6")]
+unsafe fn wg_input_ip6(t: &WgTag, ip6: *const c_void, uh: *const c_void) -> bool {
+    if ip6.is_null() {
+        return false;
+    }
+    // SAFETY: the caller's contract: the IPv6 header and `uh_sport`, the first member of
+    // `struct udphdr`, are readable.
+    let (ip6, sport) = unsafe {
+        (
+            ip6.cast::<Ip6Hdr>().read_unaligned(),
+            uh.cast::<u16>().read_unaligned(),
+        )
+    };
+    let mut e = t.t_endpoint.get();
+    e.e_remote.set_sa_sin6(&SockaddrIn6 {
+        sin6_len: size_of::<SockaddrIn6>() as u8,
+        sin6_family: AF_INET6,
+        sin6_port: sport,
+        sin6_addr: ip6.ip6_src,
+        ..SockaddrIn6::default()
+    });
+    e.e_local.set_l_in6(ip6.ip6_dst);
+    t.t_endpoint.set(e);
+    true
+}
+
+/// The IPv6 case of `wg_input` (without `INET6`: no IPv6 header).
+///
+/// # Safety
+///
+/// Nothing is read.
+#[cfg(not(feature = "inet6"))]
+unsafe fn wg_input_ip6(_t: &WgTag, _ip6: *const c_void, _uh: *const c_void) -> bool {
+    false
+}
+
 /// `wg_qstart`: the interface's `if_qstart`: stages the packets of the send queue on their
 /// peers, then queues them for encryption (or asks for a handshake).
 pub fn wg_qstart(ifq: &'static Ifqueue) {
@@ -3051,6 +3324,32 @@ pub fn wg_qstart(ifq: &'static Ifqueue) {
     task_add(wg_crypt_taskq(), &sc.sc_encap);
 }
 
+/// The IPv6 case of `wg_output`: the peer `ip6_dst` of the packet belongs to (`Some`, which
+/// may be `None` inside); `None` when `family` is not `AF_INET6` (always, without `INET6`).
+#[cfg(feature = "inet6")]
+fn wg_output_ip6(
+    sc: &WgSoftc,
+    m: &'static Mbuf,
+    family: SaFamily,
+) -> Option<Option<&'static WgPeer>> {
+    if family != AF_INET6 {
+        return None;
+    }
+    // SAFETY: an IPv6 packet starts with its header in the first mbuf (`ip6_output`).
+    let ip6: Ip6Hdr = unsafe { mtod::<Ip6Hdr>(m).read_unaligned() };
+    Some(wg_aip_lookup(sc.aip6(), &ip6.ip6_dst.s6_addr))
+}
+
+/// The IPv6 case of `wg_output` (without `INET6`: never).
+#[cfg(not(feature = "inet6"))]
+fn wg_output_ip6(
+    _sc: &WgSoftc,
+    _m: &'static Mbuf,
+    _family: SaFamily,
+) -> Option<Option<&'static WgPeer>> {
+    None
+}
+
 /// `wg_output`: the interface's `if_output`: finds the peer of the destination and enqueues
 /// the packet for it.
 ///
@@ -3079,7 +3378,8 @@ pub unsafe fn wg_output(
             // SAFETY: an IPv4 packet starts with its header in the first mbuf (`ip_output`).
             let ip: Ip = unsafe { mtod::<Ip>(m).read_unaligned() };
             wg_aip_lookup(sc.aip4(), &in_bytes(&ip.ip_dst))
-        // INET6: AF_INET6 looks ip6_dst up in sc_aip6; not configured.
+        } else if let Some(peer) = wg_output_ip6(sc, m, family) {
+            peer
         } else {
             break 'error Err(Errno::EAFNOSUPPORT);
         };
@@ -3088,7 +3388,7 @@ pub unsafe fn wg_output(
             break 'error Err(Errno::ENETUNREACH);
         };
 
-        let af = peer.p_endpoint.get().e_remote.sin_family;
+        let af = peer.p_endpoint.get().e_remote.sa_family();
         if af != AF_INET && af != AF_INET6 {
             wgprintf!(
                 LOG_DEBUG,
@@ -3264,7 +3564,7 @@ pub fn wg_ioctl_set(sc: &'static WgSoftc, data: &mut WgDataIo) -> Result<(), Err
                 }
 
                 if peer_o.p_flags & WG_PEER_HAS_ENDPOINT != 0 {
-                    wg_peer_set_sockaddr(peer, &peer_o.p_endpoint.sa_sin());
+                    wg_peer_set_sockaddr(peer, &peer_o.p_endpoint);
                 }
 
                 if peer_o.p_flags & WG_PEER_HAS_PSK != 0 {
@@ -3395,9 +3695,7 @@ pub fn wg_ioctl_get(sc: &WgSoftc, data: &mut WgDataIo) -> Result<(), Errno> {
                         peer_o.p_flags |= WG_PEER_HAS_PKA;
                     }
 
-                    let mut sin = SockaddrIn::default();
-                    if wg_peer_get_sockaddr(peer, &mut sin).is_ok() {
-                        peer_o.p_endpoint.set_sa_sin(&sin);
+                    if wg_peer_get_sockaddr(peer, &mut peer_o.p_endpoint).is_ok() {
                         peer_o.p_flags |= WG_PEER_HAS_ENDPOINT;
                     }
 
@@ -3641,7 +3939,8 @@ pub fn wg_clone_create(_ifc: &'static IfClone, unit: i32) -> Result<(), Errno> {
 
         rw_init(&sc.sc_so_lock, "wg_so");
         sc.sc_so4.set(None);
-        // INET6: sc_so6 = NULL; not configured.
+        #[cfg(feature = "inet6")]
+        sc.sc_so6.set(None);
 
         sc.sc_aip_num.set(0);
         rw_init(&sc.sc_aip_lock, "wgaip");
@@ -3650,7 +3949,16 @@ pub fn wg_clone_create(_ifc: &'static IfClone, unit: i32) -> Result<(), Errno> {
                 break 'ret_02;
             };
             sc.sc_aip4.set(Some(aip4));
-            // INET6: sc_aip6 = art_alloc(128); not configured.
+            #[cfg(feature = "inet6")]
+            match art_alloc(128) {
+                Some(aip6) => sc.sc_aip6.set(Some(aip6)),
+                None => {
+                    // ret_03:
+                    sc.sc_aip4.set(None);
+                    free(NonNull::from(aip4).cast(), M_RTABLE, size_of::<Art>());
+                    break 'ret_02;
+                }
+            }
 
             rw_init(&sc.sc_peer_lock, "wg_peer");
             sc.sc_peer_num.set(0);
@@ -3719,7 +4027,10 @@ pub fn wg_clone_create(_ifc: &'static IfClone, unit: i32) -> Result<(), Errno> {
                 return Ok(());
             }
             // ret_04:
-            // INET6: free(sc->sc_aip6, M_RTABLE, ...); not configured.
+            #[cfg(feature = "inet6")]
+            if let Some(aip6) = sc.sc_aip6.take() {
+                free(NonNull::from(aip6).cast(), M_RTABLE, size_of::<Art>());
+            }
             sc.sc_aip4.set(None);
             free(NonNull::from(aip4).cast(), M_RTABLE, size_of::<Art>());
         }
@@ -3770,7 +4081,10 @@ pub fn wg_clone_destroy(ifp: &'static Ifnet) -> Result<(), Errno> {
         // SAFETY: the table `wg_clone_create` made; every peer was destroyed above.
         unsafe { hashfree(peers, HASHTABLE_PEER_SIZE, M_DEVBUF) };
     }
-    // INET6: free(sc->sc_aip6, M_RTABLE, ...); not configured.
+    #[cfg(feature = "inet6")]
+    if let Some(aip6) = sc.sc_aip6.take() {
+        free(NonNull::from(aip6).cast(), M_RTABLE, size_of::<Art>());
+    }
     if let Some(aip4) = sc.sc_aip4.take() {
         free(NonNull::from(aip4).cast(), M_RTABLE, size_of::<Art>());
     }
@@ -3832,8 +4146,10 @@ const _: () = {
     assert!(size_of::<WgPktResponse>() == 92);
     assert!(size_of::<WgPktCookie>() == 64);
     assert!(size_of::<WgPktData>() == 16);
-    assert!(size_of::<WgEndpoint>() == 20);
-    assert!(size_of::<SockaddrIn>() == size_of::<Sockaddr>());
+    assert!(size_of::<WgEndpoint>() == SOCKADDR_IN6_LEN + IN6_PKTINFO_LEN);
+    assert!(SOCKADDR_IN6_LEN == 28 && IN6_PKTINFO_LEN == 20 && IN6_ADDR_LEN == 16);
+    assert!(size_of::<SockaddrIn>() <= SOCKADDR_IN6_LEN);
+    assert!(SOCKADDR_IN6_LEN <= size_of::<SockaddrStorage>());
     assert!(size_of::<WgTag>() <= PACKET_TAG_MAXSIZE);
     assert!(size_of::<MTag>().is_multiple_of(align_of::<WgTag>()));
     assert!(align_of::<WgTag>() <= align_of::<MTag>());

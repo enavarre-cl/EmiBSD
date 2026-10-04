@@ -38,13 +38,14 @@
 //! - The header and the file share this module.
 //! - Members the C changes through a shared pointer under the locks are `Cell`s; every
 //!   structure is valid all zero (`bzero`).
-//! - `INET6` is not configured: `cc_ratelimit_v6`, `ratelimit_entry`'s `r_in6` and the
-//!   `AF_INET6` branches are comments at their sites (an IPv6 source makes
+//! - `INET6` is configured (feature `inet6`): `cc_ratelimit_v6`, `ratelimit_entry`'s `r_in6`
+//!   (side by side with `r_in`, not a union; only its top `IPV6_MASK_SIZE` bytes are used)
+//!   and the `AF_INET6` branches. Without the feature an IPv6 source makes
 //!   `cookie_checker_validate_macs` return `EAFNOSUPPORT` and `cookie_checker_make_cookie`
-//!   draw a random cookie, as the C's `default` cases do).
-//! - The source address is `&Sockaddr`: without `INET6` only `AF_INET` addresses are read,
-//!   and a `struct sockaddr_in` is the size of a `struct sockaddr`; it is copied out of the
-//!   reference unaligned.
+//!   draw a random cookie, as the C's `default` cases do.
+//! - The source address is `&SockaddrStorage` (the C's `struct sockaddr *`): a `struct
+//!   sockaddr_in6` does not fit a `&Sockaddr`; the address is copied out of the storage
+//!   unaligned.
 //! - `rl_table` is the slice `hashinit` returns and `rl_table_mask` is its length minus one
 //!   (the C's `*hashmask`); `rl_pool` is `Option<&'static Pool>`. A `pool_get`ed entry is
 //!   written whole before it is linked.
@@ -74,13 +75,17 @@ use crate::kern::kern_subr::{hashfree, hashinit};
 use crate::kern::kern_tc::getnanouptime;
 use crate::kern::subr_pool::{pool_get, pool_put};
 use crate::netinet::in_::{InAddr, SockaddrIn};
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::{In6Addr, SockaddrIn6};
 use crate::queue_adapter;
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_DEVBUF, M_NOWAIT};
 use crate::sys::pool::{PR_NOWAIT, Pool};
 use crate::sys::queue::{ListEntry, ListHead};
 use crate::sys::rwlock::Rwlock;
-use crate::sys::socket::{AF_INET, AF_UNSPEC, Sockaddr};
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
+use crate::sys::socket::{AF_INET, AF_UNSPEC, SockaddrStorage};
 use crate::sys::time::{Timespec, timespecadd, timespecsub};
 use crate::sys::types::{SaFamily, Time};
 
@@ -147,8 +152,11 @@ pub struct RatelimitEntry {
     pub r_entry: ListEntry<RatelimitEntry>,
     /// `r_af`.
     pub r_af: Cell<SaFamily>,
-    /// `r_in` (the union's `r_in6` is `INET6`, not configured).
+    /// `r_in`.
     pub r_in: Cell<InAddr>,
+    /// `r_in6` (the C union's other member): only the top `IPV6_MASK_SIZE` bytes are kept.
+    #[cfg(feature = "inet6")]
+    pub r_in6: Cell<In6Addr>,
     /// `r_last_time`: nanouptime.
     pub r_last_time: Cell<Timespec>,
     /// `r_tokens`.
@@ -162,6 +170,8 @@ impl RatelimitEntry {
             r_entry: ListEntry::new(),
             r_af: Cell::new(AF_UNSPEC),
             r_in: Cell::new(InAddr { s_addr: 0 }),
+            #[cfg(feature = "inet6")]
+            r_in6: Cell::new(In6Addr { s6_addr: [0; 16] }),
             r_last_time: Cell::new(Timespec::new(0, 0)),
             r_tokens: Cell::new(0),
         }
@@ -275,7 +285,9 @@ impl Default for CookieMaker {
 pub struct CookieChecker {
     /// `cc_ratelimit_v4`.
     pub cc_ratelimit_v4: Ratelimit,
-    // cc_ratelimit_v6: INET6, not configured.
+    /// `cc_ratelimit_v6`.
+    #[cfg(feature = "inet6")]
+    pub cc_ratelimit_v6: Ratelimit,
     /// `cc_key_lock`.
     pub cc_key_lock: Rwlock,
     /// `cc_mac1_key`. Protected by: `cc_key_lock`.
@@ -301,6 +313,8 @@ impl CookieChecker {
     pub const fn new() -> Self {
         Self {
             cc_ratelimit_v4: Ratelimit::new(),
+            #[cfg(feature = "inet6")]
+            cc_ratelimit_v6: Ratelimit::new(),
             cc_key_lock: Rwlock::new("cookie_checker_key"),
             cc_mac1_key: Cell::new([0; COOKIE_KEY_SIZE]),
             cc_cookie_key: Cell::new([0; COOKIE_KEY_SIZE]),
@@ -349,13 +363,24 @@ pub fn cookie_checker_init(cc: &CookieChecker, pool: &'static Pool) -> Result<()
     rl.rl_table_mask.set(0);
     rl.rl_table_num.set(0);
     rl.rl_last_gc.set(Timespec::default());
+    #[cfg(feature = "inet6")]
+    {
+        let rl = &cc.cc_ratelimit_v6;
+        rl.rl_table.set(None);
+        rl.rl_table_mask.set(0);
+        rl.rl_table_num.set(0);
+        rl.rl_last_gc.set(Timespec::default());
+    }
 
     rw_init(&cc.cc_key_lock, "cookie_checker_key");
     rw_init(&cc.cc_secret_lock, "cookie_checker_secret");
 
     ratelimit_init(&cc.cc_ratelimit_v4, pool)?;
-    // INET6: ratelimit_init(&cc->cc_ratelimit_v6, pool), undoing the v4 one on failure; not
-    // configured.
+    #[cfg(feature = "inet6")]
+    if let Err(res) = ratelimit_init(&cc.cc_ratelimit_v6, pool) {
+        ratelimit_deinit(&cc.cc_ratelimit_v4);
+        return Err(res);
+    }
     Ok(())
 }
 
@@ -380,7 +405,8 @@ pub fn cookie_checker_update(cc: &CookieChecker, key: Option<&[u8; COOKIE_INPUT_
 /// `cookie_checker_deinit`: frees the rate limiters' entries and tables.
 pub fn cookie_checker_deinit(cc: &CookieChecker) {
     ratelimit_deinit(&cc.cc_ratelimit_v4);
-    // INET6: ratelimit_deinit(&cc->cc_ratelimit_v6); not configured.
+    #[cfg(feature = "inet6")]
+    ratelimit_deinit(&cc.cc_ratelimit_v6);
 }
 
 /// `cookie_checker_create_payload`: the body of a cookie message for the sender at `sa`: a
@@ -391,7 +417,7 @@ pub fn cookie_checker_create_payload(
     cm: &CookieMacs,
     nonce: &mut [u8; COOKIE_NONCE_SIZE],
     ecookie: &mut [u8; COOKIE_ENCRYPTED_SIZE],
-    sa: &Sockaddr,
+    sa: &SockaddrStorage,
 ) {
     let mut cookie = [0u8; COOKIE_COOKIE_SIZE];
 
@@ -475,7 +501,7 @@ pub fn cookie_checker_validate_macs(
     cm: &CookieMacs,
     buf: &[u8],
     busy: bool,
-    sa: &Sockaddr,
+    sa: &SockaddrStorage,
 ) -> Result<(), Errno> {
     let mut our_cm = CookieMacs::default();
     let mut cookie = [0u8; COOKIE_COOKIE_SIZE];
@@ -503,10 +529,13 @@ pub fn cookie_checker_validate_macs(
         // If the mac2 is valid, we may want rate limit the peer. ratelimit_allow will return
         // either 0 or ECONNREFUSED, implying there is no ratelimiting, or we should ratelimit
         // (refuse) respectively.
-        if sa.sa_family == AF_INET {
+        if sa.ss_family == AF_INET {
             return ratelimit_allow(&cc.cc_ratelimit_v4, sa);
         }
-        // INET6: AF_INET6 goes to cc_ratelimit_v6; not configured.
+        #[cfg(feature = "inet6")]
+        if sa.ss_family == AF_INET6 {
+            return ratelimit_allow(&cc.cc_ratelimit_v6, sa);
+        }
         return Err(Errno::EAFNOSUPPORT);
     }
     Ok(())
@@ -516,10 +545,17 @@ pub fn cookie_checker_validate_macs(
 
 /// `satosin(sa)`, read: the `struct sockaddr_in` of an `AF_INET` address (see the module's
 /// deviations).
-fn sin_of(sa: &Sockaddr) -> SockaddrIn {
-    // SAFETY: `struct sockaddr_in` is the size of `struct sockaddr` (asserted below) and made
-    // of integers, so any 16 bytes are a value; the read is unaligned.
+fn sin_of(sa: &SockaddrStorage) -> SockaddrIn {
+    // SAFETY: a `sockaddr_storage` is longer than a `struct sockaddr_in` (asserted below) and
+    // that is made of integers, so any bytes are a value; the read is unaligned.
     unsafe { ptr::from_ref(sa).cast::<SockaddrIn>().read_unaligned() }
+}
+
+/// `satosin6(sa)`, read: the `struct sockaddr_in6` of an `AF_INET6` address.
+#[cfg(feature = "inet6")]
+fn sin6_of(sa: &SockaddrStorage) -> SockaddrIn6 {
+    // SAFETY: as in `sin_of`, for a `struct sockaddr_in6`.
+    unsafe { ptr::from_ref(sa).cast::<SockaddrIn6>().read_unaligned() }
 }
 
 /// `cookie_precompute_key`: `key = HASH(label || input)`.
@@ -567,12 +603,31 @@ fn cookie_timer_expired(birthdate: &Timespec, sec: Time, nsec: i64) -> bool {
     uptime > expire
 }
 
+/// The `AF_INET6` half of `cookie_checker_make_cookie`: hashes `sin6_addr` and `sin6_port`;
+/// `false` when `sa` is not an IPv6 address (always, without `INET6`).
+#[cfg(feature = "inet6")]
+fn cookie_update_in6(state: &mut Blake2sState, sa: &SockaddrStorage) -> bool {
+    if sa.ss_family != AF_INET6 {
+        return false;
+    }
+    let sin6 = sin6_of(sa);
+    blake2s_update(state, &sin6.sin6_addr.s6_addr);
+    blake2s_update(state, &sin6.sin6_port.to_ne_bytes());
+    true
+}
+
+/// The `AF_INET6` half of `cookie_checker_make_cookie` (without `INET6`: never).
+#[cfg(not(feature = "inet6"))]
+fn cookie_update_in6(_state: &mut Blake2sState, _sa: &SockaddrStorage) -> bool {
+    false
+}
+
 /// `cookie_checker_make_cookie`: the cookie of the source `sa`: its address and port MAC'd
 /// with the secret, made anew every `COOKIE_SECRET_MAX_AGE` seconds.
 fn cookie_checker_make_cookie(
     cc: &CookieChecker,
     cookie: &mut [u8; COOKIE_COOKIE_SIZE],
-    sa: &Sockaddr,
+    sa: &SockaddrStorage,
 ) {
     let mut state = Blake2sState::default();
 
@@ -589,12 +644,13 @@ fn cookie_checker_make_cookie(
     explicit_bzero(&mut secret);
     rw_exit_write(&cc.cc_secret_lock);
 
-    if sa.sa_family == AF_INET {
+    if sa.ss_family == AF_INET {
         let sin = sin_of(sa);
         blake2s_update(&mut state, &sin.sin_addr.s_addr.to_ne_bytes());
         blake2s_update(&mut state, &sin.sin_port.to_ne_bytes());
         blake2s_final(&mut state, cookie);
-    // INET6: AF_INET6 hashes sin6_addr and sin6_port; not configured.
+    } else if cookie_update_in6(&mut state, sa) {
+        blake2s_final(&mut state, cookie);
     } else {
         arc4random_buf(cookie);
     }
@@ -678,18 +734,39 @@ fn ratelimit_gc(rl: &Ratelimit, force: bool) {
     }
 }
 
+/// The `AF_INET6` key of `ratelimit_allow`: `SipHash24` of the top `IPV6_MASK_SIZE` bytes of
+/// `sin6_addr`; `None` when `sa` is not an IPv6 address (always, without `INET6`).
+#[cfg(feature = "inet6")]
+fn ratelimit_key_in6(rl: &Ratelimit, sa: &SockaddrStorage) -> Option<u64> {
+    if sa.ss_family != AF_INET6 {
+        return None;
+    }
+    let sin6 = sin6_of(sa);
+    Some(SipHash24(
+        &rl.rl_secret.get(),
+        &sin6.sin6_addr.s6_addr[..IPV6_MASK_SIZE],
+    ))
+}
+
+/// The `AF_INET6` key of `ratelimit_allow` (without `INET6`: none).
+#[cfg(not(feature = "inet6"))]
+fn ratelimit_key_in6(_rl: &Ratelimit, _sa: &SockaddrStorage) -> Option<u64> {
+    None
+}
+
 /// `ratelimit_allow`: takes an initiation's cost from the bucket of `sa`'s address (a new
 /// bucket starts nearly full); `ECONNREFUSED` when it is empty, or no bucket can be made.
-fn ratelimit_allow(rl: &Ratelimit, sa: &Sockaddr) -> Result<(), Errno> {
+fn ratelimit_allow(rl: &Ratelimit, sa: &SockaddrStorage) -> Result<(), Errno> {
     let mut ret = Err(Errno::ECONNREFUSED);
 
     let sin = sin_of(sa);
-    let key = if sa.sa_family == AF_INET {
+    let key = if sa.ss_family == AF_INET {
         SipHash24(
             &rl.rl_secret.get(),
             &sin.sin_addr.s_addr.to_ne_bytes()[..IPV4_MASK_SIZE],
         )
-    // INET6: AF_INET6 hashes the top IPV6_MASK_SIZE bytes of sin6_addr; not configured.
+    } else if let Some(key) = ratelimit_key_in6(rl, sa) {
+        key
     } else {
         return ret;
     };
@@ -702,7 +779,7 @@ fn ratelimit_allow(rl: &Ratelimit, sa: &Sockaddr) -> Result<(), Errno> {
             break 'error;
         };
         for r in bucket.iter() {
-            if r.r_af.get() != sa.sa_family {
+            if r.r_af.get() != sa.ss_family {
                 continue;
             }
 
@@ -710,7 +787,13 @@ fn ratelimit_allow(rl: &Ratelimit, sa: &Sockaddr) -> Result<(), Errno> {
                 continue;
             }
 
-            // INET6: an AF_INET6 entry compares the top IPV6_MASK_SIZE bytes; not configured.
+            #[cfg(feature = "inet6")]
+            if r.r_af.get() == AF_INET6
+                && r.r_in6.get().s6_addr[..IPV6_MASK_SIZE]
+                    != sin6_of(sa).sin6_addr.s6_addr[..IPV6_MASK_SIZE]
+            {
+                continue;
+            }
 
             // If we get to here, we've found an entry for the endpoint. We apply standard
             // token bucket, by calculating the time lapsed since our last_time, adding that,
@@ -765,11 +848,17 @@ fn ratelimit_allow(rl: &Ratelimit, sa: &Sockaddr) -> Result<(), Errno> {
         // Insert entry into the hashtable and ensure it's initialised
         // SAFETY: a new entry, on no list; the table is protected by `rl_lock` (held).
         unsafe { bucket.insert_head(r) };
-        r.r_af.set(sa.sa_family);
+        r.r_af.set(sa.ss_family);
         if r.r_af.get() == AF_INET {
             r.r_in.set(sin.sin_addr);
         }
-        // INET6: an AF_INET6 entry keeps the top IPV6_MASK_SIZE bytes; not configured.
+        #[cfg(feature = "inet6")]
+        if r.r_af.get() == AF_INET6 {
+            let mut a = In6Addr::default();
+            a.s6_addr[..IPV6_MASK_SIZE]
+                .copy_from_slice(&sin6_of(sa).sin6_addr.s6_addr[..IPV6_MASK_SIZE]);
+            r.r_in6.set(a);
+        }
 
         r.r_last_time.set(getnanouptime());
         r.r_tokens.set(TOKEN_MAX - INITIATION_COST);
@@ -779,7 +868,9 @@ fn ratelimit_allow(rl: &Ratelimit, sa: &Sockaddr) -> Result<(), Errno> {
     ret
 }
 
-const _: () = assert!(size_of::<SockaddrIn>() == size_of::<Sockaddr>());
+const _: () = assert!(size_of::<SockaddrIn>() <= size_of::<SockaddrStorage>());
+#[cfg(feature = "inet6")]
+const _: () = assert!(size_of::<SockaddrIn6>() <= size_of::<SockaddrStorage>());
 const _: () = assert!(size_of::<CookieMacs>() == 2 * COOKIE_MAC_SIZE);
 
 #[cfg(test)]

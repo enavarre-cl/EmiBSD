@@ -101,8 +101,8 @@
 //!
 //! ## Deviations
 //! - `union sockaddr_union` is [`SockaddrUnion`], a byte image of the C union's size (28
-//!   bytes, the `sockaddr_in6` member; `<netinet6/in6.h>` is not ported) with accessors for the
-//!   `sa` and `sin` views. Every byte is always initialised, so the C's `memcmp`s over
+//!   bytes, the `sockaddr_in6` member) with accessors for the `sa`, `sin` and `sin6`
+//!   views (28 bytes also without `INET6`, where the C union is a `sockaddr_in`'s 16). Every byte is always initialised, so the C's `memcmp`s over
 //!   `sa_len` bytes are slice comparisons.
 //! - `struct sockaddr_encap` is [`SockaddrEncap`], the 48 bytes of the C structure (the radix
 //!   tree key of a policy) with getters and setters named after the `sen_*` macros at the C
@@ -128,13 +128,15 @@
 //! - `tdb_walk` takes the walker as a closure (`docs/C_TO_RUST.md`); its `void *arg` is
 //!   whatever the closure captures.
 //! - `ipsp_address` needs `inet_ntop` (`netinet/inet_ntop.c`), which is not ported: it reports
-//!   itself and answers a placeholder for `AF_INET`, as `ifa_print_all` does. It is only used
+//!   itself and answers a placeholder for `AF_INET` and `AF_INET6`, as `ifa_print_all` does. It is only used
 //!   by `tdb_printit` and the `ENCDEBUG` messages.
 //! - `DPRINTF` is [`ipsec_dprintf!`]: active with feature `encdebug` (OpenBSD's `option
 //!   ENCDEBUG`, not in GENERIC) and the `net.inet.ip.encdebug` sysctl; otherwise its
 //!   arguments are type-checked and never evaluated.
 //! - Not configured, each a comment at its site: `NSEC` (`sec(4)`: `sec_tdb_insert`,
-//!   `sec_tdb_remove`) and `INET6`. `NPFSYNC` is configured (`pfsync_delete_tdb`), and so is
+//!   `sec_tdb_remove`). `INET6` is configured (feature `inet6`): `ipsp_address` and
+//!   `ipsp_is_unspecified` have their `AF_INET6` cases and the `sen_ip6_*` accessors take
+//!   an `In6Addr`. `NPFSYNC` is configured (`pfsync_delete_tdb`), and so is
 //!   `TCP_SIGNATURE` (M9+): `XF_TCPSIGNATURE` calls the `tcp_signature_tdb_*` functions of
 //!   `netinet/tcp_subr.rs`.
 //! - `NET_LOCK()`/`KERNEL_LOCK()` keep the C's places; `MUTEX_ASSERT_LOCKED` is
@@ -177,6 +179,9 @@ use crate::netinet::ip_ipcomp::{
 };
 use crate::netinet::ip_ipip::{ipe4_attach, ipe4_init, ipe4_input, ipe4_zeroize};
 use crate::netinet::ipsec_input::{IPSEC_KEEP_INVALID, IPSECCOUNTERS};
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::in6_is_addr_unspecified;
+use crate::netinet6::in6::{In6Addr, SockaddrIn6};
 use crate::sys::endian::{htonl, ntohl, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::M_CREDENTIALS;
@@ -185,6 +190,8 @@ use crate::sys::mutex::{Mutex, mutex_assert_locked};
 use crate::sys::pool::{PR_WAITOK, PR_ZERO, Pool};
 use crate::sys::queue::{ListEntry, ListHead, SimpleqEntry, SimpleqHead, TailqEntry, TailqHead};
 use crate::sys::refcnt::{DT_REFCNT_IDX_TDB, Refcnt};
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
 use crate::sys::socket::{AF_INET, Sockaddr};
 use crate::sys::systm::{net_assert_locked, net_assert_locked_exclusive, net_lock, net_unlock};
 use crate::sys::timeout::{KCLOCK_NONE, TIMEOUT_MPSAFE, TIMEOUT_PROC, Timeout};
@@ -222,8 +229,8 @@ macro_rules! ipsec_dprintf {
     };
 }
 
-/// `sizeof(struct sockaddr_in6)`: `<netinet6/in6.h>` is not ported (see the deviations).
-pub const SIZEOF_SOCKADDR_IN6: usize = 28;
+/// `sizeof(struct sockaddr_in6)`, the largest member of `union sockaddr_union`.
+pub const SIZEOF_SOCKADDR_IN6: usize = size_of::<SockaddrIn6>();
 
 /// `union sockaddr_union`: a `struct sockaddr`, `struct sockaddr_in` or `struct
 /// sockaddr_in6`, as the bytes of the largest (see the deviations).
@@ -307,6 +314,32 @@ impl SockaddrUnion {
     /// `sin.sin_addr`.
     pub fn sin_addr(&self) -> InAddr {
         self.sin().sin_addr
+    }
+
+    /// A union holding `sin6`.
+    pub fn from_sin6(sin6: &SockaddrIn6) -> Self {
+        let mut su = Self::new();
+        su.set_sin6(sin6);
+        su
+    }
+
+    /// The `sin6` member.
+    pub fn sin6(&self) -> SockaddrIn6 {
+        // SAFETY: the union is `size_of::<SockaddrIn6>()` bytes, all initialised; a
+        // `SockaddrIn6` is integers and byte arrays, valid for any bytes.
+        unsafe { ptr::read_unaligned(self.bytes.as_ptr().cast::<SockaddrIn6>()) }
+    }
+
+    /// Writes the `sin6` member.
+    pub fn set_sin6(&mut self, sin6: &SockaddrIn6) {
+        // SAFETY: the union holds exactly `size_of::<SockaddrIn6>()` bytes; `SockaddrIn6`
+        // has no padding (28 bytes of integer fields, pinned by the size assertion).
+        unsafe { ptr::write_unaligned(self.bytes.as_mut_ptr().cast::<SockaddrIn6>(), *sin6) };
+    }
+
+    /// `sin6.sin6_addr`.
+    pub fn sin6_addr(&self) -> In6Addr {
+        self.sin6().sin6_addr
     }
 
     /// Copies the first `sa_len` bytes of the socket address at `sa` over the union
@@ -499,15 +532,15 @@ macro_rules! sen_in_addr {
 macro_rules! sen_in6_addr {
     ($get:ident, $set:ident, $off:expr, $doc:literal) => {
         #[doc = $doc]
-        pub fn $get(&self) -> [u8; 16] {
+        pub fn $get(&self) -> In6Addr {
             let mut a = [0u8; 16];
             a.copy_from_slice(&self.bytes[$off..$off + 16]);
-            a
+            In6Addr::new(a)
         }
 
         #[doc = concat!("Sets ", $doc)]
-        pub fn $set(&mut self, v: [u8; 16]) {
-            self.bytes[$off..$off + 16].copy_from_slice(&v);
+        pub fn $set(&mut self, v: In6Addr) {
+            self.bytes[$off..$off + 16].copy_from_slice(&v.s6_addr);
         }
     };
 }
@@ -2793,7 +2826,13 @@ pub fn ipsp_address(sa: &SockaddrUnion) -> &'static str {
             let _ = crate::unported!("inet_ntop");
             "(inet_ntop not ported)"
         }
-        // INET6: inet_ntop(AF_INET6, ...); not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            // inet_ntop(AF_INET6, &sa->sin6.sin6_addr, buf, size): netinet/inet_ntop.c is
+            // not ported.
+            let _ = crate::unported!("inet_ntop");
+            "(inet_ntop not ported)"
+        }
         _ => "(unknown address family)",
     }
 }
@@ -2802,7 +2841,8 @@ pub fn ipsp_address(sa: &SockaddrUnion) -> &'static str {
 pub fn ipsp_is_unspecified(addr: SockaddrUnion) -> bool {
     match addr.sa_family() {
         AF_INET => addr.sin_addr().s_addr == INADDR_ANY,
-        // INET6: IN6_IS_ADDR_UNSPECIFIED(&addr.sin6.sin6_addr); not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => in6_is_addr_unspecified(&addr.sin6_addr()),
         // 0: No family set.
         _ => true,
     }

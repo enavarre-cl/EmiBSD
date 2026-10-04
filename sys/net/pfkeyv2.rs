@@ -150,7 +150,9 @@
 //! - `pfkeyv2_sysctl` follows `pr_sysctl`'s calling convention; the process it checks and
 //!   whose routing table it uses is `curproc`, as in C.
 //! - `NPF` (pf(4)) is configured: the `SADB_X_EXT_TAG`/`TAP` extensions.
-//! - Not configured, each a comment at its site: `INET6`. `IPSEC` and `TCP_SIGNATURE`
+//! - `INET6` is configured (feature `inet6`): the `SENT_IP6` flows and `AF_INET6` addresses
+//!   of `pfkeyv2_policy`, `pfkeyv2_get` and `pfkeyv2_dump_policy`. Not configured, each a
+//!   comment at its site: `IPSEC` and `TCP_SIGNATURE`
 //!   (`SADB_X_SATYPE_TCPSIGNATURE`, `XF_TCPSIGNATURE`; M9+) are.
 
 use alloc::vec::Vec;
@@ -190,6 +192,8 @@ use crate::net::pfvar::PF_TAG_NAME_SIZE;
 use crate::net::radix::{rn_addroute, rn_init, rn_match};
 use crate::net::rtable::{rtable_exists, rtable_l2};
 use crate::netinet::in_::{IPPROTO_AH, IPPROTO_ESP, IPPROTO_IPCOMP, IPPROTO_IPIP, SockaddrIn};
+#[cfg(feature = "inet6")]
+use crate::netinet::ip_ipsp::SENT_IP6;
 use crate::netinet::ip_ipsp::{
     IPSEC_AUTH_HMAC_RIPEMD160, IPSEC_AUTH_HMAC_SHA1, IPSEC_AUTH_MD5, IPSEC_AUTH_SHA2_256,
     IPSEC_AUTH_SHA2_384, IPSEC_AUTH_SHA2_512, IPSEC_COMP_DEFLATE, IPSEC_ENC_3DES, IPSEC_ENC_AES,
@@ -212,6 +216,8 @@ use crate::netinet::ipsec_input::{
     IPSEC_SOFT_TIMEOUT,
 };
 use crate::netinet::ipsec_output::UDPENCAP_ENABLE;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::{In6Addr, SockaddrIn6};
 use crate::queue_adapter;
 use crate::sys::domain::Domain;
 use crate::sys::errno::Errno;
@@ -222,6 +228,8 @@ use crate::sys::proc::Proc;
 use crate::sys::protosw::{PR_ADDR, PR_ATOMIC, PrUsrreqs, Protosw};
 use crate::sys::queue::{TailqEntry, TailqHead};
 use crate::sys::rwlock::Rwlock;
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
 use crate::sys::socket::{
     AF_INET, NET_KEY_SADB_DUMP, NET_KEY_SPD_DUMP, PF_KEY, SO_USELOOPBACK, SOCK_RAW,
 };
@@ -1616,6 +1624,37 @@ fn sunion_in(addr: crate::netinet::in_::InAddr, port: u16) -> SockaddrUnion {
     })
 }
 
+/// A `sockaddr_in6` union of `addr`/`port` (the `SENT_IP6` cases of `pfkeyv2_policy`).
+#[cfg(feature = "inet6")]
+fn sunion_in6(addr: In6Addr, port: u16) -> SockaddrUnion {
+    SockaddrUnion::from_sin6(&SockaddrIn6 {
+        sin6_len: size_of::<SockaddrIn6>() as u8,
+        sin6_family: AF_INET6,
+        sin6_port: port,
+        sin6_addr: addr,
+        ..SockaddrIn6::default()
+    })
+}
+
+/// The union `pfkeyv2_policy` exports for one half of a flow: the source (`src`) or
+/// destination address and port of `e`, as a `sockaddr_in6` for an `SENT_IP6` flow (`v6`).
+fn policy_sunion(e: &SockaddrEncap, v6: bool, src: bool) -> SockaddrUnion {
+    #[cfg(feature = "inet6")]
+    if v6 {
+        return if src {
+            sunion_in6(e.sen_ip6_src(), e.sen_ip6_sport())
+        } else {
+            sunion_in6(e.sen_ip6_dst(), e.sen_ip6_dport())
+        };
+    }
+    let _ = v6;
+    if src {
+        sunion_in(e.sen_ip_src(), e.sen_sport())
+    } else {
+        sunion_in(e.sen_ip_dst(), e.sen_dport())
+    }
+}
+
 /// `pfkeyv2_policy`: get SPD information for an ACQUIRE. We setup the message such that the
 /// SRC/DST payloads are relative to us (regardless of whether the SPD rule was for incoming
 /// or outgoing packets). The extensions are written in the returned buffer.
@@ -1631,12 +1670,16 @@ pub unsafe fn pfkeyv2_policy(
     // Find out how big a buffer we need
     let mut i = 4 * size_of::<SadbAddress>() + size_of::<SadbProtocol>();
 
-    let dir = match ipa.ipa_info.sen_type() {
+    let (dir, v6) = match ipa.ipa_info.sen_type() {
         SENT_IP4 => {
             i += 4 * padup(size_of::<SockaddrIn>());
-            ipa.ipa_info.sen_direction()
+            (ipa.ipa_info.sen_direction(), false)
         }
-        // INET6: SENT_IP6; not configured.
+        #[cfg(feature = "inet6")]
+        SENT_IP6 => {
+            i += 4 * padup(size_of::<SockaddrIn6>());
+            (ipa.ipa_info.sen_ip6_direction(), true)
+        }
         _ => return Err(Errno::EINVAL),
     };
 
@@ -1657,19 +1700,19 @@ pub unsafe fn pfkeyv2_policy(
     // SAFETY: the buffer was sized for these four addresses and the flow type.
     unsafe {
         headers[usize::from(a)] = p;
-        let su = sunion_in(ipa.ipa_info.sen_ip_src(), ipa.ipa_info.sen_sport());
+        let su = policy_sunion(&ipa.ipa_info, v6, true);
         export_address(&mut p, su.as_sockaddr_ptr());
 
         headers[usize::from(am)] = p;
-        let su = sunion_in(ipa.ipa_mask.sen_ip_src(), ipa.ipa_mask.sen_sport());
+        let su = policy_sunion(&ipa.ipa_mask, v6, true);
         export_address(&mut p, su.as_sockaddr_ptr());
 
         headers[usize::from(b)] = p;
-        let su = sunion_in(ipa.ipa_info.sen_ip_dst(), ipa.ipa_info.sen_dport());
+        let su = policy_sunion(&ipa.ipa_info, v6, false);
         export_address(&mut p, su.as_sockaddr_ptr());
 
         headers[usize::from(bm)] = p;
-        let su = sunion_in(ipa.ipa_mask.sen_ip_dst(), ipa.ipa_mask.sen_dport());
+        let su = policy_sunion(&ipa.ipa_mask, v6, false);
         export_address(&mut p, su.as_sockaddr_ptr());
 
         headers[usize::from(SADB_X_EXT_FLOW_TYPE)] = p;
@@ -1677,11 +1720,25 @@ pub unsafe fn pfkeyv2_policy(
             sadb_protocol_len: (size_of::<SadbProtocol>() / size_of::<u64>()) as u16,
             ..SadbProtocol::default()
         };
-        if ipa.ipa_mask.sen_proto() != 0 {
-            sp.sadb_protocol_proto = ipa.ipa_info.sen_proto();
+        #[cfg(feature = "inet6")]
+        if v6 {
+            if ipa.ipa_mask.sen_ip6_proto() != 0 {
+                sp.sadb_protocol_proto = ipa.ipa_info.sen_ip6_proto();
+            }
+            sp.sadb_protocol_direction = ipa.ipa_info.sen_ip6_direction();
+        } else {
+            if ipa.ipa_mask.sen_proto() != 0 {
+                sp.sadb_protocol_proto = ipa.ipa_info.sen_proto();
+            }
+            sp.sadb_protocol_direction = ipa.ipa_info.sen_direction();
         }
-        sp.sadb_protocol_direction = ipa.ipa_info.sen_direction();
-        // INET6: the SENT_IP6 fields; not configured.
+        #[cfg(not(feature = "inet6"))]
+        {
+            if ipa.ipa_mask.sen_proto() != 0 {
+                sp.sadb_protocol_proto = ipa.ipa_info.sen_proto();
+            }
+            sp.sadb_protocol_direction = ipa.ipa_info.sen_direction();
+        }
         sadb_put(p, sp);
     }
 
@@ -1754,7 +1811,11 @@ pub unsafe fn pfkeyv2_get(
                 i += 4 * padup(size_of::<SockaddrIn>());
                 i += 4 * size_of::<SadbAddress>();
             }
-            // INET6: SENT_IP6; not configured.
+            #[cfg(feature = "inet6")]
+            SENT_IP6 => {
+                i += 4 * padup(size_of::<SockaddrIn6>());
+                i += 4 * size_of::<SadbAddress>();
+            }
             _ => return Err(Errno::EINVAL),
         }
     }
@@ -3506,7 +3567,11 @@ pub unsafe fn pfkeyv2_dump_policy(
             i += 4 * padup(size_of::<SockaddrIn>());
             i += 4 * size_of::<SadbAddress>();
         }
-        // INET6: SENT_IP6; not configured.
+        #[cfg(feature = "inet6")]
+        SENT_IP6 => {
+            i += 4 * padup(size_of::<SockaddrIn6>());
+            i += 4 * size_of::<SadbAddress>();
+        }
         _ => return Err(Errno::EINVAL),
     }
 
@@ -3517,7 +3582,11 @@ pub unsafe fn pfkeyv2_dump_policy(
             i += padup(size_of::<SockaddrIn>());
             i += size_of::<SadbAddress>();
         }
-        // INET6: AF_INET6; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            i += padup(size_of::<SockaddrIn6>());
+            i += size_of::<SadbAddress>();
+        }
         _ => return Err(Errno::EINVAL),
     }
 
@@ -3528,7 +3597,11 @@ pub unsafe fn pfkeyv2_dump_policy(
             i += padup(size_of::<SockaddrIn>());
             i += size_of::<SadbAddress>();
         }
-        // INET6: AF_INET6; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            i += padup(size_of::<SockaddrIn6>());
+            i += size_of::<SadbAddress>();
+        }
         _ => return Err(Errno::EINVAL),
     }
 

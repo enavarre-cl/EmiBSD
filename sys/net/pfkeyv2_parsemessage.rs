@@ -88,8 +88,8 @@
 //!   the constant `SADB_EXT_SUPPORTED_ENCRYPT` (always true): the compressor table is checked
 //!   against `SADB_EALG_MAX`.
 //! - `NPF` (pf(4)) is configured: the `SADB_X_EXT_TAG` and `SADB_X_EXT_TAP` checks.
-//! - Not configured, a comment at its sites:
-//!   `INET6` (the `AF_INET6` address checks: an `AF_INET6` address is an unknown family).
+//! - `INET6` is configured (feature `inet6`): the `AF_INET6` address checks of the ADDRESS
+//!   extensions.
 
 use core::mem::{offset_of, size_of};
 
@@ -113,7 +113,11 @@ use crate::net::pfkeyv2::{
 };
 use crate::net::pfvar::PF_TAG_NAME_SIZE;
 use crate::netinet::in_::SockaddrIn;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::SockaddrIn6;
 use crate::sys::errno::Errno;
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
 use crate::sys::socket::{AF_INET, Sockaddr};
 
 /// `DPRINTF` of this file.
@@ -777,7 +781,47 @@ fn parse_extension(sadb_msg: &SadbMsg, t: u16, ext: &[u8]) -> Result<(), Errno> 
                         return Err(Errno::EINVAL);
                     }
                 }
-                // INET6: the sockaddr_in6 checks; not configured.
+                #[cfg(feature = "inet6")]
+                AF_INET6 => {
+                    if size_of::<SadbAddress>() + padup(size_of::<SockaddrIn6>()) != i {
+                        dprintf!(
+                            "invalid sockaddr_in6 length in ADDRESS extension header {}",
+                            t
+                        );
+                        return Err(Errno::EINVAL);
+                    }
+
+                    if usize::from(sa.sa_len) != size_of::<SockaddrIn6>() {
+                        dprintf!("bad sockaddr_in6 length in ADDRESS extension header {}", t);
+                        return Err(Errno::EINVAL);
+                    }
+                    let Some(sin6) = get::<SockaddrIn6>(ext, size_of::<SadbAddress>()) else {
+                        return Err(Errno::EINVAL);
+                    };
+
+                    if sin6.sin6_flowinfo != 0 {
+                        dprintf!(
+                            "flowinfo field set in sockaddr_in6 of ADDRESS extension header {}",
+                            t
+                        );
+                        return Err(Errno::EINVAL);
+                    }
+
+                    // Only check the right pieces
+                    match t {
+                        SADB_X_EXT_SRC_MASK | SADB_X_EXT_DST_MASK | SADB_X_EXT_SRC_FLOW
+                        | SADB_X_EXT_DST_FLOW => {}
+                        _ => {
+                            if sin6.sin6_port != 0 {
+                                dprintf!(
+                                    "port field set in sockaddr_in6 of ADDRESS extension header {}",
+                                    t
+                                );
+                                return Err(Errno::EINVAL);
+                            }
+                        }
+                    }
+                }
                 _ => {
                     if !(sadb_msg.sadb_msg_satype == SADB_X_SATYPE_TCPSIGNATURE
                         && sa.sa_family == 0)

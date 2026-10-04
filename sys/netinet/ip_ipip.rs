@@ -90,8 +90,11 @@
 //!   `Result`. The IP headers are read and written as copies (`mtod_ip`/`mtod_ip_store`).
 //! - The local address spoofing check builds its `sockaddr_in` in a `struct
 //!   sockaddr_storage`, as the C does, and calls the `unsafe` `rtalloc` over it.
-//! - Not configured, each a comment at its site: `INET6` (the `AF_INET6` outer and
-//!   `IPPROTO_IPV6` inner cases) and `NBPFILTER && NGIF` (`bpf_mtap_af` on `gif(4)`). `NPF`
+//! - `INET6` is configured (feature `inet6`): the `AF_INET6` outer and `IPPROTO_IPV6` inner
+//!   cases, `ip6_input_if` and the IPv6 outer header of `ipip_output`. The inner header's
+//!   scoped addresses are cleared through `m_copydata`/`m_copyback` (the C writes through
+//!   `mtod`), so a header split over several mbufs is handled too. `NBPFILTER && NGIF`
+//!   (`bpf_mtap_af` on `gif(4)`) is not configured. `NPF`
 //!   is configured (`pf_pkt_addr_changed`). `SMALL_KERNEL` is not defined: the sysctls are here.
 //! - `unhandled_af` panics on an outer family that is neither `AF_INET` nor `AF_INET6`, as in
 //!   C.
@@ -101,12 +104,18 @@ use core::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 use crate::kassert;
 use crate::kern::kern_sysctl::{sysctl_int_bounded, sysctl_rdstruct};
+#[cfg(feature = "inet6")]
+use crate::kern::uipc_mbuf::m_copyback;
 use crate::kern::uipc_mbuf::{m_adj, m_copydata, m_prepend, m_pullup};
 use crate::net::if_::{IFF_LOOPBACK, if_get, if_put, unhandled_af};
 use crate::net::if_var::{Ifnet, Netstack};
 use crate::net::pf::pf_pkt_addr_changed;
 use crate::net::route::{RTF_LOCAL, rtalloc, rtfree};
-use crate::netinet::in_::{INADDR_ANY, IPPROTO_DONE, IPPROTO_IPIP, IPPROTO_IPV4, SockaddrIn};
+#[cfg(feature = "inet6")]
+use crate::netinet::in_::IPPROTO_IPV6;
+use crate::netinet::in_::{
+    INADDR_ANY, IPPROTO_DONE, IPPROTO_IPIP, IPPROTO_IPV4, InAddr, SockaddrIn,
+};
 use crate::netinet::ip::{IP_DF, IP_MF, IP_OFFMASK, IPVERSION, Ip};
 use crate::netinet::ip_ecn::{
     ECN_ALLOWED, ECN_ALLOWED_IPSEC, ip_ecn_egress, ip_ecn_ingress, ip_tos_patch,
@@ -115,10 +124,36 @@ use crate::netinet::ip_id::ip_randomid;
 use crate::netinet::ip_input::{IP_DEFTTL, ip_input_if};
 use crate::netinet::ip_ipsp::{IpsecInit, Tdb, XF_IP4, Xformsw, ipsp_address};
 use crate::netinet::ip_var::{mtod_ip, mtod_ip_store};
+#[cfg(feature = "inet6")]
+use crate::netinet::ip6::{IPV6_VERSION, Ip6Hdr};
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::{In6Addr, SockaddrIn6, in6_is_addr_unspecified, in6_is_scope_embed};
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6_proto::IP6_DEFHLIM;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6_src::in6_embedscope;
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_input::ip6_input_if;
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_var::{mtod_ip6, mtod_ip6_store};
+#[cfg(feature = "inet6")]
+use crate::sys::endian::htonl;
 use crate::sys::endian::{htons, ntohl, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::{M_AUTH, M_CONF, M_DONTWAIT, Mbuf, m_freemp};
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
 use crate::sys::socket::{AF_INET, Sockaddr, SockaddrStorage};
+
+/// The source address of the inner header of a decapsulated packet (the C's `ip`/`ip6`
+/// pointers, one of them non-NULL).
+enum InnerSrc {
+    /// An `IPPROTO_IPV4` inner header's `ip_src`.
+    V4(InAddr),
+    /// An `IPPROTO_IPV6` inner header's `ip6_src`.
+    #[cfg(feature = "inet6")]
+    V6(In6Addr),
+}
 
 /// `struct ipipstat`: the IP-in-IP statistics as `net.inet.ipip.stats` returns them.
 #[repr(C)]
@@ -271,7 +306,8 @@ pub fn ipip_input_if(
     'bad: {
         let mut hlen = match oaf {
             x if x == i32::from(AF_INET) => size_of::<Ip>() as i32,
-            // INET6: sizeof(struct ip6_hdr); not configured.
+            #[cfg(feature = "inet6")]
+            x if x == i32::from(AF_INET6) => size_of::<Ip6Hdr>() as i32,
             _ => unhandled_af(oaf),
         };
 
@@ -287,8 +323,12 @@ pub fn ipip_input_if(
         }
 
         // Keep outer ecn field.
-        // INET6: (ntohl(ip6->ip6_flow) >> 20) & 0xff; not configured.
-        let otos = mtod_ip(m).ip_tos;
+        let otos = match oaf {
+            x if x == i32::from(AF_INET) => mtod_ip(m).ip_tos,
+            #[cfg(feature = "inet6")]
+            x if x == i32::from(AF_INET6) => ((ntohl(mtod_ip6(m).ip6_flow) >> 20) & 0xff) as u8,
+            _ => unhandled_af(oaf),
+        };
 
         // Remove outer IP header
         kassert!(*offp > 0);
@@ -297,7 +337,8 @@ pub fn ipip_input_if(
 
         match proto {
             IPPROTO_IPV4 => hlen = size_of::<Ip>() as i32,
-            // INET6: IPPROTO_IPV6, sizeof(struct ip6_hdr); not configured.
+            #[cfg(feature = "inet6")]
+            IPPROTO_IPV6 => hlen = size_of::<Ip6Hdr>() as i32,
             _ => {
                 ipipstat_inc(IpipstatCounters::IpipsFamily);
                 break 'bad;
@@ -326,7 +367,7 @@ pub fn ipip_input_if(
         // position.
 
         // Some sanity checks in the inner IP header
-        let ip = match proto {
+        let inner = match proto {
             IPPROTO_IPV4 => {
                 let mut ip = mtod_ip(m);
                 hlen = i32::from(ip.ip_hl()) << 2;
@@ -350,28 +391,63 @@ pub fn ipip_input_if(
                     ip_tos_patch(&mut ip, itos);
                     mtod_ip_store(m, &ip);
                 }
-                ip
+                InnerSrc::V4(ip.ip_src)
             }
-            // INET6: the IPv6 inner header's traffic class; not configured.
+            #[cfg(feature = "inet6")]
+            IPPROTO_IPV6 => {
+                let mut ip6 = mtod_ip6(m);
+                let mut itos = ((ntohl(ip6.ip6_flow) >> 20) & 0xff) as u8;
+                if !ip_ecn_egress(ECN_ALLOWED, &otos, &mut itos) {
+                    crate::ipsec_dprintf!("ipip_input_if", "ip_ecn_egress() failed");
+                    ipipstat_inc(IpipstatCounters::IpipsPdrops);
+                    break 'bad;
+                }
+                ip6.ip6_flow &= !htonl(0xff << 20);
+                ip6.ip6_flow |= htonl(u32::from(itos) << 20);
+                mtod_ip6_store(m, &ip6);
+                InnerSrc::V6(ip6.ip6_src)
+            }
             _ => break 'bad,
         };
 
         // Check for local address spoofing.
         if ifp.if_flags.get() & IFF_LOOPBACK == 0 && allow != 2 {
             let mut ss = SockaddrStorage::default();
-            let sin = SockaddrIn {
-                sin_family: AF_INET,
-                sin_len: size_of::<SockaddrIn>() as u8,
-                sin_addr: ip.ip_src,
-                ..SockaddrIn::default()
-            };
-            // SAFETY: a `sockaddr_storage` holds any socket address; `SockaddrIn` has no
-            // padding.
-            unsafe {
-                core::ptr::write_unaligned(core::ptr::from_mut(&mut ss).cast::<SockaddrIn>(), sin)
-            };
-            // INET6: a sockaddr_in6 of ip6_src; not configured.
-            // SAFETY: `ss` holds the `sockaddr_in` just written.
+            match inner {
+                InnerSrc::V4(src) => {
+                    let sin = SockaddrIn {
+                        sin_family: AF_INET,
+                        sin_len: size_of::<SockaddrIn>() as u8,
+                        sin_addr: src,
+                        ..SockaddrIn::default()
+                    };
+                    // SAFETY: a `sockaddr_storage` holds any socket address; `SockaddrIn`
+                    // has no padding.
+                    unsafe {
+                        core::ptr::write_unaligned(
+                            core::ptr::from_mut(&mut ss).cast::<SockaddrIn>(),
+                            sin,
+                        )
+                    };
+                }
+                #[cfg(feature = "inet6")]
+                InnerSrc::V6(src) => {
+                    let sin6 = SockaddrIn6 {
+                        sin6_family: AF_INET6,
+                        sin6_len: size_of::<SockaddrIn6>() as u8,
+                        sin6_addr: src,
+                        ..SockaddrIn6::default()
+                    };
+                    // SAFETY: as above; `SockaddrIn6` has no padding either.
+                    unsafe {
+                        core::ptr::write_unaligned(
+                            core::ptr::from_mut(&mut ss).cast::<SockaddrIn6>(),
+                            sin6,
+                        )
+                    };
+                }
+            }
+            // SAFETY: `ss` holds the `sockaddr_in` or `sockaddr_in6` just written.
             let rt = unsafe {
                 rtalloc(
                     core::ptr::from_ref(&ss).cast::<Sockaddr>(),
@@ -406,7 +482,10 @@ pub fn ipip_input_if(
         if proto == IPPROTO_IPV4 {
             return ip_input_if(mp, offp, proto, oaf, ifp, ns);
         }
-        // INET6: IPPROTO_IPV6 through ip6_input_if; not configured.
+        #[cfg(feature = "inet6")]
+        if proto == IPPROTO_IPV6 {
+            return ip6_input_if(mp, offp, proto, oaf, ifp, ns);
+        }
     }
     // bad:
     m_freemp(mp);
@@ -467,31 +546,44 @@ pub fn ipip_output(mp: &mut Option<&'static Mbuf>, tdb: &Tdb) -> Result<(), Errn
                 ipo.ip_id = htons(ip_randomid());
 
                 let itos;
-                // If the inner protocol is IP...
-                if tp == IPVERSION {
-                    // Save ECN notification
-                    let mut b = [0u8; 1];
-                    m_copydata(m, (size_of::<Ip>() + offset_of!(Ip, ip_tos)) as i32, &mut b);
-                    itos = b[0];
+                match tp {
+                    // If the inner protocol is IP...
+                    IPVERSION => {
+                        // Save ECN notification
+                        let mut b = [0u8; 1];
+                        m_copydata(m, (size_of::<Ip>() + offset_of!(Ip, ip_tos)) as i32, &mut b);
+                        itos = b[0];
 
-                    ipo.ip_p = IPPROTO_IPIP as u8;
+                        ipo.ip_p = IPPROTO_IPIP as u8;
 
-                    // We should be keeping tunnel soft-state and send back ICMPs if needed.
-                    let mut off = [0u8; 2];
-                    m_copydata(
-                        m,
-                        (size_of::<Ip>() + offset_of!(Ip, ip_off)) as i32,
-                        &mut off,
-                    );
-                    let mut ip_off = ntohs(u16::from_ne_bytes(off));
-                    ip_off &= !(IP_DF | IP_MF | IP_OFFMASK);
-                    ipo.ip_off = htons(ip_off);
-                }
-                // INET6: an IPv6 inner packet (IPPROTO_IPV6, the traffic class); not
-                // configured.
-                else {
-                    ipipstat_inc(IpipstatCounters::IpipsFamily);
-                    break 'drop Errno::EAFNOSUPPORT;
+                        // We should be keeping tunnel soft-state and send back ICMPs if needed.
+                        let mut off = [0u8; 2];
+                        m_copydata(
+                            m,
+                            (size_of::<Ip>() + offset_of!(Ip, ip_off)) as i32,
+                            &mut off,
+                        );
+                        let mut ip_off = ntohs(u16::from_ne_bytes(off));
+                        ip_off &= !(IP_DF | IP_MF | IP_OFFMASK);
+                        ipo.ip_off = htons(ip_off);
+                    }
+                    #[cfg(feature = "inet6")]
+                    x if x == IPV6_VERSION >> 4 => {
+                        // Save ECN notification.
+                        let mut b = [0u8; 4];
+                        m_copydata(
+                            m,
+                            (size_of::<Ip>() + offset_of!(Ip6Hdr, ip6_flow)) as i32,
+                            &mut b,
+                        );
+                        itos = (ntohl(u32::from_ne_bytes(b)) >> 20) as u8;
+                        ipo.ip_p = IPPROTO_IPV6 as u8;
+                        ipo.ip_off = 0;
+                    }
+                    _ => {
+                        ipipstat_inc(IpipstatCounters::IpipsFamily);
+                        break 'drop Errno::EAFNOSUPPORT;
+                    }
                 }
 
                 let mut otos = 0;
@@ -504,7 +596,102 @@ pub fn ipip_output(mp: &mut Option<&'static Mbuf>, tdb: &Tdb) -> Result<(), Errn
                     tdb.tdb_cur_bytes.set(tdb.tdb_cur_bytes.get() + obytes);
                 }
             }
-            // INET6: an IPv6 outer header; not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {
+                if in6_is_addr_unspecified(&dst.sin6_addr())
+                    || src.sa_family() != AF_INET6
+                    || in6_is_addr_unspecified(&src.sin6_addr())
+                {
+                    crate::ipsec_dprintf!(
+                        "ipip_output",
+                        "unspecified tunnel endpoint address in SA {}/{:08x}",
+                        ipsp_address(&dst),
+                        ntohl(tdb.tdb_spi.get())
+                    );
+
+                    ipipstat_inc(IpipstatCounters::IpipsUnspec);
+                    break 'drop Errno::EINVAL;
+                }
+
+                // If the inner protocol is IPv6, clear link local scope
+                if tp == IPV6_VERSION >> 4 {
+                    // scoped address handling: ip6_src and ip6_dst of the inner header.
+                    let mut b = [0u8; 2 * size_of::<In6Addr>()];
+                    m_copydata(m, offset_of!(Ip6Hdr, ip6_src) as i32, &mut b);
+                    let (s, d) = b.split_at(size_of::<In6Addr>());
+                    let mut ip6_src = In6Addr::new(s.try_into().unwrap_or_default());
+                    let mut ip6_dst = In6Addr::new(d.try_into().unwrap_or_default());
+                    if in6_is_scope_embed(&ip6_src) {
+                        ip6_src.set_s6_addr16(1, 0);
+                    }
+                    if in6_is_scope_embed(&ip6_dst) {
+                        ip6_dst.set_s6_addr16(1, 0);
+                    }
+                    b[..16].copy_from_slice(&ip6_src.s6_addr);
+                    b[16..].copy_from_slice(&ip6_dst.s6_addr);
+                    let _ = m_copyback(m, offset_of!(Ip6Hdr, ip6_src) as i32, &b, M_DONTWAIT);
+                }
+
+                *mp = m_prepend(m, size_of::<Ip6Hdr>() as i32, M_DONTWAIT);
+                let Some(m) = *mp else {
+                    crate::ipsec_dprintf!("ipip_output", "M_PREPEND failed");
+                    ipipstat_inc(IpipstatCounters::IpipsHdrops);
+                    break 'drop Errno::ENOBUFS;
+                };
+
+                // Initialize IPv6 header
+                let mut ip6o = Ip6Hdr::zeroed();
+                ip6o.ip6_flow = 0;
+                ip6o.set_ip6_vfc(IPV6_VERSION);
+                ip6o.ip6_plen =
+                    htons((m.m_pkthdr().len.get() as usize - size_of::<Ip6Hdr>()) as u16);
+                ip6o.ip6_hlim = IP6_DEFHLIM.load(Ordering::Relaxed) as u8;
+                let _ = in6_embedscope(&mut ip6o.ip6_src, &src.sin6(), None, None);
+                let _ = in6_embedscope(&mut ip6o.ip6_dst, &dst.sin6(), None, None);
+
+                let itos;
+                match tp {
+                    IPVERSION => {
+                        // Save ECN notification
+                        let mut b = [0u8; 1];
+                        m_copydata(
+                            m,
+                            (size_of::<Ip6Hdr>() + offset_of!(Ip, ip_tos)) as i32,
+                            &mut b,
+                        );
+                        itos = b[0];
+
+                        // This is really IPVERSION.
+                        ip6o.ip6_nxt = IPPROTO_IPIP as u8;
+                    }
+                    x if x == IPV6_VERSION >> 4 => {
+                        // Save ECN notification.
+                        let mut b = [0u8; 4];
+                        m_copydata(
+                            m,
+                            (size_of::<Ip6Hdr>() + offset_of!(Ip6Hdr, ip6_flow)) as i32,
+                            &mut b,
+                        );
+                        itos = (ntohl(u32::from_ne_bytes(b)) >> 20) as u8;
+
+                        ip6o.ip6_nxt = IPPROTO_IPV6 as u8;
+                    }
+                    _ => {
+                        ipipstat_inc(IpipstatCounters::IpipsFamily);
+                        break 'drop Errno::EAFNOSUPPORT;
+                    }
+                }
+
+                let mut otos = 0;
+                ip_ecn_ingress(ECN_ALLOWED, &mut otos, &itos);
+                ip6o.ip6_flow |= htonl(u32::from(otos) << 20);
+                mtod_ip6_store(m, &ip6o);
+
+                obytes = (m.m_pkthdr().len.get() as usize - size_of::<Ip6Hdr>()) as u64;
+                if tdb.tdb_xform.get().is_some_and(|x| x.xf_type == XF_IP4) {
+                    tdb.tdb_cur_bytes.set(tdb.tdb_cur_bytes.get() + obytes);
+                }
+            }
             _ => {
                 crate::ipsec_dprintf!(
                     "ipip_output",
@@ -589,3 +776,7 @@ pub fn ipip_sysctl(
         _ => Err(Errno::ENOPROTOOPT),
     }
 }
+
+#[cfg(test)]
+#[cfg(feature = "inet6")]
+mod tests;

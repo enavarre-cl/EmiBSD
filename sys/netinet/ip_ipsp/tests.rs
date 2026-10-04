@@ -280,3 +280,90 @@ fn sockaddr_encap_accessors_are_at_the_c_offsets() {
     assert_eq!(&b[20..22], &4500u16.to_be_bytes());
     assert!(b[22..].iter().all(|&x| x == 0));
 }
+
+/// An IPv6 address from its eight 16-bit words.
+#[cfg(feature = "inet6")]
+fn a6(w: [u16; 8]) -> In6Addr {
+    let mut a = [0u8; 16];
+    for (i, w) in w.iter().enumerate() {
+        a[2 * i..2 * i + 2].copy_from_slice(&w.to_be_bytes());
+    }
+    In6Addr::new(a)
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn sockaddr_encap_ipv6_accessors_are_at_the_c_offsets() {
+    let mut e = SockaddrEncap::new();
+    e.set_sen_len(SENT_LEN as u8);
+    e.set_sen_family(crate::sys::socket::PF_KEY);
+    e.set_sen_type(SENT_IP6);
+    e.set_sen_ip6_direction(IPSP_DIRECTION_OUT);
+    e.set_sen_ip6_src(a6([0xfd77, 1, 0, 0, 0, 0, 0, 1]));
+    e.set_sen_ip6_dst(a6([0xfd77, 2, 0, 0, 0, 0, 0, 2]));
+    e.set_sen_ip6_proto(17);
+    e.set_sen_ip6_sport(htons(500));
+    e.set_sen_ip6_dport(htons(4500));
+    let b = e.as_bytes();
+    assert_eq!(b[0], 48);
+    assert_eq!(u16::from_ne_bytes([b[2], b[3]]), SENT_IP6);
+    assert_eq!(b[4], IPSP_DIRECTION_OUT);
+    assert_eq!(&b[8..12], &[0xfd, 0x77, 0, 1]);
+    assert_eq!(b[23], 1);
+    assert_eq!(&b[24..28], &[0xfd, 0x77, 0, 2]);
+    assert_eq!(b[39], 2);
+    assert_eq!(b[40], 17);
+    assert_eq!(&b[42..44], &500u16.to_be_bytes());
+    assert_eq!(&b[44..46], &4500u16.to_be_bytes());
+    assert_eq!(e.sen_ip6_src(), a6([0xfd77, 1, 0, 0, 0, 0, 0, 1]));
+    assert_eq!(e.sen_ip6_dst(), a6([0xfd77, 2, 0, 0, 0, 0, 0, 2]));
+    assert_eq!(e.sen_ip6_proto(), 17);
+    assert_eq!(e.sen_ip6_dport(), htons(4500));
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn sockaddr_union_holds_a_sockaddr_in6() {
+    let sin6 = SockaddrIn6 {
+        sin6_len: size_of::<SockaddrIn6>() as u8,
+        sin6_family: crate::sys::socket::AF_INET6,
+        sin6_port: htons(500),
+        sin6_addr: a6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 1]),
+        sin6_scope_id: 3,
+        ..SockaddrIn6::default()
+    };
+    let s6 = SockaddrUnion::from_sin6(&sin6);
+    assert_eq!(s6.sa_family(), crate::sys::socket::AF_INET6);
+    assert_eq!(usize::from(s6.sa_len()), 28);
+    assert_eq!(s6.sa_bytes().len(), 28, "memcmp over sa_len bytes");
+    assert_eq!(s6.sin6(), sin6);
+    assert_eq!(s6.sin6_addr(), sin6.sin6_addr);
+    // The same address is equal as bytes, another one is not.
+    assert!(s6 == SockaddrUnion::from_sin6(&sin6));
+    let mut other = sin6;
+    other.sin6_addr = a6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 2]);
+    assert!(s6 != SockaddrUnion::from_sin6(&other));
+
+    // The unspecified address, and the one of no family, count as unspecified; others not.
+    assert!(!ipsp_is_unspecified(s6));
+    other.sin6_addr = In6Addr::default();
+    assert!(ipsp_is_unspecified(SockaddrUnion::from_sin6(&other)));
+    assert!(ipsp_is_unspecified(SockaddrUnion::new()));
+    assert!(!ipsp_is_unspecified(su(A)));
+    assert!(ipsp_is_unspecified(su([0; 4])));
+
+    // The TDB lookups work over an IPv6 destination: the SA is found by it and not by the
+    // IPv4 one with the same SPI.
+    let _g = setup();
+    let su_v6 = s6;
+    let t = tdb_alloc(0);
+    t.tdb_spi.set(htonl(0x2000));
+    t.tdb_src.set(SockaddrUnion::from_sin6(&other));
+    t.tdb_dst.set(su_v6);
+    t.tdb_sproto.set(IPPROTO_ESP as u8);
+    puttdb(t);
+    let found = gettdb(0, htonl(0x2000), &su_v6, IPPROTO_ESP as u8).expect("found by IPv6");
+    assert!(core::ptr::eq(found, t));
+    tdb_unref(Some(found));
+    assert!(gettdb(0, htonl(0x2000), &su(A), IPPROTO_ESP as u8).is_none());
+}

@@ -36,8 +36,10 @@
 //! - The packet is `&'static Mbuf` (consumed on every path, as in C); IP headers are read and
 //!   written as copies (`mtod_ip`/`mtod_ip_store`). Errors are `Result`s.
 //! - `udpencap_enable`/`udpencap_port` are `AtomicI32`s.
-//! - Not configured, each a comment at its site: `INET6` (the IPv6 header handling and
-//!   `ip6_output`). `NPF` (pf(4)) is configured: `pf_tag_packet`, `pf_pkt_addr_changed`.
+//! - `INET6` is configured (feature `inet6`): the IPv6 header handling and `ip6_output`;
+//!   the IPv6 header is read and written as a copy (`mtod_ip6`/`mtod_ip6_store`) and the
+//!   extension header chain is walked with `m_copydata` as in C. `NPF` (pf(4)) is
+//!   configured: `pf_tag_packet`, `pf_pkt_addr_changed`.
 //! - `KERNEL_ASSERT_LOCKED()` is nothing without `MULTIPROCESSOR`.
 
 use core::mem::size_of;
@@ -47,12 +49,16 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_tc::gettime;
 use crate::kern::kern_timeout::timeout_add_sec;
+#[cfg(feature = "inet6")]
+use crate::kern::uipc_mbuf::m_copydata;
 use crate::kern::uipc_mbuf::{m_freem, m_makespace, m_pullup};
 use crate::kern::uipc_mbuf2::{m_tag_find, m_tag_get, m_tag_prepend};
 use crate::net::pf::{pf_pkt_addr_changed, pf_tag_packet};
 use crate::netinet::in_::{
     INADDR_ANY, IPPROTO_AH, IPPROTO_ESP, IPPROTO_IPCOMP, IPPROTO_IPIP, IPPROTO_UDP,
 };
+#[cfg(feature = "inet6")]
+use crate::netinet::in_::{IPPROTO_DSTOPTS, IPPROTO_HOPOPTS, IPPROTO_ROUTING};
 use crate::netinet::in_cksum::in_cksum;
 use crate::netinet::ip::{IP_DF, Ip};
 use crate::netinet::ip_ah::AH_FLENGTH;
@@ -68,13 +74,25 @@ use crate::netinet::ip_ipsp::{
 };
 use crate::netinet::ip_output::ip_output;
 use crate::netinet::ip_var::{IP_RAWOUTPUT, mtod_ip, mtod_ip_store};
+#[cfg(feature = "inet6")]
+use crate::netinet::ip6::{IPV6_MAXPACKET, Ip6Ext, Ip6Hdr};
 use crate::netinet::ipsec_input::{AH_ENABLE, ESP_ENABLE, IPCOMP_ENABLE};
 use crate::netinet::udp::Udphdr;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::{In6Addr, in6_are_addr_equal, in6_is_addr_unspecified};
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_output::ip6_output;
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_var::{mtod_ip6, mtod_ip6_store};
 use crate::sys::endian::{htons, ntohl};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::M_NOWAIT;
+#[cfg(feature = "inet6")]
+use crate::sys::mbuf::M_UDP_CSUM_OUT;
 use crate::sys::mbuf::{Mbuf, PACKET_TAG_IPSEC_OUT_DONE, mtod};
 use crate::sys::socket::AF_INET;
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
 use crate::sys::systm::net_assert_locked;
 
 /// \[a\] `udpencap_enable`: enabled by default.
@@ -130,7 +148,8 @@ pub fn ipsp_process_packet(
         let dst = tdb.tdb_dst.get();
         match dst.sa_family() {
             AF_INET => {}
-            // INET6: AF_INET6; not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {}
             _ => {
                 crate::ipsec_dprintf!(
                     "ipsp_process_packet",
@@ -164,11 +183,14 @@ pub fn ipsp_process_packet(
         // re-encapsulate.
         if !tunalready {
             let mut ip_dst = None;
+            #[cfg(feature = "inet6")]
+            let mut ip6_dst: Option<In6Addr> = None;
             // If the target protocol family is different, we know we'll be doing tunneling.
             if af == i32::from(dst.sa_family()) {
                 let hlen = match af {
                     x if x == i32::from(AF_INET) => size_of::<Ip>() as i32,
-                    // INET6: sizeof(struct ip6_hdr); not configured.
+                    #[cfg(feature = "inet6")]
+                    x if x == i32::from(AF_INET6) => size_of::<Ip6Hdr>() as i32,
                     _ => 0,
                 };
 
@@ -194,8 +216,18 @@ pub fn ipsp_process_packet(
                     ip_dst = Some(ip.ip_dst);
                 }
 
-                // INET6: ip6 = mtod(m, struct ip6_hdr *); not configured.
+                #[cfg(feature = "inet6")]
+                if af == i32::from(AF_INET6) {
+                    ip6_dst = Some(mtod_ip6(m).ip6_dst);
+                }
             }
+
+            #[cfg(feature = "inet6")]
+            let v6_mismatch = dst.sa_family() == AF_INET6
+                && !in6_is_addr_unspecified(&dst.sin6_addr())
+                && ip6_dst.is_some_and(|d| !in6_are_addr_equal(&dst.sin6_addr(), &d));
+            #[cfg(not(feature = "inet6"))]
+            let v6_mismatch = false;
 
             // Do the appropriate encapsulation, if necessary.
             if i32::from(dst.sa_family()) != af // PF mismatch
@@ -204,7 +236,7 @@ pub fn ipsp_process_packet(
                 || (dst.sa_family() == AF_INET
                     && dst.sin_addr().s_addr != INADDR_ANY
                     && ip_dst.is_some_and(|d| dst.sin_addr().s_addr != d.s_addr))
-            // INET6: an IPv6 SA destination other than the packet's; not configured.
+                || v6_mismatch
             {
                 // Fix IPv4 header checksum and length.
                 if af == i32::from(AF_INET) {
@@ -223,7 +255,25 @@ pub fn ipsp_process_packet(
                     mtod_ip_store(m, &ip);
                 }
 
-                // INET6: fix the IPv6 payload length (no jumbograms); not configured.
+                // Fix IPv6 header payload length.
+                #[cfg(feature = "inet6")]
+                if af == i32::from(AF_INET6) {
+                    if (m.m_len().get() as usize) < size_of::<Ip6Hdr>() {
+                        match m_pullup(m, size_of::<Ip6Hdr>() as i32) {
+                            Some(mm) => m = mm,
+                            None => return Err(Errno::ENOBUFS),
+                        }
+                    }
+
+                    if m.m_pkthdr().len.get() as usize - size_of::<Ip6Hdr>() > IPV6_MAXPACKET {
+                        // No jumbogram support.
+                        break 'drop Errno::ENXIO; /*?*/
+                    }
+                    let mut ip6 = mtod_ip6(m);
+                    ip6.ip6_plen =
+                        htons((m.m_pkthdr().len.get() as usize - size_of::<Ip6Hdr>()) as u16);
+                    mtod_ip6_store(m, &ip6);
+                }
 
                 // Encapsulate -- m may be changed or set to NULL.
                 let mut mp = Some(m);
@@ -273,7 +323,64 @@ pub fn ipsp_process_packet(
                     core::mem::offset_of!(Ip, ip_p) as i32,
                 )
             }
-            // INET6: chase the header chain for where to put AH/ESP/IPcomp; not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {
+                let ip6 = mtod_ip6(m);
+                let mut hlen = size_of::<Ip6Hdr>() as i32;
+                let mut off = core::mem::offset_of!(Ip6Hdr, ip6_nxt) as i32;
+                let mut nxt = i32::from(ip6.ip6_nxt);
+                let mut dstopt = 0;
+
+                // chase mbuf chain to find the appropriate place to put AH/ESP/IPcomp
+                // header.
+                //	IPv6 hbh dest1 rthdr ah* [esp* dest2 payload]
+                loop {
+                    match nxt {
+                        // we should not skip security header added beforehand.
+                        IPPROTO_AH | IPPROTO_ESP | IPPROTO_IPCOMP => break,
+
+                        IPPROTO_HOPOPTS | IPPROTO_DSTOPTS | IPPROTO_ROUTING => {
+                            // if we see 2nd destination option header, we should stop
+                            // there.
+                            if nxt == IPPROTO_DSTOPTS && dstopt != 0 {
+                                break;
+                            }
+
+                            if nxt == IPPROTO_DSTOPTS {
+                                // seen 1st or 2nd destination option. next time we see
+                                // one, it must be 2nd.
+                                dstopt = 1;
+                            } else if nxt == IPPROTO_ROUTING {
+                                // if we see destination option next time, it must be
+                                // dest2.
+                                dstopt = 2;
+                            }
+                            if (m.m_pkthdr().len.get() as usize)
+                                < hlen as usize + size_of::<Ip6Ext>()
+                            {
+                                break 'drop Errno::EINVAL;
+                            }
+                            // skip this header
+                            let mut ip6e = [0u8; size_of::<Ip6Ext>()];
+                            m_copydata(m, hlen, &mut ip6e);
+                            let ip6e = Ip6Ext {
+                                ip6e_nxt: ip6e[core::mem::offset_of!(Ip6Ext, ip6e_nxt)],
+                                ip6e_len: ip6e[core::mem::offset_of!(Ip6Ext, ip6e_len)],
+                            };
+                            nxt = i32::from(ip6e.ip6e_nxt);
+                            off = hlen + core::mem::offset_of!(Ip6Ext, ip6e_nxt) as i32;
+                            // we will never see nxt == IPPROTO_AH so it is safe to omit AH
+                            // case.
+                            hlen += (i32::from(ip6e.ip6e_len) + 1) << 3;
+                        }
+                        _ => break,
+                    }
+                    if hlen >= m.m_pkthdr().len.get() {
+                        break;
+                    }
+                }
+                (hlen, off)
+            }
             _ => break 'drop Errno::EPFNOSUPPORT,
         };
 
@@ -330,7 +437,8 @@ pub fn ipsp_process_done(m: &'static Mbuf, tdb: &'static Tdb) -> Result<(), Errn
 
             let iphlen = match dst.sa_family() {
                 AF_INET => size_of::<Ip>() as i32,
-                // INET6: sizeof(struct ip6_hdr); not configured.
+                #[cfg(feature = "inet6")]
+                AF_INET6 => size_of::<Ip6Hdr>() as i32,
                 _ => {
                     crate::ipsec_dprintf!(
                         "ipsp_process_done",
@@ -360,7 +468,12 @@ pub fn ipsp_process_done(m: &'static Mbuf, tdb: &'static Tdb) -> Result<(), Errn
             // SAFETY: `m_makespace` made `sizeof(struct udphdr)` contiguous bytes at `roff` of
             // `mi`; written unaligned.
             unsafe { ptr::write_unaligned(mtod::<u8>(mi).add(roff as usize).cast::<Udphdr>(), uh) };
-            // INET6: M_UDP_CSUM_OUT for an IPv6 SA; not configured.
+            #[cfg(feature = "inet6")]
+            if dst.sa_family() == AF_INET6 {
+                m.m_pkthdr()
+                    .csum_flags
+                    .set(m.m_pkthdr().csum_flags.get() | M_UDP_CSUM_OUT);
+            }
             espstat_inc(EspstatCounters::EspsUdpencout);
         }
 
@@ -374,7 +487,24 @@ pub fn ipsp_process_done(m: &'static Mbuf, tdb: &'static Tdb) -> Result<(), Errn
                 }
                 mtod_ip_store(m, &ip);
             }
-            // INET6: fix ip6_plen (no jumbograms) and ip6_nxt; not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {
+                // Fix the header length, for AH processing.
+                if (m.m_pkthdr().len.get() as usize) < size_of::<Ip6Hdr>() {
+                    break 'drop Errno::ENXIO;
+                }
+                if m.m_pkthdr().len.get() as usize - size_of::<Ip6Hdr>() > IPV6_MAXPACKET {
+                    // No jumbogram support.
+                    break 'drop Errno::ENXIO;
+                }
+                let mut ip6 = mtod_ip6(m);
+                ip6.ip6_plen =
+                    htons((m.m_pkthdr().len.get() as usize - size_of::<Ip6Hdr>()) as u16);
+                if tdb.has_flags(TDBF_UDPENCAP) {
+                    ip6.ip6_nxt = IPPROTO_UDP as u8;
+                }
+                mtod_ip6_store(m, &ip6);
+            }
             _ => {
                 crate::ipsec_dprintf!(
                     "ipsp_process_done",
@@ -432,7 +562,11 @@ pub fn ipsp_process_done(m: &'static Mbuf, tdb: &'static Tdb) -> Result<(), Errn
         // protocol (IP or IPv6). SPD lookup will be performed again there.
         return match dst.sa_family() {
             AF_INET => ip_output(m, None, None, IP_RAWOUTPUT, None, None, 0),
-            // INET6: ip6_output; not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {
+                // We don't need massage, IPv6 header fields are always in net endian.
+                ip6_output(m, None, None, 0, None, None)
+            }
             _ => {
                 m_freem(m);
                 Err(Errno::EPFNOSUPPORT)
@@ -480,10 +614,12 @@ pub fn ipsec_hdrsz(tdbp: &Tdb) -> isize {
         return adjust;
     }
 
-    if tdbp.tdb_dst.get().sa_family() == AF_INET {
-        adjust += size_of::<Ip>() as isize;
+    match tdbp.tdb_dst.get().sa_family() {
+        AF_INET => adjust += size_of::<Ip>() as isize,
+        #[cfg(feature = "inet6")]
+        AF_INET6 => adjust += size_of::<Ip6Hdr>() as isize,
+        _ => {}
     }
-    // INET6: sizeof(struct ip6_hdr); not configured.
 
     adjust
 }
@@ -524,3 +660,7 @@ pub fn ipsec_adjust_mtu(m: &Mbuf, mtu: u32) {
         mtag = m_tag_find(m, PACKET_TAG_IPSEC_OUT_DONE, Some(t));
     }
 }
+
+#[cfg(test)]
+#[cfg(feature = "inet6")]
+mod tests;

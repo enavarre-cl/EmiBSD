@@ -101,7 +101,7 @@
 //!   C's `memmove`), under a `// SAFETY:` naming the bounds.
 //! - `NBPFILTER` is configured: `esp_output` counts the packet on the SA's `enc(4)`
 //!   interface and taps it. `NPFSYNC` is: `pfsync_update_tdb`.
-//! - Not configured, each a comment at its site: `INET6`.
+//! - `INET6` is configured (feature `inet6`): `esp_output`'s IPv6 size check.
 
 use core::ptr;
 use core::sync::atomic::Ordering;
@@ -147,6 +147,8 @@ use crate::netinet::ip_ipsp::{
     TDB_REPLAYWASTE, TDB_SEEN_WORDS, TDBF_BYTES, TDBF_ESN, TDBF_SOFT_BYTES, Tdb, TdbCounters,
     Xformsw, ipsecstat_inc, ipsp_address, tdb_delete, tdbstat_add,
 };
+#[cfg(feature = "inet6")]
+use crate::netinet::ip6::IPV6_MAXPACKET;
 use crate::netinet::ipsec_input::{ESPCOUNTERS, ipsec_common_input_cb};
 use crate::netinet::ipsec_output::ipsp_process_done;
 use crate::sys::endian::{htonl, ntohl};
@@ -156,6 +158,8 @@ use crate::sys::malloc::{M_WAITOK, M_XDATA};
 use crate::sys::mbuf::{M_AUTH, M_CONF, M_DONTWAIT, Mbuf, m_freemp, m_readonly, mtod};
 use crate::sys::mutex::mutex_assert_locked;
 use crate::sys::socket::AF_INET;
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
 use libkern::{explicit_bzero, timingsafe_bcmp};
 
 /// `struct espstat`: the ESP statistics as `net.inet.esp.stats` returns them.
@@ -943,7 +947,20 @@ pub fn esp_output(
                     break 'drop Errno::EMSGSIZE;
                 }
             }
-            // INET6: the IPV6_MAXPACKET check; not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {
+                // Check for IPv6 maximum packet size violations.
+                if (skip + hlen + rlen + padding + alen) as usize > IPV6_MAXPACKET {
+                    crate::ipsec_dprintf!(
+                        "esp_output",
+                        "packet in SA {}/{:08x} got too big",
+                        ipsp_address(&tdb.tdb_dst.get()),
+                        ntohl(tdb.tdb_spi.get())
+                    );
+                    espstat_inc(EspstatCounters::EspsToobig);
+                    break 'drop Errno::EMSGSIZE;
+                }
+            }
             _ => {
                 crate::ipsec_dprintf!(
                     "esp_output",

@@ -1,7 +1,9 @@
 //! Host tests for PF_KEY: `pfkeyv2_parsemessage` and the conversions of `SADB_ADD` and
 //! `SADB_X_ADDFLOW` messages as `ipsecctl(8)` writes them, and a PF_KEY socket end to end
 //! (`SADB_REGISTER`, `SADB_ADD`, `SADB_X_ADDFLOW` and the SPD lookup it enables,
-//! `SADB_GET`, the `net.key` dumps, `SADB_DELETE`, `SADB_FLUSH`).
+//! `SADB_GET`, the `net.key` dumps, `SADB_DELETE`, `SADB_FLUSH`), over IPv6 too (the address
+//! checks of `pfkeyv2_parsemessage`, `import_flow` and `export_flow` with `SENT_IP6`, and
+//! an IPv6 SA and flow through a PF_KEY socket and the SPD lookup).
 //!
 //! The tests run as a thread with root credentials made `curproc` (`socket(PF_KEY)` needs
 //! `SS_PRIV`, and the messages carry the process's pid); they clear `curproc` before they
@@ -869,6 +871,408 @@ fn an_sa_keeps_its_pf_tag_and_enc_tap() {
     let types = ext_types(&r);
     assert!(types.contains(&SADB_X_EXT_TAG) && types.contains(&SADB_X_EXT_TAP));
     assert!(r.windows(10).any(|w| w == b"ipsec-tag\0"), "the tag's name");
+
+    soclose(so, 0).expect("close");
+    teardown();
+}
+
+/// An IPv6 address from its eight 16-bit words.
+#[cfg(feature = "inet6")]
+fn a6(w: [u16; 8]) -> In6Addr {
+    let mut a = [0u8; 16];
+    for (i, w) in w.iter().enumerate() {
+        a[2 * i..2 * i + 2].copy_from_slice(&w.to_be_bytes());
+    }
+    In6Addr::new(a)
+}
+
+/// A `sockaddr_in6` of `a`:`port`.
+#[cfg(feature = "inet6")]
+fn sin6(a: In6Addr, port: u16) -> SockaddrIn6 {
+    SockaddrIn6 {
+        sin6_len: size_of::<SockaddrIn6>() as u8,
+        sin6_family: AF_INET6,
+        sin6_port: port.to_be(),
+        sin6_addr: a,
+        ..SockaddrIn6::default()
+    }
+}
+
+#[cfg(feature = "inet6")]
+impl Msg {
+    /// An address extension of a `sockaddr_in6`.
+    fn address6(self, type_: u16, a: In6Addr, port: u16) -> Self {
+        self.ext(type_, SadbAddress::default(), bytes_of(&sin6(a, port)))
+    }
+}
+
+#[cfg(feature = "inet6")]
+const LOCAL6: [u16; 8] = [0xfd00, 0, 0, 0, 0, 0, 0, 1];
+#[cfg(feature = "inet6")]
+const PEER6: [u16; 8] = [0xfd00, 0, 0, 0, 0, 0, 0, 2];
+/// A /64 mask.
+#[cfg(feature = "inet6")]
+const MASK64: [u16; 8] = [0xffff, 0xffff, 0xffff, 0xffff, 0, 0, 0, 0];
+/// `esp tunnel from fd77:1::/64 to fd77:2::/64 peer fd00::2 spi 0x4242 auth hmac-sha2-256
+/// enc aes`: the `SADB_ADD` of the SA.
+#[cfg(feature = "inet6")]
+fn sadb_add6() -> Vec<u8> {
+    let sa = SadbSa {
+        sadb_sa_spi: htonl(SPI),
+        sadb_sa_replay: 64,
+        sadb_sa_state: SADB_SASTATE_MATURE,
+        sadb_sa_auth: SADB_X_AALG_SHA2_256,
+        sadb_sa_encrypt: SADB_X_EALG_AES,
+        sadb_sa_flags: SADB_X_SAFLAGS_TUNNEL,
+        ..SadbSa::default()
+    };
+    Msg::new(SADB_ADD, SADB_SATYPE_ESP, 1)
+        .ext(SADB_EXT_SA, sa, &[])
+        .address6(SADB_EXT_ADDRESS_SRC, a6(LOCAL6), 0)
+        .address6(SADB_EXT_ADDRESS_DST, a6(PEER6), 0)
+        .ext(
+            SADB_EXT_KEY_AUTH,
+            SadbKey {
+                sadb_key_bits: 256,
+                ..SadbKey::default()
+            },
+            &AUTHKEY,
+        )
+        .ext(
+            SADB_EXT_KEY_ENCRYPT,
+            SadbKey {
+                sadb_key_bits: 128,
+                ..SadbKey::default()
+            },
+            &ENCKEY,
+        )
+        .done()
+}
+
+/// The `SADB_X_ADDFLOW` of the same rule: fd77:1::/64 to fd77:2::/64 out, through the peer.
+#[cfg(feature = "inet6")]
+fn sadb_x_addflow6() -> Vec<u8> {
+    Msg::new(SADB_X_ADDFLOW, SADB_SATYPE_ESP, 2)
+        .address6(SADB_EXT_ADDRESS_DST, a6(PEER6), 0)
+        .address6(SADB_X_EXT_SRC_FLOW, a6([0xfd77, 1, 0, 0, 0, 0, 0, 0]), 0)
+        .address6(SADB_X_EXT_SRC_MASK, a6(MASK64), 0)
+        .address6(SADB_X_EXT_DST_FLOW, a6([0xfd77, 2, 0, 0, 0, 0, 0, 0]), 0)
+        .address6(SADB_X_EXT_DST_MASK, a6(MASK64), 0)
+        .ext(SADB_X_EXT_PROTOCOL, SadbProtocol::default(), &[])
+        .ext(
+            SADB_X_EXT_FLOW_TYPE,
+            SadbProtocol {
+                sadb_protocol_proto: SADB_X_FLOW_TYPE_REQUIRE,
+                sadb_protocol_direction: IPSP_DIRECTION_OUT,
+                sadb_protocol_flags: SADB_X_POLICYFLAGS_POLICY,
+                ..SadbProtocol::default()
+            },
+            &[],
+        )
+        .done()
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn ipv6_addresses_are_checked_by_parsemessage() {
+    let _g = setup();
+    let mut headers = sadb_headers_new();
+    let mut msg = sadb_add6();
+    pfkeyv2_parsemessage(&mut msg, &mut headers).expect("a valid IPv6 SADB_ADD");
+    assert!(!headers[usize::from(SADB_EXT_ADDRESS_SRC)].is_null());
+    assert!(!headers[usize::from(SADB_EXT_ADDRESS_DST)].is_null());
+
+    // import_address reads a sockaddr_in6 into the union.
+    let mut su = SockaddrUnion::new();
+    // SAFETY: the headers are the parsed message's.
+    unsafe { import_address(&mut su, headers[usize::from(SADB_EXT_ADDRESS_DST)]) };
+    assert_eq!(su.sa_family(), AF_INET6);
+    assert_eq!(usize::from(su.sa_len()), size_of::<SockaddrIn6>());
+    assert_eq!(su.sin6_addr(), a6(PEER6));
+
+    let sa = SadbSa {
+        sadb_sa_state: SADB_SASTATE_MATURE,
+        ..SadbSa::default()
+    };
+    let add = |dst: SockaddrIn6| {
+        Msg::new(SADB_ADD, SADB_SATYPE_ESP, 1)
+            .ext(SADB_EXT_SA, sa, &[])
+            .ext(SADB_EXT_ADDRESS_DST, SadbAddress::default(), bytes_of(&dst))
+            .done()
+    };
+    let reject = |mut m: Vec<u8>, headers: &mut SadbHeaders| {
+        assert_eq!(pfkeyv2_parsemessage(&mut m, headers), Err(Errno::EINVAL));
+    };
+    // A port on an SA address, a flow label, a wrong length: each refused.
+    reject(add(sin6(a6(PEER6), 500)), &mut headers);
+    let mut s = sin6(a6(PEER6), 0);
+    s.sin6_flowinfo = 1;
+    reject(add(s), &mut headers);
+    let mut s = sin6(a6(PEER6), 0);
+    s.sin6_len = 16;
+    reject(add(s), &mut headers);
+    // A flow address may carry a port.
+    let flow = Msg::new(SADB_X_ADDFLOW, SADB_SATYPE_ESP, 2)
+        .address6(SADB_EXT_ADDRESS_DST, a6(PEER6), 0)
+        .address6(SADB_X_EXT_SRC_FLOW, a6([0xfd77, 1, 0, 0, 0, 0, 0, 0]), 4500)
+        .address6(SADB_X_EXT_SRC_MASK, a6(MASK64), 0)
+        .address6(SADB_X_EXT_DST_FLOW, a6([0xfd77, 2, 0, 0, 0, 0, 0, 0]), 0)
+        .address6(SADB_X_EXT_DST_MASK, a6(MASK64), 0)
+        .ext(SADB_X_EXT_PROTOCOL, SadbProtocol::default(), &[])
+        .ext(
+            SADB_X_EXT_FLOW_TYPE,
+            SadbProtocol {
+                sadb_protocol_proto: SADB_X_FLOW_TYPE_REQUIRE,
+                sadb_protocol_direction: IPSP_DIRECTION_OUT,
+                ..SadbProtocol::default()
+            },
+            &[],
+        )
+        .done();
+    let mut flow = flow;
+    pfkeyv2_parsemessage(&mut flow, &mut headers).expect("a port on a flow address");
+    teardown();
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn sadb_x_addflow_imports_an_ipv6_flow_and_exports_it_again() {
+    let _g = setup();
+    let mut msg = sadb_x_addflow6();
+    let mut headers = sadb_headers_new();
+    pfkeyv2_parsemessage(&mut msg, &mut headers).expect("a valid IPv6 SADB_X_ADDFLOW");
+
+    let mut flow = SockaddrEncap::new();
+    let mut mask = SockaddrEncap::new();
+    // SAFETY: the headers are the parsed message's.
+    unsafe {
+        import_flow(
+            &mut flow,
+            &mut mask,
+            headers[usize::from(SADB_X_EXT_SRC_FLOW)],
+            headers[usize::from(SADB_X_EXT_SRC_MASK)],
+            headers[usize::from(SADB_X_EXT_DST_FLOW)],
+            headers[usize::from(SADB_X_EXT_DST_MASK)],
+            sadb_ext::<SadbProtocol>(&headers, SADB_X_EXT_PROTOCOL),
+            sadb_ext::<SadbProtocol>(&headers, SADB_X_EXT_FLOW_TYPE),
+        )
+    }
+    .expect("import_flow");
+
+    assert_eq!(usize::from(flow.sen_len()), size_of::<SockaddrEncap>());
+    assert_eq!(flow.sen_family(), PFK);
+    assert_eq!(flow.sen_type(), SENT_IP6);
+    assert_eq!(flow.sen_ip6_direction(), IPSP_DIRECTION_OUT);
+    assert_eq!(flow.sen_ip6_src(), a6([0xfd77, 1, 0, 0, 0, 0, 0, 0]));
+    assert_eq!(flow.sen_ip6_dst(), a6([0xfd77, 2, 0, 0, 0, 0, 0, 0]));
+    assert_eq!(flow.sen_ip6_proto(), 0);
+    assert_eq!(mask.sen_ip6_direction(), 0xff);
+    assert_eq!(mask.sen_ip6_src(), a6(MASK64));
+    assert_eq!(mask.sen_ip6_dst(), a6(MASK64));
+    assert_eq!(mask.sen_ip6_proto(), 0, "any protocol");
+
+    // export_flow gives the extensions back: two protocols and four sockaddr_in6 addresses.
+    let addr = padup(size_of::<SadbAddress>() + padup(size_of::<SockaddrIn6>()));
+    let mut buf = vec![0u8; 2 * 8 + 4 * addr];
+    let mut out = sadb_headers_new();
+    let mut p = buf.as_mut_ptr();
+    // SAFETY: room for two protocol and four address extensions.
+    unsafe { export_flow(&mut p, IPSP_IPSEC_REQUIRE, &flow, &mask, &mut out) };
+    assert_eq!(p as usize - buf.as_ptr() as usize, buf.len());
+    // SAFETY: the headers point into `buf`.
+    let ft: SadbProtocol = unsafe { sadb_get(out[usize::from(SADB_X_EXT_FLOW_TYPE)]) };
+    assert_eq!(ft.sadb_protocol_proto, SADB_X_FLOW_TYPE_REQUIRE);
+    assert_eq!(ft.sadb_protocol_direction, IPSP_DIRECTION_OUT);
+    // SAFETY: as above.
+    let dst = unsafe { sadb_address_sunion(out[usize::from(SADB_X_EXT_DST_FLOW)]) };
+    assert_eq!(dst.sin6_addr(), a6([0xfd77, 2, 0, 0, 0, 0, 0, 0]));
+    // SAFETY: as above.
+    let smask = unsafe { sadb_address_sunion(out[usize::from(SADB_X_EXT_SRC_MASK)]) };
+    assert_eq!(smask.sin6_addr(), a6(MASK64));
+    assert_eq!(smask.sa_family(), AF_INET6);
+
+    // A flow of mixed families is refused.
+    let mut mixed = Msg::new(SADB_X_ADDFLOW, SADB_SATYPE_ESP, 2)
+        .address6(SADB_EXT_ADDRESS_DST, a6(PEER6), 0)
+        .address6(SADB_X_EXT_SRC_FLOW, a6([0xfd77, 1, 0, 0, 0, 0, 0, 0]), 0)
+        .address6(SADB_X_EXT_SRC_MASK, a6(MASK64), 0)
+        .address(SADB_X_EXT_DST_FLOW, [10, 77, 2, 0], 0)
+        .address(SADB_X_EXT_DST_MASK, [255, 255, 255, 0], 0)
+        .ext(SADB_X_EXT_PROTOCOL, SadbProtocol::default(), &[])
+        .ext(
+            SADB_X_EXT_FLOW_TYPE,
+            SadbProtocol {
+                sadb_protocol_proto: SADB_X_FLOW_TYPE_REQUIRE,
+                sadb_protocol_direction: IPSP_DIRECTION_OUT,
+                ..SadbProtocol::default()
+            },
+            &[],
+        )
+        .done();
+    let mut headers = sadb_headers_new();
+    pfkeyv2_parsemessage(&mut mixed, &mut headers).expect("each address is valid");
+    let mut flow = SockaddrEncap::new();
+    let mut mask = SockaddrEncap::new();
+    // SAFETY: the headers are the parsed message's.
+    let r = unsafe {
+        import_flow(
+            &mut flow,
+            &mut mask,
+            headers[usize::from(SADB_X_EXT_SRC_FLOW)],
+            headers[usize::from(SADB_X_EXT_SRC_MASK)],
+            headers[usize::from(SADB_X_EXT_DST_FLOW)],
+            headers[usize::from(SADB_X_EXT_DST_MASK)],
+            sadb_ext::<SadbProtocol>(&headers, SADB_X_EXT_PROTOCOL),
+            sadb_ext::<SadbProtocol>(&headers, SADB_X_EXT_FLOW_TYPE),
+        )
+    };
+    assert_eq!(r, Err(Errno::EINVAL));
+    teardown();
+}
+
+/// An IPv6 UDP packet from `src` to `dst`, as `ip6_output` sees it.
+#[cfg(feature = "inet6")]
+fn udp6_packet(src: In6Addr, dst: In6Addr) -> &'static Mbuf {
+    let mut p = vec![0u8; 48];
+    p[0] = 0x60;
+    p[4..6].copy_from_slice(&8u16.to_be_bytes());
+    p[6] = 17;
+    p[7] = 64;
+    p[8..24].copy_from_slice(&src.s6_addr);
+    p[24..40].copy_from_slice(&dst.s6_addr);
+    p[40..42].copy_from_slice(&1234u16.to_be_bytes());
+    p[42..44].copy_from_slice(&53u16.to_be_bytes());
+    p[44..46].copy_from_slice(&8u16.to_be_bytes());
+    crate::net::if_::tests::test_packet(&p)
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn a_pfkey_socket_adds_an_ipv6_sa_and_flow() {
+    let _g = setup();
+
+    let so = socreate(i32::from(PF_KEY), SOCK_RAW, i32::from(PF_KEY_V2)).expect("socket(PF_KEY)");
+
+    // SADB_ADD: the SA is in the database under its IPv6 destination.
+    send(so, &sadb_add6()).expect("add");
+    let r = recv(so).expect("the reply");
+    assert_eq!(header(&r).sadb_msg_errno, 0);
+    let types = ext_types(&r);
+    assert!(types.contains(&SADB_EXT_SA) && types.contains(&SADB_EXT_ADDRESS_DST));
+    let peer = SockaddrUnion::from_sin6(&sin6(a6(PEER6), 0));
+    let t = gettdb(0, htonl(SPI), &peer, IPPROTO_ESP as u8).expect("the SA");
+    assert_eq!(t.tdb_xform.get().map(|x| x.xf_type), Some(XF_ESP));
+    assert_eq!(t.tdb_dst.get().sa_family(), AF_INET6);
+    assert_eq!(t.tdb_dst.get().sin6_addr(), a6(PEER6));
+    assert_eq!(t.tdb_src.get().sin6_addr(), a6(LOCAL6));
+    assert!(t.has_flags(TDBF_TUNNELING));
+    tdb_unref(Some(t));
+
+    // SADB_X_ADDFLOW: the SPD sends fd77:1::/64 -> fd77:2::/64 through the SA.
+    send(so, &sadb_x_addflow6()).expect("addflow");
+    let r = recv(so).expect("the reply");
+    assert_eq!(header(&r).sadb_msg_errno, 0);
+    assert_eq!(IPSEC_IN_USE.load(Ordering::Relaxed), 1);
+
+    let m = udp6_packet(
+        a6([0xfd77, 1, 0, 0, 0, 0, 0, 5]),
+        a6([0xfd77, 2, 0, 0, 0, 0, 0, 9]),
+    );
+    let mut tdb = None;
+    ipsp_spd_lookup(
+        m,
+        i32::from(AF_INET6),
+        40,
+        IPSP_DIRECTION_OUT,
+        None,
+        None,
+        Some(&mut tdb),
+        None,
+    )
+    .expect("IPsec required");
+    let t = tdb.expect("the flow's SA");
+    assert_eq!(t.tdb_spi.get(), htonl(SPI));
+    tdb_unref(Some(t));
+    crate::kern::uipc_mbuf::m_freem(m);
+
+    // Other traffic does not match, and neither does an IPv4 packet.
+    let m = udp6_packet(
+        a6([0xfd77, 3, 0, 0, 0, 0, 0, 5]),
+        a6([0xfd77, 2, 0, 0, 0, 0, 0, 9]),
+    );
+    let mut tdb = None;
+    ipsp_spd_lookup(
+        m,
+        i32::from(AF_INET6),
+        40,
+        IPSP_DIRECTION_OUT,
+        None,
+        None,
+        Some(&mut tdb),
+        None,
+    )
+    .expect("no policy");
+    assert!(tdb.is_none());
+    crate::kern::uipc_mbuf::m_freem(m);
+    let m = udp_packet([10, 77, 1, 5], [10, 77, 2, 9]);
+    let mut tdb = None;
+    ipsp_spd_lookup(
+        m,
+        i32::from(AF_INET),
+        20,
+        IPSP_DIRECTION_OUT,
+        None,
+        None,
+        Some(&mut tdb),
+        None,
+    )
+    .expect("no policy");
+    assert!(tdb.is_none());
+    crate::kern::uipc_mbuf::m_freem(m);
+
+    // SADB_GET gives the SA back with an IPv6 address.
+    let sa = SadbSa {
+        sadb_sa_spi: htonl(SPI),
+        ..SadbSa::default()
+    };
+    let get = Msg::new(SADB_GET, SADB_SATYPE_ESP, 3)
+        .ext(SADB_EXT_SA, sa, &[])
+        .address6(SADB_EXT_ADDRESS_DST, a6(PEER6), 0)
+        .done();
+    send(so, &get).expect("get");
+    let r = recv(so).expect("the reply");
+    assert_eq!(header(&r).sadb_msg_errno, 0);
+    assert!(ext_types(&r).contains(&SADB_EXT_KEY_ENCRYPT));
+
+    // The dumps ipsecctl -sa reads, with IPv6 addresses and flows.
+    for (op, type_) in [
+        (NET_KEY_SADB_DUMP, SADB_DUMP),
+        (NET_KEY_SPD_DUMP, SADB_X_SPDDUMP),
+    ] {
+        let mut size = 0;
+        pfkeyv2_sysctl(&[op], 0, &mut size, 0, 0).expect("size");
+        assert!(size > size_of::<SadbMsg>());
+        let mut buf = vec![0u8; size];
+        let mut len = size;
+        pfkeyv2_sysctl(&[op], buf.as_mut_ptr() as usize, &mut len, 0, 0).expect("dump");
+        assert_eq!(len, size);
+        let h = header(&buf);
+        assert_eq!(h.sadb_msg_type, type_);
+        assert_eq!(usize::from(h.sadb_msg_len) * 8, len, "one message");
+    }
+
+    // SADB_DELETE, then SADB_FLUSH takes the flow.
+    let del = Msg::new(SADB_DELETE, SADB_SATYPE_ESP, 4)
+        .ext(SADB_EXT_SA, sa, &[])
+        .address6(SADB_EXT_ADDRESS_DST, a6(PEER6), 0)
+        .done();
+    send(so, &del).expect("delete");
+    assert_eq!(header(&recv(so).expect("the reply")).sadb_msg_errno, 0);
+    assert!(gettdb(0, htonl(SPI), &peer, IPPROTO_ESP as u8).is_none());
+
+    send(so, &Msg::new(SADB_FLUSH, SADB_SATYPE_UNSPEC, 5).done()).expect("flush");
+    assert_eq!(header(&recv(so).expect("the reply")).sadb_msg_errno, 0);
+    assert_eq!(IPSEC_IN_USE.load(Ordering::Relaxed), 0, "the flow went too");
 
     soclose(so, 0).expect("close");
     teardown();

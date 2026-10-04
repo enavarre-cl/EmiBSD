@@ -56,8 +56,8 @@
 //!   (the C dereferences it; `ipcomp_init` always sets it first).
 //! - `NBPFILTER` is configured: `ipcomp_output` counts the packet on the SA's `enc(4)`
 //!   interface (rdomain 0, as the C asks) and taps it.
-//! - Not configured, each a comment at its site: `INET6`; `ENCDEBUG`'s `DPRINTF` is
-//!   `ipsec_dprintf!`. `KERNEL_LOCK` is nothing without `MULTIPROCESSOR`.
+//! - `INET6` is configured (feature `inet6`): the IPv6 size check and `ip6_nxt` in
+//!   `ipcomp_output`. `ENCDEBUG`'s `DPRINTF` is `ipsec_dprintf!`. `KERNEL_LOCK` is nothing without `MULTIPROCESSOR`.
 
 use core::ptr;
 use core::sync::atomic::Ordering;
@@ -83,13 +83,19 @@ use crate::netinet::ip_ipsp::{
     ipsecstat_inc, ipsp_address, tdb_delete, tdbstat_add,
 };
 use crate::netinet::ip_var::{mtod_ip, mtod_ip_store};
+#[cfg(feature = "inet6")]
+use crate::netinet::ip6::IPV6_MAXPACKET;
 use crate::netinet::ipsec_input::{IPCOMPCOUNTERS, ipsec_common_input_cb};
 use crate::netinet::ipsec_output::ipsp_process_done;
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_var::{mtod_ip6, mtod_ip6_store};
 use crate::sys::endian::{htons, ntohl};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::M_NOWAIT;
 use crate::sys::mbuf::{M_DONTWAIT, Mbuf, m_freemp, m_readonly, mtod};
 use crate::sys::socket::AF_INET;
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
 
 /// `struct ipcompstat`: the IPComp statistics as `net.inet.ipcomp.stats` returns them.
 #[repr(C)]
@@ -429,7 +435,20 @@ pub fn ipcomp_output(
                     break 'drop Errno::EMSGSIZE;
                 }
             }
-            // INET6: the IPV6_MAXPACKET check; not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {
+                // Check for IPv6 maximum packet size violations
+                if m.m_pkthdr().len.get() as usize + hlen as usize > IPV6_MAXPACKET {
+                    crate::ipsec_dprintf!(
+                        "ipcomp_output",
+                        "packet in IPCA {}/{:08x} got too big",
+                        ipsp_address(&tdb.tdb_dst.get()),
+                        ntohl(tdb.tdb_spi.get())
+                    );
+                    ipcompstat_inc(IpcompCounters::IpcompsToobig);
+                    break 'drop Errno::EMSGSIZE;
+                }
+            }
             _ => {
                 crate::ipsec_dprintf!(
                     "ipcomp_output",
@@ -559,7 +578,13 @@ pub fn ipcomp_output(
                     ip.ip_p = IPPROTO_IPCOMP as u8;
                     mtod_ip_store(m, &ip);
                 }
-                // INET6: ip6_nxt instead of ip_p; not configured.
+                #[cfg(feature = "inet6")]
+                AF_INET6 => {
+                    let mut ip6 = mtod_ip6(m);
+                    ipcomp.ipcomp_nh = ip6.ip6_nxt;
+                    ip6.ip6_nxt = IPPROTO_IPCOMP as u8;
+                    mtod_ip6_store(m, &ip6);
+                }
                 _ => {
                     crate::ipsec_dprintf!(
                         "ipcomp_output",

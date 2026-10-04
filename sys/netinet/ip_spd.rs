@@ -46,8 +46,9 @@
 //!   the key is written before the policy enters the tree and not changed while it is there.
 //! - The ports of the flow key are copied out of the packet in network order, as the C's
 //!   `m_copydata` into the `sockaddr_encap` does.
-//! - Not configured, each a comment at its site: `INET6` (the `AF_INET6` lookup, the
-//!   `SENT_IP6` acquire, the IPv6 unspecified-address checks).
+//! - `INET6` is configured (feature `inet6`): the `AF_INET6` flow key of the lookup, the
+//!   IPv6 unspecified-address checks and the `SENT_IP6` acquire. A packet whose IPv6
+//!   header is not in the first mbuf is read with `m_copydata`, as the C does.
 
 use alloc::vec::Vec;
 use core::ffi::c_void;
@@ -72,6 +73,8 @@ use crate::netinet::in_::{
     INADDR_ANY, INADDR_BROADCAST, IPPROTO_ESP, IPPROTO_IPCOMP, IPPROTO_TCP, IPPROTO_UDP, SockaddrIn,
 };
 use crate::netinet::ip::Ip;
+#[cfg(feature = "inet6")]
+use crate::netinet::ip_ipsp::SENT_IP6;
 use crate::netinet::ip_ipsp::{
     IPSEC_IN_USE, IPSEC_LAST_ADDED, IPSEC_POLICY_HEAD, IPSP_DENY, IPSP_DIRECTION_IN,
     IPSP_DIRECTION_OUT, IPSP_IPSEC_ACQUIRE, IPSP_IPSEC_DONTACQ, IPSP_IPSEC_REQUIRE, IPSP_IPSEC_USE,
@@ -80,12 +83,20 @@ use crate::netinet::ip_ipsp::{
     gettdbbysrc, ipsp_aux_match, ipsp_ids_free, ipsp_ids_match, ipsp_is_unspecified, tdb_ref,
     tdb_unref,
 };
+#[cfg(feature = "inet6")]
+use crate::netinet::ip6::Ip6Hdr;
 use crate::netinet::ipsec_input::IPSEC_EXPIRE_ACQUIRE;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::{IN6MASK128, In6Addr, SockaddrIn6, in6_is_addr_unspecified};
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6_src::in6_recoverscope;
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::Mbuf;
 use crate::sys::mutex::{Mutex, mutex_assert_locked};
 use crate::sys::pool::{PR_NOWAIT, PR_ZERO, Pool};
 use crate::sys::queue::TailqHead;
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
 use crate::sys::socket::{AF_INET, PF_KEY};
 use crate::sys::systm::{net_assert_locked, net_assert_locked_exclusive};
 use crate::sys::timeout::Timeout;
@@ -338,7 +349,55 @@ pub fn ipsp_spd_lookup(
                 }
             }
         }
-        // INET6: the AF_INET6 flow key (SENT_IP6, in6_recoverscope); not configured.
+        #[cfg(feature = "inet6")]
+        x if x == i32::from(AF_INET6) => {
+            if (hlen as usize) < size_of::<Ip6Hdr>() || m.m_pkthdr().len.get() < hlen {
+                return Err(Errno::EINVAL.into());
+            }
+
+            dst.set_sen_type(SENT_IP6);
+            dst.set_sen_ip6_direction(direction);
+
+            let src_b: [u8; 16] = copy_out(m, offset_of!(Ip6Hdr, ip6_src));
+            let dst_b: [u8; 16] = copy_out(m, offset_of!(Ip6Hdr, ip6_dst));
+            let nxt_b: [u8; 1] = copy_out(m, offset_of!(Ip6Hdr, ip6_nxt));
+            dst.set_sen_ip6_src(In6Addr::new(src_b));
+            dst.set_sen_ip6_dst(In6Addr::new(dst_b));
+            dst.set_sen_ip6_proto(nxt_b[0]);
+
+            let mut s6src = SockaddrIn6 {
+                sin6_family: AF_INET6,
+                sin6_len: size_of::<SockaddrIn6>() as u8,
+                ..SockaddrIn6::default()
+            };
+            let mut s6dst = s6src;
+            in6_recoverscope(&mut s6src, &dst.sen_ip6_src());
+            in6_recoverscope(&mut s6dst, &dst.sen_ip6_dst());
+            ssrc.set_sin6(&s6src);
+            sdst.set_sin6(&s6dst);
+
+            // If TCP/UDP, extract the port numbers to use in the lookup.
+            match i32::from(dst.sen_ip6_proto()) {
+                IPPROTO_UDP | IPPROTO_TCP => {
+                    // Make sure there's enough data in the packet.
+                    if m.m_pkthdr().len.get() < hlen + 2 * 2 {
+                        return Err(Errno::EINVAL.into());
+                    }
+
+                    // Luckily, the offset of the src/dst ports in both the UDP and TCP
+                    // headers is the same (first two 16-bit values in the respective
+                    // headers), so we can just copy them.
+                    let sp: [u8; 2] = copy_out(m, hlen as usize);
+                    let dp: [u8; 2] = copy_out(m, hlen as usize + 2);
+                    dst.set_sen_ip6_sport(u16::from_ne_bytes(sp));
+                    dst.set_sen_ip6_dport(u16::from_ne_bytes(dp));
+                }
+                _ => {
+                    dst.set_sen_ip6_sport(0);
+                    dst.set_sen_ip6_dport(0);
+                }
+            }
+        }
         _ => return Err(Errno::EAFNOSUPPORT.into()),
     }
 
@@ -369,17 +428,34 @@ pub fn ipsp_spd_lookup(
     let ipo_src = ipo.ipo_src.get();
 
     // Check for non-specific destination in the policy.
-    // INET6: the unspecified and all-ones IPv6 destinations; not configured.
-    if ipo_dst.sa_family() == AF_INET
-        && (ipo_dst.sin_addr().s_addr == INADDR_ANY
-            || ipo_dst.sin_addr().s_addr == INADDR_BROADCAST)
-    {
-        dignore = true;
+    match ipo_dst.sa_family() {
+        AF_INET => {
+            if ipo_dst.sin_addr().s_addr == INADDR_ANY
+                || ipo_dst.sin_addr().s_addr == INADDR_BROADCAST
+            {
+                dignore = true;
+            }
+        }
+        #[cfg(feature = "inet6")]
+        AF_INET6
+            if in6_is_addr_unspecified(&ipo_dst.sin6_addr())
+                || ipo_dst.sin6_addr() == IN6MASK128 =>
+        {
+            dignore = true;
+        }
+        _ => {}
     }
 
     // Likewise for source.
-    if ipo_src.sa_family() == AF_INET && ipo_src.sin_addr().s_addr == INADDR_ANY {
-        signore = true;
+    match ipo_src.sa_family() {
+        AF_INET => {
+            if ipo_src.sin_addr().s_addr == INADDR_ANY {
+                signore = true;
+            }
+        }
+        #[cfg(feature = "inet6")]
+        AF_INET6 if in6_is_addr_unspecified(&ipo_src.sin6_addr()) => signore = true,
+        _ => {}
     }
 
     // Do we have a cached entry ? If so, check if it's still valid.
@@ -877,7 +953,38 @@ pub fn ipsp_acquire_sa(
                 mask.set_sen_dport(ipo_mask.sen_dport());
             }
         }
-        // INET6: SENT_IP6; not configured.
+        #[cfg(feature = "inet6")]
+        SENT_IP6 => {
+            info.set_sen_type(SENT_IP6);
+            mask.set_sen_type(SENT_IP6);
+            info.set_sen_ip6_direction(ipo_addr.sen_ip6_direction());
+            mask.set_sen_ip6_direction(ipo_mask.sen_ip6_direction());
+
+            if ipsp_is_unspecified(ipo.ipo_dst.get()) {
+                info.set_sen_ip6_src(ddst.sen_ip6_src());
+                mask.set_sen_ip6_src(IN6MASK128);
+
+                info.set_sen_ip6_dst(ddst.sen_ip6_dst());
+                mask.set_sen_ip6_dst(IN6MASK128);
+            } else {
+                info.set_sen_ip6_src(ipo_addr.sen_ip6_src());
+                mask.set_sen_ip6_src(ipo_mask.sen_ip6_src());
+
+                info.set_sen_ip6_dst(ipo_addr.sen_ip6_dst());
+                mask.set_sen_ip6_dst(ipo_mask.sen_ip6_dst());
+            }
+
+            info.set_sen_ip6_proto(ipo_addr.sen_ip6_proto());
+            mask.set_sen_ip6_proto(ipo_mask.sen_ip6_proto());
+
+            if ipo_mask.sen_ip6_proto() != 0 {
+                info.set_sen_ip6_sport(ipo_addr.sen_ip6_sport());
+                mask.set_sen_ip6_sport(ipo_mask.sen_ip6_sport());
+
+                info.set_sen_ip6_dport(ipo_addr.sen_ip6_dport());
+                mask.set_sen_ip6_dport(ipo_mask.sen_ip6_dport());
+            }
+        }
         _ => return Ok(()),
     }
 

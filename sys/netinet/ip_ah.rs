@@ -97,8 +97,12 @@
 //! - The replay checks share `ip_esp.rs`'s `checkreplaywindow`; the counters are AH's.
 //! - `NBPFILTER` is configured: `ah_output` counts the packet on the SA's `enc(4)`
 //!   interface and taps it. `NPFSYNC` is: `pfsync_update_tdb`.
-//! - Not configured, each a comment at its site: `INET6` (the IPv6 header and extension
-//!   header massaging).
+//! - `INET6` is configured (feature `inet6`): `ah_massage_headers` cooks the IPv6 header
+//!   and zeroes the mutable options of the extension headers, `ah_input`/`ah_output` fix
+//!   `ip6_plen`. The IPv6 header is read and written through byte images (`m_copydata`,
+//!   `m_copyback`); the routing header's addresses are bounds-checked against the skipped
+//!   area (the C trusts `ip6r0_segleft`) and a header with no segments left is not
+//!   rewritten (the C would index `addr[-1]`).
 
 use alloc::vec;
 use core::mem::offset_of;
@@ -126,6 +130,8 @@ use crate::net::pfkeyv2::{
     pfkeyv2_expire,
 };
 use crate::netinet::in_::{IPPROTO_AH, IPPROTO_DONE};
+#[cfg(feature = "inet6")]
+use crate::netinet::in_::{IPPROTO_DSTOPTS, IPPROTO_HOPOPTS, IPPROTO_ROUTING};
 use crate::netinet::ip::{
     IP_MAXPACKET, IPOPT_EOL, IPOPT_LSRR, IPOPT_NOP, IPOPT_SECURITY, IPOPT_SSRR, Ip,
 };
@@ -136,14 +142,24 @@ use crate::netinet::ip_ipsp::{
     tdbstat_add,
 };
 use crate::netinet::ip_var::{mtod_ip, mtod_ip_store};
+#[cfg(feature = "inet6")]
+use crate::netinet::ip6::{
+    IP6OPT_MUTABLE, IP6OPT_PAD1, IPV6_MAXPACKET, IPV6_VERSION, IPV6_VERSION_MASK, Ip6Ext, Ip6Hdr,
+};
 use crate::netinet::ipsec_input::{AHCOUNTERS, ipsec_common_input_cb};
 use crate::netinet::ipsec_output::ipsp_process_done;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::{IPV6_RTHDR_TYPE_0, In6Addr, in6_is_scope_embed};
 use crate::sys::endian::{htonl, htons, ntohl, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::M_NOWAIT;
 use crate::sys::malloc::{M_WAITOK, M_XDATA};
 use crate::sys::mbuf::{M_AUTH, M_DONTWAIT, Mbuf, m_freemp, m_readonly, mtod};
 use crate::sys::socket::AF_INET;
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
+#[cfg(feature = "inet6")]
+use alloc::vec::Vec;
 use libkern::{explicit_bzero, timingsafe_bcmp};
 
 /// `struct ahstat`: the AH statistics as `net.inet.ah.stats` returns them.
@@ -368,6 +384,24 @@ pub fn ah_zeroize(tdbp: &Tdb) -> Result<(), Errno> {
     error
 }
 
+/// The IPv6 header at the start of `b` (a byte image copied out of a packet).
+#[cfg(feature = "inet6")]
+fn ip6hdr_from_bytes(b: &[u8; size_of::<Ip6Hdr>()]) -> Ip6Hdr {
+    // SAFETY: `Ip6Hdr` is integers and byte arrays without padding (40 bytes), valid for
+    // any bit pattern; read unaligned from a byte array.
+    unsafe { ptr::read_unaligned(b.as_ptr().cast::<Ip6Hdr>()) }
+}
+
+/// The byte image of an IPv6 header, to `m_copyback`.
+#[cfg(feature = "inet6")]
+fn ip6hdr_to_bytes(h: &Ip6Hdr) -> [u8; size_of::<Ip6Hdr>()] {
+    let mut b = [0u8; size_of::<Ip6Hdr>()];
+    // SAFETY: `Ip6Hdr` has no padding (40 bytes, pinned in `ip6.rs`), so every byte of `*h`
+    // is initialised; written unaligned into a byte array of its size.
+    unsafe { ptr::write_unaligned(b.as_mut_ptr().cast::<Ip6Hdr>(), *h) };
+    b
+}
+
 /// `ah_massage_headers`: massage IPv4/IPv6 headers for AH processing: the mutable fields and
 /// options are zeroed (on output, a source route's final destination is put in place).
 fn ah_massage_headers(
@@ -494,8 +528,211 @@ fn ah_massage_headers(
                 }
             }
         }
-        // INET6: for AF_INET6, cook the IPv6 header (flow, hop limit, scoped addresses) and
-        // zero the mutable options of the extension headers; not configured.
+        #[cfg(feature = "inet6")]
+        if af == AF_INET6 {
+            // Ugly...
+            // Copy and "cook" the IPv6 header.
+            let mut hb = [0u8; size_of::<Ip6Hdr>()];
+            m_copydata(m, 0, &mut hb);
+            let mut ip6 = ip6hdr_from_bytes(&hb);
+
+            // We don't do IPv6 Jumbograms.
+            if ip6.ip6_plen == 0 {
+                crate::ipsec_dprintf!("ah_massage_headers", "unsupported IPv6 jumbogram");
+                ahstat_inc(AhstatCounters::AhsHdrops);
+                break 'drop Errno::EMSGSIZE;
+            }
+
+            ip6.ip6_flow = 0;
+            ip6.ip6_hlim = 0;
+            ip6.set_ip6_vfc(ip6.ip6_vfc() & !IPV6_VERSION_MASK);
+            ip6.set_ip6_vfc(ip6.ip6_vfc() | IPV6_VERSION);
+
+            // Scoped address handling.
+            if in6_is_scope_embed(&ip6.ip6_src) {
+                ip6.ip6_src.set_s6_addr16(1, 0);
+            }
+            if in6_is_scope_embed(&ip6.ip6_dst) {
+                ip6.ip6_dst.set_s6_addr16(1, 0);
+            }
+
+            // Done with IPv6 header.
+            if let Err(e) = m_copyback(m, 0, &ip6hdr_to_bytes(&ip6), M_NOWAIT) {
+                crate::ipsec_dprintf!("ah_massage_headers", "m_copyback no memory");
+                ahstat_inc(AhstatCounters::AhsHdrops);
+                break 'drop e;
+            }
+
+            // Let's deal with the remaining headers (if any).
+            let skip = skip as usize;
+            if skip > size_of::<Ip6Hdr>() {
+                // The headers after the IPv6 header: in the first mbuf when it holds them
+                // all, else in a copy that is written back at the end.
+                let mut copy: Vec<u8> = Vec::new();
+                let alloc = m.m_len().get() as usize <= skip;
+                let ptr: &mut [u8] = if alloc {
+                    if copy.try_reserve_exact(skip - size_of::<Ip6Hdr>()).is_err() {
+                        crate::ipsec_dprintf!(
+                            "ah_massage_headers",
+                            "failed to allocate memory for IPv6 headers"
+                        );
+                        ahstat_inc(AhstatCounters::AhsHdrops);
+                        break 'drop Errno::ENOBUFS;
+                    }
+                    copy.resize(skip - size_of::<Ip6Hdr>(), 0);
+
+                    // Copy all the protocol headers after the IPv6 header.
+                    m_copydata(m, size_of::<Ip6Hdr>() as i32, &mut copy);
+                    &mut copy
+                } else {
+                    // No need to allocate memory.
+                    // SAFETY: the first mbuf holds more than `skip` bytes (`m_len > skip`),
+                    // so `skip - 40` bytes after the IPv6 header are in it; nothing else
+                    // touches them while `ptr` lives (`m_copydata`/`m_copyback` below only
+                    // reach the first 40 bytes, which `ptr` does not cover).
+                    unsafe {
+                        core::slice::from_raw_parts_mut(
+                            mtod::<u8>(m).add(size_of::<Ip6Hdr>()),
+                            skip - size_of::<Ip6Hdr>(),
+                        )
+                    }
+                };
+
+                let ptr_len = ptr.len();
+                let mut nxt = i32::from(ip6.ip6_nxt); // Next header type.
+                let mut off = 0usize;
+                let ext_len = size_of::<Ip6Ext>();
+
+                'error6: {
+                    while off + size_of::<Ip6Hdr>() < skip {
+                        if off + size_of::<Ip6Hdr>() + ext_len > skip {
+                            break 'error6;
+                        }
+                        let (ip6e_nxt, ip6e_len) = (ptr[off], ptr[off + 1]);
+
+                        match nxt {
+                            IPPROTO_HOPOPTS | IPPROTO_DSTOPTS => {
+                                let noff = off + ((usize::from(ip6e_len) + 1) << 3);
+
+                                // Sanity check.
+                                if noff + size_of::<Ip6Hdr>() > skip {
+                                    break 'error6;
+                                }
+
+                                // Zero out mutable options.
+                                let mut count = off + ext_len;
+                                while count < noff {
+                                    if ptr[count] == IP6OPT_PAD1 {
+                                        count += 1;
+                                        continue; // Skip padding.
+                                    }
+
+                                    if count + 2 > noff {
+                                        break 'error6;
+                                    }
+                                    let ad = usize::from(ptr[count + 1]) + 2;
+                                    if count + ad > noff {
+                                        break 'error6;
+                                    }
+
+                                    // If mutable option, zeroize.
+                                    if ptr[count] & IP6OPT_MUTABLE != 0 {
+                                        ptr[count..count + ad].fill(0);
+                                    }
+
+                                    count += ad;
+                                }
+
+                                if count != noff {
+                                    break 'error6;
+                                }
+                            }
+
+                            IPPROTO_ROUTING => {
+                                // Always include routing headers in computation.
+                                //
+                                // must adjust content to make it look like its final form
+                                // (as seen at the final destination). we only know how to
+                                // massage type 0 routing header.
+                                if out
+                                    && off + 4 <= ptr_len
+                                    && i32::from(ptr[off + 2]) == IPV6_RTHDR_TYPE_0
+                                {
+                                    // `rh0 + 1`: the addresses follow the 8-byte header.
+                                    let a0 = off + 8;
+                                    let segleft = usize::from(ptr[off + 3]);
+                                    if a0 + segleft * 16 > ptr_len {
+                                        break 'error6;
+                                    }
+                                    let addr_at = |i: usize| a0 + i * 16;
+                                    let rd = |p: &[u8], at: usize| {
+                                        let mut a = [0u8; 16];
+                                        a.copy_from_slice(&p[at..at + 16]);
+                                        In6Addr::new(a)
+                                    };
+
+                                    for i in 0..segleft {
+                                        let mut a = rd(ptr, addr_at(i));
+                                        if in6_is_scope_embed(&a) {
+                                            a.set_s6_addr16(1, 0);
+                                            ptr[addr_at(i)..addr_at(i) + 16]
+                                                .copy_from_slice(&a.s6_addr);
+                                        }
+                                    }
+
+                                    if segleft > 0 {
+                                        let finaldst = rd(ptr, addr_at(segleft - 1));
+                                        ptr.copy_within(
+                                            addr_at(0)..addr_at(0) + 16 * (segleft - 1),
+                                            addr_at(1),
+                                        );
+
+                                        m_copydata(m, 0, &mut hb);
+                                        let mut ip6 = ip6hdr_from_bytes(&hb);
+                                        ptr[addr_at(0)..addr_at(0) + 16]
+                                            .copy_from_slice(&ip6.ip6_dst.s6_addr);
+                                        ip6.ip6_dst = finaldst;
+                                        if let Err(e) =
+                                            m_copyback(m, 0, &ip6hdr_to_bytes(&ip6), M_NOWAIT)
+                                        {
+                                            ahstat_inc(AhstatCounters::AhsHdrops);
+                                            break 'drop e;
+                                        }
+                                    }
+                                    ptr[off + 3] = 0; // ip6r0_segleft
+                                }
+                            }
+
+                            _ => {
+                                crate::ipsec_dprintf!(
+                                    "ah_massage_headers",
+                                    "unexpected IPv6 header type {}",
+                                    off
+                                );
+                                break 'error6;
+                            }
+                        }
+
+                        // Advance.
+                        off += (usize::from(ip6e_len) + 1) << 3;
+                        nxt = i32::from(ip6e_nxt);
+                    }
+
+                    // Copyback and free, if we allocated.
+                    if alloc
+                        && let Err(e) = m_copyback(m, size_of::<Ip6Hdr>() as i32, ptr, M_NOWAIT)
+                    {
+                        ahstat_inc(AhstatCounters::AhsHdrops);
+                        break 'drop e;
+                    }
+
+                    return Ok(());
+                }
+                // error6:
+                ahstat_inc(AhstatCounters::AhsHdrops);
+                break 'drop Errno::EINVAL;
+            }
+        }
 
         return Ok(());
     };
@@ -805,7 +1042,20 @@ pub fn ah_output(
                     break 'drop Errno::EMSGSIZE;
                 }
             }
-            // INET6: the IPV6_MAXPACKET check; not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {
+                // Check for IPv6 maximum packet size violations.
+                if (rplen + authsize + m.m_pkthdr().len.get()) as usize > IPV6_MAXPACKET {
+                    crate::ipsec_dprintf!(
+                        "ah_output",
+                        "packet in SA {}/{:08x} got too big",
+                        ipsp_address(&tdb.tdb_dst.get()),
+                        ntohl(tdb.tdb_spi.get())
+                    );
+                    ahstat_inc(AhstatCounters::AhsToobig);
+                    break 'drop Errno::EMSGSIZE;
+                }
+            }
             _ => {
                 crate::ipsec_dprintf!(
                     "ah_output",
@@ -944,7 +1194,13 @@ pub fn ah_output(
             let iplen = htons(ntohs(iplen).wrapping_add((rplen + authsize) as u16));
             let _ = m_copyback(m, at as i32, &iplen.to_ne_bytes(), M_NOWAIT);
         }
-        // INET6: the same for ip6_plen; not configured.
+        #[cfg(feature = "inet6")]
+        if tdb.tdb_dst.get().sa_family() == AF_INET6 {
+            let at = offset_of!(Ip6Hdr, ip6_plen);
+            let iplen = u16::from_ne_bytes([ptr[at], ptr[at + 1]]);
+            let iplen = htons(ntohs(iplen).wrapping_add((rplen + authsize) as u16));
+            let _ = m_copyback(m, at as i32, &iplen.to_ne_bytes(), M_NOWAIT);
+        }
 
         // Fix the Next Header field in saved header.
         ptr[protoff as usize] = IPPROTO_AH as u8;
@@ -1009,3 +1265,7 @@ const _: () = {
     assert!(size_of::<Ahstat>() == AhstatCounters::AhsNcounters as usize * 8);
     assert!(size_of::<Ah>() == AH_FLENGTH + 4);
 };
+
+#[cfg(test)]
+#[cfg(feature = "inet6")]
+mod tests;

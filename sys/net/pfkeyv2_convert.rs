@@ -118,8 +118,9 @@
 //!   the C does.
 //! - `NPF` (pf(4)) is configured: `import_tag`, `export_tag`, `import_tap`, `export_tap`;
 //!   `import_tag` takes the raw extension, its name trailing the header.
-//! - Not configured, each a comment at its site: `INET6` (the `AF_INET6` flows,
-//!   `in6_embedscope`).
+//! - `INET6` is configured (feature `inet6`): the `AF_INET6` flows (`SENT_IP6`) of
+//!   `import_flow`, `export_encap` and `export_flow`, `in6_embedscope`, and the
+//!   `sockaddr_in6` size of `import_address`.
 
 use core::mem::size_of;
 use core::ptr::{self, NonNull};
@@ -157,17 +158,24 @@ use crate::net::pfkeyv2::{
 use crate::net::pfvar::PF_TAG_NAME_SIZE;
 use crate::net::route::rt_maskedcopy;
 use crate::netinet::in_::{IPPROTO_IPCOMP, SockaddrIn};
+#[cfg(feature = "inet6")]
+use crate::netinet::ip_ipsp::SENT_IP6;
 use crate::netinet::ip_ipsp::{
     IPSP_DENY, IPSP_IDENTITY_ASN1_DN, IPSP_IDENTITY_FQDN, IPSP_IDENTITY_PREFIX,
     IPSP_IDENTITY_USERFQDN, IPSP_IPSEC_ACQUIRE, IPSP_IPSEC_DONTACQ, IPSP_IPSEC_REQUIRE,
-    IPSP_IPSEC_USE, IPSP_PERMIT, IpsecId, IpsecIds, IpsecInit, SENT_IP4, SENT_IP6, SENT_LEN,
-    SockaddrEncap, SockaddrUnion, TDB_NCOUNTERS, TDBF_ALLOCATIONS, TDBF_BYTES, TDBF_ESN,
-    TDBF_FIRSTUSE, TDBF_IFACE, TDBF_INVALID, TDBF_PFS, TDBF_SOFT_ALLOCATIONS, TDBF_SOFT_BYTES,
-    TDBF_SOFT_FIRSTUSE, TDBF_SOFT_TIMER, TDBF_TIMER, TDBF_TUNNELING, TDBF_UDPENCAP, Tdb,
-    TdbCounters, ipsp_ids_insert,
+    IPSP_IPSEC_USE, IPSP_PERMIT, IpsecId, IpsecIds, IpsecInit, SENT_IP4, SENT_LEN, SockaddrEncap,
+    SockaddrUnion, TDB_NCOUNTERS, TDBF_ALLOCATIONS, TDBF_BYTES, TDBF_ESN, TDBF_FIRSTUSE,
+    TDBF_IFACE, TDBF_INVALID, TDBF_PFS, TDBF_SOFT_ALLOCATIONS, TDBF_SOFT_BYTES, TDBF_SOFT_FIRSTUSE,
+    TDBF_SOFT_TIMER, TDBF_TIMER, TDBF_TUNNELING, TDBF_UDPENCAP, Tdb, TdbCounters, ipsp_ids_insert,
 };
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::SockaddrIn6;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6_src::in6_embedscope;
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_CREDENTIALS, M_WAITOK};
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
 use crate::sys::socket::{AF_INET, PF_KEY, Sockaddr};
 
 /// `import_sa`: (partly) initialize a TDB based on an `SADB_SA` payload. Other parts of the
@@ -522,7 +530,53 @@ pub unsafe fn import_flow(
             }
         }
     }
-    // INET6: in6_embedscope and the SENT_IP6 flow of an AF_INET6 source; not configured.
+    #[cfg(feature = "inet6")]
+    if family(src) == AF_INET6 {
+        // SAFETY: `sockaddr_in6`s, checked by `pfkeyv2_parsemessage`; the message copies are
+        // written back (the C embeds the scope in place).
+        let (mut s, mut d, sm, dm): (SockaddrIn6, SockaddrIn6, SockaddrIn6, SockaddrIn6) = unsafe {
+            (
+                sadb_get(src.cast()),
+                sadb_get(dst.cast()),
+                sadb_get(srcmask.cast()),
+                sadb_get(dstmask.cast()),
+            )
+        };
+        let sin6 = s;
+        let _ = in6_embedscope(&mut s.sin6_addr, &sin6, None, None);
+        let din6 = d;
+        let _ = in6_embedscope(&mut d.sin6_addr, &din6, None, None);
+        // SAFETY: as above.
+        unsafe {
+            sadb_put(src.cast(), s);
+            sadb_put(dst.cast(), d);
+
+            // netmask handling
+            rt_maskedcopy(src, src, srcmask);
+            rt_maskedcopy(dst, dst, dstmask);
+
+            s = sadb_get(src.cast());
+            d = sadb_get(dst.cast());
+        }
+
+        flow.set_sen_type(SENT_IP6);
+        flow.set_sen_ip6_direction(ftype.map_or(0, |f| f.sadb_protocol_direction));
+        flow.set_sen_ip6_src(s.sin6_addr);
+        flow.set_sen_ip6_dst(d.sin6_addr);
+        flow.set_sen_ip6_proto(transproto);
+        flow.set_sen_ip6_sport(s.sin6_port);
+        flow.set_sen_ip6_dport(d.sin6_port);
+
+        flowmask.set_sen_type(SENT_IP6);
+        flowmask.set_sen_ip6_direction(0xff);
+        flowmask.set_sen_ip6_src(sm.sin6_addr);
+        flowmask.set_sen_ip6_dst(dm.sin6_addr);
+        flowmask.set_sen_ip6_sport(sm.sin6_port);
+        flowmask.set_sen_ip6_dport(dm.sin6_port);
+        if transproto != 0 {
+            flowmask.set_sen_ip6_proto(0xff);
+        }
+    }
 
     Ok(())
 }
@@ -572,9 +626,39 @@ unsafe fn export_encap(p: &mut *mut u8, encap: &SockaddrEncap, type_: u16) {
                 *p = p.add(padup(size_of::<SockaddrIn>()));
             }
         }
-        // INET6: SENT_IP6 makes a sockaddr_in6 (ipsec_policy keys of IPv6 flows cannot be
-        // made without INET6); the address header is written with an empty address.
-        SENT_IP6 => {}
+        #[cfg(feature = "inet6")]
+        SENT_IP6 => {
+            let src = type_ == SADB_X_EXT_SRC_FLOW || type_ == SADB_X_EXT_SRC_MASK;
+            let sin6 = SockaddrIn6 {
+                sin6_len: size_of::<SockaddrIn6>() as u8,
+                sin6_family: AF_INET6,
+                sin6_addr: if src {
+                    encap.sen_ip6_src()
+                } else {
+                    encap.sen_ip6_dst()
+                },
+                sin6_port: if src {
+                    encap.sen_ip6_sport()
+                } else {
+                    encap.sen_ip6_dport()
+                },
+                ..SockaddrIn6::default()
+            };
+            // SAFETY: the caller's contract.
+            unsafe {
+                sadb_put(
+                    saddr,
+                    SadbAddress {
+                        sadb_address_len: ((size_of::<SadbAddress>()
+                            + padup(size_of::<SockaddrIn6>()))
+                            / size_of::<u64>()) as u16,
+                        ..SadbAddress::default()
+                    },
+                );
+                sadb_put(*p, sin6);
+                *p = p.add(padup(size_of::<SockaddrIn6>()));
+            }
+        }
         _ => {}
     }
 }
@@ -608,10 +692,12 @@ pub unsafe fn export_flow(
         _ => 0,
     };
 
-    if flow.sen_type() == SENT_IP4 {
-        sab.sadb_protocol_direction = flow.sen_direction();
+    match flow.sen_type() {
+        SENT_IP4 => sab.sadb_protocol_direction = flow.sen_direction(),
+        #[cfg(feature = "inet6")]
+        SENT_IP6 => sab.sadb_protocol_direction = flow.sen_ip6_direction(),
+        _ => {}
     }
-    // INET6: sen_ip6_direction for SENT_IP6; not configured.
 
     // SAFETY: (for the function) the caller's contract.
     unsafe {
@@ -623,10 +709,12 @@ pub unsafe fn export_flow(
             sadb_protocol_len: (size_of::<SadbProtocol>() / size_of::<u64>()) as u16,
             ..SadbProtocol::default()
         };
-        if flow.sen_type() == SENT_IP4 {
-            sab.sadb_protocol_proto = flow.sen_proto();
+        match flow.sen_type() {
+            SENT_IP4 => sab.sadb_protocol_proto = flow.sen_proto(),
+            #[cfg(feature = "inet6")]
+            SENT_IP6 => sab.sadb_protocol_proto = flow.sen_ip6_proto(),
+            _ => {}
         }
-        // INET6: sen_ip6_proto for SENT_IP6; not configured.
         sadb_put(*p, sab);
         *p = p.add(size_of::<SadbProtocol>());
 
@@ -663,7 +751,8 @@ pub unsafe fn import_address(sa: &mut SockaddrUnion, sadb_address: *const u8) {
     } else {
         match ssa_family {
             AF_INET => size_of::<SockaddrIn>(),
-            // INET6: sizeof(struct sockaddr_in6); not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => size_of::<SockaddrIn6>(),
             _ => return,
         }
     };

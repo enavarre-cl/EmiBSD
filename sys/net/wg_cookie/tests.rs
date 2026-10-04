@@ -34,11 +34,34 @@ fn rl_pool(pool: &'static Pool) {
     );
 }
 
-/// The `struct sockaddr *` of a `sockaddr_in` (both 16 bytes).
-fn sa(sin: &SockaddrIn) -> &Sockaddr {
-    // SAFETY: `sintosa` of a `sockaddr_in`, which is as long as a `sockaddr` (asserted in the
-    // module); `Sockaddr` is byte-aligned.
-    unsafe { &*ptr::from_ref(sin).cast::<Sockaddr>() }
+/// The `struct sockaddr *` of a `sockaddr_in`, as a `sockaddr_storage`.
+fn sa(sin: &SockaddrIn) -> SockaddrStorage {
+    let mut ss = SockaddrStorage::zeroed();
+    // SAFETY: a `sockaddr_storage` is longer than a `sockaddr_in` (asserted in the module);
+    // both are made of integers.
+    unsafe {
+        ptr::copy_nonoverlapping(
+            ptr::from_ref(sin).cast::<u8>(),
+            ptr::from_mut(&mut ss).cast::<u8>(),
+            size_of::<SockaddrIn>(),
+        )
+    };
+    ss
+}
+
+/// The `struct sockaddr *` of a `sockaddr_in6`, as a `sockaddr_storage`.
+#[cfg(feature = "inet6")]
+fn sa6(sin6: &SockaddrIn6) -> SockaddrStorage {
+    let mut ss = SockaddrStorage::zeroed();
+    // SAFETY: as in `sa`, for a `sockaddr_in6`.
+    unsafe {
+        ptr::copy_nonoverlapping(
+            ptr::from_ref(sin6).cast::<u8>(),
+            ptr::from_mut(&mut ss).cast::<u8>(),
+            size_of::<SockaddrIn6>(),
+        )
+    };
+    ss
 }
 
 /// `struct expected_results`: the result of the constant address and the sleep before it.
@@ -71,7 +94,11 @@ fn cookie_ratelimit_timings_test() {
         sin_family: AF_INET,
         ..SockaddrIn::default()
     };
-    // INET6: the sin6 half of the test; not configured.
+    #[cfg(feature = "inet6")]
+    let mut sin6 = SockaddrIn6 {
+        sin6_family: AF_INET6,
+        ..SockaddrIn6::default()
+    };
 
     for (i, (result, sleep_time)) in RL_EXPECTED.iter().enumerate() {
         if *sleep_time != 0 {
@@ -84,7 +111,7 @@ fn cookie_ratelimit_timings_test() {
         sin.sin_port = arc4random() as u16;
 
         assert_eq!(
-            ratelimit_allow(&rl, sa(&sin)),
+            ratelimit_allow(&rl, &sa(&sin)),
             *result,
             "malicious v4, iter {i}"
         );
@@ -94,10 +121,39 @@ fn cookie_ratelimit_timings_test() {
         sin.sin_port = arc4random() as u16;
 
         assert_eq!(
-            ratelimit_allow(&rl, sa(&sin)),
+            ratelimit_allow(&rl, &sa(&sin)),
             Ok(()),
             "non-malicious v4, iter {i}"
         );
+
+        #[cfg(feature = "inet6")]
+        {
+            // The first v6 ratelimit_allow is against a constant address, and should be
+            // indifferent to the port. We also mutate the lower 64 bits of the address as we
+            // want to ensure ratelimit occurs against the higher 64 bits (/64 network).
+            sin6.sin6_addr.set_s6_addr32(0, 0x01020304);
+            sin6.sin6_addr.set_s6_addr32(1, 0x05060708);
+            sin6.sin6_addr.set_s6_addr32(2, i as u32);
+            sin6.sin6_addr.set_s6_addr32(3, i as u32);
+            sin6.sin6_port = arc4random() as u16;
+
+            assert_eq!(
+                ratelimit_allow(&rl, &sa6(&sin6)),
+                *result,
+                "malicious v6, iter {i}"
+            );
+
+            // Again, test that an address different to above is still allowed.
+            sin6.sin6_addr
+                .set_s6_addr32(0, sin6.sin6_addr.s6_addr32(0) + i as u32 + 1);
+            sin6.sin6_port = arc4random() as u16;
+
+            assert_eq!(
+                ratelimit_allow(&rl, &sa6(&sin6)),
+                Ok(()),
+                "non-malicious v6, iter {i}"
+            );
+        }
     }
     ratelimit_deinit(&rl);
     pool_destroy(&RL_POOL);
@@ -123,12 +179,12 @@ fn cookie_ratelimit_capacity_test() {
         sin.sin_addr.s_addr = i as u32;
         if i == RATELIMIT_SIZE_MAX {
             assert_eq!(
-                ratelimit_allow(&rl, sa(&sin)),
+                ratelimit_allow(&rl, &sa(&sin)),
                 Err(Errno::ECONNREFUSED),
                 "reject, iter {i}"
             );
         } else {
-            assert_eq!(ratelimit_allow(&rl, sa(&sin)), Ok(()), "allow, iter {i}");
+            assert_eq!(ratelimit_allow(&rl, &sa(&sin)), Ok(()), "allow, iter {i}");
         }
     }
     assert_eq!(rl.rl_table_num.get(), RATELIMIT_SIZE_MAX);
@@ -183,7 +239,7 @@ fn cookie_mac_test() {
     for i in 0..cm.mac1.len() {
         cm.mac1[i] = !cm.mac1[i];
         assert_eq!(
-            cookie_checker_validate_macs(&checker, &cm, &message, false, sa(&sin)),
+            cookie_checker_validate_macs(&checker, &cm, &message, false, &sa(&sin)),
             Err(Errno::EINVAL),
             "validate_macs_noload_munge"
         );
@@ -198,20 +254,20 @@ fn cookie_mac_test() {
 
     // Check we can successfully validate the MAC
     assert_eq!(
-        cookie_checker_validate_macs(&checker, &cm, &message, false, sa(&sin)),
+        cookie_checker_validate_macs(&checker, &cm, &message, false, &sa(&sin)),
         Ok(()),
         "validate_macs_noload_normal"
     );
 
     // Check we get a EAGAIN if no mac2 and under load
     assert_eq!(
-        cookie_checker_validate_macs(&checker, &cm, &message, true, sa(&sin)),
+        cookie_checker_validate_macs(&checker, &cm, &message, true, &sa(&sin)),
         Err(Errno::EAGAIN),
         "validate_macs_load_normal"
     );
 
     // Simulate a cookie message
-    cookie_checker_create_payload(&checker, &cm, &mut nonce, &mut cookie, sa(&sin));
+    cookie_checker_create_payload(&checker, &cm, &mut nonce, &mut cookie, &sa(&sin));
 
     // Validate all bytes are checked in cookie
     for i in 0..cookie.len() {
@@ -246,7 +302,7 @@ fn cookie_mac_test() {
 
     // Check we get OK if mac2 and under load
     assert_eq!(
-        cookie_checker_validate_macs(&checker, &cm, &message, true, sa(&sin)),
+        cookie_checker_validate_macs(&checker, &cm, &message, true, &sa(&sin)),
         Ok(()),
         "validate_macs_load_normal_mac2"
     );
@@ -254,7 +310,7 @@ fn cookie_mac_test() {
     sin.sin_addr.s_addr = !sin.sin_addr.s_addr;
     // Check we get EAGAIN if we munge the source IP
     assert_eq!(
-        cookie_checker_validate_macs(&checker, &cm, &message, true, sa(&sin)),
+        cookie_checker_validate_macs(&checker, &cm, &message, true, &sa(&sin)),
         Err(Errno::EAGAIN),
         "validate_macs_load_spoofip_mac2"
     );
@@ -262,7 +318,7 @@ fn cookie_mac_test() {
 
     // Check we get OK if mac2 and under load
     assert_eq!(
-        cookie_checker_validate_macs(&checker, &cm, &message, true, sa(&sin)),
+        cookie_checker_validate_macs(&checker, &cm, &message, true, &sa(&sin)),
         Ok(()),
         "validate_macs_load_normal_mac2_retry"
     );
@@ -317,12 +373,127 @@ fn mac1_and_mac2_match_blake2s() {
     cookie_checker_update(&checker, Some(&public));
     let sin = SockaddrIn::default();
     assert_eq!(
-        cookie_checker_validate_macs(&checker, &cm, &message, false, sa(&sin)),
+        cookie_checker_validate_macs(&checker, &cm, &message, false, &sa(&sin)),
         Ok(())
     );
     cookie_checker_update(&checker, None);
     assert_eq!(
-        cookie_checker_validate_macs(&checker, &cm, &message, false, sa(&sin)),
+        cookie_checker_validate_macs(&checker, &cm, &message, false, &sa(&sin)),
         Err(Errno::EINVAL)
     );
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn cookie_mac_test_v6() {
+    let _g = setup();
+    static RL_POOL: Pool = Pool::new();
+    let checker = CookieChecker::new();
+    let maker = CookieMaker::new();
+    let mut cm = CookieMacs::default();
+    let mut nonce = [0u8; COOKIE_NONCE_SIZE];
+    let mut cookie = [0u8; COOKIE_ENCRYPTED_SIZE];
+    let mut shared = [0u8; COOKIE_INPUT_SIZE];
+    let mut message = [0u8; MESSAGE_LEN];
+
+    arc4random_buf(&mut shared);
+    arc4random_buf(&mut message);
+
+    cookie_maker_init(&maker, &shared);
+    rl_pool(&RL_POOL);
+    cookie_checker_init(&checker, &RL_POOL).expect("cookie_checker_allocate");
+    cookie_checker_update(&checker, Some(&shared));
+
+    let mut sin6 = SockaddrIn6 {
+        sin6_family: AF_INET6,
+        sin6_len: size_of::<SockaddrIn6>() as u8,
+        sin6_port: 51820,
+        ..SockaddrIn6::default()
+    };
+    sin6.sin6_addr.s6_addr[0] = 0x20;
+    sin6.sin6_addr.s6_addr[1] = 0x01;
+    sin6.sin6_addr.s6_addr[15] = 1;
+
+    cookie_maker_mac(&maker, &mut cm, &message);
+
+    // Without load only mac1 counts.
+    assert_eq!(
+        cookie_checker_validate_macs(&checker, &cm, &message, false, &sa6(&sin6)),
+        Ok(())
+    );
+    // Under load, no mac2 means a cookie.
+    assert_eq!(
+        cookie_checker_validate_macs(&checker, &cm, &message, true, &sa6(&sin6)),
+        Err(Errno::EAGAIN)
+    );
+
+    // The cookie of an IPv6 source is made from its address and port.
+    cookie_checker_create_payload(&checker, &cm, &mut nonce, &mut cookie, &sa6(&sin6));
+    assert_eq!(
+        cookie_maker_consume_payload(&maker, &nonce, &cookie),
+        Ok(())
+    );
+    cookie_maker_mac(&maker, &mut cm, &message);
+    assert!(cm.mac2.iter().any(|b| *b != 0));
+    assert_eq!(
+        cookie_checker_validate_macs(&checker, &cm, &message, true, &sa6(&sin6)),
+        Ok(())
+    );
+
+    // Another address or another port is another cookie.
+    let mut other = sin6;
+    other.sin6_addr.s6_addr[15] = 2;
+    assert_eq!(
+        cookie_checker_validate_macs(&checker, &cm, &message, true, &sa6(&other)),
+        Err(Errno::EAGAIN)
+    );
+    let mut other = sin6;
+    other.sin6_port = 51821;
+    assert_eq!(
+        cookie_checker_validate_macs(&checker, &cm, &message, true, &sa6(&other)),
+        Err(Errno::EAGAIN)
+    );
+
+    cookie_checker_deinit(&checker);
+    pool_destroy(&RL_POOL);
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn ratelimit_v6_counts_a_slash_64() {
+    let _g = setup();
+    static RL_POOL: Pool = Pool::new();
+    rl_pool(&RL_POOL);
+    let rl = Ratelimit::new();
+    ratelimit_init(&rl, &RL_POOL).expect("ratelimit_init");
+
+    let mut sin6 = SockaddrIn6 {
+        sin6_family: AF_INET6,
+        ..SockaddrIn6::default()
+    };
+    sin6.sin6_addr.set_s6_addr32(0, 0x01020304);
+    sin6.sin6_addr.set_s6_addr32(1, 0x05060708);
+
+    // INITIATIONS_BURSTABLE initiations pass, whatever the interface identifier or the port,
+    // then the whole /64 is refused.
+    for i in 0..INITIATIONS_BURSTABLE as u32 {
+        sin6.sin6_addr.set_s6_addr32(3, i);
+        sin6.sin6_port = i as u16;
+        assert_eq!(ratelimit_allow(&rl, &sa6(&sin6)), Ok(()), "iter {i}");
+    }
+    sin6.sin6_addr.set_s6_addr32(3, 99);
+    assert_eq!(ratelimit_allow(&rl, &sa6(&sin6)), Err(Errno::ECONNREFUSED));
+
+    // A different /64 has its own bucket, and so does the same bits as an IPv4 address.
+    sin6.sin6_addr.set_s6_addr32(1, 0x05060709);
+    assert_eq!(ratelimit_allow(&rl, &sa6(&sin6)), Ok(()));
+    assert_eq!(rl.rl_table_num.get(), 2);
+
+    // An address that is neither IPv4 nor IPv6 is refused.
+    let mut ss = sa6(&sin6);
+    ss.ss_family = AF_UNSPEC;
+    assert_eq!(ratelimit_allow(&rl, &ss), Err(Errno::ECONNREFUSED));
+
+    ratelimit_deinit(&rl);
+    pool_destroy(&RL_POOL);
 }

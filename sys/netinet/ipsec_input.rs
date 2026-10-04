@@ -65,8 +65,13 @@
 //!   `pf_pkt_addr_changed`, and `PF_TAG_DIVERTED` packets go to raw sockets.
 //! - `NBPFILTER` is configured: the `enc(4)` interface of the SA counts a decapsulated
 //!   packet, becomes its `ph_ifidx` (but for IPComp) and taps it.
-//! - Not configured, each a comment at its site: `NSEC` (`sec(4)`), `INET6` (`in6_cksum`,
-//!   `rip6_input`, the IPv6 header chain of `ipsec_protoff`).
+//! - `INET6` is configured (feature `inet6`): the IPv6 destination of `ipsec_common_input`,
+//!   the IPv6 header fix and `in6_cksum` of `ipsec_common_input_cb`, `rip6_input` for a
+//!   disabled protocol and the extension header chain of `ipsec_protoff` (`ipsec_forward_check`
+//!   and `ipsec_local_check` are the same for both families). `ipsec_protoff` copies each
+//!   extension header with `m_copydata` as the C does and reads `ip6_nxt` of the first
+//!   mbuf through `mtod_ip6`.
+//! - Not configured, each a comment at its site: `NSEC` (`sec(4)`).
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::ffi::c_void;
@@ -126,9 +131,21 @@ use crate::netinet::ip_ipsp::{
 use crate::netinet::ip_output::in_hdr_cksum_out;
 use crate::netinet::ip_spd::{SpdError, ipsp_spd_lookup};
 use crate::netinet::ip_var::{mtod_ip, mtod_ip_store};
+#[cfg(feature = "inet6")]
+use crate::netinet::ip6::{IPV6_MAXPACKET, Ip6Ext, Ip6Hdr};
 use crate::netinet::ipsec_output::{UDPENCAP_ENABLE, UDPENCAP_PORT};
 use crate::netinet::raw_ip::rip_input;
 use crate::netinet::udp::Udphdr;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::{In6Addr, SockaddrIn6};
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6_cksum::in6_cksum;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6_src::in6_recoverscope;
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_var::{mtod_ip6, mtod_ip6_store};
+#[cfg(feature = "inet6")]
+use crate::netinet6::raw_ip6::rip6_input;
 use crate::sys::endian::{htons, ntohl, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::M_NOWAIT;
@@ -421,7 +438,19 @@ pub fn ipsec_common_input(
                     ..SockaddrIn::default()
                 });
             }
-            // INET6: the IPv6 destination (in6_recoverscope); not configured.
+            #[cfg(feature = "inet6")]
+            x if x == i32::from(AF_INET6) => {
+                let mut b = [0u8; 16];
+                m_copydata(m, offset_of!(Ip6Hdr, ip6_dst) as i32, &mut b);
+                let mut sin6 = SockaddrIn6 {
+                    sin6_len: size_of::<SockaddrIn6>() as u8,
+                    sin6_family: AF_INET6,
+                    sin6_addr: In6Addr::new(b),
+                    ..SockaddrIn6::default()
+                };
+                in6_recoverscope(&mut sin6, &In6Addr::new(b));
+                dst_address.set_sin6(&sin6);
+            }
             _ => {
                 crate::ipsec_dprintf!("ipsec_common_input", "unsupported protocol family {}", af);
                 ipsec_istat(
@@ -563,13 +592,15 @@ pub fn ipsec_common_input_cb(
     mp: &mut Option<&'static Mbuf>,
     tdbp: &'static Tdb,
     skip: i32,
-    _protoff: i32,
+    protoff: i32,
     _ns: Option<&Netstack>,
 ) -> i32 {
     let Some(mut m) = *mp else {
         return IPPROTO_DONE;
     };
 
+    #[cfg(not(feature = "inet6"))]
+    let _ = protoff;
     let af = tdbp.tdb_dst.get().sa_family();
     let sproto = i32::from(tdbp.tdb_sproto.get());
     let istat = |x, y, z| ipsec_istat(sproto, x, y, z);
@@ -617,7 +648,47 @@ pub fn ipsec_common_input_cb(
             prot = ip.ip_p;
         }
 
-        // INET6: fix the IPv6 header (ip6_plen, the next header at protoff); not configured.
+        // Fix IPv6 header
+        #[cfg(feature = "inet6")]
+        if af == AF_INET6 {
+            if (m.m_len().get() as usize) < size_of::<Ip6Hdr>() {
+                *mp = m_pullup(m, size_of::<Ip6Hdr>() as i32);
+                match *mp {
+                    Some(mm) => m = mm,
+                    None => {
+                        crate::ipsec_dprintf!(
+                            "ipsec_common_input_cb",
+                            "processing failed for SA {}/{:08x}",
+                            ipsp_address(&tdbp.tdb_dst.get()),
+                            ntohl(tdbp.tdb_spi.get())
+                        );
+                        istat(
+                            EspstatCounters::EspsHdrops,
+                            AhstatCounters::AhsHdrops,
+                            IpcompCounters::IpcompsHdrops,
+                        );
+                        break 'baddone;
+                    }
+                }
+            }
+            if m.m_pkthdr().len.get() as usize > IPV6_MAXPACKET + skip as usize {
+                istat(
+                    EspstatCounters::EspsToobig,
+                    AhstatCounters::AhsToobig,
+                    IpcompCounters::IpcompsToobig,
+                );
+                break 'baddone;
+            }
+
+            let mut ip6 = mtod_ip6(m);
+            ip6.ip6_plen = htons((m.m_pkthdr().len.get() - skip) as u16);
+            mtod_ip6_store(m, &ip6);
+
+            // Save protocol
+            let mut p = [0u8; 1];
+            m_copydata(m, protoff, &mut p);
+            prot = p[0];
+        }
 
         // Fix TCP/UDP checksum of UDP encapsulated transport mode ESP packet. (RFC3948
         // 3.1.2)
@@ -642,7 +713,21 @@ pub fn ipsec_common_input_cb(
                         &cksum.to_ne_bytes(),
                         M_NOWAIT,
                     );
-                    // INET6: in6_cksum of the UDP datagram; not configured.
+                    #[cfg(feature = "inet6")]
+                    if af == AF_INET6 {
+                        let cksum = in6_cksum(
+                            m,
+                            IPPROTO_UDP as u8,
+                            skip as u32,
+                            (m.m_pkthdr().len.get() - skip) as u32,
+                        );
+                        let _ = m_copyback(
+                            m,
+                            skip + offset_of!(Udphdr, uh_sum) as i32,
+                            &cksum.to_ne_bytes(),
+                            M_NOWAIT,
+                        );
+                    }
                 }
                 IPPROTO_TCP => {
                     if (m.m_pkthdr().len.get() as usize) < skip as usize + SIZEOF_TCPHDR {
@@ -664,7 +749,15 @@ pub fn ipsec_common_input_cb(
                         cksum =
                             in4_cksum(m, IPPROTO_TCP as u8, skip, m.m_pkthdr().len.get() - skip);
                     }
-                    // INET6: in6_cksum of the TCP segment; not configured.
+                    #[cfg(feature = "inet6")]
+                    if af == AF_INET6 {
+                        cksum = in6_cksum(
+                            m,
+                            IPPROTO_TCP as u8,
+                            skip as u32,
+                            (m.m_pkthdr().len.get() - skip) as u32,
+                        );
+                    }
                     let _ = m_copyback(
                         m,
                         skip + TH_SUM_OFFSET as i32,
@@ -959,7 +1052,8 @@ pub fn ipsec_input_disabled(
 ) -> i32 {
     match af {
         x if x == i32::from(AF_INET) => rip_input(mp, offp, proto, af, ns),
-        // INET6: rip6_input; not configured.
+        #[cfg(feature = "inet6")]
+        x if x == i32::from(AF_INET6) => rip6_input(mp, offp, proto, af, ns),
         _ => unhandled_af(af),
     }
 }
@@ -1239,12 +1333,65 @@ pub unsafe fn esp4_ctlinput(cmd: i32, sa: *const Sockaddr, rdomain: u32, v: *mut
 }
 
 /// `ipsec_protoff`: find the offset of the next protocol field in the previous header.
-pub fn ipsec_protoff(_m: &Mbuf, _off: i32, af: i32) -> i32 {
+pub fn ipsec_protoff(m: &Mbuf, off: i32, af: i32) -> i32 {
     match af {
         x if x == i32::from(AF_INET) => offset_of!(Ip, ip_p) as i32,
-        // INET6: chase the IPv6 extension header chain; not configured.
-        _ => unhandled_af(af),
+        #[cfg(feature = "inet6")]
+        x if x == i32::from(AF_INET6) => ipsec_protoff6(m, off),
+        _ => {
+            let _ = (m, off);
+            unhandled_af(af)
+        }
     }
+}
+
+/// The `AF_INET6` half of `ipsec_protoff`: chase down the header chain.
+#[cfg(feature = "inet6")]
+fn ipsec_protoff6(m: &Mbuf, off: i32) -> i32 {
+    if (off as usize) < size_of::<Ip6Hdr>() {
+        return -1;
+    }
+
+    if off as usize == size_of::<Ip6Hdr>() {
+        return offset_of!(Ip6Hdr, ip6_nxt) as i32;
+    }
+
+    // Chase down the header chain...
+    let mut protoff = size_of::<Ip6Hdr>() as i32;
+    let mut nxt = i32::from(mtod_ip6(m).ip6_nxt);
+    let mut l: i32 = 0;
+
+    loop {
+        protoff += l;
+        let mut b = [0u8; size_of::<Ip6Ext>()];
+        m_copydata(m, protoff, &mut b);
+        let ip6e = Ip6Ext {
+            ip6e_nxt: b[offset_of!(Ip6Ext, ip6e_nxt)],
+            ip6e_len: b[offset_of!(Ip6Ext, ip6e_len)],
+        };
+
+        if nxt == IPPROTO_AH {
+            l = (i32::from(ip6e.ip6e_len) + 2) << 2;
+        } else {
+            l = (i32::from(ip6e.ip6e_len) + 1) << 3;
+        }
+        #[cfg(feature = "diagnostic")]
+        if l <= 0 {
+            panic(format_args!("ipsec_protoff: l went zero or negative"));
+        }
+
+        nxt = i32::from(ip6e.ip6e_nxt);
+        if protoff + l >= off {
+            break;
+        }
+    }
+
+    // Malformed packet check
+    if protoff + l != off {
+        return -1;
+    }
+
+    protoff + offset_of!(Ip6Ext, ip6e_nxt) as i32
 }
 
 /// The SA an `IPSEC_IN_DONE` tag of `m` names (the inner-most one), with a reference.
@@ -1318,3 +1465,7 @@ const _: () = {
     assert!(size_of::<crate::netinet::ip_ipcomp::Ipcompstat>() == IPCOMPS_NCOUNTERS * 8);
     assert!(size_of::<crate::netinet::ip_ipsp::Ipsecstat>() == IPSEC_NCOUNTERS * 8);
 };
+
+#[cfg(test)]
+#[cfg(feature = "inet6")]
+mod tests;
