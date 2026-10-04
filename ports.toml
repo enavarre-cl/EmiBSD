@@ -2985,7 +2985,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d76bdcce649a48bf5e91b43d09fb2e0ea5256f3d"
 deps = ["sys/sys/domain.h", "sys/sys/protosw.h", "sys/netinet/in_proto.c", "sys/kern/uipc_proto.c", "sys/net/rtsock.c", "sys/kern/kern_timeout.c"]
-notes = "M7b: domains[] (a slice: pfkeydomain (M9c), inetdomain, unixdomain, routedomain; INET6, MPLS, BLUETOOTH not configured), domaininit (runs in main; max_linkhdr/max_hdr, the pffast/pfslow timeouts as statics), pffinddomain, pffindtype, pffindproto, net_sysctl (PF_UNIX is uipc_sysctl, PF_PFLOW pflow_sysctl (M9); CTL_NET in kern_sysctl), net_link_sysctl, pfctlinput (unsafe: raw sockaddr), pfslowtimo, pffasttimo; host test; M9+: NBPFILTER: net_sysctl hands PF_BPF to bpf_sysctl"
+notes = "M7b: domains[] (a slice: pfkeydomain (M9c), inet6domain (feature inet6, M9+), inetdomain, unixdomain, routedomain; MPLS, BLUETOOTH not configured), domaininit (runs in main; max_linkhdr/max_hdr, the pffast/pfslow timeouts as statics), pffinddomain, pffindtype, pffindproto, net_sysctl (PF_UNIX is uipc_sysctl, PF_PFLOW pflow_sysctl (M9); CTL_NET in kern_sysctl), net_link_sysctl, pfctlinput (unsafe: raw sockaddr), pfslowtimo, pffasttimo; host test; M9+: NBPFILTER: net_sysctl hands PF_BPF to bpf_sysctl"
 
 [[file]]
 c = "sys/sys/socketvar.h"
@@ -5734,34 +5734,38 @@ notes = "M9+: the whole file: frag6_init, frag6_input (RFC 6946 atomic fragments
 [[file]]
 c = "sys/netinet6/dest6.c"
 rust = "sys/netinet6/dest6.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "b27feba1d47bbf13c6c819a1e45190b6b64f86a6"
+deps = ["sys/netinet6/ip6_input.c", "sys/netinet/ip6.h", "sys/netinet6/ip6_var.h"]
+notes = "M9+: dest6_input: header length check, the Pad1/PadN walk, ip6_unknown_opt (bool) for other options; host tests"
 
 [[file]]
 c = "sys/netinet6/route6.c"
 rust = "sys/netinet6/route6.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "3bb7d1b3232b9373b0324c4d1cc813a8ab2d9e15"
+deps = ["sys/netinet6/icmp6.c", "sys/netinet/ip6.h", "sys/netinet6/ip6_var.h"]
+notes = "M9+: route6_input: a routing header with no segments left is skipped, any other gets an ICMPv6 parameter problem; host tests"
 
 [[file]]
 c = "sys/netinet6/icmp6.c"
 rust = "sys/netinet6/icmp6.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "c3bd4d47d1ee530c6bf1755f815790a28c2ee5a4"
+deps = ["sys/netinet/icmp6.h", "sys/netinet6/in6.c", "sys/netinet6/in6_src.c", "sys/netinet6/in6_cksum.c", "sys/netinet6/ip6_input.c", "sys/netinet6/ip6_output.c", "sys/netinet6/nd6.c", "sys/netinet6/nd6_nbr.c", "sys/netinet6/nd6_rtr.c", "sys/netinet6/mld6.c", "sys/netinet6/raw_ip6.c", "sys/netinet6/in6_proto.c", "sys/net/route.c"]
+notes = "M9+: the whole file: icmp6_init, icmp6_errcount, icmp6_mtudisc_callback_register (a StaticCell<Vec<fn>> written at init), icmp6_do_error/icmp6_error (per-type counts, no error about errors, multicast or unspecified sources, ppsratecheck rate limit, truncation to the minimum MTU, the quoted header's scope cleared), icmp6_input (checksum, echo reply built by icmp6_echo_reply and sent by ip6_send, MLD/ND/redirect dispatch on copies, errors through icmp6_notify_error (bool) to pr_ctlinput, then rip6_input), icmp6_reflect, icmp6_fasttimo, icmp6_redirect_input (frees the packet when the interface is gone; the C leaks it)/icmp6_redirect_output (headers built in a stack buffer), icmp6_mtudisc_update/clone/timeout, icmp6_ctloutput (ICMP6_FILTER), icmp6_ratelimit, icmp6_sysctl; counters a static atomic array; NCARP and MROUTING not configured; host tests (echo reply on both mbuf paths, error rules and layout, reflect, input drops, redirect validation, PMTU, filter, sysctls)"
 
 [[file]]
 c = "sys/netinet6/mld6.c"
 rust = "sys/netinet6/mld6.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "4c9df4b6038b56472e564fd41a36c9d5479dc50d"
+deps = ["sys/netinet6/mld6.h", "sys/netinet6/mld6_var.h", "sys/netinet6/in6.c", "sys/netinet6/ip6_output.c", "sys/netinet/icmp6.h"]
+notes = "M9+: module with mld6.h. MLDv1 host side: mld6_init (router alert hop-by-hop option), mld6_start_listening/mld6_stop_listening, mld6_input (on a copy of the header: queries arm or answer timers, others' reports stop ours), mld6_fasttimo/mld6_checktimer, mld6_sendpkt through ip6_output with hop limit 1 and the router alert (options rebuilt per send from a static buffer); report lists are Vecs; MROUTING not configured; host tests"
 
 [[file]]
 c = "sys/netinet6/nd6.c"

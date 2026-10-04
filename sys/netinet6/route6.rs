@@ -35,26 +35,61 @@
 //!
 //! Upstream: sys/netinet6/route6.c @ 3ce1f3f79392
 //!
-//! Status: skeleton from the INET6 foundation step: the globals are defined, every
-//! function has its final signature and a placeholder body that reports itself through
-//! `unported!` until the file is ported.
+//! Routing headers of any type (type 0 is treated as unknown, RFC 5095) are skipped when no
+//! segments are left, and answered with an ICMPv6 parameter problem otherwise.
 //!
 //! ## Deviations
-//! - None yet: the file is a skeleton (see `Status`).
+//! - The ICMPv6 pointer of the parameter problem is `off + 2` (the offset of `ip6r_type`
+//!   from the start of the packet); the C computes it as the difference of two addresses
+//!   (`&rh->ip6r_type - ip6`), which is the same value when the header is in the first
+//!   mbuf and not meaningful when `m_pulldown` moved it.
 
 use crate::net::if_var::Netstack;
+use crate::netinet::icmp6::{ICMP6_PARAM_PROB, ICMP6_PARAMPROB_HEADER};
+use crate::netinet::in_::IPPROTO_DONE;
+use crate::netinet::ip6::{Ip6Rthdr, ip6_exthdr_get};
+use crate::netinet6::icmp6::icmp6_error;
+use crate::netinet6::ip6_var::{Ip6statCounters, ip6stat_inc};
 use crate::sys::mbuf::Mbuf;
+use core::mem::{offset_of, size_of};
 
 /// `route6_input`: the routing header's `pr_input`: skips a header with no segments
-/// left, refuses the others; returns the next header.
+/// left, refuses the others; returns the next header. `proto` is unused.
 pub fn route6_input(
     mp: &mut Option<&'static Mbuf>,
     offp: &mut i32,
-    proto: i32,
-    af: i32,
-    ns: Option<&Netstack>,
+    _proto: i32,
+    _af: i32,
+    _ns: Option<&Netstack>,
 ) -> i32 {
-    let _ = (mp, offp, proto, af, ns);
-    let _ = crate::unported!("route6_input: placeholder");
-    crate::netinet::in_::IPPROTO_DONE
+    let off = *offp;
+
+    let Some(rh) = ip6_exthdr_get(mp, off, size_of::<Ip6Rthdr>() as i32) else {
+        ip6stat_inc(Ip6statCounters::Ip6sTooshort);
+        return IPPROTO_DONE;
+    };
+    // SAFETY: ip6_exthdr_get made the `Ip6Rthdr` bytes readable at `rh`; the packet data has
+    // no alignment guarantee, so it is read unaligned.
+    let rh = unsafe { rh.cast::<Ip6Rthdr>().read_unaligned() };
+
+    // Routing header type 0 is handled like an unrecognised routing type (RFC 5095).
+    if rh.ip6r_segleft != 0 {
+        ip6stat_inc(Ip6statCounters::Ip6sBadoptions);
+        if let Some(m) = mp.take() {
+            icmp6_error(
+                m,
+                ICMP6_PARAM_PROB,
+                ICMP6_PARAMPROB_HEADER,
+                off + offset_of!(Ip6Rthdr, ip6r_type) as i32,
+            );
+        }
+        return IPPROTO_DONE;
+    }
+
+    // Final dst. Just ignore the header.
+    *offp += (i32::from(rh.ip6r_len) + 1) << 3;
+    i32::from(rh.ip6r_nxt)
 }
+
+#[cfg(test)]
+mod tests;
