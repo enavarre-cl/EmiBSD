@@ -20,7 +20,7 @@ bench = false
 doc = false
 
 [features]
-default = ["alloc", "ffs", "ffs2", "kmemstats", "inet6"]
+default = ["alloc", "ffs", "ffs2", "kmemstats", "inet6", "quota", "ufs_dirhash", "mfs"]
 alloc = []        # enables `extern crate alloc` and the GlobalAlloc over malloc(9)
 diagnostic = []   # OpenBSD `option DIAGNOSTIC` -> kassert! active
 debug = []        # OpenBSD `option DEBUG`      -> kdassert! active
@@ -29,6 +29,9 @@ pool_debug = []   # OpenBSD `option POOL_DEBUG` -> pool_debug = 1
 vmmap_debug = []  # OpenBSD `option VMMAP_DEBUG` -> uvm_tree_sanity, uvm_tree_size_chk, vmspace_validate
 ffs = []          # OpenBSD `option FFS`  -> the fast file system (sys/ufs), in vfsconflist[]
 ffs2 = ["ffs"]    # OpenBSD `option FFS2` -> FFS2 (UFS2 dinodes) support in ffs
+quota = ["ffs"]   # OpenBSD `option QUOTA` -> disk quotas (ufs_quota.c, quotactl(2)); default (GENERIC has it)
+ufs_dirhash = ["ffs"] # OpenBSD `option UFS_DIRHASH` -> hashed lookups in large directories; default (GENERIC)
+mfs = ["ffs"]     # OpenBSD `option MFS` -> the memory file system (sys/ufs/mfs), in vfsconflist[]; default (GENERIC)
 syscall_debug = [] # OpenBSD `option SYSCALL_DEBUG` -> scdebug_call/scdebug_ret print system calls
 qemu = []         # QEMU-only exits (isa-debug-exit, semihosting) and shortcuts
 encdebug = []     # OpenBSD `option ENCDEBUG` -> the IPsec DPRINTF messages (net.inet.ip.encdebug)
