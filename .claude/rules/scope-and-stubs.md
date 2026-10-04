@@ -17,8 +17,9 @@ The kernel is ported incrementally; most of OpenBSD is not here yet. These rules
   accepted by the user at M2 for `comvar.h` and amd64 `bus.h`), MIT or Mach (Carnegie Mellon, the
   `ddb/` and `db_*` files, also accepted at M2) or beerware (Poul-Henning Kamp's `kern_tc.c`,
   accepted by the user at M5) or John S. Dyson's licence (`sys_pipe.c`, `pipe.h`, accepted by
-  the user on 2026-10-03) or the zlib licence (`sys/lib/libz`, `crc32.c` and what it needs,
-  accepted by the user on 2026-10-03; a port is an altered version and says so, clause 2)
+  the user on 2026-10-03) or the zlib licence (all of `sys/lib/libz`: `crc32.c` accepted by the user on
+  2026-10-03, the rest (deflate, inflate, trees, adler32, zutil, `zopenbsd.c`) the same day for
+  M9+'s IPComp; a port is an altered version and says so, clause 2)
   or the IPsec notice of Ioannidis, Keromytis, Provos and Hallqvist (`netinet/ip_ah.h`,
   `ip_esp.h`, `ip_ipsp.h`, ...: permission to use, copy and modify provided the entire
   notice is kept; its optional GPL alternative is not used; accepted by the user on
@@ -35,7 +36,9 @@ The kernel is ported incrementally; most of OpenBSD is not here yet. These rules
 - Compiled-not-ported userland (M8) also accepts, by the user's decision of 2026-10-03:
   Apache-2.0 WITH LLVM-exception (`gnu/llvm/compiler-rt`), public domain (pdksh), files with no
   licence text, the Lucent (gdtoa), Birgmeier (rand48), SunPro (fdlibm), Cheusov (`wcsdup.c`)
-  and Boulet/RTMX (`sys/msg.h`) notices, and the Unicode data-files licence (makefs's
-  `msdosfs_unicode.c`). Kernel ports still follow the list above.
+  and Boulet/RTMX (`sys/msg.h`) notices, the Unicode data-files licence (makefs's
+  `msdosfs_unicode.c`), and, accepted on 2026-10-03 for M9+, LibreSSL's OpenSSL and SSLeay
+  licences (`lib/libcrypto`, `libssl`, `libtls`, advertising clauses included) and tcpdump's
+  LBL notice (BSD-4 style). Kernel ports still follow the list above.
 - Scope changes (dropping an arch, skipping a subsystem, changing the boot protocol) are the
   user's decision. Propose; do not decide.
