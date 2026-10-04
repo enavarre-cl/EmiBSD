@@ -111,8 +111,10 @@
 //! - `pmap_virtual_space` is not in the C (amd64 has `PMAP_STEAL_MEMORY`); the trait needs one
 //!   and it reports the range `pmap_steal_memory` reports.
 //! - User pmaps (M6): `pmap_create`/`pmap_destroy`/`pmap_enter`/`pmap_remove` walk the
-//!   tables through the direct map instead of `pmap_map_ptes` (the recursive mapping of a
-//!   borrowed `%cr3`), so `pmap_pdes_valid`/`normal_pdes` are only used on the current pmap.
+//!   tables through the direct map instead of the recursive mapping of a borrowed `%cr3`, so
+//!   `pmap_map_ptes`/`pmap_unmap_ptes` only take and release the pmap's `pm_mtx` (M11e: where
+//!   the C calls them, with the same lock windows) and switch no `%cr3`;
+//!   `pmap_pdes_valid`/`normal_pdes` are only used on the current pmap.
 //!   `pmap_pdp_ctor` copies the kernel's whole upper half of the PML4 (the C copies the kernel
 //!   VM, direct-map and `KERNBASE` slots one by one). The pmap list (`pmaps`) waits
 //!   for `pmap_growkernel` to need it. The PDP comes from `uvm_pagealloc` rather than `pmap_pdp_pool`; the pmap pool is
@@ -166,7 +168,7 @@ use crate::arch::amd64::include::pte::{
 use crate::arch::amd64::include::specialreg::{EFER_NXE, MSR_EFER};
 use crate::arch::amd64::include::vmparam::{VM_MAX_ADDRESS, VM_MAXUSER_ADDRESS};
 use crate::arch::amd64::include::vmparam::{VM_MAX_KERNEL_ADDRESS, VM_MIN_KERNEL_ADDRESS};
-use crate::kern::kern_lock::{mtx_enter, mtx_leave};
+use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::machine::intr::IPL_VM;
 #[cfg(feature = "multiprocessor")]
@@ -410,6 +412,28 @@ fn pmap_pte2flags(pte: u64) -> u32 {
 fn pmap_sync_flags_pte(pg: &VmPage, pte: u64) {
     if pte & (PG_U | PG_M) != 0 {
         pg.set_bits(pmap_pte2flags(pte));
+    }
+}
+
+/// `pmap_map_ptes`: lock the target map before touching its page tables, to guarantee other
+/// CPUs have finished changing the tables before we potentially start caching table and TLB
+/// entries. The kernel's pmap is always accessible (and has no lock). The tables are reached
+/// through the direct map, so no `%cr3` is borrowed (see the module's deviations).
+fn pmap_map_ptes(pmap: &Pmap) {
+    kassert!(!pmap.pmap_is_ept());
+
+    // the kernel's pmap is always accessible
+    if ptr::eq(pmap, pmap_kernel()) {
+        return;
+    }
+
+    mtx_enter(&pmap.pm_mtx);
+}
+
+/// `pmap_unmap_ptes`: releases what `pmap_map_ptes` took.
+fn pmap_unmap_ptes(pmap: &Pmap) {
+    if !ptr::eq(pmap, pmap_kernel()) {
+        mtx_leave(&pmap.pm_mtx);
     }
 }
 
@@ -752,12 +776,19 @@ pub fn pmap_extract(pmap: &Pmap, va: Vaddr) -> Option<Paddr> {
         return Some(pmap_direct_unmap(va));
     }
 
-    // mtx_enter(&pmap->pm_mtx) for user pmaps: M5.
+    if !ptr::eq(pmap, pmap_kernel()) {
+        mtx_enter(&pmap.pm_mtx);
+    }
 
     let va = va.as_usize();
     let (level, ptes, offs) = pmap_find_pte_direct(pmap, va);
-    // SAFETY: `pmap_find_pte_direct` returned a table page's direct-map address.
+    // SAFETY: `pmap_find_pte_direct` returned a table page's direct-map address, which the
+    // pmap's lock keeps from being freed.
     let pte = unsafe { pde_at(ptes, offs) };
+
+    if !ptr::eq(pmap, pmap_kernel()) {
+        mtx_leave(&pmap.pm_mtx);
+    }
 
     if level == 0 && pmap_valid_entry(pte) {
         return Some(Paddr::new((pte & pg_frame()) as usize | (va & PAGE_MASK)));
@@ -1480,9 +1511,9 @@ pub fn pmap_create() -> &'static Pmap {
         pp.as_ref()
     };
 
-    // mtx_init(&pmap->pm_mtx, IPL_VM): the pmap lock (M5 note). The uvm_objects are
-    // initialised with one reference by `Pmap::new` (uvm_obj_init(&pm_obj[i], &pmap_pager,
-    // 1)); the hints are null.
+    mtx_init(&pmap.pm_mtx, IPL_VM);
+    // The uvm_objects are initialised with one reference by `Pmap::new`
+    // (uvm_obj_init(&pm_obj[i], &pmap_pager, 1)); the hints are null.
     pmap.pm_stats.wired_count.set(0);
     pmap.pm_stats.resident_count.set(1); // count the PDP allocd below
     pmap.pm_type.set(PMAP_TYPE_NORMAL);
@@ -1513,8 +1544,7 @@ pub fn pmap_create() -> &'static Pmap {
 /// `pmap_destroy`: drop reference count on pmap. free pmap if reference count goes to zero.
 pub fn pmap_destroy(pmap: &'static Pmap) {
     // drop reference count
-    let refs = pmap.pm_obj[0].uo_refs.get() - 1;
-    pmap.pm_obj[0].uo_refs.set(refs);
+    let refs = pmap.pm_obj[0].uo_refs.atomic_dec_nv();
     if refs > 0 {
         return;
     }
@@ -1549,7 +1579,7 @@ pub fn pmap_destroy(pmap: &'static Pmap) {
 
 /// Add a reference to the specified pmap.
 pub fn pmap_reference(pmap: &Pmap) {
-    pmap.pm_obj[0].uo_refs.set(pmap.pm_obj[0].uo_refs.get() + 1);
+    pmap.pm_obj[0].uo_refs.atomic_inc();
 }
 
 /// `pmap_remove_ptes`: remove a range of PTEs from a PTP.
@@ -1648,7 +1678,7 @@ fn pmap_do_remove(pmap: &Pmap, sva: usize, eva: usize, flags: i32) {
     let empty_ptps = Pglist::new();
     empty_ptps.init();
 
-    // pmap_map_ptes(pmap): the direct-map walk needs no borrowed %cr3.
+    pmap_map_ptes(pmap);
     let shootself = pmap_is_curpmap(pmap);
     let is_kernel = ptr::eq(pmap, pmap_kernel());
 
@@ -1721,7 +1751,7 @@ fn pmap_do_remove(pmap: &Pmap, sva: usize, eva: usize, flags: i32) {
         pmap_tlb_shootrange(pmap, sva, eva, shootself);
     }
 
-    // pmap_unmap_ptes(pmap, scr3): nothing borrowed.
+    pmap_unmap_ptes(pmap);
     pmap_tlb_shootwait();
 
     // cleanup:
@@ -1751,8 +1781,7 @@ pub fn pmap_page_remove(pg: &VmPage) {
         pmap_reference(pm);
         mtx_leave(&pg.mdpage.pv_mtx);
 
-        // pmap_map_ptes(pm): the direct-map walk needs no borrowed %cr3 (see the module's
-        // deviations); locks pmap.
+        pmap_map_ptes(pm); // locks pmap
         let shootself = pmap_is_curpmap(pm);
 
         // We dropped the pvlist lock before grabbing the pmap lock to avoid lock ordering
@@ -1762,6 +1791,7 @@ pub fn pmap_page_remove(pg: &VmPage) {
         mtx_enter(&pg.mdpage.pv_mtx);
         let Some(pve) = NonNull::new(pg.mdpage.pv_list.get().cast_mut()) else {
             mtx_leave(&pg.mdpage.pv_mtx);
+            pmap_unmap_ptes(pm); // unlocks pmap
             pmap_destroy(pm);
             mtx_enter(&pg.mdpage.pv_mtx);
             continue;
@@ -1770,6 +1800,7 @@ pub fn pmap_page_remove(pg: &VmPage) {
         let e = unsafe { pve.as_ref() };
         if !ptr::eq(e.pv_pmap.get(), pm) {
             mtx_leave(&pg.mdpage.pv_mtx);
+            pmap_unmap_ptes(pm); // unlocks pmap
             pmap_destroy(pm);
             mtx_enter(&pg.mdpage.pv_mtx);
             continue;
@@ -1825,7 +1856,7 @@ pub fn pmap_page_remove(pg: &VmPage) {
                 pmap_free_ptp(pm, ptp, va, &empty_ptps);
             }
         }
-        // pmap_unmap_ptes(pm, scr3): unlocks pmap.
+        pmap_unmap_ptes(pm); // unlocks pmap
         pmap_destroy(pm);
         pool_put(&PMAP_PV_POOL, pve.cast::<u8>());
         mtx_enter(&pg.mdpage.pv_mtx);
@@ -1930,7 +1961,7 @@ pub fn pmap_write_protect(pmap: &Pmap, sva: Vaddr, eva: Vaddr, prot: VmProt) {
     let mut clear: PtEntry = 0;
     let mut set: PtEntry = 0;
 
-    // pmap_map_ptes(pmap): the direct-map walk needs no borrowed %cr3.
+    pmap_map_ptes(pmap);
     let shootself = pmap_is_curpmap(pmap);
 
     if prot & PROT_READ == 0 {
@@ -1999,7 +2030,7 @@ pub fn pmap_write_protect(pmap: &Pmap, sva: Vaddr, eva: Vaddr, prot: VmProt) {
         pmap_tlb_shootrange(pmap, sva, eva, shootself);
     }
 
-    // pmap_unmap_ptes(pmap, scr3): nothing borrowed.
+    pmap_unmap_ptes(pmap);
     pmap_tlb_shootwait();
 }
 
@@ -2066,6 +2097,7 @@ pub fn pmap_enter(
     let mut opve: Option<NonNull<PvEntry>> = None;
 
     // map in ptes and get a pointer to our PTP (unless we are the kernel)
+    pmap_map_ptes(pmap);
     let shootself = pmap_is_curpmap(pmap);
     let ptp = if is_kernel {
         None
@@ -2074,7 +2106,7 @@ pub fn pmap_enter(
             Some(ptp) => Some(ptp),
             None => {
                 if flags & PMAP_CANFAIL != 0 {
-                    // pmap_unmap_ptes(pmap, scr3): nothing borrowed.
+                    pmap_unmap_ptes(pmap);
                     pool_put(&PMAP_PV_POOL, pve_new.cast::<u8>());
                     return Err(Errno::ENOMEM);
                 }
@@ -2248,7 +2280,7 @@ pub fn pmap_enter(
         }
     }
 
-    // pmap_unmap_ptes(pmap, scr3): nothing borrowed.
+    pmap_unmap_ptes(pmap);
     pmap_tlb_shootwait();
 
     // out:

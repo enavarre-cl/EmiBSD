@@ -26,7 +26,7 @@
 //! authentication keys and the zero/copy windows arrive with M6.
 //!
 //! ## Deviations
-//! - `pm_mtx` (M5) is not here yet; the boot CPU being alone is the lock. `pv_mtx` is.
+//! - `pm_refs` is an atomic (the C's `atomic_inc_int`/`atomic_dec_int_nv` on an `int`).
 //! - `pm_vp` is an enum of the two union members (`l0` for four-level tables, `l1` for three);
 //!   the C picks by `have_4_level_pt`.
 
@@ -117,7 +117,9 @@ pub enum PmVp {
 
 /// `struct pmap`: the kernel subset (see the module doc).
 pub struct Pmap {
-    // pm_mtx: M5.
+    /// `pm_mtx`: guards the tables, the pteds and `pm_stats` of a user pmap (`pmap_lock`);
+    /// the kernel pmap never takes it.
+    pub pm_mtx: Mutex,
     /// The virtual to physical tables.
     pub pm_vp: Cell<PmVp>,
     /// Physical address of the lower-half (`TTBR0_EL1`) table.
@@ -134,19 +136,24 @@ pub struct Pmap {
     /// Active on a CPU.
     pub pm_active: AtomicI32,
     /// Ref count.
-    pub pm_refs: Cell<i32>,
+    pub pm_refs: AtomicI32,
     /// pmap statistics.
     pub pm_stats: PmapStatistics,
     // pm_apiakey, pm_apdakey, pm_apibkey, pm_apdbkey, pm_apgakey (pointer authentication): M6.
 }
 
-// SAFETY: guarded by `pm_mtx` (M5); until then the single boot CPU is the lock.
+// SAFETY: a user pmap's tables, pteds and statistics are guarded by `pm_mtx`, the kernel
+// pmap's by the kernel map's lock and `pmap_growkernel`'s callers, as in C; `pm_asid`,
+// `pm_active` and `pm_refs` are atomics; `pm_vp`, `have_4_level_pt` and `pm_privileged` are
+// written once by `pmap_pinit`/`pmap_bootstrap` before the pmap is shared, and `pm_pt0pa`
+// besides by `pmap_purge` on the last thread of a dying process.
 unsafe impl Sync for Pmap {}
 
 impl Pmap {
     /// A pmap with nothing mapped.
     pub const fn new() -> Self {
         Self {
+            pm_mtx: Mutex::new(IPL_VM),
             pm_vp: Cell::new(PmVp::L1(ptr::null_mut())),
             pm_pt0pa: Cell::new(0),
             pm_asid: AtomicU64::new(0),
@@ -154,7 +161,7 @@ impl Pmap {
             have_4_level_pt: Cell::new(false),
             pm_privileged: Cell::new(false),
             pm_active: AtomicI32::new(0),
-            pm_refs: Cell::new(0),
+            pm_refs: AtomicI32::new(0),
             pm_stats: PmapStatistics::new(),
         }
     }

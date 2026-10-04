@@ -73,7 +73,6 @@
 //! and the attribute macros (`pmap_clear_modify`, `pmap_is_modified`, ...).
 //!
 //! ## Deviations
-//! - `pm_mtx` (M5) is not here yet; the boot CPU being alone is the lock. `pv_mtx` is.
 //! - `pm_obj` has no pager (`pmap_pager`, M6): the objects are built with `UvmObject::new`.
 
 use core::cell::Cell;
@@ -332,7 +331,9 @@ pub const PG_PMAP_WC: u32 = PG_PMAP2;
 
 /// `struct pmap`: the bootstrap subset (see the module doc).
 pub struct Pmap {
-    // pm_mtx: M5.
+    /// `pm_mtx`: guards a user pmap's page tables, PTP objects, hints and statistics
+    /// (`pmap_map_ptes`/`pmap_unmap_ptes`); the kernel pmap never takes it.
+    pub pm_mtx: Mutex,
     /// Objects for lvl >= 1.
     pub pm_obj: [UvmObject; PTP_LEVELS - 1],
     // pm_list (lck by pm_list lock): M6.
@@ -356,13 +357,17 @@ pub struct Pmap {
     pub eptp: Cell<u64>,
 }
 
-// SAFETY: guarded by `pm_mtx` (M5); until then the single boot CPU is the lock.
+// SAFETY: a user pmap is guarded by `pm_mtx`, as in C; the kernel pmap's tables by the
+// kernel map's lock and `pmap_growkernel`'s callers, its statistics are updated racily as in
+// C (single-word counters). `pm_pdir`, `pm_pdirpa`, `pm_type` and `eptp` are written once by
+// `pmap_create`/`pmap_bootstrap` before the pmap is shared; `pm_obj[0].uo_refs` is atomic.
 unsafe impl Sync for Pmap {}
 
 impl Pmap {
     /// A pmap with nothing mapped.
     pub const fn new() -> Self {
         Self {
+            pm_mtx: Mutex::new(IPL_VM),
             pm_obj: [UvmObject::new(1), UvmObject::new(1), UvmObject::new(1)],
             pm_pdir: Cell::new(ptr::null_mut()),
             pm_pdir_intel: Cell::new(ptr::null_mut()),

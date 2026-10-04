@@ -64,9 +64,11 @@
 //! - The `goto`-driven search of `uvm_pmr_getpages` is written with labelled loops; the order
 //!   of the tries, memtypes and ranges is the C's.
 //! - `uvm_pmr_assertvalid` (`DEBUG`) is compiled for feature `debug` and for the host tests.
-//! - `uvm_pagezero_thread` needs `msleep`/`yield` (M5) and is not here; the per-CPU cache
-//!   (`MULTIPROCESSOR && __HAVE_UVM_PERCPU`) is not configured, so `uvm_pmr_cache_*` are the
-//!   single-CPU versions.
+//! - `uvm_pagezero_thread` needs `msleep`/`yield` (M5) and is not here.
+//! - The per-CPU page cache (`MULTIPROCESSOR && __HAVE_UVM_PERCPU`, both machines define the
+//!   latter; M11e) keeps each CPU's magazines in [`UVM_PMR_CACHES`], indexed by
+//!   `cpu_number()`, instead of `curcpu()->ci_uvm`: the uvm type stays out of the machine's
+//!   `struct cpu_info`. Without `MULTIPROCESSOR` the single-CPU versions are used, as in C.
 //! - `uvm_pmr_allocpmr` after `uvm_init` needs `malloc(9)` (later in M3).
 
 use core::cell::Cell;
@@ -91,6 +93,12 @@ use crate::uvm::uvm_page::{
 };
 use crate::uvm::uvm_param::{atop, round_page, trunc_page};
 use crate::{kassert, kdassert, kprintf, queue_adapter, tree_adapter, unported};
+#[cfg(feature = "multiprocessor")]
+use crate::{
+    machine::cpu::{MAXCPUS, cpu_number},
+    machine::intr::{IPL_BIO, splassert, splbio, splx},
+    uvm::uvm_percpu::{UVM_PMR_CACHEMAGSZ, UvmPmrCache, UvmPmrCacheItem},
+};
 
 /// Dirty memory.
 pub const UVM_PMR_MEMTYPE_DIRTY: usize = 0;
@@ -190,6 +198,11 @@ impl Default for UvmPmrControl {
         Self::new()
     }
 }
+
+/// Every CPU's page cache, by `cpu_number()`: `ci_uvm` (see the module's deviations).
+#[cfg(feature = "multiprocessor")]
+static UVM_PMR_CACHES: [UvmPmrCache; MAXCPUS as usize] =
+    [const { UvmPmrCache::new() }; MAXCPUS as usize];
 
 /// Validate the flags of the page (used in asserts). Any free page must have the PQ_FREE flag
 /// set. Free pages may be zeroed. Pmap flags are left untouched. The PQ_FREE flag is not checked
@@ -1884,19 +1897,183 @@ pub fn uvm_pmr_print() {
     kprintf!("#ranges = {}\n", useq_len);
 }
 
-// !(MULTIPROCESSOR && __HAVE_UVM_PERCPU): no per-CPU page cache.
+/// This CPU's page cache (`&curcpu()->ci_uvm`, see the module's deviations).
+#[cfg(feature = "multiprocessor")]
+fn uvm_pmr_curcache() -> &'static UvmPmrCache {
+    &UVM_PMR_CACHES[cpu_number() as usize]
+}
 
-/// `uvm_pmr_cache_get`: a page from the per-CPU cache; here, straight from the allocator.
+/// `uvm_pmr_cache_alloc`: fills the empty magazine `upci` from the allocator; false when the
+/// allocator has no `UVM_PMR_CACHEMAGSZ` pages to spare.
+#[cfg(feature = "multiprocessor")]
+fn uvm_pmr_cache_alloc(upci: &UvmPmrCacheItem) -> bool {
+    let flags = UVM_PLA_NOWAIT | UVM_PLA_NOWAKE;
+    let npages = UVM_PMR_CACHEMAGSZ;
+
+    splassert(IPL_BIO, "uvm_pmr_cache_alloc");
+    kassert!(upci.upci_npages.get() == 0);
+
+    let pgl = Pglist::new();
+    pgl.init();
+    if uvm_pmr_getpages(npages, 0, 0, 1, 0, npages as i32, flags, &pgl).is_err() {
+        return false;
+    }
+
+    while let Some(pg) = pgl.first().map(VmPage::forever) {
+        // SAFETY: `pg` is on `pgl`, which only this function sees.
+        unsafe { pgl.remove(pg) };
+        let n = upci.upci_npages.get();
+        upci.upci_pages[n as usize].set(ptr::from_ref(pg));
+        upci.upci_npages.set(n + 1);
+    }
+    UVMEXP
+        .percpucaches
+        .fetch_add(npages as i32, Ordering::Relaxed);
+
+    true
+}
+
+/// `uvm_pmr_cache_get`: a page from this CPU's cache, refilled from the allocator when both
+/// magazines are empty; straight from the allocator when it cannot be refilled.
+#[cfg(feature = "multiprocessor")]
+pub fn uvm_pmr_cache_get(flags: i32) -> Option<&'static VmPage> {
+    let upc = uvm_pmr_curcache();
+
+    // XXX The buffer flipper (incorrectly?) allocates & frees pages (from
+    // uvm_pagerealloc_multi()) from interrupt context!
+    let s = splbio();
+    let mut upci = &upc.upc_magz[upc.upc_actv.get() as usize];
+    if upci.upci_npages.get() == 0 {
+        let prev = if upc.upc_actv.get() == 0 { 1 } else { 0 };
+        upci = &upc.upc_magz[prev as usize];
+        if upci.upci_npages.get() == 0 {
+            UVMEXP.pcpmiss.fetch_add(1, Ordering::Relaxed);
+            if !uvm_pmr_cache_alloc(upci) {
+                splx(s);
+                return uvm_pmr_getone(flags);
+            }
+        }
+        // Swap magazines
+        upc.upc_actv.set(prev);
+    } else {
+        UVMEXP.pcphit.fetch_add(1, Ordering::Relaxed);
+    }
+
+    UVMEXP.percpucaches.fetch_sub(1, Ordering::Relaxed);
+    let n = upci.upci_npages.get() - 1;
+    upci.upci_npages.set(n);
+    let pg = upci.upci_pages[n as usize].get();
+    splx(s);
+
+    // SAFETY: a page of the vm_page array the allocator handed to this magazine.
+    let pg = unsafe { &*pg };
+    if flags & UVM_PLA_ZERO != 0 {
+        uvm_pagezero(pg);
+    }
+
+    Some(pg)
+}
+
+/// `uvm_pmr_cache_free`: gives every page of the magazine back to the allocator; the number
+/// of pages.
+#[cfg(feature = "multiprocessor")]
+fn uvm_pmr_cache_free(upci: &UvmPmrCacheItem) -> u32 {
+    splassert(IPL_BIO, "uvm_pmr_cache_free");
+
+    let pgl = Pglist::new();
+    pgl.init();
+    let n = upci.upci_npages.get() as usize;
+    for slot in &upci.upci_pages[..n] {
+        // SAFETY: the magazine's first `upci_npages` slots hold free pages of the vm_page
+        // array, on no list.
+        unsafe { pgl.insert_tail(&*slot.get()) };
+    }
+
+    uvm_pmr_freepageq(&pgl);
+
+    UVMEXP
+        .percpucaches
+        .fetch_sub(upci.upci_npages.get(), Ordering::Relaxed);
+    upci.upci_npages.set(0);
+    for slot in &upci.upci_pages {
+        slot.set(ptr::null());
+    }
+
+    n as u32
+}
+
+/// `uvm_pmr_cache_put`: returns a page to this CPU's cache; low pages always go back to the
+/// allocator, so as not to accelerate their exhaustion.
+#[cfg(feature = "multiprocessor")]
+pub fn uvm_pmr_cache_put(pg: &VmPage) {
+    let upc = uvm_pmr_curcache();
+
+    // Always give back low pages to the allocator to not accelerate their exhaustion.
+    let pmr = uvm_pmemrange_find(atop(vm_page_to_phys(pg).as_usize()));
+    if pmr.is_none_or(|pmr| pmr.r#use.get() > 0) {
+        uvm_pmr_freepages(pg, 1);
+        return;
+    }
+
+    kassert!(pg.wire_count.get() == 0);
+    kassert!(pg.uanon.get().is_null());
+    kassert!(pg.uobject.get().is_null());
+
+    // XXX The buffer flipper (incorrectly?) allocates & frees pages (from
+    // uvm_pagerealloc_multi()) from interrupt context!
+    let s = splbio();
+    let mut upci = &upc.upc_magz[upc.upc_actv.get() as usize];
+    if upci.upci_npages.get() as usize >= UVM_PMR_CACHEMAGSZ {
+        let prev = if upc.upc_actv.get() == 0 { 1 } else { 0 };
+        upci = &upc.upc_magz[prev as usize];
+        if upci.upci_npages.get() > 0 {
+            let _ = uvm_pmr_cache_free(upci);
+        }
+
+        // Swap magazines
+        upc.upc_actv.set(prev);
+        kassert!(upci.upci_npages.get() == 0);
+    }
+
+    let n = upci.upci_npages.get();
+    upci.upci_pages[n as usize].set(ptr::from_ref(pg));
+    upci.upci_npages.set(n + 1);
+    UVMEXP.percpucaches.fetch_add(1, Ordering::Relaxed);
+    splx(s);
+}
+
+/// `uvm_pmr_cache_drain`: gives this CPU's cached pages back to the allocator; how many.
+#[cfg(feature = "multiprocessor")]
+pub fn uvm_pmr_cache_drain() -> u32 {
+    let upc = uvm_pmr_curcache();
+    let mut freed = 0;
+
+    // XXX The buffer flipper (incorrectly?) allocates & frees pages (from
+    // uvm_pagerealloc_multi()) from interrupt context!
+    let s = splbio();
+    freed += uvm_pmr_cache_free(&upc.upc_magz[0]);
+    freed += uvm_pmr_cache_free(&upc.upc_magz[1]);
+    splx(s);
+
+    freed
+}
+
+// !(MULTIPROCESSOR && __HAVE_UVM_PERCPU)
+
+/// `uvm_pmr_cache_get`: without a per-CPU cache, straight from the allocator.
+#[cfg(not(feature = "multiprocessor"))]
 pub fn uvm_pmr_cache_get(flags: i32) -> Option<&'static VmPage> {
     uvm_pmr_getone(flags)
 }
 
-/// `uvm_pmr_cache_put`: returns a page to the per-CPU cache; here, straight to the allocator.
+/// `uvm_pmr_cache_put`: without a per-CPU cache, straight to the allocator.
+#[cfg(not(feature = "multiprocessor"))]
 pub fn uvm_pmr_cache_put(pg: &VmPage) {
     uvm_pmr_freepages(pg, 1);
 }
 
 /// `uvm_pmr_cache_drain`: nothing to drain without a per-CPU cache.
+#[cfg(not(feature = "multiprocessor"))]
 pub fn uvm_pmr_cache_drain() -> u32 {
     0
 }

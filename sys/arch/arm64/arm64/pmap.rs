@@ -78,8 +78,12 @@
 //!   ASIDs active on every CPU into the new generation); `pm_asid` is an atomic because the
 //!   rollover rewrites other CPUs' active pmaps. The TLB invalidations were already the
 //!   inner-shareable broadcast ones (`cpufunc.rs`: `tlbi vae1is`/`vaale1is`/`aside1is`/
-//!   `vmalle1is`), which is what the MP kernel needs. `pm_mtx` (`pmap_lock`) is still not
-//!   here: user pmaps are changed under the kernel lock in M11a (M11e).
+//!   `vmalle1is`), which is what the MP kernel needs. M11e: `pm_mtx` (`pmap_lock`/
+//!   `pmap_unlock`/`PMAP_ASSERT_LOCKED`) where the C takes it, so user pmaps are changed
+//!   without the kernel lock, as in OpenBSD.
+//! - `pmap_purge` (`__HAVE_PMAP_PURGE`) is here, but `uvm_purge` cannot reach it until the
+//!   `machine::Pmap` contract has the method; until then the ASID of a dying process is
+//!   flushed by `pmap_free_asid` when its pmap goes, as before.
 //! - `pmap_init` also resizes `TCR_EL1.T0SZ` to `USER_SPACE_BITS` and remaps the console
 //!   (`pluartcn_remap`) before pointing `TTBR0_EL1` at the empty table: the C's locore did
 //!   both at boot, here the bootstrap device map (`machdep.rs`) lived in the lower half.
@@ -111,7 +115,7 @@ use crate::arch::arm64::include::vmparam::USER_SPACE_BITS;
 use crate::arch::arm64::include::vmparam::{VM_MAX_KERNEL_ADDRESS, VM_MIN_KERNEL_ADDRESS};
 use crate::dev::ic::pluart::pluartcn_remap;
 use crate::dev::rnd::arc4random;
-use crate::kern::kern_lock::{mtx_enter, mtx_leave};
+use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::machine::intr::{IPL_HIGH, IPL_VM};
 use crate::machine::{Cpu, Machine};
@@ -175,7 +179,8 @@ macro_rules! vp_table {
             vp: [Cell<*mut $child>; TABLE_ENTRIES],
         }
 
-        // SAFETY: the pmap's lock guards the tables (M5); the boot CPU is alone until then.
+        // SAFETY: a user pmap's tables are guarded by its `pm_mtx`, the kernel's by the
+        // kernel map's lock (`pmap_growkernel`) and the boot CPU during `pmap_bootstrap`.
         unsafe impl Sync for $name {}
 
         impl $name {
@@ -301,6 +306,30 @@ const AP_BITS_KERN: [u64; 8] = [
 /// `pmap_kernel()`.
 pub fn pmap_kernel() -> &'static Pmap {
     &KERNEL_PMAP
+}
+
+/// `pmap_lock`: takes a user pmap's `pm_mtx`; the kernel pmap has no lock.
+#[inline]
+fn pmap_lock(pmap: &Pmap) {
+    if !ptr::eq(pmap, pmap_kernel()) {
+        mtx_enter(&pmap.pm_mtx);
+    }
+}
+
+/// `pmap_unlock`: releases what `pmap_lock` took.
+#[inline]
+fn pmap_unlock(pmap: &Pmap) {
+    if !ptr::eq(pmap, pmap_kernel()) {
+        mtx_leave(&pmap.pm_mtx);
+    }
+}
+
+/// `PMAP_ASSERT_LOCKED(pmap)`.
+#[inline]
+fn pmap_assert_locked(pmap: &Pmap) {
+    if !ptr::eq(pmap, pmap_kernel()) {
+        mutex_assert_locked(&pmap.pm_mtx, "pmap");
+    }
 }
 
 /// `pmap_activate`: activate a pmap entry: `p`'s address space is in use by one more thread,
@@ -524,7 +553,7 @@ fn pmap_vp_alloc(_pm: &Pmap, flags: i32, level: &str) -> Result<*mut Pmapvp0, Er
 /// reference to the pte descriptor that is used to map the page. This code should track
 /// allocations of vp table allocations so they can be freed efficiently.
 pub fn pmap_vp_enter(pm: &Pmap, va: usize, pted: &PteDesc, flags: i32) -> Result<(), Errno> {
-    // PMAP_ASSERT_LOCKED(pm): M5.
+    pmap_assert_locked(pm);
 
     let vp1 = match pm.pm_vp.get() {
         PmVp::L0(l0) => {
@@ -893,7 +922,7 @@ pub unsafe fn pmap_bootstrap(_ram_start: Paddr, _ram_end: Paddr) -> Vaddr {
     pm.pm_active.store(1, Ordering::Relaxed);
     pm.pm_guarded.set(ATTR_GP);
     pm.pm_asid.store(0, Ordering::Relaxed);
-    pm.pm_refs.set(1);
+    pm.pm_refs.store(1, Ordering::Relaxed);
     // pmap_tramp: M6. ASID 0 is the kernel's.
     PMAP_ASID[0].fetch_or(3, Ordering::Relaxed);
 
@@ -1301,18 +1330,46 @@ pub fn pmap_copy_page(srcpg: &VmPage, dstpg: &VmPage) {
     };
 }
 
+/// `pmap_purge`: called by the last thread of an exiting process (`uvm_purge`, see the
+/// module's deviations): moves this CPU off the process's tables and drops its ASID from the
+/// TLBs, so the teardown that follows needs no more flushes.
+pub fn pmap_purge(p: &Proc) {
+    let pm = p.vmspace().vm_map.pmap();
+
+    kassert!(p.process().ps_threadcnt.get() == 0);
+    kassert!(ptr::eq(p, curcpu().ci_curproc.get()));
+
+    // There is a theoretical chance that our sibling threads are still making their way
+    // through the tail end of exit1(). Make absolutely sure they have made it past the point
+    // where they disable their userland page tables.
+    while pm.pm_active.load(Ordering::Acquire) != 1 {
+        core::hint::spin_loop();
+    }
+
+    // SAFETY: the kernel's empty lower-half table; nothing of the kernel lives there.
+    unsafe {
+        asm!("msr ttbr0_el1, {}", "isb", in(reg) pmap_kernel().pm_pt0pa.get(), options(nostack, preserves_flags));
+    }
+
+    cpu_tlb_flush_asid_all(pm.pm_asid.load(Ordering::Relaxed) << 48);
+    cpu_tlb_flush_asid_all((pm.pm_asid.load(Ordering::Relaxed) | ASID_USER) << 48);
+    pm.pm_pt0pa.set(pmap_kernel().pm_pt0pa.get());
+    pm.pm_active.store(0, Ordering::Release);
+}
+
 /// `pmap_extract`: get the physical page address for the given pmap/virtual address.
 pub fn pmap_extract(pm: &Pmap, va: Vaddr) -> Option<Paddr> {
     if ptr::eq(pm, pmap_kernel()) && pmap_direct_mapped(va) {
         return Some(pmap_direct_unmap(va));
     }
 
-    // pmap_lock(pm): M5.
+    pmap_lock(pm);
     let (pted, _) = pmap_vp_lookup(pm, va.as_usize());
-    let pted = pted.filter(|pted| pted_valid(pted))?;
-    Some(Paddr::new(
-        (pted.pted_pte.get() & PTE_RPGN) as usize | (va.as_usize() & PAGE_MASK),
-    ))
+    let pa = pted.filter(|pted| pted_valid(pted)).map(|pted| {
+        Paddr::new((pted.pted_pte.get() & PTE_RPGN) as usize | (va.as_usize() & PAGE_MASK))
+    });
+    pmap_unlock(pm);
+    pa
 }
 
 /// `pmap_steal_memory` (not in the C, see the module's deviations): `size` bytes of free
@@ -1541,7 +1598,23 @@ pub fn pmap_enter(pm: &Pmap, va: Vaddr, pa: Paddr, prot: VmProt, flags: i32) -> 
     }
     let pg = PHYS_TO_VM_PAGE(Paddr::new(pa));
 
-    // pmap_lock(pm): M5.
+    pmap_lock(pm);
+    let error = pmap_enter_locked(pm, va, pa, pg, prot, flags, cache);
+    pmap_unlock(pm);
+    error
+}
+
+/// The body of `pmap_enter` between its `pmap_lock` and the `out:` label's `pmap_unlock`.
+#[allow(clippy::too_many_arguments)] // pmap_enter's locals
+fn pmap_enter_locked(
+    pm: &Pmap,
+    va: usize,
+    pa: usize,
+    pg: Option<&'static VmPage>,
+    prot: VmProt,
+    flags: i32,
+    cache: i32,
+) -> Result<(), Errno> {
     let (mut pted, _) = pmap_vp_lookup(pm, va);
     if let Some(old) = pted.filter(|pted| pted_valid(pted)) {
         if old.pted_pte.get() & PTE_RPGN == pa as u64 & PTE_RPGN
@@ -1623,13 +1696,12 @@ pub fn pmap_enter(pm: &Pmap, va: Vaddr, pa: Paddr, prot: VmProt, flags: i32) -> 
         ttlb_flush(pm, va & !PAGE_MASK);
     }
 
-    // pmap_unlock(pm): M5.
     Ok(())
 }
 
 /// `pmap_remove`: remove the given range of mapping entries.
 pub fn pmap_remove(pm: &Pmap, sva: Vaddr, eva: Vaddr) {
-    // pmap_lock(pm): M5.
+    pmap_lock(pm);
     let mut va = sva.as_usize();
     while va < eva.as_usize() {
         let (pted, _) = pmap_vp_lookup(pm, va);
@@ -1648,7 +1720,7 @@ pub fn pmap_remove(pm: &Pmap, sva: Vaddr, eva: Vaddr) {
         }
         va += PAGE_SIZE;
     }
-    // pmap_unlock(pm): M5.
+    pmap_unlock(pm);
 }
 
 /// `pmap_page_ro`: lowers the mapping at `va` of `pm` to read-only, and to `prot`.
@@ -1692,7 +1764,7 @@ pub fn pmap_page_protect(pg: &VmPage, prot: VmProt) {
         pmap_reference(pm);
         mtx_leave(&pg.mdpage.pv_mtx);
 
-        // pmap_lock(pm): M5.
+        pmap_lock(pm);
 
         // We dropped the pvlist lock before grabbing the pmap lock to avoid lock ordering
         // problems. This means we have to check the pvlist again since somebody else might
@@ -1702,7 +1774,7 @@ pub fn pmap_page_protect(pg: &VmPage, prot: VmProt) {
         let pted = pg.mdpage.pv_list.first();
         let Some(pted) = pted.filter(|pted| ptr::eq(pted_pmap(pted), pm)) else {
             mtx_leave(&pg.mdpage.pv_mtx);
-            // pmap_unlock(pm): M5.
+            pmap_unlock(pm);
             pmap_destroy(pm);
             mtx_enter(&pg.mdpage.pv_mtx);
             continue;
@@ -1710,7 +1782,7 @@ pub fn pmap_page_protect(pg: &VmPage, prot: VmProt) {
         mtx_leave(&pg.mdpage.pv_mtx);
 
         pmap_remove_pted(pm, pted);
-        // pmap_unlock(pm): M5.
+        pmap_unlock(pm);
         pmap_destroy(pm);
 
         mtx_enter(&pg.mdpage.pv_mtx);
@@ -1723,13 +1795,13 @@ pub fn pmap_page_protect(pg: &VmPage, prot: VmProt) {
 /// `pmap_protect`: lowers the protection of the mappings in `[sva, eva)` of `pm`.
 pub fn pmap_protect(pm: &Pmap, sva: Vaddr, eva: Vaddr, prot: VmProt) {
     if prot & (PROT_READ | PROT_EXEC) != 0 {
-        // pmap_lock(pm): M5.
+        pmap_lock(pm);
         let mut va = sva.as_usize();
         while va < eva.as_usize() {
             pmap_page_ro(pm, va, prot);
             va += PAGE_SIZE;
         }
-        // pmap_unlock(pm): M5.
+        pmap_unlock(pm);
         return;
     }
     pmap_remove(pm, sva, eva);
@@ -1740,8 +1812,15 @@ pub fn pmap_protect(pm: &Pmap, sva: Vaddr, eva: Vaddr, prot: VmProt) {
 /// or to tell the caller that it's a legit fault.
 pub fn pmap_fault_fixup(pm: &Pmap, va: Vaddr, ftype: VmProt) -> bool {
     let va = va.as_usize();
-    // pmap_lock(pm): M5.
+    pmap_lock(pm);
+    let retcode = pmap_fault_fixup_locked(pm, va, ftype);
+    pmap_unlock(pm);
+    retcode
+}
 
+/// The body of `pmap_fault_fixup` between its `pmap_lock` and the `done:` label's
+/// `pmap_unlock`.
+fn pmap_fault_fixup_locked(pm: &Pmap, va: usize, ftype: VmProt) -> bool {
     // Every VA needs a pted, even unmanaged ones.
     let (pted, pl3) = pmap_vp_lookup(pm, va);
     let (Some(pted), Some(pl3)) = (pted, pl3) else {
@@ -1820,7 +1899,6 @@ pub fn pmap_fault_fixup(pm: &Pmap, va: Vaddr, ftype: VmProt) -> bool {
     pmap_pte_update(pted, pl3);
     ttlb_flush(pm, va & !PAGE_MASK);
 
-    // pmap_unlock(pm): M5.
     true
 }
 
@@ -1869,7 +1947,7 @@ pub fn pmap_clear_reference(pg: &VmPage) -> bool {
 
 /// `pmap_unwire`: clears the wired bit of the mapping at `va`.
 pub fn pmap_unwire(pm: &Pmap, va: Vaddr) {
-    // pmap_lock(pm): M5.
+    pmap_lock(pm);
     let (pted, _) = pmap_vp_lookup(pm, va.as_usize());
     if let Some(pted) = pted.filter(|pted| pted_wired(pted)) {
         pm.pm_stats
@@ -1878,7 +1956,7 @@ pub fn pmap_unwire(pm: &Pmap, va: Vaddr) {
         pted.pted_va
             .set(pted.pted_va.get() & !(PTED_VA_WIRED_M as usize));
     }
-    // pmap_unlock(pm): M5.
+    pmap_unlock(pm);
 }
 
 /// `pmap_remove_pted`: remove a single mapping, notice that this code is O(1).
@@ -1967,7 +2045,7 @@ pub fn pmap_create() -> &'static Pmap {
         pp.as_ref()
     };
 
-    // mtx_init(&pmap->pm_mtx, IPL_VM): M5.
+    mtx_init(&pmap.pm_mtx, IPL_VM);
     pmap_pinit(pmap);
     // pool_setlowat(&pmap_vp_pool, 20): no vp pool.
     pmap
@@ -1975,14 +2053,13 @@ pub fn pmap_create() -> &'static Pmap {
 
 /// `pmap_reference`: add a reference to a given pmap.
 pub fn pmap_reference(pm: &Pmap) {
-    pm.pm_refs.set(pm.pm_refs.get() + 1);
+    pm.pm_refs.fetch_add(1, Ordering::Relaxed);
 }
 
 /// `pmap_destroy`: retire the given pmap from service. Should only be called if the map
 /// contains no valid mappings.
 pub fn pmap_destroy(pm: &'static Pmap) {
-    let refs = pm.pm_refs.get() - 1;
-    pm.pm_refs.set(refs);
+    let refs = pm.pm_refs.fetch_sub(1, Ordering::AcqRel) - 1;
     if refs > 0 {
         return;
     }

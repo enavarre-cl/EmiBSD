@@ -3668,7 +3668,7 @@ pub fn uvmspace_purge(vm: &Vmspace) {
 
 /// `uvmspace_free`: free a vmspace data structure.
 pub fn uvmspace_free(vm: &'static Vmspace) {
-    if vm.vm_refcnt.fetch_sub(1, AtomicOrdering::Relaxed) - 1 == 0 {
+    if vm.vm_refcnt.fetch_sub(1, AtomicOrdering::AcqRel) - 1 == 0 {
         // Sanity check. Kernel threads never end up here and userland ones already tear
         // down there VM space in exit1().
         uvmspace_purge(vm);
@@ -4201,7 +4201,7 @@ pub fn uvm_map_create(
 /// - caller must not lock map
 /// - we will zap map if ref count goes to zero
 pub fn uvm_map_deallocate(map: &'static VmMap) {
-    let c = map.ref_count.fetch_sub(1, AtomicOrdering::Relaxed) - 1;
+    let c = map.ref_count.fetch_sub(1, AtomicOrdering::AcqRel) - 1;
     if c > 0 {
         return;
     }

@@ -37,7 +37,7 @@
 //! Status: `wip`. Milestone M3 has the page queues, `page_init_done` and the pmemrange
 //! control; M7a adds `kernel_object` and the `UVM_ET_*` entry types; the daemons' triggers
 //! and `aio_done` arrive with the buffer cache; M7a-2 adds `kentry_free`. M11a adds
-//! `fpageqlock`; `pageqlock` is not here yet (`uvm_lock_pageq` is a no-op, uvm_page.rs).
+//! `fpageqlock`, M11e `pageqlock`.
 //!
 //! Locks used to protect struct members in this file: `Q` `uvm.pageqlock`, `F`
 //! `uvm.fpageqlock`.
@@ -63,6 +63,8 @@ pub struct Uvm {
     /// \[Q\] pages inactive (reclaim/free).
     pub page_inactive: Pglist,
     // Lock order: pageqlock, then fpageqlock.
+    /// `pageqlock`: lock for active/inactive page q.
+    pub pageqlock: Mutex,
     /// `fpageqlock`: lock for free page q + pdaemon.
     pub fpageqlock: Mutex,
     /// TRUE if `uvm_page_init()` finished.
@@ -78,8 +80,10 @@ pub struct Uvm {
     pub kernel_object: Cell<*const UvmObject>,
 }
 
-// SAFETY: every field is guarded by one of the locks named in the module doc (M5); until then
-// the single boot CPU is the lock, and `page_init_done` is atomic as in C.
+// SAFETY: every field is guarded by one of the locks named in the module doc (`Q`, `F`), or
+// written once on the boot CPU before the other processors start (`kernel_object`,
+// `kentry_free`'s initial fill, under `uvm_kmapent_mtx` afterwards); `page_init_done` is
+// atomic as in C.
 unsafe impl Sync for Uvm {}
 
 impl Uvm {
@@ -88,6 +92,7 @@ impl Uvm {
         Self {
             page_active: Pglist::new(),
             page_inactive: Pglist::new(),
+            pageqlock: Mutex::new(IPL_VM),
             fpageqlock: Mutex::new(IPL_VM),
             page_init_done: AtomicBool::new(false),
             pmr_control: UvmPmrControl::new(),

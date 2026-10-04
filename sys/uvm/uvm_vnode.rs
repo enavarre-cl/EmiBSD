@@ -97,10 +97,11 @@
 //! - The pager's page arrays are `&mut [*const VmPage]` (`uvm_pager.rs`); `uvn_io` takes a
 //!   `UioRw` for the C's `int rw`.
 //! - `uvm_vnp_sync(NULL)` is `uvm_vnp_sync(None)`; `uvm_vnp_uncache` returns `bool`.
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`;
-//!   `UVM_PAGE_OWN` is not configured; the `DEBUG` printfs are compiled out as in C.
+//! - `UVM_PAGE_OWN` is not configured; the `DEBUG` printfs are compiled out as in C.
 //! - The `ratecheck` timestamp of `uvn_flush`'s error message is a `StaticCell`, written
-//!   under the kernel lock as the C's function-local `static` is.
+//!   under the kernel lock (every caller of `uvn_flush` holds it: `uvn_detach` takes it,
+//!   `msync` and the vnode layer run locked), where the C's function-local `static` is
+//!   unguarded.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -130,7 +131,9 @@ use crate::sys::param::{MAXBSIZE, PAGE_SHIFT, PAGE_SIZE, PVM};
 use crate::sys::pool::{PR_WAITOK, PR_ZERO, Pool};
 use crate::sys::queue::{ListEntry, ListHead, SimpleqEntry, SimpleqHead};
 use crate::sys::rwlock::{RW_WRITE, RWL_IS_VNODE, Rwlock, rw_lock_held, rw_write_held};
-use crate::sys::systm::{INFSLP, net_lock, net_unlock};
+use crate::sys::systm::{
+    INFSLP, kernel_assert_locked, kernel_lock, kernel_unlock, net_lock, net_unlock,
+};
 use crate::sys::time::Timeval;
 use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
 use crate::sys::vnode::{IO_NOCACHE, VBLK, VTEXT, Vattr, Vnode};
@@ -237,7 +240,9 @@ queue_adapter!(
 /// `uvn_wlist`'s type: a `Sync` static list.
 pub struct UvnWlistHead(pub ListHead<UvnWlist>);
 
-// SAFETY: changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: changed and walked under the kernel lock, as in C (`uvn_attach` and
+// `uvm_vnp_setsize` assert it, `uvn_detach` takes it, `uvm_vnp_sync` runs from the locked
+// vnode layer).
 unsafe impl Sync for UvnWlistHead {}
 
 /// `uvn_sync_q`'s type: a `Sync` static queue.
@@ -351,7 +356,7 @@ pub fn uvn_attach(vp: &'static Vnode, accessprot: VmProt) -> Option<&'static Uvm
         unsafe { uvn.as_ptr().write(UvmVnode::new()) };
         // SAFETY: as above; the vnode keeps it for good (`v_uvm`).
         let uvn: &'static UvmVnode = unsafe { uvn.as_ref() };
-        // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+        kernel_assert_locked();
         if v_uvm(vp).is_none() {
             uvm_obj_init(&uvn.u_obj, Some(&UVM_VNODEOPS), 0);
             uvn.u_vnode.set(Some(vp));
@@ -394,7 +399,7 @@ pub fn uvn_attach(vp: &'static Vnode, accessprot: VmProt) -> Option<&'static Uvm
     // if write access, we need to add it to the wlist
     if accessprot & PROT_WRITE != 0 && uvn.u_flags.get() & UVM_VNODE_WRITEABLE == 0 {
         uvn.u_flags.set(uvn.u_flags.get() | UVM_VNODE_WRITEABLE); // we are on wlist!
-        // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+        kernel_assert_locked();
         // SAFETY: a uvn without `UVM_VNODE_WRITEABLE` is on no wlist; it is never freed.
         unsafe { UVN_WLIST.0.insert_head(uvn) };
     }
@@ -438,7 +443,7 @@ pub fn uvn_detach(uobj: &UvmObject) {
         return;
     }
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     // get other pointers ...
     let uvn = uvn(uobj);
     let vp = uvn.vnode();
@@ -481,7 +486,7 @@ pub fn uvn_detach(uobj: &UvmObject) {
 
         if uvn.u_flags.get() & UVM_VNODE_RELKILL == 0 {
             rw_exit(lock);
-            // KERNEL_UNLOCK()
+            kernel_unlock();
             return;
         }
 
@@ -505,7 +510,7 @@ pub fn uvn_detach(uobj: &UvmObject) {
 
     // drop our reference to the vnode.
     let _ = vrele(vp);
-    // KERNEL_UNLOCK()
+    kernel_unlock();
 }
 
 /// uvm_vnp_terminate: external hook to clear out a vnode's VM
@@ -815,8 +820,8 @@ pub fn uvn_flush(uobj: &UvmObject, start: Voff, stop: Voff, mut flags: i32) -> b
             } else if flags & PGO_FREE != 0 && result != VM_PAGER_PEND {
                 if result != VM_PAGER_OK {
                     static INTERVAL: Timeval = Timeval::new(5, 0);
-                    // SAFETY: the timestamp is only touched here, under the kernel lock (one
-                    // CPU), as the C's function-local static.
+                    // SAFETY: the timestamp is only touched here, and every caller of
+                    // `uvn_flush` holds the kernel lock (see the module's deviations).
                     let lasttime = unsafe { UVN_FLUSH_LASTTIME.get_mut() };
                     if ratecheck(lasttime, &INTERVAL) {
                         kprintf!(
@@ -1196,7 +1201,7 @@ pub fn uvn_io(
     // case, don't panic.. instead, return the error to the user.
     //
     // XXX this is a stopgap to prevent a panic. Ideally, this kind of operation *should* work.
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     let cred = p.map_or(ptr::null(), |p| p.p_ucred.get());
     let mut result = Ok(());
     if !vnlocked {
@@ -1219,7 +1224,7 @@ pub fn uvn_io(
             let _ = VOP_UNLOCK(vn);
         }
     }
-    // KERNEL_UNLOCK()
+    kernel_unlock();
 
     if netunlocked {
         net_lock();
@@ -1260,11 +1265,11 @@ pub fn uvn_io(
         }
         Err(_) => {
             if REBOOTING.load(core::sync::atomic::Ordering::Relaxed) {
-                // KERNEL_LOCK()
+                kernel_lock();
                 while REBOOTING.load(core::sync::atomic::Ordering::Relaxed) {
                     let _ = tsleep_nsec(ptr::from_ref(&REBOOTING), PVM, "uvndead", INFSLP);
                 }
-                // KERNEL_UNLOCK()
+                kernel_unlock();
             }
             VM_PAGER_ERROR
         }
@@ -1352,7 +1357,7 @@ pub fn uvm_vnp_uncache(vp: &'static Vnode) -> bool {
 ///  => NFS: nfs_loadattrcache, nfs_getattrcache, nfs_setattr
 ///  => union fs: union_newsize
 pub fn uvm_vnp_setsize(vp: &'static Vnode, newsize: Voff) {
-    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_locked();
     let Some(uvn) = v_uvm(vp) else {
         return;
     };

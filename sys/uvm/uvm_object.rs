@@ -59,16 +59,21 @@
 //!   object itself to `struct vnode *`, which reads a member of the `uvm_vnode` instead.
 //! - `UvmObject::new(refs)` is the `const` form of `uvm_obj_init(uobj, &pmap_pager, refs)`
 //!   for the objects that live in statics (the pmaps' PTP objects): a dummy, lockless object.
+//! - `uo_refs` is [`UoRefs`], an atomic `int`: the C changes it with `atomic_inc_int`/
+//!   `atomic_dec_int_nv` (aobjs, the amd64 pmap's `pm_obj[0]`) or under the object's lock
+//!   (vnodes); one type serves both, with relaxed plain loads and stores for the latter.
 
 use core::cell::Cell;
 use core::cmp::Ordering;
 use core::ptr;
+use core::sync::atomic::{self, AtomicI32};
 
 use crate::kassert;
 use crate::kern::kern_rwlock::{rw_enter, rw_exit, rw_obj_alloc, rw_obj_free};
 use crate::sys::mman::{MADV_SEQUENTIAL, PROT_READ, PROT_WRITE};
 use crate::sys::param::{PAGE_SHIFT, PAGE_SIZE};
 use crate::sys::rwlock::{RW_DUPOK, RW_WRITE, Rwlock};
+use crate::sys::systm::kernel_assert_locked;
 use crate::sys::tree::{RbtEntry, RbtHead};
 use crate::sys::vnode::VTEXT;
 use crate::tree_adapter;
@@ -110,6 +115,38 @@ tree_adapter!(
     pub UvmObjtree: VmPage, objt => RbtEntry, uvm_pagecmp
 );
 
+/// `uo_refs`, an `int` the C changes atomically (`atomic_inc_int`, `atomic_dec_int_nv`) or
+/// under the object's lock (see the module's deviations).
+pub struct UoRefs(AtomicI32);
+
+impl UoRefs {
+    /// A count of `refs`.
+    pub const fn new(refs: i32) -> Self {
+        Self(AtomicI32::new(refs))
+    }
+
+    /// Reads the count.
+    pub fn get(&self) -> i32 {
+        self.0.load(atomic::Ordering::Relaxed)
+    }
+
+    /// Sets the count (under the object's lock, or before the object is shared).
+    pub fn set(&self, refs: i32) {
+        self.0.store(refs, atomic::Ordering::Relaxed);
+    }
+
+    /// `atomic_inc_int(&uo_refs)`.
+    pub fn atomic_inc(&self) {
+        self.0.fetch_add(1, atomic::Ordering::Relaxed);
+    }
+
+    /// `atomic_dec_int_nv(&uo_refs)`: the count after the decrement. The release/acquire
+    /// pair orders every use of the object before its teardown by the last holder.
+    pub fn atomic_dec_nv(&self) -> i32 {
+        self.0.fetch_sub(1, atomic::Ordering::AcqRel) - 1
+    }
+}
+
 /// `struct uvm_object`.
 pub struct UvmObject {
     /// `vmobjlock`: lock on object.
@@ -121,11 +158,12 @@ pub struct UvmObject {
     /// `uo_npages`: # of pages in memt.
     pub uo_npages: Cell<i32>,
     /// `uo_refs`: reference count.
-    pub uo_refs: Cell<i32>,
+    pub uo_refs: UoRefs,
 }
 
 // SAFETY: the object lock (`vmobjlock`) guards the page tree and the counters; dummy objects
-// have none and are the single CPU's.
+// have none: a pmap's PTP objects are guarded by the pmap's lock (`pm_mtx`), the buffer
+// cache's by the kernel lock, as in C. `uo_refs` is atomic.
 unsafe impl Sync for UvmObject {}
 
 impl UvmObject {
@@ -136,7 +174,7 @@ impl UvmObject {
             pgops: Cell::new(Some(&PMAP_PAGER)),
             memt: RbtHead::new(),
             uo_npages: Cell::new(0),
-            uo_refs: Cell::new(refs),
+            uo_refs: UoRefs::new(refs),
         }
     }
 
@@ -361,7 +399,7 @@ pub fn uvm_obj_free(uobj: &UvmObject) {
     let pgl = Pglist::new();
 
     kassert!(uvm_obj_is_bufcache(uobj));
-    // KERNEL_ASSERT_LOCKED().
+    kernel_assert_locked();
 
     pgl.init();
     // Extract from rb tree in offset order. The phys addresses usually increase in that
@@ -376,4 +414,20 @@ pub fn uvm_obj_free(uobj: &UvmObject) {
         unsafe { pgl.insert_tail(pg) };
     }
     uvm_pglistfree(&pgl);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uo_refs_count_like_the_c_atomics() {
+        let refs = UoRefs::new(1);
+        refs.atomic_inc();
+        assert_eq!(refs.get(), 2);
+        assert_eq!(refs.atomic_dec_nv(), 1);
+        assert_eq!(refs.atomic_dec_nv(), 0);
+        refs.set(UVM_OBJ_KERN);
+        assert_eq!(refs.get(), UVM_OBJ_KERN);
+    }
 }

@@ -94,9 +94,6 @@
 //!   `pg + n` as an address for comparisons is [`VmPage::ptr_add`].
 //! - `vm_physmem[]` and `vm_nphysseg` are behind [`vm_physmem`] / [`vm_physmem_mut`] /
 //!   [`VM_NPHYSSEG`]: written on the boot CPU before `uvm.page_init_done`, read afterwards.
-//! - The page queue lock (`uvm_lock_pageq`) is a documented no-op: the page queues are
-//!   reached under the kernel lock (M11a: uvm_fault and the page daemon's paths run locked).
-//!   M11a makes `uvm_lock_fpageq` the C's mutex, `uvm.fpageqlock` at `IPL_VM`.
 //! - `uvm_page_physload` after `uvm_init` needs `km_alloc` (`uvm_km.c`, later in M3): the
 //!   non-preload path reports it and ignores the segment, as the C does when the allocation
 //!   fails.
@@ -119,11 +116,12 @@ use crate::machine::intr::IPL_VM;
 use crate::machine::{Machine, Pmap, VmPageMd, VmParam};
 use crate::sys::errno::Errno;
 use crate::sys::mman::PROT_NONE;
+use crate::sys::mutex::mutex_assert_locked;
 use crate::sys::param::{PAGE_MASK, PAGE_SHIFT, PAGE_SIZE, PNORELOCK, PVM};
 use crate::sys::queue::{TailqEntry, TailqHead};
 use crate::sys::rwlock::{Rwlock, rw_lock_held, rw_write_held};
 use crate::sys::smr::smr_flush;
-use crate::sys::systm::INFSLP;
+use crate::sys::systm::{INFSLP, kernel_assert_locked};
 use crate::sys::tree::RbtEntry;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
 use crate::uvm::uvm_anon::VmAnon;
@@ -248,8 +246,9 @@ pub struct VmPage {
     pub mdpage: VmPageMd,
 }
 
-// SAFETY: every field is guarded by one of the locks in the module doc (M5); until then the
-// single boot CPU is the lock, and `pg_flags` is atomic as in C.
+// SAFETY: every field is guarded by one of the locks in the module doc, as in C: the owner
+// lock (`o`), `uvm.pageqlock` (`Q`, the queue linkage), `uvm.fpageqlock` (`F`, a free page's
+// range and size); `pg_flags` is atomic and `phys_addr` immutable.
 unsafe impl Sync for VmPage {}
 
 impl VmPage {
@@ -440,10 +439,14 @@ pub unsafe fn vm_physmem_mut() -> &'static mut [VmPhysseg; VM_PHYSSEG_MAX] {
     unsafe { VM_PHYSMEM.get_mut() }
 }
 
-/// `uvm_lock_pageq()`: the page queue lock (`uvm.pageqlock`, a mutex at M5).
-pub fn uvm_lock_pageq() {}
-/// `uvm_unlock_pageq()`.
-pub fn uvm_unlock_pageq() {}
+/// `uvm_lock_pageq()`: the page queue lock, `mtx_enter(&uvm.pageqlock)`.
+pub fn uvm_lock_pageq() {
+    mtx_enter(&UVM.pageqlock);
+}
+/// `uvm_unlock_pageq()`: `mtx_leave(&uvm.pageqlock)`.
+pub fn uvm_unlock_pageq() {
+    mtx_leave(&UVM.pageqlock);
+}
 /// `uvm_lock_fpageq()`: the free page queue lock, `mtx_enter(&uvm.fpageqlock)`.
 pub fn uvm_lock_fpageq() {
     mtx_enter(&UVM.fpageqlock);
@@ -459,6 +462,7 @@ fn uvm_pageinsert(pg: &VmPage) {
     let Some(obj) = pg.uobject() else {
         return;
     };
+    kassert!(uvm_obj_is_dummy(obj) || rw_write_held(obj.vmobjlock()));
     kassert!(pg.flags() & PG_TABLED == 0);
 
     // SAFETY: the page is not in any object tree (PG_TABLED is clear), and the object's tree
@@ -475,6 +479,7 @@ fn uvm_pageremove(pg: &VmPage) {
     let Some(obj) = pg.uobject() else {
         return;
     };
+    kassert!(uvm_obj_is_dummy(obj) || rw_write_held(obj.vmobjlock()));
     kassert!(pg.flags() & PG_TABLED != 0);
 
     // SAFETY: the page is in this object's tree (PG_TABLED is set).
@@ -492,7 +497,7 @@ pub fn uvm_page_init(kvm_startp: &mut Vaddr, kvm_endp: &mut Vaddr) {
     // init the page queues and page queue locks
     UVM.page_active.init();
     UVM.page_inactive.init();
-    // mtx_init(&uvm.pageqlock, IPL_VM): see the module's deviations.
+    mtx_init(&UVM.pageqlock, IPL_VM);
     mtx_init(&UVM.fpageqlock, IPL_VM);
     uvm_pmr_init();
 
@@ -965,7 +970,8 @@ pub fn uvm_pagealloc_pg(pg: &VmPage, obj: Option<&UvmObject>, off: Voff, anon: O
     kassert!(obj.is_none() || anon.is_none());
     kassert!(anon.is_none() || off == 0);
     kassert!(off == trunc_page(off as usize) as Voff);
-    // obj == NULL || UVM_OBJ_IS_DUMMY(obj) || rw_write_held(obj->vmobjlock): M5.
+    kassert!(obj.is_none_or(|obj| uvm_obj_is_dummy(obj) || rw_write_held(obj.vmobjlock())));
+    kassert!(anon.is_none_or(|anon| anon.an_lock().is_none_or(rw_write_held)));
 
     let mut flags = PG_BUSY | PG_FAKE;
     pg.offset.set(off);
@@ -1056,7 +1062,8 @@ pub fn uvm_pagealloc_multi(
     size: usize,
     flags: i32,
 ) -> Result<(), Errno> {
-    // KASSERT(UVM_OBJ_IS_BUFCACHE(obj)): pgops arrive with M6. KERNEL_ASSERT_LOCKED(): M5.
+    kassert!(crate::uvm::uvm_object::uvm_obj_is_bufcache(obj));
+    kernel_assert_locked();
     let plist = Pglist::new();
     plist.init();
     let r = uvm_pglistalloc(
@@ -1102,7 +1109,8 @@ pub fn uvm_pagealloc(
     kassert!(obj.is_none() || anon.is_none());
     kassert!(anon.is_none() || off == 0);
     kassert!(off == trunc_page(off as usize) as Voff);
-    // the owner lock assertions: M5.
+    kassert!(obj.is_none_or(|obj| uvm_obj_is_dummy(obj) || rw_write_held(obj.vmobjlock())));
+    kassert!(anon.is_none_or(|anon| anon.an_lock().is_none_or(rw_write_held)));
 
     let mut pmr_flags = UVM_PLA_NOWAIT;
 
@@ -1148,7 +1156,16 @@ pub fn uvm_pagerealloc(pg: &VmPage, newobj: Option<&UvmObject>, newoff: Voff) {
 /// assumes all valid mappings of pg are gone.
 pub fn uvm_pageclean(pg: &VmPage) {
     kassert!(pg.flags() & PG_DEV == 0);
-    // the owner lock assertions: M5.
+    kassert!(
+        pg.uobject()
+            .is_none_or(|obj| uvm_obj_is_dummy(obj) || rw_write_held(obj.vmobjlock()))
+    );
+    kassert!(
+        pg.uobject().is_some()
+            || pg
+                .uanon()
+                .is_none_or(|anon| anon.an_lock().is_some_and(rw_write_held))
+    );
 
     // if the page was an object page (and thus "TABLED"), remove it from the object.
     if pg.flags() & PG_TABLED != 0 {
@@ -1381,7 +1398,7 @@ pub fn uvm_pageactivate(pg: &VmPage) {
 /// `uvm_pagedequeue`: remove a page from any paging queue.
 pub fn uvm_pagedequeue(pg: &VmPage) {
     kassert!(uvm_page_owner_locked_p(pg, false));
-    // MUTEX_ASSERT_LOCKED(&uvm.pageqlock): M5.
+    mutex_assert_locked(&UVM.pageqlock, "uvm_pagedequeue");
     kassert!(pg.wire_count.get() == 0);
 
     if pg.flags() & PQ_ACTIVE != 0 {

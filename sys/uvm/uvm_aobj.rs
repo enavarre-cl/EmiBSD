@@ -61,7 +61,6 @@
 //!   Rust keeps `u_swslots` and `u_swhash` side by side, so a conversion clears the one it
 //!   leaves (the C's union is overwritten).
 //! - `u_swhash` keeps the slice `hashinit` returns; `u_swhashmask` is its length minus one.
-//! - `uo_refs` is a `Cell`, not the C's atomic (one CPU until `MULTIPROCESSOR`).
 //! - `UVM_PAGE_OWN` is not configured.
 
 use core::cell::Cell;
@@ -913,7 +912,7 @@ pub fn uao_reference(uobj: &UvmObject) {
         return;
     }
 
-    uobj.uo_refs.set(uobj.uo_refs.get() + 1);
+    uobj.uo_refs.atomic_inc();
 }
 
 /// `uao_detach`: drop a reference to an anonymous UVM object.
@@ -926,8 +925,7 @@ pub fn uao_detach(uobj: &UvmObject) {
     }
 
     // Drop the reference.  If it was the last one, destroy the object.
-    uobj.uo_refs.set(uobj.uo_refs.get() - 1);
-    if uobj.uo_refs.get() > 0 {
+    if uobj.uo_refs.atomic_dec_nv() > 0 {
         return;
     }
 

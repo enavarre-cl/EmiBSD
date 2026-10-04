@@ -332,8 +332,9 @@ pub enum UvmExpCounters {
     ExpNcounters,
 }
 
-/// `uvmexp_counters`: the per-CPU UVM counters, one array for the one CPU until `percpu`
-/// (`counters_alloc`, M11) gives every CPU its own.
+/// `uvmexp_counters`: the UVM event counters. The C keeps one array per CPU
+/// (`counters_alloc_ncpus`); here every CPU bumps the same relaxed atomics (`docs/C_TO_RUST.md`,
+/// the `struct cpumem *` counters row), which counts the same events without a lock.
 pub static UVMEXP_COUNTERS: [AtomicU64; UvmExpCounters::ExpNcounters as usize] =
     [const { AtomicU64::new(0) }; UvmExpCounters::ExpNcounters as usize];
 

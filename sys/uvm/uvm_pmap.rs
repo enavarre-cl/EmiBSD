@@ -69,25 +69,51 @@
 //!
 //! Status: `wip`. The prototypes it declares are the methods of `machine::Pmap`, added as the
 //! milestones need them.
+//!
+//! ## Deviations
+//! - The `pmap_statistics` counters are [`PmapCounter`]s, relaxed atomic words: a user
+//!   pmap's are changed under its lock, but the kernel pmap's are changed by every CPU without
+//!   one (the C's plain `long`s race there; a racing `Cell` would be undefined behaviour in
+//!   Rust). Loads and stores stay separate, so the counts are as approximate as the C's.
 
-use core::cell::Cell;
+use core::sync::atomic::{AtomicI64, Ordering};
 
 use crate::uvm::uvm_extern::Voff;
+
+/// A `long` of `struct pmap_statistics` (see the module's deviations).
+pub struct PmapCounter(AtomicI64);
+
+impl PmapCounter {
+    /// A counter at `v`.
+    pub const fn new(v: i64) -> Self {
+        Self(AtomicI64::new(v))
+    }
+
+    /// Reads the counter.
+    pub fn get(&self) -> i64 {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// Writes the counter.
+    pub fn set(&self, v: i64) {
+        self.0.store(v, Ordering::Relaxed);
+    }
+}
 
 /// `struct pmap_statistics`.
 pub struct PmapStatistics {
     /// Number of pages mapped (total).
-    pub resident_count: Cell<i64>,
+    pub resident_count: PmapCounter,
     /// Number of pages wired.
-    pub wired_count: Cell<i64>,
+    pub wired_count: PmapCounter,
 }
 
 impl PmapStatistics {
     /// Zeroed statistics.
     pub const fn new() -> Self {
         Self {
-            resident_count: Cell::new(0),
-            wired_count: Cell::new(0),
+            resident_count: PmapCounter::new(0),
+            wired_count: PmapCounter::new(0),
         }
     }
 }
@@ -123,4 +149,18 @@ pub const fn pmap_prefer_align() -> usize {
 #[inline]
 pub const fn pmap_prefer_offset(_off: Voff) -> usize {
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn statistics_start_at_zero_and_keep_what_is_stored() {
+        let st = PmapStatistics::new();
+        assert_eq!((st.resident_count.get(), st.wired_count.get()), (0, 0));
+        st.resident_count.set(st.resident_count.get() + 3);
+        st.wired_count.set(-1);
+        assert_eq!((st.resident_count.get(), st.wired_count.get()), (3, -1));
+    }
 }

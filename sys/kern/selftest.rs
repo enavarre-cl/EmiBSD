@@ -70,7 +70,7 @@ use crate::sys::fcntl::{FNONBLOCK, FREAD, FWRITE};
 use crate::sys::malloc::{M_NOWAIT, M_TEMP, M_ZERO};
 use crate::sys::mbuf::mtod;
 use crate::sys::mbuf::{M_COPYALL, M_DONTWAIT, MT_DATA, PACKET_TAG_GRE};
-use crate::sys::mman::{PROT_READ, PROT_WRITE};
+use crate::sys::mman::{MADV_NORMAL, MAP_INHERIT_COPY, PROT_READ, PROT_WRITE};
 use crate::sys::mutex::Mutex;
 use crate::sys::param::{NODEV, PAGE_SIZE, PWAIT};
 use crate::sys::pool::{KinfoPool, PR_NOWAIT, PR_RWLOCK, PR_WAITOK, PR_ZERO, Pool};
@@ -83,10 +83,14 @@ use crate::sys::timeout::Timeout;
 use crate::sys::types::{Paddr, Vaddr, Vsize, major};
 use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
 use crate::sys::vnode::IO_NDELAY;
-use crate::uvm::uvm_extern::{UVM_PGA_ZERO, UVM_PLA_NOWAIT, UVM_PLA_WAITOK, UVM_PLA_ZERO};
+use crate::uvm::uvm_extern::{
+    PROT_MASK, UVM_FLAG_COPYONW, UVM_FLAG_FIXED, UVM_PGA_ZERO, UVM_PLA_NOWAIT, UVM_PLA_WAITOK,
+    UVM_PLA_ZERO, Vmspace, uvm_mapflag,
+};
+use crate::uvm::uvm_fault::{VM_FAULT_INVALID, uvm_fault};
 use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_km::{KD_NOWAIT, KD_WAITOK, KP_NONE, KP_PAGEABLE, KV_ANY, km_alloc, km_free};
-use crate::uvm::uvm_map::{uvmspace_alloc, uvmspace_free};
+use crate::uvm::uvm_map::{uvm_mapanon, uvm_unmap, uvmspace_alloc, uvmspace_free};
 use crate::uvm::uvm_page::{
     PHYS_TO_VM_PAGE, Pglist, uvm_pagealloc, uvm_pagefree, uvm_pglistalloc, uvm_pglistfree,
     vm_page_to_phys,
@@ -1762,7 +1766,9 @@ pub fn rd_check() {
     }
 }
 
-// selftest=mpstress: M11a's exit test, pool(9) and uvm_pmemrange on every CPU at once.
+// selftest=mpstress: M11a's exit test, pool(9) and uvm_pmemrange on every CPU at once, and
+// M11e's uvm stress (page faults, amaps and anons, the page queues, the pmap locks and the
+// TLB shootdowns).
 
 /// The most CPUs the stress runs a thread on.
 const MPSTRESS_MAXCPUS: usize = 64;
@@ -1774,6 +1780,11 @@ const MPSTRESS_POOL_ITEMS: usize = 24;
 const MPSTRESS_PMR_ROUNDS: u32 = 600;
 /// Page lists held at once per round.
 const MPSTRESS_PMR_LISTS: usize = 6;
+/// uvm rounds per thread.
+const MPSTRESS_UVM_ROUNDS: u32 = 1000;
+/// Pages per thread per uvm round, at most, in pageable kernel memory and in the thread's
+/// slice of the shared anonymous map.
+const MPSTRESS_UVM_PAGES: usize = 4;
 /// Exchange slots per pool, through which items cross CPUs.
 const MPSTRESS_XCHG: usize = 32;
 /// The item sizes of the stress pools: a cache item's minimum, a mid size, and one that
@@ -1789,10 +1800,10 @@ static MPSTRESS_SLOTS: [[AtomicPtr<u8>; MPSTRESS_XCHG]; 3] =
     [const { [const { AtomicPtr::new(ptr::null_mut()) }; MPSTRESS_XCHG] }; 3];
 /// The barrier's interlock.
 static MPSTRESS_MTX: Mutex = Mutex::new(IPL_NONE);
-/// The phase the threads may run: 0 wait, 1 pool, 2 pmemrange, 3 exit.
+/// The phase the threads may run: 0 wait, 1 pool, 2 pmemrange, 3 uvm, 4 exit.
 static MPSTRESS_PHASE: AtomicU32 = AtomicU32::new(0);
-/// Threads arrived at each barrier (ready, pool done, pmemrange done).
-static MPSTRESS_ARRIVED: [AtomicU32; 3] = [const { AtomicU32::new(0) }; 3];
+/// Threads arrived at each barrier (ready, pool done, pmemrange done, uvm done).
+static MPSTRESS_ARRIVED: [AtomicU32; 4] = [const { AtomicU32::new(0) }; 4];
 /// Threads that took their last step before exiting.
 static MPSTRESS_EXITED: AtomicU32 = AtomicU32::new(0);
 /// The first failure, an index into [`MPSTRESS_MSG`] (`usize::MAX`: none).
@@ -1807,19 +1818,33 @@ static MPSTRESS_CPUS: [AtomicPtr<CpuInfo>; MPSTRESS_MAXCPUS] =
 static MPSTRESS_RAN_ON: [AtomicU32; MPSTRESS_MAXCPUS] =
     [const { AtomicU32::new(u32::MAX) }; MPSTRESS_MAXCPUS];
 /// Counters: pool gets, `PR_NOWAIT` gets refused, items that crossed CPUs, page lists,
-/// pages, page lists refused (`UVM_PLA_NOWAIT`).
-static MPSTRESS_STATS: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
+/// pages, page lists refused (`UVM_PLA_NOWAIT`), pageable kernel pages faulted, anonymous
+/// pages faulted, slices unmapped and mapped again.
+static MPSTRESS_STATS: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
 /// `uvmexp.free` when the pmemrange phase started and when it ended.
 static MPSTRESS_FREE: [AtomicI32; 2] = [const { AtomicI32::new(0) }; 2];
+/// The uvm phase's start and end (`nsecuptime`).
+static MPSTRESS_UVM_NS: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+/// `uvmexp.pcphit` and `uvmexp.pcpmiss` (the per-CPU page caches) when the uvm phase started
+/// and when it ended.
+static MPSTRESS_PCP: [[AtomicI32; 2]; 2] = [const { [const { AtomicI32::new(0) }; 2] }; 2];
+/// The address space whose anonymous map the uvm phase's threads share.
+static MPSTRESS_VM: AtomicPtr<Vmspace> = AtomicPtr::new(ptr::null_mut());
 
-/// The failure messages: the pool's first, two, then the pmemrange's three, then the CPU's.
-static MPSTRESS_MSG: [&str; 6] = [
+/// The failure messages: the pool's first, two, then the pmemrange's three, then the CPU's,
+/// then the uvm phase's five.
+static MPSTRESS_MSG: [&str; 11] = [
     "pool_get(PR_WAITOK) returned nothing",
     "a pool item's contents changed while it was out",
     "a page list's page is outside its constraint or misaligned",
     "a page's contents changed while it was allocated",
     "uvm_pglistalloc(UVM_PLA_WAITOK) failed",
     "a thread ran on the wrong CPU",
+    "a pageable kernel page does not hold what was written through its mapping",
+    "km_alloc(kp_pageable) failed",
+    "an anonymous page is not mapped where it was faulted in, or does not hold its tag",
+    "uvm_fault on the shared anonymous map failed",
+    "the shared anonymous map (or a thread's slice of it) could not be mapped",
 ];
 
 /// Records the first failure.
@@ -1900,9 +1925,19 @@ fn mpstress_pool_done() {
 }
 
 /// The end of the pmemrange phase, on the last thread: every thread is parked, so nothing
-/// else allocates or frees pages for the test.
+/// else allocates or frees pages for the test. The uvm phase starts.
 fn mpstress_pmr_done() {
     MPSTRESS_FREE[1].store(UVMEXP.free.load(Ordering::Relaxed), Ordering::Relaxed);
+    MPSTRESS_PCP[0][0].store(UVMEXP.pcphit.load(Ordering::Relaxed), Ordering::Relaxed);
+    MPSTRESS_PCP[0][1].store(UVMEXP.pcpmiss.load(Ordering::Relaxed), Ordering::Relaxed);
+    MPSTRESS_UVM_NS[0].store(nsecuptime(), Ordering::Relaxed);
+}
+
+/// The end of the uvm phase, on the last thread.
+fn mpstress_uvm_done() {
+    MPSTRESS_UVM_NS[1].store(nsecuptime(), Ordering::Relaxed);
+    MPSTRESS_PCP[1][0].store(UVMEXP.pcphit.load(Ordering::Relaxed), Ordering::Relaxed);
+    MPSTRESS_PCP[1][1].store(UVMEXP.pcpmiss.load(Ordering::Relaxed), Ordering::Relaxed);
 }
 
 /// Nothing to do at the start barrier.
@@ -2076,9 +2111,137 @@ fn mpstress_pmr_phase(me: usize, rand: &mut u64) {
     }
 }
 
+/// Where the shared anonymous map of the uvm phase starts.
+fn mpstress_uva() -> usize {
+    <Machine as VmParam>::VM_MIN_ADDRESS + 0x1000_0000
+}
+
+/// The flags of the shared anonymous map and of each slice mapped again: private
+/// (copy-on-write) anonymous memory, read and write, at the address given.
+fn mpstress_uvm_flags() -> u32 {
+    uvm_mapflag(
+        PROT_READ | PROT_WRITE,
+        PROT_MASK,
+        MAP_INHERIT_COPY,
+        MADV_NORMAL,
+        UVM_FLAG_COPYONW | UVM_FLAG_FIXED,
+    )
+}
+
+/// Writes `v` into the first word of the managed page at `pa`, through the direct map;
+/// false when `pa` is not a managed page.
+fn mpstress_write_phys(pa: Paddr, v: u64) -> bool {
+    let Some(pg) = PHYS_TO_VM_PAGE(pa) else {
+        return false;
+    };
+    // SAFETY: the direct map covers every managed page; a word-aligned write into a page this
+    // thread's slice owns.
+    unsafe { ptr::write_volatile(pmap_map_direct(pg).as_usize() as *mut u64, v) };
+    true
+}
+
+/// The uvm phase of one thread. Each round faults pageable kernel memory in through the trap
+/// path (`km_alloc(kp_pageable)` written through its own mapping: `uvm_fault` on
+/// `kernel_map`, the kernel object, `pmap_enter` of the kernel pmap, without the kernel
+/// lock), checks every page through its mapping and through the page `pmap_extract` reports,
+/// and frees it (`km_free`: `pmap_remove` of the kernel pmap, which shoots the range down on
+/// every CPU, and `uvm_km_pgremove`; a CPU left with a stale TLB entry reads another thread's
+/// tag the next time the addresses come back). Then it faults its slice of the shared
+/// anonymous map in with `uvm_fault` (the map lock, `amap_copy`, anons, the page queues,
+/// `pmap_enter` under the user pmap's lock), tags each page through the direct map, faults
+/// again and checks that the mapping and the tags held, and unmaps and maps the slice again
+/// (`uvm_unmap`, `uvm_mapanon(UVM_FLAG_FIXED)`).
+fn mpstress_uvm_phase(me: usize, rand: &mut u64) {
+    // SAFETY: `mpstress` made the address space before starting the threads and frees it
+    // after they all exited.
+    let Some(vm) = (unsafe { MPSTRESS_VM.load(Ordering::Acquire).as_ref() }) else {
+        mpstress_fail(10);
+        return;
+    };
+    let map = &vm.vm_map;
+    let pm = map.pmap();
+    let size = MPSTRESS_UVM_PAGES * PAGE_SIZE;
+    let slice = mpstress_uva() + me * size;
+
+    for round in 0..MPSTRESS_UVM_ROUNDS {
+        let tag = ((me as u64) << 56) | (u64::from(round) << 32);
+
+        // Pageable kernel memory.
+        let npages = 1 + (mpstress_rand(rand) as usize) % MPSTRESS_UVM_PAGES;
+        let Some(buf) = km_alloc(npages * PAGE_SIZE, &KV_ANY, &KP_PAGEABLE, &KD_WAITOK) else {
+            mpstress_fail(7);
+            continue;
+        };
+        for i in 0..npages {
+            let va = buf.as_ptr() as usize + i * PAGE_SIZE;
+            // SAFETY: the first and last words of a page of the pageable allocation just
+            // made; the first write faults it in.
+            unsafe {
+                ptr::write_volatile(va as *mut u64, tag ^ i as u64);
+                ptr::write_volatile((va + PAGE_SIZE - 8) as *mut u64, !(tag ^ i as u64));
+            }
+        }
+        for i in 0..npages {
+            let va = buf.as_ptr() as usize + i * PAGE_SIZE;
+            let want = tag ^ i as u64;
+            // SAFETY: as above.
+            let (first, last) = unsafe {
+                (
+                    ptr::read_volatile(va as *const u64),
+                    ptr::read_volatile((va + PAGE_SIZE - 8) as *const u64),
+                )
+            };
+            let phys = pmap_extract(pmap_kernel(), Vaddr::new(va)).and_then(read_phys);
+            if first != want || last != !want || phys != Some(want) {
+                mpstress_fail(6);
+            }
+        }
+        km_free(buf, npages * PAGE_SIZE, &KV_ANY, &KP_PAGEABLE);
+        MPSTRESS_STATS[6].fetch_add(npages as u64, Ordering::Relaxed);
+
+        // The thread's slice of the shared anonymous map.
+        let mut pas = [None; MPSTRESS_UVM_PAGES];
+        for (i, slot) in pas.iter_mut().enumerate() {
+            let va = slice + i * PAGE_SIZE;
+            if uvm_fault(map, va, VM_FAULT_INVALID, PROT_READ | PROT_WRITE).is_err() {
+                mpstress_fail(9);
+                continue;
+            }
+            *slot = pmap_extract(pm, Vaddr::new(va));
+            if !slot.is_some_and(|pa| mpstress_write_phys(pa, tag ^ (0x100 + i as u64))) {
+                mpstress_fail(8);
+            }
+        }
+        for (i, pa) in pas.iter().enumerate() {
+            let va = slice + i * PAGE_SIZE;
+            if uvm_fault(map, va, VM_FAULT_INVALID, PROT_READ).is_err() {
+                mpstress_fail(9);
+                continue;
+            }
+            let now = pmap_extract(pm, Vaddr::new(va));
+            if pa.is_none()
+                || now != *pa
+                || now.and_then(read_phys) != Some(tag ^ (0x100 + i as u64))
+            {
+                mpstress_fail(8);
+            }
+        }
+        MPSTRESS_STATS[7].fetch_add(MPSTRESS_UVM_PAGES as u64, Ordering::Relaxed);
+
+        uvm_unmap(map, slice, slice + size);
+        let mut addr = slice;
+        if uvm_mapanon(map, &mut addr, size, 0, mpstress_uvm_flags()).is_err() || addr != slice {
+            mpstress_fail(10);
+            return;
+        }
+        MPSTRESS_STATS[8].fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// One stress thread: `arg` is its index plus one. Pegged to its CPU (`MULTIPROCESSOR`), it
 /// drops the kernel lock (pool(9) and uvm_pmemrange are MPSAFE), waits for the start, runs
-/// the pool phase, waits for every thread, runs the pmemrange phase, waits again, and exits.
+/// the pool phase, waits for every thread, runs the pmemrange phase, waits, runs the uvm
+/// phase, waits again, and exits.
 fn mpstress_thread(arg: *mut core::ffi::c_void) {
     let me = arg.addr() - 1;
 
@@ -2100,6 +2263,8 @@ fn mpstress_thread(arg: *mut core::ffi::c_void) {
     mpstress_barrier(1, 2, mpstress_pool_done);
     mpstress_pmr_phase(me, &mut rand);
     mpstress_barrier(2, 3, mpstress_pmr_done);
+    mpstress_uvm_phase(me, &mut rand);
+    mpstress_barrier(3, 4, mpstress_uvm_done);
 
     if MPSTRESS_RAN_ON[me].load(Ordering::Relaxed) != cpu_number() {
         mpstress_fail(5);
@@ -2115,9 +2280,11 @@ fn mpstress_thread(arg: *mut core::ffi::c_void) {
 
 /// `selftest=mpstress` (M11a's exit test): one kernel thread per running CPU, each pegged to
 /// its CPU and started together, hammers three shared pools with per-CPU caches
-/// (`pool_cache_init`) and then `uvm_pglistalloc`/`uvm_pglistfree`; prints
-/// `selftest: mpstress pool ok (<N> cpus, ...)` and `selftest: mpstress pmemrange ok (<N>
-/// cpus, ...)`, or a FAILED line; returns whether both passed. The uniprocessor kernel runs
+/// (`pool_cache_init`), then `uvm_pglistalloc`/`uvm_pglistfree`, then uvm's fault path
+/// (M11e: pageable kernel memory faulted in through the trap, and a shared anonymous map);
+/// prints `selftest: mpstress pool ok (<N> cpus, ...)`, `selftest: mpstress pmemrange ok
+/// (<N> cpus, ...)` and `selftest: mpstress uvm ok (<N> cpus, ...)`, or a FAILED line;
+/// returns whether all three passed. The uniprocessor kernel runs
 /// the same with one thread.
 pub fn mpstress() -> bool {
     #[cfg(feature = "multiprocessor")]
@@ -2167,6 +2334,26 @@ pub fn mpstress() -> bool {
     for pp in &MPSTRESS_POOLS {
         pool_cache_init(pp);
     }
+    // The uvm phase's shared anonymous map: one slice of MPSTRESS_UVM_PAGES pages per thread.
+    let vm = uvmspace_alloc(
+        <Machine as VmParam>::VM_MIN_ADDRESS,
+        <Machine as VmParam>::VM_MAXUSER_ADDRESS,
+        true,
+        true,
+    );
+    let mut uva = mpstress_uva();
+    if uvm_mapanon(
+        &vm.vm_map,
+        &mut uva,
+        ncpus * MPSTRESS_UVM_PAGES * PAGE_SIZE,
+        0,
+        mpstress_uvm_flags(),
+    )
+    .is_ok()
+        && uva == mpstress_uva()
+    {
+        MPSTRESS_VM.store(ptr::from_ref(vm).cast_mut(), Ordering::Release);
+    }
     let free_start = UVMEXP.free.load(Ordering::Relaxed);
     let start_ns = nsecuptime();
 
@@ -2214,7 +2401,10 @@ pub fn mpstress() -> bool {
         pool_ok &= pp.pr_npages.get() == 0 && pp.pr_nitems.get() == 0;
     }
 
-    let stats: [u64; 6] = core::array::from_fn(|i| MPSTRESS_STATS[i].load(Ordering::Relaxed));
+    MPSTRESS_VM.store(ptr::null_mut(), Ordering::Relaxed);
+    uvmspace_free(vm);
+
+    let stats: [u64; 9] = core::array::from_fn(|i| MPSTRESS_STATS[i].load(Ordering::Relaxed));
     let failed = MPSTRESS_FAILED.load(Ordering::Relaxed);
     let why = MPSTRESS_MSG.get(failed).copied();
     let cpus_seen = (0..ncpus)
@@ -2271,5 +2461,34 @@ pub fn mpstress() -> bool {
         );
     }
 
-    pool_passed && pmr_passed
+    let uvm_failed = matches!(failed, 6..=10);
+    let uvm_ms = MPSTRESS_UVM_NS[1]
+        .load(Ordering::Relaxed)
+        .wrapping_sub(MPSTRESS_UVM_NS[0].load(Ordering::Relaxed))
+        / 1_000_000;
+    let pcp = |i: usize| {
+        MPSTRESS_PCP[1][i]
+            .load(Ordering::Relaxed)
+            .wrapping_sub(MPSTRESS_PCP[0][i].load(Ordering::Relaxed))
+    };
+    if !uvm_failed {
+        kprintf!(
+            "selftest: mpstress uvm ok ({} cpus, {} pageable kernel pages and {} anonymous pages faulted in, {} slices unmapped and mapped again, per-cpu page caches {} hits {} misses, {} ms)\n",
+            ncpus,
+            stats[6],
+            stats[7],
+            stats[8],
+            pcp(0),
+            pcp(1),
+            uvm_ms
+        );
+    } else {
+        kprintf!(
+            "selftest: mpstress uvm FAILED ({} cpus, {})\n",
+            ncpus,
+            why.unwrap_or("-")
+        );
+    }
+
+    pool_passed && pmr_passed && !uvm_failed
 }

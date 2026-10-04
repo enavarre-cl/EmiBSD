@@ -1225,7 +1225,10 @@ ntfs_steps := disk_login + " " + \
 # and runs (`selftest: 4 cpus running`, the IPI and TLB shootdown check of each machine), the
 # default boot's init stand-in passes on it, `selftest=kthread` ping-pongs across two CPUs and
 # `selftest=mpstress` hammers the pools (with their per-CPU caches) and uvm_pmemrange from a
-# thread pegged to each CPU. M11b (MP timekeeping), in the default boots: amd64 runs tsc.c's
+# thread pegged to each CPU; since M11e a third phase has each pegged thread, without the
+# kernel lock, fault pageable kernel memory in through the trap path and a shared
+# copy-on-write anonymous map through uvm_fault, check, unmap and remap it (the page queues,
+# amaps, pmap locks, per-CPU page caches and TLB shootdowns on four CPUs). M11b (MP timekeeping), in the default boots: amd64 runs tsc.c's
 # synchronisation test against each application processor and prints a line per AP whatever
 # the verdict (`tsc: cpu0/cpuN: sync test passed`, `... failed` or `... not run`; QEMU's TCG
 # passes it), and on both archs every CPU dispatches its own clock interrupts with an uptime
@@ -1246,7 +1249,7 @@ smoke-mp: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feature
         --cmdline "selftest=kthread" --expect "selftest: kthread ping-pong ok" --expect ", across cpu"
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none \
         --cmdline "selftest=mpstress" --expect "selftest: mpstress pool ok (4 cpus" \
-        --expect "selftest: mpstress pmemrange ok (4 cpus"
+        --expect "selftest: mpstress pmemrange ok (4 cpus" --expect "selftest: mpstress uvm ok (4 cpus"
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none \
         --expect "bsd: 4 processors" --expect "cpu0 at mainbus0 mpidr 0: ARM Cortex-A72" \
         --expect "cpu3 at mainbus0 mpidr 3: ARM Cortex-A72" \
@@ -1259,7 +1262,7 @@ smoke-mp: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feature
         --cmdline "selftest=kthread" --expect "selftest: kthread ping-pong ok" --expect ", across cpu"
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none \
         --cmdline "selftest=mpstress" --expect "selftest: mpstress pool ok (4 cpus" \
-        --expect "selftest: mpstress pmemrange ok (4 cpus"
+        --expect "selftest: mpstress pmemrange ok (4 cpus" --expect "selftest: mpstress uvm ok (4 cpus"
 
 # M11c: ddb(4) on the MULTIPROCESSOR kernel with four processors (`-smp 4`), per arch, from the
 # ffs ramdisk booted `-ds`. `-d` stops at `ddb{0}> ` before the application processors exist

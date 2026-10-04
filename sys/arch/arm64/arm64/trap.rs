@@ -37,14 +37,12 @@
 //! `pcb_onfault` recovery; M6-b/M7a `udata_abort`; `kern_sig.c` the `trapsignal`s of every
 //! EL0 exception, `fpu_load` for the FP traps and `sve_load` for the SVE one. M11a:
 //! `emulate_msr` (with `cpu.c`'s `cpu_id_aa64*`) and `do_el0_sync`'s `KERNEL_LOCK` around
-//! `sigexit`.
+//! `sigexit`. M11e: `kdata_abort` and `udata_abort` run `uvm_fault` and `uvm_grow` without the
+//! kernel lock, as the C does (uvm takes the locks it needs, the kernel lock included around
+//! the vnode pager's I/O and `pgo_fault`).
 //!
 //! ## Deviations
 //! - `do_el0_sync`'s `KERNEL_UNLOCK` after `sigexit` is a comment: `sigexit` never returns.
-//! - `MULTIPROCESSOR` (M11a): `kdata_abort` and `udata_abort` hold the kernel lock over
-//!   `uvm_fault` and `uvm_grow`, which the C runs unlocked: the page queues (`uvm_lock_pageq`)
-//!   are still unlocked, as on amd64. This lasts until M11e makes `uvm.pageqlock` real.
-//!   Without `MULTIPROCESSOR` the lock is nothing.
 //! - The `we_re_toast` path prints the syndrome and enters `db_ktrap` as the `DDB` build does,
 //!   then panics with the same message as the non-`DDB` build: ddb-lite has no command loop
 //!   to stay in, and returning would re-execute the faulting instruction.
@@ -85,7 +83,7 @@ use crate::sys::siginfo::{
     TRAP_TRACE,
 };
 use crate::sys::signal::{SIGBUS, SIGILL, SIGKILL, SIGSEGV, SIGTRAP};
-use crate::sys::systm::{kernel_lock, kernel_unlock};
+use crate::sys::systm::kernel_lock;
 use crate::sys::types::Register;
 use crate::sys::types::Vaddr;
 use crate::uvm::uvm_extern::VmProt;
@@ -174,17 +172,13 @@ fn kdata_abort(frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
         return;
     }
 
-    // M11a: the kernel lock around the fault (see the module's deviations).
-    kernel_lock();
     let error = uvm_fault(map, va, 0, access_type);
     if error.is_ok() {
         if !kernel_map && let Some(p) = p {
             uvm_grow(p, va);
         }
-        kernel_unlock();
         return;
     }
-    kernel_unlock();
 
     // error != 0:
     if ci.ci_idepth.get() == 0 && pcb_onfault != 0 {
@@ -325,13 +319,10 @@ fn udata_abort(_frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
     if pmap_fault_fixup(map.pmap(), Vaddr::new(va), access_type) {
         return;
     }
-    // M11a: the kernel lock around the fault (see the module's deviations).
-    kernel_lock();
     let result = uvm_fault(map, va, 0, access_type);
     if result.is_ok() {
         uvm_grow(p, va);
     }
-    kernel_unlock();
     let error = match result {
         Ok(()) => return,
         Err(e) => e,

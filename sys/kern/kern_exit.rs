@@ -46,7 +46,10 @@
 //! `reaper`, `process_clear_orphan`, `process_reparent` and `process_zap`: enough for a
 //! kernel thread (and soon `init`) to die and be reaped. M8 adds `sys___threxit`,
 //! `dowait6`, `sys_wait4`, `sys_waitid`, `proc_finish_wait` and `process_untrace` (the file
-//! is complete) and the `ACCOUNTING` record (`acct_process`) in `exit1`.
+//! is complete) and the `ACCOUNTING` record (`acct_process`) in `exit1`. M11e: the
+//! `MULTIPROCESSOR` teardown as in C: `exit1` releases every hold of the kernel lock around
+//! `uvm_purge`, and the reaper drops the lock its kthread starts with and takes it only
+//! around the zombie's notification.
 //!
 //! ## Deviations
 //! - What `exit1` tears down that does not exist yet is reported, each once:
@@ -64,11 +67,6 @@
 //! - `dowait6` takes its out-parameters as `Option<&mut>`; `ps_opptr` (ptrace's old parent)
 //!   is always null, since `ptrace(2)` (`sys_process.c`) is not ported, so
 //!   `proc_finish_wait` always takes the zombie's branch.
-//! - M11a (`MULTIPROCESSOR`): `exit1` does not drop the kernel lock around `uvm_purge`, and
-//!   the reaper does not drop the lock its kthread starts with (its `KERNEL_LOCK`/
-//!   `KERNEL_UNLOCK` pair only nests): the address space teardown (`uvm_purge`, `uvm_exit`,
-//!   `uvm_uarea_free`) and `proc_free` reach uvm and the pools, which run under the kernel
-//!   lock until the M11e audit.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -314,9 +312,10 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
             // exit1() might be called with a lock count greater than one and we want to
             // ensure the costly operation of tearing down the VM space is performed
             // unlocked. It is safe to release them all since exit1() will not return.
-            // __mp_release_all(&kernel_lock) and KERNEL_LOCK() afterwards: M11a keeps the
-            // kernel lock over uvm_purge (see the module's deviations).
+            #[cfg(feature = "multiprocessor")]
+            let _ = crate::kern::kern_lock::__mp_release_all(&crate::kern::kern_lock::KERNEL_LOCK);
             uvm_purge();
+            kernel_lock();
         }
     }
 
@@ -512,7 +511,7 @@ pub fn proc_free(p: &Proc) {
 /// dead process. Once the resources are free, the process becomes a zombie, and the parent
 /// is allowed to read the undead's status.
 pub fn reaper(_arg: *mut c_void) {
-    // KERNEL_UNLOCK(): M11a keeps the kernel lock (see the module's deviations).
+    kernel_unlock();
 
     sched_assert_unlocked();
 

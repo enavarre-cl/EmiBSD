@@ -78,6 +78,10 @@
 //!   direct-map addresses until `kernel_map` exists (`uvm_map.c`, M6), and punching a hole
 //!   in the direct map would unmap the page from everyone. The carve-out is reported once
 //!   and the u-area has no guard until then.
+//! - `uvm_purge` does not call arm64's `pmap_purge` (`__HAVE_PMAP_PURGE`): the
+//!   `machine::Pmap` contract has no such method yet (the arm64 function is ported). Without
+//!   it the dying process's ASID stays live until `pmap_destroy` frees it, as before; the
+//!   teardown's TLB flushes are the ones `pmap_remove` does anyway.
 
 use core::ptr::{self, NonNull};
 use core::slice;
@@ -99,6 +103,7 @@ use crate::sys::proc::Proc;
 use crate::sys::proc::Process;
 use crate::sys::resource::{RLIMIT_DATA, RLIMIT_RSS, RLIMIT_STACK};
 use crate::sys::resourcevar::Plimit;
+use crate::sys::systm::kernel_assert_unlocked;
 use crate::sys::types::{Paddr, Rlim, Vaddr, Vsize};
 use crate::uvm::uvm_extern::{KmemVaMode, KvMap, UVM_PLA_WAITOK, VmProt};
 use crate::uvm::uvm_fault::{uvm_fault_unwire_locked, uvm_fault_wire};
@@ -330,7 +335,10 @@ pub fn uvm_purge() {
     };
     let vm = p.vmspace();
 
-    // KERNEL_ASSERT_UNLOCKED(); __HAVE_PMAP_PURGE: neither amd64 nor arm64.
+    kernel_assert_unlocked();
+
+    // __HAVE_PMAP_PURGE (arm64): pmap_purge(p) waits for the machine::Pmap contract (see the
+    // module's deviations).
     uvmspace_purge(vm);
 }
 
