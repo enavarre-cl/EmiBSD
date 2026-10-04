@@ -13,8 +13,8 @@
 //! `<uvm/uvm_extern.h>`). M11a adds the `MULTIPROCESSOR` contract: `cpu_number`,
 //! `ci_cpuid`, `CPU_IS_RUNNING`, `intr_disable`/`intr_restore` (the kernel lock and the
 //! mutex's parking lots), `cpu_boot_secondary_processors` and the application processor's
-//! entry from the boot glue, `cpu_hatch`; and `ci_cputype` (`__HAVE_CPU_TOPOLOGY`, with a
-//! default for machines without a topology probe).
+//! entry from the boot glue, `cpu_hatch`; and `ci_cputype`, `ci_smt_id`
+//! (`__HAVE_CPU_TOPOLOGY`, with defaults for machines without a topology probe).
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -286,6 +286,14 @@ pub trait Cpu {
         0
     }
 
+    /// `ci->ci_smt_id` (`__HAVE_CPU_TOPOLOGY`): the hardware thread of `ci` within its core,
+    /// 0 for the first; `kern_intrmap.c` gives interrupts only to thread 0 of each core. The
+    /// default, 0, is what a machine reports until it ports its topology probe (amd64
+    /// `cpu_topology`).
+    fn ci_smt_id(_ci: &Self::CpuInfo) -> u32 {
+        0
+    }
+
     /// `cpu_boot_secondary_processors()` (`MULTIPROCESSOR`): `main` calls it once the
     /// scheduler and the idle threads exist; lets every attached application processor run
     /// (`CPUF_GO`) and waits until each reports `CPUF_RUNNING`. Without `MULTIPROCESSOR`
@@ -396,6 +404,11 @@ pub fn cpu_number() -> u32 {
 /// `CPU_IS_RUNNING(ci)` on the selected machine.
 pub fn cpu_is_running(ci: &CpuInfo) -> bool {
     Machine::cpu_is_running(ci)
+}
+
+/// `ci->ci_smt_id` on the selected machine.
+pub fn ci_smt_id(ci: &CpuInfo) -> u32 {
+    Machine::ci_smt_id(ci)
 }
 
 /// `intr_disable()` on the selected machine.

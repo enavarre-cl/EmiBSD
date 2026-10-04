@@ -19,6 +19,7 @@ pub mod kern_event;
 pub mod kern_exec;
 pub mod kern_exit;
 pub mod kern_fork;
+pub mod kern_intrmap;
 pub mod kern_kthread;
 pub mod kern_lock;
 pub mod kern_malloc;

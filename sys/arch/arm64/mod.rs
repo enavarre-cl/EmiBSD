@@ -269,6 +269,10 @@ impl Cpu for Machine {
         include::cpu::cpu_is_running(ci)
     }
 
+    fn ci_smt_id(ci: &include::cpu::CpuInfo) -> u32 {
+        ci.ci_smt_id.get()
+    }
+
     fn intr_disable() -> u64 {
         include::cpu::intr_disable()
     }

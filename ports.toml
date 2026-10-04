@@ -2327,6 +2327,23 @@ deps = ["sys/sys/proc.h", "sys/kern/kern_fork.c"]
 notes = "M5-b1: kthread_create_deferred and kthread_run_deferred_queue; kthread_create reports fork1 (M5-b2) and kthread_exit exit1 (M6); M5-b2: kthread_create over fork1; M6-b: kthread_exit over exit1 (the file is complete); M11a: kthread_create takes the kernel lock around fork1 (and its error path)"
 
 [[file]]
+c = "sys/sys/intrmap.h"
+rust = "sys/sys/intrmap.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9220711b01f5d79f88b864d8d71724f41e7df5fb"
+notes = "M11d: INTRMAP_POWEROF2; struct intrmap is opaque and lives with the functions in kern_intrmap.rs"
+
+[[file]]
+c = "sys/kern/kern_intrmap.c"
+rust = "sys/kern/kern_intrmap.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "87021ca01b21333eb27341976910ac63e1e3e532"
+deps = ["sys/sys/intrmap.h", "sys/sys/device.h", "sys/sys/refcnt.h", "sys/kern/kern_malloc.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_synch.c"]
+notes = "M11d: the whole file: struct intrmap_cpus, struct intrmap, intrmap_lock/intrmap_cpus/intrmap_ncpu, intrmap_cpus_put (unsafe: consumes a reference), intrmap_cpus_get (CPU_INFO_FOREACH skipping ci_smt_id > 0, __HAVE_CPU_TOPOLOGY on both machines; Cpu::ci_smt_id defaults to 0, amd64 cpu_topology not ported), intrmap_nintrs, intrmap_set_grid, intrmap_create (returns &'static Intrmap; its body after intrmap_cpus_get is intrmap_create_cpus, for the host tests), intrmap_destroy (unsafe), intrmap_count, intrmap_cpu; fls(n) - 1 is n.ilog2() (libkern fls.c not ported); M_WAITOK allocations that fail panic; KASSERTMSG is kassert!; no caller yet: vio multi-queue with MSI-X is M13; host tests (counts, POWEROF2, the grid per unit over 1, 2, 4, 6 and 8 CPUs, the shared CPU set)"
+
+[[file]]
 c = "sys/sys/task.h"
 rust = "sys/sys/task.rs"
 status = "ported"
