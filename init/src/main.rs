@@ -285,6 +285,8 @@ const ENOTDIR: usize = 20;
 const ESPIPE: usize = 29;
 /// `EINVAL`.
 const EINVAL: usize = 22;
+/// `ENOSYS`.
+const ENOSYS: usize = 78;
 /// `EPIPE`.
 const EPIPE: usize = 32;
 /// `EAGAIN`.
@@ -688,8 +690,9 @@ fn unpinned_getpid() -> usize {
 /// `kern_fork.c`, `kern_exit.c` and the process system calls seen from user mode: a forked
 /// child exits with a status `wait4(2)` reports, a child that makes a system call from an
 /// unpinned site dies of `SIGABRT` (`pin_check`), there are no more children (`ECHILD`),
-/// and `getentropy`, `sched_yield`, `futex`, `utrace`, `pledge`, `acct`, `setrtable`,
-/// `getrtable`, `ypconnect`, `profil` and `sendsyslog` answer as OpenBSD's do here.
+/// and `getentropy`, `sched_yield`, `futex`, `utrace`, `pledge` (a bad promise only: a
+/// pledge lasts for the process, see [`pledges`]), `acct`, `setrtable`, `getrtable`,
+/// `ypconnect`, `profil` and `sendsyslog` answer as OpenBSD's do here.
 fn processes() -> bool {
     let call = |n, a, b, c| syscall3(n, a, b, c);
     let mut status: i32 = 0;
@@ -731,12 +734,6 @@ fn processes() -> bool {
         [&word as *const u32 as usize, FUTEX_WAKE, 1, 0, 0, 0],
     ) == (0, false);
     ok &= call(SYS_UTRACE, c"init".as_ptr() as usize, 0, 0) == (0, false);
-    ok &= call(
-        SYS_PLEDGE,
-        c"stdio rpath wpath cpath proc exec".as_ptr() as usize,
-        0,
-        0,
-    ) == (0, false);
     ok &= call(SYS_PLEDGE, c"stdio bogus".as_ptr() as usize, 0, 0) == (EINVAL, true);
     ok &= call(SYS_ACCT, 0, 0, 0) == (0, false);
     ok &= call(SYS_SETRTABLE, 0, 0, 0) == (0, false);
@@ -747,6 +744,59 @@ fn processes() -> bool {
     let msg = b"<13>init: sendsyslog ok";
     ok &= call(SYS_SENDSYSLOG, msg.as_ptr() as usize, msg.len(), LOG_CONS) == (ENOTCONN, true);
     ok
+}
+
+/// `kern_pledge.c` seen from user mode, in forked children since a pledge lasts for the
+/// process: a child pledged to "stdio" may still call `getpid(2)` and exit with a status of
+/// its choosing but cannot widen its promises (`EPERM`); calling `fork(2)`, which needs
+/// "proc", kills it with an uncatchable `SIGABRT` (`pledge_fail`); under "error" the same
+/// call answers `ENOSYS` instead. The parent stays unpledged.
+fn pledges() -> bool {
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let pledge = |promises: &core::ffi::CStr| call(SYS_PLEDGE, promises.as_ptr() as usize, 0, 0);
+    let mut status: i32 = 0;
+    let sp = &mut status as *mut i32 as usize;
+
+    // Allowed calls still work.
+    let pid = match call(SYS_FORK, 0, 0, 0) {
+        (0, false) => {
+            let mut ok = pledge(c"stdio") == (0, false);
+            ok &= !call(SYS_GETPID, 0, 0, 0).1;
+            ok &= pledge(c"stdio rpath") == (EPERM, true);
+            exit(if ok { 21 } else { 1 })
+        }
+        (pid, false) => pid,
+        _ => return false,
+    };
+    let mut ok = call(SYS_WAIT4, pid, sp, 0) == (pid, false);
+    ok &= status & 0x7f == 0 && (status >> 8) & 0xff == 21;
+
+    // A forbidden one is fatal.
+    let pid = match call(SYS_FORK, 0, 0, 0) {
+        (0, false) => {
+            if pledge(c"stdio") == (0, false) {
+                let _ = call(SYS_FORK, 0, 0, 0);
+            }
+            exit(1)
+        }
+        (pid, false) => pid,
+        _ => return false,
+    };
+    ok &= call(SYS_WAIT4, pid, sp, 0) == (pid, false);
+    ok &= status & 0x7f == SIGABRT as i32;
+
+    // Unless the process asked for errors.
+    let pid = match call(SYS_FORK, 0, 0, 0) {
+        (0, false) => {
+            let ok =
+                pledge(c"stdio error") == (0, false) && call(SYS_FORK, 0, 0, 0) == (ENOSYS, true);
+            exit(if ok { 22 } else { 1 })
+        }
+        (pid, false) => pid,
+        _ => return false,
+    };
+    ok &= call(SYS_WAIT4, pid, sp, 0) == (pid, false);
+    ok && status & 0x7f == 0 && (status >> 8) & 0xff == 22
 }
 
 /// How many times `on_sigalrm` ran.
@@ -964,6 +1014,13 @@ extern "C" fn init_main(sp: *const usize) -> ! {
         }
     } else {
         status = 10;
+    }
+    if pledges() {
+        if write(1, b"init: pledge ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 19;
     }
     if times() {
         if write(1, b"init: time ok\n").is_err() {
