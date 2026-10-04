@@ -572,6 +572,8 @@ pub struct SmokeOptions<'a> {
     pub cmdline: Option<&'a str>,
     /// Serial lines that must appear.
     pub expects: &'a [&'a str],
+    /// `--reject`: serial lines that must not appear; any of them fails the run.
+    pub rejects: &'a [&'a str],
     /// The QEMU exit status expected.
     pub status: i32,
     /// `(after this line, send this text)` on the serial console, in order: each pair waits
@@ -594,6 +596,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         kernel,
         cmdline,
         expects,
+        rejects,
         status,
         sends,
         until_seen,
@@ -709,8 +712,11 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         .copied()
         .filter(|e| !serial.contains(e))
         .collect();
+    let seen_rejects = rejected(&serial, rejects);
     let code = exit.and_then(|s| s.code());
-    let ok = missing.is_empty() && (stopped_when_seen || code == Some(expected_status));
+    let ok = missing.is_empty()
+        && seen_rejects.is_empty()
+        && (stopped_when_seen || code == Some(expected_status));
     let elapsed = started.elapsed().as_secs_f32();
     if ok {
         // The kernel's own lines, for the record; firmware and bootloader chatter before the
@@ -752,16 +758,30 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         format!("qemu exited with status {code:?}")
     };
     Err(format!(
-        "smoke {}: {} (expected {expected_status}); {}",
+        "smoke {}: {} (expected {expected_status}); {}{}",
         arch.name(),
         why,
         if missing.is_empty() {
             "every expected line was seen".to_string()
         } else {
             format!("NOT seen: {}", missing.join(" | "))
+        },
+        if seen_rejects.is_empty() {
+            String::new()
+        } else {
+            format!("; REJECTED line(s) seen: {}", seen_rejects.join(" | "))
         }
     )
     .into())
+}
+
+/// The lines of `rejects` that appear in `serial` (`--reject`).
+pub(crate) fn rejected<'a>(serial: &str, rejects: &[&'a str]) -> Vec<&'a str> {
+    rejects
+        .iter()
+        .copied()
+        .filter(|r| serial.contains(r))
+        .collect()
 }
 
 /// The line rd(4)'s self-test prints for `ramdisk` (its size is the module's), or the line
@@ -797,6 +817,17 @@ pub(crate) fn slurp_into(mut r: impl Read, into: &Mutex<Vec<u8>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejected_lines_are_the_ones_in_the_transcript() {
+        let serial = "boot\nuptime went backwards by 27000000 ns (5 -> 4)\nok\n";
+        assert_eq!(
+            rejected(serial, &["uptime went backwards", "panic:"]),
+            vec!["uptime went backwards"]
+        );
+        assert!(rejected(serial, &[]).is_empty());
+        assert!(rejected("boot\nok\n", &["uptime went backwards"]).is_empty());
+    }
 
     #[test]
     fn ramdisk_expectation_names_the_size_or_its_absence() {

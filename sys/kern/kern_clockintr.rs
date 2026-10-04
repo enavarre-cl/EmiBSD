@@ -46,9 +46,16 @@
 //!   whose 15-bit count wraps every 27.46 ms, and a clock interrupt held off longer than that
 //!   (QEMU's vCPU thread descheduled by the host) loses a period in `tc_delta`. OpenBSD on
 //!   the same counter does the same; checked arithmetic would panic where the C goes on.
+//!   amd64 now prefers the TSC (`tsc.c`), whose 32-bit count wraps after seconds; the i8254
+//!   remains the fallback.
+//! - Under feature `qemu` only (not in C): `clockintr_dispatch` checks every uptime it reads
+//!   against the previous one and prints `uptime went backwards by <n> ns` when it is behind,
+//!   which the smoke tests reject (`cargo xtask smoke --reject`).
 
 use core::ffi::c_void;
 use core::ptr;
+#[cfg(feature = "qemu")]
+use core::sync::atomic::AtomicU64;
 use core::sync::atomic::{Ordering, fence};
 
 use crate::kassert;
@@ -60,6 +67,8 @@ use crate::kern::kern_synch::wakeup;
 use crate::kern::kern_tc::nsecuptime;
 use crate::kern::sched_bsd::roundrobin_period;
 use crate::kern::subr_prf::panic;
+#[cfg(feature = "qemu")]
+use crate::kern::subr_prf::printf;
 use crate::kern::subr_prof::profclock_period;
 use crate::machine::Machine;
 use crate::machine::cpu::{Cpu, CpuInfo, MAXCPUS, curcpu};
@@ -71,6 +80,10 @@ use crate::sys::clockintr::{
 use crate::sys::mutex::mutex_assert_locked;
 use crate::sys::queue::TailqHead;
 use crate::unported;
+
+/// The last uptime `clockintr_dispatch` read (feature `qemu`, see the module's deviations).
+#[cfg(feature = "qemu")]
+static LAST_UPTIME: AtomicU64 = AtomicU64::new(0);
 
 /// `cl->cl_queue`: the queue a bound clockintr belongs to.
 fn cl_queue(cl: &Clockintr) -> &'static Clockqueue {
@@ -187,6 +200,20 @@ pub fn clockintr_trigger() {
     }
 }
 
+/// Feature `qemu`: prints `uptime went backwards` when `now` is behind the previous reading.
+#[cfg(feature = "qemu")]
+fn uptime_check(now: u64) {
+    let last = LAST_UPTIME.swap(now, Ordering::Relaxed);
+    if now < last {
+        printf(format_args!(
+            "uptime went backwards by {} ns ({} -> {})\n",
+            last - now,
+            last,
+            now
+        ));
+    }
+}
+
 /// `clockintr_dispatch`: run all expired events scheduled on the calling CPU. Returns 1 when
 /// something ran (the interrupt handler's "handled").
 pub fn clockintr_dispatch(frame: *mut c_void) -> i32 {
@@ -208,6 +235,8 @@ pub fn clockintr_dispatch(frame: *mut c_void) -> i32 {
 
     // If nothing is scheduled or we arrived too early, we have nothing to do.
     let start = nsecuptime();
+    #[cfg(feature = "qemu")]
+    uptime_check(start);
     cq.cq_uptime.set(start);
     let mut rearm = true;
     if cq.cq_pend.is_empty() {
@@ -222,6 +251,8 @@ pub fn clockintr_dispatch(frame: *mut c_void) -> i32 {
             if cq.cq_uptime.get() < cl.cl_expiration.get() {
                 // Double-check the time before giving up.
                 cq.cq_uptime.set(nsecuptime());
+                #[cfg(feature = "qemu")]
+                uptime_check(cq.cq_uptime.get());
                 if cq.cq_uptime.get() < cl.cl_expiration.get() {
                     break;
                 }

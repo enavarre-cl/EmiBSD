@@ -11,6 +11,10 @@ export EMIBSD_BUILD_HOST := `hostname -s 2>/dev/null || echo localhost`
 amd64 := "x86_64-unknown-none"
 arm64 := "aarch64-unknown-none-softfloat"
 
+# Every smoke and smoke2 run fails if a VM prints this (kern_clockintr's check under feature
+# `qemu`: an uptime reading behind the previous one).
+reject := "--reject 'uptime went backwards'"
+
 default:
     @just --list
 
@@ -75,7 +79,7 @@ run-arm64: image-arm64
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
 smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
         --expect "real mem = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
@@ -98,24 +102,24 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "selftest: pmap reuse ok" --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "-d" \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=trap" --status 35 \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=trap" --status 35 \
         --expect "fatal page fault in supervisor mode" --expect "trap type 6 code" \
         --expect "panic: trap type 6, code=" --expect "Starting stack trace..." \
         --expect "End of stack trace." --expect "The operating system has halted."
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=uart" \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=uart" \
         --send-after "selftest: uart rx interrupt armed" --send 'hello\n' \
         --expect "selftest: uart rx interrupt armed" --expect "selftest: uart echo: hello"
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=clock" \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=clock" \
         --expect "selftest: clock ok"
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=kthread" \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=kthread" \
         --expect "selftest: kthread ping-pong ok"
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=taskq" \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=taskq" \
         --expect "selftest: taskq ok"
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=vio" \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --cmdline "selftest=vio" \
         --expect "selftest: vio up ok" --expect "selftest: vio rx ok"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --expect-ramdisk \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on arm64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
         --expect "real mem  = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
@@ -138,21 +142,21 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "selftest: pmap reuse ok" --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "-d" \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "-d" \
         --expect "Stopped at" --expect "selftest: malloc/pool stress ok"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=trap" --status 35 \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=trap" --status 35 \
         --expect "panic: uvm_fault failed:" --expect "Starting stack trace..." \
         --expect "End of stack trace." --expect "The operating system has halted."
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=uart" \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=uart" \
         --send-after "selftest: uart rx interrupt armed" --send 'hello\n' \
         --expect "selftest: uart rx interrupt armed" --expect "selftest: uart echo: hello"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=clock" \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=clock" \
         --expect "selftest: clock ok"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=kthread" \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=kthread" \
         --expect "selftest: kthread ping-pong ok"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=taskq" \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=taskq" \
         --expect "selftest: taskq ok"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=vio" \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --cmdline "selftest=vio" \
         --expect "selftest: vio up ok" --expect "selftest: vio rx ok"
 
 # M8: OpenBSD's init(8) and ksh(1) from the ffs ramdisk, driven over the serial console. Needs
@@ -160,7 +164,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
 smoke-shell: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-shell: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
         --send-after "RETURN for sh:" --send '\n' \
         --send-after "# " --send 'uname -a\n' --send-after "GENERIC#" --send 'uname -sr\n' \
         --send-after "EmiBSD 8.0" --send 'cat /etc/motd\n' \
@@ -171,7 +175,7 @@ smoke-shell: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect " 8.0 GENERIC#" --expect "amd64" \
         --expect "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1)" \
         --expect "bin  dev  etc  home root sbin tmp  usr  var" --expect "pfctl"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
         --send-after "RETURN for sh:" --send '\n' \
         --send-after "# " --send 'uname -a\n' --send-after "GENERIC#" --send 'uname -sr\n' \
         --send-after "EmiBSD 8.0" --send 'cat /etc/motd\n' \
@@ -193,13 +197,13 @@ smoke-shell: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 smoke-login: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-login: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'id\n' --send-after "uid=0(root)" --send 'uname -a\n' \
         --send-after " 8.0 GENERIC#" --send 'x=ok; [ $(date +%s) -gt 1790985600 ] && echo rtc-$x\n' \
         --expect "rc: multi-user" --expect "EmiBSD/amd64 (Amnesiac) (tty00)" \
         --expect "uid=0(root)" --expect " 8.0 GENERIC#" --expect "amd64" --expect "rtc-ok"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'id\n' --send-after "uid=0(root)" --send 'uname -a\n' \
         --send-after " 8.0 GENERIC#" --send 'x=ok; [ $(date +%s) -gt 1790985600 ] && echo rtc-$x\n' \
@@ -214,7 +218,7 @@ smoke-login: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 smoke-route: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-route: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'route -n show -inet\n' \
         --send-after "# " --send 'route -n get 8.8.8.8\n' \
@@ -222,7 +226,7 @@ smoke-route: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "rc: multi-user" --expect "Internet:" --expect "default            10.0.2.2" \
         --expect "10.0.2/24" --expect "gateway: 10.0.2.2" --expect "interface: vio0" \
         --expect "lo0: flags=" --expect "vio0: flags=" {{https_run}}
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'route -n show -inet\n' \
         --send-after "# " --send 'route -n get 8.8.8.8\n' \
@@ -252,8 +256,8 @@ smoke-https: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-https: no ramdisk image; run just userland first"; exit 1; }
     @mkdir -p target/https-www && echo 'hello from emibsd-host over https' >target/https-www/hello.txt
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen {{https_check}}
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen {{https_check}}
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen {{https_check}}
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen {{https_check}}
 
 https_check := "--https-server target/https-www:8443:trusted --https-server target/https-www:8444:echo " + \
     "--https-server target/https-www:8445:untrusted " + \
@@ -273,8 +277,8 @@ https_check := "--https-server target/https-www:8443:trusted --https-server targ
 smoke-internet: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-internet: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen {{internet_check}}
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen {{internet_check}}
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen {{internet_check}}
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen {{internet_check}}
 
 internet_check := "--send-after login: --send 'root\\n' --send-after Password: --send 'emibsd\\n' " + \
     "--send-after '# ' --send 'ftp -o - https://www.openbsd.org/robots.txt\\n' " + \
@@ -287,7 +291,7 @@ internet_check := "--send-after login: --send 'root\\n' --send-after Password: -
 smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-diag: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'ps -ax\n' \
         --send-after "# " --send 'ps -aux\n' \
@@ -307,7 +311,7 @@ smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "bytes per page" --expect "Memory statistics by bucket size" \
         --expect "Memory resource pool statistics" --expect "/dev/rd0a        " \
         --expect "/dev/rd0a on / type ffs (local)" --expect "diag-42"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'ps -ax\n' \
         --send-after "# " --send 'ps -aux\n' \
@@ -334,7 +338,7 @@ smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 smoke-link: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-link: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke2 --arch amd64 --kernel target/{{amd64}}/debug/bsd \
+    cargo xtask smoke2 {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd \
         --both-send-after "login:" --both-send 'root\n' --both-send-after "Password:" --both-send 'emibsd\n' \
         --a-send-after "# " --a-send 'ifconfig vio1 inet 192.168.77.1/24 up\n' \
         --a-send-after "# " --a-send 'ping -c 10 192.168.77.2\n' \
@@ -343,7 +347,7 @@ smoke-link: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --a-expect "vio1 at virtio1: 1 queue, address 52:54:00:bb:00:01" \
         --b-expect "vio1 at virtio1: 1 queue, address 52:54:00:bb:00:02" \
         --a-expect "bytes from 192.168.77.2: icmp_seq=" --b-expect "bytes from 192.168.77.1: icmp_seq="
-    cargo xtask smoke2 --arch arm64 --kernel target/{{arm64}}/debug/bsd \
+    cargo xtask smoke2 {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd \
         --both-send-after "login:" --both-send 'root\n' --both-send-after "Password:" --both-send 'emibsd\n' \
         --a-send-after "# " --a-send 'ifconfig vio1 inet 192.168.77.1/24 up\n' \
         --a-send-after "# " --a-send 'ping -c 10 192.168.77.2\n' \
@@ -361,7 +365,7 @@ smoke-link: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 smoke-wg: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-wg: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke2 --arch amd64 --kernel target/{{amd64}}/debug/bsd \
+    cargo xtask smoke2 {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd \
         --both-send-after "login:" --both-send 'root\n' --both-send-after "Password:" --both-send 'emibsd\n' \
         --a-send-after "# " --a-send 'ifconfig vio1 inet 192.168.77.1/24 up\n' \
         --a-send-after "# " --a-send 'ifconfig wg0 create wgport 51820 wgkey dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=\n' \
@@ -385,7 +389,7 @@ smoke-wg: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --both-expect "last handshake: " \
         --a-expect "block drop quick on wg0 inet proto icmp all" --a-expect "wg-blocked-8" \
         --a-expect "pf disabled" --a-expect "wg-passes-10"
-    cargo xtask smoke2 --arch arm64 --kernel target/{{arm64}}/debug/bsd \
+    cargo xtask smoke2 {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd \
         --both-send-after "login:" --both-send 'root\n' --both-send-after "Password:" --both-send 'emibsd\n' \
         --a-send-after "# " --a-send 'ifconfig vio1 inet 192.168.77.1/24 up\n' \
         --a-send-after "# " --a-send 'ifconfig wg0 create wgport 51820 wgkey dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=\n' \
@@ -417,13 +421,13 @@ smoke-wg: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 smoke-net: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-net: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'ifconfig vio0\n' --send-after "# " --send 'ping -c 1 10.0.2.2\n' \
         --expect "rc: multi-user" --expect "vio0: flags=" --expect "inet 10.0.2.15 netmask 0xffffff00" \
         --expect "PING 10.0.2.2 (10.0.2.2): 56 data bytes" \
         --expect "1 packets transmitted, 1 packets received, 0.0% packet loss"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'ifconfig vio0\n' --send-after "# " --send 'ping -c 1 10.0.2.2\n' \
         --expect "rc: multi-user" --expect "vio0: flags=" --expect "inet 10.0.2.15 netmask 0xffffff00" \
@@ -440,7 +444,7 @@ smoke-net: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 smoke-pf: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-pf: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'pfctl -si\n' \
         --send-after "# " --send 'ping -c 1 10.0.2.2 && echo before-pf-$((1+1))\n' \
@@ -453,7 +457,7 @@ smoke-pf: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "pf enabled" --expect "Status: Enabled" \
         --expect "block drop quick inet proto icmp from any to 10.0.2.2" --expect "blocked-4" \
         --expect "pf disabled" --expect "after-pfctl-d-6"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'pfctl -si\n' \
         --send-after "# " --send 'ping -c 1 10.0.2.2 && echo before-pf-$((1+1))\n' \
@@ -478,7 +482,7 @@ smoke-pf: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 smoke-ipsec: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-ipsec: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'cd /tmp; umask 077\n' \
         {{esp_keys}} \
@@ -489,7 +493,7 @@ smoke-ipsec: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "flow esp out from 10.77.1.0/24 to 10.77.2.0/24 peer 192.168.77.2" \
         --expect "esp tunnel from 192.168.77.1 to 192.168.77.2 spi 0x00001001 auth hmac-sha2-256 enc aes" \
         --expect "esp tunnel from 192.168.77.2 to 192.168.77.1 spi 0x00001002 auth hmac-sha2-256 enc aes"
-    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'cd /tmp; umask 077\n' \
         {{esp_keys}} \
@@ -513,7 +517,7 @@ smoke-ipsec: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 smoke-esp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-esp: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke2 --arch amd64 --kernel target/{{amd64}}/debug/bsd \
+    cargo xtask smoke2 {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd \
         {{esp_both}} \
         --a-send-after "# " --a-send 'ifconfig vio1 inet 192.168.77.1/24\n' \
         --a-send-after "# " --a-send 'ifconfig lo1 create; ifconfig lo1 inet 10.77.1.1/32\n' \
@@ -523,7 +527,7 @@ smoke-esp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         {{esp_b}} \
         --a-expect "bytes from 192.168.77.2" --a-expect "bytes from 10.77.2.1" \
         --b-expect "bytes from 192.168.77.1" --b-expect "bytes from 10.77.1.1"
-    cargo xtask smoke2 --arch arm64 --kernel target/{{arm64}}/debug/bsd \
+    cargo xtask smoke2 {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd \
         {{esp_both}} \
         --a-send-after "# " --a-send 'ifconfig vio1 inet 192.168.77.1/24\n' \
         --a-send-after "# " --a-send 'ifconfig lo1 create; ifconfig lo1 inet 10.77.1.1/32\n' \
@@ -548,9 +552,9 @@ smoke-esp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 smoke-pfsync: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-pfsync: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke2 --arch amd64 --kernel target/{{amd64}}/debug/bsd --timeout 400 \
+    cargo xtask smoke2 {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --timeout 400 \
         {{pfsync_both}} {{pfsync_a}} {{pfsync_b}} {{pfsync_expect}}
-    cargo xtask smoke2 --arch arm64 --kernel target/{{arm64}}/debug/bsd --timeout 400 \
+    cargo xtask smoke2 {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --timeout 400 \
         {{pfsync_both}} {{pfsync_a}} {{pfsync_b}} {{pfsync_expect}}
 
 # `smoke-pfsync`'s sends and expectations.
@@ -609,13 +613,13 @@ esp_sa := "--send-after '# ' --send 'a=\"esp tunnel from 192.168.77.1 to 192.168
 smoke-ipcomp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-ipcomp: no ramdisk image; run just userland first"; exit 1; }
-    cargo xtask smoke2 --arch amd64 --kernel target/{{amd64}}/debug/bsd \
+    cargo xtask smoke2 {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd \
         {{esp_both}} {{ipcomp_both}} {{ipcomp_a}} {{ipcomp_b}} \
         --a-expect "bytes from 192.168.77.2" --a-expect "1008 bytes from 10.77.2.1" \
         --a-expect "ipcomp tunnel from 192.168.77.2 to 192.168.77.1 spi 0x00002002 comp deflate" \
         --b-expect "bytes from 192.168.77.1" --b-expect "1008 bytes from 10.77.1.1" \
         --b-expect "ipcomp tunnel from 192.168.77.1 to 192.168.77.2 spi 0x00002001 comp deflate"
-    cargo xtask smoke2 --arch arm64 --kernel target/{{arm64}}/debug/bsd \
+    cargo xtask smoke2 {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd \
         {{esp_both}} {{ipcomp_both}} {{ipcomp_a}} {{ipcomp_b}} \
         --a-expect "bytes from 192.168.77.2" --a-expect "1008 bytes from 10.77.2.1" \
         --a-expect "ipcomp tunnel from 192.168.77.2 to 192.168.77.1 spi 0x00002002 comp deflate" \

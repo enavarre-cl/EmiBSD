@@ -13,14 +13,14 @@
 //! cargo xtask smoke2 --arch A [--kernel K] [--cmdline C] [--timeout SECS] [--show-transcripts]
 //!     [--both-send-after L --both-send T]... [--both-expect L]...
 //!     [--a-send-after L --a-send T]... [--a-expect L]...
-//!     [--b-send-after L --b-send T]... [--b-expect L]...
+//!     [--b-send-after L --b-send T]... [--b-expect L]... [--reject L]...
 //! ```
 //!
 //! The `--both-*` lines are put in front of each VM's own (a shared login, then one command per
 //! VM). The run passes once both VMs have sent everything and seen everything they expect; a
 //! VM that is done keeps running until the other one is, since the other may still be talking
 //! to it. A VM that is not done after the timeout, or whose QEMU exits early, fails the run;
-//! both transcripts are printed then.
+//! both transcripts are printed then. A `--reject` line in either transcript fails the run too.
 
 use std::io::Write;
 use std::net::UdpSocket;
@@ -105,6 +105,8 @@ pub struct Plan {
     pub timeout: Duration,
     /// Print both transcripts on success too.
     pub show_transcripts: bool,
+    /// `--reject`: lines that fail the run if either VM prints them.
+    pub rejects: Vec<String>,
 }
 
 /// The `--<who>-send-after`/`--<who>-send` pairs and `--<who>-expect` lines, with the
@@ -147,6 +149,10 @@ pub fn parse_plan(args: &[&str]) -> Result<Plan> {
         b: script_for(args, "b")?,
         timeout,
         show_transcripts: args.contains(&"--show-transcripts"),
+        rejects: flags(args, "--reject")
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
     })
 }
 
@@ -326,7 +332,8 @@ pub fn smoke2(
 
     kill_all(&mut vms);
     let elapsed = started.elapsed().as_secs_f32();
-    let mut summary: Vec<String> = Vec::new();
+    let rejects: Vec<&str> = plan.rejects.iter().map(String::as_str).collect();
+    let mut outputs: Vec<(String, String)> = Vec::new();
     for vm in &mut vms {
         drop(vm.stdin.take());
         if let Some(r) = vm.out_reader.take() {
@@ -338,11 +345,23 @@ pub fn smoke2(
             .and_then(|r| r.join().ok())
             .map(|b| String::from_utf8_lossy(&b).into_owned())
             .unwrap_or_default();
-        let t = vm.snapshot();
-        let serial = String::from_utf8_lossy(&t).into_owned();
-        let missing = vm.script.missing(&t);
+        let serial = String::from_utf8_lossy(&vm.snapshot()).into_owned();
+        let seen = boot::rejected(&serial, &rejects);
+        if !seen.is_empty() && failure.is_none() {
+            failure = Some(format!(
+                "vm {}: REJECTED line(s) seen: {}",
+                vm.tag,
+                seen.join(" | ")
+            ));
+        }
+        outputs.push((serial, diagnostics));
+    }
+    let mut summary: Vec<String> = Vec::new();
+    for (vm, (serial, diagnostics)) in vms.iter().zip(&outputs) {
+        let t = serial.as_bytes();
+        let missing = vm.script.missing(t);
         if failure.is_some() || plan.show_transcripts {
-            vm.report(&serial, &diagnostics);
+            vm.report(serial, diagnostics);
         }
         summary.push(match vm.done_at {
             Some(at) => format!("vm {}: done at {at:.1}s", vm.tag),
@@ -478,6 +497,21 @@ mod tests {
         assert_eq!(plan.timeout, Duration::from_secs(42));
         assert!(plan.show_transcripts);
         assert!(parse_plan(&["--timeout", "soon"]).is_err());
+    }
+
+    #[test]
+    fn plan_reads_reject_lines() {
+        let plan = parse_plan(&[
+            "--reject",
+            "uptime went backwards",
+            "--a-expect",
+            "x",
+            "--reject",
+            "panic:",
+        ])
+        .unwrap();
+        assert_eq!(plan.rejects, vec!["uptime went backwards", "panic:"]);
+        assert!(parse_plan(&[]).unwrap().rejects.is_empty());
     }
 
     #[test]

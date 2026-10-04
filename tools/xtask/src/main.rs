@@ -68,8 +68,8 @@ const TABLE_END: &str = "<!-- ports:end -->";
 const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | ports next | \
                      ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] [--init I] [--ramdisk R] | \
                      qemu --arch A [--kernel K] [--init I] [--ramdisk R] | gen-syscalls [--check] | \
-                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... --expect L... | \
-                     smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--https-server DIR:PORT:MODE]... | \
+                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
+                     smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
                      symbolize --arch A [--kernel K] | userland --arch A>";
 
 #[derive(Deserialize)]
@@ -218,6 +218,7 @@ fn run(args: &[String]) -> Result<()> {
                     kernel: kernel.as_deref(),
                     cmdline: optional_flag(rest, "--cmdline"),
                     expects: &expects,
+                    rejects: &flags(rest, "--reject"),
                     status,
                     sends: &sends
                         .iter()
@@ -657,4 +658,29 @@ fn git(repo: &Path, args: &[&str]) -> Result<String> {
         return Err(format!("git {cmd}: {stderr}").into());
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn smoke_reads_every_reject_line() {
+        let args = [
+            "--arch",
+            "amd64",
+            "--reject",
+            "uptime went backwards",
+            "--expect",
+            "init: uptime monotonic ok",
+            "--reject",
+            "panic:",
+        ];
+        assert_eq!(
+            flags(&args, "--reject"),
+            vec!["uptime went backwards", "panic:"]
+        );
+        assert_eq!(flags(&args, "--expect"), vec!["init: uptime monotonic ok"]);
+        assert!(flags(&["--arch", "amd64"], "--reject").is_empty());
+    }
 }
