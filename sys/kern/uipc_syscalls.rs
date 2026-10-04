@@ -56,7 +56,6 @@
 //!   takes a `namei_pool` buffer.
 //! - `KTRACE` is not configured (`ktrsockaddr`, `ktrmsghdr`, `ktriovec`, `ktrgenio`,
 //!   `ktrfds`, `ktrcmsghdr`). `INET6` (`dns_portcheck`'s `AF_INET6`) is the `inet6` feature.
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::mem::offset_of;
 use core::ptr::NonNull;
@@ -120,7 +119,7 @@ use crate::sys::syscallargs::{
     SysSetsockoptArgs, SysShutdownArgs, SysSocketArgs, SysSocketpairArgs, SysYpconnectArgs,
 };
 use crate::sys::syslimits::IOV_MAX;
-use crate::sys::systm::{INFSLP, SysArgs, sysargs};
+use crate::sys::systm::{INFSLP, SysArgs, kernel_lock, kernel_unlock, sysargs};
 use crate::sys::time::{Timespec, timespecadd, timespecsub};
 use crate::sys::types::{Register, Socklen};
 use crate::sys::uio::{Iovec, UIO_SMALLIOV, Uio, UioRw, UioSeg};
@@ -1722,7 +1721,7 @@ pub fn sys_ypconnect(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Resul
     if p.process().ps_flags.load(Ordering::Relaxed) & PS_CHROOT != 0 {
         return Err(Errno::EACCES);
     }
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     let mut name = [0u8; MAXPATHLEN];
     let prefix = b"/var/yp/binding/";
     let suffix = b".2";
@@ -1742,7 +1741,10 @@ pub fn sys_ypconnect(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Resul
     );
     nid.ni_pledge = PLEDGE_RPATH;
 
-    namei(&mut nid)?;
+    if let Err(e) = namei(&mut nid) {
+        kernel_unlock();
+        return Err(e);
+    }
     let Some(vp) = nid.ni_vp else {
         crate::kern::subr_prf::panic(format_args!("sys_ypconnect: namei returned no vnode"));
     };
@@ -1794,7 +1796,7 @@ pub fn sys_ypconnect(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Resul
         VOP_READ(vp, &mut uio, 0, p.p_ucred.get())
     };
     vput(vp);
-    // KERNEL_UNLOCK()
+    kernel_unlock();
     error?;
     let data = Ypbinding::from_bytes(&data);
 

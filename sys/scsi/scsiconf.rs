@@ -176,7 +176,7 @@
 //!   error of 0 is `Ok(())` after the link is freed.
 //! - The C global `scsi_autoconf` is a `static` [`AtomicI32`] of the same name (beside the
 //!   `SCSI_AUTOCONF` flag value it starts with). `atomic_setbits_int(&link->state, ...)` is
-//!   a `Cell` update (one CPU, as the rest of the link).
+//!   a `Cell` update (under the kernel lock, as the rest of the link).
 //! - [`scsi_inqmatch`] takes a slice of anything that is or begins with an
 //!   [`ScsiInquiryPattern`] (`AsRef`) where the C takes a base pointer, a count and an
 //!   element size, and returns the best entry and its priority. A pattern longer than its

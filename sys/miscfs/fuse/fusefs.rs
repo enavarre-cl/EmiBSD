@@ -109,7 +109,7 @@ pub struct FusefsMnt {
     pub dev: Dev,
 }
 
-// SAFETY: changed under the kernel lock (one CPU), as in C.
+// SAFETY: changed under the kernel lock, as in C.
 unsafe impl Sync for FusefsMnt {}
 
 /// `VFSTOFUSEFS(mp)`: the FUSE mount of a mount.

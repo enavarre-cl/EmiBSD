@@ -78,9 +78,9 @@ use crate::sys::vnode::Vnode;
 struct FuseIhashtbl(&'static [ListHead<FusefsIHash>]);
 
 // SAFETY: the chains are changed under the kernel lock (the C's "XXXLOCKING" comments), as
-// in C; the kernel runs one CPU.
+// in C.
 unsafe impl Sync for FuseIhashtbl {}
-// SAFETY: as above: one CPU, the kernel lock.
+// SAFETY: as above: the kernel lock.
 unsafe impl Send for FuseIhashtbl {}
 
 /// `LIST_HEAD(fuse_ihashhead, fusefs_node) *fuse_ihashtbl`: the hash chains.

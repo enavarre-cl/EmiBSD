@@ -398,8 +398,8 @@ impl Virtqueue {
     }
 }
 
-// SAFETY: a virtqueue is reached from its softc under the driver's mutexes or at splnet, as
-// in C; one CPU here.
+// SAFETY: a virtqueue is reached from its softc under the driver's mutexes, or at splnet
+// under the kernel lock, as in C.
 unsafe impl Sync for Virtqueue {}
 
 /// `struct virtio_feature_name`.

@@ -207,7 +207,7 @@ pub struct NfsNode {
 }
 
 // SAFETY: the members are changed under the node's vnode lock (`n_lock`) or at `splbio`, the
-// tree link under the kernel lock, as in C; the kernel runs one CPU.
+// tree link under the kernel lock, as in C.
 unsafe impl Sync for NfsNode {}
 
 impl NfsNode {
@@ -307,8 +307,7 @@ tree_adapter!(
 /// `struct nfs_bufqhead`: the queue head for nfsiod's.
 pub struct NfsBufqhead(pub TailqHead<BFreelist>);
 
-// SAFETY: the queue is changed at `splbio` under the kernel lock, as in C; the kernel runs one
-// CPU.
+// SAFETY: the queue is changed at `splbio` under the kernel lock, as in C.
 unsafe impl Sync for NfsBufqhead {}
 
 /// `nfs_bufq`: buffers waiting for an nfsiod (defined in `nfs_bio.c`).

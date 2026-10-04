@@ -83,7 +83,6 @@
 //! - `vprint` is compiled under feature `diagnostic` or `debug`, `printlockedvnodes` under
 //!   `debug`, as in C. The DDB printers (`vfs_buf_print`, `vfs_vnode_print`,
 //!   `vfs_mount_print`) wait for the ddb command loop (`db_command.c`).
-//! - `KERNEL_ASSERT_LOCKED()` is nothing without `MULTIPROCESSOR`.
 
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering};
@@ -164,7 +163,7 @@ use crate::sys::stat::{
     S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG, S_IFSOCK, S_IRGRP, S_IROTH,
     S_IRUSR, S_IWGRP, S_IWOTH, S_IWUSR, S_IXGRP, S_IXOTH, S_IXUSR,
 };
-use crate::sys::systm::INFSLP;
+use crate::sys::systm::{INFSLP, kernel_assert_locked};
 use crate::sys::types::{Dev, Gid, Mode, Uid, major, makedev, minor};
 use crate::sys::ucred::{NOCRED, Ucred};
 use crate::sys::vnode::VN_KNOTE;
@@ -190,13 +189,13 @@ pub const VTTOIF_TAB: [Mode; 9] = [
 /// A global list of vnodes (`struct freelst`): the free list or the hold list.
 pub struct Freelst(pub TailqHead<VFreelist>);
 
-// SAFETY: the lists are changed at `splbio`, as in C; the kernel runs one CPU.
+// SAFETY: the lists are changed at `splbio` under the kernel lock, as in C.
 unsafe impl Sync for Freelst {}
 
 /// `struct mntlist`: the mounted file systems.
 pub struct Mntlist(pub TailqHead<MntList>);
 
-// SAFETY: the list is changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: the list is changed under the kernel lock, as in C.
 unsafe impl Sync for Mntlist {}
 
 /// `prtactive`: 1 => print out reclaim of active vnodes.
@@ -764,7 +763,7 @@ pub fn vget(vp: &'static Vnode, flags: i32) -> Result<(), Errno> {
 
 /// Vnode reference.
 pub fn vref(vp: &'static Vnode) {
-    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_locked();
 
     #[cfg(feature = "diagnostic")]
     {
@@ -1928,8 +1927,20 @@ pub fn vfs_syncwait(p: &Proc, verbose: bool) -> i32 {
         if verbose {
             kprintf!("{} ", nbusy);
         }
-        // MULTIPROCESSOR (__mp_release_all of the kernel lock): not configured.
+        #[cfg(feature = "multiprocessor")]
+        let hold_count = if crate::kern::kern_lock::_kernel_lock_held() {
+            crate::kern::kern_lock::__mp_release_all(&crate::kern::kern_lock::KERNEL_LOCK)
+        } else {
+            0
+        };
         delay(40000 * iter);
+        #[cfg(feature = "multiprocessor")]
+        if hold_count != 0 {
+            crate::kern::kern_lock::__mp_acquire_count(
+                &crate::kern::kern_lock::KERNEL_LOCK,
+                hold_count,
+            );
+        }
     }
 
     nbusy

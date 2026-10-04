@@ -1102,7 +1102,8 @@ pub fn pci_primary_vga(pa: &PciAttachArgs) -> i32 {
         return 0;
     }
 
-    // SAFETY: written by autoconfiguration only, on one CPU; nothing holds a reference.
+    // SAFETY: written by autoconfiguration only, under the kernel lock; nothing holds a
+    // reference.
     unsafe { PCI_VGA_TAG.write(Some(pa.pa_tag)) };
 
     1

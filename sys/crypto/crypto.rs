@@ -33,8 +33,8 @@
 //! - `crypto_drivers`/`crypto_drivers_num` are one `Vec<Cryptocap>` (`crypto_drivers_num` is
 //!   its length; "NULL until the first driver" is "empty"), in a `StaticCell` that the
 //!   functions reach through a closure (`with_drivers`) so no borrow of it outlives a call into
-//!   a driver. It is protected as in the C: by the kernel lock and `splvm`; this tree has one
-//!   processor (`KERNEL_ASSERT_LOCKED()` is nothing without `MULTIPROCESSOR`).
+//!   a driver. It is protected as in the C: by the kernel lock (asserted on entry) and
+//!   `splvm`.
 //! - The growth and zeroing of the table (`mallocarray` with `M_NOWAIT`) are `try_reserve` and
 //!   `resize_with`; memory comes from the global allocator (`M_TEMP`) where the C charges
 //!   `M_CRYPTO_DATA`.
@@ -62,6 +62,7 @@ use super::cryptodev::{
 };
 use crate::machine::intr::{splvm, splx};
 use crate::sys::errno::Errno;
+use crate::sys::systm::kernel_assert_locked;
 
 /// `crypto_drivers`: array allocated by driver; [A] driver data and session count [K].
 #[allow(non_upper_case_globals)] // the C name
@@ -116,7 +117,7 @@ fn crypto_newsession_locked(cri: &Cryptoini<'_>, hard: i32) -> Result<u64, Errno
         return Err(Errno::EINVAL);
     }
 
-    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_locked();
 
     // The algorithm we use here is pretty stupid; just use the first driver that supports all
     // the algorithms we need. Do a double-pass over all the drivers, ignoring software ones at
@@ -223,7 +224,7 @@ fn crypto_freesession_locked(sid: u64) -> Result<(), Errno> {
         return Err(Errno::ENOENT);
     }
 
-    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_locked();
 
     let freesession = with_drivers(|d| {
         if d[hid].cc_sessions != 0 {
@@ -258,7 +259,7 @@ pub fn crypto_get_driverid(flags: u8) -> Result<u32, Errno> {
 }
 
 fn crypto_get_driverid_locked(flags: u8) -> Result<u32, Errno> {
-    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_locked();
 
     with_drivers(|drivers| {
         if drivers.is_empty() {
@@ -309,7 +310,7 @@ pub fn crypto_register(
     }
 
     // called from attach routines
-    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_locked();
 
     let s = splvm();
     with_drivers(|drivers| {
@@ -344,7 +345,7 @@ fn crypto_unregister_locked(driverid: u32, alg: i32) -> Result<(), Errno> {
     let mut i = all;
 
     // may be called from detach routines, but not used
-    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_locked();
 
     with_drivers(|drivers| {
         // Sanity checks.
@@ -413,7 +414,7 @@ pub fn crypto_invoke(crp: &mut Cryptop<'_>) -> Result<(), Errno> {
 }
 
 fn crypto_invoke_locked(crp: &mut Cryptop<'_>) -> Result<(), Errno> {
-    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_locked();
 
     // Sanity checks.
     let num = crypto_drivers_num();

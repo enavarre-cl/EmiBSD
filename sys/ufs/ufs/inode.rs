@@ -226,8 +226,7 @@ pub struct Inode {
     pub i_vtbl: Cell<Option<&'static InodeVtbl>>,
 }
 
-// SAFETY: the members are changed under the inode's lock or the kernel lock, as in C; the
-// kernel runs one CPU.
+// SAFETY: the members are changed under the inode's lock or the kernel lock, as in C.
 unsafe impl Sync for Inode {}
 
 /// Generates a `DIP(ip, field)` getter and a `DIP_ASSIGN(ip, field, v)` setter.
@@ -384,7 +383,7 @@ impl Inode {
         // SAFETY: `ffs_vget` points `dinode_u` at the inode's own pool dinode of the mount's
         // type before the inode is used, and `ffs_reclaim` frees it with the inode; the
         // reference does not outlive `f`, and no other one is alive meanwhile (the accessors
-        // are the only way in, none of them nests, and the kernel runs one CPU).
+        // are the only way in, none of them nests, and they run under the kernel lock).
         f(unsafe { &mut *p })
     }
 
@@ -552,7 +551,7 @@ impl Inode {
         // SAFETY: `ext2fs_vget` points `dinode_u` at the inode's own pool `ext2fs_dinode`
         // before the inode is used, and `ext2fs_reclaim` frees it with the inode; the
         // reference does not outlive `f`, and no other one is alive meanwhile (the accessors
-        // are the only way in, none of them nests, and the kernel runs one CPU).
+        // are the only way in, none of them nests, and they run under the kernel lock).
         f(unsafe { &mut *p })
     }
 

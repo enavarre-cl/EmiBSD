@@ -77,7 +77,7 @@
 //!   `ntfs_nthashinit` runs at every `ntfs_mount` and sets them on the first one (under the
 //!   kernel lock, as the C); the table is published last, so a reader that sees it sees the
 //!   mask and the key. `hashinit` cannot sleep between the C's two tests of the table here
-//!   (one CPU, the kernel lock), so the C's `hashfree` of a table that lost the race never
+//!   (the kernel lock is held throughout), so the C's `hashfree` of a table that lost the race never
 //!   runs; it is kept.
 //! - `ntfs_nthashlookup` returns `Option`; `ntfs_nthashins` returns `Err(EEXIST)`.
 

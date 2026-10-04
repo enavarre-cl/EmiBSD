@@ -124,7 +124,7 @@ use crate::sys::syscallargs::{
 use crate::sys::syscallargs::{SysPollArgs, SysPpollArgs, SysPselectArgs, SysSelectArgs};
 use crate::sys::syslimits::IOV_MAX;
 use crate::sys::systm::{INFSLP, MAXTSLP};
-use crate::sys::systm::{SysArgs, sysargs};
+use crate::sys::systm::{SysArgs, kernel_lock, kernel_unlock, sysargs};
 use crate::sys::time::{Timespec, Timeval, timespec_to_nsec, timeval_to_timespec};
 use crate::sys::types::{Off, Register};
 use crate::sys::uio::{Iovec, UIO_SMALLIOV, Uio, UioRw, UioSeg};
@@ -823,9 +823,9 @@ pub fn pselcollect(
 
 /// `selwakeup`: do a wakeup when a selectable event occurs.
 pub fn selwakeup(sip: &Selinfo) {
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     knote_locked(&sip.si_note, i64::from(NOTE_SUBMIT));
-    // KERNEL_UNLOCK().
+    kernel_unlock();
 }
 
 /// Only copyout the revents field.
@@ -1193,8 +1193,15 @@ pub fn ppollcollect(p: &Proc, kevp: &Kevent, pl: &mut [Pollfd]) -> usize {
     //
     // Live-locking within the system call should not happen because the scan loop in
     // doppoll() has an upper limit for the number of events to process.
-    // SAFETY: the rate limiter is touched under the kernel lock (one CPU).
-    if pfd.revents == 0 && ratecheck(unsafe { POLL_LASTERR.get_mut() }, &POLL_ERRINTVL) {
+    if pfd.revents == 0 && {
+        // The C reads and writes the static without a lock (a benign race); here the kernel
+        // lock serialises the rate limiter, which `SY_NOLOCK` callers reach concurrently.
+        kernel_lock();
+        // SAFETY: the rate limiter is touched only here, under the kernel lock.
+        let noisy = ratecheck(unsafe { POLL_LASTERR.get_mut() }, &POLL_ERRINTVL);
+        kernel_unlock();
+        noisy
+    } {
         kprintf!(
             "{}[{}]: poll index {} fd {} events 0x{:x} filter {}/0x{:x} unclaimed\n",
             Str(p.process().comm()),

@@ -151,7 +151,7 @@ use crate::sys::stat::{S_IFBLK, S_IFCHR};
 use crate::sys::syslog::LOG_PRINTF;
 #[cfg(feature = "nfsclient")]
 use crate::sys::systm::MountrootFn;
-use crate::sys::systm::{DUMPDEV, MOUNTROOT, ROOTDEV};
+use crate::sys::systm::{DUMPDEV, MOUNTROOT, ROOTDEV, kernel_assert_locked};
 use crate::sys::task::Task;
 use crate::sys::time::sec_to_nsec;
 use crate::sys::time::{timeradd, timersub};
@@ -1149,7 +1149,7 @@ pub fn disk_construct(diskp: &Disk) {
 
 /// Attach a disk.
 pub fn disk_attach(dv: Option<&Device>, diskp: &'static Disk) {
-    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_locked();
 
     if diskp.dk_flags.get() & DKF_CONSTRUCTED == 0 {
         disk_construct(diskp);
@@ -1249,7 +1249,7 @@ pub fn disk_attach_callback(xdat: *mut c_void) {
 
 /// Detach a disk.
 pub fn disk_detach(diskp: &Disk) {
-    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_locked();
 
     if SOFTRAID_DISK_ATTACH.load(Ordering::Relaxed) {
         sr_disk_attach(diskp, -1);
@@ -1886,7 +1886,7 @@ pub fn duid_iszero(duid: &[u8; DUID_SIZE]) -> bool {
 
 /// `duid_format`: the DUID as 16 hex digits.
 pub fn duid_format(duid: &[u8; DUID_SIZE]) -> [u8; 2 * DUID_SIZE] {
-    // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_locked();
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut s = [0u8; 2 * DUID_SIZE];
     for (i, b) in duid.iter().enumerate() {

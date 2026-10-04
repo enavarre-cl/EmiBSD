@@ -184,6 +184,8 @@ use crate::sys::syslimits::NGROUPS_MAX;
 #[cfg(feature = "nfsclient")]
 use crate::sys::syslog::{LOG_ERR, LOG_INFO};
 use crate::sys::systm::{INFSLP, net_lock, net_unlock};
+#[cfg(feature = "nfsserver")]
+use crate::sys::systm::{kernel_lock, kernel_unlock};
 use crate::sys::time::sec_to_nsec;
 use crate::sys::ucred::Ucred;
 #[cfg(feature = "nfsclient")]
@@ -1826,10 +1828,11 @@ pub fn nfsrv_rcv(so: &'static Socket, arg: *mut c_void, waitflag: i32) {
     // cleared the upcall and while no nfsd holds a reference.
     let slp: &'static NfssvcSock = unsafe { &*arg.cast::<NfssvcSock>() };
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
 
     if slp.ns_flag.get() & SLP_VALID == 0 {
-        return; // out
+        kernel_unlock(); // out
+        return;
     }
 
     'dorecs: {
@@ -1955,6 +1958,9 @@ pub fn nfsrv_rcv(so: &'static Socket, arg: *mut c_void, waitflag: i32) {
     {
         nfsrv_wakenfsd(slp);
     }
+
+    // out:
+    kernel_unlock();
 }
 
 /// `nfsrv_getstream(slp, waitflag)`: try and extract an RPC request from the mbuf data list

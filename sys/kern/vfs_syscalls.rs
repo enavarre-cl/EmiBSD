@@ -61,8 +61,7 @@
 //!   reaches `single_thread_clear`; the pathname buffer is a `NameiBuf` given back on drop.
 //! - `option FIFO` is not configured (`miscfs/fifofs` is not ported): `mkfifo` answers
 //!   `EOPNOTSUPP` as the C does without it.
-//! - `KTRACE` is not configured; `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without
-//!   `MULTIPROCESSOR`.
+//! - `KTRACE` is not configured.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -138,7 +137,7 @@ use crate::sys::stat::{
     s_isfifo,
 };
 use crate::sys::syscallargs::*;
-use crate::sys::systm::{INFSLP, SysArgs, sysargs};
+use crate::sys::systm::{INFSLP, SysArgs, kernel_lock, kernel_unlock, sysargs};
 use crate::sys::time::{Timespec, Timeval, timeval_to_timespec};
 use crate::sys::types::{Dev, Gid, Mode, Off, Register, Uid, major};
 use crate::sys::uio::{Iovec, UIO_SMALLIOV, Uio, UioRw, UioSeg};
@@ -955,7 +954,7 @@ pub fn sys___realpath(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Res
         let mut bp = cwdlen - 1;
         cwdbuf[bp] = 0;
 
-        // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+        kernel_lock();
         let error = match p.fd().fd_cdir.get() {
             None => Err(Errno::ENOENT), // no root file system yet
             Some(cdir) => vfs_getcwd_common(
@@ -967,6 +966,7 @@ pub fn sys___realpath(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Res
                 p,
             ),
         };
+        kernel_unlock();
 
         let error = error.and_then(|()| {
             let cwd = &cwdbuf[bp..];
@@ -994,13 +994,17 @@ pub fn sys___realpath(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Res
 
     nd.ni_pledge = PLEDGE_RPATH;
     nd.ni_unveil = UNVEIL_READ;
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
-    namei(&mut nd)?;
+    kernel_lock();
+    if let Err(e) = namei(&mut nd) {
+        kernel_unlock();
+        return Err(e);
+    }
 
     // release reference from namei
     if let Some(vp) = nd.ni_vp {
         vrele(vp);
     }
+    kernel_unlock();
 
     let error = copyoutstr(rp, uap.resolved.get() as usize).map(|_| ());
 
@@ -1253,7 +1257,7 @@ pub fn doopenat(
         localtrunc = true;
         flags &= !O_TRUNC; // Must do truncate ourselves
     }
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     let error: Result<(), Errno> = 'error: {
         if let Err(error) = vn_open(&mut nd, flags, cmode) {
             fdplock(fdp);
@@ -1327,7 +1331,7 @@ pub fn doopenat(
             }
         }
         let _ = VOP_UNLOCK(vp);
-        // KERNEL_UNLOCK().
+        kernel_unlock();
         retval[0] = indx as Register;
         fdplock(fdp);
         fdinsert(fdp, indx, fdflags, fp);
@@ -1336,7 +1340,7 @@ pub fn doopenat(
         return Ok(());
     };
     // error:
-    // KERNEL_UNLOCK().
+    kernel_unlock();
     fdpunlock(fdp);
     let _ = closef(fp, p);
     error
@@ -2013,12 +2017,15 @@ pub fn dofstatat(p: &Proc, fd: i32, path: *const u8, buf: usize, flag: i32) -> R
     let mut nd = ndinitat(LOOKUP, follow | LOCKLEAF, fd, upath(path), p);
     nd.ni_pledge = PLEDGE_RPATH;
     nd.ni_unveil = UNVEIL_READ;
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
-    namei(&mut nd)?;
+    kernel_lock();
+    if let Err(e) = namei(&mut nd) {
+        kernel_unlock();
+        return Err(e);
+    }
     let vp = ndvp(nd.ni_vp);
     let error = vn_stat(vp, &mut sb, p);
     vput(vp);
-    // KERNEL_UNLOCK().
+    kernel_unlock();
     error?;
     // Don't let non-root see generation numbers (for NFS security)
     if suser(p).is_err() {

@@ -76,9 +76,9 @@ use libkern::StaticCell;
 struct Ihashtbl(&'static [ListHead<IHash>]);
 
 // SAFETY: the chains are changed under the kernel lock (the C's "XXXLOCKING" comments), as
-// in C; the kernel runs one CPU.
+// in C.
 unsafe impl Sync for Ihashtbl {}
-// SAFETY: as above: one CPU, the kernel lock.
+// SAFETY: as above: the kernel lock.
 unsafe impl Send for Ihashtbl {}
 
 /// `LIST_HEAD(ihashhead, inode) *ihashtbl`: the hash chains.

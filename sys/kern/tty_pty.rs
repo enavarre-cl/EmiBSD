@@ -178,7 +178,7 @@ pub struct PtSoftc {
     pub pty_sn: Cell<[u8; 11]>,
 }
 
-// SAFETY: changed at spltty or under the kernel lock, on one CPU, as the tty is.
+// SAFETY: changed at spltty under the kernel lock, as the tty is.
 unsafe impl Sync for PtSoftc {}
 
 /// The pty array: `pt_softc` and `npty`.
@@ -190,7 +190,7 @@ struct PtArray {
 }
 
 // SAFETY: grown and filled under `pt_softc_lock`, read by the entry points of devices
-// `check_pty` already made, on one CPU.
+// `check_pty` already made, under the kernel lock.
 unsafe impl Sync for PtArray {}
 
 /// `pt_softc` and `npty`.

@@ -238,8 +238,7 @@ pub struct Denode {
     pub de_fc: [Cell<Fatcache>; FC_SIZE],
 }
 
-// SAFETY: the members are changed under the denode's lock or the kernel lock, as in C; the
-// kernel runs one CPU.
+// SAFETY: the members are changed under the denode's lock or the kernel lock, as in C.
 unsafe impl Sync for Denode {}
 
 impl Denode {

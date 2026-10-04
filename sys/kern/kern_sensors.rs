@@ -85,7 +85,8 @@ unsafe impl Sync for SensorTask {}
 pub struct SensordevListHead(SlistHead<KsensordevList>);
 
 // SAFETY: the list changes at `splhigh` (`sensordev_install`, `sensordev_deinstall`) and is
-// read under the kernel lock; the kernel runs one CPU.
+// read under the kernel lock, which the writers hold too (autoconfiguration, the
+// drivers' tasks).
 unsafe impl Sync for SensordevListHead {}
 
 /// `sensors_taskq`: the queue the refresh tasks run on (`systq` if it cannot be made).

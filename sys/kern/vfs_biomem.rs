@@ -67,7 +67,7 @@ use crate::uvm::uvm_param::{atop, ptoa, round_page};
 /// `buf_valist`'s type: a `Sync` static queue.
 pub struct BufValist(pub TailqHead<BValist>);
 
-// SAFETY: changed at `splbio`, as in C; the kernel runs one CPU.
+// SAFETY: changed at `splbio` under the kernel lock, as in C.
 unsafe impl Sync for BufValist {}
 
 /// `buf_kva_start`: the first slot of the arena never handed out.

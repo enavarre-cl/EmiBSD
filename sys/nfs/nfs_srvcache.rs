@@ -102,7 +102,7 @@ use crate::sys::types::SaFamily;
 #[derive(Clone, Copy)]
 struct Nfsrvhashtbl(&'static [ListHead<RcHash>]);
 
-// SAFETY: the chains are changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: the chains are changed under the kernel lock, as in C.
 unsafe impl Sync for Nfsrvhashtbl {}
 // SAFETY: as above.
 unsafe impl Send for Nfsrvhashtbl {}
@@ -110,7 +110,7 @@ unsafe impl Send for Nfsrvhashtbl {}
 /// `TAILQ_HEAD(nfsrvlru, nfsrvcache)`: the cache's entries, least recently used first.
 struct Nfsrvlru(TailqHead<RcLru>);
 
-// SAFETY: the list is changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: the list is changed under the kernel lock, as in C.
 unsafe impl Sync for Nfsrvlru {}
 
 /// `numnfsrvcache`: the number of entries in the cache.

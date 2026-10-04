@@ -109,7 +109,7 @@ pub struct NfsrvCache {
     pub rc_flag: Cell<u8>,
 }
 
-// SAFETY: the cache is changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: the cache is changed under the kernel lock, as in C.
 unsafe impl Sync for NfsrvCache {}
 
 impl NfsrvCache {

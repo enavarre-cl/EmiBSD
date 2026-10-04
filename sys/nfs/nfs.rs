@@ -460,7 +460,7 @@ pub struct NfsReq {
 }
 
 // SAFETY: requests are changed under the kernel lock at `splsoftnet` (`nfs_timer` and the
-// requesting thread), as in C; the kernel runs one CPU.
+// requesting thread), as in C.
 unsafe impl Sync for NfsReq {}
 
 impl NfsReq {
@@ -538,7 +538,7 @@ pub struct NfssvcSock {
     pub ns_sref: Cell<u32>,
 }
 
-// SAFETY: server sockets are changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: server sockets are changed under the kernel lock, as in C.
 unsafe impl Sync for NfssvcSock {}
 
 impl NfssvcSock {
@@ -588,7 +588,7 @@ pub struct Nfsd {
     pub nfsd_nd: Cell<Option<NonNull<NfsrvDescript>>>,
 }
 
-// SAFETY: server threads are changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: server threads are changed under the kernel lock, as in C.
 unsafe impl Sync for Nfsd {}
 
 impl Nfsd {
@@ -618,7 +618,7 @@ queue_adapter!(
 /// `struct nfsdhead`: the list of nfsds.
 pub struct Nfsdhead(pub TailqHead<NfsdChain>);
 
-// SAFETY: the list is changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: the list is changed under the kernel lock, as in C.
 unsafe impl Sync for Nfsdhead {}
 
 /// `struct nfsrv_descript`: used by the server for describing each request. The nfsd that

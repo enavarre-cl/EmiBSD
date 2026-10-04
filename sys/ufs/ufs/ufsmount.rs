@@ -110,7 +110,7 @@ pub struct Ufsmount {
 }
 
 // SAFETY: the members are changed under the kernel lock while mounting and unmounting, as in
-// C; the kernel runs one CPU.
+// C.
 unsafe impl Sync for Ufsmount {}
 
 impl Ufsmount {

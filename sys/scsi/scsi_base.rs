@@ -64,7 +64,6 @@
 //!   `flagnames`/`quirknames`/`devicetypenames`/`scsidebug_*` tables) are not ported.
 //!   `SCSI_DELAY` is not configured either (a comment in `scsi_init`). `SCSITERSE` is the
 //!   cargo feature `scsiterse`.
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are comments (nothing without `MULTIPROCESSOR`).
 //! - Functions returning 0 or an errno return `Result<(), Errno>`; `Err(ERESTART)` from an
 //!   `interpret_sense` or [`scsi_delay`] means "retry", as the C's `ERESTART`.
 //! - Buffers the C passes as `void *` plus a length (`scsi_inquire_vpd`, `scsi_mode_select`,
@@ -115,7 +114,7 @@ use crate::sys::errno::Errno::{self, *};
 use crate::sys::mutex::Mutex;
 use crate::sys::param::{PCATCH, PRIBIO};
 use crate::sys::pool::{PR_NOWAIT, PR_WAITOK, PR_ZERO, Pool};
-use crate::sys::systm::INFSLP;
+use crate::sys::systm::{INFSLP, kernel_lock, kernel_unlock};
 use crate::sys::task::Task;
 use crate::sys::time::sec_to_nsec;
 
@@ -1492,10 +1491,10 @@ fn scsi_iopool_get(iopl: &ScsiIopool) -> Option<ScsiIo> {
             iopl
         ));
     };
-    // KERNEL_LOCK();
+    kernel_lock();
     // SAFETY: `scsi_iopool_init` paired `io_get` with `iocookie`.
     let io = unsafe { io_get(iopl.iocookie.get()) };
-    // KERNEL_UNLOCK();
+    kernel_unlock();
 
     io
 }
@@ -1508,11 +1507,11 @@ fn scsi_iopool_put(iopl: &ScsiIopool, io: ScsiIo) {
             iopl
         ));
     };
-    // KERNEL_LOCK();
+    kernel_lock();
     // SAFETY: `scsi_iopool_init` paired `io_put` with `iocookie`; `io` came from the paired
     // `io_get` (every opening of this pool does).
     unsafe { io_put(iopl.iocookie.get(), io) };
-    // KERNEL_UNLOCK();
+    kernel_unlock();
 }
 
 /// Calls an I/O handler with an opening, or `None`.
@@ -2758,9 +2757,9 @@ pub fn scsi_xs_exec(xs: &'static ScsiXfer) {
     // SCSIDEBUG (not configured): scsi_show_xs(xs).
 
     // The adapter's scsi_cmd() is responsible for calling scsi_done().
-    // KERNEL_LOCK();
+    kernel_lock();
     (xs.link().bus().adapter().scsi_cmd)(xs);
-    // KERNEL_UNLOCK();
+    kernel_unlock();
 }
 
 /// `scsi_copy_internal_data`: for adapters that fake SCSI commands: copies the reply `data`
@@ -2787,12 +2786,12 @@ pub fn scsi_done(xs: &'static ScsiXfer) {
     // SCSIDEBUG (not configured): with SDEV_DB1, scsi_show_mem of the data that came in.
 
     xs.flags.set(xs.flags.get() | ITSDONE);
-    // KERNEL_LOCK();
+    kernel_lock();
     match xs.done.get() {
         Some(done) => done(xs),
         None => panic(format_args!("scsi_done: xs {:p} has no done", xs)),
     }
-    // KERNEL_UNLOCK();
+    kernel_unlock();
 }
 
 /// `scsi_xs_sync`: executes `xs` and waits for it (with `SCSI_NOSLEEP`, the adapter polls),

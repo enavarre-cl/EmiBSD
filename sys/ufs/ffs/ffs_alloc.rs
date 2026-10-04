@@ -118,7 +118,7 @@ static FFS_INODE_ALLOC_FSNOINODES_LAST: StaticCell<Timeval> = StaticCell::new(Ti
 
 /// `ratecheck(&last, &fserr_interval)` on one of the statics above.
 fn fserr_ratecheck(last: &StaticCell<Timeval>) -> bool {
-    // SAFETY: the rate limits are changed under the kernel lock on one CPU, and the
+    // SAFETY: the rate limits are changed under the kernel lock (ffs runs under it), and the
     // reference does not outlive the call.
     ratecheck(unsafe { last.get_mut() }, &FSERR_INTERVAL)
 }

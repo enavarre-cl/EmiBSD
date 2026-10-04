@@ -202,7 +202,7 @@ pub static NFSRV_DESCRIPT_PL: Pool = Pool::new();
 #[cfg(feature = "nfsserver")]
 pub struct Nfssvcsockhead(pub TailqHead<NsChain>);
 
-// SAFETY: the list is changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: the list is changed under the kernel lock, as in C.
 #[cfg(feature = "nfsserver")]
 unsafe impl Sync for Nfssvcsockhead {}
 

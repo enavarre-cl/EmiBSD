@@ -58,7 +58,8 @@
 //!   gives the pools their freelist order and page magics and `XSIMPLEQ` its cookies with the
 //!   C's interfaces, and nothing more. Nothing security-relevant may rely on it until the
 //!   ChaCha20 generator and the entropy pool land; `random_start` reports the gap.
-//! - `rndlock` (M5) is not here; the generator is one atomic word.
+//! - `rndlock` (M5) is not here; the generator is one atomic word, which `fetch_add`
+//!   advances safely from any CPU (`MULTIPROCESSOR`) without the lock.
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -91,13 +92,13 @@ fn rs_random_u64() -> u64 {
 
 /// `arc4random`: a 32-bit value from the stream.
 pub fn arc4random() -> u32 {
-    // mtx_enter(&rndlock): M5.
+    // mtx_enter(&rndlock): not needed by the one-word placeholder state (deviations).
     rs_random_u64() as u32
 }
 
 /// `arc4random_buf`: fills a buffer of arbitrary length from the stream.
 pub fn arc4random_buf(buf: &mut [u8]) {
-    // mtx_enter(&rndlock): M5.
+    // mtx_enter(&rndlock): not needed by the one-word placeholder state (deviations).
     for chunk in buf.chunks_mut(8) {
         let word = rs_random_u64().to_le_bytes();
         chunk.copy_from_slice(&word[..chunk.len()]);

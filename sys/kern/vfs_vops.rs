@@ -65,13 +65,14 @@ use core::ptr;
 
 use crate::kassert;
 use crate::kern::subr_prf::panic;
-use crate::kern::vfs_subr::{vput, vrele};
+use crate::kern::vfs_subr::{VNODE_MTX, vput, vrele};
 use crate::machine::cpu::curproc;
 use crate::machine::intr::{splbio, splx};
 use crate::sys::buf::Buf;
 use crate::sys::errno::Errno;
 use crate::sys::event::Knote;
 use crate::sys::fcntl::Flock;
+use crate::sys::mutex::mutex_assert_unlocked;
 use crate::sys::namei::Componentname;
 use crate::sys::proc::Proc;
 use crate::sys::syslimits::{PATH_MAX, PIPE_BUF};
@@ -671,7 +672,7 @@ pub fn VOP_LOCK(vp: &'static Vnode, flags: i32) -> Result<(), Errno> {
         a_flags: flags,
     };
 
-    // MUTEX_ASSERT_UNLOCKED(&vnode_mtx): the uniprocessor mutex keeps no owner to check.
+    mutex_assert_unlocked(&VNODE_MTX, "VOP_LOCK");
 
     match vp.op().vop_lock {
         Some(f) => f(&mut a),

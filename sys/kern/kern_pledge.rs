@@ -130,7 +130,7 @@ use crate::sys::sysctl::{
     KERN_PROC_ARGV, KERN_PROC_CWD, KERN_PROC_ENV, KERN_RAWPARTITION, KERN_SOMAXCONN, KERN_SYSVSHM,
     KERN_VERSION,
 };
-use crate::sys::systm::{SysArgs, sysargs};
+use crate::sys::systm::{SysArgs, kernel_lock, kernel_unlock, sysargs};
 use crate::sys::tty::PTMGET;
 use crate::sys::ttycom::{
     TIOCCBRK, TIOCCDTR, TIOCEXCL, TIOCEXT, TIOCFLUSH, TIOCGETA, TIOCGPGRP, TIOCGWINSZ, TIOCSBRK,
@@ -588,8 +588,9 @@ pub fn sys_pledge(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
         // path-accessing pledge. This must be done single-threaded, because another thread
         // may be in a system call sleeping in namei().
         let _ = single_thread_set(p, SINGLE_UNWIND);
-        // KERNEL_LOCK()/KERNEL_UNLOCK(): nothing without MULTIPROCESSOR.
+        kernel_lock();
         crate::kern::kern_unveil::unveil_destroy(pr);
+        kernel_unlock();
         single_thread_clear(p);
     }
     error
@@ -644,7 +645,7 @@ pub fn pledge_fail(p: &Proc, error: Errno, code: u64) -> Errno {
         return Errno::ENOSYS;
     }
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     uprintf(format_args!(
         "{}[{}]: pledge \"{}\", syscall {}\n",
         Str(pr.comm()),
@@ -663,7 +664,7 @@ pub fn pledge_fail(p: &Proc, error: Errno, code: u64) -> Errno {
     sigabort(p);
 
     pr.ps_pledge.set(0); // Disable all PLEDGE_ flags
-    // KERNEL_UNLOCK()
+    kernel_unlock();
     error
 }
 

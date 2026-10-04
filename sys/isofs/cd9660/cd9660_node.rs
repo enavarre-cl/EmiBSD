@@ -203,8 +203,7 @@ pub struct IsoNode {
     pub i_ci: Cell<ClusterInfo>,
 }
 
-// SAFETY: the members are changed under the node's lock or the kernel lock, as in C; the
-// kernel runs one CPU.
+// SAFETY: the members are changed under the node's lock or the kernel lock, as in C.
 unsafe impl Sync for IsoNode {}
 
 impl IsoNode {
@@ -292,9 +291,9 @@ pub const IN_ACCESS: u32 = 0x0020;
 struct Isohashtbl(&'static [ListHead<IsoHash>]);
 
 // SAFETY: the chains are changed under the kernel lock (the C's "XXX locking" comments), as
-// in C; the kernel runs one CPU.
+// in C.
 unsafe impl Sync for Isohashtbl {}
-// SAFETY: as above: one CPU, the kernel lock.
+// SAFETY: as above: the kernel lock.
 unsafe impl Send for Isohashtbl {}
 
 /// `isohashtbl`: structures associated with `iso_node` caching.

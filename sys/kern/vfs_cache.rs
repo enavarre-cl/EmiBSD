@@ -91,7 +91,7 @@ pub static NUMNEG: AtomicI64 = AtomicI64::new(0);
 /// A global LRU chain of name cache entries.
 pub struct NcList<A: crate::sys::queue::TailqAdapter>(pub TailqHead<A>);
 
-// SAFETY: the chains are changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: the chains are changed under the kernel lock, as in C.
 unsafe impl<A: crate::sys::queue::TailqAdapter> Sync for NcList<A> {}
 
 /// `nclruhead`: Regular Entry LRU chain.

@@ -374,7 +374,7 @@ pub struct Fs {
 }
 
 // SAFETY: the in-core super-block is changed under the kernel lock (and the vnode locks of
-// the files being allocated), as in C; the kernel runs one CPU.
+// the files being allocated), as in C.
 unsafe impl Sync for Fs {}
 
 impl Fs {
@@ -425,7 +425,7 @@ impl Fs {
     pub fn fsmnt(&self) -> crate::kern::subr_prf::Str<'_> {
         let name = self.fs_fsmnt.as_ptr();
         // SAFETY: a `Cell<[u8; N]>` has the array's layout; the borrow lasts as long as the
-        // caller's `&self`, during which nothing writes the name (the kernel runs one CPU,
+        // caller's `&self`, during which nothing writes the name (both run under the kernel lock,
         // and printing a message does not mount).
         crate::kern::subr_prf::Str(unsafe { &*name })
     }

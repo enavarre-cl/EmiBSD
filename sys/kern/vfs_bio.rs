@@ -220,13 +220,13 @@ unsafe impl crate::sys::sysctl::SysctlPlain for Bcachestats {}
 /// `bufhead`'s type: the list of every buffer, a `Sync` static.
 pub struct BufheadStatic(pub Bufhead);
 
-// SAFETY: changed at `splbio`, as in C; the kernel runs one CPU.
+// SAFETY: changed at `splbio` under the kernel lock, as in C.
 unsafe impl Sync for BufheadStatic {}
 
 /// `dirtyqueue`'s type: a `Sync` static queue.
 pub struct BufqueueStatic(pub Bufqueue);
 
-// SAFETY: changed at `splbio`, as in C; the kernel runs one CPU.
+// SAFETY: changed at `splbio` under the kernel lock, as in C.
 unsafe impl Sync for BufqueueStatic {}
 
 /// `high_constraint`: the range of memory above the DMA range (set by the machine code that

@@ -116,7 +116,7 @@ pub struct FuseD {
 }
 
 // SAFETY: the queues and the klist are changed under `fd_lock`, the rest under the kernel
-// lock (one CPU), as in C.
+// lock, as in C.
 unsafe impl Sync for FuseD {}
 
 queue_adapter!(
@@ -149,7 +149,7 @@ impl Default for FuseD {
 /// `fuse_d_list`'s type.
 pub struct FuseDListHead(ListHead<FuseDList>);
 
-// SAFETY: changed only under the kernel lock (one CPU), as in C.
+// SAFETY: changed only under the kernel lock, as in C.
 unsafe impl Sync for FuseDListHead {}
 
 impl core::ops::Deref for FuseDListHead {

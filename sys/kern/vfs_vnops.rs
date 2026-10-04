@@ -53,7 +53,6 @@
 //!   `DTYPE_VNODE` file.
 //! - `vn_ioctl`'s `TIOCSCTTY` stores the vnode in the session's `s_ttyvp`, which stays an
 //!   opaque pointer until the tty layer (M10).
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -94,7 +93,7 @@ use crate::sys::specdev::Cloneinfo;
 use crate::sys::stat::{
     S_BLKSIZE, S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFREG, S_IFSOCK, Stat,
 };
-use crate::sys::systm::INFSLP;
+use crate::sys::systm::{INFSLP, kernel_lock, kernel_unlock};
 use crate::sys::ttycom::TIOCSCTTY;
 use crate::sys::types::Off;
 use crate::sys::ucred::Ucred;
@@ -411,7 +410,7 @@ pub fn vn_read(fp: &File, uio: &mut Uio<'_>, fflags: i32) -> Result<(), Errno> {
     let cred = fp.f_cred.get();
     let count = uio.uio_resid;
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
 
     let _ = vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
 
@@ -447,7 +446,7 @@ pub fn vn_read(fp: &File, uio: &mut Uio<'_>, fflags: i32) -> Result<(), Errno> {
         error
     };
     let _ = VOP_UNLOCK(vp);
-    // KERNEL_UNLOCK().
+    kernel_unlock();
     error
 }
 
@@ -457,7 +456,7 @@ pub fn vn_write(fp: &File, uio: &mut Uio<'_>, fflags: i32) -> Result<(), Errno> 
     let cred = fp.f_cred.get();
     let mut ioflag = IO_UNIT;
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
 
     // note: pwrite/pwritev are unaffected by O_APPEND
     if vp.v_type.get() == VREG && fp.flag() & O_APPEND != 0 && fflags & FO_POSITION == 0 {
@@ -492,7 +491,7 @@ pub fn vn_write(fp: &File, uio: &mut Uio<'_>, fflags: i32) -> Result<(), Errno> 
     }
     let _ = VOP_UNLOCK(vp);
 
-    // KERNEL_UNLOCK().
+    kernel_unlock();
     error
 }
 
@@ -500,8 +499,11 @@ pub fn vn_write(fp: &File, uio: &mut Uio<'_>, fflags: i32) -> Result<(), Errno> 
 pub fn vn_statfile(fp: &File, sb: &mut Stat, p: &Proc) -> Result<(), Errno> {
     let vp = fp.vnode();
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
-    vn_stat(vp, sb, p)
+    kernel_lock();
+    let error = vn_stat(vp, sb, p);
+    kernel_unlock();
+
+    error
 }
 
 /// vnode stat routine.
@@ -549,7 +551,7 @@ pub fn vn_ioctl(fp: &File, com: u64, data: &mut [u8], p: &Proc) -> Result<(), Er
     let mut vattr = Vattr::new();
     let mut error = Err(Errno::ENOTTY);
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     match vp.v_type.get() {
         VREG | VDIR => {
             if com == FIONREAD {
@@ -584,7 +586,7 @@ pub fn vn_ioctl(fp: &File, com: u64, data: &mut [u8], p: &Proc) -> Result<(), Er
 
         _ => {}
     }
-    // KERNEL_UNLOCK().
+    kernel_unlock();
 
     error
 }
@@ -638,7 +640,7 @@ pub fn vn_lock(vp: &'static Vnode, flags: i32) -> Result<(), Errno> {
 pub fn vn_closefile(fp: &File, p: Option<&Proc>) -> Result<(), Errno> {
     let vp = fp.vnode();
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     if fp.f_iflags.load(core::sync::atomic::Ordering::SeqCst) & FIF_HASLOCK != 0 {
         let mut lf = Flock {
             l_whence: SEEK_SET as i16,
@@ -656,14 +658,16 @@ pub fn vn_closefile(fp: &File, p: Option<&Proc>) -> Result<(), Errno> {
         );
     }
     let error = vn_close(vp, fp.flag(), fp.f_cred.get(), p);
-    // KERNEL_UNLOCK().
+    kernel_unlock();
     error
 }
 
 /// `vn_kqfilter(fp, kn)`: the vnode's `VOP_KQFILTER`.
 pub fn vn_kqfilter(fp: &File, kn: &Knote) -> Result<(), Errno> {
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
-    VOP_KQFILTER(fp.vnode(), fp.flag(), kn)
+    kernel_lock();
+    let error = VOP_KQFILTER(fp.vnode(), fp.flag(), kn);
+    kernel_unlock();
+    error
 }
 
 /// `vn_seek(fp, offset, whence, p)`: the file table's `lseek` of a vnode.
@@ -684,11 +688,12 @@ pub fn vn_seek(fp: &File, offset: &mut Off, whence: i32, p: &Proc) -> Result<(),
         let newoff = match whence {
             SEEK_CUR => fp.f_offset.get().wrapping_add(*offset),
             SEEK_END => {
-                // KERNEL_LOCK().
-                if let Err(e) = VOP_GETATTR(vp, &mut vattr, cred, p) {
+                kernel_lock();
+                let error = VOP_GETATTR(vp, &mut vattr, cred, p);
+                kernel_unlock();
+                if let Err(e) = error {
                     break 'out Err(e);
                 }
-                // KERNEL_UNLOCK().
                 offset.wrapping_add(vattr.va_size as Off)
             }
             SEEK_SET => *offset,

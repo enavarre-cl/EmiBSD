@@ -72,7 +72,7 @@ pub struct BufqImpl {
 /// `bufqs`' type: a `Sync` static list.
 pub struct Bufqs(pub SlistHead<BufqList>);
 
-// SAFETY: changed under `bufqs_mtx`, as in C; the kernel runs one CPU.
+// SAFETY: changed under `bufqs_mtx`, as in C.
 unsafe impl Sync for Bufqs {}
 
 /// `bufqs`: every initialised queue.
@@ -240,7 +240,7 @@ pub fn bufq_drain(bq: &Bufq) {
 /// `bufq_wait(bq)`: a writer sleeps while the queue has `bufq_hi` buffers outstanding.
 pub fn bufq_wait(bq: &Bufq) {
     if bq.bufq_hi.get() != 0 {
-        // assertwaitok(): M5.
+        crate::kern::subr_xxx::assertwaitok();
         mtx_enter(&bq.bufq_mtx);
         while bq.bufq_outstanding.get() >= bq.bufq_hi.get() {
             bq.bufq_waiting.set(bq.bufq_waiting.get() + 1);

@@ -70,7 +70,6 @@
 //! - `unp_internalize` keeps the message in a stack buffer (at most `MLEN` bytes) while it
 //!   moves it into a cluster, where the C uses `malloc(M_TEMP)`.
 //! - `NKCOV` is 0 (no kcov descriptors).
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::ffi::c_void;
 use core::mem::offset_of;
@@ -139,7 +138,7 @@ use crate::sys::socket::{
 use crate::sys::socketvar::{SB_MAX, SS_CANTSENDMORE, SS_ISCONNECTED, Socket};
 use crate::sys::stat::{ACCESSPERMS, Stat};
 use crate::sys::sysctl::SysctlBoundedArgs;
-use crate::sys::systm::INFSLP;
+use crate::sys::systm::{INFSLP, kernel_lock, kernel_unlock};
 use crate::sys::task::Task;
 use crate::sys::types::{Blksize, Socklen};
 use crate::sys::un::{SUN_PATH_LEN, SockaddrUn};
@@ -496,11 +495,13 @@ pub fn uipc_bind(so: &'static Socket, nam: &'static Mbuf, p: &Proc) -> Result<()
 
     sounlock(unp.unp_socket);
 
+    let Some(nam2) = m_getclr(M_WAITOK, MT_SONAME) else {
+        solock(unp.unp_socket);
+        unp.clear_flags(UNP_BINDING);
+        return Err(Errno::ENOBUFS);
+    };
+
     let error: Result<(), Errno> = 'out: {
-        let Some(nam2) = m_getclr(M_WAITOK, MT_SONAME) else {
-            solock(unp.unp_socket);
-            break 'out Err(Errno::ENOBUFS);
-        };
         nam2.m_len().set(size_of::<SockaddrUn>() as u32);
         // SAFETY: `nam` holds a `sockaddr_un` with a `pathlen`-byte path (`unp_nam2sun`);
         // `nam2` is a fresh zeroed mbuf of `MLEN` bytes, larger than a `sockaddr_un`.
@@ -526,7 +527,7 @@ pub fn uipc_bind(so: &'static Socket, nam: &'static Mbuf, p: &Proc) -> Result<()
         nd.ni_pledge = PLEDGE_UNIX;
         nd.ni_unveil = UNVEIL_CREATE;
 
-        // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+        kernel_lock();
         // SHOULD BE ABLE TO ADOPT EXISTING AND wakeup() ALA FIFO's
         if let Err(error) = namei(&mut nd) {
             m_freem(nam2);
@@ -577,7 +578,7 @@ pub fn uipc_bind(so: &'static Socket, nam: &'static Mbuf, p: &Proc) -> Result<()
         Ok(())
     };
     // out:
-    // KERNEL_UNLOCK()
+    kernel_unlock();
     unp.clear_flags(UNP_BINDING);
 
     error
@@ -987,8 +988,9 @@ pub fn unp_detach(unp: &'static Unpcb) {
         let _ = VOP_LOCK(vp, LK_EXCLUSIVE);
         vp.set_v_socket(None);
 
-        // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+        kernel_lock();
         vput(vp);
+        kernel_unlock();
         solock(so);
     }
 
@@ -1073,7 +1075,7 @@ pub fn unp_connect(so: &'static Socket, nam: &'static Mbuf, p: &Proc) -> Result<
 
     sounlock(so);
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     let mut error: Result<(), Errno> = 'unlock: {
         if let Err(e) = namei(&mut nd) {
             break 'unlock Err(e);
@@ -1152,7 +1154,7 @@ pub fn unp_connect(so: &'static Socket, nam: &'static Mbuf, p: &Proc) -> Result<
         error
     };
     // unlock:
-    // KERNEL_UNLOCK()
+    kernel_unlock();
     solock(so);
     unp.clear_flags(UNP_CONNECTING);
 
@@ -1294,6 +1296,8 @@ pub fn unp_externalize(
         // Make sure the recipient should be able to see the descriptors..
 
         // fdp->fd_rdir requires KERNEL_LOCK()
+        kernel_lock();
+
         let mut error = Ok(());
         for i in 0..nfds {
             // SAFETY: the message holds `nfds` entries after its header.
@@ -1318,7 +1322,7 @@ pub fn unp_externalize(
             }
         }
 
-        // KERNEL_UNLOCK()
+        kernel_unlock();
 
         if let Err(e) = error {
             break 'out Err(e);

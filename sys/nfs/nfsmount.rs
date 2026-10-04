@@ -129,7 +129,7 @@ pub struct NfsMount {
 }
 
 // SAFETY: the members are changed under the kernel lock (at `splsoftnet` for the RPC state),
-// as in C; the kernel runs one CPU.
+// as in C.
 unsafe impl Sync for NfsMount {}
 
 impl NfsMount {

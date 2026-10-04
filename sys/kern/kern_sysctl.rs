@@ -80,9 +80,7 @@
 //!   (`sysctl_sysvipc`), `NAUDIO`/`NVIDEO`/`NDT`/`NUCOM` (0), `GPROF`, `WITNESS`,
 //!   `PTRACE` (`kern.global_ptrace`), `KTRACE` (the trace members of `kinfo_proc` stay
 //!   zero). `SMALL_KERNEL` is not set.
-//! - `KERNEL_LOCK` is not taken at the C's sites: `sys_sysctl` runs under the kernel lock
-//!   with `MULTIPROCESSOR` (M11a ignores `SY_NOLOCK`, `sys/syscall_mi.rs`), which covers
-//!   them until the M11e audit. `log_mtx` does not exist
+//! - The kernel lock is taken at the C's sites (M11e). `log_mtx` does not exist
 //!   (`subr_log.rs`), so the message buffer header is read without it.
 //! - `kern.file`: `fill_file` fills the `AF_INET` and `AF_INET6` (feature `inet6`) control
 //!   blocks and the TCP members (`fill_file_tcpcb`, zero for a control block without a
@@ -205,7 +203,10 @@ use crate::sys::socketvar::{Socket, isspliced, issplicedback};
 use crate::sys::syscallargs::SysSysctlArgs;
 use crate::sys::sysctl::*;
 use crate::sys::syslimits;
-use crate::sys::systm::{PHYSMEM, SysArgs, net_lock_shared, net_unlock_shared, sysargs};
+use crate::sys::systm::{
+    PHYSMEM, SysArgs, kernel_assert_locked, kernel_lock, kernel_unlock, net_lock_shared,
+    net_unlock_shared, sysargs,
+};
 use crate::sys::time::timeradd;
 use crate::sys::types::{Dev, Off, Register};
 use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
@@ -402,7 +403,7 @@ pub static hw_battery_setchargestop: StaticCell<Option<BatterySetFn>> = StaticCe
 /// [`sysctl_vsunlock`].
 pub fn sysctl_vslock(addr: usize, len: usize) -> Result<(), Errno> {
     rw_enter(&SYSCTL_LOCK, RW_WRITE | RW_INTR)?;
-    // KERNEL_LOCK(): one CPU, no kernel lock yet.
+    kernel_lock();
 
     if addr != 0 {
         let wired = UVMEXP.wired.load(Ordering::Relaxed);
@@ -416,7 +417,7 @@ pub fn sysctl_vslock(addr: usize, len: usize) -> Result<(), Errno> {
             uvm_vslock(p, addr, len, PROT_READ | PROT_WRITE)
         };
         if let Err(e) = error {
-            // KERNEL_UNLOCK()
+            kernel_unlock();
             rw_exit_write(&SYSCTL_LOCK);
             return Err(e);
         }
@@ -427,7 +428,7 @@ pub fn sysctl_vslock(addr: usize, len: usize) -> Result<(), Errno> {
 
 /// `sysctl_vsunlock`: undoes [`sysctl_vslock`].
 pub fn sysctl_vsunlock(addr: usize, len: usize) {
-    // KERNEL_ASSERT_LOCKED(): no kernel lock yet.
+    kernel_assert_locked();
 
     if addr != 0 {
         let Some(p) = curproc() else {
@@ -435,7 +436,7 @@ pub fn sysctl_vsunlock(addr: usize, len: usize) {
         };
         uvm_vsunlock(p, addr, len);
     }
-    // KERNEL_UNLOCK()
+    kernel_unlock();
     rw_exit_write(&SYSCTL_LOCK);
 }
 
@@ -1984,8 +1985,10 @@ pub fn sysctl_file(name: &[i32], where_: usize, sizep: &mut usize, p: &Proc) -> 
                     af == i32::from(AF_INET) || af == i32::from(AF_INET6)
                 };
                 if !skip {
-                    // KERNEL_LOCK(): no kernel lock yet.
-                    if let Err(e) = w.fillit(Some(f), None, 0, None, None) {
+                    kernel_lock();
+                    let r = w.fillit(Some(f), None, 0, None, None);
+                    kernel_unlock();
+                    if let Err(e) = r {
                         let _ = frele(f, p);
                         return Err(e);
                     }
@@ -1998,47 +2001,61 @@ pub fn sysctl_file(name: &[i32], where_: usize, sizep: &mut usize, p: &Proc) -> 
                 return Err(Errno::EINVAL);
             }
             let mut matched = false;
-            // KERNEL_LOCK(): no kernel lock yet.
-            for pr in ALLPROCESS.0.iter() {
-                if file_skips(pr) {
-                    continue;
-                }
-                if arg >= 0 && pr.ps_pid.get() != arg {
-                    // not the pid we are looking for
-                    continue;
-                }
+            kernel_lock();
+            let r = 'scan: {
+                for pr in ALLPROCESS.0.iter() {
+                    if file_skips(pr) {
+                        continue;
+                    }
+                    if arg >= 0 && pr.ps_pid.get() != arg {
+                        // not the pid we are looking for
+                        continue;
+                    }
 
-                refcnt_take(&pr.ps_refcnt);
-                matched = true;
-                let r = w.fill_process(pr, true);
-                refcnt_rele_wake(&pr.ps_refcnt);
-                r?;
+                    refcnt_take(&pr.ps_refcnt);
+                    matched = true;
+                    let r = w.fill_process(pr, true);
+                    refcnt_rele_wake(&pr.ps_refcnt);
+                    if r.is_err() {
+                        break 'scan r;
+                    }
 
-                // pid is unique, stop searching
-                if arg >= 0 {
-                    break;
+                    // pid is unique, stop searching
+                    if arg >= 0 {
+                        break;
+                    }
                 }
-            }
+                Ok(())
+            };
+            kernel_unlock();
+            r?;
             if !matched {
                 return Err(Errno::ESRCH);
             }
         }
         KERN_FILE_BYUID => {
-            // KERNEL_LOCK(): no kernel lock yet.
-            for pr in ALLPROCESS.0.iter() {
-                if file_skips(pr) {
-                    continue;
-                }
-                if arg >= 0 && pr.ucred().cr_uid.get() != arg as u32 {
-                    // not the uid we are looking for
-                    continue;
-                }
+            kernel_lock();
+            let r = 'scan: {
+                for pr in ALLPROCESS.0.iter() {
+                    if file_skips(pr) {
+                        continue;
+                    }
+                    if arg >= 0 && pr.ucred().cr_uid.get() != arg as u32 {
+                        // not the uid we are looking for
+                        continue;
+                    }
 
-                refcnt_take(&pr.ps_refcnt);
-                let r = w.fill_process(pr, false);
-                refcnt_rele_wake(&pr.ps_refcnt);
-                r?;
-            }
+                    refcnt_take(&pr.ps_refcnt);
+                    let r = w.fill_process(pr, false);
+                    refcnt_rele_wake(&pr.ps_refcnt);
+                    if r.is_err() {
+                        break 'scan r;
+                    }
+                }
+                Ok(())
+            };
+            kernel_unlock();
+            r?;
         }
         _ => return Err(Errno::EINVAL),
     }
@@ -2887,7 +2904,7 @@ unsafe fn diskstats_mut() -> &'static mut [Diskstats] {
 /// `sysctl_diskinit`: initialises `disknames`/`diskstats` for export by sysctl. If `update`
 /// is set, then we simply update the disk statistics information.
 pub fn sysctl_diskinit(update: bool, _p: &Proc) -> Result<(), Errno> {
-    // KERNEL_ASSERT_LOCKED(): no kernel lock yet.
+    kernel_assert_locked();
 
     rw_enter(&SYSCTL_DISKLOCK, RW_WRITE | RW_INTR)?;
 
@@ -2993,8 +3010,14 @@ pub fn sysctl_sensors(
 
     let dev = name[0];
     if name.len() == 1 {
-        // KERNEL_LOCK(): one CPU, no kernel lock yet.
-        let ksd = sensordev_get(dev)?;
+        kernel_lock();
+        let ksd = match sensordev_get(dev) {
+            Ok(ksd) => ksd,
+            Err(e) => {
+                kernel_unlock();
+                return Err(e);
+            }
+        };
 
         // Grab a copy, to clear the kernel pointers
         let mut usd = Sensordev {
@@ -3004,7 +3027,7 @@ pub fn sysctl_sensors(
             ..Sensordev::default()
         };
         strlcpy(&mut usd.xname, &ksd.xname.get());
-        // KERNEL_UNLOCK()
+        kernel_unlock();
 
         return sysctl_rdstruct(oldp, oldlenp, newp, usd.as_bytes());
     }
@@ -3013,12 +3036,16 @@ pub fn sysctl_sensors(
     let r#type = SensorType::from_i32(name[1]);
     let numt = name[2];
 
-    // KERNEL_LOCK()
+    kernel_lock();
     let ks = match r#type {
-        Some(t) => sensor_find(dev, t, numt)?,
-        None => {
-            sensordev_get(dev)?;
-            return Err(Errno::ENOENT);
+        Some(t) => sensor_find(dev, t, numt),
+        None => sensordev_get(dev).and(Err(Errno::ENOENT)),
+    };
+    let ks = match ks {
+        Ok(ks) => ks,
+        Err(e) => {
+            kernel_unlock();
+            return Err(e);
         }
     };
 
@@ -3032,7 +3059,7 @@ pub fn sysctl_sensors(
         numt: ks.numt.get(),
         flags: ks.flags.get(),
     };
-    // KERNEL_UNLOCK()
+    kernel_unlock();
 
     sysctl_rdstruct(oldp, oldlenp, newp, us.as_bytes())
 }

@@ -136,7 +136,7 @@ pub struct FusefsNode {
     pub i_hashed: Cell<bool>,
 }
 
-// SAFETY: changed under the vnode lock or the kernel lock (one CPU), as in C; the hash link
+// SAFETY: changed under the vnode lock or the kernel lock, as in C; the hash link
 // under the kernel lock (the C's "XXXLOCKING").
 unsafe impl Sync for FusefsNode {}
 

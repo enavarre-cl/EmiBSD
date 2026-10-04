@@ -230,8 +230,7 @@ impl Default for Dquot {
     }
 }
 
-// SAFETY: dquots are changed under the kernel lock and `DQ_LOCK`, as in C; the kernel runs
-// one CPU.
+// SAFETY: dquots are changed under the kernel lock and `DQ_LOCK`, as in C.
 unsafe impl Sync for Dquot {}
 
 queue_adapter!(
@@ -261,7 +260,7 @@ pub enum Limit {
 #[derive(Clone, Copy)]
 struct Dqhashtbl(&'static [ListHead<DqHash>]);
 
-// SAFETY: the chains are changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: the chains are changed under the kernel lock, as in C.
 unsafe impl Sync for Dqhashtbl {}
 // SAFETY: as above.
 unsafe impl Send for Dqhashtbl {}
@@ -269,7 +268,7 @@ unsafe impl Send for Dqhashtbl {}
 /// The free list, with the claim that makes it shareable.
 struct Dqfreelst(TailqHead<DqFreelist>);
 
-// SAFETY: the list is changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: the list is changed under the kernel lock, as in C.
 unsafe impl Sync for Dqfreelst {}
 
 /// `quotatypes[]`: quota name to error message mapping (`INITQFNAMES`).

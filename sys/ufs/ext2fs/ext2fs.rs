@@ -686,7 +686,7 @@ pub struct MExt2fs {
     pub e2fs_gd: Cell<*mut Ext2Gd>,
 }
 
-// SAFETY: the members are changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: the members are changed under the kernel lock, as in C.
 unsafe impl Sync for MExt2fs {}
 
 impl MExt2fs {
@@ -715,7 +715,7 @@ impl MExt2fs {
     /// `f(&fs->e2fs)`: the super block, for the duration of `f`.
     pub fn with_e2fs<R>(&self, f: impl FnOnce(&Ext2fs) -> R) -> R {
         // SAFETY: the reference does not outlive `f`; the only writers are `with_e2fs_mut`
-        // and `set_e2fs`, which run to completion under the kernel lock on one CPU, and none
+        // and `set_e2fs`, which run to completion under the kernel lock, and none
         // of these nests inside `f` (the accessors take and return plain values).
         f(unsafe { &*self.e2fs.get() })
     }
@@ -746,7 +746,7 @@ impl MExt2fs {
     pub fn fsmnt_str(&self) -> crate::kern::subr_prf::Str<'_> {
         let name = self.e2fs_fsmnt.as_ptr();
         // SAFETY: a `Cell<[u8; N]>` has the array's layout; the borrow lasts as long as the
-        // caller's `&self`, during which nothing writes the name (the kernel runs one CPU,
+        // caller's `&self`, during which nothing writes the name (both run under the kernel lock,
         // and printing a message does not mount).
         crate::kern::subr_prf::Str(unsafe { &*name })
     }
@@ -767,7 +767,7 @@ impl MExt2fs {
     pub fn with_gd_mut<R>(&self, i: usize, f: impl FnOnce(&mut Ext2Gd) -> R) -> R {
         let p = self.gd_ptr(i);
         // SAFETY: as in `gd`; the reference does not outlive `f` and no other one is alive
-        // meanwhile (the accessors copy, none nests, one CPU).
+        // meanwhile (the accessors copy, none nests, all run under the kernel lock).
         f(unsafe { &mut *p })
     }
 

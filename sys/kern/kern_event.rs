@@ -70,13 +70,12 @@
 //! - `kqueue_scan`'s `struct timespec *tsp` is `Option<&mut Timespec>` and its event array
 //!   a slice; `kqueue_scan_setup` is `unsafe` (the state holds the scan markers, linked into
 //!   the kqueue until `kqueue_scan_finish`, so it must stay in place).
-//! - `KERNEL_LOCK`/`KERNEL_ASSERT_LOCKED` are nothing without `MULTIPROCESSOR`, so the
-//!   `FILTEROP_MPSAFE` and non-`MPSAFE` paths call the filter the same way (the `splhigh`
-//!   around `knote_modify`/`knote_process` stays); `pool_cache_init` is nothing without
-//!   `MULTIPROCESSOR`, so `kqueue_init_percpu` is empty. `KLIST_ASSERT_LOCKED` checks the
-//!   list's lock under feature `diagnostic` (`option DIAGNOSTIC`). `KQUEUE_DEBUG`
-//!   (`kqueue_check`) and `KTRACE` (`ktrevent`, `ktrreltimespec`) are not configured.
-//!   `NET_ASSERT_UNLOCKED` waits for the network lock.
+//! - The `MULTIPROCESSOR` paths are the C's (M11e): non-`FILTEROP_MPSAFE` filters run under
+//!   the kernel lock, a klist without ops is guarded by it, and the knote pool gets its
+//!   per-CPU caches. `KERNEL_LOCK`/`KERNEL_ASSERT_LOCKED` are nothing without the feature, as
+//!   in the C. `KLIST_ASSERT_LOCKED` checks under feature `diagnostic`
+//!   (`option DIAGNOSTIC`). `KQUEUE_DEBUG` (`kqueue_check`) and `KTRACE` (`ktrevent`,
+//!   `ktrreltimespec`) are not configured.
 //! - `filt_timer`'s `ft_reschedule` is a `bool`.
 
 use core::cell::Cell;
@@ -133,7 +132,10 @@ use crate::sys::rwlock::{RW_WRITE, Rwlock};
 use crate::sys::signal::NSIG;
 use crate::sys::stat::{S_IFIFO, Stat};
 use crate::sys::syscallargs::{SysKeventArgs, SysKqueue1Args};
-use crate::sys::systm::{INFSLP, MAXTSLP, SysArgs, sysargs};
+use crate::sys::systm::{
+    INFSLP, MAXTSLP, SysArgs, kernel_assert_locked, kernel_lock, kernel_unlock,
+    net_assert_unlocked, sysargs,
+};
 use crate::sys::time::{Timespec, sec_to_nsec, timespec_to_nsec, timespecsub};
 use crate::sys::timeout::{Timeout, timeout_triggered};
 use crate::sys::types::{Dev, Pid, Register};
@@ -316,8 +318,9 @@ fn klist_assert_locked(kl: &Klist) {
         // SAFETY: `kl_arg` is the lock `klist_init` was given for these ops, valid while the
         // list is (its contract).
         unsafe { (ops.klo_assertlk)(kl.kl_arg.get()) };
+    } else {
+        kernel_assert_locked();
     }
-    // else KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
     let _ = kl;
 }
 
@@ -430,8 +433,12 @@ pub fn kqueue_init() {
     );
 }
 
-/// `kqueue_init_percpu`: `pool_cache_init(&knote_pool)`, nothing without `MULTIPROCESSOR`.
-pub fn kqueue_init_percpu() {}
+/// `kqueue_init_percpu`: the knote pool's per-CPU caches (`pool_cache_init`, which exists
+/// only with `MULTIPROCESSOR`).
+pub fn kqueue_init_percpu() {
+    #[cfg(feature = "multiprocessor")]
+    crate::kern::subr_pool::pool_cache_init(&KNOTE_POOL);
+}
 
 /// `filt_fileattach`: the file's `fo_kqfilter` attaches the knote and picks its filter.
 pub fn filt_fileattach(kn: &Knote) -> Result<(), Errno> {
@@ -523,13 +530,15 @@ pub fn filt_procattach(kn: &Knote) -> Result<(), Errno> {
         return Err(Errno::ESRCH);
     }
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     let Some(pr) = prfind(kn.kn_id().get() as Pid) else {
+        kernel_unlock();
         return Err(Errno::ESRCH);
     };
 
     // exiting processes can't be specified
     if pr.ps_flags.load(Ordering::Relaxed) & PS_EXITING != 0 {
+        kernel_unlock();
         return Err(Errno::ESRCH);
     }
 
@@ -555,6 +564,8 @@ pub fn filt_procattach(kn: &Knote) -> Result<(), Errno> {
     if !nolock {
         rw_exit_write(&KQUEUE_PS_LIST_LOCK);
     }
+
+    kernel_unlock();
 
     Ok(())
 }
@@ -1092,8 +1103,14 @@ fn filter_attach(kn: &Knote) -> Result<(), Errno> {
         ));
     };
 
-    // Without FILTEROP_MPSAFE the C takes KERNEL_LOCK(): nothing without MULTIPROCESSOR.
-    f_attach(kn)
+    if fop.f_flags & FILTEROP_MPSAFE != 0 {
+        f_attach(kn)
+    } else {
+        kernel_lock();
+        let error = f_attach(kn);
+        kernel_unlock();
+        error
+    }
 }
 
 /// `filter_detach(kn)`.
@@ -1106,13 +1123,21 @@ fn filter_detach(kn: &Knote) {
         ));
     };
 
-    // Without FILTEROP_MPSAFE the C takes KERNEL_LOCK(): nothing without MULTIPROCESSOR.
-    f_detach(kn);
+    if fop.f_flags & FILTEROP_MPSAFE != 0 {
+        f_detach(kn);
+    } else {
+        kernel_lock();
+        f_detach(kn);
+        kernel_unlock();
+    }
 }
 
 /// `filter_event(kn, hint)`.
 fn filter_event(kn: &Knote, hint: i64) -> bool {
-    // Without FILTEROP_MPSAFE: KERNEL_ASSERT_LOCKED(), nothing without MULTIPROCESSOR.
+    if kn.fop().f_flags & FILTEROP_MPSAFE == 0 {
+        kernel_assert_locked();
+    }
+
     fop_event(kn, hint)
 }
 
@@ -1129,8 +1154,8 @@ fn filter_modify(kev: &mut Kevent, kn: &Knote) -> bool {
             )),
         }
     } else {
-        // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
-        match fop.f_modify {
+        kernel_lock();
+        let active = match fop.f_modify {
             Some(f_modify) => f_modify(kev, kn),
             None => {
                 let s = splhigh();
@@ -1138,7 +1163,9 @@ fn filter_modify(kev: &mut Kevent, kn: &Knote) -> bool {
                 splx(s);
                 active
             }
-        }
+        };
+        kernel_unlock();
+        active
     }
 }
 
@@ -1155,8 +1182,8 @@ fn filter_process(kn: &Knote, kev: Option<&mut Kevent>) -> bool {
             )),
         }
     } else {
-        // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
-        match fop.f_process {
+        kernel_lock();
+        let active = match fop.f_process {
             Some(f_process) => f_process(kn, kev),
             None => {
                 let s = splhigh();
@@ -1164,7 +1191,9 @@ fn filter_process(kn: &Knote, kev: Option<&mut Kevent>) -> bool {
                 splx(s);
                 active
             }
-        }
+        };
+        kernel_unlock();
+        active
     }
 }
 
@@ -2459,7 +2488,10 @@ pub fn knote_dequeue(kn: &Knote) {
 /// `knote_assign(kev, kn)`: assign parameters to the knote. The knote's object lock must be
 /// held.
 pub fn knote_assign(kev: &Kevent, kn: &Knote) {
-    // Without FILTEROP_MPSAFE: KERNEL_ASSERT_LOCKED(), nothing without MULTIPROCESSOR.
+    if kn.fop().f_flags & FILTEROP_MPSAFE == 0 {
+        kernel_assert_locked();
+    }
+
     kn.kn_sfflags.set(kev.fflags);
     kn.kn_sdata.set(kev.data);
     kn.kn_udata().set(kev.udata);
@@ -2468,7 +2500,10 @@ pub fn knote_assign(kev: &Kevent, kn: &Knote) {
 /// `knote_submit(kn, kev)`: submit the knote's event for delivery. The knote's object lock
 /// must be held.
 pub fn knote_submit(kn: &Knote, kev: Option<&mut Kevent>) {
-    // Without FILTEROP_MPSAFE: KERNEL_ASSERT_LOCKED(), nothing without MULTIPROCESSOR.
+    if kn.fop().f_flags & FILTEROP_MPSAFE == 0 {
+        kernel_assert_locked();
+    }
+
     if let Some(kev) = kev {
         *kev = kn.kn_kevent.get();
         if kn.has_flags(EV_CLEAR) {
@@ -2536,7 +2571,7 @@ pub fn klist_remove_locked(klist: &Klist, kn: &Knote) {
 pub fn klist_invalidate(list: &Klist) {
     let p = curproc();
 
-    // NET_ASSERT_UNLOCKED(): the network lock is not ported.
+    net_assert_unlocked("klist_invalidate");
 
     let mut ls = klist_lock(list);
     while let Some(kn) = list.kl_list.first() {
@@ -2572,7 +2607,7 @@ fn klist_lock(list: &Klist) -> i32 {
         // SAFETY: `kl_arg` is what `klist_init` was given for these ops (its contract).
         Some(ops) => unsafe { (ops.klo_lock)(list.kl_arg.get()) },
         None => {
-            // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+            kernel_lock();
             splhigh()
         }
     }
@@ -2585,7 +2620,7 @@ fn klist_unlock(list: &Klist, ls: i32) {
         Some(ops) => unsafe { (ops.klo_unlock)(list.kl_arg.get(), ls) },
         None => {
             splx(ls);
-            // KERNEL_UNLOCK(): nothing without MULTIPROCESSOR.
+            kernel_unlock();
         }
     }
 }

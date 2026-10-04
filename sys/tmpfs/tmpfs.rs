@@ -98,8 +98,7 @@ pub struct TmpfsDirent {
     pub td_namelen: Cell<u16>,
 }
 
-// SAFETY: the members are changed under the directory's vnode lock, as in C; the kernel
-// runs one CPU.
+// SAFETY: the members are changed under the directory's vnode lock, as in C.
 unsafe impl Sync for TmpfsDirent {}
 
 impl TmpfsDirent {
@@ -248,7 +247,7 @@ pub struct TmpfsNode {
 }
 
 // SAFETY: the members are changed under the node's vnode lock or `tn_nlock`, and the list
-// link under the mount's `tm_lock`, as in C; the kernel runs one CPU.
+// link under the mount's `tm_lock`, as in C.
 unsafe impl Sync for TmpfsNode {}
 
 impl TmpfsNode {
@@ -417,7 +416,7 @@ pub struct TmpfsMount {
 }
 
 // SAFETY: the counters are changed under `tm_acc_lock`, the node list under `tm_lock`, the
-// rest under the vnode locks, as in C; the kernel runs one CPU.
+// rest under the vnode locks, as in C.
 unsafe impl Sync for TmpfsMount {}
 
 impl TmpfsMount {

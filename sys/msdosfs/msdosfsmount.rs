@@ -193,7 +193,7 @@ pub struct Msdosfsmount {
     pub pm_export: Netexport,
 }
 
-// SAFETY: the members are changed under the kernel lock, as in C; the kernel runs one CPU.
+// SAFETY: the members are changed under the kernel lock, as in C.
 unsafe impl Sync for Msdosfsmount {}
 
 impl Msdosfsmount {

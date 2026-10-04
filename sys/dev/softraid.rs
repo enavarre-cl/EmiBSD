@@ -214,7 +214,7 @@ queue_adapter!(
 /// `sr_hotplug_callbacks`, made `Sync`.
 pub struct SrHotplugListHead(SlistHead<SrHotplugLink>);
 
-// SAFETY: the list changes under the kernel lock (bio ioctls, attach); one CPU.
+// SAFETY: the list changes under the kernel lock (bio ioctls, attach).
 unsafe impl Sync for SrHotplugListHead {}
 
 /// The metadata reader and writer of a format (`smd_read`, `smd_write`): the metadata area
