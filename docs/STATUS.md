@@ -1,10 +1,9 @@
 # Status
 
-Milestone: **M9a done** (sockets, ifconfig, ping, route on the ramdisk); M9b next. Updated: 2026-10-03.
+Milestone: **M9b done** (a WireGuard tunnel between two VMs carries a ping); M9c next. Updated: 2026-10-03.
 
 Done:
-- M7a (exit met: `init: demand-zero bss ok`, user pages served by `uvm_fault`): `uvm_map.c`,
-  `uvm_fault.c`, pv lists, `pmap_protect`, exec through `uvm_map`, `uvm_mmap.c`, `uvm_unix.c`.
+- M7a (exit met: `init: demand-zero bss ok`): `uvm_map.c`, `uvm_fault.c`, `uvm_mmap.c`.
 - M7b (exit met: `selftest: ping 10.0.2.2: echo reply received` on both archs): task queues,
   mbufs, autoconf, bus_dma + PCI (amd64), `if.c`/`ifq.c`/ether, virtio (pci, mmio) + `vio`,
   routing (art, rtable, route), ARP, IPv4, ICMP. For M8: credentials, limits, signals, the
@@ -14,14 +13,14 @@ Done:
   ffs (`5506e47`), rd(4) + disk layer (`bd92ac0`), execve/exec_elf/pin_check and the process,
   time and select/poll syscalls (`a737765`..`e667958`), `setroot`/`diskconf`, amd64 FPU
   (`fpu.c`), OpenBSD's makefs for the image, libc/init/ksh/cat/echo/ls/uname.
-- M9b/M9c harness: `cargo xtask smoke2` boots two VMs with `vio1` on a private link;
-  `just smoke-link` passes on both archs (vio1 attaches; `ifconfig` needs AF_INET sockets).
+- M9a (exit met: `just smoke-net`/`smoke-route`): sockets, kqueue, in_pcb/udp/raw_ip,
+  rtsock; ifconfig, ping, route on the ramdisk. M8b: multi-user `/etc/rc`, getty, login.
+- M9b (exit met: `just smoke-wg`, both archs): `sys/crypto`, `wg_noise`, `wg_cookie`,
+  `if_wg`; `cargo xtask smoke2` boots two VMs on a private `vio1` link (`just smoke-link`).
 
 Next:
-- M9a (sockets in: `9a84a98`; kqueue in, with the pipe, tty, vnode and socket filters;
-  AF_INET/route sockets, ifconfig/ping/route next), crypto agent running. Then diagnostic tools stage 2 (libkvm, ps with
-  `uvm_io`, fstat, vmstat, df/mount). M9 is split: M9a sockets and network userland, M9b
-  WireGuard, M9c IPsec, M9d pf (last: it filters the tunnels too). M14b when no agents run.
+- M9c IPsec and M9d pf (last: it filters the tunnels too), agents running. Then diagnostic
+  tools stage 2 (libkvm, ps with `uvm_io`, fstat, vmstat, df/mount). M14b when no agents run.
 
 Blockers:
 - amd64's TSC timecounter (`tsc.c`) is deferred.

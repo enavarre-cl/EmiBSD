@@ -125,23 +125,8 @@ with `--b-`; `--both-*` lines are put in front of each VM's own. The run passes 
 are done (a VM that is done stays up for the other one); a VM that is not done after
 `--timeout SECS` (default 180) fails it and both transcripts are printed
 (`--show-transcripts` prints them always). `just smoke-link` boots two VMs per arch, logs in as
-root on both and checks that each kernel attached `vio1` with the link NIC's MAC. It needs
-`just userland` first and is not part of `just smoke`.
-
-By hand, once `AF_INET` sockets and the inet protocols are in (not yet: `ifconfig` fails with
-`socket: Protocol not supported` today), the plain link, before any tunnel on top:
-
-```sh
-cargo xtask smoke2 --arch amd64 --kernel target/x86_64-unknown-none/debug/bsd --timeout 240 \
-    --show-transcripts \
-    --both-send-after "login:" --both-send 'root\n' --both-send-after "Password:" --both-send 'emibsd\n' \
-    --a-send-after "# " --a-send 'ifconfig vio1 inet 192.168.77.1/24\n' \
-    --b-send-after "# " --b-send 'ifconfig vio1 inet 192.168.77.2/24\n' \
-    --b-send-after "# " --b-send 'ping -c 3 192.168.77.1\n' \
-    --b-expect "3 packets received"
-```
-
-For M9b/M9c, replace the plain address by the tunnel: `wg0`/`ipsec.conf` on `192.168.77.1`
-and `.2` as the outer addresses, an inner pair (say `10.77.0.1`/`.2`), and the ping between the
-inner addresses (`--b-expect "3 packets received"` stays). `ifconfig vio1 up`, and for ESP
-`ipsecctl -f` over the file `echo`ed into place, are further `--a-send`/`--b-send` pairs.
+root on both, gives `vio1` the addresses `192.168.77.1` and `.2` and pings across the link.
+`just smoke-wg` builds a `wg0` tunnel on top (`10.77.0.1`/`.2`, RFC 7748's keys) with
+`ifconfig(8)` and pings through it. Both need `just userland` first and are part of
+`just smoke`. An ESP tunnel (M9c) uses the same outer addresses, with `ipsecctl -f` over a
+file `echo`ed into place as further `--a-send`/`--b-send` pairs.
