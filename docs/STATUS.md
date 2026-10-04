@@ -1,6 +1,6 @@
 # Status
 
-Milestone: **M10a done** (persistent disk: vioblk, SCSI, sd; both archs); M9+ INET6 under way. Updated: 2026-10-04.
+Milestone: **M9+ done** (network completion, INET6 last) and **M10a done** (persistent disk); M10c next. Updated: 2026-10-04.
 
 Done:
 - M7a/M7b/M8/M8b: uvm, mbufs, PCI, virtio, IPv4; ffs root on rd0a, init, ksh, /etc/rc, login.
@@ -12,13 +12,14 @@ Done:
 - M9+: TCP with SYN cache, SACK, ECN, TCP-MD5 (`init: tcp ok`; nc and ftp work over it);
   zlib and IPComp (`smoke-ipcomp`); HTTPS with LibreSSL, ftp and nc (`smoke-https`);
   bpf(4), divert sockets, IGMP (`smoke-esp` without forwarding); criterion recipes `smoke-tcp`,
-  `smoke-divert`, `smoke-tcpdump` (libpcap, tcpdump with privsep).
+  `smoke-divert`, `smoke-tcpdump` (libpcap, tcpdump with privsep); INET6 (`smoke-inet6`: ND,
+  ping6 over global and link-local addresses, ::1 on lo0).
 - amd64 runs on the TSC (`tsc.c`, `kern.timecounter`); smokes reject `uptime went backwards`.
 - M10a: vioblk(4), the SCSI midlayer, sd(4), physio(9); newfs/fsck/disklabel/fdisk; a
   persistent virtio-blk image per VM; `smoke-disk` (two boots, `fsck -fn` clean, file back).
 
 Next:
-- M9+: INET6 (ping6); then M10c, b, f, e, d and M11a..e (SMP; then every smoke runs MP).
+- M10c, b, f, e, d, then M11a..e (SMP; then every smoke runs MP).
 
 Blockers:
 - Under load the amd64 TSC can measure high (1.2-1.3 GHz for ~1.0), so the clock runs slow

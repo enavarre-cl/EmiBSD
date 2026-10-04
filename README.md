@@ -21,7 +21,7 @@
 
 ## Status
 
-Status: M9 (network security) and M10a (persistent disk) met; M9+ (network completion: INET6) under way.
+Status: M9+ (network completion) and M10a (persistent disk) met; M10c (tmpfs, msdosfs, cd9660) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -35,7 +35,7 @@ Status: M9 (network security) and M10a (persistent disk) met; M9+ (network compl
 | M7a, M7b | uvm (demand paging); mbufs, virtio-net, IPv4 ping | met |
 | M8, M8b | OpenBSD's userland on an ffs ramdisk; multi-user boot and login | met |
 | M9a..M9d | Sockets, WireGuard, IPsec, pf | met |
-| M9+ | Network completion: TCP, bpf, divert, IPComp, HTTPS, tcpdump done; INET6 left | in progress |
+| M9+ | Network completion: TCP, bpf, divert, IPComp, HTTPS, tcpdump, INET6 | met |
 | M10a | Persistent disk (vioblk, SCSI midlayer) | met |
 | M10b..M10f | UFS options, tmpfs/msdosfs/cd9660, ext2fs/ntfs/fuse, NFS, softraid | next |
 | M11a..M11e | SMP | next |
@@ -71,6 +71,7 @@ Between two VMs on a private link (`cargo xtask smoke2`):
 - pfsync(4) and pflow(4) (`smoke-pfsync`); pf `divert-to` (`smoke-divert`).
 - TCP with nc(1): directly, through `wg0` and through ESP (`smoke-tcp`).
 - tcpdump(8) on `vio1` and on `pflog0` (`smoke-tcpdump`).
+- IPv6: ping(8) as ping6 to the other VM's global and link-local addresses, ::1 on lo0 (`smoke-inet6`).
 
 An excerpt of the serial console, from `smoke-login` on amd64 (trimmed):
 
@@ -143,7 +144,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 7 | 147 | 449 | 14 | 617 |
+| 7 | 147 | 484 | 14 | 652 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).
