@@ -24,6 +24,7 @@ pub mod machine;
 pub mod miscfs;
 pub mod net;
 pub mod netinet;
+pub mod scsi;
 pub mod sys;
 #[cfg(feature = "ffs")]
 pub mod ufs;

@@ -5405,3 +5405,49 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "853f73990d190a607962078b7858c5298dc0a7f5"
 deps = ["sys/sys/ioccom.h"]
 notes = "bio(4) ioctl ABI: struct bio, bio_locate, bioc_inq, bioc_disk (bd_patrol is the named BiocDiskPatrol), bioc_vol, bioc_alarm, bioc_blink, bioc_setstate, bioc_createraid, bioc_deleteraid, bioc_discipline, bioc_installboot, bioc_patrol (#[repr(C)], LP64 sizes asserted at compile time), BIOCLOCATE..BIOCPATROL, all BIO_*/BIOC_* constants; used by kern_pledge.c pledge_ioctl (the disklabel cases); stub: the _KERNEL prototypes (bio_register, bio_unregister, bio_status_init, bio_status, bio_info, bio_warn, bio_error) belong to the unported dev/bio.c; host tests of the encoded values, test-ref against the header"
+
+# ---------------------------------------------------------------------------
+# M10a: the SCSI midlayer (sys/scsi), the disk layer under vioblk(4)
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/scsi/scsi_all.h"
+rust = "sys/scsi/scsi_all.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "75ad743f41413d3e924d6ea4c63c53db1e585238"
+deps = []
+notes = "M10a: license: TRW Financial Systems / Julian Elischer notice (accepted 2026-10-03, kept whole); every struct #[repr(C)] of u8s with sizes pinned by const asserts, marked ScsiWire (unsafe trait: align 1, no padding, any bits valid) with zeroed/as_bytes/as_bytes_mut/read_from, and wire_ref/wire_mut for the C's pointer casts; union scsi_mode_sense_buf is ScsiModeSenseBuf { buf: [u8; 254] } with hdr/hdr_big(_mut) views; char arrays are [u8; N]; struct scsi_lun_array is a plain struct (not wire); VPD_DEVID_*(f), ASC_ASCQ, VALID_MODE_HDR(_BIG), SIU_SENSE_LENGTH are const fns, SIU_PKTFAIL_CODE takes the whole IU as bytes and SIU_SENSE_DATA returns an offset; reference test of every define plus completeness of SKEY_/SENSE_/T_"
+
+[[file]]
+c = "sys/scsi/scsiconf.h"
+rust = "sys/scsi/scsiconf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a62b6ea883bd98f4cd47256fe79da33ada3d2ccd"
+deps = ["sys/sys/queue.h", "sys/sys/timeout.h", "sys/sys/mutex.h", "sys/scsi/scsi_all.h"]
+notes = "M10a: license: Hannum BSD-4 plus the TRW notice; struct scsi_link/scsi_xfer/scsi_iopool/scsi_iohandler/scsi_xshandler/scsibus_softc are Cell-membered and reached as &'static (links, pools and softcs live until detach; a scsi_xfer is a scsi_xfer_pool item from scsi_xs_get to scsi_xs_put); xs->data/datalen private behind unsafe set_data (the issuer vouches for the buffer) with data()/datalen()/data_slice(); cmd is Cell<ScsiGeneric> with set_cmd/cmd_as/with_cmd views; link->device_softc is Option<NonNull<Device>>; interpret_sense a non-NULL fn set to scsi_interpret_sense by ScsiLink::new; scsi_iohandler has a private is_xsh flag guarding scsi_link_shutdown's cast (fn addresses are not unique in Rust); io is ScsiIo = NonNull<c_void>, io_get/io_put/handlers unsafe fns over their cookie; struct devid header with unsafe id()/devid_cmp (DEVID_CMP); scsi_inquiry_pattern strings are &[u8]; _lto2b.._8btol const fns over slices; SID_ANSII_REV/SID_RESPONSE_FORMAT const fns; scsiconf.c's scsi_probe and scsi_detach (called by scsi_base.c) are unported! stubs here until scsiconf.c is ported; reference test of every define"
+
+[[file]]
+c = "sys/scsi/scsi_base.c"
+rust = "sys/scsi/scsi_base.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "efa6c91dea45180c4961d7c09a942eb205b4e417"
+deps = ["sys/scsi/scsiconf.h", "sys/scsi/scsi_all.h", "sys/kern/subr_pool.c", "sys/kern/kern_task.c", "sys/kern/kern_synch.c"]
+notes = "M10a: license: Hannum BSD-4; all of it except: scsi_read_cap_10, scsi_read_cap_16, scsi_start and scsi_cmd_rw_decode return unported! (ENOSYS) because their CDBs come from scsi_disk.h, skipped pending the user's decision on its OSF notice (scsi_cmd_rw_decode returns Result for that reason); SCSIDEBUG not configured and scsi_debug.h (no licence text) not ported, so SC_DEBUG/SC_DEBUG_SENSE sites are comments and scsi_show_*/flagnames/quirknames/devicetypenames/scsidebug_* are not ported; SCSI_DELAY not configured; SCSITERSE is feature scsiterse; KERNEL_LOCK a comment; errno results are Result<(), Errno> (Err(ERESTART) = retry); buffers are slices or ScsiWire references; scsi_do_mode_sense returns Ok((page offset, big)), the page helpers return offsets and None past the buffer; scsi_mode_select(_big) clamp the header's length to the slice; scsi_decode_sense returns its buffer by value; stack xshandler/io mover linked with the queues' unsafe mutators, public scsi_ioh_add/scsi_xsh_add take &'static; NULL done/handler/io panics; host tests (sense decoding, interpret_sense, xs_error retries, iopool order, xs accounting, xsh, sync commands and mode sense against a completing fake adapter) and a reference test of adesc[]"
+
+[[file]]
+c = "sys/scsi/scsi_disk.h"
+status = "skipped"
+notes = "license: Open Software Foundation (Grenoble, 1990) permission notice beside the TRW one; not in the accepted list, awaiting the user's decision (M10a needs it: sd.c, vioblk.c and four scsi_base.c functions use its CDBs)"
+
+[[file]]
+c = "sys/scsi/scsi_debug.h"
+status = "skipped"
+notes = "license: none (only 'Written by Julian Elischer'), awaiting the user's decision; SCSIDEBUG is not configured: SDEV_DB1..4 and SC_DEBUG* are not needed by the kernel as built (SDEV_DBX is scsiconf.h's)"
+
+[[file]]
+c = "sys/scsi/scsi_message.h"
+status = "skipped"
+notes = "license: none (no licence text at all); only parallel-SCSI adapter drivers use it, none of which is planned"
