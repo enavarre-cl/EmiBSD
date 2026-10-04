@@ -337,8 +337,10 @@ block drop quick inet proto icmp from any to 10.0.2.2
 const PF_OS: &str = "# pf.os(5) of the EmiBSD ramdisk: no fingerprints.\n";
 
 /// `fstab(5)`: `mount -uw /` finds the root's entry here (`mount.c` looks the root up by its
-/// mount point because the kernel names it `root_device`).
-const FSTAB: &str = "/dev/rd0a / ffs rw 1 1\n";
+/// mount point because the kernel names it `root_device`). The `sd0a` line (M10b) is how
+/// quotacheck(8), quotaon(8), edquota(8), repquota(8) and quota(1) find a file system with
+/// quotas (`userquota`); `noauto` keeps `mount -a` off it.
+const FSTAB: &str = "/dev/rd0a / ffs rw 1 1\n/dev/sd0a /mnt ffs rw,userquota,noauto 1 2\n";
 
 /// `ttys(5)`: `init(8)` runs `getty` on the line the kernel's console is, `tty00` on both
 /// architectures (`DEVICES`), and not on `/dev/console` itself, which is the same device.

@@ -188,7 +188,10 @@ over sysctl(2) when no kernel image is named, the way `ps`, `fstat` and `vmstat`
 `sbin/ifconfig`, `sbin/ping` (with its `ping6` link, setuid root), `sbin/route`, `sbin/pfctl` and
 `sbin/ipsecctl`, the diagnostic tools `bin/ps`, `bin/df`, `usr.bin/fstat` (and its `fuser`
 link) and `usr.bin/vmstat`, the disk tools `sbin/umount`, `sbin/newfs` (with its `mount_mfs` link),
-`sbin/fsck`, `sbin/fsck_ffs`, `sbin/disklabel` and `sbin/fdisk` (M10a), and a few more as static PIE executables, the form
+`sbin/fsck`, `sbin/fsck_ffs`, `sbin/disklabel` and `sbin/fdisk` (M10a), the quota tools
+`sbin/quotacheck`, `usr.sbin/quotaon` (and `quotaoff`), `usr.sbin/edquota`, `usr.sbin/repquota`
+and `usr.bin/quota` (over `librpcsvc.a`, whose sources `rpcgen` makes from its `.x` files) with
+`usr.bin/su` (M10b), and a few more as static PIE executables, the form
 OpenBSD's `cc -static` gives `/bin` and `/sbin` (`rcrt0.o` relocates the program itself; no
 `PT_INTERP`).
 

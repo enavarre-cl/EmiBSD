@@ -109,15 +109,16 @@ struct Variant {
 }
 
 impl Variant {
-    /// A program of a dynamic directory (`/usr/bin`, `/usr/libexec`) linked `-static`.
+    /// A program of a dynamic directory (`/usr/bin`, `/usr/sbin`, `/usr/libexec`) linked
+    /// `-static`.
     const fn statically(dir: &'static str) -> Self {
         Variant {
             dir,
             add_cflags: "",
             drop_ldadd: &[],
             static_link: true,
-            why: "linked -static, as the install media's crunched programs are: /usr/bin and \
-                  /usr/libexec are dynamic on OpenBSD and ld.so is not built yet",
+            why: "linked -static, as the install media's crunched programs are: /usr/bin, \
+                  /usr/sbin and /usr/libexec are dynamic on OpenBSD and ld.so is not built yet",
         }
     }
 }
@@ -139,6 +140,11 @@ const VARIANTS: &[Variant] = &[
     Variant::statically("libexec/login_passwd"),
     Variant::statically("usr.bin/ftp"),
     Variant::statically("usr.bin/nc"),
+    Variant::statically("usr.sbin/quotaon"),
+    Variant::statically("usr.sbin/edquota"),
+    Variant::statically("usr.sbin/repquota"),
+    Variant::statically("usr.bin/quota"),
+    Variant::statically("usr.bin/su"),
     Variant::statically("usr.bin/fstat"),
     Variant::statically("usr.bin/vmstat"),
     Variant {
@@ -231,6 +237,14 @@ const PROGRAMS: &[&str] = &[
     "usr.bin/vmstat",
     // M9+: over libpcap (LIBRARIES); `iapp.h` from usr.sbin/hostapd (-I../hostapd).
     "usr.sbin/tcpdump",
+    // M10b: disk quotas (quota(1) over librpcsvc, LIBRARIES) and su(1) to write as a user
+    // under quota; mount_mfs(8) is newfs (its LINKS).
+    "sbin/quotacheck",
+    "usr.sbin/quotaon",
+    "usr.sbin/edquota",
+    "usr.sbin/repquota",
+    "usr.bin/quota",
+    "usr.bin/su",
     // M10a: the disk tools, over libutil.
     "sbin/umount",
     "sbin/newfs",
@@ -253,7 +267,8 @@ const NOMAN_PROGRAMS: &[&str] = &["sbin/disklabel", "sbin/fdisk"];
 /// sources (`BUILDFIRST`: libcrypto's perlasm `.S` files and `obj_mac.h`, libcurses's
 /// tables and the host-built `make_keys`/`make_hash`, libedit's `makelist` headers) by
 /// running its rules (`make_target`). `libpcap` (tcpdump(8)) has its scanner made by
-/// OpenBSD's lex and its grammar by OpenBSD's yacc, both built for this machine.
+/// OpenBSD's lex and its grammar by OpenBSD's yacc, both built for this machine. `librpcsvc`
+/// (quota(1), M10b) has its sources made from its `.x` files by OpenBSD's `rpcgen`.
 const LIBRARIES: &[&str] = &[
     "lib/libcrypto",
     "lib/libssl",
@@ -261,6 +276,7 @@ const LIBRARIES: &[&str] = &[
     "lib/libcurses",
     "lib/libedit",
     "lib/libpcap",
+    "lib/librpcsvc",
 ];
 
 /// Flags added to host tools (built for macOS with the same clang) and why.
@@ -1232,6 +1248,20 @@ fn object_jobs(ctx: &Ctx<'_>, mk: &Make, objdir: &Path, extra_objs: &[String]) -
             if let Some(rule) = mk.rule_for(c) {
                 let sources = resolve_sources(mk, objdir, &rule.sources)?;
                 generated.push(Job::from_rule(mk, &rule.commands, c, sources, objdir)?);
+                found = Some((c.clone(), objdir.join(c)));
+                break;
+            }
+            if c.ends_with(".c")
+                && let Some(rule) = mk.rule_for(".x.c")
+                && let Some(p) = mk.search(&format!("{stem}.x"))
+            {
+                // `.x.c` (librpcsvc, M10b): made by OpenBSD's own rpcgen, built for this
+                // machine; the `.x.h` headers it includes are already in `objdir`
+                // (`rpcsvc_headers`).
+                let bindir = build_host_prog(ctx, "usr.bin/rpcgen")?;
+                let mut job = Job::from_rule(mk, &rule.commands, c, vec![p], objdir)?;
+                job.path = Some(bindir);
+                generated.push(job);
                 found = Some((c.clone(), objdir.join(c)));
                 break;
             }
