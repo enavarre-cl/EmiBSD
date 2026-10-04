@@ -21,7 +21,7 @@
 
 ## Status
 
-Status: M10c (memory and removable file systems: tmpfs, msdosfs, cd9660, udf, vnd) met; M10f (softraid) next.
+Status: M10f (softraid: RAID 0, 1, 5, 6, concat, RAID 1C, CRYPTO) met; M10e (NFS) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -39,7 +39,8 @@ Status: M10c (memory and removable file systems: tmpfs, msdosfs, cd9660, udf, vn
 | M10a | Persistent disk (vioblk, SCSI midlayer) | met |
 | M10b | UFS options (quotas, dirhash, mfs) | met |
 | M10c | Memory and removable file systems (tmpfs, msdosfs, cd9660, udf, vnd) | met |
-| M10d..M10f | ext2fs/ntfs/fuse, NFS, softraid | next |
+| M10f | softraid (RAID 0, 1, 5, 6, concat, RAID 1C, CRYPTO; bio(4), bioctl) | met |
+| M10d, M10e | ext2fs/ntfs/fuse, NFS | next |
 | M11a..M11e | SMP | next |
 | M12 | Devices (audio, USB), in QEMU | next |
 | M13 | Storage, firmware and console | next |
@@ -71,6 +72,11 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
 - tmpfs(5) on /tmp; FAT, ISO 9660 and UDF images attached with vnconfig(8) and mounted with
   mount_msdos(8), mount_cd9660(8), mount_udf(8); newfs_msdos(8) on a vnd(4) over a tmpfs file
   and fsck_msdos(8) passing it (`smoke-fs`).
+- softraid(4) over four vioblk disks: RAID 0, 1, 5, concat, RAID 1C and CRYPTO made with
+  bioctl(8), RAID 6 with our own `sr6create` (bioctl has no `-c 6`); each gets an ffs and a
+  file; after a reboot the volumes are assembled at boot, `bioctl -p` unlocks the encrypted
+  ones and every file reads back; with a disk missing, RAID 1 and RAID 6 come up degraded
+  and still read (`smoke-softraid`).
 
 Between two VMs on a private link (`cargo xtask smoke2`):
 
@@ -152,7 +158,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 4 | 148 | 531 | 14 | 697 |
+| 4 | 148 | 543 | 14 | 709 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).
