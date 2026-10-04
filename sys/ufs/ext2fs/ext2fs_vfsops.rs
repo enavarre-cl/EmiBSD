@@ -1267,4 +1267,4 @@ fn e2fs_sbcheck(sb: &[u8], ronly: bool) -> Result<(), Errno> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

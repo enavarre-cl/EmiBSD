@@ -20,7 +20,7 @@ bench = false
 doc = false
 
 [features]
-default = ["alloc", "ffs", "ffs2", "kmemstats", "inet6", "quota", "ufs_dirhash", "mfs", "tmpfs", "msdosfs", "cd9660", "udf", "nfsclient", "nfsserver", "fuse", "ntfs"]
+default = ["alloc", "ffs", "ffs2", "kmemstats", "inet6", "quota", "ufs_dirhash", "mfs", "tmpfs", "msdosfs", "cd9660", "udf", "nfsclient", "nfsserver", "fuse", "ntfs", "ext2fs"]
 alloc = []        # enables `extern crate alloc` and the GlobalAlloc over malloc(9)
 diagnostic = []   # OpenBSD `option DIAGNOSTIC` -> kassert! active
 debug = []        # OpenBSD `option DEBUG`      -> kdassert! active

@@ -70,6 +70,10 @@ pub use crate::ufs::ext2fs::ext2fs_bmap::ext2fs_bmap;
 pub use crate::ufs::ext2fs::ext2fs_inode::{
     ext2fs_inactive, ext2fs_setsize, ext2fs_size, ext2fs_truncate, ext2fs_update,
 };
+pub use crate::ufs::ext2fs::ext2fs_lookup::{
+    ext2fs_checkpath, ext2fs_dirempty, ext2fs_direnter, ext2fs_dirremove, ext2fs_dirrewrite,
+    ext2fs_lookup, ext2fs_readdir,
+};
 pub use crate::ufs::ext2fs::ext2fs_readwrite::{ext2fs_read, ext2fs_write};
 pub use crate::ufs::ext2fs::ext2fs_subr::{ext2fs_bufatoff, ext2fs_vinit};
 pub use crate::ufs::ext2fs::ext2fs_vfsops::{
@@ -78,7 +82,10 @@ pub use crate::ufs::ext2fs::ext2fs_vfsops::{
     ext2fs_statfs, ext2fs_sync, ext2fs_unmount, ext2fs_vget, ext2fs_vptofh,
 };
 pub use crate::ufs::ext2fs::ext2fs_vnops::{
-    EXT2FS_SPECVOPS, EXT2FS_VOPS, ext2fs_fsync, ext2fs_reclaim,
+    EXT2FS_SPECVOPS, EXT2FS_VOPS, ext2fs_access, ext2fs_advlock, ext2fs_create, ext2fs_fsync,
+    ext2fs_getattr, ext2fs_link, ext2fs_makeinode, ext2fs_mkdir, ext2fs_mknod, ext2fs_open,
+    ext2fs_pathconf, ext2fs_readlink, ext2fs_reclaim, ext2fs_remove, ext2fs_rename, ext2fs_rmdir,
+    ext2fs_setattr, ext2fs_symlink,
 };
 
 /// `IS_EXT2_VNODE(vp)`: whether the vnode belongs to ext2fs.

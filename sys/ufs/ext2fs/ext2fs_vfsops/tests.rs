@@ -252,7 +252,7 @@ fn image(extents: bool) -> Vec<u8> {
 }
 
 /// The disk the strategy below reads and writes.
-static DISK: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+pub(crate) static DISK: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
 
 /// A synchronous transfer between the buffer and the image at `b_blkno`, then `biodone`.
 fn disk_strategy(ap: &mut VopStrategyArgs) -> Result<(), Errno> {
@@ -310,7 +310,7 @@ const DISKDEV: i32 = makedev(17, 5);
 
 /// Memory, the vfs (whose `vfsinit` runs `ext2fs_init`), a fresh buffer cache, the image as
 /// the disk, the thread as `curproc`.
-fn setup(image: Vec<u8>) -> (MutexGuard<'static, ()>, &'static Proc) {
+pub(crate) fn setup(image: Vec<u8>) -> (MutexGuard<'static, ()>, &'static Proc) {
     let (g, p) = crate::kern::vfs_subr::tests::setup();
     Machine::set_curproc(Machine::curcpu(), p);
     BUFHEAD.0.init();
@@ -339,13 +339,13 @@ fn setup(image: Vec<u8>) -> (MutexGuard<'static, ()>, &'static Proc) {
     (g, p)
 }
 
-fn teardown() {
+pub(crate) fn teardown() {
     Machine::set_curproc(Machine::curcpu(), ptr::null());
 }
 
 /// `ext2fs_mountfs` of the disk on a fresh mount, and the `statfs` `sys_mount` follows it
 /// with.
-fn mount(p: &'static Proc, ronly: bool) -> Result<&'static Mount, Errno> {
+pub(crate) fn mount(p: &'static Proc, ronly: bool) -> Result<&'static Mount, Errno> {
     let devvp = bdevvp(DISKDEV).unwrap().unwrap();
     devvp.v_op.set(Some(&DISK_VOPS));
     let mp = vfs_mount_alloc(None, vfs_byname(b"ext2fs").unwrap());

@@ -11,8 +11,9 @@
 //! The file system itself: `ext2fs_vfsops` (mounting, `vget`, `statfs`, `sync`),
 //! `ext2fs_alloc` and `ext2fs_balloc` (blocks and inodes), `ext2fs_bmap` (logical to disk
 //! blocks, by block pointers or extents), `ext2fs_inode` (size, update, truncate, inactive),
-//! `ext2fs_readwrite` (`read`/`write`), `ext2fs_subr` (`bufatoff`, `vinit`) and
-//! `ext2fs_vnops` (the operation tables; its port is under way).
+//! `ext2fs_readwrite` (`read`/`write`), `ext2fs_subr` (`bufatoff`, `vinit`),
+//! `ext2fs_lookup` (directories: lookup, readdir and the entry routines) and `ext2fs_vnops`
+//! (the vnode operations and their tables).
 
 #[allow(clippy::module_inception)] // OpenBSD's sys/ufs/ext2fs/ext2fs.h
 pub mod ext2fs;
@@ -25,6 +26,7 @@ pub mod ext2fs_dir;
 pub mod ext2fs_extents;
 pub mod ext2fs_extern;
 pub mod ext2fs_inode;
+pub mod ext2fs_lookup;
 pub mod ext2fs_readwrite;
 pub mod ext2fs_subr;
 pub mod ext2fs_vfsops;

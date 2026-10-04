@@ -48,8 +48,8 @@
 //!   `IN_HASHED` test that follows it: the list links are private to `sys/queue.rs`, and the
 //!   flag is set exactly when the inode is linked. The `DIAGNOSTIC` clearing of the links is
 //!   `LIST_REMOVE`'s own (`_Q_INVALIDATE`).
-//! - The `EXT2FS` branch of `ufs_ihashget` (`IS_EXT2_VNODE`) is left out: `ext2fs` is not
-//!   ported.
+//! - The `EXT2FS` branch of `ufs_ihashget` (`IS_EXT2_VNODE`: an ext2fs inode's link count is
+//!   `i_e2fs_nlink`, an unsigned 16 bits, so `<= 0` is `== 0`) is under feature `ext2fs`.
 
 use crate::crypto::siphash::{
     SipHash24_End, SipHash24_Init, SipHash24_Update, SiphashCtx, SiphashKey,
@@ -148,7 +148,17 @@ pub fn ufs_ihashget(dev: Dev, inum: Ufsino) -> Option<&'static Vnode> {
                     .v_mount
                     .get()
                     .is_some_and(|mp| mp.mnt_flag.get() & MNT_RDONLY != 0);
-                if ip.dip_nlink() <= 0 && !rdonly {
+                // XXX DIP does not cover ext2fs so hack around this for now since this is
+                // using ufs_ihashget as well.
+                #[cfg(feature = "ext2fs")]
+                let unlinked = if crate::ufs::ext2fs::ext2fs_extern::is_ext2_vnode(vp) {
+                    ip.i_e2fs_nlink() == 0
+                } else {
+                    ip.dip_nlink() <= 0
+                };
+                #[cfg(not(feature = "ext2fs"))]
+                let unlinked = ip.dip_nlink() <= 0;
+                if unlinked && !rdonly {
                     // This should recycle the inode immediately, unless there are other
                     // threads that try to access it. Pause to give the threads a chance to
                     // finish with the inode.

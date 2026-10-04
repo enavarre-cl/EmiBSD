@@ -71,6 +71,11 @@
 //!   C's `NONE`, `COMPACT`, `FOUND`).
 //! - `E2IFTODT` and `EXT2FS_DIRSIZ` are the `const fn`s [`e2iftodt`] and [`ext2fs_dirsiz`];
 //!   `inot2ext2dt` keeps its name.
+//! - A `struct ext2fs_direct *` into a directory block is an offset into the block's bytes:
+//!   [`e2d_ino`], [`e2d_reclen`], [`e2d_namlen`], [`e2d_type`], [`e2d_name`] and their setters
+//!   read and write the members there, converting from and to little-endian (the C's
+//!   `letoh32`/`htole16` at each use). [`Ext2fsDirect::write_to`] and the
+//!   [`Ext2fsDirtemplate`] byte conversions are the C's `memcpy`s of the structures.
 
 use core::mem::size_of;
 
@@ -111,6 +116,27 @@ impl Ext2fsDirect {
             e2d_namlen: 0,
             e2d_type: 0,
             e2d_name: [0; EXT2FS_MAXNAMLEN],
+        }
+    }
+}
+
+impl Ext2fsDirect {
+    /// `offsetof(struct ext2fs_direct, e2d_name)`: the size of the fixed header.
+    pub const NAME_OFFSET: usize = 8;
+
+    /// `memcpy(ep, &newdir, len)`: the first `len` bytes of the entry, little-endian, at
+    /// `off` in `b`.
+    pub fn write_to(&self, b: &mut [u8], off: usize, len: usize) {
+        let mut h = [0u8; Self::NAME_OFFSET];
+        h[0..4].copy_from_slice(&self.e2d_ino.to_le_bytes());
+        h[4..6].copy_from_slice(&self.e2d_reclen.to_le_bytes());
+        h[6] = self.e2d_namlen;
+        h[7] = self.e2d_type;
+        let hl = len.min(Self::NAME_OFFSET);
+        b[off..off + hl].copy_from_slice(&h[..hl]);
+        if len > Self::NAME_OFFSET {
+            let n = len - Self::NAME_OFFSET;
+            b[off + Self::NAME_OFFSET..off + len].copy_from_slice(&self.e2d_name[..n]);
         }
     }
 }
@@ -231,60 +257,99 @@ pub struct Ext2fsDirtemplate {
     pub dotdot_name: [u8; 4],
 }
 
+impl Ext2fsDirtemplate {
+    /// `sizeof(struct ext2fs_dirtemplate)`.
+    pub const SIZE: usize = size_of::<Ext2fsDirtemplate>();
+
+    /// The structure as it lies on the disk (little-endian).
+    pub fn to_le_bytes(&self) -> [u8; Self::SIZE] {
+        let mut b = [0u8; Self::SIZE];
+        b[0..4].copy_from_slice(&self.dot_ino.to_le_bytes());
+        b[4..6].copy_from_slice(&self.dot_reclen.to_le_bytes());
+        b[6] = self.dot_namlen;
+        b[7] = self.dot_type;
+        b[8..12].copy_from_slice(&self.dot_name);
+        b[12..16].copy_from_slice(&self.dotdot_ino.to_le_bytes());
+        b[16..18].copy_from_slice(&self.dotdot_reclen.to_le_bytes());
+        b[18] = self.dotdot_namlen;
+        b[19] = self.dotdot_type;
+        b[20..24].copy_from_slice(&self.dotdot_name);
+        b
+    }
+
+    /// The structure from the first [`Self::SIZE`] bytes of `b` (little-endian).
+    pub fn from_le_bytes(b: &[u8]) -> Self {
+        let u32_at = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+        let i16_at = |o: usize| i16::from_le_bytes([b[o], b[o + 1]]);
+        let name_at = |o: usize| [b[o], b[o + 1], b[o + 2], b[o + 3]];
+        Self {
+            dot_ino: u32_at(0),
+            dot_reclen: i16_at(4),
+            dot_namlen: b[6],
+            dot_type: b[7],
+            dot_name: name_at(8),
+            dotdot_ino: u32_at(12),
+            dotdot_reclen: i16_at(16),
+            dotdot_namlen: b[18],
+            dotdot_type: b[19],
+            dotdot_name: name_at(20),
+        }
+    }
+}
+
+/// `letoh32(ep->e2d_ino)` of the entry at `off` in `b` (0 past the end).
+pub fn e2d_ino(b: &[u8], off: usize) -> u32 {
+    match b.get(off..off + 4) {
+        Some(s) => u32::from_le_bytes([s[0], s[1], s[2], s[3]]),
+        None => 0,
+    }
+}
+
+/// `ep->e2d_ino = htole32(v)`.
+pub fn set_e2d_ino(b: &mut [u8], off: usize, v: u32) {
+    b[off..off + 4].copy_from_slice(&v.to_le_bytes());
+}
+
+/// `letoh16(ep->e2d_reclen)` (0 past the end).
+pub fn e2d_reclen(b: &[u8], off: usize) -> u16 {
+    match b.get(off + 4..off + 6) {
+        Some(s) => u16::from_le_bytes([s[0], s[1]]),
+        None => 0,
+    }
+}
+
+/// `ep->e2d_reclen = htole16(v)`.
+pub fn set_e2d_reclen(b: &mut [u8], off: usize, v: u16) {
+    b[off + 4..off + 6].copy_from_slice(&v.to_le_bytes());
+}
+
+/// `ep->e2d_namlen` (0 past the end).
+pub fn e2d_namlen(b: &[u8], off: usize) -> u8 {
+    b.get(off + 6).copied().unwrap_or(0)
+}
+
+/// `ep->e2d_type` (0 past the end).
+pub fn e2d_type(b: &[u8], off: usize) -> u8 {
+    b.get(off + 7).copied().unwrap_or(0)
+}
+
+/// `ep->e2d_type = v`.
+pub fn set_e2d_type(b: &mut [u8], off: usize, v: u8) {
+    b[off + 7] = v;
+}
+
+/// `ep->e2d_name`: the `len` bytes of the name (fewer if the block ends first).
+pub fn e2d_name(b: &[u8], off: usize, len: usize) -> &[u8] {
+    let start = (off + Ext2fsDirect::NAME_OFFSET).min(b.len());
+    let end = (start + len).min(b.len());
+    &b[start..end]
+}
+
 const _: () = {
     assert!(size_of::<Ext2fsDirect>() == 264);
+    assert!(core::mem::offset_of!(Ext2fsDirect, e2d_name) == Ext2fsDirect::NAME_OFFSET);
     assert!(size_of::<Ext2fsDirtemplate>() == 24);
 };
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dirsiz_rounds_up_to_four_bytes() {
-        assert_eq!(ext2fs_dirsiz(0), 8);
-        assert_eq!(ext2fs_dirsiz(1), 12);
-        assert_eq!(ext2fs_dirsiz(4), 12);
-        assert_eq!(ext2fs_dirsiz(5), 16);
-        assert_eq!(ext2fs_dirsiz(255), 264);
-    }
-
-    #[test]
-    fn modes_map_to_directory_types() {
-        for (mode, ft) in [
-            (EXT2_IFIFO, EXT2_FT_FIFO),
-            (EXT2_IFCHR, EXT2_FT_CHRDEV),
-            (EXT2_IFDIR, EXT2_FT_DIR),
-            (EXT2_IFBLK, EXT2_FT_BLKDEV),
-            (EXT2_IFREG, EXT2_FT_REG_FILE),
-            (EXT2_IFLNK, EXT2_FT_SYMLINK),
-            (EXT2_IFSOCK, EXT2_FT_SOCK),
-            (0o030000, EXT2_FT_UNKNOWN),
-            (0, EXT2_FT_UNKNOWN),
-        ] {
-            assert_eq!(inot2ext2dt(e2iftodt(mode | 0o644)), ft, "{mode:o}");
-        }
-        assert_eq!(e2iftodt(EXT2_IFDIR), 4);
-    }
-
-    #[test]
-    #[ignore = "needs OPENBSD_SRC (just test-ref)"]
-    fn constants_match_the_c_header() {
-        let defs = crate::reftest::defines("sys/ufs/ext2fs/ext2fs_dir.h");
-        for (name, value) in [
-            ("EXT2FS_MAXDIRSIZE", i64::from(EXT2FS_MAXDIRSIZE)),
-            ("EXT2FS_MAXNAMLEN", EXT2FS_MAXNAMLEN as i64),
-            ("EXT2_FT_UNKNOWN", i64::from(EXT2_FT_UNKNOWN)),
-            ("EXT2_FT_REG_FILE", i64::from(EXT2_FT_REG_FILE)),
-            ("EXT2_FT_DIR", i64::from(EXT2_FT_DIR)),
-            ("EXT2_FT_CHRDEV", i64::from(EXT2_FT_CHRDEV)),
-            ("EXT2_FT_BLKDEV", i64::from(EXT2_FT_BLKDEV)),
-            ("EXT2_FT_FIFO", i64::from(EXT2_FT_FIFO)),
-            ("EXT2_FT_SOCK", i64::from(EXT2_FT_SOCK)),
-            ("EXT2_FT_SYMLINK", i64::from(EXT2_FT_SYMLINK)),
-            ("EXT2_FT_MAX", i64::from(EXT2_FT_MAX)),
-        ] {
-            assert_eq!(crate::reftest::int(&defs, name), Some(value), "{name}");
-        }
-    }
-}
+mod tests;

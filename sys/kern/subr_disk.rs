@@ -71,8 +71,8 @@
 //!   one function the C stores in it is `dev/softraid.rs`'s `sr_disk_attach`, so the flag says
 //!   whether it is set (by `sr_attach`) and the call names it. `DEBUG`'s
 //!   `DPRINTF`s are not configured.
-//! - `dk_mountroot`: `FFS` (feature `ffs`) and `CD9660` (feature `cd9660`) are the file
-//!   systems the kernel configuration names with a mountroot; `EXT2FS` is not configured.
+//! - `dk_mountroot`: `EXT2FS` (feature `ext2fs`), `FFS` (feature `ffs`) and `CD9660` (feature
+//!   `cd9660`) are the file systems the kernel configuration names with a mountroot.
 //! - `setroot`'s `RB_ASKNAME` dialogue (the "root device:" and "swap device:" prompts read
 //!   with `getsn` under `cnpollc`) is reported and skipped: `getsn` is not ported. A kernel
 //!   booted with `-a` goes on with its configured root. `NFSCLIENT` (feature `nfsclient`):
@@ -1406,8 +1406,11 @@ pub fn dk_mountroot() -> Result<(), Errno> {
     if dl_getpsize(&dl.d_partitions[part]) == 0 {
         panic(format_args!("root filesystem has size 0"));
     }
-    // EXT2FS: not configured.
     let fstype = dl.d_partitions[part].p_fstype;
+    #[cfg(feature = "ext2fs")]
+    if fstype == FS_EXT2FS {
+        return crate::ufs::ext2fs::ext2fs_vfsops::ext2fs_mountroot();
+    }
     #[cfg(feature = "cd9660")]
     if fstype == crate::sys::disklabel::FS_ISO9660 {
         return crate::isofs::cd9660::cd9660_vfsops::cd9660_mountroot();

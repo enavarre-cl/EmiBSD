@@ -47,12 +47,13 @@
 //!
 //! ## Deviations
 //! - The filters reach their vnode through `kn_hook` (`kn_vnode`); `filt_ufsread`'s
-//!   `EXT2FS` branch is left out with the rest of `ext2fs`.
+//!   `EXT2FS` branch (`ext2fs_size`) is under feature `ext2fs`.
 //! - `option FIFO` is in GENERIC, but `miscfs/fifofs` is not ported: `ufsfifo_read`,
 //!   `ufsfifo_write`, `ufsfifo_close` (and `ffs_fifovops`, `ffsfifo_reclaim`) come with it;
 //!   until then `ffs_vinit` refuses a fifo with `EOPNOTSUPP`, as a kernel without `FIFO`
 //!   does.
-//! - `EXT2FS`'s branch of `ufs_itimes` is left out: `ext2fs` is not ported.
+//! - `EXT2FS`'s branch of `ufs_itimes` (`EXT2FS_ITIMES`, `Inode::ext2fs_itimes`) is under
+//!   feature `ext2fs`.
 //! - `pool_put(&namei_pool, cnp->cn_pnbuf)` is [`pnbuf_free`].
 //! - Credentials that the C dereferences (`cred->cr_uid`) go through [`ucred`], which panics
 //!   on `NOCRED`/`FSCRED`, where the C would follow a bad pointer.
@@ -228,7 +229,13 @@ pub fn ufs_itimes(vp: &'static Vnode) {
     }
 
     if !rdonly(vp) {
-        // EXT2FS: EXT2FS_ITIMES (ext2fs, not ported).
+        #[cfg(feature = "ext2fs")]
+        if crate::ufs::ext2fs::ext2fs_extern::is_ext2_vnode(vp) {
+            ip.ext2fs_itimes();
+            // goto out
+            ip.clr_flag(IN_ACCESS | IN_CHANGE | IN_UPDATE);
+            return;
+        }
 
         if vp.v_type.get() == VBLK || vp.v_type.get() == VCHR {
             ip.set_flag(IN_LAZYMOD);
@@ -1796,8 +1803,15 @@ pub fn filt_ufsread(kn: &Knote, hint: i64) -> bool {
         return true;
     }
 
-    // EXT2FS: not ported.
-    kn.kn_data().set(ip.dip_size() as i64 - foffset(kn.fp()));
+    #[cfg(feature = "ext2fs")]
+    let size = if crate::ufs::ext2fs::ext2fs_extern::is_ext2_vnode(vp) {
+        crate::ufs::ext2fs::ext2fs_inode::ext2fs_size(ip) as i64
+    } else {
+        ip.dip_size() as i64
+    };
+    #[cfg(not(feature = "ext2fs"))]
+    let size = ip.dip_size() as i64;
+    kn.kn_data().set(size - foffset(kn.fp()));
     if kn.kn_data().get() == 0 && kn.kn_sfflags.get() & NOTE_EOF != 0 {
         kn.kn_fflags().set(kn.kn_fflags().get() | NOTE_EOF);
         return true;
