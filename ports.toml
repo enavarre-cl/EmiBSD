@@ -5653,18 +5653,20 @@ notes = "M9+: module with in6_ifattach.h (WIDE BSD-3). The whole file: in6_get_r
 [[file]]
 c = "sys/netinet6/in6_pcb.c"
 rust = "sys/netinet6/in6_pcb.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "bb5b7661e5f4ebce110e25768f8b5f12be366ceb"
+deps = ["sys/netinet/in_pcb.c", "sys/netinet6/in6.c", "sys/netinet6/in6_src.c", "sys/netinet6/ip6_input.c", "sys/net/route.c", "sys/net/pf.c"]
+notes = "M9+: NRL notice (BSD-4, accepted). The whole file: zeroin6_addr, in6_pcbhash, in6_pcbaddrisavail(_lock), in6_pcbconnect, in6_setsockaddr/in6_setpeeraddr, in6_sockaddr/in6_peeraddr, in6_pcbnotify, in6_pcbrtentry, in6_pcbhash_lookup, in6_pcblookup(_lock), in6_pcblookup_listen (pf divert-to and localhost keys), in6_pcbset_addr; NPF and NSTOEPLITZ configured; stub until in_pcb.c's INET6 branches: in_pcblookup_local_lock/in_pcbbind_locked with an IPv6 local address are unported! (ENOSYS for a non-zero port); host tests (hash spread, exact and listen lookups, set_addr conflict, sockname scope, notify, addrisavail)"
 
 [[file]]
 c = "sys/netinet6/in6_proto.c"
 rust = "sys/netinet6/in6_proto.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "ce7a1e4c615b2ae90d8ba391051924bf3342d665"
+deps = ["sys/netinet6/ip6_input.c", "sys/netinet6/frag6.c", "sys/netinet6/raw_ip6.c", "sys/netinet6/icmp6.c", "sys/netinet6/dest6.c", "sys/netinet6/route6.c", "sys/netinet6/ip6_divert.c", "sys/netinet/ipsec_input.c", "sys/netinet/ip_ipip.c"]
+notes = "M9+: inet6sw[] (IPv6, raw, ICMPv6, destination options, routing, fragment, AH/ESP/IPComp, IPv4 and IPv6 in IPv6 through ipip_input (NGIF 0), divert, the raw wildcard), inet6domain (registered in domains[] under the inet6 feature), ip6_protox (atomics), the ip6_*/icmp6_* globals, rip6_sendspace/rip6_recvspace; the UDP and TCP entries wait for udp6_usrreqs/tcp6_usrreqs (comment at the site); MPLS, NCARP, NETHERIP, NGRE not configured; host test"
 
 [[file]]
 c = "sys/netinet6/in6_src.c"
@@ -5788,26 +5790,29 @@ notes = "M9+: the whole file: nd6_rtr_cache (an RS/RA source link-layer address 
 [[file]]
 c = "sys/netinet6/raw_ip6.c"
 rust = "sys/netinet6/raw_ip6.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "b378de4ebffd751f99d96a29e78eebac776528b6"
+deps = ["sys/netinet6/raw_ip6.h", "sys/netinet/in_pcb.c", "sys/netinet6/in6_pcb.c", "sys/netinet6/in6_src.c", "sys/netinet6/in6_cksum.c", "sys/netinet6/ip6_input.c", "sys/netinet6/ip6_output.c", "sys/netinet6/icmp6.c", "sys/netinet6/in6_proto.c", "sys/net/pf.c"]
+notes = "M9+: module with raw_ip6.h. The whole file: rawin6pcbtable, rip6counters (atomics), rip6_usrreqs, rip6_init, rip6_input (ICMP6_FILTER, the IPV6_CHECKSUM check, the divert-to key, a parameter problem when no socket matches), rip6_sbappend, rip6_ctlinput (PRC_MSGSIZE to icmp6_mtudisc_update), rip6_output (ICMPv6 and IPV6_CHECKSUM sums, IN6P_MINMTU, the pf link), rip6_ctloutput, rip6_attach..rip6_send, rip6_sysctl; MROUTING not configured (comments); host tests (filter delivery, checksum offsets, a ping6 echo request out with its checksum, sysctl and privilege)"
 
 [[file]]
 c = "sys/netinet6/udp6_output.c"
 rust = "sys/netinet6/udp6_output.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "4739e3219165bcaa0e0277005d065f0edd81e50a"
+deps = ["sys/netinet/in_pcb.c", "sys/netinet6/in6_pcb.c", "sys/netinet6/in6_src.c", "sys/netinet6/ip6_output.c", "sys/netinet/udp_usrreq.c", "sys/net/pf.c"]
+notes = "M9+: udp6_output (destination checks, scope embedding, in6_pcbselsrc, the implicit in_pcbbind, the IPv6 and UDP headers through the private udp6_output_hdr, M_UDP_CSUM_OUT, flow id and pf link when connected); host tests (headers and checksum, jumbo ulen 0, refused destinations)"
 
 [[file]]
 c = "sys/netinet6/ip6_divert.c"
 rust = "sys/netinet6/ip6_divert.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "7452bbcaeb3387bff1b3edcf25b678c849936cd6"
+deps = ["sys/netinet/ip_divert.c", "sys/netinet/in_pcb.c", "sys/netinet6/in6_pcb.c", "sys/netinet6/ip6_input.c", "sys/netinet6/ip6_output.c", "sys/net/route.c"]
+notes = "M9+: ISC (Michele Marchetto). The whole file: divb6table, div6counters (allocated but unused, as in the C: divstat_inc counts in divcounters), divert6_usrreqs, divert6_init, divert6_output (ip6_lasthdr, checksum flags, reinjection through ipv6_input or ip6_output; no address or mbuf is EINVAL), divert6_packet (skips iterator markers), divert6_attach, divert6_send"
 
 [[file]]
 c = "sys/crypto/idgen.c"

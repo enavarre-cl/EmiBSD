@@ -62,27 +62,62 @@
  */
 /* </LICENSES> */
 
-//! The IPv6 protocol switch and domain, and the IPv6 configuration variables:
-//! `netinet6/in6_proto.c`.
+//! The IPv6 protocol switch `inet6sw[]`, `ip6_protox[]` and `inet6domain`, and the IPv6
+//! configuration variables: `netinet6/in6_proto.c`.
 //!
 //! Upstream: sys/netinet6/in6_proto.c @ 3ce1f3f79392
 //!
-//! Locks: \[a\] atomic operations. The sysctl variables are atomics, as
-//! `netinet/ip_input.rs`'s are. `inet6sw[]` and `inet6domain` come with the port of
-//! this file.
+//! IPv6, raw IPv6, ICMPv6, the destination options, routing and fragment headers, AH, ESP
+//! and IPComp, IPv4 and IPv6 in IPv6, divert and the raw wildcard, in the C's order.
+//! `ip6_init` fills `ip6_protox[]`, which maps an IP protocol number to its entry in
+//! `inet6sw[]`; every number without an entry goes to the raw IPv6 handler.
 //!
-//! Status: skeleton from the INET6 foundation step: the globals are defined, every
-//! function has its final signature and a placeholder body that reports itself through
-//! `unported!` until the file is ported.
+//! Locks: \[a\] atomic operations. The sysctl variables are atomics, as
+//! `netinet/ip_input.rs`'s are.
 //!
 //! ## Deviations
-//! - None yet: the file is a skeleton (see `Status`).
+//! - The UDP and TCP entries are not in the table yet: their `pr_usrreqs` and
+//!   `pr_ctlinput` (`udp6_usrreqs`, `udp6_ctlinput` in `netinet/udp_usrreq.c`;
+//!   `tcp6_usrreqs`, `tcp6_ctlinput` in `netinet/tcp_usrreq.c`/`tcp_subr.c`) come with the
+//!   INET6 integration of those files. A comment marks their place; until then
+//!   `ip6_protox[]` sends UDP and TCP over IPv6 to the raw handler, and `socket(2)` of
+//!   `AF_INET6`/`SOCK_DGRAM` or `SOCK_STREAM` finds no protocol.
+//! - `IPSEC` is configured (M9c): AH, ESP and IPComp take `ah46_input`, `esp46_input` and
+//!   `ipcomp46_input`, as in C.
+//! - `NGIF` is 0 (`ipip_input` serves `IPPROTO_IPV4` and `IPPROTO_IPV6`); `MPLS`, `NCARP`,
+//!   `NETHERIP` and `NGRE` are not configured: their entries are comments. `NPF` is:
+//!   `IPPROTO_DIVERT` (`netinet6/ip6_divert.c`) has its entry. `SMALL_KERNEL` is not set,
+//!   so the sysctl handlers are in the table.
+//! - `ip6_protox[]` holds atomics (`ip6_init` writes it once, every input reads it).
+//! - `rip6_sendspace`/`rip6_recvspace` (`u_long`, no sysctl) are constants of the same
+//!   names, as `rip_sendspace` is.
 
-use crate::netinet::in_::IPPROTO_MAX;
+use core::mem::{offset_of, size_of};
+use core::sync::atomic::{AtomicI32, AtomicU8};
+
+use crate::netinet::in_::{
+    IPPROTO_AH, IPPROTO_DIVERT, IPPROTO_DSTOPTS, IPPROTO_ESP, IPPROTO_FRAGMENT, IPPROTO_ICMPV6,
+    IPPROTO_IPCOMP, IPPROTO_IPV4, IPPROTO_IPV6, IPPROTO_MAX, IPPROTO_RAW, IPPROTO_ROUTING,
+};
+use crate::netinet::ip_ipip::ipip_input;
 use crate::netinet::ip_var::IPMTUDISCTIMEOUT;
 use crate::netinet::ip6::IPV6_DEFHLIM;
-use crate::netinet6::in6::IPV6_DEFAULT_MULTICAST_HOPS;
-use core::sync::atomic::{AtomicI32, AtomicU8};
+use crate::netinet::ipsec_input::{
+    ah_sysctl, ah46_input, esp_sysctl, esp46_input, ipcomp_sysctl, ipcomp46_input,
+};
+use crate::netinet6::dest6::dest6_input;
+use crate::netinet6::frag6::{frag6_input, frag6_slowtimo};
+use crate::netinet6::icmp6::{icmp6_fasttimo, icmp6_init, icmp6_input, icmp6_sysctl};
+use crate::netinet6::in6::{IPV6_DEFAULT_MULTICAST_HOPS, SockaddrIn6};
+use crate::netinet6::ip6_divert::{DIVERT6_USRREQS, divert6_init};
+use crate::netinet6::ip6_input::{ip6_init, ip6_sysctl};
+use crate::netinet6::raw_ip6::{
+    RIP6_USRREQS, rip6_ctlinput, rip6_ctloutput, rip6_init, rip6_input, rip6_sysctl,
+};
+use crate::netinet6::route6::route6_input;
+use crate::sys::domain::Domain;
+use crate::sys::protosw::{PR_ADDR, PR_ATOMIC, PR_MPINPUT, PR_MPSYSCTL, Protosw};
+use crate::sys::socket::{AF_INET6, SOCK_RAW};
 
 /// Nominal space allocated to a raw ip6 socket: send.
 pub const RIPV6SNDQ: u64 = 8192;
@@ -97,6 +132,155 @@ pub const RIP6_RECVSPACE: u64 = RIPV6RCVQ;
 /// `ip6_protox[]`: the index in `inet6sw[]` of each protocol (`ip6_init` fills it).
 pub static IP6_PROTOX: [AtomicU8; IPPROTO_MAX as usize] =
     [const { AtomicU8::new(0) }; IPPROTO_MAX as usize];
+
+/// `inet6sw[]`: TCP/IP protocol family: IP6, ICMP6, UDP, TCP.
+pub static INET6SW: [Protosw; 13] = [
+    Protosw {
+        pr_protocol: IPPROTO_IPV6 as i16,
+        pr_flags: PR_MPSYSCTL,
+        pr_init: Some(ip6_init),
+        pr_slowtimo: Some(frag6_slowtimo),
+        pr_sysctl: Some(ip6_sysctl),
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    // IPPROTO_UDP (SOCK_DGRAM; udp_input, udp6_ctlinput, ip6_ctloutput, udp6_usrreqs,
+    // udp_sysctl) and IPPROTO_TCP (SOCK_STREAM; tcp_input, tcp6_ctlinput, tcp_ctloutput,
+    // tcp6_usrreqs, tcp_sysctl) come here with udp6_usrreqs/udp6_ctlinput and
+    // tcp6_usrreqs/tcp6_ctlinput (see the module's deviations).
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_RAW as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPINPUT | PR_MPSYSCTL,
+        pr_input: Some(rip6_input),
+        pr_ctlinput: Some(rip6_ctlinput),
+        pr_ctloutput: Some(rip6_ctloutput),
+        pr_usrreqs: Some(&RIP6_USRREQS),
+        pr_sysctl: Some(rip6_sysctl),
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_ICMPV6 as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPSYSCTL,
+        pr_input: Some(icmp6_input),
+        pr_ctlinput: Some(rip6_ctlinput),
+        pr_ctloutput: Some(rip6_ctloutput),
+        pr_usrreqs: Some(&RIP6_USRREQS),
+        pr_init: Some(icmp6_init),
+        pr_fasttimo: Some(icmp6_fasttimo),
+        pr_sysctl: Some(icmp6_sysctl),
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_DSTOPTS as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPINPUT,
+        pr_input: Some(dest6_input),
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_ROUTING as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPINPUT,
+        pr_input: Some(route6_input),
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_FRAGMENT as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPINPUT,
+        pr_input: Some(frag6_input),
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_AH as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPSYSCTL,
+        pr_input: Some(ah46_input),
+        pr_ctloutput: Some(rip6_ctloutput),
+        pr_usrreqs: Some(&RIP6_USRREQS),
+        pr_sysctl: Some(ah_sysctl),
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_ESP as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPSYSCTL,
+        pr_input: Some(esp46_input),
+        pr_ctloutput: Some(rip6_ctloutput),
+        pr_usrreqs: Some(&RIP6_USRREQS),
+        pr_sysctl: Some(esp_sysctl),
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_IPCOMP as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPSYSCTL,
+        pr_input: Some(ipcomp46_input),
+        pr_ctloutput: Some(rip6_ctloutput),
+        pr_usrreqs: Some(&RIP6_USRREQS),
+        pr_sysctl: Some(ipcomp_sysctl),
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_IPV4 as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR,
+        // NGIF > 0: in6_gif_input; not configured.
+        pr_input: Some(ipip_input),
+        pr_ctloutput: Some(rip6_ctloutput),
+        pr_usrreqs: Some(&RIP6_USRREQS), // XXX
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_IPV6 as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR,
+        // NGIF > 0: in6_gif_input; not configured.
+        pr_input: Some(ipip_input),
+        pr_ctloutput: Some(rip6_ctloutput),
+        pr_usrreqs: Some(&RIP6_USRREQS), // XXX
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    // MPLS && NGIF > 0: IPPROTO_MPLS through in6_gif_input; NCARP > 0: IPPROTO_CARP
+    // (carp6_proto_input); neither configured.
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_DIVERT as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPSYSCTL,
+        pr_ctloutput: Some(rip6_ctloutput),
+        pr_usrreqs: Some(&DIVERT6_USRREQS),
+        pr_init: Some(divert6_init),
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    // NETHERIP > 0: IPPROTO_ETHERIP (ip6_etherip_input); NGRE > 0: IPPROTO_GRE
+    // (gre_input6); neither configured.
+    Protosw {
+        // raw wildcard
+        pr_type: SOCK_RAW as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_MPINPUT,
+        pr_input: Some(rip6_input),
+        pr_ctloutput: Some(rip6_ctloutput),
+        pr_usrreqs: Some(&RIP6_USRREQS),
+        pr_init: Some(rip6_init),
+        ..Protosw::new(&INET6DOMAIN)
+    },
+];
+
+/// `inet6domain`.
+pub static INET6DOMAIN: Domain = Domain {
+    dom_family: AF_INET6 as i32,
+    dom_name: b"inet6",
+    dom_init: None,
+    dom_externalize: None,
+    dom_dispose: None,
+    dom_protosw: &INET6SW,
+    dom_sasize: size_of::<SockaddrIn6>() as u32,
+    dom_rtoffset: offset_of!(SockaddrIn6, sin6_addr) as u32,
+    dom_maxplen: 128,
+};
+
+// Internet configuration info.
 
 /// \[a\] `ip6_forwarding`: no forwarding unless sysctl to enable.
 pub static IP6_FORWARDING: AtomicI32 = AtomicI32::new(0);
@@ -127,9 +311,34 @@ pub static IP6_NEIGHBORGCTHRESH: AtomicI32 = AtomicI32::new(2048);
 /// \[a\] `ip6_maxdynroutes`: max # of routes created via redirect.
 pub static IP6_MAXDYNROUTES: AtomicI32 = AtomicI32::new(4096);
 
+// ICMPV6 parameters.
+
 /// `icmp6_redirtimeout`: cache time for redirect routes, 10 minutes.
 pub static ICMP6_REDIRTIMEOUT: AtomicI32 = AtomicI32::new(10 * 60);
 /// \[a\] `icmp6errppslim`: 100pps.
 pub static ICMP6ERRPPSLIM: AtomicI32 = AtomicI32::new(100);
 /// \[a\] `ip6_mtudisc_timeout`: mtu discovery.
 pub static IP6_MTUDISC_TIMEOUT: AtomicI32 = AtomicI32::new(IPMTUDISCTIMEOUT);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_entry_is_of_the_inet6_domain_and_the_wildcard_is_last() {
+        assert!(
+            INET6SW
+                .iter()
+                .all(|pr| core::ptr::eq(pr.pr_domain, &INET6DOMAIN))
+        );
+        let last = &INET6SW[INET6SW.len() - 1];
+        assert_eq!((last.pr_type, last.pr_protocol), (SOCK_RAW as i16, 0));
+        assert!(last.pr_init.is_some());
+        assert_eq!(INET6DOMAIN.dom_sasize, 28);
+        assert_eq!(INET6DOMAIN.dom_rtoffset, 8);
+        let icmp6 = INET6SW
+            .iter()
+            .find(|pr| i32::from(pr.pr_protocol) == IPPROTO_ICMPV6);
+        assert!(icmp6.is_some_and(|pr| pr.pr_type == SOCK_RAW as i16 && pr.pr_usrreqs.is_some()));
+    }
+}

@@ -47,8 +47,9 @@
 //! ## Deviations
 //! - `domains[]` is a slice without the C's NULL terminator. It holds `inetdomain`
 //!   (`netinet/in_proto.rs`), `unixdomain` (`kern/uipc_proto.rs`, local sockets) and
-//!   `routedomain` (`net/rtsock.rs`), with `pfkeydomain` (`net/pfkeyv2.rs`, `IPSEC`) first. `MPLS`,
-//!   `INET6` and `NAF_FRAME` are not configured; their entries are comments, and so are the
+//!   `routedomain` (`net/rtsock.rs`), with `pfkeydomain` (`net/pfkeyv2.rs`, `IPSEC`) first and
+//!   `inet6domain` (`netinet6/in6_proto.rs`, `INET6`: the `inet6` feature) before `inetdomain`.
+//!   `MPLS` and `NAF_FRAME` are not configured; their entries are comments, and so are the
 //!   `PIPEX` branches of `net_sysctl`. `NPFLOW` is configured: `PF_PFLOW` goes to
 //!   `pflow_sysctl`; so is `NBPFILTER`: `PF_BPF` goes to `bpf_sysctl`.
 //! - The two timeouts are statics initialised in `domaininit` with their own address as the
@@ -72,6 +73,8 @@ use crate::net::ifq::net_ifiq_sysctl;
 use crate::net::pfkeyv2::PFKEYDOMAIN;
 use crate::net::rtsock::ROUTEDOMAIN;
 use crate::netinet::in_proto::INETDOMAIN;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6_proto::INET6DOMAIN;
 use crate::sys::domain::Domain;
 use crate::sys::errno::Errno;
 use crate::sys::proc::Proc;
@@ -83,10 +86,11 @@ use crate::sys::systm::net_assert_locked;
 use crate::sys::timeout::{KCLOCK_NONE, TIMEOUT_MPSAFE, TIMEOUT_PROC, Timeout};
 
 /// `domains[]`: the configured communication domains.
-pub static DOMAINS: [&Domain; 4] = [
+pub static DOMAINS: &[&Domain] = &[
     // MPLS: &mplsdomain, not configured.
     &PFKEYDOMAIN,
-    // INET6: &inet6domain, not configured.
+    #[cfg(feature = "inet6")]
+    &INET6DOMAIN,
     &INETDOMAIN,
     &UNIXDOMAIN,
     &ROUTEDOMAIN,

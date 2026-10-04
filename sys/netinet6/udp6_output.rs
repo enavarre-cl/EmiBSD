@@ -60,20 +60,57 @@
  */
 /* </LICENSES> */
 
-//! UDP output for IPv6 sockets: `netinet6/udp6_output.c`.
+//! UDP output for IPv6 sockets: `netinet6/udp6_output.c`. UDP protocol implementation, per
+//! RFC 768, August, 1980.
 //!
 //! Upstream: sys/netinet6/udp6_output.c @ 3ce1f3f79392
 //!
-//! Status: skeleton from the INET6 foundation step: the globals are defined, every
-//! function has its final signature and a placeholder body that reports itself through
-//! `unported!` until the file is ported.
+//! `udp6_output` is `udp_output`'s IPv6 half (`netinet/udp_usrreq.rs` calls it for an
+//! `INP_IPV6` control block): it checks the destination (an explicit `sockaddr_in6`, or the
+//! connected peer), picks the source address, binds a local port if there is none yet,
+//! prepends the IPv6 and UDP headers and hands the datagram to `ip6_output` with the
+//! checksum left to `in6_proto_cksum_out` (`M_UDP_CSUM_OUT`).
 //!
 //! ## Deviations
-//! - None yet: the file is a skeleton (see `Status`).
+//! - The destination `sockaddr_in6` is read out of `addr6` as a copy (the C copies it too,
+//!   "protect *sin6 from overwrites"); mbuf data need not be aligned.
+//! - The headers are written by `udp6_output_hdr`, a helper of this file (the C fills them
+//!   inline), so that host tests can check them.
+//! - `NPF` and `NSTOEPLITZ` are configured: `pf_mbuf_link_inpcb` and the flow id of a
+//!   connected socket.
 
-use crate::netinet::in_pcb::Inpcb;
+use core::mem::size_of;
+
+use crate::kern::subr_prf::panic;
+use crate::kern::uipc_mbuf::{m_freem, m_prepend};
+use crate::machine::cpu::curproc;
+use crate::net::pf::pf_mbuf_link_inpcb;
+use crate::netinet::in_::IPPROTO_UDP;
+use crate::netinet::in_pcb::{IN6P_MINMTU, Inpcb, in_pcbbind};
+use crate::netinet::ip6::{IPV6_FLOWINFO_MASK, IPV6_VERSION, IPV6_VERSION_MASK, Ip6Hdr};
+use crate::netinet::udp::Udphdr;
+use crate::netinet::udp_var::{UdpstatCounters, udpstat_inc};
+use crate::netinet6::in6::{
+    In6Addr, SockaddrIn6, in6_are_addr_equal, in6_is_addr_unspecified, in6_is_addr_v4mapped,
+    in6_nam2sin6,
+};
+use crate::netinet6::in6_pcb::{in6_pcbaddrisavail, inp_moptions6, inp_outputopts6};
+use crate::netinet6::in6_src::{in6_embedscope, in6_pcbselsrc, in6_selecthlim};
+use crate::netinet6::ip6_output::{ip6_clearpktopts, ip6_output, ip6_setpktopts};
+use crate::netinet6::ip6_var::{IPV6_MINMTU, Ip6Pktopts, mtod_ip6, mtod_ip6_store};
+use crate::sys::endian::htons;
 use crate::sys::errno::Errno;
-use crate::sys::mbuf::Mbuf;
+use crate::sys::mbuf::{M_DONTWAIT, M_FLOWID, M_UDP_CSUM_OUT, Mbuf, mtod};
+use crate::sys::proc::Proc;
+use crate::sys::socketvar::{SS_ISCONNECTED, SS_PRIV};
+
+/// `curproc`, which the socket requests run as.
+fn curproc_or_panic(func: &str) -> &'static Proc {
+    match curproc() {
+        Some(p) => p,
+        None => panic(format_args!("{}: no curproc", func)),
+    }
+}
 
 /// `udp6_output`: sends datagram `m` of `inp` to the `sockaddr_in6` in `addr6` (`None`:
 /// the connected peer) with control messages `control`. Consumes `m` and `control`.
@@ -83,6 +120,177 @@ pub fn udp6_output(
     addr6: Option<&Mbuf>,
     control: Option<&'static Mbuf>,
 ) -> Result<(), Errno> {
-    let _ = (inp, m, addr6, control);
-    Err(crate::unported!("udp6_output: placeholder"))
+    let ulen = m.m_pkthdr().len.get() as u32;
+    let plen = size_of::<Udphdr>() as u32 + ulen;
+    let mut opt = Ip6Pktopts::default();
+
+    let priv_ = inp.socket().has_state(SS_PRIV);
+
+    let result: Result<(), Errno> = 'releaseopt: {
+        let error: Errno = 'release: {
+            let optp: Option<&Ip6Pktopts> = if let Some(control) = control {
+                if let Err(e) =
+                    ip6_setpktopts(control, &mut opt, inp_outputopts6(inp), priv_, IPPROTO_UDP)
+                {
+                    break 'release e;
+                }
+                Some(&opt)
+            } else {
+                inp_outputopts6(inp)
+            };
+
+            let (laddr, faddr, fport): (In6Addr, In6Addr, u16) = if let Some(addr6) = addr6 {
+                let sin6p = match in6_nam2sin6(addr6) {
+                    Ok(p) => p,
+                    Err(e) => break 'release e,
+                };
+                // protect *sin6 from overwrites: a copy.
+                // SAFETY: `in6_nam2sin6` checked the mbuf holds a whole `sockaddr_in6`;
+                // read unaligned.
+                let mut sin6: SockaddrIn6 = unsafe { sin6p.read_unaligned() };
+                if sin6.sin6_port == 0 {
+                    break 'release Errno::EADDRNOTAVAIL;
+                }
+                if in6_is_addr_v4mapped(&sin6.sin6_addr) {
+                    break 'release Errno::EADDRNOTAVAIL;
+                }
+                if !in6_is_addr_unspecified(&inp.inp_faddr6.get()) {
+                    break 'release Errno::EISCONN;
+                }
+
+                let fport = sin6.sin6_port; // allow 0 port
+
+                // KAME hack: embed scopeid
+                let mut a = sin6.sin6_addr;
+                if in6_embedscope(&mut a, &sin6, inp_outputopts6(inp), inp_moptions6(inp)).is_err()
+                {
+                    break 'release Errno::EINVAL;
+                }
+                sin6.sin6_addr = a;
+                let faddr = sin6.sin6_addr;
+
+                let mut laddr = In6Addr::default();
+                if let Err(e) = in6_pcbselsrc(&mut laddr, &sin6, inp, optp) {
+                    break 'release e;
+                }
+
+                if inp.inp_lport.get() == 0
+                    && let Err(e) = in_pcbbind(inp, None, curproc_or_panic("udp6_output"))
+                {
+                    break 'release e;
+                }
+
+                if !in6_is_addr_unspecified(&inp.inp_laddr6.get())
+                    && !in6_are_addr_equal(&inp.inp_laddr6.get(), &laddr)
+                {
+                    let mut valid = SockaddrIn6::with_addr(laddr);
+                    valid.sin6_port = inp.inp_lport.get();
+                    valid.sin6_scope_id = 0;
+                    if let Err(e) =
+                        in6_pcbaddrisavail(inp, &mut valid, 0, curproc_or_panic("udp6_output"))
+                    {
+                        break 'release e;
+                    }
+                }
+                (laddr, faddr, fport)
+            } else {
+                if in6_is_addr_unspecified(&inp.inp_faddr6.get()) {
+                    break 'release Errno::ENOTCONN;
+                }
+                (
+                    inp.inp_laddr6.get(),
+                    inp.inp_faddr6.get(),
+                    inp.inp_fport.get(),
+                )
+            };
+
+            let hlen = size_of::<Ip6Hdr>();
+
+            // Calculate data length and get a mbuf for UDP and IP6 headers.
+            let Some(m) = m_prepend(m, (hlen + size_of::<Udphdr>()) as i32, M_DONTWAIT) else {
+                break 'releaseopt Err(Errno::ENOBUFS);
+            };
+
+            // Stuff checksum and output datagram.
+            udp6_output_hdr(m, inp, &laddr, &faddr, fport, plen);
+
+            let ph = m.m_pkthdr();
+            ph.csum_flags.set(ph.csum_flags.get() | M_UDP_CSUM_OUT);
+
+            let mut flags = 0;
+            if inp.has_flags(IN6P_MINMTU) {
+                flags |= IPV6_MINMTU;
+            }
+
+            udpstat_inc(UdpstatCounters::UdpsOpackets);
+
+            // force routing table
+            ph.ph_rtableid.set(inp.inp_rtableid.get());
+
+            if inp.socket().has_state(SS_ISCONNECTED) {
+                pf_mbuf_link_inpcb(m, Some(inp));
+                ph.ph_flowid.set(inp.inp_flowid.get());
+                ph.csum_flags.set(ph.csum_flags.get() | M_FLOWID);
+            }
+
+            break 'releaseopt ip6_output(
+                m,
+                optp,
+                Some(&inp.inp_route),
+                flags,
+                inp_moptions6(inp),
+                Some(&inp.inp_seclevel.get()),
+            );
+        };
+
+        // release:
+        m_freem(m);
+        Err(error)
+    };
+
+    // releaseopt:
+    if let Some(control) = control {
+        ip6_clearpktopts(&mut opt, -1);
+        m_freem(control);
+    }
+    result
 }
+
+/// The IPv6 and UDP headers `udp6_output` writes at the front of `m` (prepended for them):
+/// from `laddr` and `inp`'s local port to `faddr`.`fport`, `plen` bytes of UDP (header
+/// included; a length that does not fit in 16 bits is written as 0), the checksum zero for
+/// `in6_proto_cksum_out` to fill. `ip6_plen` is left to `ip6_output`.
+fn udp6_output_hdr(m: &Mbuf, inp: &Inpcb, laddr: &In6Addr, faddr: &In6Addr, fport: u16, plen: u32) {
+    let hlen = size_of::<Ip6Hdr>();
+
+    let udp6 = Udphdr {
+        uh_sport: inp.inp_lport.get(), // lport is always set in the PCB
+        uh_dport: fport,
+        uh_ulen: if plen <= 0xffff {
+            htons(plen as u16)
+        } else {
+            0
+        },
+        uh_sum: 0,
+    };
+    // SAFETY: `m_prepend` made the first mbuf hold both headers' bytes; written unaligned.
+    unsafe {
+        mtod::<u8>(m)
+            .add(hlen)
+            .cast::<Udphdr>()
+            .write_unaligned(udp6)
+    };
+
+    let mut ip6 = mtod_ip6(m);
+    ip6.ip6_flow = inp.inp_flowinfo() & IPV6_FLOWINFO_MASK;
+    ip6.set_ip6_vfc((ip6.ip6_vfc() & !IPV6_VERSION_MASK) | IPV6_VERSION);
+    // ip6_plen will be filled in ip6_output.
+    ip6.ip6_nxt = IPPROTO_UDP as u8;
+    ip6.ip6_hlim = in6_selecthlim(inp) as u8;
+    ip6.ip6_src = *laddr;
+    ip6.ip6_dst = *faddr;
+    mtod_ip6_store(m, &ip6);
+}
+
+#[cfg(test)]
+mod tests;
