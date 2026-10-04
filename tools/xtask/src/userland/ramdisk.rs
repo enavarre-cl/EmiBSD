@@ -70,6 +70,8 @@ const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 ///   `sd0a`..`sd0p` and `rsd0a`..`rsd0p`, mode 0640, group `operator`). `MAKEDEV all` makes
 ///   `sd0`..`sd9`; the image has `sd0` (amd64's and arm64's persistent disk) and `sd1` (the
 ///   arm64 boot disk is the second block device the kernel finds);
+/// - vnode disks (`vnd`, M10c), made by `devices()` from `VND_UNITS` the same way: block 14
+///   (`bdev_disk_init(NVND,vnd)`, 69 / 67), character 41 (219 / 169), `vnd0`..`vnd3`;
 /// - `fd/N` is `filedesc` 22 (200 / 150), minor N, for N in `0..64` like MAKEDEV;
 ///   `stdin`, `stdout` and `stderr` link to `fd/0..2` (`DEV_LINKS`).
 ///
@@ -101,6 +103,14 @@ const DISK_UNITS: &[u32] = &[0, 1];
 const SD_BLOCK_MAJOR: u32 = 4;
 const SD_CHAR_MAJOR: u32 = 13;
 
+/// The `vnd` units the image has nodes for: `MAKEDEV all`'s `vnd0`..`vnd3` (GENERIC's
+/// `pseudo-device vnd 4`).
+const VND_UNITS: &[u32] = &[0, 1, 2, 3];
+
+/// `bdevsw[]` and `cdevsw[]` majors of `vnd` (14 and 41 on amd64 and arm64).
+const VND_BLOCK_MAJOR: u32 = 14;
+const VND_CHAR_MAJOR: u32 = 41;
+
 /// Every device node of the image, in the shape of `DEVICES`: its table plus the `sd` disk
 /// partitions (`MAKEDEV`'s `dodisk`: `a`..`p`, `MAXPARTITIONS` 16 minors per unit).
 fn devices() -> Vec<(String, char, u32, u32, u32, &'static str)> {
@@ -108,21 +118,29 @@ fn devices() -> Vec<(String, char, u32, u32, u32, &'static str)> {
         .iter()
         .map(|&(n, k, major, minor, mode, group)| (n.to_string(), k, major, minor, mode, group))
         .collect();
-    for unit in DISK_UNITS {
+    let disks = DISK_UNITS
+        .iter()
+        .map(|u| ("sd", *u, SD_BLOCK_MAJOR, SD_CHAR_MAJOR))
+        .chain(
+            VND_UNITS
+                .iter()
+                .map(|u| ("vnd", *u, VND_BLOCK_MAJOR, VND_CHAR_MAJOR)),
+        );
+    for (name, unit, bmajor, cmajor) in disks {
         for (part, letter) in ('a'..='p').enumerate() {
             let minor = unit * 16 + part as u32;
             all.push((
-                format!("sd{unit}{letter}"),
+                format!("{name}{unit}{letter}"),
                 'b',
-                SD_BLOCK_MAJOR,
+                bmajor,
                 minor,
                 0o640,
                 "operator",
             ));
             all.push((
-                format!("rsd{unit}{letter}"),
+                format!("r{name}{unit}{letter}"),
                 'c',
-                SD_CHAR_MAJOR,
+                cmajor,
                 minor,
                 0o640,
                 "operator",
@@ -465,7 +483,7 @@ fn owners_table(attrs: &[Attr]) -> String {
 /// A fixed timestamp (`makefs -T`: inode times and generation numbers), 2026-10-02, the date
 /// of the reference pin. The image is not bit-for-bit reproducible: makefs gives the label a
 /// random `d_uid` (`arc4random_buf`).
-const TIMESTAMP: u64 = 1_790_899_200;
+pub(super) const TIMESTAMP: u64 = 1_790_899_200;
 
 /// The header force-included (`-include`) into every makefs source.
 const COMPAT_H: &str = "\
@@ -711,6 +729,8 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
         let p = staging.join(dir.trim_start_matches('/'));
         fs::create_dir_all(&p).map_err(|e| format!("{}: {e}", p.display()))?;
     }
+    // M10c: the FAT, ISO 9660 and UDF images vnconfig(8) attaches (`images.rs`).
+    images::make_images(ctx, &makefs, &staging.join("root/images"))?;
     let dev = staging.join("dev");
     fs::create_dir_all(dev.join("fd")).map_err(|e| format!("{}: {e}", dev.display()))?;
     let device = |name: &str, kind: char, major: u32, minor: u32, mode: u32| -> Result<()> {

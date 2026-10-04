@@ -255,6 +255,17 @@ const PROGRAMS: &[&str] = &[
     "sbin/fsck_ffs",
     "sbin/disklabel",
     "sbin/fdisk",
+    // M10c: the memory and removable file systems, vnd(4)'s tools, and dd(1) to make an
+    // empty image for newfs_msdos.
+    "bin/dd",
+    "sbin/mount_tmpfs",
+    "sbin/mount_msdos",
+    "sbin/mount_cd9660",
+    "sbin/mount_udf",
+    "sbin/newfs_msdos",
+    "sbin/fsck_msdos",
+    "sbin/vnconfig",
+    "sbin/mount_vnd",
 ];
 
 /// Programs whose Makefile embeds their manual page in a generated `manual.c` (`disklabel`'s
@@ -1779,6 +1790,7 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
     Ok(())
 }
 
+mod images;
 mod libraries;
 mod passwd;
 mod ramdisk;
