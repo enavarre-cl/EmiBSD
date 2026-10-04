@@ -14,16 +14,16 @@ Done:
   pfsync(4) and pflow(4) between the two VMs (`smoke-pfsync`).
 - Diagnostic tools stage 2: libkvm, ps/fstat/vmstat/df over sysctl (`smoke-diag`).
 - M9+: TCP with SYN cache, SACK, ECN, TCP-MD5 (`init: tcp ok`; nc and ftp work over it);
-  zlib and IPComp (`smoke-ipcomp`).
+  zlib and IPComp (`smoke-ipcomp`); HTTPS with LibreSSL, ftp and nc (`smoke-https`).
 
 Next:
-- amd64's `tsc.c`; M9+: bpf, divert, IGMP (agent running), INET6, HTTPS in smoke.
+- amd64's `tsc.c`; M9+: bpf, divert, IGMP (agent running), INET6, the criterion recipes.
   Then M10a..f and M11a..e (SMP; afterwards every smoke runs MP, -smp 4).
 
 Blockers:
 - amd64's TSC timecounter (`tsc.c`) is deferred.
 - No bpf(4) yet (NBPFILTER 0): `smoke-esp`'s VMs forward, since only bpf moves a decapsulated
-  IPsec packet to enc0 (else `ips_wrongif`). arm64 has no RTC time (plrtc; agent on it).
+  IPsec packet to enc0 (else `ips_wrongif`).
 
 Decisions pending (the user's): the scope section (open until M13); the PC's CPU (Intel VMX
 or AMD SVM) for vmm and M15; the exact Raspberry Pi 4 model; networking in M15.

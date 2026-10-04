@@ -74,7 +74,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -247,8 +247,7 @@ https_run := "--send-after '# ' --send 'ls -l /etc/ssl\\n' --send-after '# ' --s
 # by the guest as `emibsd-host`, 10.0.2.2; docs/SETUP.md, "The test CA"). Logs in as root,
 # fetches `hello.txt` with ftp(1) trusting the test CA, is refused by the self-signed server
 # (`certificate verification failed`), and has a line echoed back over TLS by nc(1) (`-c`,
-# `-R` the CA, `-e` the expected name). Needs `just userland`. NOT in `smoke` until the kernel
-# has TCP (ported in parallel): today ftp stops at `socket: Protocol not supported`.
+# `-R` the CA, `-e` the expected name). Needs `just userland`. Part of `smoke`.
 smoke-https: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-https: no ramdisk image; run just userland first"; exit 1; }
