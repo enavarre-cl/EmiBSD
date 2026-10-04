@@ -663,15 +663,12 @@ smoke-tcp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-tcp: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke2 {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --timeout 300 \
-        {{tcp_both}} {{tcp_a}} {{tcp_b}} {{tcp_expect}}
+        {{esp_both}} {{tcp_a}} {{tcp_b}} {{tcp_expect}}
     cargo xtask smoke2 {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --timeout 300 \
-        {{tcp_both}} {{tcp_a}} {{tcp_b}} {{tcp_expect}}
+        {{esp_both}} {{tcp_a}} {{tcp_b}} {{tcp_expect}}
 
-# `smoke-tcp`'s sends: the login and the ESP keys (`esp_both` without forwarding), each VM's
-# vio1, wg0, lo1 and ipsec.conf (`esp_sa`), then the transfers.
-tcp_both := "--both-send-after 'login:' --both-send 'root\\n' --both-send-after 'Password:' --both-send 'emibsd\\n' " + \
-    "--both-send-after '# ' --both-send 'cd /tmp; umask 077\\n' " + \
-    "--both-send-after '# ' --both-send 'k=0123456789abcdef; echo $k$k$k$k >ak; e=fedcba9876543210; echo $e$e >ek\\n'"
+# `smoke-tcp`'s sends after `esp_both` (the login and the ESP keys): each VM's vio1, wg0, lo1
+# and ipsec.conf (`esp_sa`), then the transfers.
 tcp_a := "--a-send-after '# ' --a-send 'ifconfig vio1 inet 192.168.77.1/24 up\\n' " + \
     "--a-send-after '# ' --a-send 'ifconfig wg0 create wgport 51820 wgkey dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=\\n' " + \
     "--a-send-after '# ' --a-send 'ifconfig wg0 wgpeer 3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08= wgendpoint 192.168.77.2 51820 wgaip 10.77.0.2/32\\n' " + \
