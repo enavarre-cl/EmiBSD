@@ -856,12 +856,13 @@ smoke-inet6: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 # `smoke-inet6`'s sends and expectations.
 inet6_sends := "--both-send-after login: --both-send 'root\\n' --both-send-after Password: --both-send 'emibsd\\n' " + \
     "--both-send-after '# ' --both-send 'ifconfig lo0 inet 127.0.0.1/8 up\\n' --both-send-after '# ' --both-send 'ifconfig lo0\\n' " + \
+    "--both-send-after '# ' --both-send 'w6(){ i=0; until ping6 -c 1 -w 1 $1 >/dev/null 2>&1; do i=$((i+1)); [ $i -ge 60 ] && break; sleep 1; done; }\\n' " + \
     "--a-send-after '# ' --a-send 'ifconfig vio1 inet6 fd00:77::1/64 up\\n' " + \
     "--b-send-after '# ' --b-send 'ifconfig vio1 inet6 fd00:77::2/64 up\\n' " + \
     "--a-send-after '# ' --a-send 'ifconfig vio1\\n' --b-send-after '# ' --b-send 'ifconfig vio1\\n' " + \
-    "--a-send-after '# ' --a-send 'ping6 -c 3 fd00:77::2\\n' " + \
-    "--a-send-after '# ' --a-send 'ping6 -c 3 fe80::5054:ff:febb:2%vio1\\n' " + \
-    "--b-send-after '# ' --b-send 'ping6 -c 3 fd00:77::1\\n'"
+    "--a-send-after '# ' --a-send 'w6 fd00:77::2; ping6 -c 3 fd00:77::2\\n' " + \
+    "--a-send-after '# ' --a-send 'w6 fe80::5054:ff:febb:2%vio1; ping6 -c 3 fe80::5054:ff:febb:2%vio1\\n' " + \
+    "--b-send-after '# ' --b-send 'w6 fd00:77::1; ping6 -c 3 fd00:77::1\\n'"
 inet6_expects := "--a-expect 'inet6 ::1 prefixlen 128' --b-expect 'inet6 ::1 prefixlen 128' " + \
     "--a-expect 'inet6 fe80::5054:ff:febb:1%vio1 prefixlen 64' --b-expect 'inet6 fe80::5054:ff:febb:2%vio1 prefixlen 64' " + \
     "--a-expect 'inet6 fd00:77::1 prefixlen 64' --b-expect 'inet6 fd00:77::2 prefixlen 64' " + \
