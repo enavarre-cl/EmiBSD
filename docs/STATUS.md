@@ -1,6 +1,6 @@
 # Status
 
-Milestone: **M9 done** (WireGuard, IPsec ESP tunnel, pf, on both archs). Updated: 2026-10-03.
+Milestone: **M9 done** (WireGuard, IPsec ESP tunnel, pf, on both archs). Updated: 2026-10-04.
 
 Done:
 - M7a/M7b (exit met: `init: demand-zero bss ok`, `selftest: ping 10.0.2.2`): uvm_map/fault,
@@ -13,12 +13,12 @@ Done:
   PF_KEY, ipsecctl (`smoke-ipsec`, `smoke-esp`; IPComp reported, needs deflate); M9d the pf
   family, pflog, hfsc, fq_codel, pfctl (`smoke-pf`, a pf rule on wg0 in `smoke-wg`).
 - Diagnostic tools stage 2: libkvm, ps/fstat/vmstat/df over sysctl (`smoke-diag`).
+- M9+ TCP: the SYN cache, SACK, ECN, TCP-MD5 (`init: tcp ok`); nc and ftp work over it.
 
 Next:
-- pfsync and pflow (added to M9 by the user; agent running), then amd64's `tsc.c`. M9+
-  (TCP, bpf, INET6, divert, IGMP, IPComp, HTTPS with LibreSSL and ftp) beside diagnostic
-  tools stage 2; then M10a..f (disk, UFS options, tmpfs/FAT/ISO/UDF, ext2/NTFS/FUSE, NFS,
-  softraid) and M11a..e (SMP; afterwards every smoke runs MP, -smp 4). M14b when idle.
+- pfsync and pflow (added to M9; agent running), then amd64's `tsc.c`. M9+: bpf, divert,
+  IGMP, IPComp (agents running), INET6, HTTPS in smoke. Then M10a..f (disk, UFS options,
+  FAT/ISO/UDF, ext2/NTFS/FUSE, NFS, softraid), M11a..e (SMP; then every smoke runs MP).
 
 Blockers:
 - amd64's TSC timecounter (`tsc.c`) is deferred.
