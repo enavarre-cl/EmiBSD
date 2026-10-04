@@ -78,7 +78,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -840,6 +840,86 @@ ufsopts_dirhash_mfs := disk_login + " " + \
     "--expect '/mnt: user quotas turned on' --expect 'daemon    +-      98      50     100' " + \
     "--expect 'made-5000' --expect 'found-5000' --expect 'vfs.ffs.dirhash_mem=' --expect 'dirhash-used-42' " + \
     "--expect 'm10b-mfs-42' --expect 'mfs:' --expect 'ufsopts-done-42'"
+
+# M10f: softraid(4) over four persistent vioblk disks (`--disks 4`). Boot 1 (`--disk-fresh`)
+# gives sd0..sd3 an MBR and four 14 MB RAID partitions each (disklabel(8)'s `-T` table of
+# `raid` lines: a, b, d, e), then creates one volume per discipline: RAID 0, 1, 5, concat,
+# RAID 1C and CRYPTO with bioctl(8) (the last two keyed from a root-owned passphrase file with
+# `-p`), and RAID 6 with our own sr6create (tools/sr6create: bioctl refuses `-c 6`,
+# "unsupported RAID level"); it puts an ffs on each and writes a file naming it. Boot 2
+# reuses the disks: the kernel assembles the five unencrypted volumes at boot
+# (sr_boot_assembly), `-p` unlocks the two encrypted ones, and every file reads back. Boot 3
+# runs with sd3 missing (`--disks 3`): the RAID 1 volume (sd2a, sd3a) and the RAID 6 volume
+# (sd0d..sd3d) are assembled degraded and their files still read; no chunk may come up
+# under another chunk's metadata (`roaming device`). The volumes' sd units differ per arch
+# (arm64's boot disk is a vioblk too: sd4), so the scripts find them in `hw.disknames`. The
+# command lines stay short (helper functions): arm64's console drops input past about 128
+# bytes (`pluart0: ... ibuf overflows`). Part of `smoke`.
+smoke-softraid: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-softraid: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disks 4 --disk-fresh {{softraid_make}}
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disks 4 {{softraid_check}}
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disks 3 {{softraid_degraded}}
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disks 4 --disk-fresh {{softraid_make}}
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disks 4 {{softraid_check}}
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disks 3 {{softraid_degraded}}
+
+# `smoke-softraid`'s three boots. `sr_pass` writes the passphrase file (the ramdisk root is
+# rebuilt every boot); `sr_cat` mounts every disk's `a` partition read-only and prints its
+# file (the RAID chunks and arm64's FAT boot disk do not mount, silently). `sr_mk` defines
+# `mk name bioctl-args...`: create the volume, label it, newfs, write m10f.txt; `m6` is the
+# same through sr6create, for RAID 6 on the four `d` partitions.
+sr_pass := "--send-after '# ' --send 'print emibsd-m10f-passphrase >/etc/m10f.pass\\n' " + \
+    "--send-after '# ' --send 'chmod 600 /etc/m10f.pass && echo pass-$((40+2))\\n' "
+sr_cat := "--send-after '# ' --send 'c() { mount -r /dev/$1a /mnt 2>/dev/null && echo \"$1: $(cat /mnt/m10f.txt)\" && umount /mnt; }\\n' " + \
+    "--send-after '# ' --send 'sr_cat() { IFS=,; for e in $(sysctl -n hw.disknames); do c ${e%%:*}; done; IFS=\" \"; echo cat-done-$((40+2)); }\\n' "
+sr_mk := "--send-after '# ' --send 'h() { echo m10f-$1-$((40+2)) >/mnt/m10f.txt && umount /mnt; }\\n' " + \
+    "--send-after '# ' --send 'g() { newfs -q $1a && mount /dev/$1a /mnt && h $2 && echo made-$2-$((40+2)); }\\n' " + \
+    "--send-after '# ' --send 'f() { fdisk -iy -f /dev/r$1c $1 >/dev/null && disklabel -w -A $1 && g $1 $2; }\\n' " + \
+    "--send-after '# ' --send 'mk() { n=$1; shift; o=$(bioctl \"$@\" softraid0) && echo \"$o\" && f ${o##* } $n; }\\n' " + \
+    "--send-after '# ' --send 'm6() { o=$(sr6create \"$@\" softraid0) && echo \"$o\" && f ${o##* } raid6; }\\n' "
+softraid_make := disk_login + " " + sr_pass + \
+    "--send-after '# ' --send 'for i in 1 2 3 4; do echo raid 14M; done >/tmp/t\\n' " + \
+    "--send-after '# ' --send 'l() { fdisk -iy -f /dev/r$1c $1 >/dev/null && disklabel -w -A -T /tmp/t $1; }\\n' " + \
+    "--send-after '# ' --send 'for d in sd0 sd1 sd2 sd3; do l $d || echo label-fail$((0))ed-$d; done\\n' " + \
+    "--send-after '# ' --send 'disklabel sd3; echo labels-$((40+2))\\n' " + sr_mk + \
+    "--send-after '# ' --send 'mk raid0 -c 0 -l /dev/sd0a,/dev/sd1a\\n' " + \
+    "--send-after 'made-raid0-42' --send 'mk raid1 -c 1 -l /dev/sd2a,/dev/sd3a\\n' " + \
+    "--send-after 'made-raid1-42' --send 'mk raid5 -c 5 -l /dev/sd0b,/dev/sd1b,/dev/sd2b\\n' " + \
+    "--send-after 'made-raid5-42' --send 'mk concat -c c -l /dev/sd0e,/dev/sd1e\\n' " + \
+    "--send-after 'made-concat-42' --send 'm6 -l /dev/sd0d,/dev/sd1d,/dev/sd2d,/dev/sd3d\\n' " + \
+    "--send-after 'made-raid6-42' --send 'mk raid1c -c 1C -r 16 -p /etc/m10f.pass -l /dev/sd2e,/dev/sd3e\\n' " + \
+    "--send-after 'made-raid1c-42' --send 'mk crypto -c C -r 16 -p /etc/m10f.pass -l /dev/sd3b\\n' " + \
+    "--send-after 'made-crypto-42' --send 'bioctl softraid0; echo bioctl-$((40+2))\\n' " + \
+    "--expect 'sd3 at scsibus3 targ 0 lun 0: <VirtIO, Block Device, >' --expect 'softraid0 at root' " + \
+    "--expect 'pass-42' --expect 'labels-42' --expect '  a:            28672' --expect 'RAID' " + \
+    "--expect 'softraid0: RAID 0 volume attached as sd' --expect 'softraid0: RAID 1 volume attached as sd' " + \
+    "--expect 'softraid0: RAID 5 volume attached as sd' --expect 'softraid0: RAID 6 volume attached as sd' " + \
+    "--expect 'softraid0: CONCAT volume attached as sd' " + \
+    "--expect 'softraid0: RAID 1C volume attached as sd' --expect 'softraid0: CRYPTO volume attached as sd' " + \
+    "--expect 'made-raid0-42' --expect 'made-raid1-42' --expect 'made-raid5-42' --expect 'made-raid6-42' --expect 'made-concat-42' " + \
+    "--expect 'made-raid1c-42' --expect 'made-crypto-42' --expect 'bioctl-42' " + \
+    "--reject 'label-fail0ed-' --reject 'disklabels not read'"
+softraid_check := disk_login + " " + sr_pass + sr_cat + \
+    "--send-after '# ' --send 'bioctl softraid0; sr_cat\\n' " + \
+    "--send-after 'cat-done-42' --send 'bioctl -c 1C -p /etc/m10f.pass -l /dev/sd2e,/dev/sd3e softraid0\\n' " + \
+    "--send-after '# ' --send 'bioctl -c C -p /etc/m10f.pass -l /dev/sd3b softraid0\\n' " + \
+    "--send-after '# ' --send 'sr_cat; echo unlocked-$((40+2))\\n' " + \
+    "--expect ': m10f-raid0-42' --expect ': m10f-raid1-42' --expect ': m10f-raid5-42' " + \
+    "--expect ': m10f-raid6-42' --expect ': m10f-concat-42' --expect ': m10f-raid1c-42' --expect ': m10f-crypto-42' " + \
+    "--expect 'softraid0: RAID 1C volume attached as sd' --expect 'softraid0: CRYPTO volume attached as sd' " + \
+    "--expect 'unlocked-42'"
+softraid_degraded := disk_login + " " + sr_cat + \
+    "--send-after '# ' --send 'bioctl softraid0; sr_cat\\n' " + \
+    "--expect 'trying to bring up' --expect 'Degraded' --expect ': m10f-raid1-42' --expect ': m10f-raid6-42' --expect 'cat-done-42' " + \
+    "--reject 'roaming device'"
 
 # M9+: IPv6 between the two VMs of `smoke-link` (option INET6, sys/netinet6). Bringing lo0
 # up gives it ::1 (if_up calls in6_ifattach for the default loopback); vio1 gets fd00:77::1
