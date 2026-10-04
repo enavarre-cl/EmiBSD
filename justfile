@@ -78,7 +78,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -696,6 +696,33 @@ tcp_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24 up\\n
     "--b-send-after '# ' --b-send 'nc -l 10.77.0.2 7002\\n' " + \
     "--b-send-after '# ' --b-send 'nc -l 10.77.2.1 7003\\n'"
 tcp_expect := "--b-expect 'tcp-direct-7' --b-expect 'tcp-wg-7' --b-expect 'tcp-esp-7' --a-expect 'tcp-sent-8'"
+
+# M9+: pf's divert-to between the two VMs of `smoke-link`. B gives lo0 its 127.0.0.1 (as
+# netstart(8) would), loads a rule that diverts TCP to its port 80 arriving on vio1 to
+# 127.0.0.1 port 8080 (pf.conf(5), `divert-to`) and listens there with `nc -l`; nothing
+# listens on port 80. A writes a line to B's port 80 with
+# `nc -N`, retrying every second until B's listener is up: pf_test marks the packet
+# PF_DIVERT and tcp_input finds the listener through in_pcblookup_listen's divert lookup.
+# Part of `smoke`.
+smoke-divert: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-divert: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke2 {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd \
+        {{divert_both}} {{divert_a}} {{divert_b}} {{divert_expect}}
+    cargo xtask smoke2 {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd \
+        {{divert_both}} {{divert_a}} {{divert_b}} {{divert_expect}}
+
+# `smoke-divert`'s sends and expectations.
+divert_both := "--both-send-after 'login:' --both-send 'root\\n' --both-send-after 'Password:' --both-send 'emibsd\\n'"
+divert_a := "--a-send-after '# ' --a-send 'ifconfig vio1 inet 192.168.77.1/24 up\\n' " + \
+    "--a-send-after '# ' --a-send 'until echo divert-$((3+4)) | nc -N -w 5 192.168.77.2 80; do sleep 1; done\\n' " + \
+    "--a-send-after '# ' --a-send 'echo divert-sent-$((4+4))\\n'"
+divert_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24 up; ifconfig lo0 inet 127.0.0.1/8\\n' " + \
+    "--b-send-after '# ' --b-send 'r=\"pass in on vio1 inet proto tcp to port 80\"\\n' " + \
+    "--b-send-after '# ' --b-send 'echo \"$r divert-to 127.0.0.1 port 8080\" | pfctl -e -f -\\n' " + \
+    "--b-send-after '# ' --b-send 'pfctl -sr\\n' " + \
+    "--b-send-after '# ' --b-send 'nc -l 127.0.0.1 8080\\n'"
+divert_expect := "--b-expect 'proto tcp from any to any port = 80' --b-expect 'divert-7' --a-expect 'divert-sent-8'"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
