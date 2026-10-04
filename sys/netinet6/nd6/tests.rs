@@ -290,7 +290,7 @@ fn an_entry_walks_incomplete_reachable_stale_delay_probe() {
     assert_eq!(&held_packet.1[24..40], &PEER6.s6_addr, "to the neighbor");
     assert_eq!(ln_hold_total.load(Ordering::Relaxed), held);
     let reachable = if_nd(ifp).expect("if_nd").get().reachable;
-    assert!((15..=45).contains(&reachable), "ND_COMPUTE_RTIME(30000)");
+    assert!((14..=44).contains(&reachable), "ND_COMPUTE_RTIME(30000)");
     assert_eq!(rt.rt_expire().get(), uptime + i64::from(reachable));
 
     // Its timer runs out: STALE for a day.
