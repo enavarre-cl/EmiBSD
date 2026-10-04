@@ -3,21 +3,21 @@
 Milestone: **M9 done** (WireGuard, IPsec, pf, pfsync, pflow; both archs); M9+ under way. Updated: 2026-10-04.
 
 Done:
-- M7a/M7b (exit met: `init: demand-zero bss ok`, `selftest: ping 10.0.2.2`): uvm_map/fault,
-  mbufs, autoconf, PCI, virtio + `vio`, routing, ARP, IPv4, ICMP; creds, signals, vfs core.
+- M7a/M7b (`init: demand-zero bss ok`, `selftest: ping 10.0.2.2`): uvm, mbufs, PCI, virtio, IPv4.
 - M8/M8b (exit met: `just smoke-shell`, `smoke-login`): ffs root on rd0a, OpenBSD's init,
   ksh, multi-user `/etc/rc`, getty, login; execve/ELF, buffer cache, tty, amd64 FPU, makefs.
 - M9 (exit met, all in `just smoke`, both archs): M9a sockets, kqueue, inet pcbs, rtsock,
   ifconfig/ping/route (`smoke-net`, `smoke-route`); M9b `sys/crypto` + wg(4) between two
   VMs (`smoke-link`, `smoke-wg`); M9c IPsec: SA database, SPD, ESP, AH, IPIP, enc(4),
-  PF_KEY, ipsecctl (`smoke-ipsec`, `smoke-esp`; IPComp reported, needs deflate); M9d the pf
+  PF_KEY, ipsecctl (`smoke-ipsec`, `smoke-esp`); M9d the pf
   family, pflog, hfsc, fq_codel, pfctl (`smoke-pf`, a pf rule on wg0 in `smoke-wg`);
   pfsync(4) and pflow(4) between the two VMs (`smoke-pfsync`).
 - Diagnostic tools stage 2: libkvm, ps/fstat/vmstat/df over sysctl (`smoke-diag`).
-- M9+ TCP: the SYN cache, SACK, ECN, TCP-MD5 (`init: tcp ok`); nc and ftp work over it.
+- M9+: TCP with SYN cache, SACK, ECN, TCP-MD5 (`init: tcp ok`; nc and ftp work over it);
+  zlib and IPComp (`smoke-ipcomp`).
 
 Next:
-- amd64's `tsc.c`; M9+: bpf, divert, IGMP, IPComp (agents running), INET6, HTTPS in smoke.
+- amd64's `tsc.c`; M9+: bpf, divert, IGMP (agent running), INET6, HTTPS in smoke.
   Then M10a..f and M11a..e (SMP; afterwards every smoke runs MP, -smp 4).
 
 Blockers:
