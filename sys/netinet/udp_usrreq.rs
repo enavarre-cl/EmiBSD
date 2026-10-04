@@ -102,8 +102,8 @@
 //!   `malloc(M_SYSCTL)`), as `sysctl_struct` takes bytes.
 //! - Not configured, each a comment at its site: `INET6` (`udb6table`, `udp6_usrreqs`,
 //!   `udp6_ctlinput`, `udp6_output`, the IPv6 paths), `IPSEC` (UDP encapsulation of ESP, the
-//!   SPD lookup, `IP_IPSECFLOWINFO` control messages), `NPF` (`pf_inp_lookup`,
-//!   `pf_inp_link`, `pf_mbuf_link_inpcb`), `PIPEX` and `NSTOEPLITZ` (the flow id).
+//!   SPD lookup, `IP_IPSECFLOWINFO` control messages) and `PIPEX`. `NPF` (`pf_inp_lookup`,
+//!   `pf_inp_link`, `pf_mbuf_link_inpcb`) and `NSTOEPLITZ` (the flow id) are configured.
 //! - `SMALL_KERNEL` is not set: the sysctl handlers are compiled.
 
 use core::ffi::c_void;
@@ -124,6 +124,7 @@ use crate::kern::uipc_socket2::{
 };
 use crate::machine::cpu::curproc;
 use crate::net::if_var::Netstack;
+use crate::net::pf::{pf_inp_link, pf_inp_lookup, pf_mbuf_link_inpcb};
 use crate::net::rtable::rtable_l2;
 use crate::netinet::in_::{
     INADDR_ANY, IP_RECVDSTPORT, IP_SENDSRCADDR, IPPROTO_DONE, IPPROTO_IP, IPPROTO_UDP, InAddr,
@@ -452,26 +453,28 @@ pub fn udp_input(
             return IPPROTO_DONE;
         }
         // Locate pcb for datagram.
-        // NPF > 0: inp = pf_inp_lookup(m); not configured.
-        // INET6: in6_pcblookup for IPv6; not configured.
-        inp = in_pcblookup(
-            &UDBTABLE,
-            ip.ip_src,
-            hdr.uh_sport,
-            ip.ip_dst,
-            hdr.uh_dport,
-            m.m_pkthdr().ph_rtableid.get(),
-        );
+        inp = pf_inp_lookup(m);
         if inp.is_none() {
-            udpstat_inc(UdpstatCounters::UdpsPcbhashmiss);
-            // INET6: in6_pcblookup_listen for IPv6; not configured.
-            inp = in_pcblookup_listen(
+            // INET6: in6_pcblookup for IPv6; not configured.
+            inp = in_pcblookup(
                 &UDBTABLE,
+                ip.ip_src,
+                hdr.uh_sport,
                 ip.ip_dst,
                 hdr.uh_dport,
-                Some(m),
                 m.m_pkthdr().ph_rtableid.get(),
             );
+            if inp.is_none() {
+                udpstat_inc(UdpstatCounters::UdpsPcbhashmiss);
+                // INET6: in6_pcblookup_listen for IPv6; not configured.
+                inp = in_pcblookup_listen(
+                    &UDBTABLE,
+                    ip.ip_dst,
+                    hdr.uh_dport,
+                    Some(m),
+                    m.m_pkthdr().ph_rtableid.get(),
+                );
+            }
         }
 
         // IPSEC: the PACKET_TAG_IPSEC_IN_DONE tdb, ipsp_spd_lookup and the flow info;
@@ -500,7 +503,9 @@ pub fn udp_input(
             break 'bad;
         }
 
-        // NPF > 0: pf_inp_link for a connected socket; not configured.
+        if i.socket().has_state(SS_ISCONNECTED) {
+            pf_inp_link(m, Some(i));
+        }
         // PIPEX: pipex_l2tp_lookup_session and pipex_l2tp_input; not configured.
 
         udp_sbappend(i, m, Some(&ip), iphlen, &hdr, &srcsa, ipsecflowinfo, ns);
@@ -824,7 +829,10 @@ pub fn udp_output(
     m.m_pkthdr().ph_rtableid.set(inp.inp_rtableid.get());
 
     if inp.socket().has_state(SS_ISCONNECTED) {
-        // NPF > 0: pf_mbuf_link_inpcb; NSTOEPLITZ > 0: the flow id; not configured.
+        pf_mbuf_link_inpcb(m, Some(inp));
+        m.m_pkthdr().ph_flowid.set(inp.inp_flowid.get());
+        let cf = &m.m_pkthdr().csum_flags;
+        cf.set(cf.get() | crate::sys::mbuf::M_FLOWID);
     }
 
     let error = ip_output(

@@ -93,7 +93,8 @@
 //!   atomic updates.
 //! - `rip_chkhdr` reads the options as a byte slice of the pulled-up header.
 //! - `rip_sendspace`/`rip_recvspace` (`u_long`, no sysctl) are constants of the same names.
-//! - Not configured, each a comment at its site: `NPF` (the divert key, `pf_mbuf_link_inpcb`),
+//! - `NPF` (pf(4)) is configured: the divert-to key and `pf_mbuf_link_inpcb`.
+//! - Not configured, each a comment at its site:
 //!   `INET6`, `IPSEC`.
 
 use core::mem::size_of;
@@ -109,6 +110,8 @@ use crate::kern::uipc_socket2::{
 };
 use crate::net::if_::ifa_ifwithaddr;
 use crate::net::if_var::Netstack;
+use crate::net::pf::{pf_find_divert, pf_mbuf_link_inpcb};
+use crate::net::pfvar::{PF_DIVERT_REPLY, PF_DIVERT_TO};
 use crate::net::rtable::rtable_l2;
 use crate::netinet::in_::{
     INADDR_ANY, INADDR_BROADCAST, IP_HDRINCL, IPPROTO_DONE, IPPROTO_ICMP, IPPROTO_IP, IPPROTO_MAX,
@@ -131,7 +134,7 @@ use crate::netinet::ip_var::{
 };
 use crate::sys::endian::{htons, ntohs};
 use crate::sys::errno::Errno;
-use crate::sys::mbuf::{M_COPYALL, M_DONTWAIT, Mbuf, mtod};
+use crate::sys::mbuf::{M_COPYALL, M_DONTWAIT, Mbuf, PF_TAG_DIVERTED, mtod};
 use crate::sys::proc::Proc;
 use crate::sys::protosw::{PRCO_SETOPT, PrUsrreqs};
 use crate::sys::socket::{AF_INET, SO_BINDANY, SO_TIMESTAMP};
@@ -239,8 +242,20 @@ pub fn rip_input(
         ..SockaddrIn::default()
     };
 
-    let key = ip.ip_dst;
-    // NPF > 0: a diverted packet's divert-to address is the key; not configured.
+    let mut key = ip.ip_dst;
+    if m.m_pkthdr().pf.flags.get() & PF_TAG_DIVERTED != 0 {
+        let divert = pf_find_divert(m);
+        kassert!(divert.is_some());
+        if let Some(divert) = divert {
+            match divert.type_ {
+                PF_DIVERT_TO => key = divert.addr.v4(),
+                PF_DIVERT_REPLY => {}
+                t => crate::kern::subr_prf::panic(format_args!(
+                    "rip_input: unknown divert type {t}, mbuf {m:p}"
+                )),
+            }
+        }
+    }
     mtx_enter(&RAWCBTABLE.inpt_mtx);
     // SAFETY: the table mutex is held around every call; `iter` lives on this frame until the
     // walk ends with `None`.
@@ -403,7 +418,9 @@ pub fn rip_output(
     // force routing table
     m.m_pkthdr().ph_rtableid.set(inp.inp_rtableid.get());
 
-    // NPF > 0: pf_mbuf_link_inpcb for a connected non-ICMP socket; not configured.
+    if inp.socket().has_state(SS_ISCONNECTED) && i32::from(mtod_ip(m).ip_p) != IPPROTO_ICMP {
+        pf_mbuf_link_inpcb(m, Some(inp));
+    }
 
     ip_output(
         m,

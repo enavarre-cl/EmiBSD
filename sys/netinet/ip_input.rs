@@ -66,7 +66,9 @@
 //!   bytes.
 //! - `ip_init` fills `in_pcb.c`'s `baddynamicports`/`rootonlyports` from the default lists
 //!   (slices without the C's terminating 0); the `ipport_*` sysctls are `in_pcb.c`'s atomics.
-//! - Not configured, each a comment at its site: `NPF` (`pf_test`, `pf_ouraddr`), `NCARP`
+//! - `NPF` (pf(4)) is configured: `pf_test` filters every packet, `pf_ouraddr` answers for
+//!   the addresses pf redirected, and a diverted packet's routing domain comes from its tag.
+//! - Not configured, each a comment at its site: `NCARP`
 //!   (`carp_lsdrop`, `carp_strict_addr_chk`), `MROUTING` (`ip_mforward`,
 //!   `ip_mrouter_active`, the `mrt` sysctls answer `EOPNOTSUPP` as the C's `#else` does),
 //!   `IPSEC` (`ipsec_forward_check`, `ipsec_local_check`, `ipsec_init`, `ipsec_sysctl`) and
@@ -105,6 +107,8 @@ use crate::net::if_dl::SockaddrDl;
 use crate::net::if_types::IFT_ENC;
 use crate::net::if_var::{Ifnet, Netstack, Niqueue, niq_dequeue, sysctl_niq};
 use crate::net::netisr::NETISR_IP;
+use crate::net::pf::{pf_find_divert, pf_ouraddr, pf_test};
+use crate::net::pfvar::{PF_IN, PF_PASS};
 use crate::net::route::{
     RT_RESOLVE, RTF_BROADCAST, RTF_DYNAMIC, RTF_GATEWAY, RTF_LOCAL, RTF_MODIFIED, Route,
     route_mpath, rt_timer_queue_change, rt_timer_queue_flush, rtalloc, rtfree, rtisvalid,
@@ -156,7 +160,8 @@ use crate::sys::malloc::M_NOWAIT;
 use crate::sys::mbuf::{
     M_BCAST, M_COPYFLAGS, M_DONTWAIT, M_EXT, M_IPV4_CSUM_IN_BAD, M_IPV4_CSUM_IN_OK, M_MCAST,
     M_PKTHDR, MHLEN, MT_DATA, MT_SOOPTS, Mbuf, MbufList, MbufQueue, PACKET_TAG_IP_OFFNXT,
-    PACKET_TAG_SRCROUTE, PF_TAG_GENERATED, PF_TAG_TRANSLATE_LOCALHOST, m_freemp, ml_empty, mtod,
+    PACKET_TAG_SRCROUTE, PF_TAG_DIVERTED, PF_TAG_GENERATED, PF_TAG_TRANSLATE_LOCALHOST, m_freemp,
+    ml_empty, mtod,
 };
 use crate::sys::mutex::Mutex;
 use crate::sys::pool::{PR_NOWAIT, Pool};
@@ -608,8 +613,19 @@ pub fn ip_input_if(
 
             // NCARP > 0: carp_lsdrop; not configured.
 
-            // NPF > 0: the packet filter (pf_test, PF_IN), which may redirect it
-            // (IP_REDIRECT); not configured.
+            // Packet filter.
+            let odst = ip.ip_dst;
+            if pf_test(AF_INET, PF_IN, ifp, mp) != PF_PASS {
+                break 'bad;
+            }
+            let Some(m) = *mp else {
+                break 'bad;
+            };
+
+            let ip = mtod_ip(m);
+            if odst.s_addr != ip.ip_dst.s_addr {
+                flags |= IP_REDIRECT;
+            }
 
             match ip_forwarding.load(Ordering::Relaxed) {
                 2 => flags |= IP_FORWARDING_IPSEC | IP_FORWARDING,
@@ -870,7 +886,11 @@ pub fn ip_deliver(
 pub fn in_ouraddr(m: &'static Mbuf, ifp: &Ifnet, ro: &Route, flags: i32) -> i32 {
     let mut match_ = 0;
 
-    // NPF > 0: pf_ouraddr; not configured.
+    match pf_ouraddr(m) {
+        0 => return 0,
+        1 => return 1,
+        _ => {} // pf does not know it
+    }
 
     let ip = mtod_ip(m);
 
@@ -1933,10 +1953,15 @@ pub fn ip_savecontrol(inp: &Inpcb, mp: &mut Option<&'static Mbuf>, ip: &Ip, m: &
         ));
     }
     if inp.has_flags(INP_RECVRTABLE) {
-        let rtableid: u32 = inp.inp_rtableid.get();
+        let mut rtableid: u32 = inp.inp_rtableid.get();
 
-        // NPF > 0: the routing domain of a diverted packet (pf_find_divert); not
-        // configured.
+        if m.m_pkthdr().pf.flags.get() & PF_TAG_DIVERTED != 0 {
+            let divert = pf_find_divert(m);
+            kassert!(divert.is_some());
+            if let Some(d) = divert {
+                rtableid = u32::from(d.rdomain);
+            }
+        }
 
         put(sbcreatecontrol(
             pod_bytes(&rtableid),

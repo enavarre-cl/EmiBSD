@@ -885,6 +885,36 @@ impl<T> TailqEntry<T> {
     }
 }
 
+impl<T> TailqEntry<T> {
+    /// `elm->field.tqe_prev != NULL`: the element is in a queue (or was marked so by
+    /// [`set_prev_self`](Self::set_prev_self)). Meaningful only for code that clears the link
+    /// after every removal ([`clear_prev`](Self::clear_prev)), as pf does with its rules.
+    pub fn is_linked(&self) -> bool {
+        !self.tqe_prev.get().is_null()
+    }
+
+    /// `elm->field.tqe_prev = NULL` after a `TAILQ_REMOVE`.
+    ///
+    /// # Safety
+    ///
+    /// The element is in no queue (it was just removed from its queue).
+    pub unsafe fn clear_prev(&self) {
+        self.tqe_prev.set(ptr::null());
+    }
+
+    /// `elm->field.tqe_prev = &elm->field.tqe_next`: marks an element that is in no queue
+    /// as linked, so that [`is_linked`](Self::is_linked) holds for it forever (pf's default
+    /// rule, "never garbage collected").
+    ///
+    /// # Safety
+    ///
+    /// The element is in no queue and is never inserted into or removed from one; it stays
+    /// in place (a static).
+    pub unsafe fn set_prev_self(&self) {
+        self.tqe_prev.set(&self.tqe_next);
+    }
+}
+
 impl<T> Default for TailqEntry<T> {
     fn default() -> Self {
         Self::new()

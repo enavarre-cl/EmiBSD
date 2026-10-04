@@ -79,7 +79,7 @@
 //!   `ENOENT`. `resettodr` after a new `kern.utc_offset` is reported and skipped.
 //! - Options this kernel does not configure are compiled out as in C: `DEBUG_SYSCTL`
 //!   (`debug_sysctl`, `CTL_DEBUG` is `EOPNOTSUPP`), `SYSVMSG`/`SYSVSEM`/`SYSVSHM`
-//!   (`sysctl_sysvipc`), `NAUDIO`/`NVIDEO`/`NDT`/`NPF`/`NUCOM` (0), `GPROF`, `WITNESS`,
+//!   (`sysctl_sysvipc`), `NAUDIO`/`NVIDEO`/`NDT`/`NUCOM` (0), `GPROF`, `WITNESS`,
 //!   `PTRACE` (`kern.global_ptrace`), `KTRACE` (the trace members of `kinfo_proc` stay
 //!   zero), `MULTIPROCESSOR` (`p_cpuid` stays `KI_NOCPU`). `SMALL_KERNEL` is not set.
 //! - `KERNEL_LOCK` is not taken: one CPU and no kernel lock yet. `log_mtx` does not exist
@@ -815,7 +815,7 @@ fn kern_sysctl_locked(
             }
             Ok(())
         }
-        // KERN_PFSTATUS: NPF is 0.
+        KERN_PFSTATUS => crate::net::pf_ioctl::pf_sysctl(oldp, oldlenp, newp, newlen),
         KERN_CONSDEV => {
             let dev = cn_tab().map_or(NODEV, |cn| cn.cn_dev.get());
             sysctl_rdstruct(oldp, oldlenp, newp, dev.as_bytes())

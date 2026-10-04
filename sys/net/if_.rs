@@ -130,9 +130,9 @@
 //!   types `if.c` defines (`struct if_idxmap`, `struct softnet`) are private here.
 //! - Options and pseudo-devices that are not ported are not configured, and their code is a
 //!   comment at each site: `INET6` (`nd6_ifattach`, `in6_ifattach`/`in6_ifdetach`,
-//!   `ip6intr`, the `AF_INET6` cases), `MPLS`, `MROUTING`, `NFSCLIENT`, and `NPF`, `NBRIDGE`,
-//!   `NCARP`, `NBPFILTER`, `NPPP`, `NPPPOE` as 0. `NETHER` is configured (`if_ethersubr.c`
-//!   is here).
+//!   `ip6intr`, the `AF_INET6` cases), `MPLS`, `MROUTING`, `NFSCLIENT`, and `NBRIDGE`,
+//!   `NCARP`, `NBPFILTER`, `NPPP`, `NPPPOE` as 0. `NETHER` and `NPF` (pf(4): the interface
+//!   and group hooks of `pf_if.c`, `pf_delay_pkt`, `pf_pkt_addr_changed`) are configured.
 //! - Calls into files that are not ported report themselves with `unported!` and go on as
 //!   the C would with an empty subsystem: `rti_delete` (`netinet/igmp.c`);
 //!   `tcp_input_mlist`, `tcpstat_inc` (`netinet/tcp_input.c`); `inet_ntop` (`ifa_print_all`).
@@ -213,6 +213,11 @@ use crate::net::ifq::{
     ifq_enqueue, ifq_idx, ifq_init, ifq_init_maxlen, ifq_is_oactive, ifq_purge, ifq_start,
 };
 use crate::net::netisr::{NETISR_ARP, NETISR_IP, schednetisr};
+use crate::net::pf::{pf_delay_pkt, pf_pkt_addr_changed};
+use crate::net::pf_if::{
+    pfi_attach_ifgroup, pfi_attach_ifnet, pfi_detach_ifgroup, pfi_detach_ifnet,
+    pfi_group_addmember, pfi_group_delmember,
+};
 use crate::net::route::{
     RTF_BLACKHOLE, RTF_LLINFO, RTF_LOCAL, RTF_REJECT, RTLABEL_LEN, RTM_ADD, RTP_ANY, Rtentry,
     ifafree, ifaref, rt_if_track, rtlabel_id2name, rtlabel_name2id, rtlabel_unref,
@@ -1643,7 +1648,7 @@ fn if_attachsetup(ifp: &'static Ifnet) {
 
     // INET6: nd6_ifattach(ifp): IPv6 is not configured.
 
-    // NPF > 0: pfi_attach_ifnet(ifp): pf(4) is not configured.
+    pfi_attach_ifnet(ifp);
 
     timeout_set(
         &ifp.if_slowtimo,
@@ -1925,12 +1930,14 @@ pub fn if_enqueue(ifp: &'static Ifnet, m: &'static Mbuf) -> Result<(), Errno> {
     let ph = m.m_pkthdr();
     ph.csum_flags.set(ph.csum_flags.get() & !M_TIMESTAMP);
 
-    // NPF > 0: a packet with pf.delay goes to pf_delay_pkt; pf(4) is not configured.
+    if m.m_pkthdr().pf.delay.get() > 0 {
+        return pf_delay_pkt(m, ifp.if_index.get());
+    }
 
     // NBRIDGE > 0: a bridge port (if_bridgeidx) hands the packet to bridge_enqueue unless it
     // has M_PROTO1; bridge(4) is not configured.
 
-    // NPF > 0: pf_pkt_addr_changed(m); not configured.
+    pf_pkt_addr_changed(m);
 
     match ifp.if_enqueue.get() {
         Some(enqueue) => enqueue(ifp, m),
@@ -2296,7 +2303,7 @@ pub fn if_input_process(ifp: &'static Ifnet, ml: &MbufList, idx: u32) {
 /// `if_vinput`: a virtual interface's input (`vlan(4)` and the like): the packet goes to
 /// `ifp`'s input again through the netstack, or through its input queue without one.
 pub fn if_vinput(ifp: &'static Ifnet, m: &'static Mbuf, ns: Option<&Netstack>) {
-    // NPF > 0: pf_pkt_addr_changed(m); pf(4) is not configured.
+    pf_pkt_addr_changed(m);
 
     let Some(ns) = ns else {
         let _ = ifiq_enqueue(&ifp.if_rcv, m);
@@ -2485,7 +2492,7 @@ pub fn if_detach(ifp: &'static Ifnet) {
     // MROUTING: vif_delete(ifp); not configured.
     in_ifdetach(ifp);
     // INET6: in6_ifdetach(ifp); IPv6 is not configured.
-    // NPF > 0: pfi_detach_ifnet(ifp); pf(4) is not configured.
+    pfi_detach_ifnet(ifp);
 
     while let Some(ifg) = ifp.if_groups.first() {
         // A copy: if_delgroup may free the group that holds the name.
@@ -4170,7 +4177,7 @@ pub fn if_creategroup(groupname: &[u8]) -> Option<&'static IfgGroup> {
     let ifg: &'static IfgGroup = unsafe { ifg.as_ref() };
     ifg.ifg_members.init();
     refcnt_init(&ifg.ifg_tmprefcnt);
-    // NPF > 0: pfi_attach_ifgroup(ifg); pf(4) is not configured.
+    pfi_attach_ifgroup(ifg);
     // SAFETY: a new group, on no list; it stays until `if_delgroup` takes it off.
     unsafe { IFG_HEAD.0.insert_tail(ifg) };
 
@@ -4244,7 +4251,7 @@ pub fn if_addgroup(ifp: &'static Ifnet, groupname: &[u8]) -> Result<(), Errno> {
         ifp.if_groups.insert_tail(ifgl);
     }
 
-    // NPF > 0: pfi_group_addmember(groupname); not configured.
+    pfi_group_addmember(groupname);
 
     Ok(())
 }
@@ -4279,14 +4286,14 @@ pub fn if_delgroup(ifp: &Ifnet, groupname: &[u8]) -> Result<(), Errno> {
         );
     }
 
-    // NPF > 0: pfi_group_delmember(groupname); not configured.
+    pfi_group_delmember(groupname);
 
     kassert!(ifg.ifg_refcnt.get() != 0);
     ifg.ifg_refcnt.set(ifg.ifg_refcnt.get() - 1);
     if ifg.ifg_refcnt.get() == 0 {
         // SAFETY: the group is on `ifg_head`.
         unsafe { IFG_HEAD.0.remove(ifg) };
-        // NPF > 0: pfi_detach_ifgroup(ifg); not configured.
+        pfi_detach_ifgroup(ifg);
         ifgroup_icrele(ifg);
     }
 

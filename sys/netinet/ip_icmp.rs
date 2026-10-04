@@ -142,9 +142,9 @@
 //! - `icmp_error` and `icmp_do_error` take the C's `int type, int code` as `u8`s (the values of
 //!   `icmp_type`/`icmp_code`); `icmp_reflect` returns `Result` (its `ELOOP`/`EHOSTUNREACH`)
 //!   with the options mbuf through an `Option<&mut ...>` out parameter.
-//! - `ICMPPRINTFS` (debug printfs) is not configured; `NCARP` and `NPF` (`carp_lsdrop`, the
-//!   `PF_TAG_DIVERTED` handling) are not configured; `INET6` (the v6-in-v4 length check)
-//!   likewise. Each is a comment at its site.
+//! - `ICMPPRINTFS` (debug printfs) is not configured; `NCARP` (`carp_lsdrop`) is not
+//!   configured; `INET6` (the v6-in-v4 length check) likewise. Each is a comment at its site.
+//!   `NPF` (pf(4)) is configured: the `PF_TAG_DIVERTED` handling of diverted connections.
 
 use core::ffi::c_void;
 use core::mem::{offset_of, size_of};
@@ -208,7 +208,7 @@ use crate::sys::limits::INT_MAX;
 use crate::sys::malloc::M_NOWAIT;
 use crate::sys::mbuf::{
     M_BCAST, M_DONTWAIT, M_EXT, M_ICMP_CSUM_OUT, M_MCAST, MCLBYTES, MHLEN, MT_HEADER, Mbuf,
-    PF_TAG_GENERATED, mclget, mtod,
+    PF_TAG_DIVERTED, PF_TAG_GENERATED, mclget, mtod,
 };
 use crate::sys::protosw::{
     PRC_MSGSIZE, PRC_MTUINC, PRC_PARAMPROB, PRC_QUENCH, PRC_REDIRECT_HOST, PRC_TIMXCEED_INTRANS,
@@ -1076,7 +1076,22 @@ pub fn icmp_input_if(
             if icp.icmp_type() > ICMP_MAXTYPE {
                 break 'raw;
             }
-            // NPF > 0: the PF_TAG_DIVERTED handling of diverted connections; not configured.
+            let pf = &m.m_pkthdr().pf;
+            if pf.flags.get() & PF_TAG_DIVERTED != 0 {
+                match icp.icmp_type() {
+                    // As pf_icmp_mapping() considers redirects belonging to a diverted
+                    // connection, we must include it here. The other types map to other
+                    // connections: they must be delivered to pr_ctlinput() also for diverted
+                    // connections.
+                    ICMP_REDIRECT | ICMP_UNREACH | ICMP_TIMXCEED | ICMP_PARAMPROB
+                    | ICMP_SOURCEQUENCH => {
+                        // Do not use the divert-to property of the TCP or UDP rule when doing
+                        // the PCB lookup for the raw socket.
+                        pf.flags.set(pf.flags.get() & !PF_TAG_DIVERTED);
+                    }
+                    _ => break 'raw,
+                }
+            }
             icmpstat_inc_hist(IcmpstatCounters::IcpsInhist, icp.icmp_type());
             let code = icp.icmp_code();
             // The C's deliver/badcode/reflect labels: what the message turns into.

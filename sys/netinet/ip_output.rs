@@ -63,10 +63,12 @@
 //!   `IPSEC_LEVEL_NONE` to a get, as the C's `#ifndef IPSEC` branches do.
 //! - `struct tcphdr` (`<netinet/tcp.h>`) is not ported: the offset of `th_sum` is a constant
 //!   here, and `tcpstat_inc(tcps_outswcsum)` is reported (`netinet/tcp_*.c`).
+//! - `NPF` (pf(4)) is configured: `pf_test` filters the packet before it is sent, and a
+//!   packet pf tagged `PF_TAG_REROUTE` reruns the route lookup (the C's `goto reroute` is a
+//!   labelled loop). The `pf_test` on `enc0` in `ip_output_ipsec_send` comes with `IPSEC`.
 //! - Not configured, each a comment at its site: `IPSEC` (`ip_output_ipsec_lookup`,
-//!   `ip_output_ipsec_pmtu_update`, `ip_output_ipsec_send`, `ipsec_adjust_mtu`), `NPF`
-//!   (`pf_test`, the reroute, `icmp_mtudisc_clone` of a pf table change) and `MROUTING`
-//!   (`ip_mforward`).
+//!   `ip_output_ipsec_pmtu_update`, `ip_output_ipsec_send`, `ipsec_adjust_mtu`) and
+//!   `MROUTING` (`ip_mforward`).
 //! - `in_cksum_phdr`, `in_delayed_cksum` and `in_proto_cksum_out` write the checksum through
 //!   `m_copyback` or, when it lies in the first mbuf, an unaligned store; `in_ifcap_cksum`
 //!   answers `bool`.
@@ -91,6 +93,8 @@ use crate::net::if_::{
     ifa_ifwithaddr,
 };
 use crate::net::if_var::Ifnet;
+use crate::net::pf::pf_test;
+use crate::net::pfvar::{PF_FWD, PF_OUT, PF_PASS};
 use crate::net::route::{
     RT_RESOLVE, RTF_BROADCAST, RTF_GATEWAY, RTF_HOST, RTF_LOCAL, RTV_MTU, Route, route_cache,
     rtalloc, rtalloc_mpath, rtfree, rtisvalid,
@@ -118,7 +122,7 @@ use crate::netinet::ip::{
     IP_DF, IP_MAXPACKET, IP_MF, IPOPT_EOL, IPOPT_LSRR, IPOPT_MINOFF, IPOPT_NOP, IPOPT_OFFSET,
     IPOPT_OLEN, IPOPT_OPTVAL, IPOPT_SSRR, IPVERSION, Ip, MAXTTL, ipopt_copied,
 };
-use crate::netinet::ip_icmp::ICMP_CKSUM_OFFSET;
+use crate::netinet::ip_icmp::{ICMP_CKSUM_OFFSET, icmp_mtudisc_clone};
 use crate::netinet::ip_id::ip_randomid;
 use crate::netinet::ip_input::IP_DEFTTL;
 use crate::netinet::ip_var::{
@@ -132,7 +136,8 @@ use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_IPMOPTS, M_NOWAIT, M_WAITOK, M_ZERO};
 use crate::sys::mbuf::{
     M_BCAST, M_DONTWAIT, M_EXT, M_ICMP_CSUM_OUT, M_IPV4_CSUM_OUT, M_MCAST, M_TCP_CSUM_OUT,
-    M_TCP_TSO, M_UDP_CSUM_OUT, MT_HEADER, MT_SOOPTS, Mbuf, MbufList, m_move_hdr, ml_len, mtod,
+    M_TCP_TSO, M_UDP_CSUM_OUT, MT_HEADER, MT_SOOPTS, Mbuf, MbufList, PF_TAG_GENERATED,
+    PF_TAG_REROUTE, m_move_hdr, ml_len, mtod,
 };
 use crate::sys::protosw::{PRCO_GETOPT, PRCO_SETOPT};
 use crate::sys::socket::{AF_INET, SO_RTABLE};
@@ -188,7 +193,7 @@ pub fn ip_output(
     mtod_ip_store(m, &ip);
     let _ = hlen; // read by the IPsec lookup, which is not configured
 
-    let ro = ro.unwrap_or(&iproute);
+    let mut ro = ro.unwrap_or(&iproute);
     let error: Result<(), Errno> = 'done: {
         let bad: Result<(), Errno> = 'bad: {
             // We should not send traffic to 0/8 say both Stevens and RFCs 5735 section 3 and
@@ -197,261 +202,309 @@ pub fn ip_output(
                 break 'bad Err(Errno::ENETUNREACH);
             }
 
-            // NPF > 0: orig_rtableid for the reroute; not configured.
-
-            // Do a route lookup now in case we need the source address to do an SPD lookup in
-            // IPsec; for most packets, the source address is set at a higher level protocol.
-            // ICMPs and other packets though (e.g., traceroute) have a source address of
-            // zeroes. If there is a cached route, check that it is to the same destination and
-            // is still up. If not, free it and try again.
-            let _ = route_cache(
-                ro,
-                &ip.ip_dst,
-                Some(&ip.ip_src),
-                m.m_pkthdr().ph_rtableid.get(),
-            );
-            let mut dst: *const SockaddrIn = ro.ro_dstsa().cast();
-
-            let mcast_or_bcast =
-                in_multicast(ip.ip_dst.s_addr) || ip.ip_dst.s_addr == INADDR_BROADCAST;
-            let imo_ifp = match imo {
-                Some(imo) if mcast_or_bcast => if_get(u32::from(imo.imo_ifidx)),
-                _ => None,
-            };
-            if let Some(i) = imo_ifp {
-                ifp = Some(i);
-                mtu = u64::from(i.if_mtu.get());
-                if ip.ip_src.s_addr == INADDR_ANY
-                    && let Some(ia) = in_ifp2ia(i)
-                {
-                    ip.ip_src = ia.ia_addr.get().sin_addr;
-                    mtod_ip_store(m, &ip);
-                }
-            } else {
-                if ro.ro_rt.get().is_none() {
-                    let words = [ip.ip_src.s_addr];
-                    // SAFETY: `ro_dstsa` is the `sockaddr_in` `route_cache` wrote.
-                    ro.ro_rt.set(unsafe {
-                        rtalloc_mpath(ro.ro_dstsa(), Some(&words), ro.ro_tableid.get() as u32)
-                    });
-                }
-
-                let Some(rt) = ro.ro_rt.get() else {
-                    ipstat_inc(IpstatCounters::IpsNoroute);
-                    break 'bad Err(Errno::EHOSTUNREACH);
-                };
-
-                let ia = rt.rt_ifa.get().map(ifatoia);
-                ifp = if rt.rt_flags.get() & RTF_LOCAL != 0 {
-                    if_get(rtable_loindex(m.m_pkthdr().ph_rtableid.get()))
-                } else {
-                    if_get(rt.rt_ifidx.get())
-                };
-                // We aren't using rtisvalid() here because the UP/DOWN state machine is broken
-                // with some Ethernet drivers like em(4). As a result we might try to use an
-                // invalid cached route entry while an interface is being detached.
-                let Some(i) = ifp else {
-                    ipstat_inc(IpstatCounters::IpsNoroute);
-                    break 'bad Err(Errno::EHOSTUNREACH);
-                };
-                mtu = u64::from(rt.rt_mtu().load(Ordering::Relaxed));
-                if mtu == 0 {
-                    mtu = u64::from(i.if_mtu.get());
-                }
-
-                if rt.rt_flags.get() & RTF_GATEWAY != 0 {
-                    dst = satosin(rt.rt_gateway.get());
-                }
-
-                // Set the source IP address
-                if ip.ip_src.s_addr == INADDR_ANY
-                    && let Some(ia) = ia
-                {
-                    ip.ip_src = ia.ia_addr.get().sin_addr;
-                    mtod_ip_store(m, &ip);
-                }
-            }
-
-            // IPSEC: ip_output_ipsec_lookup when ipsec_in_use or seclevel; not configured,
-            // so there is never a tdb below.
-
-            if in_multicast(ip.ip_dst.s_addr) || ip.ip_dst.s_addr == INADDR_BROADCAST {
-                m.m_flags().set(
-                    m.m_flags().get()
-                        | if ip.ip_dst.s_addr == INADDR_BROADCAST {
-                            M_BCAST
-                        } else {
-                            M_MCAST
-                        },
+            let orig_rtableid = m.m_pkthdr().ph_rtableid.get();
+            // reroute: pf(4) asks for a new route lookup after it changed the packet.
+            'reroute: loop {
+                // Do a route lookup now in case we need the source address to do an SPD lookup in
+                // IPsec; for most packets, the source address is set at a higher level protocol.
+                // ICMPs and other packets though (e.g., traceroute) have a source address of
+                // zeroes. If there is a cached route, check that it is to the same destination and
+                // is still up. If not, free it and try again.
+                let _ = route_cache(
+                    ro,
+                    &ip.ip_dst,
+                    Some(&ip.ip_src),
+                    m.m_pkthdr().ph_rtableid.get(),
                 );
+                let mut dst: *const SockaddrIn = ro.ro_dstsa().cast();
 
-                // IP destination address is multicast. Make sure "dst" still points to the
-                // address in "ro". (It may have been changed to point to a gateway address,
-                // above.)
-                dst = ro.ro_dstsa().cast();
-
-                // See if the caller provided any multicast options
-                ip.ip_ttl = match imo {
-                    Some(imo) => imo.imo_ttl,
-                    None => IP_DEFAULT_MULTICAST_TTL,
+                let mcast_or_bcast =
+                    in_multicast(ip.ip_dst.s_addr) || ip.ip_dst.s_addr == INADDR_BROADCAST;
+                let imo_ifp = match imo {
+                    Some(imo) if mcast_or_bcast => if_get(u32::from(imo.imo_ifidx)),
+                    _ => None,
                 };
-                mtod_ip_store(m, &ip);
+                if let Some(i) = imo_ifp {
+                    ifp = Some(i);
+                    mtu = u64::from(i.if_mtu.get());
+                    if ip.ip_src.s_addr == INADDR_ANY
+                        && let Some(ia) = in_ifp2ia(i)
+                    {
+                        ip.ip_src = ia.ia_addr.get().sin_addr;
+                        mtod_ip_store(m, &ip);
+                    }
+                } else {
+                    if ro.ro_rt.get().is_none() {
+                        let words = [ip.ip_src.s_addr];
+                        // SAFETY: `ro_dstsa` is the `sockaddr_in` `route_cache` wrote.
+                        ro.ro_rt.set(unsafe {
+                            rtalloc_mpath(ro.ro_dstsa(), Some(&words), ro.ro_tableid.get() as u32)
+                        });
+                    }
 
-                // if we don't know the outgoing ifp yet, we can't generate output
-                let Some(i) = ifp else {
-                    ipstat_inc(IpstatCounters::IpsNoroute);
-                    break 'bad Err(Errno::EHOSTUNREACH);
-                };
+                    let Some(rt) = ro.ro_rt.get() else {
+                        ipstat_inc(IpstatCounters::IpsNoroute);
+                        break 'bad Err(Errno::EHOSTUNREACH);
+                    };
 
-                // Confirm that the outgoing interface supports multicast, but only if the
-                // packet actually is going out on that interface (i.e., no IPsec is applied).
-                if (m.m_flags().get() & M_MCAST != 0 && i.if_flags.get() & IFF_MULTICAST == 0)
-                    || (m.m_flags().get() & M_BCAST != 0 && i.if_flags.get() & IFF_BROADCAST == 0)
-                {
-                    ipstat_inc(IpstatCounters::IpsNoroute);
-                    break 'bad Err(Errno::ENETUNREACH);
-                }
+                    let ia = rt.rt_ifa.get().map(ifatoia);
+                    ifp = if rt.rt_flags.get() & RTF_LOCAL != 0 {
+                        if_get(rtable_loindex(m.m_pkthdr().ph_rtableid.get()))
+                    } else {
+                        if_get(rt.rt_ifidx.get())
+                    };
+                    // We aren't using rtisvalid() here because the UP/DOWN state machine is broken
+                    // with some Ethernet drivers like em(4). As a result we might try to use an
+                    // invalid cached route entry while an interface is being detached.
+                    let Some(i) = ifp else {
+                        ipstat_inc(IpstatCounters::IpsNoroute);
+                        break 'bad Err(Errno::EHOSTUNREACH);
+                    };
+                    mtu = u64::from(rt.rt_mtu().load(Ordering::Relaxed));
+                    if mtu == 0 {
+                        mtu = u64::from(i.if_mtu.get());
+                    }
 
-                // If source address not specified yet, use address of outgoing interface.
-                if ip.ip_src.s_addr == INADDR_ANY
-                    && let Some(ia) = in_ifp2ia(i)
-                {
-                    ip.ip_src = ia.ia_addr.get().sin_addr;
-                    mtod_ip_store(m, &ip);
-                }
+                    if rt.rt_flags.get() & RTF_GATEWAY != 0 {
+                        dst = satosin(rt.rt_gateway.get());
+                    }
 
-                if imo.is_none_or(|imo| imo.imo_loop != 0) && in_hasmulti(&ip.ip_dst, i) {
-                    // If we belong to the destination multicast group on the outgoing
-                    // interface, and the caller did not forbid loopback, loop back a copy.
-                    // Can't defer TCP/UDP checksumming, do the computation now.
-                    in_proto_cksum_out(m, None);
-                    // SAFETY: `dst` is the route's destination `sockaddr_in`.
-                    ip_mloopback(i, m, unsafe { &*dst });
-                }
-                // MROUTING: ip_mforward when ipmforwarding and ip_mrouter_active; not
-                // configured.
-
-                // Multicasts with a time-to-live of zero may be looped-back, above, but must
-                // not be transmitted on a network. Also, multicasts addressed to the loopback
-                // interface are not sent -- the above call to ip_mloopback() will loop back a
-                // copy if this host actually belongs to the destination group on the loopback
-                // interface.
-                if ip.ip_ttl == 0 || i.if_flags.get() & IFF_LOOPBACK != 0 {
-                    break 'bad Ok(());
-                }
-            }
-
-            let Some(i) = ifp else {
-                break 'bad Err(Errno::EHOSTUNREACH);
-            };
-
-            // Look for broadcast address and verify user is allowed to send such a packet; if
-            // the packet is going in an IPsec tunnel, skip this check.
-            // SAFETY: `dst` is the route's destination or gateway `sockaddr_in`.
-            let dst_addr = unsafe { (*dst).sin_addr.s_addr };
-            if dst_addr == INADDR_BROADCAST
-                || ro
-                    .ro_rt
-                    .get()
-                    .is_some_and(|rt| rt.rt_flags.get() & RTF_BROADCAST != 0)
-            {
-                if i.if_flags.get() & IFF_BROADCAST == 0 {
-                    break 'bad Err(Errno::EADDRNOTAVAIL);
-                }
-                if flags & IP_ALLOWBROADCAST == 0 {
-                    break 'bad Err(Errno::EACCES);
-                }
-
-                // Don't allow broadcast messages to be fragmented
-                if u32::from(ntohs(ip.ip_len)) > i.if_mtu.get() {
-                    break 'bad Err(Errno::EMSGSIZE);
-                }
-                m.m_flags().set(m.m_flags().get() | M_BCAST);
-            } else {
-                m.m_flags().set(m.m_flags().get() & !M_BCAST);
-            }
-
-            // If we're doing Path MTU discovery, we need to set DF unless the route's MTU is
-            // locked.
-            if flags & IP_MTUDISC != 0
-                && ro
-                    .ro_rt
-                    .get()
-                    .is_some_and(|rt| rt.rt_locks().get() & RTV_MTU == 0)
-            {
-                ip.ip_off |= htons(IP_DF);
-                mtod_ip_store(m, &ip);
-            }
-
-            // IPSEC: ip_output_ipsec_send when a tdb applies; not configured.
-
-            // NPF > 0: the packet filter (pf_test, PF_FWD/PF_OUT) and the PF_TAG_REROUTE
-            // rerun; not configured.
-
-            // IPSEC: the IP_FORWARDING_IPSEC check; not configured.
-
-            // If TSO or small enough for interface, can just send directly.
-            let mut mp = Some(m);
-            // SAFETY: `dst` is the route's destination or gateway `sockaddr_in`, readable for
-            // the call.
-            let error = unsafe {
-                if_output_tso(
-                    i,
-                    &mut mp,
-                    sintosa(dst.cast_mut()),
-                    ro.ro_rt.get(),
-                    mtu as u32,
-                )
-            };
-            let Some(mm) = mp else {
-                break 'done error;
-            };
-            if error.is_err() {
-                break 'done error;
-            }
-            m = mm;
-
-            // Too large for interface; fragment if possible. Must be able to put at least 8
-            // bytes per fragment.
-            let ip = mtod_ip(m);
-            if ip.ip_off & htons(IP_DF) != 0 {
-                // IPSEC: ipsec_adjust_mtu when ip_mtudisc; not configured.
-                // NPF > 0: the path MTU of the original table after a pf table change; not
-                // configured.
-
-                // This case can happen if the user changed the MTU of an interface after
-                // enabling IP on it. Because most netifs don't keep track of routes pointing
-                // to them, there is no way for one to update all its routes when the MTU is
-                // changed.
-                if let Some(rt) = ro.ro_rt.get()
-                    && rtisvalid(Some(rt))
-                    && rt.rt_flags.get() & RTF_HOST != 0
-                    && rt.rt_locks().get() & RTV_MTU == 0
-                {
-                    let rtmtu = rt.rt_mtu().load(Ordering::Relaxed);
-                    if rtmtu > i.if_mtu.get() {
-                        let _ = rt.rt_mtu().compare_exchange(
-                            rtmtu,
-                            i.if_mtu.get(),
-                            Ordering::Relaxed,
-                            Ordering::Relaxed,
-                        );
+                    // Set the source IP address
+                    if ip.ip_src.s_addr == INADDR_ANY
+                        && let Some(ia) = ia
+                    {
+                        ip.ip_src = ia.ia_addr.get().sin_addr;
+                        mtod_ip_store(m, &ip);
                     }
                 }
-                ipstat_inc(IpstatCounters::IpsCantfrag);
-                break 'bad Err(Errno::EMSGSIZE);
-            }
 
-            if let Err(e) = ip_fragment(m, &ml, i, mtu) {
-                break 'done Err(e);
+                // IPSEC: ip_output_ipsec_lookup when ipsec_in_use or seclevel; not configured,
+                // so there is never a tdb below.
+
+                if in_multicast(ip.ip_dst.s_addr) || ip.ip_dst.s_addr == INADDR_BROADCAST {
+                    m.m_flags().set(
+                        m.m_flags().get()
+                            | if ip.ip_dst.s_addr == INADDR_BROADCAST {
+                                M_BCAST
+                            } else {
+                                M_MCAST
+                            },
+                    );
+
+                    // IP destination address is multicast. Make sure "dst" still points to the
+                    // address in "ro". (It may have been changed to point to a gateway address,
+                    // above.)
+                    dst = ro.ro_dstsa().cast();
+
+                    // See if the caller provided any multicast options
+                    ip.ip_ttl = match imo {
+                        Some(imo) => imo.imo_ttl,
+                        None => IP_DEFAULT_MULTICAST_TTL,
+                    };
+                    mtod_ip_store(m, &ip);
+
+                    // if we don't know the outgoing ifp yet, we can't generate output
+                    let Some(i) = ifp else {
+                        ipstat_inc(IpstatCounters::IpsNoroute);
+                        break 'bad Err(Errno::EHOSTUNREACH);
+                    };
+
+                    // Confirm that the outgoing interface supports multicast, but only if the
+                    // packet actually is going out on that interface (i.e., no IPsec is applied).
+                    if (m.m_flags().get() & M_MCAST != 0 && i.if_flags.get() & IFF_MULTICAST == 0)
+                        || (m.m_flags().get() & M_BCAST != 0
+                            && i.if_flags.get() & IFF_BROADCAST == 0)
+                    {
+                        ipstat_inc(IpstatCounters::IpsNoroute);
+                        break 'bad Err(Errno::ENETUNREACH);
+                    }
+
+                    // If source address not specified yet, use address of outgoing interface.
+                    if ip.ip_src.s_addr == INADDR_ANY
+                        && let Some(ia) = in_ifp2ia(i)
+                    {
+                        ip.ip_src = ia.ia_addr.get().sin_addr;
+                        mtod_ip_store(m, &ip);
+                    }
+
+                    if imo.is_none_or(|imo| imo.imo_loop != 0) && in_hasmulti(&ip.ip_dst, i) {
+                        // If we belong to the destination multicast group on the outgoing
+                        // interface, and the caller did not forbid loopback, loop back a copy.
+                        // Can't defer TCP/UDP checksumming, do the computation now.
+                        in_proto_cksum_out(m, None);
+                        // SAFETY: `dst` is the route's destination `sockaddr_in`.
+                        ip_mloopback(i, m, unsafe { &*dst });
+                    }
+                    // MROUTING: ip_mforward when ipmforwarding and ip_mrouter_active; not
+                    // configured.
+
+                    // Multicasts with a time-to-live of zero may be looped-back, above, but must
+                    // not be transmitted on a network. Also, multicasts addressed to the loopback
+                    // interface are not sent -- the above call to ip_mloopback() will loop back a
+                    // copy if this host actually belongs to the destination group on the loopback
+                    // interface.
+                    if ip.ip_ttl == 0 || i.if_flags.get() & IFF_LOOPBACK != 0 {
+                        break 'bad Ok(());
+                    }
+                }
+
+                let Some(i) = ifp else {
+                    break 'bad Err(Errno::EHOSTUNREACH);
+                };
+
+                // Look for broadcast address and verify user is allowed to send such a packet; if
+                // the packet is going in an IPsec tunnel, skip this check.
+                // SAFETY: `dst` is the route's destination or gateway `sockaddr_in`.
+                let dst_addr = unsafe { (*dst).sin_addr.s_addr };
+                if dst_addr == INADDR_BROADCAST
+                    || ro
+                        .ro_rt
+                        .get()
+                        .is_some_and(|rt| rt.rt_flags.get() & RTF_BROADCAST != 0)
+                {
+                    if i.if_flags.get() & IFF_BROADCAST == 0 {
+                        break 'bad Err(Errno::EADDRNOTAVAIL);
+                    }
+                    if flags & IP_ALLOWBROADCAST == 0 {
+                        break 'bad Err(Errno::EACCES);
+                    }
+
+                    // Don't allow broadcast messages to be fragmented
+                    if u32::from(ntohs(ip.ip_len)) > i.if_mtu.get() {
+                        break 'bad Err(Errno::EMSGSIZE);
+                    }
+                    m.m_flags().set(m.m_flags().get() | M_BCAST);
+                } else {
+                    m.m_flags().set(m.m_flags().get() & !M_BCAST);
+                }
+
+                // If we're doing Path MTU discovery, we need to set DF unless the route's MTU is
+                // locked.
+                if flags & IP_MTUDISC != 0
+                    && ro
+                        .ro_rt
+                        .get()
+                        .is_some_and(|rt| rt.rt_locks().get() & RTV_MTU == 0)
+                {
+                    ip.ip_off |= htons(IP_DF);
+                    mtod_ip_store(m, &ip);
+                }
+
+                // IPSEC: ip_output_ipsec_send when a tdb applies; not configured.
+
+                // Packet filter.
+                let mut mp = Some(m);
+                let dir = if flags & IP_FORWARDING != 0 {
+                    PF_FWD
+                } else {
+                    PF_OUT
+                };
+                if pf_test(AF_INET, dir, i, &mut mp) != PF_PASS {
+                    // `goto bad` frees `m` as pf_test left it: NULL when pf dropped it.
+                    m_freem(mp);
+                    break 'done Err(Errno::EACCES);
+                }
+                let Some(mm) = mp else {
+                    break 'done Ok(());
+                };
+                m = mm;
+                ip = mtod_ip(m);
+                hlen = i32::from(ip.ip_hl()) << 2;
+                let _ = hlen; // read by the IPsec code, which is not configured
+                let pf = &m.m_pkthdr().pf;
+                if pf.flags.get() & (PF_TAG_REROUTE | PF_TAG_GENERATED)
+                    == (PF_TAG_REROUTE | PF_TAG_GENERATED)
+                {
+                    // Already rerun the route lookup, go on.
+                    pf.flags
+                        .set(pf.flags.get() & !(PF_TAG_GENERATED | PF_TAG_REROUTE));
+                } else if pf.flags.get() & PF_TAG_REROUTE != 0 {
+                    // Tag as generated to skip over pf_test on rerun.
+                    pf.flags.set(pf.flags.get() | PF_TAG_GENERATED);
+                    if ptr::eq(ro, &iproute) {
+                        rtfree(ro.ro_rt.get());
+                    }
+                    // ro = NULL, then `ro = &iproute; ro->ro_rt = NULL` at reroute.
+                    ro = &iproute;
+                    ro.ro_rt.set(None);
+                    if_put(ifp); // drop reference since target changed
+                    ifp = None;
+                    continue 'reroute;
+                }
+
+                // IPSEC: the IP_FORWARDING_IPSEC check; not configured.
+
+                // If TSO or small enough for interface, can just send directly.
+                let mut mp = Some(m);
+                // SAFETY: `dst` is the route's destination or gateway `sockaddr_in`, readable for
+                // the call.
+                let error = unsafe {
+                    if_output_tso(
+                        i,
+                        &mut mp,
+                        sintosa(dst.cast_mut()),
+                        ro.ro_rt.get(),
+                        mtu as u32,
+                    )
+                };
+                let Some(mm) = mp else {
+                    break 'done error;
+                };
+                if error.is_err() {
+                    break 'done error;
+                }
+                m = mm;
+
+                // Too large for interface; fragment if possible. Must be able to put at least 8
+                // bytes per fragment.
+                let ip = mtod_ip(m);
+                if ip.ip_off & htons(IP_DF) != 0 {
+                    // IPSEC: ipsec_adjust_mtu when ip_mtudisc; not configured.
+                    // pf changed routing table, use orig rtable for path MTU.
+                    if ro.ro_tableid.get() != u64::from(orig_rtableid) {
+                        rtfree(ro.ro_rt.get());
+                        ro.ro_tableid.set(u64::from(orig_rtableid));
+                        ro.ro_rt.set(icmp_mtudisc_clone(
+                            ro.ro_dstsin().sin_addr,
+                            ro.ro_tableid.get() as u32,
+                            false,
+                        ));
+                    }
+
+                    // This case can happen if the user changed the MTU of an interface after
+                    // enabling IP on it. Because most netifs don't keep track of routes pointing
+                    // to them, there is no way for one to update all its routes when the MTU is
+                    // changed.
+                    if let Some(rt) = ro.ro_rt.get()
+                        && rtisvalid(Some(rt))
+                        && rt.rt_flags.get() & RTF_HOST != 0
+                        && rt.rt_locks().get() & RTV_MTU == 0
+                    {
+                        let rtmtu = rt.rt_mtu().load(Ordering::Relaxed);
+                        if rtmtu > i.if_mtu.get() {
+                            let _ = rt.rt_mtu().compare_exchange(
+                                rtmtu,
+                                i.if_mtu.get(),
+                                Ordering::Relaxed,
+                                Ordering::Relaxed,
+                            );
+                        }
+                    }
+                    ipstat_inc(IpstatCounters::IpsCantfrag);
+                    break 'bad Err(Errno::EMSGSIZE);
+                }
+
+                if let Err(e) = ip_fragment(m, &ml, i, mtu) {
+                    break 'done Err(e);
+                }
+                // SAFETY: as for `if_output_tso`.
+                let sent = unsafe { if_output_ml(i, &ml, sintosa(dst.cast_mut()), ro.ro_rt.get()) };
+                if let Err(e) = sent {
+                    break 'done Err(e);
+                }
+                ipstat_inc(IpstatCounters::IpsFragmented);
+                break 'done Ok(());
             }
-            // SAFETY: as for `if_output_tso`.
-            if let Err(e) = unsafe { if_output_ml(i, &ml, sintosa(dst.cast_mut()), ro.ro_rt.get()) }
-            {
-                break 'done Err(e);
-            }
-            ipstat_inc(IpstatCounters::IpsFragmented);
-            break 'done Ok(());
         };
         // bad:
         m_freem(m);

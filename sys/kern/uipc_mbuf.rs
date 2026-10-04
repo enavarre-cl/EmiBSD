@@ -91,8 +91,7 @@
 //!   `<sys/percpu.h>` is not ported and there is one CPU. `mbcpuinit` therefore has nothing to
 //!   do: `counters_alloc_ncpus` and `pool_cache_init` are no-ops without `MULTIPROCESSOR`.
 //! - The `NPF > 0` paths (`pf_mbuf_unlink_state_key`, `pf_mbuf_unlink_inpcb`,
-//!   `pf_mbuf_link_state_key`, `pf_mbuf_link_inpcb`) are not compiled: pf(4) is not ported, so
-//!   `NPF` is 0 and the C compiles them out as well.
+//!   `pf_mbuf_link_state_key`, `pf_mbuf_link_inpcb`) are compiled: pf(4) is configured.
 //! - `mclnames` is built at compile time from `mclsizes` with the C's two formats (`mcl%dk`,
 //!   `mcl%dk%u`) instead of by `snprintf` in `mbinit`, and `m_pool_allocator.pa_pagesz` is
 //!   `pool_allocator_multi`'s from the initialiser instead of copied by `mbinit`.
@@ -130,6 +129,10 @@ use crate::kern::subr_prf::{Bitmask, panic, printf};
 use crate::kern::uipc_mbuf2::{m_tag_copy_chain, m_tag_delete_chain};
 use crate::machine::db_machdep::PrFn;
 use crate::machine::intr::{IPL_NET, splnet, splx};
+use crate::net::pf::{
+    pf_mbuf_inp, pf_mbuf_link_inpcb, pf_mbuf_link_state_key, pf_mbuf_statekey,
+    pf_mbuf_unlink_inpcb, pf_mbuf_unlink_state_key,
+};
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::{
     M_BITS, M_COPYALL, M_COPYFLAGS, M_DONTWAIT, M_EOR, M_EXT, M_EXTWR, M_PKTHDR, M_TIMESTAMP,
@@ -473,7 +476,8 @@ pub fn m_inithdr(m: &'static Mbuf) -> &'static Mbuf {
 fn m_clearhdr(m: &Mbuf) {
     // delete all mbuf tags to reset the state
     m_tag_delete_chain(m);
-    // NPF > 0: pf_mbuf_unlink_state_key(m), pf_mbuf_unlink_inpcb(m) (pf(4) not ported).
+    pf_mbuf_unlink_state_key(m);
+    pf_mbuf_unlink_inpcb(m);
 
     m.m_pkthdr_zero();
 }
@@ -633,7 +637,8 @@ pub fn m_free<'a>(m: impl Into<Option<&'a Mbuf>>) -> Option<&'static Mbuf> {
     }
     if m.m_flags().get() & M_PKTHDR != 0 {
         m_tag_delete_chain(m);
-        // NPF > 0: pf_mbuf_unlink_state_key(m), pf_mbuf_unlink_inpcb(m) (pf(4) not ported).
+        pf_mbuf_unlink_state_key(m);
+        pf_mbuf_unlink_inpcb(m);
     }
     if m.m_flags().get() & M_EXT != 0 {
         m_extfree(m);
@@ -1708,7 +1713,12 @@ pub fn m_dup_pkthdr(to: &Mbuf, from: &Mbuf, wait: i32) -> Result<(), Errno> {
         .set(to.m_flags().get() | (from.m_flags().get() & M_COPYFLAGS));
     to.m_pkthdr_assign(from);
 
-    // NPF > 0: pf_mbuf_link_state_key(to, ...), pf_mbuf_link_inpcb(to, ...) (pf(4) not ported).
+    to.m_pkthdr().pf.statekey.set(core::ptr::null_mut());
+    if let Some(sk) = pf_mbuf_statekey(from) {
+        pf_mbuf_link_state_key(to, sk);
+    }
+    to.m_pkthdr().pf.inp.set(core::ptr::null_mut());
+    pf_mbuf_link_inpcb(to, pf_mbuf_inp(from));
 
     to.m_pkthdr().ph_tags.init();
 

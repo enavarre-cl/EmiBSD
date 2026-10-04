@@ -172,8 +172,8 @@
 //!   only `inp_moptions`; `inp_icmp6filt` is left out. The `IN6P_*` flags and
 //!   `INPLOOKUP_IPV6` are defined; `in6_*` functions are not compiled, as in a kernel without
 //!   `INET6`, and the `ISSET(inp_flags, INP_IPV6)` branches are comments.
-//! - `inp_seclevel` (`struct ipsec_level`, `IPSEC` not configured) and `inp_pf_sk` (`NPF`
-//!   not configured) are left out; `ip_output` takes no security level.
+//! - `inp_seclevel` (`struct ipsec_level`, `IPSEC` not configured) is left out; `ip_output`
+//!   takes no security level. `inp_pf_sk` is pf(4)'s state key.
 //! - `struct inpcb_iterator` is [`InpcbIterator`], a whole `Inpcb` whose `inp_table` and
 //!   `inp_socket` are `None`, so it can sit in the table's queue like the C's prefix-compatible
 //!   structure. [`in_pcb_iterator`] is an `unsafe fn`: the iterator must stay in place until
@@ -188,9 +188,10 @@
 //! - `in_pcbaddrisavail_lock` clears the port and `sin_zero` of a copy of the address (the C
 //!   clears them in the caller's mbuf and puts the port back).
 //! - `in_pcbset_addr` takes `sockaddr_in`s: without `INET6` the C asserts `AF_INET`.
-//! - `NSTOEPLITZ` is 0 (`inp_flowid` stays 0) and `NPF` is 0 (`pf_remove_divert_state`,
-//!   `pf_inp_unlink`, the divert and redirected-localhost keys of `in_pcblookup_listen`):
-//!   comments at the sites. `IPSEC`'s `udpencap_port` check in `in_baddynamic` likewise.
+//! - `NSTOEPLITZ` (`pseudo-device pf` needs `stoeplitz`) and `NPF` (pf(4)) are configured:
+//!   the flow id of a connected or bound socket, `pf_remove_divert_state`, `pf_inp_unlink`,
+//!   and the divert and redirected-localhost keys of `in_pcblookup_listen`. `IPSEC` is not:
+//!   its `udpencap_port` check in `in_baddynamic` is a comment at the site.
 //! - The `DIAGNOSTIC` `in_pcbnotifymiss` printfs are behind the `diagnostic` feature.
 
 use core::cell::Cell;
@@ -218,10 +219,13 @@ use crate::machine::cpu::curproc;
 use crate::machine::intr::IPL_SOFTNET;
 use crate::net::if_::{IFF_UP, if_get, if_put, ifa_ifwithaddr};
 use crate::net::if_var::Netstack;
+use crate::net::pf::{pf_find_divert, pf_inp_unlink, pf_remove_divert_state};
+use crate::net::pfvar::{PF_DIVERT_REPLY, PF_DIVERT_TO};
 use crate::net::route::{
     RTF_DYNAMIC, RTF_GATEWAY, Route, Rtentry, route_mpath, rtdeletemsg, rtfree,
 };
 use crate::net::rtable::{rtable_exists, rtable_getsource, rtable_l2};
+use crate::net::toeplitz::stoeplitz_ip4port;
 use crate::netinet::in_::{
     INADDR_ANY, INADDR_BROADCAST, IPPORT_HIFIRSTAUTO, IPPORT_HILASTAUTO, IPPORT_RESERVED,
     IPPORT_USERRESERVED, IPPROTO_TCP, IPPROTO_UDP, InAddr, SockaddrIn, in_broadcast, in_ifp2ia,
@@ -235,7 +239,7 @@ use crate::queue_adapter;
 use crate::sys::endian::htons;
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_NOWAIT, M_PCB, M_WAITOK};
-use crate::sys::mbuf::{M_WAIT, Mbuf, mtod};
+use crate::sys::mbuf::{M_WAIT, Mbuf, PF_TAG_DIVERTED, PF_TAG_TRANSLATE_LOCALHOST, mtod};
 use crate::sys::mutex::{Mutex, mutex_assert_locked};
 use crate::sys::pool::{PR_NOWAIT, PR_WAITOK, PR_ZERO, Pool};
 use crate::sys::proc::Proc;
@@ -458,6 +462,8 @@ pub struct Inpcb {
     pub inp_pipex: Cell<i32>,
     /// \[s\] `inp_flowid`.
     pub inp_flowid: Cell<u16>,
+    /// \[L\] `inp_pf_sk`: the pf(4) state key the socket's packets match (`pf_inp_mtx`).
+    pub inp_pf_sk: Cell<Option<&'static crate::net::pfvar_priv::PfStateKey>>,
 }
 
 impl Inpcb {
@@ -500,6 +506,7 @@ impl Inpcb {
             inp_rtableid: Cell::new(0),
             inp_pipex: Cell::new(0),
             inp_flowid: Cell::new(0),
+            inp_pf_sk: Cell::new(None),
         }
     }
 
@@ -1183,13 +1190,19 @@ pub fn in_pcbconnect(inp: &'static Inpcb, nam: &Mbuf) -> Result<(), Errno> {
 
     mtx_leave(&table.inpt_mtx);
 
-    // NSTOEPLITZ > 0: inp_flowid = stoeplitz_ip4port(...); not configured.
+    inp.inp_flowid.set(stoeplitz_ip4port(
+        inp.inp_faddr.get().s_addr,
+        inp.inp_laddr.get().s_addr,
+        inp.inp_fport.get(),
+        inp.inp_lport.get(),
+    ));
     Ok(())
 }
 
 /// `in_pcbdisconnect`: forgets the flow; a socket without a file reference goes too.
 pub fn in_pcbdisconnect(inp: &'static Inpcb) {
-    // NPF > 0: pf_remove_divert_state, pf_inp_unlink; not configured.
+    pf_remove_divert_state(inp);
+    pf_inp_unlink(inp);
     inp.inp_flowid.set(0);
     if inp.socket().has_state(SS_NOFDREF) {
         in_pcbdetach(inp);
@@ -1216,7 +1229,8 @@ pub fn in_pcbdetach(inp: &'static Inpcb) {
         // taken out of it here and never used again.
         unsafe { ip_freemoptions(inp.inp_moptions.take()) };
     }
-    // NPF > 0: pf_remove_divert_state, pf_inp_unlink; not configured.
+    pf_remove_divert_state(inp);
+    pf_inp_unlink(inp);
     mtx_enter(&table.inpt_mtx);
     // SAFETY: the table mutex is held and the control block is on the three lists since
     // `in_pcballoc`.
@@ -1822,15 +1836,42 @@ pub fn in_pcblookup_listen(
     table: &Inpcbtable,
     laddr: InAddr,
     lport_arg: u16,
-    _m: Option<&Mbuf>,
+    m: Option<&Mbuf>,
     rtable: u32,
 ) -> Option<&'static Inpcb> {
-    let key1 = &laddr;
-    let key2 = &ZEROIN_ADDR;
-    let lport = lport_arg;
+    let mut key1 = &laddr;
+    let mut key2 = &ZEROIN_ADDR;
+    let mut lport = lport_arg;
 
-    // NPF > 0: PF_TAG_DIVERTED (pf_find_divert: divert-to key, divert-reply none) and
-    // PF_TAG_TRANSLATE_LOCALHOST (the keys swapped); not configured.
+    let divert_addr;
+    if let Some(m) = m
+        && m.m_pkthdr().pf.flags.get() & PF_TAG_DIVERTED != 0
+    {
+        let divert = pf_find_divert(m);
+        kassert!(divert.is_some());
+        let divert = divert?;
+        match divert.type_ {
+            PF_DIVERT_TO => {
+                divert_addr = divert.addr.v4();
+                key1 = &divert_addr;
+                key2 = &divert_addr;
+                lport = divert.port;
+            }
+            PF_DIVERT_REPLY => return None,
+            t => panic(format_args!(
+                "in_pcblookup_listen: unknown divert type {t}, mbuf {m:p}"
+            )),
+        }
+    } else if let Some(m) = m
+        && m.m_pkthdr().pf.flags.get() & PF_TAG_TRANSLATE_LOCALHOST != 0
+    {
+        // Redirected connections should not be treated the same as connections directed to
+        // 127.0.0.0/8 since localhost can only be accessed from the host itself. For example
+        // portmap(8) grants more permissions for connections to the socket bound to
+        // 127.0.0.1 than to the * socket.
+        key1 = &ZEROIN_ADDR;
+        key2 = &laddr;
+    }
 
     let rdomain = rtable_l2(rtable);
     let hash = in_pcbhash(table, rdomain, &ZEROIN_ADDR, 0, key1, lport);
@@ -1916,7 +1957,12 @@ pub fn in_pcbset_addr(
 
     mtx_leave(&table.inpt_mtx);
 
-    // NSTOEPLITZ > 0: inp_flowid = stoeplitz_ip4port(...); not configured.
+    inp.inp_flowid.set(stoeplitz_ip4port(
+        inp.inp_faddr.get().s_addr,
+        inp.inp_laddr.get().s_addr,
+        inp.inp_fport.get(),
+        inp.inp_lport.get(),
+    ));
     Ok(())
 }
 
