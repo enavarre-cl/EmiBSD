@@ -46,21 +46,28 @@
 //! `intrframe`) and the `CLKF_*` macros; the TSC timecounter adds `enum cpu_vendor` and the
 //! identification fields `identifycpu` fills for it (`ci_vendor` .. `ci_model`). The other
 //! identification fields, the sensors, the vmm fields and the `CTL_MACHDEP` names arrive with
-//! their subsystems.
+//! their subsystems. M11a adds the `MULTIPROCESSOR` part: `ci_func`, `CPU_STARTUP`,
+//! `CPU_START_CLEANUP`, `CPU_BUSY_CYCLE` and `CPU_INFO_UNIT` over `ci_dev`.
 //!
 //! ## Deviations
 //! - The fields kept follow the C's order; the ones left out are named in comments. Nothing
 //!   reads the struct by a C offset: the entry stubs get their offsets from `offset_of!`.
 //! - `curcpu()` reads `%gs:ci_self`, so it is valid only once `cpu_init_msrs` has set
 //!   `GS.base` (the C's `locore0.S` does that before `init_x86_64`; here `init_x86_64` does it
-//!   first thing).
-//! - `CPU_INFO_UNIT(ci)` is 0 until `struct device` exists (M5-b).
+//!   first thing; an application processor's `cpu_hatch` does it first thing too).
+//! - The fields other CPUs write are atomics (`[a]`): `ci_flags`, `ci_ipis`,
+//!   `ci_want_resched` (`need_resched` from another CPU) and `ci_proc_pmap` (read by the TLB
+//!   shootdown of another CPU, `pmap_is_active`). The `[o]` fields stay `Cell`s: only their
+//!   own CPU touches them. The `[I]` fields (`ci_next`, `ci_cpuid`, `ci_apicid`, `ci_func`,
+//!   ...) are written by the boot CPU in `cpu_attach` before the CPU is started; the release
+//!   of `CPUF_GO` (`cpu_boot_secondary`) and the acquire on `ci_flags` order them.
 
 use core::arch::asm;
 use core::cell::{Cell, UnsafeCell};
 use core::ptr;
-use core::sync::atomic::{AtomicU32, AtomicU64};
+use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, AtomicU64};
 
+use crate::arch::amd64::include::cpuvar::CpuFunctions;
 use crate::arch::amd64::include::frame::Intrframe;
 use crate::arch::amd64::include::intr::Intrsource;
 use crate::arch::amd64::include::intrdefs::{MAX_INTR_SOURCES, NIPL};
@@ -125,8 +132,9 @@ pub struct CpuInfo {
     pub ci_curproc: Cell<*const Proc>,
     /// Scheduler state.
     pub ci_schedstate: SchedstatePercpu,
-    /// Active, non-kernel pmap.
-    pub ci_proc_pmap: Cell<*const Pmap>,
+    /// \[a\] active, non-kernel pmap: written by its CPU (`cpu_switchto`, `pmap_activate`),
+    /// read by the others' TLB shootdowns (`pmap_is_active`).
+    pub ci_proc_pmap: AtomicPtr<Pmap>,
     /// \[o\] last pmap used in userspace.
     pub ci_user_pmap: Cell<*const Pmap>,
     /// \[o\] the thread's pcb.
@@ -184,9 +192,12 @@ pub struct CpuInfo {
     pub ci_cflushsz: Cell<u32>,
     /// \[o\] inside an atomic section (copyin/copyout).
     pub ci_inatomic: Cell<i32>,
-    // ci_cputype .. ci_mwait (topology, cpu_functions, acpi, mwait): M4-b/M5.
-    /// The scheduler asks for a reschedule.
-    pub ci_want_resched: Cell<i32>,
+    // ci_cputype .. ci_pkg_id (topology): M4-b/M5.
+    /// \[I\] `ci_func`: how `cpu_start_secondary` starts this CPU (`MULTIPROCESSOR`).
+    pub ci_func: Cell<Option<&'static CpuFunctions>>,
+    // cpu_setup, ci_acpicpudev, ci_mwait (acpi, mwait): M4-b/M5.
+    /// \[a\] the scheduler asks for a reschedule; another CPU's `need_resched` sets it.
+    pub ci_want_resched: AtomicI32,
     /// \[o\] the TSS.
     pub ci_tss: Cell<*const X86_64Tss>,
     /// \[o\] the GDT.
@@ -200,7 +211,9 @@ pub struct CpuInfo {
     pub ci_panicbuf: UnsafeCell<[u8; 512]>,
 }
 
-// SAFETY: one CPU's state, touched by that CPU (and read by ddb); the boot CPU is alone.
+// SAFETY: the `[o]` fields are touched by their own CPU only (and read by ddb); the fields
+// other CPUs write are atomics; the `[I]` fields are written by the boot CPU before the CPU
+// they describe runs (see the module's deviations).
 unsafe impl Sync for CpuInfo {}
 
 impl CpuInfo {
@@ -221,7 +234,7 @@ impl CpuInfo {
             ci_user_cr3: Cell::new(0),
             ci_curproc: Cell::new(ptr::null()),
             ci_schedstate: SchedstatePercpu::new(),
-            ci_proc_pmap: Cell::new(ptr::null()),
+            ci_proc_pmap: AtomicPtr::new(ptr::null_mut()),
             ci_user_pmap: Cell::new(ptr::null()),
             ci_curpcb: Cell::new(ptr::null()),
             ci_idle_pcb: Cell::new(ptr::null()),
@@ -250,7 +263,8 @@ impl CpuInfo {
             ci_model: Cell::new(0),
             ci_cflushsz: Cell::new(0),
             ci_inatomic: Cell::new(0),
-            ci_want_resched: Cell::new(0),
+            ci_func: Cell::new(None),
+            ci_want_resched: AtomicI32::new(0),
             ci_tss: Cell::new(ptr::null()),
             ci_gdt: Cell::new(ptr::null()),
             ci_ddb_paused: Cell::new(0),
@@ -366,9 +380,36 @@ pub fn cpu_is_running(ci: &CpuInfo) -> bool {
     ci.ci_flags.load(core::sync::atomic::Ordering::Relaxed) & CPUF_RUNNING != 0
 }
 
-/// `CPU_INFO_UNIT(ci)`: `ci_dev->dv_unit`, 0 without a device (see the module's deviations).
-pub fn cpu_info_unit(_ci: &CpuInfo) -> u32 {
-    0
+/// `CPU_INFO_UNIT(ci)`: `ci_dev->dv_unit`, 0 without a device.
+pub fn cpu_info_unit(ci: &CpuInfo) -> u32 {
+    // SAFETY: `ci_dev` is null or the CPU's attached device, which is never freed.
+    unsafe { ci.ci_dev.get().as_ref() }.map_or(0, |d| d.dv_unit.get().max(0) as u32)
+}
+
+/// `CPU_STARTUP(ci)`: `ci->ci_func->start(ci)` (`MULTIPROCESSOR`); 0 when started.
+#[cfg(feature = "multiprocessor")]
+pub fn cpu_startup_ci(ci: &CpuInfo) -> i32 {
+    match ci.ci_func.get().and_then(|f| f.start) {
+        Some(start) => start(ci),
+        None => crate::sys::errno::Errno::ENXIO as i32,
+    }
+}
+
+/// `CPU_START_CLEANUP(ci)`: `ci->ci_func->cleanup(ci)` (`MULTIPROCESSOR`).
+#[cfg(feature = "multiprocessor")]
+pub fn cpu_start_cleanup(ci: &CpuInfo) {
+    if let Some(cleanup) = ci.ci_func.get().and_then(|f| f.cleanup) {
+        cleanup(ci);
+    }
+}
+
+/// `CPU_BUSY_CYCLE()`: `pause` with `MULTIPROCESSOR`, a compiler barrier without.
+#[inline]
+pub fn cpu_busy_cycle() {
+    #[cfg(feature = "multiprocessor")]
+    core::hint::spin_loop();
+    #[cfg(not(feature = "multiprocessor"))]
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
 /// `CLKF_USERMODE(frame)`.

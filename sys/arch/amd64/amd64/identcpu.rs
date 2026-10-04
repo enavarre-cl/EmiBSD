@@ -56,8 +56,10 @@
 //!   CPUID\[eax=80000007h\].EDX.invtsc \[bit 8\]". Its TSC is monotonic all the same (derived
 //!   from the host clock). The user's decision of 2026-10-04; `docs/ARCHITECTURE.md`.
 //!   Without the feature (real hardware) the C's rules apply unchanged.
-//! - Only the boot CPU is identified (no `MULTIPROCESSOR`): the AP branch, which re-reads
-//!   cpuid(1) and intersects `cpu_feature`/`cpu_ecxfeature`, is kept for when APs attach.
+//! - With `MULTIPROCESSOR` (M11a) each application processor identifies itself from
+//!   `cpu_hatch` (the AP branch re-reads cpuid(1) and intersects `cpu_feature` and
+//!   `cpu_ecxfeature`); `print_perf_cpuid`'s and `pcpuid`'s `MULTIPROCESSOR` "say only what
+//!   differs from the previous CPU" state goes with the feature printing, reported.
 //! - Reported as unported when `identifycpu` reaches them: the feature-flag printing
 //!   (`pcpuid*`, `print_perf_cpuid`, `pbitdiff`), leaf 7's `%ecx`/`%edx` and sub-leaf 2,
 //!   leaf 6 (`ci_feature_tpmflags`), leaf 0xd sub-leaf 1, the speculation-control and SEV

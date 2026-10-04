@@ -43,8 +43,9 @@
 //! `lapic_hwunmask` and `lapic_setup`; M5 adds the timer: `lapic_gettick`,
 //! `lapic_timer_rearm/trigger/start/oneshot/periodic`, `lapic_timer_intrclock`,
 //! `lapic_clockintr`, `lapic_startclock`, `lapic_initclocks`, `wait_next_cycle` and
-//! `lapic_calibrate_timer`. The IPIs (`x86_ipi*`, `i82489_ipi`, `x2apic_ipi`) need
-//! `MULTIPROCESSOR`.
+//! `lapic_calibrate_timer`; M11a the `MULTIPROCESSOR` parts: `ipi_count`, the IPI vectors
+//! of `lapic_boot_init`, `x86_ipi` with `i82489_icr_wait`, `i82489_ipi_init`, `i82489_ipi`,
+//! `x2apic_writeicr`, `x2apic_ipi_init`, `x2apic_ipi` and `x86_ipi_init`.
 //!
 //! ## Deviations
 //! - `lapic_map` maps the page with `pmap_kenter_pa` (`PMAP_NOCACHE`) instead of whapping the
@@ -59,6 +60,12 @@
 //! - `lapic_clockintr` takes the interrupt frame by pointer (`vector.S` passes `%rsp`), not
 //!   by value as the C does.
 //! - `lapic_calibrate_timer`: `mp_verbose` is off and the CPU is named `cpu0`.
+//! - `lapic_set_lvt` on an application processor masks LINT0: the 8259's ExtINT goes to the
+//!   boot processor only (device interrupts stay routed to it, M11a), which is what the C's
+//!   `nioapics > 0` masking amounts to there. QEMU hands the 8259's output to every LAPIC
+//!   whose LINT0 is unmasked, so leaving it open would deliver each legacy interrupt to every
+//!   CPU. `mp_verbose`'s `apic_format_redir` dumps are not there (`mp_verbose` is off).
+//! - The IPI stubs' EOI is the MMIO write, as the timer's (no x2APIC `CODEPATCH`).
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
@@ -70,6 +77,10 @@ use libkern::StaticCell;
 use crate::arch::amd64::amd64::machdep::{
     IDT_ALLOCMAP, delay, delay_is_i8254, idt_vec_set, set_initclock_func, set_startclock_func,
 };
+#[cfg(feature = "multiprocessor")]
+use crate::arch::amd64::amd64::vector::{
+    Xintr_lapic_ipi, Xipi_invlpg, Xipi_invlrange, Xipi_invltlb,
+};
 use crate::arch::amd64::amd64::vector::{Xintr_lapic_ltimer, Xintrspurious};
 use crate::arch::amd64::include::cpu::{CpuInfo, curcpu};
 use crate::arch::amd64::include::cpufunc::{intr_disable, intr_restore, rdmsr, wrmsr};
@@ -79,6 +90,15 @@ use crate::arch::amd64::include::i82489reg::{
     LAPIC_ICR_TIMER, LAPIC_ID, LAPIC_ID_SHIFT, LAPIC_LVINT0, LAPIC_LVINT1, LAPIC_LVT_MASKED,
     LAPIC_LVTT, LAPIC_LVTT_M, LAPIC_LVTT_TM_ONESHOT, LAPIC_LVTT_TM_PERIODIC, LAPIC_SVR,
     LAPIC_SVR_ENABLE, MSR_X2APIC_BASE,
+};
+#[cfg(feature = "multiprocessor")]
+use crate::arch::amd64::include::i82489reg::{
+    LAPIC_DEST_MASK, LAPIC_DLMODE_INIT, LAPIC_DLSTAT_BUSY, LAPIC_ICRHI, LAPIC_ICRLO,
+    LAPIC_LVL_ASSERT, LAPIC_LVL_DEASSERT, LAPIC_LVL_TRIG,
+};
+#[cfg(feature = "multiprocessor")]
+use crate::arch::amd64::include::i82489var::{
+    LAPIC_IPI_INVLPG, LAPIC_IPI_INVLRANGE, LAPIC_IPI_INVLTLB, LAPIC_IPI_VECTOR,
 };
 use crate::arch::amd64::include::i82489var::{LAPIC_SPURIOUS_VECTOR, LAPIC_TIMER_VECTOR};
 use crate::arch::amd64::include::param::PAGE_SIZE;
@@ -116,6 +136,12 @@ pub static LOCAL_APIC: LocalApicPage = LocalApicPage(UnsafeCell::new([0; PAGE_SI
 pub static CLK_COUNT: Evcount = Evcount::new();
 /// `clk_irq`: the counter's user data.
 static CLK_IRQ: AtomicU64 = AtomicU64::new(0);
+/// `ipi_count`: the inter-processor interrupt counter (`MULTIPROCESSOR`).
+#[cfg(feature = "multiprocessor")]
+pub static IPI_COUNT: Evcount = Evcount::new();
+/// `ipi_irq`: the counter's user data.
+#[cfg(feature = "multiprocessor")]
+static IPI_IRQ: AtomicU64 = AtomicU64::new(0);
 
 /// `local_pic`: the LAPIC as a `struct pic`.
 pub static LOCAL_PIC: Pic = Pic {
@@ -182,6 +208,10 @@ pub fn x2apic_writereg(reg: i32, val: u32) {
 static LAPIC_READREG: StaticCell<fn(i32) -> u32> = StaticCell::new(i82489_readreg);
 /// `lapic_writereg`.
 static LAPIC_WRITEREG: StaticCell<fn(i32, u32)> = StaticCell::new(i82489_writereg);
+/// `x86_ipi`: how an IPI is sent (`vec`, the target APIC ID or `LAPIC_DEST_*`, the delivery
+/// mode): `i82489_ipi`, or `x2apic_ipi` in x2APIC mode (`MULTIPROCESSOR`).
+#[cfg(feature = "multiprocessor")]
+static X86_IPI: StaticCell<fn(i32, u32, u32)> = StaticCell::new(i82489_ipi);
 
 /// `lapic_readreg(reg)`.
 pub fn lapic_readreg(reg: i32) -> u32 {
@@ -219,7 +249,11 @@ pub fn lapic_map(lapic_base: Paddr) {
             LAPIC_READREG.write(x2apic_readreg);
             LAPIC_WRITEREG.write(x2apic_writereg);
         }
-        // MULTIPROCESSOR: x86_ipi = x2apic_ipi.
+        #[cfg(feature = "multiprocessor")]
+        // SAFETY: as above.
+        unsafe {
+            X86_IPI.write(x2apic_ipi)
+        };
         X2APIC_ENABLED.store(true, Ordering::Relaxed);
         let _ = unported!("codepatch_call(CPTAG_EOI, x2apic_eoi)");
     } else {
@@ -252,12 +286,17 @@ pub fn lapic_disable() {
 
 /// `lapic_set_lvt`: programs the local interrupt pins (see the module's deviations).
 pub fn lapic_set_lvt() {
-    // mp_verbose: MULTIPROCESSOR. NIOAPIC > 0: ExtINT would be masked here.
+    // mp_verbose: off. NIOAPIC > 0: ExtINT would be masked here.
     // ci_vendor == CPUV_AMD && family 0xf/0x10: the C1E workaround (M4-b).
 
     // for (i = 0; i < mp_nintrs; i++): no MP/ACPI interrupt table yet; the MP default
-    // configuration is LINT0 = ExtINT (the 8259's output), LINT1 = NMI.
-    lapic_writereg(LAPIC_LVINT0, LAPIC_DLMODE_EXTINT);
+    // configuration is LINT0 = ExtINT (the 8259's output), LINT1 = NMI. ExtINT goes to the
+    // boot processor only (see the module's deviations).
+    if crate::arch::amd64::include::cpu::cpu_is_primary(curcpu()) {
+        lapic_writereg(LAPIC_LVINT0, LAPIC_DLMODE_EXTINT);
+    } else {
+        lapic_writereg(LAPIC_LVINT0, LAPIC_DLMODE_EXTINT | LAPIC_LVT_MASKED);
+    }
     lapic_writereg(LAPIC_LVINT1, LAPIC_DLMODE_NMI);
 }
 
@@ -265,7 +304,19 @@ pub fn lapic_set_lvt() {
 pub fn lapic_boot_init(lapic_base: Paddr) {
     lapic_map(lapic_base);
 
-    // MULTIPROCESSOR: LAPIC_IPI_VECTOR and the invalidation IPIs.
+    #[cfg(feature = "multiprocessor")]
+    {
+        IDT_ALLOCMAP[LAPIC_IPI_VECTOR as usize].store(true, Ordering::Relaxed);
+        idt_vec_set(LAPIC_IPI_VECTOR, Xintr_lapic_ipi as *const () as usize);
+        IDT_ALLOCMAP[LAPIC_IPI_INVLTLB as usize].store(true, Ordering::Relaxed);
+        IDT_ALLOCMAP[LAPIC_IPI_INVLPG as usize].store(true, Ordering::Relaxed);
+        IDT_ALLOCMAP[LAPIC_IPI_INVLRANGE as usize].store(true, Ordering::Relaxed);
+        // !pmap_use_pcid: PCID is never enabled (pmap.rs), so the _pcid stubs are not there.
+        idt_vec_set(LAPIC_IPI_INVLTLB, Xipi_invltlb as *const () as usize);
+        idt_vec_set(LAPIC_IPI_INVLPG, Xipi_invlpg as *const () as usize);
+        idt_vec_set(LAPIC_IPI_INVLRANGE, Xipi_invlrange as *const () as usize);
+        // NVMM > 0 (LAPIC_IPI_INVEPT): not configured.
+    }
 
     IDT_ALLOCMAP[LAPIC_SPURIOUS_VECTOR as usize].store(true, Ordering::Relaxed);
     idt_vec_set(LAPIC_SPURIOUS_VECTOR, Xintrspurious as *const () as usize);
@@ -276,7 +327,11 @@ pub fn lapic_boot_init(lapic_base: Paddr) {
 
     evcount_attach(&CLK_COUNT, "clock", ptr::from_ref(&CLK_IRQ).cast::<()>());
     evcount_percpu(&CLK_COUNT);
-    // MULTIPROCESSOR: ipi_count.
+    #[cfg(feature = "multiprocessor")]
+    {
+        evcount_attach(&IPI_COUNT, "ipi", ptr::from_ref(&IPI_IRQ).cast::<()>());
+        evcount_percpu(&IPI_COUNT);
+    }
 }
 
 /// `lapic_gettick`: the timer's current count.
@@ -452,6 +507,144 @@ pub fn lapic_calibrate_timer(_ci: &CpuInfo) {
     LAPIC_TIMER_NSEC_MAX.store(u64::MAX / ratio, Ordering::Relaxed);
     set_initclock_func(lapic_initclocks);
     set_startclock_func(lapic_startclock);
+}
+
+// XXX the following belong mostly or partly elsewhere..
+
+/// `i82489_icr_wait`: spins until the LAPIC has sent the last command (`DIAGNOSTIC`: panics
+/// after 100000 rounds).
+#[cfg(feature = "multiprocessor")]
+#[inline]
+fn i82489_icr_wait() {
+    #[cfg(feature = "diagnostic")]
+    let mut j: u32 = 100_000;
+
+    while i82489_readreg(LAPIC_ICRLO) & LAPIC_DLSTAT_BUSY != 0 {
+        core::hint::spin_loop();
+        #[cfg(feature = "diagnostic")]
+        {
+            j -= 1;
+            if j == 0 {
+                crate::kern::subr_prf::panic(format_args!("i82489_icr_wait: busy"));
+            }
+        }
+    }
+}
+
+/// `i82489_ipi_init`: the INIT assert/deassert pair to `target` (MMIO mode).
+#[cfg(feature = "multiprocessor")]
+pub fn i82489_ipi_init(target: u32) {
+    if target & LAPIC_DEST_MASK == 0 {
+        i82489_writereg(LAPIC_ICRHI, target << LAPIC_ID_SHIFT);
+    }
+
+    i82489_writereg(
+        LAPIC_ICRLO,
+        (target & LAPIC_DEST_MASK) | LAPIC_DLMODE_INIT | LAPIC_LVL_ASSERT,
+    );
+
+    i82489_icr_wait();
+
+    delay(10000);
+
+    i82489_writereg(
+        LAPIC_ICRLO,
+        (target & LAPIC_DEST_MASK) | LAPIC_DLMODE_INIT | LAPIC_LVL_TRIG | LAPIC_LVL_DEASSERT,
+    );
+
+    i82489_icr_wait();
+}
+
+/// `i82489_ipi`: sends vector `vec` to `target` with delivery mode `dl` (MMIO mode).
+#[cfg(feature = "multiprocessor")]
+pub fn i82489_ipi(vec: i32, target: u32, dl: u32) {
+    let s = crate::machine::intr::splhigh();
+
+    i82489_icr_wait();
+
+    if target & LAPIC_DEST_MASK == 0 {
+        i82489_writereg(LAPIC_ICRHI, target << LAPIC_ID_SHIFT);
+    }
+
+    // What the receiver reads (ci_ipis, the shootdown globals) is stored before the command:
+    // the volatile ICR write must not move above those stores.
+    core::sync::atomic::compiler_fence(Ordering::SeqCst);
+    i82489_writereg(
+        LAPIC_ICRLO,
+        (target & LAPIC_DEST_MASK) | vec as u32 | dl | LAPIC_LVL_ASSERT,
+    );
+
+    i82489_icr_wait();
+
+    crate::machine::intr::splx(s);
+}
+
+/// `x2apic_writeicr`: the 64-bit ICR write of x2APIC mode.
+#[cfg(feature = "multiprocessor")]
+#[inline]
+fn x2apic_writeicr(hi: u32, lo: u32) {
+    let msr = MSR_X2APIC_BASE + (LAPIC_ICRLO as u32 >> 4);
+    // SAFETY: the x2APIC ICR MSR exists in x2APIC mode, the only mode this is used in; the
+    // write sends an interrupt command and touches no memory.
+    unsafe {
+        core::arch::asm!("wrmsr", in("eax") lo, in("edx") hi, in("ecx") msr, options(nostack, preserves_flags))
+    };
+}
+
+/// `x2apic_ipi_init`: the INIT assert/deassert pair to `target` (x2APIC mode).
+#[cfg(feature = "multiprocessor")]
+pub fn x2apic_ipi_init(target: u32) {
+    let mut hi = 0;
+
+    if target & LAPIC_DEST_MASK == 0 {
+        hi = target & 0xff;
+    }
+
+    x2apic_writeicr(
+        hi,
+        (target & LAPIC_DEST_MASK) | LAPIC_DLMODE_INIT | LAPIC_LVL_ASSERT,
+    );
+
+    delay(10000);
+
+    x2apic_writeicr(
+        0,
+        (target & LAPIC_DEST_MASK) | LAPIC_DLMODE_INIT | LAPIC_LVL_TRIG | LAPIC_LVL_DEASSERT,
+    );
+}
+
+/// `x2apic_ipi`: sends vector `vec` to `target` with delivery mode `dl` (x2APIC mode).
+#[cfg(feature = "multiprocessor")]
+pub fn x2apic_ipi(vec: i32, target: u32, dl: u32) {
+    let mut hi = 0;
+
+    if target & LAPIC_DEST_MASK == 0 {
+        hi = target & 0xff;
+    }
+
+    let lo = (target & LAPIC_DEST_MASK) | vec as u32 | dl | LAPIC_LVL_ASSERT;
+
+    // SAFETY: `mfence; lfence` only orders memory accesses and instructions: the ICR write
+    // is not serializing, and the receiver must see what was stored before it.
+    unsafe { core::arch::asm!("mfence", "lfence", options(nostack, preserves_flags)) };
+    x2apic_writeicr(hi, lo);
+}
+
+/// `x86_ipi_init`: the INIT IPI pair, in the mode the LAPIC runs in.
+#[cfg(feature = "multiprocessor")]
+pub fn x86_ipi_init(target: u32) {
+    if X2APIC_ENABLED.load(Ordering::Relaxed) {
+        x2apic_ipi_init(target);
+    } else {
+        i82489_ipi_init(target);
+    }
+}
+
+/// `(*x86_ipi)(vec, target, dl)`: sends an IPI through the accessor `lapic_map` chose.
+#[cfg(feature = "multiprocessor")]
+pub fn x86_ipi(vec: i32, target: u32, dl: u32) {
+    // SAFETY: written once by `lapic_map` on the boot CPU before any CPU sends an IPI.
+    (unsafe { X86_IPI.read() })(vec, target, dl)
 }
 
 /// `lapic_hwmask`: masks LVT entry `pin`.

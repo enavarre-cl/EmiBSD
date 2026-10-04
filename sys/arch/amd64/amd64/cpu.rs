@@ -71,16 +71,38 @@
 //!
 //! Status: `wip`. Milestone M4 ports `cpu_info_full_primary`,
 //! `cpu_init_msrs` and `cpu_enter_pages`'s TSS part; M7b the `cpu` device (`struct
-//! cpu_softc`, `cpu_ca`, `cpu_cd`, `cpu_match`, `cpu_attach`) for autoconfiguration. CPU
-//! identification (`identifycpu`), `cpu_init`, the AP boot (`cpu_boot_secondary`),
-//! `cpu_hatch`, `patinit` and the MDS/`cpu_fix_msrs` work come later.
+//! cpu_softc`, `cpu_ca`, `cpu_cd`, `cpu_match`, `cpu_attach`) for autoconfiguration, with
+//! `cpu_init`. M11a ports the `MULTIPROCESSOR` half: `cpu_info[]`, `mp_cpu_funcs`
+//! (`mp_cpu_start`, `mp_cpu_start_cleanup`), the application processor's `cpu_attach`
+//! (its `cpu_info_full`, idle pcb, `sched_init_cpu`, `ncpus`, `cpu_info_list`),
+//! `cpu_boot_secondary_processors`, `cpu_start_secondary`, `cpu_boot_secondary`,
+//! `cpu_hatch`, `cpu_init`'s `CPUF_RUNNING` and `wbinvd_on_all_cpus`. `patinit`, the
+//! MDS/`cpu_fix_msrs` work, `cpu_init_mwait` and `cpu_debug_dump` (ddb, M11c) come later.
 //!
 //! ## Deviations
 //! - `cpu_attach` reports what it cannot do yet: `cpu_fix_msrs`,
-//!   `mem_range_attach` (`MTRR`), `cpu_init_mwait` and `cpu_init_vmm`; an
-//!   application processor (never attached without `MULTIPROCESSOR` tables) is reported
-//!   instead of getting a `km_alloc`ed `cpu_info_full`. `cpu_ca` has no `cpu_activate`
-//!   (suspend/resume): `config_suspend` walks the CPU's children instead.
+//!   `mem_range_attach` (`MTRR`), `cpu_init_mwait` and `cpu_init_vmm`. Without
+//!   `MULTIPROCESSOR` an application processor (never attached: mainbus attaches the boot
+//!   CPU alone) is reported instead of getting a `km_alloc`ed `cpu_info_full`. `cpu_ca` has
+//!   no `cpu_activate` (suspend/resume): `config_suspend` walks the CPU's children instead.
+//! - `MULTIPROCESSOR`: the bootloader starts the application processors (`stand`, Limine's
+//!   MP request; `mptramp.S` is `skipped`), so `mp_cpu_start` (`CPU_STARTUP`) is
+//!   `BootMp::start` for the processor whose hardware ID is `ci_apicid`, with the
+//!   `cpu_info` as its argument, in place of the warm-reset vector and the INIT/STARTUP
+//!   IPIs; `mp_cpu_start_cleanup` has no NVRAM reset byte to restore. `init_x86_64` keeps the
+//!   `BootMp` (`BOOT_MP`). The processor enters `cpu_hatch_entry` (`Cpu::cpu_hatch`) on the
+//!   bootloader's 64 KiB stack, in long mode on the bootloader's GDT, with no IDT and
+//!   interrupts masked; `cpu_hatch_entry` does what `mptramp.S`'s `cpu_spinup_finish` did
+//!   (x2APIC mode when the boot CPU runs it, the CPU's own GDT, `CR3` = the kernel pmap,
+//!   `CR0_DEFAULT`, `EFER.NXE` when `CPUID` has it, the idle pcb's stack) and loads the IDT
+//!   first, before anything can fault: the C loads it in `cpu_hatch`, after `CPUF_GO`.
+//! - The TSC synchronisation test (`tsc_test_sync_bp`/`tsc_test_sync_ap`, which `tsc.rs`
+//!   has) is reported where `cpu_start_secondary`, `cpu_boot_secondary`, `cpu_hatch` and
+//!   `cpu_init` would run it: M11b. `cpu_ucode_apply`, `cpu_tsx_disable` and the AP's
+//!   `cpu_fix_msrs` are reported too; `HIBERNATE`, `NPVBUS` and the memory range `initAP`
+//!   are not configured. `mp_verbose` is off.
+//! - `cpu_boot_secondary_processors` ends with `x86_ipi_selftest` under feature `qemu`
+//!   (not in the C, `ipi.rs`).
 //! - `cpu_init` sets `CR4_DEFAULT` (with `CR4_OSFXSR`: user SSE) and fills
 //!   `fpu_cleandata`. Its CPUID-dependent bits wait for `identifycpu`: `CR4_SMEP`,
 //!   `CR4_SMAP`, `CR4_UMIP`, `CR4_PKE` (`pg_xo`), `CR4_PCIDE` (`pmap_use_pcid` is 0) and the
@@ -129,6 +151,44 @@ use crate::kern::subr_prf::{Str, panic, printf};
 use crate::sys::device::{CD_COCOVM, CfMatch, Cfattach, Cfdriver, DV_DULL, Device, Softc};
 use crate::unported;
 
+#[cfg(feature = "multiprocessor")]
+use {
+    crate::arch::amd64::amd64::autoconf::COLD,
+    crate::arch::amd64::amd64::fpu::fpuinit,
+    crate::arch::amd64::amd64::gdt::gdt_init_cpu,
+    crate::arch::amd64::amd64::ipi::x86_broadcast_ipi,
+    crate::arch::amd64::amd64::lapic::{
+        X2APIC_ENABLED, lapic_cpu_number, lapic_set_lvt, lapic_startclock,
+    },
+    crate::arch::amd64::amd64::locore::lgdt,
+    crate::arch::amd64::amd64::machdep::{cpu_init_idt, cpu_set_vendor, delay, setregion},
+    crate::arch::amd64::amd64::pmap::pmap_kernel,
+    crate::arch::amd64::include::cpu::{
+        CPUF_AP, CPUF_GO, CPUF_IDENTIFIED, CPUF_IDENTIFY, CPUF_RUNNING, cpu_is_primary,
+        cpu_start_cleanup, cpu_startup_ci,
+    },
+    crate::arch::amd64::include::cpufunc::{
+        intr_disable, intr_enable, intr_restore, lcr0, lcr3, lcr8, lldt, wbinvd,
+    },
+    crate::arch::amd64::include::cpuvar::CpuFunctions,
+    crate::arch::amd64::include::intrdefs::X86_IPI_WBINVD,
+    crate::arch::amd64::include::param::USPACE,
+    crate::arch::amd64::include::pcb::Pcb,
+    crate::arch::amd64::include::segments::{GDT_SIZE, RegionDescriptor},
+    crate::arch::amd64::include::specialreg::{
+        APICBASE_ENABLE_X2APIC, CPUID_NXE, CR0_DEFAULT, CR4_PGE, EFER_NXE, MSR_APICBASE, cpuid,
+    },
+    crate::dev::rnd::arc4random,
+    crate::kern::init_main::NCPUS,
+    crate::kern::kern_clockintr::clockqueue_init,
+    crate::kern::kern_sched::{sched_init_cpu, sched_toidle},
+    crate::machine::bootinfo::BootMp,
+    crate::machine::intr::{splhigh, splx},
+    crate::sys::errno::Errno,
+    crate::uvm::uvm_km::{KD_NOWAIT, KD_WAITOK, KP_DIRTY, KP_ZERO, KV_ANY, km_alloc},
+    core::sync::atomic::AtomicPtr,
+};
+
 /// `struct cpu_softc`.
 #[repr(C)]
 pub struct CpuSoftc {
@@ -173,6 +233,27 @@ pub static CPU_CD: Cfdriver = Cfdriver::new(b"cpu", DV_DULL, CD_COCOVM);
 /// `init_x86_64` (the C initialises them statically).
 pub static CPU_INFO_FULL_PRIMARY: CpuInfoFull = CpuInfoFull::new();
 
+/// `mp_cpu_funcs`: how `cpu_start_secondary` starts an application processor
+/// (`MULTIPROCESSOR`; see the module's deviations).
+#[cfg(feature = "multiprocessor")]
+pub static MP_CPU_FUNCS: CpuFunctions = CpuFunctions {
+    start: Some(mp_cpu_start),
+    stop: None,
+    cleanup: Some(mp_cpu_start_cleanup),
+};
+
+/// `cpu_info[MAXCPUS]`: the CPUs by `ci_cpuid` (`MULTIPROCESSOR`); `cpu_info_primary_init`
+/// puts the primary at 0, `cpu_attach` the others. Must be statically-allocated because
+/// curproc, etc. are used early.
+#[cfg(feature = "multiprocessor")]
+pub static CPU_INFO: [AtomicPtr<CpuInfo>; MAXCPUS as usize] =
+    [const { AtomicPtr::new(ptr::null_mut()) }; MAXCPUS as usize];
+
+/// The processors the bootloader found and how to start them (`MULTIPROCESSOR`): kept by
+/// `init_x86_64` from `BootInfo::mp`, read by `mainbus_attach` and `mp_cpu_start`.
+#[cfg(feature = "multiprocessor")]
+pub static BOOT_MP: StaticCell<Option<BootMp>> = StaticCell::new(None);
+
 /// `cpu_info_list`: the CPUs, the primary first.
 pub fn cpu_info_list() -> &'static CpuInfo {
     &CPU_INFO_FULL_PRIMARY.cif_cpu
@@ -185,6 +266,9 @@ pub fn cpu_info_primary_init() {
     ci.ci_self.set(ptr::from_ref(ci));
     ci.ci_flags
         .store(CPUF_PRIMARY, core::sync::atomic::Ordering::Relaxed);
+    // cpu_info[MAXCPUS] = { &cpu_info_primary }
+    #[cfg(feature = "multiprocessor")]
+    CPU_INFO[0].store(ptr::from_ref(ci).cast_mut(), Ordering::Release);
 }
 
 /// `cpu_match`: the attach arguments name a `cpu` and the unit fits `MAXCPUS`.
@@ -215,19 +299,52 @@ pub fn cpu_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
     let caa = unsafe { *aux.cast::<CpuAttachArgs>() };
     let xname = self_.dv_xname.get();
 
+    #[cfg(feature = "multiprocessor")]
+    let cpunum = self_.dv_unit.get();
+
     // If we're an Application Processor, allocate a cpu_info structure, otherwise use the
     // primary's.
-    if caa.cpu_role == CPU_ROLE_AP {
-        let _ = unported!("cpu_attach: an application processor's cpu_info_full (km_alloc)");
-        printf(format_args!(
-            ": apid {} (application processor)\n",
-            caa.cpu_apicid
-        ));
-        printf(format_args!("{}: not started\n", Str(&xname)));
-        return;
-    }
-    let ci = cpu_info_primary();
-    // MULTIPROCESSOR: the running CPU's apic id is checked against caa.cpu_apicid.
+    let ci: &'static CpuInfo = if caa.cpu_role == CPU_ROLE_AP {
+        #[cfg(not(feature = "multiprocessor"))]
+        {
+            let _ = unported!("cpu_attach: an application processor's cpu_info_full (km_alloc)");
+            printf(format_args!(
+                ": apid {} (application processor)\n",
+                caa.cpu_apicid
+            ));
+            printf(format_args!("{}: not started\n", Str(&xname)));
+            return;
+        }
+        #[cfg(feature = "multiprocessor")]
+        {
+            let cif = cpu_info_full_alloc();
+            let ci = &cif.cif_cpu;
+            ci.ci_tss.set(cif.cif_tss.get());
+            ci.ci_gdt.set(cif.cif_gdt.get().cast::<u8>());
+            // SAFETY: the new CPU's GDT, loaded nowhere yet, gets a copy of the boot CPU's,
+            // which nothing writes any more (`gdt_init_cpu` writes each CPU's own copy).
+            unsafe { *cif.cif_gdt.get() = *CPU_INFO_FULL_PRIMARY.cif_gdt.get() };
+            // SAFETY: once for this CPU, on the boot CPU, before its TSS is loaded.
+            unsafe { cpu_enter_pages(cif) };
+            if !CPU_INFO[cpunum as usize].load(Ordering::Acquire).is_null() {
+                panic(format_args!("cpu at apic id {cpunum} already attached?"));
+            }
+            CPU_INFO[cpunum as usize].store(ptr::from_ref(ci).cast_mut(), Ordering::Release);
+            // TRAPLOG: not configured.
+            ci
+        }
+    } else {
+        #[cfg(feature = "multiprocessor")]
+        if caa.cpu_apicid as u32 != lapic_cpu_number() {
+            panic(format_args!(
+                "{}: running cpu is at apic {} instead of at expected {}",
+                Str(&xname),
+                lapic_cpu_number(),
+                caa.cpu_apicid
+            ));
+        }
+        cpu_info_primary()
+    };
 
     ci.ci_self.set(ptr::from_ref(ci));
     sc.sc_info.set(ptr::from_ref(ci));
@@ -235,11 +352,50 @@ pub fn cpu_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
     ci.ci_dev.set(ptr::from_ref(self_));
     ci.ci_apicid.set(caa.cpu_apicid as u32);
     ci.ci_acpi_proc_id.set(caa.cpu_acpi_proc_id as u32);
+    #[cfg(feature = "multiprocessor")]
+    ci.ci_cpuid.set(cpunum as u32);
+    #[cfg(not(feature = "multiprocessor"))]
     ci.ci_cpuid.set(0); // False for APs, but they're not used anyway
-    // ci_func = caa->cpu_func: the start/stop functions are MULTIPROCESSOR's.
+    ci.ci_func.set(caa.cpu_func);
     ci.ci_handled_intr_level.set(IPL_NONE);
 
     // !SMALL_KERNEL: ci_sensordev takes the device's name; there are no sensors yet.
+
+    #[cfg(feature = "multiprocessor")]
+    {
+        // NXCALL > 0: cpu_xcall_establish(ci): kern_xcall.c is not ported; reported after
+        // the attach line, which a report here would cut in two.
+
+        // Allocate UPAGES contiguous pages for the idle PCB and stack.
+        let Some(kstack) = km_alloc(USPACE, &KV_ANY, &KP_DIRTY, &KD_NOWAIT) else {
+            if caa.cpu_role != CPU_ROLE_AP {
+                panic(format_args!(
+                    "cpu_attach: unable to allocate idle stack for primary"
+                ));
+            }
+            printf(format_args!(
+                "{}: unable to allocate idle stack\n",
+                Str(&xname)
+            ));
+            return;
+        };
+        let kstack = kstack.as_ptr() as usize;
+        // SAFETY: USPACE fresh bytes of kernel memory, page-aligned; an all-zero pcb is
+        // valid (`Pcb::new` is all zeroes), and the pcb stays at the bottom of the stack for
+        // the CPU's lifetime.
+        let pcb: &'static Pcb = unsafe {
+            ptr::write_bytes(kstack as *mut u8, 0, USPACE);
+            &*(kstack as *const Pcb)
+        };
+        ci.ci_idle_pcb.set(pcb);
+
+        pcb.pcb_kstack.set((kstack + USPACE - 16) as u64);
+        pcb.pcb_rbp.set((kstack + USPACE - 16) as u64);
+        pcb.pcb_rsp.set((kstack + USPACE - 16) as u64);
+        pcb.pcb_pmap.set(pmap_kernel());
+        pcb.pcb_cr3
+            .set(pmap_kernel().pm_pdirpa.get().as_usize() as u64);
+    }
 
     // further PCB init done later.
 
@@ -272,8 +428,37 @@ pub fn cpu_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
             let _ = unported!("cpu_init_mwait (mwait)");
             // NIOAPIC > 0: ioapic_bsp_id = caa->cpu_apicid (ioapic.c is not ported).
         }
+        CPU_ROLE_AP => {
+            // report on an AP
+            printf(format_args!(
+                "apid {} (application processor)\n",
+                caa.cpu_apicid
+            ));
+
+            #[cfg(feature = "multiprocessor")]
+            {
+                cpu_intr_init(ci);
+                cpu_start_secondary(ci);
+                clockqueue_init(&ci.ci_queue);
+                sched_init_cpu(ci);
+                NCPUS.fetch_add(1, Ordering::Relaxed);
+                if ci.ci_flags.load(Ordering::Acquire) & CPUF_PRESENT != 0 {
+                    let mut ci_last = cpu_info_list();
+                    // SAFETY: the list links cpu_info structures that are never freed; only
+                    // the boot CPU appends, during autoconfiguration.
+                    while let Some(next) = unsafe { ci_last.ci_next.get().as_ref() } {
+                        ci_last = next;
+                    }
+                    ci_last.ci_next.set(ptr::from_ref(ci));
+                }
+            }
+        }
         _ => panic(format_args!("unknown processor type??")),
     }
+
+    // MULTIPROCESSOR && mp_verbose: the kstack and idle pcb lines (mp_verbose is off).
+    #[cfg(feature = "multiprocessor")]
+    let _ = unported!("cpu_xcall_establish (kern_xcall.c)");
 
     // NVMM > 0
     let _ = unported!("cpu_init_vmm (vmm)");
@@ -311,8 +496,258 @@ pub fn cpu_init(ci: &CpuInfo) {
         fpureset();
     }
 
-    // MULTIPROCESSOR: CPUF_RUNNING and the CR4_PGE TLB flush.
+    #[cfg(feature = "multiprocessor")]
+    {
+        ci.ci_flags.fetch_or(CPUF_RUNNING, Ordering::SeqCst);
+        // Big hammer: flush all TLB entries, including ones from PTEs with the G bit set.
+        // This should only be necessary if TLB shootdown falls far behind.
+        let cr4 = rcr4();
+        // SAFETY: clearing and setting CR4_PGE again only flushes the TLB (global entries
+        // included); every other bit is put back as it was.
+        unsafe {
+            lcr4(cr4 & !CR4_PGE);
+            lcr4(cr4);
+        }
+
+        // Check if TSC is synchronized.
+        if COLD.load(Ordering::Relaxed) && !cpu_is_primary(ci) {
+            let _ = unported!("tsc_test_sync_ap (cpu_init, M11b)");
+        }
+    }
 }
+
+/// `cpu_boot_secondary_processors`: lets every attached application processor run
+/// (`CPUF_GO`) and waits until each reports `CPUF_RUNNING`. Without `MULTIPROCESSOR` there
+/// are no application processors to start.
+pub fn cpu_boot_secondary_processors() {
+    #[cfg(feature = "multiprocessor")]
+    {
+        for slot in CPU_INFO.iter() {
+            // SAFETY: `cpu_info[]` holds null or cpu_info structures that are never freed.
+            let Some(ci) = (unsafe { slot.load(Ordering::Acquire).as_ref() }) else {
+                continue;
+            };
+            if ci.ci_idle_pcb.get().is_null() {
+                continue;
+            }
+            let flags = ci.ci_flags.load(Ordering::Acquire);
+            if flags & CPUF_PRESENT == 0 {
+                continue;
+            }
+            if flags & (CPUF_BSP | CPUF_SP | CPUF_PRIMARY) != 0 {
+                continue;
+            }
+            ci.ci_randseed.set((arc4random() & 0x7fff_ffff) + 1);
+            cpu_boot_secondary(ci);
+        }
+
+        #[cfg(feature = "qemu")]
+        crate::arch::amd64::amd64::ipi::x86_ipi_selftest();
+    }
+}
+
+/// `cpu_start_secondary`: starts `ci` (`CPU_STARTUP`), waits until it is present, lets it
+/// identify itself and waits for that (see the module's deviations).
+#[cfg(feature = "multiprocessor")]
+pub fn cpu_start_secondary(ci: &'static CpuInfo) {
+    ci.ci_flags.fetch_or(CPUF_AP, Ordering::SeqCst);
+
+    // pmap_kenter_pa(MP_TRAMPOLINE), pmap_kenter_pa(MP_TRAMP_DATA): the bootloader parked
+    // the processor (mptramp.S is skipped, replaced-by-limine).
+
+    let _ = cpu_startup_ci(ci);
+
+    // wait for it to become ready
+    let mut i = 100_000;
+    while ci.ci_flags.load(Ordering::Acquire) & CPUF_PRESENT == 0 && i > 0 {
+        delay(10);
+        i -= 1;
+    }
+    // SAFETY: `cpu_attach` set `ci_dev` to the CPU's device before starting it.
+    let xname = unsafe { ci.ci_dev.get().as_ref() }.map_or([0; 16], |d| d.dv_xname.get());
+    if ci.ci_flags.load(Ordering::Acquire) & CPUF_PRESENT == 0 {
+        printf(format_args!("{}: failed to become ready\n", Str(&xname)));
+        // MPDEBUG && DDB: not configured.
+    }
+
+    if ci.ci_flags.load(Ordering::Acquire) & CPUF_IDENTIFIED == 0 {
+        ci.ci_flags.fetch_or(CPUF_IDENTIFY, Ordering::SeqCst);
+
+        // wait for it to identify
+        let mut i = 2_000_000;
+        while ci.ci_flags.load(Ordering::Acquire) & CPUF_IDENTIFY != 0 && i > 0 {
+            delay(10);
+            i -= 1;
+        }
+
+        if ci.ci_flags.load(Ordering::Acquire) & CPUF_IDENTIFY != 0 {
+            printf(format_args!("{}: failed to identify\n", Str(&xname)));
+        }
+    }
+
+    if ci.ci_flags.load(Ordering::Acquire) & CPUF_IDENTIFIED != 0 {
+        // Test if TSCs are synchronized. Invalidate cache to minimize possible cache
+        // effects. Disable interrupts to try to rule out external interference.
+        let s = intr_disable();
+        wbinvd();
+        let _ = unported!("tsc_test_sync_bp (cpu_start_secondary, M11b)");
+        // SAFETY: `s` is this CPU's saved flags.
+        unsafe { intr_restore(s) };
+    }
+
+    cpu_start_cleanup(ci);
+
+    // pmap_kremove(MP_TRAMPOLINE), pmap_kremove(MP_TRAMP_DATA): nothing was mapped.
+}
+
+/// `cpu_boot_secondary`: lets `ci` leave `cpu_hatch`'s wait (`CPUF_GO`) and waits until it
+/// runs.
+#[cfg(feature = "multiprocessor")]
+pub fn cpu_boot_secondary(ci: &CpuInfo) {
+    ci.ci_flags.fetch_or(CPUF_GO, Ordering::SeqCst);
+
+    let mut i = 100_000;
+    while ci.ci_flags.load(Ordering::Acquire) & CPUF_RUNNING == 0 && i > 0 {
+        delay(10);
+        i -= 1;
+    }
+    if ci.ci_flags.load(Ordering::Acquire) & CPUF_RUNNING == 0 {
+        printf(format_args!("cpu failed to start\n"));
+        // MPDEBUG && DDB: not configured.
+    } else if COLD.load(Ordering::Relaxed) {
+        // Test if TSCs are synchronized again.
+        let s = intr_disable();
+        wbinvd();
+        let _ = unported!("tsc_test_sync_bp (cpu_boot_secondary, M11b)");
+        // SAFETY: `s` is this CPU's saved flags.
+        unsafe { intr_restore(s) };
+    }
+}
+
+/// `cpu_hatch`: the CPU ends up here when it's ready to run. This is called from
+/// `cpu_hatch_entry` (`mptramp.S` in C); at this point, we are running in the idle pcb/idle
+/// stack of the new cpu. When this function returns, this processor will enter the idle
+/// loop and start looking for work: here it goes there itself, through `sched_toidle`.
+///
+/// XXX should share some of this with init386 in machdep.c
+#[cfg(feature = "multiprocessor")]
+extern "C" fn cpu_hatch(v: *const CpuInfo) -> ! {
+    // SAFETY: `cpu_hatch_entry` passes the `cpu_info` `mp_cpu_start` handed the bootloader,
+    // which is never freed.
+    let ci: &'static CpuInfo = unsafe { &*v };
+
+    {
+        let (level, vb, vc, vd) = cpuid(0);
+        let mut vendor = [0u8; 16];
+        vendor[0..4].copy_from_slice(&vb.to_le_bytes());
+        vendor[4..8].copy_from_slice(&vd.to_le_bytes());
+        vendor[8..12].copy_from_slice(&vc.to_le_bytes());
+        cpu_set_vendor(ci, level, &vendor);
+    }
+
+    // SAFETY: this CPU's own cpu_info, once, before anything reads curcpu().
+    unsafe { cpu_init_msrs(ci) };
+
+    #[cfg(feature = "debug")]
+    if ci.ci_flags.load(Ordering::Acquire) & CPUF_PRESENT != 0 {
+        panic(format_args!("cpu_hatch: already running!?"));
+    }
+    ci.ci_flags.fetch_or(CPUF_PRESENT, Ordering::SeqCst);
+
+    lapic_enable();
+    let _ = unported!("cpu_ucode_apply, cpu_tsx_disable (cpu_hatch)");
+
+    if ci.ci_flags.load(Ordering::Acquire) & CPUF_IDENTIFIED == 0 {
+        // We need to wait until we can identify, otherwise dmesg output will be messy.
+        while ci.ci_flags.load(Ordering::Acquire) & CPUF_IDENTIFY == 0 {
+            delay(10);
+        }
+
+        identifycpu(ci);
+
+        // Prevent identifycpu() from running again
+        ci.ci_flags.fetch_or(CPUF_IDENTIFIED, Ordering::SeqCst);
+
+        // Signal we're done
+        ci.ci_flags.fetch_and(!CPUF_IDENTIFY, Ordering::SeqCst);
+    }
+
+    // These have to run after identifycpu()
+    let _ = unported!("cpu_fix_msrs (cpu_hatch)");
+
+    // Test if our TSC is synchronized for the first time. Note that interrupts are off at
+    // this point.
+    wbinvd();
+    let _ = unported!("tsc_test_sync_ap (cpu_hatch, M11b)");
+
+    while ci.ci_flags.load(Ordering::Acquire) & CPUF_GO == 0 {
+        delay(10);
+    }
+    // HIBERNATE (CPUF_PARK): not configured.
+
+    #[cfg(feature = "debug")]
+    if ci.ci_flags.load(Ordering::Acquire) & CPUF_RUNNING != 0 {
+        panic(format_args!("cpu_hatch: already running!?"));
+    }
+
+    cpu_init_idt();
+    lapic_set_lvt();
+    // SAFETY: this CPU's own GDT (the copy `cpu_attach` made) and TSS, loaded nowhere else.
+    unsafe { gdt_init_cpu(ci) };
+    fpuinit();
+
+    // SAFETY: selector 0: no LDT.
+    unsafe { lldt(0) };
+
+    cpu_init(ci);
+    // NPVBUS > 0: pvbus_init_cpu(): not configured.
+
+    // Re-initialise memory range handling on AP: mem_range_softc is not ported (MTRR).
+
+    let s = splhigh();
+    // SAFETY: 0 lets every interrupt through, as on the boot CPU; the IDT, the LAPIC and the
+    // masks are set up, and the level is IPL_HIGH until splx.
+    unsafe {
+        lcr8(0);
+        intr_enable();
+    }
+    splx(s);
+
+    lapic_startclock();
+
+    sched_toidle()
+}
+
+/// `mp_cpu_start` (`CPU_STARTUP`): releases the processor whose hardware ID is `ci_apicid`
+/// from the bootloader's wait into `cpu_hatch_entry` (see the module's deviations); 0 when
+/// it was released.
+#[cfg(feature = "multiprocessor")]
+pub fn mp_cpu_start(ci: &CpuInfo) -> i32 {
+    // The warm reset vector (CMOS shutdown code, 40:67) and the INIT/STARTUP IPIs: the
+    // bootloader parked the processor instead.
+    // SAFETY: written once by `init_x86_64`, before autoconfiguration reads it.
+    let Some(mp) = (unsafe { BOOT_MP.read() }) else {
+        return Errno::ENXIO as i32;
+    };
+    let Some(index) = mp.index_of(u64::from(ci.ci_apicid.get())) else {
+        return Errno::ENXIO as i32;
+    };
+    if ci.ci_flags.load(Ordering::Acquire) & CPUF_AP != 0
+        && mp.bsp_hwid != u64::from(ci.ci_apicid.get())
+    {
+        // SAFETY: `index` is this application processor's, started once (`cpu_attach`
+        // attaches each processor once), and the argument is its `cpu_info`, which is what
+        // `cpu_hatch_entry` expects; everything it reads was written before (the boot
+        // glue's release store orders it).
+        unsafe { (mp.start)(index, ptr::from_ref(ci) as usize) };
+    }
+    0
+}
+
+/// `mp_cpu_start_cleanup` (`CPU_START_CLEANUP`): the C puts the NVRAM reset byte back; the
+/// bootloader's start left nothing to clean.
+#[cfg(feature = "multiprocessor")]
+pub fn mp_cpu_start_cleanup(_ci: &CpuInfo) {}
 
 /// `cpu_init_msrs`: the `syscall` MSRs and the segment bases of `ci`.
 ///
@@ -379,22 +814,106 @@ pub unsafe fn cpu_enter_pages(cif: &CpuInfoFull) {
     tss.tss_iobase = size_of::<X86_64Tss>() as u16;
 }
 
-/// `cpu_boot_secondary_processors`: without `MULTIPROCESSOR` there are no application
-/// processors to start.
-pub fn cpu_boot_secondary_processors() {
-    #[cfg(feature = "multiprocessor")]
-    let _ = unported!("cpu_boot_secondary_processors (amd64 cpu.c, M11a)");
+/// `wbinvd_on_all_cpus` (`MULTIPROCESSOR`): every other running CPU writes back and
+/// invalidates its caches (`X86_IPI_WBINVD`), then this one.
+#[cfg(feature = "multiprocessor")]
+pub fn wbinvd_on_all_cpus() -> i32 {
+    x86_broadcast_ipi(X86_IPI_WBINVD);
+    wbinvd();
+    0
 }
 
-/// The application processor's entry from the boot glue (`Cpu::cpu_hatch`), standing in for
-/// `mptramp.S`'s jump to `cpu_hatch`; `arg` is its `struct cpu_info`.
+/// `km_alloc(sizeof *cif, &kv_any, &kp_zero, &kd_waitok)` for an application processor's
+/// `cpu_info_full`, with its `cpu_info` built in place: the rest of the structure (the TSS,
+/// the GDT, the stacks) is plain data, valid all zero.
+#[cfg(feature = "multiprocessor")]
+fn cpu_info_full_alloc() -> &'static CpuInfoFull {
+    let Some(va) = km_alloc(size_of::<CpuInfoFull>(), &KV_ANY, &KP_ZERO, &KD_WAITOK) else {
+        panic(format_args!("cpu_attach: cannot allocate cpu_info_full"));
+    };
+    let cif = va.cast::<CpuInfoFull>();
+    // SAFETY: fresh, zeroed, page-aligned kernel memory of the structure's size (a multiple
+    // of pages, `cpu_full.rs`), never freed: the CPU lives as long as the kernel. Only the
+    // `cpu_info` needs its constructor; it is written in place.
+    unsafe {
+        ptr::addr_of_mut!((*cif.as_ptr()).cif_cpu).write(CpuInfo::new());
+        cif.as_ref()
+    }
+}
+
+/// The application processor's entry from the boot glue (`Cpu::cpu_hatch`): what
+/// `mptramp.S`'s `cpu_spinup_finish` does once the processor is in long mode, then
+/// `cpu_hatch` on the idle pcb's stack (see the module's deviations). `arg` is the
+/// processor's `struct cpu_info`, as `mp_cpu_start` passed it.
 ///
 /// # Safety
 ///
 /// Called once per application processor by the boot glue, with the `arg` the boot processor
-/// passed to `BootMp::start`.
+/// passed to `BootMp::start`, on the bootloader's stack with interrupts masked.
+#[cfg(feature = "multiprocessor")]
+pub unsafe fn cpu_hatch_entry(arg: usize) -> ! {
+    // SAFETY: the caller's guarantee: `arg` is the cpu_info `cpu_attach` built, never freed.
+    let ci: &'static CpuInfo = unsafe { &*(arg as *const CpuInfo) };
+
+    // Before anything can fault: the kernel's IDT (the bootloader's is not defined here).
+    cpu_init_idt();
+
+    // SAFETY: MSR_APICBASE and MSR_EFER exist on every amd64 CPU. x2APIC mode is turned on
+    // only when the boot CPU runs in it (the same LAPIC accessors serve every CPU); NXE is
+    // what the kernel page tables' PG_NX bits need, as `mptramp.S` sets it.
+    unsafe {
+        if X2APIC_ENABLED.load(Ordering::Relaxed) {
+            wrmsr(MSR_APICBASE, rdmsr(MSR_APICBASE) | APICBASE_ENABLE_X2APIC);
+        }
+        if cpuid(0x8000_0001).3 & CPUID_NXE != 0 {
+            wrmsr(MSR_EFER, rdmsr(MSR_EFER) | EFER_NXE);
+        }
+    }
+
+    // SAFETY: `cpu_attach` allocated the idle pcb before starting the processor.
+    let pcb: &Pcb = unsafe { &*ci.ci_idle_pcb.get() };
+
+    let mut region = RegionDescriptor {
+        rd_limit: 0,
+        rd_base: 0,
+    };
+    setregion(&mut region, ci.ci_gdt.get() as usize, (GDT_SIZE - 1) as u16);
+    // SAFETY: the CPU's GDT is the copy of the boot CPU's `cpu_attach` made, with valid
+    // 64-bit kernel code and data segments; it lives as long as the CPU. CR3 is the kernel
+    // pmap's PML4, which maps this code, the stacks and the cpu_info; CR0_DEFAULT keeps
+    // protected mode and paging on.
+    unsafe {
+        lgdt(ptr::from_ref(&region));
+        lcr3(pcb.pcb_cr3.get());
+        lcr0(CR0_DEFAULT);
+    }
+
+    // SAFETY: the idle pcb's stack is USPACE bytes `cpu_attach` allocated for this CPU,
+    // unused until now; `pcb_rsp`/`pcb_rbp` point 16 bytes below its top, 16-byte aligned as
+    // the call needs. `cpu_hatch` never returns, so leaving the bootloader's stack behind is
+    // fine; `ud2` traps if it ever did.
+    unsafe {
+        core::arch::asm!(
+            "mov rsp, {sp}",
+            "mov rbp, {bp}",
+            "call {hatch}",
+            "ud2",
+            sp = in(reg) pcb.pcb_rsp.get(),
+            bp = in(reg) pcb.pcb_rbp.get(),
+            hatch = sym cpu_hatch,
+            in("rdi") ptr::from_ref(ci),
+            options(noreturn)
+        )
+    }
+}
+
+/// The application processor's entry from the boot glue, without `MULTIPROCESSOR`: nothing
+/// starts one (the boot glue makes no MP request), so this is never reached; it parks.
+///
+/// # Safety
+///
+/// As with `MULTIPROCESSOR`: called once per started processor by the boot glue.
+#[cfg(not(feature = "multiprocessor"))]
 pub unsafe fn cpu_hatch_entry(_arg: usize) -> ! {
-    // Nothing starts an application processor yet (`cpu_start_secondary` is not ported), and
-    // one that got here could not print: its `curcpu()` is not set up.
     <crate::machine::Machine as crate::machine::cpu::Cpu>::halt()
 }

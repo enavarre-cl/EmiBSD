@@ -62,8 +62,14 @@ pub const CR0_EM: u64 = 0x0000_0004;
 pub const CR0_TS: u64 = 0x0000_0008;
 /// `CR0_ET`: Extension Type (387 (if set) vs 287).
 pub const CR0_ET: u64 = 0x0000_0010;
+/// `CR0_NE`: Numeric Error enable (EX16 vs IRQ13).
+pub const CR0_NE: u64 = 0x0000_0020;
+/// `CR0_WP`: Write Protect (honor PG_RW in all modes).
+pub const CR0_WP: u64 = 0x0001_0000;
 /// `CR0_PG`: PaGing enable.
 pub const CR0_PG: u64 = 0x8000_0000;
+/// `CR0_DEFAULT`: what `mptramp.S` loads into an application processor's `CR0`.
+pub const CR0_DEFAULT: u64 = CR0_PE | CR0_PG | CR0_NE | CR0_WP;
 
 /// `CR4_PSE`: large (4MB) page size enable.
 pub const CR4_PSE: u64 = 0x0000_0010;
@@ -226,6 +232,8 @@ mod tests {
         let ours: &[(&str, i64)] = &[
             ("CR0_PE", CR0_PE as i64),
             ("CR0_PG", CR0_PG as i64),
+            ("CR0_NE", CR0_NE as i64),
+            ("CR0_WP", CR0_WP as i64),
             ("CR4_PSE", CR4_PSE as i64),
             ("CR4_PAE", CR4_PAE as i64),
             ("CR4_PGE", CR4_PGE as i64),

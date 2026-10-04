@@ -4,7 +4,8 @@
 //! (`docs/ARCHITECTURE.md`, "Deviations"); `machine::autoconf` hands them to
 //! `subr_autoconf.rs`.
 //!
-//! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?`, `pci* at mainbus0`,
+//! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?` (and GENERIC.MP's
+//! `cpu* at mainbus?` with feature `multiprocessor`), `pci* at mainbus0`,
 //! `virtio* at pci?`, `vio* at virtio?`, `vioblk* at virtio?`, `scsibus* at scsi?`,
 //! `sd* at scsibus?`, `softraid0 at root` and `scsibus* at softraid?` (conf/GENERIC),
 //! `isa0 at mainbus0`,
@@ -92,8 +93,15 @@ const LOC_COM2: &[i64] = &[0x3e8, 0, -1, 0, 5, -1, -1];
 /// `loc[]` of `com3 at isa? disable port 0x2e8 irq 9`.
 const LOC_COM3: &[i64] = &[0x2e8, 0, -1, 0, 9, -1, -1];
 
+/// `cfdata[]`: 14 entries, 15 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
+    15
+} else {
+    14
+};
+
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 14] = [
+pub static CFDATA: [Cfdata; NCFDATA] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -252,6 +260,10 @@ pub static CFDATA: [Cfdata; 14] = [
         0,
         0,
     ),
+    // 14: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // on (cpu0 takes unit 0).
+    #[cfg(feature = "multiprocessor")]
+    Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];
 
 /// `cfroots[]`: `mainbus0`, `softraid0`.

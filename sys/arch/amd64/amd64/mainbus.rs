@@ -49,6 +49,13 @@
 //!   none has.
 //!   Without ACPI or MP tables the boot CPU attaches here, as `CPU_ROLE_SP`, and `pci0`
 //!   attaches here for bus 0 (`acpi_haspci` is false), as the C does on such a machine.
+//! - `MULTIPROCESSOR` (M11a): with no ACPI MADT (M13) and no `mpbios`, the processors the
+//!   bootloader found (`BootInfo::mp`, kept as `BOOT_MP`) are the enumeration: mainbus
+//!   attaches one `cpu` per processor, the boot processor first as `CPU_ROLE_BP`, the others
+//!   as `CPU_ROLE_AP` in the bootloader's order, with the hardware ID as `cpu_apicid` and the
+//!   bootloader's processor number as `cpu_acpi_proc_id`, as `acpimadt` would (its children
+//!   attach at mainbus too). A uniprocessor kernel, or an MP kernel the bootloader found one
+//!   processor for, attaches the boot CPU alone as `CPU_ROLE_SP`, as before.
 //! - `pci0`'s attach arguments carry no extents (`sys/extent.h` is not ported, so
 //!   `pci_init_extents` is reported and `pciio_ex`, `pcimem_ex`, `pcibus_ex` are NULL).
 //! - `union mainbus_attach_args` has the members that exist (`mba_busname`, `mba_caa`,
@@ -121,6 +128,12 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
     // NIPMI > 0
     let _ = unported!("ipmi_probe (ipmi0 at mainbus?)");
 
+    // MULTIPROCESSOR: the processors the bootloader found stand for acpimadt0's (or
+    // mpbios0's) enumeration: the boot processor first, then the others in the bootloader's
+    // order (see the module's deviations). One processor attaches as CPU_ROLE_SP below.
+    #[cfg(feature = "multiprocessor")]
+    mainbus_attach_cpus(self_);
+
     if cpu_info_primary().ci_flags.load(Ordering::Relaxed) & CPUF_PRESENT == 0 {
         let mut caa = CpuAttachArgs {
             caa_name: b"cpu",
@@ -140,7 +153,8 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
     // sets.
     let _ = unported!("setperf_setup (identcpu.c)");
 
-    // MULTIPROCESSOR: mp_setperf_init, not configured.
+    #[cfg(feature = "multiprocessor")]
+    let _ = unported!("mp_setperf_init (mp_setperf.c)");
 
     // NPVBUS > 0: probe first to hide the "not configured" message.
     let _ = unported!("pvbus_probe (pvbus0 at mainbus0)");
@@ -193,6 +207,41 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
     let _ = unported!("efifb0 at mainbus? (bios_efiinfo, efifb_cb_found)");
 
     let _ = unported!("codepatch_disable (codepatch.c)");
+}
+
+/// The `cpu` children of a `MULTIPROCESSOR` kernel: one per processor of `BOOT_MP`, the
+/// boot processor (`CPU_ROLE_BP`) first, then the application processors (`CPU_ROLE_AP`),
+/// each with `mp_cpu_funcs`; nothing when the bootloader found a single processor.
+#[cfg(feature = "multiprocessor")]
+fn mainbus_attach_cpus(self_: &Device) {
+    use crate::arch::amd64::amd64::cpu::{BOOT_MP, MP_CPU_FUNCS};
+    use crate::arch::amd64::include::cpuvar::{CPU_ROLE_AP, CPU_ROLE_BP};
+
+    // SAFETY: written once by `init_x86_64`, before autoconfiguration reads it.
+    let Some(mp) = (unsafe { BOOT_MP.read() }) else {
+        return;
+    };
+    if mp.ncpus < 2 {
+        return;
+    }
+
+    let attach = |cpu: crate::machine::BootCpu, role: i32| {
+        let mut caa = CpuAttachArgs {
+            caa_name: b"cpu",
+            cpu_apicid: cpu.hwid as i32,
+            cpu_acpi_proc_id: cpu.processor_id as i32,
+            cpu_role: role,
+            cpu_func: Some(&MP_CPU_FUNCS),
+        };
+        let _ = config_found(self_, ptr::from_mut(&mut caa).cast(), Some(mainbus_print));
+    };
+
+    if let Some(bsp) = mp.cpus().find(|c| c.hwid == mp.bsp_hwid) {
+        attach(bsp, CPU_ROLE_BP);
+    }
+    for cpu in mp.cpus().filter(|c| c.hwid != mp.bsp_hwid) {
+        attach(cpu, CPU_ROLE_AP);
+    }
 }
 
 /// `mainbus_efifb_reattach` (`NEFIFB > 0`): attaches the EFI framebuffer again after a

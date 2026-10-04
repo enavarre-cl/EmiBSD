@@ -77,7 +77,9 @@
 //! `pmap_copy_page`, `pmap_init`, the kernel mapping functions (`pmap_kenter_pa`,
 //! `pmap_kremove`, `pmap_extract`, `pmap_pdes_valid`, `pmap_find_pte_direct`),
 //! `pmap_growkernel` with `pmap_alloc_level`/`pmap_get_physpage`, and the single-CPU TLB
-//! shootdowns. The user pmaps (`pmap_create`, `pmap_enter`, `pmap_remove`, the pv lists, the
+//! shootdowns; M11a the `MULTIPROCESSOR` shootdowns (`tlb_shoot_lock` .. `tlb_shoot_addr2`,
+//! `pmap_is_active`, `pmap_start_tlb_shoot`, `pmap_tlb_shootwait`, `pmap_tlb_shootfail` and
+//! the IPI halves of `pmap_tlb_shootpage`/`shootrange`/`shoottlb`). The user pmaps (`pmap_create`, `pmap_enter`, `pmap_remove`, the pv lists, the
 //! PTP management, `pmap_map_ptes`), PCID, `pmap_randomize` and the MP shootdowns come with
 //! M4 to M6.
 //!
@@ -119,18 +121,36 @@
 //!   `pmap_write_protect` reach each PTE through `pmap_find_pte_direct` instead of
 //!   `PTE_BASE` under `pmap_map_ptes`. `pmap_remove_pte` (the single-page shortcut of
 //!   `pmap_do_remove`) is folded into the block loop over `pmap_remove_ptes`.
+//! - The `MULTIPROCESSOR` shootdowns: the globals are plain statics (`.kudata`, the u-k
+//!   mapping of the Meltdown mitigation, is M6), each on its own cache line as in C; the
+//!   targets' bit mask is built by `pmap_tlb_shoot_targets` and the IPIs sent by
+//!   `pmap_tlb_shoot_send`, the two `CPU_INFO_FOREACH` loops the three C functions repeat.
+//!   `tlb_shoot_first_pcid` and the PCID/EPT variants are not there (`pmap_use_pcid` is
+//!   never set, `NVMM` is not configured).
 //! - `pmap_growkernel` has no user pmaps to update yet (`pmaps`, M6); the `splhigh` around
 //!   it waits for `spl(9)` (M4). `pmap_get_physpage` after `uvm_init` allocates the PTP from
 //!   `pm_obj`, whose objects have no pager yet.
 
 use core::ptr;
+#[cfg(feature = "multiprocessor")]
+use core::sync::atomic::AtomicU32;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use libkern::StaticCell;
 
+#[cfg(feature = "multiprocessor")]
+use crate::arch::amd64::amd64::ipi::x86_fast_ipi;
 use crate::arch::amd64::include::cpu::curcpu;
+#[cfg(feature = "multiprocessor")]
+use crate::arch::amd64::include::cpu::{
+    CpuInfo, MAXCPUS, cpu_busy_cycle, cpu_info_primary, cpu_is_running,
+};
 use crate::arch::amd64::include::cpufunc::{
     invlpg, lcr3, rcr3, rdmsr, tlbflush, wbinvd_on_all_cpus,
+};
+#[cfg(feature = "multiprocessor")]
+use crate::arch::amd64::include::i82489var::{
+    LAPIC_IPI_INVLPG, LAPIC_IPI_INVLRANGE, LAPIC_IPI_INVLTLB,
 };
 use crate::arch::amd64::include::param::{PAGE_MASK, PAGE_SIZE};
 use crate::arch::amd64::include::pmap::{
@@ -149,6 +169,8 @@ use crate::arch::amd64::include::vmparam::{VM_MAX_KERNEL_ADDRESS, VM_MIN_KERNEL_
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::machine::intr::IPL_VM;
+#[cfg(feature = "multiprocessor")]
+use crate::machine::intr::{splvm, splx};
 use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
 use crate::sys::pool::{PR_NOWAIT, PR_WAITOK, Pool};
@@ -218,6 +240,31 @@ static PMAP_PMAP_POOL: Pool = Pool::new();
 /// `pmap_pv_pool`: pool for pv entries.
 static PMAP_PV_POOL: Pool = Pool::new();
 
+/// `struct { volatile int x __attribute__((aligned(64))); }`: a shootdown word on a cache
+/// line of its own, which the IPI stubs of `vector.S` reach by symbol.
+#[cfg(feature = "multiprocessor")]
+#[repr(C, align(64))]
+pub struct TlbShootWord<T>(pub T);
+
+/// `tlb_shoot_lock`: held from `pmap_start_tlb_shoot` until the last target acknowledges
+/// (the IPI stubs release it).
+#[cfg(feature = "multiprocessor")]
+pub static TLB_SHOOT_LOCK: TlbShootWord<AtomicU32> = TlbShootWord(AtomicU32::new(0));
+/// `tlb_shoot_cpu`: the `ci_cpuid` of the CPU holding `tlb_shoot_lock`.
+#[cfg(feature = "multiprocessor")]
+pub static TLB_SHOOT_CPU: TlbShootWord<AtomicU32> = TlbShootWord(AtomicU32::new(0));
+/// `tlb_shoot_counts[]`: per shooting CPU, the targets that have not flushed yet.
+#[cfg(feature = "multiprocessor")]
+pub static TLB_SHOOT_COUNTS: [AtomicU32; MAXCPUS as usize] =
+    [const { AtomicU32::new(0) }; MAXCPUS as usize];
+/// `tlb_shoot_addr1`: the page, or the start of the range, to flush.
+#[cfg(feature = "multiprocessor")]
+pub static TLB_SHOOT_ADDR1: TlbShootWord<AtomicUsize> = TlbShootWord(AtomicUsize::new(0));
+/// `tlb_shoot_addr2`: the end of the range to flush.
+#[cfg(feature = "multiprocessor")]
+pub static TLB_SHOOT_ADDR2: TlbShootWord<AtomicUsize> = TlbShootWord(AtomicUsize::new(0));
+// tlb_shoot_first_pcid, ept_shoot_mode, ept_shoot_vid: PCID and NVMM are not enabled.
+
 /// `PMAP_REMOVE_ALL`: `pmap_do_remove` removes every mapping.
 const PMAP_REMOVE_ALL: i32 = 0;
 /// `PMAP_REMOVE_SKIPWIRED`: `pmap_do_remove` leaves wired mappings alone.
@@ -246,7 +293,9 @@ pub fn pmap_activate(p: &Proc) {
 
     if p.p_flag.load(Ordering::Relaxed) & P_SYSTEM == 0 {
         // mark the pmap in use by this processor
-        curcpu().ci_proc_pmap.set(pmap);
+        curcpu()
+            .ci_proc_pmap
+            .store(ptr::from_ref(pmap).cast_mut(), Ordering::Relaxed);
         // in case we return to userspace without context switching: cpu_meltdown's
         // ci_kern_cr3/ci_user_cr3 (not configured).
     }
@@ -262,8 +311,11 @@ pub fn pmap_deactivate(p: &Proc) {
         let this = curcpu();
 
         // mark the pmap no longer in use by this processor.
-        kassert!(ptr::eq(this.ci_proc_pmap.get(), p.vmspace().vm_map.pmap()));
-        this.ci_proc_pmap.set(ptr::null());
+        kassert!(ptr::eq(
+            this.ci_proc_pmap.load(Ordering::Relaxed),
+            p.vmspace().vm_map.pmap()
+        ));
+        this.ci_proc_pmap.store(ptr::null_mut(), Ordering::Relaxed);
     }
 }
 
@@ -895,9 +947,144 @@ pub fn pmap_growkernel(maxkvaddr: Vaddr) -> Vaddr {
     Vaddr::new(maxkvaddr)
 }
 
-/// `pmap_tlb_shootpage`: drops one page's TLB entry; on one CPU, locally when `shootself`.
+// Locking for tlb shootdown.
+//
+// We lock by grabbing tlb_shoot_lock.lock, then setting per-cpu tlb_shoot_counts[] to the
+// number of cpus that will receive our tlb shootdown. After sending the IPIs, we don't need
+// to worry about locking order or interrupts spinning for the lock because the call that
+// grabs the "lock" isn't the one that releases it. And there is nothing that can block the
+// IPI that releases the lock.
+//
+// The functions are organized so that we first count the number of cpus we need to send the
+// IPI to, then we grab the counter, then we send the IPIs, then we finally do our own
+// shootdown.
+//
+// Our shootdown is last to make it parallel with the other cpus to shorten the spin time.
+//
+// Notice that we depend on failures to send IPIs only being able to happen during boot. If
+// they happen later, the above assumption doesn't hold since we can end up in situations
+// where noone will release the lock if we get an interrupt in a bad moment.
+
+/// `pmap_is_active`: is this pmap loaded into the specified processor's `%cr3`?
+#[cfg(feature = "multiprocessor")]
+#[inline]
+fn pmap_is_active(pmap: &Pmap, ci: &CpuInfo) -> bool {
+    ptr::eq(pmap, pmap_kernel()) || ptr::eq(pmap, ci.ci_proc_pmap.load(Ordering::Relaxed))
+    // NVMM > 0 (the EPT pmap of ci_ept_pmap): not configured.
+}
+
+/// The targets of one shootdown: a bit per `ci_cpuid` (`u_int8_t mask[howmany(MAXCPUS,
+/// 8)]`).
+#[cfg(feature = "multiprocessor")]
+type ShootMask = [u8; (MAXCPUS as usize).div_ceil(8)];
+
+/// `pmap_start_tlb_shoot`: obtain the "lock" for TLB shooting, and expect `targets` CPUs to
+/// acknowledge.
+#[cfg(feature = "multiprocessor")]
+#[inline]
+fn pmap_start_tlb_shoot(targets: u32, _func: &str) {
+    let cpuid = curcpu().ci_cpuid.get();
+
+    while TLB_SHOOT_LOCK
+        .0
+        .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        // MP_LOCKDEBUG (the spin-out into ddb): not configured.
+        while TLB_SHOOT_LOCK.0.load(Ordering::Relaxed) != 0 {
+            cpu_busy_cycle();
+        }
+    }
+    TLB_SHOOT_CPU.0.store(cpuid, Ordering::Relaxed);
+    TLB_SHOOT_COUNTS[cpuid as usize].swap(targets, Ordering::SeqCst);
+}
+
+/// `pmap_tlb_shootwait`: waits until every CPU this CPU shot at has flushed.
+#[cfg(feature = "multiprocessor")]
+pub fn pmap_tlb_shootwait() {
+    let cpuid = curcpu().ci_cpuid.get();
+    // MP_LOCKDEBUG: not configured.
+    while TLB_SHOOT_COUNTS[cpuid as usize].load(Ordering::Acquire) > 0 {
+        cpu_busy_cycle();
+    }
+}
+
+/// `pmap_tlb_shootfail`: a target was not running after all: count it as done.
+#[cfg(feature = "multiprocessor")]
+#[inline]
+fn pmap_tlb_shootfail() {
+    let cpuid = curcpu().ci_cpuid.get();
+
+    if TLB_SHOOT_COUNTS[cpuid as usize].fetch_sub(1, Ordering::AcqRel) == 1 {
+        TLB_SHOOT_LOCK.0.store(0, Ordering::Release);
+    }
+}
+
+/// The CPUs a shootdown of `pm` goes to: running, not this one, and (but for a kernel
+/// address, `is_kva`) with `pm` active. Returns the mask and the count.
+#[cfg(feature = "multiprocessor")]
+fn pmap_tlb_shoot_targets(pm: &Pmap, is_kva: bool) -> (ShootMask, u32) {
+    let self_ = curcpu();
+    let mut mask: ShootMask = [0; (MAXCPUS as usize).div_ceil(8)];
+    let mut targets = 0;
+
+    let mut next: *const CpuInfo = cpu_info_primary();
+    // SAFETY: CPU_INFO_FOREACH: the list links cpu_info structures that are never freed.
+    while let Some(ci) = unsafe { next.as_ref() } {
+        next = ci.ci_next.get();
+        if ptr::eq(ci, self_) || !cpu_is_running(ci) {
+            continue;
+        }
+        if !is_kva && !pmap_is_active(pm, ci) {
+            continue;
+        }
+        let id = ci.ci_cpuid.get() as usize;
+        mask[id / 8] |= 1 << (id % 8);
+        targets += 1;
+    }
+    (mask, targets)
+}
+
+/// Sends the shootdown IPI `ipi` to the CPUs of `mask` (`CPU_INFO_FOREACH` + `isclr` +
+/// `x86_fast_ipi`), counting each one that cannot take it as done.
+#[cfg(feature = "multiprocessor")]
+fn pmap_tlb_shoot_send(mask: &ShootMask, ipi: i32) {
+    let mut next: *const CpuInfo = cpu_info_primary();
+    // SAFETY: as in `pmap_tlb_shoot_targets`.
+    while let Some(ci) = unsafe { next.as_ref() } {
+        next = ci.ci_next.get();
+        let id = ci.ci_cpuid.get() as usize;
+        if mask[id / 8] & (1 << (id % 8)) == 0 {
+            continue;
+        }
+        if x86_fast_ipi(ci, ipi).is_err() {
+            pmap_tlb_shootfail();
+        }
+    }
+}
+
+// KVA TLB entries can exist under PCID_TEMP (pmap_map_ptes() + interrupts/traps), so KVA
+// shootdowns must invalidate PCID_TEMP too.
+
+/// `pmap_tlb_shootpage`: drops one page's TLB entry here (when `shootself`) and, with
+/// `MULTIPROCESSOR`, on every other CPU that may cache it.
 pub fn pmap_tlb_shootpage(_pm: &Pmap, va: usize, shootself: bool) {
-    // MULTIPROCESSOR: the IPIs to the other CPUs are not configured.
+    #[cfg(feature = "multiprocessor")]
+    {
+        let is_kva = va >= VM_MIN_KERNEL_ADDRESS;
+        let (mask, targets) = pmap_tlb_shoot_targets(_pm, is_kva);
+
+        if targets != 0 {
+            let s = splvm();
+
+            pmap_start_tlb_shoot(targets, "pmap_tlb_shootpage");
+            // tlb_shoot_first_pcid = is_kva ? PCID_KERN : PCID_PROC: PCID is not enabled.
+            TLB_SHOOT_ADDR1.0.store(va, Ordering::Relaxed);
+            pmap_tlb_shoot_send(&mask, LAPIC_IPI_INVLPG);
+            splx(s);
+        }
+    }
+
     if !PMAP_USE_PCID.load(Ordering::Relaxed) {
         if shootself {
             pmap_update_pg(va);
@@ -907,9 +1094,26 @@ pub fn pmap_tlb_shootpage(_pm: &Pmap, va: usize, shootself: bool) {
     }
 }
 
-/// `pmap_tlb_shootrange`: drops a range's TLB entries.
+/// `pmap_tlb_shootrange`: drops a range's TLB entries (here when `shootself`, and on the
+/// other CPUs with `MULTIPROCESSOR`).
 pub fn pmap_tlb_shootrange(_pm: &Pmap, sva: usize, eva: usize, shootself: bool) {
-    // MULTIPROCESSOR: not configured.
+    #[cfg(feature = "multiprocessor")]
+    {
+        let is_kva = sva >= VM_MIN_KERNEL_ADDRESS;
+        let (mask, targets) = pmap_tlb_shoot_targets(_pm, is_kva);
+
+        if targets != 0 {
+            let s = splvm();
+
+            pmap_start_tlb_shoot(targets, "pmap_tlb_shootrange");
+            // tlb_shoot_first_pcid: PCID is not enabled.
+            TLB_SHOOT_ADDR1.0.store(sva, Ordering::Relaxed);
+            TLB_SHOOT_ADDR2.0.store(eva, Ordering::Relaxed);
+            pmap_tlb_shoot_send(&mask, LAPIC_IPI_INVLRANGE);
+            splx(s);
+        }
+    }
+
     if !PMAP_USE_PCID.load(Ordering::Relaxed) {
         if shootself {
             let mut va = sva;
@@ -923,9 +1127,24 @@ pub fn pmap_tlb_shootrange(_pm: &Pmap, sva: usize, eva: usize, shootself: bool) 
     }
 }
 
-/// `pmap_tlb_shoottlb`: drops the whole TLB.
+/// `pmap_tlb_shoottlb`: drops the whole (non-global) TLB of a user pmap, here when
+/// `shootself` and, with `MULTIPROCESSOR`, on the other CPUs that run it.
 pub fn pmap_tlb_shoottlb(_pm: &Pmap, shootself: bool) {
-    // MULTIPROCESSOR: not configured.
+    #[cfg(feature = "multiprocessor")]
+    {
+        kassert!(!ptr::eq(_pm, pmap_kernel()));
+
+        let (mask, targets) = pmap_tlb_shoot_targets(_pm, false);
+
+        if targets != 0 {
+            let s = splvm();
+
+            pmap_start_tlb_shoot(targets, "pmap_tlb_shoottlb");
+            pmap_tlb_shoot_send(&mask, LAPIC_IPI_INVLTLB);
+            splx(s);
+        }
+    }
+
     if shootself {
         if !PMAP_USE_PCID.load(Ordering::Relaxed) {
             tlbflush();
@@ -936,6 +1155,7 @@ pub fn pmap_tlb_shoottlb(_pm: &Pmap, shootself: bool) {
 }
 
 /// `pmap_tlb_shootwait`: nothing without `MULTIPROCESSOR`.
+#[cfg(not(feature = "multiprocessor"))]
 pub fn pmap_tlb_shootwait() {}
 
 // main pv_entry manipulation functions:

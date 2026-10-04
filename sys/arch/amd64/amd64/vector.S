@@ -655,6 +655,129 @@ Xsoftclock:
 	.size	Xsoftclock, . - Xsoftclock
 
 /*
+ * MULTIPROCESSOR: the local APIC IPI vector and the "fast" TLB shootdown IPIs,
+ * assembled only when vector.rs sets {MULTIPROCESSOR} (feature multiprocessor;
+ * without it the shootdown placeholders are 0). The EOI is the MMIO write
+ * (ioapic_asm_ack(); the x2APIC CODEPATCH is not ported), and only the
+ * no-PCID versions exist: pmap_use_pcid is never set (pmap.rs).
+ */
+.if	{MULTIPROCESSOR}
+	.globl	Xrecurse_lapic_ipi
+	.type	Xrecurse_lapic_ipi,@function
+	.p2align 4, 0x90
+Xrecurse_lapic_ipi:
+	INTR_RECURSE
+	jmp	1f
+	.size	Xrecurse_lapic_ipi, . - Xrecurse_lapic_ipi
+	.globl	Xintr_lapic_ipi
+	.type	Xintr_lapic_ipi,@function
+	.p2align 4, 0x90
+Xintr_lapic_ipi:
+	INTRENTRY	intr_lapic_ipi
+	movl	$0,local_apic+{LAPIC_EOI}(%rip)
+	movl	%gs:{CI_ILEVEL},%ebx
+	cmpl	${IPL_IPI},%ebx
+	jae	2f
+	.size	Xintr_lapic_ipi, . - Xintr_lapic_ipi
+	.globl	Xresume_lapic_ipi
+	.type	Xresume_lapic_ipi,@function
+Xresume_lapic_ipi:
+	endbr64
+1:
+	incl	%gs:{CI_IDEPTH}
+	movl	${IPL_IPI},%gs:{CI_ILEVEL}
+	sti
+	cld
+	/* SMAP_CLAC: with CPU identification (M4-b). */
+	movq	%rbx,{IF_PPL}(%rsp)
+	call	x86_ipi_handler
+	movq	$0,-8(%rsp)
+	jmp	Xdoreti
+2:
+	movq	$(1 << {LIR_IPI}),%rax
+	orq	%rax,%gs:{CI_IPENDING}
+	jmp	intr_fast_exit		/* INTRFASTEXIT */
+	.size	Xresume_lapic_ipi, . - Xresume_lapic_ipi
+
+/*
+ * "Fast" IPI handlers.  These are the IPIs which are handled without
+ * unblocking interrupts, so no need for 'recurse' or 'resume' entry points
+ */
+/* invalidate the entire TLB, no PCIDs version */
+IDTVEC	ipi_invltlb
+	pushq	%rax
+
+	movl	$0,local_apic+{LAPIC_EOI}(%rip)	/* ioapic_asm_ack() */
+
+	movq	%cr3, %rax
+	movq	%rax, %cr3
+
+	movl	{TLB_SHOOT_CPU}(%rip), %eax
+	lock
+	decl	{TLB_SHOOT_COUNTS}(,%rax,4)	# decrement outstanding shoots
+	jnz	9f
+	xorl	%eax, %eax
+	movl	%eax, {TLB_SHOOT_LOCK}(%rip)	# release lock for next shooter
+9:
+
+	popq	%rax
+	iretq
+	.size	Xipi_invltlb, . - Xipi_invltlb
+
+/* NVMM > 0: Xipi_invept, not configured. */
+
+/* invalidate a single page, no PCIDs version */
+IDTVEC	ipi_invlpg
+	pushq	%rax
+
+	movl	$0,local_apic+{LAPIC_EOI}(%rip)	/* ioapic_asm_ack() */
+
+	movq	{TLB_SHOOT_ADDR1}(%rip), %rax
+	invlpg	(%rax)
+
+	movl	{TLB_SHOOT_CPU}(%rip), %eax
+	lock
+	decl	{TLB_SHOOT_COUNTS}(,%rax,4)	# decrement outstanding shoots
+	jnz	9f
+	xorl	%eax, %eax
+	movl	%eax, {TLB_SHOOT_LOCK}(%rip)	# release lock for next shooter
+9:
+
+	popq	%rax
+	iretq
+	.size	Xipi_invlpg, . - Xipi_invlpg
+
+/* invalidate a range of pages, no PCIDs version */
+IDTVEC	ipi_invlrange
+	pushq	%rax
+	pushq	%rdx
+
+	movl	$0,local_apic+{LAPIC_EOI}(%rip)	/* ioapic_asm_ack() */
+
+	movq	{TLB_SHOOT_ADDR1}(%rip), %rax
+	movq	{TLB_SHOOT_ADDR2}(%rip), %rdx
+1:	invlpg	(%rax)
+	addq	${PAGE_SIZE}, %rax
+	cmpq	%rdx, %rax
+	jb	1b
+
+	movl	{TLB_SHOOT_CPU}(%rip), %eax
+	lock
+	decl	{TLB_SHOOT_COUNTS}(,%rax,4)	# decrement outstanding shoots
+	jnz	9f
+	xorl	%eax, %eax
+	movl	%eax, {TLB_SHOOT_LOCK}(%rip)	# release lock for next shooter
+9:
+
+	popq	%rdx
+	popq	%rax
+	iretq
+	.size	Xipi_invlrange, . - Xipi_invlrange
+
+/* The _pcid versions (Xipi_invltlb_pcid, ...): PCID is not enabled. */
+.endif	/* MULTIPROCESSOR */
+
+/*
  * Local APIC timer interrupt. The handler takes the frame by pointer (%rsi),
  * where the C passes `struct intrframe' by value; the EOI is the MMIO write
  * (the x2APIC CODEPATCH is not ported).

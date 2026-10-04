@@ -17,9 +17,15 @@ pub mod db_interface;
 pub mod db_trace;
 pub mod disksubr;
 pub mod fpu;
+#[cfg(feature = "multiprocessor")]
+pub mod gdt;
 pub mod i8259;
 pub mod identcpu;
 pub mod intr;
+#[cfg(feature = "multiprocessor")]
+pub mod ipi;
+#[cfg(feature = "multiprocessor")]
+pub mod ipifuncs;
 pub mod lapic;
 pub mod locore;
 pub mod machdep;

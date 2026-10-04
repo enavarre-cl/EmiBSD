@@ -96,6 +96,27 @@ pub unsafe fn intr_restore(ef: u64) {
     unsafe { write_rflags(ef) };
 }
 
+/// `lcr0`: loads `CR0`.
+///
+/// # Safety
+///
+/// `val` must keep protected mode and paging on (`CR0_PE`, `CR0_PG`): the kernel runs in long
+/// mode.
+#[inline]
+pub unsafe fn lcr0(val: u64) {
+    // SAFETY: the caller's guarantee.
+    unsafe { asm!("mov cr0, {}", in(reg) val, options(nostack, preserves_flags)) };
+}
+
+/// `rcr0`: reads `CR0`.
+#[inline]
+pub fn rcr0() -> u64 {
+    let val: u64;
+    // SAFETY: reading CR0 has no side effects.
+    unsafe { asm!("mov {}, cr0", out(reg) val, options(nomem, nostack, preserves_flags)) };
+    val
+}
+
 /// `rcr3`: reads `CR3`, the physical address of the current PML4 (with the PCID bits).
 #[inline]
 pub fn rcr3() -> u64 {
@@ -225,10 +246,15 @@ pub fn rdtsc_lfence() -> u64 {
 }
 
 /// `wbinvd_on_all_cpus`: there is one CPU (no `MULTIPROCESSOR`).
+#[cfg(not(feature = "multiprocessor"))]
 pub fn wbinvd_on_all_cpus() -> i32 {
     wbinvd();
     0
 }
+
+/// `wbinvd_on_all_cpus`: with `MULTIPROCESSOR`, `cpu.c`'s (an IPI to the other CPUs).
+#[cfg(feature = "multiprocessor")]
+pub use crate::arch::amd64::amd64::cpu::wbinvd_on_all_cpus;
 
 /// `rcr2`: reads `CR2`, the faulting address of the last page fault.
 #[inline]

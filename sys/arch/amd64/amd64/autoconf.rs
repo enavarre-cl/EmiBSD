@@ -73,7 +73,7 @@ use crate::arch::amd64::amd64::lapic::{
     lapic_boot_init, lapic_calibrate_timer, lapic_enable, lapic_set_lvt,
 };
 use crate::arch::amd64::amd64::machdep::x86_64_proc0_tss_ldt_init;
-use crate::arch::amd64::include::cpu::cpu_info_primary;
+use crate::arch::amd64::include::cpu::{CPUF_BSP, cpu_info_primary};
 use crate::arch::amd64::include::cpufunc::{intr_enable, lcr8};
 use crate::arch::amd64::include::i82489reg::LAPIC_BASE;
 use crate::kern::subr_autoconf::config_rootfound;
@@ -195,12 +195,15 @@ pub fn cpu_configure() {
 
     // mainbus attached cpu0 as CPU_ROLE_SP (cpu_intr_init); what the boot processor's
     // attach would add (lapic_enable, lapic_calibrate_timer) and the LVT the C programs for
-    // the IOAPIC below, before the interrupts are let through.
+    // the IOAPIC below, before the interrupts are let through. A boot processor attached as
+    // CPU_ROLE_BP (MULTIPROCESSOR) has done the first two in cpu_attach already.
     lapic_enable();
     lapic_set_lvt();
     // SAFETY: the IDT, the PIC, the LAPIC and the masks are set up.
     unsafe { intr_enable() };
-    lapic_calibrate_timer(cpu_info_primary());
+    if cpu_info_primary().ci_flags.load(Ordering::Relaxed) & CPUF_BSP == 0 {
+        lapic_calibrate_timer(cpu_info_primary());
+    }
 
     intr_printconfig();
 

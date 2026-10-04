@@ -81,7 +81,8 @@
 //! `intr_enable`. `cpu_reset`,
 //! `dumpsys`, the bootinfo parsing and the sysctl tree arrive with M4-b to M6; `kern_sig.c`
 //! brought `sendsig`, `sys_sigreturn`, `copyoutfpu`, `initialize_thread_xstate` and
-//! `signotify`.
+//! `signotify`. M11a adds the `MULTIPROCESSOR` parts: `cpu_kick`, `cpu_unidle`'s IPI,
+//! `need_resched`'s kick, `signotify`'s `cpu_kick` and `boot`'s `X86_IPI_HALT` broadcast.
 //!
 //! ## Deviations
 //! - Limine has set up long mode, paging and the direct map before `init_x86_64` runs, so the
@@ -106,6 +107,11 @@
 //! - `cninit()` is replaced by `consinit()` (`consinit.rs`): no `constab[]` yet.
 //! - `delay_func` is a `StaticCell<fn(i32)>` written by `delay_init`/`delay_fini` during
 //!   autoconfiguration; `delay` is the C's `DELAY(x)`/`delay(x)` macro over it.
+//! - `init_x86_64` keeps the bootloader's processors (`BootInfo::mp`) in `cpu.rs`'s
+//!   `BOOT_MP` (`MULTIPROCESSOR`), where the C's `acpimadt`/`mpbios` read the firmware's
+//!   tables during autoconfiguration (`mainbus_attach`).
+//! - `cpu_kick`/`cpu_unidle` always send `X86_IPI_NOP`: `cpu_init_mwait` is not ported, so
+//!   `cpu_mwait_size` is 0 and no CPU idles in `mwait`.
 //! - `init_x86_64` does `locore0.S`'s CPUID probe (`cpuid_level`, `cpu_vendor`, `cpu_id`,
 //!   `cpu_ebxfeature`, `cpu_ecxfeature`, `cpu_feature` with `CPUID_NXE`) before
 //!   `cpu_set_vendor`: there is no `locore0.S`. The meltdown and SEV probes are not there.
@@ -279,6 +285,14 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
     let ci = cpu_info_primary();
     // SAFETY: the boot CPU, once, before anything reads curcpu().
     unsafe { cpu_init_msrs(ci) };
+
+    // MULTIPROCESSOR: the processors the bootloader found, for mainbus_attach (the C's
+    // acpimadt/mpbios read the firmware tables) and mp_cpu_start.
+    // SAFETY: the boot CPU, once, before anything reads it.
+    #[cfg(feature = "multiprocessor")]
+    unsafe {
+        crate::arch::amd64::amd64::cpu::BOOT_MP.write(boot.mp)
+    };
 
     // locore0.S: cpuid(0) gives cpuid_level and the vendor string, cpuid(1) the signature
     // and the feature words; the NX bit of cpuid(0x80000001) is or'ed into cpu_feature
@@ -910,13 +924,28 @@ pub fn sys_sigreturn(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Resu
     Err(Errno::EJUSTRETURN)
 }
 
-// cpu_kick: MULTIPROCESSOR.
+/// `cpu_kick`: force a CPU into the kernel, whether or not it's idle (`MULTIPROCESSOR`;
+/// nothing on one CPU).
+pub fn cpu_kick(_ci: &CpuInfo) {
+    #[cfg(feature = "multiprocessor")]
+    // only need to kick other CPUs
+    if !ptr::eq(_ci, curcpu()) {
+        // cpu_mwait_size > 0 (MWAIT_IN_IDLE / MWAIT_KEEP_IDLING): cpu_init_mwait is not
+        // ported, so there is no mwait and an IPI is needed.
+        crate::arch::amd64::amd64::ipi::x86_send_ipi(
+            _ci,
+            crate::arch::amd64::include::intrdefs::X86_IPI_NOP,
+        );
+    }
+}
 
 /// `signotify`: notify the current process (p) that it has a signal pending, process as
 /// soon as possible.
 pub fn signotify(p: &Proc) {
     aston(p);
-    // cpu_kick(p->p_cpu): MULTIPROCESSOR (a no-op on one CPU).
+    if let Some(ci) = p.cpu() {
+        cpu_kick(ci);
+    }
 }
 
 /// `boot(9)`: halts or reboots according to `howto`.
@@ -960,7 +989,10 @@ pub fn boot(howto: i32) -> ! {
         // haltsys:
         let _ = unported!("config_suspend_all (DVACT_POWERDOWN)");
 
-        // MULTIPROCESSOR: x86_broadcast_ipi(X86_IPI_HALT): not configured.
+        #[cfg(feature = "multiprocessor")]
+        crate::arch::amd64::amd64::ipi::x86_broadcast_ipi(
+            crate::arch::amd64::include::intrdefs::X86_IPI_HALT,
+        );
 
         if howto & RB_HALT != 0 {
             // NACPI > 0 && !SMALL_KERNEL: delay(500000) and acpi_powerdown() (M4+).
@@ -1047,15 +1079,16 @@ pub fn cpu_startclock() {
     (unsafe { STARTCLOCK_FUNC.read() })();
 }
 
-/// `need_resched`: asks `ci` to reschedule.
+/// `need_resched`: asks `ci` to reschedule; another CPU is kicked into the kernel.
 pub fn need_resched(ci: &CpuInfo) {
-    ci.ci_want_resched.set(1);
+    ci.ci_want_resched.store(1, Ordering::SeqCst);
 
     // There's a risk we'll be called before the idle threads start
-    // SAFETY: `ci_curproc` names a thread on the CPU, hence alive.
+    // SAFETY: `ci_curproc` names a thread on the CPU, hence alive (the caller holds the
+    // scheduler lock, which keeps it from exiting).
     if let Some(p) = unsafe { ci.ci_curproc.get().as_ref() } {
         aston(p);
-        // cpu_kick(ci): MULTIPROCESSOR.
+        cpu_kick(ci);
     }
 }
 
@@ -1066,12 +1099,21 @@ pub fn aston(p: &Proc) {
 
 /// `clear_resched(ci)`.
 pub fn clear_resched(ci: &CpuInfo) {
-    ci.ci_want_resched.set(0);
+    ci.ci_want_resched.store(0, Ordering::SeqCst);
 }
 
-/// `cpu_unidle(ci)`: with `MULTIPROCESSOR` an IPI (or clearing `MWAIT_KEEP_IDLING`); on one
-/// CPU the idle loop sees the run queue itself.
-pub fn cpu_unidle(_ci: &CpuInfo) {}
+/// `cpu_unidle(ci)`: with `MULTIPROCESSOR` an IPI to wake another CPU's idle loop (no
+/// `mwait`: `cpu_init_mwait` is not ported, so `MWAIT_ONLY` is never set); on one CPU the
+/// idle loop sees the run queue itself.
+pub fn cpu_unidle(_ci: &CpuInfo) {
+    #[cfg(feature = "multiprocessor")]
+    if !ptr::eq(_ci, curcpu()) {
+        crate::arch::amd64::amd64::ipi::x86_send_ipi(
+            _ci,
+            crate::arch::amd64::include::intrdefs::X86_IPI_NOP,
+        );
+    }
+}
 
 /// `cpu_idle_cycle_hlt`: `sti; hlt`, what `cpu_idle_cycle_fcn` points at by default.
 pub fn cpu_idle_cycle_hlt() {

@@ -74,7 +74,10 @@
 //! `child_return`, and `kpageflttrap`'s `pcb_onfault` handling. `upageflttrap`, `usertrap`,
 //! `frame_dump`, `verify_pkru` and the `#VC` handler come with user mode (M6-b);
 //! `verify_smap` with CPU identification (M4-b); `debug_trap` is the `DEBUG` option's
-//! `trapdebug` print.
+//! `trapdebug` print. M11a: `child_return`'s `KERNEL_UNLOCK()` (the lock
+//! `proc_trampoline_mi` takes for a new thread with `MULTIPROCESSOR`) and `ast`'s
+//! `ci_want_resched`, an atomic other CPUs set; the system call's kernel lock is
+//! `mi_syscall`'s.
 //!
 //! ## Deviations
 //! - `kpageflttrap`: `p->p_vmspace` does not exist before M6-b, so a fault outside the
@@ -84,6 +87,10 @@
 //! - `syscall` skips `verify_smap` (M4-b) and `verify_pkru` (PKU, M6-b).
 //! - `usertrap` reports `fputrap` (the FPU, `fpu.c`) and posts `SIGFPE` with code 0 for the
 //!   x87/SSE exceptions; the other user traps go to `kern_sig.c`'s `trapsignal` as in C.
+//! - `MULTIPROCESSOR` (M11a): `kpageflttrap` and `upageflttrap` hold the kernel lock over
+//!   `uvm_fault` and `uvm_grow`, which the C runs unlocked: uvm, the page allocator
+//!   (`uvm_lock_fpageq` is still a no-op) and the pools are not audited for MP yet (M11a
+//!   phase 2, M11e). Without `MULTIPROCESSOR` the lock is nothing.
 //! - `fault` writes `curcpu()->ci_panicbuf` as the C does; `panic()` itself still uses
 //!   `subr_prf`'s buffer (`kern/subr_prf.rs`, deviations).
 
@@ -122,7 +129,7 @@ use crate::sys::siginfo::{
 use crate::sys::signal::{SIGBUS, SIGFPE, SIGILL, SIGKILL, SIGSEGV, SIGTRAP};
 use crate::sys::syscall::SYS_MAXSYSCALL;
 use crate::sys::syscall_mi::{mi_ast, mi_child_return, mi_syscall, mi_syscall_return};
-use crate::sys::systm::SysArgs;
+use crate::sys::systm::{SysArgs, kernel_lock, kernel_unlock};
 use crate::sys::types::Register;
 use crate::uvm::uvm_extern::VmProt;
 use crate::uvm::uvm_fault::uvm_fault;
@@ -238,11 +245,14 @@ pub fn kpageflttrap(frame: &mut Trapframe, cr2: u64) -> bool {
         };
         let onfault = pcb.pcb_onfault.get();
         pcb.pcb_onfault.set(0);
+        // M11a: the kernel lock around the fault (see the module's deviations).
+        kernel_lock();
         let error = uvm_fault(map, va, 0, access_type);
         pcb.pcb_onfault.set(onfault);
         if error.is_ok() && !kernel_map {
             uvm_grow(p, va);
         }
+        kernel_unlock();
         error.err()
     } else {
         Some(Errno::EFAULT)
@@ -303,7 +313,7 @@ pub extern "C" fn ast(frame: &mut Trapframe) {
     p.p_md.md_regs.set(frame);
     refreshcreds(p);
     UVMEXP.softs.fetch_add(1, Ordering::Relaxed);
-    mi_ast(p, curcpu().ci_want_resched.get() != 0);
+    mi_ast(p, curcpu().ci_want_resched.load(Ordering::Relaxed) != 0);
     userret(p);
 }
 
@@ -367,7 +377,8 @@ pub fn child_return(arg: *mut c_void) {
         (*tf).tf_rflags &= !(PSL_C as i64);
     }
 
-    // KERNEL_UNLOCK(): nothing without MULTIPROCESSOR.
+    // The kernel lock proc_trampoline_mi took for the new thread (MULTIPROCESSOR).
+    kernel_unlock();
 
     mi_child_return(p);
 }
@@ -402,6 +413,8 @@ pub fn upageflttrap(frame: &mut Trapframe, cr2: u64) -> bool {
     // We used to set PROT_EXEC when CPU NX bit was not set, but the pmap now treats them
     // as read-only and PROT_EXEC access, so try both.
     let map = &p.vmspace().vm_map;
+    // M11a: the kernel lock around the fault (see the module's deviations).
+    kernel_lock();
     let mut result = uvm_fault(map, va, 0, access_type);
     if crate::arch::amd64::amd64::pmap::PG_NX_BIT.load(core::sync::atomic::Ordering::Relaxed) == 0
         && result == Err(Errno::EACCES)
@@ -409,11 +422,12 @@ pub fn upageflttrap(frame: &mut Trapframe, cr2: u64) -> bool {
     {
         result = uvm_fault(map, va, 0, PROT_EXEC);
     }
+    if result.is_ok() {
+        uvm_grow(p, va);
+    }
+    kernel_unlock();
     let error = match result {
-        Ok(()) => {
-            uvm_grow(p, va);
-            return true;
-        }
+        Ok(()) => return true,
         Err(e) => e,
     };
 

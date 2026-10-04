@@ -37,8 +37,9 @@
 //!
 //! Status: `wip`. Milestone M4 ports the registers and bits `lapic.c`'s boot path uses
 //! (ID, version, TPR, EOI, SVR, the LVT entries, the timer registers, the delivery modes and
-//! `LAPIC_BASE`); the ICR fields, `ESR`, `LDR`/`DFR`, the ISR/TMR/IRR arrays and the x2APIC
-//! MSR map come with the IPIs and the timer (M5).
+//! `LAPIC_BASE`); M11a the interrupt command registers (`LAPIC_ICRLO`, `LAPIC_ICRHI`) the
+//! IPIs send through. `ESR`, `LDR`/`DFR`, the ISR/TMR/IRR arrays and the rest of the x2APIC
+//! MSR map come with their users.
 
 /// `LAPIC_ID`: ID. RW.
 pub const LAPIC_ID: i32 = 0x020;
@@ -85,6 +86,8 @@ pub const LAPIC_SVR_FDIS: u32 = 0x0000_0200;
 /// `LAPIC_LVT_CMCI`: Corrected machine chk LVT.
 pub const LAPIC_LVT_CMCI: i32 = 0x2f0;
 
+/// `LAPIC_ICRLO`: interrupt command, low half (RW).
+pub const LAPIC_ICRLO: i32 = 0x300;
 /// `LAPIC_DLMODE_MASK`: the delivery mode of an ICR or LVT entry.
 pub const LAPIC_DLMODE_MASK: u32 = 0x0000_0700;
 /// `LAPIC_DLMODE_FIXED`.
@@ -121,6 +124,9 @@ pub const LAPIC_DEST_SELF: u32 = 0x0004_0000;
 pub const LAPIC_DEST_ALLINCL: u32 = 0x0008_0000;
 /// `LAPIC_DEST_ALLEXCL`.
 pub const LAPIC_DEST_ALLEXCL: u32 = 0x000c_0000;
+
+/// `LAPIC_ICRHI`: interrupt command, high half (RW): the destination.
+pub const LAPIC_ICRHI: i32 = 0x310;
 
 /// `LAPIC_LVTT`: Loc.vec.(timer) RW.
 pub const LAPIC_LVTT: i32 = 0x320;
@@ -217,6 +223,14 @@ mod tests {
             ("LAPIC_DCR_TIMER", i64::from(LAPIC_DCR_TIMER)),
             ("LAPIC_BASE", LAPIC_BASE as i64),
             ("MSR_X2APIC_BASE", i64::from(MSR_X2APIC_BASE)),
+            ("LAPIC_ICRLO", i64::from(LAPIC_ICRLO)),
+            ("LAPIC_ICRHI", i64::from(LAPIC_ICRHI)),
+            ("LAPIC_DLSTAT_BUSY", i64::from(LAPIC_DLSTAT_BUSY)),
+            ("LAPIC_DEST_MASK", i64::from(LAPIC_DEST_MASK)),
+            ("LAPIC_DEST_ALLEXCL", i64::from(LAPIC_DEST_ALLEXCL)),
+            ("LAPIC_DLMODE_INIT", i64::from(LAPIC_DLMODE_INIT)),
+            ("LAPIC_LVL_ASSERT", i64::from(LAPIC_LVL_ASSERT)),
+            ("LAPIC_LVL_TRIG", i64::from(LAPIC_LVL_TRIG)),
         ];
         let defs = crate::reftest::defines("sys/arch/amd64/include/i82489reg.h");
         for (name, value) in want {

@@ -46,13 +46,18 @@
 //! `intr_allocate_slot`, `intr_shared_edge`, `intr_establish`, `intr_disestablish`,
 //! `intr_handler`, the fake soft handlers, `cpu_intr_init`, `intr_printconfig`,
 //! `intr_barrier`, `intr_set_wakeup`, `splraise`, `spllower`, `softintr` and `dosoftint`.
-//! The LAPIC sources of `cpu_intr_init` (`LIR_TIMER`, `LIR_IPI`, xen, hyperv), the
-//! `SUSPEND` wakeup masking and the `MULTIPROCESSOR` paths come with their subsystems.
+//! M5 adds the LAPIC timer source of `cpu_intr_init` (`LIR_TIMER`); M11a the
+//! `MULTIPROCESSOR` paths: the kernel lock in `intr_handler` and the `LIR_IPI` source
+//! (`fake_ipi_intrhand`). Xen, Hyper-V, `SIR_XCALL` and the `SUSPEND` wakeup masking come with
+//! their subsystems.
 //!
 //! ## Deviations
-//! - Only the primary CPU exists: `CPU_INFO_FOREACH` walks `ci_next` from
-//!   `cpu_info_primary`, which is null.
-//! - `sched_barrier` (`intr_barrier`) is reported until M5.
+//! - `CPU_INFO_FOREACH` walks `ci_next` from `cpu_info_primary`; without `MULTIPROCESSOR`
+//!   the primary is the only CPU.
+//! - `MULTIPROCESSOR`: `intr_handler` takes the kernel lock for every handler at or below
+//!   `IPL_MPFLOOR` even when it is `IPL_MPSAFE` (the M11a decision: until M11e audits each
+//!   driver, an `IPL_MPSAFE` flag is not trusted below the floor); above the floor the C's
+//!   rule holds (the lock unless `IPL_MPSAFE`). Device interrupts all go to the boot CPU.
 //! - `intr_printconfig` is the `INTRDEBUG` body behind feature `debug`.
 
 use core::cell::Cell;
@@ -65,6 +70,8 @@ use crate::arch::amd64::amd64::i8259::{I8259_PIC, i8259_default_setup, i8259_stu
 use crate::arch::amd64::amd64::lapic::LOCAL_PIC;
 use crate::arch::amd64::amd64::machdep::{IDT, IDT_ALLOCMAP, idt_vec_alloc, idt_vec_free, setgate};
 use crate::arch::amd64::amd64::spl::Xspllower;
+#[cfg(feature = "multiprocessor")]
+use crate::arch::amd64::amd64::vector::{Xrecurse_lapic_ipi, Xresume_lapic_ipi};
 use crate::arch::amd64::amd64::vector::{
     Xrecurse_lapic_ltimer, Xresume_lapic_ltimer, Xsoftclock, Xsoftnet, Xsofttty,
 };
@@ -78,11 +85,16 @@ use crate::arch::amd64::include::intrdefs::{
     IPL_SOFTTTY, IPL_TTY, IPL_WAKEUP, IST_EDGE, IST_LEVEL, IST_NONE, IST_PULSE, LIR_TIMER,
     MAX_INTR_SOURCES, NIPL, NUM_LEGACY_IRQS, SIR_CLOCK, SIR_NET, SIR_TTY,
 };
+#[cfg(feature = "multiprocessor")]
+use crate::arch::amd64::include::intrdefs::{IPL_IPI, IPL_MPFLOOR, LIR_IPI};
 use crate::arch::amd64::include::pic::{PIC_SOFT, Pic};
 use crate::arch::amd64::include::pio::inb;
 use crate::arch::amd64::include::segments::{GCODE_SEL, SDT_SYS386IGT, SEL_KPL, gsel};
 use crate::kassert;
+#[cfg(feature = "multiprocessor")]
+use crate::kern::kern_lock::{__mp_lock, __mp_unlock, KERNEL_LOCK};
 use crate::kern::kern_malloc::{free, malloc};
+use crate::kern::kern_sched::sched_barrier;
 use crate::kern::kern_softintr::softintr_dispatch;
 use crate::kern::subr_evcount::{evcount_attach, evcount_detach};
 use crate::kern::subr_prf::{log, panic, printf, snprintf};
@@ -90,7 +102,6 @@ use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_DEVBUF, M_NOWAIT, M_WAITOK, M_ZERO};
 use crate::sys::softintr::NSOFTINTR;
 use crate::sys::syslog::LOG_CRIT;
-use crate::unported;
 
 /// `softintr_pic`.
 pub static SOFTINTR_PIC: Pic = Pic {
@@ -700,7 +711,14 @@ pub unsafe extern "C" fn intr_handler(frame: *mut Intrframe, ih: *const Intrhand
         return 0;
     }
 
-    // MULTIPROCESSOR: the kernel lock unless IPL_MPSAFE.
+    // MULTIPROCESSOR: the kernel lock unless IPL_MPSAFE; in M11a every handler at or below
+    // IPL_MPFLOOR takes it, IPL_MPSAFE or not (see the module's deviations).
+    #[cfg(feature = "multiprocessor")]
+    let need_lock = ih.ih_flags.get() & IPL_MPSAFE == 0 || ih.ih_level.get() <= IPL_MPFLOOR;
+    #[cfg(feature = "multiprocessor")]
+    if need_lock {
+        __mp_lock(&KERNEL_LOCK);
+    }
 
     let floor = ci.ci_handled_intr_level.get();
     ci.ci_handled_intr_level.set(ih.ih_level.get());
@@ -710,6 +728,10 @@ pub unsafe extern "C" fn intr_handler(frame: *mut Intrframe, ih: *const Intrhand
         None => 0,
     };
     ci.ci_handled_intr_level.set(floor);
+    #[cfg(feature = "multiprocessor")]
+    if need_lock {
+        __mp_unlock(&KERNEL_LOCK);
+    }
 
     rc
 }
@@ -723,7 +745,9 @@ static FAKE_SOFTNET_INTRHAND: Intrhand = Intrhand::new();
 static FAKE_SOFTTTY_INTRHAND: Intrhand = Intrhand::new();
 /// `fake_timer_intrhand`.
 static FAKE_TIMER_INTRHAND: Intrhand = Intrhand::new();
-// fake_ipi_intrhand: MULTIPROCESSOR.
+/// `fake_ipi_intrhand` (`MULTIPROCESSOR`).
+#[cfg(feature = "multiprocessor")]
+static FAKE_IPI_INTRHAND: Intrhand = Intrhand::new();
 
 /// A fixed source for `cpu_intr_init`: `recurse` and `resume` entries, the fake handler at
 /// `level`, on `pic`.
@@ -782,7 +806,18 @@ pub fn cpu_intr_init(ci: &CpuInfo) {
         IPL_CLOCK,
         &LOCAL_PIC,
     ));
-    // MULTIPROCESSOR: LIR_IPI, SIR_XCALL. NXEN, NHYPERV: not configured.
+    #[cfg(feature = "multiprocessor")]
+    {
+        ci.ci_isources[LIR_IPI as usize].set(fixed_source(
+            Xrecurse_lapic_ipi as *const () as usize,
+            Xresume_lapic_ipi as *const () as usize,
+            &FAKE_IPI_INTRHAND,
+            IPL_IPI,
+            &LOCAL_PIC,
+        ));
+        // NXCALL > 0: the SIR_XCALL source (Xxcallintr): kern_xcall.c is not ported.
+    }
+    // NXEN, NHYPERV: not configured.
 
     intr_calculatemasks(ci);
 }
@@ -832,9 +867,11 @@ pub fn intr_printconfig() {
 }
 
 /// `intr_barrier`: waits until no CPU runs the handler.
-pub fn intr_barrier(_cookie: NonNull<Intrhand>) {
-    // sched_barrier(ih->ih_cpu): M5.
-    let _ = unported!("sched_barrier (intr_barrier, M5)");
+pub fn intr_barrier(cookie: NonNull<Intrhand>) {
+    // SAFETY: an established handler.
+    let ih = unsafe { cookie.as_ref() };
+    // SAFETY: `ih_cpu` is null or the static cpu_info `intr_establish` recorded.
+    sched_barrier(unsafe { ih.ih_cpu.get().as_ref() });
 }
 
 /// `intr_set_wakeup`: marks the handler as one that may fire while suspended.
