@@ -1074,3 +1074,86 @@ fn full_flush_stream_decodes_whole() {
     assert_decodes(testdata!("fullflush.z"), 15, CORPUS);
     assert_decodes(testdata!("syncflush.z"), 15, SMALL_CORPUS);
 }
+
+/// Compress `data` with this crate's deflate (`level`, `windowBits`, `strategy`), flushing
+/// with `flush` after every `chunk` bytes and finishing with `Z_FINISH`.
+fn deflate_with(
+    data: &[u8],
+    level: i32,
+    wbits: i32,
+    strategy: i32,
+    chunk: usize,
+    flush: i32,
+) -> Vec<u8> {
+    use crate::deflate::{deflate, deflateEnd};
+    use crate::zlib::{Z_DEFLATED, deflateInit2};
+    let mut out = vec![0u8; data.len() + data.len() / 2 + 1024];
+    let mut strm = ZStream::new();
+    assert_eq!(
+        deflateInit2(&mut strm, level, Z_DEFLATED, wbits, 8, strategy),
+        Z_OK
+    );
+    strm.next_out = &mut out;
+    let pieces: Vec<&[u8]> = data.chunks(chunk).collect();
+    for (i, piece) in pieces.iter().enumerate() {
+        strm.next_in = piece;
+        let last = i + 1 == pieces.len();
+        let ret = deflate(&mut strm, if last { Z_FINISH } else { flush });
+        assert_eq!(ret, if last { Z_STREAM_END } else { Z_OK });
+        assert_eq!(strm.avail_in(), 0);
+    }
+    let n = strm.total_out as usize;
+    assert_eq!(deflateEnd(&mut strm), Z_OK);
+    out.truncate(n);
+    out
+}
+
+#[test]
+fn round_trips_with_this_crates_deflate() {
+    use crate::zlib::{
+        Z_DEFAULT_STRATEGY, Z_FILTERED, Z_FIXED, Z_FULL_FLUSH, Z_HUFFMAN_ONLY, Z_RLE,
+    };
+    for level in 0..=9 {
+        let z = deflate_with(
+            CORPUS,
+            level,
+            15,
+            Z_DEFAULT_STRATEGY,
+            usize::MAX,
+            Z_NO_FLUSH,
+        );
+        assert_decodes(&z, 15, CORPUS);
+    }
+    for strategy in [Z_FILTERED, Z_HUFFMAN_ONLY, Z_RLE, Z_FIXED] {
+        let z = deflate_with(CORPUS, 6, -15, strategy, usize::MAX, Z_NO_FLUSH);
+        assert_decodes(&z, -15, CORPUS);
+    }
+    for wbits in [9, 12, 15] {
+        let z = deflate_with(CORPUS, 9, wbits, Z_DEFAULT_STRATEGY, 5000, Z_FULL_FLUSH);
+        assert_decodes(&z, wbits, CORPUS);
+        let z = deflate_with(CORPUS, 9, -wbits, Z_DEFAULT_STRATEGY, 3000, Z_SYNC_FLUSH);
+        assert_decodes(&z, -wbits, CORPUS);
+    }
+}
+
+#[test]
+fn round_trips_the_ipcomp_way() {
+    // xform_ipcomp.c: raw deflate of a packet with Z_FINISH, raw inflate with
+    // Z_PARTIAL_FLUSH into fresh buffers
+    use crate::zlib::Z_DEFAULT_STRATEGY;
+    for packet in [&CORPUS[..1400], &CORPUS[5000..5100], CORPUS] {
+        let z = deflate_with(
+            packet,
+            -1,
+            -MAX_WBITS,
+            Z_DEFAULT_STRATEGY,
+            usize::MAX,
+            Z_NO_FLUSH,
+        );
+        for slow in BOTH {
+            let d = decode(&z, -MAX_WBITS, slow, usize::MAX, 256, Z_PARTIAL_FLUSH);
+            assert_eq!(d.ret, Z_STREAM_END);
+            assert!(d.out == packet);
+        }
+    }
+}
