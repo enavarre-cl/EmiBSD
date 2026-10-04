@@ -547,3 +547,28 @@ fn discipline_free_releases_and_unlinks() {
     assert!(sc.sc_dis_list.is_empty());
     assert!(sc.sc_targets[7].get().is_none());
 }
+
+#[test]
+fn probe_numbers_missing_chunks_by_position() {
+    // A chunk missing from the device list (NODEV) keeps its place as its chunk id, so
+    // that sr_meta_attach's sort by id leaves it where the boot assembly put it.
+    let _g = setup_real_memory();
+    let sd = volume(0);
+    assert_eq!(
+        sr_meta_probe(sd, &[NODEV, NODEV, NODEV, NODEV]),
+        SR_META_F_INVALID
+    );
+    let ids: Vec<(u32, u32)> = sd
+        .sd_vol
+        .sv_chunk_list
+        .iter()
+        .map(|c| {
+            (
+                c.src_meta.scmi().scm_chunk_id.get(),
+                c.src_meta.scm_status.get(),
+            )
+        })
+        .collect();
+    let off = BIOC_SDOFFLINE as u32;
+    assert_eq!(ids, [(0, off), (1, off), (2, off), (3, off)]);
+}

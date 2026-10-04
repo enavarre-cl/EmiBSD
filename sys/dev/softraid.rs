@@ -80,6 +80,12 @@
 //!   `hotplug_device_attach` (the C prints the newline after it, which prints nothing).
 //! - `sr_hotspare`'s and the boot probe's fake disciplines carry a full `SR_META_SIZE`
 //!   metadata area (the C's hotspare one is `sizeof(struct sr_metadata)`).
+//! - `sr_meta_probe` sets a missing chunk's (`NODEV`) `scm_chunk_id` to its position in the
+//!   device list. The C leaves it 0, so `sr_meta_attach`'s sort by chunk id moves a missing
+//!   chunk other than 0 or 1 behind chunk 0, and `sr_meta_read`, which hands out the chunk
+//!   metadata array in list order and skips one entry for the offline chunk, gives each
+//!   later chunk the next one's metadata: a RAID 5 or RAID 6 volume assembled at boot
+//!   without its last chunk read the wrong disks (and `sr_roam_chunks` saved the mix-up).
 //! - `sr_discipline_free` wipes the crypto keys member by member instead of
 //!   `explicit_bzero`ing the whole discipline (a byte view of a structure that is still
 //!   referenced would alias it).
@@ -492,7 +498,7 @@ pub fn sr_meta_probe(sd: &'static SrDiscipline, dt: &[Dev]) -> i32 {
     let mut ch_prev: Option<&'static SrChunk> = None;
     let mut prevf = SR_META_F_INVALID;
 
-    for &dev in dt {
+    for (d, &dev) in dt.iter().enumerate() {
         let Some(ch) = sr_malloc::<SrChunk>(M_WAITOK) else {
             return SR_META_F_INVALID;
         };
@@ -511,6 +517,11 @@ pub fn sr_meta_probe(sd: &'static SrDiscipline, dt: &[Dev]) -> i32 {
 
         if dev == NODEV {
             ch_entry.src_meta.scm_status.set(BIOC_SDOFFLINE as u32);
+            // Deviation: a missing chunk keeps its place as its chunk id (the boot assembly
+            // lists the chunks by id, bioctl's create numbers them in order). The C leaves
+            // it 0, so sr_meta_attach's sort moves it behind chunk 0 and sr_meta_read then
+            // gives every later chunk the next chunk's metadata.
+            ch_entry.src_meta.scmi().scm_chunk_id.set(d as u32);
             continue;
         }
         let mut devname = [0u8; 32];
