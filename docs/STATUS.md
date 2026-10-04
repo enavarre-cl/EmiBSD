@@ -1,7 +1,7 @@
 # Status
 
-Milestone: **M9+ done** (network completion, INET6 last), **M10a done** (persistent disk) and
-**M10b done** (UFS options); M10c next. Updated: 2026-10-04.
+Milestone: **M9+ done** (network completion, INET6 last); **M10a**, **M10b** and **M10c done**
+(persistent disk, UFS options, memory and removable file systems); M10f next. Updated: 2026-10-04.
 
 Done:
 - M7a/M7b/M8/M8b: uvm, mbufs, PCI, virtio, IPv4; ffs root on rd0a, init, ksh, /etc/rc, login.
@@ -16,9 +16,10 @@ Done:
   persistent virtio-blk image per VM; `smoke-disk` (two boots, `fsck -fn` clean, file back).
 - M10b: option QUOTA (`ufs_quota.c`), UFS_DIRHASH, MFS as default-on features; quota tools,
   su, mount_mfs; `smoke-ufsopts` (EDQUOT and repquota, a hashed 5,000-entry directory, mfs).
+- M10c: tmpfs, msdosfs, cd9660, udf, vnd(4), their tools; `smoke-fs` (FAT/ISO/UDF on vnd).
 
 Next:
-- M10c, f, e, d, then M11a..e (SMP; then every smoke runs MP).
+- M10f, e, d, then M11a..e (SMP; then every smoke runs MP).
 
 Blockers:
 - Under load the amd64 TSC can measure high (1.2-1.3 GHz for ~1.0), so the clock runs slow

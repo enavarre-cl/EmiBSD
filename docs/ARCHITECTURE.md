@@ -278,6 +278,10 @@ clone): one track of one cylinder spanning the image, partition `a` FFS at offse
 0, which `checkdisklabel` rejects. The result is FFS1 in `a` and the label in sector 1; the
 size is twice the contents in whole MiB (at least 2 MiB), the timestamps fixed (`-T`).
 Its tree is `root/` plus `/etc`, `/dev` and the directories below.
+M10c adds `/root/images` (`images.rs`): a FAT12 and an ISO 9660 image made by the same makefs
+(`-t msdos`, `-t cd9660 -o rockridge`) and a UDF image made by macOS's own `hdiutil makehybrid
+-udf` (OpenBSD has no UDF writer; nothing is installed), for vnd(4) to attach in `smoke-fs`.
+Disk nodes follow MAKEDEV: `UNITMULT` 64 minors per unit (`MAXPARTITIONSUNIT`).
 
 `/etc` is our own minimal set (OpenBSD's `etc/` is not in the clone), text in `ramdisk.rs`:
 `motd`, `shells`, `fstab` (`/dev/rd0a / ffs rw 1 1`, which `mount -uw /` needs), `ttys` (a

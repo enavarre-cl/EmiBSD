@@ -21,7 +21,7 @@
 
 ## Status
 
-Status: M10a (persistent disk) and M10b (UFS options) met; M10c (tmpfs, msdosfs, cd9660) next.
+Status: M10c (memory and removable file systems: tmpfs, msdosfs, cd9660, udf, vnd) met; M10f (softraid) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -38,7 +38,8 @@ Status: M10a (persistent disk) and M10b (UFS options) met; M10c (tmpfs, msdosfs,
 | M9+ | Network completion: TCP, bpf, divert, IPComp, HTTPS, tcpdump, INET6 | met |
 | M10a | Persistent disk (vioblk, SCSI midlayer) | met |
 | M10b | UFS options (quotas, dirhash, mfs) | met |
-| M10c..M10f | tmpfs/msdosfs/cd9660, ext2fs/ntfs/fuse, NFS, softraid | next |
+| M10c | Memory and removable file systems (tmpfs, msdosfs, cd9660, udf, vnd) | met |
+| M10d..M10f | ext2fs/ntfs/fuse, NFS, softraid | next |
 | M11a..M11e | SMP | next |
 | M12 | Devices and virtualisation | next |
 | M13 | Storage, firmware and console | next |
@@ -67,6 +68,9 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
 - Disk quotas: quotacheck(8), quotaon(8), edquota(8); a write as a user over its hard limit
   fails with EDQUOT and repquota(8) shows it; a hashed 5,000-entry directory; mount_mfs(8)
   (`smoke-ufsopts`).
+- tmpfs(5) on /tmp; FAT, ISO 9660 and UDF images attached with vnconfig(8) and mounted with
+  mount_msdos(8), mount_cd9660(8), mount_udf(8); newfs_msdos(8) on a vnd(4) over a tmpfs file
+  and fsck_msdos(8) passing it (`smoke-fs`).
 
 Between two VMs on a private link (`cargo xtask smoke2`):
 
@@ -148,7 +152,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 4 | 147 | 491 | 14 | 656 |
+| 4 | 148 | 531 | 14 | 697 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).
