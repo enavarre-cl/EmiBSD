@@ -317,7 +317,7 @@ smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "rw    tty00" --expect "sr sd0 rd0  int" \
         --expect "interrupt                       total     rate" --expect "/com0" \
         --expect "bytes per page" --expect "Memory statistics by bucket size" \
-        --expect "Memory resource pool statistics" --expect "/dev/rd0a        " \
+        --expect "Memory resource pool statistics" --expect "/dev/rd0a       " \
         --expect "/dev/rd0a on / type ffs (local)" --expect "diag-42" \
         --expect "kern.timecounter.hardware=tsc" --expect "kern.timecounter.choice=i8254(0) tsc(2000)"
     cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
@@ -339,7 +339,7 @@ smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "rw    tty00" --expect "sr sd0 sd1  int" \
         --expect "interrupt                       total     rate" --expect "/pluart0" \
         --expect "bytes per page" --expect "Memory statistics by bucket size" \
-        --expect "Memory resource pool statistics" --expect "/dev/rd0a        " \
+        --expect "Memory resource pool statistics" --expect "/dev/rd0a       " \
         --expect "/dev/rd0a on / type ffs (local)" --expect "diag-42" \
         --expect "kern.timecounter.hardware=agtimer" --expect "kern.timecounter.choice=agtimer(0)"
 
