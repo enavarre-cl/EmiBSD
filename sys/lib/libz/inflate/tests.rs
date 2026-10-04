@@ -1157,3 +1157,130 @@ fn round_trips_the_ipcomp_way() {
         }
     }
 }
+
+/// Compress `input` with this crate's deflate in one `Z_FINISH` call, with `memLevel`
+/// `mem_level` (an empty input too, which `deflate_with` has no piece for).
+fn deflate_all(input: &[u8], level: i32, wbits: i32, mem_level: i32) -> Vec<u8> {
+    use crate::deflate::{deflate, deflateEnd};
+    use crate::zlib::{Z_DEFAULT_STRATEGY, Z_DEFLATED, Z_FINISH, deflateInit2};
+    let mut out = vec![0u8; input.len() + input.len() / 8 + 1024];
+    let mut strm = ZStream::new();
+    assert_eq!(
+        deflateInit2(
+            &mut strm,
+            level,
+            Z_DEFLATED,
+            wbits,
+            mem_level,
+            Z_DEFAULT_STRATEGY
+        ),
+        Z_OK
+    );
+    strm.next_in = input;
+    strm.next_out = &mut out;
+    assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_END);
+    let n = strm.total_out as usize;
+    assert_eq!(deflateEnd(&mut strm), Z_OK);
+    out.truncate(n);
+    out
+}
+
+#[test]
+fn round_trips_every_window_and_memory_size() {
+    for wbits in 9..=15 {
+        for mem_level in [1, 5, 9] {
+            let z = deflate_all(CORPUS, 6, wbits, mem_level);
+            assert_decodes(&z, wbits, CORPUS);
+            assert_decodes(&z, 0, CORPUS);
+            let raw = deflate_all(SMALL_CORPUS, 9, -wbits, mem_level);
+            assert_decodes(&raw, -wbits, SMALL_CORPUS);
+        }
+    }
+}
+
+#[test]
+fn round_trips_odd_inputs() {
+    let zeros = vec![0u8; 70_000];
+    let noise: Vec<u8> = (0u32..50_000)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+        .collect();
+    for input in [&[][..], &[42][..], &zeros[..], &noise[..]] {
+        for level in [0, 1, 6, 9] {
+            let z = deflate_all(input, level, 15, 8);
+            assert_decodes(&z, 15, input);
+        }
+    }
+}
+
+/// One stream written in pieces with every flush mode between them (`Z_PARTIAL_FLUSH` and
+/// `Z_BLOCK` too) decodes whole, and with one byte of input and output at a time.
+#[test]
+fn round_trips_every_flush_mode() {
+    use crate::deflate::{deflate, deflateEnd};
+    use crate::zlib::{Z_BLOCK, Z_FINISH, Z_FULL_FLUSH, deflateInit};
+    let mut out = vec![0u8; CORPUS.len() * 2];
+    let mut strm = ZStream::new();
+    assert_eq!(deflateInit(&mut strm, 6), Z_OK);
+    strm.next_out = &mut out;
+    let flushes = [
+        Z_NO_FLUSH,
+        Z_PARTIAL_FLUSH,
+        Z_SYNC_FLUSH,
+        Z_FULL_FLUSH,
+        Z_BLOCK,
+    ];
+    for (i, piece) in CORPUS.chunks(3000).enumerate() {
+        strm.next_in = piece;
+        assert_eq!(deflate(&mut strm, flushes[i % flushes.len()]), Z_OK);
+        assert_eq!(strm.avail_in(), 0);
+    }
+    assert_eq!(deflate(&mut strm, Z_FINISH), Z_STREAM_END);
+    let n = strm.total_out as usize;
+    assert_eq!(deflateEnd(&mut strm), Z_OK);
+    let z = &out[..n];
+    assert_decodes(z, 15, CORPUS);
+    for slow in BOTH {
+        let d = decode(z, 15, slow, 1, 1, Z_NO_FLUSH);
+        assert_eq!(d.ret, Z_STREAM_END);
+        assert!(d.out == CORPUS);
+    }
+}
+
+/// `xform_ipcomp.c`'s compression side: raw deflate with `Z_FINISH` into fresh 512-byte
+/// buffers whenever one is full, then raw inflate with `Z_PARTIAL_FLUSH` into 333-byte ones.
+#[test]
+fn round_trips_ipcomp_output_buffers() {
+    use crate::deflate::{deflate, deflateEnd};
+    use crate::zlib::{Z_DEFAULT_STRATEGY, Z_DEFLATED, Z_FINISH, deflateInit2};
+    for size in [1, 100, 1000, 1400, 9000] {
+        let packet = &CORPUS[..size];
+        let mut bufs: Vec<Vec<u8>> = (0..40).map(|_| vec![0u8; 512]).collect();
+        let mut used = Vec::new();
+        let mut c = ZStream::new();
+        assert_eq!(
+            deflateInit2(&mut c, 6, Z_DEFLATED, -11, 8, Z_DEFAULT_STRATEGY),
+            Z_OK
+        );
+        c.next_in = packet;
+        for buf in bufs.iter_mut() {
+            c.next_out = buf;
+            let ret = deflate(&mut c, Z_FINISH);
+            used.push(512 - c.avail_out());
+            if ret == Z_STREAM_END {
+                break;
+            }
+            assert_eq!(ret, Z_OK);
+        }
+        assert_eq!(deflateEnd(&mut c), Z_OK);
+        let z: Vec<u8> = bufs
+            .iter()
+            .zip(&used)
+            .flat_map(|(b, &n)| b[..n].iter().copied())
+            .collect();
+        for slow in BOTH {
+            let d = decode(&z, -11, slow, usize::MAX, 333, Z_PARTIAL_FLUSH);
+            assert_eq!(d.ret, Z_STREAM_END);
+            assert!(d.out == packet, "size={size} slow={slow}");
+        }
+    }
+}
