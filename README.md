@@ -21,7 +21,7 @@
 
 ## Status
 
-Status: M10f (softraid: RAID 0, 1, 5, 6, concat, RAID 1C, CRYPTO) met; M10e (NFS) next.
+Status: M10e (NFS client and server) met; M10d (ext2fs, ntfs, fuse) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -40,7 +40,8 @@ Status: M10f (softraid: RAID 0, 1, 5, 6, concat, RAID 1C, CRYPTO) met; M10e (NFS
 | M10b | UFS options (quotas, dirhash, mfs) | met |
 | M10c | Memory and removable file systems (tmpfs, msdosfs, cd9660, udf, vnd) | met |
 | M10f | softraid (RAID 0, 1, 5, 6, concat, RAID 1C, CRYPTO; bio(4), bioctl) | met |
-| M10d, M10e | ext2fs/ntfs/fuse, NFS | next |
+| M10e | NFS client and server (portmap, mountd, nfsd, mount_nfs, showmount) | met |
+| M10d | ext2fs, ntfs, fuse | next |
 | M11a..M11e | SMP | next |
 | M12 | Devices (audio, USB), in QEMU | next |
 | M13 | Storage, firmware and console | next |
@@ -86,6 +87,9 @@ Between two VMs on a private link (`cargo xtask smoke2`):
 - TCP with nc(1): directly, through `wg0` and through ESP (`smoke-tcp`).
 - tcpdump(8) on `vio1` and on `pflog0` (`smoke-tcpdump`).
 - IPv6: ping(8) as ping6 to the other VM's global and link-local addresses, ::1 on lo0 (`smoke-inet6`).
+- NFS over UDP and TCP with OpenBSD's portmap(8), mountd(8), nfsd(8), mount_nfs(8) and
+  showmount(8): one VM exports a directory, the other lists and mounts it, reads a file and
+  writes files the first one reads (`smoke-nfs`).
 
 An excerpt of the serial console, from `smoke-login` on amd64 (trimmed):
 
@@ -158,7 +162,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 4 | 148 | 543 | 14 | 709 |
+| 4 | 148 | 569 | 15 | 736 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).
@@ -171,7 +175,7 @@ Three tiers:
 1. Host unit tests (`just test`): pure logic runs on macOS through `sys/arch/host`.
 2. Reference-backed tests (`just test-ref`): constants are cross-checked against the C headers.
 3. QEMU smoke tests (`just smoke`): boot both architectures headless and assert serial lines and
-   exit codes. A full run boots 36 single VMs and 16 pairs of VMs.
+   exit codes. A full run boots 48 single VMs and 20 pairs of VMs.
 
 `just ci` runs fmt, clippy for amd64, arm64 and the host, all tests, both builds, every smoke and
 the tracker checks. Green `just ci` is the definition of done.
