@@ -420,7 +420,9 @@ pub fn main() -> ! {
     // Reduce softnet threads to number of CPU
     softnet_percpu();
 
-    // Initialize the file systems. NFSSERVER / NFSCLIENT: not configured.
+    // Initialize the file systems.
+    #[cfg(any(feature = "nfsserver", feature = "nfsclient"))]
+    crate::nfs::nfs_subs::nfs_init(); // initialize server/shared data
     vfsinit();
 
     // Start real time and statistics clocks.

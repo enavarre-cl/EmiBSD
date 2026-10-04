@@ -76,8 +76,7 @@
 //!   takes one without `MT_SONAME`.
 //! - `nfs_reply`'s, `nfs_timer`'s and `nfs_msg`'s `struct proc *` is the request's
 //!   `r_procp`, read back as `Option<&Proc>`.
-//! - Temporary (M10e merge): the `nfsrv_descript_pl` pool (`nfs_syscalls.c`) is reached
-//!   through the private `shim` module at the end of this file until nfs_syscalls.rs lands.
+//! - `nfsrv_dorec` takes its descriptors from `nfs_syscalls.rs`'s `NFSRV_DESCRIPT_PL`.
 
 use core::cell::Cell;
 use core::cmp::{max, min};
@@ -136,6 +135,8 @@ use crate::nfs::nfs_subs::{
     NFS_TICKS, NFSSTATS, NFSV3_PROCID, nfs_prog, nfsm_build, rpc_auth_unix, rpc_autherr, rpc_call,
     rpc_mismatch, rpc_msgaccepted, rpc_msgdenied, rpc_reply, rpc_vers,
 };
+#[cfg(feature = "nfsserver")]
+use crate::nfs::nfs_syscalls::NFSRV_DESCRIPT_PL;
 #[cfg(feature = "nfsclient")]
 use crate::nfs::nfsm_subs::{NfsmInfo, nfsm_adv, nfsm_dissect};
 use crate::nfs::nfsm_subs::{XdrIn, nfsd_adv, nfsd_dissect, nfsm_rndup};
@@ -2112,7 +2113,7 @@ pub fn nfsrv_dorec(slp: &NfssvcSock, nfsd: &Nfsd) -> Result<NonNull<NfsrvDescrip
     } else {
         (None, Some(m))
     };
-    let Some(item) = pool_get(&shim::NFSRV_DESCRIPT_PL, PR_WAITOK) else {
+    let Some(item) = pool_get(&NFSRV_DESCRIPT_PL, PR_WAITOK) else {
         m_freem(nam);
         m_freem(m);
         return Err(Errno::ENOBUFS);
@@ -2132,7 +2133,7 @@ pub fn nfsrv_dorec(slp: &NfssvcSock, nfsd: &Nfsd) -> Result<NonNull<NfsrvDescrip
     nd.nd_dpos = m.map_or(ptr::null_mut(), mtod::<u8>);
     if let Err(error) = nfs_getreq(nd, Some(nfsd), true) {
         m_freem(nam);
-        pool_put(&shim::NFSRV_DESCRIPT_PL, item);
+        pool_put(&NFSRV_DESCRIPT_PL, item);
         return Err(error);
     }
     nfsd.nfsd_nd.set(Some(ndp));
@@ -2163,17 +2164,6 @@ pub fn nfsrv_wakenfsd(slp: &'static NfssvcSock) {
 
     slp.ns_flag.set(slp.ns_flag.get() | SLP_DOREC);
     NFSD_HEAD_FLAG.fetch_or(NFSD_CHECKSLP, Relaxed);
-}
-
-/// TEMPORARY (M10e merge): `nfsrv_descript_pl` of `nfs_syscalls.c`, which this tree does not
-/// have yet; replaced by the real import when nfs_syscalls.rs lands.
-mod shim {
-    #[cfg(feature = "nfsserver")]
-    use crate::sys::pool::Pool;
-
-    /// TEMPORARY: `nfsrv_descript_pl` of `nfs_syscalls.c`.
-    #[cfg(feature = "nfsserver")]
-    pub(super) static NFSRV_DESCRIPT_PL: Pool = Pool::new();
 }
 
 #[cfg(test)]

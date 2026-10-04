@@ -49,7 +49,8 @@
 //! `pool_runqueue`, `pool_get_done`, `pool_wakeup`), `pool_prime`, the watermarks and
 //! limits, `pool_reclaim`/`pool_reclaim_all`, the page allocators and the lock operations.
 //! The per-CPU caches (`MULTIPROCESSOR`), the garbage collector (`pool_gc_*`, a timeout and
-//! a task), the ddb printers, `pool_chk` and `pool_walk` come with M5 to M7. `sysctl_dopool`
+//! a task), the ddb printers and `pool_chk` come with M5 to M7 (`pool_walk` came with the
+//! NFS client's ddb printers, M10e). `sysctl_dopool`
 //! and the non-`MULTIPROCESSOR` `pool_cache_*info` came with the diagnostic tools (stage 2).
 //!
 //! ## Deviations
@@ -1274,6 +1275,45 @@ pub fn pool_reclaim_all() {
 /// `pool_count`: how many pools exist.
 pub fn pool_count() -> u32 {
     POOL_COUNT.load(Ordering::Relaxed)
+}
+
+/// The printer `pool_walk` hands its `func` (`db_printf`'s type).
+pub type PoolWalkPr = fn(core::fmt::Arguments<'_>) -> usize;
+
+/// What `pool_walk` calls for every item in use: the item, `full`, the printer.
+pub type PoolWalkFn = fn(*const u8, bool, PoolWalkPr);
+
+/// `pool_walk(pp, full, pr, func)` (`DDB`): calls `func(item, full, pr)` for every item of the
+/// pool that is in use (`db_show_all_nfsreqs`, `db_show_all_nfsnodes`): the items of the full
+/// pages, then the items of the partial pages that are not on the page's free list. `pr` is
+/// the printer (`db_printf`) `func` writes with.
+pub fn pool_walk(pp: &Pool, full: bool, pr: PoolWalkPr, func: PoolWalkFn) {
+    let size = pp.pr_size.get() as usize;
+    for ph in pp.pr_fullpages.iter() {
+        let mut cp = ph.ph_colored.get().cast_const();
+        for _ in 0..ph.ph_nmissing.get() {
+            func(cp, full, pr);
+            cp = cp.wrapping_add(size);
+        }
+    }
+
+    for ph in pp.pr_partpages.iter() {
+        let mut cp = ph.ph_colored.get().cast_const();
+        let mut n = ph.ph_nmissing.get();
+
+        while n > 0 {
+            let free = ph
+                .ph_items
+                .iter()
+                .any(|pi| ptr::eq(cp, ptr::from_ref(pi).cast()));
+            if !free {
+                func(cp, full, pr);
+                n -= 1;
+            }
+
+            cp = cp.wrapping_add(size);
+        }
+    }
 }
 
 /// `sysctl_dopool`: the `kern.pool` sysctls. `kern.pool.npools` is the number of pools;

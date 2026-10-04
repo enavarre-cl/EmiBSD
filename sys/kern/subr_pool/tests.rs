@@ -200,3 +200,58 @@ fn freelist_order_is_randomised_and_items_do_not_overlap() {
     }
     pool_destroy(&P);
 }
+
+std::thread_local! {
+    /// The items `pool_walk` reported to `walk_collect`.
+    static WALKED: core::cell::RefCell<Vec<usize>> = const { core::cell::RefCell::new(Vec::new()) };
+}
+
+fn walk_collect(item: *const u8, full: bool, _pr: PoolWalkPr) {
+    assert!(!full);
+    WALKED.with(|w| w.borrow_mut().push(item as usize));
+}
+
+fn walk_pr(_args: core::fmt::Arguments<'_>) -> usize {
+    0
+}
+
+#[test]
+fn pool_walk_visits_exactly_the_items_in_use() {
+    let _g = setup_real_memory();
+    static P: Pool = Pool::new();
+    pool_init(&P, 1000, 0, IPL_HIGH, 0, "testwalk", None);
+    let per_page = P.pr_itemsperpage.get() as usize;
+    assert!(per_page >= 2);
+
+    // Enough for a full page and part of the next.
+    let n = per_page + 2;
+    let items: Vec<NonNull<u8>> = (0..n)
+        .map(|_| pool_get(&P, PR_NOWAIT).expect("an item"))
+        .collect();
+    let mut in_use: Vec<usize> = items.iter().map(|p| p.as_ptr() as usize).collect();
+
+    let walk = || {
+        WALKED.with(|w| w.borrow_mut().clear());
+        pool_walk(&P, false, walk_pr, walk_collect);
+        let mut seen = WALKED.with(|w| w.borrow().clone());
+        seen.sort_unstable();
+        seen
+    };
+    in_use.sort_unstable();
+    assert_eq!(walk(), in_use);
+
+    // Give three back (from both pages): they are no longer reported.
+    for p in [items[0], items[per_page], items[n - 1]] {
+        pool_put(&P, p);
+        in_use.retain(|&a| a != p.as_ptr() as usize);
+    }
+    assert_eq!(walk(), in_use);
+
+    for p in &items {
+        if in_use.contains(&(p.as_ptr() as usize)) {
+            pool_put(&P, *p);
+        }
+    }
+    assert_eq!(walk(), Vec::<usize>::new());
+    pool_destroy(&P);
+}

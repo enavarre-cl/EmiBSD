@@ -82,8 +82,6 @@
 //!   (`unported!`, `ENOSYS`).
 //! - `nfs_numasync` (defined here in C, counted by `nfs_syscalls.c`'s `nfssvc_iod`) is the
 //!   atomic `NFS_NUMASYNC`.
-//! - Temporary (M10e merge): `nfs_fsinfo` (`nfs_vfsops.c`) is reached through the private
-//!   module `shim` until `nfs_vfsops.rs` lands; it fails (its result is ignored, as in C).
 //! - `malloc(M_WAITOK)` cannot fail in C; here a failure panics.
 //! - `nfs_print` prints under feature `debug` or `diagnostic`; the C's third condition,
 //!   `VFSLCKDEBUG`, has no feature here. The `DIAGNOSTIC` checks and `printf`s are behind
@@ -209,7 +207,7 @@ use crate::sys::vnode::{
 use crate::unported;
 use crate::uvm::uvm_vnode::{uvm_vnp_setsize, uvm_vnp_uncache};
 
-use self::shim::nfs_fsinfo;
+use crate::nfs::nfs_vfsops::nfs_fsinfo;
 
 /// `if (... != 0) goto nfsmout;`: the value of a `Result`, or a `break` out of the labeled
 /// block `$l` (the C's `nfsmout:`) with its error.
@@ -510,29 +508,6 @@ pub static NFS_FIFOVOPS: Vops = Vops {
     vop_pathconf: Some(|_| Err(unported!("fifo_pathconf (miscfs/fifofs)"))),
     vop_advlock: Some(|_| Err(unported!("fifo_advlock (miscfs/fifofs)"))),
 };
-
-/// TEMPORARY (M10e merge): `nfs_fsinfo` of `nfs_vfsops.c`, which this tree does not have
-/// yet, as a visible gap with the signature `nfs_bio.rs` uses. The coordinator replaces it
-/// with the real one and deletes the module.
-mod shim {
-    use crate::nfs::nfsmount::NfsMount;
-    use crate::sys::errno::Errno;
-    use crate::sys::proc::Proc;
-    use crate::sys::ucred::Ucred;
-    use crate::sys::vnode::Vnode;
-    use crate::unported;
-
-    /// `nfs_fsinfo(nmp, vp, cred, p)` (`nfs_vfsops.c`): fetch the NFSv3 file system info.
-    /// Temporary: fails.
-    pub(super) fn nfs_fsinfo(
-        _nmp: &NfsMount,
-        _vp: &'static Vnode,
-        _cred: *const Ucred,
-        _p: Option<&Proc>,
-    ) -> Result<(), Errno> {
-        Err(unported!("nfs_fsinfo (nfs_vfsops.c)"))
-    }
-}
 
 /// `*cred` of a credential the C dereferences: a real one (`NOCRED`/`FSCRED` panic).
 fn ucred<'a>(cred: *const Ucred) -> &'a Ucred {

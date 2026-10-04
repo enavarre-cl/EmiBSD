@@ -10,9 +10,12 @@
 //! Upstream: sys/kern/init_sysent.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - An entry points at its `sys_*` function only when `sys/kern` or `sys/uvm` defines
-//!   it (`pub fn sys_<name>(`); the others are `sys_nosys` with a note, so the table
-//!   always compiles. Rerun the generator after porting a syscall.
+//! - An entry points at its `sys_*` function only when `sys/kern`, `sys/uvm`, `sys/dev` or
+//!   `sys/nfs` defines it (`pub fn sys_<name>(`); the others are `sys_nosys` with a note,
+//!   so the table always compiles. Rerun the generator after porting a syscall.
+//! - An entry whose function exists only with a kernel option (`nfssvc`: `NFSCLIENT` or
+//!   `NFSSERVER`, cargo features `nfsclient`, `nfsserver`) has two rows, one per `cfg`; the
+//!   second is the master file's `#else` branch, `sys_nosys`.
 
 use crate::dev::rnd::sys_getentropy;
 use crate::kern::kern_acct::sys_acct;
@@ -74,6 +77,8 @@ use crate::kern::vfs_syscalls::{
     sys_statfs, sys_symlink, sys_symlinkat, sys_sync, sys_truncate, sys_umask, sys_unlink,
     sys_unlinkat, sys_unmount, sys_unveil, sys_utimensat, sys_utimes,
 };
+#[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
+use crate::nfs::nfs_syscalls::sys_nfssvc;
 use crate::sys::syscall::SYS_MAXSYSCALL;
 use crate::sys::syscallargs::{
     SysAccept4Args, SysAcceptArgs, SysAccessArgs, SysAcctArgs, SysAdjfreqArgs, SysAdjtimeArgs,
@@ -320,7 +325,15 @@ pub static SYSENT: [Sysent; SYS_MAXSYSCALL] = [
     Sysent::new(0, 0, 0, sys_nosys), // 152 = unimplemented
     Sysent::new(0, 0, 0, sys_nosys), // 153 = unimplemented
     Sysent::new(0, 0, 0, sys_nosys), // 154 = unimplemented
-    Sysent::new(0, 0, 0, sys_nosys), // 155 = unimplemented
+    #[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
+    Sysent::new(
+        2,
+        size_of::<crate::sys::syscallargs::SysNfssvcArgs>(),
+        0,
+        sys_nfssvc,
+    ), // 155 = nfssvc
+    #[cfg(not(any(feature = "nfsclient", feature = "nfsserver")))]
+    Sysent::new(0, 0, 0, sys_nosys), // 155 = nfssvc (sys_nfssvc needs any(feature = "nfsclient", feature = "nfsserver"))
     Sysent::new(0, 0, 0, sys_nosys), // 156 = obsolete ogetdirentries
     Sysent::new(0, 0, 0, sys_nosys), // 157 = obsolete statfs25
     Sysent::new(4, size_of::<SysPinsyscallsArgs>(), 0, sys_pinsyscalls), // 158 = pinsyscalls

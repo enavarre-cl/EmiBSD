@@ -47,9 +47,10 @@
 //! ## Deviations
 //! - `vfsconflist[]` holds the ported file systems in `vfs_init.c`'s order: `ffs` (feature
 //!   `ffs`, `option FFS`), `mfs` (feature `mfs`, `option MFS`), `cd9660` (feature `cd9660`,
-//!   `option CD9660`), `msdos` (feature `msdosfs`, `option MSDOSFS`), `udf` (feature `udf`,
-//!   `option UDF`), `tmpfs` (feature `tmpfs`, `option TMPFS`, commented out in GENERIC). Each
-//!   other GENERIC entry (`EXT2FS`, `NFSCLIENT`, `NTFS`, `FUSE`) joins as a
+//!   `option CD9660`), `msdos` (feature `msdosfs`, `option MSDOSFS`), `nfs` (feature
+//!   `nfsclient`, `option NFSCLIENT`), `udf` (feature `udf`, `option UDF`), `tmpfs` (feature
+//!   `tmpfs`, `option TMPFS`, commented out in GENERIC). Each other GENERIC entry (`EXT2FS`,
+//!   `NTFS`, `FUSE`) joins as a
 //!   `Vfsconf::new(...)` line when its file system does, behind a cargo feature named after
 //!   the `option(4)`.
 //! - `rootvnode` is an `AtomicPtr` behind [`rootvnode`]/[`set_rootvnode`]; `maxvfsconf` is an
@@ -109,6 +110,14 @@ static VFSCONFLIST: [Vfsconf; NVFSCONF] = [
         crate::sys::mount::MNT_LOCAL | crate::sys::mount::MNT_SWAPPABLE,
         crate::sys::mount::MsdosfsArgs::SIZE,
     ),
+    #[cfg(feature = "nfsclient")]
+    Vfsconf::new(
+        &crate::nfs::nfs_vfsops::NFS_VFSOPS,
+        crate::sys::mount::MOUNT_NFS,
+        2,
+        crate::sys::mount::MNT_SWAPPABLE,
+        crate::sys::mount::NfsArgs::SIZE,
+    ),
     #[cfg(feature = "udf")]
     Vfsconf::new(
         &crate::isofs::udf::udf_vfsops::UDF_VFSOPS,
@@ -132,6 +141,7 @@ const NVFSCONF: usize = cfg!(feature = "ffs") as usize
     + cfg!(feature = "mfs") as usize
     + cfg!(feature = "cd9660") as usize
     + cfg!(feature = "msdosfs") as usize
+    + cfg!(feature = "nfsclient") as usize
     + cfg!(feature = "udf") as usize
     + cfg!(feature = "tmpfs") as usize;
 

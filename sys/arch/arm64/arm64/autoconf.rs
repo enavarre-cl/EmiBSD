@@ -29,26 +29,64 @@
 //! ## Deviations
 //! - `unmap_startup` (with its `codepatch_disable`) and
 //!   `cpu_identify_cleanup` are reported.
-//! - `diskconf`: `NFSCLIENT` (the boot MAC's interface) is not configured, so `setroot` gets
-//!   no boot device, as in C without it; `dumpconf` (`machdep.c`, crash dumps) is reported;
+//! - `diskconf`: `setroot` gets no boot device unless the boot MAC address ([`BOOTMAC`],
+//!   `bootmac` of `NFSCLIENT`, which the firmware hand-over would fill in and nothing does
+//!   under Limine) names an interface; `dumpconf` (`machdep.c`, crash dumps) is reported;
 //!   `HIBERNATE` is not configured.
 
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::Ordering;
 
+#[cfg(feature = "nfsclient")]
+use libkern::StaticCell;
+
 use crate::arch::arm64::arm64::bus_dma::bus_dma_init;
 use crate::arch::arm64::arm64::machdep::COLD;
 use crate::kern::kern_softintr::softintr_init;
 use crate::kern::subr_autoconf::config_rootfound;
+#[cfg(feature = "nfsclient")]
+use crate::kern::subr_disk::parsedisk;
 use crate::machine::intr::{spl0, splhigh};
+#[cfg(feature = "nfsclient")]
+use crate::net::if_::IFNETLIST;
+#[cfg(feature = "nfsclient")]
+use crate::net::if_types::IFT_ETHER;
+#[cfg(feature = "nfsclient")]
+use crate::netinet::if_ether::{ETHER_ADDR_LEN, arpcom_of};
 use crate::sys::device::{Device, Nam2blk};
 use crate::unported;
 
-/// `nam2blk[]`: the disk drivers' names and block majors (`findblkmajor`, `findblkname`).
-/// `diskconf`: `setroot` with the boot device (none without `NFSCLIENT`).
+/// `bootmac`: the MAC address the machine booted from over the network, handed over by the
+/// firmware (`None` under Limine).
+#[cfg(feature = "nfsclient")]
+pub static BOOTMAC: StaticCell<Option<[u8; ETHER_ADDR_LEN]>> = StaticCell::new(None);
+
+/// `diskconf`: `setroot` with the boot device (the interface of the boot MAC address with
+/// `NFSCLIENT`, none otherwise).
 pub fn diskconf() {
-    crate::kern::subr_disk::setroot(None, 0, crate::sys::reboot::RB_USERREQ);
+    #[cfg(feature = "nfsclient")]
+    let mut bootdv: Option<&'static Device> = None;
+    #[cfg(not(feature = "nfsclient"))]
+    let bootdv: Option<&'static Device> = None;
+    let part = 0;
+
+    #[cfg(feature = "nfsclient")]
+    // SAFETY: written only while the firmware's hand-over is read, before autoconfiguration
+    // ends.
+    if let Some(mac) = unsafe { BOOTMAC.read() } {
+        let ifp = IFNETLIST
+            .0
+            .iter()
+            .find(|ifp| ifp.if_type.get() == IFT_ETHER && arpcom_of(ifp).ac_enaddr.get() == mac);
+        if let Some(ifp) = ifp {
+            let xname = ifp.if_xname.get();
+            let len = xname.iter().position(|&c| c == 0).unwrap_or(xname.len());
+            bootdv = parsedisk(&xname[..len], 0).map(|(dv, _)| dv);
+        }
+    }
+
+    crate::kern::subr_disk::setroot(bootdv, part, crate::sys::reboot::RB_USERREQ);
     let _ = crate::unported!("dumpconf (machdep.c)");
     // HIBERNATE: not configured.
 }

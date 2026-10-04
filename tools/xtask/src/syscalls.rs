@@ -7,11 +7,14 @@
 //! - `sys/kern/syscalls.rs` (the names, `syscalls.c`).
 //!
 //! The switch table points every entry at `sys_nosys` unless a `pub fn sys_<name>(` exists
-//! in a file directly under `sys/kern/`, `sys/uvm/` or `sys/dev/` (`getentropy(2)` lives in
-//! `dev/rnd.c`), so porting a syscall is: write the function, rerun the
-//! generator. `--check` regenerates in memory and fails if the files on disk differ (`just
-//! ci`). Of the kernel options the master file tests only `ACCOUNTING` is configured (as in
-//! GENERIC); for `PTRACE`, `KTRACE`, `NFS*` and `SYSV*` the `#else` branches are taken.
+//! in a file directly under `sys/kern/`, `sys/uvm/`, `sys/dev/` or `sys/nfs/` (`getentropy(2)`
+//! lives in `dev/rnd.c`, `nfssvc(2)` in `nfs/nfs_syscalls.c`), so porting a syscall is: write
+//! the function, rerun the generator. `--check` regenerates in memory and fails if the files on
+//! disk differ (`just ci`). Of the kernel options the master file tests, `ACCOUNTING`,
+//! `NFSCLIENT` and `NFSSERVER` are configured (as in GENERIC); for `PTRACE`, `KTRACE` and
+//! `SYSV*` the `#else` branches are taken. `NFSCLIENT` and `NFSSERVER` are cargo features of
+//! the kernel (`nfsclient`, `nfsserver`), so an entry they guard (`nfssvc`) is in [`GATED`]: its
+//! table row is `cfg`-selected between the function and the `#else` branch's `sys_nosys`.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -50,7 +53,15 @@ enum Kind {
 
 /// Kernel options the master file may test that the kernel configures: `ACCOUNTING`
 /// (`kern_acct.c`, in GENERIC). `KTRACE`, `PTRACE`, `NFS*` and `SYSV*` are not.
-const CONFIGURED_OPTIONS: &[&str] = &["ACCOUNTING"];
+const CONFIGURED_OPTIONS: &[&str] = &["ACCOUNTING", "NFSCLIENT", "NFSSERVER"];
+
+/// Syscalls whose `sys_*` function exists only with a cargo feature (the C kernel option):
+/// (function, `cfg` predicate). Without it the table entry is `sys_nosys`, which is what
+/// the master file's `#else` branch (`UNIMPL`) gives.
+const GATED: &[(&str, &str)] = &[(
+    "sys_nfssvc",
+    "any(feature = \"nfsclient\", feature = \"nfsserver\")",
+)];
 
 /// The C types the master file uses, mapped to Rust. Scalars keep their `sys/types.rs`
 /// alias; pointers to kernel structures the tree does not have yet are opaque.
@@ -372,6 +383,7 @@ fn ported_syscalls(root: &Path) -> Result<BTreeMap<String, String>> {
         ("sys/kern", "crate::kern"),
         ("sys/uvm", "crate::uvm"),
         ("sys/dev", "crate::dev"),
+        ("sys/nfs", "crate::nfs"),
     ] {
         let mut names: Vec<_> = fs::read_dir(root.join(dir))?
             .filter_map(|e| e.ok())
@@ -554,11 +566,15 @@ pub fn generate(root: &Path) -> Result<Vec<(&'static str, String)>> {
     sysent.push_str(&banner("sys/kern/init_sysent.c"));
     sysent.push_str(
         "//!\n//! ## Deviations\n\
-         //! - An entry points at its `sys_*` function only when `sys/kern` or `sys/uvm` defines\n\
-         //!   it (`pub fn sys_<name>(`); the others are `sys_nosys` with a note, so the table\n\
-         //!   always compiles. Rerun the generator after porting a syscall.\n\n",
+         //! - An entry points at its `sys_*` function only when `sys/kern`, `sys/uvm`, `sys/dev` or\n\
+         //!   `sys/nfs` defines it (`pub fn sys_<name>(`); the others are `sys_nosys` with a note,\n\
+         //!   so the table always compiles. Rerun the generator after porting a syscall.\n\
+         //! - An entry whose function exists only with a kernel option (`nfssvc`: `NFSCLIENT` or\n\
+         //!   `NFSSERVER`, cargo features `nfsclient`, `nfsserver`) has two rows, one per `cfg`; the\n\
+         //!   second is the master file's `#else` branch, `sys_nosys`.\n\n",
     );
     let mut imports: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut gated_imports: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     let mut used_structs: Vec<String> = Vec::new();
     let mut rows = String::new();
     for e in &entries {
@@ -578,22 +594,51 @@ pub fn generate(root: &Path) -> Result<Vec<(&'static str, String)>> {
                     format!("size_of::<{name}>()")
                 };
                 let flags = if e.nolock { "SY_NOLOCK" } else { "0" };
+                let gate = GATED
+                    .iter()
+                    .find(|(func, _)| *func == e.func)
+                    .map(|(_, cfg)| *cfg);
                 let (call, note) = match ported.get(&e.func) {
                     Some(module) => {
-                        imports
-                            .entry(module.clone())
-                            .or_default()
-                            .push(e.func.clone());
+                        match gate {
+                            Some(cfg) => gated_imports
+                                .entry(cfg.to_string())
+                                .or_default()
+                                .push((module.clone(), e.func.clone())),
+                            None => imports
+                                .entry(module.clone())
+                                .or_default()
+                                .push(e.func.clone()),
+                        }
                         (e.func.clone(), String::new())
                     }
                     None => ("sys_nosys".to_string(), format!(" ({} not ported)", e.func)),
                 };
-                rows.push_str(&format!(
-                    "    Sysent::new({}, {argsize}, {flags}, {call}), // {} = {}{note}\n",
-                    e.args.len(),
-                    e.number,
-                    e.alias
-                ));
+                match gate {
+                    Some(cfg) if call == e.func => {
+                        // The entry's argument structure is named in full: `used_structs` is
+                        // for the ungated rows (the import would be unused without the feature).
+                        let argsize =
+                            argsize.replace("size_of::<", "size_of::<crate::sys::syscallargs::");
+                        used_structs.pop();
+                        rows.push_str(&format!(
+                            "    #[cfg({cfg})]\n    Sysent::new({}, {argsize}, {flags}, {call}), // {} = {}\n",
+                            e.args.len(),
+                            e.number,
+                            e.alias
+                        ));
+                        rows.push_str(&format!(
+                            "    #[cfg(not({cfg}))]\n    Sysent::new(0, 0, 0, sys_nosys), // {} = {} ({} needs {cfg})\n",
+                            e.number, e.alias, e.func
+                        ));
+                    }
+                    _ => rows.push_str(&format!(
+                        "    Sysent::new({}, {argsize}, {flags}, {call}), // {} = {}{note}\n",
+                        e.args.len(),
+                        e.number,
+                        e.alias
+                    )),
+                }
             }
         }
     }
@@ -603,6 +648,11 @@ pub fn generate(root: &Path) -> Result<Vec<(&'static str, String)>> {
         funcs.sort();
         funcs.dedup();
         sysent.push_str(&format!("use {module}::{{{}}};\n", funcs.join(", ")));
+    }
+    for (cfg, funcs) in &gated_imports {
+        for (module, func) in funcs {
+            sysent.push_str(&format!("#[cfg({cfg})]\nuse {module}::{func};\n"));
+        }
     }
     sysent.push_str("use crate::sys::syscall::SYS_MAXSYSCALL;\n");
     if !used_structs.is_empty() {

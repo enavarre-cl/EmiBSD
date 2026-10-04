@@ -440,6 +440,9 @@ pub const SYS_quotactl: i32 = 148;
 /// syscall: "ypconnect" ret: "int" args: "int"
 pub const SYS_ypconnect: i32 = 150;
 
+/// syscall: "nfssvc" ret: "int" args: "int" "void *"
+pub const SYS_nfssvc: i32 = 155;
+
 // 156 is obsolete ogetdirentries
 
 // 157 is obsolete statfs25

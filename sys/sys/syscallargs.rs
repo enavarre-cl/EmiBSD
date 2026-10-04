@@ -1431,6 +1431,16 @@ pub struct SysYpconnectArgs {
     pub r#type: Syscallarg<i32>,
 }
 
+/// `struct sys_nfssvc_args`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct SysNfssvcArgs {
+    /// `flag`: `int`.
+    pub flag: Syscallarg<i32>,
+    /// `argp`: `void *`.
+    pub argp: Syscallarg<*mut c_void>,
+}
+
 /// `struct sys_pinsyscalls_args`.
 #[repr(C)]
 #[derive(Clone, Copy)]

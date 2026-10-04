@@ -70,11 +70,8 @@
 //!   (`nfs_bioblk`, `nfs_bufranges`, `nfs_shortread`) so that host tests can check them.
 //! - The `DIAGNOSTIC` mode checks of `nfs_bioread`/`nfs_write` are behind feature
 //!   `diagnostic`.
-//! - Temporary (M10e, until the files that define them are merged): `nfs_fsinfo`
-//!   (`nfs_vfsops.c`) and `nfs_numasync` (`nfs_syscalls.c`) are reached through the private
-//!   module `shim`, whose functions are visible gaps (`unported!`): `nfs_fsinfo` fails (its
-//!   result is ignored, as in C), `nfs_numasync` is 0 (no nfsiods: every I/O is synchronous). The RPCs
-//!   of `nfs_vnops.c` are its temporary stubs.
+//! - `nfs_numasync` (defined in `nfs_vnops.c`) is `nfs_vnops.rs`'s atomic `NFS_NUMASYNC`,
+//!   the count the nfsiods keep.
 
 use core::cmp::{max, min};
 use core::ffi::c_void;
@@ -96,11 +93,15 @@ use crate::machine::intr::{splbio, splx};
 use crate::nfs::nfs::B_INVAFTERWRITE;
 use crate::nfs::nfs::nfs_isv3;
 use crate::nfs::nfs_node::{nfs_crfree, nfs_crhold, vfstonfs_vp};
+use crate::nfs::nfs_socket::nfs_sigintr;
 use crate::nfs::nfs_subs::{
     NFSSTATS, nfs_add_tobecommitted_range, nfs_clearcommit, nfs_del_committed_range,
     nfs_del_tobecommitted_range,
 };
-use crate::nfs::nfs_vnops::{nfs_readlinkrpc, nfs_readrpc, nfs_writebp, nfs_writerpc};
+use crate::nfs::nfs_vfsops::nfs_fsinfo;
+use crate::nfs::nfs_vnops::{
+    NFS_NUMASYNC, nfs_readlinkrpc, nfs_readrpc, nfs_writebp, nfs_writerpc,
+};
 use crate::nfs::nfsnode::{
     NFLUSHINPROG, NFLUSHWANT, NFS_BUFQ, NFS_BUFQLEN, NFS_BUFQMAX, NMODIFIED, NWRITEERR, VTONFS,
     nfs_invalidate_attrcache,
@@ -128,36 +129,9 @@ use crate::sys::vnode::{
 };
 use crate::uvm::uvm_vnode::{uvm_vnp_setsize, uvm_vnp_uncache};
 
-use self::shim::{nfs_fsinfo, nfs_numasync};
-use crate::nfs::nfs_socket::nfs_sigintr;
-
-/// TEMPORARY (M10e): the functions of files other agents port in parallel, as visible gaps
-/// with the signatures this file expects. The coordinator replaces each with the real one
-/// at merge (`nfs_socket.rs`, `nfs_vfsops.rs`, `nfs_syscalls.rs`) and deletes the module.
-mod shim {
-    use crate::nfs::nfsmount::NfsMount;
-    use crate::sys::errno::Errno;
-    use crate::sys::proc::Proc;
-    use crate::sys::ucred::Ucred;
-    use crate::sys::vnode::Vnode;
-    use crate::unported;
-
-    /// `nfs_fsinfo(nmp, vp, cred, p)` (`nfs_vfsops.c`): fetch the NFSv3 file system info.
-    /// Temporary: fails.
-    pub(super) fn nfs_fsinfo(
-        _nmp: &NfsMount,
-        _vp: &'static Vnode,
-        _cred: *const Ucred,
-        _p: Option<&Proc>,
-    ) -> Result<(), Errno> {
-        Err(unported!("nfs_fsinfo (nfs_vfsops.c)"))
-    }
-
-    /// `nfs_numasync` (`nfs_syscalls.c`): the number of running nfsiods. Temporary: 0.
-    pub(super) fn nfs_numasync() -> i32 {
-        let _ = unported!("nfs_numasync (nfs_syscalls.c)");
-        0
-    }
+/// `nfs_numasync`: the number of running nfsiods.
+fn nfs_numasync() -> i32 {
+    NFS_NUMASYNC.load(Ordering::Relaxed)
 }
 
 /// The thread `VOP_GETATTR` runs for: `p`, else `curproc`, else `proc0`.

@@ -75,8 +75,9 @@
 //!   systems the kernel configuration names with a mountroot; `EXT2FS` is not configured.
 //! - `setroot`'s `RB_ASKNAME` dialogue (the "root device:" and "swap device:" prompts read
 //!   with `getsn` under `cnpollc`) is reported and skipped: `getsn` is not ported. A kernel
-//!   booted with `-a` goes on with its configured root. `NFSCLIENT` (the `nfs_mountroot`
-//!   branches) is not configured.
+//!   booted with `-a` goes on with its configured root. `NFSCLIENT` (feature `nfsclient`):
+//!   the `nfs_mountroot` branches are ported; `swapdev = NODEV` (a constant of `conf.c` here)
+//!   is not assigned, nothing reads it before `swdevt[0]` is.
 //! - `parsedisk` returns the device and the `dev_t` as an `Option` pair instead of filling
 //!   `*devp`; `getdisk` likewise.
 //! - `disk_attach_callback`'s `struct disk_attach_task` is a malloc'd [`DiskAttachTask`], as
@@ -114,6 +115,10 @@ use crate::machine::conf::{bdevsw, cdevsw, nblkdev, nchrdev};
 use crate::machine::cpu::curproc;
 use crate::machine::intr::IPL_BIO;
 use crate::net::if_::{if_addgroup, if_put, if_unit};
+#[cfg(feature = "nfsclient")]
+use crate::nfs::nfs_boot::set_nfsbootdevname;
+#[cfg(feature = "nfsclient")]
+use crate::nfs::nfs_vfsops::nfs_mountroot;
 use crate::sys::buf::{B_BUSY, B_DONE, B_ERROR, B_RAW, B_READ, B_WRITE, Buf};
 use crate::sys::conf::SWDEVT;
 use crate::sys::conf::{DevTypeOpen, DevTypeStrategy};
@@ -144,6 +149,8 @@ use crate::sys::reboot::RB_ASKNAME;
 use crate::sys::rwlock::{RW_INTR, RW_WRITE, RWL_IS_VNODE};
 use crate::sys::stat::{S_IFBLK, S_IFCHR};
 use crate::sys::syslog::LOG_PRINTF;
+#[cfg(feature = "nfsclient")]
+use crate::sys::systm::MountrootFn;
 use crate::sys::systm::{DUMPDEV, MOUNTROOT, ROOTDEV};
 use crate::sys::task::Task;
 use crate::sys::time::sec_to_nsec;
@@ -1429,7 +1436,10 @@ pub fn getdisk(str: &[u8], defpart: u32) -> Option<(&'static Device, Dev)> {
             if dv.dv_class.get() == DV_DISK {
                 let _ = printf(format_args!(" {}[a-p]", dv.xname()));
             }
-            // NFSCLIENT: not configured (DV_IFNET choices).
+            #[cfg(feature = "nfsclient")]
+            if dv.dv_class.get() == DV_IFNET {
+                let _ = printf(format_args!(" {}", dv.xname()));
+            }
         }
         let _ = printf(format_args!("\n"));
     }
@@ -1462,7 +1472,10 @@ pub fn parsedisk(str: &[u8], defpart: u32) -> Option<(&'static Device, Dev)> {
                 makediskdev(majdev as u32, dv.dv_unit.get() as u32, part),
             ));
         }
-        // NFSCLIENT: not configured (an interface name gives NODEV).
+        #[cfg(feature = "nfsclient")]
+        if dv.dv_class.get() == DV_IFNET && dv.xname().as_bytes() == &str[..len] {
+            return Some((dv, NODEV));
+        }
     }
     None
 }
@@ -1547,7 +1560,20 @@ pub fn setroot(bootdv: Option<&'static Device>, part: u32, exitflags: i32) {
         }
     }
     let rootdev = ROOTDEV.load(Ordering::Relaxed);
-    if generic && rootdev == NODEV {
+    #[cfg(feature = "nfsclient")]
+    let nfs_root =
+        // SAFETY: as for MOUNTROOT above.
+        unsafe { MOUNTROOT.read() }.is_some_and(|f| core::ptr::fn_addr_eq(f, nfs_mountroot as MountrootFn));
+    #[cfg(not(feature = "nfsclient"))]
+    let nfs_root = false;
+    if nfs_root {
+        // `mountroot == nfs_mountroot'
+        let Some(dv) = bootdv else { return };
+        rootdv = dv;
+        ROOTDEV.store(NODEV, Ordering::Relaxed);
+        DUMPDEV.store(NODEV, Ordering::Relaxed);
+        // swapdev = NODEV: see the module's deviations.
+    } else if generic && rootdev == NODEV {
         // `swap generic'
         let Some(mut dv) = bootdv else { return };
 
@@ -1622,7 +1648,13 @@ pub fn setroot(bootdv: Option<&'static Device>, part: u32, exitflags: i32) {
         unsafe { MOUNTROOT.write(Some(dk_mountroot)) };
         part = diskpart(ROOTDEV.load(Ordering::Relaxed));
     } else {
-        // NFSCLIENT: not configured (DV_IFNET: nfs_mountroot).
+        #[cfg(feature = "nfsclient")]
+        if rootdv.dv_class.get() == DV_IFNET {
+            // SAFETY: as for MOUNTROOT above.
+            unsafe { MOUNTROOT.write(Some(nfs_mountroot)) };
+            set_nfsbootdevname(rootdv.xname().as_bytes());
+            return;
+        }
         let _ = printf(format_args!(
             "can't figure root, hope your kernel is right\n"
         ));

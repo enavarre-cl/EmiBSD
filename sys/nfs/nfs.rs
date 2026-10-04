@@ -407,6 +407,18 @@ impl Nfsstats {
         };
         core::array::from_fn(|i| words[i].load(Ordering::Relaxed))
     }
+
+    /// Overwrites the counters with `values`, in the order of the C structure: what the
+    /// `fs.nfs.nfsstats` sysctl does when it is written (`nfs_sysctl`'s `copyin`).
+    pub fn restore(&self, values: &[u64; Self::NWORDS]) {
+        // SAFETY: as in `snapshot`: the structure is `NWORDS` atomics in a row.
+        let words = unsafe {
+            core::slice::from_raw_parts(ptr::from_ref(self).cast::<AtomicU64>(), Self::NWORDS)
+        };
+        for (word, value) in words.iter().zip(values) {
+            word.store(*value, Ordering::Relaxed);
+        }
+    }
 }
 
 impl Default for Nfsstats {
