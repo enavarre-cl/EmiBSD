@@ -329,7 +329,7 @@ const fn kn_hash(val: u64, mask: u64) -> u64 {
 }
 
 /// `kn->kn_fp->f_data` of a kqueue file: its kqueue.
-fn fp_kqueue(fp: &File) -> &'static Kqueue {
+pub fn fp_kqueue(fp: &File) -> &'static Kqueue {
     if fp.f_type.get() != DTYPE_KQUEUE {
         panic(format_args!("file {:p}: not a kqueue", fp));
     }

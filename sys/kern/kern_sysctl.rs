@@ -52,10 +52,12 @@
 //! `rawpartition`, `maxthread`, `nthreads`, `fsync`, `sysvmsg`/`sysvsem`/`sysvshm` (0: not
 //! configured), `msgbufsize`, `msgbuf`, `consbufsize`, `consbuf`, `cp_time`, `cp_time2`,
 //! `cpustats`, `forkstat`, `ccpu`, `fscale`, `nprocs`, `allowkmem`, `splassert`, `mbstat`,
-//! `proc` (`kinfo_proc`), `proc_nobroadcastkill`, `maxclusters`, `wxabort`, `consdev`,
+//! `proc` (`kinfo_proc`), `file` (`kinfo_file`), `proc_nobroadcastkill`, `maxclusters`,
+//! `wxabort`, `consdev`,
 //! `netlivelocks`, `pool_debug`, `timeout_stats`, `utc_offset`, `autoconf_serial`; `hw.machine`,
 //! `ncpu`, `ncpufound`, `ncpuonline`, `byteorder`, `physmem`, `usermem`, `physmem64`,
 //! `usermem64`, `pagesize`, `power`, `allowpowerdown`, `ucomnames`, `cpuspeed`, `battery.*`,
+//! `diskcount`, `disknames`, `diskstats`,
 //! `vendor`/`product`/`version`/`serialno`/`uuid` (whatever the machine recorded). The
 //! `vm` tree is `uvm/uvm_meter.rs`.
 //!
@@ -67,11 +69,10 @@
 //!   ([`SysctlPlain`]). `int *valp` is `&AtomicI32`, the C's atomic operations on it are the
 //!   atomic's; a C local passed by address is an `AtomicI32` read back with `into_inner`.
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
-//!   `ENOSYS`: `file` (`kern_descrip.c`; `fill_file` is not here),
-//!   `watchdog` (`kern_watchdog.c`), `clockintr`, `timecounter`
+//!   `ENOSYS`: `watchdog` (`kern_watchdog.c`), `clockintr`, `timecounter`
 //!   (`sysctl_tc`), `proc_vmmap` after its checks
 //!   (`fill_vmmap`); `hw.model` (`cpu_model`, `identcpu.c`/arm64 `cpu.c`),
-//!   `disknames`/`diskstats`/`diskcount` (`subr_disk.c`), `sensors` (`kern_sensors.c`),
+//!   `sensors` (`kern_sensors.c`),
 //!   `setperf`/`perfpolicy` (`sched_bsd.c`), `smt`/`blockcpu` (`kern_sched.c`); the top-level
 //!   `machdep` (`cpu_sysctl`) and `ddb` (`ddb_sysctl`) trees. `kern.proc_cwd` of a process
 //!   without a current directory (none has one before a root file system is mounted) is
@@ -85,8 +86,25 @@
 //!   (`subr_log.rs`), so the message buffer header is read without it.
 //! - `pledge_sysctl` (`kern_pledge.c`) is its first test: an unpledged process passes; a
 //!   pledged one cannot exist yet and would be reported.
-//! - `disknames`, `diskstats` and their lengths are not declared: `sysctl_diskinit` reports
-//!   `subr_disk.c` before it would touch them.
+//! - `kern.file`: `fill_file` leaves the TCP members of `kinfo_file` (`t_state`, the
+//!   windows) zero and reports `struct tcpcb` (`tcp_usrreq.c`) if a TCP socket ever shows
+//!   up (none can be created yet); an `AF_INET6` socket cannot exist (`INET6` is not
+//!   configured) and is reported likewise. `KERN_FILE_BYFILE` of sockets walks `udbtable`
+//!   and `rawcbtable`; `tcbtable` (`tcp_usrreq.c`) and `divbtable` (`ip_divert.c`) are
+//!   reported, and the `INET6` tables are compiled out. `ps_tracevp` does not exist
+//!   (`KTRACE`), so no `KERN_FILE_TRACE` entry is made. The C's `FILLIT` macros are the
+//!   methods of a private `FileWalk` (the C's `kf`, `dp`, `buflen`, `elem_count`,
+//!   `needed`); `kf` lives in it instead of an `M_TEMP` allocation. A `copyout` error ends
+//!   the walk and is returned once the references taken are dropped (the C's `break` only
+//!   left the macro's `do { } while (0)`, so its walk went on and a later `copyout` could
+//!   overwrite the error). `kinfo_file` is copied out as bytes, its two C padding holes
+//!   being members (`sys/sysctl.rs`).
+//! - `disknames`/`diskstats` are `AtomicPtr`s to their `M_SYSCTL` allocations, with their
+//!   lengths in `AtomicUsize`s, all under `sysctl_disklock`. `hw.disknames` and
+//!   `hw.diskstats` read them holding that lock for reading (the C reads them after
+//!   `sysctl_diskinit` let go of it, under the kernel lock), and `hw.diskstats` copies at
+//!   most `diskstatslen` bytes. `sysctl_diskinit` fills at most as many entries as it
+//!   allocated (the C trusts `disk_count` to match the list).
 //! - The morally-const values `sysctl_bounded_arr` reports (`arg_max`, `openbsd`, ...) are
 //!   `AtomicI32` statics like the C's `static int`s; `ccpu` is a constant in `sched_bsd.rs`,
 //!   so the table points at a read-only copy of it.
@@ -97,7 +115,8 @@
 //!   sums at zero instead of dividing by zero; an empty name (never from `sys_sysctl`, which
 //!   wants two components) is `EINVAL`.
 
-use core::sync::atomic::{AtomicI32, Ordering};
+use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicUsize, Ordering};
 
 use libkern::{StaticCell, strlcpy, strnlen};
 
@@ -106,42 +125,62 @@ use crate::conf::vers::{OSRELEASE, OSTYPE, OSVERSION, VERSION};
 use crate::dev::cons::cn_tab;
 use crate::kern::init_main::{NCPUS, NCPUSFOUND};
 use crate::kern::kern_clock::sysctl_clockrate;
-use crate::kern::kern_descrip::NUMFILES;
+use crate::kern::kern_descrip::{NUMFILES, fd_getfile, fd_iterfile};
+use crate::kern::kern_event::fp_kqueue;
 use crate::kern::kern_fork::{FORKSTAT, NPROCESSES, NTHREADS};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave, pc_cons_enter, pc_cons_leave};
-use crate::kern::kern_malloc::{free, malloc, sysctl_malloc};
+use crate::kern::kern_malloc::{free, malloc, mallocarray, sysctl_malloc};
 use crate::kern::kern_proc::{ALLPROCESS, ZOMBPROCESS, prfind};
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_resource::{calctsru, tuagg_get_proc, tuagg_get_process};
-use crate::kern::kern_rwlock::{rw_enter, rw_enter_write, rw_exit_write};
+use crate::kern::kern_rwlock::{
+    rw_enter, rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write,
+};
 use crate::kern::kern_sched::{cpu_is_online, sysctl_hwncpuonline};
 use crate::kern::kern_sig::NOSUIDCOREDUMP;
+use crate::kern::kern_synch::{refcnt_rele_wake, refcnt_take};
 use crate::kern::kern_tc::{microboottime, nanoboottime, nanotime, tc_setrealtimeclock};
 use crate::kern::kern_timeout::timeout_sysctl;
 use crate::kern::sched_bsd;
 use crate::kern::subr_autoconf::AUTOCONF_SERIAL;
+use crate::kern::subr_disk::{DISK_CHANGE, DISK_COUNT, DISKLIST, duid_format, duid_iszero};
 use crate::kern::subr_evcount::evcount_sysctl;
 use crate::kern::subr_log::{consbufp, msgbufp};
 use crate::kern::subr_pool::{POOL_DEBUG, pool_reclaim_all, sysctl_dopool};
 use crate::kern::subr_prf::{SPLASSERT_CTL, panic};
+use crate::kern::sys_pipe::fp_pipe;
+use crate::kern::sys_socket::fp_socket;
 use crate::kern::tty::{TTY_COUNT, sysctl_tty};
 use crate::kern::uipc_mbuf::{MBSTAT, nmbclust_update};
 use crate::kern::uipc_socket::{somaxconn, sominconn};
+use crate::kern::uipc_socket2::{soassertlocked, solock_shared, sounlock_shared};
 use crate::kern::vfs_bio::{BUFHIGHPAGES, bufadjust};
 use crate::kern::vfs_cache::NCHSTATS;
 use crate::kern::vfs_getcwd::vfs_getcwd_common;
 use crate::kern::vfs_lockf::MAXLOCKSPERUID;
 use crate::kern::vfs_subr::{MAXVNODES, NUMVNODES, vfs_sysctl, vref, vrele};
+use crate::kern::vfs_vops::VOP_GETATTR;
 use crate::machine::Machine;
 use crate::machine::copy::{copyin, copyout};
 use crate::machine::cpu::{Cpu, CpuInfo, cpu_info_foreach, curproc};
 use crate::machine::param::MachineInfo;
 use crate::machine::pmap::pmap_resident_count;
+use crate::netinet::in_::IPPROTO_TCP;
+use crate::netinet::in_pcb::{
+    Inpcb, InpcbIterator, Inpcbtable, in_pcb_iterator, in_pcb_iterator_abort, in_pcbsolock,
+    in_pcbsounlock, sotoinpcb,
+};
+use crate::netinet::raw_ip::RAWCBTABLE;
+use crate::netinet::udp_usrreq::UDBTABLE;
+use crate::sys::disk::{DS_DISKNAMELEN, Disk, Diskstats};
 use crate::sys::errno::Errno;
 use crate::sys::exec::PsStrings;
+use crate::sys::fcntl::{FREAD, FWRITE};
+use crate::sys::file::{DTYPE_KQUEUE, DTYPE_PIPE, DTYPE_SOCKET, DTYPE_VNODE, File, frele};
+use crate::sys::filedesc::{Filedesc, fdplock, fdpunlock};
 use crate::sys::limits::SHRT_MAX;
-use crate::sys::malloc::{M_TEMP, M_WAITOK};
-use crate::sys::mbuf::{MT_NTYPES, Mbstat, MbstatCounters};
+use crate::sys::malloc::{M_SYSCTL, M_TEMP, M_WAITOK, M_ZERO};
+use crate::sys::mbuf::{MT_NTYPES, Mbstat, MbstatCounters, mtod};
 use crate::sys::mman::{PROT_READ, PROT_WRITE};
 use crate::sys::msgbuf::{MSG_MAGIC, Msgbuf};
 use crate::sys::param::{MAXPATHLEN, MAXPHYS, NODEV, OpenBSD, PAGE_MASK, PAGE_SIZE};
@@ -150,19 +189,23 @@ use crate::sys::proc::{
     PS_ZOMBIE, Proc, ProcThrLink, Process, SDEAD, SIDL, SONPROC, SRUN, SSLEEP, SSTOP,
     THREAD_PID_OFFSET, TU_ITICKS, TU_STICKS, TU_UTICKS, Tusage,
 };
-use crate::sys::queue::TailqHead;
+use crate::sys::queue::{SlistHead, TailqHead};
 use crate::sys::resource::RLIMIT_RSS;
 use crate::sys::rwlock::{RW_INTR, RW_WRITE, Rwlock};
 use crate::sys::sched::{CPUSTATES, CPUSTATS_ONLINE, Cpustats};
+use crate::sys::socket::{AF_INET, AF_INET6, AF_UNIX, SOCK_RAW};
+use crate::sys::socketvar::{Socket, isspliced, issplicedback};
 use crate::sys::syscallargs::SysSysctlArgs;
 use crate::sys::sysctl::*;
 use crate::sys::syslimits;
-use crate::sys::systm::{PHYSMEM, SysArgs, sysargs};
+use crate::sys::systm::{PHYSMEM, SysArgs, net_lock_shared, net_unlock_shared, sysargs};
 use crate::sys::time::timeradd;
 use crate::sys::types::{Dev, Off, Register};
 use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
+use crate::sys::un::SockaddrUn;
 use crate::sys::unistd::_POSIX_VERSION;
-use crate::sys::vnode::GETCWD_CHECK_ACCESS;
+use crate::sys::unpcb::{UnpRefs, sotounpcb};
+use crate::sys::vnode::{GETCWD_CHECK_ACCESS, Vattr, Vnode, VnodeUn, makeimode};
 use crate::unported;
 use crate::uvm::uvm_extern::Vmspace;
 use crate::uvm::uvm_glue::{uvm_vslock, uvm_vsunlock};
@@ -203,6 +246,16 @@ pub type BatterySetFn = fn(i32) -> Result<(), Errno>;
 pub static SYSCTL_LOCK: Rwlock = Rwlock::new("sysctllk");
 /// `sysctl_disklock`.
 pub static SYSCTL_DISKLOCK: Rwlock = Rwlock::new("sysctldlk");
+/// `disknames`: the `hw.disknames` string (`M_SYSCTL`), rebuilt by `sysctl_diskinit` under
+/// `sysctl_disklock`; null until the first call.
+static DISKNAMES: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
+/// `disknameslen`: the size of the `disknames` allocation.
+static DISKNAMESLEN: AtomicUsize = AtomicUsize::new(0);
+/// `diskstats`: the `hw.diskstats` array (`M_SYSCTL`), under `sysctl_disklock` like
+/// `disknames`.
+static DISKSTATS: AtomicPtr<Diskstats> = AtomicPtr::new(ptr::null_mut());
+/// `diskstatslen`: the size of the `diskstats` allocation in bytes.
+static DISKSTATSLEN: AtomicUsize = AtomicUsize::new(0);
 
 /// \[a\] `allowkmem`.
 pub static ALLOWKMEM: AtomicI32 = AtomicI32::new(0);
@@ -303,12 +356,13 @@ pub static hw_power: AtomicI32 = AtomicI32::new(1);
 /// `byte_order`: morally const, reported by `sysctl_bounded_arr`.
 static BYTE_ORDER: AtomicI32 = AtomicI32::new(BYTE_ORDER_C);
 
-/// `hw_vars[]`. `HW_DISKCOUNT` (`disk_count`, `subr_disk.c`) is reported by `hw_sysctl`.
-static HW_VARS: [SysctlBoundedArgs; 5] = [
+/// `hw_vars[]`.
+static HW_VARS: [SysctlBoundedArgs; 6] = [
     SysctlBoundedArgs::readonly(HW_NCPU, &NCPUS),
     SysctlBoundedArgs::readonly(HW_NCPUFOUND, &NCPUSFOUND),
     SysctlBoundedArgs::readonly(HW_BYTEORDER, &BYTE_ORDER),
     SysctlBoundedArgs::readonly(HW_PAGESIZE, &UVMEXP.pagesize),
+    SysctlBoundedArgs::readonly(HW_DISKCOUNT, &DISK_COUNT),
     SysctlBoundedArgs::readonly(HW_POWER, &hw_power),
 ];
 
@@ -878,7 +932,6 @@ pub fn hw_sysctl(
         HW_UUID => hw_string(&hw_uuid, oldp, oldlenp, newp),
         HW_PHYSMEM64 => sysctl_rdquad(oldp, oldlenp, newp, physmem * PAGE_SIZE as i64),
         HW_USERMEM64 => sysctl_rdquad(oldp, oldlenp, newp, (physmem - wired) * PAGE_SIZE as i64),
-        HW_DISKCOUNT => Err(unported!("hw.diskcount: disk_count (subr_disk.c)")),
         _ => sysctl_bounded_arr(&HW_VARS, name, oldp, oldlenp, newp, newlen),
     }
 }
@@ -909,10 +962,36 @@ fn hw_sysctl_locked(
     p: &Proc,
 ) -> Result<(), Errno> {
     match name[0] {
-        HW_DISKNAMES | HW_DISKSTATS => {
-            sysctl_diskinit(name[0] == HW_DISKSTATS, p)?;
-            // disknames, diskstats: sysctl_diskinit reported subr_disk.c above.
-            Err(Errno::ENOSYS)
+        HW_DISKNAMES => {
+            sysctl_diskinit(false, p)?;
+            rw_enter_read(&SYSCTL_DISKLOCK);
+            let names = match NonNull::new(DISKNAMES.load(Ordering::Relaxed)) {
+                // SAFETY: the `disknameslen` bytes `sysctl_diskinit` allocated, which it
+                // replaces only under the lock taken for reading here.
+                Some(n) => unsafe {
+                    core::slice::from_raw_parts(n.as_ptr(), DISKNAMESLEN.load(Ordering::Relaxed))
+                },
+                None => &[],
+            };
+            let err = sysctl_rdstring(oldp, oldlenp, newp, names);
+            rw_exit_read(&SYSCTL_DISKLOCK);
+            err
+        }
+        HW_DISKSTATS => {
+            sysctl_diskinit(true, p)?;
+            rw_enter_read(&SYSCTL_DISKLOCK);
+            let len = (DISK_COUNT.load(Ordering::Relaxed).max(0) as usize * size_of::<Diskstats>())
+                .min(DISKSTATSLEN.load(Ordering::Relaxed));
+            let stats = match NonNull::new(DISKSTATS.load(Ordering::Relaxed)) {
+                // SAFETY: `len` bytes of the `diskstatslen`-byte array `sysctl_diskinit`
+                // allocated and filled (zeroed, padding a member: every byte initialised),
+                // which it replaces only under the lock taken for reading here.
+                Some(sdk) => unsafe { core::slice::from_raw_parts(sdk.as_ptr().cast::<u8>(), len) },
+                None => &[],
+            };
+            let err = sysctl_rdstruct(oldp, oldlenp, newp, stats);
+            rw_exit_read(&SYSCTL_DISKLOCK);
+            err
         }
         HW_CPUSPEED => {
             // SAFETY: the machine sets `cpu_cpuspeed` while attaching its CPUs, before any
@@ -1402,24 +1481,535 @@ pub fn sysctl_rdstruct(
     Ok(())
 }
 
-/// `sysctl_file`: get file structures (`kern.file`). The argument checks are the C's; the
-/// walk needs `struct file` (`kern_descrip.c`) and is reported.
-pub fn sysctl_file(name: &[i32], where_: usize, sizep: &mut usize, p: &Proc) -> Result<(), Errno> {
-    let _ = (where_, sizep, p);
+/// `PTRTOINT64(vp->v_un.vu_socket)`: whatever pointer the vnode's union holds.
+fn vnode_un_ptr(un: VnodeUn) -> u64 {
+    match un {
+        VnodeUn::None => 0,
+        VnodeUn::Mountedhere(mp) => ptrtoint64(mp),
+        VnodeUn::Socket(so) => ptrtoint64(so),
+        VnodeUn::Specinfo(si) => ptrtoint64(si),
+        VnodeUn::Fifoinfo(fi) => ptrtoint64(fi),
+    }
+}
 
+/// The `memcpy(kf->unp_path, un->sun_path, un->sun_len - offsetof(...))` of `fill_file`:
+/// `addr` is the bytes of a bound `struct sockaddr_un` (its mbuf's `m_len`). The copy is
+/// bounded by both buffers.
+fn unp_path_copy(dst: &mut [u8; KI_UNPPATHLEN], addr: &[u8]) {
+    let off = SockaddrUn::PATH_OFFSET;
+    let Some(&sun_len) = addr.first() else {
+        return;
+    };
+    let len = usize::from(sun_len)
+        .saturating_sub(off)
+        .min(addr.len().saturating_sub(off))
+        .min(KI_UNPPATHLEN);
+    dst[..len].copy_from_slice(&addr[off..off + len]);
+}
+
+/// `fill_file`: one `kinfo_file` for the file `fp`, or (without a file) for the vnode `vp`
+/// a process uses as its text, current or root directory (`fd` is then `KERN_FILE_TEXT`,
+/// ...), or for the socket `so` of a protocol control block table (locked by the caller).
+/// `fdp` and `pr` are the descriptor table and the process the descriptor is found through,
+/// for `KERN_FILE_BYPID`/`KERN_FILE_BYUID`.
+#[allow(clippy::too_many_arguments)] // the C's arguments
+pub fn fill_file(
+    kf: &mut KinfoFile,
+    fp: Option<&File>,
+    fdp: Option<&Filedesc>,
+    fd: i32,
+    vp: Option<&'static Vnode>,
+    pr: Option<&Process>,
+    p: &Proc,
+    so: Option<&Socket>,
+    show_pointers: bool,
+) {
+    *kf = KinfoFile::zeroed();
+
+    kf.fd_fd = fd; // might not really be an fd
+
+    if let Some(fp) = fp {
+        // SAFETY: an open file holds a reference to its credentials from `fnew` until
+        // `fdrop`, and the caller holds a reference to the file.
+        let cred = unsafe { &*fp.f_cred.get() };
+        if show_pointers {
+            kf.f_fileaddr = ptrtoint64(fp);
+        }
+        kf.f_flag = fp.f_flag.load(Ordering::Relaxed);
+        kf.f_iflags = fp.f_iflags.load(Ordering::Relaxed);
+        kf.f_type = fp.f_type.get() as u32;
+        kf.f_count = fp.f_count.load(Ordering::Relaxed);
+        if show_pointers {
+            kf.f_ucred = ptrtoint64(fp.f_cred.get());
+        }
+        kf.f_uid = cred.cr_uid.get();
+        kf.f_gid = cred.cr_gid.get();
+        if show_pointers {
+            kf.f_ops = fp.f_ops.get().map_or(0, |ops| ptrtoint64(ops));
+        }
+        if show_pointers {
+            kf.f_data = ptrtoint64(fp.f_data.get());
+        }
+        kf.f_usecount = 0;
+
+        if suser(p).is_ok() || p.ucred().cr_uid.get() == cred.cr_uid.get() {
+            mtx_enter(&fp.f_mtx);
+            kf.f_offset = fp.f_offset.get() as u64;
+            kf.f_rxfer = fp.f_rxfer.get();
+            kf.f_rwfer = fp.f_wxfer.get();
+            kf.f_seek = fp.f_seek.get();
+            kf.f_rbytes = fp.f_rbytes.get();
+            kf.f_wbytes = fp.f_wbytes.get();
+            mtx_leave(&fp.f_mtx);
+        } else {
+            kf.f_offset = -1i64 as u64;
+        }
+    } else if vp.is_some() {
+        // fake it
+        kf.f_type = DTYPE_VNODE as u32;
+        kf.f_flag = FREAD as u32;
+        if fd == KERN_FILE_TRACE {
+            kf.f_flag |= FWRITE as u32;
+        }
+    } else if so.is_some() {
+        // fake it
+        kf.f_type = DTYPE_SOCKET as u32;
+    }
+
+    // information about the object associated with this file
+    match (kf.f_type as i32, fp) {
+        (DTYPE_VNODE, _) => {
+            let vp = match (fp, vp) {
+                (Some(fp), _) => Some(fp.vnode()),
+                (None, vp) => vp,
+            };
+            if let Some(vp) = vp {
+                fill_file_vnode(kf, vp, p, show_pointers);
+            }
+        }
+        (DTYPE_SOCKET, _) => {
+            // if so is passed as parameter it is already locked
+            let (so, locked) = match (so, fp) {
+                (Some(so), _) => (Some(so), false),
+                (None, Some(fp)) => {
+                    let so = fp_socket(fp);
+                    solock_shared(so);
+                    (Some(so), true)
+                }
+                (None, None) => (None, false),
+            };
+            if let Some(so) = so {
+                fill_file_socket(kf, so, show_pointers);
+                if locked {
+                    sounlock_shared(so);
+                }
+            }
+        }
+        (DTYPE_PIPE, Some(fp)) => {
+            let pipe = fp_pipe(fp);
+            if show_pointers {
+                kf.pipe_peer = ptrtoint64(pipe.pipe_peer.get());
+            }
+            kf.pipe_state = pipe.pipe_state.get();
+        }
+        (DTYPE_KQUEUE, Some(fp)) => {
+            let kqi = fp_kqueue(fp);
+            kf.kq_count = kqi.kq_count.get() as u32;
+            kf.kq_state = kqi.kq_state.get() as u32;
+        }
+        _ => {}
+    }
+
+    // per-process information for KERN_FILE_BY[PU]ID
+    if let Some(pr) = pr {
+        let cred = pr.ucred();
+        kf.p_pid = pr.ps_pid.get() as u32;
+        kf.p_uid = cred.cr_uid.get();
+        kf.p_gid = cred.cr_gid.get();
+        kf.p_tid = -1i32 as u32;
+        strlcpy(&mut kf.p_comm, pr.comm());
+    }
+    if let Some(fdp) = fdp {
+        fdplock(fdp);
+        kf.fd_ofileflags = u32::from(fdp.ofileflags(fd as usize));
+        fdpunlock(fdp);
+    }
+}
+
+/// The `DTYPE_VNODE` case of `fill_file`.
+fn fill_file_vnode(kf: &mut KinfoFile, vp: &'static Vnode, p: &Proc, show_pointers: bool) {
+    if show_pointers {
+        kf.v_un = vnode_un_ptr(vp.v_un.get());
+    }
+    kf.v_type = vp.v_type.get() as u32;
+    kf.v_tag = vp.v_tag.get() as u32;
+    kf.v_flag = vp.v_flag.get();
+    if show_pointers {
+        kf.v_data = ptrtoint64(vp.v_data.get());
+    }
+    if show_pointers {
+        kf.v_mount = vp.v_mount.get().map_or(0, |mp| ptrtoint64(mp));
+    }
+    if let Some(mp) = vp.v_mount.get() {
+        let (name, len) = mp.mntonname();
+        strlcpy(&mut kf.f_mntonname, &name[..len]);
+    }
+
+    let mut va = Vattr::new();
+    if VOP_GETATTR(vp, &mut va, p.p_ucred.get(), p).is_ok() {
+        kf.va_fileid = va.va_fileid;
+        kf.va_mode = makeimode(va.va_type, va.va_mode);
+        kf.va_size = va.va_size;
+        kf.va_rdev = va.va_rdev as u32;
+        kf.va_fsid = (va.va_fsid & 0xffff_ffff) as u32;
+        kf.va_nlink = va.va_nlink;
+    }
+}
+
+/// The `DTYPE_SOCKET` case of `fill_file`, the socket locked.
+fn fill_file_socket(kf: &mut KinfoFile, so: &Socket, show_pointers: bool) {
+    kf.so_type = so.so_type.get() as u32;
+    kf.so_state = so.so_state.get() | so.so_snd.sb_state.get() | so.so_rcv.sb_state.get();
+    kf.so_pcb = if show_pointers {
+        ptrtoint64(so.so_pcb.get())
+    } else {
+        -1i64 as u64
+    };
+    kf.so_protocol = so.so_proto.pr_protocol as u32;
+    kf.so_family = so.dom_family() as u32;
+    kf.so_rcv_cc = so.so_rcv.sb_cc.get();
+    kf.so_snd_cc = so.so_snd.sb_cc.get();
+    if isspliced(so) {
+        if let Some(sp) = so.so_sp.get() {
+            if show_pointers {
+                kf.so_splice = sp.ssp_socket.get().map_or(0, |s| ptrtoint64(s));
+            }
+            kf.so_splicelen = sp.ssp_len.get();
+        }
+    } else if issplicedback(so) {
+        kf.so_splicelen = -1;
+    }
+    if so.so_pcb.get().is_null() {
+        return;
+    }
+    let family = so.dom_family();
+    if family == i32::from(AF_INET) {
+        let Some(inpcb) = sotoinpcb(so) else {
+            return;
+        };
+        soassertlocked(so);
+        if show_pointers {
+            kf.inp_ppcb = ptrtoint64(inpcb.inp_ppcb.get());
+        }
+        kf.inp_lport = u32::from(inpcb.inp_lport.get());
+        kf.inp_laddru[0] = inpcb.inp_laddr.get().s_addr;
+        kf.inp_fport = u32::from(inpcb.inp_fport.get());
+        kf.inp_faddru[0] = inpcb.inp_faddr.get().s_addr;
+        kf.inp_rtableid = inpcb.inp_rtableid.get();
+        if so.so_type.get() == SOCK_RAW {
+            kf.inp_proto = u32::from(inpcb.inp_ip.get().ip_p);
+        }
+        if i32::from(so.so_proto.pr_protocol) == IPPROTO_TCP {
+            // t_rcv_wnd, t_snd_wnd, t_snd_cwnd and t_state stay zero: without
+            // tcp_usrreq.c no TCP socket can be created.
+            let _ = unported!("fill_file: struct tcpcb (tcp_usrreq.c)");
+        }
+    } else if family == i32::from(AF_INET6) {
+        // INET6 is not configured, so no such socket exists.
+        let _ = unported!("fill_file: AF_INET6 inpcb (option INET6)");
+    } else if family == i32::from(AF_UNIX) {
+        let Some(unpcb) = sotounpcb(so) else {
+            return;
+        };
+        kf.f_msgcount = unpcb.unp_msgcount.get() as u32;
+        if show_pointers {
+            kf.unp_conn = unpcb.unp_conn.get().map_or(0, |u| ptrtoint64(u));
+            kf.unp_refs = unpcb.unp_refs.first().map_or(0, |u| ptrtoint64(u));
+            kf.unp_nextref = SlistHead::<UnpRefs>::next(unpcb).map_or(0, |u| ptrtoint64(u));
+            kf.v_un = unpcb.unp_vnode.get().map_or(0, |v| ptrtoint64(v));
+            kf.unp_addr = unpcb.unp_addr.get().map_or(0, |m| ptrtoint64(m));
+        }
+        if let Some(m) = unpcb.unp_addr.get() {
+            // SAFETY: a bound address mbuf holds `m_len` bytes of `struct sockaddr_un` and
+            // lives while the control block is bound; the caller holds the socket lock.
+            let addr = unsafe {
+                core::slice::from_raw_parts(mtod::<u8>(m).cast_const(), m.m_len().get() as usize)
+            };
+            unp_path_copy(&mut kf.unp_path, addr);
+        }
+    }
+}
+
+/// The output of a `sysctl_file` walk: the C's `kf`, `dp`, `buflen`, `elem_count` and
+/// `needed`, which its `FILLIT` and `FILLINPTABLE` macros advance.
+struct FileWalk<'a> {
+    kf: KinfoFile,
+    p: &'a Proc,
+    show_pointers: bool,
+    dp: usize,
+    buflen: usize,
+    elem_size: usize,
+    elem_count: usize,
+    outsize: usize,
+    needed: usize,
+}
+
+impl FileWalk<'_> {
+    /// Whether the buffer has room for one more element.
+    fn room(&self) -> bool {
+        self.buflen >= self.elem_size && self.elem_count > 0
+    }
+
+    /// Copies the filled `kf` out and advances past its element.
+    fn put(&mut self) -> Result<(), Errno> {
+        copyout(&self.kf.as_bytes()[..self.outsize], self.dp)?;
+        self.dp += self.elem_size;
+        self.buflen -= self.elem_size;
+        self.elem_count -= 1;
+        Ok(())
+    }
+
+    /// `FILLIT(fp, fdp, i, vp, pr)`.
+    fn fillit(
+        &mut self,
+        fp: Option<&File>,
+        fdp: Option<&Filedesc>,
+        i: i32,
+        vp: Option<&'static Vnode>,
+        pr: Option<&Process>,
+    ) -> Result<(), Errno> {
+        if self.room() {
+            fill_file(
+                &mut self.kf,
+                fp,
+                fdp,
+                i,
+                vp,
+                pr,
+                self.p,
+                None,
+                self.show_pointers,
+            );
+            self.put()?;
+        }
+        self.needed += self.elem_size;
+        Ok(())
+    }
+
+    /// `FILLINPTABLE(table)`: the sockets of a protocol control block table, which also
+    /// holds the closed connections no file refers to any more.
+    fn fillinptable(&mut self, table: &Inpcbtable) -> Result<(), Errno> {
+        let iter = InpcbIterator::new();
+        let mut inp: Option<&'static Inpcb> = None;
+        let mut error = Ok(());
+
+        mtx_enter(&table.inpt_mtx);
+        loop {
+            // SAFETY: the table mutex is held; `iter` stays in place on this frame and serves
+            // this walk only, until the iterator returns None or the walk is aborted below.
+            inp = unsafe { in_pcb_iterator(table, inp, &iter) };
+            let Some(i) = inp else {
+                break;
+            };
+            if self.room() {
+                mtx_leave(&table.inpt_mtx);
+                net_lock_shared();
+                let Some(so) = in_pcbsolock(i) else {
+                    net_unlock_shared();
+                    mtx_enter(&table.inpt_mtx);
+                    continue;
+                };
+                fill_file(
+                    &mut self.kf,
+                    None,
+                    None,
+                    0,
+                    None,
+                    None,
+                    self.p,
+                    Some(so),
+                    self.show_pointers,
+                );
+                in_pcbsounlock(Some(i), Some(so));
+                net_unlock_shared();
+                let r = copyout(&self.kf.as_bytes()[..self.outsize], self.dp);
+                mtx_enter(&table.inpt_mtx);
+                if let Err(e) = r {
+                    // SAFETY: the mutex is held and `iter` is the iterator of this walk,
+                    // whose last answer was `i`.
+                    unsafe { in_pcb_iterator_abort(table, Some(i), &iter) };
+                    error = Err(e);
+                    break;
+                }
+                self.dp += self.elem_size;
+                self.buflen -= self.elem_size;
+                self.elem_count -= 1;
+            }
+            self.needed += self.elem_size;
+        }
+        mtx_leave(&table.inpt_mtx);
+        error
+    }
+
+    /// The `KERN_FILE_BYPID`/`KERN_FILE_BYUID` body for one process: its text vnode (when
+    /// `text`), current and root directories, then every open descriptor.
+    fn fill_process(&mut self, pr: &Process, text: bool) -> Result<(), Errno> {
+        let fdp = pr.fd();
+        if text && let Some(vp) = pr.ps_textvp.get() {
+            self.fillit(None, None, KERN_FILE_TEXT, Some(vp), Some(pr))?;
+        }
+        if let Some(vp) = fdp.fd_cdir.get() {
+            self.fillit(None, None, KERN_FILE_CDIR, Some(vp), Some(pr))?;
+        }
+        if let Some(vp) = fdp.fd_rdir.get() {
+            self.fillit(None, None, KERN_FILE_RDIR, Some(vp), Some(pr))?;
+        }
+        // ps_tracevp (KERN_FILE_TRACE) does not exist: KTRACE is not configured.
+        let mut i = 0;
+        while i < fdp.fd_nfiles.get() {
+            if let Some(fp) = fd_getfile(fdp, i) {
+                let r = self.fillit(Some(fp), Some(fdp), i, None, Some(pr));
+                let _ = frele(fp, self.p);
+                r?;
+            }
+            i += 1;
+        }
+        Ok(())
+    }
+}
+
+/// Whether `sysctl_file`'s process walks skip `pr`: system, exiting, embryonic and undead
+/// processes.
+fn file_skips(pr: &Process) -> bool {
+    pr.ps_flags.load(Ordering::Relaxed) & (PS_SYSTEM | PS_EMBRYO | PS_EXITING) != 0
+}
+
+/// `sysctl_file`: get file structures (`kern.file`; `name` is op, arg, element size,
+/// element count).
+pub fn sysctl_file(name: &[i32], where_: usize, sizep: &mut usize, p: &Proc) -> Result<(), Errno> {
     if name.len() > 4 {
         return Err(Errno::ENOTDIR);
     }
     if name.len() < 4 || name[2] < 0 || name[2] as usize > size_of::<KinfoFile>() {
         return Err(Errno::EINVAL);
     }
-    if name[2] < 1 {
+
+    let op = name[0];
+    let arg = name[1];
+    let elem_size = name[2] as usize;
+    // As the C's size_t: a negative count is no limit.
+    let elem_count = name[3] as usize;
+
+    if elem_size < 1 {
         return Err(Errno::EINVAL);
     }
 
-    Err(unported!(
-        "kern.file: fill_file, fd_iterfile (kern_descrip.c)"
-    ))
+    let mut w = FileWalk {
+        kf: KinfoFile::zeroed(),
+        p,
+        show_pointers: curproc().is_some_and(|cp| suser(cp).is_ok()),
+        dp: where_,
+        buflen: if where_ != 0 { *sizep } else { 0 },
+        elem_size,
+        elem_count,
+        outsize: size_of::<KinfoFile>().min(elem_size),
+        needed: 0,
+    };
+
+    match op {
+        KERN_FILE_BYFILE => {
+            // use the inp-tables to pick up closed connections, too
+            if arg == DTYPE_SOCKET {
+                // tcbtable: without tcp_usrreq.c no TCP socket exists.
+                let _ = unported!("kern.file: tcbtable (tcp_usrreq.c)");
+                // INET6 is not configured: no tcb6table, udb6table, rawin6pcbtable.
+                w.fillinptable(&UDBTABLE)?;
+                w.fillinptable(&RAWCBTABLE)?;
+                // NPF > 0: divbtable (and divb6table).
+                let _ = unported!("kern.file: divbtable (ip_divert.c)");
+            }
+            let mut fp = None;
+            loop {
+                fp = fd_iterfile(fp, p);
+                let Some(f) = fp else {
+                    break;
+                };
+                if arg != 0 && f.f_type.get() != arg {
+                    continue;
+                }
+                let skip = arg == DTYPE_SOCKET && {
+                    let af = fp_socket(f).dom_family();
+                    af == i32::from(AF_INET) || af == i32::from(AF_INET6)
+                };
+                if !skip {
+                    // KERNEL_LOCK(): no kernel lock yet.
+                    if let Err(e) = w.fillit(Some(f), None, 0, None, None) {
+                        let _ = frele(f, p);
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        KERN_FILE_BYPID => {
+            // A arg of -1 indicates all processes
+            if arg < -1 {
+                return Err(Errno::EINVAL);
+            }
+            let mut matched = false;
+            // KERNEL_LOCK(): no kernel lock yet.
+            for pr in ALLPROCESS.0.iter() {
+                if file_skips(pr) {
+                    continue;
+                }
+                if arg >= 0 && pr.ps_pid.get() != arg {
+                    // not the pid we are looking for
+                    continue;
+                }
+
+                refcnt_take(&pr.ps_refcnt);
+                matched = true;
+                let r = w.fill_process(pr, true);
+                refcnt_rele_wake(&pr.ps_refcnt);
+                r?;
+
+                // pid is unique, stop searching
+                if arg >= 0 {
+                    break;
+                }
+            }
+            if !matched {
+                return Err(Errno::ESRCH);
+            }
+        }
+        KERN_FILE_BYUID => {
+            // KERNEL_LOCK(): no kernel lock yet.
+            for pr in ALLPROCESS.0.iter() {
+                if file_skips(pr) {
+                    continue;
+                }
+                if arg >= 0 && pr.ucred().cr_uid.get() != arg as u32 {
+                    // not the uid we are looking for
+                    continue;
+                }
+
+                refcnt_take(&pr.ps_refcnt);
+                let r = w.fill_process(pr, false);
+                refcnt_rele_wake(&pr.ps_refcnt);
+                r?;
+            }
+        }
+        _ => return Err(Errno::EINVAL),
+    }
+
+    let mut needed = w.needed;
+    let mut error = Ok(());
+    if where_ == 0 {
+        needed += KERN_FILESLOP * elem_size;
+    } else if *sizep < needed {
+        error = Err(Errno::ENOMEM);
+    }
+    *sizep = needed;
+    error
 }
 
 /// `sysctl_doproc`: the `kern.proc` node, an array of `kinfo_proc` (`name` is op, arg,
@@ -2197,18 +2787,143 @@ pub fn sysctl_proc_vmmap(
     Err(unported!("kern.proc_vmmap: fill_vmmap (uvm_glue.c)"))
 }
 
-/// `sysctl_diskinit`: initialises `disknames`/`diskstats` for export by sysctl (`update`:
-/// only refresh the statistics). The disk list is `subr_disk.c`'s and is reported.
-pub fn sysctl_diskinit(update: bool, p: &Proc) -> Result<(), Errno> {
-    let _ = (update, p);
+/// One `snprintf(disknames + l, disknameslen - l, "%s:%s,", name, duid)` of
+/// `sysctl_diskinit`, then `l += strlen(disknames + l)`: appends at `l` what fits of the
+/// entry, NUL-terminated, and returns the new `l`.
+fn diskname_append(buf: &mut [u8], l: usize, name: &[u8], duid: &[u8]) -> usize {
+    let Some(avail) = buf.len().checked_sub(l).filter(|&a| a > 0) else {
+        return l;
+    };
+    let mut n = 0;
+    for &c in name.iter().chain(b":").chain(duid).chain(b",") {
+        if n + 1 >= avail {
+            break;
+        }
+        buf[l + n] = c;
+        n += 1;
+    }
+    buf[l + n] = 0;
+    l + n
+}
+
+/// The per-disk copy of `sysctl_diskinit`: `dk`'s name and statistics into `sdk`.
+fn disk_stats_copy(sdk: &mut Diskstats, dk: &Disk) {
+    strlcpy(&mut sdk.ds_name, &dk.dk_name.get());
+    mtx_enter(&dk.dk_mtx);
+    sdk.ds_busy = dk.dk_busy.get();
+    sdk.ds_rxfer = dk.dk_rxfer.get();
+    sdk.ds_wxfer = dk.dk_wxfer.get();
+    sdk.ds_seek = dk.dk_seek.get();
+    sdk.ds_rbytes = dk.dk_rbytes.get();
+    sdk.ds_wbytes = dk.dk_wbytes.get();
+    sdk.ds_attachtime = dk.dk_attachtime.get();
+    sdk.ds_timestamp = dk.dk_timestamp.get();
+    sdk.ds_time = dk.dk_time.get();
+    mtx_leave(&dk.dk_mtx);
+}
+
+/// `diskstats` as a slice of its `diskstatslen / sizeof(struct diskstats)` entries.
+///
+/// # Safety
+///
+/// `sysctl_disklock` is held for writing, so no other slice of the array is live and
+/// `sysctl_diskinit` cannot replace it meanwhile.
+#[allow(clippy::mut_from_ref)] // the C's global array, guarded by sysctl_disklock
+unsafe fn diskstats_mut() -> &'static mut [Diskstats] {
+    let Some(sdk) = NonNull::new(DISKSTATS.load(Ordering::Relaxed)) else {
+        return &mut [];
+    };
+    let n = DISKSTATSLEN.load(Ordering::Relaxed) / size_of::<Diskstats>();
+    // SAFETY: `sysctl_diskinit` allocated `n` zeroed entries (all-zero is a valid
+    // `Diskstats`) and frees them only under the lock the caller holds.
+    unsafe { core::slice::from_raw_parts_mut(sdk.as_ptr(), n) }
+}
+
+/// `sysctl_diskinit`: initialises `disknames`/`diskstats` for export by sysctl. If `update`
+/// is set, then we simply update the disk statistics information.
+pub fn sysctl_diskinit(update: bool, _p: &Proc) -> Result<(), Errno> {
     // KERNEL_ASSERT_LOCKED(): no kernel lock yet.
 
     rw_enter(&SYSCTL_DISKLOCK, RW_WRITE | RW_INTR)?;
-    let error = Err(unported!(
-        "sysctl_diskinit: disklist, disk_change (subr_disk.c)"
-    ));
+
+    let mut changed = false;
+
+    // Run in a loop, disks may change while malloc sleeps.
+    while DISK_CHANGE.load(Ordering::Relaxed) != 0 {
+        DISK_CHANGE.store(0, Ordering::Relaxed);
+
+        let mut tlen = 0;
+        for dk in DISKLIST.0.iter() {
+            tlen += strnlen(&dk.dk_name.get(), DS_DISKNAMELEN);
+            tlen += 18; // label uid + separators
+        }
+        tlen += 1;
+        // disk_count may change when malloc sleeps
+        let count = DISK_COUNT.load(Ordering::Relaxed).max(0) as usize;
+
+        // The sysctl_disklock ensures that no other process can allocate disknames and
+        // diskstats while our malloc sleeps.
+        if let Some(names) = NonNull::new(DISKNAMES.swap(ptr::null_mut(), Ordering::Relaxed)) {
+            free(names, M_SYSCTL, DISKNAMESLEN.load(Ordering::Relaxed));
+        }
+        if let Some(stats) = NonNull::new(DISKSTATS.swap(ptr::null_mut(), Ordering::Relaxed)) {
+            free(stats.cast(), M_SYSCTL, DISKSTATSLEN.load(Ordering::Relaxed));
+        }
+        DISKNAMESLEN.store(0, Ordering::Relaxed);
+        DISKSTATSLEN.store(0, Ordering::Relaxed);
+        if let Some(stats) = mallocarray(count, size_of::<Diskstats>(), M_SYSCTL, M_WAITOK | M_ZERO)
+        {
+            DISKSTATS.store(stats.as_ptr().cast(), Ordering::Relaxed);
+            DISKSTATSLEN.store(count * size_of::<Diskstats>(), Ordering::Relaxed);
+        }
+        if let Some(names) = malloc(tlen, M_SYSCTL, M_WAITOK | M_ZERO) {
+            // disknames[0] = '\0': M_ZERO.
+            DISKNAMES.store(names.as_ptr(), Ordering::Relaxed);
+            DISKNAMESLEN.store(tlen, Ordering::Relaxed);
+        }
+        changed = true;
+    }
+
+    // SAFETY: SYSCTL_DISKLOCK is held for writing.
+    let stats = unsafe { diskstats_mut() };
+    if changed {
+        let names = match NonNull::new(DISKNAMES.load(Ordering::Relaxed)) {
+            // SAFETY: the `disknameslen` bytes allocated above; only this lock's holder
+            // touches them.
+            Some(n) => unsafe {
+                core::slice::from_raw_parts_mut(n.as_ptr(), DISKNAMESLEN.load(Ordering::Relaxed))
+            },
+            None => &mut [],
+        };
+        let mut l = 0;
+        let mut sdk = stats.iter_mut();
+        for dk in DISKLIST.0.iter() {
+            let label_uid = dk.label().map(|lp| lp.d_uid).filter(|u| !duid_iszero(u));
+            let duid = label_uid.map(|u| duid_format(&u));
+            let name = dk.dk_name.get();
+            l = diskname_append(
+                names,
+                l,
+                &name[..strnlen(&name, DS_DISKNAMELEN)],
+                duid.as_ref().map_or(&[][..], |d| &d[..]),
+            );
+            if let Some(sdk) = sdk.next() {
+                disk_stats_copy(sdk, dk);
+            }
+        }
+
+        // Eliminate trailing comma
+        if l != 0 {
+            names[l - 1] = 0;
+        }
+    } else if update {
+        // Just update, number of drives hasn't changed
+        for (sdk, dk) in stats.iter_mut().zip(DISKLIST.0.iter()) {
+            disk_stats_copy(sdk, dk);
+        }
+    }
     rw_exit_write(&SYSCTL_DISKLOCK);
-    error
+    Ok(())
 }
 
 /// `sysctl_intrcnt`: `kern.intrcnt`, served by `evcount_sysctl`.

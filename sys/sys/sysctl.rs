@@ -52,6 +52,8 @@
 //! - `struct kinfo_proc` has an explicit `p_pad0` where the C compiler inserts four bytes of
 //!   padding before `p_uru_maxrss`; the layout is the C's (checked at compile time), and the
 //!   structure has no uninitialised bytes, so it can be copied out as bytes ([`SysctlPlain`]).
+//!   `struct kinfo_file` likewise has `kf_pad0` (before `so_splice`) and `kf_pad1` (its
+//!   tail padding), and `struct diskstats` (`<sys/disk.h>`) its `ds_pad0`.
 //! - `FILL_KPROC`, `_getcompatprio`, `PTRTOINT64` and `PR_LOCK`/`PR_UNLOCK` are expanded where
 //!   their one kernel user is, `fill_kproc` in `kern/kern_sysctl.rs`: a macro over a dozen
 //!   pointers is a function body in Rust.
@@ -67,6 +69,7 @@
 
 use core::sync::atomic::AtomicI32;
 
+use crate::sys::disk::Diskstats;
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::Mbstat;
 use crate::sys::proc::Proc;
@@ -981,6 +984,8 @@ pub struct KinfoFile {
 
     /// UINT: Routing table identifier.
     pub inp_rtableid: u32,
+    /// The four bytes of padding the C compiler puts here to align `so_splice`.
+    pub kf_pad0: u32,
     /// PTR: `f_data` of spliced socket.
     pub so_splice: u64,
     /// OFF_T: already spliced count or -1 if this is target of splice.
@@ -1010,6 +1015,17 @@ pub struct KinfoFile {
 
     /// NLINK_T: number of references to file.
     pub va_nlink: u32,
+    /// The four bytes of tail padding the C compiler adds to round the size to 8.
+    pub kf_pad1: u32,
+}
+
+impl KinfoFile {
+    /// `memset(kf, 0, sizeof(*kf))`.
+    pub fn zeroed() -> Self {
+        // SAFETY: every member is an integer or an array of integers, for which all-zero
+        // bytes are a valid value.
+        unsafe { core::mem::MaybeUninit::<Self>::zeroed().assume_init() }
+    }
 }
 
 /// `KERN_INTRCNT_NUM`: int: # intrcnt.
@@ -1284,6 +1300,12 @@ unsafe impl SysctlPlain for Clockinfo {}
 // SAFETY: `#[repr(C)]` integers and byte arrays, the one C padding hole made a member
 // (`p_pad0`); the compile-time checks below pin the size and the offsets.
 unsafe impl SysctlPlain for KinfoProc {}
+// SAFETY: `#[repr(C)]` integers and byte arrays, the two C padding holes made members
+// (`kf_pad0`, `kf_pad1`); the compile-time checks below pin the size and the offsets.
+unsafe impl SysctlPlain for KinfoFile {}
+// SAFETY: `#[repr(C)]` integers, a byte array and `Timeval`s, the one C padding hole made a
+// member (`ds_pad0`); the compile-time checks below pin the size and the offsets.
+unsafe impl SysctlPlain for Diskstats {}
 // SAFETY: `#[repr(C)]`, seven `u64`s, no padding.
 unsafe impl SysctlPlain for Cpustats {}
 // SAFETY: `#[repr(C)]`, `u64`s only, no padding.
@@ -1304,6 +1326,14 @@ const _: () = {
     assert!(offset_of!(KinfoProc, p_emul) == 576);
     assert!(offset_of!(KinfoProc, p_name) == 624);
     assert!(size_of::<KinfoFile>() == 632);
+    assert!(offset_of!(KinfoFile, f_mntonname) == 176);
+    assert!(offset_of!(KinfoFile, p_comm) == 400);
+    assert!(offset_of!(KinfoFile, so_splice) == 432);
+    assert!(offset_of!(KinfoFile, unp_path) == 488);
+    assert!(offset_of!(KinfoFile, va_nlink) == 624);
+    assert!(size_of::<Diskstats>() == 112);
+    assert!(offset_of!(Diskstats, ds_rxfer) == 24);
+    assert!(offset_of!(Diskstats, ds_attachtime) == 64);
     assert!(size_of::<KinfoVmentry>() == 80);
     assert!(size_of::<Timeval>() == 16);
     assert!(size_of::<Clockinfo>() == 16);

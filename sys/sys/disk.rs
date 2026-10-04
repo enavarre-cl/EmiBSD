@@ -63,6 +63,9 @@
 //!   `char *` into the softc's `dv_xname`: the same bytes without a self-reference.
 //! - `dk_device` and `dk_label` are `Option<NonNull<_>>` (the C's possibly NULL pointers);
 //!   [`Disk::label`] and [`Disk::label_mut`] reach the label.
+//! - `struct diskstats` has an explicit `ds_pad0` where the C compiler inserts four bytes of
+//!   padding before `ds_rxfer`: the layout is the C's (checked in `sys/sysctl.rs`) with no
+//!   uninitialised bytes, so `hw.diskstats` copies it out as bytes.
 
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -87,6 +90,8 @@ pub struct Diskstats {
     pub ds_name: [u8; DS_DISKNAMELEN],
     /// `ds_busy`: busy counter.
     pub ds_busy: i32,
+    /// The four bytes of padding the C compiler puts here to align `ds_rxfer`.
+    pub ds_pad0: u32,
     /// `ds_rxfer`: total number of read transfers.
     pub ds_rxfer: u64,
     /// `ds_wxfer`: total number of write transfers.

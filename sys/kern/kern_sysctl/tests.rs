@@ -1,7 +1,8 @@
 //! Host tests for `kern_sysctl.rs`: the helpers' C semantics on old and new buffers (sizes,
 //! `ENOMEM`/`EPERM`/`EINVAL`, truncation, bounds), the bounded tables, the identity nodes,
 //! `hw` nodes that need no hardware, `kern.proc` sizing and `fill_kproc` over a process built
-//! by hand, and `sysctl(2)` itself through its argument registers.
+//! by hand, `fill_file`/`kern.file` checks and sizing, the `hw.disk*` nodes over a disk
+//! put on the list by hand, and `sysctl(2)` itself through its argument registers.
 
 use std::assert_eq;
 use std::boxed::Box;
@@ -472,4 +473,169 @@ fn sysctl_2_reads_kern_ostype() {
     let name = [CTL_DEBUG, 0];
     let args = [ra(&name) as Register, 2, 0, 0, 0, 0];
     assert_eq!(sys_sysctl(p, &args, &mut retval), Err(Errno::EOPNOTSUPP));
+}
+
+#[test]
+fn fill_file_reports_the_file_and_its_process() {
+    let _g = setup();
+    let p = thread(1000);
+    let pr = p.process();
+
+    let cr: &'static Ucred = crget();
+    cr.cr_uid.set(1000);
+    cr.cr_gid.set(20);
+    let fp: &'static File = Box::leak(Box::new(File::new()));
+    fp.f_cred.set(cr);
+    fp.f_type.set(crate::sys::file::DTYPE_DMABUF);
+    fp.f_flag.store((FREAD | FWRITE) as u32, Ordering::Relaxed);
+    fp.f_count.store(2, Ordering::Relaxed);
+    fp.f_offset.set(77);
+
+    let mut kf = KinfoFile::zeroed();
+    fill_file(&mut kf, Some(fp), None, 3, None, Some(pr), p, None, false);
+    assert_eq!((kf.fd_fd, kf.f_type, kf.f_count), (3, 5, 2));
+    assert_eq!((kf.f_flag, kf.f_uid, kf.f_gid), (3, 1000, 20));
+    // The owner sees the offset; no pointers without root.
+    assert_eq!((kf.f_offset, kf.f_fileaddr, kf.f_data), (77, 0, 0));
+    assert_eq!((kf.p_pid, kf.p_uid, kf.p_tid), (42, 1000, u32::MAX));
+    assert_eq!(&kf.p_comm[..5], b"test\0");
+
+    // Another user does not.
+    let other = thread(1001);
+    fill_file(&mut kf, Some(fp), None, 3, None, None, other, None, true);
+    assert_eq!(kf.f_offset, u64::MAX);
+    assert_eq!(kf.f_fileaddr, fp as *const File as u64);
+    assert_eq!(kf.p_pid, 0);
+}
+
+#[test]
+fn sysctl_file_checks_and_sizes() {
+    let _g = setup();
+    let p = thread(0);
+    let size = size_of::<KinfoFile>() as i32;
+
+    let mut len = 0;
+    assert_eq!(
+        sysctl_file(&[KERN_FILE_BYPID, -1, size], 0, &mut len, p),
+        Err(Errno::EINVAL)
+    );
+    assert_eq!(
+        sysctl_file(&[KERN_FILE_BYPID, -1, size, 1, 0], 0, &mut len, p),
+        Err(Errno::ENOTDIR)
+    );
+    assert_eq!(
+        sysctl_file(&[KERN_FILE_BYPID, -1, size + 1, 1], 0, &mut len, p),
+        Err(Errno::EINVAL)
+    );
+    assert_eq!(
+        sysctl_file(&[KERN_FILE_BYPID, -1, 0, 1], 0, &mut len, p),
+        Err(Errno::EINVAL)
+    );
+    assert_eq!(
+        sysctl_file(&[KERN_FILE_BYPID, -2, size, 1], 0, &mut len, p),
+        Err(Errno::EINVAL)
+    );
+    assert_eq!(
+        sysctl_file(&[9, 0, size, 1], 0, &mut len, p),
+        Err(Errno::EINVAL)
+    );
+    assert_eq!(
+        sysctl_file(&[KERN_FILE_BYPID, 999_999, size, 1], 0, &mut len, p),
+        Err(Errno::ESRCH)
+    );
+    // Nobody has this uid: only the slop is asked for.
+    assert_eq!(
+        sysctl_file(&[KERN_FILE_BYUID, 54_321, size, 10], 0, &mut len, p),
+        Ok(())
+    );
+    assert_eq!(len, KERN_FILESLOP * size as usize);
+}
+
+#[test]
+fn unp_path_copy_honours_sun_len() {
+    let mut addr = [0u8; 16];
+    addr[0] = 2 + 5;
+    addr[1] = 1;
+    addr[2..7].copy_from_slice(b"/sock");
+    addr[7] = b'X';
+    let mut path = [0u8; KI_UNPPATHLEN];
+    unp_path_copy(&mut path, &addr);
+    assert_eq!(&path[..6], b"/sock\0");
+
+    // A sun_len past the mbuf's bytes is cut at the mbuf.
+    addr[0] = 200;
+    let mut path = [0u8; KI_UNPPATHLEN];
+    unp_path_copy(&mut path, &addr);
+    assert_eq!(&path[..15], b"/sockX\0\0\0\0\0\0\0\0\0");
+    unp_path_copy(&mut path, &[]);
+}
+
+#[test]
+fn diskname_append_is_snprintf() {
+    let mut buf = [0xffu8; 12];
+    let l = diskname_append(&mut buf, 0, b"rd0", b"");
+    assert_eq!((l, &buf[..6]), (5, &b"rd0:,\0"[..]));
+    // Truncated to what fits, still terminated.
+    let l = diskname_append(&mut buf, l, b"sd0", b"0123456789abcdef");
+    assert_eq!((l, &buf[..]), (11, &b"rd0:,sd0:01\0"[..]));
+    assert_eq!(diskname_append(&mut buf, 12, b"x", b""), 12);
+}
+
+#[test]
+fn hw_disk_nodes_follow_the_disklist() {
+    use crate::kern::subr_disk::{DISK_CHANGE, DISK_COUNT, DISKLIST};
+    use crate::sys::disk::Disk;
+
+    let _g = setup();
+    let p = thread(0);
+
+    // Other tests may have left their disks on the list: this one is the last.
+    let dk: &'static Disk = Box::leak(Box::new(Disk::new()));
+    let mut name = [0u8; DS_DISKNAMELEN];
+    name[..4].copy_from_slice(b"tst9");
+    dk.dk_name.set(name);
+    dk.dk_rxfer.set(5);
+    dk.dk_rbytes.set(4096);
+    if DISKLIST.0.is_empty() {
+        DISKLIST.0.init();
+    }
+    // SAFETY: the disk is leaked, in no list; the setup guard serialises the tests.
+    unsafe { DISKLIST.0.insert_tail(dk) };
+    DISK_COUNT.fetch_add(1, Ordering::Relaxed);
+    DISK_CHANGE.store(1, Ordering::Relaxed);
+
+    let mut v = 0i32;
+    let mut len = 4;
+    assert_eq!(
+        hw_sysctl(&[HW_DISKCOUNT], ua(&mut v), &mut len, 0, 0, p),
+        Ok(())
+    );
+    assert_eq!(v, DISK_COUNT.load(Ordering::Relaxed));
+
+    let mut out = [0u8; 256];
+    let mut len = out.len();
+    assert_eq!(
+        hw_sysctl_locked(&[HW_DISKNAMES], ua(&mut out), &mut len, 0, 0, p),
+        Ok(())
+    );
+    assert!(out[..len].ends_with(b"tst9:\0"));
+    assert!(len == 6 || out[len - 7] == b',');
+
+    dk.dk_wxfer.set(9);
+    let mut ds = [Diskstats::default(); 16];
+    let mut len = size_of_val(&ds);
+    assert_eq!(
+        hw_sysctl_locked(&[HW_DISKSTATS], ua(&mut ds), &mut len, 0, 0, p),
+        Ok(())
+    );
+    let n = DISK_COUNT.load(Ordering::Relaxed) as usize;
+    assert_eq!(len, n * size_of::<Diskstats>());
+    let last = &ds[n - 1];
+    assert_eq!(&last.ds_name[..5], b"tst9\0");
+    assert_eq!((last.ds_rxfer, last.ds_wxfer, last.ds_rbytes), (5, 9, 4096));
+
+    // SAFETY: inserted above; the guard is still held.
+    unsafe { DISKLIST.0.remove(dk) };
+    DISK_COUNT.fetch_sub(1, Ordering::Relaxed);
+    DISK_CHANGE.store(1, Ordering::Relaxed);
 }
