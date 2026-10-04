@@ -59,7 +59,8 @@
 //!   before `mount_info`), so the structure is plain data that `copyout` may read whole;
 //!   `union mount_info` is its 160 bytes, 8-aligned: the per-filesystem views come with
 //!   their file systems (`ufs_args` and the `export_args` it embeds are here, with ffs;
-//!   `UfsArgs::from_bytes` reads them out of the kernel copy of the mount arguments).
+//!   `UfsArgs::from_bytes` reads them out of the kernel copy of the mount arguments;
+//!   `struct mfs_args` is `MfsArgs`, read the same way, with MFS).
 //! - `struct vfsconf`'s `vfc_refcount` is atomic (`atomic_inc_int` in C).
 //! - `VFS_*` are functions with the macros' names (`#[allow(non_snake_case)]`).
 //! - `struct netcred`/`struct netexport` need `net/radix.h` and `NFSSERVER`, neither of
@@ -157,6 +158,39 @@ impl UfsArgs {
         // integers, valid for any bit pattern (its padding bytes are padding); the read is
         // unaligned.
         Some(unsafe { ptr::read_unaligned(data.as_ptr().cast::<UfsArgs>()) })
+    }
+}
+
+/// `struct mfs_args`: arguments to mount MFS. `fspec` is the user address of the name to
+/// export for `statfs`, `base` the user address of the file system in the memory of the
+/// process that mounts it.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct MfsArgs {
+    /// `fspec`: name to export for statfs.
+    pub fspec: usize,
+    /// `export_info`: if exported MFSes are supported.
+    pub export_info: ExportArgs,
+    /// `base`: base of file system in memory.
+    pub base: usize,
+    /// `size`: size of file system.
+    pub size: u64,
+}
+
+impl MfsArgs {
+    /// `sizeof(struct mfs_args)`: the `vfc_datasize` of MFS.
+    pub const SIZE: usize = size_of::<MfsArgs>();
+
+    /// The arguments in the kernel copy `sys_mount` made of them (at least `SIZE` bytes),
+    /// `None` when there are none (the C's NULL `data`).
+    pub fn from_bytes(data: &[u8]) -> Option<Self> {
+        if data.len() < Self::SIZE {
+            return None;
+        }
+        // SAFETY: `data` holds `SIZE` readable bytes (checked), and the structure is
+        // integers, valid for any bit pattern (its padding bytes are padding); the read is
+        // unaligned.
+        Some(unsafe { ptr::read_unaligned(data.as_ptr().cast::<MfsArgs>()) })
     }
 }
 
@@ -753,6 +787,10 @@ const _: () = {
     assert!(size_of::<Fhandle>() == 28);
     assert!(size_of::<ExportArgs>() == 120);
     assert!(UfsArgs::SIZE == 128);
+    assert!(MfsArgs::SIZE == 144);
+    assert!(offset_of!(MfsArgs, base) == 128);
+    assert!(offset_of!(MfsArgs, size) == 136);
+    assert!(MfsArgs::SIZE <= size_of::<MountInfo>());
 };
 
 #[cfg(test)]

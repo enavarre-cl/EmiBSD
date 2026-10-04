@@ -4317,6 +4317,42 @@ upstream_blob = "1432a9d841b245e6435f2a60208575eef5aeafea"
 deps = ["sys/ufs/ffs/ffs_vnops.c", "sys/ufs/ffs/ffs_alloc.c", "sys/ufs/ffs/ffs_balloc.c", "sys/ufs/ufs/ufs_vfsops.c", "sys/kern/vfs_syscalls.c"]
 notes = "ffs: ffs_vfsops, ffs_vtbl, pools, ffs_checkrange, ffs_mountroot (rootdev in sys/systm.rs, swapdev from machine::conf, rootvp/swapdev_vp in init_main.rs; inittodr(fs_time) runs), ffs_mount (own Nameidata for the device; disk_map (subr_disk.c) maps a DUID name to its block device, else the name is used as given; nblkdev from machine::conf), ffs_reload, ffs_validate, sbtry, ffs_mountfs (FFS1 and FFS2 super-blocks; the in-core super-block is at least size_of::<Fs>()), ffs_oldfscompat, ffs1_compat_read/write, ffs_unmount, ffs_flushfiles, ffs_statfs, ffs_sync, ffs_vget, ffs_fhtovp, ffs_vptofh, ffs_sbupdate, ffs_init (done flag atomic), ffs_sysctl; ffs_vars holds vfs.ffs.dirhash_dirsize, dirhash_maxmem and the read-only dirhash_mem under feature ufs_dirhash (empty without it); host tests: newfs-like FFS1/FFS2 images (the test module and its helpers are pub(crate) for ufs_dirhash's and ufs_quota's tests), mount, read, write past the direct blocks, mkdir/rename/unlink/rmdir/symlink/getdents, sync, unmount, fsck-like counter check, remount"
 
+[[file]]
+c = "sys/ufs/mfs/mfs_vfsops.c"
+rust = "sys/ufs/mfs/mfs_vfsops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4ce1859b773ed8b3e3e2583ad40e19ef57a59c3e"
+deps = ["sys/ufs/mfs/mfsnode.h", "sys/ufs/mfs/mfs_extern.h", "sys/ufs/mfs/mfs_vnops.c", "sys/ufs/ffs/ffs_vfsops.c", "sys/ufs/ufs/ufs_vfsops.c", "sys/ufs/ufs/ufs_quota.c", "sys/kern/vfs_syscalls.c", "sys/kern/kern_sig.c"]
+notes = "M10b, feature mfs (option MFS, default as in GENERIC): the whole file: mfs_vfsops (ffs_unmount/ffs_statfs/ffs_sync/ffs_vget/ffs_fhtovp/ffs_vptofh/ffs_sysctl, ufs_root, ufs_quotactl), mfs_minor (atomic), mfs_mount (struct mfs_args as MfsArgs read from the kernel copy of the arguments; the update path flushes as the C; a new mount makes a VBLK vnode of tag VT_MFS (getnewvnode, checkalias with makedev(255, mfs_minor)), a zeroed Mfsnode malloc(M_MFSNODE) with base, size and the mounting thread's tid, bufq_init FIFO, ffs_mountfs on it (unchanged: it already reaches an mfs devvp through VOP_OPEN/bread/VOP_STRATEGY), then fs_fsmnt, f_mntonname, f_mntfromname/f_mntfromspec and the mfs_args in mount_info; NULL data in a new mount answers EINVAL where the C dereferences it; EXPORTMFS is not configured), mfs_start (VFS_START, which sys_mount already calls last: the process serves the bufq with mfs_doio, then tsleep_nsec(vp, PWAIT|PCATCH, \"mfsidl\", INFSLP); after a wakeup with an error, cursig, vfs_busy(VB_WRITE|VB_NOWAIT) and dounmount (MNT_FORCE for SIGKILL), clearing the signal from p_siglist if that fails; returns when mfs_shutdown is set), mfs_checkexp (EOPNOTSUPP), mfs_init (ffs_init); host tests (mfs_vfsops/tests.rs: the vfsconflist entry, MfsArgs parsing, mount of a newfs-built FFS2 image standing in for the process's memory with file read/write/sync, unmount leaving the image clean and mfs_shutdown set, mfs_reclaim through vgone, remount of the same memory read-only, mount failures (NULL data, bad fspec, no file system in the memory) and the update path); mfs_start's sleep, the mount_mfs(8) fork, the signal unmount and the I/O across processes are exercised only by the smoke (`mount_mfs -s 8m swap /mfs`, both archs)"
+
+[[file]]
+c = "sys/ufs/mfs/mfs_vnops.c"
+rust = "sys/ufs/mfs/mfs_vnops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cd724eb59f7b0c750c365218f1ac633df5addefe"
+deps = ["sys/ufs/mfs/mfsnode.h", "sys/ufs/mfs/mfs_extern.h", "sys/kern/kern_bufq.c", "sys/kern/vfs_default.c", "sys/kern/spec_vnops.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_bio.c"]
+notes = "M10b, feature mfs: the whole file: mfs_vops (vop_generic_badop slots as closures like spec_vops, nullop lock/unlock/islocked, spec_fsync, vop_generic_revoke/bmap/bwrite), mfs_open (DIAGNOSTIC VBLK check), mfs_ioctl (ENOTTY), mfs_strategy (the file system's own thread, by tid, does the I/O at once, any other queues on the bufq and wakes the vnode), mfs_doio (b_bcount clamped to the end of the file system, a start beyond it reads as no bytes; copyin for B_READ and copyout for a write against the mfs process's address space; b_error/B_ERROR/b_resid; biodone at splbio), mfs_close (drains the queue, vinvalbuf, DIAGNOSTIC bufq_peek, sets mfs_shutdown and wakes the process), mfs_inactive (DIAGNOSTIC check, VOP_UNLOCK), mfs_reclaim (bufq_destroy, free of the Mfsnode), mfs_print (features debug/diagnostic); host tests (mfs_vnops/tests.rs: mfs_doio reads, writes, the clamp, an empty request and a bad address; mfs_strategy in the file system's thread and queued for another, then served by hand; ioctl, open, print)"
+
+[[file]]
+c = "sys/ufs/mfs/mfsnode.h"
+rust = "sys/ufs/mfs/mfsnode.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f57db08e694b1971b79d24d53f989d79bb6853e5"
+deps = ["sys/sys/buf.h", "sys/sys/vnode.h"]
+notes = "M10b, feature mfs: struct mfsnode (Mfsnode: Cells, the Bufq inline, mfs_baseoff a user address (usize), mfs_size i64, mfs_tid, mfs_buflist unused as in the C, mfs_shutdown atomic as it is set by the closer and polled by the file system's process; malloc(M_MFSNODE) item behind v_data, &'static), VTOMFS as vtomfs (checks VT_MFS and v_data) and MFSTOV as mfstov"
+
+[[file]]
+c = "sys/ufs/mfs/mfs_extern.h"
+rust = "sys/ufs/mfs/mfs_extern.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ed133bb42acd3eb05847521661c5f9017d7fd92f"
+deps = ["sys/ufs/mfs/mfs_vfsops.c", "sys/ufs/mfs/mfs_vnops.c"]
+notes = "M10b, feature mfs: re-exports the prototypes and mfs_vops of mfs_vfsops.rs and mfs_vnops.rs"
+
 [[extra]]
 rust = "sys/dev/consfile.rs"
 reason = "stand-in until /dev/console can be opened (a root file system with /dev): the console as a struct file (DTYPE_CONSFILE) that start_init installs at descriptors 0, 1 and 2 of init through falloc/fdinsert; since M8 its fileops are what vn_read/vn_write/vn_ioctl/vn_close would do for the console's vnode: cnopen at attach, cnread/cnwrite (IO_NDELAY for FNONBLOCK), cnioctl (FIONBIO/FIOASYNC are the file's), cnkqfilter, cnclose; the polled cnputc/cngetc path is kept for a console that is not a tty"
@@ -4610,7 +4646,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e765164b70433aca6f866a1fc9997627c2ec7f0f"
 deps = ["sys/sys/queue.h", "sys/sys/rwlock.h", "sys/sys/refcnt.h", "sys/sys/ucred.h", "sys/sys/mbuf.h", "sys/sys/sysctl.h"]
-notes = "vfs stage 1: fsid_t (Fsid), struct fid, MFSNAMELEN/MNAMELEN, union mount_info as its 160 aligned bytes (the per-filesystem *_args views, export_args, the NFS/ISO/MSDOS/NTFS/UDF/tmpfs/fuse args and their flags come with their file systems), struct statfs (#[repr(C)], the holes named _pad0/_pad1, AbiPod, 568 bytes checked), MOUNT_* names, struct mount (malloc'd, &'static Mount with mnt_refs; Cells, mnt_op/mnt_vfc Options with accessors, mnt_stat a Cell<Statfs> with update_stat), MntList/MntDounmount adapters, MNT_* flags and MNT_BITS, MNT_OP_FLAGS, MNT_WAIT/NOWAIT/LAZY, struct fhandle (AbiPod), VFS_GENERIC/MAXTYPENUM/CONF/BCACHESTAT, struct vfsconf (vfc_refcount atomic, Vfsconf::new), struct bcachestats, struct vfsops (vfs_root/vfs_vget/vfs_fhtovp return the vnode; vfs_mount gets the arguments as bytes; vfs_init/vfs_sysctl Options), the VFS_* macros as functions, VB_*; struct netcred/netexport (net/radix.h, NFSSERVER) left out; reference-backed test; vfs stage 2: BUFPAGES_DEFICIT/BUFPAGES_INACT as bufpages_deficit()/bufpages_inact() over vfs_bio.c's bcstats and buflowpages; ffs: struct export_args (sockaddr pointers as user addresses) and struct ufs_args (UfsArgs::from_bytes reads the kernel copy of the mount arguments)"
+notes = "vfs stage 1: fsid_t (Fsid), struct fid, MFSNAMELEN/MNAMELEN, union mount_info as its 160 aligned bytes (the per-filesystem *_args views, export_args, the NFS/ISO/MSDOS/NTFS/UDF/tmpfs/fuse args and their flags come with their file systems), struct statfs (#[repr(C)], the holes named _pad0/_pad1, AbiPod, 568 bytes checked), MOUNT_* names, struct mount (malloc'd, &'static Mount with mnt_refs; Cells, mnt_op/mnt_vfc Options with accessors, mnt_stat a Cell<Statfs> with update_stat), MntList/MntDounmount adapters, MNT_* flags and MNT_BITS, MNT_OP_FLAGS, MNT_WAIT/NOWAIT/LAZY, struct fhandle (AbiPod), VFS_GENERIC/MAXTYPENUM/CONF/BCACHESTAT, struct vfsconf (vfc_refcount atomic, Vfsconf::new), struct bcachestats, struct vfsops (vfs_root/vfs_vget/vfs_fhtovp return the vnode; vfs_mount gets the arguments as bytes; vfs_init/vfs_sysctl Options), the VFS_* macros as functions, VB_*; struct netcred/netexport (net/radix.h, NFSSERVER) left out; reference-backed test; vfs stage 2: BUFPAGES_DEFICIT/BUFPAGES_INACT as bufpages_deficit()/bufpages_inact() over vfs_bio.c's bcstats and buflowpages; ffs: struct export_args (sockaddr pointers as user addresses) and struct ufs_args (UfsArgs::from_bytes reads the kernel copy of the mount arguments); M10b: struct mfs_args (MfsArgs, 144 bytes checked, MfsArgs::from_bytes like UfsArgs; mfs_mount copies the raw bytes into mount_info)"
 
 [[file]]
 c = "sys/sys/namei.h"
@@ -4628,7 +4664,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8d31047ac94f65c25fff1431e92936deca4f2437"
 deps = ["sys/sys/mount.h", "sys/sys/vnode.h", "sys/kern/subr_pool.c"]
-notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args))"
+notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries"
 
 [[file]]
 c = "sys/kern/vfs_subr.c"

@@ -45,8 +45,9 @@
 //! Upstream: sys/kern/vfs_init.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `vfsconflist[]` holds the ported file systems: `ffs` (feature `ffs`, `option FFS`). Each
-//!   other GENERIC entry (`MFS`, `EXT2FS`, `CD9660`, `MSDOSFS`, `NFSCLIENT`, `NTFS`, `UDF`,
+//! - `vfsconflist[]` holds the ported file systems: `ffs` (feature `ffs`, `option FFS`) and
+//!   `mfs` (feature `mfs`, `option MFS`), in the C's order. Each
+//!   other GENERIC entry (`EXT2FS`, `CD9660`, `MSDOSFS`, `NFSCLIENT`, `NTFS`, `UDF`,
 //!   `FUSE`, `TMPFS`) joins as a `Vfsconf::new(...)` line when its file system does, behind
 //!   a cargo feature named after the `option(4)`.
 //! - `rootvnode` is an `AtomicPtr` behind [`rootvnode`]/[`set_rootvnode`]; `maxvfsconf` is an
@@ -82,10 +83,18 @@ static VFSCONFLIST: [Vfsconf; NVFSCONF] = [
         crate::sys::mount::MNT_LOCAL | crate::sys::mount::MNT_SWAPPABLE,
         crate::sys::mount::UfsArgs::SIZE,
     ),
+    #[cfg(feature = "mfs")]
+    Vfsconf::new(
+        &crate::ufs::mfs::mfs_vfsops::MFS_VFSOPS,
+        crate::sys::mount::MOUNT_MFS,
+        3,
+        crate::sys::mount::MNT_LOCAL,
+        crate::sys::mount::MfsArgs::SIZE,
+    ),
 ];
 
 /// The number of entries of `vfsconflist[]`: one per configured file system.
-const NVFSCONF: usize = if cfg!(feature = "ffs") { 1 } else { 0 };
+const NVFSCONF: usize = cfg!(feature = "ffs") as usize + cfg!(feature = "mfs") as usize;
 
 /// `maxvfsconf`: initially the size of the list, `vfsinit` will set it to the highest defined
 /// type number.
