@@ -78,7 +78,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid smoke-nfs
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -1018,6 +1018,105 @@ nfs_expect := "--a-expect 'nfs-up-5' --a-expect 'nfs-udp-8' --a-expect 'nfs-tcp-
     "--b-expect 'Exports list on 192.168.77.1:' --b-expect '/export                            192.168.77.2' " + \
     "--b-expect 'nfs-a-7' --b-expect '192.168.77.1:/export on /mnt type nfs (v3, udp' " + \
     "--b-expect '192.168.77.1:/export on /mnt type nfs (v3, tcp' --b-expect 'nfs-done-10'"
+
+# M10d: ext2fs (sys/ufs/ext2fs) on a disk set of its own (`--disk-set ext2fs`, so smoke-disk's
+# sd0 is left alone). Boot 1 (`--disk-fresh`) gives sd0 an MBR and disklabel(8)'s automatic
+# layout as smoke-disk does, retypes partition a from 4.2BSD to ext2fs (newfs_ext2fs(8)
+# insists on it): the label is printed, rewritten by a ksh function `t` and restored with
+# `disklabel -R`; then newfs_ext2fs, mount(8) -t ext2fs, a file, a directory of 30 files,
+# umount. The file system is 114690 sectors, seven whole block groups of 8192 1 KB blocks
+# (`-s`), not the whole partition: OpenBSD's fsck_ext2fs tests `testbmap(d)` before
+# `d >= e2fs_bcount` (reference/openbsd-src/sbin/fsck_ext2fs/pass5.c:151), so with a partial
+# last group it reads up to 4 bytes past its block map; on the whole 131008-sector partition
+# that map is 8188 bytes, which OpenBSD's malloc gives two whole pages, and the read faults on
+# the next page (SIGSEGV after "Phase 5", seen here; whole groups pass). Boot 2 reuses the
+# disk: fsck_ext2fs(8) -n must skip it as clean and -fn must run its five phases without a
+# question, both with status 0, and the files read back after a read-only mount. Then, on
+# this machine, `cargo xtask e2fsck` checks the same disk image with e2fsprogs (Homebrew's
+# keg-only formula, docs/SETUP.md): `e2fsck -fn` must exit 0 and debugfs must read both files
+# back (tools/xtask/src/e2fs.rs). Part of `smoke`.
+smoke-ext2fs: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-ext2fs: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disk-set ext2fs --disk-fresh {{ext2_make}}
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disk-set ext2fs {{ext2_check}}
+    cargo xtask e2fsck --arch amd64 --disk-set ext2fs {{ext2_host}}
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disk-set ext2fs --disk-fresh {{ext2_make}}
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disk-set ext2fs {{ext2_check}}
+    cargo xtask e2fsck --arch arm64 --disk-set ext2fs {{ext2_host}}
+
+# `smoke-ext2fs`'s two boots and its host check.
+ext2_make := disk_login + " " + \
+    "--send-after '# ' --send 'fdisk -iy -f /dev/rsd0c sd0 >/dev/null && disklabel -w -A sd0 && echo label-$((40+2))\\n' " + \
+    "--send-after 'label-42' --send 't() { while IFS= read -r l; do case $l in *4.2BSD*) l=\"${l%%4.2BSD*}ext2fs\";; esac; print -r -- \"$l\"; done; }\\n' " + \
+    "--send-after '# ' --send 'disklabel sd0 | t >/tmp/l && disklabel -R sd0 /tmp/l && disklabel sd0 && echo relabel-$((40+2))\\n' " + \
+    "--send-after 'relabel-42' --send 'newfs_ext2fs -s 114690 sd0a && echo newfs-$((40+2))\\n' " + \
+    "--send-after 'newfs-42' --send 'mount -t ext2fs /dev/sd0a /mnt && mount && echo m10d-ext2-$((40+2)) >/mnt/m10d-ext2.txt\\n' " + \
+    "--send-after '# ' --send 'mkdir /mnt/d && i=0 && while [ $i -lt 30 ]; do echo f$i >/mnt/d/f$i; i=$((i+1)); done\\n' " + \
+    "--send-after '# ' --send 'echo m10d-ext2-sub-$((40+2)) >/mnt/d/sub.txt && ls /mnt && cat /mnt/d/f29 /mnt/m10d-ext2.txt\\n' " + \
+    "--send-after '# ' --send 'umount /mnt && echo ext2-written-$((40+2))\\n' " + \
+    "--expect 'sd0 at scsibus0 targ 0 lun 0: <VirtIO, Block Device, >' --expect 'label-42' " + \
+    "--expect '131008               64  ext2fs' --expect 'relabel-42' " + \
+    "--expect '/dev/rsd0a: 56.0MB (114690 sectors) block size 1024, fragment size 1024' " + \
+    "--expect 'super-block backups (for fsck_ext2fs -b #) at:' --expect 'newfs-42' " + \
+    "--expect '/dev/sd0a on /mnt type ext2fs (local)' --expect 'lost+found' --expect 'f29' --expect 'm10d-ext2-42' " + \
+    "--expect 'ext2-written-42' --reject 'partition type is not'"
+ext2_check := disk_login + " " + \
+    "--send-after '# ' --send 'fsck_ext2fs -n /dev/rsd0a; echo fsck-rc=$?\\n' " + \
+    "--send-after 'fsck-rc=' --send 'fsck_ext2fs -fn /dev/rsd0a; echo fsck-f-rc=$?\\n' " + \
+    "--send-after 'fsck-f-rc=' --send 'mount -r -t ext2fs /dev/sd0a /mnt && cat /mnt/m10d-ext2.txt /mnt/d/sub.txt\\n' " + \
+    "--send-after '# ' --send 'set -- /mnt/d/*; echo files-$#; umount /mnt && echo ext2-read-$((40+2))\\n' " + \
+    "--expect 'sd0 at scsibus0 targ 0 lun 0' --expect '** /dev/rsd0a (NO WRITE)' " + \
+    "--expect '** File system is clean; not checking' --expect 'fsck-rc=0' " + \
+    "--expect '** Phase 5 - Check Cyl groups' --expect '35 files, ' --expect 'fsck-f-rc=0' " + \
+    "--expect 'm10d-ext2-42' --expect 'm10d-ext2-sub-42' --expect 'files-31' --expect 'ext2-read-42' " + \
+    "--reject 'UNEXPECTED' --reject 'FILE SYSTEM WAS MODIFIED' --reject '? no'"
+ext2_host := "--cat /m10d-ext2.txt=m10d-ext2-42 --cat /d/sub.txt=m10d-ext2-sub-42 --cat /d/f29=f29"
+
+# M10d: FUSE (sys/miscfs/fuse). Our own read-only file system, tools/fusehello (linked to
+# OpenBSD's libfuse, which opens /dev/fuse0 and mounts fusefs), is mounted on /fuse; mount(8)
+# must list it as `fuse`, its two files read back through the daemon (hello.txt and
+# sub/deep.txt), ls(1) lists both directories, a write is refused, and after umount(8) the
+# mount is gone. Both archs. Part of `smoke`.
+smoke-fuse: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-fuse: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen {{fuse_steps}}
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen {{fuse_steps}}
+
+# `smoke-fuse`'s session.
+fuse_steps := disk_login + " " + \
+    "--send-after '# ' --send 'mkdir -p /fuse && fusehello /fuse && mount && echo fuse-up-$((40+2))\\n' " + \
+    "--send-after 'fuse-up-42' --send 'cat /fuse/hello.txt /fuse/sub/deep.txt\\n' " + \
+    "--send-after '# ' --send 'ls -l /fuse /fuse/sub\\n' " + \
+    "--send-after '# ' --send '(echo x >/fuse/new.txt) || echo fuse-ro-$((40+2))\\n' " + \
+    "--send-after '# ' --send 'umount /fuse && echo fuse-umount-$((40+2))\\n' " + \
+    "--send-after 'fuse-umount-42' --send 'case \"$(mount)\" in *fuse*) echo still;; *) echo fuse-gone-$((40+2));; esac\\n' " + \
+    "--expect 'on /fuse type fuse' --expect 'fuse-up-42' --expect 'm10d-fuse-42' --expect 'm10d-fuse-sub-42' " + \
+    "--expect 'hello.txt' --expect 'deep.txt' --expect 'fuse-ro-42' --expect 'fuse-umount-42' --expect 'fuse-gone-42'"
+
+# M10d: NTFS, read-only, amd64 only (OpenBSD builds ntfs and mount_ntfs(8) for alpha, amd64 and
+# i386). The ramdisk's /root/images/ntfs.img (an NTFS volume made on this machine by
+# `cargo xtask ntfs-image`, tools/xtask/src/ntfsgen.rs) is attached to vnd(4) and mounted with
+# mount_ntfs(8); ls(1) lists the root, the small file (resident in its MFT record) reads back,
+# and so do the 500 lines of the big one (non-resident, three clusters). Part of `smoke`.
+smoke-ntfs: (build-amd64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-ntfs: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen {{ntfs_steps}}
+
+# `smoke-ntfs`'s session.
+ntfs_steps := disk_login + " " + \
+    "--send-after '# ' --send 'vnconfig vnd0 /root/images/ntfs.img && mount_ntfs /dev/vnd0c /mnt && mount\\n' " + \
+    "--send-after '# ' --send 'ls /mnt; cat /mnt/m10d-ntfs.txt\\n' " + \
+    "--send-after '# ' --send 'n=0; while read l; do x=$l; n=$((n+1)); done </mnt/m10d-ntfs-big.txt; echo \"lines $n $x\"\\n' " + \
+    "--send-after '# ' --send 'umount /mnt && vnconfig -u vnd0 && echo ntfs-done-$((40+2))\\n' " + \
+    "--expect '/dev/vnd0c on /mnt type ntfs (local, read-only)' --expect 'm10d-ntfs-42' " + \
+    "--expect 'lines 500 m10d-ntfs-big-line-0499' --expect 'ntfs-done-42'"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
