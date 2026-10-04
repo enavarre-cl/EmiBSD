@@ -4838,10 +4838,11 @@ notes = "M9+: compiled as in GENERIC (!small_kernel): tcp_debug_mtx, the tcp_deb
 [[file]]
 c = "sys/netinet/tcp_input.c"
 rust = "sys/netinet/tcp_input.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "eb06fb84105ca498ff277e246d375780609273cb"
 deps = ["sys/netinet/tcp_var.h", "sys/netinet/tcp_subr.c", "sys/netinet/tcp_timer.c", "sys/netinet/in_pcb.c", "sys/netinet/ip_input.c", "sys/kern/uipc_socket2.c"]
-notes = "M9+: whole file ported by subagent A, review and tests pending: wip"
+notes = "M9+: the whole file: tcprexmtthresh, tcp_rst_ppslim/tcp_ackdrop_ppslim (count/last pairs in StaticCells), tcp_reass (Result: Err(ENOBUFS) for the C's -1), tcp_flush_queue, tcp_input/tcp_input_mlist (ns_tcp_ml; the socket kept locked across segments of one connection), tcp_input_solocked (the TCP header a host-order local copy, the mbuf keeps network order; labels badsyn/dropafterack*/dropwithreset*/drop as TcpInputExit variants run over TcpInputState; findpcb a loop, step6/dodata labelled blocks; saveti a 40-byte slice for tcp_trace), tcp_dooptions (bool for 0/-1; options as a slice; TCP_SIGNATURE check), tcp_seq_subtract, tcp_update_sack_list, tcp_sack_option, tcp_del_sackholes, tcp_clean_sackreport, tcp_sack_partialack, tcp_pulloutofband, tcp_xmit_timer, tcp_mss, tcp_hdrsz, tcp_mss_update, tcp_newreno_partialack, tcp_mss_adv, the syn cache (syn_cache_mtx, two SynCacheSets with malloc'ed bucket slices, addresses as SynCacheSa byte images, syn_cache_get returns SynCacheGet for NULL/-1/socket, syn_cache_lookup without headp, syn_cache_add's stack tcpcb a Tcpcb::new), tcp_softlro_* (SMALL_KERNEL unset; tcp_softlro_glue has no caller until ixl/ice/bnxt/cnmac); ip6_exthdr_get a private helper; TCP_ECN, TCP_SIGNATURE, IPSEC, NPF configured; INET6 not (comments at each site); DIAGNOSTIC is feature diagnostic; host tests (dooptions, seq helpers, sack list and holes, xmit timer, hdrsz, reassembly, syn cache hash and insert/lookup/reset/cleanup)"
 
 [[file]]
 c = "sys/netinet/tcp_output.c"
