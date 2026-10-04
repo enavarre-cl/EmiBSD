@@ -20,7 +20,7 @@ bench = false
 doc = false
 
 [features]
-default = ["alloc", "ffs", "ffs2", "kmemstats", "inet6", "quota", "ufs_dirhash", "mfs", "tmpfs", "msdosfs", "cd9660", "udf"]
+default = ["alloc", "ffs", "ffs2", "kmemstats", "inet6", "quota", "ufs_dirhash", "mfs", "tmpfs", "msdosfs", "cd9660", "udf", "nfsclient", "nfsserver"]
 alloc = []        # enables `extern crate alloc` and the GlobalAlloc over malloc(9)
 diagnostic = []   # OpenBSD `option DIAGNOSTIC` -> kassert! active
 debug = []        # OpenBSD `option DEBUG`      -> kdassert! active
@@ -36,6 +36,8 @@ tmpfs = []        # OpenBSD `option TMPFS`   -> tmpfs (sys/tmpfs), uao_grow/uao_
 msdosfs = []      # OpenBSD `option MSDOSFS` -> the MS-DOS FAT file system (sys/msdosfs)
 cd9660 = []       # OpenBSD `option CD9660`  -> the ISO 9660 file system (sys/isofs/cd9660)
 udf = []          # OpenBSD `option UDF`     -> the UDF file system (sys/isofs/udf)
+nfsclient = []    # OpenBSD `option NFSCLIENT` -> the NFS client (sys/nfs), in vfsconflist[]; default (GENERIC)
+nfsserver = []    # OpenBSD `option NFSSERVER` -> the NFS server (sys/nfs, nfssvc(2)) and file system exports; default (GENERIC)
 syscall_debug = [] # OpenBSD `option SYSCALL_DEBUG` -> scdebug_call/scdebug_ret print system calls
 qemu = []         # QEMU-only exits (isa-debug-exit, semihosting) and shortcuts
 encdebug = []     # OpenBSD `option ENCDEBUG` -> the IPsec DPRINTF messages (net.inet.ip.encdebug)
