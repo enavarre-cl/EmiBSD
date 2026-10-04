@@ -86,9 +86,10 @@ pub const QEMU_SUCCESS_STATUS: i32 = 33;
 pub(crate) const SMOKE_TIMEOUT: Duration = Duration::from_secs(180);
 
 const SECTOR: u64 = 512;
-/// 128 MiB: room for FAT32 if the formatter picks it, and for the modules: the debug kernel
-/// and the ramdisk (23 MiB since M9+ added LibreSSL, ftp and nc) outgrew 64 MiB.
-const IMAGE_SECTORS: u64 = 128 * 1024 * 1024 / SECTOR;
+/// 192 MiB: room for FAT32 if the formatter picks it, and for the modules: the debug kernel
+/// and the ramdisk (23 MiB since M9+ added LibreSSL, ftp and nc) outgrew 64 MiB, and the
+/// 65 MiB debug kernel with the 63 MiB ramdisk of M11e (tcpbench) outgrew 128 MiB.
+const IMAGE_SECTORS: u64 = 192 * 1024 * 1024 / SECTOR;
 /// First partition sector: 1 MiB, the conventional alignment.
 const PART_START: u64 = 2048;
 

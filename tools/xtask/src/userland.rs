@@ -167,6 +167,8 @@ const VARIANTS: &[Variant] = &[
         why: "linked -static: its Makefile ends with `LDSTATIC=` (dynamic, as OpenBSD ships \
               it) and ld.so is not built yet",
     },
+    // M11e: the two-VM network stress.
+    Variant::statically("usr.bin/tcpbench"),
     Variant {
         dir: "usr.sbin/tcpdump",
         add_cflags: "",
@@ -303,6 +305,9 @@ const PROGRAMS: &[&str] = &[
     "sbin/fsck_ext2fs",
     "sbin/mount_ext2fs",
     "sbin/mount_ntfs",
+    // M11e: tcpbench(1), the network stress between two VMs, over libevent (LIBRARIES),
+    // LibreSSL and libm.
+    "usr.bin/tcpbench",
 ];
 
 /// EmiBSD's own test programs, built after `PROGRAMS` the same way (an OpenBSD-style Makefile,
@@ -330,6 +335,8 @@ const NOMAN_PROGRAMS: &[&str] = &["sbin/disklabel", "sbin/fdisk"];
 /// (quota(1), M10b) has its sources made from its `.x` files by OpenBSD's `rpcgen`.
 /// `libfuse` (M10d) is the FUSE library our own `tools/fusehello` links; its `includes` rule
 /// installs `<fuse/*.h>`, and its sources include the kernel's `<sys/fusebuf.h>`.
+/// `libevent` (M11e) is tcpbench(1)'s event loop; its `includes` rule installs `<event.h>`
+/// and `<evutil.h>`.
 const LIBRARIES: &[&str] = &[
     "lib/libcrypto",
     "lib/libssl",
@@ -339,6 +346,7 @@ const LIBRARIES: &[&str] = &[
     "lib/libpcap",
     "lib/librpcsvc",
     "lib/libfuse",
+    "lib/libevent",
 ];
 
 /// Flags added to host tools (built for macOS with the same clang) and why.

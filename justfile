@@ -92,7 +92,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-mp smoke-ddbmp smoke-net-mp smoke-up
+smoke: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp smoke-net-mp smoke-up
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -780,6 +780,30 @@ netmp_expect := "--both-expect 'bsd: 4 processors' --both-expect softnets-4 " + 
     "--a-expect 'bytes from 192.168.77.2: icmp_seq=' --b-expect 'bytes from 192.168.77.1: icmp_seq=' " + \
     "--a-expect 'bytes from 10.77.0.2: icmp_seq=' " + \
     "--b-expect 'tcp-direct-7' --b-expect 'tcp-wg-7' --a-expect 'if-destroyed-6' --a-expect 'tcp-sent-8'"
+
+# M11e: a network stress between the two VMs of `smoke-link`, both on the MULTIPROCESSOR
+# kernel with four processors: each VM runs a tcpbench(1) server in the background and a
+# client of the other's with four connections for 15 seconds (retried every second until the
+# other server is up), so TCP runs both ways over eight connections at once. Each client
+# prints the per-second `Conn:   4 Mbps:` lines and the summary; the echoed markers follow.
+# Part of `smoke`.
+smoke-tcpbench: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-tcpbench: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke2 {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --timeout 300 {{tcpbench_steps}}
+    cargo xtask smoke2 {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --timeout 300 {{tcpbench_steps}}
+
+# `smoke-tcpbench`'s session.
+tcpbench_steps := "--both-send-after 'login:' --both-send 'root\\n' --both-send-after 'Password:' --both-send 'emibsd\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig vio1 inet 192.168.77.1/24 up\\n' " + \
+    "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24 up\\n' " + \
+    "--both-send-after '# ' --both-send 'tcpbench -s >/dev/null 2>&1 &\\n' " + \
+    "--a-send-after '# ' --a-send 'until tcpbench -n 4 -t 15 192.168.77.2; do sleep 1; done; echo bench-a-$((5+5))\\n' " + \
+    "--b-send-after '# ' --b-send 'until tcpbench -n 4 -t 15 192.168.77.1; do sleep 1; done; echo bench-b-$((5+5))\\n' " + \
+    "--a-expect 'Conn:   4 Mbps:' --a-expect '--- 192.168.77.2 tcpbench statistics ---' " + \
+    "--a-expect 'bytes sent over' --a-expect 'bandwidth min/avg/max/std-dev = ' --a-expect 'bench-a-10' " + \
+    "--b-expect 'Conn:   4 Mbps:' --b-expect '--- 192.168.77.1 tcpbench statistics ---' " + \
+    "--b-expect 'bytes sent over' --b-expect 'bandwidth min/avg/max/std-dev = ' --b-expect 'bench-b-10'"
 
 # M9+: pf's divert-to between the two VMs of `smoke-link`. B gives lo0 its 127.0.0.1 (as
 # netstart(8) would), loads a rule that diverts TCP to its port 80 arriving on vio1 to
