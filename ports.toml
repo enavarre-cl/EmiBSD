@@ -4662,7 +4662,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8d31047ac94f65c25fff1431e92936deca4f2437"
 deps = ["sys/sys/mount.h", "sys/sys/vnode.h", "sys/kern/subr_pool.c"]
-notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries"
+notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries; M10c: tmpfs (feature tmpfs, option TMPFS commented out in GENERIC; typenum 19, MNT_LOCAL, sizeof(struct tmpfs_args)) joins vfsconflist[] after mfs, in vfs_init.c's order"
 
 [[file]]
 c = "sys/kern/vfs_subr.c"
@@ -5944,7 +5944,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "31d77e1fbaff85de2820ce950494fe5c2eb6609f"
 deps = ["sys/tmpfs/tmpfs.h", "sys/tmpfs/tmpfs_mem.c", "sys/tmpfs/tmpfs_subr.c", "sys/sys/mount.h", "sys/kern/vfs_subr.c", "sys/kern/subr_pool.c", "sys/kern/kern_malloc.c"]
-notes = "M10c: the whole file: tmpfs_dirent_pool/tmpfs_node_pool (TMPFS_DIRENT_POOL/TMPFS_NODE_POOL), tmpfs_init (TMPFS_BYTES_LIMIT from uvmexp.npages / 2), tmpfs_mount_update (panics if the root node has no vnode, where the C follows NULL), tmpfs_mount (TmpfsArgs::from_bytes of the kernel copy, EINVAL when short; the tmpfs_mount malloc(M_MISCFSMNT)ed with a fresh TmpfsMount written in; mount_info gets the args' bytes), tmpfs_start, tmpfs_unmount, tmpfs_root, tmpfs_vget (EOPNOTSUPP), tmpfs_fhtovp, tmpfs_vptofh, tmpfs_statfs, tmpfs_sync, tmpfs_vfsops as TMPFS_VFSOPS ((void *)eopnotsupp slots as closures); not yet in vfsconflist[] (joins with tmpfs_vnops.c); host tests mount tmpfs through the vfs test setup: root, files, directories, symbolic links, lookups, getdents in pieces, resize and the memory limit, chmod/chown, file handles, statfs, node limit, unmount"
+notes = "M10c: the whole file: tmpfs_dirent_pool/tmpfs_node_pool (TMPFS_DIRENT_POOL/TMPFS_NODE_POOL), tmpfs_init (TMPFS_BYTES_LIMIT from uvmexp.npages / 2), tmpfs_mount_update (panics if the root node has no vnode, where the C follows NULL), tmpfs_mount (TmpfsArgs::from_bytes of the kernel copy, EINVAL when short; the tmpfs_mount malloc(M_MISCFSMNT)ed with a fresh TmpfsMount written in; mount_info gets the args' bytes), tmpfs_start, tmpfs_unmount, tmpfs_root, tmpfs_vget (EOPNOTSUPP), tmpfs_fhtovp, tmpfs_vptofh, tmpfs_statfs, tmpfs_sync, tmpfs_vfsops as TMPFS_VFSOPS ((void *)eopnotsupp slots as closures), in vfsconflist[] (vfsinit runs tmpfs_init); host tests mount tmpfs through the vfs test setup (the vfsconflist[] entry, vfs_byname): root, files, directories, symbolic links, lookups, getdents in pieces, resize and the memory limit, chmod/chown, file handles, statfs, node limit, unmount"
 
 [[file]]
 c = "sys/tmpfs/tmpfs_specops.c"
@@ -5953,7 +5953,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "0c5a01bc1e37f8c36afc71ee221642cb28423117"
 deps = ["sys/tmpfs/tmpfs.h", "sys/tmpfs/tmpfs_vnops.h", "sys/tmpfs/tmpfs_subr.c", "sys/kern/spec_vnops.c", "sys/kern/vfs_default.c"]
-notes = "M10c: the whole file: tmpfs_specvops (TMPFS_SPECVOPS; vop_generic_badop slots as closures), tmpfs_spec_read, tmpfs_spec_write; tmpfs_access/tmpfs_getattr/tmpfs_setattr are tmpfs_vnops.rs's M10C-SHIM stubs until tmpfs_vnops.c is ported"
+notes = "M10c: the whole file: tmpfs_specvops (TMPFS_SPECVOPS; vop_generic_badop slots as closures), tmpfs_spec_read, tmpfs_spec_write; tmpfs_access/tmpfs_getattr/tmpfs_setattr are tmpfs_vnops.rs's"
 
 [[file]]
 c = "sys/tmpfs/tmpfs_fifoops.c"
@@ -5962,7 +5962,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d869f32c10a0565d5d91612387b284d3fd94c507"
 deps = ["sys/tmpfs/tmpfs.h", "sys/tmpfs/tmpfs_vnops.h", "sys/tmpfs/tmpfs_subr.c", "sys/kern/vfs_default.c"]
-notes = "M10c: the whole file: tmpfs_fifovops (TMPFS_FIFOVOPS), tmpfs_fifo_read, tmpfs_fifo_write, tmpfs_fifo_fsync; option FIFO: miscfs/fifofs is not ported (the ffs precedent), so the table's fifo_open/fifo_close/fifo_ioctl/fifo_kqfilter/fifo_pathconf/fifo_advlock slots and the fifo_read/fifo_write the wrappers end in are unported! stubs (ENOSYS), and tmpfs_vnode_get never installs the table (a fifo node is EOPNOTSUPP); tmpfs_access/tmpfs_getattr/tmpfs_setattr are tmpfs_vnops.rs's M10C-SHIM stubs until tmpfs_vnops.c is ported"
+notes = "M10c: the whole file: tmpfs_fifovops (TMPFS_FIFOVOPS), tmpfs_fifo_read, tmpfs_fifo_write, tmpfs_fifo_fsync; option FIFO: miscfs/fifofs is not ported (the ffs precedent), so the table's fifo_open/fifo_close/fifo_ioctl/fifo_kqfilter/fifo_pathconf/fifo_advlock slots and the fifo_read/fifo_write the wrappers end in are unported! stubs (ENOSYS), and tmpfs_vnode_get never installs the table (a fifo node is EOPNOTSUPP); tmpfs_access/tmpfs_getattr/tmpfs_setattr are tmpfs_vnops.rs's"
 
 [[file]]
 c = "sys/tmpfs/tmpfs_vnops.h"
@@ -5976,10 +5976,11 @@ notes = "M10c: the declarations: tmpfs_vops (TMPFS_VOPS here), tmpfs_fifovops an
 [[file]]
 c = "sys/tmpfs/tmpfs_vnops.c"
 rust = "sys/tmpfs/tmpfs_vnops.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = ["sys/tmpfs/tmpfs_vnops.h", "sys/tmpfs/tmpfs_subr.c", "sys/kern/vfs_default.c", "sys/kern/vfs_cache.c", "sys/kern/vfs_subr.c"]
-notes = "M10c (tmpfs-core, in part): tmpfs_vops (TMPFS_VOPS, the slots of the unported operations None: EOPNOTSUPP), tmpfs_inactive, tmpfs_reclaim, tmpfs_lock, tmpfs_unlock, tmpfs_islocked, tmpfs_print (DEBUG/DIAGNOSTIC; fifo_printinfo waits for fifofs), tmpfs_bwrite, tmpfs_strategy, tmpfs_ioctl ported; tmpfs_access, tmpfs_getattr, tmpfs_setattr are unported! stubs marked M10C-SHIM (tmpfs_specops.c and tmpfs_fifoops.c name them); the rest of the file (lookup, create, mknod, open, close, read, write, fsync, remove, link, rename and its helpers, mkdir, rmdir, symlink, readdir, readlink, pathconf, advlock, kqfilter) is M10C-PENDING"
+upstream_blob = "bcb2f8b0e88b882e8bfe3ce1279d15783922ca27"
+deps = ["sys/tmpfs/tmpfs_vnops.h", "sys/tmpfs/tmpfs_subr.c", "sys/tmpfs/tmpfs_mem.c", "sys/kern/vfs_default.c", "sys/kern/vfs_cache.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_vnops.c", "sys/kern/vfs_vops.c", "sys/kern/vfs_lockf.c", "sys/kern/kern_event.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_subr.c", "sys/uvm/uvm_vnode.c"]
+notes = "M10c: the whole file: tmpfs_vops (TMPFS_VOPS, every slot), tmpfs_lookup, tmpfs_create, tmpfs_mknod, tmpfs_open, tmpfs_close, tmpfs_access, tmpfs_getattr, tmpfs_setattr (GOODTIME), tmpfs_read, tmpfs_write, tmpfs_fsync, tmpfs_remove, tmpfs_link, tmpfs_mkdir, tmpfs_rmdir, tmpfs_symlink, tmpfs_readdir, tmpfs_readlink, tmpfs_inactive, tmpfs_reclaim, tmpfs_pathconf, tmpfs_advlock, tmpfs_print (DEBUG/DIAGNOSTIC), tmpfs_bwrite, tmpfs_strategy, tmpfs_ioctl, tmpfs_lock/tmpfs_unlock/tmpfs_islocked (rrw_enter on tn_vlock: recursive for the owner as ufs_lock is, EDEADLK with LK_RECURSEFAIL; vnd's VNDIOCSET reads under vn_open's lock through it), tmpfs_rename with tmpfs_sane_rename, tmpfs_rename_enter/_common/_separate, tmpfs_rename_exit, tmpfs_rename_lock_directory, tmpfs_rename_genealogy, tmpfs_rename_lock, tmpfs_rename_attachdetach, tmpfs_do_remove, tmpfs_rename_check_possible/_permitted, tmpfs_remove_check_possible/_permitted, tmpfs_check_sticky, tmpfs_rename_cache_purge, tmpfs_rename_abort, tmpfs_kqfilter and the tmpfsread/tmpfswrite/tmpfsvnode filters (filt_tmpfsdetach/read/write/vnode; the vnode through kn_hook). Deviations: tmpfs_print's fifo_printinfo waits for miscfs/fifofs (option FIFO; fifo nodes are refused by tmpfs_vnode_get); tmpfs_lookup passes on a cache_lookup error other than ENOENT (the C returns 0 with no vnode); credentials the C dereferences go through ucred(), which panics on NOCRED/FSCRED, and KASSERTs on pointers the C then dereferences are panics; tmpfs_readlink copies the target to a MAXPATHLEN stack buffer for uiomove; rename helpers return their out-parameters (RenameEntered, RenameLocked) and their goto fail ladders are labelled blocks; pool_put(&namei_pool) is pnbuf_free; curproc is curp() (panics without a thread). Host tests (tmpfs_vnops/tests.rs, tmpfs mounted as root, through namei/vn_open/do*at): create/stat/resize by pages/unlink, open of a nameless file, read/write argument checks, mkdir/getdents/rmdir and link counts, rename within and across directories, over a file, directory over directory, into itself, hard links, symlinks and readlink, the recursive vnode lock and vnd's read under vn_open's lock, pathconf, kqfilter and filters; every one also passes alone with feature diagnostic. Reading and writing bytes needs kernel faults (tmpfs_uiomove maps the object): covered by the smoke"
 
 [[file]]
 c = "sys/msdosfs/bpb.h"

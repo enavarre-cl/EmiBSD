@@ -16,7 +16,7 @@ use crate::kern::vfs_subr::{vfs_mount_alloc, vput, vrele};
 use crate::machine::Machine;
 use crate::machine::cpu::Cpu;
 use crate::sys::dirent::Dirent;
-use crate::sys::mount::{MOUNT_TMPFS, TMPFS_ARGS_VERSION};
+use crate::sys::mount::TMPFS_ARGS_VERSION;
 use crate::sys::namei::{Componentname, LOOKUP, NiDirp};
 use crate::sys::types::Off;
 use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
@@ -28,23 +28,24 @@ use crate::tmpfs::tmpfs_subr::{
 };
 use crate::uvm::uvm_aobj::uao_init;
 
-/// The configuration entry of tmpfs (`vfs_init.c`'s, not in `vfsconflist[]` yet).
-static TMPFS_CONF: Vfsconf =
-    Vfsconf::new(&TMPFS_VFSOPS, MOUNT_TMPFS, 19, MNT_LOCAL, TmpfsArgs::SIZE);
+/// The configuration entry of tmpfs in `vfsconflist[]`.
+pub(crate) fn tmpfs_conf() -> &'static Vfsconf {
+    crate::kern::vfs_init::vfs_byname(b"tmpfs").expect("tmpfs in vfsconflist[]")
+}
 
-/// Memory, the vfs, the aobj and tmpfs pools, the thread as `curproc`.
-fn setup() -> (MutexGuard<'static, ()>, &'static Proc) {
+/// Memory, the vfs (whose `vfsinit` runs `tmpfs_init`), the aobj pools, the thread as
+/// `curproc`.
+pub(crate) fn setup() -> (MutexGuard<'static, ()>, &'static Proc) {
     let (g, p) = crate::kern::vfs_subr::tests::setup();
     Machine::set_curproc(Machine::curcpu(), p);
     crate::kern::kern_rwlock::rw_obj_init();
     uao_init();
-    tmpfs_init(&TMPFS_CONF).expect("tmpfs_init");
     TMPFS_BYTES_USED.store(0, Ordering::Relaxed);
     (g, p)
 }
 
 /// The bytes of a `struct tmpfs_args` as `sys_mount` copies them in.
-fn args(size_max: i64, nodes_max: u64, uid: Uid, mode: Mode) -> [u8; TmpfsArgs::SIZE] {
+pub(crate) fn args(size_max: i64, nodes_max: u64, uid: Uid, mode: Mode) -> [u8; TmpfsArgs::SIZE] {
     let mut b = [0u8; TmpfsArgs::SIZE];
     let mut put = |off: usize, v: &[u8]| b[off..off + v.len()].copy_from_slice(v);
     put(
@@ -64,7 +65,7 @@ fn args(size_max: i64, nodes_max: u64, uid: Uid, mode: Mode) -> [u8; TmpfsArgs::
 
 /// `mount -t tmpfs` on "/tmp" with these arguments.
 fn mount(p: &'static Proc, data: &mut [u8]) -> Result<&'static Mount, Errno> {
-    let mp = vfs_mount_alloc(None, &TMPFS_CONF);
+    let mp = vfs_mount_alloc(None, tmpfs_conf());
     let mut nd = ndinit(LOOKUP, 0, NiDirp::Sys(b"/tmp"), p);
     tmpfs_mount(mp, b"/tmp", data, &mut nd, p).map(|()| mp)
 }

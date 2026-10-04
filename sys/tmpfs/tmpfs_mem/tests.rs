@@ -7,18 +7,16 @@ use std::{assert, assert_eq};
 use super::*;
 use crate::kern::kern_rwlock::{rw_enter_read, rw_exit_read};
 use crate::kern::subr_pool::tests::setup_real_memory;
-use crate::sys::mount::{MNT_LOCAL, MOUNT_TMPFS, TmpfsArgs, Vfsconf};
 use crate::sys::param::PAGE_SIZE;
-use crate::tmpfs::tmpfs_vfsops::{TMPFS_VFSOPS, tmpfs_init};
-
-/// The configuration entry `tmpfs_init` receives.
-static TMPFS_CONF: Vfsconf =
-    Vfsconf::new(&TMPFS_VFSOPS, MOUNT_TMPFS, 19, MNT_LOCAL, TmpfsArgs::SIZE);
+use crate::tmpfs::tmpfs_vfsops::tests::tmpfs_conf;
+use crate::tmpfs::tmpfs_vfsops::tmpfs_init;
 
 /// Real memory, the tmpfs pools, and the global limit set to `limit` bytes with nothing used.
+/// No `vfsinit` runs here, so `tmpfs_init` is called directly, with tmpfs's
+/// `vfsconflist[]` entry.
 fn setup(limit: u64) -> MutexGuard<'static, ()> {
     let guard = setup_real_memory();
-    let _ = tmpfs_init(&TMPFS_CONF);
+    let _ = tmpfs_init(tmpfs_conf());
     TMPFS_BYTES_LIMIT.store(limit, Ordering::Relaxed);
     TMPFS_BYTES_USED.store(0, Ordering::Relaxed);
     guard

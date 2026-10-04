@@ -41,9 +41,6 @@
 //! ## Deviations
 //! - The helpers the C installs in many slots (`vop_generic_badop`) are closures, as in
 //!   `spec_vops` (`docs/C_TO_RUST.md`).
-//! - `tmpfs_access`, `tmpfs_getattr` and `tmpfs_setattr` come from `tmpfs_vnops.c`, which
-//!   is ported after this file (M10C-PENDING: tmpfs_vnops.c): until then they are the
-//!   visible stubs of `tmpfs_vnops.rs`.
 
 use crate::kern::spec_vnops::{
     spec_advlock, spec_close, spec_fsync, spec_ioctl, spec_kqfilter, spec_open, spec_pathconf,

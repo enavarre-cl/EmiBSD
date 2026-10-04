@@ -54,8 +54,6 @@
 //!   calling `eopnotsupp`.
 //! - The `struct tmpfs_mount` is `malloc(M_MISCFSMNT)`ed and a fresh [`TmpfsMount::new`]
 //!   written into it.
-//! - `TMPFS_VFSOPS` is not in `vfsconflist[]` yet: it joins with the vnode operations of
-//!   `tmpfs_vnops.c` (M10C-PENDING: tmpfs_vnops.c).
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -452,4 +450,4 @@ pub fn tmpfs_sync(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
