@@ -1239,5 +1239,13 @@ pub fn pfi_unmask(addr: &PfAddr) -> i32 {
     b
 }
 
+/// Host tests: pfi back to "never initialised" (`pfi_all` NULL, no kifs), as the old state
+/// points into an earlier test's memory; the next `pfi_initialize` starts over.
+#[cfg(test)]
+pub(crate) fn pfi_test_reset() {
+    PFI_ALL.set(None);
+    PFI_IFS.init();
+}
+
 #[cfg(test)]
 mod tests;

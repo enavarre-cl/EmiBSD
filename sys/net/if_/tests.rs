@@ -99,12 +99,17 @@ use std::sync::MutexGuard;
 use crate::kern::uipc_mbuf::m_gethdr;
 use crate::sys::mbuf::{M_DONTWAIT, MT_DATA};
 
-/// Real memory, `mbinit` and a fresh index map (`ifinit`): everything from earlier tests
-/// lives in their own (leaked) memory, so the map must not be grown from it.
+/// Real memory, `mbinit`, a fresh index map (`ifinit`), and no interfaces, groups or pf kifs:
+/// everything from earlier tests lives in their own (leaked) memory, so nothing may be grown
+/// from it.
 pub(crate) fn setup_net() -> MutexGuard<'static, ()> {
     let guard = crate::kern::uipc_mbuf::tests::setup();
     IF_IDXMAP.count.set(0);
     ifinit();
+    // No interfaces, groups or pf kifs (pfi_attach_ifgroup) from earlier tests either.
+    IFNETLIST.0.init();
+    IFG_HEAD.0.init();
+    crate::net::pf_if::pfi_test_reset();
     guard
 }
 
