@@ -30,6 +30,8 @@ pub mod netinet;
 pub mod netinet6;
 #[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
 pub mod nfs;
+#[cfg(option_ntfs)]
+pub mod ntfs;
 pub mod scsi;
 pub mod sys;
 #[cfg(feature = "tmpfs")]

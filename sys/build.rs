@@ -8,6 +8,10 @@
 //!   `USER`, and `EMIBSD_BUILD_HOST` (the justfile passes `hostname -s`).
 //! - Bare-metal builds only: the per-architecture linker script. Host builds (tests,
 //!   `cargo check`, the `sys/arch/host` double) never link a kernel.
+//! - Every build: the per-architecture `option`s (`ARCH_OPTIONS`), what `config(8)` reads
+//!   from `arch/<arch>/conf/GENERIC` on top of the shared `conf/GENERIC`. Their cargo feature
+//!   says the code may be built; the `option_*` cfg emitted here says this target configures
+//!   it. Host builds get every one, so the host tests cover the code.
 
 use std::env;
 
@@ -52,6 +56,23 @@ fn date_string(epoch: i64) -> String {
     )
 }
 
+/// The `option`s only some architectures' GENERIC sets: (cargo feature, cfg emitted, the
+/// architectures whose GENERIC has it). `option NTFS` is in `arch/amd64/conf/GENERIC` alone.
+const ARCH_OPTIONS: &[(&str, &str, &[&str])] = &[("ntfs", "option_ntfs", &["amd64"])];
+
+/// Emits each `ARCH_OPTIONS` cfg whose feature is on and whose architecture list holds
+/// `arch` (`None`: a host build, which gets them all).
+fn arch_options(arch: Option<&str>) {
+    for (feature, cfg, arches) in ARCH_OPTIONS {
+        println!("cargo:rustc-check-cfg=cfg({cfg})");
+        let var = format!("CARGO_FEATURE_{}", feature.to_uppercase());
+        let on = env::var_os(&var).is_some();
+        if on && arch.is_none_or(|a| arches.contains(&a)) {
+            println!("cargo:rustc-cfg={cfg}");
+        }
+    }
+}
+
 /// An environment variable the build depends on, `default` when unset or empty.
 fn input(name: &str, default: &str) -> String {
     println!("cargo:rerun-if-env-changed={name}");
@@ -87,6 +108,7 @@ fn main() {
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     if target_os != "none" {
+        arch_options(None);
         return;
     }
     let arch = match env::var("CARGO_CFG_TARGET_ARCH")
@@ -97,6 +119,7 @@ fn main() {
         "aarch64" => "arm64",
         other => panic!("bsd: unsupported target_arch `{other}`; expected x86_64 or aarch64"),
     };
+    arch_options(Some(arch));
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap_or_default();
     let ld = format!("{manifest_dir}/arch/{arch}/conf/kernel.ld");
     println!("cargo:rustc-link-arg-bins=-T{ld}");

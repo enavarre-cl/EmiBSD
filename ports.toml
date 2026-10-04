@@ -4644,7 +4644,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e765164b70433aca6f866a1fc9997627c2ec7f0f"
 deps = ["sys/sys/queue.h", "sys/sys/rwlock.h", "sys/sys/refcnt.h", "sys/sys/ucred.h", "sys/sys/mbuf.h", "sys/sys/sysctl.h"]
-notes = "vfs stage 1: fsid_t (Fsid), struct fid, MFSNAMELEN/MNAMELEN, union mount_info as its 160 aligned bytes (the per-filesystem *_args views, export_args, the NFS/ISO/MSDOS/NTFS/UDF/tmpfs/fuse args and their flags come with their file systems), struct statfs (#[repr(C)], the holes named _pad0/_pad1, AbiPod, 568 bytes checked), MOUNT_* names, struct mount (malloc'd, &'static Mount with mnt_refs; Cells, mnt_op/mnt_vfc Options with accessors, mnt_stat a Cell<Statfs> with update_stat), MntList/MntDounmount adapters, MNT_* flags and MNT_BITS, MNT_OP_FLAGS, MNT_WAIT/NOWAIT/LAZY, struct fhandle (AbiPod), VFS_GENERIC/MAXTYPENUM/CONF/BCACHESTAT, struct vfsconf (vfc_refcount atomic, Vfsconf::new), struct bcachestats, struct vfsops (vfs_root/vfs_vget/vfs_fhtovp return the vnode; vfs_mount gets the arguments as bytes; vfs_init/vfs_sysctl Options), the VFS_* macros as functions, VB_*; M10e: struct netcred and struct netexport (over net/radix.rs: Cell members, ne_rtable_inet an Option<&'static RadixNodeHead>; a Netcred is malloc'ed with its address and mask behind it, as the C), struct nfs_args (NfsArgs, 112 bytes checked, SIZE and from_bytes like the others) with NFS_ARGSVERSION and every NFSMNT_* flag (reference-backed test); reference-backed test; vfs stage 2: BUFPAGES_DEFICIT/BUFPAGES_INACT as bufpages_deficit()/bufpages_inact() over vfs_bio.c's bcstats and buflowpages; ffs: struct export_args (sockaddr pointers as user addresses) and struct ufs_args (UfsArgs::from_bytes reads the kernel copy of the mount arguments); M10b: struct mfs_args (MfsArgs, 144 bytes checked, MfsArgs::from_bytes like UfsArgs; mfs_mount copies the raw bytes into mount_info); M10c: struct iso_args, msdosfs_args, udf_args, tmpfs_args with ISOFSMNT_*, MSDOSFSMNT_*, TMPFS_ARGS_VERSION (SIZE and from_bytes each, sizes checked); ntfs_args, fusefs_args come with their file systems M10d: struct fusefs_args (FusefsArgs) under feature fuse."
+notes = "vfs stage 1: fsid_t (Fsid), struct fid, MFSNAMELEN/MNAMELEN, union mount_info as its 160 aligned bytes (the per-filesystem *_args views, export_args, the NFS/ISO/MSDOS/NTFS/UDF/tmpfs/fuse args and their flags come with their file systems), struct statfs (#[repr(C)], the holes named _pad0/_pad1, AbiPod, 568 bytes checked), MOUNT_* names, struct mount (malloc'd, &'static Mount with mnt_refs; Cells, mnt_op/mnt_vfc Options with accessors, mnt_stat a Cell<Statfs> with update_stat), MntList/MntDounmount adapters, MNT_* flags and MNT_BITS, MNT_OP_FLAGS, MNT_WAIT/NOWAIT/LAZY, struct fhandle (AbiPod), VFS_GENERIC/MAXTYPENUM/CONF/BCACHESTAT, struct vfsconf (vfc_refcount atomic, Vfsconf::new), struct bcachestats, struct vfsops (vfs_root/vfs_vget/vfs_fhtovp return the vnode; vfs_mount gets the arguments as bytes; vfs_init/vfs_sysctl Options), the VFS_* macros as functions, VB_*; M10e: struct netcred and struct netexport (over net/radix.rs: Cell members, ne_rtable_inet an Option<&'static RadixNodeHead>; a Netcred is malloc'ed with its address and mask behind it, as the C), struct nfs_args (NfsArgs, 112 bytes checked, SIZE and from_bytes like the others) with NFS_ARGSVERSION and every NFSMNT_* flag (reference-backed test); reference-backed test; vfs stage 2: BUFPAGES_DEFICIT/BUFPAGES_INACT as bufpages_deficit()/bufpages_inact() over vfs_bio.c's bcstats and buflowpages; ffs: struct export_args (sockaddr pointers as user addresses) and struct ufs_args (UfsArgs::from_bytes reads the kernel copy of the mount arguments); M10b: struct mfs_args (MfsArgs, 144 bytes checked, MfsArgs::from_bytes like UfsArgs; mfs_mount copies the raw bytes into mount_info); M10c: struct iso_args, msdosfs_args, udf_args, tmpfs_args with ISOFSMNT_*, MSDOSFSMNT_*, TMPFS_ARGS_VERSION (SIZE and from_bytes each, sizes checked); ntfs_args, fusefs_args come with their file systems M10d: struct fusefs_args (FusefsArgs) under feature fuse. M10d: struct ntfs_args (NtfsArgs) and NTFS_MFLAG_CASEINS/ALLNAMES under cfg option_ntfs (feature ntfs, amd64 GENERIC; sys/build.rs)."
 
 [[file]]
 c = "sys/sys/namei.h"
@@ -4662,7 +4662,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8d31047ac94f65c25fff1431e92936deca4f2437"
 deps = ["sys/sys/mount.h", "sys/sys/vnode.h", "sys/kern/subr_pool.c"]
-notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries; M10c: cd9660 (feature cd9660, typenum 14, MNT_LOCAL, sizeof(struct iso_args)), msdos (feature msdosfs, typenum 4, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct msdosfs_args)), udf (feature udf, typenum 13, MNT_LOCAL, sizeof(struct udf_args)) and tmpfs (feature tmpfs, option TMPFS commented out in GENERIC; typenum 19, MNT_LOCAL, sizeof(struct tmpfs_args)) join vfsconflist[] after mfs, in vfs_init.c's order; M10e: nfs joins vfsconflist[] after msdos, in vfs_init.c order (feature nfsclient, typenum 2, MNT_SWAPPABLE, sizeof(struct nfs_args)); NVFSCONF counts it M10d: fuse (typenum 18, flags 0, FusefsArgs::SIZE) under feature fuse."
+notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries; M10c: cd9660 (feature cd9660, typenum 14, MNT_LOCAL, sizeof(struct iso_args)), msdos (feature msdosfs, typenum 4, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct msdosfs_args)), udf (feature udf, typenum 13, MNT_LOCAL, sizeof(struct udf_args)) and tmpfs (feature tmpfs, option TMPFS commented out in GENERIC; typenum 19, MNT_LOCAL, sizeof(struct tmpfs_args)) join vfsconflist[] after mfs, in vfs_init.c's order; M10e: nfs joins vfsconflist[] after msdos, in vfs_init.c order (feature nfsclient, typenum 2, MNT_SWAPPABLE, sizeof(struct nfs_args)); NVFSCONF counts it M10d: fuse (typenum 18, flags 0, FusefsArgs::SIZE) under feature fuse. M10d: ntfs (typenum 6, MNT_LOCAL, NtfsArgs::SIZE) under cfg option_ntfs: amd64 only, as only amd64 GENERIC has option NTFS."
 
 [[file]]
 c = "sys/kern/vfs_subr.c"
@@ -6757,3 +6757,120 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "355ab9b52a7a31e5ba11a7ca9a6e20ed43614f0f"
 deps = ["sys/miscfs/fuse/fusebuf.c", "sys/miscfs/fuse/fuse_file.c", "sys/miscfs/fuse/fuse_lookup.c", "sys/miscfs/fuse/fuse_ihash.c", "sys/kern/vfs_default.c", "sys/kern/spec_vnops.c", "sys/kern/vfs_lockf.c", "sys/kern/kern_event.c", "sys/uvm/uvm_vnode.c"]
 notes = "M10d (feature fuse): the whole file: fusefs_vops as FUSEFS_VOPS (vop_revoke and vop_bwrite NULL as in C; vop_generic_abortop/bmap, spec_pathconf), the three filtops and filters (kn_hook is the vnode), open/close (FUSE_FLUSH)/access/getattr/setattr/ioctl/link/symlink/readdir/inactive/readlink/reclaim (FUSE_FORGET with nlookup)/print/create/mknod/read/write/rename/mkdir/rmdir/remove/strategy/lock/unlock/islocked/advlock/fsync, the UNDEF_* learning of ENOSYS; deviations: pool_put(&namei_pool, cn_pnbuf) is pnbuf_free; cn_proc detached from cnp; a NULL struct proc * (close/inactive/reclaim a_p, uio_procp) is curproc; ap->a_cred via cred_ref (panics on NOCRED/FSCRED); readdir and mkdir free the fusebuf on the two paths where the C leaks it; dirents built in a byte array; fusefs_print under features debug/diagnostic (VFSLCKDEBUG has none)"
+
+[[file]]
+c = "sys/ntfs/ntfs.h"
+rust = "sys/ntfs/ntfs.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1bba2d94e11bcf4d62dae9d0a3afd5171b8d07f6"
+deps = ["sys/sys/queue.h", "sys/sys/mount.h", "sys/sys/vnode.h"]
+notes = "M10d, feature ntfs: cn_t/wchar/ntfsino_t, the system inode numbers, the __packed on-disk structures as #[repr(C, packed)] with an ntfs-local Packed trait (at = the C's cast when it fits, read = a copy that reads zeros past the buffer; UDF's idiom, ecma167_udf.rs's trait is behind feature udf), struct attr's union a_S as 48 bytes with a_r()/a_nr() views, n_name[1]/al_name[1] as [u16; 0] tails (names read past the fixed part with wchar_at), struct ntfsmount (Cells; ntm_ad a mallocarray'd table beside ntm_adnum; ntm_export (Netexport) kept whether or not nfsserver is configured; name hooks as fn pointers over slices), the cluster macros as Ntfsmount methods computing in 64 bits, VFSTONTFS/VTOF/VTONT/FTOV/FTONT as functions (the first three checked); NTFS_DEBUG off (DPRINTF family left out); layouts asserted"
+
+[[file]]
+c = "sys/ntfs/ntfs_compr.h"
+rust = "sys/ntfs/ntfs_compr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0e109aaac1aa3a5db9d9dec5775616700887b087"
+deps = ["sys/ntfs/ntfs.h"]
+notes = "M10d, feature ntfs: NTFS_COMPBLOCK_SIZE, NTFS_COMPUNIT_CL; shares ntfs_compr.rs with ntfs_compr.c, as .h/.c pairs do"
+
+[[file]]
+c = "sys/ntfs/ntfs_compr.c"
+rust = "sys/ntfs/ntfs_compr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b2e0a6de430ec14fad9950804eaacfb0082b5870"
+deps = ["sys/ntfs/ntfs.h", "sys/ntfs/ntfs_compr.h"]
+notes = "M10d, feature ntfs: ntfs_uncompblock (LZNT1 block over slices; bytes past cbuf read 0, a back reference before the block reads 0 where the C reads out of bounds), ntfs_uncompunit; host tests with a test-side LZNT1 compressor (pub(crate) for the volume tests): stored, short, compressed and overlapping blocks, a whole unit"
+
+[[file]]
+c = "sys/ntfs/ntfs_conv.c"
+rust = "sys/ntfs/ntfs_conv.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "70d2b103eac2d8ef382a6920f671be269999e3aa"
+deps = ["sys/ntfs/ntfs.h"]
+notes = "M10d, feature ntfs: ntfs_utf8_wget (bytes plus a position; bytes past the end read 0; the C's 0x1F mask of 3-byte leads kept), ntfs_utf8_wput (room as a slice, usize count), ntfs_utf8_wcmp; DDPRINTFs left out; inline host tests"
+
+[[file]]
+c = "sys/ntfs/ntfs_ihash.h"
+rust = "sys/ntfs/ntfs_ihash.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0ced0cebc2759e11fd33ab19bb2353c4a26edfe3"
+deps = ["sys/ntfs/ntfs.h"]
+notes = "M10d, feature ntfs: the prototypes are ntfs_ihash.c's functions; shares ntfs_ihash.rs with it"
+
+[[file]]
+c = "sys/ntfs/ntfs_ihash.c"
+rust = "sys/ntfs/ntfs_ihash.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f5623f40e0b4e34e952af1e7234235e4770ced6f"
+deps = ["sys/ntfs/ntfs_ihash.h", "sys/ntfs/ntfs_inode.h", "sys/kern/kern_subr.c", "sys/crypto/siphash.c"]
+notes = "M10d, feature ntfs: ntfs_nthashinit (table, mask and key in atomics, the table published last; the C's hashfree of a table that lost the race kept), ntfs_hash (SipHash24 of dev and inum), ntfs_nthashlookup (Option), ntfs_nthashins (Err(EEXIST)), ntfs_nthashrem; test-only ntfs_nthash_reset (the host tests reset the memory the table lives in)"
+
+[[file]]
+c = "sys/ntfs/ntfs_inode.h"
+rust = "sys/ntfs/ntfs_inode.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9ce63991c808f5991943308d15821b5a2bd22385"
+deps = ["sys/ntfs/ntfs.h", "sys/sys/queue.h", "sys/sys/rwlock.h"]
+notes = "M10d, feature ntfs: IN_*, struct ntnode (malloc'd, &'static, Cells; i_next/i_prev left out: nothing uses them), FN_*, struct fnode (f_attrname as AttrNameBuf, the C's malloc'd char * with its length; f_dirblbuf with its allocation size), the NtnodeHash/NtnodeLoaded/FnodeList adapters, struct ntfid (Ntfid, copied in and out of struct fid member by member; the notyet ntfid_gen left out)"
+
+[[file]]
+c = "sys/ntfs/ntfs_subr.h"
+rust = "sys/ntfs/ntfs_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fceae1aba7576745d6069c20e6f35bd3b1434a94"
+deps = ["sys/ntfs/ntfs.h"]
+notes = "M10d, feature ntfs: VA_*, struct ntvattr (Ntvattr: malloc'd, written once, va_vflag/va_vp/va_ip Cells; the union va_d an enum VaD tagged by NTFS_AF_INRUN; va_a_name/va_a_iroot/va_a_ialloc copy the structures out of va_datap); the prototypes are ntfs_subr.c's functions; shares ntfs_subr.rs with it"
+
+[[file]]
+c = "sys/ntfs/ntfs_subr.c"
+rust = "sys/ntfs/ntfs_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c5adc3a493a18e39186a5e136741041944066e77"
+deps = ["sys/ntfs/ntfs_subr.h", "sys/ntfs/ntfs_inode.h", "sys/ntfs/ntfs_ihash.c", "sys/ntfs/ntfs_compr.c", "sys/ntfs/ntfsmount.h", "sys/kern/vfs_bio.c", "sys/kern/vfs_subr.c", "sys/kern/kern_malloc.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_subr.c"]
+notes = "M10d, feature ntfs: the whole file: ntfs_ntvattrrele (no value), ntfs_findvattr (Ok(true)/Ok(false) for the C's 0/-1), ntfs_ntvattrget (the $ATTRIBUTE_LIST walk; an entry of length 0 or longer than what is left ends the list), ntfs_loadntnode (LRU of LOADED_NTNODE_HI; an attribute of length 0 or past the record is EINVAL), ntfs_ntget/ntlookup/ntput/ntref/ntrele (i_lock rw_enter_write/rw_exit_write, the DIAGNOSTIC usecount check under feature diagnostic), ntfs_freentvattr, ntfs_attrtontvattr, ntfs_runtovrun (u32 shifts modulo 32 as the machines; bytes past the record read 0; the run[off+sz-1] quirk of a hole kept; an empty list allocates nothing), ntfs_uastricmp/ntfs_uastrcmp (wchar slices), ntfs_fget, ntfs_frele, ntfs_ntlookupattr (AttrNameBuf), ntfs_ntlookupfile (lookup ctx chain malloc'd as in C; an index entry of length 0 ends the scan), ntfs_isnamepermitted (bool), ntfs_ntreaddir (returns the entry's offset in f_dirblbuf), ntfs_nttimetounix, ntfs_filesize (returns the pair), ntfs_readntvattr_plain/ntfs_readattr_plain/ntfs_readattr (Rdata: the C's rdata or uio; holes moved as zeros 256 bytes at a time; the buffer released when uiomove fails, which the C leaks busy; resident reads past the data zero-filled), ntfs_procfixups, ntfs_toupper_use/unuse (table AtomicPtr and use count AtomicI32 under ntfs_toupper_lock; table zeroed); temporary buffers are KBuf (malloc'd, zeroed, freed on drop); #if UNUSED_CODE ntfs_parserun/ntfs_runtocn left out (never compiled); NTFS_DEBUG off; host tests in ntfs_subr/tests.rs (runs, fixups, name compares, attribute names, times, name types)"
+
+[[file]]
+c = "sys/ntfs/ntfs_vfsops.h"
+rust = "sys/ntfs/ntfs_vfsops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c06bf9473b645658e5047808ef041dbbf96518db"
+deps = ["sys/ntfs/ntfs.h"]
+notes = "M10d, feature ntfs: VG_DONTLOADIN, VG_DONTVALIDFN, VG_EXT; the prototypes are ntfs_vfsops.c's functions; shares ntfs_vfsops.rs with it"
+
+[[file]]
+c = "sys/ntfs/ntfs_vfsops.c"
+rust = "sys/ntfs/ntfs_vfsops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "36783bf8b7eb33585d66989ba5e6e41710327d7d"
+deps = ["sys/ntfs/ntfs_vfsops.h", "sys/ntfs/ntfs_subr.c", "sys/ntfs/ntfs_conv.c", "sys/ntfs/ntfs_ihash.c", "sys/sys/mount.h", "sys/kern/vfs_init.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_lookup.c", "sys/kern/subr_disk.c", "sys/kern/vfs_bio.c"]
+notes = "M10d, feature ntfs: ntfs_vfsops (NTFS_VFSOPS), ntfs_checkexp (vfs_export_lookup over ntm_export, as msdosfs_check_export), ntfs_sysctl (EINVAL), ntfs_init, ntfs_mount (NtfsArgs::from_bytes; own nameidata; EINVAL without arguments; mount_info gets the argument bytes; VFS_STATFS on a copy of mnt_stat), ntfs_mountfs (a zero sector size is EINVAL; 1 << -cpr modulo 32; the $AttrDef vnode released on its error path, which the C leaks; attrdef names stop at 64 characters), ntfs_start, ntfs_unmount, ntfs_root, ntfs_quotactl, ntfs_calccfree (returns the count), ntfs_statfs, ntfs_sync, ntfs_fhtovp/ntfs_vptofh (Ntfid), ntfs_vgetex (f_type VNON where the C leaves it uninitialised; the C's second ntfs_ntput when getnewvnode fails kept), ntfs_vget; registered in vfsconflist[] as ntfs, typenum 6, MNT_LOCAL, NtfsArgs::SIZE; host tests in ntfs_vnops/tests.rs"
+
+[[file]]
+c = "sys/ntfs/ntfs_vnops.c"
+rust = "sys/ntfs/ntfs_vnops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8893d9cd0287fdde5df2760818ca5f17f739134a"
+deps = ["sys/ntfs/ntfs_subr.c", "sys/ntfs/ntfs_vfsops.c", "sys/sys/vnode.h", "sys/kern/vfs_vops.c", "sys/kern/vfs_default.c", "sys/kern/vfs_cache.c", "sys/kern/vfs_bio.c", "sys/sys/dirent.h"]
+notes = "M10d, feature ntfs: ntfs_vops (NTFS_VOPS: vop_lock/unlock/islocked nullop closures, vop_remove eopnotsupp, vop_bwrite vop_generic_bwrite, the NULL slots None), ntfs_bmap, ntfs_read, ntfs_getattr, ntfs_inactive, ntfs_reclaim (the DIAGNOSTIC vprints under feature diagnostic; ntfs_prtactive an AtomicI32), ntfs_print (features debug/diagnostic), ntfs_strategy, ntfs_access, ntfs_open, ntfs_close, ntfs_readdir (whole struct dirents as the C; an entry of length 0 ends the buffer's walk), ntfs_lookup, ntfs_fsync, ntfs_pathconf; host tests (ntfs_vnops/tests.rs): a 256 KB volume built in memory (boot file, 24-record MFT with fixups, $AttrDef, $Bitmap, $UpCase, resident, sparse, compressed and attribute-list files, an index-allocation directory, a DOS name) mounted with ntfs_mountfs: lookups, reads by VOP_READ and bread/ntfs_strategy, readdir in two buffer sizes, getattr, statfs, case-insensitive and all-names mounts, damaged volumes, pathconf, bmap, access, unmount"
+
+[[file]]
+c = "sys/ntfs/ntfsmount.h"
+rust = "sys/ntfs/ntfsmount.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "79cb2321e5fc78b617ec4856b5a5f99ccba347e0"
+deps = []
+notes = "M10d, feature ntfs: NTFS_MFLAG_CASEINS, NTFS_MFLAG_ALLNAMES (u64, ntm_flag's u_long); <sys/mount.h> defines them too, beside NtfsArgs"

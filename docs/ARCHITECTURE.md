@@ -155,8 +155,18 @@ the default and `cargo test` just works.
 | `qemu` | — | QEMU-only exits (`isa-debug-exit`, semihosting), the boot self-tests, the TSC under TCG and the `uptime went backwards` check |
 | `inet6` | `option INET6` | IPv6: the `#ifdef INET6` sites outside `sys/netinet6` and `inet6domain` in `domains[]`; default, as in GENERIC. `sys/netinet6` itself (and the IPv6 tables and usrreqs it names, `route6_cache`, `tcp6_usrreqs`, ...) always compiles, like a library nothing reaches without the option, so the tree builds both ways |
 | `multiprocessor` | `option MULTIPROCESSOR` | off; so far only `tsc.c`'s TSC synchronisation test, for M11b |
+| `ntfs` | `option NTFS` | the read-only NTFS file system (`sys/ntfs`) and its `vfsconflist[]` entry; default, but compiled only where the architecture's GENERIC has it (amd64): see below |
+| `fuse` | `option FUSE` | FUSE (`sys/miscfs/fuse`), its `vfsconflist[]` entry, `cdevsw[]` 92 (`/dev/fuse0`) and `fuseattach` in `pdevinit[]`; default, as in GENERIC |
 
 More appear as they are needed (`small_kernel`, ...), one per `option(4)`.
+
+An `option` that only some architectures' GENERIC sets (M10d: `option NTFS`, in
+`arch/amd64/conf/GENERIC` alone) cannot be a per-target cargo feature, so `sys/build.rs` plays
+`config(8)`'s part: its `ARCH_OPTIONS` table names the feature, a cfg and the architectures,
+and it emits the cfg (`option_ntfs`) when the feature is on and the target is one of them, or
+a host build (so the host tests cover the code). The code is gated on the cfg, not on the
+feature: the arm64 kernel has no NTFS, as OpenBSD's arm64 GENERIC has none, and generic code
+still never names an architecture.
 
 ## Dependencies
 

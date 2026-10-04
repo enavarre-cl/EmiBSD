@@ -61,7 +61,8 @@
 //!   their file systems (`ufs_args` and the `export_args` it embeds came with ffs, `struct
 //!   mfs_args` (`MfsArgs`) with MFS, `iso_args`, `msdosfs_args`, `udf_args` and `tmpfs_args`
 //!   with M10c, `nfs_args` with NFS (M10e); each `*Args::from_bytes` reads them out of the kernel copy of the mount
-//!   arguments).
+//!   arguments). `ntfs_args` (`NtfsArgs`) and the two `NTFS_MFLAG_*` came with NTFS (M10d),
+//!   under cfg `option_ntfs` (feature `ntfs`, amd64 only: `sys/build.rs`).
 //! - `struct vfsconf`'s `vfc_refcount` is atomic (`atomic_inc_int` in C).
 //! - `VFS_*` are functions with the macros' names (`#[allow(non_snake_case)]`).
 //! - `struct netcred` and `struct netexport` are always defined, as the C header does, over
@@ -412,6 +413,35 @@ pub const MSDOSFSMNT_SHORTNAME: i32 = 0x01;
 pub const MSDOSFSMNT_LONGNAME: i32 = 0x02;
 /// `MSDOSFSMNT_NOWIN95`: completely ignore Win95 entries.
 pub const MSDOSFSMNT_NOWIN95: i32 = 0x04;
+
+/// `struct ntfs_args`: arguments to mount ntfs filesystems. `fspec` is a user address.
+#[cfg(option_ntfs)]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct NtfsArgs {
+    /// `fspec`: block special device to mount.
+    pub fspec: usize,
+    /// `export_info`: network export information.
+    pub export_info: ExportArgs,
+    /// `uid`: uid that owns ntfs files.
+    pub uid: Uid,
+    /// `gid`: gid that owns ntfs files.
+    pub gid: Gid,
+    /// `mode`: mask to be applied for ntfs perms.
+    pub mode: Mode,
+    /// `flag`: additional flags, the `NTFS_MFLAG_*` below.
+    pub flag: u64,
+}
+
+#[cfg(option_ntfs)]
+mount_args_from_bytes!(NtfsArgs, "ntfs_args");
+
+/// `NTFS_MFLAG_CASEINS`: ntfs mount option, case-insensitive lookups.
+#[cfg(option_ntfs)]
+pub const NTFS_MFLAG_CASEINS: u64 = 0x0000_0001;
+/// `NTFS_MFLAG_ALLNAMES`: ntfs mount option, list the DOS names too.
+#[cfg(option_ntfs)]
+pub const NTFS_MFLAG_ALLNAMES: u64 = 0x0000_0002;
 
 /// `struct udf_args`: arguments to mount UDF file systems. `fspec` is a user address.
 #[repr(C)]
@@ -1141,6 +1171,14 @@ const _: () = {
     assert!(MsdosfsArgs::SIZE == 144);
     assert!(UdfArgs::SIZE == 16);
     assert!(TmpfsArgs::SIZE == 40);
+};
+
+#[cfg(option_ntfs)]
+const _: () = {
+    assert!(NtfsArgs::SIZE == 152);
+    assert!(core::mem::offset_of!(NtfsArgs, uid) == 128);
+    assert!(core::mem::offset_of!(NtfsArgs, flag) == 144);
+    assert!(NtfsArgs::SIZE <= size_of::<MountInfo>());
 };
 
 #[cfg(feature = "fuse")]

@@ -20,7 +20,7 @@ bench = false
 doc = false
 
 [features]
-default = ["alloc", "ffs", "ffs2", "kmemstats", "inet6", "quota", "ufs_dirhash", "mfs", "tmpfs", "msdosfs", "cd9660", "udf", "nfsclient", "nfsserver", "fuse"]
+default = ["alloc", "ffs", "ffs2", "kmemstats", "inet6", "quota", "ufs_dirhash", "mfs", "tmpfs", "msdosfs", "cd9660", "udf", "nfsclient", "nfsserver", "fuse", "ntfs"]
 alloc = []        # enables `extern crate alloc` and the GlobalAlloc over malloc(9)
 diagnostic = []   # OpenBSD `option DIAGNOSTIC` -> kassert! active
 debug = []        # OpenBSD `option DEBUG`      -> kdassert! active
@@ -39,6 +39,7 @@ udf = []          # OpenBSD `option UDF`     -> the UDF file system (sys/isofs/u
 nfsclient = []    # OpenBSD `option NFSCLIENT` -> the NFS client (sys/nfs), in vfsconflist[]; default (GENERIC)
 nfsserver = []    # OpenBSD `option NFSSERVER` -> the NFS server (sys/nfs, nfssvc(2)) and file system exports; default (GENERIC)
 ext2fs = ["ffs"]  # OpenBSD `option EXT2FS`  -> the second extended file system (sys/ufs/ext2fs), on the ufs layer `ffs` compiles
+ntfs = []         # OpenBSD `option NTFS`    -> the read-only NTFS file system (sys/ntfs); built where the arch's GENERIC has it (amd64; build.rs emits cfg option_ntfs)
 fuse = []         # OpenBSD `option FUSE`    -> FUSE (sys/miscfs/fuse, /dev/fuse0)
 syscall_debug = [] # OpenBSD `option SYSCALL_DEBUG` -> scdebug_call/scdebug_ret print system calls
 qemu = []         # QEMU-only exits (isa-debug-exit, semihosting) and shortcuts
