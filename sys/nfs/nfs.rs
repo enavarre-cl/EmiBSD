@@ -629,7 +629,7 @@ pub struct NfsrvDescript {
     pub nd_flag: i32,
     /// `nd_repstat`: reply status (an NFS status number).
     pub nd_repstat: i32,
-    /// `nd_retxid`: reply xid (a raw XDR word).
+    /// `nd_retxid`: reply xid, in host order (`nfs_getreq` converts it, `nfs_rephead` converts back).
     pub nd_retxid: u32,
     /// `nd_cr`: credentials.
     pub nd_cr: Ucred,
