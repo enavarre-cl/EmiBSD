@@ -107,6 +107,8 @@ pub struct Plan {
     pub show_transcripts: bool,
     /// `--reject`: lines that fail the run if either VM prints them.
     pub rejects: Vec<String>,
+    /// `--disk-fresh`: delete and recreate both persistent disks before booting.
+    pub disk_fresh: bool,
 }
 
 /// The `--<who>-send-after`/`--<who>-send` pairs and `--<who>-expect` lines, with the
@@ -153,6 +155,7 @@ pub fn parse_plan(args: &[&str]) -> Result<Plan> {
             .into_iter()
             .map(str::to_string)
             .collect(),
+        disk_fresh: args.contains(&"--disk-fresh"),
     })
 }
 
@@ -246,7 +249,8 @@ pub fn smoke2(
                 p
             }
         };
-        let mut cmd = boot::qemu_command(root, arch, &image, "stdio", Some(&link))?;
+        let mut cmd =
+            boot::qemu_command(root, arch, &image, "stdio", Some(&link), plan.disk_fresh)?;
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

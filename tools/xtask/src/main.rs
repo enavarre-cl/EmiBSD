@@ -12,7 +12,11 @@
 //!                                          C as the kernel command line (boot(8) flags);
 //!                                          the init and ramdisk modules default to the
 //!                                          built ones (`none` leaves one out)
-//! cargo xtask qemu --arch A [--kernel K]   boot the image, serial and monitor on stdio
+//! cargo xtask qemu --arch A [--kernel K] [--disk-fresh]
+//!                                          boot the image, serial and monitor on stdio;
+//!                                          (also smoke and smoke2) the persistent disk
+//!                                          target/disk-A[-a|-b].img, 64 MiB, is kept
+//!                                          across boots unless --disk-fresh recreates it
 //! cargo xtask smoke --arch A [--kernel K] [--cmdline C] [--status N] [--send-after L --send T]... [--until-seen]
 //!                   [--expect-ramdisk] --expect L...
 //!                                          boot headless; pass if every L appears and QEMU
@@ -67,9 +71,9 @@ const TABLE_END: &str = "<!-- ports:end -->";
 
 const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | ports next | \
                      ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] [--init I] [--ramdisk R] | \
-                     qemu --arch A [--kernel K] [--init I] [--ramdisk R] | gen-syscalls [--check] | \
-                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
-                     smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
+                     qemu --arch A [--kernel K] [--init I] [--ramdisk R] [--disk-fresh] | gen-syscalls [--check] | \
+                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--disk-fresh] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
+                     smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--disk-fresh] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
                      symbolize --arch A [--kernel K] | userland --arch A>";
 
 #[derive(Deserialize)]
@@ -182,6 +186,7 @@ fn run(args: &[String]) -> Result<()> {
                 kernel.as_deref(),
                 init.as_deref(),
                 ramdisk.as_deref(),
+                rest.contains(&"--disk-fresh"),
             )
         }
         ["smoke", rest @ ..] => {
@@ -228,6 +233,7 @@ fn run(args: &[String]) -> Result<()> {
                     init: init.as_deref(),
                     ramdisk: ramdisk.as_deref(),
                     expect_ramdisk: rest.contains(&"--expect-ramdisk"),
+                    disk_fresh: rest.contains(&"--disk-fresh"),
                 },
             )
         }

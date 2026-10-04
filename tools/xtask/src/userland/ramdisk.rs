@@ -64,6 +64,12 @@ const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 ///   `tty00` on both;
 /// - block (`bdevsw[]`): `rd` 17 (72 / 70), minor `unit * 16 + partition` (`DISKMINOR`,
 ///   `MAXPARTITIONS` 16): `rd0a` 0, `rd0b` 1, `rd0c` 2;
+/// - SCSI disks (`sd`, M10a), made by `devices()` from `DISK_UNITS` and not listed in the
+///   table: block `sd` 4 (`bdev_disk_init(NSD,sd)`, 59 / 57), character `sd` 13 (191 /
+///   141), minor `unit * 16 + partition` for the partitions `a`..`p` (`MAKEDEV`'s `dodisk`:
+///   `sd0a`..`sd0p` and `rsd0a`..`rsd0p`, mode 0640, group `operator`). `MAKEDEV all` makes
+///   `sd0`..`sd9`; the image has `sd0` (amd64's and arm64's persistent disk) and `sd1` (the
+///   arm64 boot disk is the second block device the kernel finds);
 /// - `fd/N` is `filedesc` 22 (200 / 150), minor N, for N in `0..64` like MAKEDEV;
 ///   `stdin`, `stdout` and `stderr` link to `fd/0..2` (`DEV_LINKS`).
 ///
@@ -87,6 +93,44 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("rrd0c", 'c', 47, 2, 0o640, "operator"),
     ("pf", 'c', 73, 0, 0o600, "wheel"),
 ];
+
+/// The `sd` units the image has nodes for (module docs of `DEVICES`).
+const DISK_UNITS: &[u32] = &[0, 1];
+
+/// `bdevsw[]` and `cdevsw[]` majors of `sd`.
+const SD_BLOCK_MAJOR: u32 = 4;
+const SD_CHAR_MAJOR: u32 = 13;
+
+/// Every device node of the image, in the shape of `DEVICES`: its table plus the `sd` disk
+/// partitions (`MAKEDEV`'s `dodisk`: `a`..`p`, `MAXPARTITIONS` 16 minors per unit).
+fn devices() -> Vec<(String, char, u32, u32, u32, &'static str)> {
+    let mut all: Vec<_> = DEVICES
+        .iter()
+        .map(|&(n, k, major, minor, mode, group)| (n.to_string(), k, major, minor, mode, group))
+        .collect();
+    for unit in DISK_UNITS {
+        for (part, letter) in ('a'..='p').enumerate() {
+            let minor = unit * 16 + part as u32;
+            all.push((
+                format!("sd{unit}{letter}"),
+                'b',
+                SD_BLOCK_MAJOR,
+                minor,
+                0o640,
+                "operator",
+            ));
+            all.push((
+                format!("rsd{unit}{letter}"),
+                'c',
+                SD_CHAR_MAJOR,
+                minor,
+                0o640,
+                "operator",
+            ));
+        }
+    }
+    all
+}
 
 /// `/dev/fd/N` exists for N below this (`MAKEDEV fd`).
 const FD_NODES: u32 = 64;
@@ -152,6 +196,7 @@ const GROUPS: &[(&str, u32, &str)] = &[
 /// The directories the multi-user system needs, with their modes: (path, mode).
 const DIRS: &[(&str, u32)] = &[
     ("/home", 0o755),
+    ("/mnt", 0o755),
     ("/root", 0o700),
     ("/tmp", 0o1777),
     ("/var", 0o755),
@@ -397,11 +442,11 @@ fn image_attrs(installed: &[Attr]) -> Vec<Attr> {
     for (path, mode) in DIRS {
         attrs.push(Attr::root(path, wheel, *mode));
     }
-    for (name, _, _, _, mode, group) in DEVICES {
+    for (name, _, _, _, mode, group) in devices() {
         attrs.push(Attr::root(
             &format!("/dev/{name}"),
             group_id(group).unwrap_or(wheel),
-            *mode,
+            mode,
         ));
     }
     attrs
@@ -674,8 +719,8 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
         )
         .map_err(|e| format!("{}: {e}", p.display()).into())
     };
-    for (name, kind, major, minor, mode, _) in DEVICES {
-        device(name, *kind, *major, *minor, *mode)?;
+    for (name, kind, major, minor, mode, _) in devices() {
+        device(&name, kind, major, minor, mode)?;
     }
     for n in 0..FD_NODES {
         device(&format!("fd/{n}"), 'c', 22, n, 0o666)?;
@@ -723,7 +768,11 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
             .map(|f| f.0.as_str())
             .collect::<Vec<_>>()
             .join(" "),
-        DEVICES.iter().map(|d| d.0).collect::<Vec<_>>().join(" "),
+        devices()
+            .iter()
+            .map(|d| d.0.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
         FD_NODES - 1,
         passwd::ROOT_PASSWORD,
     );
@@ -960,6 +1009,36 @@ mod tests {
                 .iter()
                 .any(|d| d.0 == "rd0a" && d.1 == 'b' && (d.2, d.3) == (17, 0))
         );
+    }
+
+    #[test]
+    fn sd_nodes_follow_makedev() {
+        let all = devices();
+        let find = |n: &str| all.iter().find(|d| d.0 == n);
+        // Block 4 / char 13, minor unit * 16 + partition, 0640 operator.
+        assert_eq!(
+            find("sd0a").map(|d| (d.1, d.2, d.3, d.4, d.5)),
+            Some(('b', 4, 0, 0o640, "operator"))
+        );
+        assert_eq!(find("sd0c").map(|d| (d.1, d.2, d.3)), Some(('b', 4, 2)));
+        assert_eq!(find("sd0p").map(|d| (d.1, d.2, d.3)), Some(('b', 4, 15)));
+        assert_eq!(find("rsd0a").map(|d| (d.1, d.2, d.3)), Some(('c', 13, 0)));
+        assert_eq!(find("sd1a").map(|d| (d.1, d.2, d.3)), Some(('b', 4, 16)));
+        assert_eq!(find("rsd1p").map(|d| (d.1, d.2, d.3)), Some(('c', 13, 31)));
+        assert!(find("sd0q").is_none() && find("sd2a").is_none());
+        // Every name once, and the attributes table gets them and /mnt.
+        let mut names: Vec<&str> = all.iter().map(|d| d.0.as_str()).collect();
+        let n = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), n);
+        let attrs = image_attrs(&[]);
+        let attr = |p: &str| attrs.iter().find(|a| a.path == p);
+        assert_eq!(
+            attr("/dev/rsd1b").map(|a| (a.gid, a.mode)),
+            Some((5, 0o640))
+        );
+        assert_eq!(attr("/mnt").map(|a| a.mode), Some(0o755));
     }
 
     #[test]

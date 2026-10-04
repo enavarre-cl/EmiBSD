@@ -103,6 +103,39 @@ pub(crate) fn image_path(root: &Path, arch: Arch, tag: Option<&str>) -> PathBuf 
         .join(format!("emibsd-{}{}.img", arch.name(), dash(tag)))
 }
 
+/// Size of the persistent disk: 64 MiB, sparse.
+pub(crate) const DISK_SIZE: u64 = 64 * 1024 * 1024;
+
+/// The persistent disk's path: `disk-<arch>.img`, or `disk-<arch>-<tag>.img` for a `smoke2` VM.
+/// Unlike the boot image it is never rebuilt, so what a guest wrote survives across boots.
+pub(crate) fn disk_path(root: &Path, arch: Arch, tag: Option<&str>) -> PathBuf {
+    root.join("target")
+        .join(format!("disk-{}{}.img", arch.name(), dash(tag)))
+}
+
+/// Makes sure the persistent disk at `path` exists: created sparse and zero-filled when
+/// missing (or when `fresh`, which deletes it first), otherwise left exactly as it is.
+/// Returns whether the file was (re)created.
+pub(crate) fn ensure_disk(path: &Path, fresh: bool) -> Result<bool> {
+    let err = |e: io::Error| format!("{}: {e}", path.display());
+    if fresh {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(err(e).into()),
+        }
+    }
+    if path.is_file() {
+        return Ok(false);
+    }
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(err)?;
+    }
+    let f = File::create(path).map_err(err)?;
+    f.set_len(DISK_SIZE).map_err(err)?;
+    Ok(true)
+}
+
 /// `-<tag>` for a tagged VM, nothing for the single-VM commands.
 fn dash(tag: Option<&str>) -> String {
     tag.map(|t| format!("-{t}")).unwrap_or_default()
@@ -409,13 +442,25 @@ impl VmLink {
 /// mode network (`vio(4)`: virtio-net-pci on amd64's PCI bus, virtio-net-device on one of
 /// arm64 `virt`'s virtio-mmio slots). A fresh copy of the EDK2 variable store is made per run
 /// so boots do not depend on what the firmware remembered last time.
+///
+/// Besides the boot image there is always one persistent virtio-blk disk, the raw 64 MiB
+/// file `target/disk-<arch>.img` (`disk-<arch>-<tag>.img` for a `smoke2` VM). It is created
+/// sparse and zero-filled when missing and reused as is otherwise, so what a guest wrote
+/// survives across boots; `disk_fresh` (`--disk-fresh`) deletes and recreates it first. It is
+/// the LAST device added on both archs: on amd64 the NICs keep their PCI slots (vio0 is dev
+/// 2) and the disk is a later `virtio-blk-pci`; on arm64 `virt` the lowest virtio-mmio slot
+/// in use goes to it, so the kernel, which attaches bottom up, finds it before the boot
+/// disk (virtio31) and it becomes `sd0`.
 pub(crate) fn qemu_command(
     root: &Path,
     arch: Arch,
     image: &Path,
     serial: &str,
     vm: Option<&VmLink>,
+    disk_fresh: bool,
 ) -> Result<Command> {
+    let disk = disk_path(root, arch, vm.map(|v| v.tag));
+    ensure_disk(&disk, disk_fresh)?;
     let code = edk2_file(arch.edk2_code())?;
     let vars_src = edk2_file(arch.edk2_vars())?;
     let vars = root.join("target").join(format!(
@@ -460,6 +505,9 @@ pub(crate) fn qemu_command(
                     &format!("virtio-net-pci,netdev=n1,mac={}", v.link_mac),
                 ]);
             }
+            cmd.arg("-drive")
+                .arg(format!("if=none,format=raw,file={},id=sd0", disk.display()));
+            cmd.args(["-device", "virtio-blk-pci,drive=sd0"]);
         }
         Arch::Arm64 => {
             // acpi=off: EDK2 then installs the device tree, which the arm64 kernel needs (M4).
@@ -480,6 +528,9 @@ pub(crate) fn qemu_command(
                 ]);
             }
             cmd.args(["-device", &format!("virtio-net-device,netdev=n0{nic0}")]);
+            cmd.arg("-drive")
+                .arg(format!("if=none,format=raw,file={},id=sd0", disk.display()));
+            cmd.args(["-device", "virtio-blk-device,drive=sd0"]);
             cmd.args(["-semihosting-config", "enable=on,target=native"]);
         }
     }
@@ -529,6 +580,7 @@ pub fn qemu(
     kernel: Option<&Path>,
     init: Option<&Path>,
     ramdisk: Option<&Path>,
+    disk_fresh: bool,
 ) -> Result<()> {
     let image = match kernel {
         Some(k) => image(root, arch, k, None, init, ramdisk)?,
@@ -545,7 +597,7 @@ pub fn qemu(
             p
         }
     };
-    let mut cmd = qemu_command(root, arch, &image, "mon:stdio", None)?;
+    let mut cmd = qemu_command(root, arch, &image, "mon:stdio", None, disk_fresh)?;
     println!("xtask: {}", command_line(&cmd));
     let status = cmd.status().map_err(|e| spawn_error(arch, &e))?;
     match status.code() {
@@ -589,6 +641,8 @@ pub struct SmokeOptions<'a> {
     /// `--expect-ramdisk`: also expect rd(4)'s line for the ramdisk the image carries
     /// (`rd0: <N> bytes, ffs magic ok`), or the kernel's `rd: no ramdisk module` without one.
     pub expect_ramdisk: bool,
+    /// `--disk-fresh`: delete and recreate the persistent disk before booting.
+    pub disk_fresh: bool,
 }
 
 pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
@@ -603,6 +657,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         init,
         ramdisk,
         expect_ramdisk,
+        disk_fresh,
     } = *opts;
     let image = match kernel {
         Some(k) => image(root, arch, k, cmdline, init, ramdisk)?,
@@ -620,7 +675,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         }
     };
     let expected_status = status;
-    let mut cmd = qemu_command(root, arch, &image, "stdio", None)?;
+    let mut cmd = qemu_command(root, arch, &image, "stdio", None, disk_fresh)?;
     cmd.stdin(if !sends.is_empty() {
         Stdio::piped()
     } else {
@@ -817,6 +872,47 @@ pub(crate) fn slurp_into(mut r: impl Read, into: &Mutex<Vec<u8>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disk_paths_are_per_arch_and_per_vm() {
+        let root = Path::new("/r");
+        assert_eq!(
+            disk_path(root, Arch::Amd64, None),
+            Path::new("/r/target/disk-amd64.img")
+        );
+        assert_eq!(
+            disk_path(root, Arch::Arm64, Some("a")),
+            Path::new("/r/target/disk-arm64-a.img")
+        );
+        assert_ne!(
+            disk_path(root, Arch::Arm64, Some("a")),
+            disk_path(root, Arch::Arm64, Some("b"))
+        );
+    }
+
+    #[test]
+    fn disk_is_created_sparse_reused_and_recreated_when_fresh() {
+        let dir = std::env::temp_dir().join(format!("xtask-disk-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let path = dir.join("disk-test.img");
+        // Missing: created at the full size.
+        assert!(ensure_disk(&path, false).unwrap());
+        assert_eq!(fs::metadata(&path).unwrap().len(), DISK_SIZE);
+        // Present: kept as is, contents included.
+        fs::write(&path, b"guest data").unwrap();
+        assert!(!ensure_disk(&path, false).unwrap());
+        assert_eq!(fs::read(&path).unwrap(), b"guest data");
+        // Fresh: recreated, zero-filled.
+        assert!(ensure_disk(&path, true).unwrap());
+        assert_eq!(fs::metadata(&path).unwrap().len(), DISK_SIZE);
+        let mut head = [1u8; 16];
+        File::open(&path).unwrap().read_exact(&mut head).unwrap();
+        assert_eq!(head, [0u8; 16]);
+        // Fresh on a missing file just creates it.
+        fs::remove_file(&path).unwrap();
+        assert!(ensure_disk(&path, true).unwrap());
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn rejected_lines_are_the_ones_in_the_transcript() {

@@ -186,7 +186,8 @@ over sysctl(2) when no kernel image is named, the way `ps`, `fstat` and `vmstat`
 `sbin/mount_ffs`, `libexec/getty`, `usr.bin/login`, `libexec/login_passwd`, the network tools
 `sbin/ifconfig`, `sbin/ping` (with its `ping6` link, setuid root), `sbin/route`, `sbin/pfctl` and
 `sbin/ipsecctl`, the diagnostic tools `bin/ps`, `bin/df`, `usr.bin/fstat` (and its `fuser`
-link) and `usr.bin/vmstat`, and a few more as static PIE executables, the form
+link) and `usr.bin/vmstat`, the disk tools `sbin/umount`, `sbin/newfs` (with its `mount_mfs` link),
+`sbin/fsck`, `sbin/fsck_ffs`, `sbin/disklabel` and `sbin/fdisk` (M10a), and a few more as static PIE executables, the form
 OpenBSD's `cc -static` gives `/bin` and `/sbin` (`rcrt0.o` relocates the program itself; no
 `PT_INTERP`).
 
@@ -293,10 +294,12 @@ clients (M9+): `resolv.conf` (`nameserver 10.0.2.3`, QEMU's user-network DNS), `
 `emibsd-test-ca.pem`, the certificate of the test CA `userland/testca.rs` makes once with the
 Mac's `openssl` (docs/SETUP.md, "The test CA"). With LibreSSL, ftp and nc the image is about
 22 MiB, so the boot image (`boot.rs`, `IMAGE_SECTORS`) is 128 MiB. The directories are
-`/home`, `/root` (0700), `/tmp` and `/var/tmp` (1777), `/var/{log,mail,run}`. `/dev` has
+`/home`, `/mnt`, `/root` (0700), `/tmp` and `/var/tmp` (1777), `/var/{log,mail,run}`. `/dev` has
 `console`, `tty`, `mem`, `kmem`, `null`, `zero`, `klog`, `tty00` (the console on both
 architectures: `com0` on amd64, and on arm64 `pluart0` takes `com`'s slot, major 8, in
-`pluartcnattach`), `rd0{a,b,c}` (block 17), `rrd0{a,b,c}` (47), `fd/0..63` and
+`pluartcnattach`), `rd0{a,b,c}` (block 17), `rrd0{a,b,c}` (47), `sd{0,1}{a..p}` (block 4) and `rsd{0,1}{a..p}`
+(character 13; minor `unit * 16 + partition`, 0640 root:operator, as `MAKEDEV`'s `dodisk`;
+the image has `sd0` and `sd1`), `fd/0..63` and
 `stdin`/`stdout`/`stderr`; the majors and minors, with their `conf.c` lines, are in
 `DEVICES`'s comment.
 
@@ -774,6 +777,19 @@ user's group (macOS has no such group, and `pwd_mkdb` insists on one).
   for virtio is `machine::pci_machdep::PCI_MSI_PER_BRIDGE`. Interrupts: amd64 has no MP
   tables, so `pci_intr_map_msi*` refuse and the device's INTx line (the one the firmware
   wrote) is established on the 8259; arm64's comes from the node through `ampintc`.
+- QEMU's disks (M10a, `boot.rs`, `qemu_command`): besides the boot image every VM has one
+  persistent virtio-blk disk, the raw 64 MiB sparse file `target/disk-<arch>.img`
+  (`disk-<arch>-a.img` / `-b.img` for `smoke2`'s two VMs), created zero-filled when missing
+  and reused as is, so what a guest wrote survives the next boot; `--disk-fresh` (`qemu`,
+  `smoke`, `smoke2`) recreates it. It is added after every NIC: on amd64 it is
+  `virtio-blk-pci` on a later PCI slot (the NIC stays `virtio0`/`vio0`, dev 2; the boot
+  image is on q35's AHCI, which is not ported); on arm64 `virt` it takes the lowest
+  virtio-mmio slot in use (slots go out top down, the kernel attaches bottom up), so it is
+  the first block device found (`sd0`) and the boot disk (`virtio31`) the second (`sd1`).
+- `disklabel(8)` and `fdisk(8)` embed their manual page in a generated `manual.c` rendered
+  with mandoc(1); the userland build takes their Makefiles' own `.ifdef NOMAN` branch
+  (`NOMAN_PROGRAMS` in `tools/xtask/src/userland.rs`), so the embedded page reads
+  `no manual`. Only that text differs.
 - `vio(4)` (M7b): `dev/pv/if_vio.c` is OpenBSD's whole driver (`vio* at virtio?`), attached
   with the NIC API of the network-interface layer (`if_attach`, `ether_ifattach`, one send
   and one receive queue). QEMU's user-mode network gives it no offloads (slirp has no

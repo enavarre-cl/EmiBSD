@@ -231,7 +231,20 @@ const PROGRAMS: &[&str] = &[
     "usr.bin/vmstat",
     // M9+: over libpcap (LIBRARIES); `iapp.h` from usr.sbin/hostapd (-I../hostapd).
     "usr.sbin/tcpdump",
+    // M10a: the disk tools, over libutil.
+    "sbin/umount",
+    "sbin/newfs",
+    "sbin/fsck",
+    "sbin/fsck_ffs",
+    "sbin/disklabel",
+    "sbin/fdisk",
 ];
+
+/// Programs whose Makefile embeds their manual page in a generated `manual.c` (`disklabel`'s
+/// and `fdisk`'s `-h`/`help` pager): the Makefile renders `*.8` with mandoc(1), which this
+/// machine may not have, so they are built the way its `.ifdef NOMAN` branch says, with the
+/// text `no manual` in place of the page. Only that string differs; every code path is built.
+const NOMAN_PROGRAMS: &[&str] = &["sbin/disklabel", "sbin/fdisk"];
 
 /// Libraries built after libc, libutil, libm and libcompiler_rt (M9+), in link order of
 /// dependence: LibreSSL (`libcrypto`, `libssl`, `libtls`) for ftp(1) and nc(1), and ncurses
@@ -584,6 +597,11 @@ fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make>
         // that changes a variable.
         ("bsd.subdir.mk", ""),
     ];
+    let mut predefined = predefined.to_vec();
+    if !host && NOMAN_PROGRAMS.contains(&dir) {
+        predefined.push(("NOMAN", "yes".to_string()));
+        println!("  {dir}: NOMAN: the embedded manual page is `no manual` (no mandoc here)");
+    }
     let mut mk = Make::new(&curdir, &predefined, &sys_mk);
     mk.read(&curdir.join("Makefile"))?;
     for (flag, why) in UNSUPPORTED_FLAGS {
