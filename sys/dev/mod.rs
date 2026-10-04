@@ -26,6 +26,8 @@ pub mod softraid;
 pub mod softraid_concat;
 pub mod softraid_raid0;
 pub mod softraid_raid1;
+pub mod softraid_raid5;
+pub mod softraid_raid6;
 pub mod softraidvar;
 pub mod vnd;
 pub mod vndioctl;
