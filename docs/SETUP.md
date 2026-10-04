@@ -66,8 +66,9 @@ unmodified, from `reference/openbsd-src`: `/usr/include`, `lib/csu`, `libc.a`, `
 `libm.a`, `libkvm.a`, `init(8)`, `ksh(1)`, `cat(1)`, `echo(1)`, `ls(1)`, `uname(1)`, `mount(8)`, `getty(8)`,
 `login(1)`, `login_passwd(8)`, `ifconfig(8)`, `ping(8)` (and `ping6`), `route(8)`, `pfctl(8)`,
 `ipsecctl(8)`, `ps(1)`, `df(1)`, `fstat(1)` and `vmstat(8)` among others, and the ffs ramdisk image `ramdisk.ffs` (made by
-OpenBSD's makefs(8) and pwd_mkdb(8), built for the Mac with the same clang, as are rpcgen(1) and
-yacc(1), which `pfctl` and `ipsecctl`'s `parse.y` need), into
+OpenBSD's makefs(8) and pwd_mkdb(8), built for the Mac with the same clang, as are rpcgen(1),
+yacc(1), which `pfctl` and `ipsecctl`'s `parse.y` need, and lex(1) for `.l` sources, whose own
+`scan.l` the Mac's `/usr/bin/lex` makes since the tree has no `initscan.c`), into
 `target/userland/<arch>/`. It is not part of
 `just ci`. The user approved these tools on 2026-10-03; nothing else is installed for it:
 
@@ -89,10 +90,20 @@ else `reference/openbsd-src`, else, from a git worktree, the main checkout's
 
 Output: `sysroot/usr/{include,lib}` (what OpenBSD installs in `/usr/include` and `/usr/lib`),
 `obj/` (objects, per source directory), `root/{bin,sbin}` (the executables, stripped, with
-ksh's `rksh` and `sh` links, `/usr/libexec/auth/login_passwd`), `host/` (`rpcgen`, `yacc`, `makefs`,
+ksh's `rksh` and `sh` links, `/usr/libexec/auth/login_passwd`), `host/` (`rpcgen`, `yacc`, `lex`, `makefs`,
 `pwd_mkdb`, `emibsd-bcrypt`) and `licences.txt` (the licence family of
 every OpenBSD file compiled or included). The build is incremental (`.d` files and the
 recorded command line of every object).
+
+### tcpdump (not built yet)
+
+`usr.sbin/tcpdump` and `lib/libpcap` are in the clone, but neither is in `PROGRAMS` or
+`LIBRARIES` yet: libpcap's `ppp.h` and tcpdump's `bootp.h` carry a Carnegie Mellon/Stanford
+notice that `licences.txt` reports as unclassified (the user's decision), and tcpdump's
+Makefile adds `-I${.CURDIR}/../hostapd` for `iapp.h`, which needs `usr.sbin/hostapd` in the
+sparse clone. Once both are settled: libpcap goes into `LIBRARIES` (its `scanner.l` goes
+through the host-built lex), tcpdump into `PROGRAMS` linked `-static`, and the ramdisk gets
+`/var/empty` and OpenBSD's `_tcpdump` user and group (privsep chroots there).
 
 ### The test image's login
 
