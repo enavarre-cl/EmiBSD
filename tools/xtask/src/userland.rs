@@ -147,6 +147,26 @@ const VARIANTS: &[Variant] = &[
     Variant::statically("usr.bin/su"),
     Variant::statically("usr.bin/fstat"),
     Variant::statically("usr.bin/vmstat"),
+    // M10e: the NFS userland. portmap and showmount are in dynamic directories; mountd and
+    // nfsd are in /sbin but their Makefiles end with `LDSTATIC=` (not static by default).
+    Variant::statically("usr.sbin/portmap"),
+    Variant::statically("usr.bin/showmount"),
+    Variant {
+        dir: "sbin/mountd",
+        add_cflags: "",
+        drop_ldadd: &[],
+        static_link: true,
+        why: "linked -static: its Makefile ends with `LDSTATIC=` (dynamic, as OpenBSD ships \
+              it) and ld.so is not built yet",
+    },
+    Variant {
+        dir: "sbin/nfsd",
+        add_cflags: "",
+        drop_ldadd: &[],
+        static_link: true,
+        why: "linked -static: its Makefile ends with `LDSTATIC=` (dynamic, as OpenBSD ships \
+              it) and ld.so is not built yet",
+    },
     Variant {
         dir: "usr.sbin/tcpdump",
         add_cflags: "",
@@ -268,6 +288,13 @@ const PROGRAMS: &[&str] = &[
     "sbin/mount_vnd",
     // M10f: softraid's control program, over libutil (bcrypt_pbkdf, pkcs5_pbkdf2, opendev).
     "sbin/bioctl",
+    // M10e: the NFS userland, over librpcsvc (LIBRARIES): portmap(8), mountd(8), nfsd(8),
+    // mount_nfs(8) and showmount(8).
+    "usr.sbin/portmap",
+    "sbin/mountd",
+    "sbin/nfsd",
+    "sbin/mount_nfs",
+    "usr.bin/showmount",
 ];
 
 /// EmiBSD's own test programs, built after `PROGRAMS` the same way (an OpenBSD-style Makefile,

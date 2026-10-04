@@ -168,8 +168,9 @@ const DEV_LINKS: &[(&str, &str)] = &[("stdin", "fd/0"), ("stdout", "fd/1"), ("st
 
 /// A user of `/etc/master.passwd`: (name, uid, gid, class, gecos, home, shell). OpenBSD's
 /// `root`, `daemon` and `nobody` (the lines of its stock `master.passwd`), and tcpdump(8)'s
-/// privsep user `_tcpdump` (`etc/master.passwd` of the reference clone, line for line; the
-/// empty class is login.conf's `default`), no more.
+/// privsep users `_tcpdump` and `_portmap` (portmap(8) chroots to `/var/empty` as it;
+/// `etc/master.passwd` of the reference clone, line for line; the empty class is
+/// login.conf's `default`), no more.
 const USERS: &[(&str, u32, u32, &str, &str, &str, &str)] = &[
     ("root", 0, 0, "daemon", "Charlie &", "/root", "/bin/ksh"),
     (
@@ -179,6 +180,15 @@ const USERS: &[(&str, u32, u32, &str, &str, &str, &str)] = &[
         "daemon",
         "The devil himself",
         "/root",
+        "/sbin/nologin",
+    ),
+    (
+        "_portmap",
+        28,
+        28,
+        "",
+        "portmap",
+        "/var/empty",
         "/sbin/nologin",
     ),
     (
@@ -216,6 +226,7 @@ const GROUPS: &[(&str, u32, &str)] = &[
     ("_shadow", 14, ""),
     ("utmp", 45, ""),
     // etc/group of the reference clone.
+    ("_portmap", 28, ""),
     ("_tcpdump", 76, ""),
     ("nogroup", 32766, ""),
     ("nobody", 32767, ""),
@@ -230,6 +241,8 @@ const DIRS: &[(&str, u32)] = &[
     ("/var", 0o755),
     // etc/mtree/4.4BSD.dist: root:wheel 0755; tcpdump's privsep chroots here.
     ("/var/empty", 0o755),
+    // mountd(8)'s `mountdtab` (`_PATH_RMOUNTLIST`); etc/mtree/4.4BSD.dist: root:wheel 0755.
+    ("/var/db", 0o755),
     ("/var/log", 0o755),
     ("/var/mail", 0o755),
     ("/var/run", 0o755),
@@ -316,6 +329,7 @@ const ETC_FILES: &[(&str, u32, &str)] = &[
     ("protocols", 0o644, PROTOCOLS),
     ("resolv.conf", 0o644, RESOLV_CONF),
     ("hosts", 0o644, HOSTS),
+    ("rpc", 0o644, RPC),
 ];
 
 /// `resolv.conf(5)`: QEMU's user network answers DNS on 10.0.2.3 (forwarded to this
@@ -330,6 +344,20 @@ const HOSTS: &str = "\
 127.0.0.1\tlocalhost
 ::1\t\tlocalhost
 10.0.2.2\temibsd-host
+";
+
+/// `rpc(5)`: getrpcbyname(3)'s database, for the NFS programs (portmap(8), mountd(8), nfsd(8),
+/// showmount(8)). The lines of `etc/rpc` of the reference clone for the programs the
+/// ramdisk has (`reference_etc_entries_match`), no more.
+const RPC: &str = "\
+#
+# rpc(5) of the EmiBSD ramdisk, a subset of OpenBSD's etc/rpc (the programs it has):
+# from: rpc 88/08/01 4.0 RPCSRC; from 1.12   88/02/07 SMI
+#
+portmapper\t100000\tportmap sunrpc
+nfs\t\t100003\tnfsprog
+mountd\t\t100005\tmount showmount
+rquotad\t\t100011\trquotaprog quota rquota
 ";
 
 /// `protocols(5)`: pfctl(8)'s parser names protocols through getprotobyname(3) (`proto icmp`
@@ -968,7 +996,7 @@ mod tests {
     }
 
     /// The users and groups whose lines come from the reference clone's `etc/`.
-    const FROM_REFERENCE_ETC: &[&str] = &["_tcpdump"];
+    const FROM_REFERENCE_ETC: &[&str] = &["_tcpdump", "_portmap"];
 
     /// The users and groups taken from the reference clone's `etc/master.passwd` and
     /// `etc/group` reproduce their lines: `cargo test -p xtask -- --ignored` with
@@ -988,6 +1016,11 @@ mod tests {
             };
             assert_eq!(line(&ours), line(&passwd), "{name} in master.passwd");
             assert_eq!(line(&group_file()), line(&group), "{name} in group");
+        }
+        // Every non-comment line of our rpc(5) is a line of the reference's.
+        let rpc = fs::read_to_string(src.join("etc/rpc")).expect("rpc");
+        for l in RPC.lines().filter(|l| !l.starts_with('#')) {
+            assert!(rpc.lines().any(|r| r == l), "rpc: `{l}` is not in etc/rpc");
         }
     }
 

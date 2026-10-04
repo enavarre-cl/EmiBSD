@@ -221,6 +221,11 @@ Workarounds, each printed by the build (flags only; no source is edited):
 - `usr.bin/uname`, `usr.bin/id`, `usr.bin/login`, `usr.bin/fstat`, `usr.bin/vmstat`,
   `libexec/getty` and `libexec/login_passwd` are linked `-static` (their Makefiles are dynamic, as `/usr/bin` and `/usr/libexec` are on
   OpenBSD; there is no `ld.so` yet), as the install media's crunched programs are.
+- M10e's `usr.sbin/portmap` and `usr.bin/showmount` are linked `-static` for the same reason,
+  and so are `sbin/mountd` and `sbin/nfsd`, whose Makefiles end with `LDSTATIC=` (OpenBSD ships
+  them dynamic). No source or other flag differs. The ramdisk gets what they need from a base
+  install: the `_portmap` user and group (28:28, from `etc/`), `/etc/rpc` (the portmapper, nfs,
+  mountd and rquotad lines of `etc/rpc`) and `/var/db` (mountd's `mountdtab`); no `/etc/exports`.
 - A program whose Makefile sets `BINOWN`, `BINGRP` or `BINMODE` (`login_passwd`: root:auth,
   setuid 4555, in `/usr/libexec/auth`, where `lib/libc/gen/auth_subr.c`'s `_PATH_AUTHPROG`
   looks for BSD Auth styles) gets them in the image (below).
