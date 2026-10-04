@@ -148,19 +148,21 @@
 //!   `caddr_t data` a raw pointer: `ifioctl` and the `ioctl` helpers are `unsafe fn`s whose contract is
 //!   `sys_ioctl`'s kernel copy of the argument. `SIOCSIFXFLAGS`'s `goto forceup` into the
 //!   `SIOCSIFFLAGS` case is a flag checked after the `match`.
-//! - SMR (`kern/kern_smr.c`) is not ported: the index map is read without a lock and
-//!   replaced under its rwlock, as in C, but `smr_call` (freeing the old map when it grows)
-//!   runs at once and `smr_barrier` is empty. That is sound on one CPU with a kernel that is
-//!   not preempted: a reader never sleeps between loading the map and using it, so no reader
-//!   can be inside a map when its writer frees it. `struct if_idxmap_dtor`, which recycles
-//!   the old bitmap as the SMR entry, is not needed; the old bitmap is freed directly.
+//! - The index map is SMR-protected as in C (M11d): a grown map is freed by `smr_call`
+//!   through `struct if_idxmap_dtor` in the old bitmap, `if_idxmap_remove` waits with
+//!   `smr_barrier`. Its locked part is `if_idxmap_unlink`, so the host tests (no SMR thread)
+//!   can check it.
 //! - `if_attach` and `if_attachhead` panic on an interface that already has an index (the C
 //!   would corrupt `ifnetlist`); `if_start`'s `KASSERT(if_qstart == if_qstart_compat)` checks
 //!   `IFXF_MPSAFE` instead (function pointers do not compare reliably in Rust).
 //! - `counters_inc`/`counters_pkt` (`<sys/percpu.h>`) are here, over `if_var.rs`'s
 //!   [`IfCounterArray`]; `if_counters_alloc` allocates it with `malloc(M_COUNTERS)`.
-//! - The `KERNEL_LOCK()`/`KERNEL_UNLOCK()` pairs and `KERNEL_ASSERT_LOCKED()` are nothing
-//!   without `MULTIPROCESSOR`; `NET_TASKQ` is 1 and `softnet_percpu` has nothing to do.
+//! - Without `MULTIPROCESSOR` `NET_TASKQ` is 1 and `softnet_percpu` has nothing to do. With
+//!   it (M11d) `softnet_init` makes eight softnet queues and `softnet_percpu` destroys those
+//!   past `softnet_count()`, one per CPU; the `KERNEL_LOCK()`/`KERNEL_UNLOCK()` pairs and
+//!   `KERNEL_ASSERT_LOCKED()` are real (`sys/systm.rs`, nothing on one CPU). `TASKQ_MPSAFE`
+//!   and `SY_NOLOCK` are ignored until M11e, so the softnet threads and the ioctls already
+//!   hold the kernel lock there and the pairs only nest.
 //! - `malloc(M_WAITOK)` that fails panics where the C would sleep (the index map,
 //!   `if_alloc_sadl`, `if_attach_queues`, `if_counters_alloc`; `malloc(9)` does not sleep yet).
 //! - The hook lists (`if_*hook_add`) and `if_clone_attach`, `ifa_add` are `unsafe fn`s: they
@@ -170,7 +172,7 @@
 //!   `niq_enqueue`'s "dropped").
 
 use core::cell::{Cell, UnsafeCell};
-use core::cmp::min;
+use core::cmp::{max, min};
 use core::ffi::c_void;
 use core::mem::{MaybeUninit, offset_of, size_of};
 use core::ptr::{self, NonNull};
@@ -186,9 +188,12 @@ use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_rwlock::{rw_enter_write, rw_exit_write, rw_init};
+use crate::kern::kern_smr::{smr_read_enter, smr_read_leave};
 use crate::kern::kern_synch::{
     refcnt_finalize, refcnt_init, refcnt_rele, refcnt_rele_wake, refcnt_take,
 };
+#[cfg(feature = "multiprocessor")]
+use crate::kern::kern_task::taskq_destroy;
 use crate::kern::kern_task::{task_add, task_del, task_set, taskq_create};
 use crate::kern::kern_tc::getmicrotime;
 use crate::kern::kern_timeout::{timeout_add_sec, timeout_del, timeout_set};
@@ -277,14 +282,15 @@ use crate::sys::queue::{ListHead, TailqEntry, TailqHead};
 use crate::sys::refcnt::Refcnt;
 use crate::sys::rwlock::{DT_RWLOCK_IDX_NETLOCK, Rwlock};
 use crate::sys::sched::SPCF_SHOULDYIELD;
+use crate::sys::smr::{SmrEntry, smr_assert_critical, smr_barrier, smr_call, smr_init};
 use crate::sys::socket::{
     AF_INET, AF_INET6, AF_LINK, AF_MAX, RT_TABLEID_MAX, Sockaddr, SockaddrStorage,
 };
 use crate::sys::socketvar::Socket;
 use crate::sys::sockio::*;
 use crate::sys::systm::{
-    net_assert_locked, net_assert_locked_exclusive, net_lock, net_lock_shared, net_unlock,
-    net_unlock_shared,
+    kernel_assert_locked, kernel_lock, kernel_unlock, net_assert_locked,
+    net_assert_locked_exclusive, net_lock, net_lock_shared, net_unlock, net_unlock_shared,
 };
 use crate::sys::task::{TASKQ_MPSAFE, Task, TaskList, Taskq};
 use crate::sys::time::Timeval;
@@ -1164,8 +1170,13 @@ const fn lsd(ifs_type: u8, ifs_state: u8, ifs_string: &'static [u8]) -> IfStatus
     }
 }
 
-/// `NET_TASKQ`: the softnet task queues; one without `MULTIPROCESSOR`.
-pub const NET_TASKQ: usize = 1;
+/// `NET_TASKQ`: the softnet task queues `softnet_init` makes: eight with `MULTIPROCESSOR`
+/// (`softnet_percpu` keeps one per CPU of them), one without.
+pub const NET_TASKQ: usize = if cfg!(feature = "multiprocessor") {
+    8
+} else {
+    1
+};
 
 /// `NBBY` (`<sys/select.h>`, not ported): bits per byte, for the index bitmap.
 const NBBY: usize = u8::BITS as usize;
@@ -1189,6 +1200,15 @@ struct IfIdxmap {
 
 // SAFETY: the cells are touched only with `lock` held; `map` and its slots are atomics.
 unsafe impl Sync for IfIdxmap {}
+
+/// `struct if_idxmap_dtor`: what an outgrown used-index bitmap becomes, the SMR entry that
+/// frees the map it belonged to.
+struct IfIdxmapDtor {
+    /// `smr`.
+    smr: SmrEntry,
+    /// `map`: the outgrown map.
+    map: *mut AtomicPtr<Ifnet>,
+}
 
 /// `struct softnet`: a softnet task queue and the packet lists its thread works through.
 #[repr(align(64))]
@@ -1397,10 +1417,19 @@ pub fn softnet_init() {
     }
 }
 
-/// `softnet_percpu`: after attaching all CPUs and interfaces, remove useless threads. Only
-/// `MULTIPROCESSOR` kernels have more than one softnet.
+/// `softnet_percpu`: after attaching all CPUs and interfaces, remove useless threads: the
+/// softnets from `softnet_count()` on (one per CPU, up to `NET_TASKQ`). Only `MULTIPROCESSOR`
+/// kernels have more than one softnet.
 pub fn softnet_percpu() {
-    // MULTIPROCESSOR: taskq_destroy the softnets from softnet_count() on; not configured.
+    #[cfg(feature = "multiprocessor")]
+    for sn in &SOFTNETS[softnet_count() as usize..] {
+        if let Some(tq) = sn.sn_taskq.take() {
+            // SAFETY: the queue came from `taskq_create` in `softnet_init` and is destroyed
+            // once (its slot is emptied first). No interface uses it: `net_sn` and
+            // `net_tq_barriers` only reach the first `softnet_count()` softnets.
+            unsafe { taskq_destroy(NonNull::from(tq)) };
+        }
+    }
 }
 
 /// `if_idxmap_limit(if_map)`: the map's length, kept in slot 0.
@@ -1413,9 +1442,10 @@ unsafe fn if_idxmap_limit(if_map: *const AtomicPtr<Ifnet>) -> u32 {
     unsafe { (*if_map).load(Ordering::Relaxed) as usize as u32 }
 }
 
-/// `if_idxmap_usedidx_size(limit)`: the bytes of the bitmap for `limit` indices.
+/// `if_idxmap_usedidx_size(limit)`: the bytes of the bitmap for `limit` indices, at least an
+/// `if_idxmap_dtor` (the bitmap becomes one when the map grows).
 fn if_idxmap_usedidx_size(limit: u32) -> usize {
-    howmany(limit as usize, NBBY)
+    max(howmany(limit as usize, NBBY), size_of::<IfIdxmapDtor>())
 }
 
 /// The used-index bitmap of a map of `limit` slots.
@@ -1520,17 +1550,28 @@ pub fn if_idxmap_alloc(ifp: &Ifnet) {
             ptr::copy_nonoverlapping(ousedidx, nusedidx, howmany(olimit as usize, NBBY));
         }
 
+        // use the old usedidx bitmap as an smr_entry for the if_map
+        let dtor = ousedidx.cast::<IfIdxmapDtor>();
         IF_IDXMAP.usedidx.set(nusedidx);
 
         IF_IDXMAP.map.store(if_map, Ordering::Release);
 
-        // smr_call(&dtor->smr, if_idxmap_free, dtor): no SMR, see the module's deviations;
-        // the old bitmap was the C's smr_entry.
-        // SAFETY: the old map is no longer published, and no reader can still be inside it.
-        unsafe { if_idxmap_free(oif_map) };
-        if let Some(ousedidx) = NonNull::new(ousedidx) {
-            free(ousedidx, M_IFADDR, if_idxmap_usedidx_size(olimit));
-        }
+        // SAFETY: the old bitmap is no longer reachable from the map, holds at least an
+        // `IfIdxmapDtor` (`if_idxmap_usedidx_size`) and is `malloc`ed, so aligned for one; it
+        // stays allocated until `if_idxmap_free` runs, which makes it `'static` for SMR.
+        let dtor: &'static IfIdxmapDtor = unsafe {
+            dtor.write(IfIdxmapDtor {
+                smr: SmrEntry::new(),
+                map: oif_map,
+            });
+            &*dtor
+        };
+        smr_init(&dtor.smr);
+        smr_call(
+            &dtor.smr,
+            if_idxmap_free,
+            ptr::from_ref(dtor).cast_mut().cast(),
+        );
     }
 
     // pick the next free index
@@ -1559,13 +1600,14 @@ fn next_serial() -> u32 {
     serial & u32::from(USHRT_MAX)
 }
 
-/// `if_idxmap_free`: drops the references of an old map and frees it.
-///
-/// # Safety
-///
-/// `oif_map` is a map that is no longer published and that no reader is inside.
-unsafe fn if_idxmap_free(oif_map: *mut AtomicPtr<Ifnet>) {
-    // SAFETY: the caller's map is live until freed below.
+/// `if_idxmap_free`: the SMR call of a grown map: drops the old map's references and frees
+/// it and its destructor (the old bitmap).
+fn if_idxmap_free(arg: *mut c_void) {
+    let dtor = arg.cast::<IfIdxmapDtor>();
+    // SAFETY: `if_idxmap_alloc` queued this call with a live destructor, which nobody else
+    // sees: the grace period is over, so no reader is inside its map.
+    let oif_map = unsafe { (*dtor).map };
+    // SAFETY: the old map is live until freed below.
     let olimit = unsafe { if_idxmap_limit(oif_map) };
 
     for i in 1..olimit as usize {
@@ -1580,6 +1622,9 @@ unsafe fn if_idxmap_free(oif_map: *mut AtomicPtr<Ifnet>) {
             M_IFADDR,
             olimit as usize * size_of::<AtomicPtr<Ifnet>>(),
         );
+    }
+    if let Some(dtor) = NonNull::new(dtor.cast::<u8>()) {
+        free(dtor, M_IFADDR, if_idxmap_usedidx_size(olimit));
     }
 }
 
@@ -1612,8 +1657,18 @@ pub fn if_idxmap_insert(ifp: &'static Ifnet) {
     rw_exit_write(&IF_IDXMAP.lock);
 }
 
-/// `if_idxmap_remove`: takes the interface out of the map and frees its index.
+/// `if_idxmap_remove`: takes the interface out of the map and frees its index, then waits
+/// for the readers that may still see it before dropping the map's reference.
 pub fn if_idxmap_remove(ifp: &'static Ifnet) {
+    if_idxmap_unlink(ifp);
+
+    smr_barrier();
+    if_put(ifp);
+}
+
+/// The part of `if_idxmap_remove` under the map's lock: the slot and the index are free once
+/// it returns; the map's reference is still held.
+fn if_idxmap_unlink(ifp: &'static Ifnet) {
     let index = ifp.if_index.get();
 
     rw_enter_write(&IF_IDXMAP.lock);
@@ -1637,13 +1692,10 @@ pub fn if_idxmap_remove(ifp: &'static Ifnet) {
     // end of if_idxmap modifications
 
     rw_exit_write(&IF_IDXMAP.lock);
-
-    // smr_barrier(): no SMR (see the module's deviations).
-    if_put(ifp);
 }
 
-/// `if_idxmap_get`: the interface at `index`, without taking a reference (SMR read section in
-/// C).
+/// `if_idxmap_get`: the interface at `index`, without taking a reference; the caller is in an
+/// SMR read section.
 fn if_idxmap_get(index: u32) -> Option<&'static Ifnet> {
     if index == 0 {
         return None;
@@ -1653,8 +1705,8 @@ fn if_idxmap_get(index: u32) -> Option<&'static Ifnet> {
     if if_map.is_null() {
         return None;
     }
-    // SAFETY: a published map stays valid while no writer replaces it, which on one CPU
-    // cannot happen during this read (see the module's deviations).
+    // SAFETY: a map replaced by `if_idxmap_alloc` is freed by `smr_call` only after every
+    // CPU has left the read section the caller is in.
     if index < unsafe { if_idxmap_limit(if_map) } {
         // SAFETY: `index` is below the map's length; a slot is NULL or an interface the map
         // holds a reference to.
@@ -1947,13 +1999,13 @@ pub fn if_qstart_compat(ifq: &'static Ifqueue) {
         return;
     };
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     let s = splnet();
     if let Some(start) = ifp.if_start.get() {
         start(ifp);
     }
     splx(s);
-    // KERNEL_UNLOCK()
+    kernel_unlock();
 }
 
 /// `if_enqueue`: hands a finished packet to the interface for transmission.
@@ -2294,8 +2346,10 @@ pub fn if_input_process(ifp: &'static Ifnet, ml: &MbufList, idx: u32) {
 
     loop {
         while let Some(m) = ml_dequeue(&ns.ns_input) {
-            // smr_read_enter()/smr_read_leave(): see the module's deviations.
-            match if_idxmap_get(m.m_pkthdr().ph_ifidx.get()) {
+            smr_read_enter();
+            let ifp = if_idxmap_get(m.m_pkthdr().ph_ifidx.get());
+            smr_read_leave();
+            match ifp {
                 Some(ifp) => ifp_input(ifp, m, Some(ns)),
                 None => {
                     m_freem(m);
@@ -2304,7 +2358,10 @@ pub fn if_input_process(ifp: &'static Ifnet, ml: &MbufList, idx: u32) {
         }
 
         while let Some(m) = ml_dequeue(&ns.ns_proto) {
-            match if_idxmap_get(m.m_pkthdr().ph_ifidx.get()) {
+            smr_read_enter();
+            let ifp = if_idxmap_get(m.m_pkthdr().ph_ifidx.get());
+            smr_read_leave();
+            match ifp {
                 Some(ifp) => if_input_process_proto(ifp, m, Some(ns)),
                 None => {
                     m_freem(m);
@@ -2675,7 +2732,7 @@ pub fn if_clone_destroy(name: &[u8]) -> Result<(), Errno> {
         return Err(Errno::EOPNOTSUPP);
     };
 
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
     rw_enter_write(&IF_CLONERS_LOCK);
 
     let Some(ifp) = IFNETLIST
@@ -3064,7 +3121,7 @@ fn if_linkstate_task(xifidx: *mut c_void) {
     let ifidx = xifidx.addr() as u32;
 
     net_lock();
-    // KERNEL_LOCK(): one CPU.
+    kernel_lock();
 
     let ifp = if_get(ifidx);
     if let Some(ifp) = ifp {
@@ -3072,7 +3129,7 @@ fn if_linkstate_task(xifidx: *mut c_void) {
     }
     if_put(ifp);
 
-    // KERNEL_UNLOCK()
+    kernel_unlock();
     net_unlock();
 }
 
@@ -3151,20 +3208,20 @@ fn if_watchdog_task(xifidx: *mut c_void) {
         return;
     };
 
-    // KERNEL_LOCK(): one CPU.
+    kernel_lock();
     let s = splnet();
     if let Some(watchdog) = ifp.if_watchdog.get() {
         watchdog(ifp);
     }
     splx(s);
-    // KERNEL_UNLOCK()
+    kernel_unlock();
 
     if_put(ifp);
 }
 
 /// `if_unit`: map interface name to interface structure pointer, with a reference.
 pub fn if_unit(name: &[u8]) -> Option<&'static Ifnet> {
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
 
     let ifp = IFNETLIST
         .0
@@ -3180,17 +3237,20 @@ pub fn if_get(index: u32) -> Option<&'static Ifnet> {
         return None;
     }
 
-    // smr_read_enter(): see the module's deviations.
-    let ifp = if_idxmap_get(index)?;
-    kassert!(ifp.if_index.get() == index);
-    // smr_read_leave()
+    smr_read_enter();
+    let ifp = if_idxmap_get(index);
+    if let Some(ifp) = ifp {
+        kassert!(ifp.if_index.get() == index);
+        if_ref(ifp);
+    }
+    smr_read_leave();
 
-    Some(if_ref(ifp))
+    ifp
 }
 
 /// `if_get_smr`: the interface at `index` inside an SMR read section, without a reference.
 pub fn if_get_smr(index: u32) -> Option<&'static Ifnet> {
-    // SMR_ASSERT_CRITICAL(): no SMR (see the module's deviations).
+    smr_assert_critical();
     if_idxmap_get(index)
 }
 
@@ -3367,19 +3427,26 @@ pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> R
     match cmd {
         SIOCIFCREATE => {
             suser(p)?;
-            // KERNEL_LOCK(): one CPU.
-            return if_clone_create(&ifr.ifr_name, 0);
+            kernel_lock();
+            let error = if_clone_create(&ifr.ifr_name, 0);
+            kernel_unlock();
+            return error;
         }
         SIOCIFDESTROY => {
             suser(p)?;
-            return if_clone_destroy(&ifr.ifr_name);
+            kernel_lock();
+            let error = if_clone_destroy(&ifr.ifr_name);
+            kernel_unlock();
+            return error;
         }
         SIOCSIFGATTR => {
             suser(p)?;
+            kernel_lock();
             net_lock();
             // SAFETY: the caller's contract: an `ifgroupreq`.
             let error = unsafe { if_setgroupattribs(data) };
             net_unlock();
+            kernel_unlock();
             return error;
         }
         SIOCGIFCONF | SIOCIFGCLONERS | SIOCGIFGMEMB | SIOCGIFGATTR | SIOCGIFGLIST
@@ -3392,9 +3459,10 @@ pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> R
         _ => {}
     }
 
-    // KERNEL_LOCK(): one CPU.
+    kernel_lock();
 
     let Some(ifp) = if_unit(&ifr.ifr_name) else {
+        kernel_unlock();
         return Err(Errno::ENXIO);
     };
     let oif_flags = ifp.if_flags.get();
@@ -3813,7 +3881,7 @@ pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> R
         ifp.if_lastchange.set(getmicrotime());
     }
 
-    // KERNEL_UNLOCK()
+    kernel_unlock();
 
     if_put(ifp);
 
@@ -3850,8 +3918,11 @@ unsafe fn ifioctl_get(cmd: u64, data: *mut u8) -> Result<(), Errno> {
     // SAFETY: the caller's contract: an `ifreq`.
     let ifr = unsafe { &mut *data.cast::<Ifreq>() };
 
-    // KERNEL_LOCK(): one CPU.
-    let Some(ifp) = if_unit(&ifr.ifr_name) else {
+    kernel_lock();
+    let ifp = if_unit(&ifr.ifr_name);
+    kernel_unlock();
+
+    let Some(ifp) = ifp else {
         return Err(Errno::ENXIO);
     };
 
@@ -3881,8 +3952,9 @@ unsafe fn ifioctl_get(cmd: u64, data: *mut u8) -> Result<(), Errno> {
             let ifdata = unsafe { ifdata.assume_init_mut() };
 
             net_lock_shared();
-            // KERNEL_LOCK(): one CPU.
+            kernel_lock();
             if_getdata(ifp, ifdata);
+            kernel_unlock();
             net_unlock_shared();
 
             // SAFETY: zero-filled, then written member by member.
@@ -3891,8 +3963,9 @@ unsafe fn ifioctl_get(cmd: u64, data: *mut u8) -> Result<(), Errno> {
 
         SIOCGIFDESCR => {
             let mut ifdescrbuf = [0u8; IFDESCRSIZE];
-            // KERNEL_LOCK(): one CPU.
+            kernel_lock();
             let _ = strlcpy(&mut ifdescrbuf, &ifp.if_description.get());
+            kernel_unlock();
 
             error = copyoutstr(&ifdescrbuf, ifr.ifr_data() as usize).map(|_| ());
         }
@@ -4778,7 +4851,7 @@ pub fn ifsetlro(ifp: &'static Ifnet, on: bool) -> Result<(), Errno> {
     let s = splnet();
 
     net_assert_locked("ifsetlro"); // for ioctl
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
 
     let error = 'out: {
         let mut ifr = Ifreq::zeroed();
@@ -4888,7 +4961,7 @@ pub fn ifnewlladdr(ifp: &'static Ifnet) {
     let i_am_router = IP6_FORWARDING.load(Ordering::Relaxed) != 0;
 
     net_assert_locked("ifnewlladdr"); // for ioctl and in6
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked();
 
     let mut ifrq = Ifreq::zeroed();
     let up = ifp.if_flags.get() & IFF_UP != 0;

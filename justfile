@@ -87,7 +87,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-mp smoke-ddbmp
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-mp smoke-ddbmp smoke-net-mp
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -720,6 +720,68 @@ tcp_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24 up\\n
     "--b-send-after '# ' --b-send 'nc -l 10.77.0.2 7002\\n' " + \
     "--b-send-after '# ' --b-send 'nc -l 10.77.2.1 7003\\n'"
 tcp_expect := "--b-expect 'internet stream tcp' --b-expect '192.168.77.2:7009' --b-expect 'tcp-direct-7' --b-expect 'tcp-wg-7' --b-expect 'tcp-esp-7' --a-expect 'tcp-sent-8'"
+
+# M11d: the network on the softnet task queues of the MULTIPROCESSOR kernel. Both VMs of
+# `smoke-link` boot `bsd.mp` with `-smp 4`. softnet_init makes NET_TASKQ (8) softnet queues
+# and softnet_percpu keeps one per CPU, min(8, ncpus) = 4 (net/if.c), so ps(1) `-k` (the
+# kern.proc sysctl) lists softnet0..softnet3 (`softnets-4`), each on the CPU it last ran on;
+# each interface's work goes to the queue of its index (net_tq), so vio1, wg0 and lo0 are
+# served by different threads. Then the representative subset of the two-VM smokes: a ping
+# across the link (`smoke-link`), a ping through wg0 (`smoke-wg`) and a TCP line with nc(1)
+# directly and through wg0 (`smoke-tcp`). A then creates lo3..lo5 (the interface index map
+# grows past its first 8 slots; the old map is freed by smr_call) and destroys lo3
+# (if_idxmap_remove's smr_barrier). The transcripts are printed. Last, one VM per arch
+# boots with `-smp 8` and keeps all eight softnets (`softnets-8`). The MP kernels are kept
+# as `bsd.mp` and the uniprocessor ones rebuilt. Part of `smoke`.
+smoke-net-mp:
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-net-mp: no ramdisk image; run just userland first"; exit 1; }
+    cargo build -p bsd --target {{amd64}} --features qemu,multiprocessor
+    cp target/{{amd64}}/debug/bsd target/{{amd64}}/debug/bsd.mp
+    cargo build -p bsd --target {{arm64}} --features qemu,multiprocessor
+    cp target/{{arm64}}/debug/bsd target/{{arm64}}/debug/bsd.mp
+    cargo build -p bsd --target {{amd64}} --features qemu
+    cargo build -p bsd --target {{arm64}} --features qemu
+    cargo xtask smoke2 {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd.mp --smp 4 --timeout 300 --show-transcripts \
+        {{divert_both}} {{netmp_a}} {{netmp_b}} {{netmp_expect}}
+    cargo xtask smoke2 {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd.mp --smp 4 --timeout 300 --show-transcripts \
+        {{divert_both}} {{netmp_a}} {{netmp_b}} {{netmp_expect}}
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd.mp --smp 8 --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send '{{netmp_count}}' --expect "bsd: 8 processors" --expect "softnets-8"
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd.mp --smp 8 --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send '{{netmp_count}}' --expect "bsd: 8 processors" --expect "softnets-8"
+
+# `smoke-net-mp`'s sends and expectations (the login is `divert_both`; wg0's keys are
+# `smoke-wg`'s, the TCP helper `t` is `smoke-tcp`'s). `netmp_count` counts the softnet
+# threads ps(1) lists, in ksh (the ramdisk has no grep).
+netmp_count := "n=0;for c in $(ps -axko comm);do [[ $c = softnet? ]]&&((n++));done;echo softnets-$n\\n"
+netmp_a := "--a-send-after '# ' --a-send 'ifconfig vio1 inet 192.168.77.1/24 up\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig wg0 create wgport 51820 wgkey dwdtCnMYpX08FsFyUbJmRd9ML4frwJkqsXf7pR25LCo=\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig wg0 wgpeer 3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08= wgendpoint 192.168.77.2 51820 wgaip 10.77.0.2/32\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig wg0 inet 10.77.0.1/24 up\\n' " + \
+    "--a-send-after '# ' --a-send 'ping -c 5 192.168.77.2\\n' " + \
+    "--a-send-after '# ' --a-send 'ping -c 10 10.77.0.2\\n' " + \
+    "--a-send-after '# ' --a-send 't(){ until echo tcp-$1-$((3+4)) | nc -N -w 5 $2 $3; do sleep 1; done; }\\n' " + \
+    "--a-send-after '# ' --a-send 't direct 192.168.77.2 7001\\n' " + \
+    "--a-send-after '# ' --a-send 't wg 10.77.0.2 7002\\n' " + \
+    "--a-send-after '# ' --a-send 'for i in 3 4 5; do ifconfig lo$i create; done; ifconfig lo5\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig lo3 destroy && echo if-destroyed-$((3+3))\\n' " + \
+    "--a-send-after '# ' --a-send 'ps -axk -o pid,cpuid,comm\\n' --a-send-after '# ' --a-send '" + netmp_count + "' " + \
+    "--a-send-after '# ' --a-send 'echo tcp-sent-$((4+4))\\n'"
+netmp_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24 up\\n' " + \
+    "--b-send-after '# ' --b-send 'ifconfig wg0 create wgport 51820 wgkey XasIfmJKikt54X+Lg4AO5m87sSkmGLb9HC+LJ/+I4Os=\\n' " + \
+    "--b-send-after '# ' --b-send 'ifconfig wg0 wgpeer hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo= wgendpoint 192.168.77.1 51820 wgaip 10.77.0.1/32\\n' " + \
+    "--b-send-after '# ' --b-send 'ifconfig wg0 inet 10.77.0.2/24 up\\n' " + \
+    "--b-send-after '# ' --b-send 'ping -c 5 192.168.77.1\\n' " + \
+    "--b-send-after '# ' --b-send 'nc -l 192.168.77.2 7001\\n' " + \
+    "--b-send-after '# ' --b-send 'nc -l 10.77.0.2 7002\\n' " + \
+    "--b-send-after '# ' --b-send 'ps -axk -o pid,cpuid,comm\\n' --b-send-after '# ' --b-send '" + netmp_count + "'"
+netmp_expect := "--both-expect 'bsd: 4 processors' --both-expect softnets-4 " + \
+    "--a-expect 'bytes from 192.168.77.2: icmp_seq=' --b-expect 'bytes from 192.168.77.1: icmp_seq=' " + \
+    "--a-expect 'bytes from 10.77.0.2: icmp_seq=' " + \
+    "--b-expect 'tcp-direct-7' --b-expect 'tcp-wg-7' --a-expect 'if-destroyed-6' --a-expect 'tcp-sent-8'"
 
 # M9+: pf's divert-to between the two VMs of `smoke-link`. B gives lo0 its 127.0.0.1 (as
 # netstart(8) would), loads a rule that diverts TCP to its port 80 arriving on vio1 to

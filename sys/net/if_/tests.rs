@@ -209,9 +209,11 @@ fn attached_interfaces_get_unique_indexes_and_the_map_grows() {
     // Taking an interface out of the map frees its index; the slot reads NULL.
     let gone = ifps[3];
     let index = gone.if_index.get();
+    // (if_idxmap_remove's smr_barrier needs the SMR thread, which the host has not.)
     let _ = if_ref(gone);
-    if_idxmap_remove(gone);
+    if_idxmap_unlink(gone);
     assert!(if_get(index).is_none());
+    if_put(gone);
     if_put(gone);
 }
 
