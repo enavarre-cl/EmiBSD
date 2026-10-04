@@ -28,6 +28,8 @@ pub mod fcntl;
 pub mod file;
 pub mod filedesc;
 pub mod filio;
+#[cfg(feature = "fuse")]
+pub mod fusebuf;
 pub mod futex;
 pub mod ioccom;
 pub mod ioctl;

@@ -448,6 +448,27 @@ pub struct TmpfsArgs {
 
 mount_args_from_bytes!(TmpfsArgs, "tmpfs_args");
 
+/// `struct fusefs_args`: arguments to mount fusefs filesystems. `name` is a user address.
+#[cfg(feature = "fuse")]
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct FusefsArgs {
+    /// `name`.
+    pub name: usize,
+    /// `fd`: the daemon's open fuse(4) device.
+    pub fd: i32,
+    /// `max_read`.
+    pub max_read: i32,
+    /// `allow_other`: FUSE does not allow the file system to be accessed by other users
+    /// unless this option is specified. This is to prevent unintentional denial of service
+    /// to other users if the file system is not responding. e.g. user executes df(1) or
+    /// cron job that scans mounted file systems.
+    pub allow_other: i32,
+}
+
+#[cfg(feature = "fuse")]
+mount_args_from_bytes!(FusefsArgs, "fusefs_args");
+
 /// `MFSNAMELEN`: length of fs type name, including nul.
 pub const MFSNAMELEN: usize = 16;
 /// `MNAMELEN`: length of buffer for returned name.
@@ -1120,6 +1141,13 @@ const _: () = {
     assert!(MsdosfsArgs::SIZE == 144);
     assert!(UdfArgs::SIZE == 16);
     assert!(TmpfsArgs::SIZE == 40);
+};
+
+#[cfg(feature = "fuse")]
+const _: () = {
+    assert!(FusefsArgs::SIZE == 24);
+    assert!(core::mem::offset_of!(FusefsArgs, fd) == 8);
+    assert!(core::mem::offset_of!(FusefsArgs, allow_other) == 16);
 };
 
 #[cfg(test)]

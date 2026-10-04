@@ -45,14 +45,13 @@
 //! Upstream: sys/kern/vfs_init.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `vfsconflist[]` holds the ported file systems in `vfs_init.c`'s order: `ffs` (feature
-//!   `ffs`, `option FFS`), `mfs` (feature `mfs`, `option MFS`), `cd9660` (feature `cd9660`,
-//!   `option CD9660`), `msdos` (feature `msdosfs`, `option MSDOSFS`), `nfs` (feature
-//!   `nfsclient`, `option NFSCLIENT`), `udf` (feature `udf`, `option UDF`), `tmpfs` (feature
-//!   `tmpfs`, `option TMPFS`, commented out in GENERIC). Each other GENERIC entry (`EXT2FS`,
-//!   `NTFS`, `FUSE`) joins as a
-//!   `Vfsconf::new(...)` line when its file system does, behind a cargo feature named after
-//!   the `option(4)`.
+//! - `vfsconflist[]` holds the ported file systems in `vfs_init.c`'s order: `ffs` (feature `ffs`,
+//!   `option FFS`), `mfs` (feature `mfs`, `option MFS`), `cd9660` (feature `cd9660`, `option
+//!   CD9660`), `msdos` (feature `msdosfs`, `option MSDOSFS`), `nfs` (feature `nfsclient`, `option
+//!   NFSCLIENT`), `udf` (feature `udf`, `option UDF`), `fuse` (feature `fuse`, `option FUSE`),
+//!   `tmpfs` (feature `tmpfs`, `option TMPFS`, commented out in GENERIC). Each other GENERIC entry
+//!   (`EXT2FS`, `NTFS`) joins as a `Vfsconf::new(...)` line when its file system does, behind a
+//!   cargo feature named after the `option(4)`.
 //! - `rootvnode` is an `AtomicPtr` behind [`rootvnode`]/[`set_rootvnode`]; `maxvfsconf` is an
 //!   `AtomicI32`.
 //! - `vfs_byname` takes the name as bytes (`&[u8]`, NUL or slice end terminated).
@@ -126,6 +125,14 @@ static VFSCONFLIST: [Vfsconf; NVFSCONF] = [
         crate::sys::mount::MNT_LOCAL,
         crate::sys::mount::UdfArgs::SIZE,
     ),
+    #[cfg(feature = "fuse")]
+    Vfsconf::new(
+        &crate::miscfs::fuse::fuse_vfsops::FUSEFS_VFSOPS,
+        crate::sys::mount::MOUNT_FUSEFS,
+        18,
+        0,
+        crate::sys::mount::FusefsArgs::SIZE,
+    ),
     #[cfg(feature = "tmpfs")]
     Vfsconf::new(
         &crate::tmpfs::tmpfs_vfsops::TMPFS_VFSOPS,
@@ -143,6 +150,7 @@ const NVFSCONF: usize = cfg!(feature = "ffs") as usize
     + cfg!(feature = "msdosfs") as usize
     + cfg!(feature = "nfsclient") as usize
     + cfg!(feature = "udf") as usize
+    + cfg!(feature = "fuse") as usize
     + cfg!(feature = "tmpfs") as usize;
 
 /// `maxvfsconf`: initially the size of the list, `vfsinit` will set it to the highest defined

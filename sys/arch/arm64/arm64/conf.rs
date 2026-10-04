@@ -43,7 +43,7 @@
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `vnd` (14 block,
-//!   41 character), `rd` (17 block, 47 character), `pf` (73), `bio` (79) and `ptm` (81). `log` (7) waits for `subr_log.c`'s `logopen` ..
+//!   41 character), `rd` (17 block, 47 character), `pf` (73), `bio` (79), `ptm` (81) and `fuse` (92, feature `fuse`). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
 //!   boot (`machine::conf::cdevsw_set`); `nblkdev`/`nchrdev` are their lengths.
@@ -71,9 +71,15 @@ use crate::kern::tty_pty::{
 };
 use crate::kern::tty_tty::{cttyioctl, cttykqfilter, cttyopen, cttyread, cttywrite};
 use crate::machine::conf::Devsw;
+#[cfg(feature = "fuse")]
+use crate::miscfs::fuse::fuse_device::{
+    NFUSE, fuseclose, fusekqfilter, fuseopen, fuseread, fusewrite,
+};
 use crate::net::bpf::{NBPFILTER, bpfclose, bpfioctl, bpfkqfilter, bpfopen, bpfread, bpfwrite};
 use crate::net::pf_ioctl::{NPF, pfclose, pfioctl, pfopen};
 use crate::scsi::sd::{NSD, sdclose, sddump, sdioctl, sdopen, sdread, sdsize, sdstrategy, sdwrite};
+#[cfg(feature = "fuse")]
+use crate::sys::conf::cdev_fuse_init;
 use crate::sys::conf::{
     Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_bio_init, cdev_bpf_init, cdev_cn_init,
     cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_mm_init, cdev_notdef, cdev_pf_init,
@@ -278,7 +284,17 @@ pub static CDEVSW: Devsw<Cdevsw, 101> = Devsw([
     cnotdef(), // 89: vscsi (not ported)
     cnotdef(), // 90: disk mapper (diskmap: not ported)
     cnotdef(), // 91: pppx (not ported)
-    cnotdef(), // 92: fuse (not ported)
+    #[cfg(feature = "fuse")]
+    Cell::new(cdev_fuse_init(
+        NFUSE,
+        fuseopen,
+        fuseclose,
+        fuseread,
+        fusewrite,
+        fusekqfilter,
+    )), // 92: fuse
+    #[cfg(not(feature = "fuse"))]
+    cnotdef(), // 92: fuse (feature `fuse` off)
     cnotdef(), // 93: Ethernet network tunnel (tap: not ported)
     cnotdef(), // 94
     cnotdef(), // 95

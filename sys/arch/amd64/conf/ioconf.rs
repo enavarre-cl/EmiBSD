@@ -37,6 +37,8 @@ use crate::dev::rd::rdattach;
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
 use crate::dev::vnd::{NVND, vndattach};
 use crate::kern::tty_pty::ptyattach;
+#[cfg(feature = "fuse")]
+use crate::miscfs::fuse::fuse_device::{NFUSE, fuseattach};
 use crate::net::bpf::bpfilterattach;
 use crate::net::if_enc::encattach;
 use crate::net::if_loop::loopattach;
@@ -259,10 +261,10 @@ pub static CFROOTS: [i16; 2] = [0, 13];
 /// ported, in `ioconf.c`'s order (`pseudo-device pf`, `pseudo-device pflog`, `pseudo-device
 /// pfsync`, `pseudo-device pflow`, `pseudo-device enc`, `pseudo-device pty 16`, `pseudo-device
 /// vnd 4`, `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device
-/// bio 1`; all but pty and vnd with a count of 1), then `pseudo-device rd 1`, which is not in
+/// bio 1`, `pseudo-device fuse` under feature `fuse`; all but pty and vnd with a count of 1), then `pseudo-device rd 1`, which is not in
 /// GENERIC but in the RAMDISK kernels (`arch/amd64/conf/RAMDISK*`): this kernel boots its root
 /// from rd0a (M8).
-pub static PDEVINIT: [Pdevinit; 12] = [
+pub static PDEVINIT: [Pdevinit; 12 + cfg!(feature = "fuse") as usize] = [
     Pdevinit {
         pdev_attach: pfattach,
         pdev_count: 1,
@@ -306,6 +308,11 @@ pub static PDEVINIT: [Pdevinit; 12] = [
     Pdevinit {
         pdev_attach: bioattach,
         pdev_count: 1,
+    },
+    #[cfg(feature = "fuse")]
+    Pdevinit {
+        pdev_attach: fuseattach,
+        pdev_count: NFUSE,
     },
     Pdevinit {
         pdev_attach: rdattach,
