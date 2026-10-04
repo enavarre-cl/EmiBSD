@@ -64,7 +64,8 @@ run-arm64: image-arm64
 # and `selftest=vio`, which brings vio0 up, sends an ARP request for QEMU's gateway and waits
 # for a frame through the receive interrupt (status 33).
 # The default boot's init stand-in also checks the Internet sockets (`init: inet sockets ok`:
-# vio0's address through SIOCGIFADDR, a ping from a raw ICMP socket, a local UDP datagram).
+# vio0's address through SIOCGIFADDR, a ping from a raw ICMP socket, a local UDP datagram) and
+# PF_KEY (`init: pfkey ok`: SADB_REGISTER on a PF_KEY socket and its answer).
 # All of those boot without a ramdisk (`--ramdisk none`, so the kernel says
 # `rd: no ramdisk module`, `--expect-ramdisk`) and run the Rust stand-in init, the kernel's
 # self-test. Then `smoke-shell` (M8's exit criterion) boots the ffs ramdisk `just userland`
@@ -92,7 +93,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 8.0" \
         --expect "cannot mount root: no root file system" \
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
-        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: wg ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
+        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: wg ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: pfkey ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
         --expect "selftest: pmap reuse ok" --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
@@ -131,7 +132,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 8.0" \
         --expect "cannot mount root: no root file system" \
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
-        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: wg ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
+        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: wg ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: pfkey ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
         --expect "selftest: pmap reuse ok" --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
@@ -367,6 +368,95 @@ smoke-pf: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "pf enabled" --expect "Status: Enabled" \
         --expect "block drop quick inet proto icmp from any to 10.0.2.2" --expect "blocked-4" \
         --expect "pf disabled" --expect "after-pfctl-d-6"
+
+# M9c: OpenBSD's ipsecctl(8) loads a static ESP tunnel through PF_KEY and reads it back.
+# Logged in as root (`smoke-login`'s sends), the session writes the keys and an ipsec.conf(5)
+# (a flow between 10.77.1.0/24 and 10.77.2.0/24 through the peer 192.168.77.2, and the SA
+# pair, hmac-sha2-256 and aes), loads it with `ipsecctl -f` (SADB_X_ADDFLOW and SADB_ADD) and
+# lists it with `ipsecctl -sa` (the net.key SPD and SADB dumps through sysctl(2)). One VM:
+# nothing is sent through the tunnel (`smoke-esp` does that). The files are in /tmp, named
+# relative to it (an unquoted ipsec.conf word cannot hold a `/`), under umask 077: ipsecctl
+# refuses a configuration file others can read.
+smoke-ipsec: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-ipsec: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send 'cd /tmp; umask 077\n' \
+        {{esp_keys}} \
+        --send-after "# " --send 'echo flow esp from 10.77.1.0/24 to 10.77.2.0/24 peer 192.168.77.2 >ipsec.conf\n' \
+        {{esp_sa}} \
+        --send-after "# " --send 'ipsecctl -f ipsec.conf\n' --send-after "# " --send 'ipsecctl -sa\n' \
+        --expect "rc: multi-user" --expect "FLOWS:" \
+        --expect "flow esp out from 10.77.1.0/24 to 10.77.2.0/24 peer 192.168.77.2" \
+        --expect "esp tunnel from 192.168.77.1 to 192.168.77.2 spi 0x00001001 auth hmac-sha2-256 enc aes" \
+        --expect "esp tunnel from 192.168.77.2 to 192.168.77.1 spi 0x00001002 auth hmac-sha2-256 enc aes"
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send 'cd /tmp; umask 077\n' \
+        {{esp_keys}} \
+        --send-after "# " --send 'echo flow esp from 10.77.1.0/24 to 10.77.2.0/24 peer 192.168.77.2 >ipsec.conf\n' \
+        {{esp_sa}} \
+        --send-after "# " --send 'ipsecctl -f ipsec.conf\n' --send-after "# " --send 'ipsecctl -sa\n' \
+        --expect "rc: multi-user" --expect "FLOWS:" \
+        --expect "flow esp out from 10.77.1.0/24 to 10.77.2.0/24 peer 192.168.77.2" \
+        --expect "esp tunnel from 192.168.77.1 to 192.168.77.2 spi 0x00001001 auth hmac-sha2-256 enc aes" \
+        --expect "esp tunnel from 192.168.77.2 to 192.168.77.1 spi 0x00001002 auth hmac-sha2-256 enc aes"
+
+# M9c: an ESP tunnel between two VMs (`cargo xtask smoke2`, `smoke-link`'s private link).
+# A is 192.168.77.1 on vio1 with 10.77.1.1 on lo1, B is 192.168.77.2 with 10.77.2.1; each
+# loads `smoke-ipsec`'s SA pair and its flow between 10.77.1.0/24 and 10.77.2.0/24 with
+# ipsecctl(8), pings the other end of the link, then each pings the other's inner address
+# from its own: the echoes and their replies go through ESP in tunnel mode
+# (ipsp_process_packet, ipip_output, esp_output; esp_input, ipip_input on the other side).
+# Both are gateways (net.inet.ip.forwarding=1): without bpf(4) (NBPFILTER 0) the C leaves a
+# decapsulated packet on vio1 instead of moving it to enc0, and a plain host drops it as
+# `ips_wrongif`, its inner address being on lo1. Each VM ends with `ipsecctl -sa -v` (the SA
+# counters). Not part of `smoke`.
+smoke-esp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-esp: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke2 --arch amd64 --kernel target/{{amd64}}/debug/bsd \
+        {{esp_both}} \
+        --a-send-after "# " --a-send 'ifconfig vio1 inet 192.168.77.1/24\n' \
+        --a-send-after "# " --a-send 'ifconfig lo1 create; ifconfig lo1 inet 10.77.1.1/32\n' \
+        {{esp_a}} \
+        --b-send-after "# " --b-send 'ifconfig vio1 inet 192.168.77.2/24\n' \
+        --b-send-after "# " --b-send 'ifconfig lo1 create; ifconfig lo1 inet 10.77.2.1/32\n' \
+        {{esp_b}} \
+        --a-expect "bytes from 192.168.77.2" --a-expect "bytes from 10.77.2.1" \
+        --b-expect "bytes from 192.168.77.1" --b-expect "bytes from 10.77.1.1"
+    cargo xtask smoke2 --arch arm64 --kernel target/{{arm64}}/debug/bsd \
+        {{esp_both}} \
+        --a-send-after "# " --a-send 'ifconfig vio1 inet 192.168.77.1/24\n' \
+        --a-send-after "# " --a-send 'ifconfig lo1 create; ifconfig lo1 inet 10.77.1.1/32\n' \
+        {{esp_a}} \
+        --b-send-after "# " --b-send 'ifconfig vio1 inet 192.168.77.2/24\n' \
+        --b-send-after "# " --b-send 'ifconfig lo1 create; ifconfig lo1 inet 10.77.2.1/32\n' \
+        {{esp_b}} \
+        --a-expect "bytes from 192.168.77.2" --a-expect "bytes from 10.77.2.1" \
+        --b-expect "bytes from 192.168.77.1" --b-expect "bytes from 10.77.1.1"
+
+# `smoke-esp`'s sends: the login and the keys on both VMs, then each VM's ipsec.conf (its
+# flow, the SA pair), ipsecctl -f, a ping across the link, the ping through the tunnel and
+# the SA counters.
+esp_both := "--both-send-after 'login:' --both-send 'root\\n' --both-send-after 'Password:' --both-send 'emibsd\\n' " + \
+    "--both-send-after '# ' --both-send 'cd /tmp; umask 077; sysctl net.inet.ip.forwarding=1\\n' " + \
+    "--both-send-after '# ' --both-send 'k=0123456789abcdef; echo $k$k$k$k >ak; e=fedcba9876543210; echo $e$e >ek\\n'"
+esp_a := "--a-send-after '# ' --a-send 'echo flow esp from 10.77.1.0/24 to 10.77.2.0/24 peer 192.168.77.2 >ipsec.conf\\n' " + \
+    replace(replace(esp_sa, "--send-after", "--a-send-after"), "--send ", "--a-send ") + \
+    " --a-send-after '# ' --a-send 'ipsecctl -f ipsec.conf\\n' --a-send-after '# ' --a-send 'ping -c 2 192.168.77.2\\n' " + \
+    "--a-send-after '# ' --a-send 'ping -c 3 -I 10.77.1.1 10.77.2.1\\n' --a-send-after '# ' --a-send 'ipsecctl -sa -v\\n'"
+esp_b := "--b-send-after '# ' --b-send 'echo flow esp from 10.77.2.0/24 to 10.77.1.0/24 peer 192.168.77.1 >ipsec.conf\\n' " + \
+    replace(replace(esp_sa, "--send-after", "--b-send-after"), "--send ", "--b-send ") + \
+    " --b-send-after '# ' --b-send 'ipsecctl -f ipsec.conf\\n' --b-send-after '# ' --b-send 'ping -c 2 192.168.77.1\\n' --b-send-after '# ' --b-send 'ping -c 3 -I 10.77.2.1 10.77.1.1\\n' --b-send-after '# ' --b-send 'ipsecctl -sa -v\\n'"
+
+# The sends that write the keys (files ak and ek) and append the SA pair to ipsec.conf, for
+# `smoke-ipsec` and `smoke-esp` (ipsec.conf(5), "MANUAL SECURITY ASSOCIATIONS"): SPI 0x1001
+# from 192.168.77.1 to .2, 0x1002 back, the same keys both ways. Every line stays short:
+# arm64's pluart drops input past its buffer (`pluart0: ... ibuf overflow`).
+esp_keys := "--send-after '# ' --send 'k=0123456789abcdef; echo $k$k$k$k >ak; e=fedcba9876543210; echo $e$e >ek\\n'"
+esp_sa := "--send-after '# ' --send 'a=\"esp tunnel from 192.168.77.1 to 192.168.77.2\"\\n' --send-after '# ' --send 'b=\"spi 0x1001:0x1002 auth hmac-sha2-256 enc aes\"\\n' --send-after '# ' --send 'echo $a $b authkey file ak:ak enckey file ek:ek >>ipsec.conf\\n'"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

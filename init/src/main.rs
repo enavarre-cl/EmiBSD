@@ -944,6 +944,13 @@ extern "C" fn init_main(sp: *const usize) -> ! {
     } else {
         status = 15;
     }
+    if pfkey() {
+        if write(1, b"init: pfkey ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 17;
+    }
     if processes() {
         if write(1, b"init: processes ok\n").is_err() {
             status = 1;
@@ -1753,6 +1760,50 @@ fn inet() -> bool {
         ok &= call(SYS_CLOSE, fd, 0, 0) == (0, false);
     }
     ok
+}
+
+/// `PF_KEY` (`pseudo_AF_KEY`).
+const PF_KEY: usize = 30;
+/// `PF_KEY_V2`.
+const PF_KEY_V2: u8 = 2;
+/// `SADB_REGISTER`.
+const SADB_REGISTER: u8 = 7;
+/// `SADB_SATYPE_ESP`.
+const SADB_SATYPE_ESP: u8 = 2;
+/// `SADB_EXT_SUPPORTED_AUTH`, the first extension of the `SADB_REGISTER` reply.
+const SADB_EXT_SUPPORTED_AUTH: u16 = 14;
+
+/// `net/pfkeyv2.c` from user mode, as `isakmpd(8)` and `ipsecctl(8)` start: a PF_KEY socket
+/// (`socket(PF_KEY, SOCK_RAW, PF_KEY_V2)`) registers for ESP with `SADB_REGISTER` and reads
+/// back the kernel's answer, which lists the supported algorithms.
+fn pfkey() -> bool {
+    let (s, err) = syscall3(SYS_SOCKET, PF_KEY, SOCK_RAW, usize::from(PF_KEY_V2));
+    if err {
+        return false;
+    }
+    let (pid, _) = syscall3(SYS_GETPID, 0, 0, 0);
+    // struct sadb_msg: version, type, errno, satype, len (in 8-byte words), reserved, seq, pid.
+    let mut msg = [0u8; 16];
+    msg[0] = PF_KEY_V2;
+    msg[1] = SADB_REGISTER;
+    msg[3] = SADB_SATYPE_ESP;
+    msg[4..6].copy_from_slice(&2u16.to_ne_bytes());
+    msg[8..12].copy_from_slice(&0x4242u32.to_ne_bytes());
+    msg[12..16].copy_from_slice(&(pid as u32).to_ne_bytes());
+    let mut ok = syscall3(SYS_WRITE, s, msg.as_ptr() as usize, msg.len()) == (msg.len(), false);
+
+    let mut buf = [0u8; 512];
+    let (n, err) = syscall6(
+        SYS_RECVFROM,
+        [s, buf.as_mut_ptr() as usize, buf.len(), MSG_DONTWAIT, 0, 0],
+    );
+    ok &= !err && n > msg.len();
+    ok &= buf[0] == PF_KEY_V2 && buf[1] == SADB_REGISTER && buf[2] == 0;
+    ok &= usize::from(u16::from_ne_bytes([buf[4], buf[5]])) * 8 == n;
+    ok &= buf[8..16] == msg[8..16];
+    ok &= u16::from_ne_bytes([buf[18], buf[19]]) == SADB_EXT_SUPPORTED_AUTH;
+
+    ok && syscall3(SYS_CLOSE, s, 0, 0) == (0, false)
 }
 
 /// The `SIGUSR1` handler, entered through the kernel's signal trampoline.
