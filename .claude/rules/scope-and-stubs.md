@@ -41,6 +41,8 @@ The kernel is ported incrementally; most of OpenBSD is not here yet. These rules
   and Boulet/RTMX (`sys/msg.h`) notices, the Unicode data-files licence (makefs's
   `msdosfs_unicode.c`), and, accepted on 2026-10-03 for M9+, LibreSSL's OpenSSL and SSLeay
   licences (`lib/libcrypto`, `libssl`, `libtls`, advertising clauses included) and tcpdump's
-  LBL notice (BSD-4 style). Kernel ports still follow the list above.
+  LBL notice (BSD-4 style), and, accepted on 2026-10-04, Carnegie Mellon's 1988-89 BOOTP/PPP notice
+  (`usr.sbin/tcpdump/bootp.h`, `lib/libpcap/ppp.h`; its credit to Carnegie Mellon and Stanford is
+  kept in `LICENSE`). Kernel ports still follow the list above.
 - Scope changes (dropping an arch, skipping a subsystem, changing the boot protocol) are the
   user's decision. Propose; do not decide.

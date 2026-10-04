@@ -38,3 +38,8 @@ Files ported from zlib (Copyright (C) 1995-2026 Jean-loup Gailly and Mark
 Adler) are altered source versions: they are rewritten in Rust and are not
 the original software (zlib license, clause 2). Their license text is kept
 in full in each file.
+
+The ramdisk's userland is compiled unmodified from the OpenBSD sources and
+keeps their licenses. Its tcpdump and libpcap include headers (bootp.h,
+ppp.h) under a Carnegie Mellon notice: copying and distribution is by
+permission of Carnegie Mellon and Stanford University.

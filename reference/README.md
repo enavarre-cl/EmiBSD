@@ -7,7 +7,8 @@ userland, compiled unmodified), plus `gnu/lib/libcompiler_rt` and `gnu/llvm/comp
 `usr.sbin/makefs` (built for the host to make the ffs ramdisk image), `usr.sbin/pwd_mkdb`
 (built for the host to make the ramdisk's password databases), `usr.sbin/tcpdump` (for the
 ramdisk, M9+; added 2026-10-03) and `usr.sbin/portmap`, `quotaon`, `edquota`, `repquota` (NFS and
-quotas, M10; added 2026-10-03).
+quotas, M10; added 2026-10-03), `usr.sbin/hostapd` (only `iapp.h`, which tcpdump includes) and
+`etc/` (`master.passwd` and `group` give the ramdisk OpenBSD's uids, e.g. `_tcpdump`; both added 2026-10-04).
 It is gitignored and **read-only**. `PINNED.md` records the exact commit.
 
 ## Clone (first time)
@@ -17,7 +18,7 @@ git clone --depth 1 --filter=blob:none --sparse https://github.com/openbsd/src.g
 git -C reference/openbsd-src sparse-checkout set sys lib bin sbin usr.bin libexec include \
     gnu/lib/libcompiler_rt gnu/llvm/compiler-rt usr.sbin/makefs \
     usr.sbin/pwd_mkdb usr.sbin/tcpdump usr.sbin/portmap usr.sbin/quotaon \
-    usr.sbin/edquota usr.sbin/repquota
+    usr.sbin/edquota usr.sbin/repquota usr.sbin/hostapd etc
 git -C reference/openbsd-src log -1 --format='%H %cs'      # -> PINNED.md Commit: and Date:
 ```
 
