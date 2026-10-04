@@ -4,6 +4,7 @@ Applies to every port of a C file from `reference/openbsd-src/sys/` into `sys/`.
 
 - Before writing a line: read the `.c` file completely, its header(s), and the `(9)` man page
   comments it references. Note locking/SPL assumptions, error paths and `#ifdef` options.
+  Big files are read in ranges and ported by a subagent of their own (`large-ports.md`).
 - List every function, struct, macro and global the file uses. For each, check `ports.toml`:
   `ported`, `wip`, `todo`, or missing (add it as `todo`). Port leaf dependencies first;
   `cargo xtask ports next` shows what is unblocked.
