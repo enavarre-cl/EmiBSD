@@ -601,3 +601,204 @@ fn a_pfkey_socket_registers_adds_an_sa_and_a_flow() {
     assert_eq!(NREGISTERED.load(Ordering::Relaxed), 0);
     teardown();
 }
+
+/// An `SADB_ADD` of an ESP tunnel SA from `src` to `dst`, as ipsecctl(8) sends a static one
+/// (no replay window).
+fn sa_msg(spi: u32, src: [u8; 4], dst: [u8; 4], seq: u32) -> Vec<u8> {
+    let sa = SadbSa {
+        sadb_sa_spi: htonl(spi),
+        sadb_sa_state: SADB_SASTATE_MATURE,
+        sadb_sa_auth: SADB_X_AALG_SHA2_256,
+        sadb_sa_encrypt: SADB_X_EALG_AES,
+        sadb_sa_flags: SADB_X_SAFLAGS_TUNNEL,
+        ..SadbSa::default()
+    };
+    Msg::new(SADB_ADD, SADB_SATYPE_ESP, seq)
+        .ext(SADB_EXT_SA, sa, &[])
+        .address(SADB_EXT_ADDRESS_SRC, src, 0)
+        .address(SADB_EXT_ADDRESS_DST, dst, 0)
+        .ext(
+            SADB_EXT_KEY_AUTH,
+            SadbKey {
+                sadb_key_bits: 256,
+                ..SadbKey::default()
+            },
+            &AUTHKEY,
+        )
+        .ext(
+            SADB_EXT_KEY_ENCRYPT,
+            SadbKey {
+                sadb_key_bits: 128,
+                ..SadbKey::default()
+            },
+            &ENCKEY,
+        )
+        .done()
+}
+
+/// An `SADB_X_ADDFLOW` requiring ESP through `peer` for `src`/`smask` to `dst`/`dmask`.
+fn flow_msg(dir: u8, src: [[u8; 4]; 2], dst: [[u8; 4]; 2], peer: [u8; 4], seq: u32) -> Vec<u8> {
+    Msg::new(SADB_X_ADDFLOW, SADB_SATYPE_ESP, seq)
+        .address(SADB_EXT_ADDRESS_DST, peer, 0)
+        .address(SADB_X_EXT_SRC_FLOW, src[0], 0)
+        .address(SADB_X_EXT_SRC_MASK, src[1], 0)
+        .address(SADB_X_EXT_DST_FLOW, dst[0], 0)
+        .address(SADB_X_EXT_DST_MASK, dst[1], 0)
+        .ext(SADB_X_EXT_PROTOCOL, SadbProtocol::default(), &[])
+        .ext(
+            SADB_X_EXT_FLOW_TYPE,
+            SadbProtocol {
+                sadb_protocol_proto: SADB_X_FLOW_TYPE_REQUIRE,
+                sadb_protocol_direction: dir,
+                ..SadbProtocol::default()
+            },
+            &[],
+        )
+        .done()
+}
+
+/// RFC 1071 over `b`.
+fn cksum(b: &[u8]) -> u16 {
+    let mut sum: u32 = b
+        .chunks(2)
+        .map(|w| u32::from(u16::from_be_bytes([w[0], *w.get(1).unwrap_or(&0)])))
+        .sum();
+    while sum >> 16 != 0 {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    !(sum as u16)
+}
+
+/// The far end of a tunnel (`smoke-esp`'s B, here the host under test at 10.0.2.15 with
+/// 10.77.2.1 on lo0 and a default route through 10.0.2.2): an echo request from 10.77.1.1
+/// comes in through ESP from the peer 10.0.2.2 (SPI 0x1001), is decapsulated, passes the
+/// inbound policy and, on a forwarding gateway, is answered through the reverse SA (SPI
+/// 0x1002); a plain host drops it as received on the wrong interface (`NBPFILTER` is 0).
+#[test]
+fn an_esp_tunnel_echo_request_is_answered_through_the_reverse_sa() {
+    use crate::net::route::{
+        RTAX_DST, RTAX_GATEWAY, RTAX_NETMASK, RTF_GATEWAY, RTF_STATIC, RTM_ADD, RtAddrinfo, rtfree,
+        rtrequest,
+    };
+    use crate::netinet::in_::sintosa;
+    use crate::netinet::ip_input::tests::{ADDR, GATEWAY, configure, test_ether};
+    use crate::netinet::ip_input::{IPCOUNTERS, ip_forwarding};
+    use crate::netinet::ip_ipsp::{IPSP_DF_INHERIT, IPSP_DIRECTION_IN, TdbCounters};
+    use crate::netinet::ip_var::IpstatCounters;
+    use crate::netinet::ipsec_output::ipsp_process_packet;
+
+    let _g = setup();
+    let ifp = test_ether();
+    configure(ifp, ADDR, [255, 255, 255, 0]);
+    crate::net::if_loop::loop_clone_create(&crate::net::if_loop::LOOP_CLONER, 0).expect("lo0");
+    // enc0: ip_output_ipsec_send runs pf_test on it, and drops the packet without it.
+    crate::net::if_enc::enc_reset();
+    crate::net::if_enc::enc_clone_create(&crate::net::if_enc::ENC_CLONER, 0).expect("enc0");
+    let lo = crate::net::if_::if_get(crate::net::rtable::rtable_loindex(0)).expect("lo0");
+    configure(lo, [10, 77, 2, 1], [255, 255, 255, 255]);
+    // route add default 10.0.2.2
+    let mut dst = sin([0; 4]);
+    let mut mask = sin([0; 4]);
+    let mut gw = sin(GATEWAY);
+    let mut info = RtAddrinfo::new();
+    info.rti_info[RTAX_DST] = sintosa(&mut dst);
+    info.rti_info[RTAX_NETMASK] = sintosa(&mut mask);
+    info.rti_info[RTAX_GATEWAY] = sintosa(&mut gw);
+    info.rti_flags = RTF_GATEWAY | RTF_STATIC;
+    // SAFETY: a local `sockaddr_in`.
+    info.rti_ifa = unsafe { crate::net::if_::ifaof_ifpforaddr(sintosa(&mut gw), ifp) };
+    let mut rt = None;
+    // SAFETY: the addresses are locals.
+    unsafe { rtrequest(RTM_ADD, &mut info, 0, Some(&mut rt), 0) }.expect("default route");
+    rtfree(rt);
+    let so = socreate(i32::from(PF_KEY), SOCK_RAW, i32::from(PF_KEY_V2)).expect("socket(PF_KEY)");
+
+    let net = [[10, 77, 1, 0], [255, 255, 255, 0]];
+    let us = [[10, 77, 2, 0], [255, 255, 255, 0]];
+    for msg in [
+        sa_msg(0x1001, GATEWAY, ADDR, 1),
+        sa_msg(0x1002, ADDR, GATEWAY, 2),
+        flow_msg(IPSP_DIRECTION_OUT, us, net, GATEWAY, 3),
+        flow_msg(IPSP_DIRECTION_IN, net, us, GATEWAY, 4),
+    ] {
+        send(so, &msg).expect("send");
+        assert_eq!(header(&recv(so).expect("the reply")).sadb_msg_errno, 0);
+    }
+
+    // The peer's echo request, encrypted with SPI 0x1001: ip_output loops it to lo0, and it
+    // is handed in from the peer on the Ethernet instead.
+    let peer = SockaddrUnion::from_sin(&sin(ADDR));
+    let ta = gettdb(0, htonl(0x1001), &peer, IPPROTO_ESP as u8).expect("SPI 0x1001");
+    let esp_in = |seq: u8| {
+        let mut p = vec![0u8; 20 + 8 + 16];
+        p[0] = 0x45;
+        p[2..4].copy_from_slice(&44u16.to_be_bytes());
+        p[8] = 64;
+        p[9] = 1;
+        p[12..16].copy_from_slice(&[10, 77, 1, 1]);
+        p[16..20].copy_from_slice(&[10, 77, 2, 1]);
+        let s = cksum(&p[..20]);
+        p[10..12].copy_from_slice(&s.to_be_bytes());
+        p[20] = 8;
+        p[24..28].copy_from_slice(&[0x12, 0x34, 0, seq]);
+        p[28..].copy_from_slice(b"through the tun!");
+        let s = cksum(&p[20..]);
+        p[22..24].copy_from_slice(&s.to_be_bytes());
+        ipsp_process_packet(
+            crate::net::if_::tests::test_packet(&p),
+            ta,
+            i32::from(AF_INET),
+            false,
+            IPSP_DF_INHERIT,
+        )
+        .expect("encrypted");
+        let ml = crate::sys::mbuf::MbufList::new();
+        crate::kern::uipc_mbuf::ml_enlist(&ml, &lo.ifiq(0).ifiq_ml);
+        let m = crate::kern::uipc_mbuf::ml_dequeue(&ml).expect("the ESP packet");
+        let mut esp = crate::netinet::ip_input::tests::bytes(m);
+        m_freem(m);
+        assert_eq!(esp[9], IPPROTO_ESP as u8);
+        // The loopback left the header checksum to its (offloaded) output.
+        esp[10..12].fill(0);
+        let s = cksum(&esp[..20]);
+        esp[10..12].copy_from_slice(&s.to_be_bytes());
+        let f = crate::netinet::ip_input::tests::frame(
+            ifp,
+            crate::netinet::ip_input::tests::OURS,
+            crate::net::ethertypes::ETHERTYPE_IP,
+            &esp,
+        );
+        crate::net::if_ethersubr::ether_input(ifp, f, None);
+        crate::netinet::ip_input::ipintr();
+    };
+    let c = |t: &Tdb, k: TdbCounters| t.tdb_counters[k as usize].load(Ordering::Relaxed);
+    let wrongif = || IPCOUNTERS[IpstatCounters::IpsWrongif as usize].load(Ordering::Relaxed);
+
+    // A host: NBPFILTER is 0, so the decapsulated packet keeps vio's ph_ifidx (the C moves
+    // it to enc0 only under NBPFILTER > 0), and 10.77.2.1 lives on lo0: ips_wrongif.
+    let w = wrongif();
+    esp_in(1);
+    assert_eq!(c(ta, TdbCounters::TdbIpackets), 1, "decrypted");
+    assert_eq!(wrongif(), w + 1, "received on the wrong interface");
+    assert_eq!(crate::netinet::ip_input::tests::sent(|_, _| {}), 0);
+
+    // A gateway (net.inet.ip.forwarding=1) takes it, answers, and the reply leaves through
+    // the reverse SA.
+    ip_forwarding.store(1, Ordering::Relaxed);
+    esp_in(2);
+    ip_forwarding.store(0, Ordering::Relaxed);
+    assert_eq!(c(ta, TdbCounters::TdbIpackets), 2, "decrypted");
+    crate::netinet::ip_input::tests::run_ip_send();
+    let gw = SockaddrUnion::from_sin(&sin(GATEWAY));
+    let tb = gettdb(0, htonl(0x1002), &gw, IPPROTO_ESP as u8).expect("SPI 0x1002");
+    assert_eq!(
+        c(tb, TdbCounters::TdbOpackets),
+        1,
+        "the reply went through ESP"
+    );
+    tdb_unref(Some(ta));
+    tdb_unref(Some(tb));
+
+    soclose(so, 0).expect("close");
+    teardown();
+}

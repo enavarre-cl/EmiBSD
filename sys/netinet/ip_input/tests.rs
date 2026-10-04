@@ -418,6 +418,11 @@ fn icmp_to_us(type_: u8, opts: &[u8]) -> &'static Mbuf {
     m
 }
 
+/// Runs `ipsend_task` as the softnet thread would: `ip_output` of what `ip_send` queued.
+pub(crate) fn run_ip_send() {
+    ip_send_dispatch((&raw const IPSEND_MQ).cast_mut().cast());
+}
+
 /// The packets `ip_send` queued, freed after `check` looked at each.
 pub(crate) fn sent(mut check: impl FnMut(&[u8], u16)) -> usize {
     let ml = MbufList::new();

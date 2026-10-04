@@ -391,5 +391,13 @@ pub fn enc_unsetif(ifp: &'static Ifnet) {
     }
 }
 
+/// Host tests: forgets the enc interfaces of the previous test (its memory is gone).
+#[cfg(test)]
+pub(crate) fn enc_reset() {
+    let t = enc_ifs();
+    t.by_rdomain.clear();
+    t.by_unit.clear();
+}
+
 // LP64 sizes of the C structures.
 const _: () = assert!(size_of::<Enchdr>() == ENC_HDRLEN);
