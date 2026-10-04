@@ -16,7 +16,8 @@ Done:
 Next:
 - pfsync and pflow (added to M9 by the user; agent running), then amd64's `tsc.c`. M9+
   (TCP, bpf, INET6, divert, IGMP, IPComp, HTTPS with LibreSSL and ftp) beside diagnostic
-  tools stage 2; then M10. M14b when idle.
+  tools stage 2; then M10a..f (disk, UFS options, tmpfs/FAT/ISO/UDF, ext2/NTFS/FUSE, NFS,
+  softraid) and M11a..e (SMP; afterwards every smoke runs MP, -smp 4). M14b when idle.
 
 Blockers:
 - amd64's TSC timecounter (`tsc.c`) is deferred.
