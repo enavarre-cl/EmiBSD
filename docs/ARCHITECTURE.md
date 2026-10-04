@@ -884,11 +884,10 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
 
 - pf(4) (M9d): `pseudo-device pf` and `pflog` are configured as in GENERIC (`/dev/pf` is
   character major 73 on both archs, `pfattach` and `pflogattach` run from `pdevinit[]`), and
-  so is `stoeplitz` (pf's state hashes, `inp_flowid`). `pseudo-device pfsync` is configured
-  too (the user's decision of 2026-10-03): `pfsyncattach` in `pdevinit[]`, `IPPROTO_PFSYNC` in
-  `inetsw[]`, the pf and IPsec hooks. GENERIC's `pseudo-device pflow` is not yet: its hook in
-  `net/pf.rs` (`export_pflow`) is a comment. `INET6` is not configured, so pf's IPv6 and
-  NAT64 (`af-to`) paths are comments.
+  so is `stoeplitz` (pf's state hashes, `inp_flowid`), and so are `pseudo-device pfsync` and
+  `pflow` (the user's decision of 2026-10-03): `pfsyncattach` and `pflowattach` in
+  `pdevinit[]`, `IPPROTO_PFSYNC` in `inetsw[]`, `net.pflow` in `net_sysctl`, the pf and IPsec
+  hooks. `INET6` is not configured, so pf's IPv6 and NAT64 (`af-to`) paths are comments.
   `bpf(4)` is not configured, so `pflog0` exists and counts but `pflog_packet` taps nothing.
   Divert sockets (`netinet/ip_divert.c`) are not ported: `divert-packet` rules report
   themselves and drop the packet. The ABI structures pf shares with pfctl(8) keep the C

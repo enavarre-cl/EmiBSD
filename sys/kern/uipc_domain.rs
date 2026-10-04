@@ -49,7 +49,8 @@
 //!   (`netinet/in_proto.rs`), `unixdomain` (`kern/uipc_proto.rs`, local sockets) and
 //!   `routedomain` (`net/rtsock.rs`), with `pfkeydomain` (`net/pfkeyv2.rs`, `IPSEC`) first. `MPLS`,
 //!   `INET6` and `NAF_FRAME` are not configured; their entries are comments, and so are the
-//!   `NBPFILTER`, `NPFLOW` and `PIPEX` branches of `net_sysctl`.
+//!   `NBPFILTER` and `PIPEX` branches of `net_sysctl`. `NPFLOW` is configured: `PF_PFLOW` goes
+//!   to `pflow_sysctl`.
 //! - The two timeouts are statics initialised in `domaininit` with their own address as the
 //!   argument, as the C's function-local statics are.
 //! - `pffinddomain`, `pffindtype` and `pffindproto` return `Option`s for the C's NULL;
@@ -74,7 +75,9 @@ use crate::sys::domain::Domain;
 use crate::sys::errno::Errno;
 use crate::sys::proc::Proc;
 use crate::sys::protosw::{PR_MPSYSCTL, Protosw};
-use crate::sys::socket::{NET_LINK_IFRXQ, PF_LINK, PF_UNIX, PF_UNSPEC, SOCK_RAW, Sockaddr};
+use crate::sys::socket::{
+    NET_LINK_IFRXQ, PF_LINK, PF_PFLOW, PF_UNIX, PF_UNSPEC, SOCK_RAW, Sockaddr,
+};
 use crate::sys::systm::net_assert_locked;
 use crate::sys::timeout::{KCLOCK_NONE, TIMEOUT_MPSAFE, TIMEOUT_PROC, Timeout};
 
@@ -221,7 +224,11 @@ pub fn net_sysctl(
     if family == i32::from(PF_UNIX) {
         return uipc_sysctl(&name[1..], oldp, oldlenp, newp, newlen);
     }
-    // NBPFILTER (PF_BPF), NPFLOW (PF_PFLOW), PIPEX (PF_PIPEX), MPLS (PF_MPLS): not configured.
+    // NBPFILTER > 0: PF_BPF; not configured.
+    if family == i32::from(PF_PFLOW) {
+        return crate::net::if_pflow::pflow_sysctl(&name[1..], oldp, oldlenp, newp, newlen);
+    }
+    // PIPEX (PF_PIPEX), MPLS (PF_MPLS): not configured.
     let Some(dp) = pffinddomain(family) else {
         return Err(Errno::ENOPROTOOPT);
     };

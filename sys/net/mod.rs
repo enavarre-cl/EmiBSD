@@ -16,6 +16,7 @@ pub mod if_ethersubr;
 pub mod if_loop;
 pub mod if_media;
 pub mod if_pflog;
+pub mod if_pflow;
 pub mod if_pfsync;
 pub mod if_types;
 pub mod if_var;

@@ -54,8 +54,8 @@
 //!   discovery handling and the NAT64 (`af-to`) translation between families are comments at
 //!   their sites; an `af-to` rule never matches an IPv4 packet towards IPv6 because the
 //!   translation reports `unported!("inet6")` and drops the packet with `PFRES_TRANSLATE`.
-//! - `pflow(4)` (`NPFLOW`) and `carp(4)` (`NCARP`) are not configured: their calls are comments
-//!   at the sites (`export_pflow`, `carp_lsdrop`). `pfsync(4)` is (`net/if_pfsync.rs`).
+//! - `carp(4)` (`NCARP`) is not configured: `carp_lsdrop` is a comment at its site. `pfsync(4)`
+//!   (`net/if_pfsync.rs`) and `pflow(4)` (`net/if_pflow.rs`) are.
 //! - Divert sockets (`netinet/ip_divert.c`) are not ported: `divert_packet` reports itself
 //!   with `unported!` and frees the packet, as the C does when the socket is gone.
 //! - `pf_anchor_stack` and `pf_status_fcounters` are per-CPU (`cpumem`) in the C; there is one
@@ -2256,7 +2256,9 @@ pub fn pf_remove_state(st: &'static PfState) {
 
     // SAFETY: an inserted state is in the id tree.
     unsafe { TREE_ID.remove(st) };
-    // NPFLOW > 0: export_pflow(st) for PFSTATE_PFLOW; not configured.
+    if st.state_flags.get() & PFSTATE_PFLOW != 0 {
+        let _ = crate::net::if_pflow::export_pflow(st);
+    }
     crate::net::if_pfsync::pfsync_delete_state(st);
     pf_src_tree_remove_state(st);
     pf_detach_state(st);

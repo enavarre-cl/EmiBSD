@@ -2777,7 +2777,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d76bdcce649a48bf5e91b43d09fb2e0ea5256f3d"
 deps = ["sys/sys/domain.h", "sys/sys/protosw.h", "sys/netinet/in_proto.c", "sys/kern/uipc_proto.c", "sys/net/rtsock.c", "sys/kern/kern_timeout.c"]
-notes = "M7b: domains[] (a slice: pfkeydomain (M9c), inetdomain, unixdomain, routedomain; INET6, MPLS, BLUETOOTH not configured), domaininit (runs in main; max_linkhdr/max_hdr, the pffast/pfslow timeouts as statics), pffinddomain, pffindtype, pffindproto, net_sysctl (PF_UNIX is uipc_sysctl; CTL_NET in kern_sysctl), net_link_sysctl, pfctlinput (unsafe: raw sockaddr), pfslowtimo, pffasttimo; host test"
+notes = "M7b: domains[] (a slice: pfkeydomain (M9c), inetdomain, unixdomain, routedomain; INET6, MPLS, BLUETOOTH not configured), domaininit (runs in main; max_linkhdr/max_hdr, the pffast/pfslow timeouts as statics), pffinddomain, pffindtype, pffindproto, net_sysctl (PF_UNIX is uipc_sysctl, PF_PFLOW pflow_sysctl (M9); CTL_NET in kern_sysctl), net_link_sysctl, pfctlinput (unsafe: raw sockaddr), pfslowtimo, pffasttimo; host test"
 
 [[file]]
 c = "sys/sys/socketvar.h"
@@ -4921,7 +4921,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b465a77b487e3490033bbf895b543f32fb6de0f7"
 deps = ["sys/net/pfvar.h", "sys/net/pfvar_priv.h", "sys/netinet/tcp.h", "sys/netinet/tcp_seq.h", "sys/netinet/tcp_fsm.h", "sys/netinet/udp.h", "sys/netinet/ip_icmp.h", "sys/netinet/in_pcb.c", "sys/net/toeplitz.c", "sys/crypto/sha2.c", "sys/crypto/siphash.c", "sys/kern/kern_timeout.c"]
-notes = "M9d: the whole file for IPv4: rule evaluation (pf_match_rule/pf_test_rule, anchors via the one-CPU pf_anchor_stack), the state table (state keys, pf_state_insert/remove, purge), TCP window tracking and sloppy states, scrub hooks, NAT/RDR/BINAT via pf_lb, route-to/reply-to (pf_route), source tracking and the state/source limiters, pf_test with pf_tag/queue/prio/delay, the inpcb/state key links for netinet. Stubs: INET6 not configured (AF_INET6, pf_test6, pf_route6, ICMPv6, af-to: pf_translate_icmp_af/pf_change_icmp_af and the af-to translation report unported! and drop with PFRES_TRANSLATE); pf_socket_lookup for TCP reports unported!(tcbtable) (netinet TCP not ported; user/group rules never match TCP); divert_packet reports unported! (netinet/ip_divert.c) and frees the packet; tcp_mssdflt is TCP_MSS; tcpstat_inc calls are comments. Not configured: NPFLOW, NCARP, NBPFILTER (comments at the sites); NPFSYNC configured (the pfsync hooks, pf_state_import, PF_DEFER through pfsync_defer). pf_anchor_stack and pf_status_fcounters (per-CPU cpumem) are one static each; pf_test takes &mut Option<&'static Mbuf> and returns the action as u8; host tests"
+notes = "M9d: the whole file for IPv4: rule evaluation (pf_match_rule/pf_test_rule, anchors via the one-CPU pf_anchor_stack), the state table (state keys, pf_state_insert/remove, purge), TCP window tracking and sloppy states, scrub hooks, NAT/RDR/BINAT via pf_lb, route-to/reply-to (pf_route), source tracking and the state/source limiters, pf_test with pf_tag/queue/prio/delay, the inpcb/state key links for netinet. Stubs: INET6 not configured (AF_INET6, pf_test6, pf_route6, ICMPv6, af-to: pf_translate_icmp_af/pf_change_icmp_af and the af-to translation report unported! and drop with PFRES_TRANSLATE); pf_socket_lookup for TCP reports unported!(tcbtable) (netinet TCP not ported; user/group rules never match TCP); divert_packet reports unported! (netinet/ip_divert.c) and frees the packet; tcp_mssdflt is TCP_MSS; tcpstat_inc calls are comments. Not configured: NCARP, NBPFILTER (comments at the sites); NPFLOW configured (export_pflow in pf_remove_state); NPFSYNC configured (the pfsync hooks, pf_state_import, PF_DEFER through pfsync_defer). pf_anchor_stack and pf_status_fcounters (per-CPU cpumem) are one static each; pf_test takes &mut Option<&'static Mbuf> and returns the action as u8; host tests"
 
 [[file]]
 c = "sys/net/pf_ioctl.c"
@@ -4985,6 +4985,24 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "803d7e2e44bac880c247e46cb1dff3f39e6f21ca"
 deps = ["sys/net/if_pflog.h", "sys/net/if.c"]
 notes = "M9d: pflogattach (pdevinit), the pflog cloner; bpf(4) not configured: no bpfattach, pflog_packet body compiled out (returns success); PFLOGDEBUG DPRINTF not ported; pflogoutput/pflogioctl unsafe fns; this version has no pflogifs/pflogifs_resize/pflog_mtap/pflog_bpfcopy; host tests"
+
+[[file]]
+c = "sys/net/if_pflow.h"
+rust = "sys/net/if_pflow.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "61f7c452309c05c14506a9d531064e45e8c88fef"
+deps = ["sys/net/pfvar.h"]
+notes = "M9 (pfsync/pflow, the user's decision of 2026-10-03): merged into net/if_pflow.rs; the __packed records, headers and IPFIX templates are #[repr(C, packed)] AbiPod (sizes const-asserted: flow 48, header 24, v10 header 16, ipfix flow4 54/nat 66/flow6 78, templates 176, pflowreq 520 with its tail padding named); in6_addr is 16 bytes (netinet6 not ported); the header's extern pflowif (never defined) left out; PFIX_IE_* keep their names (allow non_upper_case_globals); reference test against the header"
+
+[[file]]
+c = "sys/net/if_pflow.c"
+rust = "sys/net/if_pflow.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fced85a31866f041057472a808165a881655ec42"
+deps = ["sys/net/if_pflow.h", "sys/net/if.c", "sys/net/pf.c", "sys/kern/uipc_socket.c", "sys/netinet/udp_usrreq.c"]
+notes = "M9: the whole file: pflowattach (pdevinit), the pflow cloner, pflowioctl (SIOCSETPFLOW/SIOCGETPFLOW, mtu, flags), pflow_set (kernel UDP socket: socreate/sobind/sosend), NetFlow v5 and IPFIX (v10) records, templates, timeouts and the output task, export_pflow (pf_remove_state for PFSTATE_PFLOW), pflow_sysctl (net.pflow.stats via net_sysctl). No SMR (pflowif_list a plain SLIST, smr_barrier empty); pflow_counters a static atomic array; sc_flowsrc/sc_flowdst are Option<SockaddrStorage> (no malloc, no ENOMEM paths); export_pflow_if's bcopy of the state is the byte counters passed to pflow_pack_flow/copy_flow_data; pflow_get_mbuf's sc==NULL branch has no caller; headers updated through m_copydata/m_copyback; PFLOWDEBUG not defined; the IPv6 paths are ported though INET6 is not configured; host tests (layout, templates, sockaddr checks, a state's v5 and IPFIX datagrams, sysctl)"
 
 [[file]]
 c = "sys/net/if_pfsync.h"
