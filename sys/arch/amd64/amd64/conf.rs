@@ -42,7 +42,8 @@
 //!   writes the driver's initialiser with a count (`cdev_disk_init(NWD,wd)`): its entry points
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
-//!   `filedesc` (22), `bpf` (23), `rd` (17 block, 47 character), `pf` (73) and `ptm` (81). `log` (7) waits for `subr_log.c`'s `logopen` ..
+//!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `rd` (17 block,
+//!   47 character), `pf` (73) and `ptm` (81). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
 //!   boot (`machine::conf::cdevsw_set`); `nblkdev`/`nchrdev` are their lengths.
@@ -68,6 +69,7 @@ use crate::kern::tty_tty::{cttyioctl, cttykqfilter, cttyopen, cttyread, cttywrit
 use crate::machine::conf::Devsw;
 use crate::net::bpf::{NBPFILTER, bpfclose, bpfioctl, bpfkqfilter, bpfopen, bpfread, bpfwrite};
 use crate::net::pf_ioctl::{NPF, pfclose, pfioctl, pfopen};
+use crate::scsi::sd::{NSD, sdclose, sddump, sdioctl, sdopen, sdread, sdsize, sdstrategy, sdwrite};
 use crate::sys::conf::{
     Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_bpf_init, cdev_cn_init, cdev_ctty_init,
     cdev_disk_init, cdev_fd_init, cdev_mm_init, cdev_notdef, cdev_pf_init, cdev_ptc_init,
@@ -95,7 +97,10 @@ pub static BDEVSW: Devsw<Bdevsw, 20> = Devsw([
     bnotdef(), // 1: swap pseudo-device (sw: uvm_swap.c, not ported)
     bnotdef(), // 2: floppy diskette (fd: not ported)
     bnotdef(), // 3
-    bnotdef(), // 4: SCSI disk (sd: not ported)
+    // 4: SCSI disk
+    Cell::new(bdev_disk_init(
+        NSD, sdopen, sdclose, sdstrategy, sdioctl, sddump, sdsize,
+    )),
     bnotdef(), // 5: was: SCSI tape
     bnotdef(), // 6: SCSI CD-ROM (cd: not ported)
     bnotdef(), // 7
@@ -161,7 +166,10 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     cnotdef(), // 10 vmm (not ported)
     cnotdef(), // 11: Sony CD-ROM
     cnotdef(), // 12: frame buffers, etc. (wsdisplay: not ported)
-    cnotdef(), // 13: SCSI disk (sd: not ported)
+    // 13: SCSI disk
+    Cell::new(cdev_disk_init(
+        NSD, sdopen, sdclose, sdread, sdwrite, sdioctl,
+    )),
     cnotdef(), // 14: SCSI tape (st: not ported)
     cnotdef(), // 15: SCSI CD-ROM (cd: not ported)
     cnotdef(), // 16: parallel printer (lpt: not ported)

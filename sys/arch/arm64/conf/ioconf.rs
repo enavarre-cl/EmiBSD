@@ -5,7 +5,8 @@
 //! `subr_autoconf.rs`.
 //!
 //! GENERIC lines present: `mainbus0 at root`, `ampintc* at fdt? early 1`, `agtimer* at fdt?`,
-//! `virtio* at fdt?`, `vio* at virtio?`, `vioblk* at virtio?`, `pluart* at fdt?`,
+//! `virtio* at fdt?`, `vio* at virtio?`, `vioblk* at virtio?`, `scsibus* at scsi?`,
+//! `sd* at scsibus?`, `pluart* at fdt?`,
 //! `plrtc* at fdt?`, `efi0 at mainbus?`;
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
@@ -40,6 +41,8 @@ use crate::net::if_pflow::pflowattach;
 use crate::net::if_pfsync::pfsyncattach;
 use crate::net::if_wg::wgattach;
 use crate::net::pf_ioctl::pfattach;
+use crate::scsi::scsiconf::{SCSIBUS_CA, SCSIBUS_CD};
+use crate::scsi::sd::{SD_CA, SD_CD};
 use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR, Pdevinit};
 
 /// `pv[]` for children of `mainbus0` (`cfdata[0]`) through the `fdt` attribute.
@@ -57,8 +60,18 @@ const LOC_EARLY_0: &[i64] = &[0];
 /// `pv[]` for children of `virtio*` (`cfdata[3]`).
 const PV_VIRTIO: &[i16] = &[3];
 
+/// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`).
+const PV_VIOBLK: &[i16] = &[5];
+
+/// `pv[]` for children of `scsibus*` (`cfdata[9]`).
+const PV_SCSIBUS: &[i16] = &[9];
+
+/// `loc[]` of an entry at `scsibus` with the defaults `target = -1, lun = -1`
+/// (`scsi/files.scsi`: `device scsibus {[target = -1], [lun = -1]}`).
+const LOC_SCSIBUS_UNK: &[i64] = &[-1, -1];
+
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 9] = [
+pub static CFDATA: [Cfdata; 11] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -154,6 +167,30 @@ pub static CFDATA: [Cfdata; 9] = [
         &[],
         0,
         PV_MAINBUS,
+        0,
+        0,
+    ),
+    // 9: scsibus* at scsi? (vioblk is the only `scsi` adapter)
+    Cfdata::new(
+        &SCSIBUS_CA,
+        &SCSIBUS_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_VIOBLK,
+        0,
+        0,
+    ),
+    // 10: sd* at scsibus?
+    Cfdata::new(
+        &SD_CA,
+        &SD_CD,
+        0,
+        FSTATE_STAR,
+        LOC_SCSIBUS_UNK,
+        0,
+        PV_SCSIBUS,
         0,
         0,
     ),

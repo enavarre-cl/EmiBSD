@@ -435,7 +435,7 @@ pub struct ScsiAdapter {
     /// (before returning when `SCSI_POLL` is set).
     pub scsi_cmd: fn(xs: &'static ScsiXfer),
     /// `dev_minphys`: trims a transfer to what the adapter can do.
-    pub dev_minphys: Option<fn(bp: &'static Buf, link: &'static ScsiLink)>,
+    pub dev_minphys: Option<fn(bp: &Buf, link: &'static ScsiLink)>,
     /// `dev_probe`: asks the adapter whether a link should be probed.
     pub dev_probe: Option<ScsiDevProbeFn>,
     /// `dev_free`: the link is going away.

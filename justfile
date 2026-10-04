@@ -78,7 +78,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-disk
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -90,6 +90,9 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "at pci0 dev 0 function 0 not configured" \
         --expect "virtio0 at pci0 dev 2 function 0 vendor 0x1af4 product 0x1000 rev 0x00" \
         --expect "vio0 at virtio0: 1 queue, address 52:54:00:12:34:56" --expect "virtio0: irq " \
+        --expect "virtio1 at pci0 dev 3 function 0 vendor 0x1af4 product 0x1001 rev 0x00" \
+        --expect "vioblk0 at virtio1" --expect "scsibus0 at vioblk0: 1 targets" \
+        --expect "sd0 at scsibus0 targ 0 lun 0: <VirtIO, Block Device, >" \
         --expect "isa0 at mainbus0" \
         --expect "com0 at isa0 port 0x3f8/8 irq 4: ns16550a, 16 byte fifo" --expect "com0: console" \
         --expect "cpu0: apic clock running at" \
@@ -130,7 +133,10 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "efi0 at mainbus0: UEFI 2." --expect "efi0: EDK II rev 0x" \
         --expect "virtio0 at mainbus0: Virtio Unknown (0) Device" \
         --expect "virtio30 at mainbus0: Virtio Network Device" \
-        --expect "virtio31 at mainbus0: Virtio Block Device" \
+        --expect "virtio29 at mainbus0: Virtio Block Device" --expect "vioblk0 at virtio29" \
+        --expect "virtio31 at mainbus0: Virtio Block Device" --expect "vioblk1 at virtio31" \
+        --expect "sd0 at scsibus0 targ 0 lun 0: <VirtIO, Block Device, >" \
+        --expect "sd1 at scsibus1 targ 0 lun 0: <VirtIO, Block Device, >" \
         --expect "vio0 at virtio30: 1 queue, address 52:54:00:12:34:56" \
         --expect ": rev 1, 16 byte fifo" --expect "pluart0: console" \
         --expect "module: /init (" --expect "init: hello from user mode" --expect "init: argv and auxv ok" \
@@ -751,6 +757,44 @@ tcpdump_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24 u
     "--b-send-after '# ' --b-send 'tcpdump -n -e -ttt -i pflog0 -c 1\\n' " + \
     "--b-send-after '# ' --b-send 'echo pflog-done-$((5+5))\\n'"
 tcpdump_expect := "--b-expect '192.168.77.2.7001: S ' --b-expect 'block in on vio1: 192.168.77.1.' --b-expect 'pflog-done-10'"
+
+# M10a: the persistent disk. Boot 1 (`--disk-fresh`, a zeroed 64 MiB image) finds sd0 on
+# vioblk(4)'s scsibus, runs fdisk(8), disklabel(8)'s automatic layout and newfs(8) on it,
+# writes a file on sd0a and unmounts it; boot 2 runs on the same image: fsck(8) -n must find
+# the file system clean (by its clean flag, then forced with -f) and the file must read back.
+# fdisk's MBR template (`-f`) is the blank disk's own first sector: amd64's fdisk otherwise
+# reads boot(8)'s /usr/mdec/mbr, which comes with M14. Part of `smoke`.
+smoke-disk: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-disk: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disk-fresh {{disk_make}} --expect 'vioblk0 at virtio1'
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        {{disk_check}}
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disk-fresh {{disk_make}} --expect 'vioblk0 at virtio29'
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        {{disk_check}}
+
+# `smoke-disk`'s two boots.
+disk_login := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' --send 'emibsd\\n'"
+disk_make := disk_login + " " + \
+    "--send-after '# ' --send 'fdisk -iy -f /dev/rsd0c sd0 && fdisk -f /dev/rsd0c sd0\\n' " + \
+    "--send-after '# ' --send 'disklabel -w -A sd0 && disklabel sd0\\n' " + \
+    "--send-after '# ' --send 'newfs sd0a\\n' " + \
+    "--send-after '# ' --send 'mount /dev/sd0a /mnt && echo m10a-persistent-$((40+2)) >/mnt/m10a.txt && umount /mnt && echo disk-written-$((40+2))\\n' " + \
+    "--expect 'scsibus0 at vioblk0' --expect 'sd0 at scsibus0 targ 0 lun 0: <VirtIO, Block Device, >' " + \
+    "--expect 'sd0: 64MB, 512 bytes/sector, 131072 sectors' --expect '*3: A6' " + \
+    "--expect 'boundstart: 64' --expect '131008               64  4.2BSD' " + \
+    "--expect '/dev/rsd0a: ' --expect 'disk-written-42'"
+disk_check := disk_login + " " + \
+    "--send-after '# ' --send 'fsck -n /dev/sd0a; echo fsck-rc=$?\\n' " + \
+    "--send-after '# ' --send 'fsck -fn /dev/sd0a; echo fsck-f-rc=$?\\n' " + \
+    "--send-after '# ' --send 'mount -r /dev/sd0a /mnt && cat /mnt/m10a.txt\\n' " + \
+    "--expect 'sd0 at scsibus0 targ 0 lun 0' --expect '** /dev/rsd0a (NO WRITE)' " + \
+    "--expect '** File system is clean; not checking' --expect 'fsck-rc=0' " + \
+    "--expect '** Phase 5 - Check Cyl groups' --expect 'fsck-f-rc=0' --expect 'm10a-persistent-42' " + \
+    "--reject 'UNEXPECTED' --reject 'FILE SYSTEM WAS MODIFIED'"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
