@@ -95,7 +95,9 @@ const FD_NODES: u32 = 64;
 const DEV_LINKS: &[(&str, &str)] = &[("stdin", "fd/0"), ("stdout", "fd/1"), ("stderr", "fd/2")];
 
 /// A user of `/etc/master.passwd`: (name, uid, gid, class, gecos, home, shell). OpenBSD's
-/// `root`, `daemon` and `nobody` (the lines of its stock `master.passwd`), no more.
+/// `root`, `daemon` and `nobody` (the lines of its stock `master.passwd`), and tcpdump(8)'s
+/// privsep user `_tcpdump` (`etc/master.passwd` of the reference clone, line for line; the
+/// empty class is login.conf's `default`), no more.
 const USERS: &[(&str, u32, u32, &str, &str, &str, &str)] = &[
     ("root", 0, 0, "daemon", "Charlie &", "/root", "/bin/ksh"),
     (
@@ -105,6 +107,15 @@ const USERS: &[(&str, u32, u32, &str, &str, &str, &str)] = &[
         "daemon",
         "The devil himself",
         "/root",
+        "/sbin/nologin",
+    ),
+    (
+        "_tcpdump",
+        76,
+        76,
+        "",
+        "tcpdump privsep",
+        "/var/empty",
         "/sbin/nologin",
     ),
     (
@@ -132,6 +143,8 @@ const GROUPS: &[(&str, u32, &str)] = &[
     ("auth", 11, ""),
     ("_shadow", 14, ""),
     ("utmp", 45, ""),
+    // etc/group of the reference clone.
+    ("_tcpdump", 76, ""),
     ("nogroup", 32766, ""),
     ("nobody", 32767, ""),
 ];
@@ -142,6 +155,8 @@ const DIRS: &[(&str, u32)] = &[
     ("/root", 0o700),
     ("/tmp", 0o1777),
     ("/var", 0o755),
+    // etc/mtree/4.4BSD.dist: root:wheel 0755; tcpdump's privsep chroots here.
+    ("/var/empty", 0o755),
     ("/var/log", 0o755),
     ("/var/mail", 0o755),
     ("/var/run", 0o755),
@@ -853,6 +868,8 @@ mod tests {
     fn every_user_has_a_group_and_every_class_exists() {
         for (name, _, gid, class, ..) in USERS {
             assert!(GROUPS.iter().any(|g| g.1 == *gid), "{name}: gid {gid}");
+            // An empty class is login.conf(5)'s `default`.
+            let class = if class.is_empty() { "default" } else { class };
             assert!(
                 LOGIN_CONF.contains(&format!("\n{class}:\\")),
                 "{name}: login class {class}"
@@ -867,6 +884,30 @@ mod tests {
         assert!(text.contains("\nauth:*:11:\n"));
         assert!(text.contains("\nutmp:*:45:\n"));
         assert_eq!(text.lines().count(), GROUPS.len());
+    }
+
+    /// The users and groups whose lines come from the reference clone's `etc/`.
+    const FROM_REFERENCE_ETC: &[&str] = &["_tcpdump"];
+
+    /// The users and groups taken from the reference clone's `etc/master.passwd` and
+    /// `etc/group` reproduce their lines: `cargo test -p xtask -- --ignored` with
+    /// `$OPENBSD_SRC` naming the clone.
+    #[test]
+    #[ignore]
+    fn reference_etc_entries_match() {
+        let src = std::path::PathBuf::from(std::env::var("OPENBSD_SRC").expect("OPENBSD_SRC"));
+        let passwd = fs::read_to_string(src.join("etc/master.passwd")).expect("master.passwd");
+        let group = fs::read_to_string(src.join("etc/group")).expect("group");
+        let ours = master_passwd("");
+        for name in FROM_REFERENCE_ETC {
+            let line = |text: &str| {
+                text.lines()
+                    .find(|l| l.split(':').next() == Some(*name))
+                    .map(str::to_string)
+            };
+            assert_eq!(line(&ours), line(&passwd), "{name} in master.passwd");
+            assert_eq!(line(&group_file()), line(&group), "{name} in group");
+        }
     }
 
     #[test]

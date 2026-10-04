@@ -38,6 +38,12 @@ fn licence_families_are_recognised() {
                   * Permission to use, copy, modify, and distribute this\n\
                   * software is freely granted, provided that this notice";
     assert_eq!(licence_families(sunpro), vec!["SunPro (fdlibm)"]);
+    let bootp = "Copyright 1988 by Carnegie Mellon.\n\
+                 * Permission to use, copy, modify, and distribute this program for any\n\
+                 * permission, and notice be given in supporting documentation that copying\n\
+                 * and distribution is by permission of Carnegie Mellon and Stanford\n\
+                 * University.  Carnegie Mellon makes no representations about the";
+    assert_eq!(licence_families(bootp), vec!["CMU/Stanford (BOOTP)"]);
 }
 
 #[test]

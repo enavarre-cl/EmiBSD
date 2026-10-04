@@ -141,6 +141,14 @@ const VARIANTS: &[Variant] = &[
     Variant::statically("usr.bin/nc"),
     Variant::statically("usr.bin/fstat"),
     Variant::statically("usr.bin/vmstat"),
+    Variant {
+        dir: "usr.sbin/tcpdump",
+        add_cflags: "",
+        drop_ldadd: &[],
+        static_link: true,
+        why: "linked -static, as the install media's crunched programs are: /usr/sbin is \
+              dynamic on OpenBSD and ld.so is not built yet",
+    },
 ];
 
 /// OpenBSD's compiler runtime (the `-lcompiler_rt` its clang driver adds to every link): a
@@ -221,6 +229,8 @@ const PROGRAMS: &[&str] = &[
     "bin/df",
     "usr.bin/fstat",
     "usr.bin/vmstat",
+    // M9+: over libpcap (LIBRARIES); `iapp.h` from usr.sbin/hostapd (-I../hostapd).
+    "usr.sbin/tcpdump",
 ];
 
 /// Libraries built after libc, libutil, libm and libcompiler_rt (M9+), in link order of
@@ -229,13 +239,15 @@ const PROGRAMS: &[&str] = &[
 /// by running each one's own `includes` rule (`library_includes`), and their generated
 /// sources (`BUILDFIRST`: libcrypto's perlasm `.S` files and `obj_mac.h`, libcurses's
 /// tables and the host-built `make_keys`/`make_hash`, libedit's `makelist` headers) by
-/// running its rules (`make_target`).
+/// running its rules (`make_target`). `libpcap` (tcpdump(8)) has its scanner made by
+/// OpenBSD's lex and its grammar by OpenBSD's yacc, both built for this machine.
 const LIBRARIES: &[&str] = &[
     "lib/libcrypto",
     "lib/libssl",
     "lib/libtls",
     "lib/libcurses",
     "lib/libedit",
+    "lib/libpcap",
 ];
 
 /// Flags added to host tools (built for macOS with the same clang) and why.
@@ -1587,6 +1599,11 @@ fn licence_families(text: &str) -> Vec<&'static str> {
     {
         f.push("SunPro (fdlibm)");
     }
+    if t.contains("carnegie mellon")
+        && t.contains("copying and distribution is by permission of carnegie mellon and stanford")
+    {
+        f.push("CMU/Stanford (BOOTP)");
+    }
     if t.contains("aleksey cheusov") && t.contains("permission to use or copy this software") {
         f.push("Cheusov");
     }
@@ -1690,6 +1707,8 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
         // LibreSSL (M9+), accepted by the user on 2026-10-03.
         "OpenSSL",
         "SSLeay",
+        // libpcap's ppp.h and tcpdump's bootp.h (M9+), accepted by the user on 2026-10-04.
+        "CMU/Stanford (BOOTP)",
     ];
     let unusual: Vec<_> = by_file
         .iter()
