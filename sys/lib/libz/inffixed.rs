@@ -55,7 +55,6 @@
 //!   the kernel build, so these tables are what the kernel uses.
 
 #![allow(non_upper_case_globals)] // the C's table names
-#![cfg_attr(not(test), allow(dead_code))] // inflate.rs, the next commit, uses it all
 
 use crate::inftrees::Code;
 

@@ -23,7 +23,9 @@ pub mod adler32;
 pub mod compress;
 pub mod crc32;
 pub mod deflate;
+mod inffast;
 mod inffixed;
+pub mod inflate;
 mod inftrees;
 mod trees;
 pub mod zconf;
@@ -38,6 +40,12 @@ pub use deflate::{
     deflate, deflateBound, deflateBound_z, deflateCopy, deflateEnd, deflateGetDictionary,
     deflateInit_, deflateInit2_, deflateParams, deflatePending, deflatePrime, deflateReset,
     deflateResetKeep, deflateSetDictionary, deflateSetHeader, deflateTune, deflateUsed,
+};
+pub use inflate::{
+    inflate, inflateCodesUsed, inflateCopy, inflateEnd, inflateGetDictionary, inflateGetHeader,
+    inflateInit_, inflateInit2_, inflateMark, inflatePrime, inflateReset, inflateReset2,
+    inflateResetKeep, inflateSetDictionary, inflateSync, inflateSyncPoint, inflateUndermine,
+    inflateValidate,
 };
 pub use zconf::{MAX_MEM_LEVEL, MAX_WBITS};
 pub use zlib::*;

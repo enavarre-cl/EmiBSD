@@ -76,7 +76,8 @@
 //!   selectors of the fixed tables instead of pointers to them.
 
 #![allow(non_upper_case_globals)] // the C's table names (lbase, lext, dbase, dext)
-#![cfg_attr(not(test), allow(dead_code))] // inflate.rs, the next commit, uses it all
+
+use crate::inflate::{CodeTable, InflateState};
 
 /// `MAXBITS`: the longest code length deflate allows.
 const MAXBITS: usize = 15;
@@ -386,6 +387,15 @@ pub(crate) fn inflate_table(
     *next += used as usize;
     *bits = root;
     0
+}
+
+/// `inflate_fixed`: set `state` to decode with the fixed codes of RFC 1951 (section 3.2.6):
+/// the tables of `inffixed.rs`, 9 root bits for literals/lengths and 5 for distances.
+pub(crate) fn inflate_fixed(state: &mut InflateState) {
+    state.lencode = CodeTable::LenFix;
+    state.lenbits = 9;
+    state.distcode = CodeTable::DistFix;
+    state.distbits = 5;
 }
 
 #[cfg(test)]
