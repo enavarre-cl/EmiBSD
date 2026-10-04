@@ -1172,6 +1172,75 @@ pub fn cpus_running() {
     kprintf!("selftest: {} cpus running\n", n);
 }
 
+/// What [`clockintr_percpu`] sleeps on; nothing wakes it.
+#[cfg(feature = "multiprocessor")]
+static CLOCKINTR_PERCPU_WCHAN: u8 = 0;
+
+/// `MULTIPROCESSOR` (M11b): every running CPU dispatches its own clock interrupts, reading
+/// the uptime through the timecounter there, and the uptime never goes back on any of them
+/// (`kern_clockintr.rs`'s check under feature `qemu`). Waits up to two seconds for each CPU
+/// to check 20 more uptimes, then prints a line per CPU and `selftest: clockintr on N cpus
+/// ok, uptime monotonic on each`.
+#[cfg(feature = "multiprocessor")]
+pub fn clockintr_percpu() {
+    use crate::kern::kern_clockintr::uptime_check_counts;
+    use crate::machine::cpu::{Cpu, cpu_info_foreach, cpu_is_running};
+
+    const MORE: u64 = 20;
+
+    // (cpu_number, checks so far) for every running CPU.
+    let mut cpus: Vec<(u32, u64)> = Vec::new();
+    cpu_info_foreach(&mut |ci| {
+        if cpu_is_running(ci) {
+            let id = Machine::ci_cpuid(ci);
+            cpus.push((id, uptime_check_counts(id).0));
+        }
+    });
+    for _ in 0..200 {
+        if cpus
+            .iter()
+            .all(|&(id, base)| uptime_check_counts(id).0 >= base + MORE)
+        {
+            break;
+        }
+        let _ = tsleep_nsec(
+            ptr::addr_of!(CLOCKINTR_PERCPU_WCHAN),
+            PWAIT,
+            "clkpcpu",
+            10_000_000,
+        );
+    }
+
+    let mut ticking = 0;
+    let mut behind_total = 0;
+    for &(id, base) in &cpus {
+        let (checks, behind) = uptime_check_counts(id);
+        kprintf!(
+            "selftest: cpu{} clockintr: {} uptime checks, {} behind\n",
+            id,
+            checks - base,
+            behind
+        );
+        if checks >= base + MORE {
+            ticking += 1;
+        }
+        behind_total += behind;
+    }
+    if ticking == cpus.len() && behind_total == 0 {
+        kprintf!(
+            "selftest: clockintr on {} cpus ok, uptime monotonic on each\n",
+            ticking
+        );
+    } else {
+        kprintf!(
+            "selftest: clockintr FAILED: {} of {} cpus ticking, {} uptimes behind\n",
+            ticking,
+            cpus.len(),
+            behind_total
+        );
+    }
+}
+
 /// Serialises the task queue check's bookkeeping between the workers and proc0.
 static TASKQ_MTX: Mutex = Mutex::new(IPL_NONE);
 /// One bit per selftest task that ran (its argument is the bit number).

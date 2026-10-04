@@ -893,11 +893,11 @@ notes = "the whole file: efi_acpi_table/efi_smbios_table, efi_ca (efi_cd defined
 [[file]]
 c = "sys/arch/arm64/dev/agtimer.c"
 rust = "sys/arch/arm64/dev/agtimer.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9e54031936bbf5f390f112e84bc2502284d1536b"
 deps = ["sys/arch/arm64/arm64/intr.c", "sys/sys/timetc.h", "sys/sys/clockintr.h", "sys/dev/ofw/openfirm.h"]
-notes = "M5: the whole driver (readcnt64 default/sun50i, the register accessors, match/attach, get_timecount, rearm/trigger/intr, set_clockrate, cpu_initclocks with the PPI by EL, delay, setstatclockrate, startclock, init); one static softc, the intrclock cookie stays null; M7b: agtimer_ca/agtimer_cd (ca_devsize is a bare struct device, the rest of the softc stays the static AGTIMER), match/attach take the cfattach arguments and mainbus attaches the timer (agtimer* at fdt?): 'agtimer0 at mainbus0: N kHz'"
+notes = "M5: the whole driver (readcnt64 default/sun50i, the register accessors, match/attach, get_timecount, rearm/trigger/intr, set_clockrate, cpu_initclocks with the PPI by EL, delay, setstatclockrate, startclock, init); one static softc, the intrclock cookie stays null; M7b: agtimer_ca/agtimer_cd (ca_devsize is a bare struct device, the rest of the softc stays the static AGTIMER), match/attach take the cfattach arguments and mainbus attaches the timer (agtimer* at fdt?): 'agtimer0 at mainbus0: N kHz'; M11b: agtimer_startclock checked on every CPU with -smp 4 (the APs route the virtual timer PPI to themselves, arm_intr_route, and dispatch their own clockintr queue); complete"
 
 # ---------------------------------------------------------------------------
 # Replaced by project-level decisions (docs/ARCHITECTURE.md, "Deviations")
@@ -1964,7 +1964,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "92fd8a2843ae231452d9354ea67ceef6d184b581"
 deps = ["sys/sys/clockintr.h", "sys/kern/kern_tc.c", "sys/kern/kern_clock.c", "sys/kern/kern_lock.c", "sys/lib/libkern/random.c"]
-notes = "M5: clockintr_cpu_init, clockintr_trigger, clockintr_dispatch, clockintr_advance, clockrequest_advance[_random], clockintr_cancel[_locked], clockintr_bind/unbind (CL_BARRIER's msleep_nsec reported, M5-b), clockintr_schedule[_locked], clockintr_stagger, clockintr_hardclock, clockqueue_init, clockqueue_intrclock_install, clockqueue_next, clockqueue_pend_delete/insert, clockqueue_intrclock_reprogram, intrclock_rearm/trigger, nsec_advance; sysctl_clockintr is kern_sysctl.c (M6), db_show_all_clockintr the real ddb (M7); the cq_stat time sums wrap as the C's uint64_t do (a 15-bit i8254 timecounter can step uptime back, tested on the host); M11a: clock path audited for MP (it runs unlocked on every CPU): the per-CPU state it reaches is the CPU's own or behind the C's mutexes; the qemu-only uptime check compares with the same CPU's previous reading"
+notes = "M5: clockintr_cpu_init, clockintr_trigger, clockintr_dispatch, clockintr_advance, clockrequest_advance[_random], clockintr_cancel[_locked], clockintr_bind/unbind (CL_BARRIER's msleep_nsec reported, M5-b), clockintr_schedule[_locked], clockintr_stagger, clockintr_hardclock, clockqueue_init, clockqueue_intrclock_install, clockqueue_next, clockqueue_pend_delete/insert, clockqueue_intrclock_reprogram, intrclock_rearm/trigger, nsec_advance; sysctl_clockintr is kern_sysctl.c (M6), db_show_all_clockintr the real ddb (M7); the cq_stat time sums wrap as the C's uint64_t do (a 15-bit i8254 timecounter can step uptime back, tested on the host); M11a: clock path audited for MP (it runs unlocked on every CPU): the per-CPU state it reaches is the CPU's own or behind the C's mutexes; the qemu-only uptime check compares with the same CPU's previous reading; M11b: checked per CPU with -smp 4 on both archs (every CPU dispatches its own queue off its LAPIC timer or agtimer); the qemu-only check counts its checks and the readings behind per CPU (uptime_check_counts) for selftest clockintr_percpu"
 
 [[file]]
 c = "sys/kern/kern_timeout.c"
@@ -4933,7 +4933,7 @@ reason = "project helper: the Rust GlobalAlloc over malloc(9)/free(9), feature a
 
 [[extra]]
 rust = "sys/kern/selftest.rs"
-reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access, selftest=uart for the console echo (M4; since M8 it opens the console's tty through cdevsw and reads a line through the line discipline) and selftest=clock for hz clock interrupts plus a timeout (M5); mbuf_chains after mbinit (M7b); bus_dma_check, called by each cpu_configure after bus_dma_init with the machine's tag (M7b); selftest=vio: vio_check brings vio0 up through ifioctl, sends a hand-built ARP request and waits for a frame through the rx interrupt (M7b); the kernel ping to 10.0.2.2 (M7b); buffer_cache (mapped anonymous buffers after bufinit) and pager_map (a three-page cluster through uvm_pagermapin) after cpu_startup (vfs stage 2)"
+reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access, selftest=uart for the console echo (M4; since M8 it opens the console's tty through cdevsw and reads a line through the line discipline) and selftest=clock for hz clock interrupts plus a timeout (M5); mbuf_chains after mbinit (M7b); bus_dma_check, called by each cpu_configure after bus_dma_init with the machine's tag (M7b); selftest=vio: vio_check brings vio0 up through ifioctl, sends a hand-built ARP request and waits for a frame through the rx interrupt (M7b); the kernel ping to 10.0.2.2 (M7b); buffer_cache (mapped anonymous buffers after bufinit) and pager_map (a three-page cluster through uvm_pagermapin) after cpu_startup (vfs stage 2); M11b: clockintr_percpu (MULTIPROCESSOR: every running CPU checks 20 more uptimes in clockintr_dispatch, none behind)"
 
 [[extra]]
 rust = "sys/reftest.rs"

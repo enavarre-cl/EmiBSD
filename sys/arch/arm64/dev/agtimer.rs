@@ -24,11 +24,13 @@
 //!
 //! Upstream: sys/arch/arm64/dev/agtimer.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M5 ports the whole driver: `agtimer_readcnt64_{default,sun50i}`,
+//! Status: `ported`. Milestone M5 ports the whole driver: `agtimer_readcnt64_{default,sun50i}`,
 //! the register accessors, `agtimer_match`, `agtimer_attach`, `agtimer_get_timecount_*`,
 //! `agtimer_rearm`, `agtimer_trigger`, `agtimer_intr`, `agtimer_set_clockrate`,
 //! `agtimer_cpu_initclocks`, `agtimer_delay`, `agtimer_setstatclockrate`,
-//! `agtimer_startclock` and `agtimer_init`.
+//! `agtimer_startclock` and `agtimer_init`. M11b checks it on every CPU: each application
+//! processor routes the timer's PPI to itself in `agtimer_startclock` and runs its own
+//! clock interrupt queue.
 //!
 //! ## Deviations
 //! - One static softc (`AGTIMER`, the C's `agtimer_cd.cd_devs[0]`) holds what

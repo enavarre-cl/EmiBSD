@@ -448,7 +448,8 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   OpenBSD's own way of bringing code under MP. Unlocked as in OpenBSD: the scheduler and the
   idle loop, `mi_switch`, the clock interrupt (`clockintr_dispatch`), the SMR thread and the
   IPIs. The `qemu`-only `uptime went backwards` check compares each CPU's readings with that
-  CPU's previous one (`kern_clockintr.rs`).
+  CPU's previous one (`kern_clockintr.rs`); since M11b it counts them per CPU, and the MP boot
+  self-test `clockintr_percpu` checks that every CPU runs its own clock interrupts.
 - Memory allocators under MP (M11a): the pool lock is the C's mutex or rwlock with and without
   `MULTIPROCESSOR` (the uniprocessor C kernel takes the same mutex); `malloc_mtx` and
   `uvm.fpageqlock` are real mutexes at `IPL_VM`. With `MULTIPROCESSOR` the pools' per-CPU
@@ -1068,6 +1069,15 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   every 27 ms). So, also under `qemu` only, a TSC no reference has recalibrated gets the
   quality 2000 `calibrate_tsc_freq` gives a calibrated invariant TSC. Without the feature the
   C's rules apply unchanged.
+- amd64's TSC synchronisation test with `MULTIPROCESSOR` (M11b). `cpu.c` runs `tsc.c`'s test
+  against each application processor where the C does, and a failure prints the C's
+  `tsc: cpu0/cpuN: sync test failed` and drops the TSC to quality -1000. The C prints nothing
+  when the test passes, and nothing for the APs it skips after a failure. So under features
+  `qemu` and `multiprocessor` only, `cpu_start_secondary` adds one line per AP:
+  `tsc: cpu0/cpuN: sync test passed`, or `... sync test not run: <why>`
+  (`tsc_report_verdict`). `smoke-tsc-mp` then expects one `tsc: cpu0/cpuN: sync test` line
+  per AP, whatever the verdict. Under TCG the test passes: every vCPU reads its TSC from one
+  host clock that QEMU keeps monotonic across vCPUs.
 - softraid's boot keys (`sr_bootuuid`, `sr_bootkey`) have no source under Limine (M10f).
   OpenBSD's own loaders set them: amd64 boot(8) through `bios_bootsr`, arm64 efiboot through
   the `openbsd,sr-bootuuid` and `openbsd,sr-bootkey` properties. Here they stay zero

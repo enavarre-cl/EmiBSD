@@ -51,7 +51,9 @@
 //! - Under feature `qemu` only (not in C): `clockintr_dispatch` checks every uptime it reads
 //!   against the previous one and prints `uptime went backwards by <n> ns` when it is behind,
 //!   which the smoke tests reject (`cargo xtask smoke --reject`). The previous reading is
-//!   the same CPU's (M11a): the CPUs' clocks need not agree to the nanosecond.
+//!   the same CPU's (M11a): the CPUs' clocks need not agree to the nanosecond. It counts
+//!   the checks and the readings behind per CPU (`uptime_check_counts`, M11b), for the MP
+//!   self-test that every CPU dispatches its own clock interrupts.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -86,6 +88,15 @@ use crate::unported;
 /// see the module's deviations).
 #[cfg(feature = "qemu")]
 static LAST_UPTIME: [AtomicU64; crate::machine::cpu::MAXCPUS as usize] =
+    [const { AtomicU64::new(0) }; crate::machine::cpu::MAXCPUS as usize];
+/// How many uptimes `clockintr_dispatch` checked on each CPU, by `cpu_number()` (feature
+/// `qemu`): the MP self-test's proof that every CPU dispatches its own clock interrupts.
+#[cfg(feature = "qemu")]
+static UPTIME_CHECKS: [AtomicU64; crate::machine::cpu::MAXCPUS as usize] =
+    [const { AtomicU64::new(0) }; crate::machine::cpu::MAXCPUS as usize];
+/// How many of those found the uptime behind the previous reading, by `cpu_number()`.
+#[cfg(feature = "qemu")]
+static UPTIME_BEHIND: [AtomicU64; crate::machine::cpu::MAXCPUS as usize] =
     [const { AtomicU64::new(0) }; crate::machine::cpu::MAXCPUS as usize];
 
 /// `cl->cl_queue`: the queue a bound clockintr belongs to.
@@ -206,8 +217,11 @@ pub fn clockintr_trigger() {
 /// Feature `qemu`: prints `uptime went backwards` when `now` is behind the previous reading.
 #[cfg(feature = "qemu")]
 fn uptime_check(now: u64) {
-    let last = LAST_UPTIME[crate::machine::cpu::cpu_number() as usize].swap(now, Ordering::Relaxed);
+    let cpu = crate::machine::cpu::cpu_number() as usize;
+    let last = LAST_UPTIME[cpu].swap(now, Ordering::Relaxed);
+    UPTIME_CHECKS[cpu].fetch_add(1, Ordering::Relaxed);
     if now < last {
+        UPTIME_BEHIND[cpu].fetch_add(1, Ordering::Relaxed);
         printf(format_args!(
             "uptime went backwards by {} ns ({} -> {})\n",
             last - now,
@@ -215,6 +229,17 @@ fn uptime_check(now: u64) {
             now
         ));
     }
+}
+
+/// Feature `qemu`: how many uptimes `clockintr_dispatch` has checked on the CPU whose
+/// `cpu_number()` is `cpu`, and how many of them were behind the previous one.
+#[cfg(feature = "qemu")]
+pub fn uptime_check_counts(cpu: u32) -> (u64, u64) {
+    let cpu = cpu as usize;
+    (
+        UPTIME_CHECKS[cpu].load(Ordering::Relaxed),
+        UPTIME_BEHIND[cpu].load(Ordering::Relaxed),
+    )
 }
 
 /// `clockintr_dispatch`: run all expired events scheduled on the calling CPU. Returns 1 when

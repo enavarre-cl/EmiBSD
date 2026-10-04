@@ -60,8 +60,10 @@
 //! ## Deviations
 //! - With `MULTIPROCESSOR` and `qemu`, `selftest=kthread` starts the secondary processors
 //!   itself before its ping-pong (the run ends there), and every run prints `selftest: N
-//!   cpus running` after `cpu_boot_secondary_processors`; `selftest=mpstress` does the same
-//!   before the pool and pmemrange stress on every CPU (M11a's exit test).
+//!   cpus running` after `cpu_boot_secondary_processors`, then checks that every CPU
+//!   dispatches its clock interrupts with a monotonic uptime (M11b,
+//!   `selftest::clockintr_percpu`); `selftest=mpstress` starts them before the pool and
+//!   pmemrange stress on every CPU (M11a's exit test).
 //! - `main()` takes no `framep` (unused in C) and never returns, as the C's loop never does.
 //! - `start_init` execs the `init` Limine module (`stand` hands it over through
 //!   `set_init_module`) instead of trying the `initpaths` on a filesystem; `check_console`
@@ -629,7 +631,10 @@ pub fn main() -> ! {
     #[cfg(feature = "multiprocessor")]
     crate::machine::cpu::cpu_boot_secondary_processors();
     #[cfg(all(feature = "multiprocessor", feature = "qemu"))]
-    crate::kern::selftest::cpus_running();
+    {
+        crate::kern::selftest::cpus_running();
+        crate::kern::selftest::clockintr_percpu();
+    }
 
     // Now that all CPUs partake in scheduling, start SMR thread.
     smr_startup_thread();
