@@ -60,8 +60,8 @@
 //! ## Deviations
 //! - With `MULTIPROCESSOR` and `qemu`, `selftest=kthread` starts the secondary processors
 //!   itself before its ping-pong (the run ends there), and every run prints `selftest: N
-//!   cpus running` after `cpu_boot_secondary_processors`. `pool_gc_pages(NULL)`
-//!   (`MULTIPROCESSOR`, `subr_pool.c`) is not called until the per-CPU pool caches land.
+//!   cpus running` after `cpu_boot_secondary_processors`; `selftest=mpstress` does the same
+//!   before the pool and pmemrange stress on every CPU (M11a's exit test).
 //! - `main()` takes no `framep` (unused in C) and never returns, as the C's loop never does.
 //! - `start_init` execs the `init` Limine module (`stand` hands it over through
 //!   `set_init_module`) instead of trying the `initpaths` on a filesystem; `check_console`
@@ -422,7 +422,7 @@ pub fn main() -> ! {
     uvm_init_limits(&LIMIT0);
 
     // Per CPU memory allocation
-    let _ = unported!("percpu_init");
+    crate::kern::subr_percpu::percpu_init();
 
     // Reduce softnet threads to number of CPU
     softnet_percpu();
@@ -469,7 +469,7 @@ pub fn main() -> ! {
     mbcpuinit();
     crate::kern::kern_event::kqueue_init_percpu();
     let _ = unported!("pmap_init_percpu");
-    let _ = unported!("uvm_init_percpu");
+    crate::uvm::uvm_init::uvm_init_percpu();
     let _ = unported!("evcount_init_percpu");
 
     // init exec: init_exec (exec_conf.c) computes exec_maxhdrsz from execsw[], which is a
@@ -591,6 +591,20 @@ pub fn main() -> ! {
         Machine::exit(ExitStatus::Success);
     }
     #[cfg(feature = "qemu")]
+    if crate::kern::selftest::mpstress_requested() {
+        // M11a's exit test: pool(9) and uvm_pmemrange on every CPU at once. With
+        // MULTIPROCESSOR the secondary processors start first, as for selftest=kthread.
+        #[cfg(feature = "multiprocessor")]
+        {
+            crate::machine::cpu::cpu_boot_secondary_processors();
+            crate::kern::selftest::cpus_running();
+        }
+        if crate::kern::selftest::mpstress() {
+            Machine::exit(ExitStatus::Success);
+        }
+        Machine::exit(ExitStatus::Failure);
+    }
+    #[cfg(feature = "qemu")]
     if crate::kern::selftest::vio_requested() {
         // The M7b network card check: the softnet thread exists since
         // kthread_run_deferred_queue.
@@ -628,7 +642,7 @@ pub fn main() -> ! {
 
     // Start the idle pool page garbage collector
     #[cfg(feature = "multiprocessor")]
-    let _ = unported!("pool_gc_pages (subr_pool.c)");
+    crate::kern::subr_pool::pool_gc_pages(ptr::null_mut());
 
     crate::kern::kern_time::start_periodic_resettodr();
 

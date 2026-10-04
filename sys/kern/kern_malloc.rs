@@ -48,15 +48,17 @@
 //!   loaded page frame and `kmemusage` has one entry per frame in between.
 //! - `btokup` always checks that the address is inside `[kmembase, kmemlimit)` (the C only
 //!   under `DIAGNOSTIC`): it indexes an array.
-//! - `malloc_mtx` (M5) is not here; the boot CPU is alone. A `M_WAITOK` request over a type's
-//!   `ks_limit` cannot `msleep`: it is reported and fails.
+//! - M11a: `malloc_mtx` is the C's mutex (`IPL_VM`) around the buckets, `kmemusage` and
+//!   `kmemstats`, with or without `MULTIPROCESSOR`; a `M_WAITOK` request over a type's
+//!   `ks_limit` sleeps on it as in C. `km_alloc`/`km_free` run at `splvm` with the mutex
+//!   released, as in C.
 //! - `poison_mem`/`poison_check`/`poison_value` (`subr_poison.c`) and the `uvm_map_checkprot`
 //!   freelist check under `DIAGNOSTIC` are reported where the C calls them.
 //! - `malloc_lasterr`/`ratecheck` (time) are not here: the "allocation too large" message is
 //!   printed every time.
 //! - `sysctl_malloc` copies `kmembuckets`/`kmemstats` out through their `to_bytes` (the C
-//!   layout, freelist head zeroed) without `malloc_mtx` (M5). `BUCKETINDX` of a negative
-//!   bucket number is the smallest bucket, as the C's `int` comparisons make it.
+//!   layout, freelist head zeroed) under `malloc_mtx`. `BUCKETINDX` of a negative bucket
+//!   number is the smallest bucket, as the C's `int` comparisons make it.
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
@@ -65,9 +67,11 @@ use core::sync::atomic::{AtomicI64, AtomicPtr, AtomicUsize, Ordering};
 use libkern::StaticCell;
 
 use crate::dev::rnd::arc4random_buf;
+use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_sysctl::{sysctl_rdstring, sysctl_rdstruct};
 #[cfg(any(feature = "kmemstats", feature = "diagnostic"))]
 use crate::kern::subr_prf::snprintf;
+use crate::machine::intr::{IPL_VM, splvm, splx};
 use crate::machine::pmap::pmap_map_direct;
 use crate::machine::{Machine, Pmap};
 use crate::sys::errno::Errno;
@@ -82,10 +86,11 @@ use crate::sys::malloc::{
     Kmembuckets, Kmemusage, M_CANFAIL, M_NOWAIT, M_WAITOK, M_ZERO, MALLOC_MAX, MAXALLOCSAVE,
     MINBUCKET,
 };
+use crate::sys::mutex::Mutex;
 use crate::sys::param::{PAGE_SHIFT, PAGE_SIZE};
 use crate::sys::queue::XsimpleqEntry;
 use crate::sys::systm::PHYSMEM;
-#[cfg(any(feature = "kmemstats", feature = "diagnostic"))]
+#[cfg(feature = "diagnostic")]
 use crate::unported;
 use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_km::{
@@ -169,7 +174,8 @@ queue_adapter!(
 /// `nkmempages`: default number of pages in kmem_map. We attempt to calculate this at
 /// run-time, but allow it to be either patched or set in the kernel config file.
 static NKMEMPAGES: AtomicI64 = AtomicI64::new(NKMEMPAGES_OPTION);
-// malloc_mtx: M5.
+/// `malloc_mtx`: guards `bucket[]`, `kmemstats[]` and `kmemusage`.
+static MALLOC_MTX: Mutex = Mutex::new(IPL_VM);
 /// `bucket[]`.
 static BUCKET: [Kmembuckets; (MINBUCKET + 16) as usize] =
     [const { Kmembuckets::new() }; (MINBUCKET + 16) as usize];
@@ -228,6 +234,15 @@ fn memname(type_: i32) -> &'static str {
         .unwrap_or("???")
 }
 
+/// `memname[type]` as `malloc`'s wait message over `ks_limit`.
+#[cfg(feature = "kmemstats")]
+fn kmemstats_wmesg(type_: i32) -> &'static str {
+    usize::try_from(type_)
+        .ok()
+        .and_then(|t| INITKMEMNAMES.get(t).copied().flatten())
+        .unwrap_or("???")
+}
+
 /// `btokup(addr)`: the usage descriptor of the page holding `addr`.
 fn btokup(addr: usize) -> &'static Kmemusage {
     let base = KMEMBASE.load(Ordering::Relaxed);
@@ -267,7 +282,13 @@ pub fn malloc(size: usize, type_: i32, flags: i32) -> Option<NonNull<u8>> {
 
     kassert!(flags & (M_WAITOK | M_NOWAIT) != 0);
 
-    // DIAGNOSTIC: assertwaitok() and the pool_debug == 2 yield(): M5.
+    #[cfg(feature = "diagnostic")]
+    if flags & M_NOWAIT == 0 {
+        crate::kern::subr_xxx::assertwaitok();
+        if crate::kern::subr_pool::POOL_DEBUG.load(Ordering::Relaxed) == 2 {
+            crate::kern::sched_bsd::r#yield();
+        }
+    }
 
     if size > MALLOC_MAX {
         if flags & M_CANFAIL != 0 {
@@ -295,19 +316,33 @@ pub fn malloc(size: usize, type_: i32, flags: i32) -> Option<NonNull<u8>> {
         1 << indx
     };
     let kbp = &BUCKET[indx];
-    // mtx_enter(&malloc_mtx): M5.
+    mtx_enter(&MALLOC_MTX);
     #[cfg(feature = "kmemstats")]
     {
-        if ksp.ks_memuse.get() >= ksp.ks_limit.get() {
+        while ksp.ks_memuse.get() >= ksp.ks_limit.get() {
             if flags & M_NOWAIT != 0 {
+                mtx_leave(&MALLOC_MTX);
                 return None;
             }
-            // DIAGNOSTIC: "cannot sleep for memory during boot" with curproc == &proc0.
+            #[cfg(feature = "diagnostic")]
+            if flags & M_WAITOK != 0
+                && crate::machine::cpu::curproc()
+                    .is_some_and(|p| ptr::eq(p, &crate::kern::init_main::PROC0))
+            {
+                crate::kern::subr_prf::panic(format_args!(
+                    "malloc: cannot sleep for memory during boot"
+                ));
+            }
             if ksp.ks_limblocks.get() < 65535 {
                 ksp.ks_limblocks.set(ksp.ks_limblocks.get() + 1);
             }
-            let _ = unported!("msleep_nsec (malloc over ks_limit, M5)");
-            return None;
+            let _ = crate::kern::kern_synch::msleep_nsec(
+                ptr::from_ref(ksp),
+                &MALLOC_MTX,
+                crate::sys::param::PSWP + 2,
+                kmemstats_wmesg(type_),
+                crate::sys::systm::INFSLP,
+            );
         }
         ksp.ks_memuse.set(ksp.ks_memuse.get() + allocsize as i64); // account for this early
         ksp.ks_size.set(ksp.ks_size.get() | (1 << indx));
@@ -317,7 +352,7 @@ pub fn malloc(size: usize, type_: i32, flags: i32) -> Option<NonNull<u8>> {
     #[cfg(feature = "diagnostic")]
     let freshalloc = kbp.kb_freelist.first().is_none();
     if kbp.kb_freelist.first().is_none() {
-        // mtx_leave(&malloc_mtx): M5.
+        mtx_leave(&MALLOC_MTX);
         let npg = atop(round_page(allocsize));
         let swpages = UVMEXP.swpages.load(Ordering::Relaxed);
         let swpgonly = UVMEXP.swpgonly.load(Ordering::Relaxed);
@@ -329,8 +364,10 @@ pub fn malloc(size: usize, type_: i32, flags: i32) -> Option<NonNull<u8>> {
         } else {
             &KD_WAITOK
         };
-        // splvm(): M4.
-        let Some(va) = km_alloc(ptoa(npg), &KV_INTRSAFE, &KP_DIRTY, kdp) else {
+        let s = splvm();
+        let va = km_alloc(ptoa(npg), &KV_INTRSAFE, &KP_DIRTY, kdp);
+        splx(s);
+        let Some(va) = va else {
             // Kmem_malloc() can return NULL, even if it can wait, if there is no map space
             // available, because it can't fix that problem. Neither can we, right now. (We
             // should release pages which are completely free and which are in buckets with
@@ -344,9 +381,11 @@ pub fn malloc(size: usize, type_: i32, flags: i32) -> Option<NonNull<u8>> {
 
             #[cfg(feature = "kmemstats")]
             {
+                mtx_enter(&MALLOC_MTX);
                 ksp.ks_memuse.set(ksp.ks_memuse.get() - allocsize as i64);
                 let wake = ksp.ks_memuse.get() + allocsize as i64 >= ksp.ks_limit.get()
                     && ksp.ks_memuse.get() < ksp.ks_limit.get();
+                mtx_leave(&MALLOC_MTX);
                 if wake {
                     wakeup(ptr::from_ref(ksp));
                 }
@@ -354,7 +393,7 @@ pub fn malloc(size: usize, type_: i32, flags: i32) -> Option<NonNull<u8>> {
             return None;
         };
         let va = va.as_ptr() as usize;
-        // mtx_enter(&malloc_mtx): M5.
+        mtx_enter(&MALLOC_MTX);
         #[cfg(feature = "kmemstats")]
         kbp.kb_total.set(kbp.kb_total.get() + kbp.kb_elmpercl.get());
         let kup = btokup(va);
@@ -395,7 +434,11 @@ pub fn malloc(size: usize, type_: i32, flags: i32) -> Option<NonNull<u8>> {
             cp -= allocsize;
         }
     }
-    let freep = kbp.kb_freelist.first()?;
+    let Some(freep) = kbp.kb_freelist.first() else {
+        // Cannot happen: the bucket was just filled (the C dereferences it).
+        mtx_leave(&MALLOC_MTX);
+        return None;
+    };
     let freep: *const KmemFreelist = freep;
     // SAFETY: `freep` is the head of the bucket's list.
     unsafe { kbp.kb_freelist.remove_head() };
@@ -465,7 +508,7 @@ fn malloc_out(
     }
     #[cfg(not(feature = "kmemstats"))]
     let _ = kbp;
-    // mtx_leave(&malloc_mtx): M5.
+    mtx_leave(&MALLOC_MTX);
 
     let va = NonNull::new(va as *mut u8)?;
     if flags & M_ZERO != 0 {
@@ -488,7 +531,7 @@ pub fn free(addr: NonNull<u8>, type_: i32, freedsize: usize) {
 
     // TRACEPOINT(uvm, free): not configured.
 
-    // mtx_enter(&malloc_mtx): M5.
+    mtx_enter(&MALLOC_MTX);
     let kup = btokup(addr);
     let indx = kup.ku_indx.get() as usize;
     let mut size = 1usize << indx;
@@ -548,17 +591,21 @@ pub fn free(addr: NonNull<u8>, type_: i32, freedsize: usize) {
 
         kup.ku_indx.set(0);
         kup.set_ku_pagecnt(0);
-        // mtx_leave(&malloc_mtx): M5. splvm(): M4.
+        mtx_leave(&MALLOC_MTX);
+        let s = splvm();
         if let Some(v) = NonNull::new(addr as *mut u8) {
             km_free(v, ptoa(pagecnt as usize), &KV_INTRSAFE, &KP_DIRTY);
         }
+        splx(s);
         #[cfg(feature = "kmemstats")]
         {
+            mtx_enter(&MALLOC_MTX);
             ksp.ks_memuse.set(ksp.ks_memuse.get() - size as i64);
             let wake = ksp.ks_memuse.get() + size as i64 >= ksp.ks_limit.get()
                 && ksp.ks_memuse.get() < ksp.ks_limit.get();
             ksp.ks_inuse.set(ksp.ks_inuse.get() - 1);
             kbp.kb_total.set(kbp.kb_total.get() - 1);
+            mtx_leave(&MALLOC_MTX);
             if wake {
                 wakeup(ptr::from_ref(ksp));
             }
@@ -601,16 +648,19 @@ pub fn free(addr: NonNull<u8>, type_: i32, freedsize: usize) {
         }
         kbp.kb_totalfree.set(kbp.kb_totalfree.get() + 1);
         ksp.ks_memuse.set(ksp.ks_memuse.get() - size as i64);
-        let wake = ksp.ks_memuse.get() + size as i64 >= ksp.ks_limit.get()
-            && ksp.ks_memuse.get() < ksp.ks_limit.get();
-        ksp.ks_inuse.set(ksp.ks_inuse.get() - 1);
-        if wake {
-            wakeup(ptr::from_ref(ksp));
-        }
     }
+    #[cfg(feature = "kmemstats")]
+    let wake = ksp.ks_memuse.get() + size as i64 >= ksp.ks_limit.get()
+        && ksp.ks_memuse.get() < ksp.ks_limit.get();
+    #[cfg(feature = "kmemstats")]
+    ksp.ks_inuse.set(ksp.ks_inuse.get() - 1);
     // SAFETY: the block is on no list (the DIAGNOSTIC search above is the C's).
     unsafe { kbp.kb_freelist.insert_tail(freep) };
-    // mtx_leave(&malloc_mtx): M5.
+    mtx_leave(&MALLOC_MTX);
+    #[cfg(feature = "kmemstats")]
+    if wake {
+        wakeup(ptr::from_ref(ksp));
+    }
 }
 
 /// `kmeminit_nkmempages`: compute the number of pages that kmem_map will map, that is, the
@@ -805,8 +855,10 @@ pub fn sysctl_malloc(
         KERN_MALLOC_BUCKET => {
             // BUCKETINDX of an int: a negative size compares below every bucket.
             let sz = usize::try_from(name[1]).unwrap_or(0);
-            // mtx_enter(&malloc_mtx): M5. The freelist head is left out (zeroed).
+            // The freelist head is left out (zeroed).
+            mtx_enter(&MALLOC_MTX);
             let kb = BUCKET[bucketindx(sz)].to_bytes();
+            mtx_leave(&MALLOC_MTX);
             sysctl_rdstruct(oldp, oldlenp, newp, &kb)
         }
         KERN_MALLOC_KMEMSTATS => {
@@ -815,8 +867,9 @@ pub fn sysctl_malloc(
                 if name[1] < 0 || name[1] >= M_LAST {
                     return Err(Errno::EINVAL);
                 }
-                // mtx_enter(&malloc_mtx): M5.
+                mtx_enter(&MALLOC_MTX);
                 let km = KMEMSTATS[name[1] as usize].to_bytes();
+                mtx_leave(&MALLOC_MTX);
                 sysctl_rdstruct(oldp, oldlenp, newp, &km)
             }
             #[cfg(not(feature = "kmemstats"))]

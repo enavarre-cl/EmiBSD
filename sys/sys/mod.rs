@@ -48,6 +48,7 @@ pub mod mutex;
 pub mod namei;
 pub mod param;
 pub mod pclock;
+pub mod percpu;
 pub mod pipe;
 pub mod pledge;
 pub mod poll;

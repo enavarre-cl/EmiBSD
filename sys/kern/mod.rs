@@ -52,6 +52,7 @@ pub mod subr_autoconf;
 pub mod subr_disk;
 pub mod subr_evcount;
 pub mod subr_log;
+pub mod subr_percpu;
 pub mod subr_pool;
 pub mod subr_prf;
 pub mod subr_prof;

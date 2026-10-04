@@ -56,9 +56,10 @@
 //!   `Paddr`.
 //! - Pages and ranges are `&'static`: the page arrays and the pmemranges live for the whole
 //!   kernel; [`VmPage::forever`] restores that lifetime where a list API shortened it.
-//! - `uvm_lock_fpageq` is a documented no-op until the mutex arrives (M5); `wakeup` and
-//!   `uvm_wait` are reported as unported, so a `UVM_PLA_WAITOK` request that cannot be met
-//!   returns `ENOMEM` instead of sleeping for the page daemon.
+//! - `uvm_lock_fpageq` is the C's mutex (`uvm.fpageqlock`, M11a): every path that touches the
+//!   ranges' trees and free lists holds it as the C does. `uvm_wait` is reported as unported
+//!   (there is no page daemon), so a `UVM_PLA_WAITOK` request that cannot be met returns
+//!   `ENOMEM` instead of sleeping for the page daemon.
 //! - `in_pagedaemon` answers false: there is no page daemon nor `curproc` yet (M5).
 //! - The `goto`-driven search of `uvm_pmr_getpages` is written with labelled loops; the order
 //!   of the tries, memtypes and ranges is the C's.
@@ -137,8 +138,7 @@ pub struct UvmPmemrange {
     pub pmr_addr: RbtEntry,
 }
 
-// SAFETY: every field is guarded by `uvm.fpageqlock` (M5); until then the single boot CPU is
-// the lock.
+// SAFETY: every field is guarded by `uvm.fpageqlock`.
 unsafe impl Sync for UvmPmemrange {}
 
 impl UvmPmemrange {
@@ -172,7 +172,7 @@ pub struct UvmPmrControl {
     pub r#use: TailqHead<PmrUse>,
 }
 
-// SAFETY: guarded by `uvm.fpageqlock` (M5); until then the single boot CPU is the lock.
+// SAFETY: guarded by `uvm.fpageqlock`.
 unsafe impl Sync for UvmPmrControl {}
 
 impl UvmPmrControl {

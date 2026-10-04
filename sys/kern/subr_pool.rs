@@ -48,35 +48,59 @@
 //! `remove`, `pool_update_curpage`, `pr_find_pagehead`), the request queue (`pool_request`,
 //! `pool_runqueue`, `pool_get_done`, `pool_wakeup`), `pool_prime`, the watermarks and
 //! limits, `pool_reclaim`/`pool_reclaim_all`, the page allocators and the lock operations.
-//! The per-CPU caches (`MULTIPROCESSOR`), the garbage collector (`pool_gc_*`, a timeout and
-//! a task), the ddb printers and `pool_chk` come with M5 to M7 (`pool_walk` came with the
-//! NFS client's ddb printers, M10e). `sysctl_dopool`
-//! and the non-`MULTIPROCESSOR` `pool_cache_*info` came with the diagnostic tools (stage 2).
+//! `pool_walk` came with the NFS client's ddb printers (M10e); `sysctl_dopool` and the
+//! non-`MULTIPROCESSOR` `pool_cache_*info` with the diagnostic tools (stage 2). M11a makes
+//! the lock operations the real mutex and rwlock (so `pool_get` sleeps for memory as the C
+//! does), takes `pr_refcnt` in `sysctl_dopool`, and ports the `MULTIPROCESSOR` per-CPU caches
+//! (`pool_cache_init`, `pool_cache_get`/`put`, the list functions, `pool_cache_destroy`,
+//! `pool_cache_gc`, the `pool_cache_*info` sysctls) and the garbage collector
+//! (`pool_gc_sched`, `pool_gc_pages`). The ddb printers (`pool_printit`,
+//! `db_show_all_pools`) and `pool_chk` are not here.
 //!
 //! ## Deviations
-//! - The lock operations keep a flag per lock so the `pl_assert_*` checks mean something;
-//!   the mutex and rwlock they stand for arrive with M5. `pl_sleep` cannot sleep: a
-//!   `PR_WAITOK` `pool_get` that finds no memory fails instead of queueing a request and
-//!   sleeping for `pool_runqueue` (a request left queued would outlive the caller's frame).
-//! - `pool_lock` (the rwlock over the pool list) and `pr_refcnt` wait for M5; the boot CPU
-//!   is alone. `sysctl_dopool` therefore holds no reference on the pool it reports. `splassert(pr_ipl)` waits for M4; `KERNEL_LOCK` in the `_ni` allocators for M5.
+//! - `pl_init` has no `lock_type` argument (`WITNESS` is not configured).
+//! - A `PR_WAITOK` `pool_get` that finds no memory while the kernel is `cold` or on proc0
+//!   (or a thread-less host test) fails, where the C panics under `DIAGNOSTIC` ("cannot sleep
+//!   for memory during boot") and spins in `msleep`'s cold path otherwise; after boot it
+//!   queues a request and sleeps for `pool_runqueue` as in C.
 //! - `poison_mem`/`poison_check` (`subr_poison.c`) are reported where `POOL_DEBUG` would
-//!   call them; the double-put check under `DIAGNOSTIC` is ported.
-//! - `arc4random` (page magics, freelist order, the `XSIMPLEQ` cookies) is `dev/rnd.rs`'s
-//!   placeholder stream until M5.
+//!   call them, in the page lists and in the per-CPU caches; the double-put check under
+//!   `DIAGNOSTIC` is ported.
+//! - `splassert(pp->pr_ipl)` in `pool_do_get`/`pool_do_put` is not checked.
+//! - `arc4random` (page magics, freelist order, the `XSIMPLEQ` cookies, the cache magics) is
+//!   `dev/rnd.rs`'s stream.
+//! - Fields the C reads without the lock as a guess (`pr_nidle` in `pool_gc_pages`, the
+//!   request queue's emptiness in `pool_put`) are read as the C reads them; the per-CPU cache
+//!   counters another CPU reads (`pc_gen`, `pc_nget`, ...) are relaxed atomics written only
+//!   by their CPU, the generation number with release/acquire ordering.
+//! - A cached item's `ci_nextl` link doubles as two words of magic while the item sits in a
+//!   CPU's list (`pool_cache_item_magic`): the link is read and written as two `usize`s.
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+#[cfg(feature = "multiprocessor")]
+use core::sync::atomic::{AtomicU64, fence};
 
 use crate::dev::rnd::{arc4random, arc4random_buf};
-use crate::kern::kern_rwlock::{rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write};
-use crate::kern::kern_synch::wakeup_one;
+use crate::kern::kern_lock::{mtx_enter, mtx_enter_try, mtx_init_flags, mtx_leave};
+use crate::kern::kern_rwlock::{
+    rw_assert_wrlock, rw_enter, rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write,
+    rw_init_flags, rw_status,
+};
+use crate::kern::kern_synch::{
+    msleep_nsec, refcnt_finalize, refcnt_init, refcnt_rele_wake, refcnt_take, rwsleep_nsec,
+    wakeup_one,
+};
 use crate::kern::kern_sysctl::{sysctl_rdint, sysctl_rdstring, sysctl_rdstruct};
+use crate::kern::kern_task::{SYSTQMP, task_add};
 use crate::kern::kern_tc::getnsecuptime;
-use crate::machine::intr::IPL_HIGH;
+use crate::kern::kern_timeout::timeout_add_sec;
+use crate::kern::subr_xxx::assertwaitok;
+use crate::machine::intr::{IPL_HIGH, splvm, splx};
 use crate::sys::errno::Errno;
-use crate::sys::param::{PAGE_SIZE, align, roundup};
+use crate::sys::mutex::{mutex_assert_locked, mutex_assert_unlocked};
+use crate::sys::param::{PAGE_SIZE, PSWP, align, roundup};
 use crate::sys::pool::{
     KERN_POOL_CACHE, KERN_POOL_CACHE_CPUS, KERN_POOL_NAME, KERN_POOL_NPOOLS, KERN_POOL_POOL,
     KinfoPool, POOL_ALLOC_ALIGNED, POOL_ALLOC_DEFAULT, PR_LIMITFAIL, PR_NOWAIT, PR_RWLOCK,
@@ -84,11 +108,25 @@ use crate::sys::pool::{
     pool_alloc_size, pool_alloc_sizes,
 };
 use crate::sys::queue::{SimpleqHead, TailqEntry, TailqHead, XsimpleqEntry, XsimpleqHead};
-use crate::sys::rwlock::Rwlock;
+use crate::sys::rwlock::{RW_NOSLEEP, RW_WRITE, Rwlock};
+use crate::sys::systm::{INFSLP, kernel_lock, kernel_unlock};
+use crate::sys::task::Task;
+use crate::sys::timeout::Timeout;
 use crate::sys::tree::RbtEntry;
+#[cfg(feature = "diagnostic")]
+use crate::unported;
 use crate::uvm::uvm_extern::{KMEM_DYN_INITIALIZER, KmemPaMode, KmemVaMode};
 use crate::uvm::uvm_km::{KP_DIRTY, KV_ANY, KV_INTRSAFE, KV_PAGE, km_alloc, km_free};
-use crate::{kassert, queue_adapter, tree_adapter, unported};
+use crate::{kassert, queue_adapter, tree_adapter};
+#[cfg(feature = "multiprocessor")]
+use crate::{
+    kern::kern_malloc::{free, mallocarray},
+    kern::subr_percpu::{cpumem_get, ncpusfound},
+    machine::intr::{IPL_NONE, splraise},
+    sys::malloc::{M_CANFAIL, M_TEMP, M_WAITOK, M_ZERO},
+    sys::percpu::{CACHELINESIZE, CpumemPtr, cpumem_enter, cpumem_foreach, cpumem_leave},
+    sys::pool::{KinfoPoolCache, KinfoPoolCacheCpu},
+};
 
 /// `struct pool_item`: the free-list link at the start of every free item.
 #[repr(C)]
@@ -171,6 +209,82 @@ tree_adapter!(
     pub Phtree: PoolPageHeader, ph_node => RbtEntry, phtree_compare
 );
 
+/// `POOL_CACHE_LIST_MIN`: minimum list length.
+#[cfg(feature = "multiprocessor")]
+const POOL_CACHE_LIST_MIN: u32 = 8;
+/// `POOL_CACHE_LIST_INC`.
+#[cfg(feature = "multiprocessor")]
+const POOL_CACHE_LIST_INC: u32 = 8;
+/// `POOL_CACHE_LIST_DEC`.
+#[cfg(feature = "multiprocessor")]
+const POOL_CACHE_LIST_DEC: u32 = 1;
+
+/// `struct pool_cache_item`: a free item in a CPU's cache, the head of a list of them.
+#[repr(C)]
+pub struct PoolCacheItem {
+    /// `ci_next`: next item in list.
+    pub ci_next: Cell<*mut PoolCacheItem>,
+    /// `ci_nitems`: number of items in list (the high bit: the items are poisoned).
+    pub ci_nitems: Cell<usize>,
+    /// `ci_nextl`: entry in list of lists; two words of magic while in a CPU's list.
+    pub ci_nextl: TailqEntry<PoolCacheItem>,
+}
+
+queue_adapter!(
+    /// `TAILQ_HEAD(pool_cache_lists, pool_cache_item)`.
+    pub CiList: PoolCacheItem, ci_nextl => TailqEntry<PoolCacheItem>
+);
+
+/// `POOL_CACHE_ITEM_NITEMS_MASK`: we store whether the cached item is poisoned in the high
+/// bit of nitems.
+#[cfg(feature = "multiprocessor")]
+const POOL_CACHE_ITEM_NITEMS_MASK: usize = 0x7ff_ffff;
+/// `POOL_CACHE_ITEM_NITEMS_POISON`.
+#[cfg(all(feature = "multiprocessor", feature = "diagnostic"))]
+const POOL_CACHE_ITEM_NITEMS_POISON: usize = 0x800_0000;
+
+/// `POOL_CACHE_ITEM_NITEMS(_ci)`.
+#[cfg(feature = "multiprocessor")]
+fn pool_cache_item_nitems(ci: &PoolCacheItem) -> usize {
+    ci.ci_nitems.get() & POOL_CACHE_ITEM_NITEMS_MASK
+}
+
+/// `POOL_CACHE_ITEM_POISONED(_ci)`.
+#[cfg(all(feature = "multiprocessor", feature = "diagnostic"))]
+fn pool_cache_item_poisoned(ci: &PoolCacheItem) -> bool {
+    ci.ci_nitems.get() & POOL_CACHE_ITEM_NITEMS_POISON != 0
+}
+
+/// `struct pool_cache`: one CPU's cache. Every field is written only by its CPU, at
+/// `pr_ipl`; the counters other CPUs read (`pool_cache_pool_info`, `pool_cache_cpus_info`)
+/// are atomics under the generation number `pc_gen`, which is odd while the CPU works.
+#[cfg(feature = "multiprocessor")]
+pub struct PoolCache {
+    /// `pc_actv`: active list of items.
+    pub pc_actv: Cell<*mut PoolCacheItem>,
+    /// `pc_nactv`: actv head nitems cache.
+    pub pc_nactv: Cell<usize>,
+    /// `pc_prev`: previous list of items.
+    pub pc_prev: Cell<*mut PoolCacheItem>,
+    /// `pc_gen`: generation number.
+    pub pc_gen: AtomicU64,
+    /// `pc_nget`: # of successful requests.
+    pub pc_nget: AtomicU64,
+    /// `pc_nfail`: # of unsuccessful reqs.
+    pub pc_nfail: AtomicU64,
+    /// `pc_nput`: # of releases.
+    pub pc_nput: AtomicU64,
+    /// `pc_nlget`: # of list requests.
+    pub pc_nlget: AtomicU64,
+    /// `pc_nlfail`: # of fails getting a list.
+    pub pc_nlfail: AtomicU64,
+    /// `pc_nlput`: # of list releases.
+    pub pc_nlput: AtomicU64,
+    /// `pc_nout`: items out through this cache, folded into `pr_cache_nout` under the list
+    /// lock.
+    pub pc_nout: AtomicI32,
+}
+
 /// `struct pool_lock_ops`: how a pool's locks are taken (mutex or rwlock).
 pub struct PoolLockOps {
     /// `pl_init`.
@@ -185,8 +299,8 @@ pub struct PoolLockOps {
     pub pl_assert_locked: fn(&PoolLock),
     /// `pl_assert_unlocked`.
     pub pl_assert_unlocked: fn(&PoolLock),
-    /// `pl_sleep`: sleeps on `ident` with the lock released; returns 0 or an errno.
-    pub pl_sleep: fn(*const (), &PoolLock, i32, &str) -> i32,
+    /// `pl_sleep`: sleeps on `ident` with the lock released, and takes it again.
+    pub pl_sleep: fn(*const (), &PoolLock, i32, &'static str) -> Result<(), Errno>,
 }
 
 /// `POOL_WAIT_FREE`: an idle page is freed by `pool_put` after this long.
@@ -202,7 +316,7 @@ queue_adapter!(
 /// The list of all pools, as a static.
 struct PoolHead(SimpleqHead<PoolListHead>);
 
-// SAFETY: guarded by `pool_lock` (M5); the boot CPU is alone until then.
+// SAFETY: guarded by `pool_lock`, the rwlock below.
 unsafe impl Sync for PoolHead {}
 
 /// `pool_head`: list of all pools.
@@ -216,6 +330,13 @@ static POOL_COUNT: AtomicU32 = AtomicU32::new(0);
 static POOL_LOCK: Rwlock = Rwlock::new("pools");
 /// `phpool`: private pool for page header structures.
 pub static PHPOOL: Pool = Pool::new();
+/// `pool_gc_tick`: runs `pool_gc_sched` every second once `pool_gc_pages` started it.
+static POOL_GC_TICK: Timeout = Timeout::new(pool_gc_sched, ptr::null_mut());
+/// `pool_gc_task`: `pool_gc_pages` on `systqmp`.
+static POOL_GC_TASK: Task = Task::new(pool_gc_pages, ptr::null_mut());
+/// `pool_caches`: per cpu cache entries.
+#[cfg(feature = "multiprocessor")]
+static POOL_CACHES: Pool = Pool::new();
 /// `pool_debug`: 1 with `POOL_DEBUG`, 2 forces a yield on every waiting get.
 #[cfg(feature = "pool_debug")]
 pub static POOL_DEBUG: AtomicI32 = AtomicI32::new(1);
@@ -278,7 +399,6 @@ fn pl_enter(pp: &Pool, pl: &PoolLock) {
     (lock_ops(pp).pl_enter)(pl);
 }
 
-#[allow(dead_code)] // the C's, for pool_cache (MULTIPROCESSOR)
 fn pl_enter_try(pp: &Pool, pl: &PoolLock) -> bool {
     (lock_ops(pp).pl_enter_try)(pl)
 }
@@ -295,8 +415,13 @@ fn pl_assert_unlocked(pp: &Pool, pl: &PoolLock) {
     (lock_ops(pp).pl_assert_unlocked)(pl);
 }
 
-#[allow(dead_code)] // the C's, for pool_get's sleeping path (M5)
-fn pl_sleep(pp: &Pool, ident: *const (), lock: &PoolLock, priority: i32, wmesg: &str) -> i32 {
+fn pl_sleep(
+    pp: &Pool,
+    ident: *const (),
+    lock: &PoolLock,
+    priority: i32,
+    wmesg: &'static str,
+) -> Result<(), Errno> {
     (lock_ops(pp).pl_sleep)(ident, lock, priority, wmesg)
 }
 
@@ -446,7 +571,7 @@ pub fn pool_init(
     kassert!(items > 0);
 
     // Initialize the pool structure.
-    // refcnt_init(&pp->pr_refcnt): M5.
+    refcnt_init(&pp.pr_refcnt);
     if flags & PR_RWLOCK != 0 {
         kassert!(flags & PR_WAITOK != 0);
         pp.pr_lock_ops.set(Some(&POOL_LOCK_OPS_RW));
@@ -575,9 +700,13 @@ pub fn pool_destroy(pp: &'static Pool) {
     }
     rw_exit_write(&POOL_LOCK);
 
-    // Wait for concurrent sysctl_dopool(): refcnt_finalize(&pp->pr_refcnt, "pooldtor"), M5.
+    // Wait for concurrent sysctl_dopool()
+    refcnt_finalize(&pp.pr_refcnt, "pooldtor");
 
-    // MULTIPROCESSOR: pool_cache_destroy, not configured.
+    #[cfg(feature = "multiprocessor")]
+    if !pp.pr_cache.load(Ordering::Acquire).is_null() {
+        pool_cache_destroy(pp);
+    }
 
     // Remove all pages
     while let Some(ph) = pp.pr_emptypages.first() {
@@ -629,19 +758,27 @@ pub struct PoolGetMemory {
     pub v: Cell<Option<NonNull<u8>>>,
 }
 
-/// `pool_get`: grab an item from the pool.
+/// `pool_get`: grab an item from the pool. With `PR_WAITOK` and no memory it queues a
+/// request and sleeps until `pool_runqueue` serves it.
 pub fn pool_get(pp: &Pool, flags: i32) -> Option<NonNull<u8>> {
     let mut v: Option<NonNull<u8>> = None;
     let mut slowdown = 0;
 
-    // assertwaitok() with PR_WAITOK: M5.
+    if flags & PR_WAITOK != 0 {
+        assertwaitok();
+    }
 
     kassert!(flags & (PR_WAITOK | PR_NOWAIT) != 0);
     if pp.pr_flags.get() & PR_RWLOCK != 0 {
         kassert!(flags & PR_WAITOK != 0);
     }
 
-    // MULTIPROCESSOR: pool_cache_get, not configured.
+    #[cfg(feature = "multiprocessor")]
+    if !pp.pr_cache.load(Ordering::Acquire).is_null()
+        && let Some(v) = pool_cache_get(pp)
+    {
+        return Some(pool_get_good(pp, v, flags));
+    }
 
     pl_enter(pp, &pp.pr_lock);
     if pp.pr_nout.get() >= pp.pr_hardlimit.get() {
@@ -657,17 +794,69 @@ pub fn pool_get(pp: &Pool, flags: i32) -> Option<NonNull<u8>> {
     pl_leave(pp, &pp.pr_lock);
 
     if (slowdown != 0 || POOL_DEBUG.load(Ordering::Relaxed) == 2) && flags & PR_WAITOK != 0 {
-        // yield(): M5.
+        crate::kern::sched_bsd::r#yield();
     }
 
-    let Some(v) = v else {
-        // The C queues a pool_request here and sleeps in pl_sleep until pool_runqueue serves
-        // it (see the module's deviations).
-        let _ = unported!("pool_get: sleeping for memory (pool_request + pl_sleep, M5)");
-        pl_enter(pp, &pp.pr_lock);
-        return pool_get_fail(pp);
+    let v = match v {
+        Some(v) => v,
+        None => {
+            let mem = PoolGetMemory {
+                lock: PoolLock::new(),
+                v: Cell::new(None),
+            };
+
+            // During boot nothing can be waited for: the C panics under DIAGNOSTIC when proc0
+            // would sleep, and otherwise spins in msleep's cold path; here the get fails (see
+            // the module's deviations).
+            if flags & PR_WAITOK != 0
+                && (crate::sys::systm::COLD.load(Ordering::Relaxed)
+                    || crate::machine::cpu::curproc()
+                        .is_none_or(|p| ptr::eq(p, &crate::kern::init_main::PROC0)))
+            {
+                #[cfg(feature = "diagnostic")]
+                crate::kern::subr_prf::panic(format_args!(
+                    "pool_get: cannot sleep for memory during boot"
+                ));
+                #[cfg(not(feature = "diagnostic"))]
+                {
+                    pl_enter(pp, &pp.pr_lock);
+                    return pool_get_fail(pp);
+                }
+            }
+            pl_init(pp, &mem.lock);
+            // pool_request_init(&pr, pool_get_done, &mem)
+            let pr = PoolRequest {
+                pr_entry: TailqEntry::new(),
+                pr_handler: pool_get_done,
+                pr_cookie: ptr::from_ref(&mem).cast_mut().cast(),
+                pr_item: Cell::new(None),
+            };
+            // SAFETY: `pr` stays on this stack until `pool_get_done` has run: this thread
+            // sleeps below until the handler stores the item, and `pool_runqueue` takes a
+            // request off the queue before calling its handler.
+            unsafe { pool_request(pp, &pr) };
+
+            pl_enter(pp, &mem.lock);
+            while mem.v.get().is_none() {
+                let _ = pl_sleep(
+                    pp,
+                    ptr::from_ref(&mem).cast(),
+                    &mem.lock,
+                    PSWP,
+                    pp.pr_wchan.get(),
+                );
+            }
+            pl_leave(pp, &mem.lock);
+
+            mem.v.get()?
+        }
     };
 
+    Some(pool_get_good(pp, v, flags))
+}
+
+/// `pool_get`'s `good:` label: `PR_ZERO`.
+fn pool_get_good(pp: &Pool, v: NonNull<u8>, flags: i32) -> NonNull<u8> {
     if flags & PR_ZERO != 0 {
         // SAFETY: `v` is a free item of `pr_size` bytes that is now the caller's.
         unsafe { ptr::write_bytes(v.as_ptr(), 0, pp.pr_size.get() as usize) };
@@ -675,7 +864,7 @@ pub fn pool_get(pp: &Pool, flags: i32) -> Option<NonNull<u8>> {
 
     // TRACEPOINT(uvm, pool_get): not configured.
 
-    Some(v)
+    v
 }
 
 /// `pool_get`'s `fail:` label: counts the failure and drops the lock.
@@ -852,7 +1041,11 @@ pub fn pool_put(pp: &Pool, v: NonNull<u8>) {
 
     // TRACEPOINT(uvm, pool_put): not configured.
 
-    // MULTIPROCESSOR: pool_cache_put, not configured.
+    #[cfg(feature = "multiprocessor")]
+    if !pp.pr_cache.load(Ordering::Acquire).is_null() && pp.pr_requests.is_empty() {
+        pool_cache_put(pp, v);
+        return;
+    }
 
     pl_enter(pp, &pp.pr_lock);
 
@@ -1344,14 +1537,16 @@ pub fn sysctl_dopool(name: &[i32], oldp: usize, oldlenp: &mut usize) -> Result<(
         .0
         .iter()
         .find(|pp| name[1] >= 0 && pp.pr_serial.get() == name[1] as u32);
-    // refcnt_take(&pp->pr_refcnt): M5 (see the module's deviations).
+    if let Some(pp) = found {
+        refcnt_take(&pp.pr_refcnt);
+    }
     rw_exit_read(&POOL_LOCK);
 
     let Some(pp) = found else {
         return Err(Errno::ENOENT);
     };
 
-    match what {
+    let rv = match what {
         KERN_POOL_NAME => sysctl_rdstring(oldp, oldlenp, 0, pp.pr_wchan.get().as_bytes()),
         KERN_POOL_POOL => {
             pl_enter(pp, &pp.pr_lock);
@@ -1381,8 +1576,59 @@ pub fn sysctl_dopool(name: &[i32], oldp: usize, oldlenp: &mut usize) -> Result<(
         }
         KERN_POOL_CACHE => pool_cache_info(pp, oldp, oldlenp),
         _ => pool_cache_cpus_info(pp, oldp, oldlenp),
+    };
+
+    refcnt_rele_wake(&pp.pr_refcnt);
+
+    rv
+}
+
+/// `pool_gc_sched`: the gc timeout hands the work to `systqmp`.
+pub fn pool_gc_sched(_null: *mut core::ffi::c_void) {
+    task_add(SYSTQMP, &POOL_GC_TASK);
+}
+
+/// `pool_gc_pages`: frees, in every pool, one idle page that has been idle for
+/// `POOL_WAIT_GC`, gives the per-CPU caches' idle lists back (`MULTIPROCESSOR`), and runs again
+/// in a second. `init_main` starts it with `MULTIPROCESSOR`.
+pub fn pool_gc_pages(_null: *mut core::ffi::c_void) {
+    rw_enter_read(&POOL_LOCK);
+    let s = splvm(); // XXX go to splvm until all pools _setipl properly
+    for pp in POOL_HEAD.0.iter() {
+        #[cfg(feature = "multiprocessor")]
+        if !pp.pr_cache.load(Ordering::Acquire).is_null() {
+            pool_cache_gc(pp);
+        }
+
+        if pp.pr_nidle.get() <= u64::from(pp.pr_minpages.get()) // guess
+            || !pl_enter_try(pp, &pp.pr_lock)
+        // try
+        {
+            continue;
+        }
+
+        // is it time to free a page?
+        let mut freeph: Option<&PoolPageHeader> = None;
+        if pp.pr_nidle.get() > u64::from(pp.pr_minpages.get())
+            && let Some(ph) = pp.pr_emptypages.first()
+            && getnsecuptime().wrapping_sub(ph.ph_timestamp.get()) > POOL_WAIT_GC
+        {
+            // SAFETY: the header is on the empty list, so its page is allocated.
+            let ph = unsafe { ph_ref(ph) };
+            freeph = Some(ph);
+            pool_p_remove(pp, ph);
+        }
+
+        pl_leave(pp, &pp.pr_lock);
+
+        if let Some(ph) = freeph {
+            pool_p_free(pp, ph);
+        }
     }
-    // refcnt_rele_wake(&pp->pr_refcnt): M5.
+    splx(s);
+    rw_exit_read(&POOL_LOCK);
+
+    timeout_add_sec(&POOL_GC_TICK, 1);
 }
 
 // Pool backend allocators.
@@ -1455,8 +1701,12 @@ pub fn pool_multi_alloc(pp: &Pool, flags: i32, _slowdown: &mut i32) -> Option<No
         kv.kv_align = pp.pr_pgsize.get() as usize;
     }
 
-    // splvm(): M4.
-    km_alloc(pp.pr_pgsize.get() as usize, &kv, pp.pr_crange.get()?, &kd)
+    let crange = pp.pr_crange.get()?;
+    let s = splvm();
+    let v = km_alloc(pp.pr_pgsize.get() as usize, &kv, crange, &kd);
+    splx(s);
+
+    v
 }
 
 /// `pool_multi_free`.
@@ -1467,9 +1717,10 @@ pub fn pool_multi_free(pp: &Pool, v: NonNull<u8>) {
         kv.kv_align = pp.pr_pgsize.get() as usize;
     }
 
-    // splvm(): M4.
     if let Some(crange) = pp.pr_crange.get() {
+        let s = splvm();
         km_free(v, pp.pr_pgsize.get() as usize, &kv, crange);
+        splx(s);
     }
 }
 
@@ -1485,8 +1736,12 @@ pub fn pool_multi_alloc_ni(pp: &Pool, flags: i32, _slowdown: &mut i32) -> Option
         kv.kv_align = pp.pr_pgsize.get() as usize;
     }
 
-    // KERNEL_LOCK(): M5.
-    km_alloc(pp.pr_pgsize.get() as usize, &kv, pp.pr_crange.get()?, &kd)
+    let crange = pp.pr_crange.get()?;
+    kernel_lock();
+    let v = km_alloc(pp.pr_pgsize.get() as usize, &kv, crange, &kd);
+    kernel_unlock();
+
+    v
 }
 
 /// `pool_multi_free_ni`.
@@ -1497,102 +1752,668 @@ pub fn pool_multi_free_ni(pp: &Pool, v: NonNull<u8>) {
         kv.kv_align = pp.pr_pgsize.get() as usize;
     }
 
-    // KERNEL_LOCK(): M5.
     if let Some(crange) = pp.pr_crange.get() {
+        kernel_lock();
         km_free(v, pp.pr_pgsize.get() as usize, &kv, crange);
+        kernel_unlock();
     }
+}
+
+// The per-CPU caches (MULTIPROCESSOR).
+
+/// The pool's per-CPU caches, `None` when it has none.
+#[cfg(feature = "multiprocessor")]
+fn pr_cache(pp: &Pool) -> Option<CpumemPtr> {
+    let cm = NonNull::new(pp.pr_cache.load(Ordering::Acquire))?;
+    // SAFETY: `pool_cache_init` published a `cpumem_get(&pool_caches)` array, whose items are
+    // `pool_caches`' size; it lives until `pool_cache_destroy` takes it away.
+    Some(unsafe { CpumemPtr::from_raw(cm, POOL_CACHES.pr_size.get() as usize) })
+}
+
+/// The `struct pool_cache` at one CPU's memory of `pr_cache`.
+#[cfg(feature = "multiprocessor")]
+fn pool_cache_at(mem: NonNull<u8>) -> &'static PoolCache {
+    // SAFETY: an item of `pool_caches` (`size_of::<PoolCache>()` bytes, cache-line aligned),
+    // zeroed by `cpumem_get`; every bit pattern of zero is a valid `PoolCache` and the fields
+    // are cells and atomics.
+    unsafe { &*mem.as_ptr().cast::<PoolCache>() }
+}
+
+/// The cache item at `ci`, a free item of the pool.
+///
+/// # Safety
+///
+/// `ci` must be a free item of a pool whose items are at least a `pool_cache_item`, aligned.
+#[cfg(feature = "multiprocessor")]
+unsafe fn ci_ref<'a>(ci: *mut PoolCacheItem) -> &'a PoolCacheItem {
+    // SAFETY: the caller's guarantee; every bit pattern is a valid item (cells of words).
+    unsafe { &*ci }
+}
+
+/// `pool_cache_init`: gives the pool a cache per CPU (`pool_caches` items through
+/// `cpumem_get`); `pool_get`/`pool_put` use them from then on.
+#[cfg(feature = "multiprocessor")]
+pub fn pool_cache_init(pp: &Pool) {
+    if POOL_CACHES.pr_size.get() == 0 {
+        pool_init(
+            &POOL_CACHES,
+            size_of::<PoolCache>(),
+            CACHELINESIZE as u32,
+            IPL_NONE,
+            PR_WAITOK | PR_RWLOCK,
+            "plcache",
+            None,
+        );
+    }
+
+    // must be able to use the pool items as cache list items
+    kassert!(pp.pr_size.get() as usize >= size_of::<PoolCacheItem>());
+
+    let cm = cpumem_get(&POOL_CACHES);
+
+    pl_init(pp, &pp.pr_cache_lock);
+    let mut magic = [0u8; 2 * size_of::<usize>()];
+    arc4random_buf(&mut magic);
+    let (words, _) = magic.as_chunks::<{ size_of::<usize>() }>();
+    for (m, w) in pp.pr_cache_magic.iter().zip(words) {
+        m.set(usize::from_ne_bytes(*w));
+    }
+    pp.pr_cache_lists.init();
+    pp.pr_cache_nitems.set(0);
+    pp.pr_cache_timestamp
+        .store(getnsecuptime(), Ordering::Relaxed);
+    pp.pr_cache_items
+        .store(POOL_CACHE_LIST_MIN, Ordering::Relaxed);
+    pp.pr_cache_contention.store(0, Ordering::Relaxed);
+    pp.pr_cache_ngc.set(0);
+
+    for mem in cpumem_foreach(cm) {
+        let pc = pool_cache_at(mem);
+        pc.pc_actv.set(ptr::null_mut());
+        pc.pc_nactv.set(0);
+        pc.pc_prev.set(ptr::null_mut());
+
+        pc.pc_nget.store(0, Ordering::Relaxed);
+        pc.pc_nfail.store(0, Ordering::Relaxed);
+        pc.pc_nput.store(0, Ordering::Relaxed);
+        pc.pc_nlget.store(0, Ordering::Relaxed);
+        pc.pc_nlfail.store(0, Ordering::Relaxed);
+        pc.pc_nlput.store(0, Ordering::Relaxed);
+        pc.pc_nout.store(0, Ordering::Relaxed);
+    }
+
+    fence(Ordering::Release); // membar_producer()
+
+    pp.pr_cache.store(cm.as_ptr().as_ptr(), Ordering::Release);
+}
+
+/// The two words of `ci_nextl` that hold a cached item's magic.
+#[cfg(feature = "multiprocessor")]
+fn ci_magic_words(ci: &PoolCacheItem) -> &[Cell<usize>; 2] {
+    // SAFETY: `ci_nextl` is a `#[repr(C)]` TAILQ_ENTRY of two pointer-sized cells; any value is
+    // a valid `usize`, and an item in a CPU's list is on no tail queue.
+    unsafe { &*ptr::from_ref(&ci.ci_nextl).cast::<[Cell<usize>; 2]>() }
+}
+
+/// `pool_cache_item_magic`: marks a cached item's link words.
+#[cfg(feature = "multiprocessor")]
+fn pool_cache_item_magic(pp: &Pool, ci: &PoolCacheItem) {
+    let entry = ci_magic_words(ci);
+
+    entry[0].set(pp.pr_cache_magic[0].get() ^ ptr::from_ref(ci) as usize);
+    entry[1].set(pp.pr_cache_magic[1].get() ^ ci.ci_next.get() as usize);
+}
+
+/// `pool_cache_item_magic_check`: panics when a cached item's link words were modified.
+#[cfg(feature = "multiprocessor")]
+fn pool_cache_item_magic_check(pp: &Pool, ci: &PoolCacheItem) {
+    let entry = ci_magic_words(ci);
+    let vals = [
+        pp.pr_cache_magic[0].get() ^ ptr::from_ref(ci) as usize,
+        pp.pr_cache_magic[1].get() ^ ci.ci_next.get() as usize,
+    ];
+
+    for (i, val) in vals.into_iter().enumerate() {
+        if entry[i].get() != val {
+            let off = ptr::from_ref(&entry[i]) as usize - ptr::from_ref(ci) as usize;
+            crate::kern::subr_prf::panic(format_args!(
+                "pool_cache_item_magic_check: {} cpu free list modified: item addr {:p}+{} {:#x}!={:#x}",
+                pp.pr_wchan.get(),
+                ci,
+                off,
+                entry[i].get(),
+                val
+            ));
+        }
+    }
+}
+
+/// `pool_list_enter`: takes the idle list lock, counting contention.
+#[cfg(feature = "multiprocessor")]
+fn pool_list_enter(pp: &Pool) {
+    if !pl_enter_try(pp, &pp.pr_cache_lock) {
+        pl_enter(pp, &pp.pr_cache_lock);
+        pp.pr_cache_contention.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// `pool_list_leave`.
+#[cfg(feature = "multiprocessor")]
+fn pool_list_leave(pp: &Pool) {
+    pl_leave(pp, &pp.pr_cache_lock);
+}
+
+/// One more in a counter only its CPU writes.
+#[cfg(feature = "multiprocessor")]
+fn pc_inc(c: &AtomicU64) {
+    c.store(c.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+}
+
+/// `pool_cache_list_alloc`: an idle list from the pool for `pc`, or null.
+#[cfg(feature = "multiprocessor")]
+fn pool_cache_list_alloc(pp: &Pool, pc: &PoolCache) -> *mut PoolCacheItem {
+    pool_list_enter(pp);
+    let pl = pp
+        .pr_cache_lists
+        .first()
+        .map_or(ptr::null_mut(), |pl| ptr::from_ref(pl).cast_mut());
+    // SAFETY: a list on `pr_cache_lists` is a free item of the pool.
+    if let Some(l) = (!pl.is_null()).then(|| unsafe { ci_ref(pl) }) {
+        // SAFETY: `l` is on the pool's list of lists, which the list lock guards.
+        unsafe { pp.pr_cache_lists.remove(l) };
+        pp.pr_cache_nitems
+            .set(pp.pr_cache_nitems.get() - pool_cache_item_nitems(l) as u32);
+
+        pool_cache_item_magic(pp, l);
+
+        pc_inc(&pc.pc_nlget);
+    } else {
+        pc_inc(&pc.pc_nlfail);
+    }
+
+    // fold this cpus nout into the global while we have the lock
+    pp.pr_cache_nout
+        .set(pp.pr_cache_nout.get() + pc.pc_nout.load(Ordering::Relaxed));
+    pc.pc_nout.store(0, Ordering::Relaxed);
+    pool_list_leave(pp);
+
+    pl
+}
+
+/// `pool_cache_list_free`: gives a full list of `pc` to the pool's idle lists.
+#[cfg(feature = "multiprocessor")]
+fn pool_cache_list_free(pp: &Pool, pc: &PoolCache, ci: &PoolCacheItem) {
+    pool_list_enter(pp);
+    if pp.pr_cache_lists.is_empty() {
+        pp.pr_cache_timestamp
+            .store(getnsecuptime(), Ordering::Relaxed);
+    }
+
+    pp.pr_cache_nitems
+        .set(pp.pr_cache_nitems.get() + pool_cache_item_nitems(ci) as u32);
+    // SAFETY: a CPU's list is on no tail queue; the list lock guards the queue.
+    unsafe { pp.pr_cache_lists.insert_tail(ci) };
+
+    pc_inc(&pc.pc_nlput);
+
+    // fold this cpus nout into the global while we have the lock
+    pp.pr_cache_nout
+        .set(pp.pr_cache_nout.get() + pc.pc_nout.load(Ordering::Relaxed));
+    pc.pc_nout.store(0, Ordering::Relaxed);
+    pool_list_leave(pp);
+}
+
+/// `pool_cache_enter`: this CPU's cache at `pr_ipl`, its generation number made odd.
+#[cfg(feature = "multiprocessor")]
+fn pool_cache_enter(pp: &Pool, cm: CpumemPtr) -> (&'static PoolCache, i32) {
+    let pc = pool_cache_at(cpumem_enter(cm));
+    let s = splraise(pp.pr_ipl.get());
+    pc.pc_gen
+        .store(pc.pc_gen.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+    fence(Ordering::Release);
+
+    (pc, s)
+}
+
+/// `pool_cache_leave`: the generation number even again, the level back.
+#[cfg(feature = "multiprocessor")]
+fn pool_cache_leave(cm: CpumemPtr, pc: &PoolCache, s: i32) {
+    pc.pc_gen
+        .store(pc.pc_gen.load(Ordering::Relaxed) + 1, Ordering::Release);
+    splx(s);
+    cpumem_leave(cm, NonNull::from(pc).cast());
+}
+
+/// `pool_cache_get`: an item from this CPU's cache, else a list from the pool's idle lists;
+/// `None` sends `pool_get` to the pages.
+#[cfg(feature = "multiprocessor")]
+pub fn pool_cache_get(pp: &Pool) -> Option<NonNull<u8>> {
+    let cm = pr_cache(pp)?;
+    let (pc, s) = pool_cache_enter(pp, cm);
+
+    let ci = if !pc.pc_actv.get().is_null() {
+        pc.pc_actv.get()
+    } else if !pc.pc_prev.get().is_null() {
+        let ci = pc.pc_prev.get();
+        pc.pc_prev.set(ptr::null_mut());
+        ci
+    } else {
+        let ci = pool_cache_list_alloc(pp, pc);
+        if ci.is_null() {
+            pc_inc(&pc.pc_nfail);
+            pool_cache_leave(cm, pc, s);
+            return None;
+        }
+        ci
+    };
+    // SAFETY: the lists of a cache hold free items of this pool.
+    let ci = unsafe { ci_ref(ci) };
+
+    pool_cache_item_magic_check(pp, ci);
+    #[cfg(feature = "diagnostic")]
+    if POOL_DEBUG.load(Ordering::Relaxed) != 0 && pool_cache_item_poisoned(ci) {
+        let _ = unported!("poison_check (subr_poison.c) in pool_cache_get");
+    }
+
+    pc.pc_actv.set(ci.ci_next.get());
+    pc.pc_nactv.set(pool_cache_item_nitems(ci) - 1);
+    pc_inc(&pc.pc_nget);
+    pc.pc_nout
+        .store(pc.pc_nout.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
+
+    pool_cache_leave(cm, pc, s);
+
+    Some(NonNull::from(ci).cast())
+}
+
+/// `pool_cache_put`: an item onto this CPU's active list; a full active list becomes the
+/// previous one, and a previous one goes to the pool's idle lists.
+#[cfg(feature = "multiprocessor")]
+pub fn pool_cache_put(pp: &Pool, v: NonNull<u8>) {
+    let Some(cm) = pr_cache(pp) else {
+        return;
+    };
+    // SAFETY: `v` is an item of this pool the caller gives back, at least a pool_cache_item
+    // (`pool_cache_init`'s KASSERT) and aligned.
+    let ci = unsafe { ci_ref(v.as_ptr().cast::<PoolCacheItem>()) };
+    #[cfg(feature = "diagnostic")]
+    let poison = POOL_DEBUG.load(Ordering::Relaxed) != 0
+        && pp.pr_size.get() as usize > size_of::<PoolCacheItem>();
+    #[cfg(feature = "diagnostic")]
+    if poison {
+        let _ = unported!("poison_mem (subr_poison.c) in pool_cache_put");
+    }
+
+    let (pc, s) = pool_cache_enter(pp, cm);
+
+    let mut nitems = pc.pc_nactv.get();
+    if nitems >= pp.pr_cache_items.load(Ordering::Relaxed) as usize {
+        if !pc.pc_prev.get().is_null() {
+            // SAFETY: the previous list is free items of this pool.
+            pool_cache_list_free(pp, pc, unsafe { ci_ref(pc.pc_prev.get()) });
+        }
+
+        pc.pc_prev.set(pc.pc_actv.get());
+
+        pc.pc_actv.set(ptr::null_mut());
+        pc.pc_nactv.set(0);
+        nitems = 0;
+    }
+
+    ci.ci_next.set(pc.pc_actv.get());
+    nitems += 1;
+    ci.ci_nitems.set(nitems);
+    #[cfg(feature = "diagnostic")]
+    if poison {
+        ci.ci_nitems
+            .set(ci.ci_nitems.get() | POOL_CACHE_ITEM_NITEMS_POISON);
+    }
+    pool_cache_item_magic(pp, ci);
+
+    pc.pc_actv.set(ptr::from_ref(ci).cast_mut());
+    pc.pc_nactv.set(nitems);
+
+    pc_inc(&pc.pc_nput);
+    pc.pc_nout
+        .store(pc.pc_nout.load(Ordering::Relaxed) - 1, Ordering::Relaxed);
+
+    pool_cache_leave(cm, pc, s);
+}
+
+/// `pool_cache_list_put`: every item of the list `pl` back onto its page. Returns what was
+/// `pl`'s `TAILQ_NEXT` (meaningful only for a list taken off `pr_cache_lists`).
+#[cfg(feature = "multiprocessor")]
+fn pool_cache_list_put(pp: &Pool, pl: *mut PoolCacheItem) -> *mut PoolCacheItem {
+    if pl.is_null() {
+        return ptr::null_mut();
+    }
+
+    // SAFETY: a list is free items of this pool.
+    let rpl = ci_magic_words(unsafe { ci_ref(pl) })[0].get() as *mut PoolCacheItem;
+
+    let mut pl = pl;
+    pl_enter(pp, &pp.pr_lock);
+    loop {
+        // SAFETY: as above.
+        let next = unsafe { ci_ref(pl) }.ci_next.get();
+        if let Some(v) = NonNull::new(pl.cast::<u8>()) {
+            pool_do_put(pp, v);
+        }
+        pl = next;
+        if pl.is_null() {
+            break;
+        }
+    }
+    pl_leave(pp, &pp.pr_lock);
+
+    rpl
+}
+
+/// `pool_cache_destroy`: every cached item back onto its page and the caches freed; the pool
+/// works without them from then on. Nobody may be using the caches.
+#[cfg(feature = "multiprocessor")]
+pub fn pool_cache_destroy(pp: &Pool) {
+    rw_enter_write(&POOL_LOCK); // serialise with the gc
+    let cm = pr_cache(pp);
+    pp.pr_cache.store(ptr::null_mut(), Ordering::Release); // make pool_put avoid the cache
+    rw_exit_write(&POOL_LOCK);
+
+    let Some(cm) = cm else {
+        return;
+    };
+
+    for mem in cpumem_foreach(cm) {
+        let pc = pool_cache_at(mem);
+        pool_cache_list_put(pp, pc.pc_actv.get());
+        pool_cache_list_put(pp, pc.pc_prev.get());
+    }
+
+    // SAFETY: `pr_cache` no longer names `cm`, and no CPU is using its cache (the caller's
+    // contract).
+    unsafe { crate::kern::subr_percpu::cpumem_put(&POOL_CACHES, cm) };
+
+    let mut pl = pp
+        .pr_cache_lists
+        .first()
+        .map_or(ptr::null_mut(), |pl| ptr::from_ref(pl).cast_mut());
+    while !pl.is_null() {
+        pl = pool_cache_list_put(pp, pl);
+    }
+}
+
+/// `pool_cache_gc`: gives one idle list that has been idle for `POOL_WAIT_GC` back to the
+/// pages, and adapts the list length to the contention on the list lock.
+#[cfg(feature = "multiprocessor")]
+pub fn pool_cache_gc(pp: &Pool) {
+    if getnsecuptime().wrapping_sub(pp.pr_cache_timestamp.load(Ordering::Relaxed)) > POOL_WAIT_GC
+        && !pp.pr_cache_lists.is_empty()
+        && pl_enter_try(pp, &pp.pr_cache_lock)
+    {
+        let mut pl: *mut PoolCacheItem = ptr::null_mut();
+
+        if let Some(l) = pp.pr_cache_lists.first() {
+            // SAFETY: `l` is on the list of lists, which the lock guards.
+            unsafe { pp.pr_cache_lists.remove(l) };
+            pp.pr_cache_nitems
+                .set(pp.pr_cache_nitems.get() - pool_cache_item_nitems(l) as u32);
+            pp.pr_cache_timestamp
+                .store(getnsecuptime(), Ordering::Relaxed);
+
+            pp.pr_cache_ngc.set(pp.pr_cache_ngc.get() + 1);
+            pl = ptr::from_ref(l).cast_mut();
+        }
+
+        pl_leave(pp, &pp.pr_cache_lock);
+
+        pool_cache_list_put(pp, pl);
+    }
+
+    // if there's a lot of contention on the pr_cache_mtx then consider growing the length of
+    // the list to reduce the need to access the global pool.
+
+    let contention = pp.pr_cache_contention.load(Ordering::Relaxed);
+    let delta = contention.wrapping_sub(pp.pr_cache_contention_prev.get());
+    if delta > 8 {
+        // magic
+        if (ncpusfound() as u32 * POOL_CACHE_LIST_MIN * 2) <= pp.pr_cache_nitems.get() {
+            pp.pr_cache_items
+                .fetch_add(POOL_CACHE_LIST_INC, Ordering::Relaxed);
+        }
+    } else if delta == 0 && pp.pr_cache_items.load(Ordering::Relaxed) > POOL_CACHE_LIST_MIN {
+        pp.pr_cache_items
+            .fetch_sub(POOL_CACHE_LIST_DEC, Ordering::Relaxed);
+    }
+    pp.pr_cache_contention_prev.set(contention);
+}
+
+/// `pool_cache_pool_info`: adds the per-CPU caches' gets, puts and items out to `pi`.
+#[cfg(feature = "multiprocessor")]
+pub fn pool_cache_pool_info(pp: &Pool, pi: &mut KinfoPool) {
+    let Some(cm) = pr_cache(pp) else {
+        return;
+    };
+
+    // loop through the caches twice to collect stats
+
+    // once without the lock so we can yield while reading nget/nput
+    for mem in cpumem_foreach(cm) {
+        let pc = pool_cache_at(mem);
+        let (mut nget, mut nput);
+
+        loop {
+            let mut r#gen = pc.pc_gen.load(Ordering::Acquire);
+            while r#gen & 1 != 0 {
+                crate::kern::sched_bsd::r#yield();
+                r#gen = pc.pc_gen.load(Ordering::Acquire);
+            }
+
+            nget = pc.pc_nget.load(Ordering::Relaxed);
+            nput = pc.pc_nput.load(Ordering::Relaxed);
+            fence(Ordering::Acquire);
+            if r#gen == pc.pc_gen.load(Ordering::Relaxed) {
+                break;
+            }
+        }
+
+        pi.pr_nget += nget;
+        pi.pr_nput += nput;
+    }
+
+    // and once with the mtx so we can get consistent nout values
+    pl_enter(pp, &pp.pr_cache_lock);
+    for mem in cpumem_foreach(cm) {
+        let pc = pool_cache_at(mem);
+        pi.pr_nout = pi
+            .pr_nout
+            .wrapping_add_signed(pc.pc_nout.load(Ordering::Relaxed));
+    }
+
+    pi.pr_nout = pi.pr_nout.wrapping_add_signed(pp.pr_cache_nout.get());
+    pl_leave(pp, &pp.pr_cache_lock);
+}
+
+/// `pool_cache_info`: `kern.pool.cache.<serial>`, the pool's `struct kinfo_pool_cache`.
+#[cfg(feature = "multiprocessor")]
+pub fn pool_cache_info(pp: &Pool, oldp: usize, oldlenp: &mut usize) -> Result<(), Errno> {
+    if pr_cache(pp).is_none() {
+        return Err(Errno::EOPNOTSUPP);
+    }
+
+    pl_enter(pp, &pp.pr_cache_lock);
+    let kpc = KinfoPoolCache {
+        pr_ngc: pp.pr_cache_ngc.get(),
+        pr_len: pp.pr_cache_items.load(Ordering::Relaxed),
+        pr_nitems: pp.pr_cache_nitems.get(),
+        pr_contention: pp.pr_cache_contention.load(Ordering::Relaxed),
+    };
+    pl_leave(pp, &pp.pr_cache_lock);
+
+    sysctl_rdstruct(oldp, oldlenp, 0, &kpc.to_bytes())
+}
+
+/// `pool_cache_cpus_info`: `kern.pool.cache_cpus.<serial>`, a `struct kinfo_pool_cache_cpu`
+/// per CPU.
+#[cfg(feature = "multiprocessor")]
+pub fn pool_cache_cpus_info(pp: &Pool, oldp: usize, oldlenp: &mut usize) -> Result<(), Errno> {
+    let Some(cm) = pr_cache(pp) else {
+        return Err(Errno::EOPNOTSUPP);
+    };
+    if !(*oldlenp).is_multiple_of(KinfoPoolCacheCpu::SIZE) {
+        return Err(Errno::EINVAL);
+    }
+
+    let ncpus = ncpusfound();
+    let Some(kpcc) = mallocarray(
+        ncpus,
+        KinfoPoolCacheCpu::SIZE,
+        M_TEMP,
+        M_WAITOK | M_CANFAIL | M_ZERO,
+    ) else {
+        return Err(Errno::EIO);
+    };
+
+    let len = ncpus * KinfoPoolCacheCpu::SIZE;
+    // SAFETY: `len` bytes just allocated, ours until the free below.
+    let buf = unsafe { core::slice::from_raw_parts_mut(kpcc.as_ptr(), len) };
+
+    let mut error = Ok(());
+    for (cpu, mem) in cpumem_foreach(cm).enumerate() {
+        if cpu >= ncpus {
+            error = Err(Errno::EIO);
+            break;
+        }
+
+        let pc = pool_cache_at(mem);
+        let mut info;
+        loop {
+            let mut r#gen = pc.pc_gen.load(Ordering::Acquire);
+            while r#gen & 1 != 0 {
+                crate::kern::sched_bsd::r#yield();
+                r#gen = pc.pc_gen.load(Ordering::Acquire);
+            }
+
+            info = KinfoPoolCacheCpu {
+                pr_cpu: cpu as u32,
+                pr_nget: pc.pc_nget.load(Ordering::Relaxed),
+                pr_nfail: pc.pc_nfail.load(Ordering::Relaxed),
+                pr_nput: pc.pc_nput.load(Ordering::Relaxed),
+                pr_nlget: pc.pc_nlget.load(Ordering::Relaxed),
+                pr_nlfail: pc.pc_nlfail.load(Ordering::Relaxed),
+                pr_nlput: pc.pc_nlput.load(Ordering::Relaxed),
+            };
+            fence(Ordering::Acquire);
+            if r#gen == pc.pc_gen.load(Ordering::Relaxed) {
+                break;
+            }
+        }
+
+        buf[cpu * KinfoPoolCacheCpu::SIZE..(cpu + 1) * KinfoPoolCacheCpu::SIZE]
+            .copy_from_slice(&info.to_bytes());
+    }
+
+    if error.is_ok() {
+        error = sysctl_rdstruct(oldp, oldlenp, 0, buf);
+    }
+    free(kpcc, M_TEMP, len);
+
+    error
 }
 
 // The per-CPU caches without MULTIPROCESSOR.
 
+/// `pool_cache_init`: nothing without `MULTIPROCESSOR`.
+#[cfg(not(feature = "multiprocessor"))]
+pub fn pool_cache_init(_pp: &Pool) {
+    // nop
+}
+
 /// `pool_cache_pool_info`: adds the per-CPU caches' counts to `pi`; nothing to add without
 /// `MULTIPROCESSOR`.
+#[cfg(not(feature = "multiprocessor"))]
 pub fn pool_cache_pool_info(_pp: &Pool, _pi: &mut KinfoPool) {
     // nop
 }
 
 /// `pool_cache_info`: `kern.pool.cache.<serial>`; there is no cache without
 /// `MULTIPROCESSOR`.
+#[cfg(not(feature = "multiprocessor"))]
 pub fn pool_cache_info(_pp: &Pool, _oldp: usize, _oldlenp: &mut usize) -> Result<(), Errno> {
     Err(Errno::EOPNOTSUPP)
 }
 
 /// `pool_cache_cpus_info`: `kern.pool.cache_cpus.<serial>`; there is no cache without
 /// `MULTIPROCESSOR`.
+#[cfg(not(feature = "multiprocessor"))]
 pub fn pool_cache_cpus_info(_pp: &Pool, _oldp: usize, _oldlenp: &mut usize) -> Result<(), Errno> {
     Err(Errno::EOPNOTSUPP)
 }
 
-// The lock operations (see the module's deviations).
+// The lock operations.
 
-fn pool_lock_mtx_init(_pp: &Pool, lock: &PoolLock) {
-    // _mtx_init_flags(&lock->prl_mtx, pp->pr_ipl, pp->pr_wchan, 0, type): M5.
-    lock.set_locked(false);
+fn pool_lock_mtx_init(pp: &Pool, lock: &PoolLock) {
+    mtx_init_flags(&lock.prl_mtx, pp.pr_ipl.get(), Some(pp.pr_wchan.get()), 0);
 }
 
 fn pool_lock_mtx_enter(lock: &PoolLock) {
-    kassert!(!lock.is_locked());
-    lock.set_locked(true);
+    mtx_enter(&lock.prl_mtx);
 }
 
 fn pool_lock_mtx_enter_try(lock: &PoolLock) -> bool {
-    if lock.is_locked() {
-        return false;
-    }
-    lock.set_locked(true);
-    true
+    mtx_enter_try(&lock.prl_mtx)
 }
 
 fn pool_lock_mtx_leave(lock: &PoolLock) {
-    kassert!(lock.is_locked());
-    lock.set_locked(false);
+    mtx_leave(&lock.prl_mtx);
 }
 
 fn pool_lock_mtx_assert_locked(lock: &PoolLock) {
-    kassert!(lock.is_locked());
+    mutex_assert_locked(&lock.prl_mtx, "pool_lock_mtx_assert_locked");
 }
 
 fn pool_lock_mtx_assert_unlocked(lock: &PoolLock) {
-    kassert!(!lock.is_locked());
+    mutex_assert_unlocked(&lock.prl_mtx, "pool_lock_mtx_assert_unlocked");
 }
 
-fn pool_lock_mtx_sleep(_ident: *const (), _lock: &PoolLock, _priority: i32, _wmesg: &str) -> i32 {
-    unported!("msleep_nsec (pool lock sleep, M5)") as i32
+fn pool_lock_mtx_sleep(
+    ident: *const (),
+    lock: &PoolLock,
+    priority: i32,
+    wmesg: &'static str,
+) -> Result<(), Errno> {
+    msleep_nsec(ident, &lock.prl_mtx, priority, wmesg, INFSLP)
 }
 
-fn pool_lock_rw_init(_pp: &Pool, lock: &PoolLock) {
-    // _rw_init_flags(&lock->prl_rwlock, pp->pr_wchan, 0, type, 0): M5.
-    lock.set_locked(false);
+fn pool_lock_rw_init(pp: &Pool, lock: &PoolLock) {
+    rw_init_flags(&lock.prl_rwlock, pp.pr_wchan.get(), 0);
 }
 
 fn pool_lock_rw_enter(lock: &PoolLock) {
-    kassert!(!lock.is_locked());
-    lock.set_locked(true);
+    rw_enter_write(&lock.prl_rwlock);
 }
 
 fn pool_lock_rw_enter_try(lock: &PoolLock) -> bool {
-    if lock.is_locked() {
-        return false;
-    }
-    lock.set_locked(true);
-    true
+    rw_enter(&lock.prl_rwlock, RW_WRITE | RW_NOSLEEP).is_ok()
 }
 
 fn pool_lock_rw_leave(lock: &PoolLock) {
-    kassert!(lock.is_locked());
-    lock.set_locked(false);
+    rw_exit_write(&lock.prl_rwlock);
 }
 
 fn pool_lock_rw_assert_locked(lock: &PoolLock) {
-    kassert!(lock.is_locked());
+    rw_assert_wrlock(&lock.prl_rwlock);
 }
 
 fn pool_lock_rw_assert_unlocked(lock: &PoolLock) {
-    kassert!(!lock.is_locked());
+    kassert!(rw_status(&lock.prl_rwlock) != RW_WRITE);
 }
 
-fn pool_lock_rw_sleep(_ident: *const (), _lock: &PoolLock, _priority: i32, _wmesg: &str) -> i32 {
-    unported!("rwsleep_nsec (pool lock sleep, M5)") as i32
+fn pool_lock_rw_sleep(
+    ident: *const (),
+    lock: &PoolLock,
+    priority: i32,
+    wmesg: &'static str,
+) -> Result<(), Errno> {
+    rwsleep_nsec(ident, &lock.prl_rwlock, priority, wmesg, INFSLP)
 }
 
 #[cfg(test)]

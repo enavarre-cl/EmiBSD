@@ -35,9 +35,9 @@
 //! Upstream: sys/uvm/uvm.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M3 has the page queues, `page_init_done` and the pmemrange
-//! control; M7a adds `kernel_object` and the `UVM_ET_*` entry types; the locks (M5), the
-//! daemons' triggers (M5) and `aio_done` arrive with the buffer cache; M7a-2 adds
-//! `kentry_free`.
+//! control; M7a adds `kernel_object` and the `UVM_ET_*` entry types; the daemons' triggers
+//! and `aio_done` arrive with the buffer cache; M7a-2 adds `kentry_free`. M11a adds
+//! `fpageqlock`; `pageqlock` is not here yet (`uvm_lock_pageq` is a no-op, uvm_page.rs).
 //!
 //! Locks used to protect struct members in this file: `Q` `uvm.pageqlock`, `F`
 //! `uvm.fpageqlock`.
@@ -46,6 +46,8 @@ use core::cell::Cell;
 use core::ptr;
 use core::sync::atomic::AtomicBool;
 
+use crate::machine::intr::IPL_VM;
+use crate::sys::mutex::Mutex;
 use crate::sys::queue::SlistHead;
 use crate::uvm::uvm_map::{UvmKentryFree, VmMapEntry};
 use crate::uvm::uvm_object::UvmObject;
@@ -60,7 +62,9 @@ pub struct Uvm {
     pub page_active: Pglist,
     /// \[Q\] pages inactive (reclaim/free).
     pub page_inactive: Pglist,
-    // Lock order: pageqlock, then fpageqlock. (M5)
+    // Lock order: pageqlock, then fpageqlock.
+    /// `fpageqlock`: lock for free page q + pdaemon.
+    pub fpageqlock: Mutex,
     /// TRUE if `uvm_page_init()` finished.
     pub page_init_done: AtomicBool,
     /// \[F\] pmemrange data.
@@ -84,6 +88,7 @@ impl Uvm {
         Self {
             page_active: Pglist::new(),
             page_inactive: Pglist::new(),
+            fpageqlock: Mutex::new(IPL_VM),
             page_init_done: AtomicBool::new(false),
             pmr_control: UvmPmrControl::new(),
             kentry_free: SlistHead::new(),

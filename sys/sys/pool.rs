@@ -38,25 +38,35 @@
 //!
 //! Status: `wip`. Milestone M3 ports `struct pool`, `struct pool_allocator`,
 //! `struct pool_request`, the `PR_*` flags and the `POOL_ALLOC_*` encoding; `struct
-//! kinfo_pool` (diagnostic tools, stage 2). The per-CPU cache fields and their
-//! `kinfo_pool_cache*` records (`MULTIPROCESSOR`) come later.
+//! kinfo_pool` (diagnostic tools, stage 2). M11a adds the per-CPU cache fields of `struct
+//! pool`, `struct kinfo_pool_cache` and `struct kinfo_pool_cache_cpu`, `pr_refcnt`, and makes
+//! `union pool_lock` the real mutex or rwlock.
 //!
 //! ## Deviations
-//! - `union pool_lock` (a mutex or an rwlock, M5) is [`PoolLock`], a flag that only backs
-//!   the `pl_assert_*` checks until the real locks land.
-//! - `pr_refcnt` (`refcnt(9)`, M5) is not here.
-//! - `struct kinfo_pool` is copied out through `KinfoPool::to_bytes` (the C layout with its
-//!   padding zeroed), not as the Rust structure's memory.
+//! - `union pool_lock` is [`PoolLock`], a structure holding both the mutex and the rwlock;
+//!   the pool's lock operations (`pr_lock_ops`, chosen by `PR_RWLOCK`) use one of them.
+//! - `struct kinfo_pool`, `struct kinfo_pool_cache` and `struct kinfo_pool_cache_cpu` are
+//!   copied out through their `to_bytes` (the C layout with its padding zeroed), not as the
+//!   Rust structure's memory.
 //! - `pr_wchan` is a `&'static str`; `pr_alloc` and `pr_crange` are references, `None` before
-//!   `pool_init`.
+//!   `pool_init`. `pr_cache` is the `cpumem` slot array as an atomic pointer (null: no cache),
+//!   read without the lock by every `pool_get`/`pool_put` as the C reads it.
+//! - The cache's counters that the C reads or writes without `pr_cache_lock`
+//!   (`pr_cache_items`, `pr_cache_contention`, `pr_cache_timestamp`) are relaxed atomics.
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
+use core::sync::atomic::{AtomicPtr, AtomicU32, AtomicU64};
 
-use crate::kern::subr_pool::{PhEntry, Phtree, PoolLockOps, PoolPageHeader};
+use crate::kern::subr_pool::{CiList, PhEntry, Phtree, PoolLockOps, PoolPageHeader};
+use crate::machine::intr::IPL_NONE;
 use crate::queue_adapter;
+use crate::sys::mutex::Mutex;
 use crate::sys::param::PAGE_SIZE;
+use crate::sys::percpu::Cpumem;
 use crate::sys::queue::{SimpleqEntry, TailqEntry, TailqHead};
+use crate::sys::refcnt::Refcnt;
+use crate::sys::rwlock::Rwlock;
 use crate::sys::tree::RbtHead;
 use crate::uvm::uvm_extern::KmemPaMode;
 
@@ -145,6 +155,76 @@ impl KinfoPool {
     }
 }
 
+/// `struct kinfo_pool_cache`: `kern.pool.cache.<serial>`, the pool's global cache state.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct KinfoPoolCache {
+    /// `pr_ngc`: # of times a list has been gc'ed.
+    pub pr_ngc: u64,
+    /// `pr_len`: current target for list len.
+    pub pr_len: u32,
+    /// `pr_nitems`: # of idle items in the depot.
+    pub pr_nitems: u32,
+    /// `pr_contention`: # of times mtx was busy.
+    pub pr_contention: u32,
+}
+
+impl KinfoPoolCache {
+    /// The structure's bytes in the C layout, 24 bytes, the trailing padding zeroed.
+    pub fn to_bytes(&self) -> [u8; 24] {
+        let mut out = [0u8; 24];
+        out[0..8].copy_from_slice(&self.pr_ngc.to_ne_bytes());
+        out[8..12].copy_from_slice(&self.pr_len.to_ne_bytes());
+        out[12..16].copy_from_slice(&self.pr_nitems.to_ne_bytes());
+        out[16..20].copy_from_slice(&self.pr_contention.to_ne_bytes());
+        out
+    }
+}
+
+/// `struct kinfo_pool_cache_cpu`: one CPU's entry of `kern.pool.cache_cpus.<serial>`, which
+/// provides an array of `ncpusfound` of them, not a single struct.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct KinfoPoolCacheCpu {
+    /// `pr_cpu`: which cpu this cache is on.
+    pub pr_cpu: u32,
+    // counters for times items were handled by the cache
+    /// `pr_nget`: # of requests.
+    pub pr_nget: u64,
+    /// `pr_nfail`: # of unsuccessful requests.
+    pub pr_nfail: u64,
+    /// `pr_nput`: # of releases.
+    pub pr_nput: u64,
+    // counters for times the cache interacted with the pool
+    /// `pr_nlget`: # of list requests.
+    pub pr_nlget: u64,
+    /// `pr_nlfail`: # of unsuccessful list requests.
+    pub pr_nlfail: u64,
+    /// `pr_nlput`: # of list releases.
+    pub pr_nlput: u64,
+}
+
+impl KinfoPoolCacheCpu {
+    /// The size of the C structure.
+    pub const SIZE: usize = 56;
+
+    /// The structure's bytes in the C layout, the padding after `pr_cpu` zeroed.
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut out = [0u8; Self::SIZE];
+        out[0..4].copy_from_slice(&self.pr_cpu.to_ne_bytes());
+        let longs = [
+            self.pr_nget,
+            self.pr_nfail,
+            self.pr_nput,
+            self.pr_nlget,
+            self.pr_nlfail,
+            self.pr_nlput,
+        ];
+        for (i, v) in longs.iter().enumerate() {
+            out[8 + 8 * i..16 + 8 * i].copy_from_slice(&v.to_ne_bytes());
+        }
+        out
+    }
+}
+
 /// `pa_alloc`: gives `pr_pgsize` bytes for the pool; `slowdown` is set when the caller should
 /// yield.
 pub type PoolAllocFn = fn(&Pool, i32, &mut i32) -> Option<NonNull<u8>>;
@@ -191,25 +271,19 @@ pub const POOL_ALLOC_DEFAULT: usize = pool_alloc_size(PAGE_SIZE, POOL_ALLOC_ALIG
 
 /// `union pool_lock`: the pool's mutex or rwlock (see the module's deviations).
 pub struct PoolLock {
-    locked: Cell<bool>,
+    /// `prl_mtx`: the lock of a pool without `PR_RWLOCK`.
+    pub prl_mtx: Mutex,
+    /// `prl_rwlock`: the lock of a `PR_RWLOCK` pool.
+    pub prl_rwlock: Rwlock,
 }
 
 impl PoolLock {
-    /// An unlocked lock.
+    /// A lock before `pl_init`.
     pub const fn new() -> Self {
         Self {
-            locked: Cell::new(false),
+            prl_mtx: Mutex::new(IPL_NONE),
+            prl_rwlock: Rwlock::new("pool"),
         }
-    }
-
-    /// Whether the lock is held.
-    pub fn is_locked(&self) -> bool {
-        self.locked.get()
-    }
-
-    /// Records the lock as held or not.
-    pub fn set_locked(&self, locked: bool) {
-        self.locked.set(locked);
     }
 }
 
@@ -244,7 +318,8 @@ queue_adapter!(
 
 /// `struct pool`.
 pub struct Pool {
-    // pr_refcnt: M5.
+    /// `pr_refcnt`: held by `sysctl_dopool` while it reports the pool.
+    pub pr_refcnt: Refcnt,
     /// The pool's lock.
     pub pr_lock: PoolLock,
     /// The lock's operations (mutex or rwlock).
@@ -295,7 +370,28 @@ pub struct Pool {
     pub pr_ipl: Cell<i32>,
     /// Off-page page headers, by page address.
     pub pr_phtree: RbtHead<Phtree>,
-    // pr_cache* (MULTIPROCESSOR): not configured.
+    /// `pr_cache`: the per-CPU caches (`struct pool_cache` per CPU), null without one.
+    pub pr_cache: AtomicPtr<Cpumem>,
+    /// `pr_cache_magic`: the cookies a cached item's list link is XORed with.
+    pub pr_cache_magic: [Cell<usize>; 2],
+    /// `pr_cache_lock`: guards the idle item lists.
+    pub pr_cache_lock: PoolLock,
+    /// `pr_cache_lists`: list of idle item lists.
+    pub pr_cache_lists: TailqHead<CiList>,
+    /// `pr_cache_nitems`: # of idle items.
+    pub pr_cache_nitems: Cell<u32>,
+    /// `pr_cache_items`: target list length.
+    pub pr_cache_items: AtomicU32,
+    /// `pr_cache_contention`: # of times the list lock was busy.
+    pub pr_cache_contention: AtomicU32,
+    /// `pr_cache_contention_prev`: its value at the last gc.
+    pub pr_cache_contention_prev: Cell<u32>,
+    /// `pr_cache_timestamp`: time idle list was empty.
+    pub pr_cache_timestamp: AtomicU64,
+    /// `pr_cache_ngc`: # of times the gc released a list.
+    pub pr_cache_ngc: Cell<u64>,
+    /// `pr_cache_nout`: the items the CPUs' caches folded in.
+    pub pr_cache_nout: Cell<i32>,
     /// Item alignment.
     pub pr_align: Cell<u32>,
     /// Cache coloring.
@@ -328,14 +424,16 @@ pub struct Pool {
     pub pr_crange: Cell<Option<&'static KmemPaMode>>,
 }
 
-// SAFETY: every field is guarded by `pr_lock` or `pr_requests_lock` (M5); the boot CPU is
-// alone until then.
+// SAFETY: the page fields and counters are guarded by `pr_lock`, the request queue by
+// `pr_requests_lock`, the idle cache lists by `pr_cache_lock` (all real locks, M11a); the
+// fields read without a lock are atomics or, as in the C, written once at `pool_init`.
 unsafe impl Sync for Pool {}
 
 impl Pool {
     /// A pool before `pool_init` (the C's zeroed `struct pool`).
     pub const fn new() -> Self {
         Self {
+            pr_refcnt: Refcnt::new(),
             pr_lock: PoolLock::new(),
             pr_lock_ops: Cell::new(None),
             pr_poollist: SimpleqEntry::new(),
@@ -361,6 +459,17 @@ impl Pool {
             pr_flags: Cell::new(0),
             pr_ipl: Cell::new(0),
             pr_phtree: RbtHead::new(),
+            pr_cache: AtomicPtr::new(ptr::null_mut()),
+            pr_cache_magic: [Cell::new(0), Cell::new(0)],
+            pr_cache_lock: PoolLock::new(),
+            pr_cache_lists: TailqHead::new(),
+            pr_cache_nitems: Cell::new(0),
+            pr_cache_items: AtomicU32::new(0),
+            pr_cache_contention: AtomicU32::new(0),
+            pr_cache_contention_prev: Cell::new(0),
+            pr_cache_timestamp: AtomicU64::new(0),
+            pr_cache_ngc: Cell::new(0),
+            pr_cache_nout: Cell::new(0),
             pr_align: Cell::new(0),
             pr_maxcolors: Cell::new(0),
             pr_phoffset: Cell::new(0),
@@ -435,5 +544,31 @@ mod tests {
         assert_eq!((word(40), word(72)), (10, 14));
         assert_eq!(u32::from_ne_bytes(b[80..84].try_into().expect("4")), 15);
         assert_eq!(word(88), 16);
+    }
+
+    #[test]
+    fn kinfo_pool_cache_layouts() {
+        let kpc = KinfoPoolCache {
+            pr_ngc: 1,
+            pr_len: 2,
+            pr_nitems: 3,
+            pr_contention: 4,
+        }
+        .to_bytes();
+        assert_eq!(u64::from_ne_bytes(kpc[0..8].try_into().expect("8")), 1);
+        assert_eq!(u32::from_ne_bytes(kpc[16..20].try_into().expect("4")), 4);
+        assert_eq!(&kpc[20..24], &[0; 4], "padding");
+
+        let kpcc = KinfoPoolCacheCpu {
+            pr_cpu: 3,
+            pr_nget: 5,
+            pr_nlput: 10,
+            ..KinfoPoolCacheCpu::default()
+        }
+        .to_bytes();
+        assert_eq!(u32::from_ne_bytes(kpcc[0..4].try_into().expect("4")), 3);
+        assert_eq!(&kpcc[4..8], &[0; 4], "padding");
+        assert_eq!(u64::from_ne_bytes(kpcc[8..16].try_into().expect("8")), 5);
+        assert_eq!(u64::from_ne_bytes(kpcc[48..56].try_into().expect("8")), 10);
     }
 }

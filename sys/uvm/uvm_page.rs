@@ -94,9 +94,9 @@
 //!   `pg + n` as an address for comparisons is [`VmPage::ptr_add`].
 //! - `vm_physmem[]` and `vm_nphysseg` are behind [`vm_physmem`] / [`vm_physmem_mut`] /
 //!   [`VM_NPHYSSEG`]: written on the boot CPU before `uvm.page_init_done`, read afterwards.
-//! - The page queue locks (`uvm_lock_pageq`, `uvm_lock_fpageq`) are documented no-ops until the
-//!   mutex arrives (M5); the owner-lock assertions (`rw_write_held`) answer true for the same
-//!   reason, and `uvm_pagewait` reports `rwsleep` as unported.
+//! - The page queue lock (`uvm_lock_pageq`) is a documented no-op: the page queues are
+//!   reached under the kernel lock (M11a: uvm_fault and the page daemon's paths run locked).
+//!   M11a makes `uvm_lock_fpageq` the C's mutex, `uvm.fpageqlock` at `IPL_VM`.
 //! - `uvm_page_physload` after `uvm_init` needs `km_alloc` (`uvm_km.c`, later in M3): the
 //!   non-preload path reports it and ignores the segment, as the C does when the allocation
 //!   fails.
@@ -112,8 +112,10 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use libkern::StaticCell;
 
+use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_synch::rwsleep_nsec;
 use crate::kern::subr_prf::panic;
+use crate::machine::intr::IPL_VM;
 use crate::machine::{Machine, Pmap, VmPageMd, VmParam};
 use crate::sys::errno::Errno;
 use crate::sys::mman::PROT_NONE;
@@ -442,10 +444,14 @@ pub unsafe fn vm_physmem_mut() -> &'static mut [VmPhysseg; VM_PHYSSEG_MAX] {
 pub fn uvm_lock_pageq() {}
 /// `uvm_unlock_pageq()`.
 pub fn uvm_unlock_pageq() {}
-/// `uvm_lock_fpageq()`: the free page queue lock (`uvm.fpageqlock`, a mutex at M5).
-pub fn uvm_lock_fpageq() {}
-/// `uvm_unlock_fpageq()`.
-pub fn uvm_unlock_fpageq() {}
+/// `uvm_lock_fpageq()`: the free page queue lock, `mtx_enter(&uvm.fpageqlock)`.
+pub fn uvm_lock_fpageq() {
+    mtx_enter(&UVM.fpageqlock);
+}
+/// `uvm_unlock_fpageq()`: `mtx_leave(&uvm.fpageqlock)`.
+pub fn uvm_unlock_fpageq() {
+    mtx_leave(&UVM.fpageqlock);
+}
 
 /// `uvm_pageinsert`: insert a page in the object. Caller must lock object; call should have
 /// already set pg's object and offset pointers and bumped the version counter.
@@ -486,7 +492,8 @@ pub fn uvm_page_init(kvm_startp: &mut Vaddr, kvm_endp: &mut Vaddr) {
     // init the page queues and page queue locks
     UVM.page_active.init();
     UVM.page_inactive.init();
-    // mtx_init(&uvm.pageqlock, IPL_VM); mtx_init(&uvm.fpageqlock, IPL_VM): M5.
+    // mtx_init(&uvm.pageqlock, IPL_VM): see the module's deviations.
+    mtx_init(&UVM.fpageqlock, IPL_VM);
     uvm_pmr_init();
 
     // allocate vm_page structures.

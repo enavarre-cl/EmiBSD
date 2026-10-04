@@ -1056,11 +1056,20 @@ notes = "M_* flags and types with INITKMEMNAMES, MINBUCKET/MINALLOCSIZE/MAXALLOC
 [[file]]
 c = "sys/sys/pool.h"
 rust = "sys/sys/pool.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6b2d9d4350ad12e82914aeca71ce89a990f6f813"
 deps = ["sys/sys/queue.h", "sys/sys/tree.h", "sys/uvm/uvm_extern.h"]
-notes = "struct pool, pool_allocator, pool_request, PR_* and POOL_ALLOC_*; union pool_lock is a flag until the mutex/rwlock (M5); pr_refcnt (M5); kinfo_pool* (sysctl, M7) and the pool_cache fields (MULTIPROCESSOR) not here; struct kinfo_pool (KinfoPool, to_bytes in the C layout)"
+notes = "struct pool, pool_allocator, pool_request, PR_* and POOL_ALLOC_*; struct kinfo_pool (KinfoPool, to_bytes in the C layout); M11a: union pool_lock is PoolLock holding both the mutex and the rwlock (pr_lock_ops picks one); pr_refcnt; the pool_cache fields (pr_cache is an AtomicPtr to the cpumem slots; pr_cache_items/contention/timestamp, read unlocked in C, are relaxed atomics); struct kinfo_pool_cache and kinfo_pool_cache_cpu with to_bytes (C layout, padding zeroed); the prototypes are subr_pool.rs's functions; host test"
+
+[[file]]
+c = "sys/sys/percpu.h"
+rust = "sys/sys/percpu.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5595b1abafede2fa908ac752385698a3454747f2"
+deps = ["sys/sys/types.h"]
+notes = "M11a: CACHELINESIZE (64: neither arch defines it), struct cpumem (Cpumem), struct cpumem * (CpumemPtr: slot array with MULTIPROCESSOR, the memory itself without), cpumem_iter, counters_ref, cpumem_enter/leave, CPUMEM_BOOT_MEMORY/INITIALIZER (CpumemBootMemory<W>, initializer() fills the MP slot), CPUMEM_FOREACH (cpumem_foreach iterator), COUNTERS_BOOT_MEMORY (counters_boot_words), counters_enter/leave (odd generation number with MULTIPROCESSOR), counters_inc/dec/add/pkt (relaxed fetch_add on AtomicU64: an interrupt on the same CPU cannot tear them); __upunused not needed"
 
 [[file]]
 c = "sys/kern/subr_pool.c"
@@ -1069,7 +1078,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c965cb859811f0a12dcfd3379fa1a585e57a3dcc"
 deps = ["sys/sys/pool.h", "sys/uvm/uvm_km.c", "sys/dev/rnd.c", "sys/kern/kern_synch.c"]
-notes = "pool_init/destroy/get/put with do_get/do_put, the page management, the request queue, pool_prime, watermarks/limits/constraints, pool_reclaim(_all), the page allocators and the lock ops (flags until M5); a PR_WAITOK get that finds no memory fails instead of sleeping; getnsecuptime is kern_tc.c's (M5); poison_* (subr_poison.c) reported; pool_cache (MULTIPROCESSOR), pool_gc_*, ddb printers, pool_chk, pool_walk, sysctl_dopool: M5 to M7; M7a: pool_lock (the rwlock over the pool list) is real; the per-pool rwlock variant of pool_lock_ops still stands on the flag; diagnostic tools stage 2: sysctl_dopool (no pr_refcnt taken, M5) and the non-MULTIPROCESSOR pool_cache_pool_info/pool_cache_info/pool_cache_cpus_info; M10e: pool_walk (DDB: func(item, full, pr) for every item in use of the full and the partial pages; PoolWalkPr/PoolWalkFn types), used by the NFS client printers (nfs_debug.c); host test"
+notes = "pool_init/destroy/get/put with do_get/do_put, the page management, the request queue, pool_prime, watermarks/limits/constraints, pool_reclaim(_all), the page allocators and the lock ops; getnsecuptime is kern_tc.c's; poison_* (subr_poison.c) reported; ddb printers (pool_printit, db_show_all_pools) and pool_chk not here; M7a: pool_lock (the rwlock over the pool list) is real; diagnostic tools stage 2: sysctl_dopool and the non-MULTIPROCESSOR pool_cache_pool_info/pool_cache_info/pool_cache_cpus_info; M10e: pool_walk (DDB: func(item, full, pr) for every item in use of the full and the partial pages; PoolWalkPr/PoolWalkFn types), used by the NFS client printers (nfs_debug.c); host test; M11a: the lock ops are the real mutex (mtx_init_flags at pr_ipl, mtx_enter/_try/leave, MUTEX_ASSERT_*, msleep_nsec) and rwlock (rw_init_flags, rw_enter_write, RW_WRITE|RW_NOSLEEP, rw_assert_wrlock, rwsleep_nsec), with or without MULTIPROCESSOR; pool_get asserts waitok and with PR_WAITOK and no memory queues a pool_request on its stack and sleeps in pl_sleep until pool_runqueue serves it (deviation: while cold or on proc0 it fails, where the C panics under DIAGNOSTIC); the slowdown/pool_debug yield; pr_refcnt taken by sysctl_dopool and finalized by pool_destroy; splvm in pool_multi_alloc/free, KERNEL_LOCK in pool_multi_alloc_ni/free_ni; pool_gc_sched (timeout) and pool_gc_pages (systqmp task, splvm, one idle page per pool after POOL_WAIT_GC, re-armed every second; started by init_main under MULTIPROCESSOR); the MULTIPROCESSOR per-CPU caches: struct pool_cache_item/pool_cache, POOL_CACHE_* , pool_cache_init (pool_caches 'plcache' via cpumem_get), pool_cache_item_magic(_check) over the ci_nextl words, pool_list_enter/leave (contention count), pool_cache_list_alloc/free/put, pool_cache_enter/leave (pc_gen generation at pr_ipl), pool_cache_get/put, pool_cache_destroy, pool_cache_gc (list length tuning), pool_cache_pool_info, pool_cache_info and pool_cache_cpus_info (kern.pool.cache/cache_cpus); counters other CPUs read are relaxed atomics with release/acquire on pc_gen; selftest=mpstress (selftest.rs) is the MP stress"
 
 [[file]]
 c = "sys/kern/kern_malloc.c"
@@ -1078,7 +1087,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "9a011b29bfce8c2d727484c9536a3954fc5b296d"
 deps = ["sys/sys/malloc.h", "sys/uvm/uvm_km.c", "sys/dev/rnd.c", "sys/sys/systm.h"]
-notes = "malloc/free/mallocarray/kmeminit_nkmempages/kmeminit with BUCKETINDX; KMEMSTATS is feature kmemstats; kmem_map is the direct map (kmembase/kmemlimit span the loaded frames, kmemusage one entry per frame) until uvm_km_suballoc (uvm_map); btokup always range-checks; the ks_limit msleep, poison_*, uvm_map_checkprot and ratecheck reported; sysctl_malloc/malloc_printit and buckstring/memall: M7; M7b: kmeminit makes kmem_map with uvm_km_suballoc (VM_MAP_INTRSAFE) and kmembase/kmemlimit are its bounds; only the host double (PMAP_NOMMU) keeps the direct-map stand-in; diagnostic tools stage 2: sysctl_malloc, buckstring (KMEMSTATS) and memall (KMEMSTATS or DIAGNOSTIC) built by kmeminit; the structures go out through to_bytes, no malloc_mtx (M5); BUCKETINDX of a negative number is the smallest bucket; KMEMSTATS is a default cargo feature since the diagnostic tools (GENERIC has option KMEMSTATS); memname is DIAGNOSTIC-only (its KMEMSTATS user, the ks_limit msleep wmesg, is reported)"
+notes = "malloc/free/mallocarray/kmeminit_nkmempages/kmeminit with BUCKETINDX; KMEMSTATS is feature kmemstats (default: GENERIC has option KMEMSTATS); btokup always range-checks; poison_*, uvm_map_checkprot and ratecheck reported; malloc_printit not here; M7b: kmeminit makes kmem_map with uvm_km_suballoc (VM_MAP_INTRSAFE) and kmembase/kmemlimit are its bounds; only the host double (PMAP_NOMMU) keeps the direct-map stand-in; diagnostic tools stage 2: sysctl_malloc, buckstring (KMEMSTATS) and memall (KMEMSTATS or DIAGNOSTIC) built by kmeminit; the structures go out through to_bytes; BUCKETINDX of a negative number is the smallest bucket; M11a: malloc_mtx is the C's mutex (IPL_VM) at the C's sites in malloc, free and sysctl_malloc (dropped around km_alloc/km_free, which run at splvm), with or without MULTIPROCESSOR; the KMEMSTATS ks_limit wait msleeps on it (memname as wmesg); DIAGNOSTIC assertwaitok, the pool_debug == 2 yield and the proc0 'cannot sleep for memory during boot' panic"
 
 [[file]]
 c = "sys/dev/rnd.c"
@@ -1169,7 +1178,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ff2d6fe21192846df9abf631bcdb91bff05c95b0"
 deps = ["sys/uvm/uvm_page.h", "sys/sys/rwlock.h"]
-notes = "struct vm_anon (an_lock, an_page, an_ref, an_swslot), struct vm_aref, the prototypes; MULTIPROCESSOR padding not configured (M7a-1)"
+notes = "struct vm_anon (an_lock, an_page, an_ref, an_swslot), struct vm_aref, the prototypes; M11a: the MULTIPROCESSOR && __LP64__ 'unused' padding (pool items at least a pool_cache_item)"
 
 [[file]]
 c = "sys/uvm/uvm_anon.c"
@@ -1178,7 +1187,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "77a6005b43e5cdf9d67bcfd390b80a6fa649b43f"
 deps = ["sys/uvm/uvm_anon.h", "sys/kern/subr_pool.c", "sys/kern/kern_rwlock.c", "sys/uvm/uvm_page.c"]
-notes = "M7a-1: uvm_anon_init (the pool, hiwat free/16), uvm_anon_init_percpu (pool_cache_init: MULTIPROCESSOR not configured), uvm_analloc, uvm_anfree, uvm_anwait, uvm_anon_dropswap (uvm_swap_free reported: swap, M7), uvm_anon_release; uvm_anon_pagein reports uvmfault_anonget (M7a-3); UVM_PAGE_OWN not configured"
+notes = "M7a-1: uvm_anon_init (the pool, hiwat free/16), uvm_anon_init_percpu, uvm_analloc, uvm_anfree, uvm_anwait, uvm_anon_dropswap (uvm_swap_free reported: swap, M7), uvm_anon_release; uvm_anon_pagein reports uvmfault_anonget (M7a-3); UVM_PAGE_OWN not configured; M11a: uvm_anon_init_percpu does pool_cache_init(&uvm_anon_pool) under MULTIPROCESSOR"
 
 [[file]]
 c = "sys/uvm/uvm_amap.h"
@@ -1286,7 +1295,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "79dd17e35d40fa3d84252b3ace130f87eea2e717"
 deps = ["sys/uvm/uvm_page.h", "sys/uvm/uvm_pmemrange.h"]
-notes = "struct uvm (page queues, page_init_done, pmr_control) and the UVM_ET_* bits; the locks, the aiodone queue, the pager and swap fields arrive with their subsystems; M7a-1: kernel_object and the UVM_ET_IS* tests; M7a-2: kentry_free"
+notes = "struct uvm (page queues, page_init_done, pmr_control) and the UVM_ET_* bits; the aiodone queue, the pager and swap fields arrive with their subsystems; M7a-1: kernel_object and the UVM_ET_IS* tests; M7a-2: kentry_free; M11a: fpageqlock (a mutex at IPL_VM); pageqlock not here yet (uvm_lock_pageq is a no-op)"
 
 [[file]]
 c = "sys/uvm/uvm_init.c"
@@ -1295,7 +1304,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7703ec138db0f65b7bedc76cdaed1423363db7f0"
 deps = ["sys/uvm/uvm.h", "sys/uvm/uvmexp.h", "sys/uvm/uvm_page.c", "sys/uvm/uvm_pager.c", "sys/uvm/uvm_amap.c", "sys/uvm/uvm_aobj.c", "sys/uvm/uvm_anon.c", "sys/uvm/uvm_map.c", "sys/uvm/uvm_km.c", "sys/uvm/uvm_addr.c"]
-notes = "uvm_init: page system, uvm_map_init, uvm_km_init (kernel_map), uvmfault_init, pmap_init, kmeminit, uvm_pager_init, amap_init, uao_create (kernel swap), uvm_anon_init, the bestfit switch of kernel_map (kmem_map waits for kmeminit's suballoc) run; uvm_km_page_init, dma_alloc_init, uvm_km_page_lateinit and uvm_init_percpu's counters report themselves unported; uvmexp is exported under its C name for the amd64 interrupt stubs' V_INTR; vm_min_kernel_address is a runtime value (amd64 shifts the kernel map above its direct map) and uvm_maxkaddr is raised to it before uvm_km_init"
+notes = "uvm_init: page system, uvm_map_init, uvm_km_init (kernel_map), uvmfault_init, pmap_init, kmeminit, uvm_pager_init, amap_init, uao_create (kernel swap), uvm_anon_init, the bestfit switch of kernel_map (kmem_map waits for kmeminit's suballoc) run; uvm_km_page_init, dma_alloc_init, uvm_km_page_lateinit and uvm_init_percpu's counters report themselves unported; uvmexp is exported under its C name for the amd64 interrupt stubs' V_INTR; vm_min_kernel_address is a runtime value (amd64 shifts the kernel map above its direct map) and uvm_maxkaddr is raised to it before uvm_km_init; M11a: uvm_init_percpu calls uvm_anon_init_percpu; uvmexp_counters stay static atomics, so counters_alloc_ncpus (now in subr_percpu.rs) is not called: a deviation, no longer reported"
 
 [[file]]
 c = "sys/uvm/uvm_io.c"
@@ -1327,7 +1336,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e89c58ad8ac48fec0a2742e0391ebc4ffa649598"
 deps = ["sys/uvm/uvm_page.h", "sys/uvm/uvm_pmemrange.c", "sys/uvm/uvm_object.h", "sys/uvm/uvm_anon.h", "sys/uvm/uvm_param.h", "sys/kern/kern_rwlock.c"]
-notes = "page init, physload/physget/physdump, pageboot_alloc (both PMAP_STEAL_MEMORY paths), pagealloc/pagefree/pglistalloc/pglistfree, wire/unwire/activate/deactivate, PHYS_TO_VM_PAGE; uvm_page_physload after uvm_init needs malloc; uvm_pagewait needs rwsleep (M5); uvm_pagezero_thread (M5); M7a-1: uvm_pagewait sleeps on the owner lock (rwsleep_nsec), uvm_page_unbusy calls pmap_page_protect, uvm_page_owner_locked_p checks vmobjlock/an_lock; vfs stage 2: uvm_pagealloc_multi asks for one segment on a machine without an MMU (the host double), so the buffer cache can use the direct map there; vfs stage 2: uvm_pagedeactivate calls pmap_page_protect, pmap_clear_reference and pmap_is_modified (now in the machine contract) as the C does; M11a: uvm_shutdown calls smr_flush"
+notes = "page init, physload/physget/physdump, pageboot_alloc (both PMAP_STEAL_MEMORY paths), pagealloc/pagefree/pglistalloc/pglistfree, wire/unwire/activate/deactivate, PHYS_TO_VM_PAGE; uvm_page_physload after uvm_init needs malloc; uvm_pagezero_thread not here; M7a-1: uvm_pagewait sleeps on the owner lock (rwsleep_nsec), uvm_page_unbusy calls pmap_page_protect, uvm_page_owner_locked_p checks vmobjlock/an_lock; vfs stage 2: uvm_pagealloc_multi asks for one segment on a machine without an MMU (the host double), so the buffer cache can use the direct map there; vfs stage 2: uvm_pagedeactivate calls pmap_page_protect, pmap_clear_reference and pmap_is_modified (now in the machine contract) as the C does; M11a: uvm_shutdown calls smr_flush; M11a: uvm_page_init does mtx_init(&uvm.fpageqlock, IPL_VM) and uvm_lock_fpageq/uvm_unlock_fpageq are mtx_enter/mtx_leave on it; uvm.pageqlock (uvm_lock_pageq) is still a no-op: the page queues are reached under the kernel lock in M11a"
 
 [[file]]
 c = "sys/uvm/uvm_pmemrange.h"
@@ -1354,7 +1363,7 @@ deps = [
     "sys/kern/kern_synch.c",
     "sys/uvm/uvm_pdaemon.c",
 ]
-notes = "the whole allocator (getpages/getone/get1page, freepages/freepageq, split/use_inc, rootupdate, isfree, print, assertvalid under debug); uvm_wait/wakeup report themselves unported so WAITOK fails with ENOMEM; in_pagedaemon is false; the per-CPU cache (MULTIPROCESSOR && __HAVE_UVM_PERCPU) is not configured; uvm_pmr_allocpmr after uvm_init needs malloc; vfs stage 2: BUFPAGES_DEFICIT/BUFPAGES_INACT are mount.h's bufpages_deficit()/bufpages_inact() over bcstats"
+notes = "the whole allocator (getpages/getone/get1page, freepages/freepageq, split/use_inc, rootupdate, isfree, print, assertvalid under debug); uvm_wait reports itself unported so WAITOK fails with ENOMEM; in_pagedaemon is false; uvm_pmr_allocpmr after uvm_init needs malloc; vfs stage 2: BUFPAGES_DEFICIT/BUFPAGES_INACT are mount.h's bufpages_deficit()/bufpages_inact() over bcstats; M11a: uvm_lock_fpageq is the real mutex (uvm.fpageqlock, IPL_VM) at every C site (getpages, freepages, freepageq, split, use_inc); the per-CPU page cache (MULTIPROCESSOR && __HAVE_UVM_PERCPU, which amd64 and arm64 define: uvm_pmr_cache_alloc/get/free/put/drain, ci_uvm) is not ported: uvm_pmr_cache_get/put/drain are the !MULTIPROCESSOR versions (a performance cache; it needs ci_uvm in both archs' cpu_info); uvm_pagezero_thread not here; selftest=mpstress stresses uvm_pglistalloc/free on every CPU"
 
 [[file]]
 c = "sys/uvm/uvm_km.c"
@@ -1470,7 +1479,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "68cdf4c1b23fa986d0055f16ee4c4fd90a98099e"
 deps = ["sys/arch/amd64/include/trap.h", "sys/arch/amd64/include/frame.h", "sys/arch/amd64/include/cpu.h", "sys/arch/amd64/amd64/db_interface.c"]
-notes = "M4: trap_type[], trap_types, fault (writes ci_panicbuf), pgex2access, kpageflttrap (returns 0 at the curproc check, as C with p == NULL; the pcb_onfault/SMEP/SMAP/uvm_fault code behind it is ported with uvm_fault reported), kerntrap (x86_nmi from intr.c, verify_smap M4-b2, debug_trap is the DEBUG option), trap_print; upageflttrap, usertrap, ast, syscall, frame_dump, verify_pkru, vctrap are M6; M6-a: syscall, ast, child_return; kpageflttrap checks pcb_onfault against the .nofault table and resumes there (uvm_fault still reported); M6-b: syscall hands the six argument registers as a SysArgs block; M6-b2: usertrap (the signal table; verify_pkru, fputrap and uvm_map_inentry reported), upageflttrap (uvm_fault reported: a user fault is SIGSEGV), frame_dump (always on, as TRAP_SIGDEBUG); trapsignal is a stand-in that prints and lets the process die of the signal through exit1 until kern_sig.c (M6-c); M7a-3b: kpageflttrap and upageflttrap call uvm_fault (kernel_map or the process's vm_map, the PROT_EXEC retry without NX); uvm_grow reported; M7a-3b: usertrap's uvm_map_inentry stack check before a user page fault, uvm_grow after a served fault; kern_sig.c: usertrap and upageflttrap call kern_sig's trapsignal with the C's sigval (rip, cr2) and usertrap ends in userret; the siginfo codes come from sys/siginfo.rs (the local ILL_BTCFI was 10, the C's is 9); fputrap reported (SIGFPE code 0); M8: child_return behind machine::cpu; M11a: child_return's KERNEL_UNLOCK() (the kernel lock proc_trampoline_mi takes for a new thread with MULTIPROCESSOR), ast reads ci_want_resched as the atomic other CPUs set; the system call's kernel lock is mi_syscall's; verify_pkru's KERNEL_LOCK/sigabort waits for PKU (M6-b); deviation: kpageflttrap and upageflttrap hold the kernel lock over uvm_fault/uvm_grow (unlocked in the C) until uvm, uvm_lock_fpageq and the pools are audited (M11a phase 2, M11e)"
+notes = "M4: trap_type[], trap_types, fault (writes ci_panicbuf), pgex2access, kpageflttrap (returns 0 at the curproc check, as C with p == NULL; the pcb_onfault/SMEP/SMAP/uvm_fault code behind it is ported with uvm_fault reported), kerntrap (x86_nmi from intr.c, verify_smap M4-b2, debug_trap is the DEBUG option), trap_print; upageflttrap, usertrap, ast, syscall, frame_dump, verify_pkru, vctrap are M6; M6-a: syscall, ast, child_return; kpageflttrap checks pcb_onfault against the .nofault table and resumes there (uvm_fault still reported); M6-b: syscall hands the six argument registers as a SysArgs block; M6-b2: usertrap (the signal table; verify_pkru, fputrap and uvm_map_inentry reported), upageflttrap (uvm_fault reported: a user fault is SIGSEGV), frame_dump (always on, as TRAP_SIGDEBUG); trapsignal is a stand-in that prints and lets the process die of the signal through exit1 until kern_sig.c (M6-c); M7a-3b: kpageflttrap and upageflttrap call uvm_fault (kernel_map or the process's vm_map, the PROT_EXEC retry without NX); uvm_grow reported; M7a-3b: usertrap's uvm_map_inentry stack check before a user page fault, uvm_grow after a served fault; kern_sig.c: usertrap and upageflttrap call kern_sig's trapsignal with the C's sigval (rip, cr2) and usertrap ends in userret; the siginfo codes come from sys/siginfo.rs (the local ILL_BTCFI was 10, the C's is 9); fputrap reported (SIGFPE code 0); M8: child_return behind machine::cpu; M11a: child_return's KERNEL_UNLOCK() (the kernel lock proc_trampoline_mi takes for a new thread with MULTIPROCESSOR), ast reads ci_want_resched as the atomic other CPUs set; the system call's kernel lock is mi_syscall's; verify_pkru's KERNEL_LOCK/sigabort waits for PKU (M6-b); deviation: kpageflttrap and upageflttrap hold the kernel lock over uvm_fault/uvm_grow (unlocked in the C) until uvm, uvm_lock_fpageq and the pools are audited (M11a phase 2, M11e); M11a phase 2: the fault-path kernel lock now stands only for the unlocked page queues (uvm_lock_pageq); fpageqlock, malloc_mtx and the pool locks are real"
 
 [[file]]
 c = "sys/arch/amd64/amd64/locore.S"
@@ -1536,7 +1545,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a6caf2c6ba99ae93953cf21a8af80db2ff4e95d4"
 deps = ["sys/arch/arm64/include/armreg.h", "sys/arch/arm64/include/frame.h", "sys/arch/arm64/include/cpu.h", "sys/arch/arm64/arm64/db_interface.c"]
-notes = "M4: is_unpriv_ldst, accesstype, fault (writes ci_panicbuf), kdata_abort (no pcb before M5, pmap_fault_fixup and uvm_fault reported, so every kernel abort panics uvm_fault failed), do_el1h_sync (intr_enable as in C; the we_re_toast path prints, enters db_ktrap and then panics as the non-DDB build does), serror, do_el1h_error, dumpregs; udata_abort, emulate_msr, do_el0_sync, do_el0_error and the svc path are M6; M6-a: do_el0_sync (svc -> svc_handler), do_el0_error, kdata_abort resumes at pcb_onfault; M6-b2: udata_abort (alignment -> SIGBUS; uvm_map_inentry, pmap_fault_fixup and uvm_fault reported: a user fault is SIGSEGV) and do_el0_sync's default sigexit(SIGILL) after the dump; trapsignal is a stand-in that prints and lets the process die of the signal through exit1 until kern_sig.c (M6-c); emulate_msr, fpu_load/sve_load are M6-c; M7a-3b: kdata_abort and udata_abort call uvm_fault (kernel_map or the process's vm_map); M7a-3b (2): kdata_abort and udata_abort try pmap_fault_fixup first; M7a-3b (3): udata_abort's uvm_map_inentry stack check, uvm_grow after a served fault; kern_sig.c: do_el0_sync's every exception as in C (trapsignal for UNKNOWN/BRANCH_TGT/MSR/FPAC/PC_ALIGN/SP_ALIGN/BRK/SOFTSTP_EL0, fpu_load for FP_SIMD/TRAP_FP, sve_load for SVE, the default sigexit(SIGILL) after the dump), udata_abort's trapsignals; emulate_msr reported (needs cpu.c's cpu_id_aa64*): it emulates nothing, so the mrs is a SIGILL; M11a: emulate_msr (MIDR, the RES1-only MPIDR, REVIDR, ID_AA64PFR0/1, ISAR0/1/2 from cpu.c's cpu_id_aa64*, the zero registers; Rt or lr, elr += 4; ISS_MSR_* in armreg.rs), so trap.c is whole; do_el0_sync's KERNEL_LOCK before sigexit (the KERNEL_UNLOCK after it is unreachable: sigexit never returns)"
+notes = "M4: is_unpriv_ldst, accesstype, fault (writes ci_panicbuf), kdata_abort (no pcb before M5, pmap_fault_fixup and uvm_fault reported, so every kernel abort panics uvm_fault failed), do_el1h_sync (intr_enable as in C; the we_re_toast path prints, enters db_ktrap and then panics as the non-DDB build does), serror, do_el1h_error, dumpregs; udata_abort, emulate_msr, do_el0_sync, do_el0_error and the svc path are M6; M6-a: do_el0_sync (svc -> svc_handler), do_el0_error, kdata_abort resumes at pcb_onfault; M6-b2: udata_abort (alignment -> SIGBUS; uvm_map_inentry, pmap_fault_fixup and uvm_fault reported: a user fault is SIGSEGV) and do_el0_sync's default sigexit(SIGILL) after the dump; trapsignal is a stand-in that prints and lets the process die of the signal through exit1 until kern_sig.c (M6-c); emulate_msr, fpu_load/sve_load are M6-c; M7a-3b: kdata_abort and udata_abort call uvm_fault (kernel_map or the process's vm_map); M7a-3b (2): kdata_abort and udata_abort try pmap_fault_fixup first; M7a-3b (3): udata_abort's uvm_map_inentry stack check, uvm_grow after a served fault; kern_sig.c: do_el0_sync's every exception as in C (trapsignal for UNKNOWN/BRANCH_TGT/MSR/FPAC/PC_ALIGN/SP_ALIGN/BRK/SOFTSTP_EL0, fpu_load for FP_SIMD/TRAP_FP, sve_load for SVE, the default sigexit(SIGILL) after the dump), udata_abort's trapsignals; emulate_msr reported (needs cpu.c's cpu_id_aa64*): it emulates nothing, so the mrs is a SIGILL; M11a: emulate_msr (MIDR, the RES1-only MPIDR, REVIDR, ID_AA64PFR0/1, ISAR0/1/2 from cpu.c's cpu_id_aa64*, the zero registers; Rt or lr, elr += 4; ISS_MSR_* in armreg.rs), so trap.c is whole; do_el0_sync's KERNEL_LOCK before sigexit (the KERNEL_UNLOCK after it is unreachable: sigexit never returns); M11a phase 2: kdata_abort and udata_abort hold the kernel lock over uvm_fault/uvm_grow (unlocked in the C) as amd64 does, until M11e makes uvm.pageqlock real"
 
 [[file]]
 c = "sys/ddb/db_trap.c"
@@ -2010,6 +2019,15 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "5a6e0414362f3343a9bc6ca66ed360dce1d6b5fa"
 deps = ["sys/sys/clockintr.h", "sys/kern/kern_clockintr.c"]
 notes = "M5-a: profclock_period and profclock (addupc_intr reported, struct process M5-b); GPROF/DDBPROF not configured; sys_profil and addupc_* are M6; M8: sys_profil's checks (EPERM without PSI_PROFILE, EINVAL above 1.0, scale 0 stops); struct uprof, prof_fork/exec/write, addupc_intr/task and start/stopprofclock are not ported, so the rest is reported"
+
+[[file]]
+c = "sys/kern/subr_percpu.c"
+rust = "sys/kern/subr_percpu.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6c03becf49ef76f72b2b4c3d35e45cd535b12ea3"
+deps = ["sys/sys/percpu.h", "sys/kern/subr_pool.c", "sys/kern/kern_malloc.c"]
+notes = "M11a: both halves. MULTIPROCESSOR: percpu_init (the percpumem pool of ncpusfound slots, pool_allocator_single), cpumem_get/put, cpumem_malloc/malloc_ncpus/free (rounded to CACHELINESIZE), cpumem_first/next, counters_alloc/alloc_ncpus/free/read (generation protocol, yield while odd)/zero; uniprocessor: one allocation cast to the handle, counters_read/zero at splhigh. The handle (CpumemPtr) carries the per-CPU size so accesses are bounds-checked; cpumem_put/cpumem_free/counters_free are unsafe fn; a None from malloc/pool_get with M_WAITOK panics. Existing users of struct cpumem * (if_counters, uvmexp_counters, mbstat, rtcounters, pf/pfsync counters) stay static atomic arrays (docs/C_TO_RUST.md); converting them is not part of M11a; host test"
 
 [[file]]
 c = "sys/lib/libkern/random.c"

@@ -240,6 +240,9 @@ fn mainbus_attach_cpus(self_: &Device) {
         attach(bsp, CPU_ROLE_BP);
     }
     for cpu in mp.cpus().filter(|c| c.hwid != mp.bsp_hwid) {
+        // acpimadt_attach counts every application processor in ncpusfound (which starts
+        // at 1, the boot processor): percpu(9) sizes its per-CPU arrays with it.
+        crate::kern::init_main::NCPUSFOUND.fetch_add(1, Ordering::Relaxed);
         attach(cpu, CPU_ROLE_AP);
     }
 }

@@ -39,7 +39,9 @@
 //! pagers, amaps, anons, the kmem allocators).
 //!
 //! ## Deviations
-//! - `uvmexp_counters` (per-CPU, `COUNTERS_BOOT_MEMORY`) waits for `percpu` (M5).
+//! - `uvmexp_counters` (the C's per-CPU `COUNTERS_BOOT_MEMORY`) are the static atomics of
+//!   `uvmexp` (`docs/C_TO_RUST.md`, the `struct cpumem *` counters row), so `uvm_init_percpu`
+//!   does not call `counters_alloc_ncpus` (which exists since M11a, `kern/subr_percpu.rs`).
 //! - `averunnable.fscale` waits for `kern_synch.c` (M5).
 
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -152,6 +154,8 @@ pub fn uvm_init() {
 
 /// `uvm_init_percpu`: the per-CPU parts, once the CPUs are known.
 pub fn uvm_init_percpu() {
-    let _ = unported!("counters_alloc_ncpus (uvmexp_counters)");
+    // uvmexp_counters = counters_alloc_ncpus(uvmexp_counters, exp_ncounters): the uvmexp
+    // counters are static atomics here (see the module's deviations), so there is nothing to
+    // move to per-CPU memory.
     uvm_anon_init_percpu();
 }

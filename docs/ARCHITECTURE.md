@@ -449,6 +449,17 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   idle loop, `mi_switch`, the clock interrupt (`clockintr_dispatch`), the SMR thread and the
   IPIs. The `qemu`-only `uptime went backwards` check compares each CPU's readings with that
   CPU's previous one (`kern_clockintr.rs`).
+- Memory allocators under MP (M11a): the pool lock is the C's mutex or rwlock with and without
+  `MULTIPROCESSOR` (the uniprocessor C kernel takes the same mutex); `malloc_mtx` and
+  `uvm.fpageqlock` are real mutexes at `IPL_VM`. With `MULTIPROCESSOR` the pools' per-CPU
+  caches are ported (`pool_cache_init` on the anon pool and the `selftest=mpstress` pools; the
+  other C callers, mbufs, knotes and pfsync, still skip it until M11e) and `pool_gc_pages`
+  runs every second. A `PR_WAITOK` `pool_get` with no memory sleeps for a request as in C,
+  except while cold or on proc0, where it fails (the C panics under `DIAGNOSTIC`). The
+  per-CPU page cache of `uvm_pmemrange` (`__HAVE_UVM_PERCPU`) is not ported: a performance
+  cache. `uvm.pageqlock` is still a no-op, so both machines hold the kernel lock over
+  `uvm_fault` (unlocked in C) and `exit1`/the reaper keep it over `uvm_purge` until M11e.
+  amd64's mainbus counts every application processor in `ncpusfound`, as `acpimadt` does.
 - Cargo features and `xtask` instead of `config(8)`, Makefiles and `newvers.sh`; the
   autoconfiguration tables `config(8)` generates are written by hand ("Autoconfiguration",
   below).

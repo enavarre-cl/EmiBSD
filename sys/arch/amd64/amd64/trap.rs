@@ -88,9 +88,9 @@
 //! - `usertrap` reports `fputrap` (the FPU, `fpu.c`) and posts `SIGFPE` with code 0 for the
 //!   x87/SSE exceptions; the other user traps go to `kern_sig.c`'s `trapsignal` as in C.
 //! - `MULTIPROCESSOR` (M11a): `kpageflttrap` and `upageflttrap` hold the kernel lock over
-//!   `uvm_fault` and `uvm_grow`, which the C runs unlocked: uvm, the page allocator
-//!   (`uvm_lock_fpageq` is still a no-op) and the pools are not audited for MP yet (M11a
-//!   phase 2, M11e). Without `MULTIPROCESSOR` the lock is nothing.
+//!   `uvm_fault` and `uvm_grow`, which the C runs unlocked: the page queues (`uvm_lock_pageq`)
+//!   are still unlocked; the pools and the page allocator have their own locks since M11a.
+//!   This lasts until M11e makes `uvm.pageqlock` real. Without `MULTIPROCESSOR` it is nothing.
 //! - `fault` writes `curcpu()->ci_panicbuf` as the C does; `panic()` itself still uses
 //!   `subr_prf`'s buffer (`kern/subr_prf.rs`, deviations).
 

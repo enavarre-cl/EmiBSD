@@ -48,7 +48,8 @@
 //! - Swap is not here (M7): `uvm_anon_dropswap` reports `uvm_swap_free` when an anon has a
 //!   slot, which nothing assigns yet.
 //! - `uvm_anon_pagein` needs `uvmfault_anonget` (M7a part 3) and reports it.
-//! - `MULTIPROCESSOR`'s `unused` padding and `pool_cache_init` are not configured.
+//! - M11a: `MULTIPROCESSOR`'s `unused` padding and `pool_cache_init` are in (the per-CPU
+//!   pool caches need items of at least a `pool_cache_item`).
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
@@ -77,6 +78,10 @@ pub struct VmAnon {
     pub an_ref: Cell<i32>,
     /// `an_swslot`: drum swap slot # (if != 0) \[if we hold an_page, PG_BUSY\].
     pub an_swslot: Cell<i32>,
+    /// `unused`: the per-CPU pool caching code requires pool item to be at least the size of
+    /// struct pool_cache_item (`MULTIPROCESSOR && __LP64__`).
+    #[cfg(feature = "multiprocessor")]
+    pub unused: Cell<i64>,
 }
 
 // SAFETY: `an_lock` guards every field once the anon is in an amap; a fresh anon is its
@@ -91,6 +96,8 @@ impl VmAnon {
             an_page: Cell::new(ptr::null()),
             an_ref: Cell::new(1),
             an_swslot: Cell::new(0),
+            #[cfg(feature = "multiprocessor")]
+            unused: Cell::new(0),
         }
     }
 
@@ -165,8 +172,11 @@ pub fn uvm_anon_init() {
     );
 }
 
-/// `uvm_anon_init_percpu`: `pool_cache_init` under `MULTIPROCESSOR`; nothing here.
-pub fn uvm_anon_init_percpu() {}
+/// `uvm_anon_init_percpu`: the anon pool's per-CPU caches (`MULTIPROCESSOR`).
+pub fn uvm_anon_init_percpu() {
+    #[cfg(feature = "multiprocessor")]
+    crate::kern::subr_pool::pool_cache_init(&UVM_ANON_POOL);
+}
 
 /// `uvm_analloc`: allocate a new anon.
 ///

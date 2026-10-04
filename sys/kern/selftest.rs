@@ -7,7 +7,9 @@
 
 use core::mem::size_of;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
+use core::sync::atomic::{
+    AtomicBool, AtomicI32, AtomicPtr, AtomicU32, AtomicU64, AtomicUsize, Ordering,
+};
 
 use alloc::boxed::Box;
 use alloc::vec;
@@ -29,7 +31,10 @@ use crate::kern::kern_task::{
 use crate::kern::kern_tc::{getuptime, nsecuptime};
 use crate::kern::kern_timeout::timeout_del;
 use crate::kern::kern_timeout::{timeout_add_msec, timeout_set};
-use crate::kern::subr_pool::{pool_destroy, pool_get, pool_init, pool_put, pool_reclaim};
+use crate::kern::subr_pool::{
+    pool_cache_init, pool_cache_pool_info, pool_destroy, pool_get, pool_init, pool_put,
+    pool_reclaim,
+};
 use crate::kern::subr_prf::Str;
 use crate::kern::uipc_mbuf::{
     MBPOOL, MBUF_MEM_ALLOC, MBUF_MEM_LIMIT, MCLPOOLS, MTAGPOOL, m_adj, m_copyback, m_copydata,
@@ -45,8 +50,10 @@ use crate::machine::bus::{
 };
 use crate::machine::conf::cdevsw;
 use crate::machine::copy::copyin;
+#[cfg(feature = "multiprocessor")]
+use crate::machine::cpu::CpuInfo;
 use crate::machine::cpu::{cpu_number, curproc};
-use crate::machine::intr::IPL_NONE;
+use crate::machine::intr::{IPL_NONE, IPL_VM};
 use crate::machine::pmap::{
     MachinePmap, pmap_activate, pmap_deactivate, pmap_enter, pmap_extract, pmap_kenter_pa,
     pmap_kernel, pmap_kremove, pmap_map_direct, pmap_remove, pmap_update,
@@ -66,7 +73,7 @@ use crate::sys::mbuf::{M_COPYALL, M_DONTWAIT, MT_DATA, PACKET_TAG_GRE};
 use crate::sys::mman::{PROT_READ, PROT_WRITE};
 use crate::sys::mutex::Mutex;
 use crate::sys::param::{NODEV, PAGE_SIZE, PWAIT};
-use crate::sys::pool::{PR_NOWAIT, PR_ZERO, Pool};
+use crate::sys::pool::{KinfoPool, PR_NOWAIT, PR_RWLOCK, PR_WAITOK, PR_ZERO, Pool};
 use crate::sys::proc::Proc;
 use crate::sys::sockio::SIOCSIFFLAGS;
 use crate::sys::stat::S_IFCHR;
@@ -76,11 +83,14 @@ use crate::sys::timeout::Timeout;
 use crate::sys::types::{Paddr, Vaddr, Vsize, major};
 use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
 use crate::sys::vnode::IO_NDELAY;
-use crate::uvm::uvm_extern::UVM_PGA_ZERO;
+use crate::uvm::uvm_extern::{UVM_PGA_ZERO, UVM_PLA_NOWAIT, UVM_PLA_WAITOK, UVM_PLA_ZERO};
 use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_km::{KD_NOWAIT, KD_WAITOK, KP_NONE, KP_PAGEABLE, KV_ANY, km_alloc, km_free};
 use crate::uvm::uvm_map::{uvmspace_alloc, uvmspace_free};
-use crate::uvm::uvm_page::{PHYS_TO_VM_PAGE, uvm_pagealloc, uvm_pagefree, vm_page_to_phys};
+use crate::uvm::uvm_page::{
+    PHYS_TO_VM_PAGE, Pglist, uvm_pagealloc, uvm_pagefree, uvm_pglistalloc, uvm_pglistfree,
+    vm_page_to_phys,
+};
 use crate::uvm::uvm_pmap::PMAP_WIRED;
 
 /// A value that is neither all zeros nor all ones.
@@ -98,6 +108,8 @@ static KTHREAD_REQUESTED: AtomicBool = AtomicBool::new(false);
 static TASKQ_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// `selftest=vio` was on the command line.
 static VIO_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// `selftest=mpstress` was on the command line.
+static MPSTRESS_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// Reads the self-test requests off the kernel command line: `selftest=trap` asks for the
 /// fatal [`trap_bad_access`], which a plain boot must not run.
@@ -108,6 +120,7 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     const KTHREAD: &[u8] = b"selftest=kthread";
     const TASKQ: &[u8] = b"selftest=taskq";
     const VIO: &[u8] = b"selftest=vio";
+    const MPSTRESS: &[u8] = b"selftest=mpstress";
     if cmdline.windows(TRAP.len()).any(|w| w == TRAP) {
         TRAP_REQUESTED.store(true, Ordering::Relaxed);
     }
@@ -126,6 +139,14 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     if cmdline.windows(VIO.len()).any(|w| w == VIO) {
         VIO_REQUESTED.store(true, Ordering::Relaxed);
     }
+    if cmdline.windows(MPSTRESS.len()).any(|w| w == MPSTRESS) {
+        MPSTRESS_REQUESTED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Whether the command line asked for [`mpstress`].
+pub fn mpstress_requested() -> bool {
+    MPSTRESS_REQUESTED.load(Ordering::Relaxed)
 }
 
 /// Whether the command line asked for [`vio_check`].
@@ -1670,4 +1691,516 @@ pub fn rd_check() {
             kprintf!("rd0: {} bytes, no ffs superblock on rd0a\n", size);
         }
     }
+}
+
+// selftest=mpstress: M11a's exit test, pool(9) and uvm_pmemrange on every CPU at once.
+
+/// The most CPUs the stress runs a thread on.
+const MPSTRESS_MAXCPUS: usize = 64;
+/// Pool rounds per thread.
+const MPSTRESS_POOL_ROUNDS: u32 = 1500;
+/// Items taken from each pool per round.
+const MPSTRESS_POOL_ITEMS: usize = 24;
+/// Page list rounds per thread.
+const MPSTRESS_PMR_ROUNDS: u32 = 600;
+/// Page lists held at once per round.
+const MPSTRESS_PMR_LISTS: usize = 6;
+/// Exchange slots per pool, through which items cross CPUs.
+const MPSTRESS_XCHG: usize = 32;
+/// The item sizes of the stress pools: a cache item's minimum, a mid size, and one that
+/// needs the multi-page allocator.
+const MPSTRESS_SIZES: [usize; 3] = [32, 256, 2048];
+
+/// The stress pools: 32 bytes at `IPL_VM` (mutex), 256 bytes `PR_RWLOCK` (rwlock, only
+/// `PR_WAITOK` gets), 2048 bytes `PR_WAITOK` (`pool_allocator_multi_ni`, which takes the
+/// kernel lock).
+static MPSTRESS_POOLS: [Pool; 3] = [const { Pool::new() }; 3];
+/// Items in transit between CPUs, per pool.
+static MPSTRESS_SLOTS: [[AtomicPtr<u8>; MPSTRESS_XCHG]; 3] =
+    [const { [const { AtomicPtr::new(ptr::null_mut()) }; MPSTRESS_XCHG] }; 3];
+/// The barrier's interlock.
+static MPSTRESS_MTX: Mutex = Mutex::new(IPL_NONE);
+/// The phase the threads may run: 0 wait, 1 pool, 2 pmemrange, 3 exit.
+static MPSTRESS_PHASE: AtomicU32 = AtomicU32::new(0);
+/// Threads arrived at each barrier (ready, pool done, pmemrange done).
+static MPSTRESS_ARRIVED: [AtomicU32; 3] = [const { AtomicU32::new(0) }; 3];
+/// Threads that took their last step before exiting.
+static MPSTRESS_EXITED: AtomicU32 = AtomicU32::new(0);
+/// The first failure, an index into [`MPSTRESS_MSG`] (`usize::MAX`: none).
+static MPSTRESS_FAILED: AtomicUsize = AtomicUsize::new(usize::MAX);
+/// How many threads run.
+static MPSTRESS_NTHREADS: AtomicU32 = AtomicU32::new(0);
+/// The CPU each thread is pegged to (`MULTIPROCESSOR`).
+#[cfg(feature = "multiprocessor")]
+static MPSTRESS_CPUS: [AtomicPtr<CpuInfo>; MPSTRESS_MAXCPUS] =
+    [const { AtomicPtr::new(ptr::null_mut()) }; MPSTRESS_MAXCPUS];
+/// The CPU number each thread saw itself on.
+static MPSTRESS_RAN_ON: [AtomicU32; MPSTRESS_MAXCPUS] =
+    [const { AtomicU32::new(u32::MAX) }; MPSTRESS_MAXCPUS];
+/// Counters: pool gets, `PR_NOWAIT` gets refused, items that crossed CPUs, page lists,
+/// pages, page lists refused (`UVM_PLA_NOWAIT`).
+static MPSTRESS_STATS: [AtomicU64; 6] = [const { AtomicU64::new(0) }; 6];
+/// `uvmexp.free` when the pmemrange phase started and when it ended.
+static MPSTRESS_FREE: [AtomicI32; 2] = [const { AtomicI32::new(0) }; 2];
+
+/// The failure messages: the pool's first, two, then the pmemrange's three, then the CPU's.
+static MPSTRESS_MSG: [&str; 6] = [
+    "pool_get(PR_WAITOK) returned nothing",
+    "a pool item's contents changed while it was out",
+    "a page list's page is outside its constraint or misaligned",
+    "a page's contents changed while it was allocated",
+    "uvm_pglistalloc(UVM_PLA_WAITOK) failed",
+    "a thread ran on the wrong CPU",
+];
+
+/// Records the first failure.
+fn mpstress_fail(which: usize) {
+    let _ =
+        MPSTRESS_FAILED.compare_exchange(usize::MAX, which, Ordering::Relaxed, Ordering::Relaxed);
+}
+
+/// A small per-thread random stream (xorshift).
+fn mpstress_rand(state: &mut u64) -> u64 {
+    let mut x = *state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    *state = x;
+    x
+}
+
+/// The words of a pool item of `size` bytes.
+fn mpstress_words(p: NonNull<u8>, size: usize) -> &'static [AtomicU64] {
+    // SAFETY: `size` bytes of an item this test holds, 8-byte aligned (pool items are).
+    unsafe { core::slice::from_raw_parts(p.as_ptr().cast::<AtomicU64>(), size / 8) }
+}
+
+/// Fills an item with `tag`: word `k` holds `tag ^ k`.
+fn mpstress_fill(p: NonNull<u8>, size: usize, tag: u64) {
+    for (k, w) in mpstress_words(p, size).iter().enumerate() {
+        w.store(tag ^ k as u64, Ordering::Relaxed);
+    }
+}
+
+/// Whether an item still holds the tag in its first word everywhere.
+fn mpstress_check(p: NonNull<u8>, size: usize) -> bool {
+    let words = mpstress_words(p, size);
+    let tag = words[0].load(Ordering::Relaxed);
+    words
+        .iter()
+        .enumerate()
+        .all(|(k, w)| w.load(Ordering::Relaxed) == tag ^ k as u64)
+}
+
+/// Waits at barrier `b` until `PHASE` reaches `next`; the last thread to arrive runs `last`
+/// and moves the phase on.
+fn mpstress_barrier(b: usize, next: u32, last: fn()) {
+    let n = MPSTRESS_NTHREADS.load(Ordering::Relaxed);
+    mtx_enter(&MPSTRESS_MTX);
+    if MPSTRESS_ARRIVED[b].fetch_add(1, Ordering::Relaxed) + 1 == n {
+        last();
+        MPSTRESS_PHASE.store(next, Ordering::Release);
+        wakeup(ptr::addr_of!(MPSTRESS_PHASE));
+    }
+    while MPSTRESS_PHASE.load(Ordering::Acquire) < next {
+        let _ = msleep_nsec(
+            ptr::addr_of!(MPSTRESS_PHASE),
+            &MPSTRESS_MTX,
+            PWAIT,
+            "mpstress",
+            INFSLP,
+        );
+    }
+    mtx_leave(&MPSTRESS_MTX);
+}
+
+/// The end of the pool phase, on the last thread to finish it: the items left in transit go
+/// back, and the pmemrange phase starts from the free page count read now.
+fn mpstress_pool_done() {
+    for (pi, pp) in MPSTRESS_POOLS.iter().enumerate() {
+        for slot in &MPSTRESS_SLOTS[pi] {
+            if let Some(p) = NonNull::new(slot.swap(ptr::null_mut(), Ordering::AcqRel)) {
+                if !mpstress_check(p, MPSTRESS_SIZES[pi]) {
+                    mpstress_fail(1);
+                }
+                pool_put(pp, p);
+            }
+        }
+    }
+    MPSTRESS_FREE[0].store(UVMEXP.free.load(Ordering::Relaxed), Ordering::Relaxed);
+}
+
+/// The end of the pmemrange phase, on the last thread: every thread is parked, so nothing
+/// else allocates or frees pages for the test.
+fn mpstress_pmr_done() {
+    MPSTRESS_FREE[1].store(UVMEXP.free.load(Ordering::Relaxed), Ordering::Relaxed);
+}
+
+/// Nothing to do at the start barrier.
+fn mpstress_nothing() {}
+
+/// The pool phase of one thread: each round takes items from the three pools (`PR_WAITOK`
+/// and `PR_NOWAIT`), tags them, passes some to other CPUs through the exchange slots and
+/// takes theirs, checks every item and gives them all back.
+fn mpstress_pool_phase(me: usize, rand: &mut u64) {
+    let mut held: [[Option<NonNull<u8>>; MPSTRESS_POOL_ITEMS]; 3] =
+        [[None; MPSTRESS_POOL_ITEMS]; 3];
+    for round in 0..MPSTRESS_POOL_ROUNDS {
+        for (pi, pp) in MPSTRESS_POOLS.iter().enumerate() {
+            let size = MPSTRESS_SIZES[pi];
+            for (i, h) in held[pi].iter_mut().enumerate() {
+                let waitok = pi == 1 || mpstress_rand(rand) & 1 == 0;
+                let flags = if waitok { PR_WAITOK } else { PR_NOWAIT };
+                let flags = if i % 5 == 0 { flags | PR_ZERO } else { flags };
+                let Some(p) = pool_get(pp, flags) else {
+                    if waitok {
+                        mpstress_fail(0);
+                    } else {
+                        MPSTRESS_STATS[1].fetch_add(1, Ordering::Relaxed);
+                    }
+                    continue;
+                };
+                MPSTRESS_STATS[0].fetch_add(1, Ordering::Relaxed);
+                if flags & PR_ZERO != 0
+                    && mpstress_words(p, size)
+                        .iter()
+                        .any(|w| w.load(Ordering::Relaxed) != 0)
+                {
+                    mpstress_fail(1);
+                }
+                let tag = ((me as u64) << 56) | (u64::from(round) << 32) | ((pi * 64 + i) as u64);
+                mpstress_fill(p, size, tag);
+                *h = Some(p);
+            }
+        }
+
+        // Hand some items to the other CPUs and take theirs.
+        for (pi, items) in held.iter_mut().enumerate() {
+            for h in items.iter_mut().take(4) {
+                let slot = &MPSTRESS_SLOTS[pi][(mpstress_rand(rand) as usize) % MPSTRESS_XCHG];
+                let theirs =
+                    slot.swap(h.map_or(ptr::null_mut(), NonNull::as_ptr), Ordering::AcqRel);
+                if NonNull::new(theirs).is_some() {
+                    MPSTRESS_STATS[2].fetch_add(1, Ordering::Relaxed);
+                }
+                *h = NonNull::new(theirs);
+            }
+        }
+
+        // Check everything and give it back, in a shuffled order.
+        for (pi, items) in held.iter_mut().enumerate() {
+            let start = (mpstress_rand(rand) as usize) % MPSTRESS_POOL_ITEMS;
+            for k in 0..MPSTRESS_POOL_ITEMS {
+                if let Some(p) = items[(start + k) % MPSTRESS_POOL_ITEMS].take() {
+                    if !mpstress_check(p, MPSTRESS_SIZES[pi]) {
+                        mpstress_fail(1);
+                    }
+                    pool_put(&MPSTRESS_POOLS[pi], p);
+                }
+            }
+        }
+    }
+}
+
+/// The constraints the pmemrange phase asks for: (low, high, alignment, boundary, maxseg)
+/// with the sizes in pages taken from the round.
+const MPSTRESS_PMR_CONSTRAINTS: [(usize, usize, usize, usize, i32); 5] = [
+    (0, usize::MAX, 0, 0, 0),
+    (0, 0xffff_ffff, 0, 0, 1),
+    (0, usize::MAX, 16 * PAGE_SIZE, 0, 1),
+    (0, 0xffff_ffff, 0, 8 * PAGE_SIZE, 0),
+    (0, usize::MAX, 4 * PAGE_SIZE, 0, 2),
+];
+
+/// The pmemrange phase of one thread: each round holds several page lists of varied sizes
+/// and constraints at once, writes a tag into every page through the direct map, checks the
+/// pages lie inside their constraint, checks every tag, and frees the lists.
+fn mpstress_pmr_phase(me: usize, rand: &mut u64) {
+    let lists: [Pglist; MPSTRESS_PMR_LISTS] = [const { Pglist::new() }; MPSTRESS_PMR_LISTS];
+    for l in &lists {
+        l.init();
+    }
+    for round in 0..MPSTRESS_PMR_ROUNDS {
+        for (li, pgl) in lists.iter().enumerate() {
+            let (low, high, align, boundary, maxseg) =
+                MPSTRESS_PMR_CONSTRAINTS[(mpstress_rand(rand) as usize) % 5];
+            let npages = 1 + (mpstress_rand(rand) as usize) % 12;
+            let npages = if boundary != 0 { npages.min(8) } else { npages };
+            let maxseg = if maxseg == 0 { npages as i32 } else { maxseg };
+            let npages = if maxseg == 2 { npages.min(8) } else { npages };
+            let waitok = li % 3 == 0;
+            let mut flags = if waitok {
+                UVM_PLA_WAITOK
+            } else {
+                UVM_PLA_NOWAIT
+            };
+            if li % 4 == 1 {
+                flags |= UVM_PLA_ZERO;
+            }
+            if uvm_pglistalloc(
+                npages * PAGE_SIZE,
+                Paddr::new(low),
+                Paddr::new(high),
+                Paddr::new(align),
+                Paddr::new(boundary),
+                pgl,
+                maxseg,
+                flags,
+            )
+            .is_err()
+            {
+                if waitok {
+                    mpstress_fail(4);
+                } else {
+                    MPSTRESS_STATS[5].fetch_add(1, Ordering::Relaxed);
+                }
+                continue;
+            }
+            MPSTRESS_STATS[3].fetch_add(1, Ordering::Relaxed);
+
+            let mut n = 0usize;
+            for (k, pg) in pgl.iter().enumerate() {
+                let pa = vm_page_to_phys(pg).as_usize();
+                if pa < low
+                    || pa + (PAGE_SIZE - 1) > high
+                    || (k == 0 && align != 0 && !pa.is_multiple_of(align))
+                {
+                    mpstress_fail(2);
+                }
+                let va = pmap_map_direct(pg).as_usize();
+                // SAFETY: the page is this test's; its direct-map address covers PAGE_SIZE
+                // bytes.
+                let words =
+                    unsafe { core::slice::from_raw_parts(va as *const AtomicU64, PAGE_SIZE / 8) };
+                if flags & UVM_PLA_ZERO != 0 && words.iter().any(|w| w.load(Ordering::Relaxed) != 0)
+                {
+                    mpstress_fail(3);
+                }
+                let tag = ((me as u64) << 56) | (u64::from(round) << 32) | ((li * 64 + k) as u64);
+                for step in [0, 1, 255, 511] {
+                    words[step].store(tag ^ step as u64, Ordering::Relaxed);
+                }
+                n += 1;
+            }
+            MPSTRESS_STATS[4].fetch_add(n as u64, Ordering::Relaxed);
+        }
+
+        for (li, pgl) in lists.iter().enumerate() {
+            for (k, pg) in pgl.iter().enumerate() {
+                let va = pmap_map_direct(pg).as_usize();
+                // SAFETY: as above.
+                let words =
+                    unsafe { core::slice::from_raw_parts(va as *const AtomicU64, PAGE_SIZE / 8) };
+                let tag = ((me as u64) << 56) | (u64::from(round) << 32) | ((li * 64 + k) as u64);
+                if [0, 1, 255, 511]
+                    .iter()
+                    .any(|&s| words[s].load(Ordering::Relaxed) != tag ^ s as u64)
+                {
+                    mpstress_fail(3);
+                }
+            }
+            if !pgl.is_empty() {
+                // uvm_pmr_freepageq takes every page off the list.
+                uvm_pglistfree(pgl);
+            }
+        }
+    }
+}
+
+/// One stress thread: `arg` is its index plus one. Pegged to its CPU (`MULTIPROCESSOR`), it
+/// drops the kernel lock (pool(9) and uvm_pmemrange are MPSAFE), waits for the start, runs
+/// the pool phase, waits for every thread, runs the pmemrange phase, waits again, and exits.
+fn mpstress_thread(arg: *mut core::ffi::c_void) {
+    let me = arg.addr() - 1;
+
+    #[cfg(feature = "multiprocessor")]
+    {
+        let ci = MPSTRESS_CPUS[me].load(Ordering::Relaxed);
+        // SAFETY: a non-null entry is a `cpu_info` the boot code made, alive forever.
+        if let Some(ci) = unsafe { ci.as_ref() } {
+            crate::kern::kern_sched::sched_peg_curproc(ci);
+        }
+    }
+    crate::sys::systm::kernel_unlock();
+    MPSTRESS_RAN_ON[me].store(cpu_number(), Ordering::Relaxed);
+
+    let mut rand = 0x9e37_79b9_7f4a_7c15u64 ^ ((me as u64 + 1) << 17);
+
+    mpstress_barrier(0, 1, mpstress_nothing);
+    mpstress_pool_phase(me, &mut rand);
+    mpstress_barrier(1, 2, mpstress_pool_done);
+    mpstress_pmr_phase(me, &mut rand);
+    mpstress_barrier(2, 3, mpstress_pmr_done);
+
+    if MPSTRESS_RAN_ON[me].load(Ordering::Relaxed) != cpu_number() {
+        mpstress_fail(5);
+    }
+
+    crate::sys::systm::kernel_lock();
+    mtx_enter(&MPSTRESS_MTX);
+    MPSTRESS_EXITED.fetch_add(1, Ordering::Relaxed);
+    wakeup(ptr::addr_of!(MPSTRESS_EXITED));
+    mtx_leave(&MPSTRESS_MTX);
+    kthread_exit(0);
+}
+
+/// `selftest=mpstress` (M11a's exit test): one kernel thread per running CPU, each pegged to
+/// its CPU and started together, hammers three shared pools with per-CPU caches
+/// (`pool_cache_init`) and then `uvm_pglistalloc`/`uvm_pglistfree`; prints
+/// `selftest: mpstress pool ok (<N> cpus, ...)` and `selftest: mpstress pmemrange ok (<N>
+/// cpus, ...)`, or a FAILED line; returns whether both passed. The uniprocessor kernel runs
+/// the same with one thread.
+pub fn mpstress() -> bool {
+    #[cfg(feature = "multiprocessor")]
+    let ncpus = {
+        use crate::machine::cpu::{cpu_info_foreach, cpu_is_running};
+        let mut n = 0usize;
+        cpu_info_foreach(&mut |ci| {
+            if n < MPSTRESS_MAXCPUS && cpu_is_running(ci) {
+                MPSTRESS_CPUS[n].store(ptr::from_ref(ci).cast_mut(), Ordering::Relaxed);
+                n += 1;
+            }
+        });
+        n.max(1)
+    };
+    #[cfg(not(feature = "multiprocessor"))]
+    let ncpus = 1usize;
+    MPSTRESS_NTHREADS.store(ncpus as u32, Ordering::Relaxed);
+    mtx_init(&MPSTRESS_MTX, IPL_NONE);
+
+    pool_init(
+        &MPSTRESS_POOLS[0],
+        MPSTRESS_SIZES[0],
+        0,
+        IPL_VM,
+        0,
+        "mpstress32",
+        None,
+    );
+    pool_init(
+        &MPSTRESS_POOLS[1],
+        MPSTRESS_SIZES[1],
+        0,
+        IPL_NONE,
+        PR_WAITOK | PR_RWLOCK,
+        "mpstress256",
+        None,
+    );
+    pool_init(
+        &MPSTRESS_POOLS[2],
+        MPSTRESS_SIZES[2],
+        0,
+        IPL_NONE,
+        PR_WAITOK,
+        "mpstress2k",
+        None,
+    );
+    for pp in &MPSTRESS_POOLS {
+        pool_cache_init(pp);
+    }
+    let free_start = UVMEXP.free.load(Ordering::Relaxed);
+    let start_ns = nsecuptime();
+
+    for i in 0..ncpus {
+        if let Err(e) = kthread_create(
+            mpstress_thread,
+            ptr::without_provenance_mut(i + 1),
+            b"mpstress",
+        ) {
+            kprintf!("selftest: mpstress FAILED: kthread_create: {:?}\n", e);
+            return false;
+        }
+    }
+
+    mtx_enter(&MPSTRESS_MTX);
+    while MPSTRESS_EXITED.load(Ordering::Relaxed) < ncpus as u32 {
+        let _ = msleep_nsec(
+            ptr::addr_of!(MPSTRESS_EXITED),
+            &MPSTRESS_MTX,
+            PWAIT,
+            "mpstress",
+            INFSLP,
+        );
+    }
+    mtx_leave(&MPSTRESS_MTX);
+    let elapsed_ms = nsecuptime().wrapping_sub(start_ns) / 1_000_000;
+
+    // Every item is back: the pools' own count plus the caches' must be zero; then the caches
+    // go and every page of the three pools must be reclaimable.
+    let mut pool_ok = true;
+    let mut cache_gets = 0u64;
+    let mut pages_reclaimed = 0u32;
+    for pp in &MPSTRESS_POOLS {
+        let mut pi = KinfoPool {
+            pr_nout: pp.pr_nout.get(),
+            ..KinfoPool::default()
+        };
+        pool_cache_pool_info(pp, &mut pi);
+        cache_gets += pi.pr_nget;
+        pool_ok &= pi.pr_nout == 0;
+        #[cfg(feature = "multiprocessor")]
+        crate::kern::subr_pool::pool_cache_destroy(pp);
+        pages_reclaimed += pp.pr_npages.get();
+        pool_reclaim(pp);
+        pool_ok &= pp.pr_npages.get() == 0 && pp.pr_nitems.get() == 0;
+    }
+
+    let stats: [u64; 6] = core::array::from_fn(|i| MPSTRESS_STATS[i].load(Ordering::Relaxed));
+    let failed = MPSTRESS_FAILED.load(Ordering::Relaxed);
+    let why = MPSTRESS_MSG.get(failed).copied();
+    let cpus_seen = (0..ncpus)
+        .map(|i| MPSTRESS_RAN_ON[i].load(Ordering::Relaxed))
+        .fold(0u64, |m, c| m | (1u64 << (c % 64)))
+        .count_ones();
+    let pool_failed = matches!(failed, 0 | 1 | 5);
+    let pool_passed = pool_ok && !pool_failed && cpus_seen as usize == ncpus;
+    if pool_passed {
+        kprintf!(
+            "selftest: mpstress pool ok ({} cpus, {} gets, {} through the per-cpu caches, {} items exchanged between threads, {} PR_NOWAIT refused, {} pages reclaimed, {} ms)\n",
+            ncpus,
+            stats[0],
+            cache_gets,
+            stats[2],
+            stats[1],
+            pages_reclaimed,
+            elapsed_ms
+        );
+    } else {
+        kprintf!(
+            "selftest: mpstress pool FAILED ({} cpus, {} cpus seen, items back and pages reclaimable: {}, {})\n",
+            ncpus,
+            cpus_seen,
+            pool_ok,
+            why.unwrap_or("-")
+        );
+    }
+
+    let (free_b, free_e) = (
+        MPSTRESS_FREE[0].load(Ordering::Relaxed),
+        MPSTRESS_FREE[1].load(Ordering::Relaxed),
+    );
+    let pmr_failed = matches!(failed, 2..=4);
+    let pmr_passed = free_b == free_e && !pmr_failed;
+    if pmr_passed {
+        kprintf!(
+            "selftest: mpstress pmemrange ok ({} cpus, {} page lists, {} pages, {} UVM_PLA_NOWAIT refused, {} pages free before and after; {} free at the start, {} at the end)\n",
+            ncpus,
+            stats[3],
+            stats[4],
+            stats[5],
+            free_b,
+            free_start,
+            UVMEXP.free.load(Ordering::Relaxed)
+        );
+    } else {
+        kprintf!(
+            "selftest: mpstress pmemrange FAILED ({} cpus, {} pages free before, {} after, {})\n",
+            ncpus,
+            free_b,
+            free_e,
+            why.unwrap_or("-")
+        );
+    }
+
+    pool_passed && pmr_passed
 }
