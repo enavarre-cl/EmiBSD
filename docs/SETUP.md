@@ -95,15 +95,13 @@ ksh's `rksh` and `sh` links, `/usr/libexec/auth/login_passwd`), `host/` (`rpcgen
 every OpenBSD file compiled or included). The build is incremental (`.d` files and the
 recorded command line of every object).
 
-### tcpdump (not built yet)
+### tcpdump
 
-`usr.sbin/tcpdump` and `lib/libpcap` are in the clone, but neither is in `PROGRAMS` or
-`LIBRARIES` yet: libpcap's `ppp.h` and tcpdump's `bootp.h` carry a Carnegie Mellon/Stanford
-notice that `licences.txt` reports as unclassified (the user's decision), and tcpdump's
-Makefile adds `-I${.CURDIR}/../hostapd` for `iapp.h`, which needs `usr.sbin/hostapd` in the
-sparse clone. Once both are settled: libpcap goes into `LIBRARIES` (its `scanner.l` goes
-through the host-built lex), tcpdump into `PROGRAMS` linked `-static`, and the ramdisk gets
-`/var/empty` and OpenBSD's `_tcpdump` user and group (privsep chroots there).
+`lib/libpcap` is built with the other libraries (its `scanner.l` through the host-built lex)
+and `usr.sbin/tcpdump` linked `-static` into `/usr/sbin`; tcpdump's Makefile reads `iapp.h`
+from `usr.sbin/hostapd`, in the sparse clone since 2026-10-04. Its privsep half chroots to
+`/var/empty` as `_tcpdump` (uid and gid 76, the lines of the clone's `etc/master.passwd` and
+`etc/group`).
 
 ### The test image's login
 

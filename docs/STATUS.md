@@ -14,14 +14,14 @@ Done:
   enforced (`kern_pledge.c`; `init: pledge ok`).
 - M9+: TCP with SYN cache, SACK, ECN, TCP-MD5 (`init: tcp ok`; nc and ftp work over it);
   zlib and IPComp (`smoke-ipcomp`); HTTPS with LibreSSL, ftp and nc (`smoke-https`);
-  bpf(4), divert sockets, IGMP (`smoke-esp` without forwarding); `smoke-tcp`, `smoke-divert`.
+  bpf(4), divert sockets, IGMP (`smoke-esp` without forwarding); criterion recipes `smoke-tcp`,
+  `smoke-divert`, `smoke-tcpdump` (libpcap, tcpdump with privsep).
 - amd64 runs on the TSC (`tsc.c`, `kern.timecounter`); smokes reject `uptime went backwards`.
 
 Next:
 - M9+: INET6 (ping6); then M10a..f and M11a..e (SMP; afterwards every smoke runs MP, -smp 4).
 
 Blockers:
-- tcpdump/libpcap (user): Carnegie Mellon/Stanford notice (`ppp.h`, `bootp.h`), `hostapd/iapp.h`.
 - Under load the amd64 TSC can measure high (1.2-1.3 GHz for ~1.0), so the clock runs slow
   until acpitimer/acpihpet recalibrate it (M13; accepted by the user).
 
