@@ -537,16 +537,20 @@ pub fn udp_sbappend(
 
     if let Some(upcall) = inp.inp_upcall.get() {
         let ipp = ip.map_or(ptr::null(), ptr::from_ref);
-        let mut uhc = *uh;
-        let Some(n) = upcall(
-            inp.inp_upcall_arg.get(),
-            m,
-            ipp,
-            ptr::null(),
-            ptr::from_mut(&mut uhc).cast::<c_void>(),
-            hlen,
-            ns,
-        ) else {
+        let uhc = *uh;
+        // SAFETY: the argument is the one installed with the upcall, `ipp` is null or the
+        // packet's IP header, and `uhc` is a copy of the UDP header that outlives the call.
+        let Some(n) = (unsafe {
+            upcall(
+                inp.inp_upcall_arg.get(),
+                m,
+                ipp,
+                ptr::null(),
+                ptr::from_ref(&uhc).cast::<c_void>(),
+                hlen,
+                ns,
+            )
+        }) else {
             return;
         };
         m = n;

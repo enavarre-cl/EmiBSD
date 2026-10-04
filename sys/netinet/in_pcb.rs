@@ -387,12 +387,17 @@ const fn inpcbhash_loadfactor(x: i32) -> i32 {
 /// `inp_upcall`: a hook that sees UDP datagrams before the socket buffer
 /// (`(arg, m, ip, ip6, uh, hlen, ns)`); returns the packet to append, or `None` when it took
 /// it.
-pub type InpUpcallFn = fn(
+///
+/// # Safety
+///
+/// `arg` is the pcb's `inp_upcall_arg`; `ip` (or `ip6`) points at the packet's IP header and
+/// `uh` at its UDP header, both readable for the call.
+pub type InpUpcallFn = unsafe fn(
     *mut c_void,
     &'static Mbuf,
     *const Ip,
     *const c_void,
-    *mut c_void,
+    *const c_void,
     i32,
     Option<&Netstack>,
 ) -> Option<&'static Mbuf>;

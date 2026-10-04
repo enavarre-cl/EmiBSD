@@ -57,11 +57,9 @@
 //!   (16 and 28 bytes, 4-byte aligned). Holes the C compiler leaves are named `_pad*` fields.
 //! - `NBPFILTER` and `NPF` are not configured (`bpfattach`, `bpf_mtap_af`,
 //!   `pf_pkt_addr_changed`): comments at the sites.
-//! - The UDP socket needs `netinet/in_pcb.c` (`sotoinpcb`, `inp_upcall`, `inp_lport`,
-//!   `inp_rtableid`), which is not ported: those three sites in `wg_socket_open` are
-//!   `unported!` and fail the bind with `ENOSYS`. [`wg_input`] has the upcall's shape, with
-//!   the headers as raw pointers into the packet; `struct udphdr` (`netinet/udp.h`) is not
-//!   ported, so it reads `uh_sport`, the header's first member, through the pointer.
+//! - [`wg_input`] is the UDP pcb's `inp_upcall` ([`InpUpcallFn`](crate::netinet::in_pcb::InpUpcallFn), an `unsafe fn`: the
+//!   headers come as raw pointers); it reads `uh_sport`, `struct udphdr`'s first member,
+//!   through the pointer.
 //! - The `struct mbuf`s the C builds on its stack for `sobind`, `sosetopt` and `sosend`'s
 //!   address (`mhostnam`, `mrtable`, `peernam`) are `m_get`'d and freed after the call (an
 //!   mbuf is `&'static Mbuf`); `peernam` holds a copy of the address instead of pointing at
@@ -163,6 +161,7 @@ use crate::net::wg_noise::{
     noise_remote_ready, noise_remote_set_psk,
 };
 use crate::netinet::in_::{INADDR_ANY, IP_SENDSRCADDR, IPPROTO_IP, InAddr, SockaddrIn};
+use crate::netinet::in_pcb::sotoinpcb;
 use crate::netinet::ip::{IPVERSION, Ip};
 use crate::netinet::ip_input::ipv4_input;
 use crate::queue_adapter;
@@ -191,7 +190,6 @@ use crate::sys::task::{TASKQ_MPSAFE, Task, Taskq};
 use crate::sys::time::{Timespec, Timeval, timespecadd};
 use crate::sys::timeout::{Timeout, timeout_pending};
 use crate::sys::types::{InPort, SaFamily};
-use crate::unported;
 use libkern::StaticCell;
 
 /// `WG_KEY_LEN`.
@@ -1419,10 +1417,11 @@ pub fn wg_socket_open(
         so.set(Some(s));
 
         solock(s);
-        // sotoinpcb(*so)->inp_upcall = wg_input; sotoinpcb(*so)->inp_upcall_arg = upcall_arg:
-        // netinet/in_pcb.c is not ported.
-        let _ = (wg_input as WgInputFn, upcall_arg);
-        let mut ret = Err(unported!("in_pcb: inp_upcall (wg_socket_open)"));
+        if let Some(inp) = sotoinpcb(s) {
+            inp.inp_upcall.set(Some(wg_input));
+            inp.inp_upcall_arg.set(upcall_arg);
+        }
+        let mut ret = Ok(());
         sounlock(s);
 
         if ret.is_ok() {
@@ -1435,13 +1434,11 @@ pub fn wg_socket_open(
                 None => panic(format_args!("wg_socket_open: no curproc")),
             };
             ret = sobind(s, mhostnam, p);
-            if ret.is_ok() {
-                // *port = sotoinpcb(*so)->inp_lport; *rtable = sotoinpcb(*so)->inp_rtableid:
-                // netinet/in_pcb.c is not ported.
-                let _ = (&*port, &*rtable);
-                ret = Err(unported!(
-                    "in_pcb: inp_lport, inp_rtableid (wg_socket_open)"
-                ));
+            if ret.is_ok()
+                && let Some(inp) = sotoinpcb(s)
+            {
+                *port = inp.inp_lport.get();
+                *rtable = inp.inp_rtableid.get() as i32;
             }
             sounlock(s);
         }
@@ -2897,17 +2894,6 @@ pub fn wg_index_drop(arg: *mut c_void, key0: u32) {
     // SAFETY: the index left the table above and is on no unused list (it was in use).
     unsafe { peer.p_unused_index.insert_head(iter) };
 }
-
-/// The shape of `inp_upcall`, which `wg_socket_open` would install.
-pub type WgInputFn = unsafe fn(
-    *mut c_void,
-    &'static Mbuf,
-    *const Ip,
-    *const c_void,
-    *const c_void,
-    i32,
-    Option<&Netstack>,
-) -> Option<&'static Mbuf>;
 
 /// `wg_input`: the UDP socket's upcall: queues a received datagram (`hlen` bytes of IP and UDP
 /// header first) as a handshake message or a data message. Always consumes the packet.
