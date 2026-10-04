@@ -671,9 +671,9 @@ fn cksum(b: &[u8]) -> u16 {
 
 /// The far end of a tunnel (`smoke-esp`'s B, here the host under test at 10.0.2.15 with
 /// 10.77.2.1 on lo0 and a default route through 10.0.2.2): an echo request from 10.77.1.1
-/// comes in through ESP from the peer 10.0.2.2 (SPI 0x1001), is decapsulated, passes the
-/// inbound policy and, on a forwarding gateway, is answered through the reverse SA (SPI
-/// 0x1002); a plain host drops it as received on the wrong interface (`NBPFILTER` is 0).
+/// comes in through ESP from the peer 10.0.2.2 (SPI 0x1001), is decapsulated, moved to
+/// enc0 (`NBPFILTER` > 0), passes the inbound policy and is answered through the reverse SA
+/// (SPI 0x1002), on a plain host as on a forwarding gateway.
 #[test]
 fn an_esp_tunnel_echo_request_is_answered_through_the_reverse_sa() {
     use crate::net::route::{
@@ -774,26 +774,39 @@ fn an_esp_tunnel_echo_request_is_answered_through_the_reverse_sa() {
     let c = |t: &Tdb, k: TdbCounters| t.tdb_counters[k as usize].load(Ordering::Relaxed);
     let wrongif = || IPCOUNTERS[IpstatCounters::IpsWrongif as usize].load(Ordering::Relaxed);
 
-    // A host: NBPFILTER is 0, so the decapsulated packet keeps vio's ph_ifidx (the C moves
-    // it to enc0 only under NBPFILTER > 0), and 10.77.2.1 lives on lo0: ips_wrongif.
+    // A host: the decapsulated packet comes in on enc0 (NBPFILTER > 0), which is not
+    // vio's, so 10.77.2.1 on lo0 is not "the wrong interface"; the host answers, and the
+    // reply leaves through the reverse SA. enc0 counts both directions.
+    let enc0 = crate::net::if_enc::enc_getif(0, 0).expect("enc0");
     let w = wrongif();
     esp_in(1);
     assert_eq!(c(ta, TdbCounters::TdbIpackets), 1, "decrypted");
-    assert_eq!(wrongif(), w + 1, "received on the wrong interface");
-    assert_eq!(crate::netinet::ip_input::tests::sent(|_, _| {}), 0);
-
-    // A gateway (net.inet.ip.forwarding=1) takes it, answers, and the reply leaves through
-    // the reverse SA.
-    ip_forwarding.store(1, Ordering::Relaxed);
-    esp_in(2);
-    ip_forwarding.store(0, Ordering::Relaxed);
-    assert_eq!(c(ta, TdbCounters::TdbIpackets), 2, "decrypted");
+    assert_eq!(wrongif(), w, "not received on the wrong interface");
+    assert_eq!(
+        enc0.if_ipackets().get(),
+        1,
+        "enc0 took the decapsulated packet"
+    );
     crate::netinet::ip_input::tests::run_ip_send();
     let gw = SockaddrUnion::from_sin(&sin(GATEWAY));
     let tb = gettdb(0, htonl(0x1002), &gw, IPPROTO_ESP as u8).expect("SPI 0x1002");
     assert_eq!(
         c(tb, TdbCounters::TdbOpackets),
         1,
+        "the reply went through ESP"
+    );
+    // esp_output counted the reply on enc0, and the request the test encrypted before.
+    assert_eq!(enc0.if_opackets().get(), 2, "esp_output counts on enc0");
+
+    // A gateway (net.inet.ip.forwarding=1) does the same.
+    ip_forwarding.store(1, Ordering::Relaxed);
+    esp_in(2);
+    ip_forwarding.store(0, Ordering::Relaxed);
+    assert_eq!(c(ta, TdbCounters::TdbIpackets), 2, "decrypted");
+    crate::netinet::ip_input::tests::run_ip_send();
+    assert_eq!(
+        c(tb, TdbCounters::TdbOpackets),
+        2,
         "the reply went through ESP"
     );
     tdb_unref(Some(ta));

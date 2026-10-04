@@ -55,8 +55,9 @@
 //!   The ABI structures keep the IPv6 members' room: `netinet6/in6.h` is not ported, so the
 //!   `in6_addr` of [`WgAipAddr`] and the `sockaddr_in6` of [`WgPeerEndpoint`] are their sizes
 //!   (16 and 28 bytes, 4-byte aligned). Holes the C compiler leaves are named `_pad*` fields.
-//! - `NBPFILTER` is not configured (`bpfattach`, `bpf_mtap_af`): comments at the sites. `NPF`
-//!   is: `wg_decap` calls `pf_pkt_addr_changed`.
+//! - `NBPFILTER` and `NPF` are configured: `wg_clone_create` attaches a `DLT_LOOP` tap and
+//!   `wg_deliver_in`/`wg_qstart` tap with `bpf_mtap_af`; `wg_decap` calls
+//!   `pf_pkt_addr_changed`.
 //! - [`wg_input`] is the UDP pcb's `inp_upcall` ([`InpUpcallFn`](crate::netinet::in_pcb::InpUpcallFn), an `unsafe fn`: the
 //!   headers come as raw pointers); it reads `uh_sport`, `struct udphdr`'s first member,
 //!   through the pointer.
@@ -136,6 +137,7 @@ use crate::machine::intr::IPL_NET;
 use crate::net::art::{
     Art, ArtNode, art_alloc, art_delete, art_insert, art_lookup, art_match, art_node_init,
 };
+use crate::net::bpf::{BPF_DIRECTION_IN, BPF_DIRECTION_OUT, DLT_LOOP, bpf_mtap_af, bpfattach};
 use crate::net::if_::{
     IFDESCRSIZE, IFF_BROADCAST, IFF_DEBUG, IFF_MULTICAST, IFF_NOARP, IFF_RUNNING, IFF_UP, IFNAMSIZ,
     IFQ_MAXPRIO, IFXF_CLONED, IFXF_MPSAFE, Ifreq, counters_inc, counters_pkt, if_alloc_sadl,
@@ -2676,8 +2678,15 @@ pub fn wg_deliver_in(arg: *mut c_void) {
             continue;
         }
 
-        // NBPFILTER > 0: bpf_mtap_af(sc->sc_if.if_bpf, ..., BPF_DIRECTION_IN); bpf is not
-        // configured.
+        let if_bpf = sc.sc_if.if_bpf.get();
+        if !if_bpf.is_null() {
+            let _ = bpf_mtap_af(
+                if_bpf,
+                u32::from(m.m_pkthdr().ph_family.get()),
+                m,
+                BPF_DIRECTION_IN,
+            );
+        }
 
         net_lock();
         if m.m_pkthdr().ph_family.get() == AF_INET {
@@ -3011,8 +3020,15 @@ pub fn wg_qstart(ifq: &'static Ifqueue) {
             continue;
         };
 
-        // NBPFILTER > 0: bpf_mtap_af(sc->sc_if.if_bpf, ..., BPF_DIRECTION_OUT); bpf is not
-        // configured.
+        let if_bpf = sc.sc_if.if_bpf.get();
+        if !if_bpf.is_null() {
+            let _ = bpf_mtap_af(
+                if_bpf,
+                u32::from(m.m_pkthdr().ph_family.get()),
+                m,
+                BPF_DIRECTION_OUT,
+            );
+        }
 
         if mq_push(&peer.p_stage_queue, m) {
             ifp_counters_inc(ifp, IfCounters::IfcOqdrops);
@@ -3696,8 +3712,7 @@ pub fn wg_clone_create(_ifc: &'static IfClone, unit: i32) -> Result<(), Errno> {
                 if_attach(ifp);
                 if_alloc_sadl(ifp);
 
-                // NBPFILTER > 0: bpfattach(&ifp->if_bpf, ifp, DLT_LOOP, sizeof(uint32_t)); bpf
-                // is not configured.
+                bpfattach(&ifp.if_bpf, ifp, DLT_LOOP, size_of::<u32>() as u32);
 
                 wgprintf!(LOG_INFO, sc, None, "Interface created\n");
 

@@ -53,8 +53,6 @@
 //!   under the net lock; `enc_max_rdomain`/`enc_max_unit` are their lengths minus one.
 //! - `enc_output` and `enc_ioctl` are `unsafe fn`s, the signatures of `if_output` and
 //!   `if_ioctl` (`net/if_var.rs`).
-//! - `bpf(4)` is not configured: `bpfattach(&ifp->if_bpf, ifp, DLT_ENC, ENC_HDRLEN)` is not
-//!   called.
 
 use alloc::vec::Vec;
 use core::cell::Cell;
@@ -65,6 +63,7 @@ use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_synch::{refcnt_init_trace, refcnt_rele};
 use crate::kern::subr_prf::{panic, snprintf};
 use crate::kern::uipc_mbuf::m_freem;
+use crate::net::bpf::{DLT_ENC, bpfattach};
 use crate::net::if_::{
     IFF_RUNNING, IFF_UP, IFXF_CLONED, Ifreq, LINK_STATE_UNKNOWN, LINK_STATE_UP, if_addgroup,
     if_alloc_sadl, if_attach, if_clone_attach, if_detach,
@@ -97,6 +96,17 @@ pub struct Enchdr {
     pub spi: u32,
     /// `flags`: similar to mbuf `m_flags`.
     pub flags: u32,
+}
+
+impl Enchdr {
+    /// The structure's bytes as the C lays it out (`(char *)&hdr`, `ENC_HDRLEN` bytes).
+    pub fn to_bytes(&self) -> [u8; ENC_HDRLEN] {
+        let mut b = [0u8; ENC_HDRLEN];
+        b[0..4].copy_from_slice(&self.af.to_ne_bytes());
+        b[4..8].copy_from_slice(&self.spi.to_ne_bytes());
+        b[8..12].copy_from_slice(&self.flags.to_ne_bytes());
+        b
+    }
 }
 
 /// `struct enc_softc`.
@@ -203,7 +213,7 @@ pub fn enc_clone_create(ifc: &'static IfClone, unit: i32) -> Result<(), Errno> {
     sc.sc_ifa.ifa_addr.set(sdltosa(ifp.if_sadl.get()));
     sc.sc_ifa.ifa_netmask.set(ptr::null_mut());
 
-    // NBPFILTER > 0: bpfattach(&ifp->if_bpf, ifp, DLT_ENC, ENC_HDRLEN); not configured.
+    bpfattach(&ifp.if_bpf, ifp, DLT_ENC, ENC_HDRLEN as u32);
     net_lock();
     if let Err(error) = enc_setif(ifp, 0) {
         net_unlock();

@@ -116,7 +116,6 @@
 //! Status: `ported` (M7b).
 //!
 //! ## Deviations
-//! - `bpf(4)` is not configured: `bpfattach(&ifp->if_bpf, ifp, DLT_LOOP, ...)` is not called.
 //! - `loioctl` and `looutput` are `unsafe fn`s, the signatures of `if_ioctl` and `if_output`
 //!   (`net/if_var.rs`).
 
@@ -126,6 +125,7 @@ use core::sync::atomic::Ordering;
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::subr_prf::{panic, snprintf};
 use crate::kern::uipc_mbuf::m_freem;
+use crate::net::bpf::{DLT_LOOP, bpfattach};
 use crate::net::if_::{
     IFCAP_CSUM_IPv4, IFCAP_CSUM_TCPv4, IFCAP_CSUM_TCPv6, IFCAP_CSUM_UDPv4, IFCAP_CSUM_UDPv6,
     IFCAP_LRO, IFCAP_TSOv4, IFCAP_TSOv6, IFF_LOOPBACK, IFF_MULTICAST, IFF_RUNNING, IFXF_CLONED,
@@ -203,8 +203,7 @@ pub fn loop_clone_create(ifc: &'static IfClone, unit: i32) -> Result<(), Errno> 
     if_attach_queues(ifp, softnet_count());
     if_attach_iqueues(ifp, softnet_count());
     if_alloc_sadl(ifp);
-    // NBPFILTER > 0: bpfattach(&ifp->if_bpf, ifp, DLT_LOOP, sizeof(u_int32_t)); not
-    // configured.
+    bpfattach(&ifp.if_bpf, ifp, DLT_LOOP, size_of::<u32>() as u32);
     Ok(())
 }
 

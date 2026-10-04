@@ -110,6 +110,9 @@ pub(crate) fn setup_net() -> MutexGuard<'static, ()> {
     IFNETLIST.0.init();
     IFG_HEAD.0.init();
     crate::net::pf_if::pfi_test_reset();
+    // Nor enc(4) interfaces or bpf(4) taps of interfaces that are gone.
+    crate::net::if_enc::enc_reset();
+    crate::net::bpf::bpf_test_reset();
     guard
 }
 

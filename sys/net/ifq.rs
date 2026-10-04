@@ -66,8 +66,9 @@
 //!   `ifiq_kstat_*`, the `kstat_create`/`kstat_install` in `ifq_init`/`ifiq_init` and the
 //!   `kstat_destroy` calls) is not compiled, as with `NKSTAT` 0; `ifq_kstat`/`ifiq_kstat`
 //!   stay NULL.
-//! - `bpf(4)` is not ported: the `NBPFILTER > 0` taps in `ifiq_input` and
-//!   `ifiq_enqueue_qlim` are not compiled (`NBPFILTER` 0); `ifiq_bpfp` is kept.
+//! - `bpf(4)` is configured: `ifiq_input` and `ifiq_enqueue_qlim` hand each packet to the
+//!   queue's and the interface's taps (`ifiq_bpfp`, `if_bpf`) through `if_bpf_mtap`, which
+//!   `if_attach_common` always sets; a hook left unset would tap nothing.
 //! - `ifq_serialize` takes a `&'static Task` (the task may run on another CPU after the call
 //!   returns); `ifq_barrier`'s task on its own stack goes through the private
 //!   `ifq_serialize_task`, whose caller waits for it.
@@ -98,6 +99,7 @@ use crate::kern::uipc_mbuf::{m_freem, ml_dequeue, ml_enlist, ml_enqueue, ml_init
 use crate::machine::Machine;
 use crate::machine::cpu::Cpu;
 use crate::machine::intr::IPL_NET;
+use crate::net::bpf::BPF_DIRECTION_IN;
 use crate::net::if_::{IFF_RUNNING, IFQ_MAXPRIO, IFQ_NQUEUES, IFXF_MONITOR, IfData};
 use crate::net::if_::{if_input_process, net_tq};
 use crate::net::if_var::Ifnet;
@@ -925,7 +927,7 @@ pub fn ifiq_destroy(ifiq: &Ifiqueue) {
 pub fn ifiq_input(ifiq: &'static Ifiqueue, ml: &MbufList) -> bool {
     let ifp = ifiq_ifp(ifiq);
     let mut bytes: u64 = 0;
-    let fdrops: u64 = 0;
+    let mut fdrops: u64 = 0;
 
     if ml_empty(ml) {
         return false;
@@ -938,8 +940,52 @@ pub fn ifiq_input(ifiq: &'static Ifiqueue, ml: &MbufList) -> bool {
     }
     let packets = u64::from(ml_len(ml));
 
-    // NBPFILTER > 0: each packet goes past the queue's and the interface's bpf taps
-    // (if_bpf_mtap, BPF_DIRECTION_IN), which may drop it (fdrops); bpf(4) is not configured.
+    let ifiq_bpfp = ifiq.ifiq_bpfp.get();
+    let ifiq_bpf = if ifiq_bpfp.is_null() {
+        ptr::null_mut()
+    } else {
+        // SAFETY: a queue's `ifiq_bpfp` is NULL or points at its driver's per-queue tap
+        // cookie, which lives as long as the queue.
+        unsafe { ifiq_bpfp.read() }
+    };
+    let if_bpf = ifp.if_bpf.get();
+    if !ifiq_bpf.is_null() || !if_bpf.is_null() {
+        let ml0 = MbufList::new();
+        ml_enlist(&ml0, ml);
+
+        let mtap = |arg: *mut u8, m: &Mbuf| {
+            !arg.is_null()
+                && ifp
+                    .if_bpf_mtap
+                    .get()
+                    .is_some_and(|f| f(arg, m, BPF_DIRECTION_IN))
+        };
+        while let Some(m) = ml_dequeue(&ml0) {
+            let mut drop = false;
+            if mtap(ifiq_bpf, m) {
+                drop = true;
+            }
+            if mtap(if_bpf, m) {
+                drop = true;
+            }
+            if drop {
+                m_freem(m);
+                fdrops += 1;
+            } else {
+                ml_enqueue(ml, m);
+            }
+        }
+
+        if ml_empty(ml) {
+            mtx_enter(&ifiq.ifiq_mtx);
+            ifiq.ifiq_packets.set(ifiq.ifiq_packets.get() + packets);
+            ifiq.ifiq_bytes.set(ifiq.ifiq_bytes.get() + bytes);
+            ifiq.ifiq_fdrops.set(ifiq.ifiq_fdrops.get() + fdrops);
+            mtx_leave(&ifiq.ifiq_mtx);
+
+            return false;
+        }
+    }
 
     mtx_enter(&ifiq.ifiq_mtx);
     ifiq.ifiq_packets.set(ifiq.ifiq_packets.get() + packets);
@@ -988,7 +1034,21 @@ pub fn ifiq_enqueue_qlim(
     m.m_pkthdr().ph_ifidx.set(ifp.if_index.get());
     m.m_pkthdr().ph_rtableid.set(ifp.if_rdomain.get());
 
-    // NBPFILTER > 0: the interface's bpf tap may drop the packet (fdrops); not configured.
+    let if_bpf = ifp.if_bpf.get();
+    if !if_bpf.is_null()
+        && let Some(mtap) = ifp.if_bpf_mtap.get()
+        && mtap(if_bpf, m, BPF_DIRECTION_IN)
+    {
+        mtx_enter(&ifiq.ifiq_mtx);
+        ifiq.ifiq_packets.set(ifiq.ifiq_packets.get() + 1);
+        ifiq.ifiq_bytes
+            .set(ifiq.ifiq_bytes.get() + m.m_pkthdr().len.get() as u64);
+        ifiq.ifiq_fdrops.set(ifiq.ifiq_fdrops.get() + 1);
+        mtx_leave(&ifiq.ifiq_mtx);
+
+        m_freem(m);
+        return Ok(());
+    }
 
     mtx_enter(&ifiq.ifiq_mtx);
     ifiq.ifiq_packets.set(ifiq.ifiq_packets.get() + 1);

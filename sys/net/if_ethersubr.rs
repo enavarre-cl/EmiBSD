@@ -101,7 +101,7 @@ didn't get a copy, you may request one from <license@ipv6.nrl.navy.mil>.
 //! - Options and pseudo-devices that are not ported are not configured, their code a comment
 //!   at each site: `vlan(4)` (`NVLAN` 0, so a tagged frame is service delimited and dropped
 //!   unless a bridge takes it, as the C does without vlan), `carp(4)`, `pppoe(4)`/`PIPEX`,
-//!   `bpe(4)`, `bpf(4)`, `af_frame` (`NAF_FRAME` 0: the frame sockets need sockets, so the
+//!   `bpe(4)`, `af_frame` (`NAF_FRAME` 0: the frame sockets need sockets, so the
 //!   whole `#if NAF_FRAME > 0` part, `ether_frm_*` and `struct ether_pcb`, is not compiled),
 //!   `INET6` (`nd6_*`, `ether_ip6multicast_*`, the IPv6 cases) and `MPLS`.
 //! - `ether_ifattach` takes the `struct arpcom` (the C takes its `ac_if` and casts), which
@@ -134,6 +134,7 @@ use crate::kern::kern_synch::{refcnt_init_trace, refcnt_rele, refcnt_take};
 use crate::kern::subr_prf::{Str, panic, printf};
 use crate::kern::uipc_mbuf::{m_adj, m_copym, m_freem, m_getptr, m_prepend, m_pullup};
 use crate::machine::intr::{splnet, splx};
+use crate::net::bpf::{DLT_EN10MB, bpfattach};
 use crate::net::ethertypes::{
     ETHERTYPE_ARP, ETHERTYPE_IP, ETHERTYPE_QINQ, ETHERTYPE_REVARP, ETHERTYPE_VLAN,
 };
@@ -723,7 +724,7 @@ pub fn ether_ifattach(ac: &'static Arpcom) {
         );
     }
     ac.ac_multiaddrs.init();
-    // NBPFILTER > 0: bpfattach(&ifp->if_bpf, ifp, DLT_EN10MB, ETHER_HDR_LEN); not configured.
+    bpfattach(&ifp.if_bpf, ifp, DLT_EN10MB, ETHER_HDR_LEN as u32);
 }
 
 /// `ether_ifdetach`: undo pseudo-driver changes and free the multicast list.

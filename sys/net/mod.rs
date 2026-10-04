@@ -7,6 +7,7 @@
 pub mod art;
 pub mod bpf;
 pub mod bpf_filter;
+pub mod bpfdesc;
 pub mod ethertypes;
 pub mod fq_codel;
 pub mod hfsc;

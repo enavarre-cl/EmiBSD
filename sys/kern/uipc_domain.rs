@@ -49,8 +49,8 @@
 //!   (`netinet/in_proto.rs`), `unixdomain` (`kern/uipc_proto.rs`, local sockets) and
 //!   `routedomain` (`net/rtsock.rs`), with `pfkeydomain` (`net/pfkeyv2.rs`, `IPSEC`) first. `MPLS`,
 //!   `INET6` and `NAF_FRAME` are not configured; their entries are comments, and so are the
-//!   `NBPFILTER` and `PIPEX` branches of `net_sysctl`. `NPFLOW` is configured: `PF_PFLOW` goes
-//!   to `pflow_sysctl`.
+//!   `PIPEX` branches of `net_sysctl`. `NPFLOW` is configured: `PF_PFLOW` goes to
+//!   `pflow_sysctl`; so is `NBPFILTER`: `PF_BPF` goes to `bpf_sysctl`.
 //! - The two timeouts are statics initialised in `domaininit` with their own address as the
 //!   argument, as the C's function-local statics are.
 //! - `pffinddomain`, `pffindtype` and `pffindproto` return `Option`s for the C's NULL;
@@ -67,6 +67,7 @@ use crate::kern::kern_timeout::{timeout_add, timeout_add_msec, timeout_set_flags
 use crate::kern::uipc_mbuf::{MAX_HDR, MAX_LINKHDR, MAX_PROTOHDR};
 use crate::kern::uipc_proto::UNIXDOMAIN;
 use crate::kern::uipc_usrreq::uipc_sysctl;
+use crate::net::bpf::bpf_sysctl;
 use crate::net::ifq::net_ifiq_sysctl;
 use crate::net::pfkeyv2::PFKEYDOMAIN;
 use crate::net::rtsock::ROUTEDOMAIN;
@@ -76,7 +77,7 @@ use crate::sys::errno::Errno;
 use crate::sys::proc::Proc;
 use crate::sys::protosw::{PR_MPSYSCTL, Protosw};
 use crate::sys::socket::{
-    NET_LINK_IFRXQ, PF_LINK, PF_PFLOW, PF_UNIX, PF_UNSPEC, SOCK_RAW, Sockaddr,
+    NET_LINK_IFRXQ, PF_BPF, PF_LINK, PF_PFLOW, PF_UNIX, PF_UNSPEC, SOCK_RAW, Sockaddr,
 };
 use crate::sys::systm::net_assert_locked;
 use crate::sys::timeout::{KCLOCK_NONE, TIMEOUT_MPSAFE, TIMEOUT_PROC, Timeout};
@@ -224,7 +225,9 @@ pub fn net_sysctl(
     if family == i32::from(PF_UNIX) {
         return uipc_sysctl(&name[1..], oldp, oldlenp, newp, newlen);
     }
-    // NBPFILTER > 0: PF_BPF; not configured.
+    if family == i32::from(PF_BPF) {
+        return bpf_sysctl(&name[1..], oldp, oldlenp, newp, newlen);
+    }
     if family == i32::from(PF_PFLOW) {
         return crate::net::if_pflow::pflow_sysctl(&name[1..], oldp, oldlenp, newp, newlen);
     }

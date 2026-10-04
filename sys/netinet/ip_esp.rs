@@ -99,8 +99,9 @@
 //!   sequence number through `&mut u32`, as the C does: the callers switch on the code.
 //! - The ESP header removal of `esp_input` moves bytes inside an mbuf with `ptr::copy` (the
 //!   C's `memmove`), under a `// SAFETY:` naming the bounds.
-//! - Not configured, each a comment at its site: `NBPFILTER` (the `enc(4)` counters and
-//!   `bpf_mtap_hdr` of `esp_output`), `INET6`. `NPFSYNC` is: `pfsync_update_tdb`.
+//! - `NBPFILTER` is configured: `esp_output` counts the packet on the SA's `enc(4)`
+//!   interface and taps it. `NPFSYNC` is: `pfsync_update_tdb`.
+//! - Not configured, each a comment at its site: `INET6`.
 
 use core::ptr;
 use core::sync::atomic::Ordering;
@@ -128,6 +129,8 @@ use crate::kern::subr_prf::panic;
 use crate::kern::uipc_mbuf::{
     m_adj, m_copyback, m_copydata, m_dup_pkt, m_freem, m_getptr, m_makespace,
 };
+use crate::net::bpf::{BPF_DIRECTION_OUT, bpf_mtap_hdr};
+use crate::net::if_enc::{Enchdr, enc_getif};
 use crate::net::if_var::Netstack;
 use crate::net::pfkeyv2::{
     SADB_AALG_MD5HMAC, SADB_AALG_SHA1HMAC, SADB_EALG_3DESCBC, SADB_EALG_NULL,
@@ -150,7 +153,7 @@ use crate::sys::endian::{htonl, ntohl};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::M_NOWAIT;
 use crate::sys::malloc::{M_WAITOK, M_XDATA};
-use crate::sys::mbuf::{M_DONTWAIT, Mbuf, m_freemp, m_readonly, mtod};
+use crate::sys::mbuf::{M_AUTH, M_CONF, M_DONTWAIT, Mbuf, m_freemp, m_readonly, mtod};
 use crate::sys::mutex::mutex_assert_locked;
 use crate::sys::socket::AF_INET;
 use libkern::{explicit_bzero, timingsafe_bcmp};
@@ -886,8 +889,31 @@ pub fn esp_output(
     let esph = tdb.tdb_authalgxform.get();
     let mut m = m;
 
-    // NBPFILTER > 0: the enc(4) interface of tdb_rdomain/tdb_tap counts the packet and taps
-    // it with an enchdr; not configured.
+    if let Some(encif) = enc_getif(tdb.tdb_rdomain.get(), tdb.tdb_tap.get()) {
+        encif.if_opackets().set(encif.if_opackets().get() + 1);
+        encif
+            .if_obytes()
+            .set(encif.if_obytes().get() + m.m_pkthdr().len.get() as u64);
+
+        let if_bpf = encif.if_bpf.get();
+        if !if_bpf.is_null() {
+            let mut hdr = Enchdr {
+                af: u32::from(tdb.tdb_dst.get().sa_family()).to_be(),
+                spi: tdb.tdb_spi.get(),
+                flags: 0,
+            };
+
+            // The C sets these two in host order, unlike ah_output and ipsec_input.
+            if espx.is_some() {
+                hdr.flags |= u32::from(M_CONF);
+            }
+            if esph.is_some() {
+                hdr.flags |= u32::from(M_AUTH);
+            }
+
+            let _ = bpf_mtap_hdr(if_bpf, &hdr.to_bytes(), m, BPF_DIRECTION_OUT);
+        }
+    }
 
     let hlen = 2 * 4 + i32::from(tdb.tdb_ivlen.get());
 

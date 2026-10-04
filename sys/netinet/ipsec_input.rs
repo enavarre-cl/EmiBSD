@@ -63,10 +63,9 @@
 //!   drops the packet, as the C's non-zero).
 //! - `NPF` (pf(4)) is configured: `pf_test` of transport mode packets, `pf_tag_packet`,
 //!   `pf_pkt_addr_changed`, and `PF_TAG_DIVERTED` packets go to raw sockets.
-//! - Not configured, each a comment at its site: `NBPFILTER` (the `enc(4)` interface of the
-//!   SA: its counters, `ph_ifidx` and `bpf_mtap_hdr`; so a decapsulated packet keeps its
-//!   receiving interface, and one for an address on another interface is dropped as
-//!   `ips_wrongif` unless the host forwards), `NSEC` (`sec(4)`), `INET6` (`in6_cksum`,
+//! - `NBPFILTER` is configured: the `enc(4)` interface of the SA counts a decapsulated
+//!   packet, becomes its `ph_ifidx` (but for IPComp) and taps it.
+//! - Not configured, each a comment at its site: `NSEC` (`sec(4)`), `INET6` (`in6_cksum`,
 //!   `rip6_input`, the IPv6 header chain of `ipsec_protoff`).
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
@@ -83,7 +82,9 @@ use crate::kern::kern_timeout::timeout_add_sec;
 use crate::kern::subr_prf::panic;
 use crate::kern::uipc_mbuf::{m_copyback, m_copydata, m_pullup};
 use crate::kern::uipc_mbuf2::{m_tag_find, m_tag_get, m_tag_prepend};
+use crate::net::bpf::{BPF_DIRECTION_IN, bpf_mtap_hdr};
 use crate::net::if_::{if_get, if_put, unhandled_af};
+use crate::net::if_enc::{Enchdr, enc_getif};
 use crate::net::if_var::Netstack;
 use crate::net::pf::{pf_pkt_addr_changed, pf_tag_packet, pf_test};
 use crate::net::pfvar::{PF_IN, PF_PASS};
@@ -737,8 +738,27 @@ pub fn ipsec_common_input_cb(
             m.m_pkthdr().len.get() as u64,
         );
 
-        // NBPFILTER > 0: the enc(4) interface of tdb_rdomain_post/tdb_tap counts the packet,
-        // becomes its ph_ifidx (but for IPComp) and taps it with an enchdr; not configured.
+        if let Some(encif) = enc_getif(tdbp.tdb_rdomain_post.get(), tdbp.tdb_tap.get()) {
+            encif.if_ipackets().set(encif.if_ipackets().get() + 1);
+            encif
+                .if_ibytes()
+                .set(encif.if_ibytes().get() + m.m_pkthdr().len.get() as u64);
+
+            if sproto != IPPROTO_IPCOMP {
+                // XXX This conflicts with the scoped nature of IPv6
+                m.m_pkthdr().ph_ifidx.set(encif.if_index.get());
+            }
+            let if_bpf = encif.if_bpf.get();
+            if !if_bpf.is_null() {
+                let hdr = Enchdr {
+                    af: u32::from(af).to_be(),
+                    spi: tdbp.tdb_spi.get(),
+                    flags: u32::from(m.m_flags().get() & (M_AUTH | M_CONF)).to_be(),
+                };
+
+                let _ = bpf_mtap_hdr(if_bpf, &hdr.to_bytes(), m, BPF_DIRECTION_IN);
+            }
+        }
 
         if tdbp.has_flags(TDBF_IFACE) {
             // NSEC > 0: sec_input of a tunnel mode packet on its sec(4) interface; not

@@ -56,7 +56,8 @@ const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 /// - character (`cdevsw[]`, line numbers amd64 / arm64): `cn` 0 (177 / 127), `ctty` 1
 ///   (178 / 128), `mm` 2 (179 / 129; minors: `mem` 0, `kmem` 1, `null` 2, `zero` 12),
 ///   `log` 7 (184 / 134: `/dev/klog`), `com` 8 (185 / 135: the serial console's tty, minor
-///   = unit), `rd` 47 (225 / 175: the raw disk) and `pf` 73 (258 / 208: `/dev/pf`, which
+///   = unit), `bpf` 23 (201 / 151: `/dev/bpf`, cloning; `MAKEDEV` makes it 0600), `rd` 47
+///   (225 / 175: the raw disk) and `pf` 73 (258 / 208: `/dev/pf`, which
 ///   pfctl(8) opens; `MAKEDEV` makes it 0600). The amd64 console is `com0`, `tty00`.
 ///   On arm64 `pluartcnattach` finds the major of `comopen` and puts `pluartdev` in its slot
 ///   (`sys/dev/ic/pluart.c:856-863`, "KLUDGE"), so `pluart0` is major 8, minor 0 too:
@@ -77,6 +78,7 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("zero", 'c', 2, 12, 0o666, "wheel"),
     ("klog", 'c', 7, 0, 0o600, "wheel"),
     ("tty00", 'c', 8, 0, 0o600, "wheel"),
+    ("bpf", 'c', 23, 0, 0o600, "wheel"),
     ("rd0a", 'b', 17, 0, 0o640, "operator"),
     ("rd0b", 'b', 17, 1, 0o640, "operator"),
     ("rd0c", 'b', 17, 2, 0o640, "operator"),

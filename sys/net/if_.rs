@@ -131,8 +131,9 @@
 //! - Options and pseudo-devices that are not ported are not configured, and their code is a
 //!   comment at each site: `INET6` (`nd6_ifattach`, `in6_ifattach`/`in6_ifdetach`,
 //!   `ip6intr`, the `AF_INET6` cases), `MPLS`, `MROUTING`, `NFSCLIENT`, and `NBRIDGE`,
-//!   `NCARP`, `NBPFILTER`, `NPPP`, `NPPPOE` as 0. `NETHER` and `NPF` (pf(4): the interface
-//!   and group hooks of `pf_if.c`, `pf_delay_pkt`, `pf_pkt_addr_changed`) are configured.
+//!   `NCARP`, `NPPP`, `NPPPOE` as 0. `NETHER`, `NPF` (pf(4): the interface and group hooks
+//!   of `pf_if.c`, `pf_delay_pkt`, `pf_pkt_addr_changed`) and `NBPFILTER` (bpf(4): the taps
+//!   of `if_input_local`, `if_vinput` and `p2p_bpf_mtap`, `bpfdetach`) are configured.
 //! - Calls into files that are not ported report themselves with `unported!` and go on as
 //!   the C would with an empty subsystem: `rti_delete` (`netinet/igmp.c`);
 //!   `inet_ntop` (`ifa_print_all`).
@@ -196,6 +197,9 @@ use crate::machine::Machine;
 use crate::machine::copy::{copyin, copyinstr, copyout, copyoutstr};
 use crate::machine::cpu::{Cpu, curcpu};
 use crate::machine::intr::{IPL_NET, IPL_NONE, splnet, splx};
+use crate::net::bpf::{
+    BPF_DIRECTION_IN, BPF_DIRECTION_OUT, bpf_mtap_af, bpf_mtap_ether, bpfdetach,
+};
 use crate::net::if_dl::{SockaddrDl, lladdr};
 use crate::net::if_ethersubr::ether_brport_isset;
 use crate::net::if_types::{IFT_CARP, IFT_ETHER, IFT_IEEE80211, IFT_ISO88025, IFT_PPP, IFT_XETHER};
@@ -1885,7 +1889,9 @@ fn if_attach_common(ifp: &'static Ifnet) {
     if ifp.if_enqueue.get().is_none() {
         ifp.if_enqueue.set(Some(if_enqueue_ifq));
     }
-    // NBPFILTER > 0: if_bpf_mtap defaults to bpf_mtap_ether; bpf(4) is not configured.
+    if ifp.if_bpf_mtap.get().is_none() {
+        ifp.if_bpf_mtap.set(Some(bpf_mtap_ether));
+    }
     ifp.if_llprio.set(IFQ_DEFPRIO as u8);
 }
 
@@ -1976,8 +1982,17 @@ pub fn if_input_local(
     af: SaFamily,
     ns: Option<&Netstack>,
 ) -> Result<(), Errno> {
-    // NBPFILTER > 0: on a loopback interface, packets go to bpf (bpf_mtap_af,
-    // BPF_DIRECTION_OUT); bpf(4) is not configured.
+    // Only send packets to bpf if they are destined to local addresses.
+    //
+    // if_input_local() is also called for SIMPLEX interfaces to duplicate packets for local
+    // use. But don't dup them to bpf.
+    if ifp.if_flags.get() & IFF_LOOPBACK != 0 {
+        let if_bpf = ifp.if_bpf.get();
+
+        if !if_bpf.is_null() {
+            let _ = bpf_mtap_af(if_bpf, u32::from(af), m, BPF_DIRECTION_OUT);
+        }
+    }
 
     let keepflags = m.m_flags().get() & (M_BCAST | M_MCAST);
     // Preserve outgoing checksum flags, in case the packet is forwarded to another interface.
@@ -2292,7 +2307,14 @@ pub fn if_vinput(ifp: &'static Ifnet, m: &'static Mbuf, ns: Option<&Netstack>) {
         m.m_pkthdr().len.get() as u64,
     );
 
-    // NBPFILTER > 0: the interface's bpf tap may drop the packet; bpf(4) is not configured.
+    let if_bpf = ifp.if_bpf.get();
+    if !if_bpf.is_null()
+        && let Some(mtap) = ifp.if_bpf_mtap.get()
+        && mtap(if_bpf, m, BPF_DIRECTION_IN)
+    {
+        m_freem(m);
+        return;
+    }
 
     if ifp.if_xflags.get() & IFXF_MONITOR == 0 {
         ml_enqueue(&ns.ns_input, m);
@@ -2442,7 +2464,7 @@ pub fn if_detach(ifp: &'static Ifnet) {
         ifq_clr_oactive(ifp.ifq(i));
     }
 
-    // NBPFILTER > 0: bpfdetach(ifp); bpf(4) is not configured.
+    bpfdetach(ifp);
 
     net_lock();
     let s = splnet();
@@ -2930,9 +2952,8 @@ pub fn p2p_rtrequest(ifp: &'static Ifnet, req: i32, rt: Option<&'static Rtentry>
 }
 
 /// `p2p_bpf_mtap`: a point-to-point interface's tap, by the packet's address family.
-pub fn p2p_bpf_mtap(_if_bpf: *mut u8, _m: &Mbuf, _dir: u32) -> bool {
-    // NBPFILTER > 0: bpf_mtap_af(if_bpf, m->m_pkthdr.ph_family, m, dir); not configured.
-    false
+pub fn p2p_bpf_mtap(if_bpf: *mut u8, m: &Mbuf, dir: u32) -> bool {
+    bpf_mtap_af(if_bpf, u32::from(m.m_pkthdr().ph_family.get()), m, dir)
 }
 
 /// `p2p_input`: a point-to-point interface's input, by the packet's address family.

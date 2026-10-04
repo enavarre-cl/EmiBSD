@@ -58,6 +58,10 @@ pub unsafe trait AbiPod: Copy + 'static {}
 // and file ioctls, `*(int *)data`).
 unsafe impl AbiPod for i32 {}
 
+// SAFETY: a plain `u_int`: four initialised bytes, any pattern valid (`*(u_int *)data` of the
+// bpf(4) ioctls).
+unsafe impl AbiPod for u32 {}
+
 /// `copyin(uaddr, &obj, sizeof(obj))`: copies a `T` in from the user address `uaddr`.
 pub fn copyin_obj<T: AbiPod>(uaddr: usize) -> Result<T, Errno> {
     let mut obj = MaybeUninit::<T>::zeroed();

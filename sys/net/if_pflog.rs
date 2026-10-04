@@ -74,15 +74,11 @@
 //! it back (`DLT_PFLOG`), so it keeps the C layout (`#[repr(C)]`, `PFLOG_HDRLEN` bytes).
 //!
 //! ## Deviations
-//! - `bpf(4)` is not configured (`NBPFILTER` 0): `pflog_clone_create` attaches no bpf tap
-//!   (`bpfattach(..., DLT_PFLOG, PFLOG_HDRLEN)`), and the whole body of `pflog_packet` (the
-//!   `pfloghdr` it builds and `bpf_mtap_hdr`) is compiled out in the C, so `pflog_packet`
-//!   only returns success, as the C does. Both are comments at their sites.
 //! - `PFLOGDEBUG` is not defined: `DPRINTF` expands to nothing and is not ported.
 //! - `pflogoutput` and `pflogioctl` are `unsafe fn`s, the signatures of `if_output` and
 //!   `if_ioctl` (`net/if_var.rs`).
 //! - `pflog_packet` returns `bool` for the C's `int` 0 (`true`) or -1 (`false`, bad
-//!   arguments, which only the compiled-out bpf path can find).
+//!   arguments); `rm` and `pd` are references, so only a missing kif or packet is bad.
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
@@ -90,23 +86,27 @@ use core::ptr::{self, NonNull};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::subr_prf::{panic, snprintf};
 use crate::kern::uipc_mbuf::m_freem;
+use crate::net::bpf::{BPF_DIRECTION_OUT, DLT_PFLOG, bpf_mtap_hdr, bpfattach};
 use crate::net::if_::{
     IFF_RUNNING, IFF_UP, IFNAMSIZ, IFXF_CLONED, if_alloc_sadl, if_attach, if_clone_attach,
     if_detach,
 };
 use crate::net::if_types::IFT_PFLOG;
 use crate::net::if_var::{IfClone, Ifnet};
-use crate::net::pfvar::{PfAddr, PfRule, PfRuleset};
-use crate::net::pfvar_priv::{PfGlobal, PfPdesc};
+use crate::net::pf::{pf_addr_compare, pf_addrcpy, pf_socket_lookup};
+use crate::net::pfvar::{PF_DROP, PF_LOG_USER, PFRES_MATCH, PfAddr, PfRule, PfRuleset};
+use crate::net::pfvar_priv::{PfGlobal, PfLoc, PfPdesc};
 use crate::net::route::Rtentry;
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_DEVBUF, M_WAITOK, M_ZERO};
 use crate::sys::mbuf::{MHLEN, MLEN, Mbuf};
+use crate::sys::proc::NO_PID;
 use crate::sys::queue::{ListEntry, ListHead};
 use crate::sys::socket::Sockaddr;
 use crate::sys::sockio::SIOCSIFFLAGS;
 use crate::sys::systm::{net_assert_locked, net_lock, net_unlock};
 use crate::sys::types::{Pid, SaFamily, Uid};
+use libkern::strlcpy;
 
 /// `PFLOG_RULESET_NAME_SIZE`.
 pub const PFLOG_RULESET_NAME_SIZE: usize = 16;
@@ -223,8 +223,7 @@ pub fn pflog_clone_create(_ifc: &'static IfClone, unit: i32) -> Result<(), Errno
     if_attach(ifp);
     if_alloc_sadl(ifp);
 
-    // NBPFILTER > 0: bpfattach(&pflogif->sc_if.if_bpf, ifp, DLT_PFLOG, PFLOG_HDRLEN); not
-    // configured.
+    bpfattach(&pflogif.sc_if.if_bpf, ifp, DLT_PFLOG, PFLOG_HDRLEN as u32);
 
     net_lock();
     // SAFETY: the new softc is on no list; it stays allocated until `pflog_clone_destroy`
@@ -302,24 +301,94 @@ pub fn pflog_getif(unit: i32) -> Option<&'static PflogSoftc> {
 /// `pflog_packet`: logs the packet `pd` describes, matched by rule `rm` (in anchor rule
 /// `am` of `ruleset`), on the `pflog` interface of `trigger` (or of `rm`).
 pub fn pflog_packet(
-    _pd: &mut PfPdesc,
-    _reason: u8,
-    _rm: &'static PfRule,
-    _am: Option<&'static PfRule>,
-    _ruleset: Option<&'static PfRuleset>,
-    _trigger: Option<&'static PfRule>,
+    pd: &mut PfPdesc,
+    reason: u8,
+    rm: &'static PfRule,
+    am: Option<&'static PfRule>,
+    ruleset: Option<&'static PfRuleset>,
+    trigger: Option<&'static PfRule>,
 ) -> bool {
-    // NBPFILTER > 0: the packet is handed to the bpf listeners of the pflog interface of
-    // trigger->logif (trigger defaults to rm; -1 for a missing rule, descriptor, kif or
-    // packet; 0 without the interface or a listener) behind a struct pfloghdr: length
-    // PFLOG_REAL_HDRLEN; the action (PF_DROP for the default rule when the reason is not
-    // PFRES_MATCH); the reason; the kif's name; the rule numbers (am's and rm's in network
-    // order, or rm's and -1) and the ruleset's anchor name; the socket's uid/pid for
-    // `log (user)` (pf_socket_lookup), else -1/NO_PID; the rule's creator uid/pid; the
-    // direction and family; `rewritten` when the addresses or ports were translated; the
-    // translated family, addresses and ports. The interface counts an output packet of the
-    // packet's length, and bpf_mtap_hdr(if_bpf, &hdr, sizeof(hdr), pd->m,
-    // BPF_DIRECTION_OUT) passes it on. bpf(4) is not configured.
+    let (Some(kif), Some(m)) = (pd.kif, pd.m) else {
+        return false;
+    };
+    let trigger = trigger.unwrap_or(rm);
+    let Some(pflogif) = pflog_getif(i32::from(trigger.logif)) else {
+        return true;
+    };
+    let ifn = &pflogif.sc_if;
+    let if_bpf = ifn.if_bpf.get();
+    if if_bpf.is_null() {
+        return true;
+    }
+
+    let mut hdr = Pfloghdr {
+        length: PFLOG_REAL_HDRLEN as u8,
+        // Default rule does not pass packets dropped for other reasons.
+        action: if rm.nr.get() == u32::MAX && u16::from(reason) != PFRES_MATCH {
+            PF_DROP
+        } else {
+            rm.action
+        },
+        reason,
+        ifname: kif.pfik_name,
+        ..Pfloghdr::default()
+    };
+
+    match am {
+        None => {
+            hdr.rulenr = rm.nr.get().to_be();
+            hdr.subrulenr = u32::MAX;
+        }
+        Some(am) => {
+            hdr.rulenr = am.nr.get().to_be();
+            hdr.subrulenr = rm.nr.get().to_be();
+            if let Some(anchor) = ruleset.and_then(|rs| rs.anchor.get()) {
+                let _ = strlcpy(&mut hdr.ruleset, &anchor.name);
+            }
+        }
+    }
+    if trigger.log & PF_LOG_USER != 0 && pd.lookup.done == 0 {
+        pd.lookup.done = i32::from(pf_socket_lookup(pd));
+    }
+    if trigger.log & PF_LOG_USER != 0 && pd.lookup.done > 0 {
+        hdr.uid = pd.lookup.uid;
+        hdr.pid = pd.lookup.pid;
+    } else {
+        hdr.uid = Uid::MAX;
+        hdr.pid = NO_PID;
+    }
+    hdr.rule_uid = rm.cuid;
+    hdr.rule_pid = rm.cpid;
+    hdr.dir = pd.dir;
+    hdr.af = pd.af;
+
+    if !matches!(pd.src, PfLoc::None) && !matches!(pd.dst, PfLoc::None) {
+        let (src, dst) = (pd.ld_addr(pd.src), pd.ld_addr(pd.dst));
+        if pd.af != pd.naf
+            || pf_addr_compare(&src, &pd.nsaddr, pd.naf) != 0
+            || pf_addr_compare(&dst, &pd.ndaddr, pd.naf) != 0
+            || pd.osport != pd.nsport
+            || pd.odport != pd.ndport
+        {
+            hdr.rewritten = 1;
+        }
+    }
+    hdr.naf = pd.naf;
+    pf_addrcpy(&mut hdr.saddr, &pd.nsaddr, pd.naf);
+    pf_addrcpy(&mut hdr.daddr, &pd.ndaddr, pd.naf);
+    hdr.sport = pd.nsport;
+    hdr.dport = pd.ndport;
+
+    ifn.if_opackets().set(ifn.if_opackets().get() + 1);
+    ifn.if_obytes()
+        .set(ifn.if_obytes().get() + m.m_pkthdr().len.get() as u64);
+
+    // SAFETY: `Pfloghdr` is `#[repr(C)]` plain data of `PFLOG_HDRLEN` bytes without holes
+    // (`pad` is a member), so viewing it as bytes reads only initialised memory.
+    let bytes = unsafe {
+        core::slice::from_raw_parts(ptr::from_ref(&hdr).cast::<u8>(), size_of::<Pfloghdr>())
+    };
+    let _ = bpf_mtap_hdr(if_bpf, bytes, m, BPF_DIRECTION_OUT);
 
     true
 }

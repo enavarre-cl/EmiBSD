@@ -95,9 +95,10 @@
 //!   (it may pull the packet up, or free it on failure); the IPv4 header is changed in a
 //!   copy stored back, the options through the pulled-up first mbuf.
 //! - The replay checks share `ip_esp.rs`'s `checkreplaywindow`; the counters are AH's.
-//! - Not configured, each a comment at its site: `NBPFILTER` (the `enc(4)` counters and
-//!   `bpf_mtap_hdr` of `ah_output`), `INET6` (the IPv6 header and extension header
-//!   massaging). `NPFSYNC` is: `pfsync_update_tdb`.
+//! - `NBPFILTER` is configured: `ah_output` counts the packet on the SA's `enc(4)`
+//!   interface and taps it. `NPFSYNC` is: `pfsync_update_tdb`.
+//! - Not configured, each a comment at its site: `INET6` (the IPv6 header and extension
+//!   header massaging).
 
 use alloc::vec;
 use core::mem::offset_of;
@@ -116,6 +117,8 @@ use crate::kern::subr_prf::panic;
 use crate::kern::uipc_mbuf::{
     m_copyback, m_copydata, m_dup_pkt, m_freem, m_getptr, m_makespace, m_pullup,
 };
+use crate::net::bpf::{BPF_DIRECTION_OUT, bpf_mtap_hdr};
+use crate::net::if_enc::{Enchdr, enc_getif};
 use crate::net::if_var::Netstack;
 use crate::net::pfkeyv2::{
     SADB_AALG_MD5HMAC, SADB_AALG_SHA1HMAC, SADB_EXT_LIFETIME_HARD, SADB_EXT_LIFETIME_SOFT,
@@ -139,7 +142,7 @@ use crate::sys::endian::{htonl, htons, ntohl, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::M_NOWAIT;
 use crate::sys::malloc::{M_WAITOK, M_XDATA};
-use crate::sys::mbuf::{M_DONTWAIT, Mbuf, m_freemp, m_readonly, mtod};
+use crate::sys::mbuf::{M_AUTH, M_DONTWAIT, Mbuf, m_freemp, m_readonly, mtod};
 use crate::sys::socket::AF_INET;
 use libkern::{explicit_bzero, timingsafe_bcmp};
 
@@ -765,8 +768,23 @@ pub fn ah_output(
     };
     let authsize = i32::from(ahx.authsize);
 
-    // NBPFILTER > 0: the enc(4) interface of tdb_rdomain/tdb_tap counts the packet and taps
-    // it with an enchdr; not configured.
+    if let Some(encif) = enc_getif(tdb.tdb_rdomain.get(), tdb.tdb_tap.get()) {
+        encif.if_opackets().set(encif.if_opackets().get() + 1);
+        encif
+            .if_obytes()
+            .set(encif.if_obytes().get() + m.m_pkthdr().len.get() as u64);
+
+        let if_bpf = encif.if_bpf.get();
+        if !if_bpf.is_null() {
+            let hdr = Enchdr {
+                af: u32::from(tdb.tdb_dst.get().sa_family()).to_be(),
+                spi: tdb.tdb_spi.get(),
+                flags: u32::from(M_AUTH).to_be(),
+            };
+
+            let _ = bpf_mtap_hdr(if_bpf, &hdr.to_bytes(), m, BPF_DIRECTION_OUT);
+        }
+    }
 
     ahstat_inc(AhstatCounters::AhsOutput);
 

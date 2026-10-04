@@ -55,8 +55,9 @@
 //!   (`kern/kern_intrmap.c`: the multi-queue interrupt map, used only when `VIRTIO_NET_F_MQ`
 //!   is negotiated, which needs more than one CPU; `sc_intrmap` is therefore always NULL and
 //!   left out, its tests commented), `struct ifmedia` and `ifmedia_*` (`net/if_media.c`:
-//!   `sc_media` is left out; `SIOCGIFMEDIA`/`SIOCSIFMEDIA` fail with `ENOSYS`). Not configured (comments at the sites): `NBPFILTER`, `NVLAN`,
-//!   `INET6`.
+//!   `sc_media` is left out; `SIOCGIFMEDIA`/`SIOCSIFMEDIA` fail with `ENOSYS`). Not configured
+//!   (comments at the sites): `NVLAN`, `INET6`. `NBPFILTER` is configured: `vio_start` taps
+//!   each packet it queues.
 //! - `offsetof(struct tcphdr, th_sum)` and `offsetof(struct udphdr, uh_sum)` are the
 //!   constants 16 and 6: `netinet/tcp.h` and `netinet/udp.h` are not ported.
 //! - `KERNEL_LOCK()` is a comment (nothing without `MULTIPROCESSOR`).
@@ -99,6 +100,7 @@ use crate::machine::bus::{
     bus_dmamem_map, bus_dmamem_unmap,
 };
 use crate::machine::intr::{IPL_MPSAFE, IPL_NET, splassert, splnet, splx};
+use crate::net::bpf::{BPF_DIRECTION_OUT, bpf_mtap};
 use crate::net::if_::{
     IF_MAX_VECTORS, IFCAP_CSUM_TCPv4, IFCAP_CSUM_TCPv6, IFCAP_CSUM_UDPv4, IFCAP_CSUM_UDPv6,
     IFCAP_LRO, IFCAP_TSOv4, IFCAP_TSOv6, IFF_ALLMULTI, IFF_BROADCAST, IFF_DEBUG, IFF_MULTICAST,
@@ -1997,7 +1999,10 @@ pub fn vio_start(viq_ifq: &'static Ifqueue) {
             virtio_enqueue(vq, slot, txmap, true);
             virtio_enqueue_commit(vsc, vq, slot, false);
             queued += 1;
-            // NBPFILTER > 0: bpf_mtap(ifp->if_bpf, m, BPF_DIRECTION_OUT); not configured.
+            let if_bpf = ifp.if_bpf.get();
+            if !if_bpf.is_null() {
+                let _ = bpf_mtap(if_bpf, m, BPF_DIRECTION_OUT);
+            }
         }
         if used_slots > 0 {
             if used_slots > vioq.viq_txfree_slots.get() {
