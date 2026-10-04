@@ -66,7 +66,7 @@
 //!   (`GEN_TREES_H`), so there is no run-time initialisation. The host tests compare them
 //!   with `trees.h` (in full under `just test-ref`). `gen_trees_header` (which writes
 //!   `trees.h` out) has no counterpart.
-//! - `tree_desc.dyn_tree` is a [`Tree`] selector; the tree a function works on is moved out
+//! - `tree_desc.dyn_tree` is a `Tree` selector; the tree a function works on is moved out
 //!   of the state (`core::mem::take` of its `Vec`, no copy) for the duration, so the rest of
 //!   the state stays borrowable, the way the C reaches both through `s`.
 //! - `send_bits`, `send_code`, `put_short`, `pqremove` and `smaller` are functions or a local
@@ -485,7 +485,7 @@ fn pqdownheap(s: &mut DeflateState, tree: &[CtData], mut k: usize) {
 }
 
 /// `gen_bitlen`: compute the optimal bit lengths for a tree and update the total bit length
-/// for the current block. IN assertion: the fields freq and dad are set, heap[heap_max] and
+/// for the current block. IN assertion: the fields freq and dad are set, `heap[heap_max]` and
 /// above are the tree nodes sorted by increasing frequency. OUT assertions: the field len is
 /// set to the optimal bit length, the array bl_count contains the frequencies for each bit
 /// length. The length opt_len is updated; static_len is also updated if stree is not null.

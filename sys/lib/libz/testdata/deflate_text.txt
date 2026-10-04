@@ -1,0 +1,29 @@
+The deflate test text
+
+A compressor sees the world as a long ribbon of bytes. It walks along the ribbon one
+position at a time, and at every step it asks the same question: have I seen these next
+few bytes before, and if so, how far back, and for how long do they keep matching? When
+the answer is yes, it writes down a short note, a length and a distance, instead of the
+bytes themselves. When the answer is no, it writes the byte as it is, a literal.
+
+The notes and the literals are then counted. Frequent symbols get short codes and rare
+symbols get long ones, and the codes are chosen so that no code is the beginning of
+another, which lets the reader take them apart again without separators. The table of
+code lengths travels at the head of each block, itself compressed, so that the reader can
+rebuild exactly the same codes before it reads the first symbol.
+
+A kernel uses this to make packets smaller before they are encrypted and sent: IP payload
+compression squeezes each datagram on its own, with a small window, and gives up whenever
+the result would not be smaller than what it started with. The receiver inflates the
+payload and hands it on as if nothing had happened.
+
+Repetition is what makes all of this work. Repetition is what makes all of this work.
+Repetition is what makes all of this work, and a text that never repeats itself, not even
+a little, will not shrink much: random bytes stay random, and their stored blocks cost five
+bytes of header for every sixty-four kilobytes or less.
+
+	Tabs, newlines and carriage returns are text too.
+Numbers: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29.
+Punctuation: ! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ \ ] ^ _ ` { | } ~
+
+The end of the text comes after this sentence, which says so twice: the end, the end.

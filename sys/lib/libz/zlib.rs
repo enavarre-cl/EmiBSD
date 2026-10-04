@@ -263,3 +263,32 @@ pub struct GzHeader {
     /// `done`: true when done reading gzip header (not used when writing a gzip file).
     pub done: i32,
 }
+
+/// `deflateInit(strm, level)`: the zlib.h macro, [`deflateInit_`](crate::deflate::deflateInit_)
+/// with this library's version and stream size.
+pub fn deflateInit(strm: &mut ZStream<'_>, level: i32) -> i32 {
+    crate::deflate::deflateInit_(strm, level, ZLIB_VERSION, size_of::<ZStream<'_>>() as i32)
+}
+
+/// `deflateInit2(strm, level, method, windowBits, memLevel, strategy)`: the zlib.h macro,
+/// [`deflateInit2_`](crate::deflate::deflateInit2_) with this library's version and stream
+/// size.
+pub fn deflateInit2(
+    strm: &mut ZStream<'_>,
+    level: i32,
+    method: i32,
+    windowBits: i32,
+    memLevel: i32,
+    strategy: i32,
+) -> i32 {
+    crate::deflate::deflateInit2_(
+        strm,
+        level,
+        method,
+        windowBits,
+        memLevel,
+        strategy,
+        ZLIB_VERSION,
+        size_of::<ZStream<'_>>() as i32,
+    )
+}

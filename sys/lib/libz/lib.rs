@@ -32,6 +32,11 @@ pub mod zutil;
 
 pub use adler32::{adler32, adler32_combine};
 pub use crc32::crc32;
+pub use deflate::{
+    deflate, deflateBound, deflateBound_z, deflateCopy, deflateEnd, deflateGetDictionary,
+    deflateInit_, deflateInit2_, deflateParams, deflatePending, deflatePrime, deflateReset,
+    deflateResetKeep, deflateSetDictionary, deflateSetHeader, deflateTune, deflateUsed,
+};
 pub use zconf::{MAX_MEM_LEVEL, MAX_WBITS};
 pub use zlib::*;
 pub use zutil::{zError, zlibCompileFlags, zlibVersion};
