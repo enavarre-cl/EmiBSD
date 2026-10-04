@@ -153,6 +153,7 @@ the default and `cargo test` just works.
 | `ffs` | `option FFS` | the fast file system (`sys/ufs`) and its `vfsconflist[]` entry; default |
 | `ffs2` | `option FFS2` | FFS2 (UFS2 dinodes, the 64 KB super-block) in ffs; default |
 | `qemu` | — | QEMU-only exits (`isa-debug-exit`, semihosting), the boot self-tests, the TSC under TCG and the `uptime went backwards` check |
+| `inet6` | `option INET6` | IPv6: the `#ifdef INET6` sites outside `sys/netinet6` and `inet6domain` in `domains[]`; default, as in GENERIC. `sys/netinet6` itself (and the IPv6 tables and usrreqs it names, `route6_cache`, `tcp6_usrreqs`, ...) always compiles, like a library nothing reaches without the option, so the tree builds both ways |
 | `multiprocessor` | `option MULTIPROCESSOR` | off; so far only `tsc.c`'s TSC synchronisation test, for M11b |
 
 More appear as they are needed (`small_kernel`, ...), one per `option(4)`.
@@ -819,7 +820,7 @@ user's group (macOS has no such group, and `pwd_mkdb` insists on one).
   `machine::autoconf::pdevinit()` hands over. SMR is not ported: the interface index map is
   read without a lock and replaced under its rwlock as in C, but the old map is freed at once
   (`smr_call`) and `smr_barrier` is empty, which is sound on one CPU with a kernel that is not
-  preempted. `INET6`, `MPLS` and the pseudo-devices that are not
+  preempted. `MPLS` (and, until M9+, `INET6`) and the pseudo-devices that are not
   ported (`vlan`, `bridge`, `carp`, `pf`, `bpfilter`, `kstat`, `af_frame`, ...) are not
   configured: their code is a comment at each site. A driver embeds a `struct arpcom`
   (all-zero valid, so it fits an `M_ZERO` softc; `Rwlock`'s name became an `Option` for
@@ -919,7 +920,7 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   so is `stoeplitz` (pf's state hashes, `inp_flowid`), and so are `pseudo-device pfsync` and
   `pflow` (the user's decision of 2026-10-03): `pfsyncattach` and `pflowattach` in
   `pdevinit[]`, `IPPROTO_PFSYNC` in `inetsw[]`, `net.pflow` in `net_sysctl`, the pf and IPsec
-  hooks. `INET6` is not configured, so pf's IPv6 and NAT64 (`af-to`) paths are comments.
+  hooks. `INET6` is configured since M9+ (feature `inet6`), so pf's IPv6 and NAT64 (`af-to`, `netinet/inet_nat64.c`) paths are real.
   `bpf(4)` is not configured, so `pflog0` exists and counts but `pflog_packet` taps nothing.
   Divert sockets (`netinet/ip_divert.c`) are not ported: `divert-packet` rules report
   themselves and drop the packet. The ABI structures pf shares with pfctl(8) keep the C
