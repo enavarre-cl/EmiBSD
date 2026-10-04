@@ -6469,7 +6469,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7531770033ce5bf61f86e242ef4703875dd24ffe"
 deps = ["sys/nfs/nfs.h", "sys/nfs/nfsm_subs.h", "sys/nfs/nfsnode.h", "sys/nfs/nfsmount.h", "sys/nfs/rpcv2.h", "sys/nfs/xdr_subs.h", "sys/kern/uipc_mbuf.c", "sys/kern/kern_subr.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_cache.c", "sys/kern/spec_vnops.c", "sys/uvm/uvm_vnode.c", "sys/kern/kern_tc.c", "sys/crypto/idgen.c", "sys/kern/subr_pool.c", "sys/kern/kern_lock.c", "sys/conf/param.c"]
-notes = "M10e: every function of the file is ported; wip only for three cross-file gaps the coordinator wires when their files land: nfs_loadattrcache's unported!(nfs_specvops) becomes vp.v_op.set(Some(&NFS_SPECVOPS)) (nfs_vnops.rs), and nfs_init's unported!(nfsrv_init) and unported!(nfsrv_initcache) become nfsrv_init(0) (nfs_syscalls.rs) and nfsrv_initcache() (nfs_srvcache.rs), under nfsserver; then ported. XDR words of nfs_init as consts with their C names; type, procid and v2/v3 errno tables; NFSSTATS (atomics), NFS_TICKS, NFSREQPL; nfsm_reqhead; nfs_get_xid (static idgen32 context in a StaticCell under a private mutex, as ip6_randomid); nfsm_rpchead (RPCAUTH_UNIX only, as the C's KASSERT; xid stored in r_xid); nfsm_mbuftouio, nfsm_uiotombuf, nfsm_buftombuf, nfsm_strtombuf (byte slices; copyout/uiomove errors ignored as the C); nfsm_disct and nfs_adv (compute left themselves; disct returns an XdrIn view, ENOBUFS when MGET fails); nfsm_nextbytes Rust helper for cursor walks (nfs_namei); nfs_init; nfs_vfs_init, nfs_loadattrcache, nfs_attrtimeo, nfs_getattrcache (nfsclient; Result, ENOENT for a miss; FIFO is EOPNOTSUPP as tmpfs); nfs_clearcommit (goto loop as a labelled continue) and the commit-range functions; nfsrv_errmap (err below 1 maps to NFSERR_IO, the C would index before the v2 table); nfsm_v3attrbuild (full a bool); nfsm_build (XdrOut view), nfsm_fhtom, nfsm_srvfhtom (takes the nfsfh_t), txdr_nfsv2time; MGET(M_WAIT) failure panics where the C cannot fail; host tests (dissect/adv/build/strings/uio round trip, rpchead layout v2 and v3, errmap, commit ranges, attribute cache, v3 sattr, xids)"
+notes = "M10e: every function of the file is ported; wip only for two cross-file gaps the coordinator wires when their files land: nfs_loadattrcache's unported!(nfs_specvops) becomes vp.v_op.set(Some(&NFS_SPECVOPS)) (nfs_vnops.rs), and nfs_init's unported!(nfsrv_init) becomes nfsrv_init(0) (nfs_syscalls.rs; nfsrv_initcache() is called); then ported. XDR words of nfs_init as consts with their C names; type, procid and v2/v3 errno tables; NFSSTATS (atomics), NFS_TICKS, NFSREQPL; nfsm_reqhead; nfs_get_xid (static idgen32 context in a StaticCell under a private mutex, as ip6_randomid); nfsm_rpchead (RPCAUTH_UNIX only, as the C's KASSERT; xid stored in r_xid); nfsm_mbuftouio, nfsm_uiotombuf, nfsm_buftombuf, nfsm_strtombuf (byte slices; copyout/uiomove errors ignored as the C); nfsm_disct and nfs_adv (compute left themselves; disct returns an XdrIn view, ENOBUFS when MGET fails); nfsm_nextbytes Rust helper for cursor walks (nfs_namei); nfs_init; nfs_vfs_init, nfs_loadattrcache, nfs_attrtimeo, nfs_getattrcache (nfsclient; Result, ENOENT for a miss; FIFO is EOPNOTSUPP as tmpfs); nfs_clearcommit (goto loop as a labelled continue) and the commit-range functions; nfsrv_errmap (err below 1 maps to NFSERR_IO, the C would index before the v2 table); nfsm_v3attrbuild (full a bool); nfsm_build (XdrOut view), nfsm_fhtom, nfsm_srvfhtom (takes the nfsfh_t), txdr_nfsv2time; MGET(M_WAIT) failure panics where the C cannot fail; host tests (dissect/adv/build/strings/uio round trip, rpchead layout v2 and v3, errmap, commit ranges, attribute cache, v3 sattr, xids)"
 
 [[file]]
 c = "sys/nfs/nfs_socket.c"
@@ -6479,3 +6479,57 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "cfb789d807f3e985c99c37f065c0df5fb2a79e13"
 deps = ["sys/nfs/nfs.h", "sys/nfs/nfsm_subs.h", "sys/nfs/nfsmount.h", "sys/nfs/nfsproto.h", "sys/nfs/rpcv2.h", "sys/nfs/xdr_subs.h", "sys/nfs/nfs_var.h", "sys/nfs/nfs_subs.c", "sys/kern/uipc_socket.c", "sys/kern/uipc_socket2.c", "sys/kern/uipc_mbuf.c", "sys/kern/kern_synch.c", "sys/kern/kern_timeout.c", "sys/kern/subr_prf.c", "sys/kern/subr_pool.c", "sys/kern/vfs_cache.c"]
 notes = "M10e: every function of the file is ported, gated as the C (nfs_receive/nfs_reply/nfs_request nfsclient; nfsrv_rcv/nfsrv_getstream/nfsrv_dorec/nfsrv_wakenfsd nfsserver; the rest for either). TEMPORARY until nfs_syscalls.c lands: a private `shim` module at the end of nfs_socket.rs holds the nfsrv_descript_pl pool. Result<_, Errno> throughout: nfs_sigintr Err(EINTR) for nonzero, nfs_rcvlock Err(EALREADY); a v3 reply status that is no errno (10001..) comes out of nfs_request as EIO. Lock words are &Cell<i32> (nm_flag or ns_solock). MGET/m_copym/M_PREPEND/pool_get with M_WAIT can fail here: ENOBUFS where the C path returns an error, R_MUSTRESEND for a failed first send copy, nfs_realign leaves the chain as is (dissect views copy bytes). nfs_rephead returns (mreq, mb) and builds the header with nfsm_build; nfsrv_dorec returns the descriptor; nfs_getreq has_header bool, nd_retxid host order as the C. Frees what the C leaks: the reply of a MSG_DENIED RPC (nfs_request), a partial chain/address with an soreceive error (nfsrv_rcv); a datagram without an address is queued as its own record (the C dereferences NULL). Host tests: RTT estimator, flag locks and nfs_sigintr, nfs_realign (strict alignment test seam), nfs_rephead layouts, nfs_getreq (v2/v3, AUTH_UNIX, RPC errors, EBADRPC), nfsrv_getstream (records, fragments, EPERM)"
+
+[[file]]
+c = "sys/nfs/nfs_srvsubs.c"
+rust = "sys/nfs/nfs_srvsubs.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "47ae88ee96d9843b84781d8d51126f79c8eaa218"
+deps = ["sys/nfs/nfs.h", "sys/nfs/nfsproto.h", "sys/nfs/nfsm_subs.h", "sys/nfs/nfs_subs.c", "sys/nfs/xdr_subs.h", "sys/nfs/nfs_var.h", "sys/kern/vfs_lookup.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_vops.c", "sys/sys/mount.h", "sys/sys/namei.h", "sys/kern/kern_tc.c"]
+notes = "M10e: all of the file, under nfsserver (sys/conf/files). nfs_namei and nfsrv_fhtovp return Result<_, i32>: the C's int is an errno or an NFS status (NFSERR_AUTHERR | AUTH_TOOWEAK is not an Errno) that goes into nd_repstat; nfs_namei's retdirp stays an out parameter (set before the lookup, the caller vreles it on every path); name copied from the mbuf chain with nfsm_nextbytes (never dereferences dpos), ENAMETOOLONG for a name past MAXPATHLEN, cn_pnbuf nulled when given back; nfsrv_fhtovp goes through vfs_getvfs, VFS_CHECKEXP (the file system's check_export, glue) and VFS_FHTOVP, reads the client's sockaddr_in unaligned and refuses an address mbuf shorter than one; nfsm_srvwcc and nfsm_srvpostop_attr take Option<&Vattr> for the C's before_ret/after_ret flags; nfsm_srvfattr returns the NfsFattr; nfsm_adj clamps its null fill to the mbuf's data; netaddr_match returns bool; nfsm_srvsattr over nfsd_dissect. Host tests including nfs_namei/nfsrv_fhtovp over a real exported ffs mount (errors, mapping of root to the anonymous user, symlinks with and without FOLLOW, SAVENAME, reference counts checked by a clean unmount)"
+
+[[file]]
+c = "sys/nfs/nfs_srvcache.c"
+rust = "sys/nfs/nfs_srvcache.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "63cc7e7c7bc76b1288c652ef1d314cffbd67a961"
+deps = ["sys/nfs/nfsrvcache.h", "sys/nfs/nfs.h", "sys/nfs/nfs_srvsubs.c", "sys/nfs/nfs_subs.c", "sys/nfs/nfs_socket.c", "sys/crypto/siphash.c", "sys/dev/rnd.c", "sys/kern/kern_subr.c", "sys/kern/kern_malloc.c", "sys/kern/kern_synch.c", "sys/kern/uipc_mbuf.c"]
+notes = "M10e: every function of the file is ported, under nfsserver; a cached status-only reply is answered with nfs_socket's nfs_rephead (a failure drops the request). Duplicate request cache: hash by SipHash24 of the xid with a random key (hashinit(M_NFSD)), LRU TAILQ, entries are malloc'd NfsrvCache items (StaticCell table/mask/key, atomics for numnfsrvcache and desirednfsrvcache); nonidempotent and nfsv2_repstat tables; a reply that m_copym cannot copy drops the request and an entry malloc cannot get lets it through uncached (the C's M_WAIT cannot fail); updatecache takes repvalid as bool and the reply as Option. Host tests (drop in progress, saved reply copied, idempotent redo, v2 status-only, LRU recycling, per xid/proc/client entries, reliable transports not cached, non-INET addresses kept as copies, cleancache)"
+
+[[file]]
+c = "sys/nfs/krpc_subr.c"
+rust = "sys/nfs/krpc_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9c44d34a8ebfdb68b9c41aeabf27bc69d96a3ebb"
+deps = ["sys/nfs/krpc.h", "sys/nfs/rpcv2.h", "sys/nfs/xdr_subs.h", "sys/crypto/idgen.c", "sys/kern/uipc_socket.c", "sys/kern/uipc_socket2.c", "sys/kern/uipc_mbuf.c", "sys/kern/init_main.c", "sys/netinet/in.h", "sys/kern/kern_lock.c"]
+notes = "M10e: all of the file, under nfsclient (sys/conf/files); license: BSD with the advertising clause (UCB and Lawrence Berkeley Laboratory, 4 clauses), kept whole. krpc_portmap returns the port (network order); krpc_call takes the request body out of *data (always freed, the C leaks it on early failures) and puts the reply there, sa is a &SockaddrIn, from_p an Option<&mut Option<&Mbuf>>; a failed socreate returns at once (the C soclose()s an uninitialised so); the reply is freed on the error paths where the C leaks it; the one-shot UDP socket (SO_RCVTIMEO 1 s, SO_BROADCAST, IP_PORTRANGE_LOW bind through PROC0) and the resend loop with an increasing delay are as the C; xdr_string_encode/decode (slice based, padding zeroed, decode bounded by the buffer), xdr_inaddr_encode/decode, krpc_get_xid (idgen32 context in a StaticCell under a private mutex). Host tests of the XDR functions, xids, the portmapper shortcut and the family check; krpc_call over the network is the smoke test's"
+
+[[file]]
+c = "sys/nfs/krpc.h"
+rust = "sys/nfs/krpc_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f764699742444440708a36225031ff1f4d2e70dd"
+deps = ["sys/nfs/krpc_subr.c"]
+notes = "M10e: the prototypes are the functions of krpc_subr.rs; the PMAP* and BOOTPARAM_* constants are in krpc_subr.rs too (reference-backed test)"
+
+[[file]]
+c = "sys/nfs/nfsdiskless.h"
+rust = "sys/nfs/nfsdiskless.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f379f26aa6eb6a3a7756a4079953be40ef9c932d"
+deps = ["sys/nfs/nfsproto.h", "sys/sys/mount.h", "sys/netinet/in.h"]
+notes = "M10e: struct nfs_dlmount and struct nfs_diskless (NfsDlmount, NfsDiskless, const new()); ndm_args is the NfsArgs of sys/mount.rs whose pointer members are usize addresses that nfs_boot_getfh points at the NfsDlmount's own members, so the structure must not move afterwards (nfs_diskless is a static of nfs_vfsops.c); sw_vp is an Option<&Vnode>. The prototypes are nfs_boot.rs's"
+
+[[file]]
+c = "sys/nfs/nfs_boot.c"
+rust = "sys/nfs/nfs_boot.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "02f0b8d8b9430515c218f16cb2f65b3145532a7b"
+deps = ["sys/nfs/nfsdiskless.h", "sys/nfs/krpc.h", "sys/nfs/nfsproto.h", "sys/nfs/rpcv2.h", "sys/nfs/xdr_subs.h", "sys/netinet/if_ether.c", "sys/net/if.c", "sys/netinet/in.c", "sys/netinet/in_var.h", "sys/kern/kern_sysctl.c"]
+notes = "M10e: all of the file, both C variants: the !NFSCLIENT stubs (nfs_boot_init panics, nfs_boot_getfh is EOPNOTSUPP) without feature nfsclient, the real code with it (NETHER == 0 never holds here: ethernet is always built; sys/conf/files compiles the file only with nfsclient). nfsbootdevname is NFSBOOTDEVNAME with a setter set_nfsbootdevname() that subr_disk.c's setroot() (another agent) must call; hostname/domainname are kern_sysctl.rs's statics; nfs_boot_init: if_unit, SIOCGIFFLAGS/SIOCSIFFLAGS/SIOCAIFADDR through ifioctl on a UDP socket, revarpwhoami (glue), bp_whoami through PMAPPROC_CALLIT broadcast; bp_whoami returns the gateway, bp_getfile/md_mount as the C with the reply parsers split out (host-tested: whoami, getfile and mount replies, v2/v3 handles, errors, the host:path construction); md_mount takes the file handle buffer explicitly; a mount daemon errno that is not an Errno is EIO. NFS_BOOT_OPTIONS/NFS_BOOT_RWSIZE are not configured, as in GENERIC. The RPCs themselves are for the smoke test"

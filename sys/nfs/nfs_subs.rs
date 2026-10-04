@@ -77,9 +77,8 @@
 //!   `ip6_randomid` does.
 //! - `nfsm_rpchead` builds `RPCAUTH_UNIX` only, as the C does (`KASSERT(auth_type ==
 //!   RPCAUTH_UNIX)`); its switches over the type are the one case.
-//! - `nfs_init`: under `NFSSERVER` it calls `nfsrv_init(0)` (`nfs_syscalls.c`) and
-//!   `nfsrv_initcache()` (`nfs_srvcache.c`); M10e wires them when those files land, until
-//!   then each site is an `unported!` gap.
+//! - `nfs_init`: under `NFSSERVER` it calls `nfsrv_initcache()` (`nfs_srvcache.c`) and
+//!   `nfsrv_init(0)` (`nfs_syscalls.c`), the latter an `unported!` gap until that file lands.
 //! - `nfs_vfs_init` and `nfs_getattrcache` return `Result` (`ENOENT` for a cache miss).
 //! - `nfs_clearcommit`'s `goto loop` (a vnode found on the list of another mount) restarts
 //!   the walk with a labelled `continue`.
@@ -1105,10 +1104,10 @@ pub fn nfs_init() {
     NFS_TICKS.store(ticks.max(1), Ordering::Relaxed);
     #[cfg(feature = "nfsserver")]
     {
-        // M10e: `nfsrv_init(0)` (nfs_syscalls.rs) and `nfsrv_initcache()` (nfs_srvcache.rs)
-        // once those files land: init server data structures and the server request cache.
+        // M10e: `nfsrv_init(0)` (nfs_syscalls.rs) once that file lands: init server data
+        // structures.
         let _ = crate::unported!("nfsrv_init");
-        let _ = crate::unported!("nfsrv_initcache");
+        crate::nfs::nfs_srvcache::nfsrv_initcache(); // Init the server request cache
     }
 
     pool_init(
