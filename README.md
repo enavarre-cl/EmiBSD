@@ -21,7 +21,7 @@
 
 ## Status
 
-Status: M9+ (network completion) and M10a (persistent disk) met; M10c (tmpfs, msdosfs, cd9660) next.
+Status: M10a (persistent disk) and M10b (UFS options) met; M10c (tmpfs, msdosfs, cd9660) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -37,7 +37,8 @@ Status: M9+ (network completion) and M10a (persistent disk) met; M10c (tmpfs, ms
 | M9a..M9d | Sockets, WireGuard, IPsec, pf | met |
 | M9+ | Network completion: TCP, bpf, divert, IPComp, HTTPS, tcpdump, INET6 | met |
 | M10a | Persistent disk (vioblk, SCSI midlayer) | met |
-| M10b..M10f | UFS options, tmpfs/msdosfs/cd9660, ext2fs/ntfs/fuse, NFS, softraid | next |
+| M10b | UFS options (quotas, dirhash, mfs) | met |
+| M10c..M10f | tmpfs/msdosfs/cd9660, ext2fs/ntfs/fuse, NFS, softraid | next |
 | M11a..M11e | SMP | next |
 | M12 | Devices and virtualisation | next |
 | M13 | Storage, firmware and console | next |
@@ -63,6 +64,9 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
 - ftp(1) and nc(1) over TLS with LibreSSL, against servers on the host (`smoke-https`).
 - A persistent disk: `sd0` on vioblk(4), fdisk(8), disklabel(8), newfs(8); after a second boot
   fsck(8) finds it clean and the file reads back (`smoke-disk`).
+- Disk quotas: quotacheck(8), quotaon(8), edquota(8); a write as a user over its hard limit
+  fails with EDQUOT and repquota(8) shows it; a hashed 5,000-entry directory; mount_mfs(8)
+  (`smoke-ufsopts`).
 
 Between two VMs on a private link (`cargo xtask smoke2`):
 
@@ -144,7 +148,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 7 | 147 | 484 | 14 | 652 |
+| 4 | 147 | 491 | 14 | 656 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).
@@ -157,7 +161,7 @@ Three tiers:
 1. Host unit tests (`just test`): pure logic runs on macOS through `sys/arch/host`.
 2. Reference-backed tests (`just test-ref`): constants are cross-checked against the C headers.
 3. QEMU smoke tests (`just smoke`): boot both architectures headless and assert serial lines and
-   exit codes. A full run boots 32 single VMs and 16 pairs of VMs.
+   exit codes. A full run boots 36 single VMs and 16 pairs of VMs.
 
 `just ci` runs fmt, clippy for amd64, arm64 and the host, all tests, both builds, every smoke and
 the tracker checks. Green `just ci` is the definition of done.
