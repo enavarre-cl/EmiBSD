@@ -656,7 +656,8 @@ ipcomp_sa := "--send-after '# ' --send 'c=\"ipcomp tunnel from 192.168.77.1 to 1
 # and port per path, one after the other; A's `t` sends a line with `nc -N` (shut down after
 # stdin's EOF) and retries every second until B's listener takes it (`-w 5` bounds a connect
 # that gets no answer while wg handshakes). B's nc prints the line and exits on A's FIN.
-# The markers are built with `$((3+4))`, so that the typed commands do not match them. Part
+# The markers are built with `$((3+4))`, so that the typed commands do not match them. First
+# B lists a listening TCP socket with fstat(1) (kern.file's tcbtable and tcpcb fields). Part
 # of `smoke`.
 smoke-tcp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
@@ -692,10 +693,11 @@ tcp_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24 up\\n
     "--b-send-after '# ' --b-send 'echo flow esp from 10.77.2.0/24 to 10.77.1.0/24 peer 192.168.77.1 >ipsec.conf\\n' " + \
     replace(replace(esp_sa, "--send-after", "--b-send-after"), "--send ", "--b-send ") + \
     " --b-send-after '# ' --b-send 'ipsecctl -f ipsec.conf\\n' " + \
+    "--b-send-after '# ' --b-send 'nc -l 192.168.77.2 7009 </dev/null & sleep 1; fstat -p $!; kill $!\\n' " + \
     "--b-send-after '# ' --b-send 'nc -l 192.168.77.2 7001\\n' " + \
     "--b-send-after '# ' --b-send 'nc -l 10.77.0.2 7002\\n' " + \
     "--b-send-after '# ' --b-send 'nc -l 10.77.2.1 7003\\n'"
-tcp_expect := "--b-expect 'tcp-direct-7' --b-expect 'tcp-wg-7' --b-expect 'tcp-esp-7' --a-expect 'tcp-sent-8'"
+tcp_expect := "--b-expect 'internet stream tcp' --b-expect '192.168.77.2:7009' --b-expect 'tcp-direct-7' --b-expect 'tcp-wg-7' --b-expect 'tcp-esp-7' --a-expect 'tcp-sent-8'"
 
 # M9+: pf's divert-to between the two VMs of `smoke-link`. B gives lo0 its 127.0.0.1 (as
 # netstart(8) would), loads a rule that diverts TCP to its port 80 arriving on vio1 to
