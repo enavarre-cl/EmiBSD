@@ -536,9 +536,10 @@ smoke-esp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 # up, synced over pfsync (B keeps no ICMP state of its own). A then clears its states (the
 # flows are exported, pfsync tells B to clear them too) and flushes pflow0 (`pflowproto 10`
 # again); B polls until its own state for A's datagrams to 9995 shows up: the flow records
-# (or the templates, sent at start and every 30 seconds) arrived. `pfctl` patterns use `?` for
-# the spaces and `<` so that the typed commands do not match the expected lines. Part of
-# `smoke`.
+# (or the templates, sent at start and every 30 seconds) arrived. B's polls go through a short
+# shell function: a long typed line can lose characters on the busy arm64 VM's serial input.
+# The patterns use `?` for the spaces and `<` so that the typed commands do not match the
+# expected lines. Part of `smoke`.
 smoke-pfsync: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-pfsync: no ramdisk image; run just userland first"; exit 1; }
@@ -558,10 +559,13 @@ pfsync_a := "--a-send-after '# ' --a-send 'ifconfig vio1 inet 192.168.77.1/24 up
     "--a-send-after '# ' --a-send 'ifconfig pflow0 pflowproto 10; ifconfig pflow0; ifconfig pfsync0\\n'"
 pfsync_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24 up\\n' " + \
     "--b-send-after '# ' --b-send 'ifconfig pfsync0 create syncdev vio1 up\\n' " + \
-    "--b-send-after '# ' --b-send 'echo pass no state >/tmp/b.conf; echo pass in proto udp to port 9995 >>/tmp/b.conf\\n' " + \
+    "--b-send-after '# ' --b-send 'echo pass no state >/tmp/b.conf\\n' " + \
+    "--b-send-after '# ' --b-send 'echo pass in proto udp to port 9995 >>/tmp/b.conf\\n' " + \
     "--b-send-after '# ' --b-send 'pfctl -e -f /tmp/b.conf\\n' " + \
-    "--b-send-after '# ' --b-send 'until case $(pfctl -ss 2>/dev/null) in *icmp?192.168.77.1:*) true;; *) false;; esac; do sleep 1; done; pfctl -ss; echo pfsync-synced-$((7+7))\\n' " + \
-    "--b-send-after 'pfsync-synced-14' --b-send 'until case $(pfctl -ss 2>/dev/null) in *udp?192.168.77.2:9995????192.168.77.1:*) true;; *) false;; esac; do sleep 1; done; pfctl -ss; echo pflow-seen-$((8+8))\\n'"
+    "--b-send-after '# ' --b-send 'w(){ until case $(pfctl -ss) in *$1*):;;*)false;;esac;do sleep 1;done;}\\n' " + \
+    "--b-send-after '# ' --b-send 'w icmp?192.168.77.1:; pfctl -ss; echo pfsync-synced-$((7+7))\\n' " + \
+    "--b-send-after 'pfsync-synced-14' --b-send 'w udp?192.168.77.2:9995????192.168.77.1:\\n' " + \
+    "--b-send-after '# ' --b-send 'pfctl -ss; echo pflow-seen-$((8+8))\\n'"
 pfsync_expect := "--a-expect 'pfsync: syncdev: vio1' " + \
     "--a-expect 'pflow: sender: 192.168.77.1 receiver: 192.168.77.2:9995 version: 10' " + \
     "--b-expect 'pfsync-synced-14' --b-expect 'all icmp 192.168.77.1:' " + \
