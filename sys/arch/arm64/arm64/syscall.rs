@@ -21,7 +21,8 @@
 //!
 //! Upstream: sys/arch/arm64/arm64/syscall.c @ 3ce1f3f79392
 //!
-//! Status: `ported` (M6-a): `svc_handler` and `child_return`.
+//! Status: `ported` (M6-a): `svc_handler` and `child_return`; M11a: `child_return` drops the
+//! kernel lock (`KERNEL_UNLOCK`, `MULTIPROCESSOR`).
 
 use core::ffi::c_void;
 use core::sync::atomic::Ordering;
@@ -35,7 +36,7 @@ use crate::sys::errno::Errno;
 use crate::sys::proc::Proc;
 use crate::sys::syscall::SYS_MAXSYSCALL;
 use crate::sys::syscall_mi::{mi_child_return, mi_syscall, mi_syscall_return};
-use crate::sys::systm::SysArgs;
+use crate::sys::systm::{SysArgs, kernel_unlock};
 use crate::sys::types::Register;
 use crate::uvm::uvm_init::UVMEXP;
 
@@ -103,7 +104,9 @@ pub fn child_return(arg: *mut c_void) {
         (*frame).tf_spsr &= !(PSR_C as Register); // carry bit
     }
 
-    // KERNEL_UNLOCK(): nothing without MULTIPROCESSOR.
+    // The kernel lock `proc_trampoline_mi` took for the new thread (nothing without
+    // MULTIPROCESSOR).
+    kernel_unlock();
 
     mi_child_return(p);
 }

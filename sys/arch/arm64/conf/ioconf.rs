@@ -8,19 +8,21 @@
 //! `virtio* at fdt?`, `vio* at virtio?`, `vioblk* at virtio?`, `scsibus* at scsi?`,
 //! `sd* at scsibus?`, `softraid0 at root` and `scsibus* at softraid?` (conf/GENERIC),
 //! `pluart* at fdt?`,
-//! `plrtc* at fdt?`, `efi0 at mainbus?`;
+//! `plrtc* at fdt?`, `efi0 at mainbus?`, `cpu0 at mainbus?` and, with `MULTIPROCESSOR`,
+//! `GENERIC.MP`'s `cpu* at mainbus?`;
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
 //! The `fdt` attribute (`files.arm64`: `define fdt {[early = 0]}`) is carried by `mainbus`
 //! and `simplebus`; `simplebus` is not ported, so mainbus is the only parent here. Every
-//! other GENERIC line waits for its driver (`cpu0 at mainbus?`, `smbios0 at efi?`,
+//! other GENERIC line waits for its driver (`smbios0 at efi?`,
 //! `simplebus* at fdt?`, the devices at `virtio?` but `vio*` and `vioblk*`, `virtio* at pci?`
 //! with a host bridge driver, ...),
 //! as do the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s layout:
 //! attachment, driver, unit, state, locators, flags, parents (indices into `CFDATA`), the
 //! start of its locator names and the first unit a starred entry may take.
 
+use crate::arch::arm64::arm64::cpu::{CPU_CA, CPU_CD};
 use crate::arch::arm64::dev::agtimer::{AGTIMER_CA, AGTIMER_CD};
 use crate::arch::arm64::dev::ampintc::{AMPINTC_CA, AMPINTC_CD};
 use crate::arch::arm64::dev::efi_machdep::{EFI_CA, EFI_CD};
@@ -77,8 +79,15 @@ const PV_SCSIBUS: &[i16] = &[9];
 /// (`scsi/files.scsi`: `device scsibus {[target = -1], [lun = -1]}`).
 const LOC_SCSIBUS_UNK: &[i64] = &[-1, -1];
 
+/// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
+const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
+    14
+} else {
+    13
+};
+
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 12] = [
+pub static CFDATA: [Cfdata; NCFDATA] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -213,6 +222,21 @@ pub static CFDATA: [Cfdata; 12] = [
         0,
         0,
     ),
+    // 12: cpu0 at mainbus?
+    Cfdata::new(
+        &CPU_CA,
+        &CPU_CD,
+        0,
+        FSTATE_NOTFOUND,
+        &[],
+        0,
+        PV_MAINBUS,
+        0,
+        0,
+    ),
+    // 13: cpu* at mainbus? (GENERIC.MP)
+    #[cfg(feature = "multiprocessor")]
+    Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];
 
 /// `cfroots[]`: `mainbus0`, `softraid0`.

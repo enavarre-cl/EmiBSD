@@ -71,8 +71,15 @@
 //!   and the ASIDs. Every vp table (the kernel's and the users') comes from the two-page
 //!   allocator `pmap_vp_pages` instead of `pmap_vp_pool`, and goes back page by page
 //!   (`pmap_vp_free`); the pteds of user pmaps come from `pmap_pted_pool`. The ASID bitmap
-//!   is 8-bit (`pmap_nasid` 256, the generation never rolls over: `pmap_rollover_asid` is
-//!   M7 and running out panics). `pmap_setpauthkeys` (pointer authentication) is M7.
+//!   is 8-bit (`pmap_nasid` 256 and a bitmap that size; the 16-bit probe of
+//!   `id_aa64mmfr0_el1` is not done). `pmap_setpauthkeys` (pointer authentication) is M7.
+//! - M11a (`MULTIPROCESSOR`): the ASID allocator is the C's, under `pmap_asid_mtx`
+//!   (`pmap_find_asid` with the old/random/linear search, `pmap_rollover_asid` carrying the
+//!   ASIDs active on every CPU into the new generation); `pm_asid` is an atomic because the
+//!   rollover rewrites other CPUs' active pmaps. The TLB invalidations were already the
+//!   inner-shareable broadcast ones (`cpufunc.rs`: `tlbi vae1is`/`vaale1is`/`aside1is`/
+//!   `vmalle1is`), which is what the MP kernel needs. `pm_mtx` (`pmap_lock`) is still not
+//!   here: user pmaps are changed under the kernel lock in M11a (M11e).
 //! - `pmap_init` also resizes `TCR_EL1.T0SZ` to `USER_SPACE_BITS` and remaps the console
 //!   (`pluartcn_remap`) before pointing `TTBR0_EL1` at the empty table: the C's locore did
 //!   both at boot, here the bootstrap device map (`machdep.rs`) lived in the lower half.
@@ -103,11 +110,14 @@ use crate::arch::arm64::include::pte::{
 use crate::arch::arm64::include::vmparam::USER_SPACE_BITS;
 use crate::arch::arm64::include::vmparam::{VM_MAX_KERNEL_ADDRESS, VM_MIN_KERNEL_ADDRESS};
 use crate::dev::ic::pluart::pluartcn_remap;
+use crate::dev::rnd::arc4random;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
-use crate::machine::intr::IPL_VM;
+use crate::machine::intr::{IPL_HIGH, IPL_VM};
+use crate::machine::{Cpu, Machine};
 use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_EXEC, PROT_NONE, PROT_READ, PROT_WRITE};
+use crate::sys::mutex::{Mutex, mutex_assert_locked};
 use crate::sys::pool::{PR_NOWAIT, PR_WAITOK, PR_ZERO, Pool};
 use crate::sys::proc::Proc;
 use crate::sys::proc::Process;
@@ -261,6 +271,8 @@ static PMAP_ASID: [AtomicU32; PMAP_NASID / 32] = [const { AtomicU32::new(0) }; P
 /// `pmap_asid_gen`: the current ASID generation (above the mask); a fresh pmap's zero never
 /// matches it.
 static PMAP_ASID_GEN: AtomicU64 = AtomicU64::new(PMAP_ASID_MASK + 1);
+/// `pmap_asid_mtx`: guards `pmap_asid[]`, the generation's rollover and the ASIDs it hands out.
+static PMAP_ASID_MTX: Mutex = Mutex::new(IPL_HIGH);
 
 /// `ap_bits_user[]`: the access bits of a user mapping, by `PROT_*`.
 const AP_BITS_USER: [u64; 8] = [
@@ -335,7 +347,8 @@ pub extern "C" fn pmap_setttb(p: *const core::ffi::c_void) {
     // If the generation of the ASID for the new pmap doesn't match the current generation,
     // allocate a new ASID.
     if !ptr::eq(pm, pmap_kernel())
-        && (pm.pm_asid.get() & !PMAP_ASID_MASK) != PMAP_ASID_GEN.load(Ordering::Relaxed)
+        && (pm.pm_asid.load(Ordering::Relaxed) & !PMAP_ASID_MASK)
+            != PMAP_ASID_GEN.load(Ordering::Relaxed)
     {
         pmap_allocate_asid(pm);
     }
@@ -344,7 +357,7 @@ pub extern "C" fn pmap_setttb(p: *const core::ffi::c_void) {
     // address space can be cached under the new ASID; then the new tables.
     unsafe {
         asm!("msr ttbr0_el1, {}", "isb", in(reg) pmap_kernel().pm_pt0pa.get(), options(nostack, preserves_flags));
-        cpu_setttb(pm.pm_asid.get(), pm.pm_pt0pa.get());
+        cpu_setttb(pm.pm_asid.load(Ordering::Relaxed), pm.pm_pt0pa.get());
     }
     ci.ci_curpm.set(pm);
     if let Some(flush_bp) = ci.ci_flush_bp.get() {
@@ -449,7 +462,7 @@ fn ttlb_flush(pm: &Pmap, va: usize) {
     if ptr::eq(pm, pmap_kernel()) {
         cpu_tlb_flush_all_asid(resva);
     } else {
-        let asid = pm.pm_asid.get();
+        let asid = pm.pm_asid.load(Ordering::Relaxed);
         cpu_tlb_flush_asid(resva | asid << 48);
         cpu_tlb_flush_asid(resva | (asid | ASID_USER) << 48);
     }
@@ -879,9 +892,10 @@ pub unsafe fn pmap_bootstrap(_ram_start: Paddr, _ram_end: Paddr) -> Vaddr {
     pm.pm_privileged.set(true);
     pm.pm_active.store(1, Ordering::Relaxed);
     pm.pm_guarded.set(ATTR_GP);
-    pm.pm_asid.set(0);
+    pm.pm_asid.store(0, Ordering::Relaxed);
     pm.pm_refs.set(1);
-    // pmap_tramp and the ASID bitmap (ASID 0 in use): M6.
+    // pmap_tramp: M6. ASID 0 is the kernel's.
+    PMAP_ASID[0].fetch_or(3, Ordering::Relaxed);
 
     // MAIR_EL1 indices 2, 3 and 4 (see include/pte.rs).
     let mair: u64;
@@ -1357,44 +1371,115 @@ const _: () = {
     assert!(size_of::<Pmapvp0>() == 2 * PAGE_SIZE);
 };
 
-/// `pmap_find_asid`: a free pair of ASIDs (even: the kernel's view, odd: the user's), from
-/// 2 up (0 is the kernel pmap's).
-fn pmap_find_asid() -> Option<usize> {
-    (2..PMAP_NASID).step_by(2).find(|&asid| {
+/// `pmap_find_asid`: a free pair of ASIDs (even: the kernel's view, odd: the user's): `pm`'s
+/// old one if it is free, else a random one, else the first free; `None` when all are taken.
+fn pmap_find_asid(pm: &Pmap) -> Option<usize> {
+    mutex_assert_locked(&PMAP_ASID_MTX, "pmap_find_asid");
+
+    let free = |asid: usize| {
         let bit = asid & (32 - 1);
         PMAP_ASID[asid / 32].load(Ordering::Relaxed) & (3u32 << bit) == 0
-    })
+    };
+
+    // Attempt to re-use the old ASID.
+    let asid = (pm.pm_asid.load(Ordering::Relaxed) & PMAP_ASID_MASK) as usize;
+    if free(asid) {
+        return Some(asid);
+    }
+
+    // Attempt to obtain a random ASID.
+    for _ in 0..5 {
+        let asid = arc4random() as usize & (PMAP_NASID - 2);
+        if free(asid) {
+            return Some(asid);
+        }
+    }
+
+    // Do a linear search if that fails.
+    for asid in (0..PMAP_NASID).step_by(32) {
+        let bits = PMAP_ASID[asid / 32].load(Ordering::Relaxed);
+        if bits == !0 {
+            continue;
+        }
+        for bit in (0..32).step_by(2) {
+            if bits & (3u32 << bit) == 0 {
+                return Some(asid + bit);
+            }
+        }
+    }
+
+    None
+}
+
+/// `pmap_rollover_asid`: starts a new ASID generation when they are all taken: the ASIDs
+/// active on some CPU carry over, every other pmap gets a new one when it next runs
+/// (`pmap_setttb`), and every TLB is flushed. Returns `pm`'s new ASID.
+fn pmap_rollover_asid(pm: &Pmap) -> Option<usize> {
+    mutex_assert_locked(&PMAP_ASID_MTX, "pmap_rollover_asid");
+
+    // Start a new generation. Mark ASID 0 as in-use again.
+    let generation =
+        PMAP_ASID_GEN.fetch_add(PMAP_ASID_MASK + 1, Ordering::Relaxed) + PMAP_ASID_MASK + 1;
+    for word in &PMAP_ASID {
+        word.store(0, Ordering::Relaxed);
+    }
+    PMAP_ASID[0].fetch_or(3, Ordering::Relaxed);
+
+    // Carry over all the ASIDs that are currently active into the new generation and
+    // reserve them. CPUs in cpu_switchto() will spin in pmap_setttb() waiting for the
+    // mutex. In that case an old ASID will be carried over but that is not problematic.
+    Machine::cpu_info_foreach(&mut |ci| {
+        // SAFETY: a CPU's active pmap stays alive while it is active.
+        let Some(curpm) = (unsafe { ci.ci_curpm.get().as_ref() }) else {
+            return;
+        };
+        let asid = curpm.pm_asid.load(Ordering::Relaxed) & PMAP_ASID_MASK;
+        curpm.pm_asid.store(asid | generation, Ordering::Relaxed);
+        let bit = asid & (32 - 1);
+        PMAP_ASID[(asid / 32) as usize].fetch_or(3u32 << bit, Ordering::Relaxed);
+    });
+
+    // Flush the TLBs on all CPUs.
+    cpu_tlb_flush();
+
+    if pm.pm_asid.load(Ordering::Relaxed) & !PMAP_ASID_MASK == generation {
+        return Some((pm.pm_asid.load(Ordering::Relaxed) & PMAP_ASID_MASK) as usize);
+    }
+
+    pmap_find_asid(pm)
 }
 
 /// `pmap_allocate_asid`: gives `pm` an ASID of the current generation.
 pub fn pmap_allocate_asid(pm: &Pmap) {
-    // mtx_enter(&pmap_asid_mtx): M5 (one CPU).
-    let Some(asid) = pmap_find_asid() else {
-        // We have no free ASIDs. Do a rollover to clear all inactive ASIDs and pick a fresh
-        // one: pmap_rollover_asid (M7).
-        #[allow(clippy::panic)] // the rollover is not here yet
-        {
-            panic!("pmap_allocate_asid: out of ASIDs (pmap_rollover_asid, M7)");
-        }
-    };
+    mtx_enter(&PMAP_ASID_MTX);
+    // We have no free ASIDs. Do a rollover to clear all inactive ASIDs and pick a fresh one.
+    let asid = pmap_find_asid(pm)
+        .or_else(|| pmap_rollover_asid(pm))
+        .unwrap_or(0);
     kassert!(asid > 0 && asid < PMAP_NASID);
     let bit = asid & (32 - 1);
     PMAP_ASID[asid / 32].fetch_or(3u32 << bit, Ordering::Relaxed);
-    pm.pm_asid
-        .set(asid as u64 | PMAP_ASID_GEN.load(Ordering::Relaxed));
+    pm.pm_asid.store(
+        asid as u64 | PMAP_ASID_GEN.load(Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
+    mtx_leave(&PMAP_ASID_MTX);
 }
 
 /// `pmap_free_asid`: drops `pm`'s TLB entries and returns its ASIDs.
 pub fn pmap_free_asid(pm: &Pmap) {
     kassert!(!ptr::eq(pm, curcpu().ci_curpm.get()));
-    cpu_tlb_flush_asid_all(pm.pm_asid.get() << 48);
-    cpu_tlb_flush_asid_all((pm.pm_asid.get() | ASID_USER) << 48);
+    cpu_tlb_flush_asid_all(pm.pm_asid.load(Ordering::Relaxed) << 48);
+    cpu_tlb_flush_asid_all((pm.pm_asid.load(Ordering::Relaxed) | ASID_USER) << 48);
 
-    if pm.pm_asid.get() & !PMAP_ASID_MASK == PMAP_ASID_GEN.load(Ordering::Relaxed) {
-        let asid = (pm.pm_asid.get() & PMAP_ASID_MASK) as usize;
+    mtx_enter(&PMAP_ASID_MTX);
+    if pm.pm_asid.load(Ordering::Relaxed) & !PMAP_ASID_MASK == PMAP_ASID_GEN.load(Ordering::Relaxed)
+    {
+        let asid = (pm.pm_asid.load(Ordering::Relaxed) & PMAP_ASID_MASK) as usize;
         let bit = asid & (32 - 1);
         PMAP_ASID[asid / 32].fetch_and(!(3u32 << bit), Ordering::Relaxed);
     }
+    mtx_leave(&PMAP_ASID_MTX);
 }
 
 /// `pmap_enter_pv`: puts the mapping on its page's pv list.

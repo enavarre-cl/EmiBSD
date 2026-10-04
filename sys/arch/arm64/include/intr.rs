@@ -33,7 +33,7 @@
 //!
 //! Status: `wip`. Milestone M3 ports the levels; M4 adds the `IST_*` trigger types,
 //! `SOFTINTR_XCALL`, `struct machine_intr_handle`, `struct arm_intr_func` and
-//! `struct interrupt_controller`. The `ARM_IPI_*` numbers come with `MULTIPROCESSOR`.
+//! `struct interrupt_controller`; M11a the `ARM_IPI_*` numbers (`MULTIPROCESSOR`).
 //! The functions it declares are `arm64/intr.rs`; the `spl*()` helpers are the
 //! `machine::intr` contract.
 //!
@@ -136,6 +136,15 @@ pub const IST_EDGE_BOTH: i32 = 6;
 
 /// `SOFTINTR_XCALL`: the cross-call soft interrupt, after the MI ones.
 pub const SOFTINTR_XCALL: i32 = crate::sys::softintr::NSOFTINTR as i32;
+
+/// `ARM_IPI_NOP` (`MULTIPROCESSOR`): only wakes the CPU up.
+pub const ARM_IPI_NOP: i32 = 0;
+/// `ARM_IPI_DDB`: enter ddb.
+pub const ARM_IPI_DDB: i32 = 1;
+/// `ARM_IPI_HALT`: halt the CPU (`cpu_halt`).
+pub const ARM_IPI_HALT: i32 = 2;
+/// `ARM_IPI_XCALL`: run the cross calls (`NXCALL`).
+pub const ARM_IPI_XCALL: i32 = 3;
 
 /// An interrupt handler: `int (*)(void *)`.
 pub type IntrFn = fn(*mut core::ffi::c_void) -> i32;

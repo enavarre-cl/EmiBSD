@@ -8,7 +8,10 @@
 //! `esigcode`, `sigfill` and `sigfillsiz`), which `exec_sigcode_map` copies into every
 //! process. The rest of the file is the kernel entry, which the boot protocol replaces
 //! (`docs/ARCHITECTURE.md`, "Boot flow"): `drop_to_el1`, the boot page tables and
-//! `initstack` have no counterpart here.
+//! `initstack` have no counterpart here. The `MULTIPROCESSOR` entry of the application
+//! processors (`cpu_hatch_secondary`, `cpu_hatch_secondary_spin`, `cpu_hatch_ci`) is
+//! `cpu.rs`'s `cpu_hatch_entry` since M11a, reached through the boot protocol (`BootMp`);
+//! `HIBERNATE`'s `cpu_park` and `SUSPEND`'s `cpu_hatch_primary` are not configured.
 //!
 //! ## Deviations
 //! - The trampoline is assembled inside the softfloat kernel: `.arch_extension fp` enables

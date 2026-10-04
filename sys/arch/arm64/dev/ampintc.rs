@@ -31,22 +31,41 @@
 //! `ampintc_iack`/`eoi`, `ampintc_route`, `ampintc_cpuinit`, `ampintc_route_irq`,
 //! `ampintc_intr_barrier`, `ampintc_run_handler`, `ampintc_irq_handler`,
 //! `ampintc_intr_establish_fdt`, `ampintc_intr_establish` and `ampintc_intr_disestablish`.
-//! `ampintc_activate` (`DVACT_RESUME`, M5), the `MULTIPROCESSOR` IPIs (`ampintc_ipi_*`,
-//! `ampintc_send_ipi`), the GICv2m MSI frame (`ampintc_msi_*`, with PCI) and the
-//! `simplebus_attach` of the children are not here.
+//! M11a adds the `MULTIPROCESSOR` side: the IPI's SGI found and established in
+//! `ampintc_attach` (` ipi N`), `ampintc_ipi_ddb`, `ampintc_ipi_halt`, `ampintc_ipi_handler`,
+//! `ampintc_send_ipi` (`intr_send_ipi_func`), the IPI EOI of `ampintc_cpuinit` (the
+//! application processors' per-CPU init: their banked SGI/PPI registers, their target mask)
+//! and the kernel lock in `ampintc_run_handler`. Device interrupts stay routed to the boot
+//! CPU (`ci` `NULL` is `cpu_info_primary`), as in C. `ampintc_activate` (`DVACT_RESUME`,
+//! M5), the GICv2m MSI frame (`ampintc_msi_*`, with PCI) and the `simplebus_attach` of the
+//! children are not here.
 //!
 //! ## Deviations
 //! - One static softc, `AMPINTC`, stands for the C's `ampintc` pointer to the attached
 //!   device and for the rest of `struct ampintc_softc`: `ampintc_ca`'s `ca_devsize` is a bare
 //!   `struct device`, which mainbus attaches from the device tree (`ampintc* at fdt? early
 //!   1`); `ampintc_activate` (`DVACT_RESUME`) is not in it yet.
-//! - `sched_barrier` (`ampintc_intr_barrier`) is reported until M5.
+//! - `ampintc_run_handler` (`MULTIPROCESSOR`): M11a honours `IPL_MPSAFE` only for handlers
+//!   above `IPL_MPFLOOR` (the clock, the IPI); every device handler takes the kernel lock
+//!   when it interrupts below `IPL_SCHED`, until M11e audits them (the user's M11a decision).
+//! - `sc_cpu_mask` and `sc_ipi_reason` are atomics (each CPU writes its own mask in
+//!   `ampintc_cpuinit` while others read it to send IPIs); `ampintc_send_ipi` fences before
+//!   the `ICD_SGIR` write so the posted reason is visible to the target's handler.
+//! - `ampintc_ipi_ddb` reports `db_enter` on an application processor: ddb on MP is M11c.
+//! - `ampintc_ipi_count` (feature `qemu`) reads the IPI handler's event counter for the
+//!   self-check in `cpu_boot_secondary_processors`; not in the C.
 
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "multiprocessor")]
+use core::sync::atomic::fence;
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU32, Ordering};
 
+#[cfg(feature = "multiprocessor")]
+use crate::arch::arm64::arm64::cpu::cpu_halt;
+#[cfg(feature = "multiprocessor")]
+use crate::arch::arm64::arm64::intr::INTR_SEND_IPI_FUNC;
 use crate::arch::arm64::arm64::intr::{
     arm_do_pending_intr, arm_init_smask, arm_intr_register_fdt, arm_set_intr_handler, arm_smask,
 };
@@ -54,9 +73,11 @@ use crate::arch::arm64::include::cpu::{CpuInfo, cpu_info_primary, cpu_number, cu
 use crate::arch::arm64::include::cpu::{intr_disable, intr_enable, intr_restore};
 use crate::arch::arm64::include::fdt::FdtAttachArgs;
 use crate::arch::arm64::include::frame::Trapframe;
+#[cfg(feature = "multiprocessor")]
+use crate::arch::arm64::include::intr::{ARM_IPI_DDB, ARM_IPI_HALT, ARM_IPI_NOP, IPL_IPI};
 use crate::arch::arm64::include::intr::{
-    IPL_FLAGMASK, IPL_HIGH, IPL_IRQMASK, IPL_NONE, IST_EDGE_RISING, IST_LEVEL_HIGH,
-    InterruptController, IntrFn,
+    IPL_FLAGMASK, IPL_HIGH, IPL_IRQMASK, IPL_MPFLOOR, IPL_MPSAFE, IPL_NONE, IPL_SCHED,
+    IST_EDGE_RISING, IST_LEVEL_HIGH, InterruptController, IntrFn,
 };
 use crate::dev::ofw::openfirm::OF_is_compatible;
 use crate::kassert;
@@ -73,6 +94,8 @@ use crate::sys::device::{CfMatch, Cfattach, Cfdriver, DV_DULL, Device};
 use crate::sys::evcount::Evcount;
 use crate::sys::malloc::{M_DEVBUF, M_NOWAIT, M_WAITOK, M_ZERO};
 use crate::sys::queue::{ListEntry, TailqEntry, TailqHead};
+use crate::sys::systm::{kernel_lock, kernel_unlock};
+#[cfg(feature = "multiprocessor")]
 use crate::unported;
 
 // registers
@@ -273,12 +296,15 @@ pub struct AmpintcSoftc {
     /// `sc_p_ioh`: the CPU interface.
     pub sc_p_ioh: Cell<Option<BusSpaceHandle>>,
     /// `sc_cpu_mask`: each CPU's bit in the target registers.
-    pub sc_cpu_mask: [Cell<u8>; ICD_ICTR_CPU_M as usize + 1],
+    pub sc_cpu_mask: [AtomicU8; ICD_ICTR_CPU_M as usize + 1],
     /// `sc_spur`: the spurious interrupt counter.
     pub sc_spur: Evcount,
     /// `sc_ic`: the registered interrupt controller.
     pub sc_ic: InterruptController,
-    // sc_ipi_reason, sc_ipi_num: MULTIPROCESSOR.
+    /// `sc_ipi_reason`: per CPU, the `1 << ARM_IPI_*` bits waiting for its IPI handler.
+    pub sc_ipi_reason: [AtomicU32; ICD_ICTR_CPU_M as usize + 1],
+    /// `sc_ipi_num`: the SGI the IPIs use (`MULTIPROCESSOR`; 0 without).
+    pub sc_ipi_num: AtomicI32,
 }
 
 // SAFETY: the one controller, attached on the boot CPU before interrupts are enabled; the
@@ -292,7 +318,7 @@ pub static AMPINTC: AmpintcSoftc = AmpintcSoftc {
     sc_iot: Cell::new(None),
     sc_d_ioh: Cell::new(None),
     sc_p_ioh: Cell::new(None),
-    sc_cpu_mask: [const { Cell::new(0) }; ICD_ICTR_CPU_M as usize + 1],
+    sc_cpu_mask: [const { AtomicU8::new(0) }; ICD_ICTR_CPU_M as usize + 1],
     sc_spur: Evcount::new(),
     sc_ic: InterruptController {
         ic_node: Cell::new(0),
@@ -310,6 +336,8 @@ pub static AMPINTC: AmpintcSoftc = AmpintcSoftc {
         ic_cells: Cell::new(0),
         ic_gic_its_id: Cell::new(0),
     },
+    sc_ipi_reason: [const { AtomicU32::new(0) }; ICD_ICTR_CPU_M as usize + 1],
+    sc_ipi_num: AtomicI32::new(0),
 };
 /// `ampintc_ca`.
 pub static AMPINTC_CA: Cfattach = Cfattach {
@@ -411,7 +439,8 @@ pub fn ampintc_attach(_parent: Option<&Device>, _self: &Device, aux: *mut c_void
     kprintf!(" nirq {nintr}, ncpu {ncpu}");
 
     kassert!(curcpu().ci_cpuid.get() <= ICD_ICTR_CPU_M);
-    sc.sc_cpu_mask[curcpu().ci_cpuid.get() as usize].set(bus_space_read_1(iot, d, icd_iptrn(0)));
+    sc.sc_cpu_mask[curcpu().ci_cpuid.get() as usize]
+        .store(bus_space_read_1(iot, d, icd_iptrn(0)), Ordering::Relaxed);
 
     ampintc_init(sc);
 
@@ -453,7 +482,48 @@ pub fn ampintc_attach(_parent: Option<&Device>, _self: &Device, aux: *mut c_void
         None,
     );
 
-    // MULTIPROCESSOR: the IPI interrupt (M5).
+    // setup IPI interrupts
+    #[cfg(feature = "multiprocessor")]
+    {
+        let (iot, d, _) = regs();
+        let mut ipiirq = -1;
+        for i in 0..16 {
+            let oldreg = bus_space_read_1(iot, d, icd_iprn(i));
+            bus_space_write_1(iot, d, icd_iprn(i), oldreg ^ 0x20);
+
+            // if this interrupt is not usable, route will be zero
+            let reg = bus_space_read_1(iot, d, icd_iprn(i));
+            if reg == oldreg {
+                continue;
+            }
+
+            // return to original value, will be set when used
+            bus_space_write_1(iot, d, icd_iprn(i), oldreg);
+
+            ipiirq = i;
+            break;
+        }
+
+        if ipiirq == -1 {
+            panic(format_args!("no irq available for IPI"));
+        }
+
+        kprintf!(" ipi {ipiirq}");
+
+        let _ = ampintc_intr_establish(
+            ipiirq,
+            IST_EDGE_RISING,
+            IPL_IPI | IPL_MPSAFE,
+            None,
+            ampintc_ipi_handler,
+            ptr::from_ref(sc).cast_mut().cast(),
+            Some("ipi"),
+        );
+        sc.sc_ipi_num.store(ipiirq, Ordering::Relaxed);
+        // SAFETY: the boot CPU, before any application processor runs (the hook's
+        // protocol in `arm64/intr.rs`).
+        unsafe { INTR_SEND_IPI_FUNC.write(ampintc_send_ipi) };
+    }
 
     // enable interrupts
     let (iot, d, p) = regs();
@@ -649,7 +719,7 @@ fn ampintc_route(irq: i32, enable: bool, ci: &CpuInfo) {
     let (iot, d, _) = regs();
 
     kassert!(ci.ci_cpuid.get() <= ICD_ICTR_CPU_M);
-    let mask = sc.sc_cpu_mask[ci.ci_cpuid.get() as usize].get();
+    let mask = sc.sc_cpu_mask[ci.ci_cpuid.get() as usize].load(Ordering::Relaxed);
 
     let mut val = bus_space_read_1(iot, d, icd_iptrn(irq));
     if enable == IRQ_ENABLE {
@@ -666,17 +736,17 @@ pub fn ampintc_cpuinit() {
     let (iot, d, _) = regs();
 
     // XXX - this is the only cpu specific call to set this
-    if sc.sc_cpu_mask[cpu_number() as usize].get() == 0 {
+    if sc.sc_cpu_mask[cpu_number() as usize].load(Ordering::Relaxed) == 0 {
         for i in 0..32 {
             let cpumask = bus_space_read_1(iot, d, icd_iptrn(i));
             if cpumask != 0 {
-                sc.sc_cpu_mask[cpu_number() as usize].set(cpumask);
+                sc.sc_cpu_mask[cpu_number() as usize].store(cpumask, Ordering::Relaxed);
                 break;
             }
         }
     }
 
-    if sc.sc_cpu_mask[cpu_number() as usize].get() == 0 {
+    if sc.sc_cpu_mask[cpu_number() as usize].load(Ordering::Relaxed) == 0 {
         panic(format_args!("could not determine cpu target mask"));
     }
 
@@ -694,7 +764,8 @@ pub fn ampintc_cpuinit() {
 
     // If a secondary CPU is turned off from an IPI handler and the GIC did not go through a
     // full reset (for example when we fail to suspend) the IPI might still be active. So
-    // signal EOI here to make sure new interrupts will be serviced: sc_ipi_num (M5).
+    // signal EOI here to make sure new interrupts will be serviced.
+    ampintc_eoi(sc.sc_ipi_num.load(Ordering::Relaxed) as u32);
 }
 
 /// `ampintc_route_irq`: the `ic_route` hook.
@@ -718,14 +789,25 @@ fn ampintc_route_irq(v: *mut c_void, enable: bool, ci: &CpuInfo) {
 }
 
 /// `ampintc_intr_barrier`: the `ic_barrier` hook.
-fn ampintc_intr_barrier(_cookie: *mut c_void) {
-    // sched_barrier(ih->ih_ci): M5.
-    let _ = unported!("sched_barrier (ampintc_intr_barrier, M5)");
+fn ampintc_intr_barrier(cookie: *mut c_void) {
+    // SAFETY: the cookie `ampintc_intr_establish` handed out: an established handler, never
+    // freed while its driver can still call the barrier.
+    let ih = unsafe { &*cookie.cast::<Intrhand>() };
+    // SAFETY: `ih_ci` is the cpu_info the handler was established on, which lives forever.
+    crate::kern::kern_sched::sched_barrier(unsafe { ih.ih_ci.get().as_ref() });
 }
 
 /// `ampintc_run_handler`: one handler, with its argument or the frame.
-fn ampintc_run_handler(ih: &Intrhand, frame: *mut c_void, _s: i32) {
-    // MULTIPROCESSOR: KERNEL_LOCK unless IPL_MPSAFE or s >= IPL_SCHED.
+fn ampintc_run_handler(ih: &Intrhand, frame: *mut c_void, s: i32) {
+    // MULTIPROCESSOR: the kernel lock unless the handler is IPL_MPSAFE or the interrupted
+    // level is at least IPL_SCHED. M11a honours IPL_MPSAFE only above IPL_MPFLOOR (the
+    // clock, the IPIs): every device handler takes the lock until M11e audits them.
+    let need_lock = cfg!(feature = "multiprocessor")
+        && (ih.ih_flags & IPL_MPSAFE == 0 || ih.ih_ipl <= IPL_MPFLOOR)
+        && s < IPL_SCHED;
+    if need_lock {
+        kernel_lock();
+    }
 
     let arg = if ih.ih_arg.is_null() {
         frame
@@ -736,6 +818,10 @@ fn ampintc_run_handler(ih: &Intrhand, frame: *mut c_void, _s: i32) {
     let handled = (ih.ih_func)(arg);
     if handled != 0 {
         ih.ih_count.ec_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    if need_lock {
+        kernel_unlock();
     }
 }
 
@@ -918,6 +1004,85 @@ fn ampintc_intr_disestablish(cookie: *mut c_void) {
     unsafe { intr_restore(psw) };
 
     free(ih.cast::<u8>(), M_DEVBUF, size_of::<Intrhand>());
+}
+
+// ampintc_msi_*: the GICv2m MSI frame, with PCI on arm64.
+
+/// `ampintc_ipi_ddb`: another CPU entered ddb.
+#[cfg(feature = "multiprocessor")]
+fn ampintc_ipi_ddb(_v: *mut c_void) -> i32 {
+    // XXX
+    // db_enter() on this CPU: ddb on MP (db_interface.c's MULTIPROCESSOR paths) is M11c.
+    let _ = unported!("ampintc_ipi_ddb: db_enter on an application processor (M11c)");
+    1
+}
+
+/// `ampintc_ipi_halt`: stop this CPU (`cpu_halt`).
+#[cfg(feature = "multiprocessor")]
+fn ampintc_ipi_halt(_v: *mut c_void) -> i32 {
+    cpu_halt();
+    1
+}
+
+/// `ampintc_ipi_handler`: the IPI's interrupt handler, at `IPL_IPI`, without the kernel
+/// lock: runs the reasons posted for this CPU (`ARM_IPI_NOP` posts none; the interrupt
+/// itself was the point).
+#[cfg(feature = "multiprocessor")]
+fn ampintc_ipi_handler(v: *mut c_void) -> i32 {
+    let sc = &AMPINTC;
+    let ci = curcpu();
+    let reason = &sc.sc_ipi_reason[ci.ci_cpuid.get() as usize];
+
+    let mut reasons = reason.load(Ordering::Relaxed);
+    if reasons != 0 {
+        reasons = reason.swap(0, Ordering::AcqRel);
+        if reasons & (1 << ARM_IPI_DDB) != 0 {
+            ampintc_ipi_ddb(v);
+        }
+        if reasons & (1 << ARM_IPI_HALT) != 0 {
+            ampintc_ipi_halt(v);
+        }
+        // ARM_IPI_XCALL: NXCALL is 0 on arm64 (arm_cpu_xcall_dispatch).
+    }
+
+    1
+}
+
+/// `ampintc_send_ipi`: `intr_send_ipi_func`: posts `reason` for `ci` and raises the IPI's
+/// SGI at it alone.
+#[cfg(feature = "multiprocessor")]
+fn ampintc_send_ipi(ci: &CpuInfo, reason: i32) {
+    let sc = &AMPINTC;
+    let (iot, d, _) = regs();
+
+    if reason == ARM_IPI_NOP {
+        if ptr::eq(ci, curcpu()) {
+            return;
+        }
+    } else {
+        sc.sc_ipi_reason[ci.ci_cpuid.get() as usize].fetch_or(1 << reason, Ordering::Release);
+    }
+
+    // currently will only send to one cpu
+    let mut sendmask =
+        u32::from(sc.sc_cpu_mask[ci.ci_cpuid.get() as usize].load(Ordering::Relaxed)) << 16;
+    sendmask |= sc.sc_ipi_num.load(Ordering::Relaxed) as u32;
+
+    // The reason (and whatever the sender prepared) before the interrupt.
+    fence(Ordering::SeqCst);
+    bus_space_write_4(iot, d, ICD_SGIR, sendmask);
+}
+
+/// The number of IPIs the IPI handler has run, on every CPU (its event counter): what the
+/// `qemu` self-check of `cpu_boot_secondary_processors` watches.
+#[cfg(all(feature = "multiprocessor", feature = "qemu"))]
+pub fn ampintc_ipi_count() -> u64 {
+    let sc = &AMPINTC;
+    handler(sc, sc.sc_ipi_num.load(Ordering::Relaxed))
+        .iq_list
+        .iter()
+        .map(|ih| ih.ih_count.ec_count.load(Ordering::Relaxed))
+        .sum()
 }
 
 /// Whether the controller has attached.

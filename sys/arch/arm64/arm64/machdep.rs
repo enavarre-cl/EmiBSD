@@ -29,7 +29,10 @@
 //! of the bootloader's device tree, `stdout_node`/`stdout_speed`, `fdt_find_cons` and the
 //! console's receive interrupt.
 //! `cpu_info[]`, the FDT setup, `dumpsys`, `sendsig`/`setregs`, the sysctl tree and the
-//! bootstrap KVA helpers arrive with M4-b to M6.
+//! bootstrap KVA helpers arrive with M4-b to M6. M11a adds `cpu_info[]`,
+//! `cpu_idle_cycle_fcn`, `need_resched`'s `cpu_kick`, the `MULTIPROCESSOR` `signotify`
+//! (`aston` and `cpu_unidle(p->p_cpu)`) and keeps the boot protocol's processors
+//! (`BOOT_MP`) for `cpu_start_secondary`; `cpu_unidle` moved to `cpu.rs`, where the C has it.
 //!
 //! ## Deviations
 //! - Limine has set up EL1, the MMU and the direct map before `initarm` runs, so the C's
@@ -65,6 +68,9 @@
 //!   map is relocated into a static buffer (`MMAP`) instead of stolen pages.
 //! - The bootargs parsing (`-a -c -d -s`) is `BootInfo::boothowto` in `sys/machine/bootinfo.rs`,
 //!   because the Limine command line serves both architectures.
+//! - `cpu_info[]` holds `CiPtr`s; `cpu_idle_cycle_fcn` is a `StaticCell` written at attach
+//!   time; `BOOT_MP` (`MULTIPROCESSOR`) has no C counterpart: PSCI or a spin table in the C
+//!   (`cpu.rs`, deviations).
 
 use core::arch::asm;
 use core::cell::UnsafeCell;
@@ -73,6 +79,9 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 use libkern::StaticCell;
 
+use crate::arch::arm64::arm64::cpu::cpu_kick;
+#[cfg(feature = "multiprocessor")]
+use crate::arch::arm64::arm64::cpu::cpu_unidle;
 use crate::arch::arm64::arm64::cpufunc::cpu_wfi;
 use crate::arch::arm64::arm64::cpuswitch::cpu_switchto_asm;
 use crate::arch::arm64::arm64::exception::exception_vectors_addr;
@@ -82,7 +91,9 @@ use crate::arch::arm64::arm64::pmap::{
     PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap, pmap_growkernel,
 };
 use crate::arch::arm64::include::armreg::{PSR_DIT, PSR_M_EL0t};
-use crate::arch::arm64::include::cpu::{CpuInfo, curcpu, disable_irq_daif, enable_irq_daif};
+use crate::arch::arm64::include::cpu::{
+    CiPtr, CpuInfo, MAXCPUS, curcpu, disable_irq_daif, enable_irq_daif,
+};
 use crate::arch::arm64::include::frame::Trapframe;
 use crate::arch::arm64::include::param::PAGE_SIZE;
 use crate::arch::arm64::include::pcb::{PCB_FPU, PCB_SVE};
@@ -100,6 +111,8 @@ use crate::kern::kern_malloc::{kmeminit_nkmempages, nkmempages};
 use crate::kern::subr_log::init_static_msgbuf;
 use crate::kern::vfs_bio::bufinit;
 use crate::kprintf;
+#[cfg(feature = "multiprocessor")]
+use crate::machine::bootinfo::BootMp;
 use crate::machine::bootinfo::{BootInfo, MemKind};
 use crate::machine::db_machdep::db_enter;
 use crate::machine::{Cpu, Machine};
@@ -178,8 +191,26 @@ const DIRECT_MAP_MIN_SIZE: usize = 4 << 30;
 /// `initarm` does not (`ci_cpuid`, `ci_mpidr`, the flags).
 pub static CPU_INFO_PRIMARY: CpuInfo = CpuInfo::new();
 
+/// `cpu_info[MAXCPUS]`: every attached CPU by unit, `cpu_info_primary` first.
+pub static CPU_INFO: [CiPtr<CpuInfo>; MAXCPUS as usize] = {
+    let mut a = [const { CiPtr::null() }; MAXCPUS as usize];
+    a[0] = CiPtr::new(ptr::from_ref(&CPU_INFO_PRIMARY));
+    a
+};
+
+/// The processors from the boot protocol (`MULTIPROCESSOR`), which `initarm` keeps for
+/// `cpu_start_secondary` (`cpu.rs`): written once by `initarm` on the boot CPU.
+#[cfg(feature = "multiprocessor")]
+pub static BOOT_MP: StaticCell<Option<BootMp>> = StaticCell::new(None);
+
 /// `proc0paddr`: proc0's u-area (its pcb; the boot stack is Limine's).
 pub static PROC0_UAREA: Uarea = Uarea::new();
+
+/// `cpu_info_list` (`cpu.c`): the attached CPUs, linked through `ci_next`, headed by the
+/// boot CPU.
+pub fn cpu_info_list() -> &'static CpuInfo {
+    &CPU_INFO_PRIMARY
+}
 
 /// `proc0paddr`: proc0's `struct user`, at the bottom of its u-area.
 pub fn proc0paddr() -> &'static User {
@@ -325,6 +356,13 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
             options(nostack, preserves_flags)
         );
     }
+
+    // The processors and the way to start them (MULTIPROCESSOR, cpu_start_secondary).
+    // SAFETY: once, on the boot CPU, before any reader (cpu_attach runs much later).
+    #[cfg(feature = "multiprocessor")]
+    unsafe {
+        BOOT_MP.write(boot.mp)
+    };
 
     // The FDT, memory-map and page-table work of the C happens in the boot protocol; the
     // device map below stands in for `pmap_bootstrap_bs_map` (see the module's deviations).
@@ -612,13 +650,14 @@ fn atoi(s: &[u8]) -> i32 {
 
 /// `need_resched`: asks `ci` to reschedule.
 pub fn need_resched(ci: &CpuInfo) {
-    ci.ci_want_resched.set(1);
+    ci.ci_want_resched.store(1, Ordering::Relaxed);
 
     // There's a risk we'll be called before the idle threads start
-    // SAFETY: `ci_curproc` names a thread on the CPU, hence alive.
+    // SAFETY: `ci_curproc` names a thread on the CPU, hence alive (a thread is freed only
+    // after it switched away for good).
     if let Some(p) = unsafe { ci.ci_curproc.get().as_ref() } {
         aston(p);
-        // cpu_kick(ci): MULTIPROCESSOR.
+        cpu_kick(ci);
     }
 }
 
@@ -636,20 +675,29 @@ pub fn setsoftast() {
 }
 
 /// `signotify(p)` (`<machine/cpu.h>`): notify the current process (p) that it has a signal
-/// pending, process as soon as possible. Without `MULTIPROCESSOR` it is `setsoftast()`, which
-/// posts the AST to the thread on this CPU.
-pub fn signotify(_p: &Proc) {
-    setsoftast();
+/// pending, process as soon as possible. With `MULTIPROCESSOR`, `aston(p)` and
+/// `cpu_unidle(p->p_cpu)`; without, `setsoftast()`, which posts the AST to the thread on this
+/// CPU.
+pub fn signotify(p: &Proc) {
+    #[cfg(feature = "multiprocessor")]
+    {
+        aston(p);
+        // SAFETY: `p_cpu` names a CPU's `cpu_info`, which lives forever.
+        if let Some(ci) = unsafe { p.p_cpu.get().as_ref() } {
+            cpu_unidle(ci);
+        }
+    }
+    #[cfg(not(feature = "multiprocessor"))]
+    {
+        let _ = p;
+        setsoftast();
+    }
 }
 
 /// `clear_resched(ci)`.
 pub fn clear_resched(ci: &CpuInfo) {
-    ci.ci_want_resched.set(0);
+    ci.ci_want_resched.store(0, Ordering::Relaxed);
 }
-
-/// `cpu_unidle(ci)`: with `MULTIPROCESSOR` an IPI; on one CPU the idle loop sees the run
-/// queue itself.
-pub fn cpu_unidle(_ci: &CpuInfo) {}
 
 /// `cpu_idle_enter`: the idle thread checks the run queues with interrupts masked, so an
 /// interrupt between the check and the `wfi` wakes the `wfi`.
@@ -657,10 +705,16 @@ pub fn cpu_idle_enter() {
     disable_irq_daif();
 }
 
-/// `cpu_idle_cycle`: `(*cpu_idle_cycle_fcn)()` (`cpu_wfi` until a driver installs another),
-/// then let the pending interrupt in and mask again for the next check.
+/// `cpu_idle_cycle_fcn`: how the idle loop waits (`cpu_wfi`, or `cpu_psci_idle_cycle` when
+/// the device tree has a PSCI idle state); set at attach time before the idle loops run.
+pub static CPU_IDLE_CYCLE_FCN: StaticCell<fn()> = StaticCell::new(cpu_wfi);
+
+/// `cpu_idle_cycle`: `(*cpu_idle_cycle_fcn)()`, then let the pending interrupt in and mask
+/// again for the next check.
 pub fn cpu_idle_cycle() {
-    cpu_wfi();
+    // SAFETY: written only at attach time on the boot CPU, before any idle loop runs.
+    let f = unsafe { CPU_IDLE_CYCLE_FCN.read() };
+    f();
     // SAFETY: the idle thread runs at IPL_NONE with nothing held: interrupts may come in.
     unsafe { enable_irq_daif() };
     disable_irq_daif();

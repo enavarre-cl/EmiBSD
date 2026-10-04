@@ -27,8 +27,8 @@
 //! the boot-only text. `cold` lives in `sys/systm.rs`.
 //!
 //! ## Deviations
-//! - `unmap_startup` (with its `codepatch_disable`) and
-//!   `cpu_identify_cleanup` are reported.
+//! - `unmap_startup` (with its `codepatch_disable`) is reported; `cpu_identify_cleanup`
+//!   (`cpu.rs`) runs since M11a.
 //! - `diskconf`: `setroot` gets no boot device unless the boot MAC address ([`BOOTMAC`],
 //!   `bootmac` of `NFSCLIENT`, which the firmware hand-over would fill in and nothing does
 //!   under Limine) names an interface; `dumpconf` (`machdep.c`, crash dumps) is reported;
@@ -42,6 +42,7 @@ use core::sync::atomic::Ordering;
 use libkern::StaticCell;
 
 use crate::arch::arm64::arm64::bus_dma::bus_dma_init;
+use crate::arch::arm64::arm64::cpu::cpu_identify_cleanup;
 use crate::arch::arm64::arm64::machdep::COLD;
 use crate::kern::kern_softintr::softintr_init;
 use crate::kern::subr_autoconf::config_rootfound;
@@ -128,7 +129,7 @@ pub fn cpu_configure() {
 
     let _ = unported!("unmap_startup (M6)");
 
-    let _ = unported!("cpu_identify_cleanup (M4-b)");
+    cpu_identify_cleanup();
 
     // CRYPTO: not configured.
 

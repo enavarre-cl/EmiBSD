@@ -426,7 +426,7 @@ pub fn efi_enter(sc: &EfiSoftc) {
     // SAFETY: as above.
     unsafe {
         write_specialreg!("tcr_el1", tcr);
-        cpu_setttb(pm.pm_asid.get(), pm.pm_pt0pa.get());
+        cpu_setttb(pm.pm_asid.load(Ordering::Relaxed), pm.pm_pt0pa.get());
     }
 
     fpu_kernel_enter();
@@ -462,7 +462,7 @@ pub fn efi_leave(sc: &EfiSoftc) {
     // SAFETY: as above.
     unsafe {
         write_specialreg!("tcr_el1", tcr);
-        cpu_setttb(pm.pm_asid.get(), pm.pm_pt0pa.get());
+        cpu_setttb(pm.pm_asid.load(Ordering::Relaxed), pm.pm_pt0pa.get());
         intr_restore(sc.sc_psw.get());
     }
 }

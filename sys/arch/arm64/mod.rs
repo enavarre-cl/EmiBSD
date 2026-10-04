@@ -170,7 +170,7 @@ impl Cpu for Machine {
     }
 
     fn cpu_unidle(ci: &include::cpu::CpuInfo) {
-        arm64::machdep::cpu_unidle(ci)
+        arm64::cpu::cpu_unidle(ci)
     }
 
     fn cpu_idle_enter() {

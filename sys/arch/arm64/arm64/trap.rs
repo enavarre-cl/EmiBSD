@@ -31,16 +31,16 @@
 //!
 //! Upstream: sys/arch/arm64/arm64/trap.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M4 ports the EL1 side: `is_unpriv_ldst`, `accesstype`, `fault`,
+//! Status: `ported` (M11a). Milestone M4 ports the EL1 side: `is_unpriv_ldst`, `accesstype`, `fault`,
 //! `kdata_abort`, `do_el1h_sync`, `serror`, `do_el1h_error` and `dumpregs`; M6-a adds
 //! `do_el0_sync` (the `svc` path, `syscall.rs`) and `do_el0_error`, and `kdata_abort`'s
 //! `pcb_onfault` recovery; M6-b/M7a `udata_abort`; `kern_sig.c` the `trapsignal`s of every
-//! EL0 exception, `fpu_load` for the FP traps and `sve_load` for the SVE one.
+//! EL0 exception, `fpu_load` for the FP traps and `sve_load` for the SVE one. M11a:
+//! `emulate_msr` (with `cpu.c`'s `cpu_id_aa64*`) and `do_el0_sync`'s `KERNEL_LOCK` around
+//! `sigexit`.
 //!
 //! ## Deviations
-//! - `emulate_msr` (the `mrs` of the ID registers from EL0) needs the CPU identification
-//!   (`cpu.c`'s `cpu_id_aa64*`): it is reported and emulates nothing, so such an `mrs` is a
-//!   `SIGILL`, as in C for a register it does not emulate.
+//! - `do_el0_sync`'s `KERNEL_UNLOCK` after `sigexit` is a comment: `sigexit` never returns.
 //! - The `we_re_toast` path prints the syndrome and enters `db_ktrap` as the `DDB` build does,
 //!   then panics with the same message as the non-`DDB` build: ddb-lite has no command loop
 //!   to stay in, and returning would re-execute the faulting instruction.
@@ -51,6 +51,7 @@ use core::fmt;
 use core::ptr;
 use core::sync::atomic::Ordering;
 
+use crate::arch::arm64::arm64::cpu;
 use crate::arch::arm64::arm64::db_interface::db_ktrap;
 use crate::arch::arm64::arm64::fpu::{fpu_load, sve_load};
 use crate::arch::arm64::arm64::pmap::pmap_fault_fixup;
@@ -60,7 +61,10 @@ use crate::arch::arm64::include::armreg::{
     EXCP_INSN_ABORT, EXCP_INSN_ABORT_L, EXCP_MSR, EXCP_PC_ALIGN, EXCP_SOFTSTP_EL0,
     EXCP_SOFTSTP_EL1, EXCP_SP_ALIGN, EXCP_SVC, EXCP_SVE, EXCP_TRAP_FP, EXCP_UNKNOWN,
     EXCP_WATCHPT_EL1, INSN_SIZE, ISS_BRK_COMMENT_MASK, ISS_DATA_CM, ISS_DATA_DFSC_ALIGN,
-    ISS_DATA_DFSC_MASK, ISS_DATA_WNR, esr_elx_exception, read_specialreg,
+    ISS_DATA_DFSC_MASK, ISS_DATA_WNR, ISS_MSR_CRM_MASK, ISS_MSR_CRM_SHIFT, ISS_MSR_CRN_MASK,
+    ISS_MSR_CRN_SHIFT, ISS_MSR_DIR, ISS_MSR_OP0_MASK, ISS_MSR_OP0_SHIFT, ISS_MSR_OP1_MASK,
+    ISS_MSR_OP1_SHIFT, ISS_MSR_OP2_MASK, ISS_MSR_OP2_SHIFT, ISS_MSR_RT_MASK, ISS_MSR_RT_SHIFT,
+    esr_elx_exception, iss_msr_field, read_specialreg,
 };
 use crate::arch::arm64::include::cpu::{curcpu, intr_enable};
 use crate::arch::arm64::include::frame::Trapframe;
@@ -77,8 +81,9 @@ use crate::sys::siginfo::{
     TRAP_TRACE,
 };
 use crate::sys::signal::{SIGBUS, SIGILL, SIGKILL, SIGSEGV, SIGTRAP};
+use crate::sys::systm::kernel_lock;
+use crate::sys::types::Register;
 use crate::sys::types::Vaddr;
-use crate::unported;
 use crate::uvm::uvm_extern::VmProt;
 use crate::uvm::uvm_fault::uvm_fault;
 use crate::uvm::uvm_init::UVMEXP;
@@ -332,11 +337,61 @@ fn udata_abort(_frame: &mut Trapframe, esr: u64, far: u64, exe: bool) {
     trapsignal(p, sig, esr, code, Sigval::from_ptr(far as usize));
 }
 
-/// `emulate_msr`: emulate a read of an ID register from EL0 (see the module's deviations):
-/// `true` when the access was emulated and the instruction skipped.
-fn emulate_msr(_frame: &mut Trapframe, _esr: u64) -> bool {
-    let _ = unported!("emulate_msr: the ID registers (cpu.c's cpu_id_aa64*)");
-    false
+/// `emulate_msr`: emulate a read of an ID register from EL0 with the values userland may see
+/// (`cpu_identify_cleanup`): `true` when the access was emulated and the instruction
+/// skipped.
+fn emulate_msr(frame: &mut Trapframe, esr: u64) -> bool {
+    let field = |mask, shift| iss_msr_field(esr, mask, shift);
+    let rt = field(ISS_MSR_RT_MASK, ISS_MSR_RT_SHIFT) as usize;
+    let id = |a: &core::sync::atomic::AtomicU64| a.load(Ordering::Relaxed);
+
+    // Only emulate reads.
+    if esr & ISS_MSR_DIR == 0 {
+        return false;
+    }
+
+    // Only emulate non-debug System register access.
+    if field(ISS_MSR_OP0_MASK, ISS_MSR_OP0_SHIFT) != 3
+        || field(ISS_MSR_OP1_MASK, ISS_MSR_OP1_SHIFT) != 0
+        || field(ISS_MSR_CRN_MASK, ISS_MSR_CRN_SHIFT) != 0
+    {
+        return false;
+    }
+
+    let op2 = field(ISS_MSR_OP2_MASK, ISS_MSR_OP2_SHIFT);
+    let val = match (field(ISS_MSR_CRM_MASK, ISS_MSR_CRM_SHIFT), op2) {
+        // MIDR_EL1
+        (0, 0) => read_specialreg!("midr_el1"),
+        // MPIDR_EL1: don't reveal the topology to userland. But return a valid value; Bit
+        // 31 is RES1.
+        (0, 5) => 0x8000_0000,
+        // REVIDR_EL1
+        (0, 6) => 0,
+        // ID_AA64PFR0_EL1
+        (4, 0) => id(&cpu::CPU_ID_AA64PFR0),
+        // ID_AA64PFR1_EL1
+        (4, 1) => id(&cpu::CPU_ID_AA64PFR1),
+        // ID_AA64PFR2_EL1, ID_AA64ZFR0_EL1, ID_AA64SMFR0_EL1
+        (4, 2 | 4 | 5) => 0,
+        // ID_AA64ISAR0_EL1
+        (6, 0) => id(&cpu::CPU_ID_AA64ISAR0),
+        // ID_AA64ISAR1_EL1
+        (6, 1) => id(&cpu::CPU_ID_AA64ISAR1),
+        // ID_AA64ISAR2_EL2
+        (6, 2) => id(&cpu::CPU_ID_AA64ISAR2),
+        // ID_AA64MMFR0_EL1 .. ID_AA64MMFR4_EL1
+        (7, 0..=4) => 0,
+        _ => return false,
+    };
+
+    if rt < 30 {
+        frame.tf_x[rt] = val as Register;
+    } else if rt == 30 {
+        frame.tf_lr = val as Register;
+    }
+    frame.tf_elr += 4;
+
+    true
 }
 
 /// `do_el0_sync`: the synchronous exception handler for EL0, called from `handle_el0_sync`
@@ -407,8 +462,9 @@ pub extern "C" fn do_el0_sync(frame: &mut Trapframe) {
             ));
             dumpregs(frame);
             flush_bp();
-            // KERNEL_LOCK()
+            kernel_lock();
             sigexit(p, SIGILL);
+            // KERNEL_UNLOCK(): sigexit does not return.
         }
     }
 

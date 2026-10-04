@@ -47,6 +47,6 @@ pub extern "C" fn ast(tf: &mut Trapframe) {
 
     refreshcreds(p);
     UVMEXP.softs.fetch_add(1, Ordering::Relaxed);
-    mi_ast(p, ci.ci_want_resched.get() != 0);
+    mi_ast(p, ci.ci_want_resched.load(Ordering::Relaxed) != 0);
     userret(p);
 }

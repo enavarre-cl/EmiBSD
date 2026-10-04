@@ -31,7 +31,7 @@
 //!   the C picks by `have_4_level_pt`.
 
 use core::cell::Cell;
-use core::sync::atomic::AtomicI32;
+use core::sync::atomic::{AtomicI32, AtomicU64};
 
 use core::ptr;
 
@@ -122,8 +122,9 @@ pub struct Pmap {
     pub pm_vp: Cell<PmVp>,
     /// Physical address of the lower-half (`TTBR0_EL1`) table.
     pub pm_pt0pa: Cell<u64>,
-    /// The address space id.
-    pub pm_asid: Cell<u64>,
+    /// The address space id and its generation: an atomic because `pmap_rollover_asid`
+    /// (under `pmap_asid_mtx`) rewrites the pmaps other CPUs run on while they read it.
+    pub pm_asid: AtomicU64,
     /// Guarded control stack enabled.
     pub pm_guarded: Cell<u64>,
     /// Four-level page tables (`have_4_level_pt`).
@@ -148,7 +149,7 @@ impl Pmap {
         Self {
             pm_vp: Cell::new(PmVp::L1(ptr::null_mut())),
             pm_pt0pa: Cell::new(0),
-            pm_asid: Cell::new(0),
+            pm_asid: AtomicU64::new(0),
             pm_guarded: Cell::new(0),
             have_4_level_pt: Cell::new(false),
             pm_privileged: Cell::new(false),

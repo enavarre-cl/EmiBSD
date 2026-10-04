@@ -33,7 +33,8 @@
 //! `_idx_cpu`, `arm_intr_disestablish_fdt`, `arm_intr_enable`/`disable`,
 //! `arm_intr_parent_establish_fdt`/`_disestablish_fdt`, `arm_intr_route`,
 //! `arm_intr_cpu_enable`, `intr_barrier`, `intr_set_wakeup`). The `imap` and `msi` variants
-//! and `arm_intr_map_msi` come with PCI (M5), the IPIs with `MULTIPROCESSOR`; the generic
+//! and `arm_intr_map_msi` come with PCI (M5); M11a adds the `MULTIPROCESSOR` IPIs
+//! (`intr_send_ipi_func`, `arm_send_ipi`, `arm_no_send_ipi`); the generic
 //! timer (`agtimer.c`) that replaces `arm_dflt_delay` attaches from `mainbus` (M5).
 //!
 //! ## Deviations
@@ -41,7 +42,8 @@
 //!   autoconfiguration on the boot CPU.
 //! - `arm_dflt_delay`'s inner loop spins on `yield` so the compiler keeps it; the C's empty
 //!   loop body relies on the compiler not optimising it away.
-//! - `arm_intr_func` and `arm_smask` are `StaticCell`s written by the controller's attach
+//! - `arm_intr_func`, `arm_smask` and `intr_send_ipi_func` are `StaticCell`s written by the
+//!   controller's attach
 //!   (`arm_set_intr_handler`, `arm_init_smask`) on the boot CPU before interrupts are enabled.
 //! - The controller and pre-registration lists are `LIST`s behind a `Sync` wrapper, touched
 //!   at attach time on the boot CPU; the handles are `NonNull<MachineIntrHandle>`.
@@ -951,4 +953,26 @@ pub fn intr_set_wakeup(cookie: NonNull<MachineIntrHandle>) {
     if let Some(set_wakeup) = ic.ic_set_wakeup {
         set_wakeup(ih.ih_ih);
     }
+}
+
+// IPI implementation (MULTIPROCESSOR)
+
+/// `intr_send_ipi_func`: how the interrupt controller sends an IPI; `ampintc_attach`
+/// installs its own, on the boot CPU before any application processor starts.
+#[cfg(feature = "multiprocessor")]
+pub static INTR_SEND_IPI_FUNC: StaticCell<fn(&CpuInfo, i32)> = StaticCell::new(arm_no_send_ipi);
+
+/// `arm_send_ipi`: sends IPI `id` (`ARM_IPI_*`) to `ci`.
+#[cfg(feature = "multiprocessor")]
+pub fn arm_send_ipi(ci: &CpuInfo, id: i32) {
+    // SAFETY: written once by the controller's attach, before any CPU but the boot one runs
+    // (see `INTR_SEND_IPI_FUNC`); read-only afterwards.
+    let f = unsafe { INTR_SEND_IPI_FUNC.read() };
+    f(ci, id)
+}
+
+/// `arm_no_send_ipi`: the controller sends no IPIs.
+#[cfg(feature = "multiprocessor")]
+pub fn arm_no_send_ipi(_ci: &CpuInfo, _id: i32) {
+    panic(format_args!("arm_send_ipi() called: no ipi function"));
 }
