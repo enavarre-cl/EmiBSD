@@ -49,7 +49,7 @@
 //! - `ufs_check_export`: without `NFSSERVER` there is no export list (`vfs_export_lookup`
 //!   finds nothing), so every client is refused with `EACCES`, as the C does when the lookup
 //!   fails; `struct netcred` (its `netc_exflags`, `netc_anon`) is not ported.
-//! - `ufsdirhash_init` (`UFS_DIRHASH`) waits for `ufs_dirhash.c` (`ufs_lookup.rs`).
+//! - `ufsdirhash_init` (`UFS_DIRHASH`) is under feature `ufs_dirhash`.
 
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -108,7 +108,8 @@ pub fn ufs_init(_vfsp: &'static Vfsconf) -> Result<(), Errno> {
     }
     ufs_ihashinit();
     ufs_quota_init();
-    // UFS_DIRHASH: ufsdirhash_init() (ufs_dirhash.c, not ported).
+    #[cfg(feature = "ufs_dirhash")]
+    crate::ufs::ufs::ufs_dirhash::ufsdirhash_init();
 
     Ok(())
 }

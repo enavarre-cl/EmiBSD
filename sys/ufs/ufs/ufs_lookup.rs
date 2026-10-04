@@ -46,11 +46,10 @@
 //! Upstream: sys/ufs/ufs/ufs_lookup.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `option UFS_DIRHASH` (in GENERIC) is not here yet: `ufs_dirhash.c` is not ported, so
-//!   every lookup is the linear search the C falls back to when a directory is not hashed
-//!   (small directories, or a hash that cannot be built). Each `#ifdef UFS_DIRHASH` site
-//!   carries a comment naming the call it makes; the directory format and the results are the
-//!   same, only large directories are slower.
+//! - `#ifdef UFS_DIRHASH` is feature `ufs_dirhash` (default, as GENERIC has the option).
+//!   The dirhash's `goto foundentry`/`goto notfound` into the linear search are a `hashed`
+//!   flag that skips the search, with `found` set by the dirhash path; `ufsdirhash_build`'s
+//!   0 is `true`, `ufsdirhash_findfree`'s and `ufsdirhash_enduseful`'s -1 is `None`.
 //! - A `struct direct *` into a directory block is an offset into the buffer's bytes, its
 //!   members read and written by `dir.rs`'s accessors; `memmove` of an entry is
 //!   `copy_within`.
@@ -90,6 +89,12 @@ use crate::ufs::ufs::dir::{
 use crate::ufs::ufs::inode::{
     IN_CHANGE, IN_UPDATE, Inode, UFS_BUF_ALLOC, UFS_BUFATOFF, UFS_TRUNCATE, UFS_UPDATE, doingasync,
     vtoi,
+};
+#[cfg(feature = "ufs_dirhash")]
+use crate::ufs::ufs::ufs_dirhash::{
+    ufsdirhash_add, ufsdirhash_build, ufsdirhash_checkblock, ufsdirhash_dirtrunc,
+    ufsdirhash_enduseful, ufsdirhash_findfree, ufsdirhash_lookup, ufsdirhash_move,
+    ufsdirhash_newblk, ufsdirhash_remove,
 };
 use crate::ufs::ufs::ufsmount::vfstoufs;
 use crate::uvm::uvm_vnode::uvm_vnp_setsize;
@@ -204,34 +209,88 @@ pub fn ufs_lookup(ap: &mut VopLookupArgs<'_>) -> Result<(), Errno> {
     // interest of simplicity.
     let bmask = vfstoufs(vmount(vdp)).mountp().mnt_stat.get().f_iosize as i32 - 1;
 
-    // UFS_DIRHASH: ufsdirhash_build(dp) == 0 would look the name up in the hash
-    // (ufsdirhash_findfree, ufsdirhash_enduseful, ufsdirhash_lookup) and jump to foundentry
-    // or notfound; ufs_dirhash.c is not ported, so the linear search below is the lookup.
-
-    let mut entryoffsetinblock: i32;
-    let mut numdirpasses;
-    if nameiop != LOOKUP || dp.i_diroff.get() == 0 || dp.i_diroff.get() as u64 >= dp.dip_size() {
-        entryoffsetinblock = 0;
-        dp.i_offset.set(0);
-        numdirpasses = 1;
-    } else {
-        dp.i_offset.set(dp.i_diroff.get());
-        entryoffsetinblock = dp.i_offset.get() & bmask;
-        if entryoffsetinblock != 0 {
-            let (b, _) = UFS_BUFATOFF(dp, i64::from(dp.i_offset.get()))?;
-            bp = Some(b);
-        }
-        numdirpasses = 2;
-        NCHSTATS.ncs_2passes.fetch_add(1, Ordering::Relaxed);
-    }
-    let mut prevoff = dp.i_offset.get();
-    let mut endsearch = roundup(dp.dip_size() as usize, DIRBLKSIZ) as Doff;
+    // The entry found: its DIRSIZ.
+    let mut found: Option<usize> = None;
+    let mut numdirpasses = 1;
+    let mut prevoff: Doff = 0;
     let mut enduseful: Doff = 0;
 
-    // The entry found: its offset in the block and its DIRSIZ.
-    let mut found: Option<usize> = None;
+    // Use dirhash for fast operations on large directories. The logic to determine whether
+    // to hash the directory is contained within ufsdirhash_build(); a true return means that
+    // it decided to hash this directory and it successfully built up the hash table.
+    // `hashed`: the dirhash answered, found (`goto foundentry`) or not (`goto notfound`).
+    #[cfg(not(feature = "ufs_dirhash"))]
+    let hashed = false;
+    #[cfg(feature = "ufs_dirhash")]
+    let hashed = ufsdirhash_build(dp) && {
+        // Look for a free slot if needed.
+        enduseful = dp.dip_size() as Doff;
+        if slotstatus != Slotstatus::Found {
+            slotoffset = -1;
+            if let Some((off, size)) = ufsdirhash_findfree(dp, slotneeded) {
+                slotoffset = off;
+                slotsize = size;
+                slotstatus = Slotstatus::Compact;
+                enduseful = ufsdirhash_enduseful(dp).unwrap_or(dp.dip_size() as Doff);
+            }
+        }
+        // Look up the component.
+        let prevoffp = if nameiop == DELETE {
+            Some(&mut prevoff)
+        } else {
+            None
+        };
+        match ufsdirhash_lookup(dp, cnp.name(), prevoffp) {
+            Ok((offset, b)) => {
+                dp.i_offset.set(offset);
+                bp = Some(b);
+                // SAFETY: the buffer is ours (busy from ufsdirhash_lookup) and mapped; the
+                // slice dies before the buffer is released.
+                let data = unsafe { b.data() };
+                let ep = (offset & bmask) as usize;
+                // foundentry: save directory entry's inode number and reclen in ndp->ni_ufs
+                // area, and release directory buffer.
+                dp.i_ino.set(d_ino(data, ep));
+                dp.i_reclen.set(u32::from(d_reclen(data, ep)));
+                found = Some(dirsiz(d_namlen(data, ep)));
+                true
+            }
+            Err(Errno::ENOENT) => {
+                // notfound:
+                dp.i_offset
+                    .set(roundup(dp.dip_size() as usize, DIRBLKSIZ) as Doff);
+                true
+            }
+            // Something failed; just do a linear search.
+            Err(_) => false,
+        }
+    };
+
+    let mut entryoffsetinblock: i32 = 0;
+    let mut endsearch: Doff = 0;
+    if !hashed {
+        if nameiop != LOOKUP || dp.i_diroff.get() == 0 || dp.i_diroff.get() as u64 >= dp.dip_size()
+        {
+            entryoffsetinblock = 0;
+            dp.i_offset.set(0);
+            numdirpasses = 1;
+        } else {
+            dp.i_offset.set(dp.i_diroff.get());
+            entryoffsetinblock = dp.i_offset.get() & bmask;
+            if entryoffsetinblock != 0 {
+                let (b, _) = UFS_BUFATOFF(dp, i64::from(dp.i_offset.get()))?;
+                bp = Some(b);
+            }
+            numdirpasses = 2;
+            NCHSTATS.ncs_2passes.fetch_add(1, Ordering::Relaxed);
+        }
+        prevoff = dp.i_offset.get();
+        endsearch = roundup(dp.dip_size() as usize, DIRBLKSIZ) as Doff;
+        enduseful = 0;
+    }
+
     'searchloop: loop {
-        while dp.i_offset.get() < endsearch {
+        while !hashed && dp.i_offset.get() < endsearch {
             // If necessary, get the next directory block.
             if dp.i_offset.get() & bmask == 0 {
                 if let Some(b) = bp.take() {
@@ -618,10 +677,19 @@ pub fn ufs_direnter(
             & (vfstoufs(vmount(dvp)).mountp().mnt_stat.get().f_iosize as usize - 1);
         // SAFETY: the buffer is ours (busy from UFS_BUF_ALLOC) and mapped; the slice dies
         // before it is written.
-        dirp.write_to(unsafe { bp.data() }, blkoff);
+        let data = unsafe { bp.data() };
+        dirp.write_to(data, blkoff);
 
-        // UFS_DIRHASH: ufsdirhash_newblk, ufsdirhash_add, ufsdirhash_checkblock when the
-        // directory is hashed (ufs_dirhash.c, not ported).
+        #[cfg(feature = "ufs_dirhash")]
+        if dp.i_dirhash.get().is_some() {
+            ufsdirhash_newblk(dp, dp.i_offset.get());
+            ufsdirhash_add(
+                dp,
+                &dirp.d_name[..usize::from(dirp.d_namlen)],
+                dp.i_offset.get(),
+            );
+            ufsdirhash_checkblock(dp, &data[blkoff..blkoff + DIRBLKSIZ], dp.i_offset.get());
+        }
 
         let error = VOP_BWRITE(bp);
         let ret = UFS_UPDATE(dp, 1);
@@ -646,7 +714,8 @@ pub fn ufs_direnter(
     {
         // SAFETY: the buffer is ours (busy from UFS_BUFATOFF) and mapped; the slice dies
         // before it is written.
-        let dirbuf = &mut unsafe { bp.data() }[off..];
+        let data = unsafe { bp.data() };
+        let dirbuf = &mut data[off..];
         // Find space for the new entry. In the simple case, the entry at offset base will
         // have the space. If it does not, then namei arranged that compacting the region
         // dp->i_offset to dp->i_offset + dp->i_count would yield the space.
@@ -681,7 +750,16 @@ pub fn ufs_direnter(
             }
             dsize = dirsiz(d_namlen(dirbuf, nep));
             spacefree += nep_reclen - dsize;
-            // UFS_DIRHASH: ufsdirhash_move (ufs_dirhash.c, not ported).
+            #[cfg(feature = "ufs_dirhash")]
+            if dp.i_dirhash.get().is_some() {
+                let namlen = usize::from(d_namlen(dirbuf, nep));
+                ufsdirhash_move(
+                    dp,
+                    d_name(dirbuf, nep, namlen),
+                    dp.i_offset.get() + nep as Doff,
+                    dp.i_offset.get() + ep as Doff,
+                );
+            }
             dirbuf.copy_within(nep..nep + dsize, ep);
         }
         // Here, `ep' points to a directory entry containing `dsize' in-use bytes followed by
@@ -704,9 +782,26 @@ pub fn ufs_direnter(
             ep += dsize;
         }
 
-        // UFS_DIRHASH: ufsdirhash_add and ufsdirhash_checkblock (ufs_dirhash.c, not
-        // ported).
+        #[cfg(feature = "ufs_dirhash")]
+        if dp.i_dirhash.get().is_some()
+            && (d_ino(dirbuf, ep) == 0 || usize::from(dirp.d_reclen) == spacefree)
+        {
+            ufsdirhash_add(
+                dp,
+                &dirp.d_name[..usize::from(dirp.d_namlen)],
+                dp.i_offset.get() + ep as Doff,
+            );
+        }
         dirp.write_to(dirbuf, ep);
+        #[cfg(feature = "ufs_dirhash")]
+        if dp.i_dirhash.get().is_some() {
+            let blk = off - (dp.i_offset.get() as usize & (DIRBLKSIZ - 1));
+            ufsdirhash_checkblock(
+                dp,
+                &data[blk..blk + DIRBLKSIZ],
+                dp.i_offset.get() & !(DIRBLKSIZ as i32 - 1),
+            );
+        }
     }
 
     let mut error = VOP_BWRITE(bp);
@@ -721,7 +816,10 @@ pub fn ufs_direnter(
             let _ = VOP_UNLOCK(tvp);
         }
         error = UFS_TRUNCATE(dp, i64::from(dp.i_endoff.get()), IO_SYNC, cr);
-        // UFS_DIRHASH: ufsdirhash_dirtrunc (ufs_dirhash.c, not ported).
+        #[cfg(feature = "ufs_dirhash")]
+        if error.is_ok() && dp.i_dirhash.get().is_some() {
+            ufsdirhash_dirtrunc(dp, dp.i_endoff.get());
+        }
         if let Some(tvp) = tvp {
             let _ = vn_lock(tvp, LK_EXCLUSIVE | LK_RETRY);
         }
@@ -749,7 +847,18 @@ pub fn ufs_dirremove(
         // SAFETY: the buffer is ours (busy from UFS_BUFATOFF) and mapped; the slice dies
         // before it is written.
         let data = unsafe { bp.data() };
-        // UFS_DIRHASH: ufsdirhash_remove (ufs_dirhash.c, not ported).
+        // Remove the dirhash entry. This is complicated by the fact that `ep' is the previous
+        // entry when dp->i_count != 0.
+        #[cfg(feature = "ufs_dirhash")]
+        if dp.i_dirhash.get().is_some() {
+            let rp = if dp.i_count.get() == 0 {
+                off
+            } else {
+                off + usize::from(d_reclen(data, off))
+            };
+            let namlen = usize::from(d_namlen(data, rp));
+            ufsdirhash_remove(dp, d_name(data, rp, namlen), dp.i_offset.get());
+        }
 
         if dp.i_count.get() == 0 {
             // First entry in block: set d_ino to zero.
@@ -759,7 +868,15 @@ pub fn ufs_dirremove(
             let r = d_reclen(data, off) as u32 + dp.i_reclen.get();
             set_d_reclen(data, off, r as u16);
         }
-        // UFS_DIRHASH: ufsdirhash_checkblock (ufs_dirhash.c, not ported).
+        #[cfg(feature = "ufs_dirhash")]
+        if dp.i_dirhash.get().is_some() {
+            let blk = off - ((dp.i_offset.get() - dp.i_count.get()) as usize & (DIRBLKSIZ - 1));
+            ufsdirhash_checkblock(
+                dp,
+                &data[blk..blk + DIRBLKSIZ],
+                dp.i_offset.get() & !(DIRBLKSIZ as i32 - 1),
+            );
+        }
     }
     if let Some(ip) = ip {
         ip.i_effnlink.set(ip.i_effnlink.get() - 1);

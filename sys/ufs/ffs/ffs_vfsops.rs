@@ -50,9 +50,9 @@
 //!   `conf.c` (`crate::machine::conf`).
 //! - `um_export` (`NFSSERVER`) is not kept, so the export update of `ffs_mount` passes a
 //!   NULL table to `vfs_export`, which answers `ENOTSUP` without `NFSSERVER`.
-//! - `ffs_vars[]` holds only the `UFS_DIRHASH` variables, so with `ufs_dirhash.c` not ported
-//!   it is empty and `ffs_sysctl` answers every name as `sysctl_bounded_arr` does for an
-//!   unknown one.
+//! - `ffs_vars[]` holds only the `UFS_DIRHASH` variables (feature `ufs_dirhash`); without
+//!   the feature it is empty and `ffs_sysctl` answers every name as `sysctl_bounded_arr`
+//!   does for an unknown one.
 //! - `ffs_init`'s `static int done` is the atomic [`FFS_INIT_DONE`]; the host tests clear it
 //!   to initialise again over fresh memory.
 //! - The `struct ffs_reload_args`/`struct ffs_sync_args` callbacks of
@@ -168,6 +168,23 @@ pub static FFS_DINODE2_POOL: Pool = Pool::new();
 
 /// `ffs_init`'s `done`: the pools are initialised.
 pub static FFS_INIT_DONE: AtomicBool = AtomicBool::new(false);
+
+/// `ffs_vars[]`: the `UFS_DIRHASH` variables `vfs.ffs.dirhash_dirsize`, `dirhash_maxmem`
+/// and `dirhash_mem` (read-only).
+#[cfg(feature = "ufs_dirhash")]
+static FFS_VARS: [crate::sys::sysctl::SysctlBoundedArgs; 3] = {
+    use crate::sys::sysctl::SysctlBoundedArgs;
+    use crate::ufs::ffs::ffs_extern::{FFS_DIRHASH_DIRSIZE, FFS_DIRHASH_MAXMEM, FFS_DIRHASH_MEM};
+    use crate::ufs::ufs::ufs_dirhash::{UFS_DIRHASHMAXMEM, UFS_DIRHASHMEM, UFS_MINDIRHASHSIZE};
+    [
+        SysctlBoundedArgs::new(FFS_DIRHASH_DIRSIZE, &UFS_MINDIRHASHSIZE, 0, i32::MAX),
+        SysctlBoundedArgs::new(FFS_DIRHASH_MAXMEM, &UFS_DIRHASHMAXMEM, 0, i32::MAX),
+        SysctlBoundedArgs::readonly(FFS_DIRHASH_MEM, &UFS_DIRHASHMEM),
+    ]
+};
+/// `ffs_vars[]`: empty without `UFS_DIRHASH`.
+#[cfg(not(feature = "ufs_dirhash"))]
+static FFS_VARS: [crate::sys::sysctl::SysctlBoundedArgs; 0] = [];
 
 /// The bytes of the in-core super-block allocation (see the module's deviations).
 fn fs_allocsize(sbsize: i32) -> usize {
@@ -1585,8 +1602,7 @@ pub fn ffs_init(vfsp: &'static Vfsconf) -> Result<(), Errno> {
     ufs_init(vfsp)
 }
 
-/// `ffs_sysctl` (`vfs_sysctl`): fast filesystem related variables (`ffs_vars[]`, empty
-/// without `UFS_DIRHASH`).
+/// `ffs_sysctl` (`vfs_sysctl`): fast filesystem related variables (`ffs_vars[]`).
 pub fn ffs_sysctl(
     name: &[i32],
     oldp: usize,
@@ -1595,7 +1611,7 @@ pub fn ffs_sysctl(
     newlen: usize,
     _p: &Proc,
 ) -> Result<(), Errno> {
-    sysctl_bounded_arr(&[], name, oldp, oldlenp, newp, newlen)
+    sysctl_bounded_arr(&FFS_VARS, name, oldp, oldlenp, newp, newlen)
 }
 
 #[cfg(test)]

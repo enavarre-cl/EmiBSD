@@ -64,7 +64,8 @@
 //!   `i_e2fs_*` shorthands, `EXT2FS_ITIMES`) are left out: `ext2fs` is not ported.
 //! - `i_dquot[]` exists only with feature `quota` (`option QUOTA`), whose `ufs_quota.rs`
 //!   defines `struct dquot`; `NODQUOT` is `None`.
-//! - `i_dirhash` is left out: `option UFS_DIRHASH` waits for `ufs_dirhash.c` (see `ufs_lookup.rs`).
+//! - `i_dirhash` is `inode_ext` alone, a `Cell<Option<NonNull<Dirhash>>>`, NULL without
+//!   feature `ufs_dirhash` (`option UFS_DIRHASH`).
 //! - `i_lockf` is a `LockfStateSlot` (`sys/lockf.rs`).
 //! - The `struct inode_vtbl` calls (`UFS_TRUNCATE`, `UFS_UPDATE`, ...) are functions with the
 //!   macros' names; `iv_inode_alloc` and `iv_buf_alloc` return the vnode or buffer the C
@@ -76,7 +77,7 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr;
+use core::ptr::{self, NonNull};
 
 use crate::kern::subr_prf::panic;
 use crate::queue_adapter;
@@ -94,6 +95,7 @@ use crate::ufs::ufs::dinode::{
     MAXSYMLINKLEN_UFS1, MAXSYMLINKLEN_UFS2, Ufs1Dinode, Ufs2Dinode, Ufsino,
 };
 use crate::ufs::ufs::dir::Doff;
+use crate::ufs::ufs::dirhash::Dirhash;
 #[cfg(feature = "quota")]
 use crate::ufs::ufs::quota::MAXQUOTAS;
 #[cfg(feature = "quota")]
@@ -146,6 +148,9 @@ pub struct Inode {
     pub i_ino: Cell<Ufsino>,
     /// `i_reclen`: size of found directory entry.
     pub i_reclen: Cell<u32>,
+    /// `i_dirhash` (`inode_ext.dirhash`): hashing for large directories, a `malloc`ed
+    /// `struct dirhash` (`ufs_dirhash.rs`, feature `ufs_dirhash`).
+    pub i_dirhash: Cell<Option<NonNull<Dirhash>>>,
     /// `dinode_u`: the on-disk dinode itself (`i_din1`, `i_din2`), a pool item.
     pub dinode_u: Cell<*mut c_void>,
     /// `i_vtbl`.
@@ -211,6 +216,7 @@ impl Inode {
             i_offset: Cell::new(0),
             i_ino: Cell::new(0),
             i_reclen: Cell::new(0),
+            i_dirhash: Cell::new(None),
             dinode_u: Cell::new(ptr::null_mut()),
             i_vtbl: Cell::new(None),
         }

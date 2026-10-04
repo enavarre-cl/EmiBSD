@@ -4137,8 +4137,8 @@ rust = "sys/ufs/ufs/inode.rs"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "16aaac8b7ff5086c17ac47b26a7926455f3926b9"
-deps = ["sys/ufs/ufs/dinode.h", "sys/ufs/ufs/dir.h", "sys/ufs/ffs/fs.h", "sys/ufs/ufs/ufsmount.h", "sys/sys/lockf.h", "sys/sys/rwlock.h"]
-notes = "ffs: struct inode (ffs_ino_pool item, Cells, &'static via VTOI=vtoi checking v_tag), dinode_u as one pointer with DIP/DIP_ASSIGN as dip_*/dip_set_* methods (UFS1/UFS2 by um_fstype under feature ffs2), SHORTLINK as with_shortlink, struct inode_vtbl and the UFS_* macros (iv_buf_alloc/iv_bufatoff return the buffer), IN_* flags, struct indir, struct ufid with from_fid/to_fid, DOINGASYNC; helpers for block pointers and dinodes in buffers; ext2fs members and i_dirhash (UFS_DIRHASH) left out; M10b: i_dquot[MAXQUOTAS] (Option<&'static Dquot>, NODQUOT = None) under feature quota (option QUOTA), the only configuration where struct dquot exists"
+deps = ["sys/ufs/ufs/dinode.h", "sys/ufs/ufs/dir.h", "sys/ufs/ffs/fs.h", "sys/ufs/ufs/ufsmount.h", "sys/sys/lockf.h", "sys/sys/rwlock.h", "sys/ufs/ufs/dirhash.h"]
+notes = "ffs: struct inode (ffs_ino_pool item, Cells, &'static via VTOI=vtoi checking v_tag), dinode_u as one pointer with DIP/DIP_ASSIGN as dip_*/dip_set_* methods (UFS1/UFS2 by um_fstype under feature ffs2), SHORTLINK as with_shortlink, struct inode_vtbl and the UFS_* macros (iv_buf_alloc/iv_bufatoff return the buffer), IN_* flags, struct indir, struct ufid with from_fid/to_fid, DOINGASYNC; helpers for block pointers and dinodes in buffers; ext2fs members left out; M10b: i_dquot[MAXQUOTAS] (Option<&'static Dquot>, NODQUOT = None) under feature quota (option QUOTA), the only configuration where struct dquot exists; inode_ext is i_dirhash alone, a Cell<Option<NonNull<Dirhash>>>, always present as in C and NULL without feature ufs_dirhash"
 
 [[file]]
 c = "sys/ufs/ufs/ufs_extern.h"
@@ -4152,16 +4152,20 @@ notes = "ffs: re-exports of the UFS functions (the header has only prototypes); 
 [[file]]
 c = "sys/ufs/ufs/dirhash.h"
 rust = "sys/ufs/ufs/dirhash.rs"
-status = "todo"
-deps = ["sys/ufs/ufs/dir.h"]
-notes = "option UFS_DIRHASH (in GENERIC): comes with ufs_dirhash.c"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3c60283fa411623245a2e2077eb7668cad034ee2"
+deps = ["sys/ufs/ufs/dir.h", "sys/sys/rwlock.h", "sys/sys/queue.h"]
+notes = "option UFS_DIRHASH: constants (DIRHASH_EMPTY/DEL, DIRALIGN, DH_NFSTATS, DH_SCORE*, DH_BLKOFF*), struct dirhash as Dirhash (malloc(M_DIRHASH) block of Cells under dh_mtx; dh_hash and dh_blkfree raw pointers beside their counts), DH_ENTRY as dh_entry/set_dh_entry and dh_blkfree[] as blkfree/set_blkfree (index and NULL checked, panic), the dh_list TAILQ adapter and head type; compiled always (inode.h names struct dirhash *); the prototypes and externs are ufs_dirhash.rs's; reference test of the constants"
 
 [[file]]
 c = "sys/ufs/ufs/ufs_dirhash.c"
 rust = "sys/ufs/ufs/ufs_dirhash.rs"
-status = "todo"
-deps = ["sys/ufs/ufs/dirhash.h", "sys/ufs/ufs/inode.h"]
-notes = "option UFS_DIRHASH (in GENERIC): a hash of large directories; until it is ported every lookup is the linear search the C falls back to, and each #ifdef UFS_DIRHASH call site in ufs_lookup.rs/ufs_vnops.rs/ufs_inode.rs/ufs_vfsops.rs/ffs_vfsops.rs (ffs_vars) is a comment naming the call"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "81c27c14f7ac7a085d462539b451bd1abe7e9c8d"
+deps = ["sys/ufs/ufs/dirhash.h", "sys/ufs/ufs/inode.h", "sys/crypto/siphash.c", "sys/kern/subr_pool.c", "sys/kern/kern_malloc.c", "sys/kern/kern_rwlock.c", "sys/dev/rnd.c"]
+notes = "option UFS_DIRHASH, cargo feature ufs_dirhash (default): ufsdirhash_build (bool), _free, _lookup (offset and buffer, ENOENT/EJUSTRETURN, prevoff through getprev, seqopt), _findfree (Option of offset and slot size), _enduseful (Option), _add/_remove/_move (take the entry's name for struct direct *), _newblk, _dirtrunc, _checkblock (runs when ufs_dirhashcheck is set, as in C; 0 by default, the host tests set it), _hash (SipHash24 under a random key), _adjfree, _findslot, _delslot, _getprev (block slice and position), _recycle (true with the list locked), _init, _uninit; ufsdirhash_pool, ufsdirhash_list and ufsdirhash_mtx (rwlocks as in C, list then dh_mtx); ufs_mindirhashsize/ufs_dirhashmaxmem/ufs_dirhashmem/ufs_dirhashcheck are AtomicI32 (vfs.ffs.dirhash_* via ffs_vars); memory accounting uses size_of::<Dirhash>(); lookup reads TAILQ_NEXT unlocked only while dh_onlist (a recycled hash's links are poisoned under diagnostic); free clears dh_hash before freeing the arrays; host tests: slot chains and DIRHASH_DEL collapse, first-free lists, getprev, a 3000-entry directory on an FFS2 image hashed (dirhash_mem > 0) with removals, renames, growth and truncation under checkblock and a linear walk/lookup cross-check, recycling under a small maxmem"
 
 [[file]]
 c = "sys/ufs/ufs/ufs_quota.c"
@@ -4203,7 +4207,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "5e66f0bf26c1daf4d883606ef3cf608d8d7e10dc"
 deps = ["sys/ufs/ufs/inode.h", "sys/ufs/ufs/ufs_ihash.c"]
-notes = "ffs: ufs_inactive, ufs_reclaim; UFS_DIRHASH ufsdirhash_free waits for ufs_dirhash.c; quota calls (getinoquota, ufs_quota_free_inode, ufs_quota_delete) are quota.rs's: ufs_quota.rs's with feature quota (M10b), the no-quota answers without it"
+notes = "ffs: ufs_inactive, ufs_reclaim; UFS_DIRHASH ufsdirhash_free in ufs_reclaim under feature ufs_dirhash; quota calls (getinoquota, ufs_quota_free_inode, ufs_quota_delete) are quota.rs's: ufs_quota.rs's with feature quota (M10b), the no-quota answers without it"
 
 [[file]]
 c = "sys/ufs/ufs/ufs_lookup.c"
@@ -4211,8 +4215,8 @@ rust = "sys/ufs/ufs/ufs_lookup.rs"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "35f87c67cd9321b4beb10298d53038c6c7220f79"
-deps = ["sys/ufs/ufs/inode.h", "sys/ufs/ufs/dir.h", "sys/kern/vfs_cache.c", "sys/kern/vfs_lookup.c"]
-notes = "ffs: ufs_lookup (linear search; the UFS_DIRHASH path is a comment until ufs_dirhash.c), ufs_dirbad, ufs_dirbadentry (bool), ufs_makedirentry, ufs_direnter (compaction with copy_within), ufs_dirremove, ufs_dirrewrite, ufs_dirempty (bool), ufs_checkpath; dirchk is an atomic; entries are offsets into the block"
+deps = ["sys/ufs/ufs/inode.h", "sys/ufs/ufs/dir.h", "sys/kern/vfs_cache.c", "sys/kern/vfs_lookup.c", "sys/ufs/ufs/ufs_dirhash.c"]
+notes = "ffs: ufs_lookup (linear search, and the UFS_DIRHASH fast path under feature ufs_dirhash: build, findfree, enduseful, lookup with prevoff for DELETE; goto foundentry/notfound are a hashed flag that skips the search), ufs_dirbad, ufs_dirbadentry (bool), ufs_makedirentry, ufs_direnter (compaction with copy_within; dirhash newblk/add/move/checkblock/dirtrunc), ufs_dirremove (dirhash remove/checkblock), ufs_dirrewrite, ufs_dirempty (bool), ufs_checkpath; dirchk is an atomic; entries are offsets into the block"
 
 [[file]]
 c = "sys/ufs/ufs/ufs_vfsops.c"
@@ -4221,7 +4225,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "40e27be0b22e2b71926a732ff48d38defa141999"
 deps = ["sys/ufs/ufs/inode.h", "sys/ufs/ufs/ufs_ihash.c"]
-notes = "ffs: ufs_start, ufs_root, ufs_check_export (EACCES without NFSSERVER; struct netcred reported), ufs_init (done flag atomic, cleared by the host tests), ufs_fhtovp"
+notes = "ffs: ufs_start, ufs_root, ufs_check_export (EACCES without NFSSERVER; struct netcred reported), ufs_init (done flag atomic, cleared by the host tests; ufsdirhash_init under feature ufs_dirhash), ufs_fhtovp"
 
 [[file]]
 c = "sys/ufs/ufs/ufs_vnops.c"
@@ -4230,7 +4234,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "499dfe40e92eca6539339e8e74d67239b9bc4f4c"
 deps = ["sys/ufs/ufs/inode.h", "sys/ufs/ufs/ufs_lookup.c", "sys/kern/spec_vnops.c", "sys/kern/vfs_lockf.c"]
-notes = "ffs: every vnode op of the file (itimes, create, mknod, open, close, access, getattr, setattr, chmod, chown, ioctl, remove, link, rename, mkdir, rmdir, symlink, readdir, readlink, lock/unlock/islocked over rrwlock, strategy, print, ufsspec_read/write/close, pathconf, advlock, makeinode); kern_event.c: every VN_KNOTE site posts (setattr's NOTE_ATTRIB/NOTE_TRUNCATE hint, create, mknod, remove, link, rename, mkdir, rmdir, symlink), ufsread/ufswrite/ufsvnode_filtops, ufs_kqfilter and filt_ufsdetach/filt_ufsread/filt_ufswrite/filt_ufsvnode (EXT2FS branch left out; kn_vnode reads kn_hook) are real, host test of the vnode and write filters; ufsfifo_* wait for fifofs (option FIFO); EXT2FS branch of ufs_itimes left out; NOCRED/FSCRED dereferences panic via ucred()"
+notes = "ffs: every vnode op of the file (itimes, create, mknod, open, close, access, getattr, setattr, chmod, chown, ioctl, remove, link, rename, mkdir, rmdir, symlink, readdir, readlink, lock/unlock/islocked over rrwlock, strategy, print, ufsspec_read/write/close, pathconf, advlock, makeinode); kern_event.c: every VN_KNOTE site posts (setattr's NOTE_ATTRIB/NOTE_TRUNCATE hint, create, mknod, remove, link, rename, mkdir, rmdir, symlink), ufsread/ufswrite/ufsvnode_filtops, ufs_kqfilter and filt_ufsdetach/filt_ufsread/filt_ufswrite/filt_ufsvnode (EXT2FS branch left out; kn_vnode reads kn_hook) are real, host test of the vnode and write filters; ufsfifo_* wait for fifofs (option FIFO); EXT2FS branch of ufs_itimes left out; NOCRED/FSCRED dereferences panic via ucred(); ufs_rmdir's UFS_DIRHASH ufsdirhash_free under feature ufs_dirhash"
 
 [[file]]
 c = "sys/ufs/ffs/fs.h"
@@ -4311,7 +4315,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1432a9d841b245e6435f2a60208575eef5aeafea"
 deps = ["sys/ufs/ffs/ffs_vnops.c", "sys/ufs/ffs/ffs_alloc.c", "sys/ufs/ffs/ffs_balloc.c", "sys/ufs/ufs/ufs_vfsops.c", "sys/kern/vfs_syscalls.c"]
-notes = "ffs: ffs_vfsops, ffs_vtbl, pools, ffs_checkrange, ffs_mountroot (rootdev in sys/systm.rs, swapdev from machine::conf, rootvp/swapdev_vp in init_main.rs; inittodr(fs_time) runs), ffs_mount (own Nameidata for the device; disk_map (subr_disk.c) maps a DUID name to its block device, else the name is used as given; nblkdev from machine::conf), ffs_reload, ffs_validate, sbtry, ffs_mountfs (FFS1 and FFS2 super-blocks; the in-core super-block is at least size_of::<Fs>()), ffs_oldfscompat, ffs1_compat_read/write, ffs_unmount, ffs_flushfiles, ffs_statfs, ffs_sync, ffs_vget, ffs_fhtovp, ffs_vptofh, ffs_sbupdate, ffs_init (done flag atomic), ffs_sysctl (ffs_vars empty without UFS_DIRHASH); host tests: newfs-like FFS1/FFS2 images, mount, read, write past the direct blocks, mkdir/rename/unlink/rmdir/symlink/getdents, sync, unmount, fsck-like counter check, remount"
+notes = "ffs: ffs_vfsops, ffs_vtbl, pools, ffs_checkrange, ffs_mountroot (rootdev in sys/systm.rs, swapdev from machine::conf, rootvp/swapdev_vp in init_main.rs; inittodr(fs_time) runs), ffs_mount (own Nameidata for the device; disk_map (subr_disk.c) maps a DUID name to its block device, else the name is used as given; nblkdev from machine::conf), ffs_reload, ffs_validate, sbtry, ffs_mountfs (FFS1 and FFS2 super-blocks; the in-core super-block is at least size_of::<Fs>()), ffs_oldfscompat, ffs1_compat_read/write, ffs_unmount, ffs_flushfiles, ffs_statfs, ffs_sync, ffs_vget, ffs_fhtovp, ffs_vptofh, ffs_sbupdate, ffs_init (done flag atomic), ffs_sysctl; ffs_vars holds vfs.ffs.dirhash_dirsize, dirhash_maxmem and the read-only dirhash_mem under feature ufs_dirhash (empty without it); host tests: newfs-like FFS1/FFS2 images (the test module and its helpers are pub(crate) for ufs_dirhash's and ufs_quota's tests), mount, read, write past the direct blocks, mkdir/rename/unlink/rmdir/symlink/getdents, sync, unmount, fsck-like counter check, remount"
 
 [[extra]]
 rust = "sys/dev/consfile.rs"

@@ -45,8 +45,7 @@
 //! Upstream: sys/ufs/ufs/ufs_inode.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `UFS_DIRHASH`'s `ufsdirhash_free` in `ufs_reclaim` waits for `ufs_dirhash.c`
-//!   (`ufs_lookup.rs`); without it an inode has no hash to free.
+//! - `UFS_DIRHASH`'s `ufsdirhash_free` in `ufs_reclaim` is under feature `ufs_dirhash`.
 //! - The quota calls are `quota.rs`'s: `ufs_quota.rs`'s with feature `quota` (`option QUOTA`),
 //!   the no-quota answers of `ufs_quota_stub.c` without it.
 
@@ -140,8 +139,10 @@ pub fn ufs_reclaim(vp: &'static Vnode) -> Result<(), Errno> {
     {
         vrele(devvp);
     }
-    // UFS_DIRHASH: ufsdirhash_free(ip) when ip->i_dirhash != NULL (ufs_dirhash.c, not
-    // ported: no inode has a hash).
+    #[cfg(feature = "ufs_dirhash")]
+    if ip.i_dirhash.get().is_some() {
+        crate::ufs::ufs::ufs_dirhash::ufsdirhash_free(ip);
+    }
     let _ = ufs_quota_delete(ip);
     Ok(())
 }

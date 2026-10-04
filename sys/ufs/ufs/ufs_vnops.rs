@@ -56,7 +56,7 @@
 //! - `pool_put(&namei_pool, cnp->cn_pnbuf)` is [`pnbuf_free`].
 //! - Credentials that the C dereferences (`cred->cr_uid`) go through [`ucred`], which panics
 //!   on `NOCRED`/`FSCRED`, where the C would follow a bad pointer.
-//! - `UFS_DIRHASH`'s `ufsdirhash_free` in `ufs_rmdir` waits for `ufs_dirhash.c`.
+//! - `UFS_DIRHASH`'s `ufsdirhash_free` in `ufs_rmdir` is under feature `ufs_dirhash`.
 
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
@@ -1312,7 +1312,11 @@ pub fn ufs_rmdir(ap: &mut VopRmdirArgs<'_>) -> Result<(), Errno> {
         let error = UFS_TRUNCATE(ip, 0, if doingasync(vp) { 0 } else { IO_SYNC }, cnp.cn_cred);
 
         cache_purge(vp);
-        // UFS_DIRHASH: kill any active hash (ufsdirhash_free; ufs_dirhash.c, not ported).
+        // Kill any active hash; i_effnlink == 0, so it will not come back.
+        #[cfg(feature = "ufs_dirhash")]
+        if ip.i_dirhash.get().is_some() {
+            crate::ufs::ufs::ufs_dirhash::ufsdirhash_free(ip);
+        }
         error
     };
     // out:
