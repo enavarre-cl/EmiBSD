@@ -159,6 +159,9 @@ pub(crate) enum InternalState {
     Deflate(alloc::boxed::Box<crate::deflate::DeflateState>),
     /// A decompression stream (`inflate.rs`).
     Inflate(alloc::boxed::Box<crate::inflate::InflateState>),
+    /// A call-back decompression stream (`infback.rs`). The C's `inflateStateCheck` rejects
+    /// it, so it is not an `Inflate`.
+    InflateBack(alloc::boxed::Box<crate::inflate::InflateState>),
 }
 
 /// `struct z_stream_s` (`z_stream`): a compression or decompression stream.
@@ -308,6 +311,19 @@ pub fn inflateInit2(strm: &mut ZStream<'_>, windowBits: i32) -> i32 {
     crate::inflate::inflateInit2_(
         strm,
         windowBits,
+        ZLIB_VERSION,
+        size_of::<ZStream<'_>>() as i32,
+    )
+}
+
+/// `inflateBackInit(strm, windowBits, window)`: the zlib.h macro,
+/// [`inflateBackInit_`](crate::infback::inflateBackInit_) with this library's version and
+/// stream size.
+pub fn inflateBackInit(strm: &mut ZStream<'_>, windowBits: i32, window: Vec<u8>) -> i32 {
+    crate::infback::inflateBackInit_(
+        strm,
+        windowBits,
+        window,
         ZLIB_VERSION,
         size_of::<ZStream<'_>>() as i32,
     )

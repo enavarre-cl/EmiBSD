@@ -23,6 +23,7 @@ pub mod adler32;
 pub mod compress;
 pub mod crc32;
 pub mod deflate;
+pub mod infback;
 mod inffast;
 mod inffixed;
 pub mod inflate;
@@ -41,6 +42,7 @@ pub use deflate::{
     deflateInit_, deflateInit2_, deflateParams, deflatePending, deflatePrime, deflateReset,
     deflateResetKeep, deflateSetDictionary, deflateSetHeader, deflateTune, deflateUsed,
 };
+pub use infback::{inflateBack, inflateBackEnd, inflateBackInit_};
 pub use inflate::{
     inflate, inflateCodesUsed, inflateCopy, inflateEnd, inflateGetDictionary, inflateGetHeader,
     inflateInit_, inflateInit2_, inflateMark, inflatePrime, inflateReset, inflateReset2,
