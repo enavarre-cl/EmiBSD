@@ -69,9 +69,8 @@
 //!   `panicbuf`, per CPU from M5 (`ci_panicbuf`).
 //! - `db_panic` defaults to 0: a panic prints the stack trace and reboots, as OpenBSD does with
 //!   `ddb.panic=0`, instead of waiting at the `ddb>` prompt (the headless boots and smokes
-//!   expect the reboot); `sysctl ddb.panic=1` enables the debugger. `db_panic` and
-//!   `db_console` stay `AtomicBool`s; `ddb_sysctl` (`db_usrreq.rs`) reads and writes them as
-//!   `int`s.
+//!   expect the reboot); `sysctl ddb.panic=1` enables the debugger. `db_panic` stays an
+//!   `AtomicBool`; `ddb_sysctl` (`db_usrreq.rs`) reads and writes it as an `int`.
 //! - `KASSERT`/`KDASSERT` (`libkern.h`) live here as [`kassert!`]/[`kdassert!`], next to the
 //!   `__assert` they call; `libkern` is a leaf crate that cannot reach it.
 
@@ -131,8 +130,8 @@ static PANICSTR: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 static PANICBUF: StaticCell<[u8; 512]> = StaticCell::new([0; 512]);
 /// `db_panic`: enter ddb on panic.
 pub static DB_PANIC: AtomicBool = AtomicBool::new(false);
-/// `db_console`: whether a special key combination (machine dependent) enters ddb.
-pub static DB_CONSOLE: AtomicBool = AtomicBool::new(false);
+/// `db_console`: whether a special key combination (machine dependent) enters ddb (0 or 1).
+pub static DB_CONSOLE: AtomicI32 = AtomicI32::new(0);
 /// `splassert_ctl`: what an spl assertion failure does: 1 prints, 2 adds a stack trace, 3 enters
 /// ddb, anything else panics; 0 stays quiet.
 pub static SPLASSERT_CTL: AtomicI32 = AtomicI32::new(1);

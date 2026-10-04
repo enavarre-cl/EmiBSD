@@ -654,10 +654,10 @@ notes = "M2: db_force_whitespace, db_more, db_putchar, db_print_position, db_end
 [[file]]
 c = "sys/ddb/db_usrreq.c"
 rust = "sys/ddb/db_usrreq.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "cdf779bd386700a1bbb7d04152d78b31218a954c"
-notes = "M2: db_log only; db_profile, db_suspend and ddb_sysctl come with sysctl(2)"
+notes = "M2: db_log; M11c: db_profile, db_suspend, ddb_vars (bounded: radix, max_width, tab_stop_width, max_line, log, suspend), ddb_sysctl (panic and console lowered-only above securelevel 0, trigger enters ddb when ddb.console is set and securelevel < 1 or the caller's controlling tty is the console), wired into kern_sysctl's CTL_DDB; db_panic stays an AtomicBool (read through an int copy); DDBPROF not configured (no ddb.profile)"
 
 [[file]]
 c = "sys/ddb/db_access.c"
@@ -674,7 +674,7 @@ notes = "in-kernel symbol table for traces; cargo xtask symbolize does it offlin
 [[file]]
 c = "sys/ddb/db_var.h"
 rust = "sys/ddb/db_var.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6402ef2df6493f4a404000ca8cd7430a22099ab4"
 notes = "M11c: DB_HISTORY_SIZE, DBCTL_*, CTL_DDB_NAMES (a Ctlname array); the extern tunables live in the files that define them (db_output.rs, subr_prf.rs, db_usrreq.rs)"
@@ -682,7 +682,7 @@ notes = "M11c: DB_HISTORY_SIZE, DBCTL_*, CTL_DDB_NAMES (a Ctlname array); the ex
 [[file]]
 c = "sys/ddb/db_lex.h"
 rust = "sys/ddb/db_lex.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "3ab70ae3618ab99c6b24974dd8ecfe0278dbcc2e"
 notes = "license: Mach notice, kept whole; M11c: the t* token values with their C names (#[allow(non_upper_case_globals)]), TOK_STRING_SIZE"
@@ -690,7 +690,7 @@ notes = "license: Mach notice, kept whole; M11c: the t* token values with their 
 [[file]]
 c = "sys/ddb/db_lex.c"
 rust = "sys/ddb/db_lex.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "61a9a6274d81bf2dc4f6787a885c5395f1958a8a"
 deps = ["sys/ddb/db_lex.h", "sys/ddb/db_input.c", "sys/ddb/db_output.c"]
@@ -699,7 +699,7 @@ notes = "license: Mach notice, kept whole; M11c: the lexer state is one StaticCe
 [[file]]
 c = "sys/ddb/db_input.c"
 rust = "sys/ddb/db_input.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "bb9335a69dc81dd241dd6914b770c338e4417169"
 deps = ["sys/ddb/db_var.h", "sys/ddb/db_output.c", "sys/dev/cons.c"]
@@ -708,7 +708,7 @@ notes = "license: Mach notice, kept whole; M11c: db_readline with every editing 
 [[file]]
 c = "sys/ddb/db_command.h"
 rust = "sys/ddb/db_command.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "dee1538a0266c3dc45b8fd4d19bda2e3fba4bc87"
 notes = "license: Mach notice, kept whole; M11c: struct db_command (DbCommand: fcn and more are Options, tables are &'static [DbCommand] without the NULL entry), DbCmdFn, CS_OWN/CS_MORE/CS_SET_DOT, db_dot/db_last_addr/db_prev/db_next (AtomicUsize)"
@@ -716,7 +716,7 @@ notes = "license: Mach notice, kept whole; M11c: struct db_command (DbCommand: f
 [[file]]
 c = "sys/ddb/db_command.c"
 rust = "sys/ddb/db_command.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a0aeb5e33e22ec3fac424372352e0fc015fd959a"
 deps = ["sys/ddb/db_command.h", "sys/ddb/db_lex.c"]
@@ -725,7 +725,7 @@ notes = "license: Mach notice, kept whole; M11c: the whole file: db_command_loop
 [[file]]
 c = "sys/ddb/db_variables.h"
 rust = "sys/ddb/db_variables.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ca58c4161f9839c3cc65da92d9bb500a333fd9a2"
 notes = "license: Mach notice, kept whole; M11c: struct db_variable with valuep an Option<&AtomicI32> (registers use fcn), DB_VAR_GET/SET; db_reg_var! builds a register entry over a trap-frame StaticCell"
@@ -733,7 +733,7 @@ notes = "license: Mach notice, kept whole; M11c: struct db_variable with valuep 
 [[file]]
 c = "sys/ddb/db_variables.c"
 rust = "sys/ddb/db_variables.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d926f52c27bd05964c5dce9bfc7b88e1b65cba80"
 deps = ["sys/ddb/db_variables.h", "sys/ddb/db_lex.c", "sys/ddb/db_expr.c"]
@@ -742,7 +742,7 @@ notes = "license: Mach notice, kept whole; M11c: db_vars[] (radix, maxoff, maxwi
 [[file]]
 c = "sys/ddb/db_expr.c"
 rust = "sys/ddb/db_expr.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "bd9099ae352401495a9b3322906815e2efaac11d"
 deps = ["sys/ddb/db_lex.c", "sys/ddb/db_variables.c"]
@@ -751,7 +751,7 @@ notes = "license: Mach notice, kept whole; M11c: the whole grammar, each rule Db
 [[file]]
 c = "sys/ddb/db_run.h"
 rust = "sys/ddb/db_run.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e3f50336bfff40bd0bffa63552588eaba9553f0b"
 notes = "license: Mach notice, kept whole; M11c: the db_run.c prototypes and db_inst_count; db_set/clear_single_step are the machine's (header macros), SOFTWARE_SSTEP is not defined on amd64/arm64"
@@ -759,7 +759,7 @@ notes = "license: Mach notice, kept whole; M11c: the db_run.c prototypes and db_
 [[file]]
 c = "sys/ddb/db_run.c"
 rust = "sys/ddb/db_run.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "351f7f60dac12c5f5dce2654c03c56d336ef18ee"
 deps = ["sys/ddb/db_run.h", "sys/ddb/db_command.c"]
@@ -1644,7 +1644,7 @@ notes = "M4: is_unpriv_ldst, accesstype, fault (writes ci_panicbuf), kdata_abort
 [[file]]
 c = "sys/ddb/db_trap.c"
 rust = "sys/ddb/db_trap.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "24a4dd9a16969451f170a203cea94df7233e8e58"
 deps = ["sys/ddb/db_output.c", "sys/kern/subr_prf.c", "sys/ddb/db_run.c", "sys/ddb/db_command.c"]

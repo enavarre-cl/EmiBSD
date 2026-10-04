@@ -473,7 +473,7 @@ pub fn sys_sysctl(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
         CTL_VFS => (true, vfs_sysctl),
         CTL_MACHDEP => return Err(unported!("cpu_sysctl (machdep.c)")),
         // CTL_DEBUG: DEBUG_SYSCTL is not configured.
-        CTL_DDB => return Err(unported!("ddb_sysctl (db_usrreq.c)")),
+        CTL_DDB => (false, crate::ddb::db_usrreq::ddb_sysctl),
         _ => return Err(Errno::EOPNOTSUPP),
     };
 

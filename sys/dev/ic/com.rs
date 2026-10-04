@@ -1181,7 +1181,7 @@ pub fn comintr(arg: *mut c_void) -> i32 {
                 if lsr & LSR_BI != 0 {
                     // DDB
                     if sc.sc_hwflags.get() & COM_HW_CONSOLE != 0 {
-                        if DB_CONSOLE.load(Ordering::Relaxed) {
+                        if DB_CONSOLE.load(Ordering::Relaxed) != 0 {
                             db_enter();
                         }
                         skip = true; // goto next

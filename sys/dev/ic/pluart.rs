@@ -581,7 +581,7 @@ pub fn pluart_intr(arg: *mut c_void) -> i32 {
         if u32::from(c) & UART_DR_BE != 0 {
             // DDB
             if sc.sc_hwflags.get() & COM_HW_CONSOLE != 0 {
-                if DB_CONSOLE.load(Ordering::Relaxed) {
+                if DB_CONSOLE.load(Ordering::Relaxed) != 0 {
                     db_enter();
                 }
                 continue;
