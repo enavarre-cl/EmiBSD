@@ -89,7 +89,7 @@ fn depfiles_and_locals() {
 }
 
 #[test]
-fn y_c_rule_runs_yacc_d_then_moves_y_tab_c() -> Result<()> {
+fn y_c_rule_runs_yacc_d_with_the_target_as_output() -> Result<()> {
     let predefined = [
         ("YACC", "/out/host/bin/yacc".to_string()),
         ("YACC.y", "${YACC} -d ${YFLAGS}".to_string()),
@@ -109,9 +109,38 @@ fn y_c_rule_runs_yacc_d_then_moves_y_tab_c() -> Result<()> {
         cmds.iter()
             .map(|c| c.split_whitespace().collect::<Vec<_>>().join(" "))
             .collect::<Vec<_>>(),
-        ["/out/host/bin/yacc -d /src/parse.y", "mv y.tab.c parse.c"]
+        ["/out/host/bin/yacc -d -o parse.c /src/parse.y"]
     );
     assert_eq!(job.target, PathBuf::from("/obj/parse.c"));
+    Ok(())
+}
+
+#[test]
+fn l_c_rule_runs_lex_with_lflags_and_the_target_as_output() -> Result<()> {
+    let predefined = [
+        ("LEX", "/out/host/bin/lex".to_string()),
+        ("LEX.l", "${LEX} ${LFLAGS}".to_string()),
+        ("LFLAGS", "-Ppcap_yy".to_string()),
+    ];
+    let mk = Make::new(Path::new("/nonexistent"), &predefined, &[]);
+    let rule: Vec<String> = RULE_L_C.iter().map(|c| c.to_string()).collect();
+    let job = Job::from_rule(
+        &mk,
+        &rule,
+        "scanner.c",
+        vec![PathBuf::from("/src/scanner.l")],
+        Path::new("/obj"),
+    )?;
+    let cmds: Vec<String> = job
+        .commands
+        .iter()
+        .map(|(c, _)| c.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    assert_eq!(
+        cmds,
+        ["/out/host/bin/lex -Ppcap_yy -o scanner.c /src/scanner.l"]
+    );
+    assert_eq!(job.target, PathBuf::from("/obj/scanner.c"));
     Ok(())
 }
 
