@@ -1649,6 +1649,7 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
 mod libraries;
 mod passwd;
 mod ramdisk;
+pub(crate) mod testca;
 
 #[cfg(test)]
 mod tests;

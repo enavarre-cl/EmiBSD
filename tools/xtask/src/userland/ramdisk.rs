@@ -224,7 +224,23 @@ const ETC_FILES: &[(&str, u32, &str)] = &[
     ("pf.conf", 0o600, PF_CONF),
     ("pf.os", 0o444, PF_OS),
     ("protocols", 0o644, PROTOCOLS),
+    ("resolv.conf", 0o644, RESOLV_CONF),
+    ("hosts", 0o644, HOSTS),
 ];
+
+/// `resolv.conf(5)`: QEMU's user network answers DNS on 10.0.2.3 (forwarded to this
+/// machine's resolvers). libc's resolver (`asr`) reads it for ftp(1) and nc(1).
+const RESOLV_CONF: &str = "nameserver 10.0.2.3\n";
+
+/// `hosts(5)`: `localhost`, and `emibsd-host` for 10.0.2.2, the address QEMU's user network
+/// gives this machine (a guest's connection to it reaches the host's 127.0.0.1), where
+/// `cargo xtask smoke --https-server` runs the test servers. The test CA's server
+/// certificate is for that name (`testca.rs`).
+const HOSTS: &str = "\
+127.0.0.1\tlocalhost
+::1\t\tlocalhost
+10.0.2.2\temibsd-host
+";
 
 /// `protocols(5)`: pfctl(8)'s parser names protocols through getprotobyname(3) (`proto icmp`
 /// in `pf.conf`). The IANA numbers of the protocols this kernel handles, with `ip` for
@@ -620,6 +636,13 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
         fs::write(&p, text).map_err(|e| format!("{}: {e}", p.display()))?;
     }
     passwd::make_databases(&pwd_mkdb, &etc)?;
+    // /etc/ssl (M9+): LibreSSL's CA bundle and the test CA (`testca.rs`).
+    let ssl = testca::ssl_files(ctx)?;
+    fs::create_dir_all(etc.join("ssl")).map_err(|e| format!("{}: {e}", etc.display()))?;
+    for (name, from) in &ssl {
+        let to = etc.join("ssl").join(name);
+        fs::copy(from, &to).map_err(|e| format!("{}: {e}", from.display()))?;
+    }
     for (dir, _) in DIRS {
         let p = staging.join(dir.trim_start_matches('/'));
         fs::create_dir_all(&p).map_err(|e| format!("{}: {e}", p.display()))?;
@@ -647,6 +670,10 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
     // Owners, groups and modes (module docs); the programs' own come from their Makefiles.
     let installed = ctx.owners.lock().map_err(|_| "lock poisoned")?.clone();
     let mut attrs = image_attrs(&installed);
+    attrs.push(Attr::root("/etc/ssl", 0, 0o755));
+    for (name, _) in &ssl {
+        attrs.push(Attr::root(&format!("/etc/ssl/{name}"), 0, 0o444));
+    }
     for n in 0..FD_NODES {
         attrs.push(Attr::root(&format!("/dev/fd/{n}"), 0, 0o666));
     }

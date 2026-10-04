@@ -280,7 +280,14 @@ for the Mac like makefs from `usr.sbin/pwd_mkdb` (in the clone since 2026-10-03)
 own db(3) (`lib/libc/db`, hash and btree) and `pw_scan` (`lib/libutil/passwd.c`), not macOS's
 `dbopen`, so the databases have OpenBSD's format by construction. The hash is OpenBSD's
 `bcrypt.c` with `blowfish.c`, in a small helper that replaces `arc4random_buf` with a fixed
-salt before including the unmodified source, so the image is reproducible. The directories are
+salt before including the unmodified source, so the image is reproducible. For the network
+clients (M9+): `resolv.conf` (`nameserver 10.0.2.3`, QEMU's user-network DNS), `hosts`
+(`localhost`, and `emibsd-host` for `10.0.2.2`, QEMU's alias of the Mac, where
+`smoke --https-server` runs test servers), and `/etc/ssl`: `cert.pem`, LibreSSL's CA bundle
+(`lib/libcrypto/cert.pem`, as its `distribution` target installs it, 0444), and
+`emibsd-test-ca.pem`, the certificate of the test CA `userland/testca.rs` makes once with the
+Mac's `openssl` (docs/SETUP.md, "The test CA"). With LibreSSL, ftp and nc the image is about
+22 MiB, so the boot image (`boot.rs`, `IMAGE_SECTORS`) is 128 MiB. The directories are
 `/home`, `/root` (0700), `/tmp` and `/var/tmp` (1777), `/var/{log,mail,run}`. `/dev` has
 `console`, `tty`, `mem`, `kmem`, `null`, `zero`, `klog`, `tty00` (the console on both
 architectures: `com0` on amd64, and on arm64 `pluart0` takes `com`'s slot, major 8, in

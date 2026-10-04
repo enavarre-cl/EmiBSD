@@ -20,6 +20,10 @@
 //!                                          status); with K the image is rebuilt first;
 //!                                          --expect-ramdisk adds rd(4)'s line for the
 //!                                          ramdisk on the image (or its absence)
+//!                   [--https-server DIR:PORT:trusted|untrusted|echo]...
+//!                                          (smoke and smoke2) TLS test servers on this
+//!                                          machine during the run, the guest's
+//!                                          emibsd-host:PORT (https.rs)
 //! cargo xtask smoke2 --arch A [--kernel K] [--cmdline C] [--timeout SECS] [--show-transcripts]
 //!                   [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]...
 //!                                          boot TWO VMs of A at once, each with vio1 on a
@@ -44,6 +48,7 @@ use serde::Deserialize;
 
 mod boot;
 mod bsdmake;
+mod https;
 mod symbolize;
 mod syscalls;
 mod twovm;
@@ -63,8 +68,8 @@ const TABLE_END: &str = "<!-- ports:end -->";
 const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | ports next | \
                      ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] [--init I] [--ramdisk R] | \
                      qemu --arch A [--kernel K] [--init I] [--ramdisk R] | gen-syscalls [--check] | \
-                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--status N] [--send-after L --send T]... [--until-seen] --expect L... | \
-                     smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... | \
+                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... --expect L... | \
+                     smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--https-server DIR:PORT:MODE]... | \
                      symbolize --arch A [--kernel K] | userland --arch A>";
 
 #[derive(Deserialize)]
@@ -204,6 +209,8 @@ fn run(args: &[String]) -> Result<()> {
                 .collect();
             let init = init_flag(&root, arch, rest);
             let ramdisk = ramdisk_flag(&root, arch, rest);
+            // Killed when dropped, after the run.
+            let _servers = https::start(&root, &flags(rest, "--https-server"))?;
             boot::smoke(
                 &root,
                 arch,
@@ -229,6 +236,7 @@ fn run(args: &[String]) -> Result<()> {
             let init = init_flag(&root, arch, rest);
             let ramdisk = ramdisk_flag(&root, arch, rest);
             let plan = twovm::parse_plan(rest)?;
+            let _servers = https::start(&root, &flags(rest, "--https-server"))?;
             twovm::smoke2(
                 &root,
                 arch,

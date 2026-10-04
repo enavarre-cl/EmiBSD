@@ -213,7 +213,7 @@ smoke-route: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --send-after "# " --send 'ifconfig -a\n' \
         --expect "rc: multi-user" --expect "Internet:" --expect "default            10.0.2.2" \
         --expect "10.0.2/24" --expect "gateway: 10.0.2.2" --expect "interface: vio0" \
-        --expect "lo0: flags=" --expect "vio0: flags="
+        --expect "lo0: flags=" --expect "vio0: flags=" {{https_run}}
     cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'route -n show -inet\n' \
@@ -221,7 +221,57 @@ smoke-route: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --send-after "# " --send 'ifconfig -a\n' \
         --expect "rc: multi-user" --expect "Internet:" --expect "default            10.0.2.2" \
         --expect "10.0.2/24" --expect "gateway: 10.0.2.2" --expect "interface: vio0" \
-        --expect "lo0: flags=" --expect "vio0: flags="
+        --expect "lo0: flags=" --expect "vio0: flags=" {{https_run}}
+
+# M9+, part of `smoke-route` (so `ci` covers the LibreSSL build): ftp(1) and nc(1) run
+# (usage), `/etc/ssl` holds `cert.pem` and the test CA, and ftp resolves `emibsd-host` through
+# `/etc/hosts` (`Trying 10.0.2.2...`) and fails at the TCP step with status 1 (no TCP in the
+# kernel yet: `socket: Protocol not supported`; with TCP and no server: connection refused).
+# Lines stay short for arm64's pluart.
+https_run := "--send-after '# ' --send 'ls -l /etc/ssl\\n' --send-after '# ' --send 'ftp -? ; nc -h\\n' " + \
+    "--send-after '# ' --send 'u=https://emibsd-host:8443/hello.txt\\n' " + \
+    "--send-after '# ' --send 'ftp -v -o - $u; echo ftp-exit=$?\\n' " + \
+    "--expect emibsd-test-ca.pem --expect 'usage: ftp' --expect 'usage: nc' " + \
+    "--expect 'Trying 10.0.2.2...' --expect ftp-exit=1"
+
+# M9+ (docs/ROADMAP.md, "M9+ Network completion"): HTTPS from userland against TLS servers on
+# this machine (`--https-server`: `openssl s_server` with the test CA's certificates, reached
+# by the guest as `emibsd-host`, 10.0.2.2; docs/SETUP.md, "The test CA"). Logs in as root,
+# fetches `hello.txt` with ftp(1) trusting the test CA, is refused by the self-signed server
+# (`certificate verification failed`), and has a line echoed back over TLS by nc(1) (`-c`,
+# `-R` the CA, `-e` the expected name). Needs `just userland`. NOT in `smoke` until the kernel
+# has TCP (ported in parallel): today ftp stops at `socket: Protocol not supported`.
+smoke-https: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-https: no ramdisk image; run just userland first"; exit 1; }
+    @mkdir -p target/https-www && echo 'hello from emibsd-host over https' >target/https-www/hello.txt
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen {{https_check}}
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen {{https_check}}
+
+https_check := "--https-server target/https-www:8443:trusted --https-server target/https-www:8444:echo " + \
+    "--https-server target/https-www:8445:untrusted " + \
+    "--send-after login: --send 'root\\n' --send-after Password: --send 'emibsd\\n' " + \
+    "--send-after '# ' --send 'date; c=cafile=/etc/ssl/emibsd-test-ca.pem\\n' " + \
+    "--send-after '# ' --send 'h=emibsd-host; u=https://emibsd-host\\n' " + \
+    "--send-after '# ' --send 'ftp -S $c -o - $u:8443/hello.txt\\n' " + \
+    "--send-after '# ' --send 'ftp -S $c -o - $u:8445/hello.txt\\n' " + \
+    "--send-after '# ' --send 'r=\"-R /etc/ssl/emibsd-test-ca.pem\"\\n' " + \
+    "--send-after '# ' --send 'echo emibsd-$((6*7))-echo | nc -w 5 -c $r -e $h $h 8444\\n' " + \
+    "--expect 'rc: multi-user' --expect 'hello from emibsd-host over https' " + \
+    "--expect 'certificate verification failed' --expect emibsd-42-echo"
+
+# M9+, outside `smoke` and `ci` (it needs the Internet): ftp(1) fetches a small file from
+# https://www.openbsd.org, resolving the name through QEMU's DNS (10.0.2.3, `/etc/resolv.conf`)
+# and verifying the server with LibreSSL's default bundle, `/etc/ssl/cert.pem`. Needs TCP.
+smoke-internet: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-internet: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen {{internet_check}}
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen {{internet_check}}
+
+internet_check := "--send-after login: --send 'root\\n' --send-after Password: --send 'emibsd\\n' " + \
+    "--send-after '# ' --send 'ftp -o - https://www.openbsd.org/robots.txt\\n' " + \
+    "--expect 'rc: multi-user' --expect 'User-agent:'"
 
 # M9b/M9c harness: two VMs of one arch at once (`cargo xtask smoke2`), each with vio0 on QEMU's
 # user network and vio1 on a private link between the two (docs/SETUP.md, "Two VMs"). Both log

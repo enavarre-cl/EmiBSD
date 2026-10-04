@@ -109,6 +109,42 @@ so it is public. The password is hashed with OpenBSD's own `bcrypt.c` (`$2b$`, 8
 LLVM-exception, in the sparse clone since 2026-10-03) is built and linked on both archs: arm64's
 `printf` `%La` (`gdtoa/hdtoa.c`) multiplies a 128-bit `long double`, which needs `__multf3`.
 
+M9+ adds LibreSSL (`libcrypto`, `libssl`, `libtls`), `libcurses` and `libedit`, and `ftp(1)`
+and `nc(1)`. Two more of the Mac's own tools take part, nothing installed: `/usr/bin/perl`
+runs libcrypto's perlasm generators (amd64's assembly) and `objects.pl`, and `/usr/bin/awk`
+and `sort` run libcurses's table scripts. libcurses's `make_keys` and `make_hash` are built
+for the Mac with the same clang and run during the build.
+
+### The test CA
+
+The first `just userland` also makes a **test CA** with the Mac's `/usr/bin/openssl` (macOS's
+LibreSSL 3.3.6; `$EMIBSD_OPENSSL` overrides it) in `target/userland/test-ca/`, shared by both
+archs (`tools/xtask/src/userland/testca.rs`). It is a test fixture: nothing in it is secret.
+
+| File | What |
+|---|---|
+| `ca.key`, `ca.pem` | the CA, `O=EmiBSD, CN=EmiBSD test CA`, serial 1 |
+| `server.key`, `server.pem` | `CN=emibsd-host`, `subjectAltName=DNS:emibsd-host`, signed by the CA, serial 2 |
+| `untrusted.key`, `untrusted.pem` | the same names, self-signed, serial 3: a client must refuse it |
+| `openssl.cnf` | the extensions (`CA:TRUE` for the CA, `serverAuth` for the servers) |
+
+Keys are ECDSA P-256 and every certificate is valid for ten years from the day it was made.
+The CA is kept: it is made again only when one of its files is missing
+(`rm -r target/userland/test-ca` and `just userland` make a new one, with new random keys, so
+the image changes too). `ca.pem` is copied into the ramdisk as `/etc/ssl/emibsd-test-ca.pem`;
+the guest's clock must be within the validity (it comes from the RTC: the Mac's date).
+
+The test servers are the Mac's `openssl s_server`, run by `cargo xtask smoke` and `smoke2` for
+the length of the run with `--https-server DIR:PORT:MODE` (`tools/xtask/src/https.rs`): in
+`DIR` (relative to the repository), listening on `PORT`, as `trusted` (`-WWW`: `GET /f`
+answers the file `DIR/f`; `server.pem`), `untrusted` (`-WWW` with `untrusted.pem`) or `echo`
+(`server.pem`; what the client sends comes back). The guest reaches them as
+`emibsd-host:PORT`: on QEMU's user network 10.0.2.2 is the Mac, and slirp turns a connection
+to it into one to the Mac's 127.0.0.1, so no port forwarding is configured. `just smoke-https`
+uses ports 8443 (trusted), 8444 (echo) and 8445 (untrusted); they must be free.
+`cargo test -p xtask -- --ignored servers_answer` checks the three modes against
+`openssl s_client` on the Mac alone.
+
 ## Two VMs (M9b, M9c)
 
 `cargo xtask smoke2 --arch amd64|arm64 --kernel K ...` boots two VMs of one arch at once, for
