@@ -76,7 +76,7 @@
 //! `cpu_hatch`, `patinit` and the MDS/`cpu_fix_msrs` work come later.
 //!
 //! ## Deviations
-//! - `cpu_attach` reports what it cannot do yet: `identifycpu`, `cpu_fix_msrs`,
+//! - `cpu_attach` reports what it cannot do yet: `cpu_fix_msrs`,
 //!   `mem_range_attach` (`MTRR`), `cpu_init_mwait` and `cpu_init_vmm`; an
 //!   application processor (never attached without `MULTIPROCESSOR` tables) is reported
 //!   instead of getting a `km_alloc`ed `cpu_info_full`. `cpu_ca` has no `cpu_activate`
@@ -96,9 +96,12 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU32, Ordering};
+
+use libkern::StaticCell;
 
 use crate::arch::amd64::amd64::fpu::XSAVE_MASK;
+use crate::arch::amd64::amd64::identcpu::identifycpu;
 use crate::arch::amd64::amd64::intr::cpu_intr_init;
 use crate::arch::amd64::amd64::lapic::{lapic_calibrate_timer, lapic_enable};
 use crate::arch::amd64::amd64::locore::Xsyscall;
@@ -137,6 +140,22 @@ pub struct CpuSoftc {
 
 // SAFETY: `#[repr(C)]`, the device first, and a null pointer is the all-zero `sc_info`.
 unsafe impl Softc for CpuSoftc {}
+
+/// `cpuid_level`: MIN cpuid(0).eax.
+pub static CPUID_LEVEL: AtomicU32 = AtomicU32::new(0);
+/// `cpu_vendor`: CPU0's cpuid(0).e\[bdc\]x, \0. Written once by `init_x86_64` (the C's
+/// `locore0.S`) before anything reads it.
+pub static CPU_VENDOR: StaticCell<[u8; 16]> = StaticCell::new([0; 16]);
+/// `cpu_id`: cpuid(1).eax.
+pub static CPU_ID: AtomicU32 = AtomicU32::new(0);
+/// `cpu_ebxfeature`: cpuid(1).ebx.
+pub static CPU_EBXFEATURE: AtomicU32 = AtomicU32::new(0);
+/// `cpu_ecxfeature`: INTERSECTION(cpuid(1).ecx).
+pub static CPU_ECXFEATURE: AtomicU32 = AtomicU32::new(0);
+/// `cpu_feature`: cpuid(1).edx.
+pub static CPU_FEATURE: AtomicU32 = AtomicU32::new(0);
+/// `ecpu_ecxfeature`: cpuid(0x80000001).ecx.
+pub static ECPU_ECXFEATURE: AtomicU32 = AtomicU32::new(0);
 
 /// `cpu_ca`.
 pub static CPU_CA: Cfattach = Cfattach {
@@ -232,7 +251,8 @@ pub fn cpu_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
             ci.ci_flags
                 .fetch_or(CPUF_PRESENT | CPUF_SP | CPUF_PRIMARY, Ordering::Relaxed);
             cpu_intr_init(ci);
-            let _ = unported!("identifycpu, cpu_fix_msrs, mem_range_attach (identcpu.c, mtrr.c)");
+            identifycpu(ci);
+            let _ = unported!("cpu_fix_msrs, mem_range_attach (cpu.c, mtrr.c)");
             // XXX SP fpuinit(ci) is done earlier
             cpu_init(ci);
             let _ = unported!("cpu_init_mwait (mwait)");
@@ -242,7 +262,8 @@ pub fn cpu_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
             ci.ci_flags
                 .fetch_or(CPUF_PRESENT | CPUF_BSP | CPUF_PRIMARY, Ordering::Relaxed);
             cpu_intr_init(ci);
-            let _ = unported!("identifycpu, cpu_fix_msrs, mem_range_attach (identcpu.c, mtrr.c)");
+            identifycpu(ci);
+            let _ = unported!("cpu_fix_msrs, mem_range_attach (cpu.c, mtrr.c)");
             // NLAPIC > 0: enable local apic
             lapic_enable();
             lapic_calibrate_timer(ci);

@@ -43,8 +43,10 @@
 //! Status: `wip`. Milestone M4 ports `struct cpu_info` (the fields the trap and interrupt
 //! paths use), `curcpu()`, `cpu_info_primary` and the `CPUF_*` flags; M5 adds
 //! `ci_schedstate`, `ci_queue`, `MAXCPUS`, `CPU_INFO_UNIT`, `struct clockframe` (the
-//! `intrframe`) and the `CLKF_*` macros. The CPU identification fields, the sensors, the vmm
-//! fields and the `CTL_MACHDEP` names arrive with their subsystems.
+//! `intrframe`) and the `CLKF_*` macros; the TSC timecounter adds `enum cpu_vendor` and the
+//! identification fields `identifycpu` fills for it (`ci_vendor` .. `ci_model`). The other
+//! identification fields, the sensors, the vmm fields and the `CTL_MACHDEP` names arrive with
+//! their subsystems.
 //!
 //! ## Deviations
 //! - The fields kept follow the C's order; the ones left out are named in comments. Nothing
@@ -70,6 +72,21 @@ use crate::sys::clockintr::Clockqueue;
 use crate::sys::device::Device;
 use crate::sys::proc::Proc;
 use crate::sys::sched::SchedstatePercpu;
+
+/// `enum cpu_vendor`: the vendor `cpu_set_vendor` maps cpuid(0)'s string to.
+#[allow(non_camel_case_types, clippy::upper_case_acronyms)] // OpenBSD names, verbatim
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum CpuVendor {
+    /// `CPUV_UNKNOWN`.
+    CPUV_UNKNOWN,
+    /// `CPUV_AMD`.
+    CPUV_AMD,
+    /// `CPUV_INTEL`.
+    CPUV_INTEL,
+    /// `CPUV_VIA`.
+    CPUV_VIA,
+}
 
 /// `struct cpu_info`: the per-CPU state (the M4/M5 subset, see the module doc).
 #[repr(C)]
@@ -138,9 +155,31 @@ pub struct CpuInfo {
     pub ci_flags: AtomicU32,
     /// \[a\] pending IPIs.
     pub ci_ipis: AtomicU32,
-    // ci_vendor .. ci_model (CPU identification, identifycpu): M4-b.
+    /// \[I\] mapped from cpuid(0).
+    pub ci_vendor: Cell<CpuVendor>,
+    /// \[I\] cpuid(0).eax.
+    pub ci_cpuid_level: Cell<u32>,
+    /// \[I\] cpuid(1).edx.
+    pub ci_feature_flags: Cell<u32>,
+    /// \[I\] cpuid(0x80000001).edx.
+    pub ci_feature_eflags: Cell<u32>,
     /// \[I\] `CPUID(7).ebx` (for the SMAP check in the trap handler).
     pub ci_feature_sefflags_ebx: Cell<u32>,
+    // ci_feature_sefflags_ecx .. ci_feature_tpmflags: the rest of identifycpu.
+    /// \[I\] cpuid(0x80000000).eax, the highest extended function.
+    pub ci_pnfeatset: Cell<u32>,
+    /// \[I\] cpuid(0x80000001).eax.
+    pub ci_efeature_eax: Cell<u32>,
+    /// \[I\] cpuid(0x80000001).ecx.
+    pub ci_efeature_ecx: Cell<u32>,
+    /// \[I\] the brand string, cpuid(0x80000002..0x80000004).
+    pub ci_brand: Cell<[u32; 12]>,
+    /// \[I\] cpuid(1).eax.
+    pub ci_signature: Cell<u32>,
+    /// \[I\] the family, extended family included.
+    pub ci_family: Cell<u32>,
+    /// \[I\] the model, extended model included.
+    pub ci_model: Cell<u32>,
     /// \[I\] the `clflush` line size.
     pub ci_cflushsz: Cell<u32>,
     /// \[o\] inside an atomic section (copyin/copyout).
@@ -197,7 +236,18 @@ impl CpuInfo {
             ci_mutex_level: Cell::new(0),
             ci_flags: AtomicU32::new(0),
             ci_ipis: AtomicU32::new(0),
+            ci_vendor: Cell::new(CpuVendor::CPUV_UNKNOWN),
+            ci_cpuid_level: Cell::new(0),
+            ci_feature_flags: Cell::new(0),
+            ci_feature_eflags: Cell::new(0),
             ci_feature_sefflags_ebx: Cell::new(0),
+            ci_pnfeatset: Cell::new(0),
+            ci_efeature_eax: Cell::new(0),
+            ci_efeature_ecx: Cell::new(0),
+            ci_brand: Cell::new([0; 12]),
+            ci_signature: Cell::new(0),
+            ci_family: Cell::new(0),
+            ci_model: Cell::new(0),
             ci_cflushsz: Cell::new(0),
             ci_inatomic: Cell::new(0),
             ci_want_resched: Cell::new(0),

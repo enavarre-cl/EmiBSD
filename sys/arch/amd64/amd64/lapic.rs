@@ -58,8 +58,7 @@
 //!   8259 off. The AMD C1E workaround needs `ci_vendor`/`ci_family` (M4-b).
 //! - `lapic_clockintr` takes the interrupt frame by pointer (`vector.S` passes `%rsp`), not
 //!   by value as the C does.
-//! - `lapic_calibrate_timer` always calibrates against the i8254 (`delay_func` is
-//!   `i8254_delay`, `machdep.rs`); `mp_verbose` is off and the CPU is named `cpu0`.
+//! - `lapic_calibrate_timer`: `mp_verbose` is off and the CPU is named `cpu0`.
 
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
@@ -69,7 +68,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use libkern::StaticCell;
 
 use crate::arch::amd64::amd64::machdep::{
-    IDT_ALLOCMAP, idt_vec_set, set_initclock_func, set_startclock_func,
+    IDT_ALLOCMAP, delay, delay_is_i8254, idt_vec_set, set_initclock_func, set_startclock_func,
 };
 use crate::arch::amd64::amd64::vector::{Xintr_lapic_ltimer, Xintrspurious};
 use crate::arch::amd64::include::cpu::{CpuInfo, curcpu};
@@ -400,32 +399,41 @@ pub fn lapic_calibrate_timer(_ci: &CpuInfo) {
         // Configure timer to one-shot, interrupt masked, large positive number.
         lapic_timer_oneshot(LAPIC_LVTT_M, 0x8000_0000);
 
-        // delay_func == i8254_delay: always (see the module's deviations).
-        let s = intr_disable();
+        if delay_is_i8254() {
+            let s = intr_disable();
 
-        // wait for current cycle to finish
-        wait_next_cycle();
-
-        let startapic = lapic_gettick();
-
-        // wait the next hz cycles
-        let hz = HZ.load(Ordering::Relaxed);
-        for _ in 0..hz {
+            // wait for current cycle to finish
             wait_next_cycle();
+
+            let startapic = lapic_gettick();
+
+            // wait the next hz cycles
+            let hz = HZ.load(Ordering::Relaxed);
+            for _ in 0..hz {
+                wait_next_cycle();
+            }
+
+            let endapic = lapic_gettick();
+
+            // SAFETY: `s` is this CPU's saved flags.
+            unsafe { intr_restore(s) };
+
+            let dtick = u64::from(hz as u32) * RTCLOCK_TVAL.load(Ordering::Relaxed);
+            let dapic = u64::from(startapic.wrapping_sub(endapic));
+
+            // there are TIMER_FREQ ticks per second. in dtick ticks, there are dapic bus clocks.
+            let tmp = (TIMER_FREQ as u64 * dapic) / dtick;
+
+            LAPIC_PER_SECOND.store(tmp as u32, Ordering::Relaxed);
+        } else {
+            let s = intr_disable();
+            let startapic = lapic_gettick();
+            delay(1000 * 1000);
+            let endapic = lapic_gettick();
+            // SAFETY: `s` is this CPU's saved flags.
+            unsafe { intr_restore(s) };
+            LAPIC_PER_SECOND.store(startapic.wrapping_sub(endapic), Ordering::Relaxed);
         }
-
-        let endapic = lapic_gettick();
-
-        // SAFETY: `s` is this CPU's saved flags.
-        unsafe { intr_restore(s) };
-
-        let dtick = u64::from(hz as u32) * RTCLOCK_TVAL.load(Ordering::Relaxed);
-        let dapic = u64::from(startapic.wrapping_sub(endapic));
-
-        // there are TIMER_FREQ ticks per second. in dtick ticks, there are dapic bus clocks.
-        let tmp = (TIMER_FREQ as u64 * dapic) / dtick;
-
-        LAPIC_PER_SECOND.store(tmp as u32, Ordering::Relaxed);
     }
 
     let per_second = LAPIC_PER_SECOND.load(Ordering::Relaxed);

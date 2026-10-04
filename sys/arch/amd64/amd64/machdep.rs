@@ -104,8 +104,11 @@
 //! - The message buffer is a static area (`kern/subr_log.rs`, `init_static_msgbuf`) instead of
 //!   reserved physical pages, until M3.
 //! - `cninit()` is replaced by `consinit()` (`consinit.rs`): no `constab[]` yet.
-//! - `delay` is `i8254_delay` directly; `delay_func`, `delay_init` and `delay_fini` (the TSC
-//!   upgrade) arrive with M5.
+//! - `delay_func` is a `StaticCell<fn(i32)>` written by `delay_init`/`delay_fini` during
+//!   autoconfiguration; `delay` is the C's `DELAY(x)`/`delay(x)` macro over it.
+//! - `init_x86_64` does `locore0.S`'s CPUID probe (`cpuid_level`, `cpu_vendor`, `cpu_id`,
+//!   `cpu_ebxfeature`, `cpu_ecxfeature`, `cpu_feature` with `CPUID_NXE`) before
+//!   `cpu_set_vendor`: there is no `locore0.S`. The meltdown and SEV probes are not there.
 //! - `boot`: under feature `qemu`, the wait for a key after "The operating system has halted"
 //!   is the emulator exit with the failure status, which `xtask smoke` checks after a panic.
 //! - `sendsig`/`sys_sigreturn` without the FPU (`fpu.c` is not ported): `fpu_save_len` is the
@@ -126,7 +129,8 @@ use libkern::StaticCell;
 use crate::arch::amd64::amd64::autoconf::COLD;
 use crate::arch::amd64::amd64::consinit::consinit;
 use crate::arch::amd64::amd64::cpu::{
-    CPU_INFO_FULL_PRIMARY, cpu_enter_pages, cpu_info_primary_init, cpu_init_msrs,
+    CPU_EBXFEATURE, CPU_ECXFEATURE, CPU_FEATURE, CPU_ID, CPU_INFO_FULL_PRIMARY, CPU_VENDOR,
+    CPUID_LEVEL, cpu_enter_pages, cpu_info_primary_init, cpu_init_msrs,
 };
 use crate::arch::amd64::amd64::fpu::{FPU_SAVE_LEN, XSAVE_MASK, fpuinit};
 use crate::arch::amd64::amd64::intr::{intr_default_setup, splraise};
@@ -134,7 +138,7 @@ use crate::arch::amd64::amd64::locore::lgdt;
 use crate::arch::amd64::amd64::pmap::{PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap};
 use crate::arch::amd64::amd64::vector::Xexceptions;
 use crate::arch::amd64::include::cpu::{
-    CPUPF_USERSEGS, CPUPF_USERXSTATE, CpuInfo, cpu_info_primary, curcpu,
+    CPUPF_USERSEGS, CPUPF_USERXSTATE, CpuInfo, CpuVendor, cpu_info_primary, curcpu,
 };
 use crate::arch::amd64::include::cpufunc::{intr_enable, lidt, lldt, ltr, rcr3};
 use crate::arch::amd64::include::fpu::{
@@ -152,6 +156,7 @@ use crate::arch::amd64::include::segments::{
     gsyssel, usermode,
 };
 use crate::arch::amd64::include::signal::Sigcontext;
+use crate::arch::amd64::include::specialreg::{CPUID_NXE, cpuid};
 use crate::arch::amd64::include::tss::X86_64Tss;
 use crate::arch::amd64::include::vmparam::VM_MAXUSER_ADDRESS;
 use crate::arch::amd64::isa::clock::{
@@ -240,6 +245,21 @@ pub static PROC0_UAREA: Uarea = Uarea::new();
 pub fn proc0paddr() -> &'static User {
     &PROC0_UAREA.u
 }
+/// `cpu_set_vendor`: records `ci`'s cpuid level and maps the vendor string to an integer.
+pub fn cpu_set_vendor(ci: &CpuInfo, level: u32, vendor: &[u8]) {
+    ci.ci_cpuid_level.set(level);
+    CPUID_LEVEL.fetch_min(level, Ordering::Relaxed);
+
+    // map the vendor string to an integer
+    let end = vendor.iter().position(|&c| c == 0).unwrap_or(vendor.len());
+    ci.ci_vendor.set(match &vendor[..end] {
+        b"AuthenticAMD" => CpuVendor::CPUV_AMD,
+        b"GenuineIntel" => CpuVendor::CPUV_INTEL,
+        b"CentaurHauls" => CpuVendor::CPUV_VIA,
+        _ => CpuVendor::CPUV_UNKNOWN,
+    });
+}
+
 /// The direct map covers at least this much, by the boot protocol's guarantee.
 const DIRECT_MAP_MIN_SIZE: usize = 4 << 30;
 
@@ -259,6 +279,28 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
     let ci = cpu_info_primary();
     // SAFETY: the boot CPU, once, before anything reads curcpu().
     unsafe { cpu_init_msrs(ci) };
+
+    // locore0.S: cpuid(0) gives cpuid_level and the vendor string, cpuid(1) the signature
+    // and the feature words; the NX bit of cpuid(0x80000001) is or'ed into cpu_feature
+    // (pg_nx itself is the bootloader's EFER.NXE, pmap.rs).
+    let (level, vb, vc, vd) = cpuid(0);
+    CPUID_LEVEL.store(level, Ordering::Relaxed);
+    let mut vendor = [0u8; 16];
+    vendor[0..4].copy_from_slice(&vb.to_le_bytes());
+    vendor[4..8].copy_from_slice(&vd.to_le_bytes());
+    vendor[8..12].copy_from_slice(&vc.to_le_bytes());
+    // SAFETY: the boot CPU, once, before anything reads cpu_vendor.
+    unsafe { CPU_VENDOR.write(vendor) };
+    let (id, ebx, ecx, edx) = cpuid(1);
+    CPU_ID.store(id, Ordering::Relaxed);
+    CPU_EBXFEATURE.store(ebx, Ordering::Relaxed);
+    CPU_ECXFEATURE.store(ecx, Ordering::Relaxed);
+    CPU_FEATURE.store(edx, Ordering::Relaxed);
+    let (_, _, _, eedx) = cpuid(0x8000_0001);
+    CPU_FEATURE.fetch_or(eedx & CPUID_NXE, Ordering::Relaxed);
+
+    // SAFETY: written just above, read on the same CPU.
+    cpu_set_vendor(ci, level, unsafe { CPU_VENDOR.get() });
 
     // The direct map is the bootloader's (see the module's deviations); the C derives
     // pmap_direct_base from L4_SLOT_DIRECT here.
@@ -936,9 +978,21 @@ pub fn cpu_reset() -> ! {
     Machine::halt()
 }
 
-/// `delay(9)`: busy-waits `usec` microseconds (`delay_func`, see the module's deviations).
+/// `delay(9)`, the C's `DELAY(x)` macro: busy-waits `usec` microseconds through
+/// `delay_func`.
 pub fn delay(usec: u32) {
-    i8254_delay(usec.min(i32::MAX as u32) as i32);
+    // SAFETY: as for `delay_is_i8254`.
+    (unsafe { DELAY_FUNC.read() })(usec.min(i32::MAX as u32) as i32);
+}
+
+/// `delay_func`: `i8254_delay` until a better delay source (`tsc_delay`) calls `delay_init`.
+static DELAY_FUNC: StaticCell<fn(i32)> = StaticCell::new(i8254_delay);
+
+/// `delay_func == i8254_delay` (`lapic_calibrate_timer`).
+pub fn delay_is_i8254() -> bool {
+    // SAFETY: `delay_init`/`delay_fini` write it on the boot CPU during autoconfiguration;
+    // readers see the static default or the value written there.
+    core::ptr::fn_addr_eq(unsafe { DELAY_FUNC.read() }, i8254_delay as fn(i32))
 }
 
 /// `initclock_func`: the i8254 until `lapic_calibrate_timer` installs the LAPIC timer.
@@ -1135,4 +1189,27 @@ pub fn idt_vec_free(vec: i32) {
     let idt = unsafe { IDT.get_mut() };
     unsetgate(&mut idt.0[vec as usize]);
     IDT_ALLOCMAP[vec as usize].store(false, Ordering::Relaxed);
+}
+
+/// `amd64_delay_quality`: the quality of the current `delay_func`.
+static AMD64_DELAY_QUALITY: AtomicI32 = AtomicI32::new(0);
+
+/// `delay_init`: makes `f` the `delay(9)` implementation if its quality beats the current one.
+pub fn delay_init(f: fn(i32), fn_quality: i32) {
+    if fn_quality > AMD64_DELAY_QUALITY.load(Ordering::Relaxed) {
+        // SAFETY: called on the boot CPU during autoconfiguration (tsc_identify, the timer
+        // drivers' attach), when nothing runs concurrently with the write.
+        unsafe { DELAY_FUNC.write(f) };
+        AMD64_DELAY_QUALITY.store(fn_quality, Ordering::Relaxed);
+    }
+}
+
+/// `delay_fini`: goes back to `i8254_delay` if `f` is the current `delay_func`.
+pub fn delay_fini(f: fn(i32)) {
+    // SAFETY: as for `delay_init`.
+    if core::ptr::fn_addr_eq(unsafe { DELAY_FUNC.read() }, f) {
+        // SAFETY: as for `delay_init`.
+        unsafe { DELAY_FUNC.write(i8254_delay) };
+        AMD64_DELAY_QUALITY.store(0, Ordering::Relaxed);
+    }
 }

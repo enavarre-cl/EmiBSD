@@ -37,7 +37,8 @@
 //!
 //! Status: `wip`. Milestone M0 ports the interrupt-flag helpers only (`read_rflags`,
 //! `write_rflags`, `intr_enable`, `intr_disable`, `intr_restore`). Descriptor tables, control
-//! registers, MSRs, TLB and cache helpers arrive with milestones M3 and M4.
+//! registers, MSRs, TLB and cache helpers arrive with milestones M3 and M4; the TSC
+//! timecounter adds `rdtsc`, `rdtscp` and `rdtsc_lfence`.
 
 use core::arch::asm;
 
@@ -186,6 +187,41 @@ pub unsafe fn wrmsr(msr: u32, newval: u64) {
 pub fn wbinvd() {
     // SAFETY: flushing the caches loses no data (write-back first); memory is a clobber.
     unsafe { asm!("wbinvd", options(nostack, preserves_flags)) };
+}
+
+/// `rdtsc`: reads the time stamp counter.
+#[inline]
+pub fn rdtsc() -> u64 {
+    let (hi, lo): (u32, u32);
+    // SAFETY: `rdtsc` reads the counter into edx:eax; the kernel runs at CPL 0, where it is
+    // always allowed. Like the C's `asm volatile` without a memory clobber, it orders nothing.
+    unsafe {
+        asm!("rdtsc", out("edx") hi, out("eax") lo, options(nomem, nostack, preserves_flags))
+    };
+    (u64::from(hi) << 32) | u64::from(lo)
+}
+
+/// `rdtscp`: reads the time stamp counter once all earlier instructions have executed.
+#[inline]
+pub fn rdtscp() -> u64 {
+    let (hi, lo): (u32, u32);
+    // SAFETY: as for `rdtsc`; `rdtscp` also loads `IA32_TSC_AUX` into ecx, declared clobbered.
+    unsafe {
+        asm!("rdtscp", out("edx") hi, out("eax") lo, out("ecx") _, options(nomem, nostack, preserves_flags))
+    };
+    (u64::from(hi) << 32) | u64::from(lo)
+}
+
+/// `rdtsc_lfence`: reads the time stamp counter after an `lfence`, so earlier loads have
+/// completed.
+#[inline]
+pub fn rdtsc_lfence() -> u64 {
+    let (hi, lo): (u32, u32);
+    // SAFETY: as for `rdtsc`; `lfence` only orders instructions and changes no state.
+    unsafe {
+        asm!("lfence", "rdtsc", out("edx") hi, out("eax") lo, options(nomem, nostack, preserves_flags))
+    };
+    (u64::from(hi) << 32) | u64::from(lo)
 }
 
 /// `wbinvd_on_all_cpus`: there is one CPU (no `MULTIPROCESSOR`).

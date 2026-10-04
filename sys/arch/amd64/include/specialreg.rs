@@ -39,8 +39,16 @@
 //! Upstream: sys/arch/amd64/include/specialreg.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestones M3 and M4 port the `CR0`/`CR3` bits, `MSR_EFER` and the
-//! `syscall`/segment-base MSRs; the CPUID feature words, the remaining MSRs and the MTRR/PAT
-//! definitions arrive with CPU identification.
+//! `syscall`/segment-base MSRs; the TSC timecounter (`tsc.c`, `identcpu.c`'s TSC part) adds the
+//! CPUID bits and MSRs it reads and the `CPUID`/`CPUID_LEAF` macros. The other CPUID feature
+//! words, MSRs and the MTRR/PAT definitions arrive with the rest of CPU identification.
+//!
+//! ## Deviations
+//! - `CPUID(code, eax, ebx, ecx, edx)` and `CPUID_LEAF(code, leaf, ...)` are the functions
+//!   [`cpuid`] and [`cpuid_leaf`] returning `(eax, ebx, ecx, edx)`: Rust has no output macro
+//!   arguments, and LLVM reserves `rbx`, which `core::arch::x86_64::__cpuid_count` handles.
+
+use core::arch::x86_64::{__cpuid_count, CpuidResult};
 
 // Bits in 386 special registers:
 
@@ -85,6 +93,80 @@ pub const CR3_REUSE_PCID: u64 = 1 << 63;
 /// `CR3_PADDR`: the page-table address bits of `CR3`.
 pub const CR3_PADDR: u64 = 0x7fff_ffff_ffff_f000;
 
+// CPUID "features" bits (CPUID function 0x1):
+
+/// `CPUID_TSC`: has time stamp counter.
+pub const CPUID_TSC: u32 = 0x0000_0010;
+
+/// `CPUIDECX_HV`: running on hypervisor.
+pub const CPUIDECX_HV: u32 = 0x8000_0000;
+
+// "Structured Extended Feature Flags Parameters" (CPUID function 0x7, leaf 0)
+
+/// `SEFF0EBX_TSC_ADJUST`: has IA32_TSC_ADJUST MSR.
+pub const SEFF0EBX_TSC_ADJUST: u32 = 0x0000_0002;
+
+// "Architectural Performance Monitoring" bits (CPUID function 0x0a):
+
+/// `CPUIDEAX_VERID`: version ID.
+pub const CPUIDEAX_VERID: u32 = 0x0000_00ff;
+/// `CPUIDEDX_NUM_FC(cpuid)`: the number of fixed-function counters.
+pub const fn cpuidedx_num_fc(cpuid: u32) -> u32 {
+    cpuid & 0x0000_001f
+}
+
+// CPUID "extended features" bits (CPUID function 0x80000001):
+
+/// `CPUID_NXE`: No-Execute Extension.
+pub const CPUID_NXE: u32 = 0x0010_0000;
+/// `CPUID_RDTSCP`: RDTSCP / IA32_TSC_AUX available.
+pub const CPUID_RDTSCP: u32 = 0x0800_0000;
+
+// "Advanced Power Management Information" bits (CPUID function 0x80000007):
+
+/// `CPUIDEDX_ITSC`: Invariant TSC.
+pub const CPUIDEDX_ITSC: u32 = 1 << 8;
+
+/// `CPUID(code, eax, ebx, ecx, edx)`: executes `cpuid` for function `code`.
+#[inline]
+pub fn cpuid(code: u32) -> (u32, u32, u32, u32) {
+    cpuid_leaf(code, 0)
+}
+
+/// `CPUID_LEAF(code, leaf, eax, ebx, ecx, edx)`: executes `cpuid` for function `code`, sub-leaf
+/// `leaf`.
+#[inline]
+pub fn cpuid_leaf(code: u32, leaf: u32) -> (u32, u32, u32, u32) {
+    // `__cpuid_count` is safe to call on every x86-64 CPU (the instruction always exists in
+    // long mode); it saves and restores `rbx` around `cpuid` for LLVM.
+    #[allow(unused_unsafe)]
+    // SAFETY: `cpuid` only reads identification registers; it has no side effects.
+    let CpuidResult { eax, ebx, ecx, edx } = unsafe { __cpuid_count(code, leaf) };
+    (eax, ebx, ecx, edx)
+}
+
+/// `MSR_TSC_ADJUST`.
+pub const MSR_TSC_ADJUST: u32 = 0x03b;
+/// `MSR_BIOS_SIGN`.
+pub const MSR_BIOS_SIGN: u32 = 0x08b;
+/// `MSR_PERF_FIXED_CTR1`: CPU_CLK_Unhalted.Core.
+pub const MSR_PERF_FIXED_CTR1: u32 = 0x30a;
+/// `MSR_PERF_FIXED_CTR_CTRL`.
+pub const MSR_PERF_FIXED_CTR_CTRL: u32 = 0x38d;
+/// `MSR_PERF_FIXED_CTR_FC_1`: count ring 1.
+pub const MSR_PERF_FIXED_CTR_FC_1: u64 = 0x1;
+/// `MSR_PERF_FIXED_CTR_FC_MASK`.
+pub const MSR_PERF_FIXED_CTR_FC_MASK: u64 = 0x3;
+/// `MSR_PERF_FIXED_CTR_FC(_i, _v)`.
+pub const fn msr_perf_fixed_ctr_fc(i: u64, v: u64) -> u64 {
+    v << (4 * i)
+}
+/// `MSR_PERF_GLOBAL_CTRL`.
+pub const MSR_PERF_GLOBAL_CTRL: u32 = 0x38f;
+/// `MSR_PERF_GLOBAL_CTR1_EN`.
+pub const MSR_PERF_GLOBAL_CTR1_EN: u64 = 1 << 33;
+/// `MSR_PATCH_LEVEL`.
+pub const MSR_PATCH_LEVEL: u32 = 0x0000_008b;
 /// `MSR_APICBASE`: the local APIC's base address and mode.
 pub const MSR_APICBASE: u32 = 0x01b;
 /// `APICBASE_BSP`.
@@ -111,6 +193,16 @@ pub const MSR_FSBASE: u32 = 0xc000_0100;
 pub const MSR_GSBASE: u32 = 0xc000_0101;
 /// `MSR_KERNELGSBASE`: the `GS` base `swapgs` swaps in.
 pub const MSR_KERNELGSBASE: u32 = 0xc000_0102;
+/// `MSR_HWCR`.
+pub const MSR_HWCR: u32 = 0xc001_0015;
+/// `HWCR_TSCFREQSEL`.
+pub const HWCR_TSCFREQSEL: u64 = 0x0100_0000;
+/// `MSR_PSTATEDEF(_n)`.
+pub const fn msr_pstatedef(n: u32) -> u32 {
+    0xc001_0064 + n
+}
+/// `PSTATEDEF_EN`.
+pub const PSTATEDEF_EN: u64 = 0x8000_0000_0000_0000;
 /// `EFER_SCE`: SYSCALL extension.
 pub const EFER_SCE: u64 = 0x0000_0001;
 /// `EFER_LME`: Long Mode Enabled.
@@ -158,6 +250,23 @@ mod tests {
             ("MSR_FSBASE", i64::from(MSR_FSBASE)),
             ("MSR_GSBASE", i64::from(MSR_GSBASE)),
             ("MSR_KERNELGSBASE", i64::from(MSR_KERNELGSBASE)),
+            ("CPUID_TSC", i64::from(CPUID_TSC)),
+            ("CPUIDECX_HV", i64::from(CPUIDECX_HV)),
+            ("SEFF0EBX_TSC_ADJUST", i64::from(SEFF0EBX_TSC_ADJUST)),
+            ("CPUID_NXE", i64::from(CPUID_NXE)),
+            ("CPUID_RDTSCP", i64::from(CPUID_RDTSCP)),
+            ("MSR_TSC_ADJUST", i64::from(MSR_TSC_ADJUST)),
+            ("MSR_HWCR", i64::from(MSR_HWCR)),
+            ("CPUIDEAX_VERID", i64::from(CPUIDEAX_VERID)),
+            ("MSR_BIOS_SIGN", i64::from(MSR_BIOS_SIGN)),
+            ("MSR_PERF_FIXED_CTR1", i64::from(MSR_PERF_FIXED_CTR1)),
+            (
+                "MSR_PERF_FIXED_CTR_CTRL",
+                i64::from(MSR_PERF_FIXED_CTR_CTRL),
+            ),
+            ("MSR_PERF_GLOBAL_CTRL", i64::from(MSR_PERF_GLOBAL_CTRL)),
+            ("MSR_PATCH_LEVEL", i64::from(MSR_PATCH_LEVEL)),
+            ("HWCR_TSCFREQSEL", HWCR_TSCFREQSEL as i64),
         ];
         for (name, value) in ours {
             assert_eq!(crate::reftest::int(&defs, name), Some(*value), "{name}");
