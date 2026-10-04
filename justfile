@@ -74,7 +74,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -591,6 +591,50 @@ esp_b := "--b-send-after '# ' --b-send 'echo flow esp from 10.77.2.0/24 to 10.77
 # arm64's pluart drops input past its buffer (`pluart0: ... ibuf overflow`).
 esp_keys := "--send-after '# ' --send 'k=0123456789abcdef; echo $k$k$k$k >ak; e=fedcba9876543210; echo $e$e >ek\\n'"
 esp_sa := "--send-after '# ' --send 'a=\"esp tunnel from 192.168.77.1 to 192.168.77.2\"\\n' --send-after '# ' --send 'b=\"spi 0x1001:0x1002 auth hmac-sha2-256 enc aes\"\\n' --send-after '# ' --send 'echo $a $b authkey file ak:ak enckey file ek:ek >>ipsec.conf\\n'"
+
+# M9+: `smoke-esp` with IPComp. Each VM enables net.inet.ipcomp.enable and loads an `ipcomp`
+# flow between the inner networks with a bundle (ipsec.conf(5), `bundle`) of an IPComp SA in
+# tunnel mode (CPI 0x2001 from 192.168.77.1 to .2, 0x2002 back, `comp deflate`) and an ESP SA
+# in transport mode (smoke-esp's SPIs and keys): a packet is tunnelled (ipip_output),
+# compressed (ipcomp_output through cryptosoft's deflate) and then encrypted (esp_output);
+# the other VM decrypts, decompresses and decapsulates it. The pings to the inner addresses
+# carry 1000 bytes, above comp_algo_deflate's 90-byte minimum and compressible (ping(8)
+# fills them with a byte ramp). Each VM ends with `ipsecctl -sa`, which lists the IPComp SAs.
+# Part of `smoke`.
+smoke-ipcomp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-ipcomp: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke2 --arch amd64 --kernel target/{{amd64}}/debug/bsd \
+        {{esp_both}} {{ipcomp_both}} {{ipcomp_a}} {{ipcomp_b}} \
+        --a-expect "bytes from 192.168.77.2" --a-expect "1008 bytes from 10.77.2.1" \
+        --a-expect "ipcomp tunnel from 192.168.77.2 to 192.168.77.1 spi 0x00002002 comp deflate" \
+        --b-expect "bytes from 192.168.77.1" --b-expect "1008 bytes from 10.77.1.1" \
+        --b-expect "ipcomp tunnel from 192.168.77.1 to 192.168.77.2 spi 0x00002001 comp deflate"
+    cargo xtask smoke2 --arch arm64 --kernel target/{{arm64}}/debug/bsd \
+        {{esp_both}} {{ipcomp_both}} {{ipcomp_a}} {{ipcomp_b}} \
+        --a-expect "bytes from 192.168.77.2" --a-expect "1008 bytes from 10.77.2.1" \
+        --a-expect "ipcomp tunnel from 192.168.77.2 to 192.168.77.1 spi 0x00002002 comp deflate" \
+        --b-expect "bytes from 192.168.77.1" --b-expect "1008 bytes from 10.77.1.1" \
+        --b-expect "ipcomp tunnel from 192.168.77.1 to 192.168.77.2 spi 0x00002001 comp deflate"
+
+# `smoke-ipcomp`'s sends: IPComp on, then each VM's addresses, its ipcomp flow, the SA
+# bundle (ipcomp_sa), ipsecctl -f, the pings and the SAs. Short lines, as for esp_sa.
+ipcomp_both := "--both-send-after '# ' --both-send 'sysctl net.inet.ipcomp.enable=1\\n'"
+ipcomp_a := "--a-send-after '# ' --a-send 'ifconfig vio1 inet 192.168.77.1/24\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig lo1 create; ifconfig lo1 inet 10.77.1.1/32\\n' " + \
+    "--a-send-after '# ' --a-send 'echo flow ipcomp from 10.77.1.0/24 to 10.77.2.0/24 peer 192.168.77.2 >ipsec.conf\\n' " + \
+    replace(replace(ipcomp_sa, "--send-after", "--a-send-after"), "--send ", "--a-send ") + \
+    " --a-send-after '# ' --a-send 'ipsecctl -f ipsec.conf\\n' --a-send-after '# ' --a-send 'ping -c 2 192.168.77.2\\n' " + \
+    "--a-send-after '# ' --a-send 'ping -c 3 -s 1000 -I 10.77.1.1 10.77.2.1\\n' --a-send-after '# ' --a-send 'ipsecctl -sa\\n'"
+ipcomp_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24\\n' " + \
+    "--b-send-after '# ' --b-send 'ifconfig lo1 create; ifconfig lo1 inet 10.77.2.1/32\\n' " + \
+    "--b-send-after '# ' --b-send 'echo flow ipcomp from 10.77.2.0/24 to 10.77.1.0/24 peer 192.168.77.1 >ipsec.conf\\n' " + \
+    replace(replace(ipcomp_sa, "--send-after", "--b-send-after"), "--send ", "--b-send ") + \
+    " --b-send-after '# ' --b-send 'ipsecctl -f ipsec.conf\\n' --b-send-after '# ' --b-send 'ping -c 2 192.168.77.1\\n' " + \
+    "--b-send-after '# ' --b-send 'ping -c 3 -s 1000 -I 10.77.2.1 10.77.1.1\\n' --b-send-after '# ' --b-send 'ipsecctl -sa\\n'"
+ipcomp_sa := "--send-after '# ' --send 'c=\"ipcomp tunnel from 192.168.77.1 to 192.168.77.2\"\\n' --send-after '# ' --send 'echo $c spi 0x2001:0x2002 comp deflate bundle x >>ipsec.conf\\n' " + \
+    "--send-after '# ' --send 'a=\"esp transport from 192.168.77.1 to 192.168.77.2\"\\n' --send-after '# ' --send 'b=\"spi 0x1001:0x1002 auth hmac-sha2-256 enc aes\"\\n' " + \
+    "--send-after '# ' --send 'echo $a $b authkey file ak:ak enckey file ek:ek bundle x >>ipsec.conf\\n'"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
