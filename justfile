@@ -72,7 +72,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-link smoke-wg
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-link smoke-wg smoke-pf
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -253,7 +253,8 @@ smoke-link: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 # M9b: a wg(4) tunnel between the two VMs of `smoke-link`, configured with OpenBSD's
 # ifconfig(8): wg0 is 10.77.0.1 on A and 10.77.0.2 on B, the outer endpoints are vio1's
 # addresses, the keys are RFC 7748's test vectors (A = Alice, B = Bob). Each side pings the
-# other through the tunnel, then `ifconfig wg0` shows the peer's handshake.
+# other through the tunnel, then `ifconfig wg0` shows the peer's handshake. Then A loads a pf
+# rule on wg0 (M9d): the tunnel's ping is blocked, and passes again after `pfctl -d`.
 smoke-wg: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-wg: no ramdisk image; run just userland first"; exit 1; }
@@ -265,6 +266,11 @@ smoke-wg: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --a-send-after "# " --a-send 'ifconfig wg0 inet 10.77.0.1/24 up\n' \
         --a-send-after "# " --a-send 'ping -c 15 10.77.0.2\n' \
         --a-send-after "packet loss" --a-send 'ifconfig wg0\n' \
+        --a-send-after "last handshake: " --a-send "echo 'block drop quick on wg0 inet proto icmp' | pfctl -e -f -\n" \
+        --a-send-after "# " --a-send 'pfctl -sr\n' \
+        --a-send-after "# " --a-send 'ping -c 2 -w 2 10.77.0.2 || echo wg-blocked-$((4+4))\n' \
+        --a-send-after "# " --a-send 'pfctl -d\n' \
+        --a-send-after "# " --a-send 'ping -c 1 10.77.0.2 && echo wg-passes-$((5+5))\n' \
         --b-send-after "# " --b-send 'ifconfig vio1 inet 192.168.77.2/24 up\n' \
         --b-send-after "# " --b-send 'ifconfig wg0 create wgport 51820 wgkey XasIfmJKikt54X+Lg4AO5m87sSkmGLb9HC+LJ/+I4Os=\n' \
         --b-send-after "# " --b-send 'ifconfig wg0 wgpeer hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo= wgendpoint 192.168.77.1 51820 wgaip 10.77.0.1/32\n' \
@@ -273,7 +279,9 @@ smoke-wg: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --b-send-after "packet loss" --b-send 'ifconfig wg0\n' \
         --a-expect "bytes from 10.77.0.2: icmp_seq=" --b-expect "bytes from 10.77.0.1: icmp_seq=" \
         --a-expect "wgpubkey hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=" --b-expect "wgpubkey 3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=" \
-        --both-expect "last handshake: "
+        --both-expect "last handshake: " \
+        --a-expect "block drop quick on wg0 inet proto icmp all" --a-expect "wg-blocked-8" \
+        --a-expect "pf disabled" --a-expect "wg-passes-10"
     cargo xtask smoke2 --arch arm64 --kernel target/{{arm64}}/debug/bsd \
         --both-send-after "login:" --both-send 'root\n' --both-send-after "Password:" --both-send 'emibsd\n' \
         --a-send-after "# " --a-send 'ifconfig vio1 inet 192.168.77.1/24 up\n' \
@@ -282,6 +290,11 @@ smoke-wg: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --a-send-after "# " --a-send 'ifconfig wg0 inet 10.77.0.1/24 up\n' \
         --a-send-after "# " --a-send 'ping -c 15 10.77.0.2\n' \
         --a-send-after "packet loss" --a-send 'ifconfig wg0\n' \
+        --a-send-after "last handshake: " --a-send "echo 'block drop quick on wg0 inet proto icmp' | pfctl -e -f -\n" \
+        --a-send-after "# " --a-send 'pfctl -sr\n' \
+        --a-send-after "# " --a-send 'ping -c 2 -w 2 10.77.0.2 || echo wg-blocked-$((4+4))\n' \
+        --a-send-after "# " --a-send 'pfctl -d\n' \
+        --a-send-after "# " --a-send 'ping -c 1 10.77.0.2 && echo wg-passes-$((5+5))\n' \
         --b-send-after "# " --b-send 'ifconfig vio1 inet 192.168.77.2/24 up\n' \
         --b-send-after "# " --b-send 'ifconfig wg0 create wgport 51820 wgkey XasIfmJKikt54X+Lg4AO5m87sSkmGLb9HC+LJ/+I4Os=\n' \
         --b-send-after "# " --b-send 'ifconfig wg0 wgpeer hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo= wgendpoint 192.168.77.1 51820 wgaip 10.77.0.1/32\n' \
@@ -290,7 +303,9 @@ smoke-wg: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --b-send-after "packet loss" --b-send 'ifconfig wg0\n' \
         --a-expect "bytes from 10.77.0.2: icmp_seq=" --b-expect "bytes from 10.77.0.1: icmp_seq=" \
         --a-expect "wgpubkey hSDwCYkwp1R0i33ctD73Wg2/Og0mOBr066SpjqqbTmo=" --b-expect "wgpubkey 3p7bfXt9wbTTW2HC7OQ1Nz+DQ8hbeGdNrfx+FG+IK08=" \
-        --both-expect "last handshake: "
+        --both-expect "last handshake: " \
+        --a-expect "block drop quick on wg0 inet proto icmp all" --a-expect "wg-blocked-8" \
+        --a-expect "pf disabled" --a-expect "wg-passes-10"
 
 # M9a: OpenBSD's ifconfig(8) and ping(8) from the ramdisk, multi-user, logged in as root
 # (`smoke-login`'s sends). vio0's address (10.0.2.15/24) and the default route through QEMU's
