@@ -62,6 +62,24 @@
 //! - `IS_EXT2_VNODE(vp)` is [`is_ext2_vnode`].
 
 use crate::sys::vnode::{VT_EXT2FS, Vnode};
+pub use crate::ufs::ext2fs::ext2fs_alloc::{
+    ext2fs_alloc, ext2fs_blkfree, ext2fs_blkpref, ext2fs_inode_alloc, ext2fs_inode_free,
+};
+pub use crate::ufs::ext2fs::ext2fs_balloc::ext2fs_buf_alloc;
+pub use crate::ufs::ext2fs::ext2fs_bmap::ext2fs_bmap;
+pub use crate::ufs::ext2fs::ext2fs_inode::{
+    ext2fs_inactive, ext2fs_setsize, ext2fs_size, ext2fs_truncate, ext2fs_update,
+};
+pub use crate::ufs::ext2fs::ext2fs_readwrite::{ext2fs_read, ext2fs_write};
+pub use crate::ufs::ext2fs::ext2fs_subr::{ext2fs_bufatoff, ext2fs_vinit};
+pub use crate::ufs::ext2fs::ext2fs_vfsops::{
+    EXT2FS_DINODE_POOL, EXT2FS_INODE_POOL, ext2fs_cgupdate, ext2fs_fhtovp, ext2fs_flushfiles,
+    ext2fs_init, ext2fs_mount, ext2fs_mountfs, ext2fs_mountroot, ext2fs_reload, ext2fs_sbupdate,
+    ext2fs_statfs, ext2fs_sync, ext2fs_unmount, ext2fs_vget, ext2fs_vptofh,
+};
+pub use crate::ufs::ext2fs::ext2fs_vnops::{
+    EXT2FS_SPECVOPS, EXT2FS_VOPS, ext2fs_fsync, ext2fs_reclaim,
+};
 
 /// `IS_EXT2_VNODE(vp)`: whether the vnode belongs to ext2fs.
 pub fn is_ext2_vnode(vp: &Vnode) -> bool {

@@ -46,13 +46,13 @@
 //!
 //! ## Deviations
 //! - `vfsconflist[]` holds the ported file systems in `vfs_init.c`'s order: `ffs` (feature `ffs`,
-//!   `option FFS`), `mfs` (feature `mfs`, `option MFS`), `cd9660` (feature `cd9660`, `option
-//!   CD9660`), `msdos` (feature `msdosfs`, `option MSDOSFS`), `nfs` (feature `nfsclient`, `option
-//!   NFSCLIENT`), `ntfs` (feature `ntfs`, `option NTFS`, in amd64's GENERIC only: cfg
-//!   `option_ntfs`, `sys/build.rs`), `udf` (feature `udf`, `option UDF`), `fuse` (feature `fuse`,
-//!   `option FUSE`), `tmpfs` (feature `tmpfs`, `option TMPFS`, commented out in GENERIC). Each
-//!   other GENERIC entry (`EXT2FS`) joins as a `Vfsconf::new(...)` line when its file system does,
-//!   behind a cargo feature named after the `option(4)`.
+//!   `option FFS`), `mfs` (feature `mfs`, `option MFS`), `ext2fs` (feature `ext2fs`, `option
+//!   EXT2FS`), `cd9660` (feature `cd9660`, `option CD9660`), `msdos` (feature `msdosfs`, `option
+//!   MSDOSFS`), `nfs` (feature `nfsclient`, `option NFSCLIENT`), `ntfs` (feature `ntfs`, `option
+//!   NTFS`, in amd64's GENERIC only: cfg `option_ntfs`, `sys/build.rs`), `udf` (feature `udf`,
+//!   `option UDF`), `fuse` (feature `fuse`, `option FUSE`), `tmpfs` (feature `tmpfs`, `option
+//!   TMPFS`, commented out in GENERIC). A new entry joins as a `Vfsconf::new(...)` line behind a
+//!   cargo feature named after the `option(4)`.
 //! - `rootvnode` is an `AtomicPtr` behind [`rootvnode`]/[`set_rootvnode`]; `maxvfsconf` is an
 //!   `AtomicI32`.
 //! - `vfs_byname` takes the name as bytes (`&[u8]`, NUL or slice end terminated).
@@ -93,6 +93,14 @@ static VFSCONFLIST: [Vfsconf; NVFSCONF] = [
         3,
         crate::sys::mount::MNT_LOCAL,
         crate::sys::mount::MfsArgs::SIZE,
+    ),
+    #[cfg(feature = "ext2fs")]
+    Vfsconf::new(
+        &crate::ufs::ext2fs::ext2fs_vfsops::EXT2FS_VFSOPS,
+        crate::sys::mount::MOUNT_EXT2FS,
+        17,
+        crate::sys::mount::MNT_LOCAL | crate::sys::mount::MNT_SWAPPABLE,
+        crate::sys::mount::UfsArgs::SIZE,
     ),
     #[cfg(feature = "cd9660")]
     Vfsconf::new(
@@ -155,6 +163,7 @@ static VFSCONFLIST: [Vfsconf; NVFSCONF] = [
 /// The number of entries of `vfsconflist[]`: one per configured file system.
 const NVFSCONF: usize = cfg!(feature = "ffs") as usize
     + cfg!(feature = "mfs") as usize
+    + cfg!(feature = "ext2fs") as usize
     + cfg!(feature = "cd9660") as usize
     + cfg!(feature = "msdosfs") as usize
     + cfg!(feature = "nfsclient") as usize

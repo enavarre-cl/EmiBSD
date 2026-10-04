@@ -742,6 +742,15 @@ impl MExt2fs {
         self.e2fs_fsmnt.get()
     }
 
+    /// `fs->e2fs_fsmnt` as a C string (up to its NUL), for messages.
+    pub fn fsmnt_str(&self) -> crate::kern::subr_prf::Str<'_> {
+        let name = self.e2fs_fsmnt.as_ptr();
+        // SAFETY: a `Cell<[u8; N]>` has the array's layout; the borrow lasts as long as the
+        // caller's `&self`, during which nothing writes the name (the kernel runs one CPU,
+        // and printing a message does not mount).
+        crate::kern::subr_prf::Str(unsafe { &*name })
+    }
+
     /// `&fs->e2fs_gd[i]`, copied; panics beyond `e2fs_ncg` descriptors.
     pub fn gd(&self, i: usize) -> Ext2Gd {
         // SAFETY: `gd_ptr` is in bounds of the `malloc`ed descriptors (`e2fs_ncg` of them).

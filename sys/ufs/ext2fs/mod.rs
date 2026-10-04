@@ -7,11 +7,25 @@
 //! `ext2fs_extern` (the shared declarations) and `ext2fs_bswap` (the byte swappers, used on
 //! big-endian machines). The in-core super block of a mount is a [`ext2fs::MExt2fs`], reached
 //! from an inode as `Inode::e2fs()` and from the mount as `Ufsmount::e2fs()`.
+//!
+//! The file system itself: `ext2fs_vfsops` (mounting, `vget`, `statfs`, `sync`),
+//! `ext2fs_alloc` and `ext2fs_balloc` (blocks and inodes), `ext2fs_bmap` (logical to disk
+//! blocks, by block pointers or extents), `ext2fs_inode` (size, update, truncate, inactive),
+//! `ext2fs_readwrite` (`read`/`write`), `ext2fs_subr` (`bufatoff`, `vinit`) and
+//! `ext2fs_vnops` (the operation tables; its port is under way).
 
 #[allow(clippy::module_inception)] // OpenBSD's sys/ufs/ext2fs/ext2fs.h
 pub mod ext2fs;
+pub mod ext2fs_alloc;
+pub mod ext2fs_balloc;
+pub mod ext2fs_bmap;
 pub mod ext2fs_bswap;
 pub mod ext2fs_dinode;
 pub mod ext2fs_dir;
 pub mod ext2fs_extents;
 pub mod ext2fs_extern;
+pub mod ext2fs_inode;
+pub mod ext2fs_readwrite;
+pub mod ext2fs_subr;
+pub mod ext2fs_vfsops;
+pub mod ext2fs_vnops;

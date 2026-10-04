@@ -4662,7 +4662,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8d31047ac94f65c25fff1431e92936deca4f2437"
 deps = ["sys/sys/mount.h", "sys/sys/vnode.h", "sys/kern/subr_pool.c"]
-notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries; M10c: cd9660 (feature cd9660, typenum 14, MNT_LOCAL, sizeof(struct iso_args)), msdos (feature msdosfs, typenum 4, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct msdosfs_args)), udf (feature udf, typenum 13, MNT_LOCAL, sizeof(struct udf_args)) and tmpfs (feature tmpfs, option TMPFS commented out in GENERIC; typenum 19, MNT_LOCAL, sizeof(struct tmpfs_args)) join vfsconflist[] after mfs, in vfs_init.c's order; M10e: nfs joins vfsconflist[] after msdos, in vfs_init.c order (feature nfsclient, typenum 2, MNT_SWAPPABLE, sizeof(struct nfs_args)); NVFSCONF counts it M10d: fuse (typenum 18, flags 0, FusefsArgs::SIZE) under feature fuse. M10d: ntfs (typenum 6, MNT_LOCAL, NtfsArgs::SIZE) under cfg option_ntfs: amd64 only, as only amd64 GENERIC has option NTFS."
+notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries; M10c: cd9660 (feature cd9660, typenum 14, MNT_LOCAL, sizeof(struct iso_args)), msdos (feature msdosfs, typenum 4, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct msdosfs_args)), udf (feature udf, typenum 13, MNT_LOCAL, sizeof(struct udf_args)) and tmpfs (feature tmpfs, option TMPFS commented out in GENERIC; typenum 19, MNT_LOCAL, sizeof(struct tmpfs_args)) join vfsconflist[] after mfs, in vfs_init.c's order; M10e: nfs joins vfsconflist[] after msdos, in vfs_init.c order (feature nfsclient, typenum 2, MNT_SWAPPABLE, sizeof(struct nfs_args)); NVFSCONF counts it M10d: fuse (typenum 18, flags 0, FusefsArgs::SIZE) under feature fuse. M10d: ntfs (typenum 6, MNT_LOCAL, NtfsArgs::SIZE) under cfg option_ntfs: amd64 only, as only amd64 GENERIC has option NTFS. M10d: ext2fs (typenum 17, MNT_LOCAL | MNT_SWAPPABLE, UfsArgs::SIZE) under feature ext2fs."
 
 [[file]]
 c = "sys/kern/vfs_subr.c"
@@ -6621,7 +6621,8 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "5f87ecd3146eb3ef80aecb4c178f34c3cdcd3b7f"
 deps = ["sys/ufs/ufs/dinode.h", "sys/sys/param.h"]
-notes = "M10d, feature ext2fs: struct ext2fs (Ext2fs, plain #[repr(C)], 1024 bytes and offsets pinned), struct ext2_gd (Ext2Gd, 32 bytes, from_le_bytes/to_le_bytes), struct m_ext2fs (MExt2fs: the super block in an UnsafeCell behind with_e2fs/with_e2fs_mut and scalar getters/setters, the rest Cells, e2fs_gd a raw pointer behind bounds-checked gd/set_gd/with_gd_mut), every constant (feature flags, behaviours, OS ids, E2FS_ISCLEAN), the ro_compat/incompat name tables as RO_COMPAT/INCOMPAT, cg_has_sb (64-bit arithmetic), e2fs_overflow, e2fs_sbload/sbsave (read_unaligned plus the bswap on big-endian targets), e2fs_cgload/cgsave (per-descriptor little-endian decode), and every macro as a lower-case function (fsbtodb, dbtofsb, ino_to_cg, ino_to_fsba, ino_to_fsbo, dtog, dtogd, blkoff, lblktosize, lblkno, blkroundup, fragroundup, freespace, nindir); fsbtodb/dbtofsb/lblktosize work on daddr_t/off_t (no 32-bit wrap); host tests, constants checked in test-ref"
+notes = "M10d, feature ext2fs: struct ext2fs (Ext2fs, plain #[repr(C)], 1024 bytes and offsets pinned), struct ext2_gd (Ext2Gd, 32 bytes, from_le_bytes/to_le_bytes), struct m_ext2fs (MExt2fs: the super block in an UnsafeCell behind with_e2fs/with_e2fs_mut and scalar getters/setters, the rest Cells, e2fs_gd a raw pointer behind bounds-checked gd/set_gd/with_gd_mut), every constant (feature flags, behaviours, OS ids, E2FS_ISCLEAN), the ro_compat/incompat name tables as RO_COMPAT/INCOMPAT, cg_has_sb (64-bit arithmetic), e2fs_overflow, e2fs_sbload/sbsave (read_unaligned plus the bswap on big-endian targets), e2fs_cgload/cgsave (per-descriptor little-endian decode), and every macro as a lower-case function (fsbtodb, dbtofsb, ino_to_cg, ino_to_fsba, ino_to_fsbo, dtog, dtogd, blkoff, lblktosize, lblkno, blkroundup, fragroundup, freespace, nindir); fsbtodb/dbtofsb/lblktosize work on daddr_t/off_t (no 32-bit wrap); MExt2fs::fsmnt_str prints e2fs_fsmnt; host tests, constants checked in test-ref"
+
 
 [[file]]
 c = "sys/ufs/ext2fs/ext2fs_dinode.h"
@@ -6632,6 +6633,7 @@ upstream_blob = "4357be5b9efc7b6a077251c58c1d91539b3d9dd5"
 deps = ["sys/ufs/ext2fs/ext2fs.h", "sys/ufs/ufs/dinode.h"]
 notes = "M10d, feature ext2fs: struct ext2fs_dinode (Ext2fsDinode, plain #[repr(C)], 156 bytes with the large-inode fields, offsets pinned; e2di_rdev and e2di_shortlink as methods over e2di_blocks), EXT2_ROOTINO/RESIZEINO/FIRSTINO, EXT2_I* modes and types, EXT2_*/EXT4_* inode flags, EXT2_REV0_DINODE_SIZE, EXT2_DINODE_SIZE as ext2_dinode_size, e2fs_iload/e2fs_isave (always compiled: copy MIN(EXT2_DINODE_SIZE, sizeof) bytes on little-endian, via e2fs_i_bswap on big-endian; they take the buffer bytes); host tests, constants checked in test-ref"
 
+
 [[file]]
 c = "sys/ufs/ext2fs/ext2fs_dir.h"
 rust = "sys/ufs/ext2fs/ext2fs_dir.rs"
@@ -6640,6 +6642,7 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "bb1b8ece4b8c1ca397502105112785429a18e5d3"
 deps = ["sys/ufs/ext2fs/ext2fs_dinode.h", "sys/ufs/ufs/dir.h"]
 notes = "M10d, feature ext2fs: struct ext2fs_direct (264 bytes), enum slotstatus as Slotstatus (None, Compact, Found), struct ext2fs_searchslot, EXT2_FT_*, E2IFTODT as const fn e2iftodt, inot2ext2dt, EXT2FS_DIRSIZ as const fn ext2fs_dirsiz, struct ext2fs_dirtemplate; doff_t is Doff; host tests, constants checked in test-ref"
+
 
 [[file]]
 c = "sys/ufs/ext2fs/ext2fs_extents.h"
@@ -6650,6 +6653,7 @@ upstream_blob = "8a5076f6bf5a77347b68555e8b4a7cb1475ae252"
 deps = ["sys/ufs/ext2fs/ext2fs.h"]
 notes = "M10d, feature ext2fs: the types and constants of the header (Ext4Extent, Ext4ExtentIndex, Ext4ExtentHeader: plain #[repr(C)], 12 bytes each; Ext4ExtentCache; Ext4ExtentPath with raw pointers into the tree node: the root lives in the inode, the others in ep_bp), EXT4_EXT_MAGIC, EXT4_EXT_CACHE_*; the header has no $OpenBSD$ line; the prototypes are the functions of ext2fs_extents.c, which shares this .rs; constants checked in test-ref"
 
+
 [[file]]
 c = "sys/ufs/ext2fs/ext2fs_extern.h"
 rust = "sys/ufs/ext2fs/ext2fs_extern.rs"
@@ -6659,6 +6663,7 @@ upstream_blob = "1fadbc3c6b13f6ead8578ef9367d749bb040502c"
 deps = ["sys/ufs/ext2fs/ext2fs.h", "sys/ufs/ufs/inode.h", "sys/sys/vnode.h"]
 notes = "M10d, feature ext2fs: IS_EXT2_VNODE as is_ext2_vnode; the prototypes, pools and vops are the items of the ext2fs_*.rs files, each of which adds its pub use here when ported (the list is in the module docs), as ffs_extern.rs and ufs_extern.rs do"
 
+
 [[file]]
 c = "sys/ufs/ext2fs/ext2fs_bswap.c"
 rust = "sys/ufs/ext2fs/ext2fs_bswap.rs"
@@ -6667,6 +6672,95 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c4f36ba3d8624052ee865d3225ad557d4b3631ec"
 deps = ["sys/ufs/ext2fs/ext2fs.h", "sys/ufs/ext2fs/ext2fs_dinode.h"]
 notes = "M10d, feature ext2fs: e2fs_sb_bswap, e2fs_cg_bswap, e2fs_i_bswap, which the C compiles only on big-endian machines; always compiled here so the host tests run them, and called by e2fs_sbload/e2fs_iload only on a big-endian target (never on amd64/arm64); untouched fields stay as they are in new (e2fs_sb_bswap starts from a copy of old, as the C's memcpy); host tests: swap and round trip, whole descriptors only, the inode size cut"
+
+[[file]]
+c = "sys/ufs/ext2fs/ext2fs_extents.c"
+rust = "sys/ufs/ext2fs/ext2fs_extents.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c467144d0959debdb0c6aa08bd82eb447e860e28"
+deps = ["sys/ufs/ext2fs/ext2fs_extents.h", "sys/ufs/ext2fs/ext2fs.h", "sys/ufs/ufs/inode.h", "sys/kern/vfs_bio.c"]
+notes = "M10d, feature ext2fs: ext4_ext_binsearch_index, ext4_ext_binsearch, ext4_ext_in_cache, ext4_ext_put_cache, ext4_ext_find_extent (returns Option<&mut Ext4ExtentPath>), sharing the header's .rs with its own FreeBSD notice (no $OpenBSD$ line); entries read with read_unaligned through the path's raw pointers; Ext4ExtentPath::ext() reads *ep_ext; deviation: a node whose eh_ecount exceeds its room (60 bytes for the root, the buffer otherwise) is a corrupt tree, searched no further (ep_ext NULL) where the C would run past the node; the C's entry-before-the-first (the header read as an entry) is kept; host tests: depth-0 search, corrupt and empty nodes, the cache; deeper levels in the ext2fs_vfsops mount test"
+
+
+[[file]]
+c = "sys/ufs/ext2fs/ext2fs_subr.c"
+rust = "sys/ufs/ext2fs/ext2fs_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "68769d8f28a1d89854daa06a4df36a882cd6581e"
+deps = ["sys/ufs/ext2fs/ext2fs.h", "sys/ufs/ext2fs/ext2fs_extents.c", "sys/ufs/ufs/inode.h", "sys/kern/vfs_bio.c", "sys/kern/vfs_subr.c", "sys/kern/spec_vnops.c"]
+notes = "M10d, feature ext2fs: ext2fs_bufatoff (returns the buffer and the offset of *res, as ffs_bufatoff; releases the leaf buffer the C leaks when no extent covers the block), ext2fs_vinit (returns the vnode to use; a fifo is EOPNOTSUPP, the C's answer without option FIFO: fifofs not ported); tested through the ext2fs_vfsops mount test"
+
+
+[[file]]
+c = "sys/ufs/ext2fs/ext2fs_bmap.c"
+rust = "sys/ufs/ext2fs/ext2fs_bmap.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "87944872407c832a9ea2f058c55a53542f4cd700"
+deps = ["sys/ufs/ext2fs/ext2fs.h", "sys/ufs/ext2fs/ext2fs_extents.c", "sys/ufs/ufs/ufs_bmap.c", "sys/ufs/ufs/ufsmount.h"]
+notes = "M10d, feature ext2fs: ext2fs_bmap (vop_bmap), ext4_bmapext, ext2fs_bmaparray (indir array as a slice and Option<&mut i32> counts, as ufs_bmaparray; block pointers read little-endian from the buffer bytes, int32_t sign as in C); deviations: ext4_bmapext starts from an empty path (uninitialised in C) and releases the leaf buffer the C keeps busy; ru_inblock skipped without curproc; tested by the ext2fs_vfsops mount test (direct runs, the indirect block, extents)"
+
+
+[[file]]
+c = "sys/ufs/ext2fs/ext2fs_alloc.c"
+rust = "sys/ufs/ext2fs/ext2fs_alloc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ca71d8adf9871cd515bfc905bfe8c5b70a3e495b"
+deps = ["sys/ufs/ext2fs/ext2fs.h", "sys/ufs/ext2fs/ext2fs_dinode.h", "sys/ufs/ufs/inode.h", "sys/kern/vfs_bio.c", "sys/kern/subr_prf.c"]
+notes = "M10d, feature ext2fs: ext2fs_alloc, ext2fs_inode_alloc (returns the vnode), ext2fs_dirpref, ext2fs_blkpref (bap as the stored little-endian bytes), ext2fs_hashalloc, ext2fs_alloccg, ext2fs_nodealloccg, ext2fs_blkfree, ext2fs_inode_free, ext2fs_mapsearch, ext2fs_fserr (log LOG_ERR), uprintf; ext2gennumber is the AtomicU64 EXT2GENNUMBER (next_gennumber, shared with ext2fs_vget); a missing credential panics with or without DIAGNOSTIC; host tests: mapsearch, blkpref, dirpref, the hashalloc group order; the bitmap allocations and frees in the ext2fs_vfsops read-write mount test"
+
+
+[[file]]
+c = "sys/ufs/ext2fs/ext2fs_balloc.c"
+rust = "sys/ufs/ext2fs/ext2fs_balloc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b615739e4606fb8386eb0be2ac796352fbfe6fe5"
+deps = ["sys/ufs/ext2fs/ext2fs_alloc.c", "sys/ufs/ufs/ufs_bmap.c", "sys/kern/vfs_bio.c"]
+notes = "M10d, feature ext2fs: ext2fs_buf_alloc (returns the buffer; indirect pointers little-endian in the buffer bytes; the fail path unwinds as in C); deviation: on failure the C sets IN_CHANGE|IN_UPDATE in i_e2fs_flags (the on-disk e2di_flags: EXT2_UNRM|EXT2_COMPR), here in i_flag; tested by the ext2fs_vfsops read-write mount test (direct, indirect and hole allocation)"
+
+
+[[file]]
+c = "sys/ufs/ext2fs/ext2fs_inode.c"
+rust = "sys/ufs/ext2fs/ext2fs_inode.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "432dd5f12f079ea688fa93deb51603a1240dc258"
+deps = ["sys/ufs/ext2fs/ext2fs_alloc.c", "sys/ufs/ext2fs/ext2fs_balloc.c", "sys/ufs/ext2fs/ext2fs_dinode.h", "sys/kern/vfs_bio.c", "sys/kern/vfs_subr.c"]
+notes = "M10d, feature ext2fs: ext2fs_size, ext2fs_setsize, ext2fs_inactive (vop_inactive), ext2fs_update (e2fs_isave into the buffer bytes), ext2fs_truncate, ext2fs_indirtrunc (copy in malloc(M_TEMP) as in C); no QUOTA code in the C file; ext2fs_truncate's int32 block arithmetic is ext2fs_truncate_lastblocks/ext2fs_truncate_nblock (helpers of this port); allerror starts Ok (unset in C, replaced by vinvalbuf's result); ru_inblock skipped without curproc; host tests: the size words, EFBIG and LARGE_FILE, the truncate arithmetic; truncation itself in the ext2fs_vfsops read-write mount test"
+
+
+[[file]]
+c = "sys/ufs/ext2fs/ext2fs_readwrite.c"
+rust = "sys/ufs/ext2fs/ext2fs_readwrite.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f4c6267114cf0670aee233694e166acb0b089789"
+deps = ["sys/ufs/ext2fs/ext2fs_balloc.c", "sys/ufs/ext2fs/ext2fs_inode.c", "sys/ufs/ext2fs/ext2fs_extents.c", "sys/kern/vfs_bio.c", "sys/kern/kern_subr.c"]
+notes = "M10d, feature ext2fs: ext2fs_read (vop_read), ext2_ind_read (breadn read-ahead as in C), ext4_ext_read (with the extent cache), ext2fs_write (vop_write); deviations: ext4_ext_read uses a fresh path per lookup and releases the leaf buffer also when no extent covers the block (the C returns EIO with it busy); ext2fs_write releases the block's buffer when ext2fs_setsize refuses the size (the C leaves it busy); tested by the ext2fs_vfsops mount tests"
+
+
+[[file]]
+c = "sys/ufs/ext2fs/ext2fs_vfsops.c"
+rust = "sys/ufs/ext2fs/ext2fs_vfsops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7cac0fa07efc5ab96aea35252d783a67f50d0bb5"
+deps = ["sys/ufs/ext2fs/ext2fs.h", "sys/ufs/ext2fs/ext2fs_subr.c", "sys/ufs/ext2fs/ext2fs_inode.c", "sys/ufs/ext2fs/ext2fs_alloc.c", "sys/ufs/ext2fs/ext2fs_vnops.c", "sys/ufs/ufs/ufs_vfsops.c", "sys/ufs/ufs/ufs_ihash.c", "sys/ufs/ufs/ufs_quota.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_init.c"]
+notes = "M10d, feature ext2fs: EXT2FS_VFSOPS (no vfs_sysctl, as in C; vfs_quotactl = ufs_quotactl), EXT2FS_INODE_POOL/EXT2FS_DINODE_POOL, ext2fs_init, ext2fs_mountroot, ext2fs_mount (own Nameidata as ffs_mount; no args outside an update is EINVAL; export updates go to vfs_export over um_export), ext2fs_reload/ext2fs_reload_vnode (closure), ext2fs_maxfilesize, e2fs_sbfill, ext2fs_mountfs, ext2fs_unmount, ext2fs_flushfiles, ext2fs_statfs, ext2fs_sync/ext2fs_sync_vnode (closure), ext2fs_vget, ext2fs_fhtovp, ext2fs_vptofh, ext2fs_sbupdate, ext2fs_cgupdate, e2fs_sbcheck (little-endian reads at the members' offsets in the buffer); registered in vfs_init.rs as ext2fs, typenum 17, MNT_LOCAL|MNT_SWAPPABLE, UfsArgs; deviations: struct m_ext2fs is malloc(M_ZERO)ed and used as a zeroed MExt2fs, the descriptors are M_ZERO too; ext2fs_reload releases the super block buffer and the old descriptors (leaked in C); ext2fs_vget vrefs the device vnode as soon as the inode points at the mount (as ffs_vget; the C does it after ext2fs_vinit, so its failure paths release one it never took) and zeroes the pool dinode before e2fs_iload; host tests: read-only mount of an in-memory image (vget, reads through block pointers, an indirect block and a two-level extent tree, bmap runs, statfs, file handles, unmount writes nothing), read-write mount (write, allocate, truncate through indirect blocks, inode alloc/free, clean unmount on disk), super block checks, ext2fs_maxfilesize"
+
+
+[[file]]
+c = "sys/ufs/ext2fs/ext2fs_vnops.c"
+rust = "sys/ufs/ext2fs/ext2fs_vnops.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = ["sys/ufs/ext2fs/ext2fs_inode.c", "sys/ufs/ext2fs/ext2fs_readwrite.c", "sys/ufs/ext2fs/ext2fs_bmap.c", "sys/ufs/ufs/ufs_vnops.c", "sys/ufs/ufs/ufs_ihash.c", "sys/kern/spec_vnops.c"]
+notes = "M10d, feature ext2fs, wip: done: EXT2FS_VOPS and EXT2FS_SPECVOPS (ext2fs_fifovops waits for fifofs, option FIFO), ext2fs_fsync, ext2fs_reclaim; still unported() stubs answering ENOSYS (from this file and ext2fs_lookup.c): ext2fs_lookup, ext2fs_create, ext2fs_mknod, ext2fs_open, ext2fs_access, ext2fs_getattr, ext2fs_setattr, ext2fs_remove, ext2fs_link, ext2fs_rename, ext2fs_mkdir, ext2fs_rmdir, ext2fs_symlink, ext2fs_readdir, ext2fs_readlink, ext2fs_pathconf, ext2fs_advlock; not yet: ext2fs_chmod, ext2fs_chown, ext2fs_makeinode, ext2fsfifo_reclaim"
+
 
 [[file]]
 c = "sys/sys/fusebuf.h"
