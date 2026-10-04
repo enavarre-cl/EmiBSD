@@ -858,5 +858,17 @@ pub fn mallocarray(nmemb: usize, size: usize, type_: i32, flags: i32) -> Option<
     malloc(size * nmemb, type_, flags)
 }
 
+/// Host tests: forget every type's usage. `setup_real_memory` (`subr_pool/tests.rs`) replaces
+/// the memory the counted allocations lived in, which nobody frees, so the counts start over
+/// with it; otherwise each test that sets the vfs up again (`ufs_ihashinit`'s table, ...)
+/// leaves its usage behind until a type passes its `ks_limit`.
+#[cfg(all(test, feature = "kmemstats"))]
+pub(crate) fn kmemstats_test_reset() {
+    for ks in &KMEMSTATS {
+        ks.ks_inuse.set(0);
+        ks.ks_memuse.set(0);
+    }
+}
+
 #[cfg(test)]
 mod tests;

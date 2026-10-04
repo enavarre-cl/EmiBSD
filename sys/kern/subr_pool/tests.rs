@@ -44,6 +44,8 @@ pub(crate) fn setup_real_memory() -> MutexGuard<'static, ()> {
     );
     uvm_page_init(&mut s, &mut e);
     kmeminit();
+    #[cfg(feature = "kmemstats")]
+    crate::kern::kern_malloc::kmemstats_test_reset();
     // The radix trees' globals (`rn_zeros`, the mask tree) point into the memory just replaced:
     // the next `rn_init` (`vfsinit`'s, `pfr_initialize`'s) starts over.
     crate::net::radix::rn_test_reset();
