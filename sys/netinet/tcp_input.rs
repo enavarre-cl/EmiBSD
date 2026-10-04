@@ -127,8 +127,16 @@
 //!   (the `icmperrppslim` idiom of `ip_icmp.rs`). `tcp_ackdrop_ppslim` is an `AtomicI32`.
 //! - `syn_cache_add`'s `struct tcpcb tb` on the stack is a `Tcpcb::new(tp.t_inpcb)`: the
 //!   control block needs a back pointer, which `tcp_dooptions` never follows.
-//! - `syn_cache_get`: a socket from `sonewconn` without a control block or TCP control
-//!   block goes to `resetandabort` (the C dereferences both).
+//! - Where the C dereferences a pointer that cannot be NULL there, the port takes the
+//!   harmless way out instead of a wild read: `syn_cache_get` treats a listening socket
+//!   without a control block as a miss and sends a socket from `sonewconn` without one (or
+//!   without a TCP control block) to `resetandabort`; `syn_cache_add` fails without a TCP
+//!   control block; `tcp_pulloutofband` skips the `t_iobc` store without one;
+//!   `tcp_softlro_compare` refuses a head without a TCP header; the listener's flags
+//!   `syn_cache_get` copies are 0 without its control block.
+//! - The functions `tcp_var.h` does not declare stay private: `tcp_input_solocked`,
+//!   `tcp_flush_queue`, `tcp_sack_partialack`, `tcp_newreno_partialack`, `tcp_mss_adv`, the
+//!   SYN cache internals and the soft LRO helpers.
 //! - Not configured, each a comment at its site: `INET6` (`tcb6table`, `ns_tcp6_ml`,
 //!   `in6_pcblookup*`, `in6_cksum`, `ip6_output`, `route6_mpath`, the IPv6 header and
 //!   addresses, `IPV6_MMTU` in `tcp_mss`, the IPv6 branches of the SYN cache and the soft
@@ -141,7 +149,7 @@
 
 use core::cmp::{max, min};
 use core::ffi::c_void;
-use core::mem::size_of;
+use core::mem::{size_of, size_of_val};
 use core::ptr::{self, NonNull};
 use core::slice;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
@@ -660,11 +668,10 @@ fn tcp_flush_queue(tp: &'static Tcpcb) -> u8 {
     {
         return 0;
     }
-    let mut flags;
-    loop {
-        let Some(e) = q else {
-            break;
-        };
+    let mut flags = 0;
+    // do { ... } while (q != NULL && q->tcpqe_tcp->th_seq == tp->rcv_nxt && !flags): the
+    // first entry is the one checked above.
+    while let Some(e) = q {
         let hdr = e.tcpqe_tcp.get();
         tp.rcv_nxt
             .set(tp.rcv_nxt.get().wrapping_add(u32::from(hdr.th_reseqlen())));
@@ -682,16 +689,12 @@ fn tcp_flush_queue(tp: &'static Tcpcb) -> u8 {
         }
         tcpqe_put(e);
         q = nq;
-        match q {
-            Some(n) if n.tcpqe_tcp.get().th_seq == tp.rcv_nxt.get() && flags == 0 => {}
-            _ => {
-                sorwakeup(so);
-                return flags;
-            }
+        if !q.is_some_and(|n| n.tcpqe_tcp.get().th_seq == tp.rcv_nxt.get()) || flags != 0 {
+            break;
         }
     }
     sorwakeup(so);
-    0
+    flags
 }
 
 /// `tcp_input`: a TCP segment from IP. Without a softnet thread's stack (`ns`) it is
@@ -877,7 +880,7 @@ fn tcp_input_solocked(
                     tcp_trace(
                         TA_DROP,
                         st.ostate,
-                        st.tp.map(|t| t as &Tcpcb),
+                        st.tp,
                         st.otp,
                         Some(&st.saveti),
                         0,
@@ -1557,28 +1560,27 @@ fn tcp_input_body(
             // If a new connection request is received while in TIME_WAIT, drop the old
             // connection and start over if the if the timestamp or the sequence numbers are
             // above the previous ones.
-            TCPS_TIME_WAIT => {
+            TCPS_TIME_WAIT
                 if st.tiflags & (TH_SYN | TH_ACK) == TH_SYN
                     && ((opti.ts_present && tstmp_lt(tp.ts_recent.get(), opti.ts_val))
-                        || seq_gt(st.th.th_seq, tp.rcv_nxt.get()))
-                {
-                    // The socket will be recreated but the new state has already been linked
-                    // to the socket. Remove the link between old socket and new state.
-                    pf_inp_unlink(inp);
-                    // Advance the iss by at least 32768, but clear the msb in order to make
-                    // sure that SEG_LT(snd_nxt, iss).
-                    let iss = tp
-                        .snd_nxt
-                        .get()
-                        .wrapping_add((arc4random() & 0x7fff_ffff) | 0x8000);
-                    reuse = Some(iss);
-                    st.tp = tcp_close(tp);
-                    in_pcbsounlock(Some(inp), Some(so));
-                    st.so = None;
-                    in_pcbunref(Some(inp));
-                    st.inp = None;
-                    continue 'findpcb;
-                }
+                        || seq_gt(st.th.th_seq, tp.rcv_nxt.get())) =>
+            {
+                // The socket will be recreated but the new state has already been linked to
+                // the socket. Remove the link between old socket and new state.
+                pf_inp_unlink(inp);
+                // Advance the iss by at least 32768, but clear the msb in order to make sure
+                // that SEG_LT(snd_nxt, iss).
+                let iss = tp
+                    .snd_nxt
+                    .get()
+                    .wrapping_add((arc4random() & 0x7fff_ffff) | 0x8000);
+                reuse = Some(iss);
+                st.tp = tcp_close(tp);
+                in_pcbsounlock(Some(inp), Some(so));
+                st.so = None;
+                in_pcbunref(Some(inp));
+                st.inp = None;
+                continue 'findpcb;
             }
 
             _ => {}
@@ -1891,7 +1893,7 @@ fn tcp_input_body(
                     if !tcp_timer_isarmed(tp, TCPT_REXMT) {
                         tp.t_dupacks.set(0);
                     } else {
-                        tp.t_dupacks.set(tp.t_dupacks.get() + 1);
+                        tp.t_dupacks.set(tp.t_dupacks.get().wrapping_add(1));
                         if i32::from(tp.t_dupacks.get()) == TCPREXMTTHRESH {
                             let onxt = tp.snd_nxt.get();
                             let maxseg = u64::from(tp.t_maxseg.get());
@@ -2027,9 +2029,8 @@ fn tcp_input_body(
                     ));
                 }
             }
-            let ourfinisacked;
             let sb_cc = so.so_snd.sb_cc.get();
-            if acked as u64 > sb_cc {
+            let ourfinisacked = if acked as u64 > sb_cc {
                 if tp.snd_wnd.get() > sb_cc {
                     tp.snd_wnd.set(tp.snd_wnd.get() - sb_cc);
                 } else {
@@ -2038,7 +2039,7 @@ fn tcp_input_body(
                 mtx_enter(&so.so_snd.sb_mtx);
                 sbdrop(&so.so_snd, so.so_snd.sb_cc.get() as i32);
                 mtx_leave(&so.so_snd.sb_mtx);
-                ourfinisacked = true;
+                true
             } else {
                 mtx_enter(&so.so_snd.sb_mtx);
                 sbdrop(&so.so_snd, acked);
@@ -2048,8 +2049,8 @@ fn tcp_input_body(
                 } else {
                     tp.snd_wnd.set(0);
                 }
-                ourfinisacked = false;
-            }
+                false
+            };
 
             tcp_update_sndspace(tp);
             if sb_notify(&so.so_snd) {
@@ -2388,18 +2389,16 @@ pub fn tcp_dooptions(
                     }
                 }
                 TCPOPT_SACK => tcp_sack_option(tp, th, o),
-                TCPOPT_SIGNATURE => {
-                    if optlen == usize::from(TCPOLEN_SIGNATURE) {
-                        if let Some(s) = sigp
-                            && timingsafe_bcmp(&s, &o[2..18])
-                        {
-                            break 'bad false;
-                        }
-
-                        let mut s = [0u8; 16];
-                        s.copy_from_slice(&o[2..18]);
-                        sigp = Some(s);
+                TCPOPT_SIGNATURE if optlen == usize::from(TCPOLEN_SIGNATURE) => {
+                    if let Some(s) = sigp
+                        && timingsafe_bcmp(&s, &o[2..18])
+                    {
+                        break 'bad false;
                     }
+
+                    let mut s = [0u8; 16];
+                    s.copy_from_slice(&o[2..18]);
+                    sigp = Some(s);
                 }
                 _ => {}
             }
@@ -2513,8 +2512,8 @@ pub fn tcp_update_sack_list(tp: &Tcpcb, rcv_laststart: TcpSeq, rcv_lastend: TcpS
     }
     // Otherwise, sack blocks are already present.
     let numsacks = tp.rcv_numsacks.get() as usize;
-    for i in 0..numsacks {
-        tp.sackblks[i].set(temp[i]); // first copy back sack list
+    for (blk, sack) in tp.sackblks.iter().zip(&temp).take(numsacks) {
+        blk.set(*sack); // first copy back sack list
     }
     if seq_geq(tp.rcv_nxt.get(), rcv_lastend) {
         return; // sack list remains unchanged
@@ -2558,9 +2557,8 @@ pub fn tcp_update_sack_list(tp: &Tcpcb, rcv_laststart: TcpSeq, rcv_lastend: TcpS
             j += 1;
         }
         tp.rcv_numsacks.set(j as i32); // including first blk (added later)
-        for i in 1..j {
-            // now copy back
-            tp.sackblks[i].set(temp[i]);
+        for (blk, sack) in tp.sackblks.iter().zip(&temp).take(j).skip(1) {
+            blk.set(*sack); // now copy back
         }
     } else {
         // no merges -- shift sacks by 1
@@ -2593,7 +2591,7 @@ pub fn tcp_sack_option(tp: &Tcpcb, th: &Tcphdr, cp: &[u8]) {
     }
     // Note: TCPOLEN_SACK must be 2*sizeof(tcp_seq)
     let sacklen = usize::from(TCPOLEN_SACK);
-    if optlen <= 2 || (optlen - 2) % sacklen != 0 {
+    if optlen <= 2 || !(optlen - 2).is_multiple_of(sacklen) {
         return;
     }
     // Note: TCPOLEN_SACK must be 2*sizeof(tcp_seq)
@@ -2964,15 +2962,16 @@ pub fn tcp_mss(tp: &'static Tcpcb, offer: i32) -> i32 {
             // INET6: an AF_INET6 path MTU below IPV6_MMTU (RFC2460 section 5: use 1280 and a
             // fragment header); tp->pf is AF_INET here.
             mss = rtmtu as i32 - iphlen - th_len;
-        } else if ifp.if_flags.get() & IFF_LOOPBACK != 0 {
+        } else if ifp.if_flags.get() & IFF_LOOPBACK != 0
+            || (pf == i32::from(AF_INET) && ip_mtudisc.load(Ordering::Relaxed) != 0)
+        {
+            // A loopback interface, or an IPv4 route with path MTU discovery: the
+            // interface's MTU.
             mss = if_mtu - iphlen - th_len;
-        } else if pf == i32::from(AF_INET) {
-            if ip_mtudisc.load(Ordering::Relaxed) != 0 {
-                mss = if_mtu - iphlen - th_len;
-            }
         }
-        // INET6: for IPv6, path MTU discovery is always turned on, or the node must use
-        // packet size <= 1280; not configured.
+        // INET6: `else if (tp->pf == AF_INET6)`: for IPv6, path MTU discovery is always
+        // turned on, or the node must use packet size <= 1280; not configured (tp->pf is
+        // AF_INET, so the AF_INET test above is the C's whole else-if chain).
 
         // Calculate the value that we offer in TCPOPT_MAXSEG
         if offer != -1 {
@@ -3294,11 +3293,7 @@ fn syn_cache_insert(sc: &'static SynCache, tp: &'static Tcpcb) {
                 Some(scp) => {
                     let old = set.scs_buckethead.get();
                     if !old.is_empty() {
-                        free(
-                            NonNull::from(old).cast(),
-                            M_SYNCACHE,
-                            old.len() * size_of::<SynCacheHead>(),
-                        );
+                        free(NonNull::from(old).cast(), M_SYNCACHE, size_of_val(old));
                     }
                     set.scs_buckethead.set(scp);
                     set.scs_size.set(hash_size);
@@ -3308,8 +3303,8 @@ fn syn_cache_insert(sc: &'static SynCache, tp: &'static Tcpcb) {
         let mut bytes = [0u8; 20];
         arc4random_buf(&mut bytes);
         let mut random = [0u32; 5];
-        for (r, b) in random.iter_mut().zip(bytes.chunks_exact(4)) {
-            *r = u32::from_ne_bytes([b[0], b[1], b[2], b[3]]);
+        for (r, b) in random.iter_mut().zip(bytes.as_chunks::<4>().0) {
+            *r = u32::from_ne_bytes(*b);
         }
         set.scs_random.set(random);
         tcpstat_inc(TcpstatCounters::TcpsScSeedrandom);
