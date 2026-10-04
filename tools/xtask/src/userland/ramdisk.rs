@@ -62,11 +62,11 @@ const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 ///   On arm64 `pluartcnattach` finds the major of `comopen` and puts `pluartdev` in its slot
 ///   (`sys/dev/ic/pluart.c:856-863`, "KLUDGE"), so `pluart0` is major 8, minor 0 too:
 ///   `tty00` on both;
-/// - block (`bdevsw[]`): `rd` 17 (72 / 70), minor `unit * 16 + partition` (`DISKMINOR`,
-///   `MAXPARTITIONS` 16): `rd0a` 0, `rd0b` 1, `rd0c` 2;
+/// - block (`bdevsw[]`): `rd` 17 (72 / 70), minor `unit * 64 + partition` (`DISKMINOR`,
+///   `MAXPARTITIONSUNIT` 64, `MAKEDEV`'s `UNITMULT`): `rd0a` 0, `rd0b` 1, `rd0c` 2;
 /// - SCSI disks (`sd`, M10a), made by `devices()` from `DISK_UNITS` and not listed in the
 ///   table: block `sd` 4 (`bdev_disk_init(NSD,sd)`, 59 / 57), character `sd` 13 (191 /
-///   141), minor `unit * 16 + partition` for the partitions `a`..`p` (`MAKEDEV`'s `dodisk`:
+///   141), minor `unit * 64 + partition` for the partitions `a`..`p` (`MAKEDEV`'s `dodisk`:
 ///   `sd0a`..`sd0p` and `rsd0a`..`rsd0p`, mode 0640, group `operator`). `MAKEDEV all` makes
 ///   `sd0`..`sd9`; the image has `sd0` (amd64's and arm64's persistent disk) and `sd1` (the
 ///   arm64 boot disk is the second block device the kernel finds);
@@ -99,6 +99,9 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
 /// The `sd` units the image has nodes for (module docs of `DEVICES`).
 const DISK_UNITS: &[u32] = &[0, 1];
 
+/// `MAKEDEV`'s `UNITMULT`: minors per disk unit (`MAXPARTITIONSUNIT` of `sys/disklabel.h`).
+const UNITMULT: u32 = 64;
+
 /// `bdevsw[]` and `cdevsw[]` majors of `sd`.
 const SD_BLOCK_MAJOR: u32 = 4;
 const SD_CHAR_MAJOR: u32 = 13;
@@ -112,7 +115,8 @@ const VND_BLOCK_MAJOR: u32 = 14;
 const VND_CHAR_MAJOR: u32 = 41;
 
 /// Every device node of the image, in the shape of `DEVICES`: its table plus the `sd` disk
-/// partitions (`MAKEDEV`'s `dodisk`: `a`..`p`, `MAXPARTITIONS` 16 minors per unit).
+/// partitions (`MAKEDEV`'s `dodisk`: `a`..`p` of a kernel with `kern.maxpartitions` 16, at
+/// `UNITMULT` (`MAXPARTITIONSUNIT`) 64 minors per unit: `DISKUNIT` divides by 64).
 fn devices() -> Vec<(String, char, u32, u32, u32, &'static str)> {
     let mut all: Vec<_> = DEVICES
         .iter()
@@ -128,7 +132,7 @@ fn devices() -> Vec<(String, char, u32, u32, u32, &'static str)> {
         );
     for (name, unit, bmajor, cmajor) in disks {
         for (part, letter) in ('a'..='p').enumerate() {
-            let minor = unit * 16 + part as u32;
+            let minor = unit * UNITMULT + part as u32;
             all.push((
                 format!("{name}{unit}{letter}"),
                 'b',
@@ -1037,7 +1041,7 @@ mod tests {
     fn sd_nodes_follow_makedev() {
         let all = devices();
         let find = |n: &str| all.iter().find(|d| d.0 == n);
-        // Block 4 / char 13, minor unit * 16 + partition, 0640 operator.
+        // Block 4 / char 13, minor unit * 64 + partition, 0640 operator.
         assert_eq!(
             find("sd0a").map(|d| (d.1, d.2, d.3, d.4, d.5)),
             Some(('b', 4, 0, 0o640, "operator"))
@@ -1045,8 +1049,14 @@ mod tests {
         assert_eq!(find("sd0c").map(|d| (d.1, d.2, d.3)), Some(('b', 4, 2)));
         assert_eq!(find("sd0p").map(|d| (d.1, d.2, d.3)), Some(('b', 4, 15)));
         assert_eq!(find("rsd0a").map(|d| (d.1, d.2, d.3)), Some(('c', 13, 0)));
-        assert_eq!(find("sd1a").map(|d| (d.1, d.2, d.3)), Some(('b', 4, 16)));
-        assert_eq!(find("rsd1p").map(|d| (d.1, d.2, d.3)), Some(('c', 13, 31)));
+        assert_eq!(find("sd1a").map(|d| (d.1, d.2, d.3)), Some(('b', 4, 64)));
+        assert_eq!(find("rsd1p").map(|d| (d.1, d.2, d.3)), Some(('c', 13, 79)));
+        // vnd: block 14 / char 41, the same layout.
+        assert_eq!(find("vnd1c").map(|d| (d.1, d.2, d.3)), Some(('b', 14, 66)));
+        assert_eq!(
+            find("rvnd3p").map(|d| (d.1, d.2, d.3)),
+            Some(('c', 41, 207))
+        );
         assert!(find("sd0q").is_none() && find("sd2a").is_none());
         // Every name once, and the attributes table gets them and /mnt.
         let mut names: Vec<&str> = all.iter().map(|d| d.0.as_str()).collect();
