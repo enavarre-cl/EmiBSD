@@ -1,5 +1,11 @@
 # EmiBSD
 
+<p align="center">
+  <img src="docs/Ferffy.jpg" alt="Ferffy, the EmiBSD mascot: a spiky orange crab in front of a shield, above the EmiBSD name" width="600">
+</p>
+
+<p align="center"><em>Ferffy, the EmiBSD mascot: half Ferris (Rust's crab), half Puffy (OpenBSD's pufferfish).</em></p>
+
 The OpenBSD kernel, re-implemented in Rust, one file at a time.
 
 - Standalone `#![no_std]` kernel, booted by [Limine](https://github.com/limine-bootloader/limine),
