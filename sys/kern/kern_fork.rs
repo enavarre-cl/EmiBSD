@@ -327,6 +327,12 @@ fn process_new(p: &'static Proc, parent: &'static Process, flags: i32) -> &'stat
     pr.ps_limit.set(parent.ps_limit.get());
     pr.ps_pgrp.set(parent.ps_pgrp.get());
     pr.set_comm(parent.comm());
+    pr.ps_strings.set(parent.ps_strings.get());
+    pr.ps_auxinfo.set(parent.ps_auxinfo.get());
+    pr.ps_timekeep.set(parent.ps_timekeep.get());
+    pr.ps_sigcode.set(parent.ps_sigcode.get());
+    pr.ps_sigcoderet.set(parent.ps_sigcoderet.get());
+    pr.ps_sigcookie.set(parent.ps_sigcookie.get());
     pr.ps_rtableid.store(
         parent.ps_rtableid.load(Ordering::Relaxed),
         Ordering::Relaxed,
@@ -336,6 +342,8 @@ fn process_new(p: &'static Proc, parent: &'static Process, flags: i32) -> &'stat
     pr.ps_acflag.set(parent.ps_acflag.get());
     pr.ps_pledge.set(parent.ps_pledge.get());
     pr.ps_execpledge.set(parent.ps_execpledge.get());
+    pr.ps_kbind_cookie.set(parent.ps_kbind_cookie.get());
+    pr.ps_kbind_addr.set(parent.ps_kbind_addr.get());
 
     process_initialize(pr, p);
     pr.ps_pid.set(allocpid());
