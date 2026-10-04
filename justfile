@@ -87,7 +87,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-mp
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-mp smoke-ddbmp
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -1184,6 +1184,66 @@ smoke-mp: build-init-amd64 build-init-arm64
     cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd.mp --ramdisk none --smp 4 \
         --cmdline "selftest=mpstress" --expect "selftest: mpstress pool ok (4 cpus" \
         --expect "selftest: mpstress pmemrange ok (4 cpus"
+
+# M11c: ddb(4) on the MULTIPROCESSOR kernel with four processors (`-smp 4`), per arch, from the
+# ffs ramdisk booted `-ds`. `-d` stops at `ddb{0}> ` before the application processors exist
+# and, after the empty line the `-d` smokes type first (arm64's early PL011), `continue` goes
+# on; in the single-user shell `sysctl ddb.console=1` and
+# `sysctl ddb.trigger=1` enter ddb with every CPU running, the OpenBSD way. The CPU that runs
+# sysctl(8) varies, so `machine ddbcpu 2` then `machine ddbcpu 1` always ends in a switch to
+# CPU 1, where `machine cpuinfo` shows the other three stopped. After `continue` a second
+# trigger, `ddbcpu 3`, `ddbcpu 0` and `cpuinfo` show CPU 1 stopped again (it resumed and took
+# the new IPI), and after the second `continue` the shell answers. Needs `just userland`.
+# Part of `smoke`.
+smoke-ddbmp: build-init-amd64 build-init-arm64
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-ddbmp: no ramdisk image; run just userland first"; exit 1; }
+    cargo build -p bsd --target {{amd64}} --features qemu,multiprocessor
+    cp target/{{amd64}}/debug/bsd target/{{amd64}}/debug/bsd.mp
+    cargo build -p bsd --target {{arm64}} --features qemu,multiprocessor
+    cp target/{{arm64}}/debug/bsd target/{{arm64}}/debug/bsd.mp
+    cargo build -p bsd --target {{amd64}} --features qemu
+    cargo build -p bsd --target {{arm64}} --features qemu
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd.mp --smp 4 --cmdline "-ds" \
+        --expect-ramdisk --until-seen \
+        --send-after "ddb{0}> " --send '\n' --send-after "ddb{0}> " --send 'continue\n' \
+        --send-after "RETURN for sh:" --send '\n' \
+        --send-after "# " --send 'sysctl ddb.console=1\n' \
+        --send-after "ddb.console: 0 -> 1" --send 'sysctl ddb.trigger=1\n' \
+        --send-after "ddb{" --send 'machine ddbcpu 2\n' \
+        --send-after "ddb{2}> " --send 'machine ddbcpu 1\n' \
+        --send-after "ddb{1}> " --send 'machine cpuinfo\n' \
+        --send-after "ddb{1}> " --send 'continue\n' \
+        --send-after "# " --send 'sysctl ddb.trigger=1\n' \
+        --send-after "ddb{" --send 'machine ddbcpu 3\n' \
+        --send-after "ddb{3}> " --send 'machine ddbcpu 0\n' \
+        --send-after "ddb{0}> " --send 'machine cpuinfo\n' \
+        --send-after "ddb{0}> " --send 'continue\n' \
+        --send-after "# " --send 'echo cpus-$((2+2))-resumed\n' \
+        --expect "bsd: 4 processors" --expect "Stopped at" \
+        --expect "    0: stopped" --expect "*   1: ddb" --expect "    2: stopped" \
+        --expect "    3: stopped" --expect "*   0: ddb" --expect "    1: stopped" \
+        --expect "cpus-4-resumed"
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd.mp --smp 4 --cmdline "-ds" \
+        --expect-ramdisk --until-seen \
+        --send-after "ddb{0}> " --send '\n' --send-after "ddb{0}> " --send 'continue\n' \
+        --send-after "RETURN for sh:" --send '\n' \
+        --send-after "# " --send 'sysctl ddb.console=1\n' \
+        --send-after "ddb.console: 0 -> 1" --send 'sysctl ddb.trigger=1\n' \
+        --send-after "ddb{" --send 'machine ddbcpu 2\n' \
+        --send-after "ddb{2}> " --send 'machine ddbcpu 1\n' \
+        --send-after "ddb{1}> " --send 'machine cpuinfo\n' \
+        --send-after "ddb{1}> " --send 'continue\n' \
+        --send-after "# " --send 'sysctl ddb.trigger=1\n' \
+        --send-after "ddb{" --send 'machine ddbcpu 3\n' \
+        --send-after "ddb{3}> " --send 'machine ddbcpu 0\n' \
+        --send-after "ddb{0}> " --send 'machine cpuinfo\n' \
+        --send-after "ddb{0}> " --send 'continue\n' \
+        --send-after "# " --send 'echo cpus-$((2+2))-resumed\n' \
+        --expect "bsd: 4 processors" --expect "Stopped at" \
+        --expect "    0: stopped" --expect "*   1: ddb" --expect "    2: stopped" \
+        --expect "    3: stopped" --expect "*   0: ddb" --expect "    1: stopped" \
+        --expect "cpus-4-resumed"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
