@@ -37,8 +37,7 @@
 //! - `KTRACE` is not configured: `parsepledges` and `pledge_fail` record nothing.
 //! - Promise classes for devices this kernel does not configure are compiled out as the C's
 //!   `#if` does with a zero count: `NAUDIO`, `NVIDEO`, `NDRM` (`pledge_ioctl_drm`), `NVMM`
-//!   and `NPSP` (`pledge_ioctl_psp`). `NBPFILTER` is 0 until `net/bpf.c` is ported, so the
-//!   "bpf" `BIOCGSTATS` case is left out too.
+//!   and `NPSP` (`pledge_ioctl_psp`).
 //! - `netinet6` is not ported (`INET6` is not configured): no `AF_INET6` protocol exists, so
 //!   the `AF_INET6` arms of `pledge_sockopt` can never be taken and are left out with the
 //!   `IPV6_*` names they test; the IPv6 interface ioctls of the "route" and "wroute" classes
@@ -64,9 +63,11 @@ use crate::kern::kern_prot::groupmember;
 use crate::kern::kern_sig::{sigabort, single_thread_clear, single_thread_set};
 use crate::kern::subr_prf::{Str, panic, uprintf};
 use crate::kern::tty_pty::{ptcopen, ptmopen};
+use crate::kern::vfs_vnops::vn_ioctl;
 use crate::machine::conf::{bdevsw, cdevsw};
 use crate::machine::copy::copyinstr;
 use crate::machine::cpu::{CPU_CHR2BLK, CPU_ID_AA64ISAR0, CPU_ID_AA64ISAR1, CPU_SSE};
+use crate::net::bpf::{BIOCGSTATS, bpfopen};
 use crate::net::pf_ioctl::pfopen;
 use crate::net::pfvar::{
     DIOCADDRULE, DIOCGETSTATUS, DIOCKILLSRCNODES, DIOCNATLOOK, DIOCRADDTABLES, DIOCRCLRADDRS,
@@ -1096,7 +1097,18 @@ pub fn pledge_ioctl(p: &Proc, com: u64, fp: &File) -> Result<(), Errno> {
         return Ok(());
     }
 
-    // NBPFILTER == 0: the "bpf" BIOCGSTATS case waits for net/bpf.c (see the deviations).
+    // NBPFILTER > 0
+    if pledge & PLEDGE_BPF != 0
+        && com == BIOCGSTATS
+        // bpf: tcpdump privsep on ^C
+        && ptr::fn_addr_eq(
+            fp.ops().fo_ioctl,
+            vn_ioctl as fn(&File, u64, &mut [u8], &Proc) -> Result<(), Errno>,
+        )
+        && vchr.is_some_and(|vp| cdev_is(vp, bpfopen as DevTypeOpen))
+    {
+        return Ok(());
+    }
 
     if pledge & PLEDGE_TAPE != 0 && matches!(com, MTIOCGET | MTIOCTOP) {
         // for pax(1) and such, checking tapes...

@@ -83,12 +83,11 @@
 //!   zero), `MULTIPROCESSOR` (`p_cpuid` stays `KI_NOCPU`). `SMALL_KERNEL` is not set.
 //! - `KERNEL_LOCK` is not taken: one CPU and no kernel lock yet. `log_mtx` does not exist
 //!   (`subr_log.rs`), so the message buffer header is read without it.
-//! - `kern.file`: `fill_file` leaves the TCP members of `kinfo_file` (`t_state`, the
-//!   windows) zero and reports `struct tcpcb` (`tcp_usrreq.c`) if a TCP socket ever shows
-//!   up (none can be created yet); an `AF_INET6` socket cannot exist (`INET6` is not
-//!   configured) and is reported likewise. `KERN_FILE_BYFILE` of sockets walks `udbtable`,
-//!   `rawcbtable` and `divbtable` (`NPF`); `tcbtable` (`tcp_usrreq.c`) is reported, and the
-//!   `INET6` tables are compiled out. `ps_tracevp` does not exist
+//! - `kern.file`: an `AF_INET6` socket cannot exist (`INET6` is not configured) and is
+//!   reported if one ever shows up. `fill_file` skips the TCP members of `kinfo_file` of a
+//!   TCP socket whose `tcpcb` is already gone (`intotcpcb` is `None`) where the C would
+//!   dereference NULL. `KERN_FILE_BYFILE` of sockets walks `tcbtable`, `udbtable`,
+//!   `rawcbtable` and `divbtable` (`NPF`); the `INET6` tables are compiled out. `ps_tracevp` does not exist
 //!   (`KTRACE`), so no `KERN_FILE_TRACE` entry is made. The C's `FILLIT` macros are the
 //!   methods of a private `FileWalk` (the C's `kf`, `dp`, `buflen`, `elem_count`,
 //!   `needed`); `kf` lives in it instead of an `M_TEMP` allocation. A `copyout` error ends
@@ -170,6 +169,8 @@ use crate::netinet::in_pcb::{
 };
 use crate::netinet::ip_divert::DIVBTABLE;
 use crate::netinet::raw_ip::RAWCBTABLE;
+use crate::netinet::tcp_usrreq::TCBTABLE;
+use crate::netinet::tcp_var::intotcpcb;
 use crate::netinet::udp_usrreq::UDBTABLE;
 use crate::sys::disk::{DS_DISKNAMELEN, Disk, Diskstats};
 use crate::sys::errno::Errno;
@@ -1700,9 +1701,14 @@ fn fill_file_socket(kf: &mut KinfoFile, so: &Socket, show_pointers: bool) {
             kf.inp_proto = u32::from(inpcb.inp_ip.get().ip_p);
         }
         if i32::from(so.so_proto.pr_protocol) == IPPROTO_TCP {
-            // t_rcv_wnd, t_snd_wnd, t_snd_cwnd and t_state stay zero: without
-            // tcp_usrreq.c no TCP socket can be created.
-            let _ = unported!("fill_file: struct tcpcb (tcp_usrreq.c)");
+            // A TCP socket's pcb always has its tcpcb (tcp_attach); `intotcpcb` returns
+            // `None` only between tcp_close and the pcb's detach.
+            if let Some(tcpcb) = intotcpcb(inpcb) {
+                kf.t_rcv_wnd = tcpcb.rcv_wnd.get();
+                kf.t_snd_wnd = tcpcb.snd_wnd.get();
+                kf.t_snd_cwnd = tcpcb.snd_cwnd.get();
+                kf.t_state = tcpcb.t_state.get() as u32;
+            }
         }
     } else if family == i32::from(AF_INET6) {
         // INET6 is not configured, so no such socket exists.
@@ -1910,8 +1916,7 @@ pub fn sysctl_file(name: &[i32], where_: usize, sizep: &mut usize, p: &Proc) -> 
         KERN_FILE_BYFILE => {
             // use the inp-tables to pick up closed connections, too
             if arg == DTYPE_SOCKET {
-                // tcbtable: without tcp_usrreq.c no TCP socket exists.
-                let _ = unported!("kern.file: tcbtable (tcp_usrreq.c)");
+                w.fillinptable(&TCBTABLE)?;
                 // INET6 is not configured: no tcb6table, udb6table, rawin6pcbtable.
                 w.fillinptable(&UDBTABLE)?;
                 w.fillinptable(&RAWCBTABLE)?;
