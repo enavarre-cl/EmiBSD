@@ -53,6 +53,10 @@
 //! from a raw `IPPROTO_ICMP` socket as ping(8) does (`sendto(2)`, then `recvfrom(2)` with a
 //! receive timeout) and reads the echo reply with its IP header, and sends a UDP datagram
 //! from one socket to another bound to its own address.
+//! With `wg(4)` (`if_wg.c`) it creates `wg0` through the cloner ioctl on a socket
+//! (`SIOCIFCREATE`), gives it a private key with `SIOCSWG`, reads the public key back with
+//! `SIOCGWG` and compares it with RFC 7748's vector for that key, then destroys it
+//! (`SIOCIFDESTROY`).
 
 #![no_std]
 #![no_main]
@@ -285,6 +289,22 @@ const EINVAL: usize = 22;
 const EPIPE: usize = 32;
 /// `EAGAIN`.
 const EAGAIN: usize = 35;
+/// `EEXIST`.
+const EEXIST: usize = 17;
+/// `ENXIO`.
+const ENXIO: usize = 6;
+/// `SIOCIFCREATE`: `_IOW('i', 122, struct ifreq)`.
+const SIOCIFCREATE: usize = 0x8020_697a;
+/// `SIOCIFDESTROY`: `_IOW('i', 121, struct ifreq)`.
+const SIOCIFDESTROY: usize = 0x8020_6979;
+/// `SIOCSWG`: `_IOWR('i', 210, struct wg_data_io)`.
+const SIOCSWG: usize = 0xc020_69d2;
+/// `SIOCGWG`: `_IOWR('i', 211, struct wg_data_io)`.
+const SIOCGWG: usize = 0xc020_69d3;
+/// `WG_INTERFACE_HAS_PUBLIC`.
+const WG_INTERFACE_HAS_PUBLIC: u8 = 1 << 0;
+/// `WG_INTERFACE_HAS_PRIVATE`.
+const WG_INTERFACE_HAS_PRIVATE: u8 = 1 << 1;
 /// `O_NONBLOCK`, `O_CLOEXEC`.
 const O_NONBLOCK: usize = 0x4;
 const O_CLOEXEC: usize = 0x10000;
@@ -903,6 +923,13 @@ extern "C" fn init_main(sp: *const usize) -> ! {
     } else {
         status = 13;
     }
+    if wg() {
+        if write(1, b"init: wg ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 16;
+    }
     if kqueues() {
         if write(1, b"init: kqueue ok\n").is_err() {
             status = 1;
@@ -1302,6 +1329,87 @@ fn sockets() -> bool {
         ok &= call(SYS_CLOSE, fd, 0, 0) == (0, false);
     }
     ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
+}
+
+/// `struct wg_interface_io` (`<net/if_wg.h>`), without its peers.
+#[repr(C)]
+#[derive(Default)]
+struct WgInterfaceIo {
+    i_flags: u8,
+    _pad0: u8,
+    i_port: u16,
+    i_rtable: i32,
+    i_public: [u8; 32],
+    i_private: [u8; 32],
+    i_peers_count: usize,
+}
+
+/// `struct wg_data_io`.
+#[repr(C)]
+struct WgDataIo {
+    wgd_name: [u8; 16],
+    wgd_size: usize,
+    wgd_interface: usize,
+}
+
+/// RFC 7748, 6.1: Alice's private key.
+const ALICE_PRIVATE: [u8; 32] = [
+    0x77, 0x07, 0x6d, 0x0a, 0x73, 0x18, 0xa5, 0x7d, 0x3c, 0x16, 0xc1, 0x72, 0x51, 0xb2, 0x66, 0x45,
+    0xdf, 0x4c, 0x2f, 0x87, 0xeb, 0xc0, 0x99, 0x2a, 0xb1, 0x77, 0xfb, 0xa5, 0x1d, 0xb9, 0x2c, 0x2a,
+];
+/// RFC 7748, 6.1: Alice's public key, X25519 of the private key and the base point.
+const ALICE_PUBLIC: [u8; 32] = [
+    0x85, 0x20, 0xf0, 0x09, 0x89, 0x30, 0xa7, 0x54, 0x74, 0x8b, 0x7d, 0xdc, 0xb4, 0x3e, 0xf7, 0x5a,
+    0x0d, 0xbf, 0x3a, 0x0d, 0x26, 0x38, 0x1a, 0xf4, 0xeb, 0xa4, 0xa9, 0x8e, 0xaa, 0x9b, 0x4e, 0x6a,
+];
+
+/// `wg(4)` from user mode, as `ifconfig wg0 create wgkey ...` drives it: the interface ioctls
+/// go through any socket (`soo_ioctl` hands group `'i'` to `ifioctl`), here a local datagram
+/// socket. `wg0` is created (twice: `EEXIST`), keyed with `SIOCSWG`, its public key read back
+/// with `SIOCGWG` and checked against RFC 7748, and destroyed (then `SIOCGWG` is `ENXIO`).
+fn wg() -> bool {
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let (s, err) = call(SYS_SOCKET, AF_UNIX, SOCK_DGRAM, 0);
+    if err {
+        return false;
+    }
+    let mut ifr = [0u8; 32];
+    ifr[..3].copy_from_slice(b"wg0");
+    let mut name = [0u8; 16];
+    name[..3].copy_from_slice(b"wg0");
+
+    let mut ok = call(SYS_IOCTL, s, SIOCIFCREATE, ifr.as_mut_ptr() as usize) == (0, false);
+    ok &= call(SYS_IOCTL, s, SIOCIFCREATE, ifr.as_mut_ptr() as usize) == (EEXIST, true);
+
+    let mut iface = WgInterfaceIo {
+        i_flags: WG_INTERFACE_HAS_PRIVATE,
+        i_private: ALICE_PRIVATE,
+        ..WgInterfaceIo::default()
+    };
+    let mut data = WgDataIo {
+        wgd_name: name,
+        wgd_size: size_of::<WgInterfaceIo>(),
+        wgd_interface: &mut iface as *mut WgInterfaceIo as usize,
+    };
+    ok &= call(SYS_IOCTL, s, SIOCSWG, &mut data as *mut WgDataIo as usize) == (0, false);
+
+    let mut out = WgInterfaceIo::default();
+    let mut data = WgDataIo {
+        wgd_name: name,
+        wgd_size: size_of::<WgInterfaceIo>(),
+        wgd_interface: &mut out as *mut WgInterfaceIo as usize,
+    };
+    ok &= call(SYS_IOCTL, s, SIOCGWG, &mut data as *mut WgDataIo as usize) == (0, false);
+    ok &= data.wgd_size == size_of::<WgInterfaceIo>();
+    let both = WG_INTERFACE_HAS_PUBLIC | WG_INTERFACE_HAS_PRIVATE;
+    ok &= out.i_flags & both == both;
+    ok &= out.i_public == ALICE_PUBLIC;
+    ok &= out.i_peers_count == 0;
+
+    ok &= call(SYS_IOCTL, s, SIOCIFDESTROY, ifr.as_mut_ptr() as usize) == (0, false);
+    ok &= call(SYS_IOCTL, s, SIOCGWG, &mut data as *mut WgDataIo as usize) == (ENXIO, true);
+    ok &= call(SYS_CLOSE, s, 0, 0) == (0, false);
+    ok
 }
 
 /// `kevent(kq, changes, nchanges, events, nevents, timeout)`: the number of events.

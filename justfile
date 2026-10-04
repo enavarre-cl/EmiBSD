@@ -92,7 +92,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 8.0" \
         --expect "cannot mount root: no root file system" \
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
-        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
+        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: wg ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
         --expect "selftest: pmap reuse ok" --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
@@ -131,7 +131,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 8.0" \
         --expect "cannot mount root: no root file system" \
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
-        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
+        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: wg ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: processes ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
         --expect "selftest: pmap reuse ok" --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"

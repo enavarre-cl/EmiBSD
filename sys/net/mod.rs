@@ -14,6 +14,7 @@ pub mod if_loop;
 pub mod if_media;
 pub mod if_types;
 pub mod if_var;
+pub mod if_wg;
 pub mod ifq;
 pub mod netisr;
 pub mod route;
