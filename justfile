@@ -98,7 +98,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 8.0" \
         --expect "cannot mount root: no root file system" \
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
-        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: wg ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: pfkey ok" --expect "init: tcp ok" --expect "init: processes ok" --expect "init: pledge ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
+        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: wg ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: pfkey ok" --expect "init: tcp ok" --expect "init: processes ok" --expect "init: pledge ok" --expect "init: time ok" --expect "init: uptime monotonic ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
         --expect "selftest: pmap reuse ok" --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
@@ -138,7 +138,7 @@ smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-ini
         --expect "init: fds ok" --expect "init: signals ok" --expect "init: EmiBSD 8.0" \
         --expect "cannot mount root: no root file system" \
         --expect "warning: /dev/console does not exist" --expect "init: vfs ok (no root file system)" \
-        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: wg ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: pfkey ok" --expect "init: tcp ok" --expect "init: processes ok" --expect "init: pledge ok" --expect "init: time ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
+        --expect "init: pipes ok" --expect "init: sockets ok" --expect "init: wg ok" --expect "init: kqueue ok" --expect "init: inet sockets ok" --expect "init: pfkey ok" --expect "init: tcp ok" --expect "init: processes ok" --expect "init: pledge ok" --expect "init: time ok" --expect "init: uptime monotonic ok" --expect "init: unveil ok" --expect "init: sendsyslog ok" --expect "pinsyscalls addr" \
         --expect "selftest: pmap reuse ok" --expect "selftest: ping 10.0.2.2: echo reply received" \
         --expect "init: tty ok" \
         --expect "init exited with status 0 (signal 0)"
@@ -286,7 +286,8 @@ internet_check := "--send-after login: --send 'root\\n' --send-after Password: -
 
 # Diagnostic tools stage 2: OpenBSD's ps(1), fstat(1) and vmstat(8) over libkvm's sysctl(2)
 # paths (kern.proc, kern.proc_args, kern.file, vm.uvmexp, hw.diskstats, kern.intrcnt,
-# kern.pool, kern.malloc), df(1) and mount(8) over getfsstat(2). Logs in as `smoke-login`
+# kern.pool, kern.malloc), df(1) and mount(8) over getfsstat(2), and sysctl(8)'s
+# kern.timecounter (amd64 runs on the TSC, arm64 on agtimer). Logs in as `smoke-login`
 # does; `echo diag-$((40+2))` marks the end. Part of `smoke`.
 smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
@@ -302,6 +303,7 @@ smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --send-after "# " --send 'vmstat -m\n' \
         --send-after "# " --send 'df\n' \
         --send-after "# " --send 'mount\n' \
+        --send-after "# " --send 'sysctl kern.timecounter\n' \
         --send-after "# " --send 'echo diag-$((40+2))\n' \
         --expect "rc: multi-user" --expect " /sbin/init" --expect " -ksh (ksh)" \
         --expect "root         1  " \
@@ -310,7 +312,8 @@ smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "interrupt                       total     rate" --expect "/com0" \
         --expect "bytes per page" --expect "Memory statistics by bucket size" \
         --expect "Memory resource pool statistics" --expect "/dev/rd0a        " \
-        --expect "/dev/rd0a on / type ffs (local)" --expect "diag-42"
+        --expect "/dev/rd0a on / type ffs (local)" --expect "diag-42" \
+        --expect "kern.timecounter.hardware=tsc" --expect "kern.timecounter.choice=i8254(0) tsc(2000)"
     cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'ps -ax\n' \
@@ -322,6 +325,7 @@ smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --send-after "# " --send 'vmstat -m\n' \
         --send-after "# " --send 'df\n' \
         --send-after "# " --send 'mount\n' \
+        --send-after "# " --send 'sysctl kern.timecounter\n' \
         --send-after "# " --send 'echo diag-$((40+2))\n' \
         --expect "rc: multi-user" --expect " /sbin/init" --expect " -ksh (ksh)" \
         --expect "root         1  " \
@@ -330,7 +334,8 @@ smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "interrupt                       total     rate" --expect "/pluart0" \
         --expect "bytes per page" --expect "Memory statistics by bucket size" \
         --expect "Memory resource pool statistics" --expect "/dev/rd0a        " \
-        --expect "/dev/rd0a on / type ffs (local)" --expect "diag-42"
+        --expect "/dev/rd0a on / type ffs (local)" --expect "diag-42" \
+        --expect "kern.timecounter.hardware=agtimer" --expect "kern.timecounter.choice=agtimer(0)"
 
 # M9b/M9c harness: two VMs of one arch at once (`cargo xtask smoke2`), each with vio0 on QEMU's
 # user network and vio1 on a private link between the two (docs/SETUP.md, "Two VMs"). Both log

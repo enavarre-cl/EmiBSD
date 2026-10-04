@@ -219,6 +219,8 @@ const SYS_KQUEUE: usize = 269;
 const CLOCK_REALTIME: usize = 0;
 /// `CLOCK_MONOTONIC`.
 const CLOCK_MONOTONIC: usize = 3;
+/// `CLOCK_UPTIME`.
+const CLOCK_UPTIME: usize = 5;
 /// `ITIMER_REAL`.
 const ITIMER_REAL: usize = 0;
 /// `SIGALRM`.
@@ -1029,6 +1031,13 @@ extern "C" fn init_main(sp: *const usize) -> ! {
     } else {
         status = 11;
     }
+    if uptime_monotonic() {
+        if write(1, b"init: uptime monotonic ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 20;
+    }
     // Last: it locks unveil(2) for this process.
     if unveil() {
         if write(1, b"init: unveil ok\n").is_err() {
@@ -1038,6 +1047,33 @@ extern "C" fn init_main(sp: *const usize) -> ! {
         status = 12;
     }
     exit(status)
+}
+
+/// The uptime clock never steps back: `CLOCK_UPTIME` read in a tight loop for about a
+/// second (amd64's i8254 timecounter wrapped every 27 ms and could lose a period when a
+/// windup came late; the TSC and arm64's generic timer cannot).
+fn uptime_monotonic() -> bool {
+    let read = |ts: &mut [i64; 2]| {
+        syscall3(SYS_CLOCK_GETTIME, CLOCK_UPTIME, ts.as_mut_ptr() as usize, 0) == (0, false)
+    };
+    let nsec = |ts: &[i64; 2]| ts[0] * 1_000_000_000 + ts[1];
+    let mut ts = [0i64; 2];
+    if !read(&mut ts) {
+        return false;
+    }
+    let start = nsec(&ts);
+    let mut last = start;
+    while last - start < 1_000_000_000 {
+        if !read(&mut ts) {
+            return false;
+        }
+        let now = nsec(&ts);
+        if now < last {
+            return false;
+        }
+        last = now;
+    }
+    true
 }
 
 /// `unveil(2)` (`vfs_syscalls.c`'s `sys_unveil`, `kern_unveil.c`) before a root file system
