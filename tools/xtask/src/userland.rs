@@ -270,6 +270,13 @@ const PROGRAMS: &[&str] = &[
     "sbin/bioctl",
 ];
 
+/// EmiBSD's own test programs, built after `PROGRAMS` the same way (an OpenBSD-style Makefile,
+/// `build_prog`) from directories of this repository instead of the reference tree: paths
+/// relative to the workspace root. `tools/sr6create` makes a RAID 6 softraid(4) volume, which
+/// OpenBSD's own bioctl(8) refuses to. Their sources are not OpenBSD's, so the licence report
+/// (which lists only the reference tree's files) does not name them.
+const OWN_PROGRAMS: &[&str] = &["tools/sr6create"];
+
 /// Programs whose Makefile embeds their manual page in a generated `manual.c` (`disklabel`'s
 /// and `fdisk`'s `-h`/`help` pager): the Makefile renders `*.8` with mandoc(1), which this
 /// machine may not have, so they are built the way its `.ifdef NOMAN` branch says, with the
@@ -378,6 +385,8 @@ impl Tools {
 
 /// Everything a build step needs.
 struct Ctx<'a> {
+    /// The workspace root (the home of `OWN_PROGRAMS`).
+    root: PathBuf,
     src: PathBuf,
     out: PathBuf,
     sysroot: PathBuf,
@@ -411,6 +420,7 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
     }
     let sysroot = out.join("sysroot");
     let ctx = Ctx {
+        root: root.to_path_buf(),
         src,
         sysroot,
         m: Machine::of(arch),
@@ -448,7 +458,7 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
     }
     let mut built = Vec::new();
     let mut blocked = Vec::new();
-    for dir in PROGRAMS {
+    for dir in PROGRAMS.iter().chain(OWN_PROGRAMS) {
         match build_prog(&ctx, dir)? {
             Linked::Yes(prog, exe, installed) => built.push((prog, exe, installed)),
             Linked::NeedsCompilerRt(symbols) => {
@@ -583,7 +593,11 @@ fn new_host_make(ctx: &Ctx<'_>, dir: &str, objdir: &Path) -> Result<Make> {
 }
 
 fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make> {
-    let curdir = ctx.src.join(dir);
+    let curdir = if OWN_PROGRAMS.contains(&dir) {
+        ctx.root.join(dir)
+    } else {
+        ctx.src.join(dir)
+    };
     let t = ctx.tools;
     let cc = if host {
         t.cc.display().to_string()

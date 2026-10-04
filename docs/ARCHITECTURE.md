@@ -331,6 +331,19 @@ are made in host order), OpenBSD's `<pwd.h>`, `<util.h>`, `<mpool.h>` and `hidde
 clone in a directory searched first, and a `getgrnam("_shadow")` that answers with the building
 user's group (macOS has no such group, and `pwd_mkdb` insists on one).
 
+EmiBSD's own test programs (M10f) are the one thing in the userland build that is not OpenBSD's
+C. `OWN_PROGRAMS` in `userland.rs` lists directories of this repository (`tools/<name>/`, paths
+relative to the workspace root), each with an OpenBSD-style `Makefile` (`PROG`, `BINDIR`,
+`LDSTATIC= -static`, `NOMAN`, `.include <bsd.prog.mk>`) and an ISC-licensed source naming the
+EmiBSD authors. They are built after `PROGRAMS` by the same `build_prog`, with the same
+clang, sysroot, libc and static-PIE link, and installed stripped under `root/` where `BINDIR`
+says; only `make_for` differs, taking the Makefile's directory from the workspace instead of
+the reference tree. The licence report lists reference-tree files only, so they do not appear
+in it. First user: `tools/sr6create` (`/usr/sbin/sr6create`), which creates a softraid(4) RAID 6
+volume through `BIOCCREATERAID`; OpenBSD's bioctl(8) refuses `-c 6` ("unsupported RAID level")
+although `softraid_raid6.c` is in the kernel, and the userland is compiled unmodified, so
+the test program does what bioctl's `bio_createraid()` does for a non-crypto level, for level 6.
+
 ## Deviations from OpenBSD (deliberate)
 
 - One kernel is both `bsd` and `bsd.rd` (M8). OpenBSD builds GENERIC (`config bsd swap

@@ -182,3 +182,19 @@ fn libc_makefile_evaluates() {
     assert!(mk.rule_for("md5hl.c").is_some());
     assert!(mk.rule_for("access.o").is_some());
 }
+
+#[test]
+fn own_programs_have_a_makefile_and_their_source() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for dir in OWN_PROGRAMS {
+        assert!(!PROGRAMS.contains(dir), "{dir} is in both lists");
+        let makefile = fs::read_to_string(root.join(dir).join("Makefile")).unwrap();
+        let prog = makefile
+            .lines()
+            .find_map(|l| l.strip_prefix("PROG="))
+            .unwrap()
+            .trim();
+        assert!(root.join(dir).join(format!("{prog}.c")).is_file(), "{dir}");
+        assert!(makefile.contains("LDSTATIC=\t-static"), "{dir}");
+    }
+}
