@@ -50,10 +50,6 @@
 //! queue `nfs_asyncio` fills with the buffers of read-ahead and write-behind I/O.
 //!
 //! ## Deviations
-//! - `nfsrv3_procs[]` is `nfs_serv.rs`'s `NFSRV3_PROCS` (a table of `NfsrvProc`s). Temporary
-//!   (M10e, until `nfs_serv.rs` is merged): this file holds a copy of the type and a private
-//!   table whose every entry is `shim::nfsrv_unavail`, which answers `EPROCUNAVAIL` like
-//!   `nfsrv_noop`.
 //! - `sys_nfssvc` returns `ENOSYS` after the privilege check without `nfsserver`, as the C
 //!   without `NFSSERVER`; the `NFSSVC_NFSD` argument is copied in only to check that it is
 //!   readable (the C never looks at it again).
@@ -73,9 +69,11 @@ use core::ffi::c_void;
 use core::ptr;
 #[cfg(feature = "nfsserver")]
 use core::ptr::NonNull;
+#[cfg(feature = "nfsserver")]
+use core::sync::atomic::AtomicI32;
 #[cfg(feature = "nfsclient")]
 use core::sync::atomic::AtomicPtr;
-use core::sync::atomic::{AtomicI32, Ordering::Relaxed};
+use core::sync::atomic::Ordering::Relaxed;
 
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_synch::{tsleep_nsec, wakeup};
@@ -119,6 +117,8 @@ use crate::nfs::nfs::{
 };
 #[cfg(feature = "nfsserver")]
 use crate::nfs::nfs::{NFSSVC_ADDSOCK, NFSSVC_NFSD};
+#[cfg(feature = "nfsserver")]
+use crate::nfs::nfs_serv::{self, NfsrvProc};
 #[cfg(feature = "nfsserver")]
 use crate::nfs::nfs_socket::{
     nfs_send, nfs_sndlock, nfs_sndunlock, nfsrv_dorec, nfsrv_rcv, nfsrv_wakenfsd,
@@ -193,13 +193,6 @@ const SLP_INIT: i32 = 0x01;
 #[cfg(feature = "nfsserver")]
 const SLP_WANTINIT: i32 = 0x02;
 
-/// A server procedure of `nfsrv3_procs[]` (`int (*)(struct nfsrv_descript *, struct
-/// nfssvc_sock *, struct proc *, struct mbuf **)`): the type `nfs_serv.rs` declares for its
-/// procedures (temporary copy, see the module's deviations).
-#[cfg(feature = "nfsserver")]
-pub type NfsrvProc =
-    fn(&mut NfsrvDescript, &NfssvcSock, &Proc, &mut Option<&'static Mbuf>) -> Result<(), Errno>;
-
 /// `nfsrv_descript_pl`: the pool of the descriptors of the requests being served
 /// (`nfsrv_dorec` takes them, `nfssvc_nfsd` gives them back).
 #[cfg(feature = "nfsserver")]
@@ -245,45 +238,34 @@ pub fn nfsd_waiting() -> i32 {
     NFSD_WAITING_COUNT.load(Relaxed)
 }
 
-/// `nfsrv3_procs[NFS_NPROCS]`: the server's procedures, indexed by NFS procedure number
-/// (`NFSPROC_NULL`, `NFSPROC_GETATTR`, ..., `NFSPROC_COMMIT`, `NFSPROC_NOOP`). Temporary
-/// (M10e): see the module's deviations.
+/// `nfsrv3_procs[NFS_NPROCS]`: the server procedure of each NFS version 3 procedure number
+/// (`nd_procnum`; `nfs_getreq` maps version 2 numbers onto these), from `nfs_serv.rs`.
 #[cfg(feature = "nfsserver")]
-static NFSRV3_PROCS: [NfsrvProc; NFS_NPROCS] = [shim::nfsrv_unavail; NFS_NPROCS];
-
-/// TEMPORARY (M10e): `nfs_serv.rs` is ported in parallel; the coordinator replaces the table
-/// above with the real one (`nfsrv_null`, `nfsrv_getattr`, `nfsrv_setattr`, `nfsrv_lookup`,
-/// `nfsrv3_access`, `nfsrv_readlink`, `nfsrv_read`, `nfsrv_write`, `nfsrv_create`,
-/// `nfsrv_mkdir`, `nfsrv_symlink`, `nfsrv_mknod`, `nfsrv_remove`, `nfsrv_rmdir`,
-/// `nfsrv_rename`, `nfsrv_link`, `nfsrv_readdir`, `nfsrv_readdirplus`, `nfsrv_statfs`,
-/// `nfsrv_fsinfo`, `nfsrv_pathconf`, `nfsrv_commit`, `nfsrv_noop`) and deletes this module.
-#[cfg(feature = "nfsserver")]
-mod shim {
-    use crate::nfs::nfs::{NfsrvDescript, NfssvcSock};
-    use crate::nfs::nfs_socket::nfs_rephead;
-    use crate::sys::errno::Errno;
-    use crate::sys::mbuf::Mbuf;
-    use crate::sys::proc::Proc;
-
-    /// What `nfsrv_noop` does for an obsolete procedure: reply `EPROCUNAVAIL` (or the
-    /// status already set).
-    pub(super) fn nfsrv_unavail(
-        nd: &mut NfsrvDescript,
-        slp: &NfssvcSock,
-        _procp: &Proc,
-        mrq: &mut Option<&'static Mbuf>,
-    ) -> Result<(), Errno> {
-        let err = if nd.nd_repstat != 0 {
-            nd.nd_repstat
-        } else {
-            Errno::EPROCUNAVAIL.as_i32()
-        };
-        if let Ok((mreq, _mb)) = nfs_rephead(0, nd, Some(slp), err) {
-            *mrq = Some(mreq);
-        }
-        Ok(())
-    }
-}
+pub(crate) static NFSRV3_PROCS: [NfsrvProc; NFS_NPROCS] = [
+    nfs_serv::nfsrv_null,
+    nfs_serv::nfsrv_getattr,
+    nfs_serv::nfsrv_setattr,
+    nfs_serv::nfsrv_lookup,
+    nfs_serv::nfsrv3_access,
+    nfs_serv::nfsrv_readlink,
+    nfs_serv::nfsrv_read,
+    nfs_serv::nfsrv_write,
+    nfs_serv::nfsrv_create,
+    nfs_serv::nfsrv_mkdir,
+    nfs_serv::nfsrv_symlink,
+    nfs_serv::nfsrv_mknod,
+    nfs_serv::nfsrv_remove,
+    nfs_serv::nfsrv_rmdir,
+    nfs_serv::nfsrv_rename,
+    nfs_serv::nfsrv_link,
+    nfs_serv::nfsrv_readdir,
+    nfs_serv::nfsrv_readdirplus,
+    nfs_serv::nfsrv_statfs,
+    nfs_serv::nfsrv_fsinfo,
+    nfs_serv::nfsrv_pathconf,
+    nfs_serv::nfsrv_commit,
+    nfs_serv::nfsrv_noop,
+];
 
 /// `sys_nfssvc(p, v, retval)`: NFS server pseudo system call for the nfsds. Based on the
 /// flag value it either:

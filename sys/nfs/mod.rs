@@ -5,7 +5,7 @@
 //! `xdr_subs` (`xdr_subs.h`), `nfsm_subs` (`nfsm_subs.h`), `nfsnode` (`nfsnode.h`),
 //! `nfsmount` (`nfsmount.h`), `nfsrvcache` (`nfsrvcache.h`), `nfs_var` (`nfs_var.h`).
 //! Files (functions): `nfs_socket`, `nfs_subs`, `nfs_srvsubs`, `nfs_srvcache`, `krpc_subr`
-//! (and `krpc.h`), `nfs_boot`, `nfs_syscalls`; client: `nfs_bio`, `nfs_debug`, `nfs_kq`,
+//! (and `krpc.h`), `nfs_boot`, `nfs_syscalls`; server: `nfs_serv`; client: `nfs_bio`, `nfs_debug`, `nfs_kq`,
 //! `nfs_node`, `nfs_vfsops`, `nfs_vnops`; `nfsdiskless` is a header.
 
 #[cfg(feature = "nfsclient")]
@@ -21,6 +21,8 @@ pub mod nfs_debug;
 pub mod nfs_kq;
 #[cfg(feature = "nfsclient")]
 pub mod nfs_node;
+#[cfg(feature = "nfsserver")]
+pub mod nfs_serv;
 pub mod nfs_socket;
 #[cfg(feature = "nfsserver")]
 pub mod nfs_srvcache;
