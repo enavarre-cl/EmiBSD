@@ -58,6 +58,17 @@ use crate::uvm::uvm_page::{
     PHYS_TO_VM_PAGE, VM_PSTRAT_BIGFIRST, VmPage, uvm_page_physsteal, vm_page_to_phys,
 };
 
+/// The host's `<machine/*.h>` types where generic code names them: amd64's.
+pub mod include {
+    /// `<machine/db_machdep.h>`.
+    pub mod db_machdep {
+        /// `db_expr_t`: expression - signed (`long`).
+        pub type DbExpr = i64;
+        /// `db_addr_t`: an address the debugger works on (`vaddr_t`).
+        pub type DbAddr = usize;
+    }
+}
+
 /// The host implementation of the machine interface.
 pub struct Machine;
 

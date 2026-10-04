@@ -8,6 +8,7 @@
 
 use core::fmt;
 
+pub use crate::arch::current::include::db_machdep::{DbAddr, DbExpr};
 use crate::machine::Machine;
 
 /// The output function `db_stack_trace_print` prints through: `printf` from `db_stack_dump`,

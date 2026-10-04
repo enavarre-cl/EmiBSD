@@ -53,17 +53,20 @@
 //! - The counters are atomics; ddb runs one CPU at a time.
 //! - `db_stack_dump` tells a recursive traceback from a parallel one by `cpu_info`, which
 //!   arrives with M5; with one CPU every second entry is "Faulted in traceback".
-//! - `db_more`'s `q` needs `db_error` (`db_command.c`), reported as unported.
+//! - `db_more`'s `q` calls `db_error(0)`, which cannot unwind out of `db_printf` here
+//!   (`docs/C_TO_RUST.md`, the `db_error` row): it sets [`DB_QUIT`] instead, which drops
+//!   every character `db_putchar` is given until `db_command_loop` clears it before its next
+//!   prompt. The command runs to its end, silently.
 //! - `db_format` returns the formatted bytes as a slice of `buf`; its `#` alternate form is
 //!   Rust's (`0x`, `0o`), which differs from C's `%#lo` (`0`) for octal.
 
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
+use crate::ddb::db_command::db_error;
 use crate::dev::cons::{cngetc, cnputc};
 use crate::kern::subr_prf::{printf, snprintf};
 use crate::machine::Machine;
 use crate::machine::db_machdep::{DbMachdep, db_stack_trace_print};
-use crate::unported;
 
 /// Maximum line.
 pub const DB_MAX_LINE: i32 = 24;
@@ -104,6 +107,9 @@ pub static DB_MAX_LINE_VAR: AtomicI32 = AtomicI32::new(DB_MAX_LINE);
 pub static DB_MAX_WIDTH_VAR: AtomicI32 = AtomicI32::new(DB_MAX_WIDTH);
 /// `db_radix`: output numbers radix.
 pub static DB_RADIX: AtomicI32 = AtomicI32::new(16);
+/// Set by `db_more`'s `q`: the output of the current command is dropped (C's `db_error(0)`
+/// from `db_more`). `db_command_loop` clears it before each prompt.
+pub static DB_QUIT: AtomicBool = AtomicBool::new(false);
 
 /// `NEXT_TAB(i)`: the first tab stop after column `i`.
 fn next_tab(i: i32) -> i32 {
@@ -155,17 +161,23 @@ fn db_more() {
         cnputc(i32::from(p));
     }
     if quit_output {
-        // db_error(0): the longjmp back to the command loop (db_command.c).
-        let _ = unported!("db_error (db_more)");
+        let _ = db_error(None);
+        DB_QUIT.store(true, Ordering::Relaxed);
     }
 }
 
 /// `db_putchar`: prints `c`, keeping track of the column and the line, paginating every
 /// `db_max_line` lines and wrapping at `db_max_width`.
 pub fn db_putchar(c: i32) {
+    if DB_QUIT.load(Ordering::Relaxed) {
+        return;
+    }
     let max_line = DB_MAX_LINE_VAR.load(Ordering::Relaxed);
     if max_line >= DB_MIN_MAX_LINE && DB_OUTPUT_LINE.load(Ordering::Relaxed) >= max_line - 1 {
         db_more();
+        if DB_QUIT.load(Ordering::Relaxed) {
+            return;
+        }
     }
 
     if c > i32::from(b' ') && c <= i32::from(b'~') {
@@ -289,6 +301,7 @@ mod tests {
 
     #[test]
     fn tabs_and_columns() {
+        let _g = crate::ddb::db_lex::db_test_lock();
         DB_TAB_STOP_WIDTH.store(8, Ordering::Relaxed);
         assert_eq!(next_tab(0), 8);
         assert_eq!(next_tab(7), 8);
@@ -312,6 +325,7 @@ mod tests {
 
     #[test]
     fn format_variants() {
+        let _g = crate::ddb::db_lex::db_test_lock();
         let mut buf = [0u8; DB_FORMAT_BUF_SIZE];
         DB_RADIX.store(16, Ordering::Relaxed);
         assert_eq!(db_format(&mut buf, 255, DB_FORMAT_R, false, 0), b"ff");

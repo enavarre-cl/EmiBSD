@@ -649,7 +649,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d6abed2745b54d54969f09fa35f82a95fdfea32b"
 deps = ["sys/ddb/db_output.h", "sys/dev/cons.h", "sys/kern/subr_prf.c"]
-notes = "M2: db_force_whitespace, db_more, db_putchar, db_print_position, db_end_line, db_format, db_stack_dump, db_resize; counters are atomics; db_stack_dump cannot tell a parallel traceback from a recursive one without cpu_info (M5); db_more's q needs db_error (reported unported); db_format's # alternate form is Rust's"
+notes = "M2: db_force_whitespace, db_more, db_putchar, db_print_position, db_end_line, db_format, db_stack_dump, db_resize; counters are atomics; db_stack_dump cannot tell a parallel traceback from a recursive one without cpu_info (M5); db_more's q calls db_error(0) and sets DB_QUIT, which silences output until the next prompt (no longjmp); db_format's # alternate form is Rust's"
 
 [[file]]
 c = "sys/ddb/db_usrreq.c"
@@ -670,6 +670,57 @@ c = "sys/ddb/db_sym.c"
 rust = "sys/ddb/db_sym.rs"
 status = "todo"
 notes = "in-kernel symbol table for traces; cargo xtask symbolize does it offline until then"
+
+[[file]]
+c = "sys/ddb/db_var.h"
+rust = "sys/ddb/db_var.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6402ef2df6493f4a404000ca8cd7430a22099ab4"
+notes = "M11c: DB_HISTORY_SIZE, DBCTL_*, CTL_DDB_NAMES (a Ctlname array); the extern tunables live in the files that define them (db_output.rs, subr_prf.rs, db_usrreq.rs)"
+
+[[file]]
+c = "sys/ddb/db_lex.h"
+rust = "sys/ddb/db_lex.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3ab70ae3618ab99c6b24974dd8ecfe0278dbcc2e"
+notes = "license: Mach notice, kept whole; M11c: the t* token values with their C names (#[allow(non_upper_case_globals)]), TOK_STRING_SIZE"
+
+[[file]]
+c = "sys/ddb/db_lex.c"
+rust = "sys/ddb/db_lex.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "61a9a6274d81bf2dc4f6787a885c5395f1958a8a"
+deps = ["sys/ddb/db_lex.h", "sys/ddb/db_input.c", "sys/ddb/db_output.c"]
+notes = "license: Mach notice, kept whole; M11c: the lexer state is one StaticCell, the token is read through db_tok_string()/db_tok_number(); db_error returns a DbError that callers propagate (DbResult) instead of longjmp"
+
+[[file]]
+c = "sys/ddb/db_input.c"
+rust = "sys/ddb/db_input.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "bb9335a69dc81dd241dd6914b770c338e4417169"
+deps = ["sys/ddb/db_var.h", "sys/ddb/db_output.c", "sys/dev/cons.c"]
+notes = "license: Mach notice, kept whole; M11c: db_readline with every editing key and the history ring (indices, one StaticCell); the NUL after a full line is not written one byte past the buffer as C does; db_check_interrupt is not in the pinned file"
+
+[[file]]
+c = "sys/ddb/db_command.h"
+rust = "sys/ddb/db_command.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "dee1538a0266c3dc45b8fd4d19bda2e3fba4bc87"
+notes = "license: Mach notice, kept whole; M11c: struct db_command and CS_* (with the command loop)"
+
+[[file]]
+c = "sys/ddb/db_command.c"
+rust = "sys/ddb/db_command.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a0aeb5e33e22ec3fac424372352e0fc015fd959a"
+deps = ["sys/ddb/db_command.h", "sys/ddb/db_lex.c"]
+notes = "license: Mach notice, kept whole; M11c: db_error returns DbError (no db_recover longjmp) and db_skip_to_eol so far"
 
 # amd64: what the console, delay(9), boot(9) and the trace need
 

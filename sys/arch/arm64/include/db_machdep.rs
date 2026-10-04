@@ -45,6 +45,13 @@
 use crate::arch::arm64::include::armreg::{EXCP_BRK, EXCP_WATCHPT_EL1, INSN_SIZE, PSR_SS};
 use crate::arch::arm64::include::frame::Trapframe;
 
+/// `db_expr_t`: expression - signed (`long`).
+pub type DbExpr = i64;
+
+/// `db_addr_t`: an address the debugger works on (`vaddr_t`; the header has no `db_addr_t`
+/// any more, ddb uses `vaddr_t`).
+pub type DbAddr = usize;
+
 /// `db_regs_t`: the register state the debugger works on, a trap frame.
 pub type DbRegs = Trapframe;
 
