@@ -49,10 +49,6 @@
 //! - `unveil_add_vnode` re-checks the covers of the other slots; a slot whose vnode
 //!   `unveil_removevnode` zapped has no vnode to walk up from (the C would follow NULL) and
 //!   gets cover -1.
-//! - The checks consult the pledge state that exists: `ni_pledge == PLEDGE_UNVEIL` (the
-//!   lookup of `unveil(2)` itself) and `BYPASSUNVEIL`. The `BYPASSUNVEIL` that `pledge_namei`
-//!   sets for a pledged process's whitelisted paths is not set, because `pledge_namei` is
-//!   reported (`kern_pledge.c`); no process is pledged yet (`PS_PLEDGE` is never set).
 
 use core::cell::Cell;
 use core::cmp::Ordering as CmpOrdering;

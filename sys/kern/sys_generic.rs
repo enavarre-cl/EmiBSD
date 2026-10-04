@@ -61,8 +61,7 @@
 //! - `dofilereadv`/`dofilewritev` take a `Uio` whose iovecs borrow the caller's array; the
 //!   positioned checks (`FO_POSITION`) answer `ESPIPE` for every file that is not a vnode
 //!   (and for fifos and ttys), as in C.
-//! - `sys_ioctl`'s `pledge_ioctl` is reported where the C makes it: only a pledged process
-//!   (none can be yet) reaches it. The argument buffer is a byte slice of `max(IOCPARM_LEN(com), sizeof(caddr_t))`
+//! - `sys_ioctl`'s argument buffer is a byte slice of `max(IOCPARM_LEN(com), sizeof(caddr_t))`
 //!   bytes, from the 128-byte stack buffer or `malloc(M_IOCTLOPS)`.
 //! - `KTRACE` is not configured.
 //! - `select(2)`/`poll(2)` are OpenBSD's, built on the thread's poll kqueue
@@ -83,6 +82,7 @@ use crate::kern::kern_event::{
 };
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
+use crate::kern::kern_pledge::pledge_ioctl;
 use crate::kern::kern_sig::dosigsuspend;
 use crate::kern::kern_sig::ptsignal;
 use crate::kern::kern_synch::{nowake, tsleep_nsec};
@@ -109,7 +109,7 @@ use crate::sys::poll::{
     INFTIM, POLL_NOHUP, POLLERR, POLLHUP, POLLIN, POLLNVAL, POLLOUT, POLLPRI, POLLRDBAND,
     POLLRDNORM, POLLWRNORM, Pollfd,
 };
-use crate::sys::proc::{PS_PLEDGE, Proc};
+use crate::sys::proc::Proc;
 use crate::sys::resource::RLIMIT_NOFILE;
 use crate::sys::resourcevar::lim_cur;
 use crate::sys::select::{FdMask, NFDBITS, fd_set, howmany};
@@ -129,7 +129,6 @@ use crate::sys::time::{Timespec, Timeval, timespec_to_nsec, timeval_to_timespec}
 use crate::sys::types::{Off, Register};
 use crate::sys::uio::{Iovec, UIO_SMALLIOV, Uio, UioRw, UioSeg};
 use crate::sys::vnode::{VCHR, VFIFO, VISTTY};
-use crate::unported;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::mem::offset_of;
@@ -449,9 +448,8 @@ pub fn sys_ioctl(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
             }
         }
 
-        // pledge_ioctl(p, com, fp): kern_pledge.c.
-        if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE != 0 {
-            break 'out Err(unported!("pledge_ioctl (kern_pledge.c)"));
+        if let Err(error) = pledge_ioctl(p, com, fp) {
+            break 'out Err(error);
         }
 
         if com == FIONCLEX || com == FIOCLEX {

@@ -68,6 +68,7 @@ pub mod sockio;
 pub mod softintr;
 pub mod specdev;
 pub mod stat;
+pub mod swap;
 pub mod syscall;
 pub mod syscall_mi;
 pub mod syscallargs;

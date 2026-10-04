@@ -57,9 +57,8 @@
 //! (see the deviations). `filt_sig*` (the `EVFILT_SIGNAL` filter) are `kern_event.c`'s.
 //!
 //! ## Deviations
-//! - Calls into subsystems that are not ported are reported with `unported!`:
-//!   `pledge_kill` (only when `PS_PLEDGE` is set, which nothing sets yet), and in `coredump`
-//!   the filesystem half: `vn_open` of the core file and everything after it
+//! - Calls into subsystems that are not ported are reported with `unported!`: in
+//!   `coredump`, the filesystem half: `vn_open` of the core file and everything after it
 //!   (`VOP_GETATTR`/`VOP_SETATTR`, `coredump_elf`, `vn_close`) is reported and the dump fails
 //!   with `ENOSYS`, so `sigexit` never sets `WCOREFLAG`; `coredump_write`'s `vn_rdwr` is
 //!   reported likewise. `coredump` builds the core file name in a stack buffer instead of a
@@ -87,6 +86,7 @@ use crate::kern::kern_event::knote_locked;
 use crate::kern::kern_exit::exit1;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
+use crate::kern::kern_pledge::pledge_kill;
 use crate::kern::kern_proc::{ALLPROCESS, pgfind, prfind, tfind_user, zombiefind};
 use crate::kern::kern_prot::{crdup, crfree, crhold, suser};
 use crate::kern::kern_synch::{msleep_nsec, nowake, tsleep_nsec, unsleep, wakeup};
@@ -109,10 +109,10 @@ use crate::sys::pool::{PR_WAITOK, Pool};
 use crate::sys::proc::{
     EXIT_NORMAL, EXIT_THREAD_NOCHECK, P_ALRMPEND, P_INSCHED, P_PROFPEND, P_SIGSUSPEND, P_SINTR,
     P_SUSPSIG, P_SUSPSINGLE, P_TRACESINGLE, P_WEXIT, PS_CONTINUED, PS_CONTROLT, PS_COREDUMP,
-    PS_EXITING, PS_NOBROADCASTKILL, PS_PLEDGE, PS_PPWAIT, PS_SINGLEEXIT, PS_SINGLEUNWIND,
-    PS_STOPPED, PS_STOPPING, PS_SUGID, PS_SYSTEM, PS_TRACED, PS_TRAPPED, PS_WAITED, PS_WAITEVENT,
-    Pgrp, Proc, Process, SDEAD, SIDL, SINGLE_DEEP, SINGLE_EXIT, SINGLE_MASK, SINGLE_SUSPEND,
-    SINGLE_UNWIND, SONPROC, SRUN, SSLEEP, SSTOP, p_hassibling,
+    PS_EXITING, PS_NOBROADCASTKILL, PS_PPWAIT, PS_SINGLEEXIT, PS_SINGLEUNWIND, PS_STOPPED,
+    PS_STOPPING, PS_SUGID, PS_SYSTEM, PS_TRACED, PS_TRAPPED, PS_WAITED, PS_WAITEVENT, Pgrp, Proc,
+    Process, SDEAD, SIDL, SINGLE_DEEP, SINGLE_EXIT, SINGLE_MASK, SINGLE_SUSPEND, SINGLE_UNWIND,
+    SONPROC, SRUN, SSLEEP, SSTOP, p_hassibling,
 };
 use crate::sys::resource::RLIMIT_CORE;
 use crate::sys::resourcevar::lim_cur;
@@ -617,10 +617,7 @@ pub fn sys_kill(cp: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
     let pid = uap.pid.get();
     let signum = uap.signum.get();
 
-    // pledge_kill(cp, pid): a pledged process may only signal itself.
-    if cp.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE != 0 {
-        let _ = unported!("sys_kill: pledge_kill (kern_pledge.c)");
-    }
+    pledge_kill(cp, pid)?;
     if (signum as u32) >= NSIG as u32 {
         return Err(Errno::EINVAL);
     }

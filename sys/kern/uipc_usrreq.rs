@@ -69,8 +69,7 @@
 //!   cannot be refused without leaking the files in flight, so its failure panics.
 //! - `unp_internalize` keeps the message in a stack buffer (at most `MLEN` bytes) while it
 //!   moves it into a cluster, where the C uses `malloc(M_TEMP)`.
-//! - `pledge_recvfd`, `pledge_sendfd` (`kern_pledge.c`'s enforcement is not ported) are
-//!   reported for a pledged process; `NKCOV` is 0 (no kcov descriptors).
+//! - `NKCOV` is 0 (no kcov descriptors).
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::ffi::c_void;
@@ -80,9 +79,11 @@ use core::slice;
 use core::sync::atomic::{AtomicI32, AtomicU64, Ordering};
 
 use crate::conf::param::MAXFILES;
+use crate::kassert;
 use crate::kern::kern_descrip::{closef, fd_getfile, fdalloc, fdexpand, fdremove};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
+use crate::kern::kern_pledge::{pledge_recvfd, pledge_sendfd};
 use crate::kern::kern_rwlock::{rw_assert_wrlock, rw_enter_write, rw_exit_write};
 use crate::kern::kern_synch::{refcnt_finalize, refcnt_init, refcnt_rele_wake, refcnt_take};
 use crate::kern::kern_sysctl::{sysctl_bounded_arr, sysctl_rdint};
@@ -126,7 +127,7 @@ use crate::sys::namei::{
 use crate::sys::param::NODEV;
 use crate::sys::pledge::PLEDGE_UNIX;
 use crate::sys::pool::{PR_NOWAIT, PR_WAITOK, PR_ZERO, Pool};
-use crate::sys::proc::{PS_PLEDGE, Proc};
+use crate::sys::proc::Proc;
 use crate::sys::protosw::{PR_CONNREQUIRED, PrUsrreqs};
 use crate::sys::queue::{ListHead, SlistEntry, SlistHead};
 use crate::sys::rwlock::Rwlock;
@@ -147,7 +148,6 @@ use crate::sys::unpcb::{
     sotounpcb,
 };
 use crate::sys::vnode::{VBLK, VDIR, VSOCK, VWRITE, Vattr};
-use crate::{kassert, unported};
 
 /// `PIPSIZ`: both send and receive buffers are allocated `PIPSIZ` bytes of buffering for
 /// stream sockets, although the total for sender and receiver is actually only `PIPSIZ`.
@@ -351,24 +351,6 @@ fn cmsg_data_of(m: &Mbuf) -> *mut u8 {
 /// The `cmsg_len` of a header as the `size_t`s the C computes with.
 fn cmsg_len_of(cm: &Cmsghdr) -> usize {
     cm.cmsg_len as usize
-}
-
-/// `pledge_recvfd(p, fp)` (`kern_pledge.c`, not ported): only a pledged process has anything
-/// to check.
-fn pledge_recvfd(p: &Proc, _fp: &File) -> Result<(), Errno> {
-    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE == 0 {
-        return Ok(());
-    }
-    Err(unported!("pledge_recvfd (kern_pledge.c)"))
-}
-
-/// `pledge_sendfd(p, fp)` (`kern_pledge.c`, not ported): only a pledged process has anything
-/// to check.
-fn pledge_sendfd(p: &Proc, _fp: &File) -> Result<(), Errno> {
-    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE == 0 {
-        return Ok(());
-    }
-    Err(unported!("pledge_sendfd (kern_pledge.c)"))
 }
 
 /// `unp_init`: the control block pool.

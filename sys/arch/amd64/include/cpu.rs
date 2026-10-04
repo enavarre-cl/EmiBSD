@@ -256,6 +256,9 @@ pub const CPUF_VMM: u32 = 0x20000;
 /// `MAXCPUS`: without `MULTIPROCESSOR`, one.
 pub const MAXCPUS: u32 = 1;
 
+/// `CPU_CHR2BLK`: convert chr maj into blk one (a `CTL_MACHDEP` name).
+pub const CPU_CHR2BLK: i32 = 4;
+
 /// `CI_DDB_RUNNING`.
 pub const CI_DDB_RUNNING: i32 = 0;
 /// `CI_DDB_SHOULDSTOP`.

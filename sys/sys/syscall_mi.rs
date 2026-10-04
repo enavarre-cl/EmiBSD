@@ -46,12 +46,13 @@
 //!   (`ps_libcpin`) names for its number, or be `sigreturn` from the signal trampoline;
 //!   anything else gets `SIGABRT` (`sigabort`). Its message goes to the console with
 //!   `printf` where the C's `uprintf` writes to the process's terminal (no tty layer yet).
-//! - `mi_syscall` reports the `MAP_STACK` check (`uvm_map_inentry`, with the user map) and
-//!   the pledge check of a pledged process (`kern_pledge.c`); `KTRACE`, `SYSCALL_DEBUG`,
-//!   dt(4) and the kernel lock (`MULTIPROCESSOR`) are not configured.
+//! - `mi_syscall` reports the `MAP_STACK` check (`uvm_map_inentry`, with the user map);
+//!   `KTRACE`, `SYSCALL_DEBUG`, dt(4) and the kernel lock (`MULTIPROCESSOR`) are not
+//!   configured.
 
 use core::sync::atomic::Ordering;
 
+use crate::kern::kern_pledge::{pledge_fail, pledge_syscall};
 use crate::kern::kern_sig::{sigabort, single_thread_set, userret};
 use crate::kern::sched_bsd::preempt;
 use crate::kern::subr_prf::Str;
@@ -197,9 +198,11 @@ pub fn mi_syscall(
 
     pin_check(p, code)?;
 
-    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE != 0 {
-        // pledge_syscall / pledge_fail: kern_pledge.c.
-        let _ = unported!("mi_syscall: pledge_syscall (kern_pledge.c)");
+    let pledged = p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE != 0;
+    let mut tval = 0;
+    if pledged && let Err(error) = pledge_syscall(p, code as i32, &mut tval) {
+        // KERNEL_LOCK()/KERNEL_UNLOCK(): nothing without MULTIPROCESSOR.
+        return Err(pledge_fail(p, error, tval));
     }
 
     (callp.sy_call)(p, argp, retval)

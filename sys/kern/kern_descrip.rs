@@ -68,9 +68,7 @@
 //! - `find_next_zero` reads the words past the end of a bitmap as full, where the C reads
 //!   past the array; the C rejects whatever it finds there (`i < last`), so the result is
 //!   the same.
-//! - Not here yet, each reported with `unported!` where the C calls it: the
-//!   `pledge_fcntl`/`pledge_flock` checks (`kern_pledge.c`; only a process with
-//!   `PS_PLEDGE`, which none can have yet, reaches them). The vnode paths (`VOP_ADVLOCK` of the record locks, `flock` and `closef`,
+//! - The vnode paths (`VOP_ADVLOCK` of the record locks, `flock` and `closef`,
 //!   `VOP_PATHCONF`, `VISTTY` for `F_ISATTY`, `vref`/`vrele` of `fd_cdir`/`fd_rdir`) are
 //!   the vfs core's (`vfs_vops.rs`, `vfs_subr.rs`). `F_ISATTY` answers 0/`ENOTTY` for every
 //!   file that is not a vnode, as in C, so the console stand-in is not a tty to `isatty(3)`.
@@ -85,6 +83,7 @@ use crate::kassert;
 use crate::kern::kern_event::knote_fdclose;
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_malloc::{free, mallocarray};
+use crate::kern::kern_pledge::{pledge_fcntl, pledge_flock};
 use crate::kern::kern_prot::{crfree, crhold, suser};
 use crate::kern::kern_rwlock::rw_init;
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
@@ -129,7 +128,6 @@ use crate::sys::systm::{SysArgs, sysargs};
 use crate::sys::types::{Dev, Register, minor};
 use crate::sys::unistd::{_PC_PIPE_BUF, SEEK_CUR, SEEK_SET};
 use crate::sys::vnode::VISTTY;
-use crate::unported;
 
 /// `DUPF_CLOEXEC`.
 const DUPF_CLOEXEC: i32 = 0x01;
@@ -530,10 +528,7 @@ pub fn sys_fcntl(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<()
     let fdp = p.fd();
     let mut flg = F_POSIX;
 
-    // pledge_fcntl(p, cmd): kern_pledge.c (see the module's deviations).
-    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE != 0 {
-        return Err(unported!("pledge_fcntl (kern_pledge.c)"));
-    }
+    pledge_fcntl(p, cmd)?;
 
     'restart: loop {
         let Some(fp) = fd_getfile(fdp, fd) else {
@@ -660,9 +655,8 @@ pub fn sys_fcntl(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<()
                         flg |= F_WAIT;
                     }
 
-                    // pledge_flock(p): see the module's deviations.
-                    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE != 0 {
-                        break 'out Err(unported!("pledge_flock (kern_pledge.c)"));
+                    if let Err(error) = pledge_flock(p) {
+                        break 'out Err(error);
                     }
 
                     if fp.f_type.get() != DTYPE_VNODE {
@@ -712,9 +706,8 @@ pub fn sys_fcntl(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<()
                 }
 
                 F_GETLK => {
-                    // pledge_flock(p): see the module's deviations.
-                    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE != 0 {
-                        break 'out Err(unported!("pledge_flock (kern_pledge.c)"));
+                    if let Err(error) = pledge_flock(p) {
+                        break 'out Err(error);
                     }
 
                     if fp.f_type.get() != DTYPE_VNODE {

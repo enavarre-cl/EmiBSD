@@ -56,16 +56,16 @@
 //!   panics first when it cannot mount root).
 //! - `namei_pool` cannot sleep yet (`subr_pool.rs`): when it is empty `namei` fails with
 //!   `ENOMEM` instead of waiting in `pool_get(PR_WAITOK)`.
-//! - `pledge_namei` and `checkzoneinfopath` (`kern_pledge.c`) are reported for a pledged
-//!   process, which none can be yet, so they never set `BYPASSUNVEIL`; the `unveil_*` hooks
-//!   are `kern_unveil.rs`'s. `KTRACE` is not configured; `NAMEI_DIAGNOSTIC` neither.
+//! - `pledge_namei` and `checkzoneinfopath` are `kern_pledge.rs`'s and take the pathname
+//!   without its NUL; the `unveil_*` hooks are `kern_unveil.rs`'s. `KTRACE` is not
+//!   configured; `NAMEI_DIAGNOSTIC` neither.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::slice;
-use core::sync::atomic::Ordering;
 
 use crate::kern::kern_descrip::fd_getfile;
+use crate::kern::kern_pledge::{checkzoneinfopath, pledge_namei};
 use crate::kern::kern_unveil::{unveil_check_component, unveil_check_final, unveil_start_relative};
 use crate::kern::subr_pool::{pool_get, pool_put};
 use crate::kern::vfs_init::{NAMEI_POOL, rootvnode};
@@ -86,11 +86,10 @@ use crate::sys::namei::{
 use crate::sys::param::MAXPATHLEN;
 use crate::sys::pledge::PLEDGE_UNVEIL;
 use crate::sys::pool::PR_WAITOK;
-use crate::sys::proc::{PS_COREDUMP, PS_PLEDGE, Proc};
+use crate::sys::proc::Proc;
 use crate::sys::syslimits::{NAME_MAX, SYMLOOP_MAX};
 use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
 use crate::sys::vnode::{VDIR, VLNK, VROOT, Vnode};
-use crate::unported;
 
 /// `component_push(cnp, component, len)`: appends `/component` to the realpath buffer; false
 /// when it would not fit.
@@ -185,20 +184,10 @@ pub fn ndinit<'a>(op: u64, flags: u64, namep: NiDirp<'a>, p: &Proc) -> Nameidata
     ndinitat(op, flags, AT_FDCWD, namep, p)
 }
 
-/// `pledge_namei(p, ni, path)`: `kern_pledge.c` is not ported; only a pledged process has
-/// anything to check, and none can be pledged yet.
-fn pledge_namei(p: &Proc, _ndp: &Nameidata<'_>) -> Result<(), Errno> {
-    let flags = p.process().ps_flags.load(Ordering::Relaxed);
-    if flags & PS_PLEDGE == 0 || flags & PS_COREDUMP != 0 {
-        return Ok(());
-    }
-    Err(unported!("pledge_namei (kern_pledge.c)"))
-}
-
-/// `checkzoneinfopath(path)` (`kern_pledge.c`, not ported): only `__pledge_open` of a pledged
-/// process sets `BPU_LOCALTIME`.
-fn checkzoneinfopath(_path: &[u8]) -> Result<(), Errno> {
-    Err(unported!("checkzoneinfopath (kern_pledge.c)"))
+/// The pathname in `buf` up to its NUL.
+fn pn_str(buf: &[u8]) -> &[u8] {
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    &buf[..len]
 }
 
 /// Gives the pathname buffer back and fails the lookup (`fail:` in C).
@@ -313,7 +302,7 @@ pub fn namei(ndp: &mut Nameidata<'_>) -> Result<(), Errno> {
 
     if ndp.ni_cnd.cn_flags & KERNELPATH != 0 {
         ndp.ni_cnd.cn_flags |= BYPASSUNVEIL;
-    } else if let Err(e) = pledge_namei(p, ndp) {
+    } else if let Err(e) = pledge_namei(p, ndp, pn_str(pnbuf_ref(&ndp.ni_cnd))) {
         return namei_fail(ndp, e);
     }
 
@@ -463,7 +452,7 @@ pub fn namei(ndp: &mut Nameidata<'_>) -> Result<(), Errno> {
         if ndp.ni_cnd.cn_flags & BPU_LOCALTIME != 0 {
             // /etc/localtime can be a symbolic link but must point into /usr/share/zoneinfo/
             // without ..
-            if checkzoneinfopath(pn).is_err() {
+            if !checkzoneinfopath(pn_str(pn)) {
                 break Errno::EACCES;
             }
             ndp.ni_cnd.cn_flags &= !BPU_LOCALTIME;

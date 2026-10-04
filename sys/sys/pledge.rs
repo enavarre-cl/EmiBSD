@@ -26,8 +26,7 @@
 //! ## Deviations
 //! - `pledgenames[]` is a slice without the `{ 0, NULL }` terminator; it is always compiled
 //!   (the C hides it behind `PLEDGENAMES`).
-//! - The prototypes belong to `kern_pledge.c`, which is not ported: the callers report a
-//!   pledged process with `unported!` (no process can be pledged before `sys_pledge`).
+//! - The prototypes are the functions of `kern_pledge.rs`.
 
 /// `PLEDGE_ALWAYS`.
 pub const PLEDGE_ALWAYS: u64 = 0xffff_ffff_ffff_ffff;

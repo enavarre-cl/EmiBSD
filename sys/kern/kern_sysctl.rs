@@ -84,8 +84,6 @@
 //!   zero), `MULTIPROCESSOR` (`p_cpuid` stays `KI_NOCPU`). `SMALL_KERNEL` is not set.
 //! - `KERNEL_LOCK` is not taken: one CPU and no kernel lock yet. `log_mtx` does not exist
 //!   (`subr_log.rs`), so the message buffer header is read without it.
-//! - `pledge_sysctl` (`kern_pledge.c`) is its first test: an unpledged process passes; a
-//!   pledged one cannot exist yet and would be reported.
 //! - `kern.file`: `fill_file` leaves the TCP members of `kinfo_file` (`t_state`, the
 //!   windows) zero and reports `struct tcpcb` (`tcp_usrreq.c`) if a TCP socket ever shows
 //!   up (none can be created yet); an `AF_INET6` socket cannot exist (`INET6` is not
@@ -130,6 +128,7 @@ use crate::kern::kern_event::fp_kqueue;
 use crate::kern::kern_fork::{FORKSTAT, NPROCESSES, NTHREADS};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave, pc_cons_enter, pc_cons_leave};
 use crate::kern::kern_malloc::{free, malloc, mallocarray, sysctl_malloc};
+use crate::kern::kern_pledge::pledge_sysctl;
 use crate::kern::kern_proc::{ALLPROCESS, ZOMBPROCESS, prfind};
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_resource::{calctsru, tuagg_get_proc, tuagg_get_process};
@@ -426,15 +425,6 @@ pub fn sysctl_vsunlock(addr: usize, len: usize) {
     }
     // KERNEL_UNLOCK()
     rw_exit_write(&SYSCTL_LOCK);
-}
-
-/// `pledge_sysctl` (`kern_pledge.c`): see the module's deviations.
-fn pledge_sysctl(p: &Proc, mib: &[i32], new: usize) -> Result<(), Errno> {
-    let _ = (mib, new);
-    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE == 0 {
-        return Ok(());
-    }
-    Err(unported!("pledge_sysctl (kern_pledge.c)"))
 }
 
 /// `sysctl(2)`: reads and writes the variable `name` names. `old` (with `*oldlenp` bytes)

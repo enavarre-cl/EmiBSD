@@ -59,6 +59,8 @@ impl Cpu for Machine {
     type CpuInfo = include::cpu::CpuInfo;
     type ClockFrame = include::cpu::Clockframe;
     const MAXCPUS: u32 = include::cpu::MAXCPUS;
+    const CPU_ID_AA64ISAR0: Option<i32> = Some(include::cpu::CPU_ID_AA64ISAR0);
+    const CPU_ID_AA64ISAR1: Option<i32> = Some(include::cpu::CPU_ID_AA64ISAR1);
 
     unsafe fn early_init(boot: &BootInfo) -> Result<(), &'static str> {
         // SAFETY: forwarded; `_start` calls this once with the machine as Limine left it.

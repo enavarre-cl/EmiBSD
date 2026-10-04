@@ -57,9 +57,6 @@
 //!   (`statfs_mnt`); `mnt_stat` is a `Cell` (`sys/mount.rs`).
 //! - `getvnode` returns the file instead of filling `*fpp`; `dorenameat`'s `error = -1` ("the
 //!   same file: nothing to do") is a flag.
-//! - Not here yet, reported with `unported!`: `pledge_flock`/`pledge_chown` (`kern_pledge.c`,
-//!   only for a pledged process), the device switch of `sys_revoke` (`conf.c`, through
-//!   `spec_vnops.rs`).
 //! - `sys_unveil`'s body after `single_thread_set` is `unveil_path`, so that every exit
 //!   reaches `single_thread_clear`; the pathname buffer is a `NameiBuf` given back on drop.
 //! - `option FIFO` is not configured (`miscfs/fifofs` is not ported): `mkfifo` answers
@@ -74,6 +71,7 @@ use core::sync::atomic::Ordering;
 
 use crate::kern::kern_descrip::{closef, dupfdopen, falloc, fd_getfile, fdinsert, fdremove};
 use crate::kern::kern_malloc::{free, malloc};
+use crate::kern::kern_pledge::{pledge_chown, pledge_flock};
 use crate::kern::kern_proc::ALLPROCESS;
 use crate::kern::kern_prot::{crdup, crfree, suser};
 use crate::kern::kern_resource::lim_cur_proc;
@@ -149,7 +147,6 @@ use crate::sys::vnode::{
     GETCWD_CHECK_ACCESS, REVOKEALL, V_SAVE, VA_UTIMES_CHANGE, VA_UTIMES_NULL, VALIASED, VBAD, VBLK,
     VCHR, VDIR, VEXEC, VNOVAL, VREAD, VROOT, VSGID, VSUID, VWRITE, Vattr, Vnode,
 };
-use crate::unported;
 use crate::uvm::uvm_vnode::{uvm_vnp_sync, uvm_vnp_uncache};
 
 /// The user address of a pathname argument.
@@ -163,24 +160,6 @@ fn ndvp(vp: Option<&'static Vnode>) -> &'static Vnode {
         Some(vp) => vp,
         None => panic(format_args!("vfs_syscalls: namei returned no vnode")),
     }
-}
-
-/// `pledge_flock(p)` (`kern_pledge.c`, not ported): only a pledged process has anything to
-/// check.
-fn pledge_flock(p: &Proc) -> Result<(), Errno> {
-    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE == 0 {
-        return Ok(());
-    }
-    Err(unported!("pledge_flock (kern_pledge.c)"))
-}
-
-/// `pledge_chown(p, uid, gid)` (`kern_pledge.c`, not ported): only a pledged process has
-/// anything to check.
-fn pledge_chown(p: &Proc, _uid: Uid, _gid: Gid) -> Result<(), Errno> {
-    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE == 0 {
-        return Ok(());
-    }
-    Err(unported!("pledge_chown (kern_pledge.c)"))
 }
 
 /// `VFS_STATFS(mp, &mp->mnt_stat, p)`: refreshes the mount's statistics (see the module's

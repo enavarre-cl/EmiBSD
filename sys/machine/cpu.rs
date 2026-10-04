@@ -57,6 +57,21 @@ pub trait Cpu {
     /// `MAXCPUS`: the most CPUs this kernel supports.
     const MAXCPUS: u32;
 
+    /// `CPU_CHR2BLK` (`<machine/cpu.h>`): the `machdep` sysctl converting a character major
+    /// into a block one, where the machine defines it (`pledge_sysctl`'s `#ifdef`).
+    const CPU_CHR2BLK: Option<i32> = None;
+
+    /// `CPU_SSE` (`<machine/cpu.h>`): the `machdep` sysctl i386's libm reads, where defined.
+    const CPU_SSE: Option<i32> = None;
+
+    /// `CPU_ID_AA64ISAR0` (`<machine/cpu.h>`): arm64's instruction set attribute register 0
+    /// sysctl, where defined.
+    const CPU_ID_AA64ISAR0: Option<i32> = None;
+
+    /// `CPU_ID_AA64ISAR1` (`<machine/cpu.h>`): arm64's instruction set attribute register 1
+    /// sysctl, where defined.
+    const CPU_ID_AA64ISAR1: Option<i32> = None;
+
     /// Earliest machine setup, called once by the boot glue before anything prints: OpenBSD's
     /// `init_x86_64` / `initarm`, as far as they are ported. It brings up the message buffer and
     /// the console (`consinit`), so everything after it can `printf`. The error is a fixed
@@ -234,6 +249,18 @@ pub type ClockFrame = <Machine as Cpu>::ClockFrame;
 
 /// `MAXCPUS` on the selected machine.
 pub const MAXCPUS: u32 = <Machine as Cpu>::MAXCPUS;
+
+/// `CPU_CHR2BLK` on the selected machine (`None`: not defined there).
+pub const CPU_CHR2BLK: Option<i32> = <Machine as Cpu>::CPU_CHR2BLK;
+
+/// `CPU_SSE` on the selected machine (`None`: not defined there).
+pub const CPU_SSE: Option<i32> = <Machine as Cpu>::CPU_SSE;
+
+/// `CPU_ID_AA64ISAR0` on the selected machine (`None`: not defined there).
+pub const CPU_ID_AA64ISAR0: Option<i32> = <Machine as Cpu>::CPU_ID_AA64ISAR0;
+
+/// `CPU_ID_AA64ISAR1` on the selected machine (`None`: not defined there).
+pub const CPU_ID_AA64ISAR1: Option<i32> = <Machine as Cpu>::CPU_ID_AA64ISAR1;
 
 /// `curcpu()` on the selected machine.
 pub fn curcpu() -> &'static CpuInfo {

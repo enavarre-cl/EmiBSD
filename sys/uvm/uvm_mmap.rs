@@ -57,8 +57,6 @@
 //!   report `fd_getfile`/`getvnode` (`kern_descrip.c`) and fail; `uvm_mmapfile` is not here.
 //! - `uvm_wxcheck`: `ps_textvp` has no mount (no vnodes), so W^X is never allowed; the
 //!   `uvm_wxabort` path reports `log` and then `sigexit`s.
-//! - `pledge_protexec`: no process can be pledged before `kern_pledge.c`; a pledged one is
-//!   reported and refused.
 //! - `pmap_wired_count` exists on both machines, so the `suser` branches of `mlock(2)` and
 //!   friends are not compiled, as in the C.
 
@@ -66,6 +64,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, mallocarray};
+use crate::kern::kern_pledge::pledge_protexec;
 use crate::kern::kern_sig::sigexit;
 use crate::machine::copy::{copyin, kcopy};
 use crate::machine::cpu::Cpu;
@@ -82,7 +81,7 @@ use crate::sys::mman::{
     PROT_WRITE,
 };
 use crate::sys::param::PAGE_MASK;
-use crate::sys::proc::{PS_PLEDGE, Proc, p_hassibling};
+use crate::sys::proc::{Proc, p_hassibling};
 use crate::sys::resource::{RLIMIT_DATA, RLIMIT_MEMLOCK};
 use crate::sys::resourcevar::lim_cur;
 use crate::sys::signal::{SIGABRT, SIGILL};
@@ -135,14 +134,6 @@ fn align_addr(addr: usize, size: usize) -> Result<(usize, usize, usize), Errno> 
         }
     }
     Ok((addr, size, pageoff))
-}
-
-/// `pledge_protexec(p, prot)` (`kern_pledge.c`): see the module's deviations.
-fn pledge_protexec(p: &Proc, _prot: VmProt) -> Result<(), Errno> {
-    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE == 0 {
-        return Ok(());
-    }
-    Err(unported!("pledge_protexec (kern_pledge.c)"))
 }
 
 /// `sys_mquery`: provide mapping hints to applications that do fixed mappings.

@@ -70,8 +70,6 @@
 //! - `kqueue_scan`'s `struct timespec *tsp` is `Option<&mut Timespec>` and its event array
 //!   a slice; `kqueue_scan_setup` is `unsafe` (the state holds the scan markers, linked into
 //!   the kqueue until `kqueue_scan_finish`, so it must stay in place).
-//! - `pledge_fail` (`kern_pledge.c`, not ported) is reported for a pledged process that
-//!   asks for `EVFILT_PROC` without `proc`; no process can be pledged yet.
 //! - `KERNEL_LOCK`/`KERNEL_ASSERT_LOCKED` are nothing without `MULTIPROCESSOR`, so the
 //!   `FILTEROP_MPSAFE` and non-`MPSAFE` paths call the filter the same way (the `splhigh`
 //!   around `knote_modify`/`knote_process` stays); `pool_cache_init` is nothing without
@@ -92,6 +90,7 @@ use crate::kern::kern_clock::tstohz;
 use crate::kern::kern_descrip::{falloc, fd_checkclosed, fd_getfile, fdinsert};
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
+use crate::kern::kern_pledge::pledge_fail;
 use crate::kern::kern_proc::prfind;
 use crate::kern::kern_rwlock::{rw_assert_wrlock, rw_enter_write, rw_exit_write, rw_status};
 use crate::kern::kern_subr::hashsize;
@@ -140,7 +139,6 @@ use crate::sys::timeout::{Timeout, timeout_triggered};
 use crate::sys::types::{Dev, Pid, Register};
 use crate::sys::uio::Uio;
 use crate::sys::wait::w_exitcode;
-use crate::unported;
 
 /// `NOTE_TIMER_UNITMASK`: the unit bits of an `EVFILT_TIMER`'s `fflags`.
 const NOTE_TIMER_UNITMASK: u32 = NOTE_SECONDS | NOTE_MSECONDS | NOTE_USECONDS | NOTE_NSECONDS;
@@ -518,8 +516,7 @@ pub fn filt_procattach(kn: &Knote) -> Result<(), Errno> {
         && cp.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE != 0
         && cp.p_pledge.get() & PLEDGE_PROC == 0
     {
-        // pledge_fail(curproc, EPERM, PLEDGE_PROC): kern_pledge.c (see the deviations).
-        return Err(unported!("filt_procattach: pledge_fail (kern_pledge.c)"));
+        return Err(pledge_fail(cp, Errno::EPERM, PLEDGE_PROC));
     }
 
     if kn.kn_id().get() > PID_MAX as usize {

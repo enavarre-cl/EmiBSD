@@ -260,6 +260,11 @@ pub const CPUF_PARKED: u32 = 1 << 8;
 /// `MAXCPUS`: without `MULTIPROCESSOR`, one.
 pub const MAXCPUS: u32 = 1;
 
+/// `CPU_ID_AA64ISAR0`: a `CTL_MACHDEP` name (`ID_AA64ISAR0_EL1`).
+pub const CPU_ID_AA64ISAR0: i32 = 2;
+/// `CPU_ID_AA64ISAR1`: a `CTL_MACHDEP` name (`ID_AA64ISAR1_EL1`).
+pub const CPU_ID_AA64ISAR1: i32 = 3;
+
 /// `struct clockframe`: all the `CLKF_*` macros take a struct clockframe * as an argument.
 pub type Clockframe = Trapframe;
 

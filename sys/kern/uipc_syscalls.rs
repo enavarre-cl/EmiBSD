@@ -52,8 +52,6 @@
 //!   field by field (they have padding).
 //! - `pool_get(PR_WAITOK)`, `m_get(M_WAIT)` and `mallocarray(M_WAITOK)` can fail here (see
 //!   `subr_pool.rs`): `ENOBUFS` for an mbuf, `ENOMEM` for an iovec array.
-//! - `pledge_socket`, `pledge_sendit`, `pledge_sockopt` and `pledge_fail` (`kern_pledge.c`'s
-//!   enforcement is not ported) are reported for a pledged process, as elsewhere.
 //! - `sys_ypconnect`'s binding file name is built on the stack (`MAXPATHLEN`), where the C
 //!   takes a `namei_pool` buffer.
 //! - `KTRACE` is not configured (`ktrsockaddr`, `ktrmsghdr`, `ktriovec`, `ktrgenio`,
@@ -69,6 +67,7 @@ use crate::kern::kern_descrip::{closef, falloc, fd_getfile, fdinsert, fdremove};
 use crate::kern::kern_event::knote;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, mallocarray};
+use crate::kern::kern_pledge::{pledge_fail, pledge_sendit, pledge_socket, pledge_sockopt};
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_sig::ptsignal;
 use crate::kern::kern_sysctl::{DOMAINNAME, DOMAINNAMELEN};
@@ -103,7 +102,7 @@ use crate::sys::namei::{KERNELPATH, LOCKLEAF, NOFOLLOW, NiDirp};
 use crate::sys::param::{MAXPATHLEN, PCATCH, PSOCK, align};
 use crate::sys::pledge::{PLEDGE_DNS, PLEDGE_RPATH};
 use crate::sys::proc::{PS_CHROOT, PS_PLEDGE, Proc};
-use crate::sys::protosw::{Protosw, pru_peeraddr, pru_sockaddr};
+use crate::sys::protosw::{pru_peeraddr, pru_sockaddr};
 use crate::sys::signal::SIGPIPE;
 use crate::sys::signalvar::SignalType;
 use crate::sys::socket::{
@@ -127,7 +126,6 @@ use crate::sys::types::{Register, Socklen};
 use crate::sys::uio::{Iovec, UIO_SMALLIOV, Uio, UioRw, UioSeg};
 use crate::sys::unistd::SEEK_SET;
 use crate::sys::vnode::{VREG, Vattr};
-use crate::unported;
 
 /// The size of `struct msghdr` in user space.
 const MSGHDR_SIZE: usize = size_of::<Msghdr>();
@@ -282,43 +280,6 @@ fn iovs_copyin(uiov: usize, iov: &mut [Iovec]) -> Result<(), Errno> {
     Ok(())
 }
 
-/// `pledge_socket(p, domain, state)` (`kern_pledge.c`, not ported): only a pledged process
-/// has anything to check.
-fn pledge_socket(p: &Proc, _domain: i32, _state: u32) -> Result<(), Errno> {
-    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE == 0 {
-        return Ok(());
-    }
-    Err(unported!("pledge_socket (kern_pledge.c)"))
-}
-
-/// `pledge_sendit(p, to)` (`kern_pledge.c`, not ported).
-fn pledge_sendit(p: &Proc, _to: *const core::ffi::c_void) -> Result<(), Errno> {
-    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE == 0 {
-        return Ok(());
-    }
-    Err(unported!("pledge_sendit (kern_pledge.c)"))
-}
-
-/// `pledge_sockopt(p, set, proto, level, optname)` (`kern_pledge.c`, not ported).
-fn pledge_sockopt(
-    p: &Proc,
-    _set: bool,
-    _proto: &Protosw,
-    _level: i32,
-    _optname: i32,
-) -> Result<(), Errno> {
-    if p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE == 0 {
-        return Ok(());
-    }
-    Err(unported!("pledge_sockopt (kern_pledge.c)"))
-}
-
-/// `pledge_fail(p, error, code)` (`kern_pledge.c`, not ported): a pledged process's
-/// violation.
-fn pledge_fail(_p: &Proc, _error: Errno, _code: u64) -> Result<(), Errno> {
-    Err(unported!("pledge_fail (kern_pledge.c)"))
-}
-
 /// `socket(2)`.
 pub fn sys_socket(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(), Errno> {
     let uap: &SysSocketArgs = sysargs(v);
@@ -391,7 +352,7 @@ fn dns_portcheck(p: &Proc, so: &Socket, nam: &[u8], namelen: usize) -> Result<()
     }
     // INET6: not configured.
     if error.is_err() && p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE != 0 {
-        return pledge_fail(p, Errno::EPERM, PLEDGE_DNS);
+        return Err(pledge_fail(p, Errno::EPERM, PLEDGE_DNS));
     }
     error
 }
