@@ -25,12 +25,15 @@
 //! Status: `wip`. Milestone M4 ports `struct mutex` (the machine-independent one: both
 //! architectures' `<machine/mutex.h>` say `__USE_MI_MUTEX`), `MUTEX_INITIALIZER`,
 //! `mtx_curcpu`, `mtx_owner`, `mtx_owned`, `MUTEX_ASSERT_LOCKED`/`UNLOCKED` and the `MTX_*`
-//! flags. `WITNESS` (`lock_object`, `MTX_LO_INITIALIZER`) and `struct db_mutex` come with M5.
-//! The functions live in `kern/kern_lock.rs`. M11a: `__MUTEX_IPL(ipl)` raises to at least
-//! `IPL_MPFLOOR` with `MULTIPROCESSOR`, as in the C.
+//! flags. `WITNESS` (`lock_object`, `MTX_LO_INITIALIZER`) is not configured. The functions
+//! live in `kern/kern_lock.rs`. M11a: `__MUTEX_IPL(ipl)` raises to at least `IPL_MPFLOOR` with
+//! `MULTIPROCESSOR`, as in the C. M11c: `struct db_mutex` and `DB_MUTEX_INITIALIZER` (`DDB`,
+//! always configured here).
 //!
 //! ## Deviations
 //! - The fields are an atomic and `Cell`s, so a `static` mutex is entered through `&`.
+//! - `db_mutex`'s owner is the owning CPU as `mtx_curcpu()` gives it (an `AtomicUsize`, 0 when
+//!   free), like `struct mutex`'s, instead of a `struct cpu_info *volatile`.
 
 use core::cell::Cell;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -116,6 +119,34 @@ pub fn mutex_assert_unlocked(mtx: &Mutex, func: &str) {
 /// `mtx_owned(mtx)`: whether this CPU holds `mtx` (or the kernel is past caring).
 pub fn mtx_owned(mtx: &Mutex) -> bool {
     mtx_owner(mtx) == mtx_curcpu() || panicstr() || DB_ACTIVE.load(Ordering::Relaxed)
+}
+
+/// `struct db_mutex`: the debugger's spinning lock, which keeps interrupts off while held.
+pub struct DbMutex {
+    /// `mtx_owner` (volatile): the owning CPU (`mtx_curcpu()`), 0 when free.
+    pub mtx_owner: AtomicUsize,
+    /// `mtx_intr_state`: what `intr_disable` returned on entry; written by the owner only.
+    pub mtx_intr_state: Cell<u64>,
+}
+
+// SAFETY: `mtx_owner` is atomic; `mtx_intr_state` is written and read by the owning CPU only,
+// between `db_mtx_enter` and `db_mtx_leave`.
+unsafe impl Sync for DbMutex {}
+
+impl DbMutex {
+    /// `DB_MUTEX_INITIALIZER`: a free debugger mutex.
+    pub const fn new() -> Self {
+        Self {
+            mtx_owner: AtomicUsize::new(0),
+            mtx_intr_state: Cell::new(0),
+        }
+    }
+}
+
+impl Default for DbMutex {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]

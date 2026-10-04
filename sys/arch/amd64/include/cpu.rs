@@ -202,8 +202,8 @@ pub struct CpuInfo {
     pub ci_tss: Cell<*const X86_64Tss>,
     /// \[o\] the GDT.
     pub ci_gdt: Cell<*const u8>,
-    /// `CI_DDB_*`.
-    pub ci_ddb_paused: Cell<i32>,
+    /// `CI_DDB_*` (volatile): written by the CPUs entering and leaving ddb.
+    pub ci_ddb_paused: AtomicI32,
     // ci_srp_hazards, ci_xcall, ci_uvm (MULTIPROCESSOR), the sensors, gmon, vmm: later.
     /// The clock interrupt queue.
     pub ci_queue: Clockqueue,
@@ -267,7 +267,7 @@ impl CpuInfo {
             ci_want_resched: AtomicI32::new(0),
             ci_tss: Cell::new(ptr::null()),
             ci_gdt: Cell::new(ptr::null()),
-            ci_ddb_paused: Cell::new(0),
+            ci_ddb_paused: AtomicI32::new(0),
             ci_queue: Clockqueue::new(),
             ci_panicbuf: UnsafeCell::new([0; 512]),
         }

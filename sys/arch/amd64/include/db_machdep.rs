@@ -36,7 +36,7 @@
 //! instruction, `FIXUP_PC_AFTER_BREAK`, the single-step bit helpers and the
 //! `IS_BREAKPOINT_TRAP`/`IS_WATCHPOINT_TRAP` tests; M11c `db_expr_t` and the `inst_*`
 //! classifiers (`db_run.c`). `DB_MACHINE_COMMANDS` is defined: the table is
-//! `amd64/db_interface.rs`'s. The `DDB_STATE_*` values come with the multiprocessor entry.
+//! `amd64/db_interface.rs`'s. The `DDB_STATE_*` values are here.
 //! The entry points this header declares (`db_ktrap`, `db_machine_init`, ...) live in
 //! `amd64/db_interface.rs`; what `ddb/` itself needs is the `machine::DbMachdep` contract.
 
@@ -130,6 +130,13 @@ pub const fn inst_return(ins: DbExpr) -> bool {
 pub const fn inst_call(ins: DbExpr) -> bool {
     (ins & 0xff) == I_CALL || ((ins & 0xff) == I_CALLI && (ins & 0x3800) == 0x1000)
 }
+
+/// `DDB_STATE_NOT_RUNNING`: no CPU is in ddb (`MULTIPROCESSOR`).
+pub const DDB_STATE_NOT_RUNNING: i32 = 0;
+/// `DDB_STATE_RUNNING`: one CPU runs ddb, the others are held.
+pub const DDB_STATE_RUNNING: i32 = 1;
+/// `DDB_STATE_EXITING`: the ddb CPU is leaving; the others resume.
+pub const DDB_STATE_EXITING: i32 = 2;
 
 #[cfg(test)]
 mod tests {

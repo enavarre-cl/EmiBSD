@@ -32,8 +32,9 @@
 //! `__mp_release_all`, `__mp_acquire_count`, `__mp_lock_held`); the spinning mutex with its
 //! parking lots (`mtx_init_parking`, `mtx_park`, `mtx_enter_park`, `mtx_leave_park`,
 //! `mtx_cas`, `mtx_enter`, `mtx_enter_try`, `mtx_leave`); the interlocking `pc_mprod_enter`
-//! and `pc_mprod_leave`. `db_mtx_enter`/`db_mtx_leave` and `mtx_print_parks` (ddb) come with
-//! M11c; `WITNESS` and `MP_LOCKDEBUG` are not configured.
+//! and `pc_mprod_leave`. M11c adds the debugger's mutex, `db_mtx_enter`/`db_mtx_leave` (`DDB`;
+//! uniprocessor too, as in the C). `mtx_print_parks` (a debugging printer of the parking lots
+//! that nothing calls) is not here; `WITNESS` and `MP_LOCKDEBUG` are not configured.
 //!
 //! ## Deviations
 //! - `membar_producer`/`membar_consumer`/`membar_exit` are `fence`s of the matching
@@ -70,7 +71,7 @@ use crate::sys::mplock::MpLock;
 use crate::sys::mutex::mtx_owner;
 #[cfg(not(feature = "multiprocessor"))]
 use crate::sys::mutex::mutex_assert_locked;
-use crate::sys::mutex::{Mutex, mtx_curcpu, mutex_ipl};
+use crate::sys::mutex::{DbMutex, Mutex, mtx_curcpu, mutex_ipl};
 use crate::sys::pclock::PcLock;
 #[cfg(feature = "multiprocessor")]
 use crate::sys::queue::{TailqEntry, TailqHead};
@@ -84,6 +85,9 @@ const MTX_PARKING_LOTS: usize = 1 << MTX_PARKING_BITS;
 /// `MTX_PARKING_MASK`.
 #[cfg(feature = "multiprocessor")]
 const MTX_PARKING_MASK: usize = MTX_PARKING_LOTS - 1;
+
+/// `CPU_MIN_BUSY_CYCLES`: the first back-off of `db_mtx_enter`.
+const CPU_MIN_BUSY_CYCLES: u32 = 1;
 
 /// `struct mtx_waiter`: a CPU waiting for a contended mutex, linked into the mutex's
 /// parking lot from the waiting CPU's stack.
@@ -593,6 +597,76 @@ pub fn mtx_leave(mtx: &Mutex) {
     }
 }
 
+/// `CPU_MAX_BUSY_CYCLES`: `ncpusfound`, the longest back-off of `db_mtx_enter`.
+fn cpu_max_busy_cycles() -> u32 {
+    u32::try_from(crate::kern::init_main::NCPUSFOUND.load(Ordering::Relaxed)).unwrap_or(1)
+}
+
+/// `db_mtx_enter`: takes the debugger's mutex with interrupts off, spinning with exponential
+/// back-off while another CPU holds it. Unlike `mtx_enter` it works while `db_active`.
+pub fn db_mtx_enter(mtx: &DbMutex) {
+    let ci = mtx_curcpu();
+    let mut ncycle = CPU_MIN_BUSY_CYCLES;
+
+    #[cfg(feature = "diagnostic")]
+    if mtx.mtx_owner.load(Ordering::Relaxed) == ci {
+        crate::kern::subr_prf::panic(format_args!(
+            "db_mtx_enter: mtx {:p}: locking against myself",
+            mtx
+        ));
+    }
+
+    let s = crate::machine::cpu::intr_disable();
+    loop {
+        // Avoid unconditional atomic operation to prevent cache line contention.
+        let owner = mtx.mtx_owner.load(Ordering::Relaxed);
+        if owner == 0 {
+            if mtx
+                .mtx_owner
+                .compare_exchange(0, ci, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                break;
+            }
+            // Busy loop with exponential backoff.
+            for _ in 0..ncycle {
+                core::hint::spin_loop(); // CPU_BUSY_CYCLE()
+            }
+            if ncycle < cpu_max_busy_cycles() {
+                ncycle += ncycle;
+            }
+        }
+    }
+    fence(Ordering::Acquire); // membar_enter_after_atomic()
+
+    mtx.mtx_intr_state.set(s);
+
+    #[cfg(feature = "diagnostic")]
+    Machine::curcpu_mutex_level_add(1);
+}
+
+/// `db_mtx_leave`: releases the debugger's mutex and restores this CPU's interrupt state.
+pub fn db_mtx_leave(mtx: &DbMutex) {
+    #[cfg(feature = "diagnostic")]
+    {
+        if mtx.mtx_owner.load(Ordering::Relaxed) != mtx_curcpu() {
+            crate::kern::subr_prf::panic(format_args!(
+                "db_mtx_leave: mtx {:p}: not owned by this CPU",
+                mtx
+            ));
+        }
+        Machine::curcpu_mutex_level_add(-1);
+    }
+
+    let s = mtx.mtx_intr_state.get();
+    #[cfg(feature = "multiprocessor")]
+    fence(Ordering::Release); // membar_exit()
+    mtx.mtx_owner.store(0, Ordering::Relaxed);
+    // SAFETY: `s` is what `intr_disable` returned on this CPU in `db_mtx_enter`; only the
+    // owner (this CPU) writes `mtx_intr_state`.
+    unsafe { crate::machine::cpu::intr_restore(s) };
+}
+
 /// `pc_lock_init`.
 pub fn pc_lock_init(pcl: &PcLock) {
     pcl.pcl_gen.store(0, Ordering::Relaxed);
@@ -733,6 +807,15 @@ mod tests {
         assert!(mtx_enter_try(&M));
         mtx_leave(&M);
         assert_eq!(mtx_owner(&M), 0);
+    }
+
+    #[test]
+    fn db_mutex_tracks_the_owner() {
+        static M: DbMutex = DbMutex::new();
+        db_mtx_enter(&M);
+        assert_eq!(M.mtx_owner.load(Ordering::Relaxed), mtx_curcpu());
+        db_mtx_leave(&M);
+        assert_eq!(M.mtx_owner.load(Ordering::Relaxed), 0);
     }
 
     #[test]

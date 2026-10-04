@@ -51,7 +51,6 @@
 //! - `sc_cpu_mask` and `sc_ipi_reason` are atomics (each CPU writes its own mask in
 //!   `ampintc_cpuinit` while others read it to send IPIs); `ampintc_send_ipi` fences before
 //!   the `ICD_SGIR` write so the posted reason is visible to the target's handler.
-//! - `ampintc_ipi_ddb` reports `db_enter` on an application processor: ddb on MP is M11c.
 //! - `ampintc_ipi_count` (feature `qemu`) reads the IPI handler's event counter for the
 //!   self-check in `cpu_boot_secondary_processors`; not in the C.
 
@@ -64,6 +63,8 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU32, Ordering};
 
 #[cfg(feature = "multiprocessor")]
 use crate::arch::arm64::arm64::cpu::cpu_halt;
+#[cfg(feature = "multiprocessor")]
+use crate::arch::arm64::arm64::db_interface::db_enter;
 #[cfg(feature = "multiprocessor")]
 use crate::arch::arm64::arm64::intr::INTR_SEND_IPI_FUNC;
 use crate::arch::arm64::arm64::intr::{
@@ -95,8 +96,6 @@ use crate::sys::evcount::Evcount;
 use crate::sys::malloc::{M_DEVBUF, M_NOWAIT, M_WAITOK, M_ZERO};
 use crate::sys::queue::{ListEntry, TailqEntry, TailqHead};
 use crate::sys::systm::{kernel_lock, kernel_unlock};
-#[cfg(feature = "multiprocessor")]
-use crate::unported;
 
 // registers
 /// `ICD_DCR`: the distributor control register.
@@ -1012,8 +1011,7 @@ fn ampintc_intr_disestablish(cookie: *mut c_void) {
 #[cfg(feature = "multiprocessor")]
 fn ampintc_ipi_ddb(_v: *mut c_void) -> i32 {
     // XXX
-    // db_enter() on this CPU: ddb on MP (db_interface.c's MULTIPROCESSOR paths) is M11c.
-    let _ = unported!("ampintc_ipi_ddb: db_enter on an application processor (M11c)");
+    db_enter();
     1
 }
 

@@ -44,16 +44,17 @@
 //! ## Deviations
 //! - The entries for subsystems that are not ported are visible stubs:
 //!   `x86_64_ipi_reload_mtrr` (option `MTRR`: `amd64_mem.c`'s `mem_range_softc` is not
-//!   ported), `x86_setperf_ipi` (`mp_setperf.c`), `x86_ipi_db` (`db_interface.c`'s
-//!   `MULTIPROCESSOR` half, M11c) and `x86_64_ipi_xcall` (`kern_xcall.c`: the C posts
-//!   `SIR_XCALL`, whose `Xxcallintr` source does not exist here, so the stub posts nothing).
-//!   `NVMM` and `NPCTR` are not configured: their entries are `None`, as the C's `NULL`.
+//!   ported), `x86_setperf_ipi` (`mp_setperf.c`) and `x86_64_ipi_xcall` (`kern_xcall.c`:
+//!   the C posts `SIR_XCALL`, whose `Xxcallintr` source does not exist here, so the stub
+//!   posts nothing). `NVMM` and `NPCTR` are not configured: their entries are `None`, as the
+//!   C's `NULL`. `x86_ipi_db` is `db_interface.rs`'s, as in the C (M11c).
 //! - `x86_64_ipi_halt` spins on `hlt`: `cpu_suspend_cycle_fcn` (option `SUSPEND`) is not
 //!   configured.
 
 use core::arch::asm;
 use core::sync::atomic::Ordering;
 
+use crate::arch::amd64::amd64::db_interface::x86_ipi_db;
 use crate::arch::amd64::amd64::lapic::lapic_disable;
 use crate::arch::amd64::include::cpu::{CPUF_RUNNING, CpuInfo};
 use crate::arch::amd64::include::cpufunc::{intr_disable, wbinvd};
@@ -108,11 +109,6 @@ pub fn x86_64_ipi_reload_mtrr(_ci: &CpuInfo) {
 /// `x86_setperf_ipi` (`mp_setperf.c`): see the module's deviations.
 pub fn x86_setperf_ipi(_ci: &CpuInfo) {
     let _ = unported!("x86_setperf_ipi (mp_setperf.c)");
-}
-
-/// `x86_ipi_db` (`db_interface.c`): see the module's deviations.
-pub fn x86_ipi_db(_ci: &CpuInfo) {
-    let _ = unported!("x86_ipi_db (db_interface.c MULTIPROCESSOR, M11c)");
 }
 
 /// `x86_64_ipi_wbinvd`: write back and invalidate this CPU's caches.
