@@ -77,7 +77,6 @@
 //!   `ipsec_forward_check`, `ipsec_local_check` (any `SpdError` drops the packet, as the C's
 //!   non-zero), `ipsec_init` and `ipsec_sysctl`.
 //! - `ip_forward`'s 68-byte `icmp_buf` is an array on the stack, as in C.
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::ffi::c_void;
 use core::mem::{offset_of, size_of};
@@ -194,7 +193,8 @@ use crate::sys::socket::{
 };
 use crate::sys::sysctl::SysctlBoundedArgs;
 use crate::sys::systm::{
-    net_assert_locked, net_lock, net_lock_shared, net_unlock, net_unlock_shared,
+    kernel_lock, kernel_unlock, net_assert_locked, net_lock, net_lock_shared, net_unlock,
+    net_unlock_shared,
 };
 use crate::sys::task::Task;
 
@@ -1352,7 +1352,7 @@ pub fn ip_dooptions(m: &'static Mbuf, ifp: &'static Ifnet, flags: i32) -> bool {
     // mbuf; the options follow the fixed header.
     let opts: &mut [u8] = unsafe { slice::from_raw_parts_mut(mtod::<u8>(m).add(hdr), cnt0) };
 
-    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+    kernel_lock();
     let bad = 'bad: {
         let mut cp = 0usize;
         let mut cnt = cnt0 as i32;
@@ -1592,7 +1592,7 @@ pub fn ip_dooptions(m: &'static Mbuf, ifp: &'static Ifnet, flags: i32) -> bool {
         }
         false
     };
-    // KERNEL_UNLOCK()
+    kernel_unlock();
     if bad {
         icmp_error(m, type_, code as u8, 0, 0);
         ipstat_inc(IpstatCounters::IpsBadoptions);

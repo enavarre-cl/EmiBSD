@@ -1826,8 +1826,8 @@ pub fn icmp_mtudisc_timeout(rt: &'static Rtentry, rtableid: u32) {
 /// per-destination/type check necessary?
 pub fn icmp_ratelimit(_dst: &InAddr, _type: u8, _code: u8) -> bool {
     let icmperrppslim_local = ICMPERRPPSLIM.load(Ordering::Relaxed);
-    // SAFETY: the counters are touched only here, inside `ppsratecheck`'s mutex on one CPU
-    // (see the static's doc); no other reference to them exists.
+    // SAFETY: the counters are touched only here, and `ppsratecheck` reads and writes them
+    // only inside `ppsratecheck_mtx`, which orders the accesses of every CPU, as in C.
     let pps = unsafe { ICMPERRPPS.get_mut() };
     // PPS limit
     if !ppsratecheck(&mut pps.last, &mut pps.count, icmperrppslim_local) {

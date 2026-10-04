@@ -828,8 +828,8 @@ fn tcp_input_solocked(
                 exit = TcpInputExit::DropWithReset;
             }
             TcpInputExit::DropAfterAckRatelim => {
-                // SAFETY: the pair is touched only here, inside `ppsratecheck`'s mutex; no
-                // other reference to it exists.
+                // SAFETY: the pair is touched only here, and `ppsratecheck` reads and writes
+                // it only inside `ppsratecheck_mtx`, which orders every CPU's accesses.
                 let pps = unsafe { TCP_ACKDROP_PPS.get_mut() };
                 exit = if ppsratecheck(
                     &mut pps.last,

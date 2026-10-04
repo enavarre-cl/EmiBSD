@@ -137,10 +137,18 @@ unsafe impl Send for SpdTable {}
 /// `NET_LOCK()`.
 static SPD_TABLES: StaticCell<Vec<SpdTable>> = StaticCell::new(Vec::new());
 
-/// The SPD tables; the net lock is held.
-fn spd_tables() -> &'static mut Vec<SpdTable> {
-    // SAFETY: the net lock serialises every access; no caller keeps the reference past the
-    // function that took it.
+/// The SPD tables to read; the net lock is held, shared or exclusive.
+fn spd_tables() -> &'static Vec<SpdTable> {
+    // SAFETY: the vector changes only in `spd_tables_mut`, under the exclusive net lock,
+    // which no reader (holding the net lock) runs beside; no caller keeps the reference past
+    // the function that took it.
+    unsafe { SPD_TABLES.get() }
+}
+
+/// The SPD tables to change; the net lock is held exclusively.
+fn spd_tables_mut() -> &'static mut Vec<SpdTable> {
+    // SAFETY: the exclusive net lock keeps out every other reader and writer; no caller
+    // keeps the reference past the function that took it.
     unsafe { SPD_TABLES.get_mut() }
 }
 
@@ -173,7 +181,7 @@ pub fn spd_table_get(rtableid: u32) -> Option<&'static RadixNodeHead> {
 pub fn spd_table_add(rtableid: u32) -> Option<&'static RadixNodeHead> {
     net_assert_locked_exclusive("spd_table_add");
 
-    let tables = spd_tables();
+    let tables = spd_tables_mut();
     let rdomain = rtable_l2(rtableid) as usize;
     if tables.len() <= rdomain {
         if tables.try_reserve(rdomain + 1 - tables.len()).is_err() {
@@ -1086,7 +1094,7 @@ pub fn ipsec_get_acquire(seq: u32) -> Option<&'static IpsecAcquire> {
 /// Forgets every SPD table: the host tests start from an empty database.
 #[cfg(test)]
 pub(crate) fn spd_reset() {
-    spd_tables().clear();
+    spd_tables_mut().clear();
     IPSEC_ACQUIRE_HEAD.0.init();
 }
 

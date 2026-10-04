@@ -47,7 +47,6 @@
 //!   past.
 //! - `rt6_deleteroute` is the closure `rtable_walk` takes (a `void *` argument in C); its
 //!   `EEXIST` is the walk's error.
-//! - `KERNEL_LOCK()` around `rtrequest_delete` is nothing without `MULTIPROCESSOR`.
 
 use core::mem::size_of;
 use core::ptr;
@@ -76,7 +75,7 @@ use crate::netinet6::nd6::{NdOpts, nd6_cache_lladdr, nd6_opt_lladdr, nd6_options
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::Mbuf;
 use crate::sys::socket::{AF_INET6, SockaddrStorage};
-use crate::sys::systm::net_assert_locked;
+use crate::sys::systm::{kernel_lock, kernel_unlock, net_assert_locked};
 
 /// `nd6_rtr_cache`: process Source Link-layer Address Options from Router Solicitation /
 /// Advertisement Messages of `icmp6_type` (`icmp6len` bytes at `off` of `m`, consumed).
@@ -203,11 +202,12 @@ pub fn rt6_flush(gateway: &In6Addr, ifp: &Ifnet) -> Result<(), Errno> {
             info.rti_info[RTAX_DST] = rt_key(r);
             info.rti_info[RTAX_GATEWAY] = r.rt_gateway.get();
             info.rti_info[RTAX_NETMASK] = rt_plen2mask(r, &mut sa_mask);
-            // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+            kernel_lock();
             // SAFETY: the route's key, gateway and the local netmask are readable socket
             // addresses.
             error =
                 unsafe { rtrequest_delete(&mut info, RTP_ANY, ifp, None, ifp.if_rdomain.get()) };
+            kernel_unlock();
             if error.is_ok() {
                 error = Err(Errno::EAGAIN);
             }

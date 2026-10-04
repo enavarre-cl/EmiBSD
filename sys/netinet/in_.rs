@@ -138,7 +138,6 @@
 //! - `in_nam2sin` and `in_sa2sin` return the `sockaddr_in` pointer instead of storing it
 //!   through an out parameter. Booleans are `bool` (`in_canforward`, `in_broadcast`,
 //!   `in_hasmulti`, `in_ifinit`'s `newaddr`, `in_ioctl`'s `privileged`).
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::mem::{offset_of, size_of};
 use core::ptr::{self, NonNull};
@@ -175,7 +174,8 @@ use crate::sys::sockio::{
     SIOCGIFDSTADDR, SIOCGIFNETMASK, SIOCSIFADDR, SIOCSIFBRDADDR, SIOCSIFDSTADDR, SIOCSIFNETMASK,
 };
 use crate::sys::systm::{
-    net_assert_locked, net_lock, net_lock_shared, net_unlock, net_unlock_shared,
+    kernel_lock, kernel_unlock, net_assert_locked, net_lock, net_lock_shared, net_unlock,
+    net_unlock_shared,
 };
 use crate::sys::types::{InPort, SaFamily};
 
@@ -914,7 +914,7 @@ pub unsafe fn in_ioctl(
     }
 
     net_lock();
-    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+    kernel_lock();
 
     let mut ia: Option<&'static InIfaddr> = None;
     for ifa in ifp.if_addrlist.iter() {
@@ -1003,6 +1003,7 @@ pub unsafe fn in_ioctl(
         }
     };
     // err:
+    kernel_unlock();
     net_unlock();
     error
 }
@@ -1055,7 +1056,7 @@ unsafe fn in_ioctl_set_ifaddr(cmd: u64, data: *mut u8, ifp: &'static Ifnet) -> R
     let sin = unsafe { *sin };
 
     net_lock();
-    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+    kernel_lock();
 
     // find first address
     let found = ifp
@@ -1074,6 +1075,7 @@ unsafe fn in_ioctl_set_ifaddr(cmd: u64, data: *mut u8, ifp: &'static Ifnet) -> R
         if_addrhooks_run(ifp);
     }
 
+    kernel_unlock();
     net_unlock();
     error
 }
@@ -1104,7 +1106,7 @@ unsafe fn in_ioctl_change_ifaddr(
     }
 
     net_lock();
-    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+    kernel_lock();
 
     let mut ia: Option<&'static InIfaddr> = None;
     for ifa in ifp.if_addrlist.iter() {
@@ -1214,6 +1216,7 @@ unsafe fn in_ioctl_change_ifaddr(
         }
     };
 
+    kernel_unlock();
     net_unlock();
     error
 }
@@ -1587,12 +1590,14 @@ pub fn in_addmulti(addr: &InAddr, ifp: &'static Ifnet) -> Option<&'static InMult
     };
     // SAFETY: `ifr_addr` is 16 bytes, a `sockaddr_in`'s size.
     unsafe { ptr::write_unaligned(satosin(ifr.ifr_addr_mut()), sin) };
-    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+    kernel_lock();
     // SAFETY: `ifr` is a `struct ifreq`, what SIOCADDMULTI takes.
     if unsafe { ifp_ioctl(ifp, SIOCADDMULTI, ptr::from_mut(&mut ifr).cast()) }.is_err() {
+        kernel_unlock();
         free(mem, M_IPMADDR, size_of::<InMulti>());
         return None;
     }
+    kernel_unlock();
 
     rw_enter_write(&ifp.if_maddrlock);
     // check again after unlock and lock
@@ -1653,9 +1658,10 @@ pub fn in_delmulti(inm: &'static InMulti) {
         };
         // SAFETY: `ifr_addr` is 16 bytes, a `sockaddr_in`'s size.
         unsafe { ptr::write_unaligned(satosin(ifr.ifr_addr_mut()), sin) };
-        // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+        kernel_lock();
         // SAFETY: `ifr` is a `struct ifreq`, what SIOCDELMULTI takes.
         let _ = unsafe { ifp_ioctl(ifp, SIOCDELMULTI, ptr::from_mut(&mut ifr).cast()) };
+        kernel_unlock();
 
         if_put(ifp);
     }

@@ -108,8 +108,6 @@
 //!   NULL).
 //! - `inet_ntop(AF_INET6, ...)` (`netinet/inet_ntop.c`) is not ported: the log lines print
 //!   addresses through [`In6Ntop`], which writes what it writes for `AF_INET6`.
-//! - `KERNEL_LOCK()` around `in6_addmulti`/`in6_delmulti` is nothing without
-//!   `MULTIPROCESSOR`.
 //! - The casts and inline code the C repeats in `nd6.c`, `nd6_nbr.c` and `nd6_rtr.c` are
 //!   crate-visible helpers here: `rt_ln` (`(struct llinfo_nd6 *)rt->rt_llinfo`),
 //!   `rt_key_in6` (`satosin6(rt_key(rt))->sin6_addr`), `nd6_opt_lladdr` (an option's
@@ -186,8 +184,8 @@ use crate::sys::refcnt::Refcnt;
 use crate::sys::socket::{AF_INET6, AF_LINK, Sockaddr};
 use crate::sys::syslog::{LOG_DEBUG, LOG_INFO};
 use crate::sys::systm::{
-    net_assert_locked, net_assert_locked_exclusive, net_lock, net_lock_shared, net_unlock,
-    net_unlock_shared,
+    kernel_lock, kernel_unlock, net_assert_locked, net_assert_locked_exclusive, net_lock,
+    net_lock_shared, net_unlock, net_unlock_shared,
 };
 use crate::sys::task::Task;
 use crate::sys::timeout::{Timeout, timeout_pending};
@@ -1279,8 +1277,9 @@ pub fn nd6_rtrequest(ifp: &'static Ifnet, req: i32, rt: &'static Rtentry) {
         {
             let llsol = nd6_llsol(&key, ifp);
 
-            // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+            kernel_lock();
             let _ = in6_addmulti(&llsol, ifp);
+            kernel_unlock();
         }
     } else if req == RTM_DELETE {
         mtx_enter(&ND6_MTX);
@@ -1306,10 +1305,11 @@ pub fn nd6_rtrequest(ifp: &'static Ifnet, req: i32, rt: &'static Rtentry) {
         if rt.rt_flags.get() & RTF_ANNOUNCE != 0 && ifp.if_flags.get() & IFF_MULTICAST != 0 {
             let llsol = nd6_llsol(&rt_key_in6(rt), ifp);
 
-            // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+            kernel_lock();
             if let Some(in6m) = in6_lookupmulti(&llsol, ifp) {
                 in6_delmulti(in6m);
             }
+            kernel_unlock();
         }
     } else if req == RTM_INVALIDATE && rt.rt_flags.get() & RTF_LOCAL == 0 {
         nd6_invalidate(rt);

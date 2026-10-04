@@ -125,8 +125,9 @@
 //!   `unsafe fn` over the raw destination address and answers `Result` (`EAGAIN`: the packet
 //!   is held).
 //! - `NFSCLIENT` (the `revarp*` state and functions behind it) is feature `nfsclient`;
-//!   `NCARP` is not configured and is a comment at its site. `KERNEL_LOCK()` is nothing
-//!   without `MULTIPROCESSOR`.
+//!   `NCARP` is not configured and is a comment at its site. `arpresolve` sets and clears
+//!   `RTF_REJECT` under the kernel lock (`KERNEL_LOCK()`, nothing without `MULTIPROCESSOR`)
+//!   and tests it without, as the C; `rt_flags` is a `Cell` of `net/route.rs`.
 //! - The `revarp` state (`revarp_myip`, `revarp_srvip`, `revarp_finished`, `revarp_ifidx`) is
 //!   atomics ([`REVARP_MYIP`], ...), one machine word each, as the C reads and writes them
 //!   without a lock; `revarpwhoarewe` returns `Result<(InAddr, InAddr), Errno>` (the server's
@@ -192,7 +193,10 @@ use crate::sys::queue::{ListEntry, ListHead};
 use crate::sys::refcnt::Refcnt;
 use crate::sys::socket::{AF_INET, AF_LINK, Sockaddr, pseudo_AF_HDRCMPLT};
 use crate::sys::syslog::{LOG_DEBUG, LOG_ERR, LOG_INFO, LOG_WARNING};
-use crate::sys::systm::{net_assert_locked, net_assert_locked_exclusive, net_lock, net_unlock};
+use crate::sys::systm::{
+    kernel_lock, kernel_unlock, net_assert_locked, net_assert_locked_exclusive, net_lock,
+    net_unlock,
+};
 #[cfg(feature = "nfsclient")]
 use crate::sys::time::msec_to_nsec;
 use crate::sys::timeout::{KCLOCK_NONE, TIMEOUT_MPSAFE, TIMEOUT_PROC, Timeout};
@@ -1204,12 +1208,16 @@ pub unsafe fn arpresolve(
         }
         mtx_leave(&ARP_MTX);
 
-        // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+        // The route flags are changed under the kernel lock.
         if reject == Some(true) && rt.rt_flags.get() & RTF_REJECT == 0 {
+            kernel_lock();
             rt.rt_flags.set(rt.rt_flags.get() | RTF_REJECT);
+            kernel_unlock();
         }
         if reject == Some(false) && rt.rt_flags.get() & RTF_REJECT != 0 {
+            kernel_lock();
             rt.rt_flags.set(rt.rt_flags.get() & !RTF_REJECT);
+            kernel_unlock();
         }
         if refresh {
             // SAFETY: as above.

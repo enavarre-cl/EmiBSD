@@ -101,7 +101,6 @@
 //!   `carp_strict_addr_chk`) and `MROUTING` (`ip6_mforward`, `ip6_mrouter_active`,
 //!   `mrt6_init`; the `mrt` sysctls answer `EOPNOTSUPP` as the C's `#else` does).
 //! - The `SMALL_KERNEL` variant of `ip6_sysctl` is not built (the kernel is `GENERIC`).
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::ffi::c_void;
 use core::mem::{offset_of, size_of};

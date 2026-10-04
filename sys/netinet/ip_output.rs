@@ -68,7 +68,6 @@
 //! - `in_cksum_phdr`, `in_delayed_cksum` and `in_proto_cksum_out` write the checksum through
 //!   `m_copyback` or, when it lies in the first mbuf, an unaligned store; `in_ifcap_cksum`
 //!   answers `bool`.
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::cell::Cell;
 use core::mem::size_of;
@@ -153,7 +152,7 @@ use crate::sys::mbuf::{
 use crate::sys::protosw::{PRCO_GETOPT, PRCO_SETOPT};
 use crate::sys::socket::{AF_INET, SO_RTABLE};
 use crate::sys::socketvar::Socket;
-use crate::sys::systm::net_assert_locked;
+use crate::sys::systm::{kernel_lock, kernel_unlock, net_assert_locked};
 
 /// `offsetof(struct tcphdr, th_sum)`.
 const TH_SUM_OFFSET: usize = core::mem::offset_of!(crate::netinet::tcp::Tcphdr, th_sum);
@@ -734,7 +733,7 @@ fn ip_output_ipsec_send(
             ml_enqueue(&ml, m);
         }
 
-        // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+        kernel_lock();
         while let Some(m) = ml_dequeue(&ml) {
             // Callee frees mbuf
             error = ipsp_process_packet(m, tdb, i32::from(AF_INET), false, IPSP_DF_INHERIT);
@@ -742,7 +741,7 @@ fn ip_output_ipsec_send(
                 break;
             }
         }
-        // KERNEL_UNLOCK()
+        kernel_unlock();
     }
     // done:
     if error.is_err() {

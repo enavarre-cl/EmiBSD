@@ -72,7 +72,6 @@
 //!   extension header with `m_copydata` as the C does and reads `ip6_nxt` of the first
 //!   mbuf through `mtod_ip6`.
 //! - Not configured, each a comment at its site: `NSEC` (`sec(4)`).
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::ffi::c_void;
 use core::mem::{offset_of, size_of};
@@ -155,7 +154,7 @@ use crate::sys::mbuf::{
 use crate::sys::protosw::PRC_MSGSIZE;
 use crate::sys::socket::{AF_INET, AF_INET6, Sockaddr};
 use crate::sys::sysctl::SysctlBoundedArgs;
-use crate::sys::systm::net_assert_locked;
+use crate::sys::systm::{kernel_lock, kernel_unlock, net_assert_locked};
 use libkern::{strlcpy, strncasecmp, strnlen};
 
 /// `sizeof(struct tcphdr)` (`<netinet/tcp.h>` is not ported).
@@ -543,7 +542,7 @@ pub fn ipsec_common_input(
             break 'drop;
         };
 
-        // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+        kernel_lock();
         // Register first use, setup expiration timer.
         if t.tdb_first_use.get() == 0 {
             t.tdb_first_use.set(gettime() as u64);
@@ -573,7 +572,7 @@ pub fn ipsec_common_input(
             tdbstat_inc(t, TdbCounters::TdbIdrops);
         }
         tdb_unref(Some(t));
-        // KERNEL_UNLOCK()
+        kernel_unlock();
         return prot;
     }
     // drop:

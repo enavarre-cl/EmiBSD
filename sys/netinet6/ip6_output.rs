@@ -102,7 +102,6 @@
 //!   `AF_INET6`; their IPv6 halves in `netinet/ip_spd.rs` and `netinet/ipsec_output.rs` are
 //!   still comments there (phase 2 of the INET6 port), so an IPv6 flow finds no policy yet.
 //! - Not configured, a comment at its site: `MROUTING` (`ip6_mforward`).
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 //! - `ip6_optlen` and `ip6_copypktopts` of other BSDs do not exist in this OpenBSD:
 //!   `copypktopts` is file-local here as in C.
 
@@ -205,6 +204,7 @@ use crate::sys::protosw::{PRCO_GETOPT, PRCO_SETOPT};
 use crate::sys::queue::ListHead;
 use crate::sys::socket::{AF_INET6, Cmsghdr, SO_RTABLE, cmsg_align, cmsg_len};
 use crate::sys::socketvar::{SS_ISCONNECTED, SS_PRIV, Socket};
+use crate::sys::systm::{kernel_lock, kernel_unlock};
 use libkern::StaticCell;
 
 /// `JUMBOOPTLEN`: length of the jumbo payload option and its padding.
@@ -2797,7 +2797,7 @@ pub fn ip6_output_ipsec_send(
             ml_enqueue(&ml, m);
         }
 
-        // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+        kernel_lock();
         while let Some(m) = ml_dequeue(&ml) {
             // Callee frees mbuf
             error = ipsp_process_packet(m, tdb, i32::from(AF_INET6), false, IPSP_DF_INHERIT);
@@ -2805,7 +2805,7 @@ pub fn ip6_output_ipsec_send(
                 break;
             }
         }
-        // KERNEL_UNLOCK()
+        kernel_unlock();
     }
     // done:
     if error.is_err() {

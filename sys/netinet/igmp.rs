@@ -134,7 +134,7 @@
 //! - `igmp_sendpkt` zeroes the IP header fields the C leaves to `ip_output` (version, header
 //!   length, identification, TTL, checksum), which `ip_output` then fills.
 //! - `MROUTING` is not configured (the own-report check of v2 reports, `imo_loop` from
-//!   `ip_mrouter_active`). `KERNEL_LOCK()` is nothing on one CPU.
+//!   `ip_mrouter_active`). `igmp_input` runs `igmp_input_if` under the kernel lock, as the C.
 
 use alloc::vec::Vec;
 use core::cell::Cell;
@@ -173,7 +173,7 @@ use crate::sys::mutex::{Mutex, mutex_assert_locked};
 use crate::sys::protosw::PR_FASTHZ;
 use crate::sys::queue::{ListEntry, ListHead};
 use crate::sys::socket::AF_INET;
-use crate::sys::systm::{net_lock_shared, net_unlock_shared};
+use crate::sys::systm::{kernel_lock, kernel_unlock, net_lock_shared, net_unlock_shared};
 
 /// `IGMP_MINLEN`.
 pub const IGMP_MINLEN: usize = 8;
@@ -464,9 +464,9 @@ pub fn igmp_input(
         return IPPROTO_DONE;
     };
 
-    // KERNEL_LOCK(): one CPU.
+    kernel_lock();
     let proto = igmp_input_if(ifp, mp, offp, proto, af, ns);
-    // KERNEL_UNLOCK()
+    kernel_unlock();
     if_put(ifp);
     proto
 }

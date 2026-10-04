@@ -40,7 +40,6 @@
 //!   the IPv6 header is read and written as a copy (`mtod_ip6`/`mtod_ip6_store`) and the
 //!   extension header chain is walked with `m_copydata` as in C. `NPF` (pf(4)) is
 //!   configured: `pf_tag_packet`, `pf_pkt_addr_changed`.
-//! - `KERNEL_ASSERT_LOCKED()` is nothing without `MULTIPROCESSOR`.
 
 use core::mem::size_of;
 use core::ptr;
@@ -93,7 +92,7 @@ use crate::sys::mbuf::{Mbuf, PACKET_TAG_IPSEC_OUT_DONE, mtod};
 use crate::sys::socket::AF_INET;
 #[cfg(feature = "inet6")]
 use crate::sys::socket::AF_INET6;
-use crate::sys::systm::net_assert_locked;
+use crate::sys::systm::{kernel_assert_locked, net_assert_locked};
 
 /// \[a\] `udpencap_enable`: enabled by default.
 pub static UDPENCAP_ENABLE: AtomicI32 = AtomicI32::new(1);
@@ -544,7 +543,7 @@ pub fn ipsp_process_done(m: &'static Mbuf, tdb: &'static Tdb) -> Result<(), Errn
 
         // If there's another (bundled) TDB to apply, do so.
         if let Some(tdbo) = tdb_ref(tdb.tdb_onext.get()) {
-            // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
+            kernel_assert_locked();
             let error =
                 ipsp_process_packet(m, tdbo, i32::from(dst.sa_family()), false, IPSP_DF_INHERIT);
             tdb_unref(Some(tdbo));

@@ -111,7 +111,8 @@
 //!   `&'static T`; the members the C changes through a shared pointer are `Cell`s whose doc
 //!   names the lock. Their queue and tree links use `sys/queue.rs`/`sys/tree.rs` adapters.
 //! - `tdb_counters` (`struct cpumem *` from `counters_alloc`) is an array of atomics inside
-//!   the TDB: one CPU, and the array lives exactly as long as the TDB.
+//!   the TDB, not per-CPU memory: every CPU adds to the same atomics (exact, if slower),
+//!   and the array lives exactly as long as the TDB.
 //! - `tdb_amxkey`/`tdb_emxkey` stay `malloc(M_XDATA)` pointers beside their lengths; the key
 //!   bytes are lent out by [`Tdb::tdb_amxkey`]/[`Tdb::tdb_emxkey`] (`unsafe`: the key lives
 //!   until the transform's `xf_zeroize`).

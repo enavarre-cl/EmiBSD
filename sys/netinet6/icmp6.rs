@@ -1791,8 +1791,8 @@ pub fn icmp6_ctloutput(
 /// moment.
 pub fn icmp6_ratelimit(_dst: &In6Addr, _type: u8, _code: u8) -> bool {
     let limit = ICMP6ERRPPSLIM.load(Ordering::Relaxed);
-    // SAFETY: the counters are touched only here, inside `ppsratecheck`'s mutex on one CPU
-    // (see the static's doc); no other reference to them exists.
+    // SAFETY: the counters are touched only here, and `ppsratecheck` reads and writes them
+    // only inside `ppsratecheck_mtx`, which orders the accesses of every CPU, as in C.
     let pps = unsafe { ICMP6ERRPPS.get_mut() };
     // PPS limit
     if !ppsratecheck(&mut pps.last, &mut pps.count, limit) {

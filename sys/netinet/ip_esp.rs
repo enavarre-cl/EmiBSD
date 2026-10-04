@@ -160,6 +160,7 @@ use crate::sys::mutex::mutex_assert_locked;
 use crate::sys::socket::AF_INET;
 #[cfg(feature = "inet6")]
 use crate::sys::socket::AF_INET6;
+use crate::sys::systm::{kernel_lock, kernel_unlock};
 use libkern::{explicit_bzero, timingsafe_bcmp};
 
 /// `struct espstat`: the ESP statistics as `net.inet.esp.stats` returns them.
@@ -469,8 +470,9 @@ pub fn esp_init(tdbp: &Tdb, xsp: &'static Xformsw, ii: &mut IpsecInit<'_>) -> Re
         // XXX Rounds ?
     }
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     let r = crypto_newsession(if txform.is_some() { &crie } else { &cria }, 0);
+    kernel_unlock();
     match r {
         Ok(sid) => {
             tdbp.tdb_cryptoid.set(sid);
@@ -495,8 +497,9 @@ pub fn esp_zeroize(tdbp: &Tdb) -> Result<(), Errno> {
     esp_freekey(&tdbp.tdb_amxkey, tdbp.tdb_amxkeylen.get());
     esp_freekey(&tdbp.tdb_emxkey, tdbp.tdb_emxkeylen.get());
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     let error = crypto_freesession(tdbp.tdb_cryptoid.get());
+    kernel_unlock();
     tdbp.tdb_cryptoid.set(0);
     error
 }

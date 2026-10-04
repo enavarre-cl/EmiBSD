@@ -158,6 +158,7 @@ use crate::sys::mbuf::{M_AUTH, M_DONTWAIT, Mbuf, m_freemp, m_readonly, mtod};
 use crate::sys::socket::AF_INET;
 #[cfg(feature = "inet6")]
 use crate::sys::socket::AF_INET6;
+use crate::sys::systm::{kernel_lock, kernel_unlock};
 #[cfg(feature = "inet6")]
 use alloc::vec::Vec;
 use libkern::{explicit_bzero, timingsafe_bcmp};
@@ -362,9 +363,10 @@ pub fn ah_init(tdbp: &Tdb, xsp: &'static Xformsw, ii: &mut IpsecInit<'_>) -> Res
         cria.cri_next = Some(&crin);
     }
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
-    let sid = crypto_newsession(&cria, 0)?;
-    tdbp.tdb_cryptoid.set(sid);
+    kernel_lock();
+    let sid = crypto_newsession(&cria, 0);
+    kernel_unlock();
+    tdbp.tdb_cryptoid.set(sid?);
     Ok(())
 }
 
@@ -378,8 +380,9 @@ pub fn ah_zeroize(tdbp: &Tdb) -> Result<(), Errno> {
         tdbp.tdb_amxkey.set(ptr::null_mut());
     }
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     let error = crypto_freesession(tdbp.tdb_cryptoid.get());
+    kernel_unlock();
     tdbp.tdb_cryptoid.set(0);
     error
 }

@@ -189,8 +189,7 @@
 //!   prototypes in C); the first two work on a copy of the request's address that is
 //!   written back.
 //! - `NCARP` (`carp_iamatch`, `IFT_CARP` rules in `in6_ifawithscope` and `in6if_do_dad`) and
-//!   `MROUTING` (`mrt6_ioctl`) are not configured: comments at the sites; `KERNEL_LOCK()` is
-//!   a comment (no kernel lock without `MULTIPROCESSOR`).
+//!   `MROUTING` (`mrt6_ioctl`) are not configured: comments at the sites.
 //! - The routing code called for `AF_INET6` (`rt_ifa_add`, `rt_ifa_addlocal`, `rtalloc`,
 //!   `rtrequest` of the multicast routes) is the generic code of `net/route.rs`.
 
@@ -248,7 +247,8 @@ use crate::sys::sockio::{
 use crate::sys::sysctl::{CTLTYPE_INT, CTLTYPE_NODE, CTLTYPE_STRUCT, Ctlname};
 use crate::sys::syslog::LOG_ERR;
 use crate::sys::systm::{
-    net_assert_locked, net_lock, net_lock_shared, net_unlock, net_unlock_shared,
+    kernel_lock, kernel_unlock, net_assert_locked, net_lock, net_lock_shared, net_unlock,
+    net_unlock_shared,
 };
 use crate::sys::types::{InPort, SaFamily, Time};
 
@@ -1061,8 +1061,8 @@ unsafe fn in6_ioctl_change_ifaddr(
         sa6 = Some(unsafe { in6_sa2sin6(sa) }?);
     }
 
+    kernel_lock();
     net_lock();
-    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
 
     let mut ia6: Option<&'static In6Ifaddr> = None;
     let error = 'err: {
@@ -1182,7 +1182,7 @@ unsafe fn in6_ioctl_change_ifaddr(
 
     // err:
     net_unlock();
-    // KERNEL_UNLOCK()
+    kernel_unlock();
     error
 }
 
@@ -1833,9 +1833,10 @@ pub fn in6_addmulti(addr: &In6Addr, ifp: &'static Ifnet) -> Result<&'static In6M
     sin6.sin6_family = AF_INET6;
     sin6.sin6_addr = *addr;
     ifr.set_ifr_addr(sin6);
-    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+    kernel_lock();
     // SAFETY: `ifr` is a `struct in6_ifreq`, what SIOCADDMULTI takes here.
     let error = unsafe { ifp_ioctl(ifp, SIOCADDMULTI, ptr::from_mut(&mut ifr).cast()) };
+    kernel_unlock();
     if let Err(e) = error {
         free(mem, M_IPMADDR, size_of::<In6Multi>());
         return Err(e);
@@ -1902,9 +1903,10 @@ pub fn in6_delmulti(in6m: &'static In6Multi) {
         sin6.sin6_family = AF_INET6;
         sin6.sin6_addr = in6m.in6m_addr();
         ifr.set_ifr_addr(sin6);
-        // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+        kernel_lock();
         // SAFETY: `ifr` is a `struct in6_ifreq`, what SIOCDELMULTI takes here.
         let _ = unsafe { ifp_ioctl(ifp, SIOCDELMULTI, ptr::from_mut(&mut ifr).cast()) };
+        kernel_unlock();
 
         if_put(ifp);
     }

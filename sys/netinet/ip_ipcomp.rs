@@ -57,7 +57,7 @@
 //! - `NBPFILTER` is configured: `ipcomp_output` counts the packet on the SA's `enc(4)`
 //!   interface (rdomain 0, as the C asks) and taps it.
 //! - `INET6` is configured (feature `inet6`): the IPv6 size check and `ip6_nxt` in
-//!   `ipcomp_output`. `ENCDEBUG`'s `DPRINTF` is `ipsec_dprintf!`. `KERNEL_LOCK` is nothing without `MULTIPROCESSOR`.
+//!   `ipcomp_output`. `ENCDEBUG`'s `DPRINTF` is `ipsec_dprintf!`.
 
 use core::ptr;
 use core::sync::atomic::Ordering;
@@ -96,6 +96,7 @@ use crate::sys::mbuf::{M_DONTWAIT, Mbuf, m_freemp, m_readonly, mtod};
 use crate::sys::socket::AF_INET;
 #[cfg(feature = "inet6")]
 use crate::sys::socket::AF_INET6;
+use crate::sys::systm::{kernel_lock, kernel_unlock};
 
 /// `struct ipcompstat`: the IPComp statistics as `net.inet.ipcomp.stats` returns them.
 #[repr(C)]
@@ -249,16 +250,18 @@ pub fn ipcomp_init(tdbp: &Tdb, xsp: &'static Xformsw, ii: &mut IpsecInit<'_>) ->
         ..Cryptoini::default()
     };
 
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
-    let sid = crypto_newsession(&cric, 0)?;
-    tdbp.tdb_cryptoid.set(sid);
+    kernel_lock();
+    let sid = crypto_newsession(&cric, 0);
+    kernel_unlock();
+    tdbp.tdb_cryptoid.set(sid?);
     Ok(())
 }
 
 /// `ipcomp_zeroize`: used when an IPCA is deleted: frees the crypto session.
 pub fn ipcomp_zeroize(tdbp: &Tdb) -> Result<(), Errno> {
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock();
     let error = crypto_freesession(tdbp.tdb_cryptoid.get());
+    kernel_unlock();
     tdbp.tdb_cryptoid.set(0);
     error
 }
