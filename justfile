@@ -285,6 +285,8 @@ smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --send-after "# " --send 'fstat\n' \
         --send-after "# " --send 'vmstat\n' \
         --send-after "# " --send 'vmstat -i\n' \
+        --send-after "# " --send 'vmstat -s\n' \
+        --send-after "# " --send 'vmstat -m\n' \
         --send-after "# " --send 'df\n' \
         --send-after "# " --send 'mount\n' \
         --send-after "# " --send 'echo diag-$((40+2))\n' \
@@ -295,6 +297,8 @@ smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --send-after "# " --send 'fstat\n' \
         --send-after "# " --send 'vmstat\n' \
         --send-after "# " --send 'vmstat -i\n' \
+        --send-after "# " --send 'vmstat -s\n' \
+        --send-after "# " --send 'vmstat -m\n' \
         --send-after "# " --send 'df\n' \
         --send-after "# " --send 'mount\n' \
         --send-after "# " --send 'echo diag-$((40+2))\n' \

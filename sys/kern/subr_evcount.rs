@@ -33,14 +33,20 @@
 //!
 //! Status: `wip`. Milestone M4 ports `evcount_attach`, `evcount_detach`, `evcount_inc`,
 //! `evcount_percpu` and `evcount_init_percpu` (the `counters_*` per-CPU side is reported
-//! until `percpu` arrives, M5); `evcount_sysctl` is not here yet (`kern_sysctl.rs` reports
-//! `kern.evcount` and `kern.intrcnt`).
+//! until `percpu` arrives, M5); the diagnostic tools (stage 2) port `evcount_sysctl`
+//! (`kern.intrcnt`, `kern.evcount`; `counters_read` of a per-CPU counter is reported).
 
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use crate::kassert;
+use crate::kern::kern_sysctl::{sysctl_rdint, sysctl_rdquad, sysctl_rdstring};
+use crate::machine::intr::{splhigh, splx};
+use crate::sys::errno::Errno;
 use crate::sys::evcount::{Evcount, EvcountList};
 use crate::sys::queue::TailqHead;
+use crate::sys::sysctl::{
+    KERN_INTRCNT_CNT, KERN_INTRCNT_NAME, KERN_INTRCNT_NUM, KERN_INTRCNT_VECTOR,
+};
 use crate::unported;
 
 /// A list head that can be a static: every access happens at attach time on the boot CPU.
@@ -136,6 +142,83 @@ pub fn evcount_inc(ec: &Evcount) {
     }
 }
 
+/// `evcount_sysctl`: `kern.intrcnt` and `kern.evcount`. `name` is `KERN_INTRCNT_NUM` (the
+/// number of counters) or `<KERN_INTRCNT_CNT|NAME|VECTOR>.<index>` (the index-th counter's
+/// count, name or interrupt vector). Read-only.
+pub fn evcount_sysctl(
+    name: &[i32],
+    oldp: usize,
+    oldlenp: &mut usize,
+    newp: usize,
+    _newlen: usize,
+) -> Result<(), Errno> {
+    if newp != 0 {
+        return Err(Errno::EPERM);
+    }
+    let Some(&what) = name.first() else {
+        return Err(Errno::ENOTDIR);
+    };
+
+    let i = if what != KERN_INTRCNT_NUM {
+        if name.len() != 2 {
+            return Err(Errno::ENOTDIR);
+        }
+        if name[1] < 0 {
+            return Err(Errno::EINVAL);
+        }
+        Some(name[1] as usize)
+    } else {
+        None
+    };
+
+    // The index-th counter, or the count of them all.
+    let (list, _) = lists();
+    let mut nintr = 0;
+    let mut found = None;
+    for ec in list.iter() {
+        let this = nintr;
+        nintr += 1;
+        if Some(this) == i {
+            found = Some(ec);
+            break;
+        }
+    }
+
+    match what {
+        KERN_INTRCNT_NUM => sysctl_rdint(oldp, oldlenp, 0, nintr as i32),
+        KERN_INTRCNT_CNT => {
+            let ec = found.ok_or(Errno::ENOENT)?;
+            let count = if !ec.ec_percpu.get().is_null() {
+                // counters_read(ec->ec_percpu, &count, 1, &scratch)
+                return Err(unported!("counters_read (evcount_sysctl, M5)"));
+            } else {
+                let s = splhigh();
+                let count = ec.ec_count.load(Ordering::Relaxed);
+                splx(s);
+                count
+            };
+            sysctl_rdquad(oldp, oldlenp, 0, count as i64)
+        }
+        KERN_INTRCNT_NAME => {
+            let ec = found.ok_or(Errno::ENOENT)?;
+            sysctl_rdstring(oldp, oldlenp, 0, ec.ec_name.get().as_bytes())
+        }
+        KERN_INTRCNT_VECTOR => {
+            let ec = found.ok_or(Errno::ENOENT)?;
+            let data = ec.ec_data.get();
+            if data.is_null() {
+                return Err(Errno::ENOENT);
+            }
+            // SAFETY: `evcount_attach`'s contract, as in C: a non-NULL `ec_data` points at
+            // the counter's interrupt vector, an `int` that lives as long as the counter is
+            // attached (a driver's static or softc field).
+            let vector = unsafe { *data.cast::<i32>() };
+            sysctl_rdint(oldp, oldlenp, 0, vector)
+        }
+        _ => Err(Errno::EOPNOTSUPP),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,5 +238,30 @@ mod tests {
         evcount_detach(&A);
         evcount_detach(&B);
         assert!(!lists().0.iter().any(|e| core::ptr::eq(e, &A)));
+    }
+
+    #[test]
+    fn sysctl_checks() {
+        let mut len = 0;
+        assert_eq!(
+            evcount_sysctl(&[KERN_INTRCNT_NUM], 0, &mut len, 1, 4),
+            Err(Errno::EPERM)
+        );
+        assert_eq!(
+            evcount_sysctl(&[KERN_INTRCNT_CNT], 0, &mut len, 0, 0),
+            Err(Errno::ENOTDIR)
+        );
+        assert_eq!(
+            evcount_sysctl(&[KERN_INTRCNT_NAME, -1], 0, &mut len, 0, 0),
+            Err(Errno::EINVAL)
+        );
+        assert_eq!(
+            evcount_sysctl(&[KERN_INTRCNT_NAME, i32::MAX], 0, &mut len, 0, 0),
+            Err(Errno::ENOENT)
+        );
+        assert_eq!(
+            evcount_sysctl(&[99, 0], 0, &mut len, 0, 0),
+            Err(Errno::EOPNOTSUPP)
+        );
     }
 }

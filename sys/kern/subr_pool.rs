@@ -49,7 +49,8 @@
 //! `pool_runqueue`, `pool_get_done`, `pool_wakeup`), `pool_prime`, the watermarks and
 //! limits, `pool_reclaim`/`pool_reclaim_all`, the page allocators and the lock operations.
 //! The per-CPU caches (`MULTIPROCESSOR`), the garbage collector (`pool_gc_*`, a timeout and
-//! a task), the ddb printers, `pool_chk`, `pool_walk` and `sysctl_dopool` come with M5 to M7.
+//! a task), the ddb printers, `pool_chk` and `pool_walk` come with M5 to M7. `sysctl_dopool`
+//! and the non-`MULTIPROCESSOR` `pool_cache_*info` came with the diagnostic tools (stage 2).
 //!
 //! ## Deviations
 //! - The lock operations keep a flag per lock so the `pl_assert_*` checks mean something;
@@ -57,7 +58,7 @@
 //!   `PR_WAITOK` `pool_get` that finds no memory fails instead of queueing a request and
 //!   sleeping for `pool_runqueue` (a request left queued would outlive the caller's frame).
 //! - `pool_lock` (the rwlock over the pool list) and `pr_refcnt` wait for M5; the boot CPU
-//!   is alone. `splassert(pr_ipl)` waits for M4; `KERNEL_LOCK` in the `_ni` allocators for M5.
+//!   is alone. `sysctl_dopool` therefore holds no reference on the pool it reports. `splassert(pr_ipl)` waits for M4; `KERNEL_LOCK` in the `_ni` allocators for M5.
 //! - `poison_mem`/`poison_check` (`subr_poison.c`) are reported where `POOL_DEBUG` would
 //!   call them; the double-put check under `DIAGNOSTIC` is ported.
 //! - `arc4random` (page magics, freelist order, the `XSIMPLEQ` cookies) is `dev/rnd.rs`'s
@@ -70,14 +71,16 @@ use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use crate::dev::rnd::{arc4random, arc4random_buf};
 use crate::kern::kern_rwlock::{rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write};
 use crate::kern::kern_synch::wakeup_one;
+use crate::kern::kern_sysctl::{sysctl_rdint, sysctl_rdstring, sysctl_rdstruct};
 use crate::kern::kern_tc::getnsecuptime;
 use crate::machine::intr::IPL_HIGH;
 use crate::sys::errno::Errno;
 use crate::sys::param::{PAGE_SIZE, align, roundup};
 use crate::sys::pool::{
-    POOL_ALLOC_ALIGNED, POOL_ALLOC_DEFAULT, PR_LIMITFAIL, PR_NOWAIT, PR_RWLOCK, PR_WAITOK, PR_ZERO,
-    Pool, PoolAllocator, PoolLock, PoolRequest, PoolRequestHandler, PrEntry, pool_alloc_size,
-    pool_alloc_sizes,
+    KERN_POOL_CACHE, KERN_POOL_CACHE_CPUS, KERN_POOL_NAME, KERN_POOL_NPOOLS, KERN_POOL_POOL,
+    KinfoPool, POOL_ALLOC_ALIGNED, POOL_ALLOC_DEFAULT, PR_LIMITFAIL, PR_NOWAIT, PR_RWLOCK,
+    PR_WAITOK, PR_ZERO, Pool, PoolAllocator, PoolLock, PoolRequest, PoolRequestHandler, PrEntry,
+    pool_alloc_size, pool_alloc_sizes,
 };
 use crate::sys::queue::{SimpleqHead, TailqEntry, TailqHead, XsimpleqEntry, XsimpleqHead};
 use crate::sys::rwlock::Rwlock;
@@ -1273,6 +1276,75 @@ pub fn pool_count() -> u32 {
     POOL_COUNT.load(Ordering::Relaxed)
 }
 
+/// `sysctl_dopool`: the `kern.pool` sysctls. `kern.pool.npools` is the number of pools;
+/// `kern.pool.pool.<serial>` the `kinfo_pool` of the pool with that serial number and
+/// `kern.pool.name.<serial>` its name. `kern.pool.cache` and `kern.pool.cache_cpus` are
+/// `EOPNOTSUPP` without `MULTIPROCESSOR`, as in C.
+pub fn sysctl_dopool(name: &[i32], oldp: usize, oldlenp: &mut usize) -> Result<(), Errno> {
+    let Some(&what) = name.first() else {
+        return Err(Errno::EOPNOTSUPP);
+    };
+    match what {
+        KERN_POOL_NPOOLS => {
+            if name.len() != 1 {
+                return Err(Errno::ENOTDIR);
+            }
+            return sysctl_rdint(oldp, oldlenp, 0, pool_count() as i32);
+        }
+        KERN_POOL_NAME | KERN_POOL_POOL | KERN_POOL_CACHE | KERN_POOL_CACHE_CPUS => {}
+        _ => return Err(Errno::EOPNOTSUPP),
+    }
+
+    if name.len() != 2 {
+        return Err(Errno::ENOTDIR);
+    }
+
+    rw_enter_read(&POOL_LOCK);
+    let found = POOL_HEAD
+        .0
+        .iter()
+        .find(|pp| name[1] >= 0 && pp.pr_serial.get() == name[1] as u32);
+    // refcnt_take(&pp->pr_refcnt): M5 (see the module's deviations).
+    rw_exit_read(&POOL_LOCK);
+
+    let Some(pp) = found else {
+        return Err(Errno::ENOENT);
+    };
+
+    match what {
+        KERN_POOL_NAME => sysctl_rdstring(oldp, oldlenp, 0, pp.pr_wchan.get().as_bytes()),
+        KERN_POOL_POOL => {
+            pl_enter(pp, &pp.pr_lock);
+            let mut pi = KinfoPool {
+                pr_size: pp.pr_size.get(),
+                pr_pgsize: pp.pr_pgsize.get(),
+                pr_itemsperpage: pp.pr_itemsperpage.get(),
+                pr_npages: pp.pr_npages.get(),
+                pr_minpages: pp.pr_minpages.get(),
+                pr_maxpages: pp.pr_maxpages.get(),
+                pr_hardlimit: pp.pr_hardlimit.get(),
+                pr_nout: pp.pr_nout.get(),
+                pr_nitems: pp.pr_nitems.get(),
+                pr_nget: pp.pr_nget.get(),
+                pr_nput: pp.pr_nput.get(),
+                pr_nfail: pp.pr_nfail.get(),
+                pr_npagealloc: pp.pr_npagealloc.get(),
+                pr_npagefree: pp.pr_npagefree.get(),
+                pr_hiwat: pp.pr_hiwat.get(),
+                pr_nidle: pp.pr_nidle.get(),
+            };
+            pl_leave(pp, &pp.pr_lock);
+
+            pool_cache_pool_info(pp, &mut pi);
+
+            sysctl_rdstruct(oldp, oldlenp, 0, &pi.to_bytes())
+        }
+        KERN_POOL_CACHE => pool_cache_info(pp, oldp, oldlenp),
+        _ => pool_cache_cpus_info(pp, oldp, oldlenp),
+    }
+    // refcnt_rele_wake(&pp->pr_refcnt): M5.
+}
+
 // Pool backend allocators.
 
 /// `pool_allocator_alloc`: a page from the pool's allocator.
@@ -1389,6 +1461,26 @@ pub fn pool_multi_free_ni(pp: &Pool, v: NonNull<u8>) {
     if let Some(crange) = pp.pr_crange.get() {
         km_free(v, pp.pr_pgsize.get() as usize, &kv, crange);
     }
+}
+
+// The per-CPU caches without MULTIPROCESSOR.
+
+/// `pool_cache_pool_info`: adds the per-CPU caches' counts to `pi`; nothing to add without
+/// `MULTIPROCESSOR`.
+pub fn pool_cache_pool_info(_pp: &Pool, _pi: &mut KinfoPool) {
+    // nop
+}
+
+/// `pool_cache_info`: `kern.pool.cache.<serial>`; there is no cache without
+/// `MULTIPROCESSOR`.
+pub fn pool_cache_info(_pp: &Pool, _oldp: usize, _oldlenp: &mut usize) -> Result<(), Errno> {
+    Err(Errno::EOPNOTSUPP)
+}
+
+/// `pool_cache_cpus_info`: `kern.pool.cache_cpus.<serial>`; there is no cache without
+/// `MULTIPROCESSOR`.
+pub fn pool_cache_cpus_info(_pp: &Pool, _oldp: usize, _oldlenp: &mut usize) -> Result<(), Errno> {
+    Err(Errno::EOPNOTSUPP)
 }
 
 // The lock operations (see the module's deviations).

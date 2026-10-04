@@ -37,13 +37,16 @@
 //! Upstream: sys/sys/pool.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M3 ports `struct pool`, `struct pool_allocator`,
-//! `struct pool_request`, the `PR_*` flags and the `POOL_ALLOC_*` encoding. The
-//! `kinfo_pool*` sysctl records and the per-CPU cache fields (`MULTIPROCESSOR`) come later.
+//! `struct pool_request`, the `PR_*` flags and the `POOL_ALLOC_*` encoding; `struct
+//! kinfo_pool` (diagnostic tools, stage 2). The per-CPU cache fields and their
+//! `kinfo_pool_cache*` records (`MULTIPROCESSOR`) come later.
 //!
 //! ## Deviations
 //! - `union pool_lock` (a mutex or an rwlock, M5) is [`PoolLock`], a flag that only backs
 //!   the `pl_assert_*` checks until the real locks land.
 //! - `pr_refcnt` (`refcnt(9)`, M5) is not here.
+//! - `struct kinfo_pool` is copied out through `KinfoPool::to_bytes` (the C layout with its
+//!   padding zeroed), not as the Rust structure's memory.
 //! - `pr_wchan` is a `&'static str`; `pr_alloc` and `pr_crange` are references, `None` before
 //!   `pool_init`.
 
@@ -69,6 +72,78 @@ pub const KERN_POOL_POOL: i32 = 3;
 pub const KERN_POOL_CACHE: i32 = 4;
 /// `KERN_POOL_CACHE_CPUS`: all cpus cache info.
 pub const KERN_POOL_CACHE_CPUS: i32 = 5;
+
+/// `struct kinfo_pool`: what `kern.pool.pool.<serial>` reports about a pool.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct KinfoPool {
+    /// `pr_size`: size of a pool item.
+    pub pr_size: u32,
+    /// `pr_pgsize`: size of a "page".
+    pub pr_pgsize: u32,
+    /// `pr_itemsperpage`: number of items per "page".
+    pub pr_itemsperpage: u32,
+    /// `pr_minpages`: same in page units.
+    pub pr_minpages: u32,
+    /// `pr_maxpages`: maximum # of idle pages to keep.
+    pub pr_maxpages: u32,
+    /// `pr_hardlimit`: hard limit to number of allocated items.
+    pub pr_hardlimit: u32,
+    /// `pr_npages`: # of pages allocated.
+    pub pr_npages: u32,
+    /// `pr_nout`: # items currently allocated.
+    pub pr_nout: u32,
+    /// `pr_nitems`: # items in the pool.
+    pub pr_nitems: u32,
+    /// `pr_nget`: # of successful requests.
+    pub pr_nget: u64,
+    /// `pr_nput`: # of releases.
+    pub pr_nput: u64,
+    /// `pr_nfail`: # of unsuccessful requests.
+    pub pr_nfail: u64,
+    /// `pr_npagealloc`: # of pages allocated.
+    pub pr_npagealloc: u64,
+    /// `pr_npagefree`: # of pages released.
+    pub pr_npagefree: u64,
+    /// `pr_hiwat`: max # of pages in pool.
+    pub pr_hiwat: u32,
+    /// `pr_nidle`: # of idle pages.
+    pub pr_nidle: u64,
+}
+
+impl KinfoPool {
+    /// The structure's bytes in the C layout (LP64: `unsigned long` is 8 bytes), 96 bytes,
+    /// the padding after `pr_nitems` and `pr_hiwat` zeroed ("don't leak padding").
+    pub fn to_bytes(&self) -> [u8; 96] {
+        let mut out = [0u8; 96];
+        let ints = [
+            self.pr_size,
+            self.pr_pgsize,
+            self.pr_itemsperpage,
+            self.pr_minpages,
+            self.pr_maxpages,
+            self.pr_hardlimit,
+            self.pr_npages,
+            self.pr_nout,
+            self.pr_nitems,
+        ];
+        for (i, v) in ints.iter().enumerate() {
+            out[4 * i..4 * i + 4].copy_from_slice(&v.to_ne_bytes());
+        }
+        let longs = [
+            self.pr_nget,
+            self.pr_nput,
+            self.pr_nfail,
+            self.pr_npagealloc,
+            self.pr_npagefree,
+        ];
+        for (i, v) in longs.iter().enumerate() {
+            out[40 + 8 * i..48 + 8 * i].copy_from_slice(&v.to_ne_bytes());
+        }
+        out[80..84].copy_from_slice(&self.pr_hiwat.to_ne_bytes());
+        out[88..96].copy_from_slice(&self.pr_nidle.to_ne_bytes());
+        out
+    }
+}
 
 /// `pa_alloc`: gives `pr_pgsize` bytes for the pool; `slowdown` is set when the caller should
 /// yield.
@@ -339,5 +414,26 @@ mod tests {
         assert!(sizes & (1 << 11) == 0);
         assert!(sizes & POOL_ALLOC_ALIGNED != 0);
         assert_eq!(POOL_ALLOC_DEFAULT, PAGE_SIZE | 1);
+    }
+
+    #[test]
+    fn kinfo_pool_layout() {
+        let pi = KinfoPool {
+            pr_size: 1,
+            pr_nitems: 9,
+            pr_nget: 10,
+            pr_npagefree: 14,
+            pr_hiwat: 15,
+            pr_nidle: 16,
+            ..KinfoPool::default()
+        };
+        let b = pi.to_bytes();
+        let word = |o: usize| u64::from_ne_bytes(b[o..o + 8].try_into().expect("8 bytes"));
+        assert_eq!(u32::from_ne_bytes(b[0..4].try_into().expect("4")), 1);
+        assert_eq!(u32::from_ne_bytes(b[32..36].try_into().expect("4")), 9);
+        assert_eq!(&b[36..40], &[0; 4], "padding");
+        assert_eq!((word(40), word(72)), (10, 14));
+        assert_eq!(u32::from_ne_bytes(b[80..84].try_into().expect("4")), 15);
+        assert_eq!(word(88), 16);
     }
 }

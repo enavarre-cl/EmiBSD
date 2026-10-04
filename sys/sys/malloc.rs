@@ -43,6 +43,8 @@
 //!
 //! ## Deviations
 //! - `kmemusage`'s union of `freecnt`/`pagecnt` is one `u16` with two accessor pairs.
+//! - `struct kmemstats` and `struct kmembuckets` hold `Cell`s; `to_bytes` gives the C
+//!   layout `kern.malloc` copies out (LP64 only, as both architectures are).
 
 use core::cell::Cell;
 
@@ -430,6 +432,23 @@ impl Kmemstats {
     }
 }
 
+impl Kmemstats {
+    /// The structure's bytes as `sysctl_malloc` copies them out: the C layout (`long`s, the
+    /// `u_short` `ks_limblocks` and its padding zeroed), 64 bytes on LP64.
+    pub fn to_bytes(&self) -> [u8; 64] {
+        let mut out = [0u8; 64];
+        out[0..8].copy_from_slice(&self.ks_inuse.get().to_ne_bytes());
+        out[8..16].copy_from_slice(&self.ks_calls.get().to_ne_bytes());
+        out[16..24].copy_from_slice(&self.ks_memuse.get().to_ne_bytes());
+        out[24..26].copy_from_slice(&self.ks_limblocks.get().to_ne_bytes());
+        out[32..40].copy_from_slice(&self.ks_maxused.get().to_ne_bytes());
+        out[40..48].copy_from_slice(&self.ks_limit.get().to_ne_bytes());
+        out[48..56].copy_from_slice(&self.ks_size.get().to_ne_bytes());
+        out[56..64].copy_from_slice(&self.ks_spare.get().to_ne_bytes());
+        out
+    }
+}
+
 impl Default for Kmemstats {
     fn default() -> Self {
         Self::new()
@@ -520,6 +539,27 @@ impl Kmembuckets {
     }
 }
 
+impl Kmembuckets {
+    /// The structure's bytes as `sysctl_malloc` copies them out: the C layout on LP64, 72
+    /// bytes, with the freelist head (`XSIMPLEQ_HEAD`: two pointers and a cookie) zeroed as
+    /// the C zeroes it before the copy.
+    pub fn to_bytes(&self) -> [u8; 72] {
+        let mut out = [0u8; 72];
+        let counts = [
+            self.kb_calls.get(),
+            self.kb_total.get(),
+            self.kb_totalfree.get(),
+            self.kb_elmpercl.get(),
+            self.kb_highwat.get(),
+            self.kb_couldfree.get(),
+        ];
+        for (i, c) in counts.iter().enumerate() {
+            out[24 + 8 * i..32 + 8 * i].copy_from_slice(&c.to_ne_bytes());
+        }
+        out
+    }
+}
+
 impl Default for Kmembuckets {
     fn default() -> Self {
         Self::new()
@@ -561,6 +601,25 @@ mod tests {
         assert_eq!(INITKMEMNAMES[1], None);
         assert_eq!(INITKMEMNAMES[143], None);
         assert_eq!(INITKMEMNAMES.len(), M_LAST as usize);
+    }
+
+    #[test]
+    fn sysctl_layouts() {
+        let kb = Kmembuckets::new();
+        kb.kb_calls.set(3);
+        kb.kb_couldfree.set(8);
+        let b = kb.to_bytes();
+        assert_eq!(&b[..24], &[0; 24], "the freelist head is zeroed");
+        assert_eq!(u64::from_ne_bytes(b[24..32].try_into().expect("8")), 3);
+        assert_eq!(u64::from_ne_bytes(b[64..72].try_into().expect("8")), 8);
+
+        let ks = Kmemstats::new();
+        ks.ks_limblocks.set(7);
+        ks.ks_spare.set(-1);
+        let b = ks.to_bytes();
+        assert_eq!(u16::from_ne_bytes(b[24..26].try_into().expect("2")), 7);
+        assert_eq!(&b[26..32], &[0; 6], "padding");
+        assert_eq!(i64::from_ne_bytes(b[56..64].try_into().expect("8")), -1);
     }
 
     #[test]

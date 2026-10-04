@@ -68,8 +68,7 @@
 //!   atomic's; a C local passed by address is an `AtomicI32` read back with `into_inner`.
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
 //!   `ENOSYS`: `file` (`kern_descrip.c`; `fill_file` is not here),
-//!   `malloc` (`sysctl_malloc`), `pool` (`sysctl_dopool`), `intrcnt` and `evcount`
-//!   (`evcount_sysctl`), `watchdog` (`kern_watchdog.c`), `clockintr`, `timecounter`
+//!   `watchdog` (`kern_watchdog.c`), `clockintr`, `timecounter`
 //!   (`sysctl_tc`), `proc_vmmap` after its checks
 //!   (`fill_vmmap`); `hw.model` (`cpu_model`, `identcpu.c`/arm64 `cpu.c`),
 //!   `disknames`/`diskstats`/`diskcount` (`subr_disk.c`), `sensors` (`kern_sensors.c`),
@@ -110,7 +109,7 @@ use crate::kern::kern_clock::sysctl_clockrate;
 use crate::kern::kern_descrip::NUMFILES;
 use crate::kern::kern_fork::{FORKSTAT, NPROCESSES, NTHREADS};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave, pc_cons_enter, pc_cons_leave};
-use crate::kern::kern_malloc::{free, malloc};
+use crate::kern::kern_malloc::{free, malloc, sysctl_malloc};
 use crate::kern::kern_proc::{ALLPROCESS, ZOMBPROCESS, prfind};
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_resource::{calctsru, tuagg_get_proc, tuagg_get_process};
@@ -121,8 +120,9 @@ use crate::kern::kern_tc::{microboottime, nanoboottime, nanotime, tc_setrealtime
 use crate::kern::kern_timeout::timeout_sysctl;
 use crate::kern::sched_bsd;
 use crate::kern::subr_autoconf::AUTOCONF_SERIAL;
+use crate::kern::subr_evcount::evcount_sysctl;
 use crate::kern::subr_log::{consbufp, msgbufp};
-use crate::kern::subr_pool::{POOL_DEBUG, pool_reclaim_all};
+use crate::kern::subr_pool::{POOL_DEBUG, pool_reclaim_all, sysctl_dopool};
 use crate::kern::subr_prf::{SPLASSERT_CTL, panic};
 use crate::kern::tty::{TTY_COUNT, sysctl_tty};
 use crate::kern::uipc_mbuf::{MBSTAT, nmbclust_update};
@@ -468,9 +468,9 @@ fn kern_sysctl_dirs(
 ) -> Result<(), Errno> {
     match top_name {
         KERN_FILE => return sysctl_file(name, oldp, oldlenp, p),
-        KERN_MALLOCSTATS => return Err(unported!("kern.malloc: sysctl_malloc (kern_malloc.c)")),
+        KERN_MALLOCSTATS => return sysctl_malloc(name, oldp, oldlenp, newp, newlen),
         KERN_CPTIME2 => return sysctl_cptime2(name, oldp, oldlenp, newp, newlen),
-        KERN_POOL => return Err(unported!("kern.pool: sysctl_dopool (subr_pool.c)")),
+        KERN_POOL => return sysctl_dopool(name, oldp, oldlenp),
         KERN_CPUSTATS => return sysctl_cpustats(name, oldp, oldlenp, newp, newlen),
         // KERN_SYSVIPC_INFO, KERN_SEMINFO, KERN_SHMINFO: SYSV* are not configured.
         // KERN_AUDIO, KERN_VIDEO: NAUDIO and NVIDEO are 0.
@@ -505,7 +505,7 @@ fn kern_sysctl_dirs_locked(
         KERN_PROC_VMMAP => sysctl_proc_vmmap(name, oldp, oldlenp, p),
         KERN_INTRCNT => sysctl_intrcnt(name, oldp, oldlenp),
         KERN_WATCHDOG => Err(unported!("kern.watchdog: sysctl_wdog (kern_watchdog.c)")),
-        KERN_EVCOUNT => Err(unported!("kern.evcount: evcount_sysctl (subr_evcount.c)")),
+        KERN_EVCOUNT => evcount_sysctl(name, oldp, oldlenp, newp, newlen),
         KERN_CLOCKINTR => Err(unported!(
             "kern.clockintr: sysctl_clockintr (kern_clockintr.c)"
         )),
@@ -2211,10 +2211,9 @@ pub fn sysctl_diskinit(update: bool, p: &Proc) -> Result<(), Errno> {
     error
 }
 
-/// `sysctl_intrcnt`: `kern.intrcnt`, served by `evcount_sysctl` (reported).
+/// `sysctl_intrcnt`: `kern.intrcnt`, served by `evcount_sysctl`.
 pub fn sysctl_intrcnt(name: &[i32], oldp: usize, oldlenp: &mut usize) -> Result<(), Errno> {
-    let _ = (name, oldp, oldlenp);
-    Err(unported!("kern.intrcnt: evcount_sysctl (subr_evcount.c)"))
+    evcount_sysctl(name, oldp, oldlenp, 0, 0)
 }
 
 /// `sysctl_sensors`: `hw.sensors`. The name checks are the C's; the sensor list is

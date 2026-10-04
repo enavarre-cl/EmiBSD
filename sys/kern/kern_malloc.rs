@@ -38,8 +38,9 @@
 //! Upstream: sys/kern/kern_malloc.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M3 ports `malloc`, `free`, `mallocarray`, `kmeminit_nkmempages`
-//! and `kmeminit`; `sysctl_malloc` and `malloc_printit` (ddb) come with M7. The `KMEMSTATS`
-//! option is feature `kmemstats`.
+//! and `kmeminit`; the diagnostic tools (stage 2) `sysctl_malloc` with `buckstring` and
+//! `memall`; `malloc_printit` (ddb) is not here. The `KMEMSTATS` option is feature
+//! `kmemstats`.
 //!
 //! ## Deviations
 //! - On a machine without an MMU (`PMAP_NOMMU`: the host test double) `kmem_map` is not
@@ -52,17 +53,31 @@
 //! - `poison_mem`/`poison_check`/`poison_value` (`subr_poison.c`) and the `uvm_map_checkprot`
 //!   freelist check under `DIAGNOSTIC` are reported where the C calls them.
 //! - `malloc_lasterr`/`ratecheck` (time) are not here: the "allocation too large" message is
-//!   printed every time. `buckstring` and `memall` (sysctl strings) wait for M7.
+//!   printed every time.
+//! - `sysctl_malloc` copies `kmembuckets`/`kmemstats` out through their `to_bytes` (the C
+//!   layout, freelist head zeroed) without `malloc_mtx` (M5). `BUCKETINDX` of a negative
+//!   bucket number is the smallest bucket, as the C's `int` comparisons make it.
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI64, AtomicPtr, AtomicUsize, Ordering};
 
+use libkern::StaticCell;
+
 use crate::dev::rnd::arc4random_buf;
+use crate::kern::kern_sysctl::{sysctl_rdstring, sysctl_rdstruct};
+#[cfg(any(feature = "kmemstats", feature = "diagnostic"))]
+use crate::kern::subr_prf::snprintf;
 use crate::machine::pmap::pmap_map_direct;
 use crate::machine::{Machine, Pmap};
+use crate::sys::errno::Errno;
 #[cfg(any(feature = "kmemstats", feature = "diagnostic"))]
 use crate::sys::malloc::INITKMEMNAMES;
+#[cfg(any(feature = "kmemstats", feature = "diagnostic"))]
+use crate::sys::malloc::M_SYSCTL;
+use crate::sys::malloc::{
+    KERN_MALLOC_BUCKET, KERN_MALLOC_BUCKETS, KERN_MALLOC_KMEMNAMES, KERN_MALLOC_KMEMSTATS,
+};
 use crate::sys::malloc::{
     Kmembuckets, Kmemusage, M_CANFAIL, M_NOWAIT, M_WAITOK, M_ZERO, MALLOC_MAX, MAXALLOCSAVE,
     MINBUCKET,
@@ -85,7 +100,9 @@ use crate::{kassert, kprintf, queue_adapter};
 #[cfg(feature = "kmemstats")]
 use crate::kern::kern_synch::wakeup;
 #[cfg(feature = "kmemstats")]
-use crate::sys::malloc::{Kmemstats, M_LAST};
+use crate::sys::malloc::Kmemstats;
+#[cfg(any(feature = "kmemstats", feature = "diagnostic"))]
+use crate::sys::malloc::M_LAST;
 #[cfg(feature = "diagnostic")]
 use crate::sys::malloc::{M_FREE, MINALLOCSIZE};
 
@@ -167,7 +184,16 @@ static KMEMUSAGE_LEN: AtomicUsize = AtomicUsize::new(0);
 static KMEMBASE: AtomicUsize = AtomicUsize::new(0);
 /// `kmemlimit`.
 static KMEMLIMIT: AtomicUsize = AtomicUsize::new(0);
-// buckstring, memall: sysctl (M7).
+/// `buckstring`: the bucket sizes, comma separated, for `kern.malloc.buckets` (`[I]`:
+/// written once by `kmeminit` under `KMEMSTATS`, before any sysctl; empty otherwise).
+static BUCKSTRING: StaticCell<[u8; 16 * 8]> = StaticCell::new([0; 16 * 8]);
+/// `memall`: the memory type names, comma separated (`kern.malloc.kmemnames`; `[I]`:
+/// allocated once by `kmeminit`). Its length, NUL included, is `MEMALL_LEN`.
+#[cfg(any(feature = "kmemstats", feature = "diagnostic"))]
+static MEMALL: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
+/// The size of the `memall` allocation.
+#[cfg(any(feature = "kmemstats", feature = "diagnostic"))]
+static MEMALL_LEN: AtomicUsize = AtomicUsize::new(0);
 
 /// `addrmask[]`: this structure provides a set of masks to catch unaligned frees.
 #[cfg(feature = "diagnostic")]
@@ -709,9 +735,112 @@ pub fn kmeminit() {
             ks.ks_limit
                 .set(nkmempages() as i64 * PAGE_SIZE as i64 * 6 / 10);
         }
-        // buckstring: sysctl (M7).
+
+        // SAFETY: `buckstring` is `[I]`: kmeminit runs once on the boot CPU, before any
+        // sysctl can read it.
+        let buckstring = unsafe { BUCKSTRING.get_mut() };
+        buckstring.fill(0);
+        let mut siz = 0;
+        for i in MINBUCKET..MINBUCKET + 16 {
+            siz += snprintf(&mut buckstring[siz..], format_args!("{},", 1u32 << i));
+        }
+        // Remove trailing comma
+        if siz > 0 {
+            buckstring[siz - 1] = 0;
+        }
     }
-    // memall (KMEMSTATS || DIAGNOSTIC): sysctl (M7).
+    #[cfg(any(feature = "kmemstats", feature = "diagnostic"))]
+    {
+        // Figure out how large a buffer we need.
+        let totlen: usize = INITKMEMNAMES
+            .iter()
+            .map(|n| n.map_or(0, str::len) + 1)
+            .sum();
+        let len = totlen + M_LAST as usize;
+        let Some(mem) = malloc(len, M_SYSCTL, M_WAITOK | M_ZERO) else {
+            #[allow(clippy::panic)] // M_WAITOK does not fail in the C
+            {
+                panic!("kmeminit: no memory for memall");
+            }
+        };
+        // SAFETY: a fresh, zeroed `len`-byte allocation, published below and never freed;
+        // nothing else sees it yet.
+        let memall = unsafe { core::slice::from_raw_parts_mut(mem.as_ptr(), len) };
+        let mut siz = 0;
+        for name in INITKMEMNAMES {
+            siz += snprintf(&mut memall[siz..], format_args!("{},", name.unwrap_or("")));
+        }
+        // Remove trailing comma
+        if siz > 0 {
+            memall[siz - 1] = 0;
+        }
+        // Now, convert all spaces to underscores.
+        for c in memall[..totlen].iter_mut() {
+            if *c == b' ' {
+                *c = b'_';
+            }
+        }
+        MEMALL_LEN.store(len, Ordering::Relaxed);
+        MEMALL.store(mem.as_ptr(), Ordering::Release);
+    }
+}
+
+/// `sysctl_malloc`: return kernel malloc statistics information (`kern.malloc`): the bucket
+/// sizes, one bucket's counters, one type's statistics (`KMEMSTATS`) or the type names.
+pub fn sysctl_malloc(
+    name: &[i32],
+    oldp: usize,
+    oldlenp: &mut usize,
+    newp: usize,
+    _newlen: usize,
+) -> Result<(), Errno> {
+    let Some(&what) = name.first() else {
+        return Err(Errno::ENOTDIR);
+    };
+    if name.len() != 2 && what != KERN_MALLOC_BUCKETS && what != KERN_MALLOC_KMEMNAMES {
+        return Err(Errno::ENOTDIR); // overloaded
+    }
+
+    match what {
+        KERN_MALLOC_BUCKETS => {
+            // SAFETY: `[I]`: written only by kmeminit, before any sysctl.
+            let buckstring = unsafe { BUCKSTRING.get() };
+            sysctl_rdstring(oldp, oldlenp, newp, buckstring)
+        }
+        KERN_MALLOC_BUCKET => {
+            // BUCKETINDX of an int: a negative size compares below every bucket.
+            let sz = usize::try_from(name[1]).unwrap_or(0);
+            // mtx_enter(&malloc_mtx): M5. The freelist head is left out (zeroed).
+            let kb = BUCKET[bucketindx(sz)].to_bytes();
+            sysctl_rdstruct(oldp, oldlenp, newp, &kb)
+        }
+        KERN_MALLOC_KMEMSTATS => {
+            #[cfg(feature = "kmemstats")]
+            {
+                if name[1] < 0 || name[1] >= M_LAST {
+                    return Err(Errno::EINVAL);
+                }
+                // mtx_enter(&malloc_mtx): M5.
+                let km = KMEMSTATS[name[1] as usize].to_bytes();
+                sysctl_rdstruct(oldp, oldlenp, newp, &km)
+            }
+            #[cfg(not(feature = "kmemstats"))]
+            Err(Errno::EOPNOTSUPP)
+        }
+        #[cfg(any(feature = "kmemstats", feature = "diagnostic"))]
+        KERN_MALLOC_KMEMNAMES => {
+            let p = MEMALL.load(Ordering::Acquire);
+            if p.is_null() {
+                return sysctl_rdstring(oldp, oldlenp, newp, b"");
+            }
+            // SAFETY: published by kmeminit once filled, `MEMALL_LEN` bytes, never freed
+            // nor written again.
+            let memall =
+                unsafe { core::slice::from_raw_parts(p, MEMALL_LEN.load(Ordering::Relaxed)) };
+            sysctl_rdstring(oldp, oldlenp, newp, memall)
+        }
+        _ => Err(Errno::EOPNOTSUPP),
+    }
 }
 
 /// `MUL_NO_OVERFLOW`: products of two factors below it cannot overflow.
