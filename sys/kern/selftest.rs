@@ -1023,6 +1023,8 @@ fn pingpong_thread(arg: *mut core::ffi::c_void) {
 pub fn kthread_pingpong() {
     mtx_init(&PINGPONG_MTX, IPL_NONE);
     let start_ns = nsecuptime();
+    // The thread count before the two exist: after their exits are reaped it is back here.
+    let nthreads_start = NTHREADS.load(Ordering::Relaxed);
 
     let ping_tid = match kthread_create(pingpong_thread, ptr::without_provenance_mut(1), b"ping") {
         Ok(p) => p.p_tid.get(),
@@ -1058,13 +1060,15 @@ pub fn kthread_pingpong() {
     mtx_leave(&PINGPONG_MTX);
     let elapsed_us = nsecuptime().wrapping_sub(start_ns) / 1000;
 
-    // Give the two exits time to reach the reaper: a timed sleep (endtsleep wakes it).
+    // Give the two exits time to reach the reaper: a timed sleep (endtsleep wakes it). The
+    // reaper may already have taken them by now, so the count is compared with the one from
+    // before their creation, not with one read here.
     let nthreads_before = NTHREADS.load(Ordering::Relaxed);
     let _ = tsleep_nsec(ptr::addr_of!(PINGPONG_REAP), PWAIT, "reapwait", 50_000_000);
     let nthreads_after = NTHREADS.load(Ordering::Relaxed);
 
     let turns = PINGPONG_TURN.load(Ordering::Relaxed);
-    if turns == 2 * PINGPONG_ROUNDS && nthreads_after == nthreads_before - 2 {
+    if turns == 2 * PINGPONG_ROUNDS && nthreads_after == nthreads_start {
         kprintf!(
             "selftest: kthread ping-pong ok: {} turns between tid {} and tid {} in {} us, {} context switches, both exited and reaped ({} threads left)\n",
             turns,
@@ -1076,8 +1080,9 @@ pub fn kthread_pingpong() {
         );
     } else {
         kprintf!(
-            "selftest: kthread ping-pong FAILED: {} turns, {} threads before the exits, {} after\n",
+            "selftest: kthread ping-pong FAILED: {} turns, {} threads at the start, {} before the reap wait, {} after\n",
             turns,
+            nthreads_start,
             nthreads_before,
             nthreads_after
         );
