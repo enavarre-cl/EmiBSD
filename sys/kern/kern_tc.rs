@@ -29,16 +29,16 @@
 //!
 //! Upstream: sys/kern/kern_tc.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M5 ports the dummy timecounter, the timehands ring, every time
+//! Status: `ported`. Milestone M5 ports the dummy timecounter, the timehands ring, every time
 //! reader, `tc_init`, `tc_reset_quality`, `tc_getfrequency`/`tc_getprecision`,
 //! `tc_setrealtimeclock`, `tc_setclock`, `tc_update_timekeep`, `tc_windup`, `tc_ticktock`,
 //! `inittimecounter`, `ntp_update_second`, `tc_adjfreq` and `tc_adjtime`; the TSC port adds
-//! the sysctl side (`sysctl_tc`, `sysctl_tc_hardware`, `sysctl_tc_choice`, `tc_vars`).
+//! the sysctl side (`sysctl_tc`, `sysctl_tc_hardware`, `sysctl_tc_choice`, `tc_vars`). M11b
+//! completes `tc_lock` (taken in `tc_setrealtimeclock` and `sysctl_tc_hardware`, asserted in
+//! `tc_windup`, `tc_adjfreq` and `tc_adjtime`; `kern_time.c` takes it around them) and checks
+//! the readers on every CPU: they only race the winder on the atomic generation.
 //!
 //! ## Deviations
-//! - `tc_lock` is an rwlock (`kern_rwlock.c`, M5-b): the paths that take it
-//!   (`tc_setrealtimeclock`, `tc_adjfreq`, `tc_adjtime`) report it as unported and go on
-//!   under `windup_mtx` alone, which on one CPU with no other thread is the same exclusion.
 //! - `timekeep` (the page shared with userland) is `kern_exec.c`'s global
 //!   (`kern_exec::TIMEKEEP`): null until the first exec maps the page, so
 //!   `tc_update_timekeep` returns at its null check before then, as the C does.
@@ -590,7 +590,9 @@ pub fn tc_windup(
     new_offset: Option<&Bintime>,
     new_adjtimedelta: Option<i64>,
 ) {
-    // rw_assert_wrlock(&tc_lock) when new_boottime or new_adjtimedelta: see the deviations.
+    if new_boottime.is_some() || new_adjtimedelta.is_some() {
+        rw_assert_wrlock(&TC_LOCK);
+    }
     mutex_assert_locked(&WINDUP_MTX, "tc_windup");
 
     let active_tc = timecounter();

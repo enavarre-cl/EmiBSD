@@ -28,8 +28,8 @@
 //! Upstream: sys/sys/timetc.h @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M5 ports `struct timecounter`, `struct timekeep` and
-//! `TK_VERSION`; the functions are in `kern/kern_tc.rs`. `tc_lock` (an rwlock) and
-//! `timekeep_object` (the page shared with userland, M6) are not here.
+//! `TK_VERSION`; the functions are in `kern/kern_tc.rs`, with `tc_lock` (`TC_LOCK`, the C's
+//! `extern`). `timekeep_object` (the page shared with userland, M6) is not here.
 //!
 //! A timecounter is a binary counter which has two properties:
 //! - it runs at a fixed, known frequency.
