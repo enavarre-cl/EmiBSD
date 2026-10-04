@@ -1939,14 +1939,23 @@ pub fn sr_discipline_init(sd: &'static SrDiscipline, level: i32) -> Result<(), E
 
     sd.set_wu_type_default();
     match level {
-        0 => Err(unported!("sr_raid0_discipline_init (softraid_raid0.c)")),
-        1 => Err(unported!("sr_raid1_discipline_init (softraid_raid1.c)")),
+        0 => {
+            crate::dev::softraid_raid0::sr_raid0_discipline_init(sd);
+            Ok(())
+        }
+        1 => {
+            crate::dev::softraid_raid1::sr_raid1_discipline_init(sd);
+            Ok(())
+        }
         5 => Err(unported!("sr_raid5_discipline_init (softraid_raid5.c)")),
         6 => Err(unported!("sr_raid6_discipline_init (softraid_raid6.c)")),
         // CRYPTO
         0x43 /* 'C' */ => Err(unported!("sr_crypto_discipline_init (softraid_crypto.c)")),
         0x1C => Err(unported!("sr_raid1c_discipline_init (softraid_raid1c.c)")),
-        0x63 /* 'c' */ => Err(unported!("sr_concat_discipline_init (softraid_concat.c)")),
+        0x63 /* 'c' */ => {
+            crate::dev::softraid_concat::sr_concat_discipline_init(sd);
+            Ok(())
+        }
         _ => Err(Errno::EIO),
     }
 }

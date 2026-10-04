@@ -6304,3 +6304,30 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7e0f27109c6fed8c481a851b3c3c89407f7f15fc"
 deps = ["sys/dev/softraidvar.h", "sys/kern/kern_sensors.c", "sys/dev/bio.c", "sys/scsi/scsiconf.c", "sys/scsi/scsi_base.c", "sys/kern/vfs_bio.c", "sys/kern/subr_disk.c", "sys/crypto/md5.c"]
 notes = "M10f phase 1 (discipline-facing part): smd[] native driver, sr_meta_attach/probe/getdevname, sr_rw (bufpool buf, DmaBuf), sr_meta_rw/clear/init/init_complete/opt_handler/save_callback/save (fake wu malloced)/read/opt_load (old fixed-length items converted)/validate (v3-v6), sr_meta_native_probe/attach/read/write, sr_hotplug_register/unregister (typed fn, fn_addr_eq), sr_disk_attach, sr_info/warn/error (fmt::Arguments), sr_ccb_alloc/free/get/put/rw (unsafe: data pointer contract)/done, sr_wu_alloc/free/get/put (iopool unsafe fns)/init/enqueue_ccb/release_ccbs/done/done_callback, sr_scsi_wu_get/put, sr_scsi_done, sr_chunk_in_use, sr_rebuild_percent, sr_discipline_init, sr_raid_inquiry/read_cap/tur/request_sense/start_stop/sync/intr, sr_schedule_wu, sr_raid_startwu, sr_raid_recreate_wu, sr_alloc_resources, sr_free_resources, sr_set_chunk_state, sr_set_vol_state, sr_block_get/put, sr_checksum, sr_uuid_generate/format/print, sr_validate_stripsize (Option), sr_validate_io (returns blkno), sr_rebuild_thread, sr_rebuild (xs from scsi_xfer_pool). Stubs: sr_discipline_init's discipline arms report unported!(softraid_raid0.c, raid1, raid5, raid6, crypto, raid1c, concat) until the discipline ports; sr_hotspare_rebuild reports itself (phase 2). Not yet ported (phase 2): bootprobe, boot assembly, map_root, attach/detach, scsi cmd/probe/ioctl, bio ioctls, hotspares, rebuild_init/start, roaming, createraid/deleteraid/discipline/installboot, chunks_unwind, discipline_free/shutdown, already_assembled, quiesce/shutdown, find_discipline, sensors, hibernate (not configured). C's bare 1 returns are Err(EIO); sr_meta_init checksums 16 bytes of the chunk metadata as the C does"
+
+[[file]]
+c = "sys/dev/softraid_raid0.c"
+rust = "sys/dev/softraid_raid0.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "058e141682e2ba1fbbfacd507e24da9c9e58a292"
+deps = ["sys/dev/softraid.c", "sys/dev/softraidvar.h", "sys/dev/biovar.h", "sys/scsi/scsiconf.h", "sys/kern/subr_prf.c"]
+notes = "M10f: RAID 0 discipline (strip walk of sr_raid0_rw is the pure Raid0Walk, same steps incl. the offset -= stripoffs after the first ccb, tested against a textbook stripe model; sr_raid0_create/assemble/init; volume size helper); the C's return 1 is Err(EIO); sr_discipline_init's level-0 arm calls sr_raid0_discipline_init; host tests"
+
+[[file]]
+c = "sys/dev/softraid_concat.c"
+rust = "sys/dev/softraid_concat.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "43576335e29172ff9fba6280d82b390c07086d8a"
+deps = ["sys/dev/softraid.c", "sys/dev/softraidvar.h", "sys/dev/biovar.h", "sys/scsi/scsiconf.h", "sys/kern/subr_prf.c"]
+notes = "M10f: CONCAT discipline (SR_CAP_NON_COERCED; chunk search of sr_concat_rw is the pure concat_locate; an offset exactly at the end of the volume, which the C resolves by reading sv_chunks[no_chunk], fails with EIO instead); sr_discipline_init's 'c' arm calls sr_concat_discipline_init; host tests"
+
+[[file]]
+c = "sys/dev/softraid_raid1.c"
+rust = "sys/dev/softraid_raid1.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "153e6989805ef31d43c46ae68c9a1b1ec87be64c"
+deps = ["sys/dev/softraid.c", "sys/dev/softraidvar.h", "sys/dev/biovar.h", "sys/scsi/scsiconf.h", "sys/kern/kern_task.c", "sys/kern/subr_prf.c"]
+notes = "M10f: RAID 1 discipline; sr_raid1_init/assemble/set_chunk_state/set_vol_state/wu_done are pub for softraid_raid1c.rs; chunk and volume state machines are pure tables (raid1_chunk_transition_ok, raid1_vol_state, raid1_vol_transition_ok) with the C's locking, sd_reb_abort, metadata-save and hotspare task_adds kept around them; read interleaving (raid1_read_chunk, wrapping u32 sr1_counter) and write actions (raid1_write_action) as pure functions; wu_done retries a failed read through sd_scsi_rw; sr_discipline_init's level-1 arm calls sr_raid1_discipline_init; host tests (all transitions, interleave, wu_done, rw error paths)"
