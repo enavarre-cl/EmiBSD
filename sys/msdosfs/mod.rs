@@ -2,8 +2,7 @@
 //!
 //! Headers (types): `bootsect`, `bpb`, `denode`, `direntry`, `fat`, `msdosfsmount`. Files
 //! (functions): `msdosfs_conv`, `msdosfs_denode`, `msdosfs_fat`, `msdosfs_lookup`,
-//! `msdosfs_vfsops`; `msdosfs_vnops` holds only the items the others call (`M10C-SHIM`)
-//! until its port.
+//! `msdosfs_vfsops`, `msdosfs_vnops`.
 
 pub mod bootsect;
 pub mod bpb;
