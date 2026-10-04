@@ -373,8 +373,8 @@ pub fn ffs_truncate(oip: &Inode, length: Off, flags: i32, cred: *const Ucred) ->
                 panic(format_args!("ffs_truncate1"));
             }
         }
-        for i in 0..NDADDR {
-            if newblks[i] != oip.dip_db(i) {
+        for (i, &blk) in newblks[..NDADDR].iter().enumerate() {
+            if blk != oip.dip_db(i) {
                 panic(format_args!("ffs_truncate2"));
             }
         }

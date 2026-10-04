@@ -217,8 +217,10 @@ const ADDRMASK: [usize; 17] = [
     0x0000_ffff,
 ];
 
-/// `memname[type]`, `"???"` for an unknown type.
-#[cfg(any(feature = "kmemstats", feature = "diagnostic"))]
+/// `memname[type]`, `"???"` for an unknown type. Only `DIAGNOSTIC` paths name a type here:
+/// the `KMEMSTATS` user, the `msleep_nsec` wait message over `ks_limit`, is reported (M5);
+/// `memall` reads `INITKMEMNAMES` directly.
+#[cfg(feature = "diagnostic")]
 fn memname(type_: i32) -> &'static str {
     usize::try_from(type_)
         .ok()
@@ -310,8 +312,10 @@ pub fn malloc(size: usize, type_: i32, flags: i32) -> Option<NonNull<u8>> {
         ksp.ks_memuse.set(ksp.ks_memuse.get() + allocsize as i64); // account for this early
         ksp.ks_size.set(ksp.ks_size.get() | (1 << indx));
     }
+    // freshalloc: the block comes from pages allocated just below (the C sets it once they
+    // are, and clears it when the bucket had a free block; a failure returns before use).
     #[cfg(feature = "diagnostic")]
-    let mut freshalloc = false;
+    let freshalloc = kbp.kb_freelist.first().is_none();
     if kbp.kb_freelist.first().is_none() {
         // mtx_leave(&malloc_mtx): M5.
         let npg = atop(round_page(allocsize));
@@ -355,10 +359,6 @@ pub fn malloc(size: usize, type_: i32, flags: i32) -> Option<NonNull<u8>> {
         kbp.kb_total.set(kbp.kb_total.get() + kbp.kb_elmpercl.get());
         let kup = btokup(va);
         kup.ku_indx.set(indx as i16);
-        #[cfg(feature = "diagnostic")]
-        {
-            freshalloc = true;
-        }
         if allocsize > MAXALLOCSAVE {
             kup.set_ku_pagecnt(npg as u16);
             return malloc_out(
@@ -393,11 +393,6 @@ pub fn malloc(size: usize, type_: i32, flags: i32) -> Option<NonNull<u8>> {
                 break;
             }
             cp -= allocsize;
-        }
-    } else {
-        #[cfg(feature = "diagnostic")]
-        {
-            freshalloc = false;
         }
     }
     let freep = kbp.kb_freelist.first()?;

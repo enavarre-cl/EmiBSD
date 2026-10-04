@@ -34,6 +34,9 @@ pub(crate) fn setup_real_memory() -> MutexGuard<'static, ()> {
     let base = (block.as_ptr() as usize + PAGE_MASK) & !PAGE_MASK;
     let (start, end) = (atop(base), atop(base + BLOCK_BYTES));
     uvm_page_physload(start, end, start, end, 0);
+    // physmem, as the machine's bootstrap records it: kmeminit_nkmempages sizes kmem_map
+    // and, under KMEMSTATS, every type's ks_limit from it.
+    crate::sys::systm::PHYSMEM.store(end - start, Ordering::Relaxed);
 
     let (mut s, mut e) = (
         crate::sys::types::Vaddr::new(0),

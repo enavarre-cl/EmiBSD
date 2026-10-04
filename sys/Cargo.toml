@@ -20,11 +20,11 @@ bench = false
 doc = false
 
 [features]
-default = ["alloc", "ffs", "ffs2"]
+default = ["alloc", "ffs", "ffs2", "kmemstats"]
 alloc = []        # enables `extern crate alloc` and the GlobalAlloc over malloc(9)
 diagnostic = []   # OpenBSD `option DIAGNOSTIC` -> kassert! active
 debug = []        # OpenBSD `option DEBUG`      -> kdassert! active
-kmemstats = []    # OpenBSD `option KMEMSTATS`  -> malloc(9) statistics
+kmemstats = []    # OpenBSD `option KMEMSTATS`  -> malloc(9) statistics; default (GENERIC has it)
 pool_debug = []   # OpenBSD `option POOL_DEBUG` -> pool_debug = 1
 vmmap_debug = []  # OpenBSD `option VMMAP_DEBUG` -> uvm_tree_sanity, uvm_tree_size_chk, vmspace_validate
 ffs = []          # OpenBSD `option FFS`  -> the fast file system (sys/ufs), in vfsconflist[]

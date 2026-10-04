@@ -2,7 +2,7 @@
 
 use core::ffi::c_void;
 use std::vec::Vec;
-use std::{assert, assert_eq, vec};
+use std::{assert_eq, vec};
 
 use super::*;
 use crate::sys::uio::UioRw;
