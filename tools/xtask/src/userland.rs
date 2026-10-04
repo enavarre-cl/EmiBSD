@@ -171,10 +171,23 @@ emibsd_reallocarray(void *p, size_t n, size_t size)
 #define reallocarray emibsd_reallocarray
 ";
 
-/// `bsd.sys.mk`'s `.y.c` rule (`YACC.y` is `${YACC} -d ${YFLAGS}`): yacc writes `y.tab.c` (and
-/// `y.tab.h`) into the object directory, where the program's `.y` sources are made one at a
-/// time.
-const RULE_Y_C: [&str; 2] = ["${YACC.y} ${.IMPSRC}", "mv y.tab.c ${.TARGET}"];
+/// `bsd.sys.mk`'s `.y.c` rule (`YACC.y` is `${YACC} -d ${YFLAGS}`): yacc writes the `.c` file
+/// and, named after it, its `.h` (`-o`, yacc(1)) into the object directory. libpcap's
+/// scanner includes the `grammar.h` that `grammar.y` makes so.
+const RULE_Y_C: [&str; 1] = ["${YACC.y} -o ${.TARGET} ${.IMPSRC}"];
+
+/// OpenBSD's lex(1) (flex 2.5.39), built for this machine the first time a `.l` source is
+/// met, as yacc is. Its own scanner (`scan.l`; the tree has no `initscan.c` to bootstrap
+/// from) is made by the Mac's `BOOTSTRAP_LEX`, as OpenBSD makes it with the lex already
+/// installed; every `.l` of the target's userland goes through OpenBSD's lex.
+const LEX_DIR: &str = "usr.bin/lex";
+
+/// The lex that makes OpenBSD lex's own `scan.c` (part of the Xcode command line tools, like
+/// `/usr/bin/clang`, `/usr/bin/perl` and `/usr/bin/awk`).
+const BOOTSTRAP_LEX: &str = "/usr/bin/lex";
+
+/// `bsd.sys.mk`'s `.l.c` rule.
+const RULE_L_C: [&str; 1] = ["${LEX.l} -o ${.TARGET} ${.IMPSRC}"];
 
 /// The programs, in build order.
 const PROGRAMS: &[&str] = &[
@@ -325,6 +338,8 @@ struct Ctx<'a> {
     owners: Mutex<Vec<ramdisk::Attr>>,
     /// Where yacc(1) was built, once a `.y` source asked for it.
     yacc: Mutex<Option<PathBuf>>,
+    /// Where lex(1) was built, once a `.l` source asked for it.
+    lex: Mutex<Option<PathBuf>>,
 }
 
 /// `cargo xtask userland --arch A`.
@@ -348,6 +363,7 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
         inputs: Mutex::new(BTreeSet::new()),
         owners: Mutex::new(Vec::new()),
         yacc: Mutex::new(None),
+        lex: Mutex::new(None),
         out,
     };
     println!(
@@ -544,6 +560,9 @@ fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make>
         ("YACC", ctx.out.join("host/bin/yacc").display().to_string()),
         ("YACC.y", "${YACC} -d ${YFLAGS}".to_string()),
         ("YFLAGS", String::new()),
+        ("LEX", ctx.out.join("host/bin/lex").display().to_string()),
+        ("LEX.l", "${LEX} ${LFLAGS}".to_string()),
+        ("LFLAGS", String::new()),
     ];
     let sys_mk = [
         ("bsd.own.mk", BSD_OWN_MK),
@@ -1019,6 +1038,25 @@ fn build_yacc(ctx: &Ctx<'_>) -> Result<PathBuf> {
     Ok(bindir)
 }
 
+/// Builds OpenBSD's lex(1) for this machine (`$out/host/bin/lex`, what `LEX` names); its own
+/// `scan.l` is made by `BOOTSTRAP_LEX` and its `parse.y` by OpenBSD's yacc.
+fn build_lex(ctx: &Ctx<'_>) -> Result<PathBuf> {
+    let mut built = ctx.lex.lock().map_err(|_| "lock poisoned")?;
+    if let Some(bindir) = built.as_ref() {
+        return Ok(bindir.clone());
+    }
+    let bindir = build_host_prog_with(ctx, LEX_DIR, |mk, _| {
+        mk.set("LEX", BOOTSTRAP_LEX);
+        println!(
+            "  {LEX_DIR} (host tool): OpenBSD's lex; its own scan.l made by {BOOTSTRAP_LEX} \
+             (no initscan.c in the tree)"
+        );
+        Ok(())
+    })?;
+    *built = Some(bindir.clone());
+    Ok(bindir)
+}
+
 /// `build_host_prog`, with `adapt` changing the evaluated Makefile (given the object
 /// directory) before anything is compiled: the host portability shims of `ramdisk.rs`.
 fn build_host_prog_with(
@@ -1127,7 +1165,7 @@ fn object_jobs(ctx: &Ctx<'_>, mk: &Make, objdir: &Path, extra_objs: &[String]) -
             .cloned()
             .collect();
         let candidates = if named.is_empty() {
-            ["c", "S", "s", "y"]
+            ["c", "S", "s", "y", "l"]
                 .iter()
                 .map(|x| format!("{stem}.{x}"))
                 .collect()
@@ -1143,6 +1181,20 @@ fn object_jobs(ctx: &Ctx<'_>, mk: &Make, objdir: &Path, extra_objs: &[String]) -
                 build_yacc(ctx)?;
                 let c_name = format!("{stem}.c");
                 let rule: Vec<String> = RULE_Y_C.iter().map(|c| c.to_string()).collect();
+                generated.push(Job::from_rule(mk, &rule, &c_name, vec![p], objdir)?);
+                found = Some((c_name.clone(), objdir.join(c_name)));
+                break;
+            }
+            if c.ends_with(".l")
+                && let Some(p) = mk.search(c)
+            {
+                // `.l.c`: made by OpenBSD's own lex, built for this machine (except for
+                // lex's own scanner, `LEX_DIR`).
+                if mk.var("LEX")? != BOOTSTRAP_LEX {
+                    build_lex(ctx)?;
+                }
+                let c_name = format!("{stem}.c");
+                let rule: Vec<String> = RULE_L_C.iter().map(|c| c.to_string()).collect();
                 generated.push(Job::from_rule(mk, &rule, &c_name, vec![p], objdir)?);
                 found = Some((c_name.clone(), objdir.join(c_name)));
                 break;
