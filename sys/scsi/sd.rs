@@ -638,6 +638,9 @@ pub fn sdclose(dev: Dev, flag: i32, fmt: i32, _p: Option<&Proc>) -> Result<(), E
     error
 }
 
+/// The zeroed label the I/O paths read before `disk_attach` allocated one.
+static ZERO_LABEL: Disklabel = Disklabel::zeroed();
+
 /// `sdstrategy`: actually translates the requested transfer into one the physical driver
 /// can understand. The transfer is described by a buf and will include only one physical
 /// transfer.
@@ -667,8 +670,10 @@ pub fn sdstrategy(bp: &'static Buf) {
             }
 
             // Validate the request.
-            let lp = sc.sc_dk.label().unwrap_or_default();
-            if !bounds_check_with_label(bp, &lp) {
+            let ok = sc
+                .sc_dk
+                .with_label(|lp| bounds_check_with_label(bp, lp.unwrap_or(&ZERO_LABEL)));
+            if !ok {
                 break 'done;
             }
 
@@ -784,13 +789,16 @@ pub fn sdstart(xs: &'static ScsiXfer) {
     xs.cookie.set(ptr::from_ref(bp).cast_mut().cast());
     xs.bp.set(Some(bp));
 
-    let lp = sc.sc_dk.label().unwrap_or_default();
-    let p = &lp.d_partitions[diskpart(bp.b_dev.get()) as usize];
-    let secno = dl_getpoffset(p) + dl_blktosec(&lp, bp.b_blkno.get() as u64);
-    let nsecs = howmany(
-        usize::try_from(bp.b_bcount.get()).unwrap_or(0),
-        lp.d_secsize as usize,
-    ) as u32;
+    let (secno, nsecs) = sc.sc_dk.with_label(|lp| {
+        let lp = lp.unwrap_or(&ZERO_LABEL);
+        let p = &lp.d_partitions[diskpart(bp.b_dev.get()) as usize];
+        let secno = dl_getpoffset(p) + dl_blktosec(lp, bp.b_blkno.get() as u64);
+        let nsecs = howmany(
+            usize::try_from(bp.b_bcount.get()).unwrap_or(0),
+            lp.d_secsize as usize,
+        ) as u32;
+        (secno, nsecs)
+    });
     let disksize = sc.params.get().disksize;
 
     let cmdlen = xs.with_cmd(|cmd: &mut ScsiGeneric| {
@@ -925,7 +933,7 @@ pub fn sdminphys(bp: &Buf) {
         if !link_isset(link, SDEV_ATAPI | SDEV_UMASS)
             && sid_ansii_rev(&link.inqdata.get()) < SCSI_REV_2
         {
-            let secsize = sc.sc_dk.label().map_or(0, |lp| lp.d_secsize);
+            let secsize = sc.sc_dk.with_label(|lp| lp.map_or(0, |lp| lp.d_secsize));
             let max = i64::from(secsize) * 0xff;
 
             if bp.b_bcount.get() > max {

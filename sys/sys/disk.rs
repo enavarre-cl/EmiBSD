@@ -224,6 +224,17 @@ impl Disk {
         self.dk_label.get().map(|p| unsafe { *p.as_ptr() })
     }
 
+    /// `dk->dk_label`, read in place: `f` gets the label (`None` before `disk_attach`
+    /// allocated it). The I/O paths (`sdstrategy`, `sdstart`, `sdminphys`) read it this way:
+    /// a `Disklabel` is over a kilobyte (64 partitions), and copying it into each frame of a
+    /// stacked I/O (a softraid volume's strategy calling its chunks') exhausts the kernel
+    /// stack.
+    pub fn with_label<R>(&self, f: impl FnOnce(Option<&Disklabel>) -> R) -> R {
+        // SAFETY: as in `label`: the allocation lives until `disk_detach`, and the shared
+        // borrow ends with `f`, while no `label_mut` borrow is live (the drivers' rule).
+        f(self.dk_label.get().map(|p| unsafe { &*p.as_ptr() }))
+    }
+
     /// `dk->dk_label`, writable: `None` before `disk_attach` allocated it.
     ///
     /// # Safety

@@ -76,6 +76,8 @@
 //! - `sr_boot_assembly` restarts its disk scan after each probe, as the C does, by looking
 //!   for the first disk not yet on `sdklist`; a chunk id past `BIOC_CRMAXLEN` (where the C
 //!   indexes past its arrays) is ignored. The arrays are `Vec`s (`try_reserve`).
+//! - `sr_attach` ends its attach line before `sensordev_install`, which reports the unported
+//!   `hotplug_device_attach` (the C prints the newline after it, which prints nothing).
 //! - `sr_hotspare`'s and the boot probe's fake disciplines carry a full `SR_META_SIZE`
 //!   metadata area (the C's hotspare one is `sizeof(struct sr_metadata)`).
 //! - `sr_discipline_free` wipes the crypto keys member by member instead of
@@ -2017,13 +2019,15 @@ pub fn sr_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_void) {
         ));
     }
 
+    // The C prints the newline after `sensordev_install`, which prints nothing there; here
+    // it reports the unported `hotplug_device_attach`, so the attach line ends first.
+    printf(format_args!("\n"));
+
     // !SMALL_KERNEL
     let mut xname = [0u8; 16];
     let _ = strlcpy(&mut xname, DEVNAME(sc).as_bytes());
     sc.sc_sensordev.xname.set(xname);
     sensordev_install(&sc.sc_sensordev);
-
-    printf(format_args!("\n"));
 
     let mut saa = ScsibusAttachArgs::new();
     saa.saa_adapter_softc = ptr::from_ref(sc).cast_mut().cast();

@@ -83,6 +83,15 @@
 //!   `vector.S` read and write its bytes (`i8259_asm_mask`/`unmask`).
 //! - `i8259_stubs` is the table `vector.S` defines; `i8259_stubs_table` returns it as a slice
 //!   for `struct pic`.
+//! - The add-route hook is `i8259_addroute`: it marks a level-triggered pin (`IST_LEVEL`, the
+//!   PCI interrupts `pci_intr_establish` routes here) level-sensitive in the edge/level
+//!   control registers (ELCR, ports 0x4d0/0x4d1) before `i8259_setup`. OpenBSD/amd64 routes
+//!   PCI interrupts through the I/O APIC (`ioapic.c`, not ported) and leaves the ELCR to the
+//!   firmware; QEMU's OVMF leaves every pin edge-triggered, so a PCI line two devices share
+//!   (virtio-blk disks on IRQ 10/11) loses an interrupt that arrives while the other device
+//!   still holds the line: no new edge, and the request never completes. i386 programs the
+//!   ELCR the same way for its PCI routing (`piix_set_trigger`). TODO(M13): goes with the I/O
+//!   APIC port.
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -91,9 +100,9 @@ use crate::arch::amd64::include::cpu::{CpuInfo, cpu_info_primary, cpu_is_primary
 use crate::arch::amd64::include::cpufunc::{intr_disable, intr_restore};
 use crate::arch::amd64::include::i8259::{ICU_OFFSET, IRQ_SLAVE};
 use crate::arch::amd64::include::intr::Intrstub;
-use crate::arch::amd64::include::intrdefs::NUM_LEGACY_IRQS;
+use crate::arch::amd64::include::intrdefs::{IST_LEVEL, NUM_LEGACY_IRQS};
 use crate::arch::amd64::include::pic::{PIC_I8259, Pic};
-use crate::arch::amd64::include::pio::outb;
+use crate::arch::amd64::include::pio::{inb, outb};
 use crate::dev::isa::isareg::{IO_ICU1, IO_ICU2};
 
 /// `i8259_imen`: interrupt mask enable, the bits of the IRQs currently masked.
@@ -112,7 +121,7 @@ pub static I8259_PIC: Pic = Pic {
     pic_type: PIC_I8259,
     pic_hwmask: Some(i8259_hwmask),
     pic_hwunmask: Some(i8259_hwunmask),
-    pic_addroute: Some(i8259_setup),
+    pic_addroute: Some(i8259_addroute),
     pic_delroute: Some(i8259_setup),
     pic_allocidtvec: None,
     pic_level_stubs: Some(i8259_stubs_table),
@@ -191,6 +200,28 @@ fn i8259_reinit_irqs() {
         outb(IO_ICU1 + 1, imen as u8);
         outb(IO_ICU2 + 1, (imen >> 8) as u8);
     }
+}
+
+/// `ELCR0`, `ELCR1`: the edge/level control registers of IRQ 0-7 and 8-15 (`eisavar.h`).
+const ELCR0: u16 = 0x4d0;
+/// `ELCR1`.
+const ELCR1: u16 = 0x4d1;
+
+/// The add-route hook: a level-triggered pin is made level-sensitive in the ELCR (see the
+/// deviations), then `i8259_setup`.
+fn i8259_addroute(pic: &Pic, ci: &CpuInfo, pin: i32, idtvec: i32, r#type: i32) {
+    // IRQ 0, 1, 2, 8 and 13 must stay edge-triggered (timer, keyboard, cascade, RTC, FPU).
+    if r#type == IST_LEVEL && (3..16).contains(&pin) && pin != 8 && pin != 13 {
+        let (port, bit) = if pin < 8 {
+            (ELCR0, pin)
+        } else {
+            (ELCR1, pin - 8)
+        };
+        // SAFETY: the ELCR of the chipset's 8259 pair; setting the bit of a pin only PCI
+        // (level) sources use changes how the controller samples that line.
+        unsafe { outb(port, inb(port) | (1 << bit)) };
+    }
+    i8259_setup(pic, ci, pin, idtvec, r#type);
 }
 
 /// `i8259_setup`: the add/delete route hook; the 8259 has no routing, only the mask.
