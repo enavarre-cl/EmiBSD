@@ -12,11 +12,16 @@
 //!                                          C as the kernel command line (boot(8) flags);
 //!                                          the init and ramdisk modules default to the
 //!                                          built ones (`none` leaves one out)
-//! cargo xtask qemu --arch A [--kernel K] [--disk-fresh]
+//! cargo xtask qemu --arch A [--kernel K] [--disk-fresh] [--disks N]
 //!                                          boot the image, serial and monitor on stdio;
 //!                                          (also smoke and smoke2) the persistent disk
 //!                                          target/disk-A[-a|-b].img, 64 MiB, is kept
-//!                                          across boots unless --disk-fresh recreates it
+//!                                          across boots unless --disk-fresh recreates it;
+//!                                          --disks N (1..=4, default 1) attaches N such
+//!                                          disks, sd0 the file above and sd1..sd3
+//!                                          target/disk-A[-a|-b]-sdK.img (each VM of smoke2
+//!                                          gets N); a run with fewer disks than the last
+//!                                          keeps the extra files, unattached
 //! cargo xtask smoke --arch A [--kernel K] [--cmdline C] [--status N] [--send-after L --send T]... [--until-seen]
 //!                   [--expect-ramdisk] --expect L...
 //!                                          boot headless; pass if every L appears and QEMU
@@ -71,9 +76,9 @@ const TABLE_END: &str = "<!-- ports:end -->";
 
 const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | ports next | \
                      ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] [--init I] [--ramdisk R] | \
-                     qemu --arch A [--kernel K] [--init I] [--ramdisk R] [--disk-fresh] | gen-syscalls [--check] | \
-                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--disk-fresh] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
-                     smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--disk-fresh] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
+                     qemu --arch A [--kernel K] [--init I] [--ramdisk R] [--disk-fresh] [--disks N] | gen-syscalls [--check] | \
+                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--disk-fresh] [--disks N] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
+                     smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--disk-fresh] [--disks N] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
                      symbolize --arch A [--kernel K] | userland --arch A>";
 
 #[derive(Deserialize)]
@@ -187,6 +192,7 @@ fn run(args: &[String]) -> Result<()> {
                 init.as_deref(),
                 ramdisk.as_deref(),
                 rest.contains(&"--disk-fresh"),
+                disks_flag(rest)?,
             )
         }
         ["smoke", rest @ ..] => {
@@ -234,6 +240,7 @@ fn run(args: &[String]) -> Result<()> {
                     ramdisk: ramdisk.as_deref(),
                     expect_ramdisk: rest.contains(&"--expect-ramdisk"),
                     disk_fresh: rest.contains(&"--disk-fresh"),
+                    disks: disks_flag(rest)?,
                 },
             )
         }
@@ -299,6 +306,21 @@ fn ramdisk_flag(root: &Path, arch: boot::Arch, args: &[&str]) -> Option<PathBuf>
 /// The value following `name` in `args`, if present.
 fn optional_flag<'a>(args: &[&'a str], name: &str) -> Option<&'a str> {
     args.windows(2).find(|w| w[0] == name).map(|w| w[1])
+}
+
+/// `--disks N`: how many persistent disks a VM gets, 1 (the default) to `boot::MAX_DISKS`.
+fn disks_flag(args: &[&str]) -> Result<usize> {
+    let Some(s) = optional_flag(args, "--disks") else {
+        return Ok(1);
+    };
+    match s.parse::<usize>() {
+        Ok(n) if (1..=boot::MAX_DISKS).contains(&n) => Ok(n),
+        _ => Err(format!(
+            "--disks {s}: expected a number from 1 to {}",
+            boot::MAX_DISKS
+        )
+        .into()),
+    }
 }
 
 /// Every value following an occurrence of `name` in `args`.
@@ -669,6 +691,16 @@ fn git(repo: &Path, args: &[&str]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disks_defaults_to_one_and_stops_at_four() {
+        assert_eq!(disks_flag(&[]).unwrap(), 1);
+        assert_eq!(disks_flag(&["--disks", "4"]).unwrap(), 4);
+        assert_eq!(disks_flag(&["--arch", "amd64", "--disks", "2"]).unwrap(), 2);
+        for bad in ["0", "5", "x", "-1"] {
+            assert!(disks_flag(&["--disks", bad]).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn smoke_reads_every_reject_line() {

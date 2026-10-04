@@ -109,6 +109,8 @@ pub struct Plan {
     pub rejects: Vec<String>,
     /// `--disk-fresh`: delete and recreate both persistent disks before booting.
     pub disk_fresh: bool,
+    /// `--disks N`: persistent disks per VM (1 to `boot::MAX_DISKS`).
+    pub disks: usize,
 }
 
 /// The `--<who>-send-after`/`--<who>-send` pairs and `--<who>-expect` lines, with the
@@ -156,6 +158,7 @@ pub fn parse_plan(args: &[&str]) -> Result<Plan> {
             .map(str::to_string)
             .collect(),
         disk_fresh: args.contains(&"--disk-fresh"),
+        disks: crate::disks_flag(args)?,
     })
 }
 
@@ -249,8 +252,15 @@ pub fn smoke2(
                 p
             }
         };
-        let mut cmd =
-            boot::qemu_command(root, arch, &image, "stdio", Some(&link), plan.disk_fresh)?;
+        let mut cmd = boot::qemu_command(
+            root,
+            arch,
+            &image,
+            "stdio",
+            Some(&link),
+            plan.disk_fresh,
+            plan.disks,
+        )?;
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -516,6 +526,13 @@ mod tests {
         .unwrap();
         assert_eq!(plan.rejects, vec!["uptime went backwards", "panic:"]);
         assert!(parse_plan(&[]).unwrap().rejects.is_empty());
+    }
+
+    #[test]
+    fn plan_takes_the_disk_count() {
+        assert_eq!(parse_plan(&[]).unwrap().disks, 1);
+        assert_eq!(parse_plan(&["--disks", "3"]).unwrap().disks, 3);
+        assert!(parse_plan(&["--disks", "9"]).is_err());
     }
 
     #[test]

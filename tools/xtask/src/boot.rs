@@ -113,6 +113,19 @@ pub(crate) fn disk_path(root: &Path, arch: Arch, tag: Option<&str>) -> PathBuf {
         .join(format!("disk-{}{}.img", arch.name(), dash(tag)))
 }
 
+/// The most persistent disks a VM can have (`--disks`, M10f's softraid smokes).
+pub(crate) const MAX_DISKS: usize = 4;
+
+/// The path of persistent disk `k` (`sd<k>`): disk 0 is [`disk_path`], the others are
+/// `disk-<arch>[-<tag>]-sd<k>.img`.
+pub(crate) fn disk_path_n(root: &Path, arch: Arch, tag: Option<&str>, k: usize) -> PathBuf {
+    if k == 0 {
+        return disk_path(root, arch, tag);
+    }
+    root.join("target")
+        .join(format!("disk-{}{}-sd{k}.img", arch.name(), dash(tag)))
+}
+
 /// Makes sure the persistent disk at `path` exists: created sparse and zero-filled when
 /// missing (or when `fresh`, which deletes it first), otherwise left exactly as it is.
 /// Returns whether the file was (re)created.
@@ -451,6 +464,13 @@ impl VmLink {
 /// 2) and the disk is a later `virtio-blk-pci`; on arm64 `virt` the lowest virtio-mmio slot
 /// in use goes to it, so the kernel, which attaches bottom up, finds it before the boot
 /// disk (virtio31) and it becomes `sd0`.
+///
+/// `disks` (`--disks N`, 1 to [`MAX_DISKS`]) persistent disks are attached: `sd0` is the file
+/// above and `sd<k>` is `disk-<arch>[-<tag>]-sd<k>.img` (see [`disk_path_n`]), all 64 MiB and
+/// all recreated by `disk_fresh`. Files of higher disks than `disks` are left alone, not
+/// attached (the "one disk missing" boot). The order keeps `sd0` the first one the kernel
+/// finds: on amd64 PCI slots go up, so `sd0` is added first; on arm64 the last device added
+/// is found first, so `sd<disks - 1>` is added first and `sd0` last.
 pub(crate) fn qemu_command(
     root: &Path,
     arch: Arch,
@@ -458,9 +478,15 @@ pub(crate) fn qemu_command(
     serial: &str,
     vm: Option<&VmLink>,
     disk_fresh: bool,
+    disks: usize,
 ) -> Result<Command> {
-    let disk = disk_path(root, arch, vm.map(|v| v.tag));
-    ensure_disk(&disk, disk_fresh)?;
+    let tag = vm.map(|v| v.tag);
+    let disk_files: Vec<PathBuf> = (0..disks)
+        .map(|k| disk_path_n(root, arch, tag, k))
+        .collect();
+    for disk in &disk_files {
+        ensure_disk(disk, disk_fresh)?;
+    }
     let code = edk2_file(arch.edk2_code())?;
     let vars_src = edk2_file(arch.edk2_vars())?;
     let vars = root.join("target").join(format!(
@@ -505,9 +531,13 @@ pub(crate) fn qemu_command(
                     &format!("virtio-net-pci,netdev=n1,mac={}", v.link_mac),
                 ]);
             }
-            cmd.arg("-drive")
-                .arg(format!("if=none,format=raw,file={},id=sd0", disk.display()));
-            cmd.args(["-device", "virtio-blk-pci,drive=sd0"]);
+            for (k, disk) in disk_files.iter().enumerate() {
+                cmd.arg("-drive").arg(format!(
+                    "if=none,format=raw,file={},id=sd{k}",
+                    disk.display()
+                ));
+                cmd.args(["-device", &format!("virtio-blk-pci,drive=sd{k}")]);
+            }
         }
         Arch::Arm64 => {
             // acpi=off: EDK2 then installs the device tree, which the arm64 kernel needs (M4).
@@ -528,9 +558,13 @@ pub(crate) fn qemu_command(
                 ]);
             }
             cmd.args(["-device", &format!("virtio-net-device,netdev=n0{nic0}")]);
-            cmd.arg("-drive")
-                .arg(format!("if=none,format=raw,file={},id=sd0", disk.display()));
-            cmd.args(["-device", "virtio-blk-device,drive=sd0"]);
+            for (k, disk) in disk_files.iter().enumerate().rev() {
+                cmd.arg("-drive").arg(format!(
+                    "if=none,format=raw,file={},id=sd{k}",
+                    disk.display()
+                ));
+                cmd.args(["-device", &format!("virtio-blk-device,drive=sd{k}")]);
+            }
             cmd.args(["-semihosting-config", "enable=on,target=native"]);
         }
     }
@@ -581,6 +615,7 @@ pub fn qemu(
     init: Option<&Path>,
     ramdisk: Option<&Path>,
     disk_fresh: bool,
+    disks: usize,
 ) -> Result<()> {
     let image = match kernel {
         Some(k) => image(root, arch, k, None, init, ramdisk)?,
@@ -597,7 +632,7 @@ pub fn qemu(
             p
         }
     };
-    let mut cmd = qemu_command(root, arch, &image, "mon:stdio", None, disk_fresh)?;
+    let mut cmd = qemu_command(root, arch, &image, "mon:stdio", None, disk_fresh, disks)?;
     println!("xtask: {}", command_line(&cmd));
     let status = cmd.status().map_err(|e| spawn_error(arch, &e))?;
     match status.code() {
@@ -643,6 +678,8 @@ pub struct SmokeOptions<'a> {
     pub expect_ramdisk: bool,
     /// `--disk-fresh`: delete and recreate the persistent disk before booting.
     pub disk_fresh: bool,
+    /// `--disks N`: how many persistent disks to attach (1 to [`MAX_DISKS`]).
+    pub disks: usize,
 }
 
 pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
@@ -658,6 +695,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         ramdisk,
         expect_ramdisk,
         disk_fresh,
+        disks,
     } = *opts;
     let image = match kernel {
         Some(k) => image(root, arch, k, cmdline, init, ramdisk)?,
@@ -675,7 +713,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         }
     };
     let expected_status = status;
-    let mut cmd = qemu_command(root, arch, &image, "stdio", None, disk_fresh)?;
+    let mut cmd = qemu_command(root, arch, &image, "stdio", None, disk_fresh, disks)?;
     cmd.stdin(if !sends.is_empty() {
         Stdio::piped()
     } else {
@@ -872,6 +910,23 @@ pub(crate) fn slurp_into(mut r: impl Read, into: &Mutex<Vec<u8>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extra_disks_are_numbered_files_beside_the_first() {
+        let root = Path::new("/r");
+        assert_eq!(
+            disk_path_n(root, Arch::Amd64, None, 0),
+            disk_path(root, Arch::Amd64, None)
+        );
+        assert_eq!(
+            disk_path_n(root, Arch::Amd64, None, 3),
+            Path::new("/r/target/disk-amd64-sd3.img")
+        );
+        assert_eq!(
+            disk_path_n(root, Arch::Arm64, Some("b"), 1),
+            Path::new("/r/target/disk-arm64-b-sd1.img")
+        );
+    }
 
     #[test]
     fn disk_paths_are_per_arch_and_per_vm() {

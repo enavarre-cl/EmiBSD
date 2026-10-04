@@ -68,10 +68,12 @@ const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 ///   table: block `sd` 4 (`bdev_disk_init(NSD,sd)`, 59 / 57), character `sd` 13 (191 /
 ///   141), minor `unit * 64 + partition` for the partitions `a`..`p` (`MAKEDEV`'s `dodisk`:
 ///   `sd0a`..`sd0p` and `rsd0a`..`rsd0p`, mode 0640, group `operator`). `MAKEDEV all` makes
-///   `sd0`..`sd9`; the image has `sd0` (amd64's and arm64's persistent disk) and `sd1` (the
-///   arm64 boot disk is the second block device the kernel finds);
+///   `sd0`..`sd9`; the image has `sd0`..`sd15` (M10f): `sd0` is the first persistent disk,
+///   the arm64 boot disk is one more block device the kernel finds, and softraid volumes
+///   take the next units;
 /// - vnode disks (`vnd`, M10c), made by `devices()` from `VND_UNITS` the same way: block 14
 ///   (`bdev_disk_init(NVND,vnd)`, 69 / 67), character 41 (219 / 169), `vnd0`..`vnd3`;
+/// - `bio` is major 79 (`bio` 79 / 79: `/dev/bio`, `MAKEDEV` makes it 0600), minor 0;
 /// - `fd/N` is `filedesc` 22 (200 / 150), minor N, for N in `0..64` like MAKEDEV;
 ///   `stdin`, `stdout` and `stderr` link to `fd/0..2` (`DEV_LINKS`).
 ///
@@ -94,10 +96,14 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("rrd0b", 'c', 47, 1, 0o640, "operator"),
     ("rrd0c", 'c', 47, 2, 0o640, "operator"),
     ("pf", 'c', 73, 0, 0o600, "wheel"),
+    // M10f: `bio` 79 (`MAKEDEV`'s `_mkdev(bio, bio, {-M bio c major_bio_c 0 600-})`):
+    // bioctl(8) and the softraid tools.
+    ("bio", 'c', 79, 0, 0o600, "wheel"),
 ];
 
-/// The `sd` units the image has nodes for (module docs of `DEVICES`).
-const DISK_UNITS: &[u32] = &[0, 1];
+/// The `sd` units the image has nodes for (module docs of `DEVICES`): M10f's four vioblk
+/// disks, the arm64 boot disk and the softraid volumes (`sd4` and up) fit in sixteen.
+const DISK_UNITS: &[u32] = &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 
 /// `MAKEDEV`'s `UNITMULT`: minors per disk unit (`MAXPARTITIONSUNIT` of `sys/disklabel.h`).
 const UNITMULT: u32 = 64;
@@ -1057,7 +1063,17 @@ mod tests {
             find("rvnd3p").map(|d| (d.1, d.2, d.3)),
             Some(('c', 41, 207))
         );
-        assert!(find("sd0q").is_none() && find("sd2a").is_none());
+        assert_eq!(find("sd3a").map(|d| (d.1, d.2, d.3)), Some(('b', 4, 192)));
+        assert_eq!(
+            find("rsd15p").map(|d| (d.1, d.2, d.3)),
+            Some(('c', 13, 975))
+        );
+        assert!(find("sd0q").is_none() && find("sd16a").is_none());
+        // M10f: /dev/bio is cdevsw 79, 0600.
+        assert_eq!(
+            find("bio").map(|d| (d.1, d.2, d.3, d.4)),
+            Some(('c', 79, 0, 0o600))
+        );
         // Every name once, and the attributes table gets them and /mnt.
         let mut names: Vec<&str> = all.iter().map(|d| d.0.as_str()).collect();
         let n = names.len();

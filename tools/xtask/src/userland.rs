@@ -266,6 +266,8 @@ const PROGRAMS: &[&str] = &[
     "sbin/fsck_msdos",
     "sbin/vnconfig",
     "sbin/mount_vnd",
+    // M10f: softraid's control program, over libutil (bcrypt_pbkdf, pkcs5_pbkdf2, opendev).
+    "sbin/bioctl",
 ];
 
 /// Programs whose Makefile embeds their manual page in a generated `manual.c` (`disklabel`'s
