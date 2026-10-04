@@ -603,7 +603,7 @@ rust = "sys/arch/amd64/amd64/conf.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b955775e37a97fb7172fd379cd3be435dc9e3686"
-notes = "M8: bdevsw[] (20 slots) and cdevsw[] (102 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf (nblkdev/nchrdev are their lengths, cdevsw_set lets a console driver take a slot over); the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 4), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() (ENODEV, d_type 0) until its driver is ported (log 7 waits for subr_log.c's entry points, random 45 for rnd.c); mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; constab[] (cninit) and findblkmajor/dev_rawpart (dk_mountroot) are not used: the console is attached directly (consinit.rs) and there is no disk; APERTURE, MTRR and the <machine/conf.h> drivers are not configured"
+notes = "M8: bdevsw[] (20 slots) and cdevsw[] (102 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf (nblkdev/nchrdev are their lengths, cdevsw_set lets a console driver take a slot over); the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 4), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() (ENODEV, d_type 0) until its driver is ported (log 7 waits for subr_log.c's entry points, random 45 for rnd.c); mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; constab[] (cninit) and findblkmajor/dev_rawpart (dk_mountroot) are not used: the console is attached directly (consinit.rs) and there is no disk; APERTURE, MTRR and the <machine/conf.h> drivers are not configured; M9d: cdevsw 73 is pf (cdev_pf_init)"
 
 # arm64: the same, plus the bus_space table and the bootstrap device map
 
@@ -4415,7 +4415,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a239133825b3a31f6e7fc41fc6aebe446f76ec82"
 deps = ["sys/sys/conf.h"]
-notes = "bdevsw[] (19 slots) and cdevsw[] (101 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf; the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 1, taken over by pluartdev at boot through cdevsw_set: the C's KLUDGE), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() until its driver is ported; mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; findblkmajor/dev_rawpart (dk_mountroot) are not used"
+notes = "bdevsw[] (19 slots) and cdevsw[] (101 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf; the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 1, taken over by pluartdev at boot through cdevsw_set: the C's KLUDGE), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() until its driver is ported; mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; findblkmajor/dev_rawpart (dk_mountroot) are not used; M9d: cdevsw 73 is pf (cdev_pf_init)"
 
 [[file]]
 c = "sys/arch/arm64/arm64/mem.c"

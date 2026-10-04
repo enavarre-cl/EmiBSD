@@ -42,7 +42,7 @@
 //!   writes the driver's initialiser with a count (`cdev_disk_init(NWD,wd)`): its entry points
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
-//!   `filedesc` (22), `rd` (17 block, 47 character) and `ptm` (81). `log` (7) waits for `subr_log.c`'s `logopen` ..
+//!   `filedesc` (22), `rd` (17 block, 47 character), `pf` (73) and `ptm` (81). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
 //!   boot (`machine::conf::cdevsw_set`); `nblkdev`/`nchrdev` are their lengths.
@@ -66,9 +66,11 @@ use crate::kern::tty_pty::{
 };
 use crate::kern::tty_tty::{cttyioctl, cttykqfilter, cttyopen, cttyread, cttywrite};
 use crate::machine::conf::Devsw;
+use crate::net::pf_ioctl::{NPF, pfclose, pfioctl, pfopen};
 use crate::sys::conf::{
     Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_cn_init, cdev_ctty_init, cdev_disk_init,
-    cdev_fd_init, cdev_mm_init, cdev_notdef, cdev_ptc_init, cdev_ptm_init, cdev_tty_init,
+    cdev_fd_init, cdev_mm_init, cdev_notdef, cdev_pf_init, cdev_ptc_init, cdev_ptm_init,
+    cdev_tty_init,
 };
 use crate::sys::param::NODEV;
 use crate::sys::types::{Dev, major, makedev, minor};
@@ -224,7 +226,7 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     cnotdef(), // 70: was: /dev/crypto
     cnotdef(), // 71: Cyclades-Z serial port (cztty: not ported)
     cnotdef(), // 72: PCI user (USER_PCICONF not configured)
-    cnotdef(), // 73: packet filter (pf: not ported)
+    Cell::new(cdev_pf_init(NPF, pfopen, pfclose, pfioctl)), // 73: packet filter
     cnotdef(), // 74: ALTQ (deprecated)
     cnotdef(), // 75
     cnotdef(), // 76: generic radio I/O (radio: not ported)

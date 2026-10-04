@@ -56,7 +56,8 @@ const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 /// - character (`cdevsw[]`, line numbers amd64 / arm64): `cn` 0 (177 / 127), `ctty` 1
 ///   (178 / 128), `mm` 2 (179 / 129; minors: `mem` 0, `kmem` 1, `null` 2, `zero` 12),
 ///   `log` 7 (184 / 134: `/dev/klog`), `com` 8 (185 / 135: the serial console's tty, minor
-///   = unit) and `rd` 47 (225 / 175: the raw disk). The amd64 console is `com0`, `tty00`.
+///   = unit), `rd` 47 (225 / 175: the raw disk) and `pf` 73 (258 / 208: `/dev/pf`, which
+///   pfctl(8) opens; `MAKEDEV` makes it 0600). The amd64 console is `com0`, `tty00`.
 ///   On arm64 `pluartcnattach` finds the major of `comopen` and puts `pluartdev` in its slot
 ///   (`sys/dev/ic/pluart.c:856-863`, "KLUDGE"), so `pluart0` is major 8, minor 0 too:
 ///   `tty00` on both;
@@ -82,6 +83,7 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("rrd0a", 'c', 47, 0, 0o640, "operator"),
     ("rrd0b", 'c', 47, 1, 0o640, "operator"),
     ("rrd0c", 'c', 47, 2, 0o640, "operator"),
+    ("pf", 'c', 73, 0, 0o600, "wheel"),
 ];
 
 /// `/dev/fd/N` exists for N below this (`MAKEDEV fd`).
@@ -219,7 +221,42 @@ const ETC_FILES: &[(&str, u32, &str)] = &[
     ("gettytab", 0o644, GETTYTAB),
     ("login.conf", 0o644, LOGIN_CONF),
     ("rc", 0o644, RC),
+    ("pf.conf", 0o600, PF_CONF),
+    ("pf.os", 0o444, PF_OS),
+    ("protocols", 0o644, PROTOCOLS),
 ];
+
+/// `protocols(5)`: pfctl(8)'s parser names protocols through getprotobyname(3) (`proto icmp`
+/// in `pf.conf`). The IANA numbers of the protocols this kernel handles, with `ip` for
+/// pseudo-protocol 0; OpenBSD's `etc/protocols` is not in the reference clone.
+const PROTOCOLS: &str = "\
+# protocols(5) of the EmiBSD ramdisk: name, number, aliases.
+ip\t0\tIP\t\t# internet protocol, pseudo protocol number
+icmp\t1\tICMP\t\t# internet control message protocol
+igmp\t2\tIGMP\t\t# internet group management protocol
+ipencap\t4\tIP-ENCAP\t# IP encapsulated in IP
+tcp\t6\tTCP\t\t# transmission control protocol
+udp\t17\tUDP\t\t# user datagram protocol
+gre\t47\tGRE\t\t# generic routing encapsulation
+esp\t50\tESP\t\t# encapsulated security payload
+ah\t51\tAH\t\t# authentication header
+ipv6-icmp\t58\tIPv6-ICMP icmp6\t# ICMP for IPv6
+carp\t112\tCARP\t\t# common address redundancy protocol
+pfsync\t240\tPFSYNC\t\t# pf state synchronisation
+";
+
+/// `pf.conf(5)`: what `just smoke-pf` loads with `pfctl -f /etc/pf.conf`: pass everything
+/// but ICMP to QEMU's gateway, so the ping that worked before is blocked.
+const PF_CONF: &str = "\
+# pf.conf(5) of the EmiBSD ramdisk: block the ping to QEMU's user-network gateway.
+set skip on lo
+pass
+block drop quick inet proto icmp from any to 10.0.2.2
+";
+
+/// `pf.os(5)`: pfctl(8) loads the passive OS fingerprints from it with every ruleset; the
+/// ramdisk has none (OpenBSD's `etc/pf.os` is not in the reference clone).
+const PF_OS: &str = "# pf.os(5) of the EmiBSD ramdisk: no fingerprints.\n";
 
 /// `fstab(5)`: `mount -uw /` finds the root's entry here (`mount.c` looks the root up by its
 /// mount point because the kernel names it `root_device`).

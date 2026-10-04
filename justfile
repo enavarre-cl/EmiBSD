@@ -316,6 +316,43 @@ smoke-net: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "PING 10.0.2.2 (10.0.2.2): 56 data bytes" \
         --expect "1 packets transmitted, 1 packets received, 0.0% packet loss"
 
+# M9d: pf(4) from userland. Logs in as `smoke-login` does, then: `pfctl -si` (DIOCGETSTATUS:
+# disabled), a ping to QEMU's gateway that gets its reply, `pfctl -e` (DIOCSTART) and `pfctl
+# -si` again (enabled), `pfctl -f /etc/pf.conf` (a ruleset transaction: DIOCXBEGIN,
+# DIOCADDRULE, DIOCXCOMMIT; the ramdisk's pf.conf blocks ICMP to 10.0.2.2) and `pfctl -sr`, the
+# same ping blocked, `pfctl -d` (DIOCSTOP) and the ping through again. The echoes print
+# computed markers so that the expected lines are not matched by the typed commands. Not part
+# of `smoke`.
+smoke-pf: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-pf: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send 'pfctl -si\n' \
+        --send-after "# " --send 'ping -c 1 10.0.2.2 && echo before-pf-$((1+1))\n' \
+        --send-after "# " --send 'pfctl -e\n' --send-after "# " --send 'pfctl -si\n' \
+        --send-after "# " --send 'pfctl -f /etc/pf.conf\n' --send-after "# " --send 'pfctl -sr\n' \
+        --send-after "# " --send 'ping -c 1 -w 2 10.0.2.2 || echo blocked-$((2+2))\n' \
+        --send-after "# " --send 'pfctl -d\n' \
+        --send-after "# " --send 'ping -c 1 10.0.2.2 && echo after-pfctl-d-$((3+3))\n' \
+        --expect "rc: multi-user" --expect "Status: Disabled" --expect "before-pf-2" \
+        --expect "pf enabled" --expect "Status: Enabled" \
+        --expect "block drop quick inet proto icmp from any to 10.0.2.2" --expect "blocked-4" \
+        --expect "pf disabled" --expect "after-pfctl-d-6"
+    cargo xtask smoke --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send 'pfctl -si\n' \
+        --send-after "# " --send 'ping -c 1 10.0.2.2 && echo before-pf-$((1+1))\n' \
+        --send-after "# " --send 'pfctl -e\n' --send-after "# " --send 'pfctl -si\n' \
+        --send-after "# " --send 'pfctl -f /etc/pf.conf\n' --send-after "# " --send 'pfctl -sr\n' \
+        --send-after "# " --send 'ping -c 1 -w 2 10.0.2.2 || echo blocked-$((2+2))\n' \
+        --send-after "# " --send 'pfctl -d\n' \
+        --send-after "# " --send 'ping -c 1 10.0.2.2 && echo after-pfctl-d-$((3+3))\n' \
+        --expect "rc: multi-user" --expect "Status: Disabled" --expect "before-pf-2" \
+        --expect "pf enabled" --expect "Status: Enabled" \
+        --expect "block drop quick inet proto icmp from any to 10.0.2.2" --expect "blocked-4" \
+        --expect "pf disabled" --expect "after-pfctl-d-6"
+
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
     cargo xtask symbolize --arch {{arch}}
