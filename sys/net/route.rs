@@ -192,8 +192,7 @@
 //! - `rtcounters` (`struct cpumem *`, `<sys/percpu.h>` not ported) is one static array of
 //!   atomics, as `uvmexp` and `mbstat` are; `rtstat_inc` bumps it.
 //! - `MPLS` and `BFD` are not configured: `rt_mpls_set`/`rt_mpls_clear`, `bfdinit` and
-//!   `bfdclear` are comments at their sites. `INET6` likewise (`rt_hash`'s, `rt_plentosa`'s
-//!   and `rt_ifa_addlocal`'s `AF_INET6` cases).
+//!   `bfdclear` are comments at their sites.
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`; `membar_producer()`
 //!   before bumping `rtgeneration` is a release fence.
 //! - The routing socket side (`rtm_send`, `rtm_miss`, `rtm_addr`, ...) is `net/rtsock.rs`;
@@ -1390,7 +1389,27 @@ pub unsafe fn rt_hash(rt: &Rtentry, dst: *const Sockaddr, src: Option<&[u32]>) -
         b = b.wrapping_add(src[0]);
         mix(&mut a, &mut b, &mut c);
     }
-    // INET6: the four words of the IPv6 addresses for AF_INET6; not configured.
+    #[cfg(feature = "inet6")]
+    // SAFETY: the caller's contract.
+    if unsafe { (*dst).sa_family } == crate::sys::socket::AF_INET6 {
+        use crate::netinet6::in6::satosin6_const;
+        use crate::netinet6::in6_proto::IP6_MULTIPATH;
+
+        if IP6_MULTIPATH.load(Ordering::Relaxed) == 0 {
+            return None;
+        }
+
+        // SAFETY: an `AF_INET6` address is a `sockaddr_in6` (the caller's contract); it may
+        // sit at a smaller alignment, so it is read unaligned.
+        let sin6 = unsafe { ptr::read_unaligned(satosin6_const(dst)) };
+        let w = |i| sin6.sin6_addr.s6_addr32(i);
+        for (x, y, s) in [(0, 2, 0), (1, 3, 1), (2, 1, 2), (3, 0, 3)] {
+            a = a.wrapping_add(w(x));
+            b = b.wrapping_add(w(y));
+            c = c.wrapping_add(src[s]);
+            mix(&mut a, &mut b, &mut c);
+        }
+    }
 
     Some(c & 0xffff)
 }
@@ -2452,7 +2471,15 @@ fn rt_ifa_localflags(ifa: &Ifaddr, ifp: &Ifnet) -> Option<u32> {
     {
         return None;
     }
-    // INET6: the same for in6addr_any; not configured.
+    #[cfg(feature = "inet6")]
+    // SAFETY: as above.
+    if unsafe { (*addr).sa_family } == crate::sys::socket::AF_INET6
+        // SAFETY: an `AF_INET6` address is a `sockaddr_in6`, read unaligned.
+        && unsafe { ptr::read_unaligned(crate::netinet6::in6::satosin6_const(addr)) }.sin6_addr
+            == crate::netinet6::in6::IN6ADDR_ANY
+    {
+        return None;
+    }
 
     if ifp.if_flags.get() & (IFF_LOOPBACK | IFF_POINTOPOINT) == 0 {
         flags |= RTF_LLINFO;
@@ -3079,7 +3106,18 @@ pub fn rt_plentosa(af: SaFamily, plen: i32, sa_mask: &mut SockaddrStorage) -> *c
             // SAFETY: a `sockaddr_storage` is larger than a `sockaddr_in` and aligned for it.
             unsafe { p.write(sin) };
         }
-        // INET6: in6_prefixlen2mask into a sockaddr_in6; not configured.
+        #[cfg(feature = "inet6")]
+        crate::sys::socket::AF_INET6 => {
+            let mut sin6 = SockaddrIn6 {
+                sin6_family: crate::sys::socket::AF_INET6,
+                sin6_len: size_of::<SockaddrIn6>() as u8,
+                ..SockaddrIn6::default()
+            };
+            crate::netinet6::in6::in6_prefixlen2mask(&mut sin6.sin6_addr, plen);
+            let p = ptr::from_mut(sa_mask).cast::<SockaddrIn6>();
+            // SAFETY: a `sockaddr_storage` is larger than a `sockaddr_in6` and aligned for it.
+            unsafe { p.write(sin6) };
+        }
         _ => return ptr::null(),
     }
 

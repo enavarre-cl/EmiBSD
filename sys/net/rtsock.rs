@@ -99,12 +99,12 @@
 //!   `unsafe fn`s whose contract is that every non-NULL address is readable for its `sa_len`
 //!   (`docs/C_TO_RUST.md`).
 //! - `rtm_validate_proposal` returns `Err(EINVAL)` for the C's -1. `sizeof(struct
-//!   sockaddr_in6)` is the local `SIZEOF_SOCKADDR_IN6` (28): `<netinet6/in6.h>` is not ported,
-//!   and `rtm_validate_proposal` checks it outside `INET6`.
+//!   sockaddr_in6)` is the local `SIZEOF_SOCKADDR_IN6`; `rtm_validate_proposal` checks it
+//!   outside `INET6`, as the C does.
 //! - `ifp->if_rtrequest` is an `Option`, called when set (`if_attach` always sets it).
 //! - Not configured: `BFD` (`rtm_bfd`, `RTM_BFD`'s header, `RTAX_BFD`), `MPLS`
-//!   (`RTAX_SRC` labels, `rt_mpls_set`/`rt_mpls_clear`) and `INET6`
-//!   (the `AF_INET6` cases under `#ifdef INET6`); comments at their sites. `SMALL_KERNEL` is
+//!   (`RTAX_SRC` labels, `rt_mpls_set`/`rt_mpls_clear`); comments at their
+//!   sites. `INET6`'s `AF_INET6` cases are under the `inet6` feature. `SMALL_KERNEL` is
 //!   not defined, so `NET_RT_STATS` and `NET_RT_TABLE` are answered. `KERNEL_LOCK()` is
 //!   nothing on one CPU.
 //! - kqueue: `rtm_sendup` and `rtm_senddesync` wake the reader with `sorwakeup`, whose knote
@@ -213,8 +213,8 @@ pub const ROUTECB_FLAG_FLUSH: u32 = 0x2;
 /// `ROUTE_DESYNC_RESEND_TIMEOUT`: in ms.
 pub const ROUTE_DESYNC_RESEND_TIMEOUT: u64 = 200;
 
-/// `sizeof(struct sockaddr_in6)`: `<netinet6/in6.h>` is not ported (see the deviations).
-const SIZEOF_SOCKADDR_IN6: usize = 28;
+/// `sizeof(struct sockaddr_in6)`.
+const SIZEOF_SOCKADDR_IN6: usize = size_of::<crate::netinet6::in6::SockaddrIn6>();
 
 /// `sizeof(socklen_t)`: what `rtm_xaddrs` wants left before it reads an address.
 const SIZEOF_SOCKLEN_T: usize = size_of::<u32>();
@@ -1801,7 +1801,8 @@ pub unsafe fn rtm_xaddrs(
             RTAX_DST | RTAX_GATEWAY | RTAX_SRC => match family {
                 AF_INET => size = size_of::<SockaddrIn>(),
                 AF_LINK => size = size_of::<crate::net::if_dl::SockaddrDl>(),
-                // INET6: sizeof(struct sockaddr_in6), not configured.
+                #[cfg(feature = "inet6")]
+                crate::sys::socket::AF_INET6 => size = SIZEOF_SOCKADDR_IN6,
                 // MPLS: sizeof(struct sockaddr_mpls), not configured.
                 _ => {}
             },
@@ -1815,7 +1816,8 @@ pub unsafe fn rtm_xaddrs(
             }
             RTAX_IFA => match family {
                 AF_INET => size = size_of::<SockaddrIn>(),
-                // INET6: sizeof(struct sockaddr_in6), not configured.
+                #[cfg(feature = "inet6")]
+                crate::sys::socket::AF_INET6 => size = SIZEOF_SOCKADDR_IN6,
                 _ => return Err(Errno::EAFNOSUPPORT),
             },
             RTAX_LABEL => {
@@ -1836,14 +1838,16 @@ pub unsafe fn rtm_xaddrs(
                 }
                 match family {
                     AF_INET => {}
-                    // INET6: AF_INET6, not configured.
+                    #[cfg(feature = "inet6")]
+                    crate::sys::socket::AF_INET6 => {}
                     _ => return Err(Errno::EAFNOSUPPORT),
                 }
             }
             RTAX_STATIC => {
                 match family {
                     AF_INET => {}
-                    // INET6: AF_INET6, not configured.
+                    #[cfg(feature = "inet6")]
+                    crate::sys::socket::AF_INET6 => {}
                     _ => return Err(Errno::EAFNOSUPPORT),
                 }
                 maxlen = RTSTATIC_LEN;
@@ -2481,8 +2485,8 @@ fn sysctl_ifnames(w: &mut Walkarg) -> Result<(), Errno> {
 /// `sysctl_source(af, tableid, w)`: the preferred source address of `af` in `tableid`, if
 /// one is set.
 fn sysctl_source(af: SaFamily, tableid: u32, w: &mut Walkarg) -> Result<(), Errno> {
-    // union { struct sockaddr_in in; (INET6: struct sockaddr_in6 in6, not configured) } buf
-    let mut buf = [0u8; size_of::<SockaddrIn>()];
+    // union { struct sockaddr_in in; struct sockaddr_in6 in6; } buf
+    let mut buf = [0u8; SIZEOF_SOCKADDR_IN6];
     let mut size = 0;
 
     net_lock_shared();
@@ -2491,13 +2495,15 @@ fn sysctl_source(af: SaFamily, tableid: u32, w: &mut Walkarg) -> Result<(), Errn
         // SAFETY: a preferred source is an interface's address, readable.
         match unsafe { sa_family(sa) } {
             AF_INET => size = size_of::<SockaddrIn>(),
-            // INET6: sizeof(struct sockaddr_in6), not configured.
+            #[cfg(feature = "inet6")]
+            crate::sys::socket::AF_INET6 => size = SIZEOF_SOCKADDR_IN6,
             _ => sa = ptr::null(),
         }
     }
     if !sa.is_null() {
-        // SAFETY: an `AF_INET` interface address is a whole `struct sockaddr_in`.
-        buf.copy_from_slice(unsafe { slice::from_raw_parts(sa.cast::<u8>(), size) });
+        // SAFETY: an `AF_INET` (`AF_INET6`) interface address is a whole `struct sockaddr_in`
+        // (`sockaddr_in6`) of `size` bytes.
+        buf[..size].copy_from_slice(unsafe { slice::from_raw_parts(sa.cast::<u8>(), size) });
     }
     net_unlock_shared();
 
@@ -2680,7 +2686,15 @@ unsafe fn rtm_validate_proposal(info: &RtAddrinfo) -> Result<(), Errno> {
                     return bad;
                 }
             }
-            // INET6: a multiple of sizeof(struct in6_addr), not configured.
+            #[cfg(feature = "inet6")]
+            crate::sys::socket::AF_INET6 => {
+                if (len - offset_of!(SockaddrRtdns, sr_dns))
+                    % size_of::<crate::netinet6::in6::In6Addr>()
+                    != 0
+                {
+                    return bad;
+                }
+            }
             _ => return bad,
         }
     }
@@ -2739,7 +2753,16 @@ unsafe fn rt_setsource(rtableid: u32, src: *const Sockaddr) -> Result<(), Errno>
                 return Ok(());
             }
         }
-        // INET6: IN6_IS_ADDR_UNSPECIFIED, not configured.
+        #[cfg(feature = "inet6")]
+        crate::sys::socket::AF_INET6 => {
+            // SAFETY: `rtm_xaddrs` checked an `AF_INET6` `RTAX_IFA` holds a whole `struct
+            // sockaddr_in6`; maybe unaligned.
+            let sin6 = unsafe { ptr::read_unaligned(crate::netinet6::in6::satosin6_const(src)) };
+            if crate::netinet6::in6::in6_is_addr_unspecified(&sin6.sin6_addr) {
+                let _ = rtable_setsource(rtableid, crate::sys::socket::AF_INET6, ptr::null());
+                return Ok(());
+            }
+        }
         _ => return Err(Errno::EAFNOSUPPORT),
     }
 
