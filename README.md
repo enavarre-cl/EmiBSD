@@ -21,7 +21,7 @@
 
 ## Status
 
-Status: M10e (NFS client and server) met; M10d (ext2fs, ntfs, fuse) next.
+Status: M10 (file systems, M10a..M10f) met, M10d (ext2fs, ntfs, fuse) last; M11 (SMP) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -41,7 +41,7 @@ Status: M10e (NFS client and server) met; M10d (ext2fs, ntfs, fuse) next.
 | M10c | Memory and removable file systems (tmpfs, msdosfs, cd9660, udf, vnd) | met |
 | M10f | softraid (RAID 0, 1, 5, 6, concat, RAID 1C, CRYPTO; bio(4), bioctl) | met |
 | M10e | NFS client and server (portmap, mountd, nfsd, mount_nfs, showmount) | met |
-| M10d | ext2fs, ntfs, fuse | next |
+| M10d | ext2fs, ntfs (amd64), fuse | met |
 | M11a..M11e | SMP | next |
 | M12 | Devices (audio, USB), in QEMU | next |
 | M13 | Storage, firmware and console | next |
@@ -78,6 +78,14 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
   file; after a reboot the volumes are assembled at boot, `bioctl -p` unlocks the encrypted
   ones and every file reads back; with a disk missing, RAID 1 and RAID 6 come up degraded
   and still read (`smoke-softraid`).
+- ext2fs: newfs_ext2fs(8) on a persistent disk, files written with mount_ext2fs(8); after a
+  reboot fsck_ext2fs(8) finds it clean and the files read back, and e2fsprogs' `e2fsck -fn` on
+  the Mac passes the same disk image (`smoke-ext2fs`).
+- FUSE: our own file system over OpenBSD's libfuse and /dev/fuse0 mounts, serves its files,
+  refuses a write and unmounts (`smoke-fuse`).
+- NTFS, amd64 only (as in GENERIC): an image made by our own generator, checked first by
+  macOS's NTFS driver, attached with vnconfig(8) and mounted with mount_ntfs(8); a resident
+  and a non-resident file read back (`smoke-ntfs`).
 
 Between two VMs on a private link (`cargo xtask smoke2`):
 
@@ -116,6 +124,18 @@ vio0: flags=4008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST> mtu 1500
         inet 10.0.2.15 netmask 0xffffff00 broadcast 10.0.2.255
 # ping -c 1 10.0.2.2
 64 bytes from 10.0.2.2: icmp_seq=0 ttl=255 time=5.278 ms
+```
+
+And from `smoke-fuse` on amd64 (trimmed):
+
+```
+# mkdir -p /fuse && fusehello /fuse && mount && echo fuse-up-$((40+2))
+/dev/rd0a on / type ffs (local)
+fusefs on /fuse type fuse
+fuse-up-42
+# cat /fuse/hello.txt /fuse/sub/deep.txt
+m10d-fuse-42
+m10d-fuse-sub-42
 ```
 
 The real console also prints `unported: <name>` lines. Each one is a known gap, reported once.
@@ -162,7 +182,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 4 | 148 | 569 | 15 | 736 |
+| 4 | 148 | 608 | 15 | 775 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).

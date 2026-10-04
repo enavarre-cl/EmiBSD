@@ -1,8 +1,7 @@
 # Status
 
-Milestone: **M9+ done**; **M10a**, **M10b**, **M10c**, **M10f** and **M10e done** (persistent
-disk, UFS options, memory and removable file systems, softraid, NFS); M10d next.
-Updated: 2026-10-04.
+Milestone: **M10 done** (M10a..M10f: persistent disk, UFS options, memory and removable file
+systems, softraid, NFS, ext2fs/ntfs/fuse); M11a next. Updated: 2026-10-04.
 
 Done:
 - M7a..M8b: uvm, mbufs, PCI, virtio, IPv4; ffs root on rd0a, init, ksh, /etc/rc, login. M9:
@@ -14,11 +13,12 @@ Done:
 - M10c: tmpfs, msdosfs, cd9660, udf, vnd(4), their tools; `smoke-fs` (FAT/ISO/UDF on vnd).
 - M10f: softraid and all seven disciplines, bio(4), sensors, bioctl, four disks per VM
   (`--disks`); `smoke-softraid` (RAID 6 via our `sr6create`: bioctl has no `-c 6`).
-- M10e: all of `nfs/` (nfs_aiod.c skipped: not compiled by OpenBSD), portmap, mountd, nfsd,
-  mount_nfs, showmount; `smoke-nfs` (two VMs, mounts over UDP and TCP, files both ways).
+- M10e: all of `nfs/`, portmap, mountd, nfsd, mount_nfs, showmount; `smoke-nfs` (two VMs).
+- M10d: ext2fs, read-only ntfs (amd64), fuse; ext2/ntfs tools, libfuse, our `fusehello` and
+  NTFS generator; `smoke-ext2fs` (+ host e2fsck), `smoke-ntfs`, `smoke-fuse`.
 
 Next:
-- M10d (ext2fs, ntfs, fuse), then M11a..e (SMP; then every smoke runs MP).
+- M11a..e (SMP; then every smoke runs MP), then M12.
 
 Blockers:
 - amd64 kernel stacks are tight: about 4.9 KB stay free under softraid I/O (M10f measure).
