@@ -2,12 +2,17 @@
 //! and growing a request chain, the XDR strings and their padding, the uio copies both ways,
 //! and the version 2 times.
 
+use std::boxed::Box;
 use std::vec;
 use std::vec::Vec;
 
 use super::*;
 use crate::kern::uipc_mbuf::tests::setup;
-use crate::kern::uipc_mbuf::{m_copyback, m_copydata, m_freem};
+use crate::kern::uipc_mbuf::{m_copyback, m_copydata, m_freem, m_gethdr};
+use crate::nfs::nfsmount::NfsMount;
+use crate::nfs::nfsnode::NfsNode;
+use crate::nfs::nfsproto::{NFSERR_NOENT, NFSERR_NOTDIR, NFSPROC_GETATTR, NFSPROC_LOOKUP};
+use crate::sys::vnode::VT_NFS;
 
 /// A chain of mbufs holding `parts`, one mbuf each.
 pub(crate) fn chain(parts: &[&[u8]]) -> &'static Mbuf {
@@ -293,3 +298,193 @@ fn tables() {
 
 /// `NFSPROC_MKNOD`, which version 2 maps to `NFSV2PROC_CREATE`.
 const NFSPROC_MKNOD_FOR_TEST: usize = crate::nfs::nfsproto::NFSPROC_MKNOD;
+
+/// A leaked NFS mount (named "nfs", over the test file system's operations), and a vnode of
+/// it with its node.
+fn nfs_vnode(vtype: Vtype) -> (&'static Vnode, &'static NfsNode, &'static NfsMount) {
+    static CONF: Vfsconf = Vfsconf::new(
+        &crate::kern::vfs_subr::tests::testfs::TESTFS_VFSOPS,
+        b"nfs",
+        2,
+        0,
+        0,
+    );
+    let nmp: &'static NfsMount = Box::leak(Box::new(NfsMount::new()));
+    let mp: &'static Mount = Box::leak(Box::new(Mount::new()));
+    mp.mnt_vfc.set(Some(&CONF));
+    mp.mnt_data.set(ptr::from_ref(nmp).cast_mut().cast());
+    let np: &'static NfsNode = Box::leak(Box::new(NfsNode::new()));
+    let vp: &'static Vnode = Box::leak(Box::new(Vnode::new()));
+    vp.v_tag.set(VT_NFS);
+    vp.v_type.set(vtype);
+    vp.v_mount.set(Some(mp));
+    vp.v_data.set(ptr::from_ref(np).cast_mut().cast());
+    np.n_vnode.set(Some(vp));
+    (vp, np, nmp)
+}
+
+#[test]
+fn errors_are_mapped_per_version_and_procedure() {
+    let mut nd = NfsrvDescript::new();
+    assert_eq!(nfsrv_errmap(&nd, Errno::ESTALE as i32), NFSERR_STALE);
+    assert_eq!(nfsrv_errmap(&nd, Errno::ENOTSUP as i32), NFSERR_IO);
+    assert_eq!(nfsrv_errmap(&nd, 0), NFSERR_IO);
+    nd.nd_flag = ND_NFSV3;
+    nd.nd_procnum = NFSPROC_LOOKUP;
+    assert_eq!(nfsrv_errmap(&nd, NFSERR_NOENT), NFSERR_NOENT);
+    assert_eq!(nfsrv_errmap(&nd, NFSERR_NOTDIR), NFSERR_NOTDIR);
+    assert_eq!(
+        nfsrv_errmap(&nd, NFSERR_PERM),
+        NFSERR_IO,
+        "not a LOOKUP error"
+    );
+    nd.nd_procnum = NFSPROC_GETATTR;
+    assert_eq!(nfsrv_errmap(&nd, NFSERR_NOENT), NFSERR_IO);
+    nd.nd_procnum = NFSPROC_NOOP;
+    assert_eq!(
+        nfsrv_errmap(&nd, 0x1_0000 | NFSERR_BADHANDLE),
+        NFSERR_BADHANDLE
+    );
+}
+
+#[test]
+fn commit_ranges() {
+    let (vp, np, _) = nfs_vnode(VREG);
+    let bp = Buf::new();
+    bp.b_blkno.set(2);
+    bp.b_dirtyend.set(100);
+    let lo = 2 * DEV_BSIZE as Off;
+    assert!(!nfs_in_tobecommitted_range(vp, &bp));
+    nfs_add_tobecommitted_range(vp, &bp);
+    assert!(nfs_in_tobecommitted_range(vp, &bp));
+    assert_eq!((np.n_pushlo.get(), np.n_pushhi.get()), (lo, lo + 100));
+    nfs_merge_commit_ranges(vp);
+    assert!(nfs_in_committed_range(vp, &bp));
+    assert!(!nfs_in_tobecommitted_range(vp, &bp));
+
+    // A second buffer further on widens the committed range; deleting the first leaves the
+    // second's part.
+    let bp2 = Buf::new();
+    bp2.b_blkno.set(10);
+    bp2.b_dirtyend.set(512);
+    nfs_add_committed_range(vp, &bp2);
+    assert_eq!(np.n_pushedhi.get(), 10 * DEV_BSIZE as Off + 512);
+    nfs_del_committed_range(vp, &bp);
+    assert_eq!(np.n_pushedlo.get(), lo + 100);
+    assert!(nfs_in_committed_range(vp, &bp2));
+    assert!(!nfs_in_committed_range(vp, &bp));
+
+    nfs_add_tobecommitted_range(vp, &bp2);
+    nfs_del_tobecommitted_range(vp, &bp2);
+    assert_eq!(np.n_pushlo.get(), 10 * DEV_BSIZE as Off + 512);
+}
+
+#[test]
+fn attribute_cache_timeouts_and_hits() {
+    let (vp, np, nmp) = nfs_vnode(VREG);
+    nmp.nm_acregmin.set(3);
+    nmp.nm_acregmax.set(60);
+    np.n_mtime.set(Timespec::new(gettime(), 0));
+    assert_eq!(nfs_attrtimeo(np), 3);
+    np.n_mtime.set(Timespec::new(gettime() - 200, 0));
+    assert_eq!(nfs_attrtimeo(np), 20);
+    np.n_mtime.set(Timespec::new(gettime() - 10_000, 0));
+    assert_eq!(nfs_attrtimeo(np), 60);
+
+    let mut va = Vattr::new();
+    assert_eq!(nfs_getattrcache(vp, &mut va).err(), Some(Errno::ENOENT));
+    let mut cached = Vattr::new();
+    cached.va_type = VREG;
+    cached.va_mode = 0o644;
+    np.n_vattr.set(cached);
+    np.n_attrstamp.set(gettime() - 1);
+    np.n_atim.set(Timespec::new(7, 8));
+    np.n_flag
+        .set(crate::nfs::nfsnode::NCHG | crate::nfs::nfsnode::NACC);
+    nfs_getattrcache(vp, &mut va).expect("a hit");
+    assert_eq!(va.va_mode, 0o644);
+    assert_eq!(va.va_atime, Timespec::new(7, 8));
+}
+
+#[test]
+fn rpc_header_with_unix_credentials() {
+    let _g = setup();
+    let nmp: &'static NfsMount = Box::leak(Box::new(NfsMount::new()));
+    nmp.nm_flag.set(NFSMNT_NFSV3);
+    nmp.nm_numgrps.set(16);
+    let req = NfsReq::new();
+    let m = m_gethdr(M_WAIT, MT_DATA).expect("a header mbuf");
+    req.r_mreq.set(Some(m));
+    req.r_nmp.set(Some(nmp));
+    req.r_procnum.set(NFSPROC_GETATTR);
+    let cr = Ucred::new();
+    cr.cr_uid.set(1000);
+    cr.cr_gid.set(10);
+    cr.cr_ngroups.set(2);
+    cr.cr_groups[0].set(10);
+    cr.cr_groups[1].set(20);
+
+    nfsm_rpchead(&req, &cr, RPCAUTH_UNIX);
+
+    let b = bytes(m);
+    assert_eq!(b.len(), 68, "10 words and a 28-byte credential");
+    assert_eq!(m.m_pkthdr().len.get(), 68);
+    let w: Vec<u32> = b
+        .chunks(4)
+        .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    assert_ne!(w[0], 0);
+    assert_eq!(req.r_xid.get(), txdr_unsigned(w[0]));
+    assert_eq!(
+        w[1..],
+        [0, 2, 100003, 3, 1, 1, 28, 0, 0, 1000, 10, 2, 10, 20, 0, 0]
+    );
+    // Version 2 maps the procedure number.
+    nmp.nm_flag.set(0);
+    let m2 = m_gethdr(M_WAIT, MT_DATA).expect("a header mbuf");
+    req.r_mreq.set(Some(m2));
+    req.r_procnum.set(NFSPROC_LOOKUP);
+    nfsm_rpchead(&req, &cr, RPCAUTH_UNIX);
+    let b = bytes(m2);
+    assert_eq!(b[16..24], [0, 0, 0, 2, 0, 0, 0, 4]);
+    m_freem(m);
+    m_freem(m2);
+}
+
+#[test]
+fn v3_sattr() {
+    let _g = setup();
+    let mut a = Vattr::new();
+    crate::kern::vfs_subr::vattr_null(&mut a);
+    a.va_mode = 0o600;
+    a.va_size = 5;
+    a.va_mtime = Timespec::new(gettime() + 100, 9);
+    let head = nfsm_reqhead(0);
+    let mut mb = head;
+    nfsm_v3attrbuild(&mut mb, &a, true);
+    let w: Vec<u32> = bytes(head)
+        .chunks(4)
+        .map(|c| u32::from_be_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    let t = (gettime() + 100) as u32;
+    assert_eq!(w, [1, 0o600, 0, 0, 1, 0, 5, 0, 2, t, 9]);
+    // Not full: only the mode and the times.
+    let head2 = nfsm_reqhead(0);
+    let mut mb = head2;
+    a.va_mtime = Timespec::new(gettime(), 0);
+    nfsm_v3attrbuild(&mut mb, &a, false);
+    assert_eq!(
+        bytes(head2)[8..],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+    );
+    m_freem(head);
+    m_freem(head2);
+}
+
+#[test]
+fn xids_are_nonzero_and_vary() {
+    let a = nfs_get_xid();
+    let b = nfs_get_xid();
+    assert_ne!(a, 0);
+    assert_ne!(a, b);
+}

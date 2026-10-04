@@ -72,30 +72,56 @@
 //!   new device node does not get `nfs_specvops` yet: M10e wires it when `nfs_vnops.rs`
 //!   lands (an `unported!("nfs_specvops")` marks the site); the alias check runs.
 //! - `nfsstats` is `NFSSTATS` of atomics (`nfs.rs`); `nfs_ticks` an `AtomicI32`.
+//! - `nfs_get_xid`'s function-local statics (`nfs_xid_ctx`, `called`) are file statics, the
+//!   context a `StaticCell` under a private mutex (`nfs_xid_mtx`, not in C), as
+//!   `ip6_randomid` does.
+//! - `nfsm_rpchead` builds `RPCAUTH_UNIX` only, as the C does (`KASSERT(auth_type ==
+//!   RPCAUTH_UNIX)`); its switches over the type are the one case.
+//! - `nfs_init`: under `NFSSERVER` it calls `nfsrv_init(0)` (`nfs_syscalls.c`) and
+//!   `nfsrv_initcache()` (`nfs_srvcache.c`); M10e wires them when those files land, until
+//!   then each site is an `unported!` gap.
+//! - `nfs_vfs_init` and `nfs_getattrcache` return `Result` (`ENOENT` for a cache miss).
+//! - `nfs_clearcommit`'s `goto loop` (a vnode found on the list of another mount) restarts
+//!   the walk with a labelled `continue`.
+//! - `nfsrv_errmap` maps an `err` below 1 to `NFSERR_IO`; the C indexes the version 2 table
+//!   at `err - 1` and would read before it (its callers never pass one).
+//! - `nfsm_v3attrbuild` takes `full` as a `bool`.
 
 use core::ffi::c_void;
 use core::ptr;
 use core::slice;
-use core::sync::atomic::AtomicI32;
+use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
+use crate::conf::param::HZ;
+use crate::crypto::idgen::{Idgen32Ctx, idgen32, idgen32_init};
+use crate::kassert;
+use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_subr::uiomove;
-#[cfg(feature = "nfsclient")]
 use crate::kern::kern_tc::gettime;
 #[cfg(feature = "nfsclient")]
 use crate::kern::spec_vnops::SPEC_VOPS;
+use crate::kern::subr_pool::pool_init;
 use crate::kern::subr_prf::panic;
-use crate::kern::uipc_mbuf::{m_get, m_trailingspace};
+use crate::kern::uipc_mbuf::{m_align, m_get, m_trailingspace};
 #[cfg(feature = "nfsclient")]
 use crate::kern::vfs_cache::cache_purge;
 #[cfg(feature = "nfsclient")]
 use crate::kern::vfs_subr::{checkalias, vgone, vrele};
 use crate::machine::copy::copyout;
-use crate::nfs::nfs::Nfsstats;
+use crate::machine::intr::{IPL_NONE, IPL_SOFTNET, splbio, splx};
+#[cfg(feature = "nfsclient")]
+use crate::nfs::nfs::NFS_NODE_POOL;
+use crate::nfs::nfs::{ND_NFSV3, NFS_TICKINTVL, NfsReq, NfsrvDescript, Nfsstats};
 use crate::nfs::nfs_var::{mb_offset, nfsm_padlen};
+use crate::nfs::nfsm_subs::nfsm_rndup;
 use crate::nfs::nfsm_subs::{XdrIn, XdrOut, nfsm_avail};
-use crate::nfs::nfsnode::VTONFS;
+#[cfg(feature = "nfsclient")]
+use crate::nfs::nfsmount::VFSTONFS;
 #[cfg(feature = "nfsclient")]
 use crate::nfs::nfsnode::{NACC, NCHG, NMODIFIED, NUPD};
+#[cfg(feature = "nfsclient")]
+use crate::nfs::nfsnode::{NFS_BUFQ, NFSTOV, NfsNode};
+use crate::nfs::nfsnode::{NFS_COMMIT_PUSH_VALID, NFS_COMMIT_PUSHED_VALID, VTONFS};
 use crate::nfs::nfsproto::{NFBLK, NFCHR, NFDIR, NFFIFO, NFLNK, NFNON, NFREG, NFSOCK};
 #[cfg(feature = "nfsclient")]
 use crate::nfs::nfsproto::{NFS_FABLKSIZE, NfsFattr, nfsv2tov_type, nfsv3tov_type, nfsx_fattr};
@@ -113,29 +139,45 @@ use crate::nfs::nfsproto::{
     NFSV2PROC_RMDIR, NFSV2PROC_SETATTR, NFSV2PROC_STATFS, NFSV2PROC_SYMLINK, NFSV2PROC_WRITE,
     NFSX_V2FH, NFSX_V3FH, Nfsfh, Nfstype, Nfsv2Time,
 };
+use crate::nfs::nfsproto::{
+    NFS_VER2, NFS_VER3, NFSPROC_COMMIT, NFSV3SATTRTIME_DONTCHANGE, NFSV3SATTRTIME_TOCLIENT,
+    NFSV3SATTRTIME_TOSERVER, NFSX_UNSIGNED,
+};
+use crate::nfs::rpcv2::RPCAUTH_NULL;
 use crate::nfs::rpcv2::{
     RPC_AUTHERR, RPC_CALL, RPC_MISMATCH, RPC_MSGACCEPTED, RPC_MSGDENIED, RPC_REPLY, RPC_VER2,
     RPCAUTH_UNIX,
 };
 #[cfg(feature = "nfsclient")]
 use crate::nfs::xdr_subs::{fxdr_hyper, fxdr_nfsv2time, fxdr_nfsv3time};
-use crate::nfs::xdr_subs::{fxdr_unsigned, txdr_unsigned};
+use crate::nfs::xdr_subs::{fxdr_unsigned, txdr_nfsv3time, txdr_unsigned};
+use crate::sys::buf::{B_BUSY, B_DELWRI, B_NEEDCOMMIT, Buf};
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::{M_WAIT, MHLEN, MLEN, MT_DATA, Mbuf, mclget, mtod};
+use crate::sys::mount::Mount;
+use crate::sys::mount::NFSMNT_NFSV3;
+#[cfg(feature = "nfsclient")]
+use crate::sys::mount::Vfsconf;
+use crate::sys::mutex::Mutex;
+use crate::sys::param::DEV_BSIZE;
 #[cfg(feature = "nfsclient")]
 use crate::sys::param::{BLKDEV_IOSIZE, MAXBSIZE};
-use crate::sys::pool::Pool;
+use crate::sys::pool::{PR_WAITOK, Pool};
 use crate::sys::time::Timespec;
+use crate::sys::types::{Gid, Mode, Off, Uid};
 #[cfg(feature = "nfsclient")]
 use crate::sys::types::{Time, makedev};
+use crate::sys::ucred::Ucred;
 use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
-use crate::sys::vnode::{VBLK, VCHR, VDIR, VFIFO, VLNK, VNON, VNOVAL, VREG, VSOCK, Vnode, Vtype};
+use crate::sys::vnode::Vattr;
 #[cfg(feature = "nfsclient")]
-use crate::sys::vnode::{Vattr, iftovt};
+use crate::sys::vnode::iftovt;
+use crate::sys::vnode::{VBLK, VCHR, VDIR, VFIFO, VLNK, VNON, VNOVAL, VREG, VSOCK, Vnode, Vtype};
 #[cfg(feature = "nfsclient")]
 use crate::uvm::uvm_extern::Voff;
 #[cfg(feature = "nfsclient")]
 use crate::uvm::uvm_vnode::uvm_vnp_setsize;
+use libkern::StaticCell;
 
 /// `nfs_xdrneg1`: data items converted to XDR at startup, since they are constant. This is
 /// kinda hokey, but may save a little time doing byte swaps.
@@ -632,6 +674,15 @@ pub static NFSSTATS: Nfsstats = Nfsstats::new();
 /// `nfsreqpl`: the `struct nfsreq` pool.
 pub static NFSREQPL: Pool = Pool::new();
 
+/// `nfs_xid_mtx` (not in C, see the deviations): guards [`NFS_XID_CTX`].
+static NFS_XID_MTX: Mutex = Mutex::new(IPL_SOFTNET);
+
+/// `nfs_xid_ctx`: `nfs_get_xid`'s generator; touched only under [`NFS_XID_MTX`].
+static NFS_XID_CTX: StaticCell<Idgen32Ctx> = StaticCell::new(Idgen32Ctx::zeroed());
+
+/// `called`: `nfs_get_xid` has seeded [`NFS_XID_CTX`].
+static NFS_XID_CALLED: AtomicBool = AtomicBool::new(false);
+
 /// `MGET(m, M_WAIT, MT_DATA)` where the C cannot fail: panics when the pool cannot serve
 /// (it cannot sleep here, `subr_pool.rs`).
 fn nfsm_mget() -> &'static Mbuf {
@@ -653,6 +704,94 @@ pub fn nfsm_reqhead(hsiz: usize) -> &'static Mbuf {
 
     // Finally, return values
     mb
+}
+
+/// `nfs_get_xid`: returns an unpredictable XID in XDR form.
+pub fn nfs_get_xid() -> u32 {
+    mtx_enter(&NFS_XID_MTX);
+    // SAFETY: NFS_XID_CTX is touched only here, with NFS_XID_MTX held; no other reference to
+    // it exists while this one lives.
+    let ctx = unsafe { NFS_XID_CTX.get_mut() };
+    if !NFS_XID_CALLED.load(Ordering::Relaxed) {
+        NFS_XID_CALLED.store(true, Ordering::Relaxed);
+        idgen32_init(ctx);
+    }
+    let xid = idgen32(ctx);
+    mtx_leave(&NFS_XID_MTX);
+    txdr_unsigned(xid)
+}
+
+/// `nfsm_rpchead(req, cr, auth_type)`: builds the RPC header and fills in the authorization
+/// info in `req`'s request mbuf (`r_mreq`, a packet header mbuf with nothing in it yet), and
+/// stores the new xid in `r_xid`. Right now we are pretty centric around `RPCAUTH_UNIX`; in
+/// the future, this function will need some love to be able to handle other authorization
+/// methods, such as Kerberos.
+pub fn nfsm_rpchead(req: &NfsReq, cr: &Ucred, auth_type: u32) {
+    kassert!(auth_type == RPCAUTH_UNIX);
+
+    // RPCAUTH_UNIX fits in an hdr mbuf, in the future other authorization methods need to
+    // figure out their own sizes and allocate and chain mbufs accordingly.
+    let Some(mut mb) = req.r_mreq.get() else {
+        panic(format_args!("nfsm_rpchead: no request mbuf"));
+    };
+    let Some(nmp) = req.r_nmp.get() else {
+        panic(format_args!("nfsm_rpchead: no mount"));
+    };
+
+    // We need to start out by finding how big the authorization cred and verifier are for
+    // the auth_type, to be able to correctly align the mbuf header/chain. In the
+    // RPCAUTH_UNIX case, the size is the static part as shown in RFC1831 + the number of
+    // groups, RPCAUTH_UNIX has a zero verifier.
+    let ngroups = i32::from(cr.cr_ngroups.get())
+        .min(nmp.nm_numgrps.get())
+        .max(0) as usize;
+    let auth_len = (ngroups << 2) + 5 * NFSX_UNSIGNED;
+    let authsiz = nfsm_rndup(auth_len);
+    // The authorization size + the size of the static part.
+    m_align(mb, (authsiz + 10 * NFSX_UNSIGNED) as i32);
+
+    mb.m_len().set(0);
+
+    // First the RPC header.
+    let mut tl = nfsm_build(&mut mb, 6 * NFSX_UNSIGNED);
+
+    // Get a new (non-zero) xid.
+    let xid = nfs_get_xid();
+    req.r_xid.set(xid);
+    tl.put(xid);
+    tl.put(rpc_call);
+    tl.put(rpc_vers);
+    tl.put(nfs_prog);
+    if nmp.nm_flag.get() & NFSMNT_NFSV3 != 0 {
+        tl.put(txdr_unsigned(NFS_VER3));
+        tl.put(txdr_unsigned(req.r_procnum.get() as u32));
+    } else {
+        tl.put(txdr_unsigned(NFS_VER2));
+        tl.put(txdr_unsigned(NFSV2_PROCID[req.r_procnum.get()] as u32));
+    }
+
+    // The Authorization cred and its verifier.
+    let mut tl = nfsm_build(&mut mb, auth_len + 4 * NFSX_UNSIGNED);
+    tl.put(txdr_unsigned(RPCAUTH_UNIX));
+    tl.put(txdr_unsigned(authsiz as u32));
+
+    // The authorization cred.
+    tl.put(0); // stamp
+    tl.put(0); // NULL hostname
+    tl.put(txdr_unsigned(cr.cr_uid.get()));
+    tl.put(txdr_unsigned(cr.cr_gid.get()));
+    tl.put(txdr_unsigned(ngroups as u32));
+    for g in &cr.cr_groups[..ngroups] {
+        tl.put(txdr_unsigned(g.get()));
+    }
+    // The authorization verifier.
+    tl.put(txdr_unsigned(RPCAUTH_NULL));
+    tl.put(0);
+
+    let ph = mb.m_pkthdr();
+    ph.len
+        .set(ph.len.get() + (authsiz + 10 * NFSX_UNSIGNED) as i32);
+    ph.ph_ifidx.set(0);
 }
 
 /// `nfsm_mbuftouio(mrep, uiop, siz, dpos)`: copies `siz` bytes of an mbuf chain, from the
@@ -959,6 +1098,48 @@ pub fn nfsm_nextbytes<'a>(
     Ok(unsafe { XdrIn::new(p, n) })
 }
 
+/// `nfs_init`: called once to initialize data structures...
+pub fn nfs_init() {
+    // The XDR words of the C (`rpc_vers = txdr_unsigned(RPC_VER2)`, ...) are constants.
+    let ticks = (HZ.load(Ordering::Relaxed) * NFS_TICKINTVL + 500) / 1000;
+    NFS_TICKS.store(ticks.max(1), Ordering::Relaxed);
+    #[cfg(feature = "nfsserver")]
+    {
+        // M10e: `nfsrv_init(0)` (nfs_syscalls.rs) and `nfsrv_initcache()` (nfs_srvcache.rs)
+        // once those files land: init server data structures and the server request cache.
+        let _ = crate::unported!("nfsrv_init");
+        let _ = crate::unported!("nfsrv_initcache");
+    }
+
+    pool_init(
+        &NFSREQPL,
+        size_of::<NfsReq>(),
+        0,
+        IPL_NONE,
+        PR_WAITOK,
+        "nfsreqpl",
+        None,
+    );
+}
+
+/// `nfs_vfs_init` (`vfs_init`): the nfsiod buffer queue and the nfsnode pool.
+#[cfg(feature = "nfsclient")]
+pub fn nfs_vfs_init(_vfsp: &'static Vfsconf) -> Result<(), Errno> {
+    NFS_BUFQ.0.init();
+
+    pool_init(
+        &NFS_NODE_POOL,
+        size_of::<NfsNode>(),
+        0,
+        IPL_NONE,
+        PR_WAITOK,
+        "nfsnodepl",
+        None,
+    );
+
+    Ok(())
+}
+
 /// `nfs_loadattrcache(vpp, mdp, dposp, vaper)`: loads the attribute cache (that lives in the
 /// nfsnode entry) with the values on the mbuf list and, iff `vaper` is given, copies the
 /// attributes to it. A new device node may be replaced by an alias (`*vpp`).
@@ -1118,6 +1299,338 @@ pub fn nfs_loadattrcache(
         }
     }
     Ok(())
+}
+
+/// `nfs_attrtimeo(np)`: the attribute cache timeout of a node, in seconds: a tenth of the
+/// age of its last modification, clamped to the mount's `acregmin..acregmax` (directories:
+/// `acdirmin..acdirmax`); the minimum while it has local modifications.
+#[cfg(feature = "nfsclient")]
+pub fn nfs_attrtimeo(np: &NfsNode) -> i32 {
+    let vp = NFSTOV(np);
+    let Some(mp) = vp.v_mount.get() else {
+        panic(format_args!("nfs_attrtimeo: vnode {:p} has no mount", vp));
+    };
+    let nmp = VFSTONFS(mp);
+    let tenthage = ((gettime() - np.n_mtime.get().tv_sec) / 10) as i32;
+
+    let (minto, maxto) = if vp.v_type.get() == VDIR {
+        (
+            i32::from(nmp.nm_acdirmin.get()),
+            i32::from(nmp.nm_acdirmax.get()),
+        )
+    } else {
+        (
+            i32::from(nmp.nm_acregmin.get()),
+            i32::from(nmp.nm_acregmax.get()),
+        )
+    };
+
+    if np.n_flag.get() & NMODIFIED != 0 || tenthage < minto {
+        minto
+    } else if tenthage < maxto {
+        tenthage
+    } else {
+        maxto
+    }
+}
+
+/// `nfs_getattrcache(vp, vaper)`: checks the time stamp; if the cache is valid, copies its
+/// contents to `vaper`, otherwise fails with `ENOENT`.
+#[cfg(feature = "nfsclient")]
+pub fn nfs_getattrcache(vp: &'static Vnode, vaper: &mut Vattr) -> Result<(), Errno> {
+    let np = VTONFS(vp);
+
+    if np.n_attrstamp.get() == 0 || gettime() - np.n_attrstamp.get() >= i64::from(nfs_attrtimeo(np))
+    {
+        NFSSTATS.attrcache_misses.fetch_add(1, Ordering::Relaxed);
+        return Err(Errno::ENOENT);
+    }
+    NFSSTATS.attrcache_hits.fetch_add(1, Ordering::Relaxed);
+    let mut vap = np.n_vattr.get();
+    if vap.va_size != np.n_size.get() {
+        if vap.va_type == VREG {
+            if np.n_flag.get() & NMODIFIED != 0 {
+                if vap.va_size < np.n_size.get() {
+                    vap.va_size = np.n_size.get();
+                } else {
+                    np.n_size.set(vap.va_size);
+                }
+            } else {
+                np.n_size.set(vap.va_size);
+            }
+            np.n_vattr.set(vap);
+            uvm_vnp_setsize(vp, np.n_size.get() as Voff);
+        } else {
+            np.n_size.set(vap.va_size);
+        }
+    }
+    np.n_vattr.set(vap);
+    *vaper = vap;
+    if np.n_flag.get() & NCHG != 0 {
+        if np.n_flag.get() & NACC != 0 {
+            vaper.va_atime = np.n_atim.get();
+        }
+        if np.n_flag.get() & NUPD != 0 {
+            vaper.va_mtime = np.n_mtim.get();
+        }
+    }
+    Ok(())
+}
+
+/// `nfs_clearcommit(mp)`: the write verifier has changed (probably due to a server reboot),
+/// so all `B_NEEDCOMMIT` blocks will have to be written again. Since they are on the dirty
+/// block list as `B_DELWRI`, all this takes is clearing the `B_NEEDCOMMIT` flag. Once done
+/// the new write verifier can be set for the mount point.
+pub fn nfs_clearcommit(mp: &Mount) {
+    let s = splbio();
+    'restart: loop {
+        for vp in mp.mnt_vnodelist.iter() {
+            if !vp.v_mount.get().is_some_and(|m| ptr::eq(m, mp)) {
+                // Paranoia.
+                continue 'restart;
+            }
+            for bp in vp.v_dirtyblkhd.iter() {
+                let flags = bp.b_flags.get();
+                if flags & (B_BUSY | B_DELWRI | B_NEEDCOMMIT) == B_DELWRI | B_NEEDCOMMIT {
+                    bp.b_flags.set(flags & !B_NEEDCOMMIT);
+                }
+            }
+        }
+        break;
+    }
+    splx(s);
+}
+
+/// `nfs_merge_commit_ranges(vp)`: folds the to-be-committed range into the committed one.
+pub fn nfs_merge_commit_ranges(vp: &Vnode) {
+    let np = VTONFS(vp);
+
+    if np.n_commitflags.get() & NFS_COMMIT_PUSHED_VALID == 0 {
+        np.n_pushedlo.set(np.n_pushlo.get());
+        np.n_pushedhi.set(np.n_pushhi.get());
+        np.n_commitflags
+            .set(np.n_commitflags.get() | NFS_COMMIT_PUSHED_VALID);
+    } else {
+        if np.n_pushlo.get() < np.n_pushedlo.get() {
+            np.n_pushedlo.set(np.n_pushlo.get());
+        }
+        if np.n_pushhi.get() > np.n_pushedhi.get() {
+            np.n_pushedhi.set(np.n_pushhi.get());
+        }
+    }
+
+    np.n_pushlo.set(0);
+    np.n_pushhi.set(0);
+    np.n_commitflags
+        .set(np.n_commitflags.get() & !NFS_COMMIT_PUSH_VALID);
+}
+
+/// The byte range of a buffer's dirty data: `b_blkno * DEV_BSIZE` to that plus
+/// `b_dirtyend`.
+fn commit_range(bp: &Buf) -> (Off, Off) {
+    let lo = bp.b_blkno.get() * DEV_BSIZE as Off;
+    (lo, lo + Off::from(bp.b_dirtyend.get()))
+}
+
+/// `nfs_in_committed_range(vp, bp)`: whether the buffer's dirty data was committed.
+pub fn nfs_in_committed_range(vp: &Vnode, bp: &Buf) -> bool {
+    let np = VTONFS(vp);
+
+    if np.n_commitflags.get() & NFS_COMMIT_PUSHED_VALID == 0 {
+        return false;
+    }
+    let (lo, hi) = commit_range(bp);
+
+    lo >= np.n_pushedlo.get() && hi <= np.n_pushedhi.get()
+}
+
+/// `nfs_in_tobecommitted_range(vp, bp)`: whether the buffer's dirty data is in the range
+/// to be committed.
+pub fn nfs_in_tobecommitted_range(vp: &Vnode, bp: &Buf) -> bool {
+    let np = VTONFS(vp);
+
+    if np.n_commitflags.get() & NFS_COMMIT_PUSH_VALID == 0 {
+        return false;
+    }
+    let (lo, hi) = commit_range(bp);
+
+    lo >= np.n_pushlo.get() && hi <= np.n_pushhi.get()
+}
+
+/// `nfs_add_committed_range(vp, bp)`: widens the committed range to the buffer.
+pub fn nfs_add_committed_range(vp: &Vnode, bp: &Buf) {
+    let np = VTONFS(vp);
+    let (lo, hi) = commit_range(bp);
+
+    if np.n_commitflags.get() & NFS_COMMIT_PUSHED_VALID == 0 {
+        np.n_pushedlo.set(lo);
+        np.n_pushedhi.set(hi);
+        np.n_commitflags
+            .set(np.n_commitflags.get() | NFS_COMMIT_PUSHED_VALID);
+    } else {
+        if hi > np.n_pushedhi.get() {
+            np.n_pushedhi.set(hi);
+        }
+        if lo < np.n_pushedlo.get() {
+            np.n_pushedlo.set(lo);
+        }
+    }
+}
+
+/// `nfs_del_committed_range(vp, bp)`: takes the buffer out of the committed range.
+pub fn nfs_del_committed_range(vp: &Vnode, bp: &Buf) {
+    let np = VTONFS(vp);
+
+    if np.n_commitflags.get() & NFS_COMMIT_PUSHED_VALID == 0 {
+        return;
+    }
+
+    let (lo, hi) = commit_range(bp);
+
+    if lo > np.n_pushedhi.get() || hi < np.n_pushedlo.get() {
+        return;
+    }
+    if lo <= np.n_pushedlo.get() {
+        np.n_pushedlo.set(hi);
+    } else if hi >= np.n_pushedhi.get() {
+        np.n_pushedhi.set(lo);
+    } else {
+        // XXX There's only one range. If the deleted range is in the middle, pick the
+        // largest of the contiguous ranges that it leaves.
+        if np.n_pushedlo.get() - lo > hi - np.n_pushedhi.get() {
+            np.n_pushedhi.set(lo);
+        } else {
+            np.n_pushedlo.set(hi);
+        }
+    }
+}
+
+/// `nfs_add_tobecommitted_range(vp, bp)`: widens the range to be committed to the buffer.
+pub fn nfs_add_tobecommitted_range(vp: &Vnode, bp: &Buf) {
+    let np = VTONFS(vp);
+    let (lo, hi) = commit_range(bp);
+
+    if np.n_commitflags.get() & NFS_COMMIT_PUSH_VALID == 0 {
+        np.n_pushlo.set(lo);
+        np.n_pushhi.set(hi);
+        np.n_commitflags
+            .set(np.n_commitflags.get() | NFS_COMMIT_PUSH_VALID);
+    } else {
+        if lo < np.n_pushlo.get() {
+            np.n_pushlo.set(lo);
+        }
+        if hi > np.n_pushhi.get() {
+            np.n_pushhi.set(hi);
+        }
+    }
+}
+
+/// `nfs_del_tobecommitted_range(vp, bp)`: takes the buffer out of the range to be
+/// committed.
+pub fn nfs_del_tobecommitted_range(vp: &Vnode, bp: &Buf) {
+    let np = VTONFS(vp);
+
+    if np.n_commitflags.get() & NFS_COMMIT_PUSH_VALID == 0 {
+        return;
+    }
+
+    let (lo, hi) = commit_range(bp);
+
+    if lo > np.n_pushhi.get() || hi < np.n_pushlo.get() {
+        return;
+    }
+
+    if lo <= np.n_pushlo.get() {
+        np.n_pushlo.set(hi);
+    } else if hi >= np.n_pushhi.get() {
+        np.n_pushhi.set(lo);
+    } else {
+        // XXX There's only one range. If the deleted range is in the middle, pick the
+        // largest of the contiguous ranges that it leaves.
+        if np.n_pushlo.get() - lo > hi - np.n_pushhi.get() {
+            np.n_pushhi.set(lo);
+        } else {
+            np.n_pushlo.set(hi);
+        }
+    }
+}
+
+/// `nfsrv_errmap(nd, err)`: maps an errno to an NFS error number. For version 3 also
+/// filters out error numbers not specified for the associated procedure.
+pub fn nfsrv_errmap(nd: &NfsrvDescript, err: i32) -> i32 {
+    if nd.nd_flag & ND_NFSV3 != 0 {
+        if nd.nd_procnum <= NFSPROC_COMMIT {
+            let errs = NFSRV_V3ERRMAP[nd.nd_procnum];
+            for &e in &errs[1..] {
+                if e == 0 {
+                    break;
+                }
+                let e = i32::from(e);
+                if e == err {
+                    return err;
+                } else if e > err {
+                    break;
+                }
+            }
+            return i32::from(errs[0]);
+        } else {
+            return err & 0xffff;
+        }
+    }
+    if err >= 1 && err as usize <= NFSRV_V2ERRMAP.len() {
+        return i32::from(NFSRV_V2ERRMAP[err as usize - 1]);
+    }
+    NFSERR_IO
+}
+
+/// `nfsm_v3attrbuild(mp, a, full)`: appends a version 3 `sattr3` built from `a`: if `full`,
+/// all fields that are set, otherwise just the mode and time fields.
+pub fn nfsm_v3attrbuild(mp: &mut &'static Mbuf, a: &Vattr, full: bool) {
+    let mut mb = *mp;
+
+    if a.va_mode != VNOVAL as Mode {
+        let mut tl = nfsm_build(&mut mb, 2 * NFSX_UNSIGNED);
+        tl.put(nfs_true);
+        tl.put(txdr_unsigned(a.va_mode));
+    } else {
+        nfsm_build(&mut mb, NFSX_UNSIGNED).put(nfs_false);
+    }
+    if full && a.va_uid != VNOVAL as Uid {
+        let mut tl = nfsm_build(&mut mb, 2 * NFSX_UNSIGNED);
+        tl.put(nfs_true);
+        tl.put(txdr_unsigned(a.va_uid));
+    } else {
+        nfsm_build(&mut mb, NFSX_UNSIGNED).put(nfs_false);
+    }
+    if full && a.va_gid != VNOVAL as Gid {
+        let mut tl = nfsm_build(&mut mb, 2 * NFSX_UNSIGNED);
+        tl.put(nfs_true);
+        tl.put(txdr_unsigned(a.va_gid));
+    } else {
+        nfsm_build(&mut mb, NFSX_UNSIGNED).put(nfs_false);
+    }
+    if full && a.va_size != VNOVAL as u64 {
+        let mut tl = nfsm_build(&mut mb, 3 * NFSX_UNSIGNED);
+        tl.put(nfs_true);
+        tl.put_hyper(a.va_size);
+    } else {
+        nfsm_build(&mut mb, NFSX_UNSIGNED).put(nfs_false);
+    }
+    for t in [&a.va_atime, &a.va_mtime] {
+        if t.tv_nsec != i64::from(VNOVAL) {
+            if t.tv_sec != gettime() {
+                let mut tl = nfsm_build(&mut mb, 3 * NFSX_UNSIGNED);
+                tl.put(txdr_unsigned(NFSV3SATTRTIME_TOCLIENT));
+                tl.write(NFSX_UNSIGNED, &txdr_nfsv3time(t));
+            } else {
+                nfsm_build(&mut mb, NFSX_UNSIGNED).put(txdr_unsigned(NFSV3SATTRTIME_TOSERVER));
+            }
+        } else {
+            nfsm_build(&mut mb, NFSX_UNSIGNED).put(txdr_unsigned(NFSV3SATTRTIME_DONTCHANGE));
+        }
+    }
+
+    *mp = mb;
 }
 
 /// `nfsm_build(mp, len)`: ensures a contiguous buffer `len` bytes long at the end of the
