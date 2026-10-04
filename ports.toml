@@ -6469,7 +6469,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7531770033ce5bf61f86e242ef4703875dd24ffe"
 deps = ["sys/nfs/nfs.h", "sys/nfs/nfsm_subs.h", "sys/nfs/nfsnode.h", "sys/nfs/nfsmount.h", "sys/nfs/rpcv2.h", "sys/nfs/xdr_subs.h", "sys/kern/uipc_mbuf.c", "sys/kern/kern_subr.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_cache.c", "sys/kern/spec_vnops.c", "sys/uvm/uvm_vnode.c", "sys/kern/kern_tc.c", "sys/crypto/idgen.c", "sys/kern/subr_pool.c", "sys/kern/kern_lock.c", "sys/conf/param.c"]
-notes = "M10e: every function of the file is ported; wip only for two cross-file gaps the coordinator wires when their files land: nfs_loadattrcache's unported!(nfs_specvops) becomes vp.v_op.set(Some(&NFS_SPECVOPS)) (nfs_vnops.rs), and nfs_init's unported!(nfsrv_init) becomes nfsrv_init(0) (nfs_syscalls.rs; nfsrv_initcache() is called); then ported. XDR words of nfs_init as consts with their C names; type, procid and v2/v3 errno tables; NFSSTATS (atomics), NFS_TICKS, NFSREQPL; nfsm_reqhead; nfs_get_xid (static idgen32 context in a StaticCell under a private mutex, as ip6_randomid); nfsm_rpchead (RPCAUTH_UNIX only, as the C's KASSERT; xid stored in r_xid); nfsm_mbuftouio, nfsm_uiotombuf, nfsm_buftombuf, nfsm_strtombuf (byte slices; copyout/uiomove errors ignored as the C); nfsm_disct and nfs_adv (compute left themselves; disct returns an XdrIn view, ENOBUFS when MGET fails); nfsm_nextbytes Rust helper for cursor walks (nfs_namei); nfs_init; nfs_vfs_init, nfs_loadattrcache, nfs_attrtimeo, nfs_getattrcache (nfsclient; Result, ENOENT for a miss; FIFO is EOPNOTSUPP as tmpfs); nfs_clearcommit (goto loop as a labelled continue) and the commit-range functions; nfsrv_errmap (err below 1 maps to NFSERR_IO, the C would index before the v2 table); nfsm_v3attrbuild (full a bool); nfsm_build (XdrOut view), nfsm_fhtom, nfsm_srvfhtom (takes the nfsfh_t), txdr_nfsv2time; MGET(M_WAIT) failure panics where the C cannot fail; host tests (dissect/adv/build/strings/uio round trip, rpchead layout v2 and v3, errmap, commit ranges, attribute cache, v3 sattr, xids)"
+notes = "M10e: every function of the file is ported; wip only for one cross-file gap: nfs_init's unported!(nfsrv_init) becomes nfsrv_init(0) when nfs_syscalls.rs lands (nfsrv_initcache() is called); then ported. XDR words of nfs_init as consts with their C names; type, procid and v2/v3 errno tables; NFSSTATS (atomics), NFS_TICKS, NFSREQPL; nfsm_reqhead; nfs_get_xid (static idgen32 context in a StaticCell under a private mutex, as ip6_randomid); nfsm_rpchead (RPCAUTH_UNIX only, as the C's KASSERT; xid stored in r_xid); nfsm_mbuftouio, nfsm_uiotombuf, nfsm_buftombuf, nfsm_strtombuf (byte slices; copyout/uiomove errors ignored as the C); nfsm_disct and nfs_adv (compute left themselves; disct returns an XdrIn view, ENOBUFS when MGET fails); nfsm_nextbytes Rust helper for cursor walks (nfs_namei); nfs_init; nfs_vfs_init, nfs_loadattrcache, nfs_attrtimeo, nfs_getattrcache (nfsclient; Result, ENOENT for a miss; FIFO is EOPNOTSUPP as tmpfs); nfs_clearcommit (goto loop as a labelled continue) and the commit-range functions; nfsrv_errmap (err below 1 maps to NFSERR_IO, the C would index before the v2 table); nfsm_v3attrbuild (full a bool); nfsm_build (XdrOut view), nfsm_fhtom, nfsm_srvfhtom (takes the nfsfh_t), txdr_nfsv2time; MGET(M_WAIT) failure panics where the C cannot fail; host tests (dissect/adv/build/strings/uio round trip, rpchead layout v2 and v3, errmap, commit ranges, attribute cache, v3 sattr, xids)"
 
 [[file]]
 c = "sys/nfs/nfs_socket.c"
@@ -6533,3 +6533,46 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "02f0b8d8b9430515c218f16cb2f65b3145532a7b"
 deps = ["sys/nfs/nfsdiskless.h", "sys/nfs/krpc.h", "sys/nfs/nfsproto.h", "sys/nfs/rpcv2.h", "sys/nfs/xdr_subs.h", "sys/netinet/if_ether.c", "sys/net/if.c", "sys/netinet/in.c", "sys/netinet/in_var.h", "sys/kern/kern_sysctl.c"]
 notes = "M10e: all of the file, both C variants: the !NFSCLIENT stubs (nfs_boot_init panics, nfs_boot_getfh is EOPNOTSUPP) without feature nfsclient, the real code with it (NETHER == 0 never holds here: ethernet is always built; sys/conf/files compiles the file only with nfsclient). nfsbootdevname is NFSBOOTDEVNAME with a setter set_nfsbootdevname() that subr_disk.c's setroot() (another agent) must call; hostname/domainname are kern_sysctl.rs's statics; nfs_boot_init: if_unit, SIOCGIFFLAGS/SIOCSIFFLAGS/SIOCAIFADDR through ifioctl on a UDP socket, revarpwhoami (glue), bp_whoami through PMAPPROC_CALLIT broadcast; bp_whoami returns the gateway, bp_getfile/md_mount as the C with the reply parsers split out (host-tested: whoami, getfile and mount replies, v2/v3 handles, errors, the host:path construction); md_mount takes the file handle buffer explicitly; a mount daemon errno that is not an Errno is EIO. NFS_BOOT_OPTIONS/NFS_BOOT_RWSIZE are not configured, as in GENERIC. The RPCs themselves are for the smoke test"
+
+[[file]]
+c = "sys/nfs/nfs_bio.c"
+rust = "sys/nfs/nfs_bio.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c91626de950755684a28fbb971f83ed6bae2a575"
+deps = ["sys/nfs/nfs.h", "sys/nfs/nfsnode.h", "sys/nfs/nfsmount.h", "sys/nfs/nfsproto.h", "sys/nfs/nfs_var.h", "sys/nfs/nfs_subs.c", "sys/nfs/nfs_socket.c", "sys/kern/vfs_bio.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_vnops.c", "sys/kern/vfs_vops.c", "sys/kern/kern_subr.c", "sys/kern/kern_synch.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_sig.c", "sys/kern/kern_prot.c", "sys/kern/subr_prf.c", "sys/uvm/uvm_vnode.c"]
+notes = "M10e (nfsclient): every function ported (nfs_bioread with read-ahead, nfs_write, nfs_getcacheblk -> Option, nfs_vinvalbuf, nfs_asyncio(readahead: bool), nfs_doio(p: Option)); nfs_bufq/nfs_bufqlen/nfs_bufqmax are nfsnode.rs's NFS_BUFQ/NFS_BUFQLEN/NFS_BUFQMAX, sleep channels their addresses; a buffer on nfs_bufq is linked through b_freelist without b_onfreelist. wip only for the private module shim (temporary until merge): nfs_fsinfo (nfs_vfsops.c; fails, result ignored as in C) and nfs_numasync (nfs_syscalls.c; 0, all I/O synchronous) are unported! gaps; the RPCs (nfs_readrpc, nfs_writerpc, nfs_readlinkrpc, nfs_writebp) are nfs_vnops.rs's temporary stubs. VOP_GETATTR gets uio_procp, else curproc, else proc0; nfs_doio's readlink uses NOCRED with no curproc (C would dereference NULL); block arithmetic, write range merge and short-read zero fill are helpers (nfs_bioblk, nfs_bufranges, nfs_shortread) with host tests; DIAGNOSTIC checks behind feature diagnostic"
+
+[[file]]
+c = "sys/nfs/nfs_node.c"
+rust = "sys/nfs/nfs_node.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0b3423a93adbea88dc74f4b4bd0ce7e512e2922b"
+deps = ["sys/nfs/nfs.h", "sys/nfs/nfsnode.h", "sys/nfs/nfsmount.h", "sys/nfs/nfs_var.h", "sys/nfs/nfs_subs.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_cache.c", "sys/kern/vfs_vnops.c", "sys/kern/vfs_vops.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_malloc.c", "sys/kern/kern_prot.c", "sys/kern/subr_pool.c"]
+notes = "M10e (nfsclient): nfs_ninit, nfs_nget(mnt, fh: &[u8]) -> Result<&NfsNode, Errno> (node returned where the C fills *npp; the lookup key is a stack node holding a copy of the handle), nfs_inactive, nfs_reclaim; nfsnode_cmp and the RBT adapter NfsNodetree live in nfsnode.rs (the nfsmount tree head names them), nfs_node_pool is nfs.rs's NFS_NODE_POOL; crate helpers vfstonfs_vp, nfs_crhold, nfs_crfree (NULL/NOCRED/FSCRED skipped); VFSLCKDEBUG not configured; DIAGNOSTIC checks behind feature diagnostic; nfs_removeit and the vops tables come from nfs_vnops.rs (temporary stubs until nfs_vnops.c lands); host test of the node tree"
+
+[[file]]
+c = "sys/nfs/nfs_kq.c"
+rust = "sys/nfs/nfs_kq.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "66bb2f1e5b7aa7fe23c20f07986a17145c5daa88"
+deps = ["sys/nfs/nfs.h", "sys/nfs/nfsnode.h", "sys/nfs/nfs_var.h", "sys/nfs/nfs_subs.c", "sys/kern/kern_event.c", "sys/kern/kern_kthread.c", "sys/kern/kern_malloc.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_synch.c", "sys/kern/vfs_vops.c", "sys/sys/event.h"]
+notes = "M10e (nfsclient): the poller thread nfs_kqpoll, nfs_kqwatch/nfs_kqunwatch, filt_nfsdetach/read/write/vnode and their filterops, nfs_kqfilter; struct kevq is a malloc(M_KEVENT)ed Kevq of Cells on an SLIST (adapter KevLink); kevlist, pnfskq (AtomicPtr) and nfskevq_lock are statics; the poller uses curproc (itself) where the C reads pnfskq, since kthread_create returns the thread; DEBUG printfs behind feature debug; host tests of the write and vnode filters"
+
+[[file]]
+c = "sys/nfs/nfs_vnops.c"
+rust = "sys/nfs/nfs_vnops.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e1887ea74e954abd5a94dc6b3a06498474e77725"
+deps = ["sys/nfs/nfs.h", "sys/nfs/nfsnode.h", "sys/nfs/nfsmount.h", "sys/nfs/nfs_subs.c", "sys/nfs/nfs_socket.c", "sys/nfs/nfs_bio.c", "sys/nfs/nfs_node.c", "sys/nfs/nfs_kq.c"]
+notes = "M10e (nfsclient): temporary stubs only, made with nfs_bio.c: the RPCs nfs_bio.c and nfs_node.c call (nfs_readrpc, nfs_writerpc, nfs_readlinkrpc, nfs_readdirrpc, nfs_readdirplusrpc, nfs_commit, nfs_removeit, nfs_writebp) as unported! gaps, and the vops tables NFS_VOPS/NFS_SPECVOPS/NFS_FIFOVOPS holding only nfs_write, nfs_kqfilter, nfs_inactive and nfs_reclaim; the port of the file replaces it"
+
+[[file]]
+c = "sys/nfs/nfs_aiod.c"
+rust = ""
+status = "skipped"
+deps = []
+notes = "not-applicable: commented out in sys/conf/files (#file nfs/nfs_aiod.c), so no OpenBSD kernel compiles it, and it uses struct nfs_aiod/nfs_aiodhead, which no header at the pin defines; the client's async I/O daemons are nfs_syscalls.c's nfssvc_iod, which drain nfs_bufq"

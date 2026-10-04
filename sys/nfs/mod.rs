@@ -5,13 +5,20 @@
 //! `xdr_subs` (`xdr_subs.h`), `nfsm_subs` (`nfsm_subs.h`), `nfsnode` (`nfsnode.h`),
 //! `nfsmount` (`nfsmount.h`), `nfsrvcache` (`nfsrvcache.h`), `nfs_var` (`nfs_var.h`).
 //! Files (functions): `nfs_socket`, `nfs_subs`, `nfs_srvsubs`, `nfs_srvcache`, `krpc_subr`
-//! (and `krpc.h`), `nfs_boot`; `nfsdiskless` is a header.
+//! (and `krpc.h`), `nfs_boot`; client: `nfs_bio`, `nfs_kq`, `nfs_node`, `nfs_vnops`;
+//! `nfsdiskless` is a header.
 
 #[cfg(feature = "nfsclient")]
 pub mod krpc_subr;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/nfs/nfs.h
 pub mod nfs;
+#[cfg(feature = "nfsclient")]
+pub mod nfs_bio;
 pub mod nfs_boot;
+#[cfg(feature = "nfsclient")]
+pub mod nfs_kq;
+#[cfg(feature = "nfsclient")]
+pub mod nfs_node;
 pub mod nfs_socket;
 #[cfg(feature = "nfsserver")]
 pub mod nfs_srvcache;
@@ -19,6 +26,8 @@ pub mod nfs_srvcache;
 pub mod nfs_srvsubs;
 pub mod nfs_subs;
 pub mod nfs_var;
+#[cfg(feature = "nfsclient")]
+pub mod nfs_vnops;
 pub mod nfsdiskless;
 pub mod nfsm_subs;
 pub mod nfsmount;

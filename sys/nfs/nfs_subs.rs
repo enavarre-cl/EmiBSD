@@ -68,9 +68,7 @@
 //!   `nfsm_srvfhtom` takes the `nfsfh_t` the server's handle lives in (the C passes its
 //!   `fh_generic` member and reads `NFSX_V2FH` bytes from it, past the `fhandle_t`).
 //! - `nfs_loadattrcache`: `option FIFO` is in GENERIC but `miscfs/fifofs` is not ported, so a
-//!   new fifo node fails with `EOPNOTSUPP`, the C's `!FIFO` path (the tmpfs precedent). A
-//!   new device node does not get `nfs_specvops` yet: M10e wires it when `nfs_vnops.rs`
-//!   lands (an `unported!("nfs_specvops")` marks the site); the alias check runs.
+//!   new fifo node fails with `EOPNOTSUPP`, the C's `!FIFO` path (the tmpfs precedent).
 //! - `nfsstats` is `NFSSTATS` of atomics (`nfs.rs`); `nfs_ticks` an `AtomicI32`.
 //! - `nfs_get_xid`'s function-local statics (`nfs_xid_ctx`, `called`) are file statics, the
 //!   context a `StaticCell` under a private mutex (`nfs_xid_mtx`, not in C), as
@@ -1191,8 +1189,7 @@ pub fn nfs_loadattrcache(
             return Err(Errno::EOPNOTSUPP);
         }
         if vtyp == VCHR || vtyp == VBLK {
-            // M10e: `vp->v_op = &nfs_specvops` once nfs_vnops.rs (agent vnops) lands.
-            let _ = crate::unported!("nfs_specvops");
+            vp.v_op.set(Some(&crate::nfs::nfs_vnops::NFS_SPECVOPS));
             if let Some(nvp) = checkalias(vp, rdev, vp.v_mount.get()) {
                 // Discard unneeded vnode, but save its nfsnode. Since the nfsnode does not
                 // have a lock, its vnode lock has to be carried over.
