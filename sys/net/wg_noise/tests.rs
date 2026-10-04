@@ -62,6 +62,14 @@ pub(crate) fn uptime_past_reject_interval() -> MutexGuard<'static, ()> {
     g
 }
 
+/// The lock order of the tests that take both: the timecounter's, then the memory's. The
+/// memory lock also keeps out the tests that make a thread `curproc`, which the rwlocks
+/// record as their owner (on the host `curproc` is one global).
+fn setup() -> (MutexGuard<'static, ()>, MutexGuard<'static, ()>) {
+    let t = uptime_past_reject_interval();
+    (t, crate::kern::subr_pool::tests::setup_real_memory())
+}
+
 /// `T_INIT`: a zeroed counter.
 fn t_init() -> NoiseCounter {
     let ctr = NoiseCounter::new();
@@ -275,7 +283,7 @@ struct Response {
 
 #[test]
 fn noise_handshake_test() {
-    let _g = uptime_past_reject_interval();
+    let _g = setup();
     let p = noise_handshake_init();
     let mut init = Initiation::default();
     let mut resp = Response::default();
@@ -434,6 +442,7 @@ fn noise_handshake_test() {
 
 #[test]
 fn no_identity_no_handshake() {
+    let _g = setup();
     let p = noise_handshake_init();
     let mut init = Initiation::default();
     // A remote of a local without identity has no static-static DH: no initiation.
@@ -482,7 +491,7 @@ fn no_identity_no_handshake() {
 #[ignore = "WGTEST noise_speed_test: timings only"]
 fn noise_speed_test() {
     const SPEED_ITER: u32 = 1 << 16;
-    let _g = uptime_past_reject_interval();
+    let _g = setup();
     let p = noise_handshake_init();
     let mut init = Initiation::default();
     let mut resp = Response::default();

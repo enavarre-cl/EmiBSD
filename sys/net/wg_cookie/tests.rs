@@ -14,10 +14,11 @@ use crate::net::wg_noise::tests::{advance_uptime, hex, tc_lock};
 /// `MESSAGE_LEN`.
 const MESSAGE_LEN: usize = 64;
 
-/// Real memory for the pools and the tables, then the timecounter lock.
+/// The timecounter lock, then real memory for the pools and the tables (the order every
+/// test that takes both keeps).
 fn setup() -> (MutexGuard<'static, ()>, MutexGuard<'static, ()>) {
-    let m = crate::kern::subr_pool::tests::setup_real_memory();
-    (m, tc_lock())
+    let t = tc_lock();
+    (t, crate::kern::subr_pool::tests::setup_real_memory())
 }
 
 /// `pool_init(&rl_pool, sizeof(struct ratelimit_entry), 0, IPL_NONE, 0, "rl", NULL)`.
@@ -282,6 +283,7 @@ fn cookie_mac_test() {
 
 #[test]
 fn mac1_and_mac2_match_blake2s() {
+    let _g = setup();
     let mut public = [0u8; COOKIE_INPUT_SIZE];
     for (i, b) in public.iter_mut().enumerate() {
         *b = i as u8 + 1;
