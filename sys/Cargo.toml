@@ -20,7 +20,7 @@ bench = false
 doc = false
 
 [features]
-default = ["alloc", "ffs", "ffs2", "kmemstats", "inet6", "quota", "ufs_dirhash", "mfs"]
+default = ["alloc", "ffs", "ffs2", "kmemstats", "inet6", "quota", "ufs_dirhash", "mfs", "tmpfs", "msdosfs", "cd9660", "udf"]
 alloc = []        # enables `extern crate alloc` and the GlobalAlloc over malloc(9)
 diagnostic = []   # OpenBSD `option DIAGNOSTIC` -> kassert! active
 debug = []        # OpenBSD `option DEBUG`      -> kdassert! active
@@ -32,6 +32,10 @@ ffs2 = ["ffs"]    # OpenBSD `option FFS2` -> FFS2 (UFS2 dinodes) support in ffs
 quota = ["ffs"]   # OpenBSD `option QUOTA` -> disk quotas (ufs_quota.c, quotactl(2)); default (GENERIC has it)
 ufs_dirhash = ["ffs"] # OpenBSD `option UFS_DIRHASH` -> hashed lookups in large directories; default (GENERIC)
 mfs = ["ffs"]     # OpenBSD `option MFS` -> the memory file system (sys/ufs/mfs), in vfsconflist[]; default (GENERIC)
+tmpfs = []        # OpenBSD `option TMPFS`   -> tmpfs (sys/tmpfs) in vfsconflist[], uao_grow/uao_shrink
+msdosfs = []      # OpenBSD `option MSDOSFS` -> the MS-DOS FAT file system (sys/msdosfs)
+cd9660 = []       # OpenBSD `option CD9660`  -> the ISO 9660 file system (sys/isofs/cd9660)
+udf = []          # OpenBSD `option UDF`     -> the UDF file system (sys/isofs/udf)
 syscall_debug = [] # OpenBSD `option SYSCALL_DEBUG` -> scdebug_call/scdebug_ret print system calls
 qemu = []         # QEMU-only exits (isa-debug-exit, semihosting) and shortcuts
 encdebug = []     # OpenBSD `option ENCDEBUG` -> the IPsec DPRINTF messages (net.inet.ip.encdebug)

@@ -58,9 +58,10 @@
 //! - `struct statfs` names the holes the C compiler leaves (`_pad0` after `f_iosize`, `_pad1`
 //!   before `mount_info`), so the structure is plain data that `copyout` may read whole;
 //!   `union mount_info` is its 160 bytes, 8-aligned: the per-filesystem views come with
-//!   their file systems (`ufs_args` and the `export_args` it embeds are here, with ffs;
-//!   `UfsArgs::from_bytes` reads them out of the kernel copy of the mount arguments;
-//!   `struct mfs_args` is `MfsArgs`, read the same way, with MFS).
+//!   their file systems (`ufs_args` and the `export_args` it embeds came with ffs, `struct
+//!   mfs_args` (`MfsArgs`) with MFS, `iso_args`, `msdosfs_args`, `udf_args` and `tmpfs_args`
+//!   with M10c; each `*Args::from_bytes` reads them out of the kernel copy of the mount
+//!   arguments).
 //! - `struct vfsconf`'s `vfc_refcount` is atomic (`atomic_inc_int` in C).
 //! - `VFS_*` are functions with the macros' names (`#[allow(non_snake_case)]`).
 //! - `struct netcred`/`struct netexport` need `net/radix.h` and `NFSSERVER`, neither of
@@ -84,7 +85,7 @@ use crate::sys::queue::{SlistEntry, TailqEntry, TailqHead};
 use crate::sys::refcnt::Refcnt;
 use crate::sys::rwlock::Rwlock;
 use crate::sys::sysctl::Sysctlfn;
-use crate::sys::types::{Ino, Uid};
+use crate::sys::types::{Gid, Ino, Mode, Off, Uid};
 use crate::sys::ucred::Ucred;
 use crate::sys::vnode::{VMntvnodes, Vnode};
 
@@ -193,6 +194,118 @@ impl MfsArgs {
         Some(unsafe { ptr::read_unaligned(data.as_ptr().cast::<MfsArgs>()) })
     }
 }
+
+/// The `SIZE` and `from_bytes` of a file system's mount arguments, as [`UfsArgs`] has them:
+/// `sys_mount` copies `vfc_datasize` bytes in, and the file system reads its structure out.
+macro_rules! mount_args_from_bytes {
+    ($t:ident, $c:literal) => {
+        impl $t {
+            #[doc = concat!("`sizeof(struct ", $c, ")`: the `vfc_datasize` of its file system.")]
+            pub const SIZE: usize = size_of::<$t>();
+
+            /// The arguments in the kernel copy `sys_mount` made of them (at least `SIZE`
+            /// bytes), `None` when there are none (the C's NULL `data`).
+            pub fn from_bytes(data: &[u8]) -> Option<Self> {
+                if data.len() < Self::SIZE {
+                    return None;
+                }
+                // SAFETY: `data` holds `SIZE` readable bytes (checked), and the structure is
+                // integers, valid for any bit pattern (its padding bytes are padding); the
+                // read is unaligned.
+                Some(unsafe { ptr::read_unaligned(data.as_ptr().cast::<$t>()) })
+            }
+        }
+    };
+}
+
+/// `struct iso_args`: arguments to mount ISO 9660 filesystems. `fspec` is a user address.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct IsoArgs {
+    /// `fspec`: block special device to mount.
+    pub fspec: usize,
+    /// `export_info`: network export info.
+    pub export_info: ExportArgs,
+    /// `flags`: mounting flags, the `ISOFSMNT_*` below.
+    pub flags: i32,
+    /// `sess`: start sector of session.
+    pub sess: i32,
+}
+
+mount_args_from_bytes!(IsoArgs, "iso_args");
+
+/// `ISOFSMNT_NORRIP`: disable Rock Ridge Ext.
+pub const ISOFSMNT_NORRIP: i32 = 0x0000_0001;
+/// `ISOFSMNT_GENS`: enable generation numbers.
+pub const ISOFSMNT_GENS: i32 = 0x0000_0002;
+/// `ISOFSMNT_EXTATT`: enable extended attr.
+pub const ISOFSMNT_EXTATT: i32 = 0x0000_0004;
+/// `ISOFSMNT_NOJOLIET`: disable Joliet Ext.
+pub const ISOFSMNT_NOJOLIET: i32 = 0x0000_0008;
+/// `ISOFSMNT_SESS`: use `iso_args.sess`.
+pub const ISOFSMNT_SESS: i32 = 0x0000_0010;
+
+/// `struct msdosfs_args`: arguments to mount MSDOS filesystems. `fspec` is a user address.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct MsdosfsArgs {
+    /// `fspec`: blocks special holding the fs to mount.
+    pub fspec: usize,
+    /// `export_info`: network export information.
+    pub export_info: ExportArgs,
+    /// `uid`: uid that owns msdosfs files.
+    pub uid: Uid,
+    /// `gid`: gid that owns msdosfs files.
+    pub gid: Gid,
+    /// `mask`: mask to be applied for msdosfs perms.
+    pub mask: Mode,
+    /// `flags`: the `MSDOSFSMNT_*` below.
+    pub flags: i32,
+}
+
+mount_args_from_bytes!(MsdosfsArgs, "msdosfs_args");
+
+/// `MSDOSFSMNT_SHORTNAME`: force old DOS short names only.
+pub const MSDOSFSMNT_SHORTNAME: i32 = 0x01;
+/// `MSDOSFSMNT_LONGNAME`: force Win'95 long names.
+pub const MSDOSFSMNT_LONGNAME: i32 = 0x02;
+/// `MSDOSFSMNT_NOWIN95`: completely ignore Win95 entries.
+pub const MSDOSFSMNT_NOWIN95: i32 = 0x04;
+
+/// `struct udf_args`: arguments to mount UDF file systems. `fspec` is a user address.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct UdfArgs {
+    /// `fspec`: block special device to mount.
+    pub fspec: usize,
+    /// `lastblock`: special device last block.
+    pub lastblock: u32,
+}
+
+mount_args_from_bytes!(UdfArgs, "udf_args");
+
+/// `TMPFS_ARGS_VERSION`.
+pub const TMPFS_ARGS_VERSION: i32 = 1;
+
+/// `struct tmpfs_args`: arguments to mount tmpfs file systems.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct TmpfsArgs {
+    /// `ta_version`: `TMPFS_ARGS_VERSION`.
+    pub ta_version: i32,
+    /// `ta_nodes_max`: size counter, the most nodes.
+    pub ta_nodes_max: Ino,
+    /// `ta_size_max`: size counter, the most bytes.
+    pub ta_size_max: Off,
+    /// `ta_root_uid`: root node attribute.
+    pub ta_root_uid: Uid,
+    /// `ta_root_gid`: root node attribute.
+    pub ta_root_gid: Gid,
+    /// `ta_root_mode`: root node attribute.
+    pub ta_root_mode: Mode,
+}
+
+mount_args_from_bytes!(TmpfsArgs, "tmpfs_args");
 
 /// `MFSNAMELEN`: length of fs type name, including nul.
 pub const MFSNAMELEN: usize = 16;
@@ -791,6 +904,10 @@ const _: () = {
     assert!(offset_of!(MfsArgs, base) == 128);
     assert!(offset_of!(MfsArgs, size) == 136);
     assert!(MfsArgs::SIZE <= size_of::<MountInfo>());
+    assert!(IsoArgs::SIZE == 136);
+    assert!(MsdosfsArgs::SIZE == 144);
+    assert!(UdfArgs::SIZE == 16);
+    assert!(TmpfsArgs::SIZE == 40);
 };
 
 #[cfg(test)]
@@ -817,6 +934,15 @@ mod tests {
             ("MAXFIDSZ", MAXFIDSZ as i32),
             ("VFS_BCACHESTAT", VFS_BCACHESTAT),
             ("VB_DUPOK", VB_DUPOK),
+            ("ISOFSMNT_NORRIP", ISOFSMNT_NORRIP),
+            ("ISOFSMNT_GENS", ISOFSMNT_GENS),
+            ("ISOFSMNT_EXTATT", ISOFSMNT_EXTATT),
+            ("ISOFSMNT_NOJOLIET", ISOFSMNT_NOJOLIET),
+            ("ISOFSMNT_SESS", ISOFSMNT_SESS),
+            ("MSDOSFSMNT_SHORTNAME", MSDOSFSMNT_SHORTNAME),
+            ("MSDOSFSMNT_LONGNAME", MSDOSFSMNT_LONGNAME),
+            ("MSDOSFSMNT_NOWIN95", MSDOSFSMNT_NOWIN95),
+            ("TMPFS_ARGS_VERSION", TMPFS_ARGS_VERSION),
         ] {
             assert_eq!(
                 crate::reftest::int(&defs, name),
