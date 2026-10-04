@@ -14,11 +14,12 @@ Done:
   pfsync(4) and pflow(4) between the two VMs (`smoke-pfsync`).
 - Diagnostic tools stage 2: libkvm, ps/fstat/vmstat/df over sysctl (`smoke-diag`).
 - M9+: TCP with SYN cache, SACK, ECN, TCP-MD5 (`init: tcp ok`; nc and ftp work over it);
-  zlib and IPComp (`smoke-ipcomp`); HTTPS with LibreSSL, ftp and nc (`smoke-https`).
+  zlib and IPComp (`smoke-ipcomp`); HTTPS with LibreSSL, ftp and nc (`smoke-https`);
+  bpf(4), divert sockets, IGMP (`smoke-esp` without IP forwarding).
 
 Next:
-- amd64's `tsc.c`; M9+: bpf, divert, IGMP (agent running), INET6, the criterion recipes.
-  Then M10a..f and M11a..e (SMP; afterwards every smoke runs MP, -smp 4).
+- amd64's `tsc.c`, pledge(2) (merging); M9+: INET6, the criterion recipes. Then M10a..f
+  and M11a..e (SMP; afterwards every smoke runs MP, -smp 4).
 
 Blockers:
 - amd64's TSC timecounter (`tsc.c`) is deferred.
