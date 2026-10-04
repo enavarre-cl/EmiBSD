@@ -55,8 +55,8 @@
 //!   The ABI structures keep the IPv6 members' room: `netinet6/in6.h` is not ported, so the
 //!   `in6_addr` of [`WgAipAddr`] and the `sockaddr_in6` of [`WgPeerEndpoint`] are their sizes
 //!   (16 and 28 bytes, 4-byte aligned). Holes the C compiler leaves are named `_pad*` fields.
-//! - `NBPFILTER` and `NPF` are not configured (`bpfattach`, `bpf_mtap_af`,
-//!   `pf_pkt_addr_changed`): comments at the sites.
+//! - `NBPFILTER` is not configured (`bpfattach`, `bpf_mtap_af`): comments at the sites. `NPF`
+//!   is: `wg_decap` calls `pf_pkt_addr_changed`.
 //! - [`wg_input`] is the UDP pcb's `inp_upcall` ([`InpUpcallFn`](crate::netinet::in_pcb::InpUpcallFn), an `unsafe fn`: the
 //!   headers come as raw pointers); it reads `uh_sport`, `struct udphdr`'s first member,
 //!   through the pointer.
@@ -144,6 +144,7 @@ use crate::net::if_::{
 use crate::net::if_types::IFT_WIREGUARD;
 use crate::net::if_var::{IfClone, IfCounterArray, IfCounters, Ifnet, Netstack};
 use crate::net::ifq::{Ifqueue, ifq_dequeue, ifq_empty, ifq_purge};
+use crate::net::pf::pf_pkt_addr_changed;
 use crate::net::route::Rtentry;
 use crate::net::wg_cookie::{
     COOKIE_ENCRYPTED_SIZE, COOKIE_NONCE_SIZE, CookieChecker, CookieMacs, CookieMaker,
@@ -2582,7 +2583,7 @@ pub fn wg_decap(sc: &WgSoftc, m: &'static Mbuf) {
         m.m_pkthdr().ph_ifidx.set(sc.sc_if.if_index.get());
         m.m_pkthdr().ph_rtableid.set(sc.sc_if.if_rdomain.get());
         m.m_flags().set(m.m_flags().get() & !(M_MCAST | M_BCAST));
-        // NPF > 0: pf_pkt_addr_changed(m); pf is not configured.
+        pf_pkt_addr_changed(m);
 
         // done:
         t.t_mbuf.set(Some(m));
