@@ -440,6 +440,9 @@ impl Pmap for Machine {
         amd64::pmap::pmap_deactivate(p)
     }
 
+    /// No `__HAVE_PMAP_PURGE` on amd64.
+    fn pmap_purge(_p: &Proc) {}
+
     fn pmap_update(_pmap: &Self::Pmap) {}
 
     fn pmap_growkernel(maxkvaddr: Vaddr) -> Vaddr {

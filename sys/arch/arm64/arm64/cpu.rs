@@ -3100,14 +3100,15 @@ mod selfcheck {
     }
 
     /// After `CPUF_GO`: once the AP has read through the window, move it to the new page
-    /// (`pmap_kremove` broadcasts the invalidation) and let the AP read again.
+    /// (`pmap_kremove` broadcasts the invalidation) and let the AP read again. There is no
+    /// timeout: `cpu_boot_secondary` waits for `CPUF_RUNNING` without one anyway, and
+    /// remapping before the AP's first read (as a 10 s timeout once did on a host loaded by
+    /// other emulators) unmaps the window under it.
     pub fn remap(w: &Window) {
-        let mut timeout = 100_000;
-        while STAGE.load(Ordering::Acquire) != 1 && timeout > 0 {
+        while STAGE.load(Ordering::Acquire) != 1 {
             delay(100);
-            timeout -= 1;
         }
-        // SAFETY: our window.
+        // SAFETY: our window; the AP is between its two reads, waiting for stage 2.
         unsafe {
             pmap_kremove(w.va, Vsize::new(PAGE_SIZE));
             pmap_kenter_pa(w.va, w.new, PROT_READ | PROT_WRITE);
@@ -3115,7 +3116,8 @@ mod selfcheck {
         STAGE.store(2, Ordering::Release);
     }
 
-    /// After `CPUF_RUNNING`: what the AP saw.
+    /// After `CPUF_RUNNING`: what the AP saw. `hatch` runs before the AP sets `CPUF_RUNNING`,
+    /// so the AP is done with the window.
     pub fn finish(w: &Window) {
         if SEEN.load(Ordering::Acquire) == NEW {
             TLB_OK.fetch_add(1, Ordering::Relaxed);

@@ -78,10 +78,6 @@
 //!   direct-map addresses until `kernel_map` exists (`uvm_map.c`, M6), and punching a hole
 //!   in the direct map would unmap the page from everyone. The carve-out is reported once
 //!   and the u-area has no guard until then.
-//! - `uvm_purge` does not call arm64's `pmap_purge` (`__HAVE_PMAP_PURGE`): the
-//!   `machine::Pmap` contract has no such method yet (the arm64 function is ported). Without
-//!   it the dying process's ASID stays live until `pmap_destroy` frees it, as before; the
-//!   teardown's TLB flushes are the ones `pmap_remove` does anyway.
 
 use core::ptr::{self, NonNull};
 use core::slice;
@@ -337,8 +333,8 @@ pub fn uvm_purge() {
 
     kernel_assert_unlocked();
 
-    // __HAVE_PMAP_PURGE (arm64): pmap_purge(p) waits for the machine::Pmap contract (see the
-    // module's deviations).
+    // __HAVE_PMAP_PURGE: arm64's; nothing on a machine without it.
+    crate::machine::pmap::pmap_purge(p);
     uvmspace_purge(vm);
 }
 

@@ -443,6 +443,10 @@ impl Pmap for Machine {
         arm64::pmap::pmap_deactivate(p)
     }
 
+    fn pmap_purge(p: &Proc) {
+        arm64::pmap::pmap_purge(p)
+    }
+
     fn pmap_update(_pmap: &Self::Pmap) {}
 
     fn pmap_growkernel(maxkvaddr: Vaddr) -> Vaddr {

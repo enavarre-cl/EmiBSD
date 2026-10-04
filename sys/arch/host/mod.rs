@@ -672,6 +672,8 @@ impl Pmap for Machine {
 
     fn pmap_deactivate(_p: &Proc) {}
 
+    fn pmap_purge(_p: &Proc) {}
+
     fn pmap_update(_pmap: &HostPmap) {}
 
     /// The host's page tables never run out.

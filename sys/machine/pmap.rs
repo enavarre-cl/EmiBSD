@@ -162,6 +162,11 @@ pub trait Pmap {
     /// `pmap_deactivate(p)`: the inverse, at exit.
     fn pmap_deactivate(p: &Proc);
 
+    /// `pmap_purge(p)` (`__HAVE_PMAP_PURGE`): the last thread of a dying process is about to
+    /// tear its address space down (`uvm_purge`). arm64 drops the process's ASID first;
+    /// a machine without `__HAVE_PMAP_PURGE` (amd64, host) does nothing.
+    fn pmap_purge(p: &Proc);
+
     /// `pmap_growkernel`: grows the kernel page tables to cover `maxkvaddr`; returns how far
     /// they now reach.
     fn pmap_growkernel(maxkvaddr: Vaddr) -> Vaddr;
@@ -324,6 +329,11 @@ pub fn pmap_activate(p: &Proc) {
 /// `pmap_deactivate` on the selected machine.
 pub fn pmap_deactivate(p: &Proc) {
     Machine::pmap_deactivate(p)
+}
+
+/// `pmap_purge` on the selected machine (`__HAVE_PMAP_PURGE`; nothing where it is not).
+pub fn pmap_purge(p: &Proc) {
+    Machine::pmap_purge(p)
 }
 
 /// `pmap_update` on the selected machine.

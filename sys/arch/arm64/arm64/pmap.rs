@@ -81,9 +81,6 @@
 //!   `vmalle1is`), which is what the MP kernel needs. M11e: `pm_mtx` (`pmap_lock`/
 //!   `pmap_unlock`/`PMAP_ASSERT_LOCKED`) where the C takes it, so user pmaps are changed
 //!   without the kernel lock, as in OpenBSD.
-//! - `pmap_purge` (`__HAVE_PMAP_PURGE`) is here, but `uvm_purge` cannot reach it until the
-//!   `machine::Pmap` contract has the method; until then the ASID of a dying process is
-//!   flushed by `pmap_free_asid` when its pmap goes, as before.
 //! - `pmap_init` also resizes `TCR_EL1.T0SZ` to `USER_SPACE_BITS` and remaps the console
 //!   (`pluartcn_remap`) before pointing `TTBR0_EL1` at the empty table: the C's locore did
 //!   both at boot, here the bootstrap device map (`machdep.rs`) lived in the lower half.
@@ -1330,8 +1327,8 @@ pub fn pmap_copy_page(srcpg: &VmPage, dstpg: &VmPage) {
     };
 }
 
-/// `pmap_purge`: called by the last thread of an exiting process (`uvm_purge`, see the
-/// module's deviations): moves this CPU off the process's tables and drops its ASID from the
+/// `pmap_purge`: called by the last thread of an exiting process (`uvm_purge`, through
+/// `machine::pmap`): moves this CPU off the process's tables and drops its ASID from the
 /// TLBs, so the teardown that follows needs no more flushes.
 pub fn pmap_purge(p: &Proc) {
     let pm = p.vmspace().vm_map.pmap();

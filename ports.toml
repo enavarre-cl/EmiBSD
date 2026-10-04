@@ -1128,7 +1128,7 @@ deps = [
     "sys/arch/arm64/include/vmparam.h",
     "sys/uvm/uvm_page.c",
 ]
-notes = "pte_desc, the pmapvp tables, kernel pmap, pmap_bootstrap adopting the bootloader's four-level tables (copies of L0 and the kernel slot's L1, TTBR1 switched to them, MAIR indices 2-4), vp lookup/enter/set_l1-3, kvp/kpted allocators over the direct map, pmap_growkernel (populates the first GiB, which the C's pmap_bootstrap does), kenter/kenter_cache/kremove(_pg), fill_pte, pte_insert/update/remove, extract, zero/copy page via the HHDM, pmap_steal_memory (not in the C; OpenBSD arm64 has no direct map nor PMAP_STEAL_MEMORY); pmap_vp_populate and pmap_fault_fixup: M7a; M5-b2: pmap_activate, pmap_deactivate, pmap_setttb (extern C for cpuswitch.S; every thread runs on the kernel pmap, already live, M6-b2 makes it real); M6-b2: pmap_init (the pmap and pted pools, the console remap, TCR_EL1.T0SZ = 64 - USER_SPACE_BITS and TTBR0 pointed at the empty table: the C's locore did the last two at boot), user pmaps (pmap_create/pinit (three-level), pmap_reference, pmap_destroy/release/vp_destroy, pmap_enter/remove/remove_pted with pmap_pted_pool, the pv lists pmap_enter_pv/remove_pv, pmap_icache_sync_page), pmap_allocate_asid/free_asid over an 8-bit bitmap (pmap_rollover_asid and the 16-bit probe are M7), pmap_activate/deactivate/setttb over the vmspace's pmap (pmap_setpauthkeys M7), pmap_remove_holes (nothing), pmap_proc_iflush through the direct-map alias; every vp table comes from the two-page allocator and goes back page by page (no pmap_vp_pool); M7a-3b: pv_mtx around the pv lists, pmap_page_ro, pmap_page_protect, pmap_protect, pmap_fault_fixup (the R/M emulation), pmap_is_referenced/is_modified/clear_modify/clear_reference; kern_sig.c: the vmmap window is VMMAP_SIZE (1024 pages) below virtual_avail instead of one page, because generic_space_map takes every device mapping from it: with one page the device mappings overlapped kernel_map's first allocations (the first uvm_map of kernel_map, exec_sigcode_map's sigobject, wrote over the GIC); vfs stage 2: pmap_is_modified and pmap_clear_reference are machine::pmap contract methods (the vnode pager and uvm_pagedeactivate use them); M11a: the ASID allocator as in C under pmap_asid_mtx (IPL_HIGH): pmap_find_asid (the old ASID, five random tries with arc4random, then the linear search), pmap_rollover_asid (a new generation, ASID 0 reserved, the ASIDs active on every CPU carried over, cpu_tlb_flush), pmap_allocate_asid/pmap_free_asid locked, ASID 0 marked in use by pmap_bootstrap; pm_asid is an AtomicU64 (the rollover rewrites other CPUs' active pmaps); the TLB invalidations were already the inner-shareable broadcast ones (cpufunc.rs); pmap_setttb runs on the APs through cpu_switchto; pm_mtx/pmap_lock still absent (user pmaps change under the kernel lock in M11a, M11e); M11e: pmap_lock/pmap_unlock/PMAP_ASSERT_LOCKED (pm_mtx, nothing for the kernel pmap) where the C has them: pmap_vp_enter (assert), pmap_enter, pmap_remove, pmap_page_protect, pmap_protect, pmap_fault_fixup, pmap_extract, pmap_unwire; mtx_init in pmap_create; pmap_reference/pmap_destroy atomic; pmap_purge ported (uvm_purge cannot call it until machine::Pmap has the method)"
+notes = "pte_desc, the pmapvp tables, kernel pmap, pmap_bootstrap adopting the bootloader's four-level tables (copies of L0 and the kernel slot's L1, TTBR1 switched to them, MAIR indices 2-4), vp lookup/enter/set_l1-3, kvp/kpted allocators over the direct map, pmap_growkernel (populates the first GiB, which the C's pmap_bootstrap does), kenter/kenter_cache/kremove(_pg), fill_pte, pte_insert/update/remove, extract, zero/copy page via the HHDM, pmap_steal_memory (not in the C; OpenBSD arm64 has no direct map nor PMAP_STEAL_MEMORY); pmap_vp_populate and pmap_fault_fixup: M7a; M5-b2: pmap_activate, pmap_deactivate, pmap_setttb (extern C for cpuswitch.S; every thread runs on the kernel pmap, already live, M6-b2 makes it real); M6-b2: pmap_init (the pmap and pted pools, the console remap, TCR_EL1.T0SZ = 64 - USER_SPACE_BITS and TTBR0 pointed at the empty table: the C's locore did the last two at boot), user pmaps (pmap_create/pinit (three-level), pmap_reference, pmap_destroy/release/vp_destroy, pmap_enter/remove/remove_pted with pmap_pted_pool, the pv lists pmap_enter_pv/remove_pv, pmap_icache_sync_page), pmap_allocate_asid/free_asid over an 8-bit bitmap (pmap_rollover_asid and the 16-bit probe are M7), pmap_activate/deactivate/setttb over the vmspace's pmap (pmap_setpauthkeys M7), pmap_remove_holes (nothing), pmap_proc_iflush through the direct-map alias; every vp table comes from the two-page allocator and goes back page by page (no pmap_vp_pool); M7a-3b: pv_mtx around the pv lists, pmap_page_ro, pmap_page_protect, pmap_protect, pmap_fault_fixup (the R/M emulation), pmap_is_referenced/is_modified/clear_modify/clear_reference; kern_sig.c: the vmmap window is VMMAP_SIZE (1024 pages) below virtual_avail instead of one page, because generic_space_map takes every device mapping from it: with one page the device mappings overlapped kernel_map's first allocations (the first uvm_map of kernel_map, exec_sigcode_map's sigobject, wrote over the GIC); vfs stage 2: pmap_is_modified and pmap_clear_reference are machine::pmap contract methods (the vnode pager and uvm_pagedeactivate use them); M11a: the ASID allocator as in C under pmap_asid_mtx (IPL_HIGH): pmap_find_asid (the old ASID, five random tries with arc4random, then the linear search), pmap_rollover_asid (a new generation, ASID 0 reserved, the ASIDs active on every CPU carried over, cpu_tlb_flush), pmap_allocate_asid/pmap_free_asid locked, ASID 0 marked in use by pmap_bootstrap; pm_asid is an AtomicU64 (the rollover rewrites other CPUs' active pmaps); the TLB invalidations were already the inner-shareable broadcast ones (cpufunc.rs); pmap_setttb runs on the APs through cpu_switchto; pm_mtx/pmap_lock still absent (user pmaps change under the kernel lock in M11a, M11e); M11e: pmap_lock/pmap_unlock/PMAP_ASSERT_LOCKED (pm_mtx, nothing for the kernel pmap) where the C has them: pmap_vp_enter (assert), pmap_enter, pmap_remove, pmap_page_protect, pmap_protect, pmap_fault_fixup, pmap_extract, pmap_unwire; mtx_init in pmap_create; pmap_reference/pmap_destroy atomic; pmap_purge ported, called by uvm_purge through machine::Pmap"
 
 [[file]]
 c = "sys/sys/systm.h"
@@ -2456,7 +2456,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6b849af48cf3f896ae687673f076b96fa37a03d8"
 deps = ["sys/sys/proc.h", "sys/kern/kern_tc.c", "sys/kern/kern_lock.c"]
-notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE (arm64): pmap_purge is ported in arm64 pmap.rs but not called until the machine::Pmap contract has the method"
+notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE: uvm_purge calls machine::pmap::pmap_purge (arm64's; nothing on amd64)"
 [[file]]
 c = "sys/kern/subr_xxx.c"
 rust = "sys/kern/subr_xxx.rs"
@@ -2464,7 +2464,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6b849af48cf3f896ae687673f076b96fa37a03d8"
 deps = ["sys/kern/subr_prf.c"]
-notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE (arm64): pmap_purge is ported in arm64 pmap.rs but not called until the machine::Pmap contract has the method"
+notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE: uvm_purge calls machine::pmap::pmap_purge (arm64's; nothing on amd64)"
 [[file]]
 c = "sys/uvm/uvm_glue.c"
 rust = "sys/uvm/uvm_glue.rs"
@@ -2472,7 +2472,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6b849af48cf3f896ae687673f076b96fa37a03d8"
 deps = ["sys/uvm/uvm_km.c", "sys/sys/proc.h", "sys/uvm/uvm_fault.c"]
-notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE (arm64): pmap_purge is ported in arm64 pmap.rs but not called until the machine::Pmap contract has the method"
+notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE: uvm_purge calls machine::pmap::pmap_purge (arm64's; nothing on amd64)"
 [[file]]
 c = "sys/arch/amd64/amd64/vm_machdep.c"
 rust = "sys/arch/amd64/amd64/vm_machdep.rs"
@@ -2480,7 +2480,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6b849af48cf3f896ae687673f076b96fa37a03d8"
 deps = ["sys/arch/amd64/amd64/locore.S", "sys/arch/amd64/amd64/pmap.c", "sys/sys/proc.h"]
-notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE (arm64): pmap_purge is ported in arm64 pmap.rs but not called until the machine::Pmap contract has the method"
+notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE: uvm_purge calls machine::pmap::pmap_purge (arm64's; nothing on amd64)"
 [[file]]
 c = "sys/arch/arm64/arm64/vm_machdep.c"
 rust = "sys/arch/arm64/arm64/vm_machdep.rs"
@@ -2488,7 +2488,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6b849af48cf3f896ae687673f076b96fa37a03d8"
 deps = ["sys/arch/arm64/arm64/cpuswitch.S", "sys/arch/arm64/arm64/pmap.c", "sys/arch/arm64/arm64/fpu.c", "sys/sys/proc.h"]
-notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE (arm64): pmap_purge is ported in arm64 pmap.rs but not called until the machine::Pmap contract has the method"
+notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE: uvm_purge calls machine::pmap::pmap_purge (arm64's; nothing on amd64)"
 [[file]]
 c = "sys/arch/arm64/arm64/cpuswitch.S"
 rust = "sys/arch/arm64/arm64/cpuswitch.rs"
@@ -2496,7 +2496,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6b849af48cf3f896ae687673f076b96fa37a03d8"
 deps = ["sys/arch/arm64/include/frame.h", "sys/arch/arm64/include/pcb.h", "sys/sys/proc.h"]
-notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE (arm64): pmap_purge is ported in arm64 pmap.rs but not called until the machine::Pmap contract has the method"
+notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE: uvm_purge calls machine::pmap::pmap_purge (arm64's; nothing on amd64)"
 [[file]]
 c = "sys/arch/arm64/arm64/fpu.c"
 rust = "sys/arch/arm64/arm64/fpu.rs"
@@ -2504,7 +2504,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6b849af48cf3f896ae687673f076b96fa37a03d8"
 deps = ["sys/arch/arm64/include/armreg.h", "sys/arch/arm64/include/pcb.h"]
-notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE (arm64): pmap_purge is ported in arm64 pmap.rs but not called until the machine::Pmap contract has the method"
+notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONCRITICAL is kern_smr.c, M7); M8: bdevsw_lookup (a copy of the entry), chrtoblk, blktochr over machine::conf; M11a: assertwaitok's SMR_ASSERT_NONCRITICAL (kern_smr.c); M11e: uvm_purge's KERNEL_ASSERT_UNLOCKED is real; __HAVE_PMAP_PURGE: uvm_purge calls machine::pmap::pmap_purge (arm64's; nothing on amd64)"
 
 
 [[file]]
