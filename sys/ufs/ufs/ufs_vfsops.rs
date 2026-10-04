@@ -46,9 +46,9 @@
 //! ## Deviations
 //! - `ufs_init`'s `static int done` is the atomic [`UFS_INIT_DONE`]; the host tests clear it
 //!   to initialise again over fresh memory.
-//! - `ufs_check_export`: without `NFSSERVER` there is no export list (`vfs_export_lookup`
+//! - `ufs_check_export`: without `nfsserver` there is no export list (`vfs_export_lookup`
 //!   finds nothing), so every client is refused with `EACCES`, as the C does when the lookup
-//!   fails; `struct netcred` (its `netc_exflags`, `netc_anon`) is not ported.
+//!   fails. `credanonp` is a `*const Ucred` into the entry's `netc_anon`.
 //! - `ufsdirhash_init` (`UFS_DIRHASH`) is under feature `ufs_dirhash`.
 
 use core::ptr;
@@ -65,6 +65,7 @@ use crate::ufs::ufs::dinode::ROOTINO;
 use crate::ufs::ufs::inode::{Ufid, vtoi};
 use crate::ufs::ufs::quota::ufs_quota_init;
 use crate::ufs::ufs::ufs_ihash::ufs_ihashinit;
+use crate::ufs::ufs::ufsmount::vfstoufs;
 
 /// `ufs_init`'s `done`: the UFS layer is initialised.
 pub static UFS_INIT_DONE: AtomicBool = AtomicBool::new(false);
@@ -84,21 +85,19 @@ pub fn ufs_root(mp: &'static Mount) -> Result<&'static Vnode, Errno> {
 pub fn ufs_check_export(
     mp: &'static Mount,
     nam: &Mbuf,
-    _exflagsp: &mut i32,
-    _credanonp: &mut *const Ucred,
+    exflagsp: &mut i32,
+    credanonp: &mut *const Ucred,
 ) -> Result<(), Errno> {
-    // Get the export permission structure for this <mp, client> tuple. `um_export` is not
-    // kept without NFSSERVER (ufsmount.rs).
-    let np = vfs_export_lookup(mp, ptr::null_mut(), ptr::from_ref(nam).cast());
-    if np.is_null() {
-        return Err(Errno::EACCES);
-    }
+    let ump = vfstoufs(mp);
 
-    // *exflagsp = np->netc_exflags; *credanonp = &np->netc_anon: struct netcred
-    // (NFSSERVER, not configured; vfs_export_lookup never finds one).
-    Err(crate::unported!(
-        "ufs_check_export: struct netcred (NFSSERVER)"
-    ))
+    // Get the export permission structure for this <mp, client> tuple.
+    let Some(np) = vfs_export_lookup(mp, &ump.um_export, Some(nam)) else {
+        return Err(Errno::EACCES);
+    };
+
+    *exflagsp = np.netc_exflags.get();
+    *credanonp = ptr::from_ref(&np.netc_anon);
+    Ok(())
 }
 
 /// `ufs_init`: initialize UFS file systems, done only once.

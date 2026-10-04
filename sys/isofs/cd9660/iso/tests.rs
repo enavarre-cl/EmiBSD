@@ -272,6 +272,7 @@ pub(crate) fn test_mnt(ftype: IsoFtype) -> &'static mut IsoMnt {
         im_bshift: 11,
         im_bmask: 2047,
         volume_space_size: 25,
+        im_export: crate::sys::mount::Netexport::new(),
         root,
         root_extent: 20,
         root_size: 2048,

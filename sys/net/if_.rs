@@ -2520,7 +2520,11 @@ pub fn if_detach(ifp: &'static Ifnet) {
     }
 
     rti_delete(ifp);
-    // NETHER > 0 && NFSCLIENT: revarp_ifidx is cleared; NFSCLIENT is not configured.
+    // NETHER > 0 && NFSCLIENT: revarp_ifidx is cleared.
+    #[cfg(feature = "nfsclient")]
+    if ifp.if_index.get() == crate::netinet::if_ether::REVARP_IFIDX.load(Ordering::Relaxed) {
+        crate::netinet::if_ether::REVARP_IFIDX.store(0, Ordering::Relaxed);
+    }
     // MROUTING: vif_delete(ifp); not configured.
     in_ifdetach(ifp);
     #[cfg(feature = "inet6")]

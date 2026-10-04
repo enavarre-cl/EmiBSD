@@ -63,10 +63,6 @@
 //!   whose lifetime cannot hold a local name, as `ffs_mount` does. `nblkdev` comes from the
 //!   machine's `conf.c` (`crate::machine::conf`). A mount that is not an update and has no
 //!   arguments (the C would dereference NULL) answers `EINVAL`.
-//! - `pm_export` (`NFSSERVER`) is not kept (`msdosfsmount.rs`), so the export update of
-//!   `msdosfs_mount` passes a NULL table to `vfs_export`, which answers `ENOTSUP` without
-//!   `NFSSERVER`, and `msdosfs_check_export` refuses every client with `EACCES`, as
-//!   `ufs_check_export` does; `struct netcred` is not ported.
 //! - `bcopy(args, &mp->mnt_stat.mount_info.msdosfs_args, ...)` copies the kernel copy of the
 //!   arguments' bytes into `mount_info` (`sys/sys/mount.rs`).
 //! - `struct msdosfs_sync_arg` is [`MsdosfsSyncArgs`] and its `allerror` a `Result`;
@@ -223,7 +219,7 @@ pub fn msdosfs_mount(
         match args {
             // Process export requests.
             Some(a) if a.fspec == 0 => {
-                return vfs_export(mp, ptr::null_mut(), ptr::from_ref(&a.export_info).cast());
+                return vfs_export(mp, &pmp.pm_export, &a.export_info);
             }
             None => return Ok(()),
             Some(_) => {}
@@ -776,21 +772,19 @@ pub fn msdosfs_vptofh(vp: &'static Vnode, fhp: &mut Fid) -> Result<(), Errno> {
 pub fn msdosfs_check_export(
     mp: &'static Mount,
     nam: &Mbuf,
-    _exflagsp: &mut i32,
-    _credanonp: &mut *const Ucred,
+    exflagsp: &mut i32,
+    credanonp: &mut *const Ucred,
 ) -> Result<(), Errno> {
-    // Get the export permission structure for this <mp, client> tuple. `pm_export` is not
-    // kept without NFSSERVER (msdosfsmount.rs).
-    let np = vfs_export_lookup(mp, ptr::null_mut(), ptr::from_ref(nam).cast());
-    if np.is_null() {
-        return Err(Errno::EACCES);
-    }
+    let pmp = vfstomsdosfs(mp);
 
-    // *exflagsp = np->netc_exflags; *credanonp = &np->netc_anon: struct netcred
-    // (NFSSERVER, not configured; vfs_export_lookup never finds one).
-    Err(crate::unported!(
-        "msdosfs_check_export: struct netcred (NFSSERVER)"
-    ))
+    // Get the export permission structure for this <mp, client> tuple.
+    let Some(np) = vfs_export_lookup(mp, &pmp.pm_export, Some(nam)) else {
+        return Err(Errno::EACCES);
+    };
+
+    *exflagsp = np.netc_exflags.get();
+    *credanonp = ptr::from_ref(&np.netc_anon);
+    Ok(())
 }
 
 #[cfg(test)]

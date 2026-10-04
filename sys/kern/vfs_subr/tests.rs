@@ -711,3 +711,209 @@ fn checkalias_is_not_reached_for_regular_vnodes() {
     assert!(vp.v_specinfo().is_none());
     vput(vp);
 }
+
+/// What `vfs_export` and `vfs_export_lookup` do with the export list (`NFSSERVER`): the entries
+/// of the radix tree, their masks, the default export and `MNT_DELEXPORT`.
+#[cfg(feature = "nfsserver")]
+pub(crate) mod exports {
+    use std::boxed::Box;
+    use std::{assert, assert_eq};
+
+    use super::testfs;
+    use super::*;
+    use crate::sys::mount::{
+        ExportArgs, MNT_DEFEXPORTED, MNT_DELEXPORT, MNT_EXPORTED, MNT_EXRDONLY, Netexport,
+    };
+    use crate::sys::syslimits::NGROUPS_MAX;
+    use crate::sys::ucred::Xucred;
+
+    /// A `sockaddr_in` for `a` in a 32-byte buffer (the radix code reads keys for its
+    /// `max_keylen`), at a stable address: a "user" address for `copyin`.
+    pub(crate) fn sin(family: u8, a: [u8; 4]) -> &'static [u8; 32] {
+        let mut k = [0u8; 32];
+        k[0] = 16;
+        k[1] = family;
+        k[4..8].copy_from_slice(&a);
+        Box::leak(Box::new(k))
+    }
+
+    /// `struct export_args` for the address and mask (`None`: an empty one).
+    pub(crate) fn args(
+        flags: i32,
+        anon: u32,
+        addr: Option<&'static [u8; 32]>,
+        mask: Option<&'static [u8; 32]>,
+    ) -> ExportArgs {
+        ExportArgs {
+            ex_flags: flags,
+            ex_root: 0,
+            ex_anon: Xucred {
+                cr_uid: anon,
+                cr_gid: anon,
+                cr_ngroups: 0,
+                cr_groups: [0; NGROUPS_MAX],
+            },
+            ex_addr: addr.map_or(0, |a| a.as_ptr() as usize),
+            ex_addrlen: if addr.is_some() { 16 } else { 0 },
+            ex_mask: mask.map_or(0, |a| a.as_ptr() as usize),
+            ex_masklen: if mask.is_some() { 16 } else { 0 },
+        }
+    }
+
+    /// What `VFS_CHECKEXP` answers a client at `a` (an `AF_INET` address mbuf; the caller has
+    /// run `mbinit_again`): the export flags and the anonymous credentials' uid, or the error.
+    pub(crate) fn check_export(mp: &'static Mount, a: [u8; 4]) -> Result<(i32, u32), Errno> {
+        use crate::kern::uipc_mbuf::m_get;
+        use crate::sys::mbuf::{M_DONTWAIT, MT_SONAME, mtod};
+        use crate::sys::mount::VFS_CHECKEXP;
+
+        let m = m_get(M_DONTWAIT, MT_SONAME).ok_or(Errno::ENOBUFS)?;
+        let k = sin(2, a);
+        // SAFETY: an mbuf's data area holds a `sockaddr_in`; `mtod` points at it.
+        unsafe { ptr::copy_nonoverlapping(k.as_ptr(), mtod::<u8>(m), 16) };
+        m.m_len().set(16);
+        let mut exflags = 0;
+        let mut anon: *const Ucred = ptr::null();
+        VFS_CHECKEXP(mp, m, &mut exflags, &mut anon)?;
+        // SAFETY: `anon` is the entry's `netc_anon`, which lives as long as the list.
+        Ok((exflags, unsafe { (*anon).cr_uid.get() }))
+    }
+
+    /// The entry the client `a` matches, as `(exflags, anon uid)`.
+    fn lookup(mp: &'static Mount, nep: &'static Netexport, a: [u8; 4]) -> Option<(i32, u32)> {
+        let key = sin(2, a);
+        // SAFETY: a `sockaddr_in` in a buffer longer than `max_keylen`; `rn_init` ran in
+        // `vfs_init`.
+        let np = unsafe { export_lookup(mp, nep, Some(key.as_ptr())) }?;
+        Some((np.netc_exflags.get(), np.netc_anon.cr_uid.get()))
+    }
+
+    fn fresh() -> (
+        std::sync::MutexGuard<'static, ()>,
+        &'static Mount,
+        &'static Netexport,
+    ) {
+        let (g, _p) = setup();
+        let mp = vfs_mount_alloc(None, &testfs::TESTFS_CONF);
+        (g, mp, Box::leak(Box::new(Netexport::new())))
+    }
+
+    #[test]
+    fn an_exported_network_matches_its_hosts_only() {
+        let (_g, mp, nep) = fresh();
+        let net = sin(2, [10, 1, 0, 0]);
+        let mask = sin(2, [255, 255, 0, 0]);
+        let ro = MNT_EXPORTED | MNT_EXRDONLY;
+        assert_eq!(
+            vfs_export(mp, nep, &args(ro, 32767, Some(net), Some(mask))),
+            Ok(())
+        );
+        assert!(mp.mnt_flag.get() & MNT_EXPORTED != 0);
+        assert!(nep.ne_rtable_inet.get().is_some());
+
+        assert_eq!(lookup(mp, nep, [10, 1, 2, 3]), Some((ro, 32767)));
+        assert_eq!(lookup(mp, nep, [10, 1, 255, 255]), Some((ro, 32767)));
+        assert_eq!(lookup(mp, nep, [10, 2, 0, 1]), None);
+        assert_eq!(lookup(mp, nep, [192, 168, 0, 1]), None);
+    }
+
+    #[test]
+    fn the_most_specific_entry_wins() {
+        let (_g, mp, nep) = fresh();
+        let net = sin(2, [10, 0, 0, 0]);
+        let mask = sin(2, [255, 0, 0, 0]);
+        let host = sin(2, [10, 0, 0, 7]);
+        let ro = MNT_EXPORTED | MNT_EXRDONLY;
+        vfs_export(mp, nep, &args(ro, 100, Some(net), Some(mask))).unwrap();
+        vfs_export(mp, nep, &args(MNT_EXPORTED, 200, Some(host), None)).unwrap();
+        assert_eq!(lookup(mp, nep, [10, 0, 0, 7]), Some((MNT_EXPORTED, 200)));
+        assert_eq!(lookup(mp, nep, [10, 0, 0, 8]), Some((ro, 100)));
+    }
+
+    #[test]
+    fn a_duplicate_entry_and_a_bad_address_are_refused() {
+        let (_g, mp, nep) = fresh();
+        let host = sin(2, [10, 0, 0, 7]);
+        vfs_export(mp, nep, &args(MNT_EXPORTED, 1, Some(host), None)).unwrap();
+        assert_eq!(
+            vfs_export(mp, nep, &args(MNT_EXPORTED, 2, Some(host), None)),
+            Err(Errno::EPERM)
+        );
+        // The first one is still the entry.
+        assert_eq!(lookup(mp, nep, [10, 0, 0, 7]), Some((MNT_EXPORTED, 1)));
+
+        // AF_UNSPEC is not an address family the export list knows.
+        let other = sin(0, [10, 0, 0, 9]);
+        assert_eq!(
+            vfs_export(mp, nep, &args(MNT_EXPORTED, 1, Some(other), None)),
+            Err(Errno::EINVAL)
+        );
+        // Lengths past an mbuf, or negative.
+        let mut a = args(MNT_EXPORTED, 1, Some(host), None);
+        a.ex_addrlen = MLEN as i32 + 1;
+        assert_eq!(vfs_export(mp, nep, &a), Err(Errno::EINVAL));
+        a.ex_addrlen = -1;
+        assert_eq!(vfs_export(mp, nep, &a), Err(Errno::EINVAL));
+        a.ex_addrlen = 16;
+        a.ex_masklen = -1;
+        assert_eq!(vfs_export(mp, nep, &a), Err(Errno::EINVAL));
+        // A bad address pointer is the copyin's EFAULT.
+        let mut a = args(MNT_EXPORTED, 1, None, None);
+        a.ex_addrlen = 16;
+        assert_eq!(vfs_export(mp, nep, &a), Err(Errno::EFAULT));
+    }
+
+    #[test]
+    fn the_default_export_serves_everyone_else() {
+        let (_g, mp, nep) = fresh();
+        // Not exported at all: nothing, whatever the lists hold.
+        assert_eq!(lookup(mp, nep, [10, 0, 0, 1]), None);
+        let host = sin(2, [10, 0, 0, 7]);
+        vfs_export(mp, nep, &args(MNT_EXPORTED, 1, Some(host), None)).unwrap();
+        assert_eq!(lookup(mp, nep, [172, 16, 0, 1]), None);
+
+        let ro = MNT_EXPORTED | MNT_EXRDONLY;
+        vfs_export(mp, nep, &args(ro, 77, None, None)).unwrap();
+        assert!(mp.mnt_flag.get() & MNT_DEFEXPORTED != 0);
+        assert_eq!(lookup(mp, nep, [172, 16, 0, 1]), Some((ro, 77)));
+        assert_eq!(lookup(mp, nep, [10, 0, 0, 7]), Some((MNT_EXPORTED, 1)));
+        // No address at all (a NULL `nam`): only the default.
+        assert!(vfs_export_lookup(mp, nep, None).is_some_and(|np| np.netc_exflags.get() == ro));
+        // Only one default.
+        assert_eq!(
+            vfs_export(mp, nep, &args(ro, 78, None, None)),
+            Err(Errno::EPERM)
+        );
+    }
+
+    #[test]
+    fn mnt_delexport_empties_the_list() {
+        let (_g, mp, nep) = fresh();
+        let net = sin(2, [10, 1, 0, 0]);
+        let mask = sin(2, [255, 255, 0, 0]);
+        vfs_export(mp, nep, &args(MNT_EXPORTED, 5, Some(net), Some(mask))).unwrap();
+        vfs_export(mp, nep, &args(MNT_EXPORTED, 6, None, None)).unwrap();
+        assert!(lookup(mp, nep, [10, 1, 0, 9]).is_some());
+
+        vfs_export(mp, nep, &args(MNT_DELEXPORT, 0, None, None)).unwrap();
+        assert_eq!(mp.mnt_flag.get() & (MNT_EXPORTED | MNT_DEFEXPORTED), 0);
+        assert!(nep.ne_rtable_inet.get().is_none());
+        assert_eq!(lookup(mp, nep, [10, 1, 0, 9]), None);
+        assert!(vfs_export_lookup(mp, nep, None).is_none());
+
+        // And the list can be built again.
+        vfs_export(mp, nep, &args(MNT_EXPORTED, 8, Some(net), Some(mask))).unwrap();
+        assert_eq!(lookup(mp, nep, [10, 1, 0, 9]), Some((MNT_EXPORTED, 8)));
+        // Delete and add in one call, as `mountd` reloading its exports does.
+        vfs_export(
+            mp,
+            nep,
+            &args(MNT_DELEXPORT | MNT_EXPORTED, 9, Some(net), Some(mask)),
+        )
+        .unwrap();
+        assert_eq!(
+            lookup(mp, nep, [10, 1, 0, 9]),
+            Some((MNT_DELEXPORT | MNT_EXPORTED, 9))
+        );
+    }
+}

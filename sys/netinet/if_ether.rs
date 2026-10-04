@@ -124,18 +124,28 @@
 //!   (`docs/C_TO_RUST.md`); `arpcache` returns `bool` (the C's 0/-1); `arpresolve` is an
 //!   `unsafe fn` over the raw destination address and answers `Result` (`EAGAIN`: the packet
 //!   is held).
-//! - `NFSCLIENT` (the `revarp*` state and functions behind it) and `NCARP` are not configured;
-//!   each is a comment at its site. `KERNEL_LOCK()` is nothing without `MULTIPROCESSOR`.
+//! - `NFSCLIENT` (the `revarp*` state and functions behind it) is feature `nfsclient`;
+//!   `NCARP` is not configured and is a comment at its site. `KERNEL_LOCK()` is nothing
+//!   without `MULTIPROCESSOR`.
+//! - The `revarp` state (`revarp_myip`, `revarp_srvip`, `revarp_finished`, `revarp_ifidx`) is
+//!   atomics ([`REVARP_MYIP`], ...), one machine word each, as the C reads and writes them
+//!   without a lock; `revarpwhoarewe` returns `Result<(InAddr, InAddr), Errno>` (the server's
+//!   and the client's address, the C's two out parameters) and `revarpwhoami` the
+//!   `Result<InAddr, Errno>` of the client's address.
 
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::size_of;
 use core::ptr;
+#[cfg(feature = "nfsclient")]
+use core::sync::atomic::AtomicBool;
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, Ordering};
 
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_synch::{refcnt_init, refcnt_rele, refcnt_take};
+#[cfg(feature = "nfsclient")]
+use crate::kern::kern_synch::{tsleep_nsec, wakeup};
 use crate::kern::kern_tc::getuptime;
 use crate::kern::kern_timeout::{timeout_add_sec, timeout_set_flags};
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
@@ -145,10 +155,14 @@ use crate::kern::uipc_mbuf::{
 };
 use crate::log;
 use crate::machine::intr::IPL_SOFTNET;
+#[cfg(feature = "nfsclient")]
+use crate::net::ethertypes::ETHERTYPE_REVARP;
 use crate::net::ethertypes::{ETHERTYPE_ARP, ETHERTYPE_IP};
 use crate::net::if_::{
     IFF_NOARP, IFF_STATICARP, if_get, if_isconnected, if_output_mq, if_put, niq_enqueue,
 };
+#[cfg(feature = "nfsclient")]
+use crate::net::if_arp::ARPOP_REVREQUEST;
 use crate::net::if_arp::{ARPHRD_ETHER, ARPOP_REPLY, ARPOP_REQUEST, ARPOP_REVREPLY, Arphdr};
 use crate::net::if_dl::{SockaddrDl, lladdr, satosdl};
 use crate::net::if_ethersubr::{ETHERBROADCASTADDR, ether_sprintf};
@@ -171,12 +185,16 @@ use crate::sys::endian::{htons, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::{M_BCAST, M_DONTWAIT, M_MCAST, MT_DATA, Mbuf, MbufList, MbufQueue, mtod};
 use crate::sys::mutex::{Mutex, mutex_assert_locked};
+#[cfg(feature = "nfsclient")]
+use crate::sys::param::PSOCK;
 use crate::sys::pool::{PR_NOWAIT, PR_ZERO, Pool};
 use crate::sys::queue::{ListEntry, ListHead};
 use crate::sys::refcnt::Refcnt;
 use crate::sys::socket::{AF_INET, AF_LINK, Sockaddr, pseudo_AF_HDRCMPLT};
 use crate::sys::syslog::{LOG_DEBUG, LOG_ERR, LOG_INFO, LOG_WARNING};
 use crate::sys::systm::{net_assert_locked, net_assert_locked_exclusive, net_lock, net_unlock};
+#[cfg(feature = "nfsclient")]
+use crate::sys::time::msec_to_nsec;
 use crate::sys::timeout::{KCLOCK_NONE, TIMEOUT_MPSAFE, TIMEOUT_PROC, Timeout};
 
 /// Ethernet address length.
@@ -665,7 +683,19 @@ pub static la_hold_total: AtomicU32 = AtomicU32::new(0);
 /// `arptimer_to`: `arpinit`'s timeout.
 static ARPTIMER_TO: Timeout = Timeout::new(arptimer, ptr::null_mut());
 
-// NFSCLIENT: revarp_myip, revarp_srvip, revarp_finished, revarp_ifidx; not configured.
+/// `revarp_myip`: the client address a RARP reply gave (`in_addr`, network order). NFSCLIENT.
+#[cfg(feature = "nfsclient")]
+pub static REVARP_MYIP: AtomicU32 = AtomicU32::new(0);
+/// `revarp_srvip`: the address of the server that answered. NFSCLIENT.
+#[cfg(feature = "nfsclient")]
+pub static REVARP_SRVIP: AtomicU32 = AtomicU32::new(0);
+/// `revarp_finished`: a reply has been taken. NFSCLIENT.
+#[cfg(feature = "nfsclient")]
+pub static REVARP_FINISHED: AtomicBool = AtomicBool::new(false);
+/// `revarp_ifidx`: the interface a RARP request is out on (0: none); `if_detach` clears it
+/// for the interface that goes. NFSCLIENT.
+#[cfg(feature = "nfsclient")]
+pub static REVARP_IFIDX: AtomicU32 = AtomicU32::new(0);
 
 /// The `struct llinfo_arp` of a route, NULL when none.
 fn rt_la(rt: &Rtentry) -> Option<&'static LlinfoArp> {
@@ -1598,7 +1628,7 @@ pub fn revarpinput(ifp: &'static Ifnet, m: &'static Mbuf, _ns: Option<&Netstack>
 /// interfaces. Thus we support no user-interface. Since the contents of the RARP reply are
 /// specific to the interface that sent the request, this code must ensure that they are
 /// properly associated. Note: also supports ARP via RARP packets, per the RFC.
-pub fn in_revarpinput(_ifp: &'static Ifnet, m: &'static Mbuf) {
+pub fn in_revarpinput(ifp: &'static Ifnet, m: &'static Mbuf) {
     let ar = ea_get(m);
     match ntohs(ar.arp_op()) {
         ARPOP_REQUEST | ARPOP_REPLY => {
@@ -1607,8 +1637,11 @@ pub fn in_revarpinput(_ifp: &'static Ifnet, m: &'static Mbuf) {
             return;
         }
         ARPOP_REVREPLY => {
-            // NFSCLIENT: the reply to revarpwhoarewe (revarp_myip, revarp_srvip, the wakeup);
-            // not configured, so the reply is dropped as the C's #else does.
+            // NFSCLIENT: the reply to revarpwhoarewe; without it the reply is dropped.
+            #[cfg(feature = "nfsclient")]
+            revarp_reply(ifp, m, &ar);
+            #[cfg(not(feature = "nfsclient"))]
+            let _ = ifp;
         }
         // ARPOP_REVREQUEST: handled by rarpd(8); default:
         _ => {}
@@ -1618,7 +1651,118 @@ pub fn in_revarpinput(_ifp: &'static Ifnet, m: &'static Mbuf) {
     m_freem(m);
 }
 
-// NFSCLIENT: revarprequest, revarpwhoarewe and revarpwhoami; not configured.
+/// The `ARPOP_REVREPLY` case of `in_revarpinput` (`NFSCLIENT`): a reply to our request, if
+/// it is on the interface that asked and for our hardware address.
+#[cfg(feature = "nfsclient")]
+fn revarp_reply(ifp: &'static Ifnet, m: &'static Mbuf, ar: &EtherArp) {
+    let ifidx = REVARP_IFIDX.load(Ordering::Relaxed);
+    if ifidx == 0 {
+        return;
+    }
+    if ifidx != m.m_pkthdr().ph_ifidx.get() {
+        // !same interface
+        return;
+    }
+    if !REVARP_FINISHED.load(Ordering::Relaxed) {
+        // SAFETY: an attached interface's link address has its hardware address after the
+        // name.
+        let ours =
+            unsafe { core::slice::from_raw_parts(lladdr(ifp.if_sadl.get()), ETHER_ADDR_LEN) };
+        if ar.arp_tha[..] != *ours {
+            return;
+        }
+        REVARP_SRVIP.store(u32::from_ne_bytes(ar.arp_spa), Ordering::Relaxed);
+        REVARP_MYIP.store(u32::from_ne_bytes(ar.arp_tpa), Ordering::Relaxed);
+        REVARP_FINISHED.store(true, Ordering::Relaxed);
+    }
+    // wake: Do wakeup every time in case it was missed.
+    wakeup(&REVARP_MYIP);
+}
+
+/// `revarprequest`: send a RARP request for the ip address of the specified interface. The
+/// request should be RFC 903-compliant.
+#[cfg(feature = "nfsclient")]
+pub fn revarprequest(ifp: &'static Ifnet) {
+    let ac = arpcom_of(ifp);
+    let enaddr = ac.ac_enaddr.get();
+
+    let Some(m) = m_gethdr(M_DONTWAIT, MT_DATA) else {
+        return;
+    };
+    let len = size_of::<EtherArp>();
+    m.m_len().set(len as u32);
+    m.m_pkthdr().len.set(len as i32);
+    m.m_pkthdr().ph_rtableid.set(ifp.if_rdomain.get());
+    m.m_pkthdr().pf.prio.set(ifp.if_llprio.get());
+    m_align(m, len as i32);
+    let mut sa = Sockaddr::default();
+    let eh = EtherHeader {
+        ether_dhost: ETHERBROADCASTADDR,
+        ether_shost: enaddr,
+        ether_type: htons(ETHERTYPE_REVARP), // if_output will not swap
+    };
+    let ea = EtherArp {
+        ea_hdr: Arphdr {
+            ar_hrd: htons(ARPHRD_ETHER),
+            ar_pro: htons(ETHERTYPE_IP),
+            ar_hln: ETHER_ADDR_LEN as u8, // hardware address length
+            ar_pln: 4,                    // protocol address length
+            ar_op: htons(ARPOP_REVREQUEST),
+        },
+        arp_sha: enaddr,
+        arp_spa: [0; 4],
+        arp_tha: enaddr,
+        arp_tpa: [0; 4],
+    };
+    ea_store(m, &ea);
+    eh_into_sa(&mut sa, &eh);
+    sa.sa_family = pseudo_AF_HDRCMPLT;
+    sa.sa_len = size_of::<Sockaddr>() as u8;
+    m.m_flags().set(m.m_flags().get() | M_BCAST);
+    // SAFETY: a local `sockaddr` carrying the complete Ethernet header.
+    let _ = unsafe { ifp_output(ifp, m, &sa) };
+}
+
+/// `revarpwhoarewe`: RARP for the ip address of the specified interface, but also save the ip
+/// address of the server that sent the answer. Timeout if no response is received. Returns
+/// the server's and the client's addresses.
+#[cfg(feature = "nfsclient")]
+pub fn revarpwhoarewe(ifp: &'static Ifnet) -> Result<(InAddr, InAddr), Errno> {
+    let mut count = 20;
+
+    if REVARP_FINISHED.load(Ordering::Relaxed) {
+        return Err(Errno::EIO);
+    }
+
+    REVARP_IFIDX.store(ifp.if_index.get(), Ordering::Relaxed);
+    while count > 0 {
+        count -= 1;
+        revarprequest(ifp);
+        let result = tsleep_nsec(&REVARP_MYIP, PSOCK, "revarp", msec_to_nsec(500));
+        if result != Err(Errno::EWOULDBLOCK) {
+            break;
+        }
+    }
+    REVARP_IFIDX.store(0, Ordering::Relaxed);
+    if !REVARP_FINISHED.load(Ordering::Relaxed) {
+        return Err(Errno::ENETUNREACH);
+    }
+
+    let serv = InAddr {
+        s_addr: REVARP_SRVIP.load(Ordering::Relaxed),
+    };
+    let clnt = InAddr {
+        s_addr: REVARP_MYIP.load(Ordering::Relaxed),
+    };
+    Ok((serv, clnt))
+}
+
+/// `revarpwhoami`: for compatibility: only saves the interface address.
+#[cfg(feature = "nfsclient")]
+pub fn revarpwhoami(ifp: &'static Ifnet) -> Result<InAddr, Errno> {
+    let (_server, clnt) = revarpwhoarewe(ifp)?;
+    Ok(clnt)
+}
 
 // Sizes of the C structures.
 const _: () = {

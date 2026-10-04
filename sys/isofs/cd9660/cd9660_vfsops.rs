@@ -52,9 +52,6 @@
 //!   dereference) is `EINVAL`. The mount arguments copied into `mnt_stat.mount_info` are the
 //!   caller's bytes with the `flags` that `iso_mountfs` changed (the C changes the kernel
 //!   copy in place).
-//! - `im_export` is not kept (`cd9660_extern.rs`): the export update passes a NULL table to
-//!   `vfs_export`, which answers `ENOTSUP` without `NFSSERVER`, and `cd9660_check_export`
-//!   finds no `struct netcred`, as `ufs_check_export` does.
 //! - `iso_mountfs` builds `struct iso_mnt` in a local and allocates it once it is complete
 //!   (the C allocates it before the Rock Ridge check and frees it on error); the error path
 //!   also releases the primary descriptor's buffer, which the C leaks when the logical block
@@ -124,8 +121,8 @@ use crate::sys::malloc::{M_ISOFSMNT, M_ISOFSNODE, M_WAITOK, M_ZERO};
 use crate::sys::mbuf::Mbuf;
 use crate::sys::mount::{
     Fid, ISOFSMNT_EXTATT, ISOFSMNT_GENS, ISOFSMNT_NOJOLIET, ISOFSMNT_NORRIP, ISOFSMNT_SESS,
-    IsoArgs, MNAMELEN, MNT_FORCE, MNT_LOCAL, MNT_RDONLY, MNT_UPDATE, Mount, Statfs, VFS_VGET,
-    Vfsops,
+    IsoArgs, MNAMELEN, MNT_FORCE, MNT_LOCAL, MNT_RDONLY, MNT_UPDATE, Mount, Netexport, Statfs,
+    VFS_VGET, Vfsops,
 };
 use crate::sys::namei::{FOLLOW, LOOKUP, Nameidata, NiDirp};
 use crate::sys::param::{DEV_BSHIFT, DEV_BSIZE, MAXBSIZE, btodb};
@@ -270,11 +267,11 @@ pub fn cd9660_mount(
     // If updating, check whether changing from read-only to read/write; if there is no
     // device name, that's all we do.
     if mp.mnt_flag.get() & MNT_UPDATE != 0 {
-        let _imp = vfstoisofs(mp);
+        let imp = vfstoisofs(mp);
         if let Some(a) = args
             && a.fspec == 0
         {
-            return vfs_export(mp, ptr::null_mut(), ptr::from_ref(&a.export_info).cast());
+            return vfs_export(mp, &imp.im_export, &a.export_info);
         }
         return Ok(());
     }
@@ -473,6 +470,7 @@ fn iso_mountfs(
             // Since an ISO9660 multi-session CD can also access previous sessions, we have
             // to include them into the space considerations.
             volume_space_size: (isonum_733(&pri.volume_space_size) as i32).wrapping_add(sess),
+            im_export: Netexport::new(),
             root: pri.root_directory_record,
             root_extent: isonum_733(rootp.extent()),
             root_size: isonum_733(rootp.size()),
@@ -1017,22 +1015,19 @@ pub fn cd9660_vptofh(vp: &'static Vnode, fhp: &mut Fid) -> Result<(), Errno> {
 pub fn cd9660_check_export(
     mp: &'static Mount,
     nam: &Mbuf,
-    _exflagsp: &mut i32,
-    _credanonp: &mut *const Ucred,
+    exflagsp: &mut i32,
+    credanonp: &mut *const Ucred,
 ) -> Result<(), Errno> {
-    // Get the export permission structure for this <mp, client> tuple. `im_export` is not
-    // kept without NFSSERVER (cd9660_extern.rs).
-    let _imp = vfstoisofs(mp);
-    let np = vfs_export_lookup(mp, ptr::null_mut(), ptr::from_ref(nam).cast());
-    if np.is_null() {
-        return Err(Errno::EACCES);
-    }
+    let imp = vfstoisofs(mp);
 
-    // *exflagsp = np->netc_exflags; *credanonp = &np->netc_anon: struct netcred
-    // (NFSSERVER, not configured; vfs_export_lookup never finds one).
-    Err(crate::unported!(
-        "cd9660_check_export: struct netcred (NFSSERVER)"
-    ))
+    // Get the export permission structure for this <mp, client> tuple.
+    let Some(np) = vfs_export_lookup(mp, &imp.im_export, Some(nam)) else {
+        return Err(Errno::EACCES);
+    };
+
+    *exflagsp = np.netc_exflags.get();
+    *credanonp = ptr::from_ref(&np.netc_anon);
+    Ok(())
 }
 
 const _: () = {

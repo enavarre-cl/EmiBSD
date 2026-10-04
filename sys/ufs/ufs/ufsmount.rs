@@ -44,9 +44,8 @@
 //!   `unsafe` checks that the mount is a UFS one. The members are `Cell`s.
 //! - `ufsmount_u` (the super-block pointer of FFS or of EXT2FS) is `um_fs` alone:
 //!   `ext2fs` is not ported.
-//! - `um_export` (`struct netexport`) needs `NFSSERVER`, which is not configured: the member is
-//!   left out and `vfs_export` gets a NULL export table (`docs/C_TO_RUST.md`, members of
-//!   unported subsystems).
+//! - `um_export` (`struct netexport`) is kept whether or not `nfsserver` is configured, as the
+//!   C does; without the feature `vfs_export` answers `ENOTSUP` and the list stays empty.
 //! - The quota members (`um_quotas`, `um_cred`, `um_btime`, `um_itime`, `um_qflags`) exist
 //!   with or without feature `quota`, as the C has no `#ifdef QUOTA` here; without it they stay
 //!   NULL and zero. `um_cred` is NULL or `NOCRED` while no quota file is open (`ufs_quota.rs`).
@@ -57,7 +56,7 @@ use core::cell::Cell;
 use core::ptr;
 
 use crate::kern::subr_prf::panic;
-use crate::sys::mount::Mount;
+use crate::sys::mount::{Mount, Netexport};
 use crate::sys::types::{Daddr, Dev, Time};
 use crate::sys::ucred::Ucred;
 use crate::sys::vnode::Vnode;
@@ -92,6 +91,8 @@ pub struct Ufsmount {
     pub um_itime: [Cell<Time>; MAXQUOTAS],
     /// `um_qflags`: quota specific flags.
     pub um_qflags: [Cell<u8>; MAXQUOTAS],
+    /// `um_export`: export information.
+    pub um_export: Netexport,
     /// `um_savedmaxfilesize`: XXX - limit maxfilesize.
     pub um_savedmaxfilesize: Cell<u64>,
     /// `um_maxsymlinklen`: max size of short symlink.
@@ -119,6 +120,7 @@ impl Ufsmount {
             um_btime: [const { Cell::new(0) }; MAXQUOTAS],
             um_itime: [const { Cell::new(0) }; MAXQUOTAS],
             um_qflags: [const { Cell::new(0) }; MAXQUOTAS],
+            um_export: Netexport::new(),
             um_savedmaxfilesize: Cell::new(0),
             um_maxsymlinklen: Cell::new(0),
         }

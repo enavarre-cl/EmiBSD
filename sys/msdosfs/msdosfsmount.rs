@@ -65,8 +65,8 @@
 //! - `pm_inusemap` stays the `malloc`ed pointer (`Cell<*mut u32>`); [`Msdosfsmount::inusemap`]
 //!   is the bitmap as `howmany(pm_maxcluster + 1, N_INUSEBITS)` words, the size
 //!   `msdosfs_mountfs` allocates it with.
-//! - `pm_export` (`struct netexport`) needs `NFSSERVER`, which is not configured: the member
-//!   is left out, as `um_export` is in `ufsmount.rs`.
+//! - `pm_export` (`struct netexport`) is kept whether or not `nfsserver` is configured, as the C
+//!   does, as `um_export` is in `ufsmount.rs`.
 //! - The flags are `u32`, the type of `pm_flags`; `MSDOSFSMNT_SHORTNAME`, `_LONGNAME` and
 //!   `_NOWIN95` are the `<sys/mount.h>` ones (`sys/sys/mount.rs`), as the C's `#if 0` says.
 //! - The arithmetic macros (`de_cluster`, `cntobn`, ...) are generic functions over the
@@ -87,7 +87,7 @@ use crate::kern::subr_prf::panic;
 use crate::msdosfs::bpb::Bpb50;
 use crate::msdosfs::fat::{CLUST_FIRST, MSDOSFSROOT};
 use crate::sys::mount::{
-    MOUNT_MSDOS, MSDOSFSMNT_LONGNAME, MSDOSFSMNT_NOWIN95, MSDOSFSMNT_SHORTNAME, Mount,
+    MOUNT_MSDOS, MSDOSFSMNT_LONGNAME, MSDOSFSMNT_NOWIN95, MSDOSFSMNT_SHORTNAME, Mount, Netexport,
 };
 use crate::sys::types::{Dev, Gid, Mode, Uid};
 use crate::sys::vnode::Vnode;
@@ -189,6 +189,8 @@ pub struct Msdosfsmount {
     pub pm_inusemap: Cell<*mut u32>,
     /// `pm_flags`: the `MSDOSFSMNT_*` flags below.
     pub pm_flags: Cell<u32>,
+    /// `pm_export`: export information.
+    pub pm_export: Netexport,
 }
 
 // SAFETY: the members are changed under the kernel lock, as in C; the kernel runs one CPU.
@@ -229,6 +231,7 @@ impl Msdosfsmount {
             pm_curfat: Cell::new(0),
             pm_inusemap: Cell::new(ptr::null_mut()),
             pm_flags: Cell::new(0),
+            pm_export: Netexport::new(),
         }
     }
 

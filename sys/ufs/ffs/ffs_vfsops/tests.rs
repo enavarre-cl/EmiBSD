@@ -1198,6 +1198,69 @@ fn ufs_getlbns_finds_the_indirect_path() {
     teardown();
 }
 
+/// `mount -u` with `ufs_args` whose `fspec` is NULL and whose `export_info` names a network, as
+/// `mountd(8)` does it: `mount(2)` reaches `ffs_mount`, which hands the export list to
+/// `vfs_export`; `ufs_check_export` then answers the flags and the anonymous credentials for a
+/// client's address, and refuses one outside the list.
+#[cfg(feature = "nfsserver")]
+#[test]
+fn mount_update_exports_the_file_system() {
+    use crate::kern::uipc_mbuf::tests::mbinit_again;
+    use crate::kern::vfs_subr::tests::exports::{args, check_export, sin};
+    use crate::kern::vfs_syscalls::sys_mount;
+    use crate::sys::mount::{MNT_DELEXPORT, MNT_EXPORTED, MNT_EXRDONLY, MNT_UPDATE, UfsArgs};
+
+    let img = newfs::Image::new(newfs::FFS2_4M);
+    let (_g, p) = setup(img.finish());
+    mbinit_again();
+    let mp = mount_root(p, false);
+
+    let net = sin(2, [10, 0, 2, 0]);
+    let mask = sin(2, [255, 255, 255, 0]);
+    let mut args = UfsArgs {
+        fspec: 0,
+        export_info: args(MNT_EXPORTED | MNT_EXRDONLY, 32767, Some(net), Some(mask)),
+    };
+    let check = |a: [u8; 4]| check_export(mp, a);
+
+    // Not exported yet: every client is refused.
+    assert_eq!(check([10, 0, 2, 9]), Err(Errno::EACCES));
+
+    let update = |args: &mut UfsArgs| {
+        sys(
+            sys_mount,
+            p,
+            &[
+                b"ffs\0".as_ptr() as usize,
+                path(b"/\0"),
+                MNT_UPDATE as usize,
+                ptr::from_mut(args) as usize,
+            ],
+        )
+    };
+    update(&mut args).unwrap();
+    assert!(mp.mnt_flag.get() & MNT_EXPORTED != 0);
+    assert_eq!(mp.mnt_flag.get() & MNT_UPDATE, 0, "the update flag is gone");
+    assert_eq!(
+        check([10, 0, 2, 9]),
+        Ok((MNT_EXPORTED | MNT_EXRDONLY, 32767))
+    );
+    assert_eq!(check([10, 0, 3, 9]), Err(Errno::EACCES));
+
+    // The same network again is refused, and the mount keeps its flags.
+    assert_eq!(update(&mut args), Err(Errno::EPERM));
+    assert!(mp.mnt_flag.get() & MNT_EXPORTED != 0);
+
+    // mountd deletes the list before it loads another.
+    args.export_info.ex_flags = MNT_DELEXPORT;
+    update(&mut args).unwrap();
+    assert_eq!(mp.mnt_flag.get() & MNT_EXPORTED, 0);
+    assert_eq!(check([10, 0, 2, 9]), Err(Errno::EACCES));
+
+    unmount_root(p, mp);
+    teardown();
+}
+
 #[test]
 #[ignore = "needs OPENBSD_SRC (just test-ref)"]
 fn fs_h_constants_match_the_c_header() {

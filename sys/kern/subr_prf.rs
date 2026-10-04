@@ -62,7 +62,9 @@
 //!   output as in C.
 //! - The `struct tty *tp` of `kprintf`/`kputchar` is an `Option<&Tty>`; `kprintf` keeps its
 //!   three arguments and [`kprintf_tp`] is the form with the tty. `tprintf_open`,
-//!   `tprintf_close` and `tprintf` are `NFSSERVER`/`NFSCLIENT` only: not configured.
+//!   `tprintf_close` and `tprintf` (`NFSSERVER || NFSCLIENT`) are compiled with feature
+//!   `nfsclient` or `nfsserver`; the handle `tpr_t` is [`Tpr`], an `Option` of a session
+//!   reference (`sys/sys/tprintf.rs`), and `tprintf` takes `fmt::Arguments`.
 //! - `panicstr` is behind [`panicstr`] (a flag); the first message is kept in a single
 //!   `panicbuf`, per CPU from M5 (`ci_panicbuf`).
 //! - `db_panic` defaults to 0: ddb-lite has no debugger to enter, so a panic prints the stack
@@ -83,10 +85,18 @@ use crate::kern::init_main::DB_ACTIVE;
 use crate::kern::kern_xxx::reboot;
 use crate::kern::subr_log::{LOG_OPEN, logwakeup, msgbuf_putchar, msgbufmapped, msgbufp};
 use crate::kern::tty::tputchar;
+#[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
+use crate::kern::tty::ttycheckoutq;
 use crate::machine::db_machdep::db_enter;
 use crate::sys::proc::PS_CONTROLT;
+#[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
+use crate::sys::proc::{Proc, sesshold, sessrele};
 use crate::sys::reboot::{RB_AUTOBOOT, RB_DUMP, RB_NOSYNC};
 use crate::sys::syslog::LOG_ERR;
+#[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
+use crate::sys::syslog::LOG_INFO;
+#[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
+use crate::sys::tprintf::Tpr;
 use crate::sys::tty::Tty;
 
 // flags for kprintf
@@ -432,7 +442,61 @@ pub fn uprintf(args: fmt::Arguments<'_>) {
     }
 }
 
-// tprintf_open, tprintf_close, tprintf: NFSSERVER || NFSCLIENT (not configured).
+// tprintf functions: used to send messages to a specific process
+//
+// usage:
+//   get a tpr_t handle on a process "p" by using "tprintf_open(p)"
+//   use the handle when calling "tprintf"
+//   when done, do a "tprintf_close" to drop the handle
+
+/// `tprintf_open`: get a tprintf handle on a process `p` (XXX change s/proc/process).
+///
+/// `None` if the process can't be printed to.
+#[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
+pub fn tprintf_open(p: &Proc) -> Tpr {
+    let pr = p.process();
+
+    // SAFETY: a process's session lives while the process is in it, and the reference taken
+    // below keeps it alive until `tprintf_close`.
+    let sess = unsafe { pr.session().as_ref() }?;
+    if pr.ps_flags.load(Ordering::Relaxed) & PS_CONTROLT != 0 && !sess.s_ttyvp.get().is_null() {
+        sesshold(sess);
+        return Some(sess);
+    }
+    None
+}
+
+/// `tprintf_close`: dispose of a tprintf handle obtained with `tprintf_open`.
+#[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
+pub fn tprintf_close(sess: Tpr) {
+    if let Some(sess) = sess {
+        sessrele(sess);
+    }
+}
+
+/// `tprintf`: given a tprintf handle to a process (obtained with `tprintf_open`), send a
+/// message to the controlling tty for that process; also sends the message to /dev/klog.
+#[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
+pub fn tprintf(tpr: Tpr, args: fmt::Arguments<'_>) {
+    let mut tp: Option<&Tty> = None;
+    let mut flags = TOLOG;
+
+    logpri(LOG_INFO);
+    if let Some(sess) = tpr
+        && !sess.s_ttyvp.get().is_null()
+    {
+        // SAFETY: a session's terminal stays allocated while the session refers to it.
+        let t = unsafe { sess.s_ttyp.get().as_ref() };
+        if let Some(t) = t
+            && ttycheckoutq(t, false)
+        {
+            flags |= TOTTY;
+            tp = Some(t);
+        }
+    }
+    kprintf_tp(args, flags, tp, None);
+    logwakeup();
+}
 
 /// `ttyprintf`: send a message to a specific tty.
 ///

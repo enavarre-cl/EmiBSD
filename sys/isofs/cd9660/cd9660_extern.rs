@@ -45,8 +45,8 @@
 //! Upstream: sys/isofs/cd9660/cd9660_extern.h @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `im_export` (`struct netexport`, `NFSSERVER`) is not kept: without `NFSSERVER` there is
-//!   nothing to export (`vfs_export` answers `ENOTSUP`), as `ufsmount.rs` does for UFS.
+//! - `im_export` (`struct netexport`) is kept whether or not `nfsserver` is configured, as the
+//!   C does (`vfs_export` answers `ENOTSUP` without it), as `ufsmount.rs` does for UFS.
 //! - `root_extent` and `root_size` are `u32`, as `isonum_733` reads them (the C's `int` only
 //!   differs past 2^31 blocks).
 //! - `struct iso_mnt` is built whole by `iso_mountfs` and not changed afterwards, so its
@@ -58,7 +58,7 @@
 
 use crate::isofs::cd9660::iso::isodcl;
 use crate::kern::subr_prf::panic;
-use crate::sys::mount::Mount;
+use crate::sys::mount::{Mount, Netexport};
 use crate::sys::types::Dev;
 use crate::sys::vnode::Vnode;
 
@@ -99,6 +99,8 @@ pub struct IsoMnt {
     pub im_bmask: i32,
     /// `volume_space_size`.
     pub volume_space_size: i32,
+    /// `im_export`: export information.
+    pub im_export: Netexport,
     /// `root`: a copy of the root directory record.
     pub root: [u8; isodcl(157, 190)],
     /// `root_extent`.

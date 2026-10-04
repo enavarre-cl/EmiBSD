@@ -60,12 +60,16 @@
 //!   `union mount_info` is its 160 bytes, 8-aligned: the per-filesystem views come with
 //!   their file systems (`ufs_args` and the `export_args` it embeds came with ffs, `struct
 //!   mfs_args` (`MfsArgs`) with MFS, `iso_args`, `msdosfs_args`, `udf_args` and `tmpfs_args`
-//!   with M10c; each `*Args::from_bytes` reads them out of the kernel copy of the mount
+//!   with M10c, `nfs_args` with NFS (M10e); each `*Args::from_bytes` reads them out of the kernel copy of the mount
 //!   arguments).
 //! - `struct vfsconf`'s `vfc_refcount` is atomic (`atomic_inc_int` in C).
 //! - `VFS_*` are functions with the macros' names (`#[allow(non_snake_case)]`).
-//! - `struct netcred`/`struct netexport` need `net/radix.h` and `NFSSERVER`, neither of
-//!   which is configured; `vfs_export` takes the export table as an opaque pointer.
+//! - `struct netcred` and `struct netexport` are always defined, as the C header does, over
+//!   the ported radix tree (`net/radix.rs`): their members are `Cell`s, the `ne_rtable_inet`
+//!   pointer an `Option<&'static RadixNodeHead>`; a `Netcred` is `malloc`ed with the
+//!   address and mask it is keyed by behind it, as in C (`kern/vfs_subr.rs`). `struct
+//!   nfs_args` (`NfsArgs`) reads like the other `*Args`; its `addr`, `fh` and `hostname`
+//!   are user addresses.
 //! - The user-level prototypes (`mount`, `statfs`, ...) are not kernel material; the kernel
 //!   ones are their functions in `vfs_subr.rs`, `vfs_init.rs` and `vfs_syscalls.rs`.
 
@@ -76,6 +80,7 @@ use core::sync::atomic::AtomicU32;
 
 use crate::kern::subr_prf::panic;
 use crate::machine::copy::AbiPod;
+use crate::net::radix::{RadixNode, RadixNodeHead};
 use crate::queue_adapter;
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::Mbuf;
@@ -244,6 +249,142 @@ pub const ISOFSMNT_EXTATT: i32 = 0x0000_0004;
 pub const ISOFSMNT_NOJOLIET: i32 = 0x0000_0008;
 /// `ISOFSMNT_SESS`: use `iso_args.sess`.
 pub const ISOFSMNT_SESS: i32 = 0x0000_0010;
+
+/// `NFS_ARGSVERSION`: change when `nfs_args` changes.
+pub const NFS_ARGSVERSION: i32 = 4;
+
+/// `struct nfs_args`: arguments to mount NFS. `addr`, `fh` and `hostname` are user addresses
+/// (the C's `struct sockaddr *`, `u_char *` and `char *`), which the NFS mount copies in.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct NfsArgs {
+    /// `version`: args structure version number (`NFS_ARGSVERSION`).
+    pub version: i32,
+    /// `addr`: file server address.
+    pub addr: usize,
+    /// `addrlen`: length of address.
+    pub addrlen: i32,
+    /// `sotype`: socket type.
+    pub sotype: i32,
+    /// `proto`: and protocol.
+    pub proto: i32,
+    /// `fh`: file handle to be mounted.
+    pub fh: usize,
+    /// `fhsize`: size, in bytes, of `fh`.
+    pub fhsize: i32,
+    /// `flags`: the `NFSMNT_*` below.
+    pub flags: i32,
+    /// `wsize`: write size in bytes.
+    pub wsize: i32,
+    /// `rsize`: read size in bytes.
+    pub rsize: i32,
+    /// `readdirsize`: readdir size in bytes.
+    pub readdirsize: i32,
+    /// `timeo`: initial timeout in .1 secs.
+    pub timeo: i32,
+    /// `retrans`: times to retry send.
+    pub retrans: i32,
+    /// `maxgrouplist`: max. size of group list.
+    pub maxgrouplist: i32,
+    /// `readahead`: number of blocks to readahead.
+    pub readahead: i32,
+    /// `leaseterm`: term (sec) of lease.
+    pub leaseterm: i32,
+    /// `deadthresh`: retrans threshold.
+    pub deadthresh: i32,
+    /// `hostname`: server's name.
+    pub hostname: usize,
+    /// `acregmin`: attr cache file recently modified.
+    pub acregmin: i32,
+    /// `acregmax`: ac file not recently modified.
+    pub acregmax: i32,
+    /// `acdirmin`: ac for dir recently modified.
+    pub acdirmin: i32,
+    /// `acdirmax`: ac for dir not recently modified.
+    pub acdirmax: i32,
+}
+
+mount_args_from_bytes!(NfsArgs, "nfs_args");
+
+/// `NFSMNT_RESVPORT`: always use reserved ports.
+pub const NFSMNT_RESVPORT: i32 = 0x0000_0000;
+/// `NFSMNT_SOFT`: soft mount (hard is default).
+pub const NFSMNT_SOFT: i32 = 0x0000_0001;
+/// `NFSMNT_WSIZE`: set write size.
+pub const NFSMNT_WSIZE: i32 = 0x0000_0002;
+/// `NFSMNT_RSIZE`: set read size.
+pub const NFSMNT_RSIZE: i32 = 0x0000_0004;
+/// `NFSMNT_TIMEO`: set initial timeout.
+pub const NFSMNT_TIMEO: i32 = 0x0000_0008;
+/// `NFSMNT_RETRANS`: set number of request retries.
+pub const NFSMNT_RETRANS: i32 = 0x0000_0010;
+/// `NFSMNT_MAXGRPS`: set maximum grouplist size.
+pub const NFSMNT_MAXGRPS: i32 = 0x0000_0020;
+/// `NFSMNT_INT`: allow interrupts on hard mount.
+pub const NFSMNT_INT: i32 = 0x0000_0040;
+/// `NFSMNT_NOCONN`: don't connect the socket.
+pub const NFSMNT_NOCONN: i32 = 0x0000_0080;
+/// `NFSMNT_NQNFS`: use Nqnfs protocol.
+pub const NFSMNT_NQNFS: i32 = 0x0000_0100;
+/// `NFSMNT_NFSV3`: use NFS version 3 protocol.
+pub const NFSMNT_NFSV3: i32 = 0x0000_0200;
+/// `NFSMNT_KERB`: use Kerberos authentication.
+pub const NFSMNT_KERB: i32 = 0x0000_0400;
+/// `NFSMNT_DUMBTIMR`: don't estimate rtt dynamically.
+pub const NFSMNT_DUMBTIMR: i32 = 0x0000_0800;
+/// `NFSMNT_LEASETERM`: set lease term (nqnfs).
+pub const NFSMNT_LEASETERM: i32 = 0x0000_1000;
+/// `NFSMNT_READAHEAD`: set read ahead.
+pub const NFSMNT_READAHEAD: i32 = 0x0000_2000;
+/// `NFSMNT_DEADTHRESH`: set dead server retry thresh.
+pub const NFSMNT_DEADTHRESH: i32 = 0x0000_4000;
+/// `NFSMNT_NOAC`: disable attribute cache.
+pub const NFSMNT_NOAC: i32 = 0x0000_8000;
+/// `NFSMNT_RDIRPLUS`: use Readdirplus for V3.
+pub const NFSMNT_RDIRPLUS: i32 = 0x0001_0000;
+/// `NFSMNT_READDIRSIZE`: set readdir size.
+pub const NFSMNT_READDIRSIZE: i32 = 0x0002_0000;
+/// `NFSMNT_ACREGMIN`: `acregmin` field valid.
+pub const NFSMNT_ACREGMIN: i32 = 0x0004_0000;
+/// `NFSMNT_ACREGMAX`: `acregmax` field valid.
+pub const NFSMNT_ACREGMAX: i32 = 0x0008_0000;
+/// `NFSMNT_ACDIRMIN`: `acdirmin` field valid.
+pub const NFSMNT_ACDIRMIN: i32 = 0x0010_0000;
+/// `NFSMNT_ACDIRMAX`: `acdirmax` field valid.
+pub const NFSMNT_ACDIRMAX: i32 = 0x0020_0000;
+
+// The bits the kernel sets in `nm_flag` for itself; `mount_nfs(8)` never passes them.
+
+/// `NFSMNT_INTERNAL`: bits set internally.
+pub const NFSMNT_INTERNAL: i32 = 0xfffc_0000_u32 as i32;
+/// `NFSMNT_HASWRITEVERF`: has write verifier for V3.
+pub const NFSMNT_HASWRITEVERF: i32 = 0x0004_0000;
+/// `NFSMNT_GOTPATHCONF`: got the V3 pathconf info.
+pub const NFSMNT_GOTPATHCONF: i32 = 0x0008_0000;
+/// `NFSMNT_GOTFSINFO`: got the V3 fsinfo.
+pub const NFSMNT_GOTFSINFO: i32 = 0x0010_0000;
+/// `NFSMNT_MNTD`: mnt server for mnt point.
+pub const NFSMNT_MNTD: i32 = 0x0020_0000;
+/// `NFSMNT_DISMINPROG`: dismount in progress.
+pub const NFSMNT_DISMINPROG: i32 = 0x0040_0000;
+/// `NFSMNT_DISMNT`: dismounted.
+pub const NFSMNT_DISMNT: i32 = 0x0080_0000;
+/// `NFSMNT_SNDLOCK`: send socket lock.
+pub const NFSMNT_SNDLOCK: i32 = 0x0100_0000;
+/// `NFSMNT_WANTSND`: want above.
+pub const NFSMNT_WANTSND: i32 = 0x0200_0000;
+/// `NFSMNT_RCVLOCK`: rcv socket lock.
+pub const NFSMNT_RCVLOCK: i32 = 0x0400_0000;
+/// `NFSMNT_WANTRCV`: want above.
+pub const NFSMNT_WANTRCV: i32 = 0x0800_0000;
+/// `NFSMNT_WAITAUTH`: wait for authentication.
+pub const NFSMNT_WAITAUTH: i32 = 0x1000_0000;
+/// `NFSMNT_HASAUTH`: has authenticator.
+pub const NFSMNT_HASAUTH: i32 = 0x2000_0000;
+/// `NFSMNT_WANTAUTH`: wants an authenticator.
+pub const NFSMNT_WANTAUTH: i32 = 0x4000_0000;
+/// `NFSMNT_AUTHERR`: authentication error.
+pub const NFSMNT_AUTHERR: i32 = 0x8000_0000_u32 as i32;
 
 /// `struct msdosfs_args`: arguments to mount MSDOS filesystems. `fspec` is a user address.
 #[repr(C)]
@@ -876,6 +1017,73 @@ pub fn VFS_CHECKEXP(
     (mp.op().vfs_checkexp)(mp, nam, exflg, cred)
 }
 
+/// `struct netcred`: network address lookup element. The radix tree of a [`Netexport`] holds
+/// these `malloc(M_NETADDR)`ed with the address and mask they are keyed by right behind
+/// them (`netc_len` is the size of the whole allocation); the first member must stay
+/// `netc_rnodes`, as `vfs_export_lookup` turns the leaf `rn_match` finds back into its
+/// `Netcred`.
+#[repr(C)]
+pub struct Netcred {
+    /// `netc_rnodes`: the radix tree's leaf and internal node for this entry.
+    pub netc_rnodes: [RadixNode; 2],
+    /// `netc_exflags`: the `export_args`'s `ex_flags` (`MNT_EXRDONLY`, ...).
+    pub netc_exflags: Cell<i32>,
+    /// `netc_len`: size of the allocation.
+    pub netc_len: Cell<i32>,
+    /// `netc_anon`: the credentials anonymous clients map to.
+    pub netc_anon: Ucred,
+}
+
+// SAFETY: the members are changed under the kernel lock while the file system's export
+// list is updated (`vfs_export`), as in C; the kernel serialises them like the rest of the
+// mount's state.
+unsafe impl Sync for Netcred {}
+
+impl Netcred {
+    /// A zeroed entry, as `malloc(M_ZERO)` returns it.
+    pub const fn new() -> Self {
+        Self {
+            netc_rnodes: [RadixNode::new(), RadixNode::new()],
+            netc_exflags: Cell::new(0),
+            netc_len: Cell::new(0),
+            netc_anon: Ucred::new(),
+        }
+    }
+}
+
+impl Default for Netcred {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `struct netexport`: network export information of one file system.
+pub struct Netexport {
+    /// `ne_defexported`: default export.
+    pub ne_defexported: Netcred,
+    /// `ne_rtable_inet`: individual exports.
+    pub ne_rtable_inet: Cell<Option<&'static RadixNodeHead>>,
+}
+
+// SAFETY: as for `Netcred`.
+unsafe impl Sync for Netexport {}
+
+impl Netexport {
+    /// An empty export list, as `malloc(M_ZERO)` returns it.
+    pub const fn new() -> Self {
+        Self {
+            ne_defexported: Netcred::new(),
+            ne_rtable_inet: Cell::new(None),
+        }
+    }
+}
+
+impl Default for Netexport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// `VB_READ`.
 pub const VB_READ: i32 = 0x01;
 /// `VB_WRITE`.
@@ -905,6 +1113,10 @@ const _: () = {
     assert!(offset_of!(MfsArgs, size) == 136);
     assert!(MfsArgs::SIZE <= size_of::<MountInfo>());
     assert!(IsoArgs::SIZE == 136);
+    assert!(NfsArgs::SIZE == 112);
+    assert!(offset_of!(NfsArgs, fh) == 32);
+    assert!(offset_of!(NfsArgs, hostname) == 88);
+    assert!(NfsArgs::SIZE <= size_of::<MountInfo>());
     assert!(MsdosfsArgs::SIZE == 144);
     assert!(UdfArgs::SIZE == 16);
     assert!(TmpfsArgs::SIZE == 40);
@@ -950,5 +1162,66 @@ mod tests {
                 "{name}"
             );
         }
+        // The NFSMNT_* bits fill all 32 bits; the C's `int` constants are the unsigned values.
+        for (name, value) in [
+            ("NFS_ARGSVERSION", NFS_ARGSVERSION),
+            ("NFSMNT_RESVPORT", NFSMNT_RESVPORT),
+            ("NFSMNT_SOFT", NFSMNT_SOFT),
+            ("NFSMNT_WSIZE", NFSMNT_WSIZE),
+            ("NFSMNT_RSIZE", NFSMNT_RSIZE),
+            ("NFSMNT_TIMEO", NFSMNT_TIMEO),
+            ("NFSMNT_RETRANS", NFSMNT_RETRANS),
+            ("NFSMNT_MAXGRPS", NFSMNT_MAXGRPS),
+            ("NFSMNT_INT", NFSMNT_INT),
+            ("NFSMNT_NOCONN", NFSMNT_NOCONN),
+            ("NFSMNT_NQNFS", NFSMNT_NQNFS),
+            ("NFSMNT_NFSV3", NFSMNT_NFSV3),
+            ("NFSMNT_KERB", NFSMNT_KERB),
+            ("NFSMNT_DUMBTIMR", NFSMNT_DUMBTIMR),
+            ("NFSMNT_LEASETERM", NFSMNT_LEASETERM),
+            ("NFSMNT_READAHEAD", NFSMNT_READAHEAD),
+            ("NFSMNT_DEADTHRESH", NFSMNT_DEADTHRESH),
+            ("NFSMNT_NOAC", NFSMNT_NOAC),
+            ("NFSMNT_RDIRPLUS", NFSMNT_RDIRPLUS),
+            ("NFSMNT_READDIRSIZE", NFSMNT_READDIRSIZE),
+            ("NFSMNT_ACREGMIN", NFSMNT_ACREGMIN),
+            ("NFSMNT_ACREGMAX", NFSMNT_ACREGMAX),
+            ("NFSMNT_ACDIRMIN", NFSMNT_ACDIRMIN),
+            ("NFSMNT_ACDIRMAX", NFSMNT_ACDIRMAX),
+            ("NFSMNT_INTERNAL", NFSMNT_INTERNAL),
+            ("NFSMNT_HASWRITEVERF", NFSMNT_HASWRITEVERF),
+            ("NFSMNT_GOTPATHCONF", NFSMNT_GOTPATHCONF),
+            ("NFSMNT_GOTFSINFO", NFSMNT_GOTFSINFO),
+            ("NFSMNT_MNTD", NFSMNT_MNTD),
+            ("NFSMNT_DISMINPROG", NFSMNT_DISMINPROG),
+            ("NFSMNT_DISMNT", NFSMNT_DISMNT),
+            ("NFSMNT_SNDLOCK", NFSMNT_SNDLOCK),
+            ("NFSMNT_WANTSND", NFSMNT_WANTSND),
+            ("NFSMNT_RCVLOCK", NFSMNT_RCVLOCK),
+            ("NFSMNT_WANTRCV", NFSMNT_WANTRCV),
+            ("NFSMNT_WAITAUTH", NFSMNT_WAITAUTH),
+            ("NFSMNT_HASAUTH", NFSMNT_HASAUTH),
+            ("NFSMNT_WANTAUTH", NFSMNT_WANTAUTH),
+            ("NFSMNT_AUTHERR", NFSMNT_AUTHERR),
+        ] {
+            assert_eq!(
+                crate::reftest::int(&defs, name),
+                Some(i64::from(value as u32)),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn nfs_args_read_out_of_the_kernel_copy() {
+        let mut bytes = [0u8; NfsArgs::SIZE];
+        bytes[..4].copy_from_slice(&NFS_ARGSVERSION.to_ne_bytes());
+        bytes[44..48].copy_from_slice(&(NFSMNT_NFSV3 | NFSMNT_RSIZE).to_ne_bytes());
+        bytes[96..100].copy_from_slice(&7i32.to_ne_bytes());
+        let args = NfsArgs::from_bytes(&bytes).expect("arguments");
+        assert_eq!(args.version, NFS_ARGSVERSION);
+        assert_eq!(args.flags, NFSMNT_NFSV3 | NFSMNT_RSIZE);
+        assert_eq!(args.acregmin, 7);
+        assert!(NfsArgs::from_bytes(&bytes[..NfsArgs::SIZE - 1]).is_none());
     }
 }

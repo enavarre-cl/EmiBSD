@@ -104,3 +104,59 @@ fn logpri_writes_the_level_to_the_log() {
     kassert!(true);
     kdassert!(true);
 }
+
+/// `tprintf_open` gives a handle only to a process with a controlling terminal, holds its
+/// session until `tprintf_close`, and `tprintf` logs at `LOG_INFO` (no terminal output here:
+/// the session's `s_ttyp` is unset).
+#[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
+#[test]
+fn tprintf_handles_follow_the_controlling_terminal() {
+    use crate::sys::proc::{Pgrp, Proc, Process, Session};
+    use crate::sys::vnode::Vnode;
+    use std::boxed::Box;
+
+    let pr: &'static Process = Box::leak(Box::new(Process::new()));
+    let p: &'static Proc = Box::leak(Box::new(Proc::new()));
+    let pg: &'static Pgrp = Box::leak(Box::new(Pgrp::new()));
+    let sess: &'static Session = Box::leak(Box::new(Session::new()));
+    pg.pg_session.set(sess);
+    sess.s_count.set(1);
+    p.p_p.set(pr);
+    pr.ps_mainproc.set(p);
+    pr.ps_pgrp.set(pg);
+
+    // No controlling terminal: no handle, and closing none is fine.
+    assert!(tprintf_open(p).is_none());
+    tprintf_close(None);
+    // The flag without a controlling vnode is no terminal either.
+    pr.ps_flags.fetch_or(PS_CONTROLT, Ordering::Relaxed);
+    assert!(tprintf_open(p).is_none());
+    assert_eq!(sess.s_count.get(), 1);
+
+    let vp: &'static Vnode = Box::leak(Box::new(Vnode::new()));
+    sess.s_ttyvp.set(vp);
+    let handle = tprintf_open(p);
+    assert!(handle.is_some_and(|h| ptr::eq(h, sess)));
+    assert_eq!(sess.s_count.get(), 2, "the handle holds the session");
+
+    crate::kern::subr_log::init_static_msgbuf();
+    let mbp = msgbufp().unwrap();
+    let mut text = std::vec::Vec::new();
+    for _ in 0..100 {
+        let before = mbp.bufx();
+        tprintf(handle, format_args!("nfs server not responding"));
+        let after = mbp.bufx();
+        text = (before..after)
+            .map(|i| mbp.bufc()[i as usize].get())
+            .collect();
+        if text.starts_with(b"<6>") && text.ends_with(b"responding") {
+            break;
+        }
+    }
+    assert_eq!(text, b"<6>nfs server not responding");
+    // Without a handle the message still goes to the log.
+    tprintf(None, format_args!("x"));
+
+    tprintf_close(handle);
+    assert_eq!(sess.s_count.get(), 1);
+}

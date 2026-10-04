@@ -68,21 +68,31 @@
 //! - `copy_statfs_info` never receives the mount's own `mnt_stat` (the callers pass a copy,
 //!   see `sys/mount.rs`), so the C's early return for that case is not needed; the copy has
 //!   the same values, so the result is the same.
-//! - `NFSSERVER` is not configured: `vfs_hang_addrlist`, `vfs_free_netcred` and
-//!   `vfs_free_addrlist` are compiled out as in C, `vfs_export` answers `ENOTSUP` and
-//!   `vfs_export_lookup` NULL. The export structures are opaque pointers.
+//! - `NFSSERVER` is feature `nfsserver`: `vfs_hang_addrlist`, `vfs_free_netcred`,
+//!   `vfs_free_addrlist` and `vfs_vfsinit`'s `rn_init` exist only with it, and without it
+//!   `vfs_export` answers `ENOTSUP` and `vfs_export_lookup` nothing, as in C. `vfs_export`
+//!   takes the file system's `Netexport` and the kernel copy of `struct export_args`
+//!   (`ExportArgs`, whose two addresses are user addresses for `copyin`) and returns the
+//!   `Result`; `vfs_export_lookup` returns `Option<&'static Netcred>` and takes the
+//!   client's address mbuf as an `Option`.
+//! - `vfs_hang_addrlist` allocates `KEYLEN_PAD` bytes more than `sizeof(struct netcred) +
+//!   ex_addrlen + ex_masklen` behind each entry (`netc_len` counts them), so that the radix
+//!   code, which reads keys for `max_keylen` bytes whatever their length byte says, never
+//!   leaves the allocation; an address shorter than two bytes (no family byte) is `EINVAL`.
+//!   A failed `malloc(M_WAITOK)` panics, as `vfs_mount_alloc`'s does.
 //! - `vprint` is compiled under feature `diagnostic` or `debug`, `printlockedvnodes` under
 //!   `debug`, as in C. The DDB printers (`vfs_buf_print`, `vfs_vnode_print`,
 //!   `vfs_mount_print`) wait for the ddb command loop (`db_command.c`).
 //! - `KERNEL_ASSERT_LOCKED()` is nothing without `MULTIPROCESSOR`.
 
-use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI32, AtomicI64, AtomicU32, Ordering};
 
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
+#[cfg(feature = "nfsserver")]
+use crate::kern::kern_prot::crfromxucred;
 use crate::kern::kern_prot::groupmember;
 use crate::kern::kern_rwlock::{
     rw_enter, rw_enter_read, rw_enter_write, rw_exit, rw_exit_read, rw_exit_write, rw_init_flags,
@@ -110,9 +120,17 @@ use crate::kern::vfs_vops::{
 };
 use crate::kprintf;
 use crate::machine::conf::{cdevsw, nblkdev};
+#[cfg(feature = "nfsserver")]
+use crate::machine::copy::copyin;
 use crate::machine::cpu::{curproc, delay};
 use crate::machine::intr::{IPL_BIO, IPL_NONE, splassert, splbio, splx};
 use crate::miscfs::deadfs::dead_vnops::DEAD_VOPS;
+#[cfg(feature = "nfsserver")]
+use crate::net::radix::{
+    RadixNode, RadixNodeHead, rn_addroute, rn_delete, rn_init, rn_inithead, rn_match, rn_walktree,
+};
+#[cfg(feature = "nfsserver")]
+use crate::netinet::in_::SockaddrIn;
 use crate::sys::buf::{B_BUSY, B_DELWRI, B_DONE, B_INVAL, B_READ, B_WANTED, Buf};
 use crate::sys::conf::{D_CLONE, D_TTY};
 use crate::sys::errno::Errno;
@@ -120,11 +138,18 @@ use crate::sys::event::NOTE_REVOKE;
 use crate::sys::fcntl::FNONBLOCK;
 use crate::sys::lock::{LK_DRAIN, LK_EXCLUSIVE, LK_NOWAIT, LK_TYPE_MASK};
 use crate::sys::malloc::{M_MOUNT, M_VNODE, M_WAITOK, M_ZERO};
+#[cfg(feature = "nfsserver")]
+use crate::sys::malloc::{M_NETADDR, M_RTABLE};
+use crate::sys::mbuf::Mbuf;
+#[cfg(feature = "nfsserver")]
+use crate::sys::mbuf::{MLEN, mtod};
 use crate::sys::mount::{
-    Fsid, MFSNAMELEN, MNAMELEN, MNT_NOPERM, MNT_RDONLY, MNT_STALLED, MNT_UNMOUNT, MNT_WAIT,
-    MntList, Mount, Statfs, VB_DUPOK, VB_NOWAIT, VB_READ, VB_WAIT, VB_WRITE, VFS_BCACHESTAT,
-    VFS_CONF, VFS_GENERIC, VFS_MAXTYPENUM, VFS_SYNC, Vfsconf,
+    ExportArgs, Fsid, MFSNAMELEN, MNAMELEN, MNT_NOPERM, MNT_RDONLY, MNT_STALLED, MNT_UNMOUNT,
+    MNT_WAIT, MntList, Mount, Netcred, Netexport, Statfs, VB_DUPOK, VB_NOWAIT, VB_READ, VB_WAIT,
+    VB_WRITE, VFS_BCACHESTAT, VFS_CONF, VFS_GENERIC, VFS_MAXTYPENUM, VFS_SYNC, Vfsconf,
 };
+#[cfg(feature = "nfsserver")]
+use crate::sys::mount::{MNT_DEFEXPORTED, MNT_DELEXPORT, MNT_EXPORTED};
 use crate::sys::mutex::Mutex;
 use crate::sys::param::{NODEV, PINOD, PRIBIO};
 use crate::sys::pool::{PR_WAITOK, PR_ZERO, Pool};
@@ -132,6 +157,8 @@ use crate::sys::proc::Proc;
 use crate::sys::queue::{ListHead, TailqHead};
 use crate::sys::rwlock::{RW_NOSLEEP, RW_READ, RW_WRITE, RWL_IS_VNODE, Rwlock};
 use crate::sys::sched::sched_pause;
+#[cfg(feature = "nfsserver")]
+use crate::sys::socket::AF_INET;
 use crate::sys::specdev::{CLONE_MAPSZ, CLONE_SHIFT, Specinfo, spechash};
 use crate::sys::stat::{
     S_IFBLK, S_IFCHR, S_IFDIR, S_IFIFO, S_IFLNK, S_IFMT, S_IFREG, S_IFSOCK, S_IRGRP, S_IROTH,
@@ -243,7 +270,8 @@ pub fn vntblinit() {
     // Initialize the filesystem syncer.
     vn_initialize_syncerd();
 
-    // NFSSERVER: rn_init, not configured.
+    #[cfg(feature = "nfsserver")]
+    rn_init(size_of::<SockaddrIn>() as u32);
 }
 
 /// Allocate a mount point. The returned mount point is marked as busy.
@@ -1412,26 +1440,252 @@ pub fn vfs_mountedon(vp: &'static Vnode) -> Result<(), Errno> {
     Ok(())
 }
 
-// NFSSERVER (vfs_hang_addrlist, vfs_free_netcred, vfs_free_addrlist): not configured.
+/// `KEYLEN_PAD`: the bytes of slack behind an export entry's address and mask (the radix
+/// code's `KEYLEN_LIMIT`, the longest key it reads).
+#[cfg(feature = "nfsserver")]
+const KEYLEN_PAD: usize = 64;
 
-/// `vfs_export(mp, nep, argp)`: process mount export info. `nep` is a `struct netexport *`
-/// and `argp` a `struct export_args *`; without `NFSSERVER` there is nothing to export.
-pub fn vfs_export(
-    _mp: &'static Mount,
-    _nep: *mut c_void,
-    _argp: *const c_void,
+/// Build hash lists of net addresses and hang them off the mount point. Called by
+/// `vfs_export()` to set up the lists of export addresses.
+#[cfg(feature = "nfsserver")]
+fn vfs_hang_addrlist(
+    mp: &'static Mount,
+    nep: &'static Netexport,
+    argp: &ExportArgs,
 ) -> Result<(), Errno> {
-    Err(Errno::ENOTSUP)
+    if argp.ex_addrlen == 0 {
+        if mp.mnt_flag.get() & MNT_DEFEXPORTED != 0 {
+            return Err(Errno::EPERM);
+        }
+        let np = &nep.ne_defexported;
+        // fill in the kernel's ucred from userspace's xucred
+        crfromxucred(&np.netc_anon, &argp.ex_anon)?;
+        mp.mnt_flag.set(mp.mnt_flag.get() | MNT_DEFEXPORTED);
+        np.netc_exflags.set(argp.ex_flags);
+        return Ok(());
+    }
+    if argp.ex_addrlen > MLEN as i32
+        || argp.ex_masklen > MLEN as i32
+        || argp.ex_addrlen < 0
+        || argp.ex_masklen < 0
+    {
+        return Err(Errno::EINVAL);
+    }
+    let addrlen = argp.ex_addrlen as usize;
+    let masklen = argp.ex_masklen as usize;
+    if addrlen < 2 {
+        // No room for the family byte `saddr->sa_family` reads.
+        return Err(Errno::EINVAL);
+    }
+    let nplen = size_of::<Netcred>() + addrlen + masklen + KEYLEN_PAD;
+    let Some(mem) = malloc(nplen, M_NETADDR, M_WAITOK | M_ZERO) else {
+        panic(format_args!("vfs_hang_addrlist: out of memory"));
+    };
+    let npp = mem.cast::<Netcred>();
+    // SAFETY: a fresh, suitably aligned (malloc's chunks are) allocation of `nplen` bytes,
+    // at least a `Netcred`'s; it is written before anything reads it, and stays allocated
+    // until `vfs_free_netcred` (or the `free` below) returns it.
+    let np: &'static Netcred = unsafe {
+        npp.as_ptr().write(Netcred::new());
+        &*npp.as_ptr()
+    };
+    np.netc_len.set(nplen as i32);
+    let free_np = || free(mem, M_NETADDR, nplen);
+    // The key (and mask) live right behind the entry, as in C: `saddr = (np + 1)`.
+    // SAFETY: inside the allocation: `Netcred` bytes, then `addrlen + masklen + KEYLEN_PAD`.
+    let saddr = unsafe { mem.as_ptr().add(size_of::<Netcred>()) };
+    // SAFETY: as above; `saddr .. saddr + addrlen` is inside the allocation and nothing else
+    // refers to it yet.
+    let saddr_buf = unsafe { core::slice::from_raw_parts_mut(saddr, addrlen) };
+    if let Err(e) = copyin(argp.ex_addr, saddr_buf) {
+        free_np();
+        return Err(e);
+    }
+    if usize::from(saddr_buf[0]) > addrlen {
+        saddr_buf[0] = addrlen as u8;
+    }
+    let mut smask: *const u8 = core::ptr::null();
+    if masklen != 0 {
+        // SAFETY: inside the allocation, right behind the address.
+        let m = unsafe { saddr.add(addrlen) };
+        // SAFETY: `m .. m + masklen` is inside the allocation, unshared.
+        let mask_buf = unsafe { core::slice::from_raw_parts_mut(m, masklen) };
+        if let Err(e) = copyin(argp.ex_mask, mask_buf) {
+            free_np();
+            return Err(e);
+        }
+        if usize::from(mask_buf[0]) > masklen {
+            mask_buf[0] = masklen as u8;
+        }
+        smask = m;
+    }
+    // fill in the kernel's ucred from userspace's xucred
+    if let Err(e) = crfromxucred(&np.netc_anon, &argp.ex_anon) {
+        free_np();
+        return Err(e);
+    }
+    let rnh: &'static RadixNodeHead = match saddr_buf[1] {
+        AF_INET => match nep.ne_rtable_inet.get() {
+            Some(rnh) => rnh,
+            None => {
+                let mut head = None;
+                if !rn_inithead(
+                    &mut head,
+                    core::mem::offset_of!(SockaddrIn, sin_addr) as i32,
+                ) {
+                    free_np();
+                    return Err(Errno::ENOBUFS);
+                }
+                nep.ne_rtable_inet.set(head);
+                let Some(rnh) = head else {
+                    free_np();
+                    return Err(Errno::ENOBUFS);
+                };
+                rnh
+            }
+        },
+        _ => {
+            free_np();
+            return Err(Errno::EINVAL);
+        }
+    };
+    // SAFETY: `rn_init` ran in `vfs_init`; the address and the mask are byte strings led by
+    // their length, `addrlen`/`masklen` long and followed by `KEYLEN_PAD` readable bytes (so
+    // readable for the radix code's `max_keylen`); both stay in place, with the node pair
+    // `np.netc_rnodes` (zeroed), until `vfs_free_netcred` deletes the route.
+    let rn = unsafe { rn_addroute(saddr, smask, rnh, &np.netc_rnodes, 0) };
+    if !rn.is_some_and(|rn| core::ptr::eq(core::ptr::from_ref(rn).cast::<Netcred>(), np)) {
+        // already exists
+        free_np();
+        return Err(Errno::EPERM);
+    }
+    np.netc_exflags.set(argp.ex_flags);
+    Ok(())
 }
 
-/// `vfs_export_lookup(mp, nep, nam)`: lookup host in fs export list; NULL without
-/// `NFSSERVER`.
+/// `vfs_free_netcred`: delete an export entry from its tree and free it (the function
+/// `rn_walktree` calls for every entry of `rnh`).
+#[cfg(feature = "nfsserver")]
+fn vfs_free_netcred(rn: &'static RadixNode, rnh: &RadixNodeHead) {
+    let np = core::ptr::from_ref(rn).cast::<Netcred>();
+    // SAFETY: `rn` is the leaf of an entry `vfs_hang_addrlist` added to `rnh`, visited by
+    // `rn_walktree`, the one leaf that may be deleted inside the walk; its key and mask stay
+    // allocated until the `free` below.
+    let _ = unsafe { rn_delete(rn.rn_key.get(), rn.rn_mask.get(), rnh, None) };
+    // SAFETY: the node pair is the first member of the `Netcred` that was `malloc`ed with
+    // `M_NETADDR`; `rn_delete` has returned it, so nothing refers to it any more.
+    unsafe {
+        let len = (*np).netc_len.get() as usize;
+        free(
+            NonNull::new_unchecked(np.cast_mut().cast::<u8>()),
+            M_NETADDR,
+            len,
+        );
+    }
+}
+
+/// Free the net address hash lists that are hanging off the mount points.
+#[cfg(feature = "nfsserver")]
+fn vfs_free_addrlist(nep: &'static Netexport) {
+    if let Some(rnh) = nep.ne_rtable_inet.get() {
+        let _ = rn_walktree(rnh, |rn, _id| {
+            vfs_free_netcred(rn, rnh);
+            Ok(())
+        });
+        free(
+            NonNull::from(rnh).cast::<u8>(),
+            M_RTABLE,
+            size_of::<RadixNodeHead>(),
+        );
+        nep.ne_rtable_inet.set(None);
+    }
+}
+
+/// `vfs_export(mp, nep, argp)`: process mount export info. `nep` is the file system's export
+/// list (`um_export`, ...), `argp` the kernel copy of the `struct export_args`.
+pub fn vfs_export(
+    mp: &'static Mount,
+    nep: &'static Netexport,
+    argp: &ExportArgs,
+) -> Result<(), Errno> {
+    #[cfg(feature = "nfsserver")]
+    {
+        if argp.ex_flags & MNT_DELEXPORT != 0 {
+            vfs_free_addrlist(nep);
+            mp.mnt_flag
+                .set(mp.mnt_flag.get() & !(MNT_EXPORTED | MNT_DEFEXPORTED));
+        }
+        if argp.ex_flags & MNT_EXPORTED != 0 {
+            vfs_hang_addrlist(mp, nep, argp)?;
+            mp.mnt_flag.set(mp.mnt_flag.get() | MNT_EXPORTED);
+        }
+        Ok(())
+    }
+    #[cfg(not(feature = "nfsserver"))]
+    {
+        let _ = (mp, nep, argp);
+        Err(Errno::ENOTSUP)
+    }
+}
+
+/// `vfs_export_lookup(mp, nep, nam)`: lookup host in fs export list. `nam` is the mbuf with
+/// the client's `struct sockaddr` (none: only the default export can match). Without
+/// `NFSSERVER` there is never an entry.
 pub fn vfs_export_lookup(
-    _mp: &'static Mount,
-    _nep: *mut c_void,
-    _nam: *const c_void,
-) -> *mut c_void {
-    ptr::null_mut()
+    mp: &'static Mount,
+    nep: &'static Netexport,
+    nam: Option<&Mbuf>,
+) -> Option<&'static Netcred> {
+    #[cfg(feature = "nfsserver")]
+    {
+        // SAFETY: an address mbuf holds a `struct sockaddr`, readable for `max_keylen` bytes
+        // (the longest key), as every mbuf's data area is.
+        unsafe { export_lookup(mp, nep, nam.map(|m| mtod::<u8>(m).cast_const())) }
+    }
+    #[cfg(not(feature = "nfsserver"))]
+    {
+        let _ = (mp, nep, nam);
+        None
+    }
+}
+
+/// The body of `vfs_export_lookup`, over the client's `struct sockaddr` as a byte pointer.
+///
+/// # Safety
+///
+/// `saddr`, when given, points at a `struct sockaddr` readable for its length byte and for
+/// the radix code's `max_keylen` bytes (an mbuf's data area is), and `rn_init` has run.
+#[cfg(feature = "nfsserver")]
+unsafe fn export_lookup(
+    mp: &'static Mount,
+    nep: &'static Netexport,
+    saddr: Option<*const u8>,
+) -> Option<&'static Netcred> {
+    let mut np: Option<&'static Netcred> = None;
+    if mp.mnt_flag.get() & MNT_EXPORTED != 0 {
+        // Lookup in the export list first.
+        if let Some(saddr) = saddr {
+            // SAFETY: the caller's contract: the family byte is readable.
+            let family = unsafe { saddr.add(1).read() };
+            let rnh = match family {
+                AF_INET => nep.ne_rtable_inet.get(),
+                _ => None,
+            };
+            if let Some(rnh) = rnh {
+                // SAFETY: the tree holds only entries `vfs_hang_addrlist` made, live until
+                // `vfs_free_addrlist`; `saddr` is a key by the caller's contract; the leaf
+                // is the first member of its `Netcred`.
+                np = unsafe {
+                    rn_match(saddr, rnh).map(|rn| &*core::ptr::from_ref(rn).cast::<Netcred>())
+                };
+            }
+        }
+        // If no address match, use the default if it exists.
+        if np.is_none() && mp.mnt_flag.get() & MNT_DEFEXPORTED != 0 {
+            np = Some(&nep.ne_defexported);
+        }
+    }
+    np
 }
 
 /// Do the usual access checking. `file_mode`, `uid` and `gid` are from the vnode in question,

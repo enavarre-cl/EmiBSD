@@ -164,3 +164,99 @@ fn an_arp_entry_is_made_resolved_answered_and_aged_out() {
         m_freem(m);
     }
 }
+
+/// The RARP client (`NFSCLIENT`): `revarprequest` broadcasts an RFC 903 request, and
+/// `in_revarpinput` takes the reply only while a `revarpwhoarewe` is out on that interface and
+/// only for our hardware address.
+#[cfg(feature = "nfsclient")]
+#[test]
+fn a_rarp_request_goes_out_and_the_reply_is_taken_once() {
+    use crate::kern::uipc_mbuf::m_freem;
+    use crate::net::ethertypes::ETHERTYPE_REVARP;
+    use crate::net::if_arp::ARPOP_REVREQUEST;
+    use crate::net::if_ethersubr::ether_input;
+    use crate::net::ifq::ifq_dequeue;
+    use crate::netinet::ip_input::tests::{
+        ADDR, GATEWAY, OURS, PEER, bytes, configure, frame, setup, test_ether, unconfigure,
+    };
+
+    let _g = setup();
+    let ifp = test_ether();
+    configure(ifp, ADDR, [255, 255, 255, 0]);
+    while let Some(m) = ifq_dequeue(&ifp.if_snd) {
+        m_freem(m);
+    }
+    REVARP_IFIDX.store(0, Ordering::Relaxed);
+    REVARP_FINISHED.store(false, Ordering::Relaxed);
+    REVARP_MYIP.store(0, Ordering::Relaxed);
+    REVARP_SRVIP.store(0, Ordering::Relaxed);
+
+    // The request: broadcast, from us, asking for the address of our own hardware address.
+    revarprequest(ifp);
+    let req = ifq_dequeue(&ifp.if_snd).expect("RARP request");
+    let b = bytes(req);
+    m_freem(req);
+    assert_eq!(&b[0..6], &[0xff; 6], "to everyone");
+    assert_eq!(&b[6..12], &OURS);
+    assert_eq!(&b[12..14], &ETHERTYPE_REVARP.to_be_bytes());
+    assert_eq!(
+        &b[14..20],
+        &[0, 1, 8, 0, 6, 4],
+        "ethernet, ip, 6 and 4 bytes"
+    );
+    assert_eq!(&b[20..22], &ARPOP_REVREQUEST.to_be_bytes());
+    assert_eq!(&b[22..28], &OURS, "sender hardware address");
+    assert_eq!(&b[28..32], &[0; 4]);
+    assert_eq!(&b[32..38], &OURS, "target hardware address");
+    assert_eq!(&b[38..42], &[0; 4]);
+
+    let deliver = |tha: [u8; 6]| {
+        ether_input(
+            ifp,
+            frame(
+                ifp,
+                OURS,
+                ETHERTYPE_REVARP,
+                &arp_packet(ARPOP_REVREPLY, tha, ADDR),
+            ),
+            None,
+        );
+    };
+    // Nobody is waiting: the reply is dropped.
+    deliver(OURS);
+    assert!(!REVARP_FINISHED.load(Ordering::Relaxed));
+
+    // A request is out on this interface; a reply for somebody else is not ours.
+    REVARP_IFIDX.store(ifp.if_index.get(), Ordering::Relaxed);
+    deliver(PEER);
+    assert!(!REVARP_FINISHED.load(Ordering::Relaxed));
+    // One that came in on another interface is not either.
+    REVARP_IFIDX.store(ifp.if_index.get() + 1, Ordering::Relaxed);
+    deliver(OURS);
+    assert!(!REVARP_FINISHED.load(Ordering::Relaxed));
+
+    // Ours: the server (the sender's protocol address) and our address (the target's) are kept.
+    REVARP_IFIDX.store(ifp.if_index.get(), Ordering::Relaxed);
+    deliver(OURS);
+    assert!(REVARP_FINISHED.load(Ordering::Relaxed));
+    assert_eq!(REVARP_SRVIP.load(Ordering::Relaxed).to_ne_bytes(), GATEWAY);
+    assert_eq!(REVARP_MYIP.load(Ordering::Relaxed).to_ne_bytes(), ADDR);
+
+    // A later reply does not change what was taken.
+    REVARP_MYIP.store(0, Ordering::Relaxed);
+    deliver(OURS);
+    assert_eq!(REVARP_MYIP.load(Ordering::Relaxed), 0);
+
+    // Asking again after an answer is an error.
+    REVARP_IFIDX.store(0, Ordering::Relaxed);
+    assert_eq!(revarpwhoarewe(ifp).err(), Some(Errno::EIO));
+    assert_eq!(revarpwhoami(ifp).err(), Some(Errno::EIO));
+
+    REVARP_FINISHED.store(false, Ordering::Relaxed);
+    REVARP_MYIP.store(0, Ordering::Relaxed);
+    REVARP_SRVIP.store(0, Ordering::Relaxed);
+    unconfigure(ifp, ADDR);
+    while let Some(m) = ifq_dequeue(&ifp.if_snd) {
+        m_freem(m);
+    }
+}

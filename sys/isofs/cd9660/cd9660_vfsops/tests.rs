@@ -266,6 +266,32 @@ fn stat(p: &Proc, name: &'static [u8]) -> Result<Stat, Errno> {
     Ok(st)
 }
 
+/// `mount -u` of a disc with an export list (`im_export`): `cd9660_check_export` answers the
+/// listed client and refuses the others.
+#[cfg(feature = "nfsserver")]
+#[test]
+fn an_exported_disc_answers_check_export() {
+    use crate::kern::uipc_mbuf::tests::mbinit_again;
+    use crate::kern::vfs_subr::tests::exports::{args, check_export, sin};
+    use crate::sys::mount::{MNT_EXPORTED, MNT_EXRDONLY};
+
+    let (_g, p) = setup(image::image_bytes());
+    mbinit_again();
+    let (mp, _flags) = mount_root(p, 0).unwrap();
+    let imp = vfstoisofs(mp);
+    let ro = MNT_EXPORTED | MNT_EXRDONLY;
+    assert_eq!(check_export(mp, [10, 0, 0, 5]), Err(Errno::EACCES));
+
+    let net = sin(2, [10, 0, 0, 0]);
+    let mask = sin(2, [255, 255, 255, 0]);
+    vfs_export(mp, &imp.im_export, &args(ro, 32767, Some(net), Some(mask))).unwrap();
+    assert_eq!(check_export(mp, [10, 0, 0, 5]), Ok((ro, 32767)));
+    assert_eq!(check_export(mp, [10, 0, 1, 5]), Err(Errno::EACCES));
+
+    unmount_root(p, mp);
+    teardown();
+}
+
 #[test]
 fn a_rock_ridge_disc_mounts_and_reads() {
     let (_g, p) = setup(image::image_bytes());

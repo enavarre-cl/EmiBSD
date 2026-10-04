@@ -48,8 +48,6 @@
 //!   around the kernel copy of the name) instead of reinitialising the caller's `ndp`, whose
 //!   lifetime cannot hold a local name. `swapdev` and `nblkdev` come from the machine's
 //!   `conf.c` (`crate::machine::conf`).
-//! - `um_export` (`NFSSERVER`) is not kept, so the export update of `ffs_mount` passes a
-//!   NULL table to `vfs_export`, which answers `ENOTSUP` without `NFSSERVER`.
 //! - `ffs_vars[]` holds only the `UFS_DIRHASH` variables (feature `ufs_dirhash`); without
 //!   the feature it is empty and `ffs_sysctl` answers every name as `sysctl_bounded_arr`
 //!   does for an unknown one.
@@ -406,9 +404,7 @@ pub fn ffs_mount(
                 };
                 if a.fspec == 0 {
                     // Process export requests.
-                    if let Err(e) =
-                        vfs_export(mp, ptr::null_mut(), ptr::from_ref(&a.export_info).cast())
-                    {
+                    if let Err(e) = vfs_export(mp, &u.um_export, &a.export_info) {
                         break 'error_1 Err(e);
                     }
                     break 'success;

@@ -85,6 +85,7 @@ pub mod termios;
 pub mod time;
 pub mod timeout;
 pub mod timetc;
+pub mod tprintf;
 pub mod tree;
 pub mod tty;
 pub mod ttycom;
