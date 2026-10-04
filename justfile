@@ -180,7 +180,7 @@ smoke-shell: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "Enter pathname of shell or RETURN for sh:" \
         --expect " 8.0 GENERIC#" --expect "amd64" \
         --expect "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1)" \
-        --expect "bin  dev  etc  home root sbin tmp  usr  var" --expect "pfctl"
+        --expect "bin  dev  etc  home mnt  root sbin tmp  usr  var" --expect "pfctl"
     cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
         --send-after "RETURN for sh:" --send '\n' \
         --send-after "# " --send 'uname -a\n' --send-after "GENERIC#" --send 'uname -sr\n' \
@@ -191,7 +191,7 @@ smoke-shell: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "Enter pathname of shell or RETURN for sh:" \
         --expect " 8.0 GENERIC#" --expect "arm64" \
         --expect "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1)" \
-        --expect "bin  dev  etc  home root sbin tmp  usr  var" --expect "pfctl"
+        --expect "bin  dev  etc  home mnt  root sbin tmp  usr  var" --expect "pfctl"
 
 # M8b: a plain boot of the ramdisk goes multi-user: init(8) runs /etc/rc (`rc: multi-user`),
 # then getty(8) on tty00 prints `login:`; the session logs in as root (the test image's
@@ -314,7 +314,7 @@ smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "rc: multi-user" --expect " /sbin/init" --expect " -ksh (ksh)" \
         --expect "root         1  " \
         --expect "USER     CMD          PID   FD MOUNT" --expect "root     ksh" \
-        --expect "rw    tty00" --expect "sr rd0  int" \
+        --expect "rw    tty00" --expect "sr sd0 rd0  int" \
         --expect "interrupt                       total     rate" --expect "/com0" \
         --expect "bytes per page" --expect "Memory statistics by bucket size" \
         --expect "Memory resource pool statistics" --expect "/dev/rd0a        " \
@@ -336,7 +336,7 @@ smoke-diag: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         --expect "rc: multi-user" --expect " /sbin/init" --expect " -ksh (ksh)" \
         --expect "root         1  " \
         --expect "USER     CMD          PID   FD MOUNT" --expect "root     ksh" \
-        --expect "rw    tty00" --expect "sr rd0  int" \
+        --expect "rw    tty00" --expect "sr sd0 sd1  int" \
         --expect "interrupt                       total     rate" --expect "/pluart0" \
         --expect "bytes per page" --expect "Memory statistics by bucket size" \
         --expect "Memory resource pool statistics" --expect "/dev/rd0a        " \
