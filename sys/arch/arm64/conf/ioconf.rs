@@ -6,7 +6,8 @@
 //!
 //! GENERIC lines present: `mainbus0 at root`, `ampintc* at fdt? early 1`, `agtimer* at fdt?`,
 //! `virtio* at fdt?`, `vio* at virtio?`, `vioblk* at virtio?`, `scsibus* at scsi?`,
-//! `sd* at scsibus?`, `pluart* at fdt?`,
+//! `sd* at scsibus?`, `softraid0 at root` and `scsibus* at softraid?` (conf/GENERIC),
+//! `pluart* at fdt?`,
 //! `plrtc* at fdt?`, `efi0 at mainbus?`;
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
@@ -33,6 +34,7 @@ use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
 use crate::dev::pv::vioblk::{VIOBLK_CA, VIOBLK_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
+use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
 use crate::dev::vnd::{NVND, vndattach};
 use crate::kern::tty_pty::ptyattach;
 use crate::net::bpf::bpfilterattach;
@@ -62,8 +64,9 @@ const LOC_EARLY_0: &[i64] = &[0];
 /// `pv[]` for children of `virtio*` (`cfdata[3]`).
 const PV_VIRTIO: &[i16] = &[3];
 
-/// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`).
-const PV_VIOBLK: &[i16] = &[5];
+/// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`) and
+/// `softraid0` (`cfdata[11]`).
+const PV_VIOBLK: &[i16] = &[5, 11];
 
 /// `pv[]` for children of `scsibus*` (`cfdata[9]`).
 const PV_SCSIBUS: &[i16] = &[9];
@@ -73,7 +76,7 @@ const PV_SCSIBUS: &[i16] = &[9];
 const LOC_SCSIBUS_UNK: &[i64] = &[-1, -1];
 
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 11] = [
+pub static CFDATA: [Cfdata; 12] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -172,7 +175,7 @@ pub static CFDATA: [Cfdata; 11] = [
         0,
         0,
     ),
-    // 9: scsibus* at scsi? (vioblk is the only `scsi` adapter)
+    // 9: scsibus* at scsi? (vioblk), and at softraid? (GENERIC's `scsibus* at softraid?`)
     Cfdata::new(
         &SCSIBUS_CA,
         &SCSIBUS_CD,
@@ -196,10 +199,22 @@ pub static CFDATA: [Cfdata; 11] = [
         0,
         0,
     ),
+    // 11: softraid0 at root
+    Cfdata::new(
+        &SOFTRAID_CA,
+        &SOFTRAID_CD,
+        0,
+        FSTATE_NOTFOUND,
+        &[],
+        0,
+        &[],
+        0,
+        0,
+    ),
 ];
 
-/// `cfroots[]`: `mainbus0`.
-pub static CFROOTS: [i16; 1] = [0];
+/// `cfroots[]`: `mainbus0`, `softraid0`.
+pub static CFROOTS: [i16; 2] = [0, 11];
 
 /// `pdevinit[]`: the pseudo-devices of the MI `conf/GENERIC` whose attach functions are
 /// ported, in `ioconf.c`'s order (`pseudo-device pf`, `pseudo-device pflog`, `pseudo-device

@@ -956,6 +956,11 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   every 27 ms). So, also under `qemu` only, a TSC no reference has recalibrated gets the
   quality 2000 `calibrate_tsc_freq` gives a calibrated invariant TSC. Without the feature the
   C's rules apply unchanged.
+- softraid's boot keys (`sr_bootuuid`, `sr_bootkey`) have no source under Limine (M10f).
+  OpenBSD's own loaders set them: amd64 boot(8) through `bios_bootsr`, arm64 efiboot through
+  the `openbsd,sr-bootuuid` and `openbsd,sr-bootkey` properties. Here they stay zero
+  (`replaced-by-limine`; comments mark both `machdep.rs` sites), so no crypto volume is
+  unlocked at boot. It is unlocked afterwards with `bioctl -c C -p <passfile> -l <chunk>`.
 
 ## Testing architecture
 

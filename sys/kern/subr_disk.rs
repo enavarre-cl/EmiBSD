@@ -67,7 +67,9 @@
 //! - `duid_format` returns the 16 hex digits by value instead of a static buffer.
 //! - `disk_map` returns `true` where the C returns 0 and `false` for -1; `mappath` is a
 //!   separate buffer (the C lets `path` and `mappath` be the same array; a Rust caller copies).
-//! - `softraid_disk_attach` and `sr_map_root` are `NSOFTRAID` (not configured); `DEBUG`'s
+//! - `softraid_disk_attach` (softraid callback, do not use!) is [`SOFTRAID_DISK_ATTACH`]: the
+//!   one function the C stores in it is `dev/softraid.rs`'s `sr_disk_attach`, so the flag says
+//!   whether it is set (by `sr_attach`) and the call names it. `DEBUG`'s
 //!   `DPRINTF`s are not configured.
 //! - `dk_mountroot`: `FFS` (feature `ffs`) and `CD9660` (feature `cd9660`) are the file
 //!   systems the kernel configuration names with a mountroot; `EXT2FS` is not configured.
@@ -84,12 +86,13 @@ use alloc::vec::Vec;
 use core::ffi::c_void;
 use core::fmt;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 
 use libkern::StaticCell;
 use libz::crc32;
 
 use crate::dev::rnd::{arc4random_buf, enqueue_randomness};
+use crate::dev::softraid::{sr_disk_attach, sr_map_root};
 use crate::kern::init_main::BOOTHOWTO;
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
@@ -225,6 +228,10 @@ pub static DISK_CHANGE: AtomicI32 = AtomicI32::new(0);
 pub static BOOTDUID: StaticCell<[u8; DUID_SIZE]> = StaticCell::new([0; DUID_SIZE]);
 /// `rootduid`: DUID of root disk. Written by `setroot`.
 pub static ROOTDUID: StaticCell<[u8; DUID_SIZE]> = StaticCell::new([0; DUID_SIZE]);
+
+/// `softraid_disk_attach` (softraid callback, do not use!): whether `sr_attach` has set it
+/// (to `sr_disk_attach`, the only function the C ever stores there).
+pub static SOFTRAID_DISK_ATTACH: AtomicBool = AtomicBool::new(false);
 
 /// `rootdv`: the root device, chosen by `setroot`.
 pub static ROOTDV: AtomicPtr<Device> = AtomicPtr::new(ptr::null_mut());
@@ -1198,7 +1205,9 @@ pub fn disk_attach(dv: Option<&Device>, diskp: &'static Disk) {
         }
     }
 
-    // softraid_disk_attach: NSOFTRAID not configured.
+    if SOFTRAID_DISK_ATTACH.load(Ordering::Relaxed) {
+        sr_disk_attach(diskp, 1);
+    }
 }
 
 /// `disk_attach_callback`: reads the label of a newly attached disk (from `systq`), so
@@ -1235,7 +1244,9 @@ pub fn disk_attach_callback(xdat: *mut c_void) {
 pub fn disk_detach(diskp: &Disk) {
     // KERNEL_ASSERT_LOCKED(): nothing without MULTIPROCESSOR.
 
-    // softraid_disk_attach: NSOFTRAID not configured.
+    if SOFTRAID_DISK_ATTACH.load(Ordering::Relaxed) {
+        sr_disk_attach(diskp, -1);
+    }
 
     // Free the space used by the disklabel structures.
     if let Some(label) = diskp.dk_label.take() {
@@ -1516,7 +1527,8 @@ pub fn setroot(bootdv: Option<&'static Device>, part: u32, exitflags: i32) {
     let rootduid = unsafe { ROOTDUID.get_mut() };
     *rootduid = *bootduid;
 
-    // NSOFTRAID: not configured (sr_map_root).
+    // NSOFTRAID > 0
+    sr_map_root();
 
     // If `swap generic' and we couldn't determine boot device, ask the user.
     let mut dk_found: Option<&Disk> = None;

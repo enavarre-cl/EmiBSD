@@ -339,6 +339,9 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
     init_static_msgbuf();
     consinit();
 
+    // `openbsd,sr-bootuuid` and `openbsd,sr-bootkey` (efiboot's softraid boot volume and
+    // key, copied into `sr_bootuuid`/`sr_bootkey` under NSOFTRAID): replaced-by-limine, no
+    // loader sets them; `dev/softraid.rs`'s `SR_BOOTUUID`/`SR_BOOTKEY` stay zero.
     // The UEFI system table and memory map efiboot puts in /chosen (see the module's
     // deviations).
     if let Some(st) = boot.efi_system_table {

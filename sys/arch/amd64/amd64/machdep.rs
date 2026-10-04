@@ -470,6 +470,10 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
     // the level is IPL_IPI, so nothing can be delivered that has no handler.
     unsafe { intr_enable() };
 
+    // BOOTARG_BOOTSR (`bios_bootsr`: the UUID and mask key of the softraid volume OpenBSD's
+    // boot(8) booted from, copied into `sr_bootuuid`/`sr_bootkey` under NSOFTRAID):
+    // replaced-by-limine. Limine hands no softraid key over, so `dev/softraid.rs`'s
+    // `SR_BOOTUUID`/`SR_BOOTKEY` stay zero and a crypto volume is unlocked with bioctl(8).
     // The ACPI/MP tables, the memory-map and -b/-c handling of the bootinfo: M5;
     // db_machine_init() and ddb_init() with the command loop.
     if BOOTHOWTO.load(Ordering::Relaxed) & RB_KDB != 0 {

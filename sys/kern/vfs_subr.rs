@@ -1623,7 +1623,8 @@ pub fn vfs_shutdown(p: &Proc) {
         vfs_unmountall();
     }
 
-    // NSOFTRAID: not configured.
+    // NSOFTRAID > 0
+    crate::dev::softraid::sr_quiesce();
 
     if vfs_syncwait(p, true) != 0 {
         kprintf!(" giving up\n");

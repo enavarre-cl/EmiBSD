@@ -23,8 +23,8 @@
 //! 1, 5, 6, concat, crypto, RAID 1C) are made of chunks (disk partitions of type `RAID`),
 //! carry their metadata on every chunk, and appear as SCSI disks (`sd(4)`) on softraid's own
 //! `scsibus`. This file holds the metadata handling, the work units and ccbs the disciplines
-//! build their I/O from, the SCSI emulation defaults, and (phase 2 of the port) the bio(4)
-//! ioctls, boot-time assembly, hotspares, rebuild and sensors.
+//! build their I/O from, the SCSI emulation defaults, the bio(4) ioctls, boot-time assembly,
+//! hotspares, rebuild and sensors.
 //!
 //! Upstream: sys/dev/softraid.c @ 3ce1f3f79392
 //!
@@ -58,70 +58,122 @@
 //! - `sr_hotplug_register`/`unregister` take a typed callback ([`SrHotplugFn`]) instead of a
 //!   `void *`; the comparison is `ptr::fn_addr_eq`.
 //! - The `CRYPTO` arms (`'C'`, `0x1C`) are always compiled: GENERIC has `option CRYPTO`.
-//!
-//! Status: wip (phase 1: the discipline-facing part). Not yet in this file: the boot
-//! probe and assembly, `sr_map_root`, attach/detach, the SCSI adapter, the bio ioctls,
-//! hotspares (`sr_hotspare_rebuild` reports itself), `sr_rebuild_init`, roaming, the
-//! discipline shutdown, sensors, `sr_quiesce`/`sr_shutdown`.
-
+//!   `softraid.c` calls nothing else in `softraid_crypto.c`; the key disk is read through
+//!   `mdd_crypto.key_disk`, and for RAID 1C through `mdd_raid1c.sr1c_crypto.key_disk`
+//!   (the C reads it through the union's other member).
+//! - `SMALL_KERNEL` is not defined: the sensors are compiled. `HIBERNATE` is not configured:
+//!   `sr_hibernate_io` does not exist.
+//! - `sr_bootuuid`/`sr_bootkey` ([`SR_BOOTUUID`], [`SR_BOOTKEY`]): amd64's `bios_bootsr`
+//!   and arm64's `openbsd,sr-boot*` properties come from OpenBSD's own loaders; with Limine
+//!   nothing sets them (`replaced-by-limine`), so they stay zero.
+//! - `softraid_disk_attach` is `subr_disk.rs`'s `SOFTRAID_DISK_ATTACH` flag, which
+//!   `sr_attach` sets and `disk_attach`/`disk_detach` test before calling
+//!   [`sr_disk_attach`].
+//! - The bio(4) ioctl structures are read out of the ioctl's bytes (`bio_arg`) and the
+//!   members the C changes are written back one by one with the status (`bio_put`): the
+//!   structures have padding, which a whole-structure copy would turn into uninitialised
+//!   bytes.
+//! - `sr_ioctl_createraid` takes the device list as `Option<&[Dev]>`: `None` is the C's
+//!   `user` (copied in from `bc_dev_list`), `Some` the boot assembly's kernel array. Its
+//!   `rv` is an `Option<Errno>` so that the C's 0 on some unwind paths stays a success.
+//! - `sr_boot_assembly` restarts its disk scan after each probe, as the C does, by looking
+//!   for the first disk not yet on `sdklist`; a chunk id past `BIOC_CRMAXLEN` (where the C
+//!   indexes past its arrays) is ignored. The arrays are `Vec`s (`try_reserve`).
+//! - `sr_hotspare`'s and the boot probe's fake disciplines carry a full `SR_META_SIZE`
+//!   metadata area (the C's hotspare one is `sizeof(struct sr_metadata)`).
+//! - `sr_discipline_free` wipes the crypto keys member by member instead of
+//!   `explicit_bzero`ing the whole discipline (a byte view of a structure that is still
+//!   referenced would alias it).
+use alloc::vec::Vec;
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::mem::offset_of;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::AtomicPtr;
+use core::sync::atomic::{AtomicPtr, Ordering};
 
-use libkern::strlcpy;
+use libkern::{StaticCell, explicit_bzero, strlcpy};
 
 use crate::crypto::md5::{MD5_DIGEST_LENGTH, MD5Final, MD5Init, MD5Update, Md5Ctx};
-use crate::dev::bio::bio_status;
+use crate::dev::bio::{bio_register, bio_status, bio_status_init};
 use crate::dev::biovar::{
-    BIO_MSG_ERROR, BIO_MSG_INFO, BIO_MSG_WARN, BIOC_SDINVALID, BIOC_SDOFFLINE, BIOC_SDONLINE,
-    BIOC_SDREBUILD, BIOC_SVINVALID, BIOC_SVOFFLINE, BIOC_SVONLINE,
+    BIO_MSG_COUNT, BIO_MSG_ERROR, BIO_MSG_INFO, BIO_MSG_LEN, BIO_MSG_WARN, BIO_STATUS_ERROR,
+    BIO_STATUS_SUCCESS, BIOC_CRMAXLEN, BIOC_SCBOOTABLE, BIOC_SCDEVT, BIOC_SCFORCE,
+    BIOC_SCNOAUTOASSEMBLE, BIOC_SDHOTSPARE, BIOC_SDINVALID, BIOC_SDOFFLINE, BIOC_SDONLINE,
+    BIOC_SDREBUILD, BIOC_SDSCRUB, BIOC_SSHOTSPARE, BIOC_SSOFFLINE, BIOC_SSOTHER_UNUSED,
+    BIOC_SSREBUILD, BIOC_SVDEGRADED, BIOC_SVINVALID, BIOC_SVOFFLINE, BIOC_SVONLINE, BIOC_SVREBUILD,
+    BIOC_SVSCRUB, BIOCALARM, BIOCBLINK, BIOCCREATERAID, BIOCDELETERAID, BIOCDISCIPLINE, BIOCDISK,
+    BIOCINQ, BIOCINSTALLBOOT, BIOCSETSTATE, BIOCVOL, Bio, BioMsg, BioStatus, BiocCreateraid,
+    BiocDeleteraid, BiocDiscipline, BiocDisk, BiocInq, BiocInstallboot, BiocSetstate, BiocVol,
 };
 use crate::dev::rnd::arc4random_buf;
 use crate::dev::softraidvar::*;
 use crate::kassert;
-use crate::kern::kern_kthread::kthread_exit;
+use crate::kern::kern_kthread::{kthread_create, kthread_create_deferred, kthread_exit};
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
-use crate::kern::kern_rwlock::rw_assert_wrlock;
+use crate::kern::kern_rwlock::{rw_assert_wrlock, rw_enter_write, rw_exit_write, rw_init};
+use crate::kern::kern_sensors::{
+    sensor_attach, sensor_detach, sensor_task_register, sensor_task_unregister,
+    sensordev_deinstall, sensordev_install,
+};
 use crate::kern::kern_synch::{tsleep_nsec, wakeup};
-use crate::kern::kern_task::{task_add, task_set};
-use crate::kern::subr_disk::findblkname;
+use crate::kern::kern_task::{task_add, task_set, taskq_create, taskq_destroy};
+use crate::kern::subr_autoconf::{config_detach, config_found, config_suspend};
+use crate::kern::subr_disk::{
+    DISKLIST, DUID_SIZE, ROOTDUID, SOFTRAID_DISK_ATTACH, duid_iszero, findblkname,
+};
 use crate::kern::subr_pool::{pool_get, pool_put};
 use crate::kern::subr_prf::{Str, panic, printf, snprintf};
+use crate::kern::subr_xxx::blktochr;
 use crate::kern::vfs_bio::{BUFPOOL, biowait};
-use crate::kern::vfs_subr::{bdevvp, vput};
-use crate::kern::vfs_vops::{VOP_IOCTL, VOP_OPEN, VOP_STRATEGY};
+use crate::kern::vfs_subr::{bdevvp, cdevvp, vput};
+use crate::kern::vfs_vnops::vn_lock;
+use crate::kern::vfs_vops::{VOP_CLOSE, VOP_IOCTL, VOP_OPEN, VOP_STRATEGY};
+use crate::machine::copy::copyin;
 use crate::machine::cpu::curproc;
 use crate::machine::intr::{IPL_BIO, splassert, splbio, splx};
 use crate::queue_adapter;
 use crate::scsi::scsi_all::{
-    SI_EVPD, SID_CmdQue, SID_SCSI2_ALEN, SID_SCSI2_RESPONSE, SKEY_HARDWARE_ERROR,
-    SKEY_ILLEGAL_REQUEST, SKEY_NOT_READY, SSD_ERRCODE_CURRENT, SSD_ERRCODE_VALID, ScsiGeneric,
-    ScsiInquiry, ScsiInquiryData, ScsiReadCapData, ScsiReadCapData16, ScsiWire, T_DIRECT,
+    INQUIRY, REQUEST_SENSE, SI_EVPD, SID_CmdQue, SID_SCSI2_ALEN, SID_SCSI2_RESPONSE,
+    SKEY_HARDWARE_ERROR, SKEY_ILLEGAL_REQUEST, SKEY_NOT_READY, SSD_ERRCODE_CURRENT,
+    SSD_ERRCODE_VALID, START_STOP, ScsiGeneric, ScsiInquiry, ScsiInquiryData, ScsiReadCapData,
+    ScsiReadCapData16, ScsiWire, T_DIRECT, TEST_UNIT_READY,
 };
 use crate::scsi::scsi_base::{
-    SCSI_XFER_POOL, scsi_copy_internal_data, scsi_done, scsi_io_get, scsi_io_put,
+    SCSI_XFER_POOL, scsi_copy_internal_data, scsi_done, scsi_io_get, scsi_io_put, scsi_iopool_init,
 };
 use crate::scsi::scsi_disk::{
-    READ_16, READ_CAPACITY, READ_CAPACITY_16, ScsiRw, ScsiRw10, ScsiRw16, WRITE_16,
+    READ_10, READ_16, READ_CAPACITY, READ_CAPACITY_16, READ_COMMAND, SYNCHRONIZE_CACHE, ScsiRw,
+    ScsiRw10, ScsiRw16, WRITE_10, WRITE_16, WRITE_COMMAND,
 };
 use crate::scsi::scsiconf::{
     _3btol, _4btol, _8btol, _lto4b, _lto8b, DmaBuf, SCSI_DATA_IN, SCSI_DATA_OUT, SCSI_REV_2,
-    ScsiIo, ScsiXfer, XS_DRIVER_STUFFUP, XS_NOERROR,
+    SDEV_NO_ADAPTER_TARGET, ScsiAdapter, ScsiIo, ScsiLink, ScsiXfer, ScsibusAttachArgs,
+    ScsibusSoftc, XS_DRIVER_STUFFUP, XS_NOERROR, XS_SENSE, scsi_detach_lun, scsi_get_link,
+    scsi_probe_lun, scsiprint,
 };
 use crate::sys::buf::{B_CALL, B_ERROR, B_PHYS, B_READ, B_WRITE, Buf};
+use crate::sys::device::{
+    CD_COCOVM, CfMatch, Cfattach, Cfdriver, DETACH_FORCE, DV_DULL, DVACT_POWERDOWN, Device,
+};
 use crate::sys::disk::Disk;
 use crate::sys::disklabel::{
-    Disklabel, FS_RAID, diskpart, diskunit, dl_getpsize, dl_partnum2name, dl_sectoblk,
+    Disklabel, FS_RAID, MAXPARTITIONS, RAW_PART, diskpart, diskunit, dl_getpsize, dl_partnum2name,
+    dl_sectoblk, makediskdev,
 };
-use crate::sys::dkio::DIOCGDINFO;
+use crate::sys::dkio::{DIOCGCACHE, DIOCGDINFO, DIOCSCACHE};
 use crate::sys::errno::Errno;
 use crate::sys::fcntl::{FREAD, FWRITE};
+use crate::sys::ioccom::{iocgroup, iocparm_len};
+use crate::sys::lock::{LK_EXCLUSIVE, LK_RETRY};
 use crate::sys::malloc::{M_DEVBUF, M_NOWAIT, M_WAITOK, M_ZERO};
-use crate::sys::param::{DEV_BSHIFT, DEV_BSIZE, MAXPHYS, NODEV, PRIBIO, PWAIT};
+use crate::sys::param::{DEV_BSHIFT, DEV_BSIZE, MAXPHYS, MAXPRI, NODEV, PRIBIO, PWAIT};
 use crate::sys::pool::{PR_WAITOK, PR_ZERO};
 use crate::sys::queue::{SlistEntry, SlistHead};
+use crate::sys::sensors::{
+    SENSOR_DRIVE, SENSOR_DRIVE_FAIL, SENSOR_DRIVE_ONLINE, SENSOR_DRIVE_PFAIL, SENSOR_DRIVE_REBUILD,
+    SENSOR_S_CRIT, SENSOR_S_OK, SENSOR_S_UNKNOWN, SENSOR_S_WARN,
+};
 use crate::sys::systm::INFSLP;
 use crate::sys::task::SYSTQ;
 use crate::sys::time::{msec_to_nsec, sec_to_nsec};
@@ -225,6 +277,68 @@ pub static SOFTRAID0: AtomicPtr<SrSoftc> = AtomicPtr::new(ptr::null_mut());
 
 /// `sr_hotplug_callbacks`.
 pub static SR_HOTPLUG_CALLBACKS: SrHotplugListHead = SrHotplugListHead(SlistHead::new());
+
+/// `sr_bootuuid`: the UUID of the volume the machine booted from (`bios_bootsr`, the boot
+/// loader's hand-over; never set with Limine).
+pub static SR_BOOTUUID: StaticCell<SrUuid> = StaticCell::new(SrUuid {
+    sui_id: [0; SR_UUID_MAX],
+});
+
+/// `sr_bootkey`: the boot volume's mask key from the boot loader (never set with Limine);
+/// wiped once `sr_attach` has assembled the volumes.
+pub static SR_BOOTKEY: StaticCell<[u8; SR_CRYPTO_MAXKEYBYTES]> =
+    StaticCell::new([0; SR_CRYPTO_MAXKEYBYTES]);
+
+/// `softraid_ca`.
+pub static SOFTRAID_CA: Cfattach = Cfattach {
+    ca_devsize: size_of::<SrSoftc>(),
+    ca_match: Some(sr_match),
+    ca_attach: sr_attach,
+    ca_detach: Some(sr_detach),
+    ca_activate: None,
+};
+
+/// `softraid_cd`.
+pub static SOFTRAID_CD: Cfdriver = Cfdriver::new(b"softraid", DV_DULL, CD_COCOVM);
+
+/// `sr_switch`: the SCSI glue.
+pub static SR_SWITCH: ScsiAdapter = ScsiAdapter {
+    scsi_cmd: sr_scsi_cmd,
+    dev_minphys: None,
+    dev_probe: Some(sr_scsi_probe),
+    dev_free: None,
+    ioctl: Some(sr_scsi_ioctl),
+};
+
+/// `sr_bootuuid`, read.
+fn sr_bootuuid() -> SrUuid {
+    // SAFETY: written only before autoconfiguration (the boot loader's hand-over, which
+    // Limine does not make), read afterwards.
+    unsafe { SR_BOOTUUID.read() }
+}
+
+/// `TAILQ_FOREACH(sd, &sc->sc_dis_list, sd_link)` with the disciplines as `&'static`.
+fn dis_list(sc: &SrSoftc) -> impl Iterator<Item = &'static SrDiscipline> + '_ {
+    // SAFETY: disciplines are `malloc`ed and stay allocated until `sr_discipline_free`
+    // unlinks them from this list.
+    sc.sc_dis_list
+        .iter()
+        .map(|sd| unsafe { &*ptr::from_ref(sd) })
+}
+
+/// The chunks of a chunk list as `&'static`.
+fn chunk_list(cl: &SrChunkHead) -> impl Iterator<Item = &'static SrChunk> + '_ {
+    // SAFETY: chunks are `malloc`ed and stay allocated until `sr_chunks_unwind` (or the
+    // hotspare code) unlinks and frees them.
+    cl.iter().map(|c| unsafe { &*ptr::from_ref(c) })
+}
+
+/// `softraid0`, if attached.
+fn softraid0() -> Option<&'static SrSoftc> {
+    // SAFETY: `SOFTRAID0` is NULL or the softc `sr_attach` stored, which lives while the
+    // device is attached.
+    unsafe { SOFTRAID0.load(Ordering::Relaxed).as_ref() }
+}
 
 /// `&smd[sd->sd_meta_type]`.
 fn smd(sd: &SrDiscipline) -> &'static SrMetaDriver {
@@ -1130,6 +1244,533 @@ pub fn sr_meta_validate(
     Ok(())
 }
 
+/// Frees a boot chunk and its metadata copy.
+fn sr_boot_chunk_free(bc: &SrBootChunk) {
+    if let Some(md) = bc.sbc_metadata.take() {
+        sr_free(md, size_of::<SrMetadata>());
+    }
+    sr_free(NonNull::from(bc), size_of::<SrBootChunk>());
+}
+
+/// `sr_meta_native_bootprobe`: reads the label of the disk `devno` is on and, for every
+/// `RAID` partition with valid native metadata, adds a boot chunk to `bch`. Returns
+/// `SR_META_CLAIMED` if it found one.
+pub fn sr_meta_native_bootprobe(sc: &'static SrSoftc, devno: Dev, bch: &SrBootChunkHead) -> i32 {
+    let mut rv = SR_META_NOTCLAIMED;
+
+    // DNPRINTF(SR_D_META, "sr_meta_native_bootprobe")
+
+    let Some(p) = curproc() else {
+        return rv;
+    };
+
+    // Use character raw device to avoid SCSI complaints about missing media on removable
+    // media devices.
+    let chrdev = blktochr(devno);
+    let rawdev = makediskdev(major(chrdev), diskunit(devno), RAW_PART);
+    let vn = match cdevvp(rawdev) {
+        Ok(Some(vn)) => vn,
+        _ => {
+            sr_error(
+                sc,
+                format_args!("sr_meta_native_bootprobe: cannot allocate vnode"),
+            );
+            return rv;
+        }
+    };
+
+    // open device
+    if VOP_OPEN(vn, FREAD, NOCRED, p).is_err() {
+        // DNPRINTF(SR_D_META, "sr_meta_native_bootprobe open failed")
+        vput(vn);
+        return rv;
+    }
+
+    // get disklabel
+    let mut label = Disklabel::zeroed();
+    if VOP_IOCTL(vn, DIOCGDINFO, label.as_bytes_mut(), FREAD, NOCRED, p).is_err() {
+        // DNPRINTF(SR_D_META, "sr_meta_native_bootprobe ioctl failed")
+        let _ = VOP_CLOSE(vn, FREAD, NOCRED, Some(p));
+        vput(vn);
+        return rv;
+    }
+
+    // we are done, close device
+    if VOP_CLOSE(vn, FREAD, NOCRED, Some(p)).is_err() {
+        // DNPRINTF(SR_D_META, "sr_meta_native_bootprobe close failed")
+        vput(vn);
+        return rv;
+    }
+    vput(vn);
+
+    let Some(md) = SrMetaBuf::new(SR_META_BYTES, M_NOWAIT) else {
+        sr_error(sc, format_args!("not enough memory for metadata buffer"));
+        return rv;
+    };
+
+    // create fake sd to use utility functions
+    let Some(fake) = sr_malloc::<SrDiscipline>(M_NOWAIT) else {
+        sr_error(sc, format_args!("not enough memory for fake discipline"));
+        return rv;
+    };
+    // SAFETY: a zeroed discipline (`SrZeroed`), freed at the end of this function.
+    let fake_sd: &'static SrDiscipline = unsafe { fake.as_ref() };
+    fake_sd.sd_sc.set(sc);
+    fake_sd.sd_meta_type.set(SR_META_F_NATIVE);
+
+    for (i, pp) in label.d_partitions.iter().enumerate().take(MAXPARTITIONS) {
+        if pp.p_fstype != FS_RAID {
+            continue;
+        }
+
+        // open partition
+        let rawdev = makediskdev(major(devno), diskunit(devno), i as u32);
+        let vn = match bdevvp(rawdev) {
+            Ok(Some(vn)) => vn,
+            _ => {
+                sr_error(
+                    sc,
+                    format_args!("sr_meta_native_bootprobe: cannot allocate vnode for partition"),
+                );
+                break;
+            }
+        };
+        if VOP_OPEN(vn, FREAD, NOCRED, p).is_err() {
+            // DNPRINTF(SR_D_META, "sr_meta_native_bootprobe open failed, partition %d")
+            vput(vn);
+            continue;
+        }
+
+        if sr_meta_native_read(fake_sd, rawdev, md.cells(), ptr::null_mut()).is_err() {
+            sr_error(
+                sc,
+                format_args!("native bootprobe could not read native metadata"),
+            );
+            let _ = VOP_CLOSE(vn, FREAD, NOCRED, Some(p));
+            vput(vn);
+            continue;
+        }
+
+        // are we a softraid partition?
+        if md.md().ssdi().ssd_magic.get() != SR_MAGIC {
+            let _ = VOP_CLOSE(vn, FREAD, NOCRED, Some(p));
+            vput(vn);
+            continue;
+        }
+
+        if sr_meta_validate(fake_sd, rawdev, md.md(), ptr::null_mut()).is_ok() {
+            // XXX fix M_WAITOK, this is boot time
+            if let (Some(bcp), Some(mdp)) = (
+                sr_malloc::<SrBootChunk>(M_WAITOK),
+                sr_malloc::<SrMetadata>(M_WAITOK),
+            ) {
+                // SAFETY: a zeroed boot chunk (`SrZeroed`), freed by `sr_boot_assembly`.
+                let bc: &'static SrBootChunk = unsafe { bcp.as_ref() };
+                bc.sbc_metadata.set(Some(mdp));
+                bc.sbc_metadata().copy_from(md.md());
+                bc.sbc_mm.set(rawdev);
+                // SAFETY: a new boot chunk in no list; freed only after it is unlinked.
+                unsafe { bch.insert_head(bc) };
+                rv = SR_META_CLAIMED;
+            }
+        }
+
+        // we are done, close partition
+        let _ = VOP_CLOSE(vn, FREAD, NOCRED, Some(p));
+        vput(vn);
+    }
+
+    sr_free(fake, size_of::<SrDiscipline>());
+
+    rv
+}
+
+/// `sr_boot_assembly`: scans every `sd` and `wd` disk for softraid chunks, groups them by
+/// volume, adds the hotspares and brings every volume up (`sr_ioctl_createraid` with the
+/// chunks it found). Returns the number of volumes it tried.
+pub fn sr_boot_assembly(sc: &'static SrSoftc) -> i32 {
+    let bvh = SrBootVolumeHead::new();
+    let bch = SrBootChunkHead::new();
+    let kdh = SrBootChunkHead::new();
+    let sdklist = SrDiskHead::new();
+    let mut rv = 0;
+
+    // DNPRINTF(SR_D_META, "sr_boot_assembly")
+
+    'unwind: {
+        loop {
+            // The first disk not checked yet (the C restarts its scan after each probe,
+            // since it may have slept).
+            let dk = DISKLIST.0.iter().find(|dk| {
+                let devno = dk.dk_devno.get();
+                devno != NODEV && !sdklist.iter().any(|sdk| sdk.sdk_devno.get() == devno)
+            });
+            let Some(dk) = dk else {
+                break;
+            };
+
+            // Add this disk to the list that we've checked.
+            let Some(sdkp) = sr_malloc::<SrDisk>(M_NOWAIT) else {
+                break 'unwind;
+            };
+            // SAFETY: a zeroed entry (`SrZeroed`), freed below.
+            let sdk: &'static SrDisk = unsafe { sdkp.as_ref() };
+            sdk.sdk_devno.set(dk.dk_devno.get());
+            // SAFETY: a new entry in no list, freed after it is unlinked.
+            unsafe { sdklist.insert_head(sdk) };
+
+            // Only check sd(4) and wd(4) devices.
+            let name = dk.dk_name.get();
+            if !name.starts_with(b"sd") && !name.starts_with(b"wd") {
+                continue;
+            }
+
+            // native softraid uses partitions
+            let devno = dk.dk_devno.get();
+            rw_enter_write(&sc.sc_lock);
+            with_status(sc, |bs| bio_status_init(bs, &sc.sc_dev));
+            sr_meta_native_bootprobe(sc, devno, &bch);
+            rw_exit_write(&sc.sc_lock);
+
+            // probe non-native disks if native failed.
+        }
+
+        // Create a list of volumes and associate chunks with each volume.
+        while let Some(bc) = bch.first() {
+            // SAFETY: the list's first element.
+            unsafe { bch.remove_head() };
+            // SAFETY: boot chunks live until the unwind below frees them.
+            let bc: &'static SrBootChunk = unsafe { &*ptr::from_ref(bc) };
+            let md = bc.sbc_metadata();
+            bc.sbc_chunk_id.set(md.ssdi().ssd_chunk_id.get());
+
+            // Handle key disks separately.
+            if md.ssdi().ssd_level.get() == SR_KEYDISK_LEVEL {
+                // SAFETY: unlinked above.
+                unsafe { kdh.insert_head(bc) };
+                continue;
+            }
+
+            let uuid = md.ssdi().ssd_uuid.get();
+            let found = bvh.iter().find(|bv| bv.sbv_uuid.get() == uuid);
+            let bv: &'static SrBootVolume = match found {
+                // SAFETY: boot volumes live until the unwind below frees them.
+                Some(bv) => unsafe { &*ptr::from_ref(bv) },
+                None => {
+                    let Some(bvp) = sr_malloc::<SrBootVolume>(M_NOWAIT) else {
+                        printf(format_args!(
+                            "{}: failed to allocate boot volume\n",
+                            DEVNAME(sc)
+                        ));
+                        // SAFETY: not on any list any more.
+                        unsafe { bch.insert_head(bc) };
+                        break 'unwind;
+                    };
+                    // SAFETY: a zeroed boot volume (`SrZeroed`), freed below.
+                    let bv: &'static SrBootVolume = unsafe { bvp.as_ref() };
+                    bv.sbv_level.set(md.ssdi().ssd_level.get());
+                    bv.sbv_volid.set(md.ssdi().ssd_volid.get());
+                    bv.sbv_chunk_no.set(md.ssdi().ssd_chunk_no.get());
+                    bv.sbv_flags.set(md.ssdi().ssd_vol_flags.get());
+                    bv.sbv_uuid.set(uuid);
+                    bv.sbv_chunks.init();
+
+                    // Maintain volume order.
+                    let mut bv2: Option<&SrBootVolume> = None;
+                    for bv1 in bvh.iter() {
+                        if bv1.sbv_volid.get() > bv.sbv_volid.get() {
+                            break;
+                        }
+                        bv2 = Some(bv1);
+                    }
+                    // SAFETY: a new volume in no list; `bv2` is linked in `bvh`.
+                    unsafe {
+                        match bv2 {
+                            None => bvh.insert_head(bv),
+                            Some(bv2) => SrBootVolumeHead::insert_after(bv2, bv),
+                        }
+                    }
+                    bv
+                }
+            };
+
+            // Maintain chunk order.
+            let mut bc2: Option<&SrBootChunk> = None;
+            for bc1 in bv.sbv_chunks.iter() {
+                if bc1.sbc_chunk_id.get() > bc.sbc_chunk_id.get() {
+                    break;
+                }
+                bc2 = Some(bc1);
+            }
+            // SAFETY: `bc` is unlinked; `bc2` is linked in the volume's list.
+            unsafe {
+                match bc2 {
+                    None => bv.sbv_chunks.insert_head(bc),
+                    Some(bc2) => SrBootChunkHead::insert_after(bc2, bc),
+                }
+            }
+
+            bv.sbv_chunks_found.set(bv.sbv_chunks_found.get() + 1);
+        }
+
+        // Device and ondisk version arrays.
+        let mut devs: Vec<Dev> = Vec::new();
+        let mut ondisk: Vec<u64> = Vec::new();
+        let n = BIOC_CRMAXLEN as usize;
+        if devs.try_reserve_exact(n).is_err() {
+            printf(format_args!(
+                "{}: failed to allocate device array\n",
+                DEVNAME(sc)
+            ));
+            break 'unwind;
+        }
+        if ondisk.try_reserve_exact(n).is_err() {
+            printf(format_args!(
+                "{}: failed to allocate ondisk array\n",
+                DEVNAME(sc)
+            ));
+            break 'unwind;
+        }
+        devs.resize(n, NODEV);
+        ondisk.resize(n, 0);
+
+        let mut devname = [0u8; 32];
+
+        // Assemble hotspare "volumes".
+        for bv in bvh.iter() {
+            // Check if this is a hotspare "volume".
+            if bv.sbv_level.get() != SR_HOTSPARE_LEVEL || bv.sbv_chunk_no.get() != 1 {
+                continue;
+            }
+
+            // SR_DEBUG: "assembling hotspare volume %s volid %u with %u chunks"
+
+            // Create hotspare chunk metadata.
+            let Some(hsp) = sr_malloc::<SrChunk>(M_NOWAIT) else {
+                printf(format_args!(
+                    "{}: failed to allocate hotspare\n",
+                    DEVNAME(sc)
+                ));
+                break 'unwind;
+            };
+            // SAFETY: a zeroed chunk (`SrZeroed`); the hotspare list keeps it.
+            let hotspare: &'static SrChunk = unsafe { hsp.as_ref() };
+
+            let Some(bc) = bv.sbv_chunks.first() else {
+                continue;
+            };
+            let md = bc.sbc_metadata();
+            sr_meta_getdevname(sc, bc.sbc_mm.get(), &mut devname);
+            hotspare.src_dev_mm.set(bc.sbc_mm.get());
+            sr_strlcpy_cell(&hotspare.src_devname, &devname);
+            hotspare.src_size.set(md.ssdi().ssd_size.get());
+
+            let hm = &hotspare.src_meta;
+            hm.scmi().scm_volid.set(SR_HOTSPARE_VOLID);
+            hm.scmi().scm_chunk_id.set(0);
+            hm.scmi().scm_size.set(md.ssdi().ssd_size.get());
+            hm.scmi().scm_coerced_size.set(md.ssdi().ssd_size.get());
+            sr_strlcpy_cell(&hm.scmi().scm_devname, &devname);
+            hm.scmi().scm_uuid.set(md.ssdi().ssd_uuid.get());
+
+            hm.scm_checksum.set(sr_checksum(sc, hm.scmi().cells()));
+
+            hm.scm_status.set(BIOC_SDHOTSPARE as u32);
+
+            // Add chunk to hotspare list.
+            rw_enter_write(&sc.sc_hs_lock);
+            sr_hotspare_list_append(sc, hotspare);
+            sc.sc_hotspare_no.set(sc.sc_hotspare_no.get() + 1);
+            rw_exit_write(&sc.sc_hs_lock);
+        }
+
+        // Assemble RAID volumes.
+        for bv in bvh.iter() {
+            // bzero(&bcr, sizeof(bcr))
+            let mut bcr = BiocCreateraid {
+                bc_bio: Bio {
+                    bio_cookie: ptr::null_mut(),
+                    bio_status: BioStatus {
+                        bs_controller: [0; 16],
+                        bs_status: 0,
+                        bs_msg_count: 0,
+                        bs_msgs: [BioMsg {
+                            bm_type: 0,
+                            bm_msg: [0; BIO_MSG_LEN],
+                        }; BIO_MSG_COUNT],
+                    },
+                },
+                bc_dev_list: ptr::null_mut(),
+                bc_dev_list_len: 0,
+                bc_key_disk: 0,
+                bc_level: 0,
+                bc_flags: 0,
+                bc_opaque_size: 0,
+                bc_opaque_flags: 0,
+                bc_opaque_status: 0,
+                bc_opaque: ptr::null_mut(),
+            };
+            let mut data: Option<[u8; SR_CRYPTO_MAXKEYBYTES]> = None;
+
+            // Check if this is a hotspare "volume".
+            if bv.sbv_level.get() == SR_HOTSPARE_LEVEL && bv.sbv_chunk_no.get() == 1 {
+                continue;
+            }
+
+            // Skip volumes that are marked as no auto assemble, unless this was the volume
+            // which we actually booted from.
+            if sr_bootuuid() != bv.sbv_uuid.get() && bv.sbv_flags.get() & BIOC_SCNOAUTOASSEMBLE != 0
+            {
+                continue;
+            }
+
+            // SR_DEBUG: "assembling volume %s volid %u with %u chunks"
+
+            // If this is a crypto volume, try to find a matching key disk...
+            bcr.bc_key_disk = NODEV;
+            let level = bv.sbv_level.get();
+            if level == u32::from(b'C') || level == 0x1C {
+                for bc in kdh.iter() {
+                    if bc.sbc_metadata().ssdi().ssd_uuid.get() == bv.sbv_uuid.get() {
+                        bcr.bc_key_disk = bc.sbc_mm.get();
+                    }
+                }
+            }
+
+            devs.fill(NODEV); // mark device as illegal
+            ondisk.fill(0);
+
+            for bc in bv.sbv_chunks.iter() {
+                let id = bc.sbc_chunk_id.get() as usize;
+                if id >= n {
+                    // The C indexes past its arrays; such a chunk is ignored here.
+                    continue;
+                }
+                if devs[id] != NODEV {
+                    bv.sbv_chunks_found.set(bv.sbv_chunks_found.get() - 1);
+                    sr_meta_getdevname(sc, bc.sbc_mm.get(), &mut devname);
+                    printf(format_args!(
+                        "{}: found duplicate chunk {} for volume {} on device {}\n",
+                        DEVNAME(sc),
+                        id,
+                        bv.sbv_volid.get(),
+                        Str(&devname)
+                    ));
+                }
+
+                let version = bc.sbc_metadata().ssd_ondisk.get();
+                if devs[id] == NODEV || version > ondisk[id] {
+                    devs[id] = bc.sbc_mm.get();
+                    ondisk[id] = version;
+                    // DNPRINTF(SR_D_META, "using ondisk metadata version %llu for chunk %u")
+                }
+            }
+
+            if bv.sbv_chunk_no.get() != bv.sbv_chunks_found.get() {
+                printf(format_args!(
+                    "{}: not all chunks were provided; attempting to bring volume {} online\n",
+                    DEVNAME(sc),
+                    bv.sbv_volid.get()
+                ));
+            }
+
+            let chunk_no = (bv.sbv_chunk_no.get() as usize).min(n);
+            bcr.bc_level = level as u16;
+            bcr.bc_dev_list_len = (chunk_no * size_of::<Dev>()) as u16;
+            bcr.bc_dev_list = devs.as_mut_ptr().cast();
+            bcr.bc_flags = BIOC_SCDEVT | (bv.sbv_flags.get() & BIOC_SCNOAUTOASSEMBLE);
+
+            if (level == u32::from(b'C') || level == 0x1C) && sr_bootuuid() == bv.sbv_uuid.get() {
+                // SAFETY: written only before autoconfiguration; read here, wiped by
+                // `sr_attach` after this function.
+                data = Some(unsafe { SR_BOOTKEY.read() });
+            }
+
+            rw_enter_write(&sc.sc_lock);
+            with_status(sc, |bs| bio_status_init(bs, &sc.sc_dev));
+            let _ = sr_ioctl_createraid(
+                sc,
+                &mut bcr,
+                Some(&devs[..chunk_no]),
+                data.as_ref().map(|d| &d[..]),
+            );
+            rw_exit_write(&sc.sc_lock);
+            if let Some(mut d) = data {
+                explicit_bzero(&mut d);
+            }
+
+            rv += 1;
+        }
+
+        // done with metadata
+    }
+
+    // unwind:
+    // Free boot volumes and associated chunks.
+    while let Some(bv) = bvh.first() {
+        // SAFETY: the list's first element.
+        unsafe { bvh.remove_head() };
+        while let Some(bc) = bv.sbv_chunks.first() {
+            // SAFETY: the list's first element.
+            unsafe { bv.sbv_chunks.remove_head() };
+            sr_boot_chunk_free(bc);
+        }
+        sr_free(NonNull::from(bv), size_of::<SrBootVolume>());
+    }
+    // Free keydisks chunks, and unallocated chunks.
+    for list in [&kdh, &bch] {
+        while let Some(bc) = list.first() {
+            // SAFETY: the list's first element.
+            unsafe { list.remove_head() };
+            sr_boot_chunk_free(bc);
+        }
+    }
+
+    while let Some(sdk) = sdklist.first() {
+        // SAFETY: the list's first element.
+        unsafe { sdklist.remove_head() };
+        sr_free(NonNull::from(sdk), size_of::<SrDisk>());
+    }
+
+    rv
+}
+
+/// `sr_map_root`: if the root DUID is that of a chunk of a bootable volume
+/// (`sbm_boot_duid`), maps it to the volume's own DUID (`sbm_root_duid`).
+pub fn sr_map_root() {
+    let Some(sc) = softraid0() else {
+        return;
+    };
+
+    // DNPRINTF(SR_D_MISC, "sr_map_root")
+
+    // SAFETY: `rootduid` is written by `setroot`, which calls this function, on the thread
+    // running main; nothing else touches it meanwhile.
+    let rootduid = unsafe { ROOTDUID.get_mut() };
+    if *rootduid == [0u8; DUID_SIZE] {
+        // DNPRINTF(SR_D_MISC, "root duid is zero")
+        return;
+    }
+
+    for sd in dis_list(sc) {
+        for omi in sd.sd_meta_opt.iter() {
+            if omi.omi_som().som_type.get() != SR_OPT_BOOT {
+                continue;
+            }
+            let Some(sbm) = omi.som_as::<SrMetaBoot>() else {
+                continue;
+            };
+            for duid in &sbm.sbm_boot_duid {
+                if *rootduid == duid.get() {
+                    *rootduid = sbm.sbm_root_duid.get();
+                    // DNPRINTF(SR_D_MISC, "root duid mapped to %s")
+                    return;
+                }
+            }
+        }
+    }
+}
+
 /// `sr_meta_native_probe`: whether the chunk is a `RAID` partition big enough for the
 /// metadata; records its DUID, usable size and sector size.
 pub fn sr_meta_native_probe(_sc: &SrSoftc, ch_entry: &SrChunk) -> i32 {
@@ -1347,14 +1988,112 @@ pub fn sr_disk_attach(diskp: &Disk, action: i32) {
     }
 }
 
-/// The softc's `bio_status`, which `sc_lock` (write) protects.
-fn sr_status(sc: &SrSoftc, print: bool, msg_type: i32, args: core::fmt::Arguments<'_>) {
+/// `sr_match`: softraid0 always attaches at root.
+pub fn sr_match(_parent: Option<&Device>, _match: &CfMatch, _aux: *mut c_void) -> i32 {
+    1
+}
+
+/// `sr_attach`: registers with bio(4) and the sensors framework, attaches softraid's
+/// `scsibus`, hooks `softraid_disk_attach` and assembles the volumes found on the disks.
+pub fn sr_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_void) {
+    // SAFETY: `self_` was made for `softraid_ca`, whose softc is an `SrSoftc`; softcs are
+    // never freed while the device exists, so the softc may be borrowed for 'static.
+    let sc: &'static SrSoftc = unsafe { &*ptr::from_ref(self_.softc::<SrSoftc>()) };
+
+    // DNPRINTF(SR_D_MISC, "\n%s: sr_attach")
+
+    if SOFTRAID0.load(Ordering::Relaxed).is_null() {
+        SOFTRAID0.store(ptr::from_ref(sc).cast_mut(), Ordering::Relaxed);
+    }
+
+    rw_init(&sc.sc_lock, "sr_lock");
+    rw_init(&sc.sc_hs_lock, "sr_hs_lock");
+
+    SR_HOTPLUG_CALLBACKS.0.init();
+    sc.sc_dis_list.init();
+    sc.sc_hotspare_list.init();
+
+    // NBIO > 0
+    if bio_register(&sc.sc_dev, sr_bio_ioctl).is_err() {
+        printf(format_args!(
+            "{}: controller registration failed",
+            DEVNAME(sc)
+        ));
+    }
+
+    // !SMALL_KERNEL
+    let mut xname = [0u8; 16];
+    let _ = strlcpy(&mut xname, DEVNAME(sc).as_bytes());
+    sc.sc_sensordev.xname.set(xname);
+    sensordev_install(&sc.sc_sensordev);
+
+    printf(format_args!("\n"));
+
+    let mut saa = ScsibusAttachArgs::new();
+    saa.saa_adapter_softc = ptr::from_ref(sc).cast_mut().cast();
+    saa.saa_adapter = Some(&SR_SWITCH);
+    saa.saa_adapter_target = SDEV_NO_ADAPTER_TARGET;
+    saa.saa_adapter_buswidth = SR_MAX_LD as u16;
+    saa.saa_luns = 1;
+    saa.saa_openings = 0;
+    saa.saa_pool = None;
+    saa.saa_quirks = 0;
+    saa.saa_flags = 0;
+    saa.saa_wwpn = 0;
+    saa.saa_wwnn = 0;
+
+    let bus = config_found(&sc.sc_dev, ptr::from_mut(&mut saa).cast(), Some(scsiprint));
+    sc.sc_scsibus.set(bus.map(NonNull::cast::<ScsibusSoftc>));
+
+    SOFTRAID_DISK_ATTACH.store(true, Ordering::Relaxed);
+
+    sr_boot_assembly(sc);
+
+    // SAFETY: the boot key is read only by `sr_boot_assembly`, which is done.
+    explicit_bzero(unsafe { SR_BOOTKEY.get_mut() });
+}
+
+/// `sr_detach`: shuts the volumes down and detaches the bus.
+pub fn sr_detach(self_: &Device, flags: i32) -> Result<(), Errno> {
+    // SAFETY: `self_` is softraid's device (`softraid_ca`), whose softc is an `SrSoftc`.
+    let sc: &SrSoftc = unsafe { self_.softc::<SrSoftc>() };
+
+    // DNPRINTF(SR_D_MISC, "sr_detach")
+
+    SOFTRAID_DISK_ATTACH.store(false, Ordering::Relaxed);
+
+    sr_shutdown(0);
+
+    // !SMALL_KERNEL
+    if let Some(st) = sc.sc_sensor_task.take() {
+        // SAFETY: the task `sr_sensors_create` registered, unregistered once (taken out).
+        unsafe { sensor_task_unregister(st) };
+    }
+    sensordev_deinstall(&sc.sc_sensordev);
+
+    if let Some(bus) = sc.sc_scsibus.get() {
+        // SAFETY: the bus `sr_attach` found; nothing uses it once detached, and the member
+        // is cleared below.
+        unsafe { config_detach(bus.cast::<Device>(), flags)? };
+        sc.sc_scsibus.set(None);
+    }
+
+    Ok(())
+}
+
+/// Runs `f` on the softc's `bio_status`, which `sc_lock` (write) protects.
+fn with_status<R>(sc: &SrSoftc, f: impl FnOnce(&mut BioStatus) -> R) -> R {
     rw_assert_wrlock(&sc.sc_lock);
 
     // SAFETY: the caller holds `sc_lock` for writing (asserted under `diagnostic`), which
-    // serialises every use of `sc_status` (the bio handler and these three functions).
-    let bs = unsafe { &mut *sc.sc_status.get() };
-    bio_status(bs, print, msg_type, args);
+    // serialises every use of `sc_status` (the bio handler, boot assembly and the message
+    // functions); `f` cannot reach the status again.
+    f(unsafe { &mut *sc.sc_status.get() })
+}
+
+/// The softc's `bio_status`, which `sc_lock` (write) protects.
+fn sr_status(sc: &SrSoftc, print: bool, msg_type: i32, args: core::fmt::Arguments<'_>) {
+    with_status(sc, |bs| bio_status(bs, print, msg_type, args));
 }
 
 /// `sr_info`: an informational message for bioctl(8).
@@ -1849,6 +2588,579 @@ pub fn sr_scsi_done(sd: &SrDiscipline, xs: &'static ScsiXfer) {
     }
 }
 
+/// The softraid softc of a link on softraid's bus (`link->bus->sb_adapter_softc`).
+fn sr_link_softc(link: &ScsiLink) -> &'static SrSoftc {
+    let sc = link.bus().sb_adapter_softc.get().cast::<SrSoftc>();
+    // SAFETY: softraid's bus was attached by `sr_attach` with its softc as the adapter's
+    // state, and only `sr_switch` functions (which get softraid's links) call this.
+    match unsafe { sc.as_ref() } {
+        Some(sc) => sc,
+        None => panic(format_args!("softraid: link without adapter softc")),
+    }
+}
+
+/// `sr_scsi_cmd`: the adapter's `scsi_cmd`: runs the command of a volume through its
+/// discipline.
+pub fn sr_scsi_cmd(xs: &'static ScsiXfer) {
+    let link = xs.link();
+    let sc = sr_link_softc(link);
+    let Some(io) = xs.io.get() else {
+        panic(format_args!("{}: sr_scsi_cmd without io", DEVNAME(sc)));
+    };
+    // SAFETY: `xs->io` is an opening of the volume's pool, a work unit `sr_wu_get` handed
+    // out; work units live until `sr_wu_free`.
+    let wu: &'static SrWorkunit = unsafe { &*io.as_ptr().cast::<SrWorkunit>() };
+
+    // DNPRINTF(SR_D_CMD, "sr_scsi_cmd target %d xs %p flags %#x")
+
+    let Some(sd) = sc.sc_targets[usize::from(link.target.get())].get() else {
+        panic(format_args!("{}: sr_scsi_cmd NULL discipline", DEVNAME(sc)));
+    };
+
+    'complete: {
+        'stuffup: {
+            if sd.sd_deleted.get() != 0 {
+                printf(format_args!(
+                    "{}: {} device is being deleted, failing io\n",
+                    DEVNAME(sc),
+                    Name(sd.sd_meta().ssd_devname.get())
+                ));
+                break 'stuffup;
+            }
+
+            // scsi layer *can* re-send wu without calling sr_wu_put().
+            sr_wu_release_ccbs(wu);
+            sr_wu_init(sd, wu);
+            wu.swu_state.set(SR_WU_INPROGRESS);
+            wu.swu_xs.set(Some(xs));
+
+            let opcode = xs.cmd.get().opcode;
+            let rv = match opcode {
+                READ_COMMAND | READ_10 | READ_16 | WRITE_COMMAND | WRITE_10 | WRITE_16 => {
+                    // DNPRINTF(SR_D_CMD, "sr_scsi_cmd: READ/WRITE %02x")
+                    if sd.sd_scsi_rw(wu).is_err() {
+                        break 'stuffup;
+                    }
+                    return;
+                }
+                SYNCHRONIZE_CACHE => sd.sd_scsi_sync(wu),
+                TEST_UNIT_READY => sd.sd_scsi_tur(wu),
+                START_STOP => sd.sd_scsi_start_stop(wu),
+                INQUIRY => sd.sd_scsi_inquiry(wu),
+                READ_CAPACITY | READ_CAPACITY_16 => sd.sd_scsi_read_cap(wu),
+                REQUEST_SENSE => sd.sd_scsi_req_sense(wu),
+                _ => {
+                    // DNPRINTF(SR_D_CMD, "unsupported scsi command %x")
+                    // XXX might need to add generic function to handle others
+                    break 'stuffup;
+                }
+            };
+            if rv.is_err() {
+                break 'stuffup;
+            }
+            break 'complete;
+        }
+
+        // stuffup:
+        if sd.sd_scsi_sense.get().error_code != 0 {
+            xs.error.set(XS_SENSE);
+            xs.sense.set(sd.sd_scsi_sense.get());
+            sd.sd_scsi_sense.set(Default::default());
+        } else {
+            xs.error.set(XS_DRIVER_STUFFUP);
+        }
+    }
+
+    // complete:
+    sr_scsi_done(sd, xs);
+}
+
+/// `sr_scsi_probe`: the adapter's `dev_probe`: a target is probed when a volume uses it; its
+/// openings are the volume's work units.
+pub fn sr_scsi_probe(link: &'static ScsiLink) -> Result<(), Errno> {
+    let sc = sr_link_softc(link);
+
+    kassert!(usize::from(link.target.get()) < SR_MAX_LD && link.lun.get() == 0);
+
+    let Some(sd) = sc.sc_targets[usize::from(link.target.get())].get() else {
+        return Err(Errno::ENODEV);
+    };
+
+    link.pool.set(Some(&sd.sd_iopool));
+    if sd.sd_openings.get().is_some() {
+        link.openings.set(sd.sd_openings() as u16);
+    } else {
+        link.openings.set(sd.sd_max_wu.get() as u16);
+    }
+
+    Ok(())
+}
+
+/// `sr_scsi_ioctl`: the adapter's `ioctl`: bio(4) ioctls on a volume go to the bio handler;
+/// the cache ioctls are not supported.
+///
+/// # Safety
+///
+/// `addr` is an aligned kernel copy of the command's argument structure (`sys_ioctl`'s
+/// contract).
+pub unsafe fn sr_scsi_ioctl(
+    link: &'static ScsiLink,
+    cmd: u64,
+    addr: *mut u8,
+    _flag: i32,
+) -> Result<(), Errno> {
+    let sc = sr_link_softc(link);
+
+    let Some(sd) = sc.sc_targets[usize::from(link.target.get())].get() else {
+        return Err(Errno::ENODEV);
+    };
+
+    // DNPRINTF(SR_D_IOCTL, "%s sr_scsi_ioctl cmd: %#lx")
+
+    // Pass bio ioctls through to the bio handler.
+    if iocgroup(cmd) == u64::from(b'B') {
+        let len = iocparm_len(cmd) as usize;
+        // SAFETY: the caller's contract: `addr` holds the command's argument structure,
+        // `IOCPARM_LEN(cmd)` bytes, for the duration of the call.
+        let data = unsafe { core::slice::from_raw_parts_mut(addr, len) };
+        return sr_bio_handler(sc, Some(sd), cmd, data);
+    }
+
+    match cmd {
+        DIOCGCACHE | DIOCSCACHE => Err(Errno::EOPNOTSUPP),
+        _ => Err(Errno::ENOTTY),
+    }
+}
+
+/// `sr_bio_ioctl`: softraid's bio(4) entry point.
+pub fn sr_bio_ioctl(dev: &Device, cmd: u64, addr: &mut [u8]) -> Result<(), Errno> {
+    // SAFETY: `sr_attach` registered softraid's own device, an `SrSoftc` that lives while
+    // the device is attached.
+    let sc: &'static SrSoftc = unsafe { &*ptr::from_ref(dev.softc::<SrSoftc>()) };
+    // DNPRINTF(SR_D_IOCTL, "sr_bio_ioctl")
+
+    sr_bio_handler(sc, None, cmd, addr)
+}
+
+/// A bio(4) ioctl argument structure, read out of the ioctl's bytes.
+///
+/// # Safety
+///
+/// The implementor is `#[repr(C)]` of integers, byte arrays, raw pointers and [`Bio`], so
+/// every bit pattern is a valid value.
+unsafe trait BioArg: Copy {}
+
+// SAFETY: integers, byte arrays and `Bio` (a raw pointer and a `BioStatus` of integers).
+unsafe impl BioArg for BiocInq {}
+// SAFETY: as above.
+unsafe impl BioArg for BiocVol {}
+// SAFETY: as above, and `BiocDiskPatrol` of integers.
+unsafe impl BioArg for BiocDisk {}
+// SAFETY: as above.
+unsafe impl BioArg for BiocSetstate {}
+// SAFETY: as above, and raw pointers.
+unsafe impl BioArg for BiocCreateraid {}
+// SAFETY: as above.
+unsafe impl BioArg for BiocDeleteraid {}
+// SAFETY: as above, and a raw pointer.
+unsafe impl BioArg for BiocDiscipline {}
+// SAFETY: as above, and raw pointers.
+unsafe impl BioArg for BiocInstallboot {}
+
+/// `(struct T *)bio`: a copy of the argument structure (`EINVAL` when the bytes are short).
+fn bio_arg<T: BioArg>(addr: &[u8]) -> Result<T, Errno> {
+    if addr.len() < size_of::<T>() {
+        return Err(Errno::EINVAL);
+    }
+    // SAFETY: `addr` holds at least `size_of::<T>()` initialised bytes and every bit
+    // pattern is a `T` (`BioArg`); the read is unaligned-safe.
+    Ok(unsafe { ptr::read_unaligned(addr.as_ptr().cast::<T>()) })
+}
+
+/// Stores `bytes` at offset `off` of the ioctl's bytes (one member written back).
+fn bio_put(addr: &mut [u8], off: usize, bytes: &[u8]) {
+    if let Some(d) = addr.get_mut(off..off + bytes.len()) {
+        d.copy_from_slice(bytes);
+    }
+}
+
+/// `memcpy(&bio->bio_status, &sc->sc_status, sizeof(struct bio_status))`, member by
+/// member.
+fn bio_put_status(addr: &mut [u8], bs: &BioStatus) {
+    let base = offset_of!(Bio, bio_status);
+    bio_put(
+        addr,
+        base + offset_of!(BioStatus, bs_controller),
+        &bs.bs_controller,
+    );
+    bio_put(
+        addr,
+        base + offset_of!(BioStatus, bs_status),
+        &bs.bs_status.to_ne_bytes(),
+    );
+    bio_put(
+        addr,
+        base + offset_of!(BioStatus, bs_msg_count),
+        &bs.bs_msg_count.to_ne_bytes(),
+    );
+    for (i, m) in bs.bs_msgs.iter().enumerate() {
+        let off = base + offset_of!(BioStatus, bs_msgs) + i * size_of::<BioMsg>();
+        bio_put(
+            addr,
+            off + offset_of!(BioMsg, bm_type),
+            &m.bm_type.to_ne_bytes(),
+        );
+        bio_put(addr, off + offset_of!(BioMsg, bm_msg), &m.bm_msg);
+    }
+}
+
+/// `sr_bio_handler`: the bio(4) ioctls of softraid (`sd` is the volume when the ioctl came
+/// through its `sd` device). The status and messages go back in the `struct bio`; with
+/// messages the ioctl itself succeeds, bioctl(8) reports them.
+pub fn sr_bio_handler(
+    sc: &'static SrSoftc,
+    sd: Option<&'static SrDiscipline>,
+    cmd: u64,
+    addr: &mut [u8],
+) -> Result<(), Errno> {
+    // DNPRINTF(SR_D_IOCTL, "sr_bio_handler ")
+
+    rw_enter_write(&sc.sc_lock);
+
+    with_status(sc, |bs| bio_status_init(bs, &sc.sc_dev));
+
+    let rv: Result<(), Errno> = (|| match cmd {
+        BIOCINQ => {
+            let mut bi = bio_arg::<BiocInq>(addr)?;
+            let r = sr_ioctl_inq(sc, &mut bi);
+            bio_put(addr, offset_of!(BiocInq, bi_dev), &bi.bi_dev);
+            bio_put(
+                addr,
+                offset_of!(BiocInq, bi_novol),
+                &bi.bi_novol.to_ne_bytes(),
+            );
+            bio_put(
+                addr,
+                offset_of!(BiocInq, bi_nodisk),
+                &bi.bi_nodisk.to_ne_bytes(),
+            );
+            r
+        }
+        BIOCVOL => {
+            let mut bv = bio_arg::<BiocVol>(addr)?;
+            let r = sr_ioctl_vol(sc, &mut bv);
+            bio_put(
+                addr,
+                offset_of!(BiocVol, bv_percent),
+                &bv.bv_percent.to_ne_bytes(),
+            );
+            bio_put(
+                addr,
+                offset_of!(BiocVol, bv_status),
+                &bv.bv_status.to_ne_bytes(),
+            );
+            bio_put(
+                addr,
+                offset_of!(BiocVol, bv_size),
+                &bv.bv_size.to_ne_bytes(),
+            );
+            bio_put(
+                addr,
+                offset_of!(BiocVol, bv_level),
+                &bv.bv_level.to_ne_bytes(),
+            );
+            bio_put(
+                addr,
+                offset_of!(BiocVol, bv_nodisk),
+                &bv.bv_nodisk.to_ne_bytes(),
+            );
+            bio_put(addr, offset_of!(BiocVol, bv_dev), &bv.bv_dev);
+            bio_put(addr, offset_of!(BiocVol, bv_vendor), &bv.bv_vendor);
+            r
+        }
+        BIOCDISK => {
+            let mut bd = bio_arg::<BiocDisk>(addr)?;
+            let r = sr_ioctl_disk(sc, &mut bd);
+            bio_put(
+                addr,
+                offset_of!(BiocDisk, bd_status),
+                &bd.bd_status.to_ne_bytes(),
+            );
+            bio_put(
+                addr,
+                offset_of!(BiocDisk, bd_size),
+                &bd.bd_size.to_ne_bytes(),
+            );
+            bio_put(
+                addr,
+                offset_of!(BiocDisk, bd_channel),
+                &bd.bd_channel.to_ne_bytes(),
+            );
+            bio_put(
+                addr,
+                offset_of!(BiocDisk, bd_target),
+                &bd.bd_target.to_ne_bytes(),
+            );
+            bio_put(addr, offset_of!(BiocDisk, bd_vendor), &bd.bd_vendor);
+            r
+        }
+        BIOCALARM => {
+            // DNPRINTF(SR_D_IOCTL, "alarm\n");
+            // rv = sr_ioctl_alarm(sc, (struct bioc_alarm *)bio);
+            Ok(())
+        }
+        BIOCBLINK => {
+            // DNPRINTF(SR_D_IOCTL, "blink\n");
+            // rv = sr_ioctl_blink(sc, (struct bioc_blink *)bio);
+            Ok(())
+        }
+        BIOCSETSTATE => {
+            let bs = bio_arg::<BiocSetstate>(addr)?;
+            sr_ioctl_setstate(sc, &bs)
+        }
+        BIOCCREATERAID => {
+            let mut bc = bio_arg::<BiocCreateraid>(addr)?;
+            let r = sr_ioctl_createraid(sc, &mut bc, None, None);
+            bio_put(
+                addr,
+                offset_of!(BiocCreateraid, bc_opaque_status),
+                &bc.bc_opaque_status.to_ne_bytes(),
+            );
+            r
+        }
+        BIOCDELETERAID => {
+            let bd = bio_arg::<BiocDeleteraid>(addr)?;
+            sr_ioctl_deleteraid(sc, sd, &bd)
+        }
+        BIOCDISCIPLINE => {
+            let mut bd = bio_arg::<BiocDiscipline>(addr)?;
+            sr_ioctl_discipline(sc, sd, &mut bd)
+        }
+        BIOCINSTALLBOOT => {
+            let bb = bio_arg::<BiocInstallboot>(addr)?;
+            sr_ioctl_installboot(sc, sd, &bb)
+        }
+        _ => {
+            // DNPRINTF(SR_D_IOCTL, "invalid ioctl\n");
+            Err(Errno::ENOTTY)
+        }
+    })();
+
+    let mut rv = rv;
+    with_status(sc, |bs| {
+        bs.bs_status = if rv.is_err() {
+            BIO_STATUS_ERROR
+        } else {
+            BIO_STATUS_SUCCESS
+        };
+
+        if bs.bs_msg_count > 0 {
+            rv = Ok(());
+        }
+
+        bio_put_status(addr, bs);
+    });
+
+    rw_exit_write(&sc.sc_lock);
+
+    rv
+}
+
+/// `sr_ioctl_inq`: the controller's name and its volume and disk counts.
+pub fn sr_ioctl_inq(sc: &SrSoftc, bi: &mut BiocInq) -> Result<(), Errno> {
+    let mut vol = 0;
+    let mut disk = 0;
+
+    for sd in dis_list(sc) {
+        vol += 1;
+        disk += sd.sd_meta().ssdi().ssd_chunk_no.get() as i32;
+    }
+
+    let _ = strlcpy(&mut bi.bi_dev, DEVNAME(sc).as_bytes());
+    bi.bi_novol = vol + sc.sc_hotspare_no.get();
+    bi.bi_nodisk = disk + sc.sc_hotspare_no.get();
+
+    Ok(())
+}
+
+/// `mdd_crypto.key_disk`, or `mdd_raid1c.sr1c_crypto.key_disk` for a RAID 1C volume
+/// (`CRYPTO`).
+fn sr_key_disk(sd: &SrDiscipline) -> Option<&'static SrChunk> {
+    let level = sd.sd_meta().ssdi().ssd_level.get();
+    if level == u32::from(b'C') {
+        sd.mds().mdd_crypto.key_disk.get()
+    } else if level == 0x1C {
+        sd.mds().mdd_raid1c.sr1c_crypto.key_disk.get()
+    } else {
+        None
+    }
+}
+
+/// `sr_ioctl_vol`: volume `bv_volid` (the volumes, then the hotspares).
+pub fn sr_ioctl_vol(sc: &SrSoftc, bv: &mut BiocVol) -> Result<(), Errno> {
+    let mut vol = -1;
+
+    for sd in dis_list(sc) {
+        vol += 1;
+        if vol != bv.bv_volid {
+            continue;
+        }
+
+        let m = sd.sd_meta();
+        bv.bv_status = sd.sd_vol_status.get();
+        bv.bv_size = (m.ssdi().ssd_size.get() as u64) << DEV_BSHIFT;
+        bv.bv_level = m.ssdi().ssd_level.get() as i32;
+        bv.bv_nodisk = m.ssdi().ssd_chunk_no.get() as i32;
+
+        // CRYPTO
+        if sr_key_disk(sd).is_some() {
+            bv.bv_nodisk += 1;
+        }
+        if bv.bv_status == BIOC_SVREBUILD {
+            bv.bv_percent = sr_rebuild_percent(sd) as i16;
+        }
+
+        let _ = strlcpy(&mut bv.bv_dev, &m.ssd_devname.get());
+        let _ = strlcpy(&mut bv.bv_vendor, &m.ssdi().ssd_vendor.get());
+        return Ok(());
+    }
+
+    // Check hotspares list.
+    for hotspare in sc.sc_hotspare_list.iter() {
+        vol += 1;
+        if vol != bv.bv_volid {
+            continue;
+        }
+
+        let scmi = hotspare.src_meta.scmi();
+        bv.bv_status = BIOC_SVONLINE;
+        bv.bv_size = (scmi.scm_size.get() as u64) << DEV_BSHIFT;
+        bv.bv_level = -1; // Hotspare.
+        bv.bv_nodisk = 1;
+        let _ = strlcpy(&mut bv.bv_dev, &scmi.scm_devname.get());
+        let _ = strlcpy(&mut bv.bv_vendor, &scmi.scm_devname.get());
+        return Ok(());
+    }
+
+    Err(Errno::EINVAL)
+}
+
+/// `sr_ioctl_disk`: disk `bd_diskid` of volume `bd_volid` (a crypto volume's key disk
+/// follows its chunks).
+pub fn sr_ioctl_disk(sc: &SrSoftc, bd: &mut BiocDisk) -> Result<(), Errno> {
+    let mut vol = -1;
+
+    if bd.bd_diskid < 0 {
+        return Err(Errno::EINVAL);
+    }
+    let diskid = bd.bd_diskid as usize;
+
+    let fill = |bd: &mut BiocDisk, src: &SrChunk, vol: i32| {
+        bd.bd_status = src.src_meta.scm_status.get() as i32;
+        bd.bd_size = (src.src_meta.scmi().scm_size.get() as u64) << DEV_BSHIFT;
+        bd.bd_channel = vol as u16;
+        bd.bd_target = bd.bd_diskid as u16;
+        let _ = strlcpy(&mut bd.bd_vendor, &src.src_meta.scmi().scm_devname.get());
+    };
+
+    for sd in dis_list(sc) {
+        vol += 1;
+        if vol != bd.bd_volid {
+            continue;
+        }
+
+        let chunk_no = sd.sd_meta().ssdi().ssd_chunk_no.get() as usize;
+        // CRYPTO: the key disk. The C reads RAID 1C's through `mdd_crypto` (the union's
+        // first member); here it is `mdd_raid1c.sr1c_crypto`'s.
+        let src = if diskid < chunk_no {
+            Some(sd.sd_vol.sv_chunk(diskid))
+        } else if diskid == chunk_no {
+            sr_key_disk(sd)
+        } else {
+            None
+        };
+        let Some(src) = src else {
+            break;
+        };
+
+        fill(bd, src, vol);
+        return Ok(());
+    }
+
+    // Check hotspares list.
+    for hotspare in sc.sc_hotspare_list.iter() {
+        vol += 1;
+        if vol != bd.bd_volid {
+            continue;
+        }
+
+        if bd.bd_diskid != 0 {
+            break;
+        }
+
+        fill(bd, hotspare, vol);
+        return Ok(());
+    }
+
+    Err(Errno::EINVAL)
+}
+
+/// `sr_ioctl_setstate`: takes a chunk offline, makes a disk a hotspare, or starts a rebuild
+/// onto a disk.
+pub fn sr_ioctl_setstate(sc: &'static SrSoftc, bs: &BiocSetstate) -> Result<(), Errno> {
+    if bs.bs_other_id_type == BIOC_SSOTHER_UNUSED {
+        return Err(Errno::EINVAL);
+    }
+
+    if bs.bs_status == BIOC_SSHOTSPARE {
+        return sr_hotspare(sc, bs.bs_other_id as Dev);
+    }
+
+    let mut vol = -1;
+    let Some(sd) = dis_list(sc).find(|_| {
+        vol += 1;
+        vol == bs.bs_volid
+    }) else {
+        return Err(Errno::EINVAL);
+    };
+
+    match bs.bs_status {
+        BIOC_SSOFFLINE => {
+            // Take chunk offline
+            let Some(c) = sd
+                .sd_vol
+                .sv_chunk_list
+                .iter()
+                .position(|ch| ch.src_dev_mm.get() == bs.bs_other_id as Dev)
+            else {
+                sr_error(sc, format_args!("chunk not part of array"));
+                return Err(Errno::EINVAL);
+            };
+
+            // XXX: check current state first
+            sd.sd_set_chunk_state(c, BIOC_SDOFFLINE);
+
+            if sr_meta_save(sd, SR_META_DIRTY).is_err() {
+                sr_error(
+                    sc,
+                    format_args!(
+                        "could not save metadata for {}",
+                        Name(sd.sd_meta().ssd_devname.get())
+                    ),
+                );
+                return Err(Errno::EINVAL);
+            }
+            Ok(())
+        }
+        BIOC_SDSCRUB => Err(Errno::EINVAL),
+        BIOC_SSREBUILD => sr_rebuild_init(sd, bs.bs_other_id as Dev, false),
+        s => {
+            sr_error(sc, format_args!("unsupported state request {}", s));
+            Err(Errno::EINVAL)
+        }
+    }
+}
+
 /// `sr_chunk_in_use`: the status of the chunk on `dev` in a volume or among the hotspares,
 /// or `BIOC_SDINVALID`.
 pub fn sr_chunk_in_use(sc: &SrSoftc, dev: Dev) -> i32 {
@@ -1878,6 +3190,224 @@ pub fn sr_chunk_in_use(sc: &SrSoftc, dev: Dev) -> i32 {
     BIOC_SDINVALID
 }
 
+/// Appends a chunk to the softc's hotspare list (`sc_hs_lock` held).
+fn sr_hotspare_list_append(sc: &SrSoftc, hotspare: &'static SrChunk) {
+    let cl = &sc.sc_hotspare_list;
+    let last = cl.iter().last();
+    // SAFETY: a chunk on no live list (a fake discipline's list it was on is abandoned);
+    // `last` is linked; chunks on the hotspare list live until
+    // `sr_hotspare_rebuild` unlinks and frees them; under `sc_hs_lock`.
+    unsafe {
+        match last {
+            None => cl.insert_head(hotspare),
+            Some(last) => SrChunkHead::insert_after(last, hotspare),
+        }
+    }
+}
+
+/// `sr_hotspare`: makes the `RAID` partition `dev` a hotspare: writes hotspare metadata to
+/// it and adds it to the hotspare list.
+pub fn sr_hotspare(sc: &'static SrSoftc, dev: Dev) -> Result<(), Errno> {
+    let mut devname = [0u8; 32];
+
+    // Add device to global hotspares list.
+
+    sr_meta_getdevname(sc, dev, &mut devname);
+
+    // Make sure chunk is not already in use.
+    let c = sr_chunk_in_use(sc, dev);
+    if c != BIOC_SDINVALID && c != BIOC_SDOFFLINE {
+        if c == BIOC_SDHOTSPARE {
+            sr_error(sc, format_args!("{} is already a hotspare", Str(&devname)));
+        } else {
+            sr_error(sc, format_args!("{} is already in use", Str(&devname)));
+        }
+        return Err(Errno::EINVAL);
+    }
+
+    // XXX - See if there is an existing degraded volume...
+
+    // Open device.
+    let vn = match bdevvp(dev) {
+        Ok(Some(vn)) => vn,
+        _ => {
+            sr_error(sc, format_args!("sr_hotspare: cannot allocate vnode"));
+            return Err(Errno::EINVAL);
+        }
+    };
+    let Some(p) = curproc() else {
+        vput(vn);
+        return Err(Errno::EINVAL);
+    };
+    if VOP_OPEN(vn, FREAD | FWRITE, NOCRED, p).is_err() {
+        // DNPRINTF(SR_D_META, "sr_hotspare cannot open %s")
+        vput(vn);
+        return Err(Errno::EINVAL);
+    }
+    // open: close dev on error (and, as in C, on success too)
+
+    let mut rv = Err(Errno::EINVAL);
+    let mut sd_p: Option<NonNull<SrDiscipline>> = None;
+    let mut sm_p: Option<NonNull<SrMetadata>> = None;
+
+    'done: {
+        let mut hotspare: Option<NonNull<SrChunk>> = None;
+        'fail: {
+            let mut label = Disklabel::zeroed();
+
+            // Get partition details.
+            let part = diskpart(dev) as usize;
+            if VOP_IOCTL(vn, DIOCGDINFO, label.as_bytes_mut(), FREAD, NOCRED, p).is_err() {
+                // DNPRINTF(SR_D_META, "sr_hotspare ioctl failed")
+                break 'fail;
+            }
+            let Some(pp) = label.d_partitions.get(part) else {
+                break 'fail;
+            };
+            if pp.p_fstype != FS_RAID {
+                sr_error(
+                    sc,
+                    format_args!(
+                        "{} partition not of type RAID ({})",
+                        Str(&devname),
+                        pp.p_fstype
+                    ),
+                );
+                break 'fail;
+            }
+
+            // Calculate partition size.
+            let mut size = dl_sectoblk(&label, dl_getpsize(pp));
+            if size <= SR_DATA_OFFSET as u64 {
+                // DNPRINTF(SR_D_META, "%s partition too small")
+                break 'fail;
+            }
+            size -= SR_DATA_OFFSET as u64;
+            let Ok(size) = i64::try_from(size) else {
+                // DNPRINTF(SR_D_META, "%s partition too large")
+                break 'fail;
+            };
+
+            // Create and populate chunk metadata.
+
+            let mut uuid = SrUuid::default();
+            sr_uuid_generate(&mut uuid);
+            let Some(hsp) = sr_malloc::<SrChunk>(M_WAITOK) else {
+                break 'fail;
+            };
+            hotspare = Some(hsp);
+            // SAFETY: a zeroed chunk (`SrZeroed`), freed on failure or kept by the list.
+            let hs: &'static SrChunk = unsafe { hsp.as_ref() };
+
+            hs.src_dev_mm.set(dev);
+            hs.src_vn.set(Some(vn));
+            sr_strlcpy_cell(&hs.src_devname, &devname);
+            hs.src_size.set(size);
+
+            let hm = &hs.src_meta;
+            hm.scmi().scm_volid.set(SR_HOTSPARE_VOLID);
+            hm.scmi().scm_chunk_id.set(0);
+            hm.scmi().scm_size.set(size);
+            hm.scmi().scm_coerced_size.set(size);
+            sr_strlcpy_cell(&hm.scmi().scm_devname, &devname);
+            hm.scmi().scm_uuid.set(uuid);
+
+            hm.scm_checksum.set(sr_checksum(sc, hm.scmi().cells()));
+
+            hm.scm_status.set(BIOC_SDHOTSPARE as u32);
+
+            // Create and populate our own discipline and metadata.
+
+            let Some(smp) = sr_malloc_size::<SrMetadata>(SR_META_BYTES, M_WAITOK) else {
+                break 'fail;
+            };
+            sm_p = Some(smp);
+            // SAFETY: a zeroed metadata area, freed below.
+            let sm: &SrMetadata = unsafe { smp.as_ref() };
+            let ssdi = sm.ssdi();
+            ssdi.ssd_magic.set(SR_MAGIC);
+            ssdi.ssd_version.set(SR_META_VERSION);
+            sm.ssd_ondisk.set(0);
+            ssdi.ssd_vol_flags.set(0);
+            ssdi.ssd_uuid.set(uuid);
+            ssdi.ssd_chunk_no.set(1);
+            ssdi.ssd_volid.set(SR_HOTSPARE_VOLID);
+            ssdi.ssd_level.set(SR_HOTSPARE_LEVEL);
+            ssdi.ssd_size.set(size);
+            ssdi.ssd_secsize.set(label.d_secsize);
+            sr_strlcpy_cell(&ssdi.ssd_vendor, b"OPENBSD");
+            let mut product = [0u8; 16];
+            let _ = snprintf(&mut product, format_args!("SR {}", "HOTSPARE"));
+            ssdi.ssd_product.set(product);
+            let mut revision = [0u8; 4];
+            let _ = snprintf(&mut revision, format_args!("{:03}", SR_META_VERSION));
+            ssdi.ssd_revision.set(revision);
+
+            let Some(sdp) = sr_malloc::<SrDiscipline>(M_WAITOK) else {
+                break 'fail;
+            };
+            sd_p = Some(sdp);
+            // SAFETY: a zeroed discipline (`SrZeroed`), freed below.
+            let sd: &'static SrDiscipline = unsafe { sdp.as_ref() };
+            sd.sd_sc.set(sc);
+            sd.sd_meta.set(Some(smp));
+            sd.sd_meta_type.set(SR_META_F_NATIVE);
+            sd.sd_vol_status.set(BIOC_SVONLINE);
+            sr_strlcpy_cell(&sd.sd_name, b"HOTSPARE");
+            sd.sd_meta_opt.init();
+
+            // Add chunk to volume.
+            if sd.sd_vol.sv_chunks_alloc(1, M_WAITOK).is_err() {
+                break 'fail;
+            }
+            sd.sd_vol.set_sv_chunk(0, Some(hs));
+            sd.sd_vol.sv_chunk_list.init();
+            // SAFETY: a new chunk in no list.
+            unsafe { sd.sd_vol.sv_chunk_list.insert_head(hs) };
+
+            // Save metadata.
+            if sr_meta_save(sd, SR_META_DIRTY).is_err() {
+                sr_error(
+                    sc,
+                    format_args!("could not save metadata to {}", Str(&devname)),
+                );
+                break 'fail;
+            }
+
+            // Add chunk to hotspare list.
+            rw_enter_write(&sc.sc_hs_lock);
+            // The fake discipline's chunk list, which also links `hs`, is abandoned.
+            sr_hotspare_list_append(sc, hs);
+            sc.sc_hotspare_no.set(sc.sc_hotspare_no.get() + 1);
+            rw_exit_write(&sc.sc_hs_lock);
+
+            rv = Ok(());
+            break 'done;
+        }
+
+        // fail:
+        if let Some(hsp) = hotspare {
+            sr_free(hsp, size_of::<SrChunk>());
+        }
+    }
+
+    // done:
+    if let Some(sdp) = sd_p {
+        // SAFETY: the discipline made above, used no more.
+        unsafe { sdp.as_ref() }.sd_vol.sv_chunks_free();
+        sr_free(sdp, size_of::<SrDiscipline>());
+    }
+    if let Some(smp) = sm_p {
+        sr_free(smp, SR_META_BYTES);
+    }
+    // open: the C closes the device here even on success, where the hotspare keeps the
+    // vnode as `src_vn`.
+    let _ = VOP_CLOSE(vn, FREAD | FWRITE, NOCRED, Some(p));
+    vput(vn);
+
+    rv
+}
+
 /// `sr_hotspare_rebuild_callback`: the `sd_hotspare_rebuild_task`.
 pub fn sr_hotspare_rebuild_callback(xsd: *mut c_void) {
     // SAFETY: `xsd` is the discipline `sr_discipline_init` set the task up with.
@@ -1885,10 +3415,302 @@ pub fn sr_hotspare_rebuild_callback(xsd: *mut c_void) {
     sr_hotspare_rebuild(sd);
 }
 
-/// `sr_hotspare_rebuild`: looks for a hotspare to rebuild a degraded volume onto.
+/// `sr_hotspare_rebuild`: attempts to locate a hotspare and initiate rebuild of a degraded
+/// volume onto it, once the I/O pending on the failed chunk has drained.
 pub fn sr_hotspare_rebuild(sd: &'static SrDiscipline) {
-    let _ = sd;
-    let _ = unported!("sr_hotspare_rebuild (softraid.c, phase 2 of the port)");
+    let sc = sd.sd_sc();
+
+    // Find first offline chunk.
+    let chunk_no = sd.sd_meta().ssdi().ssd_chunk_no.get() as usize;
+    let Some((cid, chunk)) = (0..chunk_no)
+        .map(|c| (c, sd.sd_vol.sv_chunk(c)))
+        .find(|(_, ch)| ch.src_meta.scm_status.get() == BIOC_SDOFFLINE as u32)
+    else {
+        printf(format_args!(
+            "{}: no offline chunk found on {}!\n",
+            DEVNAME(sc),
+            Name(sd.sd_meta().ssd_devname.get())
+        ));
+        return;
+    };
+
+    // See if we have a suitable hotspare...
+    rw_enter_write(&sc.sc_hs_lock);
+    let cl = &sc.sc_hotspare_list;
+    let hotspare = chunk_list(cl).find(|hs| {
+        hs.src_size.get() >= chunk.src_size.get()
+            && hs.src_secsize.get() <= sd.sd_meta().ssdi().ssd_secsize.get()
+    });
+
+    'done: {
+        let Some(hotspare) = hotspare else {
+            break 'done;
+        };
+
+        printf(format_args!(
+            "{}: {} volume degraded, will attempt to rebuild on hotspare {}\n",
+            DEVNAME(sc),
+            Name(sd.sd_meta().ssd_devname.get()),
+            Name(hotspare.src_devname.get())
+        ));
+
+        // Ensure that all pending I/O completes on the failed chunk before trying to
+        // initiate a rebuild.
+        let mut i = 0;
+        let busy = loop {
+            let s = splbio();
+            let busy = sd.sd_wu_pendq.iter().chain(sd.sd_wu_defq.iter()).any(|wu| {
+                wu.swu_ccb
+                    .iter()
+                    .any(|ccb| ccb.ccb_target.get() == cid as i32)
+            });
+            splx(s);
+
+            if !busy {
+                break false;
+            }
+            let _ = tsleep_nsec(ptr::from_ref(sd), PRIBIO, "sr_hotspare", sec_to_nsec(1));
+            i += 1;
+            if i >= 120 {
+                break true;
+            }
+        };
+
+        // DNPRINTF(SR_D_META, "waited %i seconds for I/O to complete on failed chunk %s")
+
+        if busy {
+            printf(format_args!(
+                "{}: pending I/O failed to complete on failed chunk {}, hotspare rebuild \
+                 aborted...\n",
+                DEVNAME(sc),
+                Name(chunk.src_devname.get())
+            ));
+            break 'done;
+        }
+
+        let s = splbio();
+        rw_enter_write(&sc.sc_lock);
+        with_status(sc, |bs| bio_status_init(bs, &sc.sc_dev));
+        if sr_rebuild_init(sd, hotspare.src_dev_mm.get(), true).is_ok() {
+            // Remove hotspare from available list.
+            sc.sc_hotspare_no.set(sc.sc_hotspare_no.get() - 1);
+            // SAFETY: on the hotspare list (found above), under `sc_hs_lock`; nothing
+            // references the chunk once it is unlinked.
+            unsafe { cl.remove(hotspare) };
+            sr_free(NonNull::from(hotspare), size_of::<SrChunk>());
+        }
+        rw_exit_write(&sc.sc_lock);
+        splx(s);
+    }
+
+    // done:
+    rw_exit_write(&sc.sc_hs_lock);
+}
+
+/// `sr_rebuild_init`: starts rebuilding a degraded volume's first offline chunk onto the
+/// `RAID` partition `dev` (a hotspare when `hotspare`).
+pub fn sr_rebuild_init(sd: &'static SrDiscipline, dev: Dev, hotspare: bool) -> Result<(), Errno> {
+    let sc = sd.sd_sc();
+    let meta = sd.sd_meta();
+    let mut devname = [0u8; 32];
+
+    // Attempt to initiate a rebuild onto the specified device.
+
+    if sd.sd_capabilities.get() & SR_CAP_REBUILD == 0 {
+        sr_error(sc, format_args!("discipline does not support rebuild"));
+        return Err(Errno::EINVAL);
+    }
+
+    // make sure volume is in the right state
+    if sd.sd_vol_status.get() == BIOC_SVREBUILD {
+        sr_error(sc, format_args!("rebuild already in progress"));
+        return Err(Errno::EINVAL);
+    }
+    if sd.sd_vol_status.get() != BIOC_SVDEGRADED {
+        sr_error(sc, format_args!("volume not degraded"));
+        return Err(Errno::EINVAL);
+    }
+
+    // Find first offline chunk.
+    let chunk_no = meta.ssdi().ssd_chunk_no.get() as usize;
+    let Some((cid, chunk)) = (0..chunk_no)
+        .map(|c| (c, sd.sd_vol.sv_chunk(c)))
+        .find(|(_, ch)| ch.src_meta.scm_status.get() == BIOC_SDOFFLINE as u32)
+    else {
+        sr_error(sc, format_args!("no offline chunks available to rebuild"));
+        return Err(Errno::EINVAL);
+    };
+
+    // Get coerced size from another online chunk.
+    let csize = (0..chunk_no)
+        .map(|c| sd.sd_vol.sv_chunk(c))
+        .find(|ch| ch.src_meta.scm_status.get() == BIOC_SDONLINE as u32)
+        .map_or(0, |ch| ch.src_meta.scmi().scm_coerced_size.get());
+    if csize == 0 {
+        sr_error(sc, format_args!("no online chunks available for rebuild"));
+        return Err(Errno::EINVAL);
+    }
+
+    sr_meta_getdevname(sc, dev, &mut devname);
+    let vn = match bdevvp(dev) {
+        Ok(Some(vn)) => vn,
+        _ => {
+            printf(format_args!(
+                "{}: sr_rebuild_init: can't allocate vnode\n",
+                DEVNAME(sc)
+            ));
+            return Err(Errno::EINVAL);
+        }
+    };
+    let Some(p) = curproc() else {
+        vput(vn);
+        return Err(Errno::EINVAL);
+    };
+    if VOP_OPEN(vn, FREAD | FWRITE, NOCRED, p).is_err() {
+        // DNPRINTF(SR_D_META, "sr_ioctl_setstate can't open %s")
+        vput(vn);
+        return Err(Errno::EINVAL);
+    }
+    let mut open = true; // close dev on error
+    let mut rv = Err(Errno::EINVAL);
+
+    'done: {
+        let mut label = Disklabel::zeroed();
+
+        // Get disklabel and check partition.
+        let part = diskpart(dev) as usize;
+        if VOP_IOCTL(vn, DIOCGDINFO, label.as_bytes_mut(), FREAD, NOCRED, p).is_err() {
+            // DNPRINTF(SR_D_META, "sr_ioctl_setstate ioctl failed")
+            break 'done;
+        }
+        let Some(pp) = label.d_partitions.get(part) else {
+            break 'done;
+        };
+        if pp.p_fstype != FS_RAID {
+            sr_error(
+                sc,
+                format_args!(
+                    "{} partition not of type RAID ({})",
+                    Str(&devname),
+                    pp.p_fstype
+                ),
+            );
+            break 'done;
+        }
+
+        // Is the partition large enough?
+        let mut size = dl_sectoblk(&label, dl_getpsize(pp));
+        let data_blkno = u64::from(meta.ssd_data_blkno.get());
+        if size <= data_blkno {
+            sr_error(
+                sc,
+                format_args!("{}: {} partition too small", DEVNAME(sc), Str(&devname)),
+            );
+            break 'done;
+        }
+        size -= data_blkno;
+        let Ok(size) = i64::try_from(size) else {
+            sr_error(
+                sc,
+                format_args!("{}: {} partition too large", DEVNAME(sc), Str(&devname)),
+            );
+            break 'done;
+        };
+        if size < csize {
+            sr_error(
+                sc,
+                format_args!(
+                    "{} partition too small, at least {} bytes required",
+                    Str(&devname),
+                    csize << DEV_BSHIFT
+                ),
+            );
+            break 'done;
+        } else if size > csize {
+            sr_warn(
+                sc,
+                format_args!(
+                    "{} partition too large, wasting {} bytes",
+                    Str(&devname),
+                    (size - csize) << DEV_BSHIFT
+                ),
+            );
+        }
+        if label.d_secsize > meta.ssdi().ssd_secsize.get() {
+            sr_error(
+                sc,
+                format_args!(
+                    "{} sector size too large, <= {} bytes required",
+                    Str(&devname),
+                    meta.ssdi().ssd_secsize.get()
+                ),
+            );
+            break 'done;
+        }
+
+        // Ensure that this chunk is not already in use.
+        let status = sr_chunk_in_use(sc, dev);
+        if status != BIOC_SDINVALID
+            && status != BIOC_SDOFFLINE
+            && !(hotspare && status == BIOC_SDHOTSPARE)
+        {
+            sr_error(sc, format_args!("{} is already in use", Str(&devname)));
+            break 'done;
+        }
+
+        // Reset rebuild counter since we rebuilding onto a new chunk.
+        meta.ssd_rebuild.set(0);
+
+        open = false; // leave dev open from here on out
+
+        // Fix up chunk.
+        chunk.src_duid.set(label.d_uid);
+        chunk.src_dev_mm.set(dev);
+        chunk.src_vn.set(Some(vn));
+
+        // Reconstruct metadata.
+        let cm = &chunk.src_meta;
+        cm.scmi().scm_volid.set(meta.ssdi().ssd_volid.get());
+        cm.scmi().scm_chunk_id.set(cid as u32);
+        sr_strlcpy_cell(&cm.scmi().scm_devname, &devname);
+        cm.scmi().scm_size.set(size);
+        cm.scmi().scm_coerced_size.set(csize);
+        cm.scmi().scm_uuid.set(meta.ssdi().ssd_uuid.get());
+        cm.scm_checksum.set(sr_checksum(sc, cm.scmi().cells()));
+
+        sd.sd_set_chunk_state(cid, BIOC_SDREBUILD);
+
+        if sr_meta_save(sd, SR_META_DIRTY).is_err() {
+            sr_error(
+                sc,
+                format_args!("could not save metadata to {}", Str(&devname)),
+            );
+            open = true;
+            break 'done;
+        }
+
+        sr_warn(
+            sc,
+            format_args!(
+                "rebuild of {} started on {}",
+                Name(meta.ssd_devname.get()),
+                Str(&devname)
+            ),
+        );
+
+        sd.sd_reb_abort.set(0);
+        kthread_create_deferred(sr_rebuild_start, ptr::from_ref(sd).cast_mut().cast());
+
+        rv = Ok(());
+    }
+
+    // done:
+    if open {
+        let _ = VOP_CLOSE(vn, FREAD | FWRITE, NOCRED, Some(p));
+        vput(vn);
+    }
+
+    rv
 }
 
 /// `sr_rebuild_percent`: how far the rebuild has got, in percent.
@@ -1901,6 +3723,789 @@ pub fn sr_rebuild_percent(sd: &SrDiscipline) -> i32 {
     }
 
     0
+}
+
+/// `sr_roam_chunks`: records the current device names of chunks that moved, and saves the
+/// metadata if any did.
+pub fn sr_roam_chunks(sd: &'static SrDiscipline) {
+    let sc = sd.sd_sc();
+    let mut roamed = 0;
+
+    // Have any chunks roamed?
+    for chunk in sd.sd_vol.sv_chunk_list.iter() {
+        let meta = &chunk.src_meta;
+        let old = meta.scmi().scm_devname.get();
+        let new = chunk.src_devname.get();
+        if !sr_name_eq(&old, &new) {
+            printf(format_args!(
+                "{}: roaming device {} -> {}\n",
+                DEVNAME(sc),
+                Name(old),
+                Name(new)
+            ));
+
+            sr_strlcpy_cell(&meta.scmi().scm_devname, &new);
+
+            roamed += 1;
+        }
+    }
+
+    if roamed != 0 {
+        let _ = sr_meta_save(sd, SR_META_DIRTY);
+    }
+}
+
+/// `sr_ioctl_createraid`: creates a volume of level `bc_level` from the chunks of
+/// `bc_dev_list`, or assembles it from the metadata they carry, and attaches it as an
+/// `sd` on softraid's bus (or starts it, for disciplines that are not system disks).
+///
+/// `devs` is `None` for bioctl(8)'s request (the C's `user`: the device list is copied in
+/// from `bc_dev_list`), or the boot assembly's device list (`user == 0`, the C's `memcpy`).
+/// `data` is the boot key.
+pub fn sr_ioctl_createraid(
+    sc: &'static SrSoftc,
+    bc: &mut BiocCreateraid,
+    devs: Option<&[Dev]>,
+    data: Option<&[u8]>,
+) -> Result<(), Errno> {
+    let user = devs.is_none();
+    // The C's `rv`: `None` is its 0.
+    let mut rv: Option<Errno> = Some(Errno::EINVAL);
+    let mut devname = [0u8; 32];
+
+    // DNPRINTF(SR_D_IOCTL, "sr_ioctl_createraid(%d)")
+
+    let sd: Option<&'static SrDiscipline> = 'unwind: {
+        // user input
+        if i32::from(bc.bc_dev_list_len) > BIOC_CRMAXLEN {
+            break 'unwind None;
+        }
+
+        let no_chunk = usize::from(bc.bc_dev_list_len) / size_of::<Dev>();
+        let mut dt: Vec<Dev> = Vec::new();
+        if dt.try_reserve_exact(no_chunk).is_err() {
+            break 'unwind None;
+        }
+        match devs {
+            None => {
+                let mut bytes = [0u8; BIOC_CRMAXLEN as usize];
+                let bytes = &mut bytes[..usize::from(bc.bc_dev_list_len)];
+                if copyin(bc.bc_dev_list as usize, bytes).is_err() {
+                    break 'unwind None;
+                }
+                let (devs, _) = bytes.as_chunks::<{ size_of::<Dev>() }>();
+                dt.extend(devs.iter().map(|b| Dev::from_ne_bytes(*b)));
+            }
+            Some(devs) => dt.extend(devs.iter().take(no_chunk).copied()),
+        }
+
+        // Initialise discipline.
+        let Some(sdp) = sr_malloc::<SrDiscipline>(M_WAITOK) else {
+            break 'unwind None;
+        };
+        // SAFETY: a zeroed discipline (`SrZeroed`); it lives until `sr_discipline_free`.
+        let sd: &'static SrDiscipline = unsafe { sdp.as_ref() };
+        sd.sd_sc.set(sc);
+        sd.sd_meta_opt.init();
+        sd.sd_taskq.set(taskq_create(b"srdis", 1, IPL_BIO, 0));
+        if sd.sd_taskq.get().is_none() {
+            sr_error(sc, format_args!("could not create discipline taskq"));
+            break 'unwind Some(sd);
+        }
+        if sr_discipline_init(sd, i32::from(bc.bc_level)).is_err() {
+            sr_error(sc, format_args!("could not initialize discipline"));
+            break 'unwind Some(sd);
+        }
+
+        let cl = &sd.sd_vol.sv_chunk_list;
+        cl.init();
+
+        // Ensure that chunks are not already in use.
+        for &d in &dt {
+            if sr_chunk_in_use(sc, d) != BIOC_SDINVALID {
+                sr_meta_getdevname(sc, d, &mut devname);
+                sr_error(sc, format_args!("chunk {} already in use", Str(&devname)));
+                break 'unwind Some(sd);
+            }
+        }
+
+        sd.sd_meta_type.set(sr_meta_probe(sd, &dt));
+        if sd.sd_meta_type.get() == SR_META_F_INVALID {
+            sr_error(sc, format_args!("invalid metadata format"));
+            break 'unwind Some(sd);
+        }
+
+        let force = (bc.bc_flags & BIOC_SCFORCE) as i32;
+        if sr_meta_attach(sd, no_chunk as i32, force).is_err() {
+            break 'unwind Some(sd);
+        }
+
+        // force the raid volume by clearing metadata region
+        if bc.bc_flags & BIOC_SCFORCE != 0 {
+            // make sure disk isn't up and running
+            if sr_meta_read(sd) != 0 && sr_already_assembled(sd) {
+                let uuid = sr_uuid_format(&sd.sd_meta().ssdi().ssd_uuid.get());
+                sr_error(
+                    sc,
+                    format_args!(
+                        "disk {} is currently in use; cannot force create",
+                        Str(&uuid)
+                    ),
+                );
+                break 'unwind Some(sd);
+            }
+
+            if sr_meta_clear(sd).is_err() {
+                sr_error(sc, format_args!("failed to clear metadata"));
+                break 'unwind Some(sd);
+            }
+        }
+
+        let no_meta = sr_meta_read(sd);
+        if no_meta == -1 {
+            // Corrupt metadata on one or more chunks.
+            sr_error(
+                sc,
+                format_args!("one of the chunks has corrupt metadata; aborting assembly"),
+            );
+            break 'unwind Some(sd);
+        } else if no_meta == 0 {
+            // Initialise volume and chunk metadata.
+            sr_meta_init(sd, i32::from(bc.bc_level), no_chunk as i32);
+            sd.sd_vol_status.set(BIOC_SVONLINE);
+            sd.sd_meta_flags.set(bc.bc_flags & BIOC_SCNOAUTOASSEMBLE);
+            if sd.sd_create.get().is_some()
+                && let Err(i) = sd.sd_create(bc, no_chunk as i32, sd.sd_vol.sv_chunk_minsz.get())
+            {
+                rv = Some(i);
+                break 'unwind Some(sd);
+            }
+            sr_meta_init_complete(sd);
+
+            // DNPRINTF(SR_D_IOCTL, "sr_ioctl_createraid: vol_size: %lld")
+
+            // Warn if we've wasted chunk space due to coercing.
+            if sd.sd_capabilities.get() & SR_CAP_NON_COERCED == 0
+                && sd.sd_vol.sv_chunk_minsz.get() != sd.sd_vol.sv_chunk_maxsz.get()
+            {
+                sr_warn(
+                    sc,
+                    format_args!(
+                        "chunk sizes are not equal; up to {} blocks wasted per chunk",
+                        sd.sd_vol.sv_chunk_maxsz.get() - sd.sd_vol.sv_chunk_minsz.get()
+                    ),
+                );
+            }
+        } else {
+            let m = sd.sd_meta();
+            // Ensure we are assembling the correct # of chunks.
+            if bc.bc_level == 0x1C && m.ssdi().ssd_chunk_no.get() as usize > no_chunk {
+                sr_warn(
+                    sc,
+                    format_args!("trying to bring up {} degraded", Name(m.ssd_devname.get())),
+                );
+            } else if m.ssdi().ssd_chunk_no.get() as usize != no_chunk {
+                sr_error(
+                    sc,
+                    format_args!("volume chunk count does not match metadata chunk count"),
+                );
+                break 'unwind Some(sd);
+            }
+
+            // Ensure metadata level matches requested assembly level.
+            if m.ssdi().ssd_level.get() != u32::from(bc.bc_level) {
+                sr_error(
+                    sc,
+                    format_args!("volume level does not match metadata level"),
+                );
+                break 'unwind Some(sd);
+            }
+
+            if sr_already_assembled(sd) {
+                let uuid = sr_uuid_format(&m.ssdi().ssd_uuid.get());
+                sr_error(sc, format_args!("disk {} already assembled", Str(&uuid)));
+                break 'unwind Some(sd);
+            }
+
+            if !user && sd.sd_meta_flags.get() & BIOC_SCNOAUTOASSEMBLE != 0 {
+                // DNPRINTF(SR_D_META, "disk not auto assembled from metadata")
+                break 'unwind Some(sd);
+            }
+
+            if no_meta as usize != no_chunk {
+                sr_warn(
+                    sc,
+                    format_args!("trying to bring up {} degraded", Name(m.ssd_devname.get())),
+                );
+            }
+
+            if m.ssd_meta_flags.get() & SR_META_DIRTY != 0 {
+                sr_warn(
+                    sc,
+                    format_args!("{} was not shutdown properly", Name(m.ssd_devname.get())),
+                );
+            }
+
+            for omi in sd.sd_meta_opt.iter() {
+                // SAFETY: optional metadata items live until `sr_discipline_free`.
+                let omi: &'static SrMetaOptItem = unsafe { &*ptr::from_ref(omi) };
+                if sd.sd_meta_opt_handler.get().is_none() || sd.sd_meta_opt_handler(omi).is_err() {
+                    sr_meta_opt_handler(sd, omi.omi_som());
+                }
+            }
+
+            if sd.sd_assemble.get().is_some()
+                && let Err(i) = sd.sd_assemble(bc, no_chunk as i32, data)
+            {
+                rv = Some(i);
+                break 'unwind Some(sd);
+            }
+
+            // DNPRINTF(SR_D_META, "disk assembled from metadata")
+        }
+
+        // Metadata MUST be fully populated by this point.
+        // SAFETY: a new discipline on no list; it lives until `sr_discipline_free`
+        // unlinks it.
+        unsafe { sc.sc_dis_list.insert_tail(sd) };
+
+        // Allocate all resources.
+        rv = sd.sd_alloc_resources().err();
+        if rv.is_some() {
+            break 'unwind Some(sd);
+        }
+
+        // Adjust flags if necessary.
+        let ssdi = sd.sd_meta().ssdi();
+        if sd.sd_capabilities.get() & SR_CAP_AUTO_ASSEMBLE != 0
+            && (bc.bc_flags & BIOC_SCNOAUTOASSEMBLE)
+                != (ssdi.ssd_vol_flags.get() & BIOC_SCNOAUTOASSEMBLE)
+        {
+            ssdi.ssd_vol_flags
+                .set(ssdi.ssd_vol_flags.get() & !BIOC_SCNOAUTOASSEMBLE);
+            ssdi.ssd_vol_flags
+                .set(ssdi.ssd_vol_flags.get() | (bc.bc_flags & BIOC_SCNOAUTOASSEMBLE));
+        }
+
+        if sd.sd_capabilities.get() & SR_CAP_SYSTEM_DISK != 0 {
+            // Initialise volume state.
+            sd.sd_set_vol_state();
+            if sd.sd_vol_status.get() == BIOC_SVOFFLINE {
+                sr_error(
+                    sc,
+                    format_args!(
+                        "{} is offline, will not be brought online",
+                        Name(sd.sd_meta().ssd_devname.get())
+                    ),
+                );
+                break 'unwind Some(sd);
+            }
+
+            // Setup SCSI iopool.
+            // SAFETY: the cookie is this discipline, which outlives the pool, and the get and
+            // put functions are its work units' (`sr_wu_get`, `sr_wu_put`).
+            unsafe {
+                scsi_iopool_init(
+                    &sd.sd_iopool,
+                    ptr::from_ref(sd).cast_mut().cast(),
+                    sr_wu_get,
+                    sr_wu_put,
+                )
+            };
+
+            // All checks passed - return ENXIO if volume cannot be created.
+            rv = Some(Errno::ENXIO);
+
+            // Find a free target.
+            //
+            // XXX: We reserve sd_target == 0 to indicate the discipline is not linked into
+            // sc->sc_targets, so begin the search with target = 1.
+            let Some(target) = (1..SR_MAX_LD).find(|&t| sc.sc_targets[t].get().is_none()) else {
+                sr_error(
+                    sc,
+                    format_args!(
+                        "no free target for {}",
+                        Name(sd.sd_meta().ssd_devname.get())
+                    ),
+                );
+                break 'unwind Some(sd);
+            };
+
+            // Clear sense data.
+            sd.sd_scsi_sense.set(Default::default());
+
+            // Attach discipline and get midlayer to probe it.
+            let Some(sb) = sc.sc_scsibus() else {
+                break 'unwind Some(sd);
+            };
+            sd.sd_target.set(target as u16);
+            sc.sc_targets[target].set(Some(sd));
+            if scsi_probe_lun(sb, target as i32, 0).is_err() {
+                sr_error(sc, format_args!("scsi_probe_lun failed"));
+                sc.sc_targets[target].set(None);
+                sd.sd_target.set(0);
+                break 'unwind Some(sd);
+            }
+
+            let Some(link) = scsi_get_link(sb, target as i32, 0) else {
+                break 'unwind Some(sd);
+            };
+
+            let Some(dev) = link.device_softc.get() else {
+                break 'unwind Some(sd);
+            };
+            // SAFETY: the sd(4) device the probe attached to the link; it lives until the
+            // volume's lun is detached (`sr_discipline_shutdown`).
+            let dev: &Device = unsafe { dev.as_ref() };
+            // DNPRINTF(SR_D_IOCTL, "sr device added: %s at target %d")
+
+            // XXX - Count volumes, not targets.
+            let vol = sc.sc_targets[..=target]
+                .iter()
+                .filter(|t| t.get().is_some())
+                .count() as i32
+                - 1;
+
+            // rv = 0: nothing below unwinds.
+
+            let m = sd.sd_meta();
+            let old = m.ssd_devname.get();
+            if old[0] != 0 && !sr_name_eq(&old, dev.xname().as_bytes()) {
+                sr_warn(
+                    sc,
+                    format_args!(
+                        "volume {} is roaming, it used to be {}, updating metadata",
+                        dev.xname(),
+                        Name(old)
+                    ),
+                );
+            }
+
+            // Populate remaining volume metadata.
+            m.ssdi().ssd_volid.set(vol as u32);
+            sr_strlcpy_cell(&m.ssd_devname, dev.xname().as_bytes());
+
+            sr_info(
+                sc,
+                format_args!(
+                    "{} volume attached as {}",
+                    sd.name(),
+                    Name(m.ssd_devname.get())
+                ),
+            );
+
+            // Update device name on any roaming chunks.
+            sr_roam_chunks(sd);
+
+            // !SMALL_KERNEL
+            if sr_sensors_create(sd).is_err() {
+                sr_warn(
+                    sc,
+                    format_args!("unable to create sensor for {}", dev.xname()),
+                );
+            }
+        } else {
+            // This volume does not attach as a system disk.
+            let Some(ch_entry) = sd.sd_vol.sv_chunk_list.first() else {
+                break 'unwind Some(sd);
+            }; // XXX
+            sr_strlcpy_cell(&sd.sd_meta().ssd_devname, &ch_entry.src_devname.get());
+
+            if sd.sd_start_discipline().is_err() {
+                break 'unwind Some(sd);
+            }
+        }
+
+        // Save current metadata to disk.
+        let rv = sr_meta_save(sd, SR_META_DIRTY);
+
+        if sd.sd_vol_status.get() == BIOC_SVREBUILD {
+            kthread_create_deferred(sr_rebuild_start, ptr::from_ref(sd).cast_mut().cast());
+        }
+
+        sd.sd_ready.set(1);
+
+        return rv;
+    };
+
+    // unwind:
+    sr_discipline_shutdown(sd, false, 0);
+
+    match rv {
+        None | Some(Errno::EAGAIN) => Ok(()),
+        Some(e) => Err(e),
+    }
+}
+
+/// `sr_ioctl_deleteraid`: shuts a volume down for good (it is no longer auto-assembled).
+pub fn sr_ioctl_deleteraid(
+    sc: &'static SrSoftc,
+    sd: Option<&'static SrDiscipline>,
+    bd: &BiocDeleteraid,
+) -> Result<(), Errno> {
+    // DNPRINTF(SR_D_IOCTL, "sr_ioctl_deleteraid %s")
+
+    let Some(sd) = sd.or_else(|| sr_find_discipline(sc, &bd.bd_dev)) else {
+        sr_error(sc, format_args!("volume {} not found", Str(&bd.bd_dev)));
+        return Err(Errno::EIO);
+    };
+
+    // XXX Better check for mounted file systems and refuse to detach any volume that is
+    // actively in use.
+    if sr_bootuuid() == sd.sd_meta().ssdi().ssd_uuid.get() {
+        sr_error(sc, format_args!("refusing to delete boot volume"));
+        return Err(Errno::EIO);
+    }
+
+    sd.sd_deleted.set(1);
+    sd.sd_meta().ssdi().ssd_vol_flags.set(BIOC_SCNOAUTOASSEMBLE);
+    sr_discipline_shutdown(Some(sd), true, 0);
+
+    Ok(())
+}
+
+/// `sr_ioctl_discipline`: dispatches a discipline specific ioctl.
+pub fn sr_ioctl_discipline(
+    sc: &'static SrSoftc,
+    sd: Option<&'static SrDiscipline>,
+    bd: &mut BiocDiscipline,
+) -> Result<(), Errno> {
+    // DNPRINTF(SR_D_IOCTL, "sr_ioctl_discipline %s")
+
+    let Some(sd) = sd.or_else(|| sr_find_discipline(sc, &bd.bd_dev)) else {
+        sr_error(sc, format_args!("volume {} not found", Str(&bd.bd_dev)));
+        return Err(Errno::EIO);
+    };
+
+    if sd.sd_ioctl_handler.get().is_some() {
+        return sd.sd_ioctl_handler(bd);
+    }
+
+    Err(Errno::EIO)
+}
+
+/// `sr_ioctl_installboot`: stores the boot blocks and the boot loader on every online
+/// chunk of a volume and records them in its boot optional metadata.
+pub fn sr_ioctl_installboot(
+    sc: &'static SrSoftc,
+    sd: Option<&'static SrDiscipline>,
+    bb: &BiocInstallboot,
+) -> Result<(), Errno> {
+    // DNPRINTF(SR_D_IOCTL, "sr_ioctl_installboot %s")
+
+    let Some(sd) = sd.or_else(|| sr_find_discipline(sc, &bb.bb_dev)) else {
+        sr_error(sc, format_args!("volume {} not found", Str(&bb.bb_dev)));
+        return Err(Errno::EINVAL);
+    };
+
+    let label = DISKLIST
+        .0
+        .iter()
+        .find(|dk| sr_name_eq(&dk.dk_name.get(), &bb.bb_dev))
+        .and_then(|dk| dk.label());
+    let duid = match label {
+        Some(l) if !duid_iszero(&l.d_uid) => l.d_uid,
+        _ => {
+            sr_error(sc, format_args!("failed to get DUID for softraid volume"));
+            return Err(Errno::EINVAL);
+        }
+    };
+
+    // Ensure that boot storage area is large enough.
+    let meta = sd.sd_meta();
+    if Daddr::from(meta.ssd_data_blkno.get()) < SR_BOOT_OFFSET + SR_BOOT_SIZE as Daddr {
+        sr_error(sc, format_args!("insufficient boot storage"));
+        return Err(Errno::EINVAL);
+    }
+
+    if bb.bb_bootblk_size as usize > SR_BOOT_BLOCKS_SIZE * DEV_BSIZE {
+        sr_error(
+            sc,
+            format_args!(
+                "boot block too large ({} > {})",
+                bb.bb_bootblk_size,
+                SR_BOOT_BLOCKS_SIZE * DEV_BSIZE
+            ),
+        );
+        return Err(Errno::EINVAL);
+    }
+
+    if bb.bb_bootldr_size as usize > SR_BOOT_LOADER_SIZE * DEV_BSIZE {
+        sr_error(
+            sc,
+            format_args!(
+                "boot loader too large ({} > {})",
+                bb.bb_bootldr_size,
+                SR_BOOT_LOADER_SIZE * DEV_BSIZE
+            ),
+        );
+        return Err(Errno::EINVAL);
+    }
+
+    let secsize = meta.ssdi().ssd_secsize.get().max(1) as usize;
+
+    // Copy in boot block.
+    let bbs = (bb.bb_bootblk_size as usize).div_ceil(secsize) * secsize;
+    let mut bootblk: Vec<u8> = alloc::vec![0; bbs];
+    copyin(
+        bb.bb_bootblk as usize,
+        &mut bootblk[..bb.bb_bootblk_size as usize],
+    )
+    .map_err(|_| Errno::EINVAL)?;
+
+    // Copy in boot loader.
+    let bls = (bb.bb_bootldr_size as usize).div_ceil(secsize) * secsize;
+    let mut bootldr: Vec<u8> = alloc::vec![0; bls];
+    copyin(
+        bb.bb_bootldr as usize,
+        &mut bootldr[..bb.bb_bootldr_size as usize],
+    )
+    .map_err(|_| Errno::EINVAL)?;
+
+    // Create or update optional meta for bootable volumes.
+    let found = sd
+        .sd_meta_opt
+        .iter()
+        .find(|omi| omi.omi_som().som_type.get() == SR_OPT_BOOT);
+    let omi: &SrMetaOptItem = match found {
+        Some(omi) => omi,
+        None => {
+            let Some(omi) = SrMetaOptItem::alloc(size_of::<SrMetaBoot>(), M_WAITOK) else {
+                return Err(Errno::EINVAL);
+            };
+            omi.omi_som().som_type.set(SR_OPT_BOOT);
+            omi.omi_som().som_length.set(size_of::<SrMetaBoot>() as u32);
+            // SAFETY: a new item in no list; it lives until `sr_discipline_free`.
+            unsafe { sd.sd_meta_opt.insert_head(omi) };
+            meta.ssdi().ssd_opt_no.set(meta.ssdi().ssd_opt_no.get() + 1);
+            omi
+        }
+    };
+    let Some(sbm) = omi.som_as::<SrMetaBoot>() else {
+        return Err(Errno::EINVAL);
+    };
+
+    sbm.sbm_root_duid.set(duid);
+    for d in &sbm.sbm_boot_duid {
+        d.set([0; 8]);
+    }
+    sbm.sbm_bootblk_size.set(bbs as u32);
+    sbm.sbm_bootldr_size.set(bls as u32);
+
+    // DNPRINTF(SR_D_IOCTL, "sr_ioctl_installboot: root duid is %s")
+
+    // Save boot block and boot loader to each chunk.
+    for i in 0..meta.ssdi().ssd_chunk_no.get() as usize {
+        let chunk = sd.sd_vol.sv_chunk(i);
+        let status = chunk.src_meta.scm_status.get();
+        if status != BIOC_SDONLINE as u32 && status != BIOC_SDREBUILD as u32 {
+            continue;
+        }
+
+        if let Some(d) = sbm.sbm_boot_duid.get(i) {
+            d.set(chunk.src_duid.get());
+        }
+
+        // Save boot blocks.
+        // DNPRINTF(SR_D_IOCTL, "sr_ioctl_installboot: saving boot block to %s (%u bytes)")
+
+        let cells = Cell::from_mut(&mut bootblk[..]).as_slice_of_cells();
+        if sr_rw(
+            sc,
+            chunk.src_dev_mm.get(),
+            cells,
+            SR_BOOT_BLOCKS_OFFSET,
+            B_WRITE,
+        )
+        .is_err()
+        {
+            sr_error(sc, format_args!("failed to write boot block"));
+            return Err(Errno::EINVAL);
+        }
+
+        // Save boot loader.
+        // DNPRINTF(SR_D_IOCTL, "sr_ioctl_installboot: saving boot loader to %s (%u bytes)")
+
+        let cells = Cell::from_mut(&mut bootldr[..]).as_slice_of_cells();
+        if sr_rw(
+            sc,
+            chunk.src_dev_mm.get(),
+            cells,
+            SR_BOOT_LOADER_OFFSET,
+            B_WRITE,
+        )
+        .is_err()
+        {
+            sr_error(sc, format_args!("failed to write boot loader"));
+            return Err(Errno::EINVAL);
+        }
+    }
+
+    // XXX - Install boot block on disk - MD code.
+
+    // Mark volume as bootable and save metadata.
+    meta.ssdi()
+        .ssd_vol_flags
+        .set(meta.ssdi().ssd_vol_flags.get() | BIOC_SCBOOTABLE);
+    if sr_meta_save(sd, SR_META_DIRTY).is_err() {
+        sr_error(
+            sc,
+            format_args!("could not save metadata to {}", DEVNAME(sc)),
+        );
+        return Err(Errno::EINVAL);
+    }
+
+    Ok(())
+}
+
+/// `sr_chunks_unwind`: closes and frees the chunks of `cl`.
+pub fn sr_chunks_unwind(_sc: &SrSoftc, cl: &SrChunkHead) {
+    // DNPRINTF(SR_D_IOCTL, "sr_chunks_unwind")
+
+    let p = curproc();
+    while let Some(ch_entry) = cl.first() {
+        // SAFETY: the list's first element.
+        unsafe { cl.remove_head() };
+
+        // DNPRINTF(SR_D_IOCTL, "sr_chunks_unwind closing: %s")
+        if let Some(vn) = ch_entry.src_vn.get() {
+            // XXX - explicitly lock the vnode until we can resolve the problem introduced
+            // by vnode aliasing... specfs has no locking, whereas ufs/ffs does!
+            let _ = vn_lock(vn, LK_EXCLUSIVE | LK_RETRY);
+            let _ = VOP_CLOSE(vn, FREAD | FWRITE, NOCRED, p);
+            vput(vn);
+        }
+        sr_free(NonNull::from(ch_entry), size_of::<SrChunk>());
+    }
+    cl.init();
+}
+
+/// Zeroes the keys of a crypto discipline's state before it is freed.
+fn sr_wipe_keys(c: &SrCrypto) {
+    for k in &c.scr_key {
+        k.set([0; SR_CRYPTO_KEYBYTES]);
+    }
+    c.scr_maskkey.set([0; SR_CRYPTO_MAXKEYBYTES]);
+    // Keep the stores: the memory is freed right after.
+    core::hint::black_box(c);
+}
+
+/// `sr_discipline_free`: frees a discipline and everything it owns, and unlinks it from the
+/// softc.
+pub fn sr_discipline_free(sd: Option<&'static SrDiscipline>) {
+    let Some(sd) = sd else {
+        return;
+    };
+
+    let sc = sd.sd_sc();
+
+    // DNPRINTF(SR_D_DIS, "sr_discipline_free %s")
+    if sd.sd_free_resources.get().is_some() {
+        sd.sd_free_resources();
+    }
+    sd.sd_vol.sv_chunks_free();
+    if let Some(m) = sd.sd_meta.take() {
+        sr_free(m, SR_META_BYTES);
+    }
+    if let Some(fm) = NonNull::new(sd.sd_meta_foreign.replace(ptr::null_mut())) {
+        free(fm.cast::<u8>(), M_DEVBUF, smd(sd).smd_size.max(1));
+    }
+
+    let som = &sd.sd_meta_opt;
+    while let Some(omi) = som.first() {
+        // SAFETY: the list's first element; nothing uses the item once it is unlinked.
+        unsafe {
+            som.remove_head();
+            SrMetaOptItem::free(omi);
+        }
+    }
+
+    let target = usize::from(sd.sd_target.get());
+    if target != 0 {
+        kassert!(sc.sc_targets[target].get().is_some_and(|t| ptr::eq(t, sd)));
+        sc.sc_targets[target].set(None);
+    }
+
+    if sc.sc_dis_list.iter().any(|d| ptr::eq(d, sd)) {
+        // SAFETY: on the list (checked above).
+        unsafe { sc.sc_dis_list.remove(sd) };
+    }
+
+    // explicit_bzero(sd, sizeof *sd): the secrets in it are the crypto disciplines' keys,
+    // which are wiped member by member (a byte view of a structure that is still
+    // referenced would alias it).
+    sr_wipe_keys(&sd.mds().mdd_crypto);
+    sr_wipe_keys(&sd.mds().mdd_raid1c.sr1c_crypto);
+    sr_free(NonNull::from(sd), size_of::<SrDiscipline>());
+}
+
+/// `sr_discipline_shutdown`: stops a volume: aborts its rebuild, saves its metadata
+/// (`meta_save`), waits for its syncs, and (unless `dying == -1`, the quiesce) detaches its
+/// `sd`, closes its chunks and frees it.
+pub fn sr_discipline_shutdown(sd: Option<&'static SrDiscipline>, meta_save: bool, dying: i32) {
+    let Some(sd) = sd else {
+        return;
+    };
+    let sc = sd.sd_sc();
+
+    // DNPRINTF(SR_D_DIS, "sr_discipline_shutdown %s")
+
+    // If rebuilding, abort rebuild and drain I/O.
+    if sd.sd_reb_active.get() != 0 {
+        sd.sd_reb_abort.set(1);
+        while sd.sd_reb_active.get() != 0 {
+            let _ = tsleep_nsec(ptr::from_ref(sd), PWAIT, "sr_shutdown", msec_to_nsec(1));
+        }
+    }
+
+    if meta_save {
+        let _ = sr_meta_save(sd, 0);
+    }
+
+    let s = splbio();
+
+    sd.sd_ready.set(0);
+
+    // make sure there isn't a sync pending and yield
+    wakeup(ptr::from_ref(sd));
+    while sd.sd_sync.get() != 0 || sd.sd_must_flush.get() != 0 {
+        let ret = tsleep_nsec(
+            ptr::from_ref(&sd.sd_sync),
+            MAXPRI,
+            "sr_down",
+            sec_to_nsec(60),
+        );
+        if ret == Err(Errno::EWOULDBLOCK) {
+            break;
+        }
+    }
+    if dying == -1 {
+        sd.sd_ready.set(1);
+        splx(s);
+        return;
+    }
+
+    // !SMALL_KERNEL
+    sr_sensors_delete(sd);
+
+    if sd.sd_target.get() != 0
+        && let Some(sb) = sc.sc_scsibus()
+    {
+        let flags = if dying != 0 { 0 } else { DETACH_FORCE };
+        let _ = scsi_detach_lun(sb, i32::from(sd.sd_target.get()), 0, flags);
+    }
+
+    sr_chunks_unwind(sc, &sd.sd_vol.sv_chunk_list);
+
+    if let Some(tq) = sd.sd_taskq.take() {
+        // SAFETY: the discipline's own queue (`taskq_create` in `sr_ioctl_createraid`),
+        // destroyed once (taken out); its work units are idle by now.
+        unsafe { taskq_destroy(NonNull::from(tq)) };
+    }
+
+    sr_discipline_free(Some(sd));
+
+    splx(s);
 }
 
 /// `sr_discipline_init`: installs the default hooks and the discipline of RAID `level`
@@ -2427,6 +5032,14 @@ pub fn sr_uuid_print(uuid: &SrUuid, cr: bool) {
     printf(format_args!("{}{}", Str(&s), if cr { "\n" } else { "" }));
 }
 
+/// `sr_already_assembled`: whether a volume with this one's UUID is attached.
+pub fn sr_already_assembled(sd: &SrDiscipline) -> bool {
+    let sc = sd.sd_sc();
+    let uuid = sd.sd_meta().ssdi().ssd_uuid.get();
+
+    dis_list(sc).any(|sdtmp| sdtmp.sd_meta().ssdi().ssd_uuid.get() == uuid)
+}
+
 /// `sr_validate_stripsize`: the shift of a strip size that is a power of two multiple of
 /// `DEV_BSIZE`, `None` otherwise (the C's -1).
 pub fn sr_validate_stripsize(b: u32) -> Option<i32> {
@@ -2441,6 +5054,43 @@ pub fn sr_validate_stripsize(b: u32) -> Option<i32> {
     }
 
     Some(s as i32)
+}
+
+/// `sr_quiesce`: saves the volumes' metadata and lets their I/O drain, without detaching
+/// them (`vfs_shutdown`).
+pub fn sr_quiesce() {
+    let Some(sc) = softraid0() else {
+        return;
+    };
+
+    // Shutdown disciplines in reverse attach order.
+    let mut sd = sc.sc_dis_list.last();
+    while let Some(d) = sd {
+        let prev = sc.sc_dis_list.prev(d);
+        // SAFETY: disciplines live until `sr_discipline_free`, which `dying == -1` does not
+        // reach.
+        sr_discipline_shutdown(Some(unsafe { &*ptr::from_ref(d) }), true, -1);
+        sd = prev;
+    }
+}
+
+/// `sr_shutdown`: powers softraid's children down and shuts every volume down.
+pub fn sr_shutdown(dying: i32) {
+    let Some(sc) = softraid0() else {
+        return;
+    };
+
+    // DNPRINTF(SR_D_MISC, "sr_shutdown")
+
+    // Since softraid is not under mainbus, we have to explicitly notify its children that the
+    // power is going down, so they can execute their shutdown hooks.
+    let _ = config_suspend(&sc.sc_dev, DVACT_POWERDOWN);
+
+    // Shutdown disciplines in reverse attach order.
+    while let Some(sd) = sc.sc_dis_list.last() {
+        // SAFETY: disciplines live until `sr_discipline_free`, which unlinks this one.
+        sr_discipline_shutdown(Some(unsafe { &*ptr::from_ref(sd) }), true, dying);
+    }
 }
 
 /// `sr_validate_io`: checks a read or write of the volume (online, a data length, a CDB of
@@ -2506,6 +5156,27 @@ pub fn sr_validate_io(wu: &'static SrWorkunit, func: &str) -> Result<Daddr, Errn
     }
 
     Ok(blkno)
+}
+
+/// `sr_rebuild_start`: starts the rebuild kernel thread (deferred from `sr_rebuild_init` and
+/// `sr_ioctl_createraid`).
+pub fn sr_rebuild_start(arg: *mut c_void) {
+    // SAFETY: `arg` is the discipline the deferral was made for; it waits for the rebuild
+    // (`sd_reb_active`) before it goes.
+    let sd: &'static SrDiscipline = unsafe { &*arg.cast::<SrDiscipline>() };
+    let sc = sd.sd_sc();
+
+    // DNPRINTF(SR_D_REBUILD, "%s starting rebuild thread")
+
+    match kthread_create(sr_rebuild_thread, arg, DEVNAME(sc).as_bytes()) {
+        Ok(p) => sd.sd_background_proc.set(ptr::from_ref(p)),
+        Err(_) => {
+            printf(format_args!(
+                "{}: unable to start background operation\n",
+                DEVNAME(sc)
+            ));
+        }
+    }
 }
 
 /// `sr_rebuild_thread`: the rebuild kernel thread's body.
@@ -2753,6 +5424,88 @@ pub fn sr_rebuild(sd: &'static SrDiscipline) {
     sr_xs_free(xs_w_mem);
     drop(buf);
 }
+
+/// `sr_find_discipline`: the volume whose device name is `devname`.
+pub fn sr_find_discipline(sc: &SrSoftc, devname: &[u8]) -> Option<&'static SrDiscipline> {
+    dis_list(sc).find(|sd| sr_name_eq(&sd.sd_meta().ssd_devname.get(), devname))
+}
+
+/// `sr_sensors_create`: a drive sensor for the volume, and the softc's refresh task.
+pub fn sr_sensors_create(sd: &'static SrDiscipline) -> Result<(), Errno> {
+    let sc = sd.sd_sc();
+
+    // DNPRINTF(SR_D_STATE, "%s: sr_sensors_create")
+
+    let sensor = &sd.sd_vol.sv_sensor;
+    sensor.r#type.set(SENSOR_DRIVE);
+    sensor.status.set(SENSOR_S_UNKNOWN);
+    let mut desc = [0u8; 32];
+    let _ = strlcpy(&mut desc, &sd.sd_meta().ssd_devname.get());
+    sensor.desc.set(desc);
+
+    sensor_attach(&sc.sc_sensordev, sensor);
+    sd.sd_vol.sv_sensor_attached.set(1);
+
+    if sc.sc_sensor_task.get().is_none() {
+        let st = sensor_task_register(ptr::from_ref(sc).cast_mut().cast(), sr_sensors_refresh, 10);
+        sc.sc_sensor_task.set(st);
+        if st.is_none() {
+            return Err(Errno::EIO);
+        }
+    }
+
+    Ok(())
+}
+
+/// `sr_sensors_delete`: detaches the volume's sensor, and the refresh task with the last.
+pub fn sr_sensors_delete(sd: &SrDiscipline) {
+    let sc = sd.sd_sc();
+
+    // DNPRINTF(SR_D_STATE, "sr_sensors_delete")
+
+    if sd.sd_vol.sv_sensor_attached.get() != 0 {
+        sensor_detach(&sc.sc_sensordev, &sd.sd_vol.sv_sensor);
+        sd.sd_vol.sv_sensor_attached.set(0);
+    }
+
+    // Unregister the refresh task if we detached our last sensor.
+    if dis_list(sc).any(|sd| sd.sd_vol.sv_sensor_attached.get() != 0) {
+        return;
+    }
+    if let Some(st) = sc.sc_sensor_task.take() {
+        // SAFETY: the task `sr_sensors_create` registered, unregistered once (taken out).
+        unsafe { sensor_task_unregister(st) };
+    }
+}
+
+/// `sr_sensors_refresh`: the refresh task: each volume's sensor from its state.
+pub fn sr_sensors_refresh(arg: *mut c_void) {
+    // SAFETY: `arg` is the softc `sr_sensors_create` registered the task with; the task is
+    // unregistered before the softc goes (`sr_detach`).
+    let sc: &SrSoftc = unsafe { &*arg.cast::<SrSoftc>() };
+
+    // DNPRINTF(SR_D_STATE, "sr_sensors_refresh")
+
+    for sd in dis_list(sc) {
+        let sv = &sd.sd_vol;
+
+        let (value, status) = match sd.sd_vol_status.get() {
+            BIOC_SVOFFLINE => (SENSOR_DRIVE_FAIL, SENSOR_S_CRIT),
+            BIOC_SVDEGRADED => (SENSOR_DRIVE_PFAIL, SENSOR_S_WARN),
+            BIOC_SVREBUILD => (SENSOR_DRIVE_REBUILD, SENSOR_S_WARN),
+            BIOC_SVSCRUB | BIOC_SVONLINE => (SENSOR_DRIVE_ONLINE, SENSOR_S_OK),
+            _ => (0, SENSOR_S_UNKNOWN), // unknown
+        };
+        sv.sv_sensor.value.set(value);
+        sv.sv_sensor.status.set(status);
+    }
+}
+
+// SR_FANCY_STATS (sr_print_stats) and SR_DEBUG (sr_meta_print, sr_dump_block, sr_dump_mem)
+// are not configured.
+
+// HIBERNATE is not configured (EmiBSD has no hibernation): `sr_hibernate_io`, the softraid
+// crypto writer of the hibernate image, is not compiled, as in a kernel without the option.
 
 #[cfg(test)]
 mod tests;

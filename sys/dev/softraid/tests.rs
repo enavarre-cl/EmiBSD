@@ -5,7 +5,6 @@ use std::boxed::Box;
 use std::vec::Vec;
 
 use crate::kern::subr_pool::tests::setup_real_memory;
-use crate::scsi::scsi_base::scsi_iopool_init;
 
 /// A zeroed softc (what `config_make_softc` gives `sr_attach`), leaked.
 fn softc() -> &'static SrSoftc {
@@ -406,4 +405,145 @@ fn validate_io_decodes_cdbs() {
     // offline volume
     sd.sd_vol_status.set(BIOC_SVOFFLINE);
     assert!(sr_validate_io(wu, "test").is_err());
+}
+
+/// Links `sd` into its softc's discipline list and names it.
+fn attach_volume(sd: &'static SrDiscipline, name: &[u8], level: u32) {
+    let m = sd.sd_meta();
+    sr_strlcpy_cell(&m.ssd_devname, name);
+    m.ssdi().ssd_level.set(level);
+    m.ssdi().ssd_size.set(2048);
+    sr_strlcpy_cell(&m.ssdi().ssd_vendor, b"OPENBSD");
+    sd.sd_vol_status.set(BIOC_SVONLINE);
+    // SAFETY: a new discipline on no list, leaked.
+    unsafe { sd.sd_sc().sc_dis_list.insert_tail(sd) };
+}
+
+#[test]
+fn bio_inquiries_report_volumes_disks_and_hotspares() {
+    let _g = setup_real_memory();
+    let sd = volume(2);
+    let sc = sd.sd_sc();
+    attach_volume(sd, b"sd5", 1);
+    for i in 0..2 {
+        let c = sd.sd_vol.sv_chunk(i);
+        c.src_meta.scmi().scm_size.set(1000);
+        sr_strlcpy_cell(&c.src_meta.scmi().scm_devname, b"sd0a");
+    }
+    // a hotspare after the volume
+    // SAFETY: a zeroed chunk (`SrZeroed`), leaked.
+    let hs: &'static SrChunk = unsafe { sr_malloc::<SrChunk>(M_WAITOK).unwrap().as_ref() };
+    hs.src_meta.scm_status.set(BIOC_SDHOTSPARE as u32);
+    sr_strlcpy_cell(&hs.src_meta.scmi().scm_devname, b"sd3a");
+    sr_hotspare_list_append(sc, hs);
+    sc.sc_hotspare_no.set(1);
+
+    // SAFETY: the ioctl structures are valid as zero bytes.
+    let mut bi: BiocInq = unsafe { core::mem::zeroed() };
+    sr_ioctl_inq(sc, &mut bi).unwrap();
+    assert_eq!((bi.bi_novol, bi.bi_nodisk), (2, 3));
+
+    // SAFETY: as above.
+    let mut bv: BiocVol = unsafe { core::mem::zeroed() };
+    sr_ioctl_vol(sc, &mut bv).unwrap();
+    assert_eq!((bv.bv_level, bv.bv_nodisk, bv.bv_size), (1, 2, 2048 << 9));
+    assert_eq!(&bv.bv_dev[..4], b"sd5\0");
+    assert_eq!(&bv.bv_vendor[..8], b"OPENBSD\0");
+    bv.bv_volid = 1;
+    sr_ioctl_vol(sc, &mut bv).unwrap();
+    assert_eq!((bv.bv_level, bv.bv_nodisk), (-1, 1));
+    bv.bv_volid = 2;
+    assert_eq!(sr_ioctl_vol(sc, &mut bv), Err(Errno::EINVAL));
+
+    // SAFETY: as above.
+    let mut bd: BiocDisk = unsafe { core::mem::zeroed() };
+    bd.bd_diskid = 1;
+    sr_ioctl_disk(sc, &mut bd).unwrap();
+    assert_eq!(
+        (bd.bd_status, bd.bd_size, bd.bd_target),
+        (BIOC_SDONLINE, 1000 << 9, 1)
+    );
+    assert_eq!(&bd.bd_vendor[..5], b"sd0a\0");
+    bd.bd_diskid = 2; // no key disk on a RAID 1
+    assert_eq!(sr_ioctl_disk(sc, &mut bd), Err(Errno::EINVAL));
+    bd.bd_volid = 1;
+    bd.bd_diskid = 0;
+    sr_ioctl_disk(sc, &mut bd).unwrap();
+    assert_eq!(bd.bd_status, BIOC_SDHOTSPARE);
+
+    assert!(ptr::eq(sr_find_discipline(sc, b"sd5\0\0").unwrap(), sd));
+    assert!(sr_find_discipline(sc, b"sd6").is_none());
+    assert!(sr_already_assembled(sd));
+}
+
+#[test]
+fn bio_arguments_round_trip_through_bytes() {
+    // SAFETY: the ioctl structures are valid as zero bytes.
+    let bv: BiocVol = unsafe { core::mem::zeroed() };
+    let mut bytes = std::vec![0u8; size_of::<BiocVol>()];
+    bio_put(
+        &mut bytes,
+        offset_of!(BiocVol, bv_volid),
+        &3i32.to_ne_bytes(),
+    );
+    let mut bs = bv.bv_bio.bio_status;
+    bs.bs_status = BIO_STATUS_ERROR;
+    bs.bs_msg_count = 1;
+    bs.bs_msgs[0].bm_type = BIO_MSG_WARN;
+    bs.bs_msgs[0].bm_msg[..2].copy_from_slice(b"hi");
+    bio_put_status(&mut bytes, &bs);
+    let back: BiocVol = bio_arg(&bytes).unwrap();
+    assert_eq!(back.bv_volid, 3);
+    assert_eq!(back.bv_bio.bio_status.bs_status, BIO_STATUS_ERROR);
+    assert_eq!(back.bv_bio.bio_status.bs_msgs[0].bm_type, BIO_MSG_WARN);
+    assert_eq!(&back.bv_bio.bio_status.bs_msgs[0].bm_msg[..2], b"hi");
+    assert_eq!(bio_arg::<BiocVol>(&bytes[1..]).err(), Some(Errno::EINVAL));
+}
+
+#[test]
+fn sensors_follow_the_volume_state() {
+    let _g = setup_real_memory();
+    let sd = volume(1);
+    let sc = sd.sd_sc();
+    attach_volume(sd, b"sd5", 1);
+    for (state, value, status) in [
+        (BIOC_SVOFFLINE, SENSOR_DRIVE_FAIL, SENSOR_S_CRIT),
+        (BIOC_SVDEGRADED, SENSOR_DRIVE_PFAIL, SENSOR_S_WARN),
+        (BIOC_SVREBUILD, SENSOR_DRIVE_REBUILD, SENSOR_S_WARN),
+        (BIOC_SVONLINE, SENSOR_DRIVE_ONLINE, SENSOR_S_OK),
+        (BIOC_SVINVALID, 0, SENSOR_S_UNKNOWN),
+    ] {
+        sd.sd_vol_status.set(state);
+        sr_sensors_refresh(ptr::from_ref(sc).cast_mut().cast());
+        assert_eq!(sd.sd_vol.sv_sensor.value.get(), value);
+        assert_eq!(sd.sd_vol.sv_sensor.status.get(), status);
+    }
+}
+
+#[test]
+fn discipline_free_releases_and_unlinks() {
+    let _g = setup_real_memory();
+    let sd = volume(2);
+    let sc = sd.sd_sc();
+    attach_volume(sd, b"sd5", 1);
+    let omi = SrMetaOptItem::alloc(size_of::<SrMetaBoot>(), M_WAITOK).unwrap();
+    // SAFETY: a new item in no list.
+    unsafe { sd.sd_meta_opt.insert_head(omi) };
+    sd.sd_target.set(7);
+    sc.sc_targets[7].set(Some(sd));
+    sd.mds()
+        .mdd_crypto
+        .scr_maskkey
+        .set([0xa5; SR_CRYPTO_MAXKEYBYTES]);
+    // chunks without vnodes are just freed
+    let cl = &sd.sd_vol.sv_chunk_list;
+    for i in 0..2 {
+        // SAFETY: the volume's chunks are on no list yet.
+        unsafe { cl.insert_head(sd.sd_vol.sv_chunk(i)) };
+    }
+    sr_chunks_unwind(sc, cl);
+    assert!(cl.is_empty());
+    sr_discipline_free(Some(sd));
+    assert!(sc.sc_dis_list.is_empty());
+    assert!(sc.sc_targets[7].get().is_none());
 }
