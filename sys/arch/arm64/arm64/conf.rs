@@ -43,7 +43,7 @@
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `vnd` (14 block,
-//!   41 character), `rd` (17 block, 47 character), `pf` (73) and `ptm` (81). `log` (7) waits for `subr_log.c`'s `logopen` ..
+//!   41 character), `rd` (17 block, 47 character), `pf` (73), `bio` (79) and `ptm` (81). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
 //!   boot (`machine::conf::cdevsw_set`); `nblkdev`/`nchrdev` are their lengths.
@@ -57,6 +57,7 @@
 use core::cell::Cell;
 
 use crate::arch::arm64::arm64::mem::{mmclose, mmioctl, mmmmap, mmopen, mmrw};
+use crate::dev::bio::{NBIO, bioclose, bioioctl, bioopen};
 use crate::dev::cons::{cnclose, cnioctl, cnkqfilter, cnopen, cnread, cnstop, cnwrite};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
 use crate::dev::rd::{NRD, rdclose, rddump, rdioctl, rdopen, rdread, rdsize, rdstrategy, rdwrite};
@@ -74,9 +75,9 @@ use crate::net::bpf::{NBPFILTER, bpfclose, bpfioctl, bpfkqfilter, bpfopen, bpfre
 use crate::net::pf_ioctl::{NPF, pfclose, pfioctl, pfopen};
 use crate::scsi::sd::{NSD, sdclose, sddump, sdioctl, sdopen, sdread, sdsize, sdstrategy, sdwrite};
 use crate::sys::conf::{
-    Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_bpf_init, cdev_cn_init, cdev_ctty_init,
-    cdev_disk_init, cdev_fd_init, cdev_mm_init, cdev_notdef, cdev_pf_init, cdev_ptc_init,
-    cdev_ptm_init, cdev_tty_init,
+    Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_bio_init, cdev_bpf_init, cdev_cn_init,
+    cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_mm_init, cdev_notdef, cdev_pf_init,
+    cdev_ptc_init, cdev_ptm_init, cdev_tty_init,
 };
 use crate::sys::param::NODEV;
 use crate::sys::types::{Dev, major, makedev, minor};
@@ -263,7 +264,7 @@ pub static CDEVSW: Devsw<Cdevsw, 101> = Devsw([
     cnotdef(), // 76: generic radio I/O (radio: not ported)
     cnotdef(), // 77: was USB scanners
     cnotdef(), // 78: was: system call tracing
-    cnotdef(), // 79: ioctl tunnel (bio: not ported)
+    Cell::new(cdev_bio_init(NBIO, bioopen, bioclose, bioioctl)), // 79: ioctl tunnel
     cnotdef(), // 80
     // 81: pseudo-tty ptm device
     Cell::new(cdev_ptm_init(NPTY, ptmopen, ptmclose, ptmioctl)),

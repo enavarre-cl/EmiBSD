@@ -24,6 +24,7 @@ use crate::arch::arm64::dev::agtimer::{AGTIMER_CA, AGTIMER_CD};
 use crate::arch::arm64::dev::ampintc::{AMPINTC_CA, AMPINTC_CD};
 use crate::arch::arm64::dev::efi_machdep::{EFI_CA, EFI_CD};
 use crate::arch::arm64::dev::mainbus::{MAINBUS_CA, MAINBUS_CD};
+use crate::dev::bio::bioattach;
 use crate::dev::fdt::plrtc::{PLRTC_CA, PLRTC_CD};
 use crate::dev::fdt::pluart_fdt::PLUART_FDT_CA;
 use crate::dev::fdt::virtio_mmio::VIRTIO_MMIO_CA;
@@ -203,10 +204,11 @@ pub static CFROOTS: [i16; 1] = [0];
 /// `pdevinit[]`: the pseudo-devices of the MI `conf/GENERIC` whose attach functions are
 /// ported, in `ioconf.c`'s order (`pseudo-device pf`, `pseudo-device pflog`, `pseudo-device
 /// pfsync`, `pseudo-device pflow`, `pseudo-device enc`, `pseudo-device pty 16`, `pseudo-device
-/// vnd 4`, `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`; all but pty and
-/// vnd with a count of 1), then `pseudo-device rd 1`, which is not in GENERIC but in the
-/// RAMDISK kernels (`arch/arm64/conf/RAMDISK*`): this kernel boots its root from rd0a (M8).
-pub static PDEVINIT: [Pdevinit; 11] = [
+/// vnd 4`, `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device
+/// bio 1`; all but pty and vnd with a count of 1), then `pseudo-device rd 1`, which is not in
+/// GENERIC but in the RAMDISK kernels (`arch/arm64/conf/RAMDISK*`): this kernel boots its root
+/// from rd0a (M8).
+pub static PDEVINIT: [Pdevinit; 12] = [
     Pdevinit {
         pdev_attach: pfattach,
         pdev_count: 1,
@@ -245,6 +247,10 @@ pub static PDEVINIT: [Pdevinit; 11] = [
     },
     Pdevinit {
         pdev_attach: wgattach,
+        pdev_count: 1,
+    },
+    Pdevinit {
+        pdev_attach: bioattach,
         pdev_count: 1,
     },
     Pdevinit {

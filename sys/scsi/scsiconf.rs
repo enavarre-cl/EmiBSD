@@ -160,9 +160,8 @@
 //! - The prototypes of the header are not repeated: Rust needs none.
 //!
 //! `scsiconf.c`:
-//! - bio(4) (`dev/bio.c`) is not ported, so `NBIO` is 0: `scsibusattach` does not
-//!   `bio_register` and `scsibusdetach` does not `bio_unregister` (comments mark the
-//!   sites). [`scsibusbioctl`] is ported and waits for bio(4) to call it.
+//! - bio(4) is configured (`NBIO` is 1, `dev/bio.rs`): `scsibusattach` registers
+//!   [`scsibusbioctl`] with `bio_register` and `scsibusdetach` calls `bio_unregister`.
 //! - `NMPATH` (`mpath.h`) is only included by the C file, which uses nothing of it; mpath(4)
 //!   is not ported (`subr_autoconf.rs`).
 //! - `SCSIDEBUG` is not configured and `scsi_debug.h` is not ported: the `SC_DEBUG` sites
@@ -200,6 +199,7 @@ use core::slice;
 use core::mem::{offset_of, size_of};
 use core::sync::atomic::{AtomicI32, Ordering};
 
+use crate::dev::bio::{bio_register, bio_unregister};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::subr_autoconf::{
     config_attach, config_deactivate, config_detach, config_search, config_suspend,
@@ -1447,8 +1447,10 @@ pub fn scsibusattach(parent: Option<&Device>, self_: &Device, aux: *mut c_void) 
 
     sb.sc_link_list.init();
 
-    // NBIO > 0: bio_register(&sb->sc_dev, scsibusbioctl), printing "%s: unable to register
-    // bio" on failure. bio(4) (dev/bio.c) is not ported, so NBIO is 0.
+    // NBIO > 0.
+    if bio_register(&sb.sc_dev, scsibusbioctl).is_err() {
+        kprintf!("{}: unable to register bio\n", sb.sc_dev.xname());
+    }
 
     let _ = scsi_probe_bus(sb);
 }
@@ -1462,7 +1464,8 @@ pub fn scsibusactivate(dev: &Device, act: i32) -> Result<(), Errno> {
 pub fn scsibusdetach(dev: &Device, r#type: i32) -> Result<(), Errno> {
     let sb = scsibus_softc(dev);
 
-    // NBIO > 0: bio_unregister(&sb->sc_dev); bio(4) is not ported.
+    // NBIO > 0.
+    bio_unregister(&sb.sc_dev);
 
     scsi_detach_bus(sb, r#type)?;
 
@@ -1513,8 +1516,7 @@ pub fn scsibussubprint(aux: *mut c_void, pnp: Option<&[u8]>) -> i32 {
 
 /// `scsibusbioctl`: the bio(4) ioctls of a bus (`SBIOCPROBE`, `SBIOCDETACH`).
 ///
-/// `scsibusattach` registers it with `bio_register` when bio(4) is configured (`NBIO >
-/// 0`); `dev/bio.c` is not ported, so nothing calls it yet.
+/// `scsibusattach` registers it with `bio_register` when bio(4) is configured (`NBIO > 0`).
 pub fn scsibusbioctl(dev: &Device, cmd: u64, addr: &mut [u8]) -> Result<(), Errno> {
     let sb = scsibus_softc(dev);
 

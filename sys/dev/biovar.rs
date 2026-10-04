@@ -38,8 +38,8 @@
 //!
 //! ## Deviations
 //! - The `_KERNEL` prototypes (`bio_register`, `bio_unregister`, `bio_status_init`,
-//!   `bio_status`, `bio_info`, `bio_warn`, `bio_error`) are functions of the unported
-//!   `dev/bio.c`; they belong to its port, not here.
+//!   `bio_status`, `bio_info`, `bio_warn`, `bio_error`) are functions of `dev/bio.c`; they
+//!   belong to its port (`dev/bio.rs`, which now exists), not here.
 //! - The anonymous `struct { bdp_percent; bdp_seconds }` that is `bioc_disk`'s `bd_patrol` is
 //!   the named [`BiocDiskPatrol`].
 //! - `char` arrays are `[u8; N]`, `char *` is `*mut u8` and `void *` is `*mut c_void`: user
