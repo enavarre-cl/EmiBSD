@@ -21,7 +21,9 @@
 //!                                          disks, sd0 the file above and sd1..sd3
 //!                                          target/disk-A[-a|-b]-sdK.img (each VM of smoke2
 //!                                          gets N); a run with fewer disks than the last
-//!                                          keeps the extra files, unattached
+//!                                          keeps the extra files, unattached;
+//!                                          --disk-set NAME (qemu, smoke) uses the set
+//!                                          target/disk-A-NAME[-sdK].img instead
 //! cargo xtask smoke --arch A [--kernel K] [--cmdline C] [--status N] [--send-after L --send T]... [--until-seen]
 //!                   [--expect-ramdisk] --expect L...
 //!                                          boot headless; pass if every L appears and QEMU
@@ -76,8 +78,8 @@ const TABLE_END: &str = "<!-- ports:end -->";
 
 const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | ports next | \
                      ports drift [--strict] [--diff] | image --arch A --kernel K [--cmdline C] [--init I] [--ramdisk R] | \
-                     qemu --arch A [--kernel K] [--init I] [--ramdisk R] [--disk-fresh] [--disks N] | gen-syscalls [--check] | \
-                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--disk-fresh] [--disks N] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
+                     qemu --arch A [--kernel K] [--init I] [--ramdisk R] [--disk-fresh] [--disks N] [--disk-set NAME] | gen-syscalls [--check] | \
+                     smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--disk-fresh] [--disks N] [--disk-set NAME] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
                      smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--disk-fresh] [--disks N] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
                      symbolize --arch A [--kernel K] | userland --arch A>";
 
@@ -191,8 +193,11 @@ fn run(args: &[String]) -> Result<()> {
                 kernel.as_deref(),
                 init.as_deref(),
                 ramdisk.as_deref(),
-                rest.contains(&"--disk-fresh"),
-                disks_flag(rest)?,
+                &boot::Disks {
+                    fresh: rest.contains(&"--disk-fresh"),
+                    count: disks_flag(rest)?,
+                    set: optional_flag(rest, "--disk-set"),
+                },
             )
         }
         ["smoke", rest @ ..] => {
@@ -239,8 +244,11 @@ fn run(args: &[String]) -> Result<()> {
                     init: init.as_deref(),
                     ramdisk: ramdisk.as_deref(),
                     expect_ramdisk: rest.contains(&"--expect-ramdisk"),
-                    disk_fresh: rest.contains(&"--disk-fresh"),
-                    disks: disks_flag(rest)?,
+                    disks: boot::Disks {
+                        fresh: rest.contains(&"--disk-fresh"),
+                        count: disks_flag(rest)?,
+                        set: optional_flag(rest, "--disk-set"),
+                    },
                 },
             )
         }

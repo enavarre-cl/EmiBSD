@@ -471,21 +471,37 @@ impl VmLink {
 /// attached (the "one disk missing" boot). The order keeps `sd0` the first one the kernel
 /// finds: on amd64 PCI slots go up, so `sd0` is added first; on arm64 the last device added
 /// is found first, so `sd<disks - 1>` is added first and `sd0` last.
+///
+/// `disk_set` (`--disk-set NAME`, `smoke` and `qemu`) names another set of persistent disks,
+/// `disk-<arch>-NAME[-sd<k>].img`, as a `smoke2` VM's tag does: `smoke-softraid` keeps its
+/// softraid metadata there, off the disk the other smokes boot with (a disk carrying RAID
+/// partitions has softraid assemble volumes at every boot, with threads of their own).
+/// A VM's persistent disks, as the `--disk-fresh`, `--disks` and `--disk-set` flags give them
+/// (see [`qemu_command`]).
+#[derive(Clone, Copy, Debug)]
+pub struct Disks<'a> {
+    /// `--disk-fresh`: delete and recreate the disks before booting.
+    pub fresh: bool,
+    /// `--disks N`: how many to attach (1 to [`MAX_DISKS`]).
+    pub count: usize,
+    /// `--disk-set NAME`: `disk-<arch>-NAME[-sd<k>].img` instead of the default set.
+    pub set: Option<&'a str>,
+}
+
 pub(crate) fn qemu_command(
     root: &Path,
     arch: Arch,
     image: &Path,
     serial: &str,
     vm: Option<&VmLink>,
-    disk_fresh: bool,
-    disks: usize,
+    disks: &Disks<'_>,
 ) -> Result<Command> {
-    let tag = vm.map(|v| v.tag);
-    let disk_files: Vec<PathBuf> = (0..disks)
+    let tag = vm.map(|v| v.tag).or(disks.set);
+    let disk_files: Vec<PathBuf> = (0..disks.count)
         .map(|k| disk_path_n(root, arch, tag, k))
         .collect();
     for disk in &disk_files {
-        ensure_disk(disk, disk_fresh)?;
+        ensure_disk(disk, disks.fresh)?;
     }
     let code = edk2_file(arch.edk2_code())?;
     let vars_src = edk2_file(arch.edk2_vars())?;
@@ -614,8 +630,7 @@ pub fn qemu(
     kernel: Option<&Path>,
     init: Option<&Path>,
     ramdisk: Option<&Path>,
-    disk_fresh: bool,
-    disks: usize,
+    disks: &Disks<'_>,
 ) -> Result<()> {
     let image = match kernel {
         Some(k) => image(root, arch, k, None, init, ramdisk)?,
@@ -632,7 +647,7 @@ pub fn qemu(
             p
         }
     };
-    let mut cmd = qemu_command(root, arch, &image, "mon:stdio", None, disk_fresh, disks)?;
+    let mut cmd = qemu_command(root, arch, &image, "mon:stdio", None, disks)?;
     println!("xtask: {}", command_line(&cmd));
     let status = cmd.status().map_err(|e| spawn_error(arch, &e))?;
     match status.code() {
@@ -676,10 +691,8 @@ pub struct SmokeOptions<'a> {
     /// `--expect-ramdisk`: also expect rd(4)'s line for the ramdisk the image carries
     /// (`rd0: <N> bytes, ffs magic ok`), or the kernel's `rd: no ramdisk module` without one.
     pub expect_ramdisk: bool,
-    /// `--disk-fresh`: delete and recreate the persistent disk before booting.
-    pub disk_fresh: bool,
-    /// `--disks N`: how many persistent disks to attach (1 to [`MAX_DISKS`]).
-    pub disks: usize,
+    /// The persistent disks: `--disk-fresh`, `--disks N`, `--disk-set NAME`.
+    pub disks: Disks<'a>,
 }
 
 pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
@@ -694,7 +707,6 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         init,
         ramdisk,
         expect_ramdisk,
-        disk_fresh,
         disks,
     } = *opts;
     let image = match kernel {
@@ -713,7 +725,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         }
     };
     let expected_status = status;
-    let mut cmd = qemu_command(root, arch, &image, "stdio", None, disk_fresh, disks)?;
+    let mut cmd = qemu_command(root, arch, &image, "stdio", None, &disks)?;
     cmd.stdin(if !sends.is_empty() {
         Stdio::piped()
     } else {

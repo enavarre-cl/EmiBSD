@@ -854,22 +854,25 @@ ufsopts_dirhash_mfs := disk_login + " " + \
 # under another chunk's metadata (`roaming device`). The volumes' sd units differ per arch
 # (arm64's boot disk is a vioblk too: sd4), so the scripts find them in `hw.disknames`. The
 # command lines stay short (helper functions): arm64's console drops input past about 128
-# bytes (`pluart0: ... ibuf overflows`). Part of `smoke`.
+# bytes (`pluart0: ... ibuf overflows`). The disks are a set of their own (`--disk-set
+# softraid`): RAID metadata left on the default disk would have softraid assemble volumes, with
+# threads of their own, in every later boot (the kthread self-test counts threads). Part of
+# `smoke`.
 smoke-softraid: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-softraid: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
-        --disks 4 --disk-fresh {{softraid_make}}
+        --disks 4 --disk-set softraid --disk-fresh {{softraid_make}}
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
-        --disks 4 {{softraid_check}}
+        --disks 4 --disk-set softraid {{softraid_check}}
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
-        --disks 3 {{softraid_degraded}}
+        --disks 3 --disk-set softraid {{softraid_degraded}}
     cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
-        --disks 4 --disk-fresh {{softraid_make}}
+        --disks 4 --disk-set softraid --disk-fresh {{softraid_make}}
     cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
-        --disks 4 {{softraid_check}}
+        --disks 4 --disk-set softraid {{softraid_check}}
     cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
-        --disks 3 {{softraid_degraded}}
+        --disks 3 --disk-set softraid {{softraid_degraded}}
 
 # `smoke-softraid`'s three boots. `sr_pass` writes the passphrase file (the ramdisk root is
 # rebuilt every boot); `sr_cat` mounts every disk's `a` partition read-only and prints its

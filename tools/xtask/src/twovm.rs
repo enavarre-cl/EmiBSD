@@ -257,8 +257,11 @@ pub fn smoke2(
             &image,
             "stdio",
             Some(&link),
-            plan.disk_fresh,
-            plan.disks,
+            &boot::Disks {
+                fresh: plan.disk_fresh,
+                count: plan.disks,
+                set: None,
+            },
         )?;
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
