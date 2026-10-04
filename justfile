@@ -507,10 +507,9 @@ smoke-ipsec: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 # ipsecctl(8), pings the other end of the link, then each pings the other's inner address
 # from its own: the echoes and their replies go through ESP in tunnel mode
 # (ipsp_process_packet, ipip_output, esp_output; esp_input, ipip_input on the other side).
-# Both are gateways (net.inet.ip.forwarding=1): without bpf(4) (NBPFILTER 0) the C leaves a
-# decapsulated packet on vio1 instead of moving it to enc0, and a plain host drops it as
-# `ips_wrongif`, its inner address being on lo1. Each VM ends with `ipsecctl -sa -v` (the SA
-# counters). Part of `smoke`.
+# Both are plain hosts (no net.inet.ip.forwarding): with bpf(4) configured, ipsec_input
+# moves a decapsulated packet to enc0, so its inner address on lo1 is not "the wrong
+# interface". Each VM ends with `ipsecctl -sa -v` (the SA counters). Part of `smoke`.
 smoke-esp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-esp: no ramdisk image; run just userland first"; exit 1; }
@@ -581,7 +580,7 @@ pfsync_expect := "--a-expect 'pfsync: syncdev: vio1' " + \
 # flow, the SA pair), ipsecctl -f, a ping across the link, the ping through the tunnel and
 # the SA counters.
 esp_both := "--both-send-after 'login:' --both-send 'root\\n' --both-send-after 'Password:' --both-send 'emibsd\\n' " + \
-    "--both-send-after '# ' --both-send 'cd /tmp; umask 077; sysctl net.inet.ip.forwarding=1\\n' " + \
+    "--both-send-after '# ' --both-send 'cd /tmp; umask 077\\n' " + \
     "--both-send-after '# ' --both-send 'k=0123456789abcdef; echo $k$k$k$k >ak; e=fedcba9876543210; echo $e$e >ek\\n'"
 esp_a := "--a-send-after '# ' --a-send 'echo flow esp from 10.77.1.0/24 to 10.77.2.0/24 peer 192.168.77.2 >ipsec.conf\\n' " + \
     replace(replace(esp_sa, "--send-after", "--a-send-after"), "--send ", "--a-send ") + \

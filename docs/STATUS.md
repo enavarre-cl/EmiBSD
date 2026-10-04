@@ -22,8 +22,6 @@ Next:
 
 Blockers:
 - amd64's TSC timecounter (`tsc.c`) is deferred.
-- No bpf(4) yet (NBPFILTER 0): `smoke-esp`'s VMs forward, since only bpf moves a decapsulated
-  IPsec packet to enc0 (else `ips_wrongif`).
 
 Decisions pending (the user's): the scope section (open until M13); the PC's CPU (Intel VMX
 or AMD SVM) for vmm and M15; the exact Raspberry Pi 4 model; networking in M15.
