@@ -4592,3 +4592,20 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1ba41008c9034fb7389fef725259a9e0653b2050"
 deps = ["sys/net/radix.h", "sys/kern/subr_pool.c"]
 notes = "M9d: radix.h and radix.c share one module; nothing stubbed. Union members side by side (rn_link_dupedkey's bit-0-parent branch writes rn_dupedkey only, unreachable outside offset-0 trees); links are Cell<*const> under an unsafe tree-invariant contract; keys/masks *const u8; rn_walktree takes a closure returning Result<(), Errno>; rn_inithead takes &mut Option<&'static RadixNodeHead> (off in bytes) and returns bool; non-header functions and mask_rnhead/rtmask_pool are private; rn_delete's dead dupedkey_tt dropped. Host tests in sys/net/radix/tests.rs"
+
+[[file]]
+c = "sys/net/toeplitz.h"
+rust = "sys/net/toeplitz.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "52933eb30c8cd71a19f69c25e017c290a9a2bcef"
+notes = "M9d: stoeplitz_cache global is fn stoeplitz_cache() over a StaticCell written once by stoeplitz_init at boot; the stoeplitz_* macros are fns; INET6 ip6 hashes always built, taking &[u8; 16] until netinet6/in6.h is ported"
+
+[[file]]
+c = "sys/net/toeplitz.c"
+rust = "sys/net/toeplitz.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5ccc8318f9cc75ff8d755cdc872c06aa59876e59"
+deps = ["sys/net/toeplitz.h", "sys/dev/rnd.c"]
+notes = "M9d: shares sys/net/toeplitz.rs with toeplitz.h; stoeplitz_keyseed is an AtomicU16 (lowercase C name); stoeplitz_to_key takes &mut [u8]; columns via rotate_left; licence ISC + BSD-3 (DragonFly), both accepted; host tests (the Microsoft RSS verification vectors)"
