@@ -38,14 +38,12 @@
 //! - Promise classes for devices this kernel does not configure are compiled out as the C's
 //!   `#if` does with a zero count: `NAUDIO`, `NVIDEO`, `NDRM` (`pledge_ioctl_drm`), `NVMM`
 //!   and `NPSP` (`pledge_ioctl_psp`).
-//! - `netinet6` is not ported (`INET6` is not configured): no `AF_INET6` protocol exists, so
-//!   the `AF_INET6` arms of `pledge_sockopt` can never be taken and are left out with the
-//!   `IPV6_*` names they test; the IPv6 interface ioctls of the "route" and "wroute" classes
-//!   (`SIOCGIFAFLAG_IN6`, `SIOCGIFALIFETIME_IN6`, `SIOCGIFDSTADDR_IN6`,
-//!   `SIOCGIFNETMASK_IN6`, `SIOCGNBRINFO_IN6`, `SIOCGIFINFO_IN6`, `SIOCAIFADDR_IN6`,
-//!   `SIOCDIFADDR_IN6`) are not defined either, so a pledged process issuing one is killed
-//!   where OpenBSD would hand it to `in6_control`. Likewise `net/frame.h` (`AF_FRAME`) is not
-//!   ported: no such protocol exists and the "mcast" `FRAME_*_MEMBERSHIP` arm is left out.
+//! - `net/frame.h` (`AF_FRAME`) is not ported: no such protocol exists and the "mcast"
+//!   `FRAME_*_MEMBERSHIP` arm of `pledge_sockopt` is left out.
+//! - `pledge_sockopt`'s `af_inet` (0, `AF_INET` or `AF_INET6`) is an `i32`; the C's
+//!   fall-through from the `AF_INET`/`AF_INET6` cases into `AF_UNIX`'s `TCP_NODELAY` test is
+//!   one condition. The C's IPv6 arms and the `*_IN6` ioctls are not under `#ifdef INET6`
+//!   there, so they are compiled whatever the `inet6` feature says.
 //! - `dev/diskmap.c` is not ported: no device switch entry has `diskmapioctl`, so the
 //!   "disklabel" `DIOCMAP` case never allows.
 //! - The `#ifdef CPU_CHR2BLK`, `CPU_SSE`, `CPU_ID_AA64ISAR0` and `CPU_ID_AA64ISAR1` tests of
@@ -77,10 +75,20 @@ use crate::net::route::RTF_LLINFO;
 use crate::netinet::in_::{
     IP_ADD_MEMBERSHIP, IP_DROP_MEMBERSHIP, IP_IPDEFTTL, IP_MINTTL, IP_MULTICAST_IF,
     IP_MULTICAST_LOOP, IP_MULTICAST_TTL, IP_OPTIONS, IP_PORTRANGE, IP_RECVDSTADDR, IP_RECVDSTPORT,
-    IP_TOS, IP_TTL, IPPROTO_IP, IPPROTO_TCP,
+    IP_TOS, IP_TTL, IPPROTO_IP, IPPROTO_IPV6, IPPROTO_TCP,
 };
 use crate::netinet::tcp::{
     TCP_INFO, TCP_MAXSEG, TCP_MD5SIG, TCP_NODELAY, TCP_NOPUSH, TCP_SACK_ENABLE,
+};
+use crate::netinet6::in6::{
+    IPV6_DONTFRAG, IPV6_JOIN_GROUP, IPV6_LEAVE_GROUP, IPV6_MINHOPCOUNT, IPV6_MULTICAST_HOPS,
+    IPV6_MULTICAST_IF, IPV6_MULTICAST_LOOP, IPV6_PORTRANGE, IPV6_RECVDSTPORT, IPV6_RECVHOPLIMIT,
+    IPV6_RECVPKTINFO, IPV6_RECVTCLASS, IPV6_TCLASS, IPV6_UNICAST_HOPS, IPV6_USE_MIN_MTU,
+    IPV6_V6ONLY,
+};
+use crate::netinet6::in6_var::{
+    SIOCAIFADDR_IN6, SIOCDIFADDR_IN6, SIOCGIFAFLAG_IN6, SIOCGIFALIFETIME_IN6, SIOCGIFDSTADDR_IN6,
+    SIOCGIFINFO_IN6, SIOCGIFNETMASK_IN6, SIOCGNBRINFO_IN6,
 };
 use crate::sys::acct::APLEDGE;
 use crate::sys::conf::{D_DISK, DevTypeOpen};
@@ -1212,26 +1220,33 @@ pub fn pledge_ioctl(p: &Proc, com: u64, fp: &File) -> Result<(), Errno> {
         && matches!(
             com,
             SIOCGIFADDR
+                | SIOCGIFAFLAG_IN6
+                | SIOCGIFALIFETIME_IN6
                 | SIOCGIFDATA
                 | SIOCGIFDESCR
                 | SIOCGIFFLAGS
                 | SIOCGIFMETRIC
                 | SIOCGIFGMEMB
                 | SIOCGIFRDOMAIN
+                | SIOCGIFDSTADDR_IN6
+                | SIOCGIFNETMASK_IN6
                 | SIOCGIFXFLAGS
+                | SIOCGNBRINFO_IN6
+                | SIOCGIFINFO_IN6
                 | SIOCGIFMEDIA
         )
         && is_socket
     {
-        // The INET6 names of the class are not defined (see the deviations).
         return Ok(());
     }
 
     if pledge & PLEDGE_WROUTE != 0
-        && matches!(com, SIOCAIFADDR | SIOCDIFADDR | SIOCSIFMTU)
+        && matches!(
+            com,
+            SIOCAIFADDR | SIOCDIFADDR | SIOCAIFADDR_IN6 | SIOCDIFADDR_IN6 | SIOCSIFMTU
+        )
         && is_socket
     {
-        // SIOCAIFADDR_IN6, SIOCDIFADDR_IN6: not defined (see the deviations).
         return Ok(());
     }
 
@@ -1268,8 +1283,12 @@ pub fn pledge_sockopt(
     // AF_INET6 address families, and should be handled for both.
     let af = pr.pr_domain.dom_family;
     let proto = i32::from(pr.pr_protocol);
-    // AF_INET6 cannot occur (see the deviations), so af_inet is AF_INET or nothing.
-    let af_inet = af == AF_INET as i32;
+    // AF_INET or AF_INET6, 0 for the other families.
+    let af_inet = if af == AF_INET as i32 || af == AF_INET6 as i32 {
+        af
+    } else {
+        0
+    };
 
     // Always allow these, which are too common to reject
     if level == SOL_SOCKET && matches!(optname, SO_RCVBUF | SO_ERROR) {
@@ -1277,14 +1296,21 @@ pub fn pledge_sockopt(
     }
 
     // some software assumes all streams are tcp (AF_UNIX)
-    if (af_inet || af == AF_UNIX as i32) && level == IPPROTO_TCP && optname == TCP_NODELAY {
+    if (af_inet != 0 || af == AF_UNIX as i32) && level == IPPROTO_TCP && optname == TCP_NODELAY {
         return Ok(());
     }
 
-    if af_inet && level == IPPROTO_IP && optname == IP_TOS {
+    if af == AF_INET as i32 && level == IPPROTO_IP && optname == IP_TOS {
         return Ok(());
     }
-    // AF_INET6 (IPV6_TCLASS, and IP_TOS on v6 sockets): see the deviations.
+    if af == AF_INET6 as i32 {
+        match level {
+            IPPROTO_IPV6 if optname == IPV6_TCLASS => return Ok(()),
+            // Lots of software tries IPPROTO_IP / IP_TOS on v6 sockets
+            IPPROTO_IP if optname == IP_TOS => return Ok(()),
+            _ => {}
+        }
+    }
 
     if pledge & PLEDGE_WROUTE != 0 && level == SOL_SOCKET && optname == SO_RTABLE {
         return Ok(());
@@ -1301,7 +1327,14 @@ pub fn pledge_sockopt(
         return Ok(());
     }
 
-    // DNS resolver may do these requests: AF_INET6 only (see the deviations).
+    // DNS resolver may do these requests
+    if pledge & PLEDGE_DNS != 0
+        && af == AF_INET6 as i32
+        && level == IPPROTO_IPV6
+        && matches!(optname, IPV6_RECVPKTINFO | IPV6_USE_MIN_MTU)
+    {
+        return Ok(());
+    }
 
     if pledge & (PLEDGE_INET | PLEDGE_UNIX) == 0 {
         return Err(pledge_fail(p, Errno::EPERM, PLEDGE_INET));
@@ -1316,7 +1349,7 @@ pub fn pledge_sockopt(
     if pledge & PLEDGE_INET == 0 {
         return Err(pledge_fail(p, Errno::EPERM, PLEDGE_INET));
     }
-    if !af_inet {
+    if af_inet == 0 {
         // af must be AF_INET or AF_INET6 after this point
         return Err(pledge_fail(p, Errno::EPERM, PLEDGE_INET));
     }
@@ -1331,7 +1364,7 @@ pub fn pledge_sockopt(
         return Ok(());
     }
 
-    if level == IPPROTO_IP {
+    if af_inet == AF_INET as i32 && level == IPPROTO_IP {
         match optname {
             IP_OPTIONS if !set => return Ok(()),
             IP_TTL | IP_MINTTL | IP_IPDEFTTL | IP_PORTRANGE | IP_RECVDSTADDR | IP_RECVDSTPORT => {
@@ -1339,6 +1372,19 @@ pub fn pledge_sockopt(
             }
             IP_MULTICAST_IF | IP_MULTICAST_TTL | IP_MULTICAST_LOOP | IP_ADD_MEMBERSHIP
             | IP_DROP_MEMBERSHIP
+                if pledge & PLEDGE_MCAST != 0 =>
+            {
+                return Ok(());
+            }
+            _ => {}
+        }
+    } else if af_inet == AF_INET6 as i32 && level == IPPROTO_IPV6 {
+        match optname {
+            IPV6_DONTFRAG | IPV6_UNICAST_HOPS | IPV6_MINHOPCOUNT | IPV6_RECVHOPLIMIT
+            | IPV6_PORTRANGE | IPV6_RECVPKTINFO | IPV6_RECVDSTPORT | IPV6_RECVTCLASS
+            | IPV6_V6ONLY => return Ok(()),
+            IPV6_MULTICAST_IF | IPV6_MULTICAST_HOPS | IPV6_MULTICAST_LOOP | IPV6_JOIN_GROUP
+            | IPV6_LEAVE_GROUP
                 if pledge & PLEDGE_MCAST != 0 =>
             {
                 return Ok(());

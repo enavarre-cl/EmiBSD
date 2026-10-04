@@ -36,8 +36,8 @@ fn frame_layout_and_predicates() {
         ether_map_ip_multicast(&group),
         [0x01, 0x00, 0x5e, 0x7f, 0x00, 0x01]
     );
-    let mut ip6 = [0u8; 16];
-    ip6[12..].copy_from_slice(&[0xff, 0x00, 0x00, 0x01]);
+    let mut ip6 = crate::netinet6::in6::In6Addr::default();
+    ip6.s6_addr[12..].copy_from_slice(&[0xff, 0x00, 0x00, 0x01]);
     assert_eq!(
         ether_map_ipv6_multicast(&ip6),
         [0x33, 0x33, 0xff, 0x00, 0x00, 0x01]

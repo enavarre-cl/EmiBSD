@@ -177,7 +177,8 @@ fn ether_input_filters_and_frees_every_frame() {
     assert_eq!(ifp.if_imcasts().get(), 1);
     // A VLAN-tagged frame without vlan(4) is service delimited: dropped.
     input(&frame(OURS, PEER, ETHERTYPE_VLAN));
-    // An IPv6 multicast (not configured) is counted, then dropped by the demux.
+    // An IPv6 multicast is counted, then dropped by ipv6_input (an IPv4 header follows),
+    // or by the demux without INET6.
     input(&frame([0x33, 0x33, 0, 0, 0, 1], PEER, ETHERTYPE_IPV6));
     assert_eq!(ifp.if_imcasts().get(), 2);
     // Our own multicast on a non-simplex interface comes back from the wire: dropped
@@ -328,5 +329,170 @@ fn extract_headers_of_an_ipv4_udp_frame() {
     unsafe { mtod::<u8>(m).add(14 + 6).write(0x20) };
     ether_extract_headers(m, &mut ext);
     assert!(!ext.ip4.is_null() && ext.udp.is_null());
+    m_freem(m);
+}
+
+/// `ifp`'s `SIOCADDMULTI`/`SIOCDELMULTI` request for `addr`, as `in6_addmulti` builds it: a
+/// `struct in6_ifreq`, which `ether_ioctl` reads as a `struct ifreq`.
+#[cfg(feature = "inet6")]
+fn in6_ifreq_for(addr: crate::netinet6::in6::In6Addr) -> &'static Ifreq {
+    use crate::netinet6::in6::SockaddrIn6;
+    use crate::netinet6::in6_var::In6Ifreq;
+    let ifr6: &'static mut In6Ifreq =
+        std::boxed::Box::leak(std::boxed::Box::new(In6Ifreq::zeroed()));
+    ifr6.set_ifr_addr(SockaddrIn6::with_addr(addr));
+    // SAFETY: an `in6_ifreq` starts with the name and the address union, as a `struct ifreq`,
+    // and is larger; it lives for the rest of the test run.
+    unsafe { &*ptr::from_ref(ifr6).cast::<Ifreq>() }
+}
+
+#[test]
+#[cfg(feature = "inet6")]
+fn ipv6_multicast_addresses_map_to_33_33() {
+    use crate::netinet6::in6::{IN6ADDR_ANY, In6Addr};
+    let _g = setup_net();
+    let ac = test_arpcom();
+    // ff02::1:ff00:2, the solicited-node group of ...::2.
+    let group = In6Addr::new([0xff, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0xff, 0, 0, 2]);
+    let ifr = in6_ifreq_for(group);
+    assert_eq!(ether_addmulti(ifr, ac), Err(Errno::ENETRESET));
+    let mut step = EtherMultistep { e_enm: None };
+    let enm = ether_first_multi(&mut step, ac).expect("added");
+    assert_eq!(enm.enm_addrlo, [0x33, 0x33, 0xff, 0x00, 0x00, 0x02]);
+    assert_eq!(enm.enm_addrhi, enm.enm_addrlo);
+    assert_eq!(ac.ac_multirangecnt.get(), 0);
+
+    // The unspecified address claims the whole IPv6 multicast range.
+    let any = in6_ifreq_for(IN6ADDR_ANY);
+    assert_eq!(ether_addmulti(any, ac), Err(Errno::ENETRESET));
+    assert_eq!(ac.ac_multirangecnt.get(), 1);
+    assert!(ether_lookup_multi(&ETHER_IP6MULTICAST_MIN, &ETHER_IP6MULTICAST_MAX, ac).is_some());
+
+    assert_eq!(ether_delmulti(ifr, ac), Err(Errno::ENETRESET));
+    assert_eq!(ether_delmulti(any, ac), Err(Errno::ENETRESET));
+    assert_eq!(ac.ac_multicnt.get(), 0);
+}
+
+#[test]
+#[cfg(feature = "inet6")]
+fn resolve_an_ipv6_destination_through_the_neighbor_cache() {
+    use std::boxed::Box;
+
+    use crate::kern::kern_synch::refcnt_init;
+    use crate::net::if_dl::{SockaddrDl, satosdl};
+    use crate::net::route::{RTF_HOST, RTF_LLINFO, RTM_RESOLVE};
+    use crate::netinet::ip_input::tests::PEER as PEER_MAC;
+    use crate::netinet6::in6::{In6Addr, SockaddrIn6, sin6tosa_const};
+    use crate::netinet6::nd6::tests::{OURS6, PEER6, fake_ifa6, nd6_setup};
+    use crate::netinet6::nd6_nbr::nd6_na_cache;
+    use crate::sys::socket::AF_LINK;
+    use crate::sys::systm::{net_lock, net_unlock};
+
+    let (_g, ifp) = nd6_setup();
+    let mut eh = EtherHeader::default();
+
+    // A multicast destination maps straight to 33:33:<low 32 bits>, no route needed.
+    let all_nodes = SockaddrIn6::with_addr(In6Addr::new([
+        0xff, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
+    ]));
+    let m = test_packet(&[0; 40]);
+    m.m_flags().set(m.m_flags().get() | M_MCAST);
+    // SAFETY: a local `sockaddr_in6`.
+    let r = unsafe { ether_resolve(ifp, m, sin6tosa_const(&all_nodes), None, &mut eh) };
+    assert_eq!(r, Ok(()));
+    assert_eq!(eh.ether_dhost, [0x33, 0x33, 0, 0, 0, 1]);
+    assert_eq!(ntohs(eh.ether_type), ETHERTYPE_IPV6);
+    m_freem(m);
+
+    // A unicast neighbor: a host route given its cache entry by nd6_rtrequest (through
+    // ether_rtrequest), as nd6's tests build one.
+    // SAFETY: the all-zero `Rtentry` is valid (cells, counters, empty lists).
+    let rt: &'static Rtentry = unsafe { zeroed_static() };
+    let key: &'static mut SockaddrIn6 = Box::leak(Box::new(SockaddrIn6::with_addr(PEER6)));
+    let gate: &'static mut SockaddrDl = Box::leak(Box::new(SockaddrDl {
+        sdl_len: size_of::<SockaddrDl>() as u8,
+        sdl_family: AF_LINK,
+        ..SockaddrDl::default()
+    }));
+    rt.rt_dest.set(ptr::from_mut(key).cast());
+    rt.rt_gateway.set(ptr::from_mut(gate).cast());
+    rt.rt_flags.set(RTF_HOST);
+    rt.rt_ifidx.set(ifp.if_index.get());
+    rt.rt_ifa.set(Some(&fake_ifa6(ifp, OURS6).ia_ifa));
+    refcnt_init(&rt.rt_refcnt);
+    net_lock();
+    ether_rtrequest(ifp, i32::from(RTM_RESOLVE), Some(rt));
+    net_unlock();
+    assert_ne!(rt.rt_flags.get() & RTF_LLINFO, 0, "nd6_rtrequest ran");
+
+    // Unresolved: the packet is held (EAGAIN) while the neighbor is solicited.
+    let dst = SockaddrIn6::with_addr(PEER6);
+    net_lock();
+    // SAFETY: a local `sockaddr_in6`.
+    let r = unsafe {
+        ether_resolve(
+            ifp,
+            test_packet(&[0; 40]),
+            sin6tosa_const(&dst),
+            Some(rt),
+            &mut eh,
+        )
+    };
+    net_unlock();
+    assert_eq!(r, Err(Errno::EAGAIN));
+
+    // Its advertisement resolves it: the next packet gets the neighbor's address.
+    net_lock();
+    nd6_na_cache(
+        ifp,
+        rt,
+        Some(&PEER_MAC),
+        false,
+        true,
+        true,
+        false,
+        &PEER6,
+        &PEER6,
+    );
+    net_unlock();
+    // SAFETY: the gateway is the test's `sockaddr_dl`.
+    assert_eq!(unsafe { (*satosdl(rt.rt_gateway.get())).sdl_alen }, 6);
+    let m = test_packet(&[0; 40]);
+    net_lock();
+    // SAFETY: as above.
+    let r = unsafe { ether_resolve(ifp, m, sin6tosa_const(&dst), Some(rt), &mut eh) };
+    net_unlock();
+    assert_eq!(r, Ok(()));
+    assert_eq!(eh.ether_dhost, PEER_MAC);
+    assert_eq!(ntohs(eh.ether_type), ETHERTYPE_IPV6);
+    m_freem(m);
+}
+
+#[test]
+#[cfg(feature = "inet6")]
+fn extract_headers_of_an_ipv6_tcp_frame() {
+    let _g = setup_net();
+    let mut f = Vec::new();
+    f.extend_from_slice(&OURS);
+    f.extend_from_slice(&PEER);
+    f.extend_from_slice(&ETHERTYPE_IPV6.to_be_bytes());
+    // IPv6, payload length 24, TCP, hop limit 64, fe80::1 -> fe80::2.
+    f.extend_from_slice(&[0x60, 0, 0, 0, 0, 24, 6, 64]);
+    f.extend_from_slice(&[0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    f.extend_from_slice(&[0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]);
+    // TCP, data offset 5 (20 bytes), then 4 bytes of payload.
+    f.extend_from_slice(&[
+        0, 22, 0, 80, 0, 0, 0, 1, 0, 0, 0, 0, 0x50, 0x18, 0x40, 0, 0, 0, 0, 0,
+    ]);
+    f.extend_from_slice(&[1, 2, 3, 4]);
+    let m = test_packet(&f);
+
+    let mut ext = EtherExtracted::new();
+    ether_extract_headers(m, &mut ext);
+    assert!(!ext.ip6.is_null() && ext.ip4.is_null() && !ext.tcp.is_null());
+    assert_eq!(ext.iplen, 64);
+    assert_eq!(ext.iphlen, 40);
+    assert_eq!(ext.tcphlen, 20);
+    assert_eq!(ext.paylen, 4);
     m_freem(m);
 }

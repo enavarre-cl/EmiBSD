@@ -348,3 +348,94 @@ fn congestion_marker_lasts_a_hundredth_of_a_second() {
     );
     assert!(!if_congested());
 }
+
+/// The packets [`keep_output`] was given.
+#[cfg(feature = "inet6")]
+static KEPT: std::sync::Mutex<std::vec::Vec<usize>> = std::sync::Mutex::new(std::vec::Vec::new());
+
+/// An `if_output` that keeps the packet (its address in [`KEPT`]) for the test to free.
+///
+/// # Safety
+///
+/// `IfOutputFn`'s contract.
+#[cfg(feature = "inet6")]
+unsafe fn keep_output(
+    _ifp: &'static Ifnet,
+    m: &'static Mbuf,
+    _dst: *const Sockaddr,
+    _rt: Option<&'static Rtentry>,
+) -> Result<(), Errno> {
+    KEPT.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(ptr::from_ref(m).addr());
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "inet6")]
+fn output_tso_sends_an_ipv6_packet_with_its_checksum() {
+    use crate::netinet::in_::IPPROTO_UDP;
+    use crate::netinet6::in6::{In6Addr, SockaddrIn6, sin6tosa_const};
+    use crate::netinet6::in6_cksum::in6_cksum;
+    use crate::sys::mbuf::M_UDP_CSUM_OUT;
+
+    let _g = setup_net();
+    let ifp = test_ifnet(b"ttso6");
+    ifp.if_output.set(Some(keep_output));
+    // IPv6 from fe80::1 to fe80::2, UDP 1234 -> 53 with four bytes and no checksum yet.
+    let mut p = std::vec![0x60, 0, 0, 0, 0, 12, IPPROTO_UDP as u8, 64];
+    p.extend_from_slice(&[0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
+    p.extend_from_slice(&[0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2]);
+    p.extend_from_slice(&[0x04, 0xd2, 0, 53, 0, 12, 0, 0, 1, 2, 3, 4]);
+    let m = test_packet(&p);
+    m.m_pkthdr().csum_flags.set(M_UDP_CSUM_OUT);
+    let dst = SockaddrIn6::with_addr(In6Addr::new([
+        0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2,
+    ]));
+
+    let mut mp = Some(m);
+    // SAFETY: a local `sockaddr_in6`; the interface keeps the packet.
+    let r = unsafe { if_output_tso(ifp, &mut mp, sin6tosa_const(&dst), None, 1500) };
+    assert_eq!(r, Ok(()));
+    assert!(mp.is_none(), "sent");
+    assert_eq!(
+        *KEPT.lock().unwrap_or_else(|e| e.into_inner()),
+        [ptr::from_ref(m).addr()]
+    );
+    // No IFCAP_CSUM_UDPv6: in6_proto_cksum_out computed the checksum in software.
+    assert_eq!(m.m_pkthdr().csum_flags.get() & M_UDP_CSUM_OUT, 0);
+    assert_eq!(
+        in6_cksum(m, IPPROTO_UDP as u8, 40, 12),
+        0,
+        "a valid checksum"
+    );
+    m_freem(m);
+}
+
+#[test]
+#[cfg(feature = "inet6")]
+fn if_up_gives_the_default_loopback_its_ipv6_addresses() {
+    use crate::net::if_loop::{LOOP_CLONER, loop_clone_create};
+    use crate::netinet6::in6::{IN6ADDR_LOOPBACK, in6ifa_ifpforlinklocal, in6ifa_ifpwithaddr};
+
+    let _g = crate::netinet::ip_input::tests::setup();
+    loop_clone_create(&LOOP_CLONER, 0).expect("lo0");
+    loop_clone_create(&LOOP_CLONER, 1).expect("lo1");
+    let lo0 = if_get(rtable_loindex(0)).expect("lo0");
+    let lo1 = if_unit(b"lo1").expect("lo1");
+    assert!(in6ifa_ifpwithaddr(lo0, &IN6ADDR_LOOPBACK).is_none());
+
+    net_lock();
+    if_up(lo0);
+    if_up(lo1);
+    net_unlock();
+    assert!(
+        in6ifa_ifpwithaddr(lo0, &IN6ADDR_LOOPBACK).is_some(),
+        "::1 on lo0"
+    );
+    assert!(in6ifa_ifpforlinklocal(lo0, 0).is_some(), "fe80::1%lo0");
+    // Only the default loopback of the rdomain gets ::1.
+    assert!(in6ifa_ifpwithaddr(lo1, &IN6ADDR_LOOPBACK).is_none());
+    if_put(lo0);
+    if_put(lo1);
+}

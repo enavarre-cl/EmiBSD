@@ -100,18 +100,17 @@
 //!   the C's; the `void *` port is an opaque pointer.
 //! - `ETHER_LOOKUP_MULTI`, `ETHER_FIRST_MULTI` and `ETHER_NEXT_MULTI` are functions that
 //!   return the record instead of assigning their `enm` argument.
-//! - `struct ether_extracted` points into the mbuf with raw pointers, as the C does;
-//!   `ip6_hdr`, `tcphdr` and `udphdr` are not ported, so `ip6`, `tcp` and `udp` are byte
-//!   pointers.
+//! - `struct ether_extracted` points into the mbuf with raw pointers, as the C does (the
+//!   packet data has no alignment guarantee, so they are read unaligned); `tcphdr` and
+//!   `udphdr` are not ported, so `tcp` and `udp` are byte pointers.
 //! - `etherbroadcastaddr`, `etheranyaddr`, `ether_ipmulticast_min`/`_max` and the `ether_*`
 //!   functions are in `net/if_ethersubr.rs`, which defines them; `ether_ntoa(3)` and friends
 //!   are userland.
 //! - The address predicates (`ETHER_IS_MULTICAST`, `ETHER_IS_BROADCAST`, `ETHER_IS_ANYADDR`,
 //!   `ETHER_IS_EQ`) take `&[u8; ETHER_ADDR_LEN]`; the `ETH64_*` ones and `EVL_*OFTAG` are
 //!   `const fn`s.
-//! - `ETHER_MAP_IP_MULTICAST(ipaddr, enaddr)` and `ETHER_MAP_IPV6_MULTICAST` are functions
-//!   that return the Ethernet address; the IPv6 one takes the sixteen bytes of the `in6_addr`
-//!   until `<netinet6/in6.h>` is ported.
+//! - `ETHER_MAP_IP_MULTICAST(ipaddr, enaddr)` and `ETHER_MAP_IPV6_MULTICAST(ip6addr, enaddr)`
+//!   are functions that return the Ethernet address.
 //! - `struct llinfo_arp_iterator` (the C's smaller marker with the same first two members) is
 //!   a whole [`LlinfoArp`] with no route: a Rust list links one type. `arptimer`'s marker is a
 //!   static instead of a stack variable (only that timeout walks with one).
@@ -165,6 +164,8 @@ use crate::net::rtable::{rt_key, rtable_iterate, rtable_l2};
 use crate::net::rtsock::rtm_send;
 use crate::netinet::in_::{INADDR_ANY, InAddr, SockaddrIn, satosin_const, sintosa};
 use crate::netinet::ip::Ip;
+use crate::netinet::ip6::Ip6Hdr;
+use crate::netinet6::in6::In6Addr;
 use crate::queue_adapter;
 use crate::sys::endian::{htons, ntohs};
 use crate::sys::errno::Errno;
@@ -430,8 +431,8 @@ pub struct EtherExtracted {
     pub evh: *mut EtherVlanHeader,
     /// `ip4`.
     pub ip4: *mut Ip,
-    /// `ip6` (`struct ip6_hdr *`, not ported).
-    pub ip6: *mut u8,
+    /// `ip6`.
+    pub ip6: *mut Ip6Hdr,
     /// `tcp` (`struct tcphdr *`, not ported).
     pub tcp: *mut u8,
     /// `udp` (`struct udphdr *`, not ported).
@@ -528,19 +529,12 @@ pub const fn ether_map_ip_multicast(ipaddr: &InAddr) -> [u8; ETHER_ADDR_LEN] {
     [0x01, 0x00, 0x5e, ip[1] & 0x7f, ip[2], ip[3]]
 }
 
-/// `ETHER_MAP_IPV6_MULTICAST(ip6addr, enaddr)`: maps an IPv6 multicast address (its sixteen
-/// bytes) to an Ethernet multicast address. The high-order 16 bits of the Ethernet address
-/// are statically assigned, and the low-order 32 bits are taken from the low end of the IPv6
-/// address.
-pub const fn ether_map_ipv6_multicast(ip6addr: &[u8; 16]) -> [u8; ETHER_ADDR_LEN] {
-    [
-        0x33,
-        0x33,
-        ip6addr[12],
-        ip6addr[13],
-        ip6addr[14],
-        ip6addr[15],
-    ]
+/// `ETHER_MAP_IPV6_MULTICAST(ip6addr, enaddr)`: maps an IPv6 multicast address to an
+/// Ethernet multicast address. The high-order 16 bits of the Ethernet address are statically
+/// assigned, and the low-order 32 bits are taken from the low end of the IPv6 address.
+pub const fn ether_map_ipv6_multicast(ip6addr: &In6Addr) -> [u8; ETHER_ADDR_LEN] {
+    let a = &ip6addr.s6_addr;
+    [0x33, 0x33, a[12], a[13], a[14], a[15]]
 }
 
 /// `(struct arpcom *)ifp`: the `struct arpcom` an Ethernet interface is the first member of.

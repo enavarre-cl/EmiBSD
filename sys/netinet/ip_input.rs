@@ -69,9 +69,11 @@
 //! - `NPF` (pf(4)) is configured: `pf_test` filters every packet, `pf_ouraddr` answers for
 //!   the addresses pf redirected, and a diverted packet's routing domain comes from its tag.
 //! - Not configured, each a comment at its site: `NCARP`
-//!   (`carp_lsdrop`, `carp_strict_addr_chk`), `MROUTING` (`ip_mforward`,
-//!   `ip_mrouter_active`, the `mrt` sysctls answer `EOPNOTSUPP` as the C's `#else` does)
-//!   and `INET6` (`ip6_protox`, the IPv6 delivery loop). `IPSEC` is (M9c):
+//!   (`carp_lsdrop`, `carp_strict_addr_chk`) and `MROUTING` (`ip_mforward`,
+//!   `ip_mrouter_active`, the `mrt` sysctls answer `EOPNOTSUPP` as the C's `#else` does).
+//!   `INET6` is configured (feature `inet6`: `ip_deliver` walks `inet6sw[ip6_protox[nxt]]`,
+//!   requeues through `ip6_ours_enqueue`, counts in `ip6stat` (the C's `IPSTAT_INC` by
+//!   `af` is the `ipstat_inc_af!` macro) and checks `ip6_hdrnestlimit`). `IPSEC` is (M9c):
 //!   `ipsec_forward_check`, `ipsec_local_check` (any `SpdError` drops the packet, as the C's
 //!   non-zero), `ipsec_init` and `ipsec_sysctl`.
 //! - `ip_forward`'s 68-byte `icmp_buf` is an array on the stack, as in C.
@@ -116,6 +118,8 @@ use crate::net::route::{
 };
 use crate::net::rtable::{rt_key, rtable_l2};
 use crate::netinet::if_ether::{ARPINQ, ARPT_DOWN, ARPT_KEEP, arpinit, arpproxy, la_hold_total};
+#[cfg(feature = "inet6")]
+use crate::netinet::in_::IPPROTO_IPV6;
 use crate::netinet::in_::{
     IN_CLASSA_NSHIFT, IN_LOOPBACKNET, INADDR_ANY, INADDR_BROADCAST, IP_RECVDSTADDR, IP_RECVIF,
     IP_RECVRTABLE, IP_RECVTTL, IPCTL_ARPDOWN, IPCTL_ARPQUEUE, IPCTL_ARPQUEUED, IPCTL_ARPTIMEOUT,
@@ -163,6 +167,12 @@ use crate::netinet::ip_var::{
 use crate::netinet::ipsec_input::{
     ipsec_forward_check, ipsec_init, ipsec_local_check, ipsec_sysctl,
 };
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6_proto::{INET6SW, IP6_HDRNESTLIMIT, IP6_PROTOX};
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_input::{IP6COUNTERS, ip6_ours_enqueue};
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_var::{Ip6statCounters, ip6stat_inc};
 use crate::sys::endian::{htons, ntohl, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::limits::INT_MAX;
@@ -177,6 +187,8 @@ use crate::sys::mutex::Mutex;
 use crate::sys::pool::{PR_NOWAIT, Pool};
 use crate::sys::protosw::{PR_MPINPUT, PRC_NCMDS, Protosw};
 use crate::sys::queue::ListHead;
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
 use crate::sys::socket::{
     AF_INET, AF_LINK, AF_UNSPEC, PF_INET, SCM_TIMESTAMP, SO_TIMESTAMP, SOCK_RAW, SOL_SOCKET,
 };
@@ -837,9 +849,29 @@ pub fn ip_fragcheck(mp: &mut Option<&'static Mbuf>, offp: &mut i32) -> i32 {
     i32::from(ip.ip_p)
 }
 
+/// `IPSTAT_INC(name)` of `ip_deliver`: the IPv4 counter, or with `INET6` the IPv6 one when
+/// `af` is not `AF_INET`.
+#[cfg(feature = "inet6")]
+macro_rules! ipstat_inc_af {
+    ($af:expr, $v4:ident, $v6:ident) => {
+        if $af == i32::from(AF_INET) {
+            ipstat_inc(IpstatCounters::$v4)
+        } else {
+            ip6stat_inc(Ip6statCounters::$v6)
+        }
+    };
+}
+/// `IPSTAT_INC(name)` without `INET6`: always the IPv4 counter.
+#[cfg(not(feature = "inet6"))]
+macro_rules! ipstat_inc_af {
+    ($af:expr, $v4:ident, $v6:ident) => {
+        ipstat_inc(IpstatCounters::$v4)
+    };
+}
+
 /// `ip_deliver`: hands the packet to the protocols, walking the protocol switch until one
 /// consumes it. With `shared` (the shared net lock is held), a protocol that needs the
-/// exclusive lock gets the packet through `ipintrq` instead.
+/// exclusive lock gets the packet through `ipintrq` (`ip6intrq` for IPv6) instead.
 pub fn ip_deliver(
     mp: &mut Option<&'static Mbuf>,
     offp: &mut i32,
@@ -850,23 +882,43 @@ pub fn ip_deliver(
 ) -> i32 {
     let mut nxt = nxt;
     let mut af = af;
-    // INET6: the nesting counter of the IPv6 header chain; not configured.
+    #[cfg(feature = "inet6")]
+    let mut nest = 0;
 
     // Tell launch routine the next header
-    ipstat_inc(IpstatCounters::IpsDelivered);
+    ipstat_inc_af!(af, IpsDelivered, Ip6sDelivered);
 
     while nxt != IPPROTO_DONE {
         let psw: &Protosw = match af {
             x if x == i32::from(AF_INET) => {
                 &INETSW[usize::from(IP_PROTOX[nxt as usize].load(Ordering::Relaxed))]
             }
-            // INET6: &inet6sw[ip6_protox[nxt]]; not configured.
+            #[cfg(feature = "inet6")]
+            x if x == i32::from(AF_INET6) => {
+                &INET6SW[usize::from(IP6_PROTOX[nxt as usize].load(Ordering::Relaxed))]
+            }
             _ => panic(format_args!("ip_deliver: af {af}")),
         };
         if shared && psw.pr_flags & PR_MPINPUT == 0 {
             // delivery not finished, decrement counter, queue
+            #[cfg(feature = "inet6")]
+            if af == i32::from(AF_INET6) {
+                IP6COUNTERS[Ip6statCounters::Ip6sDelivered as usize]
+                    .fetch_sub(1, Ordering::Relaxed);
+                return ip6_ours_enqueue(mp, offp, nxt);
+            }
             ipstat_dec(IpstatCounters::IpsDelivered);
             return ip_ours_enqueue(mp, offp, nxt);
+        }
+
+        #[cfg(feature = "inet6")]
+        if af == i32::from(AF_INET6) {
+            nest += 1;
+            if nest > IP6_HDRNESTLIMIT.load(Ordering::Relaxed) {
+                ip6stat_inc(Ip6statCounters::Ip6sToomanyhdr);
+                m_freemp(mp);
+                return IPPROTO_DONE;
+            }
         }
 
         // protection against faulty packet - there should be more sanity checks in header
@@ -875,7 +927,7 @@ pub fn ip_deliver(
             return IPPROTO_DONE;
         };
         if m.m_pkthdr().len.get() < *offp {
-            ipstat_inc(IpstatCounters::IpsTooshort);
+            ipstat_inc_af!(af, IpsTooshort, Ip6sTooshort);
             m_freemp(mp);
             return IPPROTO_DONE;
         }
@@ -883,7 +935,7 @@ pub fn ip_deliver(
         if IPSEC_IN_USE.load(Ordering::Relaxed) != 0
             && ipsec_local_check(m, *offp, nxt, af).is_err()
         {
-            ipstat_inc(IpstatCounters::IpsCantforward);
+            ipstat_inc_af!(af, IpsCantforward, Ip6sCantforward);
             m_freemp(mp);
             return IPPROTO_DONE;
         }
@@ -894,7 +946,11 @@ pub fn ip_deliver(
                 ipstat_inc(IpstatCounters::IpsDelivered);
                 i32::from(AF_INET)
             }
-            // INET6: IPPROTO_IPV6 -> AF_INET6; not configured.
+            #[cfg(feature = "inet6")]
+            IPPROTO_IPV6 => {
+                ip6stat_inc(Ip6statCounters::Ip6sDelivered);
+                i32::from(AF_INET6)
+            }
             _ => af,
         };
         let Some(input) = psw.pr_input else {

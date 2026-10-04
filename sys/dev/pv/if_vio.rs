@@ -56,8 +56,8 @@
 //!   is negotiated, which needs more than one CPU; `sc_intrmap` is therefore always NULL and
 //!   left out, its tests commented), `struct ifmedia` and `ifmedia_*` (`net/if_media.c`:
 //!   `sc_media` is left out; `SIOCGIFMEDIA`/`SIOCSIFMEDIA` fail with `ENOSYS`). Not configured
-//!   (comments at the sites): `NVLAN`, `INET6`. `NBPFILTER` is configured: `vio_start` taps
-//!   each packet it queues.
+//!   (comments at the sites): `NVLAN`. `NBPFILTER` is configured: `vio_start` taps each
+//!   packet it queues; so is `INET6` (feature `inet6`: TSO of IPv6 segments).
 //! - `offsetof(struct tcphdr, th_sum)` and `offsetof(struct udphdr, uh_sum)` are the
 //!   constants 16 and 6: `netinet/tcp.h` and `netinet/udp.h` are not ported.
 //! - `KERNEL_LOCK()` is a comment (nothing without `MULTIPROCESSOR`).
@@ -1884,8 +1884,12 @@ pub fn vio_tx_offload(hdr: &mut VirtioNetHdr, m: &Mbuf) {
 
     if !ext.ip4.is_null() {
         hdr.gso_type = VIRTIO_NET_HDR_GSO_TCPV4;
+    } else if !ext.ip6.is_null() {
+        #[cfg(feature = "inet6")]
+        {
+            hdr.gso_type = VIRTIO_NET_HDR_GSO_TCPV6;
+        }
     }
-    // INET6: VIRTIO_NET_HDR_GSO_TCPV6 for ext.ip6; IPv6 is not configured.
 
     // VirtIO-Net needs pseudo header cksum with IP-payload length for TSO
     // SAFETY: ether_extract_headers found a whole TCP header at `ext.tcp` inside the mbuf's

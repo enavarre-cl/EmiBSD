@@ -1,8 +1,9 @@
 //! Host tests for `kern_pledge.c`: the promise names and their parsing, `sys_pledge`'s
 //! reductions and "error" mode, the system call table, the `__pledge_open` whitelist of
-//! `pledge_namei` (with `checkpledgepaths` and `checkzoneinfopath`), and a few of the narrow
-//! checks. Every pledged test thread also has "error", so a violation answers `ENOSYS`
-//! instead of sending the (host) thread a `SIGABRT`.
+//! `pledge_namei` (with `checkpledgepaths` and `checkzoneinfopath`), a few of the narrow
+//! checks, and the IPv6 socket options and interface ioctls. Every pledged test thread also
+//! has "error", so a violation answers `ENOSYS` instead of sending the (host) thread a
+//! `SIGABRT`.
 
 use std::boxed::Box;
 use std::{assert, assert_eq};
@@ -337,4 +338,111 @@ fn narrow_checks() {
     let unp = unpledged();
     assert_eq!(pledge_kill(unp, 4242), Ok(()));
     assert_eq!(pledge_sysctl(unp, &kproc, 1), Ok(()));
+}
+
+/// A protocol of `domain` (`pr_protocol` = `proto`), as `pledge_sockopt` sees it.
+fn proto_of(domain: &'static crate::sys::domain::Domain, proto: i32) -> &'static Protosw {
+    Box::leak(Box::new(Protosw {
+        pr_protocol: proto as i16,
+        ..Protosw::new(domain)
+    }))
+}
+
+#[test]
+fn ipv6_socket_options() {
+    use crate::netinet::in_::{IPPROTO_ICMPV6, IPPROTO_UDP};
+    use crate::netinet6::in6::{ICMP6_FILTER, IPV6_PKTINFO, IPV6_RECVHOPOPTS};
+    use crate::netinet6::in6_proto::INET6DOMAIN;
+    let raw6 = proto_of(&INET6DOMAIN, IPPROTO_ICMPV6);
+    let udp6 = proto_of(&INET6DOMAIN, IPPROTO_UDP);
+    let tcp6 = proto_of(&INET6DOMAIN, IPPROTO_TCP);
+
+    // ping6's "stdio inet dns": what it may still set or get once pledged.
+    let ping6 = pledged(PLEDGE_STDIO | PLEDGE_INET | PLEDGE_DNS);
+    for opt in [
+        IPV6_RECVPKTINFO,
+        IPV6_RECVHOPLIMIT,
+        IPV6_UNICAST_HOPS,
+        IPV6_TCLASS,
+        IPV6_DONTFRAG,
+        IPV6_V6ONLY,
+    ] {
+        assert_eq!(pledge_sockopt(ping6, true, raw6, IPPROTO_IPV6, opt), Ok(()));
+    }
+    // Lots of software tries IPPROTO_IP / IP_TOS on v6 sockets.
+    assert_eq!(
+        pledge_sockopt(ping6, true, udp6, IPPROTO_IP, IP_TOS),
+        Ok(())
+    );
+    assert_eq!(
+        pledge_sockopt(ping6, true, tcp6, IPPROTO_TCP, TCP_NODELAY),
+        Ok(())
+    );
+    // Not in the lists: killed (ENOSYS in "error" mode), as on OpenBSD.
+    for (level, opt) in [
+        (IPPROTO_ICMPV6, ICMP6_FILTER),
+        (IPPROTO_IPV6, IPV6_PKTINFO),
+        (IPPROTO_IPV6, IPV6_RECVHOPOPTS),
+        (IPPROTO_IP, IP_TTL),
+    ] {
+        assert_eq!(
+            pledge_sockopt(ping6, true, raw6, level, opt),
+            Err(Errno::ENOSYS)
+        );
+    }
+    // Multicast options need "mcast".
+    assert_eq!(
+        pledge_sockopt(ping6, true, udp6, IPPROTO_IPV6, IPV6_JOIN_GROUP),
+        Err(Errno::ENOSYS)
+    );
+    let mcast = pledged(PLEDGE_INET | PLEDGE_MCAST);
+    for opt in [
+        IPV6_MULTICAST_IF,
+        IPV6_MULTICAST_HOPS,
+        IPV6_MULTICAST_LOOP,
+        IPV6_JOIN_GROUP,
+        IPV6_LEAVE_GROUP,
+    ] {
+        assert_eq!(pledge_sockopt(mcast, true, udp6, IPPROTO_IPV6, opt), Ok(()));
+    }
+    // The DNS resolver's options with "dns" alone; the rest is "inet"'s.
+    let dns = pledged(PLEDGE_STDIO | PLEDGE_DNS);
+    assert_eq!(
+        pledge_sockopt(dns, true, udp6, IPPROTO_IPV6, IPV6_USE_MIN_MTU),
+        Ok(())
+    );
+    assert_eq!(
+        pledge_sockopt(dns, true, udp6, IPPROTO_IPV6, IPV6_RECVPKTINFO),
+        Ok(())
+    );
+    assert_eq!(
+        pledge_sockopt(dns, true, udp6, IPPROTO_IPV6, IPV6_UNICAST_HOPS),
+        Err(Errno::ENOSYS)
+    );
+    assert_eq!(pledge_socket(ping6, AF_INET6 as i32, 0), Ok(()));
+}
+
+#[test]
+fn ipv6_interface_ioctls() {
+    let sock = Box::leak(Box::new(File::new()));
+    sock.f_type.set(DTYPE_SOCKET);
+    let route = pledged(PLEDGE_STDIO | PLEDGE_ROUTE);
+    for com in [
+        SIOCGIFAFLAG_IN6,
+        SIOCGIFALIFETIME_IN6,
+        SIOCGIFDSTADDR_IN6,
+        SIOCGIFNETMASK_IN6,
+        SIOCGNBRINFO_IN6,
+        SIOCGIFINFO_IN6,
+    ] {
+        assert_eq!(pledge_ioctl(route, com, sock), Ok(()));
+    }
+    for com in [SIOCAIFADDR_IN6, SIOCDIFADDR_IN6] {
+        assert_eq!(pledge_ioctl(route, com, sock), Err(Errno::ENOSYS));
+        assert_eq!(pledge_ioctl(pledged(PLEDGE_WROUTE), com, sock), Ok(()));
+    }
+    assert_eq!(
+        pledge_ioctl(pledged(PLEDGE_STDIO), SIOCGIFAFLAG_IN6, sock),
+        Err(Errno::ENOSYS)
+    );
 }

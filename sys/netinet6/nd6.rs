@@ -1653,7 +1653,7 @@ pub unsafe fn nd6_resolve(
     let dst6 = unsafe { ptr::read_unaligned(satosin6_const(dst)) }.sin6_addr;
 
     if m.m_flags().get() & M_MCAST != 0 {
-        *desten = ether_map_ipv6_multicast(&dst6.s6_addr);
+        *desten = ether_map_ipv6_multicast(&dst6);
         return Ok(());
     }
 

@@ -97,10 +97,11 @@
 //!   `stoeplitz_h32(h)`, `stoeplitz_h64(h)`, `stoeplitz_port(p)`, `stoeplitz_ip4(...)`,
 //!   `stoeplitz_ip4port(...)`, `stoeplitz_ip6(...)`, `stoeplitz_ip6port(...)` and
 //!   `stoeplitz_eaddr(ea)` are functions of the same names over the system cache.
-//! - `stoeplitz_hash_ip6` and `stoeplitz_hash_ip6port` (C `#ifdef INET6`) are always compiled
-//!   and take the sixteen bytes of each `struct in6_addr` (`&[u8; 16]`) until
-//!   `<netinet6/in6.h>` is ported; `s6_addr32[i]` is the native-order word at byte `4 * i`, as
-//!   the C's union reads it.
+//! - `stoeplitz_hash_ip6`, `stoeplitz_hash_ip6port` and their macros (C `#ifdef INET6`) are
+//!   always compiled, not gated by the `inet6` feature: `sys/netinet6` compiles
+//!   unconditionally and `in6_pcb.c`'s `in6_pcb_newflow` calls `stoeplitz_ip6port`. They take
+//!   the sixteen bytes of each `struct in6_addr` (`&[u8; 16]`, the callers pass `s6_addr`);
+//!   `s6_addr32[i]` is the native-order word at byte `4 * i`, as the C's union reads it.
 //! - `stoeplitz_to_key(void *key, size_t klen)` takes `&mut [u8]`; its `KASSERT` is
 //!   `kassert!`. `stoeplitz_hash_eaddr` takes `&[u8; 6]` and reads the C's `uint16_t *` view as
 //!   native-order words.

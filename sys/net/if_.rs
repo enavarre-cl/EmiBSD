@@ -129,13 +129,18 @@
 //! - `if.c` shares this module with `if.h` (both are `if_` because of the keyword); the
 //!   types `if.c` defines (`struct if_idxmap`, `struct softnet`) are private here.
 //! - Options and pseudo-devices that are not ported are not configured, and their code is a
-//!   comment at each site: `INET6` (`nd6_ifattach`, `in6_ifattach`/`in6_ifdetach`,
-//!   `ip6intr`, the `AF_INET6` cases), `MPLS`, `MROUTING`, `NFSCLIENT`, and `NBRIDGE`,
-//!   `NCARP`, `NPPP`, `NPPPOE` as 0. `NETHER`, `NPF` (pf(4): the interface and group hooks
-//!   of `pf_if.c`, `pf_delay_pkt`, `pf_pkt_addr_changed`) and `NBPFILTER` (bpf(4): the taps
-//!   of `if_input_local`, `if_vinput` and `p2p_bpf_mtap`, `bpfdetach`) are configured.
+//!   comment at each site: `MPLS`, `MROUTING`, `NFSCLIENT`, and `NBRIDGE`, `NCARP`,
+//!   `NPPP`, `NPPPOE` as 0. `INET6` (feature `inet6`: `nd6_ifattach`/`nd6_ifdetach`,
+//!   `in6_ifattach`/`in6_ifdetach`, `ip6intr`, `ipv6_input`, `ns_tcp6_ml`, the `AF_INET6`
+//!   cases, `::1` on the default lo(4) in `if_up`), `NETHER`, `NPF` (pf(4): the interface
+//!   and group hooks of `pf_if.c`, `pf_delay_pkt`, `pf_pkt_addr_changed`) and `NBPFILTER`
+//!   (bpf(4): the taps of `if_input_local`, `if_vinput` and `p2p_bpf_mtap`, `bpfdetach`)
+//!   are configured.
+//! - `if_up` takes a `&'static Ifnet` (the C's `struct ifnet *`): `in6_ifattach` links
+//!   addresses that keep the interface.
 //! - Calls into files that are not ported report themselves with `unported!` and go on as
-//!   the C would with an empty subsystem: `inet_ntop` (`ifa_print_all`).
+//!   the C would with an empty subsystem: `inet_ntop` for `AF_INET` (`ifa_print_all`;
+//!   `AF_INET6` prints with nd6's `In6Ntop`).
 //! - `ifioctl`'s `pru_control` goes through the socket's protocol (`sys/protosw.rs`), as in
 //!   C; the kernel's own requests come with a NULL socket and go to `in_ioctl` as privileged
 //!   ones (the boot self-test configures an interface that way).
@@ -212,6 +217,8 @@ use crate::net::ifq::{
     ifiq_init, ifiq_input, ifq_add_data, ifq_attach, ifq_barrier, ifq_clr_oactive, ifq_destroy,
     ifq_enqueue, ifq_idx, ifq_init, ifq_init_maxlen, ifq_is_oactive, ifq_purge, ifq_start,
 };
+#[cfg(feature = "inet6")]
+use crate::net::netisr::NETISR_IPV6;
 use crate::net::netisr::{NETISR_ARP, NETISR_IP, schednetisr};
 use crate::net::pf::{pf_delay_pkt, pf_pkt_addr_changed};
 use crate::net::pf_if::{
@@ -235,6 +242,23 @@ use crate::netinet::ip_output::{in_hdr_cksum_out, in_proto_cksum_out};
 use crate::netinet::tcp_input::tcp_input_mlist;
 use crate::netinet::tcp_output::tcp_if_output_tso;
 use crate::netinet::tcp_var::{TcpstatCounters, tcpstat_inc};
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::{
+    IN6ADDR_ANY, SA6_ANY, in6_are_addr_equal, in6_purgeaddr, in6ifa_ifpforlinklocal,
+    satosin6_const, sin6tosa,
+};
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6_ifattach::{in6_ifattach, in6_ifdetach};
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6_proto::IP6_FORWARDING;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6_var::{SIOCAIFADDR_IN6, SIOCDIFADDR_IN6};
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_input::{ip6intr, ipv6_input};
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_output::in6_proto_cksum_out;
+#[cfg(feature = "inet6")]
+use crate::netinet6::nd6::{In6Ntop, nd6_ifattach, nd6_ifdetach};
 use crate::sys::errno::Errno;
 use crate::sys::ioccom::iocparm_len;
 use crate::sys::kernel::HZ;
@@ -1650,7 +1674,8 @@ fn if_attachsetup(ifp: &'static Ifnet) {
 
     let _ = if_addgroup(ifp, IFG_ALL);
 
-    // INET6: nd6_ifattach(ifp): IPv6 is not configured.
+    #[cfg(feature = "inet6")]
+    nd6_ifattach(ifp);
 
     pfi_attach_ifnet(ifp);
 
@@ -2056,7 +2081,11 @@ pub fn if_input_local(
             if_input_proto(ifp, m, ipv4_input, ns);
             Ok(())
         }
-        // INET6: AF_INET6 goes to ipv6_input; IPv6 is not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            if_input_proto(ifp, m, ipv6_input, ns);
+            Ok(())
+        }
         // MPLS: AF_MPLS goes to mpls_input; MPLS is not configured.
         _ => {
             printf(format_args!(
@@ -2133,7 +2162,8 @@ pub unsafe fn if_output_tso(
     let family = unsafe { (*dst).sa_family };
     let ifcap: u32 = match family {
         AF_INET => IFCAP_TSOv4,
-        // INET6: AF_INET6 uses IFCAP_TSOv6; IPv6 is not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => IFCAP_TSOv6,
         _ => unhandled_af(i32::from(family)),
     };
 
@@ -2147,11 +2177,15 @@ pub unsafe fn if_output_tso(
     };
 
     if m.m_pkthdr().len.get() as u32 <= mtu {
-        if family == AF_INET {
-            in_hdr_cksum_out(m, Some(ifp));
-            in_proto_cksum_out(m, Some(ifp));
+        match family {
+            AF_INET => {
+                in_hdr_cksum_out(m, Some(ifp));
+                in_proto_cksum_out(m, Some(ifp));
+            }
+            #[cfg(feature = "inet6")]
+            AF_INET6 => in6_proto_cksum_out(m, Some(ifp)),
+            _ => {}
         }
-        // INET6: in6_proto_cksum_out(m, ifp) for AF_INET6; not configured.
         // SAFETY: the caller's contract is `if_output`'s.
         let error = unsafe { ifp_output(ifp, m, dst, rt) };
         *mp = None;
@@ -2250,7 +2284,8 @@ pub fn if_input_process(ifp: &'static Ifnet, ml: &MbufList, idx: u32) {
     ml_init(&ns.ns_proto);
 
     ml_init(&ns.ns_tcp_ml);
-    // INET6: ml_init(&ns->ns_tcp6_ml); IPv6 is not configured.
+    #[cfg(feature = "inet6")]
+    ml_init(&ns.ns_tcp6_ml);
 
     net_lock_shared();
     while let Some(m) = ml_dequeue(ml) {
@@ -2278,7 +2313,8 @@ pub fn if_input_process(ifp: &'static Ifnet, ml: &MbufList, idx: u32) {
         }
 
         tcp_input_mlist(&ns.ns_tcp_ml, i32::from(AF_INET));
-        // INET6: tcp_input_mlist(&ns->ns_tcp6_ml, AF_INET6); not configured.
+        #[cfg(feature = "inet6")]
+        tcp_input_mlist(&ns.ns_tcp6_ml, i32::from(AF_INET6));
 
         if ml_empty(&ns.ns_input) {
             break;
@@ -2355,7 +2391,10 @@ fn if_netisr(_unused: *mut c_void) {
         if n & (1 << NETISR_IP) != 0 {
             ipintr();
         }
-        // INET6: NETISR_IPV6 runs ip6intr(); IPv6 is not configured.
+        #[cfg(feature = "inet6")]
+        if n & (1 << NETISR_IPV6) != 0 {
+            ip6intr();
+        }
         // NPPP > 0: NETISR_PPP runs pppintr() under the kernel lock; ppp(4) is not configured.
         // NBRIDGE > 0: NETISR_BRIDGE runs bridgeintr(); bridge(4) is not configured.
         // NPPPOE > 0: NETISR_PPPOE runs pppoeintr(); pppoe(4) is not configured.
@@ -2484,7 +2523,8 @@ pub fn if_detach(ifp: &'static Ifnet) {
     // NETHER > 0 && NFSCLIENT: revarp_ifidx is cleared; NFSCLIENT is not configured.
     // MROUTING: vif_delete(ifp); not configured.
     in_ifdetach(ifp);
-    // INET6: in6_ifdetach(ifp); IPv6 is not configured.
+    #[cfg(feature = "inet6")]
+    in6_ifdetach(ifp);
     pfi_detach_ifnet(ifp);
 
     while let Some(ifg) = ifp.if_groups.first() {
@@ -2515,7 +2555,8 @@ pub fn if_detach(ifp: &'static Ifnet) {
     kassert!(ifp.if_linkstatehooks.is_empty());
     kassert!(ifp.if_detachhooks.is_empty());
 
-    // INET6: nd6_ifdetach(ifp); not configured.
+    #[cfg(feature = "inet6")]
+    nd6_ifdetach(ifp);
 
     // Announce that the interface is gone.
     rtm_ifannounce(ifp, IFAN_DEPARTURE);
@@ -2959,7 +3000,9 @@ pub fn p2p_bpf_mtap(if_bpf: *mut u8, m: &Mbuf, dir: u32) -> bool {
 pub fn p2p_input(ifp: &'static Ifnet, m: &'static Mbuf, ns: Option<&Netstack>) {
     match m.m_pkthdr().ph_family.get() {
         AF_INET => if_input_proto(ifp, m, ipv4_input, ns),
-        // INET6: ipv6_input; MPLS: mpls_input; neither is configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => if_input_proto(ifp, m, ipv6_input, ns),
+        // MPLS: mpls_input; MPLS is not configured.
         _ => {
             m_freem(m);
         }
@@ -2995,14 +3038,18 @@ pub fn if_down(ifp: &Ifnet) {
 }
 
 /// `if_up`: mark an interface up and notify protocols of the transition.
-pub fn if_up(ifp: &Ifnet) {
+pub fn if_up(ifp: &'static Ifnet) {
     net_assert_locked("if_up");
 
     ifp.if_flags.set(ifp.if_flags.get() | IFF_UP);
     ifp.if_lastchange.set(getmicrotime());
 
-    // INET6: userland expects the kernel to set ::1 on default lo(4) (in6_ifattach when
-    // ifp is rtable_loindex(if_rdomain)); IPv6 is not configured.
+    // Userland expects the kernel to set ::1 on default lo(4).
+    #[cfg(feature = "inet6")]
+    if ifp.if_index.get() == rtable_loindex(ifp.if_rdomain.get()) {
+        // The C ignores the result.
+        let _ = in6_ifattach(ifp);
+    }
 
     if_linkstate(ifp);
 }
@@ -3247,8 +3294,10 @@ pub fn if_setrdomain(ifp: &'static Ifnet, rdomain: i32) -> Result<(), Errno> {
             if_down(ifp);
         }
         rti_delete(ifp);
-        // MROUTING vif_delete and INET6 in6_ifdetach are not configured.
+        // MROUTING: vif_delete(ifp); not configured.
         in_ifdetach(ifp);
+        #[cfg(feature = "inet6")]
+        in6_ifdetach(ifp);
         splx(s);
     }
 
@@ -3367,8 +3416,14 @@ pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> R
                         in_ifdetach(ifp);
                     }
                 }
-                // INET6: AF_INET6 attaches with in6_ifattach and detaches with
-                // in6_ifdetach; IPv6 is not configured.
+                #[cfg(feature = "inet6")]
+                AF_INET6 => {
+                    if cmd == SIOCIFAFATTACH {
+                        error = in6_ifattach(ifp);
+                    } else {
+                        in6_ifdetach(ifp);
+                    }
+                }
                 _ => error = Err(Errno::EAFNOSUPPORT),
             }
             net_unlock();
@@ -3381,8 +3436,27 @@ pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> R
             }
 
             net_lock();
-            // INET6: IFXF_AUTOCONF6/IFXF_AUTOCONF6TEMP run in6_ifattach and
-            // IFXF_INET6_NOSOII is copied; IPv6 is not configured.
+            #[cfg(feature = "inet6")]
+            {
+                let rflags = i32::from(ifr.ifr_flags());
+                let xflags = ifp.if_xflags.get();
+                if rflags & (IFXF_AUTOCONF6 | IFXF_AUTOCONF6TEMP) != 0
+                    && xflags & (IFXF_AUTOCONF6 | IFXF_AUTOCONF6TEMP) == 0
+                    && let Err(e) = in6_ifattach(ifp)
+                {
+                    error = Err(e);
+                    net_unlock();
+                    break 'out;
+                }
+
+                if rflags & IFXF_INET6_NOSOII != 0 && ifp.if_xflags.get() & IFXF_INET6_NOSOII == 0 {
+                    ifp.if_xflags.set(ifp.if_xflags.get() | IFXF_INET6_NOSOII);
+                }
+
+                if rflags & IFXF_INET6_NOSOII == 0 && ifp.if_xflags.get() & IFXF_INET6_NOSOII != 0 {
+                    ifp.if_xflags.set(ifp.if_xflags.get() & !IFXF_INET6_NOSOII);
+                }
+            }
 
             // MPLS: IFXF_MPLS swaps if_output with mpls_output; MPLS is not configured.
 
@@ -3683,9 +3757,10 @@ pub unsafe fn ifioctl(so: *const c_void, cmd: u64, data: *mut u8, p: &Proc) -> R
                 break 'out;
             }
             error = match cmd {
-                // INET6: SIOCAIFADDR_IN6 and SIOCDIFADDR_IN6 too; not configured.
                 SIOCAIFADDR | SIOCDIFADDR | SIOCSIFADDR | SIOCSIFNETMASK | SIOCSIFDSTADDR
                 | SIOCSIFBRDADDR => suser(p),
+                #[cfg(feature = "inet6")]
+                SIOCAIFADDR_IN6 | SIOCDIFADDR_IN6 => suser(p),
                 _ => Ok(()),
             };
             if error.is_err() {
@@ -4569,7 +4644,25 @@ pub unsafe fn if_group_routechange(dst: *const Sockaddr, mask: *const Sockaddr) 
             let _ = if_group_egress_build();
         }
     }
-    // INET6: the same for an AF_INET6 default route; IPv6 is not configured.
+    #[cfg(feature = "inet6")]
+    // SAFETY: the caller's contract; an AF_INET6 address and its mask are `sockaddr_in6`s,
+    // of which only `sin6_addr` is read (unaligned: a `sockaddr` has a smaller alignment).
+    unsafe {
+        if (*dst).sa_family == AF_INET6
+            && in6_are_addr_equal(
+                &ptr::read_unaligned(&raw const (*satosin6_const(dst)).sin6_addr),
+                &IN6ADDR_ANY,
+            )
+            && !mask.is_null()
+            && ((*mask).sa_len == 0
+                || in6_are_addr_equal(
+                    &ptr::read_unaligned(&raw const (*satosin6_const(mask)).sin6_addr),
+                    &IN6ADDR_ANY,
+                ))
+        {
+            let _ = if_group_egress_build();
+        }
+    }
 }
 
 /// `if_group_egress_build`: the `egress` group is the interfaces of the default routes.
@@ -4610,7 +4703,29 @@ pub fn if_group_egress_build() -> Result<(), Errno> {
         rt = rtable_iterate(r);
     }
 
-    // INET6: the same for ::/0 (sa6_any); not configured.
+    #[cfg(feature = "inet6")]
+    {
+        let mut sa_in6 = SA6_ANY;
+        // SAFETY: a local `sockaddr_in6`, the destination and the mask (`::/0`).
+        let mut rt = unsafe {
+            rtable_lookup(
+                0,
+                sin6tosa(&raw mut sa_in6),
+                sin6tosa(&raw mut sa_in6),
+                ptr::null(),
+                RTP_ANY,
+            )
+        };
+        while let Some(r) = rt {
+            if r.rt_flags.get() & (RTF_REJECT | RTF_BLACKHOLE) == 0
+                && let Some(ifp) = if_get(r.rt_ifidx.get())
+            {
+                let _ = if_addgroup(ifp, IFG_EGRESS);
+                if_put(ifp);
+            }
+            rt = rtable_iterate(r);
+        }
+    }
 
     Ok(())
 }
@@ -4740,12 +4855,24 @@ pub fn ifa_print_all() {
     for ifp in IFNETLIST.0.iter() {
         for ifa in ifp.if_addrlist.iter() {
             // SAFETY: an interface's addresses are valid sockaddrs.
-            if unsafe { (*ifa.ifa_addr.get()).sa_family } == AF_INET {
-                // printf("%s", inet_ntop(AF_INET, &satosin(ifa->ifa_addr)->sin_addr, ...)):
-                // inet_ntop (lib/libkern) is not ported.
-                let _ = unported!("inet_ntop");
+            match unsafe { (*ifa.ifa_addr.get()).sa_family } {
+                AF_INET => {
+                    // printf("%s", inet_ntop(AF_INET, &satosin(ifa->ifa_addr)->sin_addr, ...)):
+                    // inet_ntop (lib/libkern) is not ported.
+                    let _ = unported!("inet_ntop");
+                }
+                #[cfg(feature = "inet6")]
+                AF_INET6 => {
+                    // SAFETY: an AF_INET6 address is a `sockaddr_in6`; read unaligned.
+                    let a = unsafe {
+                        ptr::read_unaligned(
+                            &raw const (*satosin6_const(ifa.ifa_addr.get())).sin6_addr,
+                        )
+                    };
+                    printf(format_args!("{}", In6Ntop(a)));
+                }
+                _ => {}
             }
-            // INET6: AF_INET6 addresses likewise; not configured.
             printf(format_args!(" on {}\n", Str(&ifp.if_xname.get())));
         }
     }
@@ -4753,6 +4880,9 @@ pub fn ifa_print_all() {
 
 /// `ifnewlladdr`: bounces the interface after its link address changed.
 pub fn ifnewlladdr(ifp: &'static Ifnet) {
+    #[cfg(feature = "inet6")]
+    let i_am_router = IP6_FORWARDING.load(Ordering::Relaxed) != 0;
+
     net_assert_locked("ifnewlladdr"); // for ioctl and in6
     // KERNEL_ASSERT_LOCKED(): one CPU.
 
@@ -4772,8 +4902,15 @@ pub fn ifnewlladdr(ifp: &'static Ifnet) {
 
     setflags(ifp.if_flags.get() | IFF_UP);
 
-    // INET6: unless a router, the link-local address is purged and rebuilt
-    // (in6ifa_ifpforlinklocal, in6_purgeaddr, if_addrhooks, in6_ifattach); not configured.
+    // Update the link-local address. Don't do it if we're a router to avoid confusing hosts
+    // on the network.
+    #[cfg(feature = "inet6")]
+    if !i_am_router && let Some(ia6) = in6ifa_ifpforlinklocal(ifp, 0) {
+        in6_purgeaddr(&ia6.ia_ifa);
+        if_hooks_run(&ifp.if_addrhooks);
+        // The C ignores the result.
+        let _ = in6_ifattach(ifp);
+    }
 
     if !up {
         // go back down

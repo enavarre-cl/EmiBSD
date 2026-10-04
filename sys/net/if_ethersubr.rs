@@ -96,14 +96,15 @@ didn't get a copy, you may request one from <license@ipv6.nrl.navy.mil>.
 //! Status: `ported` (M7b).
 //!
 //! ## Deviations
-//! - `ether_input` hands IPv4, ARP and RARP frames to `ipv4_input`, `arpinput` and
-//!   `revarpinput` (`netinet/`); the IPv6 and MPLS arms are comments (not configured).
+//! - `ether_input` hands IPv4, ARP, RARP and IPv6 frames to `ipv4_input`, `arpinput`,
+//!   `revarpinput` and `ipv6_input`; the MPLS arms are comments (not configured).
 //! - Options and pseudo-devices that are not ported are not configured, their code a comment
 //!   at each site: `vlan(4)` (`NVLAN` 0, so a tagged frame is service delimited and dropped
 //!   unless a bridge takes it, as the C does without vlan), `carp(4)`, `pppoe(4)`/`PIPEX`,
 //!   `bpe(4)`, `af_frame` (`NAF_FRAME` 0: the frame sockets need sockets, so the
-//!   whole `#if NAF_FRAME > 0` part, `ether_frm_*` and `struct ether_pcb`, is not compiled),
-//!   `INET6` (`nd6_*`, `ether_ip6multicast_*`, the IPv6 cases) and `MPLS`.
+//!   whole `#if NAF_FRAME > 0` part, `ether_frm_*` and `struct ether_pcb`, is not compiled)
+//!   and `MPLS`. `INET6` is configured (feature `inet6`: `nd6_rtrequest`, `nd6_resolve`,
+//!   `ether_ip6multicast_*`, the IPv6 cases).
 //! - `ether_ifattach` takes the `struct arpcom` (the C takes its `ac_if` and casts), which
 //!   lets it mark the interface for the checked cast `arpcom_of`; `ether_ioctl`,
 //!   `ether_addmulti` and `ether_delmulti` take it as the C does.
@@ -135,6 +136,8 @@ use crate::kern::subr_prf::{Str, panic, printf};
 use crate::kern::uipc_mbuf::{m_adj, m_copym, m_freem, m_getptr, m_prepend, m_pullup};
 use crate::machine::intr::{splnet, splx};
 use crate::net::bpf::{DLT_EN10MB, bpfattach};
+#[cfg(feature = "inet6")]
+use crate::net::ethertypes::ETHERTYPE_IPV6;
 use crate::net::ethertypes::{
     ETHERTYPE_ARP, ETHERTYPE_IP, ETHERTYPE_QINQ, ETHERTYPE_REVARP, ETHERTYPE_VLAN,
 };
@@ -148,6 +151,8 @@ use crate::net::if_types::IFT_ETHER;
 use crate::net::if_var::{IfInputFn, Ifnet, Netstack};
 use crate::net::route::Rtentry;
 use crate::net::rtable::rt_key;
+#[cfg(feature = "inet6")]
+use crate::netinet::if_ether::ether_map_ipv6_multicast;
 use crate::netinet::if_ether::{
     Arpcom, ETHER_ADDR_LEN, ETHER_ALIGN, ETHER_HDR_LEN, ETHERMIN, ETHERMTU, EtherExtracted,
     EtherHeader, EtherMulti, EtherMultiList, EtherPort, EtherVlanHeader, arpcom_of,
@@ -159,6 +164,16 @@ use crate::netinet::in_::{INADDR_ANY, IPPROTO_TCP, IPPROTO_UDP, SockaddrIn};
 use crate::netinet::ip::{IP_MF, IP_OFFMASK, Ip};
 use crate::netinet::ip_input::ipv4_input;
 use crate::netinet::ip_output::{in_hdr_cksum_out, in_proto_cksum_out};
+#[cfg(feature = "inet6")]
+use crate::netinet::ip6::Ip6Hdr;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::{in6_is_addr_unspecified, satosin6_const};
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_input::ipv6_input;
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_output::in6_proto_cksum_out;
+#[cfg(feature = "inet6")]
+use crate::netinet6::nd6::{nd6_resolve, nd6_rtrequest};
 use crate::sys::endian::{htons, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_IFMADDR, M_NOWAIT};
@@ -168,6 +183,8 @@ use crate::sys::mbuf::{
 };
 use crate::sys::queue::ListHead;
 use crate::sys::refcnt::{DT_REFCNT_IDX_ETHMULTI, Refcnt};
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
 use crate::sys::socket::{AF_INET, AF_UNSPEC, Sockaddr, pseudo_AF_HDRCMPLT};
 use crate::sys::sockio::{SIOCADDMULTI, SIOCDELMULTI, SIOCSIFADDR, SIOCSIFMTU};
 
@@ -199,7 +216,12 @@ pub static ETHERANYADDR: [u8; ETHER_ADDR_LEN] = [0x00, 0x00, 0x00, 0x00, 0x00, 0
 pub static ETHER_IPMULTICAST_MIN: [u8; ETHER_ADDR_LEN] = [0x01, 0x00, 0x5e, 0x00, 0x00, 0x00];
 /// `ether_ipmulticast_max`: the last one.
 pub static ETHER_IPMULTICAST_MAX: [u8; ETHER_ADDR_LEN] = [0x01, 0x00, 0x5e, 0x7f, 0xff, 0xff];
-// INET6: ether_ip6multicast_min/max (33:33:00:00:00:00 .. 33:33:ff:ff:ff:ff); not configured.
+/// `ether_ip6multicast_min`: the first Ethernet address of the IPv6 multicast range.
+#[cfg(feature = "inet6")]
+pub static ETHER_IP6MULTICAST_MIN: [u8; ETHER_ADDR_LEN] = [0x33, 0x33, 0x00, 0x00, 0x00, 0x00];
+/// `ether_ip6multicast_max`: the last one.
+#[cfg(feature = "inet6")]
+pub static ETHER_IP6MULTICAST_MAX: [u8; ETHER_ADDR_LEN] = [0x33, 0x33, 0xff, 0xff, 0xff, 0xff];
 
 /// `ether_fakeaddr`'s `unit`.
 static FAKEADDR_UNIT: AtomicI32 = AtomicI32::new(0);
@@ -250,10 +272,12 @@ pub fn ether_rtrequest(ifp: &'static Ifnet, req: i32, rt: Option<&'static Rtentr
     };
 
     // SAFETY: a route's key is a valid sockaddr.
-    if unsafe { (*rt_key(rt)).sa_family } == AF_INET {
-        arp_rtrequest(ifp, req, rt);
+    match unsafe { (*rt_key(rt)).sa_family } {
+        AF_INET => arp_rtrequest(ifp, req, rt),
+        #[cfg(feature = "inet6")]
+        AF_INET6 => nd6_rtrequest(ifp, req, rt),
+        _ => {}
     }
-    // INET6: nd6_rtrequest(ifp, req, rt) for AF_INET6; IPv6 is not configured.
 }
 
 /// `ether_resolve`: fills the Ethernet header `eh` for a packet to `dst`: the destination
@@ -316,9 +340,16 @@ pub unsafe fn ether_resolve(
                     }
                 }
             }
-            // INET6: nd6_resolve and ETHERTYPE_IPV6; IPv6 is not configured.
-            // MPLS: the gateway's link address or address resolution, ETHERTYPE_MPLS(_MCAST);
-            // not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {
+                // nd6_resolve owns the packet when it fails (or holds it: EAGAIN).
+                // SAFETY: the caller's contract: an `AF_INET6` destination is a
+                // `sockaddr_in6`.
+                unsafe { nd6_resolve(ifp, rt, m, dst, &mut eh.ether_dhost) }?;
+                eh.ether_type = htons(ETHERTYPE_IPV6);
+            }
+            // MPLS: the gateway's link address or address resolution (arpresolve, or
+            // nd6_resolve for an AF_INET6 gateway), ETHERTYPE_MPLS(_MCAST); not configured.
             af if af == pseudo_AF_HDRCMPLT => {
                 // take the whole header from the sa
                 // SAFETY: `sa_data` holds the fourteen bytes of an Ethernet header.
@@ -571,7 +602,9 @@ pub fn ether_input(ifp: &'static Ifnet, m: &'static Mbuf, ns: Option<&Netstack>)
                     Some(revarpinput as IfInputFn)
                 }
 
-                // INET6: ETHERTYPE_IPV6 goes to ipv6_input; IPv6 is not configured.
+                // Schedule IPv6 software interrupt for incoming IPv6 packet.
+                #[cfg(feature = "inet6")]
+                ETHERTYPE_IPV6 => Some(ipv6_input as IfInputFn),
                 // NPPPOE > 0 || PIPEX: ETHERTYPE_PPPOEDISC/ETHERTYPE_PPPOE go to the pppoe
                 // queues or a pipex session; not configured.
                 // MPLS: ETHERTYPE_MPLS(_MCAST) go to mpls_input; not configured.
@@ -867,8 +900,24 @@ pub unsafe fn ether_multiaddr(
                 Ok((addrlo, addrlo))
             }
         }
-        // INET6: an AF_INET6 address maps with ETHER_MAP_IPV6_MULTICAST (all of 33:33:* for
-        // the unspecified address); IPv6 is not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            // SAFETY: an `AF_INET6` sockaddr is a `sockaddr_in6` (`in6_addmulti` and
+            // `in6_delmulti` pass a `struct in6_ifreq`); read unaligned.
+            let addr = unsafe { ptr::read_unaligned(&raw const (*satosin6_const(sa)).sin6_addr) };
+            if in6_is_addr_unspecified(&addr) {
+                // An IP6 address of 0 means listen to or stop listening to all of the
+                // Ethernet multicast address used for IP6.
+                //
+                // (This might not be healthy, given IPv6's reliance on multicast for things
+                // like neighbor discovery. Perhaps initializing all-nodes, solicited nodes,
+                // and possibly all-routers for this interface afterwards is not a bad idea.)
+                Ok((ETHER_IP6MULTICAST_MIN, ETHER_IP6MULTICAST_MAX))
+            } else {
+                let addrlo = ether_map_ipv6_multicast(&addr);
+                Ok((addrlo, addrlo))
+            }
+        }
         _ => Err(Errno::EAFNOSUPPORT),
     }
 }
@@ -1053,7 +1102,35 @@ pub fn ether_extract_headers(m0: &Mbuf, ext: &mut EtherExtracted) {
             }
             (m, hoff, ipproto)
         }
-        // INET6: an ETHERTYPE_IPV6 frame's ip6_hdr; IPv6 is not configured.
+        #[cfg(feature = "inet6")]
+        ETHERTYPE_IPV6 => {
+            let Some((m, hoff)) = m_getptr(m0, hlen as i32) else {
+                return;
+            };
+            let hoff = hoff as usize;
+            if (m.m_len().get() as usize) - hoff < size_of::<Ip6Hdr>() {
+                return;
+            }
+            let ip6p = mtod::<u8>(m).wrapping_add(hoff).cast::<Ip6Hdr>();
+            ext.ip6 = ip6p;
+
+            hlen = size_of::<Ip6Hdr>();
+            if (ext.paylen as usize) < hlen {
+                ext.ip6 = ptr::null_mut();
+                return;
+            }
+            // SAFETY: `m_len - hoff` covers an IPv6 header at `ip6p`.
+            let ip6 = unsafe { ptr::read_unaligned(ip6p) };
+            let iplen = hlen + usize::from(ntohs(ip6.ip6_plen));
+            if (ext.paylen as usize) < iplen {
+                ext.ip6 = ptr::null_mut();
+                return;
+            }
+            ext.iplen = iplen as u32;
+            ext.iphlen = hlen as u32;
+            ext.paylen -= hlen as u32;
+            (m, hoff, i32::from(ip6.ip6_nxt))
+        }
         _ => return,
     };
 
@@ -1153,8 +1230,10 @@ pub fn ether_offload_ifcap(ifp: &Ifnet, m: &'static Mbuf) -> Option<&'static Mbu
         if !ext.ip4.is_null() {
             in_hdr_cksum_out(m, Some(ifp));
             in_proto_cksum_out(m, Some(ifp));
+        } else if !ext.ip6.is_null() {
+            #[cfg(feature = "inet6")]
+            in6_proto_cksum_out(m, Some(ifp));
         }
-        // INET6: in6_proto_cksum_out(m, ifp) for an IPv6 packet; not configured.
 
         // show ethernet header again
         m.m_data().set(m.m_data().get().wrapping_sub(ethlen));
