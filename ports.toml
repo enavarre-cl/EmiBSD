@@ -5356,3 +5356,21 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2ebed88d9ac2459284819517dc4737dd661a37bf"
 deps = ["sys/net/fq_codel.h", "sys/net/ifq.c"]
 notes = "M9d: FQ-CoDel; bit-fields stored truncated; FQCODEL_DEBUG not defined (DPRINTF, flow.id omitted); pf ops reached only via PFQ_FQCODEL_OPS; addqueue EINVAL when the quantum needs the MTU of a kif without ifp; malloc failure panics; host tests"
+
+[[file]]
+c = "sys/sys/mtio.h"
+rust = "sys/sys/mtio.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fa7a32bad0a67d5cd63b72df49d4aebd178aa204"
+deps = ["sys/sys/ioccom.h"]
+notes = "ioctl ABI of tape devices: struct mtop, struct mtget (#[repr(C)], 8 and 32 bytes), MT* operations, MT_IS*/MT_DS_* constants, MTIOCTOP, MTIOCGET, MTIOCIEOT, MTIOCEEOT, MTIOCRDSPOS, MTIOCRDHPOS, MTIOCSLOCATE, MTIOCHLOCATE, the _KERNEL T_* minor masks; used by kern_pledge.c pledge_ioctl (the tape promise); host tests of the encoded values and layouts, test-ref against the header"
+
+[[file]]
+c = "sys/dev/biovar.h"
+rust = "sys/dev/biovar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "853f73990d190a607962078b7858c5298dc0a7f5"
+deps = ["sys/sys/ioccom.h"]
+notes = "bio(4) ioctl ABI: struct bio, bio_locate, bioc_inq, bioc_disk (bd_patrol is the named BiocDiskPatrol), bioc_vol, bioc_alarm, bioc_blink, bioc_setstate, bioc_createraid, bioc_deleteraid, bioc_discipline, bioc_installboot, bioc_patrol (#[repr(C)], LP64 sizes asserted at compile time), BIOCLOCATE..BIOCPATROL, all BIO_*/BIOC_* constants; used by kern_pledge.c pledge_ioctl (the disklabel cases); stub: the _KERNEL prototypes (bio_register, bio_unregister, bio_status_init, bio_status, bio_info, bio_warn, bio_error) belong to the unported dev/bio.c; host tests of the encoded values, test-ref against the header"

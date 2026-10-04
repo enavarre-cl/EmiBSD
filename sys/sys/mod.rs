@@ -38,6 +38,7 @@ pub mod mbuf;
 pub mod mman;
 pub mod mount;
 pub mod msgbuf;
+pub mod mtio;
 pub mod mutex;
 pub mod namei;
 pub mod param;
