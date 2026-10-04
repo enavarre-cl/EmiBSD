@@ -4,8 +4,8 @@
 //! return (the scope zone recovered), `in6_pcbnotify`'s matching and the checks of
 //! `in6_pcbaddrisavail`.
 //!
-//! The control blocks are placed in their hash chains by hand (`place6`): `in_pcbrehash`
-//! hashes `INP_IPV6` ones with `in6_pcbhash` once the INET6 part of `in_pcb.c` is ported.
+//! The control blocks are placed in their hash chains by hand (`place6`), with the hash
+//! `in_pcbrehash` computes for `INP_IPV6` ones (`in6_pcbhash`).
 
 use std::boxed::Box;
 use std::vec::Vec;
@@ -38,17 +38,16 @@ fn table(hashsize: i32) -> &'static Inpcbtable {
 
 /// An `INP_IPV6` control block of a raw IPv6 socket in `table`.
 fn pcb6(table: &'static Inpcbtable) -> &'static Inpcb {
-    let so = soalloc(&INET6SW[1], M_WAIT).expect("socket");
+    let so = soalloc(&INET6SW[3], M_WAIT).expect("socket");
     so.so_type.set(SOCK_RAW);
     in_pcballoc(so, table, M_WAIT).expect("in_pcballoc");
     let inp = pcb_of(so);
-    // in_pcballoc sets it for PF_INET6 sockets once the INET6 part of in_pcb.c is ported.
-    inp.set_flags(INP_IPV6);
+    assert!(inp.has_flags(INP_IPV6), "in_pcballoc marks PF_INET6 pcbs");
     inp
 }
 
-/// The control block `in_pcballoc` gave `so`: `sotoinpcb(so)`, which takes inet6 sockets
-/// once the INET6 part of `in_pcb.c` is ported.
+/// The control block `in_pcballoc` gave `so` (`sotoinpcb(so)`, read without its family
+/// check).
 pub(crate) fn pcb_of(so: &Socket) -> &'static Inpcb {
     // SAFETY: `in_pcballoc` set `so_pcb` to its `inpcb_pool` item, which stays allocated
     // until the last `in_pcbunref` after `in_pcbdetach`.

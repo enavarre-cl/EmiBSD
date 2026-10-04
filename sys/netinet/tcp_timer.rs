@@ -496,7 +496,10 @@ pub fn tcp_timer_rexmt(arg: *mut c_void) {
             }
 
             let rt = match tp.pf.get() {
-                // INET6: PF_INET6: we can not turn off path MTU for IPv6; not configured.
+                // We can not turn off path MTU for IPv6. Do nothing for now, maybe lower to
+                // minimum MTU.
+                #[cfg(feature = "inet6")]
+                pf if pf == i32::from(crate::sys::socket::PF_INET6) => None,
                 pf if pf == i32::from(PF_INET) => {
                     icmp_mtudisc_clone(inp.inp_faddr.get(), inp.inp_rtableid.get(), false)
                 }

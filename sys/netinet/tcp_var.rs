@@ -70,8 +70,10 @@
 //!   (the C macro row of `docs/C_TO_RUST.md`); `intotcpcb`/`sototcpcb` return `Option`.
 //! - `TCPCTL_NAMES` is for `sysctl(8)` and is not compiled; `struct tcp_ident_mapping` has
 //!   its trailing padding as a named member (`AbiPod`).
-//! - Not configured: `INET6` (`tcp6_usrreqs`, `tcb6table`, `tcp6_ctlinput`,
-//!   `tcp6_mtudisc_callback`). `TCP_ECN` and `TCP_SIGNATURE` are (GENERIC), so the `TF_ECN_*`
+//! - The `INET6` declarations (`tcp6_usrreqs`, `tcb6table`, `tcp6_ctlinput`,
+//!   `tcp6_mtudisc_callback`) are the items of `tcp_usrreq.rs` and `tcp_subr.rs`, compiled
+//!   always, as `netinet6` is. The `sin6` member of `union syn_cache_sa` is read and written
+//!   through `tcp_input.rs`'s `sa_sin6`/`sa_from_sin6`. `TCP_ECN` and `TCP_SIGNATURE` are (GENERIC), so the `TF_ECN_*`
 //!   flags and `tcp_signature` exist. `SMALL_KERNEL` is not set: `tcp_trace` is the function of
 //!   `tcp_debug.rs`.
 

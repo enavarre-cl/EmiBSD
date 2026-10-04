@@ -76,12 +76,6 @@
 //! `netinet/ip_input.rs`'s are.
 //!
 //! ## Deviations
-//! - The UDP and TCP entries are not in the table yet: their `pr_usrreqs` and
-//!   `pr_ctlinput` (`udp6_usrreqs`, `udp6_ctlinput` in `netinet/udp_usrreq.c`;
-//!   `tcp6_usrreqs`, `tcp6_ctlinput` in `netinet/tcp_usrreq.c`/`tcp_subr.c`) come with the
-//!   INET6 integration of those files. A comment marks their place; until then
-//!   `ip6_protox[]` sends UDP and TCP over IPv6 to the raw handler, and `socket(2)` of
-//!   `AF_INET6`/`SOCK_DGRAM` or `SOCK_STREAM` finds no protocol.
 //! - `IPSEC` is configured (M9c): AH, ESP and IPComp take `ah46_input`, `esp46_input` and
 //!   `ipcomp46_input`, as in C.
 //! - `NGIF` is 0 (`ipip_input` serves `IPPROTO_IPV4` and `IPPROTO_IPV6`); `MPLS`, `NCARP`,
@@ -98,6 +92,7 @@ use core::sync::atomic::{AtomicI32, AtomicU8};
 use crate::netinet::in_::{
     IPPROTO_AH, IPPROTO_DIVERT, IPPROTO_DSTOPTS, IPPROTO_ESP, IPPROTO_FRAGMENT, IPPROTO_ICMPV6,
     IPPROTO_IPCOMP, IPPROTO_IPV4, IPPROTO_IPV6, IPPROTO_MAX, IPPROTO_RAW, IPPROTO_ROUTING,
+    IPPROTO_TCP, IPPROTO_UDP,
 };
 use crate::netinet::ip_ipip::ipip_input;
 use crate::netinet::ip_var::IPMTUDISCTIMEOUT;
@@ -105,19 +100,27 @@ use crate::netinet::ip6::IPV6_DEFHLIM;
 use crate::netinet::ipsec_input::{
     ah_sysctl, ah46_input, esp_sysctl, esp46_input, ipcomp_sysctl, ipcomp46_input,
 };
+use crate::netinet::tcp_input::tcp_input;
+use crate::netinet::tcp_subr::tcp6_ctlinput;
+use crate::netinet::tcp_usrreq::{TCP6_USRREQS, tcp_ctloutput, tcp_sysctl};
+use crate::netinet::udp_usrreq::{UDP6_USRREQS, udp_input, udp_sysctl, udp6_ctlinput};
 use crate::netinet6::dest6::dest6_input;
 use crate::netinet6::frag6::{frag6_input, frag6_slowtimo};
 use crate::netinet6::icmp6::{icmp6_fasttimo, icmp6_init, icmp6_input, icmp6_sysctl};
 use crate::netinet6::in6::{IPV6_DEFAULT_MULTICAST_HOPS, SockaddrIn6};
 use crate::netinet6::ip6_divert::{DIVERT6_USRREQS, divert6_init};
 use crate::netinet6::ip6_input::{ip6_init, ip6_sysctl};
+use crate::netinet6::ip6_output::ip6_ctloutput;
 use crate::netinet6::raw_ip6::{
     RIP6_USRREQS, rip6_ctlinput, rip6_ctloutput, rip6_init, rip6_input, rip6_sysctl,
 };
 use crate::netinet6::route6::route6_input;
 use crate::sys::domain::Domain;
-use crate::sys::protosw::{PR_ADDR, PR_ATOMIC, PR_MPINPUT, PR_MPSYSCTL, Protosw};
-use crate::sys::socket::{AF_INET6, SOCK_RAW};
+use crate::sys::protosw::{
+    PR_ABRTACPTDIS, PR_ADDR, PR_ATOMIC, PR_CONNREQUIRED, PR_MPINPUT, PR_MPSYSCTL, PR_SPLICE,
+    PR_WANTRCVD, Protosw,
+};
+use crate::sys::socket::{AF_INET6, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM};
 
 /// Nominal space allocated to a raw ip6 socket: send.
 pub const RIPV6SNDQ: u64 = 8192;
@@ -134,7 +137,7 @@ pub static IP6_PROTOX: [AtomicU8; IPPROTO_MAX as usize] =
     [const { AtomicU8::new(0) }; IPPROTO_MAX as usize];
 
 /// `inet6sw[]`: TCP/IP protocol family: IP6, ICMP6, UDP, TCP.
-pub static INET6SW: [Protosw; 13] = [
+pub static INET6SW: [Protosw; 15] = [
     Protosw {
         pr_protocol: IPPROTO_IPV6 as i16,
         pr_flags: PR_MPSYSCTL,
@@ -143,10 +146,33 @@ pub static INET6SW: [Protosw; 13] = [
         pr_sysctl: Some(ip6_sysctl),
         ..Protosw::new(&INET6DOMAIN)
     },
-    // IPPROTO_UDP (SOCK_DGRAM; udp_input, udp6_ctlinput, ip6_ctloutput, udp6_usrreqs,
-    // udp_sysctl) and IPPROTO_TCP (SOCK_STREAM; tcp_input, tcp6_ctlinput, tcp_ctloutput,
-    // tcp6_usrreqs, tcp_sysctl) come here with udp6_usrreqs/udp6_ctlinput and
-    // tcp6_usrreqs/tcp6_ctlinput (see the module's deviations).
+    Protosw {
+        pr_type: SOCK_DGRAM as i16,
+        pr_protocol: IPPROTO_UDP as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR | PR_SPLICE | PR_MPINPUT | PR_MPSYSCTL,
+        pr_input: Some(udp_input),
+        pr_ctlinput: Some(udp6_ctlinput),
+        pr_ctloutput: Some(ip6_ctloutput),
+        pr_usrreqs: Some(&UDP6_USRREQS),
+        pr_sysctl: Some(udp_sysctl),
+        ..Protosw::new(&INET6DOMAIN)
+    },
+    Protosw {
+        pr_type: SOCK_STREAM as i16,
+        pr_protocol: IPPROTO_TCP as i16,
+        pr_flags: PR_CONNREQUIRED
+            | PR_WANTRCVD
+            | PR_ABRTACPTDIS
+            | PR_SPLICE
+            | PR_MPINPUT
+            | PR_MPSYSCTL,
+        pr_input: Some(tcp_input),
+        pr_ctlinput: Some(tcp6_ctlinput),
+        pr_ctloutput: Some(tcp_ctloutput),
+        pr_usrreqs: Some(&TCP6_USRREQS),
+        pr_sysctl: Some(tcp_sysctl),
+        ..Protosw::new(&INET6DOMAIN)
+    },
     Protosw {
         pr_type: SOCK_RAW as i16,
         pr_protocol: IPPROTO_RAW as i16,

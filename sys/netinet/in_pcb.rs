@@ -173,8 +173,13 @@
 //!   the C reads the union through the macro of its family. `inp_ip6_minhlim` (the
 //!   `inp_ip_minttl` alias) and `inp_flowinfo` (`inp_ipv6.ip6_flow`) are methods.
 //! - The `in6_*` pcb functions are `netinet6/in6_pcb.rs`'s; the `ISSET(inp_flags, INP_IPV6)`
-//!   branches of this file are still comments (the INET6 integration of `in_pcb.c` comes
-//!   after the port of `netinet6`).
+//!   branches of this file (`#ifdef INET6`, feature `inet6`) call them.
+//! - The `const void *laddr` of `in_pcbbind_locked`, `in_pcbpickport` and
+//!   `in_pcblookup_local_lock` is an [`Inpaddru`] (`union inpaddru` by value), read through
+//!   `iau_addr()`/`iau_addr6()` as the C reads the pointer as the address of the family
+//!   `INP_IPV6`/`INPLOOKUP_IPV6` says; `zeroin46_addr` is [`ZEROIN46_ADDR`].
+//! - `sotoinpcb` panics on a socket of neither `inetdomain` nor `inet6domain` (the C macro
+//!   casts `so_pcb` blindly).
 //! - `inp_pf_sk` is pf(4)'s state key. `inp_seclevel` is a `Cell` (`IPSEC` is configured
 //!   since M9c).
 //! - `struct inpcb_iterator` is [`InpcbIterator`], a whole `Inpcb` whose `inp_table` and
@@ -190,7 +195,8 @@
 //! - `hashinit(M_WAITOK)` cannot fail in C; here its failure in `in_pcbinit` panics.
 //! - `in_pcbaddrisavail_lock` clears the port and `sin_zero` of a copy of the address (the C
 //!   clears them in the caller's mbuf and puts the port back).
-//! - `in_pcbset_addr` takes `sockaddr_in`s: without `INET6` the C asserts `AF_INET`.
+//! - `in_pcbset_addr` takes its generic `struct sockaddr *`s as [`SockaddrUnion`]s (the
+//!   SYN cache's `union syn_cache_sa`, its only caller), read by family.
 //! - `NSTOEPLITZ` (`pseudo-device pf` needs `stoeplitz`) and `NPF` (pf(4)) are configured:
 //!   the flow id of a connected or bound socket, `pf_remove_divert_state`, `pf_inp_unlink`,
 //!   and the divert and redirected-localhost keys of `in_pcblookup_listen`. So is `IPSEC`
@@ -220,6 +226,8 @@ use crate::kern::uipc_socket::{sofree, sorele};
 use crate::kern::uipc_socket2::soassertlocked;
 use crate::machine::cpu::curproc;
 use crate::machine::intr::IPL_SOFTNET;
+#[cfg(feature = "inet6")]
+use crate::net::if_::unhandled_af;
 use crate::net::if_::{IFF_UP, if_get, if_put, ifa_ifwithaddr};
 use crate::net::if_var::Netstack;
 use crate::net::pf::{pf_find_divert, pf_inp_unlink, pf_remove_divert_state};
@@ -238,12 +246,23 @@ use crate::netinet::in_::{
 };
 use crate::netinet::in_var::ifatoia;
 use crate::netinet::ip::Ip;
-use crate::netinet::ip_ipsp::IpsecLevel;
+use crate::netinet::ip_ipsp::{IpsecLevel, SockaddrUnion};
 use crate::netinet::ip_output::ip_freemoptions;
 use crate::netinet::ip_var::IpMoptions;
 use crate::netinet::ip6::Ip6Hdr;
 use crate::netinet::ipsec_output::UDPENCAP_PORT;
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6::{
+    IN6ADDR_ANY, SockaddrIn6, in6_are_addr_equal, in6_is_addr_unspecified, in6_nam2sin6,
+};
 use crate::netinet6::in6::{IN6ADDR_ANY_INIT, In6Addr};
+#[cfg(feature = "inet6")]
+use crate::netinet6::in6_pcb::{
+    in6_pcbaddrisavail_lock, in6_pcbconnect, in6_pcbhash, in6_pcbrtentry, in6_pcbset_addr,
+    in6_setpeeraddr, in6_setsockaddr,
+};
+#[cfg(feature = "inet6")]
+use crate::netinet6::ip6_output::{ip6_freemoptions, ip6_freepcbopts};
 use crate::netinet6::ip6_var::{Ip6Moptions, Ip6Pktopts};
 use crate::queue_adapter;
 use crate::sys::endian::htons;
@@ -259,6 +278,8 @@ use crate::sys::refcnt::Refcnt;
 use crate::sys::socket::{
     AF_INET, SO_ACCEPTCONN, SO_BINDANY, SO_REUSEADDR, SO_REUSEPORT, SOCK_DGRAM,
 };
+#[cfg(feature = "inet6")]
+use crate::sys::socket::{AF_INET6, PF_INET, PF_INET6};
 use crate::sys::socketvar::{SS_NOFDREF, Socket, soref};
 use crate::sys::systm::net_assert_locked;
 
@@ -419,6 +440,40 @@ pub type InpUpcallFn = unsafe fn(
 /// The per-pcb hook of `in_pcbnotifyall` and the protocols' `ctlinput`s (`udp_notify`,
 /// `in_pcbrtchange`): the control block and the errno of the event (`None` for 0).
 pub type InpNotifyFn = fn(&'static Inpcb, Option<Errno>);
+
+/// `union inpaddru`: an IPv4 or IPv6 address, the `const void *laddr` the port lookups take
+/// and read as the address of the family their `INP_IPV6`/`INPLOOKUP_IPV6` says.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Inpaddru {
+    /// The bytes of the union: `iau_addr6`, whose first four bytes are `iau_addr`.
+    bytes: In6Addr,
+}
+
+impl Inpaddru {
+    /// A union holding the IPv4 address `a` (`iau_addr`).
+    pub const fn from_addr(a: InAddr) -> Self {
+        Self {
+            bytes: In6Addr::from_s6_addr32([a.s_addr, 0, 0, 0]),
+        }
+    }
+
+    /// A union holding the IPv6 address `a6` (`iau_addr6`).
+    pub const fn from_addr6(a6: In6Addr) -> Self {
+        Self { bytes: a6 }
+    }
+
+    /// `iau_addr`: the union read as an IPv4 address.
+    pub const fn iau_addr(&self) -> InAddr {
+        InAddr {
+            s_addr: self.bytes.s6_addr32(0),
+        }
+    }
+
+    /// `iau_addr6`: the union read as an IPv6 address.
+    pub const fn iau_addr6(&self) -> In6Addr {
+        self.bytes
+    }
+}
 
 /// `struct inpcb`: common structure pcb for internet protocol implementation. Here are
 /// stored pointers to local and foreign host table entries, local and foreign socket numbers,
@@ -722,6 +777,8 @@ impl Default for Baddynamicports {
 
 /// `zeroin_addr`.
 pub static ZEROIN_ADDR: InAddr = InAddr { s_addr: 0 };
+/// `zeroin46_addr`: the zero address of either family.
+pub static ZEROIN46_ADDR: Inpaddru = Inpaddru::from_addr6(IN6ADDR_ANY_INIT);
 
 // These configure the range of local port addresses assigned to "unspecified" outgoing
 // connections/packets/whatever.
@@ -755,14 +812,19 @@ pub fn in_pcb_is_iterator(inp: &Inpcb) -> bool {
 
 /// `sotoinpcb(so)`: the control block of an Internet socket, `None` once detached.
 pub fn sotoinpcb(so: &Socket) -> Option<&'static Inpcb> {
-    if so.dom_family() != i32::from(AF_INET) {
+    let family = so.dom_family();
+    #[cfg(feature = "inet6")]
+    let inet6 = family == i32::from(AF_INET6);
+    #[cfg(not(feature = "inet6"))]
+    let inet6 = false;
+    if family != i32::from(AF_INET) && !inet6 {
         panic(format_args!(
             "sotoinpcb: socket {:p} of family {}",
             so,
             so.dom_family()
         ));
     }
-    // SAFETY: an `inetdomain` socket's `so_pcb` is NULL or the `inpcb_pool` item
+    // SAFETY: an `inetdomain` or `inet6domain` socket's `so_pcb` is NULL or the `inpcb_pool` item
     // `in_pcballoc` set; `in_pcbdetach` clears it before the item can go back to the pool.
     unsafe { so.so_pcb.get().cast::<Inpcb>().cast_const().as_ref() }
 }
@@ -932,7 +994,15 @@ pub fn in_pcballoc(
             .load(Ordering::Relaxed),
     );
     inp.inp_hops.set(-1);
-    // INET6: INP_IPV6 for PF_INET6 sockets, inp_cksum6 = -1; not configured.
+    #[cfg(feature = "inet6")]
+    {
+        match so.dom_family() {
+            f if f == i32::from(PF_INET6) => inp.inp_flags.set(INP_IPV6),
+            f if f == i32::from(PF_INET) => {} // inp->inp_flags is initialized to 0
+            f => unhandled_af(f),
+        }
+        inp.inp_cksum6.set(-1);
+    }
 
     mtx_enter(&table.inpt_mtx);
     let count = table.inpt_count.get();
@@ -959,12 +1029,34 @@ fn nam_sin(nam: &Mbuf) -> Result<SockaddrIn, Errno> {
     Ok(unsafe { sin.read_unaligned() })
 }
 
+/// The `sockaddr_in6` of an address mbuf, read out of it.
+#[cfg(feature = "inet6")]
+fn nam_sin6(nam: &Mbuf) -> Result<SockaddrIn6, Errno> {
+    let sin6 = in6_nam2sin6(nam)?;
+    // SAFETY: `in6_nam2sin6` checked the mbuf holds a whole `sockaddr_in6`; mbuf data need not
+    // be aligned, so it is read unaligned.
+    Ok(unsafe { sin6.read_unaligned() })
+}
+
+/// `satosin6_const(sa)` of a generic socket address image, read out of it.
+#[cfg(feature = "inet6")]
+fn su_sin6(su: &SockaddrUnion) -> SockaddrIn6 {
+    // SAFETY: the union is `sizeof(struct sockaddr_in6)` initialised bytes; `SockaddrIn6` is
+    // plain old data of that size, read unaligned.
+    unsafe {
+        su.as_bytes()
+            .as_ptr()
+            .cast::<SockaddrIn6>()
+            .read_unaligned()
+    }
+}
+
 /// `in_pcbbind_locked`: binds `inp` to the address in `nam` (or `laddr` and a port picked
 /// here when `nam` is `None`), with the table mutex held.
 pub fn in_pcbbind_locked(
     inp: &'static Inpcb,
     nam: Option<&Mbuf>,
-    laddr: &InAddr,
+    laddr: &Inpaddru,
     p: &Proc,
 ) -> Result<(), Errno> {
     let so = inp.socket();
@@ -982,8 +1074,26 @@ pub fn in_pcbbind_locked(
         wild = INPLOOKUP_WILDCARD;
     }
 
-    // INET6: the INP_IPV6 branch (in6_nam2sin6, in6_pcbaddrisavail_lock); not configured.
-    {
+    #[cfg(feature = "inet6")]
+    let inet6 = inp.has_flags(INP_IPV6);
+    #[cfg(not(feature = "inet6"))]
+    let inet6 = false;
+    if inet6 {
+        #[cfg(feature = "inet6")]
+        {
+            if !in6_is_addr_unspecified(&inp.inp_laddr6.get()) {
+                return Err(Errno::EINVAL);
+            }
+            wild |= INPLOOKUP_IPV6;
+
+            if let Some(nam) = nam {
+                let mut sin6 = nam_sin6(nam)?;
+                in6_pcbaddrisavail_lock(inp, &mut sin6, wild, p, IN_PCBLOCK_HOLD)?;
+                laddr = Inpaddru::from_addr6(sin6.sin6_addr);
+                lport = sin6.sin6_port;
+            }
+        }
+    } else {
         if inp.inp_laddr.get().s_addr != INADDR_ANY {
             return Err(Errno::EINVAL);
         }
@@ -991,7 +1101,7 @@ pub fn in_pcbbind_locked(
         if let Some(nam) = nam {
             let mut sin = nam_sin(nam)?;
             in_pcbaddrisavail_lock(inp, &mut sin, wild, p, IN_PCBLOCK_HOLD)?;
-            laddr = sin.sin_addr;
+            laddr = Inpaddru::from_addr(sin.sin_addr);
             lport = sin.sin_port;
         }
     }
@@ -1003,7 +1113,11 @@ pub fn in_pcbbind_locked(
         return Err(Errno::EACCES);
     }
     if nam.is_some() {
-        inp.inp_laddr.set(laddr);
+        if inet6 {
+            inp.inp_laddr6.set(laddr.iau_addr6());
+        } else {
+            inp.inp_laddr.set(laddr.iau_addr());
+        }
     }
     inp.inp_lport.set(lport);
     in_pcbrehash(inp);
@@ -1017,7 +1131,7 @@ pub fn in_pcbbind(inp: &'static Inpcb, nam: Option<&Mbuf>, p: &Proc) -> Result<(
 
     // keep lookup, modification, and rehash in sync
     mtx_enter(&table.inpt_mtx);
-    let error = in_pcbbind_locked(inp, nam, &ZEROIN_ADDR, p);
+    let error = in_pcbbind_locked(inp, nam, &ZEROIN46_ADDR, p);
     mtx_leave(&table.inpt_mtx);
 
     error
@@ -1072,7 +1186,7 @@ pub fn in_pcbaddrisavail_lock(
         if so.so_euid.get() != 0 && !in_multicast(sin.sin_addr.s_addr) {
             let t = in_pcblookup_local_lock(
                 table,
-                &sin.sin_addr,
+                &Inpaddru::from_addr(sin.sin_addr),
                 lport,
                 INPLOOKUP_WILDCARD,
                 inp.inp_rtableid.get(),
@@ -1088,7 +1202,7 @@ pub fn in_pcbaddrisavail_lock(
         }
         let t = in_pcblookup_local_lock(
             table,
-            &sin.sin_addr,
+            &Inpaddru::from_addr(sin.sin_addr),
             lport,
             wild,
             inp.inp_rtableid.get(),
@@ -1120,7 +1234,7 @@ pub fn in_pcbaddrisavail(
 /// give, into `lport` (network order).
 pub fn in_pcbpickport(
     lport: &mut u16,
-    laddr: &InAddr,
+    laddr: &Inpaddru,
     wild: i32,
     inp: &Inpcb,
     p: &Proc,
@@ -1195,7 +1309,10 @@ pub fn in_pcbconnect(inp: &'static Inpcb, nam: &Mbuf) -> Result<(), Errno> {
     let table = inp.table();
     let mut ina = InAddr::default();
 
-    // INET6: in6_pcbconnect for INP_IPV6; not configured.
+    #[cfg(feature = "inet6")]
+    if inp.has_flags(INP_IPV6) {
+        return in6_pcbconnect(inp, nam);
+    }
 
     let sin = nam_sin(nam)?;
     if sin.sin_port == 0 {
@@ -1224,7 +1341,12 @@ pub fn in_pcbconnect(inp: &'static Inpcb, nam: &Mbuf) -> Result<(), Errno> {
 
     if inp.inp_laddr.get().s_addr == INADDR_ANY {
         if inp.inp_lport.get() == 0 {
-            if let Err(e) = in_pcbbind_locked(inp, None, &ina, curproc_or_panic("in_pcbconnect")) {
+            if let Err(e) = in_pcbbind_locked(
+                inp,
+                None,
+                &Inpaddru::from_addr(ina),
+                curproc_or_panic("in_pcbconnect"),
+            ) {
                 mtx_leave(&table.inpt_mtx);
                 return Err(e);
             }
@@ -1283,8 +1405,21 @@ pub fn in_pcbdetach(inp: &'static Inpcb) {
     if let Some(rt) = inp.inp_route.ro_rt.take() {
         rtfree(Some(rt));
     }
-    // INET6: ip6_freepcbopts, ip6_freemoptions for INP_IPV6; not configured.
-    {
+    #[cfg(feature = "inet6")]
+    let inet6 = inp.has_flags(INP_IPV6);
+    #[cfg(not(feature = "inet6"))]
+    let inet6 = false;
+    if inet6 {
+        #[cfg(feature = "inet6")]
+        {
+            // SAFETY: the options are this control block's own allocations
+            // (`ip6_setpktopts`, `ip6_setmoptions`), taken out of it here and never used again.
+            unsafe {
+                ip6_freepcbopts(inp.inp_outputopts6.take());
+                ip6_freemoptions(inp.inp_moptions6.take());
+            }
+        }
+    } else {
         m_freem(inp.inp_options.take());
         // SAFETY: the options are this control block's own allocation (`ip_setmoptions`),
         // taken out of it here and never used again.
@@ -1428,7 +1563,11 @@ fn set_nam(nam: &Mbuf, sin: SockaddrIn) {
 
 /// `in_setsockaddr`: the local address of `inp` into `nam`.
 pub fn in_setsockaddr(inp: &Inpcb, nam: &Mbuf) {
-    // INET6: in6_setsockaddr for INP_IPV6; not configured.
+    #[cfg(feature = "inet6")]
+    if inp.has_flags(INP_IPV6) {
+        in6_setsockaddr(inp, nam);
+        return;
+    }
     set_nam(
         nam,
         SockaddrIn {
@@ -1443,7 +1582,11 @@ pub fn in_setsockaddr(inp: &Inpcb, nam: &Mbuf) {
 
 /// `in_setpeeraddr`: the foreign address of `inp` into `nam`.
 pub fn in_setpeeraddr(inp: &Inpcb, nam: &Mbuf) {
-    // INET6: in6_setpeeraddr for INP_IPV6; not configured.
+    #[cfg(feature = "inet6")]
+    if inp.has_flags(INP_IPV6) {
+        in6_setpeeraddr(inp, nam);
+        return;
+    }
     set_nam(
         nam,
         SockaddrIn {
@@ -1569,7 +1712,7 @@ pub fn in_pcbrtchange(inp: &'static Inpcb, _errno: Option<Errno>) {
 /// `IN_PCBLOCK_GRAB` the table mutex is taken here and the result referenced.
 pub fn in_pcblookup_local_lock(
     table: &Inpcbtable,
-    laddr: &InAddr,
+    laddrp: &Inpaddru,
     lport_arg: u16,
     flags: i32,
     rtable: u32,
@@ -1578,6 +1721,9 @@ pub fn in_pcblookup_local_lock(
     let mut matched: Option<&'static Inpcb> = None;
     let mut matchwild = 3;
     let lport = lport_arg;
+    let laddr = laddrp.iau_addr();
+    #[cfg(feature = "inet6")]
+    let laddr6 = laddrp.iau_addr6();
 
     let rdomain = rtable_l2(rtable);
     let lhash = in_pcblhash(table, rdomain, lport);
@@ -1596,8 +1742,30 @@ pub fn in_pcblookup_local_lock(
             continue;
         }
         let mut wildcard = 0;
-        // INET6: the INPLOOKUP_IPV6 comparison of the IPv6 addresses; not configured.
-        {
+        #[cfg(feature = "inet6")]
+        let inet6 = flags & INPLOOKUP_IPV6 != 0;
+        #[cfg(not(feature = "inet6"))]
+        let inet6 = false;
+        if inet6 {
+            #[cfg(feature = "inet6")]
+            {
+                kassert!(inp.has_flags(INP_IPV6));
+
+                if !in6_is_addr_unspecified(&inp.inp_faddr6.get()) {
+                    wildcard += 1;
+                }
+
+                if !in6_are_addr_equal(&inp.inp_laddr6.get(), &laddr6) {
+                    if in6_is_addr_unspecified(&inp.inp_laddr6.get())
+                        || in6_is_addr_unspecified(&laddr6)
+                    {
+                        wildcard += 1;
+                    } else {
+                        continue;
+                    }
+                }
+            }
+        } else {
             kassert!(!inp.has_flags(INP_IPV6));
 
             if inp.inp_faddr.get().s_addr != INADDR_ANY {
@@ -1632,7 +1800,10 @@ pub fn in_pcblookup_local_lock(
 pub fn in_pcbrtentry(inp: &Inpcb) -> Option<&'static Rtentry> {
     soassertlocked(inp.socket());
 
-    // INET6: in6_pcbrtentry for INP_IPV6; not configured.
+    #[cfg(feature = "inet6")]
+    if inp.has_flags(INP_IPV6) {
+        return in6_pcbrtentry(inp);
+    }
 
     if inp.inp_faddr.get().s_addr == INADDR_ANY {
         return None;
@@ -1742,7 +1913,27 @@ pub fn in_pcbhash_insert(inp: &'static Inpcb) {
     // SAFETY: the table mutex is held; the control block is in no local port list and stays
     // in place until `in_pcbdetach` unlinks it.
     unsafe { table.lhash_head(lhash).insert_head(inp) };
-    // INET6: in6_pcbhash for INP_IPV6; not configured.
+    #[cfg(feature = "inet6")]
+    let hash = if inp.has_flags(INP_IPV6) {
+        in6_pcbhash(
+            table,
+            rtable_l2(inp.inp_rtableid.get()),
+            &inp.inp_faddr6.get(),
+            inp.inp_fport.get(),
+            &inp.inp_laddr6.get(),
+            inp.inp_lport.get(),
+        )
+    } else {
+        in_pcbhash(
+            table,
+            rtable_l2(inp.inp_rtableid.get()),
+            &inp.inp_faddr.get(),
+            inp.inp_fport.get(),
+            &inp.inp_laddr.get(),
+            inp.inp_lport.get(),
+        )
+    };
+    #[cfg(not(feature = "inet6"))]
     let hash = in_pcbhash(
         table,
         rtable_l2(inp.inp_rtableid.get()),
@@ -1983,15 +2174,22 @@ pub fn in_pcbset_rtableid(inp: &'static Inpcb, rtableid: u32) -> Result<(), Errn
 /// listener), unless another control block has them.
 pub fn in_pcbset_addr(
     inp: &'static Inpcb,
-    fsin: &SockaddrIn,
-    lsin: &SockaddrIn,
+    fsa: &SockaddrUnion,
+    lsa: &SockaddrUnion,
     rtableid: u32,
 ) -> Result<(), Errno> {
     let table = inp.table();
 
-    // INET6: in6_pcbset_addr for INP_IPV6; not configured.
-    kassert!(fsin.sin_family == AF_INET);
-    kassert!(lsin.sin_family == AF_INET);
+    #[cfg(feature = "inet6")]
+    if inp.has_flags(INP_IPV6) {
+        kassert!(fsa.sa_family() == AF_INET6);
+        kassert!(lsa.sa_family() == AF_INET6);
+        return in6_pcbset_addr(inp, &su_sin6(fsa), &su_sin6(lsa), rtableid);
+    }
+    kassert!(fsa.sa_family() == AF_INET);
+    kassert!(lsa.sa_family() == AF_INET);
+    let fsin = fsa.sin();
+    let lsin = lsa.sin();
 
     mtx_enter(&table.inpt_mtx);
 
@@ -2032,7 +2230,13 @@ pub fn in_pcbunset_faddr(inp: &'static Inpcb) {
     let table = inp.table();
 
     mtx_enter(&table.inpt_mtx);
-    // INET6: in6addr_any for INP_IPV6; not configured.
+    #[cfg(feature = "inet6")]
+    if inp.has_flags(INP_IPV6) {
+        inp.inp_faddr6.set(IN6ADDR_ANY);
+    } else {
+        inp.inp_faddr.set(InAddr { s_addr: INADDR_ANY });
+    }
+    #[cfg(not(feature = "inet6"))]
     inp.inp_faddr.set(InAddr { s_addr: INADDR_ANY });
     inp.inp_fport.set(0);
     in_pcbrehash(inp);
@@ -2044,9 +2248,20 @@ pub fn in_pcbunset_laddr(inp: &'static Inpcb) {
     let table = inp.table();
 
     mtx_enter(&table.inpt_mtx);
-    // INET6: in6addr_any for INP_IPV6; not configured.
-    inp.inp_faddr.set(InAddr { s_addr: INADDR_ANY });
-    inp.inp_laddr.set(InAddr { s_addr: INADDR_ANY });
+    #[cfg(feature = "inet6")]
+    let inet6 = inp.has_flags(INP_IPV6);
+    #[cfg(not(feature = "inet6"))]
+    let inet6 = false;
+    if inet6 {
+        #[cfg(feature = "inet6")]
+        {
+            inp.inp_faddr6.set(IN6ADDR_ANY);
+            inp.inp_laddr6.set(IN6ADDR_ANY);
+        }
+    } else {
+        inp.inp_faddr.set(InAddr { s_addr: INADDR_ANY });
+        inp.inp_laddr.set(InAddr { s_addr: INADDR_ANY });
+    }
     inp.inp_fport.set(0);
     in_pcbrehash(inp);
     mtx_leave(&table.inpt_mtx);

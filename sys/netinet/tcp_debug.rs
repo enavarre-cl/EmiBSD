@@ -129,8 +129,9 @@
 //!   and TCP header bytes (`struct tcpiphdr` for IPv4).
 //! - `ostate` is an `i32`, the type of `t_state` here (`tcp_var.rs`); the record keeps the
 //!   C's `short`.
-//! - `INET6` is not configured: `struct tcpipv6hdr` (an `ip6_hdr`, not ported) and `td_ti6`
-//!   are left out; an IPv6 header in `headers` is not recognised, as without `INET6` in C.
+//! - `headers` is `struct tcpiphdr` for IPv4 or `struct tcpipv6hdr` for IPv6; `td_ti6` is
+//!   filled for `PF_INET6` (`INET6` is configured, feature `inet6`: the `IPV6_VERSION`
+//!   case of the header sniffing and the `PF_INET6` copy).
 //! - The ring and `tcp_debx` are one `StaticCell` changed only with `tcp_debug_mtx` held.
 
 use core::mem::size_of;
@@ -143,9 +144,14 @@ use crate::machine::intr::IPL_SOFTNET;
 use crate::netinet::ip::IPVERSION;
 use crate::netinet::ip_icmp::iptime;
 use crate::netinet::ip_var::Ipovly;
+#[cfg(feature = "inet6")]
+use crate::netinet::ip6::IPV6_VERSION;
+use crate::netinet::ip6::{IPV6_VERSION_MASK, Ip6Hdr};
 use crate::netinet::tcp::{TcpSeq, Tcphdr};
 use crate::netinet::tcp_var::Tcpcb;
 use crate::sys::mutex::Mutex;
+#[cfg(feature = "inet6")]
+use crate::sys::socket::PF_INET6;
 use crate::sys::socket::{PF_INET, PF_UNSPEC};
 
 /// `TA_INPUT`.
@@ -163,6 +169,26 @@ pub const TA_TIMER: i16 = 5;
 
 /// `TCP_NDEBUG`: the size of the ring.
 pub const TCP_NDEBUG: usize = 100;
+
+/// `struct tcpipv6hdr`: tcp+ip6 header.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Tcpipv6hdr {
+    /// `ti6_i`: the IPv6 header.
+    pub ti6_i: Ip6Hdr,
+    /// `ti6_t`: the TCP header.
+    pub ti6_t: Tcphdr,
+}
+
+impl Tcpipv6hdr {
+    /// An all-zero header pair.
+    pub const fn zeroed() -> Self {
+        Self {
+            ti6_i: Ip6Hdr::zeroed(),
+            ti6_t: Tcpiphdr::zeroed().ti_t,
+        }
+    }
+}
 
 /// `struct tcpiphdr`: tcp+ip header, after ip options removed.
 #[repr(C)]
@@ -344,6 +370,8 @@ pub struct TcpDebug {
     pub td_tcb: usize,
     /// `td_ti`.
     pub td_ti: Tcpiphdr,
+    /// `td_ti6`.
+    pub td_ti6: Tcpipv6hdr,
     /// `td_req`.
     pub td_req: i16,
     /// `td_cb`.
@@ -359,6 +387,7 @@ impl TcpDebug {
             td_ostate: 0,
             td_tcb: 0,
             td_ti: Tcpiphdr::zeroed(),
+            td_ti6: Tcpipv6hdr::zeroed(),
             td_req: 0,
             td_cb: TcpDebugCb::zeroed(),
         }
@@ -416,14 +445,25 @@ pub fn tcp_trace(
         None => td.td_cb = TcpDebugCb::zeroed(),
     }
 
-    // INET6: td_ti6 is bzero'd; not configured.
+    td.td_ti6 = Tcpipv6hdr::zeroed();
     td.td_ti = Tcpiphdr::zeroed();
     if let Some(h) = headers {
         // The address family may be in tcpcb or ip header.
-        if pf == i32::from(PF_UNSPEC) && h.first().is_some_and(|b| b & 0xf0 == IPVERSION << 4) {
-            pf = i32::from(PF_INET);
+        if pf == i32::from(PF_UNSPEC) {
+            match h.first().map(|b| b & IPV6_VERSION_MASK) {
+                #[cfg(feature = "inet6")]
+                Some(IPV6_VERSION) => pf = i32::from(PF_INET6),
+                Some(v) if v == IPVERSION << 4 => pf = i32::from(PF_INET),
+                _ => {}
+            }
         }
-        // INET6: PF_INET6 copies a struct tcpipv6hdr; not configured.
+        #[cfg(feature = "inet6")]
+        if pf == i32::from(PF_INET6) && h.len() >= size_of::<Tcpipv6hdr>() {
+            // SAFETY: at least `size_of::<Tcpipv6hdr>()` bytes (checked); the structure is
+            // integers, valid for any bytes, read unaligned.
+            td.td_ti6 = unsafe { ptr::read_unaligned(h.as_ptr().cast::<Tcpipv6hdr>()) };
+            td.td_ti6.ti6_i.ip6_plen = len as u16;
+        }
         if pf == i32::from(PF_INET) && h.len() >= size_of::<Tcpiphdr>() {
             // SAFETY: at least `size_of::<Tcpiphdr>()` bytes (checked); the structure is
             // integers, valid for any bytes, read unaligned.
@@ -438,6 +478,7 @@ pub fn tcp_trace(
 }
 
 const _: () = assert!(size_of::<Tcpiphdr>() == 40);
+const _: () = assert!(size_of::<Tcpipv6hdr>() == 60);
 
 #[cfg(test)]
 mod tests {

@@ -572,7 +572,7 @@ fn configure6(ifp: &'static Ifnet, a: In6Addr, plen: i32) -> Result<(), Errno> {
 }
 
 #[test]
-#[ignore = "needs if_output_tso's AF_INET6 case (if.c INET6) and an if_output for test_driver_if (the MLD reports go out)"]
+#[ignore = "needs an if_output for test_driver_if (the MLD reports go out; panics \"no if_output\")"]
 fn siocaifaddr_in6_makes_the_address_the_link_local_one_and_the_memberships() {
     use crate::netinet::ip_input::tests::{OURS, setup as setup_ip};
 

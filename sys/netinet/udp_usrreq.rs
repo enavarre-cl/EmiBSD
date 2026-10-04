@@ -93,15 +93,20 @@
 //!   (it writes the checksum it computes there, and puts the original back before an ICMP
 //!   error, as the C does through its pointer); `udp_output` writes the `struct udpiphdr`
 //!   over the prepended space, keeping its `uh_sum` bytes, which the C does not set.
-//! - `ip6_exthdr_get` (`netinet6/ip6_input.c`, not ported) is a private helper here: the
-//!   `m_pulldown` of the header and its address. `udp_sbappend` takes the UDP header as a
-//!   copy; an `inp_upcall` gets the address of a copy of it.
+//! - `udp_sbappend` takes the UDP header and the IP or IPv6 header as copies, and the
+//!   sender's address (`struct sockaddr *`) as its bytes; an `inp_upcall` gets the addresses
+//!   of the copies. `udp_input`'s `srcsa` union is a [`SockaddrUnion`].
 //! - `udp_ctlinput` is an `unsafe fn` (`PrCtlinputFn`): it reads the returned IP and UDP
 //!   headers through the raw argument; its `notify` takes `Option<Errno>` (`in_pcb.rs`).
 //! - `udp_sysctl`'s port bitmaps are copied through a byte buffer on the stack (the C's
 //!   `malloc(M_SYSCTL)`), as `sysctl_struct` takes bytes.
-//! - Not configured, each a comment at its site: `INET6` (`udb6table`, `udp6_usrreqs`,
-//!   `udp6_ctlinput`, `udp6_output`, the IPv6 paths) and `PIPEX`. `NPF` (`pf_inp_lookup`,
+//! - `INET6` is configured (feature `inet6`): the IPv6 paths of `udp_input`,
+//!   `udp_sbappend` (`ip6_savecontrol`, `IPV6_RECVDSTPORT`), `udp_output` (`udp6_output`)
+//!   and the user requests. `udb6table`, `udp6_usrreqs` and `udp6_ctlinput` compile
+//!   always, as `netinet6` does (its `inet6sw` names them), like `route6_mpath`.
+//!   `udp6_ctlinput` writes the scope-embedded final destination back through
+//!   `ip6c_finaldst`, as the C does.
+//! - Not configured, a comment at its site: `PIPEX`. `NPF` (`pf_inp_lookup`,
 //!   `pf_inp_link`, `pf_mbuf_link_inpcb`), `NSTOEPLITZ` (the flow id) and `IPSEC` (M9c: UDP
 //!   encapsulation of ESP, the SPD lookup, `IP_IPSECFLOWINFO` control messages) are
 //!   configured.
@@ -117,7 +122,7 @@ use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_sysctl::{SECURELEVEL, sysctl_bounded_arr, sysctl_rdstruct, sysctl_struct};
 use crate::kern::subr_prf::panic;
 use crate::kern::uipc_mbuf::{m_adj, m_copydata, m_copym, m_freem, m_prepend, m_pullup};
-use crate::kern::uipc_mbuf2::{m_pulldown, m_tag_find};
+use crate::kern::uipc_mbuf2::m_tag_find;
 use crate::kern::uipc_socket::{sorwakeup, sowwakeup};
 use crate::kern::uipc_socket2::{
     sbappendaddr, sbcreatecontrol, soassertlocked, soassertlocked_readonly, socantsendmore,
@@ -127,6 +132,10 @@ use crate::machine::cpu::curproc;
 use crate::net::if_var::Netstack;
 use crate::net::pf::{pf_inp_link, pf_inp_lookup, pf_mbuf_link_inpcb};
 use crate::net::rtable::rtable_l2;
+#[cfg(feature = "inet6")]
+use crate::netinet::icmp6::{ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOPORT};
+#[cfg(feature = "inet6")]
+use crate::netinet::in_::IPPROTO_IPV6;
 use crate::netinet::in_::{
     INADDR_ANY, IP_IPSECFLOWINFO, IP_RECVDSTPORT, IP_SENDSRCADDR, IPPROTO_DONE, IPPROTO_ESP,
     IPPROTO_IP, IPPROTO_UDP, InAddr, SockaddrIn, in_control, in_nam2sin,
@@ -139,21 +148,44 @@ use crate::netinet::in_pcb::{
     in_pcbrtchange, in_pcbselsrc, in_pcbsolock, in_pcbsounlock, in_pcbunref, in_pcbunset_laddr,
     in_peeraddr, in_sockaddr, sotoinpcb,
 };
+#[cfg(feature = "inet6")]
+use crate::netinet::in_pcb::{IN6P_CONTROLOPTS, IN6P_RECVDSTPORT};
 use crate::netinet::in4_cksum::in4_cksum;
 use crate::netinet::ip::{IP_MAXPACKET, Ip};
 use crate::netinet::ip_esp::{EspstatCounters, espstat_inc};
 use crate::netinet::ip_icmp::{ICMP_UNREACH, ICMP_UNREACH_PORT, icmp_error};
 use crate::netinet::ip_input::{INETCTLERRMAP, IP_DEFTTL, ip_mtudisc, ip_savecontrol};
-use crate::netinet::ip_ipsp::{IPSEC_IN_USE, IPSP_DIRECTION_IN, TdbIdent, gettdb, tdb_unref};
+use crate::netinet::ip_ipsp::{
+    IPSEC_IN_USE, IPSP_DIRECTION_IN, SockaddrUnion, TdbIdent, gettdb, tdb_unref,
+};
 use crate::netinet::ip_output::ip_output;
 use crate::netinet::ip_spd::ipsp_spd_lookup;
 use crate::netinet::ip_var::{mtod_ip, mtod_ip_store};
+use crate::netinet::ip6::{Ip6Hdr, ip6_exthdr_get};
 use crate::netinet::ipsec_input::{ESP_ENABLE, ipsec_common_input, udpencap_ctlinput};
 use crate::netinet::ipsec_output::{UDPENCAP_ENABLE, UDPENCAP_PORT};
 use crate::netinet::udp::Udphdr;
 use crate::netinet::udp_var::{
     UDPCTL_BADDYNAMIC, UDPCTL_CHECKSUM, UDPCTL_RECVSPACE, UDPCTL_ROOTONLY, UDPCTL_SENDSPACE,
     UDPCTL_STATS, UDPS_NCOUNTERS, Udpiphdr, Udpstat, UdpstatCounters, udpstat_inc,
+};
+use crate::netinet6::icmp6::icmp6_mtudisc_update;
+use crate::netinet6::in6::{SA6_ANY, SockaddrIn6, in6_addr2scopeid, in6_control, satosin6_const};
+use crate::netinet6::in6_pcb::{in6_pcblookup, in6_pcbnotify, in6_peeraddr, in6_sockaddr};
+use crate::netinet6::in6_src::in6_embedscope;
+use crate::netinet6::ip6_input::INET6CTLERRMAP;
+use crate::netinet6::ip6protosw::Ip6ctlparam;
+#[cfg(feature = "inet6")]
+use crate::netinet6::{
+    icmp6::icmp6_error,
+    in6::{IN6ADDR_ANY, IPV6_RECVDSTPORT, in6_are_addr_equal, in6_is_addr_unspecified},
+    in6_cksum::in6_cksum,
+    in6_pcb::in6_pcblookup_listen,
+    in6_proto::IP6_DEFHLIM,
+    in6_src::in6_recoverscope,
+    ip6_input::ip6_savecontrol,
+    ip6_var::mtod_ip6,
+    udp6_output::udp6_output,
 };
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::{
@@ -162,9 +194,11 @@ use crate::sys::mbuf::{
 };
 use crate::sys::proc::Proc;
 use crate::sys::protosw::{PRC_HOSTDEAD, PRC_MSGSIZE, PRC_NCMDS, PrUsrreqs, prc_is_redirect};
+#[cfg(feature = "inet6")]
+use crate::sys::socket::PF_INET6;
 use crate::sys::socket::{
-    AF_INET, Cmsghdr, SO_BROADCAST, SO_REUSEADDR, SO_REUSEPORT, SO_TIMESTAMP, Sockaddr, cmsg_align,
-    cmsg_data, cmsg_len,
+    AF_INET, AF_INET6, Cmsghdr, SO_BROADCAST, SO_REUSEADDR, SO_REUSEPORT, SO_TIMESTAMP, Sockaddr,
+    cmsg_align, cmsg_data, cmsg_len,
 };
 use crate::sys::socketvar::{SB_MAX, SS_CANTRCVMORE, SS_ISCONNECTED, Socket};
 use crate::sys::sysctl::SysctlBoundedArgs;
@@ -189,7 +223,21 @@ pub static UDP_USRREQS: PrUsrreqs = PrUsrreqs {
     ..PrUsrreqs::NONE
 };
 
-// INET6: udp6_usrreqs; not configured.
+/// `udp6_usrreqs` (`INET6`; compiled always, as `netinet6` is, for `inet6sw`).
+pub static UDP6_USRREQS: PrUsrreqs = PrUsrreqs {
+    pru_attach: Some(udp_attach),
+    pru_detach: Some(udp_detach),
+    pru_bind: Some(udp_bind),
+    pru_connect: Some(udp_connect),
+    pru_disconnect: Some(udp_disconnect),
+    pru_shutdown: Some(udp_shutdown),
+    pru_send: Some(udp_send),
+    pru_control: Some(in6_control),
+    pru_sockaddr: Some(in6_sockaddr),
+    pru_peeraddr: Some(in6_peeraddr),
+    pru_flowid: Some(in_flowid),
+    ..PrUsrreqs::NONE
+};
 
 /// \[a\] `udpcksum`.
 pub static UDPCKSUM: AtomicI32 = AtomicI32::new(1);
@@ -207,15 +255,19 @@ static UDPCTL_VARS: [SysctlBoundedArgs; 3] = [
 
 /// `udbtable`.
 pub static UDBTABLE: Inpcbtable = Inpcbtable::new();
-// INET6: udb6table; not configured.
+/// `udb6table` (`INET6`; compiled always, for `udp6_ctlinput`).
+pub static UDB6TABLE: Inpcbtable = Inpcbtable::new();
 
 /// `udpcounters`.
 pub static UDPCOUNTERS: [AtomicU64; UDPS_NCOUNTERS] = [const { AtomicU64::new(0) }; UDPS_NCOUNTERS];
 
-/// The bytes of a `sockaddr_in`.
-fn sin_bytes(sin: &SockaddrIn) -> &[u8] {
-    // SAFETY: `SockaddrIn` is `#[repr(C)]` without padding: its bytes are initialised.
-    unsafe { core::slice::from_raw_parts(ptr::from_ref(sin).cast::<u8>(), size_of::<SockaddrIn>()) }
+/// The bytes of a `sockaddr_in6`.
+#[cfg(feature = "inet6")]
+fn sin6_bytes(sin6: &SockaddrIn6) -> &[u8] {
+    // SAFETY: `SockaddrIn6` is `#[repr(C)]` without padding: its bytes are initialised.
+    unsafe {
+        core::slice::from_raw_parts(ptr::from_ref(sin6).cast::<u8>(), size_of::<SockaddrIn6>())
+    }
 }
 
 /// `curproc`, which the socket requests run as.
@@ -230,20 +282,8 @@ fn curproc_or_panic(func: &str) -> &'static Proc {
 pub fn udp_init() {
     // udpcounters = counters_alloc(udps_ncounters): a static array of atomics.
     in_pcbinit(&UDBTABLE, UDB_INITIAL_HASH_SIZE);
-    // INET6: in_pcbinit(&udb6table, ...); not configured.
-}
-
-/// `ip6_exthdr_get(mp, off, len)` (`netinet6/ip6_input.c`): makes `len` bytes at `off`
-/// contiguous and returns their address; `None` (and `*mp` cleared, the chain freed) when the
-/// packet is too short.
-fn ip6_exthdr_get(mp: &mut Option<&'static Mbuf>, off: i32, len: i32) -> Option<*mut u8> {
-    let m = (*mp)?;
-    let mut toff = 0;
-    let Some(t) = m_pulldown(m, off, len, Some(&mut toff)) else {
-        *mp = None;
-        return None;
-    };
-    Some(mtod::<u8>(t).wrapping_add(toff as usize))
+    #[cfg(feature = "inet6")]
+    in_pcbinit(&UDB6TABLE, UDB_INITIAL_HASH_SIZE);
 }
 
 /// The UDP header at `uh`, read unaligned.
@@ -305,24 +345,37 @@ pub fn udp_input(
         }
 
         // Make mbuf data length reflect UDP length. If not enough data to reflect UDP length,
-        // drop.
-        let len = i32::from(u16::from_be(hdr.uh_ulen));
-        let (ip, save_ip) = if af == i32::from(AF_INET) {
-            let plen = m.m_pkthdr().len.get() - iphlen;
-            if plen != len {
-                if len > plen || len < size_of::<Udphdr>() as i32 {
+        // drop. `ip` (a copy of the IPv4 header, also the C's `save_ip`, kept in case we want
+        // to restore it for sending an ICMP error message in response) or `ip6` is set.
+        let ulen = i32::from(u16::from_be(hdr.uh_ulen));
+        let (ip, ip6, len): (Option<Ip>, Option<Ip6Hdr>, i32) = match af {
+            x if x == i32::from(AF_INET) => {
+                let plen = m.m_pkthdr().len.get() - iphlen;
+                if plen != ulen {
+                    if ulen > plen || ulen < size_of::<Udphdr>() as i32 {
+                        udpstat_inc(UdpstatCounters::UdpsBadlen);
+                        break 'bad;
+                    }
+                    m_adj(m, ulen - plen);
+                }
+                (Some(mtod_ip(m)), None, ulen)
+            }
+            #[cfg(feature = "inet6")]
+            x if x == i32::from(AF_INET6) => {
+                let plen = m.m_pkthdr().len.get() - iphlen;
+                // jumbograms
+                let len = if ulen == 0 && plen > 0xffff {
+                    plen
+                } else {
+                    ulen
+                };
+                if len != plen {
                     udpstat_inc(UdpstatCounters::UdpsBadlen);
                     break 'bad;
                 }
-                m_adj(m, len - plen);
+                (None, Some(mtod_ip6(m)), len)
             }
-            let ip = mtod_ip(m);
-            // Save a copy of the IP header in case we want restore it for sending an ICMP
-            // error message in response.
-            (ip, ip)
-        } else {
-            // INET6: AF_INET6 (jumbograms, the length check); not configured.
-            crate::net::if_::unhandled_af(af);
+            _ => crate::net::if_::unhandled_af(af),
         };
 
         // Checksum extended UDP header and data. from W.R.Stevens: check incoming udp cksums
@@ -330,7 +383,11 @@ pub fn udp_input(
         let savesum = hdr.uh_sum;
         if hdr.uh_sum == 0 {
             udpstat_inc(UdpstatCounters::UdpsNosum);
-            // INET6: in IPv6, the UDP checksum is ALWAYS used; not configured.
+            // In IPv6, the UDP checksum is ALWAYS used.
+            #[cfg(feature = "inet6")]
+            if ip6.is_some() {
+                break 'bad;
+            }
         } else if m.m_pkthdr().csum_flags.get() & M_UDP_CSUM_IN_OK == 0 {
             if m.m_pkthdr().csum_flags.get() & M_UDP_CSUM_IN_BAD != 0 {
                 udpstat_inc(UdpstatCounters::UdpsBadsum);
@@ -338,10 +395,14 @@ pub fn udp_input(
             }
             udpstat_inc(UdpstatCounters::UdpsInswcsum);
 
-            let sum = in4_cksum(m, IPPROTO_UDP as u8, iphlen, len);
+            let sum = match (ip, ip6) {
+                (Some(_), _) => in4_cksum(m, IPPROTO_UDP as u8, iphlen, len),
+                #[cfg(feature = "inet6")]
+                (None, Some(_)) => in6_cksum(m, IPPROTO_UDP as u8, iphlen as u32, len as u32),
+                _ => hdr.uh_sum,
+            };
             // SAFETY: as for `hdr`.
             unsafe { uh_set_sum(uh, sum) };
-            // INET6: in6_cksum; not configured.
             if sum != 0 {
                 udpstat_inc(UdpstatCounters::UdpsBadsum);
                 break 'bad;
@@ -386,21 +447,37 @@ pub fn udp_input(
                 skip -= size_of::<Udphdr>() as i32;
 
                 espstat_inc(EspstatCounters::EspsUdpencin);
-                // INET6: offsetof(struct ip6_hdr, ip6_nxt); not configured.
-                let protoff = offset_of!(Ip, ip_p) as i32;
+                let protoff = if af == i32::from(AF_INET) {
+                    offset_of!(Ip, ip_p)
+                } else {
+                    offset_of!(Ip6Hdr, ip6_nxt)
+                } as i32;
                 return ipsec_common_input(mp, skip, protoff, af, IPPROTO_ESP, true, ns);
             }
         }
 
-        let srcsa = SockaddrIn {
-            sin_len: size_of::<SockaddrIn>() as u8,
-            sin_family: AF_INET,
-            sin_port: hdr.uh_sport,
-            sin_addr: ip.ip_src,
-            ..SockaddrIn::default()
-        };
-        // dstsa: the C fills it and does not read it further.
-        // INET6: the sockaddr_in6 pair with in6_recoverscope; not configured.
+        // srcsa: the sender's address. dstsa: the C fills it and does not read it further.
+        let mut srcsa = SockaddrUnion::new();
+        if let Some(ip) = ip {
+            srcsa.set_sin(&SockaddrIn {
+                sin_len: size_of::<SockaddrIn>() as u8,
+                sin_family: AF_INET,
+                sin_port: hdr.uh_sport,
+                sin_addr: ip.ip_src,
+                ..SockaddrIn::default()
+            });
+        }
+        #[cfg(feature = "inet6")]
+        if let Some(ip6) = ip6 {
+            let mut sin6 = SockaddrIn6 {
+                sin6_port: hdr.uh_sport,
+                ..SockaddrIn6::with_addr(IN6ADDR_ANY)
+            };
+            // XXX inbound flowinfo (#if 0 in the C)
+            // KAME hack: recover scopeid
+            in6_recoverscope(&mut sin6, &ip6.ip6_src);
+            srcsa.as_bytes_mut().copy_from_slice(sin6_bytes(&sin6));
+        }
 
         if m.m_flags().get() & (M_BCAST | M_MCAST) != 0 {
             let iter = InpcbIterator::new();
@@ -417,7 +494,9 @@ pub fn udp_input(
             // backwards compatibility we avoid the problem here rather than fixing the
             // interface. Maybe 4.5BSD will remedy this?)
 
-            // INET6: udb6table for IPv6; not configured.
+            #[cfg(feature = "inet6")]
+            let table = if ip6.is_some() { &UDB6TABLE } else { &UDBTABLE };
+            #[cfg(not(feature = "inet6"))]
             let table = &UDBTABLE;
 
             mtx_enter(&table.inpt_mtx);
@@ -425,7 +504,11 @@ pub fn udp_input(
             // until the walk ends with `None` or is aborted.
             while let Some(i) = unsafe { in_pcb_iterator(table, inp, &iter) } {
                 inp = Some(i);
-                kassert!(!i.has_flags(INP_IPV6));
+                if ip6.is_some() {
+                    kassert!(i.has_flags(INP_IPV6));
+                } else {
+                    kassert!(!i.has_flags(INP_IPV6));
+                }
 
                 let so = i.socket();
                 if so.so_rcv.has_state(SS_CANTRCVMORE) {
@@ -437,8 +520,20 @@ pub fn udp_input(
                 if i.inp_lport.get() != hdr.uh_dport {
                     continue;
                 }
-                // INET6: the minimum hop limit and the IPv6 local address; not configured.
-                {
+                #[cfg(feature = "inet6")]
+                if let Some(ip6) = ip6 {
+                    let minhlim = i.inp_ip6_minhlim().get();
+                    if minhlim != 0 && minhlim > ip6.ip6_hlim {
+                        continue;
+                    }
+                    let laddr6 = i.inp_laddr6.get();
+                    if !in6_is_addr_unspecified(&laddr6)
+                        && !in6_are_addr_equal(&laddr6, &ip6.ip6_dst)
+                    {
+                        continue;
+                    }
+                }
+                if let Some(ip) = ip {
                     let minttl = i.inp_ip_minttl.get();
                     if minttl != 0 && minttl > ip.ip_ttl {
                         continue;
@@ -449,18 +544,40 @@ pub fn udp_input(
                         continue;
                     }
                 }
-                let faddr = i.inp_faddr.get().s_addr;
-                if faddr != INADDR_ANY
-                    && (faddr != ip.ip_src.s_addr || i.inp_fport.get() != hdr.uh_sport)
-                {
-                    continue;
+                #[cfg(feature = "inet6")]
+                if let Some(ip6) = ip6 {
+                    let faddr6 = i.inp_faddr6.get();
+                    if !in6_is_addr_unspecified(&faddr6)
+                        && (!in6_are_addr_equal(&faddr6, &ip6.ip6_src)
+                            || i.inp_fport.get() != hdr.uh_sport)
+                    {
+                        continue;
+                    }
+                }
+                if let Some(ip) = ip {
+                    let faddr = i.inp_faddr.get().s_addr;
+                    if faddr != INADDR_ANY
+                        && (faddr != ip.ip_src.s_addr || i.inp_fport.get() != hdr.uh_sport)
+                    {
+                        continue;
+                    }
                 }
 
                 if let Some(l) = last {
                     mtx_leave(&table.inpt_mtx);
 
                     if let Some(n) = m_copym(m, 0, M_COPYALL, M_DONTWAIT) {
-                        udp_sbappend(l, n, Some(&ip), iphlen, &hdr, &srcsa, 0, ns);
+                        udp_sbappend(
+                            l,
+                            n,
+                            ip.as_ref(),
+                            ip6.as_ref(),
+                            iphlen,
+                            &hdr,
+                            srcsa.sa_bytes(),
+                            0,
+                            ns,
+                        );
                     }
                     in_pcbunref(Some(l));
 
@@ -490,7 +607,17 @@ pub fn udp_input(
                 return IPPROTO_DONE;
             };
 
-            udp_sbappend(last, m, Some(&ip), iphlen, &hdr, &srcsa, 0, ns);
+            udp_sbappend(
+                last,
+                m,
+                ip.as_ref(),
+                ip6.as_ref(),
+                iphlen,
+                &hdr,
+                srcsa.sa_bytes(),
+                0,
+                ns,
+            );
             in_pcbunref(Some(last));
 
             *mp = None;
@@ -499,18 +626,41 @@ pub fn udp_input(
         // Locate pcb for datagram.
         inp = pf_inp_lookup(m);
         if inp.is_none() {
-            // INET6: in6_pcblookup for IPv6; not configured.
-            inp = in_pcblookup(
-                &UDBTABLE,
-                ip.ip_src,
-                hdr.uh_sport,
-                ip.ip_dst,
-                hdr.uh_dport,
-                m.m_pkthdr().ph_rtableid.get(),
-            );
-            if inp.is_none() {
-                udpstat_inc(UdpstatCounters::UdpsPcbhashmiss);
-                // INET6: in6_pcblookup_listen for IPv6; not configured.
+            #[cfg(feature = "inet6")]
+            if let Some(ip6) = ip6 {
+                inp = in6_pcblookup(
+                    &UDB6TABLE,
+                    &ip6.ip6_src,
+                    hdr.uh_sport,
+                    &ip6.ip6_dst,
+                    hdr.uh_dport,
+                    m.m_pkthdr().ph_rtableid.get(),
+                );
+            }
+            if let Some(ip) = ip {
+                inp = in_pcblookup(
+                    &UDBTABLE,
+                    ip.ip_src,
+                    hdr.uh_sport,
+                    ip.ip_dst,
+                    hdr.uh_dport,
+                    m.m_pkthdr().ph_rtableid.get(),
+                );
+            }
+        }
+        if inp.is_none() {
+            udpstat_inc(UdpstatCounters::UdpsPcbhashmiss);
+            #[cfg(feature = "inet6")]
+            if let Some(ip6) = ip6 {
+                inp = in6_pcblookup_listen(
+                    &UDB6TABLE,
+                    &ip6.ip6_dst,
+                    hdr.uh_dport,
+                    Some(m),
+                    m.m_pkthdr().ph_rtableid.get(),
+                );
+            }
+            if let Some(ip) = ip {
                 inp = in_pcblookup_listen(
                     &UDBTABLE,
                     ip.ip_dst,
@@ -559,8 +709,17 @@ pub fn udp_input(
                 udpstat_inc(UdpstatCounters::UdpsNoportbcast);
                 break 'bad;
             }
-            // INET6: icmp6_error for IPv6; not configured.
-            mtod_ip_store(m, &save_ip);
+            #[cfg(feature = "inet6")]
+            if ip6.is_some() {
+                // SAFETY: as for `hdr`.
+                unsafe { uh_set_sum(uh, savesum) };
+                icmp6_error(m, ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOPORT, 0);
+                *mp = None;
+                return IPPROTO_DONE;
+            }
+            if let Some(save_ip) = ip {
+                mtod_ip_store(m, &save_ip);
+            }
             // SAFETY: as for `hdr`; `mtod_ip_store` rewrote only the IP header.
             unsafe { uh_set_sum(uh, savesum) };
             icmp_error(m, ICMP_UNREACH, ICMP_UNREACH_PORT, 0, 0);
@@ -570,10 +729,18 @@ pub fn udp_input(
 
         soassertlocked_readonly(i.socket());
 
-        // INET6: the minimum hop limit for IPv6; not configured.
-        let minttl = i.inp_ip_minttl.get();
-        if minttl != 0 && minttl > ip.ip_ttl {
-            break 'bad;
+        #[cfg(feature = "inet6")]
+        if let Some(ip6) = ip6 {
+            let minhlim = i.inp_ip6_minhlim().get();
+            if minhlim != 0 && minhlim > ip6.ip6_hlim {
+                break 'bad;
+            }
+        }
+        if let Some(ip) = ip {
+            let minttl = i.inp_ip_minttl.get();
+            if minttl != 0 && minttl > ip.ip_ttl {
+                break 'bad;
+            }
         }
 
         if i.socket().has_state(SS_ISCONNECTED) {
@@ -581,7 +748,17 @@ pub fn udp_input(
         }
         // PIPEX: pipex_l2tp_lookup_session and pipex_l2tp_input; not configured.
 
-        udp_sbappend(i, m, Some(&ip), iphlen, &hdr, &srcsa, ipsecflowinfo, ns);
+        udp_sbappend(
+            i,
+            m,
+            ip.as_ref(),
+            ip6.as_ref(),
+            iphlen,
+            &hdr,
+            srcsa.sa_bytes(),
+            ipsecflowinfo,
+            ns,
+        );
         in_pcbunref(inp);
         *mp = None;
         return IPPROTO_DONE;
@@ -593,17 +770,32 @@ pub fn udp_input(
     IPPROTO_DONE
 }
 
-/// `udp_sbappend`: appends datagram `m` from `srcaddr` (its IP header `ip`, `hlen` bytes, and
-/// UDP header `uh` still in front) to the receive buffer of `inp`'s socket, with the control
-/// messages the socket asked for.
+/// Appends control message `n` at the end of the chain `opts` (the C's walk to the last
+/// `m_next`).
+fn opts_append(opts: &mut Option<&'static Mbuf>, n: Option<&'static Mbuf>) {
+    match *opts {
+        None => *opts = n,
+        Some(mut t) => {
+            while let Some(next) = t.m_next().get() {
+                t = next;
+            }
+            t.m_next().set(n);
+        }
+    }
+}
+
+/// `udp_sbappend`: appends datagram `m` from `srcaddr` (the bytes of a socket address; its
+/// IP header `ip` or IPv6 header `ip6`, `hlen` bytes, and UDP header `uh` still in front) to
+/// the receive buffer of `inp`'s socket, with the control messages the socket asked for.
 #[allow(clippy::too_many_arguments)] // the C's signature
 pub fn udp_sbappend(
     inp: &Inpcb,
     m: &'static Mbuf,
     ip: Option<&Ip>,
+    ip6: Option<&Ip6Hdr>,
     hlen: i32,
     uh: &Udphdr,
-    srcaddr: &SockaddrIn,
+    srcaddr: &[u8],
     ipsecflowinfo: u32,
     ns: Option<&Netstack>,
 ) {
@@ -615,15 +807,17 @@ pub fn udp_sbappend(
 
     if let Some(upcall) = inp.inp_upcall.get() {
         let ipp = ip.map_or(ptr::null(), ptr::from_ref);
+        let ip6p = ip6.map_or(ptr::null(), |h| ptr::from_ref(h).cast::<c_void>());
         let uhc = *uh;
-        // SAFETY: the argument is the one installed with the upcall, `ipp` is null or the
-        // packet's IP header, and `uhc` is a copy of the UDP header that outlives the call.
+        // SAFETY: the argument is the one installed with the upcall, `ipp`/`ip6p` are null or
+        // copies of the packet's IP header, and `uhc` is a copy of the UDP header; all
+        // outlive the call.
         let Some(n) = (unsafe {
             upcall(
                 inp.inp_upcall_arg.get(),
                 m,
                 ipp,
-                ptr::null(),
+                ip6p,
                 ptr::from_ref(&uhc).cast::<c_void>(),
                 hlen,
                 ns,
@@ -634,41 +828,32 @@ pub fn udp_sbappend(
         m = n;
     }
 
-    // INET6: ip6_savecontrol; not configured.
+    #[cfg(feature = "inet6")]
+    if ip6.is_some() && (inp.has_flags(IN6P_CONTROLOPTS) || so.has_options(SO_TIMESTAMP)) {
+        ip6_savecontrol(inp, m, &mut opts);
+    }
     if let Some(ip) = ip
         && (inp.has_flags(INP_CONTROLOPTS) || so.has_options(SO_TIMESTAMP))
     {
         ip_savecontrol(inp, &mut opts, ip, m);
     }
-    // INET6: IPV6_RECVDSTPORT; not configured.
+    #[cfg(feature = "inet6")]
+    if ip6.is_some() && inp.has_flags(IN6P_RECVDSTPORT) {
+        let n = sbcreatecontrol(&uh.uh_dport.to_ne_bytes(), IPV6_RECVDSTPORT, IPPROTO_IPV6);
+        opts_append(&mut opts, n);
+    }
     if ip.is_some() && inp.has_flags(INP_RECVDSTPORT) {
         let n = sbcreatecontrol(&uh.uh_dport.to_ne_bytes(), IP_RECVDSTPORT, IPPROTO_IP);
-        match opts {
-            None => opts = n,
-            Some(mut t) => {
-                while let Some(next) = t.m_next().get() {
-                    t = next;
-                }
-                t.m_next().set(n);
-            }
-        }
+        opts_append(&mut opts, n);
     }
     if ipsecflowinfo != 0 && inp.has_flags(INP_IPSECFLOWINFO) {
         let n = sbcreatecontrol(&ipsecflowinfo.to_ne_bytes(), IP_IPSECFLOWINFO, IPPROTO_IP);
-        match opts {
-            None => opts = n,
-            Some(mut t) => {
-                while let Some(next) = t.m_next().get() {
-                    t = next;
-                }
-                t.m_next().set(n);
-            }
-        }
+        opts_append(&mut opts, n);
     }
     m_adj(m, hlen);
 
     mtx_enter(&so.so_rcv.sb_mtx);
-    if !sbappendaddr(&so.so_rcv, sin_bytes(srcaddr), Some(m), opts) {
+    if !sbappendaddr(&so.so_rcv, srcaddr, Some(m), opts) {
         mtx_leave(&so.so_rcv.sb_mtx);
         udpstat_inc(UdpstatCounters::UdpsFullsock);
         m_freem(m);
@@ -689,7 +874,173 @@ pub fn udp_notify(inp: &'static Inpcb, errno: Option<Errno>) {
     sowwakeup(so);
 }
 
-// INET6: udp6_ctlinput; not configured.
+/// `udp6_ctlinput`: an ICMPv6 error (`cmd`) about a datagram to `sa`; `d` is the
+/// `Ip6ctlparam` of `icmp6_notify_error` (or NULL). A path MTU change (`PRC_MSGSIZE`) updates
+/// the route if a connected socket matches; then every matching socket is notified
+/// (`in6_pcbnotify`). `INET6`; compiled always, as `netinet6` is, for `inet6sw`.
+///
+/// # Safety
+///
+/// `PrCtlinputFn`'s contract: `sa` is NULL or a readable socket address of its `sa_len`
+/// bytes; `d` is NULL or the `Ip6ctlparam` of the ICMPv6 error, valid for the call.
+pub unsafe fn udp6_ctlinput(cmd: i32, sa: *const Sockaddr, rdomain: u32, d: *mut c_void) {
+    let mut d = d;
+    let mut notify: InpNotifyFn = udp_notify;
+
+    if sa.is_null() {
+        return;
+    }
+    // SAFETY: the caller's contract: a readable socket address.
+    let (family, len) = unsafe { ((*sa).sa_family, (*sa).sa_len) };
+    if family != AF_INET6 || usize::from(len) != size_of::<SockaddrIn6>() {
+        return;
+    }
+    // SAFETY: a whole `sockaddr_in6` (checked), read unaligned.
+    let sa_sin6 = unsafe { satosin6_const(sa).read_unaligned() };
+
+    if cmd as u32 as usize >= PRC_NCMDS {
+        return;
+    }
+    if prc_is_redirect(cmd) {
+        notify = in_pcbrtchange;
+        d = ptr::null_mut();
+    } else if cmd == PRC_HOSTDEAD {
+        d = ptr::null_mut();
+    } else if cmd == PRC_MSGSIZE {
+        // special code is present, see below
+    } else if INET6CTLERRMAP[cmd as usize].is_none() {
+        return;
+    }
+
+    // if the parameter is from icmp6, decode it.
+    let ip6cp: Option<&Ip6ctlparam> = if d.is_null() {
+        None
+    } else {
+        // SAFETY: the caller's contract: a non-NULL `d` is the ICMPv6 error's parameter.
+        Some(unsafe { &*d.cast::<Ip6ctlparam>() })
+    };
+    let (m, ip6, off, cmdarg) = match ip6cp {
+        Some(p) => (p.ip6c_m, p.ip6c_ip6, p.ip6c_off, p.ip6c_cmdarg),
+        None => {
+            // XXX: translate addresses into internal form
+            let mut sa6 = sa_sin6;
+            if in6_embedscope(&mut sa6.sin6_addr, &sa_sin6, None, None).is_err() {
+                // should be impossible
+                return;
+            }
+            (None, ptr::null_mut(), 0, ptr::null_mut())
+        }
+    };
+    let ifidx = m.map_or(0, |m| m.m_pkthdr().ph_ifidx.get());
+
+    let mut sa6;
+    if let Some(p) = ip6cp
+        && !p.ip6c_finaldst.is_null()
+    {
+        // SAFETY: `icmp6_notify_error` points `ip6c_finaldst` at an address valid for the
+        // call; read unaligned.
+        let finaldst = unsafe { p.ip6c_finaldst.read_unaligned() };
+        sa6 = SockaddrIn6::with_addr(finaldst);
+        // XXX: assuming M is valid in this case
+        sa6.sin6_scope_id = in6_addr2scopeid(ifidx, &finaldst) as u32;
+        let mut embedded = finaldst;
+        if in6_embedscope(&mut embedded, &sa6, None, None).is_err() {
+            // should be impossible
+            return;
+        }
+        // SAFETY: as above; the C embeds the scope into `*ip6c_finaldst` itself.
+        unsafe { p.ip6c_finaldst.write_unaligned(embedded) };
+    } else {
+        // XXX: translate addresses into internal form
+        sa6 = sa_sin6;
+        if in6_embedscope(&mut sa6.sin6_addr, &sa_sin6, None, None).is_err() {
+            // should be impossible
+            return;
+        }
+    }
+
+    if !ip6.is_null() {
+        // XXX: We assume that when IPV6 is non NULL, M and OFF are valid.
+        let Some(m) = m else {
+            return;
+        };
+
+        // check if we can safely examine src and dst ports (`struct udp_portonly`)
+        if (m.m_pkthdr().len.get() as usize) < off as usize + 2 * size_of::<u16>() {
+            return;
+        }
+
+        let mut ports = [0u8; 4];
+        m_copydata(m, off, &mut ports);
+        let uh_sport = u16::from_ne_bytes([ports[0], ports[1]]);
+        let uh_dport = u16::from_ne_bytes([ports[2], ports[3]]);
+
+        // SAFETY: `ip6c_ip6` points at the quoted IPv6 header inside `m`, alive for the
+        // call; the address is read unaligned.
+        let src = unsafe { ptr::addr_of!((*ip6).ip6_src).read_unaligned() };
+        let mut sa6_src = SockaddrIn6::with_addr(src);
+        sa6_src.sin6_scope_id = in6_addr2scopeid(ifidx, &src) as u32;
+        let scoped = sa6_src;
+        if in6_embedscope(&mut sa6_src.sin6_addr, &scoped, None, None).is_err() {
+            // should be impossible
+            return;
+        }
+
+        if cmd == PRC_MSGSIZE {
+            // Check to see if we have a valid UDP socket corresponding to the address in the
+            // ICMPv6 message payload.
+            let inp = in6_pcblookup(
+                &UDB6TABLE,
+                &sa6.sin6_addr,
+                uh_dport,
+                &sa6_src.sin6_addr,
+                uh_sport,
+                rdomain,
+            );
+            // #if 0 in the C: as the use of sendto(2) is fairly popular, we may want to allow
+            // non-connected pcb too (in6_pcblookup_listen). But it could be too weak against
+            // attacks... We should at least check if the local address (= s) is really ours.
+
+            // Depending on the value of "valid" and routing table size (mtudisc_{hi,lo}wat),
+            // we will:
+            // - recalculate the new MTU and create the corresponding routing entry, or
+            // - ignore the MTU change notification.
+            if let Some(p) = ip6cp {
+                icmp6_mtudisc_update(p, inp.is_some());
+            }
+            in_pcbunref(inp);
+
+            // regardless of if we called icmp6_mtudisc_update(), we need to call
+            // in6_pcbnotify(), to notify path MTU change to the userland (2292bis-02),
+            // because some unconnected sockets may share the same destination and want to
+            // know the path MTU.
+        }
+
+        in6_pcbnotify(
+            &UDB6TABLE,
+            &sa6,
+            u32::from(uh_dport),
+            Some(&sa6_src),
+            u32::from(uh_sport),
+            rdomain,
+            cmd,
+            cmdarg,
+            Some(notify),
+        );
+    } else {
+        in6_pcbnotify(
+            &UDB6TABLE,
+            &sa6,
+            0,
+            Some(&SA6_ANY),
+            0,
+            rdomain,
+            cmd,
+            cmdarg,
+            Some(notify),
+        );
+    }
+}
 
 /// `udp_ctlinput`: an ICMP error (`cmd`) about a datagram to `sa`, whose IP header `v`
 /// returned: notifies the socket that sent it, or every socket talking to `sa`.
@@ -779,7 +1130,10 @@ pub fn udp_output(
     let len = m.m_pkthdr().len.get();
     let mut laddr = InAddr::default();
 
-    // INET6: udp6_output for INP_IPV6; not configured.
+    #[cfg(feature = "inet6")]
+    if inp.has_flags(INP_IPV6) {
+        return udp6_output(inp, m, addr, control);
+    }
 
     let result: Result<&'static Mbuf, Errno> = 'release: {
         // Compute the packet length of the IP header, and punt if the length looks bogus.
@@ -973,11 +1327,23 @@ pub fn udp_attach(so: &'static Socket, _proto: i32, wait: i32) -> Result<(), Err
         UDP_RECVSPACE.load(Ordering::Relaxed) as u64,
     )?;
 
-    // INET6: udb6table for PF_INET6; not configured.
+    #[cfg(feature = "inet6")]
+    let table = if so.dom_family() == i32::from(PF_INET6) {
+        &UDB6TABLE
+    } else {
+        &UDBTABLE
+    };
+    #[cfg(not(feature = "inet6"))]
     let table = &UDBTABLE;
     in_pcballoc(so, table, wait)?;
-    // INET6: ip6_hlim for INP_IPV6; not configured.
     let inp = inpcb_of(so);
+    #[cfg(feature = "inet6")]
+    if inp.has_flags(INP_IPV6) {
+        let mut ip6 = inp.inp_ipv6.get();
+        ip6.ip6_hlim = IP6_DEFHLIM.load(Ordering::Relaxed) as u8;
+        inp.inp_ipv6.set(ip6);
+        return Ok(());
+    }
     let mut ip = inp.inp_ip.get();
     ip.ip_ttl = IP_DEFTTL.load(Ordering::Relaxed) as u8;
     inp.inp_ip.set(ip);
@@ -1010,8 +1376,15 @@ pub fn udp_connect(so: &'static Socket, addr: &'static Mbuf) -> Result<(), Errno
 
     soassertlocked(so);
 
-    // INET6: the IPv6 foreign address for INP_IPV6; not configured.
-    if inp.inp_faddr.get().s_addr != INADDR_ANY {
+    #[cfg(feature = "inet6")]
+    let connected = if inp.has_flags(INP_IPV6) {
+        !in6_is_addr_unspecified(&inp.inp_faddr6.get())
+    } else {
+        inp.inp_faddr.get().s_addr != INADDR_ANY
+    };
+    #[cfg(not(feature = "inet6"))]
+    let connected = inp.inp_faddr.get().s_addr != INADDR_ANY;
+    if connected {
         return Err(Errno::EISCONN);
     }
     in_pcbconnect(inp, addr)?;
@@ -1026,8 +1399,15 @@ pub fn udp_disconnect(so: &'static Socket) -> Result<(), Errno> {
 
     soassertlocked(so);
 
-    // INET6: the IPv6 foreign address for INP_IPV6; not configured.
-    if inp.inp_faddr.get().s_addr == INADDR_ANY {
+    #[cfg(feature = "inet6")]
+    let unconnected = if inp.has_flags(INP_IPV6) {
+        in6_is_addr_unspecified(&inp.inp_faddr6.get())
+    } else {
+        inp.inp_faddr.get().s_addr == INADDR_ANY
+    };
+    #[cfg(not(feature = "inet6"))]
+    let unconnected = inp.inp_faddr.get().s_addr == INADDR_ANY;
+    if unconnected {
         return Err(Errno::ENOTCONN);
     }
     in_pcbunset_laddr(inp);

@@ -114,8 +114,9 @@
 //! - TCP's entry has the functions of `netinet/tcp_*.rs` and IGMP's those of
 //!   `netinet/igmp.rs` (M9+); IGMP's `pr_ctloutput` and `pr_usrreqs` are the raw ones, as in C.
 //! - `IPSEC` is configured (M9c): AH, ESP and IPComp come after IGMP, as in C.
-//! - `NGIF` is 0 (`ipip_input` serves `IPPROTO_IPV4`); `INET6`, `MPLS`, `NGRE`,
-//!   `NCARP` and `NETHERIP` are not configured: their entries are comments. `NPFSYNC` is:
+//! - `NGIF` is 0 (`ipip_input` serves `IPPROTO_IPV4`, and with `INET6`, feature `inet6`,
+//!   `IPPROTO_IPV6`); `MPLS`, `NGRE`, `NCARP` and `NETHERIP` are not configured: their
+//!   entries are comments. The length of `inetsw[]` counts the `INET6` entry. `NPFSYNC` is:
 //!   `IPPROTO_PFSYNC` goes to `pfsync_input4` (`net/if_pfsync.rs`); so is `NPF`:
 //!   `IPPROTO_DIVERT` (`netinet/ip_divert.c`) has its entry.
 //!   `SMALL_KERNEL` is not set, so the sysctl handlers are in the table.
@@ -126,6 +127,8 @@ use core::sync::atomic::AtomicU8;
 
 use crate::net::if_pfsync::{pfsync_input4, pfsync_sysctl};
 use crate::netinet::igmp::{igmp_fasttimo, igmp_init, igmp_input, igmp_slowtimo, igmp_sysctl};
+#[cfg(feature = "inet6")]
+use crate::netinet::in_::IPPROTO_IPV6;
 use crate::netinet::in_::{
     IPPROTO_AH, IPPROTO_DIVERT, IPPROTO_ESP, IPPROTO_ICMP, IPPROTO_IGMP, IPPROTO_IPCOMP,
     IPPROTO_IPV4, IPPROTO_MAX, IPPROTO_PFSYNC, IPPROTO_RAW, IPPROTO_TCP, IPPROTO_UDP, SockaddrIn,
@@ -158,7 +161,7 @@ pub static IP_PROTOX: [AtomicU8; IPPROTO_MAX as usize] =
     [const { AtomicU8::new(0) }; IPPROTO_MAX as usize];
 
 /// `inetsw[]`: the internet protocols.
-pub static INETSW: [Protosw; 13] = [
+pub static INETSW: [Protosw; 13 + cfg!(feature = "inet6") as usize] = [
     Protosw {
         pr_init: Some(ip_init),
         pr_slowtimo: Some(ip_slowtimo),
@@ -228,7 +231,17 @@ pub static INETSW: [Protosw; 13] = [
         pr_init: Some(ipip_init),
         ..Protosw::new(&INETDOMAIN)
     },
-    // INET6: IPPROTO_IPV6 through ipip_input; not configured.
+    #[cfg(feature = "inet6")]
+    Protosw {
+        pr_type: SOCK_RAW as i16,
+        pr_protocol: IPPROTO_IPV6 as i16,
+        pr_flags: PR_ATOMIC | PR_ADDR,
+        // NGIF > 0: in_gif_input; not configured.
+        pr_input: Some(ipip_input),
+        pr_ctloutput: Some(rip_ctloutput),
+        pr_usrreqs: Some(&RIP_USRREQS), // XXX
+        ..Protosw::new(&INETDOMAIN)
+    },
     // MPLS && NGIF > 0: IPPROTO_MPLS through in_gif_input; not configured.
     Protosw {
         pr_type: SOCK_RAW as i16,

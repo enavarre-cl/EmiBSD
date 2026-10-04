@@ -84,7 +84,6 @@ fn rip6stat(c: Rip6statCounters) -> u64 {
 }
 
 #[test]
-#[ignore = "needs sotoinpcb of AF_INET6 sockets (in_pcb.c INET6)"]
 fn icmpv6_reaches_the_sockets_whose_filter_passes_it() {
     let (_g, _t, _p) = setup();
     rip6_init();
@@ -160,7 +159,6 @@ fn icmpv6_reaches_the_sockets_whose_filter_passes_it() {
 }
 
 #[test]
-#[ignore = "needs sotoinpcb of AF_INET6 sockets (in_pcb.c INET6)"]
 fn ipv6_checksum_offsets_are_verified_on_input() {
     let (_g, _t, _p) = setup();
     rip6_init();
@@ -336,7 +334,6 @@ fn send6(so: &'static Socket, payload: &[u8], dst: In6Addr) -> Result<(), Errno>
 }
 
 #[test]
-#[ignore = "needs sotoinpcb of AF_INET6 sockets (in_pcb.c INET6) and if_output_tso's AF_INET6 case (if.c INET6)"]
 fn ping6_sends_an_echo_request_with_its_checksum() {
     let (_g, _t, _p) = setup();
     rip6_init();

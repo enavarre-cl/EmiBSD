@@ -326,3 +326,95 @@ fn ipsec_levels_and_the_udpencap_port() {
     soclose(so, 0).expect("close");
     teardown();
 }
+
+/// `udp_input` of the IPv6 packet `m`, the UDP header after the IPv6 header.
+#[cfg(feature = "inet6")]
+fn input6(m: &'static Mbuf) {
+    let mut mp = Some(m);
+    let mut off = 40;
+    assert_eq!(
+        udp_input(&mut mp, &mut off, IPPROTO_UDP, i32::from(AF_INET6), None),
+        IPPROTO_DONE
+    );
+}
+
+/// The UDP header `sport -> dport` and `payload`, checksum zero.
+#[cfg(feature = "inet6")]
+fn udp6_payload(sport: u16, dport: u16, payload: &[u8]) -> Vec<u8> {
+    let mut p = Vec::new();
+    p.extend_from_slice(&sport.to_be_bytes());
+    p.extend_from_slice(&dport.to_be_bytes());
+    p.extend_from_slice(&((8 + payload.len()) as u16).to_be_bytes());
+    p.extend_from_slice(&[0, 0]);
+    p.extend_from_slice(payload);
+    p
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn inet6_datagrams_in_to_a_bound_socket_and_a_port_unreachable() {
+    use crate::netinet::icmp6::{ICMP6_DST_UNREACH, Icmp6statCounters};
+    use crate::netinet::in_pcb::tests::inet6::{nam6, packet6, sin6, test_if6};
+    use crate::netinet6::in6::tests::a6;
+    use crate::netinet6::in6::{IN6ADDR_ANY, SockaddrIn6};
+
+    let (_g, _t, p) = setup();
+    udp_init();
+    let ifp = test_if6(b"tudp6");
+
+    let so = socreate(i32::from(AF_INET6), SOCK_DGRAM, 0).expect("socket");
+    assert!(sotoinpcb(so).is_some_and(|i| i.has_flags(INP_IPV6)));
+    solock(so);
+    udp_bind(so, nam6(sin6(IN6ADDR_ANY, 5353)), p).expect("bind");
+    sounlock(so);
+
+    // A datagram to the bound port: appended with the sender's sockaddr_in6.
+    input6(packet6(
+        ifp,
+        IPPROTO_UDP as u8,
+        &udp6_payload(1234, 5353, b"hello"),
+        Some(6),
+    ));
+    let rec = so.so_rcv.sb_mb.get().expect("a record");
+    assert_eq!(i32::from(rec.m_type().get()), MT_SONAME);
+    // SAFETY: the record's address of an inet6 socket is a `sockaddr_in6`.
+    let from = unsafe { mtod::<SockaddrIn6>(rec).read_unaligned() };
+    assert_eq!(from.sin6_family, AF_INET6);
+    assert_eq!(from.sin6_port, 1234u16.to_be());
+    assert_eq!(from.sin6_addr, a6("fd00:77::2"));
+    let data = rec.m_next().get().expect("the datagram");
+    let mut got = vec![0u8; data.m_pkthdr().len.get() as usize];
+    m_copydata(data, 0, &mut got);
+    assert_eq!(got, b"hello");
+
+    // In IPv6 the UDP checksum is always used: a datagram without one is dropped.
+    let nosum = udpstat(UdpstatCounters::UdpsNosum);
+    input6(packet6(
+        ifp,
+        IPPROTO_UDP as u8,
+        &udp6_payload(1234, 5353, b"x"),
+        None,
+    ));
+    assert_eq!(udpstat(UdpstatCounters::UdpsNosum), nosum + 1);
+    assert!(rec.m_nextpkt().get().is_none(), "not appended");
+
+    // A closed port: an ICMPv6 port unreachable is reflected to the sender (queued for
+    // ip6_send, whose queue is ip6_input.rs's own).
+    let outhist = || {
+        crate::netinet6::icmp6::ICMP6COUNTERS
+            [Icmp6statCounters::Icp6sOuthist as usize + usize::from(ICMP6_DST_UNREACH)]
+        .load(Ordering::Relaxed)
+    };
+    let (noport, out) = (udpstat(UdpstatCounters::UdpsNoport), outhist());
+    input6(packet6(
+        ifp,
+        IPPROTO_UDP as u8,
+        &udp6_payload(1234, 9999, b"?"),
+        Some(6),
+    ));
+    assert_eq!(udpstat(UdpstatCounters::UdpsNoport), noport + 1);
+    assert_eq!(outhist(), out + 1, "an ICMP6_DST_UNREACH went out");
+
+    soclose(so, 0).expect("close");
+    teardown();
+}

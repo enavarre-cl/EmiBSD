@@ -414,3 +414,150 @@ fn sysctl_reads_the_statistics_and_the_variables() {
     );
     teardown();
 }
+
+/// The TCP header `sport -> dport` with `flags`, `seq`, `ack`, options and data, checksum
+/// zero.
+#[cfg(feature = "inet6")]
+fn tcp6_payload(
+    sport: u16,
+    dport: u16,
+    flags: u8,
+    seq: u32,
+    ack: u32,
+    opts: &[u8],
+    data: &[u8],
+) -> Vec<u8> {
+    let thlen = 20 + opts.len();
+    let mut p = Vec::new();
+    p.extend_from_slice(&sport.to_be_bytes());
+    p.extend_from_slice(&dport.to_be_bytes());
+    p.extend_from_slice(&seq.to_be_bytes());
+    p.extend_from_slice(&ack.to_be_bytes());
+    p.push(((thlen / 4) as u8) << 4);
+    p.push(flags);
+    p.extend_from_slice(&16384u16.to_be_bytes());
+    p.extend_from_slice(&[0, 0, 0, 0]);
+    p.extend_from_slice(opts);
+    p.extend_from_slice(data);
+    p
+}
+
+/// `tcp_input` of the IPv6 packet `m`, the TCP header after the IPv6 header.
+#[cfg(feature = "inet6")]
+fn input6(m: &'static Mbuf) {
+    let mut mp = Some(m);
+    let mut off = 40;
+    assert_eq!(
+        crate::netinet::tcp_input::tcp_input(
+            &mut mp,
+            &mut off,
+            IPPROTO_TCP,
+            i32::from(crate::sys::socket::AF_INET6),
+            None
+        ),
+        crate::netinet::in_::IPPROTO_DONE
+    );
+}
+
+/// The one segment the IPv6 test interface sent: its IPv6 and TCP bytes, the TCP checksum
+/// verified, to `fd00:77::2` from `fd00:77::1`.
+#[cfg(feature = "inet6")]
+fn next_seg6() -> Vec<u8> {
+    use crate::netinet::in_pcb::tests::inet6::take_sent6;
+    use crate::netinet6::in6::tests::a6;
+    use crate::netinet6::in6_cksum::in6_cksum;
+
+    let mut sent = take_sent6();
+    assert_eq!(sent.len(), 1, "one segment");
+    let b = sent.remove(0);
+    assert_eq!(b[0] >> 4, 6);
+    assert_eq!(b[6], IPPROTO_TCP as u8);
+    assert_eq!(&b[8..24], &a6("fd00:77::1").s6_addr);
+    assert_eq!(&b[24..40], &a6("fd00:77::2").s6_addr);
+    assert_eq!(usize::from(u16::from_be_bytes([b[4], b[5]])), b.len() - 40);
+    let m = test_packet(&b);
+    assert_eq!(
+        in6_cksum(m, IPPROTO_TCP as u8, 40, (b.len() - 40) as u32),
+        0,
+        "tcp checksum"
+    );
+    m_freem(m);
+    b
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn inet6_passive_open_through_the_syn_cache_and_a_reset() {
+    use crate::netinet::in_pcb::INP_IPV6;
+    use crate::netinet::in_pcb::tests::inet6::{nam6, packet6, sin6, take_sent6, test_if6};
+    use crate::netinet6::in6::IN6ADDR_ANY;
+    use crate::netinet6::in6::tests::a6;
+    use crate::sys::socket::AF_INET6;
+
+    let (_g, _t, p) = setup();
+    tcp_init();
+    let ifp = test_if6(b"ttcp6");
+    // The seg helper reads the TCP header after a 20-byte IP header; shift by 20 for IPv6.
+    let seg = |b: Vec<u8>| Seg(b[20..].to_vec());
+
+    let l = socreate(i32::from(AF_INET6), SOCK_STREAM, 0).expect("socket");
+    let linp = crate::netinet::in_pcb::sotoinpcb(l).expect("inpcb");
+    assert!(linp.has_flags(INP_IPV6));
+    assert_eq!(
+        sototcpcb(l).expect("tcpcb").pf.get(),
+        i32::from(AF_INET6),
+        "tcp_attach: PF_INET6"
+    );
+    solock(l);
+    tcp_bind(l, nam6(sin6(IN6ADDR_ANY, 8080)), p).expect("bind");
+    crate::kern::uipc_socket::solisten(l, 5).expect("listen");
+    sounlock(l);
+
+    // SYN in: the SYN cache answers with a SYN-ACK from our address.
+    let peer_iss = 0x3000_0000u32;
+    let syn = tcp6_payload(40000, 8080, TH_SYN, peer_iss, 0, &[2, 4, 0x05, 0xa0], &[]);
+    input6(packet6(ifp, IPPROTO_TCP as u8, &syn, Some(16)));
+    let synack = seg(next_seg6());
+    assert_eq!(synack.flags(), TH_SYN | TH_ACK);
+    assert_eq!(synack.ack(), peer_iss.wrapping_add(1));
+    assert_eq!((synack.sport(), synack.dport()), (8080, 40000));
+    assert_eq!(l.so_qlen.get(), 0, "embryonic: in the syn cache only");
+
+    // ACK with data: syn_cache_get makes the connection (in6_pcbset_addr).
+    let ack = tcp6_payload(
+        40000,
+        8080,
+        TH_ACK,
+        peer_iss.wrapping_add(1),
+        synack.seq().wrapping_add(1),
+        &[],
+        b"hi",
+    );
+    input6(packet6(ifp, IPPROTO_TCP as u8, &ack, Some(16)));
+    assert_eq!(l.so_qlen.get(), 1, "a connection to accept");
+    let so = l.so_q.first().expect("the new socket");
+    let tp = sototcpcb(so).expect("its tcpcb");
+    assert_eq!(tp.t_state.get(), TCPS_ESTABLISHED);
+    assert_eq!(tp.pf.get(), i32::from(AF_INET6));
+    let inp = tp.t_inpcb;
+    assert!(inp.has_flags(INP_IPV6));
+    assert_eq!(inp.inp_laddr6.get(), a6("fd00:77::1"));
+    assert_eq!(inp.inp_faddr6.get(), a6("fd00:77::2"));
+    assert_eq!(inp.inp_fport.get(), 40000u16.to_be());
+    assert_eq!(received(so), b"hi");
+    let _ = take_sent6();
+
+    // A segment to a closed port: tcp_respond sends a RST over IPv6.
+    let noport = tcpstat(TcpstatCounters::TcpsNoport);
+    let stray = tcp6_payload(40001, 9, TH_SYN, 77, 0, &[], &[]);
+    input6(packet6(ifp, IPPROTO_TCP as u8, &stray, Some(16)));
+    assert_eq!(tcpstat(TcpstatCounters::TcpsNoport), noport + 1);
+    let rst = seg(next_seg6());
+    assert_eq!(rst.flags(), TH_RST | TH_ACK);
+    assert_eq!(rst.ack(), 78);
+    assert_eq!((rst.sport(), rst.dport()), (9, 40001));
+
+    let _ = soclose(l, 0);
+    let _ = take_sent6();
+    teardown();
+}

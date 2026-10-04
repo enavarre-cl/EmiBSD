@@ -99,8 +99,10 @@
 //!   `malloc(M_SYSCTL)`), as `udp_sysctl` does; `tcp_sysctl_tcpstat` writes `struct tcpstat`
 //!   member by member at its `offset_of!` positions (the structure has holes before its
 //!   64-bit members).
-//! - Not configured: `INET6` (`tcp6_usrreqs`, `tcb6table`, `in6_*` paths). `TCP_ECN` and
-//!   `TCP_SIGNATURE` are configured. `SMALL_KERNEL` is not set: `tcpctl_vars`,
+//! - `INET6` is configured (feature `inet6`): the `PF_INET6` attach, `ip6_ctloutput`, the
+//!   IPv6 checks of `tcp_connect` and `tcp_ident`'s `AF_INET6` case. `tcp6_usrreqs` and
+//!   `tcb6table` compile always, as `netinet6` does (`inet6sw` names the former), like
+//!   `route6_mpath`. `TCP_ECN` and `TCP_SIGNATURE` are configured. `SMALL_KERNEL` is not set: `tcpctl_vars`,
 //!   `tcp_sysctl_tcpstat` and `tcp_sysctl` are compiled.
 
 use core::mem::{offset_of, size_of};
@@ -123,11 +125,12 @@ use crate::kern::uipc_socket2::{
 };
 use crate::machine::copy::{copyin_obj, copyout_obj};
 use crate::machine::cpu::curproc;
-use crate::net::if_::unhandled_af;
 use crate::netinet::in_::{
     INADDR_ANY, INADDR_BROADCAST, IPPROTO_TCP, SockaddrIn, in_broadcast, in_control, in_multicast,
     in_nam2sin,
 };
+#[cfg(feature = "inet6")]
+use crate::netinet::in_pcb::INP_IPV6;
 use crate::netinet::in_pcb::{
     BADDYNAMICPORTS, DP_MAPSIZE, Inpcb, Inpcbtable, ROOTONLYPORTS, in_flowid, in_pcballoc,
     in_pcbbind, in_pcbconnect, in_pcbdetach, in_pcbdisconnect, in_pcblookup, in_pcblookup_listen,
@@ -171,6 +174,17 @@ use crate::netinet::tcp_var::{
     TF_REQ_SCALE, TF_REQ_TSTMP, TF_SACK_PERMIT, TF_SIGNATURE, TcpIdentMapping, Tcpcb, Tcpstat,
     TcpstatCounters, intotcpcb, tcp_now, tcp_time, tcpstat_inc,
 };
+use crate::netinet6::in6::in6_control;
+#[cfg(feature = "inet6")]
+use crate::netinet6::{
+    in6::{
+        IN6ADDR_ANY, In6Addr, SockaddrIn6, in6_is_addr_multicast, in6_is_addr_unspecified,
+        in6_nam2sin6,
+    },
+    in6_pcb::{in6_pcblookup, in6_pcblookup_listen},
+    in6_src::in6_embedscope,
+    ip6_output::ip6_ctloutput,
+};
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::{M_EXT, M_WAIT, MLEN, Mbuf, mclgetl, mtod};
 use crate::sys::proc::Proc;
@@ -180,7 +194,11 @@ use crate::sys::protosw::{
     PRU_SENSE, PRU_SHUTDOWN, PRU_SOCKADDR, PrUsrreqs,
 };
 use crate::sys::rwlock::{RW_INTR, RW_WRITE};
-use crate::sys::socket::{AF_INET, MSG_PEEK, SO_ACCEPTCONN, SO_DEBUG, SO_LINGER, SO_OOBINLINE};
+use crate::sys::socket::{
+    AF_INET, MSG_PEEK, PF_INET, SO_ACCEPTCONN, SO_DEBUG, SO_LINGER, SO_OOBINLINE,
+};
+#[cfg(feature = "inet6")]
+use crate::sys::socket::{AF_INET6, PF_INET6};
 use crate::sys::socketvar::{
     SS_CANTSENDMORE, SS_CONNECTOUT, SS_ISCONNECTED, SS_ISCONNECTING, SS_NOFDREF, SS_RCVATMARK,
     Socket, sbspace, sbspace_locked,
@@ -217,7 +235,28 @@ pub static TCP_USRREQS: PrUsrreqs = PrUsrreqs {
     ..PrUsrreqs::NONE
 };
 
-// INET6: tcp6_usrreqs; not configured.
+/// `tcp6_usrreqs` (`INET6`; compiled always, as `netinet6` is, for `inet6sw`).
+pub static TCP6_USRREQS: PrUsrreqs = PrUsrreqs {
+    pru_attach: Some(tcp_attach),
+    pru_detach: Some(tcp_detach),
+    pru_bind: Some(tcp_bind),
+    pru_listen: Some(tcp_listen),
+    pru_connect: Some(tcp_connect),
+    pru_accept: Some(tcp_accept),
+    pru_disconnect: Some(tcp_disconnect),
+    pru_shutdown: Some(tcp_shutdown),
+    pru_rcvd: Some(tcp_rcvd),
+    pru_send: Some(tcp_send),
+    pru_abort: Some(tcp_abort),
+    pru_sense: Some(tcp_sense),
+    pru_rcvoob: Some(tcp_rcvoob),
+    pru_sendoob: Some(tcp_sendoob),
+    pru_control: Some(in6_control),
+    pru_sockaddr: Some(tcp_sockaddr),
+    pru_peeraddr: Some(tcp_peeraddr),
+    pru_flowid: Some(in_flowid),
+    ..PrUsrreqs::NONE
+};
 
 /// \[I\] `tcp_sendspace`.
 #[allow(non_upper_case_globals)] // TCP_SENDSPACE is a constant of this file
@@ -264,7 +303,8 @@ static TCPCTL_VARS: [SysctlBoundedArgs; 14] = [
 
 /// `tcbtable`.
 pub static TCBTABLE: Inpcbtable = Inpcbtable::new();
-// INET6: tcb6table; not configured.
+/// `tcb6table` (`INET6`; compiled always, for `tcp6_ctlinput`).
+pub static TCB6TABLE: Inpcbtable = Inpcbtable::new();
 
 /// `curproc`, which the socket requests run as.
 fn curproc_or_panic(func: &str) -> &'static Proc {
@@ -429,7 +469,10 @@ pub fn tcp_ctloutput(
         return Err(Errno::ECONNRESET);
     };
     if level != IPPROTO_TCP {
-        // INET6: ip6_ctloutput for INP_IPV6; not configured.
+        #[cfg(feature = "inet6")]
+        if inp.has_flags(INP_IPV6) {
+            return ip6_ctloutput(op, so, level, optname, m);
+        }
         return ip_ctloutput(op, so, level, optname, m);
     }
     let Some(tp) = intotcpcb(inp) else {
@@ -559,7 +602,13 @@ pub fn tcp_attach(so: &'static Socket, _proto: i32, wait: i32) -> Result<(), Err
         soreserve(so, u64::from(tcp_sendspace), u64::from(tcp_recvspace))?;
     }
 
-    // INET6: tcb6table for PF_INET6 sockets; not configured.
+    #[cfg(feature = "inet6")]
+    let table = if so.dom_family() == i32::from(PF_INET6) {
+        &TCB6TABLE
+    } else {
+        &TCBTABLE
+    };
+    #[cfg(not(feature = "inet6"))]
     let table = &TCBTABLE;
     in_pcballoc(so, table, wait)?;
     let Some(inp) = sotoinpcb(so) else {
@@ -574,8 +623,14 @@ pub fn tcp_attach(so: &'static Socket, _proto: i32, wait: i32) -> Result<(), Err
         return Err(Errno::ENOBUFS);
     };
     tp.t_state.set(TCPS_CLOSED);
-    // INET6: PF_INET6 for INP_IPV6; not configured.
-    tp.pf.set(i32::from(AF_INET));
+    #[cfg(feature = "inet6")]
+    if inp.has_flags(INP_IPV6) {
+        tp.pf.set(i32::from(PF_INET6));
+    } else {
+        tp.pf.set(i32::from(PF_INET));
+    }
+    #[cfg(not(feature = "inet6"))]
+    tp.pf.set(i32::from(PF_INET));
     if so.has_options(SO_LINGER) && so.so_linger.get() == 0 {
         so.so_linger.set(TCP_LINGERTIME);
     }
@@ -647,8 +702,23 @@ pub fn tcp_connect(so: &'static Socket, nam: &'static Mbuf) -> Result<(), Errno>
     let start = trace_start(so, tp);
 
     let error = (|| {
-        // INET6: in6_nam2sin6 and the IPv6 address checks for INP_IPV6; not configured.
-        {
+        #[cfg(feature = "inet6")]
+        let inet6 = inp.has_flags(INP_IPV6);
+        #[cfg(not(feature = "inet6"))]
+        let inet6 = false;
+        if inet6 {
+            #[cfg(feature = "inet6")]
+            {
+                let sin6p = in6_nam2sin6(nam)?;
+                // SAFETY: `in6_nam2sin6` checked that the mbuf holds a whole `sockaddr_in6`.
+                let sin6: SockaddrIn6 = unsafe { ptr::read_unaligned(sin6p) };
+                if in6_is_addr_unspecified(&sin6.sin6_addr)
+                    || in6_is_addr_multicast(&sin6.sin6_addr)
+                {
+                    return Err(Errno::EINVAL);
+                }
+            }
+        } else {
             let sinp = in_nam2sin(nam)?;
             // SAFETY: `in_nam2sin` checked that the mbuf holds a whole `sockaddr_in`.
             let sin: SockaddrIn = unsafe { ptr::read_unaligned(sinp) };
@@ -1056,22 +1126,84 @@ fn tcp_ident(
 
     net_lock_shared();
 
-    // INET6: AF_INET6 with in6_embedscope; not configured.
-    if tir.faddr.ss_family != AF_INET {
-        net_unlock_shared();
-        return Err(Errno::EAFNOSUPPORT);
+    /// The looked-up addresses: `fin`/`lin`, or `fin6`/`lin6` with their embedded scopes
+    /// (`f6`, `l6`).
+    enum IdentAddrs {
+        /// `AF_INET`.
+        V4(SockaddrIn, SockaddrIn),
+        /// `AF_INET6`.
+        #[cfg(feature = "inet6")]
+        V6 {
+            /// `fin6->sin6_port`.
+            fport: u16,
+            /// `f6`.
+            f6: In6Addr,
+            /// `lin6->sin6_port`.
+            lport: u16,
+            /// `l6`.
+            l6: In6Addr,
+        },
     }
-    if tir.laddr.ss_family != AF_INET {
-        net_unlock_shared();
-        return Err(Errno::EAFNOSUPPORT);
-    }
-    // SAFETY: a `sockaddr_storage` is larger than a `sockaddr_in`; both are integers.
-    let fin = unsafe { ptr::read_unaligned(ptr::from_ref(&tir.faddr).cast::<SockaddrIn>()) };
-    // SAFETY: as above.
-    let lin = unsafe { ptr::read_unaligned(ptr::from_ref(&tir.laddr).cast::<SockaddrIn>()) };
 
-    let mut inp = match i32::from(tir.faddr.ss_family) {
-        af if af == i32::from(AF_INET) => in_pcblookup(
+    let addrs = match tir.faddr.ss_family {
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            if tir.laddr.ss_family != AF_INET6 {
+                net_unlock_shared();
+                return Err(Errno::EAFNOSUPPORT);
+            }
+            // SAFETY: a `sockaddr_storage` is larger than a `sockaddr_in6`; both are
+            // integers.
+            let fin6 =
+                unsafe { ptr::read_unaligned(ptr::from_ref(&tir.faddr).cast::<SockaddrIn6>()) };
+            let mut f6 = IN6ADDR_ANY;
+            if in6_embedscope(&mut f6, &fin6, None, None).is_err() {
+                net_unlock_shared();
+                return Err(Errno::EINVAL); // ?
+            }
+            // SAFETY: as above.
+            let lin6 =
+                unsafe { ptr::read_unaligned(ptr::from_ref(&tir.laddr).cast::<SockaddrIn6>()) };
+            let mut l6 = IN6ADDR_ANY;
+            if in6_embedscope(&mut l6, &lin6, None, None).is_err() {
+                net_unlock_shared();
+                return Err(Errno::EINVAL); // ?
+            }
+            IdentAddrs::V6 {
+                fport: fin6.sin6_port,
+                f6,
+                lport: lin6.sin6_port,
+                l6,
+            }
+        }
+        AF_INET => {
+            if tir.laddr.ss_family != AF_INET {
+                net_unlock_shared();
+                return Err(Errno::EAFNOSUPPORT);
+            }
+            // SAFETY: a `sockaddr_storage` is larger than a `sockaddr_in`; both are integers.
+            let fin =
+                unsafe { ptr::read_unaligned(ptr::from_ref(&tir.faddr).cast::<SockaddrIn>()) };
+            // SAFETY: as above.
+            let lin =
+                unsafe { ptr::read_unaligned(ptr::from_ref(&tir.laddr).cast::<SockaddrIn>()) };
+            IdentAddrs::V4(fin, lin)
+        }
+        _ => {
+            net_unlock_shared();
+            return Err(Errno::EAFNOSUPPORT);
+        }
+    };
+
+    let mut inp = match addrs {
+        #[cfg(feature = "inet6")]
+        IdentAddrs::V6 {
+            fport,
+            f6,
+            lport,
+            l6,
+        } => in6_pcblookup(&TCB6TABLE, &f6, fport, &l6, lport, tir.rdomain),
+        IdentAddrs::V4(fin, lin) => in_pcblookup(
             &TCBTABLE,
             fin.sin_addr,
             fin.sin_port,
@@ -1079,7 +1211,6 @@ fn tcp_ident(
             lin.sin_port,
             tir.rdomain,
         ),
-        af => unhandled_af(af),
     };
 
     if dodrop {
@@ -1107,8 +1238,15 @@ fn tcp_ident(
 
     if inp.is_none() {
         tcpstat_inc(TcpstatCounters::TcpsPcbhashmiss);
-        // INET6: in6_pcblookup_listen for AF_INET6; not configured.
-        inp = in_pcblookup_listen(&TCBTABLE, lin.sin_addr, lin.sin_port, None, tir.rdomain);
+        inp = match addrs {
+            #[cfg(feature = "inet6")]
+            IdentAddrs::V6 { lport, l6, .. } => {
+                in6_pcblookup_listen(&TCB6TABLE, &l6, lport, None, tir.rdomain)
+            }
+            IdentAddrs::V4(_, lin) => {
+                in_pcblookup_listen(&TCBTABLE, lin.sin_addr, lin.sin_port, None, tir.rdomain)
+            }
+        };
     }
 
     let so = inp.and_then(in_pcbsolock);

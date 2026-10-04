@@ -100,8 +100,11 @@
 //!   network order: after the conversion nothing reads the TCP header from the mbuf again
 //!   (`tcp_respond` and `tcp_signature` take the header as an argument, the data is trimmed
 //!   past it). The options are copied out likewise (at most `MAX_TCPOPTLEN` bytes).
-//! - `ip6_exthdr_get` (`netinet6/ip6_input.c`, not ported) is a private helper here, as in
-//!   `udp_usrreq.rs`: the `m_pulldown` of the header and its address.
+//! - The network header is copied once (`ip` or `ip6`, the C's two pointers, as `Option`s);
+//!   `saveti` is the bytes of the C's union of `struct tcpiphdr` and `struct tcpipv6hdr`.
+//!   The SYN cache reads and writes the `sin6` member of `union syn_cache_sa` with
+//!   `sa_sin6`/`sa_from_sin6`. `tcp_respond`'s template is the first 40 bytes of the packet
+//!   (an IPv6 header, or the IPv4 one and what follows it).
 //! - `tcp_input_solocked`'s labels (`badsyn`, `dropafterack_ratelim`, `dropafterack`,
 //!   `dropwithreset_ratelim`, `dropwithreset`, `drop` and the common `return` that hands the
 //!   socket back) are the variants of `TcpInputExit`, returned by the body and run by
@@ -137,10 +140,13 @@
 //! - The functions `tcp_var.h` does not declare stay private: `tcp_input_solocked`,
 //!   `tcp_flush_queue`, `tcp_sack_partialack`, `tcp_newreno_partialack`, `tcp_mss_adv`, the
 //!   SYN cache internals and the soft LRO helpers.
-//! - Not configured, each a comment at its site: `INET6` (`tcb6table`, `ns_tcp6_ml`,
-//!   `in6_pcblookup*`, `in6_cksum`, `ip6_output`, `route6_mpath`, the IPv6 header and
-//!   addresses, `IPV6_MMTU` in `tcp_mss`, the IPv6 branches of the SYN cache and the soft
-//!   LRO; `tp->pf` is never `AF_INET6`). Configured (GENERIC): `TCP_ECN`, `TCP_SIGNATURE`,
+//! - `syn_cache_respond` without a listening control block uses `ip6_defhlim`, what the
+//!   C's `in6_selecthlim(NULL)` returns (`in6_selecthlim` takes a `&Inpcb` here).
+//! - `INET6` is configured (feature `inet6`): `tcb6table`, `ns_tcp6_ml`,
+//!   `in6_pcblookup*`, `in6_cksum`, `ip6_output`, `route6_mpath`, the IPv6 header checks and
+//!   the IPv6 branches of `tcp_mss`, `tcp_hdrsz`, `tcp_mss_adv`, `tcp_dooptions` and the
+//!   SYN cache. The soft LRO's IPv6 cases are not `#ifdef INET6` in the C and compile
+//!   always. Configured (GENERIC): `TCP_ECN`, `TCP_SIGNATURE`,
 //!   `IPSEC`, `NPF` (`pf_inp_lookup`, `pf_inp_link`, `pf_inp_unlink`, `pf_find_divert`).
 //!   `SMALL_KERNEL` is not set, so the soft LRO is compiled; `tcp_softlro_glue` has no
 //!   caller yet (its drivers, `ixl`, `ice`, `bnxt`, `cnmac`, are not ported). `DIAGNOSTIC` is
@@ -168,7 +174,7 @@ use crate::kern::subr_prf::panic;
 use crate::kern::uipc_mbuf::{
     MAX_LINKHDR, m_adj, m_copydata, m_free, m_freem, m_gethdr, ml_dequeue, ml_enqueue,
 };
-use crate::kern::uipc_mbuf2::{m_pulldown, m_tag_find};
+use crate::kern::uipc_mbuf2::m_tag_find;
 use crate::kern::uipc_socket::{sohasoutofband, sorwakeup, sowwakeup};
 use crate::kern::uipc_socket2::{
     SB_MAX_VAR, sbappendstream, sbdrop, sbreserve, soassertlocked, socantrcvmore, soisconnected,
@@ -199,6 +205,7 @@ use crate::netinet::ip_ipsp::{
 use crate::netinet::ip_output::ip_output;
 use crate::netinet::ip_spd::ipsp_spd_lookup;
 use crate::netinet::ip_var::{IP_MTUDISC, mtod_ip, mtod_ip_store};
+use crate::netinet::ip6::{IPV6_MAXPACKET, IPV6_MMTU, Ip6Frag, Ip6Hdr, ip6_exthdr_get};
 use crate::netinet::tcp::{
     MAX_SACK_BLKS, MAX_TCPOPTLEN, TCP_MAX_WINSHIFT, TCP_MAXWIN, TCP_SACKHOLE_LIMIT, TCPOLEN_MAXSEG,
     TCPOLEN_SACK, TCPOLEN_SACK_PERMITTED, TCPOLEN_SIGLEN, TCPOLEN_SIGNATURE, TCPOLEN_TIMESTAMP,
@@ -236,6 +243,7 @@ use crate::netinet::tcp_var::{
     TcpstatCounters, intotcpcb, sototcpcb, tcp_now, tcp_rexmtval, tcp_time, tcpstat_add,
     tcpstat_inc, tcpstat_pkt,
 };
+use crate::netinet6::in6::in6_are_addr_equal;
 use crate::sys::endian::{htonl, htons, ntohl, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::kernel::HZ;
@@ -249,13 +257,26 @@ use crate::sys::mutex::{Mutex, mutex_assert_locked};
 use crate::sys::pool::{PR_NOWAIT, PR_ZERO, Pool};
 use crate::sys::queue::ListHead;
 use crate::sys::refcnt::DT_REFCNT_IDX_SYNCACHE;
-use crate::sys::socket::{AF_INET, SO_ACCEPTCONN, SO_DEBUG, SO_OOBINLINE, Sockaddr};
+use crate::sys::socket::{AF_INET, AF_INET6, SO_ACCEPTCONN, SO_DEBUG, SO_OOBINLINE, Sockaddr};
 use crate::sys::socketvar::{
     SS_CANTRCVMORE, SS_ISCONNECTED, SS_NOFDREF, SS_RCVATMARK, Socket, sb_notify, sbspace,
 };
 use crate::sys::systm::{net_assert_locked, net_lock_shared, net_unlock_shared};
 use crate::sys::time::Timeval;
 use crate::sys::timeout::{KCLOCK_NONE, TIMEOUT_MPSAFE, TIMEOUT_PROC};
+#[cfg(feature = "inet6")]
+use crate::{
+    net::route::route6_mpath,
+    netinet::ip6::{IPV6_VERSION, IPV6_VERSION_MASK},
+    netinet::tcp_usrreq::TCB6TABLE,
+    netinet6::in6::{SockaddrIn6, in6_is_addr_multicast, in6_is_addr_unspecified},
+    netinet6::in6_cksum::in6_cksum,
+    netinet6::in6_pcb::{in6_pcblookup, in6_pcblookup_listen},
+    netinet6::in6_proto::IP6_DEFHLIM,
+    netinet6::in6_src::in6_selecthlim,
+    netinet6::ip6_output::ip6_output,
+    netinet6::ip6_var::{mtod_ip6, mtod_ip6_store},
+};
 
 /// `tcprexmtthresh`.
 pub const TCPREXMTTHRESH: i32 = 3;
@@ -267,8 +288,15 @@ const TCP_PAWS_IDLE: i32 = tcp_time(24 * 24 * 60 * 60);
 const IP_HDR_LEN: usize = size_of::<Ip>();
 /// `sizeof(struct tcphdr)`.
 const TCP_HDR_LEN: usize = size_of::<Tcphdr>();
-/// `sizeof(struct tcpiphdr)`: the `saveti` copy `tcp_trace` reads.
-const TCPIPHDR_LEN: usize = IP_HDR_LEN + TCP_HDR_LEN;
+/// `sizeof(struct ip6_hdr)`.
+const IP6_HDR_LEN: usize = size_of::<Ip6Hdr>();
+/// `sizeof(saveti)`: the union of `struct tcpiphdr` and `struct tcpipv6hdr` that
+/// `tcp_trace` reads.
+const SAVETI_LEN: usize = IP6_HDR_LEN + TCP_HDR_LEN;
+/// `AF_INET` as the `int` of `af` and `tp->pf`.
+const AF_INET_I32: i32 = AF_INET as i32;
+/// `AF_INET6` as the `int` of `af` and `tp->pf`.
+const AF_INET6_I32: i32 = AF_INET6 as i32;
 
 /// A rate limiter's state: `tcp_rst_ppslim_last` and `tcp_rst_ppslim_count`, or the
 /// `tcp_ackdrop_ppslim` pair.
@@ -315,7 +343,7 @@ struct TcpInputState {
     /// `ostate`.
     ostate: i32,
     /// `saveti`: the IP and TCP headers for `tcp_trace`.
-    saveti: [u8; TCPIPHDR_LEN],
+    saveti: [u8; SAVETI_LEN],
     /// `*th`: the TCP header, host order once converted.
     th: Tcphdr,
     /// `tiflags`.
@@ -428,19 +456,6 @@ fn tcp_setup_ack(tp: &Tcpcb, tiflags: u8, m: Option<&Mbuf>) {
     if_put(ifp);
 }
 
-/// `ip6_exthdr_get(mp, off, len)` (`netinet6/ip6_input.c`): makes `len` bytes at `off`
-/// contiguous and returns their address; `None` (and `*mp` cleared, the chain freed) when the
-/// packet is too short.
-fn ip6_exthdr_get(mp: &mut Option<&'static Mbuf>, off: i32, len: i32) -> Option<*const u8> {
-    let m = (*mp)?;
-    let mut toff = 0;
-    let Some(t) = m_pulldown(m, off, len, Some(&mut toff)) else {
-        *mp = None;
-        return None;
-    };
-    Some(mtod::<u8>(t).cast_const().wrapping_add(toff as usize))
-}
-
 /// The bytes of `th` as they lie in memory (`struct tcphdr` has no padding).
 fn th_bytes(th: &Tcphdr) -> [u8; TCP_HDR_LEN] {
     let mut b = [0u8; TCP_HDR_LEN];
@@ -456,12 +471,38 @@ fn th_bytes(th: &Tcphdr) -> [u8; TCP_HDR_LEN] {
     b
 }
 
-/// The IP header at the front of `m`, as the bytes `tcp_respond` takes for its template
-/// (`mtod(m, caddr_t)`).
-fn ip_template(m: &Mbuf) -> [u8; IP_HDR_LEN] {
-    let mut b = [0u8; IP_HDR_LEN];
-    m_copydata(m, 0, &mut b);
+/// The IP or IPv6 header at the front of `m`, as the bytes `tcp_respond` takes for its
+/// template (`mtod(m, caddr_t)`; it reads `sizeof(struct ip)` or `sizeof(struct ip6_hdr)`).
+fn ip_template(m: &Mbuf) -> [u8; IP6_HDR_LEN] {
+    let mut b = [0u8; IP6_HDR_LEN];
+    let n = (m.m_pkthdr().len.get().max(0) as usize).min(IP6_HDR_LEN);
+    m_copydata(m, 0, &mut b[..n]);
     b
+}
+
+/// A `union syn_cache_sa` holding `sin6`.
+#[cfg(feature = "inet6")]
+fn sa_from_sin6(sin6: &SockaddrIn6) -> SynCacheSa {
+    let mut su = SynCacheSa::new();
+    // SAFETY: `SockaddrIn6` is `#[repr(C)]` without padding, as large as the union.
+    let b = unsafe {
+        core::slice::from_raw_parts(ptr::from_ref(sin6).cast::<u8>(), size_of::<SockaddrIn6>())
+    };
+    su.as_bytes_mut().copy_from_slice(b);
+    su
+}
+
+/// `satosin6_const(&sa)`: the union read as a `sockaddr_in6`.
+#[cfg(feature = "inet6")]
+fn sa_sin6(su: &SynCacheSa) -> SockaddrIn6 {
+    // SAFETY: the union is `sizeof(struct sockaddr_in6)` initialised bytes; `SockaddrIn6` is
+    // plain old data of that size, read unaligned.
+    unsafe {
+        su.as_bytes()
+            .as_ptr()
+            .cast::<SockaddrIn6>()
+            .read_unaligned()
+    }
 }
 
 /// Writes `bytes` at offset `off` of the first mbuf of `m`, whose length covers them.
@@ -716,11 +757,13 @@ pub fn tcp_input(
     m.m_pkthdr()
         .ph_cookie
         .set(ptr::without_provenance_mut(*offp as usize));
-    if af == i32::from(AF_INET) {
-        ml_enqueue(&ns.ns_tcp_ml, m);
-    } else {
-        // INET6: AF_INET6 goes to ns_tcp6_ml; not configured.
-        m_freemp(mp);
+    match af {
+        AF_INET_I32 => ml_enqueue(&ns.ns_tcp_ml, m),
+        #[cfg(feature = "inet6")]
+        AF_INET6_I32 => ml_enqueue(&ns.ns_tcp6_ml, m),
+        _ => {
+            m_freemp(mp);
+        }
     }
     *mp = None;
     IPPROTO_DONE
@@ -759,7 +802,7 @@ fn tcp_input_solocked(
         tp: None,
         otp: ptr::null(),
         ostate: 0,
-        saveti: [0; TCPIPHDR_LEN],
+        saveti: [0; SAVETI_LEN],
         th: Tcphdr::default(),
         tiflags: 0,
         tlen: 0,
@@ -943,15 +986,38 @@ fn tcp_input_body(
     let mut th = unsafe { thp.cast::<Tcphdr>().read_unaligned() };
 
     st.tlen = m.m_pkthdr().len.get() - iphlen;
-    let ip = if af == i32::from(AF_INET) {
-        mtod_ip(m)
-    } else {
-        // INET6: the ip6_hdr, the ECN bits of its flow label, and the drops of an
-        // unspecified source or a multicast destination; not configured.
-        unhandled_af(af);
+    // `ip` or `ip6`, copies of the network header; `iptos` its TOS byte.
+    let (ip, ip6, iptos): (Option<Ip>, Option<Ip6Hdr>, u8) = match af {
+        AF_INET_I32 => {
+            let ip = mtod_ip(m);
+            // save ip_tos before clearing it for checksum
+            (Some(ip), None, ip.ip_tos)
+        }
+        #[cfg(feature = "inet6")]
+        AF_INET6_I32 => {
+            let ip6 = mtod_ip6(m);
+            let iptos = ((ntohl(ip6.ip6_flow) >> 20) & 0xff) as u8;
+
+            // Be proactive about unspecified IPv6 address in source. As we use all-zero to
+            // indicate unbounded/unconnected pcb, unspecified IPv6 address can be used to
+            // confuse us.
+            //
+            // Note that packets with unspecified IPv6 destination is already dropped in
+            // ip6_input.
+            if in6_is_addr_unspecified(&ip6.ip6_src) {
+                // XXX stat
+                return Drop;
+            }
+
+            // Discard packets to multicast
+            if in6_is_addr_multicast(&ip6.ip6_dst) {
+                // XXX stat
+                return Drop;
+            }
+            (None, Some(ip6), iptos)
+        }
+        _ => unhandled_af(af),
     };
-    // save ip_tos before clearing it for checksum
-    let iptos = ip.ip_tos;
 
     // Checksum extended TCP header and data.
     if m.m_pkthdr().csum_flags.get() & M_TCP_CSUM_IN_OK == 0 {
@@ -960,8 +1026,11 @@ fn tcp_input_body(
             return Drop;
         }
         tcpstat_inc(TcpstatCounters::TcpsInswcsum);
-        // INET6: in6_cksum for AF_INET6; not configured.
-        let sum = in4_cksum(m, IPPROTO_TCP as u8, iphlen, st.tlen);
+        let sum = match af {
+            #[cfg(feature = "inet6")]
+            AF_INET6_I32 => in6_cksum(m, IPPROTO_TCP as u8, iphlen as u32, st.tlen as u32),
+            _ => in4_cksum(m, IPPROTO_TCP as u8, iphlen, st.tlen),
+        };
         if sum != 0 {
             tcpstat_inc(TcpstatCounters::TcpsRcvbadsum);
             return Drop;
@@ -1024,20 +1093,44 @@ fn tcp_input_body(
     st.inp = pf_inp_lookup(m);
     let (so, tp, tiwin, skip_to_step6) = 'findpcb: loop {
         if st.inp.is_none() {
-            // INET6: in6_pcblookup in tcb6table for AF_INET6; not configured.
-            st.inp = in_pcblookup(
-                &TCBTABLE,
-                ip.ip_src,
-                st.th.th_sport,
-                ip.ip_dst,
-                st.th.th_dport,
-                rtableid,
-            );
+            #[cfg(feature = "inet6")]
+            if let Some(ip6) = ip6 {
+                st.inp = in6_pcblookup(
+                    &TCB6TABLE,
+                    &ip6.ip6_src,
+                    st.th.th_sport,
+                    &ip6.ip6_dst,
+                    st.th.th_dport,
+                    rtableid,
+                );
+            }
+            if let Some(ip) = ip {
+                st.inp = in_pcblookup(
+                    &TCBTABLE,
+                    ip.ip_src,
+                    st.th.th_sport,
+                    ip.ip_dst,
+                    st.th.th_dport,
+                    rtableid,
+                );
+            }
         }
         if st.inp.is_none() {
             tcpstat_inc(TcpstatCounters::TcpsPcbhashmiss);
-            // INET6: in6_pcblookup_listen for AF_INET6; not configured.
-            st.inp = in_pcblookup_listen(&TCBTABLE, ip.ip_dst, st.th.th_dport, Some(m), rtableid);
+            #[cfg(feature = "inet6")]
+            if let Some(ip6) = ip6 {
+                st.inp = in6_pcblookup_listen(
+                    &TCB6TABLE,
+                    &ip6.ip6_dst,
+                    st.th.th_dport,
+                    Some(m),
+                    rtableid,
+                );
+            }
+            if let Some(ip) = ip {
+                st.inp =
+                    in_pcblookup_listen(&TCBTABLE, ip.ip_dst, st.th.th_dport, Some(m), rtableid);
+            }
             // If the state is CLOSED (i.e., TCB does not exist) then all data in the
             // incoming segment is discarded. If the TCB exists but is in CLOSED state, it is
             // embryonic, but should either do a listen or a connect soon.
@@ -1097,10 +1190,18 @@ fn tcp_input_body(
         soassertlocked(inp.socket());
 
         // Check the minimum TTL for socket.
-        // INET6: inp_ip6_minhlim against ip6_hlim; not configured.
-        let minttl = inp.inp_ip_minttl.get();
-        if minttl != 0 && minttl > ip.ip_ttl {
-            return Drop;
+        if let Some(ip) = ip {
+            let minttl = inp.inp_ip_minttl.get();
+            if minttl != 0 && minttl > ip.ip_ttl {
+                return Drop;
+            }
+        }
+        #[cfg(feature = "inet6")]
+        if let Some(ip6) = ip6 {
+            let minhlim = inp.inp_ip6_minhlim().get();
+            if minhlim != 0 && minhlim > ip6.ip6_hlim {
+                return Drop;
+            }
         }
 
         let Some(mut tp) = intotcpcb(inp) else {
@@ -1120,28 +1221,46 @@ fn tcp_input_body(
         };
 
         if so.has_options(SO_DEBUG | SO_ACCEPTCONN) {
-            // INET6: the sockaddr_in6 pair for AF_INET6; not configured.
-            let src = SockaddrUnion::from_sin(&SockaddrIn {
-                sin_len: size_of::<SockaddrIn>() as u8,
-                sin_family: AF_INET,
-                sin_port: st.th.th_sport,
-                sin_addr: ip.ip_src,
-                ..SockaddrIn::default()
-            });
-            let dst = SockaddrUnion::from_sin(&SockaddrIn {
-                sin_len: size_of::<SockaddrIn>() as u8,
-                sin_family: AF_INET,
-                sin_port: st.th.th_dport,
-                sin_addr: ip.ip_dst,
-                ..SockaddrIn::default()
-            });
+            let mut src = SockaddrUnion::new();
+            let mut dst = SockaddrUnion::new();
+            if let Some(ip) = ip {
+                src.set_sin(&SockaddrIn {
+                    sin_len: size_of::<SockaddrIn>() as u8,
+                    sin_family: AF_INET,
+                    sin_port: st.th.th_sport,
+                    sin_addr: ip.ip_src,
+                    ..SockaddrIn::default()
+                });
+                dst.set_sin(&SockaddrIn {
+                    sin_len: size_of::<SockaddrIn>() as u8,
+                    sin_family: AF_INET,
+                    sin_port: st.th.th_dport,
+                    sin_addr: ip.ip_dst,
+                    ..SockaddrIn::default()
+                });
+            }
+            #[cfg(feature = "inet6")]
+            if let Some(ip6) = ip6 {
+                src = sa_from_sin6(&SockaddrIn6 {
+                    sin6_port: st.th.th_sport,
+                    ..SockaddrIn6::with_addr(ip6.ip6_src)
+                });
+                dst = sa_from_sin6(&SockaddrIn6 {
+                    sin6_port: st.th.th_dport,
+                    ..SockaddrIn6::with_addr(ip6.ip6_dst)
+                });
+            }
 
             if so.has_options(SO_DEBUG) {
                 st.otp = ptr::from_ref(tp);
                 st.ostate = tp.t_state.get();
-                // INET6: saveti.tcpip6 for AF_INET6; not configured.
-                m_copydata(m, 0, &mut st.saveti[..IP_HDR_LEN]);
-                st.saveti[IP_HDR_LEN..].copy_from_slice(&th_bytes(&st.th));
+                let hlen = if ip6.is_some() {
+                    IP6_HDR_LEN
+                } else {
+                    IP_HDR_LEN
+                };
+                m_copydata(m, 0, &mut st.saveti[..hlen]);
+                st.saveti[hlen..hlen + TCP_HDR_LEN].copy_from_slice(&th_bytes(&st.th));
             }
             if so.has_options(SO_ACCEPTCONN) {
                 match st.tiflags & (TH_RST | TH_SYN | TH_ACK) {
@@ -1197,11 +1316,20 @@ fn tcp_input_body(
 
                         // LISTEN socket received a SYN from itself? This can't possibly be
                         // valid; drop the packet.
-                        // INET6: the IPv6 addresses for AF_INET6; not configured.
-                        if st.th.th_dport == st.th.th_sport && ip.ip_dst.s_addr == ip.ip_src.s_addr
-                        {
-                            tcpstat_inc(TcpstatCounters::TcpsBadsyn);
-                            return Drop;
+                        if st.th.th_dport == st.th.th_sport {
+                            #[cfg(feature = "inet6")]
+                            if let Some(ip6) = ip6
+                                && in6_are_addr_equal(&ip6.ip6_src, &ip6.ip6_dst)
+                            {
+                                tcpstat_inc(TcpstatCounters::TcpsBadsyn);
+                                return Drop;
+                            }
+                            if let Some(ip) = ip
+                                && ip.ip_dst.s_addr == ip.ip_src.s_addr
+                            {
+                                tcpstat_inc(TcpstatCounters::TcpsBadsyn);
+                                return Drop;
+                            }
                         }
 
                         // SYN looks ok; create compressed TCP state for it.
@@ -2422,7 +2550,12 @@ pub fn tcp_dooptions(
                 sin.sin_addr = ip.ip_dst;
                 dst.set_sin(&sin);
             }
-            // INET6: the sockaddr_in6 pair for AF_INET6; not configured.
+            #[cfg(feature = "inet6")]
+            if pf == AF_INET6_I32 {
+                let ip6 = mtod_ip6(m);
+                src = sa_from_sin6(&SockaddrIn6::with_addr(ip6.ip6_src));
+                dst = sa_from_sin6(&SockaddrIn6::with_addr(ip6.ip6_dst));
+            }
 
             tdb = gettdbbysrcdst(rtable_l2(rtableid), 0, &src, &dst, IPPROTO_TCP as u8);
 
@@ -2945,11 +3078,11 @@ pub fn tcp_mss(tp: &'static Tcpcb, offer: i32) -> i32 {
         };
 
         let pf = tp.pf.get();
-        // INET6: sizeof(struct ip6_hdr) for AF_INET6; not configured.
-        let iphlen = if pf == i32::from(AF_INET) {
-            IP_HDR_LEN as i32
-        } else {
-            unhandled_af(pf);
+        let iphlen = match pf {
+            AF_INET_I32 => IP_HDR_LEN as i32,
+            #[cfg(feature = "inet6")]
+            AF_INET6_I32 => IP6_HDR_LEN as i32,
+            _ => unhandled_af(pf),
         };
 
         // if there's an mtu associated with the route and we support path MTU discovery for
@@ -2959,19 +3092,24 @@ pub fn tcp_mss(tp: &'static Tcpcb, offer: i32) -> i32 {
         if rtmtu != 0 {
             // One may wish to lower MSS to take into account options, especially
             // security-related options.
-            // INET6: an AF_INET6 path MTU below IPV6_MMTU (RFC2460 section 5: use 1280 and a
-            // fragment header); tp->pf is AF_INET here.
-            mss = rtmtu as i32 - iphlen - th_len;
-        } else if ifp.if_flags.get() & IFF_LOOPBACK != 0
-            || (pf == i32::from(AF_INET) && ip_mtudisc.load(Ordering::Relaxed) != 0)
-        {
-            // A loopback interface, or an IPv4 route with path MTU discovery: the
-            // interface's MTU.
+            if pf == AF_INET6_I32 && rtmtu < IPV6_MMTU {
+                // RFC2460 section 5, last paragraph: if path MTU is smaller than 1280, use
+                // 1280 as packet size and attach fragment header.
+                mss = IPV6_MMTU as i32 - iphlen - size_of::<Ip6Frag>() as i32 - th_len;
+            } else {
+                mss = rtmtu as i32 - iphlen - th_len;
+            }
+        } else if ifp.if_flags.get() & IFF_LOOPBACK != 0 {
+            mss = if_mtu - iphlen - th_len;
+        } else if pf == AF_INET_I32 {
+            if ip_mtudisc.load(Ordering::Relaxed) != 0 {
+                mss = if_mtu - iphlen - th_len;
+            }
+        } else if cfg!(feature = "inet6") && pf == AF_INET6_I32 {
+            // for IPv6, path MTU discovery is always turned on, or the node must use packet
+            // size <= 1280.
             mss = if_mtu - iphlen - th_len;
         }
-        // INET6: `else if (tp->pf == AF_INET6)`: for IPv6, path MTU discovery is always
-        // turned on, or the node must use packet size <= 1280; not configured (tp->pf is
-        // AF_INET, so the AF_INET test above is the C's whole else-if chain).
 
         // Calculate the value that we offer in TCPOPT_MAXSEG
         if offer != -1 {
@@ -3044,11 +3182,11 @@ pub fn tcp_mss(tp: &'static Tcpcb, offer: i32) -> i32 {
 
 /// `tcp_hdrsz`: the length of the IP and TCP headers with the options sent on every segment.
 pub fn tcp_hdrsz(tp: &Tcpcb) -> u32 {
-    // INET6: sizeof(struct ip6_hdr) for AF_INET6; not configured.
-    let mut hlen = if tp.pf.get() == i32::from(AF_INET) {
-        IP_HDR_LEN as u32
-    } else {
-        0
+    let mut hlen = match tp.pf.get() {
+        #[cfg(feature = "inet6")]
+        AF_INET6_I32 => IP6_HDR_LEN as u32,
+        AF_INET_I32 => IP_HDR_LEN as u32,
+        _ => 0,
     };
     hlen += TCP_HDR_LEN as u32;
 
@@ -3152,11 +3290,11 @@ fn tcp_mss_adv(rt: Option<&Rtentry>, af: i32) -> i32 {
         return mssdflt;
     };
 
-    // INET6: sizeof(struct ip6_hdr) for AF_INET6; not configured.
-    let iphlen = if af == i32::from(AF_INET) {
-        IP_HDR_LEN as i32
-    } else {
-        unhandled_af(af);
+    let iphlen = match af {
+        AF_INET_I32 => IP_HDR_LEN as i32,
+        #[cfg(feature = "inet6")]
+        AF_INET6_I32 => IP6_HDR_LEN as i32,
+        _ => unhandled_af(af),
     };
     let mss = ifp.if_mtu.get() as i32 - iphlen - TCP_HDR_LEN as i32;
     if_put(ifp);
@@ -3175,7 +3313,19 @@ fn syn_cache_hash(src: &SynCacheSa, dst: &SynCacheSa, rand: &[u32; 5]) -> u32 {
 
             (((dst_port << 16).wrapping_add(src_port)) ^ rand[4]).wrapping_mul(src_addr ^ rand[0])
         }
-        // INET6: the hash of the four words of the IPv6 address; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            let src6 = sa_sin6(src);
+            let src_port = u32::from(src6.sin6_port);
+            let dst_port = u32::from(sa_sin6(dst).sin6_port);
+            let a = &src6.sin6_addr;
+
+            (((dst_port << 16).wrapping_add(src_port)) ^ rand[4])
+                .wrapping_mul(a.s6_addr32(0) ^ rand[0])
+                .wrapping_mul(a.s6_addr32(1) ^ rand[1])
+                .wrapping_mul(a.s6_addr32(2) ^ rand[2])
+                .wrapping_mul(a.s6_addr32(3) ^ rand[3])
+        }
         family => unhandled_af(i32::from(family)),
     }
 }
@@ -3603,8 +3753,18 @@ fn syn_cache_get(
         // We need to copy the required security levels from the listen pcb. Ditto for any
         // other IPsec-related information.
         ninp.inp_seclevel.set(listeninp.inp_seclevel.get());
-        // INET6: an INP_IPV6 socket copies ip6_hlim and inp_hops; not configured.
-        {
+        #[cfg(feature = "inet6")]
+        let inet6 = ninp.has_flags(INP_IPV6);
+        #[cfg(not(feature = "inet6"))]
+        let inet6 = false;
+        if inet6 {
+            kassert!(listeninp.has_flags(INP_IPV6));
+
+            let mut ip6 = ninp.inp_ipv6.get();
+            ip6.ip6_hlim = listeninp.inp_ipv6.get().ip6_hlim;
+            ninp.inp_ipv6.set(ip6);
+            ninp.inp_hops.set(listeninp.inp_hops.get());
+        } else {
             kassert!(!listeninp.has_flags(INP_IPV6));
 
             let mut ip = ninp.inp_ip.get();
@@ -3626,7 +3786,7 @@ fn syn_cache_get(
                 rtableid = u32::from(divert.rdomain);
             }
         }
-        if in_pcbset_addr(ninp, &src.sin(), &dst.sin(), rtableid).is_err() {
+        if in_pcbset_addr(ninp, src, dst, rtableid).is_err() {
             break 'abort true;
         }
 
@@ -3930,7 +4090,18 @@ fn syn_cache_add(
             );
         }
     }
-    // INET6: route6_mpath for an IPv6 source; not configured.
+    #[cfg(feature = "inet6")]
+    if s.sa_family() == AF_INET6 {
+        let src6 = sa_sin6(&s).sin6_addr;
+        if !in6_is_addr_unspecified(&src6) {
+            rt = route6_mpath(
+                &sc.sc_route,
+                &src6,
+                Some(&sa_sin6(&d).sin6_addr),
+                sc.sc_rtableid.get(),
+            );
+        }
+    }
     sc.sc_ipopts.set(ipopts);
     sc.sc_irs.set(th.th_seq);
 
@@ -4014,12 +4185,15 @@ fn syn_cache_respond(
     let src = sc.sc_src.get();
     let dst = sc.sc_dst.get();
     let family = src.sa_family();
-    // INET6: sizeof(struct ip6_hdr) for AF_INET6; not configured.
-    if family != AF_INET {
-        m_freem(m);
-        return Err(Errno::EAFNOSUPPORT);
-    }
-    let hlen = IP_HDR_LEN;
+    let hlen = match family {
+        AF_INET => IP_HDR_LEN,
+        #[cfg(feature = "inet6")]
+        AF_INET6 => IP6_HDR_LEN,
+        _ => {
+            m_freem(m);
+            return Err(Errno::EAFNOSUPPORT);
+        }
+    };
 
     // Compute the size of the TCP options.
     let fixflags = sc.sc_fixflags.get();
@@ -4075,17 +4249,32 @@ fn syn_cache_respond(
     // `max_linkhdr` reserved in front.
     unsafe { ptr::write_bytes(mtod::<u8>(m), 0, tlen) };
 
-    let ssin = src.sin();
-    let dsin = dst.sin();
-    // INET6: the ip6_hdr for AF_INET6; not configured.
-    let mut ip = mtod_ip(m);
-    ip.ip_dst = ssin.sin_addr;
-    ip.ip_src = dsin.sin_addr;
-    ip.ip_p = IPPROTO_TCP as u8;
-    mtod_ip_store(m, &ip);
+    let (th_dport, th_sport) = match family {
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            let ssin6 = sa_sin6(&src);
+            let dsin6 = sa_sin6(&dst);
+            let mut ip6 = mtod_ip6(m);
+            ip6.ip6_dst = ssin6.sin6_addr;
+            ip6.ip6_src = dsin6.sin6_addr;
+            ip6.ip6_nxt = IPPROTO_TCP as u8;
+            mtod_ip6_store(m, &ip6);
+            (ssin6.sin6_port, dsin6.sin6_port)
+        }
+        _ => {
+            let ssin = src.sin();
+            let dsin = dst.sin();
+            let mut ip = mtod_ip(m);
+            ip.ip_dst = ssin.sin_addr;
+            ip.ip_src = dsin.sin_addr;
+            ip.ip_p = IPPROTO_TCP as u8;
+            mtod_ip_store(m, &ip);
+            (ssin.sin_port, dsin.sin_port)
+        }
+    };
     let mut th = Tcphdr {
-        th_dport: ssin.sin_port,
-        th_sport: dsin.sin_port,
+        th_dport,
+        th_sport,
         ..Tcphdr::default()
     };
 
@@ -4142,13 +4331,28 @@ fn syn_cache_respond(
         su_dst.set_sa_len(dst.sa_len());
         su_dst.set_sa_family(dst.sa_family());
 
-        // case 0 (default to PF_INET) and AF_INET; INET6: AF_INET6; not configured.
-        let mut sin = su_src.sin();
-        sin.sin_addr = ip.ip_src;
-        su_src.set_sin(&sin);
-        let mut sin = su_dst.sin();
-        sin.sin_addr = ip.ip_dst;
-        su_dst.set_sin(&sin);
+        match family {
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {
+                let ip6 = mtod_ip6(m);
+                let mut sin6 = sa_sin6(&su_src);
+                sin6.sin6_addr = ip6.ip6_src;
+                su_src = sa_from_sin6(&sin6);
+                let mut sin6 = sa_sin6(&su_dst);
+                sin6.sin6_addr = ip6.ip6_dst;
+                su_dst = sa_from_sin6(&sin6);
+            }
+            // case 0: default to PF_INET; AF_INET
+            _ => {
+                let ip = mtod_ip(m);
+                let mut sin = su_src.sin();
+                sin.sin_addr = ip.ip_src;
+                su_src.set_sin(&sin);
+                let mut sin = su_dst.sin();
+                sin.sin_addr = ip.ip_dst;
+                su_dst.set_sin(&sin);
+            }
+        }
 
         let Some(tdb) = gettdbbysrcdst(
             rtable_l2(sc.sc_rtableid.get()),
@@ -4194,32 +4398,57 @@ fn syn_cache_respond(
 
     // Fill in some straggling IP bits. Note the stack expects ip_len to be in host order,
     // for convenience.
-    // INET6: ip6_vfc, in6_selecthlim and ip6_output for AF_INET6; not configured.
-    let mut ip = mtod_ip(m);
-    ip.ip_len = htons(tlen as u16);
-    ip.ip_ttl = match inp {
-        Some(i) => i.inp_ip.get().ip_ttl,
-        None => IP_DEFTTL.load(Ordering::Relaxed) as u8,
-    };
-    if let Some(i) = inp {
-        ip.ip_tos = i.inp_ip.get().ip_tos;
-    }
-    mtod_ip_store(m, &ip);
-
     let seclevel = inp.map(|i| i.inp_seclevel.get());
-    let error = ip_output(
-        m,
-        sc.sc_ipopts.get(),
-        Some(&sc.sc_route),
-        if ip_mtudisc.load(Ordering::Relaxed) != 0 {
-            IP_MTUDISC
-        } else {
-            0
-        },
-        None,
-        seclevel.as_ref(),
-        0,
-    );
+    let error = match family {
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            let mut ip6 = mtod_ip6(m);
+            ip6.set_ip6_vfc((ip6.ip6_vfc() & !IPV6_VERSION_MASK) | IPV6_VERSION);
+            // ip6_plen will be updated in ip6_output()
+            // `in6_selecthlim(NULL)` is `ip6_defhlim`
+            ip6.ip6_hlim = match inp {
+                Some(i) => in6_selecthlim(i),
+                None => IP6_DEFHLIM.load(Ordering::Relaxed),
+            } as u8;
+            // leave flowlabel = 0, it is legal and require no state mgmt
+            mtod_ip6_store(m, &ip6);
+
+            ip6_output(
+                m,
+                None, /* XXX */
+                Some(&sc.sc_route),
+                0,
+                None,
+                seclevel.as_ref(),
+            )
+        }
+        _ => {
+            let mut ip = mtod_ip(m);
+            ip.ip_len = htons(tlen as u16);
+            ip.ip_ttl = match inp {
+                Some(i) => i.inp_ip.get().ip_ttl,
+                None => IP_DEFTTL.load(Ordering::Relaxed) as u8,
+            };
+            if let Some(i) = inp {
+                ip.ip_tos = i.inp_ip.get().ip_tos;
+            }
+            mtod_ip_store(m, &ip);
+
+            ip_output(
+                m,
+                sc.sc_ipopts.get(),
+                Some(&sc.sc_route),
+                if ip_mtudisc.load(Ordering::Relaxed) != 0 {
+                    IP_MTUDISC
+                } else {
+                    0
+                },
+                None,
+                seclevel.as_ref(),
+                0,
+            )
+        }
+    };
     in_pcbunref(inp);
     error
 }
@@ -4366,9 +4595,24 @@ fn tcp_softlro_compare(head: &EtherExtracted, tail: &EtherExtracted) -> bool {
         if (head.iplen + tail.iplen) as usize > IP_MAXPACKET.wrapping_sub(max_linkhdr) {
             return false;
         }
+    } else if !head.ip6.is_null() && !tail.ip6.is_null() {
+        // SAFETY: `ether_extract_headers` found both IPv6 headers inside their mbufs.
+        let (hip6, tip6) = unsafe { (head.ip6.read_unaligned(), tail.ip6.read_unaligned()) };
+        // Check IPv6 addresses.
+        if !in6_are_addr_equal(&hip6.ip6_src, &tip6.ip6_src)
+            || !in6_are_addr_equal(&hip6.ip6_dst, &tip6.ip6_dst)
+        {
+            return false;
+        }
+
+        // Check max. IPv6 length.
+        let max_linkhdr = MAX_LINKHDR.load(Ordering::Relaxed) as usize;
+        if ((head.iplen - head.iphlen) + (tail.iplen - tail.iphlen)) as usize
+            > IPV6_MAXPACKET.wrapping_sub(max_linkhdr)
+        {
+            return false;
+        }
     } else {
-        // INET6: two IPv6 headers (addresses, IPV6_MAXPACKET); not configured, so
-        // ether_extract_headers never finds one.
         // Address family does not match.
         return false;
     }
@@ -4421,8 +4665,14 @@ fn tcp_softlro_concat(
             ip.ip_len = htons((head.iplen + tail.paylen) as u16);
             head.ip4.write_unaligned(ip);
         }
+    } else if !head.ip6.is_null() {
+        // SAFETY: `ether_extract_headers` found the head's IPv6 header inside its mbuf.
+        unsafe {
+            let mut ip6 = head.ip6.read_unaligned();
+            ip6.ip6_plen = htons((head.iplen - head.iphlen + tail.paylen) as u16);
+            head.ip6.write_unaligned(ip6);
+        }
     }
-    // INET6: ip6_plen of an IPv6 head; not configured.
 
     // SAFETY: the head's TCP header lies inside its mbuf (`ether_extract_headers`), the
     // tail's too; they are different mbufs.

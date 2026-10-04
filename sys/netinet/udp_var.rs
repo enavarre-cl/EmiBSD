@@ -44,8 +44,9 @@
 //!   (`struct cpumem *`, `<sys/percpu.h>` not ported) is the static array of atomics
 //!   `UDPCOUNTERS` in `netinet/udp_usrreq.rs`, which defines the C's pointer.
 //! - `UDPCTL_NAMES` (a `struct ctlname` table) comes with `<sys/sysctl.h>`.
-//! - `udbtable`, `udp_usrreqs` and the prototypes are `netinet/udp_usrreq.rs`'s; `udb6table`,
-//!   `udp6_usrreqs`, `udp6_ctlinput` and `udp6_output` are `INET6`, not configured.
+//! - `udbtable`, `udp_usrreqs` and the prototypes are `netinet/udp_usrreq.rs`'s, and so are
+//!   the `INET6` `udb6table`, `udp6_usrreqs` and `udp6_ctlinput` (compiled always, as
+//!   `netinet6` is); `udp6_output` is `netinet6/udp6_output.rs`'s.
 
 use core::mem::size_of;
 use core::sync::atomic::Ordering;

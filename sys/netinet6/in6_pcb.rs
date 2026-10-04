@@ -120,12 +120,6 @@
 //!   `read_unaligned` (no alignment guarantee).
 //! - `in6_pcbselsrc` returns the address by value, so `in6_pcbconnect` keeps a copy where
 //!   the C keeps a pointer.
-//! - `in_pcblookup_local_lock` and `in_pcbbind_locked` (`netinet/in_pcb.rs`) still take an
-//!   IPv4 local address (the C's `const void *laddr`): their `INET6` branches come with the
-//!   INET6 integration of `in_pcb.c`. The two call sites go through
-//!   `in_pcblookup_local_lock6` and `in_pcbbind_locked6`, which report the gap with
-//!   `unported!` (`ENOSYS`): binding an IPv6 socket to a non-zero port in
-//!   `in6_pcbaddrisavail_lock`, and the implicit bind of `in6_pcbconnect`, fail until then.
 //! - `in6_pcbnotify` takes `cmdarg` as the C does and, as the C does, does not use it.
 //! - `DIAGNOSTIC`'s `in_pcbnotifymiss` messages print the ports and routing domain (the C
 //!   prints no addresses either).
@@ -151,8 +145,9 @@ use crate::net::rtable::rtable_l2;
 use crate::net::toeplitz::stoeplitz_ip6port;
 use crate::netinet::in_pcb::{
     IN_PCBLOCK_GRAB, IN_PCBLOCK_HOLD, INP_IPV6, INPLOOKUP_IPV6, INPLOOKUP_WILDCARD, InpHash,
-    InpNotifyFn, Inpcb, InpcbIterator, Inpcbtable, in_pcb_iterator, in_pcbref, in_pcbrehash,
-    in_pcbrtchange, in_pcbsolock, in_pcbsounlock, in_pcbunref, sotoinpcb,
+    InpNotifyFn, Inpaddru, Inpcb, InpcbIterator, Inpcbtable, in_pcb_iterator, in_pcbbind_locked,
+    in_pcblookup_local_lock, in_pcbref, in_pcbrehash, in_pcbrtchange, in_pcbsolock, in_pcbsounlock,
+    in_pcbunref, sotoinpcb,
 };
 use crate::netinet::ip6::IPV6_FLOWLABEL_MASK;
 use crate::netinet6::in6::{
@@ -233,37 +228,6 @@ pub fn in6_pcbhash(
     SipHash24_End(&mut ctx)
 }
 
-/// `in_pcblookup_local_lock` with an IPv6 local address (the C passes `&sin6->sin6_addr`
-/// as its `const void *laddr`, with `INPLOOKUP_IPV6` in `flags`).
-///
-/// `netinet/in_pcb.rs` takes an `&InAddr` there until the INET6 integration of `in_pcb.c`
-/// generalizes it; the gap is reported here.
-fn in_pcblookup_local_lock6(
-    table: &Inpcbtable,
-    laddr: &In6Addr,
-    lport: u16,
-    flags: i32,
-    rtable: u32,
-    lock: i32,
-) -> Result<Option<&'static Inpcb>, Errno> {
-    let _ = (table, laddr, lport, flags, rtable, lock);
-    Err(crate::unported!(
-        "in_pcblookup_local_lock: IPv6 local address (in_pcb.c INET6)"
-    ))
-}
-
-/// `in_pcbbind_locked(inp, NULL, laddr, p)` with an IPv6 local address (the C's
-/// `const void *laddr`): picks a local port for `inp`.
-///
-/// `netinet/in_pcb.rs` takes an `&InAddr` there until the INET6 integration of `in_pcb.c`
-/// generalizes it; the gap is reported here.
-fn in_pcbbind_locked6(inp: &'static Inpcb, laddr: &In6Addr, p: &Proc) -> Result<(), Errno> {
-    let _ = (inp, laddr, p);
-    Err(crate::unported!(
-        "in_pcbbind_locked: IPv6 local address (in_pcb.c INET6)"
-    ))
-}
-
 /// `in6_pcbaddrisavail_lock`: whether `inp` may bind to `sin6` (an address of ours, not
 /// anycast nor unusable, and a port nobody else has, as `wild` and the reuse options
 /// allow); `lock` says whether the table mutex is held (`IN_PCBLOCK_HOLD`) or taken here
@@ -336,14 +300,14 @@ pub fn in6_pcbaddrisavail_lock(
     }
     if lport != 0 {
         if so.so_euid.get() != 0 && !in6_is_addr_multicast(&sin6.sin6_addr) {
-            let t = in_pcblookup_local_lock6(
+            let t = in_pcblookup_local_lock(
                 table,
-                &sin6.sin6_addr,
+                &Inpaddru::from_addr6(sin6.sin6_addr),
                 lport,
                 INPLOOKUP_WILDCARD | INPLOOKUP_IPV6,
                 inp.inp_rtableid.get(),
                 lock,
-            )?;
+            );
             let error = t.is_some_and(|t| so.so_euid.get() != t.socket().so_euid.get());
             if lock == IN_PCBLOCK_GRAB {
                 in_pcbunref(t);
@@ -352,14 +316,14 @@ pub fn in6_pcbaddrisavail_lock(
                 return Err(Errno::EADDRINUSE);
             }
         }
-        let t = in_pcblookup_local_lock6(
+        let t = in_pcblookup_local_lock(
             table,
-            &sin6.sin6_addr,
+            &Inpaddru::from_addr6(sin6.sin6_addr),
             lport,
             wild,
             inp.inp_rtableid.get(),
             lock,
-        )?;
+        );
         let error = t.is_some_and(|t| reuseport & t.socket().so_options.get() == 0);
         if lock == IN_PCBLOCK_GRAB {
             in_pcbunref(t);
@@ -448,7 +412,12 @@ pub fn in6_pcbconnect(inp: &'static Inpcb, nam: &Mbuf) -> Result<(), Errno> {
 
     if in6_is_addr_unspecified(&inp.inp_laddr6.get()) {
         if inp.inp_lport.get() == 0 {
-            if let Err(e) = in_pcbbind_locked6(inp, &in6a, curproc_or_panic("in6_pcbconnect")) {
+            if let Err(e) = in_pcbbind_locked(
+                inp,
+                None,
+                &Inpaddru::from_addr6(in6a),
+                curproc_or_panic("in6_pcbconnect"),
+            ) {
                 mtx_leave(&table.inpt_mtx);
                 return Err(e);
             }

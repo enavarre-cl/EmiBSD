@@ -95,7 +95,6 @@
 //! - `rip_sendspace`/`rip_recvspace` (`u_long`, no sysctl) are constants of the same names.
 //! - `NPF` (pf(4)) is configured: the divert-to key and `pf_mbuf_link_inpcb`. So is `IPSEC`
 //!   (M9c): `rip_output` passes the socket's `inp_seclevel` to `ip_output`.
-//! - Not configured, a comment at its site: `INET6`.
 
 use core::mem::size_of;
 use core::slice;
@@ -412,8 +411,9 @@ pub fn rip_output(
         mtod_ip_store(m, &ip);
     }
 
-    // INET6: a thought: even though raw IP shouldn't be able to set IPv6 multicast options,
-    // if it does, the last parameter to ip_output should be guarded against v6/v4 problems.
+    // A thought: Even though raw IP shouldn't be able to set IPv6 multicast options, if it
+    // does, the last parameter to ip_output should be guarded against v6/v4 problems.
+    // (`#ifdef INET6` around a comment in the C.)
 
     // force routing table
     m.m_pkthdr().ph_rtableid.set(inp.inp_rtableid.get());

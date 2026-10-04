@@ -41,7 +41,7 @@
 //!   C's `TAILQ_FOREACH` would read as control blocks.
 //! - `divert_output` with no address (which `sosend` never passes for an unconnected
 //!   `PR_ADDR` socket) fails with `EINVAL` where the C would dereference NULL.
-//! - The INET6 half (`divb6table`, `divert6_*`, `netinet6/ip6_divert.c`) is not configured.
+//! - The IPv6 half (`divb6table`, `divert6_*`) is `netinet6/ip6_divert.rs`.
 
 use core::mem::size_of;
 use core::ptr;

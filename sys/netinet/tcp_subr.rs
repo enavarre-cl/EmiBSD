@@ -110,8 +110,13 @@
 //!   16-byte digest array; the pseudo header and the TCP header are hashed as the bytes the
 //!   C's structures hold, written out field by field (no `unsafe` view of a struct).
 //!   `tcp_signature_apply` is the closure handed to `m_apply`.
-//! - `max_protohdr`/`MHLEN` checks, `icmp6_mtudisc_callback_register`, `tcp6_ctlinput` and
-//!   `tcp6_mtudisc_callback` are `INET6`, which is not configured (comments at the sites).
+//! - `INET6` is configured (feature `inet6`): the IPv6 cases of `tcp_init` (the
+//!   `max_protohdr`/`MHLEN` checks, `icmp6_mtudisc_callback_register`), `tcp_template`,
+//!   `tcp_respond` (its two header pointers are the enum `RespondHdr`), `tcp_newtcpcb` and
+//!   `tcp_signature`. `tcp6_ctlinput` and `tcp6_mtudisc_callback` compile always, as
+//!   `netinet6` does (`inet6sw` names the former), like `route6_mpath`.
+//! - `tcp_respond` without a control block uses `ip6_defhlim`, what the C's
+//!   `in6_selecthlim(NULL)` returns (`in6_selecthlim` takes a `&Inpcb` here).
 
 use core::ffi::c_void;
 use core::mem::{offset_of, size_of};
@@ -127,7 +132,7 @@ use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::malloc;
 use crate::kern::kern_synch::wakeup;
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put, pool_sethardlimit};
-use crate::kern::uipc_mbuf::{MAX_LINKHDR, m_apply, m_free, m_freem, m_get, m_gethdr};
+use crate::kern::uipc_mbuf::{MAX_LINKHDR, m_apply, m_copydata, m_free, m_freem, m_get, m_gethdr};
 use crate::kern::uipc_socket::{sorwakeup, sowwakeup};
 use crate::kern::uipc_socket2::{soassertlocked, soisdisconnected};
 use crate::machine::intr::IPL_SOFTNET;
@@ -146,6 +151,8 @@ use crate::netinet::ip_input::{INETCTLERRMAP, IP_DEFTTL, ip_mtudisc};
 use crate::netinet::ip_ipsp::{IpsecInit, Tdb, Xformsw};
 use crate::netinet::ip_output::ip_output;
 use crate::netinet::ip_var::{IP_MTUDISC, Ipovly, mtod_ip};
+#[cfg(feature = "inet6")]
+use crate::netinet::ip6::IPV6_FLOWLABEL_MASK;
 use crate::netinet::tcp::{
     TCP_MAX_WINSHIFT, TCP_MAXWIN, TCP_MSS, TCPOLEN_TSTAMP_APPA, TCPOPT_TSTAMP_HDR, TH_ACK, TH_RST,
     TcpSeq, Tcphdr,
@@ -162,13 +169,21 @@ use crate::netinet::tcp_timer::{
     TCPT_NTIMERS, TCPTV_MIN, TCPTV_REXMTMAX, TCPTV_SRTTBASE, TCPTV_SRTTDFLT, tcp_canceltimers,
     tcp_timer_init, tcpt_rangeset,
 };
-use crate::netinet::tcp_usrreq::TCBTABLE;
+use crate::netinet::tcp_usrreq::{TCB6TABLE, TCBTABLE};
 use crate::netinet::tcp_var::{
     Sackhole, TCP_RTT_BASE_SHIFT, TCP_RTTVAR_SHIFT, TCPS_NCOUNTERS, TF_NOOPT, TF_PMTUD_PEND,
     TF_RCVD_TSTMP, TF_REQ_SCALE, TF_REQ_TSTMP, Tcpcb, Tcpqent, TcpstatCounters, intotcpcb,
     tcp_rexmtval, tcpstat_inc,
 };
-use crate::sys::endian::{htonl, htons, ntohs};
+use crate::netinet6::icmp6::icmp6_mtudisc_update;
+use crate::netinet6::in6::{
+    SA6_ANY, SockaddrIn6, in6_is_addr_unspecified, in6_is_addr_v4mapped, satosin6_const,
+    sin6tosa_const,
+};
+use crate::netinet6::in6_pcb::{in6_pcblookup, in6_pcbnotify};
+use crate::netinet6::ip6_input::INET6CTLERRMAP;
+use crate::netinet6::ip6protosw::Ip6ctlparam;
+use crate::sys::endian::{htonl, htons, ntohl, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_NOWAIT, M_XDATA};
 use crate::sys::mbuf::{M_DONTWAIT, M_TCP_CSUM_OUT, M_WAIT, MT_HEADER, Mbuf, m_freemp, mtod};
@@ -179,12 +194,28 @@ use crate::sys::protosw::{
     PRC_HOSTDEAD, PRC_MSGSIZE, PRC_MTUINC, PRC_NCMDS, PRC_QUENCH, prc_is_redirect,
 };
 use crate::sys::socket::{AF_INET, AF_INET6, PF_INET, Sockaddr};
+#[cfg(feature = "inet6")]
+use crate::{
+    kern::uipc_mbuf::MAX_PROTOHDR,
+    netinet::in_pcb::INP_IPV6,
+    netinet::ip6::{Ip6Hdr, Ip6HdrPseudo},
+    netinet6::icmp6::icmp6_mtudisc_callback_register,
+    netinet6::in6_proto::IP6_DEFHLIM,
+    netinet6::in6_src::{in6_clearscope, in6_selecthlim},
+    netinet6::ip6_output::ip6_output,
+    netinet6::ip6_var::mtod_ip6,
+    sys::mbuf::MHLEN,
+    sys::socket::PF_INET6,
+};
 
 /// `TCB_INITIAL_HASH_SIZE`.
 const TCB_INITIAL_HASH_SIZE: i32 = 128;
 
 /// `AF_INET` as the `int` of `tp->pf` and of the functions' `af` arguments.
 const AF_INET_I32: i32 = AF_INET as i32;
+/// `AF_INET6` as the `int` of `tp->pf` and of the functions' `af` arguments.
+#[cfg(feature = "inet6")]
+const AF_INET6_I32: i32 = AF_INET6 as i32;
 
 /// `TCP_ISS_CONN_INC`: the step of `tcp_iss` per connection.
 const TCP_ISS_CONN_INC: u32 = 4096;
@@ -280,7 +311,8 @@ pub fn tcp_init() {
         tcp_sackhole_limit.load(Ordering::Relaxed) as u32,
     );
     in_pcbinit(&TCBTABLE, TCB_INITIAL_HASH_SIZE);
-    // INET6: in_pcbinit(&tcb6table, TCB_INITIAL_HASH_SIZE); not configured.
+    #[cfg(feature = "inet6")]
+    in_pcbinit(&TCB6TABLE, TCB_INITIAL_HASH_SIZE);
     // tcpcounters = counters_alloc(tcps_ncounters): a static array of atomics.
 
     // SAFETY: `tcp_init` runs once, from `domaininit` at boot, before any connection reads
@@ -294,8 +326,20 @@ pub fn tcp_init() {
         *TCP_SECRET_CTX.get_mut() = Some(ctx);
     }
 
-    // INET6: max_protohdr for ip6_hdr + tcphdr, the MHLEN check and
-    // icmp6_mtudisc_callback_register(tcp6_mtudisc_callback); not configured.
+    #[cfg(feature = "inet6")]
+    {
+        // Since sizeof(struct ip6_hdr) > sizeof(struct ip), we do max length
+        // checks/computations only on the former.
+        let hdrs = (size_of::<Ip6Hdr>() + size_of::<Tcphdr>()) as i32;
+        if MAX_PROTOHDR.load(Ordering::Relaxed) < hdrs {
+            MAX_PROTOHDR.store(hdrs, Ordering::Relaxed);
+        }
+        if (MAX_LINKHDR.load(Ordering::Relaxed) + hdrs) as usize > MHLEN {
+            crate::kern::subr_prf::panic(format_args!("tcp_init"));
+        }
+
+        icmp6_mtudisc_callback_register(tcp6_mtudisc_callback);
+    }
 
     // Initialize the compressed state engine.
     syn_cache_init();
@@ -343,7 +387,8 @@ pub fn tcp_template(tp: &Tcpcb) -> Option<&'static Mbuf> {
             match tp.pf.get() {
                 // default to PF_INET
                 0 | AF_INET_I32 => m.m_len().set(size_of::<Ip>() as u32),
-                // INET6: AF_INET6: sizeof(struct ip6_hdr); not configured.
+                #[cfg(feature = "inet6")]
+                AF_INET6_I32 => m.m_len().set(size_of::<Ip6Hdr>() as u32),
                 _ => {}
             }
             m.m_len().set(m.m_len().get() + size_of::<Tcphdr>() as u32);
@@ -365,7 +410,21 @@ pub fn tcp_template(tp: &Tcpcb) -> Option<&'static Mbuf> {
             unsafe { mbuf_put(m, 0, ipovly) };
             size_of::<Ip>()
         }
-        // INET6: AF_INET6 fills an ip6_hdr; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6_I32 => {
+            let ip6 = Ip6Hdr {
+                ip6_src: inp.inp_laddr6.get(),
+                ip6_dst: inp.inp_faddr6.get(),
+                ip6_flow: htonl(0x6000_0000) | (inp.inp_flowinfo() & IPV6_FLOWLABEL_MASK),
+                ip6_nxt: IPPROTO_TCP as u8,
+                ip6_plen: htons(size_of::<Tcphdr>() as u16), // XXX
+                ip6_hlim: in6_selecthlim(inp) as u8,         // XXX
+            };
+            // SAFETY: an `MT_HEADER` mbuf holds `MLEN` bytes, more than an IPv6 and a TCP
+            // header (the C's CTASSERT).
+            unsafe { mbuf_put(m, 0, ip6) };
+            size_of::<Ip6Hdr>()
+        }
         pf => unhandled_af(pf),
     };
 
@@ -379,6 +438,15 @@ pub fn tcp_template(tp: &Tcpcb) -> Option<&'static Mbuf> {
     // SAFETY: as above.
     unsafe { mbuf_put(m, thoff, th) };
     Some(m)
+}
+
+/// The network header `tcp_respond` builds: the C's `ip` or `ip6` pointer into the mbuf.
+enum RespondHdr {
+    /// `struct ip`.
+    V4(Ip),
+    /// `struct ip6_hdr` (`INET6`).
+    #[cfg(feature = "inet6")]
+    V6(Ip6Hdr),
 }
 
 /// `tcp_respond`: send a single message to the TCP at address specified by the given TCP/IP
@@ -430,8 +498,20 @@ pub fn tcp_respond(
             .wrapping_add(MAX_LINKHDR.load(Ordering::Relaxed) as usize),
     );
 
-    let (mut ip, mut th, mut tlen) = match af {
-        // INET6: AF_INET6 builds an ip6_hdr; not configured.
+    let (nh, mut th, mut tlen, thoff) = match af {
+        #[cfg(feature = "inet6")]
+        AF_INET6_I32 => {
+            let tlen = size_of::<Ip6Hdr>() + size_of::<Tcphdr>();
+            let mut ip6: Ip6Hdr = read_from(template);
+            let th = match th0 {
+                Some(th0) => {
+                    core::mem::swap(&mut ip6.ip6_dst, &mut ip6.ip6_src);
+                    *th0
+                }
+                None => read_from(&template[size_of::<Ip6Hdr>().min(template.len())..]),
+            };
+            (RespondHdr::V6(ip6), th, tlen, size_of::<Ip6Hdr>())
+        }
         AF_INET_I32 => {
             let tlen = size_of::<Ip>() + size_of::<Tcphdr>();
             let mut ip: Ip = read_from(template);
@@ -442,7 +522,7 @@ pub fn tcp_respond(
                 }
                 None => read_from(&template[size_of::<Ip>().min(template.len())..]),
             };
-            (ip, th, tlen)
+            (RespondHdr::V4(ip), th, tlen, size_of::<Ip>())
         }
         af => unhandled_af(af),
     };
@@ -467,7 +547,6 @@ pub fn tcp_respond(
     th.th_urp = 0;
 
     let ipoff = 0;
-    let thoff = size_of::<Ip>();
     if let Some(tp) = tp
         && tp.t_flags.get() & (TF_REQ_TSTMP | TF_NOOPT) == TF_REQ_TSTMP
         && flags & TH_RST == 0
@@ -499,31 +578,63 @@ pub fn tcp_respond(
         None => ph.ph_rtableid.set(rtableid),
     }
 
-    // INET6: AF_INET6 sets the ip6 flow, next header, hop limit and payload length and
-    // calls ip6_output; not configured.
-    ip.ip_len = htons(tlen as u16);
-    ip.ip_ttl = IP_DEFTTL.load(Ordering::Relaxed) as u8;
-    ip.ip_tos = 0;
-    // SAFETY: as for the option above.
-    unsafe {
-        mbuf_put(m, ipoff, ip);
-        mbuf_put(m, thoff, th);
-    }
     let seclevel = tp.map(|tp| tp.t_inpcb.inp_seclevel.get());
-    // The C ignores the result: a lost reply is a lost segment.
-    let _ = ip_output(
-        m,
-        None,
-        tp.map(|tp| &tp.t_inpcb.inp_route),
-        if ip_mtudisc.load(Ordering::Relaxed) != 0 {
-            IP_MTUDISC
-        } else {
-            0
-        },
-        None,
-        seclevel.as_ref(),
-        0,
-    );
+    match nh {
+        #[cfg(feature = "inet6")]
+        RespondHdr::V6(mut ip6) => {
+            ip6.ip6_flow = htonl(0x6000_0000);
+            ip6.ip6_nxt = IPPROTO_TCP as u8;
+            // XXX; `in6_selecthlim(NULL)` is `ip6_defhlim`
+            ip6.ip6_hlim = match tp {
+                Some(tp) => in6_selecthlim(tp.t_inpcb),
+                None => IP6_DEFHLIM.load(Ordering::Relaxed),
+            } as u8;
+            ip6.ip6_plen = htons((tlen - size_of::<Ip6Hdr>()) as u16);
+            // SAFETY: as for the option above.
+            unsafe {
+                mbuf_put(m, ipoff, ip6);
+                mbuf_put(m, thoff, th);
+            }
+            let opts = tp.and_then(|tp| tp.t_inpcb.inp_outputopts6.get()).map(|o| {
+                // SAFETY: the options are the socket's own allocation (`ip6_setpktopts`),
+                // freed only under the socket lock the caller holds with `tp`.
+                unsafe { o.as_ref() }
+            });
+            // The C ignores the result: a lost reply is a lost segment.
+            let _ = ip6_output(
+                m,
+                opts,
+                tp.map(|tp| &tp.t_inpcb.inp_route),
+                0,
+                None,
+                seclevel.as_ref(),
+            );
+        }
+        RespondHdr::V4(mut ip) => {
+            ip.ip_len = htons(tlen as u16);
+            ip.ip_ttl = IP_DEFTTL.load(Ordering::Relaxed) as u8;
+            ip.ip_tos = 0;
+            // SAFETY: as for the option above.
+            unsafe {
+                mbuf_put(m, ipoff, ip);
+                mbuf_put(m, thoff, th);
+            }
+            // The C ignores the result: a lost reply is a lost segment.
+            let _ = ip_output(
+                m,
+                None,
+                tp.map(|tp| &tp.t_inpcb.inp_route),
+                if ip_mtudisc.load(Ordering::Relaxed) != 0 {
+                    IP_MTUDISC
+                } else {
+                    0
+                },
+                None,
+                seclevel.as_ref(),
+                0,
+            );
+        }
+    }
 }
 
 /// `tcp_newtcpcb`: create a new TCP control block, making an empty reassembly queue and
@@ -569,8 +680,19 @@ pub fn tcp_newtcpcb(inp: &'static Inpcb, wait: i32) -> Option<&'static Tcpcb> {
     tp.t_pmtud_mtu_sent.set(0);
     tp.t_pmtud_mss_acked.set(0);
 
-    // INET6: PF_INET6 and ip6_defhlim for INP_IPV6; not configured.
-    {
+    #[cfg(feature = "inet6")]
+    let inet6 = inp.has_flags(INP_IPV6);
+    #[cfg(not(feature = "inet6"))]
+    let inet6 = false;
+    if inet6 {
+        #[cfg(feature = "inet6")]
+        {
+            tp.pf.set(i32::from(PF_INET6));
+            let mut ip6 = inp.inp_ipv6.get();
+            ip6.ip6_hlim = IP6_DEFHLIM.load(Ordering::Relaxed) as u8;
+            inp.inp_ipv6.set(ip6);
+        }
+    } else {
         tp.pf.set(i32::from(PF_INET));
         let mut ip = inp.inp_ip.get();
         ip.ip_ttl = IP_DEFTTL.load(Ordering::Relaxed) as u8;
@@ -687,7 +809,140 @@ pub fn tcp_notify(inp: &'static Inpcb, error: Option<Errno>) {
     sowwakeup(so);
 }
 
-// INET6: tcp6_ctlinput; not configured.
+/// `tcp6_ctlinput`: an ICMPv6 error about a segment we sent; `d` is the `Ip6ctlparam` of
+/// `icmp6_notify_error` (or NULL). `INET6`; compiled always, as `netinet6` is, for
+/// `inet6sw`.
+///
+/// # Safety
+///
+/// `sa` points to a readable socket address of its `sa_len` bytes; `d` is NULL or the
+/// `Ip6ctlparam` of the ICMPv6 error, valid for the call.
+pub unsafe fn tcp6_ctlinput(cmd: i32, sa: *const Sockaddr, rdomain: u32, d: *mut c_void) {
+    let mut d = d;
+    let mut notify: InpNotifyFn = tcp_notify;
+
+    // SAFETY: the caller's contract: a readable socket address.
+    let (family, len) = unsafe { ((*sa).sa_family, (*sa).sa_len) };
+    if family != AF_INET6 || usize::from(len) != size_of::<SockaddrIn6>() {
+        return;
+    }
+    // SAFETY: a whole `sockaddr_in6` (checked), read unaligned.
+    let sa6 = unsafe { satosin6_const(sa).read_unaligned() };
+    if in6_is_addr_unspecified(&sa6.sin6_addr) || in6_is_addr_v4mapped(&sa6.sin6_addr) {
+        return;
+    }
+    if cmd as u32 as usize >= PRC_NCMDS {
+        return;
+    } else if cmd == PRC_QUENCH {
+        // Don't honor ICMP Source Quench messages meant for TCP connections.
+        // XXX there's no PRC_QUENCH in IPv6
+        return;
+    } else if prc_is_redirect(cmd) {
+        notify = in_pcbrtchange;
+        d = ptr::null_mut();
+    } else if cmd == PRC_MSGSIZE {
+        // special code is present, see below
+    } else if cmd == PRC_HOSTDEAD {
+        d = ptr::null_mut();
+    } else if INET6CTLERRMAP[cmd as usize].is_none() {
+        return;
+    }
+
+    // if the parameter is from icmp6, decode it.
+    let ip6cp: Option<&Ip6ctlparam> = if d.is_null() {
+        None
+    } else {
+        // SAFETY: the caller's contract: a non-NULL `d` is the ICMPv6 error's parameter.
+        Some(unsafe { &*d.cast::<Ip6ctlparam>() })
+    };
+    let (m, ip6, off, sa6_src) = match ip6cp {
+        Some(p) => (
+            p.ip6c_m,
+            p.ip6c_ip6,
+            p.ip6c_off,
+            // SAFETY: `icmp6_notify_error` points `ip6c_src` at its source address, valid
+            // for the call; read unaligned.
+            (!p.ip6c_src.is_null()).then(|| unsafe { p.ip6c_src.read_unaligned() }),
+        ),
+        None => (None, ptr::null_mut(), 0, Some(SA6_ANY)),
+    };
+    let sa6_src = sa6_src.unwrap_or(SA6_ANY);
+
+    if !ip6.is_null() {
+        // XXX: We assume that when ip6 is non NULL, M and OFF are valid.
+        let Some(m) = m else {
+            return;
+        };
+
+        // check if we can safely examine src and dst ports
+        if (m.m_pkthdr().len.get() as usize) < off as usize + 8 {
+            return;
+        }
+
+        let mut b = [0u8; 8];
+        m_copydata(m, off, &mut b);
+        // SAFETY: eight readable bytes.
+        let th = unsafe { th_read8(b.as_ptr()) };
+
+        // Check to see if we have a valid TCP connection corresponding to the address in
+        // the ICMPv6 message payload.
+        let inp = in6_pcblookup(
+            &TCB6TABLE,
+            &sa6.sin6_addr,
+            th.th_dport,
+            &sa6_src.sin6_addr,
+            th.th_sport,
+            rdomain,
+        );
+        if cmd == PRC_MSGSIZE {
+            // Depending on the value of "valid" and routing table size (mtudisc_{hi,lo}wat),
+            // we will:
+            // - recalculate the new MTU and create the corresponding routing entry, or
+            // - ignore the MTU change notification.
+            if let Some(p) = ip6cp {
+                icmp6_mtudisc_update(p, inp.is_some());
+            }
+            in_pcbunref(inp);
+            return;
+        }
+        let so = inp.and_then(in_pcbsolock);
+        let mut tp = None;
+        if so.is_some() {
+            tp = inp.and_then(intotcpcb);
+        }
+        if let (Some(t), Some(i)) = (tp, inp) {
+            let seq = ntohl(th.th_seq);
+            if seq_geq(seq, t.snd_una.get()) && seq_lt(seq, t.snd_max.get()) {
+                notify(i, INET6CTLERRMAP[cmd as usize]);
+            }
+        }
+        in_pcbsounlock(inp, so);
+        in_pcbunref(inp);
+
+        let err = INET6CTLERRMAP[cmd as usize];
+        if tp.is_none()
+            && matches!(
+                err,
+                Some(Errno::EHOSTUNREACH | Errno::ENETUNREACH | Errno::EHOSTDOWN)
+            )
+        {
+            // SAFETY: both addresses are readable `sockaddr_in6`s (a local and the caller's).
+            unsafe { syn_cache_unreach(sin6tosa_const(ptr::from_ref(&sa6_src)), sa, &th, rdomain) };
+        }
+    } else {
+        in6_pcbnotify(
+            &TCB6TABLE,
+            &sa6,
+            0,
+            Some(&sa6_src),
+            0,
+            rdomain,
+            cmd,
+            ptr::null_mut(),
+            Some(notify),
+        );
+    }
+}
 
 /// The returned TCP header's first eight bytes (ports and sequence number) at `p`, as a
 /// header whose other members are zero.
@@ -875,7 +1130,21 @@ pub unsafe fn tcp_ctlinput(cmd: i32, sa: *const Sockaddr, rdomain: u32, v: *mut 
     }
 }
 
-// INET6: tcp6_mtudisc_callback; not configured.
+/// `tcp6_mtudisc_callback`: path MTU discovery handler of `icmp6_mtudisc_update`.
+/// `INET6`; compiled always, as `netinet6` is.
+pub fn tcp6_mtudisc_callback(sin6: &SockaddrIn6, rdomain: u32) {
+    in6_pcbnotify(
+        &TCB6TABLE,
+        sin6,
+        0,
+        Some(&SA6_ANY),
+        0,
+        rdomain,
+        PRC_MSGSIZE,
+        ptr::null_mut(),
+        Some(tcp_mtudisc),
+    );
+}
 
 /// `tcp_mtudisc`: on receipt of path MTU corrections, flush old route and replace it with the
 /// new one. Retransmit all unacknowledged packets, to ensure that all packets will be
@@ -948,9 +1217,13 @@ pub fn tcp_set_iss_tsm(tp: &Tcpcb) {
     SHA512Update(&mut ctx, &rdomain.to_ne_bytes());
     SHA512Update(&mut ctx, &inp.inp_lport.get().to_ne_bytes());
     SHA512Update(&mut ctx, &inp.inp_fport.get().to_ne_bytes());
-    // INET6: the IPv6 addresses for AF_INET6; not configured.
-    SHA512Update(&mut ctx, &inp.inp_laddr.get().s_addr.to_ne_bytes());
-    SHA512Update(&mut ctx, &inp.inp_faddr.get().s_addr.to_ne_bytes());
+    if tp.pf.get() == i32::from(AF_INET6) {
+        SHA512Update(&mut ctx, &inp.inp_laddr6.get().s6_addr);
+        SHA512Update(&mut ctx, &inp.inp_faddr6.get().s6_addr);
+    } else {
+        SHA512Update(&mut ctx, &inp.inp_laddr.get().s_addr.to_ne_bytes());
+        SHA512Update(&mut ctx, &inp.inp_faddr.get().s_addr.to_ne_bytes());
+    }
     let mut digest = [0u8; SHA512_DIGEST_LENGTH];
     SHA512Final(&mut digest, &mut ctx);
     let word =
@@ -1073,7 +1346,26 @@ pub fn tcp_signature(
             b[10..12].copy_from_slice(&ippseudo.ippseudo_len.to_ne_bytes());
             MD5Update(&mut ctx, &b);
         }
-        // INET6: AF_INET6 hashes an ip6_hdr_pseudo; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6_I32 => {
+            let ip6 = mtod_ip6(m);
+            let mut ip6pseudo = Ip6HdrPseudo {
+                ip6ph_src: ip6.ip6_src,
+                ip6ph_dst: ip6.ip6_dst,
+                ip6ph_len: htonl((m.m_pkthdr().len.get() - iphlen) as u32),
+                ip6ph_zero: [0; 3],
+                ip6ph_nxt: IPPROTO_TCP as u8,
+            };
+            in6_clearscope(&mut ip6pseudo.ip6ph_src);
+            in6_clearscope(&mut ip6pseudo.ip6ph_dst);
+            let mut b = [0u8; 40];
+            b[0..16].copy_from_slice(&ip6pseudo.ip6ph_src.s6_addr);
+            b[16..32].copy_from_slice(&ip6pseudo.ip6ph_dst.s6_addr);
+            b[32..36].copy_from_slice(&ip6pseudo.ip6ph_len.to_ne_bytes());
+            b[36..39].copy_from_slice(&ip6pseudo.ip6ph_zero);
+            b[39] = ip6pseudo.ip6ph_nxt;
+            MD5Update(&mut ctx, &b);
+        }
         _ => {}
     }
 

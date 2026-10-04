@@ -115,8 +115,10 @@
 //! - `tcp_if_output_tso` calls `ifp->if_output` through the hook in `if_output` (a missing
 //!   hook panics, where the C would jump through NULL); a NULL `*mp` returns 0, which the C
 //!   does not check.
-//! - Not configured, each a comment at its site: `INET6` (the `PF_INET6`/`AF_INET6` cases,
-//!   `ip6_output`, `in6_selecthlim`, the IPv6 TSO and checksum paths), `TCPDEBUG` (the
+//! - `INET6` is configured (feature `inet6`): the `PF_INET6`/`AF_INET6` cases with
+//!   `ip6_output` and `in6_selecthlim`, and the IPv6 cases of `tcp_softtso_chop` and
+//!   `tcp_if_output_tso` (`in6_proto_cksum_out`, `IFCAP_TSOv6`).
+//! - Not configured, a comment at its site: `TCPDEBUG` (the
 //!   `SO_DEBUG` trace calls `tcp_trace` of `tcp_debug.rs`, as the C does without it).
 //!   Configured: `TCP_ECN`, `TCP_SIGNATURE` (with `IPSEC`: `gettdbbysrcdst`), `NPF`
 //!   (`pf_mbuf_link_inpcb`), `NSTOEPLITZ` (the flow id; pf needs `stoeplitz`). `DIAGNOSTIC`
@@ -146,6 +148,7 @@ use crate::netinet::ip_input::ip_mtudisc;
 use crate::netinet::ip_ipsp::{SockaddrUnion, gettdbbysrcdst, tdb_unref};
 use crate::netinet::ip_output::{in_hdr_cksum_out, in_ifcap_cksum, in_proto_cksum_out, ip_output};
 use crate::netinet::ip_var::{IP_MTUDISC, mtod_ip, mtod_ip_store};
+use crate::netinet::ip6::Ip6Hdr;
 use crate::netinet::tcp::{
     MAX_TCPOPTLEN, TCP_MAX_SACK, TCP_MAXWIN, TCPOLEN_SACK, TCPOLEN_SIGLEN, TCPOLEN_SIGNATURE,
     TCPOLEN_TSTAMP_APPA, TCPOLEN_WINDOW, TCPOPT_MAXSEG, TCPOPT_NOP, TCPOPT_SACK_HDR,
@@ -178,6 +181,15 @@ use crate::sys::mbuf::{
 };
 use crate::sys::socket::{AF_INET, PF_INET, SO_DEBUG, Sockaddr};
 use crate::sys::socketvar::{Socket, sbspace_locked, soissending};
+#[cfg(feature = "inet6")]
+use crate::{
+    net::if_::IFCAP_TSOv6,
+    netinet6::in6::{In6Addr, SockaddrIn6},
+    netinet6::in6_src::in6_selecthlim,
+    netinet6::ip6_output::{in6_proto_cksum_out, ip6_output},
+    netinet6::ip6_var::{mtod_ip6, mtod_ip6_store},
+    sys::socket::{AF_INET6, PF_INET6},
+};
 
 /// `tcp_print_holes` (`TCP_SACK_DEBUG`): prints the sender's SACK holes.
 #[cfg(feature = "tcp_sack_debug")]
@@ -595,8 +607,8 @@ pub fn tcp_output(tp: &'static Tcpcb) -> Result<(), Errno> {
             pf if pf == 0 || pf == i32::from(PF_INET) => {
                 (size_of::<Ip>() + size_of::<Tcphdr>()) as u32
             }
-            // INET6: PF_INET6, sizeof(struct ip6_hdr) + sizeof(struct tcphdr); not
-            // configured.
+            #[cfg(feature = "inet6")]
+            pf if pf == i32::from(PF_INET6) => (size_of::<Ip6Hdr>() + size_of::<Tcphdr>()) as u32,
             _ => return Err(Errno::EPFNOSUPPORT),
         };
 
@@ -948,21 +960,40 @@ pub fn tcp_output(tp: &'static Tcpcb) -> Result<(), Errno> {
 
             // TCP_SIGNATURE
             if tp.has_flags(TF_SIGNATURE) {
-                // tp->pf is 0 (default to PF_INET) or AF_INET: the switch above returned
-                // EPFNOSUPPORT for any other. INET6: AF_INET6 with the ip6_hdr addresses;
-                // not configured.
-                let iphlen = size_of::<Ip>() as i32;
-                let ip = mtod_ip(m);
-                let su = |addr: InAddr| {
-                    SockaddrUnion::from_sin(&SockaddrIn {
-                        sin_len: size_of::<SockaddrIn>() as u8,
-                        sin_family: AF_INET,
-                        sin_addr: addr,
-                        ..SockaddrIn::default()
-                    })
+                // tp->pf is 0 (default to PF_INET), AF_INET or AF_INET6: the switch above
+                // returned EPFNOSUPPORT for any other.
+                let (iphlen, src, dst) = match tp.pf.get() {
+                    #[cfg(feature = "inet6")]
+                    pf if pf == i32::from(AF_INET6) => {
+                        let ip6 = mtod_ip6(m);
+                        let su = |addr: In6Addr| {
+                            let sin6 = SockaddrIn6::with_addr(addr);
+                            let mut su = SockaddrUnion::new();
+                            // SAFETY: `SockaddrIn6` is `#[repr(C)]` without padding, as
+                            // large as the union.
+                            su.as_bytes_mut().copy_from_slice(unsafe {
+                                slice::from_raw_parts(
+                                    ptr::from_ref(&sin6).cast::<u8>(),
+                                    size_of::<SockaddrIn6>(),
+                                )
+                            });
+                            su
+                        };
+                        (size_of::<Ip6Hdr>() as i32, su(ip6.ip6_src), su(ip6.ip6_dst))
+                    }
+                    _ => {
+                        let ip = mtod_ip(m);
+                        let su = |addr: InAddr| {
+                            SockaddrUnion::from_sin(&SockaddrIn {
+                                sin_len: size_of::<SockaddrIn>() as u8,
+                                sin_family: AF_INET,
+                                sin_addr: addr,
+                                ..SockaddrIn::default()
+                            })
+                        };
+                        (size_of::<Ip>() as i32, su(ip.ip_src), su(ip.ip_dst))
+                    }
                 };
-                let src = su(ip.ip_src);
-                let dst = su(ip.ip_dst);
 
                 let Some(tdb) = gettdbbysrcdst(
                     rtable_l2(inp.inp_rtableid.get()),
@@ -1119,9 +1150,30 @@ pub fn tcp_output(tp: &'static Tcpcb) -> Result<(), Errno> {
             let ph = m.m_pkthdr();
             ph.csum_flags.set(ph.csum_flags.get() | M_FLOWID);
 
-            // tp->pf is 0 (default to PF_INET) or AF_INET here. INET6: AF_INET6 fills the
-            // ip6_hdr (ip6_plen, ip6_nxt, in6_selecthlim, the ECT bit in ip6_flow) and calls
-            // ip6_output; not configured.
+            #[cfg(feature = "inet6")]
+            if tp.pf.get() == i32::from(AF_INET6) {
+                let mut ip6 = mtod_ip6(m);
+                ip6.ip6_plen = (m.m_pkthdr().len.get() as usize - size_of::<Ip6Hdr>()) as u16;
+                packetlen = m.m_pkthdr().len.get() as u32;
+                ip6.ip6_nxt = IPPROTO_TCP as u8;
+                ip6.ip6_hlim = in6_selecthlim(inp) as u8;
+                if needect {
+                    ip6.ip6_flow |= htonl(u32::from(IPTOS_ECN_ECT0) << 20);
+                }
+                mtod_ip6_store(m, &ip6);
+                // SAFETY: the options are the socket's own allocation (`ip6_setpktopts`),
+                // freed only under the socket lock `tcp_output` runs with.
+                let opts = inp.inp_outputopts6.get().map(|o| unsafe { o.as_ref() });
+                break 'out ip6_output(
+                    m,
+                    opts,
+                    Some(&inp.inp_route),
+                    0,
+                    None,
+                    Some(&inp.inp_seclevel.get()),
+                );
+            }
+            // case 0: default to PF_INET; AF_INET
             let mut ip = mtod_ip(m);
             ip.ip_len = htons(m.m_pkthdr().len.get() as u16);
             packetlen = m.m_pkthdr().len.get() as u32;
@@ -1244,23 +1296,32 @@ pub fn tcp_softtso_chop(
             break 'bad Errno::EINVAL;
         }
 
-        let mut ip = mtod_ip(m0);
-        let iphlen: usize = match ip.ip_v() {
+        let ip0 = mtod_ip(m0);
+        let (ip, ip6, iphlen): (Option<Ip>, Option<Ip6Hdr>, usize) = match ip0.ip_v() {
             4 => {
-                let iphlen = usize::from(ip.ip_hl()) << 2;
-                if ip.ip_off & htons(IP_OFFMASK | IP_MF) != 0
+                let iphlen = usize::from(ip0.ip_hl()) << 2;
+                if ip0.ip_off & htons(IP_OFFMASK | IP_MF) != 0
                     || iphlen != size_of::<Ip>()
-                    || i32::from(ip.ip_p) != IPPROTO_TCP
+                    || i32::from(ip0.ip_p) != IPPROTO_TCP
                 {
                     // only TCP without fragment or IP option supported
                     break 'bad Errno::EPROTOTYPE;
                 }
-                iphlen
+                (Some(ip0), None, iphlen)
             }
-            // INET6: case 6, the ip6_hdr with ip6_nxt IPPROTO_TCP (EPROTOTYPE otherwise);
-            // not configured.
+            #[cfg(feature = "inet6")]
+            6 => {
+                let ip6 = mtod_ip6(m0);
+                if i32::from(ip6.ip6_nxt) != IPPROTO_TCP {
+                    // only TCP without IPv6 header chain supported
+                    break 'bad Errno::EPROTOTYPE;
+                }
+                (None, Some(ip6), size_of::<Ip6Hdr>())
+            }
             v => panic(format_args!("tcp_softtso_chop: unknown ip version {}", v)),
         };
+        #[cfg(not(feature = "inet6"))]
+        let _ = ip6; // always `None` without INET6
 
         let tlen = m0.m_pkthdr().len.get();
         if (tlen as usize) < iphlen + size_of::<Tcphdr>() {
@@ -1328,13 +1389,21 @@ pub fn tcp_softtso_chop(
             // copy and adjust IP header, calculate checksum
             let ph = m.m_pkthdr();
             ph.csum_flags.set(ph.csum_flags.get() | M_TCP_CSUM_OUT);
-            let mut mhip = ip;
-            mhip.ip_len = htons((hlen + len) as u16);
-            mhip.ip_id = htons(ip_randomid());
-            mtod_ip_store(m, &mhip);
-            in_hdr_cksum_out(m, Some(ifp));
-            in_proto_cksum_out(m, Some(ifp));
-            // INET6: the ip6_hdr copy with ip6_plen and in6_proto_cksum_out; not configured.
+            if let Some(ip) = ip {
+                let mut mhip = ip;
+                mhip.ip_len = htons((hlen + len) as u16);
+                mhip.ip_id = htons(ip_randomid());
+                mtod_ip_store(m, &mhip);
+                in_hdr_cksum_out(m, Some(ifp));
+                in_proto_cksum_out(m, Some(ifp));
+            }
+            #[cfg(feature = "inet6")]
+            if let Some(ip6) = ip6 {
+                let mut mhip6 = ip6;
+                mhip6.ip6_plen = htons((hlen - iphlen as i32 + len) as u16);
+                mtod_ip6_store(m, &mhip6);
+                in6_proto_cksum_out(m, Some(ifp));
+            }
 
             off += mss as i32;
         }
@@ -1349,11 +1418,18 @@ pub fn tcp_softtso_chop(
         // adjust IP header, calculate checksum
         let ph = m0.m_pkthdr();
         ph.csum_flags.set(ph.csum_flags.get() | M_TCP_CSUM_OUT);
-        ip.ip_len = htons(m0.m_pkthdr().len.get() as u16);
-        mtod_ip_store(m0, &ip);
-        in_hdr_cksum_out(m0, Some(ifp));
-        in_proto_cksum_out(m0, Some(ifp));
-        // INET6: ip6_plen and in6_proto_cksum_out; not configured.
+        if let Some(mut ip) = ip {
+            ip.ip_len = htons(m0.m_pkthdr().len.get() as u16);
+            mtod_ip_store(m0, &ip);
+            in_hdr_cksum_out(m0, Some(ifp));
+            in_proto_cksum_out(m0, Some(ifp));
+        }
+        #[cfg(feature = "inet6")]
+        if let Some(mut ip6) = ip6 {
+            ip6.ip6_plen = htons((m0.m_pkthdr().len.get() as usize - iphlen) as u16);
+            mtod_ip6_store(m0, &ip6);
+            in6_proto_cksum_out(m0, Some(ifp));
+        }
 
         tcpstat_add(TcpstatCounters::TcpsOutpkttso, u64::from(ml_len(ml)));
         return Ok(());
@@ -1403,7 +1479,10 @@ pub unsafe fn tcp_if_output_tso(
                 in_hdr_cksum_out(m, Some(ifp));
                 in_proto_cksum_out(m, Some(ifp));
             }
-            // INET6: IFCAP_TSOv6 with in6_proto_cksum_out; not configured.
+            #[cfg(feature = "inet6")]
+            if ifcap & IFCAP_TSOv6 != 0 {
+                in6_proto_cksum_out(m, Some(ifp));
+            }
             let error = match ifp.if_output.get() {
                 // SAFETY: the caller's contract is the hook's.
                 Some(output) => unsafe { output(ifp, m, dst, rt) },

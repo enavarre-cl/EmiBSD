@@ -143,7 +143,8 @@
 //!   `icmp_type`/`icmp_code`); `icmp_reflect` returns `Result` (its `ELOOP`/`EHOSTUNREACH`)
 //!   with the options mbuf through an `Option<&mut ...>` out parameter.
 //! - `ICMPPRINTFS` (debug printfs) is not configured; `NCARP` (`carp_lsdrop`) is not
-//!   configured; `INET6` (the v6-in-v4 length check) likewise. Each is a comment at its site.
+//!   configured: each is a comment at its site. `INET6` is (feature `inet6`): the length
+//!   check of a v6-in-v4 message.
 //!   `NPF` (pf(4)) is configured: the `PF_TAG_DIVERTED` handling of diverted connections.
 
 use core::ffi::c_void;
@@ -183,6 +184,8 @@ use crate::netinet::icmp_var::{
     ICMPCTL_REDIRTIMEOUT, ICMPCTL_STATS, ICMPCTL_TSTAMPREPL, ICPS_NCOUNTERS, Icmpstat,
     IcmpstatCounters, icmpstat_inc, icmpstat_inc_hist,
 };
+#[cfg(feature = "inet6")]
+use crate::netinet::in_::IPPROTO_IPV6;
 use crate::netinet::in_::{
     IN_CLASSA_NET, IN_CLASSA_NSHIFT, IN_LOOPBACKNET, INADDR_ANY, INADDR_BROADCAST, IPPROTO_DONE,
     IPPROTO_ICMP, IPPROTO_TCP, InAddr, SockaddrIn, in_canforward, in_multicast, satosin_const,
@@ -1312,7 +1315,14 @@ pub fn icmp_input_if(
                     if in_multicast(oip.ip_dst.s_addr) {
                         icmpstat_inc(IcmpstatCounters::IcpsBadcode);
                     } else {
-                        // INET6: the length check of a v6-in-v4 message; not configured.
+                        // Get more contiguous data for a v6 in v4 ICMP message.
+                        #[cfg(feature = "inet6")]
+                        if i32::from(oip.ip_p) == IPPROTO_IPV6
+                            && (icmplen < ICMP_V6ADVLENMIN || icmplen < icmp_v6advlen_of(&icp))
+                        {
+                            icmpstat_inc(IcmpstatCounters::IcpsBadlen);
+                            break 'freeit;
+                        }
                         // ICMPPRINTFS: not configured.
                         let mut sin = SockaddrIn {
                             sin_family: AF_INET,
@@ -1367,6 +1377,12 @@ pub fn icmp_input_if(
 /// `ICMP_ADVLEN(icp)` for a message in a packet.
 fn icmp_advlen_of(icp: &IcmpPkt) -> usize {
     8 + (usize::from(icp.icmp_ip().ip_hl()) << 2) + 8
+}
+
+/// `ICMP_V6ADVLEN(icp)` for a message in a packet.
+#[cfg(feature = "inet6")]
+fn icmp_v6advlen_of(icp: &IcmpPkt) -> usize {
+    8 + (usize::from(icp.icmp_ip().ip_hl()) << 2) + 40
 }
 
 /// `icmp_reflect`: reflects the IP packet back to the source. With `op`, the options to send

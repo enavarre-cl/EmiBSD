@@ -83,11 +83,11 @@
 //!   zero), `MULTIPROCESSOR` (`p_cpuid` stays `KI_NOCPU`). `SMALL_KERNEL` is not set.
 //! - `KERNEL_LOCK` is not taken: one CPU and no kernel lock yet. `log_mtx` does not exist
 //!   (`subr_log.rs`), so the message buffer header is read without it.
-//! - `kern.file`: an `AF_INET6` socket cannot exist (`INET6` is not configured) and is
-//!   reported if one ever shows up. `fill_file` skips the TCP members of `kinfo_file` of a
-//!   TCP socket whose `tcpcb` is already gone (`intotcpcb` is `None`) where the C would
-//!   dereference NULL. `KERN_FILE_BYFILE` of sockets walks `tcbtable`, `udbtable`,
-//!   `rawcbtable` and `divbtable` (`NPF`); the `INET6` tables are compiled out. `ps_tracevp` does not exist
+//! - `kern.file`: `fill_file` fills the `AF_INET` and `AF_INET6` (feature `inet6`) control
+//!   blocks and the TCP members (`fill_file_tcpcb`, zero for a control block without a
+//!   `tcpcb`). `KERN_FILE_BYFILE` of sockets walks `tcbtable`, `udbtable`, `rawcbtable`,
+//!   `divbtable` (`NPF`) and, with `INET6`, `tcb6table`, `udb6table`, `rawin6pcbtable` and
+//!   `divb6table`. `ps_tracevp` does not exist
 //!   (`KTRACE`), so no `KERN_FILE_TRACE` entry is made. The C's `FILLIT` macros are the
 //!   methods of a private `FileWalk` (the C's `kf`, `dp`, `buflen`, `elem_count`,
 //!   `needed`); `kf` lives in it instead of an `M_TEMP` allocation. A `copyout` error ends
@@ -217,6 +217,11 @@ use crate::uvm::uvm_meter::uvm_sysctl;
 use crate::uvm::uvm_mmap::UVM_WXABORT;
 use crate::uvm::uvm_page::uvm_pagecount;
 use crate::uvm::uvm_param::atop;
+#[cfg(feature = "inet6")]
+use crate::{
+    netinet::tcp_usrreq::TCB6TABLE, netinet::udp_usrreq::UDB6TABLE,
+    netinet6::ip6_divert::DIVB6TABLE, netinet6::raw_ip6::RAWIN6PCBTABLE,
+};
 
 /// `MAXPARTITIONS` (`<machine/disklabel.h>`, 16 on amd64 and arm64): number of partitions.
 /// The disklabel headers are not ported.
@@ -1701,18 +1706,33 @@ fn fill_file_socket(kf: &mut KinfoFile, so: &Socket, show_pointers: bool) {
             kf.inp_proto = u32::from(inpcb.inp_ip.get().ip_p);
         }
         if i32::from(so.so_proto.pr_protocol) == IPPROTO_TCP {
-            // A TCP socket's pcb always has its tcpcb (tcp_attach); `intotcpcb` returns
-            // `None` only between tcp_close and the pcb's detach.
-            if let Some(tcpcb) = intotcpcb(inpcb) {
-                kf.t_rcv_wnd = tcpcb.rcv_wnd.get();
-                kf.t_snd_wnd = tcpcb.snd_wnd.get();
-                kf.t_snd_cwnd = tcpcb.snd_cwnd.get();
-                kf.t_state = tcpcb.t_state.get() as u32;
-            }
+            fill_file_tcpcb(kf, inpcb);
         }
     } else if family == i32::from(AF_INET6) {
-        // INET6 is not configured, so no such socket exists.
-        let _ = unported!("fill_file: AF_INET6 inpcb (option INET6)");
+        let Some(inpcb) = sotoinpcb(so) else {
+            return;
+        };
+        soassertlocked(so);
+        if show_pointers {
+            kf.inp_ppcb = ptrtoint64(inpcb.inp_ppcb.get());
+        }
+        kf.inp_lport = u32::from(inpcb.inp_lport.get());
+        let laddr6 = inpcb.inp_laddr6.get();
+        for (i, w) in kf.inp_laddru.iter_mut().enumerate() {
+            *w = laddr6.s6_addr32(i);
+        }
+        kf.inp_fport = u32::from(inpcb.inp_fport.get());
+        let faddr6 = inpcb.inp_faddr6.get();
+        for (i, w) in kf.inp_faddru.iter_mut().enumerate() {
+            *w = faddr6.s6_addr32(i);
+        }
+        kf.inp_rtableid = inpcb.inp_rtableid.get();
+        if so.so_type.get() == SOCK_RAW {
+            kf.inp_proto = u32::from(inpcb.inp_ipv6.get().ip6_nxt);
+        }
+        if i32::from(so.so_proto.pr_protocol) == IPPROTO_TCP {
+            fill_file_tcpcb(kf, inpcb);
+        }
     } else if family == i32::from(AF_UNIX) {
         let Some(unpcb) = sotounpcb(so) else {
             return;
@@ -1734,6 +1754,19 @@ fn fill_file_socket(kf: &mut KinfoFile, so: &Socket, show_pointers: bool) {
             unp_path_copy(&mut kf.unp_path, addr);
         }
     }
+}
+
+/// The TCP members of `kinfo_file` (`fill_file`'s `intotcpcb(inpcb)` block, shared by the
+/// `AF_INET` and `AF_INET6` cases); a control block without a `tcpcb` (the C would
+/// dereference NULL) leaves them zero.
+fn fill_file_tcpcb(kf: &mut KinfoFile, inpcb: &Inpcb) {
+    let Some(tcpcb) = intotcpcb(inpcb) else {
+        return;
+    };
+    kf.t_rcv_wnd = tcpcb.rcv_wnd.get();
+    kf.t_snd_wnd = tcpcb.snd_wnd.get();
+    kf.t_snd_cwnd = tcpcb.snd_cwnd.get();
+    kf.t_state = tcpcb.t_state.get() as u32;
 }
 
 /// The output of a `sysctl_file` walk: the C's `kf`, `dp`, `buflen`, `elem_count` and
@@ -1917,11 +1950,18 @@ pub fn sysctl_file(name: &[i32], where_: usize, sizep: &mut usize, p: &Proc) -> 
             // use the inp-tables to pick up closed connections, too
             if arg == DTYPE_SOCKET {
                 w.fillinptable(&TCBTABLE)?;
-                // INET6 is not configured: no tcb6table, udb6table, rawin6pcbtable.
+                #[cfg(feature = "inet6")]
+                w.fillinptable(&TCB6TABLE)?;
                 w.fillinptable(&UDBTABLE)?;
+                #[cfg(feature = "inet6")]
+                w.fillinptable(&UDB6TABLE)?;
                 w.fillinptable(&RAWCBTABLE)?;
-                // NPF > 0: divbtable (INET6: divb6table, not configured).
+                #[cfg(feature = "inet6")]
+                w.fillinptable(&RAWIN6PCBTABLE)?;
+                // NPF > 0
                 w.fillinptable(&DIVBTABLE)?;
+                #[cfg(feature = "inet6")]
+                w.fillinptable(&DIVB6TABLE)?;
             }
             let mut fp = None;
             loop {
