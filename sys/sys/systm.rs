@@ -147,6 +147,12 @@ pub fn sysargs<T>(args: &SysArgs) -> &T {
     unsafe { &*ptr::from_ref(args).cast::<T>() }
 }
 
+/// `cond_signal(c)`: wakes the thread waiting in `cond_wait` (`cond_signal_handler`).
+#[inline]
+pub fn cond_signal(c: &crate::sys::proc::Cond) {
+    crate::kern::kern_synch::cond_signal_handler(ptr::from_ref(c).cast_mut().cast());
+}
+
 /// `KERNEL_LOCK_INIT()`: `_kernel_lock_init()` with `MULTIPROCESSOR`, nothing without.
 #[inline]
 pub fn kernel_lock_init() {

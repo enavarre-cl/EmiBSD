@@ -46,7 +46,6 @@
 //! - The error stubs return `Result<(), Errno>` like every other error path.
 //! - `bdevsw_lookup` returns a copy of the entry (`machine::conf`), the C a pointer into the
 //!   table.
-//! - `SMR_ASSERT_NONCRITICAL()` in `assertwaitok` waits for `kern_smr.c` (M7).
 
 use core::sync::atomic::Ordering;
 
@@ -59,6 +58,7 @@ use crate::machine::intr::{IPL_NONE, splassert};
 use crate::sys::conf::Bdevsw;
 use crate::sys::errno::Errno;
 use crate::sys::param::NODEV;
+use crate::sys::smr::smr_assert_noncritical;
 use crate::sys::types::{Dev, major, makedev, minor};
 
 /// `enodev`: unsupported device function (e.g. writing to read-only device).
@@ -121,7 +121,7 @@ pub fn assertwaitok() {
     }
 
     splassert(IPL_NONE, "assertwaitok");
-    // SMR_ASSERT_NONCRITICAL(): kern_smr.c (M7).
+    smr_assert_noncritical(); // SMR_ASSERT_NONCRITICAL()
     #[cfg(feature = "diagnostic")]
     if Machine::curcpu_mutex_level() != 0 {
         crate::kern::subr_prf::panic(format_args!(

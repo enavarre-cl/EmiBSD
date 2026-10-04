@@ -91,7 +91,7 @@ use crate::sys::syscallargs::{
     SysMlockallArgs, SysMmapArgs, SysMprotectArgs, SysMqueryArgs, SysMsyncArgs, SysMunlockArgs,
     SysMunmapArgs, SysPinsyscallsArgs,
 };
-use crate::sys::systm::{SysArgs, sysargs};
+use crate::sys::systm::{SysArgs, kernel_lock, kernel_unlock, sysargs};
 use crate::sys::types::Register;
 use crate::sys::unistd::{KBIND_BLOCK_MAX, KBIND_DATA_MAX, Kbind};
 use crate::unported;
@@ -195,7 +195,7 @@ fn uvm_wxcheck(p: &Proc, call: &str) -> Result<(), Errno> {
     }
 
     if UVM_WXABORT.load(Ordering::Relaxed) != 0 {
-        // KERNEL_LOCK(): one CPU.
+        kernel_lock(); // KERNEL_LOCK()
         // Report W^X failures
         let n = pr.ps_wxcounter.get();
         pr.ps_wxcounter.set(n + 1);
@@ -691,23 +691,28 @@ pub fn uvm_mmaplock(
 
     vm_map_lock(map);
     if map.flags.get() & VM_MAP_WIREFUTURE != 0 {
-        // KERNEL_LOCK(): one CPU.
-        if atop(size) as i64 + UVMEXP.wired.load(Ordering::Relaxed) as i64
-            > UVMEXP.wiredmax.load(Ordering::Relaxed) as i64
-            || (locklimit != 0 && size + ptoa(pmap_wired_count(map.pmap()) as usize) > locklimit)
-        {
-            vm_map_unlock(map);
-            // unmap the region!
-            uvm_unmap(map, *addr, *addr + size);
-            return Err(Errno::ENOMEM);
-        }
-        // uvm_map_pageable() always returns the map unlocked.
-        if let Err(e) = uvm_map_pageable(map, *addr, *addr + size, false, UVM_LK_ENTER) {
-            // unmap the region!
-            uvm_unmap(map, *addr, *addr + size);
-            return Err(e);
-        }
-        return Ok(());
+        kernel_lock(); // KERNEL_LOCK()
+        let error = 'wired: {
+            if atop(size) as i64 + UVMEXP.wired.load(Ordering::Relaxed) as i64
+                > UVMEXP.wiredmax.load(Ordering::Relaxed) as i64
+                || (locklimit != 0
+                    && size + ptoa(pmap_wired_count(map.pmap()) as usize) > locklimit)
+            {
+                vm_map_unlock(map);
+                // unmap the region!
+                uvm_unmap(map, *addr, *addr + size);
+                break 'wired Err(Errno::ENOMEM);
+            }
+            // uvm_map_pageable() always returns the map unlocked.
+            if let Err(e) = uvm_map_pageable(map, *addr, *addr + size, false, UVM_LK_ENTER) {
+                // unmap the region!
+                uvm_unmap(map, *addr, *addr + size);
+                break 'wired Err(e);
+            }
+            Ok(())
+        };
+        kernel_unlock(); // KERNEL_UNLOCK()
+        return error;
     }
     vm_map_unlock(map);
     Ok(())
@@ -819,7 +824,7 @@ pub fn sys_kbind(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
 
     // Raise SIGILL if something is off.
     if sigill {
-        // KERNEL_LOCK(): one CPU.
+        kernel_lock(); // KERNEL_LOCK()
         sigexit(p, SIGILL);
     }
 

@@ -71,7 +71,7 @@
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
 //!   `ENOSYS`: `watchdog` (`kern_watchdog.c`), `clockintr`, `proc_vmmap` after its checks
 //!   (`fill_vmmap`); `hw.model` (`cpu_model`, `identcpu.c`/arm64 `cpu.c`),
-//!   `setperf`/`perfpolicy` (`sched_bsd.c`), `smt`/`blockcpu` (`kern_sched.c`); the top-level
+//!   `setperf`/`perfpolicy` (`sched_bsd.c`); the top-level
 //!   `machdep` (`cpu_sysctl`) and `ddb` (`ddb_sysctl`) trees. `kern.proc_cwd` of a process
 //!   without a current directory (none has one before a root file system is mounted) is
 //!   `ENOENT`. `resettodr` after a new `kern.utc_offset` is reported and skipped.
@@ -79,8 +79,10 @@
 //!   (`debug_sysctl`, `CTL_DEBUG` is `EOPNOTSUPP`), `SYSVMSG`/`SYSVSEM`/`SYSVSHM`
 //!   (`sysctl_sysvipc`), `NAUDIO`/`NVIDEO`/`NDT`/`NUCOM` (0), `GPROF`, `WITNESS`,
 //!   `PTRACE` (`kern.global_ptrace`), `KTRACE` (the trace members of `kinfo_proc` stay
-//!   zero), `MULTIPROCESSOR` (`p_cpuid` stays `KI_NOCPU`). `SMALL_KERNEL` is not set.
-//! - `KERNEL_LOCK` is not taken: one CPU and no kernel lock yet. `log_mtx` does not exist
+//!   zero). `SMALL_KERNEL` is not set.
+//! - `KERNEL_LOCK` is not taken at the C's sites: `sys_sysctl` runs under the kernel lock
+//!   with `MULTIPROCESSOR` (M11a ignores `SY_NOLOCK`, `sys/syscall_mi.rs`), which covers
+//!   them until the M11e audit. `log_mtx` does not exist
 //!   (`subr_log.rs`), so the message buffer header is read without it.
 //! - `kern.file`: `fill_file` fills the `AF_INET` and `AF_INET6` (feature `inet6`) control
 //!   blocks and the TCP members (`fill_file_tcpcb`, zero for a control block without a
@@ -134,7 +136,9 @@ use crate::kern::kern_resource::{calctsru, tuagg_get_proc, tuagg_get_process};
 use crate::kern::kern_rwlock::{
     rw_enter, rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write,
 };
-use crate::kern::kern_sched::{cpu_is_online, sysctl_hwncpuonline};
+use crate::kern::kern_sched::{
+    cpu_is_online, sysctl_hwblockcpu, sysctl_hwncpuonline, sysctl_hwsmt,
+};
 use crate::kern::kern_sensors::{sensor_find, sensordev_get};
 use crate::kern::kern_sig::NOSUIDCOREDUMP;
 use crate::kern::kern_synch::{refcnt_rele_wake, refcnt_take};
@@ -1011,8 +1015,8 @@ fn hw_sysctl_locked(
             // NUCOM is 0: sysctl_ucominit is not called.
             sysctl_rdstring(oldp, oldlenp, newp, b"")
         }
-        HW_SMT => Err(unported!("hw.smt: sysctl_hwsmt (kern_sched.c)")),
-        HW_BLOCKCPU => Err(unported!("hw.blockcpu: sysctl_hwblockcpu (kern_sched.c)")),
+        HW_SMT => sysctl_hwsmt(oldp, oldlenp, newp, newlen),
+        HW_BLOCKCPU => sysctl_hwblockcpu(oldp, oldlenp, newp, newlen),
         HW_BATTERY => sysctl_hwbattery(&name[1..], oldp, oldlenp, newp, newlen),
         _ => Err(Errno::EOPNOTSUPP),
     }
@@ -2404,7 +2408,10 @@ pub fn fill_kproc(pr: &Process, ki: &mut KinfoProc, p: Option<&Proc>, show_point
         ki.p_ustart_sec = utc.tv_sec as u64;
         ki.p_ustart_usec = (utc.tv_nsec / 1000) as u32;
 
-        // MULTIPROCESSOR is not configured: p_cpuid stays KI_NOCPU.
+        #[cfg(feature = "multiprocessor")]
+        if let Some(ci) = p.cpu() {
+            ki.p_cpuid = u64::from(Machine::cpu_info_unit(ci));
+        }
     }
 
     if let Some(vm) = vm {
@@ -3078,7 +3085,7 @@ fn sysctl_ci_cp_time(ci: &CpuInfo) -> [u64; CPUSTATES] {
     pc_cons_enter(&spc.spc_cp_time_lock, &mut generation);
     loop {
         for (t, c) in cp_time.iter_mut().zip(&spc.spc_cp_time) {
-            *t = c.get();
+            *t = c.load(Ordering::Relaxed);
         }
         if !pc_cons_leave(&spc.spc_cp_time_lock, &mut generation) {
             break;

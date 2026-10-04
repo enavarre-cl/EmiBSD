@@ -32,9 +32,12 @@
 //!   the `WITNESS_INIT`/`WITNESS_CHECKORDER`/`WITNESS_LOCK`/`WITNESS_UNLOCK` calls are absent.
 //! - `kcov` is not configured: `task_add` does not record `t_process` and `taskq_thread` has
 //!   no `kcov_remote_enter`/`kcov_remote_leave`.
-//! - `MULTIPROCESSOR` is not configured: `KERNEL_UNLOCK`/`KERNEL_LOCK` around a
-//!   `TASKQ_MPSAFE` queue's loop are empty, as in the C's uniprocessor build. Everything else
-//!   (several threads per queue, the barrier's generation count) is kept.
+//! - `TASKQ_MPSAFE` is ignored (M11a): a worker never drops the kernel lock its kthread
+//!   starts with, so every task runs under it, `systqmp`'s too, until the M11e audit; the C
+//!   unlocks around an `MPSAFE` queue's loop. Everything else (several threads per queue,
+//!   the barrier's generation count) is kept.
+//! - `task_add_local` is `task_add` for a task that is not `'static` (an `unsafe fn`): what
+//!   `sched_barrier` queues from its stack frame.
 //! - `struct taskq` is `#[repr(C)]` with `tq_state` first so that the queue's own address (the
 //!   "bored" and destroy wakeup channel) never equals `&tq_running`, `&tq_bthreads` or
 //!   `&tq_bgen`, the other channels, as in C.
@@ -417,6 +420,18 @@ pub fn task_set(t: &Task, func: TaskFn, arg: *mut c_void) {
 /// `task_add`: queues `w` on `tq` and wakes a worker. Returns `true` if it was queued, `false`
 /// if it was already pending.
 pub fn task_add(tq: &Taskq, w: &'static Task) -> bool {
+    // SAFETY: a `'static` task outlives its place on the worklist.
+    unsafe { task_add_local(tq, w) }
+}
+
+/// `task_add` for a task that is not `'static`, such as one on the caller's stack frame
+/// (`sched_barrier`'s): queues `w` on `tq` and wakes a worker.
+///
+/// # Safety
+///
+/// `w` stays valid and in place until a worker has taken it off the worklist (it ran) or
+/// `task_del` removed it.
+pub unsafe fn task_add_local(tq: &Taskq, w: &Task) -> bool {
     let mut rv = false;
 
     if w.t_flags.load(Ordering::Relaxed) & TASK_ONQUEUE != 0 {
@@ -427,8 +442,8 @@ pub fn task_add(tq: &Taskq, w: &'static Task) -> bool {
     if w.t_flags.load(Ordering::Relaxed) & TASK_ONQUEUE == 0 {
         rv = true;
         w.t_flags.fetch_or(TASK_ONQUEUE, Ordering::Relaxed);
-        // SAFETY: not ONQUEUE, so in no worklist; `'static`, so valid while linked; under
-        // `tq_mtx`.
+        // SAFETY: not ONQUEUE, so in no worklist; valid while linked (the caller's contract);
+        // under `tq_mtx`.
         unsafe { tq.tq_worklist.insert_tail(w) };
         // NKCOV > 0: w->t_process = curproc->p_p.
     }
@@ -512,7 +527,8 @@ pub fn taskq_thread(xtq: *mut c_void) {
     // allocated while `tq_running` counts this thread (`taskq_destroy` waits for zero).
     let tq = unsafe { &*xtq.cast::<Taskq>() };
 
-    // if ISSET(tq->tq_flags, TASKQ_MPSAFE) KERNEL_UNLOCK(): nothing without MULTIPROCESSOR.
+    // if ISSET(tq->tq_flags, TASKQ_MPSAFE) KERNEL_UNLOCK(): M11a keeps every queue under the
+    // kernel lock (see the module's deviations); kthreads start holding it.
 
     mtx_enter(&tq.tq_mtx);
     // SAFETY: `me` is in no list and lives on this thread's stack until it is removed below
@@ -545,7 +561,7 @@ pub fn taskq_thread(xtq: *mut c_void) {
     let running = ptr::from_ref(&tq.tq_running);
     mtx_leave(&tq.tq_mtx);
 
-    // if ISSET(tq->tq_flags, TASKQ_MPSAFE) KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    // if ISSET(tq->tq_flags, TASKQ_MPSAFE) KERNEL_LOCK(): never released, see above.
 
     if last {
         wakeup_one(running);

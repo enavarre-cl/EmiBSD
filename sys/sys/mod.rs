@@ -69,6 +69,7 @@ pub mod siginfo;
 pub mod sigio;
 pub mod signal;
 pub mod signalvar;
+pub mod smr;
 pub mod socket;
 pub mod socketvar;
 pub mod sockio;

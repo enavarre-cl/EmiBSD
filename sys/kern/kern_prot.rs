@@ -59,7 +59,6 @@
 //!   `Uid::MAX`/`Gid::MAX`.
 //! - `sys___set_tcb`/`sys___get_tcb` go through `machine::tcb` (`TCB_SET`, `TCB_GET`,
 //!   `TCB_INVALID`); the TCB is a `usize`.
-//! - `KERNEL_LOCK()` in `dorefreshcreds` is the lack of preemption on one CPU.
 
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
@@ -90,7 +89,7 @@ use crate::sys::syscallargs::{
     SysSetresuidArgs, SysSetreuidArgs, SysSetthrnameArgs, SysSetuidArgs,
 };
 use crate::sys::syslimits::{LOGIN_NAME_MAX, NGROUPS_MAX};
-use crate::sys::systm::{SysArgs, sysargs};
+use crate::sys::systm::{SysArgs, kernel_lock, kernel_unlock, sysargs};
 use crate::sys::types::{Gid, Register, Uid};
 use crate::sys::ucred::{Ucred, Xucred};
 
@@ -1020,13 +1019,13 @@ pub fn sys_setthrname(curp: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> R
 pub fn dorefreshcreds(pr: &Process, p: &Proc) {
     let uc = p.ucred();
 
-    // KERNEL_LOCK() (XXX should be PROCESS_RLOCK(pr)): one CPU.
+    kernel_lock(); // KERNEL_LOCK() (XXX should be PROCESS_RLOCK(pr))
     if !ptr::eq(uc, pr.ps_ucred.get()) {
         let cr = crhold(pr.ucred());
         p.p_ucred.set(cr);
         crfree(uc);
     }
-    // KERNEL_UNLOCK()
+    kernel_unlock(); // KERNEL_UNLOCK()
 }
 
 #[cfg(test)]

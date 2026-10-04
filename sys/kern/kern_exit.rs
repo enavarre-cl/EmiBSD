@@ -64,6 +64,11 @@
 //! - `dowait6` takes its out-parameters as `Option<&mut>`; `ps_opptr` (ptrace's old parent)
 //!   is always null, since `ptrace(2)` (`sys_process.c`) is not ported, so
 //!   `proc_finish_wait` always takes the zombie's branch.
+//! - M11a (`MULTIPROCESSOR`): `exit1` does not drop the kernel lock around `uvm_purge`, and
+//!   the reaper does not drop the lock its kthread starts with (its `KERNEL_LOCK`/
+//!   `KERNEL_UNLOCK` pair only nests): the address space teardown (`uvm_purge`, `uvm_exit`,
+//!   `uvm_uarea_free`) and `proc_free` reach uvm and the pools, which run under the kernel
+//!   lock until the M11e audit.
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -118,7 +123,7 @@ use crate::sys::siginfo::{
 use crate::sys::signal::{SIGCHLD, SIGCONT, SIGKILL, SIGSEGV};
 use crate::sys::signalvar::{SAS_NOCLDWAIT, SignalType};
 use crate::sys::syscallargs::{SysExitArgs, SysThrexitArgs, SysWait4Args, SysWaitidArgs};
-use crate::sys::systm::{INFSLP, SysArgs, sysargs};
+use crate::sys::systm::{INFSLP, SysArgs, kernel_lock, kernel_unlock, sysargs};
 use crate::sys::types::{Pid, Register};
 use crate::sys::wait::{
     _WCONTINUED, Idtype, P_ALL, P_PGID, P_PID, WAIT_ANY, WAIT_MYPGRP, WCONTINUED, WEXITED, WNOHANG,
@@ -309,9 +314,9 @@ pub fn exit1(p: &Proc, xexit: i32, xsig: i32, flags: i32) -> ! {
             // exit1() might be called with a lock count greater than one and we want to
             // ensure the costly operation of tearing down the VM space is performed
             // unlocked. It is safe to release them all since exit1() will not return.
-            // MULTIPROCESSOR: __mp_release_all(&kernel_lock).
+            // __mp_release_all(&kernel_lock) and KERNEL_LOCK() afterwards: M11a keeps the
+            // kernel lock over uvm_purge (see the module's deviations).
             uvm_purge();
-            // KERNEL_LOCK().
         }
     }
 
@@ -507,7 +512,7 @@ pub fn proc_free(p: &Proc) {
 /// dead process. Once the resources are free, the process becomes a zombie, and the parent
 /// is allowed to read the undead's status.
 pub fn reaper(_arg: *mut c_void) {
-    // KERNEL_UNLOCK(): nothing without MULTIPROCESSOR.
+    // KERNEL_UNLOCK(): M11a keeps the kernel lock (see the module's deviations).
 
     sched_assert_unlocked();
 
@@ -547,7 +552,7 @@ pub fn reaper(_arg: *mut c_void) {
             // Release the rest of the process's vmspace
             uvm_exit(pr);
 
-            // KERNEL_LOCK().
+            kernel_lock(); // KERNEL_LOCK()
             if pr.ps_flags.load(Ordering::Relaxed) & PS_NOZOMBIE == 0 {
                 // Process is now a true zombie.
                 pr.ps_flags.fetch_or(PS_ZOMBIE, Ordering::Relaxed);
@@ -566,7 +571,7 @@ pub fn reaper(_arg: *mut c_void) {
                 // No one will wait for us, just zap it.
                 process_zap(pr);
             }
-            // KERNEL_UNLOCK().
+            kernel_unlock(); // KERNEL_UNLOCK()
         }
     }
 }

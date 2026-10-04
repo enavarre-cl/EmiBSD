@@ -40,7 +40,7 @@
 //! Status: `wip`. Milestone M2 ports `reboot()` and `rebooting`, the tail of `panic(9)`;
 //! M8 `sys_reboot` (root only, then `reboot`) and `scdebug_call`/`scdebug_ret` (option
 //! `SYSCALL_DEBUG`, feature `syscall_debug`). `__stack_smash_handler` arrives with its
-//! subsystem.
+//! subsystem. M11a: `sys_reboot` stops the secondary CPUs (`MULTIPROCESSOR`).
 //!
 //! ## Deviations
 //! - `KASSERT((howto & RB_NOSYNC) || curproc != NULL)`: `curproc` arrives with M5; the
@@ -71,7 +71,15 @@ pub fn sys_reboot(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
 
     suser(p)?;
 
-    // MULTIPROCESSOR (sched_stop_secondary_cpus): not configured.
+    #[cfg(feature = "multiprocessor")]
+    {
+        crate::kern::kern_sched::sched_stop_secondary_cpus();
+        crate::kassert!(
+            <crate::machine::Machine as crate::machine::cpu::Cpu>::cpu_is_primary(
+                crate::machine::cpu::curcpu()
+            )
+        );
+    }
     reboot(uap.opt.get())
     // NOTREACHED
 }

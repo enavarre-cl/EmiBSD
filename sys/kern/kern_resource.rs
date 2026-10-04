@@ -101,7 +101,7 @@ use crate::sys::signal::{SIGKILL, SIGXCPU};
 use crate::sys::syscallargs::{
     SysGetpriorityArgs, SysGetrlimitArgs, SysGetrusageArgs, SysSetpriorityArgs, SysSetrlimitArgs,
 };
-use crate::sys::systm::{SysArgs, sysargs};
+use crate::sys::systm::{SysArgs, kernel_assert_locked, sysargs};
 use crate::sys::time::{
     Timespec, Timeval, timeradd, timespec_to_timeval, timespecadd, timespecsub,
 };
@@ -582,7 +582,7 @@ pub fn dogetrusage(p: &Proc, who: i32, rup: &Rusage) -> Result<(), Errno> {
     let pr = p.process();
     let tu = Tusage::new();
 
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked(); // KERNEL_ASSERT_LOCKED()
 
     match who {
         RUSAGE_SELF => {
@@ -631,7 +631,7 @@ pub fn rucheck(arg: *mut c_void) {
     let pr = unsafe { &*(arg as *const Process) };
     let tu = Tusage::new();
 
-    // KERNEL_ASSERT_LOCKED(): one CPU.
+    kernel_assert_locked(); // KERNEL_ASSERT_LOCKED()
 
     mtx_enter(&pr.ps_mtx);
     // SAFETY: a live process's ps_limit is valid; ps_mtx is held.

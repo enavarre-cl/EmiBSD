@@ -101,7 +101,7 @@
 //!   printf format becomes two words (`what`, `reason`).
 //! - [`uvm_map_protect`] reports the `RLIMIT_DATA` check (`lim_cur` is not ported) instead
 //!   of enforcing it.
-//! - `uvm_map_splitentry` takes the pager reference without `KERNEL_LOCK` (one CPU).
+//! - `uvm_map_splitentry` takes the pager reference under `KERNEL_LOCK`, as the C (M11a).
 //! - `uvm_map_fill_vmmap` (`kinfo_vmentry`, sysctl) and the `ddb` printers
 //!   (`uvm_map_printit`, `uvm_object_printit`, `uvm_page_printit`) wait for their
 //!   subsystems; `PMAP_CHECK_COPYIN`, `SYSVSHM` and `DEADBEEF0` are not configured;
@@ -167,7 +167,7 @@ use crate::sys::rwlock::{
 use crate::sys::sched::sched_pause;
 use crate::sys::siginfo::{SEGV_ACCERR, Sigval};
 use crate::sys::signal::SIGSEGV;
-use crate::sys::systm::{COLD, INFSLP};
+use crate::sys::systm::{COLD, INFSLP, kernel_lock, kernel_unlock};
 use crate::sys::time::Timeval;
 use crate::sys::tree::{RbtEntry, RbtHead};
 use crate::sys::types::{Vaddr, Vsize};
@@ -2112,7 +2112,7 @@ pub fn uvm_map_inentry(
     if uvm_map_inentry_recheck(serial, addr, ie) {
         ok = uvm_map_inentry_fix(p, ie, addr, f, serial);
         if !ok {
-            // KERNEL_LOCK(): one CPU.
+            kernel_lock(); // KERNEL_LOCK()
             let pr = p.process();
             kprintf!(
                 "[{}]{}/{} {}={:#x} inside {:#x}-{:#x}: {}\n",
@@ -2128,7 +2128,7 @@ pub fn uvm_map_inentry(
             pr.ps_acflag.set(pr.ps_acflag.get() | AMAP);
             let sv = Sigval::from_ptr(<Machine as Cpu>::proc_pc(p));
             trapsignal(p, SIGSEGV, 0, SEGV_ACCERR, sv);
-            // KERNEL_UNLOCK().
+            kernel_unlock(); // KERNEL_UNLOCK()
         }
     }
     ok
@@ -3034,8 +3034,9 @@ pub fn uvm_map_splitentry(map: &VmMap, orig: &VmMapEntry, next: &VmMapEntry, spl
             if let Some(uobj) = next.uvm_obj()
                 && let Some(reference) = uobj.pgops().pgo_reference
             {
-                // KERNEL_LOCK(): one CPU.
+                kernel_lock(); // KERNEL_LOCK()
                 reference(uobj);
+                kernel_unlock(); // KERNEL_UNLOCK()
             }
             next.offset.set(next.offset.get() + adj as Voff);
         }

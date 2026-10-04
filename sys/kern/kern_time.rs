@@ -102,7 +102,7 @@ use crate::sys::syscallargs::{
     SysAdjfreqArgs, SysAdjtimeArgs, SysClockGetresArgs, SysClockGettimeArgs, SysClockSettimeArgs,
     SysGetitimerArgs, SysGettimeofdayArgs, SysNanosleepArgs, SysSetitimerArgs, SysSettimeofdayArgs,
 };
-use crate::sys::systm::{MAXTSLP, SysArgs, sysargs};
+use crate::sys::systm::{MAXTSLP, SysArgs, kernel_lock, kernel_unlock, sysargs};
 use crate::sys::task::Task;
 use crate::sys::time::{
     Bintime, ITIMER_PROF, ITIMER_REAL, ITIMER_VIRTUAL, Itimerval, SECDAY, SECYR, Timespec, Timeval,
@@ -141,8 +141,9 @@ pub fn settime(ts: &Timespec) -> Result<(), Errno> {
     }
 
     tc_setrealtimeclock(ts);
-    // KERNEL_LOCK(): one CPU.
+    kernel_lock(); // KERNEL_LOCK()
     resettodr();
+    kernel_unlock(); // KERNEL_UNLOCK()
 
     Ok(())
 }
@@ -171,15 +172,17 @@ pub fn clock_gettime(p: &Proc, clock_id: Clockid) -> Result<Timespec, Errno> {
         _ => {
             // check for clock from pthread_getcpuclockid()
             if clock_type(clock_id) == CLOCK_THREAD_CPUTIME_ID {
-                // KERNEL_LOCK(): one CPU.
-                match tfind_user(clock_ptid(clock_id), p.process()) {
+                kernel_lock(); // KERNEL_LOCK()
+                let error = match tfind_user(clock_ptid(clock_id), p.process()) {
                     None => Err(Errno::ESRCH),
                     Some(q) => {
                         let tu = Tusage::new();
                         tuagg_get_proc(&tu, q);
                         Ok(tu.tu_runtime.get())
                     }
-                }
+                };
+                kernel_unlock(); // KERNEL_UNLOCK()
+                error
             } else {
                 Err(Errno::EINVAL)
             }
@@ -243,14 +246,16 @@ pub fn sys_clock_getres(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> R
         _ => {
             // check for clock from pthread_getcpuclockid()
             if clock_type(clock_id) == CLOCK_THREAD_CPUTIME_ID {
-                // KERNEL_LOCK(): one CPU.
-                match tfind_user(clock_ptid(clock_id), p.process()) {
+                kernel_lock(); // KERNEL_LOCK()
+                let error = match tfind_user(clock_ptid(clock_id), p.process()) {
                     None => Err(Errno::ESRCH),
                     Some(_) => {
                         ts.tv_nsec = 1_000_000_000 / stathz();
                         Ok(())
                     }
-                }
+                };
+                kernel_unlock(); // KERNEL_UNLOCK()
+                error
             } else {
                 Err(Errno::EINVAL)
             }

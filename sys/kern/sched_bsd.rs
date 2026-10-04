@@ -49,7 +49,9 @@
 //! `schedcpu`, `decay_aftersleep`, `yield`, `preempt`, `mi_switch`, `setrunnable`,
 //! `setpriority`, `schedclock` and `scheduler_start`. The CPU throttling (`cpu_setperf`,
 //! `perflevel`, the `perfpolicy_*` knobs, `setperf_auto`, `sysctl_hwsetperf`,
-//! `sysctl_hwperfpolicy`) needs sysctl and the power sensors (M7).
+//! `sysctl_hwperfpolicy`) needs sysctl and the power sensors (M7). M11a: `mi_switch` calls
+//! `smr_idle` and, with `MULTIPROCESSOR`, drops every hold of the kernel lock around the
+//! switch (`__mp_release_all`/`__mp_acquire_count`).
 //!
 //! ## Deviations
 //! - `averunnable.ldavg` are atomics (`Averunnable`, written by the softclock thread, read
@@ -57,8 +59,6 @@
 //! - `cexp` and `ccpu` are compile-time constants, like the C's constant-folded doubles; no
 //!   floating point reaches the kernel.
 //! - `yield` is a Rust keyword: the function is the raw identifier `r#yield`.
-//! - `mi_switch` and `proc_trampoline_mi` skip `smr_idle()` (`kern_smr.c`, M7) and the kernel
-//!   lock release/reacquire (`MULTIPROCESSOR`).
 
 use core::ffi::c_void;
 use core::ptr;
@@ -67,6 +67,10 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use crate::kassert;
 use crate::kern::kern_clock::{STATHZ, hardclock_period};
 use crate::kern::kern_clockintr::{clockintr_advance, clockintr_cancel, clockrequest_advance};
+#[cfg(feature = "multiprocessor")]
+use crate::kern::kern_lock::{
+    __mp_acquire_count, __mp_release_all, _kernel_lock_held, KERNEL_LOCK,
+};
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_proc::ALLPROC;
 use crate::kern::kern_resource::tuagg_add_runtime;
@@ -74,6 +78,7 @@ use crate::kern::kern_sched::{
     SCHED_ALL_CPUS, SCHED_IDLE_CPUS, cpuset_cardinality, cpuset_complement, remrunqueue,
     sched_chooseproc, setrunqueue,
 };
+use crate::kern::kern_smr::smr_idle;
 use crate::kern::kern_tc::nanouptime;
 use crate::kern::kern_timeout::timeout_add_sec;
 use crate::kern::subr_prf::panic;
@@ -199,7 +204,8 @@ pub fn roundrobin(cr: &Clockrequest, _cf: *mut c_void, _arg: *mut c_void) {
         }
     }
 
-    if spc.spc_nrun.get() != 0 || spc.spc_schedflags.load(Ordering::Relaxed) & SPCF_SHOULDYIELD != 0
+    if spc.spc_nrun.load(Ordering::Relaxed) != 0
+        || spc.spc_schedflags.load(Ordering::Relaxed) & SPCF_SHOULDYIELD != 0
     {
         need_resched(ci);
     }
@@ -213,7 +219,7 @@ pub fn update_loadavg(_unused: *mut c_void) {
     let set = cpuset_complement(&SCHED_IDLE_CPUS, &SCHED_ALL_CPUS);
     let mut nrun = u64::from(cpuset_cardinality(&set));
     cpu_info_foreach(&mut |ci| {
-        nrun += u64::from(Machine::ci_schedstate(ci).spc_nrun.get());
+        nrun += u64::from(Machine::ci_schedstate(ci).spc_nrun.load(Ordering::Relaxed));
     });
 
     for (ldavg, &cexp) in AVERUNNABLE.ldavg.iter().zip(CEXP.iter()) {
@@ -416,7 +422,13 @@ pub fn mi_switch() {
     kassert!(p.p_stat.get() != SONPROC);
     sched_assert_locked();
 
-    // MULTIPROCESSOR: release the kernel_lock, as we are about to yield the CPU.
+    // Release the kernel_lock, as we are about to yield the CPU.
+    #[cfg(feature = "multiprocessor")]
+    let hold_count = if _kernel_lock_held() {
+        __mp_release_all(&KERNEL_LOCK)
+    } else {
+        0
+    };
 
     // Update thread runtime
     tuagg_add_runtime();
@@ -466,7 +478,7 @@ pub fn mi_switch() {
     sched_assert_unlocked();
 
     assertwaitok();
-    // smr_idle(): kern_smr.c (M7).
+    smr_idle();
 
     // We're running again; record our new start time. We might be running on a new CPU
     // now, so refetch the schedstate_percpu pointer.
@@ -486,9 +498,12 @@ pub fn mi_switch() {
 
     spc.spc_runtime.set(nanouptime());
 
-    // MULTIPROCESSOR: reacquire the kernel_lock now. We do this after we've released the
-    // scheduler lock to avoid deadlock, and before we reacquire the interlock and the
-    // scheduler lock.
+    // Reacquire the kernel_lock now. We do this after we've released the scheduler lock to
+    // avoid deadlock, and before we reacquire the interlock and the scheduler lock.
+    #[cfg(feature = "multiprocessor")]
+    if hold_count != 0 {
+        __mp_acquire_count(&KERNEL_LOCK, hold_count);
+    }
 }
 
 /// `setrunnable`: change process state to be runnable, placing it on the run queue.

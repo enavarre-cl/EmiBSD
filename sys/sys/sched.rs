@@ -71,26 +71,34 @@
 //!
 //! Upstream: sys/sys/sched.h @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M5 (part a, the clocks) ports the `CP_*` states, `struct
+//! Status: `ported`. Milestone M5 (part a, the clocks) ports the `CP_*` states, `struct
 //! cpustats`, the `SPCF_*` flags, `SCHED_NQS`/`SCHED_PPQ`/`NICE_WEIGHT`/`ESTCPULIM` and the
 //! members of `struct schedstate_percpu` the clock interrupts use: the four clockintr
 //! handles, `spc_cp_time` with its lock, `spc_schedticks`, `spc_schedflags`, `spc_nrun`,
 //! `spc_whichqs`, `spc_spinning`, `spc_curpriority`, `spc_runtime`; part b adds the run
-//! queues (`spc_qs`, `spc_idleproc`, `spc_deadproc`). The SMR members (`spc_deferred` and
-//! company) wait for `kern_smr.c` (M7). The functions are in `kern/kern_sched.rs` and
-//! `kern/sched_bsd.rs`; `sched_lock` and the `SCHED_LOCK*` macros in `sched_bsd.rs`.
+//! queues (`spc_qs`, `spc_idleproc`, `spc_deadproc`); M11a the SMR members (`spc_deferred`,
+//! `spc_ndeferred`, `spc_smrdepth`, `spc_smrexpedite`, `spc_smrgp`, used by
+//! `kern/kern_smr.rs`) and `cpu_is_idle`. The functions it declares are in
+//! `kern/kern_sched.rs` and `kern/sched_bsd.rs`; `sched_lock` and the `SCHED_LOCK*` macros
+//! in `sched_bsd.rs`.
 //!
 //! ## Deviations
 //! - `spc_schedflags` (`volatile int`, set with `atomic_setbits_int`) is an `AtomicI32`;
-//!   `spc_whichqs` and `spc_spinning` (`volatile`) `AtomicU32`s.
+//!   `spc_whichqs` and `spc_spinning` (`volatile`) `AtomicU32`s; `spc_curpriority` and
+//!   `spc_smrgp` (read by other CPUs, `volatile`/`READ_ONCE` in C) `AtomicU8`s.
+//! - `spc_nrun` (changed under `sched_lock`, read without it by `update_loadavg` and the
+//!   other CPUs' cost estimates) is an `AtomicU32`, and `spc_cp_time` (written by the
+//!   CPU's `statclock`, read by sysctl under the `pc_lock` generation protocol) holds
+//!   `AtomicU64`s; relaxed accesses compile to the C's plain loads and stores.
 
 use core::cell::Cell;
-use core::sync::atomic::{AtomicI32, AtomicU32};
+use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, AtomicU64};
 
 use crate::sys::clockintr::Clockintr;
 use crate::sys::pclock::PcLock;
 use crate::sys::proc::{Proc, ProcRunq};
-use crate::sys::queue::TailqHead;
+use crate::sys::queue::{SimpleqHead, TailqHead};
+use crate::sys::smr::SmrEntryList;
 use crate::sys::time::Timespec;
 
 /*
@@ -130,26 +138,27 @@ pub const CPUSTATS_ONLINE: u64 = 0x0001;
 /// `SCHED_NQS`: 32 run queues.
 pub const SCHED_NQS: usize = 32;
 
-/// `struct schedstate_percpu`: per-CPU scheduler state (the M5-a subset, see the module doc).
+/// `struct schedstate_percpu`: per-CPU scheduler state.
 ///
 /// - o: owned (modified only) by this CPU.
 pub struct SchedstatePercpu {
-    /// `spc_idleproc`: idle proc for this cpu.
+    /// `spc_idleproc`: idle proc for this cpu. Set by `sched_kthreads_create` before the CPU
+    /// runs threads, read-only afterwards (other CPUs read it in `schedcpu` and SMR).
     pub spc_idleproc: Cell<*const Proc>,
-    /// `spc_qs`: the run queues, one per `SCHED_PPQ` priorities.
+    /// `spc_qs`: the run queues, one per `SCHED_PPQ` priorities. Protected by: `sched_lock`.
     pub spc_qs: [TailqHead<ProcRunq>; SCHED_NQS],
-    /// `spc_deadproc`: the dead threads waiting for the reaper.
+    /// \[o\] `spc_deadproc`: the dead threads waiting for the reaper.
     pub spc_deadproc: TailqHead<ProcRunq>,
-    /// `spc_runtime`: time curproc started running.
+    /// \[o\] `spc_runtime`: time curproc started running.
     pub spc_runtime: Cell<Timespec>,
     /// `spc_schedflags` (volatile): flags; see below.
     pub spc_schedflags: AtomicI32,
-    /// `spc_schedticks`: ticks for `schedclock()`.
+    /// \[o\] `spc_schedticks`: ticks for `schedclock()`.
     pub spc_schedticks: Cell<u32>,
     /// `spc_cp_time_lock`.
     pub spc_cp_time_lock: PcLock,
-    /// `spc_cp_time`: CPU state statistics.
-    pub spc_cp_time: [Cell<u64>; CPUSTATES],
+    /// `spc_cp_time`: CPU state statistics, written by this CPU under `spc_cp_time_lock`.
+    pub spc_cp_time: [AtomicU64; CPUSTATES],
 
     /// \[o\] `spc_itimer`: `itimer_update` handle.
     pub spc_itimer: Clockintr,
@@ -160,22 +169,32 @@ pub struct SchedstatePercpu {
     /// \[o\] `spc_statclock`: `statclock` handle.
     pub spc_statclock: Clockintr,
 
-    /// `spc_nrun`: procs on the run queues.
-    pub spc_nrun: Cell<u32>,
+    /// `spc_nrun`: procs on the run queues. Changed under `sched_lock`.
+    pub spc_nrun: AtomicU32,
 
     /// `spc_whichqs` (volatile).
     pub spc_whichqs: AtomicU32,
     /// `spc_spinning` (volatile): this cpu is currently spinning.
     pub spc_spinning: AtomicU32,
 
-    // spc_deferred, spc_ndeferred, spc_smrdepth, spc_smrexpedite, spc_smrgp: kern_smr.c.
+    /// \[o\] `spc_deferred`: deferred smr calls, changed at `splhigh`.
+    pub spc_deferred: SimpleqHead<SmrEntryList>,
+    /// \[o\] `spc_ndeferred`: number of deferred smr calls.
+    pub spc_ndeferred: Cell<u32>,
+    /// \[o\] `spc_smrdepth`: level of smr nesting (`DIAGNOSTIC`).
+    pub spc_smrdepth: Cell<u32>,
+    /// \[o\] `spc_smrexpedite`: if set, dispatch smr entries without delay.
+    pub spc_smrexpedite: Cell<u8>,
+    /// `spc_smrgp`: this CPU's view of grace period (read by `smr_grace_wait` elsewhere).
+    pub spc_smrgp: AtomicU8,
     /// \[o\] `spc_curpriority` (volatile): usrpri of curproc.
-    pub spc_curpriority: Cell<u8>,
+    pub spc_curpriority: AtomicU8,
 }
 
-// SAFETY: one CPU's scheduler state, touched by that CPU (the clock handles under their
-// queue's mutex, the run queues under `sched_lock`); the flag words other CPUs read are
-// atomics.
+// SAFETY: one CPU's scheduler state. The `Cell` members are owned by that CPU ([o]: the
+// clock handles under their queue's mutex, the SMR queue at splhigh) or, for the run queues,
+// changed under `sched_lock` by whichever CPU holds it; `spc_idleproc` is written once before
+// the CPU runs threads. Everything other CPUs read without a lock is atomic.
 unsafe impl Sync for SchedstatePercpu {}
 
 impl SchedstatePercpu {
@@ -189,15 +208,20 @@ impl SchedstatePercpu {
             spc_schedflags: AtomicI32::new(0),
             spc_schedticks: Cell::new(0),
             spc_cp_time_lock: PcLock::new(),
-            spc_cp_time: [const { Cell::new(0) }; CPUSTATES],
+            spc_cp_time: [const { AtomicU64::new(0) }; CPUSTATES],
             spc_itimer: Clockintr::new(),
             spc_profclock: Clockintr::new(),
             spc_roundrobin: Clockintr::new(),
             spc_statclock: Clockintr::new(),
-            spc_nrun: Cell::new(0),
+            spc_nrun: AtomicU32::new(0),
             spc_whichqs: AtomicU32::new(0),
             spc_spinning: AtomicU32::new(0),
-            spc_curpriority: Cell::new(0),
+            spc_deferred: SimpleqHead::new(),
+            spc_ndeferred: Cell::new(0),
+            spc_smrdepth: Cell::new(0),
+            spc_smrexpedite: Cell::new(0),
+            spc_smrgp: AtomicU8::new(0),
+            spc_curpriority: AtomicU8::new(0),
         }
     }
 }
@@ -258,6 +282,14 @@ mod tests {
         assert_eq!(estcpulim(36), 36);
         assert_eq!(estcpulim(1000), 36);
     }
+}
+
+/// `cpu_is_idle(ci)`: nothing is queued on `ci`.
+pub fn cpu_is_idle(ci: &crate::machine::cpu::CpuInfo) -> bool {
+    <crate::machine::Machine as crate::machine::cpu::Cpu>::ci_schedstate(ci)
+        .spc_whichqs
+        .load(core::sync::atomic::Ordering::Relaxed)
+        == 0
 }
 
 /// `scheduler_wait_hook(parent, child)`: chargeback parents for the sins of their children.

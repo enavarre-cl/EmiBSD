@@ -37,7 +37,8 @@
 //! Upstream: sys/kern/kern_kthread.c @ 3ce1f3f79392
 //!
 //! Status: `ported` (M5-b1: `kthread_create_deferred` and `kthread_run_deferred_queue`;
-//! M5-b2: `kthread_create`; M6-b: `kthread_exit` over `exit1`).
+//! M5-b2: `kthread_create`; M6-b: `kthread_exit` over `exit1`; M11a: the kernel lock in
+//! `kthread_create`).
 //!
 //! ## Deviations
 //! - `kthread_create` returns the new thread (`Result<&Proc, Errno>`) instead of an `int`
@@ -60,6 +61,7 @@ use crate::sys::proc::{
     EXIT_NORMAL, FORK_NOZOMBIE, FORK_SHAREFILES, FORK_SHAREVM, FORK_SYSTEM, Proc,
 };
 use crate::sys::queue::{SimpleqEntry, SimpleqHead};
+use crate::sys::systm::{kernel_lock, kernel_unlock};
 
 /// `kthread_create_now`: set once the standard kernel threads exist.
 pub static KTHREAD_CREATE_NOW: AtomicBool = AtomicBool::new(false);
@@ -72,21 +74,27 @@ pub fn kthread_create(
     arg: *mut c_void,
     name: &[u8],
 ) -> Result<&'static Proc, Errno> {
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock(); // KERNEL_LOCK()
 
     // First, create the new process. Share the memory, file descriptors and don't leave the
     // exit status around for the parent to wait for.
-    let p = fork1(
+    let p = match fork1(
         &PROC0,
         FORK_SHAREVM | FORK_SHAREFILES | FORK_NOZOMBIE | FORK_SYSTEM,
         func,
         arg,
-    )?;
+    ) {
+        Ok(p) => p,
+        Err(error) => {
+            kernel_unlock(); // KERNEL_UNLOCK()
+            return Err(error);
+        }
+    };
 
     // Name it as specified.
     p.process().set_comm(name);
 
-    // KERNEL_UNLOCK().
+    kernel_unlock(); // KERNEL_UNLOCK()
 
     // All done!
     Ok(p)
@@ -129,7 +137,8 @@ queue_adapter!(
     KthreadQList: KthreadQ, kq_q => SimpleqEntry<KthreadQ>
 );
 
-/// `kthread_q`'s head, made `Sync`: filled during boot on one CPU.
+/// `kthread_q`'s head, made `Sync`: filled and emptied during boot, by the boot CPU alone
+/// (`cpu_attach` runs there; the queue is run before `cpu_boot_secondary_processors`).
 struct KthreadQHead(SimpleqHead<KthreadQList>);
 // SAFETY: see the type's doc.
 unsafe impl Sync for KthreadQHead {}

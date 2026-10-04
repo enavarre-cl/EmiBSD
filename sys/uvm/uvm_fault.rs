@@ -108,8 +108,9 @@
 //!   swap slot before `uvm_swap.c`.
 //! - The fault starts with shared (`RW_READ`) upper and lower locks on every machine, as the
 //!   C does on amd64 and arm64 (the host stands in for them).
-//! - `pmap_nested` is 0 (no vmm), `MULTIPROCESSOR` and `__HAVE_PMAP_POPULATE` are not
-//!   configured, `KERNEL_LOCK` around `pgo_fault` is one CPU, `UVM_PAGE_OWN` is not
+//! - `pmap_nested` is 0 (no vmm), `__HAVE_PMAP_POPULATE` is not configured (the
+//!   `MULTIPROCESSOR` COW paths need `!__HAVE_PMAP_MPSAFE_ENTER_COW`, which both machines
+//!   define), `UVM_PAGE_OWN` is not
 //!   configured, `TRACEPOINT` (dt) is not configured.
 
 use core::ptr;
@@ -128,6 +129,7 @@ use crate::sys::malloc::M_NOWAIT;
 use crate::sys::mman::{MADV_NORMAL, MADV_SEQUENTIAL, PROT_NONE, PROT_WRITE};
 use crate::sys::param::{PAGE_SHIFT, PAGE_SIZE, PVM};
 use crate::sys::rwlock::{RW_NOSLEEP, RW_READ, RW_UPGRADE, RW_WRITE, rw_lock_held, rw_write_held};
+use crate::sys::systm::{kernel_lock, kernel_unlock};
 use crate::sys::time::msec_to_nsec;
 use crate::sys::tree::RbtHead;
 use crate::sys::types::{Paddr, Vaddr};
@@ -702,7 +704,7 @@ pub fn uvm_fault(
             match uobj.and_then(|uobj| uobj.pgops().pgo_fault.map(|f| (uobj, f))) {
                 Some((uobj, pgo_fault)) => {
                     rw_enter_write(uobj.vmobjlock());
-                    // KERNEL_LOCK(): one CPU.
+                    kernel_lock(); // KERNEL_LOCK()
                     let npages = flt.npages;
                     let rv = pgo_fault(
                         &mut ufi,
@@ -714,7 +716,7 @@ pub fn uvm_fault(
                         flt.access_type,
                         PGO_LOCKED,
                     );
-                    // KERNEL_UNLOCK().
+                    kernel_unlock(); // KERNEL_UNLOCK()
                     match Errno::from_raw(rv) {
                         Some(e) => Err(e),
                         None => Ok(()),
@@ -1139,7 +1141,7 @@ fn uvm_fault_upper(
         kassert!(ptr::eq(anon.an_lock.get(), amap.am_lock.get()));
         kassert!(ptr::eq(oanon.an_lock.get(), amap.am_lock.get()));
 
-        // MULTIPROCESSOR && !__HAVE_PMAP_MPSAFE_ENTER_COW: not configured.
+        // MULTIPROCESSOR && !__HAVE_PMAP_MPSAFE_ENTER_COW: both machines define the latter.
     } else {
         counters_inc(UvmExpCounters::FltAnon);
         let Some(page) = anon.page() else {
@@ -1429,7 +1431,7 @@ fn uvm_fault_lower(
             if amap_flags(amap) & AMAP_SHARED != 0 {
                 pmap_page_protect(src, PROT_NONE);
             }
-            // MULTIPROCESSOR && !__HAVE_PMAP_MPSAFE_ENTER_COW: not configured.
+            // MULTIPROCESSOR && !__HAVE_PMAP_MPSAFE_ENTER_COW: both machines define the latter.
             // done with copied uobjpage.
             if let Some(obj) = uobj {
                 rw_exit(obj.vmobjlock());

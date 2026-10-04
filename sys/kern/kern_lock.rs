@@ -66,7 +66,7 @@ use crate::machine::cpu::{CpuInfo, curcpu, intr_disable, intr_restore};
 use crate::machine::intr::{IPL_NONE, splraise, splx};
 #[cfg(feature = "multiprocessor")]
 use crate::sys::mplock::MpLock;
-#[cfg(feature = "diagnostic")]
+#[cfg(all(feature = "diagnostic", not(feature = "multiprocessor")))]
 use crate::sys::mutex::mtx_owner;
 #[cfg(not(feature = "multiprocessor"))]
 use crate::sys::mutex::mutex_assert_locked;

@@ -89,6 +89,7 @@ use crate::kern::kern_resource::{lim_fork, rucheck};
 use crate::kern::kern_rwlock::rw_init;
 use crate::kern::kern_sched::{sched_choosecpu_fork, setrunqueue};
 use crate::kern::kern_sig::{psignal, sigactsinit, sigstkinit};
+use crate::kern::kern_smr::smr_idle;
 use crate::kern::kern_synch::{endtsleep, refcnt_init, tsleep_nsec};
 use crate::kern::kern_tc::nanouptime;
 use crate::kern::kern_time::ratecheck;
@@ -120,7 +121,7 @@ use crate::sys::queue::ListHead;
 use crate::sys::sched::{SPCF_ITIMER, SPCF_PROFCLOCK};
 use crate::sys::signal::{SIGSEGV, SIGTRAP};
 use crate::sys::syscallargs::SysTforkArgs;
-use crate::sys::systm::{INFSLP, SysArgs, sysargs};
+use crate::sys::systm::{INFSLP, SysArgs, kernel_assert_unlocked, kernel_lock, sysargs};
 use crate::sys::time::Timeval;
 use crate::sys::types::{Pid, Register, Uid};
 use crate::sys::unistd::Tfork;
@@ -820,9 +821,9 @@ pub fn proc_trampoline_mi() {
     spl0();
 
     sched_assert_unlocked();
-    // KERNEL_ASSERT_UNLOCKED(): nothing without MULTIPROCESSOR.
+    kernel_assert_unlocked(); // KERNEL_ASSERT_UNLOCKED()
     assertwaitok();
-    // smr_idle(): kern_smr.c (M7).
+    smr_idle();
 
     // Start any optional clock interrupts needed by the thread.
     if p.process().ps_flags.load(Ordering::Relaxed) & PS_ITIMER != 0 {
@@ -836,5 +837,5 @@ pub fn proc_trampoline_mi() {
     }
 
     spc.spc_runtime.set(nanouptime());
-    // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+    kernel_lock(); // KERNEL_LOCK()
 }

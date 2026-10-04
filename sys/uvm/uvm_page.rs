@@ -120,6 +120,7 @@ use crate::sys::mman::PROT_NONE;
 use crate::sys::param::{PAGE_MASK, PAGE_SHIFT, PAGE_SIZE, PNORELOCK, PVM};
 use crate::sys::queue::{TailqEntry, TailqHead};
 use crate::sys::rwlock::{Rwlock, rw_lock_held, rw_write_held};
+use crate::sys::smr::smr_flush;
 use crate::sys::systm::INFSLP;
 use crate::sys::tree::RbtEntry;
 use crate::sys::types::{Paddr, Vaddr, Vsize};
@@ -948,7 +949,7 @@ pub fn uvm_page_physdump() {
 /// `uvm_shutdown`: what the VM does on the way down.
 pub fn uvm_shutdown() {
     // UVM_SWAP_ENCRYPT: uvm_swap_finicrypt_all(): not configured.
-    let _ = unported!("smr_flush");
+    smr_flush();
 }
 
 /// `uvm_pagealloc_pg`: perform insert of a given page in the specified anon of obj. This is

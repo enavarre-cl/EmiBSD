@@ -65,8 +65,9 @@
 //!   `namei_pool` item, and `KERNELPATH` (`<sys/namei.h>`) is the boolean `incrash`; with no
 //!   file descriptor table there is no `fd_rdir` to release. `WCOREFLAG` is `<sys/wait.h>`'s
 //!   value, kept here until that header is ported.
-//! - `KTRACE`, `WITNESS`, dt(4)'s `TRACEPOINT`, `SMALL_KERNEL`, `PMAP_CHECK_COPYIN` and
-//!   `MULTIPROCESSOR` (the kernel lock, `cpu_kick`) are not configured.
+//! - `KTRACE`, `WITNESS`, dt(4)'s `TRACEPOINT`, `SMALL_KERNEL` and `PMAP_CHECK_COPYIN` are
+//!   not configured. The kernel lock is taken where the C takes it (M11a; nothing without
+//!   `MULTIPROCESSOR`).
 //! - `sys_sigreturn` lives in `machdep.c` (amd64) and `sig_machdep.c` (arm64); the system
 //!   call table finds `pub fn sys_*` only under `sys/kern` and `sys/uvm`, so the entry here
 //!   forwards to `machine::MachineSignal::sys_sigreturn`.
@@ -134,7 +135,7 @@ use crate::sys::syscallargs::{
     SysThrkillArgs, SysThrsigdivertArgs,
 };
 use crate::sys::syslog::LOG_ERR;
-use crate::sys::systm::{INFSLP, SysArgs, sysargs};
+use crate::sys::systm::{INFSLP, SysArgs, kernel_lock, kernel_unlock, sysargs};
 use crate::sys::time::{Timespec, timespec_to_nsec};
 use crate::sys::ttycom::{TIOCGPGRP, TIOCSPGRP};
 use crate::sys::types::{Pid, Register};
@@ -762,7 +763,7 @@ pub fn pgsigio(sir: &SigioRef, sig: i32, checkctty: bool) {
         return;
     }
 
-    // KERNEL_LOCK(): one CPU.
+    kernel_lock(); // KERNEL_LOCK()
     mtx_enter(&SIGIO_LOCK);
     // SAFETY: a registered sigio stays allocated until `sigio_del`, which runs after it is
     // unlinked under `sigio_lock`.
@@ -791,7 +792,7 @@ pub fn pgsigio(sir: &SigioRef, sig: i32, checkctty: bool) {
     }
     // out:
     mtx_leave(&SIGIO_LOCK);
-    // KERNEL_UNLOCK().
+    kernel_unlock(); // KERNEL_UNLOCK()
 }
 
 /// `postsig_done`: recalculate the signal mask and reset the signal disposition after
@@ -845,7 +846,7 @@ pub fn trapsignal(p: &Proc, signum: i32, trapno: u64, code: i32, sigval: Sigval)
         )
         .is_err()
         {
-            // KERNEL_LOCK()
+            kernel_lock(); // KERNEL_LOCK()
             sigexit(p, SIGILL);
             // NOTREACHED
         }
@@ -888,7 +889,7 @@ pub fn trapsignal(p: &Proc, signum: i32, trapno: u64, code: i32, sigval: Sigval)
             && (p.p_sigmask.get() & mask != 0 || ctx.sig_ignore)
             && pr.ps_pid.get() != 1
         {
-            // KERNEL_LOCK()
+            kernel_lock(); // KERNEL_LOCK()
             sigexit(p, signum);
             // NOTREACHED
         }
@@ -1648,7 +1649,7 @@ pub fn postsig(p: &Proc, signum: i32, sctx: &Sigctx) {
     if sctx.sig_action == SIG_DFL {
         // Default action, where the default is to kill the process. (Other cases were
         // ignored above.)
-        // KERNEL_LOCK()
+        kernel_lock(); // KERNEL_LOCK()
         sigexit(p, signum);
         // NOTREACHED
     } else {
@@ -1686,7 +1687,7 @@ pub fn postsig(p: &Proc, signum: i32, sctx: &Sigctx) {
         )
         .is_err()
         {
-            // KERNEL_LOCK()
+            kernel_lock(); // KERNEL_LOCK()
             sigexit(p, SIGILL);
             // NOTREACHED
         }
@@ -2058,7 +2059,7 @@ pub fn userret(p: &Proc) {
     if let Some(ci) = p.cpu() {
         Machine::ci_schedstate(ci)
             .spc_curpriority
-            .set(p.p_usrpri.get());
+            .store(p.p_usrpri.get(), Ordering::Relaxed);
     }
 }
 
@@ -2094,7 +2095,7 @@ pub fn proc_suspend_check_locked(p: &Proc, deep: bool) -> Result<(), Errno> {
     loop {
         if pr.ps_flags.load(Ordering::Relaxed) & PS_SINGLEEXIT != 0 {
             mtx_leave(&pr.ps_mtx);
-            // KERNEL_LOCK()
+            kernel_lock(); // KERNEL_LOCK()
             exit1(p, 0, 0, EXIT_THREAD_NOCHECK);
             // NOTREACHED
         }
@@ -2313,7 +2314,7 @@ pub fn sigio_setown(sir: &SigioRef, cmd: u64, data: &i32) -> Result<(), Errno> {
 
     // The kernel lock, and not sleeping between prfind()/pgfind() and linking of the sigio
     // ensure that the process or process group does not disappear unexpectedly.
-    // KERNEL_LOCK(): one CPU.
+    kernel_lock(); // KERNEL_LOCK()
     mtx_enter(&SIGIO_LOCK);
 
     let result = 'fail: {
@@ -2359,7 +2360,7 @@ pub fn sigio_setown(sir: &SigioRef, cmd: u64, data: &i32) -> Result<(), Errno> {
     if let Err(error) = result {
         // fail:
         mtx_leave(&SIGIO_LOCK);
-        // KERNEL_UNLOCK().
+        kernel_unlock(); // KERNEL_UNLOCK()
 
         // SAFETY: the reference taken above.
         crfree(unsafe { &*sigio.sio_ucred.get() });
@@ -2372,7 +2373,7 @@ pub fn sigio_setown(sir: &SigioRef, cmd: u64, data: &i32) -> Result<(), Errno> {
     sir.sir_sigio.set(sigio);
 
     mtx_leave(&SIGIO_LOCK);
-    // KERNEL_UNLOCK().
+    kernel_unlock(); // KERNEL_UNLOCK()
 
     sigio_del(&rmlist);
 

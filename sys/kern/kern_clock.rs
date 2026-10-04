@@ -286,7 +286,8 @@ pub fn statclock(cr: &Clockrequest, cf: *mut c_void, _arg: *mut c_void) {
     };
 
     let generation = pc_sprod_enter(&spc.spc_cp_time_lock);
-    spc.spc_cp_time[cp_time].set(spc.spc_cp_time[cp_time].get() + count);
+    let t = &spc.spc_cp_time[cp_time]; // this CPU is the only writer
+    t.store(t.load(Ordering::Relaxed) + count, Ordering::Relaxed);
     pc_sprod_leave(&spc.spc_cp_time_lock, generation);
 
     if let Some(p) = p {

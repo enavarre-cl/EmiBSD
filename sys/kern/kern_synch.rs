@@ -47,13 +47,16 @@
 //! `endtsleep`, `unsleep`, `wakeup_n`, `wakeup`, `wakeup_one`, the reference counts
 //! (`refcnt_*`) and the condition variables (`cond_*`). `rwsleep[_nsec]` wait for
 //! `kern_rwlock.c`; `sleep_signal_check` with `kern_sig.c`; `__thrsleep`/`__thrwakeup`
-//! and `tslp_init` for the syscalls (M6). M8: `sys_sched_yield`.
+//! and `tslp_init` for the syscalls (M6). M8: `sys_sched_yield`. M11a: the `MULTIPROCESSOR`
+//! kernel lock steps of `tsleep_nsec` and `msleep_nsec`.
 //!
 //! ## Deviations
 //! - The sleep functions return `Result<(), Errno>` (`EWOULDBLOCK` on timeout, `EINTR`/
 //!   `ERESTART` from a signal) instead of an `int`.
 //! - The `cold == 2` ddb stack dump is not here (`cold` is a flag, not a counter).
 //! - `safepri` and `cold` are `sys/systm.rs` statics (see there).
+//! - The `cold || panicstr` path's release and reacquisition of the kernel lock, written
+//!   twice in C, is one helper, `kernel_lock_bounce`.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -61,6 +64,10 @@ use core::sync::atomic::{AtomicI32, Ordering, fence};
 
 use crate::conf::param::TICK_NSEC;
 use crate::kassert;
+#[cfg(feature = "multiprocessor")]
+use crate::kern::kern_lock::{
+    __mp_acquire_count, __mp_release_all, _kernel_lock_held, KERNEL_LOCK,
+};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_rwlock::{rw_assert_anylock, rw_enter, rw_exit, rw_status};
 use crate::kern::kern_sched::setrunqueue;
@@ -154,7 +161,8 @@ pub fn tsleep_nsec<T: ?Sized>(
     kassert!(priority & !(PRIMASK | PCATCH) == 0);
     kassert!(!ptr::eq(ident, nowake()) || priority & PCATCH != 0 || nsecs != INFSLP);
 
-    // MULTIPROCESSOR: KASSERT(ident == &nowake || nsecs != INFSLP || _kernel_lock_held()).
+    #[cfg(feature = "multiprocessor")]
+    kassert!(ptr::eq(ident, nowake()) || nsecs != INFSLP || _kernel_lock_held());
 
     if COLD.load(Ordering::Relaxed) || panicstr() {
         // After a panic, or during autoconfiguration, just give interrupts a chance, then just
@@ -162,13 +170,25 @@ pub fn tsleep_nsec<T: ?Sized>(
         // and already asleep.
         let s = splhigh();
         splx(SAFEPRI.load(Ordering::Relaxed));
-        // MULTIPROCESSOR: release and reacquire the kernel lock.
+        #[cfg(feature = "multiprocessor")]
+        kernel_lock_bounce();
         splx(s);
         return Ok(());
     }
 
     sleep_setup(ident, priority, wmesg);
     sleep_finish(nsecs, true)
+}
+
+/// The `cold || panicstr` path's `MULTIPROCESSOR` step in `tsleep_nsec` and `msleep_nsec`:
+/// if this CPU holds the kernel lock, drop every hold and take them back, so another CPU
+/// waiting for the lock gets a turn.
+#[cfg(feature = "multiprocessor")]
+fn kernel_lock_bounce() {
+    if _kernel_lock_held() {
+        let hold_count = __mp_release_all(&KERNEL_LOCK);
+        __mp_acquire_count(&KERNEL_LOCK, hold_count);
+    }
 }
 
 /// `tsleep`: `tsleep_nsec` with the timeout in ticks.
@@ -210,7 +230,8 @@ pub fn msleep_nsec<T: ?Sized>(
         let spl = mtx.mtx_oldipl.get();
         mtx.mtx_oldipl.set(SAFEPRI.load(Ordering::Relaxed));
         mtx_leave(mtx);
-        // MULTIPROCESSOR: release and reacquire the kernel lock.
+        #[cfg(feature = "multiprocessor")]
+        kernel_lock_bounce();
         if priority & PNORELOCK == 0 {
             mtx_enter(mtx);
             mtx.mtx_oldipl.set(spl);
@@ -419,7 +440,7 @@ pub fn sleep_finish(nsecs: u64, do_sleep: bool) -> Result<(), Errno> {
     if let Some(ci) = p.cpu() {
         Machine::ci_schedstate(ci)
             .spc_curpriority
-            .set(p.p_usrpri.get());
+            .store(p.p_usrpri.get(), Ordering::Relaxed);
     }
 
     // Even though this belongs to the signal handling part of sleep, we need to clear it

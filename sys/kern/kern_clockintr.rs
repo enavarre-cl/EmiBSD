@@ -50,7 +50,8 @@
 //!   remains the fallback.
 //! - Under feature `qemu` only (not in C): `clockintr_dispatch` checks every uptime it reads
 //!   against the previous one and prints `uptime went backwards by <n> ns` when it is behind,
-//!   which the smoke tests reject (`cargo xtask smoke --reject`).
+//!   which the smoke tests reject (`cargo xtask smoke --reject`). The previous reading is
+//!   the same CPU's (M11a): the CPUs' clocks need not agree to the nanosecond.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -81,9 +82,11 @@ use crate::sys::mutex::mutex_assert_locked;
 use crate::sys::queue::TailqHead;
 use crate::unported;
 
-/// The last uptime `clockintr_dispatch` read (feature `qemu`, see the module's deviations).
+/// The last uptime `clockintr_dispatch` read on each CPU, by `cpu_number()` (feature `qemu`,
+/// see the module's deviations).
 #[cfg(feature = "qemu")]
-static LAST_UPTIME: AtomicU64 = AtomicU64::new(0);
+static LAST_UPTIME: [AtomicU64; crate::machine::cpu::MAXCPUS as usize] =
+    [const { AtomicU64::new(0) }; crate::machine::cpu::MAXCPUS as usize];
 
 /// `cl->cl_queue`: the queue a bound clockintr belongs to.
 fn cl_queue(cl: &Clockintr) -> &'static Clockqueue {
@@ -203,7 +206,7 @@ pub fn clockintr_trigger() {
 /// Feature `qemu`: prints `uptime went backwards` when `now` is behind the previous reading.
 #[cfg(feature = "qemu")]
 fn uptime_check(now: u64) {
-    let last = LAST_UPTIME.swap(now, Ordering::Relaxed);
+    let last = LAST_UPTIME[crate::machine::cpu::cpu_number() as usize].swap(now, Ordering::Relaxed);
     if now < last {
         printf(format_args!(
             "uptime went backwards by {} ns ({} -> {})\n",

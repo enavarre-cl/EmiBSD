@@ -87,7 +87,7 @@ use crate::sys::rwlock::Rwlock;
 use crate::sys::socket::MSG_DONTWAIT;
 use crate::sys::syscallargs::SysSendsyslogArgs;
 use crate::sys::syslog::{LOG_CONS, LOG_KERN, LOG_MAXLINE, LOG_WARNING};
-use crate::sys::systm::{SysArgs, sysargs};
+use crate::sys::systm::{SysArgs, kernel_lock, kernel_unlock, sysargs};
 use crate::sys::types::{Pid, Register};
 use crate::sys::uio::{Iovec, Uio, UioRw, UioSeg};
 use crate::unported;
@@ -539,8 +539,9 @@ pub fn dosendsyslog(p: &Proc, buf: SyslogBuf, nbyte: usize, flags: i32) -> Resul
             error
         }
         None => {
-            // KERNEL_LOCK(): one CPU. constty and cn_devvp (the tty layer) are NULL: the
-            // console redirection breaks down and the bytes go to cnputc.
+            kernel_lock(); // KERNEL_LOCK()
+            // constty and cn_devvp (the tty layer) are NULL: the console redirection breaks
+            // down and the bytes go to cnputc.
             // XXX console redirection breaks down...
             let mut resid = len;
             let mut error = Ok(());
@@ -565,6 +566,7 @@ pub fn dosendsyslog(p: &Proc, buf: SyslogBuf, nbyte: usize, flags: i32) -> Resul
                 len -= resid;
             }
             cnputc(i32::from(b'\n'));
+            kernel_unlock(); // KERNEL_UNLOCK()
             error
         }
     };

@@ -45,7 +45,7 @@ use crate::machine::bus::{
 };
 use crate::machine::conf::cdevsw;
 use crate::machine::copy::copyin;
-use crate::machine::cpu::curproc;
+use crate::machine::cpu::{cpu_number, curproc};
 use crate::machine::intr::IPL_NONE;
 use crate::machine::pmap::{
     MachinePmap, pmap_activate, pmap_deactivate, pmap_enter, pmap_extract, pmap_kenter_pa,
@@ -981,12 +981,41 @@ static PINGPONG_DONE: AtomicU32 = AtomicU32::new(0);
 static PINGPONG_REAP: AtomicU32 = AtomicU32::new(0);
 /// Turns per thread.
 const PINGPONG_ROUNDS: u32 = 50;
+/// No turn taken yet, in [`PINGPONG_CPU`].
+const PINGPONG_NOCPU: u32 = u32::MAX;
+/// The CPU (`ci_cpuid`) each thread (ping, pong) took its last turn on.
+static PINGPONG_CPU: [AtomicU32; 2] = [const { AtomicU32::new(PINGPONG_NOCPU) }; 2];
+
+/// With `MULTIPROCESSOR` and two CPUs running, pegs ping (`me` 0) to the first running CPU
+/// and pong (`me` 1) to the second, so every turn crosses CPUs.
+#[cfg(feature = "multiprocessor")]
+fn pingpong_peg(me: u32) {
+    use crate::kern::kern_sched::sched_peg_curproc;
+    use crate::machine::cpu::{CpuInfo, cpu_info_foreach, cpu_is_running};
+
+    let mut running: [Option<&'static CpuInfo>; 2] = [None; 2];
+    let mut n = 0;
+    cpu_info_foreach(&mut |ci| {
+        if n < running.len() && cpu_is_running(ci) {
+            running[n] = Some(ci);
+            n += 1;
+        }
+    });
+    if n == running.len()
+        && let Some(ci) = running[me as usize]
+    {
+        sched_peg_curproc(ci);
+    }
+}
 
 /// One ping-pong thread: `arg` is 1 (ping) or 2 (pong), as an address (`fork1` would
 /// replace a null one with the thread). Waits for its turn under the mutex, passes the turn,
 /// wakes the other, and parks forever once the rounds are done.
 fn pingpong_thread(arg: *mut core::ffi::c_void) {
     let me = (arg as usize as u32) - 1;
+
+    #[cfg(feature = "multiprocessor")]
+    pingpong_peg(me);
 
     mtx_enter(&PINGPONG_MTX);
     loop {
@@ -1005,6 +1034,7 @@ fn pingpong_thread(arg: *mut core::ffi::c_void) {
             continue;
         }
         PINGPONG_TURN.store(turn + 1, Ordering::Relaxed);
+        PINGPONG_CPU[me as usize].store(cpu_number(), Ordering::Relaxed);
         wakeup(ptr::addr_of!(PINGPONG_TURN));
     }
     if PINGPONG_DONE.fetch_add(1, Ordering::Relaxed) + 1 == 2 {
@@ -1068,7 +1098,24 @@ pub fn kthread_pingpong() {
     let nthreads_after = NTHREADS.load(Ordering::Relaxed);
 
     let turns = PINGPONG_TURN.load(Ordering::Relaxed);
-    if turns == 2 * PINGPONG_ROUNDS && nthreads_after == nthreads_start {
+    let cpus = [
+        PINGPONG_CPU[0].load(Ordering::Relaxed),
+        PINGPONG_CPU[1].load(Ordering::Relaxed),
+    ];
+    let across = cpus[0] != cpus[1] && !cpus.contains(&PINGPONG_NOCPU);
+    if turns == 2 * PINGPONG_ROUNDS && nthreads_after == nthreads_start && across {
+        kprintf!(
+            "selftest: kthread ping-pong ok: {} turns between tid {} and tid {} in {} us, {} context switches, both exited and reaped ({} threads left), across cpu{} and cpu{}\n",
+            turns,
+            ping_tid,
+            pong_tid,
+            elapsed_us,
+            UVMEXP.swtch.load(Ordering::Relaxed),
+            nthreads_after,
+            cpus[0],
+            cpus[1]
+        );
+    } else if turns == 2 * PINGPONG_ROUNDS && nthreads_after == nthreads_start {
         kprintf!(
             "selftest: kthread ping-pong ok: {} turns between tid {} and tid {} in {} us, {} context switches, both exited and reaped ({} threads left)\n",
             turns,
@@ -1087,6 +1134,21 @@ pub fn kthread_pingpong() {
             nthreads_after
         );
     }
+}
+
+/// `MULTIPROCESSOR`: right after `cpu_boot_secondary_processors`, how many CPUs report
+/// `CPU_IS_RUNNING` (`selftest: N cpus running`).
+#[cfg(feature = "multiprocessor")]
+pub fn cpus_running() {
+    use crate::machine::cpu::{cpu_info_foreach, cpu_is_running};
+
+    let mut n = 0u32;
+    cpu_info_foreach(&mut |ci| {
+        if cpu_is_running(ci) {
+            n += 1;
+        }
+    });
+    kprintf!("selftest: {} cpus running\n", n);
 }
 
 /// Serialises the task queue check's bookkeeping between the workers and proc0.

@@ -47,8 +47,12 @@
 //!   anything else gets `SIGABRT` (`sigabort`). Its message goes to the console with
 //!   `printf` where the C's `uprintf` writes to the process's terminal (no tty layer yet).
 //! - `mi_syscall` reports the `MAP_STACK` check (`uvm_map_inentry`, with the user map);
-//!   `KTRACE`, `SYSCALL_DEBUG`, dt(4) and the kernel lock (`MULTIPROCESSOR`) are not
-//!   configured.
+//!   `KTRACE` and dt(4) are not configured (`SYSCALL_DEBUG` is the feature `syscall_debug`;
+//!   `mi_child_return` does not print the child's return).
+//! - `SY_NOLOCK` is ignored with `MULTIPROCESSOR` (M11a): every system call runs under the
+//!   kernel lock until the M11e audit. The rest of `mi_syscall` and the return path
+//!   (`refreshcreds`, `pin_check`, `pledge_syscall`, `userret`) run unlocked, taking the lock
+//!   where the C does.
 
 use core::sync::atomic::Ordering;
 
@@ -66,7 +70,7 @@ use crate::sys::proc::{
     P_OWEUPC, PS_PLEDGE, Pinsyscall, Proc, SINGLE_DEEP, SINGLE_UNWIND, p_hassibling, refreshcreds,
 };
 use crate::sys::syscall::SYS_sigreturn;
-use crate::sys::systm::{SY_NOLOCK, SysArgs, Sysent};
+use crate::sys::systm::{SY_NOLOCK, SysArgs, Sysent, kernel_lock, kernel_unlock};
 use crate::sys::types::Register;
 use crate::unported;
 
@@ -126,7 +130,8 @@ pub fn pin_check(p: &Proc, code: Register) -> Result<(), Errno> {
     };
 
     // die:
-    // KTRACE (KTR_PINSYSCALL): not configured. KERNEL_LOCK(): one CPU.
+    // KTRACE (KTR_PINSYSCALL): not configured.
+    kernel_lock(); // KERNEL_LOCK()
     let pinoff = pin
         .zip(usize::try_from(code).ok())
         .filter(|(pin, c)| *c < pin.pn_npins.get().max(0) as usize)
@@ -171,6 +176,7 @@ pub fn pin_check(p: &Proc, code: Register) -> Result<(), Errno> {
     }
     // Send uncatchable SIGABRT for coredump
     sigabort(p);
+    kernel_unlock(); // KERNEL_UNLOCK()
     Err(error)
 }
 
@@ -183,13 +189,19 @@ pub fn mi_syscall(
     argp: &SysArgs,
     retval: &mut [Register; 2],
 ) -> Result<(), Errno> {
-    let _lock = callp.sy_flags & SY_NOLOCK == 0; // KERNEL_LOCK(): nothing without MULTIPROCESSOR
+    // M11a takes the kernel lock for every system call: SY_NOLOCK is ignored until the M11e
+    // audit (see the module's deviations).
+    let lock = callp.sy_flags & SY_NOLOCK == 0 || cfg!(feature = "multiprocessor");
 
     // refresh the thread's cache of the process's creds
     refreshcreds(p);
 
     #[cfg(feature = "syscall_debug")]
-    crate::kern::kern_xxx::scdebug_call(p, code, argp);
+    {
+        kernel_lock(); // KERNEL_LOCK()
+        crate::kern::kern_xxx::scdebug_call(p, code, argp);
+        kernel_unlock(); // KERNEL_UNLOCK()
+    }
     // dt(4), KTRACE: not configured.
 
     // SP must be within MAP_STACK space: uvm_map_inentry(p, &p->p_spinentry, PROC_STACK(p),
@@ -201,11 +213,20 @@ pub fn mi_syscall(
     let pledged = p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE != 0;
     let mut tval = 0;
     if pledged && let Err(error) = pledge_syscall(p, code as i32, &mut tval) {
-        // KERNEL_LOCK()/KERNEL_UNLOCK(): nothing without MULTIPROCESSOR.
-        return Err(pledge_fail(p, error, tval));
+        kernel_lock(); // KERNEL_LOCK()
+        let error = pledge_fail(p, error, tval);
+        kernel_unlock(); // KERNEL_UNLOCK()
+        return Err(error);
+    }
+    if lock {
+        kernel_lock(); // KERNEL_LOCK()
+    }
+    let error = (callp.sy_call)(p, argp, retval);
+    if lock {
+        kernel_unlock(); // KERNEL_UNLOCK()
     }
 
-    (callp.sy_call)(p, argp, retval)
+    error
 }
 
 /// `mi_syscall_return`: finish MI stuff on return, after the registers have been set.
@@ -217,7 +238,11 @@ pub fn mi_syscall_return(
     retval: &[Register; 2],
 ) {
     #[cfg(feature = "syscall_debug")]
-    crate::kern::kern_xxx::scdebug_ret(p, code, error.err().map_or(0, |e| e as i32), retval);
+    {
+        kernel_lock(); // KERNEL_LOCK()
+        crate::kern::kern_xxx::scdebug_ret(p, code, error.err().map_or(0, |e| e as i32), retval);
+        kernel_unlock(); // KERNEL_UNLOCK()
+    }
     let _ = (code, error, retval);
     // dt(4), KTRACE: not configured.
     userret(p);
@@ -234,7 +259,7 @@ pub fn mi_child_return(p: &Proc) {
 #[inline]
 pub fn mi_ast(p: &Proc, resched: bool) {
     if p.p_flag.load(Ordering::Relaxed) & P_OWEUPC != 0 {
-        // ADDUPROF(p): the profiling clock (subr_prof.c).
+        // KERNEL_LOCK(); ADDUPROF(p); KERNEL_UNLOCK(): the profiling clock (subr_prof.c).
         let _ = unported!("mi_ast: ADDUPROF (subr_prof.c)");
     }
     if resched {

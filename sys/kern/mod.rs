@@ -31,6 +31,7 @@ pub mod kern_rwlock;
 pub mod kern_sched;
 pub mod kern_sensors;
 pub mod kern_sig;
+pub mod kern_smr;
 pub mod kern_softintr;
 pub mod kern_subr;
 pub mod kern_synch;

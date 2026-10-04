@@ -13,7 +13,8 @@
 //! `<uvm/uvm_extern.h>`). M11a adds the `MULTIPROCESSOR` contract: `cpu_number`,
 //! `ci_cpuid`, `CPU_IS_RUNNING`, `intr_disable`/`intr_restore` (the kernel lock and the
 //! mutex's parking lots), `cpu_boot_secondary_processors` and the application processor's
-//! entry from the boot glue, `cpu_hatch`.
+//! entry from the boot glue, `cpu_hatch`; and `ci_cputype` (`__HAVE_CPU_TOPOLOGY`, with a
+//! default for machines without a topology probe).
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -276,6 +277,14 @@ pub trait Cpu {
     /// `s` comes from the matching `intr_disable` on this CPU, and the code between the two
     /// has not switched threads.
     unsafe fn intr_restore(s: u64);
+
+    /// `ci->ci_cputype` (`__HAVE_CPU_TOPOLOGY`): the `CPUTYP_*` bits (`<sys/sched.h>`) of
+    /// `ci`, which `sched_blockcpu` (`hw.smt`, `hw.blockcpu`) matches. The default, 0, is a
+    /// CPU of no known type: what a machine reports until it ports its topology probe
+    /// (amd64 `cpu_topology`, arm64 `cpu_identify`).
+    fn ci_cputype(_ci: &Self::CpuInfo) -> i32 {
+        0
+    }
 
     /// `cpu_boot_secondary_processors()` (`MULTIPROCESSOR`): `main` calls it once the
     /// scheduler and the idle threads exist; lets every attached application processor run

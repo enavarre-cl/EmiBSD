@@ -21,13 +21,15 @@
 //!
 //! Upstream: sys/kern/kern_softintr.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M4 ports `softintr_init`, `softintr_dispatch`,
-//! `softintr_establish`, `softintr_disestablish` and `softintr_schedule`. `sched_barrier`
-//! (the wait for a running handler on another CPU) and `assertwaitok` are reported until M5.
+//! Status: `ported`. Milestone M4 ports `softintr_init`, `softintr_dispatch`,
+//! `softintr_establish`, `softintr_disestablish` and `softintr_schedule`; M11a the kernel
+//! lock in `softintr_dispatch`, `assertwaitok` and `sched_barrier` in
+//! `softintr_disestablish`.
 //!
 //! ## Deviations
-//! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` around a handler without `SIF_MPSAFE` are nothing
-//!   without `MULTIPROCESSOR`, as in C.
+//! - `SIF_MPSAFE` is ignored (M11a, `MULTIPROCESSOR`): every handler runs under the kernel
+//!   lock until the M11e audit; the C runs an `MPSAFE` handler unlocked. Without
+//!   `MULTIPROCESSOR` `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing, as in C.
 //! - The handle is a `NonNull<SoftintrHand>` where the C passes `void *`.
 
 use core::cell::Cell;
@@ -38,9 +40,10 @@ use core::sync::atomic::Ordering;
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
+use crate::kern::kern_sched::sched_barrier;
 use crate::kern::subr_prf::panic;
-use crate::machine::Machine;
-use crate::machine::cpu::Cpu;
+use crate::kern::subr_xxx::assertwaitok;
+use crate::machine::cpu::{CpuInfo, curcpu};
 use crate::machine::intr::{
     IPL_HIGH, IPL_MPSAFE, IPL_SOFTCLOCK, IPL_SOFTNET, IPL_SOFTTTY, IPL_TTY, softintr,
 };
@@ -49,7 +52,7 @@ use crate::sys::malloc::{M_DEVBUF, M_NOWAIT};
 use crate::sys::mutex::Mutex;
 use crate::sys::queue::{TailqEntry, TailqHead};
 use crate::sys::softintr::{NSOFTINTR, SOFTINTR_CLOCK, SOFTINTR_NET, SOFTINTR_TTY};
-use crate::unported;
+use crate::sys::systm::{kernel_lock, kernel_unlock};
 use crate::uvm::uvm_init::UVMEXP;
 
 /// A soft interrupt handler's function.
@@ -64,7 +67,7 @@ pub struct SoftintrHand {
     /// `sih_arg`.
     pub sih_arg: *mut c_void,
     /// `sih_runner`: the CPU running the handler, if one is.
-    pub sih_runner: Cell<*const ()>,
+    pub sih_runner: Cell<*const CpuInfo>,
     /// `sih_level`: `SOFTINTR_*`.
     pub sih_level: i32,
     /// `SIF_*`.
@@ -108,7 +111,7 @@ pub fn softintr_init() {
 
 /// `softintr_dispatch`: runs the handlers pending at `level`, from the soft interrupt stub.
 pub fn softintr_dispatch(level: i32) {
-    let ci = Machine::curcpu_ptr();
+    let ci = ptr::from_ref(curcpu());
     let queue = &SOFTINTR_QUEUE.0[level as usize];
 
     mtx_enter(&SOFTINTR_LOCK);
@@ -122,8 +125,11 @@ pub fn softintr_dispatch(level: i32) {
         sih.sih_runner.set(ci);
         mtx_leave(&SOFTINTR_LOCK);
 
-        // KERNEL_LOCK() unless SIF_MPSAFE: nothing without MULTIPROCESSOR.
+        // Without SIF_MPSAFE the C runs the handler under the kernel lock, with it unlocked;
+        // M11a takes the lock for every handler (see the module's deviations).
+        kernel_lock(); // KERNEL_LOCK()
         (sih.sih_fn)(sih.sih_arg);
+        kernel_unlock(); // KERNEL_UNLOCK()
 
         mtx_enter(&SOFTINTR_LOCK);
         kassert!((sih.sih_state.get() & SIS_PENDING) == 0);
@@ -183,7 +189,7 @@ pub fn softintr_establish(
 ///
 /// `sih` must come from `softintr_establish` and not be used afterwards.
 pub unsafe fn softintr_disestablish(sih: NonNull<SoftintrHand>) {
-    // assertwaitok(): M5.
+    assertwaitok();
     // SAFETY: the caller's guarantee: an established handler.
     let hand = unsafe { sih.as_ref() };
 
@@ -198,8 +204,9 @@ pub unsafe fn softintr_disestablish(sih: NonNull<SoftintrHand>) {
     let runner = hand.sih_runner.get();
     mtx_leave(&SOFTINTR_LOCK);
 
-    if !runner.is_null() {
-        let _ = unported!("sched_barrier (softintr_disestablish, M5)");
+    // SAFETY: a runner is a CPU's static `cpu_info` (`softintr_dispatch`).
+    if let Some(runner) = unsafe { runner.as_ref() } {
+        sched_barrier(Some(runner));
     }
 
     kassert!((hand.sih_state.get() & (SIS_PENDING | SIS_RESTART)) == 0);

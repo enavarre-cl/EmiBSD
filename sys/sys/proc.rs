@@ -473,8 +473,9 @@ pub struct Process {
     pub ps_timer: [Cell<crate::sys::_time::Itimerspec>; 3],
 }
 
-// SAFETY: the members are locked as the C's annotations say; on one CPU the kernel lock
-// is the lack of preemption.
+// SAFETY: the members are locked as the C's annotations say ([K] the kernel lock, [m] `ps_mtx`,
+// [S] `sched_lock`, [a] atomics, [I] immutable); without `MULTIPROCESSOR` the kernel lock is
+// the lack of preemption.
 unsafe impl Sync for Process {}
 
 impl Process {
@@ -859,8 +860,9 @@ pub struct Proc {
     pub p_sicode: Cell<i32>,
 }
 
-// SAFETY: the members are locked as the C's annotations say; on one CPU the kernel lock
-// is the lack of preemption.
+// SAFETY: the members are locked as the C's annotations say ([S] `sched_lock`, [o] the CPU
+// running the thread, [K] the kernel lock, [a] atomics); without `MULTIPROCESSOR` the kernel
+// lock is the lack of preemption.
 unsafe impl Sync for Proc {}
 
 impl Proc {

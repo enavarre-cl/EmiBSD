@@ -52,13 +52,13 @@
 //!
 //! Upstream: sys/kern/kern_rwlock.c @ 3ce1f3f79392
 //!
-//! Status: `ported` (M7a).
+//! Status: `ported` (M7a; M11a the `MULTIPROCESSOR` spin of `rw_do_enter_write`).
 //!
 //! ## Deviations
-//! - `MULTIPROCESSOR` is not configured: `rw_cas`/`rw_inc`/`rw_dec` are the atomics anyway
-//!   (one CPU makes them equivalent to the C's plain variants) and the `RW_SPINS` spin before
-//!   sleeping does not exist. `WITNESS`, `RWDIAG` (the 10 s sleep timeout and `db_enter`) and
-//!   the `dt(4)` tracepoints (`TRACEINDEX`) are not configured; `rwl_traceidx` is kept.
+//! - `rw_cas`/`rw_inc`/`rw_dec` are the atomics with and without `MULTIPROCESSOR` (on one
+//!   CPU they are equivalent to the C's plain variants). `WITNESS`, `RWDIAG` (the 10 s sleep
+//!   timeout and `db_enter`) and the `dt(4)` tracepoints (`TRACEINDEX`) are not configured;
+//!   `rwl_traceidx` is kept.
 //! - The `lock_type` arguments are gone with `WITNESS`: `_rw_init_flags(rwl, name, flags,
 //!   type, trace)` is `rw_init_flags_trace(rwl, name, flags, trace)`, with `rw_init_flags`
 //!   and `rw_init` as the C macros; the same for `rrw_init_flags`/`rrw_init` and
@@ -73,11 +73,18 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicU32, Ordering, fence};
 
 use crate::kassert;
+#[cfg(feature = "multiprocessor")]
+use crate::kern::kern_lock::_kernel_lock_held;
 use crate::kern::kern_synch::{sleep_finish, sleep_setup, wakeup, wakeup_one};
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::kern::subr_prf::panic;
 use crate::machine::cpu::curproc;
 use crate::machine::intr::IPL_MPFLOOR;
+#[cfg(feature = "multiprocessor")]
+use crate::machine::{
+    Machine,
+    cpu::{Cpu, curcpu},
+};
 use crate::sys::errno::Errno;
 use crate::sys::param::{PCATCH, PLOCK};
 use crate::sys::pool::{PR_WAITOK, Pool};
@@ -89,6 +96,13 @@ use crate::sys::systm::INFSLP;
 
 /// `RW_SLEEP_TMO`: how long a waiter sleeps before the `RWDIAG` complaint; forever without it.
 const RW_SLEEP_TMO: u64 = INFSLP;
+
+/// `RW_SPINS`: other OSes implement more sophisticated mechanism to determine how long the
+/// process attempting to acquire the lock should be spinning. We start with the most simple
+/// approach: we do `RW_SPINS` attempts at most before eventually giving up and putting the
+/// process to sleep queue.
+#[cfg(feature = "multiprocessor")]
+const RW_SPINS: u32 = 1000;
 
 /// `rw_cas(p, e, n)`: the compare-and-swap of the owner word; returns the old value.
 fn rw_cas(p: &core::sync::atomic::AtomicUsize, e: usize, n: usize) -> usize {
@@ -261,7 +275,32 @@ fn rw_do_enter_write(rwl: &Rwlock, flags: i32) -> Result<(), Errno> {
         ));
     }
 
-    // MULTIPROCESSOR: the RW_SPINS spin while not holding the kernel lock.
+    // If process holds the kernel lock, then we want to give up on CPU as soon as possible
+    // so other processes waiting for the kernel lock can progress. Hence no spinning if we
+    // hold the kernel lock.
+    #[cfg(feature = "multiprocessor")]
+    if !_kernel_lock_held() {
+        let spc = Machine::ci_schedstate(curcpu());
+
+        // It makes sense to try to spin just in case the lock is acquired by writer.
+        spc.spc_spinning.fetch_add(1, Ordering::Relaxed);
+        for _ in 0..RW_SPINS {
+            core::hint::spin_loop(); // CPU_BUSY_CYCLE()
+            owner = rwl.rwl_owner.load(Ordering::Relaxed);
+            if owner != 0 {
+                continue;
+            }
+
+            owner = rw_cas(&rwl.rwl_owner, 0, this);
+            if owner == 0 {
+                spc.spc_spinning.fetch_sub(1, Ordering::Relaxed);
+                // ok, we won now.
+                fence(Ordering::Acquire); // locked: membar_enter_after_atomic()
+                return Ok(());
+            }
+        }
+        spc.spc_spinning.fetch_sub(1, Ordering::Relaxed);
+    }
 
     if flags & RW_NOSLEEP != 0 {
         return Err(Errno::EBUSY);

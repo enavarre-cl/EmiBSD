@@ -53,9 +53,15 @@
 //! `check_console` and the kernel threads arrive with M5-b2 and M6; M7b brings `ifinit`,
 //! `softnet_init` and the pseudo-device attach (`pdevinit[]`, `pdevinit_done`), then
 //! `rtable_init` and `domaininit` (the IPv4 and routing domains); the socket layer adds
-//! `soinit` and the UNIX domain.
+//! `soinit` and the UNIX domain. M11a: the kernel lock (`KERNEL_LOCK_INIT`, `KERNEL_LOCK`
+//! on behalf of proc0, `start_init`'s `KERNEL_UNLOCK` before init's first return to user
+//! mode), `cpu_boot_secondary_processors`, `smr_startup` and `smr_startup_thread`.
 //!
 //! ## Deviations
+//! - With `MULTIPROCESSOR` and `qemu`, `selftest=kthread` starts the secondary processors
+//!   itself before its ping-pong (the run ends there), and every run prints `selftest: N
+//!   cpus running` after `cpu_boot_secondary_processors`. `pool_gc_pages(NULL)`
+//!   (`MULTIPROCESSOR`, `subr_pool.c`) is not called until the per-CPU pool caches land.
 //! - `main()` takes no `framep` (unused in C) and never returns, as the C's loop never does.
 //! - `start_init` execs the `init` Limine module (`stand` hands it over through
 //!   `set_init_module`) instead of trying the `initpaths` on a filesystem; `check_console`
@@ -97,6 +103,7 @@ use crate::kern::kern_resource::lim_startup;
 use crate::kern::kern_rwlock::rw_obj_init;
 use crate::kern::kern_sched::{sched_init, sched_init_cpu};
 use crate::kern::kern_sig::{siginit, signal_init};
+use crate::kern::kern_smr::{smr_startup, smr_startup_thread};
 use crate::kern::kern_synch::{endtsleep, sleep_queue_init, tsleep_nsec, wakeup};
 use crate::kern::kern_task::taskq_init;
 use crate::kern::kern_timeout::{timeout_proc_init, timeout_set, timeout_startup};
@@ -137,7 +144,7 @@ use crate::sys::proc::{FORK_FORK, P_SYSTEM, PS_SYSTEM, Pgrp, Proc, Process, SONP
 use crate::sys::reboot::RB_SINGLE;
 use crate::sys::resourcevar::Plimit;
 use crate::sys::signalvar::Sigacts;
-use crate::sys::systm::{INFSLP, MOUNTROOT, SysArgs, kernel_lock, kernel_lock_init};
+use crate::sys::systm::{INFSLP, MOUNTROOT, SysArgs, kernel_lock, kernel_lock_init, kernel_unlock};
 use crate::sys::types::Register;
 use crate::unported;
 use crate::uvm::uvm_extern::{
@@ -292,7 +299,7 @@ pub fn main() -> ! {
     let _ = unported!("srp_startup");
 
     // Initialize SMR subsystem.
-    let _ = unported!("smr_startup");
+    smr_startup();
 
     // Initialize process and pgrp structures.
     procinit();
@@ -572,7 +579,14 @@ pub fn main() -> ! {
     let _ = unported!("kthread_create (aiodoned, zerothread: M7)");
     #[cfg(feature = "qemu")]
     if crate::kern::selftest::kthread_requested() {
-        // The M5 exit criterion: the run ends here, before init gets to exec.
+        // The M5 exit criterion: the run ends here, before init gets to exec. With
+        // MULTIPROCESSOR the secondary processors start first (main's own call below is not
+        // reached), so that the two threads can ping-pong across CPUs (M11a).
+        #[cfg(feature = "multiprocessor")]
+        {
+            crate::machine::cpu::cpu_boot_secondary_processors();
+            crate::kern::selftest::cpus_running();
+        }
         crate::kern::selftest::kthread_pingpong();
         Machine::exit(ExitStatus::Success);
     }
@@ -600,15 +614,21 @@ pub fn main() -> ! {
     // Boot the secondary processors.
     #[cfg(feature = "multiprocessor")]
     crate::machine::cpu::cpu_boot_secondary_processors();
+    #[cfg(all(feature = "multiprocessor", feature = "qemu"))]
+    crate::kern::selftest::cpus_running();
 
     // Now that all CPUs partake in scheduling, start SMR thread.
-    let _ = unported!("smr_startup_thread");
+    smr_startup_thread();
 
     config_process_deferred_mountroot();
 
     // Okay, now we can let init(8) exec! It's off to userland!
     START_INIT_EXEC.store(1, Ordering::Relaxed);
     wakeup(ptr::from_ref(&START_INIT_EXEC));
+
+    // Start the idle pool page garbage collector
+    #[cfg(feature = "multiprocessor")]
+    let _ = unported!("pool_gc_pages (subr_pool.c)");
 
     crate::kern::kern_time::start_periodic_resettodr();
 
@@ -764,7 +784,10 @@ pub fn start_init(arg: *mut c_void) {
         // Now try to exec the program. If can't for any reason other than it doesn't
         // exist, complain.
         match sys_execve(p, &args, &mut retval) {
-            Err(Errno::EJUSTRETURN) => return, // KERNEL_UNLOCK(): one CPU
+            Err(Errno::EJUSTRETURN) => {
+                kernel_unlock(); // KERNEL_UNLOCK()
+                return;
+            }
             Err(Errno::ENOENT) => {}
             Err(error) => {
                 let name = &path[..path.len() - 1];
@@ -784,7 +807,10 @@ pub fn start_init(arg: *mut c_void) {
         let path = module.path.to_bytes_with_nul();
         let (arg0, uap) = start_init_args(addr, path);
         match exec_image(p, arg0, uap, 0, module.data) {
-            Err(Errno::EJUSTRETURN) => return,
+            Err(Errno::EJUSTRETURN) => {
+                kernel_unlock(); // KERNEL_UNLOCK(), as for an exec from the root
+                return;
+            }
             Err(e) if e != Errno::ENOENT => {
                 kprintf!("exec {}: error {}\n", Str(module.path.to_bytes()), e as i32);
             }
