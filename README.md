@@ -21,7 +21,7 @@
 
 ## Status
 
-Status: M10 (file systems, M10a..M10f) met, M10d (ext2fs, ntfs, fuse) last; M11 (SMP) next.
+Status: M11a (MP bring-up, four CPUs per VM) met; M11b (MP timekeeping) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -42,7 +42,8 @@ Status: M10 (file systems, M10a..M10f) met, M10d (ext2fs, ntfs, fuse) last; M11 
 | M10f | softraid (RAID 0, 1, 5, 6, concat, RAID 1C, CRYPTO; bio(4), bioctl) | met |
 | M10e | NFS client and server (portmap, mountd, nfsd, mount_nfs, showmount) | met |
 | M10d | ext2fs, ntfs (amd64), fuse | met |
-| M11a..M11e | SMP | next |
+| M11a | MP bring-up: APs started through Limine, the kernel lock, per-CPU run queues, SMR, percpu and pool caches, IPIs and TLB shootdowns | met |
+| M11b..M11e | SMP: MP timekeeping, ddb on MP, network parallelism, the MP audit | next |
 | M12 | Devices (audio, USB), in QEMU | next |
 | M13 | Storage, firmware and console | next |
 | M14, M14b | Installable; code and test layout | next |
@@ -86,6 +87,9 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
 - NTFS, amd64 only (as in GENERIC): an image made by our own generator, checked first by
   macOS's NTFS driver, attached with vnconfig(8) and mounted with mount_ntfs(8); a resident
   and a non-resident file read back (`smoke-ntfs`).
+- Four processors (`-smp 4`) with the `multiprocessor` kernel: the application processors
+  start, take IPIs and TLB shootdowns, two kernel threads ping-pong across CPUs, a thread per
+  CPU stresses the pools and the page allocator, and the init self-test passes (`smoke-mp`).
 
 Between two VMs on a private link (`cargo xtask smoke2`):
 
@@ -138,6 +142,18 @@ m10d-fuse-42
 m10d-fuse-sub-42
 ```
 
+And from `smoke-mp`, the `multiprocessor` kernel with `-smp 4` on amd64 (trimmed):
+
+```
+bsd: 4 processors, boot processor hwid 0x0
+cpu1 at mainbus0: apid 1 (application processor)
+cpu3 at mainbus0: apid 3 (application processor)
+x86_ipi_selftest: X86_IPI_NOP taken by 3 cpus, tlb shootdowns acknowledged
+selftest: 4 cpus running
+selftest: mpstress pool ok (4 cpus, 432000 gets, 431588 through the per-cpu caches, 71904 items exchanged between threads, 0 PR_NOWAIT refused, 29 pages reclaimed, 251 ms)
+selftest: mpstress pmemrange ok (4 cpus, 14400 page lists, 88389 pages, 0 UVM_PLA_NOWAIT refused, 95995 pages free before and after; 96108 free at the start, 96077 at the end)
+```
+
 The real console also prints `unported: <name>` lines. Each one is a known gap, reported once.
 
 ## Quick start (macOS)
@@ -182,7 +198,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 4 | 148 | 608 | 15 | 775 |
+| 4 | 143 | 625 | 16 | 788 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).

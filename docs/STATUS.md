@@ -1,26 +1,25 @@
 # Status
 
-Milestone: **M10 done** (M10a..M10f: persistent disk, UFS options, memory and removable file
-systems, softraid, NFS, ext2fs/ntfs/fuse); M11a next. Updated: 2026-10-04.
+Milestone: **M10 done**, **M11a done** (MP bring-up: four CPUs per VM with the
+`multiprocessor` kernel); M11b next. Updated: 2026-10-04.
 
 Done:
-- M7a..M8b: uvm, mbufs, PCI, virtio, IPv4; ffs root on rd0a, init, ksh, /etc/rc, login. M9:
-  sockets, kqueue, rtsock, wg(4), IPsec, pf, pfsync, pflow; ps/fstat/vmstat/df; pledge(2).
-  M9+: TCP, IPComp, HTTPS, bpf, divert, tcpdump, INET6.
-- amd64 runs on the TSC (`tsc.c`, `kern.timecounter`); smokes reject `uptime went backwards`.
-- M10a: vioblk(4), SCSI midlayer, sd(4), physio(9), the disk tools, a persistent image per VM
-  (`smoke-disk`). M10b: QUOTA, UFS_DIRHASH, MFS; quota tools, su, mount_mfs (`smoke-ufsopts`).
-- M10c: tmpfs, msdosfs, cd9660, udf, vnd(4), their tools; `smoke-fs` (FAT/ISO/UDF on vnd).
-- M10f: softraid and all seven disciplines, bio(4), sensors, bioctl, four disks per VM
-  (`--disks`); `smoke-softraid` (RAID 6 via our `sr6create`: bioctl has no `-c 6`).
-- M10e: all of `nfs/`, portmap, mountd, nfsd, mount_nfs, showmount; `smoke-nfs` (two VMs).
-- M10d: ext2fs, read-only ntfs (amd64), fuse; ext2/ntfs tools, libfuse, our `fusehello` and
-  NTFS generator; `smoke-ext2fs` (+ host e2fsck), `smoke-ntfs`, `smoke-fuse`.
+- M7a..M9+: uvm, mbufs, virtio, IPv4/6, TCP; ffs root, init, ksh, login; sockets, kqueue,
+  wg(4), IPsec, the pf family, bpf, tcpdump, HTTPS; ps/fstat/vmstat/df; pledge(2).
+- M10a..M10f: vioblk, sd(4), the disk tools; QUOTA, DIRHASH, MFS; tmpfs, msdosfs, cd9660, udf,
+  vnd; softraid; NFS; ext2fs, ntfs (amd64), fuse. Each has its `smoke-*` recipe.
+- M11a: APs started through the Limine MP request (replaces mptramp.S/PSCI), the kernel lock
+  and spinning mutex, kern_sched.c whole, SMR, percpu, per-CPU pool caches, real pool/malloc/
+  fpageq locks; amd64 IPIs and TLB shootdowns, arm64 cpu.c and ampintc SGIs; `smoke-mp`
+  (`-smp 4`, both archs: 4 cpus running, kthread across CPUs, mpstress). Default kernel: UP.
 
 Next:
-- M11a..e (SMP; then every smoke runs MP), then M12.
+- M11b (TSC sync, per-CPU clocks), M11c (ddb on MP), M11d (softnet x8), M11e (the audit;
+  then every smoke runs MP), then M12.
 
 Blockers:
+- Until M11e, unaudited paths run under the kernel lock (MPSAFE flags and SY_NOLOCK ignored,
+  uvm_fault and process teardown locked: `uvm.pageqlock` is still a no-op).
 - amd64 kernel stacks are tight: about 4.9 KB stay free under softraid I/O (M10f measure).
 - Under load the amd64 TSC can measure high (1.2-1.3 GHz for ~1.0), so the clock runs slow
   until acpitimer/acpihpet recalibrate it (M13; accepted by the user).
