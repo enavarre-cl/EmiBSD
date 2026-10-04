@@ -43,15 +43,17 @@
 //! and the real `timeout_barrier`; `timeout_sysctl` came with `kern_sysctl.c`; the `ddb`
 //! `show callout` printers come with the real ddb (M7).
 //!
+//! `MULTIPROCESSOR` (M11e): as in the C, a `TIMEOUT_PROC | TIMEOUT_MPSAFE` timeout goes to
+//! `timeout_proc_mp` and runs in the `softclockmp` thread (`softclock_thread_mp`), which drops
+//! the kernel lock; the other process-context timeouts run in the softclock thread under the
+//! kernel lock, and the soft-interrupt ones in `softclock`, a soft interrupt established
+//! without `SIF_MPSAFE`, so also under the kernel lock (the C allows `TIMEOUT_MPSAFE` only
+//! with `TIMEOUT_PROC`).
+//!
 //! ## Deviations
 //! - `WITNESS` and `kcov` are not configured: `timeout_sync_*` are no-ops and `to_process`
 //!   is only recorded.
 //! - `timeout_level_width` is a `const` (the C fills it once at startup).
-//! - `TIMEOUT_MPSAFE` is ignored (M11a, `MULTIPROCESSOR`): every process-context timeout
-//!   goes to `timeout_proc` and runs in the softclock thread under the kernel lock; the
-//!   `timeout_proc_mp` queue and its `softclockmp` thread (`softclock_thread_mp`) are not
-//!   created until the M11e audit. The soft-interrupt timeouts run under the kernel lock
-//!   like every soft interrupt (`kern_softintr.rs`).
 
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
@@ -80,6 +82,8 @@ use crate::sys::mutex::{Mutex, mutex_assert_locked};
 use crate::sys::param::PSWP;
 use crate::sys::proc::Cond;
 use crate::sys::sysctl::SysctlPlain;
+#[cfg(feature = "multiprocessor")]
+use crate::sys::systm::kernel_unlock;
 use crate::sys::systm::{INFSLP, kernel_assert_locked};
 use crate::sys::time::{Timespec, nsec_to_timespec, timespecadd, timespecsub};
 use crate::sys::timeout::{
@@ -167,8 +171,15 @@ static TIMEOUT_CTX_PROC: TimeoutCtx = TimeoutCtx {
     tctx_todo: &TIMEOUT_PROC_Q,
     tctx_running: core::cell::Cell::new(ptr::null()),
 };
-// timeout_proc_mp, timeout_ctx_proc_mp (MULTIPROCESSOR): M11a ignores TIMEOUT_MPSAFE (see the
-// module's deviations).
+/// \[T\] `timeout_proc_mp`: process context and no kernel lock (`MULTIPROCESSOR`).
+#[cfg(feature = "multiprocessor")]
+static TIMEOUT_PROC_MP: Circq = Circq::new();
+/// `timeout_ctx_proc_mp` (`MULTIPROCESSOR`).
+#[cfg(feature = "multiprocessor")]
+static TIMEOUT_CTX_PROC_MP: TimeoutCtx = TimeoutCtx {
+    tctx_todo: &TIMEOUT_PROC_MP,
+    tctx_running: core::cell::Cell::new(ptr::null()),
+};
 
 /// \[I\] `timeout_level_width`: wheel level width (seconds).
 const TIMEOUT_LEVEL_WIDTH: [i64; WHEELCOUNT] = {
@@ -348,7 +359,8 @@ pub fn timeout_startup() {
     circq_init(&TIMEOUT_NEW);
     circq_init(&TIMEOUT_TODO);
     circq_init(&TIMEOUT_PROC_Q);
-    // timeout_proc_mp: M11a ignores TIMEOUT_MPSAFE.
+    #[cfg(feature = "multiprocessor")]
+    circq_init(&TIMEOUT_PROC_MP);
     for b in TIMEOUT_WHEEL.iter() {
         circq_init(b);
     }
@@ -596,8 +608,7 @@ pub fn timeout_barrier(to: &Timeout) {
 
     mtx_enter(&TIMEOUT_MUTEX);
     let tctx = if flags & TIMEOUT_PROC != 0 {
-        // timeout_ctx_proc_mp when TIMEOUT_MPSAFE: M11a ignores the flag.
-        &TIMEOUT_CTX_PROC
+        proc_ctx(flags)
     } else {
         &TIMEOUT_CTX_SI
     };
@@ -727,6 +738,18 @@ pub fn timeout_hardclock_update() {
     }
 }
 
+/// The process context a `TIMEOUT_PROC` timeout with `flags` runs in: `timeout_ctx_proc_mp`
+/// for `TIMEOUT_MPSAFE` with `MULTIPROCESSOR`, `timeout_ctx_proc` otherwise (the C's
+/// `#ifdef MULTIPROCESSOR` choice in `timeout_barrier` and `softclock_process_*_timeout`).
+fn proc_ctx(flags: i32) -> &'static TimeoutCtx {
+    #[cfg(feature = "multiprocessor")]
+    if flags & TIMEOUT_MPSAFE != 0 {
+        return &TIMEOUT_CTX_PROC_MP;
+    }
+    let _ = flags;
+    &TIMEOUT_CTX_PROC
+}
+
 /// `timeout_run`: runs `to` in `tctx`, dropping the mutex around the call.
 fn timeout_run(tctx: &TimeoutCtx, to: &Timeout) {
     mutex_assert_locked(&TIMEOUT_MUTEX, "timeout_run");
@@ -767,9 +790,8 @@ fn softclock_process_kclock_timeout(to: &Timeout, new: bool) {
         TOSTAT.tos_late.set(TOSTAT.tos_late.get() + 1);
     }
     if to.to_flags.get() & TIMEOUT_PROC != 0 {
-        // timeout_proc_mp when TIMEOUT_MPSAFE: M11a ignores the flag.
         // SAFETY: as above.
-        unsafe { circq_insert_tail(&TIMEOUT_PROC_Q, &to.to_list) };
+        unsafe { circq_insert_tail(proc_ctx(to.to_flags.get()).tctx_todo, &to.to_list) };
         return;
     }
     timeout_run(&TIMEOUT_CTX_SI, to);
@@ -795,9 +817,8 @@ fn softclock_process_tick_timeout(to: &Timeout, new: bool) {
         TOSTAT.tos_late.set(TOSTAT.tos_late.get() + 1);
     }
     if to.to_flags.get() & TIMEOUT_PROC != 0 {
-        // timeout_proc_mp when TIMEOUT_MPSAFE: M11a ignores the flag.
         // SAFETY: as above.
-        unsafe { circq_insert_tail(&TIMEOUT_PROC_Q, &to.to_list) };
+        unsafe { circq_insert_tail(proc_ctx(to.to_flags.get()).tctx_todo, &to.to_list) };
         return;
     }
     timeout_run(&TIMEOUT_CTX_SI, to);
@@ -837,11 +858,16 @@ pub fn softclock(_arg: *mut c_void) {
     }
     TOSTAT.tos_softclocks.set(TOSTAT.tos_softclocks.get() + 1);
     let needsproc = !circq_empty(&TIMEOUT_PROC_Q);
-    // need_proc_mp: M11a ignores TIMEOUT_MPSAFE.
+    #[cfg(feature = "multiprocessor")]
+    let need_proc_mp = !circq_empty(&TIMEOUT_PROC_MP);
     mtx_leave(&TIMEOUT_MUTEX);
 
     if needsproc {
         wakeup(ptr::addr_of!(TIMEOUT_PROC_Q));
+    }
+    #[cfg(feature = "multiprocessor")]
+    if need_proc_mp {
+        wakeup(ptr::addr_of!(TIMEOUT_PROC_MP));
     }
 }
 
@@ -851,7 +877,10 @@ pub fn softclock_create_thread(_arg: *mut c_void) {
     if kthread_create(softclock_thread, ptr::null_mut(), b"softclock").is_err() {
         panic(format_args!("fork softclock"));
     }
-    // softclock_thread_mp, "softclockmp" (MULTIPROCESSOR): M11a ignores TIMEOUT_MPSAFE.
+    #[cfg(feature = "multiprocessor")]
+    if kthread_create(softclock_thread_mp, ptr::null_mut(), b"softclockmp").is_err() {
+        panic(format_args!("kthread_create softclock_thread_mp"));
+    }
 }
 
 /// `softclock_thread_run`: the softclock thread's loop: sleeps on the context's list and
@@ -903,7 +932,15 @@ pub fn softclock_thread(_arg: *mut c_void) {
     splx(s);
 }
 
-// softclock_thread_mp (MULTIPROCESSOR): not created in M11a, see the module's deviations.
+/// `softclock_thread_mp` (`MULTIPROCESSOR`): the thread that runs the `TIMEOUT_PROC |
+/// TIMEOUT_MPSAFE` timeouts without the kernel lock, on any CPU.
+#[cfg(feature = "multiprocessor")]
+pub fn softclock_thread_mp(_arg: *mut c_void) {
+    kernel_assert_locked(); // KERNEL_ASSERT_LOCKED()
+    kernel_unlock(); // KERNEL_UNLOCK()
+
+    softclock_thread_run(&TIMEOUT_CTX_PROC_MP);
+}
 
 /// `timeout_adjust_ticks`: moves the tick wheel forward by `adj` ticks after the clock was
 /// stepped (`tc_setclock`).

@@ -72,11 +72,12 @@ use core::cell::{Cell, UnsafeCell};
 use core::ptr;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::kern::uipc_mbuf::{M_EXTFREE_REFS_FN, MBSTAT, m_clget, m_ext_refs_shared, m_freem};
+use crate::kern::uipc_mbuf::{M_EXTFREE_REFS_FN, m_clget, m_ext_refs_shared, m_freem, mbstat};
 use crate::machine::intr::{splnet, splx};
 use crate::queue_adapter;
 use crate::sys::malloc::{M_NOWAIT, M_WAITOK};
 use crate::sys::mutex::Mutex;
+use crate::sys::percpu::counters_inc;
 use crate::sys::queue::{SlistEntry, SlistHead};
 
 // Constants related to network buffer management. MCLBYTES must be no larger than PAGE_SIZE
@@ -836,7 +837,7 @@ pub fn m_freemp(mp: &mut Option<&'static Mbuf>) -> Option<&'static Mbuf> {
 #[inline]
 pub fn mbstat_inc(c: usize) {
     let s = splnet();
-    MBSTAT[c].fetch_add(1, Ordering::Relaxed);
+    counters_inc(mbstat(), c);
     splx(s);
 }
 

@@ -31,23 +31,27 @@
 //!
 //! Upstream: sys/kern/subr_evcount.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M4 ports `evcount_attach`, `evcount_detach`, `evcount_inc`,
-//! `evcount_percpu` and `evcount_init_percpu` (the `counters_*` per-CPU side is reported
-//! until `percpu` arrives, M5); the diagnostic tools (stage 2) port `evcount_sysctl`
-//! (`kern.intrcnt`, `kern.evcount`; `counters_read` of a per-CPU counter is reported).
+//! Status: `ported`. Milestone M4 ports `evcount_attach`, `evcount_detach`, `evcount_inc`,
+//! `evcount_percpu` and `evcount_init_percpu`; the diagnostic tools (stage 2) port
+//! `evcount_sysctl` (`kern.intrcnt`, `kern.evcount`); M11e the per-CPU counters
+//! (`counters_alloc`, `counters_add`, `counters_inc`, `counters_read`, `counters_free`).
+//!
+//! ## Deviations
+//! - The C's `TAILQ_HEAD_INITIALIZER`s are initialised on first use (`lists`).
 
 use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use crate::kassert;
 use crate::kern::kern_sysctl::{sysctl_rdint, sysctl_rdquad, sysctl_rdstring};
+use crate::kern::subr_percpu::{counters_alloc, counters_free, counters_read};
 use crate::machine::intr::{splhigh, splx};
 use crate::sys::errno::Errno;
 use crate::sys::evcount::{Evcount, EvcountList};
+use crate::sys::percpu::{counters_add, counters_inc};
 use crate::sys::queue::TailqHead;
 use crate::sys::sysctl::{
     KERN_INTRCNT_CNT, KERN_INTRCNT_NAME, KERN_INTRCNT_NUM, KERN_INTRCNT_VECTOR,
 };
-use crate::unported;
 
 /// A list head that can be a static: every access happens at attach time on the boot CPU.
 struct EvcountHead(TailqHead<EvcountList>);
@@ -82,7 +86,7 @@ pub fn evcount_attach(ec: &'static Evcount, name: &'static str, data: *const ())
 
     // memset(ec, 0, sizeof(*ec))
     ec.ec_count.store(0, Ordering::Relaxed);
-    ec.ec_percpu.set(core::ptr::null());
+    ec.ec_percpu.set(None);
     ec.ec_name.set(name);
     ec.ec_id.set(NEXTID.fetch_add(1, Ordering::Relaxed) + 1);
     ec.ec_data.set(data);
@@ -100,8 +104,7 @@ pub fn evcount_percpu(ec: &'static Evcount) {
             init_list.insert_tail(ec);
         }
     } else {
-        // ec->ec_percpu = counters_alloc(1)
-        let _ = unported!("counters_alloc (evcount_percpu, M5)");
+        ec.ec_percpu.set(Some(counters_alloc(1)));
     }
 }
 
@@ -111,10 +114,11 @@ pub fn evcount_init_percpu() {
     let (list, init_list) = lists();
     kassert!(!EVCOUNT_PERCPU_DONE.load(Ordering::Relaxed));
 
-    for _ec in init_list.iter() {
-        // ec->ec_percpu = counters_alloc(1); counters_add(ec->ec_percpu, 0, ec->ec_count);
-        // ec->ec_count = 0;
-        let _ = unported!("counters_alloc (evcount_init_percpu, M5)");
+    for ec in init_list.iter() {
+        let percpu = counters_alloc(1);
+        counters_add(percpu, 0, ec.ec_count.load(Ordering::Relaxed));
+        ec.ec_percpu.set(Some(percpu));
+        ec.ec_count.store(0, Ordering::Relaxed);
     }
 
     // SAFETY: both lists are initialised and distinct; attach time, boot CPU.
@@ -127,16 +131,17 @@ pub fn evcount_detach(ec: &'static Evcount) {
     let (list, _) = lists();
     // SAFETY: `ec` is attached; detach time, boot CPU.
     unsafe { list.remove(ec) };
-    if !ec.ec_percpu.get().is_null() {
-        let _ = unported!("counters_free (evcount_detach, M5)");
-        ec.ec_percpu.set(core::ptr::null());
+    if let Some(percpu) = ec.ec_percpu.take() {
+        // SAFETY: `counters_alloc(1)` made it; the counter is detached, so nothing counts on
+        // it any more.
+        unsafe { counters_free(percpu, 1) };
     }
 }
 
 /// `evcount_inc`: counts one event.
 pub fn evcount_inc(ec: &Evcount) {
-    if !ec.ec_percpu.get().is_null() {
-        let _ = unported!("counters_inc (evcount_inc, M5)");
+    if let Some(percpu) = ec.ec_percpu.get() {
+        counters_inc(percpu, 0);
     } else {
         ec.ec_count.fetch_add(1, Ordering::Relaxed);
     }
@@ -188,9 +193,11 @@ pub fn evcount_sysctl(
         KERN_INTRCNT_NUM => sysctl_rdint(oldp, oldlenp, 0, nintr as i32),
         KERN_INTRCNT_CNT => {
             let ec = found.ok_or(Errno::ENOENT)?;
-            let count = if !ec.ec_percpu.get().is_null() {
-                // counters_read(ec->ec_percpu, &count, 1, &scratch)
-                return Err(unported!("counters_read (evcount_sysctl, M5)"));
+            let count = if let Some(percpu) = ec.ec_percpu.get() {
+                let mut count = [0u64; 1];
+                let mut scratch = [0u64; 1];
+                counters_read(percpu, &mut count, 1, Some(&mut scratch));
+                count[0]
             } else {
                 let s = splhigh();
                 let count = ec.ec_count.load(Ordering::Relaxed);

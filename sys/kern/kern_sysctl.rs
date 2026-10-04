@@ -80,8 +80,9 @@
 //!   (`sysctl_sysvipc`), `NAUDIO`/`NVIDEO`/`NDT`/`NUCOM` (0), `GPROF`, `WITNESS`,
 //!   `PTRACE` (`kern.global_ptrace`), `KTRACE` (the trace members of `kinfo_proc` stay
 //!   zero). `SMALL_KERNEL` is not set.
-//! - The kernel lock is taken at the C's sites (M11e). `log_mtx` does not exist
-//!   (`subr_log.rs`), so the message buffer header is read without it.
+//! - The kernel lock is taken at the C's sites (M11e), and `log_mtx` around the message
+//!   buffer header. sysctl(2) is still in `SY_NOLOCK_DEFERRED` (`sys/sys/syscall_mi.rs`):
+//!   its subtrees reach code of other audits (`net_sysctl`).
 //! - `kern.file`: `fill_file` fills the `AF_INET` and `AF_INET6` (feature `inet6`) control
 //!   blocks and the TCP members (`fill_file_tcpcb`, zero for a control block without a
 //!   `tcpcb`). `KERN_FILE_BYFILE` of sockets walks `tcbtable`, `udbtable`, `rawcbtable`,
@@ -146,13 +147,13 @@ use crate::kern::sched_bsd;
 use crate::kern::subr_autoconf::AUTOCONF_SERIAL;
 use crate::kern::subr_disk::{DISK_CHANGE, DISK_COUNT, DISKLIST, duid_format, duid_iszero};
 use crate::kern::subr_evcount::evcount_sysctl;
-use crate::kern::subr_log::{consbufp, msgbufp};
+use crate::kern::subr_log::{LOG_MTX, consbufp, msgbufp};
 use crate::kern::subr_pool::{POOL_DEBUG, pool_reclaim_all, sysctl_dopool};
 use crate::kern::subr_prf::{SPLASSERT_CTL, panic};
 use crate::kern::sys_pipe::fp_pipe;
 use crate::kern::sys_socket::fp_socket;
 use crate::kern::tty::{TTY_COUNT, sysctl_tty};
-use crate::kern::uipc_mbuf::{MBSTAT, nmbclust_update};
+use crate::kern::uipc_mbuf::{MBS_NCOUNTERS, mbstat, nmbclust_update};
 use crate::kern::uipc_socket::{somaxconn, sominconn};
 use crate::kern::uipc_socket2::{soassertlocked, solock_shared, sounlock_shared};
 use crate::kern::vfs_bio::{BUFHIGHPAGES, bufadjust};
@@ -656,8 +657,8 @@ pub fn kern_sysctl(
             return error;
         }
         KERN_MBSTAT => {
-            let counters: [u64; MbstatCounters::MbsNcounters as usize] =
-                core::array::from_fn(|i| MBSTAT[i].load(Ordering::Relaxed));
+            let mut counters = [0u64; MBS_NCOUNTERS];
+            crate::kern::subr_percpu::counters_read(mbstat(), &mut counters, MBS_NCOUNTERS, None);
             let mut mbs = Mbstat::default();
             mbs.m_mtypes.copy_from_slice(&counters[..MT_NTYPES]);
             mbs.m_drops = counters[MbstatCounters::MbsDrops as usize];
@@ -757,8 +758,9 @@ fn sysctl_msgbuf(
         return Ok(());
     }
 
-    // mtx_enter(&log_mtx): see the module's deviations.
+    mtx_enter(&LOG_MTX);
     let ump: [i64; 5] = [mp.magic(), mp.bufx(), mp.bufr(), mp.bufs(), mp.bufd()];
+    mtx_leave(&LOG_MTX);
 
     // copy header...
     copyout(ump.as_bytes(), oldp)?;
@@ -1903,7 +1905,7 @@ impl FileWalk<'_> {
         }
         // ps_tracevp (KERN_FILE_TRACE) does not exist: KTRACE is not configured.
         let mut i = 0;
-        while i < fdp.fd_nfiles.get() {
+        while i < fdp.fd_nfiles.load(Ordering::Relaxed) {
             if let Some(fp) = fd_getfile(fdp, i) {
                 let r = self.fillit(Some(fp), Some(fdp), i, None, Some(pr));
                 let _ = frele(fp, self.p);
@@ -2318,7 +2320,7 @@ pub fn fill_kproc(pr: &Process, ki: &mut KinfoProc, p: Option<&Proc>, show_point
 
     ki.p_xstat = w_exitcode(pr.ps_xexit.get(), pr.ps_xsig.get()) as u16;
     ki.p_acflag = pr.ps_acflag.get();
-    ki.p_pledge = pr.ps_pledge.get();
+    ki.p_pledge = pr.ps_pledge.load(Ordering::Relaxed);
 
     strlcpy(&mut ki.p_emul, b"native");
     strlcpy(&mut ki.p_comm, pr.comm());
@@ -2332,7 +2334,7 @@ pub fn fill_kproc(pr: &Process, ki: &mut KinfoProc, p: Option<&Proc>, show_point
         ki.p_eflag |= EPROC_UNVEIL;
     }
     if pr.ps_uvdone.get() != 0
-        || (flags & PS_PLEDGE != 0 && pr.ps_pledge.get() & PLEDGE_UNVEIL == 0)
+        || (flags & PS_PLEDGE != 0 && pr.ps_pledge.load(Ordering::Relaxed) & PLEDGE_UNVEIL == 0)
     {
         ki.p_eflag |= EPROC_LKUNVEIL;
     }

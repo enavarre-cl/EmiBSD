@@ -67,7 +67,7 @@
 
 use core::cell::{Cell, UnsafeCell};
 use core::ptr;
-use core::sync::atomic::{AtomicI32, AtomicU32};
+use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
 use crate::kassert;
 use crate::kern::kern_rwlock::{rw_assert_wrlock, rw_enter_write, rw_exit_write};
@@ -136,10 +136,12 @@ pub struct Filedesc {
     pub fd_cdir: Cell<Option<&'static Vnode>>,
     /// \[K\] `fd_rdir`: root directory.
     pub fd_rdir: Cell<Option<&'static Vnode>>,
-    /// \[f\] `fd_nfiles`: number of open files allocated.
-    pub fd_nfiles: Cell<i32>,
-    /// \[f\] `fd_openfd`: number of files currently open.
-    pub fd_openfd: Cell<i32>,
+    /// \[f\] `fd_nfiles`: number of open files allocated; written under `fd_lock`, read
+    /// unlocked (`fd_getfile`), so a relaxed atomic.
+    pub fd_nfiles: AtomicI32,
+    /// \[f\] `fd_openfd`: number of files currently open; read unlocked by
+    /// `getdtablecount(2)`, so a relaxed atomic.
+    pub fd_openfd: AtomicI32,
     /// \[f\] `fd_himap`: each bit points to 32 fds.
     pub fd_himap: Cell<*mut u32>,
     /// \[f\] `fd_lomap`: bitmap of free fds.
@@ -172,8 +174,8 @@ impl Filedesc {
             fd_ofileflags: Cell::new(ptr::null_mut()),
             fd_cdir: Cell::new(None),
             fd_rdir: Cell::new(None),
-            fd_nfiles: Cell::new(0),
-            fd_openfd: Cell::new(0),
+            fd_nfiles: AtomicI32::new(0),
+            fd_openfd: AtomicI32::new(0),
             fd_himap: Cell::new(ptr::null_mut()),
             fd_lomap: Cell::new(ptr::null_mut()),
             fd_lastfile: Cell::new(0),
@@ -190,7 +192,7 @@ impl Filedesc {
 
     /// `fd_nfiles` as an index bound.
     pub fn nfiles(&self) -> usize {
-        self.fd_nfiles.get() as usize
+        self.fd_nfiles.load(Ordering::Relaxed) as usize
     }
 
     /// Checks `i` against an array of `len` entries.

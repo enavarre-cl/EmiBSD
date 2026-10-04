@@ -341,7 +341,8 @@ fn process_new(p: &'static Proc, parent: &'static Process, flags: i32) -> &'stat
     pr.ps_iflags.set(parent.ps_iflags.get());
     pr.ps_nice.set(parent.ps_nice.get());
     pr.ps_acflag.set(parent.ps_acflag.get());
-    pr.ps_pledge.set(parent.ps_pledge.get());
+    pr.ps_pledge
+        .store(parent.ps_pledge.load(Ordering::Relaxed), Ordering::Relaxed);
     pr.ps_execpledge.set(parent.ps_execpledge.get());
     pr.ps_kbind_cookie.set(parent.ps_kbind_cookie.get());
     pr.ps_kbind_addr.set(parent.ps_kbind_addr.get());

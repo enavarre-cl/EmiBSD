@@ -74,7 +74,7 @@
 use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::ptr;
-use core::sync::atomic::{AtomicI32, AtomicU32};
+use core::sync::atomic::{AtomicI32, AtomicU32, AtomicU64};
 
 use crate::kassert;
 use crate::kern::kern_lock::{pc_sprod_enter, pc_sprod_leave};
@@ -446,8 +446,9 @@ pub struct Process {
     /// `ps_acflag`: accounting flags.
     pub ps_acflag: Cell<u32>,
 
-    /// \[m\] `ps_pledge`: pledge promises.
-    pub ps_pledge: Cell<u64>,
+    /// \[m\] `ps_pledge`: pledge promises; an atomic because `pledge_syscall` reads it without
+    /// the lock (the C's `READ_ONCE`).
+    pub ps_pledge: AtomicU64,
     /// \[m\] `ps_execpledge`: execpledge promises.
     pub ps_execpledge: Cell<u64>,
 
@@ -536,7 +537,7 @@ impl Process {
             ps_iflags: Cell::new(0),
             ps_nice: Cell::new(0),
             ps_acflag: Cell::new(0),
-            ps_pledge: Cell::new(0),
+            ps_pledge: AtomicU64::new(0),
             ps_execpledge: Cell::new(0),
             ps_kbind_cookie: Cell::new(0),
             ps_kbind_addr: Cell::new(0),

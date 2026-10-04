@@ -19,7 +19,8 @@ fn pledged(promises: u64) -> &'static Proc {
     let p: &'static Proc = Box::leak(Box::new(Proc::new()));
     p.p_p.set(pr);
     pr.ps_flags.fetch_or(PS_PLEDGE, Ordering::Relaxed);
-    pr.ps_pledge.set(promises | PLEDGE_ERROR);
+    pr.ps_pledge
+        .store(promises | PLEDGE_ERROR, Ordering::Relaxed);
     p.p_pledge.set(promises | PLEDGE_ERROR);
     p
 }
@@ -88,7 +89,7 @@ fn pledge_only_reduces() {
             == PS_PLEDGE | PS_EXECPLEDGE
     );
     assert_eq!(
-        pr.ps_pledge.get(),
+        pr.ps_pledge.load(Ordering::Relaxed),
         PLEDGE_STDIO | PLEDGE_RPATH | PLEDGE_WPATH
     );
     assert_eq!(pr.ps_execpledge.get(), PLEDGE_STDIO | PLEDGE_RPATH);
@@ -101,9 +102,15 @@ fn pledge_only_reduces() {
         Err(Errno::EPERM)
     );
     assert_eq!(pledge(p, Some(c"stdio rpath"), None), Ok(()));
-    assert_eq!(pr.ps_pledge.get(), PLEDGE_STDIO | PLEDGE_RPATH);
+    assert_eq!(
+        pr.ps_pledge.load(Ordering::Relaxed),
+        PLEDGE_STDIO | PLEDGE_RPATH
+    );
     assert_eq!(pledge(p, Some(c"stdio unknown"), None), Err(Errno::EINVAL));
-    assert_eq!(pr.ps_pledge.get(), PLEDGE_STDIO | PLEDGE_RPATH);
+    assert_eq!(
+        pr.ps_pledge.load(Ordering::Relaxed),
+        PLEDGE_STDIO | PLEDGE_RPATH
+    );
 }
 
 #[test]
@@ -113,7 +120,7 @@ fn error_mode_ignores_increases() {
     assert_eq!(pledge(p, Some(c"stdio rpath error"), None), Ok(()));
     assert_eq!(pledge(p, Some(c"stdio rpath wpath error"), None), Ok(()));
     assert_eq!(
-        pr.ps_pledge.get(),
+        pr.ps_pledge.load(Ordering::Relaxed),
         PLEDGE_STDIO | PLEDGE_RPATH | PLEDGE_ERROR
     );
 }
@@ -135,7 +142,9 @@ fn the_system_call_table() {
         Err(Errno::EINVAL)
     );
     // p_pledge is refreshed from the process at each call.
-    p.process().ps_pledge.set(PLEDGE_STDIO | PLEDGE_RPATH);
+    p.process()
+        .ps_pledge
+        .store(PLEDGE_STDIO | PLEDGE_RPATH, Ordering::Relaxed);
     assert_eq!(pledge_syscall(p, SYS_open, &mut tval), Ok(()));
     assert_eq!(p.p_pledge.get(), PLEDGE_STDIO | PLEDGE_RPATH);
     assert_eq!(PLEDGE_SYSCALLS[SYS_kbind as usize], PLEDGE_ALWAYS);

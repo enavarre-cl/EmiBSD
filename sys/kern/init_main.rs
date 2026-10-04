@@ -472,7 +472,7 @@ pub fn main() -> ! {
     crate::kern::kern_event::kqueue_init_percpu();
     let _ = unported!("pmap_init_percpu");
     crate::uvm::uvm_init::uvm_init_percpu();
-    let _ = unported!("evcount_init_percpu");
+    crate::kern::subr_evcount::evcount_init_percpu();
 
     // init exec: init_exec (exec_conf.c) computes exec_maxhdrsz from execsw[], which is a
     // constant table here, so exec_maxhdrsz is a const fn (sys/exec.rs).

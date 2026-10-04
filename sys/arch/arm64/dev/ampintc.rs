@@ -35,8 +35,9 @@
 //! `ampintc_attach` (` ipi N`), `ampintc_ipi_ddb`, `ampintc_ipi_halt`, `ampintc_ipi_handler`,
 //! `ampintc_send_ipi` (`intr_send_ipi_func`), the IPI EOI of `ampintc_cpuinit` (the
 //! application processors' per-CPU init: their banked SGI/PPI registers, their target mask)
-//! and the kernel lock in `ampintc_run_handler`. Device interrupts stay routed to the boot
-//! CPU (`ci` `NULL` is `cpu_info_primary`), as in C. `ampintc_activate` (`DVACT_RESUME`,
+//! and the kernel lock in `ampintc_run_handler` (`IPL_MPSAFE` honoured as in C since M11e).
+//! Device interrupts stay routed to the boot CPU (`ci` `NULL` is `cpu_info_primary`), as in
+//! C. `ampintc_activate` (`DVACT_RESUME`,
 //! M5), the GICv2m MSI frame (`ampintc_msi_*`, with PCI) and the `simplebus_attach` of the
 //! children are not here.
 //!
@@ -45,9 +46,6 @@
 //!   device and for the rest of `struct ampintc_softc`: `ampintc_ca`'s `ca_devsize` is a bare
 //!   `struct device`, which mainbus attaches from the device tree (`ampintc* at fdt? early
 //!   1`); `ampintc_activate` (`DVACT_RESUME`) is not in it yet.
-//! - `ampintc_run_handler` (`MULTIPROCESSOR`): M11a honours `IPL_MPSAFE` only for handlers
-//!   above `IPL_MPFLOOR` (the clock, the IPI); every device handler takes the kernel lock
-//!   when it interrupts below `IPL_SCHED`, until M11e audits them (the user's M11a decision).
 //! - `sc_cpu_mask` and `sc_ipi_reason` are atomics (each CPU writes its own mask in
 //!   `ampintc_cpuinit` while others read it to send IPIs); `ampintc_send_ipi` fences before
 //!   the `ICD_SGIR` write so the posted reason is visible to the target's handler.
@@ -77,8 +75,8 @@ use crate::arch::arm64::include::frame::Trapframe;
 #[cfg(feature = "multiprocessor")]
 use crate::arch::arm64::include::intr::{ARM_IPI_DDB, ARM_IPI_HALT, ARM_IPI_NOP, IPL_IPI};
 use crate::arch::arm64::include::intr::{
-    IPL_FLAGMASK, IPL_HIGH, IPL_IRQMASK, IPL_MPFLOOR, IPL_MPSAFE, IPL_NONE, IPL_SCHED,
-    IST_EDGE_RISING, IST_LEVEL_HIGH, InterruptController, IntrFn,
+    IPL_FLAGMASK, IPL_HIGH, IPL_IRQMASK, IPL_MPSAFE, IPL_NONE, IPL_SCHED, IST_EDGE_RISING,
+    IST_LEVEL_HIGH, InterruptController, IntrFn,
 };
 use crate::dev::ofw::openfirm::OF_is_compatible;
 use crate::kassert;
@@ -799,11 +797,9 @@ fn ampintc_intr_barrier(cookie: *mut c_void) {
 /// `ampintc_run_handler`: one handler, with its argument or the frame.
 fn ampintc_run_handler(ih: &Intrhand, frame: *mut c_void, s: i32) {
     // MULTIPROCESSOR: the kernel lock unless the handler is IPL_MPSAFE or the interrupted
-    // level is at least IPL_SCHED. M11a honours IPL_MPSAFE only above IPL_MPFLOOR (the
-    // clock, the IPIs): every device handler takes the lock until M11e audits them.
-    let need_lock = cfg!(feature = "multiprocessor")
-        && (ih.ih_flags & IPL_MPSAFE == 0 || ih.ih_ipl <= IPL_MPFLOOR)
-        && s < IPL_SCHED;
+    // level is at least IPL_SCHED.
+    let need_lock =
+        cfg!(feature = "multiprocessor") && ih.ih_flags & IPL_MPSAFE == 0 && s < IPL_SCHED;
     if need_lock {
         kernel_lock();
     }

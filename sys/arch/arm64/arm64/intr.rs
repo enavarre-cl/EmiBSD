@@ -298,7 +298,7 @@ pub fn arm_do_pending_intr(pcpl: i32) {
         do_softint(SOFTINTR_TTY, IPL_SOFTTTY, ipending);
         do_softint(SOFTINTR_NET, IPL_SOFTNET, ipending);
         do_softint(SOFTINTR_CLOCK, IPL_SOFTCLOCK, ipending);
-        // MULTIPROCESSOR + NXCALL: SOFTINTR_XCALL (M5).
+        // NXCALL > 0: SOFTINTR_XCALL; NXCALL is 0 on arm64 (no xcall(4) in GENERIC).
         if ci.ci_ipending.get() & arm_smask(pcpl) == 0 {
             break;
         }
@@ -356,7 +356,7 @@ pub fn arm_init_smask() {
         *mask = 0;
         if i < IPL_SOFTCLOCK {
             *mask |= si_to_irqbit(SOFTINTR_CLOCK);
-            // MULTIPROCESSOR + NXCALL: SOFTINTR_XCALL (M5).
+            // NXCALL > 0: SOFTINTR_XCALL; NXCALL is 0 on arm64 (no xcall(4) in GENERIC).
         }
         if i < IPL_SOFTNET {
             *mask |= si_to_irqbit(SOFTINTR_NET);

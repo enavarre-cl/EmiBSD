@@ -54,10 +54,8 @@
 //! ## Deviations
 //! - `CPU_INFO_FOREACH` walks `ci_next` from `cpu_info_primary`; without `MULTIPROCESSOR`
 //!   the primary is the only CPU.
-//! - `MULTIPROCESSOR`: `intr_handler` takes the kernel lock for every handler at or below
-//!   `IPL_MPFLOOR` even when it is `IPL_MPSAFE` (the M11a decision: until M11e audits each
-//!   driver, an `IPL_MPSAFE` flag is not trusted below the floor); above the floor the C's
-//!   rule holds (the lock unless `IPL_MPSAFE`). Device interrupts all go to the boot CPU.
+//! - `MULTIPROCESSOR`: device interrupts all go to the boot CPU (no MADT/IOAPIC routing to
+//!   the APs until M13). `intr_handler` honours `IPL_MPSAFE` as the C does (M11e).
 //! - `intr_printconfig` is the `INTRDEBUG` body behind feature `debug`.
 
 use core::cell::Cell;
@@ -86,7 +84,7 @@ use crate::arch::amd64::include::intrdefs::{
     MAX_INTR_SOURCES, NIPL, NUM_LEGACY_IRQS, SIR_CLOCK, SIR_NET, SIR_TTY,
 };
 #[cfg(feature = "multiprocessor")]
-use crate::arch::amd64::include::intrdefs::{IPL_IPI, IPL_MPFLOOR, LIR_IPI};
+use crate::arch::amd64::include::intrdefs::{IPL_IPI, LIR_IPI};
 use crate::arch::amd64::include::pic::{PIC_SOFT, Pic};
 use crate::arch::amd64::include::pio::inb;
 use crate::arch::amd64::include::segments::{GCODE_SEL, SDT_SYS386IGT, SEL_KPL, gsel};
@@ -711,10 +709,9 @@ pub unsafe extern "C" fn intr_handler(frame: *mut Intrframe, ih: *const Intrhand
         return 0;
     }
 
-    // MULTIPROCESSOR: the kernel lock unless IPL_MPSAFE; in M11a every handler at or below
-    // IPL_MPFLOOR takes it, IPL_MPSAFE or not (see the module's deviations).
+    // MULTIPROCESSOR: the kernel lock unless IPL_MPSAFE.
     #[cfg(feature = "multiprocessor")]
-    let need_lock = ih.ih_flags.get() & IPL_MPSAFE == 0 || ih.ih_level.get() <= IPL_MPFLOOR;
+    let need_lock = ih.ih_flags.get() & IPL_MPSAFE == 0;
     #[cfg(feature = "multiprocessor")]
     if need_lock {
         __mp_lock(&KERNEL_LOCK);

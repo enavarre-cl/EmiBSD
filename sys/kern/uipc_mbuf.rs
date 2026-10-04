@@ -87,9 +87,10 @@
 //! Status: `ported` (M7b).
 //!
 //! ## Deviations
-//! - `mbstat` (`struct cpumem *`, `COUNTERS_BOOT_MEMORY`) is [`MBSTAT`], one array of atomics:
-//!   `<sys/percpu.h>` is not ported and there is one CPU. `mbcpuinit` therefore has nothing to
-//!   do: `counters_alloc_ncpus` and `pool_cache_init` are no-ops without `MULTIPROCESSOR`.
+//! - `mbstat` (`struct cpumem *`, `COUNTERS_BOOT_INITIALIZER(mbstat_boot)`) is [`mbstat()`]:
+//!   the boot counters [`MBSTAT_BOOT`] until `mbcpuinit` stores the per-CPU handle (M11e,
+//!   `counters_alloc_ncpus`, with the `pool_cache_init` of the mbuf, tag, ext-refs and
+//!   cluster pools), on the boot CPU before the other CPUs run.
 //! - The `NPF > 0` paths (`pf_mbuf_unlink_state_key`, `pf_mbuf_unlink_inpcb`,
 //!   `pf_mbuf_link_state_key`, `pf_mbuf_link_inpcb`) are compiled: pf(4) is configured.
 //! - `mclnames` is built at compile time from `mclsizes` with the C's two formats (`mcl%dk`,
@@ -122,8 +123,10 @@ use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_synch::{refcnt_init, refcnt_rele, refcnt_shared, refcnt_take};
 use crate::kern::kern_sysctl::{sysctl_int, sysctl_rdint};
 use crate::kern::kern_tc::{microboottime, microtime};
+use crate::kern::subr_percpu::counters_alloc_ncpus;
 use crate::kern::subr_pool::{
-    POOL_ALLOCATOR_MULTI, pool_get, pool_init, pool_put, pool_set_constraints, pool_wakeup,
+    POOL_ALLOCATOR_MULTI, pool_cache_init, pool_get, pool_init, pool_put, pool_set_constraints,
+    pool_wakeup,
 };
 use crate::kern::subr_prf::{Bitmask, panic, printf};
 use crate::kern::uipc_mbuf2::{m_tag_copy_chain, m_tag_delete_chain};
@@ -141,6 +144,7 @@ use crate::sys::mbuf::{
     MbufQueue, MextFreeFn, m_move_pkthdr, m_readonly, mbstat_inc, mclget, mclgetl,
     mclinitreference, mextadd, ml_empty, ml_len, mq_drops, mq_len, mtod,
 };
+use crate::sys::percpu::{CpumemBootMemory, CpumemPtr, counters_boot_words, counters_dec};
 use crate::sys::pool::{PR_NOWAIT, PR_WAITOK, Pool, PoolAllocator};
 use crate::sys::refcnt::Refcnt;
 use crate::sys::time::{Timeval, nsec_to_timeval, timeradd};
@@ -173,10 +177,16 @@ struct MExtRefs {
     refs: Refcnt,
 }
 
-/// `mbstat`: the mbuf statistics counters, the `MT_*` types first, then
-/// [`MbstatCounters`] (see the module's deviations).
-pub static MBSTAT: [AtomicU64; MbstatCounters::MbsNcounters as usize] =
-    [const { AtomicU64::new(0) }; MbstatCounters::MbsNcounters as usize];
+/// `mbs_ncounters`: the mbuf statistics counters, the `MT_*` types first, then
+/// [`MbstatCounters`].
+pub const MBS_NCOUNTERS: usize = MbstatCounters::MbsNcounters as usize;
+
+/// `COUNTERS_BOOT_MEMORY(mbstat_boot, MBSTAT_COUNT)`: the boot CPU's counters until
+/// `mbcpuinit`, which keeps them as CPU 0's.
+pub static MBSTAT_BOOT: CpumemBootMemory<{ counters_boot_words(MBS_NCOUNTERS) }> =
+    CpumemBootMemory::new();
+/// `mbstat` once `mbcpuinit` has run (see the module's deviations).
+static MBSTAT: StaticCell<Option<CpumemPtr>> = StaticCell::new(None);
 
 /// `mbpool`: the mbuf pool.
 pub static MBPOOL: Pool = Pool::new();
@@ -374,12 +384,30 @@ pub fn mbinit() {
 /// `PACKET_TAG_MAXSIZE + sizeof(struct m_tag)`: an `mtagpool` item.
 const PACKET_TAG_POOL_ITEM: usize = crate::sys::mbuf::PACKET_TAG_MAXSIZE + size_of::<MTag>();
 
+/// `mbstat`: the mbuf statistics counters (see the module's deviations).
+pub fn mbstat() -> CpumemPtr {
+    // SAFETY: written once by `mbcpuinit` on the boot CPU before the other CPUs run; only
+    // read afterwards.
+    match unsafe { MBSTAT.read() } {
+        Some(cm) => cm,
+        None => MBSTAT_BOOT.initializer(),
+    }
+}
+
 /// `mbcpuinit`: per-CPU mbuf statistics and pool caches. Without `MULTIPROCESSOR`,
-/// `counters_alloc_ncpus` keeps the boot counters and `pool_cache_init` does nothing, so there
-/// is nothing to do (see the module's deviations).
+/// `counters_alloc_ncpus` keeps the boot counters and `pool_cache_init` does nothing.
 pub fn mbcpuinit() {
-    // mbstat = counters_alloc_ncpus(mbstat, mbs_ncounters): the one array stays.
-    // pool_cache_init(&mbpool), (&mtagpool), (&m_ext_refs_pool), (&mclpools[i]): no-ops.
+    let cm = counters_alloc_ncpus(mbstat(), MBS_NCOUNTERS);
+    // SAFETY: once, from `main` on the boot CPU before the other CPUs run (`mbstat`).
+    unsafe { MBSTAT.write(Some(cm)) };
+
+    pool_cache_init(&MBPOOL);
+    pool_cache_init(&MTAGPOOL);
+    pool_cache_init(&M_EXT_REFS_POOL);
+
+    for pp in &MCLPOOLS {
+        pool_cache_init(pp);
+    }
 }
 
 /// `nmbclust_update`: sets the cluster limit and the memory limit derived from it.
@@ -623,8 +651,7 @@ pub fn m_free<'a>(m: impl Into<Option<&'a Mbuf>>) -> Option<&'static Mbuf> {
     let m = m.into()?;
 
     let s = splnet();
-    // counters_dec(mbstat, m->m_type)
-    MBSTAT[m.m_type().get() as usize].fetch_sub(1, Ordering::Relaxed);
+    counters_dec(mbstat(), m.m_type().get() as usize);
     splx(s);
 
     let n = m.m_next().get();

@@ -123,10 +123,10 @@ fn fdinit_builds_an_empty_table() {
     let _g = setup();
     let p = thread();
     let fdp = p.fd();
-    assert_eq!(fdp.fd_nfiles.get(), NDFILE as i32);
+    assert_eq!(fdp.fd_nfiles.load(Ordering::Relaxed), NDFILE as i32);
     assert_eq!(fdp.fd_refcnt.get(), 1);
     assert_eq!(fdp.fd_cmask.get(), S_IWGRP | S_IWOTH);
-    assert_eq!(fdp.fd_openfd.get(), 0);
+    assert_eq!(fdp.fd_openfd.load(Ordering::Relaxed), 0);
     assert!((0..NDFILE).all(|fd| fdp.ofile(fd).is_none()));
     fdfree(p);
     assert!(p.p_fd.get().is_null());
@@ -144,7 +144,7 @@ fn fdalloc_takes_the_lowest_free_descriptor() {
     assert_eq!(fdalloc_search(fdp, 7, 1000, true), Ok(7));
     assert_eq!(fdp.ofileflags(7), UF_PLEDGED);
     assert_eq!(fdp.fd_lastfile.get(), 7);
-    assert_eq!(fdp.fd_openfd.get(), 4);
+    assert_eq!(fdp.fd_openfd.load(Ordering::Relaxed), 4);
 
     fd_unused(fdp, 1);
     assert_eq!(fdp.fd_freefile.get(), 1);
@@ -155,7 +155,7 @@ fn fdalloc_takes_the_lowest_free_descriptor() {
 
     // The table is full at NDFILE: ENOSPC asks for an expansion, EMFILE is the limit.
     while fdalloc_search(fdp, 0, 1000, false).is_ok() {}
-    assert_eq!(fdp.fd_openfd.get(), NDFILE as i32);
+    assert_eq!(fdp.fd_openfd.load(Ordering::Relaxed), NDFILE as i32);
     assert_eq!(fdalloc_search(fdp, 0, 1000, false), Err(Errno::ENOSPC));
     assert_eq!(
         fdalloc_search(fdp, 0, NDFILE as i32, false),
@@ -180,7 +180,7 @@ fn fdexpand_grows_the_table_and_the_maps() {
             }
             Err(Errno::ENOSPC) => {
                 fdexpand(p).unwrap();
-                sizes.push(fdp.fd_nfiles.get());
+                sizes.push(fdp.fd_nfiles.load(Ordering::Relaxed));
             }
             Err(e) => panic!("fdalloc: {e:?}"),
         }
@@ -260,7 +260,7 @@ fn files_are_counted_shared_and_closed() {
     assert_eq!(fdrelease(p, 3), Ok(()));
     fdplock(fdp);
     assert_eq!(fdrelease(p, 3), Err(Errno::EBADF));
-    assert_eq!(fdp.fd_openfd.get(), 0);
+    assert_eq!(fdp.fd_openfd.load(Ordering::Relaxed), 0);
     let q = thread();
     let qfd = q.fd();
     q.p_fd.set(child);

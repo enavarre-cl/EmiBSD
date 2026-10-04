@@ -50,14 +50,15 @@
 //! [`db_printf!`] macros are what callers write; `panic!` anywhere in the kernel lands in
 //! [`panic`] through the crate's panic handler.
 //!
-//! Status: `wip`.
+//! Status: `wip`. M11e: `kprintf_mutex` (`printf`, `vprintf` and the console half of `log`
+//! and `addlog`, as in C; `kprintf` asserts it for `TOCONS` output) and the `splhigh` around
+//! the log half of `log`/`addlog`.
 //!
 //! ## Deviations
 //! - The format engine is `core::fmt`: a `fmt::Arguments` replaces the `(fmt, va_list)` pair,
 //!   so `printf`/`vprintf` and `snprintf`/`vsnprintf` are the same function twice. OpenBSD's
 //!   `%b` is the [`Bitmask`] `Display` adaptor; its `%s` of a NUL-terminated byte string is
 //!   [`Str`].
-//! - `kprintf_mutex` and the `splhigh` in `log`/`addlog` arrive with M4/M5.
 //! - `v_putc` is fixed to `cnputc`; `constty` (a `TIOCCONS` redirection) takes the console
 //!   output as in C.
 //! - The `struct tty *tp` of `kprintf`/`kputchar` is an `Option<&Tty>`; `kprintf` keeps its
@@ -84,12 +85,15 @@ use crate::ddb::db_output::{db_putchar, db_stack_dump};
 use crate::ddb::db_usrreq::DB_LOG;
 use crate::dev::cons::{cnputc, constty, set_constty};
 use crate::kern::init_main::DB_ACTIVE;
+use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_xxx::reboot;
 use crate::kern::subr_log::{LOG_OPEN, logwakeup, msgbuf_putchar, msgbufmapped, msgbufp};
 use crate::kern::tty::tputchar;
 #[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
 use crate::kern::tty::ttycheckoutq;
 use crate::machine::db_machdep::db_enter;
+use crate::machine::intr::{IPL_HIGH, splhigh, splx};
+use crate::sys::mutex::{Mutex, mutex_assert_locked};
 use crate::sys::proc::PS_CONTROLT;
 #[cfg(any(feature = "nfsclient", feature = "nfsserver"))]
 use crate::sys::proc::{Proc, sesshold, sessrele};
@@ -137,6 +141,8 @@ pub static DB_CONSOLE: AtomicI32 = AtomicI32::new(0);
 pub static SPLASSERT_CTL: AtomicI32 = AtomicI32::new(1);
 /// `printf_flags`: where `printf` sends its output.
 pub static PRINTF_FLAGS: AtomicI32 = AtomicI32::new(TOCONS | TOLOG);
+/// `kprintf_mutex`: serialises console output (`MTX_NOWITNESS` in C).
+static KPRINTF_MUTEX: Mutex = Mutex::new(IPL_HIGH);
 
 /// `%s` of a NUL-terminated byte string: prints the bytes before the first NUL (or the whole
 /// slice), non-ASCII bytes as `?`.
@@ -368,12 +374,14 @@ pub fn splassert_fail(wantipl: i32, haveipl: i32, func: &str) {
 /// `log`: write to the log buffer. Will not sleep (so safe to call from interrupt); will log to
 /// console if `/dev/klog` isn't open.
 pub fn log(level: i32, args: fmt::Arguments<'_>) {
-    // s = splhigh(): M4.
+    let s = splhigh();
     logpri(level); // log the level first
     kprintf(args, TOLOG, None);
+    splx(s);
     if !LOG_OPEN.load(Ordering::Relaxed) {
-        // mtx_enter(&kprintf_mutex): M5.
+        mtx_enter(&KPRINTF_MUTEX);
         kprintf(args, TOCONS, None);
+        mtx_leave(&KPRINTF_MUTEX);
     }
     logwakeup(); // wake up anyone waiting for log msgs
 }
@@ -392,11 +400,13 @@ pub fn logpri(level: i32) {
 
 /// `addlog`: add info to previous log message.
 pub fn addlog(args: fmt::Arguments<'_>) {
-    // s = splhigh(): M4.
+    let s = splhigh();
     kprintf(args, TOLOG, None);
+    splx(s);
     if !LOG_OPEN.load(Ordering::Relaxed) {
-        // mtx_enter(&kprintf_mutex): M5.
+        mtx_enter(&KPRINTF_MUTEX);
         kprintf(args, TOCONS, None);
+        mtx_leave(&KPRINTF_MUTEX);
     }
     logwakeup();
 }
@@ -550,8 +560,9 @@ pub fn db_vprintf(args: fmt::Arguments<'_>) -> usize {
 /// `printf(9)`: the normal kernel printf, to the console and the message buffer. Returns the
 /// number of characters produced.
 pub fn printf(args: fmt::Arguments<'_>) -> usize {
-    // mtx_enter(&kprintf_mutex): M5.
+    mtx_enter(&KPRINTF_MUTEX);
     let retval = kprintf(args, PRINTF_FLAGS.load(Ordering::Relaxed), None);
+    mtx_leave(&KPRINTF_MUTEX);
     if !panicstr() {
         logwakeup();
     }
@@ -560,8 +571,9 @@ pub fn printf(args: fmt::Arguments<'_>) -> usize {
 
 /// `vprintf`: the `va_list` form of [`printf`]; always to the console and the log.
 pub fn vprintf(args: fmt::Arguments<'_>) -> usize {
-    // mtx_enter(&kprintf_mutex): M5.
+    mtx_enter(&KPRINTF_MUTEX);
     let retval = kprintf(args, TOCONS | TOLOG, None);
+    mtx_leave(&KPRINTF_MUTEX);
     if !panicstr() {
         logwakeup();
     }
@@ -599,6 +611,10 @@ pub fn kprintf_tp(
     tp: Option<&Tty>,
     sbuf: Option<&mut [u8]>,
 ) -> usize {
+    if oflags & TOCONS != 0 {
+        mutex_assert_locked(&KPRINTF_MUTEX, "kprintf");
+    }
+
     let mut sink = Sink {
         oflags,
         tp,

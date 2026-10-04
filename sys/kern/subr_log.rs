@@ -43,11 +43,10 @@
 //! (`logstash_full`, `logstash_increment`, `logstash_insert`, `logstash_remove`,
 //! `logstash_sendsyslog`), `sys_sendsyslog` and `dosendsyslog`, with `syslogf` and its
 //! rwlock. The `/dev/klog` device (`logopen` through `logkqfilter`, `logtick`, `logioctl`
-//! with `LIOCSFD`) needs the device switch, sockets and kqueue.
+//! with `LIOCSFD`) needs the device switch, sockets and kqueue. M11e: `log_mtx`, taken by
+//! `msgbuf_putchar` as in C.
 //!
 //! ## Deviations
-//! - `log_mtx` arrives with M5; until then the single boot CPU is the lock, and
-//!   `msgbuf_putchar` goes straight to `msgbuf_putchar_locked`.
 //! - `msgbufp` is a [`StaticCell`] (a `&'static Msgbuf` is a fat pointer, which no atomic holds).
 //! - [`init_static_msgbuf`] is ours: until `pmap` (M3) reserves physical pages that survive a
 //!   warm reboot, the message buffer is a static area in `.bss`, and both architectures hand it
@@ -68,6 +67,7 @@ use libkern::StaticCell;
 
 use crate::dev::cons::cnputc;
 use crate::kassert;
+use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_rwlock::{
     rw_assert_anylock, rw_assert_wrlock, rw_enter_read, rw_enter_write, rw_exit,
@@ -76,12 +76,14 @@ use crate::kern::subr_prf::snprintf;
 use crate::kern::sys_socket::fp_socket;
 use crate::kern::uipc_socket::sosend;
 use crate::machine::copy::copyin;
+use crate::machine::intr::IPL_HIGH;
 use crate::machine::{Machine, MachineParam};
 use crate::sys::errno::Errno;
 use crate::sys::fcntl::FNONBLOCK;
 use crate::sys::file::{File, fref, frele};
 use crate::sys::malloc::{M_LOG, M_WAITOK};
 use crate::sys::msgbuf::{CONSBUFSIZE, MSG_MAGIC, Msgbuf};
+use crate::sys::mutex::Mutex;
 use crate::sys::proc::Proc;
 use crate::sys::rwlock::Rwlock;
 use crate::sys::socket::MSG_DONTWAIT;
@@ -109,6 +111,9 @@ static MSGBUFP: StaticCell<Option<&'static Msgbuf>> = StaticCell::new(None);
 static CONSBUFP: StaticCell<Option<&'static Msgbuf>> = StaticCell::new(None);
 /// `logsoftc.sc_need_wakeup`: if set, wake up waiters.
 static LOGSOFTC_NEED_WAKEUP: AtomicBool = AtomicBool::new(false);
+/// `log_mtx`: serializes access to the log message buffers. This should be kept as a leaf
+/// lock in order not to constrain where printf(9) can be used (`MTX_NOWITNESS` in C).
+pub static LOG_MTX: Mutex = Mutex::new(IPL_HIGH);
 /// The buffer `init_static_msgbuf` overlays.
 static MSGBUF_AREA: StaticCell<MsgbufArea> = StaticCell::new(MsgbufArea([0; MSGBUFSIZE]));
 
@@ -198,8 +203,9 @@ pub fn msgbuf_putchar(mbp: &Msgbuf, c: u8) {
         // Nothing we can do
         return;
     }
-    // mtx_enter(&log_mtx) ... mtx_leave(&log_mtx): M5.
+    mtx_enter(&LOG_MTX);
     msgbuf_putchar_locked(mbp, c);
+    mtx_leave(&LOG_MTX);
 }
 
 /// `msgbuf_putchar_locked`: appends `c` to the ring; when it is full the oldest byte is

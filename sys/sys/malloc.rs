@@ -413,7 +413,7 @@ pub struct Kmemstats {
     pub ks_spare: Cell<i64>,
 }
 
-// SAFETY: guarded by `malloc_mtx` (M5); the boot CPU is alone until then.
+// SAFETY: guarded by `malloc_mtx` (`kern_malloc.rs`), as in C.
 unsafe impl Sync for Kmemstats {}
 
 impl Kmemstats {

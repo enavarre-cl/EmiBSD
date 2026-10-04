@@ -63,8 +63,9 @@
 //! ## Deviations
 //! - The SMR list families (`SMR_SLIST_*`, `SMR_LIST_*`, `SMR_TAILQ_*`) are not ported: no
 //!   ported file uses them. The network code that does in C (`if.c`, `bpf.c`, `if_pflow.c`,
-//!   `art.c`, `rtable.c`) keeps plain `queue.h` lists read under the kernel lock, as its
-//!   module deviations say; they come with the M11e audit that unlocks those paths.
+//!   `art.c`, `rtable.c`) keeps plain `queue.h` lists read under its locks (the kernel lock
+//!   or the net lock), as its module deviations say; the SMR lists come with the first port
+//!   that reads such a list inside an SMR read section.
 //! - `smr_call` (and `smr_call_impl`, `kern_smr.rs`) take a `&'static SmrEntry`: the entry
 //!   must outlive the deferral (`smr_barrier_impl` lends its stack entry as `'static`
 //!   while it waits for the call).

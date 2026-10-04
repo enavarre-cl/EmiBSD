@@ -622,7 +622,7 @@ pub fn dopselect(
         return Err(Errno::EINVAL);
     }
 
-    let nfiles = p.fd().fd_nfiles.get();
+    let nfiles = p.fd().fd_nfiles.load(Ordering::Relaxed);
     let nd = nd.min(nfiles) as usize;
 
     // ni bytes per set; the six sets (three in, three out) are one zeroed allocation (the C

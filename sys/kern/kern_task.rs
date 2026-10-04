@@ -26,16 +26,14 @@
 //! Status: `ported` (M7b): `taskq_init`, `taskq_create`, `taskq_destroy`,
 //! `taskq_create_thread`, `taskq_barrier_task`, `taskq_do_barrier`, `taskq_barrier`,
 //! `taskq_del_barrier`, `task_set`, `task_add`, `task_del`, `taskq_next_work`, `taskq_thread`.
+//! M11e: a `TASKQ_MPSAFE` queue's workers drop the kernel lock their kthread starts with
+//! around their loop, as in C, so `systqmp`'s tasks run without it.
 //!
 //! ## Deviations
 //! - `WITNESS` is not configured: `taskq_lock_type`, `TASKQ_LOCK_FLAGS`, `tq_lock_object` and
 //!   the `WITNESS_INIT`/`WITNESS_CHECKORDER`/`WITNESS_LOCK`/`WITNESS_UNLOCK` calls are absent.
 //! - `kcov` is not configured: `task_add` does not record `t_process` and `taskq_thread` has
 //!   no `kcov_remote_enter`/`kcov_remote_leave`.
-//! - `TASKQ_MPSAFE` is ignored (M11a): a worker never drops the kernel lock its kthread
-//!   starts with, so every task runs under it, `systqmp`'s too, until the M11e audit; the C
-//!   unlocks around an `MPSAFE` queue's loop. Everything else (several threads per queue,
-//!   the barrier's generation count) is kept.
 //! - `task_add_local` is `task_add` for a task that is not `'static` (an `unsafe fn`): what
 //!   `sched_barrier` queues from its stack frame.
 //! - `struct taskq` is `#[repr(C)]` with `tq_state` first so that the queue's own address (the
@@ -70,7 +68,7 @@ use crate::sys::param::PWAIT;
 use crate::sys::proc::Proc;
 use crate::sys::queue::{SlistEntry, SlistHead, TailqHead};
 use crate::sys::sched::sched_pause;
-use crate::sys::systm::INFSLP;
+use crate::sys::systm::{INFSLP, kernel_lock, kernel_unlock};
 use crate::sys::task::{TASK_ONQUEUE, TASKQ_MPSAFE, Task, TaskFn, TaskList};
 
 /// `taskq_sys_name`.
@@ -527,8 +525,10 @@ pub fn taskq_thread(xtq: *mut c_void) {
     // allocated while `tq_running` counts this thread (`taskq_destroy` waits for zero).
     let tq = unsafe { &*xtq.cast::<Taskq>() };
 
-    // if ISSET(tq->tq_flags, TASKQ_MPSAFE) KERNEL_UNLOCK(): M11a keeps every queue under the
-    // kernel lock (see the module's deviations); kthreads start holding it.
+    // Kernel threads start holding the kernel lock (`proc_trampoline_mi`).
+    if tq.tq_flags & TASKQ_MPSAFE != 0 {
+        kernel_unlock();
+    }
 
     mtx_enter(&tq.tq_mtx);
     // SAFETY: `me` is in no list and lives on this thread's stack until it is removed below
@@ -561,7 +561,9 @@ pub fn taskq_thread(xtq: *mut c_void) {
     let running = ptr::from_ref(&tq.tq_running);
     mtx_leave(&tq.tq_mtx);
 
-    // if ISSET(tq->tq_flags, TASKQ_MPSAFE) KERNEL_LOCK(): never released, see above.
+    if tq.tq_flags & TASKQ_MPSAFE != 0 {
+        kernel_lock();
+    }
 
     if last {
         wakeup_one(running);

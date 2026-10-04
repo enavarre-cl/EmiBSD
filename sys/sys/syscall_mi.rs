@@ -49,8 +49,10 @@
 //! - `mi_syscall` reports the `MAP_STACK` check (`uvm_map_inentry`, with the user map);
 //!   `KTRACE` and dt(4) are not configured (`SYSCALL_DEBUG` is the feature `syscall_debug`;
 //!   `mi_child_return` does not print the child's return).
-//! - `SY_NOLOCK` is ignored with `MULTIPROCESSOR` (M11a): every system call runs under the
-//!   kernel lock until the M11e audit. The rest of `mi_syscall` and the return path
+//! - `SY_NOLOCK` (M11e): honoured as in C for the system calls whose bodies are audited for
+//!   `MULTIPROCESSOR`; a `NOLOCK` system call whose body is not audited yet is listed in
+//!   [`SY_NOLOCK_DEFERRED`] and still runs under the kernel lock, with the module (and agent
+//!   audit) that unlocks each group. The rest of `mi_syscall` and the return path
 //!   (`refreshcreds`, `pin_check`, `pledge_syscall`, `userret`) run unlocked, taking the lock
 //!   where the C does.
 
@@ -69,10 +71,96 @@ use crate::sys::errno::Errno;
 use crate::sys::proc::{
     P_OWEUPC, PS_PLEDGE, Pinsyscall, Proc, SINGLE_DEEP, SINGLE_UNWIND, p_hassibling, refreshcreds,
 };
-use crate::sys::syscall::SYS_sigreturn;
+use crate::sys::syscall::*;
 use crate::sys::systm::{SY_NOLOCK, SysArgs, Sysent, kernel_lock, kernel_unlock};
 use crate::sys::types::Register;
 use crate::unported;
+
+/// `NOLOCK` system calls (`syscalls.master`) whose bodies are not audited for
+/// `MULTIPROCESSOR` yet: `mi_syscall` keeps the kernel lock for them although `sysent` marks
+/// them `SY_NOLOCK` (see the module's deviations). Each group names what unlocks it; an entry
+/// leaves the table when its body's locking is the C's.
+pub const SY_NOLOCK_DEFERRED: &[i32] = &[
+    // Files and file descriptors whose bodies reach code not audited yet: read(2)/write(2)
+    // and their vector and positional forms, fstat(2), ioctl(2), close(2)/closefrom(2),
+    // dup2(2)/dup3(2) (the file's close reaches sockets and pipes), select(2)/poll(2) and
+    // their p-forms (the poll and kqueue filters of sockets); fcntl(2) (F_SETOWN/F_GETOWN go
+    // through the file's fo_ioctl, socket and tty code); umask(2) (vfs_syscalls.c): the
+    // `vfs` and `net` audits.
+    SYS_read,
+    SYS_write,
+    SYS_close,
+    SYS_fstat,
+    SYS_ioctl,
+    SYS_umask,
+    SYS_select,
+    SYS_dup2,
+    SYS_fcntl,
+    SYS_dup3,
+    SYS_ppoll,
+    SYS_pselect,
+    SYS_readv,
+    SYS_writev,
+    SYS_pread,
+    SYS_pwrite,
+    SYS_preadv,
+    SYS_pwritev,
+    SYS_poll,
+    SYS_closefrom,
+    // Sockets (uipc_syscalls.c, uipc_socket.c): the `net` audit. sendsyslog(2) hands its
+    // message to `sosend` once `syslogf` is set (subr_log.c).
+    SYS_recvmsg,
+    SYS_sendmsg,
+    SYS_recvfrom,
+    SYS_accept,
+    SYS_getpeername,
+    SYS_getsockname,
+    SYS_accept4,
+    SYS_socket,
+    SYS_connect,
+    SYS_bind,
+    SYS_setsockopt,
+    SYS_listen,
+    SYS_sendsyslog,
+    SYS_recvmmsg,
+    SYS_sendmmsg,
+    SYS_getsockopt,
+    SYS_sendto,
+    SYS_shutdown,
+    SYS_socketpair,
+    SYS_ypconnect,
+    SYS_setrtable,
+    // kevent(2) (kern_event.c): the filters reach socket and pipe code.
+    SYS_kevent,
+    // mmap(2) (uvm_mmap.c): maps vnodes and devices, not audited with uvm.
+    SYS_mmap,
+    // sysctl(2) (kern_sysctl.c): its subtrees reach the network's (`net_sysctl`).
+    SYS_sysctl,
+    // __thrsleep(2) and __thrwakeup(2) are not ported (`sys_nosys`, which posts SIGSYS).
+    SYS___thrsleep,
+    SYS___thrwakeup,
+];
+
+/// [`SY_NOLOCK_DEFERRED`] as a table indexed by system call number.
+const SY_NOLOCK_DEFERRED_MAP: [bool; SYS_MAXSYSCALL] = {
+    let mut map = [false; SYS_MAXSYSCALL];
+    let mut i = 0;
+    while i < SY_NOLOCK_DEFERRED.len() {
+        map[SY_NOLOCK_DEFERRED[i] as usize] = true;
+        i += 1;
+    }
+    map
+};
+
+/// Whether `mi_syscall` runs system call `code` (entry `callp`) under the kernel lock: the C's
+/// `!(callp->sy_flags & SY_NOLOCK)`, plus the not yet audited [`SY_NOLOCK_DEFERRED`].
+fn syscall_lock(callp: &Sysent, code: Register) -> bool {
+    callp.sy_flags & SY_NOLOCK == 0
+        || usize::try_from(code)
+            .ok()
+            .and_then(|code| SY_NOLOCK_DEFERRED_MAP.get(code))
+            .is_none_or(|&deferred| deferred)
+}
 
 /// Check if a system call is entered from precisely correct location.
 #[inline]
@@ -189,9 +277,8 @@ pub fn mi_syscall(
     argp: &SysArgs,
     retval: &mut [Register; 2],
 ) -> Result<(), Errno> {
-    // M11a takes the kernel lock for every system call: SY_NOLOCK is ignored until the M11e
-    // audit (see the module's deviations).
-    let lock = callp.sy_flags & SY_NOLOCK == 0 || cfg!(feature = "multiprocessor");
+    // SY_NOLOCK_DEFERRED: see the module's deviations.
+    let lock = syscall_lock(callp, code);
 
     // refresh the thread's cache of the process's creds
     refreshcreds(p);
@@ -269,3 +356,6 @@ pub fn mi_ast(p: &Proc, resched: bool) {
     // XXX could move call to userret() here, but hppa calls ast() in syscall return and sh
     // calls it after userret()
 }
+
+#[cfg(test)]
+mod tests;

@@ -42,7 +42,7 @@
 //! and read it are in `kern/subr_log.rs`.
 //!
 //! Locking, as in the C: `I` immutable after creation, `L` `log_mtx`, `Lw` `log_mtx` for
-//! writing. `log_mtx` arrives with milestone M5; until then the single boot CPU is the lock.
+//! writing (`LOG_MTX`, `kern/subr_log.rs`, since M11e).
 //!
 //! ## Deviations
 //! - `msg_bufc[1]` (a flexible array in disguise) is a real unsized tail; [`Msgbuf::from_raw`]
@@ -73,7 +73,7 @@ pub struct Msgbuf {
     msg_bufc: [Cell<u8>],
 }
 
-// SAFETY: the fields are shared under `log_mtx` (M5); until then only the boot CPU touches them.
+// SAFETY: the fields are written under `log_mtx` and the `[L]` ones read under it, as in C.
 unsafe impl Sync for Msgbuf {}
 
 impl Msgbuf {

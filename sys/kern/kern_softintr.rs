@@ -24,12 +24,11 @@
 //! Status: `ported`. Milestone M4 ports `softintr_init`, `softintr_dispatch`,
 //! `softintr_establish`, `softintr_disestablish` and `softintr_schedule`; M11a the kernel
 //! lock in `softintr_dispatch`, `assertwaitok` and `sched_barrier` in
-//! `softintr_disestablish`.
+//! `softintr_disestablish`; M11e honours `SIF_MPSAFE` as the C does: such a handler runs
+//! without the kernel lock, every other one under it (nothing without `MULTIPROCESSOR`). No
+//! handler is established `IPL_MPSAFE` today (`softclock`, `comsoft`, `pluart_softint`).
 //!
 //! ## Deviations
-//! - `SIF_MPSAFE` is ignored (M11a, `MULTIPROCESSOR`): every handler runs under the kernel
-//!   lock until the M11e audit; the C runs an `MPSAFE` handler unlocked. Without
-//!   `MULTIPROCESSOR` `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing, as in C.
 //! - The handle is a `NonNull<SoftintrHand>` where the C passes `void *`.
 
 use core::cell::Cell;
@@ -125,11 +124,13 @@ pub fn softintr_dispatch(level: i32) {
         sih.sih_runner.set(ci);
         mtx_leave(&SOFTINTR_LOCK);
 
-        // Without SIF_MPSAFE the C runs the handler under the kernel lock, with it unlocked;
-        // M11a takes the lock for every handler (see the module's deviations).
-        kernel_lock(); // KERNEL_LOCK()
-        (sih.sih_fn)(sih.sih_arg);
-        kernel_unlock(); // KERNEL_UNLOCK()
+        if sih.sih_flags & SIF_MPSAFE != 0 {
+            (sih.sih_fn)(sih.sih_arg);
+        } else {
+            kernel_lock(); // KERNEL_LOCK()
+            (sih.sih_fn)(sih.sih_arg);
+            kernel_unlock(); // KERNEL_UNLOCK()
+        }
 
         mtx_enter(&SOFTINTR_LOCK);
         kassert!((sih.sih_state.get() & SIS_PENDING) == 0);

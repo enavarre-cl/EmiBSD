@@ -131,7 +131,7 @@ use crate::sys::signal::{SIGABRT, SIGTRAP};
 use crate::sys::stat::{S_IXGRP, S_IXOTH, S_IXUSR};
 use crate::sys::syscallargs::SysExecveArgs;
 use crate::sys::syslimits::{ARG_MAX, PATH_MAX};
-use crate::sys::systm::{SysArgs, sysargs};
+use crate::sys::systm::{SysArgs, kernel_lock, kernel_unlock, sysargs};
 use crate::sys::time::Timespec;
 use crate::sys::timetc::{TK_VERSION, Timekeep};
 use crate::sys::types::{Register, Vaddr, Vsize};
@@ -258,7 +258,7 @@ pub fn check_exec(
             let mut bp = cwdlen - 1;
             cwdbuf[bp] = 0;
 
-            // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
+            kernel_lock(); // KERNEL_LOCK()
             let error = match p.fd().fd_cdir.get() {
                 None => Err(Errno::ENOENT), // no root file system yet
                 Some(cdir) => vfs_getcwd_common(
@@ -270,6 +270,7 @@ pub fn check_exec(
                     p,
                 ),
             };
+            kernel_unlock(); // KERNEL_UNLOCK()
 
             let cwd = &cwdbuf[bp..];
             let len = cwd.iter().position(|&c| c == 0).unwrap_or(cwd.len());
@@ -832,12 +833,13 @@ fn execve_common(
 
     if pr.ps_flags.load(Ordering::Relaxed) & PS_EXECPLEDGE != 0 {
         p.p_pledge.set(pr.ps_execpledge.get());
-        pr.ps_pledge.set(pr.ps_execpledge.get());
+        pr.ps_pledge
+            .store(pr.ps_execpledge.get(), Ordering::Relaxed);
         pr.ps_flags.fetch_or(PS_PLEDGE, Ordering::Relaxed);
     } else {
         pr.ps_flags.fetch_and(!PS_PLEDGE, Ordering::Relaxed);
         p.p_pledge.set(0);
-        pr.ps_pledge.set(0);
+        pr.ps_pledge.store(0, Ordering::Relaxed);
         // Clear our unveil paths out so the child starts afresh
         crate::kern::kern_unveil::unveil_destroy(pr);
         pr.ps_uvdone.set(0);

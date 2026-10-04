@@ -273,7 +273,8 @@ pub(crate) fn fd_used(fdp: &Filedesc, fd: i32) {
     if fd > fdp.fd_lastfile.get() {
         fdp.fd_lastfile.set(fd);
     }
-    fdp.fd_openfd.set(fdp.fd_openfd.get() + 1);
+    fdp.fd_openfd
+        .store(fdp.fd_openfd.load(Ordering::Relaxed) + 1, Ordering::Relaxed);
 }
 
 /// `fd_unused(fdp, fd)`: marks descriptor `fd` free.
@@ -300,7 +301,8 @@ fn fd_unused(fdp: &Filedesc, fd: i32) {
     if fd == fdp.fd_lastfile.get() {
         fdp.fd_lastfile.set(find_last_set(fdp, fd));
     }
-    fdp.fd_openfd.set(fdp.fd_openfd.get() - 1);
+    fdp.fd_openfd
+        .store(fdp.fd_openfd.load(Ordering::Relaxed) - 1, Ordering::Relaxed);
 }
 
 /// `fd_iterfile(fp, p)`: the open file after `fp` (the first one when `None`) in `filehead`,
@@ -339,7 +341,7 @@ pub fn fd_iterfile(fp: Option<&'static File>, p: &Proc) -> Option<&'static File>
 pub fn fd_getfile(fdp: &Filedesc, fd: i32) -> Option<&'static File> {
     vfs_stall_barrier();
 
-    if fd as u32 >= fdp.fd_nfiles.get() as u32 {
+    if fd as u32 >= fdp.fd_nfiles.load(Ordering::Relaxed) as u32 {
         return None;
     }
 
@@ -371,7 +373,7 @@ pub fn fd_getfile_mode(fdp: &Filedesc, fd: i32, mode: i32) -> Option<&'static Fi
 /// `fd_checkclosed(fdp, fd, fp)`: whether descriptor `fd` no longer refers to `fp`.
 pub fn fd_checkclosed(fdp: &Filedesc, fd: i32, fp: &File) -> bool {
     mtx_enter(&fdp.fd_fplock);
-    kassert!(fd < fdp.fd_nfiles.get());
+    kassert!(fd < fdp.fd_nfiles.load(Ordering::Relaxed));
     let closed = !fdp.ofile(fd as usize).is_some_and(|f| ptr::eq(f, fp));
     mtx_leave(&fdp.fd_fplock);
     closed
@@ -459,7 +461,7 @@ pub fn dodup3(
             return Err(Errno::EBADF);
         }
         fdplock(fdp);
-        if new >= fdp.fd_nfiles.get() {
+        if new >= fdp.fd_nfiles.load(Ordering::Relaxed) {
             match fdalloc(p, new) {
                 Err(Errno::ENOSPC) => {
                     let expanded = fdexpand(p);
@@ -945,7 +947,7 @@ fn fdalloc_search(fdp: &Filedesc, want: i32, lim: i32, pledged: bool) -> Result<
     // Search for a free descriptor starting at the higher of want or fd_freefile. If that
     // fails, consider expanding the ofile array.
     loop {
-        let last = fdp.fd_nfiles.get().min(lim);
+        let last = fdp.fd_nfiles.load(Ordering::Relaxed).min(lim);
         let mut i = want;
         if i < fdp.fd_freefile.get() {
             i = fdp.fd_freefile.get();
@@ -978,7 +980,7 @@ fn fdalloc_search(fdp: &Filedesc, want: i32, lim: i32, pledged: bool) -> Result<
                 return Ok(i);
             }
         }
-        if fdp.fd_nfiles.get() >= lim {
+        if fdp.fd_nfiles.load(Ordering::Relaxed) >= lim {
             return Err(Errno::EMFILE);
         }
 
@@ -1082,7 +1084,7 @@ pub fn fdexpand(p: &Proc) -> Result<(), Errno> {
     mtx_leave(&fdp.fd_fplock);
 
     fdp.fd_ofileflags.set(newofileflags);
-    fdp.fd_nfiles.set(nfiles as i32);
+    fdp.fd_nfiles.store(nfiles as i32, Ordering::Relaxed);
 
     if oldnfiles > NDFILE
         && let Some(old) = NonNull::new(oldofile)
@@ -1168,7 +1170,7 @@ pub fn fdinit() -> &'static Filedesc {
     fd.fd_cmask.set(S_IWGRP | S_IWOTH);
     fd.fd_ofiles.set(newfdp.fd_dfiles.get().cast());
     fd.fd_ofileflags.set(newfdp.fd_dfileflags.get().cast());
-    fd.fd_nfiles.set(NDFILE as i32);
+    fd.fd_nfiles.store(NDFILE as i32, Ordering::Relaxed);
     fd.fd_himap.set(newfdp.fd_dhimap.get().cast());
     fd.fd_lomap.set(newfdp.fd_dlomap.get().cast());
 
@@ -1219,7 +1221,7 @@ pub fn fdcopy(pr: &Process) -> &'static Filedesc {
         newfdp.fd_ofiles.set(ofiles);
         // SAFETY: the allocation holds `i` pointers followed by `i` flag bytes.
         newfdp.fd_ofileflags.set(unsafe { ofiles.add(i) }.cast());
-        newfdp.fd_nfiles.set(i as i32);
+        newfdp.fd_nfiles.store(i as i32, Ordering::Relaxed);
     }
     if ndhislots(newfdp.nfiles()) > ndhislots(NDFILE) {
         let n = newfdp.nfiles();
@@ -1544,7 +1546,7 @@ pub fn sys_closefrom(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Resu
 
 /// `getdtablecount(2)`: the number of descriptors open.
 pub fn sys_getdtablecount(p: &Proc, _v: &SysArgs, retval: &mut [Register; 2]) -> Result<(), Errno> {
-    retval[0] = p.fd().fd_openfd.get() as Register;
+    retval[0] = p.fd().fd_openfd.load(Ordering::Relaxed) as Register;
     Ok(())
 }
 

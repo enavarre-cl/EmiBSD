@@ -539,12 +539,15 @@ pub fn sys_pledge(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
         if upromises != 0 {
             // In "error" mode, ignore promise increase requests, but accept promise
             // decrease requests
-            if flags & PS_PLEDGE != 0 && pr.ps_pledge.get() & PLEDGE_ERROR != 0 {
-                promises &= pr.ps_pledge.get() & PLEDGE_USERSET;
+            if flags & PS_PLEDGE != 0 && pr.ps_pledge.load(Ordering::Relaxed) & PLEDGE_ERROR != 0 {
+                promises &= pr.ps_pledge.load(Ordering::Relaxed) & PLEDGE_USERSET;
             }
 
             // Only permit reductions
-            if flags & PS_PLEDGE != 0 && (promises | pr.ps_pledge.get()) != pr.ps_pledge.get() {
+            if flags & PS_PLEDGE != 0
+                && (promises | pr.ps_pledge.load(Ordering::Relaxed))
+                    != pr.ps_pledge.load(Ordering::Relaxed)
+            {
                 break 'fail Err(Errno::EPERM);
             }
         }
@@ -559,10 +562,10 @@ pub fn sys_pledge(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
 
         // Set up promises
         if upromises != 0 {
-            pr.ps_pledge.set(promises);
+            pr.ps_pledge.store(promises, Ordering::Relaxed);
             pr.ps_flags.fetch_or(PS_PLEDGE, Ordering::SeqCst);
 
-            if pr.ps_pledge.get()
+            if pr.ps_pledge.load(Ordering::Relaxed)
                 & (PLEDGE_RPATH
                     | PLEDGE_WPATH
                     | PLEDGE_CPATH
@@ -614,7 +617,8 @@ pub fn pledge_syscall(p: &Proc, code: i32, tval: &mut u64) -> Result<(), Errno> 
     }
 
     // pledge checks are per-thread
-    p.p_pledge.set(p.process().ps_pledge.get());
+    p.p_pledge
+        .set(p.process().ps_pledge.load(Ordering::Relaxed));
     if p.p_pledge.get() & need != 0 {
         return Ok(());
     }
@@ -663,7 +667,7 @@ pub fn pledge_fail(p: &Proc, error: Errno, code: u64) -> Errno {
     // Send uncatchable SIGABRT for coredump
     sigabort(p);
 
-    pr.ps_pledge.set(0); // Disable all PLEDGE_ flags
+    pr.ps_pledge.store(0, Ordering::Relaxed); // Disable all PLEDGE_ flags
     kernel_unlock();
     error
 }
