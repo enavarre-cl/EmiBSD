@@ -55,7 +55,7 @@
 //! - `sys_ypconnect`'s binding file name is built on the stack (`MAXPATHLEN`), where the C
 //!   takes a `namei_pool` buffer.
 //! - `KTRACE` is not configured (`ktrsockaddr`, `ktrmsghdr`, `ktriovec`, `ktrgenio`,
-//!   `ktrfds`, `ktrcmsghdr`); `INET6` is not configured (`dns_portcheck`'s `AF_INET6`).
+//!   `ktrfds`, `ktrcmsghdr`). `INET6` (`dns_portcheck`'s `AF_INET6`) is the `inet6` feature.
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
 use core::mem::offset_of;
@@ -350,7 +350,17 @@ fn dns_portcheck(p: &Proc, so: &Socket, nam: &[u8], namelen: usize) -> Result<()
     {
         error = Ok(());
     }
-    // INET6: not configured.
+    #[cfg(feature = "inet6")]
+    {
+        use crate::netinet6::in6::SockaddrIn6;
+        if so.dom_family() == i32::from(AF_INET6)
+            && namelen >= size_of::<SockaddrIn6>()
+            && nam.get(offset_of!(SockaddrIn6, sin6_port)..offset_of!(SockaddrIn6, sin6_port) + 2)
+                == Some(&53u16.to_be_bytes()[..])
+        {
+            error = Ok(());
+        }
+    }
     if error.is_err() && p.process().ps_flags.load(Ordering::Relaxed) & PS_PLEDGE != 0 {
         return Err(pledge_fail(p, Errno::EPERM, PLEDGE_DNS));
     }
