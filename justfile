@@ -78,7 +78,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -795,6 +795,51 @@ disk_check := disk_login + " " + \
     "--expect '** File system is clean; not checking' --expect 'fsck-rc=0' " + \
     "--expect '** Phase 5 - Check Cyl groups' --expect 'fsck-f-rc=0' --expect 'm10a-persistent-42' " + \
     "--reject 'UNEXPECTED' --reject 'FILE SYSTEM WAS MODIFIED'"
+
+# M10b: the UFS options, on sd0a. Boot 1 (`--disk-fresh`) makes the file system as
+# `smoke-disk` does, mounts it through its fstab(5) line (`userquota`), runs quotacheck(8) and
+# quotaon(8), gives `daemon` a 50/100 KB block quota with edquota(8) (the "editor" copies a
+# prepared file over edquota's), and has su(1) write a 220 KB file as `daemon`: the write
+# must fail with EDQUOT, and repquota(8) and quota(1) show the user over the soft limit
+# (`+-`). Boot 2 reuses the disk: quotas come back on with the usage kept, a directory of
+# 5,000 entries gets hashed (`vfs.ffs.dirhash_mem` > 0) and every name looks up, and
+# mount_mfs(8) mounts a memory file system on which a file reads back. Part of `smoke`.
+smoke-ufsopts: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-ufsopts: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disk-fresh {{ufsopts_quota}}
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        {{ufsopts_dirhash_mfs}}
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disk-fresh {{ufsopts_quota}}
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        {{ufsopts_dirhash_mfs}}
+
+# `smoke-ufsopts`'s two boots.
+ufsopts_quota := disk_login + " " + \
+    "--send-after '# ' --send 'fdisk -iy -f /dev/rsd0c sd0 && disklabel -w -A sd0 && newfs -q sd0a && echo newfs-$((40+2))\\n' " + \
+    "--send-after 'newfs-42' --send 'mount /mnt && mkdir /mnt/q && chown daemon /mnt/q && quotacheck -u /mnt && quotaon -v -u /mnt\\n' " + \
+    "--send-after 'quotas turned on' --send 'print \"Quotas for user daemon:\" >/tmp/q; print \"/mnt: KBytes in use: 2, limits (soft = 50, hard = 100)\" >>/tmp/q\\n' " + \
+    "--send-after '# ' --send 'print \"inodes in use: 1, limits (soft = 0, hard = 0)\" >>/tmp/q; EDITOR=\"cat /tmp/q >\" edquota -u daemon && echo edquota-$((40+2))\\n' " + \
+    "--send-after 'edquota-42' --send 'su -s /bin/ksh daemon -c \"cat /sbin/newfs >/mnt/q/big\"; echo su-rc-$?\\n' " + \
+    "--send-after '# ' --send 'repquota /mnt; quota -u daemon\\n' " + \
+    "--send-after '# ' --send 'quotaoff -v -u /mnt && umount /mnt && echo quota-done-$((40+2))\\n' " + \
+    "--expect '/mnt: user quotas turned on' --expect 'edquota-42' " + \
+    "--expect '/mnt: warning, user disk quota exceeded' --expect '/mnt: write failed, user disk limit reached' --expect 'cat: stdout: Disk quota exceeded' --expect 'su-rc-1' " + \
+    "--expect 'User            used    soft    hard  grace' --expect 'daemon    +-      98      50     100  7days' --reject 'cannot change current allocation' " + \
+    "--expect 'Disk quotas for user daemon (uid 1):' --expect '/mnt      98*      50     100   7days' " + \
+    "--expect '/mnt: user quotas turned off' --expect 'quota-done-42'"
+ufsopts_dirhash_mfs := disk_login + " " + \
+    "--send-after '# ' --send 'mount /mnt && quotaon -v -u /mnt && repquota /mnt\\n' " + \
+    "--send-after '# ' --send 'mkdir /mnt/d && i=0 && while [ $i -lt 5000 ]; do : >/mnt/d/f$i; i=$((i+1)); done; echo made-$i\\n' " + \
+    "--send-after 'made-5000' --send 'n=0; i=0; while [ $i -lt 5000 ]; do [ -f /mnt/d/f$i ] && n=$((n+1)); i=$((i+1)); done; echo found-$n\\n' " + \
+    "--send-after '# ' --send 'sysctl vfs.ffs.dirhash_mem; [ $(sysctl -n vfs.ffs.dirhash_mem) -gt 0 ] && echo dirhash-used-$((40+2))\\n' " + \
+    "--send-after '# ' --send 'mkdir -p /mfs && mount_mfs -s 8m swap /mfs && echo m10b-mfs-$((40+2)) >/mfs/f && cat /mfs/f && df /mfs\\n' " + \
+    "--send-after '# ' --send 'umount /mfs && quotaoff -u /mnt && umount /mnt && echo ufsopts-done-$((40+2))\\n' " + \
+    "--expect '/mnt: user quotas turned on' --expect 'daemon    +-      98      50     100' " + \
+    "--expect 'made-5000' --expect 'found-5000' --expect 'vfs.ffs.dirhash_mem=' --expect 'dirhash-used-42' " + \
+    "--expect 'm10b-mfs-42' --expect 'mfs:' --expect 'ufsopts-done-42'"
 
 # M9+: IPv6 between the two VMs of `smoke-link` (option INET6, sys/netinet6). Bringing lo0
 # up gives it ::1 (if_up calls in6_ifattach for the default loopback); vio1 gets fd00:77::1
