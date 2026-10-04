@@ -52,10 +52,6 @@
 //! kernel array (`PfrBuf::Kernel`) itself, and the flags still pick the path.
 //!
 //! ## Deviations
-//! - `INET6` is not configured: the `AF_INET6` cases (`FILLIN_SIN6`, the IPv6 lookups and
-//!   `pfr_islinklocal`'s test) are comments at their sites, and an IPv6 address reaches
-//!   `unhandled_af` as in a kernel without `INET6`. The IPv6 radix head of every table is still
-//!   created and walked, as the C does unconditionally.
 //! - `COPYIN`/`COPYOUT` through a [`PfrBuf`]: a buffer of the other kind than the flags ask for,
 //!   or an index past the end of a kernel array, is `EFAULT` (the C would `bcopy` from the user
 //!   address, or `copyin` from a kernel address, or run off the array).
@@ -66,11 +62,11 @@
 //!   the cost entry's weight through `pfr_kentry_cost`, after the entry's type.
 //!   `pfr_fill_feedback` reads the weight of every entry as a `pfr_kentry_cost`, past the end of
 //!   plain and route entries; here only cost entries report their weight, the others 0.
-//! - The `sockaddr_in` keys built on the stack (`tmp4` in `pfr_kentry_byaddr`,
-//!   `pfr_update_stats`, `pfr_pool_get`) are `pfsockaddr_union`s, so that the radix code may
-//!   read them for its whole key length (`sizeof(struct sockaddr_in6)`). `pfr_pool_get`'s
-//!   `addr`, a `struct pf_addr *` into `tmp4.sin_addr`, is a local address written into the key
-//!   before each lookup.
+//! - The `sockaddr_in` and `sockaddr_in6` keys built on the stack (`tmp4`/`tmp6` in
+//!   `pfr_kentry_byaddr`, `pfr_update_stats`, `pfr_pool_get`) are `pfsockaddr_union`s, so that
+//!   the radix code may read them for its whole key length (`sizeof(struct sockaddr_in6)`).
+//!   `pfr_pool_get`'s `addr`, a `struct pf_addr *` into `tmp4.sin_addr` or `tmp6.sin6_addr`, is
+//!   a local address written into the key before each lookup.
 //! - `RB_FIND` with a `struct pfr_table` cast to a `struct pfr_ktable` (`pfr_lookup_table`,
 //!   the `key` tables of `pfr_add_tables`, `pfr_del_tables`, `pfr_ina_define`, ...) is a
 //!   descent of `pfr_ktables` comparing the table's name and anchor as `pfr_ktable_compare`
@@ -130,6 +126,7 @@ use crate::net::radix::{
     rn_walktree,
 };
 use crate::netinet::in_::{InAddr, SockaddrIn};
+use crate::netinet6::in6::SockaddrIn6;
 use crate::sys::errno::Errno;
 use crate::sys::malloc::M_RTABLE;
 use crate::sys::pool::{PR_LIMITFAIL, PR_NOWAIT, PR_WAITOK, PR_ZERO, Pool};
@@ -142,6 +139,9 @@ use crate::sys::systm::{net_assert_locked, net_lock, net_unlock};
 use crate::sys::tree::RbHead;
 use crate::sys::types::{SaFamily, Time};
 use libkern::{strlcpy, strnlen};
+
+#[cfg(feature = "inet6")]
+use crate::{netinet6::in6::In6Addr, sys::socket::AF_INET6};
 
 /// `NO_ADDRESSES`: a shadow table's `pfrkt_cnt` when the transaction gave no addresses.
 const NO_ADDRESSES: i32 = -1;
@@ -365,15 +365,22 @@ fn fillin_sin(su: &mut PfsockaddrUnion, addr: InAddr) {
     su.set_sin(&sin);
 }
 
-// INET6: FILLIN_SIN6(sin6, addr); not configured.
+/// `FILLIN_SIN6(sin6, addr)` on a zeroed union.
+#[cfg(feature = "inet6")]
+fn fillin_sin6(su: &mut PfsockaddrUnion, addr: In6Addr) {
+    let mut sin6 = su.sin6();
+    sin6.sin6_len = size_of::<SockaddrIn6>() as u8;
+    sin6.sin6_family = AF_INET6;
+    sin6.sin6_addr = addr;
+    su.set_sin6(&sin6);
+}
 
 /// `SUNION2PF(su, af)`: the `pf_addr` at the union's address (`sin_addr` or `sin6_addr`).
 fn sunion2pf(su: &PfsockaddrUnion, af: SaFamily) -> PfAddr {
     let off = if af == AF_INET {
         offset_of!(SockaddrIn, sin_addr)
     } else {
-        // offsetof(struct sockaddr_in6, sin6_addr)
-        8
+        offset_of!(SockaddrIn6, sin6_addr)
     };
     let mut a = PfAddr::zeroed();
     a.addr8.copy_from_slice(&su.bytes[off..off + 16]);
@@ -551,7 +558,8 @@ pub fn pfr_fill_feedback(ke: &'static PfrKentry, ad: &mut PfrAddr) {
 
     match ke.pfrke_af.get() {
         AF_INET => ad.pfra_u.set_v4(ke.pfrke_sa.get().sin().sin_addr),
-        // INET6: ad->pfra_ip6addr = ke->pfrke_sa.sin6.sin6_addr; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => ad.pfra_u.set_v6(ke.pfrke_sa.get().sin6().sin6_addr),
         af => unhandled_af(i32::from(af)),
     }
     ad.pfra_weight = if ke.pfrke_type.get() == PFRKE_COST {
@@ -1157,13 +1165,19 @@ pub fn pfr_clr_astats(
 /// `pfr_validate_addr`: `true` (the C's 0) when `ad` is a valid table address; `false` (the
 /// C's -1) for an unknown family, a prefix too long, host bits set, or bad flags.
 pub fn pfr_validate_addr(ad: &PfrAddr) -> bool {
-    if ad.pfra_af == AF_INET {
-        if ad.pfra_net > 32 {
-            return false;
+    match ad.pfra_af {
+        AF_INET => {
+            if ad.pfra_net > 32 {
+                return false;
+            }
         }
-    } else {
-        // INET6: AF_INET6 with pfra_net up to 128; not configured.
-        return false;
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            if ad.pfra_net > 128 {
+                return false;
+            }
+        }
+        _ => return false,
     }
     let net = usize::from(ad.pfra_net);
     let bytes = &ad.pfra_u.addr8;
@@ -1241,7 +1255,11 @@ pub fn pfr_lookup_addr(
             fillin_sin(&mut sa, ad.pfra_ip4addr());
             pfr_rnh(&kt.pfrkt_ip4)
         }
-        // INET6: FILLIN_SIN6(sa.sin6, ad->pfra_ip6addr), the IPv6 head; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            fillin_sin6(&mut sa, ad.pfra_ip6addr());
+            pfr_rnh(&kt.pfrkt_ip6)
+        }
         af => unhandled_af(i32::from(af)),
     };
     if addr_network(ad) {
@@ -1266,7 +1284,8 @@ pub fn pfr_lookup_kentry(
 
     let head = match key.pfrke_af.get() {
         AF_INET => pfr_rnh(&kt.pfrkt_ip4),
-        // INET6: the IPv6 head; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => pfr_rnh(&kt.pfrkt_ip6),
         af => unhandled_af(i32::from(af)),
     };
     if kentry_network(key) {
@@ -1335,7 +1354,8 @@ pub fn pfr_create_kentry(ad: &mut PfrAddr) -> Option<&'static PfrKentry> {
     let mut sa = ke.pfrke_sa.get();
     match ad.pfra_af {
         AF_INET => fillin_sin(&mut sa, ad.pfra_ip4addr()),
-        // INET6: FILLIN_SIN6(ke->pfrke_sa.sin6, ad->pfra_ip6addr); not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => fillin_sin6(&mut sa, ad.pfra_ip6addr()),
         af => unhandled_af(i32::from(af)),
     }
     ke.pfrke_sa.set(sa);
@@ -1390,7 +1410,8 @@ pub fn pfr_create_kentry_unlocked(ad: &mut PfrAddr, flags: i32) -> Option<&'stat
     let mut sa = ke.pfrke_sa.get();
     match ad.pfra_af {
         AF_INET => fillin_sin(&mut sa, ad.pfra_ip4addr()),
-        // INET6: FILLIN_SIN6(ke->pfrke_sa.sin6, ad->pfra_ip6addr); not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => fillin_sin6(&mut sa, ad.pfra_ip6addr()),
         af => unhandled_af(i32::from(af)),
     }
     ke.pfrke_sa.set(sa);
@@ -1616,7 +1637,31 @@ pub fn pfr_prepare_network(sa: &mut PfsockaddrUnion, af: SaFamily, net: i32) {
             };
             sa.set_sin(&sin);
         }
-        // INET6: the sockaddr_in6 mask, 32 bits per word; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            let mut sin6 = SockaddrIn6 {
+                sin6_len: size_of::<SockaddrIn6>() as u8,
+                sin6_family: AF_INET6,
+                ..SockaddrIn6::zeroed()
+            };
+            let mut net = net;
+            for i in 0..4 {
+                if net <= 32 {
+                    sin6.sin6_addr.set_s6_addr32(
+                        i,
+                        if net != 0 {
+                            (u32::MAX << (32 - net)).to_be()
+                        } else {
+                            0
+                        },
+                    );
+                    break;
+                }
+                sin6.sin6_addr.set_s6_addr32(i, 0xffff_ffff);
+                net -= 32;
+            }
+            sa.set_sin6(&sin6);
+        }
         _ => unhandled_af(i32::from(af)),
     }
 }
@@ -1643,7 +1688,8 @@ pub fn pfr_route_kentry(kt: &'static PfrKtable, ke: &'static PfrKentry) -> bool 
     }
     let head = match ke.pfrke_af.get() {
         AF_INET => pfr_rnh(&kt.pfrkt_ip4),
-        // INET6: the IPv6 head; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => pfr_rnh(&kt.pfrkt_ip6),
         af => unhandled_af(i32::from(af)),
     };
 
@@ -1668,7 +1714,8 @@ pub fn pfr_unroute_kentry(kt: &'static PfrKtable, ke: &'static PfrKentry) -> boo
 
     let head = match ke.pfrke_af.get() {
         AF_INET => pfr_rnh(&kt.pfrkt_ip4),
-        // INET6: the IPv6 head; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => pfr_rnh(&kt.pfrkt_ip6),
         af => unhandled_af(i32::from(af)),
     };
 
@@ -1703,7 +1750,8 @@ pub fn pfr_copyout_addr(ad: &mut PfrAddr, ke: Option<&'static PfrKentry>) {
 
     match ad.pfra_af {
         AF_INET => ad.pfra_u.set_v4(ke.pfrke_sa.get().sin().sin_addr),
-        // INET6: ad->pfra_ip6addr = ke->pfrke_sa.sin6.sin6_addr; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => ad.pfra_u.set_v6(ke.pfrke_sa.get().sin6().sin6_addr),
         af => unhandled_af(i32::from(af)),
     }
     if let Some(c) = ke.pfrke_counters.get() {
@@ -1819,7 +1867,17 @@ fn pfr_walktree(
                         dyn_.pfid_addr4.set(sunion2pf(&ke.pfrke_sa.get(), AF_INET));
                         dyn_.pfid_mask4.set(sunion2pf(&mask, AF_INET));
                     }
-                    // INET6: pfid_acnt6, pfid_addr6, pfid_mask6; not configured.
+                    #[cfg(feature = "inet6")]
+                    AF_INET6 => {
+                        let n = dyn_.pfid_acnt6.get();
+                        dyn_.pfid_acnt6.set(n + 1);
+                        if n > 0 {
+                            return Ok(());
+                        }
+                        pfr_prepare_network(&mut mask, AF_INET6, i32::from(ke.pfrke_net.get()));
+                        dyn_.pfid_addr6.set(sunion2pf(&ke.pfrke_sa.get(), AF_INET6));
+                        dyn_.pfid_mask6.set(sunion2pf(&mask, AF_INET6));
+                    }
                     af => unhandled_af(i32::from(af)),
                 }
             }
@@ -2798,8 +2856,7 @@ pub fn pfr_create_ktable(
     kt.pfrkt_ip4.set(ip4);
     let ok = ok && {
         let mut ip6 = kt.pfrkt_ip6.get();
-        // offsetof(struct sockaddr_in6, sin6_addr)
-        let ok = rn_inithead(&mut ip6, 8);
+        let ok = rn_inithead(&mut ip6, offset_of!(SockaddrIn6, sin6_addr) as i32);
         kt.pfrkt_ip6.set(ip6);
         ok
     };
@@ -2935,6 +2992,14 @@ fn pfr_sin_key(a: &PfAddr) -> PfsockaddrUnion {
     tmp4
 }
 
+/// The `sockaddr_in6` key (`tmp6`) of the address `a`.
+#[cfg(feature = "inet6")]
+fn pfr_sin6_key(a: &PfAddr) -> PfsockaddrUnion {
+    let mut tmp6 = PfsockaddrUnion::default();
+    fillin_sin6(&mut tmp6, a.v6());
+    tmp6
+}
+
 /// `pfr_kentry_byaddr`: the entry of the active table `kt` (or its root) that best matches
 /// `a` (`None` with `exact` when that is a network).
 pub fn pfr_kentry_byaddr(
@@ -2951,7 +3016,12 @@ pub fn pfr_kentry_byaddr(
             // SAFETY: the table's tree holds entries; the key is a 28-byte union.
             unsafe { rn_match(tmp4.bytes.as_ptr(), pfr_rnh(&kt.pfrkt_ip4)) }.map(rn2ke)
         }
-        // INET6: the sockaddr_in6 key in the IPv6 head; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            let tmp6 = pfr_sin6_key(a);
+            // SAFETY: as for the IPv4 key.
+            unsafe { rn_match(tmp6.bytes.as_ptr(), pfr_rnh(&kt.pfrkt_ip6)) }.map(rn2ke)
+        }
         _ => unhandled_af(i32::from(af)),
     };
     ke.filter(|ke| !(exact && kentry_network(ke)))
@@ -2974,7 +3044,12 @@ pub fn pfr_update_stats(kt: &'static PfrKtable, a: &PfAddr, pd: &PfPdesc, op: u8
             // SAFETY: as in `pfr_kentry_byaddr`.
             unsafe { rn_match(tmp4.bytes.as_ptr(), pfr_rnh(&kt.pfrkt_ip4)) }.map(rn2ke)
         }
-        // INET6: the sockaddr_in6 key in the IPv6 head; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            let tmp6 = pfr_sin6_key(a);
+            // SAFETY: as for the IPv4 key.
+            unsafe { rn_match(tmp6.bytes.as_ptr(), pfr_rnh(&kt.pfrkt_ip6)) }.map(rn2ke)
+        }
         _ => unhandled_af(i32::from(af)),
     };
 
@@ -3084,8 +3159,13 @@ pub fn pfr_detach_table(kt: &'static PfrKtable) {
 }
 
 /// `pfr_islinklocal`: whether `addr` is an IPv6 link-local address.
-pub fn pfr_islinklocal(_af: SaFamily, _addr: &PfAddr) -> bool {
-    // INET6: af == AF_INET6 && IN6_IS_ADDR_LINKLOCAL(&addr->v6); not configured.
+pub fn pfr_islinklocal(af: SaFamily, addr: &PfAddr) -> bool {
+    #[cfg(feature = "inet6")]
+    if af == AF_INET6 && crate::netinet6::in6::in6_is_addr_linklocal(&addr.v6()) {
+        return true;
+    }
+    #[cfg(not(feature = "inet6"))]
+    let _ = (af, addr);
     false
 }
 
@@ -3142,7 +3222,8 @@ pub fn pfr_pool_get(rpool: &'static PfPool, af: SaFamily) -> Result<(PfAddr, PfA
 
     match af {
         AF_INET => fillin_sin(&mut tmp4, InAddr { s_addr: 0 }),
-        // INET6: the sockaddr_in6 tmp6; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => fillin_sin6(&mut tmp4, In6Addr::default()),
         _ => unhandled_af(i32::from(af)),
     }
 
@@ -3240,7 +3321,15 @@ pub fn pfr_pool_get(rpool: &'static PfPool, af: SaFamily) -> Result<(PfAddr, PfA
                     // SAFETY: as in `pfr_kentry_byaddr`.
                     unsafe { rn_match(tmp4.bytes.as_ptr(), pfr_rnh(&kt.pfrkt_ip4)) }.map(rn2ke)
                 }
-                // INET6: the lookup of tmp6 in the IPv6 head; not configured.
+                #[cfg(feature = "inet6")]
+                AF_INET6 => {
+                    // tmp6, in the same union.
+                    let mut sin6 = tmp4.sin6();
+                    sin6.sin6_addr = addr.v6();
+                    tmp4.set_sin6(&sin6);
+                    // SAFETY: as in `pfr_kentry_byaddr`.
+                    unsafe { rn_match(tmp4.bytes.as_ptr(), pfr_rnh(&kt.pfrkt_ip6)) }.map(rn2ke)
+                }
                 _ => unhandled_af(i32::from(af)),
             };
             if ke2.is_some_and(|ke2| ptr::eq(ke2, ke))
@@ -3293,7 +3382,14 @@ pub fn pfr_kentry_byidx(
                 _ => None,
             }
         }
-        // INET6: the walk of the IPv6 head; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            let _ = pfr_walk(pfr_rnh(&kt.pfrkt_ip6), &mut w);
+            match w.pfrw_1 {
+                Pfrw1::Kentry(ke) => ke,
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -3362,7 +3458,10 @@ pub fn pfr_dynaddr_update(kt: &'static PfrKtable, dyn_: &'static PfiDynaddr) {
         AF_INET => {
             let _ = pfr_walk(pfr_rnh(&kt.pfrkt_ip4), &mut w);
         }
-        // INET6: the walk of the IPv6 head; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            let _ = pfr_walk(pfr_rnh(&kt.pfrkt_ip6), &mut w);
+        }
         af => unhandled_af(i32::from(af)),
     }
 }

@@ -15,6 +15,7 @@ pub mod in_pcb;
 pub mod in_proto;
 pub mod in_systm;
 pub mod in_var;
+pub mod inet_nat64;
 pub mod ip;
 pub mod ip6;
 pub mod ip_ah;

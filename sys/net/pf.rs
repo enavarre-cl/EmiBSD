@@ -49,11 +49,9 @@
 //! read and write through the descriptor.
 //!
 //! ## Deviations
-//! - `INET6` is not configured: the `AF_INET6` cases, `pf_test6` paths, `pf_route6`,
-//!   `pf_refragment6`, `pf_walk_header6`/`pf_walk_option6`, the ICMPv6 and neighbour
-//!   discovery handling and the NAT64 (`af-to`) translation between families are comments at
-//!   their sites; an `af-to` rule never matches an IPv4 packet towards IPv6 because the
-//!   translation reports `unported!("inet6")` and drops the packet with `PFRES_TRANSLATE`.
+//! - `pf_print_host` formats through [`PfHost`] (`Display`), which host tests use.
+//! - `pf_translate_icmp_af`'s `void *arg` (a `struct icmp` or `struct icmp6_hdr`) is a
+//!   [`PfLoc`], as the descriptor's other pointers into headers.
 //! - `carp(4)` (`NCARP`) is not configured: `carp_lsdrop` is a comment at its site. `pfsync(4)`
 //!   (`net/if_pfsync.rs`) and `pflow(4)` (`net/if_pflow.rs`) are.
 //! - `pf_anchor_stack` and `pf_status_fcounters` are per-CPU (`cpumem`) in the C; there is one
@@ -73,6 +71,7 @@ use core::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::crypto::sha2::{SHA512Final, SHA512Init, SHA512Update, Sha2Ctx};
 use crate::dev::rnd::{arc4random, arc4random_buf, arc4random_uniform};
+use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_rwlock::{
     rw_assert_wrlock, rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write,
@@ -88,7 +87,7 @@ use crate::net::pf_table::{pfr_insert_kentry, pfr_remove_kentry};
 use crate::net::pfvar::*;
 use crate::net::pfvar_priv::*;
 use crate::net::rtable::rtable_l2;
-use crate::netinet::in_::{IPPROTO_ICMP, IPPROTO_TCP, IPPROTO_UDP};
+use crate::netinet::in_::{IPPROTO_ICMP, IPPROTO_ICMPV6, IPPROTO_TCP, IPPROTO_UDP};
 use crate::netinet::in_pcb::Inpcb;
 use crate::netinet::tcp::{
     MAX_TCPOPTLEN, TCP_MAX_WINSHIFT, TCP_MAXWIN, TCPOLEN_MAXSEG, TCPOLEN_SACK, TCPOLEN_WINDOW,
@@ -116,7 +115,9 @@ use crate::sys::socket::{AF_INET, AF_INET6};
 use crate::sys::syslog::{LOG_DEBUG, LOG_ERR, LOG_NOTICE};
 use crate::sys::tree::{RbHead, RbtHead};
 use crate::sys::types::{Gid, SaFamily, Time, Uid};
-use crate::{kassert, unported};
+
+#[cfg(feature = "inet6")]
+use crate::netinet::ip6::Ip6Hdr;
 
 /// `enum pf_test_status`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -479,7 +480,11 @@ fn pf_source_pfr_addr(sr: &PfSource) -> PfrAddr {
         p.pfra_net = srlim.pfsrlim_ipv4_prefix.get() as u8;
         p.pfra_u.set_v4(sr.pfsr_addr.get().v4());
     }
-    // INET6: AF_INET6 with pfsrlim_ipv6_prefix; not configured.
+    #[cfg(feature = "inet6")]
+    if sr.pfsr_af.get() == AF_INET6 {
+        p.pfra_net = srlim.pfsrlim_ipv6_prefix.get() as u8;
+        p.pfra_u.set_v6(sr.pfsr_addr.get().v6());
+    }
     p
 }
 
@@ -560,7 +565,13 @@ pub fn pf_source_key(
                 a.set_addr32(i, 0u32.to_be());
             }
         }
-        // INET6: AF_INET6 masked with pfsrlim_ipv6_mask; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            let mask = srlim.pfsrlim_ipv6_mask.get();
+            for i in 0..4 {
+                a.set_addr32(i, mask.addr32(i) & addr.addr32(i));
+            }
+        }
         _ => unhandled_af(i32::from(af)),
     }
     key.pfsr_addr.set(a);
@@ -589,7 +600,8 @@ crate::tree_adapter!(
 pub fn pf_addr_compare(a: &PfAddr, b: &PfAddr, af: SaFamily) -> i32 {
     let words: &[usize] = match af {
         AF_INET => &[0],
-        // INET6: the four words, most significant last; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => &[3, 2, 1, 0],
         _ => &[],
     };
     for &i in words {
@@ -645,7 +657,12 @@ pub fn pf_set_protostate(st: &PfState, which: i32, newstate: u8) {
 pub fn pf_addrcpy(dst: &mut PfAddr, src: &PfAddr, af: SaFamily) {
     match af {
         AF_INET => dst.set_addr32(0, src.addr32(0)),
-        // INET6: all four words; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            for i in 0..4 {
+                dst.set_addr32(i, src.addr32(i));
+            }
+        }
         _ => unhandled_af(i32::from(af)),
     }
 }
@@ -770,7 +787,11 @@ pub fn pf_src_connlimit(st: &'static PfState) -> bool {
             p.pfra_net = 32;
             p.pfra_u.set_v4(sn.addr.get().v4());
         }
-        // INET6: pfra_net 128 and the v6 address; not configured.
+        #[cfg(feature = "inet6")]
+        if waf == AF_INET6 {
+            p.pfra_net = 128;
+            p.pfra_u.set_v6(sn.addr.get().v6());
+        }
 
         let _ = pfr_insert_kentry(tbl, &p, gettime());
 
@@ -1138,26 +1159,66 @@ pub fn pf_alloc_state_key(pool_flags: i32) -> Option<&'static PfStateKey> {
     Some(sk)
 }
 
-/// `pf_state_key_addr_setup`: copies the addresses into `addrs` (a key's `addr[2]`). The
-/// `INET6` neighbour discovery and multicast cases are not configured.
+/// `pf_state_key_addr_setup`: copies the addresses into `addrs` (a key's `addr[2]`); for
+/// ICMPv6 neighbour discovery the target address replaces one of them, and a multicast
+/// lookup uses the link-local all-nodes source. -1 if the message cannot have such a state.
 #[allow(clippy::too_many_arguments)]
 fn pf_state_key_addr_setup(
-    _pd: &PfPdesc,
+    pd: &mut PfPdesc,
     addrs: &mut [PfAddr; 2],
     sidx: usize,
     saddr: Option<&PfAddr>,
     didx: usize,
     daddr: Option<&PfAddr>,
     af: SaFamily,
-    _multi: bool,
+    multi: bool,
 ) -> i32 {
-    // INET6: ND_NEIGHBOR_SOLICIT/ADVERT targets and the multicast link-local source of
-    // ICMPv6; not configured.
+    #[cfg_attr(not(feature = "inet6"), allow(unused_mut))]
+    let mut saddr = saddr.copied();
+    #[cfg_attr(not(feature = "inet6"), allow(unused_mut))]
+    let mut daddr = daddr.copied();
+    #[cfg(feature = "inet6")]
+    if af != AF_INET && i32::from(pd.proto) == IPPROTO_ICMPV6 {
+        use crate::netinet::icmp6::{ND_NEIGHBOR_ADVERT, ND_NEIGHBOR_SOLICIT};
+        use crate::netinet6::in6::{
+            __IPV6_ADDR_INT32_MLL, __IPV6_ADDR_INT32_ONE, in6_is_addr_multicast,
+        };
+        match pd.icmp6().icmp6_type {
+            ND_NEIGHBOR_SOLICIT => {
+                if multi {
+                    return -1;
+                }
+                daddr = Some(PfAddr::from_v6(pd.nd_ns().nd_ns_target));
+            }
+            ND_NEIGHBOR_ADVERT => {
+                if multi {
+                    return -1;
+                }
+                saddr = Some(PfAddr::from_v6(pd.nd_ns().nd_ns_target));
+                if in6_is_addr_multicast(&pd.ld_addr(pd.dst).v6()) {
+                    addrs[didx] = PfAddr::zeroed();
+                    daddr = None; // overwritten
+                }
+            }
+            _ => {
+                if multi {
+                    let a = &mut addrs[sidx];
+                    a.set_addr32(0, __IPV6_ADDR_INT32_MLL);
+                    a.set_addr32(1, 0);
+                    a.set_addr32(2, 0);
+                    a.set_addr32(3, __IPV6_ADDR_INT32_ONE);
+                    saddr = None; // overwritten
+                }
+            }
+        }
+    }
+    #[cfg(not(feature = "inet6"))]
+    let _ = (&pd, multi);
     if let Some(s) = saddr {
-        pf_addrcpy(&mut addrs[sidx], s, af);
+        pf_addrcpy(&mut addrs[sidx], &s, af);
     }
     if let Some(d) = daddr {
-        pf_addrcpy(&mut addrs[didx], d, af);
+        pf_addrcpy(&mut addrs[didx], &d, af);
     }
     0
 }
@@ -2518,23 +2579,82 @@ pub unsafe fn pf_tbladdr_copyout(aw: &PfAddrWrap) {
     });
 }
 
+/// What `pf_print_host` prints: an address and port (network order, 0 for none) of family
+/// `af`, IPv4 as `a.b.c.d:port`, IPv6 colon-separated with the longest run of zero words
+/// compressed, then `[port]`.
+pub struct PfHost<'a>(pub &'a PfAddr, pub u16, pub SaFamily);
+
+impl core::fmt::Display for PfHost<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let PfHost(addr, p, af) = *self;
+        match af {
+            AF_INET => {
+                let a = u32::from_be(addr.addr32(0));
+                write!(
+                    f,
+                    "{}.{}.{}.{}",
+                    (a >> 24) & 255,
+                    (a >> 16) & 255,
+                    (a >> 8) & 255,
+                    a & 255
+                )?;
+                if p != 0 {
+                    write!(f, ":{}", u16::from_be(p))?;
+                }
+            }
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {
+                // The longest run of zero words; 255 is "none" and the differences are
+                // taken as ints, as the C's promoted u_int8_t arithmetic.
+                let (mut curstart, mut curend, mut maxstart, mut maxend) =
+                    (255i32, 255i32, 255i32, 255i32);
+                for i in 0..8 {
+                    if addr.addr16(i) == 0 {
+                        if curstart == 255 {
+                            curstart = i as i32;
+                        }
+                        curend = i as i32;
+                    } else {
+                        if curend - curstart > maxend - maxstart {
+                            maxstart = curstart;
+                            maxend = curend;
+                        }
+                        curstart = 255;
+                        curend = 255;
+                    }
+                }
+                if curend - curstart > maxend - maxstart {
+                    maxstart = curstart;
+                    maxend = curend;
+                }
+                for i in 0..8i32 {
+                    if i >= maxstart && i <= maxend {
+                        if i == 0 {
+                            f.write_str(":")?;
+                        }
+                        if i == maxend {
+                            f.write_str(":")?;
+                        }
+                    } else {
+                        write!(f, "{:x}", u16::from_be(addr.addr16(i as usize)))?;
+                        if i < 7 {
+                            f.write_str(":")?;
+                        }
+                    }
+                }
+                if p != 0 {
+                    write!(f, "[{}]", u16::from_be(p))?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
 /// `pf_print_host`: logs an address and port (network order, 0 for none).
 pub fn pf_print_host(addr: &PfAddr, p: u16, af: SaFamily) {
-    if af == AF_INET {
-        let a = u32::from_be(addr.addr32(0));
-        addlog(format_args!(
-            "{}.{}.{}.{}",
-            (a >> 24) & 255,
-            (a >> 16) & 255,
-            (a >> 8) & 255,
-            a & 255
-        ));
-        if p != 0 {
-            addlog(format_args!(":{}", u16::from_be(p)));
-        }
-    }
-    // INET6: the colon-separated form with the longest zero run compressed and
-    // "[port]"; not configured.
+    addlog(format_args!("{}", PfHost(addr, p, af)));
 }
 
 /// `pf_print_state`.
@@ -2765,6 +2885,20 @@ pub fn pf_cksum_fixup_pd(pd: &mut PfPdesc, was: u16, now: u16, proto: u8) {
     pd.st16(pc, c);
 }
 
+/// `pf_cksum_uncover`: takes out of `cksum` the coverage of `covered_cksum` (pre: the
+/// coverage of `cksum` is a superset of it).
+#[cfg(feature = "inet6")]
+fn pf_cksum_uncover(cksum: &mut u16, covered_cksum: u16, proto: u8) {
+    pf_cksum_fixup(cksum, !covered_cksum, 0x0, proto);
+}
+
+/// `pf_cksum_cover`: adds to `cksum` the coverage of `uncovered_cksum` (pre: their
+/// coverages are disjoint).
+#[cfg(feature = "inet6")]
+fn pf_cksum_cover(cksum: &mut u16, uncovered_cksum: u16, proto: u8) {
+    pf_cksum_fixup(cksum, 0x0, !uncovered_cksum, proto);
+}
+
 /// `NEG(x)`.
 const fn neg(x: u16) -> u16 {
     !x
@@ -2784,7 +2918,10 @@ pub fn pf_cksum_fixup_a(cksum: &mut u16, a: &PfAddr, an: &PfAddr, af: SaFamily, 
                 + u32::from(a.addr16(1))
                 + u32::from(neg(an.addr16(1)))
         }
-        // INET6: the eight words; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => (0..8).fold(u32::from(*cksum), |x, i| {
+            x + u32::from(a.addr16(i)) + u32::from(neg(an.addr16(i)))
+        }),
         _ => unhandled_af(i32::from(af)),
     };
 
@@ -2984,8 +3121,78 @@ pub fn pf_icmp_mapping(
             }
         }
     }
-    // INET6: ICMPv6 echo, MLD, WRU, MTRACE, neighbour discovery and the error types; not
-    // configured.
+    #[cfg(feature = "inet6")]
+    if pd.af == AF_INET6 {
+        use crate::netinet::icmp6::*;
+        // A fake id for MLD and neighbour discovery: the address words folded to 16 bits.
+        let fold = |a: &crate::netinet6::in6::In6Addr| {
+            let h = a.s6_addr32(0) ^ a.s6_addr32(1) ^ a.s6_addr32(2) ^ a.s6_addr32(3);
+            ((h >> 16) ^ (h & 0xffff)) as u16
+        };
+        match type_ {
+            ICMP6_ECHO_REQUEST | ICMP6_ECHO_REPLY => {
+                if type_ == ICMP6_ECHO_REQUEST {
+                    *icmp_dir = i32::from(PF_IN);
+                }
+                *virtual_type = u16::from(ICMP6_ECHO_REQUEST);
+                *virtual_id = pd.icmp6().icmp6_id();
+            }
+            MLD_LISTENER_QUERY | MLD_LISTENER_REPORT => {
+                // Listener Report can be sent by clients without an associated Listener
+                // Query. In addition to that, when Report is sent as a reply to a Query
+                // its source and destination address are different.
+                *icmp_dir = i32::from(PF_IN);
+                *virtual_type = u16::from(MLD_LISTENER_QUERY);
+                *virtual_id = fold(&pd.mld().mld_addr);
+            }
+            // ICMP6_FQDN and ICMP6_NI query/reply are the same type as ICMP6_WRU.
+            ICMP6_WRUREQUEST | ICMP6_WRUREPLY => {
+                if type_ == ICMP6_WRUREQUEST {
+                    *icmp_dir = i32::from(PF_IN);
+                }
+                *virtual_type = u16::from(ICMP6_WRUREQUEST);
+                *virtual_id = 0; // Nothing sane to match on!
+            }
+            MLD_MTRACE | MLD_MTRACE_RESP => {
+                if type_ == MLD_MTRACE {
+                    *icmp_dir = i32::from(PF_IN);
+                }
+                *virtual_type = u16::from(MLD_MTRACE);
+                *virtual_id = 0; // Nothing sane to match on!
+            }
+            ND_NEIGHBOR_SOLICIT | ND_NEIGHBOR_ADVERT => {
+                if type_ == ND_NEIGHBOR_SOLICIT {
+                    *icmp_dir = i32::from(PF_IN);
+                }
+                *virtual_type = u16::from(ND_NEIGHBOR_SOLICIT);
+                *virtual_id = fold(&pd.nd_ns().nd_ns_target);
+                // The extra work here deals with the 'keep state' option of a pass rule
+                // for an unsolicited advertisement: returning true (state_icmp) overrides
+                // 'keep state' with 'no state', so no state is created for unsolicited
+                // advertisements. No one expects an answer to them.
+                if type_ == ND_NEIGHBOR_ADVERT {
+                    *virtual_type = virtual_type.to_be();
+                    return true;
+                }
+            }
+            // These ICMP types map to other connections. ND_REDIRECT can't be in this list
+            // because the triggering packet header is optional.
+            ICMP6_DST_UNREACH | ICMP6_PACKET_TOO_BIG | ICMP6_TIME_EXCEEDED | ICMP6_PARAM_PROB => {
+                // These will not be used, but set them anyway.
+                *icmp_dir = i32::from(PF_IN);
+                *virtual_type = u16::from(type_).to_be();
+                *virtual_id = 0;
+                return true; // These types match to another state.
+            }
+            // All remaining ICMP6 types get their own states, and will only match in one
+            // direction.
+            _ => {
+                *icmp_dir = i32::from(PF_IN);
+                *virtual_type = u16::from(type_);
+                *virtual_id = 0;
+            }
+        }
+    }
     *virtual_type = virtual_type.to_be();
     false // These types match to their own state.
 }
@@ -3035,10 +3242,430 @@ pub fn pf_translate_a(pd: &mut PfPdesc, a: PfLoc, an: &PfAddr) -> i32 {
     1
 }
 
-// INET6: pf_translate_af (rebuilds the network header in the other family),
-// pf_change_icmp_af (translates the header quoted by an ICMP error) and
-// pf_translate_icmp_af (maps ICMP and ICMPv6 types and codes), the NAT64 machinery, are
-// compiled only with INET6; not configured.
+/// `pf_translate_af`: replaces the network header with one of the other family (`pd->naf`,
+/// the addresses `pd->nsaddr`/`pd->ndaddr`) and moves the transport checksum from the old
+/// pseudo-header to the new one. `pd->m` may change; 0, or -1 when the packet was lost
+/// (`pd->m` is then `None`).
+#[cfg(feature = "inet6")]
+pub fn pf_translate_af(pd: &mut PfPdesc) -> i32 {
+    use crate::netinet::ip::{IP_DF, IPVERSION, Ip};
+    use crate::netinet::ip6::{IPV6_DEFHLIM, IPV6_VERSION};
+    use crate::sys::mbuf::M_UDP_CSUM_OUT;
+
+    let zero = PfAddr::zeroed();
+    let hlen = if pd.naf == AF_INET {
+        size_of::<Ip>() as u32
+    } else {
+        size_of::<Ip6Hdr>() as u32
+    };
+    let ohlen = pd.off;
+    let dlen = (pd.tot_len - u64::from(pd.off)) as u16;
+    let mut copyback = false;
+
+    let naf_proto = pd.proto;
+    let af_proto = match i32::from(naf_proto) {
+        IPPROTO_ICMP => IPPROTO_ICMPV6 as u8,
+        IPPROTO_ICMPV6 => IPPROTO_ICMP as u8,
+        _ => naf_proto,
+    };
+
+    // Uncover the stale pseudo-header.
+    let p = i32::from(af_proto);
+    if p == IPPROTO_ICMPV6 || p == IPPROTO_UDP || p == IPPROTO_TCP {
+        if p == IPPROTO_ICMPV6 {
+            // Optimise: unchanged for TCP/UDP.
+            pf_cksum_fixup_pd(pd, u16::from(af_proto).to_be(), 0x0, af_proto);
+            pf_cksum_fixup_pd(pd, dlen.to_be(), 0x0, af_proto);
+        }
+        let (src, dst, af) = (pd.ld_addr(pd.src), pd.ld_addr(pd.dst), pd.af);
+        pf_cksum_fixup_a_pd(pd, &src, &zero, af, af_proto);
+        pf_cksum_fixup_a_pd(pd, &dst, &zero, af, af_proto);
+        copyback = true;
+    } // else assume no pseudo-header
+
+    // Replace the network header.
+    let Some(m) = pd.m else {
+        return -1;
+    };
+    crate::kern::uipc_mbuf::m_adj(m, pd.off as i32);
+    pd.src = PfLoc::None;
+    pd.dst = PfLoc::None;
+
+    let Some(m) = crate::kern::uipc_mbuf::m_prepend(m, hlen as i32, M_DONTWAIT) else {
+        pd.m = None;
+        return -1;
+    };
+    pd.m = Some(m);
+
+    pd.off = hlen;
+    pd.tot_len = pd.tot_len + u64::from(hlen) - u64::from(ohlen);
+
+    match pd.naf {
+        AF_INET => {
+            let mut ip4 = Ip::default();
+            ip4.set_ip_v(IPVERSION);
+            ip4.set_ip_hl((hlen >> 2) as u8);
+            ip4.ip_tos = pd.tos;
+            ip4.ip_len = (hlen as u16).wrapping_add(dlen).to_be();
+            ip4.ip_id = crate::netinet::ip_id::ip_randomid().to_be();
+            ip4.ip_off = IP_DF.to_be();
+            ip4.ip_ttl = pd.ttl;
+            ip4.ip_p = pd.proto;
+            ip4.ip_src = pd.nsaddr.v4();
+            ip4.ip_dst = pd.ndaddr.v4();
+            crate::netinet::ip_var::mtod_ip_store(m, &ip4);
+        }
+        AF_INET6 => {
+            let mut ip6 = Ip6Hdr::zeroed();
+            ip6.set_ip6_vfc(IPV6_VERSION);
+            ip6.ip6_flow |= (u32::from(pd.tos) << 20).to_be();
+            ip6.ip6_plen = dlen.to_be();
+            ip6.ip6_nxt = pd.proto;
+            ip6.ip6_hlim = if pd.ttl == 0 || pd.ttl > IPV6_DEFHLIM {
+                IPV6_DEFHLIM
+            } else {
+                pd.ttl
+            };
+            ip6.ip6_src = pd.nsaddr.v6();
+            ip6.ip6_dst = pd.ndaddr.v6();
+            crate::netinet6::ip6_var::mtod_ip6_store(m, &ip6);
+        }
+        _ => unhandled_af(i32::from(pd.naf)),
+    }
+
+    // UDP over IPv6 must be checksummed per rfc2460 p27.
+    let pc = pd.pcksum;
+    if i32::from(naf_proto) == IPPROTO_UDP && pd.ld16(pc) == 0x0000 && pd.naf == AF_INET6 {
+        let cf = &m.m_pkthdr().csum_flags;
+        cf.set(cf.get() | M_UDP_CSUM_OUT);
+    }
+
+    // Cover the fresh pseudo-header.
+    let p = i32::from(naf_proto);
+    if p == IPPROTO_ICMPV6 || p == IPPROTO_UDP || p == IPPROTO_TCP {
+        if p == IPPROTO_ICMPV6 {
+            // Optimise: unchanged for TCP/UDP.
+            pf_cksum_fixup_pd(pd, 0x0, u16::from(naf_proto).to_be(), naf_proto);
+            pf_cksum_fixup_pd(pd, 0x0, dlen.to_be(), naf_proto);
+        }
+        let (ns, nd, naf) = (pd.nsaddr, pd.ndaddr, pd.naf);
+        pf_cksum_fixup_a_pd(pd, &zero, &ns, naf, naf_proto);
+        pf_cksum_fixup_a_pd(pd, &zero, &nd, naf, naf_proto);
+        copyback = true;
+    } // else assume no pseudo-header
+
+    // Flush pd->pcksum.
+    if copyback {
+        pf_copyback_hdr(pd);
+    }
+
+    0
+}
+
+/// `pf_change_icmp_af`: replaces the IP header quoted by an ICMP error (at `ipoff2` in `m`,
+/// described by `pd2`) with one of family `naf` carrying `src` and `dst`, keeping the outer
+/// ICMP checksum (`pd->pcksum`) right. The outer network header is left for
+/// `pf_translate_af`. 0, or -1 on failure.
+#[cfg(feature = "inet6")]
+#[allow(clippy::too_many_arguments)]
+pub fn pf_change_icmp_af(
+    m: &'static Mbuf,
+    ipoff2: i32,
+    pd: &mut PfPdesc,
+    pd2: &mut PfPdesc,
+    src: &PfAddr,
+    dst: &PfAddr,
+    af: SaFamily,
+    naf: SaFamily,
+) -> i32 {
+    use crate::kern::uipc_mbuf::{m_adj, m_cat, m_prepend, m_split};
+    use crate::netinet::in_cksum::in_cksum;
+    use crate::netinet::ip::{IP_DF, IPVERSION, Ip};
+    use crate::netinet::ip6::{IPV6_DEFHLIM, IPV6_VERSION};
+
+    if af == naf || (af != AF_INET && af != AF_INET6) || (naf != AF_INET && naf != AF_INET6) {
+        return -1;
+    }
+
+    // Split the mbuf chain on the quoted ip/ip6 header boundary.
+    let Some(n) = m_split(m, ipoff2, M_DONTWAIT) else {
+        return -1;
+    };
+
+    // New quoted header.
+    let hlen = if naf == AF_INET {
+        size_of::<Ip>() as i32
+    } else {
+        size_of::<Ip6Hdr>() as i32
+    };
+    // Old quoted header.
+    let ohlen = pd2.off as i32 - ipoff2;
+
+    // Trim the old quoted header.
+    let pc = pd.pcksum;
+    let proto = pd.proto;
+    let mut c = pd.ld16(pc);
+    pf_cksum_uncover(&mut c, in_cksum(n, ohlen), proto);
+    pd.st16(pc, c);
+    m_adj(n, ohlen);
+
+    // Prepend a new, translated, quoted header.
+    let Some(n) = m_prepend(n, hlen, M_DONTWAIT) else {
+        return -1;
+    };
+
+    let qlen = pd2.tot_len as i64 - i64::from(ohlen);
+    if naf == AF_INET {
+        let mut ip4 = Ip::default();
+        ip4.set_ip_v(IPVERSION);
+        ip4.set_ip_hl((size_of::<Ip>() >> 2) as u8);
+        ip4.ip_len = ((size_of::<Ip>() as i64 + qlen) as u16).to_be();
+        ip4.ip_id = crate::netinet::ip_id::ip_randomid().to_be();
+        ip4.ip_off = IP_DF.to_be();
+        ip4.ip_ttl = pd2.ttl;
+        ip4.ip_p = if i32::from(pd2.proto) == IPPROTO_ICMPV6 {
+            IPPROTO_ICMP as u8
+        } else {
+            pd2.proto
+        };
+        ip4.ip_src = src.v4();
+        ip4.ip_dst = dst.v4();
+        crate::netinet::ip_var::mtod_ip_store(n, &ip4);
+        crate::netinet::ip_output::in_hdr_cksum_out(n, None);
+    } else {
+        let mut ip6 = Ip6Hdr::zeroed();
+        ip6.set_ip6_vfc(IPV6_VERSION);
+        ip6.ip6_plen = (qlen as u16).to_be();
+        ip6.ip6_nxt = if i32::from(pd2.proto) == IPPROTO_ICMP {
+            IPPROTO_ICMPV6 as u8
+        } else {
+            pd2.proto
+        };
+        ip6.ip6_hlim = if pd2.ttl == 0 || pd2.ttl > IPV6_DEFHLIM {
+            IPV6_DEFHLIM
+        } else {
+            pd2.ttl
+        };
+        ip6.ip6_src = src.v6();
+        ip6.ip6_dst = dst.v6();
+        crate::netinet6::ip6_var::mtod_ip6_store(n, &ip6);
+    }
+
+    // Cover the new quoted header (optimise: any new AF_INET header of ours sums to zero).
+    if naf != AF_INET {
+        let mut c = pd.ld16(pc);
+        pf_cksum_cover(&mut c, in_cksum(n, hlen), proto);
+        pd.st16(pc, c);
+    }
+
+    // Reattach the modified quoted packet to the outer header.
+    let nlen = n.m_pkthdr().len.get();
+    m_cat(m, Some(n));
+    let ml = &m.m_pkthdr().len;
+    ml.set(ml.get() + nlen);
+
+    // Account for the altered length.
+    let d = hlen - ohlen;
+
+    if i32::from(pd.proto) == IPPROTO_ICMPV6 {
+        // Fixup pseudo-header.
+        let dlen = (pd.tot_len - u64::from(pd.off)) as i32;
+        pf_cksum_fixup_pd(
+            pd,
+            (dlen as u16).to_be(),
+            ((dlen + d) as u16).to_be(),
+            proto,
+        );
+    }
+
+    pd.tot_len = (pd.tot_len as i64 + i64::from(d)) as u64;
+    pd2.tot_len = (pd2.tot_len as i64 + i64::from(d)) as u64;
+    pd2.off = (pd2.off as i32 + d) as u32;
+
+    // Note: not bothering to update network headers as these are due for rewrite by
+    // pf_translate_af().
+
+    0
+}
+
+/// `PTR_IP(field)`: the offset of a member of `struct ip`.
+#[cfg(feature = "inet6")]
+macro_rules! ptr_ip {
+    ($f:ident) => {
+        core::mem::offset_of!(crate::netinet::ip::Ip, $f) as i32
+    };
+}
+
+/// `PTR_IP6(field)`: the offset of a member of `struct ip6_hdr` (`ip6_vfc` is the first
+/// byte of `ip6_flow`).
+#[cfg(feature = "inet6")]
+macro_rules! ptr_ip6 {
+    (ip6_vfc) => {
+        core::mem::offset_of!(Ip6Hdr, ip6_flow) as i32
+    };
+    ($f:ident) => {
+        core::mem::offset_of!(Ip6Hdr, $f) as i32
+    };
+}
+
+/// `pf_translate_icmp_af`: rewrites the ICMP header at `arg` (in the descriptor `pd`, an
+/// ICMPv6 header when translating to `af` `AF_INET`, an ICMP one towards `AF_INET6`) into
+/// the other protocol's type, code, MTU and pointer. 0, or -1 if the message has no
+/// equivalent.
+#[cfg(feature = "inet6")]
+pub fn pf_translate_icmp_af(pd: &mut PfPdesc, af: SaFamily, arg: PfLoc) -> i32 {
+    use crate::netinet::icmp6::*;
+    use crate::netinet::ip::Ip;
+    use crate::netinet::ip_icmp::*;
+
+    let mut ptr: i32 = -1;
+    let mut type_ = pd.ld8(arg);
+    let mut code = pd.ld8(arg.offset(1));
+
+    match af {
+        AF_INET => {
+            // arg is a struct icmp6_hdr.
+            let mut mtu = u32::from_be(pd.ld32(arg.offset(4)));
+
+            match type_ {
+                ICMP6_ECHO_REQUEST => type_ = ICMP_ECHO,
+                ICMP6_ECHO_REPLY => type_ = ICMP_ECHOREPLY,
+                ICMP6_DST_UNREACH => {
+                    type_ = ICMP_UNREACH;
+                    code = match code {
+                        ICMP6_DST_UNREACH_NOROUTE
+                        | ICMP6_DST_UNREACH_BEYONDSCOPE
+                        | ICMP6_DST_UNREACH_ADDR => ICMP_UNREACH_HOST,
+                        ICMP6_DST_UNREACH_ADMIN => ICMP_UNREACH_HOST_PROHIB,
+                        ICMP6_DST_UNREACH_NOPORT => ICMP_UNREACH_PORT,
+                        _ => return -1,
+                    };
+                }
+                ICMP6_PACKET_TOO_BIG => {
+                    type_ = ICMP_UNREACH;
+                    code = ICMP_UNREACH_NEEDFRAG;
+                    mtu = mtu.wrapping_sub(20);
+                }
+                ICMP6_TIME_EXCEEDED => type_ = ICMP_TIMXCEED,
+                ICMP6_PARAM_PROB => match code {
+                    ICMP6_PARAMPROB_HEADER => {
+                        type_ = ICMP_PARAMPROB;
+                        code = ICMP_PARAMPROB_ERRATPTR;
+                        ptr = u32::from_be(pd.ld32(arg.offset(4))) as i32;
+
+                        ptr = if ptr == ptr_ip6!(ip6_vfc) {
+                            ptr // preserve
+                        } else if ptr == ptr_ip6!(ip6_vfc) + 1 {
+                            ptr_ip!(ip_tos)
+                        } else if ptr == ptr_ip6!(ip6_plen) || ptr == ptr_ip6!(ip6_plen) + 1 {
+                            ptr_ip!(ip_len)
+                        } else if ptr == ptr_ip6!(ip6_nxt) {
+                            ptr_ip!(ip_p)
+                        } else if ptr == ptr_ip6!(ip6_hlim) {
+                            ptr_ip!(ip_ttl)
+                        } else if ptr >= ptr_ip6!(ip6_src) && ptr < ptr_ip6!(ip6_dst) {
+                            ptr_ip!(ip_src)
+                        } else if ptr >= ptr_ip6!(ip6_dst) && ptr < size_of::<Ip6Hdr>() as i32 {
+                            ptr_ip!(ip_dst)
+                        } else {
+                            return -1;
+                        };
+                    }
+                    ICMP6_PARAMPROB_NEXTHEADER => {
+                        type_ = ICMP_UNREACH;
+                        code = ICMP_UNREACH_PROTOCOL;
+                    }
+                    _ => return -1,
+                },
+                _ => return -1,
+            }
+
+            pf_patch_8(pd, arg, type_, PF_HI);
+            pf_patch_8(pd, arg.offset(1), code, PF_LO);
+
+            // Aligns well with an ICMPv4 nextmtu.
+            pf_patch_32(pd, arg.offset(4), mtu.to_be());
+
+            // The ICMPv4 pptr is the one most significant byte.
+            if ptr >= 0 {
+                pf_patch_32(pd, arg.offset(4), ((ptr as u32) << 24).to_be());
+            }
+        }
+        AF_INET6 => {
+            // arg is a struct icmp.
+            let mut mtu = u32::from(u16::from_be(pd.ld16(arg.offset(6))));
+
+            match type_ {
+                ICMP_ECHO => type_ = ICMP6_ECHO_REQUEST,
+                ICMP_ECHOREPLY => type_ = ICMP6_ECHO_REPLY,
+                ICMP_UNREACH => {
+                    type_ = ICMP6_DST_UNREACH;
+                    match code {
+                        ICMP_UNREACH_NET
+                        | ICMP_UNREACH_HOST
+                        | ICMP_UNREACH_NET_UNKNOWN
+                        | ICMP_UNREACH_HOST_UNKNOWN
+                        | ICMP_UNREACH_ISOLATED
+                        | ICMP_UNREACH_TOSNET
+                        | ICMP_UNREACH_TOSHOST => code = ICMP6_DST_UNREACH_NOROUTE,
+                        ICMP_UNREACH_PORT => code = ICMP6_DST_UNREACH_NOPORT,
+                        ICMP_UNREACH_NET_PROHIB
+                        | ICMP_UNREACH_HOST_PROHIB
+                        | ICMP_UNREACH_FILTER_PROHIB
+                        | ICMP_UNREACH_PRECEDENCE_CUTOFF => code = ICMP6_DST_UNREACH_ADMIN,
+                        ICMP_UNREACH_PROTOCOL => {
+                            type_ = ICMP6_PARAM_PROB;
+                            code = ICMP6_PARAMPROB_NEXTHEADER;
+                            ptr = ptr_ip6!(ip6_nxt);
+                        }
+                        ICMP_UNREACH_NEEDFRAG => {
+                            type_ = ICMP6_PACKET_TOO_BIG;
+                            code = 0;
+                            mtu += 20;
+                        }
+                        _ => return -1,
+                    }
+                }
+                ICMP_TIMXCEED => type_ = ICMP6_TIME_EXCEEDED,
+                ICMP_PARAMPROB => {
+                    type_ = ICMP6_PARAM_PROB;
+                    code = match code {
+                        ICMP_PARAMPROB_ERRATPTR | ICMP_PARAMPROB_LENGTH => ICMP6_PARAMPROB_HEADER,
+                        _ => return -1,
+                    };
+
+                    ptr = i32::from(pd.ld8(arg.offset(4)));
+                    ptr = if ptr == 0 || ptr == ptr_ip!(ip_tos) {
+                        ptr // preserve
+                    } else if ptr == ptr_ip!(ip_len) || ptr == ptr_ip!(ip_len) + 1 {
+                        ptr_ip6!(ip6_plen)
+                    } else if ptr == ptr_ip!(ip_ttl) {
+                        ptr_ip6!(ip6_hlim)
+                    } else if ptr == ptr_ip!(ip_p) {
+                        ptr_ip6!(ip6_nxt)
+                    } else if ptr >= ptr_ip!(ip_src) && ptr < ptr_ip!(ip_dst) {
+                        ptr_ip6!(ip6_src)
+                    } else if ptr >= ptr_ip!(ip_dst) && ptr < size_of::<Ip>() as i32 {
+                        ptr_ip6!(ip6_dst)
+                    } else {
+                        return -1;
+                    };
+                }
+                _ => return -1,
+            }
+
+            pf_patch_8(pd, arg, type_, PF_HI);
+            pf_patch_8(pd, arg.offset(1), code, PF_LO);
+            pf_patch_16(pd, arg.offset(6), (mtu as u16).to_be());
+            if ptr >= 0 {
+                pf_patch_32(pd, arg.offset(4), (ptr as u32).to_be());
+            }
+        }
+        _ => {}
+    }
+
+    0
+}
 
 /// `TCPOLEN_MINSACK`.
 const TCPOLEN_MINSACK: usize = TCPOLEN_SACK as usize + 2;
@@ -3132,7 +3759,8 @@ pub fn pf_build_tcp(
 
     let len = match af {
         AF_INET => size_of::<Ip>() + tlen,
-        // INET6: sizeof(struct ip6_hdr) + tlen; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => size_of::<Ip6Hdr>() + tlen,
         _ => unhandled_af(i32::from(af)),
     };
 
@@ -3194,7 +3822,20 @@ pub fn pf_build_tcp(
 
             size_of::<Ip>()
         }
-        // INET6: the ip6_hdr; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            use crate::netinet::ip6::{IPV6_DEFHLIM, IPV6_VERSION};
+            let mut h6 = Ip6Hdr::zeroed();
+            h6.ip6_nxt = IPPROTO_TCP as u8;
+            h6.ip6_plen = (tlen as u16).to_be();
+            h6.set_ip6_vfc(h6.ip6_vfc() | IPV6_VERSION);
+            h6.ip6_hlim = IPV6_DEFHLIM;
+            h6.ip6_src = saddr.v6();
+            h6.ip6_dst = daddr.v6();
+            crate::netinet6::ip6_var::mtod_ip6_store(m, &h6);
+
+            size_of::<Ip6Hdr>()
+        }
         _ => unhandled_af(i32::from(af)),
     };
 
@@ -3261,7 +3902,8 @@ pub fn pf_send_tcp(
 
     match af {
         AF_INET => crate::netinet::ip_input::ip_send(m),
-        // INET6: ip6_send(m); not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => crate::netinet6::ip6_input::ip6_send(m),
         _ => {
             crate::kern::uipc_mbuf::m_freem(m);
         }
@@ -3330,7 +3972,8 @@ pub fn pf_send_icmp(
 
     match af {
         AF_INET => crate::netinet::ip_icmp::icmp_error(m0, type_, code, 0, param),
-        // INET6: icmp6_error(m0, type, code, param); not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => crate::netinet6::icmp6::icmp6_error(m0, type_, code, param),
         _ => {
             crate::kern::uipc_mbuf::m_freem(m0);
         }
@@ -3340,10 +3983,15 @@ pub fn pf_send_icmp(
 /// `pf_match_addr`: `(n == 0) == (a == b with mask m)`; with `n != 0` it says whether they
 /// differ.
 pub fn pf_match_addr(n: u8, a: &PfAddr, m: &PfAddr, b: &PfAddr, af: SaFamily) -> bool {
-    if af == AF_INET && (a.addr32(0) & m.addr32(0)) == (b.addr32(0) & m.addr32(0)) {
+    let words = match af {
+        AF_INET => 1,
+        #[cfg(feature = "inet6")]
+        AF_INET6 => 4,
+        _ => return n != 0,
+    };
+    if (0..words).all(|i| (a.addr32(i) & m.addr32(i)) == (b.addr32(i) & m.addr32(i))) {
         return n == 0;
     }
-    // INET6: all four words; not configured.
     n != 0
 }
 
@@ -3359,7 +4007,26 @@ pub fn pf_match_addr_range(b: &PfAddr, e: &PfAddr, a: &PfAddr, af: SaFamily) -> 
             return false;
         }
     }
-    // INET6: the 128-bit comparisons; not configured.
+    #[cfg(feature = "inet6")]
+    if af == AF_INET6 {
+        let w = |x: &PfAddr, i: usize| u32::from_be(x.addr32(i));
+        // Check a >= b.
+        for i in 0..4 {
+            if w(a, i) > w(b, i) {
+                break;
+            } else if w(a, i) < w(b, i) {
+                return false;
+            }
+        }
+        // Check a <= e.
+        for i in 0..4 {
+            if w(a, i) < w(e, i) {
+                break;
+            } else if w(a, i) > w(e, i) {
+                return false;
+            }
+        }
+    }
     true
 }
 
@@ -3567,7 +4234,16 @@ pub fn pf_poolmask(
             (raddr.addr32(0) & rmask.addr32(0))
                 | ((rmask.addr32(0) ^ 0xffff_ffff) & saddr.addr32(0)),
         ),
-        // INET6: the four words; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            for i in 0..4 {
+                naddr.set_addr32(
+                    i,
+                    (raddr.addr32(i) & rmask.addr32(i))
+                        | ((rmask.addr32(i) ^ 0xffff_ffff) & saddr.addr32(i)),
+                );
+            }
+        }
         _ => unhandled_af(i32::from(af)),
     }
 }
@@ -3576,7 +4252,17 @@ pub fn pf_poolmask(
 pub fn pf_addr_inc(addr: &mut PfAddr, af: SaFamily) {
     match af {
         AF_INET => addr.set_addr32(0, u32::from_be(addr.addr32(0)).wrapping_add(1).to_be()),
-        // INET6: the 128-bit increment with carries; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            // The lowest word that is not all ones is incremented, the ones below it
+            // (all ones) wrap to zero; the first word takes the last carry.
+            let mut i = 3;
+            while i > 0 && addr.addr32(i) == 0xffff_ffff {
+                addr.set_addr32(i, 0);
+                i -= 1;
+            }
+            addr.set_addr32(i, u32::from_be(addr.addr32(i)).wrapping_add(1).to_be());
+        }
         _ => unhandled_af(i32::from(af)),
     }
 }
@@ -3641,7 +4327,26 @@ pub fn pf_socket_lookup(pd: &mut PfPdesc) -> bool {
                 }
             }
         }
-        // INET6: in6_pcblookup/in6_pcblookup_listen on the v6 tables; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            use crate::netinet6::in6_pcb::{in6_pcblookup, in6_pcblookup_listen};
+            let table = match i32::from(pd.virtual_proto) {
+                IPPROTO_UDP => &crate::netinet::udp_usrreq::UDB6TABLE,
+                IPPROTO_TCP => &crate::netinet::tcp_usrreq::TCB6TABLE,
+                _ => table,
+            };
+            let rdomain = u32::from(pd.rdomain);
+            match in6_pcblookup(table, &saddr.v6(), sport, &daddr.v6(), dport, rdomain) {
+                Some(inp) => inp,
+                None => {
+                    let Some(inp) = in6_pcblookup_listen(table, &daddr.v6(), dport, None, rdomain)
+                    else {
+                        return false;
+                    };
+                    inp
+                }
+            }
+        }
         _ => unhandled_af(i32::from(pd.af)),
     };
     if let Some(so) = inp.inp_socket {
@@ -3767,7 +4472,15 @@ pub fn pf_calc_mss(addr: &PfAddr, af: SaFamily, rtableid: i32, offer: u16, mssdf
             let rt = unsafe { crate::net::route::rtalloc(sintosa(&mut dst), 0, rtableid as u32) };
             (size_of::<Ip>() as i32, rt)
         }
-        // INET6: sizeof(struct ip6_hdr) and a sockaddr_in6 route; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            use crate::netinet6::in6::{SockaddrIn6, sin6tosa_const};
+            let dst6 = SockaddrIn6::with_addr(addr.v6());
+            // SAFETY: `dst6` is a complete local sockaddr_in6 that outlives the call.
+            let rt =
+                unsafe { crate::net::route::rtalloc(sin6tosa_const(&dst6), 0, rtableid as u32) };
+            (size_of::<Ip6Hdr>() as i32, rt)
+        }
         _ => (0, None),
     };
 
@@ -3855,7 +4568,13 @@ pub fn pf_tcp_iss(pd: &mut PfPdesc) -> u32 {
         SHA512Update(&mut ctx, &s.addr8[..4]);
         SHA512Update(&mut ctx, &d.addr8[..4]);
     }
-    // INET6: the 16-byte addresses; not configured.
+    #[cfg(feature = "inet6")]
+    if pd.af == AF_INET6 {
+        let s = pd.ld_addr(pd.src);
+        let d = pd.ld_addr(pd.dst);
+        SHA512Update(&mut ctx, &s.addr8);
+        SHA512Update(&mut ctx, &d.addr8);
+    }
     let mut digest = [0u8; SHA512_DIGEST_LENGTH];
     SHA512Final(&mut digest, &mut ctx);
     let off = sec.iss_off.get().wrapping_add(4096);
@@ -4066,8 +4785,24 @@ pub fn pf_match_rule(ctx: &mut PfTestCtx<'_>, ruleset: &'static PfRuleset) -> Pf
                         next
                     );
                 }
-                // INET6: IPPROTO_ICMPV6 type/code/keep state checks (with
-                // ND_NEIGHBOR_ADVERT); not configured.
+                vp if i32::from(vp) == IPPROTO_ICMPV6 => {
+                    // icmp only. type always 0 in other cases.
+                    pf_test_attrib!(
+                        rr.type_ != 0 && rr.type_ != u16::from(ctx.icmptype) + 1,
+                        next
+                    );
+                    // icmp only. type always 0 in other cases.
+                    pf_test_attrib!(rr.code != 0 && rr.code != u16::from(ctx.icmpcode) + 1, next);
+                    // icmp only. don't create states on replies.
+                    pf_test_attrib!(
+                        rr.keep_state != 0
+                            && ctx.state_icmp == 0
+                            && (rr.rule_flag.get() & PFRULE_STATESLOPPY) == 0
+                            && ctx.icmp_dir != i32::from(PF_IN)
+                            && ctx.icmptype != crate::netinet::icmp6::ND_NEIGHBOR_ADVERT,
+                        next
+                    );
+                }
                 _ => {}
             }
 
@@ -4451,10 +5186,22 @@ pub fn pf_test_rule(
         return PF_DROP;
     }
 
-    if i32::from(ctx.pd.virtual_proto) == IPPROTO_ICMP {
-        let icmp = *ctx.pd.icmp();
-        ctx.icmptype = icmp.icmp_type;
-        ctx.icmpcode = icmp.icmp_code;
+    // The type and code of an ICMP or ICMPv6 message.
+    let icmp_tc = match i32::from(ctx.pd.virtual_proto) {
+        IPPROTO_ICMP => {
+            let icmp = *ctx.pd.icmp();
+            Some((icmp.icmp_type, icmp.icmp_code))
+        }
+        #[cfg(feature = "inet6")]
+        IPPROTO_ICMPV6 => {
+            let icmp6 = *ctx.pd.icmp6();
+            Some((icmp6.icmp6_type, icmp6.icmp6_code))
+        }
+        _ => None,
+    };
+    if let Some((icmptype, icmpcode)) = icmp_tc {
+        ctx.icmptype = icmptype;
+        ctx.icmpcode = icmpcode;
         ctx.state_icmp = i32::from(pf_icmp_mapping(
             ctx.pd,
             ctx.icmptype,
@@ -4474,7 +5221,6 @@ pub fn pf_test_rule(
             ctx.pd.ndport = virtual_id;
         }
     }
-    // INET6: the same for IPPROTO_ICMPV6; not configured.
 
     let main = crate::net::pf_ruleset::pf_main_ruleset();
     let rv = pf_match_rule(&mut ctx, main);
@@ -4576,9 +5322,23 @@ pub fn pf_test_rule(
                     Some(r),
                     u32::from(ctx.pd.rdomain),
                 );
+            } else if (i32::from(ctx.pd.proto) != IPPROTO_ICMPV6
+                || (ctx.icmptype >= crate::netinet::icmp6::ICMP6_ECHO_REQUEST
+                    && ctx.icmptype != crate::netinet::icmp6::ND_REDIRECT))
+                && ctx.pd.af == AF_INET6
+                && r.return_icmp6 != 0
+                && let Some(m) = ctx.pd.m
+            {
+                pf_send_icmp(
+                    m,
+                    (r.return_icmp6 >> 8) as u8,
+                    (r.return_icmp6 & 255) as u8,
+                    0,
+                    ctx.pd.af,
+                    Some(r),
+                    u32::from(ctx.pd.rdomain),
+                );
             }
-            // INET6: return-icmp6 for AF_INET6 (not for ICMPv6 errors and redirects); not
-            // configured.
         }
 
         if r.action == PF_DROP {
@@ -4663,7 +5423,13 @@ pub fn pf_test_rule(
                 );
             }
 
-            // INET6: PF_AFRT when an af-to translation rewrote the packet; not configured.
+            #[cfg(feature = "inet6")]
+            if rewrite != 0
+                && let (Some(w), Some(s)) = (skw, sks)
+                && w.af.get() != s.af.get()
+            {
+                action = PF_AFRT;
+            }
         } else {
             action = PF_PASS;
 
@@ -4826,8 +5592,11 @@ fn pf_create_state(
                 pf_set_protostate(st, PF_PEER_DST, PFUDPS_NO_TRAFFIC);
                 st.timeout.set(PFTM_UDP_FIRST_PACKET as u8);
             }
-            // INET6: IPPROTO_ICMPV6 as ICMP; not configured.
             IPPROTO_ICMP => {
+                st.timeout.set(PFTM_ICMP_FIRST_PACKET as u8);
+            }
+            #[cfg(feature = "inet6")]
+            IPPROTO_ICMPV6 => {
                 st.timeout.set(PFTM_ICMP_FIRST_PACKET as u8);
             }
             _ => {
@@ -5172,10 +5941,13 @@ pub fn pf_translate(
                 return 0;
             }
 
-            // INET6: with af-to, pf_translate_icmp_af to ICMPv6; not configured.
+            #[cfg(feature = "inet6")]
             if afto {
-                let _ = unported!("pf_translate_icmp_af");
-                return 0;
+                if pf_translate_icmp_af(pd, AF_INET6, PfLoc::Hdr(0)) != 0 {
+                    return 0;
+                }
+                pd.proto = IPPROTO_ICMPV6 as u8;
+                rewrite = 1;
             }
             if virtual_type == u16::from(crate::netinet::ip_icmp::ICMP_ECHO).to_be() {
                 let icmpid = if icmp_dir == i32::from(PF_IN) {
@@ -5186,7 +5958,29 @@ pub fn pf_translate(
                 rewrite += pf_patch_16(pd, PfLoc::Hdr(ICMP_ID_OFF), icmpid);
             }
         }
-        // INET6: IPPROTO_ICMPV6 (af-to and the echo id); not configured.
+        #[cfg(feature = "inet6")]
+        IPPROTO_ICMPV6 => {
+            if pd.af != AF_INET6 {
+                return 0;
+            }
+
+            if afto {
+                if pf_translate_icmp_af(pd, AF_INET, PfLoc::Hdr(0)) != 0 {
+                    return 0;
+                }
+                pd.proto = IPPROTO_ICMP as u8;
+                rewrite = 1;
+            }
+            if virtual_type == u16::from(crate::netinet::icmp6::ICMP6_ECHO_REQUEST).to_be() {
+                let icmpid = if icmp_dir == i32::from(PF_IN) {
+                    sport
+                } else {
+                    dport
+                };
+                // icmp6_id is at the offset of icmp_id.
+                rewrite += pf_patch_16(pd, PfLoc::Hdr(ICMP_ID_OFF), icmpid);
+            }
+        }
         _ => {}
     }
 
@@ -6000,15 +6794,19 @@ pub fn pf_test_state(pd: &mut PfPdesc, stp: &mut Option<&'static PfState>, reaso
             (usize::from(pd.sidx), usize::from(pd.didx))
         };
 
-        // INET6: with af-to, nsaddr/ndaddr/naf from the key and PF_AFRT; not configured.
+        #[cfg(feature = "inet6")]
         if afto {
-            let _ = unported!("pf af-to (INET6)");
-            reason_set(reason, PFRES_TRANSLATE);
-            return PF_DROP;
+            let naf = nk.af.get();
+            pf_addrcpy(&mut pd.nsaddr, &nk.addr[sidx].get(), naf);
+            pf_addrcpy(&mut pd.ndaddr, &nk.addr[didx].get(), naf);
+            pd.naf = naf;
+            action = PF_AFRT;
         }
 
-        let s = pd.src;
-        pf_translate_a(pd, s, &nk.addr[sidx].get());
+        if !afto {
+            let s = pd.src;
+            pf_translate_a(pd, s, &nk.addr[sidx].get());
+        }
 
         if !pd.sport.is_none() {
             let sp = pd.sport;
@@ -6020,8 +6818,10 @@ pub fn pf_test_state(pd: &mut PfPdesc, stp: &mut Option<&'static PfState>, reaso
             pd.destchg = 1;
         }
 
-        let dl = pd.dst;
-        pf_translate_a(pd, dl, &nk.addr[didx].get());
+        if !afto {
+            let dl = pd.dst;
+            pf_translate_a(pd, dl, &nk.addr[didx].get());
+        }
 
         if !pd.dport.is_none() {
             let dp = pd.dport;
@@ -6175,7 +6975,8 @@ pub fn pf_test_state_icmp(
 
     let (icmptype, icmpcode) = match i32::from(pd.proto) {
         IPPROTO_ICMP => (pd.icmp().icmp_type, pd.icmp().icmp_code),
-        // INET6: IPPROTO_ICMPV6's type and code; not configured.
+        #[cfg(feature = "inet6")]
+        IPPROTO_ICMPV6 => (pd.icmp6().icmp6_type, pd.icmp6().icmp6_code),
         p => panic(format_args!("unhandled proto {p}")),
     };
 
@@ -6188,7 +6989,7 @@ pub fn pf_test_state_icmp(
     ) {
         // ICMP query/reply message not related to a TCP/UDP packet. Search for an ICMP
         // state.
-        let ret = pf_icmp_state_lookup(
+        let mut ret = pf_icmp_state_lookup(
             pd,
             stp,
             virtual_id,
@@ -6198,7 +6999,19 @@ pub fn pf_test_state_icmp(
             false,
             false,
         );
-        // INET6: an IPv6 PF_OUT miss is retried with a multicast address; not configured.
+        // IPv6? try matching a multicast address.
+        if ret == i32::from(PF_DROP) && pd.af == AF_INET6 && icmp_dir == i32::from(PF_OUT) {
+            ret = pf_icmp_state_lookup(
+                pd,
+                stp,
+                virtual_id,
+                virtual_type,
+                icmp_dir,
+                &mut iidx,
+                true,
+                false,
+            );
+        }
         if ret >= 0 {
             return ret as u8;
         }
@@ -6220,8 +7033,14 @@ pub fn pf_test_state_icmp(
                 (usize::from(pd.sidx), usize::from(pd.didx))
             };
             if afto {
-                // INET6: nsaddr/ndaddr/naf from the key; not configured.
                 iidx = usize::from(iidx == 0);
+            }
+            #[cfg(feature = "inet6")]
+            if afto {
+                let naf = nk.af.get();
+                pf_addrcpy(&mut pd.nsaddr, &nk.addr[sidx].get(), naf);
+                pf_addrcpy(&mut pd.ndaddr, &nk.addr[didx].get(), naf);
+                pd.naf = naf;
             }
             if !afto {
                 let (s, d) = (pd.src, pd.dst);
@@ -6242,10 +7061,12 @@ pub fn pf_test_state_icmp(
             m.m_pkthdr().ph_rtableid.set(u32::from(nk.rdomain.get()));
 
             if pd.af == AF_INET {
-                // INET6: with af-to, pf_translate_icmp_af to ICMPv6; not configured.
+                #[cfg(feature = "inet6")]
                 if afto {
-                    let _ = unported!("pf_translate_icmp_af");
-                    return PF_DROP;
+                    if pf_translate_icmp_af(pd, AF_INET6, PfLoc::Hdr(0)) != 0 {
+                        return PF_DROP;
+                    }
+                    pd.proto = IPPROTO_ICMPV6 as u8;
                 }
                 pf_patch_16(pd, PfLoc::Hdr(ICMP_ID_OFF), nk.port[iidx].get());
 
@@ -6255,13 +7076,40 @@ pub fn pf_test_state_icmp(
                 let _ = crate::kern::uipc_mbuf::m_copyback(m, off, &bytes, M_NOWAIT);
                 copyback = 1;
             }
-            // INET6: AF_INET6's icmp6_id and the copyback; not configured.
-            // INET6: PF_AFRT after an af-to translation; not configured.
+            #[cfg(feature = "inet6")]
+            if pd.af == AF_INET6 {
+                use crate::netinet::icmp6::Icmp6Hdr;
+                if afto {
+                    if pf_translate_icmp_af(pd, AF_INET, PfLoc::Hdr(0)) != 0 {
+                        return PF_DROP;
+                    }
+                    pd.proto = IPPROTO_ICMP as u8;
+                }
+
+                // icmp6_id is at the offset of icmp_id.
+                pf_patch_16(pd, PfLoc::Hdr(ICMP_ID_OFF), nk.port[iidx].get());
+
+                let off = pd.off as i32;
+                let mut bytes = [0u8; size_of::<Icmp6Hdr>()];
+                bytes.copy_from_slice(&pd.hdr_bytes()[..size_of::<Icmp6Hdr>()]);
+                let _ = crate::kern::uipc_mbuf::m_copyback(m, off, &bytes, M_NOWAIT);
+                copyback = 1;
+            }
+            #[cfg(feature = "inet6")]
+            if afto {
+                return PF_AFRT;
+            }
         }
     } else {
         // ICMP error message in response to a TCP/UDP packet. Extract the inner TCP/UDP
         // header and search for that state.
+        // With INET6 an IPv6 error leaves `h2` unwritten.
+        #[cfg(feature = "inet6")]
+        let mut h2 = Ip::default();
+        #[cfg(not(feature = "inet6"))]
         let mut h2: Ip;
+        #[cfg(feature = "inet6")]
+        let mut h2_6 = Ip6Hdr::zeroed();
 
         // Initialize pd2 fields valid for both packets with pd.
         let mut pd2 = PfPdesc::new();
@@ -6310,7 +7158,32 @@ pub fn pf_test_state_icmp(
                 }
                 ipoff2
             }
-            // INET6: the quoted ip6_hdr (pf_walk_header6); not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {
+                let ipoff2 = pd.off as usize + size_of::<crate::netinet::icmp6::Icmp6Hdr>();
+
+                let mut b = [0u8; size_of::<Ip6Hdr>()];
+                if !pf_pull_hdr(m2, ipoff2 as i32, &mut b, Some(reason), pd2.af) {
+                    crate::dpfprintf!(LOG_NOTICE, "ICMP error message too short (ip6)");
+                    return PF_DROP;
+                }
+                // SAFETY: `Ip6Hdr` is 40 bytes of integers (`#[repr(C)]`, no padding).
+                h2_6 = unsafe { ptr::read_unaligned(b.as_ptr().cast::<Ip6Hdr>()) };
+
+                pd2.off = ipoff2 as u32;
+                if pf_walk_header6(&mut pd2, &h2_6, reason) != PF_PASS {
+                    return PF_DROP;
+                }
+
+                pd2.tot_len = u64::from(u16::from_be(h2_6.ip6_plen)) + size_of::<Ip6Hdr>() as u64;
+                pd2.ttl = h2_6.ip6_hlim;
+                // SAFETY: as for `h2` above.
+                unsafe {
+                    pd2.src = PfLoc::local(ptr::addr_of_mut!(h2_6.ip6_src));
+                    pd2.dst = PfLoc::local(ptr::addr_of_mut!(h2_6.ip6_dst));
+                }
+                ipoff2
+            }
             _ => unhandled_af(i32::from(pd.af)),
         };
 
@@ -6344,6 +7217,15 @@ pub fn pf_test_state_icmp(
             unsafe { ptr::write_unaligned(b.as_mut_ptr().cast::<Ip>(), *h2) };
             let _ = crate::kern::uipc_mbuf::m_copyback(m, ipoff2 as i32, &b, M_NOWAIT);
         };
+        #[cfg(feature = "inet6")]
+        let h2_6copy = |m: &Mbuf, h2_6: &Ip6Hdr| {
+            let mut b = [0u8; size_of::<Ip6Hdr>()];
+            // SAFETY: `Ip6Hdr` is 40 bytes of integers; `b` has room.
+            unsafe { ptr::write_unaligned(b.as_mut_ptr().cast::<Ip6Hdr>(), *h2_6) };
+            let _ = crate::kern::uipc_mbuf::m_copyback(m, ipoff2 as i32, &b, M_NOWAIT);
+        };
+        // The outer `icmp` or `icmp6_hdr` (ICMP_MINLEN and sizeof(struct icmp6_hdr) are
+        // both 8).
         let icmpcopy = |pd: &mut PfPdesc| {
             if let Some(m) = pd.m {
                 let off = pd.off as i32;
@@ -6455,13 +7337,48 @@ pub fn pf_test_state_icmp(
                 if !opt_eq(st.key[PF_SK_WIRE].get(), st.key[PF_SK_STACK].get())
                     && let Some(nk) = pf_state_nk(st, pd)
                 {
-                    let afto = pd.af != nk.af.get();
+                    #[cfg(feature = "inet6")]
+                    if pd.af != nk.af.get() {
+                        // afto: the quoted addresses swap their indexes.
+                        let (sidx, didx) = (d2, s2);
+                        let naf = nk.af.get();
+                        if pf_translate_icmp_af(pd, naf, PfLoc::Hdr(0)) != 0 {
+                            return PF_DROP;
+                        }
+                        icmpcopy(pd);
+                        let (sa, da) = (nk.addr[sidx].get(), nk.addr[didx].get());
+                        let af = pd.af;
+                        if pf_change_icmp_af(m2, ipoff2 as i32, pd, &mut pd2, &sa, &da, af, naf)
+                            != 0
+                        {
+                            return PF_DROP;
+                        }
+                        m2.m_pkthdr().ph_rtableid.set(u32::from(nk.rdomain.get()));
+                        pd.destchg = 1;
+                        pf_addrcpy(&mut pd.nsaddr, &nk.addr[s2].get(), naf);
+                        pf_addrcpy(&mut pd.ndaddr, &nk.addr[d2].get(), naf);
+                        if naf == AF_INET {
+                            pd.proto = IPPROTO_ICMP as u8;
+                        } else {
+                            pd.proto = IPPROTO_ICMPV6 as u8;
+                            // IPv4 becomes IPv6 so we must copy the IPv4 src addr to the
+                            // least 32 bits of the IPv6 address to keep traceroute/icmp
+                            // working.
+                            let src = pd.ld_addr(pd.src);
+                            pd.nsaddr.set_addr32(3, src.addr32(0));
+                        }
+                        pd.naf = naf;
 
-                    // INET6: the af-to translation of the error and its quoted packet
-                    // (pf_translate_icmp_af, pf_change_icmp_af, PF_AFRT); not configured.
-                    if afto {
-                        let _ = unported!("pf_change_icmp_af");
-                        return PF_DROP;
+                        let l = pf_hdr_loc(&mut pd2, TH_SPORT_OFF);
+                        pf_patch_16(pd, l, nk.port[sidx].get());
+                        let l = pf_hdr_loc(&mut pd2, TH_DPORT_OFF);
+                        pf_patch_16(pd, l, nk.port[didx].get());
+
+                        let mut b = [0u8; 8];
+                        b.copy_from_slice(&pd2.hdr_bytes()[..8]);
+                        let _ =
+                            crate::kern::uipc_mbuf::m_copyback(m2, pd2.off as i32, &b, M_NOWAIT);
+                        return PF_AFRT;
                     }
                     let th = *pd2.tcp();
                     let p2s = pd2.ld_addr(pd2.src);
@@ -6494,7 +7411,11 @@ pub fn pf_test_state_icmp(
                         icmpcopy(pd);
                         h2copy(m2, &h2);
                     }
-                    // INET6: the icmp6_hdr and the ip6_hdr; not configured.
+                    #[cfg(feature = "inet6")]
+                    if pd2.af == AF_INET6 {
+                        icmpcopy(pd);
+                        h2_6copy(m2, &h2_6);
+                    }
                     let mut b = [0u8; 8];
                     b.copy_from_slice(&pd2.hdr_bytes()[..8]);
                     let _ = crate::kern::uipc_mbuf::m_copyback(m2, pd2.off as i32, &b, M_NOWAIT);
@@ -6534,12 +7455,48 @@ pub fn pf_test_state_icmp(
                 if !opt_eq(st.key[PF_SK_WIRE].get(), st.key[PF_SK_STACK].get())
                     && let Some(nk) = pf_state_nk(st, pd)
                 {
-                    let afto = pd.af != nk.af.get();
+                    #[cfg(feature = "inet6")]
+                    if pd.af != nk.af.get() {
+                        // afto: the quoted addresses swap their indexes.
+                        let (sidx, didx) = (d2, s2);
+                        let naf = nk.af.get();
+                        if pf_translate_icmp_af(pd, naf, PfLoc::Hdr(0)) != 0 {
+                            return PF_DROP;
+                        }
+                        icmpcopy(pd);
+                        let (sa, da) = (nk.addr[sidx].get(), nk.addr[didx].get());
+                        let af = pd.af;
+                        if pf_change_icmp_af(m2, ipoff2 as i32, pd, &mut pd2, &sa, &da, af, naf)
+                            != 0
+                        {
+                            return PF_DROP;
+                        }
+                        m2.m_pkthdr().ph_rtableid.set(u32::from(nk.rdomain.get()));
+                        pd.destchg = 1;
+                        pf_addrcpy(&mut pd.nsaddr, &nk.addr[s2].get(), naf);
+                        pf_addrcpy(&mut pd.ndaddr, &nk.addr[d2].get(), naf);
+                        if naf == AF_INET {
+                            pd.proto = IPPROTO_ICMP as u8;
+                        } else {
+                            pd.proto = IPPROTO_ICMPV6 as u8;
+                            // IPv4 becomes IPv6 so we must copy the IPv4 src addr to the
+                            // least 32 bits of the IPv6 address to keep traceroute/icmp
+                            // working.
+                            let src = pd.ld_addr(pd.src);
+                            pd.nsaddr.set_addr32(3, src.addr32(0));
+                        }
+                        pd.naf = naf;
 
-                    // INET6: the af-to translation (PF_AFRT); not configured.
-                    if afto {
-                        let _ = unported!("pf_change_icmp_af");
-                        return PF_DROP;
+                        let l = pf_hdr_loc(&mut pd2, TH_SPORT_OFF);
+                        pf_patch_16(pd, l, nk.port[sidx].get());
+                        let l = pf_hdr_loc(&mut pd2, TH_DPORT_OFF);
+                        pf_patch_16(pd, l, nk.port[didx].get());
+
+                        let mut b = [0u8; size_of::<Udphdr>()];
+                        b.copy_from_slice(&pd2.hdr_bytes()[..size_of::<Udphdr>()]);
+                        let _ =
+                            crate::kern::uipc_mbuf::m_copyback(m2, pd2.off as i32, &b, M_NOWAIT);
+                        return PF_AFRT;
                     }
 
                     let p2s = pd2.ld_addr(pd2.src);
@@ -6569,7 +7526,11 @@ pub fn pf_test_state_icmp(
                         icmpcopy(pd);
                         h2copy(m2, &h2);
                     }
-                    // INET6: the icmp6_hdr and the ip6_hdr; not configured.
+                    #[cfg(feature = "inet6")]
+                    if pd2.af == AF_INET6 {
+                        icmpcopy(pd);
+                        h2_6copy(m2, &h2_6);
+                    }
                     // Avoid recomputing quoted UDP checksum. Note: udp6 0 csum invalid per
                     // rfc2460 p27, but presumed nothing cares in this context.
                     let l = pf_hdr_loc(&mut pd2, UH_SUM_OFF);
@@ -6625,9 +7586,51 @@ pub fn pf_test_state_icmp(
                 {
                     let afto = pd.af != nk.af.get();
                     if afto {
-                        // INET6: the af-to translation (PF_AFRT); not configured.
-                        let _ = unported!("pf_change_icmp_af");
-                        return PF_DROP;
+                        iidx = usize::from(iidx == 0);
+                    }
+
+                    #[cfg(feature = "inet6")]
+                    if afto {
+                        // The quoted addresses swap their indexes.
+                        let (sidx, didx) = (d2, s2);
+                        let naf = nk.af.get();
+                        if naf != AF_INET6 {
+                            return PF_DROP;
+                        }
+                        if pf_translate_icmp_af(pd, naf, PfLoc::Hdr(0)) != 0 {
+                            return PF_DROP;
+                        }
+                        icmpcopy(pd);
+                        let (sa, da) = (nk.addr[sidx].get(), nk.addr[didx].get());
+                        let af = pd.af;
+                        if pf_change_icmp_af(m2, ipoff2 as i32, pd, &mut pd2, &sa, &da, af, naf)
+                            != 0
+                        {
+                            return PF_DROP;
+                        }
+                        pd.proto = IPPROTO_ICMPV6 as u8;
+                        let iih = pf_hdr_loc(&mut pd2, 0);
+                        if pf_translate_icmp_af(pd, naf, iih) != 0 {
+                            return PF_DROP;
+                        }
+                        if virtual_type == u16::from(ICMP_ECHO).to_be() {
+                            let l = pf_hdr_loc(&mut pd2, ICMP_ID_OFF);
+                            pf_patch_16(pd, l, nk.port[iidx].get());
+                        }
+                        let mut b = [0u8; ICMP_MINLEN];
+                        b.copy_from_slice(&pd2.hdr_bytes()[..ICMP_MINLEN]);
+                        let _ =
+                            crate::kern::uipc_mbuf::m_copyback(m2, pd2.off as i32, &b, M_NOWAIT);
+                        m2.m_pkthdr().ph_rtableid.set(u32::from(nk.rdomain.get()));
+                        pd.destchg = 1;
+                        pf_addrcpy(&mut pd.nsaddr, &nk.addr[s2].get(), naf);
+                        pf_addrcpy(&mut pd.ndaddr, &nk.addr[d2].get(), naf);
+                        // IPv4 becomes IPv6 so we must copy the IPv4 src addr to the least
+                        // 32 bits of the IPv6 address to keep traceroute working.
+                        let src = pd.ld_addr(pd.src);
+                        pd.nsaddr.set_addr32(3, src.addr32(0));
+                        pd.naf = naf;
+                        return PF_AFRT;
                     }
 
                     let echo = virtual_type == u16::from(ICMP_ECHO).to_be();
@@ -6672,7 +7675,154 @@ pub fn pf_test_state_icmp(
                     copyback = 1;
                 }
             }
-            // INET6: IPPROTO_ICMPV6 quoted in an ICMPv6 error; not configured.
+            #[cfg(feature = "inet6")]
+            IPPROTO_ICMPV6 => {
+                use crate::netinet::icmp6::{ICMP6_ECHO_REQUEST, Icmp6Hdr};
+                const ICMP6_HDR_LEN: usize = size_of::<Icmp6Hdr>();
+
+                if pd2.af != AF_INET6 {
+                    reason_set(reason, PFRES_NORM);
+                    return PF_DROP;
+                }
+
+                let mut b = [0u8; ICMP6_HDR_LEN];
+                if !pf_pull_hdr(m2, pd2.off as i32, &mut b, Some(reason), pd2.af) {
+                    crate::dpfprintf!(LOG_NOTICE, "ICMP error message too short (icmp6)");
+                    return PF_DROP;
+                }
+                pd2.hdr_bytes()[..ICMP6_HDR_LEN].copy_from_slice(&b);
+                let iih_type = pd2.icmp6().icmp6_type;
+
+                pf_icmp_mapping(
+                    &pd2,
+                    iih_type,
+                    &mut icmp_dir,
+                    &mut virtual_id,
+                    &mut virtual_type,
+                );
+                let mut ret = pf_icmp_state_lookup(
+                    &mut pd2,
+                    stp,
+                    virtual_id,
+                    virtual_type,
+                    icmp_dir,
+                    &mut iidx,
+                    false,
+                    true,
+                );
+                // IPv6? try matching a multicast address.
+                if ret == i32::from(PF_DROP) && pd2.af == AF_INET6 && icmp_dir == i32::from(PF_OUT)
+                {
+                    ret = pf_icmp_state_lookup(
+                        &mut pd2,
+                        stp,
+                        virtual_id,
+                        virtual_type,
+                        icmp_dir,
+                        &mut iidx,
+                        true,
+                        true,
+                    );
+                }
+                if ret >= 0 {
+                    return ret as u8;
+                }
+                let Some(st) = *stp else {
+                    return PF_DROP;
+                };
+
+                // Translate source/destination address, if necessary.
+                if !opt_eq(st.key[PF_SK_WIRE].get(), st.key[PF_SK_STACK].get())
+                    && let Some(nk) = pf_state_nk(st, pd)
+                {
+                    let afto = pd.af != nk.af.get();
+                    if afto {
+                        iidx = usize::from(iidx == 0);
+                    }
+                    let echo = virtual_type == u16::from(ICMP6_ECHO_REQUEST).to_be();
+
+                    if afto {
+                        // The quoted addresses swap their indexes.
+                        let (sidx, didx) = (d2, s2);
+                        let naf = nk.af.get();
+                        if naf != AF_INET {
+                            return PF_DROP;
+                        }
+                        if pf_translate_icmp_af(pd, naf, PfLoc::Hdr(0)) != 0 {
+                            return PF_DROP;
+                        }
+                        icmpcopy(pd);
+                        let (sa, da) = (nk.addr[sidx].get(), nk.addr[didx].get());
+                        let af = pd.af;
+                        if pf_change_icmp_af(m2, ipoff2 as i32, pd, &mut pd2, &sa, &da, af, naf)
+                            != 0
+                        {
+                            return PF_DROP;
+                        }
+                        pd.proto = IPPROTO_ICMP as u8;
+                        let iih = pf_hdr_loc(&mut pd2, 0);
+                        if pf_translate_icmp_af(pd, naf, iih) != 0 {
+                            return PF_DROP;
+                        }
+                        if echo {
+                            let l = pf_hdr_loc(&mut pd2, ICMP_ID_OFF);
+                            pf_patch_16(pd, l, nk.port[iidx].get());
+                        }
+                        let mut b = [0u8; ICMP6_HDR_LEN];
+                        b.copy_from_slice(&pd2.hdr_bytes()[..ICMP6_HDR_LEN]);
+                        let _ =
+                            crate::kern::uipc_mbuf::m_copyback(m2, pd2.off as i32, &b, M_NOWAIT);
+                        m2.m_pkthdr().ph_rtableid.set(u32::from(nk.rdomain.get()));
+                        pd.destchg = 1;
+                        pf_addrcpy(&mut pd.nsaddr, &nk.addr[s2].get(), naf);
+                        pf_addrcpy(&mut pd.ndaddr, &nk.addr[d2].get(), naf);
+                        pd.naf = naf;
+                        return PF_AFRT;
+                    }
+
+                    let p2s = pd2.ld_addr(pd2.src);
+                    // The C compares the id with the port at pd2.sidx here.
+                    let icmp6_id = pd2.icmp6().icmp6_id();
+                    if pf_aneq(&p2s, &nk.addr[s2].get(), pd2.af)
+                        || (echo && nk.port[s2].get() != icmp6_id)
+                    {
+                        let (q, o) = (pd2.src, pd.dst);
+                        // icmp6_id is at the offset of icmp_id.
+                        let qp = if echo {
+                            pf_hdr_loc(&mut pd2, ICMP_ID_OFF)
+                        } else {
+                            PfLoc::None
+                        };
+                        pf_translate_icmp(
+                            pd,
+                            q,
+                            qp,
+                            o,
+                            &nk.addr[s2].get(),
+                            if echo { nk.port[iidx].get() } else { 0 },
+                        );
+                    }
+
+                    let p2d = pd2.ld_addr(pd2.dst);
+                    if pf_aneq(&p2d, &nk.addr[d2].get(), pd2.af) || pd2.rdomain != nk.rdomain.get()
+                    {
+                        pd.destchg = 1;
+                    }
+                    m2.m_pkthdr().ph_rtableid.set(u32::from(nk.rdomain.get()));
+
+                    if pf_aneq(&p2d, &nk.addr[d2].get(), pd2.af) {
+                        let (q, o) = (pd2.dst, pd.src);
+                        pf_translate_icmp(pd, q, PfLoc::None, o, &nk.addr[d2].get(), 0);
+                    }
+
+                    icmpcopy(pd);
+                    h2_6copy(m2, &h2_6);
+                    let mut b = [0u8; ICMP6_HDR_LEN];
+                    b.copy_from_slice(&pd2.hdr_bytes()[..ICMP6_HDR_LEN]);
+                    let _ = crate::kern::uipc_mbuf::m_copyback(m2, pd2.off as i32, &b, M_NOWAIT);
+                    copyback = 1;
+                }
+            }
             _ => {
                 let mut key = PfStateKeyCmp {
                     af: pd2.af,
@@ -6719,7 +7869,11 @@ pub fn pf_test_state_icmp(
                         icmpcopy(pd);
                         h2copy(m2, &h2);
                     }
-                    // INET6: the icmp6_hdr and the ip6_hdr; not configured.
+                    #[cfg(feature = "inet6")]
+                    if pd2.af == AF_INET6 {
+                        icmpcopy(pd);
+                        h2_6copy(m2, &h2_6);
+                    }
                     copyback = 1;
                 }
             }
@@ -6756,7 +7910,11 @@ pub fn pf_pull_hdr(
             }
             i32::from(u16::from_be(h.ip_len))
         }
-        // INET6: ip6_plen + sizeof(struct ip6_hdr); not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            let h = crate::netinet6::ip6_var::mtod_ip6(m);
+            i32::from(u16::from_be(h.ip6_plen)) + size_of::<Ip6Hdr>() as i32
+        }
         _ => 0,
     };
     if m.m_pkthdr().len.get() < off + len || iplen < off + len {
@@ -6789,8 +7947,26 @@ pub fn pf_routable(
             check_mpath = true;
         }
     }
-    // INET6: the sockaddr_in6, skipping embedded-scope addresses, ip6_multipath; not
-    // configured.
+    #[cfg(feature = "inet6")]
+    let dst6 = crate::netinet6::in6::SockaddrIn6::with_addr(addr.v6());
+    #[cfg(feature = "inet6")]
+    if af == AF_INET6 {
+        // Skip check for addresses with embedded interface scope, as they would always
+        // match anyway.
+        if crate::netinet6::in6::in6_is_scope_embed(&addr.v6()) {
+            return true;
+        }
+        if crate::netinet6::in6_proto::IP6_MULTIPATH.load(AtomicOrdering::Relaxed) != 0 {
+            check_mpath = true;
+        }
+    }
+    let sa: *const crate::sys::socket::Sockaddr = sintosa(&mut dst);
+    #[cfg(feature = "inet6")]
+    let sa = if af == AF_INET6 {
+        crate::netinet6::in6::sin6tosa_const(&dst6)
+    } else {
+        sa
+    };
 
     // Skip checks for ipsec interfaces.
     if let Some(k) = kif
@@ -6800,8 +7976,8 @@ pub fn pf_routable(
         return true;
     }
 
-    // SAFETY: `dst` is a complete local sockaddr_in.
-    let mut rt = unsafe { crate::net::route::rtalloc(sintosa(&mut dst), 0, rtableid as u32) };
+    // SAFETY: `sa` is a complete local sockaddr_in or sockaddr_in6.
+    let mut rt = unsafe { crate::net::route::rtalloc(sa, 0, rtableid as u32) };
     let ret = match (rt, kif) {
         (None, _) => false,
         // No interface given, this is a no-route check.
@@ -6841,17 +8017,20 @@ pub fn pf_rtlabel_match(addr: &PfAddr, af: SaFamily, aw: &PfAddrWrap, rtableid: 
         dst.sin_len = size_of::<SockaddrIn>() as u8;
         dst.sin_addr = addr.v4();
     }
-    // INET6: a sockaddr_in6; not configured.
+    let sa: *const crate::sys::socket::Sockaddr = sintosa(&mut dst);
+    #[cfg(feature = "inet6")]
+    let dst6 = crate::netinet6::in6::SockaddrIn6::with_addr(addr.v6());
+    #[cfg(feature = "inet6")]
+    let sa = if af == AF_INET6 {
+        crate::netinet6::in6::sin6tosa_const(&dst6)
+    } else {
+        sa
+    };
 
     let mut ret = false;
-    // SAFETY: `dst` is a complete local sockaddr_in.
-    let rt = unsafe {
-        crate::net::route::rtalloc(
-            sintosa(&mut dst),
-            crate::net::route::RT_RESOLVE,
-            rtableid as u32,
-        )
-    };
+    // SAFETY: `sa` is a complete local sockaddr_in or sockaddr_in6.
+    let rt =
+        unsafe { crate::net::route::rtalloc(sa, crate::net::route::RT_RESOLVE, rtableid as u32) };
     if let Some(r) = rt {
         if u32::from(r.rt_labelid.get()) == aw.v.get().rtlabel() {
             ret = true;
@@ -7076,8 +8255,182 @@ pub fn pf_route(pd: &mut PfPdesc, st: &'static PfState) {
     crate::net::route::rtfree(rt);
 }
 
-// INET6: pf_route6 (the IPv6 route-to, with pf_refragment6 of reassembled packets); not
-// configured.
+/// `pf_route6`: the IPv6 `route-to`/`reply-to`/`dup-to` of a state: sends the packet (or a
+/// copy) out of the interface of the route to the state's `rt_addr`, refragmenting a packet
+/// pf reassembled. May take `pd->m`.
+#[cfg(feature = "inet6")]
+pub fn pf_route6(pd: &mut PfPdesc, st: &'static PfState) {
+    use crate::netinet::icmp6::{
+        ICMP6_DST_UNREACH, ICMP6_DST_UNREACH_NOROUTE, ICMP6_PACKET_TOO_BIG,
+        ICMP6_TIME_EXCEED_TRANSIT, ICMP6_TIME_EXCEEDED,
+    };
+    use crate::netinet::ip6::IPV6_HLIMDEC;
+    use crate::netinet6::in6::{SockaddrIn6, ifatoia6, in6_is_addr_loopback, sin6tosa_const};
+    use crate::netinet6::ip6_var::{Ip6statCounters, ip6stat_inc, mtod_ip6, mtod_ip6_store};
+    use crate::sys::mbuf::PACKET_TAG_PF_REASSEMBLED;
+
+    let Some(m) = pd.m else {
+        return;
+    };
+    let routed = m.m_pkthdr().pf.routed.get();
+    m.m_pkthdr().pf.routed.set(routed.wrapping_add(1));
+    if routed > 3 {
+        crate::kern::uipc_mbuf::m_freem(m);
+        pd.m = None;
+        return;
+    }
+
+    let m0 = if st.rt.get() == PF_DUPTO {
+        let linkhdr = crate::kern::uipc_mbuf::MAX_LINKHDR.load(AtomicOrdering::Relaxed) as u32;
+        match crate::kern::uipc_mbuf::m_dup_pkt(m, linkhdr, M_NOWAIT) {
+            Some(m0) => m0,
+            None => return,
+        }
+    } else {
+        if (st.rt.get() == PF_REPLYTO) == (st.direction.get() == pd.dir) {
+            return;
+        }
+        pd.m = None;
+        m
+    };
+    let mut m0: Option<&'static Mbuf> = Some(m0);
+    let mut rt: Option<&'static crate::net::route::Rtentry> = None;
+    let mut ifp: Option<&'static Ifnet> = None;
+    let dst = SockaddrIn6::with_addr(st.rt_addr.get().v6());
+
+    'done: {
+        'bad: {
+            let Some(mm) = m0 else {
+                break 'done;
+            };
+            if (mm.m_len().get() as usize) < size_of::<Ip6Hdr>() {
+                crate::dpfprintf!(LOG_ERR, "pf_route6: m0->m_len < sizeof(struct ip6_hdr)");
+                break 'bad;
+            }
+            let mut ip6 = mtod_ip6(mm);
+
+            if pd.dir == PF_IN {
+                if ip6.ip6_hlim <= IPV6_HLIMDEC {
+                    if st.rt.get() != PF_DUPTO {
+                        pf_send_icmp(
+                            mm,
+                            ICMP6_TIME_EXCEEDED,
+                            ICMP6_TIME_EXCEED_TRANSIT,
+                            0,
+                            pd.af,
+                            st.rule.ptr(),
+                            u32::from(pd.rdomain),
+                        );
+                    }
+                    break 'bad;
+                }
+                ip6.ip6_hlim -= IPV6_HLIMDEC;
+                mtod_ip6_store(mm, &ip6);
+            }
+
+            let rtableid = mm.m_pkthdr().ph_rtableid.get();
+
+            let src = [ip6.ip6_src.s6_addr32(0)];
+            // SAFETY: `dst` is a complete local sockaddr_in6.
+            rt = unsafe {
+                crate::net::route::rtalloc_mpath(sin6tosa_const(&dst), Some(&src), rtableid)
+            };
+            if !crate::net::route::rtisvalid(rt) {
+                if st.rt.get() != PF_DUPTO {
+                    pf_send_icmp(
+                        mm,
+                        ICMP6_DST_UNREACH,
+                        ICMP6_DST_UNREACH_NOROUTE,
+                        0,
+                        pd.af,
+                        st.rule.ptr(),
+                        u32::from(pd.rdomain),
+                    );
+                }
+                ip6stat_inc(Ip6statCounters::Ip6sNoroute);
+                break 'bad;
+            }
+            let Some(r) = rt else {
+                break 'bad;
+            };
+
+            ifp = if_get(r.rt_ifidx.get());
+            let Some(ifn) = ifp else {
+                break 'bad;
+            };
+
+            // A locally generated packet may have invalid source address.
+            if in6_is_addr_loopback(&ip6.ip6_src)
+                && ifn.if_flags.get() & IFF_LOOPBACK == 0
+                && let Some(ifa) = r.rt_ifa.get()
+            {
+                ip6.ip6_src = ifatoia6(ifa).ia_addr.get().sin6_addr;
+                mtod_ip6_store(mm, &ip6);
+            }
+
+            if st.rt.get() != PF_DUPTO && pd.dir == PF_IN {
+                if pf_test(AF_INET6, PF_OUT, ifn, &mut m0) != PF_PASS {
+                    break 'bad;
+                }
+                let Some(mm) = m0 else {
+                    break 'done;
+                };
+                if (mm.m_len().get() as usize) < size_of::<Ip6Hdr>() {
+                    crate::dpfprintf!(LOG_ERR, "pf_route6: m0->m_len < sizeof(struct ip6_hdr)");
+                    break 'bad;
+                }
+            }
+            let Some(mm) = m0 else {
+                break 'done;
+            };
+
+            // If packet has been reassembled by PF earlier, we have to use pf_refragment6()
+            // here to turn it back to fragments.
+            if let Some(mtag) =
+                crate::kern::uipc_mbuf2::m_tag_find(mm, PACKET_TAG_PF_REASSEMBLED, None)
+            {
+                let _ = crate::net::pf_norm::pf_refragment6(&mut m0, mtag, Some(&dst), ifp, rt);
+                break 'done;
+            }
+
+            // SAFETY: `dst` is a complete local sockaddr_in6.
+            let tso = unsafe {
+                crate::net::if_::if_output_tso(
+                    ifn,
+                    &mut m0,
+                    sin6tosa_const(&dst),
+                    rt,
+                    ifn.if_mtu.get(),
+                )
+            };
+            if tso.is_err() || m0.is_none() {
+                break 'done;
+            }
+            let Some(mm) = m0 else {
+                break 'done;
+            };
+
+            ip6stat_inc(Ip6statCounters::Ip6sCantfrag);
+            if st.rt.get() != PF_DUPTO {
+                pf_send_icmp(
+                    mm,
+                    ICMP6_PACKET_TOO_BIG,
+                    0,
+                    ifn.if_mtu.get() as i32,
+                    pd.af,
+                    st.rule.ptr(),
+                    u32::from(pd.rdomain),
+                );
+            }
+            break 'bad;
+        }
+        // bad:
+        crate::kern::uipc_mbuf::m_freem(m0);
+    }
+    // done:
+    if_put(ifp);
+    crate::net::route::rtfree(rt);
+}
 
 /// `pf_check_tcp_cksum`: checks the TCP checksum of the segment at `off` (`len` bytes of
 /// header and payload) and records the result in the mbuf. `true` when it is bad (the C's
@@ -7107,7 +8460,14 @@ pub fn pf_check_tcp_cksum(m: &Mbuf, off: i32, len: i32, af: SaFamily) -> bool {
 
             crate::netinet::in4_cksum::in4_cksum(m, IPPROTO_TCP as u8, off, len)
         }
-        // INET6: in6_cksum; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            if (m.m_len().get() as usize) < size_of::<Ip6Hdr>() {
+                return true;
+            }
+
+            crate::netinet6::in6_cksum::in6_cksum(m, IPPROTO_TCP as u8, off as u32, len as u32)
+        }
         _ => unhandled_af(i32::from(af)),
     };
     if sum != 0 {
@@ -7289,8 +8649,295 @@ pub fn pf_walk_header(pd: &mut PfPdesc, h: &crate::netinet::ip::Ip, reason: &mut
     PF_DROP
 }
 
-// INET6: pf_walk_option6 and pf_walk_header6 (hop-by-hop and destination options, the
-// routing, fragment and AH headers, the jumbo payload); not configured.
+/// `pf_walk_option6`: walks the options of a hop-by-hop header from `off` to `end`, noting
+/// the jumbo payload and router alert options in `pd->badopts`.
+#[cfg(feature = "inet6")]
+pub fn pf_walk_option6(pd: &mut PfPdesc, h: &Ip6Hdr, off: i32, end: i32, reason: &mut u16) -> u8 {
+    use crate::netinet::ip6::{
+        IP6OPT_JUMBO, IP6OPT_PAD1, IP6OPT_PADN, IP6OPT_ROUTER_ALERT, IPV6_MAXPACKET, Ip6Opt,
+        Ip6OptJumbo,
+    };
+
+    let Some(m) = pd.m else {
+        return PF_DROP;
+    };
+    let mut off = off;
+    while off < end {
+        // `struct ip6_opt`: type and length.
+        let mut opt = [0u8; size_of::<Ip6Opt>()];
+        if !pf_pull_hdr(m, off, &mut opt[..1], Some(reason), AF_INET6) {
+            crate::dpfprintf!(LOG_NOTICE, "IPv6 short opt type");
+            return PF_DROP;
+        }
+        if opt[0] == IP6OPT_PAD1 {
+            off += 1;
+            continue;
+        }
+        if !pf_pull_hdr(m, off, &mut opt, Some(reason), AF_INET6) {
+            crate::dpfprintf!(LOG_NOTICE, "IPv6 short opt");
+            return PF_DROP;
+        }
+        let (ip6o_type, ip6o_len) = (opt[0], i32::from(opt[1]));
+        if off + size_of::<Ip6Opt>() as i32 + ip6o_len > end {
+            crate::dpfprintf!(LOG_NOTICE, "IPv6 long opt");
+            reason_set(reason, PFRES_IPOPTIONS);
+            return PF_DROP;
+        }
+        match ip6o_type {
+            IP6OPT_PADN => {}
+            IP6OPT_JUMBO => {
+                pd.badopts |= PF_OPT_JUMBO;
+                if pd.jumbolen != 0 {
+                    crate::dpfprintf!(LOG_NOTICE, "IPv6 multiple jumbo");
+                    reason_set(reason, PFRES_IPOPTIONS);
+                    return PF_DROP;
+                }
+                if u16::from_be(h.ip6_plen) != 0 {
+                    crate::dpfprintf!(LOG_NOTICE, "IPv6 bad jumbo plen");
+                    reason_set(reason, PFRES_IPOPTIONS);
+                    return PF_DROP;
+                }
+                let mut jumbo = [0u8; size_of::<Ip6OptJumbo>()];
+                if !pf_pull_hdr(m, off, &mut jumbo, Some(reason), AF_INET6) {
+                    crate::dpfprintf!(LOG_NOTICE, "IPv6 short jumbo");
+                    return PF_DROP;
+                }
+                // ip6oj_jumbo_len follows the type and length.
+                pd.jumbolen = u32::from_be_bytes([jumbo[2], jumbo[3], jumbo[4], jumbo[5]]);
+                if (pd.jumbolen as usize) < IPV6_MAXPACKET {
+                    crate::dpfprintf!(LOG_NOTICE, "IPv6 short jumbolen");
+                    reason_set(reason, PFRES_IPOPTIONS);
+                    return PF_DROP;
+                }
+            }
+            IP6OPT_ROUTER_ALERT => pd.badopts |= PF_OPT_ROUTER_ALERT,
+            _ => pd.badopts |= PF_OPT_OTHER,
+        }
+        off += size_of::<Ip6Opt>() as i32 + ip6o_len;
+    }
+
+    PF_PASS
+}
+
+/// `pf_walk_header6`: walks the IPv6 header and its extension headers (hop-by-hop,
+/// routing, fragment, AH, destination options) to the protocol header; sets `pd->off`,
+/// `pd->proto`, `pd->fragoff`, `pd->extoff` and `pd->jumbolen`, and checks MLD messages.
+#[cfg(feature = "inet6")]
+pub fn pf_walk_header6(pd: &mut PfPdesc, h: &Ip6Hdr, reason: &mut u16) -> u8 {
+    use crate::netinet::icmp6::{
+        Icmp6Hdr, MLD_LISTENER_DONE, MLD_LISTENER_QUERY, MLD_LISTENER_REPORT, MLDV2_LISTENER_REPORT,
+    };
+    use crate::netinet::in_::{
+        IPPROTO_AH, IPPROTO_DSTOPTS, IPPROTO_FRAGMENT, IPPROTO_HOPOPTS, IPPROTO_ROUTING,
+    };
+    use crate::netinet::ip6::{IP6F_MORE_FRAG, IP6F_OFF_MASK, Ip6Ext, Ip6Frag, Ip6Rthdr};
+    use crate::netinet6::in6::{IPV6_RTHDR_TYPE_0, in6_is_addr_linklocal, in6_is_addr_unspecified};
+
+    let Some(m) = pd.m else {
+        return PF_DROP;
+    };
+    let mut fraghdr_cnt = 0;
+    let mut rthdr_cnt = 0;
+
+    pd.off += size_of::<Ip6Hdr>() as u32;
+    let end = pd.off + u32::from(u16::from_be(h.ip6_plen));
+    pd.fragoff = 0;
+    pd.extoff = 0;
+    pd.jumbolen = 0;
+    pd.proto = h.ip6_nxt;
+
+    // `struct ip6_ext`: next header and length.
+    let mut ext = [0u8; size_of::<Ip6Ext>()];
+    for hdr_cnt in 0..PF_HDR_LIMIT.load(AtomicOrdering::Relaxed) {
+        let p = i32::from(pd.proto);
+        if p == IPPROTO_ROUTING || p == IPPROTO_DSTOPTS {
+            pd.badopts |= PF_OPT_OTHER;
+        } else if p == IPPROTO_HOPOPTS {
+            if !pf_pull_hdr(m, pd.off as i32, &mut ext, Some(reason), AF_INET6) {
+                crate::dpfprintf!(LOG_NOTICE, "IPv6 short exthdr");
+                return PF_DROP;
+            }
+            let off = pd.off as i32;
+            if pf_walk_option6(
+                pd,
+                h,
+                off + size_of::<Ip6Ext>() as i32,
+                off + (i32::from(ext[1]) + 1) * 8,
+                reason,
+            ) != PF_PASS
+            {
+                return PF_DROP;
+            }
+            // Option header which contains only padding is fishy.
+            if pd.badopts == 0 {
+                pd.badopts |= PF_OPT_OTHER;
+            }
+        }
+
+        // The routing header falls through to the hop-by-hop check, both to the
+        // AH/destination options handling.
+        let mut ext_hdr = false;
+        match i32::from(pd.proto) {
+            IPPROTO_FRAGMENT => {
+                fraghdr_cnt += 1;
+                if fraghdr_cnt > 1 {
+                    crate::dpfprintf!(LOG_NOTICE, "IPv6 multiple fragment");
+                    reason_set(reason, PFRES_FRAG);
+                    return PF_DROP;
+                }
+                // Jumbo payload packets cannot be fragmented.
+                if pd.jumbolen != 0 {
+                    crate::dpfprintf!(LOG_NOTICE, "IPv6 fragmented jumbo");
+                    reason_set(reason, PFRES_FRAG);
+                    return PF_DROP;
+                }
+                let mut b = [0u8; size_of::<Ip6Frag>()];
+                if !pf_pull_hdr(m, pd.off as i32, &mut b, Some(reason), AF_INET6) {
+                    crate::dpfprintf!(LOG_NOTICE, "IPv6 short fragment");
+                    return PF_DROP;
+                }
+                // SAFETY: `Ip6Frag` is 8 bytes of integers (`#[repr(C)]`, no padding).
+                let frag = unsafe { ptr::read_unaligned(b.as_ptr().cast::<Ip6Frag>()) };
+                // Stop walking over non initial fragments.
+                if u16::from_be(frag.ip6f_offlg & IP6F_OFF_MASK) != 0 {
+                    pd.fragoff = pd.off;
+                    return PF_PASS;
+                }
+                // RFC6946: reassemble only non atomic fragments.
+                if frag.ip6f_offlg & IP6F_MORE_FRAG != 0 {
+                    pd.fragoff = pd.off;
+                }
+                pd.off += size_of::<Ip6Frag>() as u32;
+                pd.proto = frag.ip6f_nxt;
+            }
+            IPPROTO_ROUTING => {
+                rthdr_cnt += 1;
+                if rthdr_cnt > 1 {
+                    crate::dpfprintf!(LOG_NOTICE, "IPv6 multiple rthdr");
+                    reason_set(reason, PFRES_IPOPTIONS);
+                    return PF_DROP;
+                }
+                // Fragments may be short.
+                if pd.fragoff != 0 && (end as usize) < pd.off as usize + size_of::<Ip6Rthdr>() {
+                    pd.off = pd.fragoff;
+                    pd.proto = IPPROTO_FRAGMENT as u8;
+                    return PF_PASS;
+                }
+                let mut rthdr = [0u8; size_of::<Ip6Rthdr>()];
+                if !pf_pull_hdr(m, pd.off as i32, &mut rthdr, Some(reason), AF_INET6) {
+                    crate::dpfprintf!(LOG_NOTICE, "IPv6 short rthdr");
+                    return PF_DROP;
+                }
+                // ip6r_type is the third byte.
+                if i32::from(rthdr[2]) == IPV6_RTHDR_TYPE_0 {
+                    crate::dpfprintf!(LOG_NOTICE, "IPv6 rthdr0");
+                    reason_set(reason, PFRES_IPOPTIONS);
+                    return PF_DROP;
+                }
+                ext_hdr = true;
+            }
+            IPPROTO_HOPOPTS | IPPROTO_AH | IPPROTO_DSTOPTS => ext_hdr = true,
+            crate::netinet::in_::IPPROTO_ICMPV6 => {
+                // Fragments may be short, ignore inner header then.
+                if pd.fragoff != 0 && (end as usize) < pd.off as usize + size_of::<Icmp6Hdr>() {
+                    pd.off = pd.fragoff;
+                    pd.proto = IPPROTO_FRAGMENT as u8;
+                    return PF_PASS;
+                }
+                let mut icmp6 = [0u8; size_of::<Icmp6Hdr>()];
+                if !pf_pull_hdr(m, pd.off as i32, &mut icmp6, Some(reason), AF_INET6) {
+                    crate::dpfprintf!(LOG_NOTICE, "IPv6 short icmp6hdr");
+                    return PF_DROP;
+                }
+                // ICMP multicast packets have router alert options.
+                let icmp6_type = icmp6[0];
+                if matches!(
+                    icmp6_type,
+                    MLD_LISTENER_QUERY
+                        | MLD_LISTENER_REPORT
+                        | MLD_LISTENER_DONE
+                        | MLDV2_LISTENER_REPORT
+                ) {
+                    // According to RFC 2710 all MLD messages are sent with hop-limit (ttl)
+                    // set to 1, and link local source address. If either one is missing then
+                    // the MLD message is invalid and should be discarded. RFC 3590 clarifies
+                    // that during initial duplicate address detection nodes may not have an
+                    // address, so are permitted to use the unspecified address, but only for
+                    // Report and Done messages.
+                    let ll = in6_is_addr_linklocal(&h.ip6_src);
+                    if h.ip6_hlim != 1
+                        || (!ll && icmp6_type == MLD_LISTENER_QUERY)
+                        || (!ll && !in6_is_addr_unspecified(&h.ip6_src))
+                    {
+                        crate::dpfprintf!(LOG_NOTICE, "Invalid MLD");
+                        reason_set(reason, PFRES_IPOPTIONS);
+                        return PF_DROP;
+                    }
+                    pd.badopts &= !PF_OPT_ROUTER_ALERT;
+                }
+                return PF_PASS;
+            }
+            p @ (IPPROTO_TCP | IPPROTO_UDP) => {
+                // Fragments may be short, ignore inner header then.
+                let hl = if p == IPPROTO_TCP {
+                    size_of::<Tcphdr>()
+                } else {
+                    size_of::<Udphdr>()
+                };
+                if pd.fragoff != 0 && (end as usize) < pd.off as usize + hl {
+                    pd.off = pd.fragoff;
+                    pd.proto = IPPROTO_FRAGMENT as u8;
+                }
+                return PF_PASS;
+            }
+            _ => return PF_PASS,
+        }
+        if !ext_hdr {
+            continue;
+        }
+
+        // IPPROTO_ROUTING (after its checks), IPPROTO_HOPOPTS, IPPROTO_AH, IPPROTO_DSTOPTS.
+        let p = i32::from(pd.proto);
+        // RFC2460 4.1: Hop-by-Hop only after IPv6 header.
+        if p == IPPROTO_HOPOPTS && hdr_cnt > 0 {
+            crate::dpfprintf!(LOG_NOTICE, "IPv6 hopopts not first");
+            reason_set(reason, PFRES_IPOPTIONS);
+            return PF_DROP;
+        }
+        // Fragments may be short.
+        if pd.fragoff != 0 && (end as usize) < pd.off as usize + size_of::<Ip6Ext>() {
+            pd.off = pd.fragoff;
+            pd.proto = IPPROTO_FRAGMENT as u8;
+            return PF_PASS;
+        }
+        if !pf_pull_hdr(m, pd.off as i32, &mut ext, Some(reason), AF_INET6) {
+            crate::dpfprintf!(LOG_NOTICE, "IPv6 short exthdr");
+            return PF_DROP;
+        }
+        // Reassembly needs the ext header before the frag.
+        if pd.fragoff == 0 {
+            pd.extoff = pd.off;
+        }
+        if p == IPPROTO_HOPOPTS
+            && pd.fragoff == 0
+            && u16::from_be(h.ip6_plen) == 0
+            && pd.jumbolen != 0
+        {
+            crate::dpfprintf!(LOG_NOTICE, "IPv6 missing jumbo");
+            reason_set(reason, PFRES_IPOPTIONS);
+            return PF_DROP;
+        }
+        if p == IPPROTO_AH {
+            pd.off += (u32::from(ext[1]) + 2) * 4;
+        } else {
+            pd.off += (u32::from(ext[1]) + 1) * 8;
+        }
+        pd.proto = ext[0];
+    }
+    crate::dpfprintf!(LOG_NOTICE, "IPv6 nested extension header limit");
+    reason_set(reason, PFRES_IPOPTIONS);
+    PF_DROP
+}
 
 /// `pf_pkt_hash`: the stoeplitz hash of the connection, the state table's first key.
 pub fn pf_pkt_hash(
@@ -7302,7 +8949,13 @@ pub fn pf_pkt_hash(
     dport: u16,
 ) -> u16 {
     let mut hash: u32 = src.addr32(0) ^ dst.addr32(0);
-    // INET6: the other three words for AF_INET6; not configured.
+    #[cfg(feature = "inet6")]
+    if af == AF_INET6 {
+        hash ^= src.addr32(1) ^ dst.addr32(1);
+        hash ^= src.addr32(2) ^ dst.addr32(2);
+        hash ^= src.addr32(3) ^ dst.addr32(3);
+    }
+    #[cfg(not(feature = "inet6"))]
     let _ = af;
 
     match i32::from(proto) {
@@ -7365,7 +9018,44 @@ pub fn pf_setup_pdesc(
                 u16::from(pd.proto)
             };
         }
-        // INET6: the ip6_hdr, pf_walk_header6, the jumbogram drop; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            // Check for illegal packets.
+            if (m.m_pkthdr().len.get() as usize) < size_of::<Ip6Hdr>() {
+                reason_set(reason, PFRES_SHORT);
+                return PF_DROP;
+            }
+
+            let h = crate::netinet6::ip6_var::mtod_ip6(m);
+            if (m.m_pkthdr().len.get() as usize)
+                < size_of::<Ip6Hdr>() + usize::from(u16::from_be(h.ip6_plen))
+            {
+                reason_set(reason, PFRES_SHORT);
+                return PF_DROP;
+            }
+
+            if pf_walk_header6(pd, &h, reason) != PF_PASS {
+                return PF_DROP;
+            }
+
+            // We do not support jumbogram yet. If we keep going, zero ip6_plen will do
+            // something bad, so drop the packet for now.
+            if pd.jumbolen != 0 {
+                reason_set(reason, PFRES_NORM);
+                return PF_DROP;
+            }
+
+            pd.src = PfLoc::Mbuf(core::mem::offset_of!(Ip6Hdr, ip6_src));
+            pd.dst = PfLoc::Mbuf(core::mem::offset_of!(Ip6Hdr, ip6_dst));
+            pd.tot_len = u64::from(u16::from_be(h.ip6_plen)) + size_of::<Ip6Hdr>() as u64;
+            pd.tos = ((u32::from_be(h.ip6_flow) & 0x0fc0_0000) >> 20) as u8;
+            pd.ttl = h.ip6_hlim;
+            pd.virtual_proto = if pd.fragoff != 0 {
+                PF_VPROTO_FRAGMENT
+            } else {
+                u16::from(pd.proto)
+            };
+        }
         _ => panic(format_args!(
             "pf_setup_pdesc called with illegal af {}",
             pd.af
@@ -7430,8 +9120,48 @@ pub fn pf_setup_pdesc(
             }
             pd.pcksum = PfLoc::Hdr(crate::netinet::ip_icmp::ICMP_CKSUM_OFFSET);
         }
-        // INET6: IPPROTO_ICMPV6 (with the MLD and neighbour discovery headers and the hop
-        // limit check); not configured.
+        #[cfg(feature = "inet6")]
+        IPPROTO_ICMPV6 => {
+            use crate::netinet::icmp6::{
+                Icmp6Hdr, MLD_LISTENER_QUERY, MLD_LISTENER_REPORT, MldHdr, ND_NEIGHBOR_ADVERT,
+                ND_NEIGHBOR_SOLICIT, ND_REDIRECT, ND_ROUTER_ADVERT, ND_ROUTER_SOLICIT,
+                NdNeighborSolicit,
+            };
+
+            let mut icmp_hlen = size_of::<Icmp6Hdr>();
+            let mut b = [0u8; size_of::<NdNeighborSolicit>()];
+            if !pf_pull_hdr(m, pd.off as i32, &mut b[..icmp_hlen], Some(reason), pd.af) {
+                return PF_DROP;
+            }
+            pd.hdr_bytes()[..icmp_hlen].copy_from_slice(&b[..icmp_hlen]);
+            // ICMP headers we look further into to match state.
+            match pd.icmp6().icmp6_type {
+                MLD_LISTENER_QUERY | MLD_LISTENER_REPORT => icmp_hlen = size_of::<MldHdr>(),
+                t @ (ND_NEIGHBOR_SOLICIT | ND_NEIGHBOR_ADVERT | ND_ROUTER_SOLICIT
+                | ND_ROUTER_ADVERT | ND_REDIRECT) => {
+                    if t == ND_NEIGHBOR_SOLICIT || t == ND_NEIGHBOR_ADVERT {
+                        icmp_hlen = size_of::<NdNeighborSolicit>();
+                    }
+                    if pd.ttl != 255 {
+                        reason_set(reason, PFRES_NORM);
+                        return PF_DROP;
+                    }
+                }
+                _ => {}
+            }
+            if icmp_hlen > size_of::<Icmp6Hdr>() {
+                if !pf_pull_hdr(m, pd.off as i32, &mut b[..icmp_hlen], Some(reason), pd.af) {
+                    return PF_DROP;
+                }
+                pd.hdr_bytes()[..icmp_hlen].copy_from_slice(&b[..icmp_hlen]);
+            }
+            pd.hdrlen = icmp_hlen as u32;
+            if u64::from(pd.off + pd.hdrlen) > pd.tot_len {
+                reason_set(reason, PFRES_SHORT);
+                return PF_DROP;
+            }
+            pd.pcksum = PfLoc::Hdr(core::mem::offset_of!(Icmp6Hdr, icmp6_cksum));
+        }
         _ => {}
     }
 
@@ -7552,6 +9282,7 @@ pub fn pf_counters_inc(
 /// `pf_test`: the packet filter's hook for the IP stack. `fwdir` is `PF_IN`, `PF_OUT` or
 /// `PF_FWD`; `*m0` may be replaced (reassembly, route-to) or consumed (`None`). Returns the
 /// action (`PF_PASS`, `PF_DROP`, `PF_DIVERT`, ...).
+#[cfg_attr(not(feature = "inet6"), allow(unused_labels))] // 'out is the C's INET6 label
 pub fn pf_test(af: SaFamily, fwdir: u8, ifp: &'static Ifnet, m0: &mut Option<&'static Mbuf>) -> u8 {
     use crate::netinet::in_::{IN_CLASSA_NSHIFT, IN_LOOPBACKNET};
     use crate::netinet::ip::IPTOS_LOWDELAY;
@@ -7621,10 +9352,12 @@ pub fn pf_test(af: SaFamily, fwdir: u8, ifp: &'static Ifnet, m0: &mut Option<&'s
         }
 
         // Packet normalization and reassembly.
-        if pd.af == AF_INET {
-            action = crate::net::pf_norm::pf_normalize_ip(&mut pd, &mut reason);
+        match pd.af {
+            AF_INET => action = crate::net::pf_norm::pf_normalize_ip(&mut pd, &mut reason),
+            #[cfg(feature = "inet6")]
+            AF_INET6 => action = crate::net::pf_norm::pf_normalize_ip6(&mut pd, &mut reason),
+            _ => {}
         }
-        // INET6: pf_normalize_ip6; not configured.
         *m0 = pd.m;
         // If packet sits in reassembly queue, return without error.
         let Some(pm) = pd.m else {
@@ -7702,7 +9435,39 @@ pub fn pf_test(af: SaFamily, fwdir: u8, ifp: &'static Ifnet, m0: &mut Option<&'s
                     }
                 }
             }
-            // INET6: IPPROTO_ICMPV6 the same way; not configured.
+            #[cfg(feature = "inet6")]
+            vp if i32::from(vp) == IPPROTO_ICMPV6 => {
+                if pd.af != AF_INET6 {
+                    action = PF_DROP;
+                    reason_set(&mut reason, PFRES_NORM);
+                    crate::dpfprintf!(LOG_NOTICE, "dropping IPv4 packet with ICMPv6 payload");
+                } else {
+                    pf_state_enter_read();
+                    action = pf_test_state_icmp(&mut pd, &mut st, &mut reason);
+                    st = st.map(pf_state_ref);
+                    pf_state_exit_read();
+                    if action == PF_PASS || action == PF_AFRT {
+                        if let Some(s) = st {
+                            crate::net::if_pfsync::pfsync_update_state(s);
+                            r = s.rule.ptr();
+                            a = s.anchor.ptr();
+                            pd.pflog |= s.log.get();
+                        }
+                    } else if st.is_none() {
+                        pf_lock();
+                        have_pf_lock = true;
+                        action = pf_test_rule(
+                            &mut pd,
+                            &mut r,
+                            &mut st,
+                            &mut a,
+                            &mut ruleset,
+                            &mut reason,
+                        );
+                        st = st.map(pf_state_ref);
+                    }
+                }
+            }
             vp => {
                 let mut fallthrough = true;
                 if i32::from(vp) == IPPROTO_TCP {
@@ -7936,7 +9701,10 @@ pub fn pf_test(af: SaFamily, fwdir: u8, ifp: &'static Ifnet, m0: &mut Option<&'s
             let f = &pm.m_pkthdr().pf.flags;
             f.set(f.get() | PF_TAG_TRANSLATE_LOCALHOST);
         }
-        // INET6: IN6_IS_ADDR_LOOPBACK; not configured.
+        if pd.af == AF_INET6 && crate::netinet6::in6::in6_is_addr_loopback(&d.v6()) {
+            let f = &pm.m_pkthdr().pf.flags;
+            f.set(f.get() | PF_TAG_TRANSLATE_LOCALHOST);
+        }
     }
     // We need to redo the route lookup on outgoing routes.
     if pd.destchg != 0
@@ -7992,53 +9760,152 @@ pub fn pf_test(af: SaFamily, fwdir: u8, ifp: &'static Ifnet, m0: &mut Option<&'s
 
     pf_counters_inc(action, &mut pd, st, r, a);
 
-    match action {
-        PF_SYNPROXY_DROP | PF_DEFER => {
-            if action == PF_SYNPROXY_DROP {
-                crate::kern::uipc_mbuf::m_freem(pd.m);
-            }
-            pd.m = None;
-            action = PF_PASS;
-        }
-        PF_DIVERT => {
-            if pd.af == AF_INET {
-                if let Some(m) = pd.m {
-                    crate::netinet::ip_divert::divert_packet(m, pd.dir, r.divert.port);
+    'out: {
+        match action {
+            PF_SYNPROXY_DROP | PF_DEFER => {
+                if action == PF_SYNPROXY_DROP {
+                    crate::kern::uipc_mbuf::m_freem(pd.m);
                 }
                 pd.m = None;
+                action = PF_PASS;
             }
-            // INET6: divert6_packet; not configured.
-            action = PF_PASS;
-        }
-        // INET6: PF_AFRT (pf_translate_af, then ip_forward or ip_output in the other
-        // family); not configured: pf_test_state never returns it without INET6.
-        PF_DROP => {
-            crate::kern::uipc_mbuf::m_freem(pd.m);
-            pd.m = None;
-        }
-        _ => {
-            if let Some(s) = st
-                && s.rt.get() != 0
-                && pd.af == AF_INET
-            {
-                pf_route(&mut pd, s);
+            PF_DIVERT => {
+                match pd.af {
+                    AF_INET => {
+                        if let Some(m) = pd.m {
+                            crate::netinet::ip_divert::divert_packet(m, pd.dir, r.divert.port);
+                        }
+                        pd.m = None;
+                    }
+                    #[cfg(feature = "inet6")]
+                    AF_INET6 => {
+                        if let Some(m) = pd.m {
+                            crate::netinet6::ip6_divert::divert6_packet(m, pd.dir, r.divert.port);
+                        }
+                        pd.m = None;
+                    }
+                    _ => {}
+                }
+                action = PF_PASS;
             }
-            // INET6: pf_route6 for AF_INET6; not configured.
+            #[cfg(feature = "inet6")]
+            PF_AFRT => {
+                if pf_translate_af(&mut pd) != 0 {
+                    action = PF_DROP;
+                    break 'out;
+                }
+                let Some(m) = pd.m else {
+                    action = PF_DROP;
+                    break 'out;
+                };
+                let f = &m.m_pkthdr().pf.flags;
+                f.set(f.get() | PF_TAG_GENERATED);
+                match pd.naf {
+                    AF_INET => {
+                        if pd.dir == PF_IN {
+                            use crate::netinet::ip_var::{
+                                IP_ALLOWBROADCAST, IP_FORWARDING, IP_FORWARDING_IPSEC, IP_REDIRECT,
+                                IpstatCounters, ipstat_inc,
+                            };
+                            let mut flags = IP_REDIRECT;
+                            match crate::netinet::ip_input::ip_forwarding
+                                .load(AtomicOrdering::Relaxed)
+                            {
+                                2 => flags |= IP_FORWARDING_IPSEC | IP_FORWARDING,
+                                1 => flags |= IP_FORWARDING,
+                                _ => {
+                                    ipstat_inc(IpstatCounters::IpsCantforward);
+                                    action = PF_DROP;
+                                    break 'out;
+                                }
+                            }
+                            if crate::netinet::ip_input::IP_DIRECTEDBCAST
+                                .load(AtomicOrdering::Relaxed)
+                                != 0
+                            {
+                                flags |= IP_ALLOWBROADCAST;
+                            }
+                            crate::netinet::ip_input::ip_forward(m, ifp, None, flags);
+                        } else {
+                            let _ = crate::netinet::ip_output::ip_output(
+                                m, None, None, 0, None, None, 0,
+                            );
+                        }
+                    }
+                    AF_INET6 => {
+                        if pd.dir == PF_IN {
+                            use crate::netinet6::ip6_var::{
+                                IPV6_FORWARDING, IPV6_FORWARDING_IPSEC, IPV6_REDIRECT,
+                                Ip6statCounters, ip6stat_inc,
+                            };
+                            let mut flags = IPV6_REDIRECT;
+                            match crate::netinet6::in6_proto::IP6_FORWARDING
+                                .load(AtomicOrdering::Relaxed)
+                            {
+                                2 => flags |= IPV6_FORWARDING_IPSEC | IPV6_FORWARDING,
+                                1 => flags |= IPV6_FORWARDING,
+                                _ => {
+                                    ip6stat_inc(Ip6statCounters::Ip6sCantforward);
+                                    action = PF_DROP;
+                                    break 'out;
+                                }
+                            }
+                            crate::netinet6::ip6_forward::ip6_forward(m, None, flags);
+                        } else {
+                            let _ = crate::netinet6::ip6_output::ip6_output(
+                                m, None, None, 0, None, None,
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+                pd.m = None;
+                action = PF_PASS;
+            }
+            PF_DROP => {
+                crate::kern::uipc_mbuf::m_freem(pd.m);
+                pd.m = None;
+            }
+            _ => {
+                if let Some(s) = st
+                    && s.rt.get() != 0
+                {
+                    match pd.af {
+                        AF_INET => pf_route(&mut pd, s),
+                        #[cfg(feature = "inet6")]
+                        AF_INET6 => pf_route6(&mut pd, s),
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        // If reassembled packet passed, create new fragments.
+        #[cfg(feature = "inet6")]
+        if PF_STATUS.reass.get() != 0
+            && action == PF_PASS
+            && fwdir == PF_FWD
+            && pd.af == AF_INET6
+            && let Some(m) = pd.m
+            && let Some(mtag) = crate::kern::uipc_mbuf2::m_tag_find(
+                m,
+                crate::sys::mbuf::PACKET_TAG_PF_REASSEMBLED,
+                None,
+            )
+        {
+            action = crate::net::pf_norm::pf_refragment6(&mut pd.m, mtag, None, None, None);
+        }
+        if let Some(s) = st
+            && action != PF_DROP
+        {
+            if s.if_index_in.get() == 0 && dir == PF_IN {
+                s.if_index_in.set(ifp.if_index.get() as u16);
+            } else if s.if_index_out.get() == 0 && dir == PF_OUT {
+                s.if_index_out.set(ifp.if_index.get() as u16);
+            }
         }
     }
-
-    // INET6: refragmentation of a reassembled IPv6 packet (pf_refragment6); not
-    // configured.
-    if let Some(s) = st
-        && action != PF_DROP
-    {
-        if s.if_index_in.get() == 0 && dir == PF_IN {
-            s.if_index_in.set(ifp.if_index.get() as u16);
-        } else if s.if_index_out.get() == 0 && dir == PF_OUT {
-            s.if_index_out.set(ifp.if_index.get() as u16);
-        }
-    }
-
+    // out:
     *m0 = pd.m;
 
     pf_state_unref(st);
@@ -8517,3 +10384,6 @@ impl PfPoolLimit {
         }
     }
 }
+
+#[cfg(all(test, feature = "inet6"))]
+mod tests;

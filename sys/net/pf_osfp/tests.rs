@@ -116,7 +116,7 @@ fn fpioc(os: PfOsfp, class: &[u8], version: &[u8], flags: u16, wsize: u16) -> Pf
 
 fn fingerprint(ip: &Ip, tcp: &[u8]) -> Option<&'static SlistHead<PfOsfpEnlist>> {
     pf_lock();
-    let r = pf_osfp_fingerprint_hdr(Some(ip), tcp);
+    let r = pf_osfp_fingerprint_hdr(Some(ip), None, tcp);
     pf_unlock();
     r
 }

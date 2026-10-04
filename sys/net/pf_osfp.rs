@@ -37,13 +37,11 @@
 //! compiled in the kernel and is not ported.
 //!
 //! ## Deviations
-//! - `pf_osfp_fingerprint_hdr` takes no `struct ip6_hdr *`: its only use is under `#ifdef
-//!   INET6` (not configured), so an IPv6 packet (no IPv4 header) gets NULL, as in the C
-//!   without INET6: `pf_osfp_fingerprint` passes no IPv4 header for an `AF_INET6` packet.
-//!   The TCP header and its options come as the bytes `pf_pull_hdr` copied (`th_off << 2` of
-//!   them); options running past those bytes end the parse with no fingerprint.
-//! - `inet_ntop(AF_INET, &ip->ip_src, ...)` (not ported) is a dotted quad formatter for the
-//!   debug line (`InAddrFmt`).
+//! - `pf_osfp_fingerprint_hdr`'s TCP header and its options come as the bytes `pf_pull_hdr`
+//!   copied (`th_off << 2` of them); options running past those bytes end the parse with no
+//!   fingerprint.
+//! - `inet_ntop` (not ported) for the debug line's source name is a dotted quad formatter
+//!   (`InAddrFmt`) or `In6Ntop` (`netinet6/nd6.rs`), the `srcname` buffer an enum of them.
 //! - The fingerprint and entry are filled in (from the ioctl) when they are taken from their
 //!   pools in `pf_osfp_add`, before they are published, rather than after the lookup; the
 //!   unused one goes back to its pool as in C.
@@ -71,6 +69,7 @@ use crate::net::pfvar::{
 use crate::net::pfvar_priv::{PfGlobal, PfPdesc, pf_assert_locked, pf_lock, pf_unlock};
 use crate::netinet::in_::{IPPROTO_TCP, InAddr};
 use crate::netinet::ip::{IP_DF, IP_OFFMASK, Ip};
+use crate::netinet::ip6::Ip6Hdr;
 use crate::netinet::tcp::{
     TCPOLEN_MAXSEG, TCPOLEN_TIMESTAMP, TCPOLEN_WINDOW, TCPOPT_EOL, TCPOPT_MAXSEG, TCPOPT_NOP,
     TCPOPT_SACK_PERMITTED, TCPOPT_TIMESTAMP, TCPOPT_WINDOW, TH_ACK, TH_SYN, Tcphdr,
@@ -102,6 +101,25 @@ impl fmt::Display for InAddrFmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let b = self.0.s_addr.to_ne_bytes();
         write!(f, "{}.{}.{}.{}", b[0], b[1], b[2], b[3])
+    }
+}
+
+/// `srcname`: the source address of the fingerprinted packet, as `inet_ntop` writes it.
+enum SrcName {
+    /// An IPv4 source.
+    V4(InAddrFmt),
+    /// An IPv6 source.
+    #[cfg(feature = "inet6")]
+    V6(crate::netinet6::nd6::In6Ntop),
+}
+
+impl fmt::Display for SrcName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::V4(a) => a.fmt(f),
+            #[cfg(feature = "inet6")]
+            Self::V6(a) => a.fmt(f),
+        }
     }
 }
 
@@ -185,12 +203,11 @@ pub fn pf_osfp_fingerprint(pd: &mut PfPdesc) -> Option<&'static SlistHead<PfOsfp
     }
     let m = pd.m?;
 
-    let ip = match pd.af {
+    let (ip, ip6) = match pd.af {
         // SAFETY: pf pulled the IPv4 header into the first mbuf (`pf_setup_pdesc`).
-        AF_INET => Some(unsafe { mtod::<Ip>(m).read_unaligned() }),
-        // ip6 = mtod(pd->m, struct ip6_hdr *): used under INET6 only (not configured).
-        AF_INET6 => None,
-        _ => None,
+        AF_INET => (Some(unsafe { mtod::<Ip>(m).read_unaligned() }), None),
+        AF_INET6 => (None, Some(crate::netinet6::ip6_var::mtod_ip6(m))),
+        _ => (None, None),
     };
     let mut hdr = [0u8; 60];
     let len = usize::from(pd.tcp().th_off()) << 2;
@@ -198,14 +215,14 @@ pub fn pf_osfp_fingerprint(pd: &mut PfPdesc) -> Option<&'static SlistHead<PfOsfp
         return None;
     }
 
-    pf_osfp_fingerprint_hdr(ip.as_ref(), &hdr[..len])
+    pf_osfp_fingerprint_hdr(ip.as_ref(), ip6.as_ref(), &hdr[..len])
 }
 
 /// `pf_osfp_fingerprint_hdr`: the operating systems whose fingerprint matches the SYN with
-/// IPv4 header `ip` (none: not IPv4, see the module's deviations) and TCP header and options
-/// `tcp`.
+/// IPv4 header `ip` or IPv6 header `ip6` and TCP header and options `tcp`.
 pub fn pf_osfp_fingerprint_hdr(
     ip: Option<&Ip>,
+    ip6: Option<&Ip6Hdr>,
     tcp: &[u8],
 ) -> Option<&'static SlistHead<PfOsfpEnlist>> {
     if tcp.len() < size_of::<Tcphdr>() {
@@ -225,15 +242,26 @@ pub fn pf_osfp_fingerprint_hdr(
 
     let mut fp = PfOsFingerprint::default();
 
-    // INET6: else if ip6, the IPv6 branch (fp_psize from ip6_plen, fp_ttl from ip6_hlim,
-    // PF_OSFP_DF | PF_OSFP_INET6); not configured. Neither header: no fingerprint.
-    let ip = ip?;
-    fp.fp_psize = u16::from_be(ip.ip_len);
-    fp.fp_ttl = ip.ip_ttl;
-    if u16::from_be(ip.ip_off) & IP_DF != 0 {
-        fp.fp_flags |= PF_OSFP_DF;
-    }
-    let srcname = InAddrFmt(ip.ip_src);
+    let srcname = match (ip, ip6) {
+        (Some(ip), _) => {
+            fp.fp_psize = u16::from_be(ip.ip_len);
+            fp.fp_ttl = ip.ip_ttl;
+            if u16::from_be(ip.ip_off) & IP_DF != 0 {
+                fp.fp_flags |= PF_OSFP_DF;
+            }
+            SrcName::V4(InAddrFmt(ip.ip_src))
+        }
+        #[cfg(feature = "inet6")]
+        (None, Some(ip6)) => {
+            // jumbo payload?
+            fp.fp_psize = (size_of::<Ip6Hdr>() as u16).wrapping_add(u16::from_be(ip6.ip6_plen));
+            fp.fp_ttl = ip6.ip6_hlim;
+            fp.fp_flags |= PF_OSFP_DF;
+            fp.fp_flags |= crate::net::pfvar::PF_OSFP_INET6;
+            SrcName::V6(crate::netinet6::nd6::In6Ntop(ip6.ip6_src))
+        }
+        _ => return None,
+    };
     fp.fp_wsize = u16::from_be(th.th_win);
 
     let hlen = usize::from(th.th_off()) << 2;

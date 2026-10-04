@@ -50,8 +50,6 @@
 //!   address of a header copy on the caller's stack. The descriptor's methods (`ld16`,
 //!   `st16`, `ld_addr`, `st_addr`, ...) read and write through them; a pointer into the
 //!   descriptor itself would not survive Rust's aliasing rules.
-//! - `pf_pdesc.hdr` has no `INET6` members (`icmp6`, `mld`, `nd_ns`): `INET6` is not
-//!   configured.
 //! - The `kstat(4)` members of the limiters (`pfstlim_ks`, `pfsrlim_ks`) are left out: kstat is
 //!   not configured (`NKSTAT` 0), so they would always be NULL.
 //! - `pf_anchor_stackframe`'s union of `sf_r` and `sf_stack_top` is two members, the stack top
@@ -68,6 +66,8 @@ use crate::net::pfvar::{
     PfAnchor, PfRule, PfRulePtr, PfRuleSlist, PfRuleset, PfSnHead, PfStateKeyCmp, PfStatePeer,
     PfiKif, PfrKtable,
 };
+#[cfg(feature = "inet6")]
+use crate::netinet::icmp6::{Icmp6Hdr, MldHdr, NdNeighborSolicit};
 use crate::netinet::ip_icmp::Icmp;
 use crate::netinet::tcp::Tcphdr;
 use crate::netinet::udp::Udphdr;
@@ -654,6 +654,15 @@ pub union PfPdescHdr {
     pub udp: Udphdr,
     /// `icmp`.
     pub icmp: Icmp,
+    /// `icmp6`.
+    #[cfg(feature = "inet6")]
+    pub icmp6: Icmp6Hdr,
+    /// `mld`.
+    #[cfg(feature = "inet6")]
+    pub mld: MldHdr,
+    /// `nd_ns`.
+    #[cfg(feature = "inet6")]
+    pub nd_ns: NdNeighborSolicit,
     /// The bytes.
     pub bytes: [u8; core::mem::size_of::<Icmp>()],
 }
@@ -958,6 +967,34 @@ impl PfPdesc {
         unsafe { &mut self.hdr.icmp }
     }
 
+    /// `pd->hdr.icmp6`.
+    #[cfg(feature = "inet6")]
+    pub fn icmp6(&self) -> &Icmp6Hdr {
+        // SAFETY: as for `tcp`.
+        unsafe { &self.hdr.icmp6 }
+    }
+
+    /// `pd->hdr.icmp6`, writable.
+    #[cfg(feature = "inet6")]
+    pub fn icmp6_mut(&mut self) -> &mut Icmp6Hdr {
+        // SAFETY: as for `tcp`.
+        unsafe { &mut self.hdr.icmp6 }
+    }
+
+    /// `pd->hdr.mld`.
+    #[cfg(feature = "inet6")]
+    pub fn mld(&self) -> &MldHdr {
+        // SAFETY: as for `tcp`.
+        unsafe { &self.hdr.mld }
+    }
+
+    /// `pd->hdr.nd_ns`.
+    #[cfg(feature = "inet6")]
+    pub fn nd_ns(&self) -> &NdNeighborSolicit {
+        // SAFETY: as for `tcp`.
+        unsafe { &self.hdr.nd_ns }
+    }
+
     /// The bytes of `pd->hdr`.
     pub fn hdr_bytes(&mut self) -> &mut [u8] {
         // SAFETY: as for `tcp`.
@@ -1130,3 +1167,12 @@ impl<T> core::ops::Deref for PfGlobal<T> {
         &self.0
     }
 }
+
+// The byte view covers every member of `pf_pdesc.hdr`.
+#[cfg(feature = "inet6")]
+const _: () = {
+    use core::mem::size_of;
+    assert!(size_of::<MldHdr>() <= size_of::<Icmp>());
+    assert!(size_of::<NdNeighborSolicit>() <= size_of::<Icmp>());
+    assert!(size_of::<PfPdescHdr>() == size_of::<Icmp>());
+};

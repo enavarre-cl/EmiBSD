@@ -53,8 +53,6 @@
 //! members pf changes later are `Cell`s.
 //!
 //! ## Deviations
-//! - `INET6` is not configured: `DIOCNATLOOK` and `pf_rule_checkaf` reject `AF_INET6` as the C
-//!   does without the option (comments at the sites).
 //! - `kstat(4)` (`NKSTAT`) is not configured: the limiter kstats (`pf_statelim_kstat_*`,
 //!   `pf_sourcelim_kstat_*`) are a comment at the end of the file and at their call sites.
 //! - `pf_anchor_stack` is `net/pf.rs`'s static (one CPU, no `cpumem`); `pfattach` sets its
@@ -3445,9 +3443,11 @@ fn pfioctl_natlook(pnl: &mut PfiocNatlook) -> Result<(), Errno> {
     let direction = pnl.direction;
     let mut m: i32 = 0;
 
-    if pnl.af != AF_INET {
-        // INET6: AF_INET6 is accepted with the option; not configured.
-        return Err(Errno::EAFNOSUPPORT);
+    match pnl.af {
+        AF_INET => {}
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {}
+        _ => return Err(Errno::EAFNOSUPPORT),
     }
 
     // NATLOOK src and dst are reversed, so reverse sidx/didx
@@ -4190,7 +4190,12 @@ pub fn pf_rule_checkaf(r: &PfRule) -> Result<(), Errno> {
                 return Err(Errno::EPFNOSUPPORT);
             }
         }
-        // INET6: AF_INET6, with af-to only towards AF_INET; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            if afto && r.naf != AF_INET {
+                return Err(Errno::EPFNOSUPPORT);
+            }
+        }
         _ => return Err(Errno::EPFNOSUPPORT),
     }
 

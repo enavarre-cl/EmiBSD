@@ -57,11 +57,7 @@
 //! are `Cell`s under the locks the header names (`sc_mtx`, `sc_lock`).
 //!
 //! ## Deviations
-//! - The header and the file share this module. `<netinet6/in6.h>` is not ported: the
-//!   `struct in6_addr`s of [`PflowIpfixFlow6`] are their 16 bytes, and `pflowvalidsockaddr`
-//!   reads a `sockaddr_in6`'s port and address at their offsets. `INET6` is not configured,
-//!   so `socreate(AF_INET6)` fails and no IPv6 state exists; the IPv6 paths of the C (which
-//!   are not under `#ifdef INET6`) are ported anyway.
+//! - The header and the file share this module.
 //! - SMR (`kern/kern_smr.c`) is not ported (see `net/if_.rs`): `pflowif_list` is a plain list
 //!   changed under the kernel lock, read without one; `smr_barrier` is empty.
 //! - `pflow_counters` (a `cpumem`) is a static array of atomics (`docs/C_TO_RUST.md`).
@@ -123,6 +119,7 @@ use crate::net::route::Rtentry;
 use crate::netinet::if_ether::ETHERMTU;
 use crate::netinet::in_::{INADDR_ANY, SockaddrIn};
 use crate::netinet::udp_var::Udpiphdr;
+use crate::netinet6::in6::{In6Addr, SockaddrIn6, in6_is_addr_unspecified};
 use crate::sys::endian::{htobe64, htonl, htons};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_DEVBUF, M_NOWAIT, M_WAITOK, M_ZERO};
@@ -512,10 +509,10 @@ pub struct PflowIpfixNatFlow4 {
 #[repr(C, packed)]
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct PflowIpfixFlow6 {
-    /// `src_ip`: sourceIPv6Address (a `struct in6_addr`).
-    pub src_ip: [u8; 16],
+    /// `src_ip`: sourceIPv6Address.
+    pub src_ip: In6Addr,
     /// `dest_ip`: destinationIPv6Address.
-    pub dest_ip: [u8; 16],
+    pub dest_ip: In6Addr,
     /// `if_index_in`: ingressInterface.
     pub if_index_in: u32,
     /// `if_index_out`: egressInterface.
@@ -1042,11 +1039,6 @@ pub fn pflow_clone_destroy(ifp: &'static Ifnet) -> Result<(), Errno> {
     error
 }
 
-/// The offset of `sin6_port` in a `struct sockaddr_in6`.
-const SIN6_PORT_OFF: usize = 2;
-/// The offset of `sin6_addr` in a `struct sockaddr_in6`.
-const SIN6_ADDR_OFF: usize = 8;
-
 /// The bytes of a socket address.
 fn ss_bytes(ss: &SockaddrStorage) -> &[u8] {
     // SAFETY: `SockaddrStorage` is `#[repr(C)]` integers and byte arrays without padding (256
@@ -1074,24 +1066,21 @@ pub fn pflowvalidsockaddr(sa: Option<&SockaddrStorage>, ignore_port: bool) -> bo
         }
         AF_INET6 => {
             let b = ss_bytes(sa);
-            // IN6_IS_ADDR_UNSPECIFIED(&sin6->sin6_addr)
-            let unspecified = b[SIN6_ADDR_OFF..SIN6_ADDR_OFF + 16].iter().all(|&x| x == 0);
-            let port = u16::from_ne_bytes([b[SIN6_PORT_OFF], b[SIN6_PORT_OFF + 1]]);
-            !unspecified && (ignore_port || port != 0)
+            // SAFETY: the storage holds more than `size_of::<SockaddrIn6>()` bytes; every bit
+            // pattern of the plain-integer `SockaddrIn6` is valid and the read is unaligned.
+            let sin6 = unsafe { ptr::read_unaligned(b.as_ptr().cast::<SockaddrIn6>()) };
+            !in6_is_addr_unspecified(&sin6.sin6_addr) && (ignore_port || sin6.sin6_port != 0)
         }
         _ => false,
     }
 }
-
-/// `sizeof(struct sockaddr_in6)`.
-const SIZEOF_SOCKADDR_IN6: u8 = 28;
 
 /// The copy of `ss` the C `malloc`s for a family it knows, its `sa_len` set to the family's
 /// size; `None` for another family.
 fn pflow_sockaddr_copy(ss: &SockaddrStorage) -> Option<SockaddrStorage> {
     let len = match ss.ss_family {
         AF_INET => size_of::<SockaddrIn>() as u8,
-        AF_INET6 => SIZEOF_SOCKADDR_IN6,
+        AF_INET6 => size_of::<SockaddrIn6>() as u8,
         _ => return None,
     };
     // memcpy(sc->sc_flow*, &pflowr->flow*, sizeof(struct sockaddr_in*)): the rest of the
@@ -1621,12 +1610,12 @@ pub fn copy_flow_ipfix_6_data(
     src: usize,
     dst: usize,
 ) {
-    flow1.src_ip = sk.addr[src].get().addr8;
-    flow2.dest_ip = sk.addr[src].get().addr8;
+    flow1.src_ip = sk.addr[src].get().v6();
+    flow2.dest_ip = sk.addr[src].get().v6();
     flow1.src_port = sk.port[src].get();
     flow2.dest_port = flow1.src_port;
-    flow1.dest_ip = sk.addr[dst].get().addr8;
-    flow2.src_ip = sk.addr[dst].get().addr8;
+    flow1.dest_ip = sk.addr[dst].get().v6();
+    flow2.src_ip = sk.addr[dst].get().v6();
     flow1.dest_port = sk.port[dst].get();
     flow2.src_port = flow1.dest_port;
 

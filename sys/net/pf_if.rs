@@ -55,11 +55,6 @@
 //! ## Deviations
 //! - `struct pfi_kif_cmp` (the name-only key the C casts to a `struct pfi_kif` for
 //!   `RB_FIND`) is a zeroed `PfiKif` on the stack holding the name (`pfi_kif_key`).
-//! - `INET6` is not configured: the `AF_INET6` case of `pfi_match_addr` is a comment at its
-//!   site. The `AF_INET6` paths that are not under `#ifdef INET6` (`pfi_instance_add`,
-//!   `pfi_address_add`) stay; there is no `struct sockaddr_in6` type, so they read the
-//!   address at its offset in the socket address (`SIN6_ADDR_OFF`). No interface carries an
-//!   `AF_INET6` address in this kernel.
 //! - The C dereferences NULL in a few places that cannot be reached when pf is attached to
 //!   every interface and group: a rule kif with a group matched against a packet kif without
 //!   an interface (`pfi_kif_match`), an interface or group whose `if_pf_kif`/`ifg_pf_kif` is
@@ -109,6 +104,7 @@ use crate::net::pfvar::{
 };
 use crate::net::pfvar_priv::{PfGlobal, pf_assert_locked, pf_lock, pf_unlock};
 use crate::netinet::in_::SockaddrIn;
+use crate::netinet6::in6::{In6Addr, in6_is_addr_linklocal, in6_is_scope_embed, satosin6_const};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_NOWAIT, M_PF, M_WAITOK, M_ZERO};
 use crate::sys::pool::{PR_LIMITFAIL, Pool};
@@ -123,10 +119,6 @@ use crate::sys::types::SaFamily;
 pub const PFI_BUFFER_MAX: i32 = 0x10000;
 /// `PFI_MTYPE`: the `malloc(9)` type of kifs, hook tasks and `pfi_buffer`.
 pub const PFI_MTYPE: i32 = M_PF;
-
-/// `offsetof(struct sockaddr_in6, sin6_addr)`: after `sin6_len`, `sin6_family`, `sin6_port`
-/// and `sin6_flowinfo` (see the module's deviations).
-const SIN6_ADDR_OFF: usize = 8;
 
 /// The C globals `pfi_buffer`, `pfi_buffer_cnt` and `pfi_buffer_max` (see the module's
 /// deviations).
@@ -552,7 +544,21 @@ pub fn pfi_match_addr(dyn_: &PfiDynaddr, a: &PfAddr, af: SaFamily) -> bool {
                 .get()
                 .is_some_and(|kt| pfr_match_addr(kt, a, AF_INET)),
         },
-        // INET6: the AF_INET6 case over pfid_acnt6, pfid_addr6/pfid_mask6; not configured.
+        #[cfg(feature = "inet6")]
+        AF_INET6 => match dyn_.pfid_acnt6.get() {
+            0 => false,
+            1 => pf_match_addr(
+                0,
+                &dyn_.pfid_addr6.get(),
+                &dyn_.pfid_mask6.get(),
+                a,
+                AF_INET6,
+            ),
+            _ => dyn_
+                .pfid_kt
+                .get()
+                .is_some_and(|kt| pfr_match_addr(kt, a, AF_INET6)),
+        },
         _ => false,
     }
 }
@@ -731,24 +737,15 @@ pub fn pfi_table_update(kt: &'static PfrKtable, kif: &'static PfiKif, net: u8, f
     }
 }
 
-/// The 16 bytes of `sin6_addr` in the `struct sockaddr_in6` at `sa`.
+/// `((struct sockaddr_in6 *)sa)->sin6_addr`.
 ///
 /// # Safety
 ///
 /// `sa` points at a readable `struct sockaddr_in6`.
-unsafe fn sin6_addr(sa: *const Sockaddr) -> [u8; 16] {
-    // SAFETY: the caller's contract; the address is 16 bytes at `SIN6_ADDR_OFF`.
-    unsafe { ptr::read_unaligned(sa.cast::<u8>().add(SIN6_ADDR_OFF).cast::<[u8; 16]>()) }
-}
-
-/// `IN6_IS_ADDR_LINKLOCAL`.
-fn in6_is_addr_linklocal(a: &[u8; 16]) -> bool {
-    a[0] == 0xfe && (a[1] & 0xc0) == 0x80
-}
-
-/// `IN6_IS_SCOPE_EMBED`: link-local, or interface- or link-local multicast.
-fn in6_is_scope_embed(a: &[u8; 16]) -> bool {
-    in6_is_addr_linklocal(a) || (a[0] == 0xff && matches!(a[1] & 0x0f, 0x01 | 0x02))
+unsafe fn sin6_addr(sa: *const Sockaddr) -> In6Addr {
+    // SAFETY: the caller's contract; a generic sockaddr pointer has a smaller alignment, so
+    // the structure is read unaligned.
+    unsafe { ptr::read_unaligned(satosin6_const(sa)).sin6_addr }
 }
 
 /// `sin_addr` of the `struct sockaddr_in` at `sa`, as a `pf_addr`.
@@ -820,8 +817,7 @@ pub fn pfi_instance_add(ifp: Option<&'static Ifnet>, net: u8, flags: i32) {
                     net2 = pfi_unmask(&unsafe { sin_pfaddr(mask) });
                 } else if af == AF_INET6 {
                     // SAFETY: the netmask of an `AF_INET6` address is a `sockaddr_in6`.
-                    let addr8 = unsafe { sin6_addr(mask) };
-                    net2 = pfi_unmask(&PfAddr { addr8 });
+                    net2 = pfi_unmask(&PfAddr::from_v6(unsafe { sin6_addr(mask) }));
                 }
             }
         }
@@ -899,12 +895,11 @@ pub unsafe fn pfi_address_add(sa: *const Sockaddr, af: SaFamily, mut net: u8) {
         p.pfra_u = unsafe { sin_pfaddr(sa) };
     } else if af == AF_INET6 {
         // SAFETY: the caller's contract: an `AF_INET6` address is a `sockaddr_in6`.
-        p.pfra_u.addr8 = unsafe { sin6_addr(sa) };
-        if in6_is_scope_embed(&p.pfra_u.addr8) {
-            // s6_addr16[1] = 0
-            p.pfra_u.addr8[2] = 0;
-            p.pfra_u.addr8[3] = 0;
+        let mut a6 = unsafe { sin6_addr(sa) };
+        if in6_is_scope_embed(&a6) {
+            a6.set_s6_addr16(1, 0);
         }
+        p.pfra_u.set_v6(a6);
     }
     // mask network address bits
     let b = &mut p.pfra_u.addr8;

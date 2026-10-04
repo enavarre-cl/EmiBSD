@@ -43,11 +43,8 @@
 //! The fragment state is protected by `pf_frag_mtx` (`PF_FRAG_LOCK`).
 //!
 //! ## Deviations
-//! - `INET6` is not configured: `pf_reassemble6`, `pf_refragment6`, `pf_normalize_ip6`, the
-//!   IPv6 overlap rule of `pf_fillup_fragment` (RFC 5722, drop the whole datagram) and the
-//!   IPv6 cases of `pf_normalize_tcp_init`, `pf_normalize_tcp_stateful` and `pf_scrub`
-//!   (`ip6_hlim`, `ip6_flow`) are comments at their sites. `struct pf_fragment_tag`, which only
-//!   `pf_reassemble6`/`pf_refragment6` use, is kept ([`PfFragmentTag`]).
+//! - `pf_refragment6` frees the packet in hand and the rest of the fragment list when
+//!   forwarding is off; the C returns `PF_DROP` leaving them allocated.
 //! - `pf_frent_holes` takes the fragment as well: `TAILQ_PREV` needs the queue's head here
 //!   (`sys/queue.rs`).
 //! - `pf_frent_insert`'s `ENOBUFS` is `Err(Errno::ENOBUFS)`; `pf_normalize_tcp_init`'s 1 on
@@ -60,6 +57,8 @@
 use core::cell::Cell;
 use core::cmp::Ordering;
 use core::mem::{offset_of, size_of};
+#[cfg(feature = "inet6")]
+use core::ptr;
 
 use crate::dev::rnd::arc4random;
 use crate::kassert;
@@ -107,6 +106,26 @@ use crate::sys::syslog::{LOG_DEBUG, LOG_INFO, LOG_NOTICE, LOG_WARNING};
 use crate::sys::time::timersub;
 use crate::sys::tree::{RbEntry, RbHead};
 use crate::sys::types::SaFamily;
+
+#[cfg(feature = "inet6")]
+use crate::{
+    kern::uipc_mbuf::{m_getptr, ml_dequeue, ml_purge},
+    kern::uipc_mbuf2::{m_tag_delete, m_tag_get, m_tag_prepend},
+    net::if_var::Ifnet,
+    net::route::Rtentry,
+    netinet::icmp6::ICMP6_PACKET_TOO_BIG,
+    netinet::in_::IPPROTO_FRAGMENT,
+    netinet::ip6::{IP6F_MORE_FRAG, IP6F_OFF_MASK, IPV6_MAXPACKET, Ip6Ext, Ip6Frag, Ip6Hdr},
+    netinet6::frag6::frag6_deletefraghdr,
+    netinet6::icmp6::icmp6_error,
+    netinet6::in6::{SockaddrIn6, sin6tosa_const},
+    netinet6::in6_proto::IP6_FORWARDING,
+    netinet6::ip6_forward::ip6_forward,
+    netinet6::ip6_output::{in6_proto_cksum_out, ip6_fragment},
+    netinet6::ip6_var::{mtod_ip6, mtod_ip6_store},
+    sys::mbuf::{MTag, MbufList, PACKET_TAG_PF_REASSEMBLED, PF_TAG_REFRAGMENTED, mtod},
+    sys::socket::{AF_INET6, Sockaddr},
+};
 
 /// `struct pf_frent`: one fragment of a packet in reassembly.
 pub struct PfFrent {
@@ -267,7 +286,7 @@ crate::tree_adapter!(
 );
 
 /// `struct pf_fragment_tag`: what `pf_reassemble6` leaves on a reassembled IPv6 packet for
-/// `pf_refragment6` (not configured, see the module's deviations).
+/// `pf_refragment6`.
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug)]
 pub struct PfFragmentTag {
@@ -834,8 +853,10 @@ fn pf_fillup_fragment(
                     if let Some(p) = prev
                         && fe_end(p) > u32::from(frent.fe_off.get())
                     {
-                        // INET6: an overlap in an IPv6 packet goes to free_ipv6_fragment; not
-                        // configured.
+                        #[cfg(feature = "inet6")]
+                        if frag.node().fn_af.get() == AF_INET6 {
+                            break 'free_ipv6_fragment;
+                        }
 
                         let precut = (fe_end(p) - u32::from(frent.fe_off.get())) as u16;
                         if precut >= frent.fe_len.get() {
@@ -851,8 +872,10 @@ fn pf_fillup_fragment(
                     while let Some(a) = after
                         && fe_end(frent) > u32::from(a.fe_off.get())
                     {
-                        // INET6: an overlap in an IPv6 packet goes to free_ipv6_fragment; not
-                        // configured.
+                        #[cfg(feature = "inet6")]
+                        if frag.node().fn_af.get() == AF_INET6 {
+                            break 'free_ipv6_fragment;
+                        }
 
                         let aftercut = (fe_end(frent) - u32::from(a.fe_off.get())) as u16;
                         if aftercut < a.fe_len.get() {
@@ -1051,10 +1074,260 @@ fn pf_reassemble(m0: &mut Option<&'static Mbuf>, dir: u8, rdomain: u16, reason: 
     PF_PASS
 }
 
-// INET6: pf_reassemble6 (an IPv6 fragment into the same queues, then the fragment header
-// deleted, the next header restored and a PACKET_TAG_PF_REASSEMBLED pf_fragment_tag
-// prepended) and pf_refragment6 (ip6_fragment of the reassembled packet by the tag's maxlen,
-// each piece forwarded or sent); not configured.
+/// `pf_reassemble6`: queues an IPv6 fragment (`fraghdr`, the fragmentable part starting at
+/// `hdrlen`, the last extension header before it at `extoff`). When the datagram is complete
+/// `*m0` is the reassembled packet, without its fragment header, with the next header
+/// restored and a `PACKET_TAG_PF_REASSEMBLED` tag for `pf_refragment6`; `None` while it is
+/// incomplete. `PF_DROP` leaves a valid `*m0` for the caller to free.
+#[cfg(feature = "inet6")]
+#[allow(clippy::too_many_arguments)]
+fn pf_reassemble6(
+    m0: &mut Option<&'static Mbuf>,
+    fraghdr: &Ip6Frag,
+    hdrlen: u16,
+    extoff: u16,
+    dir: u8,
+    rdomain: u16,
+    reason: &mut u16,
+) -> u8 {
+    let Some(m) = *m0 else {
+        panic(format_args!("pf_reassemble6: no packet"));
+    };
+    let ip6 = mtod_ip6(m);
+
+    // Get an entry for the fragment queue
+    let Some(frent) = pf_create_fragment(reason) else {
+        return PF_DROP;
+    };
+
+    frent.fe_m.set(Some(m));
+    frent.fe_hdrlen.set(hdrlen);
+    frent.fe_extoff.set(extoff);
+    frent.fe_len.set(
+        (size_of::<Ip6Hdr>() as u16)
+            .wrapping_add(u16::from_be(ip6.ip6_plen))
+            .wrapping_sub(hdrlen),
+    );
+    frent
+        .fe_off
+        .set(u16::from_be(fraghdr.ip6f_offlg & IP6F_OFF_MASK));
+    frent.fe_mff.set(fraghdr.ip6f_offlg & IP6F_MORE_FRAG);
+
+    let key = PfFrnode::new();
+    key.fn_src.set(PfAddr::from_v6(ip6.ip6_src));
+    key.fn_dst.set(PfAddr::from_v6(ip6.ip6_dst));
+    key.fn_af.set(AF_INET6);
+    // Only the first fragment's protocol is relevant
+    key.fn_proto.set(0);
+    key.fn_direction.set(dir);
+    key.fn_rdomain.set(rdomain);
+
+    let Some(frag) = pf_fillup_fragment(&key, fraghdr.ip6f_ident, frent, reason) else {
+        return PF_DROP;
+    };
+
+    // The mbuf is part of the fragment entry, no direct free or access
+    *m0 = None;
+
+    if frag.fr_holes.get() != 0 {
+        crate::dpfprintf!(
+            LOG_DEBUG,
+            "frag {:#08x}, holes {}",
+            frag.fr_id.get(),
+            frag.fr_holes.get()
+        );
+        return PF_PASS; // drop because *m0 is NULL, no error
+    }
+
+    // We have all the data
+    let first = frag.fr_queue.first();
+    kassert!(first.is_some());
+    let Some(frent) = first else {
+        return PF_DROP;
+    };
+    let extoff = u32::from(frent.fe_extoff.get());
+    let maxlen = frag.fr_maxlen.get();
+    let total = frag.fr_queue.last().map_or(0, fe_end);
+    let hdrlen = u32::from(frent.fe_hdrlen.get()) - size_of::<Ip6Frag>() as u32;
+    let m = pf_join_fragment(frag);
+    *m0 = Some(m);
+
+    // Take protocol from first fragment header
+    let Some((n, off)) = m_getptr(m, (hdrlen as usize + offset_of!(Ip6Frag, ip6f_nxt)) as i32)
+    else {
+        panic(format_args!("pf_reassemble6: short frag mbuf chain"));
+    };
+    // SAFETY: m_getptr found the byte at `off` within `n`'s data.
+    let proto = unsafe { *mtod::<u8>(n).add(off as usize) };
+
+    'fail: {
+        // Delete frag6 header
+        if frag6_deletefraghdr(m, hdrlen as i32).is_err() {
+            break 'fail;
+        }
+
+        m_calchdrlen(m);
+
+        let Some(mtag) = m_tag_get(
+            PACKET_TAG_PF_REASSEMBLED,
+            size_of::<PfFragmentTag>() as i32,
+            M_NOWAIT,
+        ) else {
+            break 'fail;
+        };
+        let ftag = PfFragmentTag {
+            ft_hdrlen: hdrlen as u16,
+            ft_extoff: extoff as u16,
+            ft_maxlen: maxlen,
+        };
+        // SAFETY: the tag's data has room for the `PfFragmentTag` it was made for; it may
+        // be unaligned.
+        unsafe { ptr::write_unaligned(mtag.data().cast::<PfFragmentTag>(), ftag) };
+        m_tag_prepend(m, mtag);
+
+        let mut ip6 = mtod_ip6(m);
+        let plen = hdrlen - size_of::<Ip6Hdr>() as u32 + total;
+        ip6.ip6_plen = (plen as u16).to_be();
+        if extoff != 0 {
+            // Write protocol into next field of last extension header
+            let Some((n, off)) =
+                m_getptr(m, (extoff as usize + offset_of!(Ip6Ext, ip6e_nxt)) as i32)
+            else {
+                panic(format_args!("pf_reassemble6: short ext mbuf chain"));
+            };
+            // SAFETY: m_getptr found the byte at `off` within `n`'s data.
+            unsafe { *mtod::<u8>(n).add(off as usize) = proto };
+        } else {
+            ip6.ip6_nxt = proto;
+        }
+        mtod_ip6_store(m, &ip6);
+
+        if plen as usize > IPV6_MAXPACKET {
+            crate::dpfprintf!(LOG_NOTICE, "drop: too big: {}", total);
+            ip6.ip6_plen = 0;
+            mtod_ip6_store(m, &ip6);
+            reason_set(reason, PFRES_SHORT);
+            // PF_DROP requires a valid mbuf *m0 in pf_test6()
+            return PF_DROP;
+        }
+
+        crate::dpfprintf!(
+            LOG_INFO,
+            "complete: {:p}({})",
+            m,
+            u16::from_be(ip6.ip6_plen)
+        );
+        return PF_PASS;
+    }
+    // fail:
+    reason_set(reason, PFRES_MEMORY);
+    // PF_DROP requires a valid mbuf *m0 in pf_test6(), will free later
+    PF_DROP
+}
+
+/// `pf_refragment6`: splits a packet `pf_reassemble6` reassembled (its tag `mtag`) back into
+/// fragments of the original size and sends them: forwarded when `ifp` is `None`, else out
+/// of `ifp` towards `dst` by `rt`. `*m0` is consumed.
+#[cfg(feature = "inet6")]
+pub fn pf_refragment6(
+    m0: &mut Option<&'static Mbuf>,
+    mtag: &'static MTag,
+    dst: Option<&SockaddrIn6>,
+    ifp: Option<&'static Ifnet>,
+    rt: Option<&'static Rtentry>,
+) -> u8 {
+    use crate::netinet6::ip6_var::{
+        IPV6_FORWARDING, IPV6_FORWARDING_IPSEC, Ip6statCounters, ip6stat_inc,
+    };
+
+    let Some(m) = *m0 else {
+        panic(format_args!("pf_refragment6: no packet"));
+    };
+    // SAFETY: a PACKET_TAG_PF_REASSEMBLED tag carries a `PfFragmentTag` (pf_reassemble6
+    // made it); it may be unaligned.
+    let ftag = unsafe { ptr::read_unaligned(mtag.data().cast::<PfFragmentTag>()) };
+    let hdrlen = ftag.ft_hdrlen;
+    let extoff = ftag.ft_extoff;
+    let maxlen = ftag.ft_maxlen;
+    // SAFETY: the tag was found on `m`'s list and is not used after this.
+    unsafe { m_tag_delete(m, mtag) };
+
+    // Checksum must be calculated for the whole packet
+    in6_proto_cksum_out(m, None);
+
+    let proto = if extoff != 0 {
+        // Use protocol from next field of last extension header
+        let Some((n, off)) = m_getptr(
+            m,
+            (usize::from(extoff) + offset_of!(Ip6Ext, ip6e_nxt)) as i32,
+        ) else {
+            panic(format_args!("pf_refragment6: short ext mbuf chain"));
+        };
+        // SAFETY: m_getptr found the byte at `off` within `n`'s data.
+        unsafe {
+            let p = mtod::<u8>(n).add(off as usize);
+            let proto = *p;
+            *p = IPPROTO_FRAGMENT as u8;
+            proto
+        }
+    } else {
+        let mut hdr = mtod_ip6(m);
+        let proto = hdr.ip6_nxt;
+        hdr.ip6_nxt = IPPROTO_FRAGMENT as u8;
+        mtod_ip6_store(m, &hdr);
+        proto
+    };
+
+    // Maxlen may be less than 8 iff there was only a single fragment. As it was fragmented
+    // before, add a fragment header also for a single fragment. If total or maxlen is less
+    // than 8, ip6_fragment() will return EMSGSIZE and we drop the packet.
+    let mtu = u64::from(hdrlen) + size_of::<Ip6Frag>() as u64 + u64::from(maxlen);
+    let ml = MbufList::new();
+    let error = ip6_fragment(m, &ml, i32::from(hdrlen), proto, mtu);
+    *m0 = None; // ip6_fragment() has consumed original packet.
+    if let Err(e) = error {
+        crate::dpfprintf!(LOG_NOTICE, "refragment error {}", e as i32);
+        return PF_DROP;
+    }
+
+    while let Some(m) = ml_dequeue(&ml) {
+        let pf = &m.m_pkthdr().pf;
+        pf.flags.set(pf.flags.get() | PF_TAG_REFRAGMENTED);
+        match ifp {
+            None => {
+                let flags = match IP6_FORWARDING.load(core::sync::atomic::Ordering::Relaxed) {
+                    2 => IPV6_FORWARDING_IPSEC | IPV6_FORWARDING,
+                    1 => IPV6_FORWARDING,
+                    _ => {
+                        ip6stat_inc(Ip6statCounters::Ip6sCantforward);
+                        m_freem(m);
+                        ml_purge(&ml);
+                        return PF_DROP;
+                    }
+                };
+                ip6_forward(m, None, flags);
+            }
+            Some(ifp) if m.m_pkthdr().len.get() as u64 <= u64::from(ifp.if_mtu.get()) => {
+                let dst: *const Sockaddr = match dst {
+                    Some(d) => sin6tosa_const(d),
+                    None => ptr::null(),
+                };
+                if let Some(output) = ifp.if_output.get() {
+                    // SAFETY: `dst` is the caller's sockaddr_in6 (pf_route6's local), `rt`
+                    // its route; the hook takes the packet.
+                    let _ = unsafe { output(ifp, m, dst, rt) };
+                } else {
+                    m_freem(m);
+                }
+            }
+            Some(ifp) => {
+                icmp6_error(m, ICMP6_PACKET_TOO_BIG, 0, ifp.if_mtu.get() as i32);
+            }
+        }
+    }
+
+    PF_PASS
+}
 
 /// The packet of a descriptor, which pf's normalizer is only called with.
 fn pd_mbuf(pd: &PfPdesc) -> &'static Mbuf {
@@ -1121,8 +1394,50 @@ pub fn pf_normalize_ip(pd: &mut PfPdesc, reason: &mut u16) -> u8 {
     PF_PASS
 }
 
-// INET6: pf_normalize_ip6 (pulls the fragment header at pd->fragoff and reassembles with
-// pf_reassemble6 when reass is on); not configured.
+/// `pf_normalize_ip6`: reassembles an IPv6 fragment (its fragment header at `pd->fragoff`)
+/// when `reass` is on; `pd->m` becomes `None` while the datagram is incomplete.
+#[cfg(feature = "inet6")]
+pub fn pf_normalize_ip6(pd: &mut PfPdesc, reason: &mut u16) -> u8 {
+    if pd.fragoff == 0 {
+        return PF_PASS; // no_fragment
+    }
+
+    let mut b = [0u8; size_of::<Ip6Frag>()];
+    if !pf_pull_hdr(
+        pd_mbuf(pd),
+        pd.fragoff as i32,
+        &mut b,
+        Some(reason),
+        AF_INET6,
+    ) {
+        return PF_DROP;
+    }
+    // SAFETY: `Ip6Frag` is 8 bytes of integers (`#[repr(C)]`, no padding).
+    let frag = unsafe { ptr::read_unaligned(b.as_ptr().cast::<Ip6Frag>()) };
+
+    if PF_STATUS.reass.get() == 0 {
+        return PF_PASS; // no reassembly
+    }
+
+    // Returns PF_DROP or m is NULL or completely reassembled mbuf
+    pf_frag_lock();
+    if pf_reassemble6(
+        &mut pd.m,
+        &frag,
+        (pd.fragoff as usize + size_of::<Ip6Frag>()) as u16,
+        pd.extoff as u16,
+        pd.dir,
+        pd.rdomain,
+        reason,
+    ) != PF_PASS
+    {
+        pf_frag_unlock();
+        return PF_DROP;
+    }
+    pf_frag_unlock();
+    // pd->m is NULL (packet has been reassembled, no error) or the whole datagram.
+    PF_PASS
+}
 
 /// `pf_state_scrub_get`: a zeroed scrub, `None` when the pool is empty.
 pub fn pf_state_scrub_get() -> Option<&'static PfStateScrub> {
@@ -1254,7 +1569,14 @@ pub fn pf_normalize_tcp_init(pd: &mut PfPdesc, src: &PfStatePeer) -> Result<(), 
         let h = mtod_ip(pd_mbuf(pd));
         scrub.pfss_ttl.set(h.ip_ttl);
     } else {
-        // INET6: pfss_ttl = ip6_hlim; not configured.
+        #[cfg(feature = "inet6")]
+        if pd.af == AF_INET6 {
+            let h = mtod_ip6(pd_mbuf(pd));
+            scrub.pfss_ttl.set(h.ip6_hlim);
+        } else {
+            unhandled_af(i32::from(pd.af));
+        }
+        #[cfg(not(feature = "inet6"))]
         unhandled_af(i32::from(pd.af));
     }
 
@@ -1349,7 +1671,21 @@ pub fn pf_normalize_tcp_stateful(
             mtod_ip_store(m, &h);
         }
     } else {
-        // INET6: the same for ip6_hlim; not configured.
+        #[cfg(feature = "inet6")]
+        if pd.af == AF_INET6 {
+            if let Some(scrub) = src.scrub.get() {
+                let m = pd_mbuf(pd);
+                let mut h = mtod_ip6(m);
+                if h.ip6_hlim > scrub.pfss_ttl.get() {
+                    scrub.pfss_ttl.set(h.ip6_hlim);
+                }
+                h.ip6_hlim = scrub.pfss_ttl.get();
+                mtod_ip6_store(m, &h);
+            }
+        } else {
+            unhandled_af(i32::from(pd.af));
+        }
+        #[cfg(not(feature = "inet6"))]
         unhandled_af(i32::from(pd.af));
     }
 
@@ -1739,9 +2075,22 @@ pub fn pf_normalize_mss(pd: &mut PfPdesc, maxmss: u16) -> i32 {
 /// (`no-df`), raise the TTL (`min-ttl`), set the TOS (`set-tos`) and a random IP id
 /// (`random-id`, not for fragments), fixing the header checksum.
 pub fn pf_scrub(m: &Mbuf, flags: u16, af: SaFamily, min_ttl: u8, tos: u8) {
+    #[cfg(feature = "inet6")]
+    if af == AF_INET6 {
+        let mut h6 = mtod_ip6(m);
+        // Enforce a minimum ttl, may cause endless packet loops
+        if min_ttl != 0 && h6.ip6_hlim < min_ttl {
+            h6.ip6_hlim = min_ttl;
+        }
+        // Enforce tos: drugs are unable to explain such idiocy
+        if flags & PFSTATE_SETTOS != 0 {
+            h6.ip6_flow &= !0x0fc0_0000u32.to_be();
+            h6.ip6_flow |= (u32::from(tos) << 20).to_be();
+        }
+        mtod_ip6_store(m, &h6);
+        return;
+    }
     if af != AF_INET {
-        // INET6: min-ttl raises ip6_hlim, set-tos rewrites the traffic class in ip6_flow;
-        // not configured.
         return;
     }
     let mut h = mtod_ip(m);

@@ -63,10 +63,9 @@
 //! [`pf_abi_write`], [`pf_abi_copyin`] and [`pf_abi_copyout`].
 //!
 //! ## Deviations
-//! - `INET6` is not configured (as everywhere in this kernel): `struct pf_addr`'s `v6` member,
-//!   `union pfsockaddr_union`'s `sin6` and the `struct icmp6_hdr`/`mld_hdr`/
-//!   `nd_neighbor_solicit` members of `pf_pdesc.hdr` (`net/pfvar_priv.rs`) are left out; the
-//!   storage keeps its C size, so the ABI is unchanged.
+//! - The members of the unions `struct pf_addr` (`v4`, `v6`, `addr16`, `addr32`), `pfra_u`
+//!   (`pfra_ip4addr`, `pfra_ip6addr`) and `union pfsockaddr_union` (`sa`, `sin`, `sin6`) are
+//!   accessor methods over the union's bytes.
 //! - The `PF_AEQ`, `PF_ANEQ`, `PF_AZERO`, `PF_MISMATCHAW`, `PF_POOL_DYNTYPE`,
 //!   `PF_OSFP_PACK`/`UNPACK`, `PF_OSFP_ENTRY_EQ`, `REASON_SET`, `DPFPRINTF` and
 //!   `pf_state_counter_hton`/`ntoh` macros are functions (`DPFPRINTF` a macro, `dpfprintf!`).
@@ -93,6 +92,7 @@ use crate::net::radix::{RadixNode, RadixNodeHead};
 use crate::net::route::RTLABEL_LEN;
 use crate::netinet::in_::{InAddr, SockaddrIn};
 use crate::netinet::tcp_fsm::TCP_NSTATES;
+use crate::netinet6::in6::{In6Addr, SockaddrIn6};
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::Mbuf;
 use crate::sys::queue::{SlistEntry, SlistHead, TailqEntry, TailqHead};
@@ -460,6 +460,21 @@ impl PfAddr {
         let mut p = Self::zeroed();
         p.set_v4(a);
         p
+    }
+
+    /// `v6`: the IPv6 address, all 16 bytes.
+    pub const fn v6(&self) -> In6Addr {
+        In6Addr::new(self.addr8)
+    }
+
+    /// `v6 = a`.
+    pub fn set_v6(&mut self, a: In6Addr) {
+        self.addr8 = a.s6_addr;
+    }
+
+    /// The `pf_addr` of an IPv6 address.
+    pub const fn from_v6(a: In6Addr) -> Self {
+        Self { addr8: a.s6_addr }
     }
 }
 
@@ -2200,6 +2215,11 @@ impl PfrAddr {
     pub fn pfra_ip4addr(&self) -> InAddr {
         self.pfra_u.v4()
     }
+
+    /// `pfra_ip6addr`.
+    pub fn pfra_ip6addr(&self) -> In6Addr {
+        self.pfra_u.v6()
+    }
 }
 
 /// `PFR_DIR_IN`.
@@ -2284,8 +2304,7 @@ pub struct PfrKcounters {
     pub states: Cell<u64>,
 }
 
-/// `union pfsockaddr_union`: a `sockaddr` or a `sockaddr_in` (the `sockaddr_in6` member is
-/// not configured; the storage keeps its 28 bytes).
+/// `union pfsockaddr_union`: a `sockaddr`, a `sockaddr_in` or a `sockaddr_in6` (28 bytes).
 #[repr(C)]
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct PfsockaddrUnion {
@@ -2310,6 +2329,18 @@ impl PfsockaddrUnion {
     pub fn set_sin(&mut self, s: &SockaddrIn) {
         // SAFETY: as for `sin`; the write stays within the union.
         unsafe { ptr::write_unaligned(self.bytes.as_mut_ptr().cast::<SockaddrIn>(), *s) }
+    }
+
+    /// `sin6`.
+    pub fn sin6(&self) -> SockaddrIn6 {
+        // SAFETY: `SockaddrIn6` is 28 bytes of integers, the whole union, read unaligned.
+        unsafe { ptr::read_unaligned(self.bytes.as_ptr().cast::<SockaddrIn6>()) }
+    }
+
+    /// `sin6 = s`.
+    pub fn set_sin6(&mut self, s: &SockaddrIn6) {
+        // SAFETY: as for `sin6`; the write is the whole union.
+        unsafe { ptr::write_unaligned(self.bytes.as_mut_ptr().cast::<SockaddrIn6>(), *s) }
     }
 
     /// `sa.sa_family`.

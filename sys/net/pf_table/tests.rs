@@ -608,3 +608,72 @@ fn validate_and_fix() {
     assert_eq!(pfr_gcd(12, 18), 6);
     assert_eq!(pfr_gcd(0, 5), 5);
 }
+
+/// An IPv6 address from its eight 16-bit groups.
+#[cfg(feature = "inet6")]
+fn pf6(g: [u16; 8]) -> PfAddr {
+    let mut a = PfAddr::zeroed();
+    for (i, w) in g.iter().enumerate() {
+        a.addr8[2 * i..2 * i + 2].copy_from_slice(&w.to_be_bytes());
+    }
+    a
+}
+
+#[cfg(feature = "inet6")]
+#[test]
+fn ipv6_networks_and_hosts() {
+    let _g = setup();
+
+    assert_eq!(add_tables(std::vec![table("t6", "", 0)]), 1);
+    let mut tbl = table("t6", "", 0);
+    let kt = pfr_lookup_table(&tbl).expect("table");
+
+    let a6 = |g, net, not: bool| PfrAddr {
+        pfra_u: pf6(g),
+        pfra_af: AF_INET6,
+        pfra_net: net,
+        pfra_not: u8::from(not),
+        ..PfrAddr::default()
+    };
+    let net64 = a6([0x2001, 0xdb8, 1, 2, 0, 0, 0, 0], 64, false);
+    let host = a6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x99], 128, false);
+    // Host bits past the prefix make the address invalid.
+    let bad = a6([0x2001, 0xdb8, 1, 2, 0, 0, 0, 1], 64, false);
+    assert!(!pfr_validate_addr(&bad));
+    assert!(pfr_validate_addr(&net64));
+    assert!(!pfr_validate_addr(&a6([0; 8], 129, false)));
+
+    let (nadd, _) = add_addrs(&mut tbl, &[net64, host]).expect("added");
+    assert_eq!(nadd, 2);
+    assert_eq!(kt.pfrkt_cnt().get(), 2);
+
+    assert!(pfr_match_addr(
+        kt,
+        &pf6([0x2001, 0xdb8, 1, 2, 0xa, 0xb, 0xc, 0xd]),
+        AF_INET6
+    ));
+    assert!(!pfr_match_addr(
+        kt,
+        &pf6([0x2001, 0xdb8, 1, 3, 0, 0, 0, 1]),
+        AF_INET6
+    ));
+    assert!(pfr_match_addr(
+        kt,
+        &pf6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x99]),
+        AF_INET6
+    ));
+    assert!(!pfr_match_addr(
+        kt,
+        &pf6([0x2001, 0xdb8, 0, 0, 0, 0, 0, 0x98]),
+        AF_INET6
+    ));
+    // An IPv4 lookup does not see the IPv6 entries.
+    assert!(!pfr_match_addr(kt, &pf4([32, 1, 13, 184]), AF_INET));
+
+    // The /64 entry reads back with its prefix.
+    let ke = pfr_lookup_addr(kt, &net64, true).expect("exact /64");
+    let mut ad = PfrAddr::default();
+    pfr_copyout_addr(&mut ad, Some(ke));
+    assert_eq!((ad.pfra_af, ad.pfra_net), (AF_INET6, 64));
+    assert_eq!(ad.pfra_ip6addr(), net64.pfra_ip6addr());
+}

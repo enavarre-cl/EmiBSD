@@ -118,8 +118,6 @@
 //! - `carp(4)` is not configured (`NCARP` 0): the `carp_group_demote_adj` calls and
 //!   `if_addgroup(ifp, "carp")` are comments at their sites. `bpf(4)` is configured:
 //!   `pfsync_clone_create` attaches a `DLT_PFSYNC` tap and `pfsync_sendout` taps each frame.
-//!   `INET6` is not configured: the `AF_INET6` branch of `pfsync_defer_output`
-//!   (`pf_route6`, `ip6_output`) is a comment; such a state cannot exist here.
 //! - `PFSYNC_DEBUG` is not defined: its `KASSERT` in `pfsync_slice_drop` is not ported.
 //! - `struct pfsync_slice`'s `__aligned(CACHELINESIZE)` is left out: there is one CPU.
 //! - The message writers (`struct pfsync_q`'s `write`) and readers (`struct pfsync_act`'s
@@ -2815,7 +2813,8 @@ fn pfsync_defer_output(pd: &'static PfsyncDeferral) {
         }
         match af {
             AF_INET => pf_route(&mut pdesc, st),
-            // INET6: AF_INET6 goes through pf_route6; not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => crate::net::pf::pf_route6(&mut pdesc, st),
             _ => unhandled_af(i32::from(af)),
         }
         pd.pd_m.set(pdesc.m);
@@ -2826,7 +2825,12 @@ fn pfsync_defer_output(pd: &'static PfsyncDeferral) {
                     let _ = ip_output(m, None, None, 0, None, None, 0);
                 }
             }
-            // INET6: AF_INET6 goes through ip6_output; not configured.
+            #[cfg(feature = "inet6")]
+            AF_INET6 => {
+                if let Some(m) = pd.pd_m.get() {
+                    let _ = crate::netinet6::ip6_output::ip6_output(m, None, None, 0, None, None);
+                }
+            }
             _ => unhandled_af(i32::from(af)),
         }
 

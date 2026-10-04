@@ -50,10 +50,6 @@
 //! while `pf_map_addr` runs (net lock and `pf_lock`).
 //!
 //! ## Deviations
-//! - `INET6` is not configured: `pf_hash`'s IPv6 hash, the IPv6 cases of `pf_map_addr`
-//!   (dynamic addresses, `random`, the single-host round-robin check), `pf_get_sport`'s
-//!   ICMPv6 echo and `pf_get_transaddr_af` (the `af-to` NAT64/NAT46 translation, with its
-//!   call in `pf_get_transaddr`) are comments at their sites.
 //! - The C's 0/-1 and 0/1 status returns (`pf_get_sport`, `pf_map_addr`,
 //!   `pf_map_addr_sticky`, `pf_map_addr_states_increase`, `pf_get_transaddr`,
 //!   `pf_postprocess_addr`, `pf_pool_states_decrease_addr`) are `bool`, `true` for the C's
@@ -88,6 +84,8 @@ use crate::netinet::in_::{
 use crate::netinet::in_pcb::in_baddynamic;
 use crate::netinet::ip_icmp::ICMP_ECHO;
 use crate::sys::socket::AF_INET;
+#[cfg(feature = "inet6")]
+use crate::sys::socket::AF_INET6;
 use crate::sys::syslog::{LOG_DEBUG, LOG_ERR, LOG_INFO, LOG_NOTICE};
 use crate::sys::types::SaFamily;
 
@@ -103,14 +101,28 @@ pub fn pf_hash(inaddr: &PfAddr, hash: &mut PfAddr, key: &PfPoolhashkey, af: SaFa
         k1: u64::from_ne_bytes(k1),
     };
 
-    if af != AF_INET {
-        // INET6: the hash of the four words, spread over hash->addr32[0..4] (flipped for the
-        // upper two); not configured.
-        unhandled_af(i32::from(af));
+    match af {
+        AF_INET => {
+            let res = SipHash24(&skey, &inaddr.addr8[..4]);
+            hash.set_addr32(0, res as u32);
+            res
+        }
+        #[cfg(feature = "inet6")]
+        AF_INET6 => {
+            let res = SipHash24(&skey, &inaddr.addr8);
+            // The union of hash64 and hash32[2].
+            let b = res.to_ne_bytes();
+            let h0 = u32::from_ne_bytes([b[0], b[1], b[2], b[3]]);
+            let h1 = u32::from_ne_bytes([b[4], b[5], b[6], b[7]]);
+            hash.set_addr32(0, h0);
+            hash.set_addr32(1, h1);
+            // siphash isn't big enough, but flipping it around is good enough here.
+            hash.set_addr32(2, !h1);
+            hash.set_addr32(3, !h0);
+            res
+        }
+        _ => unhandled_af(i32::from(af)),
     }
-    let res = SipHash24(&skey, &inaddr.addr8[..4]);
-    hash.set_addr32(0, res as u32);
-    res
 }
 
 /// `pf_get_sport`: picks the translated source address (`naddr`) and a free source port
@@ -153,7 +165,15 @@ pub fn pf_get_sport(
             return true; // Don't try to modify non-echo ICMP
         }
     }
-    // INET6: IPPROTO_ICMPV6 with ICMP6_ECHO_REQUEST the same way; not configured.
+    #[cfg(feature = "inet6")]
+    if i32::from(pd.proto) == IPPROTO_ICMPV6 {
+        if pd.ndport == u16::from(crate::netinet::icmp6::ICMP6_ECHO_REQUEST).to_be() {
+            low = 1;
+            high = 65535;
+        } else {
+            return true; // Don't try to modify non-echo ICMP
+        }
+    }
 
     loop {
         let mut key = PfStateKeyCmp {
@@ -485,7 +505,17 @@ pub fn pf_map_addr(
             raddr = d.pfid_addr4.get();
             rmask = d.pfid_mask4.get();
         } else {
-            // INET6: pfid_acnt6, pfid_addr6 and pfid_mask6; not configured.
+            #[cfg(feature = "inet6")]
+            if af == AF_INET6 {
+                if d.pfid_acnt6.get() < 1 && !pf_pool_dyntype(rpool.opts.get()) {
+                    return false;
+                }
+                raddr = d.pfid_addr6.get();
+                rmask = d.pfid_mask6.get();
+            } else {
+                unhandled_af(i32::from(af));
+            }
+            #[cfg(not(feature = "inet6"))]
             unhandled_af(i32::from(af));
         }
     } else if atype == PF_ADDR_TABLE {
@@ -529,8 +559,22 @@ pub fn pf_map_addr(
                     c.set_addr32(0, pf_rand_addr(rmask.addr32(0)));
                     rpool.counter.set(c);
                 } else {
-                    // INET6: a random host part in each word the mask leaves open, from the
-                    // last; not configured.
+                    #[cfg(feature = "inet6")]
+                    if af == AF_INET6 {
+                        // A random host part in each word the mask leaves open, from the
+                        // last, up to the first word the mask covers.
+                        let mut c = rpool.counter.get();
+                        for i in (0..4).rev() {
+                            if rmask.addr32(i) == 0xffff_ffff {
+                                break;
+                            }
+                            c.set_addr32(i, pf_rand_addr(rmask.addr32(i)));
+                        }
+                        rpool.counter.set(c);
+                    } else {
+                        unhandled_af(i32::from(af));
+                    }
+                    #[cfg(not(feature = "inet6"))]
                     unhandled_af(i32::from(af));
                 }
                 pf_poolmask(naddr, &raddr, &rmask, &rpool.counter.get(), af);
@@ -584,7 +628,16 @@ pub fn pf_map_addr(
                         pf_addrcpy(naddr, &raddr, af);
                         break 'rr;
                     }
-                    // INET6: the same for a /128 mask; not configured.
+                    #[cfg(feature = "inet6")]
+                    if af == AF_INET6
+                        && crate::netinet6::in6::in6_are_addr_equal(
+                            &rmask.v6(),
+                            &crate::netinet6::in6::IN6MASK128,
+                        )
+                    {
+                        pf_addrcpy(naddr, &raddr, af);
+                        break 'rr;
+                    }
                 } else if pf_match_addr(0, &raddr, &rmask, &rpool.counter.get(), af) {
                     return false;
                 }
@@ -772,7 +825,10 @@ pub fn pf_get_transaddr(
 ) -> bool {
     let mut naddr = PfAddr::zeroed();
 
-    // INET6: if pd->af != pd->naf, pf_get_transaddr_af(r, pd, sns) (af-to); not configured.
+    #[cfg(feature = "inet6")]
+    if pd.af != pd.naf {
+        return pf_get_transaddr_af(r, pd, sns);
+    }
 
     if r.nat.addr.type_.get() != PF_ADDR_NONE {
         // XXX is this right? what if rtable is changed at the same
@@ -863,10 +919,194 @@ pub fn pf_get_transaddr(
     true
 }
 
-// INET6: pf_get_transaddr_af (the af-to translation: the source port and address from the
-// nat pool, the ICMP/ICMPv6 echo types swapped, the destination through inet_nat46/
-// inet_nat64 with the prefix of the rdr pool, the rule's destination or the nat pool); not
-// configured.
+/// `pf_get_transaddr_af`: the `af-to` translation of `pd` into family `pd->naf`: the source
+/// address and port from the nat pool, the ICMP and ICMPv6 echo types swapped, and the
+/// destination mapped through `inet_nat46`/`inet_nat64` with the prefix of the rdr pool, the
+/// rule's destination or the nat pool. `true` (the C's 0) on success.
+#[cfg(feature = "inet6")]
+pub fn pf_get_transaddr_af(
+    r: &'static PfRule,
+    pd: &mut PfPdesc,
+    sns: &mut [Option<&'static PfSrcNode>; PF_SN_MAX],
+) -> bool {
+    use crate::kern::subr_prf::panic;
+    use crate::netinet::icmp6::{ICMP6_ECHO_REPLY, ICMP6_ECHO_REQUEST};
+    use crate::netinet::in_::{InAddr, in_mask2len};
+    use crate::netinet::inet_nat64::{inet_nat46, inet_nat64};
+    use crate::netinet::ip_icmp::ICMP_ECHOREPLY;
+    use crate::netinet6::in6::in6_mask2len;
+
+    let mut ndaddr = PfAddr::zeroed();
+    let mut nsaddr = PfAddr::zeroed();
+    let mut naddr = PfAddr::zeroed();
+    let mut prefixlen: i32;
+
+    let fam = |af: SaFamily| if af == AF_INET { "inet" } else { "inet6" };
+    let kind = || {
+        if r.rdr.addr.type_.get() == PF_ADDR_NONE {
+            "nat"
+        } else {
+            "rdr"
+        }
+    };
+
+    if pf_debug(LOG_INFO) {
+        log(
+            LOG_INFO,
+            format_args!("pf: af-to {} {}, ", fam(pd.naf), kind()),
+        );
+        pf_print_host(&pd.nsaddr, pd.nsport, pd.af);
+        addlog(format_args!(" -> "));
+        pf_print_host(&pd.ndaddr, pd.ndport, pd.af);
+        addlog(format_args!("\n"));
+    }
+
+    if r.nat.addr.type_.get() == PF_ADDR_NONE {
+        panic(format_args!(
+            "pf_get_transaddr_af: no nat pool for source address"
+        ));
+    }
+
+    // get source address and port
+    let mut nport: u16 = 0;
+    if !pf_get_sport(
+        pd,
+        r,
+        &mut nsaddr,
+        &mut nport,
+        r.nat.proxy_port[0].get(),
+        r.nat.proxy_port[1].get(),
+        sns,
+    ) {
+        crate::dpfprintf!(
+            LOG_NOTICE,
+            "pf: af-to NAT proxy port allocation ({}-{}) failed",
+            r.nat.proxy_port[0].get(),
+            r.nat.proxy_port[1].get()
+        );
+        return false;
+    }
+    pd.nsport = nport;
+
+    // The echo type in the port of the destination (inbound) or source (outbound).
+    let swap = |p: u16, from: (u8, u8), to: (u8, u8)| -> u16 {
+        let h = u16::from_be(p);
+        let h = if h == u16::from(from.0) {
+            u16::from(to.0)
+        } else if h == u16::from(from.1) {
+            u16::from(to.1)
+        } else {
+            h
+        };
+        h.to_be()
+    };
+    let proto = i32::from(pd.proto);
+    if proto == IPPROTO_ICMPV6 && pd.naf == AF_INET {
+        let (f, t) = (
+            (ICMP6_ECHO_REQUEST, ICMP6_ECHO_REPLY),
+            (ICMP_ECHO, ICMP_ECHOREPLY),
+        );
+        if pd.dir == PF_IN {
+            pd.ndport = swap(pd.ndport, f, t);
+        } else {
+            pd.nsport = swap(pd.nsport, f, t);
+        }
+    } else if proto == IPPROTO_ICMP && pd.naf == AF_INET6 {
+        let (f, t) = (
+            (ICMP_ECHO, ICMP_ECHOREPLY),
+            (ICMP6_ECHO_REQUEST, ICMP6_ECHO_REPLY),
+        );
+        if pd.dir == PF_IN {
+            pd.ndport = swap(pd.ndport, f, t);
+        } else {
+            pd.nsport = swap(pd.nsport, f, t);
+        }
+    }
+
+    // get the destination address and port
+    if r.rdr.addr.type_.get() != PF_ADDR_NONE {
+        if !pf_map_addr(pd.naf, r, &nsaddr, &mut naddr, None, sns, &r.rdr, PF_SN_RDR) {
+            return false;
+        }
+        if r.rdr.proxy_port[0].get() != 0 {
+            pd.ndport = r.rdr.proxy_port[0].get().to_be();
+        }
+
+        let mask = r.rdr.addr.v.get().mask();
+        if pd.naf == AF_INET {
+            // The prefix is the IPv4 rdr address
+            prefixlen = in_mask2len(&InAddr {
+                s_addr: mask.addr32(0),
+            });
+            let _ = inet_nat46(
+                i32::from(pd.naf),
+                &pd.ndaddr.addr8,
+                &mut ndaddr.addr8,
+                &naddr.addr8,
+                prefixlen as u8,
+            );
+        } else {
+            // The prefix is the IPv6 rdr address
+            prefixlen = in6_mask2len(&mask.v6(), None);
+            let _ = inet_nat64(
+                i32::from(pd.naf),
+                &pd.ndaddr.addr8,
+                &mut ndaddr.addr8,
+                &naddr.addr8,
+                prefixlen as u8,
+            );
+        }
+    } else if pd.naf == AF_INET {
+        // The prefix is the IPv6 dst address
+        prefixlen = in6_mask2len(&r.dst.addr.v.get().mask().v6(), None);
+        if prefixlen < 32 {
+            prefixlen = 96;
+        }
+        let nd = pd.ndaddr;
+        let _ = inet_nat64(
+            i32::from(pd.naf),
+            &nd.addr8,
+            &mut ndaddr.addr8,
+            &nd.addr8,
+            prefixlen as u8,
+        );
+    } else {
+        // The prefix is the IPv6 nat address (that was stored in pd->nsaddr)
+        prefixlen = in6_mask2len(&r.nat.addr.v.get().mask().v6(), None);
+        if prefixlen > 96 {
+            prefixlen = 96;
+        }
+        let _ = inet_nat64(
+            i32::from(pd.naf),
+            &pd.ndaddr.addr8,
+            &mut ndaddr.addr8,
+            &nsaddr.addr8,
+            prefixlen as u8,
+        );
+    }
+
+    let naf = pd.naf;
+    pf_addrcpy(&mut pd.nsaddr, &nsaddr, naf);
+    pf_addrcpy(&mut pd.ndaddr, &ndaddr, naf);
+
+    if pf_debug(LOG_INFO) {
+        log(
+            LOG_INFO,
+            format_args!(
+                "pf: af-to {} {} done, prefixlen {}, ",
+                fam(pd.naf),
+                kind(),
+                prefixlen
+            ),
+        );
+        pf_print_host(&pd.nsaddr, pd.nsport, pd.naf);
+        addlog(format_args!(" -> "));
+        pf_print_host(&pd.ndaddr, pd.ndport, pd.naf);
+        addlog(format_args!("\n"));
+    }
+
+    true
+}
 
 /// `pf_postprocess_addr`: takes the state's connection off the `least-states` counters of
 /// the pools that chose its addresses (`nat-to`, `rdr-to`, `route-to`); `true` (the C's 0)
