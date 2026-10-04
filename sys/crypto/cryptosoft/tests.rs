@@ -915,6 +915,7 @@ fn run_deflate_mbuf(sid: u64, m: &'static Mbuf, d: Cryptodesc<'static>) -> Resul
 #[test]
 fn deflate_compresses_and_decompresses_an_mbuf_chain() {
     let _g = fw();
+    let _m = mbuf_setup();
     let sid = crypto_newsession(&ini(CRYPTO_DEFLATE_COMP, &[], None), 0).unwrap();
     let (hdr, payload) = ipcomp_packet();
     let packet = [hdr.clone(), payload.clone()].concat();
@@ -944,6 +945,7 @@ fn deflate_compresses_and_decompresses_an_mbuf_chain() {
 #[test]
 fn deflate_leaves_incompressible_data_alone() {
     let _g = fw();
+    let _m = mbuf_setup();
     let sid = crypto_newsession(&ini(CRYPTO_DEFLATE_COMP, &[], None), 0).unwrap();
     let noise: Vec<u8> = (0..200u32)
         .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
