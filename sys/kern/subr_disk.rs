@@ -46,9 +46,9 @@
 //!
 //! Upstream: sys/kern/subr_disk.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Ported: everything a disk driver calls (rd(4) first), `dk_mountroot` with
-//! `disk_readlabel`, and `setroot` with `getdisk`/`parsedisk` (the root/swap/dump choice).
-//! Not yet ported: `disk_map` (the DUID lookup of `opendev(3)`'s `DIOCMAP`).
+//! Everything a disk driver calls (rd(4) first), `dk_mountroot` with `disk_readlabel`,
+//! `setroot` with `getdisk`/`parsedisk` (the root/swap/dump choice) and `disk_map` (the DUID
+//! lookup of `mount(2)` and of `opendev(3)`'s `DIOCMAP`).
 //!
 //! ## Deviations
 //! - `gpt_get_hdr` returns the header (zeroed when invalid) and `gpt_get_parts` the
@@ -65,6 +65,8 @@
 //! - `disk_readlabel` returns `Err(DiskReadlabelError)`, whose `Display` is the C's message,
 //!   where the C fills `errbuf` and returns it.
 //! - `duid_format` returns the 16 hex digits by value instead of a static buffer.
+//! - `disk_map` returns `true` where the C returns 0 and `false` for -1; `mappath` is a
+//!   separate buffer (the C lets `path` and `mappath` be the same array; a Rust caller copies).
 //! - `softraid_disk_attach` and `sr_map_root` are `NSOFTRAID` (not configured); `DEBUG`'s
 //!   `DPRINTF`s are not configured.
 //! - `dk_mountroot`: `FFS` (feature `ffs`) is the only file system the kernel configuration
@@ -99,7 +101,7 @@ use crate::kern::kern_tc::microuptime;
 use crate::kern::subr_autoconf::ALLDEVS;
 use crate::kern::subr_autoconf::{device_lookup, device_ref, device_unref};
 use crate::kern::subr_prf::Str;
-use crate::kern::subr_prf::{addlog, log, panic, printf};
+use crate::kern::subr_prf::{addlog, log, panic, printf, snprintf};
 use crate::kern::subr_xxx::blktochr;
 use crate::kern::vfs_bio::biowait;
 use crate::kern::vfs_subr::{cdevvp, vdevgone, vput};
@@ -114,7 +116,9 @@ use crate::sys::conf::SWDEVT;
 use crate::sys::conf::{DevTypeOpen, DevTypeStrategy};
 use crate::sys::device::{Cfdriver, Device};
 use crate::sys::device::{DV_DISK, DV_IFNET};
-use crate::sys::disk::{DKF_CONSTRUCTED, DKF_NOLABELREAD, DKF_OPENED, Disk, DisklistHead};
+use crate::sys::disk::{
+    DKF_CONSTRUCTED, DKF_NOLABELREAD, DKF_OPENED, DM_OPENBLCK, DM_OPENPART, Disk, DisklistHead,
+};
 use crate::sys::disklabel::{
     DISKLABEL_SIZE, DISKMAGIC, DOS_LABELSECTOR, DOS_MAXEBR, DOSBBSECTOR, DOSMBR_SIGNATURE,
     DOSMBR_SIGNATURE_OFF, DOSPTYP_EFI, DOSPTYP_EFISYS, DOSPTYP_EXTEND, DOSPTYP_EXTENDL,
@@ -1726,6 +1730,83 @@ pub fn disk_readlabel(dl: &mut Disklabel, dev: Dev) -> Result<(), DiskReadlabelE
     let _ = VOP_CLOSE(vn, FREAD, NOCRED, Some(p));
     vput(vn);
     result
+}
+
+/// `disk_map`: maps a disklabel UID name to the device of the disk carrying that label.
+///
+/// `path` (up to its NUL) must have the format `[disklabel uid] . [partition]`, or, with
+/// `DM_OPENPART` in `flags`, be the DUID on its own (the raw partition). On success
+/// `mappath` holds `/dev/<disk><part>` (`/dev/r<disk><part>` without `DM_OPENBLCK`),
+/// NUL-terminated and truncated to the buffer as `snprintf` does, and the result is `true`;
+/// `false` is the C's `-1`: not a DUID, no disk or more than one disk with that UID.
+pub fn disk_map(path: &[u8], mappath: &mut [u8], flags: i32) -> bool {
+    let path = &path[..path.iter().position(|&c| c == 0).unwrap_or(path.len())];
+
+    // Attempt to map a request for a disklabel UID to the correct device. We should be
+    // supplied with a disklabel UID which has the following format:
+    //
+    // [disklabel uid] . [partition]
+    //
+    // Alternatively, if the DM_OPENPART flag is set the disklabel UID can based passed on
+    // its own.
+
+    if path.contains(&b'/') {
+        return false;
+    }
+
+    // Verify that the device name is properly formed.
+    if !((path.len() == 16 && flags & DM_OPENPART != 0) || (path.len() == 18 && path[16] == b'.')) {
+        return false;
+    }
+
+    // Get partition.
+    let (part, partno) = if flags & DM_OPENPART != 0 {
+        (dl_partnum2name(RAW_PART as usize), Some(RAW_PART as usize))
+    } else {
+        (Some(path[17]), dl_partname2num(path[17]))
+    };
+    let (Some(part), Some(_)) = (part, partno) else {
+        return false;
+    };
+
+    // Derive label UID.
+    let mut uid = [0u8; DUID_SIZE];
+    for (i, &c) in path[..2 * DUID_SIZE].iter().enumerate() {
+        let nibble = match c {
+            b'0'..=b'9' => c - b'0',
+            b'a'..=b'f' => c - b'a' + 10,
+            _ => return false,
+        };
+        uid[i / 2] = (uid[i / 2] << 4) | nibble;
+    }
+
+    let mut mdk: Option<&Disk> = None;
+    for dk in DISKLIST.0.iter() {
+        let Some(lp) = dk.dk_label.get() else {
+            continue;
+        };
+        // SAFETY: an attached disk's label lives as long as the disk.
+        if duid_equal(&unsafe { lp.as_ref() }.d_uid, &uid) {
+            // Fail if there are duplicate UIDs!
+            if mdk.is_some() {
+                return false;
+            }
+            mdk = Some(dk);
+        }
+    }
+
+    // mdk->dk_name == NULL: the name is a copy here, empty when the driver gave none.
+    let Some(mdk) = mdk.filter(|dk| !dk.name().is_empty()) else {
+        return false;
+    };
+
+    let raw = if flags & DM_OPENBLCK != 0 { "" } else { "r" };
+    snprintf(
+        mappath,
+        format_args!("/dev/{}{}{}", raw, mdk.name(), char::from(part)),
+    );
+
+    true
 }
 
 /// Lookup a disk device and verify that it has completed attaching. The device comes back

@@ -91,8 +91,8 @@
 //!   protocol's usable regions, which already exclude the kernel, the firmware and the
 //!   bootloader's own data. The ISA hole and the `avail_end` bookkeeping have nothing to do.
 //! - `cpu_startup` prints the memory sizes and fills the boot CPU's TSS (`cpu_enter_pages`):
-//!   `version` (generated `vers.c`, M5-b), the exec and physio maps (M6,
-//!   M7), `cpu_init_extents` and `cpu_boot_mode` (M4-b) are not there yet; `bufinit` is.
+//!   `version` (generated `vers.c`, M5-b), the exec and physio maps and `bufinit` are;
+//!   `cpu_init_extents` and `cpu_boot_mode` (M4-b) are not there yet.
 //! - The IDT is a static page (`IDT`) instead of the early page `locore0.S` reserves and the
 //!   page `init_x86_64` maps at `idt_vaddr`; `idt_allocmap` is an array of atomics.
 //!   `cpu_init_msrs` and the `cpu_info_full_primary` initialiser are the first lines of
@@ -158,7 +158,7 @@ use crate::arch::amd64::include::segments::{
 use crate::arch::amd64::include::signal::Sigcontext;
 use crate::arch::amd64::include::specialreg::{CPUID_NXE, cpuid};
 use crate::arch::amd64::include::tss::X86_64Tss;
-use crate::arch::amd64::include::vmparam::VM_MAXUSER_ADDRESS;
+use crate::arch::amd64::include::vmparam::{VM_MAXUSER_ADDRESS, VM_PHYS_SIZE};
 use crate::arch::amd64::isa::clock::{
     i8254_delay, i8254_initclocks, i8254_start_both_clocks, rtcinit, startclocks,
 };
@@ -192,7 +192,7 @@ use crate::sys::systm::{SysArgs, sysargs};
 use crate::sys::types::{Paddr, Register, Vaddr};
 use crate::sys::user::{Uarea, User};
 use crate::unported;
-use crate::uvm::uvm_extern::{EXEC_MAP, UvmConstraintRange};
+use crate::uvm::uvm_extern::{EXEC_MAP, PHYS_MAP, UvmConstraintRange};
 use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_km::{kernel_map, kernel_map_min, uvm_km_suballoc};
 use crate::uvm::uvm_map::VM_MAP_PAGEABLE;
@@ -607,7 +607,20 @@ pub fn cpu_startup() {
     );
     EXEC_MAP.store(ptr::from_ref(exec_map).cast_mut(), Ordering::Release);
 
-    // cpu_init_extents, the physio map (phys_map): with physio and the extents.
+    // Allocate a submap for physio
+    minaddr = kernel_map_min().as_usize();
+    let phys_map = uvm_km_suballoc(
+        kernel_map(),
+        &mut minaddr,
+        &mut maxaddr,
+        VM_PHYS_SIZE,
+        0,
+        false,
+        None,
+    );
+    PHYS_MAP.store(ptr::from_ref(phys_map).cast_mut(), Ordering::Release);
+
+    // cpu_init_extents: with the extents.
 
     let free = UVMEXP.free.load(Ordering::Relaxed).max(0) as usize;
     kprintf!(

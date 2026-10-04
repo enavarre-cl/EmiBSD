@@ -22,6 +22,7 @@ pub mod kern_fork;
 pub mod kern_kthread;
 pub mod kern_lock;
 pub mod kern_malloc;
+pub mod kern_physio;
 pub mod kern_pledge;
 pub mod kern_proc;
 pub mod kern_prot;

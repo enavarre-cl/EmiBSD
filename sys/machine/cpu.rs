@@ -9,13 +9,15 @@
 //! `curproc` (`ci_curproc`, `set_curproc`), `proc0paddr`, the context switch
 //! (`cpu_switchto`, `cpu_fork`), `clear_resched`, `cpu_unidle`, the idle loop hooks
 //! (`cpu_idle_enter`/`cpu_idle_cycle`/`cpu_idle_leave`), `CPU_INFO_FOREACH` and the mutex
-//! nesting counter.
+//! nesting counter. M10a adds physio's `vmapbuf`/`vunmapbuf` (`vm_machdep.c`, declared in
+//! `<uvm/uvm_extern.h>`).
 
 use core::cell::Cell;
 use core::ffi::c_void;
 
 use crate::machine::Machine;
 use crate::machine::bootinfo::BootInfo;
+use crate::sys::buf::Buf;
 use crate::sys::clockintr::Clockqueue;
 use crate::sys::exec::{ExecPackage, PsStrings};
 use crate::sys::proc::Proc;
@@ -201,6 +203,16 @@ pub trait Cpu {
         arg: *mut c_void,
     );
 
+    /// `vmapbuf(bp, len)` (`vm_machdep.c`): maps the user pages of a physio request
+    /// (`B_PHYS`, wired by `uvm_vslock_device`; `b_data` is the user address, `b_proc` the
+    /// thread) into kernel virtual space from `phys_map`: `b_data` becomes the kernel address
+    /// and the user one is saved in `b_saveaddr`.
+    fn vmapbuf(bp: &Buf, len: usize);
+
+    /// `vunmapbuf(bp, len)` (`vm_machdep.c`): undoes [`Cpu::vmapbuf`] once the transfer is
+    /// over and restores `b_data` from `b_saveaddr`.
+    fn vunmapbuf(bp: &Buf, len: usize);
+
     /// `setregs(p, pack, stack, arginfo)` (`machdep.c`): clear registers on exec: `p` will
     /// return to user mode at `pack.ep_entry` with the stack pointer at `stack`, every other
     /// register zero and the machine state of a fresh thread.
@@ -270,6 +282,16 @@ pub fn curcpu() -> &'static CpuInfo {
 /// `child_return` on the selected machine.
 pub fn child_return(arg: *mut c_void) {
     Machine::child_return(arg)
+}
+
+/// `vmapbuf` on the selected machine.
+pub fn vmapbuf(bp: &Buf, len: usize) {
+    Machine::vmapbuf(bp, len)
+}
+
+/// `vunmapbuf` on the selected machine.
+pub fn vunmapbuf(bp: &Buf, len: usize) {
+    Machine::vunmapbuf(bp, len)
 }
 
 /// `curproc`: the thread running on this CPU, `None` before `proc0` is set up.

@@ -42,12 +42,14 @@
 //!
 //! Status: `wip`. Milestone M3 needs the address-space bounds and the physical segment
 //! policy; the user limits (`MAXTSIZ`, `DFLDSIZ`, `MAXDSIZ`, `BRKSIZ`, `DFLSSIZ`, `MAXSSIZ`,
-//! `STACKGAP_RANDOM`, `USRSTACK`, `VM_MIN_STACK_ADDRESS`), `SHMMAXPGS`, `USRIOSIZE` and
-//! `VM_PHYS_SIZE` arrive with M6.
+//! `STACKGAP_RANDOM`, `USRSTACK`, `VM_MIN_STACK_ADDRESS`); M10a (physio) `USRIOSIZE` and
+//! `VM_PHYS_SIZE`; `SHMMAXPGS` is not there yet.
 
 use crate::arch::arm64::include::param::PAGE_SIZE;
 use crate::uvm::uvm_page::VM_PSTRAT_BSEARCH;
 
+/// `USRIOSIZE`: size of User Raw I/O map, in pages.
+pub const USRIOSIZE: usize = 300;
 /// `KERNEL_BASE`: where the kernel's virtual space starts.
 pub const KERNEL_BASE: usize = 0xffff_ff80_0000_0000;
 /// `VM_MIN_ADDRESS`: the lowest user address.
@@ -80,6 +82,8 @@ pub const VM_MIN_STACK_ADDRESS: usize = 3 << (USER_SPACE_BITS - 2);
 pub const VM_MIN_KERNEL_ADDRESS: usize = 0xffff_ff80_0000_0000;
 /// `VM_MAX_KERNEL_ADDRESS`: the end of the kernel's own virtual space.
 pub const VM_MAX_KERNEL_ADDRESS: usize = 0xffff_ff83_ffff_ffff;
+/// `VM_PHYS_SIZE`: virtual size (bytes) of the physio submap (`phys_map`).
+pub const VM_PHYS_SIZE: usize = USRIOSIZE * PAGE_SIZE;
 /// `VM_PHYSSEG_MAX`: how many physical memory segments `uvm_page_physload` accepts.
 pub const VM_PHYSSEG_MAX: usize = 32;
 /// `VM_PHYSSEG_STRAT`: `vm_physmem[]` is kept sorted for a binary search.
@@ -98,6 +102,7 @@ mod tests {
         let ours: &[(&str, i64)] = &[
             ("USER_SPACE_BITS", i64::from(USER_SPACE_BITS)),
             ("VM_PHYSSEG_MAX", VM_PHYSSEG_MAX as i64),
+            ("USRIOSIZE", USRIOSIZE as i64),
         ];
         for (name, value) in ours {
             assert_eq!(crate::reftest::int(&defs, name), Some(*value), "{name}");

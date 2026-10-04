@@ -46,9 +46,8 @@
 //!   file system has a smaller `fs_sbsize`; the C allocates `fs_sbsize` bytes.
 //! - `ffs_mount` looks the device name up in a `Nameidata` of its own (`ndinit` builds one
 //!   around the kernel copy of the name) instead of reinitialising the caller's `ndp`, whose
-//!   lifetime cannot hold a local name. `disk_map` (`subr_disk.c`, DUID names) is reported
-//!   and the name is used as given, the C's answer when `disk_map` fails. `swapdev` and
-//!   `nblkdev` come from the machine's `conf.c` (`crate::machine::conf`).
+//!   lifetime cannot hold a local name. `swapdev` and `nblkdev` come from the machine's
+//!   `conf.c` (`crate::machine::conf`).
 //! - `um_export` (`NFSSERVER`) is not kept, so the export update of `ffs_mount` passes a
 //!   NULL table to `vfs_export`, which answers `ENOTSUP` without `NFSSERVER`.
 //! - `ffs_vars[]` holds only the `UFS_DIRHASH` variables, so with `ufs_dirhash.c` not ported
@@ -70,6 +69,7 @@ use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_rwlock::rrw_init_flags;
 use crate::kern::kern_sysctl::sysctl_bounded_arr;
 use crate::kern::kern_tc::gettime;
+use crate::kern::subr_disk::disk_map;
 use crate::kern::subr_pool::{pool_get, pool_init};
 use crate::kern::subr_prf::panic;
 use crate::kern::vfs_bio::{bawrite, bread, brelse, bwrite, getblk};
@@ -87,6 +87,7 @@ use crate::machine::copy::copyinstr;
 use crate::machine::cpu::curproc;
 use crate::machine::intr::{IPL_NONE, splbio, splx};
 use crate::sys::buf::{B_INVAL, B_NOCACHE, Buf};
+use crate::sys::disk::DM_OPENBLCK;
 use crate::sys::errno::Errno;
 use crate::sys::fcntl::{FREAD, FWRITE};
 use crate::sys::lock::{LK_EXCLUSIVE, LK_NOWAIT, LK_RETRY};
@@ -323,7 +324,7 @@ pub fn ffs_mount(
     let args = UfsArgs::from_bytes(data);
     let mut ump: Option<&'static Ufsmount> = None;
     let mut ronly = 0;
-    let fname: [u8; MNAMELEN];
+    let mut fname = [0u8; MNAMELEN];
     let mut fspec = [0u8; MNAMELEN];
 
     // If updating, check whether changing from read-only to read/write; if there is no
@@ -406,10 +407,9 @@ pub fn ffs_mount(
                 break 'error_1 Err(e);
             }
 
-            // disk_map(fspec, fname, MNAMELEN, DM_OPENBLCK) == -1: subr_disk.c is not ported,
-            // so the name is used as given.
-            let _ = crate::unported!("ffs_mount: disk_map (subr_disk.c)");
-            fname = fspec;
+            if !disk_map(&fspec, &mut fname, DM_OPENBLCK) {
+                fname = fspec;
+            }
 
             let flen = fname.iter().position(|&c| c == 0).unwrap_or(MNAMELEN);
             let mut nd = ndinit(LOOKUP, FOLLOW, NiDirp::Sys(&fname[..flen]), p);

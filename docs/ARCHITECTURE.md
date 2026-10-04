@@ -483,6 +483,14 @@ user's group (macOS has no such group, and `pwd_mkdb` insists on one).
   a vnode's text and data copy-on-write from its `uvn_attach` object, as OpenBSD does, and
   the boot module's anonymous with the image bytes copied in (`sys/kern/exec_subr.rs`);
   either way the pages are faulted in by `uvm_fault`.
+- Raw disk I/O (M10a): `kern_physio.c` is OpenBSD's. A disk's character device (`rdread`/
+  `rdwrite`, `sdread`/`sdwrite`) calls `physio(strategy, dev, B_READ|B_WRITE, minphys, uio)`,
+  which wires each `minphys`-sized piece of the user buffer with `uvm_vslock_device`
+  (bouncing it through `dma_constraint` pages when the device cannot reach them), maps it
+  into `phys_map` with the machine's `vmapbuf` (`machine::cpu::Cpu`, `vm_machdep.c` on each
+  arch) and runs one private buffer through the strategy routine. `phys_map`, like
+  `exec_map`, is a static in `uvm_extern.rs` (`PHYS_MAP`) that each machine's `cpu_startup`
+  sets (`VM_PHYS_SIZE` = `USRIOSIZE` pages).
 - Exec (M8): `kern_exec.c`, `exec_elf.c` and `exec_subr.c` are OpenBSD's. `sys_execve`
   finds the file with `namei` (`EXECPATH`: the realpath becomes `AUX_openbsd_execpath`),
   checks it (`VOP_GETATTR`, `VOP_ACCESS`, `VOP_OPEN`), reads the header with `vn_rdwr`,

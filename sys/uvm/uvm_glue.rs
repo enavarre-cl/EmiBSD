@@ -69,9 +69,9 @@
 //!
 //! Status: `wip`. Milestone M5 (part b2) ports the u-area allocator the fork path needs:
 //! `kv_uarea`, `uvm_uarea_alloc` and `uvm_uarea_free`. M7a adds `uvm_init_limits`.
-//! `kern_sysctl.c` brings `uvm_vslock` and `uvm_vsunlock`. `uvm_kernacc`,
-//! `uvm_vslock_device`, `uvm_vsunlock_device`, `uvm_atopg` and the swapper come with the
-//! pager and physio (M7).
+//! `kern_sysctl.c` brings `uvm_vslock` and `uvm_vsunlock`; M10a (physio) brings
+//! `uvm_vslock_device` and `uvm_vsunlock_device`. `uvm_kernacc`, `uvm_atopg` and the swapper
+//! come with the pager.
 //!
 //! ## Deviations
 //! - `__HAVE_USPACE_GUARD`'s guard page is not carved out yet: `km_alloc` hands out
@@ -80,25 +80,37 @@
 //!   and the u-area has no guard until then.
 
 use core::ptr::{self, NonNull};
+use core::slice;
 use core::sync::atomic::Ordering;
 
 use crate::kern::subr_prf::panic;
 use crate::machine::Machine;
+use crate::machine::Pmap;
 use crate::machine::VmParam;
+use crate::machine::copy::{copyin, copyout};
 use crate::machine::cpu::curproc;
 use crate::machine::param::MachineParam;
+use crate::machine::pmap::{pmap_extract, pmap_kenter_pa, pmap_kernel, pmap_kremove, pmap_update};
 use crate::sys::errno::Errno;
+use crate::sys::mman::{PROT_READ, PROT_WRITE};
+use crate::sys::param::PAGE_SIZE;
 use crate::sys::param::{USPACE, USPACE_ALIGN};
 use crate::sys::proc::Proc;
 use crate::sys::proc::Process;
 use crate::sys::resource::{RLIMIT_DATA, RLIMIT_RSS, RLIMIT_STACK};
 use crate::sys::resourcevar::Plimit;
-use crate::sys::types::Rlim;
-use crate::uvm::uvm_extern::{KmemVaMode, KvMap, VmProt};
+use crate::sys::types::{Paddr, Rlim, Vaddr, Vsize};
+use crate::uvm::uvm_extern::{KmemVaMode, KvMap, UVM_PLA_WAITOK, VmProt};
+use crate::uvm::uvm_fault::{uvm_fault_unwire_locked, uvm_fault_wire};
 use crate::uvm::uvm_init::UVMEXP;
-use crate::uvm::uvm_km::{KD_WAITOK, KP_ZERO, km_alloc, km_free};
-use crate::uvm::uvm_map::{uvm_map_pageable, uvmspace_free, uvmspace_purge};
-use crate::uvm::uvm_param::{ptoa, round_page, trunc_page};
+use crate::uvm::uvm_km::{
+    KD_NOWAIT, KD_WAITOK, KP_NONE, KP_ZERO, KV_ANY, km_alloc, km_free, uvm_km_pgremove_intrsafe,
+};
+use crate::uvm::uvm_map::{
+    uvm_map_pageable, uvmspace_free, uvmspace_purge, vm_map_lock_read, vm_map_unlock_read,
+};
+use crate::uvm::uvm_page::{Pglist, paddr_is_dma_reachable, uvm_pglistalloc, vm_page_to_phys};
+use crate::uvm::uvm_param::{atop, ptoa, round_page, trunc_page};
 use crate::{kassert, unported};
 
 /// `kv_uarea`: u-areas come from `kernel_map`, `USPACE_ALIGN`ed.
@@ -134,6 +146,157 @@ pub fn uvm_vsunlock(p: &Proc, addr: usize, len: usize) {
     kassert!(end > start);
 
     let _ = uvm_map_pageable(map, start, end, true, 0);
+}
+
+/// `uvm_vslock_device`: wire user memory, make sure it's device reachable and bounce if
+/// necessary (physio).
+///
+/// On success the map of `p` stays read-locked until [`uvm_vsunlock_device`] and the
+/// result is the C's `*retp`: `None` when the device reaches the user pages themselves,
+/// otherwise the kernel bounce buffer (DMA-reachable pages holding a copy of the `len` user
+/// bytes) that stands for `addr` during the transfer.
+pub fn uvm_vslock_device(
+    p: &Proc,
+    addr: usize,
+    len: usize,
+    access_type: VmProt,
+) -> Result<Option<NonNull<u8>>, Errno> {
+    let map = &p.vmspace().vm_map;
+
+    let start = trunc_page(addr);
+    let end = round_page(addr.wrapping_add(len));
+    let sz = end.wrapping_sub(start);
+    let off = addr - start;
+    if end <= start {
+        return Err(Errno::EINVAL);
+    }
+
+    vm_map_lock_read(map);
+    loop {
+        // retry:
+        let mapv = map.timestamp.get();
+        vm_map_unlock_read(map);
+
+        uvm_fault_wire(map, start, end, access_type)?;
+
+        vm_map_lock_read(map);
+        if mapv == map.timestamp.get() {
+            break;
+        }
+    }
+
+    let npages = atop(sz);
+    let error = 'out_unwire: {
+        let mut reachable = true;
+        for i in 0..npages {
+            let Some(pa) = pmap_extract(map.pmap(), Vaddr::new(start + ptoa(i))) else {
+                break 'out_unwire Errno::EFAULT;
+            };
+            if !paddr_is_dma_reachable(pa) {
+                reachable = false;
+                break;
+            }
+        }
+        if reachable {
+            return Ok(None);
+        }
+
+        let Some(sva) = km_alloc(sz, &KV_ANY, &KP_NONE, &KD_NOWAIT) else {
+            break 'out_unwire Errno::ENOMEM;
+        };
+        let sva = sva.as_ptr() as usize;
+
+        let error = 'out_unmap: {
+            let pgl = Pglist::new();
+            pgl.init();
+            let dma = <Machine as Pmap>::DMA_CONSTRAINT;
+            if let Err(e) = uvm_pglistalloc(
+                npages * PAGE_SIZE,
+                dma.ucr_low,
+                dma.ucr_high,
+                Paddr::new(0),
+                Paddr::new(0),
+                &pgl,
+                npages as i32,
+                UVM_PLA_WAITOK,
+            ) {
+                break 'out_unmap e;
+            }
+
+            let mut va = sva;
+            while let Some(pg) = pgl.first() {
+                // SAFETY: `pg` is the head of `pgl`.
+                unsafe { pgl.remove(pg) };
+                // SAFETY: `va` is a page of the virtual-only range km_alloc just reserved for
+                // us; `pg` a page uvm_pglistalloc just gave us.
+                unsafe {
+                    pmap_kenter_pa(Vaddr::new(va), vm_page_to_phys(pg), PROT_READ | PROT_WRITE)
+                };
+                va += PAGE_SIZE;
+            }
+            pmap_update(pmap_kernel());
+            kassert!(va == sva + sz);
+            let ret = (sva + off) as *mut u8;
+
+            // SAFETY: `[ret, ret + len)` lies inside the `sz` bytes just mapped, which only
+            // this request uses.
+            let bounce = unsafe { slice::from_raw_parts_mut(ret, len) };
+            match copyin(addr, bounce) {
+                Ok(()) => return Ok(NonNull::new(ret)),
+                Err(e) => {
+                    uvm_km_pgremove_intrsafe(Vaddr::new(sva), Vaddr::new(sva + sz));
+                    // SAFETY: the bounce range entered above; nothing uses it any more.
+                    unsafe { pmap_kremove(Vaddr::new(sva), Vsize::new(sz)) };
+                    pmap_update(pmap_kernel());
+                    e
+                }
+            }
+        };
+        // out_unmap:
+        if let Some(v) = NonNull::new(sva as *mut u8) {
+            km_free(v, sz, &KV_ANY, &KP_NONE);
+        }
+        error
+    };
+    // out_unwire:
+    uvm_fault_unwire_locked(map, start, end);
+    vm_map_unlock_read(map);
+    Err(error)
+}
+
+/// `uvm_vsunlock_device`: unwire user memory wired by [`uvm_vslock_device`], copying the
+/// bounce buffer `map` (its result) back out to the user first, and drop the map lock it
+/// kept.
+pub fn uvm_vsunlock_device(p: &Proc, addr: usize, len: usize, map: Option<NonNull<u8>>) {
+    let start = trunc_page(addr);
+    let end = round_page(addr.wrapping_add(len));
+    kassert!(end > start);
+    let sz = end - start;
+
+    if let Some(bounce) = map {
+        // SAFETY: the bounce buffer uvm_vslock_device made holds `len` bytes at `bounce`,
+        // ours until the km_free below.
+        let bounce = unsafe { slice::from_raw_parts(bounce.as_ptr(), len) };
+        // The C ignores the copyout's result too: the transfer's error is already known.
+        let _ = copyout(bounce, addr);
+    }
+
+    let vm_map = &p.vmspace().vm_map;
+    uvm_fault_unwire_locked(vm_map, start, end);
+    vm_map_unlock_read(vm_map);
+
+    let Some(bounce) = map else {
+        return;
+    };
+
+    let kva = trunc_page(bounce.as_ptr() as usize);
+    uvm_km_pgremove_intrsafe(Vaddr::new(kva), Vaddr::new(kva + sz));
+    // SAFETY: the bounce range uvm_vslock_device entered; the transfer is over.
+    unsafe { pmap_kremove(Vaddr::new(kva), Vsize::new(sz)) };
+    pmap_update(pmap_kernel());
+    if let Some(v) = NonNull::new(kva as *mut u8) {
+        km_free(v, sz, &KV_ANY, &KP_NONE);
+    }
 }
 
 /// `uvm_uarea_alloc`: allocates a u-area (`USPACE` bytes of zeroed, wired kernel memory for

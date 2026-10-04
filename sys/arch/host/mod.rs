@@ -409,6 +409,19 @@ impl Cpu for Machine {
     ) {
     }
 
+    /// User addresses are host addresses here (the host `copyin` dereferences them), so the
+    /// kernel view of a physio buffer is its user address: `b_saveaddr` keeps it as the C
+    /// does and `b_data` stays.
+    fn vmapbuf(bp: &crate::sys::buf::Buf, _len: usize) {
+        bp.b_saveaddr.set(bp.b_data.get().cast());
+    }
+
+    /// Undoes the host `vmapbuf`.
+    fn vunmapbuf(bp: &crate::sys::buf::Buf, _len: usize) {
+        bp.b_data.set(bp.b_saveaddr.get().cast());
+        bp.b_saveaddr.set(core::ptr::null_mut());
+    }
+
     /// No user mode to return to.
     fn setregs(_p: &Proc, _pack: &ExecPackage<'_>, _stack: Vaddr, _arginfo: &PsStrings) {}
 

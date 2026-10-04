@@ -511,3 +511,85 @@ fn readlabel_errors_print_the_c_messages() {
         "cannot open disk, 0x1100/0x2f02, error 6"
     );
 }
+
+/// A leaked disk named `name` whose label has the DUID `uid`, on `DISKLIST`.
+fn listed_disk(name: &[u8], uid: [u8; DUID_SIZE]) -> &'static Disk {
+    let dk: &'static Disk = Box::leak(Box::new(Disk::new()));
+    let mut n = [0u8; crate::sys::disk::DS_DISKNAMELEN];
+    n[..name.len()].copy_from_slice(name);
+    dk.dk_name.set(n);
+    let lp: &'static mut Disklabel = Box::leak(Box::new(label(64)));
+    lp.d_uid = uid;
+    dk.dk_label.set(Some(NonNull::from(lp)));
+    // SAFETY: a fresh disk, on no list; the test lock keeps other tests off DISKLIST.
+    unsafe { DISKLIST.0.insert_tail(dk) };
+    dk
+}
+
+/// `disk_map(path, flags)` as a string, `None` for the C's -1.
+fn map(path: &[u8], flags: i32) -> Option<std::string::String> {
+    let mut out = [0xffu8; 90];
+    if !disk_map(path, &mut out, flags) {
+        return None;
+    }
+    let n = out.iter().position(|&c| c == 0).unwrap_or(out.len());
+    Some(std::string::String::from_utf8_lossy(&out[..n]).into_owned())
+}
+
+#[test]
+fn disk_map_finds_a_disk_by_its_duid() {
+    let (_g, _p) = crate::kern::vfs_subr::tests::setup();
+    let uid = [0x4a, 0x5b, 0x6c, 0x7d, 0x8e, 0x9f, 0x01, 0x23];
+    let dk = listed_disk(b"sd3", uid);
+
+    let found = |path: &[u8], flags| map(path, flags);
+    assert_eq!(
+        found(b"4a5b6c7d8e9f0123.a\0junk", DM_OPENBLCK).as_deref(),
+        Some("/dev/sd3a")
+    );
+    assert_eq!(
+        found(b"4a5b6c7d8e9f0123.d", 0).as_deref(),
+        Some("/dev/rsd3d")
+    );
+    assert_eq!(
+        found(b"4a5b6c7d8e9f0123", DM_OPENPART).as_deref(),
+        Some("/dev/rsd3c")
+    );
+    assert_eq!(
+        found(b"4a5b6c7d8e9f0123.e", DM_OPENPART).as_deref(),
+        Some("/dev/rsd3c")
+    );
+    // Truncated to the buffer, as snprintf does.
+    let mut small = [0xffu8; 6];
+    assert!(disk_map(b"4a5b6c7d8e9f0123.a", &mut small, DM_OPENBLCK));
+    assert_eq!(&small, b"/dev/\0");
+
+    // Not a DUID name.
+    for bad in [
+        &b"/dev/sd3a"[..],
+        b"4a5b6c7d8e9f0123",
+        b"4a5b6c7d8e9f0123:a",
+        b"4a5b6c7d8e9f0123.a/",
+        b"4A5B6C7D8E9F0123.a",
+        b"4a5b6c7d8e9f0123.?",
+        // No such disk.
+        b"4a5b6c7d8e9f0124.a",
+    ] {
+        assert_eq!(
+            map(bad, 0),
+            None,
+            "{}",
+            std::string::String::from_utf8_lossy(bad)
+        );
+    }
+
+    // Fail if there are duplicate UIDs!
+    let twin = listed_disk(b"sd4", uid);
+    assert_eq!(map(b"4a5b6c7d8e9f0123.a", 0), None);
+
+    // SAFETY: both are on DISKLIST, inserted above under the same lock.
+    unsafe {
+        DISKLIST.0.remove(twin);
+        DISKLIST.0.remove(dk);
+    }
+}

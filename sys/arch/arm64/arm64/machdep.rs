@@ -46,8 +46,8 @@
 //!   (after it in the C) because `pmap_bootstrap` steals its tables from `vm_physmem[]`.
 //! - The message buffer is a static area (`kern/subr_log.rs`, `init_static_msgbuf`) instead of
 //!   reserved physical pages, until M3.
-//! - `cpu_startup` prints the memory sizes and sets up the buffer cache (`bufinit`): the exec
-//!   and physio maps (M6, M7), `cpu_init_extents` and `cpu_init_idt` are not there yet.
+//! - `cpu_startup` prints the memory sizes, makes the exec and physio maps and sets up the
+//!   buffer cache (`bufinit`); `cpu_init_extents` and `cpu_init_idt` are not there yet.
 //! - `initarm` sets `VBAR_EL1` itself (the C's `locore.S` does, before `initarm`) and sets
 //!   `tpidr_el1` first thing instead of after the pmap bootstrap, so `curcpu()` and the
 //!   exception vectors work for everything that follows; `x18` is not loaded, as it is a
@@ -88,7 +88,7 @@ use crate::arch::arm64::include::param::PAGE_SIZE;
 use crate::arch::arm64::include::pcb::{PCB_FPU, PCB_SVE};
 use crate::arch::arm64::include::pte::ATTR_GP;
 use crate::arch::arm64::include::reg::Fpreg;
-use crate::arch::arm64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
+use crate::arch::arm64::include::vmparam::{VM_MIN_KERNEL_ADDRESS, VM_PHYS_SIZE};
 use crate::conf::vers::VERSION;
 use crate::dev::fdt::pluart_fdt::pluart_init_cons;
 use crate::dev::ofw::fdt::{
@@ -113,7 +113,7 @@ use crate::sys::systm::PHYSMEM;
 use crate::sys::types::{Paddr, Register, Vaddr};
 use crate::sys::user::{Uarea, User};
 use crate::unported;
-use crate::uvm::uvm_extern::{EXEC_MAP, UvmConstraintRange};
+use crate::uvm::uvm_extern::{EXEC_MAP, PHYS_MAP, UvmConstraintRange};
 use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_km::{kernel_map, kernel_map_min, uvm_km_suballoc};
 use crate::uvm::uvm_map::VM_MAP_PAGEABLE;
@@ -489,7 +489,17 @@ pub fn cpu_startup() {
     );
     EXEC_MAP.store(ptr::from_ref(exec_map).cast_mut(), Ordering::Release);
 
-    // The physio map (phys_map): with physio.
+    // Allocate a submap for physio
+    let phys_map = uvm_km_suballoc(
+        kernel_map(),
+        &mut minaddr,
+        &mut maxaddr,
+        VM_PHYS_SIZE,
+        0,
+        false,
+        None,
+    );
+    PHYS_MAP.store(ptr::from_ref(phys_map).cast_mut(), Ordering::Release);
 
     // Set up buffers, so they can be used to read disk labels.
     bufinit();

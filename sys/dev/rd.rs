@@ -43,9 +43,6 @@
 //!   `readdisklabel` reads: the raw partition, the sector size and the geometry do not change
 //!   during the read), and `rdopen` installs the result. `DIOCWDINFO` writes a copy of the
 //!   in-core label for the same reason.
-//! - `rdread`/`rdwrite` go through `physio` (`kern_physio.c`), which is not ported: they
-//!   return `unported!` (`ENOSYS`). The block device, which the buffer cache and file
-//!   systems use, works.
 //! - The fake `cfdata` of `rdattach` is a `static` [`Cfdata`] instead of a function-local
 //!   `static struct cfdata`.
 
@@ -55,6 +52,7 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, AtomicU32, Ordering};
 
 use crate::kern::kern_malloc::{malloc, mallocarray};
+use crate::kern::kern_physio::{minphys, physio};
 use crate::kern::subr_autoconf::{ALLDEVS, device_ref, device_unref};
 use crate::kern::subr_disk::{
     bounds_check_with_label, disk_attach, disk_closepart, disk_detach, disk_gone, disk_lock,
@@ -65,7 +63,7 @@ use crate::kern::subr_prf::{panic, snprintf};
 use crate::kern::vfs_bio::biodone;
 use crate::machine::disklabel::{readdisklabel, writedisklabel};
 use crate::machine::intr::{splbio, splx};
-use crate::sys::buf::{B_ERROR, B_READ, Buf};
+use crate::sys::buf::{B_ERROR, B_READ, B_WRITE, Buf};
 use crate::sys::device::{
     CfMatch, Cfattach, Cfdata, Cfdriver, DV_DISK, DVF_ACTIVE, Device, FSTATE_NOTFOUND, Softc,
 };
@@ -82,7 +80,6 @@ use crate::sys::param::{DEV_BSHIFT, DEV_BSIZE};
 use crate::sys::proc::Proc;
 use crate::sys::types::{Daddr, Dev};
 use crate::sys::uio::Uio;
-use crate::unported;
 
 /// `MINIROOTSIZE`: the default size of the compiled-in image, in sectors.
 pub const MINIROOTSIZE: usize = 512;
@@ -479,14 +476,14 @@ fn strncpy(dst: &mut [u8], src: &[u8]) {
     dst[n..].fill(0);
 }
 
-/// `rdread`: through `physio`, which is not ported (see the module's deviations).
-pub fn rdread(_dev: Dev, _uio: &mut Uio<'_>, _ioflag: i32) -> Result<(), Errno> {
-    Err(unported!("physio (kern_physio.c)"))
+/// `rdread`: the raw device's read, straight into the user's buffer (physio(9)).
+pub fn rdread(dev: Dev, uio: &mut Uio<'_>, _ioflag: i32) -> Result<(), Errno> {
+    physio(rdstrategy, dev, B_READ, minphys, uio)
 }
 
-/// `rdwrite`: through `physio`, which is not ported (see the module's deviations).
-pub fn rdwrite(_dev: Dev, _uio: &mut Uio<'_>, _ioflag: i32) -> Result<(), Errno> {
-    Err(unported!("physio (kern_physio.c)"))
+/// `rdwrite`: the raw device's write, straight from the user's buffer (physio(9)).
+pub fn rdwrite(dev: Dev, uio: &mut Uio<'_>, _ioflag: i32) -> Result<(), Errno> {
+    physio(rdstrategy, dev, B_WRITE, minphys, uio)
 }
 
 /// `rddump`.

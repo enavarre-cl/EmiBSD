@@ -73,7 +73,8 @@
 //! - In `kmem_va_mode`, `kv_map` (a pointer to a map pointer) waits for `vm_map`; the mode
 //!   says which map by name until then.
 //! - `exec_map`, which every machine's `machdep.c` defines and makes identically in
-//!   `cpu_startup`, is one static here ([`EXEC_MAP`]) that the machines set.
+//!   `cpu_startup`, is one static here ([`EXEC_MAP`]) that the machines set. The same holds
+//!   for `phys_map` ([`PHYS_MAP`]), the physio submap.
 
 use core::cell::Cell;
 use core::ptr;
@@ -317,6 +318,20 @@ pub fn exec_map() -> &'static crate::uvm::uvm_map::VmMap {
     }
 }
 
+/// `phys_map`: the submap of `kernel_map` that `vmapbuf` maps physio's user buffers into
+/// (`VM_PHYS_SIZE`); null until the machine's `cpu_startup` made it.
+pub static PHYS_MAP: AtomicPtr<crate::uvm::uvm_map::VmMap> = AtomicPtr::new(ptr::null_mut());
+
+/// `phys_map`, once `cpu_startup` made it.
+pub fn phys_map() -> &'static crate::uvm::uvm_map::VmMap {
+    let map = PHYS_MAP.load(Ordering::Acquire);
+    // SAFETY: a non-null pointer is the submap `uvm_km_suballoc` returned, never freed.
+    match unsafe { map.as_ref() } {
+        Some(map) => map,
+        None => crate::kern::subr_prf::panic(format_args!("phys_map used before cpu_startup")),
+    }
+}
+
 /// Which kernel map a `kmem_va_mode` allocates from (`kv_map` in C is a pointer to the map
 /// pointer; the maps themselves arrive with `uvm_map`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -327,6 +342,8 @@ pub enum KvMap {
     Kmem,
     /// `exec_map` (`kv_exec`, `kern_exec.c`).
     Exec,
+    /// `phys_map` (`kv_physwait`, the machine's `vm_machdep.c`).
+    Phys,
     /// No map: the single page allocator (`kv_singlepage`).
     None,
 }

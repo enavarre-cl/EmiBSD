@@ -209,6 +209,14 @@ impl Cpu for Machine {
         amd64::vm_machdep::cpu_fork(p1, p2, stack, tcb, func, arg)
     }
 
+    fn vmapbuf(bp: &crate::sys::buf::Buf, len: usize) {
+        amd64::vm_machdep::vmapbuf(bp, len)
+    }
+
+    fn vunmapbuf(bp: &crate::sys::buf::Buf, len: usize) {
+        amd64::vm_machdep::vunmapbuf(bp, len)
+    }
+
     fn setregs(p: &Proc, pack: &ExecPackage<'_>, stack: Vaddr, arginfo: &PsStrings) {
         amd64::machdep::setregs(p, pack, stack, arginfo)
     }
