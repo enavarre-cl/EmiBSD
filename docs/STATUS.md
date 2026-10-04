@@ -12,6 +12,7 @@ Done:
   VMs (`smoke-link`, `smoke-wg`); M9c IPsec: SA database, SPD, ESP, AH, IPIP, enc(4),
   PF_KEY, ipsecctl (`smoke-ipsec`, `smoke-esp`; IPComp reported, needs deflate); M9d the pf
   family, pflog, hfsc, fq_codel, pfctl (`smoke-pf`, a pf rule on wg0 in `smoke-wg`).
+- Diagnostic tools stage 2: libkvm, ps/fstat/vmstat/df over sysctl (`smoke-diag`).
 
 Next:
 - pfsync and pflow (added to M9 by the user; agent running), then amd64's `tsc.c`. M9+
