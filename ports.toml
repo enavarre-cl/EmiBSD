@@ -4662,7 +4662,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8d31047ac94f65c25fff1431e92936deca4f2437"
 deps = ["sys/sys/mount.h", "sys/sys/vnode.h", "sys/kern/subr_pool.c"]
-notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries; M10c: cd9660 (feature cd9660, typenum 14, MNT_LOCAL, sizeof(struct iso_args)), msdos (feature msdosfs, typenum 4, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct msdosfs_args)) and tmpfs (feature tmpfs, option TMPFS commented out in GENERIC; typenum 19, MNT_LOCAL, sizeof(struct tmpfs_args)) join vfsconflist[] after mfs, in vfs_init.c's order"
+notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries; M10c: cd9660 (feature cd9660, typenum 14, MNT_LOCAL, sizeof(struct iso_args)), msdos (feature msdosfs, typenum 4, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct msdosfs_args)), udf (feature udf, typenum 13, MNT_LOCAL, sizeof(struct udf_args)) and tmpfs (feature tmpfs, option TMPFS commented out in GENERIC; typenum 19, MNT_LOCAL, sizeof(struct tmpfs_args)) join vfsconflist[] after mfs, in vfs_init.c's order"
 
 [[file]]
 c = "sys/kern/vfs_subr.c"
@@ -5069,7 +5069,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "71b141d0e30138905d592f58838c1a0d0830d18a"
 deps = ["sys/kern/subr_disk.c", "sys/arch/amd64/include/disklabel.h"]
-notes = "readdisklabel, writedisklabel through machine::disklabel; the BIOS geometry (bios_getdiskinfo, biosvar.h) does not exist under Limine on UEFI (boot(8) is replaced-by-limine): the driver's geometry stands; M10c: CD9660 (feature cd9660): iso_disklabelspoof when readdoslabel fails; UDF's udf_disklabelspoof joins with the udf port"
+notes = "readdisklabel, writedisklabel through machine::disklabel; the BIOS geometry (bios_getdiskinfo, biosvar.h) does not exist under Limine on UEFI (boot(8) is replaced-by-limine): the driver's geometry stands; M10c: readdisklabel tries iso_disklabelspoof (feature cd9660), then udf_disklabelspoof (feature udf), when readdoslabel fails, as the C's #if defined(CD9660) / defined(UDF)"
 
 [[file]]
 c = "sys/arch/arm64/arm64/disksubr.c"
@@ -5078,7 +5078,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e9d648e85cec4e5a6ff5b5e422bc315b1de8b31b"
 deps = ["sys/kern/subr_disk.c", "sys/arch/arm64/include/disklabel.h"]
-notes = "readdisklabel, writedisklabel through machine::disklabel; M10c: CD9660 (feature cd9660): iso_disklabelspoof when readdoslabel fails; UDF's udf_disklabelspoof joins with the udf port"
+notes = "readdisklabel, writedisklabel through machine::disklabel; M10c: readdisklabel tries iso_disklabelspoof (feature cd9660), then udf_disklabelspoof (feature udf), when readdoslabel fails, as the C's #if defined(CD9660) / defined(UDF)"
 
 [[file]]
 c = "sys/kern/kern_physio.c"
@@ -6205,3 +6205,57 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 deps = ["sys/sys/ioccom.h"]
 notes = "M10c: license: none (only the $OpenBSD$/$NetBSD$ lines, kept; every notice in the reference tree accepted by the user 2026-10-04); partial: CDIOREADMSADDR only (iso_mountfs); union msf_lba, struct cd_toc_entry and the CD audio/TOC/sub-channel/volume requests come with cd(4); host test of the ioctl number"
+
+[[file]]
+c = "sys/isofs/udf/ecma167-udf.h"
+rust = "sys/isofs/udf/ecma167_udf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "85980de1eaf43d59080372926fdc720d26c11b82"
+deps = ["sys/sys/endian.h"]
+notes = "M10c: the whole header (the file name's '-' is '_': no '-' in a Rust module name): every __packed descriptor of ECMA-167 rev. 3 and UDF up to 2.50 as #[repr(C, packed)] structures of little-endian integers (alignment 1, offsets and sizes asserted), viewed in place with the unsafe trait Packed (at(buf, off) -> Option<&T>, checked bounds); flexible x[1] members are [T; 0] (size_of is the fixed part: UDF_FENTRY_SIZE 176, UDF_EXTFENTRY_SIZE 216, UDF_FID_SIZE 38); the anonymous unions named after their parents with the member macros (longad_uniqueid, lv_fsd_loc, pd_part_hdr, lvint_next_unique_id) as methods; DescTag::as_bytes for udf_checktag; TAGID_* u16, the other enum values typed as their members; UDF_EXT_FLAGS/UDF_EXT_LEN/UDF_FILETIMES_ATTR_SIZE const fns; GETICB is T::at over data[], GETICBLEN is geticblen (trait IcbLen); rustfmt drops the trailing blank of two licence comment lines; host tests"
+
+[[file]]
+c = "sys/isofs/udf/udf.h"
+rust = "sys/isofs/udf/udf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f6dc2adc294d87489255e47bbb0fc5c102032dc6"
+deps = ["sys/isofs/udf/ecma167-udf.h", "sys/sys/vnode.h", "sys/sys/mount.h", "sys/kern/vfs_bio.c", "sys/crypto/siphash.h", "sys/kern/kern_rwlock.c", "sys/sys/queue.h"]
+notes = "M10c: UDF_HASHTBLSIZE, udfino_t (Udfino), struct unode (Unode: Cells, u_lock an Rrwlock, u_le with the UnodeHash adapter; un_u one Cell<i64> with u_diroff/u_vatlen accessors; u_fentry the malloc(M_UDFFENTRY) copy as bytes with u_fentry_len, fentry()/fentry_fe() the extfile_entry/file_entry views), struct umount (Umount: um_hashtbl the hashinit slice, um_hashsz the mask, um_stbl bytes with um_stbl_size), UDF_MNT_*, VTOU and VFSTOUDFFS (checked casts of v_data/mnt_data), struct udf_dirstream (UdfDirstream: data is UdfData, Fentry(off) or Buf(off); error a Result; fid_fragment a bool), RDSECTOR as rdsector(ump, devvp, sector, size) and udf_readlblks returning bread's pair, udf_getid, unicode_t; the prototypes are udf_vnops.rs's and udf_vfsops.rs's"
+
+[[file]]
+c = "sys/isofs/udf/udf_extern.h"
+rust = "sys/isofs/udf/udf_extern.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0aac543cb1acc20e3dcb28d755b596e50c8f413f"
+deps = ["sys/isofs/udf/udf_subr.c", "sys/isofs/udf/udf_vfsops.c", "sys/isofs/udf/udf_vnops.c"]
+notes = "license: public domain (Pedro Martelletto's notice), kept whole; M10c: no types; the prototypes, the extern pools (UDF_TRANS_POOL, UNODE_POOL, UDF_DS_POOL) and udf_vops (UDF_VOPS) re-exported from udf_subr.rs, udf_vfsops.rs and udf_vnops.rs"
+
+[[file]]
+c = "sys/isofs/udf/udf_subr.c"
+rust = "sys/isofs/udf/udf_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2377e691c1c58cf3765355c3600cc77150018210"
+deps = ["sys/isofs/udf/udf.h", "sys/kern/subr_disk.c", "sys/sys/disklabel.h", "sys/kern/vfs_bio.c"]
+notes = "M10c: the whole file: udf_rawnametounicode (Result: Err(EINVAL) for the C's -1, also when the name does not fit; bytes unsigned on both archs, amd64's signed char turned 8-bit bytes >= 0x80 into '?'), udf_disklabelspoof (called from readdisklabel on amd64 and arm64 behind feature udf, after readdoslabel fails; the anchor at 256, the PVD's vol_id as d_typename, partitions a and c FS_UDF), udf_vat_get (the VAT's unode copied with its own copy of the file entry; the C's structure copy shares u_fentry with the cached unode), udf_vat_map, udf_vat_read (no brelse(NULL) for a VAT recorded in its file entry); crate-private udf_vat_free for udf_unmount and the mount's error path; host test of the CS0 conversion (the disk label spoof is tested in udf_vnops/tests.rs)"
+
+[[file]]
+c = "sys/isofs/udf/udf_vfsops.c"
+rust = "sys/isofs/udf/udf_vfsops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9fc0479cf47719c46353beca235e2931bc167c21"
+deps = ["sys/isofs/udf/udf.h", "sys/sys/mount.h", "sys/kern/vfs_subr.c", "sys/kern/vfs_lookup.c", "sys/kern/kern_subr.c", "sys/crypto/siphash.c", "sys/kern/subr_pool.c", "sys/kern/kern_malloc.c"]
+notes = "M10c: the whole file: the pools (udf_trans_pool, unode_pool, udf_ds_pool), udf_vfsops (UDF_VFSOPS; vfsconflist[] typenum 13, MNT_LOCAL, vfc_datasize UdfArgs::SIZE where the C writes sizeof(struct iso_args)), udf_init, udf_start, udf_mount (UdfArgs::from_bytes, EINVAL when short; its own nameidata as ffs_mount; UDF_DEBUG message left out), udf_checktag, udf_mountfs (descriptors read in place, a structure past the buffer is EINVAL; the error path also frees the sparing table and the VAT copy; a VDS scan stopped by failing partition maps releases its buffer; ffs() via trailing_zeros, shifts by um_bshift wrap), udf_unmount, udf_root, udf_quotactl, udf_statfs, udf_sync, udf_vget (copies at most the buffer's bytes of the file entry; checkalias as in C), struct ifid (Ifid with from_fid), udf_fhtovp, udf_vptofh, udf_checkexp, udf_get_vpartmap, udf_get_spartmap (forgets the table it frees; entries past st_size end the count), udf_get_mpartmap, udf_find_partmaps (takes the bytes after the LVD; the regid literals compared over UDF_REGID_ID_SIZE bytes as the C's bcmp); mount, lookups, reads, readdir, bmap, getattr and unmount host-tested over an in-memory image in udf_vnops/tests.rs"
+
+[[file]]
+c = "sys/isofs/udf/udf_vnops.c"
+rust = "sys/isofs/udf/udf_vnops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c29ad0ba8a7093bde517b4fe57b44f615cdd6998"
+deps = ["sys/isofs/udf/udf.h", "sys/isofs/udf/udf_subr.c", "sys/sys/vnode.h", "sys/kern/vfs_vops.c", "sys/kern/vfs_cache.c", "sys/kern/vfs_subr.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_subr.c", "sys/sys/dirent.h", "sys/kern/spec_vnops.c"]
+notes = "M10c: the whole file: udf_vops (UDF_VOPS, vop_remove eopnotsupp, the NULL slots None), udf_hashlookup/udf_hashins/udf_hashrem (SipHash24 chains under um_hashmtx), udf_allocv, udf_permtomode, udf_access, udf_timetotimespec (the C's arithmetic kept, months past December add nothing), udf_getattr (the C's v_type & VDIR bit test kept), udf_open, udf_close, udf_ioctl, udf_pathconf, udf_read (stops on a zero-length chunk; copies out of the file entry through a bounce buffer), udf_transname (0 when destname is too short), udf_cmpname (bool), udf_uiodir (Ok(false) for -1; the '.' entry's early break returns ERESTART, the C's -1; record bytes past the NUL zeroed), udf_opendir/udf_getfid/udf_closedir (udf_ds_pool item as &'static mut; the fragment buffer freed on every path; a FID starting past its chunk is an invalid fragment), udf_readdir, udf_readlink, udf_strategy (b_dev from u_devvp: the C reads v_rdev of the file's vnode, which has no specinfo), udf_lock/udf_unlock/udf_islocked (rrw_enter/rrw_exit/rrw_status on u_lock, as ufs_lock), udf_print (features debug/diagnostic), udf_bmap (UDF_INVALID_BMAP is Err(ERESTART), the C's -1), udf_lookup, udf_inactive, udf_reclaim, udf_readatoffset (returns UdfData plus the buffer slot; size clamped to the buffer; an embedded file's data from offset on, where the C always returned it from its start), udf_data (the slice *data points at), udf_bmap_internal (UdfBmap::Block/Invalid; allocation descriptors past the file entry copy read as zeros); host tests: a hand-built image (AVDP, PVD, PD, LVD, FSD, FE/EFE, FIDs) mounted through a fake disk vnode: lookups (cached, '.', '..', deleted, missing), reads in every chunk size, an embedded file and directory, a directory whose FIDs straddle its three extents (fragments of 8 and 56 bytes) read with small and large buffers, getattr (modes, owners, times with time zones), VOP_BMAP, damaged volumes, the disk label spoof, names, tags, times"

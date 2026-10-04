@@ -84,20 +84,17 @@ pub fn readdisklabel(
         bp = Some(b);
         b.b_dev.set(dev);
 
-        let error = readdoslabel(b, strat, lp, None, spoofonly);
-        if error.is_ok() {
-            return error;
-        }
-
+        // Each spoof is tried in turn while nothing has matched (the C's `goto done`).
+        #[cfg_attr(not(any(feature = "cd9660", feature = "udf")), allow(unused_mut))]
+        let mut error = readdoslabel(b, strat, lp, None, spoofonly);
         #[cfg(feature = "cd9660")]
-        let error = {
-            let error = crate::isofs::cd9660::cd9660_vfsops::iso_disklabelspoof(dev, strat, lp);
-            if error.is_ok() {
-                return error;
-            }
-            error
-        };
-        // UDF: udf_disklabelspoof, with the udf port.
+        if error.is_err() {
+            error = crate::isofs::cd9660::cd9660_vfsops::iso_disklabelspoof(dev, strat, lp);
+        }
+        #[cfg(feature = "udf")]
+        if error.is_err() {
+            error = crate::isofs::udf::udf_subr::udf_disklabelspoof(dev, strat, lp);
+        }
         error
     })();
 
