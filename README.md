@@ -14,7 +14,9 @@ The OpenBSD kernel, re-implemented in Rust, one file at a time.
   The Rust tree mirrors them path for path.
 - Stable Rust only.
 
-Status: M5 done (boot, memory, traps, clocks, processes and a scheduler with kernel threads on amd64 and arm64 under QEMU); M6 (syscalls, a minimal init) is next. See `docs/STATUS.md` and `docs/ROADMAP.md`.
+Status: M9 done: an OpenBSD userland (init, ksh, login, ifconfig, pfctl, ftp) runs on the ported kernel,
+with uvm, ffs, IPv4, TCP, WireGuard, IPsec and pf on amd64 and arm64 under QEMU. M9+ (INET6, tcpdump)
+is under way, then M10 (file systems) and M11 (SMP). See `docs/STATUS.md` and `docs/ROADMAP.md`.
 
 | Question | Where |
 |---|---|

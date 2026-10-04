@@ -13,6 +13,9 @@ paths:
   the always-in-context summary → `CLAUDE.md` (about 120 lines, links instead of copies).
 - `docs/STATUS.md` stays under 30 lines: current milestone, last three things done, next three,
   blockers. It is imported into every session; keep it current and small.
+- `README.md`'s `Status:` line names the last milestone met and the one under way. It is
+  updated in the same commit that marks a milestone (or sub-milestone) met in `docs/ROADMAP.md`
+  and `docs/STATUS.md` (the user's rule of 2026-10-04, after it lagged at M5 while M9 closed).
 - `docs/ROADMAP.md`: every milestone has a mechanical exit criterion (a command that passes or a
   serial line that appears). Editing a milestone keeps that property.
 - `docs/C_TO_RUST.md`: one row per idiom, columns C | Rust | Why. Add a row when an idiom is
