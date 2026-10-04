@@ -1,22 +1,22 @@
 # Status
 
-Milestone: **M10 done**, **M11a** and **M11b done** (MP bring-up and timekeeping: four CPUs
-per VM with the `multiprocessor` kernel); M11c next. Updated: 2026-10-04.
+Milestone: **M10 done**; **M11a**, **M11b** and **M11c done** (MP bring-up, timekeeping, ddb
+on MP: four CPUs per VM with the `multiprocessor` kernel); M11d next. Updated: 2026-10-04.
 
 Done:
-- M7a..M9+: uvm, mbufs, virtio, IPv4/6, TCP; ffs root, init, ksh, login; sockets, kqueue,
-  wg(4), IPsec, the pf family, bpf, tcpdump, HTTPS; ps/fstat/vmstat/df; pledge(2).
-- M10a..M10f: vioblk, sd(4), the disk tools; QUOTA, DIRHASH, MFS; tmpfs, msdosfs, cd9660, udf,
-  vnd; softraid; NFS; ext2fs, ntfs (amd64), fuse. Each has its `smoke-*` recipe.
-- M11a: APs started through the Limine MP request (replaces mptramp.S/PSCI), the kernel lock
-  and spinning mutex, kern_sched.c whole, SMR, percpu, per-CPU pool caches, real pool/malloc/
-  fpageq locks; amd64 IPIs and TLB shootdowns, arm64 cpu.c and ampintc SGIs; `smoke-mp`
-  (`-smp 4`, both archs: 4 cpus running, kthread across CPUs, mpstress). Default kernel: UP.
+- M7a..M10f: uvm, mbufs, virtio, IPv4/6, TCP; ffs root, init, ksh, login; sockets, kqueue,
+  wg(4), IPsec, pf, bpf, HTTPS; disks, UFS options, tmpfs/msdosfs/cd9660/udf/vnd, softraid,
+  NFS, ext2fs, ntfs (amd64), fuse. Each has its `smoke-*` recipe.
+- M11a: APs started through the Limine MP request, the kernel lock, kern_sched.c, SMR, percpu,
+  per-CPU pool caches; IPIs and TLB shootdowns on both archs; `smoke-mp`. Default kernel: UP.
 - M11b: tsc.c's sync test runs against each AP (TCG passes it); every CPU dispatches its own
   clockintr with a monotonic uptime; kern_tc.c (tc_lock) and arm64 agtimer.c ported.
+- M11c: the ddb command loop (db_lex, db_input, db_expr, db_variables, db_command, db_run,
+  ddb_sysctl); on MP the other CPUs stop by IPI, `machine cpuinfo`/`ddbcpu`/`startcpu`/
+  `stopcpu`, `continue` resumes all; `smoke-ddbmp` (`-smp 4`, `ddb.trigger`, both archs).
 
 Next:
-- M11c (ddb on MP), M11d (softnet x8), M11e (the audit; then every smoke runs MP), then M12.
+- M11d (softnet x8), M11e (the audit; then every smoke runs MP), then M12.
 
 Blockers:
 - Until M11e, unaudited paths run under the kernel lock (MPSAFE flags and SY_NOLOCK ignored,

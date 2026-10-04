@@ -21,7 +21,7 @@
 
 ## Status
 
-Status: M11b (MP timekeeping) met, after M11a (MP bring-up); M11c (ddb on MP) next.
+Status: M11c (ddb on MP) met, after M11a and M11b; M11d (network parallelism) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -44,7 +44,8 @@ Status: M11b (MP timekeeping) met, after M11a (MP bring-up); M11c (ddb on MP) ne
 | M10d | ext2fs, ntfs (amd64), fuse | met |
 | M11a | MP bring-up: APs started through Limine, the kernel lock, per-CPU run queues, SMR, percpu and pool caches, IPIs and TLB shootdowns | met |
 | M11b | MP timekeeping: the TSC synchronisation test per AP, clock interrupts on every CPU | met |
-| M11c..M11e | SMP: ddb on MP, network parallelism, the MP audit | next |
+| M11c | ddb on MP: the command loop, the other CPUs stopped by IPI, `machine cpuinfo`, `machine ddbcpu` | met |
+| M11d, M11e | SMP: network parallelism, the MP audit | next |
 | M12 | Devices (audio, USB), in QEMU | next |
 | M13 | Storage, firmware and console | next |
 | M14, M14b | Installable; code and test layout | next |
@@ -60,7 +61,8 @@ Every line below is a recipe of `just smoke`, run on both architectures.
 
 On one VM, with OpenBSD's own binaries from the ramdisk:
 
-- Boot, autoconf, kernel self-tests, ddb-lite, a deliberate panic with a stack trace (`smoke`).
+- Boot, autoconf, kernel self-tests, the ddb(4) prompt at a `-d` stop, a deliberate panic with
+  a stack trace (`smoke`).
 - init(8) and ksh(1) in single-user mode (`smoke-shell`).
 - `/etc/rc`, getty(8), login(1) as root, the clock from the RTC (`smoke-login`).
 - ifconfig(8), ping(8), route(8) over the routing socket (`smoke-net`, `smoke-route`).
@@ -93,6 +95,9 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
   CPU stresses the pools and the page allocator, and the init self-test passes; amd64 tests
   each application processor's TSC against the boot CPU's, and on both archs every CPU runs
   its own clock interrupts with an uptime that never goes back (`smoke-mp`).
+- ddb(4) on four processors: `sysctl ddb.trigger=1` from the shell stops every other CPU by
+  IPI, `machine ddbcpu 1` moves the debugger to CPU 1, `machine cpuinfo` shows the other three
+  stopped, and `continue` resumes them all (`smoke-ddbmp`).
 
 Between two VMs on a private link (`cargo xtask smoke2`):
 
@@ -162,6 +167,24 @@ selftest: mpstress pool ok (4 cpus, 432000 gets, 431592 through the per-cpu cach
 selftest: mpstress pmemrange ok (4 cpus, 14400 page lists, 88389 pages, 0 UVM_PLA_NOWAIT refused, 95997 pages free before and after; 96108 free at the start, 96101 at the end)
 ```
 
+And from `smoke-ddbmp`, ddb on the same kernel and four processors, amd64 (trimmed):
+
+```
+# sysctl ddb.trigger=1
+Stopped at      0xffffffff802954aa
+ddb{0}> machine ddbcpu 2
+Stopped at      0xffffffff80195655
+ddb{2}> machine ddbcpu 1
+Stopped at      0xffffffff80195655
+ddb{1}> machine cpuinfo
+    0: stopped
+*   1: ddb
+    2: stopped
+    3: stopped
+ddb{1}> continue
+ddb.trigger: 0 -> 1
+```
+
 The real console also prints `unported: <name>` lines. Each one is a known gap, reported once.
 
 ## Quick start (macOS)
@@ -206,7 +229,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 4 | 141 | 627 | 16 | 788 |
+| 4 | 139 | 640 | 16 | 799 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).

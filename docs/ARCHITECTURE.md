@@ -461,6 +461,11 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   cache. `uvm.pageqlock` is still a no-op, so both machines hold the kernel lock over
   `uvm_fault` (unlocked in C) and `exit1`/the reaper keep it over `uvm_purge` until M11e.
   amd64's mainbus counts every application processor in `ncpusfound`, as `acpimadt` does.
+- ddb on MP (M11c): `db_ktrap` stays at `splhigh` for its whole `db_enter_ddb` loop, where
+  the C drops back to the trapped level between iterations. Reason: a CPU that handed ddb to
+  another (`machine ddbcpu`) waits in that loop with interrupts on, and at a low level it
+  runs the console's interrupt and eats the active CPU's input. Without `longjmp`, a fault
+  inside a ddb command prints `Faulted in DDB` and panics instead of returning to the prompt.
 - Cargo features and `xtask` instead of `config(8)`, Makefiles and `newvers.sh`; the
   autoconfiguration tables `config(8)` generates are written by hand ("Autoconfiguration",
   below).
