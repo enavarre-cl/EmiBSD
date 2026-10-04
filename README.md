@@ -21,7 +21,7 @@
 
 ## Status
 
-Status: M9 (network security) met; M9+ (network completion) and M10a (persistent disk) under way.
+Status: M9 (network security) and M10a (persistent disk) met; M9+ (network completion: INET6) under way.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -36,7 +36,7 @@ Status: M9 (network security) met; M9+ (network completion) and M10a (persistent
 | M8, M8b | OpenBSD's userland on an ffs ramdisk; multi-user boot and login | met |
 | M9a..M9d | Sockets, WireGuard, IPsec, pf | met |
 | M9+ | Network completion: TCP, bpf, divert, IPComp, HTTPS, tcpdump done; INET6 left | in progress |
-| M10a | Persistent disk (vioblk, SCSI midlayer) | in progress |
+| M10a | Persistent disk (vioblk, SCSI midlayer) | met |
 | M10b..M10f | UFS options, tmpfs/msdosfs/cd9660, ext2fs/ntfs/fuse, NFS, softraid | next |
 | M11a..M11e | SMP | next |
 | M12 | Devices and virtualisation | next |
@@ -61,6 +61,8 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
 - ps(1), fstat(1), vmstat(8), df(1), mount(8) over sysctl(2) (`smoke-diag`).
 - pfctl(8) loading a ruleset that blocks a ping (`smoke-pf`); ipsecctl(8) over PF_KEY (`smoke-ipsec`).
 - ftp(1) and nc(1) over TLS with LibreSSL, against servers on the host (`smoke-https`).
+- A persistent disk: `sd0` on vioblk(4), fdisk(8), disklabel(8), newfs(8); after a second boot
+  fsck(8) finds it clean and the file reads back (`smoke-disk`).
 
 Between two VMs on a private link (`cargo xtask smoke2`):
 
@@ -141,7 +143,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 7 | 148 | 434 | 14 | 603 |
+| 7 | 147 | 449 | 14 | 617 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).
