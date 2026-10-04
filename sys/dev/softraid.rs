@@ -41,9 +41,6 @@
 //! - `SR_DEBUG` (and with it `SR_FANCY_STATS`, `sr_print_stats`, `sr_meta_print`,
 //!   `sr_dump_block`, `sr_dump_mem`, `sr_checksum_print`'s callers) is not configured; the
 //!   `DNPRINTF` calls are comments.
-//! - Discipline initialisation: until each `dev/softraid_*.rs` exists, its arm of
-//!   `sr_discipline_init` reports `unported!("softraid_<x>.c")` and fails (the discipline
-//!   ports replace the arm by the one-line call).
 //! - Hooks and helpers that return the C's 0/1 return `Result<(), Errno>`, `Err(EIO)` for
 //!   the C's 1 (`softraidvar.rs`); `sr_validate_io` returns the block number;
 //!   `sr_validate_stripsize` returns `Option` (`None` for the C's -1; a zero strip size,
@@ -179,7 +176,6 @@ use crate::sys::task::SYSTQ;
 use crate::sys::time::{msec_to_nsec, sec_to_nsec};
 use crate::sys::types::{Daddr, Dev, major};
 use crate::sys::ucred::NOCRED;
-use crate::unported;
 
 /// `SR_META_NOTCLAIMED`.
 pub const SR_META_NOTCLAIMED: i32 = 0;
@@ -4561,8 +4557,14 @@ pub fn sr_discipline_init(sd: &'static SrDiscipline, level: i32) -> Result<(), E
             Ok(())
         }
         // CRYPTO
-        0x43 /* 'C' */ => Err(unported!("sr_crypto_discipline_init (softraid_crypto.c)")),
-        0x1C => Err(unported!("sr_raid1c_discipline_init (softraid_raid1c.c)")),
+        0x43 /* 'C' */ => {
+            crate::dev::softraid_crypto::sr_crypto_discipline_init(sd);
+            Ok(())
+        }
+        0x1C => {
+            crate::dev::softraid_raid1c::sr_raid1c_discipline_init(sd);
+            Ok(())
+        }
         0x63 /* 'c' */ => {
             crate::dev::softraid_concat::sr_concat_discipline_init(sd);
             Ok(())
