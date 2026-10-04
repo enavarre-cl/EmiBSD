@@ -77,8 +77,21 @@ pub fn readdisklabel(
         bp = Some(b);
         b.b_dev.set(dev);
 
-        readdoslabel(b, strat, lp, None, spoofonly)
-        // CD9660 / UDF: not configured.
+        let error = readdoslabel(b, strat, lp, None, spoofonly);
+        if error.is_ok() {
+            return error;
+        }
+
+        #[cfg(feature = "cd9660")]
+        let error = {
+            let error = crate::isofs::cd9660::cd9660_vfsops::iso_disklabelspoof(dev, strat, lp);
+            if error.is_ok() {
+                return error;
+            }
+            error
+        };
+        // UDF: udf_disklabelspoof, with the udf port.
+        error
     })();
 
     if let Some(bp) = bp {

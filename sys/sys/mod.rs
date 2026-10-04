@@ -8,6 +8,7 @@ pub mod _time;
 pub mod acct;
 pub mod ataio;
 pub mod buf;
+pub mod cdio;
 pub mod clockintr;
 pub mod conf;
 pub mod device;

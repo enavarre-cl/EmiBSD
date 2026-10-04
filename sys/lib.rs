@@ -19,6 +19,7 @@ pub mod conf;
 pub mod crypto;
 pub mod ddb;
 pub mod dev;
+pub mod isofs;
 pub mod kern;
 pub mod machine;
 pub mod miscfs;

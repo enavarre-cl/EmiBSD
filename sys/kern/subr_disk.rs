@@ -69,8 +69,8 @@
 //!   separate buffer (the C lets `path` and `mappath` be the same array; a Rust caller copies).
 //! - `softraid_disk_attach` and `sr_map_root` are `NSOFTRAID` (not configured); `DEBUG`'s
 //!   `DPRINTF`s are not configured.
-//! - `dk_mountroot`: `FFS` (feature `ffs`) is the only file system the kernel configuration
-//!   names with a mountroot; `EXT2FS` and `CD9660` are not configured.
+//! - `dk_mountroot`: `FFS` (feature `ffs`) and `CD9660` (feature `cd9660`) are the file
+//!   systems the kernel configuration names with a mountroot; `EXT2FS` is not configured.
 //! - `setroot`'s `RB_ASKNAME` dialogue (the "root device:" and "swap device:" prompts read
 //!   with `getsn` under `cnpollc`) is reported and skipped: `getsn` is not ported. A kernel
 //!   booted with `-a` goes on with its configured root. `NFSCLIENT` (the `nfs_mountroot`
@@ -1388,8 +1388,12 @@ pub fn dk_mountroot() -> Result<(), Errno> {
     if dl_getpsize(&dl.d_partitions[part]) == 0 {
         panic(format_args!("root filesystem has size 0"));
     }
-    // EXT2FS, CD9660: not configured.
+    // EXT2FS: not configured.
     let fstype = dl.d_partitions[part].p_fstype;
+    #[cfg(feature = "cd9660")]
+    if fstype == crate::sys::disklabel::FS_ISO9660 {
+        return crate::isofs::cd9660::cd9660_vfsops::cd9660_mountroot();
+    }
     #[cfg(feature = "ffs")]
     {
         if fstype != FS_BSDFFS {

@@ -4662,7 +4662,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8d31047ac94f65c25fff1431e92936deca4f2437"
 deps = ["sys/sys/mount.h", "sys/sys/vnode.h", "sys/kern/subr_pool.c"]
-notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries; M10c: msdos (feature msdosfs, typenum 4, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct msdosfs_args)) and tmpfs (feature tmpfs, option TMPFS commented out in GENERIC; typenum 19, MNT_LOCAL, sizeof(struct tmpfs_args)) join vfsconflist[] after mfs, in vfs_init.c's order"
+notes = "vfs stage 1: namei_pool, rootvnode (AtomicPtr with rootvnode()/set_rootvnode()), vfsconflist[] (empty: no file system is ported; each GENERIC type joins with its file system behind a cargo feature), maxvfsconf, vfsinit (main calls it), vfs_byname (bytes), vfs_bytypenum; ffs: vfsconflist[] holds ffs (feature ffs, typenum 1, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct ufs_args)); M10b: and mfs right after it, as in the C (feature mfs, typenum 3, MNT_LOCAL, sizeof(struct mfs_args)); NVFSCONF counts the configured entries; M10c: cd9660 (feature cd9660, typenum 14, MNT_LOCAL, sizeof(struct iso_args)), msdos (feature msdosfs, typenum 4, MNT_LOCAL|MNT_SWAPPABLE, sizeof(struct msdosfs_args)) and tmpfs (feature tmpfs, option TMPFS commented out in GENERIC; typenum 19, MNT_LOCAL, sizeof(struct tmpfs_args)) join vfsconflist[] after mfs, in vfs_init.c's order"
 
 [[file]]
 c = "sys/kern/vfs_subr.c"
@@ -5060,7 +5060,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "68f8e8b138f92f992c6136b4c2b5f0ac46ae94f2"
 deps = ["sys/sys/disk.h", "sys/sys/disklabel.h", "sys/sys/dkio.h", "sys/kern/vfs_bio.c", "sys/kern/kern_task.c", "sys/lib/libz/crc32.c"]
-notes = "disklist, disk_count, disk_change, bootduid, rootduid, rootdv; dkcksum, initdisklabel, checkdisklabel (raw and in-core label are two &mut, the copy is unconditional; byte-swapped labels converted), readdisksector, readdoslabel (partoffp Option, spoofonly bool), gpt_chk_mbr, mbr_get_fstype, spoofmbr (EBR walk), spooffat, setdisklabel, bounds_check_with_label (bool for 0/-1), diskerr, disk_init, disk_construct, disk_attach (label malloc, disk_attach_task on systq), disk_attach_callback, disk_detach, disk_openpart, disk_closepart, disk_gone (ptr::fn_addr_eq), disk_busy, disk_unbusy, disk_lock, disk_lock_nointr, disk_unlock, dk_mountroot (FS_BSDFFS and the assume-ffs default call ffs_mountroot under feature ffs; without it the C's panic), findblkmajor/findblkname (nam2blk[] through machine::autoconf), disk_readlabel (Err(DiskReadlabelError) whose Display is the C's errbuf), disk_lookup, duid_equal, duid_iszero, duid_format (by value); NSOFTRAID and DEBUG not configured; host tests (labels, byte swap, bounds, readdoslabel over an in-memory disk: bare, MBR with A6, FAT, GPT with the backup header, setdisklabel, open masks, DUIDs); M8: setroot (the pre-configured and the swap-generic branches, the root/swap/dump print, the primary-swap swap; the RB_ASKNAME prompts reported: getsn is not ported), getdisk, parsedisk; GPT: gpt_get_hdr (zeroed header when invalid), gpt_get_parts (Option<Vec<u8>>, NULL on a bad checksum), gpt_get_fstype (the LE GUID table), the body of spoofgpt, with crc32 from sys/lib/libz; M10a: disk_map (true/false for 0/-1, mappath a separate buffer filled by snprintf; dk_name empty stands for NULL; host test: block/raw/DM_OPENPART names, truncation, malformed names, duplicate UIDs), used by ffs_mount"
+notes = "disklist, disk_count, disk_change, bootduid, rootduid, rootdv; dkcksum, initdisklabel, checkdisklabel (raw and in-core label are two &mut, the copy is unconditional; byte-swapped labels converted), readdisksector, readdoslabel (partoffp Option, spoofonly bool), gpt_chk_mbr, mbr_get_fstype, spoofmbr (EBR walk), spooffat, setdisklabel, bounds_check_with_label (bool for 0/-1), diskerr, disk_init, disk_construct, disk_attach (label malloc, disk_attach_task on systq), disk_attach_callback, disk_detach, disk_openpart, disk_closepart, disk_gone (ptr::fn_addr_eq), disk_busy, disk_unbusy, disk_lock, disk_lock_nointr, disk_unlock, dk_mountroot (FS_BSDFFS and the assume-ffs default call ffs_mountroot under feature ffs; without it the C's panic), findblkmajor/findblkname (nam2blk[] through machine::autoconf), disk_readlabel (Err(DiskReadlabelError) whose Display is the C's errbuf), disk_lookup, duid_equal, duid_iszero, duid_format (by value); NSOFTRAID and DEBUG not configured; host tests (labels, byte swap, bounds, readdoslabel over an in-memory disk: bare, MBR with A6, FAT, GPT with the backup header, setdisklabel, open masks, DUIDs); M8: setroot (the pre-configured and the swap-generic branches, the root/swap/dump print, the primary-swap swap; the RB_ASKNAME prompts reported: getsn is not ported), getdisk, parsedisk; GPT: gpt_get_hdr (zeroed header when invalid), gpt_get_parts (Option<Vec<u8>>, NULL on a bad checksum), gpt_get_fstype (the LE GUID table), the body of spoofgpt, with crc32 from sys/lib/libz; M10a: disk_map (true/false for 0/-1, mappath a separate buffer filled by snprintf; dk_name empty stands for NULL; host test: block/raw/DM_OPENPART names, truncation, malformed names, duplicate UIDs), used by ffs_mount; M10c: dk_mountroot's FS_ISO9660 case calls cd9660_mountroot under feature cd9660 (EXT2FS still not configured)"
 
 [[file]]
 c = "sys/arch/amd64/amd64/disksubr.c"
@@ -5069,7 +5069,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "71b141d0e30138905d592f58838c1a0d0830d18a"
 deps = ["sys/kern/subr_disk.c", "sys/arch/amd64/include/disklabel.h"]
-notes = "readdisklabel, writedisklabel through machine::disklabel; the BIOS geometry (bios_getdiskinfo, biosvar.h) does not exist under Limine on UEFI (boot(8) is replaced-by-limine): the driver's geometry stands; CD9660 and UDF not configured"
+notes = "readdisklabel, writedisklabel through machine::disklabel; the BIOS geometry (bios_getdiskinfo, biosvar.h) does not exist under Limine on UEFI (boot(8) is replaced-by-limine): the driver's geometry stands; M10c: CD9660 (feature cd9660): iso_disklabelspoof when readdoslabel fails; UDF's udf_disklabelspoof joins with the udf port"
 
 [[file]]
 c = "sys/arch/arm64/arm64/disksubr.c"
@@ -5078,7 +5078,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e9d648e85cec4e5a6ff5b5e422bc315b1de8b31b"
 deps = ["sys/kern/subr_disk.c", "sys/arch/arm64/include/disklabel.h"]
-notes = "readdisklabel, writedisklabel through machine::disklabel; CD9660 and UDF not configured"
+notes = "readdisklabel, writedisklabel through machine::disklabel; M10c: CD9660 (feature cd9660): iso_disklabelspoof when readdoslabel fails; UDF's udf_disklabelspoof joins with the udf port"
 
 [[file]]
 c = "sys/kern/kern_physio.c"
@@ -6089,3 +6089,119 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b0e12dbffd38568d4ca12dfff94df375d7532d39"
 deps = ["sys/msdosfs/bpb.h", "sys/msdosfs/bootsect.h", "sys/msdosfs/direntry.h", "sys/msdosfs/denode.h", "sys/msdosfs/msdosfsmount.h", "sys/msdosfs/fat.h", "sys/msdosfs/msdosfs_denode.c", "sys/msdosfs/msdosfs_fat.c", "sys/sys/mount.h", "sys/sys/dkio.h", "sys/kern/vfs_subr.c", "sys/kern/vfs_bio.c", "sys/kern/vfs_lookup.c", "sys/kern/vfs_vnops.c", "sys/kern/vfs_vops.c", "sys/kern/subr_disk.c", "sys/kern/kern_malloc.c"]
 notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; MSDOSFS_VFSOPS (vfs_quotactl/vfs_vget closures answering EOPNOTSUPP, vfs_sysctl None, vfs_init msdosfs_denode.rs's msdosfs_init), msdosfs_mount (args via MsdosfsArgs::from_bytes, own Nameidata via ndinit as ffs_mount, no args on a new mount -> EINVAL, the args' bytes copied into mnt_stat.mount_info), msdosfs_mountfs (BPB parsing, FAT12/16/32, FSInfo check, pm_inusemap mallocarray'd after pm_maxcluster is final, ffs(x)-1 as trailing_zeros), msdosfs_start, msdosfs_unmount, msdosfs_root, msdosfs_statfs, msdosfs_sync_vnode/msdosfs_sync (struct msdosfs_sync_arg as MsdosfsSyncArgs, a closure for vfs_mount_foreach_vnode, VNON checked before VTODE), msdosfs_fhtovp/msdosfs_vptofh (Defid), msdosfs_check_export; pm_export/struct netcred (NFSSERVER) not kept: export updates get vfs_export's ENOTSUP, check_export answers EACCES (unported! past the NULL lookup, as ufs_check_export); MSDOSFS_DEBUG printfs/vprint left out; host tests (mkfat image builder, FAT12/16/32 geometry, FSInfo and active FAT, bad boot sectors, statfs, sync, dounmount)"
+
+[[file]]
+c = "sys/isofs/cd9660/iso.h"
+rust = "sys/isofs/cd9660/iso.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5b9bd4a222054b6eb4fd3d5fdd09d9c4ba2de4d7"
+deps = []
+notes = "M10c: the whole header: cdino_t (Cdino), ISODCL (const fn isodcl), struct iso_volume_descriptor/iso_primary_descriptor/iso_supplementary_descriptor/iso_extended_attributes as #[repr(C)] byte-array structs viewed in place with from_bytes (alignment 1, size checked), ISO_VD_*, ISO_STANDARD_ID/ISO_ECMA_ID, ISO_DEFAULT_BLOCK_SHIFT/SIZE, ISO_DIRECTORY_RECORD_SIZE; struct iso_directory_record * is IsoDirectoryRecord, a view from the record to the end of its buffer with one accessor per field (never shorter than 33 bytes); isonum_711..733 take a slice and return u8/i8/u16/u32 (722, unused by the kernel, reads unsigned big-endian where the C sign-extends on amd64); ASSOCCHAR; host tests (each isonum encoding, descriptor and record views over the makefs test image, the image fixtures shared by the other cd9660 tests), test-ref of the defines"
+
+[[file]]
+c = "sys/isofs/cd9660/iso_rrip.h"
+rust = "sys/isofs/cd9660/iso_rrip.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "292902340632518b34c3d55a65b003206dbd1e01"
+deps = ["sys/isofs/cd9660/iso.h"]
+notes = "M10c: ISO_SUSP_* analysis flags and ISO_RRIP_ANALYZE (IsoRripAnalyze): the moving outbuf pointer and the *outlen pointer are the whole output buffer with a position (outpos) and a length (outlen) kept in the analysis, read back by the caller; inump an Option<&mut>; the prototypes are cd9660_rrip.rs's functions; test-ref of the defines"
+
+[[file]]
+c = "sys/isofs/cd9660/cd9660_extern.h"
+rust = "sys/isofs/cd9660/cd9660_extern.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b25abdc9cd9da7ab86b5b43c4c0da25bf77e1012"
+deps = ["sys/isofs/cd9660/iso.h", "sys/sys/mount.h"]
+notes = "M10c: enum ISO_FTYPE (IsoFtype), ISOFSMNT_ROOT, struct iso_mnt (IsoMnt, built whole by iso_mountfs and not changed afterwards: plain fields; root_extent/root_size u32; im_export not kept without NFSSERVER, as ufsmount.rs), VFSTOISOFS (vfstoisofs, checks the mount is a cd9660 one), blkoff/lblktosize/lblkno/blksize as functions over i64; the prototypes and cd9660_vops/specvops/fifovops are their files' (fifovops with miscfs/fifofs, not ported)"
+
+[[file]]
+c = "sys/isofs/cd9660/cd9660_node.h"
+rust = "sys/isofs/cd9660/cd9660_node.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f76f7b3f2b9bc5575e26bac9a358724c49a81fef"
+deps = ["sys/isofs/cd9660/iso.h", "sys/isofs/cd9660/cd9660_extern.h", "sys/sys/buf.h"]
+notes = "M10c: doff_t (Doff), ISO_RRIP_INODE (IsoRripInode, Copy, in a Cell changed with IsoNode::update_inode), struct iso_node (IsoNode, Cells under i_lock, an rrwlock; i_next/i_prev are a queue.h ListEntry with the IsoHash adapter, the C's i_prev == NULL test the extra member i_hashed), IN_ACCESS, VTOI (vtoi, checks VT_ISOFS) and ITOV (IsoNode::itov); the prototypes are their files' functions; test-ref of IN_ACCESS"
+
+[[file]]
+c = "sys/isofs/cd9660/cd9660_rrip.h"
+rust = "sys/isofs/cd9660/cd9660_rrip.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7b5f5c9022e7bfd88b3d860919b32962ea5aec58"
+deps = ["sys/isofs/cd9660/iso.h"]
+notes = "M10c: the SUSP/RRIP entries ISO_SUSP_HEADER, ISO_RRIP_ATTR, DEVICE, SLINK_COMPONENT, SLINK, ALTNAME, CLINK, PLINK, RELDIR, TSTAMP, IDFLAG, EXTREF, OFFSET, CONT as #[repr(C)] byte-array structs (sizes asserted: 4, 36, 20, 3, 6, 5, 12, 12, 4, 6, 5, 8, 7, 28) viewed over an entry's bytes with from_bytes; ISO_SUSP_CFLAG_*, ISO_RRIP_SLSIZ, ISO_SUSP_TSTAMP_*; shares cd9660_rrip.rs with cd9660_rrip.c; test-ref of the defines"
+
+[[file]]
+c = "sys/isofs/cd9660/cd9660_bmap.c"
+rust = "sys/isofs/cd9660/cd9660_bmap.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "bb1066b5772648c74af5ecf492b9a35823fa87d5"
+deps = ["sys/isofs/cd9660/cd9660_node.h", "sys/sys/vnode.h"]
+notes = "M10c: cd9660_bmap (the extent is contiguous: (iso_start + lbn) << (bshift - DEV_BSHIFT), the read-ahead run capped at MAXBSIZE); a_vpp/a_bnp/a_runp Option<&mut>; host test (device block and run)"
+
+[[file]]
+c = "sys/isofs/cd9660/cd9660_util.c"
+rust = "sys/isofs/cd9660/cd9660_util.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "60c0cc09f7f5e128a13a255c4f4e33fc0f8af853"
+deps = ["sys/isofs/cd9660/iso.h"]
+notes = "M10c: the whole file: cd9660_wchar2char (a StaticCell<Option<fn>> nothing sets, as in OpenBSD), isochar (the bytes to the end of the buffer plus the name's length; a byte past the buffer reads 0), isofncmp, isofntrans (original/assoc bool, no byte written past outfn); names are slices, end tests < where the C compares pointers; host tests (plain and Joliet characters, case-insensitive and versioned comparisons and the sign of mismatches, version and trailing-dot stripping, associated files)"
+
+[[file]]
+c = "sys/isofs/cd9660/cd9660_node.c"
+rust = "sys/isofs/cd9660/cd9660_node.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6ff5e0e032050107f5bbfe3f72962d2ef9aab270"
+deps = ["sys/isofs/cd9660/cd9660_node.h", "sys/isofs/cd9660/cd9660_extern.h", "sys/isofs/cd9660/cd9660_lookup.c", "sys/crypto/siphash.c", "sys/kern/kern_malloc.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_cache.c", "sys/kern/vfs_bio.c"]
+notes = "M10c: the whole file: isohashtbl/isohash/isohashkey (StaticCells written by cd9660_init from vfsinit, as ufs_ihash.rs), cd9660_init (hashinit(initialvnodes), arc4random key), cd9660_isohash (SipHash24 of dev and inum), cd9660_ihashget, cd9660_ihashins (EEXIST unlocked, else hashed then VOP_LOCK), cd9660_ihashrem, cd9660_inactive, cd9660_reclaim (free(M_ISOFSNODE)), cd9660_defattr/cd9660_deftstamp (record view, extended attribute buffer an Option, read by cd9660_bufatoff at the negative offset under ISOFSMNT_EXTATT), cd9660_tstamp_conv7/conv17 (bool for 1/0; the int arithmetic wraps), cd9660_chars2ui, isodirino; prtactive's vprint behind feature diagnostic; host tests (7- and 17-byte dates with GMT offsets, pre-1970, isodirino with extended attributes, default attributes and times of plain records)"
+
+[[file]]
+c = "sys/isofs/cd9660/cd9660_lookup.c"
+rust = "sys/isofs/cd9660/cd9660_lookup.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b64a0f84a1dc8bfe1cd123548f5798d970abfc7a"
+deps = ["sys/isofs/cd9660/cd9660_node.h", "sys/isofs/cd9660/cd9660_util.c", "sys/isofs/cd9660/cd9660_rrip.c", "sys/kern/vfs_cache.c", "sys/kern/vfs_bio.c", "sys/kern/vfs_vops.c"]
+notes = "M10c: the whole file: iso_nchstats (a Nchstats), cd9660_lookup (the gotos between searchloop/foundino/notfound/found are a loop over the passes and a labelled block yielding Scan::{Found, FoundIno, NotFound}; the record found is its offset in the buffer; the Rock Ridge name buffer is NAME_MAX + 1 bytes on the stack instead of a NAME_MAX malloc, since the translation of a record without NM can be one byte longer; NOSORTBUG not defined), cd9660_bufatoff (returns the buffer and the offset in it); tested through the mount tests of cd9660_vfsops (Rock Ridge, plain and GENS names, '..' through a symbolic link)"
+
+[[file]]
+c = "sys/isofs/cd9660/cd9660_rrip.c"
+rust = "sys/isofs/cd9660/cd9660_rrip.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "785ba86fe61798578ccffaf4be16e651a52737cb"
+deps = ["sys/isofs/cd9660/cd9660_rrip.h", "sys/isofs/cd9660/iso_rrip.h", "sys/isofs/cd9660/cd9660_node.c", "sys/isofs/cd9660/cd9660_util.c", "sys/kern/vfs_bio.c", "sys/kern/kern_sysctl.c"]
+notes = "M10c: the whole file: RRIP_TABLE (static arrays without the sentinel; the func2 walk stops at the first entry without one, as the C's), cd9660_rrip_attr/defattr/slink/altname/defname/pclink/reldir/tstamp/deftstamp/device/idflag/cont/stop/extref (entries as slices of exactly their length; no byte written past the output, a name that would not fit treated as the C treats one past maxlen), cd9660_rrip_loop (entries read within the record and its buffer, a continuation area within the block read for it: CE's block/offset/length unsigned, a negative length refused; as in C an earlier continuation buffer is not released when a continuation holds another CE), cd9660_rrip_analyze, cd9660_rrip_getname, cd9660_rrip_getsymname, cd9660_rrip_offset (&mut IsoMnt for rr_skip0); TF is read only when a byte longer than its stamps (the C's sizeof(ISO_RRIP_TSTAMP) counts time[1]), so makefs's TF entries are ignored, as in OpenBSD; hostname copied out of HOSTNAME; host tests over the makefs records and built ones (SP/ER and the XA layout, NM with continuation and dots, CL/RE, SL with root, current, volume root, continued components, too long, PX/PN/TF in both forms, RR, ST, unreachable CE)"
+
+[[file]]
+c = "sys/isofs/cd9660/cd9660_vfsops.c"
+rust = "sys/isofs/cd9660/cd9660_vfsops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4e58ff9194051bcd0f51da938a138e42b0673b25"
+deps = ["sys/isofs/cd9660/cd9660_extern.h", "sys/isofs/cd9660/cd9660_node.c", "sys/isofs/cd9660/cd9660_rrip.c", "sys/isofs/cd9660/cd9660_lookup.c", "sys/sys/cdio.h", "sys/sys/mount.h", "sys/kern/vfs_subr.c", "sys/kern/vfs_lookup.c", "sys/kern/vfs_bio.c", "sys/kern/subr_disk.c", "sys/kern/spec_vnops.c"]
+notes = "M10c: the whole file: cd9660_vfsops (vfs_sysctl a closure answering EOPNOTSUPP), cd9660_mountroot (dk_mountroot calls it for FS_ISO9660 under feature cd9660; a rootdev without a vnode is ENODEV), cd9660_mount (its own Nameidata for the device; EINVAL without arguments; the export update passes a NULL table to vfs_export, ENOTSUP without NFSSERVER; mount_info gets the caller's iso_args with the flags iso_mountfs changed), iso_mountfs (volume descriptor search, Joliet escapes, CDIOREADMSADDR's int as four bytes through VOP_IOCTL, Rock Ridge check, the iso_mnt built in a local and malloc'ed when complete; the error path also releases the primary descriptor's buffer, which the C leaks on a bad block size), iso_disklabelspoof (readdisklabel calls it on both archs, feature cd9660), cd9660_start, cd9660_unmount, cd9660_root, cd9660_quotactl, cd9660_statfs, cd9660_sync, struct ifid (Ifid::from_fid/to_fid over struct fid), cd9660_fhtovp, cd9660_vget, cd9660_vget_internal (FIFO: cd9660_fifovops comes with miscfs/fifofs, not ported; the C's #else EOPNOTSUPP meanwhile, as ffs_vinit), cd9660_vptofh, cd9660_check_export (no struct netcred without NFSSERVER: EACCES, else unported!); ISOFS_DBG not defined; host tests: the makefs image on a fake block device mounted as root (Rock Ridge: read, readdir with small buffers, readlink, a symbolic link through '..', stat; NORRIP: case-insensitive ISO names, associated-file merging order; GENS: versions kept), blank and bad-block-size discs refused, the CD disk label, file handles"
+
+[[file]]
+c = "sys/isofs/cd9660/cd9660_vnops.c"
+rust = "sys/isofs/cd9660/cd9660_vnops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fb2e7b4a8ae8acbc8ed19479764c2fffd546a3e8"
+deps = ["sys/isofs/cd9660/cd9660_node.c", "sys/isofs/cd9660/cd9660_lookup.c", "sys/isofs/cd9660/cd9660_bmap.c", "sys/isofs/cd9660/cd9660_rrip.c", "sys/kern/spec_vnops.c", "sys/kern/vfs_default.c", "sys/kern/vfs_bio.c", "sys/kern/kern_rwlock.c", "sys/kern/kern_event.c", "sys/sys/dirent.h"]
+notes = "M10c: the whole file: struct isoreaddir (on the stack; Ent names its three entries), cd9660_setattr, cd9660_open, cd9660_close, cd9660_access, cd9660_getattr (a zero-size link's length through cd9660_readlink into a malloc(M_TEMP) buffer with a kernel Uio), cd9660_read (MAX_RA read-ahead arrays on the stack; breadn), cd9660_ioctl, cd9660_mmap/cd9660_seek (in no table, as in C; no arguments), iso_uiodir/iso_shipdir (Err(None) for the C's -1; the bcopy of d_reclen bytes is a whole-entry copy), cd9660_readdir, cd9660_readlink (the direct copy into a kernel iovec of MAXPATHLEN or more through its base pointer, uio_offset not advanced on that path, as in C; a record too short for its fixed part is EINVAL), cd9660_link, cd9660_symlink, cd9660_lock/unlock/islocked (rrw_enter/rrw_exit/rrw_status on i_lock, RWL_DUPOK|RWL_IS_VNODE, as ufs), cd9660_strategy, cd9660_print (features diagnostic/debug), cd9660_pathconf, cd9660_vops and cd9660_specvops (eopnotsupp/nullop/vop_generic_badop slots as closures), cd9660_fifovops not here (miscfs/fifofs not ported), the three filterops, cd9660_kqfilter, filt_cd9660detach/read/write/vnode; host tests (setattr refusals, pathconf, filters, associated-file merging and the full-buffer stop of readdir into a kernel buffer); the reads, lookups and listings run in cd9660_vfsops' mount tests"
+
+[[file]]
+c = "sys/sys/cdio.h"
+rust = "sys/sys/cdio.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = ["sys/sys/ioccom.h"]
+notes = "M10c: license: none (only the $OpenBSD$/$NetBSD$ lines, kept; every notice in the reference tree accepted by the user 2026-10-04); partial: CDIOREADMSADDR only (iso_mountfs); union msf_lba, struct cd_toc_entry and the CD audio/TOC/sub-channel/volume requests come with cd(4); host test of the ioctl number"

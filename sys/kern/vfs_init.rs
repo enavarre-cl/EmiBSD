@@ -46,11 +46,11 @@
 //!
 //! ## Deviations
 //! - `vfsconflist[]` holds the ported file systems in `vfs_init.c`'s order: `ffs` (feature
-//!   `ffs`, `option FFS`), `mfs` (feature `mfs`, `option MFS`), `msdos` (feature `msdosfs`,
-//!   `option MSDOSFS`), `tmpfs` (feature `tmpfs`, `option TMPFS`, commented out in GENERIC).
-//!   Each other GENERIC entry (`EXT2FS`, `CD9660`, `NFSCLIENT`, `NTFS`, `UDF`, `FUSE`) joins
-//!   as a `Vfsconf::new(...)` line when its file system does, behind a cargo feature named
-//!   after the `option(4)`.
+//!   `ffs`, `option FFS`), `mfs` (feature `mfs`, `option MFS`), `cd9660` (feature `cd9660`,
+//!   `option CD9660`), `msdos` (feature `msdosfs`, `option MSDOSFS`), `tmpfs` (feature
+//!   `tmpfs`, `option TMPFS`, commented out in GENERIC). Each other GENERIC entry (`EXT2FS`,
+//!   `NFSCLIENT`, `NTFS`, `UDF`, `FUSE`) joins as a `Vfsconf::new(...)` line when its file
+//!   system does, behind a cargo feature named after the `option(4)`.
 //! - `rootvnode` is an `AtomicPtr` behind [`rootvnode`]/[`set_rootvnode`]; `maxvfsconf` is an
 //!   `AtomicI32`.
 //! - `vfs_byname` takes the name as bytes (`&[u8]`, NUL or slice end terminated).
@@ -92,6 +92,14 @@ static VFSCONFLIST: [Vfsconf; NVFSCONF] = [
         crate::sys::mount::MNT_LOCAL,
         crate::sys::mount::MfsArgs::SIZE,
     ),
+    #[cfg(feature = "cd9660")]
+    Vfsconf::new(
+        &crate::isofs::cd9660::cd9660_vfsops::CD9660_VFSOPS,
+        crate::sys::mount::MOUNT_CD9660,
+        14,
+        crate::sys::mount::MNT_LOCAL,
+        crate::sys::mount::IsoArgs::SIZE,
+    ),
     #[cfg(feature = "msdosfs")]
     Vfsconf::new(
         &crate::msdosfs::msdosfs_vfsops::MSDOSFS_VFSOPS,
@@ -113,6 +121,7 @@ static VFSCONFLIST: [Vfsconf; NVFSCONF] = [
 /// The number of entries of `vfsconflist[]`: one per configured file system.
 const NVFSCONF: usize = cfg!(feature = "ffs") as usize
     + cfg!(feature = "mfs") as usize
+    + cfg!(feature = "cd9660") as usize
     + cfg!(feature = "msdosfs") as usize
     + cfg!(feature = "tmpfs") as usize;
 
