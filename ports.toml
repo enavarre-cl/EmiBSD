@@ -5635,18 +5635,20 @@ notes = "M9+: prototypes only; module shared with in6_ifattach.c"
 [[file]]
 c = "sys/netinet6/in6.c"
 rust = "sys/netinet6/in6.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "415ed30c76e89f38ff0120fa20bd6be8af227dd8"
+deps = ["sys/netinet6/in6.h", "sys/netinet6/in6_var.h", "sys/netinet6/in6_ifattach.c", "sys/netinet6/nd6.c", "sys/netinet6/nd6_nbr.c", "sys/netinet6/mld6.c", "sys/net/route.c", "sys/net/if.c", "sys/netinet/in.c"]
+notes = "M9+: module with in6.h (WIDE and Berkeley BSD-3). The whole file: in6_mask2len (limit as Option<usize>), in6_nam2sin6, in6_sa2sin6, in6_control (aligned copy as in_control), in6_ioctl, in6_ioctl_change_ifaddr, in6_ioctl_get, in6_check_embed_scope, in6_clear_scope_id, in6_update_ifa (ifra_flags changes stay local; the two all-nodes route blocks are in6_add_mcast_route), in6_purgeaddr, in6_unlink_ifa, in6_ifinit, in6_lookupmulti, in6_addmulti/in6_delmulti/in6_hasmulti, in6_joingroup/in6_leavegroup (*errorp is the Err), in6ifa_ifpforlinklocal, in6ifa_ifpwithaddr, in6_addrscope, in6_addr2scopeid, in6_matchlen, in6_prefixlen2mask, in6_ifawithscope (RFC 6724 rules as a verdict block, source statistics), in6if_do_dad; NCARP and MROUTING not configured (comments); host tests (masks, matchlen, scopes, embedded scope, sockaddr checks, source selection rules, address lookup, request validation, SIOCAIFADDR_IN6/SIOCDIFADDR_IN6 end to end)"
 
 [[file]]
 c = "sys/netinet6/in6_ifattach.c"
 rust = "sys/netinet6/in6_ifattach.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "ada7a7b41bc0dd588019daec43b768048228ecc1"
+deps = ["sys/netinet6/in6_ifattach.h", "sys/netinet6/in6.c", "sys/netinet6/nd6.c", "sys/netinet6/nd6_nbr.c", "sys/net/route.c", "sys/net/rtable.c"]
+notes = "M9+: module with in6_ifattach.h (WIDE BSD-3). The whole file: in6_get_rand_ifid, in6_get_hw_ifid (EUI-64 of Ethernet/CARP/IEEE1394/802.11 addresses; false is the C's -1), in6_get_ifid (borrowed from another interface, else random), in6_ifattach_linklocal, in6_ifattach_loopback, in6_ifattach, in6_ifdetach (one helper for the two all-nodes route removals); MROUTING not configured; host tests (EUI-64 vectors incl. fe80::5054:ff:febb:2 from 52:54:00:bb:00:02, unusable addresses, 8-byte addresses, random bits, borrowing)"
 
 [[file]]
 c = "sys/netinet6/in6_pcb.c"
@@ -5667,18 +5669,20 @@ notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-modu
 [[file]]
 c = "sys/netinet6/in6_src.c"
 rust = "sys/netinet6/in6_src.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "3057a98a48c6300696cc247e222abf22c921b1a3"
+deps = ["sys/netinet6/in6_var.h", "sys/netinet6/ip6_var.h", "sys/netinet6/in6.c", "sys/netinet/in_pcb.h", "sys/net/route.c", "sys/net/rtable.c", "sys/net/if.c"]
+notes = "M9+: BSD-3 (WIDE, Berkeley). The whole file: in6_pcbselsrc (the address returned by value; pi->ipi6_addr still overridden in place), in6_selectsrc, in6_selectroute, in6_selectif (private; retifp is the returned Option), in6_selecthlim, in6_embedscope, in6_recoverscope, in6_clearscope; host tests (scope embed/recover/clear, scoped and multicast sources, tentative address)"
 
 [[file]]
 c = "sys/netinet6/in6_cksum.c"
 rust = "sys/netinet6/in6_cksum.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "5fe150ac92659d55d1c6e9cd3d41028aa39e3556"
+deps = ["sys/netinet/in_cksum.c", "sys/netinet/ip6.h"]
+notes = "M9+: BSD-3. in6_cksum over an mbuf chain with the pseudo header (summed from a byte array, scope-embedded halves skipped), the word loop is in_cksum.rs's cksum_add/cksum_fold; panics 'out of data' also where the C says 'out of header'; host tests (hand-computed ICMPv6 echo, chains cut at odd and even offsets against a flat oracle, embedded scope, nxt 0, empty payload)"
 
 [[file]]
 c = "sys/netinet6/ip6_input.c"

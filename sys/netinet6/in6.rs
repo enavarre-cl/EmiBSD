@@ -165,25 +165,92 @@
 //!   `in6_recoverscope`, `in6_clearscope` (`netinet6/in6_src.rs`), `zeroin6_addr`
 //!   (`netinet6/in6_pcb.rs`); `in6_addrscope`, `in6_ifawithscope`, `in6_mask2len`,
 //!   `in6_nam2sin6` and `in6_sa2sin6` are this module's (`in6.c`).
+//!
+//! ### `in6.c`
+//! - `in6_mask2len`'s limit pointer is `Option<usize>`, the number of valid mask bytes (the
+//!   C's `lim0 - mask`); `None` or more than 16 is the whole address. `in6_update_ifa` passes
+//!   `sin6_len - 8` as the C's pointer arithmetic does (a shorter length makes the unsigned
+//!   distance huge: the whole mask).
+//! - `in6_control` hands the request to `in6_ioctl` through an aligned copy when `sys_ioctl`'s
+//!   buffer is not aligned for the structure (as `in_control`); the address inside a request
+//!   is read and written unaligned.
+//! - `in6_update_ifa` takes `&In6Aliasreq`: the C's changes of `ifra->ifra_flags` (re-run DAD)
+//!   stay in a local of the function; `in6_ioctl_change_ifaddr`, which owns the request, sets
+//!   `IN6_IFF_TENTATIVE` in it before the call as the C does.
+//! - The `*errorp` out-parameters of `in6_addmulti` and `in6_joingroup` are the `Err`; the
+//!   `malloc(M_NOWAIT)` failures are `ENOBUFS`. The membership list entries are `malloc`ed
+//!   and freed by `in6_joingroup` and `in6_leavegroup`, as in the C.
+//! - The two identical blocks of `in6_update_ifa` that add the route of an all-nodes group
+//!   (`rtalloc`, the 32-bit key check, `rtrequest(RTM_ADD)`) are one private function,
+//!   `in6_add_mcast_route`; the `goto`s of `in6_ifawithscope`'s rules are a labeled block
+//!   returning a verdict (skip or replace).
+//! - `in6_check_embed_scope`, `in6_clear_scope_id`, `in6_ioctl_get`,
+//!   `in6_ioctl_change_ifaddr`, `in6_ifinit` and `in6_unlink_ifa` are private (file-local
+//!   prototypes in C); the first two work on a copy of the request's address that is
+//!   written back.
+//! - `NCARP` (`carp_iamatch`, `IFT_CARP` rules in `in6_ifawithscope` and `in6if_do_dad`) and
+//!   `MROUTING` (`mrt6_ioctl`) are not configured: comments at the sites; `KERNEL_LOCK()` is
+//!   a comment (no kernel lock without `MULTIPROCESSOR`).
+//! - The routing code called for `AF_INET6` (`rt_ifa_add`, `rt_ifa_addlocal`, `rtalloc`,
+//!   `rtrequest` of the multicast routes) is the generic code of `net/route.rs`.
 
-use crate::net::if_var::Ifnet;
-use crate::net::route::Rtentry;
-use crate::netinet6::in6_var::{In6Aliasreq, In6Multi, In6MultiMship};
-use crate::sys::errno::Errno;
-use crate::sys::mbuf::Mbuf;
-use crate::sys::socketvar::Socket;
-use core::mem::size_of;
+use core::cell::Cell;
+use core::mem::{offset_of, size_of};
+use core::ptr::{self, NonNull};
 
-use crate::kern::kern_tc::getuptime;
-use crate::kern::subr_prf::panic;
-use crate::net::if_var::Ifaddr;
+use crate::kern::kern_malloc::{free, malloc};
+use crate::kern::kern_rwlock::{
+    rw_assert_anylock, rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write,
+};
+use crate::kern::kern_synch::{refcnt_init_trace, refcnt_rele, refcnt_take};
+use crate::kern::kern_tc::{gettime, getuptime};
+use crate::kern::subr_prf::{log, panic};
+use crate::net::if_::{
+    IFF_LOOPBACK, IFF_MULTICAST, IFF_POINTOPOINT, IFF_RUNNING, IFF_UP, IFNETLIST, if_addrhooks_run,
+    if_get, if_put, ifa_add, ifa_del, ifp_ioctl,
+};
+use crate::net::if_types::IFT_CARP;
+use crate::net::if_var::{IFA_ROUTE, Ifaddr, Ifnet};
+use crate::net::route::{
+    RTAX_DST, RTAX_GATEWAY, RTAX_IFA, RTAX_NETMASK, RTF_CLONING, RTF_CONNECTED, RTF_HOST,
+    RTF_MPATH, RTF_MULTICAST, RTM_ADD, RTM_CHGADDRATTR, RTP_CONNECTED, RtAddrinfo, Rtentry,
+    ifafree, rt_ifa_add, rt_ifa_addlocal, rt_ifa_del, rt_ifa_dellocal, rt_ifa_purge, rtalloc,
+    rtfree, rtrequest,
+};
+use crate::net::rtable::rt_key;
+use crate::net::rtsock::rtm_addr;
 use crate::netinet::in_::IPPROTO_DIVERT;
-use crate::netinet6::in6_var::In6Ifaddr;
-use crate::netinet6::nd6::ND6_INFINITE_LIFETIME;
+use crate::netinet6::in6_ifattach::in6_ifattach;
+use crate::netinet6::in6_var::{
+    IN6_IFF_ANYCAST, IN6_IFF_AUTOCONF, IN6_IFF_DEPRECATED, IN6_IFF_DETACHED, IN6_IFF_DUPLICATED,
+    IN6_IFF_TEMPORARY, IN6_IFF_TENTATIVE, In6Aliasreq, In6Ifaddr, In6Ifreq, In6Multi,
+    In6MultiMship, In6MultiMshipList, SIOCAIFADDR_IN6, SIOCDIFADDR_IN6, SIOCGIFAFLAG_IN6,
+    SIOCGIFALIFETIME_IN6, SIOCGIFDSTADDR_IN6, SIOCGIFINFO_IN6, SIOCGIFNETMASK_IN6,
+    SIOCGNBRINFO_IN6, ia6_dstin6, ia6_maskin6, ia6_sin6, ifa_in6, ifmatoin6m,
+};
+use crate::netinet6::ip6_var::{Ip6statCounters, ip6stat_inc, ip6stat_inc_idx};
+use crate::netinet6::mld6::{mld6_sendpkt, mld6_start_listening, mld6_stop_listening};
+use crate::netinet6::mld6_var::Mld6Pktinfo;
+use crate::netinet6::nd6::{ND6_INFINITE_LIFETIME, nd6_expire_timer_update, nd6_ioctl};
+use crate::netinet6::nd6_nbr::{nd6_dad_start, nd6_dad_stop};
 use crate::sys::endian::{htonl, htons};
-use crate::sys::socket::{AF_INET6, Sockaddr};
+use crate::sys::errno::Errno;
+use crate::sys::ioccom::iocparm_len;
+use crate::sys::malloc::{M_IFADDR, M_IPMADDR, M_NOWAIT, M_WAITOK, M_ZERO};
+use crate::sys::mbuf::{Mbuf, mtod};
+use crate::sys::queue::{ListEntry, ListHead};
+use crate::sys::refcnt::{DT_REFCNT_IDX_IFADDR, DT_REFCNT_IDX_IFMADDR};
+use crate::sys::socket::{AF_INET6, AF_UNSPEC, Sockaddr};
+use crate::sys::socketvar::{SS_PRIV, Socket};
+use crate::sys::sockio::{
+    SIOCADDMULTI, SIOCDELMULTI, SIOCSIFADDR, SIOCSIFBRDADDR, SIOCSIFDSTADDR, SIOCSIFNETMASK,
+};
 use crate::sys::sysctl::{CTLTYPE_INT, CTLTYPE_NODE, CTLTYPE_STRUCT, Ctlname};
-use crate::sys::types::{InPort, SaFamily};
+use crate::sys::syslog::LOG_ERR;
+use crate::sys::systm::{
+    net_assert_locked, net_lock, net_lock_shared, net_unlock, net_unlock_shared,
+};
+use crate::sys::types::{InPort, SaFamily, Time};
 
 /// Buffer length for strings containing printable IPv6 addresses.
 pub const INET6_ADDRSTRLEN: usize = 46;
@@ -772,43 +839,142 @@ pub fn ifatoia6(ifa: &Ifaddr) -> &In6Ifaddr {
     unsafe { &*core::ptr::from_ref(ifa).cast::<In6Ifaddr>() }
 }
 
+/// An interface address with the lifetime its interface's address list gives it.
+fn ifa_static(ifa: &Ifaddr) -> &'static Ifaddr {
+    // SAFETY: an address on an interface's list lives until `ifa_del` and its last
+    // `ifafree`, as the C's pointers do (`docs/C_TO_RUST.md`, reference-counted pool objects).
+    unsafe { &*ptr::from_ref(ifa) }
+}
+
+/// The IPv6 address of an `AF_INET6` interface address on a list, with that lifetime.
+fn ia6_static(ifa: &Ifaddr) -> &'static In6Ifaddr {
+    ifatoia6(ifa_static(ifa))
+}
+
+/// The family of an interface address.
+fn ifa_family(ifa: &Ifaddr) -> SaFamily {
+    // SAFETY: an interface address's `ifa_addr` is readable (`ifa_add`'s contract).
+    unsafe { (*ifa.ifa_addr.get()).sa_family }
+}
+
 /// `in6_mask2len`: the prefix length of mask `mask`, -1 if it is not contiguous. `lim` is
 /// the number of valid bytes of the mask (the C's `lim0 - mask`); `None` (`NULL`) or more
 /// than 16 means the whole address, and a given limit makes the check of the remaining
 /// bits stricter.
 pub fn in6_mask2len(mask: &In6Addr, lim: Option<usize>) -> i32 {
-    let _ = (mask, lim);
-    let _ = crate::unported!("in6_mask2len: placeholder");
-    -1
+    // ignore the scope_id part
+    let lim = match lim {
+        Some(l) if l <= size_of::<In6Addr>() => l,
+        _ => size_of::<In6Addr>(),
+    };
+    let m = &mask.s6_addr;
+
+    let mut x = 0;
+    let mut p = 0;
+    while p < lim {
+        if m[p] != 0xff {
+            break;
+        }
+        x += 1;
+        p += 1;
+    }
+    let mut y = 0;
+    if p < lim {
+        while y < 8 {
+            if m[p] & (0x80 >> y) == 0 {
+                break;
+            }
+            y += 1;
+        }
+    }
+
+    // when the limit pointer is given, do a stricter check on the remaining bits.
+    if p < lim {
+        if y != 0 && m[p] & (0x00ff >> y) != 0 {
+            return -1;
+        }
+        if m[p + 1..lim].iter().any(|&b| b != 0) {
+            return -1;
+        }
+    }
+
+    x * 8 + y
 }
 
 /// `in6_nam2sin6`: the `sockaddr_in6` in mbuf `nam`, checked (family, length).
 pub fn in6_nam2sin6(nam: &Mbuf) -> Result<*mut SockaddrIn6, Errno> {
-    let _ = nam;
-    Err(crate::unported!("in6_nam2sin6: placeholder"))
+    let sa = mtod::<Sockaddr>(nam);
+
+    if (nam.m_len().get() as usize) < offset_of!(Sockaddr, sa_data) {
+        return Err(Errno::EINVAL);
+    }
+    // SAFETY: the mbuf holds at least the length and family bytes.
+    let (family, len) = unsafe { ((*sa).sa_family, (*sa).sa_len) };
+    if family != AF_INET6 {
+        return Err(Errno::EAFNOSUPPORT);
+    }
+    if u32::from(len) != nam.m_len().get() {
+        return Err(Errno::EINVAL);
+    }
+    if usize::from(len) != size_of::<SockaddrIn6>() {
+        return Err(Errno::EINVAL);
+    }
+    Ok(satosin6(sa))
 }
 
 /// `in6_sa2sin6`: `sa` as a `sockaddr_in6`, checked.
 ///
 /// # Safety
 ///
-/// `sa` points at a readable socket address of its `sa_len` bytes.
+/// `sa` points at a readable socket address (at least its length and family).
 pub unsafe fn in6_sa2sin6(sa: *mut Sockaddr) -> Result<*mut SockaddrIn6, Errno> {
-    let _ = sa;
-    Err(crate::unported!("in6_sa2sin6: placeholder"))
+    // SAFETY: the caller's contract.
+    let (family, len) = unsafe { ((*sa).sa_family, (*sa).sa_len) };
+    if family != AF_INET6 {
+        return Err(Errno::EAFNOSUPPORT);
+    }
+    if usize::from(len) != size_of::<SockaddrIn6>() {
+        return Err(Errno::EINVAL);
+    }
+    Ok(satosin6(sa))
 }
 
 /// `in6_control`: the `pru_control` of the IPv6 protocols: the address `ioctl`s, handed
 /// to `in6_ioctl` with the socket's `SS_PRIV` (`MROUTING`'s `mrt6_ioctl` is not
-/// configured).
+/// configured). `data` is the kernel copy of the request (`sys_ioctl`), as long as `cmd`
+/// encodes; a request that is not aligned for its structure is handled through an aligned
+/// copy.
 pub fn in6_control(
     so: &'static Socket,
     cmd: u64,
     data: &mut [u8],
     ifp: Option<&'static Ifnet>,
 ) -> Result<(), Errno> {
-    let _ = (so, cmd, data, ifp);
-    Err(crate::unported!("in6_control: placeholder"))
+    let privileged = so.has_state(SS_PRIV);
+
+    // MROUTING: SIOCGETSGCNT_IN6, SIOCGETMIFCNT_IN6 through mrt6_ioctl; not configured.
+    let len = iocparm_len(cmd) as usize;
+    if data.len() < len {
+        return Err(Errno::EINVAL);
+    }
+    if data.as_ptr().align_offset(align_of::<u64>()) == 0 {
+        // SAFETY: `data` is the request, as long as `cmd` encodes (checked) and aligned
+        // (checked), exclusively ours for the call.
+        return unsafe { in6_ioctl(cmd, data.as_mut_ptr(), ifp, privileged) };
+    }
+    // sys_ioctl's on-stack buffer: at most STK_PARAMS bytes.
+    let mut aligned = [0u64; 16];
+    if len > size_of_val(&aligned) {
+        return Err(Errno::EINVAL);
+    }
+    let bytes = aligned.as_mut_ptr().cast::<u8>();
+    // SAFETY: both buffers hold `len` bytes and do not overlap.
+    unsafe { ptr::copy_nonoverlapping(data.as_ptr(), bytes, len) };
+    // SAFETY: an aligned copy of the request, as long as `cmd` encodes.
+    let error = unsafe { in6_ioctl(cmd, bytes, ifp, privileged) };
+    // SAFETY: as above, back into the caller's buffer.
+    unsafe { ptr::copy_nonoverlapping(bytes, data.as_mut_ptr(), len) };
+    error
 }
 
 /// `in6_ioctl`: the IPv6 address `ioctl`s (`SIOCAIFADDR_IN6`, `SIOCDIFADDR_IN6`, the
@@ -824,129 +990,1345 @@ pub unsafe fn in6_ioctl(
     ifp: Option<&'static Ifnet>,
     privileged: bool,
 ) -> Result<(), Errno> {
-    let _ = (cmd, data, ifp, privileged);
-    Err(crate::unported!("in6_ioctl: placeholder"))
+    let Some(ifp) = ifp else {
+        return Err(Errno::ENXIO);
+    };
+
+    match cmd {
+        // SAFETY: the caller's contract.
+        SIOCGIFINFO_IN6 | SIOCGNBRINFO_IN6 => unsafe { nd6_ioctl(cmd, data, ifp) },
+        SIOCGIFDSTADDR_IN6 | SIOCGIFNETMASK_IN6 | SIOCGIFAFLAG_IN6 | SIOCGIFALIFETIME_IN6 => {
+            // SAFETY: the caller's contract.
+            unsafe { in6_ioctl_get(cmd, data, ifp) }
+        }
+        SIOCAIFADDR_IN6 | SIOCDIFADDR_IN6 => {
+            if !privileged {
+                return Err(Errno::EPERM);
+            }
+            // SAFETY: the caller's contract.
+            unsafe { in6_ioctl_change_ifaddr(cmd, data, ifp) }
+        }
+        // Do not pass those ioctl to driver handler since they are not properly set up.
+        // Instead just error out.
+        SIOCSIFADDR | SIOCSIFDSTADDR | SIOCSIFBRDADDR | SIOCSIFNETMASK => Err(Errno::EINVAL),
+        _ => Err(Errno::EOPNOTSUPP),
+    }
 }
 
-/// `in6_update_ifa`: adds or changes the address `ifra` describes on `ifp`; `ia6` is the
-/// existing address or `None` to allocate one.
+/// `in6_ioctl_change_ifaddr`: `SIOCAIFADDR_IN6` (add or change an address) and
+/// `SIOCDIFADDR_IN6` (delete it).
+///
+/// # Safety
+///
+/// As for [`in6_ioctl`]: `data` is a `struct in6_aliasreq` (`SIOCAIFADDR_IN6`) or a
+/// `struct in6_ifreq` (`SIOCDIFADDR_IN6`).
+unsafe fn in6_ioctl_change_ifaddr(
+    cmd: u64,
+    data: *mut u8,
+    ifp: &'static Ifnet,
+) -> Result<(), Errno> {
+    let ifra = data.cast::<In6Aliasreq>();
+    let mut newifaddr = false;
+
+    // Find address for this interface, if it exists.
+    //
+    // In netinet code, we have checked ifra_addr in SIOCSIF*ADDR operation only, and used the
+    // first interface address as the target of other operations (without checking
+    // ifra_addr). This was because netinet code/API assumed at most 1 interface address per
+    // interface. Since IPv6 allows a node to assign multiple addresses on a single interface,
+    // we almost always look and check the presence of ifra_addr, and reject invalid ones
+    // here. It also decreases duplicated code among SIOC*_IN6 operations.
+    //
+    // We always require users to specify a valid IPv6 address for the corresponding
+    // operation.
+    let sa: *mut Sockaddr = match cmd {
+        SIOCAIFADDR_IN6 => {
+            // SAFETY: the caller's contract: `data` is a `struct in6_aliasreq`.
+            let a = unsafe { ptr::addr_of_mut!((*ifra).ifra_ifrau.ifrau_addr) };
+            sin6tosa(a)
+        }
+        SIOCDIFADDR_IN6 => {
+            // SAFETY: the caller's contract: `data` is a `struct in6_ifreq`.
+            let a = unsafe { ptr::addr_of_mut!((*data.cast::<In6Ifreq>()).ifr_ifru.ifru_addr) };
+            sin6tosa(a)
+        }
+        _ => panic(format_args!("in6_ioctl_change_ifaddr: invalid ioctl {cmd}")),
+    };
+    let mut sa6: Option<*mut SockaddrIn6> = None;
+    // SAFETY: the request's address, readable for its length and family bytes.
+    if unsafe { (*sa).sa_family } == AF_INET6 {
+        // SAFETY: as above.
+        sa6 = Some(unsafe { in6_sa2sin6(sa) }?);
+    }
+
+    net_lock();
+    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+
+    let mut ia6: Option<&'static In6Ifaddr> = None;
+    let error = 'err: {
+        if let Some(p) = sa6 {
+            // SAFETY: the request's `sockaddr_in6`, checked by `in6_sa2sin6`; it is copied
+            // out and back (the request is aligned for its structure, the address inside
+            // it only for the address).
+            let mut s = unsafe { ptr::read_unaligned(p) };
+            let mut r = in6_check_embed_scope(&mut s, ifp.if_index.get());
+            if r.is_ok() {
+                r = in6_clear_scope_id(&mut s, ifp.if_index.get());
+            }
+            // SAFETY: as above.
+            unsafe { ptr::write_unaligned(p, s) };
+            if let Err(e) = r {
+                break 'err Err(e);
+            }
+            ia6 = in6ifa_ifpwithaddr(ifp, &s.sin6_addr);
+        }
+
+        match cmd {
+            SIOCDIFADDR_IN6 => {
+                // for IPv4, we look for existing in_ifaddr here to allow "ifconfig if0
+                // delete" to remove the first IPv4 address on the interface. For IPv6, as
+                // the spec allows multiple interface address from the day one, we consider
+                // "remove the first one" semantics to be not preferable.
+                let Some(ia6) = ia6 else {
+                    break 'err Err(Errno::EADDRNOTAVAIL);
+                };
+                in6_purgeaddr(&ia6.ia_ifa);
+                if_addrhooks_run(ifp);
+                Ok(())
+            }
+
+            SIOCAIFADDR_IN6 => {
+                // SAFETY: the caller's contract; `data` is not otherwise referenced.
+                let ifra = unsafe { &mut *ifra };
+                if ifra.ifra_addr().sin6_family != AF_INET6
+                    || usize::from(ifra.ifra_addr().sin6_len) != size_of::<SockaddrIn6>()
+                {
+                    break 'err Err(Errno::EAFNOSUPPORT);
+                }
+
+                // reject read-only flags
+                if ifra.ifra_flags & IN6_IFF_DUPLICATED != 0
+                    || ifra.ifra_flags & IN6_IFF_DETACHED != 0
+                    || ifra.ifra_flags & IN6_IFF_DEPRECATED != 0
+                {
+                    break 'err Err(Errno::EINVAL);
+                }
+
+                if ia6.is_none() {
+                    newifaddr = true;
+                }
+
+                // Make the address tentative before joining multicast addresses, so that
+                // corresponding MLD responses would not have a tentative source address.
+                if newifaddr && in6if_do_dad(ifp) {
+                    ifra.ifra_flags |= IN6_IFF_TENTATIVE;
+                }
+
+                // first, make or update the interface address structure, and link it to the
+                // list. try to enable inet6 if there is no link-local yet.
+                if let Err(e) = in6_ifattach(ifp) {
+                    break 'err Err(e);
+                }
+                if let Err(e) = in6_update_ifa(ifp, ifra, ia6) {
+                    break 'err Err(e);
+                }
+
+                ia6 = None;
+                if let Some(p) = sa6 {
+                    // SAFETY: as above.
+                    let s = unsafe { ptr::read_unaligned(p) };
+                    ia6 = in6ifa_ifpwithaddr(ifp, &s.sin6_addr);
+                }
+                let Some(ia6) = ia6 else {
+                    // this can happen when the user specify the 0 valid lifetime.
+                    break 'err Ok(());
+                };
+
+                // Perform DAD, if needed.
+                if ia6.ia6_flags.get() & IN6_IFF_TENTATIVE != 0 {
+                    nd6_dad_start(&ia6.ia_ifa);
+                }
+
+                if !newifaddr {
+                    if_addrhooks_run(ifp);
+                    break 'err Ok(());
+                }
+
+                let plen = in6_mask2len(&ia6_maskin6(ia6), None);
+                if ifp.if_flags.get() & IFF_LOOPBACK != 0 || plen == 128 {
+                    if_addrhooks_run(ifp);
+                    break 'err Ok(()); // No need to install a connected route.
+                }
+
+                // SAFETY: the address's own socket address.
+                let error = unsafe {
+                    rt_ifa_add(
+                        &ia6.ia_ifa,
+                        RTF_CLONING | RTF_CONNECTED | RTF_MPATH,
+                        ia6.ia_ifa.ifa_addr.get(),
+                        ifp.if_rdomain.get(),
+                    )
+                };
+                if let Err(e) = error {
+                    in6_purgeaddr(&ia6.ia_ifa);
+                    break 'err Err(e);
+                }
+                if_addrhooks_run(ifp);
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    };
+
+    // err:
+    net_unlock();
+    // KERNEL_UNLOCK()
+    error
+}
+
+/// `in6_ioctl_get`: the address `ioctl`s that read: `SIOCGIFDSTADDR_IN6`,
+/// `SIOCGIFNETMASK_IN6`, `SIOCGIFAFLAG_IN6`, `SIOCGIFALIFETIME_IN6`.
+///
+/// # Safety
+///
+/// As for [`in6_ioctl`]: `data` is a `struct in6_ifreq`.
+unsafe fn in6_ioctl_get(cmd: u64, data: *mut u8, ifp: &'static Ifnet) -> Result<(), Errno> {
+    // SAFETY: the caller's contract.
+    let ifr = unsafe { &mut *data.cast::<In6Ifreq>() };
+    let mut addr = ifr.ifr_addr();
+    let mut have_sa6 = false;
+
+    if addr.sin6_family == AF_INET6 {
+        addr.sin6_len = size_of::<SockaddrIn6>() as u8;
+        ifr.set_ifr_addr(addr);
+        // SAFETY: `addr` is a local `sockaddr_in6`.
+        unsafe { in6_sa2sin6(sin6tosa(&mut addr)) }?;
+        have_sa6 = true;
+    }
+
+    net_lock_shared();
+
+    let error = 'err: {
+        let mut ia6: Option<&'static In6Ifaddr> = None;
+        if have_sa6 {
+            let mut r = in6_check_embed_scope(&mut addr, ifp.if_index.get());
+            if r.is_ok() {
+                r = in6_clear_scope_id(&mut addr, ifp.if_index.get());
+            }
+            ifr.set_ifr_addr(addr);
+            if let Err(e) = r {
+                break 'err Err(e);
+            }
+            ia6 = in6ifa_ifpwithaddr(ifp, &addr.sin6_addr);
+        }
+
+        // must think again about its semantics
+        let Some(ia6) = ia6 else {
+            break 'err Err(Errno::EADDRNOTAVAIL);
+        };
+
+        match cmd {
+            SIOCGIFDSTADDR_IN6 => {
+                if ifp.if_flags.get() & IFF_POINTOPOINT == 0 {
+                    break 'err Err(Errno::EINVAL);
+                }
+                // XXX: should we check if ifa_dstaddr is NULL and return an error?
+                ifr.set_ifr_dstaddr(ia6.ia_dstaddr.get());
+                Ok(())
+            }
+
+            SIOCGIFNETMASK_IN6 => {
+                ifr.set_ifr_addr(ia6.ia_prefixmask.get());
+                Ok(())
+            }
+
+            SIOCGIFAFLAG_IN6 => {
+                ifr.set_ifr_flags6(ia6.ia6_flags.get());
+                Ok(())
+            }
+
+            SIOCGIFALIFETIME_IN6 => {
+                let lt = ia6.ia6_lifetime.get();
+                let updatetime = ia6.ia6_updatetime.get();
+                let mut retlt = lt;
+                // XXX: adjust expiration time assuming time_t is signed.
+                let maxexpire = Time::MAX;
+                if lt.ia6t_vltime != ND6_INFINITE_LIFETIME {
+                    if Time::from(lt.ia6t_vltime) < maxexpire - updatetime {
+                        let mut expire = updatetime + Time::from(lt.ia6t_vltime);
+                        if expire != 0 {
+                            expire -= getuptime();
+                            expire += gettime();
+                        }
+                        retlt.ia6t_expire = expire;
+                    } else {
+                        retlt.ia6t_expire = maxexpire;
+                    }
+                }
+                if lt.ia6t_pltime != ND6_INFINITE_LIFETIME {
+                    if Time::from(lt.ia6t_pltime) < maxexpire - updatetime {
+                        let mut expire = updatetime + Time::from(lt.ia6t_pltime);
+                        if expire != 0 {
+                            expire -= getuptime();
+                            expire += gettime();
+                        }
+                        retlt.ia6t_preferred = expire;
+                    } else {
+                        retlt.ia6t_preferred = maxexpire;
+                    }
+                }
+                ifr.set_ifr_lifetime(retlt);
+                Ok(())
+            }
+
+            _ => panic(format_args!("in6_ioctl_get: invalid ioctl {cmd}")),
+        }
+    };
+
+    // err:
+    net_unlock_shared();
+    error
+}
+
+/// `in6_check_embed_scope`: embeds the interface index in a link-local address that does
+/// not carry one, `EINVAL` if it carries another.
+fn in6_check_embed_scope(sa6: &mut SockaddrIn6, ifidx: u32) -> Result<(), Errno> {
+    if in6_is_addr_linklocal(&sa6.sin6_addr) {
+        if sa6.sin6_addr.s6_addr16(1) == 0 {
+            // link ID is not embedded by the user
+            sa6.sin6_addr.set_s6_addr16(1, htons(ifidx as u16));
+        } else if sa6.sin6_addr.s6_addr16(1) != htons(ifidx as u16) {
+            return Err(Errno::EINVAL); // link ID contradicts
+        }
+    }
+    Ok(())
+}
+
+/// `in6_clear_scope_id`: clears the scope id of a link-local address, `EINVAL` if it is
+/// not the interface's.
+fn in6_clear_scope_id(sa6: &mut SockaddrIn6, ifidx: u32) -> Result<(), Errno> {
+    if in6_is_addr_linklocal(&sa6.sin6_addr) && sa6.sin6_scope_id != 0 {
+        if sa6.sin6_scope_id != ifidx {
+            return Err(Errno::EINVAL);
+        }
+        sa6.sin6_scope_id = 0; // XXX: good way?
+    }
+    Ok(())
+}
+
+/// Adds the route of the "all nodes" group `mltaddr`/32 through address `ia6` (the C's
+/// repeated blocks in `in6_update_ifa`): looks the group up first and adds the route when
+/// there is none whose first 32 bits match.
+fn in6_add_mcast_route(
+    ifp: &'static Ifnet,
+    ia6: &'static In6Ifaddr,
+    mltaddr: &SockaddrIn6,
+    mltmask: &SockaddrIn6,
+) -> Result<(), Errno> {
+    // SAFETY: `mltaddr` is a socket address of its `sin6_len` bytes.
+    let mut rt = unsafe { rtalloc(sin6tosa_const(mltaddr), 0, ifp.if_rdomain.get()) };
+    if let Some(r) = rt {
+        // 32bit came from "mltmask"
+        // SAFETY: a route's key is a readable socket address, a `sockaddr_in6` here.
+        let key = unsafe {
+            ptr::read_unaligned(
+                rt_key(r)
+                    .cast::<u8>()
+                    .add(offset_of!(SockaddrIn6, sin6_addr))
+                    .cast::<[u8; 4]>(),
+            )
+        };
+        if mltaddr.sin6_addr.s6_addr[..4] != key {
+            rtfree(Some(r));
+            rt = None;
+        }
+    }
+    match rt {
+        None => {
+            let mut ia_addr = ia6.ia_addr.get();
+            let mut mltaddr = *mltaddr;
+            let mut mltmask = *mltmask;
+            let mut info = RtAddrinfo::new();
+            info.rti_ifa = Some(&ia6.ia_ifa);
+            info.rti_info[RTAX_DST] = sin6tosa(&mut mltaddr);
+            info.rti_info[RTAX_GATEWAY] = sin6tosa(&mut ia_addr);
+            info.rti_info[RTAX_NETMASK] = sin6tosa(&mut mltmask);
+            info.rti_info[RTAX_IFA] = sin6tosa(&mut ia_addr);
+            info.rti_flags = RTF_MULTICAST;
+            // SAFETY: the addresses are local `sockaddr_in6`s that outlive the call.
+            unsafe {
+                rtrequest(
+                    RTM_ADD,
+                    &mut info,
+                    RTP_CONNECTED,
+                    None,
+                    ifp.if_rdomain.get(),
+                )
+            }
+        }
+        Some(r) => {
+            rtfree(Some(r));
+            Ok(())
+        }
+    }
+}
+
+/// `in6_update_ifa`: update parameters of an IPv6 interface address; adds or changes the
+/// address `ifra` describes on `ifp`. `ia6` is the existing address or `None` to allocate
+/// one (and link it into the address chains). This function is separated from
+/// `in6_control()`. The C's changes of `ifra->ifra_flags` stay in a local here.
 pub fn in6_update_ifa(
     ifp: &'static Ifnet,
     ifra: &In6Aliasreq,
     ia6: Option<&'static In6Ifaddr>,
 ) -> Result<(), Errno> {
-    let _ = (ifp, ifra, ia6);
-    Err(crate::unported!("in6_update_ifa: placeholder"))
+    let mut host_is_new = false;
+    let mut ifra_flags = ifra.ifra_flags;
+
+    net_assert_locked("in6_update_ifa");
+
+    // Validate parameters: (ifp == NULL || ifra == NULL) cannot happen with references.
+
+    // The destination address for a p2p link or the address of the announcing router for an
+    // autoconf address must have a family of AF_INET6 or AF_UNSPEC.
+    if ifp.if_flags.get() & (IFF_POINTOPOINT | IFF_LOOPBACK) != 0
+        || ifra_flags & IN6_IFF_AUTOCONF != 0
+    {
+        if ifra.ifra_dstaddr.sin6_family != AF_INET6 && ifra.ifra_dstaddr.sin6_family != AF_UNSPEC {
+            return Err(Errno::EAFNOSUPPORT);
+        }
+    } else if ifra.ifra_dstaddr.sin6_family != AF_UNSPEC {
+        return Err(Errno::EINVAL);
+    }
+
+    // validate ifra_prefixmask. don't check sin6_family, netmask does not carry fields other
+    // than sin6_len.
+    if usize::from(ifra.ifra_prefixmask.sin6_len) > size_of::<SockaddrIn6>() {
+        return Err(Errno::EINVAL);
+    }
+    // Because the IPv6 address architecture is classless, we require users to specify a
+    // (non 0) prefix length (mask) for a new address. We also require the prefix (when
+    // specified) mask is valid, and thus reject a non-consecutive mask.
+    if ia6.is_none() && ifra.ifra_prefixmask.sin6_len == 0 {
+        return Err(Errno::EINVAL);
+    }
+    let plen = if ifra.ifra_prefixmask.sin6_len != 0 {
+        // The C's limit is `&ifra_prefixmask + sin6_len` against the mask at offset 8 of
+        // the address; a length under 8 makes the (unsigned) distance huge: the whole mask.
+        let lim = usize::from(ifra.ifra_prefixmask.sin6_len)
+            .checked_sub(offset_of!(SockaddrIn6, sin6_addr));
+        let plen = in6_mask2len(&ifra.ifra_prefixmask.sin6_addr, lim);
+        if plen <= 0 {
+            return Err(Errno::EINVAL);
+        }
+        plen
+    } else {
+        // In this case, ia6 must not be NULL. We just use its prefix length.
+        match ia6 {
+            Some(ia6) => in6_mask2len(&ia6_maskin6(ia6), None),
+            None => return Err(Errno::EINVAL),
+        }
+    };
+
+    let (mut dst6, mut gw6);
+    if ifra_flags & IN6_IFF_AUTOCONF != 0 {
+        gw6 = ifra.ifra_dstaddr;
+        dst6 = SockaddrIn6::zeroed();
+    } else {
+        dst6 = ifra.ifra_dstaddr;
+        gw6 = SockaddrIn6::zeroed();
+    }
+    if dst6.sin6_family == AF_INET6 {
+        in6_check_embed_scope(&mut dst6, ifp.if_index.get())?;
+
+        if ifp.if_flags.get() & (IFF_POINTOPOINT | IFF_LOOPBACK) != 0 && plen != 128 {
+            return Err(Errno::EINVAL);
+        }
+    }
+    if gw6.sin6_family == AF_INET6 {
+        in6_check_embed_scope(&mut gw6, ifp.if_index.get())?;
+    }
+    // lifetime consistency check
+    let lt = &ifra.ifra_lifetime;
+    if lt.ia6t_pltime > lt.ia6t_vltime {
+        return Err(Errno::EINVAL);
+    }
+    if lt.ia6t_vltime == 0 && ia6.is_none() {
+        return Ok(()); // there's nothing to do
+    }
+
+    // If this is a new address, allocate a new ifaddr and link it into chains.
+    let ia6 = match ia6 {
+        Some(ia6) => ia6,
+        None => {
+            host_is_new = true;
+            let Some(mem) = malloc(size_of::<In6Ifaddr>(), M_IFADDR, M_WAITOK | M_ZERO) else {
+                panic(format_args!("in6_ifaddr: no memory"));
+            };
+            // SAFETY: a zeroed block of `size_of::<In6Ifaddr>()` bytes; all-zero is a valid
+            // `In6Ifaddr` (cells, links, a reference count). It lives until the last
+            // `ifafree`.
+            let ia6: &'static In6Ifaddr = unsafe { &*mem.as_ptr().cast::<In6Ifaddr>() };
+            refcnt_init_trace(&ia6.ia_ifa.ifa_refcnt, DT_REFCNT_IDX_IFADDR);
+            ia6.ia6_memberships.init();
+            // Initialize the address and masks, and put time stamp
+            ia6.ia_ifa.ifa_addr.set(ia6.ia_addr.as_ptr().cast());
+            let mut a = ia6.ia_addr.get();
+            a.sin6_family = AF_INET6;
+            a.sin6_len = size_of::<SockaddrIn6>() as u8;
+            ia6.ia_addr.set(a);
+            ia6.ia6_updatetime.set(getuptime());
+            if ifp.if_flags.get() & (IFF_POINTOPOINT | IFF_LOOPBACK) != 0 {
+                // XXX: some functions expect that ifa_dstaddr is not NULL for p2p
+                // interfaces.
+                ia6.ia_ifa.ifa_dstaddr.set(ia6.ia_dstaddr.as_ptr().cast());
+            } else {
+                ia6.ia_ifa.ifa_dstaddr.set(ptr::null_mut());
+            }
+            ia6.ia_ifa
+                .ifa_netmask
+                .set(ia6.ia_prefixmask.as_ptr().cast());
+
+            ia6.ia_ifp().set(Some(ifp));
+            ia6.ia_addr.set(*ifra.ifra_addr());
+            // SAFETY: the address lives until its last `ifafree`; its socket addresses are
+            // its own members.
+            unsafe { ifa_add(ifp, &ia6.ia_ifa) };
+            ia6
+        }
+    };
+
+    // The step that failed before the address is complete: a new address is unlinked again.
+    let unlink = |error: Errno| -> Result<(), Errno> {
+        // XXX: if a change of an existing address failed, keep the entry anyway.
+        if host_is_new {
+            in6_unlink_ifa(ia6, ifp);
+        }
+        Err(error)
+    };
+
+    // set prefix mask
+    if ifra.ifra_prefixmask.sin6_len != 0 {
+        // We prohibit changing the prefix length of an existing address, because
+        // + such an operation should be rare in IPv6, and
+        // + the operation would confuse prefix management.
+        if ia6.ia_prefixmask.get().sin6_len != 0 && in6_mask2len(&ia6_maskin6(ia6), None) != plen {
+            return unlink(Errno::EINVAL);
+        }
+        ia6.ia_prefixmask.set(ifra.ifra_prefixmask);
+    }
+
+    // If a new destination address is specified, scrub the old one and install the new
+    // destination.
+    if ifp.if_flags.get() & (IFF_POINTOPOINT | IFF_LOOPBACK) != 0
+        && dst6.sin6_family == AF_INET6
+        && !in6_are_addr_equal(&dst6.sin6_addr, &ia6_dstin6(ia6))
+    {
+        let ifa = &ia6.ia_ifa;
+
+        if ia6.ia_flags().get() & IFA_ROUTE != 0 {
+            // SAFETY: the address's own destination address.
+            let r =
+                unsafe { rt_ifa_del(ifa, RTF_HOST, ifa.ifa_dstaddr.get(), ifp.if_rdomain.get()) };
+            if r.is_ok() {
+                ia6.ia_flags().set(ia6.ia_flags().get() & !IFA_ROUTE);
+            }
+        }
+        ia6.ia_dstaddr.set(dst6);
+    }
+
+    if ifra_flags & IN6_IFF_AUTOCONF != 0
+        && gw6.sin6_family == AF_INET6
+        && !in6_are_addr_equal(&dst6.sin6_addr, &ia6.ia_gwaddr.get().sin6_addr)
+    {
+        // Set or update announcing router
+        ia6.ia_gwaddr.set(gw6);
+    }
+
+    // Set lifetimes. We do not refer to ia6t_expire and ia6t_preferred to see if the address
+    // is deprecated or invalidated, but initialize these members for applications.
+    ia6.ia6_updatetime.set(getuptime());
+    let mut lt = ifra.ifra_lifetime;
+    if lt.ia6t_vltime != ND6_INFINITE_LIFETIME {
+        lt.ia6t_expire = getuptime() + Time::from(lt.ia6t_vltime);
+    } else {
+        lt.ia6t_expire = 0;
+    }
+    if lt.ia6t_pltime != ND6_INFINITE_LIFETIME {
+        lt.ia6t_preferred = getuptime() + Time::from(lt.ia6t_pltime);
+    } else {
+        lt.ia6t_preferred = 0;
+    }
+    ia6.ia6_lifetime.set(lt);
+
+    // reset the interface and routing table appropriately.
+    if let Err(e) = in6_ifinit(ifp, ia6, host_is_new) {
+        return unlink(e);
+    }
+
+    // re-run DAD
+    if ia6.ia6_flags.get() & (IN6_IFF_TENTATIVE | IN6_IFF_DUPLICATED) != 0 {
+        ifra_flags |= IN6_IFF_TENTATIVE;
+    }
+    // configure address flags.
+    ia6.ia6_flags.set(ifra_flags);
+
+    nd6_expire_timer_update(ia6);
+
+    // We are done if we have simply modified an existing address.
+    if !host_is_new {
+        // DAD sends RTM_CHGADDRATTR when done.
+        if ia6.ia6_flags.get() & IN6_IFF_TENTATIVE == 0 {
+            rtm_addr(RTM_CHGADDRATTR, &ia6.ia_ifa);
+        }
+        return Ok(());
+    }
+
+    // Beyond this point, we should call in6_purgeaddr upon an error, not just go to unlink.
+
+    // join necessary multiast groups
+    if ifp.if_flags.get() & IFF_MULTICAST != 0 {
+        let cleanup = |error: Errno| -> Result<(), Errno> {
+            in6_purgeaddr(&ia6.ia_ifa);
+            Err(error)
+        };
+        // The membership of a joined group goes on the address's list.
+        let join = |addr: &In6Addr| -> Result<(), Errno> {
+            let imm = in6_joingroup(ifp, addr)?;
+            // SAFETY: the membership lives until `in6_leavegroup` frees it, which
+            // `in6_purgeaddr` does after taking it off this list.
+            unsafe { ia6.ia6_memberships.insert_head(imm) };
+            Ok(())
+        };
+
+        // join solicited multicast addr for new host id
+        let mut llsol = SockaddrIn6::zeroed();
+        llsol.sin6_family = AF_INET6;
+        llsol.sin6_len = size_of::<SockaddrIn6>() as u8;
+        llsol.sin6_addr.set_s6_addr16(0, htons(0xff02));
+        llsol
+            .sin6_addr
+            .set_s6_addr16(1, htons(ifp.if_index.get() as u16));
+        llsol.sin6_addr.set_s6_addr32(1, 0);
+        llsol.sin6_addr.set_s6_addr32(2, htonl(1));
+        llsol
+            .sin6_addr
+            .set_s6_addr32(3, ifra.ifra_addr().sin6_addr.s6_addr32(3));
+        llsol.sin6_addr.s6_addr[12] = 0xff;
+        if let Err(e) = join(&llsol.sin6_addr) {
+            return cleanup(e);
+        }
+
+        let mut mltmask = SockaddrIn6::zeroed();
+        mltmask.sin6_len = size_of::<SockaddrIn6>() as u8;
+        mltmask.sin6_family = AF_INET6;
+        mltmask.sin6_addr = IN6MASK32;
+
+        // join link-local all-nodes address
+        let mut mltaddr = SockaddrIn6::zeroed();
+        mltaddr.sin6_len = size_of::<SockaddrIn6>() as u8;
+        mltaddr.sin6_family = AF_INET6;
+        mltaddr.sin6_addr = IN6ADDR_LINKLOCAL_ALLNODES;
+        mltaddr
+            .sin6_addr
+            .set_s6_addr16(1, htons(ifp.if_index.get() as u16));
+        mltaddr.sin6_scope_id = 0;
+
+        // XXX: do we really need this automatic routes? We should probably reconsider this
+        // stuff. Most applications actually do not need the routes, since they usually
+        // specify the outgoing interface.
+        if let Err(e) = in6_add_mcast_route(ifp, ia6, &mltaddr, &mltmask) {
+            return cleanup(e);
+        }
+        if let Err(e) = join(&mltaddr.sin6_addr) {
+            return cleanup(e);
+        }
+
+        // join interface-local all-nodes address. (ff01::1%ifN, and ff01::%ifN/32)
+        let mut mltaddr = SockaddrIn6::zeroed();
+        mltaddr.sin6_len = size_of::<SockaddrIn6>() as u8;
+        mltaddr.sin6_family = AF_INET6;
+        mltaddr.sin6_addr = IN6ADDR_INTFACELOCAL_ALLNODES;
+        mltaddr
+            .sin6_addr
+            .set_s6_addr16(1, htons(ifp.if_index.get() as u16));
+        mltaddr.sin6_scope_id = 0;
+
+        // XXX: again, do we really need the route?
+        if let Err(e) = in6_add_mcast_route(ifp, ia6, &mltaddr, &mltmask) {
+            return cleanup(e);
+        }
+        if let Err(e) = join(&mltaddr.sin6_addr) {
+            return cleanup(e);
+        }
+    }
+
+    Ok(())
 }
 
 /// `in6_purgeaddr`: removes an IPv6 address and its routes and memberships.
 pub fn in6_purgeaddr(ifa: &'static Ifaddr) {
-    let _ = ifa;
-    let _ = crate::unported!("in6_purgeaddr: placeholder");
+    let Some(ifp) = ifa.ifa_ifp.get() else {
+        panic(format_args!("in6_purgeaddr: address without interface"));
+    };
+    let ia6 = ifatoia6(ifa);
+
+    // stop DAD processing
+    nd6_dad_stop(ifa);
+
+    // delete route to the destination of the address being purged. The interface must be p2p
+    // or loopback in this case.
+    if ifp.if_flags.get() & IFF_POINTOPOINT != 0
+        && ia6.ia_flags().get() & IFA_ROUTE != 0
+        && ia6.ia_dstaddr.get().sin6_len != 0
+    {
+        // SAFETY: the address's own destination address.
+        let r = unsafe { rt_ifa_del(ifa, RTF_HOST, ifa.ifa_dstaddr.get(), ifp.if_rdomain.get()) };
+        if r.is_ok() {
+            ia6.ia_flags().set(ia6.ia_flags().get() & !IFA_ROUTE);
+        }
+    }
+
+    // Remove ownaddr's loopback rtentry, if it exists.
+    let _ = rt_ifa_dellocal(&ia6.ia_ifa);
+
+    // leave from multicast groups we have joined for the interface
+    while let Some(imm) = ia6.ia6_memberships.first() {
+        // SAFETY: a membership on the list lives until `in6_leavegroup` frees it.
+        let imm: &'static In6MultiMship = unsafe { &*ptr::from_ref(imm) };
+        // SAFETY: `imm` is on `ia6`'s list (just found there).
+        unsafe { ListHead::<In6MultiMshipList>::remove(imm) };
+        in6_leavegroup(imm);
+    }
+
+    in6_unlink_ifa(ia6, ifp);
 }
 
-/// `in6_lookupmulti`: the multicast record of `addr` on `ifp`, if joined.
+/// `in6_unlink_ifa`: takes an address off its interface and drops the list's reference.
+fn in6_unlink_ifa(ia6: &'static In6Ifaddr, ifp: &'static Ifnet) {
+    let ifa = &ia6.ia_ifa;
+
+    net_assert_locked("in6_unlink_ifa");
+
+    // Release the reference to the base prefix.
+    let plen = in6_mask2len(&ia6_maskin6(ia6), None);
+    if ifp.if_flags.get() & IFF_LOOPBACK == 0 && plen != 128 {
+        // SAFETY: the address's own socket address.
+        let _ = unsafe {
+            rt_ifa_del(
+                ifa,
+                RTF_CLONING | RTF_CONNECTED,
+                ifa.ifa_addr.get(),
+                ifp.if_rdomain.get(),
+            )
+        };
+    }
+
+    rt_ifa_purge(ifa);
+    ifa_del(ifp, ifa);
+
+    ia6.ia_ifp().set(None);
+    ifafree(ifa);
+}
+
+/// `in6_ifinit`: initialize an interface's inet6 address and routing table entry.
+fn in6_ifinit(ifp: &'static Ifnet, ia6: &'static In6Ifaddr, newhost: bool) -> Result<(), Errno> {
+    let mut ifacount = 0;
+
+    net_assert_locked("in6_ifinit");
+
+    // Give the interface a chance to initialize if this is its first address (or it is a CARP
+    // interface) and to validate the address if necessary.
+    for ifa in ifp.if_addrlist.iter() {
+        if ifa_family(ifa) != AF_INET6 {
+            continue;
+        }
+        ifacount += 1;
+    }
+
+    if ifacount <= 1
+        || ifp.if_type.get() == IFT_CARP
+        || ifp.if_flags.get() & (IFF_LOOPBACK | IFF_POINTOPOINT) != 0
+    {
+        // SAFETY: the C hands the driver the `in6_ifaddr` for SIOCSIFADDR; drivers read it as
+        // the `struct ifaddr` it starts with, if at all.
+        unsafe { ifp_ioctl(ifp, SIOCSIFADDR, ptr::from_ref(ia6).cast_mut().cast()) }?;
+    }
+
+    ia6.ia_ifa.ifa_metric.set(ifp.if_metric.get() as i32);
+
+    // we could do in(6)_socktrim here, but just omit it at this moment.
+
+    // Special case: If the destination address is specified for a point-to-point interface,
+    // install a route to the destination as an interface direct route.
+    let plen = in6_mask2len(&ia6_maskin6(ia6), None); // XXX
+    if ifp.if_flags.get() & IFF_POINTOPOINT != 0
+        && plen == 128
+        && ia6.ia_dstaddr.get().sin6_family == AF_INET6
+    {
+        let ifa = &ia6.ia_ifa;
+        // SAFETY: the address's own destination address.
+        unsafe {
+            rt_ifa_add(
+                ifa,
+                RTF_HOST | RTF_MPATH,
+                ifa.ifa_dstaddr.get(),
+                ifp.if_rdomain.get(),
+            )
+        }?;
+        ia6.ia_flags().set(ia6.ia_flags().get() | IFA_ROUTE);
+    }
+
+    if newhost {
+        return rt_ifa_addlocal(&ia6.ia_ifa);
+    }
+
+    Ok(())
+}
+
+/// `in6_lookupmulti`: looks up the `in6_multi` record for a given IP6 multicast address on a
+/// given interface; the matching record if found.
 pub fn in6_lookupmulti(addr: &In6Addr, ifp: &Ifnet) -> Option<&'static In6Multi> {
-    let _ = (addr, ifp);
-    let _ = crate::unported!("in6_lookupmulti: placeholder");
+    rw_assert_anylock(&ifp.if_maddrlock);
+
+    for ifma in ifp.if_maddrlist.iter() {
+        // SAFETY: a record's address is readable (its protocol set it).
+        if unsafe { (*ifma.ifma_addr.get()).sa_family } == AF_INET6
+            && in6_are_addr_equal(&ifmatoin6m(ifma).in6m_addr(), addr)
+        {
+            // SAFETY: a record on the list lives until `in6_delmulti` frees it.
+            return Some(unsafe { &*ptr::from_ref(ifmatoin6m(ifma)) });
+        }
+    }
     None
 }
 
-/// `in6_addmulti`: joins `addr` on `ifp` (a new record, or a reference to the existing
-/// one); the C's `*errorp` is the `Err`.
+/// `in6_addmulti`: adds an address to the list of IP6 multicast addresses for a given
+/// interface (or takes a reference on the record if it is there); the C's `*errorp` is the
+/// `Err`.
 pub fn in6_addmulti(addr: &In6Addr, ifp: &'static Ifnet) -> Result<&'static In6Multi, Errno> {
-    let _ = (addr, ifp);
-    Err(crate::unported!("in6_addmulti: placeholder"))
+    // See if address already in list.
+    rw_enter_write(&ifp.if_maddrlock);
+    if let Some(in6m) = in6_lookupmulti(addr, ifp) {
+        refcnt_take(in6m.in6m_refcnt());
+        rw_exit_write(&ifp.if_maddrlock);
+        return Ok(in6m);
+    }
+    rw_exit_write(&ifp.if_maddrlock);
+
+    // New address; allocate a new multicast record and link it into the interface's
+    // multicast list.
+    let Some(mem) = malloc(size_of::<In6Multi>(), M_IPMADDR, M_NOWAIT | M_ZERO) else {
+        return Err(Errno::ENOBUFS);
+    };
+    // SAFETY: a zeroed block of `size_of::<In6Multi>()` bytes; all-zero is a valid
+    // `In6Multi`.
+    let new_in6m: &'static In6Multi = unsafe { &*mem.as_ptr().cast::<In6Multi>() };
+
+    // Ask the network driver to update its multicast reception filter appropriately for the
+    // new address.
+    let mut ifr = In6Ifreq::zeroed();
+    let mut sin6 = SockaddrIn6::zeroed();
+    sin6.sin6_len = size_of::<SockaddrIn6>() as u8;
+    sin6.sin6_family = AF_INET6;
+    sin6.sin6_addr = *addr;
+    ifr.set_ifr_addr(sin6);
+    // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+    // SAFETY: `ifr` is a `struct in6_ifreq`, what SIOCADDMULTI takes here.
+    let error = unsafe { ifp_ioctl(ifp, SIOCADDMULTI, ptr::from_mut(&mut ifr).cast()) };
+    if let Err(e) = error {
+        free(mem, M_IPMADDR, size_of::<In6Multi>());
+        return Err(e);
+    }
+
+    rw_enter_write(&ifp.if_maddrlock);
+    // check again after unlock and lock
+    if let Some(in6m) = in6_lookupmulti(addr, ifp) {
+        refcnt_take(in6m.in6m_refcnt());
+        rw_exit_write(&ifp.if_maddrlock);
+        free(mem, M_IPMADDR, size_of::<In6Multi>());
+        return Ok(in6m);
+    }
+    let in6m = new_in6m;
+    let mut sin = in6m.in6m_sin.get();
+    sin.sin6_len = size_of::<SockaddrIn6>() as u8;
+    sin.sin6_family = AF_INET6;
+    sin.sin6_addr = *addr;
+    in6m.in6m_sin.set(sin);
+    refcnt_init_trace(in6m.in6m_refcnt(), DT_REFCNT_IDX_IFMADDR);
+    in6m.in6m_ifidx().set(ifp.if_index.get());
+    in6m.in6m_ifma.ifma_addr.set(in6m.in6m_sin.as_ptr().cast());
+
+    // Let MLD6 know that we have joined a new IP6 multicast group.
+    // SAFETY: the record lives until `in6_delmulti`, which unlinks it first.
+    unsafe { ifp.if_maddrlist.insert_head(&in6m.in6m_ifma) };
+    let mut pkt = Mld6Pktinfo::default(); // pkt.mpi_ifidx = 0
+    mld6_start_listening(in6m, ifp, &mut pkt);
+    rw_exit_write(&ifp.if_maddrlock);
+
+    if pkt.mpi_ifidx != 0 {
+        mld6_sendpkt(&pkt);
+    }
+
+    Ok(in6m)
 }
 
-/// `in6_delmulti`: drops a reference to a multicast record, leaving the group with the
-/// last one.
+/// `in6_delmulti`: deletes a multicast address record: drops a reference, leaving the group
+/// with the last one.
 pub fn in6_delmulti(in6m: &'static In6Multi) {
-    let _ = in6m;
-    let _ = crate::unported!("in6_delmulti: placeholder");
+    if !refcnt_rele(in6m.in6m_refcnt()) {
+        return;
+    }
+
+    let ifp = if_get(in6m.in6m_ifidx().get());
+    if let Some(ifp) = ifp {
+        rw_enter_write(&ifp.if_maddrlock);
+        // No remaining claims to this record; let MLD6 know that we are leaving the multicast
+        // group.
+        let mut pkt = Mld6Pktinfo::default(); // pkt.mpi_ifidx = 0
+        mld6_stop_listening(in6m, ifp, &mut pkt);
+        // SAFETY: the record is on this interface's list (`in6_addmulti`).
+        unsafe { ifp.if_maddrlist.remove(&in6m.in6m_ifma) };
+        rw_exit_write(&ifp.if_maddrlock);
+
+        if pkt.mpi_ifidx != 0 {
+            mld6_sendpkt(&pkt);
+        }
+
+        // Notify the network driver to update its multicast reception filter.
+        let mut ifr = In6Ifreq::zeroed();
+        let mut sin6 = SockaddrIn6::zeroed();
+        sin6.sin6_len = size_of::<SockaddrIn6>() as u8;
+        sin6.sin6_family = AF_INET6;
+        sin6.sin6_addr = in6m.in6m_addr();
+        ifr.set_ifr_addr(sin6);
+        // KERNEL_LOCK(): no kernel lock without MULTIPROCESSOR.
+        // SAFETY: `ifr` is a `struct in6_ifreq`, what SIOCDELMULTI takes here.
+        let _ = unsafe { ifp_ioctl(ifp, SIOCDELMULTI, ptr::from_mut(&mut ifr).cast()) };
+
+        if_put(ifp);
+    }
+
+    free(NonNull::from(in6m).cast(), M_IPMADDR, size_of::<In6Multi>());
 }
 
-/// `in6_hasmulti`: whether `ifp` has joined `addr`.
+/// `in6_hasmulti`: whether the multicast group `addr` has been joined by interface `ifp`.
 pub fn in6_hasmulti(addr: &In6Addr, ifp: &Ifnet) -> bool {
-    let _ = (addr, ifp);
-    let _ = crate::unported!("in6_hasmulti: placeholder");
-    false
+    rw_enter_read(&ifp.if_maddrlock);
+    let joined = in6_lookupmulti(addr, ifp).is_some();
+    rw_exit_read(&ifp.if_maddrlock);
+
+    joined
 }
 
 /// `in6_joingroup`: joins `addr` on `ifp` and returns the membership entry (`malloc`ed,
 /// freed by `in6_leavegroup`); the C's `*errorp` is the `Err`.
 pub fn in6_joingroup(ifp: &'static Ifnet, addr: &In6Addr) -> Result<&'static In6MultiMship, Errno> {
-    let _ = (ifp, addr);
-    Err(crate::unported!("in6_joingroup: placeholder"))
+    let Some(mem) = malloc(size_of::<In6MultiMship>(), M_IPMADDR, M_NOWAIT) else {
+        return Err(Errno::ENOBUFS);
+    };
+    let maddr = match in6_addmulti(addr, ifp) {
+        Ok(m) => m,
+        Err(e) => {
+            // *errorp is already set
+            free(mem, M_IPMADDR, size_of::<In6MultiMship>());
+            return Err(e);
+        }
+    };
+    let imm = mem.as_ptr().cast::<In6MultiMship>();
+    // SAFETY: a block of `size_of::<In6MultiMship>()` bytes from the allocator, suitably
+    // aligned; it is initialized here and lives until `in6_leavegroup` frees it.
+    unsafe {
+        imm.write(In6MultiMship {
+            i6mm_maddr: Cell::new(Some(maddr)),
+            i6mm_chain: ListEntry::new(),
+        });
+        Ok(&*imm)
+    }
 }
 
 /// `in6_leavegroup`: leaves the group of membership `imm` and frees it.
 pub fn in6_leavegroup(imm: &'static In6MultiMship) {
-    let _ = imm;
-    let _ = crate::unported!("in6_leavegroup: placeholder");
+    if let Some(maddr) = imm.i6mm_maddr.get() {
+        in6_delmulti(maddr);
+    }
+    free(
+        NonNull::from(imm).cast(),
+        M_IPMADDR,
+        size_of::<In6MultiMship>(),
+    );
 }
 
-/// `in6ifa_ifpforlinklocal`: the link-local address of `ifp` without any of the
-/// `IN6_IFF_*` flags `ignoreflags`.
+/// `in6ifa_ifpforlinklocal`: finds an IPv6 interface link-local address specific to an
+/// interface, one without any of the `IN6_IFF_*` flags `ignoreflags`.
 pub fn in6ifa_ifpforlinklocal(ifp: &Ifnet, ignoreflags: i32) -> Option<&'static In6Ifaddr> {
-    let _ = (ifp, ignoreflags);
-    let _ = crate::unported!("in6ifa_ifpforlinklocal: placeholder");
+    for ifa in ifp.if_addrlist.iter() {
+        if ifa_family(ifa) != AF_INET6 {
+            continue;
+        }
+        if in6_is_addr_linklocal(&ifa_in6(ifa)) {
+            if ia6_static(ifa).ia6_flags.get() & ignoreflags != 0 {
+                continue;
+            }
+            return Some(ia6_static(ifa));
+        }
+    }
+
     None
 }
 
-/// `in6ifa_ifpwithaddr`: the address `addr` of `ifp`.
+/// `in6ifa_ifpwithaddr`: finds the internet address corresponding to a given interface and
+/// address.
 pub fn in6ifa_ifpwithaddr(ifp: &Ifnet, addr: &In6Addr) -> Option<&'static In6Ifaddr> {
-    let _ = (ifp, addr);
-    let _ = crate::unported!("in6ifa_ifpwithaddr: placeholder");
+    for ifa in ifp.if_addrlist.iter() {
+        if ifa_family(ifa) != AF_INET6 {
+            continue;
+        }
+        if in6_are_addr_equal(addr, &ifa_in6(ifa)) {
+            return Some(ia6_static(ifa));
+        }
+    }
+
     None
 }
 
-/// `in6_addrscope`: the scope of `addr` (`__IPV6_ADDR_SCOPE_*`).
+/// `in6_addrscope`: get a scope of the address. Node-local, link-local, site-local or
+/// global (`__IPV6_ADDR_SCOPE_*`).
 pub fn in6_addrscope(addr: &In6Addr) -> i32 {
-    let _ = addr;
-    let _ = crate::unported!("in6_addrscope: placeholder");
-    0
+    if addr.s6_addr8(0) == 0xfe {
+        let scope = addr.s6_addr8(1) & 0xc0;
+
+        return match scope {
+            0x80 => i32::from(__IPV6_ADDR_SCOPE_LINKLOCAL),
+            0xc0 => i32::from(__IPV6_ADDR_SCOPE_SITELOCAL),
+            _ => i32::from(__IPV6_ADDR_SCOPE_GLOBAL), // just in case
+        };
+    }
+
+    if addr.s6_addr8(0) == 0xff {
+        let scope = addr.s6_addr8(1) & 0x0f;
+
+        // due to other scope such as reserved, return scope doesn't work.
+        return match scope {
+            __IPV6_ADDR_SCOPE_INTFACELOCAL => i32::from(__IPV6_ADDR_SCOPE_INTFACELOCAL),
+            __IPV6_ADDR_SCOPE_LINKLOCAL => i32::from(__IPV6_ADDR_SCOPE_LINKLOCAL),
+            __IPV6_ADDR_SCOPE_SITELOCAL => i32::from(__IPV6_ADDR_SCOPE_SITELOCAL),
+            _ => i32::from(__IPV6_ADDR_SCOPE_GLOBAL),
+        };
+    }
+
+    if addr.s6_addr[..15] == IN6ADDR_LOOPBACK.s6_addr[..15] {
+        if addr.s6_addr8(15) == 1 {
+            // loopback
+            return i32::from(__IPV6_ADDR_SCOPE_INTFACELOCAL);
+        }
+        if addr.s6_addr8(15) == 0 {
+            // unspecified
+            return i32::from(__IPV6_ADDR_SCOPE_LINKLOCAL);
+        }
+    }
+
+    i32::from(__IPV6_ADDR_SCOPE_GLOBAL)
 }
 
 /// `in6_addr2scopeid`: the scope zone id of `addr` on interface `ifidx` (the interface
 /// index for link- and interface-local scopes, 0 otherwise).
 pub fn in6_addr2scopeid(ifidx: u32, addr: &In6Addr) -> i32 {
-    let _ = (ifidx, addr);
-    let _ = crate::unported!("in6_addr2scopeid: placeholder");
-    0
+    let scope = in6_addrscope(addr);
+
+    // XXX: we do not distinguish between a link and an I/F. A site-local scope is invalid
+    // (0) and the rest is treated as global (0).
+    if scope == i32::from(__IPV6_ADDR_SCOPE_INTFACELOCAL)
+        || scope == i32::from(__IPV6_ADDR_SCOPE_LINKLOCAL)
+    {
+        ifidx as i32
+    } else {
+        0
+    }
 }
 
-/// `in6_matchlen`: the length of the common prefix of `src` and `dst`, in bits.
+/// `in6_matchlen`: the length of the common prefix of `src` and `dst`, in bits (the part
+/// where dst and src are equal).
 pub fn in6_matchlen(src: &In6Addr, dst: &In6Addr) -> i32 {
-    let _ = (src, dst);
-    let _ = crate::unported!("in6_matchlen: placeholder");
-    0
+    let mut matched = 0;
+
+    for (&s, &d) in src.s6_addr.iter().zip(dst.s6_addr.iter()) {
+        let mut r = d ^ s;
+        if r != 0 {
+            while r < 128 {
+                matched += 1;
+                r <<= 1;
+            }
+            break;
+        }
+        matched += 8;
+    }
+    matched
 }
 
 /// `in6_prefixlen2mask`: the mask of prefix length `len`.
 pub fn in6_prefixlen2mask(maskp: &mut In6Addr, len: i32) {
-    let _ = (maskp, len);
-    let _ = crate::unported!("in6_prefixlen2mask: placeholder");
+    const MASKARRAY: [u8; 8] = [0x80, 0xc0, 0xe0, 0xf0, 0xf8, 0xfc, 0xfe, 0xff];
+
+    // sanity check
+    if !(0..=128).contains(&len) {
+        log(
+            LOG_ERR,
+            format_args!("in6_prefixlen2mask: invalid prefix length({len})\n"),
+        );
+        return;
+    }
+
+    *maskp = In6Addr::default();
+    let bytelen = (len / 8) as usize;
+    let bitlen = (len % 8) as usize;
+    for b in &mut maskp.s6_addr[..bytelen] {
+        *b = 0xff;
+    }
+    // len == 128 is ok because bitlen == 0 then
+    if bitlen != 0 {
+        maskp.s6_addr[bytelen] = MASKARRAY[bitlen - 1];
+    }
 }
 
-/// `in6_ifawithscope`: the best source address for `dst` on `oifp` (RFC 6724 rules as
-/// the C applies them), considering the route `rt` and routing domain `rdomain`.
+/// `in6_ifawithscope`: return the best address out of the same scope (the RFC 6724 source
+/// address selection rules as the C applies them), for `dst` on `oifp`, considering the
+/// route `rt` and routing domain `rdomain`.
 pub fn in6_ifawithscope(
     oifp: &Ifnet,
     dst: &In6Addr,
     rdomain: u32,
     rt: Option<&Rtentry>,
 ) -> Option<&'static In6Ifaddr> {
-    let _ = (oifp, dst, rdomain, rt);
-    let _ = crate::unported!("in6_ifawithscope: placeholder");
-    None
+    /// The verdict on one candidate address: the C's `continue` or `goto replace`.
+    enum Verdict {
+        Skip,
+        Replace,
+    }
+
+    let dst_scope = in6_addrscope(dst);
+    let mut best_scope = 0;
+    let mut blen = -1;
+    let mut ia6_best: Option<&'static In6Ifaddr> = None;
+    let mut gw6: Option<In6Addr> = None;
+
+    if let Some(rt) = rt {
+        let gw = rt.rt_gateway.get();
+        // SAFETY: a route's gateway, if any, is a readable socket address.
+        if !gw.is_null() && unsafe { (*gw).sa_family } == AF_INET6 {
+            // SAFETY: an `AF_INET6` gateway is a `sockaddr_in6`; read unaligned because the
+            // generic structure has a smaller alignment.
+            gw6 = Some(unsafe { ptr::read_unaligned(satosin6_const(gw)) }.sin6_addr);
+        }
+    }
+
+    net_assert_locked("in6_ifawithscope");
+
+    // We search for all addresses on all interfaces from the beginning.
+    for ifp in IFNETLIST.0.iter() {
+        if ifp.if_rdomain.get() != rdomain {
+            continue;
+        }
+        // NCARP: never use a carp address of an interface which is not the master
+        // (`carp_iamatch`); carp is not configured.
+
+        // We can never take an address that breaks the scope zone of the destination.
+        if in6_addr2scopeid(ifp.if_index.get(), dst) != in6_addr2scopeid(oifp.if_index.get(), dst) {
+            continue;
+        }
+
+        for ifa in ifp.if_addrlist.iter() {
+            let mut tlen = -1;
+
+            if ifa_family(ifa) != AF_INET6 {
+                continue;
+            }
+
+            let ia = ia6_static(ifa);
+            let ifa_addr6 = ifa_in6(ifa);
+            let src_scope = in6_addrscope(&ifa_addr6);
+
+            // Don't use an address before completing DAD nor a duplicated address.
+            if ia.ia6_flags.get() & (IN6_IFF_TENTATIVE | IN6_IFF_DUPLICATED) != 0 {
+                continue;
+            }
+
+            // RFC 6724 allows anycast addresses as source address because the restriction
+            // was removed in RFC 4291. However RFC 4443 states that ICMPv6 responses MUST
+            // use a unicast source address.
+            //
+            // XXX Skip anycast addresses for now since icmp6_reflect() uses this function
+            // for source address selection.
+            if ia.ia6_flags.get() & IN6_IFF_ANYCAST != 0 {
+                continue;
+            }
+
+            if ia.ia6_flags.get() & IN6_IFF_DETACHED != 0 {
+                continue;
+            }
+
+            let verdict = 'decide: {
+                // If this is the first address we find, keep it anyway.
+                let Some(best) = ia6_best else {
+                    break 'decide Verdict::Replace;
+                };
+
+                // `best` is never NULL beyond this line except within the block labeled
+                // "replace".
+
+                // Rule 2: Prefer appropriate scope. Find the address with the smallest scope
+                // that is bigger (or equal) to the scope of the destination address. Accept
+                // an address with smaller scope than the destination if non exists with
+                // bigger scope.
+                if best_scope < src_scope {
+                    if best_scope < dst_scope {
+                        break 'decide Verdict::Replace;
+                    }
+                    break 'decide Verdict::Skip;
+                } else if src_scope < best_scope {
+                    if src_scope < dst_scope {
+                        break 'decide Verdict::Skip;
+                    }
+                    break 'decide Verdict::Replace;
+                }
+
+                // Rule 3: Avoid deprecated addresses.
+                if ia.ia6_flags.get() & IN6_IFF_DEPRECATED != 0 {
+                    // If we have already found a non-deprecated candidate, just ignore
+                    // deprecated addresses.
+                    if best.ia6_flags.get() & IN6_IFF_DEPRECATED == 0 {
+                        break 'decide Verdict::Skip;
+                    }
+                } else if best.ia6_flags.get() & IN6_IFF_DEPRECATED != 0 {
+                    break 'decide Verdict::Replace;
+                }
+
+                // Rule 4: Prefer home addresses. We do not support home addresses.
+
+                // Rule 5: Prefer outgoing interface
+                let best_on_oifp = best.ia_ifp().get().is_some_and(|b| ptr::eq(b, oifp));
+                let ifp_is_oifp = ptr::eq(ifp, oifp);
+                if best_on_oifp && !ifp_is_oifp {
+                    break 'decide Verdict::Skip;
+                }
+                if !best_on_oifp && ifp_is_oifp {
+                    break 'decide Verdict::Replace;
+                }
+
+                // Rule 5.5: Prefer addresses in a prefix advertised by the next-hop.
+                if let Some(gw6) = &gw6 {
+                    let in6_bestgw = best.ia_gwaddr.get().sin6_addr;
+                    let in6_newgw = ia.ia_gwaddr.get().sin6_addr;
+                    if !in6_are_addr_equal(&in6_bestgw, gw6) && in6_are_addr_equal(&in6_newgw, gw6)
+                    {
+                        break 'decide Verdict::Replace;
+                    }
+                }
+
+                // Rule 6: Prefer matching label. We do not implement policy tables.
+
+                // Rule 7: Prefer temporary addresses.
+                if best.ia6_flags.get() & IN6_IFF_TEMPORARY != 0
+                    && ia.ia6_flags.get() & IN6_IFF_TEMPORARY == 0
+                {
+                    break 'decide Verdict::Skip;
+                }
+                if best.ia6_flags.get() & IN6_IFF_TEMPORARY == 0
+                    && ia.ia6_flags.get() & IN6_IFF_TEMPORARY != 0
+                {
+                    break 'decide Verdict::Replace;
+                }
+
+                // Rule 8: Use longest matching prefix.
+                tlen = in6_matchlen(&ifa_addr6, dst);
+                if tlen > blen {
+                    // NCARP: don't let carp interfaces win a tie against the output
+                    // interface based on matchlen (a carp address is only used if no other
+                    // interface has a usable one); carp is not configured.
+                    break 'decide Verdict::Replace;
+                } else if tlen < blen {
+                    break 'decide Verdict::Skip;
+                }
+
+                // If the eight rules fail to choose a single address, the tiebreaker is
+                // implementation-specific.
+
+                // Prefer address with highest pltime.
+                let best_pl =
+                    best.ia6_updatetime.get() + Time::from(best.ia6_lifetime.get().ia6t_pltime);
+                let new_pl =
+                    ia.ia6_updatetime.get() + Time::from(ia.ia6_lifetime.get().ia6t_pltime);
+                if best_pl < new_pl {
+                    break 'decide Verdict::Replace;
+                } else if best_pl > new_pl {
+                    break 'decide Verdict::Skip;
+                }
+
+                // Prefer address with highest vltime.
+                let best_vl =
+                    best.ia6_updatetime.get() + Time::from(best.ia6_lifetime.get().ia6t_vltime);
+                let new_vl =
+                    ia.ia6_updatetime.get() + Time::from(ia.ia6_lifetime.get().ia6t_vltime);
+                if best_vl < new_vl {
+                    break 'decide Verdict::Replace;
+                }
+
+                Verdict::Skip
+            };
+
+            if let Verdict::Replace = verdict {
+                ia6_best = Some(ia);
+                blen = if tlen >= 0 {
+                    tlen
+                } else {
+                    in6_matchlen(&ifa_addr6, dst)
+                };
+                best_scope = in6_addrscope(&ia6_sin6(ia).sin6_addr);
+            }
+        }
+    }
+
+    // count statistics for future improvements
+    match ia6_best {
+        None => ip6stat_inc(Ip6statCounters::Ip6sSourcesNone),
+        Some(best) => {
+            let scope = best_scope as usize;
+            if best.ia_ifp().get().is_some_and(|b| ptr::eq(b, oifp)) {
+                ip6stat_inc_idx(Ip6statCounters::Ip6sSourcesSameif, scope);
+            } else {
+                ip6stat_inc_idx(Ip6statCounters::Ip6sSourcesOtherif, scope);
+            }
+
+            if best_scope == dst_scope {
+                ip6stat_inc_idx(Ip6statCounters::Ip6sSourcesSamescope, scope);
+            } else {
+                ip6stat_inc_idx(Ip6statCounters::Ip6sSourcesOtherscope, scope);
+            }
+
+            if best.ia6_flags.get() & IN6_IFF_DEPRECATED != 0 {
+                ip6stat_inc_idx(Ip6statCounters::Ip6sSourcesDeprecated, scope);
+            }
+        }
+    }
+
+    ia6_best
 }
 
 /// `in6if_do_dad`: whether Duplicate Address Detection runs on `ifp`.
 pub fn in6if_do_dad(ifp: &Ifnet) -> bool {
-    let _ = ifp;
-    let _ = crate::unported!("in6if_do_dad: placeholder");
-    false
+    if ifp.if_flags.get() & IFF_LOOPBACK != 0 {
+        return false;
+    }
+
+    // NCARP: DAD does not work currently on carp(4), so it is disabled for IFT_CARP; carp is
+    // not configured.
+
+    // Our DAD routine requires the interface up and running. However, some interfaces can be
+    // up before the RUNNING status. Additionally, users may try to assign addresses before the
+    // interface becomes up (or running). We simply skip DAD in such a case as a work around.
+    // XXX: we should rather mark "tentative" on such addresses, and do DAD after the
+    // interface becomes ready.
+    ifp.if_flags.get() & (IFF_UP | IFF_RUNNING) == IFF_UP | IFF_RUNNING
 }
 
 // LP64 sizes of the C structures.
@@ -959,4 +2341,4 @@ const _: () = {
 };
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

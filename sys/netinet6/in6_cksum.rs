@@ -67,19 +67,87 @@
 //!
 //! Upstream: sys/netinet6/in6_cksum.c @ 3ce1f3f79392
 //!
-//! Status: skeleton from the INET6 foundation step: the globals are defined, every
-//! function has its final signature and a placeholder body that reports itself through
-//! `unported!` until the file is ported.
+//! Checksum routine for Internet Protocol family headers (portable version). `m` must contain
+//! a continuous IP6 header; `off` is the offset where the TCP/UDP/ICMP6 header starts; `len` is
+//! the total length of a transport segment (e.g. TCP header + TCP payload). With `nxt` 0 there
+//! is no pseudo header.
 //!
 //! ## Deviations
-//! - None yet: the file is a skeleton (see `Status`).
+//! - The word loop is `netinet/in_cksum.rs`'s [`cksum_add`] (the C file carries a copy of
+//!   `in_cksum`'s loop, as `in4_cksum.c` does); the pseudo header's words are summed from a
+//!   byte array laid out as the C's `uph` union plus the two addresses.
+//! - An `off` beyond the chain panics with "out of data" like a chain shorter than `off +
+//!   len`; the C distinguishes "out of header" from "out of data" for those two cases.
+//! - The result is a `u16` (the C's `int` holds `~sum & 0xffff`).
 
+use crate::kern::subr_prf::panic;
+use crate::netinet::in_cksum::{cksum_add, cksum_fold};
+use crate::netinet6::in6::in6_is_scope_embed;
+use crate::netinet6::ip6_var::mtod_ip6;
+use crate::sys::endian::htonl;
 use crate::sys::mbuf::Mbuf;
 
-/// `in6_cksum`: the checksum of `len` bytes from offset `off` of `m`, an IPv6 packet,
-/// with the pseudo header of next header `nxt` (0: no pseudo header).
+/// `in6_cksum`: the checksum of `len` bytes from offset `off` of `m`, an IPv6 packet, with the
+/// pseudo header of next header `nxt` (0: no pseudo header).
 pub fn in6_cksum(m: &Mbuf, nxt: u8, off: u32, len: u32) -> u16 {
-    let _ = (m, nxt, off, len);
-    let _ = crate::unported!("in6_cksum: placeholder");
-    0
+    let mut sum = 0u64;
+    let mut odd = false;
+
+    // sanity check
+    if (m.m_pkthdr().len.get() as i64) < i64::from(off) + i64::from(len) {
+        panic(format_args!(
+            "in6_cksum: mbuf len ({}) < off+len ({}+{})",
+            m.m_pkthdr().len.get(),
+            off,
+            len
+        ));
+    }
+
+    // Skip pseudo-header if nxt == 0.
+    if nxt != 0 {
+        // First create IP6 pseudo header and calculate a summary.
+        let ip6 = mtod_ip6(m);
+        let mut words = [0u16; 8 + 8 + 4];
+        let mut put = |i: usize, bytes: [u8; 2]| words[i] = u16::from_ne_bytes(bytes);
+
+        // IPv6 source address
+        let src = &ip6.ip6_src.s6_addr;
+        for i in 0..8 {
+            put(i, [src[2 * i], src[2 * i + 1]]);
+        }
+        if in6_is_scope_embed(&ip6.ip6_src) {
+            put(1, [0, 0]);
+        }
+        // IPv6 destination address
+        let dst = &ip6.ip6_dst.s6_addr;
+        for i in 0..8 {
+            put(8 + i, [dst[2 * i], dst[2 * i + 1]]);
+        }
+        if in6_is_scope_embed(&ip6.ip6_dst) {
+            put(9, [0, 0]);
+        }
+        // Payload length and upper layer identifier: `ph_len` (4 bytes, network order),
+        // `ph_zero[3]` and `ph_nxt`.
+        let l = htonl(len).to_ne_bytes();
+        put(16, [l[0], l[1]]);
+        put(17, [l[2], l[3]]);
+        put(18, [0, 0]);
+        put(19, [0, nxt]);
+
+        for w in words {
+            sum += u64::from(w);
+        }
+    }
+
+    // Secondly calculate a summary of the first mbuf excluding offset, and lastly of the rest
+    // of the mbufs.
+    let short = cksum_add(Some(m), off as usize, len as usize, &mut sum, &mut odd);
+    if short != 0 {
+        panic(format_args!("in6_cksum: out of data, len {short}"));
+    }
+
+    cksum_fold(sum)
 }
+
+#[cfg(test)]
+mod tests;
