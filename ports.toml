@@ -6380,3 +6380,93 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e17877c9f3ffd2c82180165e67dbe218dd62a163"
 deps = ["sys/sys/proc.h"]
 notes = "M10e: tpr_t (struct session *) as the type alias Tpr = Option<&'static Session>; the prototypes are kern/subr_prf.rs's (tprintf_open, tprintf_close, tprintf), compiled under feature nfsclient or nfsserver as the C's NFSSERVER || NFSCLIENT"
+
+[[file]]
+c = "sys/nfs/rpcv2.h"
+rust = "sys/nfs/rpcv2.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cdb6b4b3565d27ea2aeafff9a499973af7ed576d"
+deps = []
+notes = "M10e: Sun RPC v2 constants (RPC_*, RPCAUTH_*, AUTH_*, RPCMNT_*, RPCPROG_*): u32 protocol words, usize sizes; reference-backed test of every define"
+
+[[file]]
+c = "sys/nfs/nfsproto.h"
+rust = "sys/nfs/nfsproto.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "610f6767dc68afbeed81237264f1b7ae7967f58a"
+deps = ["sys/sys/mount.h", "sys/sys/vnode.h", "sys/sys/param.h", "sys/nfs/xdr_subs.h"]
+notes = "M10e: NFS v2/v3 protocol constants (NFSERR_* i32 status values with the RETVOID/AUTHERR/RETERR flag bits, NFSX_* usize sizes, NFSX_*(v3) as const fns of bool, NFSPROC_*/NFSV2PROC_* as usize indices, NFSV3* u32 words); nfstype as Nfstype; wire structs as #[repr(C)] raw-XDR-word AbiPod structs with size asserts: Nfsfh (union nfsfh: fh_bytes plus fh_generic()/set_fh_generic()), Nfsv2Time, Nfsv3Time, Nfsv3Spec, Nfsuint64, NfsFattr and NfsStatfs (unions as raw word arrays with fa2_*/fa3_*/sf_* accessor and set_* methods), Nfsv2Sattr, Nfsv3Sattr, Nfsv3Fsinfo, Nfsv3Pathconf; conversion macros (vtonfsv2_mode, nfsv3tov_type, ...) as functions over nfs_subs.rs's tables; reference-backed test of the defines"
+
+[[file]]
+c = "sys/nfs/xdr_subs.h"
+rust = "sys/nfs/xdr_subs.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "053242846627b5bc2c47b3f4b2e5b4456fc2babe"
+deps = ["sys/sys/time.h"]
+notes = "M10e: fxdr_unsigned/txdr_unsigned as const fns over raw u32 words (the type argument is a cast at the call site); fxdr_nfsv2time, fxdr_nfsv3time, txdr_nfsv3time, fxdr_hyper, txdr_hyper as value-returning functions; txdr_nfsv2time re-exported from nfs_subs.rs where the C defines it; Rust helpers xdr_bytes/xdr_get for AbiPod wire structs; host tests"
+
+[[file]]
+c = "sys/nfs/nfs.h"
+rust = "sys/nfs/nfs.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5df987c23ecaaa16ca6885e5212594da22cc611d"
+deps = ["sys/nfs/nfsproto.h", "sys/sys/mbuf.h", "sys/sys/queue.h", "sys/sys/ucred.h", "sys/sys/socketvar.h", "sys/sys/file.h", "sys/sys/signal.h", "sys/sys/protosw.h", "sys/sys/buf.h", "sys/sys/sysctl.h", "sys/kern/subr_pool.c", "sys/conf/param.c"]
+notes = "M10e: tunables; NFS_HZ/NFS_TIMEO/NFS_MINRTO/... as functions (they read hz and nfs_ticks); NFS_CMPFH/NFS_ISV3/NFS_SRVMAXDATA/NFSIGNORE_SOERROR as lowercase functions; nfsd_args (NfsdArgs, AbiPod) and nfsd_srvargs (NfsdSrvargs, 144 bytes) with named LP64 holes; struct nfsstats as #[repr(C)] AtomicU64s with snapshot() for sysctl (instance NFSSTATS in nfs_subs.rs); nfsreq (NfsReq), nfssvc_sock (NfssvcSock), nfsd (Nfsd) as &'static items of Cells with RChain/NsChain/NfsdChain adapters, r_procp/nfsd_procp Cell<*const Proc>, nfsd_nd NonNull; nfsrv_descript (NfsrvDescript) owned by its nfsd and passed &mut, plain fields; union nethostaddr as Nethostaddr side by side; enum nfs_rto_timers as usize consts; globals of other files declared here (NFS_NODE_POOL of nfs_node.c, NFSD_HEAD/NFSD_HEAD_FLAG/nfs_niothreads of nfs_syscalls.c); host and reference-backed tests"
+
+[[file]]
+c = "sys/nfs/nfsm_subs.h"
+rust = "sys/nfs/nfsm_subs.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6302165344f6589aea39f5eca8a6c05bb2fc0811"
+deps = ["sys/nfs/nfs.h", "sys/nfs/nfs_subs.c", "sys/kern/uipc_mbuf.c", "sys/sys/uio.h"]
+notes = "M10e: struct nfsm_info as NfsmInfo<'a> (nmi_procp Option<&'a Proc>, nmi_cred the raw a_cred, nmi_v3 bool, no nmi_errorp); nfsm_dissect/nfsd_dissect return a bounds-checked XdrIn view borrowing the cursor (get(i) raw words, fxdr_hyper, bytes, read::<AbiPod>), nfsm_build's XdrOut view (set/put/txdr_hyper/write) lives here too; nfsm_adv, nfsm_strsiz, nfsm_mtouio, nfsm_strtom and the nfsd_* versions return Result and free/clear nmi_mrep (nmi_mreq, nd_mrep) on failure as the C does before storing *errorp; nfsm_postop_attr behind nfsclient (it calls nfs_loadattrcache), keeps int *attrflagp; nfsm_avail is the C's avail with a bounds check of dpos; a NULL cursor mbuf is EBADRPC; host tests"
+
+[[file]]
+c = "sys/nfs/nfsnode.h"
+rust = "sys/nfs/nfsnode.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7977f3e712269a896b9dfff8ba5d96ae9d8927d7"
+deps = ["sys/nfs/nfs.h", "sys/nfs/nfsproto.h", "sys/sys/vnode.h", "sys/sys/rwlock.h", "sys/sys/tree.h", "sys/kern/vfs_lockf.c", "sys/sys/buf.h"]
+notes = "M10e: struct sillyrename (Sillyrename, s_cred/s_dvp &'static); struct nfsnode (NfsNode of Cells, pool item handed as &'static; n_vattr Cell<Vattr>; unions n_un1/n_un2 side by side as n_atim/n_cookieverf and n_mtim/n_direofoffset; n_sillyrename NonNull; n_rcred/n_wcred Cell<*const Ucred>; n_fhp dropped since the C always points it at n_fh: n_fhp() returns NfsFhBytes, set_fh() stores); n_flag helpers isset/set/clr; nfsnode_cmp (nfs_node.c's RBT comparator) and the NfsNodetree adapter here because nfsmount.h's tree head needs them; NFS_INVALIDATE_ATTRCACHE as nfs_invalidate_attrcache; VTONFS (checks VT_NFS) and NFSTOV; nfs_bufq/nfs_bufqlen/nfs_bufqmax of nfs_bio.c declared here; host test"
+
+[[file]]
+c = "sys/nfs/nfsmount.h"
+rust = "sys/nfs/nfsmount.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0081bd15fd1c8fd11e1cff8340b8bdf812729834"
+deps = ["sys/nfs/nfs.h", "sys/nfs/nfsnode.h", "sys/sys/mount.h", "sys/sys/timeout.h", "sys/sys/socketvar.h"]
+notes = "M10e: struct nfsmount (NfsMount of Cells, the malloc'd mnt_data handed as &'static; nm_ntree RbtHead<NfsNodetree>, nm_reqsq TailqHead<RChain>, nm_rtimeout zeroed Timeout, nm_verf Cell<[u8; 8]>); VFSTONFS checks the mount is an NFS one; the prototypes (nfs_mount, nfs_fsinfo, nfs_init) are the functions of nfs_vfsops.rs and nfs_subs.rs"
+
+[[file]]
+c = "sys/nfs/nfsrvcache.h"
+rust = "sys/nfs/nfsrvcache.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "993013b4756e298d74b4557532d69e2487eb25ee"
+deps = ["sys/nfs/nfs.h", "sys/sys/queue.h", "sys/sys/mbuf.h"]
+notes = "M10e: struct nfsrvcache (NfsrvCache of Cells with RcLru TAILQ and RcHash LIST adapters); unions rc_un and rc_haddr side by side (rc_reply/rc_status, Nethostaddr with rc_inetaddr/rc_nam accessor methods); RC_* constants; reference-backed test"
+
+[[file]]
+c = "sys/nfs/nfs_var.h"
+rust = "sys/nfs/nfs_var.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "391ab91ba9cfea0dccedb8c8132576d0776079ce"
+deps = ["sys/nfs/nfsm_subs.h", "sys/sys/mbuf.h"]
+notes = "M10e: license: BSD-4 (Christos Zoulas, advertising clause), kept whole; the two macros mb_offset and nfsm_padlen as functions; the prototypes are the Rust functions in the modules of their files (nfs_bio, nfs_boot, nfs_node, nfs_vnops, nfs_serv, nfs_socket, nfs_srvcache, nfs_srvsubs, nfs_subs, nfs_syscalls, nfs_kq)"
+
+[[file]]
+c = "sys/nfs/nfs_subs.c"
+rust = "sys/nfs/nfs_subs.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7531770033ce5bf61f86e242ef4703875dd24ffe"
+deps = ["sys/nfs/nfs.h", "sys/nfs/nfsm_subs.h", "sys/nfs/nfsnode.h", "sys/nfs/nfsmount.h", "sys/nfs/rpcv2.h", "sys/nfs/xdr_subs.h", "sys/kern/uipc_mbuf.c", "sys/kern/kern_subr.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_cache.c", "sys/kern/spec_vnops.c", "sys/uvm/uvm_vnode.c", "sys/kern/kern_tc.c", "sys/crypto/idgen.c"]
+notes = "M10e phase 1: XDR words of nfs_init as consts with their C names; type, procid and v2/v3 errno tables; NFSSTATS, NFS_TICKS, NFSREQPL; nfsm_reqhead, nfsm_mbuftouio, nfsm_uiotombuf, nfsm_buftombuf, nfsm_strtombuf (byte slices), nfsm_disct and nfs_adv (compute left themselves; disct returns an XdrIn view, ENOBUFS when MGET fails), nfsm_build (XdrOut view), nfsm_fhtom, nfsm_srvfhtom (takes the nfsfh_t), txdr_nfsv2time, nfs_loadattrcache (nfsclient; FIFO is EOPNOTSUPP as tmpfs; nfs_specvops waits for nfs_vnops.rs: unported!(nfs_specvops) at the site, alias check runs); nfsm_nextbytes Rust helper for cursor walks; MGET(M_WAIT) failure panics where the C cannot fail; copyout/uiomove errors ignored as the C; host tests. Phase 2 left: nfs_get_xid, nfsm_rpchead, nfs_init, nfs_vfs_init, nfs_attrtimeo, nfs_getattrcache, nfs_clearcommit and the commit-range functions, nfsrv_errmap, nfsm_v3attrbuild"

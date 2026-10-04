@@ -1,0 +1,70 @@
+/*	$OpenBSD: nfs_var.h,v 1.71 2026/06/09 02:55:17 jsg Exp $	*/
+/*	$NetBSD: nfs_var.h,v 1.3 1996/02/18 11:53:54 fvdl Exp $	*/
+/* <LICENSES> */
+/*
+ * Copyright (c) 1996 Christos Zoulas.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *	This product includes software developed by Christos Zoulas.
+ * 4. The name of the author may not be used to endorse or promote products
+ *    derived from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+ * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+/* </LICENSES> */
+
+//! `<nfs/nfs_var.h>`: the prototypes of the NFS files and two internal utility macros.
+//!
+//! Upstream: sys/nfs/nfs_var.h @ 3ce1f3f79392
+//!
+//! The prototypes are the Rust functions in the modules of their files (`nfs_bio.rs`,
+//! `nfs_boot.rs`, `nfs_node.rs`, `nfs_vnops.rs`, `nfs_serv.rs`, `nfs_socket.rs`,
+//! `nfs_srvcache.rs`, `nfs_srvsubs.rs`, `nfs_subs.rs`, `nfs_syscalls.rs`, `nfs_kq.rs`), with
+//! the signatures documented there; what is left here are the macros.
+//!
+//! ## Deviations
+//! - `mb_offset(m)` and `nfsm_padlen(s)` are functions with the C names.
+
+use crate::nfs::nfsm_subs::nfsm_rndup;
+use crate::sys::mbuf::{Mbuf, mtod};
+
+/// `mb_offset(m)`: the address just past the data of `m` (`mtod(m, caddr_t) + m->m_len`).
+pub fn mb_offset(m: &Mbuf) -> *mut u8 {
+    mtod::<u8>(m).wrapping_add(m.m_len().get() as usize)
+}
+
+/// `nfsm_padlen(s)`: the XDR padding after `s` bytes.
+pub const fn nfsm_padlen(s: usize) -> usize {
+    nfsm_rndup(s) - s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn padding_rounds_to_words() {
+        assert_eq!(nfsm_padlen(0), 0);
+        assert_eq!(nfsm_padlen(1), 3);
+        assert_eq!(nfsm_padlen(4), 0);
+        assert_eq!(nfsm_padlen(7), 1);
+    }
+}
