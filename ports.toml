@@ -722,6 +722,32 @@ upstream_blob = "a0aeb5e33e22ec3fac424372352e0fc015fd959a"
 deps = ["sys/ddb/db_command.h", "sys/ddb/db_lex.c"]
 notes = "license: Mach notice, kept whole; M11c: db_error returns DbError (no db_recover longjmp) and db_skip_to_eol so far"
 
+[[file]]
+c = "sys/ddb/db_variables.h"
+rust = "sys/ddb/db_variables.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ca58c4161f9839c3cc65da92d9bb500a333fd9a2"
+notes = "license: Mach notice, kept whole; M11c: struct db_variable with valuep an Option<&AtomicI32> (registers use fcn), DB_VAR_GET/SET; db_reg_var! builds a register entry over a trap-frame StaticCell"
+
+[[file]]
+c = "sys/ddb/db_variables.c"
+rust = "sys/ddb/db_variables.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d926f52c27bd05964c5dce9bfc7b88e1b65cba80"
+deps = ["sys/ddb/db_variables.h", "sys/ddb/db_lex.c", "sys/ddb/db_expr.c"]
+notes = "license: Mach notice, kept whole; M11c: db_vars[] (radix, maxoff, maxwidth, tabstops, lines, log), db_find/get/set_variable, db_read/write_variable, db_set_cmd, db_var_rw_int; db_regs[] from machine::db_machdep::db_regs(); db_maxoff (db_sym.c, not ported) lives here"
+
+[[file]]
+c = "sys/ddb/db_expr.c"
+rust = "sys/ddb/db_expr.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "bd9099ae352401495a9b3322906815e2efaac11d"
+deps = ["sys/ddb/db_lex.c", "sys/ddb/db_variables.c"]
+notes = "license: Mach notice, kept whole; M11c: the whole grammar, each rule DbResult<Option<DbExpr>>; visible stubs: db_symbol_by_name (db_sym.c: Symbol not found) and db_get_value for '*' (db_access.c); arithmetic wraps, over-wide shifts give 0"
+
 # amd64: what the console, delay(9), boot(9) and the trace need
 
 [[file]]

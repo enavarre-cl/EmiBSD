@@ -71,8 +71,12 @@
 //!   function that can reach it propagates as the `Err` of a [`DbResult`] up to
 //!   `db_command_loop`, where the C's `setjmp` was (`docs/C_TO_RUST.md`).
 
+use core::sync::atomic::AtomicUsize;
+
 use crate::ddb::db_lex::{db_flush_lex, db_read_token, tEOL};
 use crate::kern::subr_prf::db_printf;
+use crate::machine::db_machdep::{DbAddr, DbExpr};
+use crate::unported;
 
 /// "`db_error` was called": its message is printed and the lexer flushed; the command is
 /// abandoned and control goes back to the command loop (C's `longjmp(db_recover)`).
@@ -81,6 +85,15 @@ pub struct DbError;
 
 /// The result of a debugger function that can reach `db_error`.
 pub type DbResult<T = ()> = Result<T, DbError>;
+
+/// `db_dot`: current location.
+pub static DB_DOT: AtomicUsize = AtomicUsize::new(0);
+/// `db_last_addr`: last explicit address typed.
+pub static DB_LAST_ADDR: AtomicUsize = AtomicUsize::new(0);
+/// `db_prev`: last address examined or written.
+pub static DB_PREV: AtomicUsize = AtomicUsize::new(0);
+/// `db_next`: next address to be examined or written.
+pub static DB_NEXT: AtomicUsize = AtomicUsize::new(0);
 
 /// `db_skip_to_eol`: utility routine - discard tokens through end-of-line.
 pub fn db_skip_to_eol() -> DbResult {
@@ -99,4 +112,18 @@ pub fn db_error(s: Option<&str>) -> DbError {
     }
     db_flush_lex();
     DbError
+}
+
+// Stand-ins for the ddb files that are not ported yet (db_access.c, db_sym.c, db_examine.c).
+// Each is a visible stub: it says what is missing and fails the command where the C would
+// have read or printed memory.
+
+/// `db_get_value` (`db_access.c`): reads `size` bytes at `addr`. Not ported: fails the
+/// command.
+pub fn db_get_value(addr: DbAddr, size: usize, is_signed: bool) -> DbResult<DbExpr> {
+    let _ = (addr, size, is_signed);
+    let _ = unported!("db_get_value (db_access.c)");
+    Err(db_error(Some(
+        "db_get_value: memory access is not ported\n",
+    )))
 }

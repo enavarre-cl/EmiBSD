@@ -1053,6 +1053,10 @@ impl DbMachdep for Machine {
     fn pc_regs() -> usize {
         0
     }
+
+    fn db_regs() -> &'static [crate::ddb::db_variables::DbVariable] {
+        &[]
+    }
 }
 
 /// amd64's interrupt priority levels, so tests see a real machine's numbers.

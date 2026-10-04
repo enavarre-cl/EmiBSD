@@ -5,9 +5,11 @@
 //! Most of its sources carry the Mach license (Carnegie Mellon).
 
 pub mod db_command;
+pub mod db_expr;
 pub mod db_input;
 pub mod db_lex;
 pub mod db_output;
 pub mod db_trap;
 pub mod db_usrreq;
 pub mod db_var;
+pub mod db_variables;

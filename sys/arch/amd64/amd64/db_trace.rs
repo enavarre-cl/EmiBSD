@@ -34,9 +34,9 @@
 //!
 //! Status: `wip`. Milestone M2 ports `db_stack_trace_print` for the "trace from this frame"
 //! case `db_stack_dump` needs; M4 adds the trace from `ddb_regs` (a trap frame) with
-//! `db_reg_args[]` and the breakpoint-before-the-frame case. `db_regs[]` (the `$rdi`
-//! variables of the command loop), the `/t` thread trace (`tfind`), `stacktrace_save_at` and
-//! `stacktrace_save_utrace` arrive with the command loop and the scheduler (M5).
+//! `db_reg_args[]` and the breakpoint-before-the-frame case; M11c `db_regs[]` (the `$rdi`
+//! variables of the command loop). The `/t` thread trace (`tfind`), `stacktrace_save_at` and
+//! `stacktrace_save_utrace` arrive with the scheduler (M5).
 //!
 //! ## Deviations
 //! - No symbol table in memory yet (`db_search_symbol`, `db_ctf_func_numargs`, `db_printsym`):
@@ -54,8 +54,35 @@ use core::ptr;
 use crate::arch::amd64::amd64::db_interface::DDB_REGS;
 use crate::arch::amd64::include::frame::{Callframe, Trapframe};
 use crate::arch::amd64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
+use crate::db_reg_var;
+use crate::ddb::db_variables::DbVariable;
 use crate::machine::db_machdep::PrFn;
 use crate::unported;
+
+/// `db_regs[]`: the registers of `ddb_regs` as debugger variables. Each reads and writes its
+/// field of the trap frame (`db_reg_var!`) where C points `valuep` at it.
+pub static DB_REGS: [DbVariable; 20] = [
+    db_reg_var!(DDB_REGS, "rdi", tf_rdi),
+    db_reg_var!(DDB_REGS, "rsi", tf_rsi),
+    db_reg_var!(DDB_REGS, "rbp", tf_rbp),
+    db_reg_var!(DDB_REGS, "rbx", tf_rbx),
+    db_reg_var!(DDB_REGS, "rdx", tf_rdx),
+    db_reg_var!(DDB_REGS, "rcx", tf_rcx),
+    db_reg_var!(DDB_REGS, "rax", tf_rax),
+    db_reg_var!(DDB_REGS, "r8", tf_r8),
+    db_reg_var!(DDB_REGS, "r9", tf_r9),
+    db_reg_var!(DDB_REGS, "r10", tf_r10),
+    db_reg_var!(DDB_REGS, "r11", tf_r11),
+    db_reg_var!(DDB_REGS, "r12", tf_r12),
+    db_reg_var!(DDB_REGS, "r13", tf_r13),
+    db_reg_var!(DDB_REGS, "r14", tf_r14),
+    db_reg_var!(DDB_REGS, "r15", tf_r15),
+    db_reg_var!(DDB_REGS, "rip", tf_rip),
+    db_reg_var!(DDB_REGS, "cs", tf_cs),
+    db_reg_var!(DDB_REGS, "rflags", tf_rflags),
+    db_reg_var!(DDB_REGS, "rsp", tf_rsp),
+    db_reg_var!(DDB_REGS, "ss", tf_ss),
+];
 
 /// `INKERNEL(va)`.
 fn inkernel(va: usize) -> bool {

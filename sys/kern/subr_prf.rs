@@ -515,7 +515,7 @@ pub fn db_printf(args: fmt::Arguments<'_>) -> usize {
 /// `db_vprintf`: the `va_list` form of [`db_printf`].
 pub fn db_vprintf(args: fmt::Arguments<'_>) -> usize {
     let mut flags = TODDB;
-    if DB_LOG.load(Ordering::Relaxed) {
+    if DB_LOG.load(Ordering::Relaxed) != 0 {
         flags |= TOLOG;
     }
     kprintf(args, flags, None)

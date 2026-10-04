@@ -37,10 +37,10 @@
 //! Upstream: sys/arch/arm64/arm64/db_interface.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M4 ports `ddb_regs`, `db_ktrap` and `db_enter` (ddb-lite: the
-//! trap frame is saved and `db_trap` prints where the kernel stopped). The register table
-//! `db_regs[]`, `db_validate_address`, `db_read_bytes`/`db_write_bytes`, `db_machine_init`,
-//! the machine commands and the multiprocessor entry/exit (`db_enter_ddb`, `db_startcpu`,
-//! `db_stopcpu`) come with the command loop and M5.
+//! trap frame is saved and `db_trap` prints where the kernel stopped); M11c the register
+//! table `db_regs[]`. `db_validate_address`, `db_read_bytes`/`db_write_bytes`,
+//! `db_machine_init`, the machine commands and the multiprocessor entry/exit (`db_enter_ddb`,
+//! `db_startcpu`, `db_stopcpu`) come with the command loop and M11c.
 //!
 //! ## Deviations
 //! - `db_ktrap` has no `db_recover` (`db_command.c`'s longjmp target) and no `splhigh`
@@ -53,7 +53,9 @@ use crate::arch::arm64::include::armreg::{
     read_specialreg, write_specialreg,
 };
 use crate::arch::arm64::include::db_machdep::DbRegs;
+use crate::db_reg_var;
 use crate::ddb::db_trap::db_trap;
+use crate::ddb::db_variables::DbVariable;
 use crate::dev::cons::cnpollc;
 use crate::kern::init_main::DB_ACTIVE;
 use crate::unported;
@@ -118,3 +120,44 @@ pub fn db_enter() {
     // SAFETY: a breakpoint instruction; the exception handler returns past it.
     unsafe { core::arch::asm!("brk #0xf000", options(nomem, nostack, preserves_flags)) };
 }
+
+/// `db_regs[]`: the registers of `ddb_regs` as debugger variables. Each reads and writes its
+/// field of the trap frame (`db_reg_var!`) where C points `valuep` at it; `x30` is `tf_lr`
+/// (the C's `tf_x[30]` is one past the end of `tf_x`, which holds x0 to x29).
+pub static DB_REGS: [DbVariable; 35] = [
+    db_reg_var!(DDB_REGS, "x0", tf_x[0]),
+    db_reg_var!(DDB_REGS, "x1", tf_x[1]),
+    db_reg_var!(DDB_REGS, "x2", tf_x[2]),
+    db_reg_var!(DDB_REGS, "x3", tf_x[3]),
+    db_reg_var!(DDB_REGS, "x4", tf_x[4]),
+    db_reg_var!(DDB_REGS, "x5", tf_x[5]),
+    db_reg_var!(DDB_REGS, "x6", tf_x[6]),
+    db_reg_var!(DDB_REGS, "x7", tf_x[7]),
+    db_reg_var!(DDB_REGS, "x8", tf_x[8]),
+    db_reg_var!(DDB_REGS, "x9", tf_x[9]),
+    db_reg_var!(DDB_REGS, "x10", tf_x[10]),
+    db_reg_var!(DDB_REGS, "x11", tf_x[11]),
+    db_reg_var!(DDB_REGS, "x12", tf_x[12]),
+    db_reg_var!(DDB_REGS, "x13", tf_x[13]),
+    db_reg_var!(DDB_REGS, "x14", tf_x[14]),
+    db_reg_var!(DDB_REGS, "x15", tf_x[15]),
+    db_reg_var!(DDB_REGS, "x16", tf_x[16]),
+    db_reg_var!(DDB_REGS, "x17", tf_x[17]),
+    db_reg_var!(DDB_REGS, "x18", tf_x[18]),
+    db_reg_var!(DDB_REGS, "x19", tf_x[19]),
+    db_reg_var!(DDB_REGS, "x20", tf_x[20]),
+    db_reg_var!(DDB_REGS, "x21", tf_x[21]),
+    db_reg_var!(DDB_REGS, "x22", tf_x[22]),
+    db_reg_var!(DDB_REGS, "x23", tf_x[23]),
+    db_reg_var!(DDB_REGS, "x24", tf_x[24]),
+    db_reg_var!(DDB_REGS, "x25", tf_x[25]),
+    db_reg_var!(DDB_REGS, "x26", tf_x[26]),
+    db_reg_var!(DDB_REGS, "x27", tf_x[27]),
+    db_reg_var!(DDB_REGS, "x28", tf_x[28]),
+    db_reg_var!(DDB_REGS, "x29", tf_x[29]),
+    db_reg_var!(DDB_REGS, "x30", tf_lr),
+    db_reg_var!(DDB_REGS, "sp", tf_sp),
+    db_reg_var!(DDB_REGS, "spsr", tf_spsr),
+    db_reg_var!(DDB_REGS, "elr", tf_elr),
+    db_reg_var!(DDB_REGS, "lr", tf_lr),
+];

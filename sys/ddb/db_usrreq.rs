@@ -32,7 +32,7 @@
 //! Status: `wip`. Milestone M2 needs `db_log` (whether debugger output also goes to the
 //! message buffer); `db_profile`, `db_suspend` and `ddb_sysctl` arrive with `sysctl(2)`.
 
-use core::sync::atomic::AtomicBool;
+use core::sync::atomic::AtomicI32;
 
-/// `db_log`: copy `ddb(4)` output into the kernel message buffer.
-pub static DB_LOG: AtomicBool = AtomicBool::new(true);
+/// `db_log`: copy `ddb(4)` output into the kernel message buffer (0 or 1).
+pub static DB_LOG: AtomicI32 = AtomicI32::new(1);

@@ -1,0 +1,233 @@
+/*	$OpenBSD: db_expr.c,v 1.18 2020/10/15 03:14:00 deraadt Exp $	*/
+/*	$NetBSD: db_expr.c,v 1.5 1996/02/05 01:56:58 christos Exp $	*/
+/* <LICENSES> */
+/*
+ * Mach Operating System
+ * Copyright (c) 1993,1992,1991,1990 Carnegie Mellon University
+ * All Rights Reserved.
+ *
+ * Permission to use, copy, modify and distribute this software and its
+ * documentation is hereby granted, provided that both the copyright
+ * notice and this permission notice appear in all copies of the
+ * software, derivative works or modified versions, and any portions
+ * thereof, and that both notices appear in supporting documentation.
+ *
+ * CARNEGIE MELLON ALLOWS FREE USE OF THIS SOFTWARE IN ITS "AS IS"
+ * CONDITION.  CARNEGIE MELLON DISCLAIMS ANY LIABILITY OF ANY KIND FOR
+ * ANY DAMAGES WHATSOEVER RESULTING FROM THE USE OF THIS SOFTWARE.
+ *
+ * Carnegie Mellon requests users of this software to return to
+ *
+ *  Software Distribution Coordinator  or  Software.Distribution@CS.CMU.EDU
+ *  School of Computer Science
+ *  Carnegie Mellon University
+ *  Pittsburgh PA 15213-3890
+ *
+ * any improvements or extensions that they make and grant Carnegie Mellon
+ * the rights to redistribute these changes.
+ *
+ *	Author: David B. Golub, Carnegie Mellon University
+ *	Date:	7/90
+ */
+/* </LICENSES> */
+
+//! Expression evaluator of the debugger: `ddb/db_expr.c`.
+//!
+//! Upstream: sys/ddb/db_expr.c @ 3ce1f3f79392
+//!
+//! The grammar, loosest binding first:
+//!
+//! ```text
+//! expression := shift
+//! shift      := add  { ("<<" | ">>") add }
+//! add        := mult { ("+" | "-") mult }
+//! mult       := unary { ("*" | "/" | "%" | "#") term }
+//! unary      := "-" unary | "*" unary | term
+//! term       := identifier | number | "." | ".." | "+" | "\"" | "$" variable | "(" expression ")"
+//! ```
+//!
+//! `.` is `db_dot`, `..` `db_prev`, `+` `db_next`, `"` `db_last_addr`; `*` reads the word at
+//! an address, `#` rounds up to a multiple, `>>` shifts the low 32 bits as unsigned.
+//!
+//! ## Deviations
+//! - Each rule returns `DbResult<Option<DbExpr>>`: `None` is the C's 0 ("no expression
+//!   here"), `Err` a `db_error`.
+//! - Identifiers go through `db_symbol_by_name` (`db_sym.c`, not ported): a visible stub that
+//!   finds nothing, so a symbol is "Symbol not found". `*` reads memory through
+//!   `db_get_value` (`db_access.c`, not ported), a visible stub that fails the command.
+//! - The arithmetic wraps, as C's does on these machines; shifts by more than the width of
+//!   the operand (undefined in C) give 0.
+
+use core::sync::atomic::Ordering;
+
+use crate::ddb::db_command::{
+    DB_DOT, DB_LAST_ADDR, DB_NEXT, DB_PREV, DbResult, db_error, db_get_value,
+};
+use crate::ddb::db_lex::{
+    db_read_token, db_tok_number, db_tok_string, db_unread_token, tDITTO, tDOLLAR, tDOT, tDOTDOT,
+    tHASH, tIDENT, tLPAREN, tMINUS, tNUMBER, tPCT, tPLUS, tRPAREN, tSHIFT_L, tSHIFT_R, tSLASH,
+    tSTAR,
+};
+use crate::ddb::db_variables::db_get_variable;
+use crate::machine::db_machdep::DbExpr;
+use crate::unported;
+
+/// `db_symbol_by_name` (`db_sym.c`): the value of the symbol `name`. The symbol table is not
+/// ported: finds nothing.
+fn db_symbol_by_name(_name: &[u8]) -> Option<DbExpr> {
+    let _ = unported!("db_symbol_by_name (db_sym.c)");
+    None
+}
+
+/// `db_term`: an identifier, a number, one of the address variables, `$variable` or a
+/// parenthesised expression.
+fn db_term() -> DbResult<Option<DbExpr>> {
+    let t = db_read_token()?;
+    if t == tIDENT {
+        let Some(value) = db_symbol_by_name(db_tok_string().as_bytes()) else {
+            return Err(db_error(Some("Symbol not found\n")));
+        };
+        return Ok(Some(value));
+    }
+    if t == tNUMBER {
+        return Ok(Some(db_tok_number()));
+    }
+    if t == tDOT {
+        return Ok(Some(DB_DOT.load(Ordering::Relaxed) as DbExpr));
+    }
+    if t == tDOTDOT {
+        return Ok(Some(DB_PREV.load(Ordering::Relaxed) as DbExpr));
+    }
+    if t == tPLUS {
+        return Ok(Some(DB_NEXT.load(Ordering::Relaxed) as DbExpr));
+    }
+    if t == tDITTO {
+        return Ok(Some(DB_LAST_ADDR.load(Ordering::Relaxed) as DbExpr));
+    }
+    if t == tDOLLAR {
+        return db_get_variable().map(Some);
+    }
+    if t == tLPAREN {
+        let Some(value) = db_expression()? else {
+            return Err(db_error(Some("Syntax error\n")));
+        };
+        if db_read_token()? != tRPAREN {
+            return Err(db_error(Some("Syntax error\n")));
+        }
+        return Ok(Some(value));
+    }
+    db_unread_token(t);
+    Ok(None)
+}
+
+/// `db_unary`: unary minus and indirection.
+fn db_unary() -> DbResult<Option<DbExpr>> {
+    let t = db_read_token()?;
+    if t == tMINUS {
+        let Some(value) = db_unary()? else {
+            return Err(db_error(Some("Syntax error\n")));
+        };
+        return Ok(Some(value.wrapping_neg()));
+    }
+    if t == tSTAR {
+        // indirection
+        let Some(value) = db_unary()? else {
+            return Err(db_error(Some("Syntax error\n")));
+        };
+        return db_get_value(value as usize, size_of::<usize>(), false).map(Some);
+    }
+    db_unread_token(t);
+    db_term()
+}
+
+/// `db_mult_expr`: `*`, `/`, `%` and `#` (round up to a multiple).
+fn db_mult_expr() -> DbResult<Option<DbExpr>> {
+    let Some(mut lhs) = db_unary()? else {
+        return Ok(None);
+    };
+
+    let mut t = db_read_token()?;
+    while t == tSTAR || t == tSLASH || t == tPCT || t == tHASH {
+        let Some(rhs) = db_term()? else {
+            return Err(db_error(Some("Syntax error\n")));
+        };
+        if t == tSTAR {
+            lhs = lhs.wrapping_mul(rhs);
+        } else {
+            if rhs == 0 {
+                return Err(db_error(Some("Divide by 0\n")));
+            }
+            if t == tSLASH {
+                lhs = lhs.wrapping_div(rhs);
+            } else if t == tPCT {
+                lhs = lhs.wrapping_rem(rhs);
+            } else {
+                lhs = lhs
+                    .wrapping_add(rhs)
+                    .wrapping_sub(1)
+                    .wrapping_div(rhs)
+                    .wrapping_mul(rhs);
+            }
+        }
+        t = db_read_token()?;
+    }
+    db_unread_token(t);
+    Ok(Some(lhs))
+}
+
+/// `db_add_expr`: `+` and `-`.
+fn db_add_expr() -> DbResult<Option<DbExpr>> {
+    let Some(mut lhs) = db_mult_expr()? else {
+        return Ok(None);
+    };
+
+    let mut t = db_read_token()?;
+    while t == tPLUS || t == tMINUS {
+        let Some(rhs) = db_mult_expr()? else {
+            return Err(db_error(Some("Syntax error\n")));
+        };
+        if t == tPLUS {
+            lhs = lhs.wrapping_add(rhs);
+        } else {
+            lhs = lhs.wrapping_sub(rhs);
+        }
+        t = db_read_token()?;
+    }
+    db_unread_token(t);
+    Ok(Some(lhs))
+}
+
+/// `db_shift_expr`: `<<` and `>>`.
+fn db_shift_expr() -> DbResult<Option<DbExpr>> {
+    let Some(mut lhs) = db_add_expr()? else {
+        return Ok(None);
+    };
+
+    let mut t = db_read_token()?;
+    while t == tSHIFT_L || t == tSHIFT_R {
+        let Some(rhs) = db_add_expr()? else {
+            return Err(db_error(Some("Syntax error\n")));
+        };
+        if rhs < 0 {
+            return Err(db_error(Some("Negative shift amount\n")));
+        }
+        let amount = u32::try_from(rhs).unwrap_or(u32::MAX);
+        if t == tSHIFT_L {
+            lhs = lhs.checked_shl(amount).unwrap_or(0);
+        } else {
+            // Shift right is unsigned (of the low 32 bits: C's `(unsigned) lhs`)
+            lhs = DbExpr::from((lhs as u32).checked_shr(amount).unwrap_or(0));
+        }
+        t = db_read_token()?;
+    }
+    db_unread_token(t);
+    Ok(Some(lhs))
+}
+
+/// `db_expression`: reads an expression; `None` if the next token does not start one.
+pub fn db_expression() -> DbResult<Option<DbExpr>> {
+    db_shift_expr()
+}
+
+#[cfg(test)]
+mod tests;

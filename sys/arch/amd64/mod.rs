@@ -859,6 +859,10 @@ impl DbMachdep for Machine {
         // SAFETY: a read of ddb_regs while the debugger is active, after db_ktrap wrote it.
         include::db_machdep::pc_regs(unsafe { amd64::db_interface::DDB_REGS.get() })
     }
+
+    fn db_regs() -> &'static [crate::ddb::db_variables::DbVariable] {
+        &amd64::db_trace::DB_REGS
+    }
 }
 
 impl Intr for Machine {

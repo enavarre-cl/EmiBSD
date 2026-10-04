@@ -9,6 +9,7 @@
 use core::fmt;
 
 pub use crate::arch::current::include::db_machdep::{DbAddr, DbExpr};
+use crate::ddb::db_variables::DbVariable;
 use crate::machine::Machine;
 
 /// The output function `db_stack_trace_print` prints through: `printf` from `db_stack_dump`,
@@ -36,6 +37,10 @@ pub trait DbMachdep {
     /// `PC_REGS(&ddb_regs)`: the program counter of the trap frame the debugger was entered
     /// with. Valid while `db_active`, after `db_ktrap` saved the frame.
     fn pc_regs() -> usize;
+
+    /// `db_regs[]`: the machine registers as debugger variables (`$rax`, `$x0`, ...), read
+    /// and written in `ddb_regs`.
+    fn db_regs() -> &'static [DbVariable];
 }
 
 /// `db_enter` on the selected machine.
@@ -51,4 +56,9 @@ pub fn db_stack_trace_print(addr: usize, have_addr: bool, count: usize, modif: &
 /// `PC_REGS(&ddb_regs)` on the selected machine.
 pub fn pc_regs() -> usize {
     Machine::pc_regs()
+}
+
+/// `db_regs[]` on the selected machine.
+pub fn db_regs() -> &'static [DbVariable] {
+    Machine::db_regs()
 }
