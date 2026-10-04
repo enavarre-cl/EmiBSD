@@ -532,11 +532,28 @@ unsafe fn accepting_ioctl(ifp: &'static Ifnet, cmd: u64, _data: *mut u8) -> Resu
     }
 }
 
+/// The test driver's `if_output`: the packets the address code sends (MLD reports, DAD
+/// solicitations) are dropped, as on a link nobody listens to.
+///
+/// # Safety
+///
+/// As for `if_output`: `dst` is a readable socket address.
+unsafe fn discard_output(
+    _ifp: &'static Ifnet,
+    m: &'static crate::sys::mbuf::Mbuf,
+    _dst: *const crate::sys::socket::Sockaddr,
+    _rt: Option<&'static crate::net::route::Rtentry>,
+) -> Result<(), Errno> {
+    crate::kern::uipc_mbuf::m_freem(m);
+    Ok(())
+}
+
 /// An attached Ethernet-like interface `name` with hardware address `mac` and a driver that
 /// accepts what the IPv6 address code asks of it.
 fn test_driver_if(name: &[u8], mac: [u8; 6]) -> &'static Ifnet {
     let ifp = test_ifnet(name);
     ifp.if_ioctl.set(Some(accepting_ioctl));
+    ifp.if_output.set(Some(discard_output));
     ifp.if_type.set(crate::net::if_types::IFT_ETHER);
     ifp.if_flags.set(IFF_MULTICAST);
     ifp.if_mtu.set(1500);
@@ -572,7 +589,6 @@ fn configure6(ifp: &'static Ifnet, a: In6Addr, plen: i32) -> Result<(), Errno> {
 }
 
 #[test]
-#[ignore = "needs an if_output for test_driver_if (the MLD reports go out; panics \"no if_output\")"]
 fn siocaifaddr_in6_makes_the_address_the_link_local_one_and_the_memberships() {
     use crate::netinet::ip_input::tests::{OURS, setup as setup_ip};
 
