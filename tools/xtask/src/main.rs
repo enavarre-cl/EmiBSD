@@ -45,6 +45,8 @@
 //!                                          with K's symbols (default: the debug kernel)
 //! cargo xtask userland --arch A            cross-compile OpenBSD's libc, init, ksh, echo and
 //!                                          ls from the reference sources (target/userland/A)
+//! cargo xtask ntfs-image OUT [--check]     write M10d's NTFS test volume to OUT (ntfsgen.rs);
+//!                                          --check mounts it with macOS's NTFS driver
 //! ```
 //!
 //! Paths are resolved from the workspace root (derived from `CARGO_MANIFEST_DIR`), never from the
@@ -60,6 +62,7 @@ use serde::Deserialize;
 mod boot;
 mod bsdmake;
 mod https;
+mod ntfsgen;
 mod symbolize;
 mod syscalls;
 mod twovm;
@@ -81,7 +84,7 @@ const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | 
                      qemu --arch A [--kernel K] [--init I] [--ramdisk R] [--disk-fresh] [--disks N] [--disk-set NAME] | gen-syscalls [--check] | \
                      smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--disk-fresh] [--disks N] [--disk-set NAME] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
                      smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--disk-fresh] [--disks N] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
-                     symbolize --arch A [--kernel K] | userland --arch A>";
+                     symbolize --arch A [--kernel K] | userland --arch A | ntfs-image OUT [--check]>";
 
 #[derive(Deserialize)]
 struct Ports {
@@ -287,6 +290,8 @@ fn run(args: &[String]) -> Result<()> {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
             userland::userland(&root, arch)
         }
+        ["ntfs-image", out] => ntfsgen::ntfs_image(&root.join(out), false),
+        ["ntfs-image", out, "--check"] => ntfsgen::ntfs_image(&root.join(out), true),
         _ => Err(USAGE.into()),
     }
 }

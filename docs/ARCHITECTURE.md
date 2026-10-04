@@ -298,6 +298,19 @@ M10c adds `/root/images` (`images.rs`): a FAT12 and an ISO 9660 image made by th
 -udf` (OpenBSD has no UDF writer; nothing is installed), for vnd(4) to attach in `smoke-fs`.
 Disk nodes follow MAKEDEV: `UNITMULT` 64 minors per unit (`MAXPARTITIONSUNIT`).
 
+M10d adds `/root/images/ntfs.img` on amd64 only (ntfs is only in amd64's kernel): a 4 MiB
+NTFS 3.1 volume made by a generator of our own, `tools/xtask/src/ntfsgen.rs` (ISC, written
+from the public description of the format, no code of ntfs-3g or any other implementation;
+`cargo xtask ntfs-image OUT [--check]` makes it alone). Why our own: OpenBSD has no NTFS
+writer, and the usual one, ntfs-3g's `mkntfs`, does not build on macOS (decided by the user,
+2026-10-04). It holds the 16 system files ($MFT .. $Extend, a full $UpCase, a $LogFile of
+0xff bytes, which readers take as empty and clean), a root that is a large index (one `INDX`
+block), a resident `m10d-ntfs.txt` and a non-resident `m10d-ntfs-big.txt`. So that a
+generator bug shared with our kernel cannot pass unseen, every image is mounted read-only by
+an independent reader, macOS's own NTFS driver (`ntfs.fs`, an FSKit module on macOS 26:
+`diskutil mount readOnly` over an `hdiutil attach -nomount` raw device, no root), which must
+list exactly the two files and read their bytes back (docs/SETUP.md, "NTFS check").
+
 `/etc` is our own minimal set (OpenBSD's `etc/` is not in the clone), text in `ramdisk.rs`:
 `motd`, `shells`, `fstab` (`/dev/rd0a / ffs rw 1 1`, which `mount -uw /` needs), `ttys` (a
 `getty std.9600` on `tty00`, `console` off), `gettytab`, `login.conf` (a `default` class with

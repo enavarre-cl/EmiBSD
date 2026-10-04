@@ -154,6 +154,17 @@ uses ports 8443 (trusted), 8444 (echo) and 8445 (untrusted); they must be free.
 `cargo test -p xtask -- --ignored servers_answer` checks the three modes against
 `openssl s_client` on the Mac alone.
 
+## NTFS check (M10d)
+
+`just userland` for amd64 makes `/root/images/ntfs.img` with our own generator and checks it
+with macOS's own read-only NTFS driver, nothing installed: `/usr/bin/hdiutil attach -imagekey
+diskimage-class=CRawDiskImage -nomount`, then `/usr/sbin/diskutil mount readOnly -mountPoint`
+(macOS 26 has no `mount_ntfs` for `/sbin/mount -t ntfs`, which is tried first), as the user,
+no `sudo`. The image is always unmounted and detached afterwards. A Mac without
+`/System/Library/Filesystems/ntfs.fs` fails with an `xtask: ... not found` line; set
+`EMIBSD_NTFS_CHECK=0` there to skip the check (a warning is printed). `cargo xtask ntfs-image
+OUT --check` and `cargo test -p xtask -- --ignored macos_` run the same check alone.
+
 ## Two VMs (M9b, M9c)
 
 `cargo xtask smoke2 --arch amd64|arm64 --kernel K ...` boots two VMs of one arch at once, for
