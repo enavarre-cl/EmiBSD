@@ -1075,7 +1075,7 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   when the test passes, and nothing for the APs it skips after a failure. So under features
   `qemu` and `multiprocessor` only, `cpu_start_secondary` adds one line per AP:
   `tsc: cpu0/cpuN: sync test passed`, or `... sync test not run: <why>`
-  (`tsc_report_verdict`). `smoke-tsc-mp` then expects one `tsc: cpu0/cpuN: sync test` line
+  (`tsc_report_verdict`). `smoke-mp` then expects one `tsc: cpu0/cpuN: sync test` line
   per AP, whatever the verdict. Under TCG the test passes: every vCPU reads its TSC from one
   host clock that QEMU keeps monotonic across vCPUs.
 - softraid's boot keys (`sr_bootuuid`, `sr_bootkey`) have no source under Limine (M10f).

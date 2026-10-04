@@ -1126,8 +1126,14 @@ ntfs_steps := disk_login + " " + \
 # and runs (`selftest: 4 cpus running`, the IPI and TLB shootdown check of each machine), the
 # default boot's init stand-in passes on it, `selftest=kthread` ping-pongs across two CPUs and
 # `selftest=mpstress` hammers the pools (with their per-CPU caches) and uvm_pmemrange from a
-# thread pegged to each CPU. The MP kernels are kept as `bsd.mp` and the uniprocessor ones
-# rebuilt, so the rest of `smoke` boots the default kernel. Part of `smoke`.
+# thread pegged to each CPU. M11b (MP timekeeping), in the default boots: amd64 runs tsc.c's
+# synchronisation test against each application processor and prints a line per AP whatever
+# the verdict (`tsc: cpu0/cpuN: sync test passed`, `... failed` or `... not run`; QEMU's TCG
+# passes it), and on both archs every CPU dispatches its own clock interrupts with an uptime
+# that never goes back on it (`selftest: clockintr on 4 cpus ok`, plus the `uptime went
+# backwards` reject) and the init stand-in's time checks pass. The MP kernels are kept as
+# `bsd.mp` and the uniprocessor ones rebuilt, so the rest of `smoke` boots the default kernel.
+# Part of `smoke`.
 smoke-mp: build-init-amd64 build-init-arm64
     cargo build -p bsd --target {{amd64}} --features qemu,multiprocessor
     cp target/{{amd64}}/debug/bsd target/{{amd64}}/debug/bsd.mp
@@ -1139,7 +1145,11 @@ smoke-mp: build-init-amd64 build-init-arm64
         --expect "bsd: 4 processors" --expect "cpu0 at mainbus0: apid 0 (boot processor)" \
         --expect "cpu3 at mainbus0: apid 3 (application processor)" \
         --expect "x86_ipi_selftest: X86_IPI_NOP taken by 3 cpus, tlb shootdowns acknowledged" \
+        --expect "tsc: cpu0/cpu1: sync test" --expect "tsc: cpu0/cpu2: sync test" \
+        --expect "tsc: cpu0/cpu3: sync test" \
         --expect "selftest: 4 cpus running" --expect "init: processes ok" \
+        --expect "selftest: clockintr on 4 cpus ok, uptime monotonic on each" \
+        --expect "init: time ok" --expect "init: uptime monotonic ok" \
         --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd.mp --ramdisk none --smp 4 \
         --cmdline "selftest=kthread" --expect "selftest: kthread ping-pong ok" --expect ", across cpu"
@@ -1151,6 +1161,8 @@ smoke-mp: build-init-amd64 build-init-arm64
         --expect "cpu3 at mainbus0 mpidr 3: ARM Cortex-A72" \
         --expect "cpu: 3 of 3 application processors running, tlb shootdown seen by 3, ipi nop seen by 3" \
         --expect "selftest: 4 cpus running" --expect "init: processes ok" \
+        --expect "selftest: clockintr on 4 cpus ok, uptime monotonic on each" \
+        --expect "init: time ok" --expect "init: uptime monotonic ok" \
         --expect "init exited with status 0 (signal 0)"
     cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd.mp --ramdisk none --smp 4 \
         --cmdline "selftest=kthread" --expect "selftest: kthread ping-pong ok" --expect ", across cpu"
