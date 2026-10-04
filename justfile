@@ -74,7 +74,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -528,6 +528,44 @@ smoke-esp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
         {{esp_b}} \
         --a-expect "bytes from 192.168.77.2" --a-expect "bytes from 10.77.2.1" \
         --b-expect "bytes from 192.168.77.1" --b-expect "bytes from 10.77.1.1"
+
+# M9 (pfsync/pflow, the user's decision of 2026-10-03): pfsync(4) and pflow(4) between the two
+# VMs of `smoke-link`. Both bring up pfsync0 on vio1 (the 224.0.0.240 group, IPPROTO_PFSYNC);
+# A passes with `keep state (pflow)` and has pflow0 send IPFIX to B's UDP port 9995, B passes
+# without state except UDP to 9995. A pings B: B polls `pfctl -ss` until A's ICMP state shows
+# up, synced over pfsync (B keeps no ICMP state of its own). A then clears its states (the
+# flows are exported, pfsync tells B to clear them too) and flushes pflow0 (`pflowproto 10`
+# again); B polls until its own state for A's datagrams to 9995 shows up: the flow records
+# (or the templates, sent at start and every 30 seconds) arrived. `pfctl` patterns use `?` for
+# the spaces and `<` so that the typed commands do not match the expected lines. Part of
+# `smoke`.
+smoke-pfsync: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-pfsync: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke2 --arch amd64 --kernel target/{{amd64}}/debug/bsd --timeout 400 \
+        {{pfsync_both}} {{pfsync_a}} {{pfsync_b}} {{pfsync_expect}}
+    cargo xtask smoke2 --arch arm64 --kernel target/{{arm64}}/debug/bsd --timeout 400 \
+        {{pfsync_both}} {{pfsync_a}} {{pfsync_b}} {{pfsync_expect}}
+
+# `smoke-pfsync`'s sends and expectations.
+pfsync_both := "--both-send-after 'login:' --both-send 'root\\n' --both-send-after 'Password:' --both-send 'emibsd\\n'"
+pfsync_a := "--a-send-after '# ' --a-send 'ifconfig vio1 inet 192.168.77.1/24 up\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig pfsync0 create syncdev vio1 up\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig pflow0 create flowsrc 192.168.77.1 flowdst 192.168.77.2:9995 pflowproto 10\\n' " + \
+    "--a-send-after '# ' --a-send 'echo \"pass keep state (pflow)\" | pfctl -e -f -\\n' " + \
+    "--a-send-after '# ' --a-send 'sleep 5; ping -c 20 192.168.77.2\\n' " + \
+    "--a-send-after 'packet loss' --a-send 'pfctl -ss; pfctl -F states\\n' " + \
+    "--a-send-after '# ' --a-send 'ifconfig pflow0 pflowproto 10; ifconfig pflow0; ifconfig pfsync0\\n'"
+pfsync_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24 up\\n' " + \
+    "--b-send-after '# ' --b-send 'ifconfig pfsync0 create syncdev vio1 up\\n' " + \
+    "--b-send-after '# ' --b-send 'echo pass no state >/tmp/b.conf; echo pass in proto udp to port 9995 >>/tmp/b.conf\\n' " + \
+    "--b-send-after '# ' --b-send 'pfctl -e -f /tmp/b.conf\\n' " + \
+    "--b-send-after '# ' --b-send 'until case $(pfctl -ss 2>/dev/null) in *icmp?192.168.77.1:*) true;; *) false;; esac; do sleep 1; done; pfctl -ss; echo pfsync-synced-$((7+7))\\n' " + \
+    "--b-send-after 'pfsync-synced-14' --b-send 'until case $(pfctl -ss 2>/dev/null) in *udp?192.168.77.2:9995????192.168.77.1:*) true;; *) false;; esac; do sleep 1; done; pfctl -ss; echo pflow-seen-$((8+8))\\n'"
+pfsync_expect := "--a-expect 'pfsync: syncdev: vio1' " + \
+    "--a-expect 'pflow: sender: 192.168.77.1 receiver: 192.168.77.2:9995 version: 10' " + \
+    "--b-expect 'pfsync-synced-14' --b-expect 'all icmp 192.168.77.1:' " + \
+    "--b-expect 'pflow-seen-16' --b-expect 'all udp 192.168.77.2:9995 <- 192.168.77.1:'"
 
 # `smoke-esp`'s sends: the login and the keys on both VMs, then each VM's ipsec.conf (its
 # flow, the SA pair), ipsecctl -f, a ping across the link, the ping through the tunnel and
