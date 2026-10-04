@@ -166,12 +166,15 @@
 //! - An `Inpcb` is an `inpcb_pool` item handed around as `&'static Inpcb`, valid while a
 //!   reference is held (`in_pcbref`/`in_pcbunref`, the table mutex, or the socket's
 //!   `so_pcb`); the members the C changes through a pointer are `Cell`s under the locks above.
-//! - `INET6` is not configured: the `inpaddru` unions hold only their IPv4 member
-//!   (`inp_faddr`, `inp_laddr` are `Cell<InAddr>`), the header prototype `inp_hu` only
-//!   `struct ip` (`inp_ip`), the options union only `inp_options` and the multicast union
-//!   only `inp_moptions`; `inp_icmp6filt` is left out. The `IN6P_*` flags and
-//!   `INPLOOKUP_IPV6` are defined; `in6_*` functions are not compiled, as in a kernel without
-//!   `INET6`, and the `ISSET(inp_flags, INP_IPV6)` branches are comments.
+//! - The C's unions (`inp_faddru`, `inp_laddru`, the header prototype `inp_hu`, the options
+//!   and the multicast options) are their two members side by side: `inp_faddr`/`inp_faddr6`,
+//!   `inp_laddr`/`inp_laddr6`, `inp_ip`/`inp_ipv6`, `inp_options`/`inp_outputopts6`,
+//!   `inp_moptions`/`inp_moptions6`; a pcb uses the members of its family (`INP_IPV6`), as
+//!   the C reads the union through the macro of its family. `inp_ip6_minhlim` (the
+//!   `inp_ip_minttl` alias) and `inp_flowinfo` (`inp_ipv6.ip6_flow`) are methods.
+//! - The `in6_*` pcb functions are `netinet6/in6_pcb.rs`'s; the `ISSET(inp_flags, INP_IPV6)`
+//!   branches of this file are still comments (the INET6 integration of `in_pcb.c` comes
+//!   after the port of `netinet6`).
 //! - `inp_pf_sk` is pf(4)'s state key. `inp_seclevel` is a `Cell` (`IPSEC` is configured
 //!   since M9c).
 //! - `struct inpcb_iterator` is [`InpcbIterator`], a whole `Inpcb` whose `inp_table` and
@@ -226,6 +229,7 @@ use crate::net::route::{
 };
 use crate::net::rtable::{rtable_exists, rtable_getsource, rtable_l2};
 use crate::net::toeplitz::stoeplitz_ip4port;
+use crate::netinet::icmp6::Icmp6Filter;
 use crate::netinet::in_::{
     INADDR_ANY, INADDR_BROADCAST, IPPORT_HIFIRSTAUTO, IPPORT_HILASTAUTO, IPPORT_RESERVED,
     IPPORT_USERRESERVED, IPPROTO_TCP, IPPROTO_UDP, IPSEC_AUTH_LEVEL_DEFAULT,
@@ -237,7 +241,10 @@ use crate::netinet::ip::Ip;
 use crate::netinet::ip_ipsp::IpsecLevel;
 use crate::netinet::ip_output::ip_freemoptions;
 use crate::netinet::ip_var::IpMoptions;
+use crate::netinet::ip6::Ip6Hdr;
 use crate::netinet::ipsec_output::UDPENCAP_PORT;
+use crate::netinet6::in6::{IN6ADDR_ANY_INIT, In6Addr};
+use crate::netinet6::ip6_var::{Ip6Moptions, Ip6Pktopts};
 use crate::queue_adapter;
 use crate::sys::endian::htons;
 use crate::sys::errno::Errno;
@@ -425,10 +432,14 @@ pub struct Inpcb {
     pub inp_hash: ListEntry<Inpcb>,
     /// \[t\] `inp_lhash`: local port hash.
     pub inp_lhash: ListEntry<Inpcb>,
-    /// \[t\] `inp_faddr`: foreign address.
+    /// \[t\] `inp_faddr`: foreign address (`inp_faddru.iau_addr`).
     pub inp_faddr: Cell<InAddr>,
-    /// \[t\] `inp_laddr`: local address.
+    /// \[t\] `inp_faddr6`: foreign IPv6 address (`inp_faddru.iau_addr6`).
+    pub inp_faddr6: Cell<In6Addr>,
+    /// \[t\] `inp_laddr`: local address (`inp_laddru.iau_addr`).
     pub inp_laddr: Cell<InAddr>,
+    /// \[t\] `inp_laddr6`: local IPv6 address (`inp_laddru.iau_addr6`).
+    pub inp_laddr6: Cell<In6Addr>,
     /// \[t\] `inp_fport`: foreign port, network order.
     pub inp_fport: Cell<u16>,
     /// \[t\] `inp_lport`: local port, network order.
@@ -443,20 +454,28 @@ pub struct Inpcb {
     pub inp_refcnt: Refcnt,
     /// `inp_flags`: generic IP/datagram flags.
     pub inp_flags: Cell<i32>,
-    /// `inp_ip`: header prototype.
+    /// `inp_ip`: header prototype (`inp_hu.hu_ip`).
     pub inp_ip: Cell<Ip>,
+    /// `inp_ipv6`: IPv6 header prototype (`inp_hu.hu_ipv6`).
+    pub inp_ipv6: Cell<Ip6Hdr>,
     /// `inp_options`: IPv4 options.
     pub inp_options: Cell<Option<&'static Mbuf>>,
+    /// `inp_outputopts6`: IPv6 options (`malloc(M_IP6OPT)`).
+    pub inp_outputopts6: Cell<Option<NonNull<Ip6Pktopts>>>,
     /// `inp_hops`.
     pub inp_hops: Cell<i32>,
     /// \[N\] `inp_moptions`: IPv4 multicast options (`malloc(M_IPMOPTS)`).
     pub inp_moptions: Cell<Option<NonNull<IpMoptions>>>,
+    /// \[N\] `inp_moptions6`: IPv6 multicast options (`malloc(M_IPMOPTS)`).
+    pub inp_moptions6: Cell<Option<NonNull<Ip6Moptions>>>,
     /// \[N\] `inp_seclevel`: IPsec level of socket.
     pub inp_seclevel: Cell<IpsecLevel>,
     /// `inp_ip_minttl`: minimum TTL or drop.
     pub inp_ip_minttl: Cell<u8>,
     /// `inp_cksum6`.
     pub inp_cksum6: Cell<i32>,
+    /// `inp_icmp6filt`: the `ICMP6_FILTER` of a raw ICMPv6 socket (`malloc(M_PCB)`).
+    pub inp_icmp6filt: Cell<Option<NonNull<Icmp6Filter>>>,
     /// `inp_upcall`.
     pub inp_upcall: Cell<Option<InpUpcallFn>>,
     /// `inp_upcall_arg`.
@@ -481,7 +500,9 @@ impl Inpcb {
             inp_hash: ListEntry::new(),
             inp_lhash: ListEntry::new(),
             inp_faddr: Cell::new(InAddr { s_addr: 0 }),
+            inp_faddr6: Cell::new(IN6ADDR_ANY_INIT),
             inp_laddr: Cell::new(InAddr { s_addr: 0 }),
+            inp_laddr6: Cell::new(IN6ADDR_ANY_INIT),
             inp_fport: Cell::new(0),
             inp_lport: Cell::new(0),
             inp_socket: so,
@@ -501,9 +522,12 @@ impl Inpcb {
                 ip_src: InAddr { s_addr: 0 },
                 ip_dst: InAddr { s_addr: 0 },
             }),
+            inp_ipv6: Cell::new(Ip6Hdr::zeroed()),
             inp_options: Cell::new(None),
+            inp_outputopts6: Cell::new(None),
             inp_hops: Cell::new(0),
             inp_moptions: Cell::new(None),
+            inp_moptions6: Cell::new(None),
             inp_seclevel: Cell::new(IpsecLevel {
                 sl_auth: 0,
                 sl_esp_trans: 0,
@@ -512,6 +536,7 @@ impl Inpcb {
             }),
             inp_ip_minttl: Cell::new(0),
             inp_cksum6: Cell::new(0),
+            inp_icmp6filt: Cell::new(None),
             inp_upcall: Cell::new(None),
             inp_upcall_arg: Cell::new(ptr::null_mut()),
             inp_rtableid: Cell::new(0),
@@ -550,6 +575,23 @@ impl Inpcb {
     /// `inp->inp_flags &= ~bits`.
     pub fn clear_flags(&self, bits: i32) {
         self.inp_flags.set(self.inp_flags.get() & !bits);
+    }
+
+    /// `inp_ip6_minhlim`: minimum Hop Limit or drop (the `inp_ip_minttl` member).
+    pub fn inp_ip6_minhlim(&self) -> &Cell<u8> {
+        &self.inp_ip_minttl
+    }
+
+    /// `inp_flowinfo` (`inp_ipv6.ip6_flow`): the flow information of the IPv6 prototype.
+    pub fn inp_flowinfo(&self) -> u32 {
+        self.inp_ipv6.get().ip6_flow
+    }
+
+    /// `inp_flowinfo = flow`.
+    pub fn set_inp_flowinfo(&self, flow: u32) {
+        let mut ip6 = self.inp_ipv6.get();
+        ip6.ip6_flow = flow;
+        self.inp_ipv6.set(ip6);
     }
 
     /// `inp->inp_moptions` as `ip_output` takes it.

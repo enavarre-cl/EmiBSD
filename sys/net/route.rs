@@ -176,9 +176,8 @@
 //!   `[a]`); `rt->rt_rmx = parent->rt_rmx` is [`RtKmetrics::assign`].
 //! - `struct route` has `Cell` members so a cache inside a shared structure (`struct
 //!   netstack`'s `ns_route`) can be refreshed through `&`; its unions are `#[repr(C)]` unions
-//!   with accessors. `struct sockaddr_in6` and `struct in6_addr` (`<netinet6/in6.h>`) are not
-//!   ported, so `ro_dstsin6` and `ro_srcin6` are byte arrays of their sizes and the `INET6`
-//!   functions (`route6_cache`, `route6_mpath`) are not configured. A mask buffer (`struct
+//!   with accessors (`ro_dstsin6` is a `SockaddrIn6`, `ro_srcin6` an `In6Addr`).
+//!   `route6_cache` and `route6_mpath` are under the `inet6` feature (the C's `#ifdef INET6`). A mask buffer (`struct
 //!   sockaddr_in6 sa_mask` in C, big enough for any family) is a `sockaddr_storage`.
 //! - `struct rt_addrinfo`'s `rti_flags` is a `u32` (`int` in C), the type of the `RTF_*`
 //!   values it carries; `rti_info[]` holds raw socket addresses, so the functions that read
@@ -238,6 +237,7 @@ use crate::netinet::in_::{
 };
 use crate::netinet::ip_input::IPMULTIPATH;
 use crate::netinet::ip_var::{IpstatCounters, ipstat_inc};
+use crate::netinet6::in6::{IN6ADDR_ANY_INIT, In6Addr, SockaddrIn6};
 use crate::queue_adapter;
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_IFADDR, M_NOWAIT, M_RTABLE, M_ZERO};
@@ -846,8 +846,8 @@ pub union RouteDst {
     pub ro_dstsa: Sockaddr,
     /// `ro_dstsin`.
     pub ro_dstsin: SockaddrIn,
-    /// `ro_dstsin6`: a `struct sockaddr_in6` (28 bytes) once `<netinet6/in6.h>` is ported.
-    pub ro_dstsin6: [u32; 7],
+    /// `ro_dstsin6`.
+    pub ro_dstsin6: SockaddrIn6,
 }
 
 /// `struct route`'s source union: `ro_srcin`, `ro_srcin6`.
@@ -856,8 +856,8 @@ pub union RouteDst {
 pub union RouteSrc {
     /// `ro_srcin`.
     pub ro_srcin: InAddr,
-    /// `ro_srcin6`: a `struct in6_addr` (16 bytes) once `<netinet6/in6.h>` is ported.
-    pub ro_srcin6: [u32; 4],
+    /// `ro_srcin6`.
+    pub ro_srcin6: In6Addr,
 }
 
 /// `struct route`: a destination address and a reference to a routing entry. These are often
@@ -883,8 +883,12 @@ impl Route {
             ro_rt: Cell::new(None),
             ro_generation: Cell::new(0),
             ro_tableid: Cell::new(0),
-            ro_dst: Cell::new(RouteDst { ro_dstsin6: [0; 7] }),
-            ro_src: Cell::new(RouteSrc { ro_srcin6: [0; 4] }),
+            ro_dst: Cell::new(RouteDst {
+                ro_dstsin6: SockaddrIn6::zeroed(),
+            }),
+            ro_src: Cell::new(RouteSrc {
+                ro_srcin6: IN6ADDR_ANY_INIT,
+            }),
         }
     }
 
@@ -909,6 +913,18 @@ impl Route {
     pub fn ro_srcin(&self) -> InAddr {
         // SAFETY: as above.
         unsafe { self.ro_src.get().ro_srcin }
+    }
+
+    /// `ro->ro_dstsin6`.
+    pub fn ro_dstsin6(&self) -> SockaddrIn6 {
+        // SAFETY: as above.
+        unsafe { self.ro_dst.get().ro_dstsin6 }
+    }
+
+    /// `ro->ro_srcin6`.
+    pub fn ro_srcin6(&self) -> In6Addr {
+        // SAFETY: as above.
+        unsafe { self.ro_src.get().ro_srcin6 }
     }
 }
 
@@ -1131,7 +1147,9 @@ pub fn route_cache(
             ..SockaddrIn::default()
         },
     });
-    ro.ro_src.set(RouteSrc { ro_srcin6: [0; 4] });
+    ro.ro_src.set(RouteSrc {
+        ro_srcin6: IN6ADDR_ANY_INIT,
+    });
     if let Some(src) = src {
         ro.ro_src.set(RouteSrc { ro_srcin: *src });
     }
@@ -1158,7 +1176,84 @@ pub fn route_mpath(
     ro.ro_rt.get()
 }
 
-// INET6: route6_cache and route6_mpath, not configured.
+/// `route6_cache`: whether `ro` caches a valid route to `dst` (from `src`, if given) in table
+/// `rtableid`; on a miss (`ESRCH`), resets the cache to that destination. The IPv6 twin of
+/// [`route_cache`].
+#[cfg(feature = "inet6")]
+pub fn route6_cache(
+    ro: &Route,
+    dst: &In6Addr,
+    src: Option<&In6Addr>,
+    rtableid: u32,
+) -> Result<(), Errno> {
+    use crate::netinet6::in6::{in6_are_addr_equal, in6_is_addr_unspecified};
+    use crate::netinet6::in6_proto::IP6_MULTIPATH;
+    use crate::netinet6::ip6_var::{Ip6statCounters, ip6stat_inc};
+    use crate::sys::socket::AF_INET6;
+
+    let generation = RTGENERATION.load(Ordering::Relaxed);
+    fence(Ordering::Acquire);
+
+    if rtisvalid(ro.ro_rt.get())
+        && ro.ro_generation.get() == generation
+        && ro.ro_tableid.get() == u64::from(rtableid)
+        && ro.ro_dst_family() == AF_INET6
+        && in6_are_addr_equal(&ro.ro_dstsin6().sin6_addr, dst)
+        && (src.is_none()
+            || IP6_MULTIPATH.load(Ordering::Relaxed) == 0
+            || ro
+                .ro_rt
+                .get()
+                .is_some_and(|rt| rt.rt_flags.get() & RTF_MPATH == 0)
+            || src.is_some_and(|s| {
+                !in6_is_addr_unspecified(&ro.ro_srcin6()) && in6_are_addr_equal(&ro.ro_srcin6(), s)
+            }))
+    {
+        ip6stat_inc(Ip6statCounters::Ip6sRtcachehit);
+        return Ok(());
+    }
+
+    ip6stat_inc(Ip6statCounters::Ip6sRtcachemiss);
+    rtfree(ro.ro_rt.get());
+    ro.ro_rt.set(None);
+    ro.ro_generation.set(generation);
+    ro.ro_tableid.set(u64::from(rtableid));
+
+    ro.ro_dst.set(RouteDst {
+        ro_dstsin6: SockaddrIn6::with_addr(*dst),
+    });
+    ro.ro_src.set(RouteSrc {
+        ro_srcin6: src.copied().unwrap_or(IN6ADDR_ANY_INIT),
+    });
+
+    Err(Errno::ESRCH)
+}
+
+/// `route6_mpath`: checks the cache for the route to `dst`, else allocates a new one,
+/// potentially using multipath to select the peer. Updates the cache and returns a valid
+/// route or `None`. The IPv6 twin of [`route_mpath`].
+#[cfg(feature = "inet6")]
+pub fn route6_mpath(
+    ro: &Route,
+    dst: &In6Addr,
+    src: Option<&In6Addr>,
+    rtableid: u32,
+) -> Option<&'static Rtentry> {
+    if route6_cache(ro, dst, src, rtableid).is_err() {
+        let s = ro.ro_srcin6();
+        let words = [
+            s.s6_addr32(0),
+            s.s6_addr32(1),
+            s.s6_addr32(2),
+            s.s6_addr32(3),
+        ];
+        let src = (!crate::netinet6::in6::in6_is_addr_unspecified(&s)).then_some(&words[..]);
+        // SAFETY: `ro_dstsa` is the `sockaddr_in6` `route6_cache` just wrote.
+        ro.ro_rt
+            .set(unsafe { rtalloc_mpath(ro.ro_dstsa(), src, ro.ro_tableid.get() as u32) });
+    }
+    ro.ro_rt.get()
+}
 
 /// `rtisvalid`: whether the (cached) route is still valid.
 pub fn rtisvalid(rt: Option<&Rtentry>) -> bool {

@@ -3,6 +3,7 @@
 //! Headers become modules as in `sys/sys` (`ip_icmp.h` → `ip_icmp.rs`). `in.h` is `in_.rs`
 //! because `in` is a Rust keyword (`docs/C_TO_RUST.md`).
 
+pub mod icmp6;
 pub mod icmp_var;
 pub mod if_ether;
 pub mod igmp;
@@ -15,6 +16,7 @@ pub mod in_proto;
 pub mod in_systm;
 pub mod in_var;
 pub mod ip;
+pub mod ip6;
 pub mod ip_ah;
 pub mod ip_divert;
 pub mod ip_ecn;

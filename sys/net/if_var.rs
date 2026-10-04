@@ -89,6 +89,7 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::kern::subr_prf::panic;
@@ -98,6 +99,7 @@ use crate::net::if_::{IFDESCRSIZE, IFNAMSIZ, IfRxring};
 use crate::net::if_dl::SockaddrDl;
 use crate::net::ifq::{Ifiqueue, Ifqueue};
 use crate::net::route::{Route, Rtentry};
+use crate::netinet6::nd6::NdIfinfo;
 use crate::queue_adapter;
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::{Mbuf, MbufList, MbufQueue, mq_drops, mq_len};
@@ -430,8 +432,9 @@ pub struct Ifnet {
     /// \[N\] `if_sadl`: pointer to our `sockaddr_dl` (`malloc`ed, `sdl_len` bytes).
     pub if_sadl: Cell<*mut SockaddrDl>,
 
-    /// \[I\] `if_nd`: IPv6 Neighbor Discovery info (`struct nd_ifinfo *`).
-    pub if_nd: Cell<*mut c_void>,
+    /// \[I\] `if_nd`: IPv6 Neighbor Discovery info (`struct nd_ifinfo *`, `nd6_ifattach`'s
+    /// allocation; `netinet6/nd6.rs`'s `if_nd` reads it).
+    pub if_nd: Cell<Option<NonNull<NdIfinfo>>>,
 
     /// Not in the C: set by `ether_ifattach`, the interface is the `ac_if` of a `struct
     /// arpcom` (see the module's deviations).

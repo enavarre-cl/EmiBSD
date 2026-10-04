@@ -2831,7 +2831,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "4cbfbe94f6db996aeab9c7c90aca5ed884851fb0"
 deps = ["sys/sys/socket.h"]
-notes = "M7b: every constant (RTF_* u32, RTM_* u8, RTA_* i32, RTAX_* usize, RTP_* u8, RTV_* u32), rt_kmetrics (Cells, rmx_mtu atomic, assign for the structure copy), rt_metrics, rtstat, rt_tableinfo, rt_msghdr, sockaddr_rtlabel/rtdns/rtstatic/rtsearch, enum rtstat_counters, ROUTE_FILTER, srtdnstosa; struct rtentry (&'static pool item, Cells and atomics, all-zero valid; rt_use/rt_expire/rt_locks/rt_mtu methods, ifa() panics without an address), rt_addrinfo (rti_flags u32), struct route (Cells; ro_dstsin6/ro_srcin6 are byte arrays until netinet6/in6.h, so wip), rttimer_queue, rttimer (private to route.c in C, here with its queue), rt_label, rtstat_inc (one atomic array: percpu.h not ported); MPLS/BFD/INET6 parts not configured"
+notes = "M7b: every constant (RTF_* u32, RTM_* u8, RTA_* i32, RTAX_* usize, RTP_* u8, RTV_* u32), rt_kmetrics (Cells, rmx_mtu atomic, assign for the structure copy), rt_metrics, rtstat, rt_tableinfo, rt_msghdr, sockaddr_rtlabel/rtdns/rtstatic/rtsearch, enum rtstat_counters, ROUTE_FILTER, srtdnstosa; struct rtentry (&'static pool item, Cells and atomics, all-zero valid; rt_use/rt_expire/rt_locks/rt_mtu methods, ifa() panics without an address), rt_addrinfo (rti_flags u32), struct route (Cells; ro_dstsin6/ro_srcin6 are byte arrays until netinet6/in6.h, so wip), rttimer_queue, rttimer (private to route.c in C, here with its queue), rt_label, rtstat_inc (one atomic array: percpu.h not ported); MPLS/BFD/INET6 parts not configured; M9+: ro_dstsin6/ro_srcin6 are SockaddrIn6/In6Addr"
 
 [[file]]
 c = "sys/net/netisr.h"
@@ -2849,7 +2849,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "91b83cdd260e08896adb793fd4b63b9775537725"
 deps = ["sys/net/if.h", "sys/net/ifq.h", "sys/net/route.h", "sys/sys/mbuf.h", "sys/sys/task.h", "sys/sys/timeout.h", "sys/sys/refcnt.h", "sys/sys/rwlock.h", "sys/sys/queue.h"]
-notes = "M7b: struct netstack (ns_route a struct route), struct if_clone with IF_CLONE_INITIALIZER, enum if_counters as IfCounters (ifc_* = IfCounters::Ifc*; the if_ipackets.. shorthands are methods), struct ifnet (&'static, Cells, all-zero valid; Option<fn> hooks with Result returns; if_ioctl and if_output are unsafe fns over raw caddr_t/sockaddr pointers; if_flags int-wide; if_carp_ptr union side by side; if_counters an array of atomics (percpu.h not ported); one extra flag set by ether_ifattach for the checked arpcom cast), struct ifaddr (#[repr(C)]), ifmaddr, ifg_group/member/list with their list adapters, ifnet_head as IfnetHead, the constants, struct niqueue with NIQUEUE_INITIALIZER and the niq_* macros, sysctl_niq, if_input_process_proto (panics on a NULL cookie), the if_rxr_* macros; ifnetlist/if_tmplist_lock are if.c's (re-exported); reference-backed test"
+notes = "M7b: struct netstack (ns_route a struct route), struct if_clone with IF_CLONE_INITIALIZER, enum if_counters as IfCounters (ifc_* = IfCounters::Ifc*; the if_ipackets.. shorthands are methods), struct ifnet (&'static, Cells, all-zero valid; Option<fn> hooks with Result returns; if_ioctl and if_output are unsafe fns over raw caddr_t/sockaddr pointers; if_flags int-wide; if_carp_ptr union side by side; if_counters an array of atomics (percpu.h not ported); one extra flag set by ether_ifattach for the checked arpcom cast), struct ifaddr (#[repr(C)]), ifmaddr, ifg_group/member/list with their list adapters, ifnet_head as IfnetHead, the constants, struct niqueue with NIQUEUE_INITIALIZER and the niq_* macros, sysctl_niq, if_input_process_proto (panics on a NULL cookie), the if_rxr_* macros; ifnetlist/if_tmplist_lock are if.c's (re-exported); reference-backed test; M9+: if_nd is Cell<Option<NonNull<NdIfinfo>>>"
 
 [[file]]
 c = "sys/net/ifq.h"
@@ -2902,7 +2902,7 @@ rust = "sys/net/route.rs"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 deps = ["sys/net/route.h", "sys/net/if_var.h", "sys/net/rtable.c", "sys/net/rtsock.c", "sys/netinet/in.c", "sys/netinet/if_ether.c", "sys/kern/subr_pool.c", "sys/kern/kern_timeout.c"]
-notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: rtcounters/rtstat_inc, rttrash, rtgeneration, rt_hashjitter, the rtentry/rttimer pools, route_init, route_cache, route_mpath, rtisvalid, rt_match, rt_clone, rt_hash (None for -1), rtalloc_mpath, rtalloc, rt_setgwroute/rt_putgwroute, rtref/rtfree, ifaref/ifafree, rtredirect, rtdeletemsg, rtequal, rtflushclone(1), rtrequest_delete, rtrequest (ret_nrt as Option<&mut Option<..>>), rt_setgate, rt_getll, rt_maskedcopy, rt_copysa (returns the copy), rt_ifa_add/del/addlocal/dellocal/purge, rt_timer_* (rttimer_callout, rt_timer_init/queue_init/queue_change/queue_flush/queue_count/remove_all/add/timer), rtlabel_name2id/id2name (fills a buffer)/id2sa/unref, rt_if_track, rt_if_linkstate_change, rt_plentosa/rt_plen2mask (sockaddr_storage buffer), ddb db_print_sa/db_print_ifa/db_show_rtentry/db_show_rtable; SMR/SRP not ported: entries are freed at once (one CPU, no preemption); KERNEL_LOCK is nothing; MPLS, BFD and INET6 paths not configured; host tests (masked copy, prefix masks, labels; routes through netinet/ip_input tests)"
+notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: rtcounters/rtstat_inc, rttrash, rtgeneration, rt_hashjitter, the rtentry/rttimer pools, route_init, route_cache, route_mpath, rtisvalid, rt_match, rt_clone, rt_hash (None for -1), rtalloc_mpath, rtalloc, rt_setgwroute/rt_putgwroute, rtref/rtfree, ifaref/ifafree, rtredirect, rtdeletemsg, rtequal, rtflushclone(1), rtrequest_delete, rtrequest (ret_nrt as Option<&mut Option<..>>), rt_setgate, rt_getll, rt_maskedcopy, rt_copysa (returns the copy), rt_ifa_add/del/addlocal/dellocal/purge, rt_timer_* (rttimer_callout, rt_timer_init/queue_init/queue_change/queue_flush/queue_count/remove_all/add/timer), rtlabel_name2id/id2name (fills a buffer)/id2sa/unref, rt_if_track, rt_if_linkstate_change, rt_plentosa/rt_plen2mask (sockaddr_storage buffer), ddb db_print_sa/db_print_ifa/db_show_rtentry/db_show_rtable; SMR/SRP not ported: entries are freed at once (one CPU, no preemption); KERNEL_LOCK is nothing; MPLS, BFD and INET6 paths not configured; host tests (masked copy, prefix masks, labels; routes through netinet/ip_input tests); M9+: route6_cache/route6_mpath ported (feature inet6)"
 upstream_blob = "0d29b1654199385bcafb175890b5a3ad762afd38"
 
 [[file]]
@@ -3266,7 +3266,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c8b971f23d9348a03258ddcda0c897d7cc45ef09"
 deps = ["sys/netinet/in.h", "sys/netinet/ip.h", "sys/net/route.h", "sys/crypto/siphash.h"]
-notes = "M9a: module with in_pcb.c. struct inpcb (Inpcb, a pool item as &'static, Cells; the INET6 unions keep their IPv4 member only; inp_icmp6filt left out: INET6 not configured; M9c: inp_seclevel as a Cell<IpsecLevel>; M9d: inp_pf_sk (NPF) is a member), struct inpcb_iterator (InpcbIterator: a whole Inpcb without table or socket), struct inpcbtable (Sync under inpt_mtx; hash tables as hashinit slices), struct baddynamicports (atomic words), every INP_*/IN6P_*/INPLOOKUP_*/IN_PCBLOCK_* constant, DP_MAPBITS/DP_MAPSIZE and DP_SET/CLR/ISSET as functions, DEFBADDYNAMICPORTS_*/DEFROOTONLYPORTS_* as slices without the terminating 0, sotoinpcb (checks the family), in_pcb_is_iterator; the prototypes are in_pcb.c's functions; in6_* not compiled (INET6)"
+notes = "M9a: module with in_pcb.c. struct inpcb (Inpcb, a pool item as &'static, Cells; the INET6 unions keep their IPv4 member only; inp_icmp6filt left out: INET6 not configured; M9c: inp_seclevel as a Cell<IpsecLevel>; M9d: inp_pf_sk (NPF) is a member), struct inpcb_iterator (InpcbIterator: a whole Inpcb without table or socket), struct inpcbtable (Sync under inpt_mtx; hash tables as hashinit slices), struct baddynamicports (atomic words), every INP_*/IN6P_*/INPLOOKUP_*/IN_PCBLOCK_* constant, DP_MAPBITS/DP_MAPSIZE and DP_SET/CLR/ISSET as functions, DEFBADDYNAMICPORTS_*/DEFROOTONLYPORTS_* as slices without the terminating 0, sotoinpcb (checks the family), in_pcb_is_iterator; the prototypes are in_pcb.c's functions; in6_* not compiled (INET6); M9+: the IPv6 union members (inp_faddr6, inp_laddr6, inp_ipv6, inp_outputopts6, inp_moptions6, inp_icmp6filt) side by side with the IPv4 ones"
 
 [[file]]
 c = "sys/netinet/in_pcb.c"
@@ -5533,3 +5533,269 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e1dd768da08b8276e926d8347d9267c90b31a44b"
 deps = ["sys/scsi/sdvar.h", "sys/scsi/scsi_all.h", "sys/scsi/scsi_disk.h", "sys/scsi/scsiconf.h", "sys/scsi/scsiconf.c", "sys/scsi/scsi_base.c", "sys/scsi/scsi_ioctl.c", "sys/sys/scsiio.h", "sys/kern/subr_disk.c", "sys/kern/kern_bufq.c", "sys/kern/kern_physio.c", "sys/sys/dkio.h", "sys/sys/disklabel.h", "sys/sys/mtio.h"]
 notes = "M10a: license: NetBSD Foundation BSD-2 plus the TRW Financial Systems notice (accepted), kept whole; all of sd.c: SD_CA/SD_CD (CD_COCOVM), NSD 1 (config's sd.h), SD_PATTERNS, sdlookup, sdmatch (scsi_inqmatch), sdattach (spin up, prevent/allow, TEST UNIT READY, sd_get_parms, the 'sd0: 64MB, 512 bytes/sector, 131072 sectors' line with thin/readonly, bufq_init FIFO for thin disks, write cache on, disk_attach), sdactivate, sddetach, sdopen, sdclose, sdstrategy, sd_cmd_rw6/10/12/16, sdstart (the xshandler; READ/WRITE 6 for SCSI-1, 16 past 2^32 sectors, 10, else 12), sd_buf_done (residual, sense via sd_interpret_sense, busy delay, timeout retries), sdminphys, sdread/sdwrite (physio), sdioctl (DIOCRLDINFO, DIOCGPDINFO, DIOCGDINFO, DIOCGPART, DIOCWDINFO/DIOCSDINFO, DIOCLOCK, MTIOCTOP(MTOFFL)/DIOCEJECT, DIOCINQ, DIOCSCACHE/DIOCGCACHE, DIOCCACHESYNC, default scsi_do_ioctl on the raw partition), sd_ioctl_inquiry, sd_ioctl_cache, sdgetdisklabel, sd_interpret_sense, sdsize, sddump (complete; nothing calls it: dumpsys/dumpconf not ported), viscpy, sd_read_cap_10/16, sd_read_cap, sd_thin_pages, sd_vpd_block_limits, sd_vpd_thin, sd_thin_params, sd_get_parms, sd_flush; deviations: dma_alloc (kern/dma_alloc.c) not ported: fixed-size reply buffers are locals (synchronous commands), sd_thin_pages' variable page is malloc(M_TEMP); the C's -1 returns are Err(EIO); the in-core label is built in a local and installed as in rd.rs (initdisklabel'd label published while no partition is open), DIOCWDINFO writes a copy; sdsize opens through sdopen_noproc (d_open needs a &Proc, sdsize passes NULL); sd_buf_done reads the buffer from xs->bp (same as the cookie); viscpy stops at the end of the source field; ioctl arguments are read from and written back to the byte slice; SCSIDEBUG not configured (SC_DEBUG sites and sd_get_parms' geometry check are comments), notyet not defined (sd_vpd_thin's delete method choice is a comment), SD_DUMP_NOT_TRUSTED not defined; host tests: viscpy, the CDBs, sd_get_parms against a fake adapter (READ CAPACITY 10/16, page 0 write protect, rigid geometry, standard geometry, one-cylinder disks, bad sizes), sdstart's CDB choice, sd_buf_done's residual, retries and errors, the ioctl argument helpers"
+[[file]]
+c = "sys/netinet6/in6.h"
+rust = "sys/netinet6/in6.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "700e4f0d2e807169e3395bf3098cde154ef419ea"
+deps = ["sys/netinet/in.h", "sys/sys/socket.h", "sys/sys/sysctl.h"]
+notes = "M9+: module shared with in6.c. In6Addr (s6_addr bytes, align 1, s6_addr16/32 native-order views), SockaddrIn6, ipv6_mreq, in6_pktinfo, ip6_mtuinfo; every IPV6_*/IPV6CTL_*/scope constant; IN6_IS_ADDR_*/IN6_ARE_ADDR_EQUAL/IN6_IS_SCOPE_* as lower-case const fns; in6addr_*/in6mask*/sa6_any as consts (IN6ADDR_ANY, IN6MASK64, SA6_ANY); CTL_IPV6PROTO_NAMES/IPV6CTL_NAMES; satosin6/sin6tosa casts; checked ifatoia6; host tests and a reference test"
+
+[[file]]
+c = "sys/netinet6/in6_var.h"
+rust = "sys/netinet6/in6_var.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "498a25677cf1241717c9fbf5d197ac34ad317aa0"
+deps = ["sys/netinet6/in6.h", "sys/net/if_var.h", "sys/netinet6/nd6.h"]
+notes = "M9+: In6Ifaddr/In6Multi repr(C) with the ifaddr/ifmaddr first and Cells, in6_ifstat, icmp6_ifstat, in6_ifreq/in6_aliasreq unions with accessors, SIOC*_IN6 (the mroute request sizes written out), IN6_IFF_*, IA6_*/IFA_*IN6 as fns, checked ifmatoin6m, in6_multi_mship; host test and a reference test"
+
+[[file]]
+c = "sys/netinet/ip6.h"
+rust = "sys/netinet/ip6.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "26997fdc15b0ca0caf610003bbcda6bcbd780899"
+deps = ["sys/netinet6/in6.h", "sys/sys/mbuf.h"]
+notes = "M9+: Ip6Hdr flattened (ip6_vfc accessors over the first byte of ip6_flow; copied in and out of mbufs, never referenced in place), every extension header and option struct (sizes asserted), the byte-order masks as htonl/htons of the BE values, ip6_exthdr_get; host tests and a reference test"
+
+[[file]]
+c = "sys/netinet6/ip6_var.h"
+rust = "sys/netinet6/ip6_var.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "dd25e51909e7f61cd1fbeeffc8d13d6269f33a79"
+deps = ["sys/netinet/ip6.h", "sys/netinet6/in6.h", "sys/netinet6/in6_var.h"]
+notes = "M9+: ip6stat with Ip6statCounters and ip6stat_inc/add/inc_idx, ip6q/ip6asfrag, ip6_moptions, ip6po_rhinfo/ip6_pktopts, the IPV6_* ip6_output flags, mtod_ip6/mtod_ip6_store; the prototypes are their .c files'; MROUTING not configured; host test and a reference test"
+
+[[file]]
+c = "sys/netinet/icmp6.h"
+rust = "sys/netinet/icmp6.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "54bd176d785c83883f81c3ea3f1c1463ceb1531c"
+deps = ["sys/netinet6/in6.h", "sys/net/route.h"]
+notes = "M9+: icmp6_hdr with its data union behind accessors; MLD/ND/node information/router renumbering structs with the shorthand macros as methods; nd_opt_*; ICMP6_FILTER_* as methods and fns; icmp6stat with counters; ICMPV6CTL_* and names; RTF_PROBEMTU; host tests and a reference test"
+
+[[file]]
+c = "sys/netinet6/nd6.h"
+rust = "sys/netinet6/nd6.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0875b3ba7348f6734a495ea78e2a6c8512a9732a"
+deps = ["sys/netinet6/in6.h", "sys/netinet/icmp6.h", "sys/net/route.h", "sys/net/if_var.h"]
+notes = "M9+: module shared with nd6.c. nd_ifinfo (plain Copy; ifnet's if_nd a NonNull read through if_nd(ifp)), in6_nbrinfo, in6_ndireq, llinfo_nd6 with its list adapter, nd_opts, ND6_* constants, ND6_LLINFO_PERMANENT/ND_COMPUTE_RTIME as fns; reference test"
+
+[[file]]
+c = "sys/netinet6/mld6.h"
+rust = "sys/netinet6/mld6.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "92af2330e7118e42bc20d6a8c84791da35268b0a"
+deps = ["sys/netinet/icmp6.h", "sys/netinet6/in6.h"]
+notes = "M9+: module shared with mld6.c; Bruce Simpson BSD-3. mldv2_query/report/record and the MLD_* macros as const fns; host test and a reference test"
+
+[[file]]
+c = "sys/netinet6/mld6_var.h"
+rust = "sys/netinet6/mld6_var.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "40c4e077ee2a824c8c4dcc8898a70532b4d89e88"
+deps = []
+notes = "M9+: Mld6Pktinfo (the packet list a Vec), MLD_RANDOM_DELAY as mld_random_delay; reference test"
+
+[[file]]
+c = "sys/netinet6/ip6protosw.h"
+rust = "sys/netinet6/ip6protosw.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "bc5bc214a2df2cdf66f229cdcee935ec3b62c6b7"
+deps = []
+notes = "M9+: struct ip6ctlparam (Ip6ctlparam with raw pointers, as the C passes it through pr_ctlinput's void *)"
+
+[[file]]
+c = "sys/netinet6/raw_ip6.h"
+rust = "sys/netinet6/raw_ip6.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d972e6a14e9f1af57f605159c910aaf1f9f82d45"
+deps = []
+notes = "M9+: module shared with raw_ip6.c. rip6stat with Rip6statCounters, RIPV6CTL_*, RIPV6CTL_NAMES; reference test"
+
+[[file]]
+c = "sys/netinet6/in6_ifattach.h"
+rust = "sys/netinet6/in6_ifattach.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7c4adbe9d4c0a983eac006379e1edecfaeafea90"
+deps = []
+notes = "M9+: prototypes only; module shared with in6_ifattach.c"
+
+[[file]]
+c = "sys/netinet6/in6.c"
+rust = "sys/netinet6/in6.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/in6_ifattach.c"
+rust = "sys/netinet6/in6_ifattach.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/in6_pcb.c"
+rust = "sys/netinet6/in6_pcb.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/in6_proto.c"
+rust = "sys/netinet6/in6_proto.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/in6_src.c"
+rust = "sys/netinet6/in6_src.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/in6_cksum.c"
+rust = "sys/netinet6/in6_cksum.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/ip6_input.c"
+rust = "sys/netinet6/ip6_input.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/ip6_output.c"
+rust = "sys/netinet6/ip6_output.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/ip6_forward.c"
+rust = "sys/netinet6/ip6_forward.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/ip6_id.c"
+rust = "sys/netinet6/ip6_id.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/frag6.c"
+rust = "sys/netinet6/frag6.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/dest6.c"
+rust = "sys/netinet6/dest6.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/route6.c"
+rust = "sys/netinet6/route6.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/icmp6.c"
+rust = "sys/netinet6/icmp6.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/mld6.c"
+rust = "sys/netinet6/mld6.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/nd6.c"
+rust = "sys/netinet6/nd6.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/nd6_nbr.c"
+rust = "sys/netinet6/nd6_nbr.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/nd6_rtr.c"
+rust = "sys/netinet6/nd6_rtr.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/raw_ip6.c"
+rust = "sys/netinet6/raw_ip6.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/udp6_output.c"
+rust = "sys/netinet6/udp6_output.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/netinet6/ip6_divert.c"
+rust = "sys/netinet6/ip6_divert.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"

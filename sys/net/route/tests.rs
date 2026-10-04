@@ -116,3 +116,22 @@ fn labels_are_named_counted_and_reused() {
     assert_eq!(c, a.min(b));
     rtlabel_unref(c);
 }
+
+#[cfg(feature = "inet6")]
+#[test]
+fn route6_cache_misses_reset_the_destination() {
+    use crate::netinet6::in6::{IN6ADDR_LOOPBACK, SockaddrIn6};
+    let ro = Route::new();
+    let dst = crate::netinet6::in6::IN6ADDR_LINKLOCAL_ALLNODES;
+    assert_eq!(
+        route6_cache(&ro, &dst, Some(&IN6ADDR_LOOPBACK), 3),
+        Err(Errno::ESRCH)
+    );
+    assert_eq!(ro.ro_dst_family(), crate::sys::socket::AF_INET6);
+    assert_eq!(ro.ro_dstsin6(), SockaddrIn6::with_addr(dst));
+    assert_eq!(ro.ro_srcin6(), IN6ADDR_LOOPBACK);
+    assert_eq!(ro.ro_tableid.get(), 3);
+    // No route was cached, so the next lookup misses again.
+    assert_eq!(route6_cache(&ro, &dst, None, 3), Err(Errno::ESRCH));
+    assert_eq!(ro.ro_srcin6(), crate::netinet6::in6::IN6ADDR_ANY);
+}

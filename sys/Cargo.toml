@@ -20,7 +20,7 @@ bench = false
 doc = false
 
 [features]
-default = ["alloc", "ffs", "ffs2", "kmemstats"]
+default = ["alloc", "ffs", "ffs2", "kmemstats", "inet6"]
 alloc = []        # enables `extern crate alloc` and the GlobalAlloc over malloc(9)
 diagnostic = []   # OpenBSD `option DIAGNOSTIC` -> kassert! active
 debug = []        # OpenBSD `option DEBUG`      -> kdassert! active
@@ -35,6 +35,7 @@ encdebug = []     # OpenBSD `option ENCDEBUG` -> the IPsec DPRINTF messages (net
 tcp_sack_debug = [] # OpenBSD `option TCP_SACK_DEBUG` -> tcp_print_holes in tcp_output
 multiprocessor = [] # OpenBSD `option MULTIPROCESSOR` -> so far only tsc.c's TSC sync test (M11b); off
 scsiterse = []    # OpenBSD `option SCSITERSE` -> sense codes printed as numbers, no adesc[] table
+inet6 = []        # OpenBSD option INET6 -> IPv6 (sys/netinet6); default (GENERIC has it)
 
 [dependencies]
 libkern.workspace = true
