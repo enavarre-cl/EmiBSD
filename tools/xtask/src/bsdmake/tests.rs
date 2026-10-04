@@ -59,6 +59,35 @@ fn conditionals_and_for() {
 }
 
 #[test]
+fn for_with_two_variables_and_dependency_only_rules() {
+    let m = make_from(
+        "SSLASM= aes aes-x86_64 bn x86_64-mont\n\
+         .for dir f in ${SSLASM}\nSRCS+= ${dir}/${f}.S\n${f}.S: ${dir}/asm/${f}.pl\n\
+         \tperl ./asm/${f}.pl > ${.TARGET}\n.endfor\n\
+         includes: prereq\nprereq: obj_mac.h\n",
+    );
+    assert_eq!(m.var("SRCS").unwrap(), "aes/aes-x86_64.S bn/x86_64-mont.S");
+    assert_eq!(m.sources_of("x86_64-mont.S"), ["bn/asm/x86_64-mont.pl"]);
+    assert_eq!(m.sources_of("includes"), ["prereq"]);
+    assert_eq!(m.sources_of("prereq"), ["obj_mac.h"]);
+    assert!(m.rule_for("prereq").is_none());
+    let mut p = Parser {
+        conds: Vec::new(),
+        open_rule: None,
+    };
+    let mut odd = make_from("");
+    assert!(
+        odd.parse_text(
+            "L= a b c\n.for x y in ${L}\n.endfor\n",
+            "t.mk",
+            None,
+            &mut p
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn rules_paths_and_continuations() {
     let m = make_from(
         "SRCS+= a.c \\\n\tb.c\nGEN=\\t.file \"${@:R}.S\"\\n\\#include \"SYS.h\" # comment\n\

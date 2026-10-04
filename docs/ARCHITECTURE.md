@@ -214,8 +214,9 @@ Workarounds, each printed by the build (flags only; no source is edited):
 - A program whose Makefile sets `BINOWN`, `BINGRP` or `BINMODE` (`login_passwd`: root:auth,
   setuid 4555, in `/usr/libexec/auth`, where `lib/libc/gen/auth_subr.c`'s `_PATH_AUTHPROG`
   looks for BSD Auth styles) gets them in the image (below).
-- `ksh` is built like OpenBSD's install-media ksh: `-DSMALL`, no `-lcurses`, because
-  `libcurses` (ncurses, with host-built generators and `share/termtypes`) is not built yet.
+- `ksh` is built like OpenBSD's install-media ksh: `-DSMALL`, no `-lcurses`: `libcurses`
+  is built (M9+, below), but the image has no terminfo database (`share/termtypes` is not
+  in the clone).
 - macOS file systems ignore case: libc's `_exit.o` stub and `stdlib/_Exit.o` are built in
   separate directories (both are archive members).
 - `libcompiler_rt.a` is built from `gnu/lib/libcompiler_rt` over `gnu/llvm/compiler-rt`
@@ -224,7 +225,34 @@ Workarounds, each printed by the build (flags only; no source is edited):
   quad-float helpers (`__multf3`). The stand-in `bsd.own.mk` sets `BUILD_CLANG=yes`, as the
   real one does on amd64 and arm64.
 
-Every OpenBSD file compiled or included is classified by licence into `licences.txt`.
+M9+ adds LibreSSL (`lib/libcrypto`, `lib/libssl`, `lib/libtls`), `lib/libcurses` (ncurses)
+and `lib/libedit` (`LIBRARIES` in `userland.rs`, the code in `userland/libraries.rs`), for
+`usr.bin/ftp` and `usr.bin/nc` (static, like `login`). Nothing new is listed by hand either:
+
+- Generated sources are made by running the Makefiles' own rules for `BUILDFIRST`, which
+  `bsd.lib.mk` makes before any object, each after the sources a rule of its own makes
+  (`make_target`, make's recursion). On amd64 that runs libcrypto's perlasm: each `${f}.S`
+  rule of `arch/amd64/Makefile.inc` (a two-variable `.for dir f in ${SSLASM}`, which
+  `bsdmake.rs` supports) runs `/usr/bin/perl ./asm/${f}.pl openbsd`, the Mac's perl, into
+  the object directory; arm64 has only its `.S` sources. `objects.pl` and `obj_dat.pl` make
+  `obj_mac.h` and `obj_dat.h` the same way. libcurses's rules run its `MK*.sh`/`MK*.awk`
+  scripts with the Mac's `sh`, `awk` (the one-true-awk OpenBSD has) and `sort`, and build
+  `make_keys` and `make_hash` with `${HOSTCC}` (the Mac's clang, which `sys.mk`'s `HOSTCC`
+  names) and run them; libedit's run its `makelist` script.
+- Headers: `include/Makefile`'s `RDIRS` entries for these libraries are installed by running
+  each library's own `includes` rule, with an `install(1)` stand-in in `$PATH` that records
+  what it is asked to install (and a `cmp(1)` that always says "different"); xtask then
+  copies the recorded files. So `<openssl/*.h>` gets libcrypto's generated `obj_mac.h`, and
+  libcurses's `curses.h` becomes `<ncurses.h>`, as their Makefiles say.
+- LibreSSL's Makefiles add `-Werror`. Where they do, `-Wno-pointer-sign` is added
+  (`WERROR_DEFAULTS`): OpenBSD's clang does not warn about mixing `char *` and
+  `unsigned char *` by default, Apple clang does, and libcrypto mixes them.
+- `share/mk`'s `bsd.subdir.mk` (recursion into `SUBDIR`, the `man` directories) is stood in
+  for by nothing.
+
+Every OpenBSD file compiled or included is classified by licence into `licences.txt`;
+LibreSSL's two licences are named `OpenSSL` and `SSLeay` there (accepted by the user on
+2026-10-03), not counted as BSD-4-Clause.
 
 ### The ramdisk image
 

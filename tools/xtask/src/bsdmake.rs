@@ -18,7 +18,8 @@
 //! - `.if`, `.ifdef`, `.ifndef`, `.elif`, `.else`, `.endif` with `defined()`, `exists()`,
 //!   `empty()`, `make()` (always false), `target()`, `!`, `&&`, `||`, parentheses and the
 //!   comparisons `==`, `!=`, `<`, `<=`, `>`, `>=`;
-//! - `.for var in list` / `.endfor` (one loop variable), by textual substitution like make;
+//! - `.for var... in list` / `.endfor` (one or more loop variables, taking the words that
+//!   many at a time), by textual substitution like make;
 //! - explicit rules `targets: sources [; command]` with tab-indented commands, `.PATH:`.
 //!
 //! Anything else (`.undef`, `.error`, unknown modifiers, special targets other than the
@@ -187,6 +188,16 @@ impl Make {
             .chain(self.path.iter())
             .map(|d| d.join(name))
             .find(|p| p.is_file())
+    }
+
+    /// Every source any rule names for `target`, with or without commands (`includes:
+    /// prereq`, `prereq: obj_mac.h`), in the order the rules were read.
+    pub fn sources_of(&self, target: &str) -> Vec<String> {
+        self.rules
+            .iter()
+            .filter(|r| r.targets.iter().any(|t| t == target))
+            .flat_map(|r| r.sources.iter().cloned())
+            .collect()
     }
 
     /// The rule that has commands to make `target`, if any.
@@ -528,22 +539,36 @@ impl Make {
         p: &mut Parser,
         at: &str,
     ) -> Result<()> {
-        let Some((var, list)) = arg.split_once(" in ") else {
+        let Some((vars, list)) = arg.split_once(" in ") else {
             return Err(format!("{at}: malformed .for {arg}").into());
         };
-        let var = var.trim();
-        if var.is_empty() || var.contains(char::is_whitespace) {
-            return Err(format!("{at}: .for supports one loop variable, got `{var}`").into());
+        // `.for dir f in ${SSLASM}` takes the words two at a time (libcrypto's amd64
+        // Makefile.inc); the word count must be a multiple of the variable count.
+        let vars: Vec<&str> = vars.split_whitespace().collect();
+        if vars.is_empty() {
+            return Err(format!("{at}: .for without a loop variable").into());
         }
         let values: Vec<String> = self
             .expand(list)?
             .split_whitespace()
             .map(str::to_string)
             .collect();
-        for value in values {
+        if !values.len().is_multiple_of(vars.len()) {
+            return Err(format!(
+                "{at}: .for over {} words with {} variables",
+                values.len(),
+                vars.len()
+            )
+            .into());
+        }
+        for group in values.chunks(vars.len()) {
             let mut lines = Vec::with_capacity(body.len());
             for (n, l) in body {
-                lines.push((*n, self.substitute_for(l, var, &value)?));
+                let mut l = l.clone();
+                for (var, value) in vars.iter().zip(group) {
+                    l = self.substitute_for(&l, var, value)?;
+                }
+                lines.push((*n, l));
             }
             self.parse_lines(&lines, file, dir, p)?;
         }

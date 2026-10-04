@@ -88,6 +88,15 @@ const UNSUPPORTED_FLAGS: &[(&str, &str)] = &[(
      address slot after use; Apple clang rejects it",
 )];
 
+/// Warnings OpenBSD's base clang leaves off by default and Apple clang turns on, switched
+/// off where a Makefile makes warnings errors (`-Werror`: LibreSSL's), with the reason.
+/// Elsewhere they stay mere warnings, and the command lines (and objects) are unchanged.
+const WERROR_DEFAULTS: &[(&str, &str)] = &[(
+    "-Wno-pointer-sign",
+    "OpenBSD's clang does not warn about char/unsigned char pointer mixes by default \
+     (libcrypto builds with -Werror there and mixes them); Apple clang does",
+)];
+
 /// A program built differently from its Makefile, and why.
 struct Variant {
     dir: &'static str,
@@ -119,14 +128,17 @@ const VARIANTS: &[Variant] = &[
         add_cflags: "-DSMALL",
         drop_ldadd: &["-lcurses"],
         static_link: false,
-        why: "built like OpenBSD's install-media ksh (-DSMALL, no -lcurses): libcurses \
-              (ncurses, with host-built generators and share/termtypes) is not built yet",
+        why: "built like OpenBSD's install-media ksh (-DSMALL, no -lcurses): libcurses is \
+              built (LIBRARIES), but the image has no terminfo database (share/termtypes is \
+              not in the reference clone)",
     },
     Variant::statically("usr.bin/id"),
     Variant::statically("usr.bin/uname"),
     Variant::statically("libexec/getty"),
     Variant::statically("usr.bin/login"),
     Variant::statically("libexec/login_passwd"),
+    Variant::statically("usr.bin/ftp"),
+    Variant::statically("usr.bin/nc"),
 ];
 
 /// OpenBSD's compiler runtime (the `-lcompiler_rt` its clang driver adds to every link): a
@@ -185,6 +197,24 @@ const PROGRAMS: &[&str] = &[
     "sbin/route",
     "sbin/pfctl",
     "sbin/ipsecctl",
+    // M9+: HTTPS clients over LIBRARIES.
+    "usr.bin/ftp",
+    "usr.bin/nc",
+];
+
+/// Libraries built after libc, libutil, libm and libcompiler_rt (M9+), in link order of
+/// dependence: LibreSSL (`libcrypto`, `libssl`, `libtls`) for ftp(1) and nc(1), and ncurses
+/// (`libcurses`) under `libedit`, ftp(1)'s command-line editing. Their headers are installed
+/// by running each one's own `includes` rule (`library_includes`), and their generated
+/// sources (`BUILDFIRST`: libcrypto's perlasm `.S` files and `obj_mac.h`, libcurses's
+/// tables and the host-built `make_keys`/`make_hash`, libedit's `makelist` headers) by
+/// running its rules (`make_target`).
+const LIBRARIES: &[&str] = &[
+    "lib/libcrypto",
+    "lib/libssl",
+    "lib/libtls",
+    "lib/libcurses",
+    "lib/libedit",
 ];
 
 /// Flags added to host tools (built for macOS with the same clang) and why.
@@ -330,6 +360,9 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
         build_lib(&ctx, COMPILER_RT_DIR)?;
     } else {
         println!("  {COMPILER_RT_DIR}: not in the reference clone; links go without it");
+    }
+    for dir in LIBRARIES {
+        build_lib(&ctx, dir)?;
     }
     let mut built = Vec::new();
     let mut blocked = Vec::new();
@@ -487,6 +520,9 @@ fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make>
         (".OBJDIR", objdir.display().to_string()),
         ("DESTDIR", ctx.sysroot.display().to_string()),
         ("CC", cc),
+        // sys.mk: the compiler for build tools run during the build (libcurses's
+        // `make_keys` and `make_hash`).
+        ("HOSTCC", t.cc.display().to_string()),
         ("LD", t.ld.display().to_string()),
         ("AR", t.ar.display().to_string()),
         ("RANLIB", t.ranlib.display().to_string()),
@@ -504,6 +540,9 @@ fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make>
         ("bsd.own.mk", BSD_OWN_MK),
         ("bsd.prog.mk", BSD_PROG_MK),
         ("bsd.lib.mk", BSD_PROG_MK),
+        // Only the recursion into `SUBDIR` (the libraries' `man` directories): nothing
+        // that changes a variable.
+        ("bsd.subdir.mk", ""),
     ];
     let mut mk = Make::new(&curdir, &predefined, &sys_mk);
     mk.read(&curdir.join("Makefile"))?;
@@ -514,6 +553,14 @@ fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make>
         }
         if removed {
             println!("  {dir}: dropped {flag}: {why}");
+        }
+    }
+    if !host && mk.words("CFLAGS")?.iter().any(|w| w == "-Werror") {
+        let cflags = mk.var("CFLAGS")?;
+        let extra: Vec<&str> = WERROR_DEFAULTS.iter().map(|(f, _)| *f).collect();
+        mk.set("CFLAGS", &format!("{cflags} {}", extra.join(" ")));
+        for (f, why) in WERROR_DEFAULTS {
+            println!("  {dir}: -Werror: added {f}: {why}");
         }
     }
     Ok(mk)
@@ -854,13 +901,22 @@ fn install_includes(ctx: &Ctx<'_>) -> Result<()> {
     }
     symlink(machine, &inc.join("machine"))?;
 
-    // RDIRS (PRDIRS included): their own `includes` targets. Only libutil's and librpcsvc's
-    // headers are needed by what is built here.
+    // RDIRS (PRDIRS included): their own `includes` targets. Only libutil's, librpcsvc's and
+    // those of LIBRARIES are needed by what is built here.
     let mut skipped = Vec::new();
     for r in mk.words("RDIRS")? {
         if r == "../lib/librpcsvc" {
             for (from, to) in rpcsvc_headers(ctx)? {
                 count(install_file(ctx, &from, &inc.join("rpcsvc").join(to))?);
+            }
+            continue;
+        }
+        if let Some(lib) = LIBRARIES
+            .iter()
+            .find(|l| r.strip_prefix("../") == Some(**l))
+        {
+            for w in libraries::library_includes(ctx, lib)? {
+                count(w);
             }
             continue;
         }
@@ -995,7 +1051,7 @@ fn build_csu(ctx: &Ctx<'_>) -> Result<()> {
         let rule = mk
             .rule_for(&o)
             .ok_or_else(|| format!("lib/csu/Makefile: no rule for {o}"))?;
-        let sources = resolve_sources(&mk, &rule.sources)?;
+        let sources = resolve_sources(&mk, &objdir, &rule.sources)?;
         jobs.push(Job::from_rule(&mk, &rule.commands, &o, sources, &objdir)?);
     }
     let ran = run_jobs(ctx, "lib/csu", &jobs)?;
@@ -1008,12 +1064,14 @@ fn build_csu(ctx: &Ctx<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Rule sources: absolute paths stay, others are looked up like make does.
-fn resolve_sources(mk: &Make, sources: &[String]) -> Result<Vec<PathBuf>> {
+/// Rule sources: absolute paths stay, others are looked up like make does; a source no
+/// directory has may be one an earlier rule made in `objdir` (libcurses's `make_hash`).
+fn resolve_sources(mk: &Make, objdir: &Path, sources: &[String]) -> Result<Vec<PathBuf>> {
     sources
         .iter()
         .map(|s| {
             mk.search(s)
+                .or_else(|| Some(objdir.join(s)).filter(|p| p.exists()))
                 .ok_or_else(|| format!("cannot find source {s}").into())
         })
         .collect()
@@ -1049,7 +1107,7 @@ fn object_jobs(ctx: &Ctx<'_>, mk: &Make, objdir: &Path, extra_objs: &[String]) -
         *n += 1;
         fs::create_dir_all(&odir).map_err(|e| format!("{}: {e}", odir.display()))?;
         if let Some(rule) = mk.rule_for(o) {
-            let sources = resolve_sources(mk, &rule.sources)?;
+            let sources = resolve_sources(mk, objdir, &rule.sources)?;
             jobs.push(Job::from_rule(mk, &rule.commands, o, sources, &odir)?);
             continue;
         }
@@ -1081,7 +1139,7 @@ fn object_jobs(ctx: &Ctx<'_>, mk: &Make, objdir: &Path, extra_objs: &[String]) -
                 break;
             }
             if let Some(rule) = mk.rule_for(c) {
-                let sources = resolve_sources(mk, &rule.sources)?;
+                let sources = resolve_sources(mk, objdir, &rule.sources)?;
                 generated.push(Job::from_rule(mk, &rule.commands, c, sources, objdir)?);
                 found = Some((c.clone(), objdir.join(c)));
                 break;
@@ -1117,6 +1175,11 @@ fn build_lib(ctx: &Ctx<'_>, dir: &str) -> Result<()> {
     fs::create_dir_all(&objdir).map_err(|e| format!("{}: {e}", objdir.display()))?;
     let mk = new_make(ctx, dir, &objdir)?;
     let lib = mk.var("LIB")?;
+    // `bsd.lib.mk` makes `BUILDFIRST` (generated headers and sources) before any object.
+    let mut made = BTreeSet::new();
+    for t in mk.words("BUILDFIRST")? {
+        libraries::make_target(ctx, &mk, &objdir, &t, None, &mut made)?;
+    }
     let jobs = object_jobs(ctx, &mk, &objdir, &mk.words("OBJS")?)?;
     let ran = run_jobs(ctx, dir, &jobs)?;
 
@@ -1387,7 +1450,22 @@ fn licence_families(text: &str) -> Vec<&'static str> {
     if t.contains("gnu general public license") || t.contains("gnu lesser general public") {
         f.push("GPL/LGPL");
     }
-    if t.contains("redistribution and use in source and binary forms") {
+    // LibreSSL's two licences (BSD-style, with advertising clauses), named rather than
+    // counted as BSD-4-Clause: the OpenSSL licence (some files only refer to it by name)
+    // and Eric Young's SSLeay licence.
+    let openssl = t.contains("openssl project")
+        && (t.contains("openssl license")
+            || t.contains("developed by the openssl project for use in the openssl toolkit"));
+    let ssleay = t.contains("eric young") && t.contains("eay@cryptsoft.com");
+    if openssl {
+        f.push("OpenSSL");
+    }
+    if ssleay {
+        f.push("SSLeay");
+    }
+    if openssl || ssleay {
+        // The BSD-style text of the file is theirs.
+    } else if t.contains("redistribution and use in source and binary forms") {
         if t.contains("all advertising materials mentioning") {
             f.push("BSD-4-Clause");
         } else if t.contains("neither the name") || t.contains("to endorse or promote") {
@@ -1548,6 +1626,9 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
         "IPsec (Ioannidis/Keromytis)",
         "CMU (ALTQ)",
         "M.I.T.",
+        // LibreSSL (M9+), accepted by the user on 2026-10-03.
+        "OpenSSL",
+        "SSLeay",
     ];
     let unusual: Vec<_> = by_file
         .iter()
@@ -1565,6 +1646,7 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
     Ok(())
 }
 
+mod libraries;
 mod passwd;
 mod ramdisk;
 

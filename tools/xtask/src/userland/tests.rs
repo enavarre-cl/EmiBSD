@@ -41,6 +41,21 @@ fn licence_families_are_recognised() {
 }
 
 #[test]
+fn libressl_licences_are_named() {
+    let dual = "Copyright (c) 1998-2005 The OpenSSL Project. Redistribution and use in source \
+                and binary forms ... All advertising materials mentioning ... This product \
+                includes software developed by the OpenSSL Project for use in the OpenSSL \
+                Toolkit. ... Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)";
+    assert_eq!(licence_families(dual), vec!["OpenSSL", "SSLeay"]);
+    let by_name = "Copyright (c) 2008 The OpenSSL Project. All rights reserved.\n * Rights for \
+                   redistribution and usage ... according to the OpenSSL license.";
+    assert_eq!(licence_families(by_name), vec!["OpenSSL"]);
+    let eay = "Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com) Redistribution and use \
+               in source and binary forms ... All advertising materials mentioning";
+    assert_eq!(licence_families(eay), vec!["SSLeay"]);
+}
+
+#[test]
 fn compiler_builtins() {
     for s in [
         "__multf3",
