@@ -85,6 +85,16 @@ macro_rules! write_specialreg {
 }
 pub(crate) use write_specialreg;
 
+/* TCR_EL1 */
+
+/// `TCR_T0SZ_SHIFT`.
+pub const TCR_T0SZ_SHIFT: u32 = 0;
+
+/// `TCR_T0SZ(x)`: the size offset of the `TTBR0_EL1` region (64 minus its address bits).
+pub const fn tcr_t0sz(x: u64) -> u64 {
+    x << TCR_T0SZ_SHIFT
+}
+
 /* CPACR_EL1 */
 
 /// `CPACR_ZEN_MASK`.

@@ -81,7 +81,8 @@ Three implementors:
 
 Limine (UEFI, both archs) → `_start` in `sys/stand/mod.rs` (protocol structs in
 `sys/stand/limine.rs`) → `machine::BootInfo` (bootloader-neutral: memory map, HHDM offset, kernel
-load addresses, DTB/RSDP pointers, command line; it lives in `sys/machine/bootinfo.rs` so the
+load addresses, DTB/RSDP pointers, the UEFI system table and memory map (efiboot's
+`openbsd,uefi-*` properties), command line; it lives in `sys/machine/bootinfo.rs` so the
 machine traits can name it) → `boothowto` from the command line (`BootInfo::boothowto`, the
 `boot(8)` letters `-a -c -d -s` as arm64's `initarm` parses them) →
 `machine::Machine::early_init(&BootInfo)` (OpenBSD's `init_x86_64` / `initarm` as far as they are

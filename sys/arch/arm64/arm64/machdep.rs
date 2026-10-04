@@ -59,13 +59,17 @@
 //!   is the emulator exit with the failure status, which `xtask smoke` checks after a panic.
 //!   `vfs_shutdown`, `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys` and
 //!   `config_suspend_all` are reported as unported when reached.
+//! - The UEFI system table and memory map come from the boot protocol (`BootInfo`) instead
+//!   of efiboot's `openbsd,uefi-*` properties in `/chosen`; the system table's address is
+//!   kept in `SYSTEM_TABLE` (a local in C) for `mainbus` and `efi_attach`, and the memory
+//!   map is relocated into a static buffer (`MMAP`) instead of stolen pages.
 //! - The bootargs parsing (`-a -c -d -s`) is `BootInfo::boothowto` in `sys/machine/bootinfo.rs`,
 //!   because the Limine command line serves both architectures.
 
 use core::arch::asm;
 use core::cell::UnsafeCell;
 use core::ptr::{self, addr_of, addr_of_mut};
-use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 use libkern::StaticCell;
 
@@ -192,6 +196,28 @@ static WAITTIME: AtomicI32 = AtomicI32::new(-1);
 pub static CPURESETFN: StaticCell<Option<fn()>> = StaticCell::new(None);
 /// `powerdownfn`: the platform's power-off hook, registered by its driver.
 pub static POWERDOWNFN: StaticCell<Option<fn()>> = StaticCell::new(None);
+/// Room for the relocated UEFI memory map (QEMU's has about 60 descriptors of 48 bytes).
+const MMAP_MAX: usize = 16 * 1024;
+/// `mmap`: the UEFI memory map, relocated by `initarm` (see the module's deviations).
+static MMAP: StaticCell<[u8; MMAP_MAX]> = StaticCell::new([0; MMAP_MAX]);
+/// `mmap_size`: bytes of `mmap` in use; 0 without UEFI.
+pub static MMAP_SIZE: AtomicU32 = AtomicU32::new(0);
+/// `mmap_desc_size`: the distance between two descriptors of `mmap`.
+pub static MMAP_DESC_SIZE: AtomicU32 = AtomicU32::new(0);
+/// `mmap_desc_ver`: the descriptors' version.
+pub static MMAP_DESC_VER: AtomicU32 = AtomicU32::new(0);
+/// `system_table`: the UEFI system table's physical address, 0 without UEFI (a local of
+/// `initarm` in C, read again from `/chosen` by `mainbus` and `efi_attach`).
+pub static SYSTEM_TABLE: AtomicU64 = AtomicU64::new(0);
+
+/// `mmap`, `mmap_size` bytes long: the relocated UEFI memory map (empty without UEFI).
+pub fn efi_mmap() -> &'static [u8] {
+    let size = (MMAP_SIZE.load(Ordering::Acquire) as usize).min(MMAP_MAX);
+    // SAFETY: `initarm` writes the buffer once, on the boot CPU, before publishing
+    // `MMAP_SIZE`; it is only read afterwards.
+    unsafe { &MMAP.get()[..size] }
+}
+
 /// The bootstrap device map's tables.
 static TABLES: BootstrapTables =
     BootstrapTables(UnsafeCell::new([PageTable([0; 512]), PageTable([0; 512])]));
@@ -312,6 +338,27 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
 
     init_static_msgbuf();
     consinit();
+
+    // The UEFI system table and memory map efiboot puts in /chosen (see the module's
+    // deviations).
+    if let Some(st) = boot.efi_system_table {
+        SYSTEM_TABLE.store(st.as_usize() as u64, Ordering::Relaxed);
+    }
+
+    // Relocate the EFI memory map too.
+    if let Some(m) = boot.efi_memmap {
+        let len = m.map.len();
+        if len <= MMAP_MAX {
+            // SAFETY: once, on the boot CPU, before anything reads `MMAP` (`efi_mmap`
+            // reads at most `MMAP_SIZE` bytes, published below).
+            unsafe { MMAP.get_mut()[..len].copy_from_slice(m.map) };
+            MMAP_DESC_SIZE.store(m.desc_size, Ordering::Relaxed);
+            MMAP_DESC_VER.store(m.desc_ver, Ordering::Relaxed);
+            MMAP_SIZE.store(len as u32, Ordering::Release);
+        } else {
+            kprintf!("initarm: EFI memory map of {} bytes not relocated\n", len);
+        }
+    }
 
     // The direct map is the bootloader's (see `arm64/pmap.rs`).
     let regions = boot.memmap.regions();

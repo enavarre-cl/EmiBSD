@@ -8,6 +8,7 @@ pub mod bus;
 pub mod cpu;
 pub mod db_machdep;
 pub mod disklabel;
+pub mod efivar;
 pub mod exec;
 pub mod fdt;
 pub mod frame;

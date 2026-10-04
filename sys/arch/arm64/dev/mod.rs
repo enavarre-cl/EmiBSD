@@ -6,4 +6,5 @@
 
 pub mod agtimer;
 pub mod ampintc;
+pub mod efi_machdep;
 pub mod mainbus;

@@ -11,6 +11,7 @@
 pub mod clock_subr;
 pub mod cons;
 pub mod consfile;
+pub mod efi;
 pub mod fdt;
 pub mod ic;
 pub mod isa;

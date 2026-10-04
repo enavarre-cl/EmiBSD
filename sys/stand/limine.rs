@@ -41,6 +41,10 @@ pub mod id {
     pub const EXECUTABLE_CMDLINE: [u64; 2] = [0x4b16_1536_e598_651e, 0xb390_ad4a_2f1f_303a];
     /// `LIMINE_MODULE_REQUEST`: the files `module_path:` lines of `limine.conf` loaded.
     pub const MODULE: [u64; 2] = [0x3e7e_2797_02be_32af, 0xca1c_4f3b_d128_0cee];
+    /// EFI System Table feature.
+    pub const EFI_SYSTEM_TABLE: [u64; 2] = [0x5ceb_a516_3eaa_f6d6, 0x0a69_8161_0cf6_5fcc];
+    /// EFI Memory Map feature.
+    pub const EFI_MEMMAP: [u64; 2] = [0x7df6_2a43_1d68_72d5, 0xa4fc_dfb3_e573_06c8];
 }
 
 /// `LIMINE_MEMMAP_*`: memory map entry types.
@@ -320,6 +324,39 @@ impl ExecutableCmdlineResponse {
     }
 }
 
+/// `struct limine_efi_system_table_response`.
+#[repr(C)]
+pub struct EfiSystemTableResponse {
+    /// Response revision.
+    pub revision: u64,
+    /// Address of the EFI system table: virtual (HHDM) for base revision 6.
+    pub address: *const c_void,
+}
+
+/// `struct limine_efi_memmap_response`.
+#[repr(C)]
+pub struct EfiMemmapResponse {
+    /// Response revision.
+    pub revision: u64,
+    /// Virtual (HHDM) pointer to the firmware's memory map, as `GetMemoryMap` returned it.
+    pub memmap: *const c_void,
+    /// Size of the memory map in bytes.
+    pub memmap_size: u64,
+    /// Size of one descriptor in bytes (at least `sizeof(EFI_MEMORY_DESCRIPTOR)`).
+    pub desc_size: u64,
+    /// Version of the descriptors.
+    pub desc_version: u64,
+}
+
+impl EfiMemmapResponse {
+    /// The memory map's bytes.
+    pub fn memmap(&self) -> &'static [u8] {
+        // SAFETY: the protocol guarantees `memmap_size` bytes at `memmap`, in
+        // bootloader-reclaimable memory the kernel reads before reclaiming any.
+        unsafe { core::slice::from_raw_parts(self.memmap.cast::<u8>(), self.memmap_size as usize) }
+    }
+}
+
 // Layouts match the C header: these are the sizes `sizeof` reports there.
 const _: () = {
     use core::mem::size_of;
@@ -336,6 +373,8 @@ const _: () = {
     assert!(size_of::<ExecutableAddressResponse>() == 24);
     assert!(size_of::<DtbResponse>() == 16);
     assert!(size_of::<ExecutableCmdlineResponse>() == 16);
+    assert!(size_of::<EfiSystemTableResponse>() == 16);
+    assert!(size_of::<EfiMemmapResponse>() == 40);
 };
 
 /// `struct limine_uuid`.

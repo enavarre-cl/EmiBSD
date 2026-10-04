@@ -139,6 +139,19 @@ impl Default for MemMap {
     }
 }
 
+/// The UEFI memory map the firmware returned before the bootloader exited its boot services
+/// (what OpenBSD's efiboot passes as `openbsd,uefi-mmap-*` in `/chosen`).
+#[derive(Clone, Copy, Debug)]
+pub struct EfiMemmap {
+    /// The descriptors, `desc_size` bytes apart, in bootloader memory the kernel copies
+    /// before reclaiming any.
+    pub map: &'static [u8],
+    /// Size of one descriptor in bytes.
+    pub desc_size: u32,
+    /// The descriptors' version (`EFI_MEMORY_DESCRIPTOR_VERSION`).
+    pub desc_ver: u32,
+}
+
 /// Facts about the loaded image and the machine, gathered by the boot glue before anything else
 /// runs.
 pub struct BootInfo {
@@ -162,6 +175,11 @@ pub struct BootInfo {
     pub dtb: Option<NonNull<u8>>,
     /// The physical memory map.
     pub memmap: MemMap,
+    /// Physical address of the UEFI system table, when the machine booted through UEFI (what
+    /// OpenBSD's efiboot passes as `openbsd,uefi-system-table`).
+    pub efi_system_table: Option<Paddr>,
+    /// The UEFI memory map, when the machine booted through UEFI.
+    pub efi_memmap: Option<EfiMemmap>,
     /// The boot modules, in load order (`None` past the last).
     pub modules: [Option<BootModule>; MAX_MODULES],
 }
@@ -257,6 +275,8 @@ mod tests {
             rsdp: None,
             dtb: None,
             memmap: MemMap::new(),
+            efi_system_table: None,
+            efi_memmap: None,
             modules: [None; MAX_MODULES],
         };
         assert_eq!(
@@ -281,6 +301,8 @@ mod tests {
             rsdp: None,
             dtb: None,
             memmap: MemMap::new(),
+            efi_system_table: None,
+            efi_memmap: None,
             modules: [None; MAX_MODULES],
         };
         assert_eq!(boot.boothowto(), 0);

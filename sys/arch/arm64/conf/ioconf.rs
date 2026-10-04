@@ -5,19 +5,22 @@
 //! `subr_autoconf.rs`.
 //!
 //! GENERIC lines present: `mainbus0 at root`, `ampintc* at fdt? early 1`, `agtimer* at fdt?`,
-//! `virtio* at fdt?`, `vio* at virtio?`, `pluart* at fdt?`, `plrtc* at fdt?`;
+//! `virtio* at fdt?`, `vio* at virtio?`, `pluart* at fdt?`, `plrtc* at fdt?`,
+//! `efi0 at mainbus?`;
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`,
 //! `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`, `pseudo-device pflow`.
 //! The `fdt` attribute (`files.arm64`: `define fdt {[early = 0]}`) is carried by `mainbus`
 //! and `simplebus`; `simplebus` is not ported, so mainbus is the only parent here. Every
-//! other GENERIC line waits for its driver (`cpu0 at mainbus?`, `simplebus* at fdt?`, the
-//! devices at `virtio?` but `vio*`, `virtio* at pci?` with a host bridge driver, ...),
+//! other GENERIC line waits for its driver (`cpu0 at mainbus?`, `smbios0 at efi?`,
+//! `simplebus* at fdt?`, the devices at `virtio?` but `vio*`, `virtio* at pci?` with a host
+//! bridge driver, ...),
 //! as do the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s layout:
 //! attachment, driver, unit, state, locators, flags, parents (indices into `CFDATA`), the
 //! start of its locator names and the first unit a starred entry may take.
 
 use crate::arch::arm64::dev::agtimer::{AGTIMER_CA, AGTIMER_CD};
 use crate::arch::arm64::dev::ampintc::{AMPINTC_CA, AMPINTC_CD};
+use crate::arch::arm64::dev::efi_machdep::{EFI_CA, EFI_CD};
 use crate::arch::arm64::dev::mainbus::{MAINBUS_CA, MAINBUS_CD};
 use crate::dev::fdt::plrtc::{PLRTC_CA, PLRTC_CD};
 use crate::dev::fdt::pluart_fdt::PLUART_FDT_CA;
@@ -39,6 +42,9 @@ use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR, Pdevinit};
 /// `pv[]` for children of `mainbus0` (`cfdata[0]`) through the `fdt` attribute.
 const PV_FDT: &[i16] = &[0];
 
+/// `pv[]` for children of `mainbus0` (`cfdata[0]`) through `mainbus` itself.
+const PV_MAINBUS: &[i16] = &[0];
+
 /// `loc[]` of `early 1`.
 const LOC_EARLY_1: &[i64] = &[1];
 
@@ -49,7 +55,7 @@ const LOC_EARLY_0: &[i64] = &[0];
 const PV_VIRTIO: &[i16] = &[3];
 
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 7] = [
+pub static CFDATA: [Cfdata; 8] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -121,6 +127,18 @@ pub static CFDATA: [Cfdata; 7] = [
         LOC_EARLY_0,
         0,
         PV_FDT,
+        0,
+        0,
+    ),
+    // 7: efi0 at mainbus?
+    Cfdata::new(
+        &EFI_CA,
+        &EFI_CD,
+        0,
+        FSTATE_NOTFOUND,
+        &[],
+        0,
+        PV_MAINBUS,
         0,
         0,
     ),

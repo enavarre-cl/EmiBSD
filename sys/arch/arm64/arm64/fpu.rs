@@ -24,8 +24,9 @@
 //! Status: `wip`. Milestone M5 ports `fpu_drop`, what the context switch needs; with
 //! `kern_sig.c` (whose trampoline saves the `q` registers, so the first signal delivered to
 //! a process traps on the FPU) come `fpu_save` and `fpu_load`, the `str q`/`ldr q` register
-//! block moves. `sve_save`, `sve_load` and `fpu_kernel_enter`/`fpu_kernel_exit` (kernel FP
-//! use, which this softfloat kernel does not have) are reported.
+//! block moves; with efi(4) `fpu_kernel_enter`/`fpu_kernel_exit` (the softfloat kernel never
+//! uses the FPU itself, but the UEFI runtime services may). `sve_save` and `sve_load` are
+//! reported.
 //!
 //! ## Deviations
 //! - The kernel is built for `aarch64-unknown-none-softfloat`: the register moves are
@@ -40,12 +41,13 @@ use core::arch::asm;
 use core::ptr;
 
 use crate::arch::arm64::include::armreg::{
-    CPACR_FPEN_MASK, CPACR_FPEN_TRAP_ALL1, CPACR_FPEN_TRAP_NONE, CPACR_ZEN_MASK,
-    CPACR_ZEN_TRAP_ALL1, CPACR_ZEN_TRAP_NONE, read_specialreg, write_specialreg,
+    CPACR_FPEN_MASK, CPACR_FPEN_TRAP_ALL1, CPACR_FPEN_TRAP_EL0, CPACR_FPEN_TRAP_NONE,
+    CPACR_ZEN_MASK, CPACR_ZEN_TRAP_ALL1, CPACR_ZEN_TRAP_NONE, read_specialreg, write_specialreg,
 };
 use crate::arch::arm64::include::pcb::PCB_FPU;
 use crate::arch::arm64::include::reg::Fpreg;
 use crate::kassert;
+use crate::machine::cpu::curproc;
 use crate::sys::proc::Proc;
 use crate::unported;
 
@@ -205,7 +207,39 @@ pub fn fpu_drop() {
     // event.
 }
 
-// fpu_kernel_enter, fpu_kernel_exit: kernel FP use, which the softfloat kernel never needs.
+/// `fpu_kernel_enter`: lets EL1 use the FPU (for the UEFI runtime services, which may),
+/// saving the current thread's FP state first.
+pub fn fpu_kernel_enter() {
+    if let Some(p) = curproc()
+        && p.pcb().pcb_flags.get() & PCB_FPU != 0
+    {
+        fpu_save(p);
+    }
+
+    // Enable FPU (kernel only).
+    let mut cpacr = read_specialreg!("cpacr_el1");
+    cpacr &= !(CPACR_FPEN_MASK | CPACR_ZEN_MASK);
+    cpacr |= CPACR_FPEN_TRAP_EL0 | CPACR_ZEN_TRAP_ALL1;
+    // SAFETY: lets EL1 use the FP registers (EL0 still traps); this kernel's own code never
+    // does, so only the firmware called between this and `fpu_kernel_exit` sees it.
+    unsafe {
+        write_specialreg!("cpacr_el1", cpacr);
+        asm!("isb", options(nomem, nostack, preserves_flags));
+    }
+}
+
+/// `fpu_kernel_exit`: traps FP use from EL0 and EL1 again.
+pub fn fpu_kernel_exit() {
+    // Disable FPU.
+    let mut cpacr = read_specialreg!("cpacr_el1");
+    cpacr &= !(CPACR_FPEN_MASK | CPACR_ZEN_MASK);
+    cpacr |= CPACR_FPEN_TRAP_ALL1 | CPACR_ZEN_TRAP_ALL1;
+    // SAFETY: as in `fpu_drop`.
+    unsafe { write_specialreg!("cpacr_el1", cpacr) };
+
+    // No ISB instruction needed here, as returning to EL0 is a context synchronization
+    // event.
+}
 
 /// `sve_save`: the SVE `z`/`p`/`ffr` register block (see the module's deviations).
 pub fn sve_save(_p: &Proc) {

@@ -15,15 +15,16 @@ use bsd::kern::init_main::{self, BOOTHOWTO};
 use bsd::kern::subr_prf::Str;
 use bsd::kprintf;
 use bsd::machine::{
-    BootInfo, BootModule, Cpu, Exit, ExitStatus, MAX_MODULES, Machine, MachineInfo, MemKind,
-    MemMap, MemRegion,
+    BootInfo, BootModule, Cpu, EfiMemmap, Exit, ExitStatus, MAX_MODULES, Machine, MachineInfo,
+    MemKind, MemMap, MemRegion,
 };
 use bsd::sys::types::{Paddr, Psize, Vaddr};
 
 use limine::{
-    BaseRevision, BootloaderInfoResponse, DtbResponse, ExecutableAddressResponse,
-    ExecutableCmdlineResponse, HhdmResponse, MemmapResponse, ModuleResponse, Request,
-    RequestsEndMarker, RequestsStartMarker, RsdpResponse, StackSizeRequest, id, memmap_type,
+    BaseRevision, BootloaderInfoResponse, DtbResponse, EfiMemmapResponse, EfiSystemTableResponse,
+    ExecutableAddressResponse, ExecutableCmdlineResponse, HhdmResponse, MemmapResponse,
+    ModuleResponse, Request, RequestsEndMarker, RequestsStartMarker, RsdpResponse,
+    StackSizeRequest, id, memmap_type,
 };
 
 /// Boot stack for the boot CPU: the protocol's minimum, more than OpenBSD's `USPACE`.
@@ -88,6 +89,14 @@ static RSDP: Request<RsdpResponse> = Request::new(id::RSDP);
 static DTB: Request<DtbResponse> = Request::new(id::DTB);
 
 /// The modules (`init`, M6; `ramdisk.ffs`, the image of rd(4), M8).
+#[used]
+#[unsafe(link_section = ".requests")]
+static EFI_SYSTEM_TABLE: Request<EfiSystemTableResponse> = Request::new(id::EFI_SYSTEM_TABLE);
+
+#[used]
+#[unsafe(link_section = ".requests")]
+static EFI_MEMMAP: Request<EfiMemmapResponse> = Request::new(id::EFI_MEMMAP);
+
 #[unsafe(link_section = ".requests")]
 #[used]
 static MODULE: Request<ModuleResponse> = Request::new(id::MODULE);
@@ -227,6 +236,18 @@ fn gather() -> Result<BootInfo, BootError> {
             .response()
             .and_then(|d| NonNull::new(d.dtb_ptr.cast_mut().cast::<u8>())),
         memmap,
+        efi_system_table: EFI_SYSTEM_TABLE.response().and_then(|r| {
+            // A higher-half address for base revision 6 (a physical one for 3 and 4).
+            let addr = r.address as usize;
+            let offset = hhdm.offset as usize;
+            let pa = if addr >= offset { addr - offset } else { addr };
+            (pa != 0).then(|| Paddr::new(pa))
+        }),
+        efi_memmap: EFI_MEMMAP.response().map(|r| EfiMemmap {
+            map: r.memmap(),
+            desc_size: r.desc_size as u32,
+            desc_ver: r.desc_version as u32,
+        }),
         modules,
     })
 }

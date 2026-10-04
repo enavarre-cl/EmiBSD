@@ -37,6 +37,9 @@
 //!   arguments, which the C zeroes but for the name, carry mainbus's bus space and DMA tags.
 //! - `cf_loc[0]` (the `early` locator) of an entry without locators reads as 0, the
 //!   locator's default.
+//! - `mainbus_attach_efi` tests the UEFI system table the boot protocol handed over
+//!   (`machdep.rs`, `SYSTEM_TABLE`) instead of efiboot's `openbsd,uefi-system-table` property
+//!   in `/chosen`.
 //! - A node whose `reg` lines would be zero cells long (`#address-cells` and `#size-cells`
 //!   both 0) gets no `fa_reg`, where the C would divide by zero.
 
@@ -55,6 +58,7 @@ use crate::arch::arm64::arm64::bus_dma::{
 };
 use crate::arch::arm64::arm64::bus_space::ARM64_BS_TAG;
 use crate::arch::arm64::arm64::intr::arm_intr_init_fdt;
+use crate::arch::arm64::arm64::machdep::SYSTEM_TABLE;
 use crate::arch::arm64::dev::agtimer::agtimer_init;
 use crate::arch::arm64::include::armreg::{MPIDR_AFF, read_specialreg};
 use crate::arch::arm64::include::bus::{self, BUS_DMA_COHERENT};
@@ -556,9 +560,11 @@ pub fn mainbus_attach_psci(self_: &Device) {
 /// `mainbus_attach_efi`: the EFI runtime services, when the bootloader passed their table.
 pub fn mainbus_attach_efi(self_: &Device) {
     let sc = softc(self_);
-    let node = OF_finddevice(b"/chosen");
 
-    if node == -1 || OF_getproplen(node, b"openbsd,uefi-system-table") <= 0 {
+    // The C: node = OF_finddevice("/chosen"), and the openbsd,uefi-system-table property
+    // efiboot puts there; here the boot protocol's system table (see the module's
+    // deviations).
+    if SYSTEM_TABLE.load(Ordering::Relaxed) == 0 {
         return;
     }
 
