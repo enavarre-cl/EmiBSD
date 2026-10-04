@@ -796,9 +796,6 @@ fn session_errors() {
     // An algorithm no driver supports.
     let c = ini(99, &[0; 16], None);
     assert_eq!(crypto_newsession(&c, 0), Err(Errno::EINVAL));
-    // Deflate is not ported: the driver does not advertise it.
-    let c = ini(CRYPTO_DEFLATE_COMP, &[], None);
-    assert_eq!(crypto_newsession(&c, 0), Err(Errno::EINVAL));
     // Bad key sizes.
     let c = ini(CRYPTO_AES_CBC, &[0; 17], None);
     assert_eq!(crypto_newsession(&c, 0), Err(Errno::EINVAL));
@@ -896,14 +893,129 @@ fn free_wipes_the_contexts() {
     assert_eq!(swcr_freesession(sid), Err(Errno::EINVAL));
 }
 
+/// A 20-byte "header" and a compressible payload, as IPComp hands them to the driver.
+fn ipcomp_packet() -> (Vec<u8>, Vec<u8>) {
+    let hdr: Vec<u8> = (0..20).collect();
+    let payload = b"payload compressed by IPComp, ".repeat(20);
+    (hdr, payload)
+}
+
+/// Runs one deflate descriptor over the mbuf chain `m`; returns `crp_olen`.
+fn run_deflate_mbuf(sid: u64, m: &'static Mbuf, d: Cryptodesc<'static>) -> Result<i32, Errno> {
+    let mut crp = crypto_getreq(1).expect("a request");
+    crp.crp_desc[0] = d;
+    crp.crp_sid = sid;
+    crp.crp_flags = CRYPTO_F_IMBUF;
+    crp.crp_buf = CryptoBuf::Mbuf(m);
+    let r = crypto_invoke(&mut crp).map(|()| crp.crp_olen);
+    crypto_freereq(Some(crp));
+    r
+}
+
 #[test]
-fn deflate_is_reported_not_silently_dropped() {
+fn deflate_compresses_and_decompresses_an_mbuf_chain() {
     let _g = fw();
-    let d = desc(CRYPTO_DEFLATE_COMP, 0, 4, 0, 0);
+    let sid = crypto_newsession(&ini(CRYPTO_DEFLATE_COMP, &[], None), 0).unwrap();
+    let (hdr, payload) = ipcomp_packet();
+    let packet = [hdr.clone(), payload.clone()].concat();
+    let m = chain(&packet, &[50, 400, packet.len() - 450]);
+    let plen = payload.len() as i32;
+
+    // Compression replaces the payload and trims the chain.
+    let olen = run_deflate_mbuf(sid, m, desc(CRYPTO_DEFLATE_COMP, 20, plen, 20, CRD_F_COMP));
+    let compressed = (comp_algo_deflate.compress)(&payload).unwrap();
+    assert_eq!(olen, Ok(compressed.len() as i32));
+    assert_eq!(chain_bytes(m), [hdr.clone(), compressed.clone()].concat());
+
+    // Decompression restores it, growing the chain.
+    let clen = compressed.len() as i32;
+    let olen = run_deflate_mbuf(sid, m, desc(CRYPTO_DEFLATE_COMP, 20, clen, 20, 0));
+    assert_eq!(olen, Ok(plen));
+    assert_eq!(chain_bytes(m), packet);
+
+    // Garbage does not decompress.
+    let bad = chain(&[hdr.clone(), std::vec![0xff; 8]].concat(), &[28]);
+    assert_eq!(
+        run_deflate_mbuf(sid, bad, desc(CRYPTO_DEFLATE_COMP, 20, 8, 20, 0)),
+        Err(Errno::EINVAL)
+    );
+}
+
+#[test]
+fn deflate_leaves_incompressible_data_alone() {
+    let _g = fw();
+    let sid = crypto_newsession(&ini(CRYPTO_DEFLATE_COMP, &[], None), 0).unwrap();
+    let noise: Vec<u8> = (0..200u32)
+        .map(|i| (i.wrapping_mul(2_654_435_761) >> 13) as u8)
+        .collect();
+    let m = chain(&noise, &[200]);
+    let olen = run_deflate_mbuf(sid, m, desc(CRYPTO_DEFLATE_COMP, 0, 200, 0, CRD_F_COMP)).unwrap();
+    assert!(olen > 200, "the caller sees the useless size");
+    assert_eq!(chain_bytes(m), noise);
+}
+
+#[test]
+fn deflate_trims_the_iovecs() {
+    let _g = fw();
+    let (hdr, payload) = ipcomp_packet();
+    let mut packet = [hdr.clone(), payload.clone()].concat();
+    let len = packet.len();
+    let base = packet.as_mut_ptr();
+    let cuts = [100, 100, 100, len - 300];
+    let mut iov: Vec<Iovec> = Vec::new();
+    let mut off = 0;
+    for c in cuts {
+        iov.push(Iovec {
+            iov_base: base.wrapping_add(off).cast::<c_void>(),
+            iov_len: c,
+        });
+        off += c;
+    }
+    let mut uio = Uio {
+        uio_iov: &mut iov,
+        uio_offset: 0,
+        uio_resid: len,
+        uio_segflg: UioSeg::UIO_SYSSPACE,
+        uio_rw: UioRw::UIO_WRITE,
+        uio_procp: None,
+    };
+    let mut sw = SwcrData {
+        sw_alg: CRYPTO_DEFLATE_COMP,
+        SWCR_UN: SwcrUn::Comp(SwcrComp {
+            sw_size: 0,
+            sw_cxf: &comp_algo_deflate,
+        }),
+    };
+    let d = desc(
+        CRYPTO_DEFLATE_COMP,
+        20,
+        payload.len() as i32,
+        20,
+        CRD_F_COMP,
+    );
+    let mut buf = CryptoBuf::Iov(&mut uio);
+    swcr_compdec(&d, &mut sw, &mut buf).unwrap();
+    let compressed = (comp_algo_deflate.compress)(&payload).unwrap();
+    let SwcrUn::Comp(c) = &sw.SWCR_UN else {
+        panic!("a compressor")
+    };
+    assert_eq!(c.sw_size as usize, compressed.len());
+    let CryptoBuf::Iov(uio) = buf else {
+        panic!("the uio")
+    };
+    // 20 + compressed bytes fit in the first iovec: the others are dropped, it is shortened.
+    assert!(20 + compressed.len() < 100);
+    assert_eq!(uio.uio_iov.len(), 1);
+    assert_eq!(uio.uio_iov[0].iov_len, 20 + compressed.len());
+    assert_eq!(&packet[20..20 + compressed.len()], &compressed[..]);
+
+    // A session entry that is not a compressor is refused.
     let mut sw = SwcrData {
         sw_alg: CRYPTO_DEFLATE_COMP,
         SWCR_UN: SwcrUn::None,
     };
-    let mut buf = CryptoBuf::None;
-    assert_eq!(swcr_compdec(&d, &mut sw, &mut buf), Err(Errno::ENOSYS));
+    assert_eq!(
+        swcr_compdec(&d, &mut sw, &mut CryptoBuf::None),
+        Err(Errno::EINVAL)
+    );
 }

@@ -95,9 +95,9 @@
 //!   its slice.
 //! - `des3_setkey` and `blf_setkey` reject a key shorter than the C reads (24 bytes, and 1
 //!   byte), `AES_GMAC_Setkey` and the AES setkeys report an invalid AES key size.
-//! - `comp_algo_deflate` (and `deflate_compress`, `deflate_decompress`, `deflate_global`) is
-//!   not ported: `deflate_global` is zlib's, which `lib/libz` does not have yet (only crc32).
-//!   [`CompAlgo`], the type, is here for `xform_ipcomp.c`. Nothing else uses the table.
+//! - [`CompAlgo`]'s `compress` and `decompress` return the output as a `Vec<u8>` or an error
+//!   where the C returns its length (0 for failure) and the buffer through `u_int8_t **`;
+//!   `deflate_compress` and `deflate_decompress` call `xform_ipcomp.c`'s `deflate_global`.
 //! - The names of the tables are the C's, in lower case (`enc_xform_aes`); the `int` returns of
 //!   the `*Update_int` functions are `Result`s.
 
@@ -117,10 +117,10 @@ use super::cryptodev::{
     CHACHA20_BLOCK_LEN, CRYPTO_3DES_CBC, CRYPTO_AES_128_GMAC, CRYPTO_AES_192_GMAC,
     CRYPTO_AES_256_GMAC, CRYPTO_AES_CBC, CRYPTO_AES_CTR, CRYPTO_AES_GCM_16, CRYPTO_AES_GMAC,
     CRYPTO_AES_XTS, CRYPTO_BLF_CBC, CRYPTO_CAST_CBC, CRYPTO_CHACHA20_POLY1305,
-    CRYPTO_CHACHA20_POLY1305_MAC, CRYPTO_MD5_HMAC, CRYPTO_NULL, CRYPTO_RIPEMD160_HMAC,
-    CRYPTO_SHA1_HMAC, CRYPTO_SHA2_256_HMAC, CRYPTO_SHA2_384_HMAC, CRYPTO_SHA2_512_HMAC,
-    HMAC_MD5_BLOCK_LEN, HMAC_RIPEMD160_BLOCK_LEN, HMAC_SHA1_BLOCK_LEN, HMAC_SHA2_256_BLOCK_LEN,
-    HMAC_SHA2_384_BLOCK_LEN, HMAC_SHA2_512_BLOCK_LEN,
+    CRYPTO_CHACHA20_POLY1305_MAC, CRYPTO_DEFLATE_COMP, CRYPTO_MD5_HMAC, CRYPTO_NULL,
+    CRYPTO_RIPEMD160_HMAC, CRYPTO_SHA1_HMAC, CRYPTO_SHA2_256_HMAC, CRYPTO_SHA2_384_HMAC,
+    CRYPTO_SHA2_512_HMAC, HMAC_MD5_BLOCK_LEN, HMAC_RIPEMD160_BLOCK_LEN, HMAC_SHA1_BLOCK_LEN,
+    HMAC_SHA2_256_BLOCK_LEN, HMAC_SHA2_384_BLOCK_LEN, HMAC_SHA2_512_BLOCK_LEN,
 };
 use super::ecb3_enc::des_ecb3_encrypt;
 use super::gmac::{
@@ -136,6 +136,7 @@ use super::sha2::{
     SHA256_DIGEST_LENGTH, SHA256Final, SHA256Init, SHA256Update, SHA384_DIGEST_LENGTH, SHA384Final,
     SHA384Init, SHA384Update, SHA512_DIGEST_LENGTH, SHA512Final, SHA512Init, SHA512Update, Sha2Ctx,
 };
+use super::xform_ipcomp::deflate_global;
 use crate::kern::subr_prf::panic;
 use crate::sys::errno::Errno;
 
@@ -845,6 +846,16 @@ fn chachapoly_final(digest: &mut [u8], c: &mut AuthCtx) {
     }
 }
 
+/// `deflate_compress`: compression through `xform_ipcomp.c`'s `deflate_global`.
+fn deflate_compress(data: &[u8]) -> Result<Vec<u8>, Errno> {
+    deflate_global(data, false)
+}
+
+/// `deflate_decompress`: decompression through `deflate_global`.
+fn deflate_decompress(data: &[u8]) -> Result<Vec<u8>, Errno> {
+    deflate_global(data, true)
+}
+
 // Encryption instances
 
 /// `enc_xform_3des`.
@@ -1177,6 +1188,18 @@ pub static auth_hash_chacha20_poly1305: AuthHash = AuthHash {
     Reinit: Some(chachapoly_reinit),
     Update: chachapoly_update,
     Final: chachapoly_final,
+};
+
+// Compression instance
+
+/// `comp_algo_deflate`.
+#[allow(non_upper_case_globals)] // the C name
+pub static comp_algo_deflate: CompAlgo = CompAlgo {
+    type_: CRYPTO_DEFLATE_COMP,
+    name: "Deflate",
+    minlen: 90,
+    compress: deflate_compress,
+    decompress: deflate_decompress,
 };
 
 #[cfg(test)]

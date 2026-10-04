@@ -18,7 +18,7 @@ OpenBSD resolves that at link time. Cargo forbids crate cycles, so a crate per s
 trait inversions everywhere. One crate resolves the cycles the way C does.
 
 Exceptions are true leaves only: `sys/lib/libkern` and `sys/lib/libz` (OpenBSD builds both as libraries
-too; libz holds only what the kernel calls, today `crc32`, under the zlib licence). A module
+too; libz holds what the kernel compiles of zlib: crc32, adler32, deflate, inflate; zlib licence). A module
 may be promoted to a crate only if it uses nothing from `crate::{kern, uvm, arch, machine}`.
 
 No `src/` directory (`[lib] path = "lib.rs"`), so C and Rust paths differ only by extension.
@@ -861,9 +861,9 @@ user's group (macOS has no such group, and `pwd_mkdb` insists on one).
 
 - The crypto framework (`sys/crypto`, M9b/M9c) is the software driver only: `crypto.c`,
   `cryptosoft.c`, `xform.c`, `criov.c` and the primitives they and WireGuard use. `cryptop_pool`
-  is not ported (a request is a value, see `crypto/crypto.rs`) and the IPCOMP transform
-  (`CRYPTO_DEFLATE_COMP`, `comp_algo_deflate`, `xform_ipcomp.c`) is reported: it needs
-  `deflate_global` from `lib/libz`, which has crc32 only. `crypto_init` and `swcr_init`
+  is not ported (a request is a value, see `crypto/crypto.rs`). The IPCOMP transform
+  (`CRYPTO_DEFLATE_COMP`, `comp_algo_deflate`, `xform_ipcomp.c`'s `deflate_global`) runs on
+  the `libz` crate's deflate and inflate (M9+). `crypto_init` and `swcr_init`
   run in `main` after the pseudo-devices, as `init_main.c` calls them under `#ifdef CRYPTO`
   (GENERIC's `option CRYPTO`, M9b). Primitives
   whose C is public domain (`chacha_private.h`, `poly1305`, `rijndael`, `sha1`, `md5`, `cast`)

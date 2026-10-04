@@ -31,6 +31,7 @@ pub mod spr;
 #[cfg(test)]
 pub(crate) mod testutil;
 pub mod xform;
+pub mod xform_ipcomp;
 
 /// `explicit_bzero(&x, sizeof(x))` for a context that is a plain value: overwrites it with its
 /// default (all zero) and keeps the compiler from proving the store dead, so the secret it held

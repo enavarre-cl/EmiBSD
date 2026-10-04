@@ -137,8 +137,6 @@
 //!   `sec_tdb_remove`) and `INET6`. `NPFSYNC` is configured (`pfsync_delete_tdb`), and so is
 //!   `TCP_SIGNATURE` (M9+): `XF_TCPSIGNATURE` calls the `tcp_signature_tdb_*` functions of
 //!   `netinet/tcp_subr.rs`.
-//!   The `XF_IPCOMP` entry calls the stand-ins of `netinet/ip_ipcomp.rs` (deflate is not
-//!   ported).
 //! - `NET_LOCK()`/`KERNEL_LOCK()` keep the C's places; `MUTEX_ASSERT_LOCKED` is
 //!   `mutex_assert_locked`, active with feature `diagnostic`.
 

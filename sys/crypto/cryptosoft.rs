@@ -74,9 +74,10 @@
 //!   block, whose pad length the C computes as a negative number, is `EINVAL`). A `setkey`
 //!   that fails is `EINVAL` as in the C, and so is a GMAC or ChaCha20-Poly1305 `Setkey` that
 //!   reports a bad key size (the C's are `void`).
-//! - `CRYPTO_DEFLATE_COMP` is not ported (`swcr_compdec` and the `comp_algo_deflate` it uses need
-//!   `deflate_global` from zlib, see `xform.rs`): `swcr_compdec` and a session with that
-//!   algorithm return `ENOSYS` through `unported!`, and `swcr_init` does not advertise it.
+//! - `swcr_compdec` gets the (de)compressed data as a `Vec<u8>` from the [`CompAlgo`] and
+//!   copies it back with `COPYBACK`, whose `m_copyback` error it returns (as the C does); a
+//!   failed copy of the input (`COPYDATA` of a buffer that is not there) is an error too. The
+//!   trim of a `uio` shortens the `uio_iov` slice where the C decrements `uio_iovcnt`.
 //! - `swcr_process` handles `CRYPTO_RIJNDAEL128_CBC` and `CRYPTO_AES_CBC` as one case (they are
 //!   both 7).
 //! - The `hmac_ipad_buffer` and `hmac_opad_buffer` tables are constants of the pad byte.
@@ -91,7 +92,7 @@ use libkern::{StaticCell, explicit_bzero};
 use super::criov::{cuio_apply, cuio_copyback, cuio_copydata, cuio_getptr, iov_run_mut};
 use super::crypto::{crypto_get_driverid, crypto_register};
 use super::cryptodev::{
-    AALG_MAX_RESULT_LEN, CRD_F_ENCRYPT, CRD_F_ESN, CRD_F_IV_EXPLICIT, CRD_F_IV_PRESENT,
+    AALG_MAX_RESULT_LEN, CRD_F_COMP, CRD_F_ENCRYPT, CRD_F_ESN, CRD_F_IV_EXPLICIT, CRD_F_IV_PRESENT,
     CRYPTO_3DES_CBC, CRYPTO_AES_128_GMAC, CRYPTO_AES_192_GMAC, CRYPTO_AES_256_GMAC, CRYPTO_AES_CBC,
     CRYPTO_AES_CTR, CRYPTO_AES_GCM_16, CRYPTO_AES_GMAC, CRYPTO_AES_XTS, CRYPTO_ALG_FLAG_SUPPORTED,
     CRYPTO_ALGORITHM_MAX, CRYPTO_BLF_CBC, CRYPTO_CAST_CBC, CRYPTO_CHACHA20_POLY1305,
@@ -106,19 +107,18 @@ use super::xform::{
     AuthCtx, AuthHash, CompAlgo, EncXform, Kschedule, auth_hash_chacha20_poly1305,
     auth_hash_gmac_aes_128, auth_hash_gmac_aes_192, auth_hash_gmac_aes_256, auth_hash_hmac_md5_96,
     auth_hash_hmac_ripemd_160_96, auth_hash_hmac_sha1_96, auth_hash_hmac_sha2_256_128,
-    auth_hash_hmac_sha2_384_192, auth_hash_hmac_sha2_512_256, enc_xform_3des, enc_xform_aes,
-    enc_xform_aes_ctr, enc_xform_aes_gcm, enc_xform_aes_gmac, enc_xform_aes_xts, enc_xform_blf,
-    enc_xform_cast5, enc_xform_chacha20_poly1305, enc_xform_null,
+    auth_hash_hmac_sha2_384_192, auth_hash_hmac_sha2_512_256, comp_algo_deflate, enc_xform_3des,
+    enc_xform_aes, enc_xform_aes_ctr, enc_xform_aes_gcm, enc_xform_aes_gmac, enc_xform_aes_xts,
+    enc_xform_blf, enc_xform_cast5, enc_xform_chacha20_poly1305, enc_xform_null,
 };
 use crate::dev::rnd::arc4random_buf;
 use crate::kassert;
 use crate::kern::subr_prf::panic;
-use crate::kern::uipc_mbuf::{m_apply, m_copyback, m_copydata, m_getptr};
+use crate::kern::uipc_mbuf::{m_adj, m_apply, m_copyback, m_copydata, m_getptr};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::M_NOWAIT;
-use crate::sys::mbuf::mtod;
+use crate::sys::mbuf::{MAXMCLBYTES, mtod};
 use crate::sys::uio::Uio;
-use crate::unported;
 
 /// `hmac_ipad_buffer`.
 #[allow(non_upper_case_globals)] // the C name
@@ -778,14 +778,85 @@ pub fn swcr_authenc(crp: &mut Cryptop<'_>, session: &mut SwcrList) -> Result<(),
     Ok(())
 }
 
-/// `swcr_compdec`: apply a compression/decompression algorithm. Not ported (see the
-/// deviations): needs `deflate_global`.
+/// `swcr_compdec`: apply a compression/decompression algorithm. The (de)compressed data
+/// replaces the `crd_len` bytes at `crd_skip` of the buffer, which is extended or trimmed to
+/// fit; its length is left in `sw_size`. Compressed data that is not shorter than the input
+/// is not written back (the caller sees `sw_size` and keeps the original).
 pub fn swcr_compdec(
-    _crd: &Cryptodesc<'_>,
-    _sw: &mut SwcrData,
-    _buf: &mut CryptoBuf<'_>,
+    crd: &Cryptodesc<'_>,
+    sw: &mut SwcrData,
+    buf: &mut CryptoBuf<'_>,
 ) -> Result<(), Errno> {
-    Err(unported!("swcr_compdec (deflate_global of zlib)"))
+    let SwcrUn::Comp(comp) = &mut sw.SWCR_UN else {
+        return Err(Errno::EINVAL);
+    };
+    let cxf = comp.sw_cxf;
+    let crd_len = usize::try_from(crd.crd_len).map_err(|_| Errno::EINVAL)?;
+
+    // We must handle the whole buffer of data in one time then if there is not all the data
+    // in the mbuf, we must copy in a buffer.
+    let mut data = Vec::new();
+    if data.try_reserve_exact(crd_len).is_err() {
+        return Err(Errno::EINVAL);
+    }
+    data.resize(crd_len, 0);
+    copydata(buf, crd.crd_skip, &mut data)?;
+
+    let out = if crd.crd_flags & CRD_F_COMP != 0 {
+        (cxf.compress)(&data)
+    } else {
+        (cxf.decompress)(&data)
+    };
+
+    drop(data);
+    let out = match out {
+        Ok(out) if !out.is_empty() => out,
+        _ => return Err(Errno::EINVAL),
+    };
+    let result = out.len();
+
+    // Copy back the (de)compressed data. m_copyback is extending the mbuf as necessary.
+    comp.sw_size = result as u32;
+    // Check the compressed size when doing compression
+    if crd.crd_flags & CRD_F_COMP != 0 {
+        if result > crd_len {
+            // Compression was useless, we lost time
+            return Ok(());
+        }
+    } else {
+        // Decompressed IP packet must fit into mbuf cluster.
+        if matches!(buf, CryptoBuf::Mbuf(_)) && result > MAXMCLBYTES {
+            return Err(Errno::EMSGSIZE);
+        }
+    }
+
+    copyback(buf, crd.crd_skip, &out)?;
+    if result < crd_len {
+        match buf {
+            CryptoBuf::Mbuf(m) => m_adj(*m, result as i32 - crd.crd_len),
+            CryptoBuf::Iov(uio) => {
+                let mut adj = crd_len - result;
+                let mut iov = core::mem::take(&mut uio.uio_iov);
+                while adj > 0 {
+                    let Some(last) = iov.last_mut() else {
+                        break;
+                    };
+                    if adj < last.iov_len {
+                        last.iov_len -= adj;
+                        break;
+                    }
+                    adj -= last.iov_len;
+                    last.iov_len = 0;
+                    // uio_iovcnt--
+                    let n = iov.len() - 1;
+                    iov = &mut iov[..n];
+                }
+                uio.uio_iov = iov;
+            }
+            CryptoBuf::None => {}
+        }
+    }
+    Ok(())
 }
 
 /// `swcr_newsession`: generate a new software session. `sid` is the driver id on entry and the
@@ -856,7 +927,10 @@ pub fn swcr_newsession(sid: &mut u32, cri: &Cryptoini<'_>) -> Result<(), Errno> 
             }
 
             CRYPTO_DEFLATE_COMP => {
-                return Err(unported!("CRYPTO_DEFLATE_COMP (comp_algo_deflate)"));
+                swd.SWCR_UN = SwcrUn::Comp(SwcrComp {
+                    sw_size: 0,
+                    sw_cxf: &comp_algo_deflate,
+                });
             }
             CRYPTO_ESN => {
                 // nothing to do
@@ -1090,7 +1164,7 @@ pub fn swcr_init() {
         CRYPTO_AES_XTS,
         CRYPTO_AES_GCM_16,
         CRYPTO_AES_GMAC,
-        // CRYPTO_DEFLATE_COMP: not ported
+        CRYPTO_DEFLATE_COMP,
         CRYPTO_NULL,
         CRYPTO_SHA2_256_HMAC,
         CRYPTO_SHA2_384_HMAC,

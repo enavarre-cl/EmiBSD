@@ -298,6 +298,120 @@ upstream_blob = "1a45452e2682a5fead4a2068956fca91a262e499"
 notes = "zcalloc (mallocarray M_DEVBUF M_NOWAIT) is a fallible, zero-filled Vec<T> through the global allocator (malloc(9) in the kernel), None for NULL; zcalloc_box allocates one stream state (alloc + Box::from_raw, so a failure is Z_MEM_ERROR, not an abort); zcfree drops; M_DEVBUF has no counterpart"
 
 [[file]]
+c = "sys/lib/libz/deflate.h"
+rust = "sys/lib/libz/deflate.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f2fd0d0c866b68361defcd10daac9c24d797be6d"
+deps = ["sys/lib/libz/zutil.h"]
+notes = "license: zlib; an altered source version. internal_state as DeflateState (InternalState::Deflate), its window/prev/head/pending_buf/sym_buf zcalloc'd Vecs and its pointers offsets (sym_buf still overlays pending_buf); ct_data's unions are two u16 fields, tree_desc's dyn_tree a Tree selector; put_byte/put_short, MAX_DIST, WIN_INIT, d_code and the inline _tr_tally_lit/_tr_tally_dist; GZIP (gzhead, gzindex, GZIP_STATE) and LIT_MEM are not configured in the kernel build"
+
+[[file]]
+c = "sys/lib/libz/deflate.c"
+rust = "sys/lib/libz/deflate.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6879f40de7927377d15a8b347b1c8d19c9415358"
+deps = ["sys/lib/libz/deflate.h", "sys/lib/libz/trees.c", "sys/lib/libz/adler32.c", "sys/lib/libz/zutil.c", "sys/lib/libz/zopenbsd.c"]
+notes = "license: zlib; an altered source version. The whole file: deflateInit_/deflateInit2_, deflate, deflateEnd, deflateReset/deflateResetKeep, deflateSetDictionary (through a temporary stream), deflateGetDictionary, deflateParams, deflateTune, deflateBound/deflateBound_z, deflatePending, deflateUsed, deflatePrime, deflateCopy, deflateSetHeader, configuration_table (func an enum), deflate_stored/fast/slow/rle/huff, longest_match, fill_window, read_buf; the state is taken out of the stream for each call; deflateCopy leaves the copy's next_out empty (a &mut cannot be shared); deflateGetDictionary returns Z_BUF_ERROR for a too-short buffer; not configured: GZIP (deflateSetHeader refuses, as in the kernel build), FASTEST, UNALIGNED_OK, LIT_MEM, ZLIB_DEBUG (check_match), the 16-bit paths; no deflate_copyright in OpenBSD's copy; 431 vectors byte-exact with zlib 1.2.12 (testdata/gen_deflate.py)"
+
+[[file]]
+c = "sys/lib/libz/trees.h"
+rust = "sys/lib/libz/trees.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d35639d82a27807e49ea35c334f8bbcf64720f82"
+notes = "license: zlib; an altered source version. static_ltree, static_dtree, _dist_code, _length_code, base_length, base_dist are computed at compile time by tr_static_init (the GEN_TREES_H generator as a const fn) instead of being written out; `just test-ref` compares every table with trees.h"
+
+[[file]]
+c = "sys/lib/libz/trees.c"
+rust = "sys/lib/libz/trees.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f5cd291a3555e021fbf08db048e24d7db03a45bc"
+deps = ["sys/lib/libz/trees.h", "sys/lib/libz/deflate.h"]
+notes = "license: zlib; an altered source version. The whole file: _tr_init, _tr_stored_block, _tr_flush_bits, _tr_align, _tr_flush_block, _tr_tally (ported; deflate uses deflate.h's inline _tr_tally_lit/_tr_tally_dist, as the C build does), build_tree, gen_bitlen, gen_codes, pqdownheap, scan_tree/send_tree, build_bl_tree, send_all_trees, compress_block, detect_data_type, bi_reverse, bi_flush, bi_windup; the tree being built is moved out of the state while it is worked on; not configured: GEN_TREES_H (the tables are const), ZLIB_DEBUG, LIT_MEM"
+
+[[file]]
+c = "sys/lib/libz/compress.c"
+rust = "sys/lib/libz/compress.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8297fb38b40913ac18ca9618e4c9c685d4f9fa55"
+deps = ["sys/lib/libz/deflate.c"]
+notes = "license: zlib; an altered source version. compress, compress2, compressBound and compressBound_z over slices: the output slice's length is the space available (the C's *destLen on entry) and destLen receives the compressed size; the _z variants are merged in; compiled by OpenBSD's kernel, called by nothing"
+
+[[file]]
+c = "sys/lib/libz/inftrees.h"
+rust = "sys/lib/libz/inftrees.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "84d053697cd881db2f1d3a303e238a0cce0bf886"
+notes = "license: zlib; an altered source version. code as Code, codetype as CodeType, ENOUGH_LENS, ENOUGH_DISTS, ENOUGH"
+
+[[file]]
+c = "sys/lib/libz/inftrees.c"
+rust = "sys/lib/libz/inftrees.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0bf8dc4a1b30fdf0384e1292782b43dfabe71a4e"
+deps = ["sys/lib/libz/inftrees.h"]
+notes = "license: zlib; an altered source version. inflate_table over the code space as a slice plus an offset it advances (the C's code **table), the sub-table pointer an index, codes the length of lens; inflate_fixed (BUILDFIXED off: the inffixed.h statics); not configured: BUILDFIXED's buildtables and MAKEFIXED's makefixed (the tests rebuild lenfix and distfix with inflate_table, entry for entry); no inflate_copyright in OpenBSD's copy"
+
+[[file]]
+c = "sys/lib/libz/inffixed.h"
+rust = "sys/lib/libz/inffixed.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "05ce88e4ff5cd4e7ffe05d3a8309af1bf3b0e989"
+deps = ["sys/lib/libz/inftrees.h"]
+notes = "license: zlib (no notice of its own; inffixed.rs carries zlib.h's, which covers it); an altered source version. lenfix and distfix as statics of Code"
+
+[[file]]
+c = "sys/lib/libz/inflate.h"
+rust = "sys/lib/libz/inflate.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f758e0dcc18dc1dcfd875d3df98d71aa5743d349"
+deps = ["sys/lib/libz/inftrees.h"]
+notes = "license: zlib; an altered source version. inflate_mode as InflateMode, inflate_state as InflateState (InternalState::Inflate): lencode/distcode/next a CodeTable selector and an index, lens/work/codes and the window zcalloc'd heap buffers; the gzip modes and head exist but are never entered (NO_GZIP)"
+
+[[file]]
+c = "sys/lib/libz/inflate.c"
+rust = "sys/lib/libz/inflate.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c23a3149660fb702ea73dcc5efbc4ec5245716f8"
+deps = ["sys/lib/libz/inflate.h", "sys/lib/libz/inffast.c", "sys/lib/libz/inftrees.c", "sys/lib/libz/adler32.c", "sys/lib/libz/zutil.c", "sys/lib/libz/zopenbsd.c"]
+notes = "license: zlib; an altered source version. The whole file: inflateInit_/inflateInit2_, inflateReset/inflateResetKeep/inflateReset2, inflatePrime, inflate (the state machine, LOAD/RESTORE as a Regs value whose methods are NEEDBITS/PULLBYTE/BITS/DROPBITS/BYTEBITS/INITBITS, goto inf_leave a labelled break), inflateEnd, inflateGetDictionary (Z_BUF_ERROR for a too-short buffer), inflateSetDictionary, inflateGetHeader (Z_STREAM_ERROR: NO_GZIP), inflateSync/syncsearch, inflateSyncPoint, inflateCopy (dest's next_out left empty), inflateUndermine (Z_DATA_ERROR: INFLATE_ALLOW_INVALID_DISTANCE_TOOFAR_ARRR off), inflateValidate, inflateMark, inflateCodesUsed, updatewindow, inflateStateCheck; SLOW (kernel build) keeps inflate_fast out, the call kept behind !slow and tested both ways; SMALL: every message is \"error\"; not configured: GZIP (windowBits >= 16 refused), INFLATE_STRICT, PKZIP_BUG_WORKAROUND, ZLIB_DEBUG, ASMINF; vectors from zlib 1.2.12 (testdata/gen_inflate.py) and round trips through deflate.rs"
+
+[[file]]
+c = "sys/lib/libz/inffast.h"
+rust = "sys/lib/libz/inffast.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "49c6d156c5c652dbd9e2e6aff90e20eb279a2b37"
+notes = "license: zlib; an altered source version. The inflate_fast prototype; the function is in the same module"
+
+[[file]]
+c = "sys/lib/libz/inffast.c"
+rust = "sys/lib/libz/inffast.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e5b1e8b8561a9176855588d054ece5cc7440c3c1"
+deps = ["sys/lib/libz/inffast.h", "sys/lib/libz/inflate.h"]
+notes = "license: zlib; an altered source version. inflate_fast over the whole output buffer and positions (matches reach back into output written earlier in the same call, as the C does from next_out); compiled but not called in the kernel build (SLOW), tested by running every inflate stream through it too; INFLATE_STRICT and INFLATE_ALLOW_INVALID_DISTANCE_TOOFAR_ARRR not configured"
+
+[[file]]
+c = "sys/lib/libz/infback.c"
+rust = "sys/lib/libz/infback.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "20a06cf42d58fe0ee32153458595cc8ef79c2854"
+deps = ["sys/lib/libz/inflate.h", "sys/lib/libz/inffast.c", "sys/lib/libz/inftrees.c"]
+notes = "license: zlib; an altered source version. inflateBackInit_ (the window an owned Vec of at least 1 << windowBits bytes, freed by inflateBackEnd; the C keeps the caller's pointer), inflateBack (in_func/out_func and their descriptors are closures: in_ returns the next input slice, empty for none; out returns non-zero on failure), inflateBackEnd; the state is InternalState::InflateBack, which the other inflate functions refuse as inflateStateCheck does; SLOW keeps inflate_fast out (tested both ways); compiled by OpenBSD's kernel, called by nothing"
+
+[[file]]
 c = "sys/lib/libkern/memcpy.c"
 status = "skipped"
 notes = "provided-by-core: core::ptr::copy / slice::copy_from_slice"
@@ -3246,9 +3360,11 @@ notes = "M9c: BSD-2 (Jean-Jacques Bernard-Gundol). struct ipcompstat, struct ipc
 [[file]]
 c = "sys/netinet/ip_ipcomp.c"
 rust = "sys/netinet/ip_ipcomp.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "819453c9c7978006044322ce3f580f0f9807816c"
 deps = ["sys/netinet/ip_ipcomp.h", "sys/crypto/xform_ipcomp.c"]
-notes = "reported, not started: IPComp needs deflate (crypto/xform_ipcomp.c, zlib's deflate_global); ipcomp_attach/init/zeroize/input/output are stand-ins in ip_ipcomp.rs that report themselves (ENOSYS), so an IPComp SA fails at tdb_init, and ipcomp_enable stays 0 as in C"
+notes = "M9+: BSD-2 (Jean-Jacques Bernard-Gundol), the ip_ipcomp.h licence. The whole file: ipcomp_attach, ipcomp_init (SADB_X_CALG_DEFLATE -> comp_algo_deflate, crypto_newsession), ipcomp_zeroize, ipcomp_input (decompress through crypto_invoke, strip the header with ip_esp.rs's esp_strip_header, restore the next protocol, ipsec_common_input_cb), ipcomp_output (skip packets below minlen and already-compressed ones, compress, keep the original when it does not shrink, insert the header, ipsp_process_done); the crypto request is a Cryptop value and the EAGAIN retry is ip_esp.rs's ipsec_crypto_invoke; a TDB without tdb_compalgxform drops the packet (ipsec_noxform); not configured: NBPFILTER (enc(4) counters, bpf_mtap_hdr), INET6; ENCDEBUG's DPRINTF is ipsec_dprintf!; net.inet.ipcomp.enable 0 by default as in C; just smoke-ipcomp"
 
 [[file]]
 c = "sys/netinet/in_var.h"
@@ -3810,7 +3926,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "5b22ce02e2206c621048750836f386aee952a895"
 deps = ["sys/crypto/xform.h", "sys/crypto/aes.c", "sys/crypto/rijndael.c", "sys/crypto/blf.c", "sys/crypto/cast.c", "sys/crypto/rmd160.c", "sys/crypto/md5.c", "sys/crypto/sha1.c", "sys/crypto/sha2.c", "sys/crypto/gmac.c", "sys/crypto/chachapoly.c", "sys/crypto/ecb3_enc.c", "sys/crypto/set_key.c"]
-notes = "enc_xform_3des/blf/cast5/aes/aes_ctr/aes_gcm/aes_gmac/aes_xts/chacha20_poly1305/null and auth_hash_hmac_md5_96/sha1_96/ripemd_160_96/sha2_256_128/384_192/512_256, gmac_aes_128/192/256, chacha20_poly1305 with their wrappers; comp_algo_deflate and deflate_compress/decompress/global are not ported (needs zlib's deflate, lib/libz has crc32 only): reported, CompAlgo is the type only; short keys the C would read past are EINVAL; licence: Ioannidis/Keromytis/Provos/Miller/Belopuhov notice, accepted 2026-10-03"
+notes = "enc_xform_3des/blf/cast5/aes/aes_ctr/aes_gcm/aes_gmac/aes_xts/chacha20_poly1305/null and auth_hash_hmac_md5_96/sha1_96/ripemd_160_96/sha2_256_128/384_192/512_256, gmac_aes_128/192/256, chacha20_poly1305 with their wrappers; comp_algo_deflate with deflate_compress/deflate_decompress over xform_ipcomp.c's deflate_global (M9+), which return a Vec<u8> or an error where the C returns a length and a u_int8_t ** buffer; short keys the C would read past are EINVAL; licence: Ioannidis/Keromytis/Provos/Miller/Belopuhov notice, accepted 2026-10-03"
 
 [[file]]
 c = "sys/crypto/cryptosoft.h"
@@ -3828,14 +3944,16 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1672e4589b25235f224133381499e34bab855aec"
 deps = ["sys/crypto/cryptosoft.h", "sys/crypto/crypto.c", "sys/crypto/criov.c", "sys/crypto/xform.c", "sys/kern/uipc_mbuf.c", "sys/dev/rnd.c"]
-notes = "swcr_encdec (one block routine for the four copies in the C, the chaining value kept in a local), swcr_authcompute, swcr_authenc (AES-GCM and ChaCha20-Poly1305 in an ESP layout tested against the GCM spec and RFC 8439), swcr_newsession/freesession/process/init and the session table; the HMAC key is not modified in place; m_copyback errors the C ignores are returned; CRYPTO_DEFLATE_COMP/swcr_compdec are ENOSYS through unported! and not advertised; AES-CBC/CTR/XTS, 3DES/Blowfish/CAST CBC, HMACs tested over iovecs and mbuf chains with straddling blocks"
+notes = "swcr_encdec (one block routine for the four copies in the C, the chaining value kept in a local), swcr_authcompute, swcr_authenc (AES-GCM and ChaCha20-Poly1305 in an ESP layout tested against the GCM spec and RFC 8439), swcr_compdec (M9+: CRYPTO_DEFLATE_COMP through comp_algo_deflate, the result copied back with COPYBACK whose error is returned; a uio is trimmed by shortening its uio_iov slice), swcr_newsession/freesession/process/init (DEFLATE advertised) and the session table; the HMAC key is not modified in place; m_copyback errors the C ignores are returned; AES-CBC/CTR/XTS, 3DES/Blowfish/CAST CBC, HMACs and deflate tested over iovecs and mbuf chains with straddling blocks"
 
 [[file]]
 c = "sys/crypto/xform_ipcomp.c"
 rust = "sys/crypto/xform_ipcomp.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "896dfc3e45086c847a91375ba9389fe7d9e7f873"
 deps = ["sys/crypto/xform.c"]
-notes = "reported, not started: IPCOMP needs deflate_global from zlib (lib/libz has crc32 only); comp_algo_deflate is missing from xform.rs for the same reason"
+notes = "M9+: BSD-2 (Jean-Jacques Bernard-Gundol). deflate_global over sys/lib/libz (raw deflate, window_deflate -12, Z_FINISH; raw inflate, window_inflate -MAX_WBITS, Z_PARTIAL_FLUSH) returns a Vec<u8> or ENOMEM/EINVAL where the C returns 0 and a NULL buffer; struct deflate_buf is an array of fallibly allocated Vecs (try_reserve_exact, the C's M_NOWAIT), freed on every path; window_inflate/window_deflate are consts (writable globals nothing writes in C); M_CRYPTO_DATA has no counterpart; host tests against zlib 1.2.12 output"
 
 [[extra]]
 rust = "sys/crypto/testutil.rs"
