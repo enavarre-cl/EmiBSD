@@ -27,8 +27,8 @@ sparse-checkout add|set ...`, a user decision recorded in `docs/ROADMAP.md`.
   original copyright and license block, verbatim, as `/* ... */` comments. Then the `//!` docs.
   Never shorten, reword, relicense or add restrictions to license text. BSD-3 non-endorsement and
   ISC/BSD notice obligations apply to this project's distribution; `LICENSE` explains how.
-- Licenses found in OpenBSD `sys/` are ISC, BSD-2/3-Clause and MIT. Anything else, or a file with
-  no license block: stop and ask the user (`scope-and-stubs.md`).
+- Every licence or notice in the pinned tree is accepted, kept whole (`scope-and-stubs.md`, the
+  user's rule of 2026-10-04). Only code from outside this tree needs the user's decision.
 - Updating the pin is a deliberate act (`reference/README.md`, `docs/PORTING.md`): fetch, check out,
   run `cargo xtask ports drift`, update `PINNED.md` and `ports.toml [meta].pinned` in one commit.
 - `git log` inside the clone is useless (depth 1). Drift is detected by blob hash, not history.

@@ -4173,7 +4173,7 @@ notes = "option QUOTA (in GENERIC) is not configured here: quota.rs answers with
 c = "sys/ufs/ufs/ufs_quota_stub.c"
 rust = ""
 status = "skipped"
-notes = "license: none (the file has no licence block); its !QUOTA answers are the no-quota interface written in quota.rs from quota.h and quotactl(2) - user to confirm"
+notes = "not-applicable: compiled only without option QUOTA, which GENERIC configures (M10b); until then quota.rs answers with the no-quota interface from quota.h and quotactl(2). Its missing licence block no longer blocks it (rule of 2026-10-04)"
 
 [[file]]
 c = "sys/ufs/ufs/ufs_bmap.c"

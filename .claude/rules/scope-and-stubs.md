@@ -13,39 +13,25 @@ The kernel is ported incrementally; most of OpenBSD is not here yet. These rules
   in `ports.toml`.
 - Never delete a code path because "we don't need it yet". Port it or stub it visibly.
 - Drivers for hardware QEMU does not expose: `status = "skipped"`, `notes = "deferred-driver: ..."`.
-- Code whose license is not ISC, BSD (2, 3 or 4 clauses; the 4-clause advertising clause was
-  accepted by the user at M2 for `comvar.h` and amd64 `bus.h`), MIT or Mach (Carnegie Mellon, the
-  `ddb/` and `db_*` files, also accepted at M2) or beerware (Poul-Henning Kamp's `kern_tc.c`,
-  accepted by the user at M5) or John S. Dyson's licence (`sys_pipe.c`, `pipe.h`, accepted by
-  the user on 2026-10-03) or the zlib licence (all of `sys/lib/libz`: `crc32.c` accepted by the user on
-  2026-10-03, the rest (deflate, inflate, trees, adler32, zutil, `zopenbsd.c`) the same day for
-  M9+'s IPComp; a port is an altered version and says so, clause 2)
-  or the IPsec notice of Ioannidis, Keromytis, Provos and Hallqvist (`netinet/ip_ah.h`,
-  `ip_esp.h`, `ip_ipsp.h`, ...: permission to use, copy and modify provided the entire
-  notice is kept; its optional GPL alternative is not used; accepted by the user on
-  2026-10-03, kernel and userland) or public domain code (`sys/crypto`'s `chacha_private.h`,
-  `poly1305`, `rijndael`, `sha1`, `md5`, `cast`, `idgen`, ...: accepted for kernel ports by the
-  user on 2026-10-03, the original public-domain notice kept) or, accepted the same day for
-  kernel and userland, Sun's SunSoft fdlibm notice, Carnegie Mellon's ALTQ notice
-  (`net/hfsc.h`) and M.I.T.'s notice (`net/if_vlan_var.h`) or, accepted on 2026-10-03 for M10, the notice of
-  Julian Elischer / TRW Financial Systems in `scsi/` (`sd.c`, `scsiconf.c`, `scsi_all.h`, ...,
-  kept whole in each file), or, accepted on 2026-10-04 for M10a, the Open Software Foundation
-  notice (Grenoble 1990, `scsi/scsi_disk.h`) and the SCIOC* files without full licence text
-  (`sys/scsiio.h`, none; `scsi/scsi_ioctl.c`, HD Associates' "Berkeley style copyright" line
-  next to Hannum's BSD-4), each notice kept whole: stop, tell the user, record `status = "skipped"`,
-  `notes = "license: <which>"`. Do not port it. A port in another language is still a derivative
-  work, so a skipped file's license is not escaped by rewriting it; route around it (use what a
-  permissive file defines, write interfaces from the manual page) or ask.
+- Licences (the user's rule of 2026-10-04, replacing the list of per-licence decisions): any
+  licence or notice on a file in the pinned OpenBSD tree (`reference/openbsd-src`) is accepted
+  without asking, for kernel ports and for the compiled userland alike; OpenBSD already accepted
+  it into its tree. That covers ISC, BSD (2, 3, 4 clauses), MIT, Mach, beerware, Dyson, zlib,
+  public domain, the HPND-style notices (M.I.T., Carnegie Mellon, OSF, TRW, the IPsec authors),
+  LibreSSL's OpenSSL/SSLeay, Apache-2.0 WITH LLVM-exception, files with no licence text, and any
+  other. The conditions:
+  - The original notice is kept whole between `/* <LICENSES> */` and `/* </LICENSES> */`; a file
+    without licence text keeps its copyright lines as they are. Never shorten, reword or
+    relicense it. A zlib port says it is an altered version (zlib clause 2).
+  - `ports.toml` `notes` names the licence when it is not ISC, BSD or MIT
+    (e.g. `license: OSF notice, kept whole; ...`).
+  - `LICENSE` lists the licence families present; a new family is added there in the same commit.
+- Code that does not come from the pinned OpenBSD tree (ZFS, XFS, external libraries, ...) is
+  outside that rule: its licence is decided by the user when the milestone that brings it is
+  proposed. Until then: stop, tell the user, do not port it (`status = "skipped"`,
+  `notes = "license: <which>"`). A translation is still a derivative work, so rewriting does not
+  escape a licence.
 - Code replaced by a project-level decision (bootloader, build system, `config(8)`):
   `status = "skipped"`, `notes = "replaced-by-<what>: ..."`, and the decision is in `docs/ARCHITECTURE.md`.
-- Compiled-not-ported userland (M8) also accepts, by the user's decision of 2026-10-03:
-  Apache-2.0 WITH LLVM-exception (`gnu/llvm/compiler-rt`), public domain (pdksh), files with no
-  licence text, the Lucent (gdtoa), Birgmeier (rand48), SunPro (fdlibm), Cheusov (`wcsdup.c`)
-  and Boulet/RTMX (`sys/msg.h`) notices, the Unicode data-files licence (makefs's
-  `msdosfs_unicode.c`), and, accepted on 2026-10-03 for M9+, LibreSSL's OpenSSL and SSLeay
-  licences (`lib/libcrypto`, `libssl`, `libtls`, advertising clauses included) and tcpdump's
-  LBL notice (BSD-4 style), and, accepted on 2026-10-04, Carnegie Mellon's 1988-89 BOOTP/PPP notice
-  (`usr.sbin/tcpdump/bootp.h`, `lib/libpcap/ppp.h`; its credit to Carnegie Mellon and Stanford is
-  kept in `LICENSE`). Kernel ports still follow the list above.
 - Scope changes (dropping an arch, skipping a subsystem, changing the boot protocol) are the
   user's decision. Propose; do not decide.

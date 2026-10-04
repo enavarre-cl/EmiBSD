@@ -862,9 +862,10 @@ user's group (macOS has no such group, and `pwd_mkdb` insists on one).
   instead of sleeping.
 - Licences: `ddb/` and the `db_*` arch files carry the Mach licence (Carnegie Mellon);
   `dev/ic/comvar.h` and amd64 `include/bus.h` have a BSD block with the 4-clause advertising
-  clause. Both were accepted by the user at M2 (`.claude/rules/scope-and-stubs.md`). A translation
-  is still a derivative work, so each ported file keeps its original licence block whatever the
-  language; a licence outside the list is routed around, never rewritten.
+  clause. Since 2026-10-04 every licence in the pinned OpenBSD tree is accepted (the user's rule,
+  `.claude/rules/scope-and-stubs.md`). A translation is still a derivative work, so each ported
+  file keeps its original licence block whatever the language; code from outside the tree needs
+  the user's decision.
 
 - The crypto framework (`sys/crypto`, M9b/M9c) is the software driver only: `crypto.c`,
   `cryptosoft.c`, `xform.c`, `criov.c` and the primitives they and WireGuard use. `cryptop_pool`

@@ -1718,7 +1718,9 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
         })
         .collect();
     if !unusual.is_empty() {
-        println!("  files outside the accepted licences (review them; nothing is decided here):");
+        println!(
+            "  files with less common notices (accepted: they are in the pinned tree; name new families in LICENSE):"
+        );
         for (p, f) in unusual {
             println!("    {f}: {}", p.display());
         }
