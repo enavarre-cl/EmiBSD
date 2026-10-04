@@ -5,16 +5,16 @@
 //! `subr_autoconf.rs`.
 //!
 //! GENERIC lines present: `mainbus0 at root`, `ampintc* at fdt? early 1`, `agtimer* at fdt?`,
-//! `virtio* at fdt?`, `vio* at virtio?`, `pluart* at fdt?`, `plrtc* at fdt?`,
-//! `efi0 at mainbus?`;
+//! `virtio* at fdt?`, `vio* at virtio?`, `vioblk* at virtio?`, `pluart* at fdt?`,
+//! `plrtc* at fdt?`, `efi0 at mainbus?`;
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
 //! The `fdt` attribute (`files.arm64`: `define fdt {[early = 0]}`) is carried by `mainbus`
 //! and `simplebus`; `simplebus` is not ported, so mainbus is the only parent here. Every
 //! other GENERIC line waits for its driver (`cpu0 at mainbus?`, `smbios0 at efi?`,
-//! `simplebus* at fdt?`, the devices at `virtio?` but `vio*`, `virtio* at pci?` with a host
-//! bridge driver, ...),
+//! `simplebus* at fdt?`, the devices at `virtio?` but `vio*` and `vioblk*`, `virtio* at pci?`
+//! with a host bridge driver, ...),
 //! as do the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s layout:
 //! attachment, driver, unit, state, locators, flags, parents (indices into `CFDATA`), the
 //! start of its locator names and the first unit a starred entry may take.
@@ -28,6 +28,7 @@ use crate::dev::fdt::pluart_fdt::PLUART_FDT_CA;
 use crate::dev::fdt::virtio_mmio::VIRTIO_MMIO_CA;
 use crate::dev::ic::pluart::PLUART_CD;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
+use crate::dev::pv::vioblk::{VIOBLK_CA, VIOBLK_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
 use crate::kern::tty_pty::ptyattach;
@@ -57,7 +58,7 @@ const LOC_EARLY_0: &[i64] = &[0];
 const PV_VIRTIO: &[i16] = &[3];
 
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 8] = [
+pub static CFDATA: [Cfdata; 9] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -108,7 +109,19 @@ pub static CFDATA: [Cfdata; 8] = [
     ),
     // 4: vio* at virtio?
     Cfdata::new(&VIO_CA, &VIO_CD, 0, FSTATE_STAR, &[], 0, PV_VIRTIO, 0, 0),
-    // 5: pluart* at fdt?
+    // 5: vioblk* at virtio?
+    Cfdata::new(
+        &VIOBLK_CA,
+        &VIOBLK_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_VIRTIO,
+        0,
+        0,
+    ),
+    // 6: pluart* at fdt?
     Cfdata::new(
         &PLUART_FDT_CA,
         &PLUART_CD,
@@ -120,7 +133,7 @@ pub static CFDATA: [Cfdata; 8] = [
         0,
         0,
     ),
-    // 6: plrtc* at fdt?
+    // 7: plrtc* at fdt?
     Cfdata::new(
         &PLRTC_CA,
         &PLRTC_CD,
@@ -132,7 +145,7 @@ pub static CFDATA: [Cfdata; 8] = [
         0,
         0,
     ),
-    // 7: efi0 at mainbus?
+    // 8: efi0 at mainbus?
     Cfdata::new(
         &EFI_CA,
         &EFI_CD,

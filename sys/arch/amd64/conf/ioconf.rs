@@ -5,17 +5,17 @@
 //! `subr_autoconf.rs`.
 //!
 //! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?`, `pci* at mainbus0`,
-//! `virtio* at pci?`, `vio* at virtio?`, `isa0 at mainbus0`, `com0 at isa? port 0x3f8 irq 4`,
-//! `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8 irq 5`, `com3 at isa? disable
-//! port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`,
-//! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
-//! `pseudo-device pflow`.
+//! `virtio* at pci?`, `vio* at virtio?`, `vioblk* at virtio?`, `isa0 at mainbus0`,
+//! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
+//! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
+//! `pseudo-device pty 16`, `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`,
+//! `pseudo-device pfsync`, `pseudo-device pflow`.
 //! GENERIC lines left out until their drivers exist: `bios0`, `ioapic*`, `vmm0`, `pvbus0`,
 //! `ipmi0` and `efifb0` at mainbus, and everything below them; `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`, `vga0`,
 //! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
 //! (`pchb*`, `ppb*`, `pcib*`, the network and storage drivers, ...), `pci*` at `ppb?` and
-//! `pchb?`, and every device at `virtio?` but `vio*`;
+//! `pchb?`, and every device at `virtio?` but `vio*` and `vioblk*`;
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
 //! layout: attachment, driver, unit, state, locators, flags, parents (indices into
 //! `CFDATA`), the start of its locator names and the first unit a starred entry may take.
@@ -28,6 +28,7 @@ use crate::dev::isa::isa::{ISA_CA, ISA_CD};
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
+use crate::dev::pv::vioblk::{VIOBLK_CA, VIOBLK_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
 use crate::kern::tty_pty::ptyattach;
@@ -58,8 +59,8 @@ const LOC_PCI_UNK: &[i64] = &[-1, -1];
 /// `pv[]` for children of `virtio*` (`cfdata[3]`).
 const PV_VIRTIO: &[i16] = &[3];
 
-/// `pv[]` for children of `isa0` (`cfdata[5]`).
-const PV_ISA: &[i16] = &[5];
+/// `pv[]` for children of `isa0` (`cfdata[6]`).
+const PV_ISA: &[i16] = &[6];
 
 /// `loc[]` of `com0 at isa? port 0x3f8 irq 4`: `port`, `size`, `iomem`, `iosiz`, `irq`,
 /// `drq`, `drq2`, the unset ones at their `files.isa` defaults.
@@ -72,7 +73,7 @@ const LOC_COM2: &[i64] = &[0x3e8, 0, -1, 0, 5, -1, -1];
 const LOC_COM3: &[i64] = &[0x2e8, 0, -1, 0, 9, -1, -1];
 
 /// `cfdata[]`.
-pub static CFDATA: [Cfdata; 10] = [
+pub static CFDATA: [Cfdata; 11] = [
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -123,7 +124,19 @@ pub static CFDATA: [Cfdata; 10] = [
     ),
     // 4: vio* at virtio?
     Cfdata::new(&VIO_CA, &VIO_CD, 0, FSTATE_STAR, &[], 0, PV_VIRTIO, 0, 0),
-    // 5: isa0 at mainbus0
+    // 5: vioblk* at virtio?
+    Cfdata::new(
+        &VIOBLK_CA,
+        &VIOBLK_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_VIRTIO,
+        0,
+        0,
+    ),
+    // 6: isa0 at mainbus0
     Cfdata::new(
         &ISA_CA,
         &ISA_CD,
@@ -135,7 +148,7 @@ pub static CFDATA: [Cfdata; 10] = [
         0,
         0,
     ),
-    // 6: com0 at isa? port 0x3f8 irq 4
+    // 7: com0 at isa? port 0x3f8 irq 4
     Cfdata::new(
         &COM_ISA_CA,
         &COM_CD,
@@ -147,7 +160,7 @@ pub static CFDATA: [Cfdata; 10] = [
         0,
         0,
     ),
-    // 7: com1 at isa? port 0x2f8 irq 3
+    // 8: com1 at isa? port 0x2f8 irq 3
     Cfdata::new(
         &COM_ISA_CA,
         &COM_CD,
@@ -159,7 +172,7 @@ pub static CFDATA: [Cfdata; 10] = [
         0,
         0,
     ),
-    // 8: com2 at isa? port 0x3e8 irq 5
+    // 9: com2 at isa? port 0x3e8 irq 5
     Cfdata::new(
         &COM_ISA_CA,
         &COM_CD,
@@ -171,7 +184,7 @@ pub static CFDATA: [Cfdata; 10] = [
         0,
         0,
     ),
-    // 9: com3 at isa? disable port 0x2e8 irq 9
+    // 10: com3 at isa? disable port 0x2e8 irq 9
     Cfdata::new(
         &COM_ISA_CA,
         &COM_CD,

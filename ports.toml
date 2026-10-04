@@ -5496,3 +5496,21 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ae5370bccab79de3b0c8e69fdeadc2f5297766a0"
 deps = ["sys/scsi/scsiconf.h", "sys/scsi/scsi_all.h", "sys/scsi/scsi_base.c", "sys/scsi/scsiconf.c", "sys/sys/scsiio.h", "sys/sys/ataio.h", "sys/sys/ioctl.h", "sys/sys/fcntl.h"]
 notes = "M10a: license: Hannum BSD-4 plus HD Associates' 'Berkeley style copyright' line, both kept whole (accepted by the user 2026-10-04); all of it: scsi_readsafe_cmd (a const [bool; 256] built from the opcode list), scsi_ioc_cmd, scsi_ioc_ata_cmd (ATA PASS-THROUGH(12)), scsi_do_ioctl(link, cmd: u64, addr: &mut [u8], flag) -> Result; addr is d_ioctl's kernel copy as a byte slice, requests read and written back with ioctl_arg/ioctl_ret, the adapter's ioctl gets addr.as_mut_ptr(); dma_alloc(9) not ported: data buffers from malloc(9) via scsiconf.rs's DmaBuf, freed after scsi_xs_put; SCSIDEBUG not configured: SC_DEBUG/SC_DEBUG_SENSE are comments, SCIOCDEBUG sets SDEV_DB1..4 from the level's bits as in C; the DIAGNOSTIC impossible-command panic is behind the diagnostic feature; host tests (read-safe table, FWRITE checks, SCIOCIDENTIFY, SCIOCDEBUG, raw commands with status and sense, ATA pass-through, length checks) against a completing fake adapter"
+
+[[file]]
+c = "sys/dev/pv/vioblkreg.h"
+rust = "sys/dev/pv/vioblkreg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7c3140a1d15d61f17f82a4cb6ea7de9924d1ddd4"
+deps = ["sys/dev/pv/virtioreg.h"]
+notes = "M10a: VIRTIO_BLK_CONFIG_* (i32 offsets for virtio_read_device_config_*), VIRTIO_BLK_F_* (u64), VIRTIO_BLK_T_* (u32), VIRTIO_BLK_S_* (u8), VIRTIO_BLK_ID_BYTES, VIRTIO_BLK_SECTOR_SIZE, struct virtio_blk_req_hdr (repr(C, packed), `type` is r#type, CPU byte order as in C); reference-backed test of every define (assert_complete on VIRTIO_BLK_)"
+
+[[file]]
+c = "sys/dev/pv/vioblk.c"
+rust = "sys/dev/pv/vioblk.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "11a299e37820cfc03f782d859f527fc6d6e3d2a4"
+deps = ["sys/dev/pv/vioblkreg.h", "sys/dev/pv/virtio.c", "sys/dev/pv/virtiovar.h", "sys/dev/pv/virtioreg.h", "sys/scsi/scsi_all.h", "sys/scsi/scsi_disk.h", "sys/scsi/scsiconf.h", "sys/scsi/scsiconf.c", "sys/scsi/scsi_base.c", "sys/kern/subr_autoconf.c"]
+notes = "M10a: the whole driver, no stubs: VIOBLK_DONE, SEG_MAX, ALLOC_SEGS, vioblk_feature_names (empty without VIRTIO_DEBUG), struct virtio_blk_req (repr(C) in DMA memory, the C's layout so VR_DMA_END = 18; Cells, vr_status read volatile; vr_xs/vr_cmdsts/vr_payload Options), struct vioblk_softc (repr(C), Softc; sc_nreqs usize, sc_notify_on_empty bool), vioblk_ca/vioblk_cd/vioblk_switch, vioblk_match, vioblk_attach (feature negotiation, SIZE_MAX/SEG_MAX checks, capacity, virtqueue, iopool, request slots, scsibus_attach_args, virtio_attach_finish, config_found with scsiprint), vioblk_req_get/put (unsafe fns over the iopool cookie), vioblk_vq_done, vioblk_vq_done1, vioblk_reset, vioblk_scsi_cmd (dispatch split into vioblk_scsi_op returning VioblkCmd, CDB decoding by cmdlen in vioblk_rw_decode as the C does; SCSI_POLL polls virtio_poll_intr 15 s and resets), vioblk_scsi_inq/capacity/capacity16 (replies built by vioblk_inquiry_data, vioblk_read_cap_data, vioblk_read_cap_data_16; the bcopy is vioblk_copy_reply), vioblk_scsi_done, vioblk_alloc_reqs (contiguity check through volatile reads of vq_desc, an index past the table counts as not contiguous). This revision has no vioblk_minphys/dev_probe/dev_free. Host tests (slot layout, free list, opcode dispatch, CDB decoding, INQUIRY and READ CAPACITY replies, faked commands through vioblk_scsi_cmd); QEMU: vioblk0 at virtio1 (amd64 virtio-blk-pci), vioblk0 at virtio29 and vioblk1 at virtio31 (arm64 virtio-mmio), boots reach login:"
