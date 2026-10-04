@@ -69,8 +69,7 @@
 //!   ([`SysctlPlain`]). `int *valp` is `&AtomicI32`, the C's atomic operations on it are the
 //!   atomic's; a C local passed by address is an `AtomicI32` read back with `into_inner`.
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
-//!   `ENOSYS`: `watchdog` (`kern_watchdog.c`), `clockintr`, `timecounter`
-//!   (`sysctl_tc`), `proc_vmmap` after its checks
+//!   `ENOSYS`: `watchdog` (`kern_watchdog.c`), `clockintr`, `proc_vmmap` after its checks
 //!   (`fill_vmmap`); `hw.model` (`cpu_model`, `identcpu.c`/arm64 `cpu.c`),
 //!   `sensors` (`kern_sensors.c`),
 //!   `setperf`/`perfpolicy` (`sched_bsd.c`), `smt`/`blockcpu` (`kern_sched.c`); the top-level
@@ -138,7 +137,7 @@ use crate::kern::kern_rwlock::{
 use crate::kern::kern_sched::{cpu_is_online, sysctl_hwncpuonline};
 use crate::kern::kern_sig::NOSUIDCOREDUMP;
 use crate::kern::kern_synch::{refcnt_rele_wake, refcnt_take};
-use crate::kern::kern_tc::{microboottime, nanoboottime, nanotime, tc_setrealtimeclock};
+use crate::kern::kern_tc::{microboottime, nanoboottime, nanotime, sysctl_tc, tc_setrealtimeclock};
 use crate::kern::kern_timeout::timeout_sysctl;
 use crate::kern::sched_bsd;
 use crate::kern::subr_autoconf::AUTOCONF_SERIAL;
@@ -556,7 +555,7 @@ fn kern_sysctl_dirs_locked(
         )),
         KERN_TTY => sysctl_tty(name, oldp, oldlenp, newp, newlen),
         // KERN_PROF: GPROF and DDBPROF are not configured.
-        KERN_TIMECOUNTER => Err(unported!("kern.timecounter: sysctl_tc (kern_tc.c)")),
+        KERN_TIMECOUNTER => sysctl_tc(name, oldp, oldlenp, newp, newlen),
         // KERN_WITNESSWATCH, KERN_WITNESS: WITNESS is not configured.
         _ => Err(Errno::ENOTDIR), // overloaded
     }

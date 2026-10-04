@@ -32,9 +32,8 @@
 //! Status: `wip`. Milestone M5 ports the dummy timecounter, the timehands ring, every time
 //! reader, `tc_init`, `tc_reset_quality`, `tc_getfrequency`/`tc_getprecision`,
 //! `tc_setrealtimeclock`, `tc_setclock`, `tc_update_timekeep`, `tc_windup`, `tc_ticktock`,
-//! `inittimecounter`, `ntp_update_second`, `tc_adjfreq` and `tc_adjtime`. The sysctl side
-//! (`sysctl_tc`, `sysctl_tc_hardware`, `sysctl_tc_choice`, `tc_vars`) is not here yet:
-//! `kern_sysctl.rs` reports `kern.timecounter`.
+//! `inittimecounter`, `ntp_update_second`, `tc_adjfreq` and `tc_adjtime`; the TSC port adds
+//! the sysctl side (`sysctl_tc`, `sysctl_tc_hardware`, `sysctl_tc_choice`, `tc_vars`).
 //!
 //! ## Deviations
 //! - `tc_lock` is an rwlock (`kern_rwlock.c`, M5-b): the paths that take it
@@ -45,10 +44,14 @@
 //!   `tc_update_timekeep` returns at its null check before then, as the C does.
 //! - `getuptime`/`gettime` take the `__LP64__` branch (both architectures are LP64).
 //! - `membar_consumer`/`membar_producer` are `fence(Acquire)`/`fence(Release)`.
+//! - `sysctl_tc_choice`'s `malloc(M_TEMP)` buffer is a `Vec` (Rust's allocator is malloc(9)
+//!   with `M_TEMP`); `sysctl_tc_choice` drops the unused `newlen` argument.
 
+use alloc::vec;
 use core::cell::Cell;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicPtr, AtomicU32, Ordering, fence};
+use libkern::{strlcat, strlcpy};
 
 use crate::conf::param::{HZ, TICK_NSEC};
 use crate::dev::rnd::enqueue_randomness;
@@ -56,12 +59,18 @@ use crate::kern::kern_lock::{mtx_enter, mtx_enter_try, mtx_leave};
 use crate::kern::kern_rwlock::{
     rw_assert_anylock, rw_assert_wrlock, rw_enter_write, rw_exit_write,
 };
+use crate::kern::kern_sysctl::{sysctl_bounded_arr, sysctl_rdstring, sysctl_string};
 use crate::kern::kern_timeout::timeout_adjust_ticks;
-use crate::kern::subr_prf::{log, panic, printf};
+use crate::kern::subr_prf::{log, panic, printf, snprintf};
 use crate::machine::intr::IPL_CLOCK;
+use crate::sys::errno::Errno;
 use crate::sys::mutex::{Mutex, mutex_assert_locked};
 use crate::sys::queue::SlistHead;
 use crate::sys::rwlock::Rwlock;
+use crate::sys::sysctl::{
+    KERN_TIMECOUNTER_CHOICE, KERN_TIMECOUNTER_HARDWARE, KERN_TIMECOUNTER_TICK,
+    KERN_TIMECOUNTER_TIMESTEPWARNINGS, SysctlBoundedArgs,
+};
 use crate::sys::syslog::LOG_INFO;
 use crate::sys::time::{
     Bintime, Timespec, Timeval, bintime_to_nsec, bintime_to_timespec, bintime_to_timeval,
@@ -718,6 +727,94 @@ pub fn tc_ticktock() {
     COUNT.store(0, Ordering::Relaxed);
     tc_windup(None, None, None);
     mtx_leave(&WINDUP_MTX);
+}
+
+// !SMALL_KERNEL
+
+/// `sysctl_tc_hardware`: report or change the active timecounter hardware.
+pub fn sysctl_tc_hardware(
+    oldp: usize,
+    oldlenp: &mut usize,
+    newp: usize,
+    newlen: usize,
+) -> Result<(), Errno> {
+    let tc = timecounter();
+    let mut newname = [0u8; 32];
+    strlcpy(&mut newname, tc.tc_name.as_bytes());
+
+    sysctl_string(oldp, oldlenp, newp, newlen, &mut newname)?;
+    let len = newname
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(newname.len());
+    let newname = &newname[..len];
+    if newname == tc.tc_name.as_bytes() {
+        return Ok(());
+    }
+    for newtc in TC_LIST.0.iter() {
+        if newname != newtc.tc_name.as_bytes() {
+            continue;
+        }
+
+        // Warm up new timecounter.
+        let _ = newtc.get_timecount();
+        let _ = newtc.get_timecount();
+
+        rw_enter_write(&TC_LOCK);
+        TIMECOUNTER.store(ptr::from_ref(newtc).cast_mut(), Ordering::Relaxed);
+        rw_exit_write(&TC_LOCK);
+
+        return Ok(());
+    }
+    Err(Errno::EINVAL)
+}
+
+/// `sysctl_tc_choice`: report the registered timecounters as `name(quality)`, space
+/// separated.
+pub fn sysctl_tc_choice(oldp: usize, oldlenp: &mut usize, newp: usize) -> Result<(), Errno> {
+    if TC_LIST.0.is_empty() {
+        return sysctl_rdstring(oldp, oldlenp, newp, b"");
+    }
+
+    let mut buf = [0u8; 32];
+    let maxlen = TC_LIST.0.iter().count() * buf.len();
+    // malloc(maxlen, M_TEMP, M_WAITOK): Rust's allocator is malloc(9) with M_TEMP.
+    let mut choices = vec![0u8; maxlen];
+    let mut spc = "";
+    for tc in TC_LIST.0.iter() {
+        snprintf(
+            &mut buf,
+            format_args!("{spc}{}({})", tc.tc_name, tc.tc_quality.get()),
+        );
+        spc = " ";
+        strlcat(&mut choices, &buf);
+    }
+    sysctl_rdstring(oldp, oldlenp, newp, &choices)
+}
+
+/// `tc_vars`.
+static TC_VARS: [SysctlBoundedArgs; 2] = [
+    SysctlBoundedArgs::readonly(KERN_TIMECOUNTER_TICK, &TC_TICK),
+    SysctlBoundedArgs::new(KERN_TIMECOUNTER_TIMESTEPWARNINGS, &TIMESTEPWARNINGS, 0, 1),
+];
+
+/// `sysctl_tc`: return timecounter-related information.
+pub fn sysctl_tc(
+    name: &[i32],
+    oldp: usize,
+    oldlenp: &mut usize,
+    newp: usize,
+    newlen: usize,
+) -> Result<(), Errno> {
+    let [what] = name else {
+        return Err(Errno::ENOTDIR);
+    };
+
+    match *what {
+        KERN_TIMECOUNTER_HARDWARE => sysctl_tc_hardware(oldp, oldlenp, newp, newlen),
+        KERN_TIMECOUNTER_CHOICE => sysctl_tc_choice(oldp, oldlenp, newp),
+        _ => sysctl_bounded_arr(&TC_VARS, name, oldp, oldlenp, newp, newlen),
+    }
 }
 
 /// `inittimecounter`.

@@ -56,6 +56,58 @@ fn a_counter_read_a_period_after_the_windup_steps_uptime_back() {
     assert!(lost.abs_diff(period_minus_0x20) <= 2, "{lost} ns back");
 }
 
+/// amd64's TSC timecounter (`tsc.c`): the low 32 bits of the TSC (`tc_counter_mask` `~0u`),
+/// here at the 1000.68 MHz QEMU's TCG measures. It wraps every 2^32 counts, 4.29 s.
+static TSC32_COUNT: AtomicU32 = AtomicU32::new(0);
+
+fn tsc32_get(_tc: &Timecounter) -> u32 {
+    TSC32_COUNT.load(Ordering::Relaxed)
+}
+
+const TSC32_FREQ: u64 = 1_000_680_000;
+
+static TSC32: Timecounter = Timecounter::new(tsc32_get, !0u32, TSC32_FREQ, "tsc32", 2000, 0);
+
+/// A timehands of its own over [`TSC32`], outside the global ring.
+static TSC32_TH: Timehands = Timehands::new(&TSC32, 0, 1, &TSC32_TH);
+
+/// `binuptime` over [`TSC32_TH`] with the counter at `count`, in nanoseconds.
+fn tsc32_uptime(count: u32) -> u64 {
+    TSC32_COUNT.store(count, Ordering::Relaxed);
+    let th = &TSC32_TH;
+    let bt = timecount_to_bintime(tc_delta(th), th.th_scale.get());
+    bintime_to_nsec(&bintimeadd(&bt, &th.th_offset.get()))
+}
+
+#[test]
+fn the_tsc_counter_read_long_after_the_windup_does_not_step_back() {
+    // The scenario of the i8254 test above: the windup is held off for more than the
+    // i8254's 27.46 ms period. The TSC's 32-bit counter covers 4.29 s, so the readings keep
+    // growing, here across the counter's own wrap from 0xffffffff to 0.
+    let scale = ((1u64 << 63) / TSC32_FREQ).wrapping_mul(2);
+    TSC32_TH.th_scale.set(scale);
+    TSC32_TH.th_offset.set(Bintime::new(5, 0));
+    let windup = 0xffff_0000u32; // the last windup read this
+    TSC32_TH.th_offset_count.set(windup);
+
+    let counts = |ns: u64| (ns * TSC32_FREQ / 1_000_000_000) as u32;
+    let i8254_period_ns = (0x8000u64 * 1_000_000_000) / 1_193_182;
+    let mut last = tsc32_uptime(windup);
+    for ns in [
+        i8254_period_ns - 1000,
+        i8254_period_ns + 1000,
+        2 * i8254_period_ns,
+        100_000_000,
+        1_000_000_000,
+        4_000_000_000,
+    ] {
+        let now = tsc32_uptime(windup.wrapping_add(counts(ns)));
+        assert!(now > last, "{ns} ns after the windup: {last} then {now}");
+        assert!((now - 5_000_000_000).abs_diff(ns) <= 2, "{ns}: {now}");
+        last = now;
+    }
+}
+
 #[test]
 fn readers_are_monotonic_on_the_dummy_counter() {
     let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
