@@ -44,9 +44,15 @@
 //!   off, and its 15-bit counter wraps every 27 ms. `docs/ARCHITECTURE.md`.
 //! - `tsc_delay` treats a negative `usecs` as 0 (the C converts it to a huge `uint64_t`).
 //! - `tsc_rdtsc` is a `StaticCell<fn() -> u64>` written by `tsc_identify` on the boot CPU.
-//! - The `MULTIPROCESSOR` synchronisation test is behind feature `multiprocessor`, unused
-//!   until the APs start (M11b): `struct tsc_test_status` keeps its cache-line layout with
+//! - The `MULTIPROCESSOR` synchronisation test is behind feature `multiprocessor` and runs
+//!   from `cpu.rs` as in C (M11b): `struct tsc_test_status` keeps its cache-line layout with
 //!   atomics for the `volatile` and barrier-protected members. `TSC_DEBUG` is not configured.
+//! - Under features `multiprocessor` and `qemu` only (not in C): `cpu_start_secondary` prints
+//!   one verdict line per application processor through `tsc_report_verdict`, `tsc:
+//!   cpu0/<ap>: sync test passed` (the C is silent on success) or `... sync test not run:
+//!   <why>`; a failure is `tsc_report_test_results`'s own line. The smoke tests expect the
+//!   line, not a verdict: QEMU's TCG reads every vCPU's TSC off one host clock, kept
+//!   monotonic across them, so the test passes there; real hardware may not.
 
 use core::ptr;
 use core::sync::atomic::{AtomicI32, AtomicU64, Ordering};
@@ -620,6 +626,38 @@ mod mp {
                 "tsc: cpu0/{}: sync test failed\n",
                 Str(ap_name())
             ));
+        }
+    }
+
+    /// Feature `qemu` (not in C): whether `tsc_test_sync_bp` is about to run the test, i.e.
+    /// would not return at once. `cpu_start_secondary` reads it before the test, for
+    /// [`tsc_report_verdict`].
+    #[cfg(feature = "qemu")]
+    pub fn tsc_sync_testable() -> bool {
+        TSC_IS_INVARIANT.load(Ordering::Relaxed) != 0
+            && TSC_IS_SYNCHRONIZED.load(Ordering::Relaxed) != 0
+    }
+
+    /// Feature `qemu` (not in C): one line per application processor for the smoke tests,
+    /// whatever the outcome. A failed test has already printed `tsc_report_test_results`'s
+    /// `tsc: cpu0/<ap>: sync test failed`; a passed one is silent in C, so this says so in
+    /// the same words; an untested one says why. `tested` is [`tsc_sync_testable`] from
+    /// before the test.
+    #[cfg(feature = "qemu")]
+    pub fn tsc_report_verdict(ap: &[u8], tested: bool) {
+        if !tested {
+            let why = if TSC_IS_INVARIANT.load(Ordering::Relaxed) == 0 {
+                "the TSC is not invariant"
+            } else {
+                "an earlier CPU failed it"
+            };
+            printf(format_args!(
+                "tsc: cpu0/{}: sync test not run: {}\n",
+                Str(ap),
+                why
+            ));
+        } else if TSC_IS_SYNCHRONIZED.load(Ordering::Relaxed) != 0 {
+            printf(format_args!("tsc: cpu0/{}: sync test passed\n", Str(ap)));
         }
     }
 

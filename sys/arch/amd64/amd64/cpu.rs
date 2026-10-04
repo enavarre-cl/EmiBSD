@@ -96,11 +96,11 @@
 //!   (x2APIC mode when the boot CPU runs it, the CPU's own GDT, `CR3` = the kernel pmap,
 //!   `CR0_DEFAULT`, `EFER.NXE` when `CPUID` has it, the idle pcb's stack) and loads the IDT
 //!   first, before anything can fault: the C loads it in `cpu_hatch`, after `CPUF_GO`.
-//! - The TSC synchronisation test (`tsc_test_sync_bp`/`tsc_test_sync_ap`, which `tsc.rs`
-//!   has) is reported where `cpu_start_secondary`, `cpu_boot_secondary`, `cpu_hatch` and
-//!   `cpu_init` would run it: M11b. `cpu_ucode_apply`, `cpu_tsx_disable` and the AP's
-//!   `cpu_fix_msrs` are reported too; `HIBERNATE`, `NPVBUS` and the memory range `initAP`
-//!   are not configured. `mp_verbose` is off.
+//! - The TSC synchronisation test (`tsc_test_sync_bp`/`tsc_test_sync_ap`) runs where the C
+//!   runs it (M11b); under feature `qemu` `cpu_start_secondary` then prints a verdict line
+//!   per application processor (`tsc.rs`'s deviations). `cpu_ucode_apply`, `cpu_tsx_disable`
+//!   and the AP's `cpu_fix_msrs` are reported; `HIBERNATE`, `NPVBUS` and the memory range
+//!   `initAP` are not configured. `mp_verbose` is off.
 //! - `cpu_boot_secondary_processors` ends with `x86_ipi_selftest` under feature `qemu`
 //!   (not in the C, `ipi.rs`).
 //! - `cpu_init` sets `CR4_DEFAULT` (with `CR4_OSFXSR`: user SSE) and fills
@@ -151,6 +151,8 @@ use crate::kern::subr_prf::{Str, panic, printf};
 use crate::sys::device::{CD_COCOVM, CfMatch, Cfattach, Cfdriver, DV_DULL, Device, Softc};
 use crate::unported;
 
+#[cfg(all(feature = "multiprocessor", feature = "qemu"))]
+use crate::arch::amd64::amd64::tsc::{tsc_report_verdict, tsc_sync_testable};
 #[cfg(feature = "multiprocessor")]
 use {
     crate::arch::amd64::amd64::autoconf::COLD,
@@ -163,9 +165,10 @@ use {
     crate::arch::amd64::amd64::locore::lgdt,
     crate::arch::amd64::amd64::machdep::{cpu_init_idt, cpu_set_vendor, delay, setregion},
     crate::arch::amd64::amd64::pmap::pmap_kernel,
+    crate::arch::amd64::amd64::tsc::{tsc_test_sync_ap, tsc_test_sync_bp},
     crate::arch::amd64::include::cpu::{
         CPUF_AP, CPUF_GO, CPUF_IDENTIFIED, CPUF_IDENTIFY, CPUF_RUNNING, cpu_is_primary,
-        cpu_start_cleanup, cpu_startup_ci,
+        cpu_start_cleanup, cpu_startup_ci, curcpu,
     },
     crate::arch::amd64::include::cpufunc::{
         intr_disable, intr_enable, intr_restore, lcr0, lcr3, lcr8, lldt, wbinvd,
@@ -511,7 +514,7 @@ pub fn cpu_init(ci: &CpuInfo) {
 
         // Check if TSC is synchronized.
         if COLD.load(Ordering::Relaxed) && !cpu_is_primary(ci) {
-            let _ = unported!("tsc_test_sync_ap (cpu_init, M11b)");
+            tsc_test_sync_ap(ci);
         }
     }
 }
@@ -590,9 +593,13 @@ pub fn cpu_start_secondary(ci: &'static CpuInfo) {
         // effects. Disable interrupts to try to rule out external interference.
         let s = intr_disable();
         wbinvd();
-        let _ = unported!("tsc_test_sync_bp (cpu_start_secondary, M11b)");
+        #[cfg(feature = "qemu")]
+        let tested = tsc_sync_testable();
+        tsc_test_sync_bp(curcpu());
         // SAFETY: `s` is this CPU's saved flags.
         unsafe { intr_restore(s) };
+        #[cfg(feature = "qemu")]
+        tsc_report_verdict(&xname, tested);
     }
 
     cpu_start_cleanup(ci);
@@ -618,7 +625,7 @@ pub fn cpu_boot_secondary(ci: &CpuInfo) {
         // Test if TSCs are synchronized again.
         let s = intr_disable();
         wbinvd();
-        let _ = unported!("tsc_test_sync_bp (cpu_boot_secondary, M11b)");
+        tsc_test_sync_bp(curcpu());
         // SAFETY: `s` is this CPU's saved flags.
         unsafe { intr_restore(s) };
     }
@@ -678,7 +685,7 @@ extern "C" fn cpu_hatch(v: *const CpuInfo) -> ! {
     // Test if our TSC is synchronized for the first time. Note that interrupts are off at
     // this point.
     wbinvd();
-    let _ = unported!("tsc_test_sync_ap (cpu_hatch, M11b)");
+    tsc_test_sync_ap(ci);
 
     while ci.ci_flags.load(Ordering::Acquire) & CPUF_GO == 0 {
         delay(10);
