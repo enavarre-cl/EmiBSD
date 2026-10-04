@@ -16,6 +16,10 @@ paths:
 - `README.md`'s `Status:` line names the last milestone met and the one under way. It is
   updated in the same commit that marks a milestone (or sub-milestone) met in `docs/ROADMAP.md`
   and `docs/STATUS.md` (the user's rule of 2026-10-04, after it lagged at M5 while M9 closed).
+- `README.md`'s sections "Status" (the milestone table), "What works today" (the smoke list and
+  the serial excerpt) and "Porting progress" (`cargo xtask ports status` totals) are updated in
+  that same commit, whenever a milestone or sub-milestone closes (the user's rule of
+  2026-10-04). Real data only: numbers from the tool, serial lines from a smoke log.
 - `docs/ROADMAP.md`: every milestone has a mechanical exit criterion (a command that passes or a
   serial line that appears). Editing a milestone keeps that property.
 - `docs/C_TO_RUST.md`: one row per idiom, columns C | Rust | Why. Add a row when an idiom is
