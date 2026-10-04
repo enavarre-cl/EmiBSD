@@ -29,7 +29,10 @@ The kernel is ported incrementally; most of OpenBSD is not here yet. These rules
   kernel and userland, Sun's SunSoft fdlibm notice, Carnegie Mellon's ALTQ notice
   (`net/hfsc.h`) and M.I.T.'s notice (`net/if_vlan_var.h`) or, accepted on 2026-10-03 for M10, the notice of
   Julian Elischer / TRW Financial Systems in `scsi/` (`sd.c`, `scsiconf.c`, `scsi_all.h`, ...,
-  kept whole in each file): stop, tell the user, record `status = "skipped"`,
+  kept whole in each file), or, accepted on 2026-10-04 for M10a, the Open Software Foundation
+  notice (Grenoble 1990, `scsi/scsi_disk.h`) and the SCIOC* files without full licence text
+  (`sys/scsiio.h`, none; `scsi/scsi_ioctl.c`, HD Associates' "Berkeley style copyright" line
+  next to Hannum's BSD-4), each notice kept whole: stop, tell the user, record `status = "skipped"`,
   `notes = "license: <which>"`. Do not port it. A port in another language is still a derivative
   work, so a skipped file's license is not escaped by rewriting it; route around it (use what a
   permissive file defines, write interfaces from the manual page) or ask.

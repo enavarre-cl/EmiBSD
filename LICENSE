@@ -27,7 +27,8 @@ BSD-4-Clause (its advertising clause included), MIT, the Carnegie Mellon
 license (sys_pipe.c, pipe.h), the zlib license (sys/lib/libz) and the
 IPsec notice of Ioannidis, Keromytis, Provos and Hallqvist (sys/netinet and
 sys/crypto), Carnegie Mellon's ALTQ notice and M.I.T.'s notice (sys/net), the
-notice of Julian Elischer / TRW Financial Systems (sys/scsi); files
+notice of Julian Elischer / TRW Financial Systems and the Open Software
+Foundation's notice (sys/scsi); files
 in the public domain keep their public-domain notice. Provenance
 per file is recorded in ports.toml; the upstream commit is recorded in
 reference/PINNED.md. The names of OpenBSD contributors may not be used to
