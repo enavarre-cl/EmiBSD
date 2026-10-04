@@ -22,7 +22,6 @@
 //! to it. A VM that is not done after the timeout, or whose QEMU exits early, fails the run;
 //! both transcripts are printed then. A `--reject` line in either transcript fails the run too.
 
-use std::io::Write;
 use std::net::UdpSocket;
 use std::path::Path;
 use std::process::{Child, ChildStdin, Stdio};
@@ -302,9 +301,7 @@ pub fn smoke2(
             }
             let t = vm.snapshot();
             if let (Some(text), Some(stdin)) = (vm.script.step(&t), vm.stdin.as_mut()) {
-                let sent = stdin
-                    .write_all(text.as_bytes())
-                    .and_then(|()| stdin.flush());
+                let sent = boot::send_paced(stdin, &text);
                 if let Err(e) = sent {
                     failure = Some(format!("vm {}: writing to the serial console: {e}", vm.tag));
                 }

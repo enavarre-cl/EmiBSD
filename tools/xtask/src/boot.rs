@@ -755,8 +755,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
             });
             if let Some(len) = found {
                 if let Some(stdin) = stdin.as_mut() {
-                    stdin.write_all(text.as_bytes())?;
-                    stdin.flush()?;
+                    send_paced(stdin, text)?;
                     println!(
                         "xtask: sent {text:?} after {:.1}s (saw {after:?})",
                         started.elapsed().as_secs_f32()
@@ -893,6 +892,30 @@ pub(crate) fn slurp(mut r: impl Read) -> Vec<u8> {
 }
 
 /// Reads `r` to its end, appending to `into` as the bytes arrive.
+/// Bytes written to a guest's serial console at once by [`send_paced`].
+const SEND_CHUNK: usize = 32;
+
+/// The pause between two chunks of [`send_paced`].
+const SEND_PAUSE: Duration = Duration::from_millis(20);
+
+/// Types `text` on a guest's serial console the way a person or a slow line would: in chunks
+/// of [`SEND_CHUNK`] bytes, [`SEND_PAUSE`] apart. QEMU hands a whole line to the UART at
+/// once, and arm64's pluart(4) keeps only 128 bytes of input until its soft interrupt runs;
+/// when the host is loaded the guest's vCPU may not get there in time, and a long command line
+/// loses its middle (`pluart0: 0 silo overflows, 2 ibuf overflows`). Pacing keeps every smoke
+/// line whole on both archs.
+pub(crate) fn send_paced(out: &mut impl Write, text: &str) -> io::Result<()> {
+    let bytes = text.as_bytes();
+    for (i, chunk) in bytes.chunks(SEND_CHUNK).enumerate() {
+        if i > 0 {
+            thread::sleep(SEND_PAUSE);
+        }
+        out.write_all(chunk)?;
+        out.flush()?;
+    }
+    Ok(())
+}
+
 pub(crate) fn slurp_into(mut r: impl Read, into: &Mutex<Vec<u8>>) {
     let mut buf = [0u8; 4096];
     loop {
