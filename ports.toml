@@ -4575,3 +4575,20 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b41c7e417d47577b7adb937647eefb50fa594cd4"
 notes = "M9d: TCPS_* states; TCPS_HAVE* as const fns; tcp_outflags/tcpstates (C: #ifdef TCPOUTFLAGS/TCPSTATES) always present as statics TCP_OUTFLAGS and TCPSTATES (&[u8] names, no NUL)"
+
+[[file]]
+c = "sys/net/radix.h"
+rust = "sys/net/radix.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "da9babbbf9ea8b8a30d23784bb0d8861c17ad37a"
+notes = "M9d: shares sys/net/radix.rs with radix.c; struct radix_node/radix_mask/radix_node_head #[repr(C)] with Cell<*const> links; the union members side by side"
+
+[[file]]
+c = "sys/net/radix.c"
+rust = "sys/net/radix.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1ba41008c9034fb7389fef725259a9e0653b2050"
+deps = ["sys/net/radix.h", "sys/kern/subr_pool.c"]
+notes = "M9d: radix.h and radix.c share one module; nothing stubbed. Union members side by side (rn_link_dupedkey's bit-0-parent branch writes rn_dupedkey only, unreachable outside offset-0 trees); links are Cell<*const> under an unsafe tree-invariant contract; keys/masks *const u8; rn_walktree takes a closure returning Result<(), Errno>; rn_inithead takes &mut Option<&'static RadixNodeHead> (off in bytes) and returns bool; non-header functions and mask_rnhead/rtmask_pool are private; rn_delete's dead dupedkey_tt dropped. Host tests in sys/net/radix/tests.rs"

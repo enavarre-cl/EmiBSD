@@ -17,6 +17,7 @@ pub mod if_var;
 pub mod if_wg;
 pub mod ifq;
 pub mod netisr;
+pub mod radix;
 pub mod route;
 pub mod rtable;
 pub mod rtsock;
