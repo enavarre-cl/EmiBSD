@@ -177,11 +177,14 @@ The userland is OpenBSD's own C, cross-compiled unmodified (the user's M8 decisi
 (`FILES`, `DIRS`, `LFILES`/`MFILES` links, the kernel headers of `LDIRS`, `<machine/*>`, and of
 the `RDIRS` only `lib/libutil`'s headers and `lib/librpcsvc`'s `rpcgen` output, which libc's YP
 code includes); `lib/csu`; `libc.a` (988 objects on amd64, 989 on arm64), `libutil.a`, `libm.a`
-(259 objects on both; the programs' `-lm`) and `libcompiler_rt.a`; and
+(259 objects on both; the programs' `-lm`), `libkvm.a` (`kvm_getprocs`, `kvm_getfiles`, ...
+over sysctl(2) when no kernel image is named, the way `ps`, `fstat` and `vmstat` use it) and
+`libcompiler_rt.a`; and
 `sbin/init`, `bin/ksh`, `bin/cat`, `bin/echo`, `bin/ls`, `usr.bin/uname`, `sbin/mount`,
 `sbin/mount_ffs`, `libexec/getty`, `usr.bin/login`, `libexec/login_passwd`, the network tools
 `sbin/ifconfig`, `sbin/ping` (with its `ping6` link, setuid root), `sbin/route`, `sbin/pfctl` and
-`sbin/ipsecctl`, and a few more as static PIE executables, the form
+`sbin/ipsecctl`, the diagnostic tools `bin/ps`, `bin/df`, `usr.bin/fstat` (and its `fuser`
+link) and `usr.bin/vmstat`, and a few more as static PIE executables, the form
 OpenBSD's `cc -static` gives `/bin` and `/sbin` (`rcrt0.o` relocates the program itself; no
 `PT_INTERP`).
 
@@ -208,8 +211,8 @@ Workarounds, each printed by the build (flags only; no source is edited):
   program's object directory. `YACC` is OpenBSD's own `usr.bin/yacc`, built for the Mac the first
   time a `.y` is met (`host/bin/yacc`, named by its absolute path, so never macOS's bison-based
   `/usr/bin/yacc`). Its only shim is a force-included `reallocarray(3)`, which macOS's libc lacks.
-- `usr.bin/uname`, `usr.bin/id`, `usr.bin/login`, `libexec/getty` and `libexec/login_passwd`
-  are linked `-static` (their Makefiles are dynamic, as `/usr/bin` and `/usr/libexec` are on
+- `usr.bin/uname`, `usr.bin/id`, `usr.bin/login`, `usr.bin/fstat`, `usr.bin/vmstat`,
+  `libexec/getty` and `libexec/login_passwd` are linked `-static` (their Makefiles are dynamic, as `/usr/bin` and `/usr/libexec` are on
   OpenBSD; there is no `ld.so` yet), as the install media's crunched programs are.
 - A program whose Makefile sets `BINOWN`, `BINGRP` or `BINMODE` (`login_passwd`: root:auth,
   setuid 4555, in `/usr/libexec/auth`, where `lib/libc/gen/auth_subr.c`'s `_PATH_AUTHPROG`

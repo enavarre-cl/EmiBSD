@@ -63,9 +63,9 @@ arch-specific code, set `rust-analyzer.cargo.target` to one of the bare targets 
 
 `just userland` (`cargo xtask userland --arch amd64|arm64`) cross-compiles OpenBSD's own C,
 unmodified, from `reference/openbsd-src`: `/usr/include`, `lib/csu`, `libc.a`, `libutil.a`,
-`libm.a`, `init(8)`, `ksh(1)`, `cat(1)`, `echo(1)`, `ls(1)`, `uname(1)`, `mount(8)`, `getty(8)`,
-`login(1)`, `login_passwd(8)`, `ifconfig(8)`, `ping(8)` (and `ping6`), `route(8)`, `pfctl(8)` and
-`ipsecctl(8)` among others, and the ffs ramdisk image `ramdisk.ffs` (made by
+`libm.a`, `libkvm.a`, `init(8)`, `ksh(1)`, `cat(1)`, `echo(1)`, `ls(1)`, `uname(1)`, `mount(8)`, `getty(8)`,
+`login(1)`, `login_passwd(8)`, `ifconfig(8)`, `ping(8)` (and `ping6`), `route(8)`, `pfctl(8)`,
+`ipsecctl(8)`, `ps(1)`, `df(1)`, `fstat(1)` and `vmstat(8)` among others, and the ffs ramdisk image `ramdisk.ffs` (made by
 OpenBSD's makefs(8) and pwd_mkdb(8), built for the Mac with the same clang, as are rpcgen(1) and
 yacc(1), which `pfctl` and `ipsecctl`'s `parse.y` need), into
 `target/userland/<arch>/`. It is not part of
