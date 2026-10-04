@@ -21,7 +21,7 @@
 
 ## Status
 
-Status: M11a (MP bring-up, four CPUs per VM) met; M11b (MP timekeeping) next.
+Status: M11b (MP timekeeping) met, after M11a (MP bring-up); M11c (ddb on MP) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -43,7 +43,8 @@ Status: M11a (MP bring-up, four CPUs per VM) met; M11b (MP timekeeping) next.
 | M10e | NFS client and server (portmap, mountd, nfsd, mount_nfs, showmount) | met |
 | M10d | ext2fs, ntfs (amd64), fuse | met |
 | M11a | MP bring-up: APs started through Limine, the kernel lock, per-CPU run queues, SMR, percpu and pool caches, IPIs and TLB shootdowns | met |
-| M11b..M11e | SMP: MP timekeeping, ddb on MP, network parallelism, the MP audit | next |
+| M11b | MP timekeeping: the TSC synchronisation test per AP, clock interrupts on every CPU | met |
+| M11c..M11e | SMP: ddb on MP, network parallelism, the MP audit | next |
 | M12 | Devices (audio, USB), in QEMU | next |
 | M13 | Storage, firmware and console | next |
 | M14, M14b | Installable; code and test layout | next |
@@ -89,7 +90,9 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
   and a non-resident file read back (`smoke-ntfs`).
 - Four processors (`-smp 4`) with the `multiprocessor` kernel: the application processors
   start, take IPIs and TLB shootdowns, two kernel threads ping-pong across CPUs, a thread per
-  CPU stresses the pools and the page allocator, and the init self-test passes (`smoke-mp`).
+  CPU stresses the pools and the page allocator, and the init self-test passes; amd64 tests
+  each application processor's TSC against the boot CPU's, and on both archs every CPU runs
+  its own clock interrupts with an uptime that never goes back (`smoke-mp`).
 
 Between two VMs on a private link (`cargo xtask smoke2`):
 
@@ -142,16 +145,21 @@ m10d-fuse-42
 m10d-fuse-sub-42
 ```
 
-And from `smoke-mp`, the `multiprocessor` kernel with `-smp 4` on amd64 (trimmed):
+And from `smoke-mp`, the `multiprocessor` kernel with `-smp 4` on amd64 (trimmed; the last
+two lines come from its `selftest=mpstress` boot):
 
 ```
 bsd: 4 processors, boot processor hwid 0x0
 cpu1 at mainbus0: apid 1 (application processor)
+tsc: cpu0/cpu1: sync test passed
 cpu3 at mainbus0: apid 3 (application processor)
+tsc: cpu0/cpu3: sync test passed
 x86_ipi_selftest: X86_IPI_NOP taken by 3 cpus, tlb shootdowns acknowledged
 selftest: 4 cpus running
-selftest: mpstress pool ok (4 cpus, 432000 gets, 431588 through the per-cpu caches, 71904 items exchanged between threads, 0 PR_NOWAIT refused, 29 pages reclaimed, 251 ms)
-selftest: mpstress pmemrange ok (4 cpus, 14400 page lists, 88389 pages, 0 UVM_PLA_NOWAIT refused, 95995 pages free before and after; 96108 free at the start, 96077 at the end)
+selftest: cpu1 clockintr: 20 uptime checks, 0 behind
+selftest: clockintr on 4 cpus ok, uptime monotonic on each
+selftest: mpstress pool ok (4 cpus, 432000 gets, 431592 through the per-cpu caches, 71904 items exchanged between threads, 0 PR_NOWAIT refused, 30 pages reclaimed, 485 ms)
+selftest: mpstress pmemrange ok (4 cpus, 14400 page lists, 88389 pages, 0 UVM_PLA_NOWAIT refused, 95997 pages free before and after; 96108 free at the start, 96101 at the end)
 ```
 
 The real console also prints `unported: <name>` lines. Each one is a known gap, reported once.
@@ -198,7 +206,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 4 | 143 | 625 | 16 | 788 |
+| 4 | 141 | 627 | 16 | 788 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).

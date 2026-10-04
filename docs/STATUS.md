@@ -1,7 +1,7 @@
 # Status
 
-Milestone: **M10 done**, **M11a done** (MP bring-up: four CPUs per VM with the
-`multiprocessor` kernel); M11b next. Updated: 2026-10-04.
+Milestone: **M10 done**, **M11a** and **M11b done** (MP bring-up and timekeeping: four CPUs
+per VM with the `multiprocessor` kernel); M11c next. Updated: 2026-10-04.
 
 Done:
 - M7a..M9+: uvm, mbufs, virtio, IPv4/6, TCP; ffs root, init, ksh, login; sockets, kqueue,
@@ -12,10 +12,11 @@ Done:
   and spinning mutex, kern_sched.c whole, SMR, percpu, per-CPU pool caches, real pool/malloc/
   fpageq locks; amd64 IPIs and TLB shootdowns, arm64 cpu.c and ampintc SGIs; `smoke-mp`
   (`-smp 4`, both archs: 4 cpus running, kthread across CPUs, mpstress). Default kernel: UP.
+- M11b: tsc.c's sync test runs against each AP (TCG passes it); every CPU dispatches its own
+  clockintr with a monotonic uptime; kern_tc.c (tc_lock) and arm64 agtimer.c ported.
 
 Next:
-- M11b (TSC sync, per-CPU clocks), M11c (ddb on MP), M11d (softnet x8), M11e (the audit;
-  then every smoke runs MP), then M12.
+- M11c (ddb on MP), M11d (softnet x8), M11e (the audit; then every smoke runs MP), then M12.
 
 Blockers:
 - Until M11e, unaudited paths run under the kernel lock (MPSAFE flags and SY_NOLOCK ignored,
