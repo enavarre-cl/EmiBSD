@@ -177,7 +177,7 @@
 //! - `struct route` has `Cell` members so a cache inside a shared structure (`struct
 //!   netstack`'s `ns_route`) can be refreshed through `&`; its unions are `#[repr(C)]` unions
 //!   with accessors (`ro_dstsin6` is a `SockaddrIn6`, `ro_srcin6` an `In6Addr`).
-//!   `route6_cache` and `route6_mpath` are under the `inet6` feature (the C's `#ifdef INET6`). A mask buffer (`struct
+//!   `route6_cache` and `route6_mpath` (the C's `#ifdef INET6`) always compile, as netinet6 does, so the tree builds without the `inet6` feature. A mask buffer (`struct
 //!   sockaddr_in6 sa_mask` in C, big enough for any family) is a `sockaddr_storage`.
 //! - `struct rt_addrinfo`'s `rti_flags` is a `u32` (`int` in C), the type of the `RTF_*`
 //!   values it carries; `rti_info[]` holds raw socket addresses, so the functions that read
@@ -1178,7 +1178,6 @@ pub fn route_mpath(
 /// `route6_cache`: whether `ro` caches a valid route to `dst` (from `src`, if given) in table
 /// `rtableid`; on a miss (`ESRCH`), resets the cache to that destination. The IPv6 twin of
 /// [`route_cache`].
-#[cfg(feature = "inet6")]
 pub fn route6_cache(
     ro: &Route,
     dst: &In6Addr,
@@ -1231,7 +1230,6 @@ pub fn route6_cache(
 /// `route6_mpath`: checks the cache for the route to `dst`, else allocates a new one,
 /// potentially using multipath to select the peer. Updates the cache and returns a valid
 /// route or `None`. The IPv6 twin of [`route_mpath`].
-#[cfg(feature = "inet6")]
 pub fn route6_mpath(
     ro: &Route,
     dst: &In6Addr,

@@ -5691,10 +5691,11 @@ notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-modu
 [[file]]
 c = "sys/netinet6/ip6_output.c"
 rust = "sys/netinet6/ip6_output.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+upstream_blob = "cd6021ac2763c777b73d86b25ab2ed50d14d19be"
+deps = ["sys/netinet6/ip6_var.h", "sys/netinet6/in6_var.h", "sys/netinet/ip6.h", "sys/netinet/icmp6.h", "sys/netinet6/in6.h", "sys/crypto/idgen.h", "sys/net/route.h", "sys/net/pfvar.h", "sys/netinet/ip_ipsp.h", "sys/netinet/in_pcb.h", "sys/netinet6/in6_src.c", "sys/netinet6/ip6_input.c", "sys/netinet6/in6.c", "sys/netinet6/icmp6.c", "sys/netinet6/in6_pcb.c", "sys/netinet6/in6_cksum.c"]
+notes = "M9+: the whole file: ip6_output (extension headers via MAKE_EXTHDR/MAKE_CHAIN, ip6_splithdr, jumbo payload, route6_cache/in6_selectroute, multicast loopback, scope restore, path MTU and min-MTU policy, hop-by-hop options, pf_test(AF_INET6) with reroute as a labelled loop, the IPsec lookup/send/PMTU update, dontfrag, if_output_tso, ip6_fragment), ip6_copyexthdr, ip6_insert_jumboopt, ip6_insertfraghdr (returns the header pointer), ip6_getpmtu, ip6_ctloutput/ip6_raw_ctloutput (every IPV6_* option; values as byte slices), the pktopts (ip6_initpktopts, ip6_pcbopt, ip6_getpcbopt, ip6_clearpktopts, copypktopts, ip6_freepcbopts, ip6_setpktopts, ip6_setpktopt), ip6_setmoptions/getmoptions/freemoptions, ip6_mloopback, ip6_randomid(_init) over idgen32 under a private ip6_id_mtx (the C has no lock), in6_cksum_phdr, in6_delayed_cksum, in6_proto_cksum_out (no store when ip6_lasthdr fails, where the C writes at -1); the IPv6 header as copies (mtod_ip6); MROUTING (ip6_mforward) a comment; host tests (splithdr, insertfraghdr, fragment sizes/offsets/M flag, MTU too small, jumbo option, setpktopt validation, cmsg walk, cksum_phdr)"
 
 [[file]]
 c = "sys/netinet6/ip6_forward.c"
@@ -5707,10 +5708,11 @@ notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-modu
 [[file]]
 c = "sys/netinet6/ip6_id.c"
 rust = "sys/netinet6/ip6_id.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "11fb8dcd5305b08fc98d93103769696ba95b78fc"
 deps = []
-notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+notes = "M9+: struct randomtab (Randomtab), randomtab_20 as a StaticCell under a private randomtab_mtx (the C has no lock), ip6id_pmod, ip6id_initid, ip6id_randomid, ip6_randomflowlabel; licences BSD-3 (WIDE) and BSD-2 (Provos); host tests (pmod against the naive product, no repeat within a cycle, 20-bit range)"
 
 [[file]]
 c = "sys/netinet6/frag6.c"
@@ -5799,3 +5801,21 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 deps = []
 notes = "M9+: skeleton from the INET6 foundation: the globals and the cross-module signatures, bodies are placeholders until the file's port"
+
+[[file]]
+c = "sys/crypto/idgen.c"
+rust = "sys/crypto/idgen.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c744ab0b81ed1a84e70b1a1b5991512d42670904"
+deps = ["sys/crypto/idgen.h"]
+notes = "M9+: ISC (Damien Miller). IDGEN32, the SKIP32-based 31-bit Feistel permutation of a counter whose top bit flips at each rekey: idgen32_ftable, idgen32_g, idgen32_permute, idgen32_rekey, idgen32_init, idgen32; module shared with idgen.h; the caller locks; host tests (8192 ids distinct and nonzero, injective on 65536 inputs, rekey flips the top bit)"
+
+[[file]]
+c = "sys/crypto/idgen.h"
+rust = "sys/crypto/idgen.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2c96627db9e64c9e5749cb34ed9b59d1ca76a87e"
+deps = []
+notes = "M9+: ISC (Damien Miller). IDGEN32_ROUNDS/KEYLEN/REKEY_LIMIT/REKEY_TIME, struct idgen32_ctx (Idgen32Ctx, zeroed() for statics); module shared with idgen.c"

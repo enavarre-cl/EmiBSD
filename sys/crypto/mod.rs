@@ -17,6 +17,7 @@ pub mod ecb3_enc;
 pub mod ecb_enc;
 pub mod gmac;
 pub mod hmac;
+pub mod idgen;
 pub mod md5;
 pub mod podd;
 pub mod poly1305;
