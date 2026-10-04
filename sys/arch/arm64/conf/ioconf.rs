@@ -8,7 +8,7 @@
 //! `virtio* at fdt?`, `vio* at virtio?`, `vioblk* at virtio?`, `scsibus* at scsi?`,
 //! `sd* at scsibus?`, `pluart* at fdt?`,
 //! `plrtc* at fdt?`, `efi0 at mainbus?`;
-//! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`,
+//! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
 //! The `fdt` attribute (`files.arm64`: `define fdt {[early = 0]}`) is carried by `mainbus`
@@ -32,6 +32,7 @@ use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
 use crate::dev::pv::vioblk::{VIOBLK_CA, VIOBLK_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
+use crate::dev::vnd::{NVND, vndattach};
 use crate::kern::tty_pty::ptyattach;
 use crate::net::bpf::bpfilterattach;
 use crate::net::if_enc::encattach;
@@ -202,10 +203,10 @@ pub static CFROOTS: [i16; 1] = [0];
 /// `pdevinit[]`: the pseudo-devices of the MI `conf/GENERIC` whose attach functions are
 /// ported, in `ioconf.c`'s order (`pseudo-device pf`, `pseudo-device pflog`, `pseudo-device
 /// pfsync`, `pseudo-device pflow`, `pseudo-device enc`, `pseudo-device pty 16`, `pseudo-device
-/// bpfilter`, `pseudo-device loop`, `pseudo-device wg`; all but pty with a count of 1), then
-/// `pseudo-device rd 1`, which is not in GENERIC but in the RAMDISK kernels
-/// (`arch/arm64/conf/RAMDISK*`): this kernel boots its root from rd0a (M8).
-pub static PDEVINIT: [Pdevinit; 10] = [
+/// vnd 4`, `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`; all but pty and
+/// vnd with a count of 1), then `pseudo-device rd 1`, which is not in GENERIC but in the
+/// RAMDISK kernels (`arch/arm64/conf/RAMDISK*`): this kernel boots its root from rd0a (M8).
+pub static PDEVINIT: [Pdevinit; 11] = [
     Pdevinit {
         pdev_attach: pfattach,
         pdev_count: 1,
@@ -229,6 +230,10 @@ pub static PDEVINIT: [Pdevinit; 10] = [
     Pdevinit {
         pdev_attach: ptyattach,
         pdev_count: 16,
+    },
+    Pdevinit {
+        pdev_attach: vndattach,
+        pdev_count: NVND,
     },
     Pdevinit {
         pdev_attach: bpfilterattach,

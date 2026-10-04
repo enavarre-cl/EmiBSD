@@ -773,8 +773,8 @@ rust = "sys/arch/amd64/amd64/conf.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b955775e37a97fb7172fd379cd3be435dc9e3686"
-deps = ["sys/scsi/sd.c"]
-notes = "M8: bdevsw[] (20 slots) and cdevsw[] (102 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf (nblkdev/nchrdev are their lengths, cdevsw_set lets a console driver take a slot over); the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 4), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() (ENODEV, d_type 0) until its driver is ported (log 7 waits for subr_log.c's entry points, random 45 for rnd.c); mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; constab[] (cninit) and findblkmajor/dev_rawpart (dk_mountroot) are not used: the console is attached directly (consinit.rs) and there is no disk; APERTURE, MTRR and the <machine/conf.h> drivers are not configured; M9d: cdevsw 73 is pf (cdev_pf_init); M10a: sd 4 (bdev_disk_init) and 13 (cdev_disk_init), NSD 1 (scsi/sd.rs)"
+deps = ["sys/scsi/sd.c", "sys/dev/vnd.c"]
+notes = "M8: bdevsw[] (20 slots) and cdevsw[] (102 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf (nblkdev/nchrdev are their lengths, cdevsw_set lets a console driver take a slot over); the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 4), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() (ENODEV, d_type 0) until its driver is ported (log 7 waits for subr_log.c's entry points, random 45 for rnd.c); mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; constab[] (cninit) and findblkmajor/dev_rawpart (dk_mountroot) are not used: the console is attached directly (consinit.rs) and there is no disk; APERTURE, MTRR and the <machine/conf.h> drivers are not configured; M9d: cdevsw 73 is pf (cdev_pf_init); M10a: sd 4 (bdev_disk_init) and 13 (cdev_disk_init), NSD 1 (scsi/sd.rs); M10c: vnd 14 (bdev_disk_init) and 41 (cdev_disk_init), NVND 4 (dev/vnd.rs)"
 
 # arm64: the same, plus the bus_space table and the bootstrap device map
 
@@ -2729,14 +2729,12 @@ notes = "replaced-by-ioconf.rs: config(8) is not ported; what it would generate 
 [[file]]
 c = "sys/arch/amd64/conf/GENERIC"
 status = "skipped"
-notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root, cpu0 at mainbus? and pci* at mainbus0 (M7b), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it)"
+notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root, cpu0 at mainbus? and pci* at mainbus0 (M7b), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it)"
 
 [[file]]
 c = "sys/arch/arm64/conf/GENERIC"
 status = "skipped"
-notes = "replaced-by-ioconf.rs: sys/arch/arm64/conf/ioconf.rs lists mainbus0 at root, ampintc* at fdt? early 1 and agtimer* at fdt? (the fdt attribute from files.arm64, mainbus its only parent until simplebus), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it)"
-# M7b: socket, net and netinet headers (types and constants for the network stack)
-# ---------------------------------------------------------------------------
+notes = "replaced-by-ioconf.rs: sys/arch/arm64/conf/ioconf.rs lists mainbus0 at root, ampintc* at fdt? early 1 and agtimer* at fdt? (the fdt attribute from files.arm64, mainbus its only parent until simplebus), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it)"
 
 [[file]]
 c = "sys/sys/endian.h"
@@ -4963,8 +4961,8 @@ rust = "sys/arch/arm64/arm64/conf.rs"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a239133825b3a31f6e7fc41fc6aebe446f76ec82"
-deps = ["sys/sys/conf.h", "sys/scsi/sd.c"]
-notes = "bdevsw[] (19 slots) and cdevsw[] (101 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf; the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 1, taken over by pluartdev at boot through cdevsw_set: the C's KLUDGE), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() until its driver is ported; mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; findblkmajor/dev_rawpart (dk_mountroot) are not used; M9d: cdevsw 73 is pf (cdev_pf_init); M10a: sd 4 (bdev_disk_init) and 13 (cdev_disk_init), NSD 1 (scsi/sd.rs)"
+deps = ["sys/sys/conf.h", "sys/scsi/sd.c", "sys/dev/vnd.c"]
+notes = "bdevsw[] (19 slots) and cdevsw[] (101 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf; the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 1, taken over by pluartdev at boot through cdevsw_set: the C's KLUDGE), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() until its driver is ported; mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; findblkmajor/dev_rawpart (dk_mountroot) are not used; M9d: cdevsw 73 is pf (cdev_pf_init); M10a: sd 4 (bdev_disk_init) and 13 (cdev_disk_init), NSD 1 (scsi/sd.rs); M10c: vnd 14 (bdev_disk_init) and 41 (cdev_disk_init), NVND 4 (dev/vnd.rs)"
 
 [[file]]
 c = "sys/arch/arm64/arm64/mem.c"
@@ -5889,3 +5887,25 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "cc99fe855a7d82b4b61f7bfdff3ece19205c4be8"
 deps = []
 notes = "M9+ (INET6): ISC (Reyk Floeter). inet_nat64 and inet_nat46, the RFC 6052 address mappings of pf af-to; addresses as [u8; 16] with native-endian word views; -1 is Err(EINVAL)/Err(EAFNOSUPPORT); host tests (the well-known prefix, a /64 skips octet 8, the nat46 mask)"
+
+# ---------------------------------------------------------------------------
+# M10c: memory and removable file systems (tmpfs, msdosfs, cd9660, udf, vnd)
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/dev/vndioctl.h"
+rust = "sys/dev/vndioctl.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d8c90ceab6385604a6e34cbd4d5e581e8233c81f"
+deps = ["sys/sys/ioccom.h"]
+notes = "M10c: VNDNLEN, struct vnd_ioctl (VndIoctl) and struct vnd_user (VndUser) as #[repr(C)] AbiPod ABI types with LP64 sizes and offsets asserted at compile time (56 and 1040 bytes); vnd_ioctl's two bytes of tail padding are the named _pad0; char *vnd_file and u_char *vnd_key are usize user addresses; VNDIOCSET, VNDIOCCLR, VNDIOCGET (0xc0384600, 0x80384601, 0xc4104603, host test), and a reference-backed test that rebuilds each _IOW/_IOWR define of the header"
+
+[[file]]
+c = "sys/dev/vnd.c"
+rust = "sys/dev/vnd.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "45e8fe324ce9c3c43604cc1e61fb56f1ad0748e1"
+deps = ["sys/dev/vndioctl.h", "sys/kern/subr_disk.c", "sys/kern/kern_physio.c", "sys/kern/vfs_vnops.c", "sys/crypto/blf.c", "sys/sys/dkio.h"]
+notes = "M10c: the whole file: struct vnd_softc (VndSoftc, members that change after attach are Cells; sc_vp/sc_cred/sc_keyctx Options), VNF_*, VNDRW, vnd_softc/numvnd (an AtomicPtr to the mallocarray'd softcs and an AtomicI32; vnd_softc(unit) is the bounds-checked &vnd_softc[unit]), vndencrypt/vndencryptbuf (Blowfish CBC per DEV_BSIZE sector, the encrypted sector number as IV; crypto/blf.rs), vndattach (pseudo-device vnd 4, NVND, in pdevinit on both archs, after pty as GENERIC lists it; units not in the device tree, as in C), vndopen, vndgetdisklabel, vndclose, vndstrategy (vn_rdwr IO_NOCACHE|IO_SYNC|IO_NOLIMIT under the unit's credentials; the sloppy-request rounding; the DIAGNOSTIC 'sloppy' message behind feature diagnostic), vndread/vndwrite (physio), vndbdevsize, vndioctl (VNDIOCSET in the helper vndioctl_set with a labelled block for goto fail, VNDIOCCLR, VNDIOCGET, DIOCRLDINFO, DIOCGPDINFO, DIOCGDINFO, DIOCGPART, DIOCWDINFO/DIOCSDINFO, ENOTTY otherwise), vndsetcred, vndclear, vndsize, vnddump; bdevsw 14 and cdevsw 41 on amd64 and arm64 (chrtoblk 41 -> 14 was already there); vndgetdisklabel builds the label in a local and, with no partition open, first publishes the initdisklabel'd fabricated label that vndstrategy checks against (as rd.rs: no &mut aliasing the strategy's view); the clamped vnd_keylen and vnd_size are written back to the ioctl buffer only on success; VNDIOCCLR also clears sc_keyctx; vndbdevsize has no d_ioctl NULL test (an empty slot answers ENODEV, the same 0); VNDDEBUG's DNPRINTF not configured; host tests (attach, raw open of an unconfigured unit, ENXIO paths, VNDIOCGET, VNDIOCSET geometry checks and failure cleanup over testfs, a configured unit over an in-memory file: label fields and checksum, reads, writes, sloppy request, end of disk, DIOCGDINFO/DIOCGPART, VNDIOCCLR busy rules, Blowfish round trip)"

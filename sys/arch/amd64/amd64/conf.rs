@@ -42,8 +42,8 @@
 //!   writes the driver's initialiser with a count (`cdev_disk_init(NWD,wd)`): its entry points
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
-//!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `rd` (17 block,
-//!   47 character), `pf` (73) and `ptm` (81). `log` (7) waits for `subr_log.c`'s `logopen` ..
+//!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `vnd` (14 block,
+//!   41 character), `rd` (17 block, 47 character), `pf` (73) and `ptm` (81). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
 //!   boot (`machine::conf::cdevsw_set`); `nblkdev`/`nchrdev` are their lengths.
@@ -60,6 +60,9 @@ use crate::arch::amd64::amd64::mem::{mmclose, mmioctl, mmmmap, mmopen, mmrw};
 use crate::dev::cons::{cnclose, cnioctl, cnkqfilter, cnopen, cnread, cnstop, cnwrite};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
 use crate::dev::rd::{NRD, rdclose, rddump, rdioctl, rdopen, rdread, rdsize, rdstrategy, rdwrite};
+use crate::dev::vnd::{
+    NVND, vndclose, vnddump, vndioctl, vndopen, vndread, vndsize, vndstrategy, vndwrite,
+};
 use crate::kern::kern_descrip::filedescopen;
 use crate::kern::tty_pty::{
     NPTY, ptcclose, ptckqfilter, ptcopen, ptcread, ptcwrite, ptmclose, ptmioctl, ptmopen, ptsclose,
@@ -110,7 +113,16 @@ pub static BDEVSW: Devsw<Bdevsw, 20> = Devsw([
     bnotdef(), // 11
     bnotdef(), // 12
     bnotdef(), // 13
-    bnotdef(), // 14: vnode disk driver (vnd: not ported)
+    // 14: vnode disk driver
+    Cell::new(bdev_disk_init(
+        NVND,
+        vndopen,
+        vndclose,
+        vndstrategy,
+        vndioctl,
+        vnddump,
+        vndsize,
+    )),
     bnotdef(), // 15: was: Sony CD-ROM
     bnotdef(), // 16: was: concatenated disk driver
     // 17: ram disk driver
@@ -206,7 +218,10 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     cnotdef(), // 38: Cyclom serial port (cy: not ported)
     cnotdef(), // 39: Mitsumi CD-ROM
     cnotdef(), // 40: network tunnel (tun: not ported)
-    cnotdef(), // 41: vnode disk driver (vnd: not ported)
+    // 41: vnode disk driver
+    Cell::new(cdev_disk_init(
+        NVND, vndopen, vndclose, vndread, vndwrite, vndioctl,
+    )),
     cnotdef(), // 42: generic audio I/O (audio: not ported)
     cnotdef(), // 43
     cnotdef(), // 44: generic video I/O (video: not ported)

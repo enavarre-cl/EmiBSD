@@ -21,3 +21,5 @@ pub mod pci;
 pub mod pv;
 pub mod rd;
 pub mod rnd;
+pub mod vnd;
+pub mod vndioctl;
