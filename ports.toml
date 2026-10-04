@@ -5431,23 +5431,32 @@ notes = "M10a: license: Hannum BSD-4 plus the TRW notice; struct scsi_link/scsi_
 [[file]]
 c = "sys/scsi/scsi_base.c"
 rust = "sys/scsi/scsi_base.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "efa6c91dea45180c4961d7c09a942eb205b4e417"
-deps = ["sys/scsi/scsiconf.h", "sys/scsi/scsi_all.h", "sys/kern/subr_pool.c", "sys/kern/kern_task.c", "sys/kern/kern_synch.c"]
-notes = "M10a: license: Hannum BSD-4; all of it except: scsi_read_cap_10, scsi_read_cap_16, scsi_start and scsi_cmd_rw_decode return unported! (ENOSYS) because their CDBs come from scsi_disk.h, skipped pending the user's decision on its OSF notice (scsi_cmd_rw_decode returns Result for that reason); SCSIDEBUG not configured and scsi_debug.h (no licence text) not ported, so SC_DEBUG/SC_DEBUG_SENSE sites are comments and scsi_show_*/flagnames/quirknames/devicetypenames/scsidebug_* are not ported; SCSI_DELAY not configured; SCSITERSE is feature scsiterse; KERNEL_LOCK a comment; errno results are Result<(), Errno> (Err(ERESTART) = retry); buffers are slices or ScsiWire references; scsi_do_mode_sense returns Ok((page offset, big)), the page helpers return offsets and None past the buffer; scsi_mode_select(_big) clamp the header's length to the slice; scsi_decode_sense returns its buffer by value; stack xshandler/io mover linked with the queues' unsafe mutators, public scsi_ioh_add/scsi_xsh_add take &'static; NULL done/handler/io panics; host tests (sense decoding, interpret_sense, xs_error retries, iopool order, xs accounting, xsh, sync commands and mode sense against a completing fake adapter) and a reference test of adesc[]"
+deps = ["sys/scsi/scsiconf.h", "sys/scsi/scsi_all.h", "sys/scsi/scsi_disk.h", "sys/kern/subr_pool.c", "sys/kern/kern_task.c", "sys/kern/kern_synch.c"]
+notes = "M10a: license: Hannum BSD-4; all of it (scsi_read_cap_10/16 and scsi_start use scsi_disk.rs's CDBs; scsi_cmd_rw_decode returns (blkno, nblks) as a tuple and panics on an opcode it does not know, as the C); SCSIDEBUG not configured (scsi_debug.rs has the SDEV_DB* bits and empty SC_DEBUG macros), so the SC_DEBUG/SC_DEBUG_SENSE sites are comments and scsi_show_*/flagnames/quirknames/devicetypenames/scsidebug_* are not ported; SCSI_DELAY not configured; SCSITERSE is feature scsiterse; KERNEL_LOCK a comment; errno results are Result<(), Errno> (Err(ERESTART) = retry); buffers are slices or ScsiWire references; scsi_do_mode_sense returns Ok((page offset, big)), the page helpers return offsets and None past the buffer; scsi_mode_select(_big) clamp the header's length to the slice; scsi_decode_sense returns its buffer by value; stack xshandler/io mover linked with the queues' unsafe mutators, public scsi_ioh_add/scsi_xsh_add take &'static; NULL done/handler/io panics; host tests (sense decoding, interpret_sense, xs_error retries, iopool order, xs accounting, xsh, sync commands, read capacity, start stop, rw decode and mode sense against a completing fake adapter) and a reference test of adesc[]"
 
 [[file]]
 c = "sys/scsi/scsi_disk.h"
-status = "skipped"
-notes = "license: Open Software Foundation (Grenoble, 1990) permission notice beside the TRW one; not in the accepted list, awaiting the user's decision (M10a needs it: sd.c, vioblk.c and four scsi_base.c functions use its CDBs)"
+rust = "sys/scsi/scsi_disk.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c9987a7abe575030ee9b3de0982688fa1bacf2d9"
+deps = ["sys/scsi/scsi_all.h"]
+notes = "M10a: license: Open Software Foundation (Grenoble, 1990) permission notice plus the TRW Financial Systems / Julian Elischer notice, both kept whole (accepted 2026-10-04); every struct #[repr(C)] of u8s, sizes pinned by const asserts (and checked against clang), marked ScsiWire: ScsiFormatUnit, ScsiRw/Rw10/Rw12/Rw16 (READ/WRITE 6/10/12/16), ScsiWriteSame10/16, ScsiUnmap(Data/Desc), ScsiReadCapacity(16), ScsiStartStop, ScsiSynchronizeCache, ScsiReassignBlocks(Data), PageDiskFormat/RigidGeometry/FlexGeometry/ReducedGeometry/CachingMode, ScsiVpdDiskLimits/DiskInfo/DiskThin; the anonymous defect_descriptor struct is ScsiReassignBlocksDefectDescriptor; PG_CACHE_PRI_DEMAND/WRITE are const fns; SI_PG_DISK_LIMITS_UGAVALID is a u32, VPD_DISK_INFO_RPM_* u16, the other constants u8; reference test of every define (completeness of all) plus layout tests"
 
 [[file]]
 c = "sys/scsi/scsi_debug.h"
-status = "skipped"
-notes = "license: none (only 'Written by Julian Elischer'), awaiting the user's decision; SCSIDEBUG is not configured: SDEV_DB1..4 and SC_DEBUG* are not needed by the kernel as built (SDEV_DBX is scsiconf.h's)"
+rust = "sys/scsi/scsi_debug.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "58cfb542de471dc89d560b5e6e00c4a60ce3ca5e"
+deps = []
+notes = "license: none (no licence text), kept as is: only the 'Written by Julian Elischer' line; SCSIDEBUG is not configured: SDEV_DB1..4 are constants, SC_DEBUG/SC_DEBUGN/SC_DEBUG_SENSE are macros expanding to nothing (their call sites in scsi_base.rs stay comments), everything under #ifdef SCSIDEBUG is not ported; reference test of the SDEV_DB* defines"
 
 [[file]]
 c = "sys/scsi/scsi_message.h"
-status = "skipped"
-notes = "license: none (no licence text at all); only parallel-SCSI adapter drivers use it, none of which is planned"
+rust = "sys/scsi/scsi_message.rs"
+status = "todo"
+notes = "no licence text; unused in M10a, only parallel-SCSI adapter drivers use it"

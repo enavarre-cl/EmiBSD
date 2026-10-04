@@ -29,6 +29,8 @@ std::thread_local! {
     /// The fake adapter's script, and the opcodes it was given.
     static FAKE: RefCell<(VecDeque<Reply>, Vec<u8>)> =
         const { RefCell::new((VecDeque::new(), Vec::new())) };
+    /// The CDB, `cmdlen`, `timeout` and data length of every command sent.
+    static SENT: RefCell<Vec<(Vec<u8>, i32, i32, i32)>> = const { RefCell::new(Vec::new()) };
     /// The cookies of the I/O handlers that got an opening, in order.
     static SERVED: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
 }
@@ -39,6 +41,16 @@ fn fake_cmd(xs: &'static ScsiXfer) {
         let mut f = f.borrow_mut();
         f.1.push(xs.cmd.get().opcode);
         f.0.pop_front()
+    });
+    SENT.with(|s| {
+        let cmd = xs.cmd.get();
+        let len = xs.cmdlen.get();
+        s.borrow_mut().push((
+            cmd.as_bytes()[..len as usize].to_vec(),
+            len,
+            xs.timeout.get(),
+            xs.datalen(),
+        ));
     });
     match reply.unwrap_or(Reply::Data(Vec::new())) {
         Reply::Data(d) => {
@@ -69,6 +81,12 @@ fn script(replies: Vec<Reply>) {
         f.0 = replies.into();
         f.1.clear();
     });
+    SENT.with(|s| s.borrow_mut().clear());
+}
+
+/// The CDB, command length, timeout and data length of each command sent since `script`.
+fn sent() -> Vec<(Vec<u8>, i32, i32, i32)> {
+    SENT.with(|s| s.borrow().clone())
 }
 
 fn opcodes() -> Vec<u8> {
@@ -613,14 +631,103 @@ fn sync_commands_against_a_completing_adapter() {
     );
     link.flags.set(0);
 
-    // The CDBs scsi_disk.h defines are reported, not sent.
+    assert_eq!(link.pending.get(), 0);
+    teardown();
+}
+
+#[test]
+fn read_capacity_and_start_stop_send_their_cdbs() {
+    let _g = setup();
+    let link = test_link(1);
+
+    // READ CAPACITY (10): the data lands in the caller's structure.
     let mut rc = ScsiReadCapData::default();
+    script(vec![Reply::Data(vec![0, 0, 0x0f, 0xff, 0, 0, 2, 0])]);
+    assert_eq!(scsi_read_cap_10(link, &mut rc, SCSI_NOSLEEP), Ok(()));
+    assert_eq!(
+        sent(),
+        vec![(vec![READ_CAPACITY, 0, 0, 0, 0, 0, 0, 0, 0, 0], 10, 20000, 8)]
+    );
+    assert_eq!(_4btol(&rc.addr), 0x0fff);
+    assert_eq!(_4btol(&rc.length), 512);
+
+    // READ CAPACITY (16): the service action and the allocation length.
+    let mut rc16 = ScsiReadCapData16::default();
+    let mut reply = vec![0u8; 32];
+    reply[7] = 0xff;
+    reply[11] = 0x10;
+    script(vec![Reply::Data(reply)]);
+    assert_eq!(scsi_read_cap_16(link, &mut rc16, SCSI_NOSLEEP), Ok(()));
+    let mut cdb = vec![READ_CAPACITY_16, SRC16_SERVICE_ACTION];
+    cdb.extend_from_slice(&[0; 8]);
+    cdb.extend_from_slice(&[0, 0, 0, 32, 0, 0]);
+    assert_eq!(sent(), vec![(cdb, 16, 20000, 32)]);
+    assert_eq!(_8btol(&rc16.addr), 0xff);
+    assert_eq!(_4btol(&rc16.length), 0x10);
+
+    // A failed transfer comes back as the error.
+    script(vec![Reply::Error(XS_DRIVER_STUFFUP)]);
+    assert_eq!(scsi_read_cap_10(link, &mut rc, SCSI_NOSLEEP), Err(EIO));
+
+    // START STOP UNIT: the timeout depends on the action.
     script(vec![]);
-    assert_eq!(scsi_read_cap_10(link, &mut rc, SCSI_NOSLEEP), Err(ENOSYS));
-    assert!(opcodes().is_empty());
+    assert_eq!(scsi_start(link, i32::from(SSS_START), SCSI_NOSLEEP), Ok(()));
+    assert_eq!(scsi_start(link, i32::from(SSS_LOEJ), SCSI_NOSLEEP), Ok(()));
+    assert_eq!(
+        sent(),
+        vec![
+            (vec![START_STOP, 0, 0, 0, SSS_START, 0], 6, 30000, 0),
+            (vec![START_STOP, 0, 0, 0, SSS_LOEJ, 0], 6, 10000, 0),
+        ]
+    );
 
     assert_eq!(link.pending.get(), 0);
     teardown();
+}
+
+/// A generic command holding the CDB `bytes`.
+fn generic(bytes: &[u8]) -> ScsiGeneric {
+    let mut g = ScsiGeneric::zeroed();
+    g.as_bytes_mut()[..bytes.len()].copy_from_slice(bytes);
+    g
+}
+
+#[test]
+fn rw_decode_reads_every_cdb_size() {
+    // READ (6) and WRITE (6): a 21-bit address, a length of 0 meaning 256.
+    for op in [READ_COMMAND, WRITE_COMMAND] {
+        assert_eq!(
+            scsi_cmd_rw_decode(&generic(&[op, 0xff, 0x12, 0x34, 8, 0])),
+            (0x1f1234, 8)
+        );
+        assert_eq!(
+            scsi_cmd_rw_decode(&generic(&[op, 0, 0, 5, 0, 0])),
+            (5, 0x100)
+        );
+    }
+    // READ (10) and WRITE (10).
+    for op in [READ_10, WRITE_10] {
+        assert_eq!(
+            scsi_cmd_rw_decode(&generic(&[op, 0, 0x89, 0xab, 0xcd, 0xef, 0, 1, 2, 0])),
+            (0x89ab_cdef, 0x0102)
+        );
+    }
+    // READ (12) and WRITE (12).
+    for op in [READ_12, WRITE_12] {
+        assert_eq!(
+            scsi_cmd_rw_decode(&generic(&[op, 0, 0x89, 0xab, 0xcd, 0xef, 1, 2, 3, 4, 0, 0])),
+            (0x89ab_cdef, 0x0102_0304)
+        );
+    }
+    // READ (16) and WRITE (16).
+    for op in [READ_16, WRITE_16] {
+        assert_eq!(
+            scsi_cmd_rw_decode(&generic(&[
+                op, 0, 1, 2, 3, 4, 5, 6, 7, 8, 0x0a, 0x0b, 0x0c, 0x0d, 0, 0
+            ])),
+            (0x0102_0304_0506_0708, 0x0a0b_0c0d)
+        );
+    }
 }
 
 /// A MODE SENSE (6) reply: header, one direct-access block descriptor, and `page`.

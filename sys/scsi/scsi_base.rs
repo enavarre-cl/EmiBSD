@@ -54,16 +54,11 @@
 //! errno. [`scsi_xs_put`] gives the transfer, the opening and the link's slot back.
 //!
 //! ## Deviations
-//! - `scsi_disk.h` is not ported (its Open Software Foundation notice awaits the user's
-//!   decision), so the four functions built on its CDBs report the gap with `unported!`
-//!   (`ENOSYS`): [`scsi_read_cap_10`], [`scsi_read_cap_16`] (`struct scsi_read_capacity*`,
-//!   `READ_CAPACITY*`, `SRC16_SERVICE_ACTION`), [`scsi_start`] (`struct scsi_start_stop`,
-//!   `SSS_START`) and [`scsi_cmd_rw_decode`] (`struct scsi_rw*`, `READ_*`/`WRITE_*`); the
-//!   last returns a `Result` for that reason (the C returns the values through pointers and
-//!   panics on an opcode it does not know).
-//! - `SCSIDEBUG` is not configured, and `scsi_debug.h` (its `SC_DEBUG*` macros, the
-//!   `SDEV_DB*` bits) is not ported: the file has no licence text. The `SC_DEBUG`,
-//!   `SC_DEBUG_SENSE` and `#ifdef SCSIDEBUG` sites are comments, and the debug-only functions
+//! - `scsi_cmd_rw_decode` returns the block number and count as a tuple, where the C writes
+//!   them through two pointers.
+//! - `SCSIDEBUG` is not configured (`scsi_debug.rs` has the `SDEV_DB*` bits and the empty
+//!   `SC_DEBUG*` macros). The `SC_DEBUG`, `SC_DEBUG_SENSE` and `#ifdef SCSIDEBUG` sites are
+//!   comments, and the debug-only functions
 //!   at the end of the C file (`scsi_show_sense`, `scsi_show_xs`, `scsi_show_mem`,
 //!   `scsi_show_flags`, `scsi_show_inquiry_header`, `scsi_show_inquiry_match` and the
 //!   `flagnames`/`quirknames`/`devicetypenames`/`scsidebug_*` tables) are not ported.
@@ -113,6 +108,7 @@ use crate::kprintf;
 use crate::machine::cpu::delay;
 use crate::machine::intr::IPL_BIO;
 use crate::scsi::scsi_all::*;
+use crate::scsi::scsi_disk::*;
 use crate::scsi::scsiconf::*;
 use crate::sys::device::Device;
 use crate::sys::errno::Errno::{self, *};
@@ -122,7 +118,6 @@ use crate::sys::pool::{PR_NOWAIT, PR_WAITOK, PR_ZERO, Pool};
 use crate::sys::systm::INFSLP;
 use crate::sys::task::Task;
 use crate::sys::time::sec_to_nsec;
-use crate::unported;
 
 /// `DECODE_SENSE_KEY`: `scsi_decode_sense` gives the sense key's name.
 const DECODE_SENSE_KEY: i32 = 1;
@@ -2308,26 +2303,67 @@ pub fn scsi_inquire_vpd(
     error
 }
 
-/// `scsi_read_cap_10`: READ CAPACITY (10) into `rdcap`. Its CDB is `scsi_disk.h`'s, which
-/// is not ported: reports the gap (see the module's deviations).
+/// `scsi_read_cap_10`: READ CAPACITY (10) into `rdcap`.
 pub fn scsi_read_cap_10(
     link: &'static ScsiLink,
     rdcap: &mut ScsiReadCapData,
     flags: i32,
 ) -> Result<(), Errno> {
-    let _ = (link, rdcap, flags);
-    Err(unported!("scsi_read_cap_10 (scsi_disk.h)"))
+    let xs = scsi_xs_get(link, flags | SCSI_DATA_IN | SCSI_SILENT).ok_or(ENOMEM)?;
+
+    let mut cdb = ScsiReadCapacity::zeroed();
+    cdb.opcode = READ_CAPACITY;
+
+    xs.set_cmd(&cdb);
+    xs.cmdlen.set(size_of::<ScsiReadCapacity>() as i32);
+    // SAFETY: `rdcap` is borrowed for the whole call and untouched until `scsi_xs_sync` has
+    // returned.
+    unsafe {
+        xs.set_data(
+            rdcap.as_bytes_mut().as_mut_ptr(),
+            size_of::<ScsiReadCapData>() as i32,
+        )
+    };
+    xs.timeout.set(20000);
+
+    let rv = scsi_xs_sync(xs);
+    scsi_xs_put(xs);
+
+    // SCSIDEBUG (not configured): the dump of the capacity data.
+
+    rv
 }
 
-/// `scsi_read_cap_16`: READ CAPACITY (16) into `rdcap`. Its CDB is `scsi_disk.h`'s, which
-/// is not ported: reports the gap (see the module's deviations).
+/// `scsi_read_cap_16`: READ CAPACITY (16) into `rdcap`.
 pub fn scsi_read_cap_16(
     link: &'static ScsiLink,
     rdcap: &mut ScsiReadCapData16,
     flags: i32,
 ) -> Result<(), Errno> {
-    let _ = (link, rdcap, flags);
-    Err(unported!("scsi_read_cap_16 (scsi_disk.h)"))
+    let xs = scsi_xs_get(link, flags | SCSI_DATA_IN | SCSI_SILENT).ok_or(ENOMEM)?;
+
+    let mut cdb = ScsiReadCapacity16::zeroed();
+    cdb.opcode = READ_CAPACITY_16;
+    cdb.byte2 = SRC16_SERVICE_ACTION;
+    _lto4b(size_of::<ScsiReadCapData16>() as u32, &mut cdb.length);
+
+    xs.set_cmd(&cdb);
+    xs.cmdlen.set(size_of::<ScsiReadCapacity16>() as i32);
+    // SAFETY: as in `scsi_read_cap_10`.
+    unsafe {
+        xs.set_data(
+            rdcap.as_bytes_mut().as_mut_ptr(),
+            size_of::<ScsiReadCapData16>() as i32,
+        )
+    };
+    xs.timeout.set(20000);
+
+    let rv = scsi_xs_sync(xs);
+    scsi_xs_put(xs);
+
+    // SCSIDEBUG (not configured): the dump of the capacity data.
+
+    rv
 }
 
 /// `scsi_prevent`: prevents or allows (`PR_PREVENT`, `PR_ALLOW`) the removal of the media.
@@ -2352,11 +2388,27 @@ pub fn scsi_prevent(link: &'static ScsiLink, r#type: i32, flags: i32) -> Result<
     error
 }
 
-/// `scsi_start`: sends START STOP UNIT ("start up", stop, eject). Its CDB is
-/// `scsi_disk.h`'s, which is not ported: reports the gap (see the module's deviations).
+/// `scsi_start`: sends START STOP UNIT ("start up", `SSS_START`; stop, `SSS_STOP`; eject,
+/// `SSS_LOEJ`).
 pub fn scsi_start(link: &'static ScsiLink, r#type: i32, flags: i32) -> Result<(), Errno> {
-    let _ = (link, r#type, flags);
-    Err(unported!("scsi_start (scsi_disk.h)"))
+    let xs = scsi_xs_get(link, flags).ok_or(ENOMEM)?;
+    xs.cmdlen.set(size_of::<ScsiStartStop>() as i32);
+    xs.retries.set(2);
+    xs.timeout.set(if r#type == i32::from(SSS_START) {
+        30000
+    } else {
+        10000
+    });
+
+    xs.with_cmd(|cmd: &mut ScsiStartStop| {
+        cmd.opcode = START_STOP;
+        cmd.how = r#type as u8;
+    });
+
+    let error = scsi_xs_sync(xs);
+    scsi_xs_put(xs);
+
+    error
 }
 
 /// `scsi_mode_sense`: MODE SENSE (6) of page `pg_code` into `data`; `EIO` when the reply
@@ -3230,14 +3282,38 @@ fn scsi_decode_sense(sense: &ScsiSenseData, flag: i32) -> [u8; 132] {
 }
 
 /// `scsi_cmd_rw_decode`: the block number and block count of a READ or WRITE CDB (6, 10, 12
-/// or 16 bytes), for adapters that emulate SCSI. Its CDBs are `scsi_disk.h`'s, which is not
-/// ported: reports the gap (see the module's deviations).
-pub fn scsi_cmd_rw_decode(cmd: &ScsiGeneric) -> Result<(u64, u32), Errno> {
-    let _ = cmd;
-    Err(unported!("scsi_cmd_rw_decode (scsi_disk.h)"))
+/// or 16 bytes), for adapters that emulate SCSI. Panics on any other opcode.
+pub fn scsi_cmd_rw_decode(cmd: &ScsiGeneric) -> (u64, u32) {
+    match cmd.opcode {
+        READ_COMMAND | WRITE_COMMAND => {
+            let rw: &ScsiRw = wire_ref(cmd.as_bytes());
+            let blkno = u64::from(_3btol(&rw.addr) & (u32::from(SRW_TOPADDR) << 16 | 0xffff));
+            let nblks = if rw.length != 0 {
+                u32::from(rw.length)
+            } else {
+                0x100
+            };
+            (blkno, nblks)
+        }
+        READ_10 | WRITE_10 => {
+            let rw10: &ScsiRw10 = wire_ref(cmd.as_bytes());
+            (u64::from(_4btol(&rw10.addr)), _2btol(&rw10.length))
+        }
+        READ_12 | WRITE_12 => {
+            let rw12: &ScsiRw12 = wire_ref(cmd.as_bytes());
+            (u64::from(_4btol(&rw12.addr)), _4btol(&rw12.length))
+        }
+        READ_16 | WRITE_16 => {
+            let rw16: &ScsiRw16 = wire_ref(cmd.as_bytes());
+            (_8btol(&rw16.addr), _4btol(&rw16.length))
+        }
+        opcode => panic(format_args!(
+            "scsi_cmd_rw_decode: bad opcode 0x{opcode:02x}"
+        )),
+    }
 }
 
-// SCSIDEBUG (not configured, and scsi_debug.h is not ported): scsidebug_buses,
+// SCSIDEBUG (not configured): scsidebug_buses,
 // scsidebug_targets, scsidebug_luns, scsidebug_level, flagnames, quirknames,
 // devicetypenames, scsi_show_sense, scsi_show_xs, scsi_show_mem, scsi_show_flags,
 // scsi_show_inquiry_header and scsi_show_inquiry_match.
