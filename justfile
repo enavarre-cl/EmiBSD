@@ -78,7 +78,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid smoke-nfs
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -977,6 +977,47 @@ fs_steps := disk_login + " " + \
     "--expect 'tmpfs on /tmp type tmpfs' --expect 'm10c-tmpfs-42' --expect 'm10c-fat-42' " + \
     "--expect 'm10c-iso-42' --expect 'm10c-udf-42' --expect '** Phase 1 - Read and Compare FATs' " + \
     "--expect 'fsck-msdos-rc=0' --expect 'vnd3: covering /tmp/new.img'"
+
+# M10e: NFS between the two VMs of `smoke-link`. A exports /export to B with OpenBSD's
+# portmap(8), mountd(8) and nfsd(8) (UDP and TCP); B lists the export with showmount(8),
+# mounts it with mount_nfs(8) over UDP and then over TCP (`-T`; mount(8) shows each), reads
+# A's file and writes one file per mount, which A then reads from its own disk. B retries showmount until A's
+# daemons answer. The markers are built with `$((..))`, so that the typed commands do not
+# match them; the commands are short, since a long line can overflow arm64's pluart input
+# buffer under load. Part of `smoke`.
+smoke-nfs: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-nfs: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke2 {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --timeout 400 \
+        {{nfs_both}} {{nfs_a}} {{nfs_b}} {{nfs_expect}}
+    cargo xtask smoke2 {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --timeout 400 \
+        {{nfs_both}} {{nfs_a}} {{nfs_b}} {{nfs_expect}}
+
+# `smoke-nfs`'s sends and expectations.
+nfs_both := "--both-send-after 'login:' --both-send 'root\\n' --both-send-after 'Password:' --both-send 'emibsd\\n' " + \
+    "--both-send-after '# ' --both-send 'ifconfig lo0 inet 127.0.0.1/8 up\\n'"
+nfs_a := "--a-send-after '# ' --a-send 'ifconfig vio1 inet 192.168.77.1/24 up\\n' " + \
+    "--a-send-after '# ' --a-send 'mkdir -p /export\\n' " + \
+    "--a-send-after '# ' --a-send 'echo nfs-a-$((3+4)) >/export/a.txt\\n' " + \
+    "--a-send-after '# ' --a-send 'echo \"/export -maproot=root 192.168.77.2\" >/etc/exports\\n' " + \
+    "--a-send-after '# ' --a-send 'portmap; sleep 1; mountd; nfsd -tu -n 4\\n' " + \
+    "--a-send-after '# ' --a-send 'sleep 1; echo nfs-up-$((2+3))\\n' " + \
+    "--a-send-after '# ' --a-send 'cd /export; until [ -f b-tcp.txt ]; do sleep 1; done\\n' " + \
+    "--a-send-after '# ' --a-send 'sleep 1; cat b-udp.txt b-tcp.txt\\n'"
+nfs_b := "--b-send-after '# ' --b-send 'ifconfig vio1 inet 192.168.77.2/24 up\\n' " + \
+    "--b-send-after '# ' --b-send 'until showmount -e 192.168.77.1; do sleep 2; done\\n' " + \
+    "--b-send-after '# ' --b-send 'mount_nfs 192.168.77.1:/export /mnt && mount\\n' " + \
+    "--b-send-after '# ' --b-send 'cat /mnt/a.txt\\n' " + \
+    "--b-send-after '# ' --b-send 'echo nfs-udp-$((4+4)) >/mnt/b-udp.txt\\n' " + \
+    "--b-send-after '# ' --b-send 'umount /mnt\\n' " + \
+    "--b-send-after '# ' --b-send 'mount_nfs -T 192.168.77.1:/export /mnt && mount\\n' " + \
+    "--b-send-after '# ' --b-send 'cat /mnt/a.txt /mnt/b-udp.txt\\n' " + \
+    "--b-send-after '# ' --b-send 'echo nfs-tcp-$((5+4)) >/mnt/b-tcp.txt\\n' " + \
+    "--b-send-after '# ' --b-send 'umount /mnt && echo nfs-done-$((6+4))\\n'"
+nfs_expect := "--a-expect 'nfs-up-5' --a-expect 'nfs-udp-8' --a-expect 'nfs-tcp-9' " + \
+    "--b-expect 'Exports list on 192.168.77.1:' --b-expect '/export                            192.168.77.2' " + \
+    "--b-expect 'nfs-a-7' --b-expect '192.168.77.1:/export on /mnt type nfs (v3, udp' " + \
+    "--b-expect '192.168.77.1:/export on /mnt type nfs (v3, tcp' --b-expect 'nfs-done-10'"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
