@@ -53,7 +53,13 @@
 //!   I/O error (the `SWSLOT_BAD` marking and `uvm_swap_markbad` are reported with it);
 //!   `uao_dropswap` and `uao_dropswap_range` report `uvm_swap_free`. Nothing assigns a slot,
 //!   so none of these paths run.
-//! - `uao_shrink`/`uao_grow` and their helpers are `TMPFS`, which is not configured.
+//! - `uao_shrink`/`uao_grow` and their helpers are `#ifdef TMPFS`: feature `tmpfs`. When
+//!   they move the swap-hash elements to a table of another size, each element goes to the
+//!   bucket its tag hashes to in the new table; the C moves bucket `i` of the old table to
+//!   bucket `i` of the new one, which is the same bucket whenever the tags are below both
+//!   tables' sizes (its comment's assumption) and indexes past a smaller table otherwise.
+//!   Rust keeps `u_swslots` and `u_swhash` side by side, so a conversion clears the one it
+//!   leaves (the C's union is overwritten).
 //! - `u_swhash` keeps the slice `hashinit` returns; `u_swhashmask` is its length minus one.
 //! - `uo_refs` is a `Cell`, not the C's atomic (one CPU until `MULTIPROCESSOR`).
 //! - `UVM_PAGE_OWN` is not configured.
@@ -72,6 +78,10 @@ use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::kern::subr_prf::{panic, printf};
 use crate::machine::intr::{IPL_MPFLOOR, IPL_NONE};
 use crate::machine::pmap::{pmap_clear_modify, pmap_page_protect};
+#[cfg(feature = "tmpfs")]
+use crate::sys::errno::Errno;
+#[cfg(feature = "tmpfs")]
+use crate::sys::malloc::M_CANFAIL;
 use crate::sys::malloc::{M_NOWAIT, M_UVMAOBJ, M_WAITOK, M_ZERO};
 use crate::sys::mman::{PROT_NONE, PROT_READ, PROT_WRITE};
 use crate::sys::mutex::Mutex;
@@ -470,8 +480,316 @@ fn uao_free(aobj: &UvmAobj) {
 
 // pager functions
 
-// uao_shrink_flush, uao_shrink_hash, uao_shrink_convert, uao_shrink_array, uao_shrink,
-// uao_grow_array, uao_grow_hash, uao_grow_convert, uao_grow: TMPFS, not configured.
+/// `uao_shrink_flush`: free the pages and drop the swap slots of the pages
+/// `[startpg, endpg)` of an aobj that is about to shrink.
+///
+/// Shrinking an aobj to a given number of pages is always the same procedure: assess the
+/// necessity of data structure conversion (hash to array), secure resources, flush pages and
+/// drop swap slots.
+#[cfg(feature = "tmpfs")]
+pub fn uao_shrink_flush(uobj: &UvmObject, startpg: i32, endpg: i32) {
+    kassert!(startpg < endpg);
+    kassert!(uobj.uo_refs.get() == 1);
+    let _ = uao_flush(
+        uobj,
+        Voff::from(startpg) << PAGE_SHIFT,
+        Voff::from(endpg) << PAGE_SHIFT,
+        PGO_FREE,
+    );
+    uao_dropswap_range(uobj, Voff::from(startpg), Voff::from(endpg));
+}
+
+/// Moves every swap-hash element of `old` into `new`, each to the bucket its tag hashes to
+/// in `new` (see the module's deviations).
+#[cfg(feature = "tmpfs")]
+fn uao_swhash_move(old: &'static [ListHead<UaoSwhash>], new: &'static [ListHead<UaoSwhash>]) {
+    let newmask = new.len() - 1;
+    for bucket in old {
+        while let Some(elt) = bucket.first() {
+            // SAFETY: an element on its bucket's list, under the object lock; it goes on
+            // exactly one list of the new table.
+            unsafe {
+                ListHead::<UaoSwhash>::remove(elt);
+                new[(elt.tag.get() as usize) & newmask].insert_head(elt);
+            }
+        }
+    }
+}
+
+/// `uao_shrink_hash`: shrink an aobj that keeps a hash table and still needs one.
+#[cfg(feature = "tmpfs")]
+pub fn uao_shrink_hash(uobj: &UvmObject, pages: i32) -> Result<(), Errno> {
+    let aobj = aobj(uobj);
+
+    kassert!(aobj.uses_swhash());
+
+    // If the size of the hash table doesn't change, all we need to do is to adjust the
+    // page count.
+    if uao_swhash_buckets(aobj.u_pages.get()) == uao_swhash_buckets(pages) {
+        uao_shrink_flush(uobj, pages, aobj.u_pages.get());
+        aobj.u_pages.set(pages);
+        return Ok(());
+    }
+
+    let new_swhash =
+        hashinit::<UaoSwhash>(uao_swhash_buckets(pages), M_UVMAOBJ, M_WAITOK | M_CANFAIL)
+            .ok_or(Errno::ENOMEM)?;
+
+    uao_shrink_flush(uobj, pages, aobj.u_pages.get());
+
+    // Even though the hash table size is changing, the hash of the buckets we are
+    // interested in copying should not change.
+    let old = aobj.swhash();
+    uao_swhash_move(old, new_swhash);
+
+    // SAFETY: the table `uao_create` (or an earlier resize) made for `u_pages`, emptied
+    // just above; the object now uses `new_swhash`.
+    unsafe { hashfree(old, uao_swhash_buckets(aobj.u_pages.get()), M_UVMAOBJ) };
+
+    aobj.u_swhash.set(Some(new_swhash));
+    aobj.u_pages.set(pages);
+
+    Ok(())
+}
+
+/// `uao_shrink_convert`: shrink an aobj that keeps a hash table below the threshold, so
+/// that its swap slots move to an array.
+#[cfg(feature = "tmpfs")]
+pub fn uao_shrink_convert(uobj: &UvmObject, pages: i32) -> Result<(), Errno> {
+    let aobj = aobj(uobj);
+
+    let new_swslots = mallocarray(
+        pages as usize,
+        size_of::<i32>(),
+        M_UVMAOBJ,
+        M_WAITOK | M_CANFAIL | M_ZERO,
+    )
+    .ok_or(Errno::ENOMEM)?
+    .cast::<i32>();
+
+    uao_shrink_flush(uobj, pages, aobj.u_pages.get());
+
+    // Convert swap slots from hash to array.
+    for i in 0..pages {
+        let Some(elt) = uao_find_swhash_elt(aobj, Voff::from(i), false, false) else {
+            continue;
+        };
+        let slot = elt.pageslot(Voff::from(i)).get();
+        // SAFETY: `i` is below `pages`, the length of the zeroed array just allocated.
+        unsafe { new_swslots.as_ptr().add(i as usize).write(slot) };
+        if slot != 0 {
+            elt.count.set(elt.count.get() - 1);
+        }
+        if elt.count.get() == 0 {
+            // SAFETY: an element on its bucket's list, under the object lock.
+            unsafe { ListHead::<UaoSwhash>::remove(elt) };
+            pool_put(&UAO_SWHASH_ELT_POOL, NonNull::from(elt).cast::<u8>());
+        }
+    }
+
+    // SAFETY: the object's table for `u_pages`; the flush and the loop above emptied it
+    // (every element of `[0, pages)` lost its last slot), and the object now uses the array.
+    unsafe {
+        hashfree(
+            aobj.swhash(),
+            uao_swhash_buckets(aobj.u_pages.get()),
+            M_UVMAOBJ,
+        )
+    };
+    aobj.u_swhash.set(None);
+
+    aobj.u_swslots.set(new_swslots.as_ptr());
+    aobj.u_pages.set(pages);
+
+    Ok(())
+}
+
+/// `uao_shrink_array`: shrink an aobj that keeps its swap slots in an array.
+#[cfg(feature = "tmpfs")]
+pub fn uao_shrink_array(uobj: &UvmObject, pages: i32) -> Result<(), Errno> {
+    let aobj = aobj(uobj);
+
+    let new_swslots = mallocarray(
+        pages as usize,
+        size_of::<i32>(),
+        M_UVMAOBJ,
+        M_WAITOK | M_CANFAIL | M_ZERO,
+    )
+    .ok_or(Errno::ENOMEM)?
+    .cast::<i32>();
+
+    uao_shrink_flush(uobj, pages, aobj.u_pages.get());
+
+    for i in 0..pages as usize {
+        // SAFETY: `i` is below `pages`, the length of the new array.
+        unsafe { new_swslots.as_ptr().add(i).write(aobj.swslot(i).get()) };
+    }
+
+    if let Some(old) = NonNull::new(aobj.u_swslots.get().cast::<u8>()) {
+        free(
+            old,
+            M_UVMAOBJ,
+            aobj.u_pages.get() as usize * size_of::<i32>(),
+        );
+    }
+
+    aobj.u_swslots.set(new_swslots.as_ptr());
+    aobj.u_pages.set(pages);
+
+    Ok(())
+}
+
+/// `uao_shrink`: shrink an aobj to `pages` pages, freeing the pages and swap slots past
+/// the new end. The object is locked by the caller.
+#[cfg(feature = "tmpfs")]
+pub fn uao_shrink(uobj: &UvmObject, pages: i32) -> Result<(), Errno> {
+    let aobj = aobj(uobj);
+
+    kassert!(pages < aobj.u_pages.get());
+
+    // Distinguish between three possible cases:
+    // 1. aobj uses hash and must be converted to array.
+    // 2. aobj uses array and array size needs to be adjusted.
+    // 3. aobj uses hash and hash size needs to be adjusted.
+    if pages > UAO_SWHASH_THRESHOLD {
+        uao_shrink_hash(uobj, pages) // case 3
+    } else if aobj.u_pages.get() > UAO_SWHASH_THRESHOLD {
+        uao_shrink_convert(uobj, pages) // case 1
+    } else {
+        uao_shrink_array(uobj, pages) // case 2
+    }
+}
+
+/// `uao_grow_array`: grow an aobj whose swap slots stay in an array.
+///
+/// Growing an aobj only adjusts the swap slots; the pages themselves come later through
+/// `uvm_fault()`. It is thus mandatory that the caller of these functions does not allow
+/// faults to happen in case of growth error.
+#[cfg(feature = "tmpfs")]
+pub fn uao_grow_array(uobj: &UvmObject, pages: i32) -> Result<(), Errno> {
+    let aobj = aobj(uobj);
+
+    kassert!(aobj.u_pages.get() <= UAO_SWHASH_THRESHOLD);
+
+    let new_swslots = mallocarray(
+        pages as usize,
+        size_of::<i32>(),
+        M_UVMAOBJ,
+        M_WAITOK | M_CANFAIL | M_ZERO,
+    )
+    .ok_or(Errno::ENOMEM)?
+    .cast::<i32>();
+
+    for i in 0..aobj.u_pages.get() as usize {
+        // SAFETY: `i` is below the old `u_pages`, itself below `pages`, the length of the
+        // new array.
+        unsafe { new_swslots.as_ptr().add(i).write(aobj.swslot(i).get()) };
+    }
+
+    if let Some(old) = NonNull::new(aobj.u_swslots.get().cast::<u8>()) {
+        free(
+            old,
+            M_UVMAOBJ,
+            aobj.u_pages.get() as usize * size_of::<i32>(),
+        );
+    }
+
+    aobj.u_swslots.set(new_swslots.as_ptr());
+    aobj.u_pages.set(pages);
+
+    Ok(())
+}
+
+/// `uao_grow_hash`: grow an aobj that keeps a hash table.
+#[cfg(feature = "tmpfs")]
+pub fn uao_grow_hash(uobj: &UvmObject, pages: i32) -> Result<(), Errno> {
+    let aobj = aobj(uobj);
+
+    kassert!(pages > UAO_SWHASH_THRESHOLD);
+
+    // If the size of the hash table doesn't change, all we need to do is to adjust the
+    // page count.
+    if uao_swhash_buckets(aobj.u_pages.get()) == uao_swhash_buckets(pages) {
+        aobj.u_pages.set(pages);
+        return Ok(());
+    }
+
+    kassert!(uao_swhash_buckets(aobj.u_pages.get()) < uao_swhash_buckets(pages));
+
+    let new_swhash =
+        hashinit::<UaoSwhash>(uao_swhash_buckets(pages), M_UVMAOBJ, M_WAITOK | M_CANFAIL)
+            .ok_or(Errno::ENOMEM)?;
+
+    let old = aobj.swhash();
+    uao_swhash_move(old, new_swhash);
+
+    // SAFETY: the object's table for `u_pages`, emptied just above; the object now uses
+    // `new_swhash`.
+    unsafe { hashfree(old, uao_swhash_buckets(aobj.u_pages.get()), M_UVMAOBJ) };
+
+    aobj.u_swhash.set(Some(new_swhash));
+    aobj.u_pages.set(pages);
+
+    Ok(())
+}
+
+/// `uao_grow_convert`: grow an aobj past the threshold, so that its swap slots move from
+/// an array to a hash table.
+#[cfg(feature = "tmpfs")]
+pub fn uao_grow_convert(uobj: &UvmObject, pages: i32) -> Result<(), Errno> {
+    let aobj = aobj(uobj);
+
+    let new_swhash =
+        hashinit::<UaoSwhash>(uao_swhash_buckets(pages), M_UVMAOBJ, M_WAITOK | M_CANFAIL)
+            .ok_or(Errno::ENOMEM)?;
+
+    // Set these now, so we can use uao_find_swhash_elt().
+    let old_swslots = aobj.u_swslots.get();
+    aobj.u_swhash.set(Some(new_swhash));
+
+    for i in 0..aobj.u_pages.get() {
+        let slot = aobj.swslot(i as usize).get();
+        if slot != 0 {
+            let Some(elt) = uao_find_swhash_elt(aobj, Voff::from(i), true, true) else {
+                panic(format_args!("uao_grow_convert: no swap hash element"));
+            };
+            elt.count.set(elt.count.get() + 1);
+            elt.pageslot(Voff::from(i)).set(slot);
+        }
+    }
+
+    if let Some(old) = NonNull::new(old_swslots.cast::<u8>()) {
+        free(
+            old,
+            M_UVMAOBJ,
+            aobj.u_pages.get() as usize * size_of::<i32>(),
+        );
+    }
+    aobj.u_swslots.set(ptr::null_mut());
+    aobj.u_pages.set(pages);
+
+    Ok(())
+}
+
+/// `uao_grow`: grow an aobj to `pages` pages. The object is locked by the caller.
+#[cfg(feature = "tmpfs")]
+pub fn uao_grow(uobj: &UvmObject, pages: i32) -> Result<(), Errno> {
+    let aobj = aobj(uobj);
+
+    kassert!(pages > aobj.u_pages.get());
+
+    // Distinguish between three possible cases:
+    // 1. aobj uses hash and hash size needs to be adjusted.
+    // 2. aobj uses array and array size needs to be adjusted.
+    // 3. aobj uses array and must be converted to hash.
+    if pages <= UAO_SWHASH_THRESHOLD {
+        uao_grow_array(uobj, pages) // case 2
+    } else if aobj.u_pages.get() > UAO_SWHASH_THRESHOLD {
+        uao_grow_hash(uobj, pages) // case 1
+    } else {
+        uao_grow_convert(uobj, pages)
+    }
+}
 
 /// `uao_create`: create an aobj of the given size and return its uvm_object.
 ///

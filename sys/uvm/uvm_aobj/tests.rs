@@ -149,3 +149,103 @@ fn uao_get_zero_fills_and_finds_resident_pages() {
     // the last reference frees the page with the object
     uao_detach(uobj);
 }
+
+#[cfg(feature = "tmpfs")]
+#[test]
+fn grow_and_shrink_keep_the_swap_slots_below_the_end() {
+    let _g = setup();
+    let uobj = uao_create(Vsize::new(4 * PAGE_SIZE), 0).expect("an aobj");
+    let aobj = aobj(uobj);
+
+    let _ = rw_enter(uobj.vmobjlock(), RW_WRITE);
+    assert_eq!(uao_set_swslot(uobj, 1, 7), 0);
+    assert_eq!(uao_set_swslot(uobj, 3, 9), 0);
+
+    // case 2: the array grows
+    uao_grow(uobj, 8).expect("grow the array");
+    assert!(!aobj.uses_swhash());
+    assert_eq!(aobj.u_pages.get(), 8);
+    assert_eq!(uao_find_swslot(uobj, 1), 7);
+    assert_eq!(uao_find_swslot(uobj, 7), 0);
+
+    // case 3: past the threshold the slots move to a hash table
+    uao_grow(uobj, 100).expect("convert to a hash");
+    assert!(aobj.uses_swhash());
+    assert!(aobj.u_swslots.get().is_null());
+    assert_eq!(uao_find_swslot(uobj, 1), 7);
+    assert_eq!(uao_find_swslot(uobj, 3), 9);
+
+    // case 1: a bigger table, the elements rehashed by their tags
+    uao_grow(uobj, 300).expect("grow the hash");
+    assert_eq!(aobj.swhashmask(), 31, "18 buckets round up to 32");
+    assert_eq!(uao_set_swslot(uobj, 290, 11), 0);
+    assert_eq!(uao_set_swslot(uobj, 70, 12), 0);
+    assert_eq!(uao_find_swslot(uobj, 3), 9);
+
+    // shrinking the hash drops the slots past the end (a page only in swap each)
+    UVMEXP.swpgonly.fetch_add(1, Ordering::Relaxed);
+    uao_shrink(uobj, 200).expect("shrink the hash");
+    assert_eq!(aobj.u_pages.get(), 200);
+    assert_eq!(UVMEXP.swpgonly.load(Ordering::Relaxed), 0);
+    assert_eq!(uao_find_swslot(uobj, 70), 12);
+    assert_eq!(uao_find_swslot(uobj, 1), 7);
+
+    // case 1 of shrink: back to an array below the threshold
+    UVMEXP.swpgonly.fetch_add(1, Ordering::Relaxed);
+    uao_shrink(uobj, 10).expect("convert to an array");
+    assert!(!aobj.uses_swhash());
+    assert!(aobj.u_swhash.get().is_none());
+    assert_eq!(UVMEXP.swpgonly.load(Ordering::Relaxed), 0);
+    assert_eq!(uao_find_swslot(uobj, 1), 7);
+    assert_eq!(uao_find_swslot(uobj, 3), 9);
+
+    // case 2 of shrink: a smaller array (the slot at 3 goes)
+    UVMEXP.swpgonly.fetch_add(1, Ordering::Relaxed);
+    uao_shrink(uobj, 2).expect("shrink the array");
+    assert_eq!(UVMEXP.swpgonly.load(Ordering::Relaxed), 0);
+    assert_eq!(aobj.u_pages.get(), 2);
+    assert_eq!(uao_find_swslot(uobj, 1), 7);
+    assert_eq!(uao_set_swslot(uobj, 1, 0), 7);
+    rw_exit(uobj.vmobjlock());
+
+    uao_detach(uobj);
+}
+
+#[cfg(feature = "tmpfs")]
+#[test]
+fn shrink_frees_the_resident_pages_past_the_end() {
+    let _g = setup();
+    let uobj = uao_create(Vsize::new(4 * PAGE_SIZE), 0).expect("an aobj");
+    for idx in [0, 3] {
+        let mut pps: [*const VmPage; 1] = [ptr::null()];
+        let mut npages = 1;
+        let _ = rw_enter(uobj.vmobjlock(), RW_WRITE);
+        let rv = uao_get(
+            uobj,
+            (idx * PAGE_SIZE) as Voff,
+            &mut pps,
+            &mut npages,
+            0,
+            PROT_READ | PROT_WRITE,
+            0,
+            0,
+        );
+        assert_eq!(rv, VM_PAGER_OK);
+        // SAFETY: `uao_get` returned OK, so the slot holds a page of the object.
+        let pg = unsafe { pps[0].as_ref() }.expect("a page");
+        let _ = rw_enter(uobj.vmobjlock(), RW_WRITE);
+        uvm_page_unbusy(&[Some(pg)]);
+        rw_exit(uobj.vmobjlock());
+    }
+    assert_eq!(uobj.uo_npages.get(), 2);
+
+    let _ = rw_enter(uobj.vmobjlock(), RW_WRITE);
+    uao_shrink(uobj, 1).expect("shrink");
+    assert_eq!(uobj.uo_npages.get(), 1, "the page at index 3 is gone");
+    assert!(uvm_pagelookup(uobj, 0).is_some());
+    uao_grow(uobj, 4).expect("grow");
+    assert_eq!(uobj.uo_npages.get(), 1);
+    rw_exit(uobj.vmobjlock());
+
+    uao_detach(uobj);
+}

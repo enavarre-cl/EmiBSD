@@ -1206,7 +1206,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "0ac9cd8a057aac56699f7794d8b23d48e9191854"
 deps = ["sys/uvm/uvm_aobj.h", "sys/uvm/uvm_object.c", "sys/uvm/uvm_page.c", "sys/kern/kern_subr.c", "sys/kern/kern_malloc.c", "sys/kern/subr_pool.c", "sys/kern/kern_rwlock.c", "sys/uvm/uvm_pmap.h"]
-notes = "M7a-1: struct uao_swhash_elt, struct uvm_aobj (#[repr(C)], u_obj first; u_swhash keeps hashinit's slice, u_swhashmask is its length - 1), the UAO_SWHASH_* macros, uao_find_swhash_elt, uao_find_swslot, uao_set_swslot, uao_free, uao_create (kernel_object_store, bootstrap_kernel_object_lock, kobj_alloced as statics), uao_init, uao_reference/uao_detach (uo_refs a Cell, not atomic: one CPU), uao_flush, uao_get_validate, uao_get (uvm_swap_get, SWSLOT_BAD and uvm_swap_markbad reported: a slot is an I/O error; swap, M7), uao_dropswap and uao_dropswap_range (uvm_swap_free reported, swpgonly accounted), uao_swap_off, uao_pagein, uao_pagein_page; uao_shrink*/uao_grow* are TMPFS, not configured; UVM_PAGE_OWN not configured; host tests"
+notes = "M7a-1: struct uao_swhash_elt, struct uvm_aobj (#[repr(C)], u_obj first; u_swhash keeps hashinit's slice, u_swhashmask is its length - 1), the UAO_SWHASH_* macros, uao_find_swhash_elt, uao_find_swslot, uao_set_swslot, uao_free, uao_create (kernel_object_store, bootstrap_kernel_object_lock, kobj_alloced as statics), uao_init, uao_reference/uao_detach (uo_refs a Cell, not atomic: one CPU), uao_flush, uao_get_validate, uao_get (uvm_swap_get, SWSLOT_BAD and uvm_swap_markbad reported: a slot is an I/O error; swap, M7), uao_dropswap and uao_dropswap_range (uvm_swap_free reported, swpgonly accounted), uao_swap_off, uao_pagein, uao_pagein_page; uao_shrink*/uao_grow* are TMPFS, not configured; UVM_PAGE_OWN not configured; host tests; M10c (tmpfs): the #ifdef TMPFS block is now ported behind feature tmpfs: uao_shrink_flush, uao_shrink_hash, uao_shrink_convert, uao_shrink_array, uao_shrink, uao_grow_array, uao_grow_hash, uao_grow_convert, uao_grow (Result<(), Errno>, ENOMEM from the M_CANFAIL allocations); moving the swap hash to a table of another size rehashes each element by its tag (the C moves bucket i to bucket i, the same bucket only while the tags stay below both table sizes); a conversion clears the u_swslots/u_swhash field it leaves (side by side, not the C's union); host tests of every grow/shrink case and of the pages freed past the end"
 
 [[file]]
 c = "sys/uvm/uvm_pager.h"
@@ -5909,3 +5909,74 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "45e8fe324ce9c3c43604cc1e61fb56f1ad0748e1"
 deps = ["sys/dev/vndioctl.h", "sys/kern/subr_disk.c", "sys/kern/kern_physio.c", "sys/kern/vfs_vnops.c", "sys/crypto/blf.c", "sys/sys/dkio.h"]
 notes = "M10c: the whole file: struct vnd_softc (VndSoftc, members that change after attach are Cells; sc_vp/sc_cred/sc_keyctx Options), VNF_*, VNDRW, vnd_softc/numvnd (an AtomicPtr to the mallocarray'd softcs and an AtomicI32; vnd_softc(unit) is the bounds-checked &vnd_softc[unit]), vndencrypt/vndencryptbuf (Blowfish CBC per DEV_BSIZE sector, the encrypted sector number as IV; crypto/blf.rs), vndattach (pseudo-device vnd 4, NVND, in pdevinit on both archs, after pty as GENERIC lists it; units not in the device tree, as in C), vndopen, vndgetdisklabel, vndclose, vndstrategy (vn_rdwr IO_NOCACHE|IO_SYNC|IO_NOLIMIT under the unit's credentials; the sloppy-request rounding; the DIAGNOSTIC 'sloppy' message behind feature diagnostic), vndread/vndwrite (physio), vndbdevsize, vndioctl (VNDIOCSET in the helper vndioctl_set with a labelled block for goto fail, VNDIOCCLR, VNDIOCGET, DIOCRLDINFO, DIOCGPDINFO, DIOCGDINFO, DIOCGPART, DIOCWDINFO/DIOCSDINFO, ENOTTY otherwise), vndsetcred, vndclear, vndsize, vnddump; bdevsw 14 and cdevsw 41 on amd64 and arm64 (chrtoblk 41 -> 14 was already there); vndgetdisklabel builds the label in a local and, with no partition open, first publishes the initdisklabel'd fabricated label that vndstrategy checks against (as rd.rs: no &mut aliasing the strategy's view); the clamped vnd_keylen and vnd_size are written back to the ioctl buffer only on success; VNDIOCCLR also clears sc_keyctx; vndbdevsize has no d_ioctl NULL test (an empty slot answers ENODEV, the same 0); VNDDEBUG's DNPRINTF not configured; host tests (attach, raw open of an unconfigured unit, ENXIO paths, VNDIOCGET, VNDIOCSET geometry checks and failure cleanup over testfs, a configured unit over an in-memory file: label fields and checksum, reads, writes, sloppy request, end of disk, DIOCGDINFO/DIOCGPART, VNDIOCCLR busy rules, Blowfish round trip)"
+
+[[file]]
+c = "sys/tmpfs/tmpfs.h"
+rust = "sys/tmpfs/tmpfs.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7f2537038edd97127bfa56e74e24a47fb277689b"
+deps = ["sys/sys/vnode.h", "sys/sys/mount.h", "sys/kern/vfs_lockf.c", "sys/kern/kern_rwlock.c", "sys/kern/vfs_vops.c"]
+notes = "M10c: struct tmpfs_dirent (TmpfsDirent, td_name a strname buffer with name()), TAILQ_HEAD tmpfs_dir (TmpfsDir adapter), struct tmpfs_node (TmpfsNode of Cells; pool item handed as &'static; tn_nlock Rwlock, tn_vlock Rrwlock; tn_flags u32; union tn_spec as TnSpec with tn_dev/tn_dir/tn_lnk/tn_reg side by side; tn_uobj/tn_pgptr/tn_pgnum methods, link()), LIST_HEAD tmpfs_node_list (TmpfsNodeList), TMPFS_MAXNAMLEN, TMPFS_DIRSEQ_* and TMPFS_DIRSEQ_FULL (tmpfs_dirseq_full), TMPFS_NODE_* status flags, TMPFS_NODE_GEN_MASK/TMPFS_RECLAIMING_BIT with tmpfs_node_reclaiming/tmpfs_node_gen, struct tmpfs_mount (TmpfsMount, root()), struct tmpfs_fid (TmpfsFid, from_fid/to_fid instead of memcpy over struct fid), TMPFS_VALIDATE_DIR (tmpfs_validate_dir), VFS_TO_TMPFS, VP_TO_TMPFS_DIR, VP_TO_TMPFS_NODE (checks VT_TMPFS); the prototypes are the functions of tmpfs_subr.rs and tmpfs_mem.rs; CTASSERT(TMPFS_MAXNAMLEN < UINT16_MAX) a const assert; host tests"
+
+[[file]]
+c = "sys/tmpfs/tmpfs_mem.c"
+rust = "sys/tmpfs/tmpfs_mem.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "910767328e1beefc71bdcaf632cda05d2d964a37"
+deps = ["sys/tmpfs/tmpfs.h", "sys/kern/subr_pool.c", "sys/kern/kern_malloc.c", "sys/kern/kern_rwlock.c"]
+notes = "M10c: the whole file: tmpfs_bytes_limit/tmpfs_bytes_used as the atomics TMPFS_BYTES_LIMIT/TMPFS_BYTES_USED, tmpfs_mntmem_init, tmpfs_mntmem_destroy, tmpfs_pages_total, tmpfs_pages_avail, tmpfs_mem_incr (bool), tmpfs_mem_decr, tmpfs_dirent_get/put and tmpfs_node_get/put (a fresh TmpfsDirent/TmpfsNode written into the pool item; &'static out, back on put), TMPFS_NAME_QUANTUM and roundup2, tmpfs_strname_alloc/free (malloc M_TEMP, Option<NonNull<u8>>), tmpfs_strname_neqlen (compares the rounded lengths, then the names themselves: the C compares the rounded length's bytes of the path buffers, which may read past them and calls equal names unequal when the paths differ after them; its one caller only decides whether to allocate a new name); host tests of the per-mount and global limits, the name quanta, the node count and pools"
+
+[[file]]
+c = "sys/tmpfs/tmpfs_subr.c"
+rust = "sys/tmpfs/tmpfs_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6b5322e1fb63d26a01b8f567f000b2e0b137c4a3"
+deps = ["sys/tmpfs/tmpfs.h", "sys/tmpfs/tmpfs_mem.c", "sys/tmpfs/tmpfs_vnops.h", "sys/uvm/uvm_aobj.c", "sys/uvm/uvm_map.c", "sys/uvm/uvm_km.c", "sys/uvm/uvm_vnode.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_vnops.c", "sys/kern/vfs_init.c", "sys/kern/spec_vnops.c", "sys/kern/kern_prot.c", "sys/kern/kern_subr.c", "sys/kern/kern_tc.c", "sys/dev/rnd.c", "sys/sys/dirent.h"]
+notes = "M10c: the whole file: tmpfs_alloc_node (target an optional byte slice; &'static node out), tmpfs_free_node, tmpfs_vnode_get (returns the locked vnode; the tn_nlock contract kept; checkalias for VBLK/VCHR with tmpfs_specvops/spec_vops; option FIFO: a VFIFO node is refused with EOPNOTSUPP before a vnode is taken, as ffs_vinit does, until miscfs/fifofs is ported), tmpfs_alloc_file (returns the vnode; pool_put of cn_pnbuf through NAMEI_POOL), tmpfs_alloc_dirent (name slice), tmpfs_free_dirent, tmpfs_dir_attach (panics without the directory vnode the C dereferences), tmpfs_dir_detach, tmpfs_dir_lookup/tmpfs_dir_cached/tmpfs_dir_lookupbyseq (Option), tmpfs_dir_getseq, tmpfs_dir_putseq, tmpfs_dir_getdotents and tmpfs_dir_getdents (struct dirent written into bytes at its offsets; EJUSTRETURN as Err), tmpfs_reg_resize (uao_grow/uao_shrink under vmobjlock), tmpfs_chflags/tmpfs_chmod/tmpfs_chown/tmpfs_chsize/tmpfs_chtimes (cred as &Ucred), tmpfs_update, tmpfs_truncate, tmpfs_uio_cached (bool), tmpfs_uio_lookup (Option<usize>), tmpfs_uio_uncache, tmpfs_uio_cache, TMPFS_UIO_MAXBYTES, tmpfs_uiomove and tmpfs_zeropg (uvm_map of the aobj into kernel_map, uiomove/zero through the mapping, uvm_unmap); host tests of the sequence numbers, the page-cache bookkeeping and tmpfs_update; the mount-level tests in tmpfs_vfsops/tests.rs run the node, entry, vnode and resize paths (the kernel_map data path needs the kernel's faults)"
+
+[[file]]
+c = "sys/tmpfs/tmpfs_vfsops.c"
+rust = "sys/tmpfs/tmpfs_vfsops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "31d77e1fbaff85de2820ce950494fe5c2eb6609f"
+deps = ["sys/tmpfs/tmpfs.h", "sys/tmpfs/tmpfs_mem.c", "sys/tmpfs/tmpfs_subr.c", "sys/sys/mount.h", "sys/kern/vfs_subr.c", "sys/kern/subr_pool.c", "sys/kern/kern_malloc.c"]
+notes = "M10c: the whole file: tmpfs_dirent_pool/tmpfs_node_pool (TMPFS_DIRENT_POOL/TMPFS_NODE_POOL), tmpfs_init (TMPFS_BYTES_LIMIT from uvmexp.npages / 2), tmpfs_mount_update (panics if the root node has no vnode, where the C follows NULL), tmpfs_mount (TmpfsArgs::from_bytes of the kernel copy, EINVAL when short; the tmpfs_mount malloc(M_MISCFSMNT)ed with a fresh TmpfsMount written in; mount_info gets the args' bytes), tmpfs_start, tmpfs_unmount, tmpfs_root, tmpfs_vget (EOPNOTSUPP), tmpfs_fhtovp, tmpfs_vptofh, tmpfs_statfs, tmpfs_sync, tmpfs_vfsops as TMPFS_VFSOPS ((void *)eopnotsupp slots as closures); not yet in vfsconflist[] (joins with tmpfs_vnops.c); host tests mount tmpfs through the vfs test setup: root, files, directories, symbolic links, lookups, getdents in pieces, resize and the memory limit, chmod/chown, file handles, statfs, node limit, unmount"
+
+[[file]]
+c = "sys/tmpfs/tmpfs_specops.c"
+rust = "sys/tmpfs/tmpfs_specops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0c5a01bc1e37f8c36afc71ee221642cb28423117"
+deps = ["sys/tmpfs/tmpfs.h", "sys/tmpfs/tmpfs_vnops.h", "sys/tmpfs/tmpfs_subr.c", "sys/kern/spec_vnops.c", "sys/kern/vfs_default.c"]
+notes = "M10c: the whole file: tmpfs_specvops (TMPFS_SPECVOPS; vop_generic_badop slots as closures), tmpfs_spec_read, tmpfs_spec_write; tmpfs_access/tmpfs_getattr/tmpfs_setattr are tmpfs_vnops.rs's M10C-SHIM stubs until tmpfs_vnops.c is ported"
+
+[[file]]
+c = "sys/tmpfs/tmpfs_fifoops.c"
+rust = "sys/tmpfs/tmpfs_fifoops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d869f32c10a0565d5d91612387b284d3fd94c507"
+deps = ["sys/tmpfs/tmpfs.h", "sys/tmpfs/tmpfs_vnops.h", "sys/tmpfs/tmpfs_subr.c", "sys/kern/vfs_default.c"]
+notes = "M10c: the whole file: tmpfs_fifovops (TMPFS_FIFOVOPS), tmpfs_fifo_read, tmpfs_fifo_write, tmpfs_fifo_fsync; option FIFO: miscfs/fifofs is not ported (the ffs precedent), so the table's fifo_open/fifo_close/fifo_ioctl/fifo_kqfilter/fifo_pathconf/fifo_advlock slots and the fifo_read/fifo_write the wrappers end in are unported! stubs (ENOSYS), and tmpfs_vnode_get never installs the table (a fifo node is EOPNOTSUPP); tmpfs_access/tmpfs_getattr/tmpfs_setattr are tmpfs_vnops.rs's M10C-SHIM stubs until tmpfs_vnops.c is ported"
+
+[[file]]
+c = "sys/tmpfs/tmpfs_vnops.h"
+rust = "sys/tmpfs/tmpfs_vnops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ba5ebdc0890482d94dcf252ada15f0c600d304dd"
+deps = ["sys/sys/vnode.h"]
+notes = "M10c: the declarations: tmpfs_vops (TMPFS_VOPS here), tmpfs_fifovops and tmpfs_specvops (in tmpfs_fifoops.rs and tmpfs_specops.rs), and the tmpfs_* operation prototypes, which are the functions of tmpfs_vnops.c in this same file"
+
+[[file]]
+c = "sys/tmpfs/tmpfs_vnops.c"
+rust = "sys/tmpfs/tmpfs_vnops.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = ["sys/tmpfs/tmpfs_vnops.h", "sys/tmpfs/tmpfs_subr.c", "sys/kern/vfs_default.c", "sys/kern/vfs_cache.c", "sys/kern/vfs_subr.c"]
+notes = "M10c (tmpfs-core, in part): tmpfs_vops (TMPFS_VOPS, the slots of the unported operations None: EOPNOTSUPP), tmpfs_inactive, tmpfs_reclaim, tmpfs_lock, tmpfs_unlock, tmpfs_islocked, tmpfs_print (DEBUG/DIAGNOSTIC; fifo_printinfo waits for fifofs), tmpfs_bwrite, tmpfs_strategy, tmpfs_ioctl ported; tmpfs_access, tmpfs_getattr, tmpfs_setattr are unported! stubs marked M10C-SHIM (tmpfs_specops.c and tmpfs_fifoops.c name them); the rest of the file (lookup, create, mknod, open, close, read, write, fsync, remove, link, rename and its helpers, mkdir, rmdir, symlink, readdir, readlink, pathconf, advlock, kqfilter) is M10C-PENDING"

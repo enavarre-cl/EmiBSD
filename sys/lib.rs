@@ -27,6 +27,8 @@ pub mod netinet;
 pub mod netinet6;
 pub mod scsi;
 pub mod sys;
+#[cfg(feature = "tmpfs")]
+pub mod tmpfs;
 #[cfg(feature = "ffs")]
 pub mod ufs;
 pub mod uvm;
