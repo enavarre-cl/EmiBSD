@@ -3077,6 +3077,24 @@ deps = ["sys/net/if_enc.h", "sys/net/if.c"]
 notes = "M9c: ISC (Reyk Floeter). The whole file: enc_ifs/enc_allifs (in a StaticCell under the net lock), enc_cloner, encattach (enc0 from pdevinit in both ioconf.rs), enc_clone_create, enc_clone_destroy, enc_output (unsafe: if_output's contract; frees the packet), enc_ioctl, enc_getif, enc_getifa, enc_setif, enc_unsetif; NBPFILTER not configured (bpfattach a comment)"
 
 [[file]]
+c = "sys/net/bpf.h"
+rust = "sys/net/bpf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b1c0cfa2b9c102fc67b2864b893e6490d750b065"
+deps = ["sys/sys/ioccom.h"]
+notes = "M9+: module bpf with bpf.c; the ABI structures repr(C) AbiPod with the LP64 holes and bpf_hdr's tail as explicit _pad0 members; struct bpf_ops is BpfOps<P> (fn pointers over &P, loads answer Option<u32> for *err); BPF_CLASS & co. are const fns; userland prototypes not ported; host tests (ioctl numbers, alignment) and a test-ref check of DLT_* and the instruction codes"
+
+[[file]]
+c = "sys/net/bpf_filter.c"
+rust = "sys/net/bpf_filter.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b8316ebef6f5057ec5af117e42e4b28b1aebc8c9"
+deps = ["sys/net/bpf.h"]
+notes = "M9+: the kernel half: _bpf_lfilter (the program a slice, None for NULL; index walk keeping the C's from counter) and bpf_validate (bool); the userland bpf_mem_*/bpf_filter/bpf_lfilter/_bpf_filter (!_KERNEL) not ported; host tests (a tcpdump program over canned frames, ALU/scratch/len, walks off the program, validation)"
+
+[[file]]
 c = "sys/net/pfkeyv2.h"
 rust = "sys/net/pfkeyv2.rs"
 status = "ported"

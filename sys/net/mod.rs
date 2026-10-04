@@ -5,6 +5,8 @@
 //! `if_.rs` because `if` is a Rust keyword (`docs/C_TO_RUST.md`).
 
 pub mod art;
+pub mod bpf;
+pub mod bpf_filter;
 pub mod ethertypes;
 pub mod fq_codel;
 pub mod hfsc;
