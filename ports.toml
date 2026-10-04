@@ -250,6 +250,54 @@ upstream_blob = "5534f4bf3bad425c27a3aa9a41ad131af553ee36"
 notes = "license: zlib, accepted by the user on 2026-10-03; a new leaf crate, libz (OpenBSD builds libz as a library too), carries it; crc32(crc, &[u8]) -> u32 over a table computed at compile time, an altered source version (a Rust rewrite, marked so, notice kept in full); the braided/word-at-a-time implementation, ARMCRC32/HAVE_S390X_VX hooks, DYNAMIC_CRC_TABLE, MAKECRCH, get_crc_table and crc32_z (same results, simpler code) and the crc32_combine family (no kernel caller: subr_disk.c uses only crc32) are not ported; the kernel's own CRC-32C is lib/libkern/crc32c.h"
 
 [[file]]
+c = "sys/lib/libz/zlib.h"
+rust = "sys/lib/libz/zlib.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ca31baea101f722c0ab99c78c915104e1561dce9"
+notes = "license: zlib (the whole of sys/lib/libz accepted by the user on 2026-10-03); an altered source version, marked so. z_stream is ZStream<'a>: next_in/avail_in one &[u8], next_out/avail_out one &mut [u8] advanced as the C advances the pointers; zalloc/zfree/opaque/reserved gone (zopenbsd.rs allocates); state a crate-private InternalState enum; msg Option<&'static str>; adler u32; gz_header as GzHeader (NO_GZIP: never accepted); the gz* file API, get_crc_table, Z_PREFIX aliases and *64 variants are not in the kernel's zlib; the init macros (deflateInit, inflateInit2, ...) are functions here"
+
+[[file]]
+c = "sys/lib/libz/zconf.h"
+rust = "sys/lib/libz/zconf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7ed286fbb8830f44ea15e8530de6099f44fb1dba"
+notes = "license: zlib; an altered source version. MAX_MEM_LEVEL (9) and MAX_WBITS (15); the compiler/platform adaptation (Z_PREFIX renames, FAR, OF, z_const, ZEXTERN, the Byte/uInt/uLong/voidpf/z_off_t typedefs) has no counterpart: Rust uses u8/u32/u64/usize and slices"
+
+[[file]]
+c = "sys/lib/libz/zutil.h"
+rust = "sys/lib/libz/zutil.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d21a6ab7ed701ac651b7538332024ffd1860820d"
+notes = "license: zlib; an altered source version. ERR_MSG, ERR_RETURN, DEF_WBITS, DEF_MEM_LEVEL, block types, MIN_MATCH/MAX_MATCH, PRESET_DICT, OS_CODE (Unix); the kernel build's -DSLOW -DSMALL -DNO_GZIP (sys/lib/libz/Makefile) are the SLOW/SMALL/NO_GZIP consts; Assert is zassert! (cfg(test) only, no ZLIB_DEBUG in the kernel), Trace* print only under ZLIB_DEBUG and are gone; zmemcpy/zmemcmp/zmemzero are slice methods, ZSWAP32 u32::swap_bytes; ZALLOC/ZFREE/TRY_FREE are zopenbsd.rs; z_once (DYNAMIC_CRC_TABLE/BUILDFIXED only) and the non-Unix target sections have no counterpart"
+
+[[file]]
+c = "sys/lib/libz/zutil.c"
+rust = "sys/lib/libz/zutil.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "192d6f2d43da5aa2309d74bb13679e7a9f38b3d1"
+notes = "license: zlib; an altered source version. z_errmsg, zlibVersion, zlibCompileFlags (sizes from the Rust types: LP64, plus NO_GZIP), zError; z_error/z_verbose (ZLIB_DEBUG), zmemcpy/zmemcmp/zmemzero (HAVE_MEMCPY in the kernel too), the 16-bit and Windows CE sections and the userland zcalloc/zcfree (the kernel's MY_ZCALLOC is zopenbsd.c) have no counterpart"
+
+[[file]]
+c = "sys/lib/libz/adler32.c"
+rust = "sys/lib/libz/adler32.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6e4cbb32d94c507b782c43f3965a8b3b6fab20e9"
+notes = "license: zlib; an altered source version. adler32 (= adler32_z) over Option<&[u8]>, None is Z_NULL and returns 1; NMAX blocks with one modulo each, the len 1 and len < 16 short paths; NO_DIVIDE is not defined (MOD is %); adler32_combine (= adler32_combine64 and adler32_combine_) over an i64 length; tests against the RFC 1950 definition and Python's zlib vectors"
+
+[[file]]
+c = "sys/lib/libz/zopenbsd.c"
+rust = "sys/lib/libz/zopenbsd.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1a45452e2682a5fead4a2068956fca91a262e499"
+notes = "zcalloc (mallocarray M_DEVBUF M_NOWAIT) is a fallible, zero-filled Vec<T> through the global allocator (malloc(9) in the kernel), None for NULL; zcalloc_box allocates one stream state (alloc + Box::from_raw, so a failure is Z_MEM_ERROR, not an abort); zcfree drops; M_DEVBUF has no counterpart"
+
+[[file]]
 c = "sys/lib/libkern/memcpy.c"
 status = "skipped"
 notes = "provided-by-core: core::ptr::copy / slice::copy_from_slice"

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "zlib pieces the kernel uses (OpenBSD sys/lib/libz): crc32"
+description = "zlib as the OpenBSD kernel builds it (sys/lib/libz)"
 publish = false
 
 [lib]
