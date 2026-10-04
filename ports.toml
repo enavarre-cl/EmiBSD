@@ -5980,3 +5980,102 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 deps = ["sys/tmpfs/tmpfs_vnops.h", "sys/tmpfs/tmpfs_subr.c", "sys/kern/vfs_default.c", "sys/kern/vfs_cache.c", "sys/kern/vfs_subr.c"]
 notes = "M10c (tmpfs-core, in part): tmpfs_vops (TMPFS_VOPS, the slots of the unported operations None: EOPNOTSUPP), tmpfs_inactive, tmpfs_reclaim, tmpfs_lock, tmpfs_unlock, tmpfs_islocked, tmpfs_print (DEBUG/DIAGNOSTIC; fifo_printinfo waits for fifofs), tmpfs_bwrite, tmpfs_strategy, tmpfs_ioctl ported; tmpfs_access, tmpfs_getattr, tmpfs_setattr are unported! stubs marked M10C-SHIM (tmpfs_specops.c and tmpfs_fifoops.c name them); the rest of the file (lookup, create, mknod, open, close, read, write, fsync, remove, link, rename and its helpers, mkdir, rmdir, symlink, readdir, readlink, pathconf, advlock, kqfilter) is M10C-PENDING"
+
+[[file]]
+c = "sys/msdosfs/bpb.h"
+rust = "sys/msdosfs/bpb.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "af480309eeda0bb0d7eb09f8aa82fb54bd730175"
+deps = []
+notes = "M10c: license: Paul Popelka's notice (do anything, keep the notice), kept whole; struct bpb33/bpb50/bpb710 (C field names), byte_bpb33/50/710 and struct fsinfo as #[repr(C)] byte structures viewed in place with at/at_mut (byte_view! macro, align 1 checked, sizes 19/25/41/1024 checked), int8_t members as u8; getushort/getulong/putushort/putulong as little-endian functions over byte slices (the caller passes the stored width); FATNUM, FATMIRROR, FSVERS"
+
+[[file]]
+c = "sys/msdosfs/bootsect.h"
+rust = "sys/msdosfs/bootsect.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "934485e59bbc03ac96a6863a0d4eee6229a59454"
+deps = ["sys/msdosfs/bpb.h"]
+notes = "M10c: license: Paul Popelka's notice, kept whole; struct bootsector33/50/710 and extboot as byte structures (int8_t arrays as u8), union bootsector as a #[repr(C)] union with safe bs33/bs50/bs710 accessors (all members 512 bytes of bytes), BOOTSIG0..3, EXBOOTSIG; the #if 0 bsBPB shorthands left out"
+
+[[file]]
+c = "sys/msdosfs/direntry.h"
+rust = "sys/msdosfs/direntry.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ff6161e6220f9350609de9d45066701729803d5b"
+deps = ["sys/msdosfs/bpb.h"]
+notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; struct direntry and struct winentry as 32-byte byte views (at/at_mut), weReserved2 as [u8; 2] so the view has alignment 1; name11/set_name11 for the 11 bytes the C reaches through deName; SLOT_*, ATTR_*, CASE_LOWER_*, WIN_*, DT_*/DD_* masks and shifts; the _KERNEL prototypes are msdosfs_conv.rs's functions; reference-backed test"
+
+[[file]]
+c = "sys/msdosfs/fat.h"
+rust = "sys/msdosfs/fat.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e28c6ef769b8e35dfcfc8ec1fb6a62926079a47a"
+deps = ["sys/msdosfs/msdosfsmount.h"]
+notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; cluster numbers (MSDOSFSROOT, CLUST_*), FAT12/16/32_MASK, FAT_GET/FAT_SET/FAT_GET_AND_SET, DE_CLEAR; FAT12/FAT16/FAT32/MSDOSFSEOF as fat12/fat16/fat32/msdosfseof functions; the _KERNEL prototypes are msdosfs_fat.rs's functions; reference-backed test"
+
+[[file]]
+c = "sys/msdosfs/msdosfsmount.h"
+rust = "sys/msdosfs/msdosfsmount.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8dc1c39d36d16f3191c9ed822e0fe98944adc29c"
+deps = ["sys/msdosfs/bpb.h", "sys/sys/mount.h", "sys/sys/vnode.h"]
+notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; struct msdosfsmount (malloc'd by msdosfs_mountfs, &'static via vfstomsdosfs which checks the vfc name, Cell members, pm_bpb a Cell<Bpb50> with pm_BytesPerSec/set_pm_BytesPerSec... shorthand methods, pm_inusemap a Cell<*mut u32> read through inusemap() as howmany(pm_maxcluster + 1, N_INUSEBITS) Cell<u32> words); pm_export (struct netexport, NFSSERVER) left out as um_export is; MSDOSFSMNT_MNTOPT/RONLY/WAITONFAT, MSDOSFS_FATMIRROR as u32; N_INUSEBITS; FATOFS as fatofs (u32); bptoep returns the entry's offset in the buffer; de_bn2cn, de_cn2bn, de_cluster, de_clcount, de_blk, de_cn2off, de_bn2off, cntobn, roottobn generic over the DeArith integers (u32, u64, i64: the macro computes in its argument's type, wrapping); detobn (u32), fsi_size; the vfsops prototypes are msdosfs_vfsops.rs's (msdosfs_init is msdosfs_denode.rs's)"
+
+[[file]]
+c = "sys/msdosfs/denode.h"
+rust = "sys/msdosfs/denode.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "308f6826c5b864d8d559428a6cef8646070a3b67"
+deps = ["sys/msdosfs/direntry.h", "sys/msdosfs/fat.h", "sys/msdosfs/msdosfsmount.h", "sys/sys/vnode.h"]
+notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; struct denode (malloc'd by deget, &'static via vtode which checks VT_MSDOSFS, Cell members, constructible on the stack for ndirent; de_next/de_prev as a queue.h list entry de_hash with the DeHash adapter, de_prev == NULL as de_hashed; de_lockf a LockfStateSlot; de_fc an array of Cell<Fatcache>), struct fatcache, FC_*, FCE_EMPTY, DE_* flags, MSDOSFSROOT_OFS, WIN_MAXLEN, MSDOSFS_FILESIZE_MAX; fc_setcache, DE_INTERNALIZE32/DE_INTERNALIZE/DE_EXTERNALIZE (over a Direntry view), DETIMES, VTODE as functions, DETOV as Denode::detov; struct defid with from_fid/to_fid; dead de_forw/de_back macros left out; prototypes are msdosfs_vnops.rs/msdosfs_lookup.rs/msdosfs_denode.rs functions"
+
+[[file]]
+c = "sys/msdosfs/msdosfs_conv.c"
+rust = "sys/msdosfs/msdosfs_conv.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5b927404697cbdf70636a94e5979cab9106021d8"
+deps = ["sys/msdosfs/direntry.h", "sys/msdosfs/denode.h", "sys/sys/dirent.h", "sys/sys/time.h"]
+notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; regyear/leapyear (REGYEAR/LEAPYEAR), unix2dostime (returns date, time, hundredths), dos2unixtime (returns the timespec; 32-bit sum as in C), dos2unixfn (bool lower, usize length), unix2dosfn (OpenBSD's '~' over the last name character kept), unix2winfn, winChkName, win2unixfn (into a Dirent; d_namlen wraps as in C), winChksum, winSlotCnt; the last-conversion caches (lasttime/lastday/lastddate/lastdtime, lastdosdate/lastseconds) as two packed AtomicU64s; the three wePart passes as one pass over 13 characters; a month above 12 counts 0 days and a winChkName slot 0 matches nothing (C reads out of bounds); unix2dos/dos2unix/u2l tables written out, compared with the C file by a reference-backed test; host tests"
+
+[[file]]
+c = "sys/msdosfs/msdosfs_fat.c"
+rust = "sys/msdosfs/msdosfs_fat.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0b28222da0a0f58efca18fa53df205493220bdfe"
+deps = ["sys/msdosfs/bpb.h", "sys/msdosfs/denode.h", "sys/msdosfs/fat.h", "sys/msdosfs/msdosfsmount.h", "sys/kern/vfs_bio.c", "sys/kern/kern_tc.c"]
+notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; fatblock (tuple result), pcbmap, fc_lookup, fc_purge, updatefats, usemap_alloc/usemap_free, clusterfree, fatentry (DIAGNOSTIC checks behind feature diagnostic), fatchain, chainlength, chainalloc, clusteralloc (its two bitmap scans as scanfree), freeclusterchain, fillinusemap, extendfile; out-parameters as Option<&mut T>; the per-entry FAT reads/writes as fat_read/fat_write over the block's bytes; getblk 'never fails' as a retry loop (getblk_wait); fc_* statistics as atomics; fillinusemap skips brelse(NULL); host tests (FAT12/16/32 packing, fatblock, fat cache, bitmap)"
+
+[[file]]
+c = "sys/msdosfs/msdosfs_denode.c"
+rust = "sys/msdosfs/msdosfs_denode.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7948bc6b50ce18c5eca882c607c04cd57e274a13"
+deps = ["sys/msdosfs/denode.h", "sys/msdosfs/msdosfs_fat.c", "sys/crypto/siphash.c", "sys/kern/kern_subr.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_bio.c", "sys/kern/kern_malloc.c", "sys/uvm/uvm_vnode.c"]
+notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; msdosfs_init (dehashtbl/dehash/dehashkey as StaticCells set once, hashinit, arc4random_buf), msdosfs_dehash (SipHash24), msdosfs_hashget/hashins/hashrem (queue.h list; de_prev == NULL is de_hashed, cleared on removal as under DIAGNOSTIC), deget (returns the denode; a failing readep leaves the vnode locked as in C), deupdat, detrunc, deextend, reinsert, msdosfs_reclaim, msdosfs_inactive (prtactive reports behind feature diagnostic); MSDOSFS_DEBUG printfs left out; readep/readde and MSDOSFS_VOPS come from the msdosfs_lookup.rs/msdosfs_vnops.rs M10C-SHIMs until those ports"
+
+[[file]]
+c = "sys/msdosfs/msdosfs_lookup.c"
+rust = "sys/msdosfs/msdosfs_lookup.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d081a614951716853400c9154927b1019305c5e1"
+deps = ["sys/msdosfs/denode.h", "sys/msdosfs/msdosfsmount.h"]
+notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; M10C-SHIM: only readep and readde, as unported! stubs (ENOSYS) with their final signatures, until the port of this file"
+
+[[file]]
+c = "sys/msdosfs/msdosfs_vnops.c"
+rust = "sys/msdosfs/msdosfs_vnops.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "54605addf2e0b6331426bac1c66e2f9b7f4b5e49"
+deps = ["sys/msdosfs/denode.h"]
+notes = "M10c: license: BSD-4 (TooLs GmbH, advertising clause) and Paul Popelka's notice, kept whole; M10C-SHIM: only MSDOSFS_VOPS, with vop_inactive and vop_reclaim (msdosfs_denode.c's) and every other slot None, until the port of this file"
