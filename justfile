@@ -78,7 +78,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -867,6 +867,32 @@ inet6_expects := "--a-expect 'inet6 ::1 prefixlen 128' --b-expect 'inet6 ::1 pre
     "--a-expect 'inet6 fd00:77::1 prefixlen 64' --b-expect 'inet6 fd00:77::2 prefixlen 64' " + \
     "--a-expect 'bytes from fd00:77::2: icmp_seq=' --a-expect 'bytes from fe80::5054:ff:febb:2%vio1: icmp_seq=' " + \
     "--b-expect 'bytes from fd00:77::1: icmp_seq='"
+
+# M10c: the memory and removable file systems. Logs in as `smoke-login` does, mounts a
+# tmpfs(5) on /tmp and writes to it; attaches the ramdisk's test images (`/root/images`,
+# made on the host by makefs(8) and hdiutil: tools/xtask/src/userland/images.rs) to vnd(4)
+# with vnconfig(8) and mounts each, FAT with mount_msdos(8), ISO 9660 with mount_cd9660(8)
+# and UDF with mount_udf(8), reading its known file back; then newfs_msdos(8) formats a vnd
+# over an empty file on the tmpfs and fsck_msdos(8) -n must pass it. `$((40+2))` keeps the
+# echoed command lines from matching. Part of `smoke`.
+smoke-fs: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-fs: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen {{fs_steps}}
+    cargo xtask smoke {{reject}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen {{fs_steps}}
+
+# `smoke-fs`'s session.
+fs_steps := disk_login + " " + \
+    "--send-after '# ' --send 'mount_tmpfs tmpfs /tmp && echo m10c-tmpfs-$((40+2)) >/tmp/t.txt && cat /tmp/t.txt && mount\\n' " + \
+    "--send-after 'm10c-tmpfs-42' --send 'vnconfig vnd0 /root/images/fat.img && mount_msdos /dev/vnd0c /mnt && cat /mnt/m10c-fat.txt && umount /mnt\\n' " + \
+    "--send-after 'm10c-fat-42' --send 'vnconfig vnd1 /root/images/cd.iso && mount_cd9660 /dev/vnd1c /mnt && cat /mnt/m10c-iso.txt && umount /mnt\\n' " + \
+    "--send-after 'm10c-iso-42' --send 'vnconfig vnd2 /root/images/udf.img && mount_udf /dev/vnd2c /mnt && cat /mnt/m10c-udf.txt && umount /mnt\\n' " + \
+    "--send-after 'm10c-udf-42' --send 'dd if=/dev/zero of=/tmp/new.img bs=64k count=64 && vnconfig vnd3 /tmp/new.img && newfs_msdos /dev/rvnd3c\\n' " + \
+    "--send-after '# ' --send 'fsck_msdos -n /dev/rvnd3c; echo fsck-msdos-rc=$?\\n' " + \
+    "--send-after 'fsck-msdos-rc=' --send 'vnconfig -l\\n' " + \
+    "--expect 'tmpfs on /tmp type tmpfs' --expect 'm10c-tmpfs-42' --expect 'm10c-fat-42' " + \
+    "--expect 'm10c-iso-42' --expect 'm10c-udf-42' --expect '** Phase 1 - Read and Compare FATs' " + \
+    "--expect 'fsck-msdos-rc=0' --expect 'vnd3: covering /tmp/new.img'"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
