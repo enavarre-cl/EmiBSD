@@ -55,9 +55,6 @@
 //! ## Deviations
 //! - `INET6` is not configured: `DIOCNATLOOK` and `pf_rule_checkaf` reject `AF_INET6` as the C
 //!   does without the option (comments at the sites).
-//! - `pfsync(4)` (`NPFSYNC`) is not configured: `DIOCADDSTATE` is not compiled in (it falls to
-//!   the `ENODEV` default, as in a kernel without pfsync), and `pf_states_clr` neither marks
-//!   the states `PFSTATE_NOSYNC` nor calls `pfsync_clear_states`.
 //! - `kstat(4)` (`NKSTAT`) is not configured: the limiter kstats (`pf_statelim_kstat_*`,
 //!   `pf_sourcelim_kstat_*`) are a comment at the end of the file and at their call sites.
 //! - `pf_anchor_stack` is `net/pf.rs`'s static (one CPU, no `cpumem`); `pfattach` sets its
@@ -1982,8 +1979,8 @@ pub fn pf_states_clr(psk: &mut PfiocStateKill) -> Result<(), Errno> {
             }
 
             if psk.psk_ifname[0] == 0 || pf_cstr(&psk.psk_ifname) == kif_name_bytes(s.kif.get()) {
-                // NPFSYNC: SET(st->state_flags, PFSTATE_NOSYNC) (don't send out individual
-                // delete messages); not configured.
+                // don't send out individual delete messages
+                s.state_flags.set(s.state_flags.get() | PFSTATE_NOSYNC);
                 pf_remove_state(s);
                 killed += 1;
             }
@@ -1995,7 +1992,7 @@ pub fn pf_states_clr(psk: &mut PfiocStateKill) -> Result<(), Errno> {
 
         psk.psk_killed = killed;
 
-        // NPFSYNC: pfsync_clear_states(pf_status.hostid, psk->psk_ifname); not configured.
+        crate::net::if_pfsync::pfsync_clear_states(PF_STATUS.hostid.get(), &psk.psk_ifname);
     }
     net_unlock();
 
@@ -2737,8 +2734,21 @@ fn pfioctl_locked(dev: Dev, cmd: u64, data: &mut [u8], p: &Proc) -> Result<(), E
             error
         }
 
-        // NPFSYNC: DIOCADDSTATE (pf_state_import of a pfsync_state); not configured, so the
-        // command is unknown (ENODEV), as in a kernel without pfsync.
+        DIOCADDSTATE => {
+            let ps = ioctl_arg::<PfiocState>(data);
+            let sp = &ps.state;
+
+            if usize::from(sp.timeout) >= PFTM_MAX {
+                return Err(Errno::EINVAL);
+            }
+            net_lock();
+            pf_lock();
+            let error = pf_state_import(sp, crate::net::if_pfsync::PFSYNC_SI_IOCTL);
+            pf_unlock();
+            net_unlock();
+            error
+        }
+
         DIOCGETSTATE => {
             let mut ps = ioctl_arg::<PfiocState>(data);
             let id_key = PfStateCmp {

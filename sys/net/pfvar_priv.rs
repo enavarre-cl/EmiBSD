@@ -56,14 +56,10 @@
 //!   not configured (`NKSTAT` 0), so they would always be NULL.
 //! - `pf_anchor_stackframe`'s union of `sf_r` and `sf_stack_top` is two members, the stack top
 //!   an index into the stack (the C's pointer into the same per-CPU array).
-//! - `struct pf_state`'s `sync_list`/`sync_defer`/`sync_state`/`sync_updates`/`pfsync_time` are
-//!   pfsync(4)'s and stay as members, written by no one: pfsync is not configured (see
-//!   `net/pf.rs`).
 //! - The `PF_LOCK()` family are functions; the locks themselves live where the C defines them
 //!   (`net/pf_ioctl.rs` and `net/pf.rs`).
 
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::ptr;
 
 use crate::kassert;
@@ -217,8 +213,8 @@ pub struct PfState {
     pub direction: Cell<u8>,
     /// `sync_list`: \[S\].
     pub sync_list: TailqEntry<PfState>,
-    /// `sync_defer`: \[S\] pfsync's deferral (pfsync is not configured: always NULL).
-    pub sync_defer: Cell<*mut c_void>,
+    /// `sync_defer`: \[S\] pfsync's deferral of the state's first packet.
+    pub sync_defer: Cell<Option<&'static crate::net::if_pfsync::PfsyncDeferral>>,
     /// `entry_list`: \[L\].
     pub entry_list: TailqEntry<PfState>,
     /// `gc_list`: \[g\].
@@ -307,6 +303,10 @@ unsafe impl Sync for PfState {}
 crate::queue_adapter!(
     /// `TAILQ_HEAD(pf_state_queue, pf_state)` through `entry_list`.
     pub PfStateQueue: PfState, entry_list => TailqEntry<PfState>
+);
+crate::queue_adapter!(
+    /// `TAILQ_HEAD(pf_state_queue, pf_state)` through `sync_list`: pfsync's queues.
+    pub PfStateSyncQueue: PfState, sync_list => TailqEntry<PfState>
 );
 crate::queue_adapter!(
     /// The purge gc's `SLIST_HEAD(, pf_state)` through `gc_list`.

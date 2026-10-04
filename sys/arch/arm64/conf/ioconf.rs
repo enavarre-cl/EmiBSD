@@ -7,7 +7,7 @@
 //! GENERIC lines present: `mainbus0 at root`, `ampintc* at fdt? early 1`, `agtimer* at fdt?`,
 //! `virtio* at fdt?`, `vio* at virtio?`, `pluart* at fdt?`, `plrtc* at fdt?`;
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`,
-//! `pseudo-device loop`, `pseudo-device wg`.
+//! `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`.
 //! The `fdt` attribute (`files.arm64`: `define fdt {[early = 0]}`) is carried by `mainbus`
 //! and `simplebus`; `simplebus` is not ported, so mainbus is the only parent here. Every
 //! other GENERIC line waits for its driver (`cpu0 at mainbus?`, `simplebus* at fdt?`, the
@@ -30,6 +30,7 @@ use crate::kern::tty_pty::ptyattach;
 use crate::net::if_enc::encattach;
 use crate::net::if_loop::loopattach;
 use crate::net::if_pflog::pflogattach;
+use crate::net::if_pfsync::pfsyncattach;
 use crate::net::if_wg::wgattach;
 use crate::net::pf_ioctl::pfattach;
 use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR, Pdevinit};
@@ -129,16 +130,21 @@ pub static CFROOTS: [i16; 1] = [0];
 
 /// `pdevinit[]`: the pseudo-devices of the MI `conf/GENERIC` whose attach functions are
 /// ported, in `ioconf.c`'s order (`pseudo-device pf`, `pseudo-device pflog`, `pseudo-device
-/// enc`, `pseudo-device pty 16`, `pseudo-device loop`, `pseudo-device wg`; all but pty with a
-/// count of 1), then `pseudo-device rd 1`, which is not in GENERIC but in the RAMDISK kernels
-/// (`arch/arm64/conf/RAMDISK*`): this kernel boots its root from rd0a (M8).
-pub static PDEVINIT: [Pdevinit; 7] = [
+/// pfsync`, `pseudo-device enc`, `pseudo-device pty 16`, `pseudo-device loop`, `pseudo-device
+/// wg`; all but pty with a count of 1), then `pseudo-device rd 1`, which is not in GENERIC
+/// but in the RAMDISK kernels (`arch/arm64/conf/RAMDISK*`): this kernel boots its root from rd0a
+/// (M8).
+pub static PDEVINIT: [Pdevinit; 8] = [
     Pdevinit {
         pdev_attach: pfattach,
         pdev_count: 1,
     },
     Pdevinit {
         pdev_attach: pflogattach,
+        pdev_count: 1,
+    },
+    Pdevinit {
+        pdev_attach: pfsyncattach,
         pdev_count: 1,
     },
     Pdevinit {

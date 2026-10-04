@@ -318,11 +318,15 @@ fn open_and_permissions() {
     );
 
     // Unknown commands.
-    assert_eq!(
-        ioctl(DIOCADDSTATE, &mut [], p),
-        Err(Errno::ENODEV),
-        "pfsync is not configured"
-    );
+    assert_eq!(ioctl(0, &mut [], p), Err(Errno::ENODEV), "not a pf command");
+
+    // DIOCADDSTATE (pfsync is configured): a state without a creator id is refused, one
+    // with a timeout past PFTM_MAX too.
+    let mut ps = PfiocState::default();
+    assert_eq!(ioctl(DIOCADDSTATE, &mut pod(&ps), p), Err(Errno::EINVAL));
+    ps.state.timeout = PFTM_MAX as u8;
+    ps.state.creatorid = 1;
+    assert_eq!(ioctl(DIOCADDSTATE, &mut pod(&ps), p), Err(Errno::EINVAL));
 
     assert_eq!(pfclose(DEV, 0, 0, Some(p)), Ok(()));
 }

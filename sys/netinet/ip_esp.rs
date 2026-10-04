@@ -100,7 +100,7 @@
 //! - The ESP header removal of `esp_input` moves bytes inside an mbuf with `ptr::copy` (the
 //!   C's `memmove`), under a `// SAFETY:` naming the bounds.
 //! - Not configured, each a comment at its site: `NBPFILTER` (the `enc(4)` counters and
-//!   `bpf_mtap_hdr` of `esp_output`), `NPFSYNC` (`pfsync_update_tdb`), `INET6`.
+//!   `bpf_mtap_hdr` of `esp_output`), `INET6`. `NPFSYNC` is: `pfsync_update_tdb`.
 
 use core::ptr;
 use core::sync::atomic::Ordering;
@@ -755,7 +755,10 @@ pub fn esp_input(
             mtx_enter(&tdb.tdb_mtx);
             let chk_rpl = checkreplaywindow(tdb, tdb.tdb_rpl.get(), btsx, &mut esn, true);
             mtx_leave(&tdb.tdb_mtx);
-            // NPFSYNC > 0: pfsync_update_tdb(tdb, 0) when all's well; not configured.
+            if chk_rpl == 0 {
+                // All's well
+                crate::net::if_pfsync::pfsync_update_tdb(tdb, false);
+            }
             if !esp_replay_check(tdb, "esp_input", chk_rpl) {
                 break 'drop;
             }
@@ -1005,7 +1008,7 @@ pub fn esp_output(
             ptr::write_unaligned(p.add(4).cast::<u32>(), replay);
         }
 
-        // NPFSYNC > 0: pfsync_update_tdb(tdb, 1); not configured.
+        crate::net::if_pfsync::pfsync_update_tdb(tdb, true);
 
         // Add padding -- better to do it ourselves than use the crypto engine, although
         // if/when we support compression, we'd have to do that.

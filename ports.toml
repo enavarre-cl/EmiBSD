@@ -2903,7 +2903,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b680611f6215a2a7563aded95b219f34f5252ecf"
 deps = ["sys/net/pfkeyv2.h", "sys/net/pfkeyv2_parsemessage.c", "sys/net/pfkeyv2_convert.c", "sys/netinet/ip_ipsp.c", "sys/netinet/ip_spd.c", "sys/net/radix.c", "sys/kern/uipc_socket.c", "sys/kern/uipc_socket2.c", "sys/kern/uipc_domain.c"]
-notes = "M9c: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: ealgs/aalgs/calgs, pkpcb_pool, pfkeyv2_mtx, pkptable, pfkeyv2_seq, nregistered/npromisc (atomics), pfkeysw/pfkeydomain (first in domains[]), pfkeyv2_usrreqs, pfkey_init, pfkeyv2_attach/detach/disconnect/shutdown/send/sockaddr/peeraddr, pfkeyv2_output, pfkey_sendup, pfkeyv2_sendmessage (unsafe: header pointers), pfkeyv2_policy, pfkeyv2_get, pfkeyv2_dump_walker, pfkeyv2_sa_flush, pfkeyv2_get_proto_alg, pfkeyv2_newsa, pfkeyv2_dosend (messages are Vec<u8> buffers, the headers an array of raw pointers into them), pfkeyv2_flow (ADDFLOW/DELFLOW split out of dosend), pfkeyv2_acquire, pfkeyv2_expire, pfkeyv2_sysctl_walker, pfkeyv2_dump_policy, pfkeyv2_sysctl_policydumper, pfkeyv2_policy_flush, pfkeyv2_sysctl (net.key SADB_DUMP and SPD_DUMP); NPF configured (the SADB_X_EXT_TAG/TAP extensions); NBPFILTER, NPFSYNC, INET6 not configured (comments at the sites); host tests (parse and convert of SADB_ADD and SADB_X_ADDFLOW; a PF_KEY socket registering, adding an SA and a flow that ipsp_spd_lookup then finds, SADB_GET, the net.key dumps, SADB_DELETE, SADB_FLUSH)"
+notes = "M9c: NRL licence notice (advertising clause, accepted as BSD-4). The whole file: ealgs/aalgs/calgs, pkpcb_pool, pfkeyv2_mtx, pkptable, pfkeyv2_seq, nregistered/npromisc (atomics), pfkeysw/pfkeydomain (first in domains[]), pfkeyv2_usrreqs, pfkey_init, pfkeyv2_attach/detach/disconnect/shutdown/send/sockaddr/peeraddr, pfkeyv2_output, pfkey_sendup, pfkeyv2_sendmessage (unsafe: header pointers), pfkeyv2_policy, pfkeyv2_get, pfkeyv2_dump_walker, pfkeyv2_sa_flush, pfkeyv2_get_proto_alg, pfkeyv2_newsa, pfkeyv2_dosend (messages are Vec<u8> buffers, the headers an array of raw pointers into them), pfkeyv2_flow (ADDFLOW/DELFLOW split out of dosend), pfkeyv2_acquire, pfkeyv2_expire, pfkeyv2_sysctl_walker, pfkeyv2_dump_policy, pfkeyv2_sysctl_policydumper, pfkeyv2_policy_flush, pfkeyv2_sysctl (net.key SADB_DUMP and SPD_DUMP); NPF configured (the SADB_X_EXT_TAG/TAP extensions); NBPFILTER, INET6 not configured (comments at the sites); host tests (parse and convert of SADB_ADD and SADB_X_ADDFLOW; a PF_KEY socket registering, adding an SA and a flow that ipsp_spd_lookup then finds, SADB_GET, the net.key dumps, SADB_DELETE, SADB_FLUSH)"
 
 [[file]]
 c = "sys/net/pfkeyv2_parsemessage.c"
@@ -3013,7 +3013,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d8b3695eafc44c4faaa208c08d27ebd2653cfefc"
 deps = ["sys/sys/protosw.h", "sys/sys/domain.h", "sys/netinet/ip_input.c", "sys/netinet/ip_icmp.c"]
-notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; M9a: udp_usrreqs/ip_ctloutput on udp, rip_usrreqs/rip_ctloutput on the raw, icmp, ipv4-in-ipv4, igmp and wildcard entries; tcp has neither until tcp_usrreq.c), inetdomain (dom_init is in_pcb.c's in_init since M9a), ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (tcp_*, igmp_*) and free the packet; INET6, GRE, MROUTING, CARP, PFSYNC, ETHERIP, PIPEX, divert, MPLS not configured; M9c: IPSEC configured: ah, esp and ipcomp entries after igmp (with rip_ctloutput/rip_usrreqs), ipv4-in-ipv4 through ip_ipip.c"
+notes = "M7b: NRL licence notice (advertising clause, accepted as BSD-4). inetsw[] (ip, udp, tcp, raw, icmp, ipv4-in-ipv4, igmp, the raw wildcard; M9a: udp_usrreqs/ip_ctloutput on udp, rip_usrreqs/rip_ctloutput on the raw, icmp, ipv4-in-ipv4, igmp and wildcard entries; tcp has neither until tcp_usrreq.c), inetdomain (dom_init is in_pcb.c's in_init since M9a), ip_protox (atomics, filled by ip_init); the protocols that are not ported have stand-ins that report themselves (tcp_*, igmp_*) and free the packet; INET6, GRE, MROUTING, CARP, ETHERIP, PIPEX, divert, MPLS not configured; M9: the IPPROTO_PFSYNC entry (pfsync_input4, pfsync_sysctl); M9c: IPSEC configured: ah, esp and ipcomp entries after igmp (with rip_ctloutput/rip_usrreqs), ipv4-in-ipv4 through ip_ipip.c"
 
 [[file]]
 c = "sys/netinet/in_pcb.h"
@@ -3086,7 +3086,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ed482d55324c9aee393f4098e5cf975062c02d0a"
 deps = ["sys/netinet/ip_ipsp.h", "sys/netinet/ip_spd.c", "sys/netinet/ip_esp.c", "sys/netinet/ip_ah.c", "sys/netinet/ip_ipip.c", "sys/netinet/ip_ipcomp.h", "sys/kern/kern_timeout.c", "sys/kern/subr_pool.c", "sys/crypto/siphash.c", "sys/net/pfkeyv2.c"]
-notes = "M9c: Ioannidis/Keromytis licence notice. The whole file: ipsec_in_use, ipsec_last_added, ipsec_ids_idle, tdb_sadb_mtx and the three hash tables (TdbTables in a StaticCell: Vecs grown by tdb_rehash with try_reserve), tdb_pool, ipsec_flows/ipsec_ids_tree/ipsec_ids_gc_list under ipsec_flows_mtx, xformsw[] (IP4, AH, ESP, IPCOMP; TCP_SIGNATURE's transform is in tcp_subr.c, not ported), ipsp_init, tdb_hash, reserve_spi, gettdb_dir, gettdbbysrcdst_dir, ipsp_aux_match, gettdbbydst, gettdbbysrc, tdb_hashstats, tdb_printit, tdb_walk (closure), the four lifetime timers and their tasks, tdb_addtimeouts, tdb_rehash, puttdb/puttdb_locked, tdb_unlink/_locked, tdb_cleanspd, tdb_unbundle, tdb_deltimeouts, tdb_ref/unref, tdb_delete, tdb_alloc, tdb_free, tdb_init, ipsp_address (inet_ntop is not ported: reported, a placeholder for AF_INET), ipsp_is_unspecified, ipsp_ids_match/insert/lookup/gc/free and the tree comparators; NPF configured (pf_tag_unref); NSEC, NPFSYNC, INET6, TCP_SIGNATURE not configured (comments at the sites); host tests (lookups by spi/dst/src, rehash, reserve_spi, identities, sockaddr_encap offsets)"
+notes = "M9c: Ioannidis/Keromytis licence notice. The whole file: ipsec_in_use, ipsec_last_added, ipsec_ids_idle, tdb_sadb_mtx and the three hash tables (TdbTables in a StaticCell: Vecs grown by tdb_rehash with try_reserve), tdb_pool, ipsec_flows/ipsec_ids_tree/ipsec_ids_gc_list under ipsec_flows_mtx, xformsw[] (IP4, AH, ESP, IPCOMP; TCP_SIGNATURE's transform is in tcp_subr.c, not ported), ipsp_init, tdb_hash, reserve_spi, gettdb_dir, gettdbbysrcdst_dir, ipsp_aux_match, gettdbbydst, gettdbbysrc, tdb_hashstats, tdb_printit, tdb_walk (closure), the four lifetime timers and their tasks, tdb_addtimeouts, tdb_rehash, puttdb/puttdb_locked, tdb_unlink/_locked, tdb_cleanspd, tdb_unbundle, tdb_deltimeouts, tdb_ref/unref, tdb_delete, tdb_alloc, tdb_free, tdb_init, ipsp_address (inet_ntop is not ported: reported, a placeholder for AF_INET), ipsp_is_unspecified, ipsp_ids_match/insert/lookup/gc/free and the tree comparators; NPF configured (pf_tag_unref); NSEC, INET6, TCP_SIGNATURE not configured (comments at the sites); NPFSYNC configured (tdb_free calls pfsync_delete_tdb); host tests (lookups by spi/dst/src, rehash, reserve_spi, identities, sockaddr_encap offsets)"
 
 [[file]]
 c = "sys/netinet/ip_spd.c"
@@ -4912,7 +4912,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d8bc3cb4365d3298eb5f69af28c30b937b2a532d"
 deps = ["sys/net/pfvar.h", "sys/kern/kern_rwlock.c"]
-notes = "M9d: states, state keys, limiters, pf_pdesc and the locks; pool items with Cell members and Cell<Option<&'static T>> links; pf_pdesc's pointers into the packet are PfLoc (header copy offset, mbuf offset or an unsafe caller local) read/written through ld16/st16/ld_addr/st_addr; no INET6 members in pf_pdesc.hdr; NKSTAT limiter kstats left out; pf_anchor_stackframe's union is two members (stack top an index); pfsync members kept, unwritten; PF_LOCK() family are fns, PfGlobal<T> wraps the C globals"
+notes = "M9d: states, state keys, limiters, pf_pdesc and the locks; pool items with Cell members and Cell<Option<&'static T>> links; pf_pdesc's pointers into the packet are PfLoc (header copy offset, mbuf offset or an unsafe caller local) read/written through ld16/st16/ld_addr/st_addr; no INET6 members in pf_pdesc.hdr; NKSTAT limiter kstats left out; pf_anchor_stackframe's union is two members (stack top an index); sync_defer is Option<&'static PfsyncDeferral>, PfStateSyncQueue adapts sync_list for pfsync's queues; PF_LOCK() family are fns, PfGlobal<T> wraps the C globals"
 
 [[file]]
 c = "sys/net/pf.c"
@@ -4921,7 +4921,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b465a77b487e3490033bbf895b543f32fb6de0f7"
 deps = ["sys/net/pfvar.h", "sys/net/pfvar_priv.h", "sys/netinet/tcp.h", "sys/netinet/tcp_seq.h", "sys/netinet/tcp_fsm.h", "sys/netinet/udp.h", "sys/netinet/ip_icmp.h", "sys/netinet/in_pcb.c", "sys/net/toeplitz.c", "sys/crypto/sha2.c", "sys/crypto/siphash.c", "sys/kern/kern_timeout.c"]
-notes = "M9d: the whole file for IPv4: rule evaluation (pf_match_rule/pf_test_rule, anchors via the one-CPU pf_anchor_stack), the state table (state keys, pf_state_insert/remove, purge), TCP window tracking and sloppy states, scrub hooks, NAT/RDR/BINAT via pf_lb, route-to/reply-to (pf_route), source tracking and the state/source limiters, pf_test with pf_tag/queue/prio/delay, the inpcb/state key links for netinet. Stubs: INET6 not configured (AF_INET6, pf_test6, pf_route6, ICMPv6, af-to: pf_translate_icmp_af/pf_change_icmp_af and the af-to translation report unported! and drop with PFRES_TRANSLATE); pf_socket_lookup for TCP reports unported!(tcbtable) (netinet TCP not ported; user/group rules never match TCP); divert_packet reports unported! (netinet/ip_divert.c) and frees the packet; tcp_mssdflt is TCP_MSS; tcpstat_inc calls are comments. Not configured: NPFSYNC, NPFLOW, NCARP, NBPFILTER (comments at the sites). pf_anchor_stack and pf_status_fcounters (per-CPU cpumem) are one static each; pf_test takes &mut Option<&'static Mbuf> and returns the action as u8; host tests"
+notes = "M9d: the whole file for IPv4: rule evaluation (pf_match_rule/pf_test_rule, anchors via the one-CPU pf_anchor_stack), the state table (state keys, pf_state_insert/remove, purge), TCP window tracking and sloppy states, scrub hooks, NAT/RDR/BINAT via pf_lb, route-to/reply-to (pf_route), source tracking and the state/source limiters, pf_test with pf_tag/queue/prio/delay, the inpcb/state key links for netinet. Stubs: INET6 not configured (AF_INET6, pf_test6, pf_route6, ICMPv6, af-to: pf_translate_icmp_af/pf_change_icmp_af and the af-to translation report unported! and drop with PFRES_TRANSLATE); pf_socket_lookup for TCP reports unported!(tcbtable) (netinet TCP not ported; user/group rules never match TCP); divert_packet reports unported! (netinet/ip_divert.c) and frees the packet; tcp_mssdflt is TCP_MSS; tcpstat_inc calls are comments. Not configured: NPFLOW, NCARP, NBPFILTER (comments at the sites); NPFSYNC configured (the pfsync hooks, pf_state_import, PF_DEFER through pfsync_defer). pf_anchor_stack and pf_status_fcounters (per-CPU cpumem) are one static each; pf_test takes &mut Option<&'static Mbuf> and returns the action as u8; host tests"
 
 [[file]]
 c = "sys/net/pf_ioctl.c"
@@ -4930,7 +4930,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2683a3096c302a74f903be4bd68aeff0a33a6ece"
 deps = ["sys/net/pf.c", "sys/net/pf_table.c", "sys/net/pf_ruleset.c", "sys/net/pf_if.c", "sys/net/pf_osfp.c", "sys/net/pf_norm.c", "sys/net/hfsc.c", "sys/net/fq_codel.c"]
-notes = "M9d: pfattach, pfopen/pfclose/pfioctl (cdevsw 73), pf_sysctl (KERN_PFSTATUS), the transactions, queues and limiters. pfioctl's switch is pfioctl_locked (goto fail -> return), big cases in helpers; NPFSYNC (DIOCADDSTATE -> ENODEV), NKSTAT limiter kstats and INET6 cases are comments; pf_anchor_stack is pf.rs's static; default rule plain members const-initialised, pf_default_rule_new copies Cells; kernel objects filled through PfPoolNew before publishing; TailqEntry::is_linked/clear_prev/set_prev_self for tqe_prev; pfclose/pf_create_queues use Vecs, commit's `l` lists are statics; /0 IPv4 sourcelim mask is 0; DIOCIGETIFACES copies out at most its buffer; pf_addr_copyout unsafe; host tests"
+notes = "M9d: pfattach, pfopen/pfclose/pfioctl (cdevsw 73), pf_sysctl (KERN_PFSTATUS), the transactions, queues and limiters. pfioctl's switch is pfioctl_locked (goto fail -> return), big cases in helpers; NPFSYNC configured (DIOCADDSTATE through pf_state_import, PFSTATE_NOSYNC and pfsync_clear_states in pf_states_clr); NKSTAT limiter kstats and INET6 cases are comments; pf_anchor_stack is pf.rs's static; default rule plain members const-initialised, pf_default_rule_new copies Cells; kernel objects filled through PfPoolNew before publishing; TailqEntry::is_linked/clear_prev/set_prev_self for tqe_prev; pfclose/pf_create_queues use Vecs, commit's `l` lists are statics; /0 IPv4 sourcelim mask is 0; DIOCIGETIFACES copies out at most its buffer; pf_addr_copyout unsafe; host tests"
 
 [[file]]
 c = "sys/net/pf_table.c"
@@ -4985,6 +4985,24 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "803d7e2e44bac880c247e46cb1dff3f39e6f21ca"
 deps = ["sys/net/if_pflog.h", "sys/net/if.c"]
 notes = "M9d: pflogattach (pdevinit), the pflog cloner; bpf(4) not configured: no bpfattach, pflog_packet body compiled out (returns success); PFLOGDEBUG DPRINTF not ported; pflogoutput/pflogioctl unsafe fns; this version has no pflogifs/pflogifs_resize/pflog_mtap/pflog_bpfcopy; host tests"
+
+[[file]]
+c = "sys/net/if_pfsync.h"
+rust = "sys/net/if_pfsync.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5d96c02d45a3ce773a4fe7671618d64b512d1fc9"
+deps = ["sys/net/pfvar.h"]
+notes = "M9 (pfsync/pflow, the user's decision of 2026-10-03): merged into net/if_pfsync.rs; the __packed wire structures are #[repr(C, packed)] AbiPod (sizes const-asserted: header 20, upd_c 84, tdb 52 with sockaddr_union as bytes, pfsyncreq 28); enum pfsync_counters is PfsyncCounters; PFSYNCCTL_NAMES comes with sys/sysctl.h; reference test against the header"
+
+[[file]]
+c = "sys/net/if_pfsync.c"
+rust = "sys/net/if_pfsync.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "59e314aab4ca8e2c685569c7a7aaaec65b47dd43"
+deps = ["sys/net/if_pfsync.h", "sys/net/if.c", "sys/net/pf.c", "sys/net/pfvar_priv.h", "sys/netinet/ip_output.c", "sys/netinet/ip_ipsp.c", "sys/netinet/in.c"]
+notes = "M9: the whole file: pfsyncattach (pdevinit), the pfsync0 cloner, ioctls (SIOCSETPFSYNC/SIOCGETPFSYNC, SIOC[SGD]IFPARENT, mtu), up/down, the bulk request state machine and bulk send, the two slices with their queues, deferrals and tasks, the pf hooks (init/insert/update/delete/clear/in_use/defer) and the TDB hooks, pfsync_input4 (inetsw IPPROTO_PFSYNC) with every message reader, pfsync_sysctl (net.inet.pfsync.stats). No SMR: pfsyncif is an AtomicPtr, smr_call(refcnt_rele_wake) runs at once; pfsynccounters a static atomic array; NKSTAT (slice kstats), NCARP (carp_group_demote_adj, the carp group), NBPFILTER (bpfattach, bpf_mtap) and INET6 (pf_route6/ip6_output) are comments at the sites; PFSYNC_DEBUG not defined; frames are written through MbufWriter (bounds-checked) and read as byte slices; host tests (layout, init_state, a queued INS frame and a peer's DEL_C through pfsync_input4)"
 
 [[file]]
 c = "sys/net/pf_norm.c"

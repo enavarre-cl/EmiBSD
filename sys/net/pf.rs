@@ -54,10 +54,8 @@
 //!   discovery handling and the NAT64 (`af-to`) translation between families are comments at
 //!   their sites; an `af-to` rule never matches an IPv4 packet towards IPv6 because the
 //!   translation reports `unported!("inet6")` and drops the packet with `PFRES_TRANSLATE`.
-//! - `pfsync(4)` (`NPFSYNC`), `pflow(4)` (`NPFLOW`) and `carp(4)` (`NCARP`) are not configured;
-//!   GENERIC has `pseudo-device pfsync` and `pflow`: their calls are comments at the sites
-//!   (`pfsync_insert_state`, `pfsync_update_state`, `pfsync_delete_state`, `pfsync_defer`,
-//!   `pfsync_state_in_use`, `export_pflow`, `carp_lsdrop`).
+//! - `pflow(4)` (`NPFLOW`) and `carp(4)` (`NCARP`) are not configured: their calls are comments
+//!   at the sites (`export_pflow`, `carp_lsdrop`). `pfsync(4)` is (`net/if_pfsync.rs`).
 //! - Divert sockets (`netinet/ip_divert.c`) are not ported: `divert_packet` reports itself
 //!   with `unported!` and frees the packet, as the C does when the socket is gone.
 //! - `pf_anchor_stack` and `pf_status_fcounters` are per-CPU (`cpumem`) in the C; there is one
@@ -1347,7 +1345,7 @@ pub fn pf_state_insert(
     pfi_kif_ref(kif, PFI_KIF_REF_STATE);
     pf_state_exit_write();
 
-    // NPFSYNC > 0: pfsync_insert_state(st); not configured.
+    crate::net::if_pfsync::pfsync_insert_state(st);
 
     *skwp = Some(skw);
     *sksp = Some(sks);
@@ -1677,7 +1675,7 @@ pub fn pf_state_export(sp: &mut PfsyncState, st: &'static PfState) {
     sp.log = st.log.get();
     sp.timeout = st.timeout.get();
     let mut flags = st.state_flags.get().to_be();
-    if !st.sync_defer.get().is_null() {
+    if st.sync_defer.get().is_some() {
         flags |= PFSTATE_ACK.to_be();
     }
     sp.state_flags = flags;
@@ -1721,8 +1719,250 @@ pub fn pf_state_alloc_scrub_memory(s: &PfsyncStatePeer, d: &PfStatePeer) -> Resu
     Ok(())
 }
 
-// NPFSYNC > 0: pf_state_import(sp, flags), which recreates a state from a pfsync(4) or
-// DIOCADDSTATE `struct pfsync_state`, is compiled only with pfsync; not configured.
+/// `pf_state_import`: recreates a state from a `struct pfsync_state` that came from a pfsync(4)
+/// peer (`PFSYNC_SI_PFSYNC`) or `DIOCADDSTATE` (`PFSYNC_SI_IOCTL`). A state of an unknown
+/// interface or without a family is skipped (`Ok`), unless the ioctl asked.
+pub fn pf_state_import(sp: &PfsyncState, flags: i32) -> Result<(), Errno> {
+    use crate::net::if_pfsync::{
+        PFSYNC_S_NONE, PFSYNC_SI_CKSUM, PFSYNC_SI_IOCTL, pfsync_init_state,
+    };
+    use crate::net::pf_if::pfi_kif_get;
+    use crate::netinet::in_::IPPROTO_ICMPV6;
+    use crate::sys::pool::{PR_LIMITFAIL, PR_WAITOK};
+
+    let mut skw: Option<&'static PfStateKey> = None;
+    let mut sks: Option<&'static PfStateKey> = None;
+    let mut error = Errno::ENOMEM;
+
+    pf_assert_locked();
+
+    if sp.creatorid == 0 {
+        crate::dpfprintf!(
+            LOG_NOTICE,
+            "pf_state_import: invalid creator id: {:08x}",
+            u32::from_be(sp.creatorid)
+        );
+        return Err(Errno::EINVAL);
+    }
+
+    let ifname = sp.ifname;
+    let Some(kif) = pfi_kif_get(&ifname, None) else {
+        crate::dpfprintf!(
+            LOG_NOTICE,
+            "pf_state_import: unknown interface: {}",
+            crate::kern::subr_prf::Str(&ifname)
+        );
+        if flags & PFSYNC_SI_IOCTL != 0 {
+            return Err(Errno::EINVAL);
+        }
+        return Ok(()); // skip this state
+    };
+
+    if sp.af == 0 {
+        return Ok(()); // skip this state
+    }
+
+    // If the ruleset checksums match or the state is coming from the ioctl, it's safe to
+    // associate the state with the rule of that number.
+    let def: &'static PfRule = &crate::net::pf_ioctl::PF_DEFAULT_RULE;
+    let main = crate::net::pf_ruleset::pf_main_ruleset();
+    let r: &'static PfRule = if sp.rule != u32::MAX.to_be()
+        && sp.anchor == u32::MAX.to_be()
+        && flags & (PFSYNC_SI_IOCTL | PFSYNC_SI_CKSUM) != 0
+        && u32::from_be(sp.rule) < main.active.rcount.get()
+    {
+        main.queues[main.active.ptr.get()]
+            .iter()
+            .nth(u32::from_be(sp.rule) as usize)
+            .unwrap_or(def)
+    } else {
+        def
+    };
+
+    let pool_flags = if flags & PFSYNC_SI_IOCTL != 0 {
+        PR_WAITOK | PR_LIMITFAIL
+    } else {
+        PR_NOWAIT | PR_LIMITFAIL
+    };
+
+    let mut st: Option<&'static PfState> = None;
+    'cleanup_state: {
+        'cleanup: {
+            if r.max_states != 0 && r.states_cur.get() >= r.max_states {
+                break 'cleanup;
+            }
+
+            // pool_get(..., PR_ZERO): pf_pool_get zeroes.
+            st = pf_pool_get::<PfState>(&PF_STATE_PL, pool_flags);
+            let Some(s) = st else {
+                break 'cleanup;
+            };
+
+            skw = pf_alloc_state_key(pool_flags);
+            let Some(kw) = skw else {
+                break 'cleanup;
+            };
+
+            let keys = sp.key;
+            let (wk, sk) = (&keys[PF_SK_WIRE], &keys[PF_SK_STACK]);
+            if (wk.af != 0 && wk.af != sk.af)
+                || pf_aneq(&wk.addr[0], &sk.addr[0], sp.af)
+                || pf_aneq(&wk.addr[1], &sk.addr[1], sp.af)
+                || wk.port[0] != sk.port[0]
+                || wk.port[1] != sk.port[1]
+                || wk.rdomain != sk.rdomain
+            {
+                sks = pf_alloc_state_key(pool_flags);
+                if sks.is_none() {
+                    break 'cleanup;
+                }
+            } else {
+                sks = Some(pf_state_key_ref(kw));
+            }
+            let Some(ks) = sks else {
+                break 'cleanup;
+            };
+
+            // allocate memory for scrub info
+            let (src, dst) = (sp.src, sp.dst);
+            if pf_state_alloc_scrub_memory(&src, &s.src).is_err()
+                || pf_state_alloc_scrub_memory(&dst, &s.dst).is_err()
+            {
+                break 'cleanup;
+            }
+
+            // copy to state key(s)
+            kw.addr[0].set(wk.addr[0]);
+            kw.addr[1].set(wk.addr[1]);
+            kw.port[0].set(wk.port[0]);
+            kw.port[1].set(wk.port[1]);
+            kw.rdomain.set(u16::from_be(wk.rdomain));
+            kw.proto.set(sp.proto);
+            kw.af.set(if wk.af != 0 { wk.af } else { sp.af });
+            kw.hash.set(pf_pkt_hash(
+                kw.af.get(),
+                kw.proto.get(),
+                &kw.addr[0].get(),
+                &kw.addr[1].get(),
+                kw.port[0].get(),
+                kw.port[1].get(),
+            ));
+
+            if !ptr::eq(ks, kw) {
+                ks.addr[0].set(sk.addr[0]);
+                ks.addr[1].set(sk.addr[1]);
+                ks.port[0].set(sk.port[0]);
+                ks.port[1].set(sk.port[1]);
+                ks.rdomain.set(u16::from_be(sk.rdomain));
+                ks.af.set(if sk.af != 0 { sk.af } else { sp.af });
+                if ks.af.get() != kw.af.get() {
+                    ks.proto.set(match i32::from(sp.proto) {
+                        IPPROTO_ICMP => IPPROTO_ICMPV6 as u8,
+                        IPPROTO_ICMPV6 => IPPROTO_ICMP as u8,
+                        _ => sp.proto,
+                    });
+                } else {
+                    ks.proto.set(sp.proto);
+                }
+
+                if (ks.af.get() != AF_INET && ks.af.get() != AF_INET6)
+                    || (kw.af.get() != AF_INET && kw.af.get() != AF_INET6)
+                {
+                    error = Errno::EINVAL;
+                    break 'cleanup;
+                }
+
+                ks.hash.set(pf_pkt_hash(
+                    ks.af.get(),
+                    ks.proto.get(),
+                    &ks.addr[0].get(),
+                    &ks.addr[1].get(),
+                    ks.port[0].get(),
+                    ks.port[1].get(),
+                ));
+            } else if ks.af.get() != AF_INET && ks.af.get() != AF_INET6 {
+                error = Errno::EINVAL;
+                break 'cleanup;
+            }
+            let rtableid = sp.rtableid;
+            s.rtableid[PF_SK_WIRE].set(i32::from_be(rtableid[PF_SK_WIRE]));
+            s.rtableid[PF_SK_STACK].set(i32::from_be(rtableid[PF_SK_STACK]));
+
+            // copy to state
+            s.rt_addr.set(sp.rt_addr);
+            s.rt.set(sp.rt);
+            let now = getuptime();
+            s.creation
+                .set((now - i64::from(u32::from_be(sp.creation))) as i32);
+            s.expire.set(now as i32);
+            if u32::from_be(sp.expire) != 0 {
+                let mut timeout = r.timeout(usize::from(sp.timeout));
+                if timeout == 0 {
+                    timeout = def.timeout(usize::from(sp.timeout));
+                }
+
+                // sp->expire may have been adaptively scaled by export.
+                let adj = timeout.wrapping_sub(u32::from_be(sp.expire));
+                s.expire
+                    .set((s.expire.get() as u32).wrapping_sub(adj) as i32);
+            }
+
+            s.direction.set(sp.direction);
+            s.log.set(sp.log);
+            s.timeout.set(sp.timeout);
+            s.state_flags.set(u16::from_be(sp.state_flags));
+            s.max_mss.set(u16::from_be(sp.max_mss));
+            s.min_ttl.set(sp.min_ttl);
+            s.set_tos.set(sp.set_tos);
+            s.set_prio[0].set(sp.set_prio[0]);
+            s.set_prio[1].set(sp.set_prio[1]);
+
+            s.id.set(sp.id);
+            s.creatorid.set(sp.creatorid);
+            pf_state_peer_ntoh(&src, &s.src);
+            pf_state_peer_ntoh(&dst, &s.dst);
+
+            s.rule.set_ptr(Some(r));
+            s.anchor.set_ptr(None);
+
+            refcnt_init(&s.refcnt);
+            mtx_init(&s.mtx, IPL_NET);
+
+            // XXX when we have anchors, use STATE_INC_COUNTERS
+            r.states_cur.set(r.states_cur.get().wrapping_add(1));
+            r.states_tot.set(r.states_tot.get().wrapping_add(1));
+
+            s.sync_state.set(PFSYNC_S_NONE);
+            s.pfsync_time.set(getuptime() as i32);
+            pfsync_init_state(s, skw, sks, flags);
+
+            if !pf_state_insert(kif, &mut skw, &mut sks, s) {
+                // XXX when we have anchors, use STATE_DEC_COUNTERS
+                r.states_cur.set(r.states_cur.get().wrapping_sub(1));
+                error = Errno::EEXIST;
+                break 'cleanup_state;
+            }
+
+            return Ok(());
+        }
+
+        // cleanup:
+        pf_state_key_unref(skw);
+        pf_state_key_unref(sks);
+    }
+
+    // cleanup_state: pf_state_insert frees the state keys
+    if let Some(s) = st {
+        if let Some(scrub) = s.dst.scrub.get() {
+            pf_pool_put(&crate::net::pf_norm::PF_STATE_SCRUB_PL, scrub);
+        }
+        if let Some(scrub) = s.src.scrub.get() {
+            pf_pool_put(&crate::net::pf_norm::PF_STATE_SCRUB_PL, scrub);
+        }
+        pf_pool_put(&PF_STATE_PL, s);
+    }
+    Err(error)
+}
 
 /* END state table stuff */
 
@@ -2017,7 +2257,7 @@ pub fn pf_remove_state(st: &'static PfState) {
     // SAFETY: an inserted state is in the id tree.
     unsafe { TREE_ID.remove(st) };
     // NPFLOW > 0: export_pflow(st) for PFSTATE_PFLOW; not configured.
-    // NPFSYNC > 0: pfsync_delete_state(st); not configured.
+    crate::net::if_pfsync::pfsync_delete_state(st);
     pf_src_tree_remove_state(st);
     pf_detach_state(st);
 }
@@ -2079,8 +2319,9 @@ pub fn pf_remove_divert_state(inp: &'static crate::netinet::in_pcb::Inpcb) {
 pub fn pf_free_state(st: &'static PfState) {
     pf_assert_locked();
 
-    // NPFSYNC > 0: a state pfsync still uses is not freed (pfsync_state_in_use); not
-    // configured.
+    if crate::net::if_pfsync::pfsync_state_in_use(st) {
+        return;
+    }
 
     kassert!(usize::from(st.timeout.get()) == PFTM_UNLINKED);
     if let Some(r) = st.rule.ptr() {
@@ -4444,8 +4685,18 @@ pub fn pf_test_rule(
             pf_copyback_hdr(ctx.pd);
         }
 
-        // NPFSYNC > 0: a new outbound state with a pfsync peer up may be deferred
-        // (pfsync_defer, PF_DEFER); not configured.
+        if let Some(s) = *sm
+            && s.state_flags.get() & PFSTATE_NOSYNC == 0
+            && ctx.pd.dir == PF_OUT
+            && crate::net::if_pfsync::pfsync_is_up()
+            && let Some(m) = ctx.pd.m
+        {
+            // We want the state created, but we dont want to send this in case a partner
+            // firewall has to know about it to allow replies through it.
+            if crate::net::if_pfsync::pfsync_defer(s, m) {
+                return PF_DEFER;
+            }
+        }
 
         return action;
     }
@@ -4510,7 +4761,7 @@ fn pf_create_state(
         st.set_tos.set(act.set_tos);
         st.max_mss.set(act.max_mss);
         st.state_flags.set(sf | act.flags);
-        // NPFSYNC > 0: sync_state = PFSYNC_S_NONE; not configured.
+        st.sync_state.set(crate::net::if_pfsync::PFSYNC_S_NONE);
         st.set_prio[0].set(act.set_prio[0]);
         st.set_prio[1].set(act.set_prio[1]);
         st.delay.set(act.delay);
@@ -4752,7 +5003,7 @@ fn pf_create_state(
             }
         }
 
-        // NPFSYNC > 0: pfsync_init_state(st, *skw, *sks, 0); not configured.
+        crate::net::if_pfsync::pfsync_init_state(st, *skw, *sks, 0);
 
         let pd = &mut *ctx.pd;
         let Some(kif) = bound_iface(r, pd.kif) else {
@@ -7430,8 +7681,8 @@ pub fn pf_test(af: SaFamily, fwdir: u8, ifp: &'static Ifnet, m0: &mut Option<&'s
                     st = st.map(pf_state_ref);
                     pf_state_exit_read();
                     if action == PF_PASS || action == PF_AFRT {
-                        // NPFSYNC > 0: pfsync_update_state(st); not configured.
                         if let Some(s) = st {
+                            crate::net::if_pfsync::pfsync_update_state(s);
                             r = s.rule.ptr();
                             a = s.anchor.ptr();
                             pd.pflog |= s.log.get();
@@ -7540,8 +7791,8 @@ pub fn pf_test(af: SaFamily, fwdir: u8, ifp: &'static Ifnet, m0: &mut Option<&'s
                     }
 
                     if action == PF_PASS || action == PF_AFRT {
-                        // NPFSYNC > 0: pfsync_update_state(st); not configured.
                         if let Some(s) = st {
+                            crate::net::if_pfsync::pfsync_update_state(s);
                             r = s.rule.ptr();
                             a = s.anchor.ptr();
                             pd.pflog |= s.log.get();
@@ -8092,7 +8343,10 @@ pub fn pf_state_unref(st: Option<&'static PfState>) {
     };
     if refcnt_rele(&st.refcnt) {
         // Never inserted or removed.
-        // NPFSYNC > 0: the state is on no pfsync queue; not configured.
+        kassert!(
+            TailqHead::<PfStateSyncQueue>::next(st).is_none()
+                || st.sync_state.get() >= crate::net::if_pfsync::PFSYNC_S_NONE
+        );
         kassert!(TailqHead::<PfStateQueue>::next(st).is_none());
 
         pf_state_key_unref(st.key[PF_SK_WIRE].get());

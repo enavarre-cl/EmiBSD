@@ -134,8 +134,8 @@
 //!   ENCDEBUG`, not in GENERIC) and the `net.inet.ip.encdebug` sysctl; otherwise its
 //!   arguments are type-checked and never evaluated.
 //! - Not configured, each a comment at its site: `NSEC` (`sec(4)`: `sec_tdb_insert`,
-//!   `sec_tdb_remove`), `NPFSYNC` (`pfsync_delete_tdb`) and `INET6`. `TCP_SIGNATURE` is
-//!   configured (M9+): `XF_TCPSIGNATURE` calls the `tcp_signature_tdb_*` functions of
+//!   `sec_tdb_remove`) and `INET6`. `NPFSYNC` is configured (`pfsync_delete_tdb`), and so is
+//!   `TCP_SIGNATURE` (M9+): `XF_TCPSIGNATURE` calls the `tcp_signature_tdb_*` functions of
 //!   `netinet/tcp_subr.rs`.
 //!   The `XF_IPCOMP` entry calls the stand-ins of `netinet/ip_ipcomp.rs` (deflate is not
 //!   ported).
@@ -2740,7 +2740,7 @@ pub fn tdb_free(tdbp: &Tdb) {
         tdbp.tdb_xform.set(None);
     }
 
-    // NPFSYNC > 0 && IPSEC: pfsync_delete_tdb(tdbp); not configured.
+    crate::net::if_pfsync::pfsync_delete_tdb(tdbp);
 
     kassert!(tdbp.tdb_policy_head.is_empty());
 

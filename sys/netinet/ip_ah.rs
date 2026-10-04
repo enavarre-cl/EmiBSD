@@ -96,8 +96,8 @@
 //!   copy stored back, the options through the pulled-up first mbuf.
 //! - The replay checks share `ip_esp.rs`'s `checkreplaywindow`; the counters are AH's.
 //! - Not configured, each a comment at its site: `NBPFILTER` (the `enc(4)` counters and
-//!   `bpf_mtap_hdr` of `ah_output`), `NPFSYNC` (`pfsync_update_tdb`), `INET6` (the IPv6
-//!   header and extension header massaging).
+//!   `bpf_mtap_hdr` of `ah_output`), `INET6` (the IPv6 header and extension header
+//!   massaging). `NPFSYNC` is: `pfsync_update_tdb`.
 
 use alloc::vec;
 use core::mem::offset_of;
@@ -720,7 +720,10 @@ pub fn ah_input(
             mtx_enter(&tdb.tdb_mtx);
             let chk_rpl = checkreplaywindow(tdb, tdb.tdb_rpl.get(), btsx, &mut esn, true);
             mtx_leave(&tdb.tdb_mtx);
-            // NPFSYNC > 0: pfsync_update_tdb(tdb, 0) when all's well; not configured.
+            if chk_rpl == 0 {
+                // All's well
+                crate::net::if_pfsync::pfsync_update_tdb(tdb, false);
+            }
             if !ah_replay_check(tdb, chk_rpl) {
                 break 'drop;
             }
@@ -881,7 +884,7 @@ pub fn ah_output(
         hdr.ah_rpl = htonl(replay64 as u32);
         // SAFETY: the AH header's place, `size_of::<Ah>()` bytes of the space made above.
         unsafe { ptr::write_unaligned(ah.cast::<Ah>(), hdr) };
-        // NPFSYNC > 0: pfsync_update_tdb(tdb, 1); not configured.
+        crate::net::if_pfsync::pfsync_update_tdb(tdb, true);
 
         // Get crypto descriptors.
         let Some(mut crp) = crypto_getreq(1) else {
