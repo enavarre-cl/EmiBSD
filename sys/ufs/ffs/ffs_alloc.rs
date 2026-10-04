@@ -60,7 +60,8 @@
 //!   `StaticCell`s changed under the kernel lock.
 //! - `uprintf` (a message on the process's terminal, `tty.c`) is reported: the console
 //!   message of `ffs_fserr` (`log(LOG_ERR, ...)`) remains.
-//! - The quota calls are `quota.rs`'s (`option QUOTA` is not configured).
+//! - The quota calls are `quota.rs`'s: `ufs_quota.rs`'s with feature `quota` (`option QUOTA`),
+//!   the no-quota answers of `ufs_quota_stub.c` without it.
 
 use crate::dev::rnd::{arc4random, arc4random_uniform};
 use crate::kern::kern_tc::nanotime;

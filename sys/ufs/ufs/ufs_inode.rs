@@ -47,7 +47,8 @@
 //! ## Deviations
 //! - `UFS_DIRHASH`'s `ufsdirhash_free` in `ufs_reclaim` waits for `ufs_dirhash.c`
 //!   (`ufs_lookup.rs`); without it an inode has no hash to free.
-//! - The quota calls are `quota.rs`'s (`option QUOTA` is not configured).
+//! - The quota calls are `quota.rs`'s: `ufs_quota.rs`'s with feature `quota` (`option QUOTA`),
+//!   the no-quota answers of `ufs_quota_stub.c` without it.
 
 use crate::kern::vfs_cache::cache_purge;
 #[cfg(feature = "diagnostic")]

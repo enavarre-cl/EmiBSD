@@ -45,7 +45,8 @@
 //!   (`BAP`/`BAP_ASSIGN`). `ffs_indirtrunc`'s copy of the block is a heap buffer
 //!   (`malloc(M_TEMP)`), as in C.
 //! - `curproc->p_ru.ru_inblock++` is skipped when no thread runs, as `vfs_bio.rs` does.
-//! - The quota calls are `quota.rs`'s (`option QUOTA` is not configured).
+//! - The quota calls are `quota.rs`'s: `ufs_quota.rs`'s with feature `quota` (`option QUOTA`),
+//!   the no-quota answers of `ufs_quota_stub.c` without it.
 
 use core::ptr::NonNull;
 

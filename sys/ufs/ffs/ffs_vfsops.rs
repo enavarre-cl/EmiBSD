@@ -1599,4 +1599,4 @@ pub fn ffs_sysctl(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

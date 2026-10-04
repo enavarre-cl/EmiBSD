@@ -43,23 +43,34 @@
 //! Upstream: sys/ufs/ufs/quota.h @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `option QUOTA` is not configured (there is no `quota` feature): `ufs_quota.c` is not
-//!   ported. Without `QUOTA`, OpenBSD links `ufs_quota_stub.c`, whose functions answer as a
-//!   kernel without quotas must: nothing to look up or charge (`0`), nothing to sync, and
-//!   `EOPNOTSUPP` for `quotactl(2)`. That file carries no licence block, so it is recorded
-//!   `skipped` in `ports.toml` and is not ported; the functions below are the interface this
-//!   header declares, with those answers written from it and `quotactl(2)`. They are the
-//!   call sites `ufs_quota.c` will take over.
-//! - `struct dquot` (the in-core quota, `i_dquot[]`, `um_quotas[]`) belongs to `ufs_quota.c`
-//!   and is left out with it; `ufsmount` keeps `um_quotas`/`um_cred` as NULL pointers.
+//! - `option QUOTA` is the `quota` feature (default, as in GENERIC). With it, the functions
+//!   this header declares are `ufs_quota.rs`'s (the port of `ufs_quota.c`), re-exported
+//!   here. Without it, OpenBSD links `ufs_quota_stub.c`, whose functions answer as a kernel
+//!   without quotas must: nothing to look up or charge (`0`), nothing to sync, and
+//!   `EOPNOTSUPP` for `quotactl(2)`. That file carries no licence block and is recorded
+//!   `skipped` in `ports.toml`; the `#[cfg(not(feature = "quota"))]` functions below are those
+//!   answers, written from this header and `quotactl(2)`.
+//! - `struct dquot` is defined by `ufs_quota.c` at this pin, so it is `ufs_quota.rs`'s
+//!   `Dquot`; `i_dquot[]` exists only with the feature (`inode.rs`).
 //! - The `ufs_quota_{alloc,free}_{blocks,inode}` macros are functions with those names.
+//! - `Dqblk` is `AbiPod`: `quotactl(2)` copies it in and out.
 
+use crate::machine::copy::AbiPod;
 use crate::sys::errno::Errno;
+#[cfg(not(feature = "quota"))]
 use crate::sys::mount::Mount;
+#[cfg(not(feature = "quota"))]
 use crate::sys::proc::Proc;
-use crate::sys::types::{Daddr, Uid};
+use crate::sys::types::Daddr;
+#[cfg(not(feature = "quota"))]
+use crate::sys::types::Uid;
 use crate::sys::ucred::Ucred;
 use crate::ufs::ufs::inode::Inode;
+#[cfg(feature = "quota")]
+pub use crate::ufs::ufs::ufs_quota::{
+    getinoquota, qsync, quotaoff, ufs_quota_alloc_blocks2, ufs_quota_alloc_inode2,
+    ufs_quota_delete, ufs_quota_free_blocks2, ufs_quota_free_inode2, ufs_quota_init, ufs_quotactl,
+};
 
 /// `MAX_IQ_TIME`: seconds in 1 week (the grace before inode soft limits become hard).
 pub const MAX_IQ_TIME: i64 = 7 * 24 * 60 * 60;
@@ -127,6 +138,9 @@ pub struct Dqblk {
     pub dqb_itime: u32,
 }
 
+// SAFETY: eight `u_int32_t`s, `#[repr(C)]`: no padding, every bit pattern valid.
+unsafe impl AbiPod for Dqblk {}
+
 /// `enum ufs_quota_flags`: flags to `ufs_quota_{alloc,free}_{blocks,inode}2`.
 pub type UfsQuotaFlags = i32;
 /// `UFS_QUOTA_NOUID`: don't change UID quota.
@@ -157,6 +171,7 @@ pub fn ufs_quota_free_inode(ip: &Inode, cred: *const Ucred) -> Result<(), Errno>
 }
 
 /// `ufs_quota_alloc_blocks2`: charge `change` disk blocks; without `QUOTA` there is no limit.
+#[cfg(not(feature = "quota"))]
 pub fn ufs_quota_alloc_blocks2(
     _ip: &Inode,
     _change: Daddr,
@@ -168,6 +183,7 @@ pub fn ufs_quota_alloc_blocks2(
 
 /// `ufs_quota_free_blocks2`: give back `change` disk blocks; nothing is charged without
 /// `QUOTA`.
+#[cfg(not(feature = "quota"))]
 pub fn ufs_quota_free_blocks2(
     _ip: &Inode,
     _change: Daddr,
@@ -178,6 +194,7 @@ pub fn ufs_quota_free_blocks2(
 }
 
 /// `ufs_quota_alloc_inode2`: charge an inode; without `QUOTA` there is no limit.
+#[cfg(not(feature = "quota"))]
 pub fn ufs_quota_alloc_inode2(
     _ip: &Inode,
     _cred: *const Ucred,
@@ -187,6 +204,7 @@ pub fn ufs_quota_alloc_inode2(
 }
 
 /// `ufs_quota_free_inode2`: give back an inode; nothing is charged without `QUOTA`.
+#[cfg(not(feature = "quota"))]
 pub fn ufs_quota_free_inode2(
     _ip: &Inode,
     _cred: *const Ucred,
@@ -196,27 +214,32 @@ pub fn ufs_quota_free_inode2(
 }
 
 /// `ufs_quota_delete`: drop the inode's dquot references; there are none without `QUOTA`.
+#[cfg(not(feature = "quota"))]
 pub fn ufs_quota_delete(_ip: &Inode) -> Result<(), Errno> {
     Ok(())
 }
 
 /// `getinoquota`: set up the quotas for an inode; there are none without `QUOTA`.
+#[cfg(not(feature = "quota"))]
 pub fn getinoquota(_ip: &Inode) -> Result<(), Errno> {
     Ok(())
 }
 
 /// `quotaoff`: turn off a quota type on a file system; nothing is on without `QUOTA`.
+#[cfg(not(feature = "quota"))]
 pub fn quotaoff(_p: &Proc, _mp: &'static Mount, _type: usize) -> Result<(), Errno> {
     Ok(())
 }
 
 /// `qsync`: write the file system's quota changes to disk; nothing to write without
 /// `QUOTA`.
+#[cfg(not(feature = "quota"))]
 pub fn qsync(_mp: &'static Mount) -> Result<(), Errno> {
     Ok(())
 }
 
 /// `ufs_quotactl` (`vfs_quotactl`): `quotactl(2)` is not supported without `QUOTA`.
+#[cfg(not(feature = "quota"))]
 pub fn ufs_quotactl(
     _mp: &'static Mount,
     _cmds: i32,
@@ -228,6 +251,7 @@ pub fn ufs_quotactl(
 }
 
 /// `ufs_quota_init`: nothing to initialise without `QUOTA`.
+#[cfg(not(feature = "quota"))]
 pub fn ufs_quota_init() {}
 
 #[cfg(test)]

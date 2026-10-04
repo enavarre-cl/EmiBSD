@@ -775,7 +775,7 @@ pub(crate) mod newfs {
 }
 
 /// The disk the strategy below reads and writes.
-static DISK: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
+pub(crate) static DISK: std::sync::Mutex<Vec<u8>> = std::sync::Mutex::new(Vec::new());
 
 /// `diskvn`'s strategy: a synchronous transfer between the buffer and the image at
 /// `b_blkno`, then `biodone`.
@@ -836,7 +836,7 @@ const DISKDEV: i32 = makedev(17, 0);
 
 /// Memory, the vfs and a fresh buffer cache, the image as the disk, and the thread as
 /// `curproc`.
-fn setup(image: Vec<u8>) -> (MutexGuard<'static, ()>, &'static Proc) {
+pub(crate) fn setup(image: Vec<u8>) -> (MutexGuard<'static, ()>, &'static Proc) {
     let (g, p) = crate::kern::vfs_subr::tests::setup();
     Machine::set_curproc(Machine::curcpu(), p);
     // No resource limits (write(2) checks RLIMIT_FSIZE).
@@ -882,7 +882,7 @@ fn setup(image: Vec<u8>) -> (MutexGuard<'static, ()>, &'static Proc) {
     (g, p)
 }
 
-fn teardown() {
+pub(crate) fn teardown() {
     Machine::set_curproc(Machine::curcpu(), ptr::null());
 }
 
@@ -895,7 +895,7 @@ fn diskvp() -> &'static Vnode {
 
 /// Mounts the disk at `/` the way `ffs_mount` and `main` do: `ffs_mountfs`, the mount list,
 /// the root vnode and the thread's current directory.
-fn mount_root(p: &'static Proc, ronly: bool) -> &'static Mount {
+pub(crate) fn mount_root(p: &'static Proc, ronly: bool) -> &'static Mount {
     let devvp = diskvp();
     let mp = vfs_mount_alloc(None, vfs_byname(b"ffs").unwrap());
     if ronly {
@@ -918,7 +918,7 @@ fn mount_root(p: &'static Proc, ronly: bool) -> &'static Mount {
 }
 
 /// Undoes `mount_root` and unmounts.
-fn unmount_root(p: &'static Proc, mp: &'static Mount) {
+pub(crate) fn unmount_root(p: &'static Proc, mp: &'static Mount) {
     if let Some(cdir) = p.fd().fd_cdir.take() {
         vrele(cdir);
     }
@@ -931,7 +931,7 @@ fn unmount_root(p: &'static Proc, mp: &'static Mount) {
 }
 
 /// A system call with up to six arguments; `retval[0]`.
-fn sys(f: SyCall, p: &Proc, args: &[usize]) -> Result<isize, Errno> {
+pub(crate) fn sys(f: SyCall, p: &Proc, args: &[usize]) -> Result<isize, Errno> {
     let mut v: SysArgs = [0; 6];
     for (slot, a) in v.iter_mut().zip(args) {
         *slot = *a as Register;
@@ -942,13 +942,13 @@ fn sys(f: SyCall, p: &Proc, args: &[usize]) -> Result<isize, Errno> {
 }
 
 /// A NUL-terminated path as a "user" address (the host's copyin reads it directly).
-fn path(s: &'static [u8]) -> usize {
+pub(crate) fn path(s: &'static [u8]) -> usize {
     assert_eq!(s.last(), Some(&0));
     s.as_ptr() as usize
 }
 
 /// The whole contents of the file at `name`.
-fn read_file(p: &Proc, name: &'static [u8]) -> Result<Vec<u8>, Errno> {
+pub(crate) fn read_file(p: &Proc, name: &'static [u8]) -> Result<Vec<u8>, Errno> {
     let fd = sys(sys_open, p, &[path(name), O_RDONLY as usize, 0])?;
     let mut out = Vec::new();
     let mut buf = vec![0u8; 3000];

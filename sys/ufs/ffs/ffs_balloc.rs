@@ -58,7 +58,8 @@
 //!   their index in the buffer's bytes (`inode.rs`).
 //! - `VOP_FSYNC(vp, p->p_ucred, MNT_WAIT, p)` of the failure path is skipped when no thread
 //!   runs (there is no `p` to pass).
-//! - The quota calls are `quota.rs`'s (`option QUOTA` is not configured).
+//! - The quota calls are `quota.rs`'s: `ufs_quota.rs`'s with feature `quota` (`option QUOTA`),
+//!   the no-quota answers of `ufs_quota_stub.c` without it.
 
 use crate::kern::subr_prf::panic;
 use crate::kern::vfs_bio::{bawrite, bdwrite, bread, brelse, buf_adjcnt, bwrite, getblk};

@@ -47,8 +47,9 @@
 //! - `um_export` (`struct netexport`) needs `NFSSERVER`, which is not configured: the member is
 //!   left out and `vfs_export` gets a NULL export table (`docs/C_TO_RUST.md`, members of
 //!   unported subsystems).
-//! - `um_quotas`/`um_cred` stay, always NULL: `option QUOTA` is not configured
-//!   (`quota.rs`).
+//! - The quota members (`um_quotas`, `um_cred`, `um_btime`, `um_itime`, `um_qflags`) exist
+//!   with or without feature `quota`, as the C has no `#ifdef QUOTA` here; without it they stay
+//!   NULL and zero. `um_cred` is NULL or `NOCRED` while no quota file is open (`ufs_quota.rs`).
 //! - `MNINDIR`, `blkptrtodb` and `is_sequential` are functions with the macros' names in lower
 //!   case.
 

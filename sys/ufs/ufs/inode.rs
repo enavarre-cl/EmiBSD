@@ -62,8 +62,9 @@
 //!   member's type, as the assignment does. `SHORTLINK(ip)` is [`Inode::with_shortlink`].
 //! - `inode_u` is `i_fs` alone and the `ext2fs` members (`struct ext2fs_inode_ext`, the
 //!   `i_e2fs_*` shorthands, `EXT2FS_ITIMES`) are left out: `ext2fs` is not ported.
-//! - `i_dquot[]` is left out: `option QUOTA` is not configured (`quota.rs`). `i_dirhash` is
-//!   left out: `option UFS_DIRHASH` waits for `ufs_dirhash.c` (see `ufs_lookup.rs`).
+//! - `i_dquot[]` exists only with feature `quota` (`option QUOTA`), whose `ufs_quota.rs`
+//!   defines `struct dquot`; `NODQUOT` is `None`.
+//! - `i_dirhash` is left out: `option UFS_DIRHASH` waits for `ufs_dirhash.c` (see `ufs_lookup.rs`).
 //! - `i_lockf` is a `LockfStateSlot` (`sys/lockf.rs`).
 //! - The `struct inode_vtbl` calls (`UFS_TRUNCATE`, `UFS_UPDATE`, ...) are functions with the
 //!   macros' names; `iv_inode_alloc` and `iv_buf_alloc` return the vnode or buffer the C
@@ -93,6 +94,10 @@ use crate::ufs::ufs::dinode::{
     MAXSYMLINKLEN_UFS1, MAXSYMLINKLEN_UFS2, Ufs1Dinode, Ufs2Dinode, Ufsino,
 };
 use crate::ufs::ufs::dir::Doff;
+#[cfg(feature = "quota")]
+use crate::ufs::ufs::quota::MAXQUOTAS;
+#[cfg(feature = "quota")]
+use crate::ufs::ufs::ufs_quota::Dquot;
 #[cfg(feature = "ffs2")]
 use crate::ufs::ufs::ufsmount::UM_UFS2;
 use crate::ufs::ufs::ufsmount::{UM_UFS1, Ufsmount};
@@ -119,6 +124,9 @@ pub struct Inode {
     pub i_fs: Cell<Option<&'static Fs>>,
     /// `i_ci`.
     pub i_ci: Cell<ClusterInfo>,
+    /// `i_dquot`: dquot structures.
+    #[cfg(feature = "quota")]
+    pub i_dquot: [Cell<Option<&'static Dquot>>; MAXQUOTAS],
     /// `i_modrev`: revision level for NFS lease.
     pub i_modrev: Cell<u64>,
     /// `i_lockf`: byte-level lock state.
@@ -192,6 +200,8 @@ impl Inode {
                 ci_ralen: 0,
                 ci_maxra: 0,
             }),
+            #[cfg(feature = "quota")]
+            i_dquot: [const { Cell::new(None) }; MAXQUOTAS],
             i_modrev: Cell::new(0),
             i_lockf: Cell::new(None),
             i_lock: Rrwlock::new("inode"),

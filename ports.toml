@@ -4120,7 +4120,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e9c122abe982c94aabbd5927ccee0af4ef5ca6c6"
 deps = ["sys/sys/types.h"]
-notes = "ffs: constants, struct dqblk, ufs_quota_flags; option QUOTA is not configured (ufs_quota.c not ported) and ufs_quota_stub.c has no licence block (skipped), so the interface functions (getinoquota, ufs_quota_{alloc,free}_{blocks,inode}[2], ufs_quota_delete, quotaoff, qsync, ufs_quotactl=EOPNOTSUPP, ufs_quota_init) are written here with the no-quota answers; struct dquot left out"
+notes = "ffs: constants, struct dqblk (AbiPod for quotactl's copyin/copyout), ufs_quota_flags, the ufs_quota_{alloc,free}_{blocks,inode} macros as functions; M10b: with feature quota (option QUOTA, default) the interface functions (getinoquota, ufs_quota_{alloc,free}_{blocks,inode}2, ufs_quota_delete, quotaoff, qsync, ufs_quotactl, ufs_quota_init) are ufs_quota.rs's, re-exported here; without it they are the no-quota answers of ufs_quota_stub.c (skipped), written here (ufs_quotactl EOPNOTSUPP); struct dquot is defined by ufs_quota.c at this pin (ufs_quota.rs)"
 
 [[file]]
 c = "sys/ufs/ufs/ufsmount.h"
@@ -4129,7 +4129,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "3ad8938e422520947259abbfb7434c162b532845"
 deps = ["sys/ufs/ffs/fs.h", "sys/ufs/ufs/quota.h"]
-notes = "ffs: struct ufsmount (Cells, malloc(M_UFSMNT), &'static via VFSTOUFS=vfstoufs which checks the mount is ffs/mfs/ext2fs), UM_UFS1/UM_UFS2/UM_EXT2FS, QTF_*, MNINDIR/blkptrtodb/is_sequential as functions; um_e2fs left out (ext2fs), um_export left out (NFSSERVER)"
+notes = "ffs: struct ufsmount (Cells, malloc(M_UFSMNT), &'static via VFSTOUFS=vfstoufs which checks the mount is ffs/mfs/ext2fs), UM_UFS1/UM_UFS2/UM_EXT2FS, QTF_*, MNINDIR/blkptrtodb/is_sequential as functions; um_e2fs left out (ext2fs), um_export left out (NFSSERVER); M10b: the quota members (um_quotas, um_cred as *const Ucred, um_btime, um_itime, um_qflags) are used by ufs_quota.rs under feature quota and exist without it too, as the C has no #ifdef QUOTA"
 
 [[file]]
 c = "sys/ufs/ufs/inode.h"
@@ -4138,7 +4138,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "16aaac8b7ff5086c17ac47b26a7926455f3926b9"
 deps = ["sys/ufs/ufs/dinode.h", "sys/ufs/ufs/dir.h", "sys/ufs/ffs/fs.h", "sys/ufs/ufs/ufsmount.h", "sys/sys/lockf.h", "sys/sys/rwlock.h"]
-notes = "ffs: struct inode (ffs_ino_pool item, Cells, &'static via VTOI=vtoi checking v_tag), dinode_u as one pointer with DIP/DIP_ASSIGN as dip_*/dip_set_* methods (UFS1/UFS2 by um_fstype under feature ffs2), SHORTLINK as with_shortlink, struct inode_vtbl and the UFS_* macros (iv_buf_alloc/iv_bufatoff return the buffer), IN_* flags, struct indir, struct ufid with from_fid/to_fid, DOINGASYNC; helpers for block pointers and dinodes in buffers; ext2fs members, i_dquot (QUOTA) and i_dirhash (UFS_DIRHASH) left out"
+notes = "ffs: struct inode (ffs_ino_pool item, Cells, &'static via VTOI=vtoi checking v_tag), dinode_u as one pointer with DIP/DIP_ASSIGN as dip_*/dip_set_* methods (UFS1/UFS2 by um_fstype under feature ffs2), SHORTLINK as with_shortlink, struct inode_vtbl and the UFS_* macros (iv_buf_alloc/iv_bufatoff return the buffer), IN_* flags, struct indir, struct ufid with from_fid/to_fid, DOINGASYNC; helpers for block pointers and dinodes in buffers; ext2fs members and i_dirhash (UFS_DIRHASH) left out; M10b: i_dquot[MAXQUOTAS] (Option<&'static Dquot>, NODQUOT = None) under feature quota (option QUOTA), the only configuration where struct dquot exists"
 
 [[file]]
 c = "sys/ufs/ufs/ufs_extern.h"
@@ -4166,15 +4166,17 @@ notes = "option UFS_DIRHASH (in GENERIC): a hash of large directories; until it 
 [[file]]
 c = "sys/ufs/ufs/ufs_quota.c"
 rust = "sys/ufs/ufs/ufs_quota.rs"
-status = "todo"
-deps = ["sys/ufs/ufs/quota.h", "sys/ufs/ufs/inode.h"]
-notes = "option QUOTA (in GENERIC) is not configured here: quota.rs answers with the no-quota interface; call sites: ufs_access/ufs_chown/ufs_makeinode/ufs_mkdir (getinoquota, ufs_quota_*), ufs_inactive, ufs_reclaim (ufs_quota_delete), ffs_alloc/ffs_realloccg/ffs_balloc/ffs_truncate (blocks), ffs_flushfiles (quotaoff), ffs_sync (qsync), vfs_quotactl (ufs_quotactl)"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7838f5c47789d43d7f3b9e5327c5891b79206f98"
+deps = ["sys/ufs/ufs/quota.h", "sys/ufs/ufs/inode.h", "sys/ufs/ufs/ufsmount.h", "sys/crypto/siphash.c", "sys/kern/vfs_vnops.c", "sys/kern/vfs_subr.c", "sys/kern/vfs_lookup.c"]
+notes = "M10b, feature quota (option QUOTA, default as in GENERIC): the whole file: struct dquot (defined in the .c at this pin; Dquot, malloc(M_DQUOT) items never freed, Cells, dq_cred an Option<&'static Ucred>, plus a dq_hashed flag so dqget's read-error LIST_REMOVE is not repeated when the dquot is recycled), DQ_* flags, quotatypes[], dqref, getinoquota, ufs_quota_alloc_blocks2/free_blocks2/alloc_inode2/free_inode2 (NOCRED, FSCRED and NULL count as the kernel's credential: no limit check), chkdqchg/chkiqchg (the soft/hard/grace decision shared as chklimit; uprintf messages and DQ_BLKS/DQ_INODS as in C), chkdquot (feature diagnostic), quotaon_vnode/quotaon (vn_open of the user path, VSYSTEM, MNT_QUOTA, grace times from id 0), quotaoff_vnode/quotaoff, getquota/setquota/setuse (copyin/copyout of struct dqblk; the new values computed by setquota_dqblk/setuse_dqblk), qsync_vnode/qsync, dqhashtbl/dqhashkey (SipHash of the quota vnode and id; StaticCells written by ufs_quota_init), dqfreelist, numdquot/desireddquot (atomics; ufs_quota_init also resets them for the host tests' re-initialisation), dqget (VOP_READ of the dqblk slot, ENOMEM if malloc fails, EUSERS + tablefull when the table is full), dqrele, dqsync (VOP_WRITE, EIO on a short write), ufs_quota_delete, ufs_quotactl (Q_QUOTAON/QUOTAOFF/SETQUOTA/SETUSE/GETQUOTA/SYNC, suser except Q_SYNC and a user's own Q_GETQUOTA, vfs_busy VB_READ|VB_NOWAIT); quota.rs re-exports the quota.h functions; KTRACE (ktrquota) not configured; host tests (ufs_quota/tests.rs: chklimit, setquota/setuse values, and quotactl on an FFS2 image with a quotacheck-style quota file: a user writes until EDQUOT, Q_GETQUOTA, Q_SYNC into the file, unmount with quotas on (ffs_flushfiles), remount, Q_SETQUOTA, Q_SETUSE, unlink giving blocks and inode back, Q_QUOTAOFF; test-ref of DQ_*/DQUOTINC/MAX_*Q_TIME)"
 
 [[file]]
 c = "sys/ufs/ufs/ufs_quota_stub.c"
 rust = ""
 status = "skipped"
-notes = "not-applicable: compiled only without option QUOTA, which GENERIC configures (M10b); until then quota.rs answers with the no-quota interface from quota.h and quotactl(2). Its missing licence block no longer blocks it (rule of 2026-10-04)"
+notes = "not-applicable: compiled only without option QUOTA, which GENERIC configures and the default quota feature ports (ufs_quota.c, M10b); for builds without the feature, quota.rs keeps the no-quota answers written from quota.h and quotactl(2) (nothing to look up or charge, nothing to sync, EOPNOTSUPP for quotactl) under cfg(not(feature = \"quota\"))"
 
 [[file]]
 c = "sys/ufs/ufs/ufs_bmap.c"
@@ -4201,7 +4203,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "5e66f0bf26c1daf4d883606ef3cf608d8d7e10dc"
 deps = ["sys/ufs/ufs/inode.h", "sys/ufs/ufs/ufs_ihash.c"]
-notes = "ffs: ufs_inactive, ufs_reclaim; UFS_DIRHASH ufsdirhash_free waits for ufs_dirhash.c; quota calls are quota.rs's"
+notes = "ffs: ufs_inactive, ufs_reclaim; UFS_DIRHASH ufsdirhash_free waits for ufs_dirhash.c; quota calls (getinoquota, ufs_quota_free_inode, ufs_quota_delete) are quota.rs's: ufs_quota.rs's with feature quota (M10b), the no-quota answers without it"
 
 [[file]]
 c = "sys/ufs/ufs/ufs_lookup.c"
