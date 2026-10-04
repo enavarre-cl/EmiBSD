@@ -73,7 +73,7 @@ run-arm64: image-arm64
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-link smoke-wg smoke-pf
+smoke: (build-amd64 "--features qemu") (build-arm64 "--features qemu") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp
     cargo xtask smoke --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -183,9 +183,7 @@ smoke-shell: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 
 # M8b: a plain boot of the ramdisk goes multi-user: init(8) runs /etc/rc (`rc: multi-user`),
 # then getty(8) on tty00 prints `login:`; the session logs in as root (the test image's
-# password, docs/SETUP.md) and runs `id` and `uname -a`. Not part of `smoke` yet: login(1)
-# needs BSD Auth's socketpair(2) (AF_UNIX) to talk to login_passwd, which the kernel is
-# getting in parallel work.
+# password, docs/SETUP.md) and runs `id` and `uname -a`. Part of `smoke`.
 smoke-login: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-login: no ramdisk image; run just userland first"; exit 1; }
@@ -204,8 +202,7 @@ smoke-login: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 # does, then runs OpenBSD's route(8) (`show`: a routing socket, then NET_RT_DUMP through
 # sysctl(2); `get`: RTM_GET written to the routing socket and its answer read back) and
 # ifconfig(8) (getifaddrs(3): NET_RT_IFLIST, then interface ioctls on an AF_INET socket). The kernel's network self-test configured vio0 (10.0.2.15) and the default route
-# through 10.0.2.2 before init ran. Not part of `smoke` yet: ifconfig needs the inet socket
-# protocols (UDP), ported in parallel work.
+# through 10.0.2.2 before init ran. Part of `smoke`.
 smoke-route: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-route: no ramdisk image; run just userland first"; exit 1; }
@@ -311,11 +308,7 @@ smoke-wg: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 # M9a: OpenBSD's ifconfig(8) and ping(8) from the ramdisk, multi-user, logged in as root
 # (`smoke-login`'s sends). vio0's address (10.0.2.15/24) and the default route through QEMU's
 # gateway come from the kernel's boot self-test (`selftest: ping`), so no /etc/hostname.vio0
-# is needed. Not part of `smoke` yet: `ifconfig vio0` lists the addresses through
-# getifaddrs(3), whose sysctl(NET_RT_IFLIST) is rtsock.c's (in progress elsewhere), and ping
-# waits for its reply with poll(2) on the raw socket, which needs kqueue's socket filters
-# (kern_event.c, in progress elsewhere). The init stand-in's `init: inet sockets ok` (in
-# `smoke`) checks the same protocol paths without them.
+# is needed. Part of `smoke`.
 smoke-net: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-net: no ramdisk image; run just userland first"; exit 1; }
@@ -412,7 +405,7 @@ smoke-ipsec: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
 # Both are gateways (net.inet.ip.forwarding=1): without bpf(4) (NBPFILTER 0) the C leaves a
 # decapsulated packet on vio1 instead of moving it to enc0, and a plain host drops it as
 # `ips_wrongif`, its inner address being on lo1. Each VM ends with `ipsecctl -sa -v` (the SA
-# counters). Not part of `smoke`.
+# counters). Part of `smoke`.
 smoke-esp: (build-amd64 "--features qemu") (build-arm64 "--features qemu")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-esp: no ramdisk image; run just userland first"; exit 1; }
