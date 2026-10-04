@@ -137,7 +137,7 @@ use crate::sys::proc::{FORK_FORK, P_SYSTEM, PS_SYSTEM, Pgrp, Proc, Process, SONP
 use crate::sys::reboot::RB_SINGLE;
 use crate::sys::resourcevar::Plimit;
 use crate::sys::signalvar::Sigacts;
-use crate::sys::systm::{INFSLP, MOUNTROOT, SysArgs};
+use crate::sys::systm::{INFSLP, MOUNTROOT, SysArgs, kernel_lock, kernel_lock_init};
 use crate::sys::types::Register;
 use crate::unported;
 use crate::uvm::uvm_extern::{
@@ -251,7 +251,7 @@ pub fn main() -> ! {
 
     // KUBSAN and WITNESS are kernel options this configuration does not have.
 
-    let _ = unported!("KERNEL_LOCK_INIT");
+    kernel_lock_init(); // KERNEL_LOCK_INIT()
     sched_lock_init(); // SCHED_LOCK_INIT()
 
     rw_obj_init();
@@ -400,7 +400,7 @@ pub fn main() -> ! {
     softnet_init();
 
     // Lock the kernel on behalf of proc0.
-    let _ = unported!("KERNEL_LOCK");
+    kernel_lock(); // KERNEL_LOCK()
 
     // NMPATH: not configured.
 
@@ -597,7 +597,9 @@ pub fn main() -> ! {
         crate::kern::selftest::ping_gateway();
     }
 
-    // MULTIPROCESSOR: not configured.
+    // Boot the secondary processors.
+    #[cfg(feature = "multiprocessor")]
+    crate::machine::cpu::cpu_boot_secondary_processors();
 
     // Now that all CPUs partake in scheduling, start SMR thread.
     let _ = unported!("smr_startup_thread");
