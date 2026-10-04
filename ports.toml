@@ -1447,7 +1447,7 @@ notes = "BSD-4 (Wasabi, accepted at M2). TSC part: cpu_model, cpuspeed, cpu_amd6
 [[file]]
 c = "sys/arch/amd64/amd64/tsc.c"
 rust = "sys/arch/amd64/amd64/tsc.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2a898e03254f8e66f0c7a06efda895737b0bde02"
 deps = ["sys/arch/amd64/amd64/identcpu.c", "sys/kern/kern_tc.c", "sys/arch/amd64/amd64/machdep.c", "sys/arch/amd64/amd64/lapic.c"]

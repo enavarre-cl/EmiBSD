@@ -152,9 +152,10 @@ the default and `cargo test` just works.
 | `pool_debug` | `option POOL_DEBUG` | `pool_debug = 1` (poisoning, once `subr_poison.c` is here) |
 | `ffs` | `option FFS` | the fast file system (`sys/ufs`) and its `vfsconflist[]` entry; default |
 | `ffs2` | `option FFS2` | FFS2 (UFS2 dinodes, the 64 KB super-block) in ffs; default |
-| `qemu` | — | QEMU-only exits (`isa-debug-exit`, semihosting), the boot self-tests |
+| `qemu` | — | QEMU-only exits (`isa-debug-exit`, semihosting), the boot self-tests, the TSC under TCG and the `uptime went backwards` check |
+| `multiprocessor` | `option MULTIPROCESSOR` | off; so far only `tsc.c`'s TSC synchronisation test, for M11b |
 
-More appear as they are needed (`multiprocessor`, `small_kernel`, ...), one per `option(4)`.
+More appear as they are needed (`small_kernel`, ...), one per `option(4)`.
 
 ## Dependencies
 
@@ -352,8 +353,9 @@ user's group (macOS has no such group, and `pwd_mkdb` insists on one).
   do. On arm64, `initarm` installs a one-block identity map of the first GiB in
   `TTBR0_EL1` with Device-nGnRnE attributes, because the Limine protocol maps RAM but not devices;
   `bus_space_map` is the identity inside it until `pmap` maps devices (M3, page tables).
-- `delay(9)` before the clocks: amd64 polls the i8254 (`isa/clock.rs`, as OpenBSD does before the
-  TSC is calibrated); arm64 uses `intr.c`'s `arm_dflt_delay` until `agtimer` attaches (M4).
+- `delay(9)` before the clocks: amd64 polls the i8254 (`isa/clock.rs`) through `delay_func`,
+  which `delay_init` hands to `tsc_delay` when the TSC frequency is known from CPUID or an MSR,
+  as in OpenBSD (under QEMU it is measured, so `i8254_delay` stays); arm64 uses `intr.c`'s `arm_dflt_delay` until `agtimer` attaches (M4).
 - ddb-lite: `db_enter()` is a breakpoint trap (`int3`, `brk #0xf000`) that lands in `db_ktrap`
   and `db_trap`, which print `Stopped at <pc>` and the stack trace from `ddb_regs` and then
   return, as the `c` command would, because there is no command loop (`db_command.c`,
@@ -404,13 +406,16 @@ user's group (macOS has no such group, and `pwd_mkdb` insists on one).
   accessors. `main` brings up the wheel, the clock queue, the four per-CPU clock interrupts
   (`sched_init_cpu`'s binds) and `initclocks`. amd64 starts the i8254, calibrates the LAPIC
   timer against it (`lapic_calibrate_timer`, as the boot CPU's `cpu_attach` does) and drives
-  `clockintr_dispatch` from `Xintr_lapic_ltimer`; the i8254 is the timecounter (the TSC one,
-  `tsc.c`, is not ported, and wants an invariant TSC QEMU's TCG does not offer; `acpihpet` and
-  `acpitimer` need the ACPI tables). Behind the LAPIC timer the i8254 counts 15 bits
-  (`i8254_inittimecounter_simple`) and wraps every 27.46 ms: uptime moves forward only while
-  hardclock winds the timehands up within each wrap, so a clock interrupt held off longer (a
-  QEMU vCPU descheduled by a busy host) steps `nanouptime` back a period, as it would on
-  OpenBSD with this counter; the time code keeps the C's modular arithmetic for it. arm64 attaches `agtimer` from the device tree (through mainbus
+  `clockintr_dispatch` from `Xintr_lapic_ltimer`. The timecounter is the TSC (`tsc.c`, with
+  `identcpu.c`'s TSC part; `kern.timecounter.hardware=tsc`), the i8254 the fallback. Behind
+  the LAPIC timer the i8254 counts 15 bits (`i8254_inittimecounter_simple`) and wraps every
+  27.46 ms: uptime moves forward only while hardclock winds the timehands up within each wrap,
+  so a clock interrupt held off longer (a QEMU vCPU descheduled by a busy host) steps
+  `nanouptime` back a period, as it would on OpenBSD with this counter; the time code keeps
+  the C's modular arithmetic for it. The TSC's 32-bit count wraps after seconds. Under feature
+  `qemu`, `clockintr_dispatch` prints `uptime went backwards` if a reading is behind the
+  previous one, and every smoke run rejects that line (`--reject`). `acpihpet` and
+  `acpitimer` need the ACPI tables. arm64 attaches `agtimer` from the device tree (through mainbus
   since M7b) and takes the virtual timer's PPI through `ampintc`. The `selftest=clock` boot waits for
   `hz` hardclocks and a `timeout(9)`. The host double owns a `cpu_info` of its own so the
   clock queue and the wheel are unit-tested over the dummy timecounter.
@@ -489,7 +494,8 @@ user's group (macOS has no such group, and `pwd_mkdb` insists on one).
   `ld.so` through `elf_load_file`, which fails in `namei` because `ld.so` is not built.
   `exec_timekeep_map` maps the shared timekeep page (wired in `kernel_map`, written by
   `tc_update_timekeep`); where the timecounter has no user-mode reader (`tk_user` 0, the
-  i8254 on amd64) libc falls back to `clock_gettime(2)`. Until a root file system exists, `start_init`
+  i8254 on amd64) libc falls back to `clock_gettime(2)`; amd64's TSC has one
+  (`TC_TSC_LFENCE`/`TC_TSC_RDTSCP`). Until a root file system exists, `start_init`
   tries `initpaths[]` through `sys_execve` (each `ENOENT`) and then execs the `init` boot
   module with the same arguments through `exec_image`, the same body with `ep_image` set
   (`docs/C_TO_RUST.md`). What a file system must give `execve`: `namei` of the path, a
@@ -893,6 +899,30 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   Divert sockets (`netinet/ip_divert.c`) are not ported: `divert-packet` rules report
   themselves and drop the packet. The ABI structures pf shares with pfctl(8) keep the C
   layout to the byte; `net/pfvar/tests.rs` checks their sizes and offsets against clang's.
+
+- amd64's TSC under QEMU (the user's decision of 2026-10-04). OpenBSD registers the TSC
+  timecounter only with `CPUF_CONST_TSC` and `CPUF_INVAR_TSC`, which on AMD both come from
+  cpuid 0x80000007 `%edx` bit 8 (invariant TSC). QEMU's TCG never sets it (QEMU 11.1.2, Apple
+  Silicon host, so TCG only):
+
+  | `-cpu` | 0x80000007 `%edx` | cpuid(1) `CPUID_TSC` | highest leaf |
+  |---|---|---|---|
+  | `qemu64` | 0 | set | 0xd |
+  | `qemu64,+invtsc` | 0 | set | 0xd |
+  | `max,+invtsc` | 0 | set | 0xd |
+
+  With `+invtsc` QEMU warns `TCG doesn't support requested feature:
+  CPUID[eax=80000007h].EDX.invtsc [bit 8]`, so `boot.rs` keeps plain `qemu64`. TCG's TSC is
+  monotonic all the same (it follows the host clock). Under feature `qemu` only,
+  `identifycpu` sets both flags whenever cpuid(1) reports `CPUID_TSC`. The frequency is then
+  unknown to CPUID (no leaf 0x15, and the P0 MSR is AMD family 17h/19h hardware), so
+  `tsc_timecounter_init` takes `identifycpu`'s `cpu_freq` (the TSC over a 100 ms
+  `i8254_delay`). OpenBSD would leave such a TSC at quality -1000 until `acpitimer` or
+  `acpihpet` call `cpu_recalibrate_tsc`; neither is ported, and the i8254 cannot be the
+  reference (`measure_tsc_freq` delays 100 ms with interrupts off; the 15-bit count wraps
+  every 27 ms). So, also under `qemu` only, a TSC no reference has recalibrated gets the
+  quality 2000 `calibrate_tsc_freq` gives a calibrated invariant TSC. Without the feature the
+  C's rules apply unchanged.
 
 ## Testing architecture
 
