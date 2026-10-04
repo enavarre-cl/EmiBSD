@@ -71,7 +71,6 @@
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
 //!   `ENOSYS`: `watchdog` (`kern_watchdog.c`), `clockintr`, `proc_vmmap` after its checks
 //!   (`fill_vmmap`); `hw.model` (`cpu_model`, `identcpu.c`/arm64 `cpu.c`),
-//!   `sensors` (`kern_sensors.c`),
 //!   `setperf`/`perfpolicy` (`sched_bsd.c`), `smt`/`blockcpu` (`kern_sched.c`); the top-level
 //!   `machdep` (`cpu_sysctl`) and `ddb` (`ddb_sysctl`) trees. `kern.proc_cwd` of a process
 //!   without a current directory (none has one before a root file system is mounted) is
@@ -110,6 +109,8 @@
 //! - `KERN_CPTIME` with no CPU online (which only the host double can produce) leaves the
 //!   sums at zero instead of dividing by zero; an empty name (never from `sys_sysctl`, which
 //!   wants two components) is `EINVAL`.
+//! - `hw.sensors.<dev>.<type>.<numt>` with a `type` outside `enum sensor_type` finds no
+//!   sensor (`ENOENT`, after the device lookup's own errors), as the C's comparison would.
 
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicUsize, Ordering};
@@ -134,6 +135,7 @@ use crate::kern::kern_rwlock::{
     rw_enter, rw_enter_read, rw_enter_write, rw_exit_read, rw_exit_write,
 };
 use crate::kern::kern_sched::{cpu_is_online, sysctl_hwncpuonline};
+use crate::kern::kern_sensors::{sensor_find, sensordev_get};
 use crate::kern::kern_sig::NOSUIDCOREDUMP;
 use crate::kern::kern_synch::{refcnt_rele_wake, refcnt_take};
 use crate::kern::kern_tc::{microboottime, nanoboottime, nanotime, sysctl_tc, tc_setrealtimeclock};
@@ -193,6 +195,7 @@ use crate::sys::queue::{SlistHead, TailqHead};
 use crate::sys::resource::RLIMIT_RSS;
 use crate::sys::rwlock::{RW_INTR, RW_WRITE, Rwlock};
 use crate::sys::sched::{CPUSTATES, CPUSTATS_ONLINE, Cpustats};
+use crate::sys::sensors::{Sensor, SensorType, Sensordev};
 use crate::sys::socket::{AF_INET, AF_INET6, AF_UNIX, SOCK_RAW};
 use crate::sys::socketvar::{Socket, isspliced, issplicedback};
 use crate::sys::syscallargs::SysSysctlArgs;
@@ -2966,8 +2969,8 @@ pub fn sysctl_intrcnt(name: &[i32], oldp: usize, oldlenp: &mut usize) -> Result<
     evcount_sysctl(name, oldp, oldlenp, 0, 0)
 }
 
-/// `sysctl_sensors`: `hw.sensors`. The name checks are the C's; the sensor list is
-/// `kern_sensors.c`'s and is reported.
+/// `sysctl_sensors`: `hw.sensors.<dev>` (a `struct sensordev`) and
+/// `hw.sensors.<dev>.<type>.<numt>` (a `struct sensor`), copies without the kernel pointers.
 pub fn sysctl_sensors(
     name: &[i32],
     oldp: usize,
@@ -2975,15 +2978,56 @@ pub fn sysctl_sensors(
     newp: usize,
     newlen: usize,
 ) -> Result<(), Errno> {
-    let _ = (oldp, oldlenp, newp, newlen);
+    let _ = newlen;
 
     if name.len() != 1 && name.len() != 3 {
         return Err(Errno::ENOTDIR);
     }
 
-    Err(unported!(
-        "hw.sensors: sensordev_get, sensor_find (kern_sensors.c)"
-    ))
+    let dev = name[0];
+    if name.len() == 1 {
+        // KERNEL_LOCK(): one CPU, no kernel lock yet.
+        let ksd = sensordev_get(dev)?;
+
+        // Grab a copy, to clear the kernel pointers
+        let mut usd = Sensordev {
+            num: ksd.num.get(),
+            maxnumt: ksd.maxnumt.get(),
+            sensors_count: ksd.sensors_count.get(),
+            ..Sensordev::default()
+        };
+        strlcpy(&mut usd.xname, &ksd.xname.get());
+        // KERNEL_UNLOCK()
+
+        return sysctl_rdstruct(oldp, oldlenp, newp, usd.as_bytes());
+    }
+
+    // `(enum sensor_type)name[1]`: a value outside the enum matches no sensor.
+    let r#type = SensorType::from_i32(name[1]);
+    let numt = name[2];
+
+    // KERNEL_LOCK()
+    let ks = match r#type {
+        Some(t) => sensor_find(dev, t, numt)?,
+        None => {
+            sensordev_get(dev)?;
+            return Err(Errno::ENOENT);
+        }
+    };
+
+    // Grab a copy, to clear the kernel pointers
+    let us = Sensor {
+        desc: ks.desc.get(),
+        tv: ks.tv.get(),
+        value: ks.value.get(),
+        r#type: ks.r#type.get() as i32,
+        status: ks.status.get() as i32,
+        numt: ks.numt.get(),
+        flags: ks.flags.get(),
+    };
+    // KERNEL_UNLOCK()
+
+    sysctl_rdstruct(oldp, oldlenp, newp, us.as_bytes())
 }
 
 /// `sysctl_cpustats`: `kern.cpustats.<cpu>`.

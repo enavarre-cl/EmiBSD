@@ -61,6 +61,7 @@ pub mod sched;
 pub mod scsiio;
 pub mod select;
 pub mod selinfo;
+pub mod sensors;
 pub mod siginfo;
 pub mod sigio;
 pub mod signal;

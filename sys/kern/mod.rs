@@ -29,6 +29,7 @@ pub mod kern_prot;
 pub mod kern_resource;
 pub mod kern_rwlock;
 pub mod kern_sched;
+pub mod kern_sensors;
 pub mod kern_sig;
 pub mod kern_softintr;
 pub mod kern_subr;
