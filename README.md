@@ -41,10 +41,10 @@ Status: M10c (memory and removable file systems: tmpfs, msdosfs, cd9660, udf, vn
 | M10c | Memory and removable file systems (tmpfs, msdosfs, cd9660, udf, vnd) | met |
 | M10d..M10f | ext2fs/ntfs/fuse, NFS, softraid | next |
 | M11a..M11e | SMP | next |
-| M12 | Devices and virtualisation | next |
+| M12 | Devices (audio, USB), in QEMU | next |
 | M13 | Storage, firmware and console | next |
 | M14, M14b | Installable; code and test layout | next |
-| M15 | Real hardware (optional) | next |
+| M15 | Real hardware and virtualisation (vmm, vmd; optional) | next |
 
 Stage 2 of the diagnostic tools (ps, fstat, vmstat, df) is also met. Exit criteria and dates are
 in [docs/ROADMAP.md](docs/ROADMAP.md); the current state is in

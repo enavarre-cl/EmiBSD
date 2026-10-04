@@ -26,4 +26,4 @@ Blockers:
   until acpitimer/acpihpet recalibrate it (M13; accepted by the user).
 
 Decisions pending (the user's): the scope section (open until M13); the PC's CPU (Intel VMX
-or AMD SVM) for vmm and M15; the exact Raspberry Pi 4 model; networking in M15.
+or AMD SVM) for vmm, named when M15 starts; the exact Raspberry Pi 4 model; networking in M15.
