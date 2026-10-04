@@ -158,7 +158,7 @@ use crate::netinet::udp_var::{
 use crate::sys::errno::Errno;
 use crate::sys::mbuf::{
     M_BCAST, M_COPYALL, M_DONTWAIT, M_MCAST, M_UDP_CSUM_IN_BAD, M_UDP_CSUM_IN_OK, M_UDP_CSUM_OUT,
-    Mbuf, PACKET_TAG_IPSEC_IN_DONE, m_freemp, mtod,
+    Mbuf, PACKET_TAG_IPSEC_IN_DONE, PF_TAG_DIVERTED, m_freemp, mtod,
 };
 use crate::sys::proc::Proc;
 use crate::sys::protosw::{PRC_HOSTDEAD, PRC_MSGSIZE, PRC_NCMDS, PrUsrreqs, prc_is_redirect};
@@ -351,10 +351,10 @@ pub fn udp_input(
             .csum_flags
             .set(m.m_pkthdr().csum_flags.get() & !M_UDP_CSUM_OUT);
 
-        // NPF > 0: !(m->m_pkthdr.pf.flags & PF_TAG_DIVERTED); not configured.
         if UDPENCAP_ENABLE.load(Ordering::Relaxed) != 0
             && udpencap_port_local != 0
             && ESP_ENABLE.load(Ordering::Relaxed) != 0
+            && m.m_pkthdr().pf.flags.get() & PF_TAG_DIVERTED == 0
             && hdr.uh_dport == (udpencap_port_local as u16).to_be()
         {
             let mut skip = iphlen + size_of::<Udphdr>() as i32;

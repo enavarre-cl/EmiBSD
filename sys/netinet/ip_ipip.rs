@@ -91,8 +91,8 @@
 //! - The local address spoofing check builds its `sockaddr_in` in a `struct
 //!   sockaddr_storage`, as the C does, and calls the `unsafe` `rtalloc` over it.
 //! - Not configured, each a comment at its site: `INET6` (the `AF_INET6` outer and
-//!   `IPPROTO_IPV6` inner cases), `NBPFILTER && NGIF` (`bpf_mtap_af` on `gif(4)`), `NPF`
-//!   (`pf_pkt_addr_changed`). `SMALL_KERNEL` is not defined, so the sysctls are here.
+//!   `IPPROTO_IPV6` inner cases) and `NBPFILTER && NGIF` (`bpf_mtap_af` on `gif(4)`). `NPF`
+//!   is configured (`pf_pkt_addr_changed`). `SMALL_KERNEL` is not defined: the sysctls are here.
 //! - `unhandled_af` panics on an outer family that is neither `AF_INET` nor `AF_INET6`, as in
 //!   C.
 
@@ -104,6 +104,7 @@ use crate::kern::kern_sysctl::{sysctl_int_bounded, sysctl_rdstruct};
 use crate::kern::uipc_mbuf::{m_adj, m_copydata, m_prepend, m_pullup};
 use crate::net::if_::{IFF_LOOPBACK, if_get, if_put, unhandled_af};
 use crate::net::if_var::{Ifnet, Netstack};
+use crate::net::pf::pf_pkt_addr_changed;
 use crate::net::route::{RTF_LOCAL, rtalloc, rtfree};
 use crate::netinet::in_::{INADDR_ANY, IPPROTO_DONE, IPPROTO_IPIP, IPPROTO_IPV4, SockaddrIn};
 use crate::netinet::ip::{IP_DF, IP_MF, IP_OFFMASK, IPVERSION, Ip};
@@ -395,7 +396,7 @@ pub fn ipip_input_if(
         );
 
         // NBPFILTER > 0 && NGIF > 0: bpf_mtap_af on a gif(4) interface; not configured.
-        // NPF > 0: pf_pkt_addr_changed(m); not configured.
+        pf_pkt_addr_changed(m);
 
         // Interface pointer stays the same; if no IPsec processing has been done (or will be
         // done), this will point to a normal interface. Otherwise, it'll point to an enc

@@ -37,7 +37,7 @@
 //!   written as copies (`mtod_ip`/`mtod_ip_store`). Errors are `Result`s.
 //! - `udpencap_enable`/`udpencap_port` are `AtomicI32`s.
 //! - Not configured, each a comment at its site: `INET6` (the IPv6 header handling and
-//!   `ip6_output`), `NPF` (`pf_tag_packet`, `pf_pkt_addr_changed`).
+//!   `ip6_output`). `NPF` (pf(4)) is configured: `pf_tag_packet`, `pf_pkt_addr_changed`.
 //! - `KERNEL_ASSERT_LOCKED()` is nothing without `MULTIPROCESSOR`.
 
 use core::mem::size_of;
@@ -49,6 +49,7 @@ use crate::kern::kern_tc::gettime;
 use crate::kern::kern_timeout::timeout_add_sec;
 use crate::kern::uipc_mbuf::{m_freem, m_makespace, m_pullup};
 use crate::kern::uipc_mbuf2::{m_tag_find, m_tag_get, m_tag_prepend};
+use crate::net::pf::{pf_pkt_addr_changed, pf_tag_packet};
 use crate::netinet::in_::{
     INADDR_ANY, IPPROTO_AH, IPPROTO_ESP, IPPROTO_IPCOMP, IPPROTO_IPIP, IPPROTO_UDP,
 };
@@ -420,7 +421,9 @@ pub fn ipsp_process_done(m: &'static Mbuf, tdb: &'static Tdb) -> Result<(), Errn
             return error;
         }
 
-        // NPF > 0: pf_tag_packet(m, tdb_tag, -1), pf_pkt_addr_changed(m); not configured.
+        // Add pf tag if requested.
+        pf_tag_packet(m, i32::from(tdb.tdb_tag.get()), -1);
+        pf_pkt_addr_changed(m);
         if tdb.tdb_rdomain.get() != tdb.tdb_rdomain_post.get() {
             m.m_pkthdr().ph_rtableid.set(tdb.tdb_rdomain_post.get());
         }

@@ -149,8 +149,9 @@
 //!   `spd_table_walk` capture; `w_where` is a user address.
 //! - `pfkeyv2_sysctl` follows `pr_sysctl`'s calling convention; the process it checks and
 //!   whose routing table it uses is `curproc`, as in C.
-//! - Not configured, each a comment at its site: `NPF` (the `SADB_X_EXT_TAG`/`TAP`
-//!   extensions), `TCP_SIGNATURE` (`SADB_X_SATYPE_TCPSIGNATURE`), `INET6`. `IPSEC` is.
+//! - `NPF` (pf(4)) is configured: the `SADB_X_EXT_TAG`/`TAP` extensions.
+//! - Not configured, each a comment at its site:
+//!   `TCP_SIGNATURE` (`SADB_X_SATYPE_TCPSIGNATURE`), `INET6`. `IPSEC` is.
 
 use alloc::vec::Vec;
 use core::cell::Cell;
@@ -178,12 +179,14 @@ use crate::machine::intr::{IPL_MPFLOOR, IPL_SOFTNET};
 use crate::net::pfkeyv2_convert::{
     export_address, export_counter, export_flow, export_identities, export_iface, export_key,
     export_lifetime, export_mtu, export_rdomain, export_replay, export_sa, export_satype,
-    export_udpencap, import_address, import_flow, import_identities, import_iface, import_key,
-    import_lifetime, import_rdomain, import_sa, import_udpencap,
+    export_tag, export_tap, export_udpencap, import_address, import_flow, import_identities,
+    import_iface, import_key, import_lifetime, import_rdomain, import_sa, import_tag, import_tap,
+    import_udpencap,
 };
 use crate::net::pfkeyv2_parsemessage::{
     SADB_EXTS_ALLOWED_OUT, SADB_EXTS_REQUIRED_OUT, pfkeyv2_parsemessage,
 };
+use crate::net::pfvar::PF_TAG_NAME_SIZE;
 use crate::net::radix::{rn_addroute, rn_init, rn_match};
 use crate::net::rtable::{rtable_exists, rtable_l2};
 use crate::netinet::in_::{IPPROTO_AH, IPPROTO_ESP, IPPROTO_IPCOMP, IPPROTO_IPIP, SockaddrIn};
@@ -1776,7 +1779,12 @@ pub unsafe fn pfkeyv2_get(
         i += size_of::<SadbXRdomain>();
     }
 
-    // NPF > 0: the SADB_X_EXT_TAG and SADB_X_EXT_TAP extensions; not configured.
+    if tdb.tdb_tag.get() != 0 {
+        i += size_of::<SadbXTag>() + padup(PF_TAG_NAME_SIZE);
+    }
+    if tdb.tdb_tap.get() != 0 {
+        i += size_of::<SadbXTap>();
+    }
 
     if tdb.has_flags(TDBF_IFACE) {
         i += size_of::<SadbXIface>();
@@ -1892,7 +1900,17 @@ pub unsafe fn pfkeyv2_get(
             export_rdomain(&mut p, tdb);
         }
 
-        // NPF > 0: export the tag and the tap enc(4) device; not configured.
+        // Export tag information, if present
+        if tdb.tdb_tag.get() != 0 {
+            headers[usize::from(SADB_X_EXT_TAG)] = p;
+            export_tag(&mut p, tdb);
+        }
+
+        // Export tap enc(4) device information, if present
+        if tdb.tdb_tap.get() != 0 {
+            headers[usize::from(SADB_X_EXT_TAP)] = p;
+            export_tap(&mut p, tdb);
+        }
 
         // Export sec(4) interface information, if present
         if tdb.has_flags(TDBF_IFACE) {
@@ -2127,7 +2145,8 @@ unsafe fn pfkeyv2_newsa(
             sadb_ext::<SadbXUdpencap>(headers, SADB_X_EXT_UDPENCAP),
         );
         import_rdomain(newsa, sadb_ext::<SadbXRdomain>(headers, SADB_X_EXT_RDOMAIN));
-        // NPF > 0: import_tag, import_tap; not configured.
+        import_tag(newsa, headers[usize::from(SADB_X_EXT_TAG)]);
+        import_tap(newsa, sadb_ext::<SadbXTap>(headers, SADB_X_EXT_TAP));
         import_iface(newsa, sadb_ext::<SadbXIface>(headers, SADB_X_EXT_IFACE));
     }
 
@@ -2413,7 +2432,8 @@ pub fn pfkeyv2_dosend(so: &'static Socket, mut message: Vec<u8>) -> Result<(), E
                             s2,
                             sadb_ext::<SadbXUdpencap>(&headers, SADB_X_EXT_UDPENCAP),
                         );
-                        // NPF > 0: import_tag, import_tap; not configured.
+                        import_tag(s2, headers[usize::from(SADB_X_EXT_TAG)]);
+                        import_tap(s2, sadb_ext::<SadbXTap>(&headers, SADB_X_EXT_TAP));
                         import_iface(s2, sadb_ext::<SadbXIface>(&headers, SADB_X_EXT_IFACE));
 
                         tdb_addtimeouts(s2);

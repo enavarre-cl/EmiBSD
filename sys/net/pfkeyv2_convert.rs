@@ -116,8 +116,10 @@
 //!   allocations are `malloc(M_CREDENTIALS)` as in C, with `M_WAITOK` failures a panic.
 //! - `import_flow` masks the flow's addresses in place in the message (`rt_maskedcopy`), as
 //!   the C does.
-//! - Not configured, each a comment at its site: `NPF` (`import_tag`, `export_tag`,
-//!   `import_tap`, `export_tap`), `INET6` (the `AF_INET6` flows, `in6_embedscope`).
+//! - `NPF` (pf(4)) is configured: `import_tag`, `export_tag`, `import_tap`, `export_tap`;
+//!   `import_tag` takes the raw extension, its name trailing the header.
+//! - Not configured, each a comment at its site: `INET6` (the `AF_INET6` flows,
+//!   `in6_embedscope`).
 
 use core::mem::size_of;
 use core::ptr::{self, NonNull};
@@ -133,6 +135,7 @@ use crate::crypto::cryptodev::{
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::subr_prf::panic;
+use crate::net::pf_ioctl::{pf_tag2tagname, pf_tagname2tag};
 use crate::net::pfkeyv2::{
     PFKEYV2_ENCRYPTION_KEY, PFKEYV2_LIFETIME_CURRENT, PFKEYV2_LIFETIME_HARD,
     PFKEYV2_LIFETIME_LASTUSE, PFKEYV2_LIFETIME_SOFT, SADB_AALG_MD5HMAC, SADB_AALG_SHA1HMAC,
@@ -148,9 +151,10 @@ use crate::net::pfkeyv2::{
     SADB_X_FLOW_TYPE_DENY, SADB_X_FLOW_TYPE_DONTACQ, SADB_X_FLOW_TYPE_REQUIRE,
     SADB_X_FLOW_TYPE_USE, SADB_X_SAFLAGS_ESN, SADB_X_SAFLAGS_TUNNEL, SADB_X_SAFLAGS_UDPENCAP,
     SadbAddress, SadbHeaders, SadbIdent, SadbKey, SadbLifetime, SadbProtocol, SadbSa, SadbXCounter,
-    SadbXIface, SadbXMtu, SadbXRdomain, SadbXReplay, SadbXUdpencap, extlen, padup, sadb_get,
-    sadb_put,
+    SadbXIface, SadbXMtu, SadbXRdomain, SadbXReplay, SadbXTag, SadbXTap, SadbXUdpencap, extlen,
+    padup, sadb_get, sadb_put,
 };
+use crate::net::pfvar::PF_TAG_NAME_SIZE;
 use crate::net::route::rt_maskedcopy;
 use crate::netinet::in_::{IPPROTO_IPCOMP, SockaddrIn};
 use crate::netinet::ip_ipsp::{
@@ -1032,8 +1036,76 @@ pub unsafe fn export_rdomain(p: &mut *mut u8, tdb: &Tdb) {
     unsafe { put_adv(p, srdomain) };
 }
 
-// NPF > 0: import_tag/export_tag (pf_tagname2tag, pf_tag2tagname) and import_tap/export_tap
-// (the enc(4) tap unit); not configured.
+/// `import_tag`: import PF tag information for SA. `stag` is the extension (header and
+/// name), NULL when the message has none.
+///
+/// # Safety
+///
+/// A non-null `stag` points at an `SADB_X_EXT_TAG` extension `pfkeyv2_parsemessage`
+/// accepted (its length covers the header and at most `PF_TAG_NAME_SIZE` bytes of name).
+pub unsafe fn import_tag(tdb: &Tdb, stag: *const u8) {
+    if stag.is_null() {
+        return;
+    }
+    // SAFETY: the caller's contract.
+    let hdr: SadbXTag = unsafe { sadb_get(stag) };
+    let len = (usize::from(hdr.sadb_x_tag_len) * size_of::<u64>())
+        .saturating_sub(size_of::<SadbXTag>())
+        .min(PF_TAG_NAME_SIZE);
+    // SAFETY: the caller's contract: the name follows the header, `len` bytes of it.
+    let s = unsafe { core::slice::from_raw_parts(stag.add(size_of::<SadbXTag>()), len) };
+    tdb.tdb_tag.set(pf_tagname2tag(s, true));
+}
+
+/// `export_tag`: export PF tag information for SA.
+///
+/// # Safety
+///
+/// `*p` points at `size_of::<SadbXTag>() + PADUP(PF_TAG_NAME_SIZE)` writable (zeroed) bytes;
+/// it is advanced past the ones used.
+pub unsafe fn export_tag(p: &mut *mut u8, tdb: &Tdb) {
+    let mut s = [0u8; PF_TAG_NAME_SIZE];
+    pf_tag2tagname(tdb.tdb_tag.get(), &mut s);
+    let taglen = s
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(PF_TAG_NAME_SIZE - 1)
+        + 1;
+    let stag = SadbXTag {
+        sadb_x_tag_taglen: taglen as u32,
+        sadb_x_tag_len: ((size_of::<SadbXTag>() + padup(taglen)) / size_of::<u64>()) as u16,
+        ..SadbXTag::default()
+    };
+    // SAFETY: the caller's contract: the header, then the name and its NUL inside the
+    // `PADUP(PF_TAG_NAME_SIZE)` bytes after it.
+    unsafe {
+        sadb_put(*p, stag);
+        ptr::copy_nonoverlapping(s.as_ptr(), p.add(size_of::<SadbXTag>()), taglen);
+        *p = p.add(size_of::<SadbXTag>() + padup(taglen));
+    }
+}
+
+/// `import_tap`: import enc(4) tap device information for SA.
+pub fn import_tap(tdb: &Tdb, stap: Option<SadbXTap>) {
+    if let Some(s) = stap {
+        tdb.tdb_tap.set(s.sadb_x_tap_unit);
+    }
+}
+
+/// `export_tap`: export enc(4) tap device information for SA.
+///
+/// # Safety
+///
+/// `*p` points at `size_of::<SadbXTap>()` writable (zeroed) bytes; it is advanced past them.
+pub unsafe fn export_tap(p: &mut *mut u8, tdb: &Tdb) {
+    let stap = SadbXTap {
+        sadb_x_tap_unit: tdb.tdb_tap.get(),
+        sadb_x_tap_len: (size_of::<SadbXTap>() / size_of::<u64>()) as u16,
+        ..SadbXTap::default()
+    };
+    // SAFETY: the caller's contract.
+    unsafe { put_adv(p, stap) };
+}
 
 /// `import_iface`: import interface information for SA.
 pub fn import_iface(tdb: &Tdb, siface: Option<SadbXIface>) {

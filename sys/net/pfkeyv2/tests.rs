@@ -802,3 +802,61 @@ fn an_esp_tunnel_echo_request_is_answered_through_the_reverse_sa() {
     soclose(so, 0).expect("close");
     teardown();
 }
+
+/// pf(4)'s extensions: an SA added with a pf tag and an enc(4) tap unit keeps them, and
+/// SADB_GET exports both.
+#[test]
+fn an_sa_keeps_its_pf_tag_and_enc_tap() {
+    let _g = setup();
+    crate::net::pf_ioctl::pfattach(1);
+    let so = socreate(i32::from(PF_KEY), SOCK_RAW, i32::from(PF_KEY_V2)).expect("socket(PF_KEY)");
+
+    let mut add = sadb_add();
+    let ext = Msg(Vec::new())
+        .ext(
+            SADB_X_EXT_TAG,
+            SadbXTag {
+                sadb_x_tag_taglen: 10,
+                ..SadbXTag::default()
+            },
+            b"ipsec-tag\0",
+        )
+        .ext(
+            SADB_X_EXT_TAP,
+            SadbXTap {
+                sadb_x_tap_unit: 3,
+                ..SadbXTap::default()
+            },
+            &[],
+        )
+        .0;
+    add.extend_from_slice(&ext);
+    let words = (add.len() / 8) as u16;
+    add[4..6].copy_from_slice(&words.to_ne_bytes());
+    send(so, &add).expect("add");
+    assert_eq!(header(&recv(so).expect("the reply")).sadb_msg_errno, 0);
+
+    let peer = SockaddrUnion::from_sin(&sin(PEER));
+    let t = gettdb(0, htonl(SPI), &peer, IPPROTO_ESP as u8).expect("the SA");
+    assert_ne!(t.tdb_tag.get(), 0);
+    assert_eq!(t.tdb_tap.get(), 3);
+    tdb_unref(Some(t));
+
+    let sa = SadbSa {
+        sadb_sa_spi: htonl(SPI),
+        ..SadbSa::default()
+    };
+    let get = Msg::new(SADB_GET, SADB_SATYPE_ESP, 3)
+        .ext(SADB_EXT_SA, sa, &[])
+        .address(SADB_EXT_ADDRESS_DST, PEER, 0)
+        .done();
+    send(so, &get).expect("get");
+    let r = recv(so).expect("the reply");
+    assert_eq!(header(&r).sadb_msg_errno, 0);
+    let types = ext_types(&r);
+    assert!(types.contains(&SADB_X_EXT_TAG) && types.contains(&SADB_X_EXT_TAP));
+    assert!(r.windows(10).any(|w| w == b"ipsec-tag\0"), "the tag's name");
+
+    soclose(so, 0).expect("close");
+    teardown();
+}

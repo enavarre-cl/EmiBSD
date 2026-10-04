@@ -87,8 +87,8 @@
 //! - `max_alg` of the `SUPPORTED` extensions keeps the C's expression, whose second test is
 //!   the constant `SADB_EXT_SUPPORTED_ENCRYPT` (always true): the compressor table is checked
 //!   against `SADB_EALG_MAX`.
-//! - Not configured, each a comment at its site: `NPF` (the `SADB_X_EXT_TAG` and
-//!   `SADB_X_EXT_TAP` checks: without pf the C falls to "unknown extension header"),
+//! - `NPF` (pf(4)) is configured: the `SADB_X_EXT_TAG` and `SADB_X_EXT_TAP` checks.
+//! - Not configured, a comment at its sites:
 //!   `INET6` (the `AF_INET6` address checks: an `AF_INET6` address is an unknown family).
 
 use core::mem::{offset_of, size_of};
@@ -108,8 +108,10 @@ use crate::net::pfkeyv2::{
     SADB_X_EXT_TAG, SADB_X_EXT_TAP, SADB_X_EXT_UDPENCAP, SADB_X_SATYPE_TCPSIGNATURE, SadbAddress,
     SadbAlg, SadbComb, SadbExt, SadbHeaders, SadbIdent, SadbKey, SadbLifetime, SadbMsg, SadbProp,
     SadbProtocol, SadbSa, SadbSens, SadbSpirange, SadbSupported, SadbXCounter, SadbXIface,
-    SadbXPolicy, SadbXRdomain, SadbXReplay, SadbXUdpencap, padup, sadb_get, sadb_headers_new,
+    SadbXPolicy, SadbXRdomain, SadbXReplay, SadbXTag, SadbXTap, SadbXUdpencap, padup, sadb_get,
+    sadb_headers_new,
 };
+use crate::net::pfvar::PF_TAG_NAME_SIZE;
 use crate::netinet::in_::SockaddrIn;
 use crate::sys::errno::Errno;
 use crate::sys::socket::{AF_INET, Sockaddr};
@@ -1001,8 +1003,26 @@ fn parse_extension(sadb_msg: &SadbMsg, t: u16, ext: &[u8]) -> Result<(), Errno> 
                 return Err(Errno::EINVAL);
             }
         }
-        // NPF > 0: SADB_X_EXT_TAG (at most PF_TAG_NAME_SIZE of name) and SADB_X_EXT_TAP; not
-        // configured, so they are unknown below.
+        SADB_X_EXT_TAG => {
+            if i < size_of::<SadbXTag>() {
+                dprintf!("TAG extension header too small");
+                return Err(Errno::EINVAL);
+            }
+            if i > size_of::<SadbXTag>() + PF_TAG_NAME_SIZE {
+                dprintf!("TAG extension header too long");
+                return Err(Errno::EINVAL);
+            }
+        }
+        SADB_X_EXT_TAP => {
+            if i < size_of::<SadbXTap>() {
+                dprintf!("TAP extension header too small");
+                return Err(Errno::EINVAL);
+            }
+            if i > size_of::<SadbXTap>() {
+                dprintf!("TAP extension header too long");
+                return Err(Errno::EINVAL);
+            }
+        }
         SADB_X_EXT_IFACE => {
             if i != size_of::<SadbXIface>() {
                 dprintf!("bad IFACE header length");

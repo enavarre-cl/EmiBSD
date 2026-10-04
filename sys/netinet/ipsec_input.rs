@@ -61,9 +61,12 @@
 //!   IP header returned in an ICMP message, which is read unaligned.
 //! - `ipsec_forward_check`/`ipsec_local_check` return `Result<(), SpdError>` (any error
 //!   drops the packet, as the C's non-zero).
+//! - `NPF` (pf(4)) is configured: `pf_test` of transport mode packets, `pf_tag_packet`,
+//!   `pf_pkt_addr_changed`, and `PF_TAG_DIVERTED` packets go to raw sockets.
 //! - Not configured, each a comment at its site: `NBPFILTER` (the `enc(4)` interface of the
-//!   SA: its counters, `ph_ifidx` and `bpf_mtap_hdr`), `NSEC` (`sec(4)`), `NPF` (`pf_test`
-//!   of transport mode packets, `pf_tag_packet`, `PF_TAG_DIVERTED`), `INET6` (`in6_cksum`,
+//!   SA: its counters, `ph_ifidx` and `bpf_mtap_hdr`; so a decapsulated packet keeps its
+//!   receiving interface, and one for an address on another interface is dropped as
+//!   `ips_wrongif` unless the host forwards), `NSEC` (`sec(4)`), `INET6` (`in6_cksum`,
 //!   `rip6_input`, the IPv6 header chain of `ipsec_protoff`).
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.
 
@@ -80,8 +83,10 @@ use crate::kern::kern_timeout::timeout_add_sec;
 use crate::kern::subr_prf::panic;
 use crate::kern::uipc_mbuf::{m_copyback, m_copydata, m_pullup};
 use crate::kern::uipc_mbuf2::{m_tag_find, m_tag_get, m_tag_prepend};
-use crate::net::if_::unhandled_af;
+use crate::net::if_::{if_get, if_put, unhandled_af};
 use crate::net::if_var::Netstack;
+use crate::net::pf::{pf_pkt_addr_changed, pf_tag_packet, pf_test};
+use crate::net::pfvar::{PF_IN, PF_PASS};
 use crate::net::rtable::rtable_l2;
 use crate::netinet::in_::{
     IPCTL_IPSEC_AUTH_ALGORITHM, IPCTL_IPSEC_ENC_ALGORITHM, IPCTL_IPSEC_IPCOMP_ALGORITHM,
@@ -127,7 +132,7 @@ use crate::sys::endian::{htons, ntohl, ntohs};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::M_NOWAIT;
 use crate::sys::mbuf::{
-    M_AUTH, M_COMP, M_CONF, M_TUNNEL, Mbuf, PACKET_TAG_IPSEC_IN_DONE, m_freemp,
+    M_AUTH, M_COMP, M_CONF, M_TUNNEL, Mbuf, PACKET_TAG_IPSEC_IN_DONE, PF_TAG_DIVERTED, m_freemp,
 };
 use crate::sys::protosw::PRC_MSGSIZE;
 use crate::sys::socket::{AF_INET, AF_INET6, Sockaddr};
@@ -711,7 +716,9 @@ pub fn ipsec_common_input_cb(
             )),
         }
 
-        // NPF > 0: pf_tag_packet(m, tdb_tag, -1), pf_pkt_addr_changed(m); not configured.
+        // Add pf tag if requested.
+        pf_tag_packet(m, i32::from(tdbp.tdb_tag.get()), -1);
+        pf_pkt_addr_changed(m);
         if tdbp.tdb_rdomain.get() != tdbp.tdb_rdomain_post.get() {
             m.m_pkthdr().ph_rtableid.set(tdbp.tdb_rdomain_post.get());
         }
@@ -739,8 +746,23 @@ pub fn ipsec_common_input_cb(
             break 'baddone;
         }
 
-        // NPF > 0: pf_test of transport mode packets on the (enc0) interface; not
-        // configured.
+        // The ip_deliver() shortcut avoids running through ip_input() with the same IP
+        // header twice. Packets in transport mode have to be be passed to pf explicitly. In
+        // tunnel mode the inner IP header will run through ip_input() and pf anyway.
+        if !tdbp.has_flags(TDBF_TUNNELING) {
+            // This is the enc0 interface unless for ipcomp.
+            let Some(ifp) = if_get(m.m_pkthdr().ph_ifidx.get()) else {
+                break 'baddone;
+            };
+            if pf_test(af, PF_IN, ifp, mp) != PF_PASS {
+                if_put(Some(ifp));
+                break 'baddone;
+            }
+            if_put(Some(ifp));
+            if mp.is_none() {
+                return IPPROTO_DONE;
+            }
+        }
 
         // Return to the appropriate protocol handler in deliver loop.
         return i32::from(prot);
@@ -922,6 +944,11 @@ pub fn ipsec_input_disabled(
     }
 }
 
+/// `(*mp)->m_pkthdr.pf.flags & PF_TAG_DIVERTED`: pf(4) diverted the packet to a socket.
+fn pf_diverted(mp: &Option<&'static Mbuf>) -> bool {
+    mp.is_some_and(|m| m.m_pkthdr().pf.flags.get() & PF_TAG_DIVERTED != 0)
+}
+
 /// `ah46_input`: the protocol switch's AH input.
 pub fn ah46_input(
     mp: &mut Option<&'static Mbuf>,
@@ -930,8 +957,7 @@ pub fn ah46_input(
     af: i32,
     ns: Option<&Netstack>,
 ) -> i32 {
-    // NPF > 0: a PF_TAG_DIVERTED packet goes to raw sockets too; not configured.
-    if AH_ENABLE.load(Ordering::Relaxed) == 0 {
+    if pf_diverted(mp) || AH_ENABLE.load(Ordering::Relaxed) == 0 {
         return ipsec_input_disabled(mp, offp, proto, af, ns);
     }
 
@@ -975,8 +1001,7 @@ pub fn esp46_input(
     af: i32,
     ns: Option<&Netstack>,
 ) -> i32 {
-    // NPF > 0: a PF_TAG_DIVERTED packet goes to raw sockets too; not configured.
-    if ESP_ENABLE.load(Ordering::Relaxed) == 0 {
+    if pf_diverted(mp) || ESP_ENABLE.load(Ordering::Relaxed) == 0 {
         return ipsec_input_disabled(mp, offp, proto, af, ns);
     }
 
@@ -1002,8 +1027,7 @@ pub fn ipcomp46_input(
     af: i32,
     ns: Option<&Netstack>,
 ) -> i32 {
-    // NPF > 0: a PF_TAG_DIVERTED packet goes to raw sockets too; not configured.
-    if IPCOMP_ENABLE.load(Ordering::Relaxed) == 0 {
+    if pf_diverted(mp) || IPCOMP_ENABLE.load(Ordering::Relaxed) == 0 {
         return ipsec_input_disabled(mp, offp, proto, af, ns);
     }
 

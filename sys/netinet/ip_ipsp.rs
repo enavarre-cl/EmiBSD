@@ -134,7 +134,7 @@
 //!   ENCDEBUG`, not in GENERIC) and the `net.inet.ip.encdebug` sysctl; otherwise its
 //!   arguments are type-checked and never evaluated.
 //! - Not configured, each a comment at its site: `NSEC` (`sec(4)`: `sec_tdb_insert`,
-//!   `sec_tdb_remove`), `NPF` (`pf_tag_unref`), `NPFSYNC` (`pfsync_delete_tdb`), `INET6` and
+//!   `sec_tdb_remove`), `NPFSYNC` (`pfsync_delete_tdb`), `INET6` and
 //!   `TCP_SIGNATURE` (its transform lives in `netinet/tcp_subr.c`, and TCP is not ported).
 //!   The `XF_IPCOMP` entry calls the stand-ins of `netinet/ip_ipcomp.rs` (deflate is not
 //!   ported).
@@ -165,6 +165,7 @@ use crate::kern::subr_prf::{Bitmask, panic};
 use crate::machine::db_machdep::PrFn;
 use crate::machine::intr::IPL_SOFTNET;
 use crate::net::if_var::Netstack;
+use crate::net::pf_ioctl::pf_tag_unref;
 use crate::net::pfkeyv2::{
     SADB_EXT_LIFETIME_HARD, SADB_EXT_LIFETIME_SOFT, SADB_SATYPE_UNSPEC, pfkeyv2_expire,
 };
@@ -2739,7 +2740,7 @@ pub fn tdb_free(tdbp: &Tdb) {
         tdbp.tdb_ids.set(None);
     }
 
-    // NPF > 0: pf_tag_unref(tdbp->tdb_tag); not configured.
+    pf_tag_unref(tdbp.tdb_tag.get());
 
     // counters_free: the counters are part of the TDB.
 
