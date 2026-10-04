@@ -422,7 +422,33 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   owns the boot path (above), and a real-mode or MMU-off trampoline would need identity
   mappings the kernel otherwise never makes. With no ACPI MADT (M13) the processor list
   comes from the same response on amd64; arm64 still enumerates `/cpus` from the device
-  tree and matches each `reg` to a response entry by MPIDR.
+  tree and matches each `reg` to a response entry by MPIDR. On amd64, `cpu_hatch_entry`
+  does `mptramp.S`'s `cpu_spinup_finish` (x2APIC if the boot processor runs it, `EFER.NXE`,
+  the CPU's GDT, the kernel's `%cr3`, `CR0`, the idle thread's stack) and loads the IDT
+  first, which the C does later in `cpu_hatch`. On arm64 it loads the boot processor's
+  `MAIR`, `TCR`, `TTBR0`/`TTBR1` and `SCTLR` (copied into statics: the `cpu_info` itself is
+  `malloc`ed kernel memory the bootloader's tables do not map), sets `TPIDR_EL1`,
+  `VBAR_EL1` and `CPACR`, moves to the CPU's own stack and runs `cpu_init_secondary`.
+- amd64 processor enumeration (M11a): there is no ACPI MADT yet (M13) and no `mpbios`, so the
+  `MULTIPROCESSOR` kernel's mainbus attaches one `cpu` per processor the bootloader found
+  (`BootInfo::mp`): the boot processor first as `CPU_ROLE_BP`, the others as `CPU_ROLE_AP`
+  in the bootloader's order, the hardware ID as `cpu_apicid` (`GENERIC.MP`'s
+  `cpu* at mainbus?`). A uniprocessor kernel, or an MP kernel the bootloader found one
+  processor for, attaches `cpu0` as `CPU_ROLE_SP` as before. The application processors mask
+  `LINT0`: QEMU wires the 8259's ExtINT to every local APIC, and device interrupts stay on
+  the boot processor.
+- The kernel lock covers what is not audited yet (M11a, until M11e): `SIF_MPSAFE`
+  (`kern_softintr.rs`: every soft interrupt handler takes the lock), `TASKQ_MPSAFE`
+  (`kern_task.rs`: the workers keep the lock their thread starts with), `TIMEOUT_MPSAFE`
+  (`kern_timeout.rs`: no `timeout_proc_mp` queue and no `softclockmp` thread), `SY_NOLOCK`
+  (`sys/syscall_mi.rs`: every system call body runs locked) and `IPL_MPSAFE` for interrupt
+  handlers at or below `IPL_MPFLOOR` (amd64 `intr_handler`, arm64 `ampintc_run_handler`) are
+  ignored; `exit1` keeps the lock over `uvm_purge` and the reaper never drops it. Why: those
+  paths were ported against one CPU, and the lock makes them as safe as they were, which is
+  OpenBSD's own way of bringing code under MP. Unlocked as in OpenBSD: the scheduler and the
+  idle loop, `mi_switch`, the clock interrupt (`clockintr_dispatch`), the SMR thread and the
+  IPIs. The `qemu`-only `uptime went backwards` check compares each CPU's readings with that
+  CPU's previous one (`kern_clockintr.rs`).
 - Cargo features and `xtask` instead of `config(8)`, Makefiles and `newvers.sh`; the
   autoconfiguration tables `config(8)` generates are written by hand ("Autoconfiguration",
   below).
