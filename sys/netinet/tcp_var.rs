@@ -1319,6 +1319,8 @@ const _: () = {
 
 #[cfg(test)]
 mod tests {
+    use std::boxed::Box;
+
     use super::*;
 
     #[test]

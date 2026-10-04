@@ -60,8 +60,8 @@
 //!   bit 0, `sack_ok` bit 1, `wscale_idx` bits 2-4, `mss_idx` bits 5-7.
 //! - The file-static `pf_syncookie_status` is [`PF_SYNCOOKIE_STATUS`], its members `Cell`s
 //!   (and an atomic for the `volatile` `oddeven`).
-//! - `tcp_mssdflt` (netinet's `tcp_usrreq.c`, not ported) is read through `net/pf.rs`'s
-//!   `tcp_mssdflt()`, its initial value `TCP_MSS`.
+//! - `tcp_mssdflt` (netinet's `TCP_MSSDFLT`, an atomic) is read through `net/pf.rs`'s
+//!   `tcp_mssdflt()`.
 
 use core::cell::Cell;
 use core::ffi::c_void;

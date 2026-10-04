@@ -32,6 +32,7 @@ ffs2 = ["ffs"]    # OpenBSD `option FFS2` -> FFS2 (UFS2 dinodes) support in ffs
 syscall_debug = [] # OpenBSD `option SYSCALL_DEBUG` -> scdebug_call/scdebug_ret print system calls
 qemu = []         # QEMU-only exits (isa-debug-exit, semihosting) and shortcuts
 encdebug = []     # OpenBSD `option ENCDEBUG` -> the IPsec DPRINTF messages (net.inet.ip.encdebug)
+tcp_sack_debug = [] # OpenBSD `option TCP_SACK_DEBUG` -> tcp_print_holes in tcp_output
 
 [dependencies]
 libkern.workspace = true

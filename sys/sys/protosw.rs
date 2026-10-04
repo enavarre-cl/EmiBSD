@@ -59,8 +59,6 @@
 //!   pass NULL: the data and control of `pru_send`/`pru_sendoob`, the option mbuf of
 //!   `pr_ctloutput`); `pru_control`'s `caddr_t data` is the kernel copy of the `ioctl`
 //!   argument as a byte slice.
-//! - TCP (`tcp_usrreq.c`) has no `pr_usrreqs` yet, so `socreate` answers `EPROTONOSUPPORT` for
-//!   it, as the C does for a protocol without one; UDP, raw IP and the routing socket have theirs.
 //! - The hooks are `Option<fn>` with Rust signatures: `pr_input`'s `struct mbuf **` is
 //!   `&mut Option<&'static Mbuf>` (the protocol may consume the packet and leave `None`), its
 //!   netstack an `Option`; `pr_ctlinput` is an `unsafe fn` over a raw socket address (it may be

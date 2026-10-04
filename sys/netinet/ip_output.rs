@@ -54,17 +54,13 @@
 //!   *seclevel` are `Option`s; the error is a `Result`. The packet (and `opt`) are
 //!   `&'static Mbuf`s.
 //! - IPsec (M9c): `ip_output_ipsec_lookup` returns the SA (`Ok(None)` for no IPsec) or the
-//!   SPD's verdict (`SpdError::Drop` is the C's `-EINVAL`, a silent drop);
-//!   `ip_output_ipsec_send` reports `tcp_softtso_chop` (`netinet/tcp_output.c`, not ported)
-//!   for a TSO packet and drops it, and `tcpstat_inc(tcps_outswtso)` is a comment.
+//!   SPD's verdict (`SpdError::Drop` is the C's `-EINVAL`, a silent drop).
 //! - The IP header is read and written as a copy (`ip_var.rs`'s `mtod_ip`/`mtod_ip_store`),
 //!   since mbuf data has no 4-byte alignment guarantee.
 //! - `ip_ctloutput`'s option values are read and written unaligned in the option mbuf;
 //!   `ip_pcbopts` builds the `struct ipoption` in a local buffer, large enough for what the
 //!   C may write past `ipopt_list` before its final length check, and copies it into the mbuf.
 //!   `ip_setmoptions`'s `malloc(M_WAITOK)` cannot fail in C: here its failure panics.
-//! - `struct tcphdr` (`<netinet/tcp.h>`) is not ported: the offset of `th_sum` is a constant
-//!   here, and `tcpstat_inc(tcps_outswcsum)` is reported (`netinet/tcp_*.c`).
 //! - `NPF` (pf(4)) is configured: `pf_test` filters the packet before it is sent, and a
 //!   packet pf tagged `PF_TAG_REROUTE` reruns the route lookup (the C's `goto reroute` is a
 //!   labelled loop). `ip_output_ipsec_send` runs `pf_test` on the SA's `enc(4)` interface.
@@ -79,6 +75,7 @@ use core::mem::size_of;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
 
+use crate::kassert;
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_tc::gettime;
@@ -140,6 +137,8 @@ use crate::netinet::ip_var::{
     Ipoption, IpstatCounters, MAX_IPOPTLEN, ipstat_add, ipstat_inc, mtod_ip, mtod_ip_store,
 };
 use crate::netinet::ipsec_output::{ipsec_adjust_mtu, ipsp_process_packet};
+use crate::netinet::tcp_output::tcp_softtso_chop;
+use crate::netinet::tcp_var::{TcpstatCounters, tcpstat_inc};
 use crate::netinet::udp::Udphdr;
 use crate::netinet::udp_var::{UdpstatCounters, udpstat_inc};
 use crate::sys::endian::{htonl, htons, ntohl, ntohs};
@@ -155,10 +154,9 @@ use crate::sys::protosw::{PRCO_GETOPT, PRCO_SETOPT};
 use crate::sys::socket::{AF_INET, SO_RTABLE};
 use crate::sys::socketvar::Socket;
 use crate::sys::systm::net_assert_locked;
-use crate::{kassert, unported};
 
-/// `offsetof(struct tcphdr, th_sum)` (`<netinet/tcp.h>` is not ported).
-const TH_SUM_OFFSET: usize = 16;
+/// `offsetof(struct tcphdr, th_sum)`.
+const TH_SUM_OFFSET: usize = core::mem::offset_of!(crate::netinet::tcp::Tcphdr, th_sum);
 /// `offsetof(struct udphdr, uh_sum)`.
 const UH_SUM_OFFSET: usize = core::mem::offset_of!(Udphdr, uh_sum);
 
@@ -723,17 +721,18 @@ fn ip_output_ipsec_send(
     let mut error: Result<(), Errno> = Ok(());
     'done: {
         if tso {
-            // tcp_softtso_chop (netinet/tcp_output.c) is not ported.
-            m_freem(m);
-            error = Err(unported!("tcp_softtso_chop (netinet/tcp_output.c)"));
-            break 'done;
+            error = tcp_softtso_chop(&ml, m, e, len);
+            if error.is_err() {
+                break 'done;
+            }
+        } else {
+            m.m_pkthdr()
+                .csum_flags
+                .set(m.m_pkthdr().csum_flags.get() & !M_TCP_TSO);
+            in_proto_cksum_out(m, encif);
+            ml_init(&ml);
+            ml_enqueue(&ml, m);
         }
-        m.m_pkthdr()
-            .csum_flags
-            .set(m.m_pkthdr().csum_flags.get() & !M_TCP_TSO);
-        in_proto_cksum_out(m, encif);
-        ml_init(&ml);
-        ml_enqueue(&ml, m);
 
         // KERNEL_LOCK(): nothing without MULTIPROCESSOR.
         while let Some(m) = ml_dequeue(&ml) {
@@ -751,8 +750,9 @@ fn ip_output_ipsec_send(
         ipsecstat_inc(IpsecCounters::IpsecOdrops);
         tdbstat_inc(tdb, TdbCounters::TdbOdrops);
     }
-    // !error && tso: tcpstat_inc(tcps_outswtso) (netinet/tcp_input.c, not ported); TSO
-    // packets are reported above.
+    if error.is_ok() && tso {
+        tcpstat_inc(TcpstatCounters::TcpsOutswtso);
+    }
     if ip_mtudisc_local != 0 && error == Err(Errno::EMSGSIZE) {
         ip_output_ipsec_pmtu_update(tdb, ro, dst, rtableid);
     }
@@ -1869,7 +1869,7 @@ pub fn in_proto_cksum_out(m: &Mbuf, ifp: Option<&Ifnet>) {
     let flags = m.m_pkthdr().csum_flags.get();
     if flags & M_TCP_CSUM_OUT != 0 {
         if !in_ifcap_cksum(m, ifp, IFCAP_CSUM_TCPv4) || ip.ip_hl() != 5 {
-            let _ = unported!("tcpstat_inc (netinet/tcp_*.c)");
+            tcpstat_inc(TcpstatCounters::TcpsOutswcsum);
             in_delayed_cksum(m);
             m.m_pkthdr().csum_flags.set(flags & !M_TCP_CSUM_OUT); // Clear
         }

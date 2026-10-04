@@ -55,9 +55,7 @@
 //! - `pledge_socket`, `pledge_sendit`, `pledge_sockopt` and `pledge_fail` (`kern_pledge.c`'s
 //!   enforcement is not ported) are reported for a pledged process, as elsewhere.
 //! - `sys_ypconnect`'s binding file name is built on the stack (`MAXPATHLEN`), where the C
-//!   takes a `namei_pool` buffer. Its `SOCK_STREAM` socket needs TCP (`tcp_usrreq.c`, not
-//!   ported), which has no user requests yet, so `socreate` refuses it with
-//!   `EPROTONOSUPPORT`; a `SOCK_DGRAM` one is UDP's.
+//!   takes a `namei_pool` buffer.
 //! - `KTRACE` is not configured (`ktrsockaddr`, `ktrmsghdr`, `ktriovec`, `ktrgenio`,
 //!   `ktrfds`, `ktrcmsghdr`); `INET6` is not configured (`dns_portcheck`'s `AF_INET6`).
 //! - `KERNEL_LOCK()`/`KERNEL_UNLOCK()` are nothing without `MULTIPROCESSOR`.

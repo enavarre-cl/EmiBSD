@@ -65,10 +65,8 @@
 //! - `pf_test`'s `struct mbuf **m0` is `&mut Option<&'static Mbuf>`, as `ip_input_if` passes
 //!   its packet; the action is returned as `u8` (`PF_PASS`, `PF_DROP`, ...).
 //! - The `STATE_INC_COUNTERS`, `BOUND_IFACE` and `REASON_SET` macros are functions.
-//! - netinet's TCP (`tcp_input.c`, `tcp_subr.c`, `tcp_usrreq.c`, `tcp_var.h`) is not ported:
-//!   `pf_socket_lookup` reports the TCP control blocks (`tcbtable`) with `unported!` and finds
-//!   no socket for TCP (`user`/`group` rules do not match TCP packets); `tcp_mssdflt` is its
-//!   initial value, `TCP_MSS`; the `tcpstat_inc` calls of the checksum check are comments.
+//! - `tcp_mssdflt` (netinet's `TCP_MSSDFLT`, an atomic) is read through the function
+//!   `tcp_mssdflt()`, which `pf_syncookies.rs` shares.
 
 use core::cell::Cell;
 use core::cmp::Ordering;
@@ -97,15 +95,16 @@ use crate::net::rtable::rtable_l2;
 use crate::netinet::in_::{IPPROTO_ICMP, IPPROTO_TCP, IPPROTO_UDP};
 use crate::netinet::in_pcb::Inpcb;
 use crate::netinet::tcp::{
-    MAX_TCPOPTLEN, TCP_MAX_WINSHIFT, TCP_MAXWIN, TCP_MSS, TCPOLEN_MAXSEG, TCPOLEN_SACK,
-    TCPOLEN_WINDOW, TCPOPT_EOL, TCPOPT_MAXSEG, TCPOPT_NOP, TCPOPT_SACK, TCPOPT_SACK_PERMITTED,
-    TCPOPT_WINDOW, TH_ACK, TH_CWR, TH_ECE, TH_FIN, TH_PUSH, TH_RST, TH_SYN, TH_URG, Tcphdr,
+    MAX_TCPOPTLEN, TCP_MAX_WINSHIFT, TCP_MAXWIN, TCPOLEN_MAXSEG, TCPOLEN_SACK, TCPOLEN_WINDOW,
+    TCPOPT_EOL, TCPOPT_MAXSEG, TCPOPT_NOP, TCPOPT_SACK, TCPOPT_SACK_PERMITTED, TCPOPT_WINDOW,
+    TH_ACK, TH_CWR, TH_ECE, TH_FIN, TH_PUSH, TH_RST, TH_SYN, TH_URG, Tcphdr,
 };
 use crate::netinet::tcp_fsm::{
     TCPS_CLOSED, TCPS_CLOSING, TCPS_ESTABLISHED, TCPS_FIN_WAIT_2, TCPS_SYN_SENT, TCPS_TIME_WAIT,
     tcps_haveestablished,
 };
 use crate::netinet::tcp_seq::{seq_geq, seq_gt, seq_leq};
+use crate::netinet::tcp_var::{TcpstatCounters, tcpstat_inc};
 use crate::netinet::udp::Udphdr;
 use crate::sys::errno::Errno;
 use crate::sys::malloc::M_NOWAIT;
@@ -3354,10 +3353,11 @@ pub fn pf_socket_lookup(pd: &mut PfPdesc) -> bool {
             let th = *pd.tcp();
             pf_assert_locked();
             crate::sys::systm::net_assert_locked("pf_socket_lookup");
-            // The TCP control blocks (tcbtable, netinet/tcp_*.c) are not ported.
-            let _ = unported!("tcbtable");
-            let _ = (th.th_sport, th.th_dport);
-            return false;
+            (
+                th.th_sport,
+                th.th_dport,
+                &crate::netinet::tcp_usrreq::TCBTABLE,
+            )
         }
         IPPROTO_UDP => {
             let uh = *pd.udp();
@@ -3579,10 +3579,9 @@ fn pf_set_rt_ifp(
     rv
 }
 
-/// `tcp_mssdflt`: the default MSS. netinet's TCP (`tcp_usrreq.c`, where the C variable and
-/// its sysctl live) is not ported, so it is its initial value, `TCP_MSS`.
+/// `tcp_mssdflt`: the default MSS (`net.inet.tcp.mssdflt`, `netinet/tcp_subr.rs`).
 pub fn tcp_mssdflt() -> u16 {
-    TCP_MSS as u16
+    crate::netinet::tcp_subr::TCP_MSSDFLT.load(core::sync::atomic::Ordering::Relaxed) as u16
 }
 
 /// `pf_tcp_iss`: an initial sequence number for a modulated connection, from a keyed hash
@@ -3620,9 +3619,9 @@ pub fn pf_tcp_iss(pd: &mut PfPdesc) -> u32 {
     SHA512Final(&mut digest, &mut ctx);
     let off = sec.iss_off.get().wrapping_add(4096);
     sec.iss_off.set(off);
-    // tcp_iss (tcp_subr.c) is not ported: it would be added here; its value is 0 until the
-    // TCP stack exists.
-    u32::from_ne_bytes([digest[0], digest[1], digest[2], digest[3]]).wrapping_add(off)
+    u32::from_ne_bytes([digest[0], digest[1], digest[2], digest[3]])
+        .wrapping_add(crate::netinet::tcp_subr::TCP_ISS.load(core::sync::atomic::Ordering::Relaxed))
+        .wrapping_add(off)
 }
 
 /// `pf_rule_to_actions`: accumulates what a matching rule asks of the packet.
@@ -6846,7 +6845,8 @@ pub fn pf_check_tcp_cksum(m: &Mbuf, off: i32, len: i32, af: SaFamily) -> bool {
         return true;
     }
 
-    // Need to do it in software: tcpstat_inc(tcps_inswcsum) (tcp_var.h, not ported).
+    // need to do it in software
+    tcpstat_inc(TcpstatCounters::TcpsInswcsum);
 
     let sum = match af {
         AF_INET => {
@@ -6860,7 +6860,7 @@ pub fn pf_check_tcp_cksum(m: &Mbuf, off: i32, len: i32, af: SaFamily) -> bool {
         _ => unhandled_af(i32::from(af)),
     };
     if sum != 0 {
-        // tcpstat_inc(tcps_rcvbadsum) (tcp_var.h, not ported).
+        tcpstat_inc(TcpstatCounters::TcpsRcvbadsum);
         cf.set(cf.get() | M_TCP_CSUM_IN_BAD);
         return true;
     }

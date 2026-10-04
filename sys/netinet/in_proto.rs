@@ -111,20 +111,16 @@
 //! clause, accepted as BSD-4 (`.claude/rules/scope-and-stubs.md`).
 //!
 //! ## Deviations
-//! - The protocols whose files are not ported keep their entries, with stand-ins in this
-//!   module named after the C functions: `tcp_*` (`netinet/tcp_*.c`) and `igmp_*`
-//!   (`netinet/igmp.c`). Each reports itself with `unported!`; an input stand-in drops the
-//!   packet (`IPPROTO_DONE`), a sysctl one fails with `ENOSYS`. Their `pr_ctloutput` and
-//!   `pr_usrreqs` are the C's where those are ported (`rip_ctloutput` and `rip_usrreqs` for
-//!   the raw entries, `IPPROTO_IPV4`, `IPPROTO_IGMP`, AH, ESP and IPComp included); without
-//!   `tcp_usrreqs` a `SOCK_STREAM` socket is refused with `EPROTONOSUPPORT` by `socreate`.
+//! - IGMP (`netinet/igmp.c`) is not ported: its entry keeps stand-ins in this module named
+//!   after the C functions (`igmp_*`). Each reports itself with `unported!`; the input
+//!   stand-in drops the packet (`IPPROTO_DONE`). Its `pr_ctloutput` and `pr_usrreqs` are the
+//!   raw ones, as in C. TCP's entry has the functions of `netinet/tcp_*.rs` (M9+).
 //! - `IPSEC` is configured (M9c): AH, ESP and IPComp come after IGMP, as in C.
 //! - `NGIF` is 0 (`ipip_input` serves `IPPROTO_IPV4`); `INET6`, `MPLS`, `NGRE`,
 //!   `NCARP`, `NPFSYNC`, `NPF` and `NETHERIP` are not configured: their entries are comments.
 //!   `SMALL_KERNEL` is not set, so the sysctl handlers are in the table.
 //! - `ip_protox[]` holds atomics (`ip_init` writes it once, every input reads it).
 
-use core::ffi::c_void;
 use core::mem::{offset_of, size_of};
 use core::sync::atomic::AtomicU8;
 
@@ -143,6 +139,10 @@ use crate::netinet::ipsec_input::{
     ipcomp46_input,
 };
 use crate::netinet::raw_ip::{RIP_USRREQS, rip_ctloutput, rip_init, rip_input};
+use crate::netinet::tcp_input::tcp_input;
+use crate::netinet::tcp_subr::{tcp_ctlinput, tcp_init};
+use crate::netinet::tcp_timer::tcp_slowtimo;
+use crate::netinet::tcp_usrreq::{TCP_USRREQS, tcp_ctloutput, tcp_sysctl};
 use crate::netinet::udp_usrreq::{UDP_USRREQS, udp_ctlinput, udp_init, udp_input, udp_sysctl};
 use crate::sys::domain::Domain;
 use crate::sys::errno::Errno;
@@ -151,7 +151,7 @@ use crate::sys::protosw::{
     PR_ABRTACPTDIS, PR_ADDR, PR_ATOMIC, PR_CONNREQUIRED, PR_MPINPUT, PR_MPSYSCTL, PR_SPLICE,
     PR_WANTRCVD, Protosw,
 };
-use crate::sys::socket::{AF_INET, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM, Sockaddr};
+use crate::sys::socket::{AF_INET, SOCK_DGRAM, SOCK_RAW, SOCK_STREAM};
 use crate::unported;
 
 /// `ip_protox[]`: IP protocol number to `inetsw[]` index.
@@ -190,6 +190,8 @@ pub static INETSW: [Protosw; 11] = [
             | PR_MPSYSCTL,
         pr_input: Some(tcp_input),
         pr_ctlinput: Some(tcp_ctlinput),
+        pr_ctloutput: Some(tcp_ctloutput),
+        pr_usrreqs: Some(&TCP_USRREQS),
         pr_init: Some(tcp_init),
         pr_slowtimo: Some(tcp_slowtimo),
         pr_sysctl: Some(tcp_sysctl),
@@ -305,48 +307,6 @@ pub static INETDOMAIN: Domain = Domain {
 fn unported_input(mp: &mut Option<&'static Mbuf>) -> i32 {
     m_freemp(mp);
     IPPROTO_DONE
-}
-
-/// `tcp_input` (`netinet/tcp_input.c`, not ported).
-fn tcp_input(
-    mp: &mut Option<&'static Mbuf>,
-    _offp: &mut i32,
-    _proto: i32,
-    _af: i32,
-    _ns: Option<&Netstack>,
-) -> i32 {
-    let _ = unported!("tcp_input (netinet/tcp_input.c)");
-    unported_input(mp)
-}
-
-/// `tcp_ctlinput` (`netinet/tcp_subr.c`, not ported).
-///
-/// # Safety
-///
-/// `PrCtlinputFn`'s contract; nothing is read.
-unsafe fn tcp_ctlinput(_cmd: i32, _sa: *const Sockaddr, _rdomain: u32, _v: *mut c_void) {
-    let _ = unported!("tcp_ctlinput (netinet/tcp_subr.c)");
-}
-
-/// `tcp_init` (`netinet/tcp_subr.c`, not ported).
-fn tcp_init() {
-    let _ = unported!("tcp_init (netinet/tcp_subr.c)");
-}
-
-/// `tcp_slowtimo` (`netinet/tcp_timer.c`, not ported).
-fn tcp_slowtimo() {
-    let _ = unported!("tcp_slowtimo (netinet/tcp_timer.c)");
-}
-
-/// `tcp_sysctl` (`netinet/tcp_usrreq.c`, not ported).
-fn tcp_sysctl(
-    _name: &[i32],
-    _oldp: usize,
-    _oldlenp: &mut usize,
-    _newp: usize,
-    _newlen: usize,
-) -> Result<(), Errno> {
-    Err(unported!("tcp_sysctl (netinet/tcp_usrreq.c)"))
 }
 
 /// `igmp_input` (`netinet/igmp.c`, not ported).

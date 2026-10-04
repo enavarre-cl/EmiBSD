@@ -4793,18 +4793,73 @@ notes = "M9+: struct tcpcb (pool item of Cells; t_state i32, t_force bool, t_sof
 [[file]]
 c = "sys/netinet/tcp_timer.h"
 rust = "sys/netinet/tcp_timer.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "39f83a9b29ee6dae7aaa8a26d73d63c2b68a9aee"
+deps = ["sys/netinet/tcp_var.h"]
+notes = "M9+: TCPT_*, TCPTV_*, TCP_LINGERTIME, TCP_MAXRXTSHIFT, TCP_DELACK_MSECS; TCP_TIMER_INIT/ARM/DISARM/ISARMED and TCPT_RANGESET as functions (tcpt_rangeset returns the value); tcptimers[] (TCPTIMERS, TCPDEBUG only) not compiled; shares tcp_timer.rs with tcp_timer.c"
+
+[[file]]
+c = "sys/netinet/tcp_timer.c"
+rust = "sys/netinet/tcp_timer.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "70fe3df3d41cb0470645aca3f7277ad12fa4ac21"
+deps = ["sys/netinet/tcp_timer.h", "sys/netinet/tcp_var.h", "sys/kern/kern_timeout.c", "sys/netinet/in_pcb.c"]
+notes = "M9+: the whole file: keepalive parameters (AtomicI32), tcp_maxpersistidle, tcp_delack_msecs (lowercase static: TCP_DELACK_MSECS is the macro), tcp_timer_funcs (TimeoutFn table), tcp_timer_enter (Result of the locked socket and tcpcb or what to undo)/tcp_timer_leave, tcp_timer_delack, tcp_slowtimo, tcp_canceltimers, tcp_backoff/tcp_totbackoff, tcp_timer_freesack, tcp_timer_rexmt (the PMTUD fake icmp in a local IcmpPkt buffer; icmp_mtudisc_clone; TCP_ECN fallback), tcp_timer_persist, tcp_timer_keep (tcp_respond gets the template mbuf's bytes), tcp_timer_2msl; SO_DEBUG tracing kept; INET6 not configured; host tests (rangeset, backoff sum)"
+
+[[file]]
+c = "sys/netinet/tcp_usrreq.c"
+rust = "sys/netinet/tcp_usrreq.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a5e145d650b476ad86fab59d3664bb8c1eb87dfc"
+deps = ["sys/netinet/tcp_var.h", "sys/netinet/tcp_subr.c", "sys/netinet/tcp_output.c", "sys/netinet/tcp_input.c", "sys/netinet/in_pcb.c", "sys/kern/uipc_socket2.c"]
+notes = "M9+: the whole file: tcp_sendspace/tcp_recvspace (lowercase [I] statics), tcp_autorcvbuf_inc, tcp_usrreqs, tcpctl_vars, tcbtable, tcp_sogetpcb (Result), tcp_fill_info (TcpInfo copied into the mbuf), tcp_ctloutput (TCP_NODELAY, TCP_NOPUSH, TCP_MAXSEG, TCP_SACK_ENABLE, TCP_INFO, TCP_MD5SIG), tcp_attach/detach/bind/listen/connect/accept/disconnect/shutdown/rcvd/send/abort/sense/rcvoob/sendoob/sockaddr/peeraddr (SO_DEBUG tracing with otp as an address), tcp_dodisconnect, tcp_usrclosed, tcp_ident (struct tcp_ident_mapping AbiPod), tcp_sysctl_tcpstat (ASSIGN through a macro; struct tcpstat written member by member with its holes zero), tcp_sysctl (port bitmaps through a stack buffer), tcp_update_sndspace, tcp_update_rcvspace; INET6 (tcp6_usrreqs, tcb6table) not configured; TCP_ECN, TCP_SIGNATURE configured"
+
+[[file]]
+c = "sys/netinet/tcp_debug.h"
+rust = "sys/netinet/tcp_debug.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0c0e5beb564ddacbe62a94ad9461973f6caa3e8a"
+deps = ["sys/netinet/tcp_var.h", "sys/netinet/ip_var.h"]
+notes = "M9+: struct tcpiphdr (repr(C), size asserted), struct tcp_debug (td_cb as the TcpDebugCb snapshot of tcpcb's scalar members, td_tcb an address), TA_*, TCP_NDEBUG; tanames[] (TANAMES, TCPDEBUG only) not compiled; struct tcpipv6hdr and td_ti6 left out (INET6, ip6_hdr not ported)"
+
+[[file]]
+c = "sys/netinet/tcp_debug.c"
+rust = "sys/netinet/tcp_debug.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4f7a10994390aac8d45dd05a79b7186a66f1bb06"
+deps = ["sys/netinet/tcp_debug.h"]
+notes = "M9+: compiled as in GENERIC (!small_kernel): tcp_debug_mtx, the tcp_debug[] ring and tcp_debx in one StaticCell under the mutex, tcp_trace (otp a raw pointer never dereferenced, headers a byte slice); TCPDEBUG not configured: no printout (tcpconsdebug); host test (ring fill and wrap)"
+
+[[file]]
+c = "sys/netinet/tcp_input.c"
+rust = "sys/netinet/tcp_input.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = ["sys/netinet/tcp_var.h"]
-notes = "M9+: TCPT_*, TCPTV_*, TCP_LINGERTIME, TCP_MAXRXTSHIFT, TCP_DELACK_MSECS; TCP_TIMER_ARM/DISARM/ISARMED and TCPT_RANGESET as functions; TCP_TIMER_INIT comes with tcp_timer.c (it names tcp_timer_funcs)"
+deps = ["sys/netinet/tcp_var.h", "sys/netinet/tcp_subr.c", "sys/netinet/tcp_timer.c", "sys/netinet/in_pcb.c", "sys/netinet/ip_input.c", "sys/kern/uipc_socket2.c"]
+notes = "M9+: whole file ported by subagent A, review and tests pending: wip"
+
+[[file]]
+c = "sys/netinet/tcp_output.c"
+rust = "sys/netinet/tcp_output.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d53cbab729534ce21130950f06187c55d48bc5bc"
+deps = ["sys/netinet/tcp_var.h", "sys/netinet/tcp_subr.c", "sys/netinet/tcp_timer.c", "sys/netinet/ip_output.c"]
+notes = "M9+: the whole file: tcp_sack_output, tcp_sack_adjust, tcp_output (the C's gotos as labelled blocks and a loop for again; the TCP header a local Tcphdr stored back into the mbuf unaligned with bounds checks; options in a [u8; MAX_TCPOPTLEN]; tcp_signature into a local digest; sack_rxmit and p one Option<&Sackhole>; tcp_mtudisc(inp, -1) is None; error handling as a match), tcp_setpersist, tcp_softtso_chop (IP header copied once and written back after m_pullup; each segment's TCP header copied with m_copydata), tcp_if_output_tso (wired into if_.rs if_output_tso; tcp_softtso_chop into ip_output_ipsec_send); tcp_print_holes behind the tcp_sack_debug feature (option TCP_SACK_DEBUG); TCP_ECN, TCP_SIGNATURE, NPF, NSTOEPLITZ configured; INET6, TCPDEBUG not; host tests (sack output/adjust, setpersist, output decisions, softtso chop and its errors, if_output_tso paths)"
 
 [[file]]
 c = "sys/netinet/tcp_subr.c"
 rust = "sys/netinet/tcp_subr.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = ["sys/netinet/tcp_var.h", "sys/netinet/tcp_timer.h", "sys/netinet/in_pcb.c", "sys/crypto/sha2.c"]
-notes = "M9+: the globals first (sysctl ints as AtomicI32, pools, tcpcounters, tcp_iss, tcp_starttime, tcp_secret in StaticCells); the functions follow"
+upstream_blob = "83383f0853431ebd85955d408f13301b47e28ba5"
+deps = ["sys/netinet/tcp_var.h", "sys/netinet/tcp_timer.h", "sys/netinet/in_pcb.c", "sys/crypto/sha2.c", "sys/crypto/md5.c", "sys/netinet/ip_output.c", "sys/netinet/ip_icmp.c"]
+notes = "M9+: the whole file: globals (sysctl ints as AtomicI32, tcp_sackhole_limit lowercase, pools, tcpcounters atomics, tcp_iss AtomicU32 under tcp_timer_mtx, tcp_starttime, tcp_secret/ctx in StaticCells), tcp_init, tcp_template, tcp_respond (template as a byte slice; headers built as copies, written unaligned), tcp_newtcpcb (pool item written with Tcpcb::new), tcp_drop/tcp_close (Option<&Tcpcb>, errno Option<Errno>), tcp_freeq (bool), tcp_rscale, tcp_notify, tcp_ctlinput (unsafe: the returned ip header and the first 8 TCP bytes through the raw argument; PMTUD through an IcmpPkt view; syn_cache_unreach), tcp_mtudisc (tcp_output's -1 is None), tcp_mtudisc_increase, tcp_set_iss_tsm (RFC 1948 SHA-512); TCP_SIGNATURE configured: tcp_signature_tdb_attach/init/zeroize/input/output (XF_TCPSIGNATURE in ip_ipsp.rs xformsw), tcp_signature (bool; pseudo header and tcphdr hashed as bytes; tcp_signature_apply a closure for m_apply); INET6 (tcp6_ctlinput, tcp6_mtudisc_callback) not configured; host tests (rscale, header bytes)"
 
 [[file]]
 c = "sys/net/radix.h"

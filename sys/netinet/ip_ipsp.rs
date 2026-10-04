@@ -134,8 +134,9 @@
 //!   ENCDEBUG`, not in GENERIC) and the `net.inet.ip.encdebug` sysctl; otherwise its
 //!   arguments are type-checked and never evaluated.
 //! - Not configured, each a comment at its site: `NSEC` (`sec(4)`: `sec_tdb_insert`,
-//!   `sec_tdb_remove`), `NPFSYNC` (`pfsync_delete_tdb`), `INET6` and
-//!   `TCP_SIGNATURE` (its transform lives in `netinet/tcp_subr.c`, and TCP is not ported).
+//!   `sec_tdb_remove`), `NPFSYNC` (`pfsync_delete_tdb`) and `INET6`. `TCP_SIGNATURE` is
+//!   configured (M9+): `XF_TCPSIGNATURE` calls the `tcp_signature_tdb_*` functions of
+//!   `netinet/tcp_subr.rs`.
 //!   The `XF_IPCOMP` entry calls the stand-ins of `netinet/ip_ipcomp.rs` (deflate is not
 //!   ported).
 //! - `NET_LOCK()`/`KERNEL_LOCK()` keep the C's places; `MUTEX_ASSERT_LOCKED` is
@@ -1649,9 +1650,8 @@ static IPSP_IDS_GC_TIMEOUT: Timeout = Timeout::new_flags(
     TIMEOUT_PROC | TIMEOUT_MPSAFE,
 );
 
-/// `xformsw[]`: the encapsulation transforms. `TCP_SIGNATURE` (`netinet/tcp_subr.c`) is not
-/// configured.
-pub static XFORMSW: [Xformsw; 4] = [
+/// `xformsw[]`: the encapsulation transforms.
+pub static XFORMSW: [Xformsw; 5] = [
     Xformsw {
         xf_type: XF_IP4,
         xf_flags: 0,
@@ -1692,8 +1692,17 @@ pub static XFORMSW: [Xformsw; 4] = [
         xf_input: ipcomp_input,
         xf_output: Some(ipcomp_output),
     },
-    // TCP_SIGNATURE: XF_TCPSIGNATURE ("TCP MD5 Signature Option, RFC 2385") with the
-    // tcp_signature_tdb_* functions of netinet/tcp_subr.c; not configured.
+    // TCP_SIGNATURE
+    Xformsw {
+        xf_type: XF_TCPSIGNATURE,
+        xf_flags: XFT_AUTH,
+        xf_name: "TCP MD5 Signature Option, RFC 2385",
+        xf_attach: crate::netinet::tcp_subr::tcp_signature_tdb_attach,
+        xf_init: crate::netinet::tcp_subr::tcp_signature_tdb_init,
+        xf_zeroize: crate::netinet::tcp_subr::tcp_signature_tdb_zeroize,
+        xf_input: crate::netinet::tcp_subr::tcp_signature_tdb_input,
+        xf_output: Some(crate::netinet::tcp_subr::tcp_signature_tdb_output),
+    },
 ];
 
 /// `TDB_HASHSIZE_INIT`.

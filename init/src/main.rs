@@ -951,6 +951,13 @@ extern "C" fn init_main(sp: *const usize) -> ! {
     } else {
         status = 17;
     }
+    if tcp() {
+        if write(1, b"init: tcp ok\n").is_err() {
+            status = 1;
+        }
+    } else {
+        status = 18;
+    }
     if processes() {
         if write(1, b"init: processes ok\n").is_err() {
             status = 1;
@@ -1757,6 +1764,162 @@ fn inet() -> bool {
     ok &= from[4..8] == INET_ADDR && from[2..4] != [0, 0];
 
     for fd in [u1, r, u2] {
+        ok &= call(SYS_CLOSE, fd, 0, 0) == (0, false);
+    }
+    ok
+}
+
+/// TCP over the loopback from user mode (`netinet/tcp_*.c`): what `ifconfig lo0 inet
+/// 127.0.0.1/8 up` does, then a listener on 127.0.0.1, a non-blocking connect(2) to it
+/// completed with poll(2) (SYN, SYN-ACK through the SYN cache, ACK), accept(2), a line each
+/// way, a half close (the FIN reads as end of file on the other side) and both closes. Every
+/// wait is bounded (poll timeouts, `SO_RCVTIMEO`), so a stuck handshake or FIN fails the
+/// check instead of hanging the boot.
+fn tcp() -> bool {
+    /// `SYS_listen`, `SYS_connect`, `SYS_accept`.
+    const SYS_LISTEN: usize = 106;
+    const SYS_CONNECT: usize = 98;
+    const SYS_ACCEPT: usize = 30;
+    /// `F_SETFL`.
+    const F_SETFL: usize = 4;
+    /// `SO_ERROR`.
+    const SO_ERROR: usize = 0x1007;
+    /// `EINPROGRESS`.
+    const EINPROGRESS: usize = 36;
+    /// `SIOCAIFADDR` (`_IOW('i', 26, struct in_aliasreq)`), `SIOCGIFFLAGS`, `SIOCSIFFLAGS`.
+    const SIOCAIFADDR: usize = 0x8040_691a;
+    const SIOCGIFFLAGS: usize = 0xc020_6911;
+    const SIOCSIFFLAGS: usize = 0x8020_6910;
+    /// `IFF_UP`.
+    const IFF_UP: u16 = 0x1;
+    /// 127.0.0.1.
+    const LOOPBACK: [u8; 4] = [127, 0, 0, 1];
+    /// The listener's port.
+    const PORT: u16 = 7778;
+
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let mut ok = true;
+
+    let (l, err) = call(SYS_SOCKET, AF_INET, SOCK_STREAM, 0);
+    if err {
+        return false;
+    }
+
+    // ifconfig lo0 inet 127.0.0.1/8 up
+    let mut ifra = [0u8; 64];
+    ifra[..3].copy_from_slice(b"lo0");
+    ifra[16..32].copy_from_slice(&sockaddr_in(LOOPBACK, 0));
+    ifra[48..64].copy_from_slice(&sockaddr_in([255, 0, 0, 0], 0));
+    let (_, err) = call(SYS_IOCTL, l, SIOCAIFADDR, ifra.as_mut_ptr() as usize);
+    ok &= !err;
+    let mut ifr = [0u8; 32];
+    ifr[..3].copy_from_slice(b"lo0");
+    ok &= call(SYS_IOCTL, l, SIOCGIFFLAGS, ifr.as_mut_ptr() as usize) == (0, false);
+    let flags = u16::from_ne_bytes([ifr[16], ifr[17]]) | IFF_UP;
+    ifr[16..18].copy_from_slice(&flags.to_ne_bytes());
+    ok &= call(SYS_IOCTL, l, SIOCSIFFLAGS, ifr.as_mut_ptr() as usize) == (0, false);
+
+    // listen(2) on 127.0.0.1:7778
+    let sin = sockaddr_in(LOOPBACK, PORT);
+    ok &= call(SYS_BIND, l, sin.as_ptr() as usize, 16) == (0, false);
+    ok &= call(SYS_LISTEN, l, 5, 0) == (0, false);
+
+    // A non-blocking connect(2): EINPROGRESS, then writable within three seconds, no error.
+    let (c, err) = call(SYS_SOCKET, AF_INET, SOCK_STREAM, 0);
+    if err {
+        return false;
+    }
+    ok &= call(SYS_FCNTL, c, F_SETFL, O_NONBLOCK) == (0, false);
+    ok &= call(SYS_CONNECT, c, sin.as_ptr() as usize, 16) == (EINPROGRESS, true);
+    let mut pfd = [Pollfd {
+        fd: c as i32,
+        events: POLLOUT,
+        revents: 0,
+    }];
+    ok &= call(SYS_POLL, pfd.as_mut_ptr() as usize, 1, 3000) == (1, false);
+    ok &= pfd[0].revents & POLLOUT != 0;
+    let mut soerr = 0u32;
+    let mut len = 4u32;
+    ok &= syscall6(
+        SYS_GETSOCKOPT,
+        [
+            c,
+            SOL_SOCKET as usize,
+            SO_ERROR,
+            &mut soerr as *mut u32 as usize,
+            &mut len as *mut u32 as usize,
+            0,
+        ],
+    ) == (0, false);
+    ok &= soerr == 0;
+    ok &= call(SYS_FCNTL, c, F_SETFL, 0) == (0, false);
+
+    // accept(2) once the listener is readable.
+    let mut pfd = [Pollfd {
+        fd: l as i32,
+        events: POLLIN,
+        revents: 0,
+    }];
+    ok &= call(SYS_POLL, pfd.as_mut_ptr() as usize, 1, 3000) == (1, false);
+    let mut from = [0u8; 16];
+    let mut fromlen = 16u32;
+    let (a, err) = call(
+        SYS_ACCEPT,
+        l,
+        from.as_mut_ptr() as usize,
+        &mut fromlen as *mut u32 as usize,
+    );
+    if err {
+        return false;
+    }
+    ok &= fromlen == 16 && from[4..8] == LOOPBACK && from[2..4] != [0, 0];
+
+    let tv = [3u64, 0];
+    for fd in [a, c] {
+        ok &= syscall6(
+            SYS_SETSOCKOPT,
+            [
+                fd,
+                SOL_SOCKET as usize,
+                SO_RCVTIMEO,
+                tv.as_ptr() as usize,
+                16,
+                0,
+            ],
+        ) == (0, false);
+    }
+    // Reads `want` bytes from `fd` (the stream may deliver them in pieces).
+    let read_all = |fd: usize, want: &[u8]| {
+        let mut buf = [0u8; 16];
+        let mut got = 0;
+        while got < want.len() {
+            let (n, err) = call(
+                SYS_READ,
+                fd,
+                buf[got..].as_mut_ptr() as usize,
+                want.len() - got,
+            );
+            if err || n == 0 {
+                return false;
+            }
+            got += n;
+        }
+        buf[..got] == *want
+    };
+
+    // A line each way.
+    ok &= write(c, b"tcp syn ok\n") == Ok(11);
+    ok &= read_all(a, b"tcp syn ok\n");
+    ok &= write(a, b"tcp ack ok\n") == Ok(11);
+    ok &= read_all(c, b"tcp ack ok\n");
+
+    // shutdown(SHUT_WR): the FIN reads as end of file; then the other side closes.
+    ok &= call(SYS_SHUTDOWN, c, SHUT_WR, 0) == (0, false);
+    let mut buf = [0u8; 4];
+    ok &= call(SYS_READ, a, buf.as_mut_ptr() as usize, buf.len()) == (0, false);
+    ok &= call(SYS_CLOSE, a, 0, 0) == (0, false);
+    ok &= call(SYS_READ, c, buf.as_mut_ptr() as usize, buf.len()) == (0, false);
+    for fd in [c, l] {
         ok &= call(SYS_CLOSE, fd, 0, 0) == (0, false);
     }
     ok

@@ -150,8 +150,8 @@
 //! - `pfkeyv2_sysctl` follows `pr_sysctl`'s calling convention; the process it checks and
 //!   whose routing table it uses is `curproc`, as in C.
 //! - `NPF` (pf(4)) is configured: the `SADB_X_EXT_TAG`/`TAP` extensions.
-//! - Not configured, each a comment at its site:
-//!   `TCP_SIGNATURE` (`SADB_X_SATYPE_TCPSIGNATURE`), `INET6`. `IPSEC` is.
+//! - Not configured, each a comment at its site: `INET6`. `IPSEC` and `TCP_SIGNATURE`
+//!   (`SADB_X_SATYPE_TCPSIGNATURE`, `XF_TCPSIGNATURE`; M9+) are.
 
 use alloc::vec::Vec;
 use core::cell::Cell;
@@ -198,8 +198,8 @@ use crate::netinet::ip_ipsp::{
     IPSP_IPSEC_REQUIRE, IPSP_IPSEC_USE, IPSP_IPSEC_USE as IPSP_IPSEC_USE_FLOW, IPSP_PERMIT,
     IPSP_POLICY_STATIC, IpsecAcquire, IpsecInit, IpsecPolicy, SENT_IP4, SockaddrEncap,
     SockaddrUnion, TDB_SADB_MTX, TDBF_IFACE, TDBF_INVALID, Tdb, XF_AH, XF_ESP, XF_IP4, XF_IPCOMP,
-    gettdb, ipsp_ids_free, puttdb, puttdb_locked, reserve_spi, tdb_addtimeouts, tdb_alloc,
-    tdb_delete, tdb_init, tdb_unlink_locked, tdb_unref, tdb_walk,
+    XF_TCPSIGNATURE, gettdb, ipsp_ids_free, puttdb, puttdb_locked, reserve_spi, tdb_addtimeouts,
+    tdb_alloc, tdb_delete, tdb_init, tdb_unlink_locked, tdb_unref, tdb_walk,
 };
 use crate::netinet::ip_spd::{
     IPO_TDB_MTX, IPSEC_ACQUIRE_POOL, IPSEC_POLICY_POOL, ipsec_delete_policy, ipsec_get_acquire,
@@ -2017,8 +2017,8 @@ pub fn pfkeyv2_get_proto_alg(satype: u8, alg: Option<&mut u16>) -> Result<u8, Er
             }
             (IPPROTO_IPCOMP, XF_IPCOMP)
         }
-        // TCP_SIGNATURE: SADB_X_SATYPE_TCPSIGNATURE, IPPROTO_TCP and XF_TCPSIGNATURE; not
-        // configured.
+        // TCP_SIGNATURE
+        SADB_X_SATYPE_TCPSIGNATURE => (crate::netinet::in_::IPPROTO_TCP, XF_TCPSIGNATURE),
         _ => return Err(Errno::EOPNOTSUPP), // Nothing else supported
     };
 
@@ -2638,13 +2638,16 @@ pub fn pfkeyv2_dosend(so: &'static Socket, mut message: Vec<u8>) -> Result<(), E
                     net_lock();
                     let satype = smsg.sadb_msg_satype;
                     match satype {
-                        SADB_SATYPE_UNSPEC | SADB_SATYPE_AH | SADB_SATYPE_ESP
-                        | SADB_X_SATYPE_IPIP | SADB_X_SATYPE_IPCOMP => {
+                        SADB_SATYPE_UNSPEC
+                        | SADB_SATYPE_AH
+                        | SADB_SATYPE_ESP
+                        | SADB_X_SATYPE_IPIP
+                        | SADB_X_SATYPE_IPCOMP
+                        | SADB_X_SATYPE_TCPSIGNATURE => {
                             if satype == SADB_SATYPE_UNSPEC {
                                 let _ = spd_table_walk(rdomain, pfkeyv2_policy_flush);
                                 // FALLTHROUGH
                             }
-                            // TCP_SIGNATURE: SADB_X_SATYPE_TCPSIGNATURE; not configured.
                             let _ =
                                 tdb_walk(rdomain, |tdb, last| pfkeyv2_sa_flush(tdb, satype, last));
                         }
@@ -3288,8 +3291,12 @@ pub fn pfkeyv2_expire(tdb: &Tdb, type_: u16) -> Result<(), Errno> {
     net_assert_locked("pfkeyv2_expire");
 
     match i32::from(tdb.tdb_sproto.get()) {
-        IPPROTO_AH | IPPROTO_ESP | IPPROTO_IPIP | IPPROTO_IPCOMP => {}
-        // TCP_SIGNATURE: IPPROTO_TCP; not configured.
+        // TCP_SIGNATURE: IPPROTO_TCP
+        IPPROTO_AH
+        | IPPROTO_ESP
+        | IPPROTO_IPIP
+        | IPPROTO_IPCOMP
+        | crate::netinet::in_::IPPROTO_TCP => {}
         _ => return Err(Errno::EOPNOTSUPP),
     }
 

@@ -135,10 +135,7 @@
 //!   and group hooks of `pf_if.c`, `pf_delay_pkt`, `pf_pkt_addr_changed`) are configured.
 //! - Calls into files that are not ported report themselves with `unported!` and go on as
 //!   the C would with an empty subsystem: `rti_delete` (`netinet/igmp.c`);
-//!   `tcp_input_mlist`, `tcpstat_inc` (`netinet/tcp_input.c`); `inet_ntop` (`ifa_print_all`).
-//!   `tcp_if_output_tso` (`netinet/tcp_output.c`) is a local stand-in with the C's first two
-//!   tests: a packet that did not ask for TSO, or whose segments fit, goes back to the caller;
-//!   a TSO packet is reported and dropped with `ENOSYS`.
+//!   `inet_ntop` (`ifa_print_all`).
 //! - `ifioctl`'s `pru_control` goes through the socket's protocol (`sys/protosw.rs`), as in
 //!   C; the kernel's own requests come with a NULL socket and go to `in_ioctl` as privileged
 //!   ones (the boot self-test configures an interface that way).
@@ -231,6 +228,9 @@ use crate::netinet::if_ether::{ETHER_ADDR_LEN, arpcom_of, arpintr, ether_is_mult
 use crate::netinet::in_::{INADDR_ANY, SockaddrIn, in_ifdetach, in_ioctl, satosin_const, sintosa};
 use crate::netinet::ip_input::{ipintr, ipv4_input};
 use crate::netinet::ip_output::{in_hdr_cksum_out, in_proto_cksum_out};
+use crate::netinet::tcp_input::tcp_input_mlist;
+use crate::netinet::tcp_output::tcp_if_output_tso;
+use crate::netinet::tcp_var::{TcpstatCounters, tcpstat_inc};
 use crate::sys::errno::Errno;
 use crate::sys::ioccom::iocparm_len;
 use crate::sys::kernel::HZ;
@@ -2005,11 +2005,9 @@ pub fn if_input_local(
             && ((af == AF_INET && ifp.if_capabilities.get() & IFCAP_TSOv4 != 0)
                 || (af == AF_INET6 && ifp.if_capabilities.get() & IFCAP_TSOv6 != 0))
         {
-            // tcpstat_inc(tcps_inhwlro): netinet/tcp_input.c is not ported.
-            let _ = unported!("tcpstat_inc");
+            tcpstat_inc(TcpstatCounters::TcpsInhwlro);
         } else {
-            // tcpstat_inc(tcps_inbadlro)
-            let _ = unported!("tcpstat_inc");
+            tcpstat_inc(TcpstatCounters::TcpsInbadlro);
             m_freem(m);
             return Err(Errno::EPROTONOSUPPORT);
         }
@@ -2103,28 +2101,6 @@ unsafe fn ifp_output(
     }
 }
 
-/// `tcp_if_output_tso` (`netinet/tcp_output.c`, not ported): its first two tests are here,
-/// which leave every packet that did not ask for TCP segmentation offload (or whose segments
-/// fit) to the caller; a TSO packet reports the function and fails with `ENOSYS`.
-fn tcp_if_output_tso(mp: &mut Option<&'static Mbuf>, mtu: u32) -> Result<(), Errno> {
-    let Some(m) = *mp else {
-        return Ok(());
-    };
-    let ph = m.m_pkthdr();
-    // caller must fail later or fragment
-    if ph.csum_flags.get() & M_TCP_TSO == 0 {
-        return Ok(());
-    }
-    if u32::from(ph.ph_mss.get()) > mtu {
-        ph.csum_flags.set(ph.csum_flags.get() & !M_TCP_TSO);
-        return Ok(());
-    }
-    // The hardware TSO (in_ifcap_cksum) and software chopping (tcp_softtso_chop) paths.
-    m_freem(m);
-    *mp = None;
-    Err(unported!("tcp_if_output_tso"))
-}
-
 /// `if_output_tso`: sends a TCP packet with TSO, or chops it, or sends it whole when it fits
 /// `mtu`; `*mp` is left set when the packet still has to be fragmented or dropped.
 ///
@@ -2140,7 +2116,7 @@ pub unsafe fn if_output_tso(
 ) -> Result<(), Errno> {
     // SAFETY: `dst` is readable per the contract.
     let family = unsafe { (*dst).sa_family };
-    let _ifcap: u32 = match family {
+    let ifcap: u32 = match family {
         AF_INET => IFCAP_TSOv4,
         // INET6: AF_INET6 uses IFCAP_TSOv6; IPv6 is not configured.
         _ => unhandled_af(i32::from(family)),
@@ -2149,7 +2125,8 @@ pub unsafe fn if_output_tso(
     // Try to send with TSO first. When forwarding LRO may set maximum segment size in mbuf
     // header. Chop TCP segment even if it would fit interface MTU to preserve maximum path
     // MTU.
-    tcp_if_output_tso(mp, mtu)?;
+    // SAFETY: the caller's contract is `if_output`'s, which `tcp_if_output_tso` passes on.
+    unsafe { tcp_if_output_tso(ifp, mp, dst, rt, ifcap, mtu) }?;
     let Some(m) = *mp else {
         return Ok(());
     };
@@ -2285,12 +2262,7 @@ pub fn if_input_process(ifp: &'static Ifnet, ml: &MbufList, idx: u32) {
             }
         }
 
-        // tcp_input_mlist(&ns->ns_tcp_ml, AF_INET): netinet/tcp_input.c is not ported, and
-        // only tcp_input fills the list.
-        if !ml_empty(&ns.ns_tcp_ml) {
-            let _ = unported!("tcp_input_mlist");
-            let _ = ml_purge(&ns.ns_tcp_ml);
-        }
+        tcp_input_mlist(&ns.ns_tcp_ml, i32::from(AF_INET));
         // INET6: tcp_input_mlist(&ns->ns_tcp6_ml, AF_INET6); not configured.
 
         if ml_empty(&ns.ns_input) {

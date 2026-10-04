@@ -55,8 +55,7 @@
 //!   (`kern/kern_intrmap.c`: the multi-queue interrupt map, used only when `VIRTIO_NET_F_MQ`
 //!   is negotiated, which needs more than one CPU; `sc_intrmap` is therefore always NULL and
 //!   left out, its tests commented), `struct ifmedia` and `ifmedia_*` (`net/if_media.c`:
-//!   `sc_media` is left out; `SIOCGIFMEDIA`/`SIOCSIFMEDIA` fail with `ENOSYS`), `tcpstat_*`
-//!   (`netinet/tcp_var.h`). Not configured (comments at the sites): `NBPFILTER`, `NVLAN`,
+//!   `sc_media` is left out; `SIOCGIFMEDIA`/`SIOCSIFMEDIA` fail with `ENOSYS`). Not configured (comments at the sites): `NBPFILTER`, `NVLAN`,
 //!   `INET6`.
 //! - `offsetof(struct tcphdr, th_sum)` and `offsetof(struct udphdr, uh_sum)` are the
 //!   constants 16 and 6: `netinet/tcp.h` and `netinet/udp.h` are not ported.
@@ -121,6 +120,7 @@ use crate::netinet::if_ether::{
     Arpcom, ETHER_ADDR_LEN, ETHER_ALIGN, ETHER_HDR_LEN, ETHER_MAX_HARDMTU_LEN, EtherExtracted,
     EtherMultistep, ether_first_multi, ether_next_multi,
 };
+use crate::netinet::tcp_var::{TcpstatCounters, tcpstat_add, tcpstat_inc};
 use crate::sys::device::{CD_COCOVM, CfMatch, Cfattach, Cfdriver, DV_IFNET, Device, Softc};
 use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_DEVBUF, M_WAITOK, M_ZERO};
@@ -1873,8 +1873,7 @@ pub fn vio_tx_offload(hdr: &mut VirtioNetHdr, m: &Mbuf) {
     }
 
     if ext.tcp.is_null() || m.m_pkthdr().ph_mss.get() == 0 {
-        // tcpstat_inc(tcps_outbadtso)
-        let _ = unported!("tcpstat_inc (netinet/tcp_var.h)");
+        tcpstat_inc(TcpstatCounters::TcpsOutbadtso);
         return;
     }
 
@@ -1898,8 +1897,11 @@ pub fn vio_tx_offload(hdr: &mut VirtioNetHdr, m: &Mbuf) {
         th_sum.write_unaligned(sum);
     }
 
-    // tcpstat_add(tcps_outpkttso, (ext.paylen + mss - 1) / mss)
-    let _ = unported!("tcpstat_add (netinet/tcp_var.h)");
+    let mss = u32::from(m.m_pkthdr().ph_mss.get());
+    tcpstat_add(
+        TcpstatCounters::TcpsOutpkttso,
+        u64::from(ext.paylen.div_ceil(mss)),
+    );
 }
 
 /// `vio_start`: transmit what the send queue holds.
@@ -2301,8 +2303,7 @@ pub fn vio_rx_offload(m: &Mbuf, hdr: &VirtioNetHdr) {
         let mss = u32::from(hdr.gso_size);
 
         if ext.tcp.is_null() || mss == 0 {
-            // tcpstat_inc(tcps_inbadlro)
-            let _ = unported!("tcpstat_inc (netinet/tcp_var.h)");
+            tcpstat_inc(TcpstatCounters::TcpsInbadlro);
             return;
         }
 
@@ -2310,8 +2311,11 @@ pub fn vio_rx_offload(m: &Mbuf, hdr: &VirtioNetHdr) {
             return;
         }
 
-        // tcpstat_inc(tcps_inhwlro); tcpstat_add(tcps_inpktlro, (paylen + mss - 1) / mss)
-        let _ = unported!("tcpstat_add (netinet/tcp_var.h)");
+        tcpstat_inc(TcpstatCounters::TcpsInhwlro);
+        tcpstat_add(
+            TcpstatCounters::TcpsInpktlro,
+            u64::from(ext.paylen.div_ceil(mss)),
+        );
         ph.csum_flags.set(ph.csum_flags.get() | M_TCP_TSO);
         ph.ph_mss.set(mss as u16);
     }
