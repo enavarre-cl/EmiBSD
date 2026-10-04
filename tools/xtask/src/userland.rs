@@ -238,7 +238,10 @@ const PROGRAMS: &[&str] = &[
     // M9+: over libpcap (LIBRARIES); `iapp.h` from usr.sbin/hostapd (-I../hostapd).
     "usr.sbin/tcpdump",
     // M10b: disk quotas (quota(1) over librpcsvc, LIBRARIES) and su(1) to write as a user
-    // under quota; mount_mfs(8) is newfs (its LINKS).
+    // under quota; mount_mfs(8) is newfs (its LINKS). mkdir(1) and chmod(1) (with its chgrp
+    // and /sbin/chown links) to give that user a directory.
+    "bin/mkdir",
+    "bin/chmod",
     "sbin/quotacheck",
     "usr.sbin/quotaon",
     "usr.sbin/edquota",

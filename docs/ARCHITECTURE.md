@@ -191,7 +191,7 @@ link) and `usr.bin/vmstat`, the disk tools `sbin/umount`, `sbin/newfs` (with its
 `sbin/fsck`, `sbin/fsck_ffs`, `sbin/disklabel` and `sbin/fdisk` (M10a), the quota tools
 `sbin/quotacheck`, `usr.sbin/quotaon` (and `quotaoff`), `usr.sbin/edquota`, `usr.sbin/repquota`
 and `usr.bin/quota` (over `librpcsvc.a`, whose sources `rpcgen` makes from its `.x` files) with
-`usr.bin/su` (M10b), and a few more as static PIE executables, the form
+`usr.bin/su`, `bin/mkdir` and `bin/chmod` (with its `chgrp` and `/sbin/chown` links; M10b), and a few more as static PIE executables, the form
 OpenBSD's `cc -static` gives `/bin` and `/sbin` (`rcrt0.o` relocates the program itself; no
 `PT_INTERP`).
 
