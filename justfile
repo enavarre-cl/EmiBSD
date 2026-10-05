@@ -73,6 +73,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid " + \
+    "smoke-nvme " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up"
 
@@ -1208,6 +1209,41 @@ ext2_check := disk_login + " " + \
     "--expect 'm10d-ext2-42' --expect 'm10d-ext2-sub-42' --expect 'files-31' --expect 'ext2-read-42' " + \
     "--reject 'UNEXPECTED' --reject 'FILE SYSTEM WAS MODIFIED' --reject '? no'"
 ext2_host := "--cat /m10d-ext2.txt=m10d-ext2-42 --cat /d/sub.txt=m10d-ext2-sub-42 --cat /d/f29=f29"
+
+# M13a: nvme(4). `cargo xtask nvme-root` writes a disk laid out as OpenBSD installs one (MBR
+# with the OpenBSD partition, a disklabel whose DUID is `nvme_duid`, the userland's ffs in
+# `a`, its fstab naming /dev/sd0a; tools/xtask/src/hwopts.rs), and the VM gets it as the
+# namespace of an NVMe controller on q35's PCI bus (`--nvme`, slot 3, before the virtio-blk
+# disk, so its namespace is sd0). The kernel boots WITHOUT the ramdisk module: boot(8)'s
+# BOOTARG_BOOTDUID is the `bootduid=` word of the command line, and setroot mounts the root
+# from the disk whose label has that DUID. MSI/MSI-X wait for ACPI's mp_busses, so the
+# controller runs on its INTx line. The session logs in, `mount` shows sd0a on /, bioctl(8)
+# asks nvme0 (its bio(4) ioctls), and a file is written on the root and read back. amd64
+# only: arm64's `virt` gets its PCI bus with M12. Part of `smoke`.
+nvme_duid := "4e564d45524f4f54"
+
+smoke-nvme: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-nvme: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask nvme-root --arch amd64 --duid {{nvme_duid}}
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
+        --nvme nvme-amd64.img --cmdline "bootduid={{nvme_duid}}" --until-seen \
+        {{disk_login}} \
+        --send-after '# ' --send 'mount\n' \
+        --send-after '# ' --send 'bioctl nvme0\n' \
+        --send-after '# ' --send 'echo m13a-nvme-$((40+2)) >/m13a.txt && cat /m13a.txt\n' \
+        --send-after '# ' --send 'dd if=/dev/zero of=/dev/rsd0c bs=64k seek=1010 count=8 && dd if=/dev/rsd0c of=/dev/null bs=64k count=64\n' \
+        --send-after '# ' --send 'echo m13a-raw-$((40+2)) | dd of=/dev/rsd0c bs=512 seek=130000 conv=sync 2>/dev/null; dd if=/dev/rsd0c bs=512 skip=130000 count=1 2>/dev/null\n' \
+        --expect "nvme0 at pci0 dev 3 function 0 vendor 0x1b36 product 0x0010 rev 0x02: " \
+        --expect "NVMe 1.4" --expect "nvme0: QEMU NVMe Ctrl, firmware " --expect "serial EMIBSD0001" \
+        --expect "scsibus0 at nvme0: 257 targets, initiator 0" \
+        --expect "sd0 at scsibus0 targ 1 lun 0: <NVMe, QEMU NVMe Ctrl, " \
+        --expect "vioblk0 at virtio1" --expect "sd1 at scsibus1 targ 0 lun 0: <VirtIO, Block Device, >" \
+        --expect "root on sd0a ({{nvme_duid}}.a) swap on sd0b dump on sd0b" \
+        --expect "rc: multi-user" --expect "/dev/sd0a on / type ffs (local)" \
+        --expect "nvme0: NVMe 1.4, NVM I/O command set, Enabled, Ready" --expect "nvme0 0 Online" \
+        --expect "Namespace 1" --expect "m13a-nvme-42" --expect "524288 bytes transferred" \
+        --expect "4194304 bytes transferred" --expect "m13a-raw-42" --reject "mount -uw / failed"
 
 # M10d: FUSE (sys/miscfs/fuse). Our own read-only file system, tools/fusehello (linked to
 # OpenBSD's libfuse, which opens /dev/fuse0 and mounts fusefs), is mounted on /fuse; mount(8)

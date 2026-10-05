@@ -188,6 +188,12 @@ unsafe extern "C" fn _start() -> ! {
 unsafe fn boot() -> Result<BootInfo, BootError> {
     let boot = gather()?;
     BOOTHOWTO.store(boot.boothowto(), core::sync::atomic::Ordering::Relaxed);
+    // boot(8)'s BOOTARG_BOOTDUID (efiboot's `openbsd,bootduid`): `setroot` finds the boot
+    // disk by this label DUID, there being no `bootdev` under Limine.
+    if let Some(duid) = boot.bootduid() {
+        // SAFETY: the boot CPU alone, before `main` and autoconfiguration read it.
+        unsafe { bsd::kern::subr_disk::BOOTDUID.write(duid) };
+    }
     #[cfg(feature = "qemu")]
     bsd::kern::selftest::parse_bootargs(boot.cmdline.to_bytes());
     // SAFETY: forwarded from `_start`; `boot` describes the image the bootloader just loaded.

@@ -3,9 +3,11 @@
 //! `pcireg`, `pcivar`, `ppbreg` and `pcidevs` are the headers; `pci` the bus driver
 //! (`pci* at mainbus0`), `pci_map` the BAR decoding and mapping, `pci_subr` the attach-line
 //! descriptions and `pci_quirks` the multi/mono-function quirk table; `virtio_pci` (with
-//! `virtio_pcireg`) is the virtio transport (`virtio* at pci?`). The machine side
+//! `virtio_pcireg`) is the virtio transport (`virtio* at pci?`), `nvme_pci` the
+//! NVM Express front-end (`nvme* at pci?`). The machine side
 //! (configuration access, tags, interrupts) is `machine::pci_machdep`.
 
+pub mod nvme_pci;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/pci/pci.c
 pub mod pci;
 pub mod pci_map;

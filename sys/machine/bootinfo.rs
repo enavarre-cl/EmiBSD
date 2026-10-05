@@ -287,6 +287,29 @@ impl BootInfo {
         }
         howto
     }
+
+    /// The boot disk's DUID that boot(8) hands over (`BOOTARG_BOOTDUID` on amd64, the
+    /// `openbsd,bootduid` property efiboot puts in the device tree on arm64): under Limine,
+    /// a `bootduid=` word of the command line with the 16 hexadecimal digits of the
+    /// label's `d_uid`, as `duid_format` prints them. `None` without one or with a malformed
+    /// one. Flags go after it: everything from the first `-` on is read as flag letters
+    /// ([`BootInfo::boothowto`]), the `d` of a `bootduid=` word included.
+    pub fn bootduid(&self) -> Option<[u8; 8]> {
+        let word = self
+            .cmdline
+            .to_bytes()
+            .split(|c| c.is_ascii_whitespace())
+            .find_map(|w| w.strip_prefix(b"bootduid="))?;
+        if word.len() != 16 {
+            return None;
+        }
+        let digit = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+        let mut duid = [0u8; 8];
+        for (i, pair) in word.chunks(2).enumerate() {
+            duid[i] = digit(pair[0])? << 4 | digit(pair[1])?;
+        }
+        Some(duid)
+    }
 }
 
 #[cfg(test)]
@@ -391,5 +414,14 @@ mod tests {
         assert_eq!(boot.boothowto(), RB_SINGLE | RB_CONFIG);
         boot.cmdline = c"-a -x";
         assert_eq!(boot.boothowto(), RB_ASKNAME);
+        assert_eq!(boot.bootduid(), None);
+        boot.cmdline = c"bootduid=4e564d45524f4f54";
+        assert_eq!(boot.bootduid(), Some(*b"NVMEROOT"));
+        assert_eq!(boot.boothowto(), 0);
+        boot.cmdline = c"bootduid=4e564d45524f4f54 -s";
+        assert_eq!(boot.bootduid(), Some(*b"NVMEROOT"));
+        assert_eq!(boot.boothowto(), RB_SINGLE);
+        boot.cmdline = c"bootduid=4e564d45524f4f5 bootduid=4e564d45524f4fxx";
+        assert_eq!(boot.bootduid(), None);
     }
 }

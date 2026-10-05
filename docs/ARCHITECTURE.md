@@ -405,6 +405,17 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   ramdisk the kernel stays generic and, having no boot device to ask about (`setroot`'s
   `RB_ASKNAME` prompt is not ported), says it cannot mount root and runs its init boot
   module (the Rust self-test).
+- boot(8)'s `BOOTARG_BOOTDUID` (efiboot's `openbsd,bootduid` on arm64), the DUID of the disk
+  the kernel came from, is a `bootduid=<16 hex digits>` word of the Limine command line
+  (M13a): `BootInfo::bootduid` parses it and `sys/stand` writes the kernel's `bootduid`
+  before `main`. `setroot` then finds the boot disk by its label's DUID, as in OpenBSD, and a
+  kernel without a ramdisk mounts its root from that disk's `a` partition (`root on sd0a
+  (<duid>.a)`). The kernel itself sits on the boot image's FAT partition, not on that disk,
+  so the DUID is the only boot device there is: `just smoke-nvme` boots from an NVMe disk
+  `cargo xtask nvme-root` lays out as OpenBSD's installer does (MBR, OpenBSD partition at 64,
+  disklabel, the userland's ffs in `a` with its fstab naming `/dev/sd0a`;
+  `tools/xtask/src/hwopts.rs`). Flags go after it on the command line (`boothowto` reads
+  every letter from the first `-` on).
 - amd64's FPU state uses `fxsave64`/`fxrstor64` only (`amd64/fpu.rs`): the XSAVE family and
   its codepatches are not ported, so there is no AVX state; the switch is eager as in C
   (`CPUPF_USERXSTATE`, saved in `cpu_switchto`, reloaded on the way back to user mode).
@@ -944,6 +955,10 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   image is on q35's AHCI, which is not ported); on arm64 `virt` it takes the lowest
   virtio-mmio slot in use (slots go out top down, the kernel attaches bottom up), so it is
   the first block device found (`sd0`) and the boot disk (`virtio31`) the second (`sd1`).
+  `--nvme FILE` (M13a, `qemu` and `smoke`; `hwopts.rs`, the home of M13's QEMU device
+  options) adds an NVMe controller whose namespace is FILE, on amd64 only (arm64 gets PCI
+  with M12): it is added right after the NICs, so it takes slot 3, attaches before the
+  virtio-blk disk (then at slot 4) and its namespace is `sd0`.
 - `disklabel(8)` and `fdisk(8)` embed their manual page in a generated `manual.c` rendered
   with mandoc(1); the userland build takes their Makefiles' own `.ifdef NOMAN` branch
   (`NOMAN_PROGRAMS` in `tools/xtask/src/userland.rs`), so the embedded page reads

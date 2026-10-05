@@ -6,7 +6,7 @@
 //!
 //! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?` (and GENERIC.MP's
 //! `cpu* at mainbus?` with feature `multiprocessor`), `pci* at mainbus0`,
-//! `virtio* at pci?`, `vio* at virtio?`, `vioblk* at virtio?`, `scsibus* at scsi?`,
+//! `virtio* at pci?`, `vio* at virtio?`, `vioblk* at virtio?`, `nvme* at pci?`, `scsibus* at scsi?`,
 //! `sd* at scsibus?`, `softraid0 at root` and `scsibus* at softraid?` (conf/GENERIC),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
@@ -17,7 +17,7 @@
 //! `ipmi0` and `efifb0` at mainbus, and everything below them; `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`, `vga0`,
 //! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
-//! (`pchb*`, `ppb*`, `pcib*`, the network and storage drivers, ...), `pci*` at `ppb?` and
+//! (`pchb*`, `ppb*`, `pcib*`, the network drivers and the storage drivers but nvme, ...), `pci*` at `ppb?` and
 //! `pchb?`, and every device at `virtio?` but `vio*` and `vioblk*`;
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
 //! layout: attachment, driver, unit, state, locators, flags, parents (indices into
@@ -27,8 +27,10 @@ use crate::arch::amd64::amd64::cpu::{CPU_CA, CPU_CD};
 use crate::arch::amd64::amd64::mainbus::{MAINBUS_CA, MAINBUS_CD};
 use crate::dev::bio::bioattach;
 use crate::dev::ic::com::COM_CD;
+use crate::dev::ic::nvme::NVME_CD;
 use crate::dev::isa::com_isa::COM_ISA_CA;
 use crate::dev::isa::isa::{ISA_CA, ISA_CD};
+use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
@@ -69,9 +71,9 @@ const LOC_PCI_UNK: &[i64] = &[-1, -1];
 /// `pv[]` for children of `virtio*` (`cfdata[3]`).
 const PV_VIRTIO: &[i16] = &[3];
 
-/// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`) and
-/// `softraid0` (`cfdata[13]`).
-const PV_VIOBLK: &[i16] = &[5, 13];
+/// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`),
+/// `softraid0` (`cfdata[13]`) and `nvme*` (`cfdata[14]`).
+const PV_VIOBLK: &[i16] = &[5, 13, 14];
 
 /// `pv[]` for children of `scsibus*` (`cfdata[11]`).
 const PV_SCSIBUS: &[i16] = &[11];
@@ -93,11 +95,11 @@ const LOC_COM2: &[i64] = &[0x3e8, 0, -1, 0, 5, -1, -1];
 /// `loc[]` of `com3 at isa? disable port 0x2e8 irq 9`.
 const LOC_COM3: &[i64] = &[0x2e8, 0, -1, 0, 9, -1, -1];
 
-/// `cfdata[]`: 14 entries, 15 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 15 entries, 16 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    15
+    16
 } else {
-    14
+    15
 };
 
 /// `cfdata[]`.
@@ -224,7 +226,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 11: scsibus* at scsi? (vioblk), and at softraid? (GENERIC's `scsibus* at softraid?`)
+    // 11: scsibus* at scsi? (vioblk, nvme), and at softraid? (GENERIC's `scsibus* at softraid?`)
     Cfdata::new(
         &SCSIBUS_CA,
         &SCSIBUS_CD,
@@ -260,7 +262,19 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 14: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 14: nvme* at pci?
+    Cfdata::new(
+        &NVME_PCI_CA,
+        &NVME_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        0,
+        0,
+    ),
+    // 15: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

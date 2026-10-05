@@ -608,6 +608,8 @@ pub(crate) fn qemu_command(
                     &format!("virtio-net-pci,netdev=n1,mac={}", v.link_mac),
                 ]);
             }
+            // M13 (hwopts.rs): NVMe and the other PCI storage, before the virtio-blk disks.
+            crate::hwopts::pci_storage(&mut cmd, arch)?;
             for (k, disk) in disk_files.iter().enumerate() {
                 cmd.arg("-drive").arg(format!(
                     "if=none,format=raw,file={},id=sd{k}",
@@ -635,6 +637,7 @@ pub(crate) fn qemu_command(
                 ]);
             }
             cmd.args(["-device", &format!("virtio-net-device,netdev=n0{nic0}")]);
+            crate::hwopts::pci_storage(&mut cmd, arch)?;
             for (k, disk) in disk_files.iter().enumerate().rev() {
                 cmd.arg("-drive").arg(format!(
                     "if=none,format=raw,file={},id=sd{k}",

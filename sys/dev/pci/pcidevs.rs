@@ -49,7 +49,7 @@
 //!
 //! ## Deviations
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
-//!   `pci_quirks.c` and `virtio_pci.c`). The whole header, and `pcidevs_data.h` for
+//!   `pci_quirks.c`, `virtio_pci.c` and `nvme_pci.c`). The whole header, and `pcidevs_data.h` for
 //!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
 //!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
@@ -60,6 +60,8 @@ pub const PCI_VENDOR_OPENBSD: u32 = 0x0b5d;
 pub const PCI_VENDOR_CIRRUS: u32 = 0x1013;
 /// `PCI_VENDOR_AMD`: AMD.
 pub const PCI_VENDOR_AMD: u32 = 0x1022;
+/// `PCI_VENDOR_APPLE`: Apple.
+pub const PCI_VENDOR_APPLE: u32 = 0x106b;
 /// `PCI_VENDOR_QUMRANET`: Qumranet.
 pub const PCI_VENDOR_QUMRANET: u32 = 0x1af4;
 /// `PCI_VENDOR_INTEL`: Intel.
@@ -73,6 +75,13 @@ pub const PCI_PRODUCT_AMD_17_1X_XHCI_1: u32 = 0x15e0;
 pub const PCI_PRODUCT_AMD_17_1X_XHCI_2: u32 = 0x15e1;
 /// `PCI_PRODUCT_AMD_17_6X_XHCI`: 17h/6xh xHCI.
 pub const PCI_PRODUCT_AMD_17_6X_XHCI: u32 = 0x1639;
+
+/// `PCI_PRODUCT_APPLE_NVME1`: NVMe.
+pub const PCI_PRODUCT_APPLE_NVME1: u32 = 0x2001;
+/// `PCI_PRODUCT_APPLE_NVME2`: NVMe.
+pub const PCI_PRODUCT_APPLE_NVME2: u32 = 0x2003;
+/// `PCI_PRODUCT_APPLE_NVME3`: NVMe.
+pub const PCI_PRODUCT_APPLE_NVME3: u32 = 0x2005;
 
 /// `PCI_PRODUCT_CIRRUS_CL_PD6729`: CL-PD6729.
 pub const PCI_PRODUCT_CIRRUS_CL_PD6729: u32 = 0x1100;
@@ -96,6 +105,10 @@ mod tests {
             ("PCI_VENDOR_CIRRUS", PCI_VENDOR_CIRRUS),
             ("PCI_VENDOR_QUMRANET", PCI_VENDOR_QUMRANET),
             ("PCI_PRODUCT_OPENBSD_CONTROL", PCI_PRODUCT_OPENBSD_CONTROL),
+            ("PCI_VENDOR_APPLE", PCI_VENDOR_APPLE),
+            ("PCI_PRODUCT_APPLE_NVME1", PCI_PRODUCT_APPLE_NVME1),
+            ("PCI_PRODUCT_APPLE_NVME2", PCI_PRODUCT_APPLE_NVME2),
+            ("PCI_PRODUCT_APPLE_NVME3", PCI_PRODUCT_APPLE_NVME3),
             ("PCI_VENDOR_AMD", PCI_VENDOR_AMD),
             ("PCI_VENDOR_INTEL", PCI_VENDOR_INTEL),
             ("PCI_VENDOR_INVALID", PCI_VENDOR_INVALID),
