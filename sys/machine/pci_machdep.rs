@@ -90,6 +90,12 @@ pub trait PciMachdep {
     /// `pci_bus_maxdevs(pc, busno)`: how many device numbers bus `busno` has.
     fn pci_bus_maxdevs(pc: Self::PciChipsetTag, busno: i32) -> i32;
 
+    /// `pci_lookup_segment(segment, bus)`: the chipset of PCI segment `segment` (whose
+    /// bus `bus` the caller is about to address). `None` where the C's answer is a NULL no
+    /// configuration access can go through (arm64 without that segment); amd64's NULL is
+    /// its one chipset, so amd64 answers `Some`.
+    fn pci_lookup_segment(segment: i32, bus: i32) -> Option<Self::PciChipsetTag>;
+
     /// `pci_make_tag(pc, bus, device, function)`.
     fn pci_make_tag(pc: Self::PciChipsetTag, bus: i32, device: i32, function: i32) -> Self::Pcitag;
 
@@ -183,6 +189,11 @@ pub fn pci_attach_hook(parent: &Device, self_: &Device, pba: &PcibusAttachArgs) 
 /// `pci_bus_maxdevs` on the selected machine.
 pub fn pci_bus_maxdevs(pc: PciChipsetTag, busno: i32) -> i32 {
     Machine::pci_bus_maxdevs(pc, busno)
+}
+
+/// `pci_lookup_segment` on the selected machine.
+pub fn pci_lookup_segment(segment: i32, bus: i32) -> Option<PciChipsetTag> {
+    Machine::pci_lookup_segment(segment, bus)
 }
 
 /// `pci_make_tag` on the selected machine.

@@ -7858,3 +7858,127 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "562841c72cd7e0b68b4ccb1038a232740fde3b88"
 deps = ["sys/dev/usb/umass_quirks.h", "sys/dev/usb/umassvar.h", "sys/dev/usb/usbdevs.h", "sys/dev/usb/usbdi.c"]
 notes = "M12, whole: the 54-entry table, umass_lookup, umass_init_insystem, umass_init_shuttle, umass_fixup_sony, umass_fixup_yedata. Deviations in the file: uq_busquirks keeps u_int32_t with the u16 SCSI quirks widened; umass_fixup_sony returns for an interface without a descriptor (C dereferences NULL); UMASS_DEBUG's DPRINTF absent. Host tests of the table and the lookup"
+
+[[file]]
+c = "sys/dev/acpi/acpireg.h"
+rust = "sys/dev/acpi/acpireg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9e9653c7dfc83a10d230fa04891ecbdf689313ee"
+deps = []
+notes = "M13: the whole header: RSDP, RSDT/XSDT, the GAS (GAS_* and GAS_ACCESS_* as i32), FADT, DSDT/SSDT/PSDT, MADT with every entry type and union acpi_madt_entry, SBST, ECDT, SRAT, SLIT, HPET, MCFG, SPCR, FACS, TPM2, LPIT, DMAR (DRHD, RMRR, ATSR), IVRS (IVHD, IVMD), IORT and its nodes as #[repr(C, packed)] with the C sizes asserted at compile time; PM1/PM2 bits, the S and D states, ACPI_OPREG_* (i32), ACPI_DEV_*, the PCI address macros as snake-case const fns (acpi_pci_seg, acpi_adr_pcidev, ...). Deviations: the rsdp_*/hdr_* alias macros are dropped (callers name rsdp1.signature, hdr.signature); anonymous union members are named (AcpidmarEntryHdr, AcpiIvrsEntryHdr, AcpiIvhdEntry*); [1] tails stay one-element arrays, [] tails are [T; 0]; *_SIG are byte arrays; FADT_i8042 keeps its spelling. Host tests (sizes, offsets, signatures, macros) and a reference-backed test of 196 numeric defines"
+
+[[file]]
+c = "sys/dev/acpi/acpidev.h"
+rust = "sys/dev/acpi/acpidev.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6122c95016eae4ef585959c805db7e930e5fff4d"
+deps = ["sys/dev/acpi/acpireg.h"]
+notes = "M13: the constants (ACPIDEV_*, BIX_/BST_/BTM_/BMD_/BMC_/PSR_/STA_, CMB_OSC_*, the HPET register offsets, ACPIDOCK_*, ACPIEC_MAX_EVENTS) and the plain structures AcpibatBix/Bst/Bmd, AcpicpuPss, AcpiGrd (packed), AcpicpuPct, AcpisbsBattery (SMBUS_DATA_SIZE defined here until dev/acpi/smbus.h is ported). Waiting for their drivers: acpiac_softc (acpiac.c), acpibat_softc (acpibat.c), acpidock_softc with aml_nodelisth (acpidock.c), acpiec_event/acpiec_softc (acpiec.c), acpisbs_softc (acpisbs.c), DEVNAME; the prototypes are acpicpu.c's and acpibtn.c's. Host tests (sizes, offsets) and a reference-backed test of 66 numeric defines"
+
+[[file]]
+c = "sys/dev/acpi/amltypes.h"
+rust = "sys/dev/acpi/amltypes.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1bf6724b7a29c76773c06a759992d00f85bcb639"
+deps = ["sys/sys/queue.h", "sys/sys/device.h"]
+notes = "M13: AMLOP_* (i32), AML_MATCH_*, enum aml_objecttype as AML_OBJTYPE_* consts, AML_ARG_* (u8), the AML_METHOD_*/AML_FIELD_* macros as const fns, AML_NO_TIMEOUT, aml_bitmask/bitpos/bytepos/bytelen/bytealigned; struct aml_value is AmlValue: type, length and the union are one enum AmlObj behind a RefCell (the C changes a value's type in place through shared pointers), node a Weak link, refcnt the Rc count of AmlValueRef = Rc<AmlValue> (aml_addref/aml_delref are clone/drop), length derived from the variant; the v_* macros are accessors (v_integer, v_buffer, v_string, v_package, v_field, ...); struct aml_node is AmlNode in AmlNodeRef = Rc<AmlNode>, parent Weak, son/sib a Vec (sons() snapshots); uint8_t * into AML is AmlPtr (table bytes + offset, reads past the end give 0); struct acpi_pci (Cell members, a TAILQ entry) and struct acpi_gpio (fn pointers). Left out: v_mutex (overlays v_mtx; never a struct acpi_mutex in the tree), struct aml_waitq and the waiters members (unused in the tree), aml_node.i2c (until dev/i2c). Host tests (amltypes/tests.rs) and a reference-backed test of the defines. The interpreter's state is global and not thread-safe: every path to it runs under the kernel lock (dsdt.rs AmlGlobal)"
+
+[[file]]
+c = "sys/dev/acpi/acpivar.h"
+rust = "sys/dev/acpi/acpivar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "89115627ff56ef82a568a1a4986692c29d1447ff"
+deps = ["sys/dev/acpi/acpireg.h", "sys/dev/acpi/amltypes.h", "sys/sys/queue.h", "sys/sys/rwlock.h", "sys/sys/timeout.h", "sys/sys/device.h"]
+notes = "M13: ACPI_TRAMPOLINE/ACPI_TRAMP_DATA, ACPI_UUID as acpi_uuid, ACPIDEVCF_*, struct acpi_attach_args (C strings as NUL-terminated *const u8 the attaching code owns during config_found), acpi_mem_map, acpi_q (+ AcpiQList adapter, acpi_qhead_t), acpi_taskq, acpi_wakeq (+ acpi_wakeqhead_t), ACPIREG_*, ACPI_SST_*, acpi_reg_map, acpi_thread, acpi_mutex, gpe_block, acpi_devlist (TAILQ_HEAD acpi_devlist_head is a Vec), struct acpi_softc as AcpiSoftc (#[repr(C)], sc_dev first, Cell/RefCell members; not yet an unsafe impl Softc: acpi.c's port decides acpi0's allocation), WAKEGPE_*, SCFLAG_*, GPE_*, ACPI_IOREAD/IOWRITE, GL_BIT_*; extern acpi_softc is ACPI_SOFTC (AtomicPtr, set once by acpi.c) read through acpi_softc(). Waiting for their files: sc_note (acpi.c's klist), sc_pwrresdevs and struct acpi_pwrres (acpipwrres.c; NACPIPWRRES 0 until then), sc_ac/sc_bat/sc_sbs and their lists (acpiac.c, acpibat.c, acpisbs.c), struct acpivideo_softc (acpivideo.c); sc_ec is *mut c_void until acpiec.c; ACPI_DEBUG's dprintf/dnprintf not configured. The prototypes are their files' (acpi.c, acpi_machdep.c, acpiec.c, acpipwrres.c, dsdt.c). Host test and a reference-backed test of the defines"
+
+[[file]]
+c = "sys/dev/acpi/dsdt.h"
+rust = "sys/dev/acpi/dsdt.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b28a24e91ac9238501fe0e81a493115f26ef3706"
+deps = ["sys/dev/acpi/amltypes.h", "sys/dev/acpi/acpivar.h"]
+notes = "M13, in dsdt.rs with dsdt.c: struct aml_scope (AmlScope in an Rc, Cell pos, parent Rc), struct aml_opcode, SRT_*/SR_*/LR_* and the descriptor flag bits, SR_TAG as sr_tag, union acpi_resource as AcpiResource (a view of the descriptor's bytes with one accessor per member, sr_irq_irq_mask() for sr_irq.irq_mask; reads past the descriptor give 0, as aml_mapresource's zeroed copy), AML_CRSTYPE/AML_CRSLEN as aml_crstype/aml_crslen, ACPI_E_*, AML_MAX_ARG/LOCAL, AML_WALK_*, union amlpci_t as AmlpciT (the 64-bit word with field accessors), enum acpi_osi as OSI_* consts, AML_VALID_OSI as a table; aml_get8..64 are AmlPtr methods; the prototypes are dsdt.c's"
+
+[[file]]
+c = "sys/dev/acpi/dsdt.c"
+rust = "sys/dev/acpi/dsdt.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "03e93c2ca3ec4da512a40ba558cab0c4f4ac59b5"
+deps = ["sys/dev/acpi/dsdt.h", "sys/dev/acpi/amltypes.h", "sys/dev/acpi/acpivar.h", "sys/dev/acpi/acpireg.h", "sys/dev/acpi/acpidev.h", "sys/dev/pci/pcireg.h", "sys/dev/pci/ppbreg.h", "sys/kern/kern_synch.c"]
+notes = "M13: the AML interpreter, whole: aml_table[] with the compile-time perfect hash (aml_hashopcodes has nothing left to do), aml_findopcode, aml_mnem, _aml_die (prints the methods' args and locals, then panics), acpi_sleep/acpi_stall, aml_tstbit/setbit, the notify list (aml_register_notify, aml_notify, aml_notify_task, aml_notify_dev, acpi_poll, acpi_poll_notify_task), the namespace (aml_root made on first use, __aml_search, aml_nodename, aml_getname, aml_delchildren, __aml_searchname, aml_searchname, aml_searchrel, aml_walknodes, aml_find_node with closures), the global lock (acpi_glk_enter/leave, aml_lockfield/unlockfield), the values (_aml_setvalue with a Bval enum for the C's const void *, aml_copyvalue, aml_allocvalue, aml_freevalue, aml_val2int, aml_showvalue, aml_val_to_string), the math (aml_evalexpr with wrapping arithmetic and shifts, aml_convradix, aml_lsb/msb, aml_bufcpy bounded), the parser (aml_parseopcode, aml_parsename, aml_parselength, aml_parseend, aml_parsesimple, aml_parse with the 'T' loop, aml_eval, aml_gettgt, aml_seterror, aml_findscope, aml_getstack, aml_pushscope/popscope), conversions (aml_tryconv, aml_convert, aml_compare, aml_concat, aml_concatres, aml_mid, aml_hextoint, aml_match), _OSI (aml_callosi, acpi_max_osi), aml_create_defaultobjects, aml_eisaid, aml_evalhid, resources (aml_parse_resource, aml_foreachpkg), aml_postparse/aml_fixup_node, operation regions (aml_regionspace[256] in AmlGlobal, the sysmem/sysio/pcicfg/ec handlers over acpi_gasio, aml_register_regionspace with _REG, acpi_genio, aml_rdpciaddr over machine::pci_lookup_segment (new contract method, amd64/arm64/host), aml_rwgen, aml_rwgpio, aml_rwgsb, aml_rwindexfield, aml_rwfield, aml_createfield, aml_parsefieldlist), Mutex/Event (acpi_mutex_acquire/release, acpi_event_wait/signal/reset), aml_store, LoadTable/Load (aml_loadtable over sc_tables, aml_load over acpi_maptable), acpi_parse_aml, aml_evalnode/aml_node_setval/aml_evalname/aml_evalinteger (argv a slice, res caller-owned; the C's 0/ACPI_E_BADVALUE/-1 kept), acpi_getdevlist/acpi_freedevlist. Globals in AmlGlobal (unsafe impl Sync: every path is under the kernel lock, KERNEL_ASSERT_LOCKED in get()). Not configured: ACPI_DEBUG, ACPI_MEMDEBUG (acpi_walkmem, aml_dump, aml_showstack, aml_print_resource, the dnprintf traces). Deviations: aml_disasm/aml_disprintf (DDB) wait for acpidebug.c; Rust's allocator instead of acpi_os_malloc/M_ACPI; reads past a table give 0; Buffer() copies at most its size; shifts wrap the count, Mod by 0 is 0; a buffer field wider than an integer reads and writes a buffer; Ones is -1 on both archs (the C's (char) is unsigned on arm64); NULL dereferences of the C (no acpi_softc, no scope node) do nothing; aml_rwgsb never finds an I2C controller (EIO status) until dev/i2c; acpi.c's acpi_gasio, acpi_addtask, acpi_dotask, acpi_read_pmreg/write_pmreg, acpi_maptable and acpi_machdep.c's acpi_acquire_glk/release_glk are stubs in acpi.rs. Host tests (dsdt/tests.rs): hand-assembled AML for Name/Buffer/Package, methods with arguments, If/Else/While/Break/Return-in-While, method-local names, buffer fields, Field/IndexField/BankField over test address spaces, _OSI, strings and conversions, references and Index, Mutex/Event/CondRefOf, devices and walks, resource templates, forward-reference fixup, notify by PNP id, a q35-style DSDT excerpt (_CRS patched through CreateDWordField, _OSC), parse errors"
+
+[[file]]
+c = "sys/dev/acpi/acpi.c"
+rust = "sys/dev/acpi/acpi.rs"
+status = "todo"
+deps = ["sys/dev/acpi/dsdt.c", "sys/dev/acpi/acpivar.h", "sys/dev/acpi/acpireg.h", "sys/dev/acpi/acpidev.h"]
+notes = "M13 next: acpi0. acpi.rs holds today only the seam dsdt.c calls, as visible unported! stubs with the C signatures: acpi_gasio (answers -1), acpi_addtask (drops the task), acpi_dotask (0), acpi_read_pmreg (0), acpi_write_pmreg, acpi_maptable (None), acpi_acquire_glk (1) and acpi_release_glk (0) (these two are acpi_machdep.c's), and the global acpi_poll_enabled; the port replaces them, sets ACPI_SOFTC (acpivar.rs) once acpi0 is attached, and sets AML_INTLEN to 32 for a DSDT of revision 1"
+
+[[file]]
+c = "sys/arch/amd64/amd64/acpi_machdep.c"
+rust = "sys/arch/amd64/amd64/acpi_machdep.rs"
+status = "todo"
+deps = ["sys/dev/acpi/acpi.c"]
+notes = "M13 next: acpi_probe/acpi_attach_machdep on amd64; acpi_acquire_glk/acpi_release_glk (now stubs in dev/acpi/acpi.rs) reach generic code through the machine contract"
+
+[[file]]
+c = "sys/dev/acpi/acpimadt.c"
+rust = "sys/dev/acpi/acpimadt.rs"
+status = "todo"
+deps = ["sys/dev/acpi/acpi.c"]
+notes = "M13 next: the MADT: CPUs and I/O APICs (replaces mainbus_attach_cpus' bootloader enumeration)"
+
+[[file]]
+c = "sys/arch/amd64/amd64/ioapic.c"
+rust = "sys/arch/amd64/amd64/ioapic.rs"
+status = "todo"
+deps = ["sys/dev/acpi/acpimadt.c", "sys/arch/amd64/include/i82093var.h"]
+notes = "M13 next: the I/O APIC, attached by acpimadt"
+
+[[file]]
+c = "sys/dev/acpi/acpiprt.c"
+rust = "sys/dev/acpi/acpiprt.rs"
+status = "todo"
+deps = ["sys/dev/acpi/acpi.c"]
+notes = "M13 next: PCI interrupt routing from _PRT"
+
+[[file]]
+c = "sys/dev/acpi/acpitimer.c"
+rust = "sys/dev/acpi/acpitimer.rs"
+status = "todo"
+deps = ["sys/dev/acpi/acpi.c"]
+notes = "M13 next: the ACPI PM timer (recalibrates the TSC)"
+
+[[file]]
+c = "sys/dev/acpi/acpihpet.c"
+rust = "sys/dev/acpi/acpihpet.rs"
+status = "todo"
+deps = ["sys/dev/acpi/acpi.c"]
+notes = "M13 next: the HPET timecounter"
+
+[[file]]
+c = "sys/dev/acpi/acpicpu_x86.c"
+rust = "sys/dev/acpi/acpicpu_x86.rs"
+status = "todo"
+deps = ["sys/dev/acpi/acpi.c"]
+notes = "M13 next: acpicpu(4) on x86 (C-states, _PSS)"
+
+[[file]]
+c = "sys/arch/amd64/pci/acpipci.c"
+rust = "sys/arch/amd64/pci/acpipci.rs"
+status = "todo"
+deps = ["sys/dev/acpi/acpi.c"]
+notes = "M13 next: the PCI host bridges the namespace describes, on amd64"
+
+[[file]]
+c = "sys/dev/acpi/acpidebug.c"
+rust = "sys/dev/acpi/acpidebug.rs"
+status = "todo"
+deps = ["sys/dev/acpi/dsdt.c"]
+notes = "ddb's machine acpi commands; brings dsdt.c's aml_disasm/aml_disprintf (#ifdef DDB) with it"

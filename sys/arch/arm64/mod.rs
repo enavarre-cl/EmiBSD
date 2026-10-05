@@ -749,6 +749,12 @@ impl PciMachdep for Machine {
         (pc.pc_bus_maxdevs)(pc.pc_conf_v, busno)
     }
 
+    fn pci_lookup_segment(_segment: i32, _bus: i32) -> Option<Self::PciChipsetTag> {
+        let _ =
+            crate::unported!("pci_lookup_segment (arm64/dev/acpipci.c, with arm64 ACPI in M14)");
+        None
+    }
+
     fn pci_make_tag(pc: Self::PciChipsetTag, bus: i32, device: i32, function: i32) -> Self::Pcitag {
         (pc.pc_make_tag)(pc.pc_conf_v, bus, device, function)
     }

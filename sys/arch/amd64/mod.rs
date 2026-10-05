@@ -745,6 +745,10 @@ impl PciMachdep for Machine {
         pci::pci_machdep::pci_bus_maxdevs(pc, busno)
     }
 
+    fn pci_lookup_segment(segment: i32, bus: i32) -> Option<Self::PciChipsetTag> {
+        Some(pci::pci_machdep::pci_lookup_segment(segment, bus))
+    }
+
     fn pci_make_tag(pc: Self::PciChipsetTag, bus: i32, device: i32, function: i32) -> Self::Pcitag {
         pci::pci_machdep::pci_make_tag(pc, bus, device, function)
     }

@@ -937,6 +937,10 @@ impl PciMachdep for Machine {
         32
     }
 
+    fn pci_lookup_segment(_segment: i32, _bus: i32) -> Option<HostPciChipset> {
+        Some(HostPciChipset)
+    }
+
     fn pci_make_tag(_pc: HostPciChipset, bus: i32, device: i32, function: i32) -> HostPcitag {
         HostPcitag {
             bus,
