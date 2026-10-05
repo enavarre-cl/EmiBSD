@@ -119,6 +119,7 @@ use libkern::{StaticCell, strlcpy, strnlen};
 
 use crate::conf::param::{FSCALE, MAXFILES, MAXPROCESS, MAXTHREAD, NMBCLUST, UTC_OFFSET};
 use crate::conf::vers::{OSRELEASE, OSTYPE, OSVERSION, VERSION};
+use crate::dev::audio::{AUDIO_KBDCONTROL_ENABLE, AUDIO_RECORD_ENABLE};
 use crate::dev::cons::cn_tab;
 use crate::kern::init_main::{NCPUS, NCPUSFOUND};
 use crate::kern::kern_clock::sysctl_clockrate;
@@ -531,7 +532,8 @@ fn kern_sysctl_dirs(
         KERN_POOL => return sysctl_dopool(name, oldp, oldlenp),
         KERN_CPUSTATS => return sysctl_cpustats(name, oldp, oldlenp, newp, newlen),
         // KERN_SYSVIPC_INFO, KERN_SEMINFO, KERN_SHMINFO: SYSV* are not configured.
-        // KERN_AUDIO, KERN_VIDEO: NAUDIO and NVIDEO are 0.
+        KERN_AUDIO => return sysctl_audio(name, oldp, oldlenp, newp, newlen),
+        // KERN_VIDEO: NVIDEO is 0.
         _ => {}
     }
 
@@ -3142,6 +3144,27 @@ pub fn sysctl_cptime2(
     let cp_time = sysctl_ci_cp_time(ci);
 
     sysctl_rdstruct(oldp, oldlenp, newp, cp_time.as_bytes())
+}
+
+/// `sysctl_audio`: `kern.audio.record` and `kern.audio.kbdcontrol` (audio(4)'s
+/// `audio_record_enable` and `audio_kbdcontrol_enable`; the latter with `NWSKBD > 0`, as in
+/// GENERIC).
+pub fn sysctl_audio(
+    name: &[i32],
+    oldp: usize,
+    oldlenp: &mut usize,
+    newp: usize,
+    newlen: usize,
+) -> Result<(), Errno> {
+    let [n] = *name else {
+        return Err(Errno::ENOTDIR);
+    };
+    let intptr = match n {
+        KERN_AUDIO_RECORD => &AUDIO_RECORD_ENABLE,
+        KERN_AUDIO_KBDCONTROL => &AUDIO_KBDCONTROL_ENABLE,
+        _ => return Err(Errno::ENOENT),
+    };
+    sysctl_int(oldp, oldlenp, newp, newlen, intptr)
 }
 
 /// `sysctl_utc_offset`: `kern.utc_offset`, in minutes; a change steps the real-time clock

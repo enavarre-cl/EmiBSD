@@ -8,6 +8,8 @@
 //! ISA bus definitions amd64 still needs, `pci/` the PCI bus, `pv/` the paravirtual devices
 //! (`virtio(4)`).
 
+pub mod audio;
+pub mod audio_if;
 pub mod bio;
 pub mod biovar;
 pub mod clock_subr;
@@ -17,6 +19,7 @@ pub mod efi;
 pub mod fdt;
 pub mod ic;
 pub mod isa;
+pub mod mulaw;
 pub mod ofw;
 pub mod pci;
 pub mod pv;
