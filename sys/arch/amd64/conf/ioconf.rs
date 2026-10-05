@@ -6,7 +6,8 @@
 //!
 //! GENERIC lines present: `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?` (M13), `mainbus0 at root`, `cpu0 at mainbus?` (and GENERIC.MP's
 //! `cpu* at mainbus?` with feature `multiprocessor`), `pci* at mainbus0`,
-//! `virtio* at pci?`, `vio* at virtio?`, `vioblk* at virtio?`, `scsibus* at scsi?`,
+//! `virtio* at pci?`, `vio* at virtio?`, `vioblk* at virtio?`, `auich* at pci?`,
+//! `audio* at auich?`, `scsibus* at scsi?`,
 //! `sd* at scsibus?`, `softraid0 at root` and `scsibus* at softraid?` (conf/GENERIC),
 //! `xhci* at pci?`, `usb* at xhci?`, `uhub* at usb?`, `uhub* at uhub?` (M12),
 //! `isa0 at mainbus0`,
@@ -27,11 +28,13 @@
 
 use crate::arch::amd64::amd64::cpu::{CPU_CA, CPU_CD};
 use crate::arch::amd64::amd64::mainbus::{MAINBUS_CA, MAINBUS_CD};
+use crate::dev::audio::{AUDIO_CA, AUDIO_CD};
 use crate::dev::bio::bioattach;
 use crate::dev::ic::com::COM_CD;
 use crate::dev::ic::nvme::NVME_CD;
 use crate::dev::isa::com_isa::COM_ISA_CA;
 use crate::dev::isa::isa::{ISA_CA, ISA_CD};
+use crate::dev::pci::auich::{AUICH_CA, AUICH_CD};
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
@@ -81,8 +84,8 @@ const PV_VIRTIO: &[i16] = &[3];
 
 /// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`) and
 /// `softraid0` (`cfdata[13]`).
-/// M13: also `nvme*` (`cfdata[18]`), `vioscsi*` (`cfdata[19]`).
-const PV_VIOBLK: &[i16] = &[5, 13, 18, 19];
+/// M13: also `nvme*` (`cfdata[20]`), `vioscsi*` (`cfdata[21]`).
+const PV_VIOBLK: &[i16] = &[5, 13, 20, 21];
 
 /// `pv[]` for children of `scsibus*` (`cfdata[11]`).
 const PV_SCSIBUS: &[i16] = &[11];
@@ -119,11 +122,14 @@ const PV_UHUB: &[i16] = &[16, 17];
 /// uhub {[port = -1], ...}`).
 const LOC_UHUB_UNK: &[i64] = &[-1, -1, -1, -1, -1, -1];
 
-/// `cfdata[]`: 21 entries, 22 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `pv[]` for children of `auich*` (`cfdata[18]`).
+const PV_AUICH: &[i16] = &[18];
+
+/// `cfdata[]`: 23 entries, 24 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    22
+    24
 } else {
-    21
+    23
 };
 
 /// `cfdata[]`.
@@ -314,7 +320,21 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 18: nvme* at pci?
+    // 18: auich* at pci?
+    Cfdata::new(
+        &AUICH_CA,
+        &AUICH_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        0,
+        0,
+    ),
+    // 19: audio* at auich?
+    Cfdata::new(&AUDIO_CA, &AUDIO_CD, 0, FSTATE_STAR, &[], 0, PV_AUICH, 0, 0),
+    // 20: nvme* at pci?
     Cfdata::new(
         &NVME_PCI_CA,
         &NVME_CD,
@@ -326,7 +346,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 19: vioscsi* at virtio?
+    // 21: vioscsi* at virtio?
     Cfdata::new(
         &VIOSCSI_CA,
         &VIOSCSI_CD,
@@ -338,7 +358,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 20: cd* at scsibus?
+    // 22: cd* at scsibus?
     Cfdata::new(
         &CD_CA,
         &CD_CD,
@@ -350,7 +370,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 21: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 23: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

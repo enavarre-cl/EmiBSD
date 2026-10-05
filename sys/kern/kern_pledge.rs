@@ -36,7 +36,7 @@
 //!   path) for the C's 0/-1.
 //! - `KTRACE` is not configured: `parsepledges` and `pledge_fail` record nothing.
 //! - Promise classes for devices this kernel does not configure are compiled out as the C's
-//!   `#if` does with a zero count: `NAUDIO`, `NVIDEO`, `NDRM` (`pledge_ioctl_drm`), `NVMM`
+//!   `#if` does with a zero count: `NVIDEO`, `NDRM` (`pledge_ioctl_drm`), `NVMM`
 //!   and `NPSP` (`pledge_ioctl_psp`).
 //! - `net/frame.h` (`AF_FRAME`) is not ported: no such protocol exists and the "mcast"
 //!   `FRAME_*_MEMBERSHIP` arm of `pledge_sockopt` is left out.
@@ -55,6 +55,7 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::Ordering;
 
+use crate::dev::audio::audioopen;
 use crate::dev::biovar::{BIOCDISK, BIOCINQ, BIOCINSTALLBOOT, BIOCVOL};
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_prot::groupmember;
@@ -91,6 +92,10 @@ use crate::netinet6::in6_var::{
     SIOCGIFINFO_IN6, SIOCGIFNETMASK_IN6, SIOCGNBRINFO_IN6,
 };
 use crate::sys::acct::APLEDGE;
+use crate::sys::audioio::{
+    AUDIO_GETDEV, AUDIO_GETPAR, AUDIO_GETPOS, AUDIO_MIXER_DEVINFO, AUDIO_MIXER_READ,
+    AUDIO_MIXER_WRITE, AUDIO_SETPAR, AUDIO_START, AUDIO_STOP,
+};
 use crate::sys::conf::{D_DISK, DevTypeOpen};
 use crate::sys::dkio::{DIOCGDINFO, DIOCGPDINFO, DIOCMAP, DIOCRLDINFO, DIOCWDINFO};
 use crate::sys::errno::Errno;
@@ -1133,7 +1138,27 @@ pub fn pledge_ioctl(p: &Proc, com: u64, fp: &File) -> Result<(), Errno> {
         }
     }
 
-    // NDRM, NAUDIO: 0 (see the deviations).
+    // NDRM: 0 (see the deviations).
+
+    // NAUDIO > 0
+    if pledge & PLEDGE_AUDIO != 0
+        && matches!(
+            com,
+            AUDIO_GETDEV
+                | AUDIO_GETPOS
+                | AUDIO_GETPAR
+                | AUDIO_SETPAR
+                | AUDIO_START
+                | AUDIO_STOP
+                | AUDIO_MIXER_DEVINFO
+                | AUDIO_MIXER_READ
+                | AUDIO_MIXER_WRITE
+        )
+        && fp.f_type.get() == DTYPE_VNODE
+        && vchr.is_some_and(|vp| cdev_is(vp, audioopen as DevTypeOpen))
+    {
+        return Ok(());
+    }
 
     if pledge & PLEDGE_DISKLABEL != 0 {
         match com {

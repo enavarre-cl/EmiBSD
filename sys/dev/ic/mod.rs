@@ -1,5 +1,6 @@
 //! Bus-independent chip drivers: OpenBSD `sys/dev/ic/`.
 
+pub mod ac97;
 pub mod com;
 pub mod comreg;
 pub mod comvar;

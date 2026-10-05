@@ -49,7 +49,8 @@
 //!
 //! ## Deviations
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
-//!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c` and `xhci_pci.c`). The whole header, and `pcidevs_data.h` for
+//!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c`, `xhci_pci.c`, `auich.c`, `azalia.c` and
+//!   `azalia_codec.c`). The whole header, and `pcidevs_data.h` for
 //!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
 //!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
@@ -62,6 +63,10 @@ pub const PCI_VENDOR_CIRRUS: u32 = 0x1013;
 pub const PCI_VENDOR_AMD: u32 = 0x1022;
 /// `PCI_VENDOR_APPLE`: Apple.
 pub const PCI_VENDOR_APPLE: u32 = 0x106b;
+/// `PCI_VENDOR_SIS`: SiS.
+pub const PCI_VENDOR_SIS: u32 = 0x1039;
+/// `PCI_VENDOR_NVIDIA`: NVIDIA.
+pub const PCI_VENDOR_NVIDIA: u32 = 0x10de;
 /// `PCI_VENDOR_QUMRANET`: Qumranet.
 pub const PCI_VENDOR_QUMRANET: u32 = 0x1af4;
 /// `PCI_VENDOR_FRESCO`: Fresco Logic.
@@ -99,6 +104,52 @@ pub const PCI_PRODUCT_INTEL_82371FB_ISA: u32 = 0x122e;
 /// `PCI_PRODUCT_OPENBSD_CONTROL`: VMM Control.
 pub const PCI_PRODUCT_OPENBSD_CONTROL: u32 = 0x0777;
 
+// auich(4)'s controllers.
+/// `PCI_PRODUCT_AMD_PBC768_ACA`: 768 AC97.
+pub const PCI_PRODUCT_AMD_PBC768_ACA: u32 = 0x7445;
+/// `PCI_PRODUCT_AMD_8111_ACA`: 8111 AC97.
+pub const PCI_PRODUCT_AMD_8111_ACA: u32 = 0x746d;
+/// `PCI_PRODUCT_INTEL_82801AA_ACA`: 82801AA AC97.
+pub const PCI_PRODUCT_INTEL_82801AA_ACA: u32 = 0x2415;
+/// `PCI_PRODUCT_INTEL_82801AB_ACA`: 82801AB AC97.
+pub const PCI_PRODUCT_INTEL_82801AB_ACA: u32 = 0x2425;
+/// `PCI_PRODUCT_INTEL_82801BA_ACA`: 82801BA AC97.
+pub const PCI_PRODUCT_INTEL_82801BA_ACA: u32 = 0x2445;
+/// `PCI_PRODUCT_INTEL_82801CA_ACA`: 82801CA/CAM AC97.
+pub const PCI_PRODUCT_INTEL_82801CA_ACA: u32 = 0x2485;
+/// `PCI_PRODUCT_INTEL_82801DB_ACA`: 82801DB AC97.
+pub const PCI_PRODUCT_INTEL_82801DB_ACA: u32 = 0x24c5;
+/// `PCI_PRODUCT_INTEL_82801EB_ACA`: 82801EB/ER AC97.
+pub const PCI_PRODUCT_INTEL_82801EB_ACA: u32 = 0x24d5;
+/// `PCI_PRODUCT_INTEL_6300ESB_ACA`: 6300ESB AC97.
+pub const PCI_PRODUCT_INTEL_6300ESB_ACA: u32 = 0x25a6;
+/// `PCI_PRODUCT_INTEL_82801FB_ACA`: 82801FB AC97.
+pub const PCI_PRODUCT_INTEL_82801FB_ACA: u32 = 0x266e;
+/// `PCI_PRODUCT_INTEL_6321ESB_ACA`: 6321ESB AC97.
+pub const PCI_PRODUCT_INTEL_6321ESB_ACA: u32 = 0x2698;
+/// `PCI_PRODUCT_INTEL_82801GB_ACA`: 82801GB AC97.
+pub const PCI_PRODUCT_INTEL_82801GB_ACA: u32 = 0x27de;
+/// `PCI_PRODUCT_INTEL_82440MX_ACA`: 82440MX AC97.
+pub const PCI_PRODUCT_INTEL_82440MX_ACA: u32 = 0x7195;
+/// `PCI_PRODUCT_NVIDIA_MCP04_AC97`: MCP04 AC97.
+pub const PCI_PRODUCT_NVIDIA_MCP04_AC97: u32 = 0x003a;
+/// `PCI_PRODUCT_NVIDIA_NFORCE4_AC`: nForce4 AC97.
+pub const PCI_PRODUCT_NVIDIA_NFORCE4_AC: u32 = 0x0059;
+/// `PCI_PRODUCT_NVIDIA_NFORCE2_ACA`: nForce2 AC97.
+pub const PCI_PRODUCT_NVIDIA_NFORCE2_ACA: u32 = 0x006a;
+/// `PCI_PRODUCT_NVIDIA_NFORCE2_400_ACA`: nForce2 400 AC97.
+pub const PCI_PRODUCT_NVIDIA_NFORCE2_400_ACA: u32 = 0x008a;
+/// `PCI_PRODUCT_NVIDIA_NFORCE3_ACA`: nForce3 AC97.
+pub const PCI_PRODUCT_NVIDIA_NFORCE3_ACA: u32 = 0x00da;
+/// `PCI_PRODUCT_NVIDIA_NFORCE3_250_ACA`: nForce3 250 AC97.
+pub const PCI_PRODUCT_NVIDIA_NFORCE3_250_ACA: u32 = 0x00ea;
+/// `PCI_PRODUCT_NVIDIA_NFORCE_ACA`: nForce AC97.
+pub const PCI_PRODUCT_NVIDIA_NFORCE_ACA: u32 = 0x01b1;
+/// `PCI_PRODUCT_NVIDIA_MCP51_ACA`: MCP51 AC97.
+pub const PCI_PRODUCT_NVIDIA_MCP51_ACA: u32 = 0x026b;
+/// `PCI_PRODUCT_SIS_7012_ACA`: 7012 AC97.
+pub const PCI_PRODUCT_SIS_7012_ACA: u32 = 0x7012;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,6 +170,84 @@ mod tests {
             ("PCI_VENDOR_AMD", PCI_VENDOR_AMD),
             ("PCI_VENDOR_INTEL", PCI_VENDOR_INTEL),
             ("PCI_VENDOR_INVALID", PCI_VENDOR_INVALID),
+            ("PCI_VENDOR_SIS", PCI_VENDOR_SIS),
+            ("PCI_VENDOR_NVIDIA", PCI_VENDOR_NVIDIA),
+            ("PCI_PRODUCT_AMD_PBC768_ACA", PCI_PRODUCT_AMD_PBC768_ACA),
+            ("PCI_PRODUCT_AMD_8111_ACA", PCI_PRODUCT_AMD_8111_ACA),
+            (
+                "PCI_PRODUCT_INTEL_82801AA_ACA",
+                PCI_PRODUCT_INTEL_82801AA_ACA,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801AB_ACA",
+                PCI_PRODUCT_INTEL_82801AB_ACA,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801BA_ACA",
+                PCI_PRODUCT_INTEL_82801BA_ACA,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801CA_ACA",
+                PCI_PRODUCT_INTEL_82801CA_ACA,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801DB_ACA",
+                PCI_PRODUCT_INTEL_82801DB_ACA,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801EB_ACA",
+                PCI_PRODUCT_INTEL_82801EB_ACA,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_6300ESB_ACA",
+                PCI_PRODUCT_INTEL_6300ESB_ACA,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801FB_ACA",
+                PCI_PRODUCT_INTEL_82801FB_ACA,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_6321ESB_ACA",
+                PCI_PRODUCT_INTEL_6321ESB_ACA,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801GB_ACA",
+                PCI_PRODUCT_INTEL_82801GB_ACA,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82440MX_ACA",
+                PCI_PRODUCT_INTEL_82440MX_ACA,
+            ),
+            (
+                "PCI_PRODUCT_NVIDIA_MCP04_AC97",
+                PCI_PRODUCT_NVIDIA_MCP04_AC97,
+            ),
+            (
+                "PCI_PRODUCT_NVIDIA_NFORCE4_AC",
+                PCI_PRODUCT_NVIDIA_NFORCE4_AC,
+            ),
+            (
+                "PCI_PRODUCT_NVIDIA_NFORCE2_ACA",
+                PCI_PRODUCT_NVIDIA_NFORCE2_ACA,
+            ),
+            (
+                "PCI_PRODUCT_NVIDIA_NFORCE2_400_ACA",
+                PCI_PRODUCT_NVIDIA_NFORCE2_400_ACA,
+            ),
+            (
+                "PCI_PRODUCT_NVIDIA_NFORCE3_ACA",
+                PCI_PRODUCT_NVIDIA_NFORCE3_ACA,
+            ),
+            (
+                "PCI_PRODUCT_NVIDIA_NFORCE3_250_ACA",
+                PCI_PRODUCT_NVIDIA_NFORCE3_250_ACA,
+            ),
+            (
+                "PCI_PRODUCT_NVIDIA_NFORCE_ACA",
+                PCI_PRODUCT_NVIDIA_NFORCE_ACA,
+            ),
+            ("PCI_PRODUCT_NVIDIA_MCP51_ACA", PCI_PRODUCT_NVIDIA_MCP51_ACA),
+            ("PCI_PRODUCT_SIS_7012_ACA", PCI_PRODUCT_SIS_7012_ACA),
             ("PCI_PRODUCT_AMD_17_1X_XHCI_1", PCI_PRODUCT_AMD_17_1X_XHCI_1),
             ("PCI_PRODUCT_AMD_17_1X_XHCI_2", PCI_PRODUCT_AMD_17_1X_XHCI_2),
             ("PCI_PRODUCT_AMD_17_6X_XHCI", PCI_PRODUCT_AMD_17_6X_XHCI),
