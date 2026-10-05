@@ -1007,6 +1007,82 @@ impl crate::machine::isa_machdep::IsaMachdep for Machine {
 }
 
 /// amd64 has no device tree: ACPI describes the machine (M5).
+impl crate::machine::acpi_machdep::AcpiMachdep for Machine {
+    const ACPI_PRT: bool = true;
+    const ACPI_SECTWO: bool = false;
+
+    fn acpi_map(pa: Paddr, len: usize) -> Result<crate::dev::acpi::acpivar::AcpiMemMap, Errno> {
+        amd64::acpi_machdep::acpi_map(pa, len)
+    }
+
+    fn acpi_unmap(handle: &crate::dev::acpi::acpivar::AcpiMemMap) {
+        amd64::acpi_machdep::acpi_unmap(handle)
+    }
+
+    unsafe fn acpi_bus_space_map(
+        t: BusSpaceTag,
+        addr: BusAddr,
+        size: BusSize,
+        flags: i32,
+    ) -> Result<BusSpaceHandle, Errno> {
+        // SAFETY: forwarded.
+        unsafe { amd64::acpi_machdep::acpi_bus_space_map(t, addr, size, flags) }
+    }
+
+    fn acpi_bus_space_unmap(t: BusSpaceTag, bsh: BusSpaceHandle, size: BusSize) {
+        amd64::acpi_machdep::acpi_bus_space_unmap(t, bsh, size)
+    }
+
+    fn acpi_intr_establish(
+        irq: i32,
+        flags: i32,
+        level: i32,
+        handler: fn(*mut c_void) -> i32,
+        arg: *mut c_void,
+        what: &'static str,
+    ) -> Option<NonNull<c_void>> {
+        amd64::acpi_machdep::acpi_intr_establish(irq, flags, level, handler, arg, what)
+    }
+
+    unsafe fn acpi_intr_disestablish(cookie: NonNull<c_void>) {
+        // SAFETY: forwarded.
+        unsafe { amd64::acpi_machdep::acpi_intr_disestablish(cookie) }
+    }
+
+    fn acpi_attach_machdep(sc: &'static crate::dev::acpi::acpivar::AcpiSoftc) {
+        amd64::acpi_machdep::acpi_attach_machdep(sc)
+    }
+
+    unsafe fn acpi_acquire_glk(lock: *mut u32) -> i32 {
+        // SAFETY: forwarded.
+        unsafe { amd64::acpi_machdep::acpi_acquire_glk(lock) }
+    }
+
+    unsafe fn acpi_release_glk(lock: *mut u32) -> i32 {
+        // SAFETY: forwarded.
+        unsafe { amd64::acpi_machdep::acpi_release_glk(lock) }
+    }
+
+    fn acpi_iommu_device_map(
+        node: &crate::dev::acpi::amltypes::AmlNodeRef,
+        dmat: Option<crate::machine::bus::BusDmaTag>,
+    ) -> Option<crate::machine::bus::BusDmaTag> {
+        amd64::acpi_machdep::acpi_iommu_device_map(node, dmat)
+    }
+
+    fn pwr_action() -> i32 {
+        amd64::machdep::PWR_ACTION.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn ci_acpi_proc_id(ci: &CpuInfo) -> u32 {
+        ci.ci_acpi_proc_id.get()
+    }
+
+    fn cpu_suspended() -> &'static core::sync::atomic::AtomicI32 {
+        &amd64::cpu::CPU_SUSPENDED
+    }
+}
+
 impl crate::machine::fdt::Fdt for Machine {
     type FdtAttachArgs<'a> = crate::machine::fdt::NoFdtAttachArgs<'a>;
 

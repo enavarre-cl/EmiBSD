@@ -11,14 +11,16 @@
 //! `sd* at scsibus?`, `softraid0 at root` and `scsibus* at softraid?` (conf/GENERIC),
 //! `xhci* at pci?`, `usb* at xhci?`, `uhub* at usb?`, `uhub* at uhub?`, `umass* at uhub?`
 //! and `scsibus* at scsi?` below it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12),
-//! `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?`, `ahci* at pci?`, `siop* at pci?` (M13),
+//! `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?`, `ahci* at pci?`, `siop* at pci?`,
+//! `bios0 at mainbus0`, `acpi0 at bios0` (M13),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
 //! `pseudo-device pty 16`, `pseudo-device vnd 4`, `pseudo-device bpfilter`, `pseudo-device
 //! loop`, `pseudo-device wg`, `pseudo-device pfsync`, `pseudo-device pflow`.
-//! GENERIC lines left out until their drivers exist: `bios0`, `ioapic*`, `vmm0`, `pvbus0`,
-//! `ipmi0` and `efifb0` at mainbus, and everything below them; `isa0` at `pcib?`,
+//! GENERIC lines left out until their drivers exist: `ioapic*`, `vmm0`, `pvbus0`, `ipmi0`
+//! and `efifb0` at mainbus, and everything below them; `efi0` and `mpbios0` at bios0, and
+//! every device at `acpi?` (`acpitimer*`, `acpimadt0`, `acpiprt*`, `acpihpet*`, ...); `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`, `vga0`,
 //! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
 //! (`pchb*`, `ppb*`, `pcib*`, the network drivers and the storage drivers but nvme, ahci and siop, ...), every
@@ -31,8 +33,11 @@
 //! layout: attachment, driver, unit, state, locators, flags, parents (indices into
 //! `CFDATA`), the start of its locator names and the first unit a starred entry may take.
 
+use crate::arch::amd64::amd64::acpi_machdep::ACPI_CA;
+use crate::arch::amd64::amd64::bios::{BIOS_CA, BIOS_CD};
 use crate::arch::amd64::amd64::cpu::{CPU_CA, CPU_CD};
 use crate::arch::amd64::amd64::mainbus::{MAINBUS_CA, MAINBUS_CD};
+use crate::dev::acpi::acpi::ACPI_CD;
 use crate::dev::audio::{AUDIO_CA, AUDIO_CD};
 use crate::dev::bio::bioattach;
 use crate::dev::ic::ahci::AHCI_CD;
@@ -148,11 +153,14 @@ const PV_AUICH: &[i16] = &[18];
 /// `pv[]` for children of the `audio` attribute, carried by `azalia*` (`cfdata[20]`).
 const PV_AZALIA: &[i16] = &[20];
 
-/// `cfdata[]`: 30 entries, 31 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `pv[]` for children of `bios0` (`cfdata[30]`).
+const PV_BIOS: &[i16] = &[30];
+
+/// `cfdata[]`: 32 entries, 33 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    31
+    33
 } else {
-    30
+    32
 };
 
 /// `cfdata[]`.
@@ -478,7 +486,31 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 30: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 30: bios0 at mainbus0
+    Cfdata::new(
+        &BIOS_CA,
+        &BIOS_CD,
+        0,
+        FSTATE_NOTFOUND,
+        &[],
+        0,
+        PV_MAINBUS,
+        0,
+        0,
+    ),
+    // 31: acpi0 at bios0
+    Cfdata::new(
+        &ACPI_CA,
+        &ACPI_CD,
+        0,
+        FSTATE_NOTFOUND,
+        &[],
+        0,
+        PV_BIOS,
+        0,
+        0,
+    ),
+    // 32: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

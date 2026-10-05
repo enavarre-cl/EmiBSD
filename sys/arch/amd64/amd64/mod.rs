@@ -6,7 +6,9 @@
 //! are partial ports; `qemu` is the emulator exit under feature `qemu`, a project helper
 //! (`ports.toml`, `[[extra]]`). `bus_dma` (M7b) is a whole port.
 
+pub mod acpi_machdep;
 pub mod autoconf;
+pub mod bios;
 pub mod bus_dma;
 pub mod bus_space;
 pub mod conf;

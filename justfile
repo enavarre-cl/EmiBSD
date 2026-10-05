@@ -83,7 +83,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-siop smoke-efiboot " + \
+    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-efiboot " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb"
 
@@ -135,6 +135,9 @@ smoke-boot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featu
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
         --expect "selftest: buffer cache ok" --expect "selftest: pager map ok" \
         --expect "selftest: bus_dma ok" --expect "mainbus0 at root" \
+        --expect "bios0 at mainbus0" --expect "acpi0 at bios0: ACPI 3.0" \
+        --expect "acpi0: sleep states S3 S4 S5" --expect "acpi0: tables DSDT FACP APIC HPET MCFG" \
+        --expect "\"PNP0A08\" at acpi0 not configured" \
         --expect "cpu0 at mainbus0: apid 0 (boot processor)" --expect "pci0 at mainbus0 bus 0" \
         --expect "at pci0 dev 0 function 0 not configured" \
         --expect "virtio0 at pci0 dev 2 function 0 vendor 0x1af4 product 0x1000 rev 0x00" \
@@ -1386,6 +1389,32 @@ smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") efiboot-amd64
         --expect "Region 0: type 1 at 0x0 for " --expect "Total free memory: " \
         --expect "BlkSiz" \
         --expect "booting hd0a:/bsd: " --expect "]=0x" --expect "entry point at 0x"
+
+# M13: power off and reset through ACPI (dev/acpi/acpi.c, arch/amd64/amd64/acpi_machdep.c).
+# acpi0 at bios0 takes q35 over from the firmware. The first boot logs in and runs `halt -p`
+# (reboot(8)'s halt link: RB_HALT | RB_POWERDOWN), which goes down through acpi_powerdown:
+# _PTS(5), then \_S5_'s SLP_TYP with SLP_EN in PM1a_CNT, and QEMU powers the machine off and
+# exits with status 0 (`--status 0`). A reset also ends QEMU with 0 under -no-reboot, so the
+# run rejects `rebooting...`, which boot(9) prints before every reset, and the halt message
+# and the S5 panic. The second boot runs QEMU without -no-reboot (`--reboot`, hwopts.rs):
+# `reboot` resets through cpu_reset's cpuresetfn, acpi_reset (the FADT's reset register,
+# 0xcf9 on q35), the firmware boots the kernel again, and the second session runs a command.
+# amd64 only: arm64 powers off through PSCI, a later step. Part of `smoke`.
+smoke-power: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-power: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --status 0 \
+        {{disk_login}} --send-after '# ' --send 'halt -p\n' \
+        --expect "acpi0 at bios0: ACPI 3.0" --expect "acpi0: sleep states S3 S4 S5" \
+        --expect "rc: multi-user" --expect "halt -p" \
+        --reject "rebooting..." --reject "The operating system has halted" \
+        --reject "acpi S5 transition did not happen"
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --reboot --until-seen \
+        {{disk_login}} --send-after '# ' --send 'reboot\n' \
+        --send-after 'login:' --send 'root\n' --send-after 'Password:' --send 'emibsd\n' \
+        --send-after '# ' --send 'echo m13-power-$((40+2))\n' \
+        --expect "acpi0 at bios0: ACPI 3.0" --expect "rebooting..." --expect "m13-power-42" \
+        --reject "The operating system has halted"
 
 # M10d: FUSE (sys/miscfs/fuse). Our own read-only file system, tools/fusehello (linked to
 # OpenBSD's libfuse, which opens /dev/fuse0 and mounts fusefs), is mounted on /fuse; mount(8)

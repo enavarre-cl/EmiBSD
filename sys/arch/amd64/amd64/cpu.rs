@@ -118,7 +118,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
 use libkern::StaticCell;
 
@@ -256,6 +256,11 @@ pub static CPU_INFO: [AtomicPtr<CpuInfo>; MAXCPUS as usize] =
 /// `init_x86_64` from `BootInfo::mp`, read by `mainbus_attach` and `mp_cpu_start`.
 #[cfg(feature = "multiprocessor")]
 pub static BOOT_MP: StaticCell<Option<BootMp>> = StaticCell::new(None);
+
+/// `cpu_suspended`: set while the boot processor idles in the S0 suspend loop
+/// (`cpu_suspend_primary`, `SUSPEND`, not ported: nothing sets it yet); an ACPI wake event
+/// clears it (`acpi.c`, through `machine::cpu_suspended`).
+pub static CPU_SUSPENDED: AtomicI32 = AtomicI32::new(0);
 
 /// `cpu_info_list`: the CPUs, the primary first.
 pub fn cpu_info_list() -> &'static CpuInfo {

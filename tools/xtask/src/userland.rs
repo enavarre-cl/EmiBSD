@@ -367,6 +367,10 @@ const PROGRAMS: &[&str] = &[
     "usr.bin/stat",
     "usr.bin/touch",
     "usr.bin/wc",
+    // M13: reboot(8) and its halt link, over libutil (logwtmp): `halt -p` powers the machine
+    // off through ACPI S5 and `reboot` resets it through the FADT's reset register
+    // (`just smoke-power`).
+    "sbin/reboot",
 ];
 
 /// EmiBSD's own test programs, built after `PROGRAMS` the same way (an OpenBSD-style Makefile,

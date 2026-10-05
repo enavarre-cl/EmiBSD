@@ -41,14 +41,15 @@
 //! nothing has attached it yet, the paravirtual bus, PCI, ISA, `vmm` and the EFI framebuffer.
 //!
 //! ## Deviations
-//! - Only the `cpu`, `pci` and `isa` children exist (`sys/arch/amd64/conf/ioconf.rs`); every
-//!   other child GENERIC configures is reported with `unported!` where the C would probe or
-//!   attach it: `bios0` (which brings `acpi0` and `mpbios0`), `ipmi_probe`, `pvbus_probe`,
+//! - Only the `cpu`, `bios`, `pci` and `isa` children exist (`sys/arch/amd64/conf/ioconf.rs`);
+//!   every other child GENERIC configures is reported with `unported!` where the C would
+//!   probe or attach it: `ipmi_probe`, `pvbus_probe`,
 //!   `vmm_enabled`, `efifb`; so are `replacemds`, `setperf_setup` and `codepatch_disable`.
 //!   No PCI-ISA bridge driver (`pcib`) exists, so `isa0` attaches here, as the C does when
 //!   none has.
-//!   Without ACPI or MP tables the boot CPU attaches here, as `CPU_ROLE_SP`, and `pci0`
-//!   attaches here for bus 0 (`acpi_haspci` is false), as the C does on such a machine.
+//!   Without a MADT (`acpimadt`) or MP tables the boot CPU attaches here, as `CPU_ROLE_SP`,
+//!   and `pci0` attaches here for bus 0: `acpi_haspci` stays false until `acpipci.c` is
+//!   ported, as the C does on a machine whose ACPI names no PCI host bridge it drives.
 //! - `MULTIPROCESSOR` (M11a): with no ACPI MADT (M13) and no `mpbios`, the processors the
 //!   bootloader found (`BootInfo::mp`, kept as `BOOT_MP`) are the enumeration: mainbus
 //!   attaches one `cpu` per processor, the boot processor first as `CPU_ROLE_BP`, the others
@@ -63,9 +64,11 @@
 //!   (`NMPBIOS`/`NACPI`) come with `mpbios`/`acpi`.
 
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 use core::ptr;
 use core::sync::atomic::{AtomicI32, Ordering};
 
+use crate::arch::amd64::amd64::bios::BiosAttachArgs;
 use crate::arch::amd64::amd64::bus_space::{X86_BUS_SPACE_IO, X86_BUS_SPACE_MEM};
 use crate::arch::amd64::include::cpu::{CPUF_PRESENT, cpu_info_primary};
 use crate::arch::amd64::include::cpuvar::{CPU_ROLE_SP, CpuAttachArgs};
@@ -90,8 +93,9 @@ pub union MainbusAttachArgs {
     pub mba_pba: PcibusAttachArgs,
     /// `mba_iba`.
     pub mba_iba: IsabusAttachArgs,
-    // aaa_caa (ioapic), mba_iaa (ipmi), mba_bios, mba_pvba, mba_eaa (efifb): with their
-    // buses.
+    /// `mba_bios` (`NBIOS > 0`).
+    pub mba_bios: ManuallyDrop<BiosAttachArgs>,
+    // aaa_caa (ioapic), mba_iaa (ipmi), mba_pvba, mba_eaa (efifb): with their buses.
 }
 
 /// `mainbus_ca`.
@@ -123,7 +127,18 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
     let _ = unported!("efifb_cnremap (efifb0 at mainbus?)");
 
     // NBIOS > 0
-    let _ = unported!("bios0 at mainbus? (bios.c: acpi0, mpbios0)");
+    {
+        let mut mba = MainbusAttachArgs {
+            mba_bios: ManuallyDrop::new(BiosAttachArgs {
+                ba_name: b"bios",
+                ba_func: 0,
+                ba_iot: X86_BUS_SPACE_IO,
+                ba_memt: X86_BUS_SPACE_MEM,
+                ba_acpipbase: 0,
+            }),
+        };
+        let _ = config_found(self_, ptr::from_mut(&mut mba).cast(), Some(mainbus_print));
+    }
 
     // NIPMI > 0
     let _ = unported!("ipmi_probe (ipmi0 at mainbus?)");
@@ -159,9 +174,10 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
     // NPVBUS > 0: probe first to hide the "not configured" message.
     let _ = unported!("pvbus_probe (pvbus0 at mainbus0)");
 
-    // NPCI > 0. NACPI > 0: acpipci_attach_busses(self) when ACPI found PCI (acpi_haspci);
-    // without ACPI, pci0 here.
-    {
+    // NPCI > 0, NACPI > 0
+    if crate::dev::acpi::acpi::ACPI_HASPCI.load(Ordering::Relaxed) != 0 {
+        let _ = unported!("acpipci_attach_busses (acpipci.c)");
+    } else {
         pci_init_extents();
 
         let mut mba = MainbusAttachArgs {

@@ -1002,6 +1002,92 @@ impl crate::machine::isa_machdep::IsaMachdep for Machine {
     }
 }
 
+// arm64's acpi_machdep.c (arch/arm64/dev) comes with M14's EFI ACPI boot (efiacpi.c): until
+// then acpi0 never attaches on arm64, and the methods answer as a machine without ACPI,
+// reporting the gap where a caller could reach it.
+impl crate::machine::acpi_machdep::AcpiMachdep for Machine {
+    const ACPI_PRT: bool = false;
+    const ACPI_SECTWO: bool = true;
+
+    fn acpi_map(_pa: Paddr, _len: usize) -> Result<crate::dev::acpi::acpivar::AcpiMemMap, Errno> {
+        Err(crate::unported!("acpi_map (arm64 acpi_machdep.c, M14)"))
+    }
+
+    fn acpi_unmap(_handle: &crate::dev::acpi::acpivar::AcpiMemMap) {
+        let _ = crate::unported!("acpi_unmap (arm64 acpi_machdep.c, M14)");
+    }
+
+    unsafe fn acpi_bus_space_map(
+        _t: BusSpaceTag,
+        _addr: BusAddr,
+        _size: BusSize,
+        _flags: i32,
+    ) -> Result<BusSpaceHandle, Errno> {
+        Err(crate::unported!(
+            "acpi_bus_space_map (arm64 acpi_machdep.c, M14)"
+        ))
+    }
+
+    fn acpi_bus_space_unmap(_t: BusSpaceTag, _bsh: BusSpaceHandle, _size: BusSize) {
+        let _ = crate::unported!("acpi_bus_space_unmap (arm64 acpi_machdep.c, M14)");
+    }
+
+    fn acpi_intr_establish(
+        _irq: i32,
+        _flags: i32,
+        _level: i32,
+        _handler: fn(*mut c_void) -> i32,
+        _arg: *mut c_void,
+        _what: &'static str,
+    ) -> Option<core::ptr::NonNull<c_void>> {
+        let _ = crate::unported!("acpi_intr_establish (arm64 acpi_machdep.c, M14)");
+        None
+    }
+
+    unsafe fn acpi_intr_disestablish(_cookie: core::ptr::NonNull<c_void>) {
+        let _ = crate::unported!("acpi_intr_disestablish (arm64 acpi_machdep.c, M14)");
+    }
+
+    fn acpi_attach_machdep(_sc: &'static crate::dev::acpi::acpivar::AcpiSoftc) {
+        let _ = crate::unported!("acpi_attach_machdep (arm64 acpi_machdep.c, M14)");
+    }
+
+    unsafe fn acpi_acquire_glk(lock: *mut u32) -> i32 {
+        // SAFETY: the caller's guarantee, forwarded (arm64's acpi_machdep.c has the same
+        // compare and swap).
+        unsafe { crate::machine::acpi_machdep::acpi_glk_cas(lock, true) }
+    }
+
+    unsafe fn acpi_release_glk(lock: *mut u32) -> i32 {
+        // SAFETY: as above.
+        unsafe { crate::machine::acpi_machdep::acpi_glk_cas(lock, false) }
+    }
+
+    fn acpi_iommu_device_map(
+        _node: &crate::dev::acpi::amltypes::AmlNodeRef,
+        dmat: Option<crate::machine::bus::BusDmaTag>,
+    ) -> Option<crate::machine::bus::BusDmaTag> {
+        // acpiiort_device_map (acpiiort.c, M14).
+        dmat
+    }
+
+    fn pwr_action() -> i32 {
+        // arm64's acpi_machdep.c: int pwr_action = 1.
+        1
+    }
+
+    fn ci_acpi_proc_id(ci: &CpuInfo) -> u32 {
+        ci.ci_acpi_proc_id.get()
+    }
+
+    fn cpu_suspended() -> &'static core::sync::atomic::AtomicI32 {
+        // arm64 cpu.c's cpu_suspended, here until its suspend code (cpu_suspend_primary) is
+        // ported; nothing sets it yet.
+        static CPU_SUSPENDED: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+        &CPU_SUSPENDED
+    }
+}
+
 impl crate::machine::fdt::Fdt for Machine {
     type FdtAttachArgs<'a> = include::fdt::FdtAttachArgs<'a>;
 

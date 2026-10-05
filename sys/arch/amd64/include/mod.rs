@@ -3,6 +3,7 @@
 //! Constants, `#[repr(C)]` hardware structs and inline accessors only; never state.
 
 pub mod _types;
+pub mod biosvar;
 pub mod bus;
 pub mod cpu;
 pub mod cpu_full;

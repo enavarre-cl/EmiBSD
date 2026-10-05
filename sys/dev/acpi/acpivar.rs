@@ -32,9 +32,10 @@
 //! - `ACPI_DEBUG` is not configured: `dprintf`/`dnprintf` are compiled out, as in C.
 //! - `extern struct acpi_softc *acpi_softc` (defined by `acpi.c`) is [`ACPI_SOFTC`] here, an
 //!   `AtomicPtr` set once when acpi0 attaches, read with [`acpi_softc`].
-//! - `struct acpi_softc` is not yet a `Softc` (`unsafe impl Softc`): the port of `acpi.c`
-//!   decides how acpi0's softc is allocated. Members whose types are not ported are left
-//!   out and wait for their files: `sc_note` (the `klist` of `acpi.c`'s kqueue filter),
+//! - `struct acpi_softc` is a [`Softc`]: autoconfiguration allocates acpi0's zero-filled, as
+//!   the C's `config_attach` does (`acpi_ca`'s `ca_devsize`), and it is never freed.
+//!   `acpi_reg_map`'s `name` is an `Option` so that all-zero is a valid softc. Members whose
+//!   types are not ported are left out and wait for their files: `sc_note` (the `klist` of `acpi.c`'s kqueue filter),
 //!   `sc_pwrresdevs` (`acpipwrres.c`; `NACPIPWRRES` is 0 until then, so `struct acpi_pwrres`
 //!   and `acpi_pwrreshead_t` are also left out), `sc_ac`, `sc_bat`, `sc_sbs` and their list
 //!   types (`acpiac.c`, `acpibat.c`, `acpisbs.c`). `sc_ec` is a `*mut c_void` until
@@ -56,7 +57,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 use super::acpireg::{AcpiFacs, AcpiFadt};
 use super::amltypes::{AmlNodeRef, AmlValueRef};
 use crate::machine::bus::{BusDmaTag, BusSpaceHandle, BusSpaceTag};
-use crate::sys::device::Device;
+use crate::sys::device::{Device, Softc};
 use crate::sys::param::NBPG;
 use crate::sys::queue::{SimpleqEntry, SimpleqHead};
 use crate::sys::rwlock::Rwlock;
@@ -263,8 +264,8 @@ pub struct AcpiRegMap {
     pub size: Cell<i32>,
     /// `access`.
     pub access: Cell<i32>,
-    /// `name`.
-    pub name: Cell<&'static str>,
+    /// `name`: `None` (the C's NULL) until `acpi_map_pmregs` maps the register.
+    pub name: Cell<Option<&'static str>>,
 }
 
 /// `struct acpi_thread`.
@@ -415,6 +416,13 @@ pub struct AcpiSoftc {
     /// `sc_pmc_cookie`.
     pub sc_pmc_cookie: Cell<*mut c_void>,
 }
+
+// SAFETY: `#[repr(C)]` with the `Device` first; every member is valid all-zero: `Cell`s of
+// integers, raw pointers and `Option`s (of bus tags and handles, nodes, functions, names),
+// `RefCell<Option<_>>`s (an unborrowed `None`), the queue heads (`SIMPLEQ_INIT` runs in
+// `acpi_attach_common`), the register maps, the rwlock (named by `rw_init`) and the timeout
+// (set by `timeout_set`), as `struct acpi_softc` is in C after `M_ZERO`.
+unsafe impl Softc for AcpiSoftc {}
 
 /// `WAKEGPE_NONE`.
 pub const WAKEGPE_NONE: i32 = -1;

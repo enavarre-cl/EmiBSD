@@ -88,11 +88,12 @@
 //!   through `bus_space_map`, which reports memory-space maps as unported (M2's
 //!   `bus_space.rs`), and panics as the C does when the map fails; no caller sets a window
 //!   until ACPI's MCFG table is read. `pci_msix_table_map` fails the same way.
-//! - `pci_init_extents` (extents and `bios_memmap`), `acpiprt_route_interrupt`,
-//!   `acpidmar_pci_hook`, `acpi_pci_match`, `acpi_pci_min_powerstate` and
-//!   `acpi_pci_set_powerstate` belong to unported files (`subr_extent.c`, `bios.c`,
-//!   `dev/acpi/*`); `pci_init_extents` is reported, the hooks take their `NACPI == 0`
-//!   bodies.
+//! - `pci_init_extents` (extents and `bios_memmap`), `acpiprt_route_interrupt` and
+//!   `acpidmar_pci_hook` belong to unported files (`subr_extent.c`, `acpiprt.c`,
+//!   `acpidmar.c`); `pci_init_extents` is reported, the two hooks are comments. Since M13
+//!   `pci_dev_postattach`, `pci_min_powerstate` and `pci_set_powerstate_md` take their
+//!   `NACPI > 0` bodies (acpi(4)'s `acpi_pci_match`, `acpi_pci_min_powerstate`,
+//!   `acpi_pci_set_powerstate`).
 //! - `pci_intr_string` returns its text by value (the C's static buffer).
 //! - `pci_conf_read`/`pci_conf_write` check the alignment of `reg` with `kassert!`, as the
 //!   C's `KASSERT`.
@@ -128,7 +129,7 @@ use crate::arch::amd64::include::pci_machdep::{
 };
 use crate::arch::amd64::include::pic::{PIC_MSI, Pic};
 use crate::arch::amd64::include::pio::{inl, outl};
-use crate::dev::pci::pci::{pci_get_capability, pci_get_powerstate};
+use crate::dev::pci::pci::pci_get_capability;
 use crate::dev::pci::pci_map::{pci_mapreg_info, pci_mapreg_type};
 use crate::dev::pci::pcireg::*;
 use crate::dev::pci::pcivar::{PCI_FLAGS_MSI_ENABLED, PciAttachArgs, PcibusAttachArgs, Pcireg};
@@ -907,17 +908,23 @@ pub fn pci_probe_device_hook(_pc: PciChipsetTag, _pa: &mut PciAttachArgs) -> i32
 }
 
 /// `pci_dev_postattach`: `NACPI > 0` would match the device with its ACPI node.
-pub fn pci_dev_postattach(_dev: &Device, _pa: &PciAttachArgs) {
-    // NACPI > 0: acpi_pci_match(dev, pa) (dev/acpi, not ported).
+pub fn pci_dev_postattach(dev: &Device, pa: &PciAttachArgs) {
+    // NACPI > 0
+    // SAFETY: a PCI device that attached is never freed on amd64 (no PCI hot-unplug path
+    // detaches one), so acpi(4) may keep it, as the C keeps the pointer.
+    let dev: &'static Device = unsafe { &*core::ptr::from_ref(dev) };
+    let _ = crate::dev::acpi::acpi::acpi_pci_match(dev, pa);
 }
 
-/// `pci_min_powerstate`: without ACPI, the state the device is in.
+/// `pci_min_powerstate`: the lowest power state ACPI allows the device in the sleep state
+/// the machine goes to.
 pub fn pci_min_powerstate(pc: PciChipsetTag, tag: Pcitag) -> Pcireg {
-    // NACPI > 0: acpi_pci_min_powerstate(pc, tag).
-    pci_get_powerstate(pc, tag) as Pcireg
+    // NACPI > 0
+    crate::dev::acpi::acpi::acpi_pci_min_powerstate(pc, tag)
 }
 
-/// `pci_set_powerstate_md`: without ACPI, nothing to tell the firmware.
-pub fn pci_set_powerstate_md(_pc: PciChipsetTag, _tag: Pcitag, _state: i32, _pre: i32) {
-    // NACPI > 0: acpi_pci_set_powerstate(pc, tag, state, pre).
+/// `pci_set_powerstate_md`: tells ACPI (`_PSx`) about a power-state change.
+pub fn pci_set_powerstate_md(pc: PciChipsetTag, tag: Pcitag, state: i32, pre: i32) {
+    // NACPI > 0
+    crate::dev::acpi::acpi::acpi_pci_set_powerstate(pc, tag, state, pre);
 }

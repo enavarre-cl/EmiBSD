@@ -83,6 +83,9 @@
 //! brought `sendsig`, `sys_sigreturn`, `copyoutfpu`, `initialize_thread_xstate` and
 //! `signotify`. M11a adds the `MULTIPROCESSOR` parts: `cpu_kick`, `cpu_unidle`'s IPI,
 //! `need_resched`'s kick, `signotify`'s `cpu_kick` and `boot`'s `X86_IPI_HALT` broadcast.
+//! M13 adds ACPI to `boot` (`acpi_softc->sc_state = ACPI_STATE_S5`, `acpi_powerdown`),
+//! `cpu_reset` (`cpuresetfn`, the keyboard controller's reset line, the triple fault),
+//! `pwr_action`, and `bios_efiinfo->config_acpi` as `BIOS_EFIINFO_CONFIG_ACPI`.
 //!
 //! ## Deviations
 //! - Limine has set up long mode, paging and the direct map before `init_x86_64` runs, so the
@@ -122,8 +125,15 @@
 //!   is (no `fpusave`, since `CPUPF_USERXSTATE` is never set), `initialize_thread_xstate`,
 //!   `fpureset`, `fpu_cleandata` and `xrstor_user` are reported. A handler therefore runs
 //!   with the interrupted code's FPU/SSE registers and `sigreturn` does not restore them.
-//!   `vfs_shutdown`, `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys`,
-//!   `config_suspend_all`, ACPI and `cpu_reset` are reported as unported when reached.
+//!   `vfs_shutdown`, `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys` and
+//!   `config_suspend_all` are reported as unported when reached.
+//! - `bios_efiinfo` (boot(8)'s `BOOTARG_EFIINFO`) is replaced by Limine: its `config_acpi`,
+//!   the RSDP's physical address, is `BIOS_EFIINFO_CONFIG_ACPI`, from Limine's RSDP request
+//!   (`BootInfo::rsdp`), for `bios_attach`.
+//! - `KBCMDP` and `KBC_PULSE0` (`dev/ic/i8042reg.h`, not ported) and `IO_KBD`
+//!   (`dev/isa/isareg.h`) are local constants of `cpu_reset`, whose last resort faults
+//!   with `ud2` through the emptied IDT where the C divides by zero: either fault becomes
+//!   the triple fault that resets the processor.
 
 use core::arch::asm;
 use core::mem::offset_of;
@@ -217,6 +227,16 @@ use crate::machine::ExitStatus;
 pub static CPURESET_DELAY: AtomicI32 = AtomicI32::new(0);
 /// `lid_action`: what closing the lid does (`machdep.lidaction`).
 pub static LID_ACTION: AtomicI32 = AtomicI32::new(1);
+/// `pwr_action`: what the power button does: 0 nothing, 1 power down, 2 suspend
+/// (`machdep.pwraction`).
+pub static PWR_ACTION: AtomicI32 = AtomicI32::new(1);
+/// `bios_efiinfo->config_acpi`: the physical address of the ACPI RSDP the firmware gave
+/// (here Limine's RSDP request), 0 without one.
+pub static BIOS_EFIINFO_CONFIG_ACPI: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+/// `cpuresetfn`: the reset method acpi(4) installs (`acpi_reset`), tried first by
+/// `cpu_reset`.
+pub static CPURESETFN: StaticCell<Option<fn()>> = StaticCell::new(None);
 /// `waittime`: set once the file systems have been synced on the way down.
 static WAITTIME: AtomicI32 = AtomicI32::new(-1);
 /// `isa_constraint`: what ISA DMA can reach.
@@ -285,6 +305,18 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
     let ci = cpu_info_primary();
     // SAFETY: the boot CPU, once, before anything reads curcpu().
     unsafe { cpu_init_msrs(ci) };
+
+    // bios_efiinfo->config_acpi: the RSDP Limine found, as a physical address (the protocol
+    // hands it over as an address in the higher-half direct map, or as a physical one).
+    if let Some(rsdp) = boot.rsdp {
+        let va = rsdp.as_usize();
+        let pa = if va >= boot.hhdm_offset {
+            va - boot.hhdm_offset
+        } else {
+            va
+        };
+        BIOS_EFIINFO_CONFIG_ACPI.store(pa as u64, Ordering::Relaxed);
+    }
 
     // MULTIPROCESSOR: the processors the bootloader found, for mainbus_attach (the C's
     // acpimadt/mpbios read the firmware tables) and mp_cpu_start.
@@ -953,7 +985,13 @@ pub fn signotify(p: &Proc) {
 pub fn boot(howto: i32) -> ! {
     let mut howto = howto;
 
-    // NACPI > 0: acpi_softc->sc_state = ACPI_STATE_S5 on RB_POWERDOWN (M4+).
+    // NACPI > 0
+    if howto & RB_POWERDOWN != 0
+        && let Some(sc) = crate::dev::acpi::acpivar::acpi_softc()
+    {
+        sc.sc_state
+            .set(i32::from(crate::dev::acpi::acpireg::ACPI_STATE_S5));
+    }
 
     if howto & RB_POWERDOWN != 0 {
         LID_ACTION.store(0, Ordering::Relaxed);
@@ -996,7 +1034,13 @@ pub fn boot(howto: i32) -> ! {
         );
 
         if howto & RB_HALT != 0 {
-            // NACPI > 0 && !SMALL_KERNEL: delay(500000) and acpi_powerdown() (M4+).
+            // NACPI > 0 && !SMALL_KERNEL
+            if crate::dev::acpi::acpi::ACPI_ENABLED.load(Ordering::Relaxed) != 0 {
+                delay(500000);
+                if howto & RB_POWERDOWN != 0 {
+                    crate::dev::acpi::acpi::acpi_powerdown();
+                }
+            }
             kprintf!("\n");
             kprintf!("The operating system has halted.\n");
             kprintf!("Please press any key to reboot.\n\n");
@@ -1022,9 +1066,43 @@ pub fn boot(howto: i32) -> ! {
     cpu_reset()
 }
 
-/// `cpu_reset`: resets the CPU; until the descriptor tables are ported (M4), parks it.
+/// `IO_KBD` (`dev/isa/isareg.h`): the keyboard controller's ports.
+const IO_KBD: u16 = 0x060;
+/// `KBCMDP` (`dev/ic/i8042reg.h`): the keyboard controller's command port.
+const KBCMDP: u16 = 4;
+/// `KBC_PULSE0` (`dev/ic/i8042reg.h`): pulse output bit 0.
+const KBC_PULSE0: u8 = 0xfe;
+
+/// `cpu_reset`: resets the machine: acpi(4)'s reset register (`cpuresetfn`), then the
+/// keyboard controller's reset line, then a triple fault.
 pub fn cpu_reset() -> ! {
-    let _ = unported!("cpu_reset");
+    let _ = crate::arch::amd64::include::cpufunc::intr_disable();
+
+    // SAFETY: `acpi_attach_machdep` writes it once during autoconfiguration.
+    if let Some(f) = unsafe { CPURESETFN.read() } {
+        f();
+    }
+
+    // The keyboard controller has 4 random output pins, one of which is connected to the
+    // RESET pin on the CPU in many PCs. We tell the keyboard controller to pulse this line
+    // a couple of times.
+    // SAFETY: the i8042's command port; pulsing output bit 0 resets the machine where it is
+    // wired to RESET and does nothing else.
+    unsafe { crate::arch::amd64::include::pio::outb(IO_KBD + KBCMDP, KBC_PULSE0) };
+    delay(100000);
+    // SAFETY: as above.
+    unsafe { crate::arch::amd64::include::pio::outb(IO_KBD + KBCMDP, KBC_PULSE0) };
+    delay(100000);
+
+    // Try to cause a triple fault and watchdog reset by making the IDT invalid and causing
+    // a fault.
+    // SAFETY: interrupts are off and the machine is going down: an empty IDT turns the
+    // fault below into a triple fault, which resets the processor.
+    unsafe { IDT.write(Idt([const { GateDescriptor::zeroed() }; NIDT])) };
+    // SAFETY: `ud2` raises #UD through the empty IDT (the C divides by zero for the same
+    // effect); nothing after it runs.
+    unsafe { asm!("ud2", options(nomem, nostack)) };
+
     Machine::halt()
 }
 

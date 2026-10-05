@@ -26,6 +26,12 @@
 //!   `--lsi-cd ISO`, also a read-only `scsi-cd` at target 1 holding `ISO` (a relative path is
 //!   taken from the workspace root). amd64 only (arm64's GENERIC has no `siop`). It goes
 //!   after `--scsi-cd`, the last devices ([`add_devices`]), so no other PCI slot moves.
+//! - `--reboot` (`qemu`, `smoke`, M13): QEMU runs without `-no-reboot`, so a guest reset
+//!   restarts the machine (EDK2, Limine and the kernel again; the EDK2 variable store is the
+//!   run's copy) instead of ending QEMU with status 0. `smoke-power` boots, runs `reboot`
+//!   and expects a second boot's login. Without it, an ACPI power-off (`halt -p`, S5) and a
+//!   reset both end QEMU with status 0, so a smoke that checks a power-off passes
+//!   `--status 0` and rejects `rebooting...`, which `boot(9)` prints before every reset.
 //! - `cargo xtask nvme-root --arch A [--duid HEX] [--out FILE]`: the disk `just smoke-nvme`
 //!   boots from, `nvme-<arch>.img` in the run directory unless `--out` names another file.
 //!   It is laid out as OpenBSD's installer lays a disk out: an MBR whose one partition is
@@ -128,8 +134,15 @@ fn opt_path<'a>(args: &[&'a str], opt: &str) -> Result<Option<&'a str>> {
     }
 }
 
-/// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`).
+/// `--reboot`: this run's VMs restart on a guest reset (set once by `main`).
+static REBOOT: OnceLock<()> = OnceLock::new();
+
+/// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
+/// `--reboot`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
+    if args.contains(&"--reboot") {
+        let _ = REBOOT.set(());
+    }
     if let Some(w) = args.windows(2).find(|w| w[0] == "--nvme") {
         let _ = NVME.set(boot::run_dir(root).join(w[1]));
     }
@@ -152,6 +165,13 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
         let _ = LSI_CD.set(PathBuf::from(iso));
     }
     Ok(())
+}
+
+/// Whether this run's VMs restart on a guest reset (`--reboot`): QEMU then runs without
+/// `-no-reboot`, so a reset (`reboot`, the FADT's reset register) boots the firmware again
+/// instead of ending the emulator.
+pub(crate) fn reboot() -> bool {
+    REBOOT.get().is_some()
 }
 
 /// Adds the PCI storage controllers this run asked for to `cmd` (amd64's PCI bus: called

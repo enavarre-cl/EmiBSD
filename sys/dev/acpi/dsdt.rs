@@ -100,10 +100,8 @@
 //!   instead: `aml_notify` and `acpi_poll` need acpi0, `acpi_glk_enter`/`leave` and
 //!   `acpi_event_wait`'s task loop need it too (without it the event wait is the cold
 //!   path's `delay` loop).
-//! - `acpi_gasio`, `acpi_addtask`, `acpi_dotask`, `acpi_read_pmreg`/`acpi_write_pmreg`,
-//!   `acpi_maptable` and the global lock's `acpi_acquire_glk`/`acpi_release_glk` are
-//!   `acpi.c`'s and `acpi_machdep.c`'s: visible stubs in `dev/acpi/acpi.rs` until those
-//!   files are ported.
+//! - The global lock's `acpi_acquire_glk`/`acpi_release_glk` are each machine's
+//!   `acpi_machdep.c`'s, reached through `machine::acpi_machdep`.
 //! - `aml_rwgsb` never finds an I2C controller (`struct aml_node` has no `i2c` until
 //!   `dev/i2c` is ported) and answers `EIO` in the status byte, as the C does when the
 //!   controller is missing.
@@ -120,8 +118,8 @@ use core::ptr;
 use core::sync::atomic::{AtomicI32, AtomicI64, Ordering};
 
 use super::acpi::{
-    ACPI_POLL_ENABLED, acpi_acquire_glk, acpi_addtask, acpi_dotask, acpi_gasio, acpi_maptable,
-    acpi_read_pmreg, acpi_release_glk, acpi_write_pmreg,
+    ACPI_POLL_ENABLED, acpi_addtask, acpi_dotask, acpi_gasio, acpi_maptable, acpi_read_pmreg,
+    acpi_write_pmreg,
 };
 use super::acpidev::{ACPIDEV_POLL, ACPIDEV_WAKEUP};
 use super::acpireg::{
@@ -143,6 +141,7 @@ use crate::kern::kern_sysctl::hw_vendor;
 use crate::kern::kern_tc::nanouptime;
 use crate::kern::kern_timeout::timeout_add_sec;
 use crate::kern::subr_prf::{Str, panic};
+use crate::machine::acpi_machdep::{acpi_acquire_glk, acpi_release_glk};
 use crate::machine::cpu::delay;
 use crate::machine::intr::{splbio, splx};
 use crate::machine::pci_machdep::{pci_conf_read, pci_lookup_segment, pci_make_tag};
@@ -1508,7 +1507,8 @@ pub fn acpi_glk_enter() {
     // Spin to acquire the lock.
     let mut st = 0;
     while st == 0 {
-        st = acpi_acquire_glk(lock);
+        // SAFETY: `lock` is the mapped FACS's `global_lock` word (`facs_global_lock`).
+        st = unsafe { acpi_acquire_glk(lock) };
         // XXX - yield/delay?
     }
 }
@@ -1523,7 +1523,8 @@ pub fn acpi_glk_leave() {
         return;
     };
 
-    let st = acpi_release_glk(lock);
+    // SAFETY: as in `acpi_glk_enter`.
+    let st = unsafe { acpi_release_glk(lock) };
     if st == 0 {
         return;
     }
@@ -3966,7 +3967,14 @@ pub fn aml_load(
         let Some(sc) = sc else { break 'load None };
 
         // Load SSDT from memory
-        let Some(entry) = acpi_maptable(sc, r.iobase as usize, Some(b"SSDT"), None, None, 1) else {
+        let Some(entry) = acpi_maptable(
+            sc,
+            crate::sys::types::Paddr::new(r.iobase as usize),
+            Some(b"SSDT"),
+            None,
+            None,
+            1,
+        ) else {
             break 'load None;
         };
         ddb.set_obj(AmlObj::DdbHandle(i64::from(entry.q_id)));

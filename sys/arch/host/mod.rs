@@ -1362,6 +1362,81 @@ impl crate::machine::isa_machdep::IsaMachdep for Machine {
     }
 }
 
+// The host double has no firmware: no table maps, no interrupt, no attachment. The global
+// lock keeps the shared compare and swap (`machine::acpi_glk_cas`) so that the
+// interpreter's tests see a working lock.
+impl crate::machine::acpi_machdep::AcpiMachdep for Machine {
+    const ACPI_PRT: bool = false;
+    const ACPI_SECTWO: bool = false;
+
+    fn acpi_map(_pa: Paddr, _len: usize) -> Result<crate::dev::acpi::acpivar::AcpiMemMap, Errno> {
+        Err(Errno::ENOMEM)
+    }
+
+    fn acpi_unmap(_handle: &crate::dev::acpi::acpivar::AcpiMemMap) {}
+
+    unsafe fn acpi_bus_space_map(
+        _t: crate::machine::bus::BusSpaceTag,
+        _addr: crate::machine::bus::BusAddr,
+        _size: crate::machine::bus::BusSize,
+        _flags: i32,
+    ) -> Result<crate::machine::bus::BusSpaceHandle, Errno> {
+        Err(Errno::ENOMEM)
+    }
+
+    fn acpi_bus_space_unmap(
+        _t: crate::machine::bus::BusSpaceTag,
+        _bsh: crate::machine::bus::BusSpaceHandle,
+        _size: crate::machine::bus::BusSize,
+    ) {
+    }
+
+    fn acpi_intr_establish(
+        _irq: i32,
+        _flags: i32,
+        _level: i32,
+        _handler: fn(*mut c_void) -> i32,
+        _arg: *mut c_void,
+        _what: &'static str,
+    ) -> Option<core::ptr::NonNull<c_void>> {
+        None
+    }
+
+    unsafe fn acpi_intr_disestablish(_cookie: core::ptr::NonNull<c_void>) {}
+
+    fn acpi_attach_machdep(_sc: &'static crate::dev::acpi::acpivar::AcpiSoftc) {}
+
+    unsafe fn acpi_acquire_glk(lock: *mut u32) -> i32 {
+        // SAFETY: the caller's guarantee, forwarded.
+        unsafe { crate::machine::acpi_machdep::acpi_glk_cas(lock, true) }
+    }
+
+    unsafe fn acpi_release_glk(lock: *mut u32) -> i32 {
+        // SAFETY: the caller's guarantee, forwarded.
+        unsafe { crate::machine::acpi_machdep::acpi_glk_cas(lock, false) }
+    }
+
+    fn acpi_iommu_device_map(
+        _node: &crate::dev::acpi::amltypes::AmlNodeRef,
+        dmat: Option<crate::machine::bus::BusDmaTag>,
+    ) -> Option<crate::machine::bus::BusDmaTag> {
+        dmat
+    }
+
+    fn pwr_action() -> i32 {
+        1
+    }
+
+    fn ci_acpi_proc_id(_ci: &crate::machine::cpu::CpuInfo) -> u32 {
+        0
+    }
+
+    fn cpu_suspended() -> &'static core::sync::atomic::AtomicI32 {
+        static CPU_SUSPENDED: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
+        &CPU_SUSPENDED
+    }
+}
+
 impl crate::machine::fdt::Fdt for Machine {
     type FdtAttachArgs<'a> = crate::machine::fdt::NoFdtAttachArgs<'a>;
 

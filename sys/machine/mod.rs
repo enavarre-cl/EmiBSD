@@ -3,6 +3,7 @@
 //! Generic code reaches architecture code ONLY through this module. One module per OpenBSD header
 //! ([`param`], [`vmparam`], [`cpu`], [`cons`], [`bus`], [`pmap`], [`intr`], [`db_machdep`],
 //! [`disklabel`], [`fdt`], [`proc`], [`signal`], [`tcb`], [`pci_machdep`], [`isa_machdep`], [`atomic`];
+//! [`acpi_machdep`] is the machine half of `<dev/acpi/acpivar.h>` (each arch's `acpi_machdep.c`);
 //! [`autoconf`] is what `ioconf.c` and the machine's `autoconf.c` give `subr_autoconf.c`;
 //! [`conf`] is the device switch the machine's `conf.c` fills (`bdevsw[]`, `cdevsw[]`); [`bootinfo`]
 //! is the record the boot glue hands over), all re-exported here. `pci_chipset` (cfg
@@ -12,6 +13,7 @@
 //! bottom proves at compile time that it implements every trait. Adding a trait method therefore
 //! means implementing it for amd64, arm64 and the host test double in the same commit.
 
+pub mod acpi_machdep;
 pub mod atomic;
 pub mod autoconf;
 pub mod bootinfo;
@@ -36,6 +38,7 @@ pub mod signal;
 pub mod tcb;
 pub mod vmparam;
 
+pub use acpi_machdep::*;
 pub use atomic::*;
 pub use autoconf::*;
 pub use bootinfo::*;
@@ -65,6 +68,7 @@ pub use crate::arch::current::Machine;
 const _: () = {
     const fn assert_impl<
         M: MachineInfo
+            + AcpiMachdep
             + Atomic
             + Autoconf
             + MachineParam

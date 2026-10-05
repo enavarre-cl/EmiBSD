@@ -40,25 +40,35 @@
 //! Status: `wip`. Milestone M2 ports `reboot()` and `rebooting`, the tail of `panic(9)`;
 //! M8 `sys_reboot` (root only, then `reboot`) and `scdebug_call`/`scdebug_ret` (option
 //! `SYSCALL_DEBUG`, feature `syscall_debug`). `__stack_smash_handler` arrives with its
-//! subsystem. M11a: `sys_reboot` stops the secondary CPUs (`MULTIPROCESSOR`).
+//! subsystem. M11a: `sys_reboot` stops the secondary CPUs (`MULTIPROCESSOR`). M13:
+//! `do_powerdown`, `powerdown_task` and `powerbutton_event`, the power button's path from
+//! acpi(4) to init.
 //!
 //! ## Deviations
 //! - `KASSERT((howto & RB_NOSYNC) || curproc != NULL)`: `curproc` arrives with M5; the
 //!   assertion returns with it.
+//! - `powerbutton_event`'s `SUSPEND` check, `resuming()` (`subr_suspend.c`, not ported), is
+//!   false: the machine never suspends, so it never resumes.
 
 #[cfg(feature = "syscall_debug")]
 use core::sync::atomic::AtomicI32;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use crate::kern::init_main::INITPROCESS;
 use crate::kern::kern_prot::suser;
+use crate::kern::kern_sig::prsignal;
+use crate::kern::kern_sysctl::ALLOWPOWERDOWN;
+use crate::kern::kern_task::{SYSTQ, task_add};
 use crate::kern::kern_time::stop_periodic_resettodr;
 #[cfg(feature = "syscall_debug")]
 use crate::kern::subr_prf::printf;
 use crate::machine::cpu::boot;
 use crate::sys::errno::Errno;
 use crate::sys::proc::Proc;
+use crate::sys::signal::SIGUSR2;
 use crate::sys::syscallargs::SysRebootArgs;
 use crate::sys::systm::{SysArgs, sysargs};
+use crate::sys::task::Task;
 use crate::sys::types::Register;
 
 /// `rebooting`: set once the system started to go down, for the benefit of code that must not
@@ -91,6 +101,28 @@ pub fn reboot(howto: i32) -> ! {
     REBOOTING.store(true, Ordering::Relaxed);
 
     boot(howto)
+}
+
+/// `powerdown_task`: runs `do_powerdown` on the system task queue.
+static POWERDOWN_TASK: Task = Task::new(do_powerdown, core::ptr::null_mut());
+
+/// `do_powerdown`: the power button asks init to power the machine down (`SIGUSR2`, as
+/// `halt -p` would), once, if `machdep.allowpowerdown` lets it.
+fn do_powerdown(_arg: *mut core::ffi::c_void) {
+    if ALLOWPOWERDOWN.load(Ordering::Relaxed) == 1 {
+        ALLOWPOWERDOWN.store(0, Ordering::Relaxed);
+        // SAFETY: a non-null `initprocess` is init's process, which never goes away.
+        if let Some(init) = unsafe { INITPROCESS.load(Ordering::Relaxed).as_ref() } {
+            prsignal(init, SIGUSR2);
+        }
+    }
+}
+
+/// `powerbutton_event`: the power button was pressed (acpi(4)'s `acpi_pbtn_task`).
+pub fn powerbutton_event() {
+    // SUSPEND: if (resuming()) return; (never, see the deviations)
+
+    let _ = task_add(SYSTQ, &POWERDOWN_TASK);
 }
 
 /// `SCDEBUG_CALLS`: show calls.

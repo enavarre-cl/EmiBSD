@@ -54,7 +54,11 @@ needs; later `pmap.rs`, `intr.rs`, ...; `autoconf.rs` is what `ioconf.c` and the
 `autoconf.c` give `subr_autoconf.c`; `pci_machdep.rs` (M7b) is `<machine/pci_machdep.h>`;
 `conf.rs` (M8) is the device switch each arch's `conf.c` fills; `isa_machdep.rs` (M8) is
 `<machine/isa_machdep.h>`; `disklabel.rs` (M8) is `<machine/disklabel.h>` plus the machine's
-`disksubr.c`, `readdisklabel` and `writedisklabel`), all re-exported from `sys/machine/mod.rs`, which also re-exports
+`disksubr.c`, `readdisklabel` and `writedisklabel`; `acpi_machdep.rs` (M13) is the machine half of
+`<dev/acpi/acpivar.h>`, each arch's `acpi_machdep.c`: `acpi_map`, the register maps, the SCI, the
+global lock, `pwr_action`, `ci_acpi_proc_id`, `cpu_suspended`, and the `ACPI_PRT`/`ACPI_SECTWO`
+constants that stand for acpi.c's `#ifdef __amd64__`/`__arm64__` walks; arm64 answers as a
+machine without ACPI until M14), all re-exported from `sys/machine/mod.rs`, which also re-exports
 `crate::arch::current::Machine` and asserts at compile time that it implements every trait. Generic
 code names only `crate::machine`. `bus.rs` also carries the C names as free functions
 (`bus_space_read_1(t, h, o)`, `bus_dmamap_load(t, map, ...)`), so a driver reads like its
@@ -908,13 +912,13 @@ reason:
   is not ported: what it would generate into `ioconf.c` (`cfdata[]` with its locators and
   parent vectors, `cfroots[]`) is written by hand per architecture in
   `sys/arch/<arch>/conf/ioconf.rs`, following `config(8)`'s layout, for the GENERIC lines
-  whose drivers exist: `mainbus0 at root`, `cpu0 at mainbus?` and `pci* at mainbus0` on
-  amd64; `mainbus0 at
+  whose drivers exist: `mainbus0 at root`, `cpu0 at mainbus?`, `bios0 at mainbus0`,
+  `acpi0 at bios0` (M13) and `pci* at mainbus0` on amd64; `mainbus0 at
   root`, `ampintc* at fdt? early 1` and `agtimer* at fdt?` on arm64. The tables, `mainbus_cd`
   and `device_register` reach `subr_autoconf.rs` through `machine::autoconf`, so generic code
   never names an arch; the host double serves whatever table a test installs. A device that
   GENERIC configures but whose driver is not ported is reported with `unported!` where its bus
-  would probe or attach it (amd64's `bios0`, `isa0`, ...); on arm64 every device-tree node
+  would probe or attach it (amd64's `ioapic`, `efi0`, `mpbios0`, ...); on arm64 every device-tree node
   and on amd64 every PCI function without a driver prints OpenBSD's `not configured` line. The counts
   `config(8)` writes into `<dev>.h` follow the tables: `NMPATH` is 0, the `hotplug(4)` calls
   are reported. Without ACPI or MP tables, amd64's mainbus attaches the boot CPU as
@@ -922,6 +926,22 @@ reason:
   `config_rootfound` what `acpimadt` and the boot processor's attach would add (the LAPIC
   base, `lapic_enable`, `lapic_set_lvt`, `lapic_calibrate_timer`). Adding a driver means its
   `cfattach`/`cfdriver` and one `Cfdata` row in each `ioconf.rs` that has it in GENERIC.
+- ACPI (M13, amd64): `acpi0 at bios0 at mainbus0`, as in GENERIC. bios0 (`bios.c`) gets the
+  RSDP from Limine's RSDP request (`BootInfo::rsdp`, kept by `init_x86_64` as
+  `BIOS_EFIINFO_CONFIG_ACPI`, the C's `bios_efiinfo->config_acpi`), so `acpi_probe` finds it
+  as on an EFI boot; bios.c's SMBIOS half is not ported yet. acpi0 copies the tables, loads
+  the DSDT and the SSDTs into the AML interpreter at boot, and owns power: `boot(RB_HALT |
+  RB_POWERDOWN)` enters S5 (`acpi_powerdown`), `cpu_reset` tries `cpuresetfn` (`acpi_reset`,
+  the FADT's reset register) before the keyboard controller and the triple fault. acpi0's
+  children are not ported yet: `acpimadt` (CPU and I/O APIC enumeration; the bootloader's
+  processor list stands in, see "amd64 processor enumeration"), `acpiprt`, `acpitimer`,
+  `acpihpet`, `acpipci` (`acpi_haspci` stays 0, so mainbus attaches `pci0`); each prints
+  OpenBSD's `not configured` line. The SCI is on its ISA line through the i8259 until the I/O
+  APIC is ported. arm64 attaches no acpi0 until M14 (EFI ACPI boot, `efiacpi.c`); its
+  `machine::acpi_machdep` answers as a machine without ACPI. The S3/hibernate machinery
+  (`acpi_x86.c`, `acpi_wakecode.S`, `subr_suspend.c`) is not M13's and is reported where
+  reached. `just smoke-power` checks `halt -p` (QEMU powers off, status 0) and `reboot` (QEMU
+  without `-no-reboot`, xtask `--reboot`, boots a second time).
 - File descriptors (M7b): `kern_descrip.c`, `<sys/file.h>`, `<sys/filedesc.h>` and the
   read/write/ioctl paths of `sys_generic.c` are OpenBSD's: process 0 gets `fdinit()`,
   `fork1` copies or shares the table, `exec` runs `fdprepforexec`, `exit1` runs `fdfree`,

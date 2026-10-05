@@ -566,15 +566,11 @@ pub(crate) fn qemu_command(
     fs::copy(&vars_src, &vars).map_err(|e| format!("{}: {e}", vars.display()))?;
 
     let mut cmd = Command::new(arch.qemu());
-    cmd.args([
-        "-m",
-        "512M",
-        "-display",
-        "none",
-        "-monitor",
-        "none",
-        "-no-reboot",
-    ]);
+    cmd.args(["-m", "512M", "-display", "none", "-monitor", "none"]);
+    // M13 (hwopts.rs): `--reboot` lets a guest reset restart the machine.
+    if !crate::hwopts::reboot() {
+        cmd.arg("-no-reboot");
+    }
     cmd.args(["-serial", serial]);
     // EDK2 boots Limine at once: `bootindex=0` on the boot image's device (below) puts it
     // first in the firmware's BootOrder (QEMU's `bootorder` fw_cfg file, which OVMF and
