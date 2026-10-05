@@ -1005,7 +1005,12 @@ smoke-softraid: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--f
 # rebuilt every boot); `sr_cat` mounts every disk's `a` partition read-only and prints its
 # file (the RAID chunks and arm64's FAT boot disk do not mount, silently). `sr_mk` defines
 # `mk name bioctl-args...`: create the volume, label it, newfs, write m10f.txt; `m6` is the
-# same through sr6create, for RAID 6 on the four `d` partitions.
+# same through sr6create, for RAID 6 on the four `d` partitions. Boot 1 rejects
+# `disklabels not read: ` with its space, i.e. setroot naming a disk whose label is unread.
+# The bare header, with no disk after it, is setroot counting wakeups: it sleeps once per disk
+# still pending, at most five times, and each finished label read wakes it early, so when five
+# reads end during its wait (arm64 has five vioblk disks; seen with the host loaded by parallel
+# smokes) it prints the header over an empty list, as OpenBSD's subr_disk.c does.
 sr_pass := "--send-after '# ' --send 'print emibsd-m10f-passphrase >/etc/m10f.pass\\n' " + \
     "--send-after '# ' --send 'chmod 600 /etc/m10f.pass && echo pass-$((40+2))\\n' "
 sr_cat := "--send-after '# ' --send 'c() { mount -r /dev/$1a /mnt 2>/dev/null && echo \"$1: $(cat /mnt/m10f.txt)\" && umount /mnt; }\\n' " + \
@@ -1036,7 +1041,7 @@ softraid_make := disk_login + " " + sr_pass + \
     "--expect 'softraid0: RAID 1C volume attached as sd' --expect 'softraid0: CRYPTO volume attached as sd' " + \
     "--expect 'made-raid0-42' --expect 'made-raid1-42' --expect 'made-raid5-42' --expect 'made-raid6-42' --expect 'made-concat-42' " + \
     "--expect 'made-raid1c-42' --expect 'made-crypto-42' --expect 'bioctl-42' " + \
-    "--reject 'label-fail0ed-' --reject 'disklabels not read'"
+    "--reject 'label-fail0ed-' --reject 'disklabels not read: '"
 softraid_check := disk_login + " " + sr_pass + sr_cat + \
     "--send-after '# ' --send 'bioctl softraid0; sr_cat\\n' " + \
     "--send-after 'cat-done-42' --send 'bioctl -c 1C -p /etc/m10f.pass -l /dev/sd2e,/dev/sd3e softraid0\\n' " + \
