@@ -51,6 +51,7 @@ Status: M11 (SMP) met, its last part M11e (the MP audit) included; M12 (devices)
 | M11d | Network parallelism: one softnet task queue per CPU (up to 8), `kern_intrmap.c`, SMR for the interface index | met |
 | M11e | The MP audit: every `MULTIPROCESSOR` site, MPSAFE flags and `SY_NOLOCK` honoured, unlocked page faults; every smoke runs on four CPUs | met |
 | M12 | Devices (audio, USB), in QEMU | next |
+| M12+ | Measurement and verification: unsafe-report, JOURNAL, diff-openbsd | next |
 | M13 | Storage, firmware and console | next |
 | M14, M14b | Installable; code and test layout | next |
 | M15 | Real hardware and virtualisation (vmm, vmd; optional) | next |
