@@ -1,6 +1,6 @@
 # Testing
 
-Three tiers. Every change lands with the tier it belongs to.
+Four tiers. Every change lands with the tier it belongs to.
 
 1. **Host unit tests**: `just test` (`cargo test -p libkern -p bsd`). Pure logic (libkern, errno,
    page-allocator math, queue adapters, formatting) runs on macOS through `sys/arch/host`.
@@ -25,6 +25,14 @@ Three tiers. Every change lands with the tier it belongs to.
    path under `target/`; and depends on no other recipe's disks or order. A recipe that
    needs a fixed host port has it to itself; a time limit is not tightened to fit a quiet
    machine (`EMIBSD_TIMEOUT_SCALE` scales them under parallel load).
+4. **Differential tests** (M12+): `just diff-openbsd`, beside `ci`, not in it. The same
+   scenarios on EmiBSD and on the OpenBSD snapshot of `tools/xtask/openbsd-snapshot.toml`
+   (docs/ARCHITECTURE.md "diff-openbsd"). Run it before closing a milestone and after any
+   change to system calls, VFS or a file system. A new difference is a bug to fix in its own
+   commit, or, only when EmiBSD must differ (an unported part with its visible stub, the
+   branding, the snapshot's gap to the pin), an entry in `tools/xtask/diff-openbsd/
+   expected.toml` with its reason, kept alone in its own step. An unported part that gets
+   ported removes its entry. Scenario steps print only what is deterministic, or normalize it.
 
 Always:
 

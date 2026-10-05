@@ -61,8 +61,8 @@ every justfile recipe whose name starts with `smoke` (the `smokes` list only exi
 | M11c | `23d46ae` | 2026-10-04 | `8f0bd35..23d46ae` | 7 | 640 | 1923 | 29 |
 | M11d | `c3bee3c` | 2026-10-04 | `23d46ae..c3bee3c` | 3 | 642 | 1926 | 30 |
 | M11e, M11 | `fb26a93` | 2026-10-04 | `c3bee3c..fb26a93` | 13 | 645 | 1931 | 32 |
-| M12 | not met | | | | | | |
-| M12+ | not met | | | | | | |
+| M12 | `9994806` | 2026-10-05 | `fb26a93..9994806` | 26 | 708 | 2143 | 38 |
+| M12+ | the commit that marks it met | 2026-10-05 | `9994806..` that commit | 9 | 709 | 2164 | 38 |
 
 The table is in commit order. M9+ and M10a overlap: M10a's boundary landed before M9+'s, so the
 `4c17194..f44a414` range holds most of M9+'s work. The M9+ section gives the two together.
@@ -636,14 +636,34 @@ Time: _(user)_
 
 ## M12 Devices
 
-Under way in another branch, not merged.
+Boundary `9994806` ("M12 met"). Range `fb26a93..9994806`.
 
-On `main` since M11 met (`fb26a93..74d2491`, 9 commits; not M12 work): the smokes run in
-parallel (`2358f7c`, with new `testing.md` and `xtask.md` rules); `smoke-softraid` failed under
-that load on a bare "disklabels not read:" header (`9d99ac6`). `docs.md` gained the rule to escape
-`|` in table code spans (`06e70e8`), and its own example needed a fix right after (`bf2f682`).
+The range is not M12 alone. It holds 9 commits made on `main` after M11 (the parallel smokes
+`2358f7c`, the EDK2 boot order `d4122ad`, the Phase 2 draft `46d127b`, the M12+ row `01f34aa`,
+and the pipe-escape rules), and M13's first ports, which landed before M12 met: nvme(4)
+(`86a5fff`), cd(4) and vioscsi (`d4f1d7e`), and `f4462cd`. M12's own commits are the 15 from
+`d4f4726` to `9994806`.
 
-To be written when M12 is met.
+- Went well: audio(4) with azalia(4) on both archs and auich(4)/ac97(4) on amd64 played a tone
+  that QEMU's WAV capture holds (`3ae1223`, `1fb511d`); the USB core, xhci(4), uhub(4) and
+  umass(4) mounted a FAT stick on both archs (`41d47f0`, `aeb8890`, `008319b`). The first bulk
+  transfers through xhci(4) needed no change in it (`008319b`).
+- Went well: arm64 got a PCI bus on QEMU virt (pciecam, pci_machdep, GICv2m MSI, simplebus),
+  so the PCIe audio and USB controllers attach there as on amd64 (`894f69c`).
+- Failed: no fix-up commit in M12's own commits, judging by the subjects. The rebase onto M13's
+  nvme, vioscsi and cd moved their ioconf entries after M12's, and the docs had to say so in one
+  place (`1855637`).
+- Left: wskbd and `ukbdmap.c` (M13), so the USB keyboard attaches but is silent (ROADMAP note).
+- Idioms: `docs/C_TO_RUST.md` gained 19 rows in the range, most for USB and HID: packed USB
+  descriptors as `#[repr(C)]` structures read through bounds-checked casts, host-controller
+  pipes behind an `unsafe trait`, `goto out1/out2` cascades as labelled blocks, `-1` lookups
+  as `Option` (`41d47f0`, `15ec571`). Two rows only gained escaped pipes (`b1f658b`).
+- Rules: `testing.md` and `xtask.md` gained the parallel smokes and run directories
+  (`2358f7c`); `docs.md` gained the escaped-pipe rule (`06e70e8`), whose own example needed a
+  fix right after (`bf2f682`). `86a5fff` (M13) touched the rules too.
+- Numbers: 26 commits in the range (15 of them M12's); ported 645 → 708 (+63, M13's nvme and
+  cd included); tests 1931 → 2143 (+212); smoke recipes 32 → 38 (`smoke-audio`, `smoke-usb`,
+  and M13's `smoke-nvme` and `smoke-cd` among them).
 
 Effort: _(user)_
 
@@ -651,7 +671,37 @@ Time: _(user)_
 
 ## M12+ Measurement and verification
 
-To be written when M12+ is met.
+Boundary: the commit that marks M12+ met (its own hash cannot be written inside it; the log
+finds it by its subject, "docs: M12+ met"). Range `9994806..` that commit: 9 commits, one of
+them M14's `e252e18` (the wider reference clone), which M12+ was rebased onto.
+
+- Went well: `cargo xtask unsafe-report` gave the Phase 2 baseline on the first pass of its
+  lexer: its block count matched a plain grep for `unsafe {` over the tree (5864 then), with
+  the test code counted apart (`1adc26f`).
+- Went well: the OpenBSD VM installed headless with autoinstall(8) in 272 s (amd64) and 426 s
+  (arm64) once the answers were right, and a run of both systems takes one to two minutes.
+- Failed: the first install stopped silently at "Directory does not contain SHA256.sig": the
+  snapshot's install image carries none, and the driver had no failure pattern for
+  `failed; check /tmp/ai/ai.log`. With one processor the installer also left out `bsd.mp`.
+  The first boot's rc.firsttime reached the Internet (fw_update), so that boot now has none.
+- Failed: most first differences came from the two root file systems, not the kernels:
+  `/usr/mdec/mbr`, `/etc/fstab`, `/etc/group`, and tset(1) in OpenBSD root's `.profile`,
+  which clears OXTABS. Each is now avoided or normalized in the scenario that met it.
+- Found: one stale stub. `amap_copy` still reported its chunking unported although
+  `uvm_map_clip_start/end` had been ported in M7a-2; mount_mfs(8) printed the gap only on
+  EmiBSD. Ported, and with it `uvm_amap.c` (`15dd894`).
+- Found, expected: fifofs, `exec_script.c`, file mmap and core dumps are visible stubs; each
+  has a step of its own and an entry in `expected.toml`. OpenBSD's GENERIC has no tmpfs, so
+  EmiBSD's could not be compared; mfs was used instead.
+- Idioms: none new in the kernel. In xtask, an expected difference covers a whole step, so a
+  probe that hits a stub gets a section of its own: on the first run one coredump line had
+  shifted a whole section.
+- Rules: `docs.md` (JOURNAL.md gains its section in the commit that marks a milestone met),
+  `xtask.md` (`unsafe-report --write` writes STATUS's `Unsafe` line; `diff-openbsd` is the
+  only download), `testing.md` (a fourth tier, the differential tests).
+- Numbers: 9 commits; ported 708 → 709 (+1, `uvm_amap.c`); tests 2143 → 2164 (+21, xtask's);
+  smoke recipes 38 (no change; `diff-openbsd` is a recipe beside them); `diff-openbsd`: 102
+  steps, 97 equal, 5 expected, on both archs.
 
 Effort: _(user)_
 

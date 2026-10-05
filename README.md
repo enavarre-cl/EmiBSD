@@ -24,7 +24,8 @@
 
 ## Status
 
-Status: M12 (devices: audio and USB in QEMU) met; M13 (storage, firmware and console) under way.
+Status: M12+ (measurement and verification: unsafe-report, JOURNAL, diff-openbsd) met; M13
+(storage, firmware and console) under way.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -51,7 +52,7 @@ Status: M12 (devices: audio and USB in QEMU) met; M13 (storage, firmware and con
 | M11d | Network parallelism: one softnet task queue per CPU (up to 8), `kern_intrmap.c`, SMR for the interface index | met |
 | M11e | The MP audit: every `MULTIPROCESSOR` site, MPSAFE flags and `SY_NOLOCK` honoured, unlocked page faults; every smoke runs on four CPUs | met |
 | M12 | Devices in QEMU: audio(4) with azalia and auich, USB with xhci, uhub, umass and ukbd; arm64's PCI bus | met |
-| M12+ | Measurement and verification: unsafe-report, JOURNAL, diff-openbsd | next |
+| M12+ | Measurement and verification: unsafe-report, JOURNAL, diff-openbsd against a real OpenBSD | met |
 | M13 | Storage, firmware and console | next |
 | M14, M14b | Installable; code and test layout | next |
 | M15 | Real hardware and virtualisation (vmm, vmd; optional) | next |
@@ -285,6 +286,11 @@ The test image's root password is in docs/SETUP.md ("The test image's login").
 - `#![no_std]`, stable Rust only. No `static mut`. Every `unsafe` block has a `// SAFETY:` comment.
 - Gaps are explicit: `unported!()` yields `ENOSYS` and says so on the console. No `todo!()`.
 
+Against a real OpenBSD (`just diff-openbsd`, beside `just ci`): the same 102 steps (291 system
+call probes, file-system operations through OpenBSD's own utilities) on EmiBSD and on the
+OpenBSD 8.0 snapshot nearest the pin, on both archs: 97 equal, 5 expected differences
+(fifofs, `#!` scripts, file mmap, core dumps, branding).
+
 Details, boot flow and deviations: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Porting progress
@@ -293,7 +299,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 5 | 139 | 708 | 16 | 868 |
+| 5 | 138 | 709 | 16 | 868 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).
@@ -301,7 +307,7 @@ Source of truth: [ports.toml](ports.toml).
 
 ## Testing
 
-Three tiers:
+Four tiers:
 
 1. Host unit tests (`just test`): pure logic runs on macOS through `sys/arch/host`.
 2. Reference-backed tests (`just test-ref`): constants are cross-checked against the C headers.
@@ -310,6 +316,11 @@ Three tiers:
    `multiprocessor` kernel with `-smp 4` except `smoke-up`'s uniprocessor boot per arch.
    The recipes run four at a time, each in its own `target/smoke/<recipe>/` with its own log;
    `JOBS=N just smoke` changes N.
+4. Differential tests (`just diff-openbsd`, beside `just ci`): the same scenarios on EmiBSD and
+   on a real OpenBSD VM (the -current snapshot nearest the pin, installed once with
+   autoinstall(8) under `target/openbsd/`), compared step by step; every difference is fixed
+   or listed with its reason in `tools/xtask/diff-openbsd/expected.toml`. About two minutes
+   for both archs once installed.
 
 `just ci` runs fmt, clippy for amd64, arm64 and the host, all tests, both builds, every smoke and
 the tracker checks. Green `just ci` is the definition of done.

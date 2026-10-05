@@ -1240,3 +1240,59 @@ user's plan). The shape is one build phase, then one run phase:
 
 `JOBS=N just smoke` (or `just jobs=N smoke`, or `JOBS=N just ci`) picks another N; `JOBS=1`
 runs the recipes one after the other, still each in its own directory.
+
+### diff-openbsd
+
+`just diff-openbsd` (`cargo xtask diff-openbsd`, `tools/xtask/src/diffopenbsd.rs`, M12+) runs
+the same scenarios on EmiBSD and on a real OpenBSD and compares them step by step. The smokes
+check that EmiBSD does what we expect; this checks that it does what OpenBSD does.
+
+- **The OpenBSD VM** (the user's decision of 2026-10-05): the official -current snapshot
+  nearest the pin, amd64 and arm64. The mirrors keep only the latest snapshot; the one used
+  was built a day (amd64, 2026-10-03) and two days (arm64, 2026-10-04) after the pin.
+  `tools/xtask/openbsd-snapshot.toml` records the mirror, the build dates and two SHA256s per
+  arch: the snapshot's own `SHA256` file, and `install80.img` as that file lists it. `fetch`
+  downloads the image once into `target/openbsd/<arch>/` and refuses it unless both match.
+  Once the mirror moves on, a fresh clone cannot fetch it: copy `target/openbsd/` from a
+  machine that has it, or record a new snapshot (the user's decision).
+- **Install**: autoinstall(8), headless. The image boots under EDK2 (on amd64 `set tty com0`
+  is typed at efiboot's `boot>`); the installer is told `A` and given
+  `http://10.0.2.2:<port>/install.conf` (`tools/xtask/diff-openbsd/install.conf`), served by
+  a small HTTP/1.0 file server of xtask (`diffopenbsd/http.rs`) with a disklabel template
+  (`/` and swap). Sets: `bsd*`, `base`, `comp`. The image's set directory has no
+  `SHA256.sig`, so the installer is told to go on without it: the whole image was checked on
+  the host. The installer gets two processors (it offers `bsd.mp` only on a multiprocessor).
+  A first boot, without network (`restrict=on`, so rc.firsttime's fw_update and syspatch
+  reach nothing), sets `library_aslr=NO` and removes `/usr/share/relink/kernel`, so later
+  boots do not relink, and halts. The disk is kept with an `installed` marker.
+- **A run**: EmiBSD (the smokes' MP kernel and ramdisk, `--smp 4`) and OpenBSD (the installed
+  disk under `-snapshot`, never changed) boot side by side, each with a blank 64 MiB scratch
+  disk (`sd0` on EmiBSD, `sd1` on OpenBSD; `$D` in the scripts). Both log in as root on the
+  serial console and fetch each set's script and the test program with ftp(1) from the HTTP
+  server. Each script runs every step between `@@B <k>` and `@@E <k> <status>` markers.
+- **Scenarios** (`tools/xtask/diff-openbsd/*.scn`, format in `diffopenbsd/scenario.rs`): one
+  shell line per step, `$` compares output and status, `?` the status, `!` nothing. `setup`
+  partitions, labels, formats and mounts the scratch disk; `syscalls` runs `tools/difftest`
+  (ISC, our own: 291 probes printing return values and errno names, inode numbers as labels)
+  one section per step; `fs` uses OpenBSD's own utilities, built into the ramdisk for
+  it (cp, ln, mv, rm, rmdir, readlink, stat, touch, wc). The same static difftest binary runs
+  on both systems.
+- **Normalized**: host names, the scratch disk's name, `prog[pid]`, tabs (expanded on both),
+  and, where a step asks, ls dates, inode numbers, or all numbers.
+- **Expected differences** (`tools/xtask/diff-openbsd/expected.toml`): each with the step id,
+  its command and a reason. Any other difference fails, and so does an entry that no longer
+  differs. An entry covers a whole step, so a step that hits an unported part stays alone.
+- **Environment, not kernel**: the two root file systems differ (the ramdisk has no
+  `/usr/mdec/mbr`, its own `/etc/fstab`, `/etc/group` and gettytab, and no root `.profile`
+  running tset(1)). The scenarios avoid or normalize those, and each place says why.
+
+First results (2026-10-05): one stale stub fixed (`amap_copy` chunking, `uvm_amap.c` now
+ported); five expected differences on both archs: fifofs, `exec_script.c`, file `mmap`, core
+dumps (all visible EmiBSD stubs) and `kern.ostype` (branding).
+
+Timings on the M-series Mac with the other milestone agents running: download about 1 minute
+for both images (1.5 GB); install and first boot 272 s (amd64) and 426 s (arm64), once. A run
+after that: about 35 to 65 s for amd64 and 80 s for arm64, image build included. It stays
+**beside `just ci`**, a documented recipe, not part of it: the first run needs the network and
+a snapshot that the mirrors drop within days, so `ci` could not stay reproducible on a fresh
+clone; and it adds no build step `ci` does not already do. `testing.md` says when to run it.
