@@ -1775,7 +1775,9 @@ check that EmiBSD does what we expect; this checks that it does what OpenBSD doe
 
 First results (2026-10-05): one stale stub fixed (`amap_copy` chunking, `uvm_amap.c` now
 ported); five expected differences on both archs: fifofs, `exec_script.c`, file `mmap`, core
-dumps (all visible EmiBSD stubs) and `kern.ostype` (branding).
+dumps (all visible EmiBSD stubs) and `kern.ostype` (branding). Since M14 `exec_script.c` and
+file `mmap` are ported, so their two entries are gone: three expected differences remain
+(fifofs, core dumps, branding).
 
 Timings on the M-series Mac with the other milestone agents running: download about 1 minute
 for both images (1.5 GB); install and first boot 272 s (amd64) and 426 s (arm64), once. A run

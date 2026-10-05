@@ -8,8 +8,8 @@ Done:
   the MP kernel with `-smp 4`; `smoke-up` is UP).
 - M12: audio(4) (azalia, auich), the USB core, xhci, umass, ukbd; arm64's PCI bus.
 - M12+: `cargo xtask unsafe-report` (below); `docs/JOURNAL.md`, a section per milestone;
-  `just diff-openbsd`: 102 steps against the OpenBSD 8.0 snapshot of 2026-10-03/04, 97 equal,
-  5 expected (fifofs, `#!` scripts, file mmap, core dumps, branding), on both archs.
+  `just diff-openbsd`: 102 steps against the OpenBSD 8.0 snapshot of 2026-10-03/04, 99 equal,
+  3 expected (fifofs, core dumps, branding), on both archs.
 
 Next:
 - M13 (storage, firmware, console; nvme, vioscsi and cd are in), then M14, M15.

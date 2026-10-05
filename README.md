@@ -288,8 +288,8 @@ The test image's root password is in docs/SETUP.md ("The test image's login").
 
 Against a real OpenBSD (`just diff-openbsd`, beside `just ci`): the same 102 steps (291 system
 call probes, file-system operations through OpenBSD's own utilities) on EmiBSD and on the
-OpenBSD 8.0 snapshot nearest the pin, on both archs: 97 equal, 5 expected differences
-(fifofs, `#!` scripts, file mmap, core dumps, branding).
+OpenBSD 8.0 snapshot nearest the pin, on both archs: 99 equal, 3 expected differences
+(fifofs, core dumps, branding).
 
 Details, boot flow and deviations: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 

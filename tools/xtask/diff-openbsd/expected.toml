@@ -18,20 +18,6 @@ EOPNOTSUPP, the C's answer without option FIFO (ffs_vinit and domknodat; ports.t
 of ufs_vnops.c, ffs_subr.c, vfs_syscalls.c)"""
 
 [[difference]]
-step = "syscalls/probes#9"
-cmd = "difftest syscalls script"
-reason = """unported: exec_script.c (#! interpreter scripts) is not ported; execsw[] holds ELF \
-only (sys/kern/kern_exec.rs, EXECSW), so a script fails with ENOEXEC, which OpenBSD runs or \
-answers with ENOENT for a missing interpreter"""
-
-[[difference]]
-step = "syscalls/probes#12"
-cmd = "difftest syscalls mmapfile"
-reason = """unported: mmap(2) of a file or descriptor is a visible stub (sys/uvm/uvm_mmap.rs, \
-`unported!(\"sys_mmap: file mappings\")`), ENOSYS before the descriptor is looked at; \
-anonymous mappings are compared in `memory`"""
-
-[[difference]]
 step = "syscalls/probes#14"
 cmd = "difftest syscalls ostype"
 reason = """branding: kern.ostype is EmiBSD (the user's decision of 2026-10-03; \
