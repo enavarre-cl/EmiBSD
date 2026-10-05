@@ -648,6 +648,7 @@ pub(crate) fn qemu_command(
             cmd.args(["-semihosting-config", "enable=on,target=native"]);
         }
     }
+    crate::hwopts::add_devices(&mut cmd, root, arch);
     Ok(cmd)
 }
 

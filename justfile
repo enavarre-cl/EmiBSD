@@ -72,7 +72,7 @@ run-arm64: image-arm64
 jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
-    "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid " + \
+    "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
     "smoke-nvme " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up"
@@ -1110,6 +1110,29 @@ fs_steps := disk_login + " " + \
     "--expect 'tmpfs on /tmp type tmpfs' --expect 'm10c-tmpfs-42' --expect 'm10c-fat-42' " + \
     "--expect 'm10c-iso-42' --expect 'm10c-udf-42' --expect '** Phase 1 - Read and Compare FATs' " + \
     "--expect 'fsck-msdos-rc=0' --expect 'vnd3: covering /tmp/new.img'"
+
+# M13: cd(4) on vioscsi(4). The ISO `smoke-fs` mounts through vnd (the ramdisk's
+# /root/images/cd.iso, made by makefs) is also given to QEMU as a `scsi-cd` drive on a virtio
+# SCSI adapter (`--scsi-cd`, `tools/xtask/src/hwopts.rs`: virtio-scsi-pci on amd64,
+# virtio-scsi-device on arm64, read-only, `media=cdrom`). The kernel must attach vioscsi0, its
+# scsibus and cd0 (`cd0 at scsibus... targ 0 lun 0: <QEMU, QEMU CD-ROM, ...>`), mount_cd9660(8)
+# must mount /dev/cd0c (the block device: cdopen, cd_get_parms, the fabricated label, READ(10)
+# through cdstart and vioscsi_scsi_cmd) and read the known file back. `$((40+2))` keeps the
+# echoed command line from matching. Part of `smoke`.
+smoke-cd: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-cd: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --scsi-cd target/userland/amd64/ramdisk-root/root/images/cd.iso {{cd_steps}}
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --scsi-cd target/userland/arm64/ramdisk-root/root/images/cd.iso {{cd_steps}}
+
+# `smoke-cd`'s session.
+cd_steps := disk_login + " " + \
+    "--send-after '# ' --send 'mount_cd9660 /dev/cd0c /mnt && cat /mnt/m10c-iso.txt && umount /mnt\\n' " + \
+    "--expect 'vioscsi0 at virtio' --expect ' at vioscsi0: 255 targets' --expect 'cd0 at scsibus' " + \
+    "--expect ' targ 0 lun 0: <QEMU, QEMU CD-ROM' " + \
+    "--expect 'm10c-iso-42'"
 
 # M10e: NFS between the two VMs of `smoke-link`. A exports /export to B with OpenBSD's
 # portmap(8), mountd(8) and nfsd(8) (UDP and TCP); B lists the export with showmount(8),

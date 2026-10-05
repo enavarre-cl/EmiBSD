@@ -959,6 +959,15 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   options) adds an NVMe controller whose namespace is FILE, on amd64 only (arm64 gets PCI
   with M12): it is added right after the NICs, so it takes slot 3, attaches before the
   virtio-blk disk (then at slot 4) and its namespace is `sd0`.
+- QEMU's M13 devices (`tools/xtask/src/hwopts.rs`, one option each, hooked into
+  `boot::qemu_command` by one call): `--scsi-cd ISO` (`qemu`, `smoke`, `smoke2`) adds a virtio
+  SCSI adapter with a read-only `scsi-cd` drive holding the file (`virtio-scsi-pci` on amd64,
+  `virtio-scsi-device` on arm64) as the LAST device of the command line, so the numbering of
+  the other virtio devices does not change: amd64's PCI slots go up (`vioscsi0 at virtio2`,
+  after the NIC and the disk), and on arm64 the adapter takes the lowest virtio-mmio slot, so
+  the kernel finds it first (`vioscsi0`, and its `scsibus0`) while the NIC and the disks keep
+  the slots, hence the names, they have without it. `smoke-cd` mounts the ramdisk's makefs ISO
+  through it (`cd0`, `mount_cd9660 /dev/cd0c`).
 - `disklabel(8)` and `fdisk(8)` embed their manual page in a generated `manual.c` rendered
   with mandoc(1); the userland build takes their Makefiles' own `.ifdef NOMAN` branch
   (`NOMAN_PROGRAMS` in `tools/xtask/src/userland.rs`), so the embedded page reads

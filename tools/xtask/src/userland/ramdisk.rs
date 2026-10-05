@@ -71,6 +71,9 @@ const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 ///   `sd0`..`sd9`; the image has `sd0`..`sd15` (M10f): `sd0` is the first persistent disk,
 ///   the arm64 boot disk is one more block device the kernel finds, and softraid volumes
 ///   take the next units;
+/// - CD-ROM drives (`cd`, M13), made by `devices()` from `CD_UNITS` the same way: block `cd`
+///   6 (`bdev_disk_init(NCD,cd)`), character 15, `cd0a`..`cd0p` and `rcd0a`..`rcd0p` (and
+///   `cd1`; `MAKEDEV all` makes `cd0` and `cd1`);
 /// - vnode disks (`vnd`, M10c), made by `devices()` from `VND_UNITS` the same way: block 14
 ///   (`bdev_disk_init(NVND,vnd)`, 69 / 67), character 41 (219 / 169), `vnd0`..`vnd3`;
 /// - `bio` is major 79 (`bio` 79 / 79: `/dev/bio`, `MAKEDEV` makes it 0600), minor 0;
@@ -117,6 +120,13 @@ const UNITMULT: u32 = 64;
 const SD_BLOCK_MAJOR: u32 = 4;
 const SD_CHAR_MAJOR: u32 = 13;
 
+/// The `cd` units the image has nodes for: `MAKEDEV all`'s `cd0` and `cd1`.
+const CD_UNITS: &[u32] = &[0, 1];
+
+/// `bdevsw[]` and `cdevsw[]` majors of `cd` (6 and 15 on amd64 and arm64).
+const CD_BLOCK_MAJOR: u32 = 6;
+const CD_CHAR_MAJOR: u32 = 15;
+
 /// The `vnd` units the image has nodes for: `MAKEDEV all`'s `vnd0`..`vnd3` (GENERIC's
 /// `pseudo-device vnd 4`).
 const VND_UNITS: &[u32] = &[0, 1, 2, 3];
@@ -136,6 +146,11 @@ fn devices() -> Vec<(String, char, u32, u32, u32, &'static str)> {
     let disks = DISK_UNITS
         .iter()
         .map(|u| ("sd", *u, SD_BLOCK_MAJOR, SD_CHAR_MAJOR))
+        .chain(
+            CD_UNITS
+                .iter()
+                .map(|u| ("cd", *u, CD_BLOCK_MAJOR, CD_CHAR_MAJOR)),
+        )
         .chain(
             VND_UNITS
                 .iter()
@@ -1095,6 +1110,10 @@ mod tests {
         assert_eq!(find("rsd0a").map(|d| (d.1, d.2, d.3)), Some(('c', 13, 0)));
         assert_eq!(find("sd1a").map(|d| (d.1, d.2, d.3)), Some(('b', 4, 64)));
         assert_eq!(find("rsd1p").map(|d| (d.1, d.2, d.3)), Some(('c', 13, 79)));
+        // M13: cd: block 6 / char 15, the same layout.
+        assert_eq!(find("cd0c").map(|d| (d.1, d.2, d.3)), Some(('b', 6, 2)));
+        assert_eq!(find("rcd1a").map(|d| (d.1, d.2, d.3)), Some(('c', 15, 64)));
+        assert!(find("cd2a").is_none());
         // vnd: block 14 / char 41, the same layout.
         assert_eq!(find("vnd1c").map(|d| (d.1, d.2, d.3)), Some(('b', 14, 66)));
         assert_eq!(

@@ -5,8 +5,8 @@
 //! `subr_autoconf.rs`.
 //!
 //! GENERIC lines present: `mainbus0 at root`, `ampintc* at fdt? early 1`, `agtimer* at fdt?`,
-//! `virtio* at fdt?`, `vio* at virtio?`, `vioblk* at virtio?`, `scsibus* at scsi?`,
-//! `sd* at scsibus?`, `softraid0 at root` and `scsibus* at softraid?` (conf/GENERIC),
+//! `virtio* at fdt?`, `vio* at virtio?`, `vioblk* at virtio?`, `vioscsi* at virtio?`,
+//! `scsibus* at scsi?`, `sd* at scsibus?`, `cd* at scsibus?`, `softraid0 at root` and `scsibus* at softraid?` (conf/GENERIC),
 //! `pluart* at fdt?`,
 //! `plrtc* at fdt?`, `efi0 at mainbus?`, `cpu0 at mainbus?` and, with `MULTIPROCESSOR`,
 //! `GENERIC.MP`'s `cpu* at mainbus?`;
@@ -16,7 +16,7 @@
 //! The `fdt` attribute (`files.arm64`: `define fdt {[early = 0]}`) is carried by `mainbus`
 //! and `simplebus`; `simplebus` is not ported, so mainbus is the only parent here. Every
 //! other GENERIC line waits for its driver (`smbios0 at efi?`,
-//! `simplebus* at fdt?`, the devices at `virtio?` but `vio*` and `vioblk*`, `virtio* at pci?`
+//! `simplebus* at fdt?`, the devices at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`, `virtio* at pci?`
 //! with a host bridge driver, ...),
 //! as do the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s layout:
 //! attachment, driver, unit, state, locators, flags, parents (indices into `CFDATA`), the
@@ -34,6 +34,7 @@ use crate::dev::fdt::virtio_mmio::VIRTIO_MMIO_CA;
 use crate::dev::ic::pluart::PLUART_CD;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
 use crate::dev::pv::vioblk::{VIOBLK_CA, VIOBLK_CD};
+use crate::dev::pv::vioscsi::{VIOSCSI_CA, VIOSCSI_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
@@ -49,6 +50,7 @@ use crate::net::if_pflow::pflowattach;
 use crate::net::if_pfsync::pfsyncattach;
 use crate::net::if_wg::wgattach;
 use crate::net::pf_ioctl::pfattach;
+use crate::scsi::cd::{CD_CA, CD_CD};
 use crate::scsi::scsiconf::{SCSIBUS_CA, SCSIBUS_CD};
 use crate::scsi::sd::{SD_CA, SD_CD};
 use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR, Pdevinit};
@@ -68,9 +70,9 @@ const LOC_EARLY_0: &[i64] = &[0];
 /// `pv[]` for children of `virtio*` (`cfdata[3]`).
 const PV_VIRTIO: &[i16] = &[3];
 
-/// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`) and
-/// `softraid0` (`cfdata[11]`).
-const PV_VIOBLK: &[i16] = &[5, 11];
+/// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`),
+/// `softraid0` (`cfdata[11]`) and `vioscsi*` (`cfdata[13]`).
+const PV_VIOBLK: &[i16] = &[5, 11, 13];
 
 /// `pv[]` for children of `scsibus*` (`cfdata[9]`).
 const PV_SCSIBUS: &[i16] = &[9];
@@ -81,9 +83,9 @@ const LOC_SCSIBUS_UNK: &[i64] = &[-1, -1];
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    14
+    16
 } else {
-    13
+    15
 };
 
 /// `cfdata[]`.
@@ -234,7 +236,31 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 13: cpu* at mainbus? (GENERIC.MP)
+    // 13: vioscsi* at virtio?
+    Cfdata::new(
+        &VIOSCSI_CA,
+        &VIOSCSI_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_VIRTIO,
+        0,
+        0,
+    ),
+    // 14: cd* at scsibus?
+    Cfdata::new(
+        &CD_CA,
+        &CD_CD,
+        0,
+        FSTATE_STAR,
+        LOC_SCSIBUS_UNK,
+        0,
+        PV_SCSIBUS,
+        0,
+        0,
+    ),
+    // 15: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];

@@ -6,6 +6,14 @@
 //!   [`boot::run_dir`]). amd64 only: it sits on `q35`'s PCI bus, added right after the NICs
 //!   so that it comes before the persistent virtio-blk disks and its namespace is `sd0`;
 //!   arm64's `virt` has no PCI bus in the kernel until M12.
+//! - `--scsi-cd ISO` (`qemu`, `smoke`, `smoke2`): a virtio SCSI host adapter with a CD-ROM
+//!   drive holding the file `ISO` (read-only, `media=cdrom`; a relative path is taken from the
+//!   workspace root): `virtio-scsi-pci` on amd64, `virtio-scsi-device` (virtio-mmio) on arm64,
+//!   with `scsi-cd` on its bus. It is the LAST device added on both archs ([`add_devices`]),
+//!   so the numbering of the other virtio devices is unchanged: amd64's PCI slots go up, and
+//!   arm64 `virt` hands virtio-mmio slots out from the top down while the kernel finds them
+//!   bottom up (the adapter takes the lowest slot, `vioscsi0`, found first; the NIC and the
+//!   disks keep their slots, hence their names). Its `scsibus` is the one attached first.
 //! - `cargo xtask nvme-root --arch A [--duid HEX] [--out FILE]`: the disk `just smoke-nvme`
 //!   boots from, `nvme-<arch>.img` in the run directory unless `--out` names another file.
 //!   It is laid out as OpenBSD's installer lays a disk out: an MBR whose one partition is
@@ -62,11 +70,21 @@ const FSTAB_SD0A: &[u8] = b"/dev/sd0a / ffs rw 1 1\n";
 /// `--nvme FILE` for every VM this run starts (set once by `main`).
 static NVME: OnceLock<PathBuf> = OnceLock::new();
 
-/// Records this run's device options (`--nvme`).
-pub(crate) fn set(root: &Path, args: &[&str]) {
+/// `--scsi-cd ISO` for every VM this run starts (set once by `main`).
+static SCSI_CD: OnceLock<PathBuf> = OnceLock::new();
+
+/// Records this run's device options (`--nvme`, `--scsi-cd`).
+pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if let Some(w) = args.windows(2).find(|w| w[0] == "--nvme") {
         let _ = NVME.set(boot::run_dir(root).join(w[1]));
     }
+    if let Some(i) = args.iter().position(|a| *a == "--scsi-cd") {
+        let Some(iso) = args.get(i + 1) else {
+            return Err("--scsi-cd: expected the path of an ISO file".into());
+        };
+        let _ = SCSI_CD.set(PathBuf::from(iso));
+    }
+    Ok(())
 }
 
 /// Adds the PCI storage controllers this run asked for to `cmd` (amd64's PCI bus: called
@@ -234,6 +252,39 @@ pub(crate) fn nvme_root(
     Ok(())
 }
 
+/// The QEMU arguments of the `--scsi-cd` device on `arch`, in order. A relative `iso` is
+/// taken from the workspace `root`.
+fn scsi_cd_args(root: &Path, arch: Arch, iso: &Path) -> Vec<String> {
+    let iso = if iso.is_absolute() {
+        iso.to_path_buf()
+    } else {
+        root.join(iso)
+    };
+    let adapter = match arch {
+        Arch::Amd64 => "virtio-scsi-pci,id=scsi0",
+        Arch::Arm64 => "virtio-scsi-device,id=scsi0",
+    };
+    vec![
+        "-drive".into(),
+        format!(
+            "if=none,format=raw,file={},id=cd0,media=cdrom,readonly=on",
+            iso.display()
+        ),
+        "-device".into(),
+        adapter.into(),
+        "-device".into(),
+        "scsi-cd,drive=cd0,bus=scsi0.0".into(),
+    ]
+}
+
+/// Adds the devices that go last on the command line to `cmd` (`--scsi-cd`, see the module
+/// docs).
+pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) {
+    if let Some(iso) = SCSI_CD.get() {
+        cmd.args(scsi_cd_args(root, arch, iso));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,5 +318,24 @@ mod tests {
         assert!(rewrite_fstab(&mut fs).is_err());
         assert!(parse_duid("4e564d45524f4f5").is_err());
         assert!(parse_duid("4e564d45524f4fzz").is_err());
+    }
+
+    #[test]
+    fn scsi_cd_is_a_read_only_cdrom_on_the_arch_s_virtio_bus() {
+        let a = scsi_cd_args(Path::new("/r"), Arch::Amd64, Path::new("t/cd.iso"));
+        assert_eq!(a[0], "-drive");
+        assert!(a[1].contains("file=/r/t/cd.iso"));
+        assert!(a[1].contains("media=cdrom,readonly=on"));
+        assert_eq!(a[3], "virtio-scsi-pci,id=scsi0");
+        assert_eq!(a[5], "scsi-cd,drive=cd0,bus=scsi0.0");
+        let b = scsi_cd_args(Path::new("/r"), Arch::Arm64, Path::new("/x/cd.iso"));
+        assert!(b[1].contains("file=/x/cd.iso"));
+        assert_eq!(b[3], "virtio-scsi-device,id=scsi0");
+    }
+
+    #[test]
+    fn scsi_cd_needs_a_path() {
+        assert!(set(Path::new("/r"), &["--scsi-cd"]).is_err());
+        assert!(set(Path::new("/r"), &["--arch", "arm64"]).is_ok());
     }
 }

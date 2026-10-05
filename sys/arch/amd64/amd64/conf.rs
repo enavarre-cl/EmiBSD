@@ -42,7 +42,7 @@
 //!   writes the driver's initialiser with a count (`cdev_disk_init(NWD,wd)`): its entry points
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
-//!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `vnd` (14 block,
+//!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `cd` (6 block, 15 character), `vnd` (14 block,
 //!   41 character), `rd` (17 block, 47 character), `pf` (73), `bio` (79), `ptm` (81) and `fuse` (92, feature `fuse`). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
@@ -77,6 +77,7 @@ use crate::miscfs::fuse::fuse_device::{
 };
 use crate::net::bpf::{NBPFILTER, bpfclose, bpfioctl, bpfkqfilter, bpfopen, bpfread, bpfwrite};
 use crate::net::pf_ioctl::{NPF, pfclose, pfioctl, pfopen};
+use crate::scsi::cd::{NCD, cdclose, cddump, cdioctl, cdopen, cdread, cdsize, cdstrategy, cdwrite};
 use crate::scsi::sd::{NSD, sdclose, sddump, sdioctl, sdopen, sdread, sdsize, sdstrategy, sdwrite};
 #[cfg(feature = "fuse")]
 use crate::sys::conf::cdev_fuse_init;
@@ -112,7 +113,10 @@ pub static BDEVSW: Devsw<Bdevsw, 20> = Devsw([
         NSD, sdopen, sdclose, sdstrategy, sdioctl, sddump, sdsize,
     )),
     bnotdef(), // 5: was: SCSI tape
-    bnotdef(), // 6: SCSI CD-ROM (cd: not ported)
+    // 6: SCSI CD-ROM
+    Cell::new(bdev_disk_init(
+        NCD, cdopen, cdclose, cdstrategy, cdioctl, cddump, cdsize,
+    )),
     bnotdef(), // 7
     bnotdef(), // 8
     bnotdef(), // 9
@@ -190,7 +194,10 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
         NSD, sdopen, sdclose, sdread, sdwrite, sdioctl,
     )),
     cnotdef(), // 14: SCSI tape (st: not ported)
-    cnotdef(), // 15: SCSI CD-ROM (cd: not ported)
+    // 15: SCSI CD-ROM
+    Cell::new(cdev_disk_init(
+        NCD, cdopen, cdclose, cdread, cdwrite, cdioctl,
+    )),
     cnotdef(), // 16: parallel printer (lpt: not ported)
     cnotdef(), // 17: SCSI autochanger (ch: not ported)
     cnotdef(), // 18: kexec (not ported)
