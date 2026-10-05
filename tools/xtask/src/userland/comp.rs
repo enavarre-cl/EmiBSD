@@ -31,14 +31,15 @@
 //!    `ld`; `ar` as `ranlib`, ...), clang's resource headers (`/usr/lib/clang/22/include`,
 //!    by `include/clang/intrin`'s own `install` rule), `libclang_rt.*.a`, and, so that `cc`
 //!    can compile and link there, the sysroot's `/usr/include` and `/usr/lib` (`crt*.o`,
-//!    `lib*.a`). `comp.ffs` is that root as an ffs image (makefs, as `ramdisk.rs` makes
+//!    `lib*.a`, and the shared `lib*.so.M.m`) and `/usr/libexec/ld.so` (M14,
+//!    `userland/shlib.rs`). `comp.ffs` is that root as an ffs image (makefs, as `ramdisk.rs` makes
 //!    the ramdisk), the disk `just smoke-cc` mounts.
 //! 5. `<arch>/licences.txt`: the licence report of `userland`, over everything compiled.
 //!
 //! ## Deviations
 //!
-//! - The programs are static PIE executables like the rest of the userland (`ld.so` is
-//!   another M14 track's): OpenBSD links them dynamically (and `libLLVM` is a shared
+//! - The programs are static PIE executables like the rest of the userland's: OpenBSD
+//!   links them dynamically (and `libLLVM` is a shared
 //!   library there, `NOLIBSTATIC`); here `libLLVM.a` is linked into each.
 //! - The build tools run on macOS: built with Apple clang against macOS's libc++, from the
 //!   same Makefiles and the same `include/llvm/Config` (OpenBSD's `config.h`), with the
@@ -1049,10 +1050,33 @@ impl<'a> Comp<'a> {
         for sub in ["usr/include", "usr/lib"] {
             mirror(&self.ctx.sysroot.join(sub), &rootdir.join(sub), &mut n)?;
         }
+        // M14: the run-time link-editor `userland` installs (`userland/shlib.rs`), so that
+        // what `cc` links dynamically runs on this disk (`just smoke-cc` chroots into it).
+        let libexec = self.ctx.sysroot.join("usr/libexec");
+        if libexec.is_dir() {
+            mirror(&libexec, &rootdir.join("usr/libexec"), &mut n)?;
+        }
         fs::create_dir_all(rootdir.join("tmp"))
             .map_err(|e| format!("{}: {e}", rootdir.display()))?;
         let mut attrs = self.attrs.lock().map_err(|_| "lock poisoned")?;
         attrs.push(ramdisk::Attr::installed("/tmp", "root", "wheel", "1777")?);
+        // The shared libraries and ld.so: root:bin 444, as `userland` installs them.
+        for (dir, prefix) in [("usr/lib", "lib"), ("usr/libexec", "ld.so")] {
+            let Ok(entries) = fs::read_dir(rootdir.join(dir)) else {
+                continue;
+            };
+            for e in entries {
+                let name = e?.file_name().to_string_lossy().into_owned();
+                if name.starts_with(prefix) && (name.contains(".so.") || name == "ld.so") {
+                    attrs.push(ramdisk::Attr::installed(
+                        &format!("/{dir}/{name}"),
+                        "root",
+                        "bin",
+                        "444",
+                    )?);
+                }
+            }
+        }
         println!(
             "  root: {} ({n} files of /usr/include and /usr/lib updated)",
             rootdir.display()

@@ -246,7 +246,9 @@ Workarounds, each printed by the build (flags only; no source is edited):
   `/usr/bin/yacc`). Its only shim is a force-included `reallocarray(3)`, which macOS's libc lacks.
 - `usr.bin/uname`, `usr.bin/id`, `usr.bin/login`, `usr.bin/fstat`, `usr.bin/vmstat`,
   `libexec/getty` and `libexec/login_passwd` are linked `-static` (their Makefiles are dynamic, as `/usr/bin` and `/usr/libexec` are on
-  OpenBSD; there is no `ld.so` yet), as the install media's crunched programs are.
+  OpenBSD), as the install media's crunched programs are: the ramdisk's programs all stay
+  static; `ld.so` and the shared libraries (M14, "Shared libraries and ld.so") serve what
+  `cc` links.
 - M10e's `usr.sbin/portmap` and `usr.bin/showmount` are linked `-static` for the same reason,
   and so are `sbin/mountd` and `sbin/nfsd`, whose Makefiles end with `LDSTATIC=` (OpenBSD ships
   them dynamic). No source or other flag differs. The ramdisk gets what they need from a base
@@ -484,16 +486,57 @@ Workarounds, each printed by the build (flags only; no source is edited):
   `Makefile.inc` sets `CXX=clang++` unless `COMPILER_VERSION` is clang). A target compile
   whose `CC` or `CXX` is not the cross compiler stops the build.
 
-Deviations: the programs are static PIE executables, like the rest of the userland (`ld.so`
-is another M14 track); OpenBSD links them dynamically and ships `libLLVM` as a shared
+Deviations: the programs are static PIE executables, like the rest of the userland's;
+OpenBSD links them dynamically and ships `libLLVM` as a shared
 library (`NOLIBSTATIC`), here `libLLVM.a` is linked into each program.
 
 `just smoke-cc` (not in `smokes`: it needs `just comp`) boots the ramdisk kernel with
 `comp.ffs` as `sd0`, mounts it on `/mnt`, runs `/mnt/usr/bin/clang --version` (`OpenBSD
 clang version 22.1.6`, `Target: amd64-unknown-openbsd8.0` or `aarch64-unknown-openbsd8.0`),
 compiles a hello world with `cc --sysroot=/mnt -static` and runs it. On the way the kernel
-reports two gaps it works around: `unported: sys_mmap: file mappings` (clang and lld map
-their input files; LLVM falls back to `read(2)`) and `unported: amap_copy: chunking`.
+reports one gap it works around: `unported: amap_copy: chunking`. Then the plain dynamic link
+of an installed system: `chroot /mnt /usr/bin/cc -o /tmp/d /tmp/h.c` (a dynamic PIE linked
+against `libc.so.M.m` with `-dynamic-linker /usr/libexec/ld.so`), run in the chroot, and
+`ldd /mnt/tmp/d` from the ramdisk, whose own `ld.so` and `libc.so` serve it.
+
+### Shared libraries and ld.so (M14)
+
+A plain `cc hello.c` on OpenBSD makes a dynamic PIE, so the system needs the run-time
+link-editor and the shared libc. `userland` builds them (`tools/xtask/src/userland/shlib.rs`)
+after the static libraries, as OpenBSD's Makefiles say:
+
+- `libc.so.104.0`, `libutil.so.22.0`, `libm.so.10.1`, `libpthread.so.28.1` (`lib/librthread`,
+  also built static, as `comp` does): `bsd.lib.mk`'s `${FULLSHLIBNAME}`. Every object again
+  as a `.so` object (`.c.so` and `.S.so`: `${PICFLAG} -DPIC`, `-DSOLIB`; libc's system-call
+  stubs by its own `${SASM}` rules), linked `-shared -soname lib${LIB}.so.M.m` with the
+  Makefile's `LDADD` (libc: `-nostdlib -lcompiler_rt -Wl,-zinitfirst,-znow`; libpthread:
+  `-Wl,-znodelete`) and its `VERSION_SCRIPT` (libc's `Symbols.map` made by its rule from the
+  `Symbols.list` files). The version is `shlib_version`'s. Installed in the sysroot and the
+  staging root at `/usr/lib`, root:bin 444. `libcompiler_rt` stays static, as on OpenBSD.
+- `/usr/libexec/ld.so`: its sources, libc's string functions through its `VPATH`, the
+  `dl_<syscall>.o` stubs of its `.for` loop, linked by its rule (`-e _dl_start`, its
+  `Symbols.map` and `ld.script`, `--shared -Bsymbolic --no-undefined`) and checked by its
+  `CHECK_LDSO` (only `R_X86_64_RELATIVE` / `R_AARCH64_RELATIVE` dynamic relocations; read
+  with `llvm-objdump --dynamic-reloc` where the Makefile runs `readelf`). root:bin 444.
+- `ldconfig(8)`, `ldd(1)` and `chroot(8)` join `PROGRAMS`, static like the rest of the
+  ramdisk. No ramdisk program is dynamic: OpenBSD's install media are static too; dynamic
+  programs are what `cc` makes.
+- `comp` copies `/usr/libexec` of the sysroot into its root with `/usr/lib`, so `comp.ffs`
+  carries `ld.so` and the shared libraries.
+
+Deviations, each written in `shlib.rs`: the host's LLD 17 is given two defaults OpenBSD's lld
+has built in (`--undefined-version`: libc's `Symbols.list` names symbols that only other
+architectures define; `--ignore-function-address-equality`); ld.so is built with
+`STACK_PROTECTOR=` (its `__guard_local` and `__stack_smash_handler` stubs), the branch of
+the architectures OpenBSD's clang has no retguard for, because the host's clang has no
+retguard and emits the stack protector on amd64 and arm64 too; objects are linked in
+Makefile order, not shuffled (`sort -R`), and no relink kits (`/usr/share/relink`,
+`ld.so.a`) are made; `test-ld.so` is not built or run on the Mac (as in OpenBSD's cross
+builds), `smoke-cc` is that test. The kernel side is `uvm_mmap.c`'s file half
+(`uvm_mmapfile` over `uvn_attach`; device mappings other than `/dev/zero` report the
+unported `udv_attach`). `__thrsleep`/`__thrwakeup` (`kern_synch.c`) are still `sys_nosys`:
+libc's `FILE` locks and libpthread's `_rthread_dl_lock` call them only when two threads
+contend.
 
 ## Boot loaders (M14)
 
@@ -855,7 +898,7 @@ reason:
   `PT_OPENBSD_MUTABLE`, `PT_GNU_RELRO`, `DT_TEXTREL` and the `PT_OPENBSD_SYSCALLS` pin
   table; `exec_elf_fixup` writes the auxiliary vector (`AUX_base` is the executable's own
   base for a static PIE, which `rcrt0` relocates itself from). A `PT_INTERP` program loads
-  `ld.so` through `elf_load_file`, which fails in `namei` because `ld.so` is not built.
+  `ld.so` through `elf_load_file` (M14: `userland` builds it, "Shared libraries and ld.so").
   `exec_timekeep_map` maps the shared timekeep page (wired in `kernel_map`, written by
   `tc_update_timekeep`); where the timecounter has no user-mode reader (`tk_user` 0, the
   i8254 on amd64) libc falls back to `clock_gettime(2)`; amd64's TSC has one

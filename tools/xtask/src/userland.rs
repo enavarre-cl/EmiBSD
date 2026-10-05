@@ -13,7 +13,10 @@
 //! 3. `libc.a` and `libutil.a`: `SRCS`, `OBJS` and `.PATH` come from evaluating the libraries'
 //!    Makefiles with `bsdmake.rs`; the system-call stubs are made by the rules of
 //!    `lib/libc/sys/Makefile.inc` (`GENERATE.*` piped into `FINISH.*`), run through `/bin/sh`
-//!    exactly as make would; generated C (the `lib/libc/hash` helpers) likewise.
+//!    exactly as make would; generated C (the `lib/libc/hash` helpers) likewise. Then (M14)
+//!    the shared libraries `libc.so.M.m`, `libutil`, `libm`, `libpthread` and the run-time
+//!    link-editor `/usr/libexec/ld.so`, as `bsd.lib.mk` and ld.so's Makefile make them
+//!    (`userland/shlib.rs`), into the sysroot and `root/`.
 //! 4. The programs of `PROGRAMS` (`sbin/init`, `bin/ksh`, `sbin/mount`, `libexec/getty`,
 //!    `usr.bin/login`, `libexec/login_passwd`, ...), linked as static PIE executables (what
 //!    OpenBSD's `cc -static` makes for `/bin` and `/sbin`), installed stripped into `root/`
@@ -97,6 +100,16 @@ const RULE_CC_O: &str = "${COMPILE.cc} ${DFLAGS} -MF ${.TARGET:R}.d ${.IMPSRC} -
 /// `bsd.lib.mk`'s `.S.o` rule, likewise.
 const RULE_S_O: &str = "${COMPILE.S} ${CFLAGS:M-[IDM]*} ${AINC} ${DFLAGS} -MF ${.TARGET:R}.d \
                         -o ${.TARGET} ${.IMPSRC}";
+/// `bsd.lib.mk`'s `.c.so` rule (M14, shared libraries), likewise; its `.d` file is named
+/// after the whole target (`foo.so.d`), so it does not replace the `.o`'s `foo.d`.
+const RULE_C_SO: &str =
+    "${COMPILE.c} ${DFLAGS} ${PICFLAG} -DPIC -MF ${.TARGET}.d ${.IMPSRC} -o ${.TARGET}";
+/// `bsd.lib.mk`'s `.cpp.so` rule, likewise.
+const RULE_CC_SO: &str =
+    "${COMPILE.cc} ${DFLAGS} ${PICFLAG} -DPIC -MF ${.TARGET}.d ${.IMPSRC} -o ${.TARGET}";
+/// `bsd.lib.mk`'s `.S.so` rule, likewise.
+const RULE_S_SO: &str = "${COMPILE.S} ${DFLAGS} -MF ${.TARGET}.d ${PICFLAG} -DSOLIB \
+                         ${CFLAGS:M-[IDM]*} ${AINC} ${.IMPSRC} -o ${.TARGET}";
 
 /// Flags of OpenBSD's patched base clang that Apple clang does not know, removed from
 /// `CFLAGS`/`AFLAGS`/`COPTS` after evaluation, with the reason.
@@ -132,7 +145,7 @@ struct Variant {
     add_cflags: &'static str,
     drop_ldadd: &'static [&'static str],
     /// Link `-static` although the Makefiles do not say so (`/usr/bin` programs are
-    /// dynamic on OpenBSD; there is no `ld.so` here yet).
+    /// dynamic on OpenBSD; the ramdisk's programs stay static, see `Variant::statically`).
     static_link: bool,
     why: &'static str,
 }
@@ -147,7 +160,8 @@ impl Variant {
             drop_ldadd: &[],
             static_link: true,
             why: "linked -static, as the install media's crunched programs are: /usr/bin, \
-                  /usr/sbin and /usr/libexec are dynamic on OpenBSD and ld.so is not built yet",
+                  /usr/sbin and /usr/libexec are dynamic on OpenBSD; the ramdisk keeps every \
+                  program static (ld.so and the shared libraries, M14, serve what `cc` links)",
         }
     }
 }
@@ -186,7 +200,7 @@ const VARIANTS: &[Variant] = &[
         drop_ldadd: &[],
         static_link: true,
         why: "linked -static: its Makefile ends with `LDSTATIC=` (dynamic, as OpenBSD ships \
-              it) and ld.so is not built yet",
+              it); the ramdisk keeps every program static",
     },
     Variant {
         dir: "sbin/nfsd",
@@ -194,7 +208,7 @@ const VARIANTS: &[Variant] = &[
         drop_ldadd: &[],
         static_link: true,
         why: "linked -static: its Makefile ends with `LDSTATIC=` (dynamic, as OpenBSD ships \
-              it) and ld.so is not built yet",
+              it); the ramdisk keeps every program static",
     },
     // M11e: the two-VM network stress.
     Variant::statically("usr.bin/tcpbench"),
@@ -208,13 +222,17 @@ const VARIANTS: &[Variant] = &[
     Variant::statically("usr.bin/stat"),
     Variant::statically("usr.bin/touch"),
     Variant::statically("usr.bin/wc"),
+    // M14: ld.so's ldd(1) runs a program with `LD_TRACE_LOADED_OBJECTS` set and needs no
+    // dynamic linking of its own (only its `dlopen` of a shared object would); chroot(8).
+    Variant::statically("libexec/ld.so/ldd"),
+    Variant::statically("usr.sbin/chroot"),
     Variant {
         dir: "usr.sbin/tcpdump",
         add_cflags: "",
         drop_ldadd: &[],
         static_link: true,
         why: "linked -static, as the install media's crunched programs are: /usr/sbin is \
-              dynamic on OpenBSD and ld.so is not built yet",
+              dynamic on OpenBSD; the ramdisk keeps every program static",
     },
 ];
 
@@ -371,6 +389,11 @@ const PROGRAMS: &[&str] = &[
     // off through ACPI S5 and `reboot` resets it through the FADT's reset register
     // (`just smoke-power`).
     "sbin/reboot",
+    // M14: ld.so's own tools, ldconfig(8) (static by its Makefile) and ldd(1), and chroot(8),
+    // which `just smoke-cc` runs the compiler and the dynamic program it makes under.
+    "libexec/ld.so/ldconfig",
+    "libexec/ld.so/ldd",
+    "usr.sbin/chroot",
 ];
 
 /// EmiBSD's own test programs, built after `PROGRAMS` the same way (an OpenBSD-style Makefile,
@@ -570,6 +593,9 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
     for dir in LIBRARIES {
         build_lib(&ctx, dir)?;
     }
+    // M14: libpthread (static, as `comp` also builds it), the shared libraries and ld.so.
+    build_lib(&ctx, "lib/librthread")?;
+    shlib::build_shared(&ctx)?;
     let mut built = Vec::new();
     let mut blocked = Vec::new();
     for dir in PROGRAMS.iter().chain(OWN_PROGRAMS) {
@@ -924,8 +950,16 @@ impl Job {
     }
 
     fn depfile(&self) -> Option<PathBuf> {
-        (self.target.extension().and_then(|e| e.to_str()) == Some("o"))
-            .then(|| self.target.with_extension("d"))
+        match self.target.extension().and_then(|e| e.to_str()) {
+            Some("o") => Some(self.target.with_extension("d")),
+            // `RULE_C_SO` and friends (M14): `foo.so.d`.
+            Some("so") => {
+                let mut d = self.target.clone().into_os_string();
+                d.push(".d");
+                Some(PathBuf::from(d))
+            }
+            _ => None,
+        }
     }
 
     /// Every input: the rule's sources and what the compiler's `.d` file lists.
@@ -1410,11 +1444,43 @@ fn resolve_sources(mk: &Make, objdir: &Path, sources: &[String]) -> Result<Vec<P
 /// The object files `mk` builds, as jobs: explicit rules (the system-call stubs) or the
 /// implicit `.c.o`/`.S.o` rules on the source found through `.PATH` or generated by a rule.
 fn object_jobs(ctx: &Ctx<'_>, mk: &Make, objdir: &Path, extra_objs: &[String]) -> Result<Vec<Job>> {
+    object_jobs_as(ctx, mk, objdir, extra_objs, ObjKind::Static)
+}
+
+/// Which of `bsd.lib.mk`'s object kinds `object_jobs_as` makes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ObjKind {
+    /// `${OBJS}`: `.o` files, by the `.c.o`/`.S.o` rules.
+    Static,
+    /// `${SOBJS}` (M14): `.so` files, by the `.c.so`/`.S.so` rules (`${PICFLAG} -DPIC`,
+    /// `-DSOLIB`), for a shared library (`userland/shlib.rs`).
+    Pic,
+}
+
+/// `object_jobs` for objects of `kind`: `extra_objs` are `.o` names (`${OBJS}`), turned
+/// into `.so` names for `ObjKind::Pic` as `${OBJS:.o=.so}` does.
+fn object_jobs_as(
+    ctx: &Ctx<'_>,
+    mk: &Make,
+    objdir: &Path,
+    extra_objs: &[String],
+    kind: ObjKind,
+) -> Result<Vec<Job>> {
+    let suffix = match kind {
+        ObjKind::Static => "o",
+        ObjKind::Pic => "so",
+    };
     let srcs = mk.words("SRCS")?;
-    let mut objs: Vec<String> = extra_objs.to_vec();
+    let mut objs: Vec<String> = extra_objs
+        .iter()
+        .map(|o| match o.strip_suffix(".o") {
+            Some(stem) => format!("{stem}.{suffix}"),
+            None => o.clone(),
+        })
+        .collect();
     for s in srcs.iter().filter(|s| !s.ends_with(".h")) {
         let stem = s.rsplit_once('.').map_or(s.as_str(), |(a, _)| a);
-        objs.push(format!("{stem}.o"));
+        objs.push(format!("{stem}.{suffix}"));
     }
     let mut seen = BTreeSet::new();
     objs.retain(|o| seen.insert(o.clone()));
@@ -1439,7 +1505,7 @@ fn object_jobs(ctx: &Ctx<'_>, mk: &Make, objdir: &Path, extra_objs: &[String]) -
             jobs.push(Job::from_rule(mk, &rule.commands, o, sources, &odir)?);
             continue;
         }
-        let stem = &o[..o.len() - 2];
+        let stem = &o[..o.len() - suffix.len() - 1];
         let named: Vec<String> = srcs
             .iter()
             .filter(|s| s.rsplit_once('.').is_some_and(|(a, _)| a == stem))
@@ -1507,12 +1573,14 @@ fn object_jobs(ctx: &Ctx<'_>, mk: &Make, objdir: &Path, extra_objs: &[String]) -
         }
         let (name, path) =
             found.ok_or_else(|| format!("no source for {o} (tried {candidates:?})"))?;
-        let template = if name.ends_with(".c") {
-            RULE_C_O
-        } else if [".cpp", ".cc", ".cxx"].iter().any(|x| name.ends_with(x)) {
-            RULE_CC_O
-        } else {
-            RULE_S_O
+        let cc = [".cpp", ".cc", ".cxx"].iter().any(|x| name.ends_with(x));
+        let template = match (kind, name.ends_with(".c"), cc) {
+            (ObjKind::Static, true, _) => RULE_C_O,
+            (ObjKind::Static, false, true) => RULE_CC_O,
+            (ObjKind::Static, false, false) => RULE_S_O,
+            (ObjKind::Pic, true, _) => RULE_C_SO,
+            (ObjKind::Pic, false, true) => RULE_CC_SO,
+            (ObjKind::Pic, false, false) => RULE_S_SO,
         };
         jobs.push(Job::from_rule(
             mk,
@@ -1605,7 +1673,8 @@ fn build_prog(ctx: &Ctx<'_>, dir: &str) -> Result<Linked> {
     }
     if !mk.words("LDSTATIC")?.iter().any(|w| w == "-static") {
         return Err(format!(
-            "{dir}: not linked -static (LDSTATIC); dynamic programs need ld.so, not built"
+            "{dir}: not linked -static (LDSTATIC); the ramdisk's programs are all static (add a \
+             VARIANTS entry)"
         )
         .into());
     }
@@ -2023,6 +2092,7 @@ mod images;
 mod libraries;
 mod passwd;
 mod ramdisk;
+mod shlib;
 pub(crate) mod testca;
 
 #[cfg(test)]
