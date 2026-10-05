@@ -89,7 +89,11 @@
 //!   `pmap_bootstrap` does not build the direct map's page tables (`dmpdp`/`dmpd`): the
 //!   bootloader's serve until the kernel owns its page tables. Limine maps at least 4 GiB and
 //!   every memory-map region, which is all `pmap_steal_memory` and the page allocator touch.
-//! - The kernel runs on the bootloader's PML4 (`CR3`), which `pmap_bootstrap` adopts as
+//! - After a boot by boot(8) (M14), the direct map, the kernel's PML4 and its recursive slot
+//!   are `locore0.S`'s, as in C (`pmap_direct_base` without `pmap_direct_rand`), and only its
+//!   first 4 GB exist: the part of `pmap_bootstrap` that maps the rest is not ported.
+//!   `pmap_prealloc_lowmem_ptps` runs then, for the MP trampoline.
+//! - Under Limine, the kernel runs on the bootloader's PML4 (`CR3`), which `pmap_bootstrap` adopts as
 //!   `pm_pdir` (the C's is `proc0`'s, built by `locore0.S`); it installs the recursive mapping
 //!   in `PDIR_SLOT_PTE` itself, where the C's `locore0.S` does.
 //! - The managed kernel range starts at `virtual_avail`, above the direct map, when that map
@@ -534,21 +538,24 @@ pub unsafe fn pmap_bootstrap(first_avail: Paddr, _max_pa: Paddr) -> Paddr {
 
     kpm.pm_type.set(PMAP_TYPE_NORMAL);
 
-    // The recursive mapping, which the C's locore0.S installs (see the module's deviations).
+    // The recursive mapping: the C's locore0.S installs it, and so does ours after a boot by
+    // boot(8); under Limine it is installed here (see the module's deviations).
     // SAFETY: the PML4 is RAM the direct map covers; the slot is the caller's to use once it
-    // is seen empty.
+    // is seen empty, or already the recursive entry.
     unsafe {
-        if pmap_valid_entry(pde_at(pdir, PDIR_SLOT_PTE)) {
+        let pde = pde_at(pdir, PDIR_SLOT_PTE);
+        if !pmap_valid_entry(pde) {
+            pde_set(
+                pdir,
+                PDIR_SLOT_PTE,
+                pdirpa.as_usize() as u64 | PG_V | PG_RW | pg_nx | pg_crypt(),
+            );
+        } else if pde & PG_FRAME != pdirpa.as_usize() as u64 {
             #[allow(clippy::panic)] // the bootloader broke the protocol's contract
             {
                 panic!("pmap_bootstrap: PML4 slot {} is in use", PDIR_SLOT_PTE);
             }
         }
-        pde_set(
-            pdir,
-            PDIR_SLOT_PTE,
-            pdirpa.as_usize() as u64 | PG_V | PG_RW | pg_nx | pg_crypt(),
-        );
     }
     tlbflush();
 
@@ -556,6 +563,46 @@ pub unsafe fn pmap_bootstrap(first_avail: Paddr, _max_pa: Paddr) -> Paddr {
     // page tables, the early PTE pages and the low-memory PTPs: with M4 to M6.
 
     first_avail
+}
+
+/// `pmap_prealloc_lowmem_ptps`: the PTPs that map the first 2 MB in the kernel pmap, taken
+/// from the low pages at `first_avail`, so that the trampoline code can be entered (the
+/// application processors' `mptramp.S`); returns the next free page. Only after a boot by
+/// boot(8) (`init_x86_64`): Limine starts the processors itself.
+///
+/// # Safety
+///
+/// Once, after `pmap_bootstrap`, on the boot CPU; the three pages from `first_avail` are the
+/// kernel's, below 4 GB, and the low slots of the kernel PML4 are empty.
+pub unsafe fn pmap_prealloc_lowmem_ptps(first_avail: Paddr) -> Paddr {
+    let mut first_avail = first_avail.as_usize();
+    let mut pdes = pmap_kernel().pm_pdir.get() as usize;
+    let mut level = PTP_LEVELS;
+    loop {
+        let newp = first_avail;
+        first_avail += PAGE_SIZE;
+        // SAFETY: the caller's guarantee: a free page inside the direct map.
+        unsafe {
+            ptr::write_bytes(
+                pmap_direct_map(Paddr::new(newp)).as_usize() as *mut u8,
+                0,
+                PAGE_SIZE,
+            );
+            // SAFETY: `pdes` is the kernel PML4 (direct-mapped) or, below it, the page this
+            // loop installed one level up, reached through the recursive mapping.
+            pde_set(
+                pdes,
+                pl_i(0, level),
+                (newp as u64 & pg_frame()) | PG_V | PG_RW | pg_crypt(),
+            );
+        }
+        level -= 1;
+        if level <= 1 {
+            break;
+        }
+        pdes = NORMAL_PDES[level - 2];
+    }
+    Paddr::new(first_avail)
 }
 
 /// `pmap_init`: no further initialization required on this platform (the C); here the

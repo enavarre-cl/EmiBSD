@@ -95,7 +95,18 @@
 //!   is the `#else` (`APERTURE` is not configured); `cpu_sev_guestmode` (SEV probe),
 //!   `amd64_has_xcrypt` (`via_nano_setup`) and `need_retpoline` (`codepatch_replace`) keep
 //!   their initial values because the code that changes them is not ported.
-//! - Limine has set up long mode, paging and the direct map before `init_x86_64` runs, so the
+//! - Two entries (M14): boot(8)'s, through `locore0.S` and `getbootinfo`, and Limine's. Both
+//!   hand `init_x86_64` a `BootInfo`: `getbootinfo` walks `bootinfo[]` as the C does and
+//!   flenses `bios_memmap[]` as the C's `init_x86_64` does into the `BootInfo` memory map
+//!   (the free memory of `[IOM_END, KERNTEXTOFF)` only where boot(8) says it is free; the
+//!   direct map is `locore0.S`'s 4 GB, memory above it reported, pmap_bootstrap's extension
+//!   not ported), relocates the EFI memory map to `first_avail`, and lists the CPUs from the
+//!   MADT (acpimadt.c is not ported). `BOOTARG_CONSDEV` sets the `com(4)` console variables
+//!   but `comconsiot` (consinit attaches in I/O space). `bios_diskinfo` is kept as its
+//!   record's place in `bootinfo[]`; `bootdev` is recorded (dkcsum.c is not ported, the root
+//!   is found by the DUID). `map_tramps` and `pmap_prealloc_lowmem_ptps` run after a boot by
+//!   boot(8) only.
+//! - Under Limine, long mode, paging and the direct map are set up before `init_x86_64` runs, so the
 //!   BIOS/EFI memory-map walk and the page-table work of the C version are replaced by the
 //!   boot protocol (`docs/ARCHITECTURE.md`, "Boot flow"): `pmap_direct_base` is the
 //!   bootloader's higher-half direct map, and the memory clusters loaded into `uvm` are the
@@ -145,7 +156,7 @@
 use core::arch::asm;
 use core::mem::offset_of;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicUsize, Ordering};
 
 use libkern::StaticCell;
 
@@ -162,7 +173,13 @@ use crate::arch::amd64::amd64::locore::lgdt;
 use crate::arch::amd64::amd64::pmap::{PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap};
 use crate::arch::amd64::amd64::tsc::{TSC_FREQUENCY, TSC_IS_INVARIANT};
 use crate::arch::amd64::amd64::vector::Xexceptions;
-use crate::arch::amd64::include::biosvar::{BIOS_CKSUMLEN, BIOS_DEV, BIOS_DISKINFO};
+use crate::arch::amd64::include::biosvar;
+use crate::arch::amd64::include::biosvar::{
+    BIOS_MAP_ACPI, BIOS_MAP_END, BIOS_MAP_FREE, BIOS_MAP_NVS, BIOS_MAP_RES, BOOTARG_APMINFO,
+    BOOTARG_BOOTDUID, BOOTARG_BOOTMAC, BOOTARG_BOOTSR, BOOTARG_CKSUMLEN, BOOTARG_CONSDEV,
+    BOOTARG_DDB, BOOTARG_DISKINFO, BOOTARG_EFIINFO, BOOTARG_MEMMAP, BOOTARG_PCIINFO, BOOTARG_UCODE,
+    BiosBootduid, BiosBootsr, BiosConsdev, BiosDdb, BiosEfiinfo, BiosMemmap, BiosUcode,
+};
 use crate::arch::amd64::include::cpu::{
     CPU_ALLOWAPERTURE, CPU_BIOS, CPU_CHR2BLK, CPU_CONSDEV, CPU_CPUFEATURE, CPU_CPUID,
     CPU_CPUVENDOR, CPU_HIBERNATEDELAY, CPU_INVARIANTTSC, CPU_KBDRESET, CPU_LIDACTION,
@@ -175,9 +192,11 @@ use crate::arch::amd64::include::fpu::{
 };
 use crate::arch::amd64::include::frame::Trapframe;
 use crate::arch::amd64::include::intrdefs::IPL_IPI;
-use crate::arch::amd64::include::param::{PAGE_SIZE, USPACE};
+use crate::arch::amd64::include::param::{KERNBASE, KERNTEXTOFF, NBPG, PAGE_SIZE, USPACE};
+use crate::arch::amd64::include::pmap::{L4_SLOT_DIRECT, NDML2_ENTRIES, va_sign_neg};
 use crate::arch::amd64::include::proc::MDP_IRET;
 use crate::arch::amd64::include::psl::{PSL_AC, PSL_D, PSL_T, PSL_USERSET, PSL_USERSTATIC, PSL_VM};
+use crate::arch::amd64::include::pte::{NBPD_L3, NBPD_L4};
 use crate::arch::amd64::include::segments::{
     GCODE_SEL, GDATA_SEL, GDT_SIZE, GPROC0_SEL, GUCODE_SEL, GUDATA_SEL, GateDescriptor,
     MemSegmentDescriptor, NIDT, RegionDescriptor, SDT_MEMERA, SDT_MEMRWA, SDT_SYS386IGT,
@@ -195,6 +214,11 @@ use crate::arch::amd64::isa::clock::{
 };
 use crate::conf::vers::VERSION;
 use crate::dev::cons::cn_tab;
+use crate::dev::ic::com::{
+    COMCONS_REG_SHIFT, COMCONS_REG_WIDTH, COMCONSADDR, COMCONSFREQ, COMCONSRATE, COMCONSUNIT,
+};
+use crate::dev::isa::isareg::{IOM_BEGIN, IOM_END};
+use crate::dev::softraid::{SR_BOOTKEY, SR_BOOTUUID};
 use crate::kassert;
 use crate::kern::init_main::{BOOTHOWTO, PROC0};
 use crate::kern::kern_sig::{sigexit, sigonstack};
@@ -204,11 +228,12 @@ use crate::kern::kern_sysctl::{
     sysctl_securelevel_int,
 };
 use crate::kern::subr_log::init_static_msgbuf;
+use crate::kern::subr_prf::DB_CONSOLE;
 use crate::kern::subr_prf::splassert_fail;
 use crate::kern::subr_xxx::chrtoblk;
 use crate::kern::vfs_bio::bufinit;
 use crate::kprintf;
-use crate::machine::bootinfo::{BootInfo, MemKind};
+use crate::machine::bootinfo::{BootInfo, EfiMemmap, MAX_MODULES, MemKind, MemMap, MemRegion};
 use crate::machine::copy::{copyin, copyin_obj, copyout, copyout_obj};
 use crate::machine::cpu::curproc;
 use crate::machine::db_machdep::{db_enter, db_machine_init};
@@ -227,7 +252,7 @@ use crate::sys::syscallargs::SysSigreturnArgs;
 use crate::sys::sysctl::SysctlBoundedArgs;
 use crate::sys::systm::PHYSMEM;
 use crate::sys::systm::{SysArgs, sysargs};
-use crate::sys::types::{Paddr, Register, Vaddr};
+use crate::sys::types::{Dev, Paddr, Psize, Register, Vaddr, major, minor};
 use crate::sys::user::{Uarea, User};
 use crate::unported;
 use crate::uvm::uvm_extern::{EXEC_MAP, PHYS_MAP, UvmConstraintRange};
@@ -235,7 +260,7 @@ use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_km::{kernel_map, kernel_map_min, uvm_km_suballoc};
 use crate::uvm::uvm_map::VM_MAP_PAGEABLE;
 use crate::uvm::uvm_page::{uvm_page_physload, uvm_setpagesize};
-use crate::uvm::uvm_param::{atop, ptoa, trunc_page};
+use crate::uvm::uvm_param::{atop, ptoa, round_page, trunc_page};
 
 #[cfg(feature = "qemu")]
 use crate::arch::amd64::amd64::qemu;
@@ -277,6 +302,54 @@ pub static DMA_CONSTRAINT: UvmConstraintRange = UvmConstraintRange {
 };
 /// `uvm_md_constraints[]`: the machine's DMA ranges.
 pub static UVM_MD_CONSTRAINTS: [&UvmConstraintRange; 2] = [&ISA_CONSTRAINT, &DMA_CONSTRAINT];
+
+/// `ssym`: start of the kernel's symbol table (`locore0.S`; 0 under Limine).
+pub static SSYM: AtomicUsize = AtomicUsize::new(0);
+/// `esym`: end of the symbol table boot(8) loaded after the kernel (`locore0.S`; 0 when
+/// none, and under Limine).
+pub static ESYM: AtomicUsize = AtomicUsize::new(0);
+/// `bootdev`: device we booted from (boot(8)'s `B_DEVMAGIC` word; 0 under Limine).
+pub static BOOTDEV: AtomicU32 = AtomicU32::new(0);
+/// `biosbasemem`: base memory reported by BIOS (boot(8)'s `cnvmem`).
+pub static BIOSBASEMEM: AtomicI32 = AtomicI32::new(0);
+/// `bootapiver`: /boot API version (0 under Limine).
+pub static BOOTAPIVER: AtomicU32 = AtomicU32::new(0);
+/// `bootinfo[]`: the boot arguments `locore0.S` copies from boot(8).
+pub static BOOTINFO: StaticCell<Bootinfo> = StaticCell::new(Bootinfo([0; BOOTARGC_MAX]));
+/// `bootinfo_size`: what `bootinfo[]` holds; `locore0.S` reports there the size boot(8)
+/// passed, which may be more.
+pub static BOOTINFO_SIZE: AtomicI32 = AtomicI32::new(BOOTARGC_MAX as i32);
+/// `bios_diskinfo`: boot(8)'s disks, as the range of their record in `bootinfo[]` (for
+/// `bios_getdiskinfo` and `dkcsum.c`, not ported).
+pub static BIOS_DISKINFO: StaticCell<Option<(usize, usize)>> = StaticCell::new(None);
+/// `bios_cksumlen`: how many sectors boot(8) checksummed per disk.
+pub static BIOS_CKSUMLEN: AtomicU32 = AtomicU32::new(0);
+/// `bios_efiinfo`: the EFI tables, frame buffer and memory map boot(8) found.
+pub static BIOS_EFIINFO: StaticCell<Option<BiosEfiinfo>> = StaticCell::new(None);
+/// `bios_ucode`: the CPU microcode update boot(8) loaded (`cpu_ucode_setup` is not ported).
+pub static BIOS_UCODE: StaticCell<Option<BiosUcode>> = StaticCell::new(None);
+/// `avail_start`: the first low page uvm-independent allocations may take (the trampolines
+/// below it, `pmap_prealloc_lowmem_ptps`'s tables from it). Set by `getbootinfo`; 0 under
+/// Limine, whose memory map is used as it is.
+pub static AVAIL_START: AtomicUsize = AtomicUsize::new(0);
+/// Whether `getbootinfo` dropped free memory beyond the 4 GB of direct map `locore0.S`
+/// builds (reported by `init_x86_64` once there is a console).
+static DIRECT_MAP_CLIPPED: AtomicBool = AtomicBool::new(false);
+
+/// `BOOTARGC_MAX`: the size of `bootinfo[]`, one page.
+pub const BOOTARGC_MAX: usize = NBPG;
+/// `BAPIV_VECTOR` (`<stand/boot/bootarg.h>`): MI vector of MD structures passed.
+const BAPIV_VECTOR: u32 = 0x0000_0002;
+/// `BAPIV_BMEMMAP` (`<stand/boot/bootarg.h>`): MI memory map passed is in bytes.
+const BAPIV_BMEMMAP: u32 = 0x0000_0008;
+/// `BOOTARG_END` (`<stand/boot/bootarg.h>`): the end of the list.
+const BOOTARG_END: i32 = -1;
+/// The header of a `bootarg32_t` (`ba_type`, `ba_size`, `ba_nextX`) before `ba_arg`.
+const BOOTARG32_HDR: usize = 12;
+
+/// `bootinfo[]`'s storage: the `bootarg32_t` records `locore0.S` copies from boot(8).
+#[repr(C, align(8))]
+pub struct Bootinfo(pub [u8; BOOTARGC_MAX]);
 
 /// The interrupt descriptor table, one page (the C's `early_idt` in `locore0.S`, later a
 /// page `init_x86_64` maps at `idt_vaddr`).
@@ -392,6 +465,11 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
 
     init_static_msgbuf();
     consinit(); // cninit() in C
+    if DIRECT_MAP_CLIPPED.load(Ordering::Relaxed) {
+        let _ = unported!(
+            "pmap_bootstrap: the direct map past locore0's 4 GB (memory above it is not used)"
+        );
+    }
 
     // The memory map is the bootloader's, already flensed (see the module's deviations).
     let avail_end = regions
@@ -404,6 +482,18 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
     // Call pmap initialization to make new kernel address space.
     // SAFETY: once, on the boot CPU, with the direct map set above and paging on.
     let first_avail = unsafe { pmap_bootstrap(Paddr::new(0), Paddr::new(trunc_page(avail_end))) };
+
+    // Allocate these out of the 640KB base memory (after a boot by boot(8): getbootinfo
+    // kept the low pages out of uvm; Limine's memory map has no such floor).
+    let avail_start = AVAIL_START.load(Ordering::Relaxed);
+    if avail_start != 0 && avail_start != PAGE_SIZE {
+        // SAFETY: once, after pmap_bootstrap; the low pages from avail_start are the
+        // kernel's (Reserved in getbootinfo's memory map).
+        let next = unsafe {
+            crate::arch::amd64::amd64::pmap::pmap_prealloc_lowmem_ptps(Paddr::new(avail_start))
+        };
+        AVAIL_START.store(next.as_usize(), Ordering::Relaxed);
+    }
 
     // Now, load the memory clusters (which have already been flensed) into the VM system.
     for r in regions.iter().filter(|r| r.kind == MemKind::Usable) {
@@ -543,10 +633,10 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
     unsafe { intr_enable() };
 
     // BOOTARG_BOOTSR (`bios_bootsr`: the UUID and mask key of the softraid volume OpenBSD's
-    // boot(8) booted from, copied into `sr_bootuuid`/`sr_bootkey` under NSOFTRAID):
-    // replaced-by-limine. Limine hands no softraid key over, so `dev/softraid.rs`'s
-    // `SR_BOOTUUID`/`SR_BOOTKEY` stay zero and a crypto volume is unlocked with bioctl(8).
-    // The ACPI/MP tables, the memory-map and -b/-c handling of the bootinfo: M5.
+    // boot(8) booted from, copied into `sr_bootuuid`/`sr_bootkey` under NSOFTRAID) is
+    // getbootinfo's after a boot by boot(8). Limine hands no softraid key over, so there
+    // `dev/softraid.rs`'s `SR_BOOTUUID`/`SR_BOOTKEY` stay zero and a crypto volume is
+    // unlocked with bioctl(8).
     db_machine_init();
     // ddb_init() (db_sym.c, db_elf.c: the kernel's symbol table) is not ported.
     if BOOTHOWTO.load(Ordering::Relaxed) & RB_KDB != 0 {
@@ -630,6 +720,478 @@ pub fn copyin32(uaddr: usize) -> Result<u32, Errno> {
     let mut word = [0u8; 4];
     crate::machine::copy::copyin(uaddr, &mut word)?;
     Ok(u32::from_ne_bytes(word))
+}
+
+/// Reads a boot argument of type `T` (a `#[repr(C, packed)]` structure of `biosvar.rs`) from
+/// the start of `arg`; `None` when the record is too short.
+fn bootarg_read<T: Copy>(arg: &[u8]) -> Option<T> {
+    if arg.len() < size_of::<T>() {
+        return None;
+    }
+    // SAFETY: `arg` holds at least `size_of::<T>()` bytes; `T` is a packed structure of
+    // integers, valid for every bit pattern, read unaligned.
+    Some(unsafe { ptr::read_unaligned(arg.as_ptr().cast::<T>()) })
+}
+
+/// `getbootinfo(bootinfo, bootinfo_size)` with the boot(8) half of `init_x86_64`: walks the
+/// `bootarg32_t` records `locore0.S` copied into `bootinfo[]`, sets what the C sets from
+/// them (`bios_cksumlen`, the `com(4)` console, `bios_bootmac`, `db_console`, `bootduid`,
+/// `sr_bootuuid`/`sr_bootkey`, `bios_efiinfo`, `bios_ucode`), and turns boot(8)'s memory map
+/// into the [`BootInfo`] the boot glue hands `init_x86_64`, flensed as `init_x86_64` flenses
+/// `bios_memmap[]` into `mem_clusters[]`. `first_avail` is `locore0.S`'s: the first page
+/// after the kernel, its symbols and the bootstrap tables, less the tables' five spare pages.
+///
+/// # Safety
+///
+/// Call once, on the boot CPU, from `bootarg_main` after `locore0.S`, before anything else:
+/// the bootstrap tables map the kernel and the first 4 GB of the direct map.
+pub unsafe fn getbootinfo(first_avail: usize) -> Result<BootInfo, &'static str> {
+    // Boot arguments are in a single page specified by /boot. We require the "new" vector
+    // form, as well as memory ranges to be given in bytes rather than KB. locore copies the
+    // data into bootinfo[] for us.
+    let apiver = BOOTAPIVER.load(Ordering::Relaxed);
+    if apiver & (BAPIV_VECTOR | BAPIV_BMEMMAP) != (BAPIV_VECTOR | BAPIV_BMEMMAP) {
+        return Err("invalid /boot");
+    }
+    let size = BOOTINFO_SIZE.load(Ordering::Relaxed);
+    if size < 0 || size as usize >= BOOTARGC_MAX {
+        return Err("boot args too big");
+    }
+    // SAFETY: locore0.S filled it before any Rust ran; this is its only reader, once, on the
+    // boot CPU (the BOOTARG_BOOTSR record is cleared in place).
+    let bootinfo = unsafe { &mut BOOTINFO.get_mut().0[..size as usize] };
+
+    // pmap_direct_base, as init_x86_64 computes it (no pmap_direct_rand: locore0.rs).
+    let direct_base = va_sign_neg(L4_SLOT_DIRECT * NBPD_L4);
+
+    let mut memmap_arg: Option<(usize, usize)> = None;
+    let mut efiinfo: Option<BiosEfiinfo> = None;
+    let mut duid: Option<[u8; 8]> = None;
+    let mut q = 0;
+    while q + BOOTARG32_HDR <= bootinfo.len() {
+        let word = |o: usize| {
+            i32::from_ne_bytes([
+                bootinfo[o],
+                bootinfo[o + 1],
+                bootinfo[o + 2],
+                bootinfo[o + 3],
+            ])
+        };
+        let ba_type = word(q);
+        if ba_type == BOOTARG_END {
+            break;
+        }
+        let ba_size = word(q + 4);
+        // A record that does not fit ends the walk (the C would run past bootinfo[]).
+        if ba_size < BOOTARG32_HDR as i32 || q + ba_size as usize > bootinfo.len() {
+            break;
+        }
+        let (start, end) = (q + BOOTARG32_HDR, q + ba_size as usize);
+        let arg = &bootinfo[start..end];
+        match ba_type {
+            BOOTARG_MEMMAP => memmap_arg = Some((start, end)),
+            BOOTARG_DISKINFO => {
+                // SAFETY: the boot CPU alone, before anything reads it.
+                unsafe { BIOS_DISKINFO.write(Some((start, end))) };
+            }
+            // generated by i386 boot loader
+            BOOTARG_APMINFO | BOOTARG_PCIINFO => {}
+            BOOTARG_CKSUMLEN => {
+                if let Some(len) = bootarg_read::<u32>(arg) {
+                    BIOS_CKSUMLEN.store(len, Ordering::Relaxed);
+                }
+            }
+            BOOTARG_CONSDEV => {
+                if let Some(cdp) = bootarg_read::<BiosConsdev>(arg) {
+                    getbootinfo_consdev(&cdp);
+                }
+            }
+            BOOTARG_BOOTMAC => {
+                #[cfg(feature = "nfsclient")]
+                if let Some(mac) = bootarg_read::<[u8; 6]>(arg) {
+                    // SAFETY: the boot CPU alone, before autoconfiguration reads it.
+                    unsafe { crate::arch::amd64::amd64::autoconf::BIOS_BOOTMAC.write(Some(mac)) };
+                }
+            }
+            BOOTARG_DDB => {
+                if let Some(ddb) = bootarg_read::<BiosDdb>(arg) {
+                    DB_CONSOLE.store(ddb.db_console, Ordering::Relaxed);
+                }
+            }
+            BOOTARG_BOOTDUID => duid = bootarg_read::<BiosBootduid>(arg).map(|d| d.duid),
+            BOOTARG_BOOTSR => {
+                if let Some(sr) = bootarg_read::<BiosBootsr>(arg) {
+                    // SAFETY: the boot CPU alone, before softraid(4) attaches.
+                    unsafe {
+                        SR_BOOTUUID.get_mut().sui_id.copy_from_slice(&sr.uuid);
+                        SR_BOOTKEY.get_mut().copy_from_slice(&sr.maskkey);
+                    }
+                }
+                // explicit_bzero(bios_bootsr, sizeof(bios_bootsr_t))
+                let n = size_of::<BiosBootsr>().min(end - start);
+                for b in &mut bootinfo[start..start + n] {
+                    // SAFETY: a byte of bootinfo[]; volatile so the clearing is not elided.
+                    unsafe { ptr::write_volatile(b, 0) };
+                }
+            }
+            BOOTARG_EFIINFO => efiinfo = bootarg_read::<BiosEfiinfo>(arg),
+            BOOTARG_UCODE => {
+                // SAFETY: the boot CPU alone, before anything reads it.
+                unsafe { BIOS_UCODE.write(bootarg_read::<BiosUcode>(arg)) };
+            }
+            _ => {}
+        }
+        q += ba_size as usize;
+    }
+    // SAFETY: the boot CPU alone, before anything reads it.
+    unsafe { BIOS_EFIINFO.write(efiinfo) };
+
+    // locore0 mapped 5 pages after its tables for use before the pmap is initialized (the
+    // early PTE pages and the SEV-ES GHCB); neither is used here.
+    let mut first_avail = first_avail + 5 * NBPG;
+
+    // Relocate the EFI memory map (init_x86_64 does it after pmap_bootstrap): boot(8) left
+    // it in memory the memory map calls free.
+    let mut efi_memmap = None;
+    if let Some(ei) = efiinfo.filter(|ei| ei.mmap_start != 0) {
+        let len = ei.mmap_size as usize;
+        let dst = direct_base + first_avail;
+        // SAFETY: both ranges are RAM below 4 GB, inside locore0's direct map; the copy goes
+        // to the pages after the bootstrap tables, which nothing uses, and may overlap
+        // nothing boot(8) still needs (it is gone).
+        unsafe {
+            ptr::copy(
+                (direct_base + ei.mmap_start as usize) as *const u8,
+                dst as *mut u8,
+                len,
+            );
+        }
+        first_avail += round_page(len);
+        efi_memmap = Some(EfiMemmap {
+            // SAFETY: the copy just made, never reclaimed: the memory map below marks it
+            // as the kernel's.
+            map: unsafe { core::slice::from_raw_parts(dst as *const u8, len) },
+            desc_size: ei.mmap_desc_size,
+            desc_ver: ei.mmap_desc_ver,
+        });
+    }
+
+    // We skip the first few pages for trampolines, hibernate, and to avoid buggy SMI
+    // implementations that could corrupt the first 64KB.
+    #[allow(unused_mut)] // raised for MULTIPROCESSOR only
+    let mut avail_start = 16 * PAGE_SIZE;
+    #[cfg(feature = "multiprocessor")]
+    {
+        use crate::arch::amd64::include::mpbiosvar::{MP_TRAMP_DATA, MP_TRAMPOLINE};
+        avail_start = avail_start
+            .max(MP_TRAMPOLINE + PAGE_SIZE)
+            .max(MP_TRAMP_DATA + PAGE_SIZE);
+    }
+    // ACPI_TRAMPOLINE (acpi_wakecode.S), HIBERNATE and BOOT_KERNEL: not ported/configured.
+    AVAIL_START.store(avail_start, Ordering::Relaxed);
+
+    let memmap = match memmap_arg {
+        Some((start, end)) => bootarg_memmap(&bootinfo[start..end], avail_start, first_avail)?,
+        None => return Err("no boot(8) memory map"),
+    };
+
+    let rsdp = efiinfo
+        .map(|ei| ei.config_acpi as usize)
+        .filter(|&pa| pa != 0)
+        .map(|pa| Vaddr::new(direct_base + pa));
+
+    #[cfg(feature = "multiprocessor")]
+    // SAFETY: the RSDP is firmware memory inside locore0's direct map, read once here.
+    let mp = rsdp.and_then(|r| unsafe {
+        crate::arch::amd64::amd64::cpu::mp_madt_cpus(r.as_usize(), direct_base)
+    });
+    #[cfg(not(feature = "multiprocessor"))]
+    let mp = None;
+
+    Ok(BootInfo {
+        bootloader_name: c"boot(8)",
+        bootloader_version: c"efiboot",
+        cmdline: c"",
+        hhdm_offset: direct_base,
+        kernel_phys: Paddr::new(KERNTEXTOFF - KERNBASE),
+        kernel_virt: Vaddr::new(KERNTEXTOFF),
+        rsdp,
+        dtb: None,
+        memmap,
+        efi_system_table: efiinfo
+            .map(|ei| ei.system_table as usize)
+            .filter(|&pa| pa != 0)
+            .map(Paddr::new),
+        efi_memmap,
+        modules: [None; MAX_MODULES],
+        mp,
+        howto: BOOTHOWTO.load(Ordering::Relaxed),
+        duid,
+    })
+}
+
+/// `getbootinfo`'s `BOOTARG_CONSDEV`: a `com(4)` console (major 8) is recorded where
+/// `comcnattach` finds it.
+fn getbootinfo_consdev(cdp: &BiosConsdev) {
+    const PORTS: [u64; 4] = [0x3f8, 0x2f8, 0x3e8, 0x2e8];
+    let consdev = cdp.consdev;
+    let unit = minor(consdev as Dev) as usize;
+    let mut consaddr = cdp.consaddr;
+    if consaddr == u64::MAX && unit < PORTS.len() {
+        consaddr = PORTS[unit];
+    }
+    if major(consdev as Dev) == 8 && consaddr != u64::MAX {
+        COMCONSUNIT.store(unit as i32, Ordering::Relaxed);
+        COMCONSADDR.store(consaddr as usize, Ordering::Relaxed);
+        COMCONSRATE.store(cdp.conspeed, Ordering::Relaxed);
+        COMCONSFREQ.store(cdp.consfreq, Ordering::Relaxed);
+        COMCONS_REG_WIDTH.store(cdp.reg_width as u8, Ordering::Relaxed);
+        COMCONS_REG_SHIFT.store(cdp.reg_shift as u8, Ordering::Relaxed);
+        // comconsiot (BCD_MMIO): consinit attaches the console in I/O space.
+    }
+}
+
+/// `init_x86_64`'s walk of `bios_memmap[]` into `mem_clusters[]`, as a [`MemMap`]: the free
+/// memory uvm may load is `Usable` (the clusters above `first_avail`, and the memory
+/// between the ISA hole's end and the kernel), the kernel image, its symbols, the bootstrap
+/// tables and the relocated EFI memory map are `KernelAndModules`, the free memory the C
+/// never loads (below `avail_start`, the 640K hole, the buggy-BIOS slivers) is `Reserved`.
+fn bootarg_memmap(
+    arg: &[u8],
+    avail_start: usize,
+    first_avail: usize,
+) -> Result<MemMap, &'static str> {
+    // The direct map is limited to DIRECT_MAP_SIZE in C; here to the 4 GB locore0 maps
+    // (pmap_bootstrap's mapping of the rest is not ported).
+    let max_dm_size = NDML2_ENTRIES * NBPD_L3;
+    let kern_start = KERNTEXTOFF - KERNBASE;
+    let biosbasemem = BIOSBASEMEM.load(Ordering::Relaxed).max(0) as usize;
+    let mut memmap = MemMap::new();
+    let push = |memmap: &mut MemMap, base: usize, end: usize, kind: MemKind| {
+        if end <= base {
+            return true;
+        }
+        memmap.push(MemRegion {
+            base: Paddr::new(base),
+            length: Psize::new(end - base),
+            kind,
+        })
+    };
+
+    for chunk in arg.as_chunks::<{ size_of::<BiosMemmap>() }>().0 {
+        let Some(bmp) = bootarg_read::<BiosMemmap>(chunk.as_slice()) else {
+            break;
+        };
+        let (addr, size, ty) = (bmp.addr as usize, bmp.size as usize, bmp.r#type);
+        if ty == BIOS_MAP_END {
+            break;
+        }
+        let kind = match ty {
+            BIOS_MAP_FREE => MemKind::Usable,
+            BIOS_MAP_RES => MemKind::Reserved,
+            BIOS_MAP_ACPI => MemKind::AcpiReclaimable,
+            BIOS_MAP_NVS => MemKind::AcpiNvs,
+            other => MemKind::Unknown(u64::from(other)),
+        };
+        if kind != MemKind::Usable {
+            if !push(&mut memmap, addr, addr + size, kind) {
+                return Err("too many memory map regions");
+            }
+            continue;
+        }
+
+        // The clusters of this free block, as the C computes mem_clusters[].
+        let mut clusters = [(0usize, 0usize); 2];
+        'cluster: {
+            if size < PAGE_SIZE {
+                break 'cluster;
+            }
+            // Init our segment(s), round/trunc to pages
+            let mut s1 = round_page(addr);
+            let mut e1 = trunc_page(addr + size);
+            let (mut s2, mut e2) = (0, 0);
+
+            // XXX Some buggy ACPI BIOSes use memory that they declare as free. Typically the
+            // affected memory areas are small blocks between areas reserved for ACPI and
+            // other BIOS goo. So skip areas smaller than 32 MB above the 16 MB boundary (to
+            // avoid affecting legacy stuff).
+            if s1 > 16 * 1024 * 1024 && e1 - s1 < 32 * 1024 * 1024 {
+                break 'cluster;
+            }
+
+            // Nuke low pages
+            if s1 < avail_start {
+                s1 = avail_start;
+                if s1 > e1 {
+                    break 'cluster;
+                }
+            }
+
+            // The direct map is limited (see above), so discard anything above that.
+            if e1 >= max_dm_size {
+                if e1 > max_dm_size {
+                    DIRECT_MAP_CLIPPED.store(true, Ordering::Relaxed);
+                }
+                e1 = max_dm_size;
+                if s1 > e1 {
+                    break 'cluster;
+                }
+            }
+
+            // Crop stuff into "640K hole"
+            if s1 < IOM_BEGIN && e1 > IOM_BEGIN {
+                e1 = IOM_BEGIN;
+            }
+            if s1 < biosbasemem && e1 > biosbasemem {
+                e1 = biosbasemem;
+            }
+
+            // Split any segments straddling the 16MB boundary
+            if s1 < 16 * 1024 * 1024 && e1 > 16 * 1024 * 1024 {
+                e2 = e1;
+                s2 = 16 * 1024 * 1024;
+                e1 = s2;
+            }
+
+            if e1 >= s1 + PAGE_SIZE {
+                clusters[0] = (s1, e1);
+            }
+            if e2 >= s2 + PAGE_SIZE {
+                clusters[1] = (s2, e2);
+            }
+        }
+
+        // What uvm gets of them: the part above first_avail, and the part between the end
+        // of the I/O memory hole and the kernel (which the C loads whole: here only where
+        // boot(8) said it is free).
+        let mut usable = [(0usize, 0usize); 4];
+        for (i, &(s, e)) in clusters.iter().enumerate() {
+            usable[2 * i] = (s.max(first_avail), e);
+            usable[2 * i + 1] = (s.max(round_page(IOM_END)), e.min(trunc_page(kern_start)));
+        }
+        let classify = |pa: usize| {
+            if usable.iter().any(|&(s, e)| s <= pa && pa < e) {
+                MemKind::Usable
+            } else if kern_start <= pa && pa < first_avail {
+                MemKind::KernelAndModules
+            } else {
+                MemKind::Reserved
+            }
+        };
+
+        // Cut the block where its kind changes.
+        let (lo, hi) = (addr, addr + size);
+        let mut cuts = [hi; 12];
+        let mut n = 0;
+        for &(s, e) in &usable {
+            for x in [s, e] {
+                if lo < x && x < hi {
+                    cuts[n] = x;
+                    n += 1;
+                }
+            }
+        }
+        for x in [kern_start, first_avail] {
+            if lo < x && x < hi {
+                cuts[n] = x;
+                n += 1;
+            }
+        }
+        cuts[..n].sort_unstable();
+        let mut base = lo;
+        let mut kind = classify(lo);
+        for &x in cuts[..n].iter().chain(core::iter::once(&hi)) {
+            let next = if x < hi { classify(x) } else { kind };
+            if x == hi || next != kind {
+                if !push(&mut memmap, base, x, kind) {
+                    return Err("too many memory map regions");
+                }
+                base = x;
+                kind = next;
+            }
+        }
+    }
+    Ok(memmap)
+}
+
+/// `map_tramps`: copies the application processors' trampoline (`mptramp.S`) to
+/// `MP_TRAMPOLINE` and `MP_TRAMP_DATA` and points its `mp_pdirpa` at the kernel's PML4.
+/// Only after a boot by boot(8): under Limine the bootloader starts the processors.
+pub fn map_tramps() {
+    #[cfg(feature = "multiprocessor")]
+    {
+        use crate::arch::amd64::amd64::mptramp::{
+            cpu_spinup_trampoline, cpu_spinup_trampoline_end, mp_pdirpa, mp_tramp_data_end,
+            mp_tramp_data_start,
+        };
+        use crate::arch::amd64::amd64::pmap::{pmap_kenter_pa, pmap_kernel, pmap_kremove};
+        use crate::arch::amd64::include::mpbiosvar::{MP_TRAMP_DATA, MP_TRAMPOLINE};
+        use crate::sys::mman::{PROT_READ, PROT_WRITE};
+
+        if AVAIL_START.load(Ordering::Relaxed) == 0 {
+            // Booted by Limine: its MP request starts the processors (BootMp::start).
+            return;
+        }
+        let kmp = pmap_kernel();
+
+        // The initial PML4 pointer must be below 4G, so if the current one isn't, use a
+        // "bounce buffer" and save it for tramps to use.
+        let pdirpa = kmp.pm_pdirpa.get().as_usize();
+        if pdirpa > 0xffff_ffff {
+            let _ = unported!("map_tramps: the lo32 bounce page for a PML4 above 4 GB");
+            return;
+        }
+        let tramp_pdirpa = pdirpa;
+
+        // Map MP tramp code and data pages RW for copy
+        // SAFETY: the two low pages are the kernel's (getbootinfo kept them out of uvm) and
+        // their page tables exist (pmap_prealloc_lowmem_ptps).
+        unsafe {
+            pmap_kenter_pa(
+                Vaddr::new(MP_TRAMPOLINE),
+                Paddr::new(MP_TRAMPOLINE),
+                PROT_READ | PROT_WRITE,
+            );
+            pmap_kenter_pa(
+                Vaddr::new(MP_TRAMP_DATA),
+                Paddr::new(MP_TRAMP_DATA),
+                PROT_READ | PROT_WRITE,
+            );
+        }
+        let code = ptr::addr_of!(cpu_spinup_trampoline).cast::<u8>();
+        let code_len = ptr::addr_of!(cpu_spinup_trampoline_end) as usize - code as usize;
+        let data = ptr::addr_of!(mp_tramp_data_start).cast::<u8>();
+        let data_len = ptr::addr_of!(mp_tramp_data_end) as usize - data as usize;
+        // SAFETY: the two pages were just mapped writable at their own addresses; the
+        // sources are mptramp.S's bytes in .rodata, shorter than a page each.
+        unsafe {
+            ptr::write_bytes(MP_TRAMPOLINE as *mut u8, 0xcc, PAGE_SIZE);
+            ptr::write_bytes(MP_TRAMP_DATA as *mut u8, 0xcc, PAGE_SIZE);
+            ptr::copy_nonoverlapping(code, MP_TRAMPOLINE as *mut u8, code_len);
+            ptr::copy_nonoverlapping(data, MP_TRAMP_DATA as *mut u8, data_len);
+
+            // We need to patch this after we copy the tramp data, the symbol points into the
+            // copied tramp data page (at an odd offset in it: the write is unaligned).
+            ptr::write_unaligned(
+                ptr::addr_of!(mp_pdirpa).cast::<u32>().cast_mut(),
+                tramp_pdirpa as u32,
+            );
+        }
+
+        // Unmap, will be remapped in cpu_start_secondary
+        // SAFETY: the two mappings entered above, used by nothing else.
+        unsafe {
+            pmap_kremove(
+                Vaddr::new(MP_TRAMPOLINE),
+                crate::sys::types::Vsize::new(PAGE_SIZE),
+            );
+            pmap_kremove(
+                Vaddr::new(MP_TRAMP_DATA),
+                crate::sys::types::Vsize::new(PAGE_SIZE),
+            );
+        }
+        crate::arch::amd64::amd64::cpu::MP_TRAMP_INSTALLED.store(true, Ordering::Release);
+    }
 }
 
 /// `x86_64_proc0_tss_ldt_init`: loads the boot CPU's task register and clears the LDT.
@@ -1379,16 +1941,19 @@ pub fn delay_fini(f: fn(i32)) {
 }
 
 /// `bios_sysctl`: the `machdep.bios` tree. The C answers `EOPNOTSUPP` unless the boot loader
-/// passed a vector of boot arguments (`bootapiver & BAPIV_VECTOR`); Limine passes none (this
-/// kernel has no `bootapiver`, `bootdev` or `bios_diskinfo`), so `BIOS_DEV`, `BIOS_DISKINFO`
-/// and `BIOS_CKSUMLEN` are unreachable here and every name is `EOPNOTSUPP`.
+/// passed a vector of boot arguments (`bootapiver & BAPIV_VECTOR`); Limine passes none. After
+/// a boot by boot(8) (M14) `BOOTAPIVER`, `BOOTDEV`, `BIOS_DISKINFO` and `BIOS_CKSUMLEN` are
+/// recorded, but the C's switch (`biosvar::BIOS_DEV`, `BIOS_DISKINFO`, `BIOS_CKSUMLEN`) needs
+/// `bios_getdiskinfo` (dkcsum.c's side, not ported), so every name is still `EOPNOTSUPP`.
 pub fn bios_sysctl(name: &[i32]) -> Result<(), Errno> {
     if name.is_empty() {
         return Err(Errno::ENOTDIR);
     }
-    // bootapiver & BAPIV_VECTOR is 0 under Limine; the C's switch (BIOS_DEV, BIOS_DISKINFO,
-    // BIOS_CKSUMLEN) comes after that test and cannot run without bios_diskinfo.
-    let _ = (BIOS_DEV, BIOS_DISKINFO, BIOS_CKSUMLEN);
+    let _ = (
+        biosvar::BIOS_DEV,
+        biosvar::BIOS_DISKINFO,
+        biosvar::BIOS_CKSUMLEN,
+    );
     Err(Errno::EOPNOTSUPP)
 }
 

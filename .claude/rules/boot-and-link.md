@@ -28,8 +28,14 @@ paths:
   not from a crate. `sys/stand/` converts responses into `stand::BootInfo` (arch-neutral: memory
   map, HHDM offset, DTB/RSDP pointers, framebuffer, modules) and hands that to
   `machine::Machine::early_init`, then `kern::init_main::main`. Nothing else sees Limine types.
-- `sys/arch/{amd64,arm64}/conf/kernel.ld` are byte-identical except `OUTPUT_FORMAT`. Kernel base
-  `0xffffffff80000000`, `PHDRS` text/rodata/data, `.requests*` kept, `.eh_frame*`/`.note*` discarded.
+  boot(8)'s entry (`sys/stand/bootarg.rs`, called by amd64's `locore0.S`) takes its `BootInfo`
+  from `machine::Cpu::getbootinfo` and shares the tail (`stand::start_kernel`).
+- `sys/arch/{amd64,arm64}/conf/kernel.ld`: `PHDRS` text/rodata/data, `.requests*` kept,
+  `.eh_frame*`/`.note*` discarded. arm64: base `0xffffffff80000000`. amd64 (M14, so efiboot can
+  load it): OpenBSD's `ld.script` layout, `KERNTEXTOFF` `0xffffffff81000000`, physical addresses
+  from `0x1000000` by `AT()`, page-aligned sections with the symbols `locore0.S` reads, `.got`
+  inside `.data` (nothing after `end`), `ENTRY(start)` (the 32-bit boot(8) entry); Limine enters
+  `_start` through its entry point request. The two scripts no longer have to be identical.
   `sys/build.rs` passes the script with `rustc-link-arg-bins` only when `target_os = "none"`.
 - `.cargo/config.toml` never sets `[build] target`: a plain `cargo test`/`cargo check` must build
   for the host. Kernel builds always name the target through `just`.

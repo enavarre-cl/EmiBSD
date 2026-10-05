@@ -1,11 +1,17 @@
-//! Boot glue for the Limine protocol (replaces OpenBSD's `boot(8)` / `efiboot`).
+//! Boot glue: the kernel's two entries, Limine's and OpenBSD boot(8)'s (M14), both ending in
+//! [`start_kernel`].
 //!
-//! `_start` is the ELF entry point the bootloader jumps to. It checks the protocol revision,
-//! turns the bootloader's responses into the bootloader-neutral [`BootInfo`], sets `boothowto`
-//! from the command line, lets the machine do its earliest setup (OpenBSD's `init_x86_64` /
-//! `initarm`: the message buffer and the console) and hands over to `kern::init_main::main`.
-//! Nothing outside this module names a Limine type.
+//! `_start` is where Limine jumps (its entry point request; amd64's ELF entry is
+//! `locore0.S`'s `start`, for boot(8)). It checks the protocol revision, turns the
+//! bootloader's responses into the bootloader-neutral [`BootInfo`] and calls
+//! [`start_kernel`], which sets `boothowto` (the command line's flags and the loader's
+//! `howto`), lets the machine do its earliest setup (OpenBSD's `init_x86_64` / `initarm`: the
+//! message buffer and the console) and hands over to `kern::init_main::main`. Nothing outside
+//! this module names a Limine type. `bootarg.rs` is the other entry: the machine's own code
+//! (amd64's `locore0.S`) calls `bootarg_main`, which takes the [`BootInfo`] from
+//! `Machine::getbootinfo` (boot(8)'s `bootarg` list) and calls [`start_kernel`] too.
 
+mod bootarg;
 mod limine;
 
 use core::ptr::NonNull;
@@ -24,8 +30,8 @@ use bsd::sys::types::{Paddr, Psize, Vaddr};
 
 use limine::{
     BaseRevision, BootloaderInfoResponse, DtbResponse, EfiMemmapResponse, EfiSystemTableResponse,
-    ExecutableAddressResponse, ExecutableCmdlineResponse, HhdmResponse, MemmapResponse,
-    ModuleResponse, Request, RequestsEndMarker, RequestsStartMarker, RsdpResponse,
+    EntryPointRequest, ExecutableAddressResponse, ExecutableCmdlineResponse, HhdmResponse,
+    MemmapResponse, ModuleResponse, Request, RequestsEndMarker, RequestsStartMarker, RsdpResponse,
     StackSizeRequest, id, memmap_type,
 };
 
@@ -55,6 +61,11 @@ static REQUESTS_START: RequestsStartMarker = RequestsStartMarker::new();
 #[used]
 #[unsafe(link_section = ".requests")]
 static BASE_REVISION: BaseRevision = BaseRevision::new(limine::BASE_REVISION);
+
+/// Limine enters `_start`, not the ELF entry point (amd64's is boot(8)'s `start`).
+#[used]
+#[unsafe(link_section = ".requests")]
+static ENTRY_POINT: EntryPointRequest = EntryPointRequest::new(_start);
 
 #[used]
 #[unsafe(link_section = ".requests")]
@@ -114,7 +125,7 @@ static MP: limine::MpRequest = limine::MpRequest::new(0);
 #[unsafe(link_section = ".requests_end_marker")]
 static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
 
-/// Bootloader entry point, named by `ENTRY(_start)` in `arch/*/conf/kernel.ld`.
+/// Limine's entry point, named by the entry point request ([`ENTRY_POINT`]).
 ///
 /// Limine enters with every general purpose register zeroed (base revision 6), so the frame
 /// pointer this function saves ends the frame chain that `ddb`'s stack trace walks.
@@ -124,81 +135,101 @@ static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
 /// Called exactly once by the bootloader, with the machine state the Limine protocol specifies.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn _start() -> ! {
-    // SAFETY: `_start` runs once, on the boot CPU, in the protocol's entry state.
-    match unsafe { boot() } {
-        Ok(boot) => {
-            kprintf!(
-                "bsd: booted on {} by {} {}\n",
-                Machine::MACHINE,
-                Str(boot.bootloader_name.to_bytes()),
-                Str(boot.bootloader_version.to_bytes())
-            );
-            kprintf!(
-                "bsd: limine protocol base revision {} ({} requested), {} regions, {} MiB usable\n",
-                BASE_REVISION.loaded_revision().unwrap_or(0),
-                limine::BASE_REVISION,
-                boot.memmap.len(),
-                boot.memmap.usable_bytes() >> 20
-            );
-            for module in boot.modules() {
-                kprintf!(
-                    "module: {} ({} bytes){}{}\n",
-                    Str(module.path.to_bytes()),
-                    module.data.len(),
-                    if module.string.is_empty() { "" } else { ": " },
-                    Str(module.string.to_bytes())
-                );
-            }
-            if !boot.cmdline.is_empty() {
-                kprintf!("bootargs: {}\n", Str(boot.cmdline.to_bytes()));
-            }
-            if let Some(mp) = boot.mp {
-                kprintf!(
-                    "bsd: {} processors, boot processor hwid {:#x}\n",
-                    mp.ncpus,
-                    mp.bsp_hwid
-                );
-            }
-            init_main::set_init_module(boot.module(b"init").copied());
-            match boot.module(b"ramdisk.ffs") {
-                // SAFETY: the module is never reclaimed, is mapped read-write for the
-                // kernel's lifetime, and nothing but rd(4) uses it from here on.
-                // A ramdisk makes this kernel `bsd.rd`: `config bsd root on rd0a swap on rd0b`
-                // (sys/conf/swapgeneric.rs); `swapconf_rdroot` runs before main reads it.
-                Some(rd) => unsafe {
-                    rd_root_image_set(rd.base, rd.data.len());
-                    bsd::conf::swapgeneric::swapconf_rdroot();
-                },
-                None => {
-                    kprintf!("rd: no ramdisk module\n");
-                }
-            }
-            init_main::main()
-        }
+    // The entry point request has no information in its response; it only has to be present.
+    let _ = ENTRY_POINT.request.response();
+    match gather() {
+        // SAFETY: `_start` runs once, on the boot CPU, in the protocol's entry state, and
+        // `boot` describes the image Limine just loaded.
+        Ok(boot) => unsafe { start_kernel(boot, limine_banner) },
         // No console yet: the failure exit status is the only trace.
         Err(_) => Machine::exit(ExitStatus::Failure),
     }
 }
 
-/// Gathers the boot facts, sets `boothowto` and brings up the machine's console.
+/// The protocol line of the boot banner.
+fn limine_banner(boot: &BootInfo) {
+    kprintf!(
+        "bsd: limine protocol base revision {} ({} requested), {} regions, {} MiB usable\n",
+        BASE_REVISION.loaded_revision().unwrap_or(0),
+        limine::BASE_REVISION,
+        boot.memmap.len(),
+        boot.memmap.usable_bytes() >> 20
+    );
+}
+
+/// What both entries do with their [`BootInfo`]: `boothowto`, boot(8)'s DUID, the machine's
+/// earliest setup (the console), the boot banner (`banner` prints the entry's own line), the
+/// boot modules, and `main`.
 ///
 /// # Safety
 ///
-/// As for `_start`.
-unsafe fn boot() -> Result<BootInfo, BootError> {
-    let boot = gather()?;
+/// Once, on the boot CPU, from an entry, with `boot` describing the image just loaded.
+unsafe fn start_kernel(boot: BootInfo, banner: fn(&BootInfo)) -> ! {
+    // SAFETY: forwarded from the entry.
+    if let Err(_unprintable) = unsafe { boot_init(&boot) } {
+        // No console yet: the failure exit status is the only trace.
+        Machine::exit(ExitStatus::Failure)
+    }
+    kprintf!(
+        "bsd: booted on {} by {} {}\n",
+        Machine::MACHINE,
+        Str(boot.bootloader_name.to_bytes()),
+        Str(boot.bootloader_version.to_bytes())
+    );
+    banner(&boot);
+    for module in boot.modules() {
+        kprintf!(
+            "module: {} ({} bytes){}{}\n",
+            Str(module.path.to_bytes()),
+            module.data.len(),
+            if module.string.is_empty() { "" } else { ": " },
+            Str(module.string.to_bytes())
+        );
+    }
+    if !boot.cmdline.is_empty() {
+        kprintf!("bootargs: {}\n", Str(boot.cmdline.to_bytes()));
+    }
+    if let Some(mp) = boot.mp {
+        kprintf!(
+            "bsd: {} processors, boot processor hwid {:#x}\n",
+            mp.ncpus,
+            mp.bsp_hwid
+        );
+    }
+    init_main::set_init_module(boot.module(b"init").copied());
+    match boot.module(b"ramdisk.ffs") {
+        // SAFETY: the module is never reclaimed, is mapped read-write for the
+        // kernel's lifetime, and nothing but rd(4) uses it from here on.
+        // A ramdisk makes this kernel `bsd.rd`: `config bsd root on rd0a swap on rd0b`
+        // (sys/conf/swapgeneric.rs); `swapconf_rdroot` runs before main reads it.
+        Some(rd) => unsafe {
+            rd_root_image_set(rd.base, rd.data.len());
+            bsd::conf::swapgeneric::swapconf_rdroot();
+        },
+        None => {
+            kprintf!("rd: no ramdisk module\n");
+        }
+    }
+    init_main::main()
+}
+
+/// Sets `boothowto` and the boot DUID and brings up the machine's console.
+///
+/// # Safety
+///
+/// As for [`start_kernel`].
+unsafe fn boot_init(boot: &BootInfo) -> Result<(), BootError> {
     BOOTHOWTO.store(boot.boothowto(), core::sync::atomic::Ordering::Relaxed);
-    // boot(8)'s BOOTARG_BOOTDUID (efiboot's `openbsd,bootduid`): `setroot` finds the boot
-    // disk by this label DUID, there being no `bootdev` under Limine.
+    // boot(8)'s BOOTARG_BOOTDUID (efiboot's `openbsd,bootduid`; under Limine, `bootduid=` on
+    // the command line): `setroot` finds the boot disk by this label DUID.
     if let Some(duid) = boot.bootduid() {
         // SAFETY: the boot CPU alone, before `main` and autoconfiguration read it.
         unsafe { bsd::kern::subr_disk::BOOTDUID.write(duid) };
     }
     #[cfg(feature = "qemu")]
     bsd::kern::selftest::parse_bootargs(boot.cmdline.to_bytes());
-    // SAFETY: forwarded from `_start`; `boot` describes the image the bootloader just loaded.
-    unsafe { Machine::early_init(&boot) }.map_err(|_unprintable| BootError::EarlyInit)?;
-    Ok(boot)
+    // SAFETY: forwarded from the entry; `boot` describes the image just loaded.
+    unsafe { Machine::early_init(boot) }.map_err(|_unprintable| BootError::EarlyInit)
 }
 
 /// Turns the bootloader's responses into a [`BootInfo`].
@@ -272,6 +303,8 @@ fn gather() -> Result<BootInfo, BootError> {
         }),
         modules,
         mp: boot_mp(),
+        howto: 0,
+        duid: None,
     })
 }
 

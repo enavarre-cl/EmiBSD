@@ -25,6 +25,8 @@ pub const BASE_REVISION: u64 = 6;
 pub mod id {
     /// Bootloader Info feature.
     pub const BOOTLOADER_INFO: [u64; 2] = [0xf550_38d8_e2a1_202f, 0x2794_26fc_f5f5_9740];
+    /// Entry Point feature: the kernel names its entry instead of the ELF's `e_entry`.
+    pub const ENTRY_POINT: [u64; 2] = [0x13d8_6c03_5a1c_d3e1, 0x2b0c_aa89_d8f3_026a];
     /// Stack Size feature.
     pub const STACK_SIZE: [u64; 2] = [0x224e_f046_0a8e_8926, 0xe1cb_0fc2_5f46_ea3d];
     /// HHDM (Higher Half Direct Map) feature.
@@ -236,6 +238,33 @@ impl StackSizeRequest {
 /// `struct limine_stack_size_response`.
 #[repr(C)]
 pub struct StackSizeResponse {
+    /// Response revision.
+    pub revision: u64,
+}
+
+/// `struct limine_entry_point_request`: the address the bootloader enters instead of the ELF
+/// entry point. amd64's ELF entry is `locore0.S`'s 32-bit `start`, which boot(8) enters.
+#[repr(C)]
+pub struct EntryPointRequest {
+    /// The common request members.
+    pub request: Request<EntryPointResponse>,
+    /// `entry`: the kernel's Limine entry.
+    pub entry: unsafe extern "C" fn() -> !,
+}
+
+impl EntryPointRequest {
+    /// A request naming `entry`.
+    pub const fn new(entry: unsafe extern "C" fn() -> !) -> Self {
+        Self {
+            request: Request::new(id::ENTRY_POINT),
+            entry,
+        }
+    }
+}
+
+/// `struct limine_entry_point_response`.
+#[repr(C)]
+pub struct EntryPointResponse {
     /// Response revision.
     pub revision: u64,
 }

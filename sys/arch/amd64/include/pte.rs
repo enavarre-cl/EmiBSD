@@ -150,6 +150,11 @@ pub const PGEX_I: u64 = 0x10;
 /// `PGEX_PK`: protection-key violation.
 pub const PGEX_PK: u64 = 0x20;
 
+/// `PG_KR`: kernel read-only.
+pub const PG_KR: u64 = 0x0000_0000_0000_0000;
+/// `PG_KW`: kernel read-write.
+pub const PG_KW: u64 = 0x0000_0000_0000_0002;
+
 /// `PG_UCMINUS`: UC but mtrr can override.
 pub const PG_UCMINUS: u64 = PG_N;
 
@@ -177,6 +182,8 @@ mod tests {
             ("L1_MASK", L1_MASK as i64),
             ("PG_V", PG_V as i64),
             ("PG_RW", PG_RW as i64),
+            ("PG_KR", PG_KR as i64),
+            ("PG_KW", PG_KW as i64),
             ("PG_u", PG_u as i64),
             ("PG_PROT", PG_PROT as i64),
             ("PG_WT", PG_WT as i64),

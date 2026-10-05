@@ -1,6 +1,12 @@
-/* EmiBSD amd64 linker script (Limine protocol). Identical to arm64's except OUTPUT_FORMAT. */
+/*
+ * EmiBSD amd64 linker script. The same ELF boots from Limine and from OpenBSD's efiboot
+ * (M14). It differs from arm64's: OpenBSD's amd64 layout (conf/ld.script): the kernel is
+ * linked at KERNTEXTOFF (0xffffffff81000000) with physical load addresses from 0x1000000
+ * (AT()), entered by boot(8) at `start` (locore0.S, 32-bit) and by Limine at `_start`
+ * (its entry point request, sys/stand/mod.rs).
+ */
 OUTPUT_FORMAT(elf64-x86-64)
-ENTRY(_start)
+ENTRY(start)
 
 PHDRS
 {
@@ -9,18 +15,27 @@ PHDRS
     data    PT_LOAD;
 }
 
+__kernel_base = 0xffffffff80000000;
+__kernel_virt_base = __kernel_base + 0x1000000;
+__kernel_phys_base = 0x1000000;
+
 SECTIONS
 {
-    /* Higher half, where Limine loads non-relocatable kernels. */
-    . = 0xffffffff80000000;
+    /* KERNTEXTOFF; physical = virtual - KERNBASE (locore0.S's RELOC()). */
+    . = __kernel_virt_base;
 
-    .text : {
+    .text : AT(ADDR(.text) - __kernel_base) {
+        KEEP(*(.text.locore0))
         *(.text .text.*)
     } :text
 
-    . = ALIGN(CONSTANT(MAXPAGESIZE));
+    PROVIDE(etext = .);
+    _etext = .;
 
-    .rodata : {
+    . = ALIGN(0x1000);
+
+    .rodata : AT(ADDR(.rodata) - __kernel_base) {
+        __rodata_start = .;
         *(.rodata .rodata.*)
 
         /* The fault handlers copy.S declares (DECLARE_ONFAULT); the page fault handler
@@ -32,10 +47,17 @@ SECTIONS
         __nofault_end = .;
     } :rodata
 
-    . = ALIGN(CONSTANT(MAXPAGESIZE));
+    . = ALIGN(0x1000);
+    PROVIDE(erodata = .);
+    _erodata = .;
 
-    .data : {
+    . = ALIGN(0x1000);
+
+    .data : AT(ADDR(.data) - __kernel_base) {
+        __data_start = .;
         *(.data .data.*)
+        /* Not an orphan after `end`: locore0.S puts its tables right after the image. */
+        *(.got .got.*)
 
         /* Limine requests: kept even though nothing references them by symbol. */
         KEEP(*(.requests_start_marker))
@@ -43,10 +65,21 @@ SECTIONS
         KEEP(*(.requests_end_marker))
     } :data
 
-    .bss : {
+    . = ALIGN(0x1000);
+    PROVIDE(edata = .);
+    _edata = .;
+
+    .bss : AT(ADDR(.bss) - __kernel_base) {
         *(.bss .bss.*)
         *(COMMON)
+        . = ALIGN(0x1000);
     } :data
+    __kernel_bss_end = .;
+
+    . = ALIGN(0x200000);
+    _end = .;
+    PROVIDE(end = .);
+    __kernel_phys_end = . - __kernel_base;
 
     /DISCARD/ : {
         *(.eh_frame*)

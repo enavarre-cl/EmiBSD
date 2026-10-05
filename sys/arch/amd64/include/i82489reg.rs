@@ -200,6 +200,10 @@ pub const fn lapic_irq_mask(i: u32) -> u32 {
 
 /// `MSR_X2APIC_BASE`: the x2APIC's MSR window; register `r` is at `MSR_X2APIC_BASE + r/16`.
 pub const MSR_X2APIC_BASE: u32 = 0x800;
+/// `MSR_X2APIC_ID`: ID. R.
+pub const MSR_X2APIC_ID: u32 = MSR_X2APIC_BASE + 0x02;
+/// `X2APIC_ID_MASK`.
+pub const X2APIC_ID_MASK: u32 = 0xff;
 
 #[cfg(test)]
 mod tests {

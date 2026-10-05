@@ -137,7 +137,8 @@ and `#[unsafe(link_section)]` are stable; `core` and `alloc` ship precompiled fo
 
 ## Linking
 
-`sys/arch/<arch>/conf/kernel.ld` (identical except `OUTPUT_FORMAT`): base `0xffffffff80000000`,
+`sys/arch/<arch>/conf/kernel.ld` (arm64: base `0xffffffff80000000`; amd64: OpenBSD's layout from
+M14, `KERNTEXTOFF` with physical addresses from `0x1000000`, "Boot loaders"),
 `PHDRS` text/rodata/data, Limine request sections kept, `.eh_frame`/`.note` discarded.
 `sys/build.rs` passes it with `cargo:rustc-link-arg-bins` only when `target_os = "none"`.
 
@@ -599,12 +600,39 @@ reason:
   (`cargo xtask efiboot-disk`: an MBR with the OpenBSD partition, its disklabel and an FFS
   holding `/bsd`, made by OpenBSD's makefs; and the EFI system partition holding
   `EFI/BOOT/BOOTX64.EFI`), types at `boot>` and stops once efiboot has loaded the kernel
-  and printed its entry point: the kernel's entry from efiboot (`locore0.S`'s 32-bit
-  `start`, the boot arguments) is track A2. Today's kernel links its physical addresses
-  equal to its virtual ones (`0xffffffff80000000`); efiboot's `LOADADDR` keeps the low 28
-  bits (`& 0xfffffff`), so the kernel is loaded at `efi_loadaddr` and, after
-  `ExitBootServices`, moved to physical 0, over efiboot's own heap and stack. OpenBSD's amd64
-  kernel links at `0xffffffff81000000` with physical addresses from `0x1000000`.
+  and boots the kernel to `login:` (next section).
+
+### The kernel's boot(8) entry (amd64, M14 track A2)
+
+The same kernel ELF boots from Limine and from efiboot (the user's decision: Limine retires
+only once boot(8) boots the kernel in QEMU).
+
+- Link: amd64's `kernel.ld` is OpenBSD's layout (`conf/ld.script`): linked at
+  `KERNTEXTOFF` (`0xffffffff81000000`), physical addresses from `0x1000000` (`AT()`), so
+  efiboot's `paddr & 0xfffffff` move puts the image where `locore0.S` expects it; the ELF
+  entry is `locore0.S`'s 32-bit `start`. Limine ignores the physical addresses and enters
+  `_start` through its entry point request (`sys/stand/mod.rs`). `.got` is kept in `.data`:
+  nothing may follow `end`, where `locore0.S` puts its tables. arm64's `kernel.ld` is
+  unchanged (track A3).
+- `sys/arch/amd64/amd64/locore0.S` (`global_asm!`, AT&T, `const`/`sym` placeholders for
+  `assym.h`): saves boot(8)'s arguments, copies the `bootarg` list into `bootinfo[]`, probes
+  the CPU, builds the bootstrap page tables (the kernel at `KERNBASE`, the first 4 GB of the
+  direct map at `PDIR_SLOT_DIRECT`, the recursive slot), enters long mode and calls
+  `bootarg_main` in `sys/stand/bootarg.rs` on a 64 KiB `.bss` boot stack, where the C calls
+  `init_x86_64` and `main`.
+- The glue: `sys/stand/bootarg.rs` beside `limine.rs`, both ending in `stand::start_kernel`
+  (boothowto, DUID, `early_init`, the banner, `main`). The facts come from a machine trait
+  method, `Cpu::getbootinfo` (amd64's `machdep.c` `getbootinfo` with the boot(8) half of
+  `init_x86_64`; arm64 and host return an error until track A3), so `stand` names no arch
+  module. `BootInfo` gained `howto` and `duid`, boot(8)'s own `boothowto` and
+  `BOOTARG_BOOTDUID`.
+- Processors: under Limine its MP request; after boot(8) the MADT's enabled LAPIC entries
+  (`cpu.rs` `mp_madt_cpus`, standing for acpimadt0, which is not ported) and the C's start:
+  `map_tramps` copies `mptramp.S` to `MP_TRAMPOLINE`, `pmap_prealloc_lowmem_ptps` maps the
+  low 2 MB in the kernel pmap, `mp_cpu_start` sends INIT and two STARTUP IPIs.
+- Known limits: no Meltdown/SEV probe (`pg_g_kern` 0), no `pmap_direct_rand`, the direct map
+  stops at 4 GB (pmap_bootstrap's extension is not ported; more memory is reported and left
+  out), `dkcsum.c` is not ported (the root is found by the DUID, not by `bootdev`).
 
 ## Deviations from OpenBSD (deliberate)
 

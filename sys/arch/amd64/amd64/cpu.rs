@@ -85,8 +85,15 @@
 //!   `MULTIPROCESSOR` an application processor (never attached: mainbus attaches the boot
 //!   CPU alone) is reported instead of getting a `km_alloc`ed `cpu_info_full`. `cpu_ca` has
 //!   no `cpu_activate` (suspend/resume): `config_suspend` walks the CPU's children instead.
-//! - `MULTIPROCESSOR`: the bootloader starts the application processors (`stand`, Limine's
-//!   MP request; `mptramp.S` is `skipped`), so `mp_cpu_start` (`CPU_STARTUP`) is
+//! - `MULTIPROCESSOR` after a boot by boot(8) (M14): the processors are the MADT's enabled
+//!   LAPIC/x2APIC entries (`mp_madt_cpus`, standing for acpimadt0 before autoconfiguration),
+//!   and `BootMp::start` is the C's `mp_cpu_start` (`mp_cpu_start_tramp`: NVRAM reset code,
+//!   the 40:67 vector written through the direct map, INIT, two STARTUP IPIs), the
+//!   processor running `mptramp.S` into `cpu_hatch`, which loads the IDT after `CPUF_GO` as
+//!   in C. `cpu_start_secondary` maps the trampoline pages and `mp_cpu_start_cleanup`
+//!   restores the NVRAM byte, as in C.
+//! - `MULTIPROCESSOR` under Limine: the bootloader starts the application processors
+//!   (`stand`, Limine's MP request), so `mp_cpu_start` (`CPU_STARTUP`) is
 //!   `BootMp::start` for the processor whose hardware ID is `ci_apicid`, with the
 //!   `cpu_info` as its argument, in place of the warm-reset vector and the INIT/STARTUP
 //!   IPIs; `mp_cpu_start_cleanup` has no NVRAM reset byte to restore. `init_x86_64` keeps the
@@ -164,7 +171,7 @@ use {
     },
     crate::arch::amd64::amd64::locore::lgdt,
     crate::arch::amd64::amd64::machdep::{cpu_init_idt, cpu_set_vendor, delay, setregion},
-    crate::arch::amd64::amd64::pmap::pmap_kernel,
+    crate::arch::amd64::amd64::pmap::{pmap_kenter_pa, pmap_kernel, pmap_kremove},
     crate::arch::amd64::amd64::tsc::{tsc_test_sync_ap, tsc_test_sync_bp},
     crate::arch::amd64::include::cpu::{
         CPUF_AP, CPUF_GO, CPUF_IDENTIFIED, CPUF_IDENTIFY, CPUF_RUNNING, cpu_is_primary,
@@ -175,7 +182,7 @@ use {
     },
     crate::arch::amd64::include::cpuvar::CpuFunctions,
     crate::arch::amd64::include::intrdefs::X86_IPI_WBINVD,
-    crate::arch::amd64::include::param::USPACE,
+    crate::arch::amd64::include::param::{PAGE_SIZE, USPACE},
     crate::arch::amd64::include::pcb::Pcb,
     crate::arch::amd64::include::segments::{GDT_SIZE, RegionDescriptor},
     crate::arch::amd64::include::specialreg::{
@@ -185,6 +192,7 @@ use {
     crate::kern::init_main::NCPUS,
     crate::kern::kern_clockintr::clockqueue_init,
     crate::kern::kern_sched::{sched_init_cpu, sched_toidle},
+    crate::machine::bootinfo::BootCpu,
     crate::machine::bootinfo::BootMp,
     crate::machine::intr::{splhigh, splx},
     crate::sys::errno::Errno,
@@ -262,6 +270,26 @@ pub static CPU_INFO: [AtomicPtr<CpuInfo>; MAXCPUS as usize] =
 /// `init_x86_64` from `BootInfo::mp`, read by `mainbus_attach` and `mp_cpu_start`.
 #[cfg(feature = "multiprocessor")]
 pub static BOOT_MP: StaticCell<Option<BootMp>> = StaticCell::new(None);
+
+/// Whether `map_tramps` installed `mptramp.S`'s trampoline (a boot by boot(8)): then
+/// `cpu_start_secondary` maps its pages around the start and `mp_cpu_start_cleanup` puts
+/// the NVRAM reset byte back, as in C.
+#[cfg(feature = "multiprocessor")]
+pub static MP_TRAMP_INSTALLED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// The processors the firmware's MADT lists, after a boot by boot(8) (`mp_madt_cpus`):
+/// `[0, MADT_NCPUS)` is filled once, before `BOOT_MP` is read.
+#[cfg(feature = "multiprocessor")]
+static MADT_CPUS: StaticCell<[BootCpu; MAXCPUS as usize]> = StaticCell::new(
+    [BootCpu {
+        processor_id: 0,
+        hwid: 0,
+    }; MAXCPUS as usize],
+);
+/// How many entries of `MADT_CPUS` are filled.
+#[cfg(feature = "multiprocessor")]
+static MADT_NCPUS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// `cpu_suspended`: set while the boot processor idles in the S0 suspend loop
 /// (`cpu_suspend_primary`, `SUSPEND`, not ported: nothing sets it yet); an ACPI wake event
@@ -568,8 +596,28 @@ pub fn cpu_boot_secondary_processors() {
 pub fn cpu_start_secondary(ci: &'static CpuInfo) {
     ci.ci_flags.fetch_or(CPUF_AP, Ordering::SeqCst);
 
-    // pmap_kenter_pa(MP_TRAMPOLINE), pmap_kenter_pa(MP_TRAMP_DATA): the bootloader parked
-    // the processor (mptramp.S is skipped, replaced-by-limine).
+    // After a boot by boot(8) the processor starts in mptramp.S's pages; under Limine the
+    // bootloader parked it and nothing is mapped.
+    let tramp = MP_TRAMP_INSTALLED.load(Ordering::Acquire);
+    if tramp {
+        use crate::arch::amd64::include::mpbiosvar::{MP_TRAMP_DATA, MP_TRAMPOLINE};
+        use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
+        use crate::sys::types::{Paddr, Vaddr};
+        // SAFETY: the two low pages hold the trampoline map_tramps copied; their page
+        // tables exist (pmap_prealloc_lowmem_ptps).
+        unsafe {
+            pmap_kenter_pa(
+                Vaddr::new(MP_TRAMPOLINE),
+                Paddr::new(MP_TRAMPOLINE),
+                PROT_READ | PROT_EXEC,
+            );
+            pmap_kenter_pa(
+                Vaddr::new(MP_TRAMP_DATA),
+                Paddr::new(MP_TRAMP_DATA),
+                PROT_READ | PROT_WRITE,
+            );
+        }
+    }
 
     let _ = cpu_startup_ci(ci);
 
@@ -617,7 +665,22 @@ pub fn cpu_start_secondary(ci: &'static CpuInfo) {
 
     cpu_start_cleanup(ci);
 
-    // pmap_kremove(MP_TRAMPOLINE), pmap_kremove(MP_TRAMP_DATA): nothing was mapped.
+    if tramp {
+        use crate::arch::amd64::include::mpbiosvar::{MP_TRAMP_DATA, MP_TRAMPOLINE};
+        use crate::sys::types::Vaddr;
+        // SAFETY: the mappings entered above; the processor runs on its own stack and page
+        // tables by now (CPUF_PRESENT came from cpu_hatch).
+        unsafe {
+            pmap_kremove(
+                Vaddr::new(MP_TRAMPOLINE),
+                crate::sys::types::Vsize::new(PAGE_SIZE),
+            );
+            pmap_kremove(
+                Vaddr::new(MP_TRAMP_DATA),
+                crate::sys::types::Vsize::new(PAGE_SIZE),
+            );
+        }
+    }
 }
 
 /// `cpu_boot_secondary`: lets `ci` leave `cpu_hatch`'s wait (`CPUF_GO`) and waits until it
@@ -651,7 +714,7 @@ pub fn cpu_boot_secondary(ci: &CpuInfo) {
 ///
 /// XXX should share some of this with init386 in machdep.c
 #[cfg(feature = "multiprocessor")]
-extern "C" fn cpu_hatch(v: *const CpuInfo) -> ! {
+pub(crate) extern "C" fn cpu_hatch(v: *const CpuInfo) -> ! {
     // SAFETY: `cpu_hatch_entry` passes the `cpu_info` `mp_cpu_start` handed the bootloader,
     // which is never freed.
     let ci: &'static CpuInfo = unsafe { &*v };
@@ -764,10 +827,211 @@ pub fn mp_cpu_start(ci: &CpuInfo) -> i32 {
     0
 }
 
-/// `mp_cpu_start_cleanup` (`CPU_START_CLEANUP`): the C puts the NVRAM reset byte back; the
-/// bootloader's start left nothing to clean.
+/// `mp_cpu_start_cleanup` (`CPU_START_CLEANUP`): after a start through `mptramp.S`,
+/// ensure the NVRAM reset byte contains something vaguely sane; Limine's start left nothing
+/// to clean.
 #[cfg(feature = "multiprocessor")]
-pub fn mp_cpu_start_cleanup(_ci: &CpuInfo) {}
+pub fn mp_cpu_start_cleanup(_ci: &CpuInfo) {
+    use crate::arch::amd64::include::pio::outb;
+    use crate::arch::amd64::isa::nvram::{NVRAM_RESET, NVRAM_RESET_RST};
+    use crate::dev::isa::isareg::IO_RTC;
+    if MP_TRAMP_INSTALLED.load(Ordering::Acquire) {
+        // SAFETY: the RTC's index and data ports; the boot CPU starts processors one at a
+        // time, so nothing else talks to the RTC's NVRAM here.
+        unsafe {
+            outb(IO_RTC, NVRAM_RESET as u8);
+            outb(IO_RTC + 1, NVRAM_RESET_RST as u8);
+        }
+    }
+}
+
+/// `mp_cpu_start` as the C does it, for a processor `mptramp.S` starts (the [`BootMp::start`]
+/// `mp_madt_cpus` hands out): the warm reset code and vector point at `MP_TRAMPOLINE`, then
+/// INIT and two STARTUP IPIs. `arg` is the processor's `cpu_info`.
+///
+/// # Safety
+///
+/// As [`BootMp::start`] states; `map_tramps` installed the trampoline and
+/// `cpu_start_secondary` mapped its pages.
+#[cfg(feature = "multiprocessor")]
+unsafe fn mp_cpu_start_tramp(_i: usize, arg: usize) {
+    use crate::arch::amd64::amd64::lapic::{x86_ipi, x86_ipi_init};
+    use crate::arch::amd64::amd64::pmap::pmap_direct_map;
+    use crate::arch::amd64::include::i82489reg::LAPIC_DLMODE_STARTUP;
+    use crate::arch::amd64::include::mpbiosvar::MP_TRAMPOLINE;
+    use crate::arch::amd64::include::pio::outb;
+    use crate::arch::amd64::include::specialreg::CPUID_APIC;
+    use crate::arch::amd64::isa::nvram::{NVRAM_RESET, NVRAM_RESET_JUMP};
+    use crate::dev::isa::isareg::IO_RTC;
+    use crate::sys::types::Paddr;
+
+    // SAFETY: the caller's guarantee: `arg` is the processor's cpu_info, never freed.
+    let ci: &CpuInfo = unsafe { &*(arg as *const CpuInfo) };
+
+    // "The BSP must initialize CMOS shutdown code to 0Ah ..."
+    // SAFETY: the RTC's index and data ports, used by this CPU alone here.
+    unsafe {
+        outb(IO_RTC, NVRAM_RESET as u8);
+        outb(IO_RTC + 1, NVRAM_RESET_JUMP as u8);
+    }
+
+    // "and the warm reset vector (DWORD based at 40:67) to point to the AP startup code ..."
+    let dwordptr: [u16; 2] = [0, (MP_TRAMPOLINE >> 4) as u16];
+    let warm = pmap_direct_map(Paddr::new(0x467)).as_usize() as *mut [u16; 2];
+    // SAFETY: the BIOS data area's warm reset vector, low memory outside uvm, reached through
+    // the direct map (the C maps page 0 at VA 0 for the write).
+    unsafe { ptr::write_unaligned(warm, dwordptr) };
+
+    // "... prior to executing the following sequence:"
+    if ci.ci_flags.load(Ordering::Acquire) & CPUF_AP != 0 {
+        x86_ipi_init(ci.ci_apicid.get());
+
+        delay(10000);
+
+        if CPU_FEATURE.load(Ordering::Relaxed) & CPUID_APIC != 0 {
+            x86_ipi(
+                (MP_TRAMPOLINE / PAGE_SIZE) as i32,
+                ci.ci_apicid.get(),
+                LAPIC_DLMODE_STARTUP,
+            );
+            delay(200);
+
+            x86_ipi(
+                (MP_TRAMPOLINE / PAGE_SIZE) as i32,
+                ci.ci_apicid.get(),
+                LAPIC_DLMODE_STARTUP,
+            );
+            delay(200);
+        }
+    }
+}
+
+/// [`BootMp::cpu`] for the MADT's processors.
+#[cfg(feature = "multiprocessor")]
+fn madt_cpu(i: usize) -> BootCpu {
+    // SAFETY: filled once by mp_madt_cpus before BOOT_MP was written; read-only since.
+    let cpus = unsafe { MADT_CPUS.get() };
+    cpus.get(i).copied().unwrap_or(BootCpu {
+        processor_id: u32::MAX,
+        hwid: u64::MAX,
+    })
+}
+
+/// The processors of the firmware's MADT (the enabled local APIC and x2APIC entries, in
+/// table order), for a boot by boot(8): what acpimadt0 enumerates in C, here before
+/// autoconfiguration, because `mainbus_attach` attaches the CPUs from `BOOT_MP` (acpimadt.c
+/// is not ported; under Limine its MP response stands for it). `rsdp` and `direct_base` are
+/// virtual: the RSDP in the direct map, and the direct map's base. `None` without an MADT.
+///
+/// # Safety
+///
+/// Once, on the boot CPU, before `BOOT_MP` is read; the ACPI tables are in the direct map.
+#[cfg(feature = "multiprocessor")]
+pub unsafe fn mp_madt_cpus(rsdp: usize, direct_base: usize) -> Option<BootMp> {
+    use crate::dev::acpi::acpireg::{
+        ACPI_MADT_LAPIC, ACPI_MADT_X2APIC, ACPI_PROC_ENABLE, AcpiMadt, AcpiMadtLapic,
+        AcpiMadtX2apic, AcpiRsdp, AcpiTableHeader, MADT_SIG, RSDP_SIG,
+    };
+    use crate::machine::bootinfo::BootMp;
+    use core::mem::size_of;
+
+    // The reads below: firmware tables in the direct map, read unaligned as the packed
+    // structures they are; lengths come from the tables themselves.
+    let read = |va: usize| -> AcpiTableHeader {
+        // SAFETY: a table header the RSDP or the XSDT/RSDT points to, in the direct map.
+        unsafe { ptr::read_unaligned(va as *const AcpiTableHeader) }
+    };
+    // SAFETY: the caller's guarantee: the RSDP the firmware gave, in the direct map.
+    let r: AcpiRsdp = unsafe { ptr::read_unaligned(rsdp as *const AcpiRsdp) };
+    if r.rsdp1.signature != *RSDP_SIG {
+        return None;
+    }
+    // The XSDT's 64-bit entries when there is one (ACPI 2.0 and later), else the RSDT's.
+    let (sdt, entsize) = if r.rsdp1.revision >= 2 && r.rsdp_xsdt != 0 {
+        (direct_base + r.rsdp_xsdt as usize, 8)
+    } else {
+        (direct_base + r.rsdp1.rsdt as usize, 4)
+    };
+    let hdr = read(sdt);
+    let nent = (hdr.length as usize).saturating_sub(size_of::<AcpiTableHeader>()) / entsize;
+    let mut madt = None;
+    for i in 0..nent {
+        let ent = sdt + size_of::<AcpiTableHeader>() + i * entsize;
+        // SAFETY: as above.
+        let pa = unsafe {
+            if entsize == 8 {
+                ptr::read_unaligned(ent as *const u64) as usize
+            } else {
+                ptr::read_unaligned(ent as *const u32) as usize
+            }
+        };
+        if pa != 0 && read(direct_base + pa).signature == *MADT_SIG {
+            madt = Some(direct_base + pa);
+            break;
+        }
+    }
+    let madt = madt?;
+    let len = read(madt).length as usize;
+
+    // SAFETY: once, before anything reads it.
+    let cpus = unsafe { MADT_CPUS.get_mut() };
+    let mut n = 0;
+    let mut off = size_of::<AcpiMadt>();
+    while off + 2 <= len && n < cpus.len() {
+        let entry = madt + off;
+        // SAFETY: as above.
+        let (ty, elen) = unsafe {
+            (
+                ptr::read(entry as *const u8),
+                ptr::read((entry + 1) as *const u8),
+            )
+        };
+        if elen < 2 {
+            break;
+        }
+        match ty {
+            ACPI_MADT_LAPIC if elen as usize >= size_of::<AcpiMadtLapic>() => {
+                // SAFETY: as above.
+                let e: AcpiMadtLapic =
+                    unsafe { ptr::read_unaligned(entry as *const AcpiMadtLapic) };
+                if e.flags & ACPI_PROC_ENABLE != 0 {
+                    cpus[n] = BootCpu {
+                        processor_id: u32::from(e.acpi_proc_id),
+                        hwid: u64::from(e.apic_id),
+                    };
+                    n += 1;
+                }
+            }
+            ACPI_MADT_X2APIC if elen as usize >= size_of::<AcpiMadtX2apic>() => {
+                // SAFETY: as above.
+                let e: AcpiMadtX2apic =
+                    unsafe { ptr::read_unaligned(entry as *const AcpiMadtX2apic) };
+                if e.flags & ACPI_PROC_ENABLE != 0 {
+                    cpus[n] = BootCpu {
+                        processor_id: e.acpi_proc_uid,
+                        hwid: u64::from(e.apic_id),
+                    };
+                    n += 1;
+                }
+            }
+            _ => {}
+        }
+        off += elen as usize;
+    }
+    if n == 0 {
+        return None;
+    }
+    MADT_NCPUS.store(n, Ordering::Relaxed);
+    // The boot processor's local APIC ID: CPUID leaf 1's initial APIC ID (xAPIC IDs; the
+    // firmware runs in xAPIC mode under QEMU).
+    let bsp_hwid = u64::from(crate::arch::amd64::include::specialreg::cpuid(1).1 >> 24);
+    Some(BootMp {
+        bsp_hwid,
+        ncpus: n,
+        cpu: madt_cpu,
+        start: mp_cpu_start_tramp,
+    })
+}
 
 /// `cpu_init_msrs`: the `syscall` MSRs and the segment bases of `ci`.
 ///

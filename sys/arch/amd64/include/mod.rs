@@ -23,6 +23,7 @@ pub mod i8259;
 pub mod intr;
 pub mod intrdefs;
 pub mod mpbiosreg;
+pub mod mpbiosvar;
 pub mod mpconfig;
 pub mod mplock;
 pub mod mutex;

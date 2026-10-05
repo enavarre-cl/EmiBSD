@@ -1,8 +1,8 @@
 //! What the boot glue hands to the machine and the kernel: a bootloader-neutral view of the
 //! loaded image and of physical memory.
 //!
-//! `sys/stand/` fills it from the Limine responses; nothing here names Limine, so the kernel
-//! could be booted by anything able to produce the same facts. Grows with the milestones (M3 adds
+//! `sys/stand/` fills it from the Limine responses, and the machine's `getbootinfo` from
+//! OpenBSD boot(8)'s hand-over (M14, `sys/stand/bootarg.rs`); nothing here names either. Grows with the milestones (M3 adds
 //! what `uvm_page` needs; M11a the processors and the way to start them, [`BootMp`]).
 
 use core::ffi::CStr;
@@ -238,6 +238,12 @@ pub struct BootInfo {
     pub modules: [Option<BootModule>; MAX_MODULES],
     /// The processors, when the kernel is built `MULTIPROCESSOR` and the bootloader found them.
     pub mp: Option<BootMp>,
+    /// `boothowto` as the boot loader passed it (boot(8)'s `howto` argument on amd64); 0
+    /// under Limine, whose flags come from the command line.
+    pub howto: i32,
+    /// The boot disk's label DUID as the boot loader passed it (`BOOTARG_BOOTDUID`); `None`
+    /// under Limine, which names it on the command line (`bootduid=`).
+    pub duid: Option<[u8; 8]>,
 }
 
 impl BootInfo {
@@ -273,9 +279,9 @@ impl BootInfo {
     pub fn boothowto(&self) -> i32 {
         let bytes = self.cmdline.to_bytes();
         let Some(start) = bytes.iter().position(|&b| b == b'-') else {
-            return 0;
+            return self.howto;
         };
-        let mut howto = 0;
+        let mut howto = self.howto;
         for &c in &bytes[start..] {
             howto |= match c {
                 b'a' => RB_ASKNAME,
@@ -295,6 +301,9 @@ impl BootInfo {
     /// one. Flags go after it: everything from the first `-` on is read as flag letters
     /// ([`BootInfo::boothowto`]), the `d` of a `bootduid=` word included.
     pub fn bootduid(&self) -> Option<[u8; 8]> {
+        if self.duid.is_some() {
+            return self.duid;
+        }
         let word = self
             .cmdline
             .to_bytes()
@@ -358,6 +367,8 @@ mod tests {
             efi_memmap: None,
             modules: [None; MAX_MODULES],
             mp: None,
+            howto: 0,
+            duid: None,
         };
         assert_eq!(
             boot.kernel_virt_to_phys(Vaddr::new(0xffff_ffff_8001_2345)),
@@ -406,6 +417,8 @@ mod tests {
             efi_memmap: None,
             modules: [None; MAX_MODULES],
             mp: None,
+            howto: 0,
+            duid: None,
         };
         assert_eq!(boot.boothowto(), 0);
         boot.cmdline = c"-d";
@@ -423,5 +436,12 @@ mod tests {
         assert_eq!(boot.boothowto(), RB_SINGLE);
         boot.cmdline = c"bootduid=4e564d45524f4f5 bootduid=4e564d45524f4fxx";
         assert_eq!(boot.bootduid(), None);
+        // boot(8)'s own: its howto is or'ed with the command line's, its DUID wins.
+        boot.howto = RB_KDB;
+        boot.duid = Some(*b"EFIBOOT0");
+        assert_eq!(boot.boothowto(), RB_KDB);
+        assert_eq!(boot.bootduid(), Some(*b"EFIBOOT0"));
+        boot.cmdline = c"-s";
+        assert_eq!(boot.boothowto(), RB_KDB | RB_SINGLE);
     }
 }

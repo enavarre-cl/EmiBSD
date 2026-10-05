@@ -66,6 +66,11 @@ impl Cpu for Machine {
         unsafe { amd64::machdep::init_x86_64(boot) }
     }
 
+    unsafe fn getbootinfo(arg: usize) -> Result<BootInfo, &'static str> {
+        // SAFETY: forwarded; `bootarg_main` calls this once, from `locore0.S`'s `start`.
+        unsafe { amd64::machdep::getbootinfo(arg) }
+    }
+
     /// What `cpu_idle_cycle_hlt` in `machdep.c` does, forever and with interrupts off.
     fn halt() -> ! {
         let _ = include::cpufunc::intr_disable();

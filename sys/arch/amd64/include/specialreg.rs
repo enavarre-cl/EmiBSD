@@ -103,6 +103,8 @@ pub const CR3_PADDR: u64 = 0x7fff_ffff_ffff_f000;
 
 /// `CPUID_TSC`: has time stamp counter.
 pub const CPUID_TSC: u32 = 0x0000_0010;
+/// `CPUID_APIC`: has enabled APIC.
+pub const CPUID_APIC: u32 = 0x0000_0200;
 
 /// `CPUIDECX_HV`: running on hypervisor.
 pub const CPUIDECX_HV: u32 = 0x8000_0000;
@@ -212,6 +214,9 @@ pub const MSR_KERNELGSBASE: u32 = 0xc000_0102;
 pub const MSR_HWCR: u32 = 0xc001_0015;
 /// `HWCR_TSCFREQSEL`.
 pub const HWCR_TSCFREQSEL: u64 = 0x0100_0000;
+/// `MSR_SEV_GHCB`: the guest-hypervisor communication block of an SEV-ES guest
+/// (`locore0.S`'s `#VC` termination request).
+pub const MSR_SEV_GHCB: u32 = 0xc001_0130;
 /// `MSR_PSTATEDEF(_n)`.
 pub const fn msr_pstatedef(n: u32) -> u32 {
     0xc001_0064 + n

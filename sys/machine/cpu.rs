@@ -90,6 +90,19 @@ pub trait Cpu {
     /// specifies at entry, and `boot` describing the image that was just loaded.
     unsafe fn early_init(boot: &BootInfo) -> Result<(), &'static str>;
 
+    /// `getbootinfo` (amd64's `machdep.c`): the boot facts from the machine's own boot
+    /// protocol, OpenBSD's boot(8)/efiboot hand-over, for the boot glue's second entry
+    /// (`sys/stand/bootarg.rs`). `arg` is what the machine's entry code passes on (amd64:
+    /// `locore0.S`'s `first_avail`, the first free physical address after its bootstrap
+    /// tables). A machine whose entry from boot(8) is not ported yet returns an error, as
+    /// does the host. The error is a fixed message: there is no console yet.
+    ///
+    /// # Safety
+    ///
+    /// Call exactly once, on the boot CPU, from the machine's own entry code, before
+    /// `early_init`.
+    unsafe fn getbootinfo(arg: usize) -> Result<BootInfo, &'static str>;
+
     /// Masks interrupts and parks the CPU forever.
     fn halt() -> !;
 

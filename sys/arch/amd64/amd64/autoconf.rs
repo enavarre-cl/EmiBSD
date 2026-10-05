@@ -176,7 +176,7 @@ pub fn cpu_configure() {
     x86_64_proc0_tss_ldt_init();
 
     let _ = unported!("pmap_randomize (M6)");
-    let _ = unported!("map_tramps (M6)");
+    crate::arch::amd64::amd64::machdep::map_tramps();
     bus_dma_init();
     #[cfg(feature = "qemu")]
     crate::kern::selftest::bus_dma_check(&crate::arch::amd64::pci::pci_machdep::PCI_BUS_DMA_TAG);

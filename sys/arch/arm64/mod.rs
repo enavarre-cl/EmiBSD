@@ -67,6 +67,12 @@ impl Cpu for Machine {
         unsafe { arm64::machdep::initarm(boot) }
     }
 
+    /// arm64's entry from efiboot (`locore0.S`'s `_start` with the device tree) is M14's
+    /// track A3: nothing enters the kernel this way yet.
+    unsafe fn getbootinfo(_arg: usize) -> Result<BootInfo, &'static str> {
+        Err("getbootinfo: arm64's boot(8) entry is not ported")
+    }
+
     fn halt() -> ! {
         include::cpu::disable_irq_daif();
         loop {

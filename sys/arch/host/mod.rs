@@ -300,6 +300,11 @@ impl Cpu for Machine {
         Ok(())
     }
 
+    /// The host is not booted.
+    unsafe fn getbootinfo(_arg: usize) -> Result<BootInfo, &'static str> {
+        Err("getbootinfo: the host is not booted")
+    }
+
     /// The host has no CPU to park: the process ends instead.
     fn halt() -> ! {
         std::process::exit(0)

@@ -32,9 +32,12 @@ pub mod ipi;
 pub mod ipifuncs;
 pub mod lapic;
 pub mod locore;
+pub mod locore0;
 pub mod machdep;
 pub mod mainbus;
 pub mod mem;
+#[cfg(feature = "multiprocessor")]
+pub mod mptramp;
 pub mod pmap;
 #[cfg(feature = "qemu")]
 pub mod qemu;
