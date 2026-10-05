@@ -1037,7 +1037,11 @@ smoke-softraid: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--f
 # rebuilt every boot); `sr_cat` mounts every disk's `a` partition read-only and prints its
 # file (the RAID chunks and arm64's FAT boot disk do not mount, silently). `sr_mk` defines
 # `mk name bioctl-args...`: create the volume, label it, newfs, write m10f.txt; `m6` is the
-# same through sr6create, for RAID 6 on the four `d` partitions. Boot 1 rejects
+# same through sr6create, for RAID 6 on the four `d` partitions. `f` zeroes the volume's first
+# megabyte first, as bioctl(8) and softraid(4) say to: a new CRYPTO or RAID 1C volume reads as
+# random data, and `fdisk -i -f /dev/rsdNc` takes its own sector 0 as the MBR template (there
+# is no /usr/mdec/mbr in the ramdisk), so a random partition 0 of type A6 became the OpenBSD
+# partition, bounds far past the end, and `disklabel -A` failed. Boot 1 rejects
 # `disklabels not read: ` with its space, i.e. setroot naming a disk whose label is unread.
 # The bare header, with no disk after it, is setroot counting wakeups: it sleeps once per disk
 # still pending, at most five times, and each finished label read wakes it early, so when five
@@ -1049,7 +1053,7 @@ sr_cat := "--send-after '# ' --send 'c() { mount -r /dev/$1a /mnt 2>/dev/null &&
     "--send-after '# ' --send 'sr_cat() { IFS=,; for e in $(sysctl -n hw.disknames); do c ${e%%:*}; done; IFS=\" \"; echo cat-done-$((40+2)); }\\n' "
 sr_mk := "--send-after '# ' --send 'h() { echo m10f-$1-$((40+2)) >/mnt/m10f.txt && umount /mnt; }\\n' " + \
     "--send-after '# ' --send 'g() { newfs -q $1a && mount /dev/$1a /mnt && h $2 && echo made-$2-$((40+2)); }\\n' " + \
-    "--send-after '# ' --send 'f() { fdisk -iy -f /dev/r$1c $1 >/dev/null && disklabel -w -A $1 && g $1 $2; }\\n' " + \
+    "--send-after '# ' --send 'f() { dd if=/dev/zero of=/dev/r$1c bs=1m count=1 2>/dev/null && fdisk -iy -f /dev/r$1c $1 >/dev/null && disklabel -w -A $1 && g $1 $2; }\\n' " + \
     "--send-after '# ' --send 'mk() { n=$1; shift; o=$(bioctl \"$@\" softraid0) && echo \"$o\" && f ${o##* } $n; }\\n' " + \
     "--send-after '# ' --send 'm6() { o=$(sr6create \"$@\" softraid0) && echo \"$o\" && f ${o##* } raid6; }\\n' "
 softraid_make := disk_login + " " + sr_pass + \
