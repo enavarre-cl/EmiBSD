@@ -1435,6 +1435,13 @@ impl crate::machine::acpi_machdep::AcpiMachdep for Machine {
         static CPU_SUSPENDED: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
         &CPU_SUSPENDED
     }
+
+    // The host's delay(9) is its own; no TSC to recalibrate.
+    fn delay_init(_f: fn(i32), _fn_quality: i32) {}
+
+    fn delay_fini(_f: fn(i32)) {}
+
+    fn cpu_recalibrate_tsc(_tc: &'static crate::sys::timetc::Timecounter) {}
 }
 
 impl crate::machine::fdt::Fdt for Machine {

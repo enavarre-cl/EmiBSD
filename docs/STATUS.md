@@ -19,7 +19,6 @@ Unsafe (`cargo xtask unsafe-report`): kernel 5972 blocks, 723 fn, 578 impl, 22 t
 
 Blockers:
 - amd64 kernel stacks are tight: about 4.9 KB stay free under softraid I/O (M10f measure).
-- The amd64 TSC can measure high under load; acpitimer/acpihpet fix it (M13; accepted).
 - A `diagnostic` MP kernel panics at boot (`uvm_page_physload: page size not set!`).
 - Statistics counters the C bumps unlocked stay `Cell`s (docs/ARCHITECTURE.md, M11e).
 - arm64 configures azalia although its GENERIC does not (QEMU's HD Audio; ROADMAP M12).

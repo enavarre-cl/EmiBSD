@@ -202,12 +202,12 @@ fn a_better_timecounter_takes_over_and_quality_resets() {
     static BAD: Timecounter = Timecounter::new(get, 0xffff_ffff, 100_000_000, "badtc", -1, 0);
     tc_init(&BAD);
     assert_ne!(
-        timecounter().tc_name,
+        timecounter().tc_name.get(),
         "badtc",
         "negative quality is never chosen"
     );
     tc_init(&GOOD);
-    assert_eq!(timecounter().tc_name, "testtc");
+    assert_eq!(timecounter().tc_name.get(), "testtc");
     assert_eq!(GOOD.tc_precision.get(), 1);
     mtx_enter(&WINDUP_MTX);
     tc_windup(None, None, None);
@@ -215,7 +215,7 @@ fn a_better_timecounter_takes_over_and_quality_resets() {
     assert_eq!(tc_getfrequency(), 100_000_000);
     tc_reset_quality(&GOOD, -5);
     assert_ne!(
-        timecounter().tc_name,
+        timecounter().tc_name.get(),
         "testtc",
         "demoted: the best remaining counter wins"
     );

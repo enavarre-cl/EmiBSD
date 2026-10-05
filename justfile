@@ -83,7 +83,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-efiboot " + \
+    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-efiboot smoke-clock " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb"
 
@@ -137,6 +137,7 @@ smoke-boot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featu
         --expect "selftest: bus_dma ok" --expect "mainbus0 at root" \
         --expect "bios0 at mainbus0" --expect "acpi0 at bios0: ACPI 3.0" \
         --expect "acpi0: sleep states S3 S4 S5" --expect "acpi0: tables DSDT FACP APIC HPET MCFG" \
+        --expect "acpitimer0 at acpi0: 3579545 Hz, 24 bits" --expect "acpihpet0 at acpi0: 100000000 Hz" \
         --expect "\"PNP0A08\" at acpi0 not configured" \
         --expect "cpu0 at mainbus0: apid 0 (boot processor)" --expect "pci0 at mainbus0 bus 0" \
         --expect "at pci0 dev 0 function 0 not configured" \
@@ -355,7 +356,9 @@ internet_check := "--send-after login: --send 'root\\n' --send-after Password: -
 # Diagnostic tools stage 2: OpenBSD's ps(1), fstat(1) and vmstat(8) over libkvm's sysctl(2)
 # paths (kern.proc, kern.proc_args, kern.file, vm.uvmexp, hw.diskstats, kern.intrcnt,
 # kern.pool, kern.malloc), df(1) and mount(8) over getfsstat(2), and sysctl(8)'s
-# kern.timecounter (amd64 runs on the TSC, arm64 on agtimer). Logs in as `smoke-login`
+# kern.timecounter (arm64 runs on agtimer; amd64 offers i8254, tsc, acpihpet0 and acpitimer0
+# and runs on the TSC once acpihpet0 calibrated it, quality 2000, else on acpihpet0 with the
+# TSC at -1000, as OpenBSD does when every calibration round is disturbed). Logs in as `smoke-login`
 # does; `echo diag-$((40+2))` marks the end. vmstat's disk columns are the first two disks
 # of hw.disknames: on both archs now sd0 (the virtio-blk disk) and sd1 (the boot image: on
 # arm64 a vioblk, on amd64 port 0 of q35's AHCI controller since ahci(4), M13; before it the
@@ -384,7 +387,8 @@ smoke-diag: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featu
         --expect "bytes per page" --expect "Memory statistics by bucket size" \
         --expect "Memory resource pool statistics" --expect "/dev/rd0a       " \
         --expect "/dev/rd0a on / type ffs (local)" --expect "diag-42" \
-        --expect "kern.timecounter.hardware=tsc" --expect "kern.timecounter.choice=i8254(0) tsc(2000)"
+        --expect "kern.timecounter.hardware=" --expect "kern.timecounter.choice=i8254(0) tsc(" \
+        --expect ") acpihpet0(1000) acpitimer0(1000)"
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'ps -ax\n' \
@@ -1416,7 +1420,37 @@ smoke-power: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
         --expect "acpi0 at bios0: ACPI 3.0" --expect "rebooting..." --expect "m13-power-42" \
         --reject "The operating system has halted"
 
-# M10d: FUSE (sys/miscfs/fuse). Our own read-only file system, tools/fusehello (linked to
+# M13 (acpitimer, acpihpet): the clock keeps the host's rate. Each arch boots single user
+# from the ramdisk (`-s`) and ksh(1) reads date(1) beside the host's clock before and after
+# `sleep 45` (xtask replaces `{host-ms}` by the host's time in milliseconds as the line goes
+# out, tools/xtask/src/hwopts.rs; the two reading lines have the same length, so their
+# serial delays cancel); the guest's elapsed seconds must be within 2 of the host's. Before
+# acpitimer/acpihpet, amd64's TSC was measured against the i8254 and, under load, read
+# 1.2-1.3 GHz for ~1.0, so the clock ran 20-30 % slow. amd64 also expects acpitimer0,
+# acpihpet0 and the TSC's calibration line (`tsc: calibrated against acpihpet0: <N> Hz`, or,
+# when every round is disturbed, the failure line: the TSC then keeps quality -1000, as in
+# OpenBSD, and acpihpet0 is the timecounter). `sysctl kern.timecounter` is printed. Run it
+# while the host is busy (`just smoke` does) to see the load case. Part of `smoke`.
+smoke-clock: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-clock: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
+        --expect "acpitimer0 at acpi0: 3579545 Hz, 24 bits" --expect "acpihpet0 at acpi0: 100000000 Hz" \
+        --expect "tsc: calibrat" {{clock_steps}}
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
+        {{clock_steps}}
+
+# `smoke-clock`'s session.
+clock_steps := "--send-after 'RETURN for sh:' --send '\\n' " + \
+    "--send-after '# ' --send 'h0={host-ms}; g0=$(date +%s)\\n' " + \
+    "--send-after '# ' --send 'sleep 45; echo clock-slept-$((40+2))\\n' " + \
+    "--send-after 'clock-slept-42' --send 'h1={host-ms}; g1=$(date +%s)\\n' " + \
+    "--send-after '# ' --send 'd=$((g1-g0)); e=$(((h1-h0+500)/1000)); echo \"clock: guest $d s, host $e s\"\\n' " + \
+    "--send-after '# ' --send '[ $((d-e)) -le 2 -a $((e-d)) -le 2 ] && echo clock-ok-$((40+2))\\n' " + \
+    "--send-after '# ' --send 'sysctl kern.timecounter\\n' " + \
+    "--expect 'clock: guest ' --expect 'clock-ok-42' --expect 'kern.timecounter.choice='"
+
+# M10d: FUSE (sys/miscfs/fuse).Our own read-only file system, tools/fusehello (linked to
 # OpenBSD's libfuse, which opens /dev/fuse0 and mounts fusefs), is mounted on /fuse; mount(8)
 # must list it as `fuse`, its two files read back through the daemon (hello.txt and
 # sub/deep.txt), ls(1) lists both directories, a write is refused, and after umount(8) the

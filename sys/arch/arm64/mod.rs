@@ -1086,6 +1086,20 @@ impl crate::machine::acpi_machdep::AcpiMachdep for Machine {
         static CPU_SUSPENDED: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
         &CPU_SUSPENDED
     }
+
+    fn delay_init(_f: fn(i32), _fn_quality: i32) {
+        // arm64 has no delay_init: its delay(9) is agtimer's, and acpitimer/acpihpet, the
+        // callers, are amd64/i386 drivers that arm64 GENERIC does not configure.
+        let _ = crate::unported!("delay_init (not on arm64: acpitimer/acpihpet are x86 drivers)");
+    }
+
+    fn delay_fini(_f: fn(i32)) {
+        let _ = crate::unported!("delay_fini (not on arm64: acpitimer/acpihpet are x86 drivers)");
+    }
+
+    fn cpu_recalibrate_tsc(_tc: &'static crate::sys::timetc::Timecounter) {
+        // #if defined(__amd64__) in the drivers: nothing to recalibrate on arm64.
+    }
 }
 
 impl crate::machine::fdt::Fdt for Machine {

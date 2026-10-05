@@ -399,7 +399,7 @@ pub fn tc_init(tc: &'static Timecounter) {
         tc.tc_quality.set(-2000);
         printf(format_args!(
             "Timecounter \"{}\" frequency {} Hz",
-            tc.tc_name,
+            tc.tc_name.get(),
             tc.tc_frequency.get()
         ));
         printf(format_args!(" -- Insufficient hz, needs at least {u}\n"));
@@ -466,7 +466,8 @@ pub fn tc_reset_quality(tc: &'static Timecounter, quality: i32) {
             TIMECOUNTER.store(ptr::from_ref(best).cast_mut(), Ordering::Relaxed);
             printf(format_args!(
                 "timecounter: active counter changed: {} -> {}\n",
-                tc.tc_name, best.tc_name
+                tc.tc_name.get(),
+                best.tc_name.get()
             ));
         }
     }
@@ -742,7 +743,7 @@ pub fn sysctl_tc_hardware(
 ) -> Result<(), Errno> {
     let tc = timecounter();
     let mut newname = [0u8; 32];
-    strlcpy(&mut newname, tc.tc_name.as_bytes());
+    strlcpy(&mut newname, tc.tc_name.get().as_bytes());
 
     sysctl_string(oldp, oldlenp, newp, newlen, &mut newname)?;
     let len = newname
@@ -750,11 +751,11 @@ pub fn sysctl_tc_hardware(
         .position(|&b| b == 0)
         .unwrap_or(newname.len());
     let newname = &newname[..len];
-    if newname == tc.tc_name.as_bytes() {
+    if newname == tc.tc_name.get().as_bytes() {
         return Ok(());
     }
     for newtc in TC_LIST.0.iter() {
-        if newname != newtc.tc_name.as_bytes() {
+        if newname != newtc.tc_name.get().as_bytes() {
             continue;
         }
 
@@ -786,7 +787,7 @@ pub fn sysctl_tc_choice(oldp: usize, oldlenp: &mut usize, newp: usize) -> Result
     for tc in TC_LIST.0.iter() {
         snprintf(
             &mut buf,
-            format_args!("{spc}{}({})", tc.tc_name, tc.tc_quality.get()),
+            format_args!("{spc}{}({})", tc.tc_name.get(), tc.tc_quality.get()),
         );
         spc = " ";
         strlcat(&mut choices, &buf);

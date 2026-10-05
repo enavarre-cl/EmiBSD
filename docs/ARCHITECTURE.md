@@ -691,7 +691,8 @@ reason:
   `bus_space_map` is the identity inside it until `pmap` maps devices (M3, page tables).
 - `delay(9)` before the clocks: amd64 polls the i8254 (`isa/clock.rs`) through `delay_func`,
   which `delay_init` hands to `tsc_delay` when the TSC frequency is known from CPUID or an MSR,
-  as in OpenBSD (under QEMU it is measured, so `i8254_delay` stays); arm64 uses `intr.c`'s `arm_dflt_delay` until `agtimer` attaches (M4).
+  as in OpenBSD (under QEMU it is measured, so `acpitimer_delay` and then `acpihpet_delay`
+  take over when they attach, M13); arm64 uses `intr.c`'s `arm_dflt_delay` until `agtimer` attaches (M4).
 - ddb-lite: `db_enter()` is a breakpoint trap (`int3`, `brk #0xf000`) that lands in `db_ktrap`
   and `db_trap`, which print `Stopped at <pc>` and the stack trace from `ddb_regs` and then
   return, as the `c` command would, because there is no command loop (`db_command.c`,
@@ -750,8 +751,9 @@ reason:
   `nanouptime` back a period, as it would on OpenBSD with this counter; the time code keeps
   the C's modular arithmetic for it. The TSC's 32-bit count wraps after seconds. Under feature
   `qemu`, `clockintr_dispatch` prints `uptime went backwards` if a reading is behind the
-  previous one, and every smoke run rejects that line (`--reject`). `acpihpet` and
-  `acpitimer` need the ACPI tables. arm64 attaches `agtimer` from the device tree (through mainbus
+  previous one, and every smoke run rejects that line (`--reject`). Since M13 `acpitimer0`
+  and `acpihpet0` (amd64, under acpi0) are timecounters too and the TSC's reference
+  (`kern.timecounter.choice=i8254(0) tsc(2000) acpihpet0(1000) acpitimer0(1000)`). arm64 attaches `agtimer` from the device tree (through mainbus
   since M7b) and takes the virtual timer's PPI through `ampintc`. The `selftest=clock` boot waits for
   `hz` hardclocks and a `timeout(9)`. The host double owns a `cpu_info` of its own so the
   clock queue and the wheel are unit-tested over the dummy timecounter.
@@ -1353,13 +1355,19 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   monotonic all the same (it follows the host clock). Under feature `qemu` only,
   `identifycpu` sets both flags whenever cpuid(1) reports `CPUID_TSC`. The frequency is then
   unknown to CPUID (no leaf 0x15, and the P0 MSR is AMD family 17h/19h hardware), so
-  `tsc_timecounter_init` takes `identifycpu`'s `cpu_freq` (the TSC over a 100 ms
-  `i8254_delay`). OpenBSD would leave such a TSC at quality -1000 until `acpitimer` or
-  `acpihpet` call `cpu_recalibrate_tsc`; neither is ported, and the i8254 cannot be the
-  reference (`measure_tsc_freq` delays 100 ms with interrupts off; the 15-bit count wraps
-  every 27 ms). So, also under `qemu` only, a TSC no reference has recalibrated gets the
-  quality 2000 `calibrate_tsc_freq` gives a calibrated invariant TSC. Without the feature the
-  C's rules apply unchanged.
+  `tsc_timecounter_init` takes `identifycpu`'s `cpu_freq` and recalibrates it as OpenBSD
+  does (M13): `acpitimer0` and `acpihpet0` attach under acpi0 at bios0, before mainbus
+  attaches cpu0, and each calls `cpu_recalibrate_tsc`, so `delay(9)` is `acpihpet_delay` when
+  `cpu_freq` counts the TSC over 100 ms and `measure_tsc_freq` measures it against
+  acpihpet0 (three 100 ms rounds with interrupts off, at least two within 50 us). The quality
+  follows the C: 2000 after a good measurement, -1000 if every round was disturbed (a busy
+  host descheduling the vCPU), in which case acpihpet0 (1000) is the timecounter. The M11
+  stand-in (quality 2000 for a TSC no reference had recalibrated, measured against the
+  i8254, which under load read 1.2-1.3 GHz for ~1.0 and ran the clock 20-30 % slow) is gone;
+  the invariant-TSC flags above are what remains of this deviation. Under `qemu` only,
+  `calibrate_tsc_freq` prints its result (`tsc: calibrated against acpihpet0: 1000000000
+  Hz`), standing in for `machdep.tscfreq` (`cpu_sysctl` is not ported); `smoke-clock`
+  checks that `date` keeps the host's rate across `sleep 45`, within 2 s, on both archs.
 - amd64's TSC synchronisation test with `MULTIPROCESSOR` (M11b). `cpu.c` runs `tsc.c`'s test
   against each application processor where the C does, and a failure prints the C's
   `tsc: cpu0/cpuN: sync test failed` and drops the TSC to quality -1000. The C prints nothing

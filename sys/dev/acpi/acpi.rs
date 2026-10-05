@@ -38,11 +38,10 @@
 //! `acpipwrres` nor `wd` is configured).
 //!
 //! ## Deviations
-//! - acpi0's children are matched against the `cfdata` table, as in C, and no ACPI child
-//!   driver is ported yet: `acpitimer`, the table drivers (`acpimadt`, `acpihpet`,
-//!   `acpimcfg`, ...), `acpiprt`, `acpiec`, `acpicpu`, `acpitz` and the devices found by
-//!   `_HID` print "not configured" (or nothing, for the quiet ones), as an OpenBSD kernel
-//!   without them does.
+//! - acpi0's children are matched against the `cfdata` table, as in C. `acpitimer` and
+//!   `acpihpet` are ported (M13); the other table drivers (`acpimadt`, `acpimcfg`, ...),
+//!   `acpiprt`, `acpiec`, `acpicpu`, `acpitz` and the devices found by `_HID` print "not
+//!   configured" (or nothing, for the quiet ones), as an OpenBSD kernel without them does.
 //! - `pool acpiwqpool` and the `SIMPLEQ` of tasks are a `VecDeque` of `struct acpi_taskq`
 //!   values (their `next` link is unused); a failed allocation prints "unable to create
 //!   task" as `pool_get(PR_NOWAIT)` failing does. The PCI lists (`acpi_pcidevs`,
@@ -267,8 +266,9 @@ fn devname(sc: &AcpiSoftc) -> &str {
     sc.sc_dev.xname()
 }
 
-/// `sc->sc_fadt`, which `acpi_attach_common` sets before anything reads it.
-fn fadt(sc: &AcpiSoftc) -> &'static AcpiFadt {
+/// `sc->sc_fadt`, which `acpi_attach_common` sets before anything reads it (acpi0's
+/// children read it too: `acpitimer`).
+pub fn fadt(sc: &AcpiSoftc) -> &'static AcpiFadt {
     let p = sc.sc_fadt.get();
     kassert!(!p.is_null());
     // SAFETY: `sc_fadt` points at the FADT's copy, which `acpi_maptable` allocated with at
@@ -300,6 +300,12 @@ fn aaa_str<'a>(p: *const u8) -> Option<&'a [u8]> {
     }
     // SAFETY: the `n` bytes before the NUL, read above.
     Some(unsafe { slice::from_raw_parts(p, n) })
+}
+
+/// `aa->aaa_name` without its NUL, `None` when NULL: the name acpi0's children compare
+/// against their driver's (`acpitimer`).
+pub fn aaa_name(aa: &AcpiAttachArgs) -> Option<&[u8]> {
+    aaa_str(aa.aaa_name)
 }
 
 /// `memset(&aaa, 0, sizeof(aaa))` with `aaa_iot` and `aaa_memt` from acpi0.

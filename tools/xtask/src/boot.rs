@@ -837,7 +837,8 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
             });
             if let Some(len) = found {
                 if let Some(stdin) = stdin.as_mut() {
-                    send_paced(stdin, text)?;
+                    let text = crate::hwopts::expand_send(text);
+                    send_paced(stdin, &text)?;
                     println!(
                         "xtask: sent {text:?} after {:.1}s (saw {after:?})",
                         started.elapsed().as_secs_f32()

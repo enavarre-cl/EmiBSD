@@ -39,8 +39,9 @@
 //!
 //! ## Deviations
 //! - The fields a driver fills in after its static initialiser (`tc_frequency`, `tc_priv`,
-//!   `tc_get_timecount`, `tc_user`) and the ones `tc_init`/`tc_reset_quality` write are
-//!   `Cell`s, so a `static` timecounter is registered through `&'static`.
+//!   `tc_get_timecount`, `tc_user`, `tc_name`: `acpitimer` and `acpihpet` name theirs after
+//!   their device) and the ones `tc_init`/`tc_reset_quality` write are `Cell`s, so a
+//!   `static` timecounter is registered through `&'static`.
 //! - `tc_priv` is an opaque pointer, as in C; the driver casts it back.
 
 use core::cell::Cell;
@@ -68,7 +69,7 @@ pub struct Timecounter {
     /// \[I\] `tc_frequency`: frequency of the counter in Hz.
     pub tc_frequency: Cell<u64>,
     /// \[I\] `tc_name`: name of the timecounter.
-    pub tc_name: &'static str,
+    pub tc_name: Cell<&'static str>,
     /// \[I\] `tc_quality`: used to determine if this timecounter is better than another
     /// timecounter higher means better. Negative means "only use at explicit request".
     pub tc_quality: Cell<i32>,
@@ -102,7 +103,7 @@ impl Timecounter {
             tc_get_timecount: Cell::new(tc_get_timecount),
             tc_counter_mask: Cell::new(tc_counter_mask),
             tc_frequency: Cell::new(tc_frequency),
-            tc_name,
+            tc_name: Cell::new(tc_name),
             tc_quality: Cell::new(tc_quality),
             tc_priv: Cell::new(ptr::null()),
             tc_user: Cell::new(tc_user),

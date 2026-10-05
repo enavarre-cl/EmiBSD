@@ -1081,6 +1081,18 @@ impl crate::machine::acpi_machdep::AcpiMachdep for Machine {
     fn cpu_suspended() -> &'static core::sync::atomic::AtomicI32 {
         &amd64::cpu::CPU_SUSPENDED
     }
+
+    fn delay_init(f: fn(i32), fn_quality: i32) {
+        amd64::machdep::delay_init(f, fn_quality)
+    }
+
+    fn delay_fini(f: fn(i32)) {
+        amd64::machdep::delay_fini(f)
+    }
+
+    fn cpu_recalibrate_tsc(tc: &'static crate::sys::timetc::Timecounter) {
+        amd64::tsc::cpu_recalibrate_tsc(tc)
+    }
 }
 
 impl crate::machine::fdt::Fdt for Machine {

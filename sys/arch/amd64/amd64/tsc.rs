@@ -35,13 +35,11 @@
 //! ## Deviations
 //! - `NPVBUS` is not configured, so `tsc_freq_kvm` (the KVM/VMware timing leaf) is not
 //!   compiled, as in a C kernel without `pvbus`.
-//! - Under feature `qemu` only, `tsc_timecounter_init` gives the TSC quality 2000 when no
-//!   reference timecounter has recalibrated it (`tc_priv` still null): the frequency is
-//!   `identifycpu`'s `cpu_freq`, the TSC counted over a 100 ms `i8254_delay`. In C the TSC
-//!   stays at -1000 until `acpitimer` or `acpihpet` call `cpu_recalibrate_tsc`, and neither is
-//!   ported; QEMU's TCG also never reports an invariant TSC (`identcpu.rs`'s deviations). The
-//!   i8254 itself cannot be the reference: `measure_tsc_freq` delays 100 ms with interrupts
-//!   off, and its 15-bit counter wraps every 27 ms. `docs/ARCHITECTURE.md`.
+//! - Under feature `qemu` only, `calibrate_tsc_freq` prints what it measured against the
+//!   reference (`tsc: calibrated against acpihpet0: <N> Hz`, or `tsc: calibration against
+//!   <tc> failed, quality <q>`): the C is silent, and its `machdep.tscfreq` (`cpu_sysctl`) is
+//!   not ported. The TSC's quality follows the C's rules: -1000 until `acpitimer`/`acpihpet`
+//!   (M13) are the reference of a successful calibration, then 2000. `docs/ARCHITECTURE.md`.
 //! - `tsc_delay` treats a negative `usecs` as 0 (the C converts it to a huge `uint64_t`).
 //! - `tsc_rdtsc` is a `StaticCell<fn() -> u64>` written by `tsc_identify` on the boot CPU.
 //! - The `MULTIPROCESSOR` synchronisation test is behind feature `multiprocessor` and runs
@@ -326,7 +324,11 @@ pub fn calibrate_tsc_freq() {
     }
 
     // SAFETY: `tc_priv` only ever holds a `&'static Timecounter` (`cpu_recalibrate_tsc`).
-    let freq = measure_tsc_freq(unsafe { &*reference });
+    let reference = unsafe { &*reference };
+    let freq = measure_tsc_freq(reference);
+    // Not in C: the smoke tests read the outcome (see the module's deviations).
+    #[cfg(feature = "qemu")]
+    tsc_report_calibration(reference, freq);
     if freq == 0 {
         return;
     }
@@ -334,6 +336,26 @@ pub fn calibrate_tsc_freq() {
     TSC_TIMECOUNTER.tc_frequency.set(freq);
     if TSC_IS_INVARIANT.load(Ordering::Relaxed) != 0 {
         TSC_TIMECOUNTER.tc_quality.set(2000);
+    }
+}
+
+/// Under feature `qemu` only: one line per calibration, the frequency measured against
+/// `reference` or the failure (the C prints nothing; `machdep.tscfreq` would show it, and
+/// `cpu_sysctl` is not ported).
+#[cfg(feature = "qemu")]
+fn tsc_report_calibration(reference: &Timecounter, freq: u64) {
+    if freq == 0 {
+        crate::kprintf!(
+            "tsc: calibration against {} failed, quality {}\n",
+            reference.tc_name.get(),
+            TSC_TIMECOUNTER.tc_quality.get()
+        );
+    } else {
+        crate::kprintf!(
+            "tsc: calibrated against {}: {} Hz\n",
+            reference.tc_name.get(),
+            freq
+        );
     }
 }
 
@@ -382,15 +404,6 @@ pub fn tsc_timecounter_init(ci: &CpuInfo, cpufreq: u64) {
         TSC_FREQUENCY.store(cpufreq, Ordering::Relaxed);
         TSC_TIMECOUNTER.tc_frequency.set(cpufreq);
         calibrate_tsc_freq();
-
-        // No acpitimer/acpihpet to recalibrate against; see the module's deviations.
-        #[cfg(feature = "qemu")]
-        if TSC_TIMECOUNTER.tc_priv.get().is_null()
-            && TSC_IS_INVARIANT.load(Ordering::Relaxed) != 0
-            && cpufreq > 0
-        {
-            TSC_TIMECOUNTER.tc_quality.set(2000);
-        }
     }
 
     tc_init(&TSC_TIMECOUNTER);

@@ -12,6 +12,11 @@
 //! consults, defined by amd64's `machdep.c` and arm64's `acpi_machdep.c`) and
 //! `ci->ci_acpi_proc_id` (a `struct cpu_info` member on both, read by `acpi_add_device`);
 //! nor is `cpu_suspended` (each `cpu.c`'s, cleared by `acpi.c`'s wake events).
+//!
+//! The timer drivers (`acpitimer.c`, `acpihpet.c`, configured on amd64 and i386 only) also
+//! call `delay_init`/`delay_fini` (amd64's `<machine/cpu.h>`) and, under
+//! `#if defined(__amd64__)`, `tsc.c`'s `cpu_recalibrate_tsc`; they are here because those
+//! drivers are their only generic callers.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -23,6 +28,7 @@ use crate::machine::Machine;
 use crate::machine::bus::{BusAddr, BusDmaTag, BusSize, BusSpaceHandle, BusSpaceTag};
 use crate::machine::cpu::CpuInfo;
 use crate::sys::errno::Errno;
+use crate::sys::timetc::Timecounter;
 use crate::sys::types::Paddr;
 
 /// What `acpi(4)` needs from the machine.
@@ -110,6 +116,18 @@ pub trait AcpiMachdep {
     /// `cpu_suspended` (`cpu.c`): set while the boot processor idles in the S0 suspend loop
     /// (`cpu_suspend_primary`); a wake event clears it.
     fn cpu_suspended() -> &'static AtomicI32;
+
+    /// `delay_init(fn, fn_quality)` (amd64's `<machine/cpu.h>`): makes `f` the `delay(9)`
+    /// implementation if `fn_quality` beats the current one's.
+    fn delay_init(f: fn(i32), fn_quality: i32);
+
+    /// `delay_fini(fn)`: if `f` is the `delay(9)` implementation, goes back to the default.
+    fn delay_fini(f: fn(i32));
+
+    /// `cpu_recalibrate_tsc(tc)` (amd64's `tsc.c`): offers `tc` as the TSC's reference
+    /// timecounter. The drivers call it only `#if defined(__amd64__)`; elsewhere it does
+    /// nothing, as that code is not compiled.
+    fn cpu_recalibrate_tsc(tc: &'static Timecounter);
 }
 
 /// `ACPI_PRT` of the selected machine.
@@ -212,6 +230,21 @@ pub fn ci_acpi_proc_id(ci: &CpuInfo) -> u32 {
 /// `cpu_suspended` on the selected machine.
 pub fn cpu_suspended() -> &'static AtomicI32 {
     Machine::cpu_suspended()
+}
+
+/// `delay_init(fn, fn_quality)` on the selected machine.
+pub fn delay_init(f: fn(i32), fn_quality: i32) {
+    Machine::delay_init(f, fn_quality)
+}
+
+/// `delay_fini(fn)` on the selected machine.
+pub fn delay_fini(f: fn(i32)) {
+    Machine::delay_fini(f)
+}
+
+/// `cpu_recalibrate_tsc(tc)` on the selected machine (amd64 only; nothing elsewhere).
+pub fn cpu_recalibrate_tsc(tc: &'static Timecounter) {
+    Machine::cpu_recalibrate_tsc(tc)
 }
 
 /// The global lock's compare and swap, the same on every machine (`acpi_machdep.c` of amd64,

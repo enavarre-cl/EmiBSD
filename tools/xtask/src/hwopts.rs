@@ -32,6 +32,9 @@
 //!   and expects a second boot's login. Without it, an ACPI power-off (`halt -p`, S5) and a
 //!   reset both end QEMU with status 0, so a smoke that checks a power-off passes
 //!   `--status 0` and rejects `rebooting...`, which `boot(9)` prints before every reset.
+//! - `{host-ms}` in a `smoke` `--send` text (M13, `smoke-clock`): replaced, as the text is
+//!   sent, by the host's wall clock in milliseconds since the Epoch ([`expand_send`]), so a
+//!   guest script can set its own clock readings beside the host's and compare the rates.
 //! - `cargo xtask nvme-root --arch A [--duid HEX] [--out FILE]`: the disk `just smoke-nvme`
 //!   boots from, `nvme-<arch>.img` in the run directory unless `--out` names another file.
 //!   It is laid out as OpenBSD's installer lays a disk out: an MBR whose one partition is
@@ -55,6 +58,21 @@ use std::sync::OnceLock;
 
 use crate::Result;
 use crate::boot::{self, Arch};
+
+/// The placeholder [`expand_send`] replaces.
+const HOST_MS: &str = "{host-ms}";
+
+/// A `--send` text as it goes to the guest: each `{host-ms}` becomes the host's wall clock in
+/// milliseconds since the Epoch, read now.
+pub(crate) fn expand_send(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text.contains(HOST_MS) {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    std::borrow::Cow::Owned(text.replace(HOST_MS, &ms.to_string()))
+}
 
 /// The DUID of the root disk `nvme-root` writes by default (`NVMEROOT` in ASCII).
 pub(crate) const NVME_ROOT_DUID: &str = "4e564d45524f4f54";
@@ -451,6 +469,20 @@ pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) -> Result<
 mod tests {
     use super::*;
     use crate::e2fs;
+
+    #[test]
+    fn host_ms_is_expanded() {
+        assert_eq!(expand_send("uname -a\n"), "uname -a\n");
+        let t = expand_send("h={host-ms}; g={host-ms}\n");
+        let ms: Vec<u128> = t
+            .trim_end()
+            .split("; ")
+            .map(|kv| kv[2..].parse().unwrap())
+            .collect();
+        assert_eq!(ms.len(), 2);
+        assert!(ms[0] > 1_600_000_000_000, "{t}");
+        assert_eq!(ms[0], ms[1]);
+    }
 
     #[test]
     fn label_is_found_as_the_kernel_finds_it() {
