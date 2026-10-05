@@ -134,3 +134,35 @@ fn glob_matches_like_make() {
     assert!(glob(b"?x[!a-c]", b"yxd"));
     assert!(!glob(b"?x[!a-c]", b"yxb"));
 }
+
+/// `.PATH` lookups match the file name exactly, even where the file system ignores case.
+#[test]
+fn search_is_case_exact() {
+    let dir = std::env::temp_dir().join(format!("emibsd-bsdmake-case-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("a")).unwrap();
+    fs::create_dir_all(dir.join("b")).unwrap();
+    fs::write(dir.join("a/DwarfUnit.cpp"), "").unwrap();
+    fs::write(dir.join("b/DWARFUnit.cpp"), "").unwrap();
+    std::os::unix::fs::symlink(dir.join("a/DwarfUnit.cpp"), dir.join("b/Link.cpp")).unwrap();
+    let mut m = Make::new(&dir, &[], &[]);
+    m.add_path(&dir.join("a"));
+    m.add_path(&dir.join("b"));
+    assert_eq!(m.search("DWARFUnit.cpp"), Some(dir.join("b/DWARFUnit.cpp")));
+    assert_eq!(m.search("DwarfUnit.cpp"), Some(dir.join("a/DwarfUnit.cpp")));
+    assert_eq!(m.search("Link.cpp"), Some(dir.join("b/Link.cpp")));
+    assert_eq!(m.search("dwarfunit.cpp"), None);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A whole-line comment ends at its newline even after a backslash, as in OpenBSD's make
+/// (libclangASTMatchers's Makefile); a backslash after an assignment still continues it.
+#[test]
+fn comment_lines_do_not_continue() {
+    let m = make_from(
+        "#CPPFLAGS+=\t-Ifoo \\\nCPPFLAGS+=\t-Ibar\n  # indented \\\nA= a \\\n  b # c \\\nB= x\n",
+    );
+    assert_eq!(m.var("CPPFLAGS").unwrap(), "-Ibar");
+    assert_eq!(m.var("A").unwrap(), "a b");
+    assert!(!m.defined("B"));
+}

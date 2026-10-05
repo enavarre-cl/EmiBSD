@@ -179,7 +179,10 @@ impl Make {
         self.expand_in(s, locals, 0)
     }
 
-    /// The first `name` found in `.CURDIR`, then the `.PATH` directories, in order.
+    /// The first `name` found in `.CURDIR`, then the `.PATH` directories, in order. The
+    /// file name must match exactly, as on OpenBSD's file systems: on macOS's, which ignore
+    /// case, `DWARFUnit.cpp` would otherwise be found as `CodeGen/AsmPrinter/DwarfUnit.cpp`
+    /// in a `.PATH` directory that comes first (`libLLVM`, M14).
     pub fn search(&self, name: &str) -> Option<PathBuf> {
         if Path::new(name).is_absolute() {
             return Path::new(name).is_file().then(|| PathBuf::from(name));
@@ -187,7 +190,7 @@ impl Make {
         std::iter::once(&self.curdir)
             .chain(self.path.iter())
             .map(|d| d.join(name))
-            .find(|p| p.is_file())
+            .find(|p| p.is_file() && exact_case(p))
     }
 
     /// Every source any rule names for `target`, with or without commands (`includes:
@@ -983,6 +986,23 @@ impl CondParser<'_> {
 
 /// Physical lines joined at backslash-newline, with the starting line number. The
 /// continuation and the next line's leading whitespace become one space, as make does.
+/// Whether the existing file `p`'s last component is spelled as on disk (`realpath(3)` gives
+/// the on-disk spelling on case-insensitive file systems). A symbolic link counts as its own
+/// name when it points at another one (`SupportAtomic.cpp` -> `Atomic.cpp`).
+fn exact_case(p: &Path) -> bool {
+    let Some(name) = p.file_name() else {
+        return false;
+    };
+    if fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink()) {
+        // A link's own entry: compare against the directory's listing.
+        return p
+            .parent()
+            .and_then(|d| fs::read_dir(d).ok())
+            .is_some_and(|entries| entries.flatten().any(|e| e.file_name() == name));
+    }
+    fs::canonicalize(p).is_ok_and(|real| real.file_name() == Some(name))
+}
+
 fn logical_lines(text: &str) -> Vec<(usize, String)> {
     let mut out = Vec::new();
     let mut cur: Option<(usize, String)> = None;
@@ -993,6 +1013,14 @@ fn logical_lines(text: &str) -> Vec<(usize, String)> {
                 a.push(' ');
                 a.push_str(line.trim_start());
                 (s, a)
+            }
+            // A line that is a comment from its start (after blanks) ends at its newline,
+            // backslash or not: OpenBSD's make skips it to the end of the physical line
+            // (`skip_to_end_of_line`, usr.bin/make/lowparse.c). libclangASTMatchers's
+            // Makefile comments out a `CPPFLAGS+= ... \` line that way (M14).
+            None if line.trim_start_matches(' ').starts_with('#') => {
+                out.push((n + 1, line.to_string()));
+                continue;
             }
             None => (n + 1, line.to_string()),
         };
