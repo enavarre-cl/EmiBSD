@@ -20,6 +20,10 @@ paths:
   the serial excerpt) and "Porting progress" (`cargo xtask ports status` totals) are updated in
   that same commit, whenever a milestone or sub-milestone closes (the user's rule of
   2026-10-04). Real data only: numbers from the tool, serial lines from a smoke log.
+- `docs/JOURNAL.md` gains the milestone's section (went well, failed, idioms that took several
+  attempts, rules corrected, numbers from git with the commands; `Effort`/`Time` left for the
+  user) in the same commit that marks a milestone or sub-milestone met (the user's rule of
+  2026-10-05, M12+).
 - `docs/ROADMAP.md`: every milestone has a mechanical exit criterion (a command that passes or a
   serial line that appears). Editing a milestone keeps that property.
 - In a Markdown table, write a `|` inside a code span as `\|` (`\|d\| ...`, `\|=`): GitHub splits
