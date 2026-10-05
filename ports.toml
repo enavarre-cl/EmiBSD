@@ -868,7 +868,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b955775e37a97fb7172fd379cd3be435dc9e3686"
 deps = ["sys/scsi/sd.c", "sys/scsi/cd.c", "sys/dev/vnd.c", "sys/dev/bio.c"]
-notes = "M8: bdevsw[] (20 slots) and cdevsw[] (102 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf (nblkdev/nchrdev are their lengths, cdevsw_set lets a console driver take a slot over); the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 4), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() (ENODEV, d_type 0) until its driver is ported (log 7 waits for subr_log.c's entry points, random 45 for rnd.c); mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; constab[] (cninit) and findblkmajor/dev_rawpart (dk_mountroot) are not used: the console is attached directly (consinit.rs) and there is no disk; APERTURE, MTRR and the <machine/conf.h> drivers are not configured; M9d: cdevsw 73 is pf (cdev_pf_init); M10a: sd 4 (bdev_disk_init) and 13 (cdev_disk_init), NSD 1 (scsi/sd.rs); M13: cd 6 (bdev_disk_init) and 15 (cdev_disk_init), NCD 1 (scsi/cd.rs); M10c: vnd 14 (bdev_disk_init) and 41 (cdev_disk_init), NVND 4 (dev/vnd.rs); M10f: cdevsw 79 is bio (cdev_bio_init, NBIO 1; dev/bio.rs) M10d: cdevsw 92 is cdev_fuse_init(NFUSE, fuse) under feature fuse (cnotdef without it)."
+notes = "M8: bdevsw[] (20 slots) and cdevsw[] (102 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf (nblkdev/nchrdev are their lengths, cdevsw_set lets a console driver take a slot over); the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 4), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() (ENODEV, d_type 0) until its driver is ported (log 7 waits for subr_log.c's entry points, random 45 for rnd.c); mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; constab[] (cninit) and findblkmajor/dev_rawpart (dk_mountroot) are not used: the console is attached directly (consinit.rs) and there is no disk; APERTURE, MTRR and the <machine/conf.h> drivers are not configured; M9d: cdevsw 73 is pf (cdev_pf_init); M10a: sd 4 (bdev_disk_init) and 13 (cdev_disk_init), NSD 1 (scsi/sd.rs); M13: cd 6 (bdev_disk_init) and 15 (cdev_disk_init), NCD 1 (scsi/cd.rs); M10c: vnd 14 (bdev_disk_init) and 41 (cdev_disk_init), NVND 4 (dev/vnd.rs); M10f: cdevsw 79 is bio (cdev_bio_init, NBIO 1; dev/bio.rs) M10d: cdevsw 92 is cdev_fuse_init(NFUSE, fuse) under feature fuse (cnotdef without it).; M12: cdevsw 61 is usb (cdev_usb_init: usbopen, usbclose, usbioctl)"
 
 # arm64: the same, plus the bus_space table and the bootstrap device map
 
@@ -5192,7 +5192,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a239133825b3a31f6e7fc41fc6aebe446f76ec82"
 deps = ["sys/sys/conf.h", "sys/scsi/sd.c", "sys/scsi/cd.c", "sys/dev/vnd.c", "sys/dev/bio.c"]
-notes = "bdevsw[] (19 slots) and cdevsw[] (101 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf; the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 1, taken over by pluartdev at boot through cdevsw_set: the C's KLUDGE), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() until its driver is ported; mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; findblkmajor/dev_rawpart (dk_mountroot) are not used; M9d: cdevsw 73 is pf (cdev_pf_init); M10a: sd 4 (bdev_disk_init) and 13 (cdev_disk_init), NSD 1 (scsi/sd.rs); M13: cd 6 (bdev_disk_init) and 15 (cdev_disk_init), NCD 1 (scsi/cd.rs); M10c: vnd 14 (bdev_disk_init) and 41 (cdev_disk_init), NVND 4 (dev/vnd.rs); M10f: cdevsw 79 is bio (cdev_bio_init, NBIO 1; dev/bio.rs) M10d: cdevsw 92 is cdev_fuse_init(NFUSE, fuse) under feature fuse (cnotdef without it)."
+notes = "bdevsw[] (19 slots) and cdevsw[] (101 slots) at the C's major numbers, as Devsw tables of Cells behind machine::conf; the drivers present: cn 0, ctty 1, mm 2, pts 5, ptc 6, com 8 (NCOM 1, taken over by pluartdev at boot through cdevsw_set: the C's KLUDGE), filedesc 22, ptm 81; M8: rd 17 (bdev_disk_init) and 47 (cdev_disk_init), NRD 1; every other slot is cdev_notdef()/bdev_notdef() until its driver is ported; mem_no, chrtoblktbl[], swapdev, iskmemdev, iszerodev, getnulldev; findblkmajor/dev_rawpart (dk_mountroot) are not used; M9d: cdevsw 73 is pf (cdev_pf_init); M10a: sd 4 (bdev_disk_init) and 13 (cdev_disk_init), NSD 1 (scsi/sd.rs); M13: cd 6 (bdev_disk_init) and 15 (cdev_disk_init), NCD 1 (scsi/cd.rs); M10c: vnd 14 (bdev_disk_init) and 41 (cdev_disk_init), NVND 4 (dev/vnd.rs); M10f: cdevsw 79 is bio (cdev_bio_init, NBIO 1; dev/bio.rs) M10d: cdevsw 92 is cdev_fuse_init(NFUSE, fuse) under feature fuse (cnotdef without it).; M12: cdevsw 61 is usb (cdev_usb_init: usbopen, usbclose, usbioctl)"
 
 [[file]]
 c = "sys/arch/arm64/arm64/mem.c"
@@ -7329,3 +7329,136 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2b20763706445fe9d31106b28fdc8ddd4baa3e1a"
 deps = ["sys/arch/arm64/include/bus.h"]
 notes = "M12: struct simplebus_softc (repr(C); sc_bus and sc_dma MaybeUninit in UnsafeCell with unsafe accessors, Cells for the rest); simplebus_attach's prototype is arm64/dev/simplebus.rs"
+
+[[file]]
+c = "sys/dev/usb/usb.h"
+rust = "sys/dev/usb/usb.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d8e18d3b34068c9d06b09b0b4761f7c629f75942"
+deps = ["sys/sys/ioccom.h"]
+notes = "license: NetBSD Foundation BSD-2 notice (Lennart Augustsson), kept whole. M12: the whole header: uByte/uWord/uDWord, UGETW/USETW/USETW2/UGETDW/USETDW as const fns, every request, descriptor and status structure as #[repr(C)] byte structures marked UsbWire (alignment 1, any bytes valid; usb_wire_at is the bounds-checked cast), all UT_/UR_/UDESC_/UF_/UC_/UE_/UHF_/UHD_/UOTG_/UDS_/UES_/UHS_/UPS_/UDCLASS_/UICLASS_/UISUBCLASS_/UIPROTO_/USB_ constants, the UE_*/UCE_*/UPS_PORT_LS_*/UHD_NOT_REMOV macros as const fns, the ioctl structures with their padding as explicit _pad members (AbiPod; sizes and offsets asserted against clang's LP64 layout) and the 25 ioctl commands (values checked against clang); shares sys/dev/usb/usb.rs with usb.c; reference-backed test of every define (assert_complete per prefix)"
+
+[[file]]
+c = "sys/dev/usb/usb.c"
+rust = "sys/dev/usb/usb.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a59e00efcbb6ee04a8c6a12a6f7cfb221fa5f311"
+deps = ["sys/dev/usb/usb.h", "sys/dev/usb/usbdi.c", "sys/dev/usb/usb_subr.c", "sys/dev/usb/usbpcap.h", "sys/kern/subr_autoconf.c", "sys/kern/kern_softintr.c", "sys/kern/kern_kthread.c", "sys/kern/kern_rwlock.c", "sys/net/bpf.c"]
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M12: the whole file: struct usb_softc (repr(C), Softc), usb_cd/usb_ca, usbpalock, the three usb_task queues under splusb()+kernel lock, usb_match, usb_attach (bpfsattach DLT_USBPCAP, softintr_establish(IPL_SOFTUSB), root hub through usbd_new_device, cf_flags&1 cold explore, config_pending_incr), usb_attach_roothub (bool), usb_detach_roothub, usb_create_task_threads (usbatsk, usbtask), usb_add_task (&'static task), usb_rem_task, usb_wait_task, usb_rem_wait_task, usb_task_thread, usb_abort_task_thread, usbctlprint, usbopen/usbclose/usbioctl (USB_REQUEST with uiomove, USB_DEVICEINFO, USB_DEVICESTATS, USB_DEVICE_GET_DDESC/CDESC/FDESC; the CDESC/FDESC tasks are lent from the stack and waited for), usb_fill_udc_task/udf_task, usb_explore, usb_needs_explore, usb_needs_reattach, usb_schedsoftintr, usb_activate, usb_detach, usb_tap (DLT_USBPCAP records through bpf_tap_hdr, header assembled as bytes at usbpcap.h's offsets); NUSB=1 for cdev_usb_init. USB_DEBUG (usbdebug, usb_noexplore, USB_SETDEBUG, DPRINTF) is not in GENERIC and not ported. The C has no usbread/usbpoll/usbkqfilter (cdev_usb_init is open, close, ioctl). usbioctl answers ENXIO for a unit that is not attached (the C indexes cd_devs unchecked). cdevsw 61 is the coordinator's (see NOTES.md)"
+
+[[file]]
+c = "sys/dev/usb/usbdi.h"
+rust = "sys/dev/usb/usbdi.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1692e28d8ee935c2752cf01a4a800aee6fb65ba3"
+deps = ["sys/dev/usb/usb.h"]
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M12: usbd_status as #[repr(i32)] enum UsbdStatus (is_err for the C's if (err)), usbd_callback (fn(&'static UsbdXfer, *mut c_void, UsbdStatus)), open/request flags, timeouts, DEVINFOSIZE, struct usbd_desc_iter (a byte slice and an offset), struct usb_task (all-zero valid, member `type` as r#type) and usb_init_task, USB_TASK_TYPE_*/STATE_*, struct usb_devno (AsRef), USB_PRODUCT_ANY, struct usb_attach_arg (ifaces as a raw pointer + count with a slice accessor, cookie a pointer made from a counter), UMATCH_*, IPL_USB=IPL_BIO, IPL_SOFTUSB=IPL_SOFTNET, splusb/splhardusb; shares sys/dev/usb/usbdi.rs with usbdi.c"
+
+[[file]]
+c = "sys/dev/usb/usbdi.c"
+rust = "sys/dev/usb/usbdi.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f60d555ad6d5dc5a61ec387af312e521d0eaf068"
+deps = ["sys/dev/usb/usbdi.h", "sys/dev/usb/usbdivar.h", "sys/dev/usb/usb_mem.c", "sys/dev/usb/usb_subr.c"]
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M12: the whole file but the USB_DEBUG-only usbd_dump_iface/device/endpoint/queue/pipe (USB_DEBUG not in GENERIC). Out-parameter functions return Result<&'static T, UsbdStatus> (usbd_open_pipe, usbd_open_pipe_ival, usbd_open_pipe_intr, usbd_device2interface_handle); usbd_open_pipe_intr reports a failed first transfer as Err even for USBD_NORMAL_COMPLETION (the C returns success with the pipe closed); usbd_setup_xfer/usbd_setup_default_xfer/usbd_setup_isoc_xfer/usbd_open_pipe_intr are unsafe (the caller's buffer stays valid until completion); usbd_close_pipe and usbd_free_xfer are unsafe and take NonNull; synchronous requests take a slice and refuse one shorter than wLength (USBD_INVAL); descriptor getters return copies or references into the configuration descriptor; usbd_get_no_alts stops at bLength 0 (the C loops forever); usbd_desc_iter_init returns the iterator (empty for an unconfigured device); usbd_get_xfer_status takes Option<&mut T>; usbd_match_device/usb_lookup over AsRef<UsbDevno> slices; usbd_iface_claimed returns bool; timeout_set(&to, NULL, NULL) done member by member; DIAGNOSTIC busy_free checks under feature diagnostic; host tests (iterator, no_alts, usbd_str)"
+
+[[file]]
+c = "sys/dev/usb/usbdivar.h"
+rust = "sys/dev/usb/usbdivar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f96d044d873294b8c4d7925d652313d495669d69"
+deps = ["sys/dev/usb/usbdi.h", "sys/dev/usb/usb_mem.h", "sys/sys/queue.h", "sys/sys/timeout.h", "sys/sys/device.h"]
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M12: every structure, all-zero valid, members as Cells (kernel lock + splusb()): struct usb_dma, usbd_endpoint (edesc/esscd raw pointers read by copy: pipe 0's def_ep_desc changes after the pointer is taken), usbd_bus_methods/usbd_pipe_methods (fn tables; dev_setaddr Option<fn -> Result<(), Errno>>, cleartoggle Option, freex unsafe), usbd_tt, usbd_port, usbd_hub (ports slice accessor), usbd_bus (repr(C), Device first, Softc; devices[128]; bpfif/bpf; pipe_type/xfer_type TypeId recorders beside pipe_size, set by unsafe usbd_bus_set_hc_types::<P, X>), usbd_device (cdesc as &'static [u8], ifaces/subdevs raw arrays with slice accessors, strings), usbd_interface (pipes LIST), usbd_pipe (repr(C), queue SIMPLEQ, hc::<T>() checked cast), usbd_xfer (repr(C), done atomic, busy_free under diagnostic, hc::<T>() checked cast), unsafe traits UsbdHcPipe/UsbdHcXfer, USB_BUS_*, USBREV_* and USBREV_STR, URQ_*, XFER_FREE/ONQU, usbd_xfer_isread, USBTAP_DIR_*, UHUB_UNK_*. The usbd_dump_* prototypes are USB_DEBUG-only (not ported)"
+
+[[file]]
+c = "sys/dev/usb/usb_mem.h"
+rust = "sys/dev/usb/usb_mem.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e291f719ff477a73c06167c960e7677914cd0ee9"
+deps = ["sys/dev/usb/usbdivar.h", "sys/arch/amd64/include/bus.h"]
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M12: struct usb_dma_block (written once, &'static: blocks are never freed), DMAADDR/KERNADDR as dmaaddr/kernaddr, the prototypes; shares sys/dev/usb/usb_mem.rs with usb_mem.c"
+
+[[file]]
+c = "sys/dev/usb/usb_mem.c"
+rust = "sys/dev/usb/usb_mem.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e792e6a720e4b6a80ff951974f385ea0a8b32a23"
+deps = ["sys/dev/usb/usb_mem.h", "sys/kern/kern_malloc.c"]
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M12: the whole file but usb_block_real_freemem (#if 0 in C): struct usb_frag_dma, the block and fragment free lists (splusb() + kernel lock), usb_block_allocmem (malloc, bus_dmamem_alloc/map, bus_dmamap_create/load, the C's unwinding), usb_block_freemem, usb_allocmem (64-byte fragments of 4 KB blocks, large requests rounded to a block: usb_mem_round), usb_freemem, usb_syncmem. DMA tags are compared as values' bytes (a tag is a pointer). Host tests of the size math (host bus_dma is a stub)"
+
+[[file]]
+c = "sys/dev/usb/usb_quirks.h"
+rust = "sys/dev/usb/usb_quirks.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "86024a8f3ae70049f2ec3ebe25bfb9bef8b82f19"
+deps = ["sys/dev/usb/usb.h"]
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M12: struct usbd_quirks and every UQ_ flag; shares sys/dev/usb/usb_quirks.rs with usb_quirks.c; reference-backed test"
+
+[[file]]
+c = "sys/dev/usb/usb_quirks.c"
+rust = "sys/dev/usb/usb_quirks.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c6d9835d4fbc81f8353c1eb5497ecd36de24f429"
+deps = ["sys/dev/usb/usb_quirks.h", "sys/dev/usb/usbdevs.h"]
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M12: the whole file: usb_quirks[] (84 entries, comments kept), usb_dev_quirks[] (empty, as in C), usbd_no_quirk, usbd_find_quirk; tables are slices without the terminator; USB_DEBUG printfs absent; host tests (vendor/product/revision, ANY, class table)"
+
+[[file]]
+c = "sys/dev/usb/usbdi_util.h"
+rust = "sys/dev/usb/usbdi_util.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9a6f741ec73c6d07c4f0c9563427d8a17163f457"
+deps = ["sys/dev/usb/usbdi.h"]
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M12: the prototypes; usbd_get_string_desc, usbd_delay_ms, usbd_set_config_no and usbd_set_config_index (usb_subr.c's) are re-exported; shares sys/dev/usb/usbdi_util.rs with usbdi_util.c"
+
+[[file]]
+c = "sys/dev/usb/usbdi_util.c"
+rust = "sys/dev/usb/usbdi_util.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2bc4e5a23add912c23cf00e796fa203cdd289215"
+deps = ["sys/dev/usb/usbdi_util.h", "sys/dev/usb/usbdi.c", "sys/dev/usb/usbhid.h"]
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M12: the whole file: usbd_get_desc, usbd_get_device_status, usbd_get_hub_descriptor, usbd_get_hub_ss_descriptor, usbd_get_port_status, usbd_set_hub_depth, usbd_clear_port_feature, usbd_clear_endpoint_feature, usbd_set_port_feature, usbd_set_idle, usbd_get_report_descriptor, usbd_get_hid_descriptor (id located in the configuration descriptor by address; stops at bLength 0 where the C loops), usbd_get_config, usb_detach_wait, usb_detach_wakeup; buffers are byte slices or the wire structure by &mut"
+
+[[file]]
+c = "sys/dev/usb/usb_subr.c"
+rust = "sys/dev/usb/usb_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a80b6ac3561c1529122ee631e3ce2a0bdda9b69e"
+deps = ["sys/dev/usb/usbdi.c", "sys/dev/usb/usbdi_util.c", "sys/dev/usb/usb_quirks.c", "sys/dev/usb/usbdevs.h", "sys/kern/subr_autoconf.c"]
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M12: the whole file: usbd_error_strs/usbd_errstr (\"19\" for USBD_ERROR_MAX, the C's snprintf), usbd_get_string_desc, usbd_get_string (bool, bounded), usbd_trim_spaces, usbd_cache_devinfo (Result), usbd_printBCD, usbd_devinfo, usb_delay_ms, usbd_delay_ms, usbd_port_disown_to_1_1, usbd_reset_port (Result), usbd_find_idesc/usbd_find_edesc (references into the descriptor bytes), usbd_fill_iface_data, usbd_parse_idesc (bool), usbd_free_iface_data, usbd_set_config, usbd_set_config_no, usbd_set_config_index, usbd_setup_pipe, usbd_set_address (Err(EPERM) for the C's 1), usbd_getnewaddr (Option), usbd_probe_and_attach (usbpalock, device/interface/generic config_found passes, subdevs), usbd_new_device, usbd_reload_device_desc, usbd_print, usbd_fill_deviceinfo, usbd_get_routestring (Option), usbd_get_location (Option), usbd_get_cdesc, usb_free_device (unsafe, NonNull), usbd_detach (first error; the C ORs errnos). Deviation: the high speed wMaxPacketSize fix of usbd_parse_idesc is applied by usbd_set_config_index to every interface/alternate setting before the descriptor is published, so it is never changed under drivers' references. option USBVERBOSE is in GENERIC but usbdevs_data.h is not ported: devices without strings are named \"vendor 0x%04x\"/\"product 0x%04x\" as without the option. USB_DEBUG absent. Host tests (descriptor walks, endpoint/companion association, mps fix, iterator, strings, BCD)"
+
+[[file]]
+c = "sys/dev/usb/usbhid.h"
+rust = "sys/dev/usb/usbhid.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f85ab9fb0fc592a0481df886555749089b49de86"
+deps = ["sys/dev/usb/usb.h"]
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M12: the HID requests and descriptor types, struct usb_hid_descriptor (UsbWire, one descrs[] entry as in C), USB_HID_DESCRIPTOR_SIZE(n) as usb_hid_descriptor_size, UHID_*; the #include <dev/hid/hid.h> comes with the HID drivers; reference-backed test"
+
+[[file]]
+c = "sys/dev/usb/usbpcap.h"
+rust = "sys/dev/usb/usbpcap.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c29361d973d20b8f80fb746c2795b59de61b29ef"
+notes = "M12 (for usb.c's usb_tap): struct usbpcap_pkt_hdr, usbpcap_ctl_hdr, usbpcap_iso_pkt, usbpcap_iso_hdr, usbpcap_iso_hdr_full as #[repr(C, packed)] with the C's integer members (sizes asserted: 27, 28, 12, 51, 519), USBPCAP_* and _USBPCAP_MAX_ISOFRAMES; reference-backed test"
+
+[[file]]
+c = "sys/dev/usb/usbdevs.h"
+rust = "sys/dev/usb/usbdevs.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0520c0223dd8605a81f61c07d3df96ac21982d1e"
+notes = "generated by devlist2h.awk from sys/dev/usb/usbdevs (license: NetBSD Foundation BSD-2 notice, kept whole; about 4,800 lines). M12: only the IDs ported code names (the 125 vendor and product IDs of usb_quirks.c's table), as u16, with the generated comments, added by hand; the rest (and usbdevs_data.h for option USBVERBOSE) waits for a devlist2h-like generator in tools/xtask, as pcidevs.h does; reference-backed test"

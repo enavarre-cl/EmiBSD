@@ -31,5 +31,6 @@ pub mod softraid_raid1c;
 pub mod softraid_raid5;
 pub mod softraid_raid6;
 pub mod softraidvar;
+pub mod usb;
 pub mod vnd;
 pub mod vndioctl;
