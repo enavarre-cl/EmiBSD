@@ -75,7 +75,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
     "smoke-nvme " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
-    "smoke-net-mp smoke-up"
+    "smoke-net-mp smoke-up smoke-audio"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -1432,6 +1432,35 @@ smoke-up: build-up build-init-amd64 build-init-arm64
         --expect "selftest: malloc/pool stress ok" --expect "init: processes ok" \
         --expect "init: tcp ok" --expect "init: uptime monotonic ok" \
         --expect "init exited with status 0 (signal 0)"
+
+# M12: audio. Logs in as `smoke-login` does, shows audio(4)'s parameters with audioctl(8)
+# and the mixer with mixerctl(8), plays `/root/tone.wav` with aucat(1) (through
+# `/dev/audio0`: no sndiod(8) runs), and `--expect-tone` checks that QEMU's `-audiodev wav`
+# file holds the tone (a tenth of a second of samples above 1000, devices.rs). Intel HD
+# Audio (azalia(4): `intel-hda` with an `hda-output` codec) on both architectures, AC97
+# (auich(4): `AC97`) on amd64, the only GENERIC with auich. Part of `smoke`.
+smoke-audio: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-audio: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --audio hda --expect-tone {{audio_play}} \
+        --expect 'azalia0 at pci0 dev 4 function 0 vendor 0x8086 product 0x2668' \
+        --expect 'audio0 at azalia0' --expect 'name=azalia0'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --audio hda --expect-tone {{audio_play}} \
+        --expect 'azalia0 at pci0 dev 1 function 0 vendor 0x8086 product 0x2668' \
+        --expect 'audio0 at azalia0' --expect 'name=azalia0'
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --audio ac97 --expect-tone {{audio_play}} \
+        --expect 'auich0 at pci0 dev 4 function 0 vendor 0x8086 product 0x2415' \
+        --expect 'ac97: codec id 0x83847600 (SigmaTel STAC9700)' \
+        --expect 'audio0 at auich0' --expect 'name=auich0' --expect 'outputs.master=255,255'
+
+# `smoke-audio`'s session: the parameters and the mixer, then the tone.
+audio_play := disk_login + " " + \
+    "--send-after '# ' --send 'audioctl -f /dev/audioctl0; mixerctl -f /dev/audioctl0\\n' " + \
+    "--send-after '# ' --send 'aucat -i /root/tone.wav && echo tone-$((40+2))\\n' " + \
+    "--expect 'rate=48000' --expect 'encoding=s16le' --expect 'tone-42'"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

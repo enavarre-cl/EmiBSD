@@ -973,6 +973,15 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   contexts and tables live in DMA memory and are reached only through bounds-checked
   volatile accessors (`XhciTrbRef`, the `*_ctx_update` closures). uhub(4) drives both the
   emulated root hub and external hubs.
+- Audio (M12): audio(4) (`dev/audio.c`) is machine-independent; drivers reach it only
+  through `AudioHwIf`, `audio_attach_mi` and `audio_pintr`/`audio_rintr`, called with
+  `AUDIO_LOCK` held. azalia(4) attaches QEMU's `intel-hda` on both architectures (through
+  pciecam on arm64) and auich(4) with ac97(4) its `AC97` on amd64 (GENERIC has auich on
+  amd64 only). QEMU's HD Audio controller stops fetching commands while a RIRB interrupt is
+  unacknowledged, and the handler cannot run during autoconf, so `azalia_get_response` does
+  the handler's RIRB work itself when the flag is up (a deviation, harmless on hardware).
+  Userland plays with aucat(1), which falls back to `/dev/audio0` (`rsnd/0`) when no
+  sndiod(8) runs, as `sio_open(3)` does; sndiod itself is not needed for the smokes.
 - QEMU's disks (M10a, `boot.rs`, `qemu_command`): besides the boot image every VM has one
   persistent virtio-blk disk, the raw 64 MiB sparse file `target/disk-<arch>.img`
   (`disk-<arch>-a.img` / `-b.img` for `smoke2`'s two VMs; in `target/smoke/<recipe>/` instead

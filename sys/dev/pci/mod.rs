@@ -10,6 +10,8 @@
 //! (configuration access, tags, interrupts) is `machine::pci_machdep`.
 
 pub mod auich;
+pub mod azalia;
+pub mod azalia_codec;
 pub mod nvme_pci;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/pci/pci.c
 pub mod pci;
