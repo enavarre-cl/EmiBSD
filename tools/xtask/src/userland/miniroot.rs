@@ -18,8 +18,9 @@
 //!   (crunchgen) and `LINK`s every name to it; here each name is the program of that name
 //!   that `userland` built (static PIE, from the normal Makefiles, not `distrib/special`'s
 //!   `-DSMALL -Oz` ones), copied to the listed place. Bigger, same behaviour. `more` and
-//!   `less` are `distrib/special/more` (OpenBSD's tiny pager of the install media), built
-//!   here, not part of `root/`.
+//!   `less` are `distrib/special/more` (OpenBSD's tiny pager of the install media) and `doas`
+//!   is `distrib/special/doas` (the media's root-only one, no `doas.conf`), built here, not
+//!   part of `root/`.
 //! - `/dev` is made from the table of the smoke ramdisk (`ramdisk.rs`, `DEVICES`) instead of
 //!   running `MAKEDEV ramdisk` on a build host; `/dev/MAKEDEV` is OpenBSD's
 //!   (`etc/etc.<arch>/MAKEDEV`) so `install.sub` can make more (`make_dev`).
@@ -329,12 +330,22 @@ fn walk_files(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) -> Result
 /// Programs the miniroot builds from `distrib/special` and base does not use: (directory, name).
 /// `init` is built `-DDEFAULT_STATE=single_user` and without `DEBUGSHELL`/`SECURE` (the install
 /// media runs the installer as its single-user shell, no questions asked); `more` is the
-/// media's small pager. Their Makefiles install into `/usr/bin`, which is undone: they go to
-/// `target/userland/<arch>/miniroot-only/`.
+/// media's small pager; `doas` is the media's own (a root-only `doas -u user command`
+/// without `/etc/doas.conf`, which `install.sub`'s `unpriv` runs `ftp` and `signify`
+/// through; base's `usr.bin/doas` refuses without a config). Their Makefiles install into
+/// `/usr/bin`, which is undone: they go to `target/userland/<arch>/miniroot-only/`.
 const MINIROOT_ONLY: &[(&str, &str)] = &[
     ("distrib/special/more", "more"),
     ("distrib/special/init", "init"),
+    ("distrib/special/doas", "doas"),
 ];
+
+/// Nodes `MAKEDEV ramdisk` makes that the smoke ramdisk's table (`ramdisk::devices`) lacks:
+/// (name, kind, major, minor, mode, group). `diskmap` (major 90 on amd64 and arm64,
+/// `M diskmap c 90 0 640 operator`) is how opendev(3) opens a disk by its DUID, which
+/// `install.sub` names every partition by.
+const MINIROOT_DEVICES: &[(&str, char, u32, u32, u32, &str)] =
+    &[("diskmap", 'c', 90, 0, 0o640, "operator")];
 
 /// Builds `dir` of `MINIROOT_ONLY` for the miniroot only: its executable.
 fn build_only(ctx: &Ctx<'_>, dir: &str, name: &str) -> Result<Option<PathBuf>> {
@@ -428,7 +439,9 @@ pub(crate) fn build(ctx: &Ctx<'_>, arch: crate::boot::Arch, opts: &Options<'_>) 
         match e.keyword.as_str() {
             "SRCDIRS" | "ARGVLINK" | "LIBS" | "CRUNCHSPECIAL" => {}
             "COPY" if a.len() == 2 => {
-                let (from, to) = (&a[0], &a[1]);
+                // list2sh.awk's lines are shell commands: `${OSrev}` expands on both sides
+                // (`etc/signify/openbsd-${OSrev}-base.pub`).
+                let (from, to) = (&a[0], &a[1].replace("${OSrev}", &rev));
                 let word = from.replace("${OSrev}", &rev);
                 if word.starts_with("${OBJDIR}/instbin") {
                     // The crunched binary: not built (module docs).
@@ -454,7 +467,7 @@ pub(crate) fn build(ctx: &Ctx<'_>, arch: crate::boot::Arch, opts: &Options<'_>) 
                 }
             }
             "SCRIPT" if a.len() == 2 => {
-                let (from, to) = (&a[0], &a[1]);
+                let (from, to) = (&a[0], &a[1].replace("${OSrev}", &rev));
                 let word = from.replace("${OSrev}", &rev);
                 let path = if word == "${DESTDIR}/dev/MAKEDEV" {
                     Some(src.join(format!("etc/etc.{}/MAKEDEV", arch.name())))
@@ -578,7 +591,11 @@ pub(crate) fn build(ctx: &Ctx<'_>, arch: crate::boot::Arch, opts: &Options<'_>) 
         )
         .map_err(|e| format!("{}: {e}", p.display()).into())
     };
-    for (name, kind, major, minor, mode, group) in ramdisk::devices() {
+    for (name, kind, major, minor, mode, group) in ramdisk::devices().into_iter().chain(
+        MINIROOT_DEVICES
+            .iter()
+            .map(|&(n, k, ma, mi, mo, g)| (n.to_string(), k, ma, mi, mo, g)),
+    ) {
         device(&name, kind, major, minor, mode)?;
         stage.attrs.push(Attr::root(
             &format!("/dev/{name}"),

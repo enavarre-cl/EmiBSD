@@ -2048,25 +2048,27 @@ build-bsdrd-arm64:
 
 # The install media of one arch: the miniroot, `bsd.rd` and the signed sets, in
 # target/install/<arch> (`cargo xtask install-media`). Needs `just userland` and `just comp`.
-install-media-amd64: build-bsdrd-amd64 (build-amd64 "--features qemu,multiprocessor")
+install-media-amd64: build-bsdrd-amd64 (build-amd64 "--features qemu,multiprocessor") efiboot-amd64
     @test -f target/comp/amd64/comp.ffs || { echo "install-media: no comp build; run just comp first"; exit 1; }
     cargo xtask install-media --arch amd64 --rd-kernel target/bsdrd/{{amd64}}/debug/bsd --bsd target/{{amd64}}/debug/bsd
 
-install-media-arm64: build-bsdrd-arm64 (build-arm64 "--features qemu,multiprocessor")
+install-media-arm64: build-bsdrd-arm64 (build-arm64 "--features qemu,multiprocessor") efiboot-arm64
     @test -f target/comp/arm64/comp.ffs || { echo "install-media: no comp build; run just comp first"; exit 1; }
     cargo xtask install-media --arch arm64 --rd-kernel target/bsdrd/{{arm64}}/debug/bsd --bsd target/{{arm64}}/debug/bsd
 
 # M14c: OpenBSD's installer installs EmiBSD. Per arch (`cargo xtask install`,
-# tools/xtask/src/install.rs): boots `bsd.rd` (through Limine until efiboot boots it) with a
-# fresh 3 GiB disk (`sd0`), whose ramdisk holds `/auto_install.conf`; `install.sub`, unmodified,
-# starts autoinstall(8) by itself, partitions the disk (GPT with an EFI system partition,
-# `disklabel -T`), newfs, fetches `base80.tgz`, `comp80.tgz` and `bsd` over HTTP from this
-# machine, checks `SHA256.sig` with signify(1) against the test key in its `/etc/signify`,
-# extracts them, makes the device nodes, runs installboot(8) and says `CONGRATULATIONS!`; then
-# a second boot of the plain `bsd.rd` mounts the new disk and lists `/bsd`, `/usr/bin/cc`,
-# `/etc/rc`, `/usr/libexec/ld.so`, the EFI system partition and runs `fsck_ffs -n`. Not in
-# `smokes` (the extraction of the sets alone takes minutes under TCG; timings in
-# docs/ARCHITECTURE.md). Needs `just userland` and `just comp`.
+# tools/xtask/src/install.rs): boots `bsd.rd` (amd64: by our efiboot, from a disk laid out as
+# OpenBSD's miniroot image; arm64: through Limine until track A3's efiboot boots the kernel)
+# with a fresh 3 GiB disk (`sd0`), whose ramdisk holds `/auto_install.conf`; `install.sub`,
+# unmodified, starts autoinstall(8) by itself, partitions the disk (GPT with an EFI system
+# partition, `disklabel -T`), newfs, fetches `bsd`, `bsd.mp`, `base80.tgz` and `comp80.tgz`
+# over HTTP from this machine, checks `SHA256.sig` with signify(1) against the test key in its
+# `/etc/signify`, extracts them, makes the device nodes, runs installboot(8) and says
+# `CONGRATULATIONS!`; then a second boot of the plain `bsd.rd` mounts the new disk and lists
+# `/bsd`, `/usr/bin/cc`, `/etc/rc`, `/usr/libexec/ld.so`, the EFI system partition and runs
+# `fsck_ffs -n`. Not in `smokes`: about 3.5 minutes on amd64 once the media are made (the
+# installer alone 2.5 to 3, most of it extracting the sets under TCG), and making the media
+# takes minutes more (docs/ARCHITECTURE.md). Needs `just userland` and `just comp`.
 smoke-install: smoke-install-amd64 smoke-install-arm64
 
 smoke-install-amd64: install-media-amd64
@@ -2075,9 +2077,11 @@ smoke-install-amd64: install-media-amd64
 smoke-install-arm64: install-media-arm64
     EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install {{smp}} --arch arm64 --rd-kernel target/bsdrd/{{arm64}}/debug/bsd
 
-# The last step of M14's criterion, for the coordinator to enable once efiboot boots the
-# kernel on both archs: the disk `smoke-install-<arch>` installed, booted through the loader
-# installboot(8) put on it, to `login:` on a fresh VM, then `cc hello.c && ./a.out` there.
+# The last step of M14's criterion: the disk `smoke-install-<arch>` installed, booted through
+# the loader installboot(8) put on it (amd64's efiboot; arm64 waits for track A3) to `login:`
+# on a fresh VM with OpenBSD's /etc/rc, then `cc hello.c && ./a.out` there prints
+# `hello from cc 42`. About a minute on amd64; not in `smokes`, because it needs the disk
+# `smoke-install-<arch>` made.
 smoke-install-boot-amd64:
     EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install-boot {{smp}} --arch amd64
 

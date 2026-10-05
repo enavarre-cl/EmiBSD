@@ -549,10 +549,11 @@ OpenBSD's installer is run unmodified: `distrib/miniroot/install.sub`, the arch'
 - `cargo xtask miniroot|sets|install-media --arch A`, `just install-media-<arch>`: the
   miniroot, `bsd.rd` and the sets in `target/install/<arch>`. Needs `just userland` and
   `just comp`.
-- `just smoke-install-<arch>` (`cargo xtask install`): the install run; not in `smokes`.
+- `just smoke-install-<arch>` (`cargo xtask install`, `--check-only` repeats only its
+  check boot): the install run; not in `smokes` (a few minutes, below).
 - `just smoke-install-boot-<arch>` (`cargo xtask install-boot`): the disk the install made,
-  booted through the loader installboot(8) put on it; for the coordinator to enable once
-  efiboot boots the kernel.
+  booted through the loader installboot(8) put on it; not in `smokes` either (it needs
+  the disk `smoke-install-<arch>` made).
 
 **bsd.rd.** OpenBSD's RAMDISK_CD kernel is a smaller GENERIC with `option MINIROOTSIZE`
 and `rdsetroot(8)` patches the file system into it. Here the kernel is our GENERIC MP kernel
@@ -571,20 +572,30 @@ kernel is built in `target/bsdrd` (in `smoke-build` only).
 (`pwd_mkdb`), `protocols`, `services`, `/dev/MAKEDEV`. Deviations: no crunchgen `instbin`
 (each name is the static program `userland` built, from the normal Makefiles; `distrib/special`'s
 -DSMALL -Oz variants are not used, except `init`, which must be `-DDEFAULT_STATE=single_user`
-without `DEBUGSHELL`/`SECURE`, and `more`); `/dev` from the smoke ramdisk's node table; `usr/mdec/mbr` a 512-byte
+without `DEBUGSHELL`/`SECURE`, `more`, and `doas`: the media's own is a root-only `doas -u user
+command` with no `doas.conf`, which `install.sub`'s `unpriv` runs `ftp` and `signify` through);
+`/dev` from the smoke ramdisk's node table plus `diskmap` (`MAKEDEV ramdisk` makes it;
+opendev(3) opens a disk by its DUID through it, and `install.sub` names every partition by
+DUID); `usr/mdec/mbr` a 512-byte
 stub; no firmware, termcap or Raspberry Pi files; `/etc/signify/openbsd-80-base.pub` is a test
 key (`userland/signify.rs`: OpenBSD's signify built for macOS with shims, key pair made once
 in `target/install/test-signify`), never OpenBSD's. The entries not satisfied go to
 `miniroot.txt`.
 
 **The sets** (`userland/sets.rs`): `base80.tgz`, `comp80.tgz`, `bsd` (our MP kernel as built, debug
-info kept; only `bsd.rd` is stripped), `bsd.rd`, `INSTALL.<arch>` (host
+info kept; only `bsd.rd` is stripped), `bsd.mp` (the same kernel: OpenBSD ships a
+uniprocessor `bsd` beside it, and `install.sub` insists on `bsd.mp` when `hw.ncpufound` is
+above 1, installs it as `/bsd` and keeps `bsd` as `/bsd.sp`), `bsd.rd`, `INSTALL.<arch>` (host
 m4 on `distrib/notes/INSTALL`), `SHA256` and `SHA256.sig`. A set is its list
 (`distrib/sets/lists`) applied to the tree this build has: `userland`'s and `comp`'s roots,
 `etc/mtree/4.4BSD.dist`'s directories, the `etc` distribution of `etc/Makefile` (as a table,
 with `var/sysmerge/etc.tgz` that `install.sub` extracts after base), zoneinfo from OpenBSD's
 `zic` built for macOS, `usr/mdec` (efiboot; `BOOTIA32.EFI` is a zero sector because installboot
-copies it; arm64's `BOOTAA64.EFI` is a visible placeholder until track A3). Archives are
+copies it; `biosboot` is a placeholder i386 ELF whose one segment is a sector of text saying
+so, because installboot loads the BIOS boot record (`md_loadboot`) before it looks at the
+disk and never writes it on a GPT disk with an EFI system partition, while the BIOS boot
+programs are not built (`stand/biosboot`'s Makefile wants GNU as); `BOOTX64.EFI` and
+`BOOTAA64.EFI` come from `target/efiboot/<arch>`, and the set build fails without them). Archives are
 written by xtask (ustar with OpenBSD's owner names and ids, hard links) and the host's gzip.
 What the lists name and the build lacks is printed and written to `MISSING-<set>.txt` with a
 reason: perl, cvs, texinfo and GNU `as`, `gdb`, `ld.bfd` and the binutils tools are GPL and not
@@ -594,21 +605,40 @@ firmware, httpd/nsd/unbound files, the BIOS boot programs and the programs and l
 (our test programs). Every program is static, as in the rest of the userland.
 
 **The install run** (`install.rs`): a fresh 3 GiB disk is `sd0` (the install media's own disk
-is `sd1`), `bsd.rd` boots through Limine until efiboot boots it, its ramdisk holds
+is `sd1`). On amd64 `bsd.rd` is booted by our efiboot from a disk laid out as OpenBSD's
+`miniroot80.img` (`efiboot-disk`: the OpenBSD partition's FFS holding `/bsd`, which is
+`bsd.rd`, and the EFI system partition; the run answers `boot> `); arm64 boots it through
+Limine until track A3's efiboot boots the kernel. Its ramdisk holds
 `/auto_install.conf` (autoinstall(8): `.profile` starts the install after five seconds when
 that file exists, the way OpenBSD does when no DHCP server names a response file; static
 `10.0.2.15`, so dhcpleased is not needed), the sets come over HTTP from this machine
 (`10.0.2.2:PORT`, the server of `diff-openbsd`), the disk is GPT with an EFI system partition
 (`fdisk -gy`, so installboot(8) uses its EFI path and copies `BOOTX64.EFI`), partitioned by
-`disklabel -T` (a template), `newfs`, sets verified by signify. The run ends at
-`CONGRATULATIONS!` and the installer's reboot; a second boot of the plain `bsd.rd` mounts the
-disk read-only and lists `/bsd`, `/usr/bin/cc`, `/etc/rc`, `/usr/libexec/ld.so`, the EFI
-partition and runs `fsck_ffs -n`.
+`disklabel -T` (a template: `/` 2400M first, so it is `a`, and 64M of swap), `newfs`, the
+sets (`-all bsd bsd.mp base* comp*`) verified by signify. The run ends at `CONGRATULATIONS!`
+and the installer's reboot (boot(9)'s `vfs_shutdown`: "syncing disks... done"); a second
+boot of the plain `bsd.rd` makes the disk's nodes (`MAKEDEV sd0`), prints its label, mounts
+it read-only and lists `/bsd`, `/bsd.sp`, `/usr/bin/cc`, `/etc/rc`, `/usr/libexec/ld.so`, the
+EFI system partition (`efi/BOOT/BOOTX64.EFI`, `efi/openbsd/BOOTX64.EFI`) and runs
+`fsck_ffs -n` (five phases, clean).
 
-Status (2026-10-05): the miniroot, `bsd.rd`, sets, signing and the QEMU plumbing work on both
-archs, `bsd.rd` boots to the installer's prompt. The run stops at `install.sub` itself: the
-kernel does not execute `#!` scripts yet (`exec_script.c`; a kernel agent has it), so
-`/upgrade` runs as `sh` and fails at `((`.
+`install-boot` copies the installed disk into a fresh VM's boot image: OVMF starts
+`\EFI\BOOT\BOOTX64.EFI` from its ESP, efiboot reads the `boot.conf` the installer wrote
+(`stty com0 115200`, `set tty com0`), loads `/bsd` and boots it; the kernel finds its root by
+boot(8)'s DUID, `/etc/rc` from the base set runs (fsck, pf, the network, rc.firsttime) to
+`login:`, root logs in and `cc hello.c && ./a.out` prints `hello from cc 42` (the source is
+written with ksh's `print -r`: base has no printf(1) yet).
+
+Status (2026-10-05): amd64 passes both (`smoke-install-amd64` about 3.5 minutes with the media
+already made, the installer itself 2.5 to 3 minutes; `smoke-install-boot-amd64` about 1
+minute). What the installed system lacks shows in its `/etc/rc` run: the programs `userland`
+does not build (`sort`, `head`, `cut`, `mktemp`, `find`, `install`, `printf`, `swapctl`,
+`ttyflags`, `kvm_mkdb`, `dev_mkdb`, `savecore`, `ssh-keygen`, `openssl`, `mail`, ...); the
+rc.d daemons refuse to start (`wrong shell, use /bin/ksh`) because base's `/bin/ksh` is the
+`-DSMALL` build (`userland.rs` `VARIANTS`), which sets no `KSH_VERSION`; `/dev/random`
+(`random` is not a driver yet); `/dev/ttyC*` (wscons is not ported); installboot cannot add
+its UEFI boot entry (`/dev/efi`, efi(4), is not ported), so the firmware boots the ESP's
+fallback `\EFI\BOOT\BOOTX64.EFI`.
 
 ## Boot loaders (M14)
 

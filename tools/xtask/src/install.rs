@@ -142,7 +142,7 @@ fn auto_install_conf(port: u16) -> String {
         ("HTTP proxy URL", "none".to_string()),
         ("HTTP Server", server),
         ("Server directory", "sets".to_string()),
-        ("Set name(s)", "-all bsd base* comp*".to_string()),
+        ("Set name(s)", "-all bsd bsd.mp base* comp*".to_string()),
     ];
     let mut text = String::from(
         "# autoinstall(8) answers of `cargo xtask install` (tools/xtask/src/install.rs).\n",
@@ -153,8 +153,12 @@ fn auto_install_conf(port: u16) -> String {
     text
 }
 
-/// What `disklabel -T` reads for the autopartitioning: the sets need a root of about a gigabyte.
-const DISKLABEL_TEMPLATE: &str = "swap\t64M\n/\t1G-*\n";
+/// What `disklabel -T` reads for the autopartitioning: one root for everything (base and comp
+/// take about 1.5 GB extracted) and a small swap, in the 2.7 GB the EFI system partition
+/// leaves of the disk. Partitions are lettered in the template's order
+/// (`editor_allocspace`), so `/` comes first to be `a`, as in disklabel's own tables, and
+/// swap is `b`. A range without a percentage gets its minimum, so the sizes are fixed.
+const DISKLABEL_TEMPLATE: &str = "/\t2400M\nswap\t64M\n";
 
 /// Serial lines that mean the installer or the kernel failed.
 const FAILURES: &[&str] = &[
@@ -184,8 +188,43 @@ fn need(path: &Path, what: &str, recipe: &str) -> Result<()> {
     }
 }
 
-/// `cargo xtask install --arch A --rd-kernel K [--keep-going]`: the install run and its
-/// check (module docs).
+/// The efiboot that boots the install media, where it boots the kernel: amd64's
+/// `BOOTX64.EFI` (`just efiboot-amd64`). arm64's efiboot is track A3's; until it boots the
+/// kernel, arm64's media boot through Limine.
+fn media_efiboot(root: &Path, arch: Arch) -> Option<PathBuf> {
+    match arch {
+        Arch::Amd64 => {
+            let efi = root.join("target/efiboot/amd64/BOOTX64.EFI");
+            efi.is_file().then_some(efi)
+        }
+        Arch::Arm64 => None,
+    }
+}
+
+/// `boot> ` answered: efiboot's prompt waits (the media's `boot.conf` turns its timeout off),
+/// and a bare `boot` loads `/bsd`, which is the `bsd.rd` given.
+const EFIBOOT_PROMPTS: &[(&str, &str)] = &[("boot> ", "boot\n")];
+
+/// The boot image of the install media for `bsd_rd`, and the prompts to answer on the way to
+/// the kernel: laid out as OpenBSD's `miniroot<rev>.img` (`efiboot-disk`: an OpenBSD
+/// partition with an FFS holding `/bsd` and the EFI system partition with efiboot) where
+/// efiboot is available, else the Limine image.
+fn boot_media(
+    root: &Path,
+    arch: Arch,
+    bsd_rd: &Path,
+) -> Result<(PathBuf, &'static [(&'static str, &'static str)])> {
+    match media_efiboot(root, arch) {
+        Some(efi) => {
+            crate::efiboot::efiboot_disk(root, arch, &efi, bsd_rd, None)?;
+            Ok((boot::image_path(root, arch, None), EFIBOOT_PROMPTS))
+        }
+        None => Ok((boot::image(root, arch, bsd_rd, None, None, None)?, &[])),
+    }
+}
+
+/// `cargo xtask install --arch A --rd-kernel K [--check-only]`: the install run and its
+/// check (module docs); `--check-only` checks the disk a previous run installed.
 pub(crate) fn install(root: &Path, args: &[&str]) -> Result<()> {
     let arch = arch_of(args)?;
     let rd_kernel = PathBuf::from(opt(args, "--rd-kernel").ok_or("missing `--rd-kernel FILE`")?);
@@ -202,6 +241,20 @@ pub(crate) fn install(root: &Path, args: &[&str]) -> Result<()> {
         &format!("install-media-{}", arch.name()),
     )?;
     let started = Instant::now();
+    let disks = Disks {
+        fresh: false,
+        count: 1,
+        set: Some("install"),
+    };
+    if args.contains(&"--check-only") {
+        // Only run 2, on the disk a previous run installed.
+        need(
+            &target_disk(root, arch),
+            "installed disk",
+            &format!("smoke-install-{}", arch.name()),
+        )?;
+        return check_disk(root, arch, &sets.join("bsd.rd"), &disks, &dir);
+    }
 
     // The server, the answers, and the install kernel whose ramdisk holds them.
     fs::write(dir.join("disklabel.tmpl"), DISKLABEL_TEMPLATE)
@@ -235,19 +288,14 @@ pub(crate) fn install(root: &Path, args: &[&str]) -> Result<()> {
     f.set_len(TARGET_DISK_BYTES)
         .map_err(|e| format!("{}: {e}", disk.display()))?;
     drop(f);
-    let disks = Disks {
-        fresh: false,
-        count: 1,
-        set: Some("install"),
-    };
 
     // Run 1: the installer.
-    let image = boot::image(root, arch, &auto, None, None, None)?;
+    let (image, prompts) = boot_media(root, arch, &auto)?;
     let cmd = boot::qemu_command(root, arch, &image, "stdio", None, &disks)?;
     let log = dir.join("install.log");
     let mut vm = Vm::spawn(&format!("install-{}", arch.name()), cmd, log.clone())?;
     vm.respond(
-        &[],
+        prompts,
         FAILURES,
         &[Stop::Exited],
         boot::time_limit(Duration::from_secs(3600)),
@@ -293,7 +341,7 @@ pub(crate) fn install(root: &Path, args: &[&str]) -> Result<()> {
 /// installer left: the kernel, the compiler, `/etc/rc`, the run-time linker, the boot loader
 /// on the EFI system partition, and `fsck_ffs` agreeing the file system is clean.
 fn check_disk(root: &Path, arch: Arch, bsd_rd: &Path, disks: &Disks<'_>, dir: &Path) -> Result<()> {
-    let image = boot::image(root, arch, bsd_rd, None, None, None)?;
+    let (image, prompts) = boot_media(root, arch, bsd_rd)?;
     let cmd = boot::qemu_command(root, arch, &image, "stdio", None, disks)?;
     let mut vm = Vm::spawn(
         &format!("check-{}", arch.name()),
@@ -301,6 +349,10 @@ fn check_disk(root: &Path, arch: Arch, bsd_rd: &Path, disks: &Disks<'_>, dir: &P
         dir.join("check.log"),
     )?;
     let limit = boot::time_limit(Duration::from_secs(900));
+    for (prompt, answer) in prompts {
+        vm.wait_for(prompt, limit)?;
+        vm.send(answer)?;
+    }
     vm.wait_for("(I)nstall, (U)pgrade, (A)utoinstall or (S)hell?", limit)?;
     vm.send("s\n")?;
     vm.wait_for("# ", limit)?;
@@ -308,15 +360,19 @@ fn check_disk(root: &Path, arch: Arch, bsd_rd: &Path, disks: &Disks<'_>, dir: &P
         Arch::Amd64 => "i",
         Arch::Arm64 => "i",
     };
+    // The ramdisk's /dev has no node for the new disk: install.sub makes them with MAKEDEV
+    // as it needs them, and so does the check.
     let script = format!(
-        "mount -r /dev/sd0a /mnt && ls -l /mnt/bsd /mnt/usr/bin/cc /mnt/etc/rc /mnt/usr/libexec/ld.so \
-         /mnt/usr/lib/libc.so.104.0 /mnt/etc/fstab /mnt/etc/boot.conf && cat /mnt/etc/fstab \
-         /mnt/etc/boot.conf && echo check-root-$((40+2)); \
-         mount_msdos -r /dev/sd0{efi_part} /mnt2 && ls -lR /mnt2/efi && echo check-esp-$((40+2)); \
-         umount /mnt /mnt2; fsck_ffs -n /dev/rsd0a && echo check-fsck-$((40+2))\n"
+        "cd /dev && sh MAKEDEV sd0 && cd / && disklabel sd0 && \
+         mount -r /dev/sd0a /mnt && ls -l /mnt/bsd /mnt/bsd.sp /mnt/usr/bin/cc /mnt/etc/rc \
+         /mnt/usr/libexec/ld.so /mnt/usr/lib/libc.so.104.0 /mnt/etc/fstab /mnt/etc/boot.conf && \
+         cat /mnt/etc/fstab /mnt/etc/boot.conf && echo check-root-$((40+2)); \
+         mount_msdos -o ro /dev/sd0{efi_part} /mnt2 && ls -lR /mnt2/efi && echo check-esp-$((40+2)); \
+         umount /mnt2; umount /mnt; fsck_ffs -n /dev/rsd0a && echo check-fsck-$((40+2)); \
+         echo check-$((6*7))-done\n"
     );
     vm.send(&script)?;
-    vm.wait_for("check-fsck-42", boot::time_limit(Duration::from_secs(600)))?;
+    vm.wait_for("check-42-done", boot::time_limit(Duration::from_secs(600)))?;
     let text = vm.text();
     drop(vm);
     for line in ["check-root-42", "check-esp-42", "check-fsck-42"] {
@@ -365,8 +421,12 @@ pub(crate) fn install_boot(root: &Path, args: &[&str]) -> Result<()> {
     vm.wait_for("Password:", limit)?;
     vm.send("emibsd\n")?;
     vm.wait_for("# ", limit)?;
+    vm.send("uname -a; mount; echo up-$((6*7))\n")?;
+    vm.wait_for("up-42", limit)?;
+    // ksh's `print -r` (a builtin: base has no printf(1) yet) writes the lines as they are.
     vm.send(
-        "printf '#include <stdio.h>\\nint main(void) { printf(\"hello from cc %%d\\\\n\", 6 * 7); return 0; }\\n' > hello.c; \
+        "print -r '#include <stdio.h>' > hello.c; \
+         print -r 'int main(void) { printf(\"hello from cc %d\\n\", 6 * 7); return 0; }' >> hello.c; \
          cc hello.c && ./a.out\n",
     )?;
     vm.wait_for(

@@ -1,4 +1,5 @@
 //! The install sets (M14c): `base<rev>.tgz` and `comp<rev>.tgz` (`80` for 8.0), `bsd`,
+//! `bsd.mp` (the same MULTIPROCESSOR kernel: no uniprocessor `bsd` is built for the sets),
 //! `bsd.rd`, `SHA256` and `SHA256.sig`, in `target/install/<arch>/sets/`.
 //!
 //! OpenBSD makes a set by listing its files (`distrib/sets/lists/<set>/{mi,md.<arch>}` and,
@@ -676,6 +677,35 @@ fn ttys(src: &Path, arch: &str) -> Result<Vec<u8>> {
     Ok(text)
 }
 
+/// `usr/mdec/biosboot`'s placeholder (see `gather`): an `ELFCLASS32` `EM_386` executable
+/// with one `PT_LOAD` segment, a 512-byte sector of text at offset 512, what installboot's
+/// `loadproto` reads.
+fn biosboot_placeholder() -> Vec<u8> {
+    const SECTOR: usize = 512;
+    let mut f = vec![0u8; 2 * SECTOR];
+    // Elf32_Ehdr
+    f[..16].copy_from_slice(&[0x7f, b'E', b'L', b'F', 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    f[16..18].copy_from_slice(&2u16.to_le_bytes()); // e_type: ET_EXEC
+    f[18..20].copy_from_slice(&3u16.to_le_bytes()); // e_machine: EM_386
+    f[20..24].copy_from_slice(&1u32.to_le_bytes()); // e_version
+    f[28..32].copy_from_slice(&52u32.to_le_bytes()); // e_phoff
+    f[40..42].copy_from_slice(&52u16.to_le_bytes()); // e_ehsize
+    f[42..44].copy_from_slice(&32u16.to_le_bytes()); // e_phentsize
+    f[44..46].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
+    f[46..48].copy_from_slice(&40u16.to_le_bytes()); // e_shentsize
+    // Elf32_Phdr
+    let ph = &mut f[52..84];
+    ph[0..4].copy_from_slice(&1u32.to_le_bytes()); // p_type: PT_LOAD
+    ph[4..8].copy_from_slice(&(SECTOR as u32).to_le_bytes()); // p_offset
+    ph[16..20].copy_from_slice(&(SECTOR as u32).to_le_bytes()); // p_filesz
+    ph[20..24].copy_from_slice(&(SECTOR as u32).to_le_bytes()); // p_memsz
+    ph[24..28].copy_from_slice(&5u32.to_le_bytes()); // p_flags: PF_R | PF_X
+    ph[28..32].copy_from_slice(&4u32.to_le_bytes()); // p_align
+    let text = b"EmiBSD placeholder: biosboot(8) is not built (UEFI only, M14)\n";
+    f[SECTOR..SECTOR + text.len()].copy_from_slice(text);
+    f
+}
+
 /// The tree of everything the sets can take from: the directories of
 /// `etc/mtree/4.4BSD.dist`, the staged `userland` and `comp` roots, and the `etc`
 /// distribution.
@@ -764,15 +794,13 @@ fn gather(
         .join("target/efiboot")
         .join(loader.1)
         .join(loader.0);
-    let loader_bytes = fs::read(&built).unwrap_or_else(|_| {
-        // No loader built yet (arm64 until track A3): a visible placeholder, so installboot(8)
-        // has a file to copy and the install runs to its end; the disk does not boot.
+    let loader_bytes = fs::read(&built).map_err(|e| {
         format!(
-            "EmiBSD placeholder: {} is not built for {} yet\n",
-            loader.0, loader.1
+            "sets: {}: {e} (run `just efiboot-{}`)",
+            built.display(),
+            loader.1
         )
-        .into_bytes()
-    });
+    })?;
     tree.insert(
         format!("./usr/mdec/{}", loader.0),
         ent(Kind::Text(loader_bytes), 0o444, "root", "wheel"),
@@ -783,6 +811,16 @@ fn gather(
         tree.insert(
             "./usr/mdec/BOOTIA32.EFI".to_string(),
             ent(Kind::Text(vec![0u8; 512]), 0o444, "root", "wheel"),
+        );
+        // installboot(8) loads the BIOS partition boot record (`md_loadboot`: an ELF with
+        // one load segment) before it looks at the disk, and on a GPT disk with an EFI
+        // system partition never writes it. The BIOS boot programs are not built
+        // (`stand/biosboot`'s Makefile wants GNU as, `-no-integrated-as`), so it is a
+        // visible placeholder: an i386 ELF whose one segment is a sector of text saying so.
+        // On an MBR disk installboot then fails to find biosboot's symbols, as it should.
+        tree.insert(
+            "./usr/mdec/biosboot".to_string(),
+            ent(Kind::Text(biosboot_placeholder()), 0o444, "root", "wheel"),
         );
     }
     tree.insert(
@@ -1277,8 +1315,11 @@ pub(crate) fn build(
         }
     }
 
-    // The kernels.
-    for (file, name) in [(bsd, "bsd"), (bsd_rd, "bsd.rd")] {
+    // The kernels. `bsd` is the MULTIPROCESSOR kernel the smokes boot, and it is `bsd.mp`
+    // too: OpenBSD ships a uniprocessor `bsd` and `bsd.mp`, and install.sub insists on
+    // `bsd.mp` when `hw.ncpufound` is more than 1 (`SANESETS`), installs it as `/bsd` and
+    // keeps `bsd` as `/bsd.sp`.
+    for (file, name) in [(bsd, "bsd"), (bsd, "bsd.mp"), (bsd_rd, "bsd.rd")] {
         if let Some(k) = file {
             let to = dir.join(name);
             let _ = fs::remove_file(&to);
@@ -1338,6 +1379,19 @@ pub(crate) fn build(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn biosboot_placeholder_is_what_loadproto_takes() {
+        let f = biosboot_placeholder();
+        assert_eq!(&f[..4], b"\x7fELF");
+        assert_eq!(f[4], 1); // ELFCLASS32
+        assert_eq!(u16::from_le_bytes([f[44], f[45]]), 1); // e_phnum
+        let phoff = u32::from_le_bytes([f[28], f[29], f[30], f[31]]) as usize;
+        let off = u32::from_le_bytes(f[phoff + 4..phoff + 8].try_into().unwrap()) as usize;
+        let filesz = u32::from_le_bytes(f[phoff + 16..phoff + 20].try_into().unwrap()) as usize;
+        assert_eq!(filesz % 512, 0);
+        assert!(f[off..off + filesz].starts_with(b"EmiBSD placeholder"));
+    }
 
     #[test]
     fn ustar_header_checksum_and_names() {
