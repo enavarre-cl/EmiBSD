@@ -22,7 +22,7 @@ paths:
   2026-10-04). Real data only: numbers from the tool, serial lines from a smoke log.
 - `docs/ROADMAP.md`: every milestone has a mechanical exit criterion (a command that passes or a
   serial line that appears). Editing a milestone keeps that property.
-- In a Markdown table, write a `|` inside a code span as `\|` (`|d\| ...`, `\|=`): GitHub splits
+- In a Markdown table, write a `|` inside a code span as `\|` (`\|d\| ...`, `\|=`): GitHub splits
   cells at every bare pipe, even between backticks, and cuts the row.
 - `docs/C_TO_RUST.md`: one row per idiom, columns C | Rust | Why. Add a row when an idiom is
   settled, not before.
