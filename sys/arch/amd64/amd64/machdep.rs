@@ -143,8 +143,9 @@
 //!   is (no `fpusave`, since `CPUPF_USERXSTATE` is never set), `initialize_thread_xstate`,
 //!   `fpureset`, `fpu_cleandata` and `xrstor_user` are reported. A handler therefore runs
 //!   with the interrupted code's FPU/SSE registers and `sigreturn` does not restore them.
-//!   `vfs_shutdown`, `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys` and
-//!   `config_suspend_all` are reported as unported when reached.
+//!   `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys` and `config_suspend_all` are
+//!   reported as unported when reached (`vfs_shutdown` is real since M14; with no thread on
+//!   the CPU, which the C cannot have there, it is skipped).
 //! - `bios_efiinfo` (boot(8)'s `BOOTARG_EFIINFO`) is replaced by Limine: its `config_acpi`,
 //!   the RSDP's physical address, is `BIOS_EFIINFO_CONFIG_ACPI`, from Limine's RSDP request
 //!   (`BootInfo::rsdp`), for `bios_attach`.
@@ -1594,7 +1595,9 @@ pub fn boot(howto: i32) -> ! {
             BOOTHOWTO.store(howto, Ordering::Relaxed);
             if howto & RB_NOSYNC == 0 && WAITTIME.load(Ordering::Relaxed) < 0 {
                 WAITTIME.store(0, Ordering::Relaxed);
-                let _ = unported!("vfs_shutdown");
+                if let Some(p) = curproc() {
+                    crate::kern::vfs_subr::vfs_shutdown(p);
+                }
 
                 if howto & RB_TIMEBAD == 0 {
                     let _ = unported!("resettodr");
