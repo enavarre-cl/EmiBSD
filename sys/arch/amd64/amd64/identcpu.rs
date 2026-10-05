@@ -99,6 +99,9 @@ use crate::unported;
 /// `cpu_model`: sysctl wants this. Written by `identifycpu` on the primary CPU during
 /// autoconfiguration.
 pub static CPU_MODEL: StaticCell<[u8; 48]> = StaticCell::new([0; 48]);
+/// `amd64_has_xcrypt`: the VIA PadLock xcrypt feature bits. `via_nano_setup` (which sets them)
+/// is not ported, so this stays 0.
+pub static AMD64_HAS_XCRYPT: AtomicI32 = AtomicI32::new(0);
 /// `cpuspeed`: the primary CPU's frequency in MHz.
 pub static CPUSPEED: AtomicI32 = AtomicI32::new(0);
 

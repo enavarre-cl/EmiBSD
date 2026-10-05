@@ -206,6 +206,12 @@ unsafe impl Softc for CpuSoftc {}
 
 /// `cpuid_level`: MIN cpuid(0).eax.
 pub static CPUID_LEVEL: AtomicU32 = AtomicU32::new(0);
+/// `cpu_sev_guestmode`: `MSR_SEV_STATUS`'s `SEV_STAT_*` bits when running as an SEV guest. The
+/// SEV probe (`identcpu.c`) is not ported, so this stays 0.
+pub static CPU_SEV_GUESTMODE: AtomicI32 = AtomicI32::new(0);
+/// `need_retpoline`: most systems need retpoline. The C clears it when `identifycpu` patches
+/// in the IBRS/IBT-safe jumps (`codepatch_replace`), which is not ported, so it stays 1.
+pub static NEED_RETPOLINE: AtomicI32 = AtomicI32::new(1);
 /// `cpu_vendor`: CPU0's cpuid(0).e\[bdc\]x, \0. Written once by `init_x86_64` (the C's
 /// `locore0.S`) before anything reads it.
 pub static CPU_VENDOR: StaticCell<[u8; 16]> = StaticCell::new([0; 16]);

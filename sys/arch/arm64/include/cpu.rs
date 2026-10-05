@@ -29,8 +29,8 @@
 //! `CLKF_*` macros. M11a (`cpu.c`) completes `struct cpu_info` (the topology, the PSCI idle
 //! state, the operating points, the capacity) and the `MULTIPROCESSOR` side:
 //! `cpu_number()`, `CPU_IS_RUNNING`, `CPU_INFO_UNIT` from `ci_dev`, `MAXCPUS` 256 and
-//! `CPU_BUSY_CYCLE`. The `CTL_MACHDEP` names and the cache helpers arrive with their
-//! subsystems.
+//! `CPU_BUSY_CYCLE`. The `CTL_MACHDEP` names and `CTL_MACHDEP_NAMES` (`cpu_sysctl`) come with
+//! M13; the cache helpers arrive with their subsystems.
 //!
 //! ## Deviations
 //! - DAIF values are `u64`, the width of the register (`mrs`/`msr` move a full X register);
@@ -60,6 +60,7 @@ use crate::sys::clockintr::Clockqueue;
 use crate::sys::device::Device;
 use crate::sys::proc::Proc;
 use crate::sys::sched::SchedstatePercpu;
+use crate::sys::sysctl::{CTLTYPE_INT, CTLTYPE_QUAD, CTLTYPE_STRING};
 
 /// `restore_daif`: writes `daif` back into `DAIF`.
 ///
@@ -365,10 +366,54 @@ pub const MAXCPUS: u32 = 1;
 #[cfg(feature = "multiprocessor")]
 pub const MAXCPUS: u32 = 256;
 
-/// `CPU_ID_AA64ISAR0`: a `CTL_MACHDEP` name (`ID_AA64ISAR0_EL1`).
+/// `CTL_MACHDEP` names (`<machine/cpu.h>`), the ids `machdep.*` sysctls use.
+/// `CPU_COMPATIBLE`: compatible property.
+pub const CPU_COMPATIBLE: i32 = 1;
+/// `CPU_ID_AA64ISAR0`: `ID_AA64ISAR0_EL1`.
 pub const CPU_ID_AA64ISAR0: i32 = 2;
-/// `CPU_ID_AA64ISAR1`: a `CTL_MACHDEP` name (`ID_AA64ISAR1_EL1`).
+/// `CPU_ID_AA64ISAR1`: `ID_AA64ISAR1_EL1`.
 pub const CPU_ID_AA64ISAR1: i32 = 3;
+/// `CPU_ID_AA64ISAR2`: `ID_AA64ISAR2_EL1`.
+pub const CPU_ID_AA64ISAR2: i32 = 4;
+/// `CPU_ID_AA64MMFR0`: `ID_AA64MMFR0_EL1`.
+pub const CPU_ID_AA64MMFR0: i32 = 5;
+/// `CPU_ID_AA64MMFR1`: `ID_AA64MMFR1_EL1`.
+pub const CPU_ID_AA64MMFR1: i32 = 6;
+/// `CPU_ID_AA64MMFR2`: `ID_AA64MMFR2_EL1`.
+pub const CPU_ID_AA64MMFR2: i32 = 7;
+/// `CPU_ID_AA64PFR0`: `ID_AA64PFR0_EL1`.
+pub const CPU_ID_AA64PFR0: i32 = 8;
+/// `CPU_ID_AA64PFR1`: `ID_AA64PFR1_EL1`.
+pub const CPU_ID_AA64PFR1: i32 = 9;
+/// `CPU_ID_AA64SMFR0`: `ID_AA64SMFR0_EL1`.
+pub const CPU_ID_AA64SMFR0: i32 = 10;
+/// `CPU_ID_AA64ZFR0`: `ID_AA64ZFR0_EL1`.
+pub const CPU_ID_AA64ZFR0: i32 = 11;
+/// `CPU_LIDACTION`: action caused by lid close.
+pub const CPU_LIDACTION: i32 = 12;
+/// `CPU_LED_BLINK`: int: blink leds?.
+pub const CPU_LED_BLINK: i32 = 13;
+/// `CPU_MAXID`: number of valid machdep ids.
+pub const CPU_MAXID: i32 = 14;
+
+/// `CTL_MACHDEP_NAMES`: the `machdep` names `sysctl(8)` knows, indexed by id (`None` for the
+/// unused 0). Each is `(name, type)`, the C's `{ "name", CTLTYPE_x }`.
+pub const CTL_MACHDEP_NAMES: [Option<(&str, i32)>; CPU_MAXID as usize] = [
+    None,
+    Some(("compatible", CTLTYPE_STRING)),
+    Some(("id_aa64isar0", CTLTYPE_QUAD)),
+    Some(("id_aa64isar1", CTLTYPE_QUAD)),
+    Some(("id_aa64isar2", CTLTYPE_QUAD)),
+    Some(("id_aa64mmfr0", CTLTYPE_QUAD)),
+    Some(("id_aa64mmfr1", CTLTYPE_QUAD)),
+    Some(("id_aa64mmfr2", CTLTYPE_QUAD)),
+    Some(("id_aa64pfr0", CTLTYPE_QUAD)),
+    Some(("id_aa64pfr1", CTLTYPE_QUAD)),
+    Some(("id_aa64smfr0", CTLTYPE_QUAD)),
+    Some(("id_aa64zfr0", CTLTYPE_QUAD)),
+    Some(("lidaction", CTLTYPE_INT)),
+    Some(("led_blink", CTLTYPE_INT)),
+];
 
 /// `struct clockframe`: all the `CLKF_*` macros take a struct clockframe * as an argument.
 pub type Clockframe = Trapframe;
@@ -446,4 +491,49 @@ pub fn clkf_intr(_frame: &Clockframe) -> bool {
 #[inline]
 pub fn clkf_pc(frame: &Clockframe) -> usize {
     frame.tf_elr as usize
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs OPENBSD_SRC (just test-ref)"]
+    fn ctl_machdep_names_match_the_c_header() {
+        let defs = crate::reftest::defines("sys/arch/arm64/include/cpu.h");
+        let ours: &[(&str, i64)] = &[
+            ("CPU_COMPATIBLE", i64::from(CPU_COMPATIBLE)),
+            ("CPU_ID_AA64ISAR0", i64::from(CPU_ID_AA64ISAR0)),
+            ("CPU_ID_AA64ISAR1", i64::from(CPU_ID_AA64ISAR1)),
+            ("CPU_ID_AA64ISAR2", i64::from(CPU_ID_AA64ISAR2)),
+            ("CPU_ID_AA64MMFR0", i64::from(CPU_ID_AA64MMFR0)),
+            ("CPU_ID_AA64MMFR1", i64::from(CPU_ID_AA64MMFR1)),
+            ("CPU_ID_AA64MMFR2", i64::from(CPU_ID_AA64MMFR2)),
+            ("CPU_ID_AA64PFR0", i64::from(CPU_ID_AA64PFR0)),
+            ("CPU_ID_AA64PFR1", i64::from(CPU_ID_AA64PFR1)),
+            ("CPU_ID_AA64SMFR0", i64::from(CPU_ID_AA64SMFR0)),
+            ("CPU_ID_AA64ZFR0", i64::from(CPU_ID_AA64ZFR0)),
+            ("CPU_LIDACTION", i64::from(CPU_LIDACTION)),
+            ("CPU_LED_BLINK", i64::from(CPU_LED_BLINK)),
+            ("CPU_MAXID", i64::from(CPU_MAXID)),
+        ];
+        for (name, value) in ours {
+            assert_eq!(crate::reftest::int(&defs, name), Some(*value), "{name}");
+        }
+    }
+
+    #[test]
+    fn ctl_machdep_names_are_indexed_by_id() {
+        let names = &CTL_MACHDEP_NAMES;
+        assert_eq!(names.len(), CPU_MAXID as usize);
+        assert_eq!(
+            names[CPU_COMPATIBLE as usize],
+            Some(("compatible", CTLTYPE_STRING))
+        );
+        assert_eq!(
+            names[CPU_LED_BLINK as usize],
+            Some(("led_blink", CTLTYPE_INT))
+        );
+        assert_eq!(names[0], None);
+    }
 }

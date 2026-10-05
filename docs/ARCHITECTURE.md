@@ -1390,7 +1390,7 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   i8254, which under load read 1.2-1.3 GHz for ~1.0 and ran the clock 20-30 % slow) is gone;
   the invariant-TSC flags above are what remains of this deviation. Under `qemu` only,
   `calibrate_tsc_freq` prints its result (`tsc: calibrated against acpihpet0: 1000000000
-  Hz`), standing in for `machdep.tscfreq` (`cpu_sysctl` is not ported); `smoke-clock`
+  Hz`), beside `machdep.tscfreq` (`cpu_sysctl`, ported in M13); `smoke-clock`
   checks that `date` keeps the host's rate across `sleep 45`, within 2 s, on both archs.
 - amd64's TSC synchronisation test with `MULTIPROCESSOR` (M11b). `cpu.c` runs `tsc.c`'s test
   against each application processor where the C does, and a failure prints the C's

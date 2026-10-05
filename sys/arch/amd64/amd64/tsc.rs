@@ -37,8 +37,8 @@
 //!   compiled, as in a C kernel without `pvbus`.
 //! - Under feature `qemu` only, `calibrate_tsc_freq` prints what it measured against the
 //!   reference (`tsc: calibrated against acpihpet0: <N> Hz`, or `tsc: calibration against
-//!   <tc> failed, quality <q>`): the C is silent, and its `machdep.tscfreq` (`cpu_sysctl`) is
-//!   not ported. The TSC's quality follows the C's rules: -1000 until `acpitimer`/`acpihpet`
+//!   <tc> failed, quality <q>`): the C is silent (`machdep.tscfreq`, `cpu_sysctl`, shows
+//!   the result). The TSC's quality follows the C's rules: -1000 until `acpitimer`/`acpihpet`
 //!   (M13) are the reference of a successful calibration, then 2000. `docs/ARCHITECTURE.md`.
 //! - `tsc_delay` treats a negative `usecs` as 0 (the C converts it to a huge `uint64_t`).
 //! - `tsc_rdtsc` is a `StaticCell<fn() -> u64>` written by `tsc_identify` on the boot CPU.
@@ -340,8 +340,7 @@ pub fn calibrate_tsc_freq() {
 }
 
 /// Under feature `qemu` only: one line per calibration, the frequency measured against
-/// `reference` or the failure (the C prints nothing; `machdep.tscfreq` would show it, and
-/// `cpu_sysctl` is not ported).
+/// `reference` or the failure (the C prints nothing; `machdep.tscfreq` shows it).
 #[cfg(feature = "qemu")]
 fn tsc_report_calibration(reference: &Timecounter, freq: u64) {
     if freq == 0 {

@@ -45,8 +45,8 @@
 //! `ci_schedstate`, `ci_queue`, `MAXCPUS`, `CPU_INFO_UNIT`, `struct clockframe` (the
 //! `intrframe`) and the `CLKF_*` macros; the TSC timecounter adds `enum cpu_vendor` and the
 //! identification fields `identifycpu` fills for it (`ci_vendor` .. `ci_model`). The other
-//! identification fields, the sensors, the vmm fields and the `CTL_MACHDEP` names arrive with
-//! their subsystems. M11a adds the `MULTIPROCESSOR` part: `ci_func`, `CPU_STARTUP`,
+//! identification fields, the sensors and the vmm fields arrive with their subsystems; M13
+//! adds the `CTL_MACHDEP` names and `CTL_MACHDEP_NAMES` (`cpu_sysctl`). M11a adds the `MULTIPROCESSOR` part: `ci_func`, `CPU_STARTUP`,
 //! `CPU_START_CLEANUP`, `CPU_BUSY_CYCLE` and `CPU_INFO_UNIT` over `ci_dev`.
 //!
 //! ## Deviations
@@ -79,6 +79,7 @@ use crate::sys::clockintr::Clockqueue;
 use crate::sys::device::Device;
 use crate::sys::proc::Proc;
 use crate::sys::sched::SchedstatePercpu;
+use crate::sys::sysctl::{CTLTYPE_INT, CTLTYPE_QUAD, CTLTYPE_STRING, CTLTYPE_STRUCT};
 
 /// `enum cpu_vendor`: the vendor `cpu_set_vendor` maps cpuid(0)'s string to.
 #[allow(non_camel_case_types, clippy::upper_case_acronyms)] // OpenBSD names, verbatim
@@ -324,8 +325,71 @@ pub const MAXCPUS: u32 = 1;
 #[cfg(feature = "multiprocessor")]
 pub const MAXCPUS: u32 = 255;
 
-/// `CPU_CHR2BLK`: convert chr maj into blk one (a `CTL_MACHDEP` name).
+/// `CTL_MACHDEP` names (`<machine/cpu.h>`), the ids `machdep.*` sysctls use.
+/// `CPU_CONSDEV`: dev_t: console terminal device.
+pub const CPU_CONSDEV: i32 = 1;
+/// `CPU_BIOS`: BIOS variables.
+pub const CPU_BIOS: i32 = 2;
+/// `CPU_BLK2CHR`: convert blk maj into chr one.
+pub const CPU_BLK2CHR: i32 = 3;
+/// `CPU_CHR2BLK`: convert chr maj into blk one.
 pub const CPU_CHR2BLK: i32 = 4;
+/// `CPU_ALLOWAPERTURE`: allow mmap of /dev/xf86.
+pub const CPU_ALLOWAPERTURE: i32 = 5;
+/// `CPU_CPUVENDOR`: cpuid vendor string.
+pub const CPU_CPUVENDOR: i32 = 6;
+/// `CPU_CPUID`: cpuid.
+pub const CPU_CPUID: i32 = 7;
+/// `CPU_CPUFEATURE`: cpuid features.
+pub const CPU_CPUFEATURE: i32 = 8;
+/// `CPU_KBDRESET`: keyboard reset under pcvt.
+pub const CPU_KBDRESET: i32 = 10;
+/// `CPU_XCRYPT`: supports VIA xcrypt in userland.
+pub const CPU_XCRYPT: i32 = 12;
+/// `CPU_HIBERNATEDELAY`: hibernate delay after suspend.
+pub const CPU_HIBERNATEDELAY: i32 = 13;
+/// `CPU_LIDACTION`: action caused by lid close.
+pub const CPU_LIDACTION: i32 = 14;
+/// `CPU_FORCEUKBD`: Force ukbd(4) as console keyboard.
+pub const CPU_FORCEUKBD: i32 = 15;
+/// `CPU_TSCFREQ`: TSC frequency.
+pub const CPU_TSCFREQ: i32 = 16;
+/// `CPU_INVARIANTTSC`: has invariant TSC.
+pub const CPU_INVARIANTTSC: i32 = 17;
+/// `CPU_PWRACTION`: action caused by power button.
+pub const CPU_PWRACTION: i32 = 18;
+/// `CPU_RETPOLINE`: cpu requires retpoline pattern.
+pub const CPU_RETPOLINE: i32 = 19;
+/// `CPU_VMMODE`: virtualization mode.
+pub const CPU_VMMODE: i32 = 20;
+/// `CPU_MAXID`: number of valid machdep ids.
+pub const CPU_MAXID: i32 = 21;
+
+/// `CTL_MACHDEP_NAMES`: the `machdep` names `sysctl(8)` knows, indexed by id (`None` for the
+/// unused 0, 9 and 11). Each is `(name, type)`, the C's `{ "name", CTLTYPE_x }`.
+pub const CTL_MACHDEP_NAMES: [Option<(&str, i32)>; CPU_MAXID as usize] = [
+    None,
+    Some(("console_device", CTLTYPE_STRUCT)),
+    Some(("bios", CTLTYPE_INT)),
+    Some(("blk2chr", CTLTYPE_STRUCT)),
+    Some(("chr2blk", CTLTYPE_STRUCT)),
+    Some(("allowaperture", CTLTYPE_INT)),
+    Some(("cpuvendor", CTLTYPE_STRING)),
+    Some(("cpuid", CTLTYPE_INT)),
+    Some(("cpufeature", CTLTYPE_INT)),
+    None,
+    Some(("kbdreset", CTLTYPE_INT)),
+    None,
+    Some(("xcrypt", CTLTYPE_INT)),
+    Some(("hibernatedelay", CTLTYPE_INT)),
+    Some(("lidaction", CTLTYPE_INT)),
+    Some(("forceukbd", CTLTYPE_INT)),
+    Some(("tscfreq", CTLTYPE_QUAD)),
+    Some(("invarianttsc", CTLTYPE_INT)),
+    Some(("pwraction", CTLTYPE_INT)),
+    Some(("retpoline", CTLTYPE_INT)),
+    Some(("vmmode", CTLTYPE_STRING)),
+];
 
 /// `CI_DDB_RUNNING`.
 pub const CI_DDB_RUNNING: i32 = 0;
@@ -428,4 +492,53 @@ pub fn clkf_pc(frame: &Clockframe) -> usize {
 #[inline]
 pub fn clkf_intr(_frame: &Clockframe) -> bool {
     curcpu().ci_idepth.get() > 1
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs OPENBSD_SRC (just test-ref)"]
+    fn ctl_machdep_names_match_the_c_header() {
+        let defs = crate::reftest::defines("sys/arch/amd64/include/cpu.h");
+        let ours: &[(&str, i64)] = &[
+            ("CPU_CONSDEV", i64::from(CPU_CONSDEV)),
+            ("CPU_BIOS", i64::from(CPU_BIOS)),
+            ("CPU_BLK2CHR", i64::from(CPU_BLK2CHR)),
+            ("CPU_CHR2BLK", i64::from(CPU_CHR2BLK)),
+            ("CPU_ALLOWAPERTURE", i64::from(CPU_ALLOWAPERTURE)),
+            ("CPU_CPUVENDOR", i64::from(CPU_CPUVENDOR)),
+            ("CPU_CPUID", i64::from(CPU_CPUID)),
+            ("CPU_CPUFEATURE", i64::from(CPU_CPUFEATURE)),
+            ("CPU_KBDRESET", i64::from(CPU_KBDRESET)),
+            ("CPU_XCRYPT", i64::from(CPU_XCRYPT)),
+            ("CPU_HIBERNATEDELAY", i64::from(CPU_HIBERNATEDELAY)),
+            ("CPU_LIDACTION", i64::from(CPU_LIDACTION)),
+            ("CPU_FORCEUKBD", i64::from(CPU_FORCEUKBD)),
+            ("CPU_TSCFREQ", i64::from(CPU_TSCFREQ)),
+            ("CPU_INVARIANTTSC", i64::from(CPU_INVARIANTTSC)),
+            ("CPU_PWRACTION", i64::from(CPU_PWRACTION)),
+            ("CPU_RETPOLINE", i64::from(CPU_RETPOLINE)),
+            ("CPU_VMMODE", i64::from(CPU_VMMODE)),
+            ("CPU_MAXID", i64::from(CPU_MAXID)),
+        ];
+        for (name, value) in ours {
+            assert_eq!(crate::reftest::int(&defs, name), Some(*value), "{name}");
+        }
+    }
+
+    #[test]
+    fn ctl_machdep_names_are_indexed_by_id() {
+        let names = &CTL_MACHDEP_NAMES;
+        assert_eq!(names.len(), CPU_MAXID as usize);
+        assert_eq!(
+            names[CPU_LIDACTION as usize],
+            Some(("lidaction", CTLTYPE_INT))
+        );
+        assert_eq!(names[CPU_TSCFREQ as usize], Some(("tscfreq", CTLTYPE_QUAD)));
+        assert_eq!(names[CPU_VMMODE as usize], Some(("vmmode", CTLTYPE_STRING)));
+        assert_eq!(names[9], None);
+        assert_eq!(names[11], None);
+    }
 }

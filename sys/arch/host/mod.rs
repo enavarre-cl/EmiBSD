@@ -394,6 +394,18 @@ impl Cpu for Machine {
         ci.ci_want_resched.set(0);
     }
 
+    /// The host double has no `machdep` tree: `cpu_sysctl` names nothing.
+    fn cpu_sysctl(
+        _name: &[i32],
+        _oldp: usize,
+        _oldlenp: &mut usize,
+        _newp: usize,
+        _newlen: usize,
+        _p: &crate::sys::proc::Proc,
+    ) -> Result<(), crate::sys::errno::Errno> {
+        Err(crate::sys::errno::Errno::EOPNOTSUPP)
+    }
+
     fn cpu_unidle(_ci: &HostCpuInfo) {}
 
     fn cpu_idle_enter() {}

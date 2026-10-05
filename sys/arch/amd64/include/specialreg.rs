@@ -107,6 +107,15 @@ pub const CPUID_TSC: u32 = 0x0000_0010;
 /// `CPUIDECX_HV`: running on hypervisor.
 pub const CPUIDECX_HV: u32 = 0x8000_0000;
 
+// `MSR_SEV_STATUS` bits (`cpu_sev_guestmode`):
+
+/// `SEV_STAT_ENABLED`: SEV is active.
+pub const SEV_STAT_ENABLED: i32 = 0x0000_0001;
+/// `SEV_STAT_ES_ENABLED`: SEV-ES is active.
+pub const SEV_STAT_ES_ENABLED: i32 = 0x0000_0002;
+/// `SEV_STAT_SNP_ACTIVE`: SEV-SNP is active.
+pub const SEV_STAT_SNP_ACTIVE: i32 = 0x0000_0004;
+
 // "Structured Extended Feature Flags Parameters" (CPUID function 0x7, leaf 0)
 
 /// `SEFF0EBX_TSC_ADJUST`: has IA32_TSC_ADJUST MSR.

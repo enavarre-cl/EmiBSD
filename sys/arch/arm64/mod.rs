@@ -169,6 +169,17 @@ impl Cpu for Machine {
         arm64::machdep::clear_resched(ci)
     }
 
+    fn cpu_sysctl(
+        name: &[i32],
+        oldp: usize,
+        oldlenp: &mut usize,
+        newp: usize,
+        newlen: usize,
+        p: &crate::sys::proc::Proc,
+    ) -> Result<(), crate::sys::errno::Errno> {
+        arm64::machdep::cpu_sysctl(name, oldp, oldlenp, newp, newlen, p)
+    }
+
     fn cpu_unidle(ci: &include::cpu::CpuInfo) {
         arm64::cpu::cpu_unidle(ci)
     }

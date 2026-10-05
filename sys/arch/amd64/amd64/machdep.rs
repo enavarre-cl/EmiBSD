@@ -88,6 +88,13 @@
 //! `pwr_action`, and `bios_efiinfo->config_acpi` as `BIOS_EFIINFO_CONFIG_ACPI`.
 //!
 //! ## Deviations
+//! - `cpu_sysctl` (M13, `machine::cpu::cpu_sysctl`) is ported with these gaps: `CPU_BIOS` is
+//!   `EOPNOTSUPP` as in the C without `BAPIV_VECTOR` (Limine passes no boot arguments, so
+//!   `bios_sysctl`'s `BIOS_DEV`, `BIOS_DISKINFO` and `BIOS_CKSUMLEN` cannot be reached);
+//!   `CPU_FORCEUKBD` is compiled out as in C without `pckbc(4)` (not ported); `allowaperture`
+//!   is the `#else` (`APERTURE` is not configured); `cpu_sev_guestmode` (SEV probe),
+//!   `amd64_has_xcrypt` (`via_nano_setup`) and `need_retpoline` (`codepatch_replace`) keep
+//!   their initial values because the code that changes them is not ported.
 //! - Limine has set up long mode, paging and the direct map before `init_x86_64` runs, so the
 //!   BIOS/EFI memory-map walk and the page-table work of the C version are replaced by the
 //!   boot protocol (`docs/ARCHITECTURE.md`, "Boot flow"): `pmap_direct_base` is the
@@ -145,16 +152,22 @@ use libkern::StaticCell;
 use crate::arch::amd64::amd64::autoconf::COLD;
 use crate::arch::amd64::amd64::consinit::consinit;
 use crate::arch::amd64::amd64::cpu::{
-    CPU_EBXFEATURE, CPU_ECXFEATURE, CPU_FEATURE, CPU_ID, CPU_INFO_FULL_PRIMARY, CPU_VENDOR,
-    CPUID_LEVEL, cpu_enter_pages, cpu_info_primary_init, cpu_init_msrs,
+    CPU_EBXFEATURE, CPU_ECXFEATURE, CPU_FEATURE, CPU_ID, CPU_INFO_FULL_PRIMARY, CPU_SEV_GUESTMODE,
+    CPU_VENDOR, CPUID_LEVEL, NEED_RETPOLINE, cpu_enter_pages, cpu_info_primary_init, cpu_init_msrs,
 };
 use crate::arch::amd64::amd64::fpu::{FPU_SAVE_LEN, XSAVE_MASK, fpuinit};
+use crate::arch::amd64::amd64::identcpu::AMD64_HAS_XCRYPT;
 use crate::arch::amd64::amd64::intr::{intr_default_setup, splraise};
 use crate::arch::amd64::amd64::locore::lgdt;
 use crate::arch::amd64::amd64::pmap::{PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap};
+use crate::arch::amd64::amd64::tsc::{TSC_FREQUENCY, TSC_IS_INVARIANT};
 use crate::arch::amd64::amd64::vector::Xexceptions;
+use crate::arch::amd64::include::biosvar::{BIOS_CKSUMLEN, BIOS_DEV, BIOS_DISKINFO};
 use crate::arch::amd64::include::cpu::{
-    CPUPF_USERSEGS, CPUPF_USERXSTATE, CpuInfo, CpuVendor, cpu_info_primary, curcpu,
+    CPU_ALLOWAPERTURE, CPU_BIOS, CPU_CHR2BLK, CPU_CONSDEV, CPU_CPUFEATURE, CPU_CPUID,
+    CPU_CPUVENDOR, CPU_HIBERNATEDELAY, CPU_INVARIANTTSC, CPU_KBDRESET, CPU_LIDACTION,
+    CPU_PWRACTION, CPU_RETPOLINE, CPU_TSCFREQ, CPU_VMMODE, CPU_XCRYPT, CPUPF_USERSEGS,
+    CPUPF_USERXSTATE, CpuInfo, CpuVendor, cpu_info_primary, curcpu,
 };
 use crate::arch::amd64::include::cpufunc::{intr_enable, lidt, lldt, ltr, rcr3};
 use crate::arch::amd64::include::fpu::{
@@ -172,19 +185,27 @@ use crate::arch::amd64::include::segments::{
     gsyssel, usermode,
 };
 use crate::arch::amd64::include::signal::Sigcontext;
-use crate::arch::amd64::include::specialreg::{CPUID_NXE, cpuid};
+use crate::arch::amd64::include::specialreg::{
+    CPUID_NXE, CPUIDECX_HV, SEV_STAT_ENABLED, SEV_STAT_ES_ENABLED, SEV_STAT_SNP_ACTIVE, cpuid,
+};
 use crate::arch::amd64::include::tss::X86_64Tss;
 use crate::arch::amd64::include::vmparam::{VM_MAXUSER_ADDRESS, VM_PHYS_SIZE};
 use crate::arch::amd64::isa::clock::{
     i8254_delay, i8254_initclocks, i8254_start_both_clocks, rtcinit, startclocks,
 };
 use crate::conf::vers::VERSION;
+use crate::dev::cons::cn_tab;
 use crate::kassert;
 use crate::kern::init_main::{BOOTHOWTO, PROC0};
 use crate::kern::kern_sig::{sigexit, sigonstack};
 use crate::kern::kern_softintr::softintr_init;
+use crate::kern::kern_sysctl::{
+    sysctl_bounded_arr, sysctl_rdint, sysctl_rdquad, sysctl_rdstring, sysctl_rdstruct,
+    sysctl_securelevel_int,
+};
 use crate::kern::subr_log::init_static_msgbuf;
 use crate::kern::subr_prf::splassert_fail;
+use crate::kern::subr_xxx::chrtoblk;
 use crate::kern::vfs_bio::bufinit;
 use crate::kprintf;
 use crate::machine::bootinfo::{BootInfo, MemKind};
@@ -194,7 +215,7 @@ use crate::machine::db_machdep::{db_enter, db_machine_init};
 use crate::machine::{Cpu, Machine};
 use crate::sys::errno::Errno;
 use crate::sys::exec::{ExecPackage, PsStrings};
-use crate::sys::param::{NCARGS, roundup};
+use crate::sys::param::{NCARGS, NODEV, roundup};
 use crate::sys::proc::Proc;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
@@ -203,6 +224,7 @@ use crate::sys::siginfo::Siginfo;
 use crate::sys::signal::{SIGILL, SS_DISABLE, Sig, Sigset};
 use crate::sys::signalvar::sigcantmask;
 use crate::sys::syscallargs::SysSigreturnArgs;
+use crate::sys::sysctl::SysctlBoundedArgs;
 use crate::sys::systm::PHYSMEM;
 use crate::sys::systm::{SysArgs, sysargs};
 use crate::sys::types::{Paddr, Register, Vaddr};
@@ -230,6 +252,10 @@ pub static LID_ACTION: AtomicI32 = AtomicI32::new(1);
 /// `pwr_action`: what the power button does: 0 nothing, 1 power down, 2 suspend
 /// (`machdep.pwraction`).
 pub static PWR_ACTION: AtomicI32 = AtomicI32::new(1);
+/// `kbd_reset`: keyboard reset under pcvt (`machdep.kbdreset`).
+pub static KBD_RESET: AtomicI32 = AtomicI32::new(0);
+/// `hibernate_delay`: hibernate delay after suspend (`machdep.hibernatedelay`).
+pub static HIBERNATE_DELAY: AtomicI32 = AtomicI32::new(0);
 /// `bios_efiinfo->config_acpi`: the physical address of the ACPI RSDP the firmware gave
 /// (here Limine's RSDP request), 0 without one.
 pub static BIOS_EFIINFO_CONFIG_ACPI: core::sync::atomic::AtomicU64 =
@@ -1349,5 +1375,120 @@ pub fn delay_fini(f: fn(i32)) {
         // SAFETY: as for `delay_init`.
         unsafe { DELAY_FUNC.write(i8254_delay) };
         AMD64_DELAY_QUALITY.store(0, Ordering::Relaxed);
+    }
+}
+
+/// `bios_sysctl`: the `machdep.bios` tree. The C answers `EOPNOTSUPP` unless the boot loader
+/// passed a vector of boot arguments (`bootapiver & BAPIV_VECTOR`); Limine passes none (this
+/// kernel has no `bootapiver`, `bootdev` or `bios_diskinfo`), so `BIOS_DEV`, `BIOS_DISKINFO`
+/// and `BIOS_CKSUMLEN` are unreachable here and every name is `EOPNOTSUPP`.
+pub fn bios_sysctl(name: &[i32]) -> Result<(), Errno> {
+    if name.is_empty() {
+        return Err(Errno::ENOTDIR);
+    }
+    // bootapiver & BAPIV_VECTOR is 0 under Limine; the C's switch (BIOS_DEV, BIOS_DISKINFO,
+    // BIOS_CKSUMLEN) comes after that test and cannot run without bios_diskinfo.
+    let _ = (BIOS_DEV, BIOS_DISKINFO, BIOS_CKSUMLEN);
+    Err(Errno::EOPNOTSUPP)
+}
+
+/// `cpuctl_vars[]`: the `machdep` integers `sysctl_bounded_arr` serves. The read-only
+/// unsigned ones (`cpu_id`, `cpu_feature`) are `CPU_CPUID` and `CPU_CPUFEATURE` in
+/// `cpu_sysctl`, since a `u32` is not the `int` the table points at.
+static CPUCTL_VARS: [SysctlBoundedArgs; 6] = [
+    SysctlBoundedArgs::new(CPU_HIBERNATEDELAY, &HIBERNATE_DELAY, 0, 86400),
+    SysctlBoundedArgs::new(CPU_LIDACTION, &LID_ACTION, -1, 2),
+    SysctlBoundedArgs::new(CPU_PWRACTION, &PWR_ACTION, 0, 2),
+    SysctlBoundedArgs::readonly(CPU_XCRYPT, &AMD64_HAS_XCRYPT),
+    SysctlBoundedArgs::readonly(CPU_INVARIANTTSC, &TSC_IS_INVARIANT),
+    SysctlBoundedArgs::readonly(CPU_RETPOLINE, &NEED_RETPOLINE),
+];
+
+/// `vmmode`: the `machdep.vmmode` string (NUL-terminated) for `ecxfeature` (`cpu_ecxfeature`)
+/// and `sev_guestmode` (`cpu_sev_guestmode`).
+pub fn vmmode(ecxfeature: u32, sev_guestmode: i32) -> &'static [u8] {
+    if ecxfeature & CPUIDECX_HV != 0 {
+        if sev_guestmode & SEV_STAT_SNP_ACTIVE != 0 {
+            b"SEV-SNP\0"
+        } else if sev_guestmode & SEV_STAT_ES_ENABLED != 0 {
+            b"SEV-ES\0"
+        } else if sev_guestmode & SEV_STAT_ENABLED != 0 {
+            b"SEV\0"
+        } else {
+            b"guest\0"
+        }
+    } else {
+        b"host\0"
+    }
+}
+
+/// `cpu_sysctl`: machine dependent system variables.
+pub fn cpu_sysctl(
+    name: &[i32],
+    oldp: usize,
+    oldlenp: &mut usize,
+    newp: usize,
+    newlen: usize,
+    _p: &Proc,
+) -> Result<(), Errno> {
+    let Some(&first) = name.first() else {
+        return Err(Errno::ENOTDIR);
+    };
+    match first {
+        CPU_CONSDEV => {
+            if name.len() != 1 {
+                return Err(Errno::ENOTDIR); // overloaded
+            }
+            let consdev = cn_tab().map_or(NODEV, |cn| cn.cn_dev.get());
+            sysctl_rdstruct(oldp, oldlenp, newp, &consdev.to_ne_bytes())
+        }
+        CPU_CHR2BLK => {
+            if name.len() != 2 {
+                return Err(Errno::ENOTDIR); // overloaded
+            }
+            let dev = chrtoblk(name[1]);
+            sysctl_rdstruct(oldp, oldlenp, newp, &dev.to_ne_bytes())
+        }
+        CPU_BIOS => bios_sysctl(&name[1..]),
+        CPU_CPUVENDOR => {
+            // SAFETY: written once by init_x86_64 on the boot CPU before anything runs
+            // that can reach sysctl(2).
+            let vendor = unsafe { CPU_VENDOR.get() };
+            sysctl_rdstring(oldp, oldlenp, newp, vendor)
+        }
+        CPU_KBDRESET => sysctl_securelevel_int(oldp, oldlenp, newp, newlen, &KBD_RESET),
+        CPU_ALLOWAPERTURE => {
+            if name.len() != 1 {
+                return Err(Errno::ENOTDIR); // overloaded
+            }
+            // APERTURE is not configured: the C's #else.
+            sysctl_rdint(oldp, oldlenp, newp, 0)
+        }
+        // CPU_FORCEUKBD: `NPCKBC > 0 && NUKBD > 0` is false (pckbc(4) is not ported), so
+        // the case is compiled out as in C and falls to the table, which does not have it.
+        CPU_TSCFREQ => sysctl_rdquad(
+            oldp,
+            oldlenp,
+            newp,
+            TSC_FREQUENCY.load(Ordering::Relaxed) as i64,
+        ),
+        CPU_VMMODE => {
+            let mode = vmmode(
+                CPU_ECXFEATURE.load(Ordering::Relaxed),
+                CPU_SEV_GUESTMODE.load(Ordering::Relaxed),
+            );
+            sysctl_rdstring(oldp, oldlenp, newp, mode)
+        }
+        CPU_CPUID if name.len() == 1 => {
+            sysctl_rdint(oldp, oldlenp, newp, CPU_ID.load(Ordering::Relaxed) as i32)
+        }
+        CPU_CPUFEATURE if name.len() == 1 => sysctl_rdint(
+            oldp,
+            oldlenp,
+            newp,
+            CPU_FEATURE.load(Ordering::Relaxed) as i32,
+        ),
+        CPU_CPUID | CPU_CPUFEATURE => Err(Errno::ENOTDIR),
+        _ => sysctl_bounded_arr(&CPUCTL_VARS, name, oldp, oldlenp, newp, newlen),
     }
 }

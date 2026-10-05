@@ -1420,10 +1420,12 @@ smoke-power: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
     @test -f target/userland/amd64/ramdisk.ffs || \
         { echo "smoke-power: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --status 0 \
-        {{disk_login}} --send-after '# ' --send 'halt -p\n' \
+        {{disk_login}} --send-after '# ' --send 'sysctl machdep.lidaction machdep.pwraction machdep.tscfreq\n' \
+        --send-after '# ' --send 'halt -p\n' \
         --expect "acpi0 at bios0: ACPI 3.0" --expect "acpi0: sleep states S3 S4 S5" \
-        --expect "rc: multi-user" --expect "halt -p" \
-        --reject "rebooting..." --reject "The operating system has halted" \
+        --expect "rc: multi-user" --expect "machdep.lidaction=1" --expect "machdep.pwraction=1" \
+        --expect "machdep.tscfreq=" --expect "halt -p" \
+        --reject "sysctl: Function not implemented" --reject "rebooting..." --reject "The operating system has halted" \
         --reject "acpi S5 transition did not happen"
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --reboot --until-seen \
         {{disk_login}} --send-after '# ' --send 'reboot\n' \
@@ -1460,7 +1462,9 @@ clock_steps := "--send-after 'RETURN for sh:' --send '\\n' " + \
     "--send-after '# ' --send 'd=$((g1-g0)); e=$(((h1-h0+500)/1000)); echo \"clock: guest $d s, host $e s\"\\n' " + \
     "--send-after '# ' --send '[ $((d-e)) -le 2 -a $((e-d)) -le 2 ] && echo clock-ok-$((40+2))\\n' " + \
     "--send-after '# ' --send 'sysctl kern.timecounter\\n' " + \
-    "--expect 'clock: guest ' --expect 'clock-ok-42' --expect 'kern.timecounter.choice='"
+    "--send-after '# ' --send 'sysctl machdep\\n' " + \
+    "--expect 'clock: guest ' --expect 'clock-ok-42' --expect 'kern.timecounter.choice=' " + \
+    "--expect 'machdep.lidaction=' --reject 'sysctl: Function not implemented'"
 
 # M10d: FUSE (sys/miscfs/fuse).Our own read-only file system, tools/fusehello (linked to
 # OpenBSD's libfuse, which opens /dev/fuse0 and mounts fusefs), is mounted on /fuse; mount(8)

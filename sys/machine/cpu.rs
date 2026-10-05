@@ -23,6 +23,7 @@ use crate::machine::Machine;
 use crate::machine::bootinfo::BootInfo;
 use crate::sys::buf::Buf;
 use crate::sys::clockintr::Clockqueue;
+use crate::sys::errno::Errno;
 use crate::sys::exec::{ExecPackage, PsStrings};
 use crate::sys::proc::Proc;
 use crate::sys::sched::SchedstatePercpu;
@@ -155,6 +156,18 @@ pub trait Cpu {
 
     /// `CLKF_INTR(frame)`: whether the clock interrupt interrupted another interrupt handler.
     fn clkf_intr(frame: &Self::ClockFrame) -> bool;
+
+    /// `cpu_sysctl(name, namelen, oldp, oldlenp, newp, newlen, p)` (`machdep.c`): the
+    /// `CTL_MACHDEP` tree. `name` is the rest of the name after `CTL_MACHDEP` (the C's `name`
+    /// and `namelen`); `oldp` and `newp` are user addresses, 0 for the C's NULL.
+    fn cpu_sysctl(
+        name: &[i32],
+        oldp: usize,
+        oldlenp: &mut usize,
+        newp: usize,
+        newlen: usize,
+        p: &Proc,
+    ) -> Result<(), Errno>;
 
     /// `need_resched(ci)`: asks `ci` to reschedule at the next opportunity.
     fn need_resched(ci: &Self::CpuInfo);
@@ -383,6 +396,18 @@ pub fn cpu_startclock() {
 /// `setstatclockrate` on the selected machine.
 pub fn setstatclockrate(newhz: i32) {
     Machine::setstatclockrate(newhz)
+}
+
+/// `cpu_sysctl` on the selected machine: the `CTL_MACHDEP` tree.
+pub fn cpu_sysctl(
+    name: &[i32],
+    oldp: usize,
+    oldlenp: &mut usize,
+    newp: usize,
+    newlen: usize,
+    p: &Proc,
+) -> Result<(), Errno> {
+    Machine::cpu_sysctl(name, oldp, oldlenp, newp, newlen, p)
 }
 
 /// `need_resched` on the selected machine.

@@ -35,6 +35,10 @@
 //! (`BOOT_MP`) for `cpu_start_secondary`; `cpu_unidle` moved to `cpu.rs`, where the C has it.
 //!
 //! ## Deviations
+//! - `cpu_sysctl` (M13, `machine::cpu::cpu_sysctl`) is ported whole. `CPU_LED_BLINK` does not
+//!   call `blink_led_timeout` when it turns on: with no `blink_led` registered (the LED
+//!   drivers and `blink_led_register` are not ported) the C returns from it at once.
+//!   `lid_action` is a static here that nothing reads until `aplsmc` is ported.
 //! - Limine has set up EL1, the MMU and the direct map before `initarm` runs, so the C's
 //!   page-table and memory-map work is replaced by the boot protocol (`docs/ARCHITECTURE.md`).
 //!   What Limine does not map is device memory: `initarm` installs one 1 GiB identity block of
@@ -79,6 +83,7 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 use libkern::StaticCell;
 
+use crate::arch::arm64::arm64::cpu;
 use crate::arch::arm64::arm64::cpu::cpu_kick;
 #[cfg(feature = "multiprocessor")]
 use crate::arch::arm64::arm64::cpu::cpu_unidle;
@@ -92,7 +97,10 @@ use crate::arch::arm64::arm64::pmap::{
 };
 use crate::arch::arm64::include::armreg::{PSR_DIT, PSR_M_EL0t};
 use crate::arch::arm64::include::cpu::{
-    CiPtr, CpuInfo, MAXCPUS, curcpu, disable_irq_daif, enable_irq_daif,
+    CPU_COMPATIBLE, CPU_ID_AA64ISAR0, CPU_ID_AA64ISAR1, CPU_ID_AA64ISAR2, CPU_ID_AA64MMFR0,
+    CPU_ID_AA64MMFR1, CPU_ID_AA64MMFR2, CPU_ID_AA64PFR0, CPU_ID_AA64PFR1, CPU_ID_AA64SMFR0,
+    CPU_ID_AA64ZFR0, CPU_LED_BLINK, CPU_LIDACTION, CiPtr, CpuInfo, MAXCPUS, curcpu,
+    disable_irq_daif, enable_irq_daif,
 };
 use crate::arch::arm64::include::frame::Trapframe;
 use crate::arch::arm64::include::param::PAGE_SIZE;
@@ -105,9 +113,10 @@ use crate::dev::fdt::pluart_fdt::pluart_init_cons;
 use crate::dev::ofw::fdt::{
     FdtNode, fdt_find_node, fdt_init, fdt_is_compatible, fdt_node_property,
 };
-use crate::dev::ofw::openfirm::OF_finddevice;
+use crate::dev::ofw::openfirm::{OF_finddevice, OF_getprop, OF_getproplen};
 use crate::kern::init_main::{BOOTHOWTO, PROC0};
 use crate::kern::kern_malloc::{kmeminit_nkmempages, nkmempages};
+use crate::kern::kern_sysctl::{sysctl_bounded_arr, sysctl_int, sysctl_rdquad, sysctl_rdstring};
 use crate::kern::subr_log::init_static_msgbuf;
 use crate::kern::vfs_bio::bufinit;
 use crate::kprintf;
@@ -116,12 +125,14 @@ use crate::machine::bootinfo::BootMp;
 use crate::machine::bootinfo::{BootInfo, MemKind};
 use crate::machine::db_machdep::{db_enter, db_machine_init};
 use crate::machine::{Cpu, Machine};
+use crate::sys::errno::Errno;
 use crate::sys::exec::{EXEC_NOBTCFI, ExecPackage, PsStrings};
 use crate::sys::param::{NCARGS, roundup};
 use crate::sys::proc::Proc;
 use crate::sys::reboot::{
     RB_DUMP, RB_HALT, RB_KDB, RB_NOSYNC, RB_POWERDOWN, RB_RESET, RB_TIMEBAD, RB_USERREQ,
 };
+use crate::sys::sysctl::SysctlBoundedArgs;
 use crate::sys::systm::PHYSMEM;
 use crate::sys::types::{Paddr, Register, Vaddr};
 use crate::sys::user::{Uarea, User};
@@ -222,6 +233,10 @@ static PROC0TF: StaticCell<Trapframe> = StaticCell::new(Trapframe::new());
 /// `cold`: if set, still working on cold-start.
 pub use crate::sys::systm::COLD;
 /// `waittime`: set once the file systems have been synced on the way down.
+/// `lid_action`: what closing the lid does (`machdep.lidaction`).
+pub static LID_ACTION: AtomicI32 = AtomicI32::new(1);
+/// `led_blink`: blink the LEDs (`machdep.led_blink`).
+pub static LED_BLINK: AtomicI32 = AtomicI32::new(1);
 static WAITTIME: AtomicI32 = AtomicI32::new(-1);
 /// `cpuresetfn`: the platform's reset hook, registered by its driver.
 pub static CPURESETFN: StaticCell<Option<fn()>> = StaticCell::new(None);
@@ -827,4 +842,58 @@ pub fn boot(howto: i32) -> ! {
     }
     kprintf!("reboot failed; spinning\n");
     Machine::halt()
+}
+
+/// `cpuctl_vars[]`: the `machdep` integers `sysctl_bounded_arr` serves.
+static CPUCTL_VARS: [SysctlBoundedArgs; 1] =
+    [SysctlBoundedArgs::new(CPU_LIDACTION, &LID_ACTION, 0, 2)];
+
+/// `cpu_sysctl`: machine dependent system variables.
+pub fn cpu_sysctl(
+    name: &[i32],
+    oldp: usize,
+    oldlenp: &mut usize,
+    newp: usize,
+    newlen: usize,
+    _p: &Proc,
+) -> Result<(), Errno> {
+    // all sysctl names at this level are terminal
+    let [first] = *name else {
+        return Err(Errno::ENOTDIR); // overloaded
+    };
+
+    let quad = |oldlenp: &mut usize, v: &AtomicU64| {
+        sysctl_rdquad(oldp, oldlenp, newp, v.load(Ordering::Relaxed) as i64)
+    };
+    match first {
+        CPU_COMPATIBLE => {
+            let node = OF_finddevice(b"/");
+            let len = OF_getproplen(node, b"compatible");
+            if len <= 0 {
+                return Err(Errno::EOPNOTSUPP);
+            }
+            let mut compatible = alloc::vec![0u8; len as usize];
+            OF_getprop(node, b"compatible", &mut compatible);
+            compatible[len as usize - 1] = 0;
+            sysctl_rdstring(oldp, oldlenp, newp, &compatible)
+        }
+        CPU_ID_AA64ISAR0 => quad(oldlenp, &cpu::CPU_ID_AA64ISAR0),
+        CPU_ID_AA64ISAR1 => quad(oldlenp, &cpu::CPU_ID_AA64ISAR1),
+        CPU_ID_AA64ISAR2 => quad(oldlenp, &cpu::CPU_ID_AA64ISAR2),
+        CPU_ID_AA64PFR0 => quad(oldlenp, &cpu::CPU_ID_AA64PFR0),
+        CPU_ID_AA64PFR1 => quad(oldlenp, &cpu::CPU_ID_AA64PFR1),
+        CPU_ID_AA64MMFR0 => quad(oldlenp, &cpu::CPU_ID_AA64MMFR0),
+        CPU_ID_AA64MMFR1 => quad(oldlenp, &cpu::CPU_ID_AA64MMFR1),
+        CPU_ID_AA64MMFR2 => quad(oldlenp, &cpu::CPU_ID_AA64MMFR2),
+        CPU_ID_AA64SMFR0 => sysctl_rdquad(oldp, oldlenp, newp, 0),
+        CPU_ID_AA64ZFR0 => quad(oldlenp, &cpu::CPU_ID_AA64ZFR0),
+        CPU_LED_BLINK => {
+            let error = sysctl_int(oldp, oldlenp, newp, newlen, &LED_BLINK);
+            // If we were false and are now true, the C starts the timer
+            // (blink_led_timeout); with no blink_led registered (blink_led_register and
+            // the LED drivers are not ported) that function returns at once.
+            error
+        }
+        _ => sysctl_bounded_arr(&CPUCTL_VARS, name, oldp, oldlenp, newp, newlen),
+    }
 }

@@ -71,8 +71,8 @@
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
 //!   `ENOSYS`: `watchdog` (`kern_watchdog.c`), `clockintr`, `proc_vmmap` after its checks
 //!   (`fill_vmmap`); `hw.model` (`cpu_model`, `identcpu.c`/arm64 `cpu.c`),
-//!   `setperf`/`perfpolicy` (`sched_bsd.c`); the top-level
-//!   `machdep` (`cpu_sysctl`) and `ddb` (`ddb_sysctl`) trees. `kern.proc_cwd` of a process
+//!   `setperf`/`perfpolicy` (`sched_bsd.c`). The top-level `machdep` tree is the machine's
+//!   `cpu_sysctl` (`machine::cpu::cpu_sysctl`). `kern.proc_cwd` of a process
 //!   without a current directory (none has one before a root file system is mounted) is
 //!   `ENOENT`. `resettodr` after a new `kern.utc_offset` is reported and skipped.
 //! - Options this kernel does not configure are compiled out as in C: `DEBUG_SYSCTL`
@@ -473,7 +473,7 @@ pub fn sys_sysctl(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
         CTL_NET => (false, crate::kern::uipc_domain::net_sysctl),
         CTL_VM => (true, uvm_sysctl),
         CTL_VFS => (true, vfs_sysctl),
-        CTL_MACHDEP => return Err(unported!("cpu_sysctl (machdep.c)")),
+        CTL_MACHDEP => (false, crate::machine::cpu::cpu_sysctl),
         // CTL_DEBUG: DEBUG_SYSCTL is not configured.
         CTL_DDB => (false, crate::ddb::db_usrreq::ddb_sysctl),
         _ => return Err(Errno::EOPNOTSUPP),
