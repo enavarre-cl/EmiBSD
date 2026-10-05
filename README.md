@@ -10,6 +10,9 @@
 
 <p align="center">License: ISC · Rust: stable (1.98.1) · Targets: amd64, arm64 · Runs in: QEMU</p>
 
+> **Not for production.** EmiBSD is an experiment. It runs only in QEMU, and its crypto,
+> network and storage code is unaudited. Do not use it to protect real data or real networks.
+
 ## What is this
 
 - A file-by-file port of the OpenBSD kernel, pinned to commit `3ce1f3f79392` of
@@ -316,6 +319,7 @@ ports.toml              porting tracker
 | How does a C file become a Rust file? | [docs/PORTING.md](docs/PORTING.md), tracker in [ports.toml](ports.toml) |
 | How is this C idiom written in Rust? | [docs/C_TO_RUST.md](docs/C_TO_RUST.md) |
 | What comes next? | [docs/ROADMAP.md](docs/ROADMAP.md) |
+| What happens after the faithful port? | [docs/PHASE2.md](docs/PHASE2.md) (draft) |
 | Where are we right now? | [docs/STATUS.md](docs/STATUS.md) |
 | What rules does every change follow? | [CLAUDE.md](CLAUDE.md), [.claude/rules/](.claude/rules/) |
 
@@ -339,7 +343,9 @@ Upstream: sys/kern/subr_prf.c@3ce1f3f79392
 
 The full process is in [docs/PORTING.md](docs/PORTING.md).
 
-External contributions are not accepted, for now.
+Feedback is welcome: [GitHub Discussions](https://github.com/enavarre-cl/EmiBSD/discussions) for
+feedback and design questions, [Issues](https://github.com/enavarre-cl/EmiBSD/issues) for concrete
+problems. External pull requests are not accepted, for now.
 
 ## Mascot
 

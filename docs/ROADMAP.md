@@ -8,6 +8,9 @@ that progress is **measurable** (`cargo xtask ports status`, `just smoke`), not 
 Every milestone has a mechanical exit criterion: a command that passes or a serial line that appears.
 Editing a milestone must keep that property.
 
+Phase 1 is this roadmap: the faithful port. Phase 2, improving the port against a measured
+Phase 1 baseline, is drafted in [docs/PHASE2.md](PHASE2.md) and has not started.
+
 ## What "complete" means (proposed 2026-10-03; left open by the user until M13)
 
 "Complete" is every file of `reference/openbsd-src/sys/` that can be exercised in QEMU on amd64 and
