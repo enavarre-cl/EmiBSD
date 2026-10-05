@@ -49,8 +49,9 @@
 //! comments, in the header's order.
 //!
 //! ## Deviations
-//! - Partial: only the IDs some ported file names are present (`usb_quirks.c`'s table, then
-//!   `umass_quirks.c`'s, appended as a block). The
+//! - Partial: only the IDs some ported file names are present (`usb_quirks.c`'s table,
+//!   `umass_quirks.c`'s, appended as a block, and what `uhidev.c` and `ukbd.c` name: Wacom,
+//!   Apple keyboards, the TEMPer sensors, ...). The
 //!   whole header, and `usbdevs_data.h` for `option USBVERBOSE` (in GENERIC), wait for a
 //!   generator in `tools/xtask`, as `pcidevs.h` does; until then `usb_subr.c` names devices
 //!   as a kernel without the option does (`vendor 0x...`, `product 0x...`).
@@ -84,6 +85,8 @@ pub const USB_VENDOR_MICROCHIP: u16 = 0x04d8;
 pub const USB_VENDOR_CHICONY: u16 = 0x04f2;
 /// `USB_VENDOR_ALCOR2`: Alcor Micro.
 pub const USB_VENDOR_ALCOR2: u16 = 0x0566;
+/// `USB_VENDOR_WACOM`: WACOM.
+pub const USB_VENDOR_WACOM: u16 = 0x056a;
 /// `USB_VENDOR_OMRON`: OMRON Corporation.
 pub const USB_VENDOR_OMRON: u16 = 0x0590;
 /// `USB_VENDOR_APPLE`: Apple Computer.
@@ -102,16 +105,22 @@ pub const USB_VENDOR_SIEMENS2: u16 = 0x0681;
 pub const USB_VENDOR_MCT: u16 = 0x0711;
 /// `USB_VENDOR_EICON`: Eicon Networks.
 pub const USB_VENDOR_EICON: u16 = 0x0734;
+/// `USB_VENDOR_TOPRE`: Topre Corporation.
+pub const USB_VENDOR_TOPRE: u16 = 0x0853;
 /// `USB_VENDOR_METRICOM`: Metricom.
 pub const USB_VENDOR_METRICOM: u16 = 0x0870;
 /// `USB_VENDOR_PIXART`: PixArt.
 pub const USB_VENDOR_PIXART: u16 = 0x093a;
 /// `USB_VENDOR_SHANTOU`: ShanTou.
 pub const USB_VENDOR_SHANTOU: u16 = 0x0a46;
+/// `USB_VENDOR_MICRODIA`: Microdia / Sonix Technology Co., Ltd.
+pub const USB_VENDOR_MICRODIA: u16 = 0x0c45;
 /// `USB_VENDOR_TERRATEC`: TerraTec Electronic GmbH.
 pub const USB_VENDOR_TERRATEC: u16 = 0x0ccd;
 /// `USB_VENDOR_QUALCOMM2`: Qualcomm.
 pub const USB_VENDOR_QUALCOMM2: u16 = 0x1004;
+/// `USB_VENDOR_YUBICO`: Yubico.com.
+pub const USB_VENDOR_YUBICO: u16 = 0x1050;
 /// `USB_VENDOR_VELLEMAN`: Velleman.
 pub const USB_VENDOR_VELLEMAN: u16 = 0x10cf;
 /// `USB_VENDOR_TENX`: Ten X Technology, Inc..
@@ -128,6 +137,8 @@ pub const USB_VENDOR_CMOTECH: u16 = 0x16d8;
 pub const USB_VENDOR_MECANIQUE: u16 = 0x1781;
 /// `USB_VENDOR_LENOVO`: Lenovo.
 pub const USB_VENDOR_LENOVO: u16 = 0x17ef;
+/// `USB_VENDOR_WCH2`: QinHeng Electronics.
+pub const USB_VENDOR_WCH2: u16 = 0x1a86;
 /// `USB_VENDOR_DREAMLINK`: Dream Link.
 pub const USB_VENDOR_DREAMLINK: u16 = 0x1d34;
 /// `USB_VENDOR_METAGEEK`: MetaGeek.
@@ -136,10 +147,44 @@ pub const USB_VENDOR_METAGEEK: u16 = 0x1dd5;
 pub const USB_VENDOR_MOTOROLA2: u16 = 0x22b8;
 /// `USB_VENDOR_HAILUCK`: HAILUCK Co., Ltd.
 pub const USB_VENDOR_HAILUCK: u16 = 0x258a;
+/// `USB_VENDOR_RDING`: RDing TECH.
+pub const USB_VENDOR_RDING: u16 = 0x3553;
 /// `USB_VENDOR_DELL`: Dell.
 pub const USB_VENDOR_DELL: u16 = 0x413c;
+/// `USB_VENDOR_PCSENSORS`: PC Sensors.
+pub const USB_VENDOR_PCSENSORS: u16 = 0x413d;
 /// `USB_PRODUCT_ALCOR2_KBD_HUB`: Kbd Hub.
 pub const USB_PRODUCT_ALCOR2_KBD_HUB: u16 = 0x2802;
+/// `USB_PRODUCT_APPLE_FOUNTAIN_ISO`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_FOUNTAIN_ISO: u16 = 0x020f;
+/// `USB_PRODUCT_APPLE_GEYSER_ISO`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_GEYSER_ISO: u16 = 0x0215;
+/// `USB_PRODUCT_APPLE_GEYSER3_ISO`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_GEYSER3_ISO: u16 = 0x0218;
+/// `USB_PRODUCT_APPLE_WELLSPRING_ANSI`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_WELLSPRING_ANSI: u16 = 0x0223;
+/// `USB_PRODUCT_APPLE_WELLSPRING_ISO`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_WELLSPRING_ISO: u16 = 0x0224;
+/// `USB_PRODUCT_APPLE_WELLSPRING_JIS`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_WELLSPRING_JIS: u16 = 0x0225;
+/// `USB_PRODUCT_APPLE_WELLSPRING4_ANSI`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_WELLSPRING4_ANSI: u16 = 0x023f;
+/// `USB_PRODUCT_APPLE_WELLSPRING4_ISO`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_WELLSPRING4_ISO: u16 = 0x0240;
+/// `USB_PRODUCT_APPLE_WELLSPRING4_JIS`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_WELLSPRING4_JIS: u16 = 0x0241;
+/// `USB_PRODUCT_APPLE_WELLSPRING4A_ANSI`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_WELLSPRING4A_ANSI: u16 = 0x0242;
+/// `USB_PRODUCT_APPLE_WELLSPRING4A_ISO`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_WELLSPRING4A_ISO: u16 = 0x0243;
+/// `USB_PRODUCT_APPLE_WELLSPRING4A_JIS`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_WELLSPRING4A_JIS: u16 = 0x0244;
+/// `USB_PRODUCT_APPLE_WELLSPRING6_ISO`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_WELLSPRING6_ISO: u16 = 0x024d;
+/// `USB_PRODUCT_APPLE_WELLSPRING8_ISO`: Keyboard/Trackpad.
+pub const USB_PRODUCT_APPLE_WELLSPRING8_ISO: u16 = 0x0291;
+/// `USB_PRODUCT_APPLE_BLUETOOTH_HCI`: HID-proxy.
+pub const USB_PRODUCT_APPLE_BLUETOOTH_HCI: u16 = 0x1000;
 /// `USB_PRODUCT_APPLE_SPEAKERS`: Speakers.
 pub const USB_PRODUCT_APPLE_SPEAKERS: u16 = 0x1101;
 /// `USB_PRODUCT_APPLE_IPHONE`: iPhone.
@@ -242,6 +287,10 @@ pub const USB_PRODUCT_METRICOM_RICOCHET_GS: u16 = 0x0001;
 pub const USB_PRODUCT_MICROCHIP_USBLCD20X2: u16 = 0x0002;
 /// `USB_PRODUCT_MICROCHIP_USBLCD256X64`: USB-LCD-256x64.
 pub const USB_PRODUCT_MICROCHIP_USBLCD256X64: u16 = 0xc002;
+/// `USB_PRODUCT_MICRODIA_TEMPER`: TEMPer sensor.
+pub const USB_PRODUCT_MICRODIA_TEMPER: u16 = 0x7401;
+/// `USB_PRODUCT_MICRODIA_TEMPERHUM`: TEMPerHUM sensor.
+pub const USB_PRODUCT_MICRODIA_TEMPERHUM: u16 = 0x7402;
 /// `USB_PRODUCT_MICROSOFT_WLNOTEBOOK`: Wireless Optical Mouse (Model 1023).
 pub const USB_PRODUCT_MICROSOFT_WLNOTEBOOK: u16 = 0x00b9;
 /// `USB_PRODUCT_MICROSOFT_PIXARTMOUSE`: Optical Mouse.
@@ -270,6 +319,8 @@ pub const USB_PRODUCT_OMRON_BX50F: u16 = 0x0057;
 pub const USB_PRODUCT_OMRON_BX35F: u16 = 0x0058;
 /// `USB_PRODUCT_OMRON_BY35S`: BY35S UPS.
 pub const USB_PRODUCT_OMRON_BY35S: u16 = 0x0080;
+/// `USB_PRODUCT_PCSENSORS_TEMPER`: TEMPer sensor.
+pub const USB_PRODUCT_PCSENSORS_TEMPER: u16 = 0x2107;
 /// `USB_PRODUCT_PIXART_RPIMOUSE`: Raspberry Pi Mouse.
 pub const USB_PRODUCT_PIXART_RPIMOUSE: u16 = 0x2510;
 /// `USB_PRODUCT_QTRONIX_980N`: Scorpion-980N.
@@ -280,6 +331,8 @@ pub const USB_PRODUCT_QUALCOMM_MSM_MODEM: u16 = 0x3196;
 pub const USB_PRODUCT_QUALCOMM2_MSM_PHONE: u16 = 0x6000;
 /// `USB_PRODUCT_RALINK_RT2573`: RT2573.
 pub const USB_PRODUCT_RALINK_RT2573: u16 = 0x2573;
+/// `USB_PRODUCT_RDING_TEMPER`: TEMPer sensor.
+pub const USB_PRODUCT_RDING_TEMPER: u16 = 0xa001;
 /// `USB_PRODUCT_SANYO_SCP4900`: Sanyo SCP-4900 Phone.
 pub const USB_PRODUCT_SANYO_SCP4900: u16 = 0x0701;
 /// `USB_PRODUCT_SHANTOU_DM9601`: DM9601.
@@ -296,8 +349,18 @@ pub const USB_PRODUCT_TERRATEC_AUREON: u16 = 0x0077;
 pub const USB_PRODUCT_TI_UTUSB41: u16 = 0x1446;
 /// `USB_PRODUCT_TI_MSP430`: MSP-FET430UIF.
 pub const USB_PRODUCT_TI_MSP430: u16 = 0xf432;
+/// `USB_PRODUCT_TOPRE_HHKB`: HHKB Professional.
+pub const USB_PRODUCT_TOPRE_HHKB: u16 = 0x0100;
 /// `USB_PRODUCT_VELLEMAN_K8055`: K8055 USB Experiment interface board.
 pub const USB_PRODUCT_VELLEMAN_K8055: u16 = 0x5500;
+/// `USB_PRODUCT_WACOM_GRAPHIRE`: Graphire.
+pub const USB_PRODUCT_WACOM_GRAPHIRE: u16 = 0x0010;
+/// `USB_PRODUCT_WACOM_GRAPHIRE3_4X5`: Graphire3 4x5.
+pub const USB_PRODUCT_WACOM_GRAPHIRE3_4X5: u16 = 0x0013;
+/// `USB_PRODUCT_WACOM_GRAPHIRE4_4X5`: Graphire4 Classic A6.
+pub const USB_PRODUCT_WACOM_GRAPHIRE4_4X5: u16 = 0x0015;
+/// `USB_PRODUCT_WCH2_TEMPER`: TEMPer sensor.
+pub const USB_PRODUCT_WCH2_TEMPER: u16 = 0xe025;
 /// `USB_PRODUCT_YAMAHA_RTA54I`: NetVolante RTA54i.
 pub const USB_PRODUCT_YAMAHA_RTA54I: u16 = 0x4000;
 /// `USB_PRODUCT_YAMAHA_RTW65B`: NetVolante RTW65b.

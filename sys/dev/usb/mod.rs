@@ -6,7 +6,10 @@
 //! definitions (`usbhid`) and the capture headers (`usbpcap`). Host controller and device
 //! drivers (`xhci`, `uhub`, `umass`, `uhidev`, ...) attach on top of it.
 
+pub mod uhid_rdesc;
+pub mod uhidev;
 pub mod uhub;
+pub mod ukbd;
 pub mod umass;
 pub mod umass_quirks;
 pub mod umass_scsi;

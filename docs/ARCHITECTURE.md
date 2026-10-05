@@ -977,6 +977,9 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   the `scsi` attribute, as vioblk and softraid are), so a USB stick is an `sd(4)` disk. The
   SCSI probe's commands are polled (`umass_polled_transfer` turns the state machine's
   recursion into iteration); later I/O completes from the USB soft interrupt.
+  uhidev(4) and ukbd(4) attach for USB keyboards over the HID parser (`dev/hid/hid.c`) and
+  hidkbd; the keyboard's interrupt pipe opens only when a `wskbd` child enables it (M13), so
+  until then the keyboard attaches but is silent, as on an OpenBSD kernel without `wskbd`.
 - Audio (M12): audio(4) (`dev/audio.c`) is machine-independent; drivers reach it only
   through `AudioHwIf`, `audio_attach_mi` and `audio_pintr`/`audio_rintr`, called with
   `AUDIO_LOCK` held. azalia(4) attaches QEMU's `intel-hda` on both architectures (through

@@ -1463,7 +1463,8 @@ audio_play := disk_login + " " + \
     "--expect 'rate=48000' --expect 'encoding=s16le' --expect 'tone-42'"
 
 # M12: USB. QEMU's `qemu-xhci` with a `usb-storage` stick and a `usb-kbd` (`--usb`,
-# devices.rs): xhci(4), uhub(4), umass(4) below a scsibus, the stick as sd1 on amd64 (vioblk
+# devices.rs): xhci(4), uhub(4), uhidev(4) and ukbd(4) for the keyboard, umass(4) below a
+# scsibus, the stick as sd1 on amd64 (vioblk
 # is sd0) and sd2 on arm64 (the boot disk is sd1 there). Logs in as `smoke-login` does,
 # mounts the stick's FAT partition with mount_msdos(8) (`i`, spoofed from its MBR), reads
 # the note and checks the 1 MiB file's cksum(1) (made on the host, devices.rs), copies it,
@@ -1489,6 +1490,8 @@ usb_session := "--send-after '# ' --send 'mount_msdos /dev/SDi /mnt && cat /mnt/
 usb_check := "--expect 'usb0 at xhci0: USB revision 3.0' --expect 'uhub0 at usb0' " + \
     "--expect 'umass0 at uhub0 port 1 configuration 1 interface 0 \"QEMU QEMU USB HARDDRIVE\"' " + \
     "--expect 'umass0: using SCSI over Bulk-Only' " + \
+    "--expect 'uhidev0 at uhub0 port 6 configuration 1 interface 0 \"QEMU QEMU USB Keyboard\"' " + \
+    "--expect 'ukbd0 at uhidev0' " + \
     "--expect 'emibsd m12: hello from a usb stick' --expect '4071711340 1048576 /mnt/BIG.BIN' " + \
     "--expect 'usb-42'"
 

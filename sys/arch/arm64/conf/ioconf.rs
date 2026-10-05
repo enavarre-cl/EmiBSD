@@ -11,7 +11,7 @@
 //! `plrtc* at fdt?`, `efi0 at mainbus?`, `simplebus* at fdt?`, `ampintcmsi* at fdt? early
 //! 1`, `pciecam* at fdt?`, `pci* at pciecam?`, `virtio* at pci?`, `xhci* at pci?`, `usb* at
 //! xhci?`, `uhub* at usb?`, `uhub* at uhub?`, `umass* at uhub?` and `scsibus* at scsi?` below
-//! it (M12), `cpu0 at mainbus?`
+//! it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12), `cpu0 at mainbus?`
 //! and, with `MULTIPROCESSOR`, `GENERIC.MP`'s `cpu* at mainbus?`;
 //! `azalia* at pci?` and `audio* at azalia?` (M12);
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
@@ -22,8 +22,9 @@
 //! attach below it); `agintc`, which also carries it, is not ported. Every other GENERIC
 //! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*` and
 //! `vioblk*`, the devices at `pci?` but `virtio*`, `xhci*` and `azalia*`, the other host
-//! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*` and
-//! `umass*`, ...),
+//! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
+//! `umass*` and `uhidev*`, the devices at `uhidev?` but `ukbd*` (`wskbd* at ukbd?` waits
+//! for wskbd, M13), ...),
 //! as do the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s layout:
 //! attachment, driver, unit, state, locators, flags, parents (indices into `CFDATA`), the
 //! start of its locator names and the first unit a starred entry may take.
@@ -51,7 +52,9 @@ use crate::dev::pv::vioscsi::{VIOSCSI_CA, VIOSCSI_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
+use crate::dev::usb::uhidev::{UHIDEV_CA, UHIDEV_CD};
 use crate::dev::usb::uhub::{UHUB_CA, UHUB_CD, UHUB_UHUB_CA};
+use crate::dev::usb::ukbd::{UKBD_CA, UKBD_CD};
 use crate::dev::usb::umass::{UMASS_CA, UMASS_CD};
 use crate::dev::usb::usb::{USB_CA, USB_CD};
 use crate::dev::usb::xhci::XHCI_CD;
@@ -117,13 +120,20 @@ const PV_UHUB: &[i16] = &[22, 23];
 /// uhub {[port = -1], ...}`).
 const LOC_UHUB_UNK: &[i64] = &[-1, -1, -1, -1, -1, -1];
 
+/// `pv[]` for children of `uhidev*` (`cfdata[25]`): the `uhidbus` attribute (`files.usb`:
+/// `define uhidbus {[reportid = -1]}`) is carried by `uhidev` alone here.
+const PV_UHIDEV: &[i16] = &[25];
+
+/// `loc[]` of an entry at `uhidbus` with the default `reportid = -1`.
+const LOC_UHIDBUS_UNK: &[i64] = &[-1];
+
 /// `pv[]` for children of the `audio` attribute, carried by `azalia*` (`cfdata[17]`).
 const PV_AZALIA: &[i16] = &[17];
 
 /// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`),
 /// `softraid0` (`cfdata[11]`) and `umass*` (`cfdata[24]`).
-/// M13: also `vioscsi*` (`cfdata[25]`).
-const PV_VIOBLK: &[i16] = &[5, 11, 24, 25];
+/// M13: also `vioscsi*` (`cfdata[27]`).
+const PV_VIOBLK: &[i16] = &[5, 11, 24, 27];
 
 /// `pv[]` for children of `scsibus*` (`cfdata[9]`).
 const PV_SCSIBUS: &[i16] = &[9];
@@ -134,9 +144,9 @@ const LOC_SCSIBUS_UNK: &[i64] = &[-1, -1];
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    28
+    30
 } else {
-    27
+    29
 };
 
 /// `cfdata[]`.
@@ -412,7 +422,31 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 25: vioscsi* at virtio?
+    // 25: uhidev* at uhub?
+    Cfdata::new(
+        &UHIDEV_CA,
+        &UHIDEV_CD,
+        0,
+        FSTATE_STAR,
+        LOC_UHUB_UNK,
+        0,
+        PV_UHUB,
+        0,
+        0,
+    ),
+    // 26: ukbd* at uhidev?
+    Cfdata::new(
+        &UKBD_CA,
+        &UKBD_CD,
+        0,
+        FSTATE_STAR,
+        LOC_UHIDBUS_UNK,
+        0,
+        PV_UHIDEV,
+        0,
+        0,
+    ),
+    // 27: vioscsi* at virtio?
     Cfdata::new(
         &VIOSCSI_CA,
         &VIOSCSI_CD,
@@ -424,7 +458,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 26: cd* at scsibus?
+    // 28: cd* at scsibus?
     Cfdata::new(
         &CD_CA,
         &CD_CD,
@@ -436,7 +470,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 27: cpu* at mainbus? (GENERIC.MP)
+    // 29: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];
