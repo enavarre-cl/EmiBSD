@@ -50,21 +50,21 @@ impl Arch {
         }
     }
 
-    fn qemu(self) -> &'static str {
+    pub(crate) fn qemu(self) -> &'static str {
         match self {
             Arch::Amd64 => "qemu-system-x86_64",
             Arch::Arm64 => "qemu-system-aarch64",
         }
     }
 
-    fn edk2_code(self) -> &'static str {
+    pub(crate) fn edk2_code(self) -> &'static str {
         match self {
             Arch::Amd64 => "edk2-x86_64-code.fd",
             Arch::Arm64 => "edk2-aarch64-code.fd",
         }
     }
 
-    fn edk2_vars(self) -> &'static str {
+    pub(crate) fn edk2_vars(self) -> &'static str {
         match self {
             Arch::Amd64 => "edk2-i386-vars.fd",
             Arch::Arm64 => "edk2-arm-vars.fd",
@@ -165,6 +165,11 @@ pub(crate) fn set_smp(n: Option<u32>) {
     }
 }
 
+/// The `--smp N` of this run, if one was given.
+pub(crate) fn smp() -> Option<u32> {
+    SMP.get().copied()
+}
+
 /// The path of persistent disk `k` (`sd<k>`): disk 0 is [`disk_path`], the others are
 /// `disk-<arch>[-<tag>]-sd<k>.img`.
 pub(crate) fn disk_path_n(root: &Path, arch: Arch, tag: Option<&str>, k: usize) -> PathBuf {
@@ -257,7 +262,7 @@ fn limine_file(file: &str) -> Result<PathBuf> {
     )
 }
 
-fn edk2_file(file: &str) -> Result<PathBuf> {
+pub(crate) fn edk2_file(file: &str) -> Result<PathBuf> {
     locate(
         "EMIBSD_EDK2_DIR",
         "qemu",

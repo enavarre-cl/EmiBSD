@@ -1,0 +1,29 @@
+# The OpenBSD -current snapshot `cargo xtask diff-openbsd` compares EmiBSD with (M12+, the
+# user's decision of 2026-10-05: the official snapshot nearest the pin, amd64 and arm64).
+#
+# Downloaded once from the official mirror into target/openbsd/<arch>/ (never committed, never
+# redistributed: the binaries are test fixtures) and checked twice: the snapshot's own SHA256
+# file must hash to `sha256_file`, and it must list `install_img` with `install_img_sha256`,
+# which the download must match. Any mismatch stops the run.
+#
+# The pin is reference/openbsd-src at 3ce1f3f79392 (2026-10-02). The mirrors keep only the
+# latest snapshot; the nearest one still there on 2026-10-05 was built a day (amd64) and two
+# days (arm64) after the pin. Differences that come from that gap are listed, with a reason, in
+# diff-openbsd/expected.toml.
+
+mirror = "https://cdn.openbsd.org/pub/OpenBSD/snapshots"
+version = "8.0"
+pin = "3ce1f3f79392"
+fetched = "2026-10-05"
+
+[arch.amd64]
+build_date = "Sat Oct  3 20:46:48 UTC 2026"   # BUILDINFO
+sha256_file = "e1aa6a0fa264025df8317320fdb067f3227397b51a046ee60720939e12c2da2e"
+install_img = "install80.img"
+install_img_sha256 = "7c25a596459ddd57dbfd7e06e2cd0749c5a362eb37e9ccbaeaaedb3d546adb5e"
+
+[arch.arm64]
+build_date = "Sun Oct  4 23:15:57 UTC 2026"   # BUILDINFO
+sha256_file = "d739bf78a72e8a4d93a0f7da401a7b23334731688396d80439a9e2668a73fbde"
+install_img = "install80.img"
+install_img_sha256 = "639c66a98e949b2b658046bbe94bb4c7b23c3520bf4ba8513ed5cddbc81c1c01"

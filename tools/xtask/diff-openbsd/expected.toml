@@ -1,0 +1,9 @@
+# Differences between EmiBSD and OpenBSD that `cargo xtask diff-openbsd` accepts, each with
+# its reason (M12+). Every other difference fails the run, and so does an entry here that no
+# longer differs: the file must say exactly what differs and why.
+#
+# [[difference]]
+# step   = "<set>/<scenario>#<n>"   the step id (scenario.rs)
+# cmd    = "..."                     the step's command, as in the .scn file
+# arch   = "amd64"                   optional; both archs when absent
+# reason = "..."                     why EmiBSD does not, or should not, behave as OpenBSD here

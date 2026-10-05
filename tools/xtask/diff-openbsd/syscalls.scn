@@ -1,0 +1,19 @@
+# diff-openbsd set `syscalls` (format: tools/xtask/src/diffopenbsd/scenario.rs): the system
+# call probes of tools/difftest, section by section, in one directory of the scratch file
+# system (`setup` mounted it on /mnt). Each probe prints its return value or `-1 ENAME`, so a
+# different errno is a different line.
+
+## probes
+! mkdir /mnt/sc
+! cd /mnt/sc
+$ difftest syscalls files
+$ difftest syscalls dirs
+$ difftest syscalls links
+$ difftest syscalls perms
+$ difftest syscalls procs
+$ difftest syscalls ipc
+$ difftest syscalls memory
+$ difftest syscalls sysctl
+$ difftest syscalls ostype
+$ ls -1a
+! cd /

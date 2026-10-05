@@ -25,7 +25,8 @@
  * one run; addresses and times are never printed, except times the program
  * set itself.
  *
- * usage: difftest syscalls          probes, in a new directory ./sc
+ * usage: difftest syscalls [sect]   probes (one section of them) in the
+ *                                   current directory
  *        difftest stat path ...     lstat(2) fields of each path
  *        difftest dirents dir       readdir(3) order, types and inodes
  *        difftest truncate path len truncate(2)
@@ -936,10 +937,6 @@ t_sysctl(void)
 	len = sizeof(v);
 	R("hw.pagesize", sysctl(mib, 2, &v, &len, NULL, 0) == 0 ? v : -1);
 	mib[0] = CTL_KERN;
-	mib[1] = KERN_OSTYPE;
-	len = sizeof(s);
-	R("kern.ostype", sysctl(mib, 2, s, &len, NULL, 0));
-	printf("kern.ostype value: %s\n", s);
 	mib[1] = KERN_ARGMAX;
 	len = sizeof(v);
 	R("kern.argmax", sysctl(mib, 2, &v, &len, NULL, 0) == 0 ? v : -1);
@@ -955,22 +952,58 @@ t_sysctl(void)
 	R("set kern.ostype", sysctl(mib, 2, NULL, NULL, "x", 1));
 }
 
+/* The system's name: the one line EmiBSD's branding changes (kept apart). */
 static void
-syscalls(void)
+t_ostype(void)
 {
-	if (mkdir("sc", 0755) == -1 || chdir("sc") == -1) {
-		printf("difftest: cannot make ./sc: %s\n", ename(errno));
-		exit(1);
+	int mib[2];
+	char s[64];
+	size_t len;
+
+	section("ostype");
+	mib[0] = CTL_KERN;
+	mib[1] = KERN_OSTYPE;
+	len = sizeof(s);
+	R("kern.ostype", sysctl(mib, 2, s, &len, NULL, 0));
+	printf("kern.ostype value: %s\n", s);
+}
+
+static const struct {
+	const char *name;
+	void (*fn)(void);
+} sections[] = {
+	{ "files", t_files },
+	{ "dirs", t_dirs },
+	{ "links", t_links },
+	{ "perms", t_perms },
+	{ "procs", t_procs },
+	{ "ipc", t_ipc },
+	{ "memory", t_memory },
+	{ "sysctl", t_sysctl },
+	{ "ostype", t_ostype },
+};
+
+/*
+ * The probes of section `name` (all of them, in order, for NULL), in the
+ * current directory, which must be empty at the start: each section uses
+ * the files the ones before it left.
+ */
+static void
+syscalls(const char *name)
+{
+	size_t i;
+	int found = 0;
+
+	for (i = 0; i < sizeof(sections) / sizeof(sections[0]); i++) {
+		if (name == NULL || strcmp(name, sections[i].name) == 0) {
+			sections[i].fn();
+			found = 1;
+		}
 	}
-	t_files();
-	t_dirs();
-	t_links();
-	t_perms();
-	t_procs();
-	t_ipc();
-	t_memory();
-	t_sysctl();
-	printf("# done\n");
+	if (!found) {
+		printf("difftest: no section %s\n", name);
+		exit(2);
+	}
 }
 
 static void
@@ -992,7 +1025,7 @@ dirents(const char *path)
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: difftest syscalls | stat path ... | dirents dir |"
+	fprintf(stderr, "usage: difftest syscalls [section] | stat path ... | dirents dir |"
 	    " truncate path len | utimes path sec\n");
 	exit(2);
 }
@@ -1007,8 +1040,8 @@ main(int argc, char *argv[])
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	if (argc < 2)
 		usage();
-	if (strcmp(argv[1], "syscalls") == 0 && argc == 2)
-		syscalls();
+	if (strcmp(argv[1], "syscalls") == 0 && argc <= 3)
+		syscalls(argc == 3 ? argv[2] : NULL);
 	else if (strcmp(argv[1], "stat") == 0 && argc > 2) {
 		for (i = 2; i < argc; i++)
 			show(argv[i]);

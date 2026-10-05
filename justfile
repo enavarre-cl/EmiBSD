@@ -1509,6 +1509,18 @@ userland:
     cargo xtask userland --arch amd64
     cargo xtask userland --arch arm64
 
+# M12+: the same scenarios on EmiBSD and on a real OpenBSD VM, compared step by step
+# (`cargo xtask diff-openbsd`, tools/xtask/src/diffopenbsd.rs; the scenarios and the expected
+# differences are in tools/xtask/diff-openbsd/). The first run downloads the OpenBSD snapshot
+# recorded in tools/xtask/openbsd-snapshot.toml and installs it with autoinstall(8) into
+# target/openbsd/ (once per arch, kept); later runs boot it with `-snapshot` beside the smokes'
+# MP kernel. Its files go to target/diff-openbsd unless EMIBSD_RUN_DIR says otherwise. Needs
+# `just userland`. Beside `ci`, not in it (timings in docs/ARCHITECTURE.md, "diff-openbsd").
+diff-openbsd: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64
+    @test -f target/userland/amd64/root/usr/bin/difftest -a -f target/userland/arm64/root/usr/bin/difftest || \
+        { echo "diff-openbsd: no difftest in target/userland; run just userland first"; exit 1; }
+    EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/diff-openbsd} cargo xtask diff-openbsd {{smp}}
+
 # --- quality -----------------------------------------------------------------
 
 # host unit tests (libkern + libz + bsd through sys/arch/host, plus xtask's own)

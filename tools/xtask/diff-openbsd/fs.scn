@@ -1,0 +1,92 @@
+# diff-openbsd set `fs` (format: tools/xtask/src/diffopenbsd/scenario.rs): file-system
+# operations through OpenBSD's own utilities and tools/difftest, in /mnt/fs on the scratch FFS
+# (`setup`): create, link, symlink, rename, chmod, chown, truncate, times, stat fields,
+# directory listings and their order on disk, removal, and the error cases of each. Both
+# systems run the same OpenBSD userland, so a difference is the kernel's.
+
+## create
+! mkdir /mnt/fs
+! cd /mnt/fs
+$ echo hello >a && cat a
+$ echo more >>a && cat a && wc -c a
+$ : >empty && difftest stat empty a
+$ mkdir -p d1/d2/d3 && ls -1R d1
+$ mkdir d1
+$ mkdir d1/x/y
+$ cat missing
+$ echo x >d1/d2
+$ touch -t 202001020304.05 a && stat -f '%m %z %HT %Lp' a
+
+## links
+$ ln a hard && difftest stat a hard
+$ ln -s a soft && readlink soft && cat soft
+$ ln -s nowhere dangling && readlink dangling && cat dangling
+$ ln a hard
+$ ln d1 dirlink
+$ ln -s a soft
+$ stat -f '%HT %z %l' soft dangling
+$ stat -L -f '%HT %z %l' soft
+$ difftest stat soft dangling hard
+
+## rename
+$ mv a b && ls -1
+$ mv b d1/ && ls -1 d1
+$ mv d1/b . && ls -1 d1
+$ mv d1 d1/d2
+$ mv nosuch x
+$ mkdir e1 e2 && touch e2/x && mv e1 e2 && ls -1R e2
+$ mv e2 e1
+$ mkdir e3 && mv e2/e1 e3 && ls -1 e2 e3
+$ mv b hard && difftest stat hard
+$ mv soft s2 && readlink s2 && cat s2
+
+## chmod
+$ touch m && chmod 4751 m && stat -f '%Sp %Lp' m
+$ chmod u=rw,go= m && stat -f '%Sp' m
+$ chmod 1777 d1 && stat -f '%Sp' d1
+$ chown 12:34 m && stat -f '%u %g' m
+$ chmod 0 m && echo secret >m && cat m
+$ chmod 0644 nosuch
+$ chmod -h 0700 s2 && stat -f '%Sp' s2
+
+## truncate
+$ difftest truncate m 10000 && difftest stat m
+$ difftest truncate m 0 && difftest stat m
+$ dd if=/dev/zero of=big bs=64k count=16 2>/dev/null && difftest stat big
+$ difftest truncate big 1 && wc -c big && difftest stat big
+$ difftest truncate d1 0
+$ difftest truncate nosuch 0
+
+## times
+$ difftest utimes hard 1000000000 && stat -f '%m %a' hard
+$ touch -t 199912312359.59 hard && stat -f '%m %a' hard
+$ touch -m -t 203801190314.07 hard && stat -f '%m' hard
+
+## stat
+$ stat -f '%HT %Lp %l %z %u %g' . d1 hard s2 empty
+$ difftest stat . .. d1 d1/d2 d1/d2/d3
+
+## listing
+$ ls -1a
+$ ls -1aF
+$[dates] ls -la
+$ ls -1 nosuch d1
+$ difftest dirents .
+$ difftest dirents d1
+
+## remove
+$ rm hard s2 dangling && ls -1
+$ rm d1
+$ rmdir d1
+$ rmdir d1/d2/d3/
+$ rm -r d1 && ls -1
+$ rmdir .
+$ rm nosuch
+$ rm -f nosuch
+$ for i in 1 2 3 4 5 6 7 8; do echo $i >f$i; done && rm f3 f5 && echo new >g && difftest dirents .
+! cd /
+$ rm -rf /mnt/fs && ls -1a /mnt
+
+## space
+$ df -k /mnt
+$ umount /mnt && echo unmounted

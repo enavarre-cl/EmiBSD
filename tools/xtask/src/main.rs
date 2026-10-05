@@ -52,6 +52,11 @@
 //!                                          in target/smoke/RECIPE (its images, disks and
 //!                                          log); a line per recipe, the failed ones' logs
 //!                                          at the end (smokeall.rs)
+//! cargo xtask diff-openbsd [--arch A]... [--smp N] [--kernel-dir D] [fetch|install|run]
+//!                                          the same scenarios on EmiBSD and on a real OpenBSD
+//!                                          VM (the snapshot of openbsd-snapshot.toml,
+//!                                          installed under target/openbsd), compared step by
+//!                                          step (diffopenbsd.rs)
 //! cargo xtask unsafe-report [--write]    `unsafe` blocks, fns, impls and traits per kernel
 //!                                          subsystem, test code apart; --write puts the totals
 //!                                          on docs/STATUS.md's `Unsafe` line (unsafereport.rs)
@@ -84,6 +89,7 @@ use serde::Deserialize;
 mod boot;
 mod bsdmake;
 mod devices;
+mod diffopenbsd;
 mod e2fs;
 mod https;
 mod hwopts;
@@ -113,6 +119,7 @@ const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | 
                      smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--disk-fresh] [--disks N] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
                      smoke-all [-j N] [--just PATH] RECIPE... | \
                      unsafe-report [--write] | \
+                     diff-openbsd [--arch A]... [--smp N] [--kernel-dir D] [fetch | install | run] | \
                      symbolize --arch A [--kernel K] | userland --arch A | ntfs-image OUT [--check] | \
                      e2fsck --arch A [--disk-set NAME] [--cat PATH=TEXT]... | \
                      nvme-root --arch A [--duid HEX] [--out FILE]>";
@@ -310,6 +317,7 @@ fn run(args: &[String]) -> Result<()> {
             let a = smokeall::parse_args(rest)?;
             smokeall::smoke_all(&root, a.jobs, a.just, &a.recipes)
         }
+        ["diff-openbsd", rest @ ..] => diffopenbsd::diff_openbsd(&root, rest),
         ["unsafe-report"] => unsafereport::unsafe_report(&root, false),
         ["unsafe-report", "--write"] => unsafereport::unsafe_report(&root, true),
         ["gen-syscalls"] => syscalls::gen_syscalls(&root, false),
