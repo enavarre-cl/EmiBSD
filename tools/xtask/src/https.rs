@@ -113,6 +113,7 @@ pub fn start(root: &Path, values: &[&str]) -> Result<Servers> {
         if !dir.is_dir() {
             return Err(format!("https server: {}: no such directory", dir.display()).into());
         }
+        wait_free(spec.port)?;
         let mut cmd = Command::new(&openssl);
         cmd.arg("s_server")
             .args(["-accept", &spec.port.to_string()])
@@ -163,6 +164,35 @@ pub fn start(root: &Path, values: &[&str]) -> Result<Servers> {
         );
     }
     Ok(servers)
+}
+
+/// How long [`wait_free`] waits for another run's server to go away.
+const FREE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Waits until nothing accepts TCP connections on 127.0.0.1:`port`. The ports are fixed (the
+/// guest's commands name them), so a second run on this machine that needs them at the same
+/// time (`smoke-https` in two worktrees) would otherwise fail to bind, and the guest would
+/// talk to the other run's server while [`wait_listening`] took it for its own. Waiting
+/// serialises the two; `smoke-all` itself never runs two such recipes at once.
+fn wait_free(port: u16) -> Result<()> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let started = Instant::now();
+    let mut told = false;
+    while TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+        if started.elapsed() > FREE_TIMEOUT {
+            return Err(format!(
+                "https server: {addr} still in use after {}s",
+                FREE_TIMEOUT.as_secs()
+            )
+            .into());
+        }
+        if !told {
+            println!("https server: {addr} is in use (another run?); waiting for it");
+            told = true;
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    Ok(())
 }
 
 /// Waits until something accepts TCP connections on 127.0.0.1:`port`. The probe connects

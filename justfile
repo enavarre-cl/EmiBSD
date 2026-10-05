@@ -60,8 +60,32 @@ run-amd64: image-amd64
 run-arm64: image-arm64
     cargo xtask qemu --arch arm64
 
-# Boots per arch, every one with a virtio network card on QEMU's user network: a plain one that
-# must reach the end of main() (status 33), printing the EmiBSD 8.0 version banner and the
+# `just smoke`: every recipe of `smokes`, `jobs` at a time (`cargo xtask smoke-all`,
+# tools/xtask/src/smokeall.rs). `smoke-build` first builds all they boot, once and in order;
+# then each recipe runs as `just --no-deps <recipe>` in a directory of its own,
+# target/smoke/<recipe> (`EMIBSD_RUN_DIR`: its boot images, EDK2 variable stores and
+# persistent disks, and `log`, its output), so no two recipes write the same file, and with
+# its time limits scaled for the shared cores. A line is printed as each recipe ends, the log
+# of every failed one at the end. `JOBS=8 just smoke` (or `just jobs=8 smoke`) runs eight at a
+# time, `JOBS=1` one after the other. A new smoke recipe goes into `smokes`; `just <recipe>`
+# alone still builds what it needs and runs in target/.
+jobs := env("JOBS", "4")
+smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
+    "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
+    "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid " + \
+    "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
+    "smoke-net-mp smoke-up"
+
+smoke: smoke-build
+    cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
+
+# What the smoke recipes boot: the MULTIPROCESSOR kernels with `--features qemu`, the init
+# stand-ins, and `smoke-up`'s uniprocessor kernels (`build-up`).
+smoke-build: build-up (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64
+
+# `smoke-boot`, the first of `smokes` (it was `smoke`'s own body until the smokes ran in
+# parallel). Boots per arch, every one with a virtio network card on QEMU's user network: a
+# plain one that must reach the end of main() (status 33), printing the EmiBSD 8.0 version banner and the
 # virtio attach lines, with init checking its identity through sysctl(2) and the vfs system
 # calls failing as they must with no root file system yet (`main` says it cannot mount root and
 # `check_console` that /dev/console does not exist) and making the console tty its controlling
@@ -87,12 +111,12 @@ run-arm64: image-arm64
 # (`init: tcp ok`: lo0 configured, connect/accept on 127.0.0.1, a line each way, FIN, close).
 # All of those boot without a ramdisk (`--ramdisk none`, so the kernel says
 # `rd: no ramdisk module`, `--expect-ramdisk`) and run the Rust stand-in init, the kernel's
-# self-test. Then `smoke-shell` (M8's exit criterion) boots the ffs ramdisk `just userland`
+# self-test. Next in `smokes`, `smoke-shell` (M8's exit criterion) boots the ffs ramdisk `just userland`
 # makes, booted `-s` (RB_SINGLE; a plain boot goes multi-user, see `smoke-login`): rd(4) reads
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
-smoke: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64 smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-softraid smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp smoke-net-mp smoke-up
+smoke-boot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
         --expect "EmiBSD 8.0 (GENERIC) #" \
@@ -1318,18 +1342,22 @@ smoke-ddbmp: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
         --expect "    3: stopped" --expect "*   0: ddb" --expect "    1: stopped" \
         --expect "cpus-4-resumed"
 
-# M11e: the one uniprocessor boot `smoke` keeps (the user's decision of 2026-10-03), per arch,
-# to catch a dependency on MULTIPROCESSOR in the default kernel: the kernel built without the
-# feature, kept as `bsd.up`, boots on one processor without a ramdisk and the init stand-in
-# passes. The MP kernel is rebuilt last, so `target/<arch>/debug/bsd` stays the MP one. Part
-# of `smoke`.
-smoke-up: build-init-amd64 build-init-arm64
+# The uniprocessor kernels of `smoke-up`: built without MULTIPROCESSOR and kept as
+# `target/<arch>/debug/bsd.up`. The MP kernel is rebuilt last, so `target/<arch>/debug/bsd`
+# stays the MP one (cargo keeps both builds; switching back only relinks the file).
+build-up:
     cargo build -p bsd --target {{amd64}} --features qemu
     cp target/{{amd64}}/debug/bsd target/{{amd64}}/debug/bsd.up
     cargo build -p bsd --target {{arm64}} --features qemu
     cp target/{{arm64}}/debug/bsd target/{{arm64}}/debug/bsd.up
     cargo build -p bsd --target {{amd64}} --features qemu,multiprocessor
     cargo build -p bsd --target {{arm64}} --features qemu,multiprocessor
+
+# M11e: the one uniprocessor boot `smoke` keeps (the user's decision of 2026-10-03), per arch,
+# to catch a dependency on MULTIPROCESSOR in the default kernel: the kernel built without the
+# feature, kept as `bsd.up`, boots on one processor without a ramdisk and the init stand-in
+# passes (`build-up` makes `bsd.up`). Part of `smoke`.
+smoke-up: build-up build-init-amd64 build-init-arm64
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd.up --ramdisk none \
         --expect "bsd: booted on amd64" --expect "cpu0 at mainbus0: (uniprocessor)" \
         --expect "selftest: malloc/pool stress ok" --expect "init: processes ok" \

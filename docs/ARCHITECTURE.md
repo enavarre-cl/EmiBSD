@@ -936,7 +936,8 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   wrote) is established on the 8259; arm64's comes from the node through `ampintc`.
 - QEMU's disks (M10a, `boot.rs`, `qemu_command`): besides the boot image every VM has one
   persistent virtio-blk disk, the raw 64 MiB sparse file `target/disk-<arch>.img`
-  (`disk-<arch>-a.img` / `-b.img` for `smoke2`'s two VMs), created zero-filled when missing
+  (`disk-<arch>-a.img` / `-b.img` for `smoke2`'s two VMs; in `target/smoke/<recipe>/` instead
+  of `target/` when `just smoke` runs the recipe, see "Parallel smokes"), created zero-filled when missing
   and reused as is, so what a guest wrote survives the next boot; `--disk-fresh` (`qemu`,
   `smoke`, `smoke2`) recreates it. It is added after every NIC: on amd64 it is
   `virtio-blk-pci` on a later PCI slot (the NIC stays `virtio0`/`vio0`, dev 2; the boot
@@ -1137,3 +1138,34 @@ Misc Device"`), and `-boot menu=on,splash-time=0` sets the boot manager's timeou
 `etc/boot-menu-wait`. ArmVirtQemu otherwise waits its platform default: about 5 s of every
 arm64 boot (firmware start to `BdsDxe: starting` went from 5.5 s to 0.5 s). OVMF's default is
 already 0, so amd64 boots gain nothing measurable there.
+
+### Parallel smokes
+
+`just smoke` (and so `just ci`) runs its recipes several at a time, four by default, since a
+sequential run had grown to about 35 minutes of boots under TCG. Decided on 2026-10-04 (the
+user's plan). The shape is one build phase, then one run phase:
+
+- `smoke-build` builds everything a recipe boots, once and in order: the MULTIPROCESSOR
+  kernels with `--features qemu`, the init stand-ins, and `smoke-up`'s uniprocessor kernels
+  (`build-up`, which leaves `bsd.up` beside the MP `bsd`). No recipe builds while others boot.
+- `cargo xtask smoke-all -j N` (`tools/xtask/src/smokeall.rs`) runs each recipe of the
+  justfile's `smokes` list as `just --no-deps <recipe>`, N at a time, longest first by the
+  time each took last. A recipe runs exactly as `just <recipe>` would, with the same
+  expectations; `just <recipe>` alone still builds what it needs and runs in `target/`.
+- Every recipe gets a run directory, `target/smoke/<recipe>/` (`EMIBSD_RUN_DIR`, read by
+  `boot::run_dir`): its boot images, EDK2 variable stores and persistent disks are there, so
+  no two recipes write the same file (QEMU's image locking would refuse the second writer,
+  and `smoke-disk` and `smoke-ufsopts` both format `sd0`). The disks persist between runs as
+  `target/disk-*.img` do; the boot images and variable stores of a passed recipe are deleted.
+  Its output goes to `log` there: one line is printed per recipe as it ends, and the whole log
+  of every failed recipe after the last one; the command fails if any recipe failed.
+- The other shared resources were already per run: `smoke2`'s link is a pair of free UDP
+  ports asked of the system (asked again, up to three times, if QEMU finds one taken in
+  between); the HTTPS test servers' ports (8443-8445) are fixed, but only `smoke-https` uses
+  them, and a server waits for a port another run holds (another worktree's `just ci`).
+- Time limits (180 s per boot, or a recipe's `--timeout`) are multiplied by
+  `EMIBSD_TIMEOUT_SCALE`, which `smoke-all` sets to N/2 rounded up (2 for N = 4): the VMs
+  share the host's cores, and the limits are there to catch hangs. No expectation changes.
+
+`JOBS=N just smoke` (or `just jobs=N smoke`, or `JOBS=N just ci`) picks another N; `JOBS=1`
+runs the recipes one after the other, still each in its own directory.

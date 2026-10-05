@@ -85,6 +85,27 @@ pub const QEMU_SUCCESS_STATUS: i32 = 33;
 /// Longest a smoke boot may take, EDK2 and Limine included, under TCG.
 pub(crate) const SMOKE_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// The environment variable that multiplies every smoke and smoke2 time limit (see
+/// [`time_limit`]).
+pub(crate) const TIMEOUT_SCALE_ENV: &str = "EMIBSD_TIMEOUT_SCALE";
+
+/// A smoke or smoke2 time limit (the default [`SMOKE_TIMEOUT`] or a recipe's `--timeout`)
+/// multiplied by `$EMIBSD_TIMEOUT_SCALE`, a whole number from 1 (the default) to 10.
+/// `smoke-all` sets it when recipes run side by side: their VMs share the host's cores, so a
+/// boot that takes 60 s alone may take two or three times that, and the limits exist to catch
+/// hangs, not slowness. No expectation changes with it.
+pub(crate) fn time_limit(base: Duration) -> Duration {
+    base * timeout_scale(std::env::var(TIMEOUT_SCALE_ENV).ok().as_deref())
+}
+
+/// The factor of [`time_limit`], from the variable's value; anything not in 1..=10 is 1.
+fn timeout_scale(value: Option<&str>) -> u32 {
+    value
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|n| (1..=10).contains(n))
+        .unwrap_or(1)
+}
+
 const SECTOR: u64 = 512;
 /// 192 MiB: room for FAT32 if the formatter picks it, and for the modules: the debug kernel
 /// and the ramdisk (23 MiB since M9+ added LibreSSL, ftp and nc) outgrew 64 MiB, and the
@@ -97,11 +118,26 @@ const PART_START: u64 = 2048;
 /// this name and hands it to rd(4).
 pub const RAMDISK_MODULE: &str = "ramdisk.ffs";
 
+/// The environment variable naming a run's directory (see [`run_dir`]).
+pub(crate) const RUN_DIR_ENV: &str = "EMIBSD_RUN_DIR";
+
+/// Where a run keeps the files it writes for its VMs: boot images, EDK2 variable stores and
+/// persistent disks. `target/` by default; `$EMIBSD_RUN_DIR` (relative to the workspace root,
+/// or absolute) otherwise, which `smoke-all` sets to `target/smoke/<recipe>` so that recipes
+/// running at the same time never share a writable file (QEMU's image locking refuses a
+/// second writer, and a disk one recipe formats must not surprise another).
+pub(crate) fn run_dir(root: &Path) -> PathBuf {
+    match std::env::var_os(RUN_DIR_ENV) {
+        Some(dir) if !dir.is_empty() => root.join(dir),
+        _ => root.join("target"),
+    }
+}
+
 /// The boot image's path. `tag` names one VM of a two-VM run (`smoke2`): `emibsd-<arch>-<tag>.img`,
-/// so concurrent QEMUs never share a writable disk.
+/// so concurrent QEMUs never share a writable disk. Like every per-run file it lives in
+/// [`run_dir`].
 pub(crate) fn image_path(root: &Path, arch: Arch, tag: Option<&str>) -> PathBuf {
-    root.join("target")
-        .join(format!("emibsd-{}{}.img", arch.name(), dash(tag)))
+    run_dir(root).join(format!("emibsd-{}{}.img", arch.name(), dash(tag)))
 }
 
 /// Size of the persistent disk: 64 MiB, sparse.
@@ -110,8 +146,7 @@ pub(crate) const DISK_SIZE: u64 = 64 * 1024 * 1024;
 /// The persistent disk's path: `disk-<arch>.img`, or `disk-<arch>-<tag>.img` for a `smoke2` VM.
 /// Unlike the boot image it is never rebuilt, so what a guest wrote survives across boots.
 pub(crate) fn disk_path(root: &Path, arch: Arch, tag: Option<&str>) -> PathBuf {
-    root.join("target")
-        .join(format!("disk-{}{}.img", arch.name(), dash(tag)))
+    run_dir(root).join(format!("disk-{}{}.img", arch.name(), dash(tag)))
 }
 
 /// The most persistent disks a VM can have (`--disks`, M10f's softraid smokes).
@@ -136,8 +171,7 @@ pub(crate) fn disk_path_n(root: &Path, arch: Arch, tag: Option<&str>, k: usize) 
     if k == 0 {
         return disk_path(root, arch, tag);
     }
-    root.join("target")
-        .join(format!("disk-{}{}-sd{k}.img", arch.name(), dash(tag)))
+    run_dir(root).join(format!("disk-{}{}-sd{k}.img", arch.name(), dash(tag)))
 }
 
 /// Makes sure the persistent disk at `path` exists: created sparse and zero-filled when
@@ -519,7 +553,7 @@ pub(crate) fn qemu_command(
     }
     let code = edk2_file(arch.edk2_code())?;
     let vars_src = edk2_file(arch.edk2_vars())?;
-    let vars = root.join("target").join(format!(
+    let vars = run_dir(root).join(format!(
         "edk2-{}{}-vars.fd",
         arch.name(),
         dash(vm.map(|v| v.tag))
@@ -752,6 +786,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         }
     };
     let expected_status = status;
+    let limit = time_limit(SMOKE_TIMEOUT);
     let mut cmd = qemu_command(root, arch, &image, "stdio", None, &disks)?;
     cmd.stdin(if !sends.is_empty() {
         Stdio::piped()
@@ -822,7 +857,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
         if let Some(status) = child.try_wait()? {
             break Some(status);
         }
-        if started.elapsed() > SMOKE_TIMEOUT {
+        if started.elapsed() > limit {
             timed_out = true;
             let _ = child.kill();
             let _ = child.wait();
@@ -1029,6 +1064,16 @@ mod tests {
         fs::remove_file(&path).unwrap();
         assert!(ensure_disk(&path, true).unwrap());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn timeout_scale_is_a_small_whole_factor() {
+        assert_eq!(timeout_scale(None), 1);
+        assert_eq!(timeout_scale(Some("2")), 2);
+        assert_eq!(timeout_scale(Some(" 3\n")), 3);
+        assert_eq!(timeout_scale(Some("0")), 1);
+        assert_eq!(timeout_scale(Some("11")), 1);
+        assert_eq!(timeout_scale(Some("1.5")), 1);
     }
 
     #[test]

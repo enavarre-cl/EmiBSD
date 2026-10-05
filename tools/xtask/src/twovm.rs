@@ -235,10 +235,75 @@ pub fn smoke2(
     ramdisk: Option<&Path>,
     plan: Plan,
 ) -> Result<()> {
-    let ports = free_udp_ports()?;
+    let boot = Boot {
+        root,
+        arch,
+        kernel,
+        cmdline,
+        init,
+        ramdisk,
+    };
+    let mut attempt = 1;
+    loop {
+        let ports = free_udp_ports()?;
+        match run(&boot, &plan, ports, attempt == LINK_ATTEMPTS)? {
+            Outcome::Done => return Ok(()),
+            Outcome::LinkPortTaken => {
+                println!(
+                    "xtask: smoke2 {}: a link port ({} or {}) was taken before QEMU bound it; \
+                     booting again on two new ports",
+                    arch.name(),
+                    ports.0,
+                    ports.1
+                );
+                attempt += 1;
+            }
+        }
+    }
+}
+
+/// How many times [`smoke2`] boots its two VMs when QEMU finds a link port taken.
+/// [`free_udp_ports`] releases the ports it found before QEMU binds them, so another process
+/// (another `smoke2` of `smoke-all`, or any program asking for an ephemeral port) may take one
+/// in between; QEMU then exits at once with `Address already in use`.
+const LINK_ATTEMPTS: u32 = 3;
+
+/// What QEMU prints when a `dgram` netdev cannot bind its local port.
+const PORT_TAKEN: &str = "Address already in use";
+
+/// The boot arguments of a [`smoke2`] run, the same for every attempt.
+struct Boot<'a> {
+    root: &'a Path,
+    arch: Arch,
+    kernel: Option<&'a Path>,
+    cmdline: Option<&'a str>,
+    init: Option<&'a Path>,
+    ramdisk: Option<&'a Path>,
+}
+
+/// How one attempt of [`smoke2`] ended, when it did not fail.
+enum Outcome {
+    /// Both scripts were done: the run passed.
+    Done,
+    /// A VM's QEMU could not bind its link port; the run is to be tried again.
+    LinkPortTaken,
+}
+
+/// One attempt of [`smoke2`] on the link `ports`. Unless it is the `last` attempt, a failure
+/// caused by a taken link port is [`Outcome::LinkPortTaken`] instead of an error.
+fn run(boot: &Boot<'_>, plan: &Plan, ports: (u16, u16), last: bool) -> Result<Outcome> {
+    let Boot {
+        root,
+        arch,
+        kernel,
+        cmdline,
+        init,
+        ramdisk,
+    } = *boot;
     let started = Instant::now();
+    let limit = boot::time_limit(plan.timeout);
     let mut vms: Vec<Vm> = Vec::new();
-    for (index, script) in [plan.a, plan.b].into_iter().enumerate() {
+    for (index, script) in [plan.a.clone(), plan.b.clone()].into_iter().enumerate() {
         let link = vm_link(index, ports);
         let image = match kernel {
             Some(k) => boot::image_tagged(root, arch, Some(link.tag), k, cmdline, init, ramdisk)?,
@@ -328,7 +393,7 @@ pub fn smoke2(
         if failure.is_some() || vms.iter().all(|v| v.done_at.is_some()) {
             break;
         }
-        if started.elapsed() > plan.timeout {
+        if started.elapsed() > limit {
             let late: Vec<String> = vms
                 .iter()
                 .filter(|v| v.done_at.is_none())
@@ -370,6 +435,12 @@ pub fn smoke2(
         }
         outputs.push((serial, diagnostics));
     }
+    if failure.is_some() && !last && outputs.iter().any(|(_, d)| d.contains(PORT_TAKEN)) {
+        for (vm, (serial, diagnostics)) in vms.iter().zip(&outputs) {
+            vm.report(serial, diagnostics);
+        }
+        return Ok(Outcome::LinkPortTaken);
+    }
     let mut summary: Vec<String> = Vec::new();
     for (vm, (serial, diagnostics)) in vms.iter().zip(&outputs) {
         let t = serial.as_bytes();
@@ -399,7 +470,7 @@ pub fn smoke2(
                 arch.name(),
                 summary.join("; ")
             );
-            Ok(())
+            Ok(Outcome::Done)
         }
         Some(why) => Err(format!("smoke2 {}: {why}; {}", arch.name(), summary.join("; ")).into()),
     }

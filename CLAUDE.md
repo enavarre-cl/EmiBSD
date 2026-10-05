@@ -52,7 +52,7 @@ Two mapping rules:
 |---|---|
 | `just build` | kernel for amd64 + arm64 |
 | `just run-amd64` / `just run-arm64` | boot in QEMU, serial on stdio |
-| `just smoke` | boot both archs headless, assert serial output and exit code |
+| `just smoke` | boot both archs headless, assert serial output and exit code; recipes run `JOBS` (4) at a time |
 | `just test` | host unit tests (libkern + bsd through arch/host) |
 | `just test-ref` | tests that cross-check constants against the C reference |
 | `just clippy` / `just fmt` | clippy for amd64, arm64 and host with `-D warnings` / format check |

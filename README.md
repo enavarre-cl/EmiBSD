@@ -281,6 +281,8 @@ Three tiers:
 3. QEMU smoke tests (`just smoke`): boot both architectures headless and assert serial lines and
    exit codes. A full run boots 67 single VMs and 24 pairs of VMs, all on the
    `multiprocessor` kernel with `-smp 4` except `smoke-up`'s uniprocessor boot per arch.
+   The recipes run four at a time, each in its own `target/smoke/<recipe>/` with its own log;
+   `JOBS=N just smoke` changes N.
 
 `just ci` runs fmt, clippy for amd64, arm64 and the host, all tests, both builds, every smoke and
 the tracker checks. Green `just ci` is the definition of done.

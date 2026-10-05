@@ -42,6 +42,12 @@
 //!                                          boot TWO VMs of A at once, each with vio1 on a
 //!                                          private link, each running its own script; pass
 //!                                          when both saw all they expect (twovm.rs)
+//! cargo xtask smoke-all [-j N] [--just PATH] RECIPE...
+//!                                          run the justfile's smoke RECIPEs with
+//!                                          `just --no-deps`, N (default 4) at a time, each
+//!                                          in target/smoke/RECIPE (its images, disks and
+//!                                          log); a line per recipe, the failed ones' logs
+//!                                          at the end (smokeall.rs)
 //! cargo xtask symbolize --arch A [--kernel K]
 //!                                          annotate the addresses of a stack trace on stdin
 //!                                          with K's symbols (default: the debug kernel)
@@ -56,7 +62,10 @@
 //! ```
 //!
 //! Paths are resolved from the workspace root (derived from `CARGO_MANIFEST_DIR`), never from the
-//! current directory.
+//! current directory. The files a boot writes (the image, the EDK2 variable store, the
+//! persistent disks; `target/...` above) go to `$EMIBSD_RUN_DIR` instead of `target/` when it
+//! is set (`smoke-all` does, per recipe); `$EMIBSD_TIMEOUT_SCALE` (1 to 10) multiplies the
+//! time limits of `smoke` and `smoke2`.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
@@ -70,6 +79,7 @@ mod bsdmake;
 mod e2fs;
 mod https;
 mod ntfsgen;
+mod smokeall;
 mod symbolize;
 mod syscalls;
 mod twovm;
@@ -91,6 +101,7 @@ const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | 
                      qemu --arch A [--kernel K] [--init I] [--ramdisk R] [--disk-fresh] [--disks N] [--disk-set NAME] | gen-syscalls [--check] | \
                      smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--disk-fresh] [--disks N] [--disk-set NAME] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
                      smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--disk-fresh] [--disks N] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
+                     smoke-all [-j N] [--just PATH] RECIPE... | \
                      symbolize --arch A [--kernel K] | userland --arch A | ntfs-image OUT [--check] | \
                      e2fsck --arch A [--disk-set NAME] [--cat PATH=TEXT]...>";
 
@@ -280,6 +291,10 @@ fn run(args: &[String]) -> Result<()> {
                 ramdisk.as_deref(),
                 plan,
             )
+        }
+        ["smoke-all", rest @ ..] => {
+            let a = smokeall::parse_args(rest)?;
+            smokeall::smoke_all(&root, a.jobs, a.just, &a.recipes)
         }
         ["gen-syscalls"] => syscalls::gen_syscalls(&root, false),
         ["gen-syscalls", "--check"] => syscalls::gen_syscalls(&root, true),

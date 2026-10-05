@@ -17,6 +17,14 @@ Three tiers. Every change lands with the tier it belongs to.
    `multiprocessor` kernel with `-smp 4` (the justfile's `smp` variable, recipes built with
    `--features qemu,multiprocessor`); `smoke-up` is the one uniprocessor boot per arch, kept
    to catch a dependency on MP. New smokes follow suit: MP, `{{smp}}`, both archs.
+   `just smoke` runs the recipes of the justfile's `smokes` list in parallel, `JOBS` at a time
+   (default 4; `cargo xtask smoke-all`, docs/ARCHITECTURE.md "Parallel smokes"). So a smoke
+   recipe: is added to `smokes`; builds nothing in its body (what it boots is built by its
+   dependencies and by `smoke-build`, which runs alone first); writes per-run files only
+   through xtask (`EMIBSD_RUN_DIR` puts them in `target/smoke/<recipe>/`), never a shared
+   path under `target/`; and depends on no other recipe's disks or order. A recipe that
+   needs a fixed host port has it to itself; a time limit is not tightened to fit a quiet
+   machine (`EMIBSD_TIMEOUT_SCALE` scales them under parallel load).
 
 Always:
 
