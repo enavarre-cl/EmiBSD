@@ -24,7 +24,7 @@
 
 ## Status
 
-Status: M11 (SMP) met, its last part M11e (the MP audit) included; M12 (devices) next.
+Status: M12 (devices: audio and USB in QEMU) met; M13 (storage, firmware and console) under way.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -50,7 +50,7 @@ Status: M11 (SMP) met, its last part M11e (the MP audit) included; M12 (devices)
 | M11c | ddb on MP: the command loop, the other CPUs stopped by IPI, `machine cpuinfo`, `machine ddbcpu` | met |
 | M11d | Network parallelism: one softnet task queue per CPU (up to 8), `kern_intrmap.c`, SMR for the interface index | met |
 | M11e | The MP audit: every `MULTIPROCESSOR` site, MPSAFE flags and `SY_NOLOCK` honoured, unlocked page faults; every smoke runs on four CPUs | met |
-| M12 | Devices (audio, USB), in QEMU | next |
+| M12 | Devices in QEMU: audio(4) with azalia and auich, USB with xhci, uhub, umass and ukbd; arm64's PCI bus | met |
 | M12+ | Measurement and verification: unsafe-report, JOURNAL, diff-openbsd | next |
 | M13 | Storage, firmware and console | next |
 | M14, M14b | Installable; code and test layout | next |
@@ -106,6 +106,12 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
 - ddb(4) on four processors: `sysctl ddb.trigger=1` from the shell stops every other CPU by
   IPI, `machine ddbcpu 1` moves the debugger to CPU 1, `machine cpuinfo` shows the other three
   stopped, and `continue` resumes them all (`smoke-ddbmp`).
+- Audio: aucat(1) plays a tone through `/dev/audio0` on Intel HD Audio (azalia(4)) on both
+  archs and on AC97 (auich(4)) on amd64; audioctl(8) and mixerctl(8) show and set the
+  device, and QEMU's WAV capture must hold the tone (`smoke-audio`).
+- USB: xhci(4) and uhub(4) enumerate QEMU's stick and keyboard; umass(4) makes the stick an
+  sd(4) disk whose FAT partition mount_msdos(8) mounts, reads, writes and compares after a
+  remount; uhidev(4) and ukbd(4) attach the keyboard (`smoke-usb`).
 
 Between two VMs on a private link (`cargo xtask smoke2`):
 
@@ -226,6 +232,23 @@ if-destroyed-6
 softnets-4
 ```
 
+And from `smoke-usb` and `smoke-audio` on amd64 (trimmed):
+
+```
+xhci0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x000d rev 0x01: irq 10, xHCI 1.0
+usb0 at xhci0: USB revision 3.0
+umass0 at uhub0 port 1 configuration 1 interface 0 "QEMU QEMU USB HARDDRIVE" rev 3.00/0.00 addr 2
+sd1 at scsibus1 targ 1 lun 0: <QEMU, QEMU HARDDISK, 2.5+> serial.46f4000100:00:04.0-1
+ukbd0 at uhidev0
+emibsd m12: hello from a usb stick
+4071711340 1048576 /mnt/BIG.BIN
+azalia0 at pci0 dev 4 function 0 vendor 0x8086 product 0x2668 rev 0x01: irq 10
+audio0 at azalia0
+outputs.master=126,126
+# aucat -i /root/tone.wav && echo tone-$((40+2))
+tone-42
+```
+
 The real console also prints `unported: <name>` lines. Each one is a known gap, reported once.
 
 ## Quick start (macOS)
@@ -270,7 +293,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 4 | 137 | 645 | 16 | 802 |
+| 5 | 139 | 708 | 16 | 868 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).

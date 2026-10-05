@@ -1,19 +1,19 @@
 # Status
 
-Milestone: **M10 done**; **M11 done** (M11a..M11e: SMP); M12 next. Updated: 2026-10-04.
+Milestone: **M11 done** (SMP); **M12 done** (devices in QEMU); M13 under way. Updated: 2026-10-05.
 
 Done:
 - M7a..M10f: uvm, virtio, IPv4/6, TCP, ffs root, init, login, sockets, wg, IPsec, pf, bpf;
   disks, quotas, tmpfs/msdosfs/cd9660/udf/vnd, softraid, NFS, ext2fs, ntfs, fuse (`smoke-*`).
-- M11a..M11d: APs through Limine, the kernel lock, per-CPU run queues, SMR, IPIs and TLB
-  shootdowns; MP timekeeping; ddb on MP; eight softnet queues, one kept per CPU.
-- M11e: the MP audit. pageqlock and pm_mtx real, uvm_fault and exit unlocked; MPSAFE flags,
-  softclockmp and SY_NOLOCK honoured; every KERNEL_LOCK comment a real call; SMR in the
-  network. Every `just smoke` recipe now boots the MP kernel with `-smp 4`; `smoke-up` is
-  the one uniprocessor boot; `smoke-tcpbench` stresses TCP between two MP VMs.
+- M11: APs, the kernel lock, per-CPU run queues, SMR, IPIs; MP timekeeping and ddb; softnet
+  per CPU; the MP audit. Every smoke boots the MP kernel with `-smp 4`; `smoke-up` is UP.
+- M12: audio(4), azalia (amd64 and arm64) and auich/ac97 (amd64); the USB core, xhci,
+  uhub, umass, uhidev/ukbd, hid; a PCI bus on arm64 (pciecam, GICv2m MSI). `smoke-audio`
+  plays a tone with aucat(1) into QEMU's WAV capture; `smoke-usb` mounts a FAT stick.
 
 Next:
-- M12 (devices: audio, USB in QEMU), then M13..M15.
+- M13 (storage, firmware, console; nvme, vioscsi and cd are in), then M14, M15.
+- M13 picks up M12's leftovers: wskbd and ukbdmap.c (the keyboard is silent until then).
 
 Blockers:
 - amd64 kernel stacks are tight: about 4.9 KB stay free under softraid I/O (M10f measure).
@@ -21,6 +21,7 @@ Blockers:
   until acpitimer/acpihpet recalibrate it (M13; accepted by the user).
 - A `diagnostic` MP kernel panics at boot (`uvm_page_physload: page size not set!`).
 - Statistics counters the C bumps unlocked stay `Cell`s (docs/ARCHITECTURE.md, M11e).
+- arm64 configures azalia although its GENERIC does not (QEMU's HD Audio; ROADMAP M12).
 
 Decisions pending (the user's): the scope section (open until M13); the PC's CPU (Intel VMX
 or AMD SVM) for vmm, named when M15 starts; the exact Raspberry Pi 4 model; networking in M15;
