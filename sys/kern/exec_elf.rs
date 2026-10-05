@@ -90,9 +90,6 @@
 //!   nothing; the port does not check either (only the name comparison decides).
 //! - `hwcap`/`hwcap2` are the C's globals (atomics here); arm64's `cpu_identify` (`cpu.c`),
 //!   which sets them, is not ported, so arm64 passes 0.
-//! - The interpreter (`ld.so`) is not built by `cargo xtask userland`; a `PT_INTERP`
-//!   executable is loaded as the C does and fails in `elf_load_file`'s `namei` until a file
-//!   system holds `/usr/libexec/ld.so`.
 //! - The 4-clause licence of the Wasabi Systems block (advertising clause) was accepted by
 //!   the user at M2 for this project.
 

@@ -46,32 +46,39 @@
 //!
 //! Upstream: sys/uvm/uvm_mmap.c @ 3ce1f3f79392
 //!
-//! Status: `wip`. Milestone M7a ports the anonymous-memory half of the file: `sys_mquery`,
-//! `uvm_wxcheck`, `sys_mmap`, `sys_msync`, `sys_munmap`, `sys_mprotect`, `sys_pinsyscalls`,
-//! `sys_mimmutable`, `sys_minherit`, `sys_madvise`, `sys_mlock`, `sys_munlock`,
-//! `sys_mlockall`, `sys_munlockall`, `uvm_mmaplock`, `uvm_mmapanon` and `sys_kbind`.
-//! `uvm_mmapfile` (vnode and device mappings) comes with the vnode layer.
+//! Every function of the file: `sys_mquery`, `uvm_wxcheck`, `sys_mmap`, `sys_msync`,
+//! `sys_munmap`, `sys_mprotect`, `sys_pinsyscalls`, `sys_mimmutable`, `sys_minherit`,
+//! `sys_madvise`, `sys_mlock`, `sys_munlock`, `sys_mlockall`, `sys_munlockall`,
+//! `uvm_mmaplock`, `uvm_mmapanon`, `uvm_mmapfile` and `sys_kbind`. M7a brought the
+//! anonymous half; M14 the file half (`fd_getfile`, the vnode checks, `uvm_mmapfile` over
+//! `uvn_attach`), which `ld.so` needs to map shared libraries.
 //!
 //! ## Deviations
-//! - No file table and no vnodes: `sys_mmap` of a descriptor and `sys_mquery` with `fd >= 0`
-//!   report `fd_getfile`/`getvnode` (`kern_descrip.c`) and fail; `uvm_mmapfile` is not here.
-//! - `uvm_wxcheck`: `ps_textvp` has no mount (no vnodes), so W^X is never allowed; the
-//!   `uvm_wxabort` path reports `log` and then `sigexit`s.
+//! - Device mappings (`VCHR` other than `/dev/zero`): `udv_attach` (`uvm_device.c`) is not
+//!   ported, so `uvm_mmapfile` reports it and fails with `ENOSYS`; `/dev/zero` becomes an
+//!   anonymous mapping as in the C, and block devices go through `uvn_attach` as in the C.
 //! - `pmap_wired_count` exists on both machines, so the `suser` branches of `mlock(2)` and
 //!   friends are not compiled, as in the C.
 
 use core::sync::atomic::{AtomicI32, Ordering};
 
+use crate::kern::kern_descrip::fd_getfile;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, mallocarray};
 use crate::kern::kern_pledge::pledge_protexec;
 use crate::kern::kern_sig::sigexit;
+use crate::kern::vfs_syscalls::getvnode;
+use crate::kern::vfs_vops::VOP_GETATTR;
+use crate::log;
+use crate::machine::conf::iszerodev;
 use crate::machine::copy::{copyin, kcopy};
 use crate::machine::cpu::Cpu;
 use crate::machine::exec::MachineExec;
 use crate::machine::pmap::pmap_wired_count;
 use crate::machine::{Machine, VmParam};
 use crate::sys::errno::Errno;
+use crate::sys::fcntl::{FREAD, FWRITE};
+use crate::sys::file::{DTYPE_VNODE, File, frele};
 use crate::sys::malloc::{M_PINSYSCALL, M_WAITOK, M_ZERO};
 use crate::sys::mman::{
     __MAP_NOFAULT, __MAP_NOREPLACE, MADV_DONTNEED, MADV_FREE, MADV_NORMAL, MADV_RANDOM,
@@ -80,39 +87,54 @@ use crate::sys::mman::{
     MCL_CURRENT, MCL_FUTURE, MS_ASYNC, MS_INVALIDATE, MS_SYNC, PROT_EXEC, PROT_NONE, PROT_READ,
     PROT_WRITE,
 };
+use crate::sys::mount::MNT_WXALLOWED;
 use crate::sys::param::PAGE_MASK;
-use crate::sys::proc::{Proc, p_hassibling};
+use crate::sys::proc::{PSI_WXNEEDED, Proc, p_hassibling};
 use crate::sys::resource::{RLIMIT_DATA, RLIMIT_MEMLOCK};
 use crate::sys::resourcevar::lim_cur;
 use crate::sys::signal::{SIGABRT, SIGILL};
+use crate::sys::stat::{APPEND, IMMUTABLE};
 use crate::sys::syscall::SYS_MAXSYSCALL;
 use crate::sys::syscallargs::{
     SysKbindArgs, SysMadviseArgs, SysMimmutableArgs, SysMinheritArgs, SysMlockArgs,
     SysMlockallArgs, SysMmapArgs, SysMprotectArgs, SysMqueryArgs, SysMsyncArgs, SysMunlockArgs,
     SysMunmapArgs, SysPinsyscallsArgs,
 };
+use crate::sys::syslog::LOG_NOTICE;
 use crate::sys::systm::{SysArgs, kernel_lock, kernel_unlock, sysargs};
-use crate::sys::types::Register;
+use crate::sys::types::{Off, Register};
 use crate::sys::unistd::{KBIND_BLOCK_MAX, KBIND_DATA_MAX, Kbind};
+use crate::sys::vnode::{VBLK, VCHR, VREG, Vattr, Vnode};
 use crate::unported;
 use crate::uvm::uvm_amap::AMAP_REFALL;
 use crate::uvm::uvm_extern::{
-    PROT_MASK, UVM_FLAG_CONCEAL, UVM_FLAG_COPYONW, UVM_FLAG_FIXED, UVM_FLAG_OVERLAY,
-    UVM_FLAG_STACK, UVM_FLAG_UNMAP, UVM_LK_ENTER, UVM_UNKNOWN_OFFSET, VmProt, uvm_mapflag,
+    PROT_MASK, UVM_FLAG_CONCEAL, UVM_FLAG_COPYONW, UVM_FLAG_FIXED, UVM_FLAG_NOFAULT,
+    UVM_FLAG_OVERLAY, UVM_FLAG_STACK, UVM_FLAG_UNMAP, UVM_LK_ENTER, UVM_UNKNOWN_OFFSET, VmProt,
+    Voff, uvm_mapflag,
 };
 use crate::uvm::uvm_init::UVMEXP;
 use crate::uvm::uvm_km::kernel_map;
 use crate::uvm::uvm_map::{
-    UVM_EXTRACT_FIXPROT, UvmMapDeadq, VmMap, uvm_map_advice, uvm_map_checkprot, uvm_map_clean,
-    uvm_map_extract, uvm_map_hint, uvm_map_immutable, uvm_map_inherit, uvm_map_mquery,
-    uvm_map_pageable, uvm_map_pageable_all, uvm_map_protect, uvm_mapanon, uvm_unmap,
-    uvm_unmap_detach, uvm_unmap_remove, vm_map_lock, vm_map_unlock,
+    UVM_EXTRACT_FIXPROT, UvmMapDeadq, VmMap, uvm_map, uvm_map_advice, uvm_map_checkprot,
+    uvm_map_clean, uvm_map_extract, uvm_map_hint, uvm_map_immutable, uvm_map_inherit,
+    uvm_map_mquery, uvm_map_pageable, uvm_map_pageable_all, uvm_map_protect, uvm_mapanon,
+    uvm_unmap, uvm_unmap_detach, uvm_unmap_remove, vm_map_lock, vm_map_unlock,
 };
 use crate::uvm::uvm_map::{VM_MAP_PINSYSCALL_ONCE, VM_MAP_WIREFUTURE};
 use crate::uvm::uvm_pager::{PGO_CLEANIT, PGO_DEACTIVATE, PGO_FREE, PGO_SYNCIO};
 use crate::uvm::uvm_param::{atop, ptoa, round_page, trunc_page};
+use crate::uvm::uvm_vnode::{uvm_vnp_uncache, uvn_attach};
 
 use crate::sys::proc::BOGO_PC;
+
+/// What the file half of `sys_mmap` did with a descriptor.
+enum VnodeMapping {
+    /// `uvm_mmapfile` mapped the vnode.
+    Mapped,
+    /// The vnode is `/dev/zero`: `MAP_ANON` was set, and the mapping is anonymous (the C's
+    /// `goto is_anon`).
+    ZeroDev,
+}
 
 /// `ALIGN_ADDR(addr, size, pageoff)`: page align `addr` and `size`, returning `EINVAL` on
 /// wraparound. Yields the aligned address and size and the page offset taken off.
@@ -160,11 +182,10 @@ pub fn sys_mquery(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(
         flags |= UVM_FLAG_FIXED;
     }
 
-    let uoff = if fd >= 0 {
-        // getvnode(p, fd, &fp); uoff = SCARG(uap, pos): see the module's deviations.
-        return Err(unported!("sys_mquery: getvnode (kern_descrip.c)"));
+    let (fp, uoff) = if fd >= 0 {
+        (Some(getvnode(p, fd)?), uap.pos.get())
     } else {
-        UVM_UNKNOWN_OFFSET
+        (None, UVM_UNKNOWN_OFFSET)
     };
 
     if vaddr == 0 {
@@ -176,9 +197,15 @@ pub fn sys_mquery(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(
         );
     }
 
-    uvm_map_mquery(&p.vmspace().vm_map, &mut vaddr, size, uoff, flags)?;
-    retval[0] = vaddr as Register;
-    Ok(())
+    let error = uvm_map_mquery(&p.vmspace().vm_map, &mut vaddr, size, uoff, flags);
+    if error.is_ok() {
+        retval[0] = vaddr as Register;
+    }
+
+    if let Some(fp) = fp {
+        let _ = frele(fp, p);
+    }
+    error
 }
 
 /// `uvm_wxabort`: kill a process that attempts a W^X violation (`kern.wxabort`).
@@ -187,10 +214,13 @@ pub static UVM_WXABORT: AtomicI32 = AtomicI32::new(0);
 /// `uvm_wxcheck`: W^X violations are only allowed on permitted filesystems.
 fn uvm_wxcheck(p: &Proc, call: &str) -> Result<(), Errno> {
     let pr = p.process();
-    // pr->ps_textvp->v_mount->mnt_flag & MNT_WXALLOWED: see the module's deviations.
-    let wxallowed = false;
+    let wxallowed = pr
+        .ps_textvp
+        .get()
+        .and_then(|vp| vp.v_mount.get())
+        .is_some_and(|mp| mp.mnt_flag.get() & MNT_WXALLOWED != 0);
 
-    if wxallowed {
+    if wxallowed && pr.ps_iflags.get() & PSI_WXNEEDED != 0 {
         return Ok(());
     }
 
@@ -200,9 +230,8 @@ fn uvm_wxcheck(p: &Proc, call: &str) -> Result<(), Errno> {
         let n = pr.ps_wxcounter.get();
         pr.ps_wxcounter.set(n + 1);
         if n == 0 {
-            // log(LOG_NOTICE, ...): no syslog yet; see the module's deviations.
-            let _ = unported!("uvm_wxcheck: log (subr_log.c)");
-            crate::kprintf!(
+            log!(
+                LOG_NOTICE,
                 "{}({}): {} W^X violation\n",
                 core::str::from_utf8(pr.comm()).unwrap_or("?"),
                 pr.ps_pid.get(),
@@ -273,7 +302,8 @@ pub fn sys_mmap(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(),
     pledge_protexec(p, prot)?;
 
     // align file position and save offset. adjust size.
-    let (_pos, size, pageoff) = align_addr(pos as usize, size)?;
+    let (pos, size, pageoff) = align_addr(pos as usize, size)?;
+    let pos = pos as Off;
 
     // now check (MAP_FIXED) or get (!MAP_FIXED) the "addr"
     if flags & MAP_FIXED != 0 {
@@ -296,14 +326,26 @@ pub fn sys_mmap(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(),
 
     // check for file mappings (i.e. not anonymous) and verify file.
     if flags & MAP_ANON == 0 {
-        // fd_getfile(fdp, fd), the vnode checks, uvm_mmapfile: see the module's deviations.
-        return Err(unported!(
-            "sys_mmap: file mappings (fd_getfile, kern_descrip.c)"
-        ));
-    }
-
-    // MAP_ANON case
-    if fd != -1 {
+        kernel_lock(); // KERNEL_LOCK()
+        let Some(fp) = fd_getfile(p.fd(), fd) else {
+            kernel_unlock();
+            return Err(Errno::EBADF);
+        };
+        let error = mmap_vnode(p, fp, &mut addr, size, prot, &mut flags, pos);
+        let _ = frele(fp, p);
+        kernel_unlock(); // KERNEL_UNLOCK()
+        match error {
+            // remember to add offset
+            Ok(VnodeMapping::Mapped) => {
+                retval[0] = (addr + pageoff) as Register;
+                return Ok(());
+            }
+            // special case: SunOS style /dev/zero, mapped as anonymous memory below.
+            Ok(VnodeMapping::ZeroDev) => {}
+            Err(e) => return Err(e),
+        }
+    } else if fd != -1 {
+        // MAP_ANON case
         return Err(Errno::EINVAL);
     }
 
@@ -341,6 +383,115 @@ pub fn sys_mmap(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<(),
     // remember to add offset
     retval[0] = (addr + pageoff) as Register;
     Ok(())
+}
+
+/// The file half of `sys_mmap`, between `fd_getfile` and `FRELE` (run under the kernel
+/// lock): checks the file and the vnode, settles the sharing type and `maxprot`, and maps
+/// through `uvm_mmapfile`. `pos` and `size` are page aligned.
+fn mmap_vnode(
+    p: &Proc,
+    fp: &'static File,
+    addr: &mut usize,
+    size: usize,
+    prot: VmProt,
+    flags: &mut i32,
+    pos: Off,
+) -> Result<VnodeMapping, Errno> {
+    if fp.f_type.get() != DTYPE_VNODE {
+        return Err(Errno::ENODEV); // only mmap vnodes!
+    }
+    let vp = fp.vnode(); // convert to vnode
+    let vtype = vp.v_type.get();
+
+    if vtype != VREG && vtype != VCHR && vtype != VBLK {
+        return Err(Errno::ENODEV); // only REG/CHR/BLK support mmap
+    }
+
+    // (pos + size) < pos, in the C's unsigned arithmetic.
+    if vtype == VREG && (pos as u64).wrapping_add(size as u64) < pos as u64 {
+        return Err(Errno::EINVAL); // no offset wrapping
+    }
+
+    // special case: catch SunOS style /dev/zero
+    if vtype == VCHR && iszerodev(vp.v_rdev()) {
+        *flags |= MAP_ANON;
+        return Ok(VnodeMapping::ZeroDev);
+    }
+
+    // Old programs may not select a specific sharing type, so default to an appropriate one.
+    if *flags & (MAP_SHARED | MAP_PRIVATE) == 0 {
+        #[cfg(feature = "debug")]
+        crate::kprintf!(
+            "WARNING: defaulted mmap() share type to {} (pid {} comm {})\n",
+            if vtype == VCHR {
+                "MAP_SHARED"
+            } else {
+                "MAP_PRIVATE"
+            },
+            p.process().ps_pid.get(),
+            core::str::from_utf8(p.process().comm()).unwrap_or("?")
+        );
+        if vtype == VCHR {
+            *flags |= MAP_SHARED; // for a device
+        } else {
+            *flags |= MAP_PRIVATE; // for a file
+        }
+    }
+
+    // MAP_PRIVATE device mappings don't make sense (and aren't supported anyway). However,
+    // some programs rely on this, so just change it to MAP_SHARED.
+    if vtype == VCHR && *flags & MAP_PRIVATE != 0 {
+        *flags = (*flags & !MAP_PRIVATE) | MAP_SHARED;
+    }
+
+    // now check protection
+    let mut maxprot = PROT_EXEC;
+
+    // check read access
+    if fp.flag() & FREAD != 0 {
+        maxprot |= PROT_READ;
+    } else if prot & PROT_READ != 0 {
+        return Err(Errno::EACCES);
+    }
+
+    // check write access, shared case first
+    if *flags & MAP_SHARED != 0 {
+        // if the file is writable, only add PROT_WRITE to maxprot if the file is not
+        // immutable, append-only. otherwise, if we have asked for PROT_WRITE, return EPERM.
+        if fp.flag() & FWRITE != 0 {
+            let mut va = Vattr::new();
+            VOP_GETATTR(vp, &mut va, p.p_ucred.get(), p)?;
+            if va.va_flags & u64::from(IMMUTABLE | APPEND) == 0 {
+                maxprot |= PROT_WRITE;
+            } else if prot & PROT_WRITE != 0 {
+                return Err(Errno::EPERM);
+            }
+        } else if prot & PROT_WRITE != 0 {
+            return Err(Errno::EACCES);
+        }
+    } else {
+        // MAP_PRIVATE mappings can always write to
+        maxprot |= PROT_WRITE;
+    }
+    if *flags & __MAP_NOFAULT != 0 || (*flags & MAP_PRIVATE != 0 && prot & PROT_WRITE != 0) {
+        let limit = lim_cur(RLIMIT_DATA) as usize;
+        if limit < size || limit - size < ptoa(p.vmspace().vm_dused.get() as usize) {
+            return Err(Errno::ENOMEM);
+        }
+    }
+    uvm_mmapfile(
+        &p.vmspace().vm_map,
+        addr,
+        size,
+        prot,
+        maxprot,
+        *flags,
+        vp,
+        pos,
+        lim_cur(RLIMIT_MEMLOCK) as usize,
+        p,
+    )?;
+    Ok(VnodeMapping::Mapped)
 }
 
 /// `sys_msync`: the msync system call (a front-end for flush).
@@ -779,6 +930,115 @@ pub fn uvm_mmapanon(
 
     uvm_mapanon(map, addr, size, align, uvmflag)?;
     uvm_mmaplock(map, addr, size, prot, locklimit)
+}
+
+/// `uvm_mmapfile`: internal version of mmap for non-anons, used by `sys_mmap`. The caller
+/// must page-align the file offset.
+#[allow(clippy::too_many_arguments)] // the C's signature
+pub fn uvm_mmapfile(
+    map: &VmMap,
+    addr: &mut usize,
+    size: usize,
+    prot: VmProt,
+    maxprot: VmProt,
+    flags: i32,
+    vp: &'static Vnode,
+    foff: Voff,
+    locklimit: usize,
+    _p: &Proc,
+) -> Result<(), Errno> {
+    let advice = MADV_NORMAL;
+    let mut uvmflag = 0;
+    let align = 0; // userland page size
+
+    // for non-fixed mappings, round off the suggested address. for fixed mappings, check
+    // alignment and zap old mappings.
+    if flags & MAP_FIXED == 0 {
+        *addr = round_page(*addr); // round
+    } else {
+        if *addr & PAGE_MASK != 0 {
+            return Err(Errno::EINVAL);
+        }
+
+        uvmflag |= UVM_FLAG_FIXED;
+        if flags & __MAP_NOREPLACE == 0 {
+            uvmflag |= UVM_FLAG_UNMAP;
+        }
+    }
+
+    // the access a private mapping asks of the object: never write.
+    let accessprot = |maxprot: VmProt| {
+        if flags & MAP_SHARED != 0 {
+            maxprot
+        } else {
+            maxprot & !PROT_WRITE
+        }
+    };
+
+    // attach to underlying vm object.
+    let uobj = if vp.v_type.get() != VCHR {
+        let uobj = uvn_attach(vp, accessprot(maxprot));
+
+        // XXXCDC: hack from old code: don't allow vnodes which have been mapped
+        // shared-writeable to persist [forces them to be flushed out when last reference
+        // goes]. It also avoids a deadlock between the uncache and a write of the same area
+        // of the file, and protects from the "persistbug" program; not a long term solution.
+        // The uncache needs no VOP_LOCK: the reference uvn_attach took keeps the uvn alive.
+        if flags & MAP_SHARED != 0 && (prot & PROT_WRITE != 0 || maxprot & PROT_WRITE != 0) {
+            uvm_vnp_uncache(vp);
+        }
+        uobj
+    } else {
+        // udv_attach(vp->v_rdev, accessprot(maxprot), foff, size), retried with PROT_EXEC
+        // dropped from maxprot for devices that refuse it, then advice = MADV_RANDOM: see
+        // the module's deviations.
+        return Err(unported!("uvm_mmapfile: udv_attach (uvm_device.c)"));
+    };
+
+    let Some(uobj) = uobj else {
+        return Err(if vp.v_type.get() == VREG {
+            Errno::ENOMEM
+        } else {
+            Errno::EINVAL
+        });
+    };
+
+    if flags & MAP_SHARED == 0 {
+        uvmflag |= UVM_FLAG_COPYONW;
+    }
+    if flags & __MAP_NOFAULT != 0 {
+        uvmflag |= UVM_FLAG_NOFAULT | UVM_FLAG_OVERLAY;
+    }
+    if flags & MAP_STACK != 0 {
+        uvmflag |= UVM_FLAG_STACK;
+    }
+    if flags & MAP_CONCEAL != 0 {
+        uvmflag |= UVM_FLAG_CONCEAL;
+    }
+
+    // set up mapping flags
+    let uvmflag = uvm_mapflag(
+        prot,
+        maxprot,
+        if flags & MAP_SHARED != 0 {
+            MAP_INHERIT_SHARE
+        } else {
+            MAP_INHERIT_COPY
+        },
+        advice,
+        uvmflag,
+    );
+
+    match uvm_map(map, addr, size, Some(uobj), foff, align, uvmflag) {
+        Ok(()) => uvm_mmaplock(map, addr, size, prot, locklimit),
+        Err(error) => {
+            // errors: first detach from the uobj, if any.
+            if let Some(detach) = uobj.pgops().pgo_detach {
+                detach(uobj);
+            }
+            Err(error)
+        }
+    }
 }
 
 /// `sys_kbind`: the lazy-binding update of `ld.so`: writes the new PLT/GOT data into the
