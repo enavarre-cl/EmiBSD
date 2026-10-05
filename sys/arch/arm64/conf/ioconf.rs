@@ -14,7 +14,7 @@
 //! it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12), `cpu0 at mainbus?`
 //! and, with `MULTIPROCESSOR`, `GENERIC.MP`'s `cpu* at mainbus?`;
 //! `azalia* at pci?` and `audio* at azalia?` (M12); `vioscsi* at virtio?` and `cd* at
-//! scsibus?`, `psci* at fdt? early 1` (M13);
+//! scsibus?`, `psci* at fdt? early 1`, `ahci* at pci?` and `nvme* at pci?` (M13);
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
@@ -22,7 +22,8 @@
 //! `simplebus` and `ampintc` (`device ampintc: fdt`, whose GICv2m frames `ampintcmsi`
 //! attach below it); `agintc`, which also carries it, is not ported. Every other GENERIC
 //! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*`,
-//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*` and `azalia*`, the other host
+//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `azalia*`, `ahci*`
+//! and `nvme*`, `ahci*` at `acpi?` (arm64 ACPI is M14) and at `fdt?`, the other host
 //! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
 //! `umass*` and `uhidev*`, the devices at `uhidev?` but `ukbd*` (`wskbd* at ukbd?` waits
 //! for wskbd, M13), ...),
@@ -43,8 +44,12 @@ use crate::dev::fdt::plrtc::{PLRTC_CA, PLRTC_CD};
 use crate::dev::fdt::pluart_fdt::PLUART_FDT_CA;
 use crate::dev::fdt::psci::{PSCI_CA, PSCI_CD};
 use crate::dev::fdt::virtio_mmio::VIRTIO_MMIO_CA;
+use crate::dev::ic::ahci::AHCI_CD;
+use crate::dev::ic::nvme::NVME_CD;
 use crate::dev::ic::pluart::PLUART_CD;
+use crate::dev::pci::ahci_pci::AHCI_PCI_CA;
 use crate::dev::pci::azalia::{AZALIA_CA, AZALIA_CD};
+use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
 use crate::dev::pci::xhci_pci::XHCI_PCI_CA;
@@ -133,8 +138,9 @@ const LOC_UHIDBUS_UNK: &[i64] = &[-1];
 const PV_AZALIA: &[i16] = &[17];
 
 /// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`),
-/// `softraid0` (`cfdata[11]`), `umass*` (`cfdata[24]`) and `vioscsi*` (`cfdata[27]`).
-const PV_VIOBLK: &[i16] = &[5, 11, 24, 27];
+/// `softraid0` (`cfdata[11]`), `umass*` (`cfdata[24]`), `vioscsi*` (`cfdata[27]`), `ahci*`
+/// (`cfdata[30]`, through atascsi) and `nvme*` (`cfdata[31]`).
+const PV_VIOBLK: &[i16] = &[5, 11, 24, 27, 30, 31];
 
 /// `pv[]` for children of `scsibus*` (`cfdata[9]`).
 const PV_SCSIBUS: &[i16] = &[9];
@@ -145,9 +151,9 @@ const LOC_SCSIBUS_UNK: &[i64] = &[-1, -1];
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    31
+    33
 } else {
-    30
+    32
 };
 
 /// `cfdata[]`.
@@ -250,7 +256,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 9: scsibus* at scsi? (vioblk, umass, vioscsi), and at softraid? (GENERIC's `scsibus* at
+    // 9: scsibus* at scsi? (vioblk, umass, vioscsi, ahci, nvme), and at softraid? (GENERIC's `scsibus* at
     // softraid?`)
     Cfdata::new(
         &SCSIBUS_CA,
@@ -483,7 +489,31 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 30: cpu* at mainbus? (GENERIC.MP)
+    // 30: ahci* at pci? flags 0x0000
+    Cfdata::new(
+        &AHCI_PCI_CA,
+        &AHCI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        0,
+        0,
+    ),
+    // 31: nvme* at pci?
+    Cfdata::new(
+        &NVME_PCI_CA,
+        &NVME_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        0,
+        0,
+    ),
+    // 32: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];

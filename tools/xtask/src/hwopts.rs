@@ -3,15 +3,20 @@
 //!
 //! - `--nvme FILE` (`qemu`, `smoke`): an NVM Express controller (`-device nvme`, nvme(4))
 //!   whose one namespace is the raw image FILE (a relative path is in the run directory,
-//!   [`boot::run_dir`]). amd64 only: it sits on `q35`'s PCI bus, added right after the NICs
-//!   so that it comes before the persistent virtio-blk disks and its namespace is `sd0`;
-//!   arm64's `virt` has no PCI bus in the kernel until M12.
+//!   [`boot::run_dir`]). On amd64 it sits on `q35`'s PCI bus, added right after the NICs
+//!   so that it comes before the persistent virtio-blk disks and its namespace is `sd0`.
+//!   On arm64 (M13) it is the first device on `virt`'s PCI bus (`pci0 dev 1`, the virtio
+//!   devices are virtio-mmio); the kernel attaches the virtio-mmio disks before the PCI bus
+//!   (`pciecam` comes after the `virtio_mmio` nodes in the device tree), so with the one
+//!   persistent disk (`sd0`) and the boot image (`sd1`) the namespace is `sd2`.
 //! - `--ahci FILE` (`qemu`, `smoke`): a SATA disk holding the raw image FILE (a relative
-//!   path is in the run directory) on the second port of q35's built-in AHCI controller
-//!   (`ich9-ahci` at 0:1f.2, `ide-hd` on `ide.1`; the boot image is on `ide.0`), ahci(4).
-//!   The controller's place on the bus does not change, so the disk is the unit after the
-//!   boot image's (`sd2` with the one persistent virtio-blk disk). amd64 only: arm64's
-//!   `virt` has no AHCI controller of its own, and no PCI bus in the kernel until M12.
+//!   path is in the run directory), ahci(4). On amd64 it is on the second port of q35's
+//!   built-in AHCI controller (`ich9-ahci` at 0:1f.2, `ide-hd` on `ide.1`; the boot image is
+//!   on `ide.0`). The controller's place on the bus does not change, so the disk is the unit
+//!   after the boot image's (`sd2` with the one persistent virtio-blk disk). arm64's `virt`
+//!   has no AHCI controller of its own, so (M13) an `ich9-ahci` is added as the first device
+//!   on its PCI bus (`pci0 dev 1`) with the disk on port 0 (`ahci0.0`); as for `--nvme`, the
+//!   virtio-mmio disks come first and the disk is `sd2`.
 //! - `--scsi-cd ISO` (`qemu`, `smoke`, `smoke2`): a virtio SCSI host adapter with a CD-ROM
 //!   drive holding the file `ISO` (read-only, `media=cdrom`; a relative path is taken from the
 //!   workspace root): `virtio-scsi-pci` on amd64, `virtio-scsi-device` (virtio-mmio) on arm64,
@@ -233,13 +238,11 @@ pub(crate) fn reboot() -> bool {
     REBOOT.get().is_some()
 }
 
-/// Adds the PCI storage controllers this run asked for to `cmd` (amd64's PCI bus: called
-/// after the NICs, before the virtio-blk disks), and the `--ahci` disk.
+/// Adds the PCI storage controllers this run asked for to `cmd` (called after the NICs,
+/// before the virtio-blk disks: amd64's come after them on the PCI bus; arm64's are
+/// virtio-mmio, so these are the first devices on `virt`'s PCI bus), and the `--ahci` disk.
 pub(crate) fn pci_storage(cmd: &mut Command, arch: Arch) -> Result<()> {
     if let Some(image) = AHCI.get() {
-        if arch != Arch::Amd64 {
-            return Err("--ahci: amd64 only (q35's AHCI controller; arm64 waits for M12)".into());
-        }
         if !image.is_file() {
             return Err(format!(
                 "--ahci {}: no such image (cargo xtask nvme-root makes one)",
@@ -247,14 +250,11 @@ pub(crate) fn pci_storage(cmd: &mut Command, arch: Arch) -> Result<()> {
             )
             .into());
         }
-        cmd.args(ahci_args(image));
+        cmd.args(ahci_args(arch, image));
     }
     let Some(image) = NVME.get() else {
         return Ok(());
     };
-    if arch != Arch::Amd64 {
-        return Err("--nvme: amd64 only (arm64 has no PCI bus before M12)".into());
-    }
     if !image.is_file() {
         return Err(format!(
             "--nvme {}: no such image (cargo xtask nvme-root makes one)",
@@ -270,14 +270,24 @@ pub(crate) fn pci_storage(cmd: &mut Command, arch: Arch) -> Result<()> {
     Ok(())
 }
 
-/// The QEMU arguments of the `--ahci` disk: `image` on port 1 of q35's AHCI controller.
-fn ahci_args(image: &Path) -> Vec<String> {
-    vec![
+/// The QEMU arguments of the `--ahci` disk: `image` on port 1 of q35's AHCI controller on
+/// amd64; on arm64, an `ich9-ahci` controller on `virt`'s PCI bus with `image` on port 0.
+fn ahci_args(arch: Arch, image: &Path) -> Vec<String> {
+    let mut a: Vec<String> = Vec::new();
+    let bus = match arch {
+        Arch::Amd64 => "ide.1",
+        Arch::Arm64 => {
+            a.extend(["-device".into(), "ich9-ahci,id=ahci0".into()]);
+            "ahci0.0"
+        }
+    };
+    a.extend([
         "-drive".into(),
         format!("if=none,format=raw,file={},id=ahci1", image.display()),
         "-device".into(),
-        "ide-hd,drive=ahci1,bus=ide.1".into(),
-    ]
+        format!("ide-hd,drive=ahci1,bus={bus}"),
+    ]);
+    a
 }
 
 /// The bytes of a DUID written as 16 hexadecimal digits.
@@ -418,10 +428,11 @@ pub(crate) fn nvme_root(
     }
     fs::write(&out, &disk).map_err(|e| format!("{}: {e}", out.display()))?;
     println!(
-        "nvme-root: {} ({total} sectors; sd0a: {fs_sectors} sectors at {OPENBSD_START}, \
-         DUID {}, fstab root /dev/sd0a)",
+        "nvme-root: {} ({total} sectors; a: {fs_sectors} sectors at {OPENBSD_START}, \
+         DUID {}, fstab root /dev/{})",
         out.display(),
-        duid.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        duid.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+        root_dev.unwrap_or("sd0a")
     );
     Ok(())
 }
@@ -623,7 +634,7 @@ mod tests {
 
     #[test]
     fn ahci_disk_is_on_the_second_port() {
-        let args = ahci_args(Path::new("/r/target/smoke/x/ahci-amd64.img"));
+        let args = ahci_args(Arch::Amd64, Path::new("/r/target/smoke/x/ahci-amd64.img"));
         assert_eq!(
             args,
             [
@@ -631,6 +642,22 @@ mod tests {
                 "if=none,format=raw,file=/r/target/smoke/x/ahci-amd64.img,id=ahci1",
                 "-device",
                 "ide-hd,drive=ahci1,bus=ide.1"
+            ]
+        );
+    }
+
+    #[test]
+    fn arm64_ahci_is_a_controller_with_the_disk_on_port_0() {
+        let args = ahci_args(Arch::Arm64, Path::new("/run/ahci-arm64.img"));
+        assert_eq!(
+            args,
+            [
+                "-device",
+                "ich9-ahci,id=ahci0",
+                "-drive",
+                "if=none,format=raw,file=/run/ahci-arm64.img,id=ahci1",
+                "-device",
+                "ide-hd,drive=ahci1,bus=ahci0.0"
             ]
         );
     }

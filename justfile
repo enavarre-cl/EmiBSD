@@ -1272,12 +1272,15 @@ ext2_host := "--cat /m10d-ext2.txt=m10d-ext2-42 --cat /d/sub.txt=m10d-ext2-sub-4
 # BOOTARG_BOOTDUID is the `bootduid=` word of the command line, and setroot mounts the root
 # from the disk whose label has that DUID. Since M13's ACPI interrupt routing the
 # controller interrupts by MSI-X (`: msix`). The session logs in, `mount` shows sd0a on /, bioctl(8)
-# asks nvme0 (its bio(4) ioctls), and a file is written on the root and read back. amd64
-# only: arm64's `virt` gets its PCI bus with M12. Part of `smoke`.
+# asks nvme0 (its bio(4) ioctls), and a file is written on the root and read back. arm64
+# (M13): the controller is the first device on `virt`'s PCI bus (pciecam, device tree; pci0
+# dev 1) and interrupts by MSI-X through the GICv2m frame (ampintcmsi); the virtio-mmio disks
+# attach before the PCI bus, so the persistent disk is sd0, the boot image sd1 and the
+# namespace sd2 (`nvme-root --root-dev sd2a`). Part of `smoke`.
 nvme_duid := "4e564d45524f4f54"
 
-smoke-nvme: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
-    @test -f target/userland/amd64/ramdisk.ffs || \
+smoke-nvme: (build-amd64 "--features qemu,multiprocessor") build-init-amd64 (build-arm64 "--features qemu,multiprocessor") build-init-arm64
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-nvme: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask nvme-root --arch amd64 --duid {{nvme_duid}}
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
@@ -1298,6 +1301,26 @@ smoke-nvme: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
         --expect "nvme0: NVMe 1.4, NVM I/O command set, Enabled, Ready" --expect "nvme0 0 Online" \
         --expect "Namespace 1" --expect "m13a-nvme-42" --expect "524288 bytes transferred" \
         --expect "4194304 bytes transferred" --expect "m13a-raw-42" --reject "mount -uw / failed"
+    cargo xtask nvme-root --arch arm64 --duid {{nvme_duid}} --root-dev sd2a
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --expect-ramdisk \
+        --nvme nvme-arm64.img --cmdline "bootduid={{nvme_duid}}" --until-seen \
+        {{disk_login}} \
+        --send-after '# ' --send 'mount\n' \
+        --send-after '# ' --send 'bioctl nvme0\n' \
+        --send-after '# ' --send 'echo m13a-nvme-$((40+2)) >/m13a.txt && cat /m13a.txt\n' \
+        --send-after '# ' --send 'dd if=/dev/zero of=/dev/rsd2c bs=64k seek=1010 count=8 && dd if=/dev/rsd2c of=/dev/null bs=64k count=64\n' \
+        --send-after '# ' --send 'echo m13a-raw-$((40+2)) | dd of=/dev/rsd2c bs=512 seek=130000 conv=sync 2>/dev/null; dd if=/dev/rsd2c bs=512 skip=130000 count=1 2>/dev/null\n' \
+        --send-after '# ' --send 'vmstat -i\n' \
+        --expect "nvme0 at pci0 dev 1 function 0 vendor 0x1b36 product 0x0010 rev 0x02: msix, NVMe 1.4" \
+        --expect "nvme0: QEMU NVMe Ctrl, firmware " --expect "serial EMIBSD0001" \
+        --expect "scsibus2 at nvme0: 257 targets, initiator 0" \
+        --expect "sd2 at scsibus2 targ 1 lun 0: <NVMe, QEMU NVMe Ctrl, " \
+        --expect "root on sd2a ({{nvme_duid}}.a) swap on sd2b dump on sd2b" \
+        --expect "rc: multi-user" --expect "/dev/sd2a on / type ffs (local)" \
+        --expect "nvme0: NVMe 1.4, NVM I/O command set, Enabled, Ready" --expect "nvme0 0 Online" \
+        --expect "Namespace 1" --expect "m13a-nvme-42" --expect "524288 bytes transferred" \
+        --expect "4194304 bytes transferred" --expect "m13a-raw-42" --expect "/nvme0" \
+        --reject "mount -uw / failed"
 
 # M13: ahci(4) and atascsi. The disk `cargo xtask nvme-root` writes (as for smoke-nvme, with
 # its own DUID `ahci_duid` and an fstab naming /dev/sd2a: diskmap(4) is not ported, so fstab
@@ -1309,13 +1332,16 @@ smoke-nvme: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
 # interrupt routing (acpimadt, acpipci) the controller interrupts by MSI (`: msi`; vmstat -i
 # counts its interrupts). The session logs in, `mount` shows sd2a on /, a file is written on
 # the root and read back, a large file goes through the buffer cache (NCQ, several commands
-# on the chip), and raw I/O past the file system reads back what it wrote. amd64 only for
-# now: arm64's `virt` joins with an `ahci* at pci?` once M12 gives it its PCI bus (the M13
-# exit criterion boots it from an AHCI disk there). Part of `smoke`.
+# on the chip), and raw I/O past the file system reads back what it wrote. arm64 (M13, the
+# milestone's exit criterion): `virt` has no AHCI controller of its own, so `--ahci` adds an
+# ich9-ahci as the first device on its PCI bus (pciecam, device tree; pci0 dev 1) with the
+# disk on port 0; it interrupts by MSI through the GICv2m frame (ampintcmsi). The virtio-mmio
+# disks attach before the PCI bus, so the persistent disk is sd0, the boot image sd1 and the
+# root sd2 (`nvme-root --root-dev sd2a`). Part of `smoke`.
 ahci_duid := "41484349524f4f54"
 
-smoke-ahci: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
-    @test -f target/userland/amd64/ramdisk.ffs || \
+smoke-ahci: (build-amd64 "--features qemu,multiprocessor") build-init-amd64 (build-arm64 "--features qemu,multiprocessor") build-init-arm64
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-ahci: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask nvme-root --arch amd64 --duid {{ahci_duid}} --out ahci-amd64.img --root-dev sd2a
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
@@ -1334,6 +1360,25 @@ smoke-ahci: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
         --expect "sd1 at scsibus1 targ 0 lun 0: <ATA, QEMU HARDDISK, 2.5+> t10.ATA_QEMU_HARDDISK_QM00001_" \
         --expect "sd2 at scsibus1 targ 1 lun 0: <ATA, QEMU HARDDISK, 2.5+> t10.ATA_QEMU_HARDDISK_QM00003_" \
         --expect "sd2: " \
+        --expect "root on sd2a ({{ahci_duid}}.a) swap on sd2b dump on sd2b" \
+        --expect "rc: multi-user" --expect "/dev/sd2a on / type ffs (local)" \
+        --expect "m13-ahci-42" --expect "8388608 bytes transferred" \
+        --expect "524288 bytes transferred" --expect "4194304 bytes transferred" \
+        --expect "m13-ahci-raw-42" --expect "/ahci0" --reject "mount -uw / failed"
+    cargo xtask nvme-root --arch arm64 --duid {{ahci_duid}} --out ahci-arm64.img --root-dev sd2a
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --expect-ramdisk \
+        --ahci ahci-arm64.img --cmdline "bootduid={{ahci_duid}}" --until-seen \
+        {{disk_login}} \
+        --send-after '# ' --send 'mount\n' \
+        --send-after '# ' --send 'echo m13-ahci-$((40+2)) >/m13ahci.txt && cat /m13ahci.txt\n' \
+        --send-after '# ' --send 'dd if=/dev/zero of=/big bs=64k count=128 && dd if=/big of=/dev/null bs=64k && rm /big\n' \
+        --send-after '# ' --send 'dd if=/dev/zero of=/dev/rsd2c bs=64k seek=1010 count=8 && dd if=/dev/rsd2c of=/dev/null bs=64k count=64\n' \
+        --send-after '# ' --send 'echo m13-ahci-raw-$((40+2)) | dd of=/dev/rsd2c bs=512 seek=130000 conv=sync 2>/dev/null; dd if=/dev/rsd2c bs=512 skip=130000 count=1 2>/dev/null\n' \
+        --send-after '# ' --send 'vmstat -i\n' \
+        --expect "ahci0 at pci0 dev 1 function 0 vendor 0x8086 product 0x2922 rev 0x02: msi" \
+        --expect ", AHCI 1.0" --expect "ahci0: port 0: 1.5Gb/s" \
+        --expect "scsibus2 at ahci0: 32 targets" \
+        --expect "sd2 at scsibus2 targ 0 lun 0: <ATA, QEMU HARDDISK, 2.5+> t10.ATA_QEMU_HARDDISK_QM00001_" \
         --expect "root on sd2a ({{ahci_duid}}.a) swap on sd2b dump on sd2b" \
         --expect "rc: multi-user" --expect "/dev/sd2a on / type ffs (local)" \
         --expect "m13-ahci-42" --expect "8388608 bytes transferred" \

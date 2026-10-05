@@ -1211,9 +1211,12 @@ reason:
   virtio-mmio slot in use (slots go out top down, the kernel attaches bottom up), so it is
   the first block device found (`sd0`) and the boot disk (`virtio31`) the second (`sd1`).
   `--nvme FILE` (M13a, `qemu` and `smoke`; `hwopts.rs`, the home of M13's QEMU device
-  options) adds an NVMe controller whose namespace is FILE, on amd64 only (arm64 gets PCI
-  with M12): it is added right after the NICs, so it takes slot 3, attaches before the
-  virtio-blk disk (then at slot 4) and its namespace is `sd0`.
+  options) adds an NVMe controller whose namespace is FILE. On amd64 it is added right after
+  the NICs, so it takes slot 3, attaches before the virtio-blk disk (then at slot 4) and its
+  namespace is `sd0`. On arm64 (M13) it is the first device on `virt`'s PCI bus (`pci0 dev
+  1`; its NIC and disks are virtio-mmio): `pciecam` comes after the `virtio_mmio` nodes in
+  QEMU's device tree, so the virtio disks attach first and the namespace is `sd2` (after the
+  persistent disk `sd0` and the boot image `sd1`).
 - QEMU's M13 devices (`tools/xtask/src/hwopts.rs`, one option each, hooked into
   `boot::qemu_command` by one call): `--scsi-cd ISO` (`qemu`, `smoke`, `smoke2`) adds a virtio
   SCSI adapter with a read-only `scsi-cd` drive holding the file (`virtio-scsi-pci` on amd64,
@@ -1222,9 +1225,12 @@ reason:
   after the NIC and the disk), and on arm64 the adapter takes the lowest virtio-mmio slot, so
   the kernel finds it first (`vioscsi0`, and its `scsibus0`) while the NIC and the disks keep
   the slots, hence the names, they have without it. `smoke-cd` mounts the ramdisk's makefs ISO
-  through it (`cd0`, `mount_cd9660 /dev/cd0c`). `--ahci FILE` (`qemu`, `smoke`, amd64 only)
+  through it (`cd0`, `mount_cd9660 /dev/cd0c`). `--ahci FILE` (`qemu`, `smoke`)
   puts FILE on port 1 of q35's built-in AHCI controller (`ide-hd` on `ide.1`): `sd2` after the
-  virtio-blk disk (`sd0`) and the boot image (`sd1`, port 0). `smoke-ahci` boots from it a
+  virtio-blk disk (`sd0`) and the boot image (`sd1`, port 0). `virt` has no AHCI controller
+  of its own, so on arm64 (M13) it adds an `ich9-ahci` as the first device on the PCI bus
+  (`pci0 dev 1`) with FILE on port 0 (`ahci0.0`): `sd2` there too, after the two virtio-mmio
+  disks. `smoke-ahci` boots from it, on both archs, a
   disk `nvme-root --root-dev sd2a` writes (its fstab names the unit: diskmap(4) is not
   ported, so fstab cannot name the DUID).
   `--lsi FILE` (`qemu`, `smoke`; amd64 only:
