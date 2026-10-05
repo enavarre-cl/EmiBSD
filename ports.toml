@@ -1295,11 +1295,11 @@ notes = "M7a-1: struct vm_amap_chunk (always UVM_AMAP_CHUNK slots), struct vm_am
 [[file]]
 c = "sys/uvm/uvm_amap.c"
 rust = "sys/uvm/uvm_amap.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "616caf8fe3223a8242eced34b6d6f330f7e572e4"
 deps = ["sys/uvm/uvm_amap.h", "sys/uvm/uvm_anon.c", "sys/kern/kern_malloc.c", "sys/kern/subr_pool.c", "sys/kern/kern_rwlock.c", "sys/uvm/uvm_map.h"]
-notes = "M7a-1: amap_list_insert/remove, amap_chunk_get/free, pp_getreflen/setreflen, amap_init (one amap pool and one chunk pool instead of uvm_small_amap_pool[] by slot count), amap_alloc1 (bucket strategy as the C), amap_lock_alloc, amap_alloc, amap_free, amap_wipeout, amap_copy (the UVM_MAP_CLIP_START/END chunking of a large amap reports uvm_map_clip_* and falls back to a lazily allocated amap: M7a-2), amap_cow_now, amap_splitref, amap_pp_establish, amap_pp_adjref, amap_wiperange_chunk, amap_wiperange, amap_swap_off (over uvm_anon_pagein, which reports its fault path), amap_lookup, amap_lookups, amap_populate, amap_add (bool for the C's 0/1), amap_unadd, amap_adjref_anons, amap_ref, amap_unref; ffs is trailing_zeros; UVM_PAGE_OWN not configured; host tests"
+notes = "M7a-1: amap_list_insert/remove, amap_chunk_get/free, pp_getreflen/setreflen, amap_init (one amap pool and one chunk pool instead of uvm_small_amap_pool[] by slot count), amap_alloc1 (bucket strategy as the C), amap_lock_alloc, amap_alloc, amap_free, amap_wipeout, amap_copy (M12+: the UVM_MAP_CLIP_START/END chunking of a large amap over uvm_map_clip_start_at/end_at, found stale by diff-openbsd), amap_cow_now, amap_splitref, amap_pp_establish, amap_pp_adjref, amap_wiperange_chunk, amap_wiperange, amap_swap_off (over uvm_anon_pagein, which reports its fault path), amap_lookup, amap_lookups, amap_populate, amap_add (bool for the C's 0/1), amap_unadd, amap_adjref_anons, amap_ref, amap_unref; ffs is trailing_zeros; UVM_PAGE_OWN not configured; host tests"
 
 [[file]]
 c = "sys/uvm/uvm_aobj.h"

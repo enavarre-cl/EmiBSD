@@ -44,9 +44,10 @@
 //! buckets, with every chunk on one list too. `ppref` is an optional per-page reference
 //! count array used when only part of an amap is referenced (see `amap_pp_adjref`).
 //!
-//! Status: `wip`. Milestone M7a (part 1) ports the whole file. `amap_copy`'s chunking of a
-//! large amap (`UVM_MAP_CLIP_START`/`END`) needs `uvm_map_clip_*` (M7a part 2) and falls
-//! back to a lazily allocated amap meanwhile.
+//! Milestone M7a (part 1) ported the whole file; `amap_copy`'s chunking of a large amap
+//! (`UVM_MAP_CLIP_START`/`END` over `uvm_map_clip_*_at`) followed in M12+, when
+//! `cargo xtask diff-openbsd` found its stub still printing after the clip functions had
+//! been ported.
 //!
 //! ## Deviations
 //! - A chunk always has `UVM_AMAP_CHUNK` anon slots: the C's flexible `ac_anon[]` and the
@@ -77,13 +78,13 @@ use crate::sys::queue::{ListEntry, ListHead, TailqEntry, TailqHead};
 use crate::sys::rwlock::{RW_WRITE, Rwlock, rw_write_held};
 use crate::uvm::uvm::UVM_ET_NEEDSCOPY;
 use crate::uvm::uvm_anon::{VmAnon, VmAref, uvm_analloc, uvm_anfree, uvm_anon_pagein};
-use crate::uvm::uvm_map::{VmMap, VmMapEntry};
+use crate::uvm::uvm_map::{VmMap, VmMapEntry, uvm_map_clip_end_at, uvm_map_clip_start_at};
 use crate::uvm::uvm_page::{
     PG_BUSY, PG_FAKE, uvm_pageactivate, uvm_pagealloc, uvm_pagecopy, uvm_pagewait,
 };
 use crate::uvm::uvm_param::atop;
 use crate::uvm::uvm_pdaemon::uvm_wait;
-use crate::{queue_adapter, unported};
+use crate::queue_adapter;
 
 /// `AMAP_SHARED`: amap is shared.
 pub const AMAP_SHARED: i32 = 0x1;
@@ -740,12 +741,12 @@ pub fn amap_wipeout(amap: &VmAmap) {
 /// have a large space that you know you are going to need to allocate amaps for, there is
 /// no point in allowing that to be chunked).
 pub fn amap_copy(
-    _map: &VmMap,
+    map: &VmMap,
     entry: &VmMapEntry,
     waitf: i32,
     canchunk: bool,
-    _startva: usize,
-    _endva: usize,
+    startva: usize,
+    endva: usize,
 ) {
     let mut lazyalloc = false;
 
@@ -760,12 +761,19 @@ pub fn amap_copy(
         // dynamically with the number of slots.
         if atop(entry.end.get() - entry.start.get()) >= UVM_AMAP_LARGE {
             if canchunk {
-                // UVM_MAP_CLIP_START(map, entry, startva) / UVM_MAP_CLIP_END: the clip
-                // functions (uvm_map.c, M7a part 2); until then the amap stays whole and
-                // lazily allocated (see the module's deviations).
-                let _ = unported!("amap_copy: chunking (uvm_map_clip_start/end, M7a-2)");
+                // convert slots to bytes
+                let chunksize = UVM_AMAP_CHUNK << PAGE_SHIFT;
+                let startva = (startva / chunksize) * chunksize;
+                // roundup(endva, chunksize), wrapping as the C's unsigned arithmetic does.
+                let endva = (endva.wrapping_add(chunksize - 1) / chunksize) * chunksize;
+                uvm_map_clip_start_at(map, entry, startva);
+                // watch out for endva wrap-around!
+                if endva >= startva {
+                    uvm_map_clip_end_at(map, entry, endva);
+                }
+            } else {
+                lazyalloc = true;
             }
-            lazyalloc = true;
         }
 
         entry.aref.ar_pageoff.set(0);
