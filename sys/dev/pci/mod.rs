@@ -5,6 +5,7 @@
 //! descriptions and `pci_quirks` the multi/mono-function quirk table; `virtio_pci` (with
 //! `virtio_pcireg`) is the virtio transport (`virtio* at pci?`), `nvme_pci` the NVM
 //! Express front-end (`nvme* at pci?`), `ahci_pci` the AHCI SATA front-end (`ahci* at
+//! pci?`), `siop_pci` (with `siop_pci_common`) the Symbios SCSI front-end (`siop* at
 //! pci?`) (M13); `xhci_pci` the xHCI front-end (`xhci* at
 //! pci?`), `auich` the Intel ICH AC'97 audio controller (`auich* at pci?`), `azalia` (with
 //! `azalia_codec`) the HD Audio controller (`azalia* at pci?`) (M12). The machine side
@@ -24,6 +25,8 @@ pub mod pcidevs;
 pub mod pcireg;
 pub mod pcivar;
 pub mod ppbreg;
+pub mod siop_pci;
+pub mod siop_pci_common;
 pub mod virtio_pci;
 pub mod virtio_pcireg;
 pub mod xhci_pci;

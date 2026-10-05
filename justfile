@@ -73,7 +73,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci " + \
+    "smoke-nvme smoke-ahci smoke-siop " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb"
 
@@ -1311,6 +1311,40 @@ smoke-ahci: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
         --expect "m13-ahci-42" --expect "8388608 bytes transferred" \
         --expect "524288 bytes transferred" --expect "4194304 bytes transferred" \
         --expect "m13-ahci-raw-42" --expect "/ahci0" --reject "mount -uw / failed"
+
+# M13: siop(4) on QEMU's LSI 53C895A (`--lsi`, `tools/xtask/src/hwopts.rs`: the adapter
+# after every other device, a fresh zeroed 64 MiB `scsi-hd` at target 0 and, with
+# `--lsi-cd`, the ramdisk's ISO as a `scsi-cd` at target 1). The kernel must attach siop0
+# on q35's PCI bus (INTx; the SCRIPTS in the chip's 8 KB of on-board RAM), its scsibus
+# (16 targets, initiator 7), the disk as sd1 (vioblk's persistent disk is sd0) and the
+# CD-ROM as cd0. The session runs fdisk(8), disklabel(8) and newfs(8) on sd1, writes a
+# file and a copy of /bin/ksh, unmounts, mounts read-only and reads both back (cmp(1)),
+# reads 1 MiB raw with dd(1), writes and reads back one raw sector near the end of the
+# disk (once the file system is done with), and mounts the ISO with mount_cd9660(8). amd64
+# only: arm64's GENERIC has no siop. Part of `smoke`.
+smoke-siop: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-siop: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --lsi lsi-amd64.img --lsi-cd target/userland/amd64/ramdisk-root/root/images/cd.iso \
+        {{disk_login}} \
+        --send-after '# ' --send 'fdisk -iy -f /dev/rsd1c sd1 && fdisk -f /dev/rsd1c sd1\n' \
+        --send-after '# ' --send 'disklabel -w -A sd1 && disklabel sd1\n' \
+        --send-after '# ' --send 'newfs sd1a\n' \
+        --send-after '# ' --send 'mount /dev/sd1a /mnt && echo m13-siop-$((40+2)) >/mnt/siop.txt && cp /bin/ksh /mnt/ksh && umount /mnt && echo siop-written-$((40+2))\n' \
+        --send-after '# ' --send 'mount -r /dev/sd1a /mnt && cat /mnt/siop.txt && cmp /bin/ksh /mnt/ksh && echo siop-cmp-$((40+2)) && umount /mnt\n' \
+        --send-after '# ' --send 'dd if=/dev/rsd1c of=/dev/null bs=64k count=16\n' \
+        --send-after '# ' --send 'echo m13-raw-$((40+2)) | dd of=/dev/rsd1c bs=512 seek=131000 conv=sync 2>/dev/null; dd if=/dev/rsd1c bs=512 skip=131000 count=1 2>/dev/null\n' \
+        --send-after '# ' --send 'mount_cd9660 /dev/cd0c /mnt && cat /mnt/m10c-iso.txt && umount /mnt\n' \
+        --expect "siop0 at pci0 dev " --expect "vendor 0x1000 product 0x0012 rev 0x00: " \
+        --expect "using 8K of on-board RAM" \
+        --expect "scsibus1 at siop0: 16 targets, initiator 7" \
+        --expect "sd1 at scsibus1 targ 0 lun 0: <QEMU, QEMU HARDDISK, " \
+        --expect "sd1: 64MB, 512 bytes/sector, 131072 sectors" \
+        --expect "cd0 at scsibus1 targ 1 lun 0: <QEMU, QEMU CD-ROM, " \
+        --expect '*3: A6' --expect '/dev/rsd1a: ' --expect "siop-written-42" --expect "m13-siop-42" \
+        --expect "siop-cmp-42" --expect "1048576 bytes transferred" --expect "m13-raw-42" \
+        --expect "m10c-iso-42"
 
 # M10d: FUSE (sys/miscfs/fuse). Our own read-only file system, tools/fusehello (linked to
 # OpenBSD's libfuse, which opens /dev/fuse0 and mounts fusefs), is mounted on /fuse; mount(8)

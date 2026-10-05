@@ -653,7 +653,7 @@ pub(crate) fn qemu_command(
             cmd.args(["-semihosting-config", "enable=on,target=native"]);
         }
     }
-    crate::hwopts::add_devices(&mut cmd, root, arch);
+    crate::hwopts::add_devices(&mut cmd, root, arch)?;
     // M12: `--usb`, `--audio` (`devices.rs`), after every other device so the PCI slots
     // the older smokes expect do not move.
     cmd.args(crate::devices::qemu_args(image)?);

@@ -22,6 +22,7 @@ pub mod fdt;
 pub mod hid;
 pub mod ic;
 pub mod isa;
+pub mod microcode;
 pub mod mulaw;
 pub mod ofw;
 pub mod pci;

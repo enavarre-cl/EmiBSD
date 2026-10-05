@@ -20,6 +20,12 @@
 //!   arm64 `virt` hands virtio-mmio slots out from the top down while the kernel finds them
 //!   bottom up (the adapter takes the lowest slot, `vioscsi0`, found first; the NIC and the
 //!   disks keep their slots, hence their names). Its `scsibus` is the one attached first.
+//! - `--lsi FILE` (`qemu`, `smoke`): an LSI 53C895A SCSI adapter (`-device lsi53c895a`,
+//!   siop(4)) with a `scsi-hd` at target 0 whose image is FILE in the run directory, made
+//!   afresh (zeroed, [`LSI_DISK_BYTES`]) each run, as `--disk-fresh` makes its disks; with
+//!   `--lsi-cd ISO`, also a read-only `scsi-cd` at target 1 holding `ISO` (a relative path is
+//!   taken from the workspace root). amd64 only (arm64's GENERIC has no `siop`). It goes
+//!   after `--scsi-cd`, the last devices ([`add_devices`]), so no other PCI slot moves.
 //! - `cargo xtask nvme-root --arch A [--duid HEX] [--out FILE]`: the disk `just smoke-nvme`
 //!   boots from, `nvme-<arch>.img` in the run directory unless `--out` names another file.
 //!   It is laid out as OpenBSD's installer lays a disk out: an MBR whose one partition is
@@ -102,7 +108,27 @@ static AHCI: OnceLock<PathBuf> = OnceLock::new();
 /// `--scsi-cd ISO` for every VM this run starts (set once by `main`).
 static SCSI_CD: OnceLock<PathBuf> = OnceLock::new();
 
-/// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`).
+/// The size of the `--lsi` disk: 64 MiB, as `--disk-fresh`'s.
+pub(crate) const LSI_DISK_BYTES: u64 = 64 << 20;
+
+/// `--lsi FILE` (in the run directory) for every VM this run starts (set once by `main`).
+static LSI: OnceLock<PathBuf> = OnceLock::new();
+
+/// `--lsi-cd ISO` for every VM this run starts (set once by `main`).
+static LSI_CD: OnceLock<PathBuf> = OnceLock::new();
+
+/// The path that follows the option `opt` in `args`, if the option is there.
+fn opt_path<'a>(args: &[&'a str], opt: &str) -> Result<Option<&'a str>> {
+    match args.iter().position(|a| *a == opt) {
+        None => Ok(None),
+        Some(i) => match args.get(i + 1) {
+            Some(p) => Ok(Some(p)),
+            None => Err(format!("{opt}: expected a path").into()),
+        },
+    }
+}
+
+/// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if let Some(w) = args.windows(2).find(|w| w[0] == "--nvme") {
         let _ = NVME.set(boot::run_dir(root).join(w[1]));
@@ -115,6 +141,15 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
             return Err("--scsi-cd: expected the path of an ISO file".into());
         };
         let _ = SCSI_CD.set(PathBuf::from(iso));
+    }
+    if let Some(file) = opt_path(args, "--lsi")? {
+        let _ = LSI.set(boot::run_dir(root).join(file));
+    }
+    if let Some(iso) = opt_path(args, "--lsi-cd")? {
+        if LSI.get().is_none() {
+            return Err("--lsi-cd: needs --lsi (the adapter and its disk)".into());
+        }
+        let _ = LSI_CD.set(PathBuf::from(iso));
     }
     Ok(())
 }
@@ -337,12 +372,59 @@ fn scsi_cd_args(root: &Path, arch: Arch, iso: &Path) -> Vec<String> {
     ]
 }
 
-/// Adds the devices that go last on the command line to `cmd` (`--scsi-cd`, see the module
-/// docs).
-pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) {
+/// The QEMU arguments of the `--lsi` adapter with its disk `image` and, with `--lsi-cd`,
+/// the CD-ROM drive holding `cd` (a relative path is taken from the workspace `root`).
+fn lsi_args(root: &Path, image: &Path, cd: Option<&Path>) -> Vec<String> {
+    let mut a = vec![
+        "-device".into(),
+        "lsi53c895a,id=lsi0".into(),
+        "-drive".into(),
+        format!("if=none,format=raw,file={},id=lsihd0", image.display()),
+        "-device".into(),
+        "scsi-hd,drive=lsihd0,bus=lsi0.0,scsi-id=0".into(),
+    ];
+    if let Some(cd) = cd {
+        let cd = if cd.is_absolute() {
+            cd.to_path_buf()
+        } else {
+            root.join(cd)
+        };
+        a.push("-drive".into());
+        a.push(format!(
+            "if=none,format=raw,file={},id=lsicd0,media=cdrom,readonly=on",
+            cd.display()
+        ));
+        a.push("-device".into());
+        a.push("scsi-cd,drive=lsicd0,bus=lsi0.0,scsi-id=1".into());
+    }
+    a
+}
+
+/// Makes the `--lsi` disk afresh: `LSI_DISK_BYTES` zeroed bytes at `image`.
+fn lsi_fresh(image: &Path) -> Result<()> {
+    if let Some(dir) = image.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let f = fs::File::create(image).map_err(|e| format!("{}: {e}", image.display()))?;
+    f.set_len(LSI_DISK_BYTES)
+        .map_err(|e| format!("{}: {e}", image.display()))?;
+    Ok(())
+}
+
+/// Adds the devices that go last on the command line to `cmd` (`--scsi-cd`, then `--lsi`,
+/// see the module docs).
+pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) -> Result<()> {
     if let Some(iso) = SCSI_CD.get() {
         cmd.args(scsi_cd_args(root, arch, iso));
     }
+    if let Some(image) = LSI.get() {
+        if arch != Arch::Amd64 {
+            return Err("--lsi: amd64 only (arm64's GENERIC has no siop)".into());
+        }
+        lsi_fresh(image)?;
+        cmd.args(lsi_args(root, image, LSI_CD.get().map(PathBuf::as_path)));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -413,6 +495,26 @@ mod tests {
                 "ide-hd,drive=ahci1,bus=ide.1"
             ]
         );
+    }
+
+    #[test]
+    fn lsi_is_an_lsi53c895a_with_a_disk_and_maybe_a_cdrom() {
+        let a = lsi_args(Path::new("/r"), Path::new("/run/lsi.img"), None);
+        assert_eq!(a[1], "lsi53c895a,id=lsi0");
+        assert!(a[3].contains("file=/run/lsi.img"));
+        assert_eq!(a[5], "scsi-hd,drive=lsihd0,bus=lsi0.0,scsi-id=0");
+        assert_eq!(a.len(), 6);
+        let b = lsi_args(
+            Path::new("/r"),
+            Path::new("/run/lsi.img"),
+            Some(Path::new("t/cd.iso")),
+        );
+        assert!(b[7].contains("file=/r/t/cd.iso"));
+        assert!(b[7].contains("media=cdrom,readonly=on"));
+        assert_eq!(b[9], "scsi-cd,drive=lsicd0,bus=lsi0.0,scsi-id=1");
+        assert!(opt_path(&["--lsi"], "--lsi").is_err());
+        assert_eq!(opt_path(&["--lsi", "x"], "--lsi").unwrap(), Some("x"));
+        assert_eq!(opt_path(&["--arch", "amd64"], "--lsi").unwrap(), None);
     }
 
     #[test]

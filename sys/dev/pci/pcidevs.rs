@@ -50,7 +50,7 @@
 //! ## Deviations
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
 //!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c`, `ahci_pci.c`, `xhci_pci.c`, `auich.c`,
-//!   `azalia.c` and `azalia_codec.c`). The whole header, and `pcidevs_data.h` for
+//!   `azalia.c`, `azalia_codec.c` and `siop_pci_common.c`). The whole header, and `pcidevs_data.h` for
 //!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
 //!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
@@ -402,6 +402,39 @@ pub const PCI_PRODUCT_VIATECH_VT8251_SATA: u32 = 0x3349;
 /// `PCI_PRODUCT_ZHAOXIN_STORX_AHCI`: StorX AHCI.
 pub const PCI_PRODUCT_ZHAOXIN_STORX_AHCI: u32 = 0x9083;
 
+// siop(4): the Symbios Logic SCSI processors `siop_pci_common.c` knows.
+
+/// `PCI_VENDOR_SYMBIOS`: Symbios Logic.
+pub const PCI_VENDOR_SYMBIOS: u32 = 0x1000;
+/// `PCI_PRODUCT_SYMBIOS_810`: 53c810.
+pub const PCI_PRODUCT_SYMBIOS_810: u32 = 0x0001;
+/// `PCI_PRODUCT_SYMBIOS_820`: 53c820.
+pub const PCI_PRODUCT_SYMBIOS_820: u32 = 0x0002;
+/// `PCI_PRODUCT_SYMBIOS_825`: 53c825.
+pub const PCI_PRODUCT_SYMBIOS_825: u32 = 0x0003;
+/// `PCI_PRODUCT_SYMBIOS_815`: 53c815.
+pub const PCI_PRODUCT_SYMBIOS_815: u32 = 0x0004;
+/// `PCI_PRODUCT_SYMBIOS_860`: 53c860.
+pub const PCI_PRODUCT_SYMBIOS_860: u32 = 0x0006;
+/// `PCI_PRODUCT_SYMBIOS_1510D`: 53c1510D.
+pub const PCI_PRODUCT_SYMBIOS_1510D: u32 = 0x000a;
+/// `PCI_PRODUCT_SYMBIOS_896`: 53c896.
+pub const PCI_PRODUCT_SYMBIOS_896: u32 = 0x000b;
+/// `PCI_PRODUCT_SYMBIOS_895`: 53c895.
+pub const PCI_PRODUCT_SYMBIOS_895: u32 = 0x000c;
+/// `PCI_PRODUCT_SYMBIOS_885`: 53c885.
+pub const PCI_PRODUCT_SYMBIOS_885: u32 = 0x000d;
+/// `PCI_PRODUCT_SYMBIOS_875`: 53c875.
+pub const PCI_PRODUCT_SYMBIOS_875: u32 = 0x000f;
+/// `PCI_PRODUCT_SYMBIOS_895A`: 53c895A.
+pub const PCI_PRODUCT_SYMBIOS_895A: u32 = 0x0012;
+/// `PCI_PRODUCT_SYMBIOS_1010`: 53c1010-33.
+pub const PCI_PRODUCT_SYMBIOS_1010: u32 = 0x0020;
+/// `PCI_PRODUCT_SYMBIOS_1010_2`: 53c1010-66.
+pub const PCI_PRODUCT_SYMBIOS_1010_2: u32 = 0x0021;
+/// `PCI_PRODUCT_SYMBIOS_875J`: 53c875J.
+pub const PCI_PRODUCT_SYMBIOS_875J: u32 = 0x008f;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -513,6 +546,21 @@ mod tests {
             ),
             ("PCI_VENDOR_DELL", PCI_VENDOR_DELL),
             ("PCI_VENDOR_HP", PCI_VENDOR_HP),
+            ("PCI_VENDOR_SYMBIOS", PCI_VENDOR_SYMBIOS),
+            ("PCI_PRODUCT_SYMBIOS_810", PCI_PRODUCT_SYMBIOS_810),
+            ("PCI_PRODUCT_SYMBIOS_820", PCI_PRODUCT_SYMBIOS_820),
+            ("PCI_PRODUCT_SYMBIOS_825", PCI_PRODUCT_SYMBIOS_825),
+            ("PCI_PRODUCT_SYMBIOS_815", PCI_PRODUCT_SYMBIOS_815),
+            ("PCI_PRODUCT_SYMBIOS_860", PCI_PRODUCT_SYMBIOS_860),
+            ("PCI_PRODUCT_SYMBIOS_1510D", PCI_PRODUCT_SYMBIOS_1510D),
+            ("PCI_PRODUCT_SYMBIOS_896", PCI_PRODUCT_SYMBIOS_896),
+            ("PCI_PRODUCT_SYMBIOS_895", PCI_PRODUCT_SYMBIOS_895),
+            ("PCI_PRODUCT_SYMBIOS_885", PCI_PRODUCT_SYMBIOS_885),
+            ("PCI_PRODUCT_SYMBIOS_875", PCI_PRODUCT_SYMBIOS_875),
+            ("PCI_PRODUCT_SYMBIOS_895A", PCI_PRODUCT_SYMBIOS_895A),
+            ("PCI_PRODUCT_SYMBIOS_1010", PCI_PRODUCT_SYMBIOS_1010),
+            ("PCI_PRODUCT_SYMBIOS_1010_2", PCI_PRODUCT_SYMBIOS_1010_2),
+            ("PCI_PRODUCT_SYMBIOS_875J", PCI_PRODUCT_SYMBIOS_875J),
             ("PCI_PRODUCT_AMD_15_6X_AUDIO", PCI_PRODUCT_AMD_15_6X_AUDIO),
             ("PCI_PRODUCT_AMD_17_1X_HDA", PCI_PRODUCT_AMD_17_1X_HDA),
             ("PCI_PRODUCT_AMD_17_3X_HDA", PCI_PRODUCT_AMD_17_3X_HDA),

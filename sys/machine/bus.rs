@@ -170,6 +170,36 @@ pub fn bus_space_write_4(t: BusSpaceTag, h: BusSpaceHandle, offset: BusSize, val
     Machine::bus_space_write_4(t, h, offset, value)
 }
 
+/// `bus_space_write_region_4(9)`: writes the words of `values` to consecutive 4-byte
+/// locations from `offset`. Every architecture's region write is its 4-byte write at each
+/// address in turn (amd64's `x86_bus_space_{io,mem}_write_region_4`, arm64's inline
+/// `bus_space_write_region_4` in its `<machine/bus.h>`), so it is written here once, over
+/// [`bus_space_write_4`].
+pub fn bus_space_write_region_4(
+    t: BusSpaceTag,
+    h: BusSpaceHandle,
+    offset: BusSize,
+    values: &[u32],
+) {
+    for (i, &v) in values.iter().enumerate() {
+        bus_space_write_4(t, h, offset + i * 4, v);
+    }
+}
+
+/// `bus_space_set_region_4(9)`: writes `value` to `count` consecutive 4-byte locations from
+/// `offset`, as [`bus_space_write_region_4`] does.
+pub fn bus_space_set_region_4(
+    t: BusSpaceTag,
+    h: BusSpaceHandle,
+    offset: BusSize,
+    value: u32,
+    count: usize,
+) {
+    for i in 0..count {
+        bus_space_write_4(t, h, offset + i * 4, value);
+    }
+}
+
 /// `bus_space_barrier(9)`.
 pub fn bus_space_barrier(
     t: BusSpaceTag,

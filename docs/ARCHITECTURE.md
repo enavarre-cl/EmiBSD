@@ -1022,6 +1022,12 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   virtio-blk disk (`sd0`) and the boot image (`sd1`, port 0). `smoke-ahci` boots from it a
   disk `nvme-root --root-dev sd2a` writes (its fstab names the unit: diskmap(4) is not
   ported, so fstab cannot name the DUID).
+  `--lsi FILE` (`qemu`, `smoke`; amd64 only:
+  arm64's GENERIC has no siop) adds QEMU's `lsi53c895a` after that, with a `scsi-hd` at
+  target 0 on FILE (in the run directory, made afresh, zeroed, 64 MiB, each run) and, with
+  `--lsi-cd ISO`, a read-only `scsi-cd` at target 1: being last, it takes the next PCI slot
+  (`siop0 at pci0 dev 4` beside the NIC and the disk) and its `scsibus` attaches after
+  vioblk's and before ahci's (dev 31), so its disk is `sd1` (`smoke-siop`).
 - `disklabel(8)` and `fdisk(8)` embed their manual page in a generated `manual.c` rendered
   with mandoc(1); the userland build takes their Makefiles' own `.ifdef NOMAN` branch
   (`NOMAN_PROGRAMS` in `tools/xtask/src/userland.rs`), so the embedded page reads
