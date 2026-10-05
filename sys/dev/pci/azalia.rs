@@ -99,9 +99,8 @@
 //!   `azalia_sorted_pins`, `azalia_codec_nbits`, `azalia_widget_label_conv`,
 //!   `azalia_selected_conn`, `azalia_trigger`, `azalia_unsolq_put` and `azalia_rirb_entry`
 //!   are helpers for code the C repeats.
-//! - The mixer (`azalia_mixer_init`, `azalia_mixer_get`, `azalia_mixer_set`) is not ported
-//!   yet (`azalia_codec.rs`): the codec has no mixer controls, so `mixerctl(1)` shows only
-//!   audio(4)'s own `record.enable`.
+//! - `azalia_comresp` asks a simulated codec first in the host tests (`#[cfg(test)]`,
+//!   `azalia/tests.rs`), so the mixer of `azalia_codec.rs` can be tested without a controller.
 
 use alloc::vec::Vec;
 use core::cell::Cell;
@@ -3189,6 +3188,11 @@ pub fn azalia_init_rirb(az: &AzaliaSoftc, resuming: bool) -> Result<(), Errno> {
 /// `azalia_comresp`: send `control`/`param` to node `nid` of `codec` and return its
 /// response (the C's `*result`), under `audio_lock`.
 pub fn azalia_comresp(codec: &Codec, nid: NidT, control: u32, param: u32) -> Result<u32, Errno> {
+    // The host tests stand in a simulated codec for the controller.
+    #[cfg(test)]
+    if let Some(r) = tests::fake_comresp(nid, control, param) {
+        return r;
+    }
     let az = codec.az();
     mtx_enter(&AUDIO_LOCK);
     let r = azalia_set_command(az, codec.address, nid, control, param)

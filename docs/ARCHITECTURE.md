@@ -984,6 +984,9 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   amd64 only). QEMU's HD Audio controller stops fetching commands while a RIRB interrupt is
   unacknowledged, and the handler cannot run during autoconf, so `azalia_get_response` does
   the handler's RIRB work itself when the flag is up (a deviation, harmless on hardware).
+  The generic mixer of `azalia_codec.c` is ported: mixerctl(1) lists the codec's
+  amplifiers, selectors and pins (QEMU's hda-output: `inputs.dac-0:1`, `outputs.master`)
+  and sets them.
   Userland plays with aucat(1), which falls back to `/dev/audio0` (`rsnd/0`) when no
   sndiod(8) runs, as `sio_open(3)` does; sndiod itself is not needed for the smokes.
 - QEMU's disks (M10a, `boot.rs`, `qemu_command`): besides the boot image every VM has one

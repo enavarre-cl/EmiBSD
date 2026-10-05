@@ -1445,11 +1445,11 @@ smoke-audio: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --audio hda --expect-tone {{audio_play}} \
         --expect 'azalia0 at pci0 dev 4 function 0 vendor 0x8086 product 0x2668' \
-        --expect 'audio0 at azalia0' --expect 'name=azalia0'
+        --expect 'audio0 at azalia0' --expect 'name=azalia0' --expect 'outputs.master=126,126'
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --audio hda --expect-tone {{audio_play}} \
         --expect 'azalia0 at pci0 dev 1 function 0 vendor 0x8086 product 0x2668' \
-        --expect 'audio0 at azalia0' --expect 'name=azalia0'
+        --expect 'audio0 at azalia0' --expect 'name=azalia0' --expect 'outputs.master=126,126'
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --audio ac97 --expect-tone {{audio_play}} \
         --expect 'auich0 at pci0 dev 4 function 0 vendor 0x8086 product 0x2415' \

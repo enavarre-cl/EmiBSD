@@ -4,6 +4,31 @@ use std::vec::Vec;
 use super::*;
 use crate::reftest::{assert_complete, assert_defines};
 
+// --- a simulated codec link ---------------------------------------------------------------
+
+/// What answers the verbs of [`azalia_comresp`] on the host: it gets the node, the verb and
+/// its parameter.
+pub(crate) type FakeVerbs = std::boxed::Box<dyn FnMut(NidT, u32, u32) -> Result<u32, Errno>>;
+
+std::thread_local! {
+    static FAKE_CODEC: core::cell::RefCell<Option<FakeVerbs>> =
+        const { core::cell::RefCell::new(None) };
+}
+
+/// Install (or, with `None`, remove) the simulated codec of the current thread.
+pub(crate) fn set_fake_codec(verbs: Option<FakeVerbs>) {
+    FAKE_CODEC.with(|f| *f.borrow_mut() = verbs);
+}
+
+/// [`azalia_comresp`]'s hook: the simulated codec's answer, if one is installed.
+pub(crate) fn fake_comresp(nid: NidT, control: u32, param: u32) -> Option<Result<u32, Errno>> {
+    FAKE_CODEC.with(|f| {
+        f.borrow_mut()
+            .as_mut()
+            .map(|verbs| verbs(nid, control, param))
+    })
+}
+
 // --- a synthetic codec --------------------------------------------------------------------
 
 /// A widget of type `type_` with node ID `nid`, enabled, connected to `connections`, the

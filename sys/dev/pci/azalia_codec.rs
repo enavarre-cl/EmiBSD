@@ -32,56 +32,85 @@
 /* </LICENSES> */
 
 //! The generic codec support of azalia(4): codec names and quirks, converter groups, path
-//! finding between widgets, unsolicited events, and (not yet) the mixer.
+//! finding between widgets, unsolicited events, and the generic mixer (the controls of a
+//! codec's amplifiers, selectors, pins and volume groups).
 //!
 //! Upstream: sys/dev/pci/azalia_codec.c @ 3ce1f3f79392
 //!
-//! Partial (status `wip`): the functions `azalia.c` calls on the path QEMU's `hda-output`
-//! codec takes are ported; the generic mixer is the next port of this file.
-//!
 //! ## Deviations
-//! - Not ported yet: `azalia_mixer_init` (and its helpers `azalia_mixer_default`,
-//!   `azalia_mixer_ensure_capacity`, `azalia_mixer_fix_indexes`, `azalia_devinfo_offon`),
-//!   `azalia_mixer_get`, `azalia_mixer_set`, `azalia_mixer_from_device_value` and
-//!   `azalia_mixer_to_device_value`. [`azalia_mixer_init`] reports the gap with `unported!`
-//!   and returns success with no mixer controls, so the codec attaches and plays (its amplifiers
-//!   keep their power-on settings, and `azalia_codec_enable_unsol`, which the C calls at the
-//!   end of `azalia_mixer_init`, is not reached); [`azalia_mixer_get`] and
-//!   [`azalia_mixer_set`] return `ENOSYS` through `unported!` (nothing calls them while
-//!   there are no controls).
 //! - The functions take the codec as `&Codec` or `&mut Codec`, and widgets by their nid;
 //!   `azalia_pin_config_ov` and `azalia_ampcap_ov` take the widget.
 //! - [`azalia_widget_enabled`] returns `bool`.
-//! - The C's `int` results that are always 0 are `Result<(), Errno>` like the others.
+//! - The C's `int` results that are always 0 are `Result<(), Errno>` like the others; the C's
+//!   `-1` ("internal error", an unknown target) is `EIO`.
+//! - The mixer list is a `Vec<MixerItem>`: `nmixers` is its length and `maxmixers` its
+//!   capacity ([`azalia_mixer_ensure_capacity`] reserves ten more slots, as the C reallocates).
+//!   `MIXER_REG_PROLOG` builds the control in a local item that [`azalia_mixer_init`] adds
+//!   when it is complete; a control with no member is dropped before it is added (the C leaves
+//!   the slot to be overwritten).
+//! - `azalia_mixer_init` is split: [`azalia_mixer_register`] builds the controls, and the
+//!   rest (`azalia_mixer_fix_indexes`, `azalia_mixer_default`) follows, so the host tests can
+//!   run the first part without a controller. When growing the list fails the C ignores the
+//!   error in the volume-group blocks and writes past the end; here the error is returned.
+//! - The `DIAGNOSTIC` "index mismatch" message of `azalia_mixer_fix_indexes` is under the
+//!   `diagnostic` cargo feature, as option `DIAGNOSTIC`. `DPRINTF` messages are not carried.
+//! - Indexes into a widget's connection list that are out of range count as disabled
+//!   connections (the C reads past the array).
+//! - `azalia_mixer_set` for `MI_TARGET_SPDIF` reads `0` where the C reuses an unset
+//!   `result` when the first verb fails.
+//! - The pairs of verbs that set one channel's gain or mute are written once
+//!   (`amp_set_gain`, `amp_set_mute`) and run for the left and the right channel in the C's
+//!   order; likewise the play and the record volume group (`push_volgroup`, `volgroup_get`).
 
 use alloc::vec::Vec;
 
+use libkern::strlcpy;
+
 use crate::dev::pci::azalia::{
-    AZ_QRK_DOLBY_ATMOS, AZ_QRK_GPIO_POL_0, AZ_QRK_GPIO_UNMUTE_0, AZ_QRK_GPIO_UNMUTE_1,
-    AZ_QRK_GPIO_UNMUTE_2, AZ_QRK_GPIO_UNMUTE_3, AZ_QRK_NONE, AZ_QRK_ROUTE_SPKR2_DAC,
-    AZ_QRK_WID_AD1981_OAMP, AZ_QRK_WID_BEEP_1D, AZ_QRK_WID_CDIN_1C, AZ_QRK_WID_CLOSE_PCBEEP,
-    AZ_QRK_WID_OVREF50, AZ_QRK_WID_TPDOCK1, AZ_QRK_WID_TPDOCK2, AZ_QRK_WID_TPDOCK3,
-    AZ_SPKR_MUTE_DAC_MUTE, AZ_SPKR_MUTE_SPKR_DIR, AZ_SPKR_MUTE_SPKR_MUTE, AZ_TAG_PLAYVOL,
-    AZ_TAG_SPKR, COP_AMPCAP_MUTE, COP_AWCAP_DIGITAL, COP_AWCAP_OUTAMP, COP_AWCAP_STEREO,
-    COP_AWTYPE_AUDIO_INPUT, COP_AWTYPE_AUDIO_OUTPUT, COP_AWTYPE_BEEP_GENERATOR,
-    COP_AWTYPE_PIN_COMPLEX, COP_INPUT_AMPCAP, COP_OUTPUT_AMPCAP, COP_PINCAP_INPUT,
-    COP_PINCAP_OUTPUT, CORB_CD_BEEP, CORB_CD_CD, CORB_CD_DEVICE_BITS, CORB_CD_DEVICE_MASK,
-    CORB_CD_DEVICE_OFFSET, CORB_CD_FIXED, CORB_CD_PORT_BITS, CORB_CD_PORT_MASK,
-    CORB_CD_PORT_OFFSET, CORB_GET_GPIO_DATA, CORB_GET_GPIO_DIRECTION, CORB_GET_GPIO_ENABLE_MASK,
-    CORB_GET_PIN_SENSE, CORB_GET_PIN_WIDGET_CONTROL, CORB_GET_VOLUME_KNOB, CORB_PS_PRESENCE,
-    CORB_PWC_OUTPUT, CORB_SET_COEFFICIENT_INDEX, CORB_SET_GPIO_DATA, CORB_SET_GPIO_DIRECTION,
-    CORB_SET_GPIO_ENABLE_MASK, CORB_SET_GPIO_POLARITY, CORB_SET_PROCESSING_COEFFICIENT,
-    CORB_SET_UNSOLICITED_RESPONSE, CORB_SET_VOLUME_KNOB, CORB_UNSOL_ENABLE, CORB_VKNOB_DIRECT,
-    Codec, Convgroupset, HDA_MAX_CHANNELS, IoPin, MI_TARGET_OUTAMP, MI_TARGET_PINDIR,
-    MI_TARGET_PLAYVOL, NidT, Widget, azalia_comresp, cop_vkcap_numsteps, corb_unsol_tag,
-    corb_vknob_volume, valid_widget_nid,
+    AZ_CLASS_INPUT, AZ_CLASS_OUTPUT, AZ_CLASS_RECORD, AZ_QRK_DOLBY_ATMOS, AZ_QRK_GPIO_POL_0,
+    AZ_QRK_GPIO_UNMUTE_0, AZ_QRK_GPIO_UNMUTE_1, AZ_QRK_GPIO_UNMUTE_2, AZ_QRK_GPIO_UNMUTE_3,
+    AZ_QRK_NONE, AZ_QRK_ROUTE_SPKR2_DAC, AZ_QRK_WID_AD1981_OAMP, AZ_QRK_WID_BEEP_1D,
+    AZ_QRK_WID_CDIN_1C, AZ_QRK_WID_CLOSE_PCBEEP, AZ_QRK_WID_OVREF50, AZ_QRK_WID_TPDOCK1,
+    AZ_QRK_WID_TPDOCK2, AZ_QRK_WID_TPDOCK3, AZ_SPKR_MUTE_DAC_MUTE, AZ_SPKR_MUTE_NONE,
+    AZ_SPKR_MUTE_SPKR_DIR, AZ_SPKR_MUTE_SPKR_MUTE, AZ_TAG_PLAYVOL, AZ_TAG_SPKR, COP_AMPCAP_MUTE,
+    COP_AWCAP_DIGITAL, COP_AWCAP_INAMP, COP_AWCAP_OUTAMP, COP_AWCAP_STEREO, COP_AWCAP_UNSOL,
+    COP_AWTYPE_AUDIO_INPUT, COP_AWTYPE_AUDIO_MIXER, COP_AWTYPE_AUDIO_OUTPUT,
+    COP_AWTYPE_AUDIO_SELECTOR, COP_AWTYPE_BEEP_GENERATOR, COP_AWTYPE_PIN_COMPLEX, COP_INPUT_AMPCAP,
+    COP_OUTPUT_AMPCAP, COP_PINCAP_EAPD, COP_PINCAP_HEADPHONE, COP_PINCAP_INPUT, COP_PINCAP_OUTPUT,
+    CORB_AGM_GAIN_MASK, CORB_AGM_INDEX_SHIFT, CORB_AGM_INPUT, CORB_AGM_LEFT, CORB_AGM_MUTE,
+    CORB_AGM_OUTPUT, CORB_AGM_RIGHT, CORB_CD_BEEP, CORB_CD_CD, CORB_CD_DEVICE_BITS,
+    CORB_CD_DEVICE_MASK, CORB_CD_DEVICE_OFFSET, CORB_CD_FIXED, CORB_CD_PORT_BITS,
+    CORB_CD_PORT_MASK, CORB_CD_PORT_OFFSET, CORB_DCC_DIGEN, CORB_DCC_NAUDIO, CORB_EAPD_EAPD,
+    CORB_GAGM_INPUT, CORB_GAGM_LEFT, CORB_GAGM_MUTE, CORB_GAGM_OUTPUT, CORB_GAGM_RIGHT,
+    CORB_GET_AMPLIFIER_GAIN_MUTE, CORB_GET_CONNECTION_SELECT_CONTROL, CORB_GET_DIGITAL_CONTROL,
+    CORB_GET_EAPD_BTL_ENABLE, CORB_GET_GPIO_DATA, CORB_GET_GPIO_DIRECTION,
+    CORB_GET_GPIO_ENABLE_MASK, CORB_GET_PIN_SENSE, CORB_GET_PIN_WIDGET_CONTROL,
+    CORB_GET_VOLUME_KNOB, CORB_PS_PRESENCE, CORB_PWC_HEADPHONE, CORB_PWC_INPUT, CORB_PWC_OUTPUT,
+    CORB_PWC_VREF_50, CORB_PWC_VREF_80, CORB_PWC_VREF_100, CORB_PWC_VREF_GND, CORB_PWC_VREF_MASK,
+    CORB_SET_AMPLIFIER_GAIN_MUTE, CORB_SET_COEFFICIENT_INDEX, CORB_SET_CONNECTION_SELECT_CONTROL,
+    CORB_SET_DIGITAL_CONTROL_H, CORB_SET_DIGITAL_CONTROL_L, CORB_SET_EAPD_BTL_ENABLE,
+    CORB_SET_GPIO_DATA, CORB_SET_GPIO_DIRECTION, CORB_SET_GPIO_ENABLE_MASK, CORB_SET_GPIO_POLARITY,
+    CORB_SET_PIN_WIDGET_CONTROL, CORB_SET_PROCESSING_COEFFICIENT, CORB_SET_UNSOLICITED_RESPONSE,
+    CORB_SET_VOLUME_KNOB, CORB_UNSOL_ENABLE, CORB_VKNOB_DIRECT, Codec, Convgroupset,
+    HDA_MAX_CHANNELS, IoPin, MI_TARGET_ADC, MI_TARGET_CONNLIST, MI_TARGET_DAC, MI_TARGET_EAPD,
+    MI_TARGET_MIXERSET, MI_TARGET_MUTESET, MI_TARGET_OUTAMP, MI_TARGET_PINBOOST, MI_TARGET_PINDIR,
+    MI_TARGET_PINSENSE, MI_TARGET_PLAYVOL, MI_TARGET_RECVOL, MI_TARGET_SENSESET, MI_TARGET_SPDIF,
+    MI_TARGET_SPDIF_CC, MixerItem, NidT, Volgroup, Widget, azalia_codec_construct_format,
+    azalia_comresp, cop_ampcap_ctloff, cop_ampcap_numsteps, cop_pincap_vref, cop_vkcap_numsteps,
+    corb_csc_index, corb_dcc_cc, corb_gagm_gain, corb_unsol_tag, corb_vknob_volume,
+    is_mi_target_inamp, mi_target_inamp, valid_widget_nid, widget_channels,
 };
 use crate::dev::pci::pcidevs::{PCI_VENDOR_DELL, PCI_VENDOR_HP};
 use crate::dev::pci::pcireg::pci_vendor;
+use crate::kern::subr_prf::{Str, printf, snprintf};
 use crate::machine::cpu::delay;
-use crate::sys::audioio::{AUDIO_MAX_GAIN, AUDIO_MIXER_ENUM, AUDIO_MIXER_VALUE, MixerCtrl};
+use crate::sys::audioio::{
+    AUDIO_MAX_GAIN, AUDIO_MIN_GAIN, AUDIO_MIXER_CLASS, AUDIO_MIXER_ENUM, AUDIO_MIXER_LAST,
+    AUDIO_MIXER_SET, AUDIO_MIXER_VALUE, AudioCinputs, AudioCoutputs, AudioCrecord, AudioNinput,
+    AudioNmaster, AudioNmode, AudioNmute, AudioNoff, AudioNon, AudioNoutput, AudioNvolume,
+    MixerCtrl, MixerDevinfo,
+};
 use crate::sys::errno::Errno;
-use crate::unported;
 
 /// `azalia_codec_init_vtbl`: the codec's name and quirks, from its vendor/device ID and
 /// the PCI subsystem ID.
@@ -760,10 +789,764 @@ pub fn azalia_unsol_event(this: &mut Codec, tag: i32) -> Result<(), Errno> {
 // Generic mixer functions
 // ----------------------------------------------------------------
 
-/// `azalia_mixer_init`: the codec's mixer controls. Not ported yet (see the module's
-/// deviations): the gap is reported and the codec gets no controls.
-pub fn azalia_mixer_init(_this: &mut Codec) -> Result<(), Errno> {
-    let _ = unported!("azalia_mixer_init (azalia_codec.c)");
+/// `MIXER_DELTA(n)`: the step of a value control that has `n` hardware steps.
+const fn mixer_delta(n: u32) -> i32 {
+    AUDIO_MAX_GAIN / n as i32
+}
+
+/// The text of a C string held in a fixed buffer: the bytes up to the first NUL.
+fn cstr(s: &[u8]) -> &[u8] {
+    let len = s.iter().position(|&b| b == 0).unwrap_or(s.len());
+    &s[..len]
+}
+
+/// A mixer control for widget `nid`, as `M_ZERO` memory holds it: the part of
+/// `MIXER_REG_PROLOG` that sets the item up (the item is added by [`mixer_add`]).
+fn mixer_new(nid: NidT) -> MixerItem {
+    let mut m = MixerItem::new();
+    m.nid = nid;
+    m
+}
+
+/// The end of a registration in `azalia_mixer_init`: `MIXER_REG_PROLOG`'s
+/// `azalia_mixer_ensure_capacity` and the C's `this->nmixers++`.
+fn mixer_add(this: &mut Codec, m: MixerItem) -> Result<(), Errno> {
+    azalia_mixer_ensure_capacity(this, this.mixers.len() + 1)?;
+    this.mixers.push(m);
+    Ok(())
+}
+
+/// The class of an output control of widget `w`: its own, or by its type.
+fn out_class(w: &Widget) -> i32 {
+    if w.mixer_class >= 0 {
+        w.mixer_class
+    } else if w.type_ == COP_AWTYPE_AUDIO_MIXER
+        || w.type_ == COP_AWTYPE_AUDIO_SELECTOR
+        || w.type_ == COP_AWTYPE_PIN_COMPLEX
+    {
+        AZ_CLASS_OUTPUT
+    } else {
+        AZ_CLASS_INPUT
+    }
+}
+
+/// The class of an input control of widget `w`: its own, or `AZ_CLASS_INPUT`.
+fn in_class(w: &Widget) -> i32 {
+    if w.mixer_class >= 0 {
+        w.mixer_class
+    } else {
+        AZ_CLASS_INPUT
+    }
+}
+
+/// Fill the members of a set control with the enabled connections of `w` that are not the
+/// speakers, as the mute-set and the hardcoded-mixer-inputs controls of `azalia_mixer_init`
+/// list them. Returns whether there is any member (the C adds the control only then).
+fn fill_connection_set(this: &Codec, w: &Widget, d: &mut MixerDevinfo) -> bool {
+    let mut k = 0;
+    for (j, &c) in w.connections.iter().enumerate() {
+        if k >= 32 {
+            break;
+        }
+        if !azalia_widget_enabled(this, c) {
+            continue;
+        }
+        if c == this.speaker || c == this.speaker2 {
+            continue;
+        }
+        let member = &mut d.un.s_mut().member[k];
+        member.mask = 1 << j;
+        strlcpy(&mut member.label.name, &this.wi(c).name);
+        k += 1;
+    }
+    d.un.s_mut().num_mem = k as i32;
+    k != 0
+}
+
+/// The shape of a value control over an amplifier of `w` with `steps` steps.
+fn set_value_shape(d: &mut MixerDevinfo, w: &Widget, steps: u32) {
+    d.type_ = AUDIO_MIXER_VALUE;
+    let v = d.un.v_mut();
+    v.num_channels = widget_channels(w);
+    v.units.name[0] = 0;
+    v.delta = mixer_delta(steps);
+}
+
+/// The three controls of a volume group (`playvols`/`recvols`: volume, mute and slaves):
+/// the C writes them out twice with the same lines.
+fn push_volgroup(
+    this: &mut Codec,
+    target: i32,
+    class: i32,
+    first_label: &[u8],
+    group: &Volgroup,
+) -> Result<(), Errno> {
+    let master = group.master;
+    azalia_mixer_ensure_capacity(this, this.mixers.len() + 3)?;
+
+    // volume
+    let mut m = mixer_new(master);
+    m.target = target;
+    m.devinfo.mixer_class = class;
+    strlcpy(&mut m.devinfo.label.name, first_label);
+    m.devinfo.type_ = AUDIO_MIXER_VALUE;
+    m.devinfo.un.v_mut().num_channels = 2;
+    m.devinfo.un.v_mut().delta = 8;
+    let n = this.mixers.len() as i32 + 1;
+    m.devinfo.next = n;
+    this.mixers.push(m);
+
+    // mute
+    let mut m = mixer_new(master);
+    m.target = target;
+    m.devinfo.prev = n - 1;
+    m.devinfo.mixer_class = class;
+    strlcpy(&mut m.devinfo.label.name, AudioNmute);
+    azalia_devinfo_offon(&mut m.devinfo);
+    m.devinfo.next = n + 1;
+    this.mixers.push(m);
+
+    // slaves
+    let mut m = mixer_new(master);
+    m.target = target;
+    m.devinfo.prev = n;
+    m.devinfo.mixer_class = class;
+    strlcpy(&mut m.devinfo.label.name, b"slaves");
+    m.devinfo.type_ = AUDIO_MIXER_SET;
+    for i in 0..group.nslaves as usize {
+        let ww = this.wi(group.slaves[i]);
+        let member = &mut m.devinfo.un.s_mut().member[i];
+        member.mask = 1 << i;
+        strlcpy(&mut member.label.name, &ww.name);
+    }
+    m.devinfo.un.s_mut().num_mem = group.nslaves;
+    this.mixers.push(m);
+    Ok(())
+}
+
+/// The "mode" control (analog or digital converters) of `azalia_mixer_init`.
+fn mode_control(this: &Codec, class: i32, target: i32) -> MixerItem {
+    let mut m = mixer_new(this.audiofunc);
+    let d = &mut m.devinfo;
+    strlcpy(&mut d.label.name, AudioNmode);
+    d.type_ = AUDIO_MIXER_ENUM;
+    d.mixer_class = class;
+    m.target = target;
+    let e = m.devinfo.un.e_mut();
+    e.member[0].ord = 0;
+    strlcpy(&mut e.member[0].label.name, b"analog");
+    e.member[1].ord = 1;
+    strlcpy(&mut e.member[1].label.name, b"digital");
+    e.num_mem = 2;
+    m
+}
+
+/// `azalia_mixer_init`: build the codec's mixer controls from its widgets, then give them
+/// their default values and enable the unsolicited responses.
+pub fn azalia_mixer_init(this: &mut Codec) -> Result<(), Errno> {
+    azalia_mixer_register(this)?;
+
+    azalia_mixer_fix_indexes(this)?;
+    // The C ignores the result of the defaults (and of `azalia_codec_enable_unsol`).
+    let _ = azalia_mixer_default(this);
+    Ok(())
+}
+
+/// The first part of `azalia_mixer_init`: the list of controls. Split from it so the host
+/// tests can run it without a controller to talk to.
+fn azalia_mixer_register(this: &mut Codec) -> Result<(), Errno> {
+    // pin		"<color>%2.2x"
+    // audio output	"dac%2.2x"
+    // audio input	"adc%2.2x"
+    // mixer	"mixer%2.2x"
+    // selector	"sel%2.2x"
+
+    this.mixers = Vec::new();
+    if this.mixers.try_reserve_exact(10).is_err() {
+        printf(format_args!(
+            "{}: out of memory in azalia_mixer_init\n",
+            this.az().dev.xname()
+        ));
+        return Err(Errno::ENOMEM);
+    }
+
+    // register classes
+    for (index, name) in [
+        (AZ_CLASS_INPUT, AudioCinputs),
+        (AZ_CLASS_OUTPUT, AudioCoutputs),
+        (AZ_CLASS_RECORD, AudioCrecord),
+    ] {
+        let mut m = MixerItem::new();
+        m.devinfo.index = index;
+        strlcpy(&mut m.devinfo.label.name, name);
+        m.devinfo.type_ = AUDIO_MIXER_CLASS;
+        m.devinfo.mixer_class = index;
+        m.devinfo.next = AUDIO_MIXER_LAST;
+        m.devinfo.prev = AUDIO_MIXER_LAST;
+        m.nid = 0;
+        this.mixers.push(m);
+    }
+
+    for i in this.widgets() {
+        let w = this.wi(i).clone();
+        if !w.enable {
+            continue;
+        }
+
+        // selector
+        if w.nconnections() > 0
+            && w.type_ != COP_AWTYPE_AUDIO_MIXER
+            && !(w.nconnections() == 1
+                && azalia_widget_enabled(this, w.connections[0])
+                && cstr(&w.name) == cstr(&this.wi(w.connections[0]).name))
+            && w.nid != this.mic
+        {
+            let mut m = mixer_new(i);
+            let d = &mut m.devinfo;
+            snprintf(&mut d.label.name, format_args!("{}_source", Str(&w.name)));
+            d.type_ = AUDIO_MIXER_ENUM;
+            if w.mixer_class >= 0 {
+                d.mixer_class = w.mixer_class;
+            } else if w.type_ == COP_AWTYPE_AUDIO_SELECTOR {
+                d.mixer_class = AZ_CLASS_INPUT;
+            } else {
+                d.mixer_class = AZ_CLASS_OUTPUT;
+            }
+            m.target = MI_TARGET_CONNLIST;
+            let mut k = 0;
+            for (j, &c) in w.connections.iter().enumerate() {
+                if k >= 32 {
+                    break;
+                }
+                if !azalia_widget_enabled(this, c) {
+                    continue;
+                }
+                let member = &mut m.devinfo.un.e_mut().member[k];
+                member.ord = j as i32;
+                strlcpy(&mut member.label.name, &this.wi(c).name);
+                k += 1;
+            }
+            m.devinfo.un.e_mut().num_mem = k as i32;
+            mixer_add(this, m)?;
+        }
+
+        // output mute
+        if w.widgetcap & COP_AWCAP_OUTAMP != 0
+            && w.outamp_cap & COP_AMPCAP_MUTE != 0
+            && w.nid != this.mic
+        {
+            let mut m = mixer_new(i);
+            snprintf(
+                &mut m.devinfo.label.name,
+                format_args!("{}_mute", Str(&w.name)),
+            );
+            m.devinfo.mixer_class = out_class(&w);
+            m.target = MI_TARGET_OUTAMP;
+            azalia_devinfo_offon(&mut m.devinfo);
+            mixer_add(this, m)?;
+        }
+
+        // output gain
+        if w.widgetcap & COP_AWCAP_OUTAMP != 0
+            && cop_ampcap_numsteps(w.outamp_cap) != 0
+            && w.nid != this.mic
+        {
+            let mut m = mixer_new(i);
+            snprintf(&mut m.devinfo.label.name, format_args!("{}", Str(&w.name)));
+            m.devinfo.mixer_class = out_class(&w);
+            m.target = MI_TARGET_OUTAMP;
+            set_value_shape(&mut m.devinfo, &w, cop_ampcap_numsteps(w.outamp_cap));
+            mixer_add(this, m)?;
+        }
+
+        // input mute
+        if w.widgetcap & COP_AWCAP_INAMP != 0
+            && w.inamp_cap & COP_AMPCAP_MUTE != 0
+            && w.nid != this.speaker
+            && w.nid != this.speaker2
+        {
+            if w.type_ != COP_AWTYPE_AUDIO_MIXER {
+                let mut m = mixer_new(i);
+                snprintf(
+                    &mut m.devinfo.label.name,
+                    format_args!("{}_mute", Str(&w.name)),
+                );
+                m.devinfo.mixer_class = in_class(&w);
+                m.target = 0;
+                azalia_devinfo_offon(&mut m.devinfo);
+                mixer_add(this, m)?;
+            } else {
+                let mut m = mixer_new(i);
+                snprintf(
+                    &mut m.devinfo.label.name,
+                    format_args!("{}_source", Str(&w.name)),
+                );
+                m.target = MI_TARGET_MUTESET;
+                m.devinfo.type_ = AUDIO_MIXER_SET;
+                m.devinfo.mixer_class = in_class(&w);
+                if fill_connection_set(this, &w, &mut m.devinfo) {
+                    mixer_add(this, m)?;
+                }
+            }
+        }
+
+        // input gain
+        if w.widgetcap & COP_AWCAP_INAMP != 0
+            && cop_ampcap_numsteps(w.inamp_cap) != 0
+            && w.nid != this.speaker
+            && w.nid != this.speaker2
+        {
+            if w.type_ != COP_AWTYPE_AUDIO_SELECTOR && w.type_ != COP_AWTYPE_AUDIO_MIXER {
+                let mut m = mixer_new(i);
+                snprintf(&mut m.devinfo.label.name, format_args!("{}", Str(&w.name)));
+                m.devinfo.mixer_class = in_class(&w);
+                m.target = 0;
+                set_value_shape(&mut m.devinfo, &w, cop_ampcap_numsteps(w.inamp_cap));
+                mixer_add(this, m)?;
+            } else {
+                for (j, &c) in w.connections.iter().enumerate() {
+                    if !azalia_widget_enabled(this, c) {
+                        continue;
+                    }
+                    if c == this.speaker || c == this.speaker2 {
+                        continue;
+                    }
+                    let mut m = mixer_new(i);
+                    snprintf(
+                        &mut m.devinfo.label.name,
+                        format_args!("{}_{}", Str(&w.name), Str(&this.wi(c).name)),
+                    );
+                    m.devinfo.mixer_class = in_class(&w);
+                    m.target = j as i32;
+                    set_value_shape(&mut m.devinfo, &w, cop_ampcap_numsteps(w.inamp_cap));
+                    mixer_add(this, m)?;
+                }
+            }
+        }
+
+        // hardcoded mixer inputs
+        if w.type_ == COP_AWTYPE_AUDIO_MIXER && w.widgetcap & COP_AWCAP_INAMP == 0 {
+            let mut m = mixer_new(i);
+            snprintf(
+                &mut m.devinfo.label.name,
+                format_args!("{}_source", Str(&w.name)),
+            );
+            m.target = MI_TARGET_MIXERSET;
+            m.devinfo.type_ = AUDIO_MIXER_SET;
+            m.devinfo.mixer_class = in_class(&w);
+            if fill_connection_set(this, &w, &mut m.devinfo) {
+                mixer_add(this, m)?;
+            }
+        }
+
+        // pin direction
+        let pincap = w.d.pin().cap;
+        if w.type_ == COP_AWTYPE_PIN_COMPLEX
+            && ((pincap & COP_PINCAP_OUTPUT != 0 && pincap & COP_PINCAP_INPUT != 0)
+                || cop_pincap_vref(pincap) > 1)
+        {
+            let mut m = mixer_new(i);
+            let d = &mut m.devinfo;
+            snprintf(&mut d.label.name, format_args!("{}_dir", Str(&w.name)));
+            d.type_ = AUDIO_MIXER_ENUM;
+            d.mixer_class = AZ_CLASS_OUTPUT;
+            m.target = MI_TARGET_PINDIR;
+            let e = m.devinfo.un.e_mut();
+
+            let mut k = 0;
+            e.member[k].ord = 0;
+            strlcpy(&mut e.member[k].label.name, b"none");
+            k += 1;
+
+            if pincap & COP_PINCAP_OUTPUT != 0 {
+                e.member[k].ord = 1;
+                strlcpy(&mut e.member[k].label.name, AudioNoutput);
+                k += 1;
+            }
+
+            if pincap & COP_PINCAP_INPUT != 0 {
+                e.member[k].ord = 2;
+                strlcpy(&mut e.member[k].label.name, AudioNinput);
+                k += 1;
+
+                for (j, (vref, label)) in [
+                    (CORB_PWC_VREF_GND, b"input-vr0".as_slice()),
+                    (CORB_PWC_VREF_50, b"input-vr50".as_slice()),
+                    (CORB_PWC_VREF_80, b"input-vr80".as_slice()),
+                    (CORB_PWC_VREF_100, b"input-vr100".as_slice()),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    // the pin keeps the slot only if it supports the reference voltage
+                    let bits = 1 << vref;
+                    if cop_pincap_vref(pincap) & bits == bits {
+                        strlcpy(&mut e.member[k].label.name, label);
+                        e.member[k].ord = j as i32 + 3;
+                        k += 1;
+                    }
+                }
+            }
+            e.num_mem = k as i32;
+            mixer_add(this, m)?;
+        }
+
+        // pin headphone-boost
+        if w.type_ == COP_AWTYPE_PIN_COMPLEX
+            && pincap & COP_PINCAP_HEADPHONE != 0
+            && w.nid != this.mic
+        {
+            let mut m = mixer_new(i);
+            snprintf(
+                &mut m.devinfo.label.name,
+                format_args!("{}_boost", Str(&w.name)),
+            );
+            m.devinfo.mixer_class = AZ_CLASS_OUTPUT;
+            m.target = MI_TARGET_PINBOOST;
+            azalia_devinfo_offon(&mut m.devinfo);
+            mixer_add(this, m)?;
+        }
+
+        if w.type_ == COP_AWTYPE_PIN_COMPLEX && pincap & COP_PINCAP_EAPD != 0 {
+            let mut m = mixer_new(i);
+            snprintf(
+                &mut m.devinfo.label.name,
+                format_args!("{}_eapd", Str(&w.name)),
+            );
+            m.devinfo.mixer_class = AZ_CLASS_OUTPUT;
+            m.target = MI_TARGET_EAPD;
+            azalia_devinfo_offon(&mut m.devinfo);
+            mixer_add(this, m)?;
+        }
+    }
+
+    // sense pins
+    for i in 0..this.nsense_pins as usize {
+        let pin = this.sense_pins[i];
+        if !azalia_widget_enabled(this, pin) {
+            // sense pin not found
+            continue;
+        }
+
+        let ww = this.wi(pin);
+        let mut m = mixer_new(ww.nid);
+        let d = &mut m.devinfo;
+        snprintf(&mut d.label.name, format_args!("{}_sense", Str(&ww.name)));
+        d.type_ = AUDIO_MIXER_ENUM;
+        d.mixer_class = AZ_CLASS_OUTPUT;
+        m.target = MI_TARGET_PINSENSE;
+        let e = m.devinfo.un.e_mut();
+        e.num_mem = 2;
+        e.member[0].ord = 0;
+        strlcpy(&mut e.member[0].label.name, b"unplugged");
+        e.member[1].ord = 1;
+        strlcpy(&mut e.member[1].label.name, b"plugged");
+        mixer_add(this, m)?;
+    }
+
+    // spkr mute by jack sense
+    this.spkr_mute_method = AZ_SPKR_MUTE_NONE;
+    if this.speaker != -1 && this.spkr_dac != -1 && this.nsense_pins > 0 {
+        let w = this.wi(this.speaker);
+        if w.widgetcap & COP_AWCAP_OUTAMP != 0 && w.outamp_cap & COP_AMPCAP_MUTE != 0 {
+            this.spkr_mute_method = AZ_SPKR_MUTE_SPKR_MUTE;
+        } else if w.d.pin().cap & COP_PINCAP_OUTPUT != 0 && w.d.pin().cap & COP_PINCAP_INPUT != 0 {
+            this.spkr_mute_method = AZ_SPKR_MUTE_SPKR_DIR;
+        } else {
+            let w = this.wi(this.spkr_dac);
+            if w.nid != this.dacs.groups[0].conv[0]
+                && w.widgetcap & COP_AWCAP_OUTAMP != 0
+                && w.outamp_cap & COP_AMPCAP_MUTE != 0
+            {
+                this.spkr_mute_method = AZ_SPKR_MUTE_DAC_MUTE;
+            }
+        }
+    }
+    if this.spkr_mute_method != AZ_SPKR_MUTE_NONE {
+        let w = this.wi(this.speaker);
+        let mut m = mixer_new(w.nid);
+        snprintf(
+            &mut m.devinfo.label.name,
+            format_args!("{}_muters", Str(&w.name)),
+        );
+        m.target = MI_TARGET_SENSESET;
+        m.devinfo.type_ = AUDIO_MIXER_SET;
+        m.devinfo.mixer_class = AZ_CLASS_OUTPUT;
+        let mut spkr_muters = 0;
+        let mut j = 0;
+        for i in 0..this.nsense_pins as usize {
+            let ww = this.wi(this.sense_pins[i]);
+            if ww.d.pin().cap & COP_PINCAP_OUTPUT == 0 {
+                continue;
+            }
+            if ww.widgetcap & COP_AWCAP_UNSOL == 0 {
+                continue;
+            }
+            let member = &mut m.devinfo.un.s_mut().member[j];
+            member.mask = 1 << i;
+            spkr_muters |= 1 << i;
+            strlcpy(&mut member.label.name, &ww.name);
+            j += 1;
+        }
+        m.devinfo.un.s_mut().num_mem = j as i32;
+        this.spkr_muters = spkr_muters;
+        if j != 0 {
+            mixer_add(this, m)?;
+        }
+    }
+
+    // playback volume group
+    if this.playvols.nslaves > 0 {
+        let group = this.playvols;
+        push_volgroup(
+            this,
+            MI_TARGET_PLAYVOL,
+            AZ_CLASS_OUTPUT,
+            AudioNmaster,
+            &group,
+        )?;
+    }
+
+    // recording volume group
+    if this.recvols.nslaves > 0 {
+        let group = this.recvols;
+        push_volgroup(
+            this,
+            MI_TARGET_RECVOL,
+            AZ_CLASS_RECORD,
+            AudioNvolume,
+            &group,
+        )?;
+    }
+
+    // if the codec has more than one DAC group, the first is analog
+    // and the second is digital.
+    if this.dacs.ngroups > 1 {
+        let m = mode_control(this, AZ_CLASS_OUTPUT, MI_TARGET_DAC);
+        mixer_add(this, m)?;
+    }
+
+    // if the codec has more than one ADC group, the first is analog
+    // and the second is digital.
+    if this.adcs.ngroups > 1 {
+        let m = mode_control(this, AZ_CLASS_RECORD, MI_TARGET_ADC);
+        mixer_add(this, m)?;
+    }
+
+    Ok(())
+}
+
+/// `azalia_devinfo_offon`: make `d` an off/on enumeration.
+pub fn azalia_devinfo_offon(d: &mut MixerDevinfo) {
+    d.type_ = AUDIO_MIXER_ENUM;
+    let e = d.un.e_mut();
+    e.num_mem = 2;
+    e.member[0].ord = 0;
+    strlcpy(&mut e.member[0].label.name, AudioNoff);
+    e.member[1].ord = 1;
+    strlcpy(&mut e.member[1].label.name, AudioNon);
+}
+
+/// `azalia_mixer_ensure_capacity`: room for `newsize` controls. The C grows `mixers` by ten
+/// slots (or to `newsize`); `maxmixers` is the vector's capacity.
+pub fn azalia_mixer_ensure_capacity(this: &mut Codec, newsize: usize) -> Result<(), Errno> {
+    let maxmixers = this.mixers.capacity();
+    if maxmixers >= newsize {
+        return Ok(());
+    }
+    let newmax = (maxmixers + 10).max(newsize);
+    if this
+        .mixers
+        .try_reserve_exact(newmax - this.mixers.len())
+        .is_err()
+    {
+        printf(format_args!(
+            "{}: out of memory in azalia_mixer_ensure_capacity\n",
+            this.az().dev.xname()
+        ));
+        return Err(Errno::ENOMEM);
+    }
+    Ok(())
+}
+
+/// `azalia_mixer_fix_indexes`: number the controls and end every chain with
+/// `AUDIO_MIXER_LAST`.
+pub fn azalia_mixer_fix_indexes(this: &mut Codec) -> Result<(), Errno> {
+    for (i, m) in this.mixers.iter_mut().enumerate() {
+        let d = &mut m.devinfo;
+        #[cfg(feature = "diagnostic")]
+        {
+            if d.index != 0 && d.index != i as i32 {
+                printf(format_args!(
+                    "azalia_mixer_fix_indexes: index mismatch {} {}\n",
+                    d.index, i
+                ));
+            }
+        }
+        d.index = i as i32;
+        if d.prev == 0 {
+            d.prev = AUDIO_MIXER_LAST;
+        }
+        if d.next == 0 {
+            d.next = AUDIO_MIXER_LAST;
+        }
+    }
+    Ok(())
+}
+
+/// `azalia_mixer_default`: unmute everything, set the amplifiers to half gain, select a
+/// valid input for every selector, read the volume groups' masters, and enable the
+/// unsolicited responses.
+pub fn azalia_mixer_default(this: &mut Codec) -> Result<(), Errno> {
+    // One `mixer_ctrl_t` for the whole function, as in the C: the connection-list check
+    // reads with whatever `type` an earlier step left in it.
+    let mut mc = MixerCtrl::default();
+
+    // unmute all
+    for i in 0..this.mixers.len() {
+        let (nid, target, type_) = {
+            let m = &this.mixers[i];
+            (m.nid, m.target, m.devinfo.type_)
+        };
+        if !is_mi_target_inamp(target) && target != MI_TARGET_OUTAMP {
+            continue;
+        }
+        if type_ != AUDIO_MIXER_ENUM {
+            continue;
+        }
+        mc = MixerCtrl::default();
+        mc.dev = i as i32;
+        mc.type_ = AUDIO_MIXER_ENUM;
+        let _ = azalia_mixer_set(this, nid, target, &mc);
+    }
+
+    // set unextreme volume
+    for i in 0..this.mixers.len() {
+        let (nid, target, type_) = {
+            let m = &this.mixers[i];
+            (m.nid, m.target, m.devinfo.type_)
+        };
+        if !is_mi_target_inamp(target) && target != MI_TARGET_OUTAMP {
+            continue;
+        }
+        if type_ != AUDIO_MIXER_VALUE {
+            continue;
+        }
+        mc = MixerCtrl::default();
+        mc.dev = i as i32;
+        mc.type_ = AUDIO_MIXER_VALUE;
+        let stereo = widget_channels(this.wi(nid)) == 2;
+        let value = mc.un.value_mut();
+        value.num_channels = 1;
+        value.level[0] = (AUDIO_MAX_GAIN / 2) as u8;
+        if stereo {
+            value.num_channels = 2;
+            value.level[1] = value.level[0];
+        }
+        let _ = azalia_mixer_set(this, nid, target, &mc);
+    }
+
+    // unmute all
+    for i in 0..this.mixers.len() {
+        let (nid, target, type_) = {
+            let m = &this.mixers[i];
+            (m.nid, m.target, m.devinfo.type_)
+        };
+        if target != MI_TARGET_MUTESET {
+            continue;
+        }
+        if type_ != AUDIO_MIXER_SET {
+            continue;
+        }
+        mc = MixerCtrl::default();
+        mc.dev = i as i32;
+        mc.type_ = AUDIO_MIXER_SET;
+        if !azalia_widget_enabled(this, nid) {
+            // invalid set nid
+            return Err(Errno::EINVAL);
+        }
+        let w = this.wi(nid);
+        let mut mask = 0;
+        for (j, &c) in w.connections.iter().enumerate() {
+            if !azalia_widget_enabled(this, c) {
+                continue;
+            }
+            if w.nid == this.input_mixer && c == this.mic {
+                continue;
+            }
+            mask |= 1 << j;
+        }
+        mc.un.set_mask(mask);
+        let _ = azalia_mixer_set(this, nid, target, &mc);
+    }
+
+    // make sure default connection is valid
+    for i in 0..this.mixers.len() {
+        let (nid, target) = {
+            let m = &this.mixers[i];
+            (m.nid, m.target)
+        };
+        if target != MI_TARGET_CONNLIST {
+            continue;
+        }
+
+        let _ = azalia_mixer_get(this, nid, target, &mut mc);
+        let e = this.mixers[i].devinfo.un.e();
+        let members = &e.member[..e.num_mem as usize];
+        if !members.iter().any(|member| member.ord == mc.un.ord()) {
+            let first = e.member[0].ord;
+            mc = MixerCtrl::default();
+            mc.dev = i as i32;
+            mc.type_ = AUDIO_MIXER_ENUM;
+            mc.un.set_ord(first);
+        }
+        let _ = azalia_mixer_set(this, nid, target, &mc);
+    }
+
+    // get default value for play group master
+    for i in 0..this.playvols.nslaves as usize {
+        if this.playvols.cur & (1 << i) == 0 {
+            continue;
+        }
+        let w = this.wi(this.playvols.slaves[i]);
+        if cop_ampcap_numsteps(w.outamp_cap) == 0 {
+            continue;
+        }
+        let nid = w.nid;
+        mc.type_ = AUDIO_MIXER_VALUE;
+        let _ = azalia_mixer_get(this, nid, MI_TARGET_OUTAMP, &mut mc);
+        this.playvols.vol_l = i32::from(mc.un.value().level[0]);
+        this.playvols.vol_r = i32::from(mc.un.value().level[0]);
+        break;
+    }
+    this.playvols.mute = 0;
+
+    // get default value for record group master
+    for i in 0..this.recvols.nslaves as usize {
+        if this.recvols.cur & (1 << i) == 0 {
+            continue;
+        }
+        let w = this.wi(this.recvols.slaves[i]);
+        mc.type_ = AUDIO_MIXER_VALUE;
+        let mut tgt = MI_TARGET_OUTAMP;
+        let mut cap = w.outamp_cap;
+        if w.type_ == COP_AWTYPE_PIN_COMPLEX || w.type_ == COP_AWTYPE_AUDIO_INPUT {
+            tgt = 0;
+            cap = w.inamp_cap;
+        }
+        if cop_ampcap_numsteps(cap) == 0 {
+            continue;
+        }
+        let nid = w.nid;
+        let _ = azalia_mixer_get(this, nid, tgt, &mut mc);
+        this.recvols.vol_l = i32::from(mc.un.value().level[0]);
+        this.recvols.vol_r = i32::from(mc.un.value().level[0]);
+        break;
+    }
+    this.recvols.mute = 0;
+
+    azalia_codec_enable_unsol(this)?;
+
     Ok(())
 }
 
@@ -821,25 +1604,723 @@ pub fn azalia_mixer_delete(this: &mut Codec) -> Result<(), Errno> {
     Ok(())
 }
 
-/// `azalia_mixer_get`: the value of control `target` of widget `nid` (`mc->type` set by
-/// the caller). Not ported yet: `ENOSYS`.
+/// `azalia_mixer_get`: the value of control `target` of widget `nid` (`mc->type` is set by
+/// the caller).
 pub fn azalia_mixer_get(
-    _this: &Codec,
-    _nid: NidT,
-    _target: i32,
-    _mc: &mut MixerCtrl,
+    this: &Codec,
+    nid: NidT,
+    target: i32,
+    mc: &mut MixerCtrl,
 ) -> Result<(), Errno> {
-    Err(unported!("azalia_mixer_get (azalia_codec.c)"))
+    if mc.type_ == AUDIO_MIXER_CLASS {
+        return Ok(());
+    }
+    // inamp mute
+    else if is_mi_target_inamp(target) && mc.type_ == AUDIO_MIXER_ENUM {
+        let result = azalia_comresp(
+            this,
+            nid,
+            CORB_GET_AMPLIFIER_GAIN_MUTE,
+            CORB_GAGM_INPUT | CORB_GAGM_LEFT | mi_target_inamp(target) as u32,
+        )?;
+        mc.un.set_ord(i32::from(result & CORB_GAGM_MUTE != 0));
+    }
+    // inamp gain
+    else if is_mi_target_inamp(target) && mc.type_ == AUDIO_MIXER_VALUE {
+        let result = azalia_comresp(
+            this,
+            nid,
+            CORB_GET_AMPLIFIER_GAIN_MUTE,
+            CORB_GAGM_INPUT | CORB_GAGM_LEFT | mi_target_inamp(target) as u32,
+        )?;
+        mc.un.value_mut().level[0] =
+            azalia_mixer_from_device_value(this, nid, target, corb_gagm_gain(result));
+        let w = this.wi(nid);
+        let n = if w.type_ == COP_AWTYPE_AUDIO_SELECTOR || w.type_ == COP_AWTYPE_AUDIO_MIXER {
+            match w.connections.get(mi_target_inamp(target) as usize) {
+                Some(&n) if azalia_widget_enabled(this, n) => n,
+                // invalid index
+                _ => nid,
+            }
+        } else {
+            nid
+        };
+        let channels = widget_channels(this.wi(n));
+        mc.un.value_mut().num_channels = channels;
+        if channels == 2 {
+            let result = azalia_comresp(
+                this,
+                nid,
+                CORB_GET_AMPLIFIER_GAIN_MUTE,
+                CORB_GAGM_INPUT | CORB_GAGM_RIGHT | mi_target_inamp(target) as u32,
+            )?;
+            mc.un.value_mut().level[1] =
+                azalia_mixer_from_device_value(this, nid, target, corb_gagm_gain(result));
+        }
+    }
+    // outamp mute
+    else if target == MI_TARGET_OUTAMP && mc.type_ == AUDIO_MIXER_ENUM {
+        let result = azalia_comresp(
+            this,
+            nid,
+            CORB_GET_AMPLIFIER_GAIN_MUTE,
+            CORB_GAGM_OUTPUT | CORB_GAGM_LEFT,
+        )?;
+        mc.un.set_ord(i32::from(result & CORB_GAGM_MUTE != 0));
+    }
+    // outamp gain
+    else if target == MI_TARGET_OUTAMP && mc.type_ == AUDIO_MIXER_VALUE {
+        let result = azalia_comresp(
+            this,
+            nid,
+            CORB_GET_AMPLIFIER_GAIN_MUTE,
+            CORB_GAGM_OUTPUT | CORB_GAGM_LEFT,
+        )?;
+        mc.un.value_mut().level[0] =
+            azalia_mixer_from_device_value(this, nid, target, corb_gagm_gain(result));
+        let channels = widget_channels(this.wi(nid));
+        mc.un.value_mut().num_channels = channels;
+        if channels == 2 {
+            let result = azalia_comresp(
+                this,
+                nid,
+                CORB_GET_AMPLIFIER_GAIN_MUTE,
+                CORB_GAGM_OUTPUT | CORB_GAGM_RIGHT,
+            )?;
+            mc.un.value_mut().level[1] =
+                azalia_mixer_from_device_value(this, nid, target, corb_gagm_gain(result));
+        }
+    }
+    // selection
+    else if target == MI_TARGET_CONNLIST {
+        let result = azalia_comresp(this, nid, CORB_GET_CONNECTION_SELECT_CONTROL, 0)?;
+        let result = corb_csc_index(result);
+        match this.wi(nid).connections.get(result as usize) {
+            Some(&c) if azalia_widget_enabled(this, c) => mc.un.set_ord(result as i32),
+            _ => mc.un.set_ord(-1),
+        }
+    }
+    // pin I/O
+    else if target == MI_TARGET_PINDIR {
+        let result = azalia_comresp(this, nid, CORB_GET_PIN_WIDGET_CONTROL, 0)?;
+
+        if result & (CORB_PWC_INPUT | CORB_PWC_OUTPUT) == 0 {
+            mc.un.set_ord(0);
+        } else if result & CORB_PWC_OUTPUT != 0 {
+            mc.un.set_ord(1);
+        } else {
+            mc.un.set_ord(match result & CORB_PWC_VREF_MASK {
+                CORB_PWC_VREF_GND => 3,
+                CORB_PWC_VREF_50 => 4,
+                CORB_PWC_VREF_80 => 5,
+                CORB_PWC_VREF_100 => 6,
+                _ => 2,
+            });
+        }
+    }
+    // pin headphone-boost
+    else if target == MI_TARGET_PINBOOST {
+        let result = azalia_comresp(this, nid, CORB_GET_PIN_WIDGET_CONTROL, 0)?;
+        mc.un.set_ord(i32::from(result & CORB_PWC_HEADPHONE != 0));
+    }
+    // DAC group selection
+    else if target == MI_TARGET_DAC {
+        mc.un.set_ord(this.dacs.cur);
+    }
+    // ADC selection
+    else if target == MI_TARGET_ADC {
+        mc.un.set_ord(this.adcs.cur);
+    }
+    // S/PDIF
+    else if target == MI_TARGET_SPDIF {
+        let result = azalia_comresp(this, nid, CORB_GET_DIGITAL_CONTROL, 0)?;
+        mc.un
+            .set_mask((result & 0xff & !(CORB_DCC_DIGEN | CORB_DCC_NAUDIO)) as i32);
+    } else if target == MI_TARGET_SPDIF_CC {
+        let result = azalia_comresp(this, nid, CORB_GET_DIGITAL_CONTROL, 0)?;
+        mc.un.value_mut().num_channels = 1;
+        mc.un.value_mut().level[0] = corb_dcc_cc(result) as u8;
+    }
+    // EAPD
+    else if target == MI_TARGET_EAPD {
+        let result = azalia_comresp(this, nid, CORB_GET_EAPD_BTL_ENABLE, 0)?;
+        mc.un.set_ord(i32::from(result & CORB_EAPD_EAPD != 0));
+    }
+    // sense pin
+    else if target == MI_TARGET_PINSENSE {
+        let result = azalia_comresp(this, nid, CORB_GET_PIN_SENSE, 0)?;
+        mc.un.set_ord(i32::from(result & CORB_PS_PRESENCE != 0));
+    }
+    // mute set
+    else if target == MI_TARGET_MUTESET && mc.type_ == AUDIO_MIXER_SET {
+        if !azalia_widget_enabled(this, nid) {
+            // invalid muteset nid
+            return Err(Errno::EINVAL);
+        }
+        let w = this.wi(nid);
+        let mut mask = 0;
+        for (i, &c) in w.connections.iter().enumerate() {
+            if !azalia_widget_enabled(this, c) {
+                continue;
+            }
+            let result = azalia_comresp(
+                this,
+                nid,
+                CORB_GET_AMPLIFIER_GAIN_MUTE,
+                CORB_GAGM_INPUT | CORB_GAGM_LEFT | mi_target_inamp(i as i32) as u32,
+            )?;
+            if result & CORB_GAGM_MUTE == 0 {
+                mask |= 1 << i;
+            }
+        }
+        mc.un.set_mask(mask);
+    }
+    // mixer set - show all connections
+    else if target == MI_TARGET_MIXERSET && mc.type_ == AUDIO_MIXER_SET {
+        if !azalia_widget_enabled(this, nid) {
+            // invalid mixerset nid
+            return Err(Errno::EINVAL);
+        }
+        let w = this.wi(nid);
+        let mut mask = 0;
+        for (i, &c) in w.connections.iter().enumerate() {
+            if !azalia_widget_enabled(this, c) {
+                continue;
+            }
+            mask |= 1 << i;
+        }
+        mc.un.set_mask(mask);
+    } else if target == MI_TARGET_SENSESET && mc.type_ == AUDIO_MIXER_SET {
+        if nid == this.speaker {
+            mc.un.set_mask(this.spkr_muters);
+        } else {
+            // invalid senseset nid
+            return Err(Errno::EINVAL);
+        }
+    } else if target == MI_TARGET_PLAYVOL {
+        volgroup_get(&this.playvols, mc)?;
+    } else if target == MI_TARGET_RECVOL {
+        volgroup_get(&this.recvols, mc)?;
+    } else {
+        // internal error: target
+        return Err(Errno::EIO);
+    }
+    Ok(())
 }
 
-/// `azalia_mixer_set`: set control `target` of widget `nid`. Not ported yet: `ENOSYS`.
-pub fn azalia_mixer_set(
-    _this: &mut Codec,
-    _nid: NidT,
-    _target: i32,
-    _mc: &MixerCtrl,
+/// The `MI_TARGET_PLAYVOL` and `MI_TARGET_RECVOL` arms of `azalia_mixer_get`.
+fn volgroup_get(group: &Volgroup, mc: &mut MixerCtrl) -> Result<(), Errno> {
+    if mc.type_ == AUDIO_MIXER_VALUE {
+        let value = mc.un.value_mut();
+        value.num_channels = 2;
+        value.level[0] = group.vol_l as u8;
+        value.level[1] = group.vol_r as u8;
+    } else if mc.type_ == AUDIO_MIXER_ENUM {
+        mc.un.set_ord(group.mute);
+    } else if mc.type_ == AUDIO_MIXER_SET {
+        mc.un.set_mask(group.cur);
+    } else {
+        // invalid master mixer type
+        return Err(Errno::EINVAL);
+    }
+    Ok(())
+}
+
+/// Write the gain and mute of one amplifier side: the pair of verbs (get the amplifier,
+/// then set it with the gain kept) that `azalia_mixer_set` sends for each channel.
+///
+/// `side` is `CORB_GAGM_INPUT`/`OUTPUT` | `CORB_GAGM_LEFT`/`RIGHT` | the index, the get
+/// parameter; `agm` is the matching `CORB_AGM_*` bits of the set verb.
+fn amp_set_mute(this: &Codec, nid: NidT, side: u32, agm: u32, mute: bool) -> Result<(), Errno> {
+    // set stereo mute separately to keep each gain value
+    let result = azalia_comresp(this, nid, CORB_GET_AMPLIFIER_GAIN_MUTE, side)?;
+    let mut value = agm | corb_gagm_gain(result);
+    if mute {
+        value |= CORB_AGM_MUTE;
+    }
+    azalia_comresp(this, nid, CORB_SET_AMPLIFIER_GAIN_MUTE, value)?;
+    Ok(())
+}
+
+/// As [`amp_set_mute`], for the gain: the mute bit is kept and the gain comes from
+/// `level`.
+fn amp_set_gain(
+    this: &Codec,
+    nid: NidT,
+    target: i32,
+    side: u32,
+    agm: u32,
+    level: u8,
 ) -> Result<(), Errno> {
-    Err(unported!("azalia_mixer_set (azalia_codec.c)"))
+    let result = azalia_comresp(this, nid, CORB_GET_AMPLIFIER_GAIN_MUTE, side)?;
+    let value = azalia_mixer_to_device_value(this, nid, target, level);
+    let value =
+        agm | if result & CORB_GAGM_MUTE != 0 {
+            CORB_AGM_MUTE
+        } else {
+            0
+        } | (value & CORB_AGM_GAIN_MASK);
+    azalia_comresp(this, nid, CORB_SET_AMPLIFIER_GAIN_MUTE, value)?;
+    Ok(())
+}
+
+/// `azalia_mixer_set`: set control `target` of widget `nid`.
+pub fn azalia_mixer_set(
+    this: &mut Codec,
+    nid: NidT,
+    target: i32,
+    mc: &MixerCtrl,
+) -> Result<(), Errno> {
+    if mc.type_ == AUDIO_MIXER_CLASS {
+        return Ok(());
+    }
+    // inamp mute
+    else if is_mi_target_inamp(target) && mc.type_ == AUDIO_MIXER_ENUM {
+        let index = mi_target_inamp(target) as u32;
+        let mute = mc.un.ord() != 0;
+        amp_set_mute(
+            this,
+            nid,
+            CORB_GAGM_INPUT | CORB_GAGM_LEFT | index,
+            CORB_AGM_INPUT | CORB_AGM_LEFT | (target as u32) << CORB_AGM_INDEX_SHIFT,
+            mute,
+        )?;
+        if widget_channels(this.wi(nid)) == 2 {
+            amp_set_mute(
+                this,
+                nid,
+                CORB_GAGM_INPUT | CORB_GAGM_RIGHT | index,
+                CORB_AGM_INPUT | CORB_AGM_RIGHT | (target as u32) << CORB_AGM_INDEX_SHIFT,
+                mute,
+            )?;
+        }
+    }
+    // inamp gain
+    else if is_mi_target_inamp(target) && mc.type_ == AUDIO_MIXER_VALUE {
+        let value = mc.un.value();
+        if value.num_channels < 1 {
+            return Err(Errno::EINVAL);
+        }
+        let index = mi_target_inamp(target) as u32;
+        amp_set_gain(
+            this,
+            nid,
+            target,
+            CORB_GAGM_INPUT | CORB_GAGM_LEFT | index,
+            CORB_AGM_INPUT | CORB_AGM_LEFT | (target as u32) << CORB_AGM_INDEX_SHIFT,
+            value.level[0],
+        )?;
+        if value.num_channels >= 2 && widget_channels(this.wi(nid)) == 2 {
+            amp_set_gain(
+                this,
+                nid,
+                target,
+                CORB_GAGM_INPUT | CORB_GAGM_RIGHT | index,
+                CORB_AGM_INPUT | CORB_AGM_RIGHT | (target as u32) << CORB_AGM_INDEX_SHIFT,
+                value.level[1],
+            )?;
+        }
+    }
+    // outamp mute
+    else if target == MI_TARGET_OUTAMP && mc.type_ == AUDIO_MIXER_ENUM {
+        let mute = mc.un.ord() != 0;
+        amp_set_mute(
+            this,
+            nid,
+            CORB_GAGM_OUTPUT | CORB_GAGM_LEFT,
+            CORB_AGM_OUTPUT | CORB_AGM_LEFT,
+            mute,
+        )?;
+        if widget_channels(this.wi(nid)) == 2 {
+            amp_set_mute(
+                this,
+                nid,
+                CORB_GAGM_OUTPUT | CORB_GAGM_RIGHT,
+                CORB_AGM_OUTPUT | CORB_AGM_RIGHT,
+                mute,
+            )?;
+        }
+    }
+    // outamp gain
+    else if target == MI_TARGET_OUTAMP && mc.type_ == AUDIO_MIXER_VALUE {
+        let value = mc.un.value();
+        if value.num_channels < 1 {
+            return Err(Errno::EINVAL);
+        }
+        amp_set_gain(
+            this,
+            nid,
+            target,
+            CORB_GAGM_OUTPUT | CORB_GAGM_LEFT,
+            CORB_AGM_OUTPUT | CORB_AGM_LEFT,
+            value.level[0],
+        )?;
+        if value.num_channels >= 2 && widget_channels(this.wi(nid)) == 2 {
+            amp_set_gain(
+                this,
+                nid,
+                target,
+                CORB_GAGM_OUTPUT | CORB_GAGM_RIGHT,
+                CORB_AGM_OUTPUT | CORB_AGM_RIGHT,
+                value.level[1],
+            )?;
+        }
+    }
+    // selection
+    else if target == MI_TARGET_CONNLIST {
+        let ord = mc.un.ord();
+        let w = this.wi(nid);
+        if ord < 0
+            || ord >= w.nconnections()
+            || !azalia_widget_enabled(this, w.connections[ord as usize])
+        {
+            return Err(Errno::EINVAL);
+        }
+        azalia_comresp(this, nid, CORB_SET_CONNECTION_SELECT_CONTROL, ord as u32)?;
+    }
+    // pin I/O
+    else if target == MI_TARGET_PINDIR {
+        let result = azalia_comresp(this, nid, CORB_GET_PIN_WIDGET_CONTROL, 0)?;
+
+        let ord = mc.un.ord();
+        let mut value = result;
+        value &= !CORB_PWC_VREF_MASK;
+        if ord == 0 {
+            value &= !(CORB_PWC_OUTPUT | CORB_PWC_INPUT);
+        } else if ord == 1 {
+            value &= !CORB_PWC_INPUT;
+            value |= CORB_PWC_OUTPUT;
+            if this.qrks & AZ_QRK_WID_OVREF50 != 0 {
+                value |= CORB_PWC_VREF_50;
+            }
+        } else {
+            value &= !CORB_PWC_OUTPUT;
+            value |= CORB_PWC_INPUT;
+
+            if ord == 3 {
+                value |= CORB_PWC_VREF_GND;
+            }
+            if ord == 4 {
+                value |= CORB_PWC_VREF_50;
+            }
+            if ord == 5 {
+                value |= CORB_PWC_VREF_80;
+            }
+            if ord == 6 {
+                value |= CORB_PWC_VREF_100;
+            }
+        }
+        azalia_comresp(this, nid, CORB_SET_PIN_WIDGET_CONTROL, value)?;
+
+        // Run the unsolicited response handler for speaker mute
+        // since it depends on pin direction.
+        if this.sense_pins[..this.nsense_pins as usize].contains(&nid) {
+            let _ = azalia_unsol_event(this, AZ_TAG_SPKR);
+        }
+    }
+    // pin headphone-boost
+    else if target == MI_TARGET_PINBOOST {
+        if mc.un.ord() >= 2 {
+            return Err(Errno::EINVAL);
+        }
+        let mut result = azalia_comresp(this, nid, CORB_GET_PIN_WIDGET_CONTROL, 0)?;
+        if mc.un.ord() == 0 {
+            result &= !CORB_PWC_HEADPHONE;
+        } else {
+            result |= CORB_PWC_HEADPHONE;
+        }
+        azalia_comresp(this, nid, CORB_SET_PIN_WIDGET_CONTROL, result)?;
+    }
+    // DAC group selection
+    else if target == MI_TARGET_DAC {
+        if this.running != 0 {
+            return Err(Errno::EBUSY);
+        }
+        if mc.un.ord() >= this.dacs.ngroups {
+            return Err(Errno::EINVAL);
+        }
+        if mc.un.ord() != this.dacs.cur {
+            return azalia_codec_construct_format(this, mc.un.ord(), this.adcs.cur);
+        } else {
+            return Ok(());
+        }
+    }
+    // ADC selection
+    else if target == MI_TARGET_ADC {
+        if this.running != 0 {
+            return Err(Errno::EBUSY);
+        }
+        if mc.un.ord() >= this.adcs.ngroups {
+            return Err(Errno::EINVAL);
+        }
+        if mc.un.ord() != this.adcs.cur {
+            return azalia_codec_construct_format(this, this.dacs.cur, mc.un.ord());
+        } else {
+            return Ok(());
+        }
+    }
+    // S/PDIF
+    else if target == MI_TARGET_SPDIF {
+        // The C does not look at the result of this read.
+        let mut result = azalia_comresp(this, nid, CORB_GET_DIGITAL_CONTROL, 0).unwrap_or(0);
+        result &= CORB_DCC_DIGEN | CORB_DCC_NAUDIO;
+        result |= mc.un.mask() as u32 & 0xff & !CORB_DCC_DIGEN;
+        azalia_comresp(this, nid, CORB_SET_DIGITAL_CONTROL_L, result)?;
+    } else if target == MI_TARGET_SPDIF_CC {
+        if mc.un.value().num_channels != 1 {
+            return Err(Errno::EINVAL);
+        }
+        if mc.un.value().level[0] > 127 {
+            return Err(Errno::EINVAL);
+        }
+        azalia_comresp(
+            this,
+            nid,
+            CORB_SET_DIGITAL_CONTROL_H,
+            u32::from(mc.un.value().level[0]),
+        )?;
+    }
+    // EAPD
+    else if target == MI_TARGET_EAPD {
+        if mc.un.ord() >= 2 {
+            return Err(Errno::EINVAL);
+        }
+        let mut result = azalia_comresp(this, nid, CORB_GET_EAPD_BTL_ENABLE, 0)?;
+        result &= 0xff;
+        if mc.un.ord() == 0 {
+            result &= !CORB_EAPD_EAPD;
+        } else {
+            result |= CORB_EAPD_EAPD;
+        }
+        azalia_comresp(this, nid, CORB_SET_EAPD_BTL_ENABLE, result)?;
+    } else if target == MI_TARGET_PINSENSE {
+        // do nothing, control is read only
+    } else if target == MI_TARGET_MUTESET && mc.type_ == AUDIO_MIXER_SET {
+        if !azalia_widget_enabled(this, nid) {
+            // invalid muteset nid
+            return Err(Errno::EINVAL);
+        }
+        let w = this.wi(nid);
+        let stereo = widget_channels(w) == 2;
+        for (i, &c) in w.connections.iter().enumerate() {
+            if !azalia_widget_enabled(this, c) {
+                continue;
+            }
+
+            // We have to set stereo mute separately
+            // to keep each gain value.
+            let mute = mc.un.mask() & (1 << i) == 0;
+            amp_set_mute(
+                this,
+                nid,
+                CORB_GAGM_INPUT | CORB_GAGM_LEFT | mi_target_inamp(i as i32) as u32,
+                CORB_AGM_INPUT | CORB_AGM_LEFT | (i as u32) << CORB_AGM_INDEX_SHIFT,
+                mute,
+            )?;
+
+            if stereo {
+                amp_set_mute(
+                    this,
+                    nid,
+                    CORB_GAGM_INPUT | CORB_GAGM_RIGHT | mi_target_inamp(i as i32) as u32,
+                    CORB_AGM_INPUT | CORB_AGM_RIGHT | (i as u32) << CORB_AGM_INDEX_SHIFT,
+                    mute,
+                )?;
+            }
+        }
+    } else if target == MI_TARGET_MIXERSET && mc.type_ == AUDIO_MIXER_SET {
+        // do nothing, control is read only
+    } else if target == MI_TARGET_SENSESET && mc.type_ == AUDIO_MIXER_SET {
+        if nid == this.speaker {
+            this.spkr_muters = mc.un.mask();
+            let _ = azalia_unsol_event(this, AZ_TAG_SPKR);
+        } else {
+            // invalid senseset nid
+            return Err(Errno::EINVAL);
+        }
+    } else if target == MI_TARGET_PLAYVOL {
+        let mut mc2 = MixerCtrl::default();
+
+        if mc.type_ == AUDIO_MIXER_VALUE {
+            if mc.un.value().num_channels != 2 {
+                return Err(Errno::EINVAL);
+            }
+            this.playvols.vol_l = i32::from(mc.un.value().level[0]);
+            this.playvols.vol_r = i32::from(mc.un.value().level[1]);
+            for i in 0..this.playvols.nslaves as usize {
+                if this.playvols.cur & (1 << i) == 0 {
+                    continue;
+                }
+                let w = this.wi(this.playvols.slaves[i]);
+                if cop_ampcap_numsteps(w.outamp_cap) == 0 {
+                    continue;
+                }
+                let (wnid, mutable, channels) = (
+                    w.nid,
+                    w.outamp_cap & COP_AMPCAP_MUTE != 0,
+                    widget_channels(w),
+                );
+
+                // don't change volume if muted
+                if mutable {
+                    mc2.type_ = AUDIO_MIXER_ENUM;
+                    let _ = azalia_mixer_get(this, wnid, MI_TARGET_OUTAMP, &mut mc2);
+                    if mc2.un.ord() != 0 {
+                        continue;
+                    }
+                }
+                mc2.type_ = AUDIO_MIXER_VALUE;
+                let value = mc2.un.value_mut();
+                value.num_channels = channels;
+                value.level[0] = this.playvols.vol_l as u8;
+                value.level[1] = this.playvols.vol_r as u8;
+                // out slave volume
+                azalia_mixer_set(this, wnid, MI_TARGET_OUTAMP, &mc2)?;
+            }
+        } else if mc.type_ == AUDIO_MIXER_ENUM {
+            if mc.un.ord() != 0 && mc.un.ord() != 1 {
+                return Err(Errno::EINVAL);
+            }
+            this.playvols.mute = mc.un.ord();
+            for i in 0..this.playvols.nslaves as usize {
+                if this.playvols.cur & (1 << i) == 0 {
+                    continue;
+                }
+                let w = this.wi(this.playvols.slaves[i]);
+                if w.outamp_cap & COP_AMPCAP_MUTE == 0 {
+                    continue;
+                }
+                let wnid = w.nid;
+                if this.spkr_muted == 1
+                    && ((this.spkr_mute_method == AZ_SPKR_MUTE_SPKR_MUTE
+                        && (wnid == this.speaker || wnid == this.speaker2))
+                        || (this.spkr_mute_method == AZ_SPKR_MUTE_DAC_MUTE
+                            && wnid == this.spkr_dac))
+                {
+                    continue;
+                }
+                mc2.type_ = AUDIO_MIXER_ENUM;
+                mc2.un.set_ord(this.playvols.mute);
+                // out slave mute
+                azalia_mixer_set(this, wnid, MI_TARGET_OUTAMP, &mc2)?;
+            }
+        } else if mc.type_ == AUDIO_MIXER_SET {
+            this.playvols.cur = mc.un.mask() & this.playvols.mask;
+        } else {
+            // invalid output master mixer type
+            return Err(Errno::EINVAL);
+        }
+    } else if target == MI_TARGET_RECVOL {
+        let mut mc2 = MixerCtrl::default();
+
+        if mc.type_ == AUDIO_MIXER_VALUE {
+            if mc.un.value().num_channels != 2 {
+                return Err(Errno::EINVAL);
+            }
+            this.recvols.vol_l = i32::from(mc.un.value().level[0]);
+            this.recvols.vol_r = i32::from(mc.un.value().level[1]);
+            for i in 0..this.recvols.nslaves as usize {
+                if this.recvols.cur & (1 << i) == 0 {
+                    continue;
+                }
+                let w = this.wi(this.recvols.slaves[i]);
+                let mut tgt = MI_TARGET_OUTAMP;
+                let mut cap = w.outamp_cap;
+                if w.type_ == COP_AWTYPE_AUDIO_INPUT || w.type_ == COP_AWTYPE_PIN_COMPLEX {
+                    tgt = 0;
+                    cap = w.inamp_cap;
+                }
+                if cop_ampcap_numsteps(cap) == 0 {
+                    continue;
+                }
+                let (wnid, channels) = (w.nid, widget_channels(w));
+                mc2.type_ = AUDIO_MIXER_VALUE;
+                let value = mc2.un.value_mut();
+                value.num_channels = channels;
+                value.level[0] = this.recvols.vol_l as u8;
+                value.level[1] = this.recvols.vol_r as u8;
+                // in slave volume
+                azalia_mixer_set(this, wnid, tgt, &mc2)?;
+            }
+        } else if mc.type_ == AUDIO_MIXER_ENUM {
+            if mc.un.ord() != 0 && mc.un.ord() != 1 {
+                return Err(Errno::EINVAL);
+            }
+            this.recvols.mute = mc.un.ord();
+            for i in 0..this.recvols.nslaves as usize {
+                if this.recvols.cur & (1 << i) == 0 {
+                    continue;
+                }
+                let w = this.wi(this.recvols.slaves[i]);
+                let mut tgt = MI_TARGET_OUTAMP;
+                let mut cap = w.outamp_cap;
+                if w.type_ == COP_AWTYPE_AUDIO_INPUT || w.type_ == COP_AWTYPE_PIN_COMPLEX {
+                    tgt = 0;
+                    cap = w.inamp_cap;
+                }
+                if cap & COP_AMPCAP_MUTE == 0 {
+                    continue;
+                }
+                let wnid = w.nid;
+                mc2.type_ = AUDIO_MIXER_ENUM;
+                mc2.un.set_ord(this.recvols.mute);
+                // in slave mute
+                azalia_mixer_set(this, wnid, tgt, &mc2)?;
+            }
+        } else if mc.type_ == AUDIO_MIXER_SET {
+            this.recvols.cur = mc.un.mask() & this.recvols.mask;
+        } else {
+            // invalid input master mixer type
+            return Err(Errno::EINVAL);
+        }
+    } else {
+        // internal error: target
+        return Err(Errno::EIO);
+    }
+    Ok(())
+}
+
+/// The amplifier steps and the offset of the control's amplifier: the C's `steps` and
+/// `ctloff` in the two value conversions.
+fn amp_steps_ctloff(this: &Codec, nid: NidT, target: i32) -> (u32, u32) {
+    if is_mi_target_inamp(target) {
+        let cap = this.wi(nid).inamp_cap;
+        (cop_ampcap_numsteps(cap), cop_ampcap_ctloff(cap))
+    } else if target == MI_TARGET_OUTAMP {
+        let cap = this.wi(nid).outamp_cap;
+        (cop_ampcap_numsteps(cap), cop_ampcap_ctloff(cap))
+    } else {
+        // unknown target
+        (255, 0)
+    }
+}
+
+/// `azalia_mixer_from_device_value`: an amplifier setting as a 0..255 mixer level.
+pub fn azalia_mixer_from_device_value(this: &Codec, nid: NidT, target: i32, dv: u32) -> u8 {
+    let (steps, ctloff) = amp_steps_ctloff(this, nid, target);
+    // `dv` is unsigned in the C too: a setting below the offset wraps and reads as the top
+    let dv = dv.wrapping_sub(ctloff);
+    if dv == 0 || steps == 0 {
+        return AUDIO_MIN_GAIN as u8;
+    }
+    let max_gain = AUDIO_MAX_GAIN as u32 - AUDIO_MAX_GAIN as u32 % steps;
+    if dv >= steps {
+        return max_gain as u8;
+    }
+    (dv * max_gain / steps) as u8
+}
+
+/// `azalia_mixer_to_device_value`: a 0..255 mixer level as an amplifier setting.
+pub fn azalia_mixer_to_device_value(this: &Codec, nid: NidT, target: i32, uv: u8) -> u32 {
+    let (steps, ctloff) = amp_steps_ctloff(this, nid, target);
+    if i32::from(uv) <= AUDIO_MIN_GAIN || steps == 0 {
+        return ctloff;
+    }
+    let max_gain = AUDIO_MAX_GAIN as u32 - AUDIO_MAX_GAIN as u32 % steps;
+    if u32::from(uv) >= max_gain {
+        return steps + ctloff;
+    }
+    u32::from(uv) * steps / max_gain + ctloff
 }
 
 /// `azalia_gpio_unmute`: drive GPIO `pin` of the audio function high.
