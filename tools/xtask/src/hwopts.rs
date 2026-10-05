@@ -44,6 +44,13 @@
 //!   and expects a second boot's login. Without it, an ACPI power-off (`halt -p`, S5) and a
 //!   reset both end QEMU with status 0, so a smoke that checks a power-off passes
 //!   `--status 0` and rejects `rebooting...`, which `boot(9)` prints before every reset.
+//! - `--nic MODEL` (`qemu`, `smoke`, M13): the NIC on QEMU's user network, the one that
+//!   is vio0 otherwise, is an Intel PRO/1000 of that model instead, for em(4): `e1000`
+//!   (82540EM), `e1000e` (82574L) or `igb` (82576). It takes vio0's place on the command
+//!   line and its netdev (`n0`), so it is the only Ethernet interface (em0, which the
+//!   kernel's network self-test configures as it does vio0) and no other device moves. On
+//!   arm64 it is a PCI device on `virt`'s PCIe bus, where vio0 is on virtio-mmio. Not with
+//!   `--vio-mq` (that is vio0's).
 //! - `{host-ms}` in a `smoke` `--send` text (M13, `smoke-clock`): replaced, as the text is
 //!   sent, by the host's wall clock in milliseconds since the Epoch ([`expand_send`]), so a
 //!   guest script can set its own clock readings beside the host's and compare the rates.
@@ -176,9 +183,24 @@ static REBOOT: OnceLock<()> = OnceLock::new();
 /// `--vio-mq`: vio0's virtio-net offers multiqueue (`mq=on`, set once by `main`).
 static VIO_MQ: OnceLock<()> = OnceLock::new();
 
+/// The models `--nic` takes: QEMU's emulated Intel PRO/1000 controllers, which em(4) drives.
+const NIC_MODELS: &[&str] = &["e1000", "e1000e", "igb"];
+
+/// `--nic MODEL`: the user-network NIC's model, in vio0's place (set once by `main`).
+static NIC: OnceLock<String> = OnceLock::new();
+
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
-/// `--pci-serial`, `--expect-pci-serial`, `--reboot`, `--vio-mq`).
+/// `--pci-serial`, `--expect-pci-serial`, `--reboot`, `--vio-mq`, `--nic`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
+    if let Some(model) = opt_path(args, "--nic")? {
+        if !NIC_MODELS.contains(&model) {
+            return Err(format!("--nic {model}: expected one of {}", NIC_MODELS.join(", ")).into());
+        }
+        if args.contains(&"--vio-mq") {
+            return Err("--nic: not with --vio-mq (there is no vio0)".into());
+        }
+        let _ = NIC.set(model.to_string());
+    }
     if args.contains(&"--reboot") {
         let _ = REBOOT.set(());
     }
@@ -229,6 +251,22 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
 /// user network has one queue pair, so the device reports one.
 pub(crate) fn vio0_props() -> &'static str {
     if VIO_MQ.get().is_some() { ",mq=on" } else { "" }
+}
+
+/// The `-device` argument of the NIC on QEMU's user network (netdev `n0`, `props` its MAC
+/// when there is one): vio0, a `virtio-net-pci` on amd64 (with `--vio-mq`'s properties) and a
+/// `virtio-net-device` on arm64, or the `--nic` model.
+pub(crate) fn user_nic(arch: Arch, props: &str) -> String {
+    user_nic_arg(NIC.get().map(String::as_str), arch, props)
+}
+
+/// [`user_nic`] for the model `nic` (`--nic`, if any).
+fn user_nic_arg(nic: Option<&str>, arch: Arch, props: &str) -> String {
+    match (nic, arch) {
+        (Some(model), _) => format!("{model},netdev=n0{props}"),
+        (None, Arch::Amd64) => format!("virtio-net-pci,netdev=n0{props}{}", vio0_props()),
+        (None, Arch::Arm64) => format!("virtio-net-device,netdev=n0{props}"),
+    }
 }
 
 /// Whether this run's VMs restart on a guest reset (`--reboot`): QEMU then runs without
@@ -680,6 +718,25 @@ mod tests {
         assert!(opt_path(&["--lsi"], "--lsi").is_err());
         assert_eq!(opt_path(&["--lsi", "x"], "--lsi").unwrap(), Some("x"));
         assert_eq!(opt_path(&["--arch", "amd64"], "--lsi").unwrap(), None);
+    }
+
+    #[test]
+    fn nic_replaces_vio0_on_the_user_network() {
+        assert_eq!(
+            user_nic_arg(Some("e1000e"), Arch::Amd64, ""),
+            "e1000e,netdev=n0"
+        );
+        assert_eq!(
+            user_nic_arg(Some("igb"), Arch::Arm64, ",mac=52:54:00:12:34:57"),
+            "igb,netdev=n0,mac=52:54:00:12:34:57"
+        );
+        assert_eq!(
+            user_nic_arg(None, Arch::Arm64, ""),
+            "virtio-net-device,netdev=n0"
+        );
+        assert!(set(Path::new("/r"), &["--nic", "rtl8139"]).is_err());
+        assert!(set(Path::new("/r"), &["--nic"]).is_err());
+        assert!(set(Path::new("/r"), &["--nic", "e1000", "--vio-mq"]).is_err());
     }
 
     #[test]

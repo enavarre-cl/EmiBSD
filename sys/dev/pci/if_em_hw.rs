@@ -3266,15 +3266,36 @@ pub const CARRIER_EXTENSION: u32 = 0x0F;
 /// `TBI_ACCEPT(sc, status, errors, length, last_byte)`: whether a frame the MAC flagged as a
 /// carrier extension error is acceptable in TBI compatibility mode.
 pub fn tbi_accept(hw: &EmHw, status: u8, errors: u8, length: u32, last_byte: u8) -> bool {
-    hw.tbi_compatibility_on
+    tbi_accept_with(
+        hw.tbi_compatibility_on,
+        hw.min_frame_size,
+        hw.max_frame_size,
+        status,
+        errors,
+        length,
+        last_byte,
+    )
+}
+/// `TBI_ACCEPT` over the three members of `struct em_hw` it reads, passed by value: if_em(4)
+/// evaluates it in its receive interrupt from copies it keeps (`sc->hw` belongs to the
+/// kernel lock there).
+pub fn tbi_accept_with(
+    tbi_compatibility_on: bool,
+    min_frame_size: u32,
+    max_frame_size: u32,
+    status: u8,
+    errors: u8,
+    length: u32,
+    last_byte: u8,
+) -> bool {
+    tbi_compatibility_on
         && ((u32::from(errors) & E1000_RXD_ERR_FRAME_ERR_MASK) == E1000_RXD_ERR_CE)
         && (u32::from(last_byte) == CARRIER_EXTENSION)
         && (if u32::from(status) & E1000_RXD_STAT_VP != 0 {
-            length > hw.min_frame_size.wrapping_sub(VLAN_TAG_SIZE)
-                && length <= hw.max_frame_size.wrapping_add(1)
+            length > min_frame_size.wrapping_sub(VLAN_TAG_SIZE)
+                && length <= max_frame_size.wrapping_add(1)
         } else {
-            length > hw.min_frame_size
-                && length <= hw.max_frame_size.wrapping_add(VLAN_TAG_SIZE + 1)
+            length > min_frame_size && length <= max_frame_size.wrapping_add(VLAN_TAG_SIZE + 1)
         })
 }
 /// `E1000_CTRL_PHY_RESET_DIR`.

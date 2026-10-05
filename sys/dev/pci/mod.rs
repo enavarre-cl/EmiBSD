@@ -18,6 +18,7 @@ pub mod azalia;
 pub mod azalia_codec;
 pub mod gcu_reg;
 pub mod gcu_var;
+pub mod if_em;
 pub mod if_em_hw;
 pub mod if_em_osdep;
 pub mod if_em_soc;

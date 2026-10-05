@@ -83,7 +83,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-efiboot smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-efiboot smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc"
 
@@ -1419,6 +1419,42 @@ smoke-siop: (build-amd64 "--features qemu,multiprocessor")
         --expect '*3: A6' --expect '/dev/rsd1a: ' --expect "siop-written-42" --expect "m13-siop-42" \
         --expect "siop-cmp-42" --expect "1048576 bytes transferred" --expect "m13-raw-42" \
         --expect "m10c-iso-42"
+
+# M13: em(4), the exit criterion's "em(4) on e1000e answers the M7+ ping". `--nic e1000e`
+# (`tools/xtask/src/hwopts.rs`) puts QEMU's 82574L on the user network in vio0's place, so
+# em0 is the only Ethernet interface: the kernel's boot self-test gives it 10.0.2.15/24 and
+# the default route (its own ping goes out before the PHY has negotiated the link, which a
+# real NIC takes time to do, so it is not expected), then, logged in, ifconfig(8) shows em0
+# up, with its address and an active link, and ping(8) gets the gateway's reply. Both archs
+# (arm64: on `virt`'s PCIe bus, MSI through the GICv2m frame). amd64 also boots the
+# 82540EM (`--nic e1000`: INTx through the I/O APIC, the I/O BAR, 32-bit DMA) and pings
+# through it, and the 82576 (`--nic igb`), which attaches and gets its link but passes no
+# traffic, probably because QEMU's igb model writes back advanced receive descriptors only
+# while em(4) programs legacy ones (SRRCTL's DESCTYPE 0), as OpenBSD's does (not checked
+# against QEMU's source). Part of `smoke`.
+smoke-em: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-em: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --nic e1000e {{em_session}} {{em_ping}} \
+        --expect "vendor 0x8086 product 0x10d3 rev 0x00: msi, address 52:54:00:12:34:56"
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --nic e1000e {{em_session}} {{em_ping}} \
+        --expect "vendor 0x8086 product 0x10d3 rev 0x00: msi, address 52:54:00:12:34:56"
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --nic e1000 {{em_session}} {{em_ping}} \
+        --expect "vendor 0x8086 product 0x100e rev 0x03: apic 0 int "
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --nic igb {{em_session}} \
+        --expect "vendor 0x8086 product 0x10c9 rev 0x01: msi, address 52:54:00:12:34:56"
+
+# `smoke-em`'s login and commands, the expectations every em(4) boot shares, and the ping's.
+em_session := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' --send 'emibsd\\n' " + \
+    "--send-after '# ' --send 'ifconfig em0\\n' --send-after '# ' --send 'ping -c 1 10.0.2.2\\n' " + \
+    "--expect 'em0 at pci0 dev ' --expect 'rc: multi-user' --expect 'em0: flags=' " + \
+    "--expect 'status: active' --expect 'inet 10.0.2.15 netmask 0xffffff00'"
+em_ping := "--expect 'PING 10.0.2.2 (10.0.2.2): 56 data bytes' " + \
+    "--expect '1 packets transmitted, 1 packets received, 0.0% packet loss'"
 
 # M14: OpenBSD's efiboot boots the disk instead of Limine. `cargo xtask efiboot-disk` writes
 # the boot image as OpenBSD installs one (tools/xtask/src/efiboot.rs): an MBR with the

@@ -1245,6 +1245,22 @@ reason:
   guest's `echo ... >/dev/cua04` reaches the host). For a future arm64 `puc*`: the card's
   BAR is I/O space that EDK2 leaves unassigned and the kernel cannot place without extents,
   and `com` shares `cdevsw` major 8 with the PL011 console (`pluartcnattach`'s KLUDGE).
+  `--nic MODEL` (`qemu`, `smoke`; `e1000`, `e1000e` or `igb`) makes the NIC on the user
+  network an Intel PRO/1000 of that model, for em(4), in vio0's place on the command line
+  and on its netdev: no other device moves, em0 is the only Ethernet interface and the
+  kernel's network self-test configures it as it does vio0 (on arm64 it sits on `virt`'s
+  PCIe bus). Not with `--vio-mq`. `smoke-em` pings QEMU's gateway through the 82574L on both
+  archs and the 82540EM on amd64; QEMU's 82576 (`igb`) attaches and links up but passes no
+  traffic, probably because its model writes back only advanced receive descriptors and
+  em(4) programs legacy ones, as OpenBSD's does (not checked against QEMU's source).
+- `em(4)` (M13): `dev/pci/if_em.c` is OpenBSD's whole driver over the shared code of
+  `if_em_hw.c`. The C changes `sc->hw` only under the kernel lock and reads `mac_type` and
+  the registers unlocked from its MP-safe paths (the send queue, the interrupt's ring work);
+  here `sc->hw` is handed out as a guard that asserts the kernel lock and refuses a second
+  borrow, and the unlocked paths use a second, read-only `struct em_hw` holding the register
+  handles and `mac_type` (C_TO_RUST.md). `ifmedia` and `kstat(4)` are not there (reported,
+  or compiled out as with `NKSTAT` 0); `vlan(4)` is not configured (`NVLAN` 0). MSI-X stays
+  off as in C (`em_enable_msix`): the 82574L and 82576 run on MSI, the 82540EM on INTx.
 - `disklabel(8)` and `fdisk(8)` embed their manual page in a generated `manual.c` rendered
   with mandoc(1); the userland build takes their Makefiles' own `.ifdef NOMAN` branch
   (`NOMAN_PROGRAMS` in `tools/xtask/src/userland.rs`), so the embedded page reads

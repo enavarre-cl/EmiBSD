@@ -90,6 +90,51 @@ pub const IFM_AVALID: u64 = 0x0000_0000_0000_0001;
 /// `IFM_ACTIVE`: interface attached to working net.
 pub const IFM_ACTIVE: u64 = 0x0000_0000_0000_0002;
 
+// em(4) (M13): the Ethernet subtypes and options it reports and accepts, and the masks.
+
+/// `IFM_10_T`: 10BaseT - RJ45.
+pub const IFM_10_T: u64 = 3;
+/// `IFM_100_TX`: 100BaseTX - RJ45.
+pub const IFM_100_TX: u64 = 6;
+/// `IFM_1000_SX`: 1000BaseSX - multi-mode fiber.
+pub const IFM_1000_SX: u64 = 11;
+/// `IFM_1000_LX`: 1000baseLX - single-mode fiber.
+pub const IFM_1000_LX: u64 = 14;
+/// `IFM_1000_T`: 1000baseT - 4 pair cat 5.
+pub const IFM_1000_T: u64 = 16;
+/// `IFM_ETH_MASTER`: master mode (1000baseT).
+pub const IFM_ETH_MASTER: u64 = 0x0000_0000_0001_0000;
+/// `IFM_ETH_RXPAUSE`: receive PAUSE frames.
+pub const IFM_ETH_RXPAUSE: u64 = 0x0000_0000_0002_0000;
+/// `IFM_ETH_TXPAUSE`: transmit PAUSE frames.
+pub const IFM_ETH_TXPAUSE: u64 = 0x0000_0000_0004_0000;
+/// `IFM_NONE`: deselect all media.
+pub const IFM_NONE: u64 = 2;
+/// `IFM_HDX`: force half duplex.
+pub const IFM_HDX: u64 = 0x0000_0200_0000_0000;
+/// `IFM_FLOW`: enable hardware flow control.
+pub const IFM_FLOW: u64 = 0x0000_0400_0000_0000;
+/// `IFM_NMASK`: network type.
+pub const IFM_NMASK: u64 = 0x0000_0000_0000_ff00;
+/// `IFM_TMASK`: media sub-type.
+pub const IFM_TMASK: u64 = 0x0000_0000_0000_00ff;
+/// `IFM_IMASK`: instance.
+pub const IFM_IMASK: u64 = 0xff00_0000_0000_0000;
+/// `IFM_ISHIFT`: instance shift.
+pub const IFM_ISHIFT: u32 = 56;
+/// `IFM_GMASK`: global options.
+pub const IFM_GMASK: u64 = 0x00ff_ff00_0000_0000;
+
+/// `IFM_TYPE(x)`: the network type of a media word.
+pub const fn ifm_type(x: u64) -> u64 {
+    x & IFM_NMASK
+}
+
+/// `IFM_SUBTYPE(x)`: the media sub-type of a media word.
+pub const fn ifm_subtype(x: u64) -> u64 {
+    x & IFM_TMASK
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,6 +143,17 @@ mod tests {
     #[ignore = "needs OPENBSD_SRC (just test-ref)"]
     fn values_match_the_c_header() {
         let defs = crate::reftest::defines("sys/net/if_media.h");
-        crate::reftest::assert_defines!(defs; IFM_ETHER, IFM_AUTO, IFM_FDX, IFM_AVALID, IFM_ACTIVE);
+        crate::reftest::assert_defines!(defs; IFM_ETHER, IFM_AUTO, IFM_FDX, IFM_AVALID, IFM_ACTIVE,
+            IFM_10_T, IFM_100_TX, IFM_1000_SX, IFM_1000_LX, IFM_1000_T, IFM_ETH_MASTER,
+            IFM_ETH_RXPAUSE, IFM_ETH_TXPAUSE, IFM_NONE, IFM_HDX, IFM_FLOW, IFM_NMASK, IFM_TMASK,
+            IFM_IMASK, IFM_ISHIFT, IFM_GMASK);
+    }
+
+    #[test]
+    fn type_and_subtype_split_a_media_word() {
+        let w = IFM_ETHER | IFM_1000_T | IFM_FDX;
+        assert_eq!(ifm_type(w), IFM_ETHER);
+        assert_eq!(ifm_subtype(w), IFM_1000_T);
+        assert_eq!(w & IFM_GMASK, IFM_FDX);
     }
 }
