@@ -15,7 +15,9 @@
 //!   sizes only on a clean exit, so the data chunk runs to the end of the file whatever the
 //!   header says (a smoke that stops `--until-seen` kills QEMU).
 //!
-//! The paths follow the boot image's, so runs that use different images never share them.
+//! The paths follow the boot image's, which lives in the run directory (`boot::run_dir`,
+//! `$EMIBSD_RUN_DIR`: `target/smoke/<recipe>/` under `smoke-all`), so parallel recipes never
+//! share a stick or a WAV file.
 
 use std::fs;
 use std::io::{Cursor, Write};
