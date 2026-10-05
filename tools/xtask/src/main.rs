@@ -91,6 +91,7 @@ mod bsdmake;
 mod devices;
 mod diffopenbsd;
 mod e2fs;
+mod efiboot;
 mod https;
 mod hwopts;
 mod ntfsgen;
@@ -340,6 +341,25 @@ fn run(args: &[String]) -> Result<()> {
         }
         ["ntfs-image", out] => ntfsgen::ntfs_image(&root.join(out), false),
         ["ntfs-image", out, "--check"] => ntfsgen::ntfs_image(&root.join(out), true),
+        // M14: efiboot's PE image and the disk smoke-efiboot boots (efiboot.rs).
+        ["efiboot", rest @ ..] => {
+            let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
+            efiboot::efiboot(
+                &root,
+                arch,
+                Path::new(flag(rest, "--elf")?),
+                optional_flag(rest, "--out"),
+            )
+        }
+        ["efiboot-disk", rest @ ..] => {
+            let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
+            efiboot::efiboot_disk(
+                &root,
+                arch,
+                Path::new(flag(rest, "--efi")?),
+                Path::new(flag(rest, "--kernel")?),
+            )
+        }
         ["nvme-root", rest @ ..] => {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
             hwopts::nvme_root(

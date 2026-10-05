@@ -215,7 +215,7 @@ fn parse_duid(hex: &str) -> Result<[u8; 8]> {
 }
 
 /// The MBR: one OpenBSD partition from `start`, `sectors` long, the rest of the disk.
-fn mbr(start: u64, sectors: u64) -> [u8; 512] {
+pub(crate) fn mbr(start: u64, sectors: u64) -> [u8; 512] {
     let mut s = [0u8; 512];
     let e = &mut s[446..462];
     e[0] = 0x80; // active
@@ -231,7 +231,7 @@ fn mbr(start: u64, sectors: u64) -> [u8; 512] {
 
 /// `struct disklabel` (`sys/disklabel.h`, little-endian) for a disk of `total` sectors whose
 /// partition `a` is the `fs` sectors from [`OPENBSD_START`], with `dkcksum` filled in.
-fn disklabel(total: u64, fs: u64, duid: [u8; 8]) -> [u8; 512] {
+pub(crate) fn disklabel(total: u64, fs: u64, duid: [u8; 8]) -> [u8; 512] {
     let mut l = [0u8; 512];
     let put = |l: &mut [u8; 512], off: usize, b: &[u8]| l[off..off + b.len()].copy_from_slice(b);
     let (nsectors, ntracks) = (63u32, 255u32);

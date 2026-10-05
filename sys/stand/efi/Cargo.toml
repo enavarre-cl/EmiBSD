@@ -1,0 +1,17 @@
+[package]
+name = "efi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The UEFI types and protocols the boot loaders use (OpenBSD sys/stand/efi/include)"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+# A leaf, as OpenBSD's sys/stand/efi/include is headers only.
+[dependencies]
+
+[lints]
+workspace = true

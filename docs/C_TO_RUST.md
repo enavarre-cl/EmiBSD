@@ -23,6 +23,7 @@ Columns: what OpenBSD C does | what we write | why.
 | `#define FOO_X 0x1` flag groups | `bitflags! { struct FooFlags: u32 { const X = 0x1; } }` | typed, same names, same bits |
 | `volatile` MMIO | `read_volatile` / `write_volatile` behind `bus_space`-shaped accessors | no plain dereferences of device memory |
 | linker symbols (`end`, `etext`) | `unsafe extern "C" { static __kernel_end: u8; }` + `addr_of!` | address-only symbols, never read as values |
+| a library's symbols the program that links it must define (libsa's `file_system[]`, `devsw[]`, `constab[]`, `devopen()`, `_rtt()`; boot(8)'s `machdep()`, `run_loadfile()`, `cmd_machine[]`) and the `#ifdef`s that pick them (`MDRANDOM`, `BOOT_STTY`) | one `'static` table of `fn` pointers and slices (`libsa::stand::SaConf`, `boot::boot::BootMd`) the program registers at its entry; an optional routine is an `Option<fn>` | the library is a crate of its own and cannot name the program's items; a table keeps the C's one-definition-per-program shape without `extern` symbols and `unsafe` calls |
 | `goto out` cleanup | `?`, RAII guards, labelled blocks | same control flow, enforced release |
 | `.S` files | real `.S` file + `global_asm!(include_str!("x.S"))` | diffable against OpenBSD's |
 | `static` globals | `static X: Mutex<T>`, atomics, or `StaticCell<T>` (documented init-once) | `static mut` is forbidden |

@@ -186,6 +186,7 @@ fakes untestable anyway. The price: such a driver has no host tests, like arch c
 | (none for Limine) | `sys/stand/limine.rs` | the `limine` crate was dropped: 0.6+ needs nightly (`ptr_metadata`), 0.5 is stable but frozen at base revision 3, which Limine has already tried to drop once. The protocol is about twenty `#[repr(C)]` structs; they are written from `PROTOCOL.md` |
 | `bitflags` | `sys/` | typed flag sets for `#define` groups; a macro, no runtime |
 | (none for lists and trees) | `sys/sys/queue.rs`, `sys/sys/tree.rs` | `intrusive-collections` was dropped at M1: the OpenBSD macros are short, their semantics are the project's to keep, and a crate's policy changes would bind us as the `limine` crate's did |
+| `libsa`, `boot`, `efi` | `sys/lib/libsa`, `sys/stand/boot`, `sys/stand/efi` | not crates.io crates: OpenBSD code ported here (M14), split into crates as OpenBSD builds libsa as a library and compiles `sys/stand/boot` into every boot program; the boot loaders (`sys/arch/amd64/stand/efiboot`, package `efiboot-amd64`) depend on them, the kernel does not. `libsa` dev-depends on `bsd` for the host tests that pin its header layouts to the kernel's |
 | `proptest` | dev-only | property tests for libkern |
 | `serde`, `toml` | `tools/xtask` | tracker parsing |
 | `fatfs` | `tools/xtask` | writes the FAT boot image; a host tool, not kernel code |
@@ -403,6 +404,74 @@ docs/SETUP.md, "e2fsprogs"), an independent implementation, so a bug shared by o
 OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` does (the MBR's
 0xA6 partition, its label in sector 1) and hands e2fsck and debugfs `image?offset=BYTES`.
 
+## Boot loaders (M14)
+
+OpenBSD's boot programs are ported as OpenBSD builds them (the user's decision of 2026-10-03,
+M14; track A1 did amd64's efiboot): three crates and one binary.
+
+- `sys/lib/libsa` (package `libsa`): the standalone library, as efiboot's
+  `Makefile.common` builds it (`__INTERNAL_LIBSA_CREAD`: `open`/`read`... decompress, the
+  plain ones are `oopen`...). A leaf like `libkern`: it depends on `libkern` and `libz` only,
+  as the C takes `mem*`, `strlcpy` and `inflate` from `${S}/lib/libkern` and `${S}/lib/libz`
+  through `.PATH`. The kernel headers libsa includes (`<ufs/ffs/fs.h>`, `<sys/disklabel.h>`,
+  `<sys/exec_elf.h>`...) are ported in the kernel crate, tied to kernel types; libsa cannot
+  link the kernel, so `sys/lib/libsa/hdr/` declares the parts it reads again, one file per
+  header, and `hdr/tests.rs` checks their layouts against the kernel's (a dev-dependency on
+  `bsd`). The module for `alloc.c` is `sa_alloc` (`alloc` is Rust's crate). Host tests run
+  the FFS1, FFS2 and ISO 9660 readers on images OpenBSD's makefs made
+  (`testdata/gen_fixtures.py`), and `loadfile` on a hand-made ELF.
+- `sys/stand/boot` (package `boot`): boot(8)'s machine-independent files (`boot.c`,
+  `cmd.c`, `vars.c`, `bootarg.c`), which OpenBSD compiles into each boot program. The
+  command state is passed to the commands (`fn(&mut CmdState) -> i32`).
+- `sys/stand/efi` (package `efi`): the UEFI headers of `sys/stand/efi/include` as
+  `#[repr(C)]` types, the specification's names kept, function pointers `extern "efiapi"`.
+- `sys/arch/amd64/stand/efiboot` (package `efiboot-amd64`, binary `bootx64`): efiboot's
+  files; the files of `sys/arch/amd64/stand/libsa` it compiles (`disk.h`, `libsa.h`,
+  `mdrandom.c`) and `<machine/biosvar.h>` (`sys/arch/amd64/include/biosvar.rs`, written
+  self-contained so the kernel can include it too) are modules by `#[path]`.
+- What a library takes from the program at link time in C (libsa's `file_system[]`,
+  `devsw[]`, `constab[]`, `devopen()`, `_rtt()`, `LOADADDR`; boot(8)'s `machdep()`,
+  `devboot()`, `run_loadfile()`, the `machine` table...) is one table of `fn` pointers and
+  slices the program registers at its entry (`libsa::stand::SaConf`, `boot::boot::BootMd`,
+  efiboot's `conf.rs`); the C options that select those routines (`MDRANDOM`, `FWRANDOM`,
+  `HIBERNATE`, `BOOT_STTY`...) are its `Option`s (`docs/C_TO_RUST.md`).
+- `SOFTRAID=yes` (bootx64's Makefile) is the cargo feature `softraid` of efiboot, not ported
+  yet: its libsa files are `todo` in `ports.toml`, and efiboot says so where the C opens or
+  probes softraid volumes. `IDLE_POWEROFF`, which the option also defines, is compiled with
+  the feature.
+- The banner names the system as the kernel does ("The system's identity"):
+  `>> EmiBSD/amd64 BOOTX64 3.71`, where the C prints `OpenBSD`.
+
+Building BOOTX64.EFI (`just efiboot-amd64`, part of `just build`). Deviations, each for a
+reason:
+
+- The UEFI Rust targets are not installed (and the toolchain is not changed): efiboot is
+  built for `x86_64-unknown-none`, linked position-independent at 0 by
+  `sys/arch/amd64/stand/efiboot/ldscript.amd64`, and made a PE32+ image the way OpenBSD's
+  arm64 efiboot makes its own: a hand-written PE header (`.peheader`, first in the image,
+  in `start_amd64.S` in front of amd64's `_start`), one `.text` and one `.data` section
+  (rodata, data, GOT, bss as file bytes, then `.dynamic` and `.rela.dyn`), and
+  `llvm-objcopy -O binary` (`cargo xtask efiboot`; llvm-objcopy is the toolchain's
+  `llvm-tools`). OpenBSD's amd64 Makefile uses GNU objcopy's `efi-app-x86_64` output
+  target, which llvm-objcopy does not have.
+- `self_reloc` applies the image's `R_X86_64_RELATIVE` relocations at entry, as in C. The
+  code is compiled with `-C relocation-model=pie` (the `RUSTFLAGS` of the recipe, which
+  replace `.cargo/config.toml`'s `relocation-model=static` for this build only): with `pic`,
+  calls between crates go through the GOT, which `self_reloc` itself would call before it
+  is relocated. The build has its own target directory (`target/efiboot`), so switching the
+  flags never rebuilds the kernel. `build.rs` passes the script, `-Bsymbolic`,
+  `--pack-dyn-relocs=none` (efiboot's `LDFLAGS`) and `-z norelro` (one `.data`).
+- `just smoke-efiboot` boots it under OVMF from a disk laid out as OpenBSD installs one
+  (`cargo xtask efiboot-disk`: an MBR with the OpenBSD partition, its disklabel and an FFS
+  holding `/bsd`, made by OpenBSD's makefs; and the EFI system partition holding
+  `EFI/BOOT/BOOTX64.EFI`), types at `boot>` and stops once efiboot has loaded the kernel
+  and printed its entry point: the kernel's entry from efiboot (`locore0.S`'s 32-bit
+  `start`, the boot arguments) is track A2. Today's kernel links its physical addresses
+  equal to its virtual ones (`0xffffffff80000000`); efiboot's `LOADADDR` keeps the low 28
+  bits (`& 0xfffffff`), so the kernel is loaded at `efi_loadaddr` and, after
+  `ExitBootServices`, moved to physical 0, over efiboot's own heap and stack. OpenBSD's amd64
+  kernel links at `0xffffffff81000000` with physical addresses from `0x1000000`.
+
 ## Deviations from OpenBSD (deliberate)
 
 - One kernel is both `bsd` and `bsd.rd` (M8). OpenBSD builds GENERIC (`config bsd swap
@@ -430,7 +499,9 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
 - amd64's FPU state uses `fxsave64`/`fxrstor64` only (`amd64/fpu.rs`): the XSAVE family and
   its codepatches are not ported, so there is no AVX state; the switch is eager as in C
   (`CPUPF_USERXSTATE`, saved in `cpu_switchto`, reloaded on the way back to user mode).
-- Limine instead of `boot(8)`/`efiboot`.
+- Limine instead of `boot(8)`/`efiboot`, until `boot(8)` boots the same kernel (M14): efiboot
+  is ported (amd64's BOOTX64.EFI, "Boot loaders" above) and boots to the kernel's load; the
+  kernel's own entry from it is M14 track A2.
 - The application processors are started by Limine (M11a), not by the kernel's own
   trampoline: amd64's `mptramp.S` (real mode, INIT/SIPI/SIPI from `cpu_start_secondary`)
   and arm64's PSCI `CPU_ON` into `locore.S`'s `cpu_hatch` are replaced. The

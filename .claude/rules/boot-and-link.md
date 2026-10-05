@@ -10,8 +10,16 @@ paths:
 
 # Boot and link
 
-- Boot protocol is Limine (base revision 6) on UEFI for both archs. No Multiboot, no Linux image
-  header, no direct `-kernel` loading. OpenBSD's `boot(8)`/`efiboot` are `skipped: replaced-by-limine`.
+- Boot protocol is Limine (base revision 6) on UEFI for both archs until OpenBSD's own boot loader
+  boots the same kernel (M14, the user's decision): `boot(8)`/efiboot are being ported
+  (`sys/lib/libsa`, `sys/stand/boot`, `sys/stand/efi`, `sys/arch/<arch>/stand/efiboot`;
+  docs/ARCHITECTURE.md, "Boot loaders"), with the kernel's own `bootarg` entry beside Limine's.
+  No Multiboot, no Linux image header, no direct `-kernel` loading.
+- efiboot is built for the `none` targets (no UEFI target), position-independent:
+  `RUSTFLAGS="-C relocation-model=pie"` in `just efiboot-<arch>`, its own `--target-dir
+  target/efiboot`, its `ldscript.<arch>` with the hand-written PE header first, and
+  `cargo xtask efiboot` (`llvm-objcopy -O binary`). Code that runs before `self_reloc` may not
+  use statics, the GOT, formatting or panics.
 - Limine requests are `#[used] static`s in `.requests`, bracketed by the start/end marker sections,
   all referenced from `_start`. The linker script `KEEP`s them.
 - `sys/stand/limine.rs` holds the protocol structs (base revision tag, request/response

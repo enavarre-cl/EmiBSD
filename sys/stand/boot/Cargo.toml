@@ -1,0 +1,19 @@
+[package]
+name = "boot"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "boot(8)'s machine-independent part: the prompt, boot.conf, the commands, the boot arguments (OpenBSD sys/stand/boot)"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+# What OpenBSD's boot programs compile from sys/stand/boot (.PATH) on top of libsa.
+[dependencies]
+libkern.workspace = true
+libsa.workspace = true
+
+[lints]
+workspace = true

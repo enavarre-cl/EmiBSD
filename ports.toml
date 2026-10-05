@@ -999,8 +999,11 @@ notes = "M5: the whole driver (readcnt64 default/sun50i, the register accessors,
 
 [[file]]
 c = "sys/arch/amd64/stand/efiboot/efiboot.c"
-status = "skipped"
-notes = "replaced-by-limine: the whole sys/arch/amd64/stand tree (boot(8), efiboot) is not ported"
+rust = "sys/arch/amd64/stand/efiboot/efiboot.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0401522e3a82dff7456b6e682bb88679fa52530a"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): the C's globals as atomics/StaticCells; efi_main registers SaConf/BootMd and hands the heap to libsa; IDLE_POWEROFF (Xidle_efi...) under feature softraid as SOFTRAID=yes defines it; tested by smoke-efiboot"
 
 [[file]]
 c = "sys/arch/arm64/stand/efiboot/efiboot.c"
@@ -8075,3 +8078,873 @@ rust = "sys/dev/acpi/acpidebug.rs"
 status = "todo"
 deps = ["sys/dev/acpi/dsdt.c"]
 notes = "ddb's machine acpi commands; brings dsdt.c's aml_disasm/aml_disprintf (#ifdef DDB) with it"
+
+# ---------------------------------------------------------------------------
+# M14 track A1: libsa, boot(8)'s sys/stand/boot, amd64 efiboot (BOOTX64.EFI)
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/lib/libsa/stand.h"
+rust = "sys/lib/libsa/stand.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cad63ea389ab23d7ee0e7c49cb2e93026475b5d9"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): fs_ops/devsw/open_file/consdev tables; the program's extern tables and MD routines (file_system[], devsw[], constab[], devopen, _rtt, LOADADDR) are one SaConf registered with sa_conf_register; Errno newtype; f_fsdata a Box<dyn Any>; btochs undeclared (no caller)"
+
+[[file]]
+c = "sys/lib/libsa/saerrno.h"
+rust = "sys/lib/libsa/saerrno.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f1f7b79e4833940cecf923e542bbecb75ce2b3bd"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): Errno(i32) newtype with the errno.h subset and EADAPT..EHER (device opens may return 1, compared with EPERM by boot(8)); errno is dev.rs's ERRNO"
+
+[[file]]
+c = "sys/lib/libsa/alloc.c"
+rust = "sys/lib/libsa/alloc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e84c1fc77457dca949c7070f9a24f8637048f052"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): best-fit free list over a Heap value (HEAP, heap_init from heap.h); SaAlloc is the GlobalAlloc a program installs (Box/Vec go through alloc); module named sa_alloc (alloc clashes with the alloc crate); host test"
+
+[[file]]
+c = "sys/lib/libsa/close.c"
+rust = "sys/lib/libsa/close.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "52698b39b731e1623291639174c3f60e13eeaeed"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): oclose"
+
+[[file]]
+c = "sys/lib/libsa/closeall.c"
+rust = "sys/lib/libsa/closeall.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "017dfc45035dfdd28a026dd6bf196d13246407c8"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): calls cread's close as the C does"
+
+[[file]]
+c = "sys/lib/libsa/cons.c"
+rust = "sys/lib/libsa/cons.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fab9708a4f7c3e667af835de9527a81e15193ff3"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): cn_tab is an index into SaConf.constab (0 at start, as conf.c's cn_tab = constab)"
+
+[[file]]
+c = "sys/lib/libsa/cread.c"
+rust = "sys/lib/libsa/cread.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b945d778a1e84f5f35a9060584f17d0e8085b69d"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): gzip-transparent open/close/read/lseek over libz (sys/lib/libz); next_in kept as indices into inbuf, the stream borrows buffers only during inflate(); tested on a gzip file in the FFS fixtures"
+
+[[file]]
+c = "sys/lib/libsa/ctime.c"
+rust = "sys/lib/libsa/ctime.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "aff0e4541e425eb1109228b371d61fe824b5c2bd"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): returns a Ctime value instead of a static buffer; the C's leap-year month walk (Feb 29 reads Mar 1) kept, tested"
+
+[[file]]
+c = "sys/lib/libsa/dev.c"
+rust = "sys/lib/libsa/dev.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "228c40a9faaa6ca6f1f9e5d26ae10ed11f17718a"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): ERRNO atomic, nodev/nullsys/noioctl"
+
+[[file]]
+c = "sys/lib/libsa/disklabel.c"
+rust = "sys/lib/libsa/disklabel.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "934c4aabece1805885dab3e80a3a652e6b1ec6aa"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): getdisklabel copies the skinny label (16 partitions) out of the sector; Err(&str) message; host test"
+
+[[file]]
+c = "sys/lib/libsa/dkcksum.c"
+rust = "sys/lib/libsa/dkcksum.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "07127cce49ea4dda9f88300fc922cde61b152d6b"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): xor stops at the end of the struct; host test with getdisklabel"
+
+[[file]]
+c = "sys/lib/libsa/exit.c"
+rust = "sys/lib/libsa/exit.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6eb42fd31a57de683c92656e1af4d0b653237219"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): panic(format_args!) closes the files once, prints, _rtt"
+
+[[file]]
+c = "sys/lib/libsa/fchmod.c"
+rust = "sys/lib/libsa/fchmod.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cb204d663fd2cf4cb6a43f7c27b14286ee8be91c"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): descriptor checked before the fchmod slot"
+
+[[file]]
+c = "sys/lib/libsa/fstat.c"
+rust = "sys/lib/libsa/fstat.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "efa9b17d9648e8a55d23080b63c96fcef7e9ca61"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): fs stat errors only set errno, as in C"
+
+[[file]]
+c = "sys/lib/libsa/getchar.c"
+rust = "sys/lib/libsa/getchar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9df45c7b6579902b68f0aec77aecb64cd1628431"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): as the C"
+
+[[file]]
+c = "sys/lib/libsa/hexdump.c"
+rust = "sys/lib/libsa/hexdump.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "04f4604fdf60ef952a523fccb407dca7f4a22ca0"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): takes a slice; prints its addresses"
+
+[[file]]
+c = "sys/lib/libsa/lseek.c"
+rust = "sys/lib/libsa/lseek.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "96b64e12e3735e1e6b635f135f8734c75b6227f0"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): olseek"
+
+[[file]]
+c = "sys/lib/libsa/open.c"
+rust = "sys/lib/libsa/open.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d70f2751e71283ac93aac5bf9a9caddbc2b8c90b"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): oopen; FILES StaticCell; descriptors are usize, failures Err with errno set"
+
+[[file]]
+c = "sys/lib/libsa/printf.c"
+rust = "sys/lib/libsa/printf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6a049f2e27b7cfbfc794e7e35239fee6de5d8ecb"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): printf! macro over core::fmt through putchar (C_TO_RUST printf row), Str for C strings, twiddle; %b has no caller here"
+
+[[file]]
+c = "sys/lib/libsa/putchar.c"
+rust = "sys/lib/libsa/putchar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f1eeb23f4a77e5be7493595d1a1f921c23ad9777"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): pch_pos atomic; tab expansion, DEL erase; tested through a test console"
+
+[[file]]
+c = "sys/lib/libsa/read.c"
+rust = "sys/lib/libsa/read.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "763db895b98095a5e6a84df32115eeff69fc3ba6"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): oread"
+
+[[file]]
+c = "sys/lib/libsa/readdir.c"
+rust = "sys/lib/libsa/readdir.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ab55059f3429311a6ce7875d0393b5c6526c01ba"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): opendir/readdir/closedir over oopen/olseek/oclose"
+
+[[file]]
+c = "sys/lib/libsa/snprintf.c"
+rust = "sys/lib/libsa/snprintf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d3ed5986873f901e104b65d8a0e5b9a9ab904707"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): snprintf! macro: C truncation and return value; host test"
+
+[[file]]
+c = "sys/lib/libsa/stat.c"
+rust = "sys/lib/libsa/stat.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8db5bb66025354888ee24e342afe726fa2a26f63"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): over oopen/oclose"
+
+[[file]]
+c = "sys/lib/libsa/strerror.c"
+rust = "sys/lib/libsa/strerror.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f48c62e89111f1302631ee4d1b3e026d2026f87c"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): returns a StrError (Display) instead of a static buffer; host test"
+
+[[file]]
+c = "sys/lib/libsa/strtol.c"
+rust = "sys/lib/libsa/strtol.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9924fe044995f746e1482394a8ac7828de983663"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): returns (value, end index); shares strtonum with strtoll; host test"
+
+[[file]]
+c = "sys/lib/libsa/strtoll.c"
+rust = "sys/lib/libsa/strtoll.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9f157f18ea6c5f6442d94b31cbeda62c8de209a4"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): skips isspace only; host test"
+
+[[file]]
+c = "sys/lib/libsa/arc4.c"
+rust = "sys/lib/libsa/arc4.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c51e63a91cee7880f562ea479452a1d1e49c55fe"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): rc4_keysetup/getbytes/skip (rc4_crypt is #ifdef notneeded); RANDOMCTX lives here (boot.c's randomctx, which libsa's loader reads); RC4 test vector"
+
+[[file]]
+c = "sys/lib/libsa/arc4.h"
+rust = "sys/lib/libsa/arc4.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c64d6a4ea7100c32feb539c61c58c962fabe5046"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): declarations of arc4.c, with it"
+
+[[file]]
+c = "sys/lib/libsa/ufs.c"
+rust = "sys/lib/libsa/ufs.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9ba26a490483cc0041898eeebf8ef99e890f9e30"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): FFS1 and (with ufs2.rs) FFS2 as one generic reader Ufs<D: Dinode>; buffers are Vecs; the path walk and symlink splice in one MAXPATHLEN buffer; d_reclen 0 ends a block's scan; COMPAT_UFS not defined; tested on makefs FFS1/FFS2 images (testdata/)"
+
+[[file]]
+c = "sys/lib/libsa/ufs.h"
+rust = "sys/lib/libsa/ufs.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "42122d1448c073117c0a4751070410537e092a58"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): declarations of ufs.c, with it"
+
+[[file]]
+c = "sys/lib/libsa/ufs2.c"
+rust = "sys/lib/libsa/ufs2.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f36d2d155d2070500bd92c8f6fcd2c1097f3e745"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): the Ufs2Dinode instance of ufs.rs's reader; tested on a makefs FFS2 image (its super-block copied to SBLOCK_UFS2: makefs writes it at SBLOCK_UFS1)"
+
+[[file]]
+c = "sys/lib/libsa/ufs2.h"
+rust = "sys/lib/libsa/ufs2.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7e9de46a244c290f3de836cff66d6457f63daf54"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): declarations of ufs2.c, with it"
+
+[[file]]
+c = "sys/lib/libsa/cd9660.c"
+rust = "sys/lib/libsa/cd9660.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3b929090ec41815544bcbeaffa15d4b7b2b7074d"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): path table and directory records as byte ranges (hdr/iso.rs); reads through a block buffer; tested on a makefs ISO image"
+
+[[file]]
+c = "sys/lib/libsa/cd9660.h"
+rust = "sys/lib/libsa/cd9660.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "78ff6166ee1ad9f9b21458c0b5e05e3e103b5df2"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): declarations of cd9660.c, with it"
+
+[[file]]
+c = "sys/lib/libsa/loadfile.c"
+rust = "sys/lib/libsa/loadfile.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5dc5801ac4d8d5382651a669663c0600c9622faf"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): BOOT_ELF32+BOOT_ELF64 as amd64's loadfile_machdep.h; LOADADDR from SaConf; unsafe fn (writes where LOADADDR says); WARN/PROGRESS print"
+
+[[file]]
+c = "sys/lib/libsa/loadfile.h"
+rust = "sys/lib/libsa/loadfile.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c7d836f5dac10d7bcb025979fa46c4e311befac3"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): declarations of loadfile.c, with it"
+
+[[file]]
+c = "sys/lib/libsa/loadfile_elf.c"
+rust = "sys/lib/libsa/loadfile_elf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6068b673a93e04774f64726ef6f9f56ca8792762"
+notes = "M14 A1, libsa as efiboot builds it (__INTERNAL_LIBSA_CREAD): one generic elf_exec<E: ElfClass> (Elf32, Elf64) for the C's two compilations; READ/BCOPY/BZERO through load_mem; host test on a hand-made ELF64 (segments, bss, PT_OPENBSD_RANDOMIZE, symbols, marks)"
+
+[[file]]
+c = "sys/arch/amd64/stand/libsa/elf32.c"
+rust = "sys/lib/libsa/loadfile_elf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f943067411c99ef78ab592d8e79573504f6e48c4"
+notes = "M14 A1: the ELFSIZE 32 instance of loadfile_elf.c is elf32_exec = elf_exec::<Elf32> in libsa"
+
+[[file]]
+c = "sys/arch/amd64/stand/libsa/elf64.c"
+rust = "sys/lib/libsa/loadfile_elf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d7d11c843c4f0470dfdf7fefd3e0e15eef1431d0"
+notes = "M14 A1: the ELFSIZE 64 instance of loadfile_elf.c is elf64_exec = elf_exec::<Elf64> in libsa"
+
+[[file]]
+c = "sys/stand/boot/boot.c"
+rust = "sys/stand/boot/boot.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e090a0d0180b768df36275db85e8416eb114dc56"
+notes = "M14 A1, boot(8)'s MI part (crate boot), as efiboot compiles it: MDRANDOM/FWRANDOM/HIBERNATE; the program's routines are one BootMd (boot_md_register); cmd is a local passed as &mut CmdState; progname/kernelfile/boottimeout/bootprompt cells; banner names EmiBSD (the system's identity) where the C prints OpenBSD"
+
+[[file]]
+c = "sys/stand/boot/bootarg.c"
+rust = "sys/stand/boot/bootarg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b3834e77a99152f205291aaaba1dba4bee2f8c09"
+notes = "M14 A1, boot(8)'s MI part (crate boot), as efiboot compiles it: the list is a Vec of (type, bytes); makebootargs/makebootargs32 write the C's 64-bit and 32-bit record layouts; host test"
+
+[[file]]
+c = "sys/stand/boot/bootarg.h"
+rust = "sys/stand/boot/bootarg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c06685d1595fee19cf9a0d25387c8d0953cf863e"
+notes = "M14 A1, boot(8)'s MI part (crate boot), as efiboot compiles it: BAPIV_*, BOOTARG_APIVER/ENV/END; the kernel's bootargv/bootargc/bootargp externs are A2's"
+
+[[file]]
+c = "sys/stand/boot/cmd.c"
+rust = "sys/stand/boot/cmd.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "00e9e46bda48cc1ec1aa92545331e31eb413cb19"
+notes = "M14 A1, boot(8)'s MI part (crate boot), as efiboot compiles it: MACHINE_CMD, BOOT_STTY, CHECK_SKIP_CONF, no INSECURE/DEBUG; commands are fn(&mut CmdState) -> i32; argv as positions in cmd_buf"
+
+[[file]]
+c = "sys/stand/boot/cmd.h"
+rust = "sys/stand/boot/cmd.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5045f052b8b78f304606b316557ca7b87e375f84"
+notes = "M14 A1, boot(8)'s MI part (crate boot), as efiboot compiles it: struct cmd_table, struct cmd_state, CMDT_*, CMD_BUFF_SIZE, BOOTDEVLEN"
+
+[[file]]
+c = "sys/stand/boot/vars.c"
+rust = "sys/stand/boot/vars.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d15167763157fe939696e8bc60a3572f3bacd110"
+notes = "M14 A1, boot(8)'s MI part (crate boot), as efiboot compiles it: BOOT_STTY, no DEBUG; db_console atomic, environ a Vec capped at 4096"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/efiboot.h"
+rust = "sys/arch/amd64/stand/efiboot/efiboot.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "66515e50aa2466eb0b8f22e5dbc286325a56325f"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): prototypes, with efiboot.rs"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/efidev.c"
+rust = "sys/arch/amd64/stand/efiboot/efidev.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "39d018c4c889be9af8a5817f6ce72b9f76b21792"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): efid_io bounce pages; MBR/EBR/GPT search, cd9660 imaginary label, efiopen/efistrategy (bounce for partial sectors), esp_* (ESP files); SOFTRAID sr devices refused visibly (feature softraid not ported); read-only write fails EFI_WRITE_PROTECTED"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/efidev.h"
+rust = "sys/arch/amd64/stand/efiboot/efidev.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a64faea4f7236248f58fec3743688dad695a0bf9"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): prototypes, with efidev.rs"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/efipxe.c"
+rust = "sys/arch/amd64/stand/efiboot/efipxe.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "316f2f81d6b2a4ff3b967f9d3913bc3c30c8a132"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): PXE probe and whole-file TFTP through the PXE base code; not covered by a smoke yet"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/efipxe.h"
+rust = "sys/arch/amd64/stand/efiboot/efipxe.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ec10b1bf2971cf328498d02bef29decd9da4bfcc"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): prototypes, with efipxe.rs"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/efirng.c"
+rust = "sys/arch/amd64/stand/efiboot/efirng.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4892a107fc148593f1288538d1259979376be94c"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): fwrandom over EFI_RNG_PROTOCOL (declared locally as in the C)"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/conf.c"
+rust = "sys/arch/amd64/stand/efiboot/conf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d4e2aaf1453e18305392b9add7a101417b85f7f9"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): version 3.71, probe lists, file_system[], devsw[], constab[] gathered in SA_CONF and BOOT_MD; sa_cleanup stays NULL (not declared)"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/dev_i386.c"
+rust = "sys/arch/amd64/stand/efiboot/dev_i386.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6e64155401f9ca8f2c368121a12fccfcedc7a61d"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): devopen, devboot (softraid volume search: feature softraid, not ported), ttyname/ttydev/cnspeed"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/cmd_i386.c"
+rust = "sys/arch/amd64/stand/efiboot/cmd_i386.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5adacda3a427014215a1c2f6d30e83d82e0e487d"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): cmd_machine[] (idle with feature softraid); Xregs is DEBUG only"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/diskprobe.c"
+rust = "sys/arch/amd64/stand/efiboot/diskprobe.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "51c96e4d793ccb05b76f82ff68d8043d596a5a2a"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): disklist a Vec<Box<DiskInfo>>; srprobe (feature softraid) not ported; adler32 from libz"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/exec_i386.c"
+rust = "sys/arch/amd64/stand/efiboot/exec_i386.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "75451897aca8ec2c676aaf8cdc680988620ebce9"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): run_loadfile takes &mut CmdState; BOOTARG_BOOTSR/sr_clear_keys feature softraid, not ported; ucode_load, detect_sev, protect_writeable; the jump is not exercised yet (kernel entry is track A2)"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/machdep.c"
+rust = "sys/arch/amd64/stand/efiboot/machdep.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d994a0f4d74b8db18baf8212f794463b0e1da80d"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): probes, vmm(4) console switch, check_skip_conf"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/memprobe.c"
+rust = "sys/arch/amd64/stand/efiboot/memprobe.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "34ac287b994fad295f42499ebaaad5ef5f2475f0"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): dump_biosmem/mem_limit/mem_delete/mem_add/mem_pass on efiboot.c's bios_memmap[128] (the C declares [64] here); moves stay inside the array"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/self_reloc.c"
+rust = "sys/arch/amd64/stand/efiboot/self_reloc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "67d3b44e9aed4521f6ee1140d63e4f5f666d4620"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): Elf64_Rela/R_X86_64_RELATIVE; no call may go through the GOT before it runs (ELF64_R_TYPE inline); efiboot is linked relocation-model=pie"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/heap.h"
+rust = "sys/arch/amd64/stand/efiboot/heap.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5aa75c9d2b26876321d9c1fb3dcdd11df80c316e"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): heap_init hands libsa the heap start and HEAP_LIMIT once (the C's alloc calls it every time)"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/run_i386.S"
+rust = "sys/arch/amd64/stand/efiboot/run_i386.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "82bc512b2cceefe09107d5e81c3d0a01983c3164"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): the .S kept (att_syntax global_asm), cpp constants as .set, .quad 0"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/run_i386.h"
+rust = "sys/arch/amd64/stand/efiboot/run_i386.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "eca30306d6f4724ddbf5094c2206db3734552a40"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): run_i386_start/run_i386_size accessors"
+
+[[file]]
+c = "sys/arch/amd64/stand/efiboot/start_amd64.S"
+rust = "sys/arch/amd64/stand/efiboot/start_amd64.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "171dbff3d0a002e7389d09ce233bc5c4578c208a"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): the .S kept, with arm64 efiboot's hand-written PE32+ header (.peheader) in front: GNU objcopy's efi-app-x86_64 target is not in llvm-objcopy; deviation in docs/ARCHITECTURE.md, Boot loaders"
+
+[[file]]
+c = "sys/arch/amd64/stand/libsa/disk.h"
+rust = "sys/arch/amd64/stand/libsa/disk.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "911dd1ef07b32ba5d8cfa0b0c171557eff8db82b"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): struct diskinfo (included by path); sr_vol null (softraid not ported)"
+
+[[file]]
+c = "sys/arch/amd64/stand/libsa/libsa.h"
+rust = "sys/arch/amd64/stand/libsa/libsa.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "86e670229d7a0c530e7171f8aa08356ec798bb7b"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): struct i386_boot_probes, CPUID helpers; BIOS-only prototypes belong to the BIOS boot programs (not ported)"
+
+[[file]]
+c = "sys/arch/amd64/stand/libsa/mdrandom.c"
+rust = "sys/arch/amd64/stand/libsa/mdrandom.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cc6f03b07944372e29763dd0ce5fd218cef41f99"
+notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): rdtsc, rdrand, rdseed"
+
+[[file]]
+c = "sys/arch/amd64/include/biosvar.h"
+rust = "sys/arch/amd64/include/biosvar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b0c71ea0350ef33a290394f3d8e712c8ad200d65"
+notes = "M14 A1: the boot argument structures (packed, as_bytes) and BIOS constants; self-contained so efiboot includes it by path and the kernel's bootarg entry (A2) can too; BIOS_regs, bios_attach_args and the kernel externs are the kernel's to add"
+
+[[file]]
+c = "sys/lib/libsa/aes_xts.c"
+rust = "sys/lib/libsa/aes_xts.rs"
+status = "todo"
+notes = "M14 A1: SOFTRAID=yes (bootx64/Makefile) boot from softraid volumes; efiboot's feature softraid mirrors the option and is not ported yet (efiopen refuses sr devices, diskprobe says so)"
+
+[[file]]
+c = "sys/lib/libsa/bcrypt_pbkdf.c"
+rust = "sys/lib/libsa/bcrypt_pbkdf.rs"
+status = "todo"
+notes = "M14 A1: SOFTRAID=yes (bootx64/Makefile) boot from softraid volumes; efiboot's feature softraid mirrors the option and is not ported yet (efiopen refuses sr devices, diskprobe says so)"
+
+[[file]]
+c = "sys/lib/libsa/blowfish.c"
+rust = "sys/lib/libsa/blowfish.rs"
+status = "todo"
+notes = "M14 A1: SOFTRAID=yes (bootx64/Makefile) boot from softraid volumes; efiboot's feature softraid mirrors the option and is not ported yet (efiopen refuses sr devices, diskprobe says so)"
+
+[[file]]
+c = "sys/lib/libsa/explicit_bzero.c"
+rust = "sys/lib/libsa/explicit_bzero.rs"
+status = "todo"
+notes = "M14 A1: SOFTRAID=yes (bootx64/Makefile) boot from softraid volumes; efiboot's feature softraid mirrors the option and is not ported yet (efiopen refuses sr devices, diskprobe says so)"
+
+[[file]]
+c = "sys/lib/libsa/hmac_sha1.c"
+rust = "sys/lib/libsa/hmac_sha1.rs"
+status = "todo"
+notes = "M14 A1: SOFTRAID=yes (bootx64/Makefile) boot from softraid volumes; efiboot's feature softraid mirrors the option and is not ported yet (efiopen refuses sr devices, diskprobe says so)"
+
+[[file]]
+c = "sys/lib/libsa/pkcs5_pbkdf2.c"
+rust = "sys/lib/libsa/pkcs5_pbkdf2.rs"
+status = "todo"
+notes = "M14 A1: SOFTRAID=yes (bootx64/Makefile) boot from softraid volumes; efiboot's feature softraid mirrors the option and is not ported yet (efiopen refuses sr devices, diskprobe says so)"
+
+[[file]]
+c = "sys/lib/libsa/rijndael.c"
+rust = "sys/lib/libsa/rijndael.rs"
+status = "todo"
+notes = "M14 A1: SOFTRAID=yes (bootx64/Makefile) boot from softraid volumes; efiboot's feature softraid mirrors the option and is not ported yet (efiopen refuses sr devices, diskprobe says so)"
+
+[[file]]
+c = "sys/lib/libsa/sha1.c"
+rust = "sys/lib/libsa/sha1.rs"
+status = "todo"
+notes = "M14 A1: SOFTRAID=yes (bootx64/Makefile) boot from softraid volumes; efiboot's feature softraid mirrors the option and is not ported yet (efiopen refuses sr devices, diskprobe says so)"
+
+[[file]]
+c = "sys/lib/libsa/sha2.c"
+rust = "sys/lib/libsa/sha2.rs"
+status = "todo"
+notes = "M14 A1: SOFTRAID=yes (bootx64/Makefile) boot from softraid volumes; efiboot's feature softraid mirrors the option and is not ported yet (efiopen refuses sr devices, diskprobe says so)"
+
+[[file]]
+c = "sys/lib/libsa/softraid.c"
+rust = "sys/lib/libsa/softraid.rs"
+status = "todo"
+notes = "M14 A1: SOFTRAID=yes (bootx64/Makefile) boot from softraid volumes; efiboot's feature softraid mirrors the option and is not ported yet (efiopen refuses sr devices, diskprobe says so)"
+
+[[file]]
+c = "sys/arch/amd64/stand/libsa/softraid_amd64.c"
+rust = "sys/arch/amd64/stand/libsa/softraid_amd64.rs"
+status = "todo"
+notes = "M14 A1: srprobe/sr_strategy/sr_getdisklabel for efiboot's feature softraid; not ported yet"
+
+[[file]]
+c = "sys/lib/libsa/memcmp.c"
+status = "skipped"
+notes = "provided-by-core: efiboot's Makefile.common builds it; Rust's slices and core cover it"
+
+[[file]]
+c = "sys/lib/libsa/memcpy.c"
+status = "skipped"
+notes = "provided-by-core: efiboot's Makefile.common builds it; Rust's slices and core cover it"
+
+[[file]]
+c = "sys/lib/libsa/memmove.c"
+status = "skipped"
+notes = "provided-by-core: efiboot's Makefile.common builds it; Rust's slices and core cover it"
+
+[[file]]
+c = "sys/lib/libsa/memset.c"
+status = "skipped"
+notes = "provided-by-core: efiboot's Makefile.common builds it; Rust's slices and core cover it"
+
+[[file]]
+c = "sys/lib/libsa/strcmp.c"
+status = "skipped"
+notes = "provided-by-core: efiboot's Makefile.common builds it; Rust's slices and core cover it"
+
+[[file]]
+c = "sys/lib/libsa/strlen.c"
+status = "skipped"
+notes = "provided-by-core: efiboot's Makefile.common builds it; Rust's slices and core cover it"
+
+[[file]]
+c = "sys/lib/libsa/strncmp.c"
+status = "skipped"
+notes = "provided-by-core: efiboot's Makefile.common builds it; Rust's slices and core cover it"
+
+[[file]]
+c = "sys/lib/libsa/strncpy.c"
+status = "skipped"
+notes = "provided-by-core: efiboot's Makefile.common builds it; Rust's slices and core cover it"
+
+[[file]]
+c = "sys/stand/efi/include/efi.h"
+rust = "sys/stand/efi/include/efi.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a143e7f357825a48718a6b2cfbde3528146c6029"
+notes = "license: Intel's EFI notice, kept whole; the module re-exports the 13 headers efi.h includes (use efi::include::efi::*); EFI_FIRMWARE_VENDOR/MAJOR/MINOR/REVISION; the EFI_STRINGIZE/EFI_PROTOCOL_DEFINITION/EFI_GUID_DEFINITION/EFI_GUID_STRING preprocessor helpers have no counterpart; eficonsctl.h is not included by efi.h and not re-exported"
+
+[[file]]
+c = "sys/stand/efi/include/amd64/efibind.h"
+rust = "sys/stand/efi/include/amd64/efibind.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fe1fbed54ceef5631f94d4dbd79c1aa786e6d386"
+notes = "license: public domain, kept; UINT8..UINT64/INT8..INT64/UINTN/INTN/VOID aliases (UINTN = usize, asserted 64 bits), efierr() for EFIERR(); EFIAPI is the extern \"efiapi\" ABI string; INTERFACE_DECL dropped (forward declaration). Serves arm64 too: arm64/efibind.h differs only by an empty EFIAPI (AAPCS64 is what \"efiapi\" means there)"
+
+[[file]]
+c = "sys/stand/efi/include/efidef.h"
+rust = "sys/stand/efi/include/efidef.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "aae4fd7d1b98487918460450325193d7ec221b54"
+notes = "license: Intel's EFI notice, kept whole; EfiStatus/EfiHandle/EfiEvent/EfiLba/EfiTpl, EfiGuid (const new), EfiTime, EfiIpv4Address/Ipv6/MacAddress, EfiMemoryDescriptor, EFI_ALLOCATE_TYPE and EFI_MEMORY_TYPE as u32 aliases plus constants, efi_size_to_pages(); size asserts"
+
+[[file]]
+c = "sys/stand/efi/include/efidevp.h"
+rust = "sys/stand/efi/include/efidevp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1feb424c8207a1b2c0824d63761126e2e0c8091e"
+notes = "license: Intel's EFI notice, kept whole; EfiDevicePath and every node struct (PciDevicePath ... BbsBbsDevicePath), EfiDevPath/EfiDevPathPtr unions, the type/subtype constants, the path macros as unsafe snake_case fns (device_path_type, next_device_path_node, is_device_path_end, set_device_path_end_node, ...), eisa_id/efi_pnp_id; DP_IS_END_TYPE/DP_IS_END_SUBTYPE are unusable C (empty / unbalanced) and left out; host tests walk a byte buffer"
+
+[[file]]
+c = "sys/stand/efi/include/efiprot.h"
+rust = "sys/stand/efi/include/efiprot.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6889e96b0a8bcbd562827e071c26945df244e01b"
+notes = "license: Intel's EFI notice, kept whole; EfiBlockIo/EfiBlockIoMedia, EfiDiskIo, EfiFileIoInterface, EfiFile/EfiFileHandle, EfiFileInfo (+SIZE_OF_EFI_FILE_INFO via offset_of), EfiFileSystemInfo, EfiLoadFileInterface, EfiDeviceIoInterface, EfiUnicodeCollationInterface, the protocol GUID constants, efi_pci_address()"
+
+[[file]]
+c = "sys/stand/efi/include/eficon.h"
+rust = "sys/stand/efi/include/eficon.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b884e16e13d5b7a1bb2de7d49973e9daaf7564f4"
+notes = "license: Intel's EFI notice, kept whole; SimpleTextOutputInterface/SimpleTextOutputMode, SimpleInputInterface, EfiInputKey, colour/attribute constants (UINTN), efi_text_attr(), BOXDRAW_*/CHAR_*/SCAN_* constants"
+
+[[file]]
+c = "sys/stand/efi/include/efiser.h"
+rust = "sys/stand/efi/include/efiser.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2c7b631349486ca78900c6c2a0b6bee2dd84c2b0"
+notes = "license: Intel's EFI notice, kept whole; SerialIoInterface/SerialIoMode, EFI_PARITY_TYPE and EFI_STOP_BITS_TYPE as u32 aliases plus constants, the control-bit constants"
+
+[[file]]
+c = "sys/stand/efi/include/efi_nii.h"
+rust = "sys/stand/efi/include/efi_nii.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9100ba8794885791b6702ccfd0e8501f28b79f8b"
+notes = "license: Intel's EFI notice, kept whole; EfiNetworkInterfaceIdentifierInterface and the two GUID constants; the extern EFI_GUID NetworkInterfaceIdentifierProtocol[_31] declarations are not ported (nothing defines them; the GUID macros are the constants)"
+
+[[file]]
+c = "sys/stand/efi/include/efipxebc.h"
+rust = "sys/stand/efi/include/efipxebc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b23205758c619880de111511fb439deea750aa24"
+notes = "license: Intel's EFI notice, kept whole; EfiPxeBaseCode (+Mode, Packet and IpAddress unions, DHCPv4 packet, ICMP/TFTP error), EfiPxeBaseCodeCallback, the enums as u32 aliases plus constants; the anonymous ICMP union gets the names EfiPxeBaseCodeIcmpErrorU/Echo; Dhcpv6 is commented out in the C; size asserts (Mode is 10424 bytes)"
+
+[[file]]
+c = "sys/stand/efi/include/efinet.h"
+rust = "sys/stand/efi/include/efinet.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d1dba3b3d16f4fca0184c71653edb24ccd998590"
+notes = "license: Intel's EFI notice, kept whole; EfiSimpleNetwork, EfiSimpleNetworkMode, EfiNetworkStatistics, the state enum as u32 plus constants, receive-filter and interrupt-status constants"
+
+[[file]]
+c = "sys/stand/efi/include/efiapi.h"
+rust = "sys/stand/efi/include/efiapi.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "dcbe01d782c26acea349c6072482d75169b60f47"
+notes = "license: Intel's EFI notice, kept whole; EfiSystemTable, EfiBootServices (368 bytes), EfiRuntimeServices, EfiLoadedImage, EfiTableHeader, EfiConfigurationTable, EfiSystemResource*, every service typedef, the GUID constants (ACPI_20_TABLE_GUID, SMBIOS3_TABLE_GUID, FDT_TABLE_GUID, ...), next_memory_descriptor(); deviations: InstallMultipleProtocolInterfaces/UninstallMultipleProtocolInterfaces are C-variadic, typed *const c_void (stable Rust has no variadic efiapi); CreateEvent's NotifyFunction and LoadedImage.Unload are Option<fn> (same ABI as a nullable C pointer)"
+
+[[file]]
+c = "sys/stand/efi/include/efifs.h"
+rust = "sys/stand/efi/include/efifs.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "920232e7c61a194eb3c7d6b8ffd643a590892f8e"
+notes = "license: Intel's EFI notice, kept whole; EfiPartitionHeader, EfiFileHeader, EfiLbal, EfiRl, the signature/class constants, efi_file_lbal/efi_lbal_array_size/efi_lbal_rl as unsafe fns; the original EFI file system, no firmware implements it"
+
+[[file]]
+c = "sys/stand/efi/include/efierr.h"
+rust = "sys/stand/efi/include/efierr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1c1a6f886eed06bc2e33e3000ded56dfa97fa678"
+notes = "license: Intel's EFI notice, kept whole; EFI_SUCCESS, EFI_LOAD_ERROR .. EFI_PROTOCOL_ERROR via efierr(n), EFI_WARN_*, efi_error() and efiwarn()"
+
+[[file]]
+c = "sys/stand/efi/include/efigop.h"
+rust = "sys/stand/efi/include/efigop.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fbc588e22318e02ccbb2518ed406decd071565fc"
+notes = "license: Intel's EFI notice, kept whole; EfiGraphicsOutput, EfiGraphicsOutputProtocolMode, EfiGraphicsOutputModeInformation, EfiPixelBitmask, EfiGraphicsOutputBltPixel, the pixel-format and blt-operation enums as u32 aliases plus constants"
+
+[[file]]
+c = "sys/stand/efi/include/eficonsctl.h"
+rust = "sys/stand/efi/include/eficonsctl.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f61a8847e6eb2f0c03e8fb0a66133d265951d37f"
+notes = "license: Intel's BSD 2-clause notice (2004-2010), kept whole; the FreeBSD tag is on line 33 of the header and first in the .rs; EfiConsoleControlProtocol, the screen-mode enum as u32 plus constants; extern gEfiConsoleControlProtocolGuid not ported (the GUID is the constant)"
+
+[[file]]
+c = "sys/stand/efi/include/efidebug.h"
+status = "skipped"
+notes = "not-applicable: the Intel EFI toolkit's ASSERT/DEBUG macros over DebugPrint; neither efiboot (amd64, arm64) nor the other headers include it (efiboot's own EFI_DEBUG is a loader macro)"
+
+[[file]]
+c = "sys/stand/efi/include/efipart.h"
+status = "skipped"
+notes = "not-applicable: EFI partition helper definitions that no efiboot source or other header includes"
+
+[[file]]
+c = "sys/stand/efi/include/efistdarg.h"
+status = "skipped"
+notes = "not-applicable: C varargs (va_list/va_start over the stack layout); Rust has no counterpart and the loaders do not use it"
+
+[[file]]
+c = "sys/stand/efi/include/efifpswa.h"
+status = "skipped"
+notes = "not-applicable: IA-64 floating-point software assist protocol; not an EmiBSD architecture"
+
+[[file]]
+c = "sys/stand/efi/include/arm64/efibind.h"
+status = "skipped"
+notes = "replaced-by-sys/stand/efi/include/amd64/efibind.rs: identical except EFIAPI is empty on arm64 (the AAPCS64 default), which is what extern \"efiapi\" means there"
+
+[[file]]
+c = "sys/stand/efi/include/arm/efibind.h"
+status = "skipped"
+notes = "not-applicable: 32-bit arm is not an EmiBSD architecture"
+
+[[file]]
+c = "sys/stand/efi/include/i386/efibind.h"
+status = "skipped"
+notes = "not-applicable: 32-bit x86 UEFI (bootia32) is not an EmiBSD architecture"
+
+[[file]]
+c = "sys/stand/efi/include/riscv64/efibind.h"
+status = "skipped"
+notes = "not-applicable: riscv64 is not an EmiBSD architecture"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/cons.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/dinode.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/dir.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/disklabel.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/exec_elf.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/fs.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/hibernate.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/iso.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/param.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/reboot.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/stat.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/types.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/uuid.rs"
+reason = "M14 A1: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/testutil.rs"
+reason = "M14 A1: libsa host tests: a RAM disk over the makefs fixtures, a whole-file memfs, a test console and SaConf"

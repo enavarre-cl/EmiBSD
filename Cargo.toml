@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["sys", "sys/lib/libkern", "sys/lib/libz", "tools/xtask", "init"]
+members = ["sys", "sys/lib/libkern", "sys/lib/libz", "tools/xtask", "init",
+    # M14: boot(8)/efiboot (docs/ARCHITECTURE.md, "Boot loaders")
+    "sys/stand/efi", "sys/lib/libsa", "sys/stand/boot", "sys/arch/amd64/stand/efiboot"]
 # `cargo check` / `cargo test` at the root build the kernel and libkern for the HOST
 # (through sys/arch/host). Kernel images always name a target; `just` does that.
 default-members = ["sys", "sys/lib/libkern", "sys/lib/libz"]
@@ -17,6 +19,10 @@ rust-version = "1.98"
 # project; a crate is acceptable only when it replaces something that is NOT OpenBSD code.
 libkern = { path = "sys/lib/libkern" }
 libz = { path = "sys/lib/libz" }
+# M14: the boot loaders' crates, OpenBSD code ported here (docs/ARCHITECTURE.md, "Boot loaders").
+libsa = { path = "sys/lib/libsa" }
+efi = { path = "sys/stand/efi" }
+boot = { path = "sys/stand/boot" }
 # No `limine` crate: 0.6+ needs nightly (`ptr_metadata`), 0.5 is frozen at base revision 3.
 # The protocol structs live in sys/stand/limine.rs (docs/ARCHITECTURE.md, "Dependencies").
 bitflags = { version = "2", default-features = false }                  # typed flag sets for #define groups

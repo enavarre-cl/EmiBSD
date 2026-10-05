@@ -1,0 +1,62 @@
+//! libsa: the standalone library OpenBSD's boot programs link (`sys/lib/libsa`).
+//!
+//! The device and file system switches, the open file table, the console, `printf`, the
+//! allocator, the FFS1/FFS2 and ISO 9660 readers, gzip-transparent reading (`cread`) and the
+//! ELF kernel loader. A boot program (efiboot: `sys/arch/amd64/stand/efiboot`) registers its
+//! tables and machine-dependent routines with [`stand::sa_conf_register`], installs
+//! [`sa_alloc::SaAlloc`] as its global allocator and calls [`sa_alloc::heap_init`].
+//!
+//! A leaf crate, as OpenBSD builds libsa as a library of its own: it depends on libkern and
+//! libz only (the boot programs take `inflate.c`, `crc32.c`, `adler32.c` from `${S}/lib/libz`
+//! and `strlcpy.c` and the 64-bit division helpers from `${S}/lib/libkern` through `.PATH`;
+//! `mem*`/`str*` are Rust's own). The kernel headers it reads are in [`hdr`].
+//!
+//! Built as efiboot builds it: with `__INTERNAL_LIBSA_CREAD` (`open`/`close`/`read`/`lseek`
+//! decompress; the plain ones are `oopen`...), `SMALL`, `SLOW`, without `SOFTRAID` (see
+//! `docs/ARCHITECTURE.md`, "Boot loaders").
+
+#![no_std]
+
+extern crate alloc;
+#[cfg(test)]
+extern crate std;
+
+pub mod arc4;
+pub mod cd9660;
+pub mod close;
+pub mod closeall;
+pub mod cons;
+pub mod cread;
+pub mod ctime;
+pub mod dev;
+pub mod disklabel;
+pub mod dkcksum;
+pub mod exit;
+pub mod fchmod;
+pub mod fstat;
+pub mod getchar;
+pub mod hdr;
+pub mod hexdump;
+pub mod loadfile;
+pub mod loadfile_elf;
+pub mod lseek;
+pub mod open;
+pub mod printf;
+pub mod putchar;
+pub mod read;
+pub mod readdir;
+/// `alloc.c`; the module is not named `alloc`, which is Rust's allocation crate.
+#[path = "alloc.rs"]
+pub mod sa_alloc;
+pub mod saerrno;
+pub mod snprintf;
+pub mod stand;
+pub mod stat;
+pub mod strerror;
+pub mod strtol;
+pub mod strtoll;
+pub mod ufs;
+pub mod ufs2;
+
+#[cfg(test)]
+pub(crate) mod testutil;

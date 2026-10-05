@@ -1,0 +1,61 @@
+/* $OpenBSD: ldscript.arm64,v 1.4 2022/07/29 21:34:59 kettenis Exp $ */
+/* Same as elf_x86_64_fbsd_efi.lds, except for OUTPUT_FORMAT below - KEEP IN SYNC */
+
+/*
+ * EmiBSD: amd64's BOOTX64.EFI laid out as arm64's efiboot (ldscript.arm64): the hand-made
+ * PE header (.peheader, start_amd64.S) first in .text at 0, then one page-aligned .data
+ * holding the read-only data, the data, the GOT and the bss (as file bytes: EFI loaders do
+ * not like a .bss), then the dynamic section and the RELA relocations self_reloc applies.
+ * `llvm-objcopy -O binary` of the ELF is the PE image, whose RVAs are the link addresses.
+ * OpenBSD's amd64 ldscript (sections for GNU objcopy's efi-app-x86_64 target) cannot be
+ * used: llvm-objcopy has no PE output (docs/ARCHITECTURE.md, "Boot loaders").
+ */
+OUTPUT_FORMAT("elf64-x86-64")
+ENTRY(_start)
+SECTIONS
+{
+  . = 0;
+  ImageBase = .;
+  .text		: {
+    KEEP(*(.peheader))
+    *(.text .stub .text.*)
+  } =0xCC
+  . = ALIGN(4096);
+  _etext = .;
+  __data_start = .;
+  .data		: {
+    *(.rodata .rodata.*)
+    *(.data.rel.ro .data.rel.ro.*)
+    *(.data .data.*)
+    *(.got .got.plt)
+    . = ALIGN(16);
+    __bss_start = .;
+    *(.bss .bss.*)
+    *(COMMON)
+    . = ALIGN(16);
+    __bss_end = .;
+  }
+  . = ALIGN(16);
+  .dynamic	: { *(.dynamic) }
+  . = ALIGN(16);
+  .rela.dyn	: { *(.rela.dyn .rela.*) }
+  . = ALIGN(16);
+  .reloc	: { KEEP(*(.reloc)) }
+  . = ALIGN(16);
+  .dynsym	: { *(.dynsym) }
+  .dynstr	: { *(.dynstr) }
+  .hash		: { *(.hash) }
+  .gnu.hash	: { *(.gnu.hash) }
+  /* The image ends on a page (SizeOfImage is a multiple of the section alignment), in the
+     file too: the padding is data, not a gap objcopy would drop. */
+  .pad		: { BYTE(0); . = ALIGN(4096); }
+  _edata = .;
+  __data_size = . - __data_start;
+
+  /DISCARD/ : {
+    *(.eh_frame*)
+    *(.note .note.*)
+    *(.comment)
+    *(.interp)
+  }
+}

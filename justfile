@@ -40,11 +40,21 @@ build-init-amd64:
 build-init-arm64:
     cargo build -p init --target {{arm64}}
 
-build: build-amd64 build-arm64 build-init-amd64 build-init-arm64 build-mp
+build: build-amd64 build-arm64 build-init-amd64 build-init-arm64 build-mp efiboot-amd64
 
 # The MULTIPROCESSOR kernels (option MULTIPROCESSOR, M11a), so the MP paths build on every
 # commit; `smoke` boots them (with `--features qemu`) since M11e.
 build-mp: (build-amd64 "--features multiprocessor") (build-arm64 "--features multiprocessor")
+
+# M14: OpenBSD's efiboot, amd64's BOOTX64.EFI (sys/arch/amd64/stand/efiboot, with libsa and
+# boot(8)'s sys/stand/boot). Linked position-independent at 0 (relocation-model=pie, which
+# replaces the kernel's static one: RUSTFLAGS overrides .cargo/config.toml's target
+# rustflags), in a target directory of its own so the kernel's builds are not redone, then
+# made a PE32+ image with `llvm-objcopy -O binary` (cargo xtask efiboot): target/efiboot/
+# amd64/BOOTX64.EFI. docs/ARCHITECTURE.md, "Boot loaders".
+efiboot-amd64:
+    RUSTFLAGS="-C relocation-model=pie" cargo build -p efiboot-amd64 --target {{amd64}} --target-dir target/efiboot
+    cargo xtask efiboot --arch amd64 --elf target/efiboot/{{amd64}}/debug/bootx64
 
 # --- boot images and QEMU ---------------------------------------------------
 
@@ -73,7 +83,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-siop " + \
+    "smoke-nvme smoke-ahci smoke-siop smoke-efiboot " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb"
 
@@ -82,7 +92,7 @@ smoke: smoke-build
 
 # What the smoke recipes boot: the MULTIPROCESSOR kernels with `--features qemu`, the init
 # stand-ins, and `smoke-up`'s uniprocessor kernels (`build-up`).
-smoke-build: build-up (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64
+smoke-build: build-up (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64 efiboot-amd64
 
 # `smoke-boot`, the first of `smokes` (it was `smoke`'s own body until the smokes ran in
 # parallel). Boots per arch, every one with a virtio network card on QEMU's user network: a
@@ -1346,6 +1356,37 @@ smoke-siop: (build-amd64 "--features qemu,multiprocessor")
         --expect "siop-cmp-42" --expect "1048576 bytes transferred" --expect "m13-raw-42" \
         --expect "m10c-iso-42"
 
+# M14: OpenBSD's efiboot boots the disk instead of Limine. `cargo xtask efiboot-disk` writes
+# the boot image as OpenBSD installs one (tools/xtask/src/efiboot.rs): an MBR with the
+# OpenBSD partition (its disklabel, `a` an ffs made by OpenBSD's makefs holding /bsd, the
+# smoke kernel, /etc/boot.conf and /etc/random.seed) and the EFI system partition holding
+# BOOTX64.EFI. EDK2 starts efiboot from the ESP; it prints its banner, probes the console,
+# the memory and the disks (efiboot's own names, in EFI block I/O order: the boot disk is
+# hd0, with its label; OVMF connects no other disk), runs boot.conf (`set timeout 0`, an
+# echo) and prompts. The smoke lists the ffs (`ls /`, `ls /etc`), prints the memory map
+# (`machine memory`) and the disks, and boots: loadfile reads the kernel's segments and
+# symbols through ufs and cread and prints their sizes (`...]=0x<size>`), and run_loadfile
+# its entry point; the run ends there (`--until-seen`): the kernel cannot be entered by
+# efiboot's 32-bit `start` path yet (M14 track A2: today's kernel links its physical
+# addresses at 0, so the move after ExitBootServices overwrites efiboot itself). amd64 only
+# (arm64's efiboot is M14 track A3). Part of `smoke`.
+smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") efiboot-amd64
+    @test -x target/userland/amd64/host/bin/makefs || \
+        { echo "smoke-efiboot: no makefs; run just userland first"; exit 1; }
+    cargo xtask efiboot-disk --arch amd64 --efi target/efiboot/amd64/BOOTX64.EFI --kernel target/{{amd64}}/debug/bsd
+    cargo xtask smoke --arch amd64 --until-seen \
+        --send-after 'boot> ' --send 'ls /\n' \
+        --send-after 'boot> ' --send 'ls /etc\n' \
+        --send-after 'boot> ' --send 'machine memory\n' \
+        --send-after 'boot> ' --send 'machine diskinfo\n' \
+        --send-after 'boot> ' --send 'boot\n' \
+        --expect ">> EmiBSD/amd64 BOOTX64 3.71" --expect "probing: pc0" --expect "disk: hd0" \
+        --expect "efiboot: boot.conf read" --expect "boot> " \
+        --expect "drwxr-xr-x 0,0" --expect "-r-xr-xr-x 0,0" --expect "-rw-r--r-- 0,0" \
+        --expect "Region 0: type 1 at 0x0 for " --expect "Total free memory: " \
+        --expect "BlkSiz" \
+        --expect "booting hd0a:/bsd: " --expect "]=0x" --expect "entry point at 0x"
+
 # M10d: FUSE (sys/miscfs/fuse). Our own read-only file system, tools/fusehello (linked to
 # OpenBSD's libfuse, which opens /dev/fuse0 and mounts fusefs), is mounted on /fuse; mount(8)
 # must list it as `fuse`, its two files read back through the daemon (hello.txt and
@@ -1605,6 +1646,7 @@ diff-openbsd: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--fea
 # host unit tests (libkern + libz + bsd through sys/arch/host, plus xtask's own)
 test:
     cargo test -p libkern -p libz -p bsd -p xtask
+    cargo test -p libsa -p boot -p efi
 
 # tests that cross-check constants against the C reference tree
 test-ref:
@@ -1619,6 +1661,9 @@ clippy:
     cargo clippy -p init --target {{amd64}} -- -D warnings
     cargo clippy -p init --target {{arm64}} -- -D warnings
     cargo clippy -p libkern -p libz -p bsd -p xtask -- -D warnings
+    cargo clippy -p libsa -p boot -p efi -- -D warnings
+    cargo clippy -p libsa -p boot -p efi --target {{arm64}} -- -D warnings
+    cargo clippy -p efiboot-amd64 --target {{amd64}} -- -D warnings
 
 fmt:
     cargo fmt --all -- --check

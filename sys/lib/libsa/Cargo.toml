@@ -1,0 +1,24 @@
+[package]
+name = "libsa"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The standalone library of OpenBSD's boot programs (sys/lib/libsa)"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+# libsa links what the boot programs' Makefiles take from libkern and libz through `.PATH`.
+[dependencies]
+libkern.workspace = true
+libz.workspace = true
+
+[lints]
+workspace = true
+
+# The host tests check that the kernel headers libsa declares again (hdr/) keep the
+# kernel's layouts.
+[dev-dependencies]
+bsd = { path = "../.." }

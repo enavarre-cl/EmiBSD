@@ -1,0 +1,34 @@
+[package]
+name = "efiboot-amd64"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "amd64's UEFI boot loader, BOOTX64.EFI (OpenBSD sys/arch/amd64/stand/efiboot)"
+build = "build.rs"
+publish = false
+
+# BOOTX64.EFI: `just efiboot-amd64` builds this ELF position-independent, in a target
+# directory of its own, and makes the PE image of it (tools/xtask/src/efiboot.rs).
+[[bin]]
+name = "bootx64"
+path = "main.rs"
+test = false
+bench = false
+doc = false
+
+[features]
+# OpenBSD `SOFTRAID=yes` (bootx64/Makefile): boot from softraid(4) volumes (srprobe,
+# sr_strategy, the crypto unlock) and IDLE_POWEROFF. Not ported yet (M14 track A1 left it
+# out of the criterion); efiboot says so where the C probes the volumes.
+softraid = []
+
+[dependencies]
+libkern.workspace = true
+libsa.workspace = true
+libz.workspace = true
+efi.workspace = true
+boot.workspace = true
+
+[lints]
+workspace = true
