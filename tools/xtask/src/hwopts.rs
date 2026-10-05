@@ -58,7 +58,9 @@
 //!   `virtio-gpu` GOP is blit-only, which Limine cannot use). `ramfb` is not a PCI device,
 //!   so nothing on the buses moves.
 //! - `--screenshot-after LINE` (`smoke`, M13, implies `--fb`): QEMU gets a human monitor on a
-//!   Unix socket in the run directory (`monitor.sock`, instead of `-monitor none`); when a
+//!   Unix socket in the run directory (`monitor.sock`, instead of `-monitor none`; named
+//!   relative to the checkout, or in the temporary directory, to fit macOS's 104-byte
+//!   `sun_path`: [`monitor_sock`]); when a
 //!   serial line contains LINE, `screendump` writes `screen.ppm` there, and once the serial
 //!   expectations passed ([`after_smoke`]) the picture is checked against that line, which
 //!   must read `x=X y=Y w=W h=H ink=N fg=RRGGBB bg=RRGGBB` (the kernel's `selftest=fb`,
@@ -612,12 +614,45 @@ fn pci_serial_args(file: &Path) -> Vec<String> {
 pub(crate) fn monitor_arg() -> String {
     match SCREENSHOT.get() {
         Some((_, dir)) => {
-            let sock = dir.join("monitor.sock");
+            let sock = monitor_sock(dir);
             let _ = fs::remove_file(&sock);
             format!("unix:{},server=on,wait=off", sock.display())
         }
         None => "none".into(),
     }
+}
+
+/// The longest Unix socket path, NUL included: `sizeof(sun_path)` on macOS (108 on Linux).
+const SUN_PATH_MAX: usize = 104;
+
+/// The monitor socket of the run directory `dir`. A Unix socket's path must fit
+/// `sun_path` ([`SUN_PATH_MAX`]), which an absolute path into a deep checkout (a worktree
+/// under `.claude/worktrees/`, then `target/smoke/<recipe>/`) does not.
+fn monitor_sock(dir: &Path) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    monitor_sock_for(dir, &cwd, &std::env::temp_dir(), std::process::id())
+}
+
+/// [`monitor_sock`]'s choice, the first that fits `sun_path`: `monitor.sock` in `dir`
+/// relative to `cwd` (QEMU inherits xtask's current directory, so both ends resolve it
+/// alike), the same path absolute, or `emibsd-<hash of dir>-<pid>.sock` in `tmp` (removed
+/// by [`after_smoke`]).
+fn monitor_sock_for(dir: &Path, cwd: &Path, tmp: &Path, pid: u32) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let fits = |p: &Path| p.as_os_str().len() < SUN_PATH_MAX;
+    let sock = dir.join("monitor.sock");
+    if let Ok(rel) = sock.strip_prefix(cwd)
+        && !rel.as_os_str().is_empty()
+        && fits(rel)
+    {
+        return rel.to_path_buf();
+    }
+    if fits(&sock) {
+        return sock;
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    dir.hash(&mut h);
+    tmp.join(format!("emibsd-{:08x}-{pid}.sock", h.finish() as u32))
 }
 
 /// Whether a screenshot is still to be taken.
@@ -639,7 +674,7 @@ pub(crate) fn poll_screenshot(serial: &str) -> Result<()> {
     };
     let ppm = dir.join("screen.ppm");
     let _ = fs::remove_file(&ppm);
-    let sock = dir.join("monitor.sock");
+    let sock = monitor_sock(dir);
     let mut mon = UnixStream::connect(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
     mon.set_read_timeout(Some(Duration::from_secs(10)))?;
     // The greeting ends with the prompt; the command's reply with the next one.
@@ -800,6 +835,7 @@ fn check_screenshot(ppm: &Ppm<'_>, line: &str) -> Result<usize> {
 /// `--screenshot-after`, a screenshot that shows the kernel's text.
 pub(crate) fn after_smoke() -> Result<()> {
     if let Some((after, dir)) = SCREENSHOT.get() {
+        let _ = fs::remove_file(monitor_sock(dir));
         let line = SHOT_LINE
             .lock()
             .ok()
@@ -838,6 +874,32 @@ pub(crate) fn after_smoke() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn monitor_sock_fits_sun_path() {
+        let tmp = Path::new("/var/folders/xy/abcdefghijklmnopqrstuvwxyz0123/T");
+        let cwd = Path::new(
+            "/Users/someone/devel/EmiBSD/.claude/worktrees/agent-ae23d66ba61d717c5-and-more",
+        );
+        // Inside the checkout: relative, whatever the checkout's depth.
+        let dir = cwd.join("target/smoke/smoke-fb");
+        let sock = monitor_sock_for(&dir, cwd, tmp, 4242);
+        assert_eq!(sock, Path::new("target/smoke/smoke-fb/monitor.sock"));
+        // A short absolute run directory elsewhere stays as it is.
+        let sock = monitor_sock_for(Path::new("/tmp/run"), cwd, tmp, 4242);
+        assert_eq!(sock, Path::new("/tmp/run/monitor.sock"));
+        // A long one outside the checkout falls back to the temporary directory.
+        let long = Path::new("/elsewhere").join("d".repeat(120));
+        let sock = monitor_sock_for(&long, cwd, tmp, 4242);
+        assert!(sock.starts_with(tmp), "{}", sock.display());
+        assert!(sock.to_string_lossy().ends_with("-4242.sock"));
+        for s in [
+            monitor_sock_for(&dir, cwd, tmp, 4242),
+            monitor_sock_for(&long, cwd, tmp, u32::MAX),
+        ] {
+            assert!(s.as_os_str().len() < SUN_PATH_MAX, "{}", s.display());
+        }
+    }
 
     #[test]
     fn screenshot_check() {
