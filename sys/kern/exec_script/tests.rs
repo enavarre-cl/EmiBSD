@@ -70,3 +70,44 @@ fn the_newline_must_come_within_maxinterp_bytes() {
 fn the_header_is_large_enough_for_a_script() {
     assert!(crate::sys::exec::exec_maxhdrsz() >= crate::sys::exec_script::EXEC_SCRIPT_HDRSZ);
 }
+
+#[test]
+fn a_carriage_return_is_part_of_the_name() {
+    assert_eq!(parse(b"#!/bin/sh\r\n"), Ok((&b"/bin/sh\r"[..], None)));
+}
+
+#[test]
+fn only_the_valid_part_of_the_header_counts() {
+    // ep_hdrvalid bytes: a newline beyond them is not seen.
+    let mut hdr = std::vec![b'a'; crate::sys::exec_script::EXEC_SCRIPT_HDRSZ];
+    hdr[..3].copy_from_slice(b"#!/");
+    hdr[20] = b'\n';
+    assert_eq!(parse(&hdr[..20]), Err(Errno::ENOEXEC));
+    assert!(parse(&hdr[..21]).is_ok());
+    // A newline at the very end of the header is past MAXINTERP.
+    hdr[20] = b'a';
+    let last = hdr.len() - 1;
+    hdr[last] = b'\n';
+    assert_eq!(parse(&hdr), Err(Errno::ENOEXEC));
+}
+
+#[test]
+fn scripts_come_before_elf_in_the_exec_switch() {
+    use crate::kern::kern_exec::EXECSW;
+    use crate::sys::exec::{ExecMakecmdsFcn, exec_maxhdrsz};
+    // exec_conf.c's order: the script handler first, then ELF.
+    assert_eq!(EXECSW.len(), 2);
+    assert_eq!(
+        EXECSW[0].es_hdrsz,
+        crate::sys::exec_script::EXEC_SCRIPT_HDRSZ
+    );
+    assert!(core::ptr::fn_addr_eq(
+        EXECSW[0].es_check,
+        exec_script_makecmds as ExecMakecmdsFcn
+    ));
+    // init_exec: exec_maxhdrsz is the largest es_hdrsz.
+    assert_eq!(
+        Some(exec_maxhdrsz()),
+        EXECSW.iter().map(|e| e.es_hdrsz).max()
+    );
+}

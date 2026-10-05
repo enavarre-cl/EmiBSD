@@ -275,6 +275,7 @@ smoke-shell: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
 
 # smoke-login's `#!` script (M14), typed at the shell prompt.
 script_line := 'echo "#!/bin/sh" >/tmp/s; echo "echo sh-ran-\$((6*7))-\$0-\$1" >>/tmp/s; chmod +x /tmp/s; /tmp/s ok\n'
+ksh_line := 'echo "#!/bin/ksh" >/tmp/k; echo "(( y = 6 * 7 )); echo ksh-arith-\$y" >>/tmp/k; chmod 755 /tmp/k; /tmp/k\n'
 
 # M8b: a plain boot of the ramdisk goes multi-user: init(8) runs /etc/rc (`rc: multi-user`),
 # then getty(8) on tty00 prints `login:`; the session logs in as root (the test image's
@@ -284,7 +285,8 @@ script_line := 'echo "#!/bin/sh" >/tmp/s; echo "echo sh-ran-\$((6*7))-\$0-\$1" >
 # what the kernel would run on without one. `rtc-$x` keeps the echoed command line from
 # matching. M14: a two-line `#!/bin/sh` script, made executable and run with one argument,
 # prints `sh-ran-42-/tmp/s-ok` through the kernel's `exec_script.c` ($0 is the script's path,
-# $1 its argument; `$((6*7))` keeps the echoed line from matching). Part of `smoke`.
+# $1 its argument; `$((6*7))` keeps the echoed line from matching), then a `#!/bin/ksh` one
+# with `(( ))` arithmetic prints `ksh-arith-42` (`\$y` likewise). Part of `smoke`.
 smoke-login: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-login: no ramdisk image; run just userland first"; exit 1; }
@@ -293,17 +295,19 @@ smoke-login: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
         --send-after "# " --send 'id\n' --send-after "uid=0(root)" --send 'uname -a\n' \
         --send-after " 8.0 GENERIC#" --send 'x=ok; [ $(date +%s) -gt 1790985600 ] && echo rtc-$x\n' \
         --send-after "rtc-ok" --send '{{script_line}}' \
+        --send-after "sh-ran-42-/tmp/s-ok" --send '{{ksh_line}}' \
         --expect "rc: multi-user" --expect "EmiBSD/amd64 (Amnesiac) (tty00)" \
         --expect "uid=0(root)" --expect " 8.0 GENERIC#" --expect "amd64" --expect "rtc-ok" \
-        --expect "sh-ran-42-/tmp/s-ok"
+        --expect "sh-ran-42-/tmp/s-ok" --expect "ksh-arith-42"
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'id\n' --send-after "uid=0(root)" --send 'uname -a\n' \
         --send-after " 8.0 GENERIC#" --send 'x=ok; [ $(date +%s) -gt 1790985600 ] && echo rtc-$x\n' \
         --send-after "rtc-ok" --send '{{script_line}}' \
+        --send-after "sh-ran-42-/tmp/s-ok" --send '{{ksh_line}}' \
         --expect "rc: multi-user" --expect "EmiBSD/arm64 (Amnesiac) (tty00)" \
         --expect "uid=0(root)" --expect " 8.0 GENERIC#" --expect "arm64" --expect "rtc-ok" \
-        --expect "sh-ran-42-/tmp/s-ok"
+        --expect "sh-ran-42-/tmp/s-ok" --expect "ksh-arith-42"
 
 # M9a: the routing socket and the `net.route` sysctl from userland. Logs in as `smoke-login`
 # does, then runs OpenBSD's route(8) (`show`: a routing socket, then NET_RT_DUMP through
