@@ -112,7 +112,7 @@ use crate::kern::kern_rwlock::{rw_enter_write, rw_exit_write};
 use crate::kern::kern_sysctl::{
     SYSCTL_LOCK, sysctl_bounded_arr, sysctl_int_bounded, sysctl_rdint, sysctl_rdstruct,
 };
-use crate::kern::kern_time::ppsratecheck;
+use crate::kern::kern_time::ppsratecheck_shared;
 use crate::kern::uipc_domain::pfctlinput;
 use crate::kern::uipc_mbuf::{
     m_adj, m_cat, m_copydata, m_copym, m_free, m_freem, m_gethdr, m_prepend, m_pullup, m_resethdr,
@@ -1791,11 +1791,12 @@ pub fn icmp6_ctloutput(
 /// moment.
 pub fn icmp6_ratelimit(_dst: &In6Addr, _type: u8, _code: u8) -> bool {
     let limit = ICMP6ERRPPSLIM.load(Ordering::Relaxed);
-    // SAFETY: the counters are touched only here, and `ppsratecheck` reads and writes them
-    // only inside `ppsratecheck_mtx`, which orders the accesses of every CPU, as in C.
-    let pps = unsafe { ICMP6ERRPPS.get_mut() };
+    let pps = ICMP6ERRPPS.as_ptr();
     // PPS limit
-    if !ppsratecheck(&mut pps.last, &mut pps.count, limit) {
+    // SAFETY: the counters live forever and are touched only here, through
+    // `ppsratecheck_shared`, which dereferences them only inside `ppsratecheck_mtx`.
+    let ok = unsafe { ppsratecheck_shared(&raw mut (*pps).last, &raw mut (*pps).count, limit) };
+    if !ok {
         return true; // The packet is subject to rate limit
     }
     false // okay to send

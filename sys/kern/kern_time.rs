@@ -783,9 +783,23 @@ static PPSRATECHECK_MTX: Mutex = Mutex::new(IPL_HIGH);
 
 /// `ppsratecheck()`: packets (or events) per second limitation.
 pub fn ppsratecheck(lasttime: &mut Timeval, curpps: &mut i32, maxpps: i32) -> bool {
+    // SAFETY: two exclusive references are valid and touched by no one else.
+    unsafe { ppsratecheck_shared(lasttime, curpps, maxpps) }
+}
+
+/// `ppsratecheck()` on counters shared between CPUs (the network's rate limiters, which
+/// softnet threads reach at once): the pointers are dereferenced only inside
+/// `ppsratecheck_mtx`, which is what orders every CPU's accesses in C.
+///
+/// # Safety
+/// `lasttime` and `curpps` are valid for reads and writes for the whole call, and every
+/// other access to them, from any CPU, also goes through `ppsratecheck` (inside the mutex).
+pub unsafe fn ppsratecheck_shared(lasttime: *mut Timeval, curpps: *mut i32, maxpps: i32) -> bool {
     let tv = getmicrouptime();
 
     mtx_enter(&PPSRATECHECK_MTX);
+    // SAFETY: the caller's contract; the mutex is held until the references' last use.
+    let (lasttime, curpps) = unsafe { (&mut *lasttime, &mut *curpps) };
     let delta = timersub(&tv, lasttime);
 
     // check for 0,0 is so that the message will be seen at least once. if more than one

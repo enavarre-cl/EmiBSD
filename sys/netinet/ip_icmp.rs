@@ -159,7 +159,7 @@ use crate::kern::kern_sysctl::{
     sysctl_bounded_arr, sysctl_int_bounded, sysctl_rdstruct, sysctl_vslock, sysctl_vsunlock,
 };
 use crate::kern::kern_tc::microtime;
-use crate::kern::kern_time::ppsratecheck;
+use crate::kern::kern_time::ppsratecheck_shared;
 use crate::kern::subr_prf::panic;
 use crate::kern::uipc_domain::pfctlinput;
 use crate::kern::uipc_mbuf::{
@@ -1826,11 +1826,18 @@ pub fn icmp_mtudisc_timeout(rt: &'static Rtentry, rtableid: u32) {
 /// per-destination/type check necessary?
 pub fn icmp_ratelimit(_dst: &InAddr, _type: u8, _code: u8) -> bool {
     let icmperrppslim_local = ICMPERRPPSLIM.load(Ordering::Relaxed);
-    // SAFETY: the counters are touched only here, and `ppsratecheck` reads and writes them
-    // only inside `ppsratecheck_mtx`, which orders the accesses of every CPU, as in C.
-    let pps = unsafe { ICMPERRPPS.get_mut() };
+    let pps = ICMPERRPPS.as_ptr();
     // PPS limit
-    if !ppsratecheck(&mut pps.last, &mut pps.count, icmperrppslim_local) {
+    // SAFETY: the counters live forever and are touched only here, through
+    // `ppsratecheck_shared`, which dereferences them only inside `ppsratecheck_mtx`.
+    let ok = unsafe {
+        ppsratecheck_shared(
+            &raw mut (*pps).last,
+            &raw mut (*pps).count,
+            icmperrppslim_local,
+        )
+    };
+    if !ok {
         return true; // The packet is subject to rate limit
     }
     false // okay to send

@@ -167,7 +167,7 @@ use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_malloc::{free, mallocarray};
 use crate::kern::kern_synch::{refcnt_init_trace, refcnt_rele, refcnt_take};
-use crate::kern::kern_time::ppsratecheck;
+use crate::kern::kern_time::ppsratecheck_shared;
 use crate::kern::kern_timeout::{timeout_add_msec, timeout_del, timeout_set_flags};
 use crate::kern::subr_pool::{pool_get, pool_init, pool_put};
 use crate::kern::subr_prf::panic;
@@ -828,14 +828,18 @@ fn tcp_input_solocked(
                 exit = TcpInputExit::DropWithReset;
             }
             TcpInputExit::DropAfterAckRatelim => {
-                // SAFETY: the pair is touched only here, and `ppsratecheck` reads and writes
-                // it only inside `ppsratecheck_mtx`, which orders every CPU's accesses.
-                let pps = unsafe { TCP_ACKDROP_PPS.get_mut() };
-                exit = if ppsratecheck(
-                    &mut pps.last,
-                    &mut pps.count,
-                    TCP_ACKDROP_PPSLIM.load(Ordering::Relaxed),
-                ) {
+                let pps = TCP_ACKDROP_PPS.as_ptr();
+                // SAFETY: the pair lives forever and is touched only here, through
+                // `ppsratecheck_shared`, which dereferences it only inside
+                // `ppsratecheck_mtx`.
+                let ok = unsafe {
+                    ppsratecheck_shared(
+                        &raw mut (*pps).last,
+                        &raw mut (*pps).count,
+                        TCP_ACKDROP_PPSLIM.load(Ordering::Relaxed),
+                    )
+                };
+                exit = if ok {
                     // ...fall into dropafterack...
                     TcpInputExit::DropAfterAck
                 } else {
@@ -861,13 +865,16 @@ fn tcp_input_solocked(
                 // We may want to rate-limit RSTs in certain situations, particularly if we
                 // are sending an RST in response to an attempt to connect to or otherwise
                 // communicate with a port for which we have no socket.
+                let pps = TCP_RST_PPS.as_ptr();
                 // SAFETY: as for `TCP_ACKDROP_PPS`.
-                let pps = unsafe { TCP_RST_PPS.get_mut() };
-                exit = if ppsratecheck(
-                    &mut pps.last,
-                    &mut pps.count,
-                    TCP_RST_PPSLIM.load(Ordering::Relaxed),
-                ) {
+                let ok = unsafe {
+                    ppsratecheck_shared(
+                        &raw mut (*pps).last,
+                        &raw mut (*pps).count,
+                        TCP_RST_PPSLIM.load(Ordering::Relaxed),
+                    )
+                };
+                exit = if ok {
                     // ...fall into dropwithreset...
                     TcpInputExit::DropWithReset
                 } else {
