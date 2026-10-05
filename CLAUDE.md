@@ -27,8 +27,8 @@ Everything in this repository (code, comments, docs, commits) is in English.
 ```
 reference/openbsd-src/sys/   OpenBSD C source: sparse clone, gitignored, READ-ONLY (pin: reference/PINNED.md);
                              lib/ bin/ sbin/ usr.bin/ libexec/ include/ and gnu/{lib/libcompiler_rt,
-                             llvm/compiler-rt}, etc/ and usr.sbin/{makefs,pwd_mkdb,tcpdump,portmap,
-                             quotaon,edquota,repquota,hostapd} beside it are the userland
+                             llvm/compiler-rt}, etc/, usr.sbin/, distrib/, share/, gnu/llvm and
+                             clang's build glue beside it are the userland (M14 adds the comp set)
 sys/                         package `bsd`, the kernel. Mirrors reference/openbsd-src/sys/ 1:1
   sys/ kern/ uvm/ dev/ ddb/  same meaning as in OpenBSD; sys/sys = headers -> types
   machine/                   the <machine/*.h> contract: traits every arch implements

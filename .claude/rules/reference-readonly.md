@@ -13,7 +13,9 @@ needs), plus `gnu/lib/libcompiler_rt` and `gnu/llvm/compiler-rt` (the compiler r
 WITH LLVM-exception, compiled unmodified; the user's decision of 2026-10-03), and `usr.sbin/makefs` (makefs(8), built as a host tool to
 make the ffs ramdisk image; same decision date) and `usr.sbin/pwd_mkdb` (host tool for the ramdisk's
 `pwd.db`/`spwd.db`, M8b) `usr.sbin/tcpdump` (compiled unmodified for the ramdisk, M9+), and `usr.sbin/portmap`,
-`quotaon`, `edquota`, `repquota` (NFS and quotas, M10; all the user's decisions of 2026-10-03), and `usr.sbin/hostapd` (tcpdump's `iapp.h`) and `etc/` (OpenBSD's uids and gids for the ramdisk; both the user's decisions of 2026-10-04). No other `gnu/`, no `xenocara/`. It is the specification, not part of the product.
+`quotaon`, `edquota`, `repquota` (NFS and quotas, M10; all the user's decisions of 2026-10-03), and `usr.sbin/hostapd` (tcpdump's `iapp.h`) and `etc/` (OpenBSD's uids and gids for the ramdisk; both the user's decisions of 2026-10-04), and for M14 all of
+`usr.sbin/`, `distrib/`, `share/`, `gnu/llvm` and OpenBSD's clang build glue (`gnu/usr.bin/clang`,
+`gnu/lib/{libcxx,libcxxabi,libclang_rt}`; pre-approved by the user on 2026-10-04, added 2026-10-05). No other `gnu/`, no `xenocara/`. It is the specification, not part of the product.
 Widening or narrowing the sparse set at the same pin is `git -C reference/openbsd-src
 sparse-checkout add|set ...`, a user decision recorded in `docs/ROADMAP.md`.
 
