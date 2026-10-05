@@ -25,6 +25,7 @@ pub mod event;
 pub mod eventvar;
 pub mod exec;
 pub mod exec_elf;
+pub mod exec_script;
 pub mod fcntl;
 pub mod file;
 pub mod filedesc;

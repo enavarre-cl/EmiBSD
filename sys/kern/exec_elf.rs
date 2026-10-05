@@ -127,7 +127,7 @@ use crate::sys::fcntl::FREAD;
 use crate::sys::malloc::{M_PINSYSCALL, M_TEMP, M_WAITOK, M_ZERO};
 use crate::sys::mman::{PROT_EXEC, PROT_READ, PROT_WRITE};
 use crate::sys::mount::MNT_NOEXEC;
-use crate::sys::namei::{FOLLOW, LOCKLEAF, LOOKUP, NiDirp, UNVEIL_READ};
+use crate::sys::namei::{FOLLOW, LOCKLEAF, LOOKUP, Nameidata, NiDirp, UNVEIL_READ};
 use crate::sys::param::{MAXPATHLEN, PAGE_SIZE};
 use crate::sys::pledge::PLEDGE_RPATH;
 use crate::sys::proc::{BOGO_PC, Proc};
@@ -725,7 +725,11 @@ fn elf_load_file_vnode(
 ///
 /// Then, mark the text image busy (so it can be demand paged) or error out if this is not
 /// possible. Finally, set up vmcmds for the text, data, bss, and stack segments.
-pub fn exec_elf_makecmds(p: &Proc, epp: &mut ExecPackage<'_>) -> Result<(), Errno> {
+pub fn exec_elf_makecmds(
+    p: &Proc,
+    epp: &mut ExecPackage<'_>,
+    _ndp: Option<&mut Nameidata<'_>>,
+) -> Result<(), Errno> {
     match exec_elf_makecmds_inner(p, epp) {
         Ok(()) => Ok(()),
         Err(e) => {

@@ -46,8 +46,8 @@
 //! gap, `ps_strings`, the execpath, the pin tables, set[ug]id executables, the pledge
 //! hand-over, `exec_timekeep_map`, `exec_elf_fixup`, `setregs`, `exec_sigcode_map`),
 //! `copyargs`, `exec_sigcode_map`, `exec_timekeep_map` and `stackgap_random`.
-//! `exec_conf.c`'s `execsw[]` is here as [`EXECSW`] (ELF only: `exec_script.c` is not
-//! ported).
+//! `exec_conf.c`'s `execsw[]` is here as [`EXECSW`]: shell scripts (`exec_script.rs`),
+//! then ELF.
 //!
 //! Two callers reach the body. `sys_execve` finds the executable with `namei`, as the C
 //! does. `start_init` tries `initpaths[]` through `sys_execve` and, while there is no root
@@ -74,6 +74,7 @@ use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicUsize, Ordering};
 
 use crate::dev::rnd::{arc4random, arc4random_buf};
 use crate::kern::exec_elf::{exec_elf_fixup, exec_elf_makecmds};
+use crate::kern::exec_script::exec_script_makecmds;
 use crate::kern::exec_subr::exec_process_vmcmds;
 use crate::kern::kern_descrip::{closef, falloc, fd_getfile, fdprepforexec, fdrelease, fdremove};
 use crate::kern::kern_event::knote;
@@ -106,6 +107,7 @@ use crate::sys::exec::{
     EXEC_WXNEEDED, ExecPackage, Execsw, PsStrings,
 };
 use crate::sys::exec_elf::{ELF_AUX_WORDS, ElfEhdr};
+use crate::sys::exec_script::EXEC_SCRIPT_HDRSZ;
 use crate::sys::fcntl::FREAD;
 use crate::sys::file::frele;
 use crate::sys::filedesc::{fdplock, fdpunlock};
@@ -174,12 +176,19 @@ pub static KV_EXEC: KmemVaMode = KmemVaMode {
 pub static stackgap_random: AtomicI32 =
     AtomicI32::new(<Machine as VmParam>::STACKGAP_RANDOM as i32);
 
-/// `execsw[]` (`exec_conf.c`): the executable formats, in the order they are tried. The
-/// shell script format (`exec_script.c`) is not ported.
-pub static EXECSW: [Execsw; 1] = [Execsw {
-    es_hdrsz: size_of::<ElfEhdr>(),
-    es_check: exec_elf_makecmds,
-}];
+/// `execsw[]` (`exec_conf.c`): the executable formats, in the order they are tried.
+pub static EXECSW: [Execsw; 2] = [
+    // shell scripts
+    Execsw {
+        es_hdrsz: EXEC_SCRIPT_HDRSZ,
+        es_check: exec_script_makecmds,
+    },
+    // elf binaries
+    Execsw {
+        es_hdrsz: size_of::<ElfEhdr>(),
+        es_check: exec_elf_makecmds,
+    },
+];
 
 /// Free exec-package allocations owned by image-format loaders.
 pub fn exec_free_package(pack: &mut ExecPackage<'_>) {
@@ -197,7 +206,7 @@ pub fn exec_free_package(pack: &mut ExecPackage<'_>) {
 
 /// `pool_put(&namei_pool, ndp->ni_cnd.cn_pnbuf)`: gives back the pathname buffer a
 /// `SAVENAME` lookup kept.
-fn namei_pnbuf_put(ndp: &mut Nameidata<'_>) {
+pub(crate) fn namei_pnbuf_put(ndp: &mut Nameidata<'_>) {
     if let Some(buf) = NonNull::new(ndp.ni_cnd.cn_pnbuf) {
         pool_put(&NAMEI_POOL, buf);
     }
@@ -230,7 +239,7 @@ pub fn check_exec(
         let n = image.len().min(epp.ep_hdr.len());
         epp.ep_hdr[..n].copy_from_slice(&image[..n]);
         epp.ep_hdrvalid = n;
-        return check_exec_switch(p, epp);
+        return check_exec_switch(p, epp, None);
     };
 
     ndp.ni_cnd.cn_nameiop = LOOKUP;
@@ -368,7 +377,7 @@ pub fn check_exec(
     let error = match error {
         Ok(()) => {
             epp.ep_hdrvalid = hdrlen - resid;
-            match check_exec_switch(p, epp) {
+            match check_exec_switch(p, epp, Some(&mut *ndp)) {
                 Ok(()) => return Ok(()),
                 Err(e) if epp.ep_flags & EXEC_DESTR != 0 => return Err(e),
                 Err(e) => {
@@ -391,13 +400,17 @@ pub fn check_exec(
 /// The exec switch half of `check_exec`: set up the vmcmds for creation of the process
 /// address space, then check the result against the limits. A failure kills the vmcmds
 /// and frees the package's loader allocations (not the vnode: the caller's).
-fn check_exec_switch(p: &Proc, epp: &mut ExecPackage<'_>) -> Result<(), Errno> {
+fn check_exec_switch(
+    p: &Proc,
+    epp: &mut ExecPackage<'_>,
+    mut ndp: Option<&mut Nameidata<'_>>,
+) -> Result<(), Errno> {
     let mut error = Err(Errno::ENOEXEC);
     for es in &EXECSW {
         if error.is_ok() {
             break;
         }
-        let newerror = (es.es_check)(p, epp);
+        let newerror = (es.es_check)(p, epp, ndp.as_deref_mut());
         // make sure the first "interesting" error code is saved.
         if newerror.is_ok() || error == Err(Errno::ENOEXEC) {
             error = newerror;

@@ -273,13 +273,18 @@ smoke-shell: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
         --expect "Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1)" \
         --expect "bin  dev  etc  home mnt  root sbin tmp  usr  var" --expect "pfctl"
 
+# smoke-login's `#!` script (M14), typed at the shell prompt.
+script_line := 'echo "#!/bin/sh" >/tmp/s; echo "echo sh-ran-\$((6*7))-\$0-\$1" >>/tmp/s; chmod +x /tmp/s; /tmp/s ok\n'
+
 # M8b: a plain boot of the ramdisk goes multi-user: init(8) runs /etc/rc (`rc: multi-user`),
 # then getty(8) on tty00 prints `login:`; the session logs in as root (the test image's
 # password, docs/SETUP.md) and runs `id` and `uname -a`, then checks that the clock came from
 # the time-of-day chip (mc146818 on amd64, the UEFI runtime services, efi0, on arm64): later
 # than 2026-10-03 (1790985600), a day past the ramdisk's fixed file system time, which is
 # what the kernel would run on without one. `rtc-$x` keeps the echoed command line from
-# matching. Part of `smoke`.
+# matching. M14: a two-line `#!/bin/sh` script, made executable and run with one argument,
+# prints `sh-ran-42-/tmp/s-ok` through the kernel's `exec_script.c` ($0 is the script's path,
+# $1 its argument; `$((6*7))` keeps the echoed line from matching). Part of `smoke`.
 smoke-login: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-login: no ramdisk image; run just userland first"; exit 1; }
@@ -287,14 +292,18 @@ smoke-login: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'id\n' --send-after "uid=0(root)" --send 'uname -a\n' \
         --send-after " 8.0 GENERIC#" --send 'x=ok; [ $(date +%s) -gt 1790985600 ] && echo rtc-$x\n' \
+        --send-after "rtc-ok" --send '{{script_line}}' \
         --expect "rc: multi-user" --expect "EmiBSD/amd64 (Amnesiac) (tty00)" \
-        --expect "uid=0(root)" --expect " 8.0 GENERIC#" --expect "amd64" --expect "rtc-ok"
+        --expect "uid=0(root)" --expect " 8.0 GENERIC#" --expect "amd64" --expect "rtc-ok" \
+        --expect "sh-ran-42-/tmp/s-ok"
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'id\n' --send-after "uid=0(root)" --send 'uname -a\n' \
         --send-after " 8.0 GENERIC#" --send 'x=ok; [ $(date +%s) -gt 1790985600 ] && echo rtc-$x\n' \
+        --send-after "rtc-ok" --send '{{script_line}}' \
         --expect "rc: multi-user" --expect "EmiBSD/arm64 (Amnesiac) (tty00)" \
-        --expect "uid=0(root)" --expect " 8.0 GENERIC#" --expect "arm64" --expect "rtc-ok"
+        --expect "uid=0(root)" --expect " 8.0 GENERIC#" --expect "arm64" --expect "rtc-ok" \
+        --expect "sh-ran-42-/tmp/s-ok"
 
 # M9a: the routing socket and the `net.route` sysctl from userland. Logs in as `smoke-login`
 # does, then runs OpenBSD's route(8) (`show`: a routing socket, then NET_RT_DUMP through

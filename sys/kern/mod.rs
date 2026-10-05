@@ -7,6 +7,7 @@
 
 pub mod clock_subr;
 pub mod exec_elf;
+pub mod exec_script;
 pub mod exec_subr;
 pub mod init_main;
 pub mod init_sysent;

@@ -60,9 +60,10 @@
 //!   `ExecVmcmdSet::{push, kill}`.
 //! - `ep_hdr` is an owned buffer of `exec_maxhdrsz` bytes (the C's `malloc(M_EXEC)`);
 //!   `ep_interp` is a `namei_pool` buffer that gives itself back when dropped; `ep_ndp` is
-//!   passed to the exec switch as an argument instead of being stored (an image has none).
-//! - `ep_fa`, the fake argument vector of `exec_script.c`, is a `Vec` of byte strings;
-//!   `exec_script.c` is not ported, so nothing sets `EXEC_HASARGL` yet.
+//!   passed to `check_exec` and to the exec switch's functions as an argument instead of
+//!   being stored (an image has none).
+//! - `ep_fa`, the fake argument vector of `exec_script.c`, is a `Vec` of byte strings
+//!   without their NULs.
 //! - `exec_maxhdrsz` is a `const fn` over the constant exec switch instead of the global
 //!   `init_exec` (`exec_conf.c`) computes at boot.
 
@@ -74,6 +75,8 @@ use crate::kern::vfs_subr::{vref, vrele};
 use crate::kern::vfs_syscalls::NameiBuf;
 use crate::sys::errno::Errno;
 use crate::sys::exec_elf::ElfEhdr;
+use crate::sys::exec_script::EXEC_SCRIPT_HDRSZ;
+use crate::sys::namei::Nameidata;
 use crate::sys::proc::Proc;
 use crate::sys::vnode::{Vattr, Vnode};
 use crate::uvm::uvm_extern::VmProt;
@@ -331,8 +334,10 @@ impl<'a> ExecPackage<'a> {
 }
 
 /// `exec_makecmds_fcn`: an exec switch entry's check function: fills the package's vmcmds
-/// and addresses from the header, or says why not.
-pub type ExecMakecmdsFcn = fn(&Proc, &mut ExecPackage<'_>) -> Result<(), Errno>;
+/// and addresses from the header, or says why not. The nameidata is `epp->ep_ndp` (`None`
+/// for a memory image), with which the script handler looks its interpreter up.
+pub type ExecMakecmdsFcn =
+    fn(&Proc, &mut ExecPackage<'_>, Option<&mut Nameidata<'_>>) -> Result<(), Errno>;
 
 /// `struct execsw`: one executable format.
 pub struct Execsw {
@@ -343,9 +348,14 @@ pub struct Execsw {
 }
 
 /// `exec_maxhdrsz`: the largest `es_hdrsz` of the exec switch (see the module's
-/// deviations); the switch holds only ELF (`kern_exec.rs`).
+/// deviations): shell scripts' `EXEC_SCRIPT_HDRSZ` or ELF's `Elf_Ehdr` (`kern_exec.rs`).
 pub const fn exec_maxhdrsz() -> usize {
-    size_of::<ElfEhdr>()
+    let elf = size_of::<ElfEhdr>();
+    if EXEC_SCRIPT_HDRSZ > elf {
+        EXEC_SCRIPT_HDRSZ
+    } else {
+        elf
+    }
 }
 
 /// `ELF_RANDOMIZE_LIMIT`: limit on total `PT_OPENBSD_RANDOMIZE` bytes.
