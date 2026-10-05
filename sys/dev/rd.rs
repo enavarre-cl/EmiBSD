@@ -36,6 +36,15 @@
 //!   it writable in its direct map, so the C's writes to the image still work. Without a
 //!   module the image is empty (`rd_root_size` 0) and `rd0` still attaches, as the C always
 //!   attaches one; it then has no label to read.
+//! - `MINIROOTSIZE` is the cargo feature `miniroot` (M14c, `bsd.rd`): the kernel then holds
+//!   the C's `rd_root_image[ROOTBYTES]` and `rd_root_size`, under those symbol names so that
+//!   `rdsetroot` (`cargo xtask rdsetroot`, `tools/xtask/src/rdsetroot.rs`) finds them
+//!   in the ELF and copies the miniroot file system in, as `usr.sbin/rdsetroot` does. The
+//!   size is the build-time number `EMIBSD_MINIROOTSIZE` (sectors; the C takes `option
+//!   MINIROOTSIZE=n` from the kernel configuration), 512 by default. The kernel then roots
+//!   on `rd0a` by itself (`rdattach` calls `swapconf_rdroot`, the C's `config bsd root on
+//!   rd0a`), unless a module already did. A module (Limine's `ramdisk.ffs`) still overrides
+//!   the compiled-in image.
 //! - `rdgetdisklabel` writes the label being read into a local, not into the in-core label
 //!   `rdstrategy` checks transfers against (a Rust `&mut` may not alias what the strategy
 //!   reads): when no partition is open it first publishes the initialised label
@@ -81,8 +90,30 @@ use crate::sys::proc::Proc;
 use crate::sys::types::{Daddr, Dev};
 use crate::sys::uio::Uio;
 
-/// `MINIROOTSIZE`: the default size of the compiled-in image, in sectors.
-pub const MINIROOTSIZE: usize = 512;
+/// `MINIROOTSIZE`: the size of the compiled-in image, in sectors: `EMIBSD_MINIROOTSIZE`
+/// when the build sets it, the C's default 512 otherwise.
+pub const MINIROOTSIZE: usize = match option_env!("EMIBSD_MINIROOTSIZE") {
+    Some(text) => parse_sectors(text),
+    None => 512,
+};
+
+/// The decimal number in `text`, at least 1 (a compile-time error otherwise).
+const fn parse_sectors(text: &str) -> usize {
+    let digits = text.as_bytes();
+    assert!(!digits.is_empty(), "EMIBSD_MINIROOTSIZE is empty");
+    let mut n = 0usize;
+    let mut i = 0;
+    while i < digits.len() {
+        assert!(
+            digits[i].is_ascii_digit(),
+            "EMIBSD_MINIROOTSIZE is not a number"
+        );
+        n = n * 10 + (digits[i] - b'0') as usize;
+        i += 1;
+    }
+    assert!(n > 0, "EMIBSD_MINIROOTSIZE is zero");
+    n
+}
 
 /// `ROOTBYTES`: the default size of the compiled-in image, in bytes.
 pub const ROOTBYTES: usize = MINIROOTSIZE << DEV_BSHIFT;
@@ -102,11 +133,44 @@ pub struct RdSoftc {
 // SAFETY: `#[repr(C)]` with the device first; the disk is all-zero valid (`sys/disk.rs`).
 unsafe impl Softc for RdSoftc {}
 
+/// `rd_root_image[ROOTBYTES]` (feature `miniroot`): the compiled-in image, `rdsetroot`'s
+/// target, under the C's symbol name. Not all zero, so it is file contents in the ELF's data
+/// segment (the C's `"|This is the root ramdisk!\n"`).
+#[cfg(feature = "miniroot")]
+#[repr(transparent)]
+struct RootImage(core::cell::UnsafeCell<[u8; ROOTBYTES]>);
+
+// SAFETY: rd(4) alone touches the array, through `RD_ROOT_IMAGE`, and (like the C) as one
+// disk with its own serialisation (`rdstrategy` at splbio / the disk queue).
+#[cfg(feature = "miniroot")]
+unsafe impl Sync for RootImage {}
+
+#[cfg(feature = "miniroot")]
+#[unsafe(export_name = "rd_root_image")]
+static ROOT_IMAGE: RootImage = RootImage({
+    let banner = b"|This is the root ramdisk!\n";
+    let mut image = [0u8; ROOTBYTES];
+    let mut i = 0;
+    while i < banner.len() {
+        image[i] = banner[i];
+        i += 1;
+    }
+    core::cell::UnsafeCell::new(image)
+});
+
 /// `rd_root_image`: the file system image (the Limine module, see the module's
-/// deviations); NULL without one.
+/// deviations, or the compiled-in array with feature `miniroot`); NULL without either.
+#[cfg(feature = "miniroot")]
+static RD_ROOT_IMAGE: AtomicPtr<u8> = AtomicPtr::new(ROOT_IMAGE.0.get().cast::<u8>());
+#[cfg(not(feature = "miniroot"))]
 static RD_ROOT_IMAGE: AtomicPtr<u8> = AtomicPtr::new(ptr::null_mut());
 
-/// `rd_root_size`: the image's size in bytes.
+/// `rd_root_size`: the image's size in bytes (`ROOTBYTES` with feature `miniroot`: the
+/// symbol `rdsetroot` reads).
+#[cfg(feature = "miniroot")]
+#[unsafe(export_name = "rd_root_size")]
+static RD_ROOT_SIZE: AtomicU32 = AtomicU32::new(ROOTBYTES as u32);
+#[cfg(not(feature = "miniroot"))]
 static RD_ROOT_SIZE: AtomicU32 = AtomicU32::new(0);
 
 /// `rd_ca`.
@@ -155,6 +219,14 @@ fn rd_softc(dv: NonNull<Device>) -> &'static RdSoftc {
 
 /// `rdattach(num)`: attaches the one unit there is.
 pub fn rdattach(_num: i32) {
+    // Feature `miniroot`: the compiled-in image makes this kernel `bsd.rd`, rooted on rd0a
+    // (`config bsd root on rd0a swap on rd0b`); a module's image already did it.
+    #[cfg(feature = "miniroot")]
+    if RD_ROOT_IMAGE.load(Ordering::Relaxed) == ROOT_IMAGE.0.get().cast::<u8>() {
+        // SAFETY: `main` attaches the pseudo-devices on the boot CPU alone, before it
+        // configures the root device and reads `mountroot`.
+        unsafe { crate::conf::swapgeneric::swapconf_rdroot() };
+    }
     // There's only one rd_root_image, so only attach one rd.
     let num = 1usize;
 

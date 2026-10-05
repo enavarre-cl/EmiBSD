@@ -47,6 +47,7 @@ encdebug = []     # OpenBSD `option ENCDEBUG` -> the IPsec DPRINTF messages (net
 tcp_sack_debug = [] # OpenBSD `option TCP_SACK_DEBUG` -> tcp_print_holes in tcp_output
 multiprocessor = [] # OpenBSD `option MULTIPROCESSOR` -> the kernel lock, the spinning mutex, the APs (M11a), the TSC sync test (M11b), the audited MP paths (M11e); off by default, but every `just smoke` recipe but `smoke-up` boots it
 scsiterse = []    # OpenBSD `option SCSITERSE` -> sense codes printed as numbers, no adesc[] table
+miniroot = []     # OpenBSD `option MINIROOTSIZE` -> the ramdisk image compiled in (bsd.rd): rd_root_image/rd_root_size, sized by $EMIBSD_MINIROOTSIZE (sectors), filled by `cargo xtask rdsetroot`; roots on rd0a
 inet6 = []        # OpenBSD option INET6 -> IPv6 (sys/netinet6); default (GENERIC has it)
 
 [dependencies]
