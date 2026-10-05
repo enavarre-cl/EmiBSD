@@ -649,6 +649,9 @@ pub(crate) fn qemu_command(
         }
     }
     crate::hwopts::add_devices(&mut cmd, root, arch);
+    // M12: `--usb`, `--audio` (`devices.rs`), after every other device so the PCI slots
+    // the older smokes expect do not move.
+    cmd.args(crate::devices::qemu_args(image)?);
     Ok(cmd)
 }
 
@@ -910,7 +913,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
                 format!("status {expected_status}")
             }
         );
-        return Ok(());
+        return crate::devices::after_smoke(&image);
     }
     println!("----- serial transcript ({}) -----", arch.name());
     print!("{serial}");
