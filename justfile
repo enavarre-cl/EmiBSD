@@ -1885,7 +1885,10 @@ comp:
 # comp set's disk (`target/comp/<arch>/comp.ffs`, copied to the persistent disk set `comp`,
 # so sd0), mounts it on /mnt and runs `/mnt/usr/bin/clang --version`, then compiles a hello
 # world with `cc --sysroot=/mnt -static` (clang, lld, crt0, libc.a and the headers all from
-# the disk; static because ld.so is not built yet) and runs it. The C has no double quotes
+# the disk) and runs it. Then the plain dynamic link, as on an installed system: chroot(8)
+# into the disk, `cc -o /tmp/d /tmp/h.c` (a dynamic PIE: /usr/libexec/ld.so and
+# libc.so.M.m, userland/shlib.rs), run in the chroot, and ldd(1) of it from the ramdisk
+# (whose own /usr/libexec/ld.so and /usr/lib/libc.so.M.m serve it). The C has no double quotes
 # (the string is a char array) to keep the shell quoting simple; every line stays under
 # arm64's 128-byte console limit. Not in `smokes`: it needs `just comp`, which is not part of
 # `ci`. Time limits are five times the usual (`EMIBSD_TIMEOUT_SCALE`): clang runs under TCG.
@@ -1910,7 +1913,12 @@ cc_script := disk_login + " " + \
     "--send-after '# ' --send 'print -r \"puts(s);return 0;}\" >>/tmp/h.c\\n' " + \
     "--send-after '# ' --send '/mnt/usr/bin/cc --sysroot=/mnt -static -o /tmp/h /tmp/h.c; echo cc-rc-$?\\n' " + \
     "--send-after 'cc-rc-0' --send '/tmp/h\\n' " + \
-    "--expect 'cc-mnt-42' --expect 'OpenBSD clang version 22.1.6' --expect 'cc-rc-0' --expect 'cc-ok'"
+    "--send-after 'cc-ok' --send 'cp /tmp/h.c /mnt/tmp/h.c && echo cc-cp-$((40+2))\\n' " + \
+    "--send-after 'cc-cp-42' --send '/usr/sbin/chroot /mnt /usr/bin/cc -o /tmp/d /tmp/h.c; echo dyn-rc-$?\\n' " + \
+    "--send-after 'dyn-rc-0' --send 'x=$(/usr/sbin/chroot /mnt /tmp/d); echo dyn-$x\\n' " + \
+    "--send-after 'dyn-cc-ok' --send '/usr/bin/ldd /mnt/tmp/d\\n' " + \
+    "--expect 'cc-mnt-42' --expect 'OpenBSD clang version 22.1.6' --expect 'cc-rc-0' --expect 'cc-ok' " + \
+    "--expect 'dyn-rc-0' --expect 'dyn-cc-ok' --expect '/usr/lib/libc.so.' --expect '/usr/libexec/ld.so'"
 
 # --- quality -----------------------------------------------------------------
 
