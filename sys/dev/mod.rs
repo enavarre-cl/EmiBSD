@@ -17,6 +17,7 @@ pub mod biovar;
 pub mod clock_subr;
 pub mod cons;
 pub mod consfile;
+pub mod diskmap;
 pub mod efi;
 pub mod fdt;
 pub mod hid;

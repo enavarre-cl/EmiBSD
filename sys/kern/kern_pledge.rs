@@ -44,8 +44,6 @@
 //!   fall-through from the `AF_INET`/`AF_INET6` cases into `AF_UNIX`'s `TCP_NODELAY` test is
 //!   one condition. The C's IPv6 arms and the `*_IN6` ioctls are not under `#ifdef INET6`
 //!   there, so they are compiled whatever the `inet6` feature says.
-//! - `dev/diskmap.c` is not ported: no device switch entry has `diskmapioctl`, so the
-//!   "disklabel" `DIOCMAP` case never allows.
 //! - The `#ifdef CPU_CHR2BLK`, `CPU_SSE`, `CPU_ID_AA64ISAR0` and `CPU_ID_AA64ISAR1` tests of
 //!   `pledge_sysctl` read the machine's `<machine/cpu.h>` names through `crate::machine`
 //!   (`None` where the machine does not define them).
@@ -57,6 +55,7 @@ use core::sync::atomic::Ordering;
 
 use crate::dev::audio::audioopen;
 use crate::dev::biovar::{BIOCDISK, BIOCINQ, BIOCINSTALLBOOT, BIOCVOL};
+use crate::dev::diskmap::diskmapioctl;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::kern_prot::groupmember;
 use crate::kern::kern_sig::{sigabort, single_thread_clear, single_thread_set};
@@ -96,7 +95,7 @@ use crate::sys::audioio::{
     AUDIO_GETDEV, AUDIO_GETPAR, AUDIO_GETPOS, AUDIO_MIXER_DEVINFO, AUDIO_MIXER_READ,
     AUDIO_MIXER_WRITE, AUDIO_SETPAR, AUDIO_START, AUDIO_STOP,
 };
-use crate::sys::conf::{D_DISK, DevTypeOpen};
+use crate::sys::conf::{D_DISK, DevTypeIoctl, DevTypeOpen};
 use crate::sys::dkio::{DIOCGDINFO, DIOCGPDINFO, DIOCMAP, DIOCRLDINFO, DIOCWDINFO};
 use crate::sys::errno::Errno;
 use crate::sys::fcntl::F_SETOWN;
@@ -1173,9 +1172,17 @@ pub fn pledge_ioctl(p: &Proc, com: u64, fp: &File) -> Result<(), Errno> {
                     }
                 }
             }
-            // cdevsw[major(vp->v_rdev)].d_ioctl == diskmapioctl: dev/diskmap.c is not
-            // ported, no entry has it (see the deviations).
-            DIOCMAP => {}
+            DIOCMAP
+                if fp.f_type.get() == DTYPE_VNODE
+                    && vchr.is_some_and(|vp| {
+                        ptr::fn_addr_eq(
+                            cdevsw(major(vp.v_rdev())).d_ioctl,
+                            diskmapioctl as DevTypeIoctl,
+                        )
+                    }) =>
+            {
+                return Ok(());
+            }
             _ => {}
         }
     }
