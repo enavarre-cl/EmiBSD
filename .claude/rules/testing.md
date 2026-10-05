@@ -13,6 +13,10 @@ Three tiers. Every change lands with the tier it belongs to.
 3. **QEMU smoke tests**: `just smoke`. Boot both archs headless, assert serial lines and the exit
    code (amd64 `isa-debug-exit`, arm64 semihosting). Every change to boot, console, traps or
    scheduling adds or updates an expectation in `tools/xtask`.
+   Since M11 (the user's decision of 2026-10-03) every smoke and smoke2 run boots the
+   `multiprocessor` kernel with `-smp 4` (the justfile's `smp` variable, recipes built with
+   `--features qemu,multiprocessor`); `smoke-up` is the one uniprocessor boot per arch, kept
+   to catch a dependency on MP. New smokes follow suit: MP, `{{smp}}`, both archs.
 
 Always:
 

@@ -21,7 +21,7 @@
 
 ## Status
 
-Status: M11d (network parallelism) met, after M11a, M11b and M11c; M11e (the MP audit) next.
+Status: M11 (SMP) met, its last part M11e (the MP audit) included; M12 (devices) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -46,7 +46,7 @@ Status: M11d (network parallelism) met, after M11a, M11b and M11c; M11e (the MP 
 | M11b | MP timekeeping: the TSC synchronisation test per AP, clock interrupts on every CPU | met |
 | M11c | ddb on MP: the command loop, the other CPUs stopped by IPI, `machine cpuinfo`, `machine ddbcpu` | met |
 | M11d | Network parallelism: one softnet task queue per CPU (up to 8), `kern_intrmap.c`, SMR for the interface index | met |
-| M11e | SMP: the MP audit | next |
+| M11e | The MP audit: every `MULTIPROCESSOR` site, MPSAFE flags and `SY_NOLOCK` honoured, unlocked page faults; every smoke runs on four CPUs | met |
 | M12 | Devices (audio, USB), in QEMU | next |
 | M13 | Storage, firmware and console | next |
 | M14, M14b | Installable; code and test layout | next |
@@ -58,7 +58,9 @@ in [docs/ROADMAP.md](docs/ROADMAP.md); the current state is in
 
 ## What works today
 
-Every line below is a recipe of `just smoke`, run on both architectures.
+Every line below is a recipe of `just smoke`, run on both architectures, on the
+`multiprocessor` kernel with four processors (`-smp 4`); `smoke-up` boots the uniprocessor
+kernel once per arch.
 
 On one VM, with OpenBSD's own binaries from the ramdisk:
 
@@ -93,7 +95,8 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
   and a non-resident file read back (`smoke-ntfs`).
 - Four processors (`-smp 4`) with the `multiprocessor` kernel: the application processors
   start, take IPIs and TLB shootdowns, two kernel threads ping-pong across CPUs, a thread per
-  CPU stresses the pools and the page allocator, and the init self-test passes; amd64 tests
+  CPU stresses the pools, the page allocator and page faults through uvm, and the init
+  self-test passes; amd64 tests
   each application processor's TSC against the boot CPU's, and on both archs every CPU runs
   its own clock interrupts with an uptime that never goes back (`smoke-mp`).
 - ddb(4) on four processors: `sysctl ddb.trigger=1` from the shell stops every other CPU by
@@ -114,6 +117,7 @@ Between two VMs on a private link (`cargo xtask smoke2`):
 - Both VMs on the `multiprocessor` kernel with `-smp 4`: four softnet threads (eight with
   `-smp 8`), a ping across the link and through `wg0`, TCP with nc(1) directly and through
   `wg0`, loopback interfaces created and destroyed (`smoke-net-mp`).
+- tcpbench(1) both ways at once, four connections each, for 15 seconds (`smoke-tcpbench`).
 
 An excerpt of the serial console, from `smoke-login` on amd64 (trimmed):
 
@@ -155,7 +159,7 @@ m10d-fuse-sub-42
 ```
 
 And from `smoke-mp`, the `multiprocessor` kernel with `-smp 4` on amd64 (trimmed; the last
-two lines come from its `selftest=mpstress` boot):
+three lines come from its `selftest=mpstress` boot):
 
 ```
 bsd: 4 processors, boot processor hwid 0x0
@@ -169,6 +173,19 @@ selftest: cpu1 clockintr: 20 uptime checks, 0 behind
 selftest: clockintr on 4 cpus ok, uptime monotonic on each
 selftest: mpstress pool ok (4 cpus, 432000 gets, 431592 through the per-cpu caches, 71904 items exchanged between threads, 0 PR_NOWAIT refused, 30 pages reclaimed, 485 ms)
 selftest: mpstress pmemrange ok (4 cpus, 14400 page lists, 88389 pages, 0 UVM_PLA_NOWAIT refused, 95997 pages free before and after; 96108 free at the start, 96101 at the end)
+selftest: mpstress uvm ok (4 cpus, 9988 pageable kernel pages and 16000 anonymous pages faulted in, 4000 slices unmapped and mapped again, per-cpu page caches 26017 hits 3718 misses, 378 ms)
+```
+
+And from `smoke-tcpbench`, VM a of two MP VMs on amd64 (trimmed):
+
+```
+# until tcpbench -n 4 -t 15 192.168.77.2; do sleep 1; done; echo bench-a-$((5+5))
+Conn:   4 Mbps:      367.652 Peak Mbps:      367.652 Avg Mbps:       91.913
+Conn:   4 Mbps:      241.680 Peak Mbps:      367.652 Avg Mbps:       60.420
+--- 192.168.77.2 tcpbench statistics ---
+445265160 bytes sent over 15.352 seconds
+bandwidth min/avg/max/std-dev = 127.436/232.681/367.652/65.268 Mbps
+bench-a-10
 ```
 
 And from `smoke-ddbmp`, ddb on the same kernel and four processors, amd64 (trimmed):
@@ -249,7 +266,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 4 | 139 | 642 | 16 | 801 |
+| 4 | 137 | 645 | 16 | 802 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).
@@ -262,7 +279,8 @@ Three tiers:
 1. Host unit tests (`just test`): pure logic runs on macOS through `sys/arch/host`.
 2. Reference-backed tests (`just test-ref`): constants are cross-checked against the C headers.
 3. QEMU smoke tests (`just smoke`): boot both architectures headless and assert serial lines and
-   exit codes. A full run boots 48 single VMs and 20 pairs of VMs.
+   exit codes. A full run boots 67 single VMs and 24 pairs of VMs, all on the
+   `multiprocessor` kernel with `-smp 4` except `smoke-up`'s uniprocessor boot per arch.
 
 `just ci` runs fmt, clippy for amd64, arm64 and the host, all tests, both builds, every smoke and
 the tracker checks. Green `just ci` is the definition of done.

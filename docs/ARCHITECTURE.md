@@ -154,7 +154,7 @@ the default and `cargo test` just works.
 | `ffs2` | `option FFS2` | FFS2 (UFS2 dinodes, the 64 KB super-block) in ffs; default |
 | `qemu` | — | QEMU-only exits (`isa-debug-exit`, semihosting), the boot self-tests, the TSC under TCG and the `uptime went backwards` check |
 | `inet6` | `option INET6` | IPv6: the `#ifdef INET6` sites outside `sys/netinet6` and `inet6domain` in `domains[]`; default, as in GENERIC. `sys/netinet6` itself (and the IPv6 tables and usrreqs it names, `route6_cache`, `tcp6_usrreqs`, ...) always compiles, like a library nothing reaches without the option, so the tree builds both ways |
-| `multiprocessor` | `option MULTIPROCESSOR` | off by default until M11e; `just build` and `just clippy` also build it. M11a: `MAXCPUS` 255/256, the kernel lock and the spinning mutex (`kern_lock.c`), the Limine MP request and the application processors' start (see "Deviations"); `just smoke-mp` boots it with `-smp 4`. M11d: `NET_TASKQ` 8 softnet queues, `softnet_percpu` keeps one per CPU; `just smoke-net-mp` runs both VMs of the two-VM smokes on it |
+| `multiprocessor` | `option MULTIPROCESSOR` | off by default, so the uniprocessor kernel stays the plain build; `just build` and `just clippy` also build it, and since M11e every `just smoke` recipe boots it with `-smp 4` except `smoke-up` (the user's decision of 2026-10-03). M11a: `MAXCPUS` 255/256, the kernel lock and the spinning mutex (`kern_lock.c`), the Limine MP request and the application processors' start (see "Deviations"); `just smoke-mp` boots it with `-smp 4`. M11d: `NET_TASKQ` 8 softnet queues, `softnet_percpu` keeps one per CPU; `just smoke-net-mp` runs both VMs of the two-VM smokes on it |
 | `ntfs` | `option NTFS` | the read-only NTFS file system (`sys/ntfs`) and its `vfsconflist[]` entry; default, but compiled only where the architecture's GENERIC has it (amd64): see below |
 | `fuse` | `option FUSE` | FUSE (`sys/miscfs/fuse`), its `vfsconflist[]` entry, `cdevsw[]` 92 (`/dev/fuse0`) and `fuseattach` in `pdevinit[]`; default, as in GENERIC |
 
@@ -437,30 +437,53 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   processor for, attaches `cpu0` as `CPU_ROLE_SP` as before. The application processors mask
   `LINT0`: QEMU wires the 8259's ExtINT to every local APIC, and device interrupts stay on
   the boot processor.
-- The kernel lock covers what is not audited yet (M11a, until M11e): `SIF_MPSAFE`
-  (`kern_softintr.rs`: every soft interrupt handler takes the lock), `TASKQ_MPSAFE`
-  (`kern_task.rs`: the workers keep the lock their thread starts with), `TIMEOUT_MPSAFE`
-  (`kern_timeout.rs`: no `timeout_proc_mp` queue and no `softclockmp` thread), `SY_NOLOCK`
-  (`sys/syscall_mi.rs`: every system call body runs locked) and `IPL_MPSAFE` for interrupt
-  handlers at or below `IPL_MPFLOOR` (amd64 `intr_handler`, arm64 `ampintc_run_handler`) are
-  ignored; `exit1` keeps the lock over `uvm_purge` and the reaper never drops it. Why: those
-  paths were ported against one CPU, and the lock makes them as safe as they were, which is
-  OpenBSD's own way of bringing code under MP. Unlocked as in OpenBSD: the scheduler and the
-  idle loop, `mi_switch`, the clock interrupt (`clockintr_dispatch`), the SMR thread and the
-  IPIs. The `qemu`-only `uptime went backwards` check compares each CPU's readings with that
+- The kernel lock (M11a, audited in M11e). M11a took it around everything ported against one
+  CPU, OpenBSD's own way of bringing code under MP. M11e audited every `MULTIPROCESSOR` site
+  and every `KERNEL_LOCK` the port had kept as a comment, module by module, and now the lock
+  covers what it covers in OpenBSD: each `KERNEL_LOCK`/`KERNEL_UNLOCK`/`KERNEL_ASSERT_LOCKED`
+  is a real call (nothing without `MULTIPROCESSOR`), `SIF_MPSAFE` soft interrupts,
+  `TASKQ_MPSAFE` task queues (`systqmp`, the softnet queues, wg's) and `TIMEOUT_PROC |
+  TIMEOUT_MPSAFE` timeouts (the `softclockmp` thread: TCP, ARP, TDB, syn cache, socket
+  timers) run without it, and so do `IPL_MPSAFE` interrupt handlers (vio's). `mi_syscall`
+  honours `SY_NOLOCK`, except for the system calls in `SY_NOLOCK_DEFERRED`
+  (`sys/sys/syscall_mi.rs`), each group with the reason it still takes the lock; a host test
+  keeps the unlocked set equal to the audited list. `uvm_fault` and `uvm_grow` run unlocked
+  in both machines' traps, `exit1` drops the lock around `uvm_purge` and the reaper runs
+  unlocked. printf takes `kprintf_mutex` and the message buffer `log_mtx`, so CPUs do not
+  interleave characters. Unlocked as in OpenBSD since M11a: the scheduler and the idle loop,
+  `mi_switch`, the clock interrupt (`clockintr_dispatch`), the SMR thread and the IPIs.
+  Deviations: poll's rate-limit static (`poll_lasterr`, `sys_generic.rs`) and wg's
+  `wg_last_underload` are guarded (by the kernel lock and a mutex): the C touches them
+  unlocked, which is a data race in Rust. The network takes SMR as in C for the ART, the
+  rtable maps (the C's SRP is `smr_call` here), `rt_next`, bpf's listener lists and filters,
+  pflow's list and pfsync's softc (`SMR_SLIST` is ported for them). Open, a deviation: the
+  statistics counters the C bumps with a plain `++` from several softnet threads (pf's rule,
+  state and table counters, `rmx_pksent`) and a few words the C reads unlocked from softnet
+  (`rt_flags`, `rt_priority`, `rt_gateway`, bpf's `bd_dirfilt`/`bd_fildrop`, `if_bpf`) stay
+  `Cell`s like the C's plain words; making them atomics changes every user. The `qemu`-only `uptime went backwards` check compares each CPU's readings with that
   CPU's previous one (`kern_clockintr.rs`); since M11b it counts them per CPU, and the MP boot
   self-test `clockintr_percpu` checks that every CPU runs its own clock interrupts.
 - Memory allocators under MP (M11a): the pool lock is the C's mutex or rwlock with and without
   `MULTIPROCESSOR` (the uniprocessor C kernel takes the same mutex); `malloc_mtx` and
   `uvm.fpageqlock` are real mutexes at `IPL_VM`. With `MULTIPROCESSOR` the pools' per-CPU
-  caches are ported (`pool_cache_init` on the anon pool and the `selftest=mpstress` pools; the
-  other C callers, mbufs, knotes and pfsync, still skip it until M11e) and `pool_gc_pages`
-  runs every second. A `PR_WAITOK` `pool_get` with no memory sleeps for a request as in C,
-  except while cold or on proc0, where it fails (the C panics under `DIAGNOSTIC`). The
-  per-CPU page cache of `uvm_pmemrange` (`__HAVE_UVM_PERCPU`) is not ported: a performance
-  cache. `uvm.pageqlock` is still a no-op, so both machines hold the kernel lock over
-  `uvm_fault` (unlocked in C) and `exit1`/the reaper keep it over `uvm_purge` until M11e.
-  amd64's mainbus counts every application processor in `ncpusfound`, as `acpimadt` does.
+  caches are ported (`pool_cache_init` on the anon pool, the `selftest=mpstress` pools and,
+  since M11e, the knote pool and the mbuf, tag, ext-ref and cluster pools; pfsync's deferral
+  pool cache is commented out in the C too) and
+  `pool_gc_pages` runs every second; `evcount` and `mbstat` have per-CPU counters. A
+  `PR_WAITOK` `pool_get` with no memory sleeps for a request as in C, except while cold or on
+  proc0, where it fails (the C panics under `DIAGNOSTIC`). M11e: `uvm.pageqlock` is the C's
+  mutex at `IPL_VM`; the pmaps take their `pm_mtx` where the C does (amd64's
+  `pmap_map_ptes`/`pmap_unmap_ptes` only lock: the page tables are walked through the direct
+  map, with no `%cr3` borrow); pmap and `uvm_object` reference counts are atomics. The per-CPU
+  page cache (`__HAVE_UVM_PERCPU`, `uvm_pmr_cache_*`) is ported, its magazines in an array
+  indexed by `cpu_number()` rather than in `struct cpu_info`. arm64's `pmap_purge`
+  (`__HAVE_PMAP_PURGE`) is a `machine::Pmap` method, a no-op on amd64. amd64's mainbus counts every application processor in `ncpusfound`, as `acpimadt` does.
+- arm64 turns on the generic timer's event stream (`CNTKCTL_EL1.EVNTEN`, a `wfe` wake-up
+  about every 130 us) on every CPU, which OpenBSD does not (M11e). Reason: QEMU's TCG can lose
+  the `sev` that ends a `wfe` wait (its sev helper kicks the halted vCPU without the global
+  lock), and an application processor waiting for `CPUF_GO`, whose GIC CPU interface is not
+  enabled yet, then never wakes. The event stream bounds every lost event, as Linux keeps it
+  on for the same reason.
 - ddb on MP (M11c): `db_ktrap` stays at `splhigh` for its whole `db_enter_ddb` loop, where
   the C drops back to the trapped level between iterations. Reason: a CPU that handed ddb to
   another (`machine ddbcpu`) waits in that loop with interrupts on, and at a low level it
