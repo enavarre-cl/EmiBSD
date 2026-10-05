@@ -504,6 +504,15 @@ t_links(void)
 	R("mkdirat", mkdirat(AT_FDCWD, "ma", 0700));
 	R("renameat", renameat(AT_FDCWD, "ma", AT_FDCWD, "mb"));
 	R("unlinkat removedir", unlinkat(AT_FDCWD, "mb", AT_REMOVEDIR));
+}
+
+/* Named pipes on the file system (fifofs). */
+static void
+t_fifo(void)
+{
+	int fd;
+
+	section("fifo");
 	R("mkfifo p", mkfifo("p", 0644));
 	show("p");
 	R("open fifo wronly nonblock no reader", open("p", O_WRONLY | O_NONBLOCK));
@@ -511,6 +520,7 @@ t_links(void)
 	OK("open fifo rdonly nonblock", fd >= 0);
 	close(fd);
 	R("mkfifo existing", mkfifo("p", 0644));
+	R("unlink p", unlink("p"));
 }
 
 static void
@@ -719,7 +729,6 @@ t_procs(void)
 	in_child("pledge bogus", child_pledge_bad);
 	in_child("unveil", child_unveil);
 	in_child("write to a PROT_READ page", child_segv);
-	in_child("read past eof of a mapping", child_sigbus);
 	R("waitpid no children", waitpid(-1, &status, 0));
 	R("waitpid WNOHANG no children", waitpid(-1, &status, WNOHANG));
 	if (pipe(p) == 0) {
@@ -765,8 +774,6 @@ t_procs(void)
 	R("execve a dir", execve(".", argv, envp));
 	write_file("garbage", 0755, "\177ELF garbage garbage garbage");
 	R("execve garbage", execve("garbage", argv, envp));
-	write_file("badinterp", 0755, "#!/nonexistent/sh\n");
-	R("execve missing interpreter", execve("badinterp", argv, envp));
 
 	ts.tv_sec = -1;
 	ts.tv_nsec = 0;
@@ -908,11 +915,20 @@ t_memory(void)
 	R("madvise bad", madvise(p, 4096, 999));
 	R("minherit bad", minherit(p, 4096, 999));
 	R("munmap", munmap(p, 4 * 4096));
-	R("mmap bad fd", MAPPED(mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, 77, 0)));
 	R("mmap shared+private", MAPPED(mmap(NULL, 4096, PROT_READ,
 	    MAP_SHARED | MAP_PRIVATE | MAP_ANON, -1, 0)));
 	R("mmap write+exec", MAPPED(mmap(NULL, 4096, PROT_WRITE | PROT_EXEC,
 	    MAP_ANON | MAP_PRIVATE, -1, 0)));
+}
+
+/* Mappings of files and descriptors. */
+static void
+t_mmapfile(void)
+{
+	int fd;
+
+	section("mmapfile");
+	R("mmap bad fd", MAPPED(mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, 77, 0)));
 	fd = open("pm", O_RDONLY);
 	R("mmap shared write on rdonly fd",
 	    MAPPED(mmap(NULL, 4096, PROT_WRITE, MAP_SHARED, fd, 0)));
@@ -922,6 +938,7 @@ t_memory(void)
 	fd = open(".", O_RDONLY);
 	R("mmap a dir", MAPPED(mmap(NULL, 4096, PROT_READ, MAP_PRIVATE, fd, 0)));
 	close(fd);
+	in_child("read past eof of a mapping", child_sigbus);
 }
 
 static void
@@ -952,6 +969,33 @@ t_sysctl(void)
 	R("set kern.ostype", sysctl(mib, 2, NULL, NULL, "x", 1));
 }
 
+static void
+child_script(void)
+{
+	char *argv[] = { "goodscript", "arg1", NULL };
+	char *envp[] = { NULL };
+
+	fflush(stdout);
+	execve("goodscript", argv, envp);
+	printf("execve goodscript: -1 %s\n", ename(errno));
+}
+
+/* Interpreter scripts (`#!`, exec_script.c). */
+static void
+t_script(void)
+{
+	char *argv[] = { "x", NULL };
+	char *envp[] = { NULL };
+
+	section("script");
+	write_file("goodscript", 0755, "#!/bin/sh\necho script ran with \"$0\" \"$1\"\n");
+	in_child("execve a script", child_script);
+	write_file("badinterp", 0755, "#!/nonexistent/sh\n");
+	R("execve missing interpreter", execve("badinterp", argv, envp));
+	write_file("nointerp", 0755, "#!\n");
+	R("execve empty interpreter", execve("nointerp", argv, envp));
+}
+
 /* The system's name: the one line EmiBSD's branding changes (kept apart). */
 static void
 t_ostype(void)
@@ -975,10 +1019,13 @@ static const struct {
 	{ "files", t_files },
 	{ "dirs", t_dirs },
 	{ "links", t_links },
+	{ "fifo", t_fifo },
 	{ "perms", t_perms },
 	{ "procs", t_procs },
+	{ "script", t_script },
 	{ "ipc", t_ipc },
 	{ "memory", t_memory },
+	{ "mmapfile", t_mmapfile },
 	{ "sysctl", t_sysctl },
 	{ "ostype", t_ostype },
 };
@@ -1037,7 +1084,12 @@ main(int argc, char *argv[])
 	struct stat st;
 	int i;
 
+	struct rlimit nocore = { 0, 0 };
+
 	setvbuf(stdout, NULL, _IOLBF, 0);
+	/* The children killed by signals must not dump core: core dumps are a step of their own. */
+	if (setrlimit(RLIMIT_CORE, &nocore) == -1)
+		printf("setrlimit RLIMIT_CORE: -1 %s\n", ename(errno));
 	if (argc < 2)
 		usage();
 	if (strcmp(argv[1], "syscalls") == 0 && argc <= 3)

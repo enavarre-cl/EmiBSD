@@ -1,9 +1,45 @@
 # Differences between EmiBSD and OpenBSD that `cargo xtask diff-openbsd` accepts, each with
 # its reason (M12+). Every other difference fails the run, and so does an entry here that no
-# longer differs: the file must say exactly what differs and why.
+# longer differs: the file must say exactly what differs and why. A step that hits an
+# unported part of EmiBSD is kept alone in its scenario (one difftest section, one shell
+# step), so an entry here never hides a second difference.
 #
 # [[difference]]
 # step   = "<set>/<scenario>#<n>"   the step id (scenario.rs)
 # cmd    = "..."                     the step's command, as in the .scn file
 # arch   = "amd64"                   optional; both archs when absent
 # reason = "..."                     why EmiBSD does not, or should not, behave as OpenBSD here
+
+[[difference]]
+step = "syscalls/probes#6"
+cmd = "difftest syscalls fifo"
+reason = """unported: miscfs/fifofs (option FIFO) is not ported, so mkfifo(2) on FFS gets \
+EOPNOTSUPP, the C's answer without option FIFO (ffs_vinit and domknodat; ports.toml notes \
+of ufs_vnops.c, ffs_subr.c, vfs_syscalls.c)"""
+
+[[difference]]
+step = "syscalls/probes#9"
+cmd = "difftest syscalls script"
+reason = """unported: exec_script.c (#! interpreter scripts) is not ported; execsw[] holds ELF \
+only (sys/kern/kern_exec.rs, EXECSW), so a script fails with ENOEXEC, which OpenBSD runs or \
+answers with ENOENT for a missing interpreter"""
+
+[[difference]]
+step = "syscalls/probes#12"
+cmd = "difftest syscalls mmapfile"
+reason = """unported: mmap(2) of a file or descriptor is a visible stub (sys/uvm/uvm_mmap.rs, \
+`unported!(\"sys_mmap: file mappings\")`), ENOSYS before the descriptor is looked at; \
+anonymous mappings are compared in `memory`"""
+
+[[difference]]
+step = "syscalls/probes#14"
+cmd = "difftest syscalls ostype"
+reason = """branding: kern.ostype is EmiBSD (the user's decision of 2026-10-03; \
+docs/ARCHITECTURE.md, deviations, "The system's identity"; sys/conf/vers.rs)"""
+
+[[difference]]
+step = "syscalls/coredump#3"
+cmd = "sh -c 'ulimit -c unlimited; kill -SEGV $$'; echo status $?; ls -1"
+reason = """unported: core dumps are a visible stub (sys/kern/kern_sig.rs, \
+`unported!(\"coredump: vn_open of the core file (vfs)\")`): no sh.core, and the shell \
+reports the signal without `(core dumped)`"""

@@ -2,6 +2,32 @@ use super::scenario::*;
 use super::*;
 
 #[test]
+fn diff_lines_aligns_an_inserted_line() {
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let o = s(&["a", "b", "c"]);
+    let e = s(&["a", "x", "b", "c"]);
+    assert_eq!(
+        diff_lines(&o, &e),
+        vec![
+            Line::Same("a"),
+            Line::EmiBsd("x"),
+            Line::Same("b"),
+            Line::Same("c")
+        ]
+    );
+    let e = s(&["a", "B", "c"]);
+    assert_eq!(
+        diff_lines(&o, &e),
+        vec![
+            Line::Same("a"),
+            Line::OpenBsd("b"),
+            Line::EmiBsd("B"),
+            Line::Same("c")
+        ]
+    );
+}
+
+#[test]
 fn snapshot_file_parses_and_names_both_archs() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let s = load_snapshot(&root).unwrap();
@@ -125,6 +151,10 @@ fn normalizers() {
     assert_eq!(
         normalize(&l(&["a 12 b 3"]), &s, &[Norm::Numbers]),
         l(&["a N b N"])
+    );
+    assert_eq!(
+        normalize(&l(&["Disk: sd1\tgeometry", "\tx"]), &s, &[]),
+        l(&["Disk: sdX       geometry", "        x"])
     );
 }
 

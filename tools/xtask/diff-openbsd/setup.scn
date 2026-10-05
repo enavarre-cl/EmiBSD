@@ -1,15 +1,17 @@
 # diff-openbsd set `setup` (format: tools/xtask/src/diffopenbsd/scenario.rs): the blank
 # 64 MiB scratch disk $D (sd0 on EmiBSD, sd1 on OpenBSD) gets an MBR, a label with one 4.2BSD
 # partition, a new FFS, and is mounted on /mnt, the same way on both systems; the other sets
-# run there. The disk tools' outputs are compared too. disklabel(8)'s `duid:` line is random
-# and left out.
+# run there. The disk tools' outputs are compared too, with what comes from the two root file
+# systems rather than the kernel left out: fdisk(8) is given the disk itself as its MBR
+# template (the ramdisk has no /usr/mdec/mbr), and disklabel(8)'s random `duid:` line and the
+# `# /mnt` comments it takes from /etc/fstab (the ramdisk's lists sd0a) are dropped.
 
 ## scratch
 ! umount /mnt
 $ fdisk -iy -f /dev/r${D}c $D
-$ fdisk $D
+$ fdisk -f /dev/r${D}c $D
 $ disklabel -w -A $D
-$ disklabel $D | while IFS= read -r l; do case $l in duid:*) ;; *) echo "$l";; esac; done
+$ disklabel $D | while IFS= read -r l; do case $l in duid:*) ;; *) echo "${l%% # *}";; esac; done
 $ newfs ${D}a
 $ mount /dev/${D}a /mnt && echo mounted
 $ df -k /mnt

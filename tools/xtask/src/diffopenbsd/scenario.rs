@@ -192,7 +192,7 @@ pub(crate) struct Subst {
     pub(crate) disk: String,
 }
 
-/// `lines` with the global normalizers (host name, scratch disk, `name[pid]`) and then
+/// `lines` with the global normalizers (host name, scratch disk, tabs, `name[pid]`) and then
 /// `norms` applied.
 pub(crate) fn normalize(lines: &[String], subst: &Subst, norms: &[Norm]) -> Vec<String> {
     let mut labels: HashMap<String, usize> = HashMap::new();
@@ -206,7 +206,7 @@ pub(crate) fn normalize(lines: &[String], subst: &Subst, norms: &[Norm]) -> Vec<
             if !subst.disk.is_empty() {
                 l = l.replace(&subst.disk, "sdX");
             }
-            l = pids(&l);
+            l = pids(&expand_tabs(&l));
             for n in norms {
                 l = match n {
                     Norm::Dates => dates(&l),
@@ -217,6 +217,26 @@ pub(crate) fn normalize(lines: &[String], subst: &Subst, norms: &[Norm]) -> Vec<
             l
         })
         .collect()
+}
+
+/// Tabs expanded to spaces at 8-column stops, as a tty with `OXTABS` does. Whether a serial
+/// session has it depends on the login environment, not the kernel: getty(8) sets it for
+/// std.9600 on both systems, and OpenBSD root's `.profile` runs tset(1), which clears it for
+/// a vt220.
+fn expand_tabs(l: &str) -> String {
+    let mut out = String::with_capacity(l.len());
+    let mut col = 0;
+    for c in l.chars() {
+        if c == '\t' {
+            let n = 8 - col % 8;
+            out.extend(std::iter::repeat_n(' ', n));
+            col += n;
+        } else {
+            out.push(c);
+            col += 1;
+        }
+    }
+    out
 }
 
 /// `word[123]` → `word[PID]` (the kernel's `prog[pid]: ...` console lines).
@@ -442,22 +462,85 @@ pub(crate) fn compare(
     r
 }
 
-/// The lines that differ, OpenBSD's then EmiBSD's, with the common ones as context.
+/// One line of a diff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Line<'a> {
+    Same(&'a str),
+    OpenBsd(&'a str),
+    EmiBsd(&'a str),
+}
+
+/// A line diff of `o` (OpenBSD) and `e` (EmiBSD): the longest common subsequence, then each
+/// run of differing lines, OpenBSD's first.
+pub(crate) fn diff_lines<'a>(o: &'a [String], e: &'a [String]) -> Vec<Line<'a>> {
+    let (n, m) = (o.len(), e.len());
+    // lcs[i][j]: the longest common subsequence of o[i..] and e[j..].
+    let mut lcs = vec![vec![0u32; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            lcs[i][j] = if o[i] == e[j] {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
+        }
+    }
+    let (mut i, mut j) = (0, 0);
+    let mut out = Vec::new();
+    while i < n || j < m {
+        if i < n && j < m && o[i] == e[j] {
+            out.push(Line::Same(&o[i]));
+            i += 1;
+            j += 1;
+        } else if j == m || (i < n && lcs[i + 1][j] >= lcs[i][j + 1]) {
+            out.push(Line::OpenBsd(&o[i]));
+            i += 1;
+        } else {
+            out.push(Line::EmiBsd(&e[j]));
+            j += 1;
+        }
+    }
+    out
+}
+
+/// The diff as text: differing lines marked `openbsd:` / `emibsd:`, two common lines of
+/// context around them, longer common runs folded.
 fn side_by_side(o: &[String], e: &[String]) -> String {
+    const CONTEXT: usize = 2;
+    let d = diff_lines(o, e);
+    let near_change = |k: usize| {
+        let lo = k.saturating_sub(CONTEXT);
+        let hi = (k + CONTEXT).min(d.len().saturating_sub(1));
+        (lo..=hi).any(|x| !matches!(d[x], Line::Same(_)))
+    };
     let mut s = String::new();
-    let n = o.len().max(e.len());
-    for i in 0..n {
-        match (o.get(i), e.get(i)) {
-            (Some(a), Some(b)) if a == b => s.push_str(&format!("    = {a}\n")),
-            (a, b) => {
-                if let Some(a) = a {
-                    s.push_str(&format!("    openbsd: {a}\n"));
+    let mut folded = 0;
+    for (k, l) in d.iter().enumerate() {
+        match l {
+            Line::Same(t) if near_change(k) => {
+                if folded > 0 {
+                    s.push_str(&format!("    ... {folded} equal line(s)\n"));
+                    folded = 0;
                 }
-                if let Some(b) = b {
-                    s.push_str(&format!("    emibsd:  {b}\n"));
+                s.push_str(&format!("    = {t}\n"));
+            }
+            Line::Same(_) => folded += 1,
+            Line::OpenBsd(t) | Line::EmiBsd(t) => {
+                if folded > 0 {
+                    s.push_str(&format!("    ... {folded} equal line(s)\n"));
+                    folded = 0;
                 }
+                let who = if matches!(l, Line::OpenBsd(_)) {
+                    "openbsd:"
+                } else {
+                    "emibsd: "
+                };
+                s.push_str(&format!("    {who} {t}\n"));
             }
         }
+    }
+    if folded > 0 {
+        s.push_str(&format!("    ... {folded} equal line(s)\n"));
     }
     s
 }

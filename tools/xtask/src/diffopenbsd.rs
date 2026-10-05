@@ -272,14 +272,24 @@ fn openbsd_qemu(root: &Path, arch: Arch, mode: &Boot<'_>) -> Result<Command> {
         "-no-reboot",
     ]);
     cmd.args(["-serial", "stdio", "-boot", "menu=on,splash-time=0"]);
-    cmd.args(["-smp", &boot::smp().unwrap_or(1).to_string()]);
+    // At least two processors: the installer offers bsd.mp only on a multiprocessor.
+    cmd.args(["-smp", &boot::smp().unwrap_or(2).max(2).to_string()]);
     cmd.arg("-drive").arg(format!(
         "if=pflash,format=raw,readonly=on,file={}",
         code.display()
     ));
     cmd.arg("-drive")
         .arg(format!("if=pflash,format=raw,file={}", vars.display()));
-    cmd.args(["-netdev", "user,id=n0"]);
+    // The first boot runs rc.firsttime, whose fw_update(8) and syspatch(8) would reach the
+    // Internet: that boot gets no network at all (`restrict=on`), so nothing but the
+    // recorded snapshot is ever downloaded. The installer and the runs only talk to this
+    // machine's HTTP server (10.0.2.2).
+    let restrict = if matches!(mode, Boot::Prepare) {
+        ",restrict=on"
+    } else {
+        ""
+    };
+    cmd.args(["-netdev", &format!("user,id=n0{restrict}")]);
     let (dev, net) = match arch {
         Arch::Amd64 => {
             cmd.args(["-M", "q35", "-cpu", "qemu64"]);
@@ -410,6 +420,7 @@ fn install(root: &Path, snap: &Snapshot, arch: Arch, a: &ArchSnapshot) -> Result
             "Question has no answer in response file",
             "panic:",
             "Unable to get a response file",
+            "failed; check /tmp/ai/ai.log",
         ],
         &[Stop::Exited],
         boot::time_limit(Duration::from_secs(5400)),

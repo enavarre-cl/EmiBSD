@@ -1,7 +1,9 @@
 # diff-openbsd set `syscalls` (format: tools/xtask/src/diffopenbsd/scenario.rs): the system
 # call probes of tools/difftest, section by section, in one directory of the scratch file
 # system (`setup` mounted it on /mnt). Each probe prints its return value or `-1 ENAME`, so a
-# different errno is a different line.
+# different errno is a different line. Probes that hit an unported part of EmiBSD (fifofs,
+# exec_script.c, file mappings) have sections of their own, so that their expected
+# difference (expected.toml) cannot hide another one.
 
 ## probes
 ! mkdir /mnt/sc
@@ -9,11 +11,21 @@
 $ difftest syscalls files
 $ difftest syscalls dirs
 $ difftest syscalls links
+$ difftest syscalls fifo
 $ difftest syscalls perms
 $ difftest syscalls procs
+$ difftest syscalls script
 $ difftest syscalls ipc
 $ difftest syscalls memory
+$ difftest syscalls mmapfile
 $ difftest syscalls sysctl
 $ difftest syscalls ostype
 $ ls -1a
 ! cd /
+
+## coredump
+! mkdir /mnt/core
+! cd /mnt/core
+$ sh -c 'ulimit -c unlimited; kill -SEGV $$'; echo status $?; ls -1
+! cd /
+! rm -rf /mnt/core

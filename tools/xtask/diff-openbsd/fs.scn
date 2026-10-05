@@ -2,7 +2,8 @@
 # operations through OpenBSD's own utilities and tools/difftest, in /mnt/fs on the scratch FFS
 # (`setup`): create, link, symlink, rename, chmod, chown, truncate, times, stat fields,
 # directory listings and their order on disk, removal, and the error cases of each. Both
-# systems run the same OpenBSD userland, so a difference is the kernel's.
+# systems run the same OpenBSD userland, so a difference is the kernel's. Owners are shown as
+# numbers (`ls -n`): the two systems' /etc/passwd and /etc/group differ.
 
 ## create
 ! mkdir /mnt/fs
@@ -69,7 +70,7 @@ $ difftest stat . .. d1 d1/d2 d1/d2/d3
 ## listing
 $ ls -1a
 $ ls -1aF
-$[dates] ls -la
+$[dates] ls -lan
 $ ls -1 nosuch d1
 $ difftest dirents .
 $ difftest dirents d1
