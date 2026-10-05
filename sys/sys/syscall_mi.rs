@@ -77,65 +77,11 @@ use crate::sys::types::Register;
 use crate::unported;
 
 /// `NOLOCK` system calls (`syscalls.master`) whose bodies are not audited for
-/// `MULTIPROCESSOR` yet: `mi_syscall` keeps the kernel lock for them although `sysent` marks
-/// them `SY_NOLOCK` (see the module's deviations). Each group names what unlocks it; an entry
-/// leaves the table when its body's locking is the C's.
+/// `MULTIPROCESSOR`: `mi_syscall` keeps the kernel lock for them although `sysent` marks them
+/// `SY_NOLOCK` (see the module's deviations). Each group names what unlocks it; an entry
+/// leaves the table when its body's locking is the C's. Since the end of the M11e audit
+/// (files, uvm, kern, net and netinet) only the unported calls are left.
 pub const SY_NOLOCK_DEFERRED: &[i32] = &[
-    // Files and file descriptors whose bodies reach code not audited yet: read(2)/write(2)
-    // and their vector and positional forms, fstat(2), ioctl(2), close(2)/closefrom(2),
-    // dup2(2)/dup3(2) (the file's close reaches sockets and pipes), select(2)/poll(2) and
-    // their p-forms (the poll and kqueue filters of sockets); fcntl(2) (F_SETOWN/F_GETOWN go
-    // through the file's fo_ioctl, socket and tty code); umask(2) (vfs_syscalls.c): the
-    // `vfs` and `net` audits.
-    SYS_read,
-    SYS_write,
-    SYS_close,
-    SYS_fstat,
-    SYS_ioctl,
-    SYS_umask,
-    SYS_select,
-    SYS_dup2,
-    SYS_fcntl,
-    SYS_dup3,
-    SYS_ppoll,
-    SYS_pselect,
-    SYS_readv,
-    SYS_writev,
-    SYS_pread,
-    SYS_pwrite,
-    SYS_preadv,
-    SYS_pwritev,
-    SYS_poll,
-    SYS_closefrom,
-    // Sockets (uipc_syscalls.c, uipc_socket.c): the `net` audit. sendsyslog(2) hands its
-    // message to `sosend` once `syslogf` is set (subr_log.c).
-    SYS_recvmsg,
-    SYS_sendmsg,
-    SYS_recvfrom,
-    SYS_accept,
-    SYS_getpeername,
-    SYS_getsockname,
-    SYS_accept4,
-    SYS_socket,
-    SYS_connect,
-    SYS_bind,
-    SYS_setsockopt,
-    SYS_listen,
-    SYS_sendsyslog,
-    SYS_recvmmsg,
-    SYS_sendmmsg,
-    SYS_getsockopt,
-    SYS_sendto,
-    SYS_shutdown,
-    SYS_socketpair,
-    SYS_ypconnect,
-    SYS_setrtable,
-    // kevent(2) (kern_event.c): the filters reach socket and pipe code.
-    SYS_kevent,
-    // mmap(2) (uvm_mmap.c): maps vnodes and devices, not audited with uvm.
-    SYS_mmap,
-    // sysctl(2) (kern_sysctl.c): its subtrees reach the network's (`net_sysctl`).
-    SYS_sysctl,
     // __thrsleep(2) and __thrwakeup(2) are not ported (`sys_nosys`, which posts SIGSYS).
     SYS___thrsleep,
     SYS___thrwakeup,

@@ -81,8 +81,7 @@
 //!   `PTRACE` (`kern.global_ptrace`), `KTRACE` (the trace members of `kinfo_proc` stay
 //!   zero). `SMALL_KERNEL` is not set.
 //! - The kernel lock is taken at the C's sites (M11e), and `log_mtx` around the message
-//!   buffer header. sysctl(2) is still in `SY_NOLOCK_DEFERRED` (`sys/sys/syscall_mi.rs`):
-//!   its subtrees reach code of other audits (`net_sysctl`).
+//!   buffer header; sysctl(2) runs without the kernel lock (`SY_NOLOCK`), as in C.
 //! - `kern.file`: `fill_file` fills the `AF_INET` and `AF_INET6` (feature `inet6`) control
 //!   blocks and the TCP members (`fill_file_tcpcb`, zero for a control block without a
 //!   `tcpcb`). `KERN_FILE_BYFILE` of sockets walks `tcbtable`, `udbtable`, `rawcbtable`,
