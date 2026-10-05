@@ -42,8 +42,11 @@
 //! Every structure here is allocated zeroed (`malloc(..., M_ZERO)`, `pool_get(..., PR_ZERO)`)
 //! or lives in a zeroed softc, so every member is valid as all-zero bits: pointers are
 //! `Cell<Option<&'static T>>` (`None` is NULL) or raw pointers, counters are `Cell`s of
-//! integers. The members change under the kernel lock and `splusb()`, as in C (no USB path is
-//! `IPL_MPSAFE`), which is what makes the `Cell`s sound.
+//! integers. The members change under the kernel lock and `splusb()`, as in C, which is what
+//! makes the `Cell`s sound. The exception is what a host controller's hard interrupt touches:
+//! xhci(4)'s is established `IPL_MPSAFE` and reads `usbd_bus.use_polling` and writes `dying`
+//! and `no_intrs` without the kernel lock, so those three are relaxed atomics with `Cell`'s
+//! `get`/`set` ([`UsbdBusFlag`], [`UsbdBusCounter`]).
 //!
 //! The objects are long-lived kernel allocations handed around as `&'static T`, as the C
 //! passes pointers: a `usbd_device` lives from `usbd_new_device` to `usb_free_device`, a pipe
@@ -82,7 +85,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::slice;
-use core::sync::atomic::AtomicBool;
+use core::sync::atomic::{AtomicBool, AtomicI8, AtomicU32, Ordering};
 
 use crate::dev::usb::usb::{
     UE_DIR_IN, USB_MAX_DEVICES, USB_MAX_STRING_LEN, UT_READ, UsbConfigDescriptor,
@@ -311,10 +314,10 @@ pub struct UsbdBus {
     pub root_hub: Cell<Option<&'static UsbdDevice>>,
     /// `devices`: by address.
     pub devices: [Cell<Option<&'static UsbdDevice>>; USB_MAX_DEVICES],
-    /// `use_polling`: a count, nonzero while polling.
-    pub use_polling: Cell<i8>,
-    /// `dying`.
-    pub dying: Cell<i8>,
+    /// `use_polling`: a count, nonzero while polling (read by the hard interrupt).
+    pub use_polling: UsbdBusFlag,
+    /// `dying` (set by the hard interrupt).
+    pub dying: UsbdBusFlag,
     /// `flags`: `USB_BUS_*`.
     pub flags: Cell<i32>,
     /// `usbctl`: the `usb(4)` device.
@@ -323,8 +326,8 @@ pub struct UsbdBus {
     pub stats: Cell<UsbDeviceStats>,
     /// `intr_context`.
     pub intr_context: Cell<i32>,
-    /// `no_intrs`.
-    pub no_intrs: Cell<u32>,
+    /// `no_intrs` (counted by the hard interrupt).
+    pub no_intrs: UsbdBusCounter,
     /// `usbrev`: USB revision, `USBREV_*`.
     pub usbrev: Cell<i32>,
     /// `soft`: soft interrupt cookie.
@@ -366,8 +369,55 @@ impl UsbdBus {
 
 // SAFETY: `#[repr(C)]` with the device first; every other member is a `Cell` of an
 // `Option` of a reference, `NonNull` or `fn` (None is zero), a raw pointer, an integer, a
-// structure of integers or a `bus_dma_tag_t` option: all valid as zero bits.
+// structure of integers or a `bus_dma_tag_t` option, or an atomic integer: all valid as zero
+// bits.
 unsafe impl crate::sys::device::Softc for UsbdBus {}
+
+/// A `usbd_bus` flag a host controller's `IPL_MPSAFE` interrupt handler reads or writes
+/// without the kernel lock (`use_polling`, `dying`): a relaxed atomic with `Cell`'s `get` and
+/// `set` (`docs/C_TO_RUST.md`, a field another CPU reads without the writer's lock). The
+/// increments of `use_polling` stay `set(get() + 1)` under the kernel lock, as in C.
+#[derive(Debug, Default)]
+pub struct UsbdBusFlag(AtomicI8);
+
+impl UsbdBusFlag {
+    /// A flag of value `v`.
+    pub const fn new(v: i8) -> Self {
+        Self(AtomicI8::new(v))
+    }
+
+    /// The value.
+    pub fn get(&self) -> i8 {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// Sets the value.
+    pub fn set(&self, v: i8) {
+        self.0.store(v, Ordering::Relaxed)
+    }
+}
+
+/// A `usbd_bus` counter the hard interrupt bumps without the kernel lock (`no_intrs`), as
+/// [`UsbdBusFlag`].
+#[derive(Debug, Default)]
+pub struct UsbdBusCounter(AtomicU32);
+
+impl UsbdBusCounter {
+    /// A counter of value `v`.
+    pub const fn new(v: u32) -> Self {
+        Self(AtomicU32::new(v))
+    }
+
+    /// The value.
+    pub fn get(&self) -> u32 {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// Sets the value.
+    pub fn set(&self, v: u32) {
+        self.0.store(v, Ordering::Relaxed)
+    }
+}
 
 /// `USB_BUS_CONFIG_PENDING`.
 pub const USB_BUS_CONFIG_PENDING: i32 = 0x01;

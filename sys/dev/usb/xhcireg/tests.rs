@@ -1,0 +1,106 @@
+use super::*;
+
+#[test]
+fn register_macros() {
+    assert_eq!(xhci_portsc(1), 0x400);
+    assert_eq!(xhci_portsc(4), 0x430);
+    assert_eq!(xhci_iman(0), 0x20);
+    assert_eq!(xhci_imod(0), 0x24);
+    assert_eq!(xhci_erstsz(0), 0x28);
+    assert_eq!(xhci_erstba_lo(0), 0x30);
+    assert_eq!(xhci_erstba_hi(0), 0x34);
+    assert_eq!(xhci_erdp_lo(0), 0x38);
+    assert_eq!(xhci_erdp_hi(0), 0x3c);
+    assert_eq!(xhci_doorbell(3), 12);
+}
+
+#[test]
+fn parameter_fields() {
+    // QEMU's qemu-xhci: 64 slots, 16 interrupters, 8 ports.
+    let hcs1 = 0x0800_1040;
+    assert_eq!(xhci_hcs1_devslot_max(hcs1), 0x40);
+    assert_eq!(xhci_hcs1_irq_max(hcs1), 0x10);
+    assert_eq!(xhci_hcs1_n_ports(hcs1), 8);
+    // Scratchpad count: hi 5 bits at 21..25, lo 5 bits at 27..31.
+    assert_eq!(xhci_hcs2_spb_max(0x0020_0000), 0x20);
+    assert_eq!(xhci_hcs2_spb_max(0x0800_0000), 1);
+    assert!(xhci_hcs2_ist_micro(0x7));
+    assert!(!xhci_hcs2_ist_micro(0x8));
+}
+
+#[test]
+fn trb_fields() {
+    let flags = xhci_trb_set_slot(5) | xhci_trb_set_ep(3) | XHCI_CMD_STOP_EP;
+    assert_eq!(xhci_trb_get_slot(flags), 5);
+    assert_eq!(xhci_trb_get_ep(flags), 3);
+    assert_eq!(flags & XHCI_TRB_TYPE_MASK, XHCI_CMD_STOP_EP);
+    assert_eq!(xhci_trb_type(XHCI_EVT_PORT_CHANGE), 34);
+    assert_eq!(xhci_trb_portid(0x0300_0000), 3);
+    assert_eq!(xhci_trb_get_code(0x0d00_0004), XHCI_CODE_SHORT_XFER);
+    assert_eq!(xhci_trb_remain(0x0d00_0004), 4);
+}
+
+#[test]
+#[ignore = "needs OPENBSD_SRC (just test-ref)"]
+fn constants_match_the_c_header() {
+    let defs = crate::reftest::defines("sys/dev/usb/xhcireg.h");
+    let mut ours = crate::reftest::assert_defines!(defs;
+        XHCI_DCBAA_ALIGN, XHCI_ICTX_ALIGN, XHCI_SCTX_ALIGN, XHCI_OCTX_ALIGN,
+        XHCI_XFER_RING_ALIGN, XHCI_CMDS_RING_ALIGN, XHCI_EVTS_RING_ALIGN, XHCI_RING_BOUNDARY,
+        XHCI_ERST_ALIGN, XHCI_ERST_BOUNDARY, XHCI_SPAD_TABLE_ALIGN,
+        PCI_CBMEM, PCI_INTERFACE_XHCI, PCI_USBREV, PCI_USBREV_MASK, PCI_USBREV_3_0,
+        PCI_XHCI_FLADJ, PCI_XHCI_INTEL_XUSB2PR, PCI_XHCI_INTEL_XUSB2PRM,
+        PCI_XHCI_INTEL_USB3_PSSEN, PCI_XHCI_INTEL_USB3PRM,
+        XHCI_CAPLENGTH, XHCI_RESERVED, XHCI_HCIVERSION, XHCI_HCIVERSION_0_9,
+        XHCI_HCIVERSION_1_0, XHCI_HCSPARAMS1, XHCI_HCSPARAMS2, XHCI_HCSPARAMS3, XHCI_HCCPARAMS,
+        XHCI_DBOFF, XHCI_RTSOFF,
+        XHCI_USBCMD, XHCI_CMD_RS, XHCI_CMD_HCRST, XHCI_CMD_INTE, XHCI_CMD_HSEE,
+        XHCI_CMD_LHCRST, XHCI_CMD_CSS, XHCI_CMD_CRS, XHCI_CMD_EWE, XHCI_CMD_EU3S,
+        XHCI_USBSTS, XHCI_STS_HCH, XHCI_STS_HSE, XHCI_STS_EINT, XHCI_STS_PCD, XHCI_STS_SSS,
+        XHCI_STS_RSS, XHCI_STS_SRE, XHCI_STS_CNR, XHCI_STS_HCE,
+        XHCI_PAGESIZE, XHCI_PAGESIZE_4K, XHCI_PAGESIZE_8K, XHCI_PAGESIZE_16K,
+        XHCI_PAGESIZE_32K, XHCI_PAGESIZE_64K, XHCI_DNCTRL,
+        XHCI_CRCR_LO, XHCI_CRCR_LO_RCS, XHCI_CRCR_LO_CS, XHCI_CRCR_LO_CA, XHCI_CRCR_LO_CRR,
+        XHCI_CRCR_LO_MASK, XHCI_CRCR_HI, XHCI_DCBAAP_LO, XHCI_DCBAAP_HI, XHCI_CONFIG,
+        XHCI_CONFIG_SLOTS_MASK,
+        XHCI_PS_CCS, XHCI_PS_PED, XHCI_PS_OCA, XHCI_PS_PR, XHCI_PS_PP, XHCI_PS_LWS,
+        XHCI_PS_CSC, XHCI_PS_PEC, XHCI_PS_WRC, XHCI_PS_OCC, XHCI_PS_PRC, XHCI_PS_PLC,
+        XHCI_PS_CEC, XHCI_PS_CAS, XHCI_PS_WCE, XHCI_PS_WDE, XHCI_PS_WOE, XHCI_PS_DR,
+        XHCI_PS_WPR, XHCI_PS_CLEAR, XHCI_PM3_FLA, XHCI_PM2_RWE, XHCI_PM2_HLE,
+        XHCI_MFINDEX, XHCI_IMAN_INTR_PEND, XHCI_IMAN_INTR_ENA, XHCI_IMOD_DEFAULT,
+        XHCI_IMOD_DEFAULT_LP, XHCI_ERDP_LO_BUSY,
+        XHCI_XECP_BIOS_SEM, XHCI_XECP_OS_SEM,
+        XHCI_ID_USB_LEGACY, XHCI_ID_PROTOCOLS, XHCI_ID_POWER_MGMT, XHCI_ID_VIRTUALIZATION,
+        XHCI_ID_MSG_IRQ, XHCI_ID_USB_LOCAL_MEM,
+        XHCI_EP_DISABLED, XHCI_EP_RUNNING, XHCI_EP_HALTED, XHCI_EP_STOPPED, XHCI_EP_ERROR,
+        XHCI_EPCTX_MAX_IVAL, XHCI_SPEED_FULL, XHCI_SPEED_LOW, XHCI_SPEED_HIGH,
+        XHCI_SPEED_SUPER,
+        XHCI_TRB_MAXSIZE, XHCI_TRB_CYCLE, XHCI_TRB_ENT, XHCI_TRB_LINKSEG, XHCI_TRB_ISP,
+        XHCI_TRB_NOSNOOP, XHCI_TRB_CHAIN, XHCI_TRB_IOC, XHCI_TRB_IDT, XHCI_TRB_BSR,
+        XHCI_TRB_ISOC_BEI, XHCI_TRB_DIR_IN, XHCI_TRB_TRT_OUT, XHCI_TRB_TRT_IN, XHCI_TRB_SIA,
+        XHCI_TRB_TYPE_MASK,
+        XHCI_TRB_TYPE_NORMAL, XHCI_TRB_TYPE_SETUP, XHCI_TRB_TYPE_DATA, XHCI_TRB_TYPE_STATUS,
+        XHCI_TRB_TYPE_ISOCH, XHCI_TRB_TYPE_LINK, XHCI_TRB_TYPE_EVENT, XHCI_TRB_TYPE_NOOP,
+        XHCI_CMD_ENABLE_SLOT, XHCI_CMD_DISABLE_SLOT, XHCI_CMD_ADDRESS_DEVICE,
+        XHCI_CMD_CONFIG_EP, XHCI_CMD_EVAL_CTX, XHCI_CMD_RESET_EP, XHCI_CMD_STOP_EP,
+        XHCI_CMD_SET_TR_DEQ, XHCI_CMD_RESET_DEV, XHCI_CMD_FEVENT, XHCI_CMD_NEG_BW,
+        XHCI_CMD_SET_LT, XHCI_CMD_GET_BW, XHCI_CMD_FHEADER, XHCI_CMD_NOOP,
+        XHCI_EVT_XFER, XHCI_EVT_CMD_COMPLETE, XHCI_EVT_PORT_CHANGE, XHCI_EVT_BW_REQUEST,
+        XHCI_EVT_DOORBELL, XHCI_EVT_HOST_CTRL, XHCI_EVT_DEVICE_NOTIFY, XHCI_EVT_MFINDEX_WRAP,
+        XHCI_CODE_INVALID, XHCI_CODE_SUCCESS, XHCI_CODE_DATA_BUF, XHCI_CODE_BABBLE,
+        XHCI_CODE_TXERR, XHCI_CODE_TRB, XHCI_CODE_STALL, XHCI_CODE_RESOURCE,
+        XHCI_CODE_BANDWIDTH, XHCI_CODE_NO_SLOTS, XHCI_CODE_STREAM_TYPE, XHCI_CODE_SLOT_NOT_ON,
+        XHCI_CODE_ENDP_NOT_ON, XHCI_CODE_SHORT_XFER, XHCI_CODE_RING_UNDERRUN,
+        XHCI_CODE_RING_OVERRUN, XHCI_CODE_VF_RING_FULL, XHCI_CODE_PARAMETER,
+        XHCI_CODE_BW_OVERRUN, XHCI_CODE_CONTEXT_STATE, XHCI_CODE_NO_PING_RESP,
+        XHCI_CODE_EV_RING_FULL, XHCI_CODE_INCOMPAT_DEV, XHCI_CODE_MISSED_SRV,
+        XHCI_CODE_CMD_RING_STOP, XHCI_CODE_CMD_ABORTED, XHCI_CODE_XFER_STOPPED,
+        XHCI_CODE_XFER_STOPINV, XHCI_CODE_XFER_SHORTPKT, XHCI_CODE_MELAT, XHCI_CODE_RESERVED,
+        XHCI_CODE_ISOC_OVERRUN, XHCI_CODE_EVENT_LOST, XHCI_CODE_UNDEFINED,
+        XHCI_CODE_INVALID_SID, XHCI_CODE_SEC_BW, XHCI_CODE_SPLITERR,
+    );
+    // A string for `%b`, not an integer.
+    ours.push("XHCI_TRB_FLAGS_BITMASK");
+    crate::reftest::assert_complete(&defs, "XHCI_", &ours);
+    crate::reftest::assert_complete(&defs, "PCI_", &ours);
+}

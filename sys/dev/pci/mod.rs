@@ -19,3 +19,4 @@ pub mod pcivar;
 pub mod ppbreg;
 pub mod virtio_pci;
 pub mod virtio_pcireg;
+pub mod xhci_pci;

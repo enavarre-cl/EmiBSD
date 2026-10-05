@@ -6,6 +6,7 @@
 //! definitions (`usbhid`) and the capture headers (`usbpcap`). Host controller and device
 //! drivers (`xhci`, `uhub`, `umass`, `uhidev`, ...) attach on top of it.
 
+pub mod uhub;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/usb/usb.c
 pub mod usb;
 pub mod usb_mem;
@@ -17,3 +18,6 @@ pub mod usbdi_util;
 pub mod usbdivar;
 pub mod usbhid;
 pub mod usbpcap;
+pub mod xhci;
+pub mod xhcireg;
+pub mod xhcivar;

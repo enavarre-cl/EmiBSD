@@ -4,11 +4,11 @@
 //! (`docs/ARCHITECTURE.md`, "Deviations"); `machine::autoconf` hands them to
 //! `subr_autoconf.rs`.
 //!
-//! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?` (and GENERIC.MP's
+//! GENERIC lines present: `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?` (M13), `mainbus0 at root`, `cpu0 at mainbus?` (and GENERIC.MP's
 //! `cpu* at mainbus?` with feature `multiprocessor`), `pci* at mainbus0`,
-//! `virtio* at pci?`, `vio* at virtio?`, `vioblk* at virtio?`, `vioscsi* at virtio?`,
-//! `nvme* at pci?`, `scsibus* at scsi?`, `sd* at scsibus?`, `cd* at scsibus?`,
-//! `softraid0 at root` and `scsibus* at softraid?` (conf/GENERIC),
+//! `virtio* at pci?`, `vio* at virtio?`, `vioblk* at virtio?`, `scsibus* at scsi?`,
+//! `sd* at scsibus?`, `softraid0 at root` and `scsibus* at softraid?` (conf/GENERIC),
+//! `xhci* at pci?`, `usb* at xhci?`, `uhub* at usb?`, `uhub* at uhub?` (M12),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -18,8 +18,9 @@
 //! `ipmi0` and `efifb0` at mainbus, and everything below them; `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`, `vga0`,
 //! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
-//! (`pchb*`, `ppb*`, `pcib*`, the network drivers and the storage drivers but nvme, ...), `pci*` at `ppb?` and
-//! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`;
+//! (`pchb*`, `ppb*`, `pcib*`, the network and storage drivers, ...), `pci*` at `ppb?` and
+//! `pchb?`, and every device at `virtio?` but `vio*` and `vioblk*`; `usb*` at `ehci?`, `uhci?`
+//! and `ohci?`, and every device at `uhub?` but `uhub*`;
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
 //! layout: attachment, driver, unit, state, locators, flags, parents (indices into
 //! `CFDATA`), the start of its locator names and the first unit a starred entry may take.
@@ -34,12 +35,16 @@ use crate::dev::isa::isa::{ISA_CA, ISA_CD};
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
+use crate::dev::pci::xhci_pci::XHCI_PCI_CA;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
 use crate::dev::pv::vioblk::{VIOBLK_CA, VIOBLK_CD};
 use crate::dev::pv::vioscsi::{VIOSCSI_CA, VIOSCSI_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
+use crate::dev::usb::uhub::{UHUB_CA, UHUB_CD, UHUB_UHUB_CA};
+use crate::dev::usb::usb::{USB_CA, USB_CD};
+use crate::dev::usb::xhci::XHCI_CD;
 use crate::dev::vnd::{NVND, vndattach};
 use crate::kern::tty_pty::ptyattach;
 #[cfg(feature = "fuse")]
@@ -74,9 +79,10 @@ const LOC_PCI_UNK: &[i64] = &[-1, -1];
 /// `pv[]` for children of `virtio*` (`cfdata[3]`).
 const PV_VIRTIO: &[i16] = &[3];
 
-/// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`),
-/// `softraid0` (`cfdata[13]`), `nvme*` (`cfdata[14]`) and `vioscsi*` (`cfdata[15]`).
-const PV_VIOBLK: &[i16] = &[5, 13, 14, 15];
+/// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`) and
+/// `softraid0` (`cfdata[13]`).
+/// M13: also `nvme*` (`cfdata[18]`), `vioscsi*` (`cfdata[19]`).
+const PV_VIOBLK: &[i16] = &[5, 13, 18, 19];
 
 /// `pv[]` for children of `scsibus*` (`cfdata[11]`).
 const PV_SCSIBUS: &[i16] = &[11];
@@ -98,11 +104,26 @@ const LOC_COM2: &[i64] = &[0x3e8, 0, -1, 0, 5, -1, -1];
 /// `loc[]` of `com3 at isa? disable port 0x2e8 irq 9`.
 const LOC_COM3: &[i64] = &[0x2e8, 0, -1, 0, 9, -1, -1];
 
-/// `cfdata[]`: 17 entries, 18 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `pv[]` for children of the `usbus` attribute, carried by `xhci*` (`cfdata[14]`).
+const PV_XHCI: &[i16] = &[14];
+
+/// `pv[]` for children of `usb*` (`cfdata[15]`).
+const PV_USB: &[i16] = &[15];
+
+/// `pv[]` for children of the `uhub` attribute, carried by both `uhub*` entries
+/// (`cfdata[16]`, `cfdata[17]`).
+const PV_UHUB: &[i16] = &[16, 17];
+
+/// `loc[]` of an entry at `uhub` with the defaults `port = -1, configuration = -1,
+/// interface = -1, vendor = -1, product = -1, release = -1` (`dev/usb/files.usb`: `device
+/// uhub {[port = -1], ...}`).
+const LOC_UHUB_UNK: &[i64] = &[-1, -1, -1, -1, -1, -1];
+
+/// `cfdata[]`: 21 entries, 22 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    18
+    22
 } else {
-    17
+    21
 };
 
 /// `cfdata[]`.
@@ -229,7 +250,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 11: scsibus* at scsi? (vioblk, nvme), and at softraid? (GENERIC's `scsibus* at softraid?`)
+    // 11: scsibus* at scsi? (vioblk), and at softraid? (GENERIC's `scsibus* at softraid?`)
     Cfdata::new(
         &SCSIBUS_CA,
         &SCSIBUS_CD,
@@ -265,7 +286,35 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 14: nvme* at pci?
+    // 14: xhci* at pci?
+    Cfdata::new(
+        &XHCI_PCI_CA,
+        &XHCI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        0,
+        0,
+    ),
+    // 15: usb* at xhci?
+    Cfdata::new(&USB_CA, &USB_CD, 0, FSTATE_STAR, &[], 0, PV_XHCI, 0, 0),
+    // 16: uhub* at usb?
+    Cfdata::new(&UHUB_CA, &UHUB_CD, 0, FSTATE_STAR, &[], 0, PV_USB, 0, 0),
+    // 17: uhub* at uhub?
+    Cfdata::new(
+        &UHUB_UHUB_CA,
+        &UHUB_CD,
+        0,
+        FSTATE_STAR,
+        LOC_UHUB_UNK,
+        0,
+        PV_UHUB,
+        0,
+        0,
+    ),
+    // 18: nvme* at pci?
     Cfdata::new(
         &NVME_PCI_CA,
         &NVME_CD,
@@ -277,7 +326,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 15: vioscsi* at virtio?
+    // 19: vioscsi* at virtio?
     Cfdata::new(
         &VIOSCSI_CA,
         &VIOSCSI_CD,
@@ -289,7 +338,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 16: cd* at scsibus?
+    // 20: cd* at scsibus?
     Cfdata::new(
         &CD_CA,
         &CD_CD,
@@ -301,7 +350,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 17: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 21: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

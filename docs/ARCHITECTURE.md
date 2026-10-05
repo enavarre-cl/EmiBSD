@@ -964,6 +964,15 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   for virtio is `machine::pci_machdep::PCI_MSI_PER_BRIDGE`. Interrupts: amd64 has no MP
   tables, so `pci_intr_map_msi*` refuse and the device's INTx line (the one the firmware
   wrote) is established on the 8259; arm64's comes from the node through `ampintc`.
+- USB (M12): the machine-independent core (`dev/usb/usb.c`, `usbdi.c`, `usb_subr.c`, ...)
+  runs under the kernel lock at `splusb()`, as in OpenBSD. xhci(4) (`dev/usb/xhci.c`,
+  `dev/pci/xhci_pci.c`) attaches at PCI on both archs (INTx on amd64 QEMU, MSI-X through the
+  GICv2m frame on arm64). Its interrupt is `IPL_MPSAFE` as in OpenBSD: the handler only
+  reads the status registers and schedules the USB soft interrupt, so the `usbd_bus` members
+  it touches (`use_polling`, `dying`, `no_intrs`) are relaxed atomics. The TRB rings,
+  contexts and tables live in DMA memory and are reached only through bounds-checked
+  volatile accessors (`XhciTrbRef`, the `*_ctx_update` closures). uhub(4) drives both the
+  emulated root hub and external hubs.
 - QEMU's disks (M10a, `boot.rs`, `qemu_command`): besides the boot image every VM has one
   persistent virtio-blk disk, the raw 64 MiB sparse file `target/disk-<arch>.img`
   (`disk-<arch>-a.img` / `-b.img` for `smoke2`'s two VMs; in `target/smoke/<recipe>/` instead

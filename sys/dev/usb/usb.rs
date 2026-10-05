@@ -103,8 +103,9 @@
 //!   [`Device::softc`], the C's `(struct usb_softc *)dev->bus->usbctl`; only `usb(4)`
 //!   attaches below a host controller (`usbctlprint`).
 //! - The `usb_task` queues are protected by `splusb()` and the kernel lock, as in C (every
-//!   USB path runs under the kernel lock: the controllers' interrupts and the soft interrupt
-//!   are not `IPL_MPSAFE`, the task threads are kernel threads).
+//!   USB path but a host controller's hard interrupt runs under the kernel lock: xhci's
+//!   interrupt is `IPL_MPSAFE` and only schedules the soft interrupt, which is not; the task
+//!   threads are kernel threads).
 //! - `usbioctl`'s `USB_DEVICE_GET_CDESC`/`USB_DEVICE_GET_FDESC` lend a task on the caller's
 //!   stack to the task thread and wait for it (`usb_wait_task`), as the C does
 //!   (`docs/C_TO_RUST.md`, an object on the caller's stack kept while the caller sleeps).

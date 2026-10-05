@@ -49,7 +49,7 @@
 //!
 //! ## Deviations
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
-//!   `pci_quirks.c`, `virtio_pci.c` and `nvme_pci.c`). The whole header, and `pcidevs_data.h` for
+//!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c` and `xhci_pci.c`). The whole header, and `pcidevs_data.h` for
 //!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
 //!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
@@ -64,6 +64,8 @@ pub const PCI_VENDOR_AMD: u32 = 0x1022;
 pub const PCI_VENDOR_APPLE: u32 = 0x106b;
 /// `PCI_VENDOR_QUMRANET`: Qumranet.
 pub const PCI_VENDOR_QUMRANET: u32 = 0x1af4;
+/// `PCI_VENDOR_FRESCO`: Fresco Logic.
+pub const PCI_VENDOR_FRESCO: u32 = 0x1b73;
 /// `PCI_VENDOR_INTEL`: Intel.
 pub const PCI_VENDOR_INTEL: u32 = 0x8086;
 /// `PCI_VENDOR_INVALID`: INVALID VENDOR ID.
@@ -85,6 +87,11 @@ pub const PCI_PRODUCT_APPLE_NVME3: u32 = 0x2005;
 
 /// `PCI_PRODUCT_CIRRUS_CL_PD6729`: CL-PD6729.
 pub const PCI_PRODUCT_CIRRUS_CL_PD6729: u32 = 0x1100;
+
+/// `PCI_PRODUCT_FRESCO_FL1000`: FL1000 xHCI.
+pub const PCI_PRODUCT_FRESCO_FL1000: u32 = 0x1000;
+/// `PCI_PRODUCT_FRESCO_FL1400`: FL1400 xHCI.
+pub const PCI_PRODUCT_FRESCO_FL1400: u32 = 0x1400;
 
 /// `PCI_PRODUCT_INTEL_82371FB_ISA`: 82371FB ISA.
 pub const PCI_PRODUCT_INTEL_82371FB_ISA: u32 = 0x122e;
@@ -116,6 +123,9 @@ mod tests {
             ("PCI_PRODUCT_AMD_17_1X_XHCI_2", PCI_PRODUCT_AMD_17_1X_XHCI_2),
             ("PCI_PRODUCT_AMD_17_6X_XHCI", PCI_PRODUCT_AMD_17_6X_XHCI),
             ("PCI_PRODUCT_CIRRUS_CL_PD6729", PCI_PRODUCT_CIRRUS_CL_PD6729),
+            ("PCI_VENDOR_FRESCO", PCI_VENDOR_FRESCO),
+            ("PCI_PRODUCT_FRESCO_FL1000", PCI_PRODUCT_FRESCO_FL1000),
+            ("PCI_PRODUCT_FRESCO_FL1400", PCI_PRODUCT_FRESCO_FL1400),
             (
                 "PCI_PRODUCT_INTEL_82371FB_ISA",
                 PCI_PRODUCT_INTEL_82371FB_ISA,
