@@ -24,7 +24,7 @@
 //! Status: `wip`. Milestone M4 ports `struct fdt_attach_args` and the `fdt_intr_*` aliases
 //! of the `arm_intr_*_fdt` functions that exist; `stdout_node`, `stdout_speed`,
 //! `fdt_cons_bs_tag` and `fdt_find_cons` are `arm64/machdep.rs` (and the `machine::fdt`
-//! contract). The `imap`/`msi` aliases come with PCI (M5).
+//! contract). M12 adds the `imap`/`msi` aliases, with PCI.
 //!
 //! ## Deviations
 //! - `fa_reg`/`fa_nreg` and `fa_intr`/`fa_nintr` are slices; `fa_name` is a byte string.
@@ -35,6 +35,10 @@ pub use crate::arch::arm64::arm64::intr::{
     arm_intr_establish_fdt_cpu as fdt_intr_establish_cpu,
     arm_intr_establish_fdt_idx as fdt_intr_establish_idx,
     arm_intr_establish_fdt_idx_cpu as fdt_intr_establish_idx_cpu,
+    arm_intr_establish_fdt_imap as fdt_intr_establish_imap,
+    arm_intr_establish_fdt_imap_cpu as fdt_intr_establish_imap_cpu,
+    arm_intr_establish_fdt_msi as fdt_intr_establish_msi,
+    arm_intr_establish_fdt_msi_cpu as fdt_intr_establish_msi_cpu,
     arm_intr_get_parent as fdt_intr_get_parent,
     arm_intr_parent_disestablish_fdt as fdt_intr_parent_disestablish,
     arm_intr_parent_establish_fdt as fdt_intr_parent_establish,

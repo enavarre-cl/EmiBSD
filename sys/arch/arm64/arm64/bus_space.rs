@@ -32,8 +32,9 @@
 //! Upstream: sys/arch/arm64/arm64/bus_space.c @ 3ce1f3f79392
 //!
 //! Status: `wip`. Milestone M2 ports `arm64_bs_tag`, `fdt_cons_bs_tag`, the single-register
-//! accessors, `generic_space_map`/`unmap`/`region`/`vaddr`. The raw-multi accessors and
-//! `generic_space_mmap` arrive with M6.
+//! accessors, `generic_space_map`/`unmap`/`region`/`vaddr`. M12 adds `generic_space_mmap`
+//! and the `bus_private`/`_space_mmap` members of `arm64_bs_tag`, for the bridges that copy
+//! it (`simplebus`, `pciecam`). The raw-multi accessors arrive with their drivers.
 //!
 //! ## Deviations
 //! - Until `pmap_init`, `generic_space_map` is the identity inside the bootstrap device map
@@ -46,6 +47,10 @@
 //!   it is reported as unported. The C swaps `_space_map` for `pmap_bootstrap_bs_map` during
 //!   `consinit` for the same reason.
 //! - The map flags are accepted and ignored: the bootstrap mapping is Device-nGnRnE.
+//! - After `pmap_init`, a mapping that no longer fits in the `vmmap` window (a PCIe ECAM
+//!   region is 256 MiB) takes its virtual range from `km_alloc(kv_any, kp_none, kd_nowait)`,
+//!   as the C does for every mapping, and `generic_space_unmap` gives such a range back with
+//!   `km_free`.
 
 use core::ptr;
 
@@ -53,7 +58,8 @@ use core::sync::atomic::Ordering;
 
 use crate::arch::arm64::arm64::machdep::BOOTSTRAP_DEVICE_MAP_SIZE;
 use crate::arch::arm64::arm64::pmap::{
-    VMMAP, VMMAP_SIZE, pmap_growkernel, pmap_initialized, pmap_kenter_cache, pmap_kremove,
+    VMMAP, VMMAP_SIZE, pmap_growkernel, pmap_initialized, pmap_kenter_cache, pmap_kernel,
+    pmap_kremove,
 };
 use crate::arch::arm64::include::bus::{
     BUS_SPACE_MAP_CACHEABLE, BUS_SPACE_MAP_PREFETCHABLE, BusSpace, BusSpaceHandle,
@@ -64,15 +70,18 @@ use crate::arch::arm64::include::pmap::{
 };
 use crate::arch::arm64::include::vmparam::VM_MIN_KERNEL_ADDRESS;
 use crate::machine::bus::{BusAddr, BusSize};
+use crate::machine::pmap::pmap_update;
 use crate::sys::errno::Errno;
 use crate::sys::mman::{PROT_READ, PROT_WRITE};
-use crate::sys::types::{Paddr, Vaddr, Vsize};
+use crate::sys::types::{Off, Paddr, Vaddr, Vsize};
 use crate::unported;
+use crate::uvm::uvm_km::{KD_NOWAIT, KP_NONE, KV_ANY, km_alloc, km_free};
 use crate::uvm::uvm_param::{round_page, trunc_page};
 
 /// `arm64_bs_tag`: the one bus space of the machine.
 pub static ARM64_BS_TAG: BusSpace = BusSpace {
     bus_base: 0, // XXX
+    bus_private: ptr::null_mut(),
     _space_read_1: generic_space_read_1,
     _space_write_1: generic_space_write_1,
     _space_read_2: generic_space_read_2,
@@ -85,6 +94,7 @@ pub static ARM64_BS_TAG: BusSpace = BusSpace {
     _space_unmap: generic_space_unmap,
     _space_subregion: generic_space_region,
     _space_vaddr: generic_space_vaddr,
+    _space_mmap: generic_space_mmap,
 };
 
 /// `fdt_cons_bs_tag`: the tag the device-tree console attach uses.
@@ -170,15 +180,17 @@ pub unsafe fn generic_space_map(
     let startpa = trunc_page(offs);
     let endpa = round_page(offs.checked_add(size).ok_or(Errno::EINVAL)?);
     let len = endpa - startpa;
-    let va = VMMAP.load(Ordering::Relaxed);
+    let mut va = VMMAP.load(Ordering::Relaxed);
     if va + len > VM_MIN_KERNEL_ADDRESS + VMMAP_SIZE {
-        // km_alloc(kv_any) from kernel_map, which the C uses, would not run out here.
-        return Err(unported!(
-            "generic_space_map: km_alloc(kv_any) beyond the vmmap window"
-        ));
+        // Beyond the window: kernel_map space, as the C takes for every mapping.
+        let Some(kva) = km_alloc(len, &KV_ANY, &KP_NONE, &KD_NOWAIT) else {
+            return Err(Errno::ENOMEM);
+        };
+        va = kva.as_ptr() as usize;
+    } else {
+        VMMAP.store(va + len, Ordering::Relaxed);
+        let _ = pmap_growkernel(Vaddr::new(va + len));
     }
-    VMMAP.store(va + len, Ordering::Relaxed);
-    let _ = pmap_growkernel(Vaddr::new(va + len));
     let cache = if flags & BUS_SPACE_MAP_CACHEABLE != 0 {
         PMAP_CACHE_WB
     } else if flags & BUS_SPACE_MAP_PREFETCHABLE != 0 {
@@ -189,8 +201,8 @@ pub unsafe fn generic_space_map(
     let mut pa = startpa;
     let mut cur = va;
     while pa < endpa {
-        // SAFETY: a fresh kernel virtual range (`vmmap`) the tables cover, mapping device
-        // registers the caller owns.
+        // SAFETY: a fresh kernel virtual range (`vmmap` or `km_alloc`) the tables cover,
+        // mapping device registers the caller owns.
         unsafe {
             pmap_kenter_cache(
                 Vaddr::new(cur),
@@ -202,6 +214,7 @@ pub unsafe fn generic_space_map(
         pa += PAGE_SIZE;
         cur += PAGE_SIZE;
     }
+    pmap_update(pmap_kernel());
     Ok(BusSpaceHandle(va + (offs - startpa)))
 }
 
@@ -213,6 +226,13 @@ pub fn generic_space_unmap(_t: &'static BusSpace, bsh: BusSpaceHandle, size: Bus
         let endva = round_page(bsh.0 + size);
         // SAFETY: a range `generic_space_map` entered.
         unsafe { pmap_kremove(Vaddr::new(va), Vsize::new(endva - va)) };
+        pmap_update(pmap_kernel());
+        // A range beyond the vmmap window came from km_alloc.
+        if va >= VM_MIN_KERNEL_ADDRESS + VMMAP_SIZE
+            && let Some(kva) = core::ptr::NonNull::new(va as *mut u8)
+        {
+            km_free(kva, endva - va, &KV_ANY, &KP_NONE);
+        }
     }
 }
 
@@ -229,4 +249,15 @@ pub fn generic_space_region(
 /// `generic_space_vaddr`: the kernel virtual address behind a handle.
 pub fn generic_space_vaddr(_t: &'static BusSpace, h: BusSpaceHandle) -> *mut u8 {
     h.0 as *mut u8
+}
+
+/// `generic_space_mmap`: the bus address is the physical address.
+pub fn generic_space_mmap(
+    _t: &'static BusSpace,
+    addr: BusAddr,
+    off: Off,
+    _prot: i32,
+    _flags: i32,
+) -> Option<Paddr> {
+    Some(Paddr::new(addr.wrapping_add(off as usize)))
 }

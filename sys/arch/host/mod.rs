@@ -1383,6 +1383,31 @@ impl crate::machine::fdt::Fdt for Machine {
         None
     }
 
+    fn fdt_intr_establish_imap_cpu(
+        _node: i32,
+        _reg: &[u32],
+        _level: i32,
+        _ci: Option<&'static crate::machine::cpu::CpuInfo>,
+        _func: crate::machine::intr::IntrFn,
+        _arg: *mut c_void,
+        _name: &'static str,
+    ) -> Option<NonNull<c_void>> {
+        None
+    }
+
+    fn fdt_intr_establish_msi_cpu(
+        _node: i32,
+        _addr: &mut u64,
+        _data: &mut u64,
+        _level: i32,
+        _ci: Option<&'static crate::machine::cpu::CpuInfo>,
+        _func: crate::machine::intr::IntrFn,
+        _arg: *mut c_void,
+        _name: &'static str,
+    ) -> Option<NonNull<c_void>> {
+        None
+    }
+
     unsafe fn fdt_intr_disestablish(_cookie: NonNull<c_void>) {}
 }
 

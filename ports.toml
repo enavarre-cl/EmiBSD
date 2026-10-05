@@ -878,7 +878,7 @@ rust = "sys/arch/arm64/include/bus.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "fa8e2a350c7aad4ea8a246fc150b084fea936a8a"
-notes = "M2: struct bus_space with single-register accessors, map/unmap/subregion/vaddr (fn pointers; _space_map is unsafe fn), BUS_SPACE_MAP_*, bus_space_barrier (dsb sy); raw-multi accessors, _space_mmap and bus_private come with their drivers; M7b: BUS_DMA_* (incl. BUS3/BUS4/FIXED), BUS_DMASYNC_*, bus_dma_segment_t, struct bus_dma_tag (Clone/Copy for the dma-coherent copy; _flags, _dmamap_load_buffer, _dma_mask), struct bus_dmamap (as amd64's: Cells, segments and bounce pages after the header); the prototypes are arm64/bus_dma.rs and arm64/bus_space.rs; M8: BusSpace compares by identity (PartialEq on the tag's address), for pluart_param's console check"
+notes = "M2: struct bus_space with single-register accessors, map/unmap/subregion/vaddr (fn pointers; _space_map is unsafe fn), BUS_SPACE_MAP_*, bus_space_barrier (dsb sy); raw-multi accessors, _space_mmap and bus_private come with their drivers; M7b: BUS_DMA_* (incl. BUS3/BUS4/FIXED), BUS_DMASYNC_*, bus_dma_segment_t, struct bus_dma_tag (Clone/Copy for the dma-coherent copy; _flags, _dmamap_load_buffer, _dma_mask), struct bus_dmamap (as amd64's: Cells, segments and bounce pages after the header); the prototypes are arm64/bus_dma.rs and arm64/bus_space.rs; M8: BusSpace compares by identity (PartialEq on the tag's address), for pluart_param's console check; ; M12: bus_private (*mut c_void; BusSpace is now Clone/Copy and unsafe impl Sync/Send) and _space_mmap (Option<Paddr>, None for -1) with bus_space_mmap, for the bridges that copy a tag (simplebus, pciecam)"
 
 [[file]]
 c = "sys/arch/arm64/arm64/bus_space.c"
@@ -887,7 +887,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a0adfc49e9583e1cc4d72a1899d4259e4aeadc55"
 deps = ["sys/arch/arm64/include/bus.h"]
-notes = "M2: arm64_bs_tag, fdt_cons_bs_tag, generic_space_read/write_1/2/4/8, generic_space_map (identity inside the 1 GiB bootstrap device map until pmap_init; M6-b2: afterwards kernel-half mappings from the vmmap range through pmap_growkernel + pmap_kenter_cache with the cache mode from the flags, the C's km_alloc(kv_any); unmap = pmap_kremove, the range is not reused), unmap, region, vaddr; raw-multi and mmap are M6; kern_sig.c: generic_space_map takes its range from the vmmap window (VMMAP_SIZE) and reports running out of it instead of overlapping kernel_map"
+notes = "M2: arm64_bs_tag, fdt_cons_bs_tag, generic_space_read/write_1/2/4/8, generic_space_map (identity inside the 1 GiB bootstrap device map until pmap_init; M6-b2: afterwards kernel-half mappings from the vmmap range through pmap_growkernel + pmap_kenter_cache with the cache mode from the flags, the C's km_alloc(kv_any); unmap = pmap_kremove, the range is not reused), unmap, region, vaddr; raw-multi and mmap are M6; kern_sig.c: generic_space_map takes its range from the vmmap window (VMMAP_SIZE) and reports running out of it instead of overlapping kernel_map; ; M12: generic_space_mmap and arm64_bs_tag's bus_private (NULL) and _space_mmap; after pmap_init a mapping beyond the vmmap window (a 256 MiB PCIe ECAM region) takes km_alloc(kv_any, kp_none, kd_nowait) as the C does for every mapping, given back with km_free by generic_space_unmap; pmap_update after map and unmap, as in C"
 
 [[file]]
 c = "sys/arch/arm64/arm64/db_interface.c"
@@ -912,7 +912,7 @@ rust = "sys/arch/arm64/arm64/intr.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a0624ac0c074a45abac7024b57ac043f8710ed6e"
-notes = "M2: arm_clock_func, arm_clock_register, arm_dflt_delay, delay, cpu_initclocks, cpu_startclock, setstatclockrate; M4: arm_dflt_irq/fiq, arm_irq/fiq_dispatch, arm_cpu_irq/fiq, arm_smask, arm_intr_func with the arm_dflt_* spl, arm_do_pending_intr, arm_set_intr_handler, arm_init_smask, splraise/spllower/splx/softintr, arm_splassert_check, intr_enable/disable_wakeup, arm_intr_get_parent, the pre-registration (arm_intr_prereg_*, arm_intr_init_fdt), arm_intr_register_fdt, arm_intr_establish_fdt/_cpu/_idx/_idx_cpu, arm_intr_disestablish_fdt, arm_intr_enable/disable, arm_intr_parent_establish/disestablish_fdt, arm_intr_route, arm_intr_cpu_enable, intr_barrier, intr_set_wakeup (lists behind a Sync wrapper, NonNull handles); the imap/msi variants and arm_intr_map_msi come with PCI (M5), the IPIs with MULTIPROCESSOR; M11a: the MULTIPROCESSOR IPI implementation: intr_send_ipi_func (a StaticCell set by the controller's attach), arm_send_ipi, arm_no_send_ipi; SOFTINTR_XCALL stays out (NXCALL 0 on arm64)"
+notes = "M2: arm_clock_func, arm_clock_register, arm_dflt_delay, delay, cpu_initclocks, cpu_startclock, setstatclockrate; M4: arm_dflt_irq/fiq, arm_irq/fiq_dispatch, arm_cpu_irq/fiq, arm_smask, arm_intr_func with the arm_dflt_* spl, arm_do_pending_intr, arm_set_intr_handler, arm_init_smask, splraise/spllower/splx/softintr, arm_splassert_check, intr_enable/disable_wakeup, arm_intr_get_parent, the pre-registration (arm_intr_prereg_*, arm_intr_init_fdt), arm_intr_register_fdt, arm_intr_establish_fdt/_cpu/_idx/_idx_cpu, arm_intr_disestablish_fdt, arm_intr_enable/disable, arm_intr_parent_establish/disestablish_fdt, arm_intr_route, arm_intr_cpu_enable, intr_barrier, intr_set_wakeup (lists behind a Sync wrapper, NonNull handles); the imap/msi variants and arm_intr_map_msi come with PCI (M5), the IPIs with MULTIPROCESSOR; M11a: the MULTIPROCESSOR IPI implementation: intr_send_ipi_func (a StaticCell set by the controller's attach), arm_send_ipi, arm_no_send_ipi; SOFTINTR_XCALL stays out (NXCALL 0 on arm64); ; M12: arm_intr_map_msi (msi-map with msi-map-mask and #msi-cells, else the first msi-parent up the tree), arm_intr_establish_fdt_imap/_imap_cpu (interrupt-map with interrupt-map-mask, the parent's #address-cells; reg as a 4-cell slice), arm_intr_establish_fdt_msi/_msi_cpu (through ic_establish_msi); interrupt_controllers() for ampintc.c's extern use of the list"
 
 [[file]]
 c = "sys/arch/arm64/arm64/machdep.c"
@@ -1205,7 +1205,7 @@ rust = "sys/arch/arm64/include/intr.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "195f58ec14bb042144b6b0bd99b76585cd5d8b90"
-notes = "M3: the levels; M4: IST_* (with the arm64 extra trigger types), SOFTINTR_XCALL, struct machine_intr_handle, struct arm_intr_func, struct interrupt_controller (ic_establish's name is &str, the cookie a *const ()); the spl*() helpers are the machine::intr contract; ARM_IPI_* with MULTIPROCESSOR (M5); M11a: ARM_IPI_NOP/DDB/HALT/XCALL"
+notes = "M3: the levels; M4: IST_* (with the arm64 extra trigger types), SOFTINTR_XCALL, struct machine_intr_handle, struct arm_intr_func, struct interrupt_controller (ic_establish's name is &str, the cookie a *const ()); the spl*() helpers are the machine::intr contract; ARM_IPI_* with MULTIPROCESSOR (M5); M11a: ARM_IPI_NOP/DDB/HALT/XCALL; ; M12: ic_establish_msi in struct interrupt_controller (IcEstablishMsiFn, addr/data as &mut u64)"
 
 [[file]]
 c = "sys/uvm/uvm_param.h"
@@ -1902,7 +1902,7 @@ rust = "sys/arch/arm64/include/fdt.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "af2721fdadabcbf787241bb0c891aeeb9091c54a"
-notes = "M4: struct fdt_attach_args (slices for fa_reg/fa_intr; M7b: fa_dmat) and the fdt_intr_* aliases that exist; stdout_node/stdout_speed/fdt_cons_bs_tag/fdt_find_cons are arm64/machdep.rs behind the machine::fdt contract; the imap/msi aliases come with PCI (M5)"
+notes = "M4: struct fdt_attach_args (slices for fa_reg/fa_intr; M7b: fa_dmat) and the fdt_intr_* aliases that exist; stdout_node/stdout_speed/fdt_cons_bs_tag/fdt_find_cons are arm64/machdep.rs behind the machine::fdt contract; the imap/msi aliases come with PCI (M5); ; M12: the fdt_intr_establish_imap/_imap_cpu/_msi/_msi_cpu aliases (and the machine::fdt contract's fdt_intr_establish_imap_cpu/_msi_cpu, None on amd64 and host)"
 
 [[file]]
 c = "sys/arch/arm64/dev/ampintc.c"
@@ -1911,7 +1911,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "08bce9b07b706c55a91266cc792339ccdcb2f2c7"
 deps = ["sys/arch/arm64/arm64/intr.c", "sys/dev/ofw/fdt.c", "sys/kern/subr_evcount.c"]
-notes = "M4: the registers, ampintc_match/attach (from fdt_attach_args autoconf.rs builds; one static softc AMPINTC), init, set_priority, setipl, intr_enable/disable/config, calc_mask/calc_irq, splx/spllower/splraise, iack/eoi, route, cpuinit (the IPI EOI waits for MULTIPROCESSOR), route_irq, intr_barrier (sched_barrier reported, M5), run_handler, irq_handler, intr_establish_fdt, intr_establish, intr_disestablish; ampintc_activate (resume), the IPIs, the GICv2m MSI frame and simplebus_attach of the children are M5; M7b: ampintc_ca/ampintc_cd (ca_devsize is a bare struct device, the rest of the softc stays the static AMPINTC; no ampintc_activate yet), ampintc_match/ampintc_attach take the cfattach arguments and mainbus attaches the GIC (ampintc* at fdt? early 1), printing the C's ' nirq N, ncpu N'; M11a: the MULTIPROCESSOR side: ampintc_attach finds the IPI's SGI (the IPRn probe), establishes ampintc_ipi_handler at IPL_IPI|IPL_MPSAFE ('ipi 0' on the attach line) and installs ampintc_send_ipi as intr_send_ipi_func; ampintc_ipi_ddb (db_enter; M11c), ampintc_ipi_halt (cpu_halt), ampintc_ipi_handler (atomic swap of sc_ipi_reason), ampintc_send_ipi (ICD_SGIR to the target's mask); ampintc_cpuinit's IPI EOI (the APs' per-CPU init of their banked SGI/PPI registers and target mask); sc_cpu_mask/sc_ipi_reason atomics; ampintc_run_handler takes the kernel lock below IPL_SCHED unless the handler is IPL_MPSAFE (since M11e exactly the C's rule; M11a also locked IPL_MPSAFE handlers at or below IPL_MPFLOOR); SPIs stay routed to the boot CPU; ampintc_ipi_count (feature qemu, the self-check's IPI counter)"
+notes = "M4: the registers, ampintc_match/attach (from fdt_attach_args autoconf.rs builds; one static softc AMPINTC), init, set_priority, setipl, intr_enable/disable/config, calc_mask/calc_irq, splx/spllower/splraise, iack/eoi, route, cpuinit (the IPI EOI waits for MULTIPROCESSOR), route_irq, intr_barrier (sched_barrier reported, M5), run_handler, irq_handler, intr_establish_fdt, intr_establish, intr_disestablish; ampintc_activate (resume), the IPIs, the GICv2m MSI frame and simplebus_attach of the children are M5; M7b: ampintc_ca/ampintc_cd (ca_devsize is a bare struct device, the rest of the softc stays the static AMPINTC; no ampintc_activate yet), ampintc_match/ampintc_attach take the cfattach arguments and mainbus attaches the GIC (ampintc* at fdt? early 1), printing the C's ' nirq N, ncpu N'; M11a: the MULTIPROCESSOR side: ampintc_attach finds the IPI's SGI (the IPRn probe), establishes ampintc_ipi_handler at IPL_IPI|IPL_MPSAFE ('ipi 0' on the attach line) and installs ampintc_send_ipi as intr_send_ipi_func; ampintc_ipi_ddb (db_enter; M11c), ampintc_ipi_halt (cpu_halt), ampintc_ipi_handler (atomic swap of sc_ipi_reason), ampintc_send_ipi (ICD_SGIR to the target's mask); ampintc_cpuinit's IPI EOI (the APs' per-CPU init of their banked SGI/PPI registers and target mask); sc_cpu_mask/sc_ipi_reason atomics; ampintc_run_handler takes the kernel lock below IPL_SCHED unless the handler is IPL_MPSAFE (since M11e exactly the C's rule; M11a also locked IPL_MPSAFE handlers at or below IPL_MPFLOOR); SPIs stay routed to the boot CPU; ampintc_ipi_count (feature qemu, the self-check's IPI counter); ; M12: ampintc_attach ends with simplebus_attach for the GIC's children (ampintc_ca's ca_devsize is now the struct simplebus_softc that heads the C's softc), and the GICv2m frame: GICV2M_* registers, struct ampintc_msi_softc (repr(C); sc_ic an UnsafeCell written once before arm_intr_register_fdt; sc_spi Cell slots, the MSI cookie is the slot's address), ampintcmsi_ca/cd (ampintcmsi* at fdt? early 1), ampintc_msi_match/attach (pmap_extract of the mapping for the doorbell address, ' nspi N'), ampintc_intr_establish_msi (edge SPI on the parent GIC, addr = frame + GICV2M_SETSPI_NS, data = SPI), ampintc_intr_disestablish_msi, ampintc_intr_barrier_msi"
 
 # ---------------------------------------------------------------------------
 # M5-a: clocks, timecounters, clock interrupts, timeouts
@@ -2964,7 +2964,7 @@ notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at 
 [[file]]
 c = "sys/arch/arm64/conf/GENERIC"
 status = "skipped"
-notes = "replaced-by-ioconf.rs: sys/arch/arm64/conf/ioconf.rs lists mainbus0 at root, ampintc* at fdt? early 1 and agtimer* at fdt? (the fdt attribute from files.arm64, mainbus its only parent until simplebus), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it); M10f: pseudo-device bio 1 (bioattach after wgattach in pdevinit, as GENERIC lists it; dev/bio.rs); M11a: cpu0 at mainbus? (cpu.c) and, with MULTIPROCESSOR, GENERIC.MP's cpu* at mainbus?"
+notes = "replaced-by-ioconf.rs: sys/arch/arm64/conf/ioconf.rs lists mainbus0 at root, ampintc* at fdt? early 1 and agtimer* at fdt? (the fdt attribute from files.arm64, mainbus its only parent until simplebus), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it); M10f: pseudo-device bio 1 (bioattach after wgattach in pdevinit, as GENERIC lists it; dev/bio.rs); M11a: cpu0 at mainbus? (cpu.c) and, with MULTIPROCESSOR, GENERIC.MP's cpu* at mainbus?; ; M12: simplebus* at fdt?, ampintcmsi* at fdt? early 1, pciecam* at fdt?, pci* at pciecam? and virtio* at pci? (cfdata[12..16]; cpu0 and GENERIC.MP's cpu* move to cfdata[17] and [18]); the fdt attribute's parents are mainbus0, ampintc* and simplebus* (PV_FDT [0, 1, 12]), vio*/vioblk* at virtio? take both virtio entries (PV_VIRTIO [3, 16])"
 
 [[file]]
 c = "sys/sys/endian.h"
@@ -4817,7 +4817,7 @@ rust = "sys/arch/arm64/include/pci_machdep.rs"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2e9d1b552253d367bea7a91ee530756d3f921a46"
-notes = "M7b: pci_chipset_tag_t (&'static MachinePciChipset), pcitag_t (u64), PCITAG_NODE/OFFSET, PCI_NONE/INTX/MSI/MSIX, pci_intr_handle_t, struct machine_pci_chipset (fn pointers; intr maps return Option, pc_intr_string by value); the macros are the machine::pci_machdep impl in arch/arm64/mod.rs (pci_min_powerstate D3, set_powerstate_md and dev_postattach empty); the arm64/pci_machdep.c functions (pci_msix_table_map/unmap, pci_intr_enable_msivec, ...) are reported there; no host bridge driver (pciecam) yet, so no PCI bus attaches on arm64"
+notes = "M7b: pci_chipset_tag_t (&'static MachinePciChipset), pcitag_t (u64), PCITAG_NODE/OFFSET, PCI_NONE/INTX/MSI/MSIX, pci_intr_handle_t, struct machine_pci_chipset (fn pointers; intr maps return Option, pc_intr_string by value); the macros are the machine::pci_machdep impl in arch/arm64/mod.rs (pci_min_powerstate D3, set_powerstate_md and dev_postattach empty); M12: the functions it declares are arm64/dev/pci_machdep.rs (pci_msix_table_map/unmap and pci_intr_enable_msivec through the contract, no longer reported), pciecam fills the chipset; pci_mcfg_init and pci_lookup_segment (arm64/dev/acpipci.c, ACPI MCFG) are not ported: arm64 boots from the device tree (acpi=off)"
 
 # ---------------------------------------------------------------------------
 # M7+ vfs, stage 1: the VFS core (no buffer cache, no vnode pager, no file system)
@@ -7289,3 +7289,43 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "79cb2321e5fc78b617ec4856b5a5f99ccba347e0"
 deps = []
 notes = "M10d, feature ntfs: NTFS_MFLAG_CASEINS, NTFS_MFLAG_ALLNAMES (u64, ntm_flag's u_long); <sys/mount.h> defines them too, beside NtfsArgs"
+
+# ---------------------------------------------------------------------------
+# M12: devices (audio, USB) and the arm64 PCI host bridge
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/dev/fdt/pciecam.c"
+rust = "sys/dev/fdt/pciecam.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "60b16e0ca3c6dcec29a417e69f62c6af40e6d865"
+deps = ["sys/arch/arm64/include/pci_machdep.h", "sys/arch/arm64/dev/pci_machdep.c", "sys/arch/arm64/arm64/intr.c", "sys/arch/arm64/include/fdt.h", "sys/arch/arm64/arm64/bus_space.c", "sys/dev/pci/pci.c", "sys/dev/ofw/fdt.c"]
+notes = "M12: the whole file: PCIE_* ECAM offsets, struct pciecam_range/softc (repr(C); sc_bus and sc_pc MaybeUninit in UnsafeCell, written once by the attach)/intr_handle (machine_intr_handle first), pciecam_ic (ic_barrier only, a wrapper calling intr_barrier on the cookie), pciecam_ca/cd, match (pci-host-ecam-generic, snps,dw-pcie-ecam), attach (ranges parsed, ECAM mapped, bus space copied with pciecam_bs_map/_mmap, chipset filled with the _pci_intr_map_msi* of arm64/pci_machdep.c, PCI_FLAGS_MSI_ENABLED from msi-map/msi-parent), attach_hook, bus_maxdevs (dw quirk), make_tag (64-bit, no sign extension), decompose_tag, conf_size/read/write, probe_device_hook, intr_map (ih_dmat set to pa_dmat, which the C leaves unset), intr_string, intr_establish (MSI/MSI-X through fdt_intr_establish_msi_cpu with the doorbell loaded raw into a dmamap and pci_msi_enable/pci_msix_enable; INTx through fdt_intr_establish_imap_cpu), intr_disestablish, bs_map, bs_mmap (None for -1); not ported: the extents (sys/extent.h: sc_ioex/sc_memex left out, pba_*ex NULL), reported: iommu_device_map_pci and iommu_reserve_region_pci (ofw_misc.c; the tag stays the bus's); compiled only under cfg machine_pci_chipset (sys/build.rs, arm64: files.arm64 lists the file) and reaching the machine through sys/machine/pci_chipset.rs; QEMU virt: xHCI and HDA not configured at pci0, virtio-net-pci attaches with msix per-VQ (GICv2m) or irq (interrupt-map) and pings"
+
+[[file]]
+c = "sys/arch/arm64/dev/pci_machdep.c"
+rust = "sys/arch/arm64/dev/pci_machdep.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fbfb07e56d42ffc2b901f0813add23488aa847c4"
+deps = ["sys/arch/arm64/include/pci_machdep.h", "sys/dev/pci/pci.c", "sys/dev/pci/pci_map.c"]
+notes = "M12: the whole file: pci_intr_enable_msivec (true where the C returns 1), pci_msi_enable, pci_msix_table_map (the errno of pci_mapreg_info/bus_space_map where the C returns -1, as amd64), pci_msix_table_unmap, pci_msix_enable, _pci_intr_map_msi/_msivec/_msix (Option, None for -1); the machine::pci_machdep contract calls pci_msix_table_map/unmap and pci_intr_enable_msivec, pciecam the rest (machine::pci_chipset)"
+
+[[file]]
+c = "sys/arch/arm64/dev/simplebus.c"
+rust = "sys/arch/arm64/dev/simplebus.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e2c3fd37326fc9ef60d8d2a9dc5089d5fd5d02cc"
+deps = ["sys/arch/arm64/include/simplebusvar.h", "sys/arch/arm64/include/fdt.h", "sys/arch/arm64/include/bus.h", "sys/dev/ofw/fdt.c", "sys/kern/subr_autoconf.c"]
+notes = "M12: the whole file: simplebus_ca/cd, match (simple-bus, qcom,geni-se-qup), attach (bus space copied with simplebus_bs_map/_mmap, DMA tag copied with simplebus_dmamap_load_buffer/_raw, ranges, dma-ranges and the bcm2709 dma-ranges fallback, three early passes), submatch, print, attach_node (fa_reg/fa_intr malloc'd as in C, dma-coherent copy of the tag), bs_map, bs_mmap (None for -1 and for the C's EINVAL-as-paddr_t), dmamap_load_buffer, dmamap_load_raw (the C's rlen not reset between segments kept); reported: iommu_device_map (ofw_misc.c, as mainbus); ampintc_attach calls simplebus_attach for the GIC's children (the GICv2m frames); simplebus* at fdt? attaches QEMU virt's platform-bus"
+
+[[file]]
+c = "sys/arch/arm64/include/simplebusvar.h"
+rust = "sys/arch/arm64/include/simplebusvar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2b20763706445fe9d31106b28fdc8ddd4baa3e1a"
+deps = ["sys/arch/arm64/include/bus.h"]
+notes = "M12: struct simplebus_softc (repr(C); sc_bus and sc_dma MaybeUninit in UnsafeCell with unsafe accessors, Cells for the rest); simplebus_attach's prototype is arm64/dev/simplebus.rs"

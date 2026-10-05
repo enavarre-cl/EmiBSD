@@ -168,6 +168,17 @@ a host build (so the host tests cover the code). The code is gated on the cfg, n
 feature: the arm64 kernel has no NTFS, as OpenBSD's arm64 GENERIC has none, and generic code
 still never names an architecture.
 
+A machine-independent driver that `files.<arch>` lists only for some architectures and whose
+C uses those machines' headers directly (M12: `dev/fdt/pciecam.c`, written against `struct
+machine_pci_chipset`, `struct bus_space`, `struct machine_intr_handle`) is gated the same
+way: `sys/build.rs`'s `ARCH_MACHINE` table emits cfg `machine_pci_chipset` for arm64
+bare-metal builds (never for host, whose double has none of these headers), the driver's
+module is `#[cfg(machine_pci_chipset)]`, and it reaches the machine items through
+`sys/machine/pci_chipset.rs`, which re-exports them from `crate::arch::current` under the
+same cfg. Generic code still never names an architecture; the alternative, a dozen contract
+methods with fake amd64 and host implementations, would make the driver unlike its C and the
+fakes untestable anyway. The price: such a driver has no host tests, like arch code.
+
 ## Dependencies
 
 | Crate | Where | Why it is not OpenBSD code |
@@ -928,8 +939,16 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   need a generator in `tools/xtask` (as `gen-syscalls` is for `syscalls.master`), so the attach
   lines print IDs (`vendor 0x8086 product 0x29c0 (class bridge subclass host, rev 0x02) at
   pci0 dev 0 function 0 not configured`) and `pcidevs.rs` holds only the IDs ported code
-  names. arm64 has the types and dispatch of its `pci_machdep.h` but no host bridge driver
-  yet. Memory BARs are mapped by amd64's `bus_space.c` memory half (`x86_mem_add_mapping`:
+  names. On arm64 (M12) `pciecam` (`dev/fdt/pciecam.c`) attaches QEMU `virt`'s ECAM host
+  bridge from the device tree: it maps the 256 MiB ECAM region (beyond the `vmmap` window,
+  so `generic_space_map` takes `km_alloc(kv_any)` space as the C does), gives the bus a copy
+  of its parent's bus space that translates PCI addresses through `ranges`, routes INTx
+  through `interrupt-map` (`arm_intr_establish_fdt_imap`) and MSI/MSI-X through
+  `msi-parent` to the GICv2m frame (`ampintcmsi`, attached below the GIC by
+  `simplebus_attach` as in C; `arm_intr_establish_fdt_msi`), loading the doorbell into a
+  DMA map and programming the function with `arm64/pci_machdep.c`. The extents are absent
+  there too, so BARs must be assigned by the firmware (EDK2 does). `virtio* at pci?` is
+  configured on arm64 as in GENERIC. Memory BARs are mapped by amd64's `bus_space.c` memory half (`x86_mem_add_mapping`:
   `km_alloc(kv_any, kp_none)` and uncached `pmap_kenter_pa`, as the C does).
 - virtio (M7b): `dev/pv/virtio.c` and its headers are OpenBSD's, with both transports:
   `virtio_pci.c` (`virtio* at pci?`, amd64; QEMU's transitional virtio-net-pci attaches with

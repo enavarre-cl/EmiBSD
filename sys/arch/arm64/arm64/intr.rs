@@ -32,8 +32,9 @@
 //! `arm_intr_init_fdt`, `arm_intr_register_fdt`, `arm_intr_establish_fdt`/`_cpu`/`_idx`/
 //! `_idx_cpu`, `arm_intr_disestablish_fdt`, `arm_intr_enable`/`disable`,
 //! `arm_intr_parent_establish_fdt`/`_disestablish_fdt`, `arm_intr_route`,
-//! `arm_intr_cpu_enable`, `intr_barrier`, `intr_set_wakeup`). The `imap` and `msi` variants
-//! and `arm_intr_map_msi` come with PCI (M5); M11a adds the `MULTIPROCESSOR` IPIs
+//! `arm_intr_cpu_enable`, `intr_barrier`, `intr_set_wakeup`). M12 adds, with PCI, the
+//! `imap` and `msi` variants (`arm_intr_establish_fdt_imap`/`_imap_cpu`/`_msi`/`_msi_cpu`)
+//! and `arm_intr_map_msi`; M11a adds the `MULTIPROCESSOR` IPIs
 //! (`intr_send_ipi_func`, `arm_send_ipi`, `arm_no_send_ipi`); the generic
 //! timer (`agtimer.c`) that replaces `arm_dflt_delay` attaches from `mainbus` (M5).
 //!
@@ -47,6 +48,9 @@
 //!   (`arm_set_intr_handler`, `arm_init_smask`) on the boot CPU before interrupts are enabled.
 //! - The controller and pre-registration lists are `LIST`s behind a `Sync` wrapper, touched
 //!   at attach time on the boot CPU; the handles are `NonNull<MachineIntrHandle>`.
+//!   `ampintc.c`'s `extern` use of `interrupt_controllers` is [`interrupt_controllers`].
+//! - `arm_intr_establish_fdt_imap*` take the child's four `reg` cells as a slice (the C's
+//!   `int *reg, int nreg`, `nreg` in bytes); `arm_intr_map_msi`'s `data` is a `&mut u64`.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -435,7 +439,68 @@ pub fn arm_intr_get_parent(node: i32) -> i32 {
     0
 }
 
-// arm_intr_map_msi: with PCI (M5).
+/// `arm_intr_map_msi`: the phandle of the MSI controller of `node`, through its `msi-map`
+/// (which also turns the requester ID in `data` into the controller's device ID) or the
+/// first `msi-parent` up the tree; 0 when there is none.
+pub fn arm_intr_map_msi(node: i32, data: &mut u64) -> u32 {
+    let len = OF_getproplen(node, b"msi-map");
+    if len <= 0 {
+        let mut node = node;
+        let mut phandle = 0;
+        while node != 0 && phandle == 0 {
+            phandle = OF_getpropint(node, b"msi-parent", 0);
+            node = OF_parent(node);
+        }
+        return phandle;
+    }
+
+    let len = len as usize;
+    let Some(map) = malloc(len, M_TEMP, M_WAITOK) else {
+        return 0;
+    };
+    let map = map.cast::<u32>();
+    // SAFETY: a fresh allocation of `len` bytes, freed below; `len` came from the property,
+    // and a property of whole cells fills it.
+    let cells = unsafe { core::slice::from_raw_parts_mut(map.as_ptr(), len / 4) };
+    OF_getpropintarray(node, b"msi-map", cells);
+
+    let mask = OF_getpropint(node, b"msi-map-mask", 0xffff);
+    let rid = (*data as u32) & mask;
+
+    let mut phandle = 0;
+    let mut cell: &[u32] = cells;
+    while cell.len() > 1 {
+        let ctrl = OF_getnodebyphandle(cell[1]);
+        if ctrl == 0 {
+            break;
+        }
+
+        // Some device trees (e.g. those for the Rockchip RK3399 boards) are missing a
+        // #msi-cells property. Assume the msi-specifier uses a single cell in that case.
+        let mcells = OF_getpropint(ctrl, b"#msi-cells", 1) as usize;
+        if cell.len() < mcells + 3 {
+            break;
+        }
+
+        let rid_base = cell[0];
+        let length = cell[2 + mcells];
+        let mut msi_base = u64::from(cell[2]);
+        for i in 1..mcells {
+            msi_base <<= 32;
+            msi_base |= u64::from(cell[2 + i]);
+        }
+        if rid >= rid_base && rid < rid_base.wrapping_add(length) {
+            *data = msi_base + u64::from(rid - rid_base);
+            phandle = cell[1];
+            break;
+        }
+
+        cell = &cell[3 + mcells..];
+    }
+
+    free(map.cast::<u8>(), M_TEMP, len);
+    phandle
+}
 
 /// `MAX_INTERRUPT_CELLS`.
 pub const MAX_INTERRUPT_CELLS: usize = 4;
@@ -494,6 +559,12 @@ unsafe impl Sync for IcHead {}
 static PREREG_INTERRUPTS: PreregHead = PreregHead(ListHead::new());
 /// `interrupt_controllers`.
 static INTERRUPT_CONTROLLERS: IcHead = IcHead(ListHead::new());
+
+/// `interrupt_controllers`, which `ampintc.c` names `extern` for the GICv2m frame: the
+/// registered controllers, the latest first.
+pub fn interrupt_controllers() -> &'static ListHead<IcList> {
+    &INTERRUPT_CONTROLLERS.0
+}
 
 /// `arm_intr_prereg_establish_fdt`: the dummy controller's `ic_establish`.
 pub fn arm_intr_prereg_establish_fdt(
@@ -610,6 +681,7 @@ fn arm_intr_init_fdt_recurse(node: i32) {
                 ic_node: Cell::new(node),
                 ic_cookie: Cell::new(ic.as_ptr().cast::<()>()),
                 ic_establish: Some(arm_intr_prereg_establish_fdt),
+                ic_establish_msi: None,
                 ic_disestablish: Some(arm_intr_prereg_disestablish_fdt),
                 ic_enable: None,
                 ic_disable: None,
@@ -812,7 +884,166 @@ pub fn arm_intr_establish_fdt_idx_cpu(
     Some(ih)
 }
 
-// arm_intr_establish_fdt_imap, _imap_cpu, _msi, _msi_cpu: with PCI (M5).
+/// `arm_intr_establish_fdt_imap`.
+pub fn arm_intr_establish_fdt_imap(
+    node: i32,
+    reg: &[u32],
+    level: i32,
+    func: IntrFn,
+    cookie: *mut c_void,
+    name: &'static str,
+) -> Option<NonNull<MachineIntrHandle>> {
+    arm_intr_establish_fdt_imap_cpu(node, reg, level, None, func, cookie, name)
+}
+
+/// `arm_intr_establish_fdt_imap_cpu`: the interrupt that `node`'s `interrupt-map` routes the
+/// child unit address and pin `reg` (four cells: `phys.hi`, `phys.mid`, `phys.lo`, the pin)
+/// to, after `interrupt-map-mask`.
+pub fn arm_intr_establish_fdt_imap_cpu(
+    node: i32,
+    reg: &[u32],
+    level: i32,
+    ci: Option<&'static CpuInfo>,
+    func: IntrFn,
+    cookie: *mut c_void,
+    name: &'static str,
+) -> Option<NonNull<MachineIntrHandle>> {
+    let mut map_mask = [0u32; 4];
+
+    if reg.len() != map_mask.len() {
+        return None;
+    }
+
+    if OF_getpropintarray(node, b"interrupt-map-mask", &mut map_mask) != 16 {
+        return None;
+    }
+
+    let len = OF_getproplen(node, b"interrupt-map");
+    if len <= 0 {
+        return None;
+    }
+    let len = len as usize;
+
+    let map = malloc(len, M_DEVBUF, M_WAITOK)?.cast::<u32>();
+    // SAFETY: a fresh allocation of `len` bytes, freed below.
+    let cells = unsafe { core::slice::from_raw_parts_mut(map.as_ptr(), len / 4) };
+    OF_getpropintarray(node, b"interrupt-map", cells);
+
+    let mut ic: Option<&'static InterruptController> = None;
+    let mut val: *mut c_void = ptr::null_mut();
+    let mut cell: &[u32] = cells;
+    while cell.len() > 5 {
+        ic = INTERRUPT_CONTROLLERS
+            .0
+            .iter()
+            .find(|c| c.ic_phandle.get() == cell[4]);
+        let Some(c) = ic else {
+            break;
+        };
+
+        let acells = OF_getpropint(c.ic_node.get(), b"#address-cells", 0) as usize;
+        let ncells = c.ic_cells.get() as usize;
+        if cell.len() >= 5 + acells + ncells
+            && (reg[0] & map_mask[0]) == cell[0]
+            && (reg[1] & map_mask[1]) == cell[1]
+            && (reg[2] & map_mask[2]) == cell[2]
+            && (reg[3] & map_mask[3]) == cell[3]
+            && let Some(establish) = c.ic_establish
+        {
+            val = establish(
+                c.ic_cookie.get(),
+                &cell[5 + acells..],
+                level,
+                ci,
+                func,
+                cookie,
+                name,
+            );
+            break;
+        }
+
+        if cell.len() < 5 + acells + ncells {
+            break;
+        }
+        cell = &cell[5 + acells + ncells..];
+    }
+
+    free(map.cast::<u8>(), M_DEVBUF, len);
+
+    if val.is_null() {
+        return None;
+    }
+
+    let ih =
+        malloc(size_of::<MachineIntrHandle>(), M_DEVBUF, M_WAITOK)?.cast::<MachineIntrHandle>();
+    // SAFETY: a fresh allocation, written once before use.
+    unsafe {
+        ih.write(MachineIntrHandle {
+            ih_ic: ic.map_or(ptr::null(), ptr::from_ref),
+            ih_ih: val,
+        });
+    }
+    Some(ih)
+}
+
+/// `arm_intr_establish_fdt_msi`.
+pub fn arm_intr_establish_fdt_msi(
+    node: i32,
+    addr: &mut u64,
+    data: &mut u64,
+    level: i32,
+    func: IntrFn,
+    cookie: *mut c_void,
+    name: &'static str,
+) -> Option<NonNull<MachineIntrHandle>> {
+    arm_intr_establish_fdt_msi_cpu(node, addr, data, level, None, func, cookie, name)
+}
+
+/// `arm_intr_establish_fdt_msi_cpu`: an MSI through the controller `node`'s `msi-map` or
+/// `msi-parent` names; `addr` and `data` come back as what the device must write where.
+#[allow(clippy::too_many_arguments)] // the C's signature
+pub fn arm_intr_establish_fdt_msi_cpu(
+    node: i32,
+    addr: &mut u64,
+    data: &mut u64,
+    level: i32,
+    ci: Option<&'static CpuInfo>,
+    func: IntrFn,
+    cookie: *mut c_void,
+    name: &'static str,
+) -> Option<NonNull<MachineIntrHandle>> {
+    let phandle = arm_intr_map_msi(node, data);
+    let ic = INTERRUPT_CONTROLLERS
+        .0
+        .iter()
+        .find(|c| c.ic_phandle.get() == phandle)?;
+    let establish_msi = ic.ic_establish_msi?;
+
+    let val = establish_msi(
+        ic.ic_cookie.get(),
+        addr,
+        data,
+        level,
+        ci,
+        func,
+        cookie,
+        name,
+    );
+    if val.is_null() {
+        return None;
+    }
+
+    let ih =
+        malloc(size_of::<MachineIntrHandle>(), M_DEVBUF, M_WAITOK)?.cast::<MachineIntrHandle>();
+    // SAFETY: a fresh allocation, written once before use.
+    unsafe {
+        ih.write(MachineIntrHandle {
+            ih_ic: ptr::from_ref(ic),
+            ih_ih: val,
+        });
+    }
+    Some(ih)
+}
 
 /// `arm_intr_disestablish_fdt`.
 ///

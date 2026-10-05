@@ -37,22 +37,28 @@
 //! application processors' per-CPU init: their banked SGI/PPI registers, their target mask)
 //! and the kernel lock in `ampintc_run_handler` (`IPL_MPSAFE` honoured as in C since M11e).
 //! Device interrupts stay routed to the boot CPU (`ci` `NULL` is `cpu_info_primary`), as in
-//! C. `ampintc_activate` (`DVACT_RESUME`,
-//! M5), the GICv2m MSI frame (`ampintc_msi_*`, with PCI) and the `simplebus_attach` of the
-//! children are not here.
+//! C. M12 adds, with PCI, the `simplebus_attach` of the GIC's children at the end of
+//! `ampintc_attach` and the GICv2m MSI frame (`ampintcmsi* at fdt? early 1`: the `GICV2M_*`
+//! registers, `ampintc_msi_match`, `ampintc_msi_attach`, `ampintc_intr_establish_msi`,
+//! `ampintc_intr_disestablish_msi`, `ampintc_intr_barrier_msi`). `ampintc_activate`
+//! (`DVACT_RESUME`) is not here.
 //!
 //! ## Deviations
 //! - One static softc, `AMPINTC`, stands for the C's `ampintc` pointer to the attached
-//!   device and for the rest of `struct ampintc_softc`: `ampintc_ca`'s `ca_devsize` is a bare
-//!   `struct device`, which mainbus attaches from the device tree (`ampintc* at fdt? early
-//!   1`); `ampintc_activate` (`DVACT_RESUME`) is not in it yet.
+//!   device and for the rest of `struct ampintc_softc`: `ampintc_ca`'s `ca_devsize` is the
+//!   `struct simplebus_softc` that heads the C's softc (`sc_sbus`, which `simplebus_attach`
+//!   fills for the GIC's children), and mainbus attaches it from the device tree (`ampintc*
+//!   at fdt? early 1`); `ampintc_activate` (`DVACT_RESUME`) is not in it yet.
+//! - A GICv2m frame's `sc_ic` is an `UnsafeCell`, written once by `ampintc_msi_attach`
+//!   before it registers it; `sc_spi`'s slots are `Cell`s, and an MSI's cookie is the
+//!   address of its slot, as in C.
 //! - `sc_cpu_mask` and `sc_ipi_reason` are atomics (each CPU writes its own mask in
 //!   `ampintc_cpuinit` while others read it to send IPIs); `ampintc_send_ipi` fences before
 //!   the `ICD_SGIR` write so the posted reason is visible to the target's handler.
 //! - `ampintc_ipi_count` (feature `qemu`) reads the IPI handler's event counter for the
 //!   self-check in `cpu_boot_secondary_processors`; not in the C.
 
-use core::cell::Cell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 #[cfg(feature = "multiprocessor")]
@@ -67,20 +73,24 @@ use crate::arch::arm64::arm64::db_interface::db_enter;
 use crate::arch::arm64::arm64::intr::INTR_SEND_IPI_FUNC;
 use crate::arch::arm64::arm64::intr::{
     arm_do_pending_intr, arm_init_smask, arm_intr_register_fdt, arm_set_intr_handler, arm_smask,
+    interrupt_controllers, intr_barrier,
 };
+use crate::arch::arm64::arm64::pmap::{pmap_extract, pmap_kernel};
+use crate::arch::arm64::dev::simplebus::simplebus_attach;
 use crate::arch::arm64::include::cpu::{CpuInfo, cpu_info_primary, cpu_number, curcpu};
 use crate::arch::arm64::include::cpu::{intr_disable, intr_enable, intr_restore};
-use crate::arch::arm64::include::fdt::FdtAttachArgs;
+use crate::arch::arm64::include::fdt::{FdtAttachArgs, fdt_intr_disestablish};
 use crate::arch::arm64::include::frame::Trapframe;
 #[cfg(feature = "multiprocessor")]
 use crate::arch::arm64::include::intr::{ARM_IPI_DDB, ARM_IPI_HALT, ARM_IPI_NOP, IPL_IPI};
 use crate::arch::arm64::include::intr::{
     IPL_FLAGMASK, IPL_HIGH, IPL_IRQMASK, IPL_MPSAFE, IPL_NONE, IPL_SCHED, IST_EDGE_RISING,
-    IST_LEVEL_HIGH, InterruptController, IntrFn,
+    IST_LEVEL_HIGH, InterruptController, IntrFn, MachineIntrHandle,
 };
-use crate::dev::ofw::openfirm::OF_is_compatible;
+use crate::arch::arm64::include::simplebusvar::SimplebusSoftc;
+use crate::dev::ofw::openfirm::{OF_getpropint, OF_is_compatible, OF_parent};
 use crate::kassert;
-use crate::kern::kern_malloc::{free, malloc};
+use crate::kern::kern_malloc::{free, malloc, mallocarray};
 use crate::kern::subr_evcount::{evcount_attach, evcount_detach};
 use crate::kern::subr_prf::panic;
 use crate::kprintf;
@@ -89,11 +99,12 @@ use crate::machine::bus::{
     bus_space_write_1, bus_space_write_4,
 };
 use crate::queue_adapter;
-use crate::sys::device::{CfMatch, Cfattach, Cfdriver, DV_DULL, Device};
+use crate::sys::device::{CfMatch, Cfattach, Cfdriver, DV_DULL, Device, Softc};
 use crate::sys::evcount::Evcount;
 use crate::sys::malloc::{M_DEVBUF, M_NOWAIT, M_WAITOK, M_ZERO};
 use crate::sys::queue::{ListEntry, TailqEntry, TailqHead};
 use crate::sys::systm::{kernel_lock, kernel_unlock};
+use crate::sys::types::Vaddr;
 
 // registers
 /// `ICD_DCR`: the distributor control register.
@@ -226,6 +237,24 @@ pub const IRQ_ENABLE: bool = true;
 /// `IRQ_DISABLE`.
 pub const IRQ_DISABLE: bool = false;
 
+// GICv2m frame controller for MSI interrupts.
+
+/// `GICV2M_TYPER`.
+pub const GICV2M_TYPER: usize = 0x008;
+
+/// `GICV2M_TYPER_SPI_BASE(x)`: the frame's first SPI.
+pub const fn gicv2m_typer_spi_base(x: u32) -> u32 {
+    (x >> 16) & 0x3ff
+}
+
+/// `GICV2M_TYPER_SPI_COUNT(x)`: how many SPIs the frame has.
+pub const fn gicv2m_typer_spi_count(x: u32) -> u32 {
+    x & 0x3ff
+}
+
+/// `GICV2M_SETSPI_NS`: the doorbell a device writes the SPI number to.
+pub const GICV2M_SETSPI_NS: usize = 0x040;
+
 /// `struct intrhand`: one established handler.
 pub struct Intrhand {
     /// `ih_list`: link on intrq list.
@@ -308,6 +337,49 @@ pub struct AmpintcSoftc {
 // cells are written at attach and establish time with interrupts disabled.
 unsafe impl Sync for AmpintcSoftc {}
 
+/// `struct ampintc_msi_softc`: a GICv2m frame.
+#[repr(C)]
+pub struct AmpintcMsiSoftc {
+    /// `sc_dev`.
+    pub sc_dev: Device,
+    /// `sc_iot`.
+    pub sc_iot: Cell<Option<BusSpaceTag>>,
+    /// `sc_ioh`.
+    pub sc_ioh: Cell<Option<BusSpaceHandle>>,
+    /// `sc_node`.
+    pub sc_node: Cell<i32>,
+    /// `sc_addr`: the frame's physical address, as the CPU sees it.
+    pub sc_addr: Cell<usize>,
+    /// `sc_bspi`: the first SPI.
+    pub sc_bspi: Cell<i32>,
+    /// `sc_nspi`: how many.
+    pub sc_nspi: Cell<i32>,
+    /// `sc_spi`: per SPI, the handle established on the parent GIC (NULL: free); `sc_nspi`
+    /// slots, `malloc`ed zeroed. An MSI's cookie is the address of its slot.
+    pub sc_spi: Cell<*mut Cell<*mut MachineIntrHandle>>,
+    /// `sc_ic`: the registered controller; written once by `ampintc_msi_attach` before it
+    /// registers it, read-only afterwards.
+    pub sc_ic: UnsafeCell<InterruptController>,
+}
+
+impl AmpintcMsiSoftc {
+    /// `&sc->sc_spi[i]`.
+    fn spi(&self, i: i32) -> &Cell<*mut MachineIntrHandle> {
+        let base = self.sc_spi.get();
+        if base.is_null() || i < 0 || i >= self.sc_nspi.get() {
+            panic(format_args!("ampintcmsi: bad spi index {i}"));
+        }
+        // SAFETY: attach allocated `sc_nspi` zeroed slots (valid all-zero) at `sc_spi`, never
+        // freed.
+        unsafe { &*base.add(i as usize) }
+    }
+}
+
+// SAFETY: `#[repr(C)]` with the device first; the other members are `Cell`s of integers,
+// raw pointers and `Option`s of references, and a controller whose members are `Cell`s,
+// `Option`s of function pointers and a list entry of raw pointers: all valid as zero bits.
+unsafe impl Softc for AmpintcMsiSoftc {}
+
 /// `ampintc`: the attached controller.
 pub static AMPINTC: AmpintcSoftc = AmpintcSoftc {
     sc_handler: Cell::new(ptr::null_mut()),
@@ -321,6 +393,7 @@ pub static AMPINTC: AmpintcSoftc = AmpintcSoftc {
         ic_node: Cell::new(0),
         ic_cookie: Cell::new(ptr::null()),
         ic_establish: Some(ampintc_intr_establish_fdt),
+        ic_establish_msi: None,
         ic_disestablish: Some(ampintc_intr_disestablish),
         ic_enable: None,
         ic_disable: None,
@@ -336,9 +409,10 @@ pub static AMPINTC: AmpintcSoftc = AmpintcSoftc {
     sc_ipi_reason: [const { AtomicU32::new(0) }; ICD_ICTR_CPU_M as usize + 1],
     sc_ipi_num: AtomicI32::new(0),
 };
-/// `ampintc_ca`.
+/// `ampintc_ca`: the device is the `struct simplebus_softc` that heads the C's
+/// `struct ampintc_softc` (`sc_sbus`), for the frames `simplebus_attach` attaches below it.
 pub static AMPINTC_CA: Cfattach = Cfattach {
-    ca_devsize: size_of::<Device>(),
+    ca_devsize: size_of::<SimplebusSoftc>(),
     ca_match: Some(ampintc_match),
     ca_attach: ampintc_attach,
     ca_detach: None,
@@ -347,6 +421,18 @@ pub static AMPINTC_CA: Cfattach = Cfattach {
 
 /// `ampintc_cd`.
 pub static AMPINTC_CD: Cfdriver = Cfdriver::new(b"ampintc", DV_DULL, 0);
+
+/// `ampintcmsi_ca`.
+pub static AMPINTCMSI_CA: Cfattach = Cfattach {
+    ca_devsize: size_of::<AmpintcMsiSoftc>(),
+    ca_match: Some(ampintc_msi_match),
+    ca_attach: ampintc_msi_attach,
+    ca_detach: None,
+    ca_activate: None,
+};
+
+/// `ampintcmsi_cd`.
+pub static AMPINTCMSI_CD: Cfdriver = Cfdriver::new(b"ampintcmsi", DV_DULL, 0);
 
 /// Whether `ampintc_attach` has run (the C's `ampintc != NULL`).
 static ATTACHED: AtomicBool = AtomicBool::new(false);
@@ -388,7 +474,7 @@ pub fn ampintc_match(_parent: Option<&Device>, _cfdata: &CfMatch, aux: *mut c_vo
 
 /// `ampintc_attach`: maps the distributor and CPU interface, resets the controller, takes
 /// over `spl` and the IRQ dispatch, and registers with the device tree.
-pub fn ampintc_attach(_parent: Option<&Device>, _self: &Device, aux: *mut c_void) {
+pub fn ampintc_attach(parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
     let sc = &AMPINTC;
     // SAFETY: as in `ampintc_match`.
     let faa = unsafe { &*aux.cast::<FdtAttachArgs<'_>>() };
@@ -533,8 +619,8 @@ pub fn ampintc_attach(_parent: Option<&Device>, _self: &Device, aux: *mut c_void
     sc.sc_ic.ic_cookie.set(ptr::from_ref(sc).cast::<()>());
     arm_intr_register_fdt(&sc.sc_ic);
 
-    // attach GICv2M frame controller: simplebus_attach (M5).
-    kprintf!("\n");
+    // attach GICv2M frame controller
+    simplebus_attach(parent, self_, aux);
 }
 
 // ampintc_activate (DVACT_RESUME): M5.
@@ -1001,7 +1087,161 @@ fn ampintc_intr_disestablish(cookie: *mut c_void) {
     free(ih.cast::<u8>(), M_DEVBUF, size_of::<Intrhand>());
 }
 
-// ampintc_msi_*: the GICv2m MSI frame, with PCI on arm64.
+/// `ampintc_msi_match`.
+pub fn ampintc_msi_match(_parent: Option<&Device>, _cfdata: &CfMatch, aux: *mut c_void) -> i32 {
+    // SAFETY: `ampintcmsi` attaches at `fdt`, whose buses hand over a `FdtAttachArgs`.
+    let faa = unsafe { &*aux.cast::<FdtAttachArgs<'_>>() };
+    i32::from(OF_is_compatible(faa.fa_node, b"arm,gic-v2m-frame"))
+}
+
+/// `ampintc_msi_attach`: maps the frame, finds its SPIs and registers it as an MSI
+/// controller.
+pub fn ampintc_msi_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
+    // SAFETY: `ampintcmsi_ca` made the device, as an `AmpintcMsiSoftc`.
+    let sc = unsafe { self_.softc::<AmpintcMsiSoftc>() };
+    // SAFETY: as in `ampintc_msi_match`.
+    let faa = unsafe { &*aux.cast::<FdtAttachArgs<'_>>() };
+
+    sc.sc_node.set(faa.fa_node);
+    sc.sc_iot.set(Some(faa.fa_iot));
+    let Some(reg) = faa.fa_reg.first() else {
+        panic(format_args!("ampintc_msi_attach: bus_space_map failed!"));
+    };
+    // SAFETY: the device tree's registers of the frame, which nothing else drives.
+    let Ok(ioh) = (unsafe { bus_space_map(faa.fa_iot, reg.addr as usize, reg.size as usize, 0) })
+    else {
+        panic(format_args!("ampintc_msi_attach: bus_space_map failed!"));
+    };
+    sc.sc_ioh.set(Some(ioh));
+
+    // XXX: Hack to retrieve the physical address (from a CPU PoV).
+    let Some(pa) = pmap_extract(pmap_kernel(), Vaddr::new(ioh.0)) else {
+        kprintf!(": cannot retrieve msi addr\n");
+        return;
+    };
+    sc.sc_addr.set(pa.as_usize());
+
+    let typer = bus_space_read_4(faa.fa_iot, ioh, GICV2M_TYPER);
+    sc.sc_bspi.set(gicv2m_typer_spi_base(typer) as i32);
+    sc.sc_nspi.set(gicv2m_typer_spi_count(typer) as i32);
+
+    sc.sc_bspi
+        .set(OF_getpropint(faa.fa_node, b"arm,msi-base-spi", sc.sc_bspi.get() as u32) as i32);
+    sc.sc_nspi
+        .set(OF_getpropint(faa.fa_node, b"arm,msi-num-spis", sc.sc_nspi.get() as u32) as i32);
+
+    kprintf!(": nspi {}\n", sc.sc_nspi.get());
+
+    let Some(spi) = mallocarray(
+        sc.sc_nspi.get() as usize,
+        size_of::<Cell<*mut MachineIntrHandle>>(),
+        M_DEVBUF,
+        M_WAITOK | M_ZERO,
+    ) else {
+        panic(format_args!("ampintc_msi_attach: out of memory"));
+    };
+    sc.sc_spi.set(spi.as_ptr().cast());
+
+    // SAFETY: the controller is not registered yet, so nothing else reads it; it is written
+    // once, here.
+    let ic = unsafe { &mut *sc.sc_ic.get() };
+    ic.ic_node.set(faa.fa_node);
+    ic.ic_cookie.set(ptr::from_ref(sc).cast::<()>());
+    ic.ic_establish_msi = Some(ampintc_intr_establish_msi);
+    ic.ic_disestablish = Some(ampintc_intr_disestablish_msi);
+    ic.ic_barrier = Some(ampintc_intr_barrier_msi);
+    // SAFETY: the softc lives as long as the kernel (no detach); the controller is not
+    // written again.
+    arm_intr_register_fdt(unsafe { &*sc.sc_ic.get() });
+}
+
+/// `ampintc_intr_establish_msi`: the frame's `ic_establish_msi` hook: takes a free SPI,
+/// establishes it on the parent GIC (edge-triggered) and hands back the doorbell and the
+/// SPI number as the MSI's address and data. The cookie is the SPI's slot.
+#[allow(clippy::too_many_arguments)] // the C's signature
+fn ampintc_intr_establish_msi(
+    self_: *const (),
+    addr: &mut u64,
+    data: &mut u64,
+    level: i32,
+    ci: Option<&'static CpuInfo>,
+    func: IntrFn,
+    arg: *mut c_void,
+    name: &'static str,
+) -> *mut c_void {
+    // SAFETY: the cookie is the frame's softc (`ampintc_msi_attach`), which lives forever.
+    let sc = unsafe { &*self_.cast::<AmpintcMsiSoftc>() };
+
+    let Some(ic) = interrupt_controllers()
+        .iter()
+        .find(|ic| ic.ic_node.get() == OF_parent(sc.sc_node.get()))
+    else {
+        return ptr::null_mut();
+    };
+    let Some(establish) = ic.ic_establish else {
+        return ptr::null_mut();
+    };
+
+    let mut cells = [0u32; 3];
+    cells[0] = 0; // SPI
+    cells[2] = 1; // Edge-Rising
+
+    for i in 0..sc.sc_nspi.get() {
+        let slot = sc.spi(i);
+        if !slot.get().is_null() {
+            continue;
+        }
+
+        cells[1] = (sc.sc_bspi.get() + i - 32) as u32;
+        let cookie = establish(ic.ic_cookie.get(), &cells, level, ci, func, arg, name);
+        if cookie.is_null() {
+            return ptr::null_mut();
+        }
+
+        let Some(ih) = malloc(size_of::<MachineIntrHandle>(), M_DEVBUF, M_WAITOK) else {
+            return ptr::null_mut();
+        };
+        let ih = ih.cast::<MachineIntrHandle>();
+        // SAFETY: a fresh allocation, written once before use.
+        unsafe {
+            ih.write(MachineIntrHandle {
+                ih_ic: ptr::from_ref(ic),
+                ih_ih: cookie,
+            });
+        }
+
+        *addr = (sc.sc_addr.get() + GICV2M_SETSPI_NS) as u64;
+        *data = (sc.sc_bspi.get() + i) as u64;
+        slot.set(ih.as_ptr());
+        return ptr::from_ref(slot).cast_mut().cast::<c_void>();
+    }
+
+    ptr::null_mut()
+}
+
+/// The handle in an MSI's slot (`*(void **)cookie`).
+fn msi_slot(cookie: *mut c_void) -> &'static Cell<*mut MachineIntrHandle> {
+    // SAFETY: the cookie `ampintc_intr_establish_msi` handed out: a slot of a frame's
+    // `sc_spi`, which is never freed.
+    unsafe { &*cookie.cast::<Cell<*mut MachineIntrHandle>>() }
+}
+
+/// `ampintc_intr_disestablish_msi`: the frame's `ic_disestablish` hook.
+fn ampintc_intr_disestablish_msi(cookie: *mut c_void) {
+    let slot = msi_slot(cookie);
+    if let Some(ih) = NonNull::new(slot.get()) {
+        // SAFETY: the handle `ampintc_intr_establish_msi` made, not used after this.
+        unsafe { fdt_intr_disestablish(ih) };
+    }
+    slot.set(ptr::null_mut());
+}
+
+/// `ampintc_intr_barrier_msi`: the frame's `ic_barrier` hook.
+fn ampintc_intr_barrier_msi(cookie: *mut c_void) {
+    if let Some(ih) = NonNull::new(msi_slot(cookie).get()) {
+        intr_barrier(ih);
+    }
+}
 
 /// `ampintc_ipi_ddb`: another CPU entered ddb.
 #[cfg(feature = "multiprocessor")]

@@ -33,13 +33,16 @@
 //!
 //! Status: `wip`. Milestone M3 ports the levels; M4 adds the `IST_*` trigger types,
 //! `SOFTINTR_XCALL`, `struct machine_intr_handle`, `struct arm_intr_func` and
-//! `struct interrupt_controller`; M11a the `ARM_IPI_*` numbers (`MULTIPROCESSOR`).
+//! `struct interrupt_controller`; M11a the `ARM_IPI_*` numbers (`MULTIPROCESSOR`); M12
+//! `ic_establish_msi` (the GICv2m frame, PCI MSI).
 //! The functions it declares are `arm64/intr.rs`; the `spl*()` helpers are the
 //! `machine::intr` contract.
 //!
 //! ## Deviations
 //! - `ic_establish`'s `char *name` is a `&'static str`; the controller's `ic_cookie` is the
-//!   controller itself in every driver, so it is a `*const ()`.
+//!   controller itself in every driver, so it is a `*const ()`. `ic_establish_msi`'s
+//!   `uint64_t *addr, *data` are `&mut u64`.
+//! - The C's `void *` cell arrays (`int *cell`) are `&[u32]`.
 
 /// `IPL_NONE`: nothing.
 pub const IPL_NONE: i32 = 0;
@@ -184,6 +187,20 @@ pub type IcEstablishFn = fn(
     &'static str,
 ) -> *mut core::ffi::c_void;
 
+/// `ic_establish_msi(cookie, addr, data, level, ci, func, arg, name)`: establishes an MSI
+/// and hands back, through `addr` and `data`, the doorbell address and the payload the
+/// device must write; `data` comes in as the device's requester ID or `msi-map` output.
+pub type IcEstablishMsiFn = fn(
+    *const (),
+    &mut u64,
+    &mut u64,
+    i32,
+    Option<&'static crate::arch::arm64::include::cpu::CpuInfo>,
+    IntrFn,
+    *mut core::ffi::c_void,
+    &'static str,
+) -> *mut core::ffi::c_void;
+
 /// `struct interrupt_controller`: a registered interrupt controller.
 pub struct InterruptController {
     /// `ic_node`: the device tree node.
@@ -192,6 +209,8 @@ pub struct InterruptController {
     pub ic_cookie: core::cell::Cell<*const ()>,
     /// `ic_establish`.
     pub ic_establish: Option<IcEstablishFn>,
+    /// `ic_establish_msi`.
+    pub ic_establish_msi: Option<IcEstablishMsiFn>,
     /// `ic_disestablish`.
     pub ic_disestablish: Option<fn(*mut core::ffi::c_void)>,
     /// `ic_enable`.

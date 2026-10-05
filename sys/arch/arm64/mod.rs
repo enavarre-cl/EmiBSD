@@ -782,25 +782,24 @@ impl PciMachdep for Machine {
     fn pci_set_powerstate_md(_pc: Self::PciChipsetTag, _tag: Self::Pcitag, _s: i32, _p: i32) {}
 
     fn pci_msix_table_map(
-        _pc: Self::PciChipsetTag,
-        _tag: Self::Pcitag,
-        _memt: BusSpaceTag,
+        pc: Self::PciChipsetTag,
+        tag: Self::Pcitag,
+        memt: BusSpaceTag,
     ) -> Result<BusSpaceHandle, Errno> {
-        Err(crate::unported!("pci_msix_table_map (arm64/pci_machdep.c)"))
+        dev::pci_machdep::pci_msix_table_map(pc, tag, memt)
     }
 
     fn pci_msix_table_unmap(
-        _pc: Self::PciChipsetTag,
-        _tag: Self::Pcitag,
-        _memt: BusSpaceTag,
-        _memh: BusSpaceHandle,
+        pc: Self::PciChipsetTag,
+        tag: Self::Pcitag,
+        memt: BusSpaceTag,
+        memh: BusSpaceHandle,
     ) {
-        let _ = crate::unported!("pci_msix_table_unmap (arm64/pci_machdep.c)");
+        dev::pci_machdep::pci_msix_table_unmap(pc, tag, memt, memh)
     }
 
-    fn pci_intr_enable_msivec(_pa: &PciAttachArgs, _num_vec: i32) -> bool {
-        let _ = crate::unported!("pci_intr_enable_msivec (arm64/pci_machdep.c)");
-        true
+    fn pci_intr_enable_msivec(pa: &PciAttachArgs, num_vec: i32) -> bool {
+        dev::pci_machdep::pci_intr_enable_msivec(pa, num_vec)
     }
 
     fn pci_intr_map_msi(pa: &PciAttachArgs) -> Option<Self::PciIntrHandle> {
@@ -1022,9 +1021,36 @@ impl crate::machine::fdt::Fdt for Machine {
         include::fdt::fdt_intr_establish(node, level, func, arg, name).map(NonNull::cast)
     }
 
+    fn fdt_intr_establish_imap_cpu(
+        node: i32,
+        reg: &[u32],
+        level: i32,
+        ci: Option<&'static CpuInfo>,
+        func: crate::machine::intr::IntrFn,
+        arg: *mut c_void,
+        name: &'static str,
+    ) -> Option<NonNull<c_void>> {
+        include::fdt::fdt_intr_establish_imap_cpu(node, reg, level, ci, func, arg, name)
+            .map(NonNull::cast)
+    }
+
+    fn fdt_intr_establish_msi_cpu(
+        node: i32,
+        addr: &mut u64,
+        data: &mut u64,
+        level: i32,
+        ci: Option<&'static CpuInfo>,
+        func: crate::machine::intr::IntrFn,
+        arg: *mut c_void,
+        name: &'static str,
+    ) -> Option<NonNull<c_void>> {
+        include::fdt::fdt_intr_establish_msi_cpu(node, addr, data, level, ci, func, arg, name)
+            .map(NonNull::cast)
+    }
+
     unsafe fn fdt_intr_disestablish(cookie: NonNull<c_void>) {
         // SAFETY: the caller's guarantee: the cookie is a `MachineIntrHandle` from
-        // `fdt_intr_establish`.
+        // `fdt_intr_establish*`.
         unsafe { include::fdt::fdt_intr_disestablish(cookie.cast()) }
     }
 }

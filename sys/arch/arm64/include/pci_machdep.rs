@@ -34,15 +34,17 @@
 //! Status: `wip`. On arm64 every PCI host bridge driver (`pciecam`, `dwpcie`, `aplpcie`, ...)
 //! fills a `struct machine_pci_chipset` with its configuration and interrupt functions, and
 //! the macros this header defines call through it; M7b ports the types and the macros (the
-//! machine contract's `PciMachdep` impl in `arch/arm64/mod.rs`). No host bridge driver is
-//! ported yet, so no PCI bus attaches on arm64.
+//! machine contract's `PciMachdep` impl in `arch/arm64/mod.rs`). Since M12 the generic ECAM
+//! host bridge (`dev/fdt/pciecam.c`) fills one, and the functions declared at the end of the
+//! header are `arch/arm64/dev/pci_machdep.rs` (`pci_intr_enable_msivec`, `pci_msi_enable`,
+//! `pci_msix_enable`, `_pci_intr_map_msi*`, `pci_msix_table_map`/`unmap`).
 //!
 //! ## Deviations
 //! - The chipset's members are Rust `fn` pointers; the interrupt mapping functions return
 //!   `Option` (the C's 1 is `None`) and `pc_intr_string` returns its text by value.
-//! - The functions `arm64/pci_machdep.c` defines (`pci_mcfg_init`, `pci_lookup_segment`,
-//!   `pci_intr_enable_msivec`, `pci_msi_enable`, `pci_msix_enable`, `_pci_intr_map_msi*`,
-//!   `pci_msix_table_map`/`unmap`) are not ported; the contract reports the ones it reaches.
+//! - `pci_mcfg_init` and `pci_lookup_segment`, which the header declares and
+//!   `arm64/dev/acpipci.c` defines (ACPI's MCFG table), are not ported: this kernel boots
+//!   arm64 from the device tree (`acpi=off`), where no caller exists.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;

@@ -3,7 +3,9 @@
 //! On OpenBSD arm64 `<machine/fdt.h>` declares `fdt_find_cons`, `stdout_node`, `stdout_speed`
 //! and `fdt_cons_bs_tag`, which the console drivers' `*_init_cons` use to find the console
 //! the bootloader named in `/chosen`, `struct fdt_attach_args`, with which a device-tree node's
-//! driver is attached, and the `fdt_intr_*` names of the machine's interrupt functions. A
+//! driver is attached, and the `fdt_intr_*` names of the machine's interrupt functions
+//! (M12: the `interrupt-map` and MSI ones, `fdt_intr_establish_imap*` and
+//! `fdt_intr_establish_msi*`, which PCI host bridges use). A
 //! machine without a device tree answers "no node", never attaches anything with
 //! [`FdtAttachArgs`] (its type only has the members, so the machine-independent `sys/dev/fdt`
 //! drivers compile everywhere) and establishes no interrupt.
@@ -14,6 +16,7 @@ use core::ptr::NonNull;
 use crate::dev::ofw::fdt::{FdtNode, FdtReg};
 use crate::machine::Machine;
 use crate::machine::bus::{BusDmaTag, BusSpaceTag};
+use crate::machine::cpu::CpuInfo;
 use crate::machine::intr::IntrFn;
 
 /// `struct fdt_attach_args` of the selected machine.
@@ -69,11 +72,39 @@ pub trait Fdt {
         name: &'static str,
     ) -> Option<NonNull<c_void>>;
 
+    /// `fdt_intr_establish_imap_cpu(node, reg, nreg, level, ci, func, arg, name)`: the
+    /// interrupt `node`'s `interrupt-map` routes the child unit address and pin `reg` (four
+    /// cells) to, on `ci` (any CPU when `None`); a handle as `fdt_intr_establish`'s.
+    fn fdt_intr_establish_imap_cpu(
+        node: i32,
+        reg: &[u32],
+        level: i32,
+        ci: Option<&'static CpuInfo>,
+        func: IntrFn,
+        arg: *mut c_void,
+        name: &'static str,
+    ) -> Option<NonNull<c_void>>;
+
+    /// `fdt_intr_establish_msi_cpu(node, &addr, &data, level, ci, func, arg, name)`: an MSI
+    /// through the controller `node`'s `msi-map` or `msi-parent` names; `data` goes in as
+    /// the requester ID, and `addr` and `data` come back as the doorbell and the payload.
+    #[allow(clippy::too_many_arguments)] // the C's signature
+    fn fdt_intr_establish_msi_cpu(
+        node: i32,
+        addr: &mut u64,
+        data: &mut u64,
+        level: i32,
+        ci: Option<&'static CpuInfo>,
+        func: IntrFn,
+        arg: *mut c_void,
+        name: &'static str,
+    ) -> Option<NonNull<c_void>>;
+
     /// `fdt_intr_disestablish(cookie)`.
     ///
     /// # Safety
     ///
-    /// `cookie` came from `fdt_intr_establish` and is not used afterwards.
+    /// `cookie` came from `fdt_intr_establish*` and is not used afterwards.
     unsafe fn fdt_intr_disestablish(cookie: NonNull<c_void>);
 }
 
@@ -101,6 +132,61 @@ pub fn fdt_intr_establish(
     name: &'static str,
 ) -> Option<NonNull<c_void>> {
     Machine::fdt_intr_establish(node, level, func, arg, name)
+}
+
+/// `fdt_intr_establish_imap` on the selected machine: as `fdt_intr_establish_imap_cpu` on
+/// any CPU.
+pub fn fdt_intr_establish_imap(
+    node: i32,
+    reg: &[u32],
+    level: i32,
+    func: IntrFn,
+    arg: *mut c_void,
+    name: &'static str,
+) -> Option<NonNull<c_void>> {
+    Machine::fdt_intr_establish_imap_cpu(node, reg, level, None, func, arg, name)
+}
+
+/// `fdt_intr_establish_imap_cpu` on the selected machine.
+pub fn fdt_intr_establish_imap_cpu(
+    node: i32,
+    reg: &[u32],
+    level: i32,
+    ci: Option<&'static CpuInfo>,
+    func: IntrFn,
+    arg: *mut c_void,
+    name: &'static str,
+) -> Option<NonNull<c_void>> {
+    Machine::fdt_intr_establish_imap_cpu(node, reg, level, ci, func, arg, name)
+}
+
+/// `fdt_intr_establish_msi` on the selected machine: as `fdt_intr_establish_msi_cpu` on any
+/// CPU.
+pub fn fdt_intr_establish_msi(
+    node: i32,
+    addr: &mut u64,
+    data: &mut u64,
+    level: i32,
+    func: IntrFn,
+    arg: *mut c_void,
+    name: &'static str,
+) -> Option<NonNull<c_void>> {
+    Machine::fdt_intr_establish_msi_cpu(node, addr, data, level, None, func, arg, name)
+}
+
+/// `fdt_intr_establish_msi_cpu` on the selected machine.
+#[allow(clippy::too_many_arguments)] // the C's signature
+pub fn fdt_intr_establish_msi_cpu(
+    node: i32,
+    addr: &mut u64,
+    data: &mut u64,
+    level: i32,
+    ci: Option<&'static CpuInfo>,
+    func: IntrFn,
+    arg: *mut c_void,
+    name: &'static str,
+) -> Option<NonNull<c_void>> {
+    Machine::fdt_intr_establish_msi_cpu(node, addr, data, level, ci, func, arg, name)
 }
 
 /// `fdt_intr_disestablish` on the selected machine.

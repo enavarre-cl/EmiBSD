@@ -31,7 +31,9 @@
 //!
 //! Status: `wip`. Milestone M2 ports `struct bus_space` with the single-register accessors,
 //! map, unmap, subregion and vaddr, the `BUS_SPACE_MAP_*` flags and `bus_space_barrier`. The
-//! raw-multi accessors, `_space_mmap` and `bus_private` arrive with the drivers that use them.
+//! raw-multi accessors arrive with the drivers that use them. M12 adds `bus_private` and
+//! `_space_mmap` (`bus_space_mmap`), for the bridges that translate a child bus's addresses
+//! (`simplebus`, `pciecam`).
 //! M7b adds `bus_dma`: the `BUS_DMA_*` and `BUS_DMASYNC_*` flags, `bus_dma_segment_t`,
 //! `struct bus_dma_tag` and `struct bus_dmamap`; their functions are `arm64/bus_dma.rs`.
 //!
@@ -76,9 +78,16 @@ pub const BUS_SPACE_MAP_PREFETCHABLE: u32 = 0x08;
 pub struct BusSpaceHandle(pub(in crate::arch::arm64) usize);
 
 /// `struct bus_space` (`bus_space_t`): one bus's access methods.
+///
+/// `Clone`/`Copy` for the bridges that copy their parent's tag and override `_space_map` and
+/// `_space_mmap` (the C's `memcpy(&sc->sc_bus, sc->sc_iot, sizeof(sc->sc_bus))`).
+#[derive(Clone, Copy)]
 pub struct BusSpace {
     /// `bus_base`: the bus's base address.
     pub bus_base: BusAddr,
+    /// `bus_private`: the bridge's softc, for its overridden functions; NULL in
+    /// `arm64_bs_tag`.
+    pub bus_private: *mut c_void,
     /// `_space_read_1`.
     pub _space_read_1: fn(&'static BusSpace, BusSpaceHandle, BusSize) -> u8,
     /// `_space_write_1`.
@@ -105,7 +114,17 @@ pub struct BusSpace {
         fn(&'static BusSpace, BusSpaceHandle, BusSize, BusSize) -> Result<BusSpaceHandle, Errno>,
     /// `_space_vaddr`.
     pub _space_vaddr: fn(&'static BusSpace, BusSpaceHandle) -> *mut u8,
+    /// `_space_mmap`: the physical address `mmap(2)` may map for `addr + off`, `None` for
+    /// the C's `-1`.
+    pub _space_mmap: fn(&'static BusSpace, BusAddr, Off, i32, i32) -> Option<Paddr>,
 }
+
+// SAFETY: a tag is written once, by `bus_space.c`'s static initialiser or by its bridge's
+// attach before the tag is handed to any child, and only read afterwards; `bus_private` is
+// only dereferenced by that bridge's own functions.
+unsafe impl Sync for BusSpace {}
+// SAFETY: as above.
+unsafe impl Send for BusSpace {}
 
 /// Two tags are equal when they are the same bus space: the C compares `bus_space_tag_t`
 /// pointers (`com_attach_subr`'s `sc->sc_iot == comconsiot`).
@@ -113,6 +132,12 @@ impl PartialEq for BusSpace {
     fn eq(&self, other: &Self) -> bool {
         core::ptr::eq(self, other)
     }
+}
+
+/// `bus_space_mmap(t, a, o, p, f)`: the physical address of byte `o` of the bus address
+/// `a`, for `mmap(2)` of a device; `None` for the C's `-1`.
+pub fn bus_space_mmap(t: &'static BusSpace, a: BusAddr, o: Off, p: i32, f: i32) -> Option<Paddr> {
+    (t._space_mmap)(t, a, o, p, f)
 }
 
 /// `bus_space_barrier`: a full system barrier (`dsb sy`), whatever the flags.

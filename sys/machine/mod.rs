@@ -5,7 +5,10 @@
 //! [`disklabel`], [`fdt`], [`proc`], [`signal`], [`tcb`], [`pci_machdep`], [`isa_machdep`], [`atomic`];
 //! [`autoconf`] is what `ioconf.c` and the machine's `autoconf.c` give `subr_autoconf.c`;
 //! [`conf`] is the device switch the machine's `conf.c` fills (`bdevsw[]`, `cdevsw[]`); [`bootinfo`]
-//! is the record the boot glue hands over), all re-exported here. The selected architecture is re-exported as [`Machine`]; the block at the
+//! is the record the boot glue hands over), all re-exported here. `pci_chipset` (cfg
+//! `machine_pci_chipset`, arm64 only) is not a contract but the machine items the device-tree
+//! PCI host bridges use directly, as their C does; it is reached by its path. The selected
+//! architecture is re-exported as [`Machine`]; the block at the
 //! bottom proves at compile time that it implements every trait. Adding a trait method therefore
 //! means implementing it for amd64, arm64 and the host test double in the same commit.
 
@@ -24,6 +27,8 @@ pub mod fdt;
 pub mod intr;
 pub mod isa_machdep;
 pub mod param;
+#[cfg(machine_pci_chipset)]
+pub mod pci_chipset;
 pub mod pci_machdep;
 pub mod pmap;
 pub mod proc;
