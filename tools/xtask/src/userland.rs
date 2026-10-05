@@ -169,6 +169,11 @@ const VARIANTS: &[Variant] = &[
     },
     // M11e: the two-VM network stress.
     Variant::statically("usr.bin/tcpbench"),
+    // M12: the audio programs and cmp(1).
+    Variant::statically("usr.bin/cmp"),
+    Variant::statically("usr.bin/audioctl"),
+    Variant::statically("usr.bin/mixerctl"),
+    Variant::statically("usr.bin/aucat"),
     Variant {
         dir: "usr.sbin/tcpdump",
         add_cflags: "",
@@ -308,6 +313,17 @@ const PROGRAMS: &[&str] = &[
     // M11e: tcpbench(1), the network stress between two VMs, over libevent (LIBRARIES),
     // LibreSSL and libm.
     "usr.bin/tcpbench",
+    // M12: what the USB stick smoke copies and compares files with (cp(1), rm(1), cmp(1),
+    // and md5(1) for its `cksum` link), and audio(4)'s userland: audioctl(8) and
+    // mixerctl(8) on `/dev/audioctl0`, and aucat(1) over libsndio (LIBRARIES), which plays
+    // through `/dev/audio0` (`rsnd/0`) when no sndiod(8) runs, as `sio_open(3)` falls back.
+    "bin/cp",
+    "bin/rm",
+    "bin/md5",
+    "usr.bin/cmp",
+    "usr.bin/audioctl",
+    "usr.bin/mixerctl",
+    "usr.bin/aucat",
 ];
 
 /// EmiBSD's own test programs, built after `PROGRAMS` the same way (an OpenBSD-style Makefile,
@@ -336,7 +352,8 @@ const NOMAN_PROGRAMS: &[&str] = &["sbin/disklabel", "sbin/fdisk"];
 /// `libfuse` (M10d) is the FUSE library our own `tools/fusehello` links; its `includes` rule
 /// installs `<fuse/*.h>`, and its sources include the kernel's `<sys/fusebuf.h>`.
 /// `libevent` (M11e) is tcpbench(1)'s event loop; its `includes` rule installs `<event.h>`
-/// and `<evutil.h>`.
+/// and `<evutil.h>`. `libsndio` (M12) is aucat(1)'s audio library; `<sndio.h>` is one of
+/// `include/`'s own headers.
 const LIBRARIES: &[&str] = &[
     "lib/libcrypto",
     "lib/libssl",
@@ -347,6 +364,7 @@ const LIBRARIES: &[&str] = &[
     "lib/librpcsvc",
     "lib/libfuse",
     "lib/libevent",
+    "lib/libsndio",
 ];
 
 /// Flags added to host tools (built for macOS with the same clang) and why.

@@ -82,6 +82,11 @@ const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 /// - `fd/N` is `filedesc` 22 (200 / 150), minor N, for N in `0..64` like MAKEDEV;
 ///   `stdin`, `stdout` and `stderr` link to `fd/0..2` (`DEV_LINKS`).
 ///
+/// - `audio` is major 42 (`cdev_audio_init`, M12; 220 / 170): `audio0` minor 0 and
+///   `audioctl0` minor 192 (`AUDIO_DEV_AUDIOCTL`), mode 0660, group `_sndiop` (`MAKEDEV`'s
+///   `audio*` entry); `usb` is major 61 (`cdev_usb_init`, 239 / 191): `usb0`, mode 0640
+///   (`MAKEDEV`'s `usb*`).
+///
 /// `/dev/random` (major 45) is left out: the kernel has no `random` driver yet.
 /// (name, kind, major, minor, mode, group)
 const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
@@ -107,6 +112,10 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     // M10d: `fuse` 92 (`MAKEDEV`'s `_mcdev(fuse, fuse, fuse, {-major_fuse_c-}, 600)`):
     // libfuse opens `/dev/fuse0` (`lib/libfuse/fuse.c`, `fuse_mount`).
     ("fuse0", 'c', 92, 0, 0o600, "wheel"),
+    // M12: audio(4) (`MAKEDEV`'s `audio*`) and the first USB bus (`usb*`).
+    ("audio0", 'c', 42, 0, 0o660, "_sndiop"),
+    ("audioctl0", 'c', 42, 192, 0o660, "_sndiop"),
+    ("usb0", 'c', 61, 0, 0o640, "wheel"),
 ];
 
 /// The `sd` units the image has nodes for (module docs of `DEVICES`): M10f's four vioblk
@@ -188,7 +197,8 @@ const DEV_LINKS: &[(&str, &str)] = &[("stdin", "fd/0"), ("stdout", "fd/1"), ("st
 
 /// A user of `/etc/master.passwd`: (name, uid, gid, class, gecos, home, shell). OpenBSD's
 /// `root`, `daemon` and `nobody` (the lines of its stock `master.passwd`), and tcpdump(8)'s
-/// privsep users `_tcpdump` and `_portmap` (portmap(8) chroots to `/var/empty` as it;
+/// privsep users `_tcpdump` and `_portmap`, and `_sndiop` (M12, the group of the audio
+/// devices) (portmap(8) chroots to `/var/empty` as it;
 /// `etc/master.passwd` of the reference clone, line for line; the empty class is
 /// login.conf's `default`), no more.
 const USERS: &[(&str, u32, u32, &str, &str, &str, &str)] = &[
@@ -220,6 +230,16 @@ const USERS: &[(&str, u32, u32, &str, &str, &str, &str)] = &[
         "/var/empty",
         "/sbin/nologin",
     ),
+    // M12: the group of `/dev/audio0` and `/dev/audioctl0` (`MAKEDEV`), and its user.
+    (
+        "_sndiop",
+        110,
+        110,
+        "",
+        "sndio privileged user",
+        "/var/empty",
+        "/sbin/nologin",
+    ),
     (
         "nobody",
         32767,
@@ -248,6 +268,7 @@ const GROUPS: &[(&str, u32, &str)] = &[
     // etc/group of the reference clone.
     ("_portmap", 28, ""),
     ("_tcpdump", 76, ""),
+    ("_sndiop", 110, ""),
     ("nogroup", 32766, ""),
     ("nobody", 32767, ""),
 ];
@@ -789,6 +810,9 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
     }
     // M10c: the FAT, ISO 9660 and UDF images vnconfig(8) attaches (`images.rs`).
     images::make_images(ctx, &makefs, &staging.join("root/images"))?;
+    // M12: the tone `just smoke-audio` plays with aucat(1).
+    let tone = staging.join("root/tone.wav");
+    fs::write(&tone, tone_wav()).map_err(|e| format!("{}: {e}", tone.display()))?;
     let dev = staging.join("dev");
     fs::create_dir_all(dev.join("fd")).map_err(|e| format!("{}: {e}", dev.display()))?;
     let device = |name: &str, kind: char, major: u32, minor: u32, mode: u32| -> Result<()> {
@@ -857,6 +881,37 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
         passwd::ROOT_PASSWORD,
     );
     Ok(())
+}
+
+/// `/root/tone.wav` (M12): one second of a 440 Hz sine at half scale, 48 kHz, 16-bit
+/// signed little-endian, two channels, in a RIFF WAVE file aucat(1) plays. `smoke-audio`
+/// checks that QEMU's `wav` audio backend captured it (`devices.rs`, `--expect-tone`).
+fn tone_wav() -> Vec<u8> {
+    const RATE: u32 = 48_000;
+    const CHANNELS: u16 = 2;
+    let frames = RATE;
+    let data_len = frames * u32::from(CHANNELS) * 2;
+    let mut v = Vec::with_capacity(44 + data_len as usize);
+    v.extend_from_slice(b"RIFF");
+    v.extend_from_slice(&(36 + data_len).to_le_bytes());
+    v.extend_from_slice(b"WAVEfmt ");
+    v.extend_from_slice(&16u32.to_le_bytes());
+    v.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    v.extend_from_slice(&CHANNELS.to_le_bytes());
+    v.extend_from_slice(&RATE.to_le_bytes());
+    v.extend_from_slice(&(RATE * u32::from(CHANNELS) * 2).to_le_bytes());
+    v.extend_from_slice(&(CHANNELS * 2).to_le_bytes());
+    v.extend_from_slice(&16u16.to_le_bytes());
+    v.extend_from_slice(b"data");
+    v.extend_from_slice(&data_len.to_le_bytes());
+    for i in 0..frames {
+        let t = f64::from(i) / f64::from(RATE);
+        let s = (16_383.0 * (2.0 * std::f64::consts::PI * 440.0 * t).sin()).round() as i16;
+        for _ in 0..CHANNELS {
+            v.extend_from_slice(&s.to_le_bytes());
+        }
+    }
+    v
 }
 
 /// Adds the host shims (module docs) to makefs's evaluated Makefile.
@@ -1016,7 +1071,7 @@ mod tests {
     }
 
     /// The users and groups whose lines come from the reference clone's `etc/`.
-    const FROM_REFERENCE_ETC: &[&str] = &["_tcpdump", "_portmap"];
+    const FROM_REFERENCE_ETC: &[&str] = &["_tcpdump", "_portmap", "_sndiop"];
 
     /// The users and groups taken from the reference clone's `etc/master.passwd` and
     /// `etc/group` reproduce their lines: `cargo test -p xtask -- --ignored` with
@@ -1042,6 +1097,19 @@ mod tests {
         for l in RPC.lines().filter(|l| !l.starts_with('#')) {
             assert!(rpc.lines().any(|r| r == l), "rpc: `{l}` is not in etc/rpc");
         }
+    }
+
+    #[test]
+    fn tone_is_one_second_of_48k_stereo() {
+        let w = tone_wav();
+        assert_eq!(&w[0..4], b"RIFF");
+        assert_eq!(&w[36..40], b"data");
+        assert_eq!(w.len(), 44 + 48_000 * 4);
+        let peak = w[44..]
+            .chunks(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]).unsigned_abs())
+            .max();
+        assert_eq!(peak, Some(16_383));
     }
 
     #[test]
