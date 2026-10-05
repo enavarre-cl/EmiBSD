@@ -47,7 +47,11 @@
 //!   (`TPIDR_EL1`, then the MMU with the boot processor's `MAIR_EL1`, `TCR_EL1`,
 //!   `SCTLR_EL1` and `ci_ttbr1`, then `ci_el1_stkend` as its stack) plus what `initarm` does
 //!   on the boot processor (`SPSel`, `VBAR_EL1`, the FPU trapped as `fpu_drop` leaves it),
-//!   then calls `cpu_init_secondary`.
+//!   then calls `cpu_init_secondary`. After a boot by boot(8) (M14) the `BootMp` is
+//!   `machdep.rs`'s: PSCI `CPU_ON` (`psci.c` is not ported: the call is made there, its
+//!   conduit and function ID from `/psci`) at `locore.S`'s `cpu_hatch_secondary`, which
+//!   brings the MMU up on `locore0.S`'s identity map and the kernel's `TTBR1_EL1` and
+//!   enters `cpu_hatch_entry` on `ci_el1_stkend` (`locore.rs`, deviations).
 //! - Not in the C: `cpu_hatch_entry` turns on the processor's generic timer event stream
 //!   (`agtimer_evtstrm_enable`, a `wfe` wake-up every ~130 µs; `agtimer_startclock` keeps it
 //!   on) before `cpu_init_secondary` waits in `wfe` for `CPUF_IDENTIFY` and `CPUF_GO`. Those
@@ -851,8 +855,9 @@ static AP_TCR: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "multiprocessor")]
 static AP_SCTLR: AtomicU64 = AtomicU64::new(0);
 /// See `AP_MAIR`: the kernel's `TTBR1_EL1` (`ci_ttbr1`, which the processor cannot read yet).
-#[cfg(feature = "multiprocessor")]
-static AP_TTBR1: AtomicU64 = AtomicU64::new(0);
+/// `locore.S`'s `cpu_hatch_secondary` reads it with the MMU off (boot(8)'s entry), so it
+/// exists without `MULTIPROCESSOR` too (the assembly names it either way).
+pub(crate) static AP_TTBR1: AtomicU64 = AtomicU64::new(0);
 
 /// `cpu_suspended`: drivers clear it to wake a suspended machine.
 pub static CPU_SUSPENDED: AtomicI32 = AtomicI32::new(0);

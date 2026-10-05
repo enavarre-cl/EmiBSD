@@ -28,10 +28,15 @@ paths:
   not from a crate. `sys/stand/` converts responses into `stand::BootInfo` (arch-neutral: memory
   map, HHDM offset, DTB/RSDP pointers, framebuffer, modules) and hands that to
   `machine::Machine::early_init`, then `kern::init_main::main`. Nothing else sees Limine types.
-  boot(8)'s entry (`sys/stand/bootarg.rs`, called by amd64's `locore0.S`) takes its `BootInfo`
-  from `machine::Cpu::getbootinfo` and shares the tail (`stand::start_kernel`).
+  boot(8)'s entry (`sys/stand/bootarg.rs`, called by both archs' `locore0.S`) takes its
+  `BootInfo` from `machine::Cpu::getbootinfo` and shares the tail (`stand::start_kernel`).
+  Limine's `_start` is not `#[no_mangle]`: the symbol `_start` is arm64's `locore0.S` entry.
 - `sys/arch/{amd64,arm64}/conf/kernel.ld`: `PHDRS` text/rodata/data, `.requests*` kept,
-  `.eh_frame*`/`.note*` discarded. arm64: base `0xffffffff80000000`. amd64 (M14, so efiboot can
+  `.eh_frame*`/`.note*` discarded. arm64 (M14, so efiboot can load it): base
+  `0xffffffff80000000`, physical addresses from 0 by `AT()` (efiboot's `LOADADDR` keeps 39
+  bits and adds its 64 MB block), `.text.locore0` first, `__bss_start`/`_end`/`end` for
+  `locore0.S`, `ENTRY(__start_phys)` (`_start`'s offset: `e_entry` goes through `LOADADDR`
+  too). amd64 (M14, so efiboot can
   load it): OpenBSD's `ld.script` layout, `KERNTEXTOFF` `0xffffffff81000000`, physical addresses
   from `0x1000000` by `AT()`, page-aligned sections with the symbols `locore0.S` reads, `.got`
   inside `.data` (nothing after `end`), `ENTRY(start)` (the 32-bit boot(8) entry); Limine enters

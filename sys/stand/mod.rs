@@ -133,7 +133,9 @@ static REQUESTS_END: RequestsEndMarker = RequestsEndMarker::new();
 /// # Safety
 ///
 /// Called exactly once by the bootloader, with the machine state the Limine protocol specifies.
-#[unsafe(no_mangle)]
+///
+/// Not `#[no_mangle]`: the request hands Limine its address, and the symbol `_start` is
+/// arm64's boot(8) entry (`locore0.S`, OpenBSD's name), the ELF entry of that kernel.
 unsafe extern "C" fn _start() -> ! {
     // The entry point request has no information in its response; it only has to be present.
     let _ = ENTRY_POINT.request.response();

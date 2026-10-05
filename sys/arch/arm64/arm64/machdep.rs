@@ -72,30 +72,52 @@
 //!   map is relocated into a static buffer (`MMAP`) instead of stolen pages.
 //! - The bootargs parsing (`-a -c -d -s`) is `BootInfo::boothowto` in `sys/machine/bootinfo.rs`,
 //!   because the Limine command line serves both architectures.
+//! - boot(8)'s entry (M14, `locore0.rs`): `getbootinfo` is the half of `initarm` that reads
+//!   efiboot's `/chosen` and the memory (`collect_kernel_args`, `process_kernel_args`,
+//!   `memreg_add`, `memreg_remove`, the EFI memory map walk, `/reserved-memory`, the 64 MB
+//!   block), into the `BootInfo` the rest of `initarm` takes from either entry. The device
+//!   tree and the EFI memory map are read in place through `locore0.S`'s direct map (efiboot
+//!   leaves them in loader data, which is never given to uvm) instead of being mapped at the
+//!   first free KVA and copied to stolen pages; the direct map gains the gigabytes of RAM
+//!   there (`bootarg_direct_map`, not in the C; memory it cannot reach, past 512 GB, is
+//!   listed as reserved). `openbsd,dma-constraint` is read but `dma_constraint` is a
+//!   constant (every address): a narrower one is reported by `initarm`. The processors come
+//!   from `/cpus` and start by PSCI `CPU_ON` (`bootarg_mp_start`: `psci.c`'s `psci_cpu_on`
+//!   is not ported; the call is made here, `hvc` or `smc` from `/psci`'s `method`).
 //! - `cpu_info[]` holds `CiPtr`s; `cpu_idle_cycle_fcn` is a `StaticCell` written at attach
 //!   time; `BOOT_MP` (`MULTIPROCESSOR`) has no C counterpart: PSCI or a spin table in the C
 //!   (`cpu.rs`, deviations).
 
 use core::arch::asm;
 use core::cell::UnsafeCell;
-use core::ptr::{self, addr_of, addr_of_mut};
+use core::ffi::CStr;
+use core::ptr::{self, NonNull, addr_of, addr_of_mut};
 use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 
 use libkern::StaticCell;
 
+use crate::arch::arm64::arm64::autoconf::BOOTMAC;
 use crate::arch::arm64::arm64::cpu;
+#[cfg(feature = "multiprocessor")]
+use crate::arch::arm64::arm64::cpu::AP_TTBR1;
 use crate::arch::arm64::arm64::cpu::cpu_kick;
 #[cfg(feature = "multiprocessor")]
 use crate::arch::arm64::arm64::cpu::cpu_unidle;
+#[cfg(feature = "multiprocessor")]
+use crate::arch::arm64::arm64::cpufunc::cpu_dcache_wb_range;
 use crate::arch::arm64::arm64::cpufunc::cpu_wfi;
 use crate::arch::arm64::arm64::cpuswitch::cpu_switchto_asm;
 use crate::arch::arm64::arm64::exception::exception_vectors_addr;
 use crate::arch::arm64::arm64::fpu::{fpu_drop, fpu_save};
 use crate::arch::arm64::arm64::intr::delay;
+use crate::arch::arm64::arm64::locore0::DIRECT_BASE;
 use crate::arch::arm64::arm64::pmap::{
     PMAP_DIRECT_BASE, PMAP_DIRECT_END, pmap_bootstrap, pmap_growkernel,
 };
+#[cfg(feature = "multiprocessor")]
+use crate::arch::arm64::include::armreg::{MPIDR_AFF, read_specialreg};
 use crate::arch::arm64::include::armreg::{PSR_DIT, PSR_M_EL0t};
+use crate::arch::arm64::include::bootconfig::Arm64Bootparams;
 use crate::arch::arm64::include::cpu::{
     CPU_COMPATIBLE, CPU_ID_AA64ISAR0, CPU_ID_AA64ISAR1, CPU_ID_AA64ISAR2, CPU_ID_AA64MMFR0,
     CPU_ID_AA64MMFR1, CPU_ID_AA64MMFR2, CPU_ID_AA64PFR0, CPU_ID_AA64PFR1, CPU_ID_AA64SMFR0,
@@ -103,17 +125,30 @@ use crate::arch::arm64::include::cpu::{
     disable_irq_daif, enable_irq_daif,
 };
 use crate::arch::arm64::include::frame::Trapframe;
-use crate::arch::arm64::include::param::PAGE_SIZE;
+use crate::arch::arm64::include::param::{PAGE_MASK, PAGE_SIZE};
 use crate::arch::arm64::include::pcb::{PCB_FPU, PCB_SVE};
-use crate::arch::arm64::include::pte::ATTR_GP;
+use crate::arch::arm64::include::pte::{
+    ATTR_AF, ATTR_GP, ATTR_PXN, ATTR_UXN, L1_BLOCK, L1_SHIFT, L2_SIZE, Ln_ENTRIES, PTE_ATTR_WB,
+    SH_INNER, attr_idx, attr_sh,
+};
 use crate::arch::arm64::include::reg::Fpreg;
-use crate::arch::arm64::include::vmparam::{VM_MIN_KERNEL_ADDRESS, VM_PHYS_SIZE};
+use crate::arch::arm64::include::vmparam::{VM_MIN_KERNEL_ADDRESS, VM_PHYS_SIZE, VM_PHYSSEG_MAX};
 use crate::conf::vers::VERSION;
+use crate::dev::efi::efi::{
+    EFI_MEMORY_DESCRIPTOR_VERSION, EfiACPIMemoryNVS, EfiACPIReclaimMemory, EfiBootServicesCode,
+    EfiBootServicesData, EfiConventionalMemory, EfiLoaderCode, EfiLoaderData, EfiMemoryDescriptor,
+    EfiRuntimeServicesCode, EfiRuntimeServicesData, EfiUnusableMemory,
+};
 use crate::dev::fdt::pluart_fdt::pluart_init_cons;
+#[cfg(feature = "multiprocessor")]
+use crate::dev::ofw::fdt::fdt_node_property_int;
 use crate::dev::ofw::fdt::{
-    FdtNode, fdt_find_node, fdt_init, fdt_is_compatible, fdt_node_property,
+    FdtNode, FdtReg, fdt_child_node, fdt_find_node, fdt_get_reg, fdt_get_size, fdt_init,
+    fdt_is_compatible, fdt_next_node, fdt_node_property,
 };
 use crate::dev::ofw::openfirm::{OF_finddevice, OF_getprop, OF_getproplen};
+use crate::dev::softraid::{SR_BOOTKEY, SR_BOOTUUID};
+use crate::dev::softraidvar::{SR_CRYPTO_MAXKEYBYTES, SR_UUID_MAX, SrUuid};
 use crate::kern::init_main::{BOOTHOWTO, PROC0};
 use crate::kern::kern_malloc::{kmeminit_nkmempages, nkmempages};
 use crate::kern::kern_sysctl::{sysctl_bounded_arr, sysctl_int, sysctl_rdquad, sysctl_rdstring};
@@ -121,10 +156,12 @@ use crate::kern::subr_log::init_static_msgbuf;
 use crate::kern::vfs_bio::bufinit;
 use crate::kprintf;
 #[cfg(feature = "multiprocessor")]
+use crate::machine::bootinfo::BootCpu;
 use crate::machine::bootinfo::BootMp;
-use crate::machine::bootinfo::{BootInfo, MemKind};
+use crate::machine::bootinfo::{BootInfo, EfiMemmap, MAX_MODULES, MemKind, MemMap, MemRegion};
 use crate::machine::db_machdep::{db_enter, db_machine_init};
 use crate::machine::{Cpu, Machine};
+use crate::netinet::if_ether::ETHER_ADDR_LEN;
 use crate::sys::errno::Errno;
 use crate::sys::exec::{EXEC_NOBTCFI, ExecPackage, PsStrings};
 use crate::sys::param::{NCARGS, roundup};
@@ -134,7 +171,7 @@ use crate::sys::reboot::{
 };
 use crate::sys::sysctl::SysctlBoundedArgs;
 use crate::sys::systm::PHYSMEM;
-use crate::sys::types::{Paddr, Register, Vaddr};
+use crate::sys::types::{Paddr, Psize, Register, Vaddr};
 use crate::sys::user::{Uarea, User};
 use crate::unported;
 use crate::uvm::uvm_extern::{EXEC_MAP, PHYS_MAP, UvmConstraintRange};
@@ -143,6 +180,7 @@ use crate::uvm::uvm_km::{kernel_map, kernel_map_min, uvm_km_suballoc};
 use crate::uvm::uvm_map::VM_MAP_PAGEABLE;
 use crate::uvm::uvm_page::{VmPage, uvm_page_physload, uvm_setpagesize};
 use crate::uvm::uvm_param::{atop, ptoa, round_page, trunc_page};
+use libkern::explicit_bzero::explicit_bzero;
 
 #[cfg(feature = "qemu")]
 use crate::arch::arm64::arm64::qemu;
@@ -393,8 +431,22 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
     consinit();
 
     // `openbsd,sr-bootuuid` and `openbsd,sr-bootkey` (efiboot's softraid boot volume and
-    // key, copied into `sr_bootuuid`/`sr_bootkey` under NSOFTRAID): replaced-by-limine, no
-    // loader sets them; `dev/softraid.rs`'s `SR_BOOTUUID`/`SR_BOOTKEY` stay zero.
+    // key, copied into `sr_bootuuid`/`sr_bootkey` under NSOFTRAID): boot(8)'s entry copies
+    // them (`getbootinfo`); under Limine no loader sets them and `dev/softraid.rs`'s
+    // `SR_BOOTUUID`/`SR_BOOTKEY` stay zero.
+    // `openbsd,dma-constraint`: `dma_constraint` is a constant here (every address, what
+    // efiboot passes on QEMU); a narrower one is reported (see the module's deviations).
+    // SAFETY: written by `getbootinfo` before `initarm`, on this CPU.
+    if let Some((low, high)) = unsafe { BOOT_DMA_CONSTRAINT.read() }
+        && (low != 0 || high != u64::MAX)
+    {
+        kprintf!(
+            "initarm: dma constraint {:#x}-{:#x} not applied\n",
+            low,
+            high
+        );
+        let _ = unported!("dma_constraint from openbsd,dma-constraint");
+    }
     // The UEFI system table and memory map efiboot puts in /chosen (see the module's
     // deviations).
     if let Some(st) = boot.efi_system_table {
@@ -482,6 +534,691 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
         db_enter();
     }
     Ok(())
+}
+
+/// `CPU_ON` (`dev/fdt/psci.c`): PSCI 0.2's 64-bit `CPU_ON` function ID.
+#[cfg(feature = "multiprocessor")]
+const PSCI_CPU_ON_64: u32 = 0xc400_0003;
+/// `PSCI_SUCCESS` (`dev/fdt/pscivar.h`).
+#[cfg(feature = "multiprocessor")]
+const PSCI_SUCCESS: u64 = 0;
+
+/// The most usable ranges `getbootinfo` collects (`memreg[VM_PHYSSEG_MAX]` in C).
+const NMEMREG: usize = VM_PHYSSEG_MAX;
+
+/// `memreg[]`/`nmemreg`: the usable physical memory boot(8)'s entry gathers, a local of
+/// `getbootinfo` here (file statics in C).
+struct Memreg {
+    reg: [FdtReg; NMEMREG],
+    n: usize,
+}
+
+/// `bootargs`: the kernel's copy of `/chosen`'s `bootargs` (boot(8)'s entry; Limine's
+/// command line is its own).
+static BOOTARGS: StaticCell<[u8; 256]> = StaticCell::new([0; 256]);
+/// boot(8)'s entry: the kernel image's physical minus virtual address (`kern_delta`), for
+/// the physical address of `cpu_hatch_secondary`; 0 under Limine.
+pub static KERN_DELTA: AtomicU64 = AtomicU64::new(0);
+/// `openbsd,dma-constraint` as boot(8) passed it, `(low, high)`; `initarm` reports a
+/// narrower one (see the module's deviations).
+static BOOT_DMA_CONSTRAINT: StaticCell<Option<(u64, u64)>> = StaticCell::new(None);
+
+/// The processors `/cpus` lists (boot(8)'s entry, `MULTIPROCESSOR`): their `reg`, the MPIDR
+/// affinity.
+#[cfg(feature = "multiprocessor")]
+static BOOTARG_CPUS: StaticCell<[u64; MAXCPUS as usize]> = StaticCell::new([0; MAXCPUS as usize]);
+/// How many of [`BOOTARG_CPUS`] are filled.
+#[cfg(feature = "multiprocessor")]
+static BOOTARG_NCPUS: AtomicU32 = AtomicU32::new(0);
+/// PSCI's conduit from `/psci`'s `method`: `hvc` (true) or `smc`.
+#[cfg(feature = "multiprocessor")]
+static PSCI_HVC: AtomicBool = AtomicBool::new(true);
+/// PSCI's `CPU_ON` function ID (`psci.c`: the standard one from PSCI 0.2 on, else the
+/// node's `cpu_on`).
+#[cfg(feature = "multiprocessor")]
+static PSCI_CPU_ON: AtomicU32 = AtomicU32::new(0);
+
+unsafe extern "C" {
+    /// `_start` (`locore0.S`): the first instruction of the kernel image.
+    static _start: [u8; 0];
+    /// `esym` (`locore.S`): the end of the symbols boot(8) loaded, a virtual address.
+    static esym: u64;
+    /// `_end` (`conf/kernel.ld`): the end of the image's BSS.
+    static _end: [u8; 0];
+}
+
+/// boot(8)'s entry (`Cpu::getbootinfo`): the half of `initarm` that reads what efiboot
+/// passed, the `arm64_bootparams` `locore0.S` built (`arg`) and the device tree's `/chosen`
+/// (`bootargs`, `openbsd,boothowto`, `openbsd,bootduid`, `openbsd,bootmac`, the softraid
+/// boot volume and key, the UEFI memory map and system table, `openbsd,dma-constraint`),
+/// and the physical memory: the EFI memory map's conventional and boot services memory (the
+/// device tree's `/memory` without one), less `/reserved-memory`'s `no-map` regions and
+/// the kernel's 64 MB block, whose part after the kernel and its symbols is usable too
+/// (`pmap_physload_avail` in C). The direct map `locore0.S` began covers that memory
+/// afterwards (see the module's deviations).
+///
+/// # Safety
+///
+/// Once, on the boot CPU, from `bootarg_main` with the pointer `locore0.S` passed, before
+/// anything else.
+pub unsafe fn getbootinfo(arg: usize) -> Result<BootInfo, &'static str> {
+    // SAFETY: locore0.S built the parameters on the boot stack, below the caller's frame.
+    let abp = unsafe { &*(arg as *const Arm64Bootparams) };
+    let kernbase = ptr::addr_of!(_start) as usize & !PAGE_MASK;
+    let kvo = abp.kern_delta as usize;
+    KERN_DELTA.store(abp.kern_delta, Ordering::Relaxed);
+    let kernel_phys = kernbase.wrapping_add(kvo);
+
+    // The bootloader has loaded us into a 64MB block.
+    let memstart = kernel_phys & !(L2_SIZE - 1);
+    let memend = memstart + 64 * 1024 * 1024;
+
+    // The FDT, through the direct map (the C maps it at the first free KVA).
+    let config = abp.arg2 as u64;
+    // SAFETY: once, on the boot CPU, before anything reads the direct map's table.
+    if config == 0 || !unsafe { bootarg_direct_map(config, config + 1) } {
+        return Err("getbootinfo: no FDT");
+    }
+    let fdt = (DIRECT_BASE + config as usize) as *const u8;
+    let size = fdt_get_size(fdt);
+    // SAFETY: as above.
+    if size == 0 || !unsafe { bootarg_direct_map(config, config + size as u64) } {
+        return Err("getbootinfo: no FDT");
+    }
+    if fdt_init(fdt) == 0 {
+        return Err("getbootinfo: corrupt FDT");
+    }
+
+    let mut howto = 0;
+    let mut duid = None;
+    let mut mmap_start = 0u64;
+    let mut mmap_size = 0u32;
+    let mut mmap_desc_size = 0u32;
+    let mut mmap_desc_ver = 0u32;
+    let mut system_table = 0u64;
+    let node = fdt_find_node(b"/chosen");
+    if !node.is_null() {
+        let be32 = |p: &[u8]| u32::from_be_bytes([p[0], p[1], p[2], p[3]]);
+        let be64 = |p: &[u8]| u64::from_be_bytes([p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]]);
+        let prop = |name: &[u8]| fdt_node_property(node, name).unwrap_or(&[]);
+
+        let p = prop(b"bootargs");
+        if !p.is_empty() {
+            collect_kernel_args(p);
+        }
+        let p = prop(b"openbsd,boothowto");
+        if p.len() == 4 {
+            howto = be32(p) as i32;
+        }
+        let p = prop(b"openbsd,bootduid");
+        if p.len() == 8 {
+            let mut d = [0u8; 8];
+            d.copy_from_slice(p);
+            duid = Some(d);
+        }
+        let p = prop(b"openbsd,bootmac");
+        if p.len() == ETHER_ADDR_LEN {
+            let mut lladdr = [0u8; ETHER_ADDR_LEN];
+            lladdr.copy_from_slice(p);
+            // SAFETY: the boot CPU, before autoconfiguration reads it.
+            unsafe { BOOTMAC.write(Some(lladdr)) };
+        }
+        let p = prop(b"openbsd,sr-bootuuid");
+        if p.len() == size_of::<SrUuid>() {
+            let mut uuid = SrUuid {
+                sui_id: [0; SR_UUID_MAX],
+            };
+            uuid.sui_id.copy_from_slice(p);
+            // SAFETY: the boot CPU, before softraid reads it (NSOFTRAID > 0: softraid0 is
+            // configured).
+            unsafe { SR_BOOTUUID.write(uuid) };
+        }
+        // SAFETY: the property lies in the device tree efiboot allocated, mapped
+        // read-write by the direct map; nothing holds a reference into it but `p`, which is
+        // not used again.
+        unsafe { bootarg_bzero(p) };
+        let p = prop(b"openbsd,sr-bootkey");
+        if p.len() == SR_CRYPTO_MAXKEYBYTES {
+            // SAFETY: as for the UUID.
+            unsafe { SR_BOOTKEY.get_mut().copy_from_slice(p) };
+        }
+        // SAFETY: as above.
+        unsafe { bootarg_bzero(p) };
+
+        let p = prop(b"openbsd,uefi-mmap-start");
+        if p.len() == 8 {
+            mmap_start = be64(p);
+        }
+        let p = prop(b"openbsd,uefi-mmap-size");
+        if p.len() == 4 {
+            mmap_size = be32(p);
+        }
+        let p = prop(b"openbsd,uefi-mmap-desc-size");
+        if p.len() == 4 {
+            mmap_desc_size = be32(p);
+        }
+        let p = prop(b"openbsd,uefi-mmap-desc-ver");
+        if p.len() == 4 {
+            mmap_desc_ver = be32(p);
+        }
+        let p = prop(b"openbsd,uefi-system-table");
+        if p.len() == 8 {
+            system_table = be64(p);
+        }
+        let p = prop(b"openbsd,dma-constraint");
+        if p.len() == 16 {
+            // SAFETY: the boot CPU, before `initarm` reads it.
+            unsafe { BOOT_DMA_CONSTRAINT.write(Some((be64(p), be64(&p[8..])))) };
+        }
+    }
+
+    let cmdline = process_kernel_args();
+
+    // The UEFI memory map, read in place through the direct map (`initarm` relocates it).
+    let mut efi_memmap = None;
+    let mapped = mmap_start != 0
+        && mmap_size != 0
+        // SAFETY: as above.
+        && unsafe { bootarg_direct_map(mmap_start, mmap_start + u64::from(mmap_size)) };
+    if mapped {
+        // SAFETY: efiboot's memory map, `mmap_size` bytes in loader data the kernel never
+        // hands to uvm, mapped by the direct map for the kernel's lifetime.
+        let map = unsafe {
+            core::slice::from_raw_parts(
+                (DIRECT_BASE + mmap_start as usize) as *const u8,
+                mmap_size as usize,
+            )
+        };
+        efi_memmap = Some(EfiMemmap {
+            map,
+            desc_size: mmap_desc_size,
+            desc_ver: mmap_desc_ver,
+        });
+    }
+
+    // Make all other physical memory available to UVM.
+    let mut memreg = Memreg {
+        reg: [FdtReg::default(); NMEMREG],
+        n: 0,
+    };
+    let descs = || {
+        efi_memmap.iter().flat_map(|m| {
+            let n = if m.desc_size == 0 {
+                0
+            } else {
+                m.map.len() / m.desc_size as usize
+            };
+            (0..n).map(move |i| {
+                // SAFETY: descriptor `i` lies inside the map, `desc_size` bytes apart; the
+                // read is unaligned on purpose.
+                unsafe {
+                    ptr::read_unaligned(
+                        m.map
+                            .as_ptr()
+                            .add(i * m.desc_size as usize)
+                            .cast::<EfiMemoryDescriptor>(),
+                    )
+                }
+            })
+        })
+    };
+    if efi_memmap.is_some()
+        && mmap_desc_ver == EFI_MEMORY_DESCRIPTOR_VERSION
+        && mmap_desc_size as usize >= size_of::<EfiMemoryDescriptor>()
+    {
+        // Load all memory marked as EfiConventionalMemory, EfiBootServicesCode or
+        // EfiBootServicesData. The initial 64MB memory block should be marked as
+        // EfiLoaderData so it won't be added here.
+        for desc in descs() {
+            if desc.Type == EfiConventionalMemory
+                || desc.Type == EfiBootServicesCode
+                || desc.Type == EfiBootServicesData
+            {
+                memreg_add(
+                    &mut memreg,
+                    &FdtReg {
+                        addr: desc.PhysicalStart,
+                        size: ptoa(desc.NumberOfPages as usize) as u64,
+                    },
+                );
+            }
+        }
+    } else {
+        let node = fdt_find_node(b"/memory");
+        if node.is_null() {
+            return Err("getbootinfo: no memory specified");
+        }
+        let mut i = 0;
+        while memreg.n < NMEMREG {
+            let mut reg = FdtReg::default();
+            if fdt_get_reg(node, i, &mut reg).is_err() {
+                break;
+            }
+            i += 1;
+            if reg.size == 0 {
+                continue;
+            }
+            memreg_add(&mut memreg, &reg);
+        }
+    }
+
+    // Remove reserved memory.
+    let node = fdt_find_node(b"/reserved-memory");
+    if !node.is_null() {
+        let mut node = fdt_child_node(node);
+        while !node.is_null() {
+            let mut reg = FdtReg::default();
+            if fdt_node_property(node, b"no-map").is_some()
+                && fdt_get_reg(node, 0, &mut reg).is_ok()
+                && reg.size != 0
+            {
+                memreg_remove(&mut memreg, &reg);
+            }
+            node = fdt_next_node(node);
+        }
+    }
+
+    // Remove the initial 64MB block.
+    memreg_remove(
+        &mut memreg,
+        &FdtReg {
+            addr: memstart as u64,
+            size: (memend - memstart) as u64,
+        },
+    );
+
+    // The block: the kernel, its symbols and locore0.S's tables, then free memory.
+    // SAFETY: `esym` is locore.S's word, written by locore0.S before any Rust ran.
+    let esym_va = unsafe { ptr::addr_of!(esym).read() } as usize;
+    let image_end = esym_va.max(ptr::addr_of!(_end) as usize);
+    let kernel_end = round_page(image_end)
+        .wrapping_add(kvo)
+        .clamp(memstart, memend);
+
+    let mut memmap = MemMap::new();
+    let mut push = |base: u64, end: u64, kind: MemKind| {
+        end <= base
+            || memmap.push(MemRegion {
+                base: Paddr::new(base as usize),
+                length: Psize::new((end - base) as usize),
+                kind,
+            })
+    };
+    let mut ok = push(
+        memstart as u64,
+        kernel_end as u64,
+        MemKind::KernelAndModules,
+    );
+    // SAFETY: as above.
+    if unsafe { bootarg_direct_map(kernel_end as u64, memend as u64) } {
+        ok &= push(kernel_end as u64, memend as u64, MemKind::Usable);
+    }
+    for r in &memreg.reg[..memreg.n] {
+        // Memory the direct map cannot reach stays out of uvm's way (Reserved).
+        // SAFETY: as above.
+        let kind = if unsafe { bootarg_direct_map(r.addr, r.addr + r.size) } {
+            MemKind::Usable
+        } else {
+            MemKind::Reserved
+        };
+        ok &= push(r.addr, r.addr + r.size, kind);
+    }
+    // What uvm never gets, for the map's sake: the firmware's and efiboot's own memory.
+    for desc in descs() {
+        let t = desc.Type;
+        let kind =
+            if t == EfiConventionalMemory || t == EfiBootServicesCode || t == EfiBootServicesData {
+                continue;
+            } else if t == EfiLoaderCode || t == EfiLoaderData {
+                MemKind::BootloaderReclaimable
+            } else if t == EfiRuntimeServicesCode || t == EfiRuntimeServicesData {
+                MemKind::ReservedMapped
+            } else if t == EfiACPIReclaimMemory {
+                MemKind::AcpiReclaimable
+            } else if t == EfiACPIMemoryNVS {
+                MemKind::AcpiNvs
+            } else if t == EfiUnusableMemory {
+                MemKind::BadMemory
+            } else {
+                MemKind::Reserved
+            };
+        let base = desc.PhysicalStart;
+        let end = base + ptoa(desc.NumberOfPages as usize) as u64;
+        // The kernel's block is listed above.
+        if base < memend as u64 && end > memstart as u64 {
+            continue;
+        }
+        ok &= push(base, end, kind);
+    }
+    if !ok {
+        return Err("getbootinfo: too many memory regions");
+    }
+
+    Ok(BootInfo {
+        bootloader_name: c"boot(8)",
+        bootloader_version: c"efiboot",
+        cmdline,
+        hhdm_offset: DIRECT_BASE,
+        kernel_phys: Paddr::new(kernel_phys),
+        kernel_virt: Vaddr::new(kernbase),
+        rsdp: None,
+        dtb: NonNull::new(fdt.cast_mut()),
+        memmap,
+        efi_system_table: (system_table != 0).then(|| Paddr::new(system_table as usize)),
+        efi_memmap,
+        modules: [None; MAX_MODULES],
+        mp: bootarg_mp(),
+        howto,
+        duid,
+    })
+}
+
+/// Not in the C: maps the gigabytes of `[start, end)` in `locore0.S`'s direct map (1 GB
+/// blocks of write-back memory, as `locore0.S` maps the kernel's and the device tree's) where
+/// they are not mapped yet. False when part of the range is beyond the 512 GB its one table
+/// covers.
+///
+/// # Safety
+///
+/// The boot CPU alone, during boot(8)'s entry: nothing else writes the table.
+unsafe fn bootarg_direct_map(start: u64, end: u64) -> bool {
+    let table: usize;
+    // SAFETY: computes the address of locore.S's `pagetable_l1_direct`, no memory access.
+    unsafe {
+        asm!(
+            "adrp {t}, pagetable_l1_direct",
+            "add {t}, {t}, :lo12:pagetable_l1_direct",
+            t = out(reg) table,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    let table = ptr::with_exposed_provenance_mut::<u64>(table);
+    if end <= start {
+        return true;
+    }
+    let first = (start >> L1_SHIFT) as usize;
+    let last = ((end - 1) >> L1_SHIFT) as usize;
+    if last >= Ln_ENTRIES {
+        return false;
+    }
+    for idx in first..=last {
+        // SAFETY: `idx < Ln_ENTRIES`, inside the page-sized table the kernel image holds and
+        // maps; the caller guarantees nothing else writes it.
+        unsafe {
+            let e = table.add(idx);
+            if ptr::read_volatile(e) & DESC_VALID == 0 {
+                let desc = ((idx as u64) << L1_SHIFT)
+                    | L1_BLOCK
+                    | ATTR_AF
+                    | attr_sh(SH_INNER)
+                    | ATTR_UXN
+                    | ATTR_PXN
+                    | attr_idx(PTE_ATTR_WB);
+                ptr::write_volatile(e, desc);
+            }
+        }
+    }
+    // SAFETY: barriers: the new entries are visible to the table walker before the next
+    // access through them (they replace invalid entries, so no TLB entry is stale).
+    unsafe { asm!("dsb ishst", "isb", options(nostack, preserves_flags)) };
+    true
+}
+
+/// `explicit_bzero(prop, len)` on a property of the device tree.
+///
+/// # Safety
+///
+/// `p` is a property of the boot(8) device tree, writable through the direct map, and no
+/// other reference to its bytes is used afterwards.
+unsafe fn bootarg_bzero(p: &[u8]) {
+    if p.is_empty() {
+        return;
+    }
+    // SAFETY: the caller's guarantee; the bytes are plain memory.
+    explicit_bzero(unsafe { core::slice::from_raw_parts_mut(p.as_ptr().cast_mut(), p.len()) });
+}
+
+/// The processors and the way to start them under boot(8): `/cpus`'s `cpu` nodes and
+/// `/psci` (`MULTIPROCESSOR`; `None` without PSCI).
+fn bootarg_mp() -> Option<BootMp> {
+    #[cfg(feature = "multiprocessor")]
+    {
+        let psci = fdt_find_node(b"/psci");
+        if psci.is_null() {
+            return None;
+        }
+        let method = fdt_node_property(psci, b"method").unwrap_or(&[]);
+        PSCI_HVC.store(method.starts_with(b"hvc"), Ordering::Relaxed);
+        let cpu_on = if fdt_is_compatible(psci, b"arm,psci-0.2")
+            || fdt_is_compatible(psci, b"arm,psci-1.0")
+        {
+            PSCI_CPU_ON_64
+        } else {
+            fdt_node_property_int(psci, b"cpu_on").map_or(0, |v| v as u32)
+        };
+        if cpu_on == 0 {
+            return None;
+        }
+        PSCI_CPU_ON.store(cpu_on, Ordering::Relaxed);
+
+        let cpus = fdt_find_node(b"/cpus");
+        if cpus.is_null() {
+            return None;
+        }
+        let acells = fdt_node_property_int(cpus, b"#address-cells").unwrap_or(2) as usize;
+        // SAFETY: the boot CPU, before any reader (`BootMp` is handed out below).
+        let list = unsafe { BOOTARG_CPUS.get_mut() };
+        let mut n = 0;
+        let mut node = fdt_child_node(cpus);
+        while !node.is_null() && n < list.len() {
+            let is_cpu = fdt_node_property(node, b"device_type")
+                .is_some_and(|t| t.starts_with(b"cpu\0") || t == b"cpu");
+            if let Some(reg) = fdt_node_property(node, b"reg")
+                && is_cpu
+                && (acells == 1 || acells == 2)
+                && reg.len() >= 4 * acells
+            {
+                let mut hwid = 0u64;
+                for c in reg[..4 * acells].chunks(4) {
+                    hwid = (hwid << 32) | u64::from(u32::from_be_bytes([c[0], c[1], c[2], c[3]]));
+                }
+                list[n] = hwid;
+                n += 1;
+            }
+            node = fdt_next_node(node);
+        }
+        if n == 0 {
+            return None;
+        }
+        BOOTARG_NCPUS.store(n as u32, Ordering::Relaxed);
+        Some(BootMp {
+            bsp_hwid: read_specialreg!("mpidr_el1") & MPIDR_AFF,
+            ncpus: n,
+            cpu: bootarg_mp_cpu,
+            start: bootarg_mp_start,
+        })
+    }
+    #[cfg(not(feature = "multiprocessor"))]
+    None
+}
+
+/// [`BootMp::cpu`] under boot(8): processor `i` of `/cpus`.
+#[cfg(feature = "multiprocessor")]
+fn bootarg_mp_cpu(i: usize) -> BootCpu {
+    let n = BOOTARG_NCPUS.load(Ordering::Relaxed) as usize;
+    // SAFETY: written once by `bootarg_mp` before the `BootMp` existed; read-only since.
+    let list = unsafe { BOOTARG_CPUS.read() };
+    BootCpu {
+        processor_id: i as u32,
+        hwid: if i < n { list[i] } else { u64::MAX },
+    }
+}
+
+/// [`BootMp::start`] under boot(8): PSCI `CPU_ON` of processor `i` at `locore.S`'s
+/// `cpu_hatch_secondary` (its physical address), with `arg` (its `cpu_info`) as the
+/// context (`cpu_start_secondary`'s `psci_cpu_on` in C; see the module's deviations).
+///
+/// # Safety
+///
+/// As [`BootMp::start`] states.
+#[cfg(feature = "multiprocessor")]
+unsafe fn bootarg_mp_start(i: usize, arg: usize) {
+    unsafe extern "C" {
+        /// `cpu_hatch_secondary` (`locore.S`).
+        fn cpu_hatch_secondary();
+    }
+    let mpidr = bootarg_mp_cpu(i).hwid;
+    // The processor reads the kernel's TTBR1_EL1 with its MMU and caches off.
+    cpu_dcache_wb_range(ptr::addr_of!(AP_TTBR1) as usize, size_of::<u64>());
+    let entry = (cpu_hatch_secondary as *const () as usize as u64)
+        .wrapping_add(KERN_DELTA.load(Ordering::Relaxed));
+    // SAFETY: the caller's guarantee: `mpidr` is a processor not started yet, and
+    // `entry`/`arg` are what `cpu_hatch_secondary` expects.
+    let ret = unsafe { psci_cpu_on(mpidr, entry, arg as u64) };
+    if ret != PSCI_SUCCESS {
+        kprintf!(" psci: CPU_ON {:#x} failed: {}", mpidr, ret as i64);
+    }
+}
+
+/// `psci_cpu_on` (`dev/fdt/psci.c`, not ported here): PSCI `CPU_ON` of `mpidr` at the
+/// physical address `pc` with `context` in its `x0`, through `/psci`'s conduit; the PSCI
+/// status. One small function so boot(8)'s `BootMp` can switch to the driver's own once
+/// `psci.c` is in the tree.
+///
+/// # Safety
+///
+/// `mpidr` is a processor that is off, and `pc` is the physical address of code that can run
+/// with the MMU off and expects `context`.
+#[cfg(feature = "multiprocessor")]
+unsafe fn psci_cpu_on(mpidr: u64, pc: u64, context: u64) -> u64 {
+    let fid = u64::from(PSCI_CPU_ON.load(Ordering::Relaxed));
+    let ret: u64;
+    // SAFETY: a PSCI call (SMC Calling Convention): the firmware (QEMU's PSCI) starts the
+    // processor at `pc` with `context` in x0 and returns a status in x0; x1-x17 may be
+    // clobbered by an SMCCC 1.0 implementation, so they are declared clobbered.
+    unsafe {
+        if PSCI_HVC.load(Ordering::Relaxed) {
+            asm!(
+                "hvc #0",
+                inlateout("x0") fid => ret,
+                inlateout("x1") mpidr => _,
+                inlateout("x2") pc => _,
+                inlateout("x3") context => _,
+                lateout("x4") _, lateout("x5") _, lateout("x6") _, lateout("x7") _,
+                lateout("x8") _, lateout("x9") _, lateout("x10") _, lateout("x11") _,
+                lateout("x12") _, lateout("x13") _, lateout("x14") _, lateout("x15") _,
+                lateout("x16") _, lateout("x17") _,
+                options(nostack)
+            );
+        } else {
+            asm!(
+                "smc #0",
+                inlateout("x0") fid => ret,
+                inlateout("x1") mpidr => _,
+                inlateout("x2") pc => _,
+                inlateout("x3") context => _,
+                lateout("x4") _, lateout("x5") _, lateout("x6") _, lateout("x7") _,
+                lateout("x8") _, lateout("x9") _, lateout("x10") _, lateout("x11") _,
+                lateout("x12") _, lateout("x13") _, lateout("x14") _, lateout("x15") _,
+                lateout("x16") _, lateout("x17") _,
+                options(nostack)
+            );
+        }
+    }
+    ret
+}
+
+/// `collect_kernel_args`: make a local copy of the bootargs.
+fn collect_kernel_args(args: &[u8]) {
+    // SAFETY: the boot CPU, during boot(8)'s entry, before anything reads `BOOTARGS`.
+    let buf = unsafe { BOOTARGS.get_mut() };
+    let len = args.iter().position(|&c| c == 0).unwrap_or(args.len());
+    let n = len.min(buf.len() - 1);
+    buf[..n].copy_from_slice(&args[..n]);
+    buf[n] = 0;
+}
+
+/// `process_kernel_args`: skips the kernel image's name in `bootargs` and returns the rest,
+/// `boot_args` (the flags themselves are `BootInfo::boothowto`'s; the C parses them here,
+/// and `start_kernel` prints the `bootargs:` line).
+fn process_kernel_args() -> &'static CStr {
+    // SAFETY: written by `collect_kernel_args` on this CPU, read-only from here on.
+    let buf: &'static [u8; 256] = unsafe { BOOTARGS.get() };
+    let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len() - 1);
+    // Skip the kernel image filename.
+    let mut cp = buf[..len].iter().position(|&c| c == b' ').unwrap_or(len);
+    while cp < len && buf[cp] == b' ' {
+        cp += 1;
+    }
+    CStr::from_bytes_until_nul(&buf[cp..]).unwrap_or(c"")
+}
+
+/// `memreg_add`: adds a range, merged with an adjacent one when it can be.
+fn memreg_add(m: &mut Memreg, reg: &FdtReg) {
+    for r in &mut m.reg[..m.n] {
+        if reg.addr == r.addr + r.size {
+            r.size += reg.size;
+            return;
+        }
+        if reg.addr + reg.size == r.addr {
+            r.addr = reg.addr;
+            r.size += reg.size;
+            return;
+        }
+    }
+    if m.n >= NMEMREG {
+        return;
+    }
+    m.reg[m.n] = *reg;
+    m.n += 1;
+}
+
+/// `memreg_remove`: removes a range, splitting the one it falls inside.
+fn memreg_remove(m: &mut Memreg, reg: &FdtReg) {
+    let start = reg.addr;
+    let end = reg.addr + reg.size;
+
+    let mut i = 0;
+    while i < m.n {
+        let mut memstart = m.reg[i].addr;
+        let mut memend = m.reg[i].addr + m.reg[i].size;
+
+        if end <= memstart || start >= memend {
+            i += 1;
+            continue;
+        }
+
+        if start <= memstart {
+            memstart = end.min(memend);
+        }
+        if end >= memend {
+            memend = start.max(memstart);
+        }
+
+        if start > memstart && end < memend {
+            if m.n < NMEMREG {
+                m.reg[m.n] = FdtReg {
+                    addr: end,
+                    size: memend - end,
+                };
+                m.n += 1;
+            }
+            memend = start;
+        }
+        m.reg[i].addr = memstart;
+        m.reg[i].size = memend - memstart;
+        i += 1;
+    }
+
+    // Remove empty slots.
+    let mut i = m.n;
+    while i > 0 {
+        i -= 1;
+        if m.reg[i].size == 0 {
+            m.reg.copy_within(i + 1..m.n, i);
+            m.n -= 1;
+        }
+    }
 }
 
 /// `setregs`: clear registers on exec: `p` returns to EL0 at the entry point with the stack

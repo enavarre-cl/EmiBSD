@@ -191,6 +191,50 @@ pub const fn tcr_t0sz(x: u64) -> u64 {
     x << TCR_T0SZ_SHIFT
 }
 
+/// `TCR_AS`: 16-bit ASIDs.
+pub const TCR_AS: u64 = 1 << 36;
+/// `TCR_IPS_SHIFT`: the intermediate physical address size (`start_mmu` copies
+/// `ID_AA64MMFR0_EL1.PARange` there).
+pub const TCR_IPS_SHIFT: u32 = 32;
+/// `TCR_TG1_4K`: 4 KiB granule for `TTBR1_EL1`.
+pub const TCR_TG1_4K: u64 = 2 << 30;
+/// `TCR_SH1_IS`: inner shareable `TTBR1_EL1` walks.
+pub const TCR_SH1_IS: u64 = 0x3 << 28;
+/// `TCR_ORGN1_WBWA`: outer write-back write-allocate `TTBR1_EL1` walks.
+pub const TCR_ORGN1_WBWA: u64 = 0x1 << 26;
+/// `TCR_IRGN1_WBWA`: inner write-back write-allocate `TTBR1_EL1` walks.
+pub const TCR_IRGN1_WBWA: u64 = 0x1 << 24;
+/// `TCR_TG0_4K`: 4 KiB granule for `TTBR0_EL1`.
+pub const TCR_TG0_4K: u64 = 0 << 14;
+/// `TCR_SH0_IS`: inner shareable `TTBR0_EL1` walks.
+pub const TCR_SH0_IS: u64 = 0x3 << 12;
+/// `TCR_ORGN0_WBWA`: outer write-back write-allocate `TTBR0_EL1` walks.
+pub const TCR_ORGN0_WBWA: u64 = 0x1 << 10;
+/// `TCR_IRGN0_WBWA`: inner write-back write-allocate `TTBR0_EL1` walks.
+pub const TCR_IRGN0_WBWA: u64 = 0x1 << 8;
+/// `TCR_CACHE_ATTRS`: cacheable walks for both halves.
+pub const TCR_CACHE_ATTRS: u64 = TCR_IRGN0_WBWA | TCR_IRGN1_WBWA | TCR_ORGN0_WBWA | TCR_ORGN1_WBWA;
+/// `TCR_SMP_ATTRS`: inner shareable walks for both halves.
+pub const TCR_SMP_ATTRS: u64 = TCR_SH0_IS | TCR_SH1_IS;
+/// `TCR_T1SZ(x)`: the size offset of the `TTBR1_EL1` region (64 minus its address bits).
+pub const fn tcr_t1sz(x: u64) -> u64 {
+    x << 16
+}
+
+/* CNTHCTL_EL2 (locore.S's drop_to_el1) */
+
+/// `CNTHCTL_EL1PCEN`: EL0/EL1 may use the physical timer.
+pub const CNTHCTL_EL1PCEN: u64 = 1 << 1;
+/// `CNTHCTL_EL1PCTEN`: EL0/EL1 may read the physical counter.
+pub const CNTHCTL_EL1PCTEN: u64 = 1 << 0;
+
+/* ICC_SRE_EL2 (locore.S's drop_to_el1) */
+
+/// `ICC_SRE_EL2_SRE`: the GICv3 CPU interface's system registers at EL2.
+pub const ICC_SRE_EL2_SRE: u64 = 1 << 0;
+/// `ICC_SRE_EL2_EN`: lets EL1 use the system register interface.
+pub const ICC_SRE_EL2_EN: u64 = 1 << 3;
+
 /* CPACR_EL1 */
 
 /// `CPACR_ZEN_MASK`.

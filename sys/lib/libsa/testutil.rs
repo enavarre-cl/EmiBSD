@@ -143,7 +143,7 @@ static FILE_SYSTEM: [FsOps; 4] = [
     },
 ];
 
-static CONSTAB: [ConsDev; 1] = [ConsDev::new(
+pub(crate) static CONSTAB: [ConsDev; 1] = [ConsDev::new(
     |cp| cp.set_pri(CN_MIDPRI),
     |_| {},
     |_| 0,
@@ -176,6 +176,8 @@ static CONF: SaConf = SaConf {
     loadaddr: |a, offset| {
         ((a.wrapping_add(offset)) & 0xfff_ffff) + LOADBASE.load(Ordering::Relaxed)
     },
+    netif_drivers: &[],
+    getsecs: || 0,
 };
 
 /// Registers the test configuration and takes the lock on libsa's globals.

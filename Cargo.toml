@@ -2,7 +2,8 @@
 resolver = "3"
 members = ["sys", "sys/lib/libkern", "sys/lib/libz", "tools/xtask", "init",
     # M14: boot(8)/efiboot (docs/ARCHITECTURE.md, "Boot loaders")
-    "sys/stand/efi", "sys/lib/libsa", "sys/stand/boot", "sys/arch/amd64/stand/efiboot"]
+    "sys/stand/efi", "sys/lib/libsa", "sys/stand/boot", "sys/arch/amd64/stand/efiboot",
+    "sys/arch/arm64/stand/efiboot"]
 # `cargo check` / `cargo test` at the root build the kernel and libkern for the HOST
 # (through sys/arch/host). Kernel images always name a target; `just` does that.
 default-members = ["sys", "sys/lib/libkern", "sys/lib/libz"]

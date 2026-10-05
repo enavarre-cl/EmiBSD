@@ -73,6 +73,8 @@ impl Errno {
     pub const ENOMEM: Self = Self(12);
     /// `ENODEV`: operation not supported by device.
     pub const ENODEV: Self = Self(19);
+    /// `EEXIST`: file exists.
+    pub const EEXIST: Self = Self(17);
     /// `ENOTDIR`: not a directory.
     pub const ENOTDIR: Self = Self(20);
     /// `EINVAL`: invalid argument.
@@ -81,10 +83,14 @@ impl Errno {
     pub const EMFILE: Self = Self(24);
     /// `EFBIG`: file too large.
     pub const EFBIG: Self = Self(27);
+    /// `ENOSPC`: no space left on device.
+    pub const ENOSPC: Self = Self(28);
     /// `EROFS`: read-only file system.
     pub const EROFS: Self = Self(30);
     /// `EOPNOTSUPP`: operation not supported.
     pub const EOPNOTSUPP: Self = Self(45);
+    /// `ETIMEDOUT`: operation timed out.
+    pub const ETIMEDOUT: Self = Self(60);
     /// `ESTALE`: stale NFS file handle.
     pub const ESTALE: Self = Self(70);
     /// `EFTYPE`: inappropriate file type or format.

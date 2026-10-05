@@ -67,10 +67,11 @@ impl Cpu for Machine {
         unsafe { arm64::machdep::initarm(boot) }
     }
 
-    /// arm64's entry from efiboot (`locore0.S`'s `_start` with the device tree) is M14's
-    /// track A3: nothing enters the kernel this way yet.
-    unsafe fn getbootinfo(_arg: usize) -> Result<BootInfo, &'static str> {
-        Err("getbootinfo: arm64's boot(8) entry is not ported")
+    /// arm64's entry from efiboot: `locore0.S`'s `_start` passes its `arm64_bootparams`
+    /// (`machdep.rs`'s `getbootinfo`, the `/chosen` half of `initarm`).
+    unsafe fn getbootinfo(arg: usize) -> Result<BootInfo, &'static str> {
+        // SAFETY: forwarded; `bootarg_main` calls this once with locore0.S's parameters.
+        unsafe { arm64::machdep::getbootinfo(arg) }
     }
 
     fn halt() -> ! {

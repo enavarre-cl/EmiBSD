@@ -1,8 +1,9 @@
 //! libsa: the standalone library OpenBSD's boot programs link (`sys/lib/libsa`).
 //!
 //! The device and file system switches, the open file table, the console, `printf`, the
-//! allocator, the FFS1/FFS2 and ISO 9660 readers, gzip-transparent reading (`cread`) and the
-//! ELF kernel loader. A boot program (efiboot: `sys/arch/amd64/stand/efiboot`) registers its
+//! allocator, the FFS1/FFS2 and ISO 9660 readers, gzip-transparent reading (`cread`), the
+//! ELF kernel loader, and the network stack the network boot programs compile (`netif`,
+//! `ether`, `arp`, `netudp`, `tftp`). A boot program (efiboot: `sys/arch/amd64/stand/efiboot`) registers its
 //! tables and machine-dependent routines with [`stand::sa_conf_register`], installs
 //! [`sa_alloc::SaAlloc`] as its global allocator and calls [`sa_alloc::heap_init`].
 //!
@@ -22,6 +23,7 @@ extern crate alloc;
 extern crate std;
 
 pub mod arc4;
+pub mod arp;
 pub mod cd9660;
 pub mod close;
 pub mod closeall;
@@ -31,15 +33,22 @@ pub mod ctime;
 pub mod dev;
 pub mod disklabel;
 pub mod dkcksum;
+pub mod ether;
 pub mod exit;
 pub mod fchmod;
 pub mod fstat;
 pub mod getchar;
+pub mod globals;
 pub mod hdr;
 pub mod hexdump;
+pub mod in_cksum;
+pub mod iodesc;
 pub mod loadfile;
 pub mod loadfile_elf;
 pub mod lseek;
+pub mod net;
+pub mod netif;
+pub mod netudp;
 pub mod open;
 pub mod printf;
 pub mod putchar;
@@ -55,6 +64,7 @@ pub mod stat;
 pub mod strerror;
 pub mod strtol;
 pub mod strtoll;
+pub mod tftp;
 pub mod ufs;
 pub mod ufs2;
 

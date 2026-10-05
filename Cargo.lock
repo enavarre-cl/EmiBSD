@@ -46,6 +46,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "efiboot-arm64"
+version = "0.0.1"
+dependencies = [
+ "boot",
+ "efi",
+ "libkern",
+ "libsa",
+ "libz",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

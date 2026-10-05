@@ -181,6 +181,8 @@ pub static SA_CONF: SaConf = SaConf {
     devopen,
     rtt: _rtt,
     loadaddr,
+    netif_drivers: &[],
+    getsecs,
 };
 
 /// boot(8)'s view of efiboot.

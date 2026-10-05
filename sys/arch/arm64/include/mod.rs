@@ -4,6 +4,7 @@
 
 pub mod _types;
 pub mod armreg;
+pub mod bootconfig;
 pub mod bus;
 pub mod cpu;
 pub mod db_machdep;
@@ -13,6 +14,7 @@ pub mod elf;
 pub mod exec;
 pub mod fdt;
 pub mod frame;
+pub mod hypervisor;
 pub mod intr;
 pub mod mplock;
 pub mod mutex;

@@ -22,6 +22,7 @@ pub mod exception;
 pub mod fpu;
 pub mod intr;
 pub mod locore;
+pub mod locore0;
 pub mod machdep;
 pub mod mem;
 pub mod pmap;

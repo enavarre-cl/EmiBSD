@@ -40,7 +40,7 @@ build-init-amd64:
 build-init-arm64:
     cargo build -p init --target {{arm64}}
 
-build: build-amd64 build-arm64 build-init-amd64 build-init-arm64 build-mp efiboot-amd64
+build: build-amd64 build-arm64 build-init-amd64 build-init-arm64 build-mp efiboot-amd64 efiboot-arm64
 
 # The MULTIPROCESSOR kernels (option MULTIPROCESSOR, M11a), so the MP paths build on every
 # commit; `smoke` boots them (with `--features qemu`) since M11e.
@@ -55,6 +55,12 @@ build-mp: (build-amd64 "--features multiprocessor") (build-arm64 "--features mul
 efiboot-amd64:
     RUSTFLAGS="-C relocation-model=pie" cargo build -p efiboot-amd64 --target {{amd64}} --target-dir target/efiboot
     cargo xtask efiboot --arch amd64 --elf target/efiboot/{{amd64}}/debug/bootx64
+
+# M14 track A3: arm64's BOOTAA64.EFI (sys/arch/arm64/stand/efiboot), built as amd64's:
+# target/efiboot/arm64/BOOTAA64.EFI, its PE header OpenBSD's own (`.peheader`, start.S).
+efiboot-arm64:
+    RUSTFLAGS="-C relocation-model=pie" cargo build -p efiboot-arm64 --target {{arm64}} --target-dir target/efiboot
+    cargo xtask efiboot --arch arm64 --elf target/efiboot/{{arm64}}/debug/bootaa64
 
 # --- boot images and QEMU ---------------------------------------------------
 
@@ -92,7 +98,7 @@ smoke: smoke-build
 
 # What the smoke recipes boot: the MULTIPROCESSOR kernels with `--features qemu`, the init
 # stand-ins, and `smoke-up`'s uniprocessor kernels (`build-up`).
-smoke-build: build-up (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64 efiboot-amd64 build-bsdrd
+smoke-build: build-up (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64 efiboot-amd64 efiboot-arm64 build-bsdrd
 
 # `smoke-boot`, the first of `smokes` (it was `smoke`'s own body until the smokes ran in
 # parallel). Boots per arch, every one with a virtio network card on QEMU's user network: a
@@ -1476,9 +1482,16 @@ em_ping := "--expect 'PING 10.0.2.2 (10.0.2.2): 56 data bytes' " + \
 # its memory map, console, DUID and EFI tables from boot(8)'s bootarg list, starts the three
 # application processors itself (mptramp.S, INIT/SIPI, from the MADT), finds its root by the
 # DUID (sd1a: the boot image is on q35's AHCI port after the virtio disk), runs rc to login,
-# and the root login sees 4 CPUs and / on the disk. amd64 only (arm64's efiboot is M14
-# track A3). Part of `smoke`.
-smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") efiboot-amd64
+# and the root login sees 4 CPUs and / on the disk. arm64 (M14 track A3): the same disk with
+# BOOTAA64.EFI; EDK2 AArch64 on `virt,acpi=off` hands efiboot its device tree (the C's first
+# choice; efiacpi builds one from the ACPI tables only without it), efiboot loads /bsd into
+# its 64 MB block and enters locore0.S's _start with the tree (x2): the kernel builds its
+# bootstrap tables, takes /chosen's bootargs, DUID, UEFI memory map and system table
+# (getbootinfo), starts the three other processors by PSCI CPU_ON (cpu_hatch_secondary)
+# and finds its root by the DUID (sd1a: the boot image is the virtio disk after the blank
+# one). `machine dtb` is arm64's machine command (it has no `machine memory`). Part of
+# `smoke`.
+smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") efiboot-amd64 efiboot-arm64
     @test -x target/userland/amd64/host/bin/makefs -a -f target/userland/amd64/ramdisk-root/etc/fstab || \
         { echo "smoke-efiboot: no makefs or staged root; run just userland first"; exit 1; }
     cargo xtask efiboot-disk --arch amd64 --efi target/efiboot/amd64/BOOTX64.EFI --kernel target/{{amd64}}/debug/bsd --root-dev sd1a
@@ -1503,6 +1516,25 @@ smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") efiboot-amd64
         --expect "cpu1 at mainbus0: apid 1 (application processor)" \
         --expect "cpu3 at mainbus0: apid 3 (application processor)" \
         --expect "x86_ipi_selftest: X86_IPI_NOP taken by 3 cpus, tlb shootdowns acknowledged" \
+        --expect "root on sd1a (454649424f4f5430.a) swap on sd1b dump on sd1b" \
+        --expect "rc: multi-user" --expect "login:" --expect "hw.ncpu=4" \
+        --expect "/dev/sd1a on / type ffs (local)"
+    @test -x target/userland/arm64/host/bin/makefs -a -f target/userland/arm64/ramdisk-root/etc/fstab || \
+        { echo "smoke-efiboot: no arm64 makefs or staged root; run just userland first"; exit 1; }
+    cargo xtask efiboot-disk --arch arm64 --efi target/efiboot/arm64/BOOTAA64.EFI --kernel target/{{arm64}}/debug/bsd --root-dev sd1a
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --until-seen \
+        --send-after 'boot> ' --send 'ls /\n' \
+        --send-after 'boot> ' --send 'machine dtb\n' \
+        --send-after 'boot> ' --send 'boot\n' \
+        {{disk_login}} \
+        --send-after '# ' --send 'sysctl hw.ncpu\n' \
+        --send-after 'hw.ncpu=' --send 'mount\n' \
+        --expect ">> EmiBSD/arm64 BOOTAA64 1.26" --expect "efiboot: boot.conf read" --expect "boot> " \
+        --expect "-r-xr-xr-x 0,0" --expect "booting sd0a:/bsd: " --expect "]=0x" \
+        --expect "bsd: booted on arm64 by boot(8) efiboot" --expect "bsd: boot(8) bootarg protocol, " \
+        --expect "bsd: 4 processors, boot processor hwid 0x0" --expect "EmiBSD 8.0 (GENERIC) #" \
+        --expect "cpu0 at mainbus0 mpidr 0: ARM Cortex-A72" --expect "cpu3 at mainbus0 mpidr 3: ARM Cortex-A72" \
+        --expect "cpu: 3 of 3 application processors running" \
         --expect "root on sd1a (454649424f4f5430.a) swap on sd1b dump on sd1b" \
         --expect "rc: multi-user" --expect "login:" --expect "hw.ncpu=4" \
         --expect "/dev/sd1a on / type ffs (local)"
@@ -1946,10 +1978,12 @@ cc_script := disk_login + " " + \
 test:
     cargo test -p libkern -p libz -p bsd -p xtask
     cargo test -p libsa -p boot -p efi
+    cargo test -p efiboot-arm64
 
 # tests that cross-check constants against the C reference tree
 test-ref:
     OPENBSD_SRC=reference/openbsd-src cargo test -p libkern -p libz -p bsd -- --ignored
+    OPENBSD_SRC=reference/openbsd-src cargo test -p efiboot-arm64 -- --ignored
 
 # bare targets with `--features qemu`: a superset of the plain build, which `just build` covers
 clippy:
@@ -1963,6 +1997,7 @@ clippy:
     cargo clippy -p libsa -p boot -p efi -- -D warnings
     cargo clippy -p libsa -p boot -p efi --target {{arm64}} -- -D warnings
     cargo clippy -p efiboot-amd64 --target {{amd64}} -- -D warnings
+    cargo clippy -p efiboot-arm64 --target {{arm64}} -- -D warnings
 
 fmt:
     cargo fmt --all -- --check

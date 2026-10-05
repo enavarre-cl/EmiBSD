@@ -137,7 +137,8 @@ and `#[unsafe(link_section)]` are stable; `core` and `alloc` ship precompiled fo
 
 ## Linking
 
-`sys/arch/<arch>/conf/kernel.ld` (arm64: base `0xffffffff80000000`; amd64: OpenBSD's layout from
+`sys/arch/<arch>/conf/kernel.ld` (arm64: base `0xffffffff80000000` with physical addresses
+from 0 and the entry at `_start`'s offset, from M14; amd64: OpenBSD's layout from
 M14, `KERNTEXTOFF` with physical addresses from `0x1000000`, "Boot loaders"),
 `PHDRS` text/rodata/data, Limine request sections kept, `.eh_frame`/`.note` discarded.
 `sys/build.rs` passes it with `cargo:rustc-link-arg-bins` only when `target_os = "none"`.
@@ -672,6 +673,28 @@ reason:
   `EFI/BOOT/BOOTX64.EFI`), types at `boot>` and stops once efiboot has loaded the kernel
   and boots the kernel to `login:` (next section).
 
+arm64's efiboot, BOOTAA64.EFI (M14 track A3; `just efiboot-arm64`, part of `just build`,
+output `target/efiboot/arm64/BOOTAA64.EFI`, which `installboot` copies from `/usr/mdec`):
+
+- `sys/arch/arm64/stand/efiboot` (package `efiboot-arm64`, binary `bootaa64`): every file of
+  OpenBSD's directory, on the same three crates and registration tables as amd64's.
+  OpenBSD's arm64 Makefile already makes the PE image with its `.peheader` in `start.S`
+  and `objcopy -O binary`, which is what is done here, for `aarch64-unknown-none-softfloat`.
+  `dt_blob.S` (dtc's output of `acpi.dts`, the template efiacpi fills from the ACPI tables
+  when the firmware has no device tree) is built by a `const fn` in `dt_blob.rs`; a
+  reference-backed test checks its bytes against `dt_blob.S`. efipxe uses libsa's network
+  stack (`netif`, `ether`, `arp`, `netudp`, `tftp`, ported for it), which a program
+  registers through `SaConf::netif_drivers` (and `SaConf::getsecs`).
+- Link flags: the aarch64 `none` target is not static-pie, so `build.rs` adds `-pie
+  --no-dynamic-linker -z notext` to amd64's (the precompiled `core`/`alloc` keep absolute
+  addresses in read-only data, which become `R_AARCH64_RELATIVE` relocations that
+  `self_reloc` applies).
+- `softraid_arm64.c` is not ported (efiboot's feature `softraid`, as amd64's); its `sr`
+  devsw entries say so. Which device tree the kernel gets is the C's choice: the firmware's
+  (EDK2 on `virt,acpi=off`, what the smokes run) and, only without one or after `machine
+  acpi`, efiacpi's. The efiacpi path is covered by host tests on synthetic tables; the
+  arm64 kernel has no acpi(4) to use the tables it points at.
+
 ### The kernel's boot(8) entry (amd64, M14 track A2)
 
 The same kernel ELF boots from Limine and from efiboot (the user's decision: Limine retires
@@ -682,8 +705,8 @@ only once boot(8) boots the kernel in QEMU).
   efiboot's `paddr & 0xfffffff` move puts the image where `locore0.S` expects it; the ELF
   entry is `locore0.S`'s 32-bit `start`. Limine ignores the physical addresses and enters
   `_start` through its entry point request (`sys/stand/mod.rs`). `.got` is kept in `.data`:
-  nothing may follow `end`, where `locore0.S` puts its tables. arm64's `kernel.ld` is
-  unchanged (track A3).
+  nothing may follow `end`, where `locore0.S` puts its tables. arm64's `kernel.ld` has its
+  own layout (next section).
 - `sys/arch/amd64/amd64/locore0.S` (`global_asm!`, AT&T, `const`/`sym` placeholders for
   `assym.h`): saves boot(8)'s arguments, copies the `bootarg` list into `bootinfo[]`, probes
   the CPU, builds the bootstrap page tables (the kernel at `KERNBASE`, the first 4 GB of the
@@ -703,6 +726,44 @@ only once boot(8) boots the kernel in QEMU).
 - Known limits: no Meltdown/SEV probe (`pg_g_kern` 0), no `pmap_direct_rand`, the direct map
   stops at 4 GB (pmap_bootstrap's extension is not ported; more memory is reported and left
   out), `dkcsum.c` is not ported (the root is found by the DUID, not by `bootdev`).
+
+### The kernel's boot(8) entry (arm64, M14 track A3)
+
+The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
+
+- Link: `conf/kernel.ld` keeps the image at `0xffffffff80000000` (Limine's higher half,
+  which `arm64/pmap.rs` adopts) and gives it physical addresses from 0 (`AT()`): efiboot's
+  `LOADADDR` keeps the low 39 bits of an address and adds its 64 MB block's
+  (`efi_loadaddr`), which puts the image at the block's start. The ELF entry is
+  `__start_phys`, the offset of `locore0.S`'s `_start` in the image, because `e_entry` goes
+  through `LOADADDR` too; `_start` is first in `.text` (`.text.locore0`), so efiboot's
+  cache clean from the entry to the end of the symbols covers the whole image. `locore0.S`
+  zeroes `__bss_start`..`_end`, and `locore.S`'s `esym` starts at `end`. Limine ignores the
+  physical addresses and enters the boot glue's `_start` through its entry point request
+  (that function is not `#[no_mangle]`: the symbol `_start` is OpenBSD's).
+- `sys/arch/arm64/arm64/locore0.S` (with the boot half of `locore.S`: `drop_to_el1`,
+  `get_virt_delta`, `start_mmu`, the page tables, `initstack`): efiboot enters with the MMU
+  on and an identity map, `x0` its end of the symbols, `x2` the device tree. `_start` drops
+  to EL1, turns the MMU off and builds what the kernel otherwise gets from Limine: a
+  four-level `TTBR1_EL1` (`T1SZ` 16) with the 64 MB block at the link address by 2 MB
+  blocks and a direct map at `0xffff000000000000` (Limine's offset) by 1 GB blocks, and an
+  identity map of the block in `TTBR0_EL1`; `MAIR_EL1` in this kernel's layout
+  (`include/pte.rs`); then it jumps high, zeroes the BSS and calls `bootarg_main` on a
+  64 KiB stack with the `arm64_bootparams` (`include/bootconfig.rs`).
+- `Cpu::getbootinfo` (`machdep.rs`'s `getbootinfo`, the `/chosen` half of `initarm`) reads
+  `bootargs`, `openbsd,boothowto`, `openbsd,bootduid`, `openbsd,bootmac`, the softraid boot
+  volume and key, `openbsd,uefi-mmap-*`, `openbsd,uefi-system-table` and
+  `openbsd,dma-constraint`, and the memory as `initarm` loads it (the EFI map's conventional
+  and boot services memory less `/reserved-memory`'s `no-map` ranges and the 64 MB block,
+  whose part after the symbols is usable). It maps those gigabytes in the direct map before
+  handing them over; the device tree and the EFI map are read in place (loader data, never
+  given to uvm).
+- Processors: under Limine its MP request; after boot(8) the `/cpus` nodes and PSCI
+  `CPU_ON` (`/psci`'s method, `hvc` on QEMU) at `locore.S`'s `cpu_hatch_secondary` with the
+  `cpu_info` as context: it brings the MMU up on the identity map and the kernel's
+  `TTBR1_EL1` (`cpu.rs`'s `AP_TTBR1`, cleaned to memory first) and enters
+  `cpu_hatch_entry` on the processor's kernel stack. `psci.c` is not ported; the call is
+  made by `machdep.rs`.
 
 ## Deviations from OpenBSD (deliberate)
 

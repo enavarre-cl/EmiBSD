@@ -47,8 +47,10 @@
 //! - `extern struct fs_ops file_system[]; extern int nfsys;`, `extern struct devsw devsw[];
 //!   extern int ndevs;`, `extern struct consdev constab[]` (from `cons.c`), `devopen()`,
 //!   `_rtt()` and `<machine/loadfile_machdep.h>`'s `LOADADDR` are the members of [`SaConf`]
-//!   (slices carry their lengths: no `nfsys`/`ndevs`). Until a program registers its table
-//!   libsa works on an empty one: no file systems, no devices, no console.
+//!   (slices carry their lengths: no `nfsys`/`ndevs`), as are the network code's
+//!   `netif_drivers[]`/`n_netif_drivers` (`netif.h`) and `getsecs()` (`net.h`). Until a
+//!   program registers its table libsa works on an empty one: no file systems, no devices,
+//!   no console, no network interfaces, a clock stopped at 0.
 //! - `struct fs_ops` and `struct devsw` hold Rust `fn` pointers; buffers are slices, the C's
 //!   `size` is the slice's length, a NULL `resid`/`rsize` is `None`, and the routines return
 //!   `Result<_, Errno>` where the C returns an error number or -1. `dv_open`'s variadic
@@ -68,7 +70,8 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::hdr::cons::ConsDev;
 use crate::hdr::stat::Stat;
-use crate::hdr::types::{Daddr, Mode, Off};
+use crate::hdr::types::{Daddr, Mode, Off, Time};
+use crate::netif::NetifDriver;
 use crate::saerrno::Errno;
 
 /// `SEEK_SET`: set file offset to offset.
@@ -250,6 +253,12 @@ pub struct SaConf {
     /// `LOADADDR(a)` of `<machine/loadfile_machdep.h>`: where `loadfile` puts the byte the
     /// kernel expects at address `a`, given the `offset` it was called with.
     pub loadaddr: fn(a: u64, offset: u64) -> u64,
+    /// `netif_drivers[]` (`netif.h`, "machdep"): the network interface drivers `netif_open()`
+    /// chooses from; empty in a program that does not compile `netif.c`.
+    pub netif_drivers: &'static [&'static NetifDriver],
+    /// `getsecs()` (`net.h`'s machine-dependent function): seconds of the real-time clock,
+    /// which the network code times its retransmissions with.
+    pub getsecs: fn() -> Time,
 }
 
 /// The table before a program registers its own.
@@ -262,6 +271,8 @@ static EMPTY_CONF: SaConf = SaConf {
         core::hint::spin_loop();
     },
     loadaddr: |a, offset| a.wrapping_add(offset),
+    netif_drivers: &[],
+    getsecs: || 0,
 };
 
 /// The registered table (null: [`EMPTY_CONF`]).

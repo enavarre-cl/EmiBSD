@@ -13,14 +13,23 @@ pub mod cons;
 pub mod dinode;
 pub mod dir;
 pub mod disklabel;
+pub mod endian;
+pub mod ethertypes;
 pub mod exec_elf;
 pub mod fs;
 pub mod hibernate;
+pub mod if_arp;
+pub mod if_ether;
+pub mod in_;
+pub mod ip;
+pub mod ip_var;
 pub mod iso;
 pub mod param;
 pub mod reboot;
 pub mod stat;
 pub mod types;
+pub mod udp;
+pub mod udp_var;
 pub mod uuid;
 
 #[cfg(test)]

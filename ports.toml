@@ -921,7 +921,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c9656ebcea23151ba4968b4eab8099c095180027"
 deps = ["sys/arch/arm64/arm64/bus_space.c", "sys/arch/arm64/arm64/intr.c", "sys/dev/ic/pluart.c", "sys/kern/subr_log.c", "sys/sys/reboot.h"]
-notes = "M2: initarm (the 1 GiB TTBR0 Device-nGnRnE identity block for devices until pmap, message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all reported unported), cold, waittime, cpuresetfn, powerdownfn; the bootargs parsing is BootInfo::boothowto; M3: the memory setup and pmap_bootstrap; M4: cpu_info_primary, SP_EL1/tpidr_el1/VBAR_EL1 first thing, fdt_init of the bootloader DTB, consinit = pluart_init_cons (the other *_init_cons are deferred drivers), stdout_node/stdout_speed, fdt_find_cons, (M8: cn_rx_intr_establish is gone; pluart_fdt_attach establishes the console's interrupt); cpu_info[], dumpsys, sendsig/setregs, sysctl are M5 to M6; cpu_startup prints version (conf/vers.rs) since kern_sysctl.c; M5: need_resched (aston reported, M5-b); M5-b1: proc0paddr and proc0tf statics, cpu_startup sets proc0.p_addr and curpcb (pcb_flags, pcb_tf); M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), cpu_idle_enter/cycle/leave (cpu_wfi), cpu_switchto (fpu_drop then cpuswitch.S), aston, clear_resched, cpu_unidle (UP); cold moved to sys/systm.rs; M6-b2: setregs (pm_guarded from EXEC_NOBTCFI, the FPU state dropped, the EL0 trap frame with PSR_M_EL0t|PSR_DIT; pmap_setpauthkeys M7); vfs stage 2: cpu_startup calls bufinit before avail mem, as the C does; M4: cpu_info_primary, SP_EL1/tpidr_el1/VBAR_EL1 first thing, fdt_init of the bootloader DTB, consinit = pluart_init_cons (the other *_init_cons are deferred drivers), stdout_node/stdout_speed, fdt_find_cons, cn_rx_intr_establish (the console receive interrupt pluart_fdt_attach would establish, until autoconf M5); cpu_info[], dumpsys, sendsig/setregs, sysctl are M5 to M6; cpu_startup prints version (conf/vers.rs) since kern_sysctl.c; M5: need_resched (aston reported, M5-b); M5-b1: proc0paddr and proc0tf statics, cpu_startup sets proc0.p_addr and curpcb (pcb_flags, pcb_tf); M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), cpu_idle_enter/cycle/leave (cpu_wfi), cpu_switchto (fpu_drop then cpuswitch.S), aston, clear_resched, cpu_unidle (UP); cold moved to sys/systm.rs; M6-b2: setregs (pm_guarded from EXEC_NOBTCFI, the FPU state dropped, the EL0 trap frame with PSR_M_EL0t|PSR_DIT; pmap_setpauthkeys M7); vfs stage 2: cpu_startup calls bufinit before avail mem, as the C does; M8: cpu_startup makes exec_map (uvm_km_suballoc of 16 * NCARGS, VM_MAP_PAGEABLE); efi(4): mmap/mmap_size/mmap_desc_size/mmap_desc_ver (the UEFI memory map from the boot protocol, relocated into a static buffer, efi_mmap) and system_table (SYSTEM_TABLE, an initarm local in C) instead of efiboot's openbsd,uefi-* properties; M10a: cpu_startup makes phys_map (uvm_km_suballoc of VM_PHYS_SIZE, flags 0) and stores it in uvm_extern's PHYS_MAP, as it does exec_map; M11a: cpu_info[MAXCPUS] (CiPtr, cpu_info_primary first), cpu_info_list() (cpu.c's), cpu_idle_cycle_fcn (StaticCell, cpu_wfi), need_resched's cpu_kick, the MULTIPROCESSOR signotify (aston + cpu_unidle(p->p_cpu)), ci_want_resched atomic; initarm keeps BootInfo.mp in BOOT_MP for cpu_start_secondary; cpu_unidle moved to cpu.rs; M13: cpu_sysctl (through machine::cpu::cpu_sysctl, called by sys_sysctl for CTL_MACHDEP) is ported: compatible (the root node's property through OF_getprop), the id_aa64* quads (smfr0 is 0 as in C), led_blink (the C then calls blink_led_timeout, which returns at once with no blink_led registered: blink_led_register and the LED drivers are not ported) and the sysctl_bounded_arr table (lidaction, lid_action is a static in machdep.rs, nothing reads it until aplsmc); the CPU_* names and CTL_MACHDEP_NAMES are in include/cpu.rs; M13: cpuresetfn/powerdownfn are set by psci(4) (dev/fdt/psci.c) through machine::fdt::set_cpuresetfn/set_powerdownfn, so boot() powers off (halt -p: SYSTEM_OFF) and resets (reboot: SYSTEM_RESET) through PSCI; cpu_reset is boot()'s doreset path"
+notes = "M2: initarm (the 1 GiB TTBR0 Device-nGnRnE identity block for devices until pmap, message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; vfs_shutdown/resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all reported unported), cold, waittime, cpuresetfn, powerdownfn; the bootargs parsing is BootInfo::boothowto; M3: the memory setup and pmap_bootstrap; M4: cpu_info_primary, SP_EL1/tpidr_el1/VBAR_EL1 first thing, fdt_init of the bootloader DTB, consinit = pluart_init_cons (the other *_init_cons are deferred drivers), stdout_node/stdout_speed, fdt_find_cons, (M8: cn_rx_intr_establish is gone; pluart_fdt_attach establishes the console's interrupt); cpu_info[], dumpsys, sendsig/setregs, sysctl are M5 to M6; cpu_startup prints version (conf/vers.rs) since kern_sysctl.c; M5: need_resched (aston reported, M5-b); M5-b1: proc0paddr and proc0tf statics, cpu_startup sets proc0.p_addr and curpcb (pcb_flags, pcb_tf); M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), cpu_idle_enter/cycle/leave (cpu_wfi), cpu_switchto (fpu_drop then cpuswitch.S), aston, clear_resched, cpu_unidle (UP); cold moved to sys/systm.rs; M6-b2: setregs (pm_guarded from EXEC_NOBTCFI, the FPU state dropped, the EL0 trap frame with PSR_M_EL0t|PSR_DIT; pmap_setpauthkeys M7); vfs stage 2: cpu_startup calls bufinit before avail mem, as the C does; M4: cpu_info_primary, SP_EL1/tpidr_el1/VBAR_EL1 first thing, fdt_init of the bootloader DTB, consinit = pluart_init_cons (the other *_init_cons are deferred drivers), stdout_node/stdout_speed, fdt_find_cons, cn_rx_intr_establish (the console receive interrupt pluart_fdt_attach would establish, until autoconf M5); cpu_info[], dumpsys, sendsig/setregs, sysctl are M5 to M6; cpu_startup prints version (conf/vers.rs) since kern_sysctl.c; M5: need_resched (aston reported, M5-b); M5-b1: proc0paddr and proc0tf statics, cpu_startup sets proc0.p_addr and curpcb (pcb_flags, pcb_tf); M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), cpu_idle_enter/cycle/leave (cpu_wfi), cpu_switchto (fpu_drop then cpuswitch.S), aston, clear_resched, cpu_unidle (UP); cold moved to sys/systm.rs; M6-b2: setregs (pm_guarded from EXEC_NOBTCFI, the FPU state dropped, the EL0 trap frame with PSR_M_EL0t|PSR_DIT; pmap_setpauthkeys M7); vfs stage 2: cpu_startup calls bufinit before avail mem, as the C does; M8: cpu_startup makes exec_map (uvm_km_suballoc of 16 * NCARGS, VM_MAP_PAGEABLE); efi(4): mmap/mmap_size/mmap_desc_size/mmap_desc_ver (the UEFI memory map from the boot protocol, relocated into a static buffer, efi_mmap) and system_table (SYSTEM_TABLE, an initarm local in C) instead of efiboot's openbsd,uefi-* properties; M10a: cpu_startup makes phys_map (uvm_km_suballoc of VM_PHYS_SIZE, flags 0) and stores it in uvm_extern's PHYS_MAP, as it does exec_map; M11a: cpu_info[MAXCPUS] (CiPtr, cpu_info_primary first), cpu_info_list() (cpu.c's), cpu_idle_cycle_fcn (StaticCell, cpu_wfi), need_resched's cpu_kick, the MULTIPROCESSOR signotify (aston + cpu_unidle(p->p_cpu)), ci_want_resched atomic; initarm keeps BootInfo.mp in BOOT_MP for cpu_start_secondary; cpu_unidle moved to cpu.rs; M13: cpu_sysctl (through machine::cpu::cpu_sysctl, called by sys_sysctl for CTL_MACHDEP) is ported: compatible (the root node's property through OF_getprop), the id_aa64* quads (smfr0 is 0 as in C), led_blink (the C then calls blink_led_timeout, which returns at once with no blink_led registered: blink_led_register and the LED drivers are not ported) and the sysctl_bounded_arr table (lidaction, lid_action is a static in machdep.rs, nothing reads it until aplsmc); the CPU_* names and CTL_MACHDEP_NAMES are in include/cpu.rs; M13: cpuresetfn/powerdownfn are set by psci(4) (dev/fdt/psci.c) through machine::fdt::set_cpuresetfn/set_powerdownfn, so boot() powers off (halt -p: SYSTEM_OFF) and resets (reboot: SYSTEM_RESET) through PSCI; cpu_reset is boot()'s doreset path; M14 (A3): boot(8)'s entry: getbootinfo (the /chosen half of initarm: bootargs via collect_kernel_args/process_kernel_args, openbsd,boothowto/bootduid/bootmac/sr-bootuuid/sr-bootkey (explicit_bzero of the props)/uefi-mmap-*/uefi-system-table/dma-constraint), the memory (EFI map Conventional/BootServices, /memory fallback, /reserved-memory no-map, the 64 MB block, its part after esym usable; memreg_add/memreg_remove), FDT and EFI map read in place through locore0.S's direct map (bootarg_direct_map, not in the C, maps the RAM gigabytes); dma_constraint stays constant, a narrower one is reported by initarm; BootMp from /cpus with PSCI CPU_ON through one small psci_cpu_on (hvc/smc from /psci's method) until it uses dev/fdt/psci.rs's"
 
 [[file]]
 c = "sys/arch/arm64/arm64/cpu.c"
@@ -929,7 +929,7 @@ rust = "sys/arch/arm64/arm64/cpu.rs"
 status = "ported"
 upstream_blob = "797b0f4257f0e18014554bea4e3e871c512873a3"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-notes = "M11a: the whole file: cpu_implementers[] and the cpu_cores_*[] tables, CPU_IMPL/PART/VAR/REV, cpu_model (CPU_MODEL; kern_sysctl.rs does not read it yet), cpu_node, cpu_id_aa64* (atomics), arm64_has_lse/rng/aes, cpu_rng (RNDRRS/RNDR by encoding, cpu_rng_to), cpu_mitigate_spectre_v2/bhb/v4 and cpu_mitigate_cve_2025_10263, cpu_identify (the core line, the caches from CLIDR/CCSIDR with CCIDX, the mismatch checks, the ID register features through a FeatureLine printer, the SVE line), cpu_identify_cleanup (the userland view, hwcap/hwcap2 into exec_elf.rs's HWCAP/HWCAP2; autoconf.rs calls it), cpu_classify, cpu_ca/cpu_cd with cpu_match/cpu_attach ('cpu0 at mainbus0 mpidr 0: ARM Cortex-A72 r0p3'; cpu0 at mainbus? and, MULTIPROCESSOR, cpu* at mainbus? in ioconf.rs), cpu_init (TTBR0/T0SZ/TCR_A1, PAN, DIT, PAuth, BTI, SVE, MDSCR/OSLAR) on the boot CPU and every AP, cpu_flush_bp_noop/psci, cpu_serror_apple, cpu_clockspeed; MULTIPROCESSOR: AP cpu_info from malloc linked into cpu_info_list and cpu_info[] (machdep.rs), ncpus, enable-method, clockqueue_init/sched_init_cpu, the CPUF_IDENTIFY handshake, cpu_boot_secondary_processors, cpu_start_secondary, cpu_boot_secondary (CPUF_GO, dsb/sev, ARM_IPI_NOP, wait CPUF_RUNNING), cpu_init_secondary (identify, CPUF_GO, cpu_init, the idle thread's switchframe, splhigh, arm_intr_cpu_enable, cpu_startclock, CPUF_RUNNING, spllower, sched_toidle), cpu_halt, cpu_kick, cpu_unidle (moved from machdep.rs); SUSPEND: cpu_suspend_cycle/cpu_suspend_cycle_fcn ported, cpu_init_primary, cpu_suspend_primary and cpu_resume_secondary reported (SUSPEND not configured, M14); the OPP code (cpu_opp_init, cpu_opp_setperf, the cooling levels ported; cooling_device_register, cpu_opp_mountroot and cpu_opp_dotask reported: ofw_thermal/ofw_clock/ofw_regulator and cpu_setperf are not ported); cpu_psci_init (psci_features reported, only with cpu-idle-states) and cpu_psci_idle_cycle (psci_cpu_suspend reported); kstats (NKSTAT 0: kstat is not configured, cpu_kstat_attach/cpu_opp_kstat_attach report it). Deviations: the APs start through the boot protocol (BootMp kept by initarm as machdep BOOT_MP; cpu_start_secondary matches the node's reg to BootCpu.hwid & MPIDR_AFF and calls mp.start(i, ci)), replacing PSCI CPU_ON / the spin table into locore.S's cpu_hatch_secondary; cpu_hatch_entry does start_mmu's work from statics (the boot CPU's MAIR/TCR/SCTLR/TTBR1, TTBR0 = pm_pt0pa, local tlbi) plus initarm's (SPSel, TPIDR_EL1, VBAR_EL1, CPACR as fpu_drop leaves it), then switches to ci_el1_stkend; M13: NPSCI is 1 (psci.c ported): cpu_flush_bp_psci calls psci_flush_bp, smccc_enable_arch_workaround_2 runs at the boot CPU's attach, cpu_halt calls psci_cpu_off when psci_can_suspend (psci_cpu_suspend and the Spectre-BHB firmware vectors stay reported/recorded); trampoline.S is not ported so ci_trampoline_vectors records a TRAMPOLINE_VECTORS_* number; codepatch_nop(CPTAG_REPEAT_TLBI) has nothing to patch (the TLBIs never repeat yet); NXCALL 0; feature qemu: a self-check in cpu_boot_secondary/cpu_init_secondary (a kernel window remapped while each AP hatches: the broadcast TLBI must reach it) and an ARM_IPI_NOP to each AP ('cpu: 3 of 3 application processors running, tlb shootdown seen by 3, ipi nop seen by 3' with -smp 4); M11e: cpu_hatch_entry enables the generic timer event stream before cpu_init_secondary's wfe waits for CPUF_IDENTIFY/CPUF_GO (QEMU TCG lost-sev stall; see agtimer.c)."
+notes = "M11a: the whole file: cpu_implementers[] and the cpu_cores_*[] tables, CPU_IMPL/PART/VAR/REV, cpu_model (CPU_MODEL; kern_sysctl.rs does not read it yet), cpu_node, cpu_id_aa64* (atomics), arm64_has_lse/rng/aes, cpu_rng (RNDRRS/RNDR by encoding, cpu_rng_to), cpu_mitigate_spectre_v2/bhb/v4 and cpu_mitigate_cve_2025_10263, cpu_identify (the core line, the caches from CLIDR/CCSIDR with CCIDX, the mismatch checks, the ID register features through a FeatureLine printer, the SVE line), cpu_identify_cleanup (the userland view, hwcap/hwcap2 into exec_elf.rs's HWCAP/HWCAP2; autoconf.rs calls it), cpu_classify, cpu_ca/cpu_cd with cpu_match/cpu_attach ('cpu0 at mainbus0 mpidr 0: ARM Cortex-A72 r0p3'; cpu0 at mainbus? and, MULTIPROCESSOR, cpu* at mainbus? in ioconf.rs), cpu_init (TTBR0/T0SZ/TCR_A1, PAN, DIT, PAuth, BTI, SVE, MDSCR/OSLAR) on the boot CPU and every AP, cpu_flush_bp_noop/psci, cpu_serror_apple, cpu_clockspeed; MULTIPROCESSOR: AP cpu_info from malloc linked into cpu_info_list and cpu_info[] (machdep.rs), ncpus, enable-method, clockqueue_init/sched_init_cpu, the CPUF_IDENTIFY handshake, cpu_boot_secondary_processors, cpu_start_secondary, cpu_boot_secondary (CPUF_GO, dsb/sev, ARM_IPI_NOP, wait CPUF_RUNNING), cpu_init_secondary (identify, CPUF_GO, cpu_init, the idle thread's switchframe, splhigh, arm_intr_cpu_enable, cpu_startclock, CPUF_RUNNING, spllower, sched_toidle), cpu_halt, cpu_kick, cpu_unidle (moved from machdep.rs); SUSPEND: cpu_suspend_cycle/cpu_suspend_cycle_fcn ported, cpu_init_primary, cpu_suspend_primary and cpu_resume_secondary reported (SUSPEND not configured, M14); the OPP code (cpu_opp_init, cpu_opp_setperf, the cooling levels ported; cooling_device_register, cpu_opp_mountroot and cpu_opp_dotask reported: ofw_thermal/ofw_clock/ofw_regulator and cpu_setperf are not ported); cpu_psci_init (psci_features reported, only with cpu-idle-states) and cpu_psci_idle_cycle (psci_cpu_suspend reported); kstats (NKSTAT 0: kstat is not configured, cpu_kstat_attach/cpu_opp_kstat_attach report it). Deviations: the APs start through the boot protocol (BootMp kept by initarm as machdep BOOT_MP; cpu_start_secondary matches the node's reg to BootCpu.hwid & MPIDR_AFF and calls mp.start(i, ci)), replacing PSCI CPU_ON / the spin table into locore.S's cpu_hatch_secondary; cpu_hatch_entry does start_mmu's work from statics (the boot CPU's MAIR/TCR/SCTLR/TTBR1, TTBR0 = pm_pt0pa, local tlbi) plus initarm's (SPSel, TPIDR_EL1, VBAR_EL1, CPACR as fpu_drop leaves it), then switches to ci_el1_stkend; M13: NPSCI is 1 (psci.c ported): cpu_flush_bp_psci calls psci_flush_bp, smccc_enable_arch_workaround_2 runs at the boot CPU's attach, cpu_halt calls psci_cpu_off when psci_can_suspend (psci_cpu_suspend and the Spectre-BHB firmware vectors stay reported/recorded); trampoline.S is not ported so ci_trampoline_vectors records a TRAMPOLINE_VECTORS_* number; codepatch_nop(CPTAG_REPEAT_TLBI) has nothing to patch (the TLBIs never repeat yet); NXCALL 0; feature qemu: a self-check in cpu_boot_secondary/cpu_init_secondary (a kernel window remapped while each AP hatches: the broadcast TLBI must reach it) and an ARM_IPI_NOP to each AP ('cpu: 3 of 3 application processors running, tlb shootdown seen by 3, ipi nop seen by 3' with -smp 4); M11e: cpu_hatch_entry enables the generic timer event stream before cpu_init_secondary's wfe waits for CPUF_IDENTIFY/CPUF_GO (QEMU TCG lost-sev stall; see agtimer.c).; M14 (A3): after boot(8) the APs start by PSCI CPU_ON from machdep.rs's BootMp into locore.S cpu_hatch_secondary, then cpu_hatch_entry; AP_TTBR1 exists without MULTIPROCESSOR (locore.S names it)"
 
 [[file]]
 c = "sys/arch/arm64/include/frame.h"
@@ -1022,11 +1022,6 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "0401522e3a82dff7456b6e682bb88679fa52530a"
 notes = "M14 A1, amd64 efiboot (BOOTX64.EFI, crate efiboot-amd64): the C's globals as atomics/StaticCells; efi_main registers SaConf/BootMd and hands the heap to libsa; IDLE_POWEROFF (Xidle_efi...) under feature softraid as SOFTRAID=yes defines it; tested by smoke-efiboot"
-
-[[file]]
-c = "sys/arch/arm64/stand/efiboot/efiboot.c"
-status = "skipped"
-notes = "replaced-by-limine: the whole sys/arch/arm64/stand tree (efiboot) is not ported"
 
 # ---------------------------------------------------------------------------
 # Project helpers under sys/ that port no C file
@@ -1654,7 +1649,7 @@ rust = "sys/arch/arm64/include/armreg.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "fefcb935aea104b7bc8ca93a29509eb11a20b9d3"
-notes = "M4: INSN_SIZE, READ_SPECIALREG/WRITE_SPECIALREG (macros taking the register name as a literal), the ESR_ELx exception classes and the ISS bits the trap handler reads, ISS_BRK_COMMENT_MASK, DBG_MDSCR_*, PSR_*; the ID registers, SCTLR/TCR/CPACR/MAIR fields, the cache, timer and GIC system registers come with CPU identification (M4-b) and their subsystems; M5: CNTKCTL_EL0VCTEN, CNTV_CTL_*, CURRENTEL_EL_*; M5-b2: the CPACR_EL1 fields; M6-b: PSR_M_EL0t, PSR_DIT; M7b: MPIDR_AFF0..3 and MPIDR_AFF (mainbus_match_primary); kern_sig.c: PSR_BTYPE; efi(4): TCR_T0SZ_SHIFT, TCR_T0SZ (tcr_t0sz); M11a: CCSIDR (both formats), CLIDR, CSSELR, CTR_IL1P, every ID_AA64* field constant (the NAME(x) accessors are NAME_MASK masks at the use), ISS_MSR_* (iss_msr_field for the accessors), SCTLR_*, TCR_A1, DBG_MDSCR_TDCC; CNTKCTL_EVNTEN/EVNTDIR/EVNTI_SHIFT/EVNTI_MASK are not in the C header (CNTKCTL_EL1's event stream fields, for agtimer_evtstrm_enable)."
+notes = "M4: INSN_SIZE, READ_SPECIALREG/WRITE_SPECIALREG (macros taking the register name as a literal), the ESR_ELx exception classes and the ISS bits the trap handler reads, ISS_BRK_COMMENT_MASK, DBG_MDSCR_*, PSR_*; the ID registers, SCTLR/TCR/CPACR/MAIR fields, the cache, timer and GIC system registers come with CPU identification (M4-b) and their subsystems; M5: CNTKCTL_EL0VCTEN, CNTV_CTL_*, CURRENTEL_EL_*; M5-b2: the CPACR_EL1 fields; M6-b: PSR_M_EL0t, PSR_DIT; M7b: MPIDR_AFF0..3 and MPIDR_AFF (mainbus_match_primary); kern_sig.c: PSR_BTYPE; efi(4): TCR_T0SZ_SHIFT, TCR_T0SZ (tcr_t0sz); M11a: CCSIDR (both formats), CLIDR, CSSELR, CTR_IL1P, every ID_AA64* field constant (the NAME(x) accessors are NAME_MASK masks at the use), ISS_MSR_* (iss_msr_field for the accessors), SCTLR_*, TCR_A1, DBG_MDSCR_TDCC; CNTKCTL_EVNTEN/EVNTDIR/EVNTI_SHIFT/EVNTI_MASK are not in the C header (CNTKCTL_EL1's event stream fields, for agtimer_evtstrm_enable).; M14 (A3): TCR_AS, TCR_IPS_SHIFT, TCR_TG1_4K, TCR_SH1_IS, TCR_ORGN1_WBWA, TCR_IRGN1_WBWA, TCR_TG0_4K, TCR_SH0_IS, TCR_ORGN0_WBWA, TCR_IRGN0_WBWA, TCR_CACHE_ATTRS, TCR_SMP_ATTRS, TCR_T1SZ (tcr_t1sz), CNTHCTL_EL1PCEN/EL1PCTEN, ICC_SRE_EL2_SRE/EN (locore.S)"
 
 
 [[file]]
@@ -2564,7 +2559,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e152f14712f309732038b85e5772983bf029cc91"
 deps = ["sys/arch/arm64/include/frame.h"]
-notes = "pin_check (SIGABRT through sigabort, the message by printf: no uprintf without a tty; KTRACE not configured), mi_syscall (refreshcreds, pin_check, pledge_syscall/pledge_fail, the MAP_STACK check uvm_map_inentry reported; SYSCALL_DEBUG as feature syscall_debug; KTRACE and dt(4) not configured), mi_syscall_return, mi_child_return, mi_ast (ADDUPROF reported, subr_prof.c); M11a: the kernel lock at the C's sites; M11e: SY_NOLOCK honoured as in C for the audited bodies (kern_prot.c ids, kern_sig.c sigprocmask/sigsuspend/__thrsigdivert, kern_time.c, getrlimit, futex, sched_yield, getentropy, utrace, __set_tcb/__get_tcb; the files audit: open, openat, __pledge_open, stat, lstat, fstatat, __realpath, dup, flock, lseek, kqueue, kqueue1, pipe, pipe2, getrtable, getdtablecount; the uvm audit: munmap, mprotect, minherit, kbind, and setrlimit); MULTIPROCESSOR deviation: SY_NOLOCK_DEFERRED lists the NOLOCK system calls still run under the kernel lock: after the whole M11e audit only the unported __thrsleep/__thrwakeup; host tests check the table against sysent (syscall_mi/tests.rs)"
+notes = "pin_check (SIGABRT through sigabort, the message by printf: no uprintf without a tty; KTRACE not configured), mi_syscall (refreshcreds, pin_check, pledge_syscall/pledge_fail, the MAP_STACK check uvm_map_inentry reported; SYSCALL_DEBUG as feature syscall_debug; KTRACE and dt(4) not configured), mi_syscall_return, mi_child_return, mi_ast (ADDUPROF reported, subr_prof.c); M11a: the kernel lock at the C's sites; M11e: SY_NOLOCK honoured as in C for the audited bodies (kern_prot.c ids, kern_sig.c sigprocmask/sigsuspend/__thrsigdivert, kern_time.c, getrlimit, futex, sched_yield, getentropy, utrace, __set_tcb/__get_tcb; the files audit: open, openat, __pledge_open, stat, lstat, fstatat, __realpath, dup, flock, lseek, kqueue, kqueue1, pipe, pipe2, getrtable, getdtablecount; the uvm audit: munmap, mprotect, minherit, kbind, and setrlimit); MULTIPROCESSOR deviation: SY_NOLOCK_DEFERRED lists the NOLOCK system calls still run under the kernel lock: after the whole M11e audit only the unported __thrsleep/__thrwakeup; host tests check the table against sysent (syscall_mi/tests.rs); M14 (A3): the boot half for boot(8)'s entry: drop_to_el1 + hyp_vectors, get_virt_delta, start_mmu, switch_mmu_kernel, mair/tcr/sctlr words (this kernel's MAIR layout, T1SZ 16), abort, esym, the page tables (+ L0 TTBR1 and the direct map's L1), initstack (64 KiB), MULTIPROCESSOR cpu_hatch_secondary (PSCI CPU_ON entry: context = the cpu_info's VA, TTBR1 from cpu.rs AP_TTBR1, then cpu_hatch_entry); no RETGUARD/CODEPATCH; hyp_vectors by adr alone (the C subtracts x29 before get_virt_delta sets it); cpu_hatch_secondary_spin/cpu_hatch_ci (spin tables) not ported"
 [[file]]
 c = "sys/kern/syscalls.master"
 status = "skipped"
@@ -9197,3 +9192,358 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d44d304bdfa8ce28f97bb3ba8bb3d8bb5ae0869e"
 deps = ["sys/dev/pci/if_em.h", "sys/dev/pci/if_em_hw.c", "sys/dev/pci/if_em_soc.c", "sys/dev/pci/pci_map.c", "sys/dev/pci/pcidevs.h", "sys/net/if_ethersubr.c", "sys/net/ifq.c", "sys/kern/kern_timeout.c", "sys/kern/subr_autoconf.c"]
 notes = "M13: license: Intel BSD-3 notice, kept whole; the whole file: em_devices[] (198 ids, appended to pcidevs.rs), em_ca/em_cd, em_probe, em_defer_attach, em_attach, em_start, em_ioctl, em_watchdog, em_init, em_intr, em_media_status, em_media_change, em_flowstatus, em_encap (82544 PCI-X split, legacy and advanced data descriptors), the 82547 FIFO workaround (move_tail(_locked), fifo_workaround, update_fifo_head, tx_fifo_reset), em_iff, em_local_timer, em_update_link_status, em_stop, em_identify_hardware, em_legacy_irq_quirk_spt, em_allocate_pci_resources, em_free_pci_resources, em_hardware_init, em_setup_interface, em_detach, em_activate, em_smartspeed, em_dma_malloc/free, the transmit and receive structures, em_tso_setup, em_tx_ctx_setup, em_transmit_checksum_setup, em_txeof, em_get_buf, em_rxfill, em_rxrefill(_locked), em_rxeof, em_receive_checksum, em_enable_hw_vlans, em_enable/disable_intr, the EmPciOps seam (em_write_pci_cfg, em_read_pci_cfg, em_pci_set_mwi, em_pci_clear_mwi, em_read_pcie_cap_reg: -E1000_NOT_IMPLEMENTED), em_fill_descriptors, em_disable_aspm, em_flush_tx/rx_ring, em_flush_desc_rings, em_allocate_legacy, the MSI-X functions (SMALL_KERNEL not defined; em_enable_msix 0 as in C, an atomic), em_allocate_desc_rings, em_get_sffpage. Locking: sc->hw is a guard (em_hw()) under the kernel lock, as the C changes it; the MP-safe paths reach the registers through regs, a second em_hw with the same back and mac_type written once before the interrupt is established; TBI_ACCEPT's members are mirrored in atomics (tbi_accept_with, if_em_hw.rs). Descriptor rings: volatile whole-descriptor access. Stubs: ifmedia_init/add/set reported with unported! (after the attach line), SIOCGIFMEDIA/SIOCSIFMEDIA ENOSYS (ifmedia_ioctl, net/if_media.c not ported); NKSTAT 0 (em_kstat_*, em_tbi_adjust_stats compiled out, comments at the sites); NVLAN 0 (the VLAN code behind the constant NVLAN). em* at pci? in both GENERICs; smoke-em: e1000e on amd64 and arm64 and e1000 on amd64 answer ping, igb attaches and gets its link but passes no traffic in QEMU (its model writes back advanced rx descriptors only)"
+
+# M14 A3 sub-task N: libsa's network stack. New rows (ports.toml had none for these files).
+# [[file]] rows go beside the other sys/lib/libsa rows (alphabetical), [[extra]] rows beside the
+# other sys/lib/libsa/hdr rows.
+
+[[file]]
+c = "sys/lib/libsa/arp.c"
+rust = "sys/lib/libsa/arp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "12a709497cc2b79ddacaaa4e014e784f2ee10eb8"
+notes = "M14 A3, for arm64's efiboot (efinet/TFTP): arpwhohas returns the address by value; after the cache recycles, the new entry is arp_list[arp_num] (the C writes one past the end); arp_list a StaticCell, arp_num an atomic keeping its C name (allow non_upper_case_globals: ARP_NUM is the size); ARP_DEBUG not ported (no efiboot defines it); tested end to end against a fake driver (tftp/tests.rs)"
+
+[[file]]
+c = "sys/lib/libsa/ether.c"
+rust = "sys/lib/libsa/ether.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "621fc7ce243ddb9aa6523e6c93914d30af1fb54e"
+notes = "M14 A3: packets are a buffer plus the offset of their data, the header written in front (EINVAL without room); readether returns (len, etype); ether_sprintf returns a NetStr by value; ETHER_DEBUG not ported"
+
+[[file]]
+c = "sys/lib/libsa/globals.c"
+rust = "sys/lib/libsa/globals.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5b67ee9a9830e29959267af561a4d447b165137d"
+notes = "M14 A3: no licence text (the file's own header comment kept); statics upper case (BCEA, MYIP, GATEIP...); in_addr globals are AtomicU32 s_addr, name buffers StaticCells, hostnamelen/domainnamelen AtomicI32; netmask keeps 0xffffff00 applied to network order values as in C"
+
+[[file]]
+c = "sys/lib/libsa/in_cksum.c"
+rust = "sys/lib/libsa/in_cksum.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "48a5f5fa7734c9c4e1a90396cbbcb91a766cfc34"
+notes = "M14 A3: over a slice, big-endian word sums whatever the alignment (the C's two loops); result in network order as in C; tested on RFC 1071 and IPv4 header vectors"
+
+[[file]]
+c = "sys/lib/libsa/iodesc.h"
+rust = "sys/lib/libsa/iodesc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3e372499a28d1ecc690fc25da22c4a0a68aad347"
+notes = "M14 A3: struct iodesc as IoDesc; io_netif is an Option<Netif> owned by the socket (the C points every socket at netif_select's static best_if)"
+
+[[file]]
+c = "sys/lib/libsa/net.c"
+rust = "sys/lib/libsa/net.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4f0c6e76852454e4bcff77c64a955a0b59b631bc"
+notes = "M14 A3: sendrecv over SendProc/RecvProc (buffer + data offset), Result where the C returns -1 (the Err carries errno when the C leaves it), the errno-0 'not yet' protocol kept; inet_ntoa/intoa return a NetStr by value; ip_convertaddr takes a byte string (empty = NULL); getsecs is SaConf::getsecs; NET_DEBUG not ported; host tests for inet_addr/intoa/ip_convertaddr and the backoff"
+
+[[file]]
+c = "sys/lib/libsa/net.h"
+rust = "sys/lib/libsa/net.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c809d02791b59d27ca90901e65d309cbb5b9d751"
+notes = "M14 A3: sizes, timeouts, struct packet_header (PACKET_HEADER = 48), SAMENET as samenet(); its externs are defined in globals.rs and netif.rs; extern debug and rarp_getipaddress (rarp.c, not compiled by the ported programs) not declared"
+
+[[file]]
+c = "sys/lib/libsa/netif.c"
+rust = "sys/lib/libsa/netif.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f0ec4904d32724789122fdef5c2db807808eb960"
+notes = "M14 A3: netif_drivers[]/n_netif_drivers are SaConf::netif_drivers; the machdep hint is a byte string (every caller in the tree passes a device name); netif_select returns the Netif by value; sockets[] a StaticCell, socktodesc an unsafe fn; netif_close/netif_get/netif_put on a socket without interface fail with EBADF (the C dereferences NULL); NETIF_DEBUG/PARANOID not ported"
+
+[[file]]
+c = "sys/lib/libsa/netif.h"
+rust = "sys/lib/libsa/netif.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "622cb486477504454936e40c64ae16611c53ebdc"
+notes = "M14 A3: no licence text; NetifDriver (fn pointers over references and slices, Result<usize, Errno> for get/put), NetifDif (dif_used AtomicU64, dif_stats &'static NetifStats with atomic counters, unsafe impl Sync for dif_private), Netif (Copy); netif_debug not declared"
+
+[[file]]
+c = "sys/lib/libsa/netudp.c"
+rust = "sys/lib/libsa/netudp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fcf6351d6c4c5d09cb0c37c8466e8c20cc14c668"
+notes = "M14 A3: headers copied out of/into the buffer (hdr/ from_bytes/write_to), the udpiphdr overlay rewritten in place around the checksum; readudp drops datagrams whose UDP length passes the buffer, whose options exceed it, or that end shorter than their headers (the C reads past or returns a negative length); ip_ttl = IP_TTL (4) as in C; NET_DEBUG not ported"
+
+[[file]]
+c = "sys/lib/libsa/tftp.c"
+rust = "sys/lib/libsa/tftp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0e87090b09a1a73d712d876b00378b1f73f2f81b"
+notes = "M14 A3: extern servip (the program's in C) is libsa's SERVIP; f_devdata points at a usize socket (NULL: ENXIO); the handle keeps the socket number and an owned path copy (a path over 131 bytes is ENOENT, the C overflows); tftpport a const; TFTP_NOTERMINATE/LIBSA_NO_TWIDDLE/NO_READDIR undefined as for efiboot; DEBUG not ported; tested end to end (ARP, RRQ, DATA/ACK, seek back, errors) against a fake driver and server in tftp/tests.rs"
+
+[[file]]
+c = "sys/lib/libsa/tftp.h"
+rust = "sys/lib/libsa/tftp.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7c053ab3c909b0b0ff2f055b5e0f64ac1a5a2ef6"
+notes = "M14 A3: SEGSIZE, opcodes, error codes, IPPORT_TFTP, struct tftphdr (sizes the buffers; members read at their offsets) and the tftp_* prototypes with their definitions"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/endian.rs"
+reason = "M14 A3: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/ethertypes.rs"
+reason = "M14 A3: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/if_arp.rs"
+reason = "M14 A3: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/if_ether.rs"
+reason = "M14 A3: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/in_.rs"
+reason = "M14 A3: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/ip.rs"
+reason = "M14 A3: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/ip_var.rs"
+reason = "M14 A3: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/udp.rs"
+reason = "M14 A3: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[extra]]
+rust = "sys/lib/libsa/hdr/udp_var.rs"
+reason = "M14 A3: the part of the kernel header libsa reads, declared again in libsa (a leaf crate that cannot link the kernel); hdr/tests.rs checks the layouts against bsd's port"
+
+[[file]]
+c = "sys/arch/arm64/arm64/locore0.S"
+rust = "sys/arch/arm64/arm64/locore0.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2a83c37b852d0d1e41b06dfba46596fb3697e9a1"
+deps = ["sys/arch/arm64/arm64/locore.S", "sys/arch/arm64/arm64/machdep.c", "sys/arch/arm64/include/bootconfig.h"]
+notes = "M14 (A3): the kernel's entry from boot(8) (efiboot), ELF entry (__start_phys = _start's offset, kernel.ld; Limine enters the boot glue's _start through its entry point request): drop_to_el1, MMU off, contextidr, get_virt_delta, esym, create_pagetables (kernel 64 MB block by 2 MB blocks, identity map in TTBR0), start_mmu, virtdone (initstack, BSS zeroed, arm64_bootparams on the stack), then bootarg_main (sys/stand/bootarg.rs) instead of initarm + main. Deviations: global_asm! with const/sym placeholders; four-level TTBR1 (T1SZ 16) with an L0 table and a direct map at 0xffff000000000000 by 1 GB blocks (the kernel's and the FDT's gigabytes; machdep.rs getbootinfo adds RAM), as Limine leaves the kernel; kernel blocks global (x14 argument of build_l2_block_pagetable), all 32 entries of the block; _start in .text.locore0 first in the image; no proc0 trapframe on initstack (64 KiB); kern_l1pt passed physical; interrupts masked at entry (daifset); no codepatch sections"
+
+[[file]]
+c = "sys/arch/arm64/include/bootconfig.h"
+rust = "sys/arch/arm64/include/bootconfig.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "071b93069374700194d873d6d76c150cf5415693"
+notes = "M14 (A3): struct arm64_bootparams (Arm64Bootparams, repr(C)); initarm's prototype not declared (locore0.S calls bootarg_main, which runs getbootinfo then initarm)"
+
+[[file]]
+c = "sys/arch/arm64/include/hypervisor.h"
+rust = "sys/arch/arm64/include/hypervisor.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+notes = "M14 (A3): what locore.S's drop_to_el1 writes: CPTR_RES1, HCR_TGE, HCR_RW, HCR_E2H, HCR_APK, HCR_API (reference-backed test); the rest of the EL2 registers come with vmm(4)"
+
+# M14 A3 sub E: arm64 efiboot. Replaces the row c = "sys/arch/arm64/stand/efiboot/efiboot.c" (skipped, replaced-by-limine).
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/conf.c"
+rust = "sys/arch/arm64/stand/efiboot/conf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7432c45dce9e05ecde89efabbfbe13808086c975"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): version 1.26, file_system[] (mtftp, efitftp+libsa tftp, ufs, ufs2, cd9660, esp), devsw[] (esp, tftp, sd, sr), constab[] (cons, com, fb), netif_drivers[] (efinet) gathered in SA_CONF/BOOT_MD; LOADADDR (& 0x7fffffffff) + efi_loadaddr; devsw sr routines are visible stubs (sropen says softraid is not ported, ENXIO): softraid_arm64.c is todo; debug not declared (BIOS_DEBUG only)"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/disk.h"
+rust = "sys/arch/arm64/stand/efiboot/disk.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "7dc3761c43db448dfd7713b5b167ea2aba373995"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): struct diskinfo/efi_diskinfo, DISKINFO_FLAG_*; disklist is a Vec<Box<DiskInfo>> (efiboot.rs); sr_vol null (softraid not ported); no licence text in the C (only its $OpenBSD$ line)"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/efiacpi.c"
+rust = "sys/arch/arm64/stand/efiboot/efiacpi.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "346cde3ead139889d87cd267508286e2dbc22d99"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): device tree from ACPI (FADT PSCI, GTDT timer, MADT GICC/GICD/GICR/MSI/ITS, SPCR, DBG2, /acpi reg) on dt_blob.rs; tables read as slices of their length (zeros past the end); handlers take the Fdt and an AcpiState (the C file statics); phandle passed host-order and reg-shift/reg-io-width as 8 bytes, as the C; host tests on synthetic tables"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/efiboot.c"
+rust = "sys/arch/arm64/stand/efiboot/efiboot.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "62f21057fbfa970d43dbbc63ccf1dc56cb19e61e"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): efi_main, consoles (cons/com/fb), heap, efi_diskprobe (disks: sd0* line), framebuffer/console/dma-constraint into /chosen, efi_makebootargs/efi_updatefdt, machdep (64 MB at 2 MB via efi_memprobe_find), timer clock, devboot, devparse/devopen (devopen_args gives dv_open its unit/part), mdrandom, efi_fdt/smbios_dtb/fdt_load_override, machine acpi/dtb/exit/fwsetup/poweroff; softraid parts (sr_volumes, sr-boot*, sr_clear_keys, srprobe) no-ops: softraid_arm64.c not ported (feature softraid prints so in srprobe); tested by a QEMU boot to the kernel"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/efiboot.h"
+rust = "sys/arch/arm64/stand/efiboot/efiboot.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "609c640f3148430cff310ec0f2fa01180451f95f"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): prototypes, with efiboot.rs"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/efidt.h"
+rust = "sys/arch/arm64/stand/efiboot/efiboot.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "537c08c85c6c5f0ed3bd9a36193a5445460ff881"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): EFI_DT_FIXUP_PROTOCOL(_GUID), EFI_DT_APPLY_FIXUPS/RESERVE_MEMORY, with efiboot.rs (its only user)"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/libsa.h"
+rust = "sys/arch/arm64/stand/efiboot/efiboot.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "263132cf78ed217ceb2704de16bd8e172e4543bb"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): machdep/devboot prototypes and MACHINE_CMD (BootMd.cmd_machine), with efiboot.rs; DPRINTF is DEBUG only"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/efidev.c"
+rust = "sys/arch/arm64/stand/efiboot/efidev.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "37b5d98eaf3d0db6686e2829e5c84e3189c8d91c"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): efid_init reads the label (GOODLABEL), efid_io bounce pages, MBR/EBR/GPT, cd9660 label, efiopen(unit, part via devopen_args), efistrategy (bounce for partial sectors), esp_* (esp_stat keeps the C -1 after the second GetInfo), espopen(unit), check_hibernate (raw diskio), bootdev_has_hibernate; read-only write fails EFI_WRITE_PROTECTED"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/efidev.h"
+rust = "sys/arch/arm64/stand/efiboot/efidev.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "40774baaa8d824cfad7a35f71e94c77def9736bd"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): prototypes, with efidev.rs"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/efipxe.c"
+rust = "sys/arch/arm64/stand/efiboot/efipxe.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ec3a933c74079aad04d5276ec805d57e44b2bcde"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): efi_pxeprobe (NET, PXE, use_mtftp, bootip, servip/gateip in libsa), mtftp_* whole-file reads, efitftp_open over libsa tftp_open, tftpopen/close (netif_open(efinet), txbuf), efinet_driver (SNP: match/probe/init/get/put/end) on libsa netif.rs; not covered by a smoke yet"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/efipxe.h"
+rust = "sys/arch/arm64/stand/efiboot/efipxe.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fa491a9bea1a237d0b1bc3554937298b4633a3f4"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): prototypes, with efipxe.rs"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/efirng.c"
+rust = "sys/arch/arm64/stand/efiboot/efirng.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d8dab07be05180f9cebcd584d085424c280d04df"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): fwrandom over EFI_RNG_PROTOCOL (declared locally as in the C); same code as amd64"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/exec.c"
+rust = "sys/arch/arm64/stand/efiboot/exec.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d478c44716df263d0412435f9ee73fdd21dbb18c"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): run_loadfile: bootargs from cmd.path and RB_* flags, efi_makebootargs, efi_cleanup, dc civac/ic ialluis, jump to marks[MARK_ENTRY](marks[MARK_END], 0, fdt); CTR_DLINE_* declared locally; asm compiled for the target only (host tests)"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/fdt.c"
+rust = "sys/arch/arm64/stand/efiboot/fdt.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5c0cfedce0c3791bc7e9f98f5b440b2c0b1ffe6f"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): Fdt over the blob (offsets, bounds-checked big-endian reads), FdtNode offsets, global TREE behind the C-named functions (fdt_with_tree for efiacpi), values returned as copies; DEBUG printers not compiled; host tests (find, add/set property and node, finalize, reread)"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/fdt.h"
+rust = "sys/arch/arm64/stand/efiboot/fdt.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "410f160673a43aaca0189c9691b40e9fc62949c6"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): struct fdt_head/fdt, FDT_* tokens, prototypes, with fdt.rs"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/heap.h"
+rust = "sys/arch/arm64/stand/efiboot/heap.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ba8cb8c55daeb9f7b947e1392cefcfc98da8a5d2"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): heap_init hands libsa the heap once; the limit is the heap pages end (the C has no HEAP_LIMIT and runs past them unchecked)"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/self_reloc.c"
+rust = "sys/arch/arm64/stand/efiboot/self_reloc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "be4176fe3c58a0b69ce6f638e5bf72b220f36488"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): Elf64_Rela/R_AARCH64_RELATIVE; nothing relocatable before it runs (ELF64_R_TYPE inline); linked -pie -z notext with relocation-model=pie"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/smbios.c"
+rust = "sys/arch/arm64/stand/efiboot/smbios.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "158e73a7121480c04f99d3ef4f25bd923b78d502"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): SMBIOS 2/3 entry points, smbios_find_table (cookie), smbios_get_string, fixstring, smbios_info (hw_vendor/prod/ver/serial as Vec); the smbiosvar.h parts it reads declared locally; SMBIOSDEBUG not defined; host tests on a synthetic table"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/start.S"
+rust = "sys/arch/arm64/stand/efiboot/start.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "feb869ebb1e12e71248122d676514a4b169ca0bf"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): the .S kept (global_asm), cpp constants as .set, adr -> adrp/add :lo12: (image > 1 MB in reach), the PE header (.peheader) as in the C; dt_blob.S include is dt_blob.rs"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/dt_blob.S"
+rust = "sys/arch/arm64/stand/efiboot/dt_blob.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "bf5089830e5a6cb8b389e9f256efff897b1c8032"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): the template blob built by a const fn from acpi.dts (references resolved as dtc does: gic phandle 1, serial0 alias /serial@0), dtc layout and -p 16384 padding; test-ref compares the bytes with dt_blob.S (identical); dtc output, no licence text"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/acpi.dts"
+rust = "sys/arch/arm64/stand/efiboot/dt_blob.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c22e2982069d88b0126f888149ad67000062137b"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): quoted in dt_blob.rs docs and described by its ROOT tree; no licence text"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/ldscript.arm64"
+rust = "sys/arch/arm64/stand/efiboot/start.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e06e652cd2c18081aa88284bd9d45fdb3bb07909"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): the script itself is sys/arch/arm64/stand/efiboot/ldscript.arm64 (build.rs passes it; start.rs carries the Upstream line), adapted for lld: KEEP(.peheader), .data.rel.ro with the data, .gnu.hash, .pad to a page so SizeOfImage is the file size, debug/unwind sections discarded; build.rs adds -pie --no-dynamic-linker -z notext -Bsymbolic --pack-dyn-relocs=none -z norelro"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/softraid_arm64.c"
+rust = "sys/arch/arm64/stand/efiboot/softraid_arm64.rs"
+status = "todo"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): srprobe, sr_strategy (AES-XTS), sr_getdisklabel, sropen (crypto unlock), srstrategy, srdiskio, srclose, srioctl: needs libsa softraid.c/aes_xts.c/... (todo); feature softraid of efiboot-arm64 mirrors it: efi_diskprobe says so with the feature, sropen (conf.rs stub) refuses sr devices visibly"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/softraid_arm64.h"
+rust = "sys/arch/arm64/stand/efiboot/softraid_arm64.rs"
+status = "todo"
+notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): prototypes of softraid_arm64.c (todo with it)"
+
+[[file]]
+c = "sys/arch/arm64/stand/efiboot/Makefile"
+status = "skipped"
+notes = "replaced-by-cargo: the crate efiboot-arm64 (Cargo.toml, build.rs) and just efiboot-arm64 (cargo build + cargo xtask efiboot, llvm-objcopy -O binary); its CPPFLAGS options are BootMd options (MDRANDOM, FWRANDOM, HIBERNATE, BOOT_STTY)"

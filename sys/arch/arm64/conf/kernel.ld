@@ -1,6 +1,14 @@
-/* EmiBSD arm64 linker script (Limine protocol). Identical to amd64's except OUTPUT_FORMAT. */
+/*
+ * EmiBSD arm64 linker script. The same ELF boots from Limine and from OpenBSD's efiboot
+ * (M14, track A3). The kernel is linked at 0xffffffff80000000 (Limine's higher half, which
+ * arm64/pmap.rs adopts) with physical addresses from 0 (AT()): efiboot's LOADADDR keeps
+ * the low 39 bits of p_paddr and adds its 64 MB block's address (efi_loadaddr), so the
+ * image lands at the block's start. The ELF entry is the physical offset of locore0.S's
+ * `_start` for the same reason (e_entry goes through LOADADDR too); Limine enters the
+ * boot glue's `_start` (sys/stand/mod.rs) through its entry point request.
+ */
 OUTPUT_FORMAT(elf64-littleaarch64)
-ENTRY(_start)
+ENTRY(__start_phys)
 
 PHDRS
 {
@@ -9,24 +17,28 @@ PHDRS
     data    PT_LOAD;
 }
 
+__kernel_base = 0xffffffff80000000;
+
 SECTIONS
 {
-    /* Higher half, where Limine loads non-relocatable kernels. */
-    . = 0xffffffff80000000;
+    /* Higher half, where Limine loads non-relocatable kernels; physical = virtual - base. */
+    . = __kernel_base;
 
-    .text : {
+    .text : AT(ADDR(.text) - __kernel_base) {
+        /* locore0.S's _start first: efiboot cleans the cache from the entry point on. */
+        KEEP(*(.text.locore0))
         *(.text .text.*)
     } :text
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
-    .rodata : {
+    .rodata : AT(ADDR(.rodata) - __kernel_base) {
         *(.rodata .rodata.*)
     } :rodata
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
 
-    .data : {
+    .data : AT(ADDR(.data) - __kernel_base) {
         *(.data .data.*)
 
         /* Limine requests: kept even though nothing references them by symbol. */
@@ -35,13 +47,23 @@ SECTIONS
         KEEP(*(.requests_end_marker))
     } :data
 
-    .bss : {
+    .bss : AT(ADDR(.bss) - __kernel_base) {
+        . = ALIGN(16);
+        __bss_start = .;
         *(.bss .bss.*)
         *(COMMON)
+        . = ALIGN(16);
     } :data
+
+    /* locore0.S zeroes __bss_start .. _end; locore.S's esym starts at end. */
+    _end = .;
+    PROVIDE(end = .);
 
     /DISCARD/ : {
         *(.eh_frame*)
         *(.note .note.*)
     }
 }
+
+/* The ELF entry: _start's offset in the image (see above). */
+__start_phys = _start - __kernel_base;

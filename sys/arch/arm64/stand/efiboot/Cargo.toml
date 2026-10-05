@@ -1,0 +1,37 @@
+[package]
+name = "efiboot-arm64"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "arm64's UEFI boot loader, BOOTAA64.EFI (OpenBSD sys/arch/arm64/stand/efiboot)"
+build = "build.rs"
+publish = false
+
+# BOOTAA64.EFI: `just efiboot-arm64` builds this ELF position-independent, in a target
+# directory of its own, and makes the PE image of it (tools/xtask/src/efiboot.rs). On the
+# host, `cargo test -p efiboot-arm64` runs its unit tests (fdt, smbios, the ACPI tables,
+# the device tree blob); the entry code is not compiled there.
+[[bin]]
+name = "bootaa64"
+path = "main.rs"
+test = true
+bench = false
+doc = false
+
+[features]
+# softraid_arm64.c and libsa's softraid.c (and its crypto), which arm64's efiboot compiles
+# unconditionally, are not ported yet: without them efiboot cannot open softraid volumes
+# and says so (`sropen`, conf.rs); with this feature it also says so where the C probes
+# them (`srprobe` in efi_diskprobe). The feature mirrors amd64's (SOFTRAID=yes).
+softraid = []
+
+[dependencies]
+libkern.workspace = true
+libsa.workspace = true
+libz.workspace = true
+efi.workspace = true
+boot.workspace = true
+
+[lints]
+workspace = true
