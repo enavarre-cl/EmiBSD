@@ -1129,3 +1129,11 @@ from the kernel finding virtio-mmio slots bottom up while QEMU `virt` hands them
 on arm64 the link NIC is added to QEMU's command line before the user-mode one, so that
 `vio0` is still the user-mode NIC. `just smoke-link` is the first user and is not part of
 `smoke`.
+
+QEMU's command line makes EDK2 boot Limine at once: the boot image's device has
+`bootindex=0` (QEMU's `bootorder` fw_cfg file puts it first in the firmware's `BootOrder`, so
+the blank persistent disk is no longer tried first: `BdsDxe: failed to load Boot0001 "UEFI
+Misc Device"`), and `-boot menu=on,splash-time=0` sets the boot manager's timeout to 0 through
+`etc/boot-menu-wait`. ArmVirtQemu otherwise waits its platform default: about 5 s of every
+arm64 boot (firmware start to `BdsDxe: starting` went from 5.5 s to 0.5 s). OVMF's default is
+already 0, so amd64 boots gain nothing measurable there.

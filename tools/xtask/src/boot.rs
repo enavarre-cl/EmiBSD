@@ -537,6 +537,13 @@ pub(crate) fn qemu_command(
         "-no-reboot",
     ]);
     cmd.args(["-serial", serial]);
+    // EDK2 boots Limine at once: `bootindex=0` on the boot image's device (below) puts it
+    // first in the firmware's BootOrder (QEMU's `bootorder` fw_cfg file, which OVMF and
+    // ArmVirtQemu both honour), so the blank persistent disk is no longer tried first
+    // (`BdsDxe: failed to load Boot0001 "UEFI Misc Device"`); and `menu=on,splash-time=0`
+    // sets the boot manager's timeout to 0 s through `etc/boot-menu-wait`, where ArmVirtQemu
+    // otherwise waits its platform default (about 5 s per arm64 boot; OVMF's default is 0).
+    cmd.args(["-boot", "menu=on,splash-time=0"]);
     if let Some(n) = SMP.get() {
         cmd.args(["-smp", &n.to_string()]);
     }
@@ -553,8 +560,11 @@ pub(crate) fn qemu_command(
     match arch {
         Arch::Amd64 => {
             cmd.args(["-M", "q35", "-cpu", "qemu64"]);
-            cmd.arg("-drive")
-                .arg(format!("format=raw,file={}", image.display()));
+            cmd.arg("-drive").arg(format!(
+                "if=none,format=raw,file={},id=hd0",
+                image.display()
+            ));
+            cmd.args(["-device", "ide-hd,drive=hd0,bus=ide.0,bootindex=0"]);
             cmd.args(["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]);
             cmd.args(["-device", &format!("virtio-net-pci,netdev=n0{nic0}")]);
             if let Some(v) = vm {
@@ -579,7 +589,7 @@ pub(crate) fn qemu_command(
                 "if=none,format=raw,file={},id=hd0",
                 image.display()
             ));
-            cmd.args(["-device", "virtio-blk-device,drive=hd0"]);
+            cmd.args(["-device", "virtio-blk-device,drive=hd0,bootindex=0"]);
             // QEMU `virt` hands virtio-mmio slots out from the top down and the kernel
             // finds them bottom up, so the device added LAST is vio0: the link NIC goes
             // before the user-mode one.
