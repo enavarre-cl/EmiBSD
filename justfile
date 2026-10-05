@@ -1641,6 +1641,55 @@ diff-openbsd: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--fea
         { echo "diff-openbsd: no difftest in target/userland; run just userland first"; exit 1; }
     EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/diff-openbsd} cargo xtask diff-openbsd {{smp}}
 
+# --- the comp set (M14) --------------------------------------------------------------
+
+# Job count of `comp`: about half the Mac's cores by default (other builds share it).
+comp_jobs := env("COMP_JOBS", "6")
+
+# OpenBSD's compiler for EmiBSD: clang, lld, libc++, libc++abi, libpthread and LLVM's tools
+# from gnu/llvm (Apache-2.0 WITH LLVM-exception, compiled unmodified) by OpenBSD's own build
+# glue (gnu/usr.bin/clang, gnu/lib/libcxx, gnu/lib/libcxxabi, gnu/lib/libclang_rt), into
+# target/comp/<arch> (root/ the staging root, comp.ffs its disk image; userland/comp.rs and
+# docs/ARCHITECTURE.md, "The comp set"). Needs `just userland`. Not part of `ci`: a first
+# build compiles about 2,850 C++ files per arch (30 min for arm64 with 5 jobs, measured while
+# other builds kept the Mac at a load average near 30), plus about 200 for the macOS build
+# tools, once (under a minute); a run with nothing changed takes 15 to 20 s per arch.
+# COMP_JOBS=N overrides the job count.
+comp:
+    cargo xtask comp --arch amd64 --jobs {{comp_jobs}}
+    cargo xtask comp --arch arm64 --jobs {{comp_jobs}}
+
+# M14: the compiler inside EmiBSD, without the installer. Boots the ramdisk kernel with the
+# comp set's disk (`target/comp/<arch>/comp.ffs`, copied to the persistent disk set `comp`,
+# so sd0), mounts it on /mnt and runs `/mnt/usr/bin/clang --version`, then compiles a hello
+# world with `cc --sysroot=/mnt -static` (clang, lld, crt0, libc.a and the headers all from
+# the disk; static because ld.so is not built yet) and runs it. The C has no double quotes
+# (the string is a char array) to keep the shell quoting simple; every line stays under
+# arm64's 128-byte console limit. Not in `smokes`: it needs `just comp`, which is not part of
+# `ci`. Time limits are five times the usual (`EMIBSD_TIMEOUT_SCALE`): clang runs under TCG.
+smoke-cc: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-cc: no ramdisk image; run just userland first"; exit 1; }
+    @test -f target/comp/amd64/comp.ffs -a -f target/comp/arm64/comp.ffs || \
+        { echo "smoke-cc: no comp image; run just comp first"; exit 1; }
+    cp target/comp/amd64/comp.ffs target/disk-amd64-comp.img
+    EMIBSD_TIMEOUT_SCALE=5 cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disk-set comp {{cc_script}} --expect 'Target: amd64-unknown-openbsd8.0'
+    cp target/comp/arm64/comp.ffs target/disk-arm64-comp.img
+    EMIBSD_TIMEOUT_SCALE=5 cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --disk-set comp {{cc_script}} --expect 'Target: aarch64-unknown-openbsd8.0'
+
+# `smoke-cc`'s session.
+cc_script := disk_login + " " + \
+    "--send-after '# ' --send 'mount /dev/sd0a /mnt && echo cc-mnt-$((40+2))\\n' " + \
+    "--send-after 'cc-mnt-42' --send '/mnt/usr/bin/clang --version\\n' " + \
+    "--send-after 'InstalledDir' --send 'print -r \"#include <stdio.h>\" >/tmp/h.c\\n' " + \
+    "--send-after '# ' --send 'print -r \"int main(void){char s[]={99,99,45,111,107,0};\" >>/tmp/h.c\\n' " + \
+    "--send-after '# ' --send 'print -r \"puts(s);return 0;}\" >>/tmp/h.c\\n' " + \
+    "--send-after '# ' --send '/mnt/usr/bin/cc --sysroot=/mnt -static -o /tmp/h /tmp/h.c; echo cc-rc-$?\\n' " + \
+    "--send-after 'cc-rc-0' --send '/tmp/h\\n' " + \
+    "--expect 'cc-mnt-42' --expect 'OpenBSD clang version 22.1.6' --expect 'cc-rc-0' --expect 'cc-ok'"
+
 # --- quality -----------------------------------------------------------------
 
 # host unit tests (libkern + libz + bsd through sys/arch/host, plus xtask's own)

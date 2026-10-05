@@ -404,6 +404,93 @@ docs/SETUP.md, "e2fsprogs"), an independent implementation, so a bug shared by o
 OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` does (the MBR's
 0xA6 partition, its label in sector 1) and hands e2fsck and debugfs `image?offset=BYTES`.
 
+### The comp set (M14)
+
+The compiler is OpenBSD's: clang and lld from `gnu/llvm` (LLVM 22.1.6, Apache-2.0 WITH
+LLVM-exception, compiled unmodified, not ported; the user's decision of 2026-10-04), built by
+OpenBSD's own build glue (`gnu/usr.bin/clang`, `gnu/lib/libcxx`, `gnu/lib/libcxxabi`,
+`gnu/lib/libclang_rt`, `lib/librthread`) through `bsdmake.rs`, with the userland's toolchain.
+`cargo xtask comp --arch A [--jobs N]` (`tools/xtask/src/userland/comp.rs`, `just comp`)
+writes `target/comp/`:
+
+- `host/`: the build tools `gnu/usr.bin/clang/Makefile` builds and runs during the build
+  (`llvm-min-tblgen`, `llvm-tblgen`, `clang-tblgen`, with `libLLVMSupport`, `libLLVMTableGen`
+  and `libclangSupport`), built for macOS from the same Makefiles, once for both
+  architectures. The target trees reach them where the generation rules look
+  (`${.OBJDIR}/../../../llvm-tblgen/llvm-tblgen`) through symbolic links.
+- `<arch>/sysroot`: `userland`'s sysroot (copied; `just userland` must have run), plus
+  `/usr/include/c++/v1` by libc++'s and libc++abi's own `includes` rules (with OpenBSD's
+  `__config_site`), `libpthread.a`, `libc++abi.a` (with the libunwind sources OpenBSD builds
+  into it) and `libc++.a`.
+- `<arch>/obj`: `gnu/usr.bin/clang`'s `SUBDIR` for that `MACHINE` (`Makefile.arch`: the X86
+  or AArch64 backend, plus AMDGPU, as OpenBSD builds): every `include/*` directory's
+  generation rules (tblgen, `llvm-config.h`, the `.def` files), then the libraries, all
+  compiled in one parallel run (`libLLVM.a` is all of LLVM, as `libLLVM/Makefile` includes
+  every `libLLVM*/Makefile`), then the programs, linked with `ld.lld` as OpenBSD's
+  `c++ -static` would (static PIE: `rcrt0.o`, `-lc++ -lc++abi -lpthread -lm`,
+  `-lcompiler_rt -lc -lcompiler_rt`).
+- `<arch>/root`: the staging root. The programs at their Makefiles' `BINDIR` with their
+  `LINKS` (`clang` as `cc`, `c++`, `cpp`, `clang++`, `clang-cpp`; `ld.lld` as `ld`; `ar` as
+  `ranlib`; `llvm-objcopy` as `strip`; ...), stripped; clang's resource headers
+  (`/usr/lib/clang/22/include`, by `include/clang/intrin`'s own `install` rule);
+  `libclang_rt.profile.a` and `libclang_rt.ubsan_minimal.a` in `/usr/lib/clang/22/lib`; and
+  the sysroot's `/usr/include` and `/usr/lib`, what `cc` needs to compile and link there.
+  `comp.ffs` is that root as an ffs image (OpenBSD's makefs as `userland` builds it; owners
+  and modes as the Makefiles say), the disk `just smoke-cc` mounts.
+- `<arch>/licences.txt`: the licence report, as for `userland`.
+
+Incremental: objects are remade only when a source, a header or the command changed (the
+`.d` files and `.cmd` stamps of `userland`), archives only when an object is newer, links
+only when an input is; installed headers keep their mtime when unchanged. `just comp` is not
+part of `ci`: a first build compiles about 2,850 C++ files per
+architecture (measured: 30 minutes for arm64 with 5 jobs, while other builds kept the Mac at
+a load average near 30), plus about 200 files of build tools for macOS, once; a run with
+nothing changed takes 15 to 20 seconds (most of it checking the objects' `.d` files and the
+licence report). Its job count defaults to about half the Mac's cores (`COMP_JOBS`):
+other builds share the machine.
+
+What of OpenBSD's comp set (`distrib/sets/lists/comp/{mi,md.<arch>,clang.<arch>}`) and of
+the base set's compiler is built: `clang` (and links), `ld.lld` (`ld`), `clang-scan-deps`,
+`llvm-config`, `llvm-objcopy` (`strip`), `llvm-objdump`, `llvm-readobj` (`llvm-readelf`),
+`llvm-symbolizer` (`llvm-addr2line`), `llvm-profdata`, `llvm-cov`, `ar` (`ranlib`), libc++,
+libc++abi, libpthread, `libclang_rt.*.a` and the headers. Not built: lldb and lldb-server
+(`BUILD_LLDB=no`: the debugger needs ptrace(2) work and a host `libLLVM` for
+`lldb-tblgen`; the exit criterion is `cc hello.c`); the profiled `*_p.a` libraries (none are
+built anywhere here); `/usr/include/llvm` (libLLVM's `includes`), binutils' `as`, `gdb`,
+`ldscripts` (`md.amd64`; GPL, not in the clone); the `mi` list's other libraries and tools
+that `userland` builds or not, as its lists say.
+
+Workarounds, each printed by the build (flags only; no source is edited):
+
+- `-fno-ret-protector` (`gnu/usr.bin/clang/Makefile.inc`) is OpenBSD-local; dropped
+  (`UNSUPPORTED_FLAGS`).
+- macOS's file system ignores case, OpenBSD's does not. An `-I` directory holding a header
+  whose name differs from a libc or libc++ header only in case (`llvm/Support/Errno.h`,
+  `Locale.h`, `llvm/BinaryFormat/ELF.h`) becomes `-iquote`: `<errno.h>` would find it.
+  Where two `-I` directories of one compile hold such a pair (JITLink's `x86.h` and the X86
+  backend's `X86.h` in `libLLVM`), the header `CASE_COLLISIONS` names is hidden behind a
+  directory of symbolic links to the rest; an unnamed collision stops the build.
+- The build tools are built against macOS with OpenBSD's `include/llvm/Config/config.h`:
+  `-DHAVE_MACH_MACH_H=1` (its `ENABLE_CRASH_OVERRIDES` code on macOS needs `<mach/mach.h>`)
+  and a force-included header mapping `pthread_set_name_np`/`pthread_get_name_np` to
+  macOS's `pthread_setname_np`/`pthread_getname_np` (`HOST_FLAGS`, `HOST_COMPAT_H`).
+- `bsdmake.rs`: a whole-line comment ends at its newline even after a backslash, as in
+  OpenBSD's make (`libclangASTMatchers/Makefile` comments out a continued line); the
+  `<bsd.lib.mk>` stand-in includes `<bsd.own.mk>` first, as the real one does (the glue's
+  `Makefile.inc` sets `CXX=clang++` unless `COMPILER_VERSION` is clang). A target compile
+  whose `CC` or `CXX` is not the cross compiler stops the build.
+
+Deviations: the programs are static PIE executables, like the rest of the userland (`ld.so`
+is another M14 track); OpenBSD links them dynamically and ships `libLLVM` as a shared
+library (`NOLIBSTATIC`), here `libLLVM.a` is linked into each program.
+
+`just smoke-cc` (not in `smokes`: it needs `just comp`) boots the ramdisk kernel with
+`comp.ffs` as `sd0`, mounts it on `/mnt`, runs `/mnt/usr/bin/clang --version` (`OpenBSD
+clang version 22.1.6`, `Target: amd64-unknown-openbsd8.0` or `aarch64-unknown-openbsd8.0`),
+compiles a hello world with `cc --sysroot=/mnt -static` and runs it. On the way the kernel
+reports two gaps it works around: `unported: sys_mmap: file mappings` (clang and lld map
+their input files; LLVM falls back to `read(2)`) and `unported: amap_copy: chunking`.
+
 ## Boot loaders (M14)
 
 OpenBSD's boot programs are ported as OpenBSD builds them (the user's decision of 2026-10-03,

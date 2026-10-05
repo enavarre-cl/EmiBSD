@@ -73,20 +73,49 @@ CFLAGS+=\t${CDIAGFLAGS}
 CFLAGS+=\t${COPTS}
 ";
 
+/// `<bsd.lib.mk>`: as `BSD_PROG_MK`, but `<bsd.own.mk>` comes first, as in the real one
+/// (`share/mk/bsd.lib.mk`), so `../Makefile.inc` sees its defaults: the compiler's
+/// `gnu/usr.bin/clang/Makefile.inc` sets `CXX=clang++` unless `COMPILER_VERSION` is clang
+/// (M14).
+const BSD_LIB_MK: &str = "\
+.include <bsd.own.mk>
+.if exists(${.CURDIR}/../Makefile.inc)
+.include \"${.CURDIR}/../Makefile.inc\"
+.endif
+.if ${WARNINGS:L} == \"yes\"
+CFLAGS+=\t${CDIAGFLAGS}
+.endif
+CFLAGS+=\t${COPTS}
+";
+
 /// `bsd.lib.mk`'s `.c.o` rule, without its final `ld -X -r` (which only drops local
 /// temporary symbols).
 const RULE_C_O: &str = "${COMPILE.c} ${DFLAGS} -MF ${.TARGET:R}.d ${.IMPSRC} -o ${.TARGET}";
+/// `bsd.lib.mk`'s `.cpp.o` (and `.cc.o`) rule, likewise: the compiler's sources (M14,
+/// `comp.rs`).
+const RULE_CC_O: &str = "${COMPILE.cc} ${DFLAGS} -MF ${.TARGET:R}.d ${.IMPSRC} -o ${.TARGET}";
 /// `bsd.lib.mk`'s `.S.o` rule, likewise.
 const RULE_S_O: &str = "${COMPILE.S} ${CFLAGS:M-[IDM]*} ${AINC} ${DFLAGS} -MF ${.TARGET:R}.d \
                         -o ${.TARGET} ${.IMPSRC}";
 
 /// Flags of OpenBSD's patched base clang that Apple clang does not know, removed from
 /// `CFLAGS`/`AFLAGS`/`COPTS` after evaluation, with the reason.
-const UNSUPPORTED_FLAGS: &[(&str, &str)] = &[(
-    "-fret-clean",
-    "OpenBSD-local clang option (lib/libc/arch/amd64/Makefile.inc): clears the return \
-     address slot after use; Apple clang rejects it",
-)];
+const UNSUPPORTED_FLAGS: &[(&str, &str)] = &[
+    (
+        "-fret-clean",
+        "OpenBSD-local clang option (lib/libc/arch/amd64/Makefile.inc): clears the return \
+         address slot after use; Apple clang rejects it",
+    ),
+    (
+        "-fno-ret-protector",
+        "OpenBSD-local clang option (gnu/usr.bin/clang/Makefile.inc, M14): turns off the \
+         return-address protector OpenBSD's clang adds by default, which Apple clang \
+         neither adds nor knows",
+    ),
+];
+
+/// The `UNSUPPORTED_FLAGS` already reported in this run.
+static REPORTED_FLAGS: Mutex<BTreeSet<&str>> = Mutex::new(BTreeSet::new());
 
 /// Warnings OpenBSD's base clang leaves off by default and Apple clang turns on, switched
 /// off where a Makefile makes warnings errors (`-Werror`: LibreSSL's), with the reason.
@@ -681,6 +710,18 @@ fn new_host_make(ctx: &Ctx<'_>, dir: &str, objdir: &Path) -> Result<Make> {
 }
 
 fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make> {
+    make_for_with(ctx, dir, objdir, host, &[])
+}
+
+/// `make_for`, with `extra` variables defined before the Makefile is read (what `comp.rs`
+/// adds of `sys.mk` and `bsd.own.mk` for the compiler's Makefiles).
+fn make_for_with(
+    ctx: &Ctx<'_>,
+    dir: &str,
+    objdir: &Path,
+    host: bool,
+    extra: &[(&str, String)],
+) -> Result<Make> {
     let curdir = if OWN_PROGRAMS.contains(&dir) {
         ctx.root.join(dir)
     } else {
@@ -693,6 +734,19 @@ fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make>
         format!(
             "{} --target={} --sysroot={}",
             t.cc.display(),
+            ctx.m.triple,
+            ctx.sysroot.display()
+        )
+    };
+    // The C++ driver beside the C one (`/usr/bin/clang++`), for the `.cpp` sources of the
+    // compiler and its libraries (M14, `comp.rs`); nothing of `userland` is C++.
+    let cxx_driver = cxx_of(&t.cc);
+    let cxx = if host {
+        cxx_driver.display().to_string()
+    } else {
+        format!(
+            "{} --target={} --sysroot={}",
+            cxx_driver.display(),
             ctx.m.triple,
             ctx.sysroot.display()
         )
@@ -715,6 +769,13 @@ fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make>
         ("PIPE", "-pipe".to_string()),
         ("COMPILE.c", "${CC} ${CFLAGS} ${CPPFLAGS} -c".to_string()),
         ("COMPILE.S", "${CC} ${AFLAGS} ${CPPFLAGS} -c".to_string()),
+        // sys.mk's C++ defaults.
+        ("CXX", cxx),
+        ("CXXFLAGS", "-O2 ${PIPE} ${DEBUG}".to_string()),
+        (
+            "COMPILE.cc",
+            "${CXX} ${CXXFLAGS} ${CPPFLAGS} -c".to_string(),
+        ),
         ("DFLAGS", "-MD -MP".to_string()),
         ("YACC", ctx.out.join("host/bin/yacc").display().to_string()),
         ("YACC.y", "${YACC} -d ${YFLAGS}".to_string()),
@@ -726,12 +787,16 @@ fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make>
     let sys_mk = [
         ("bsd.own.mk", BSD_OWN_MK),
         ("bsd.prog.mk", BSD_PROG_MK),
-        ("bsd.lib.mk", BSD_PROG_MK),
+        ("bsd.lib.mk", BSD_LIB_MK),
         // Only the recursion into `SUBDIR` (the libraries' `man` directories): nothing
         // that changes a variable.
         ("bsd.subdir.mk", ""),
+        // Only the `obj` target (making `.OBJDIR`, which xtask does): the compiler's
+        // `include/*` Makefiles (M14, `comp.rs`).
+        ("bsd.obj.mk", ""),
     ];
     let mut predefined = predefined.to_vec();
+    predefined.extend(extra.iter().cloned());
     if !host && NOMAN_PROGRAMS.contains(&dir) {
         predefined.push(("NOMAN", "yes".to_string()));
         println!("  {dir}: NOMAN: the embedded manual page is `no manual` (no mandoc here)");
@@ -740,11 +805,18 @@ fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make>
     mk.read(&curdir.join("Makefile"))?;
     for (flag, why) in UNSUPPORTED_FLAGS {
         let mut removed = false;
-        for var in ["CFLAGS", "AFLAGS", "COPTS"] {
+        for var in ["CFLAGS", "AFLAGS", "COPTS", "CXXFLAGS"] {
             removed |= mk.remove_word(var, flag);
         }
-        if removed {
-            println!("  {dir}: dropped {flag}: {why}");
+        // Said once per flag and run: the compiler's ~150 Makefiles (M14) all drop
+        // `-fno-ret-protector`.
+        let first = removed
+            && REPORTED_FLAGS
+                .lock()
+                .map(|mut r| r.insert(*flag))
+                .unwrap_or(true);
+        if first {
+            println!("  {dir}: dropped {flag} (and wherever else it is set): {why}");
         }
     }
     if !host && mk.words("CFLAGS")?.iter().any(|w| w == "-Werror") {
@@ -756,6 +828,15 @@ fn make_for(ctx: &Ctx<'_>, dir: &str, objdir: &Path, host: bool) -> Result<Make>
         }
     }
     Ok(mk)
+}
+
+/// The C++ driver of the C compiler `cc`: `cc++` beside it when it exists (Apple's
+/// `/usr/bin/clang++`), else `cc` itself, which compiles `.cpp` files as C++ too.
+fn cxx_of(cc: &Path) -> PathBuf {
+    let mut name = cc.as_os_str().to_os_string();
+    name.push("++");
+    let cxx = PathBuf::from(name);
+    if cxx.is_file() { cxx } else { cc.to_path_buf() }
 }
 
 /// Target-local variables for making `target` from `sources`.
@@ -915,13 +996,38 @@ fn mtime(p: &Path) -> Option<SystemTime> {
     fs::metadata(p).and_then(|m| m.modified()).ok()
 }
 
+/// How many jobs `run_jobs` runs at once; 0 means one per CPU (the default of `userland`).
+/// `comp` (M14, `comp.rs`) sets it from `--jobs`: two other milestone agents may share the
+/// machine.
+static JOBS: AtomicUsize = AtomicUsize::new(0);
+
 /// Runs the jobs that are out of date, in parallel; returns how many ran. Every failure is
 /// reported, not just the first.
 fn run_jobs(ctx: &Ctx<'_>, what: &str, jobs: &[Job]) -> Result<usize> {
-    let todo: Vec<&Job> = jobs.iter().filter(|j| !j.up_to_date()).collect();
+    let workers = match JOBS.load(Ordering::Relaxed) {
+        0 => std::thread::available_parallelism().map_or(4, |n| n.get()),
+        n => n,
+    };
+    // Which jobs are out of date, checked in parallel: the compiler's ~3,000 objects
+    // (M14, `comp.rs`) each have a `.d` file of hundreds of headers to stat.
+    let mut stale = vec![false; jobs.len()];
+    let chunk = jobs.len().div_ceil(workers).max(1);
+    std::thread::scope(|s| {
+        for (js, out) in jobs.chunks(chunk).zip(stale.chunks_mut(chunk)) {
+            s.spawn(move || {
+                for (j, o) in js.iter().zip(out.iter_mut()) {
+                    *o = !j.up_to_date();
+                }
+            });
+        }
+    });
+    let todo: Vec<&Job> = jobs
+        .iter()
+        .zip(&stale)
+        .filter_map(|(j, s)| s.then_some(j))
+        .collect();
     let next = AtomicUsize::new(0);
     let failures: Mutex<Vec<(PathBuf, String)>> = Mutex::new(Vec::new());
-    let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
     std::thread::scope(|s| {
         for _ in 0..workers {
             s.spawn(|| {
@@ -939,9 +1045,16 @@ fn run_jobs(ctx: &Ctx<'_>, what: &str, jobs: &[Job]) -> Result<usize> {
             });
         }
     });
+    let deps: Vec<Vec<PathBuf>> = std::thread::scope(|s| {
+        let handles: Vec<_> = jobs
+            .chunks(chunk)
+            .map(|js| s.spawn(move || js.iter().flat_map(Job::all_deps).collect::<Vec<_>>()))
+            .collect();
+        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+    });
     if let Ok(mut inputs) = ctx.inputs.lock() {
-        for j in jobs {
-            inputs.extend(j.all_deps());
+        for d in deps {
+            inputs.extend(d);
         }
     }
     let failures = failures
@@ -1392,6 +1505,8 @@ fn object_jobs(ctx: &Ctx<'_>, mk: &Make, objdir: &Path, extra_objs: &[String]) -
             found.ok_or_else(|| format!("no source for {o} (tried {candidates:?})"))?;
         let template = if name.ends_with(".c") {
             RULE_C_O
+        } else if [".cpp", ".cc", ".cxx"].iter().any(|x| name.ends_with(x)) {
+            RULE_CC_O
         } else {
             RULE_S_O
         };
@@ -1899,6 +2014,7 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
     Ok(())
 }
 
+pub(crate) mod comp;
 mod images;
 mod libraries;
 mod passwd;

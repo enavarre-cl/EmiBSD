@@ -27,12 +27,12 @@ use super::*;
 /// `@MANIFEST@`. `install -d dir...` (libfuse's rule makes `/usr/include/fuse` so) records a
 /// `-d dir` line per directory, which xtask creates, so that a later `install file dir`
 /// lands inside it.
-const INSTALL_SH: &str = "\
+pub(super) const INSTALL_SH: &str = "\
 #!/bin/sh
 # EmiBSD: install(1) for a library's `includes` rule (tools/xtask, userland/libraries.rs).
 # Records what would be installed; xtask installs it.
 d=
-while getopts Ccdo:g:m: opt; do [ \"$opt\" = d ] && d=1; done
+while getopts CcDdo:g:m: opt; do [ \"$opt\" = d ] && d=1; done
 shift $((OPTIND - 1))
 if [ -n \"$d\" ]; then
 \tfor dir; do echo \"-d $dir\" >> '@MANIFEST@'; done
@@ -48,7 +48,7 @@ done
 
 /// The `cmp(1)` stand-in for `includes` rules: never equal, so `cmp -s a b || install ...`
 /// always reaches `install`.
-const CMP_SH: &str = "#!/bin/sh\nexit 1\n";
+pub(super) const CMP_SH: &str = "#!/bin/sh\nexit 1\n";
 
 /// Makes `target` of `mk` in `objdir` as make(1) would: every source that a rule makes
 /// first (recursively), then the target's own commands if a rule has some. `path` is put

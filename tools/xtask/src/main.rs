@@ -65,6 +65,9 @@
 //!                                          with K's symbols (default: the debug kernel)
 //! cargo xtask userland --arch A            cross-compile OpenBSD's libc, init, ksh, echo and
 //!                                          ls from the reference sources (target/userland/A)
+//! cargo xtask comp --arch A [--jobs N]     M14: OpenBSD's compiler (clang, lld, libc++) from
+//!                                          gnu/llvm by its build glue, into target/comp/A
+//!                                          (userland/comp.rs); N jobs, default half the CPUs
 //! cargo xtask ntfs-image OUT [--check]     write M10d's NTFS test volume to OUT (ntfsgen.rs);
 //!                                          --check mounts it with macOS's NTFS driver
 //! cargo xtask e2fsck --arch A [--disk-set NAME] [--cat PATH=TEXT]...
@@ -121,7 +124,7 @@ const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | 
                      smoke-all [-j N] [--just PATH] RECIPE... | \
                      unsafe-report [--write] | \
                      diff-openbsd [--arch A]... [--smp N] [--kernel-dir D] [fetch | install | run] | \
-                     symbolize --arch A [--kernel K] | userland --arch A | ntfs-image OUT [--check] | \
+                     symbolize --arch A [--kernel K] | userland --arch A | comp --arch A [--jobs N] | ntfs-image OUT [--check] | \
                      e2fsck --arch A [--disk-set NAME] [--cat PATH=TEXT]... | \
                      nvme-root --arch A [--duid HEX] [--out FILE] [--root-dev DEV]>";
 
@@ -338,6 +341,21 @@ fn run(args: &[String]) -> Result<()> {
         ["userland", rest @ ..] => {
             let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
             userland::userland(&root, arch)
+        }
+        ["comp", rest @ ..] => {
+            let arch = boot::Arch::parse(flag(rest, "--arch")?)?;
+            // Half the CPUs by default: other builds may share the machine.
+            let jobs = match optional_flag(rest, "--jobs") {
+                Some(n) => n
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|n| *n > 0)
+                    .ok_or_else(|| format!("--jobs {n}: not a positive number"))?,
+                None => std::thread::available_parallelism()
+                    .map_or(4, |n| n.get())
+                    .div_ceil(2),
+            };
+            userland::comp::comp(&root, arch, jobs)
         }
         ["ntfs-image", out] => ntfsgen::ntfs_image(&root.join(out), false),
         ["ntfs-image", out, "--check"] => ntfsgen::ntfs_image(&root.join(out), true),
