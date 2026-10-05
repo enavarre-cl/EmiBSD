@@ -10,7 +10,7 @@ paths:
   from `CARGO_MANIFEST_DIR`, never from the current directory.
 - Subcommands: `image` (FAT ESP with Limine + `/bsd`), `qemu` (run), `smoke` (run, assert serial
   lines and exit code), `smoke2` (two VMs on a private link, `twovm.rs`), `smoke-all`
-  (`just smoke`'s recipes N at a time, each in `target/smoke/<recipe>`, `smokeall.rs`), `ports {check,status,drift,next}`, `gen-syscalls`, `symbolize`, `ntfs-image` (M10d: our NTFS test volume, `ntfsgen.rs`, checked by macOS's NTFS driver), `nvme-root` (M13a: the labelled NVMe root disk of `smoke-nvme`; `hwopts.rs`, which also holds M13's QEMU device options such as `--nvme`), `userland`
+  (`just smoke`'s recipes N at a time, each in `target/smoke/<recipe>`, `smokeall.rs`), `ports {check,status,drift,next}`, `unsafe-report` (M12+: `unsafe` per subsystem, `unsafereport.rs`), `gen-syscalls`, `symbolize`, `ntfs-image` (M10d: our NTFS test volume, `ntfsgen.rs`, checked by macOS's NTFS driver), `nvme-root` (M13a: the labelled NVMe root disk of `smoke-nvme`; `hwopts.rs`, which also holds M13's QEMU device options such as `--nvme`), `userland`
   (M8: OpenBSD's libc and programs cross-compiled from the reference sources, `userland.rs` over
   the make-subset evaluator `bsdmake.rs`).
 - External tools (`qemu-system-*`, Limine binaries, EDK2 firmware) are located at runtime via
@@ -23,5 +23,6 @@ paths:
   `xtask: <what failed>: <why>` line. Non-zero exit on any error.
 - Keep dependencies minimal: `serde` + `toml` for the tracker, `fatfs` for images when M0 lands.
   No `clap`; argument parsing is a `match` on `std::env::args`.
-- `ports status --write` is the only command that writes to the tree, and only between the
-  `<!-- ports:begin -->` / `<!-- ports:end -->` markers in `docs/PORTING.md`.
+- Two commands write to the tree: `ports status --write`, only between the
+  `<!-- ports:begin -->` / `<!-- ports:end -->` markers in `docs/PORTING.md`, and
+  `unsafe-report --write`, only the line of `docs/STATUS.md` that starts with `Unsafe`.

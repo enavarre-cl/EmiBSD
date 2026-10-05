@@ -52,6 +52,9 @@
 //!                                          in target/smoke/RECIPE (its images, disks and
 //!                                          log); a line per recipe, the failed ones' logs
 //!                                          at the end (smokeall.rs)
+//! cargo xtask unsafe-report [--write]    `unsafe` blocks, fns, impls and traits per kernel
+//!                                          subsystem, test code apart; --write puts the totals
+//!                                          on docs/STATUS.md's `Unsafe` line (unsafereport.rs)
 //! cargo xtask symbolize --arch A [--kernel K]
 //!                                          annotate the addresses of a stack trace on stdin
 //!                                          with K's symbols (default: the debug kernel)
@@ -89,6 +92,7 @@ mod smokeall;
 mod symbolize;
 mod syscalls;
 mod twovm;
+mod unsafereport;
 mod userland;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
@@ -108,6 +112,7 @@ const USAGE: &str = "usage: cargo xtask <ports check | ports status [--write] | 
                      smoke --arch A [--kernel K] [--cmdline C] [--init I] [--ramdisk R] [--expect-ramdisk] [--disk-fresh] [--disks N] [--disk-set NAME] [--nvme FILE] [--scsi-cd ISO] [--usb] [--audio hda|ac97] [--expect-tone] [--status N] [--send-after L --send T]... [--until-seen] [--https-server DIR:PORT:MODE]... [--reject L]... --expect L... | \
                      smoke2 --arch A [--kernel K] [--cmdline C] [--timeout S] [--show-transcripts] [--disk-fresh] [--disks N] [--both-|--a-|--b-send-after L --send T]... [--both-|--a-|--b-expect L]... [--reject L]... [--https-server DIR:PORT:MODE]... | \
                      smoke-all [-j N] [--just PATH] RECIPE... | \
+                     unsafe-report [--write] | \
                      symbolize --arch A [--kernel K] | userland --arch A | ntfs-image OUT [--check] | \
                      e2fsck --arch A [--disk-set NAME] [--cat PATH=TEXT]... | \
                      nvme-root --arch A [--duid HEX] [--out FILE]>";
@@ -305,6 +310,8 @@ fn run(args: &[String]) -> Result<()> {
             let a = smokeall::parse_args(rest)?;
             smokeall::smoke_all(&root, a.jobs, a.just, &a.recipes)
         }
+        ["unsafe-report"] => unsafereport::unsafe_report(&root, false),
+        ["unsafe-report", "--write"] => unsafereport::unsafe_report(&root, true),
         ["gen-syscalls"] => syscalls::gen_syscalls(&root, false),
         ["gen-syscalls", "--check"] => syscalls::gen_syscalls(&root, true),
         ["symbolize", rest @ ..] => {
@@ -458,7 +465,7 @@ fn is_structural(rel: &str) -> bool {
         || rel.starts_with("sys/stand/")
 }
 
-fn walk_rs(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
+pub(crate) fn walk_rs(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
     for entry in fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
         let path = entry?.path();
         if path.is_dir() {

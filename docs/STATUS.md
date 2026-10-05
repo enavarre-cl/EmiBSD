@@ -15,6 +15,8 @@ Next:
 - M13 (storage, firmware, console; nvme, vioscsi and cd are in), then M14, M15.
 - M13 picks up M12's leftovers: wskbd and ukbdmap.c (the keyboard is silent until then).
 
+Unsafe (`cargo xtask unsafe-report`): kernel 5319 blocks, 644 fn, 497 impl, 17 trait, 103 other; tests 569 more.
+
 Blockers:
 - amd64 kernel stacks are tight: about 4.9 KB stay free under softraid I/O (M10f measure).
 - Under load the amd64 TSC can measure high (1.2-1.3 GHz for ~1.0), so the clock runs slow

@@ -86,6 +86,27 @@ cargo xtask ports drift --diff      # what changed upstream among ported files
 git commit -m "reference: bump OpenBSD pin to <12-hex>"
 ```
 
+## Measuring unsafe
+
+`cargo xtask unsafe-report` (M12+) counts the `unsafe` keywords of the kernel crates (`sys/`,
+with `sys/lib/libkern` and `sys/lib/libz`, and `init/`; not `tools/xtask`). It is the Phase 2
+baseline ([PHASE2.md](PHASE2.md)); `--write` puts the totals on the `Unsafe` line of
+`docs/STATUS.md`.
+
+- What counts: `unsafe { }` blocks, `unsafe fn` declarations (also `unsafe extern "C" fn`),
+  `unsafe impl`, `unsafe trait`. "Other" is every remaining `unsafe`: `unsafe extern` blocks,
+  `#[unsafe(no_mangle)]` attributes and `unsafe fn(..)` pointer types.
+- What does not: an `unsafe` inside a comment, a string or a raw string (a small lexer skips
+  them), and `r#unsafe`.
+- Test code is a column of its own: `tests.rs` files, files declared by a test-only `mod`,
+  and the item after a test-only `#[cfg]` (`test`, `all(.., test)`; `any(test, feature = "x")`
+  also builds into a kernel and counts as kernel code).
+- Subsystems: the first directory under `sys/` (`kern`, `uvm`, `net`, `netinet`, `ufs` with
+  ffs/mfs/ext2fs, `isofs`, ...); `arch/<a>` and `lib/<l>` by two; `dev/<d>` for the bus and
+  chip directories that hold a `mod.rs` (`pci`, `pv`, `ic`, `isa`, `fdt`, `ofw`, `efi`), and
+  `dev` for the rest of `sys/dev` (softraid, vnd, rd, bio, cons, rnd); `sys/*.rs` is
+  `(crate root)`. `arch/host` is the `cargo test` double, counted as code.
+
 ## Status
 
 <!-- ports:begin -->
