@@ -27,6 +27,10 @@
 //! falls back to the polled console it was before the tty layer: writes go to `cnputc`, a
 //! read is a line from `cngetc` with echo, and the termios ioctls answer `ENOTTY`.
 //!
+//! Each operation runs under the kernel lock, as the `vn_*` operations of a `/dev/console`
+//! vnode do (M11e: read(2) and write(2) are `SY_NOLOCK`; without it two processes writing
+//! to the console interleave their characters).
+//!
 //! It goes away when `init` can open `/dev/console`.
 
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -45,6 +49,7 @@ use crate::sys::filedesc::{fdplock, fdpunlock};
 use crate::sys::filio::{FIOASYNC, FIONBIO};
 use crate::sys::proc::Proc;
 use crate::sys::stat::{S_IFCHR, S_IRUSR, S_IWUSR, Stat};
+use crate::sys::systm::{kernel_lock, kernel_unlock};
 use crate::sys::types::{Dev, makedev};
 use crate::sys::uio::Uio;
 use crate::sys::vnode::IO_NDELAY;
@@ -82,8 +87,22 @@ fn ioflag(fp: &File) -> i32 {
     }
 }
 
+/// Runs `f` under the kernel lock, as the `vn_*` file operations the stand-in replaces run
+/// the vnode's (`vn_read`, `vn_write`, `vn_ioctl`, `vn_kqfilter`, `vn_closefile`).
+fn vn_locked<T>(f: impl FnOnce() -> T) -> T {
+    kernel_lock();
+    let r = f();
+    kernel_unlock();
+    r
+}
+
 /// Reads from the console's tty; without one, a polled line with echo.
-fn consfile_read(fp: &File, uio: &mut Uio<'_>, _fflags: i32) -> Result<(), Errno> {
+fn consfile_read(fp: &File, uio: &mut Uio<'_>, fflags: i32) -> Result<(), Errno> {
+    vn_locked(|| consfile_read_locked(fp, uio, fflags))
+}
+
+/// [`consfile_read`] under the kernel lock.
+fn consfile_read_locked(fp: &File, uio: &mut Uio<'_>, _fflags: i32) -> Result<(), Errno> {
     if CONSFILE_TTY.load(Ordering::Relaxed) {
         return cnread(CONSDEV, uio, ioflag(fp));
     }
@@ -111,7 +130,12 @@ fn consfile_read(fp: &File, uio: &mut Uio<'_>, _fflags: i32) -> Result<(), Errno
 }
 
 /// Writes to the console's tty; without one, every byte to `cnputc`.
-fn consfile_write(fp: &File, uio: &mut Uio<'_>, _fflags: i32) -> Result<(), Errno> {
+fn consfile_write(fp: &File, uio: &mut Uio<'_>, fflags: i32) -> Result<(), Errno> {
+    vn_locked(|| consfile_write_locked(fp, uio, fflags))
+}
+
+/// [`consfile_write`] under the kernel lock.
+fn consfile_write_locked(fp: &File, uio: &mut Uio<'_>, _fflags: i32) -> Result<(), Errno> {
     if CONSFILE_TTY.load(Ordering::Relaxed) {
         return cnwrite(CONSDEV, uio, ioflag(fp));
     }
@@ -130,14 +154,16 @@ fn consfile_write(fp: &File, uio: &mut Uio<'_>, _fflags: i32) -> Result<(), Errn
 fn consfile_ioctl(fp: &File, com: u64, data: &mut [u8], p: &Proc) -> Result<(), Errno> {
     match com {
         FIONBIO | FIOASYNC => Ok(()),
-        _ if CONSFILE_TTY.load(Ordering::Relaxed) => cnioctl(CONSDEV, com, data, fp.flag(), p),
+        _ if CONSFILE_TTY.load(Ordering::Relaxed) => {
+            vn_locked(|| cnioctl(CONSDEV, com, data, fp.flag(), p))
+        }
         _ => Err(Errno::ENOTTY),
     }
 }
 
 /// The console device's kqueue filter.
 fn consfile_kqfilter(_fp: &File, kn: &Knote) -> Result<(), Errno> {
-    cnkqfilter(CONSDEV, kn)
+    vn_locked(|| cnkqfilter(CONSDEV, kn))
 }
 
 /// A character device owned by root, mode 0600.
@@ -154,7 +180,7 @@ fn consfile_stat(_fp: &File, ub: &mut Stat, _p: &Proc) -> Result<(), Errno> {
 /// The last reference closes the console device.
 fn consfile_close(fp: &File, p: Option<&Proc>) -> Result<(), Errno> {
     if CONSFILE_TTY.swap(false, Ordering::Relaxed) {
-        return cnclose(CONSDEV, fp.flag(), S_IFCHR as i32, p);
+        return vn_locked(|| cnclose(CONSDEV, fp.flag(), S_IFCHR as i32, p));
     }
     Ok(())
 }

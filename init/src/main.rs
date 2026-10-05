@@ -42,7 +42,8 @@
 //! `AF_UNIX` socket pairs with `socketpair(2)`: bytes go both ways on a stream pair, which
 //! `fstat(2)` and `getsockopt(2)` know for a socket, `shutdown(2)` gives the peer EOF and the
 //! writer `EPIPE`; a datagram pair keeps message boundaries (a short read truncates); and
-//! `sendmsg(2)`/`recvmsg(2)` pass a descriptor in an `SCM_RIGHTS` message.
+//! `sendmsg(2)`/`recvmsg(2)` pass a descriptor in an `SCM_RIGHTS` message; a forked writer's
+//! stream of small writes reads back whole and in order while both run unlocked on two CPUs.
 //! With `kern_event.c` it watches a pipe with `kqueue(2)`/`kevent(2)` (`EV_ADD` on the read
 //! end, a write, the event with its byte count; `EV_EOF` once the writer is closed), sees the
 //! same pipe through `poll(2)` and `select(2)`, and sleeps in `kevent(2)` until a one-shot
@@ -1435,7 +1436,65 @@ fn sockets() -> bool {
     for fd in [a, b, c, d, newfd, s] {
         ok &= call(SYS_CLOSE, fd, 0, 0) == (0, false);
     }
+    ok &= stream_order();
     ok && call(SYS_GETDTABLECOUNT, 0, 0, 0) == (3, false)
+}
+
+/// Pages the receiver of [`stream_order`] reads into: the first write to each is a page
+/// fault inside `soreceive`'s copy, which runs without the receive buffer's mutex.
+static STREAM_PAGES: [AtomicU8; 64 * PAGE_SIZE] = [const { AtomicU8::new(0) }; 64 * PAGE_SIZE];
+
+/// A stream pair loses and reorders nothing while a writer and a reader on other CPUs race:
+/// a forked child writes `STREAM_WORDS` 4-byte sequence numbers, one `write(2)` each, and
+/// this process reads them back 4 bytes at a time, as tcpdump(8)'s privilege separation
+/// exchanges its commands. Each small write lands in the tail mbuf of the receive buffer
+/// (`sbcompress`) while `soreceive` may be copying out of that very mbuf; a reader that
+/// trusted the mbuf length it saw before the copy freed the appended bytes (M11e).
+fn stream_order() -> bool {
+    const STREAM_WORDS: u32 = 40000;
+    let call = |n, a, b, c| syscall3(n, a, b, c);
+    let Some([a, b]) = socketpair(SOCK_STREAM) else {
+        return false;
+    };
+    let pid = match call(SYS_FORK, 0, 0, 0) {
+        (0, false) => {
+            call(SYS_CLOSE, b, 0, 0);
+            for i in 0..STREAM_WORDS {
+                if write(a, &i.to_le_bytes()) != Ok(4) {
+                    exit(1);
+                }
+            }
+            exit(0)
+        }
+        (pid, false) => pid,
+        _ => return false,
+    };
+    let mut ok = call(SYS_CLOSE, a, 0, 0) == (0, false);
+    for i in 0..STREAM_WORDS {
+        let i = i as usize;
+        let off = (i % 64) * PAGE_SIZE + (i / 64 % (PAGE_SIZE / 4)) * 4;
+        let word = &STREAM_PAGES[off..off + 4];
+        let mut got = 0;
+        while ok && got < 4 {
+            match call(SYS_READ, b, word[got..].as_ptr() as usize, 4 - got) {
+                (n, false) if n > 0 => got += n,
+                _ => ok = false,
+            }
+        }
+        let mut v = [0u8; 4];
+        for (x, w) in v.iter_mut().zip(word) {
+            *x = w.load(Ordering::Relaxed);
+        }
+        ok &= u32::from_le_bytes(v) as usize == i;
+        if !ok {
+            break;
+        }
+    }
+    // Closing the reader first stops a writer still blocked on a full buffer (EPIPE).
+    ok &= call(SYS_CLOSE, b, 0, 0) == (0, false);
+    let mut status: i32 = 0;
+    ok &= call(SYS_WAIT4, pid, &mut status as *mut i32 as usize, 0) == (pid, false);
+    ok && status == 0
 }
 
 /// `struct wg_interface_io` (`<net/if_wg.h>`), without its peers.

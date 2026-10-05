@@ -1355,7 +1355,10 @@ pub fn soreceive(
                 } else {
                     uio.uio_resid -= len as usize;
                 }
-                if len == mlen - moff {
+                // `m->m_len` is read again: while the mutex was released for the copy, a
+                // sender's `sbcompress` may have appended to this very mbuf (its trailing
+                // space), and the stale length would free those bytes with it.
+                if len == u64::from(mm.m_len().get()) - moff {
                     if mm.m_flags().get() & M_EOR != 0 {
                         flags |= MSG_EOR;
                     }
