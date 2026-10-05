@@ -12,15 +12,17 @@
 //! `xhci* at pci?`, `usb* at xhci?`, `uhub* at usb?`, `uhub* at uhub?`, `umass* at uhub?`
 //! and `scsibus* at scsi?` below it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12),
 //! `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?`, `ahci* at pci?`, `siop* at pci?`,
-//! `bios0 at mainbus0`, `acpi0 at bios0`, `acpitimer* at acpi?`, `acpihpet* at acpi?` (M13),
+//! `bios0 at mainbus0`, `acpi0 at bios0`, `acpitimer* at acpi?`, `acpihpet* at acpi?`,
+//! `ioapic* at mainbus?`, `acpimadt0 at acpi?`, `acpiprt* at acpi?` and `acpipci* at
+//! acpi?` (M13),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
 //! `pseudo-device pty 16`, `pseudo-device vnd 4`, `pseudo-device bpfilter`, `pseudo-device
 //! loop`, `pseudo-device wg`, `pseudo-device pfsync`, `pseudo-device pflow`.
-//! GENERIC lines left out until their drivers exist: `ioapic*`, `vmm0`, `pvbus0`, `ipmi0`
+//! GENERIC lines left out until their drivers exist: `vmm0`, `pvbus0`, `ipmi0`
 //! and `efifb0` at mainbus, and everything below them; `efi0` and `mpbios0` at bios0, and
-//! every other device at `acpi?` (`acpimadt0`, `acpiprt*`, `acpimcfg*`, ...); `isa0` at `pcib?`,
+//! every other device at `acpi?` (`acpimcfg*`, `acpicpu*`, ...); `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`, `vga0`,
 //! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
 //! (`pchb*`, `ppb*`, `pcib*`, the network drivers and the storage drivers but nvme, ahci and siop, ...), every
@@ -36,9 +38,13 @@
 use crate::arch::amd64::amd64::acpi_machdep::ACPI_CA;
 use crate::arch::amd64::amd64::bios::{BIOS_CA, BIOS_CD};
 use crate::arch::amd64::amd64::cpu::{CPU_CA, CPU_CD};
+use crate::arch::amd64::amd64::ioapic::{IOAPIC_CA, IOAPIC_CD};
 use crate::arch::amd64::amd64::mainbus::{MAINBUS_CA, MAINBUS_CD};
+use crate::arch::amd64::pci::acpipci::{ACPIPCI_CA, ACPIPCI_CD};
 use crate::dev::acpi::acpi::ACPI_CD;
 use crate::dev::acpi::acpihpet::{ACPIHPET_CA, ACPIHPET_CD};
+use crate::dev::acpi::acpimadt::{ACPIMADT_CA, ACPIMADT_CD};
+use crate::dev::acpi::acpiprt::{ACPIPRT_CA, ACPIPRT_CD};
 use crate::dev::acpi::acpitimer::{ACPITIMER_CA, ACPITIMER_CD};
 use crate::dev::audio::{AUDIO_CA, AUDIO_CD};
 use crate::dev::bio::bioattach;
@@ -161,11 +167,11 @@ const PV_BIOS: &[i16] = &[30];
 /// `pv[]` for children of `acpi0` (`cfdata[31]`).
 const PV_ACPI: &[i16] = &[31];
 
-/// `cfdata[]`: 34 entries, 35 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 38 entries, 39 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    35
+    39
 } else {
-    34
+    38
 };
 
 /// `cfdata[]`.
@@ -539,7 +545,55 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 34: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 34: ioapic* at mainbus?
+    Cfdata::new(
+        &IOAPIC_CA,
+        &IOAPIC_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_MAINBUS,
+        0,
+        0,
+    ),
+    // 35: acpimadt0 at acpi?
+    Cfdata::new(
+        &ACPIMADT_CA,
+        &ACPIMADT_CD,
+        0,
+        FSTATE_NOTFOUND,
+        &[],
+        0,
+        PV_ACPI,
+        0,
+        0,
+    ),
+    // 36: acpiprt* at acpi?
+    Cfdata::new(
+        &ACPIPRT_CA,
+        &ACPIPRT_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_ACPI,
+        0,
+        0,
+    ),
+    // 37: acpipci* at acpi?
+    Cfdata::new(
+        &ACPIPCI_CA,
+        &ACPIPCI_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_ACPI,
+        0,
+        0,
+    ),
+    // 38: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

@@ -1102,6 +1102,95 @@ impl crate::machine::acpi_machdep::AcpiMachdep for Machine {
     }
 }
 
+/// No I/O APIC and no MP configuration tables: the x86 ACPI drivers (`acpimadt`,
+/// `acpiprt`) are not configured here, so nothing calls this; it answers "none".
+impl crate::machine::mpconfig::MpConfig for Machine {
+    type Ioapic = crate::machine::mpconfig::NoIoapic;
+
+    const MPS_INTPO_DEF: i32 = 0;
+    const MPS_INTPO_ACTHI: i32 = 0;
+    const MPS_INTPO_ACTLO: i32 = 0;
+    const MPS_INTPO_SHIFT: i32 = 0;
+    const MPS_INTPO_MASK: i32 = 0;
+    const MPS_INTTR_DEF: i32 = 0;
+    const MPS_INTTR_EDGE: i32 = 0;
+    const MPS_INTTR_LEVEL: i32 = 0;
+    const MPS_INTTR_SHIFT: i32 = 0;
+    const MPS_INTTR_MASK: i32 = 0;
+    const IOAPIC_REDLO_DEL_MASK: u32 = 0;
+    const IOAPIC_REDLO_DEL_SHIFT: u32 = 0;
+    const IOAPIC_REDLO_DEL_LOPRI: u32 = 0;
+    const IOAPIC_REDLO_DEL_NMI: u32 = 0;
+    const IOAPIC_REDLO_ACTLO: u32 = 0;
+    const IOAPIC_REDLO_LEVEL: u32 = 0;
+    const APIC_INT_VIA_APIC: i32 = 0;
+    const APIC_INT_APIC_SHIFT: i32 = 0;
+    const APIC_INT_PIN_SHIFT: i32 = 0;
+    const ICU_LEN: i32 = 0;
+    const NIOAPIC: bool = false;
+
+    fn lapic_boot_init(_lapic_base: crate::sys::types::Paddr) {}
+
+    fn lapic_cpu_number() -> u32 {
+        0
+    }
+
+    fn mp_attach_cpu(
+        _parent: &crate::sys::device::Device,
+        _apic_id: u32,
+        _acpi_proc_id: u32,
+        _bp: bool,
+        _print: crate::sys::device::CfprintT,
+    ) {
+    }
+
+    fn mp_attach_ioapic(
+        _parent: &crate::sys::device::Device,
+        _memt: crate::machine::bus::BusSpaceTag,
+        _apic_id: i32,
+        _address: crate::machine::bus::BusAddr,
+        _vecbase: i32,
+        _print: crate::sys::device::CfprintT,
+    ) {
+    }
+
+    fn ioapic_find_bybase(_vec: i32) -> Option<&'static Self::Ioapic> {
+        None
+    }
+
+    fn ioapic_apicid(apic: &Self::Ioapic) -> i32 {
+        match *apic {}
+    }
+
+    fn ioapic_vecbase(apic: &Self::Ioapic) -> i32 {
+        match *apic {}
+    }
+
+    fn ioapic_set_ip_map(
+        apic: &Self::Ioapic,
+        _pin: i32,
+        _map: &'static crate::machine::mpconfig::MpIntrMap,
+    ) {
+        match *apic {}
+    }
+
+    fn nioapics() -> i32 {
+        0
+    }
+
+    fn mp_set_busses(
+        _busses: &'static [crate::machine::mpconfig::MpBus],
+        _isa: &'static crate::machine::mpconfig::MpBus,
+    ) {
+    }
+
+    fn mp_set_intrs(_intrs: &'static [crate::machine::mpconfig::MpIntrMap]) {}
+
+    fn mp_busses() -> Option<&'static [crate::machine::mpconfig::MpBus]> {
+        None
+    }
+}
+
 impl crate::machine::fdt::Fdt for Machine {
     type FdtAttachArgs<'a> = include::fdt::FdtAttachArgs<'a>;
 

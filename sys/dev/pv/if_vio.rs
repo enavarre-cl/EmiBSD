@@ -51,11 +51,11 @@
 //!   pointer to the same bytes.
 //! - The dmamap and mbuf arrays of a queue are one `mallocarray`, as in C; their slots are
 //!   `Cell<Option<&'static ...>>` reached through bounds-checked accessors.
-//! - Not ported, reported with `unported!` where called: `struct intrmap`
-//!   (`kern/kern_intrmap.c`: the multi-queue interrupt map, used only when `VIRTIO_NET_F_MQ`
-//!   is negotiated, which needs more than one CPU; `sc_intrmap` is therefore always NULL and
-//!   left out, its tests commented), `struct ifmedia` and `ifmedia_*` (`net/if_media.c`:
-//!   `sc_media` is left out; `SIOCGIFMEDIA`/`SIOCSIFMEDIA` fail with `ENOSYS`). Not configured
+//! - Not ported, reported with `unported!` where called: `struct ifmedia` and `ifmedia_*`
+//!   (`net/if_media.c`: `sc_media` is left out; `SIOCGIFMEDIA`/`SIOCSIFMEDIA` fail with
+//!   `ENOSYS`). Since M13 `sc_intrmap` (`intrmap(9)`) is as in C: with `VIRTIO_NET_F_MQ`
+//!   the queue pairs get their own MSI-X vectors (2 and on) on the CPUs the map picks, the
+//!   configuration and control queue interrupts vectors 0 and 1. Not configured
 //!   (comments at the sites): `NVLAN`. `NBPFILTER` is configured: `vio_start` taps each
 //!   packet it queues; so is `INET6` (feature `inet6`: TSO of IPv6 segments).
 //! - `offsetof(struct tcphdr, th_sum)` and `offsetof(struct udphdr, uh_sum)` are the
@@ -88,6 +88,7 @@ use crate::dev::pv::virtiovar::{
     virtio_negotiate_features, virtio_read_device_config_1, virtio_read_device_config_2,
 };
 use crate::kern::init_main::NCPUS;
+use crate::kern::kern_intrmap::{Intrmap, intrmap_count, intrmap_cpu, intrmap_create};
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
 use crate::kern::kern_malloc::{free, mallocarray};
 use crate::kern::kern_synch::{tsleep_nsec, wakeup};
@@ -787,7 +788,9 @@ pub struct VioSoftc {
     /// `sc_ctrl_mac_tbl_mc`.
     pub sc_ctrl_mac_tbl_mc: Cell<*mut VirtioNetCtrlMacTbl>,
 
-    // sc_intrmap: struct intrmap, always NULL here (see the deviations).
+    /// `sc_intrmap`: the queues' interrupt map, with `VIRTIO_NET_F_MQ` (M13); set once by
+    /// `vio_attach`.
+    pub sc_intrmap: Cell<Option<&'static Intrmap>>,
     /// `sc_q`: `sc_nqueues` queues.
     pub sc_q: Cell<*mut VioQueue>,
     /// `sc_nqueues`.
@@ -1344,13 +1347,15 @@ pub fn vio_attach(parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
         if virtio_has_feature(vsc, VIRTIO_NET_F_MQ) {
             let i = virtio_read_device_config_2(vsc, VIRTIO_NET_CONFIG_MAX_QUEUES);
             vsc.sc_nvqs.set(2 * i32::from(i) + 1);
-            let _i = i.min(VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MAX);
-            // sc->sc_intrmap = intrmap_create(&sc->sc_dev, i, MIN(va_nintr - 2,
-            // IF_MAX_VECTORS), 0); sc->sc_nqueues = intrmap_count(sc->sc_intrmap):
-            // kern_intrmap.c is not ported; one queue pair is used.
-            let _ = (va_nintr.saturating_sub(2) as usize).min(IF_MAX_VECTORS);
-            let _ = unported!("intrmap_create, intrmap_count (kern/kern_intrmap.c)");
-            sc.sc_nqueues.set(1);
+            let i = i.min(VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MAX);
+            let im = intrmap_create(
+                &sc.sc_dev,
+                u32::from(i),
+                va_nintr.saturating_sub(2).min(IF_MAX_VECTORS as u32),
+                0,
+            );
+            sc.sc_intrmap.set(Some(im));
+            sc.sc_nqueues.set(intrmap_count(im) as u16);
             let n = sc.sc_nqueues.get();
             printf(format_args!(": {n} queue{}", if n > 1 { "s" } else { "" }));
         } else {
@@ -1547,7 +1552,10 @@ pub fn vio_attach(parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
                 ));
             }
 
-            // sc->sc_intrmap != NULL: vq_intr_vec = i + 2; sc_intrmap is always NULL.
+            if sc.sc_intrmap.get().is_some() {
+                vioq.rxvq().vq_intr_vec.set(i as i32 + 2);
+                vioq.txvq().vq_intr_vec.set(i as i32 + 2);
+            }
         }
 
         // control queue
@@ -1564,19 +1572,46 @@ pub fn vio_attach(parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
                 break 'err Err(e);
             }
             sc.ctl_vq().vq_done.set(Some(vio_ctrleof));
-            // sc->sc_intrmap != NULL: vq_intr_vec = 1; sc_intrmap is always NULL.
+            if sc.sc_intrmap.get().is_some() {
+                sc.ctl_vq().vq_intr_vec.set(1);
+            }
             virtio_start_vq_intr(vsc, sc.ctl_vq());
         }
 
-        // sc->sc_intrmap != NULL: virtio_intr_establish for the config interrupt (vector
-        // 0, vio_config_intr), the control queue (1, vio_ctrl_intr) and each queue pair
-        // (i + 2, vio_queue_intr on intrmap_cpu); sc_intrmap is always NULL.
-        let _ = (
-            vio_config_intr,
-            vio_ctrl_intr,
-            vio_queue_intr,
-            virtio_intr_establish,
-        );
+        if let Some(im) = sc.sc_intrmap.get() {
+            let vsc_arg = ptr::from_ref(vsc).cast_mut().cast();
+            if let Err(r) = virtio_intr_establish(vsc, va, 0, None, vio_config_intr, vsc_arg) {
+                printf(format_args!(
+                    "{}: cannot alloc config intr: {}\n",
+                    Str(&sc.sc_dev.dv_xname.get()),
+                    r as i32
+                ));
+                break 'err Err(r);
+            }
+            let ctl_arg = sc.sc_ctl_vq.get().cast_mut().cast();
+            if let Err(r) = virtio_intr_establish(vsc, va, 1, None, vio_ctrl_intr, ctl_arg) {
+                printf(format_args!(
+                    "{}: cannot alloc ctrl intr: {}\n",
+                    Str(&sc.sc_dev.dv_xname.get()),
+                    r as i32
+                ));
+                break 'err Err(r);
+            }
+            for i in 0..usize::from(sc.sc_nqueues.get()) {
+                let ci = intrmap_cpu(im, i as u32);
+                let q_arg = ptr::from_ref(sc.q(i)).cast_mut().cast();
+                if let Err(r) =
+                    virtio_intr_establish(vsc, va, i as i32 + 2, Some(ci), vio_queue_intr, q_arg)
+                {
+                    printf(format_args!(
+                        "{}: cannot alloc q{i} intr: {}\n",
+                        Str(&sc.sc_dev.dv_xname.get()),
+                        r as i32
+                    ));
+                    break 'err Err(r);
+                }
+            }
+        }
 
         if let Err(e) = vio_alloc_mem(sc, tx_max_segments, txsize) {
             break 'err Err(e);

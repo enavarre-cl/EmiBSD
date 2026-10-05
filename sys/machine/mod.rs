@@ -28,6 +28,7 @@ pub mod exec;
 pub mod fdt;
 pub mod intr;
 pub mod isa_machdep;
+pub mod mpconfig;
 pub mod param;
 #[cfg(machine_pci_chipset)]
 pub mod pci_chipset;
@@ -53,6 +54,7 @@ pub use exec::*;
 pub use fdt::*;
 pub use intr::*;
 pub use isa_machdep::*;
+pub use mpconfig::*;
 pub use param::*;
 pub use pci_machdep::*;
 pub use pmap::*;
@@ -86,6 +88,7 @@ const _: () = {
             + Intr
             + Fdt
             + IsaMachdep
+            + MpConfig
             + MachineProc
             + UserCopy
             + MachineExec

@@ -41,44 +41,59 @@
 //! nothing has attached it yet, the paravirtual bus, PCI, ISA, `vmm` and the EFI framebuffer.
 //!
 //! ## Deviations
-//! - Only the `cpu`, `bios`, `pci` and `isa` children exist (`sys/arch/amd64/conf/ioconf.rs`);
-//!   every other child GENERIC configures is reported with `unported!` where the C would
+//! - Only the `cpu`, `bios`, `pci`, `isa` and `ioapic` children exist
+//!   (`sys/arch/amd64/conf/ioconf.rs`; `ioapic` attaches here through `acpimadt`); every
+//!   other child GENERIC configures is reported with `unported!` where the C would
 //!   probe or attach it: `ipmi_probe`, `pvbus_probe`,
 //!   `vmm_enabled`, `efifb`; so are `replacemds`, `setperf_setup` and `codepatch_disable`.
 //!   No PCI-ISA bridge driver (`pcib`) exists, so `isa0` attaches here, as the C does when
 //!   none has.
-//!   Without a MADT (`acpimadt`) or MP tables the boot CPU attaches here, as `CPU_ROLE_SP`,
-//!   and `pci0` attaches here for bus 0: `acpi_haspci` stays false until `acpipci.c` is
-//!   ported, as the C does on a machine whose ACPI names no PCI host bridge it drives.
-//! - `MULTIPROCESSOR` (M11a): with no ACPI MADT (M13) and no `mpbios`, the processors the
+//!   Without a MADT (`acpimadt`) or MP tables the boot CPU attaches here, as `CPU_ROLE_SP`.
+//!   The PCI buses attach here too, through `acpipci_attach_busses` once `acpipci` set
+//!   `acpi_haspci` (M13), else `pci0` for bus 0 without MSI, as in C.
+//! - Without a MADT (no `acpimadt` set `mp_busses`; a kernel without ACPI) mainbus does
+//!   what `acpimadt`/`mpbios` would before the processors attach: `lapic_boot_init` at the
+//!   architectural base (`LAPIC_BASE`). With a MADT, `acpimadt` did it with the table's
+//!   address, as in C.
+//! - `MULTIPROCESSOR` (M11a): with no ACPI MADT and no `mpbios`, the processors the
 //!   bootloader found (`BootInfo::mp`, kept as `BOOT_MP`) are the enumeration: mainbus
 //!   attaches one `cpu` per processor, the boot processor first as `CPU_ROLE_BP`, the others
 //!   as `CPU_ROLE_AP` in the bootloader's order, with the hardware ID as `cpu_apicid` and the
 //!   bootloader's processor number as `cpu_acpi_proc_id`, as `acpimadt` would (its children
-//!   attach at mainbus too). A uniprocessor kernel, or an MP kernel the bootloader found one
-//!   processor for, attaches the boot CPU alone as `CPU_ROLE_SP`, as before.
+//!   attach at mainbus too). Since M13 this stand-in runs only without a MADT: `acpimadt0`
+//!   attaches the processors from the table (`acpimadt.rs`). A uniprocessor kernel, or an
+//!   MP kernel that found one processor, attaches the boot CPU alone as `CPU_ROLE_SP`.
 //! - `pci0`'s attach arguments carry no extents (`sys/extent.h` is not ported, so
 //!   `pci_init_extents` is reported and `pciio_ex`, `pcimem_ex`, `pcibus_ex` are NULL).
 //! - `union mainbus_attach_args` has the members that exist (`mba_busname`, `mba_caa`,
-//!   `mba_pba`); the others come with their buses. `mp_busses`/`mp_intrs`
-//!   (`NMPBIOS`/`NACPI`) come with `mpbios`/`acpi`.
+//!   `mba_pba`, `mba_iba`, `mba_bios`); the I/O APICs' `struct apic_attach_args` is handed
+//!   to `config_found` directly by `acpimadt` (`mp_attach_ioapic`); the others come with
+//!   their buses.
+//! - The `mp_*` globals (`NMPBIOS > 0 || NACPI > 0`) are atomics: `mp_busses`/`mp_nbusses`,
+//!   `mp_intrs`/`mp_nintrs` and `mp_isa_bus`/`mp_eisa_bus` are set once by `acpimadt`
+//!   while cold; [`mp_busses`], [`mp_intrs`] and [`mp_isa_bus`] read them as slices and
+//!   references. `mp_verbose` is 0 (`MPVERBOSE` is not configured).
 
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 use core::ptr;
-use core::sync::atomic::{AtomicI32, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 use crate::arch::amd64::amd64::bios::BiosAttachArgs;
 use crate::arch::amd64::amd64::bus_space::{X86_BUS_SPACE_IO, X86_BUS_SPACE_MEM};
+use crate::arch::amd64::amd64::lapic::lapic_boot_init;
 use crate::arch::amd64::include::cpu::{CPUF_PRESENT, cpu_info_primary};
 use crate::arch::amd64::include::cpuvar::{CPU_ROLE_SP, CpuAttachArgs};
+use crate::arch::amd64::include::i82489reg::LAPIC_BASE;
 use crate::arch::amd64::pci::pci_machdep::{PCI_BUS_DMA_TAG, pci_init_extents};
 use crate::dev::isa::isavar::IsabusAttachArgs;
 use crate::dev::pci::pci::PCI_NDOMAINS;
 use crate::dev::pci::pcivar::PcibusAttachArgs;
 use crate::kern::subr_autoconf::{config_found, device_mainbus};
 use crate::kern::subr_prf::{Str, printf};
+use crate::machine::mpconfig::{MpBus, MpIntrMap};
 use crate::sys::device::{CD_COCOVM, CfMatch, Cfattach, Cfdriver, DV_DULL, Device, UNCONF};
+use crate::sys::types::Paddr;
 use crate::unported;
 
 /// `union mainbus_attach_args`: what mainbus hands its children. Every member starts with the
@@ -109,6 +124,21 @@ pub static MAINBUS_CA: Cfattach = Cfattach {
 
 /// `mainbus_cd`.
 pub static MAINBUS_CD: Cfdriver = Cfdriver::new(b"mainbus", DV_DULL, CD_COCOVM);
+
+/// `mp_busses`: the MP configuration's buses, NULL until a table (`acpimadt`) sets them.
+pub static MP_BUSSES: AtomicPtr<MpBus> = AtomicPtr::new(ptr::null_mut());
+/// `mp_nbusses`.
+pub static MP_NBUSSES: AtomicI32 = AtomicI32::new(0);
+/// `mp_intrs`: the local APIC interrupt mappings.
+pub static MP_INTRS: AtomicPtr<MpIntrMap> = AtomicPtr::new(ptr::null_mut());
+/// `mp_nintrs`.
+pub static MP_NINTRS: AtomicI32 = AtomicI32::new(0);
+/// `mp_isa_bus`.
+pub static MP_ISA_BUS: AtomicPtr<MpBus> = AtomicPtr::new(ptr::null_mut());
+/// `mp_eisa_bus`.
+pub static MP_EISA_BUS: AtomicPtr<MpBus> = AtomicPtr::new(ptr::null_mut());
+/// `mp_verbose`: 0 (`MPVERBOSE` is not configured).
+pub static MP_VERBOSE: AtomicI32 = AtomicI32::new(0);
 
 /// `isa_has_been_seen`: this is set when the ISA bus is attached. If it's not set by the time
 /// it's checked below, then mainbus attempts to attach an ISA.
@@ -143,11 +173,19 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
     // NIPMI > 0
     let _ = unported!("ipmi_probe (ipmi0 at mainbus?)");
 
-    // MULTIPROCESSOR: the processors the bootloader found stand for acpimadt0's (or
-    // mpbios0's) enumeration: the boot processor first, then the others in the bootloader's
-    // order (see the module's deviations). One processor attaches as CPU_ROLE_SP below.
-    #[cfg(feature = "multiprocessor")]
-    mainbus_attach_cpus(self_);
+    if mp_busses().is_none() {
+        // No acpimadt0 (or mpbios0): find the LAPIC as they would (see the module's
+        // deviations).
+        // TODO(M14): without ACPI, mpbios.c's MP tables give the LAPIC's address.
+        lapic_boot_init(Paddr::new(LAPIC_BASE));
+
+        // MULTIPROCESSOR: the processors the bootloader found stand for acpimadt0's (or
+        // mpbios0's) enumeration: the boot processor first, then the others in the
+        // bootloader's order (see the module's deviations). One processor attaches as
+        // CPU_ROLE_SP below.
+        #[cfg(feature = "multiprocessor")]
+        mainbus_attach_cpus(self_);
+    }
 
     if cpu_info_primary().ci_flags.load(Ordering::Relaxed) & CPUF_PRESENT == 0 {
         let mut caa = CpuAttachArgs {
@@ -176,7 +214,7 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
 
     // NPCI > 0, NACPI > 0
     if crate::dev::acpi::acpi::ACPI_HASPCI.load(Ordering::Relaxed) != 0 {
-        let _ = unported!("acpipci_attach_busses (acpipci.c)");
+        crate::arch::amd64::pci::acpipci::acpipci_attach_busses(self_);
     } else {
         pci_init_extents();
 
@@ -275,7 +313,7 @@ pub fn mainbus_efifb_reattach() {
 /// `mainbus_print`: names a child that found no driver.
 pub fn mainbus_print(aux: *mut c_void, pnp: Option<&[u8]>) -> i32 {
     // SAFETY: every mainbus child's attach arguments start with the bus name
-    // (`MainbusAttachArgs`, `CpuAttachArgs`), which is all this reads.
+    // (`MainbusAttachArgs`, `CpuAttachArgs`, `ApicAttachArgs`), which is all this reads.
     let busname = unsafe { *aux.cast::<&'static [u8]>() };
 
     if let Some(pnp) = pnp {
@@ -288,4 +326,55 @@ pub fn mainbus_print(aux: *mut c_void, pnp: Option<&[u8]>) -> i32 {
     }
 
     UNCONF
+}
+
+/// `mp_busses` with `mp_nbusses`, `None` while no table set them.
+pub fn mp_busses() -> Option<&'static [MpBus]> {
+    let p = MP_BUSSES.load(Ordering::Acquire);
+    if p.is_null() {
+        return None;
+    }
+    // SAFETY: `mp_set_busses` stored a `'static` slice's start, after its length.
+    Some(unsafe { core::slice::from_raw_parts(p, MP_NBUSSES.load(Ordering::Relaxed) as usize) })
+}
+
+/// `mp_isa_bus`.
+pub fn mp_isa_bus() -> Option<&'static MpBus> {
+    // SAFETY: `mp_set_busses` stored a `'static` reference, or nothing did.
+    unsafe { MP_ISA_BUS.load(Ordering::Acquire).as_ref() }
+}
+
+/// `mp_eisa_bus` (`NEISA > 0`; nothing sets it: `acpimadt` has no EISA bus).
+pub fn mp_eisa_bus() -> Option<&'static MpBus> {
+    // SAFETY: as for `mp_isa_bus`.
+    unsafe { MP_EISA_BUS.load(Ordering::Acquire).as_ref() }
+}
+
+/// `mp_intrs` with `mp_nintrs`; empty while no table set them.
+pub fn mp_intrs() -> &'static [MpIntrMap] {
+    let p = MP_INTRS.load(Ordering::Acquire);
+    if p.is_null() {
+        return &[];
+    }
+    // SAFETY: `mp_set_intrs` stored a `'static` slice's start, after its length.
+    unsafe { core::slice::from_raw_parts(p, MP_NINTRS.load(Ordering::Relaxed) as usize) }
+}
+
+/// `mp_busses = busses; mp_nbusses = nitems(busses); mp_isa_bus = isa` (`acpimadt`).
+pub fn mp_set_busses(busses: &'static [MpBus], isa: &'static MpBus) {
+    MP_NBUSSES.store(busses.len() as i32, Ordering::Relaxed);
+    MP_BUSSES.store(
+        ptr::from_ref(busses).cast::<MpBus>().cast_mut(),
+        Ordering::Release,
+    );
+    MP_ISA_BUS.store(ptr::from_ref(isa).cast_mut(), Ordering::Release);
+}
+
+/// `mp_intrs = intrs; mp_nintrs = nitems(intrs)` (`acpimadt`).
+pub fn mp_set_intrs(intrs: &'static [MpIntrMap]) {
+    MP_NINTRS.store(intrs.len() as i32, Ordering::Relaxed);
+    MP_INTRS.store(
+        ptr::from_ref(intrs).cast::<MpIntrMap>().cast_mut(),
+        Ordering::Release,
+    );
 }

@@ -74,8 +74,8 @@
 //!
 //! Status: `wip`. Milestone M4 ports the interrupt side: `isa_intr_alloc`, `isa_intr_check`,
 //! `isa_intr_establish`, `isa_intr_disestablish` and `isa_attach_hook`. The ISA DMA bounce
-//! buffers (`_isa_bus_dma*`, `isa_bus_dma_tag`) come with `bus_dma(9)` (M7); the IOAPIC
-//! pin lookup (`mp_busses`) with the IOAPIC (M5).
+//! buffers (`_isa_bus_dma*`, `isa_bus_dma_tag`) come with `bus_dma(9)` (M7). M13 adds the
+//! `NIOAPIC > 0` pin lookup of `isa_intr_establish` (`mp_isa_bus`, set by `acpimadt`).
 //!
 //! ## Deviations
 //! - `isa_intr_alloc` returns the IRQ as `Option` where the C returns 0/1 with an out
@@ -89,10 +89,12 @@ use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 use crate::arch::amd64::amd64::i8259::I8259_PIC;
 use crate::arch::amd64::amd64::intr::{intr_disestablish, intr_establish};
-use crate::arch::amd64::amd64::mainbus::ISA_HAS_BEEN_SEEN;
+use crate::arch::amd64::amd64::mainbus::{ISA_HAS_BEEN_SEEN, mp_busses, mp_isa_bus};
 use crate::arch::amd64::include::i8259::ICU_LEN;
+use crate::arch::amd64::include::i82093var::apic_irq_pin;
 use crate::arch::amd64::include::intr::{IntrFn, Intrhand};
 use crate::arch::amd64::include::intrdefs::{IST_EDGE, IST_LEVEL, IST_NONE, IST_PULSE};
+use crate::arch::amd64::include::pic::Pic;
 use crate::kern::subr_prf::panic;
 
 /// `isa_chipset_tag_t`: unused on amd64.
@@ -198,9 +200,24 @@ pub fn isa_intr_establish(
     ih_arg: *mut c_void,
     ih_what: &'static str,
 ) -> Option<NonNull<Intrhand>> {
-    let pic = &I8259_PIC;
-    let pin = irq;
-    // NIOAPIC > 0: the mp_busses pin lookup, M5.
+    let mut pic: &'static Pic = &I8259_PIC;
+    let mut pin = irq;
+
+    // NIOAPIC > 0
+    if mp_busses().is_some() {
+        let Some(isa) = mp_isa_bus() else {
+            panic(format_args!("no isa bus"));
+        };
+
+        if let Some(mip) = isa.intrs().find(|mip| mip.bus_pin == pin)
+            && let Some(apic) = mip.ioapic
+        {
+            pin = apic_irq_pin(mip.ioapic_ih);
+            // SAFETY: an attached I/O APIC's pic is initialised before acpimadt maps a pin
+            // to it.
+            pic = unsafe { apic.pic() };
+        }
+    }
 
     let _ = &INTRLEVEL;
     intr_establish(irq, pic, pin, type_, level, None, ih_fun, ih_arg, ih_what)

@@ -53,18 +53,19 @@
 //!   mapping for the Meltdown trampoline) is M6. x2APIC mode is taken only when the firmware
 //!   enabled it (`cpu_ecxfeature` arrives with CPU identification, M4-b), and the `CODEPATCH`
 //!   of the EOI is not there: the timer stub's EOI is the MMIO write.
-//! - `lapic_set_lvt`: the MP/ACPI interrupt tables (`mp_intrs`, M5) do not exist, so LINT0 is
-//!   programmed as ExtINT and LINT1 as NMI, the MP specification's default configuration
-//!   (what `mpbios` would record); the firmware leaves LINT0 masked, which would cut the
-//!   8259 off. The AMD C1E workaround needs `ci_vendor`/`ci_family` (M4-b).
+//! - `lapic_set_lvt`: with I/O APICs it masks ExtINT and programs the `mp_intrs` entries
+//!   (the MADT's local APIC NMIs) as the C does (M13). Without any MP/ACPI interrupt table
+//!   (no `mp_busses`: a kernel without ACPI) LINT0 is programmed as ExtINT and LINT1 as NMI,
+//!   the MP specification's default configuration (what `mpbios` would record); the firmware
+//!   leaves LINT0 masked, which would cut the 8259 off. The AMD C1E workaround needs
+//!   `ci_vendor`/`ci_family` (M4-b).
 //! - `lapic_clockintr` takes the interrupt frame by pointer (`vector.S` passes `%rsp`), not
 //!   by value as the C does.
 //! - `lapic_calibrate_timer`: `mp_verbose` is off and the CPU is named `cpu0`.
-//! - `lapic_set_lvt` on an application processor masks LINT0: the 8259's ExtINT goes to the
-//!   boot processor only (device interrupts stay routed to it, M11a), which is what the C's
-//!   `nioapics > 0` masking amounts to there. QEMU hands the 8259's output to every LAPIC
-//!   whose LINT0 is unmasked, so leaving it open would deliver each legacy interrupt to every
-//!   CPU. `mp_verbose`'s `apic_format_redir` dumps are not there (`mp_verbose` is off).
+//! - Without a table, `lapic_set_lvt` on an application processor masks LINT0: the 8259's
+//!   ExtINT goes to the boot processor only, which is what the C's `nioapics > 0` masking
+//!   amounts to there. QEMU hands the 8259's output to every LAPIC whose LINT0 is unmasked,
+//!   so leaving it open would deliver each legacy interrupt to every CPU.
 //! - The IPI stubs' EOI is the MMIO write, as the timer's (no x2APIC `CODEPATCH`).
 
 use core::cell::UnsafeCell;
@@ -74,14 +75,18 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use libkern::StaticCell;
 
+use crate::arch::amd64::amd64::ioapic::NIOAPICS;
 use crate::arch::amd64::amd64::machdep::{
     IDT_ALLOCMAP, delay, delay_is_i8254, idt_vec_set, set_initclock_func, set_startclock_func,
 };
+use crate::arch::amd64::amd64::mainbus::{mp_busses, mp_intrs};
 #[cfg(feature = "multiprocessor")]
 use crate::arch::amd64::amd64::vector::{
     Xintr_lapic_ipi, Xipi_invlpg, Xipi_invlrange, Xipi_invltlb,
 };
 use crate::arch::amd64::amd64::vector::{Xintr_lapic_ltimer, Xintrspurious};
+#[cfg(feature = "multiprocessor")]
+use crate::arch::amd64::amd64::{apic::apic_format_redir, mainbus::MP_VERBOSE};
 use crate::arch::amd64::include::cpu::{CpuInfo, curcpu};
 use crate::arch::amd64::include::cpufunc::{intr_disable, intr_restore, rdmsr, wrmsr};
 use crate::arch::amd64::include::frame::Intrframe;
@@ -93,14 +98,15 @@ use crate::arch::amd64::include::i82489reg::{
 };
 #[cfg(feature = "multiprocessor")]
 use crate::arch::amd64::include::i82489reg::{
-    LAPIC_DEST_MASK, LAPIC_DLMODE_INIT, LAPIC_DLSTAT_BUSY, LAPIC_ICRHI, LAPIC_ICRLO,
-    LAPIC_LVL_ASSERT, LAPIC_LVL_DEASSERT, LAPIC_LVL_TRIG,
+    LAPIC_DEST_MASK, LAPIC_DLMODE_INIT, LAPIC_DLSTAT_BUSY, LAPIC_ICRHI, LAPIC_ICRLO, LAPIC_LVERR,
+    LAPIC_LVL_ASSERT, LAPIC_LVL_DEASSERT, LAPIC_LVL_TRIG, LAPIC_PCINT,
 };
 #[cfg(feature = "multiprocessor")]
 use crate::arch::amd64::include::i82489var::{
     LAPIC_IPI_INVLPG, LAPIC_IPI_INVLRANGE, LAPIC_IPI_INVLTLB, LAPIC_IPI_VECTOR,
 };
 use crate::arch::amd64::include::i82489var::{LAPIC_SPURIOUS_VECTOR, LAPIC_TIMER_VECTOR};
+use crate::arch::amd64::include::mpbiosreg::MPS_ALL_APICS;
 use crate::arch::amd64::include::param::PAGE_SIZE;
 use crate::arch::amd64::include::pic::{PIC_LAPIC, Pic};
 use crate::arch::amd64::include::pmap::PMAP_NOCACHE;
@@ -286,18 +292,69 @@ pub fn lapic_disable() {
 
 /// `lapic_set_lvt`: programs the local interrupt pins (see the module's deviations).
 pub fn lapic_set_lvt() {
-    // mp_verbose: off. NIOAPIC > 0: ExtINT would be masked here.
+    let ci = curcpu();
+
+    // MULTIPROCESSOR && mp_verbose: the "prelint" dumps (apic_format_redir).
+    #[cfg(feature = "multiprocessor")]
+    if MP_VERBOSE.load(Ordering::Relaxed) != 0 {
+        let name = cpu_name(ci);
+        apic_format_redir(name, "prelint", 0, 0, lapic_readreg(LAPIC_LVINT0));
+        apic_format_redir(name, "prelint", 1, 0, lapic_readreg(LAPIC_LVINT1));
+    }
+
+    // NIOAPIC > 0: disable ExtINT by default when using I/O APICs.
+    if NIOAPICS.load(Ordering::Relaxed) > 0 {
+        let lint0 = lapic_readreg(LAPIC_LVINT0) | LAPIC_LVT_MASKED;
+        lapic_writereg(LAPIC_LVINT0, lint0);
+    } else if mp_busses().is_none() {
+        // No MP/ACPI interrupt table (see the module's deviations): the MP default
+        // configuration, LINT0 = ExtINT (the 8259's output), LINT1 = NMI. ExtINT goes to the
+        // boot processor only.
+        if crate::arch::amd64::include::cpu::cpu_is_primary(ci) {
+            lapic_writereg(LAPIC_LVINT0, LAPIC_DLMODE_EXTINT);
+        } else {
+            lapic_writereg(LAPIC_LVINT0, LAPIC_DLMODE_EXTINT | LAPIC_LVT_MASKED);
+        }
+        lapic_writereg(LAPIC_LVINT1, LAPIC_DLMODE_NMI);
+    }
+
     // ci_vendor == CPUV_AMD && family 0xf/0x10: the C1E workaround (M4-b).
 
-    // for (i = 0; i < mp_nintrs; i++): no MP/ACPI interrupt table yet; the MP default
-    // configuration is LINT0 = ExtINT (the 8259's output), LINT1 = NMI. ExtINT goes to the
-    // boot processor only (see the module's deviations).
-    if crate::arch::amd64::include::cpu::cpu_is_primary(curcpu()) {
-        lapic_writereg(LAPIC_LVINT0, LAPIC_DLMODE_EXTINT);
-    } else {
-        lapic_writereg(LAPIC_LVINT0, LAPIC_DLMODE_EXTINT | LAPIC_LVT_MASKED);
+    for mpi in mp_intrs() {
+        if mpi.ioapic.is_none()
+            && (mpi.cpu_id == MPS_ALL_APICS || mpi.cpu_id as u32 == ci.ci_apicid.get())
+        {
+            #[cfg(feature = "diagnostic")]
+            if mpi.ioapic_pin > 1 {
+                crate::kern::subr_prf::panic(format_args!(
+                    "lapic_set_lvt: bad pin value {}",
+                    mpi.ioapic_pin
+                ));
+            }
+            if mpi.ioapic_pin == 0 {
+                lapic_writereg(LAPIC_LVINT0, mpi.redir);
+            } else {
+                lapic_writereg(LAPIC_LVINT1, mpi.redir);
+            }
+        }
     }
-    lapic_writereg(LAPIC_LVINT1, LAPIC_DLMODE_NMI);
+
+    #[cfg(feature = "multiprocessor")]
+    if MP_VERBOSE.load(Ordering::Relaxed) != 0 {
+        let name = cpu_name(ci);
+        apic_format_redir(name, "timer", 0, 0, lapic_readreg(LAPIC_LVTT));
+        apic_format_redir(name, "pcint", 0, 0, lapic_readreg(LAPIC_PCINT));
+        apic_format_redir(name, "lint", 0, 0, lapic_readreg(LAPIC_LVINT0));
+        apic_format_redir(name, "lint", 1, 0, lapic_readreg(LAPIC_LVINT1));
+        apic_format_redir(name, "err", 0, 0, lapic_readreg(LAPIC_LVERR));
+    }
+}
+
+/// `ci->ci_dev->dv_xname`, for the `mp_verbose` dumps.
+#[cfg(feature = "multiprocessor")]
+fn cpu_name(ci: &CpuInfo) -> &str {
+    // SAFETY: an attached CPU's device is never freed.
+    unsafe { ci.ci_dev.get().as_ref() }.map_or("cpu", |d| d.xname())
 }
 
 /// `lapic_boot_init`: initialize fixed idt vectors for use by local apic.

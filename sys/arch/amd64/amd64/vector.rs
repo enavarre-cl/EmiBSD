@@ -10,7 +10,8 @@
 //! the soft interrupt stubs `Xsoftclock`/`Xsoftnet`/`Xsofttty`; M5 adds the LAPIC timer stub
 //! `Xintr_lapic_ltimer` with its recurse/resume entries; M11a the `MULTIPROCESSOR` IPI stubs
 //! `Xintr_lapic_ipi`/`Xrecurse_lapic_ipi`/`Xresume_lapic_ipi` and the TLB shootdown IPIs
-//! `Xipi_invltlb`, `Xipi_invlpg`, `Xipi_invlrange`. The IOAPIC stubs, `x2apic_eoi`, the
+//! `Xipi_invltlb`, `Xipi_invlpg`, `Xipi_invlrange`; M13 the I/O APIC stubs (`ioapic_edge0`..63,
+//! `ioapic_level0`..63, their tables and the `ioapic_*` macros). `x2apic_eoi`, the
 //! PCID and `NVMM` shootdowns, `Xxcallintr` and the `#VC` (AMD SEV) and `DDBPROF` paths come
 //! later.
 //!
@@ -41,7 +42,7 @@ use crate::arch::amd64::include::i82489reg::LAPIC_EOI;
 use crate::arch::amd64::include::intr::{Intrhand, Intrsource, Intrstub};
 use crate::arch::amd64::include::intrdefs::{
     IPL_CLOCK, IPL_IPI, IPL_SOFTCLOCK, IPL_SOFTNET, IPL_SOFTTTY, IREENT_MAGIC, LIR_IPI, LIR_TIMER,
-    NUM_LEGACY_IRQS,
+    MAX_INTR_SOURCES, NUM_LEGACY_IRQS,
 };
 use crate::arch::amd64::include::param::PAGE_SIZE;
 use crate::arch::amd64::include::segments::SEL_RPL;
@@ -115,6 +116,9 @@ macro_rules! vector_asm {
             IF_PPL = const offset_of!(Intrframe, if_ppl),
             IS_MAXLEVEL = const offset_of!(Intrsource, is_maxlevel),
             IS_HANDLERS = const offset_of!(Intrsource, is_handlers),
+            IS_PIC = const offset_of!(Intrsource, is_pic),
+            IS_PIN = const offset_of!(Intrsource, is_pin),
+            IF_ERR = const offset_of!(Intrframe, if_err),
             IH_LEVEL = const offset_of!(Intrhand, ih_level),
             IH_NEXT = const offset_of!(Intrhand, ih_next),
             IH_COUNT = const offset_of!(Intrhand, ih_count),
@@ -169,6 +173,11 @@ unsafe extern "C" {
     pub static Xexceptions: [unsafe extern "C" fn(); 32];
     /// `i8259_stubs[]`: the entry, recurse and resume points of the sixteen legacy IRQs.
     pub static i8259_stubs: [Intrstub; NUM_LEGACY_IRQS];
+    /// `ioapic_edge_stubs[]`: the entry, recurse and resume points of the 64 edge-triggered
+    /// I/O APIC sources (`NIOAPIC > 0`).
+    pub static ioapic_edge_stubs: [Intrstub; MAX_INTR_SOURCES];
+    /// `ioapic_level_stubs[]`: the same for the level-triggered sources.
+    pub static ioapic_level_stubs: [Intrstub; MAX_INTR_SOURCES];
     /// `Xintrspurious`: the spurious interrupt stub (an `iretq`), the LAPIC's spurious vector.
     pub fn Xintrspurious();
     /// `Xsoftclock`: the soft clock interrupt stub (an `is_recurse`/`is_resume` entry).

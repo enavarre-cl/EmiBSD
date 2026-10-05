@@ -26,10 +26,11 @@
 //! Upstream: sys/arch/amd64/amd64/acpi_machdep.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `acpi_intr_establish` takes its `NIOAPIC == 0` body (NULL): `ioapic.c` and the MADT
-//!   (`acpimadt.c`) are the next ACPI ports, and the C establishes through an I/O APIC
-//!   only. The SCI does not use it: `acpi_attach_machdep` establishes it on its ISA line
-//!   (`isa_intr_establish`, the i8259), as the C does.
+//! - `acpi_intr_establish` (M13: through the I/O APIC, `NIOAPIC > 0`) leaks its
+//!   `mp_intr_map` (`Box`), as the C never frees it, and returns NULL for a pin past the
+//!   I/O APIC's where the C would write past `sc_pins`. The SCI does not use it:
+//!   `acpi_attach_machdep` establishes it on its ISA line (`isa_intr_establish`, through the
+//!   ISA bus's I/O APIC mapping), as the C does.
 //! - `acpi_attach_machdep`'s wakeup trampoline (`acpi_real_mode_resume`, `acpi_tramp_data`,
 //!   `acpi_pdirpa`: `acpi_wakecode.S`) and `acpi_sleep_cpu`, `acpi_resume_cpu`, `sleep_mp`
 //!   and `resume_mp` (`SUSPEND`: S3 and hibernation) are not ported: the trampoline copy is
@@ -40,6 +41,7 @@
 //!   a candidate near its end is read within the mapping (the C reads on into the mapped
 //!   page).
 
+use alloc::boxed::Box;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 
@@ -47,8 +49,18 @@ use crate::arch::amd64::amd64::bios::BiosAttachArgs;
 use crate::arch::amd64::amd64::bus_space::{
     BusSpaceHandle, X86BusSpace, bus_space_map, bus_space_unmap,
 };
+use crate::arch::amd64::amd64::intr::intr_establish;
+use crate::arch::amd64::amd64::ioapic::ioapic_find_bybase;
 use crate::arch::amd64::amd64::machdep::CPURESETFN;
 use crate::arch::amd64::amd64::pmap::{pmap_kenter_pa, pmap_kernel, pmap_kremove};
+use crate::arch::amd64::include::i82093reg::{
+    IOAPIC_REDLO_ACTLO, IOAPIC_REDLO_DEL_LOPRI, IOAPIC_REDLO_DEL_SHIFT, IOAPIC_REDLO_LEVEL,
+};
+use crate::arch::amd64::include::intrdefs::IST_EDGE;
+use crate::arch::amd64::include::mpbiosreg::{
+    MPS_INTPO_ACTHI, MPS_INTPO_ACTLO, MPS_INTPO_DEF, MPS_INTPO_MASK, MPS_INTPO_SHIFT,
+    MPS_INTTR_DEF, MPS_INTTR_EDGE, MPS_INTTR_LEVEL, MPS_INTTR_MASK, MPS_INTTR_SHIFT,
+};
 use crate::arch::amd64::include::param::{NBPG, PGOFSET};
 use crate::arch::amd64::isa::isa_machdep::isa_intr_establish;
 use crate::arch::amd64::pci::pci_machdep::PCI_BUS_DMA_TAG;
@@ -57,10 +69,12 @@ use crate::dev::acpi::acpireg::{AcpiRsdp, AcpiRsdp1, RSDP_SIG};
 use crate::dev::acpi::acpiutil::acpi_checksum;
 use crate::dev::acpi::acpivar::{AcpiMemMap, AcpiSoftc};
 use crate::dev::acpi::amltypes::AmlNodeRef;
+use crate::dev::acpi::dsdt::{LR_EXTIRQ_MODE, LR_EXTIRQ_POLARITY};
 use crate::dev::isa::isareg::IOM_BEGIN;
 use crate::machine::bus::{BusAddr, BusDmaTag, BusSize};
 use crate::machine::intr::{IPL_BIO, IPL_WAKEUP};
 use crate::machine::isa_machdep::IST_LEVEL;
+use crate::machine::mpconfig::MpIntrMap;
 use crate::machine::pmap::pmap_update;
 use crate::sys::device::{CfMatch, Cfattach, Device};
 use crate::sys::errno::Errno;
@@ -184,17 +198,56 @@ pub fn acpi_bus_space_unmap(t: X86BusSpace, bsh: BusSpaceHandle, size: BusSize) 
 }
 
 /// `acpi_intr_establish(irq, flags, level, handler, arg, what)`: through the I/O APIC that
-/// serves global interrupt `irq`; NULL without one (`NIOAPIC == 0`, see the deviations).
+/// serves global interrupt `irq`; NULL without one.
 pub fn acpi_intr_establish(
-    _irq: i32,
-    _flags: i32,
-    _level: i32,
-    _handler: fn(*mut c_void) -> i32,
-    _arg: *mut c_void,
-    _what: &'static str,
+    irq: i32,
+    flags: i32,
+    level: i32,
+    handler: fn(*mut c_void) -> i32,
+    arg: *mut c_void,
+    what: &'static str,
 ) -> Option<NonNull<c_void>> {
-    // NIOAPIC > 0: ioapic_find_bybase(irq) and an mp_intr_map (ioapic.c, M13 next).
-    None
+    // NIOAPIC > 0
+    let apic = ioapic_find_bybase(irq)?;
+
+    let mut map = MpIntrMap::new();
+    map.ioapic = Some(apic);
+    map.ioapic_pin = irq - apic.sc_apic_vecbase.get();
+    map.bus_pin = irq;
+    if flags & i32::from(LR_EXTIRQ_POLARITY) != 0 {
+        map.flags |= MPS_INTPO_ACTLO << MPS_INTPO_SHIFT;
+    } else {
+        map.flags |= MPS_INTPO_ACTHI << MPS_INTPO_SHIFT;
+    }
+    if flags & i32::from(LR_EXTIRQ_MODE) != 0 {
+        map.flags |= MPS_INTTR_EDGE << MPS_INTTR_SHIFT;
+    } else {
+        map.flags |= MPS_INTTR_LEVEL << MPS_INTTR_SHIFT;
+    }
+
+    map.redir = IOAPIC_REDLO_DEL_LOPRI << IOAPIC_REDLO_DEL_SHIFT;
+    let po = (map.flags >> MPS_INTPO_SHIFT) & MPS_INTPO_MASK;
+    if po == MPS_INTPO_DEF || po == MPS_INTPO_ACTLO {
+        map.redir |= IOAPIC_REDLO_ACTLO;
+    }
+    let tr = (map.flags >> MPS_INTTR_SHIFT) & MPS_INTTR_MASK;
+    if tr == MPS_INTTR_DEF || tr == MPS_INTTR_LEVEL {
+        map.redir |= IOAPIC_REDLO_LEVEL;
+    }
+
+    let pin = map.ioapic_pin;
+    let pp = apic.pins().get(pin as usize)?;
+    let map: &'static MpIntrMap = Box::leak(Box::new(map));
+    pp.ip_map.set(Some(map));
+
+    let type_ = if flags & i32::from(LR_EXTIRQ_MODE) != 0 {
+        IST_EDGE
+    } else {
+        IST_LEVEL
+    };
+    // SAFETY: an attached I/O APIC's pic is initialised before it is in `ioapics`.
+    let pic = unsafe { apic.pic() };
+    intr_establish(-1, pic, pin, type_, level, None, handler, arg, what).map(NonNull::cast)
 }
 
 /// `acpi_intr_disestablish(cookie)`.

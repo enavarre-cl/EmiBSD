@@ -613,14 +613,31 @@ reason:
   `MAIR`, `TCR`, `TTBR0`/`TTBR1` and `SCTLR` (copied into statics: the `cpu_info` itself is
   `malloc`ed kernel memory the bootloader's tables do not map), sets `TPIDR_EL1`,
   `VBAR_EL1` and `CPACR`, moves to the CPU's own stack and runs `cpu_init_secondary`.
-- amd64 processor enumeration (M11a): there is no ACPI MADT yet (M13) and no `mpbios`, so the
-  `MULTIPROCESSOR` kernel's mainbus attaches one `cpu` per processor the bootloader found
-  (`BootInfo::mp`): the boot processor first as `CPU_ROLE_BP`, the others as `CPU_ROLE_AP`
-  in the bootloader's order, the hardware ID as `cpu_apicid` (`GENERIC.MP`'s
-  `cpu* at mainbus?`). A uniprocessor kernel, or an MP kernel the bootloader found one
-  processor for, attaches `cpu0` as `CPU_ROLE_SP` as before. The application processors mask
-  `LINT0`: QEMU wires the 8259's ExtINT to every local APIC, and device interrupts stay on
-  the boot processor.
+- amd64 processor enumeration: since M13 `acpimadt0` attaches the processors from the MADT
+  at mainbus, as OpenBSD does (`CPU_ROLE_BP` for the one whose local APIC is running, the
+  others `CPU_ROLE_AP`, `mp_cpu_funcs` with `MULTIPROCESSOR`; a uniprocessor kernel's
+  `cpu0` is then `apid 0 (boot processor)`, as `bsd.sp` prints it). The bootloader still
+  starts the application processors (`mp_cpu_start` finds the MADT's APIC ID in Limine's
+  list). Without a MADT (a kernel without ACPI, until `mpbios.c` is ported) the M11a
+  stand-in remains: mainbus maps the local APIC at `LAPIC_BASE` and the `MULTIPROCESSOR`
+  kernel attaches one `cpu` per processor the bootloader found (`BootInfo::mp`), the boot
+  processor first as `CPU_ROLE_BP`, the others as `CPU_ROLE_AP` in the bootloader's order;
+  one processor attaches as `CPU_ROLE_SP`. Without I/O APICs the application processors mask
+  `LINT0` (QEMU wires the 8259's ExtINT to every local APIC); with them every CPU masks it, as
+  the C does.
+- amd64 interrupt routing (M13): `ioapic.c` drives the I/O APICs `acpimadt` attaches; every
+  ISA interrupt goes through `mp_isa_bus` (the MADT's overrides, the rest identity-mapped),
+  every PCI INTx through `mp_busses[bus]` (`acpiprt`), MSI and MSI-X straight to the local
+  APIC (`msi_pic`, `msix_pic`, with the I/O APIC's edge stubs, as in C); the 8259 is left
+  masked (nothing is established on it) and `LINT0`'s ExtINT is masked on every CPU.
+  Routes are recorded while `ioapic_cold` and programmed by `ioapic_enable` at the end of
+  `cpu_configure`, as in C, so no device interrupt arrives during autoconfiguration. All
+  device interrupts still go to the boot processor (`apic_set_redir`'s destination, as in
+  C). `acpimadt` and `acpiprt` are x86 code in `dev/acpi`: they reach the I/O APICs, the
+  `mp_*` globals and the x86 attach arguments through the `machine::mpconfig` contract
+  (`<machine/mpconfig.h>`; `struct mp_bus`/`struct mp_intr_map` are defined there because
+  the generic drivers build them, the MP-spec and I/O APIC constants are associated
+  constants), which arm64 and the host double implement as a machine without I/O APICs.
 - The kernel lock (M11a, audited in M11e). M11a took it around everything ported against one
   CPU, OpenBSD's own way of bringing code under MP. M11e audited every `MULTIPROCESSOR` site
   and every `KERNEL_LOCK` the port had kept as a comment, module by module, and now the lock
@@ -753,7 +770,8 @@ reason:
   `qemu`, `clockintr_dispatch` prints `uptime went backwards` if a reading is behind the
   previous one, and every smoke run rejects that line (`--reject`). Since M13 `acpitimer0`
   and `acpihpet0` (amd64, under acpi0) are timecounters too and the TSC's reference
-  (`kern.timecounter.choice=i8254(0) tsc(2000) acpihpet0(1000) acpitimer0(1000)`). arm64 attaches `agtimer` from the device tree (through mainbus
+  (`kern.timecounter.choice=i8254(0) acpihpet0(1000) tsc(2000) acpitimer0(1000)`: since acpimadt
+  attaches the CPUs from acpi0, the TSC registers between the HPET and the PM timer). arm64 attaches `agtimer` from the device tree (through mainbus
   since M7b) and takes the virtual timer's PPI through `ampintc`. The `selftest=clock` boot waits for
   `hz` hardclocks and a `timeout(9)`. The host double owns a `cpu_info` of its own so the
   clock queue and the wheel are unit-tested over the dummy timecounter.
@@ -920,13 +938,14 @@ reason:
   and `device_register` reach `subr_autoconf.rs` through `machine::autoconf`, so generic code
   never names an arch; the host double serves whatever table a test installs. A device that
   GENERIC configures but whose driver is not ported is reported with `unported!` where its bus
-  would probe or attach it (amd64's `ioapic`, `efi0`, `mpbios0`, ...); on arm64 every device-tree node
+  would probe or attach it (amd64's `efi0`, `mpbios0`, ...); on arm64 every device-tree node
   and on amd64 every PCI function without a driver prints OpenBSD's `not configured` line. The counts
   `config(8)` writes into `<dev>.h` follow the tables: `NMPATH` is 0, the `hotplug(4)` calls
   are reported. Without ACPI or MP tables, amd64's mainbus attaches the boot CPU as
-  `CPU_ROLE_SP`, as the C does on such a machine; `cpu_configure` keeps doing around
-  `config_rootfound` what `acpimadt` and the boot processor's attach would add (the LAPIC
-  base, `lapic_enable`, `lapic_set_lvt`, `lapic_calibrate_timer`). Adding a driver means its
+  `CPU_ROLE_SP`, as the C does on such a machine; `cpu_configure` keeps doing after
+  `config_rootfound` what the boot processor's attach would add (`lapic_enable`,
+  `lapic_calibrate_timer`) and mainbus maps the LAPIC at its architectural base (with ACPI,
+  `acpimadt` does both from the MADT, M13). Adding a driver means its
   `cfattach`/`cfdriver` and one `Cfdata` row in each `ioconf.rs` that has it in GENERIC.
 - ACPI (M13, amd64): `acpi0 at bios0 at mainbus0`, as in GENERIC. bios0 (`bios.c`) gets the
   RSDP from Limine's RSDP request (`BootInfo::rsdp`, kept by `init_x86_64` as
@@ -935,11 +954,13 @@ reason:
   the DSDT and the SSDTs into the AML interpreter at boot, and owns power: `boot(RB_HALT |
   RB_POWERDOWN)` enters S5 (`acpi_powerdown`), `cpu_reset` tries `cpuresetfn` (`acpi_reset`,
   the FADT's reset register) before the keyboard controller and the triple fault. acpi0's
-  children are not ported yet: `acpimadt` (CPU and I/O APIC enumeration; the bootloader's
-  processor list stands in, see "amd64 processor enumeration"), `acpiprt`, `acpitimer`,
-  `acpihpet`, `acpipci` (`acpi_haspci` stays 0, so mainbus attaches `pci0`); each prints
-  OpenBSD's `not configured` line. The SCI is on its ISA line through the i8259 until the I/O
-  APIC is ported. arm64 attaches no acpi0 until M14 (EFI ACPI boot, `efiacpi.c`); its
+  children: `acpimadt0` (the MADT: processors, `ioapic*` at mainbus, the ISA overrides and
+  the local APIC NMIs, `mp_busses`), `acpiprt*` (each PCI bus's `_PRT`: INTx pins on the I/O
+  APIC, link devices through `_CRS`/`_PRS`/`_SRS`) and `acpipci*` (the host bridges:
+  `acpi_haspci`, `_OSC`, MSI enabled for the bus mainbus then attaches) are ported (M13; see
+  "amd64 interrupt routing"); `acpitimer`, `acpihpet` and the rest print OpenBSD's `not
+  configured` line. The SCI is on its ISA line, which `isa_intr_establish` maps to the I/O
+  APIC pin through `mp_isa_bus`. arm64 attaches no acpi0 until M14 (EFI ACPI boot, `efiacpi.c`); its
   `machine::acpi_machdep` answers as a machine without ACPI. The S3/hibernate machinery
   (`acpi_x86.c`, `acpi_wakecode.S`, `subr_suspend.c`) is not M13's and is reported where
   reached. `just smoke-power` checks `halt -p` (QEMU powers off, status 0) and `reboot` (QEMU
@@ -1111,10 +1132,10 @@ reason:
   attaches `pci0` for bus 0 (as the C does when `acpi_haspci` is false) and configuration
   space is reached with mechanism #1 (ports `0xcf8`/`0xcfc`). The extents (`sys/extent.h`)
   are not ported, so a bus reserves nothing and a BAR the firmware left at 0 cannot be placed.
-  `mp_busses` is NULL (no `mpbios`/`acpimadt`), so interrupts map to the line register and
-  the 8259, and MSI/MSI-X are refused exactly as the C refuses them without tables (the
-  routing functions are ported; their `ioapic_edge_stubs` wait for the I/O APIC half of
-  `vector.S`). `option PCIVERBOSE` is not configured: the 800 KB name tables
+  Since M13 `acpimadt` installs `mp_busses` and `acpiprt` fills them, so INTx maps to I/O
+  APIC pins (`apic 0 int N`), and `acpipci` enables MSI on the bus, so `pci_intr_map_msi*`
+  work (`msi`, `msix`); a kernel without ACPI still maps the line register to the 8259 and
+  refuses MSI, exactly as the C does without tables. `option PCIVERBOSE` is not configured: the 800 KB name tables
   (`pcidevs_data.h`) and most of `pcidevs.h` are generated by `devlist2h.awk` in C and would
   need a generator in `tools/xtask` (as `gen-syscalls` is for `syscalls.master`), so the attach
   lines print IDs (`vendor 0x8086 product 0x29c0 (class bridge subclass host, rev 0x02) at
@@ -1141,9 +1162,9 @@ reason:
   `fdt_intr_establish` through `machine::fdt` (a generic associated type per machine; amd64
   and the host double have the members but never attach anything with them), and
   `intr_barrier` joined `machine::intr`. The C's `#if defined(__amd64__)` around forcing MSI
-  for virtio is `machine::pci_machdep::PCI_MSI_PER_BRIDGE`. Interrupts: amd64 has no MP
-  tables, so `pci_intr_map_msi*` refuse and the device's INTx line (the one the firmware
-  wrote) is established on the 8259; arm64's comes from the node through `ampintc`.
+  for virtio is `machine::pci_machdep::PCI_MSI_PER_BRIDGE`. Interrupts: since M13 amd64's
+  virtio devices take an MSI-X vector per queue (`msix per-VQ`); arm64's come from the node
+  through `ampintc`.
 - USB (M12): the machine-independent core (`dev/usb/usb.c`, `usbdi.c`, `usb_subr.c`, ...)
   runs under the kernel lock at `splusb()`, as in OpenBSD. xhci(4) (`dev/usb/xhci.c`,
   `dev/pci/xhci_pci.c`) attaches at PCI on both archs (INTx on amd64 QEMU, MSI-X through the
@@ -1216,10 +1237,13 @@ reason:
   with the NIC API of the network-interface layer (`if_attach`, `ether_ifattach`, one send
   and one receive queue). QEMU's user-mode network gives it no offloads (slirp has no
   virtio-net header), so it runs with `MRG_RXBUF`, event indexes, indirect descriptors and
-  the control queue. Not ported and reported where called: `intrmap(9)` (multi-queue is only
-  asked for with more than one CPU), `ifmedia` (`net/if_media.c`: only the five media words
+  the control queue. Multi-queue (`VIRTIO_NET_F_MQ`, asked for with more than one CPU and
+  four MSI-X vectors) goes through `intrmap(9)` since M13, as in C; QEMU's user network
+  offers it only with `mq=on` (xtask `--vio-mq`) and with one queue pair, so the default
+  boots keep virtio_pci's per-queue vectors. Not ported and reported where called:
+  `ifmedia` (`net/if_media.c`: only the five media words
   of `<net/if_media.h>` it reports are here), `tcpstat`. The interrupts work on both
-  machines: amd64's INTx through the 8259 (q35's firmware routes the PIRQ to IRQ 11),
+  machines: amd64's through MSI-X since M13 (INTx through the 8259 before),
   arm64's SPI through `ampintc`; the `selftest=vio` boot brings `vio0` up through `ifioctl`
   (the control queue's answers arrive only through the interrupt once `cold` is over),
   stops the receive tick, sends an ARP request built by hand and sees QEMU's answer reach

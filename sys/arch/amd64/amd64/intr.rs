@@ -54,8 +54,8 @@
 //! ## Deviations
 //! - `CPU_INFO_FOREACH` walks `ci_next` from `cpu_info_primary`; without `MULTIPROCESSOR`
 //!   the primary is the only CPU.
-//! - `MULTIPROCESSOR`: device interrupts all go to the boot CPU (no MADT/IOAPIC routing to
-//!   the APs until M13). `intr_handler` honours `IPL_MPSAFE` as the C does (M11e).
+//! - `MULTIPROCESSOR`: device interrupts all go to the boot CPU (`intr_allocate_slot` tries
+//!   the primary first, as in C). `intr_handler` honours `IPL_MPSAFE` as the C does (M11e).
 //! - `intr_printconfig` is the `INTRDEBUG` body behind feature `debug`.
 
 use core::cell::Cell;

@@ -7,6 +7,7 @@
 //! (`ports.toml`, `[[extra]]`). `bus_dma` (M7b) is a whole port.
 
 pub mod acpi_machdep;
+pub mod apic;
 pub mod autoconf;
 pub mod bios;
 pub mod bus_dma;
@@ -24,6 +25,7 @@ pub mod gdt;
 pub mod i8259;
 pub mod identcpu;
 pub mod intr;
+pub mod ioapic;
 #[cfg(feature = "multiprocessor")]
 pub mod ipi;
 #[cfg(feature = "multiprocessor")]

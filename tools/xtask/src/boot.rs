@@ -601,7 +601,8 @@ pub(crate) fn qemu_command(
             ));
             cmd.args(["-device", "ide-hd,drive=hd0,bus=ide.0,bootindex=0"]);
             cmd.args(["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]);
-            cmd.args(["-device", &format!("virtio-net-pci,netdev=n0{nic0}")]);
+            let mq = crate::hwopts::vio0_props();
+            cmd.args(["-device", &format!("virtio-net-pci,netdev=n0{nic0}{mq}")]);
             if let Some(v) = vm {
                 cmd.args(["-netdev", &v.netdev()]);
                 cmd.args([

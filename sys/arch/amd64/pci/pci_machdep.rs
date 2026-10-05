@@ -74,23 +74,18 @@
 //! directly by the `msi_pic` and `msix_pic` routing functions.
 //!
 //! ## Deviations
-//! - `mp_busses` is NULL: neither `mpbios.c` nor `acpimadt.c` is ported, so the
-//!   `NIOAPIC > 0` code takes its NULL branches: `pci_intr_map` uses the line register
-//!   with the 8259, and `pci_intr_map_msi`/`_msivec`/`_msix` and `pci_intr_enable_msivec`
-//!   refuse, as the C does on a machine without those tables (mainbus does not set
-//!   `PCI_FLAGS_MSI_ENABLED` either without ACPI). The `mp_busses` walks and the
-//!   `APIC_INT_VIA_APIC` establish path (`ioapic_find`) are reported where reached.
-//! - `msi_pic` and `msix_pic` have no edge stubs: the C's `ioapic_edge_stubs` come from the
-//!   I/O APIC half of `vector.S`, not built yet, so `pci_intr_establish_cpu` reports an
-//!   MSI/MSI-X establish instead of calling `intr_establish` without them (unreachable while
-//!   the maps refuse MSI). The routing functions themselves are ported.
-//! - ECAM: `pci_mcfg_init` records the window, but `pci_mcfg_map_bus` maps memory space
-//!   through `bus_space_map`, which reports memory-space maps as unported (M2's
-//!   `bus_space.rs`), and panics as the C does when the map fails; no caller sets a window
-//!   until ACPI's MCFG table is read. `pci_msix_table_map` fails the same way.
-//! - `pci_init_extents` (extents and `bios_memmap`), `acpiprt_route_interrupt` and
-//!   `acpidmar_pci_hook` belong to unported files (`subr_extent.c`, `acpiprt.c`,
-//!   `acpidmar.c`); `pci_init_extents` is reported, the two hooks are comments. Since M13
+//! - Since M13 `mp_busses` is `acpimadt`'s (`mainbus.rs`'s globals) and `acpiprt` fills its
+//!   buses, so the `NIOAPIC > 0` paths run as in C: `pci_intr_map`'s bus, bridge and ISA
+//!   lookups, `pci_intr_establish_cpu`'s `acpiprt_route_interrupt` and `ioapic_find`; MSI and
+//!   MSI-X (`msi_pic`, `msix_pic`, on the I/O APIC's edge stubs) are mapped when the bus has
+//!   `PCI_FLAGS_MSI_ENABLED` (`acpipci`, or virtio's own). Without ACPI the NULL branches
+//!   are taken, as the C takes them on a machine without tables.
+//! - ECAM: `pci_mcfg_init` records the window; `pci_mcfg_map_bus` maps it through
+//!   `bus_space_map` and panics as the C does when the map fails; no caller sets a window
+//!   until ACPI's MCFG table is read (`acpimcfg`).
+//! - `pci_init_extents` (extents and `bios_memmap`) and `acpidmar_pci_hook` belong to
+//!   unported files (`subr_extent.c`, `acpidmar.c`); `pci_init_extents` is reported, the
+//!   hook is a comment. Since M13
 //!   `pci_dev_postattach`, `pci_min_powerstate` and `pci_set_powerstate_md` take their
 //!   `NACPI > 0` bodies (acpi(4)'s `acpi_pci_match`, `acpi_pci_min_powerstate`,
 //!   `acpi_pci_set_powerstate`).
@@ -116,11 +111,14 @@ use crate::arch::amd64::amd64::bus_space::{
 };
 use crate::arch::amd64::amd64::i8259::I8259_PIC;
 use crate::arch::amd64::amd64::intr::{intr_disestablish, intr_establish};
+use crate::arch::amd64::amd64::ioapic::{ioapic_edge_stubs_table, ioapic_find};
 use crate::arch::amd64::amd64::machdep::idt_vec_alloc_range;
+use crate::arch::amd64::amd64::mainbus::{mp_busses, mp_eisa_bus, mp_isa_bus};
 use crate::arch::amd64::include::bus::BusDmaTag;
 use crate::arch::amd64::include::cpu::CpuInfo;
 use crate::arch::amd64::include::i82093var::{
-    APIC_INT_VIA_APIC, APIC_INT_VIA_MSG, APIC_INT_VIA_MSGX, apic_irq_apic, apic_irq_pin,
+    APIC_INT_VIA_APIC, APIC_INT_VIA_MSG, APIC_INT_VIA_MSGX, apic_irq_apic, apic_irq_legacy_irq,
+    apic_irq_pin,
 };
 use crate::arch::amd64::include::intr::{IntrFn, Intrhand};
 use crate::arch::amd64::include::intrdefs::{IST_LEVEL, IST_PULSE, NUM_LEGACY_IRQS};
@@ -129,10 +127,12 @@ use crate::arch::amd64::include::pci_machdep::{
 };
 use crate::arch::amd64::include::pic::{PIC_MSI, Pic};
 use crate::arch::amd64::include::pio::{inl, outl};
+use crate::dev::acpi::acpiprt::acpiprt_route_interrupt;
 use crate::dev::pci::pci::pci_get_capability;
 use crate::dev::pci::pci_map::{pci_mapreg_info, pci_mapreg_type};
 use crate::dev::pci::pcireg::*;
 use crate::dev::pci::pcivar::{PCI_FLAGS_MSI_ENABLED, PciAttachArgs, PcibusAttachArgs, Pcireg};
+use crate::dev::pci::ppbreg::ppb_interrupt_swizzle;
 use crate::kassert;
 use crate::kern::kern_lock::{mtx_enter, mtx_leave};
 use crate::kern::subr_prf::{panic, printf};
@@ -219,8 +219,7 @@ pub static MSI_PIC: Pic = Pic {
     pic_delroute: Some(msi_delroute),
     pic_allocidtvec: Some(msi_allocidtvec),
     pic_level_stubs: None,
-    // ioapic_edge_stubs: the I/O APIC stubs of vector.S (see the module's deviations).
-    pic_edge_stubs: None,
+    pic_edge_stubs: Some(ioapic_edge_stubs_table),
 };
 
 /// `msix_pic`: MSI-X vectors, routed by programming the device's MSI-X table.
@@ -233,14 +232,12 @@ pub static MSIX_PIC: Pic = Pic {
     pic_delroute: Some(msix_delroute),
     pic_allocidtvec: None,
     pic_level_stubs: None,
-    // ioapic_edge_stubs (see MSI_PIC).
-    pic_edge_stubs: None,
+    pic_edge_stubs: Some(ioapic_edge_stubs_table),
 };
 
-/// `mp_busses != NULL`: the MP bus table `mpbios.c` or `acpimadt.c` would build (neither is
-/// ported, see the module's deviations).
+/// `mp_busses != NULL`: an MP bus table (`acpimadt`, or `mpbios`) is installed.
 fn mp_busses_present() -> bool {
-    false
+    mp_busses().is_some()
 }
 
 /// `pci_mcfg_init`: records the ECAM window of `segment` (ACPI's MCFG table).
@@ -756,16 +753,43 @@ pub fn pci_intr_map(pa: &PciAttachArgs) -> Option<PciIntrHandle> {
         return None;
     }
 
-    let ih = PciIntrHandle {
+    let mut ih = PciIntrHandle {
         tag: pa.pa_tag,
         line,
         pin,
     };
 
-    // NIOAPIC > 0: with mp_busses, look up the pin (mp_busses[bus].mb_intrs) and then the
-    // parent bridge's handles (PPB_INTERRUPT_SWIZZLE); no explicit PCI mapping is not fatal.
-    if mp_busses_present() {
-        let _ = unported!("pci_intr_map: mp_busses (mpbios.c, acpimadt.c)");
+    // NIOAPIC > 0
+    let (bus, dev, func) = pci_decompose_tag(pa.pa_pc, pa.pa_tag);
+
+    if let Some(busses) = mp_busses() {
+        let mpspec_pin = (dev << 2) | (pin - 1);
+
+        if let Some(mb) = busses.get(bus as usize) {
+            let is_isa = mp_isa_bus().is_some_and(|b| ptr::eq(b, mb));
+            let is_eisa = mp_eisa_bus().is_some_and(|b| ptr::eq(b, mb));
+            if !is_isa
+                && !is_eisa
+                && let Some(mip) = mb.intrs().find(|mip| mip.bus_pin == mpspec_pin)
+            {
+                ih.line = mip.ioapic_ih | line;
+                return Some(ih);
+            }
+        }
+
+        if pa.pa_bridgetag.is_some() {
+            let swizpin = ppb_interrupt_swizzle(pin, dev);
+            if let Some(bih) = pa
+                .pa_bridgeih
+                .and_then(|b| b.get((swizpin - 1) as usize))
+                .filter(|bih| bih.line != -1)
+            {
+                ih.line = bih.line | line;
+                return Some(ih);
+            }
+        }
+        // No explicit PCI mapping found. This is not fatal, we'll try the ISA (or possibly
+        // EISA) mappings next.
     }
 
     // Section 6.2.4, `Miscellaneous Functions', says that 255 means `unknown' or `no
@@ -785,14 +809,27 @@ pub fn pci_intr_map(pa: &PciAttachArgs) -> Option<PciIntrHandle> {
         printf(format_args!("pci_intr_map: bad interrupt line {line}\n"));
         return None;
     }
+    let mut line = line;
     if line == 2 {
         printf(format_args!("pci_intr_map: changed line 2 to line 9\n"));
-        // The C sets its local `line` to 9 here, which only the I/O APIC lookups below
-        // read; the handle keeps the line it was filled with.
+        // Only the I/O APIC lookups below read the local `line`; the handle keeps the line
+        // it was filled with, as in C.
+        line = 9;
     }
 
-    // NIOAPIC > 0: with mp_busses, the ISA (and EISA) bus mappings of the line, and a
-    // "no MP mapping found" complaint (see above).
+    // NIOAPIC > 0
+    if mp_busses_present() {
+        let isa = mp_isa_bus().and_then(|b| b.intrs().find(|mip| mip.bus_pin == line));
+        // NEISA > 0: not configured (mp_eisa_bus stays NULL with ACPI).
+        if let Some(mip) = isa {
+            ih.line = mip.ioapic_ih | line;
+            return Some(ih);
+        }
+        printf(format_args!(
+            "pci_intr_map: bus {bus} dev {dev} func {func} pin {pin}; line {line}\n"
+        ));
+        printf(format_args!("pci_intr_map: no MP mapping found\n"));
+    }
 
     Some(ih)
 }
@@ -856,30 +893,33 @@ pub fn pci_intr_establish_cpu(
         } else {
             &MSIX_PIC
         };
-        if pic.pic_edge_stubs.is_none() {
-            let _ = unported!("pci_intr_establish: MSI/MSI-X (ioapic_edge_stubs, vector.S)");
-            return None;
-        }
         return intr_establish(-1, pic, tag as i32, IST_PULSE, level, ci, func, arg, what);
     }
 
-    let (_bus, _dev, _) = pci_decompose_tag(pc, ih.tag);
-    // NACPIPRT > 0: acpiprt_route_interrupt(bus, dev, ih.pin) (dev/acpi, not ported).
+    let (bus, dev, _) = pci_decompose_tag(pc, ih.tag);
+    // NACPIPRT > 0
+    acpiprt_route_interrupt(bus, dev, ih.pin);
 
-    let pic = &I8259_PIC;
-    let pin = ih.line;
-    let irq = ih.line;
+    let mut pic: &'static Pic = &I8259_PIC;
+    let mut pin = ih.line;
+    let mut irq = ih.line;
 
     // NIOAPIC > 0
     if ih.line & APIC_INT_VIA_APIC != 0 {
-        // pic = ioapic_find(APIC_IRQ_APIC(ih.line)), pin = APIC_IRQ_PIN, irq =
-        // APIC_IRQ_LEGACY_IRQ (or -1): ioapic.c, not ported.
-        printf(format_args!(
-            "pci_intr_establish: bad ioapic {}\n",
-            apic_irq_apic(ih.line)
-        ));
-        let _ = unported!("pci_intr_establish: ioapic_find (ioapic.c)");
-        return None;
+        let Some(apic) = ioapic_find(apic_irq_apic(ih.line)) else {
+            printf(format_args!(
+                "pci_intr_establish: bad ioapic {}\n",
+                apic_irq_apic(ih.line)
+            ));
+            return None;
+        };
+        // SAFETY: an attached I/O APIC's pic is initialised before it is in `ioapics`.
+        pic = unsafe { apic.pic() };
+        pin = apic_irq_pin(ih.line);
+        irq = apic_irq_legacy_irq(ih.line);
+        if !(0..NUM_LEGACY_IRQS as i32).contains(&irq) {
+            irq = -1;
+        }
     }
 
     intr_establish(irq, pic, pin, IST_LEVEL, level, ci, func, arg, what)

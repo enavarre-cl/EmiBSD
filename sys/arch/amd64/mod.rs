@@ -1095,6 +1095,134 @@ impl crate::machine::acpi_machdep::AcpiMachdep for Machine {
     }
 }
 
+/// The MP configuration (`mainbus.c`'s `mp_*` globals), the local APIC and the I/O APICs
+/// (`lapic.c`, `ioapic.c`) as the x86 ACPI drivers see them.
+impl crate::machine::mpconfig::MpConfig for Machine {
+    type Ioapic = include::i82093var::IoapicSoftc;
+
+    const MPS_INTPO_DEF: i32 = include::mpbiosreg::MPS_INTPO_DEF;
+    const MPS_INTPO_ACTHI: i32 = include::mpbiosreg::MPS_INTPO_ACTHI;
+    const MPS_INTPO_ACTLO: i32 = include::mpbiosreg::MPS_INTPO_ACTLO;
+    const MPS_INTPO_SHIFT: i32 = include::mpbiosreg::MPS_INTPO_SHIFT;
+    const MPS_INTPO_MASK: i32 = include::mpbiosreg::MPS_INTPO_MASK;
+    const MPS_INTTR_DEF: i32 = include::mpbiosreg::MPS_INTTR_DEF;
+    const MPS_INTTR_EDGE: i32 = include::mpbiosreg::MPS_INTTR_EDGE;
+    const MPS_INTTR_LEVEL: i32 = include::mpbiosreg::MPS_INTTR_LEVEL;
+    const MPS_INTTR_SHIFT: i32 = include::mpbiosreg::MPS_INTTR_SHIFT;
+    const MPS_INTTR_MASK: i32 = include::mpbiosreg::MPS_INTTR_MASK;
+    const IOAPIC_REDLO_DEL_MASK: u32 = include::i82093reg::IOAPIC_REDLO_DEL_MASK;
+    const IOAPIC_REDLO_DEL_SHIFT: u32 = include::i82093reg::IOAPIC_REDLO_DEL_SHIFT;
+    const IOAPIC_REDLO_DEL_LOPRI: u32 = include::i82093reg::IOAPIC_REDLO_DEL_LOPRI;
+    const IOAPIC_REDLO_DEL_NMI: u32 = include::i82093reg::IOAPIC_REDLO_DEL_NMI;
+    const IOAPIC_REDLO_ACTLO: u32 = include::i82093reg::IOAPIC_REDLO_ACTLO;
+    const IOAPIC_REDLO_LEVEL: u32 = include::i82093reg::IOAPIC_REDLO_LEVEL;
+    const APIC_INT_VIA_APIC: i32 = include::i82093var::APIC_INT_VIA_APIC;
+    const APIC_INT_APIC_SHIFT: i32 = include::i82093var::APIC_INT_APIC_SHIFT;
+    const APIC_INT_PIN_SHIFT: i32 = include::i82093var::APIC_INT_PIN_SHIFT;
+    const ICU_LEN: i32 = include::i8259::ICU_LEN;
+    const NIOAPIC: bool = true;
+
+    fn lapic_boot_init(lapic_base: Paddr) {
+        amd64::lapic::lapic_boot_init(lapic_base)
+    }
+
+    fn lapic_cpu_number() -> u32 {
+        amd64::lapic::lapic_cpu_number()
+    }
+
+    fn mp_attach_cpu(
+        parent: &Device,
+        apic_id: u32,
+        acpi_proc_id: u32,
+        bp: bool,
+        print: crate::sys::device::CfprintT,
+    ) {
+        use include::cpuvar::{CPU_ROLE_AP, CPU_ROLE_BP, CpuAttachArgs};
+
+        let mut caa = CpuAttachArgs {
+            caa_name: b"cpu",
+            cpu_apicid: apic_id as i32,
+            cpu_acpi_proc_id: acpi_proc_id as i32,
+            cpu_role: if bp { CPU_ROLE_BP } else { CPU_ROLE_AP },
+            // MULTIPROCESSOR: caa.cpu_func = &mp_cpu_funcs
+            #[cfg(feature = "multiprocessor")]
+            cpu_func: Some(&amd64::cpu::MP_CPU_FUNCS),
+            #[cfg(not(feature = "multiprocessor"))]
+            cpu_func: None,
+        };
+        let _ = crate::kern::subr_autoconf::config_found(
+            parent,
+            core::ptr::from_mut(&mut caa).cast(),
+            Some(print),
+        );
+    }
+
+    fn mp_attach_ioapic(
+        parent: &Device,
+        memt: BusSpaceTag,
+        apic_id: i32,
+        address: BusAddr,
+        vecbase: i32,
+        print: crate::sys::device::CfprintT,
+    ) {
+        let mut aaa = include::apicvar::ApicAttachArgs {
+            aaa_name: b"ioapic",
+            apic_id,
+            apic_version: 0,
+            flags: 0,
+            apic_memt: memt,
+            apic_address: address,
+            apic_vecbase: vecbase,
+        };
+        let _ = crate::kern::subr_autoconf::config_found(
+            parent,
+            core::ptr::from_mut(&mut aaa).cast(),
+            Some(print),
+        );
+    }
+
+    fn ioapic_find_bybase(vec: i32) -> Option<&'static Self::Ioapic> {
+        amd64::ioapic::ioapic_find_bybase(vec)
+    }
+
+    fn ioapic_apicid(apic: &Self::Ioapic) -> i32 {
+        apic.sc_apicid.get()
+    }
+
+    fn ioapic_vecbase(apic: &Self::Ioapic) -> i32 {
+        apic.sc_apic_vecbase.get()
+    }
+
+    fn ioapic_set_ip_map(
+        apic: &Self::Ioapic,
+        pin: i32,
+        map: &'static crate::machine::mpconfig::MpIntrMap,
+    ) {
+        if let Some(pp) = apic.pins().get(pin as usize) {
+            pp.ip_map.set(Some(map));
+        }
+    }
+
+    fn nioapics() -> i32 {
+        amd64::ioapic::NIOAPICS.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn mp_set_busses(
+        busses: &'static [crate::machine::mpconfig::MpBus],
+        isa: &'static crate::machine::mpconfig::MpBus,
+    ) {
+        amd64::mainbus::mp_set_busses(busses, isa)
+    }
+
+    fn mp_set_intrs(intrs: &'static [crate::machine::mpconfig::MpIntrMap]) {
+        amd64::mainbus::mp_set_intrs(intrs)
+    }
+
+    fn mp_busses() -> Option<&'static [crate::machine::mpconfig::MpBus]> {
+        amd64::mainbus::mp_busses()
+    }
+}
+
 impl crate::machine::fdt::Fdt for Machine {
     type FdtAttachArgs<'a> = crate::machine::fdt::NoFdtAttachArgs<'a>;
 

@@ -45,13 +45,13 @@
 //! here; `unmap_startup` waits for the boot-only text.
 //!
 //! ## Deviations
-//! - What `bios0`/`acpi0` (the MADT) or `mpbios0` would do for the interrupts while mainbus
-//!   attaches is done by `cpu_configure` around `config_rootfound`: `lapic_boot_init` at the
-//!   architectural base before it; and after it, because mainbus attaches the boot CPU as
-//!   `CPU_ROLE_SP` without those tables, what the boot processor's attach would add
-//!   (`lapic_enable`, `lapic_calibrate_timer`), the LVT setup (`lapic_set_lvt`, which the C
-//!   does after mainbus for `NIOAPIC`) and `intr_enable`. `pmap_randomize`, `map_tramps`,
-//!   `ioapic_enable`, `unmap_startup` and the random-number timeouts are reported;
+//! - After `config_rootfound`, `cpu_configure` does what a boot CPU attached as `CPU_ROLE_SP`
+//!   (no MADT) misses from the boot processor's attach (`lapic_enable`,
+//!   `lapic_calibrate_timer`), the LVT setup (`lapic_set_lvt`, which the C does after
+//!   mainbus for `NIOAPIC`) and `intr_enable`; then, where the C does, `ioapic_enable`
+//!   (M13). Until M13 `lapic_boot_init` ran here before mainbus; it is now `acpimadt`'s, or
+//!   mainbus's without a MADT (`mainbus.rs`). `pmap_randomize`, `map_tramps`,
+//!   `unmap_startup` and the random-number timeouts are reported;
 //!   `mbuf_dma_64bit_enable` runs and reports the interface list it needs itself.
 //! - `diskconf`: Limine is not boot(8), so there is no `bootdev` (`B_DEVMAGIC`): the boot
 //!   device is unknown and `setroot` gets none, unless the PXE boot MAC address
@@ -69,13 +69,11 @@ use libkern::StaticCell;
 
 use crate::arch::amd64::amd64::bus_dma::bus_dma_init;
 use crate::arch::amd64::amd64::intr::intr_printconfig;
-use crate::arch::amd64::amd64::lapic::{
-    lapic_boot_init, lapic_calibrate_timer, lapic_enable, lapic_set_lvt,
-};
+use crate::arch::amd64::amd64::ioapic::ioapic_enable;
+use crate::arch::amd64::amd64::lapic::{lapic_calibrate_timer, lapic_enable, lapic_set_lvt};
 use crate::arch::amd64::amd64::machdep::x86_64_proc0_tss_ldt_init;
 use crate::arch::amd64::include::cpu::{CPUF_BSP, cpu_info_primary};
 use crate::arch::amd64::include::cpufunc::{intr_enable, lcr8};
-use crate::arch::amd64::include::i82489reg::LAPIC_BASE;
 use crate::kern::subr_autoconf::config_rootfound;
 #[cfg(feature = "nfsclient")]
 use crate::kern::subr_disk::parsedisk;
@@ -93,7 +91,6 @@ use crate::net::if_types::IFT_ETHER;
 #[cfg(feature = "nfsclient")]
 use crate::netinet::if_ether::{ETHER_ADDR_LEN, arpcom_of};
 use crate::sys::device::{Device, Nam2blk};
-use crate::sys::types::Paddr;
 use crate::unported;
 
 /// `cold`: if set, still working on cold-start.
@@ -184,11 +181,6 @@ pub fn cpu_configure() {
     #[cfg(feature = "qemu")]
     crate::kern::selftest::bus_dma_check(&crate::arch::amd64::pci::pci_machdep::PCI_BUS_DMA_TAG);
 
-    // What acpimadt (or mpbios) does before attaching the CPUs: find the LAPIC.
-    // TODO(M7b): the LAPIC base comes from the MADT or the MP tables; this is the
-    // architectural default.
-    lapic_boot_init(Paddr::new(LAPIC_BASE));
-
     if config_rootfound(b"mainbus", ptr::null_mut()).is_none() {
         panic(format_args!("configure: mainbus not configured"));
     }
@@ -210,7 +202,7 @@ pub fn cpu_configure() {
     mbuf_dma_64bit_enable();
 
     // NIOAPIC > 0: lapic_set_lvt (done above), ioapic_enable.
-    let _ = unported!("ioapic_enable (ioapic.c)");
+    ioapic_enable();
 
     let _ = unported!("unmap_startup (M6)");
 

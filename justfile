@@ -127,6 +127,14 @@ smoke-build: build-up (build-amd64 "--features qemu,multiprocessor") (build-arm6
 # its superblock, the root is mounted from rd0a, OpenBSD's init(8) runs from it and goes single
 # user, and ksh(1) answers `uname -a`, `uname -sr`, `cat /etc/motd` and `ls /` on the serial
 # console.
+# Since M13 the amd64 boot enumerates its interrupt hardware from ACPI, as OpenBSD does:
+# `acpimadt0` reads the MADT (the local APIC address, the processors, which attach at mainbus
+# from it, and `ioapic0`, its 24 pins), `acpiprt0` reads bus 0's `_PRT` (the PCI INTx pins
+# on the I/O APIC), `acpipci0` is the host bridge (`PCI0`, which printed `"PNP0A08" ... not
+# configured` before; its `_OSC` answer follows the name) through which pci0 attaches with
+# MSI enabled, and every device interrupt goes through the I/O APIC or MSI(-X); the virtio
+# devices take one MSI-X vector per queue (`virtio0: msix per-VQ`, where they printed
+# `irq N` through the 8259 before), as OpenBSD/amd64 on QEMU does.
 smoke-boot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
@@ -138,11 +146,14 @@ smoke-boot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featu
         --expect "bios0 at mainbus0" --expect "acpi0 at bios0: ACPI 3.0" \
         --expect "acpi0: sleep states S3 S4 S5" --expect "acpi0: tables DSDT FACP APIC HPET MCFG" \
         --expect "acpitimer0 at acpi0: 3579545 Hz, 24 bits" --expect "acpihpet0 at acpi0: 100000000 Hz" \
-        --expect "\"PNP0A08\" at acpi0 not configured" \
+        --expect "acpimadt0 at acpi0 addr 0xfee00000: PC-AT compat" \
+        --expect "ioapic0 at mainbus0: apid 0 pa 0xfec00000, version 20, 24 pins" \
+        --expect "acpiprt0 at acpi0: bus 0 (PCI0)" \
+        --expect "acpipci0 at acpi0 PCI0: 0x" \
         --expect "cpu0 at mainbus0: apid 0 (boot processor)" --expect "pci0 at mainbus0 bus 0" \
         --expect "at pci0 dev 0 function 0 not configured" \
         --expect "virtio0 at pci0 dev 2 function 0 vendor 0x1af4 product 0x1000 rev 0x00" \
-        --expect "vio0 at virtio0: 1 queue, address 52:54:00:12:34:56" --expect "virtio0: irq " \
+        --expect "vio0 at virtio0: 1 queue, address 52:54:00:12:34:56" --expect "virtio0: msix per-VQ" \
         --expect "virtio1 at pci0 dev 3 function 0 vendor 0x1af4 product 0x1001 rev 0x00" \
         --expect "vioblk0 at virtio1" --expect "scsibus0 at vioblk0: 1 targets" \
         --expect "sd0 at scsibus0 targ 0 lun 0: <VirtIO, Block Device, >" \
@@ -387,8 +398,8 @@ smoke-diag: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featu
         --expect "bytes per page" --expect "Memory statistics by bucket size" \
         --expect "Memory resource pool statistics" --expect "/dev/rd0a       " \
         --expect "/dev/rd0a on / type ffs (local)" --expect "diag-42" \
-        --expect "kern.timecounter.hardware=" --expect "kern.timecounter.choice=i8254(0) tsc(" \
-        --expect ") acpihpet0(1000) acpitimer0(1000)"
+        --expect "kern.timecounter.hardware=" \
+        --expect "kern.timecounter.choice=i8254(0) acpihpet0(1000) tsc(" --expect ") acpitimer0(1000)"
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send 'ps -ax\n' \
@@ -1259,8 +1270,8 @@ ext2_host := "--cat /m10d-ext2.txt=m10d-ext2-42 --cat /d/sub.txt=m10d-ext2-sub-4
 # namespace of an NVMe controller on q35's PCI bus (`--nvme`, slot 3, before the virtio-blk
 # disk, so its namespace is sd0). The kernel boots WITHOUT the ramdisk module: boot(8)'s
 # BOOTARG_BOOTDUID is the `bootduid=` word of the command line, and setroot mounts the root
-# from the disk whose label has that DUID. MSI/MSI-X wait for ACPI's mp_busses, so the
-# controller runs on its INTx line. The session logs in, `mount` shows sd0a on /, bioctl(8)
+# from the disk whose label has that DUID. Since M13's ACPI interrupt routing the
+# controller interrupts by MSI-X (`: msix`). The session logs in, `mount` shows sd0a on /, bioctl(8)
 # asks nvme0 (its bio(4) ioctls), and a file is written on the root and read back. amd64
 # only: arm64's `virt` gets its PCI bus with M12. Part of `smoke`.
 nvme_duid := "4e564d45524f4f54"
@@ -1277,7 +1288,7 @@ smoke-nvme: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
         --send-after '# ' --send 'echo m13a-nvme-$((40+2)) >/m13a.txt && cat /m13a.txt\n' \
         --send-after '# ' --send 'dd if=/dev/zero of=/dev/rsd0c bs=64k seek=1010 count=8 && dd if=/dev/rsd0c of=/dev/null bs=64k count=64\n' \
         --send-after '# ' --send 'echo m13a-raw-$((40+2)) | dd of=/dev/rsd0c bs=512 seek=130000 conv=sync 2>/dev/null; dd if=/dev/rsd0c bs=512 skip=130000 count=1 2>/dev/null\n' \
-        --expect "nvme0 at pci0 dev 3 function 0 vendor 0x1b36 product 0x0010 rev 0x02: " \
+        --expect "nvme0 at pci0 dev 3 function 0 vendor 0x1b36 product 0x0010 rev 0x02: msix, NVMe 1.4" \
         --expect "NVMe 1.4" --expect "nvme0: QEMU NVMe Ctrl, firmware " --expect "serial EMIBSD0001" \
         --expect "scsibus0 at nvme0: 257 targets, initiator 0" \
         --expect "sd0 at scsibus0 targ 1 lun 0: <NVMe, QEMU NVMe Ctrl, " \
@@ -1294,8 +1305,8 @@ smoke-nvme: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
 # `ide.1`; the boot image is on port 0, which ahci now attaches too). PCI is probed by device
 # number, so the virtio-blk disk (dev 3) is sd0 and the controller (dev 31) gives sd1 (the
 # boot image, targ 0) and sd2 (the root, targ 1). The kernel boots WITHOUT the ramdisk module
-# and mounts its root from the disk whose label has the `bootduid=` DUID. MSI waits for
-# ACPI's mp_busses, so the controller runs on its INTx line through the i8259 (vmstat -i
+# and mounts its root from the disk whose label has the `bootduid=` DUID. Since M13's ACPI
+# interrupt routing (acpimadt, acpipci) the controller interrupts by MSI (`: msi`; vmstat -i
 # counts its interrupts). The session logs in, `mount` shows sd2a on /, a file is written on
 # the root and read back, a large file goes through the buffer cache (NCQ, several commands
 # on the chip), and raw I/O past the file system reads back what it wrote. amd64 only for
@@ -1316,7 +1327,7 @@ smoke-ahci: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
         --send-after '# ' --send 'dd if=/dev/zero of=/dev/rsd2c bs=64k seek=1010 count=8 && dd if=/dev/rsd2c of=/dev/null bs=64k count=64\n' \
         --send-after '# ' --send 'echo m13-ahci-raw-$((40+2)) | dd of=/dev/rsd2c bs=512 seek=130000 conv=sync 2>/dev/null; dd if=/dev/rsd2c bs=512 skip=130000 count=1 2>/dev/null\n' \
         --send-after '# ' --send 'vmstat -i\n' \
-        --expect "ahci0 at pci0 dev 31 function 2 vendor 0x8086 product 0x2922 rev 0x02: irq " \
+        --expect "ahci0 at pci0 dev 31 function 2 vendor 0x8086 product 0x2922 rev 0x02: msi" \
         --expect ", AHCI 1.0" --expect "ahci0: port 0: 1.5Gb/s" --expect "ahci0: port 1: 1.5Gb/s" \
         --expect "vioblk0 at virtio1" --expect "sd0 at scsibus0 targ 0 lun 0: <VirtIO, Block Device, >" \
         --expect "scsibus1 at ahci0: 32 targets" \
@@ -1332,7 +1343,8 @@ smoke-ahci: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
 # M13: siop(4) on QEMU's LSI 53C895A (`--lsi`, `tools/xtask/src/hwopts.rs`: the adapter
 # after every other device, a fresh zeroed 64 MiB `scsi-hd` at target 0 and, with
 # `--lsi-cd`, the ramdisk's ISO as a `scsi-cd` at target 1). The kernel must attach siop0
-# on q35's PCI bus (INTx; the SCRIPTS in the chip's 8 KB of on-board RAM), its scsibus
+# on q35's PCI bus (INTx, which since M13 goes through the I/O APIC pin acpiprt finds:
+# `apic 0 int N`; the SCRIPTS in the chip's 8 KB of on-board RAM), its scsibus
 # (16 targets, initiator 7), the disk as sd1 (vioblk's persistent disk is sd0) and the
 # CD-ROM as cd0. The session runs fdisk(8), disklabel(8) and newfs(8) on sd1, writes a
 # file and a copy of /bin/ksh, unmounts, mounts read-only and reads both back (cmp(1)),
@@ -1353,7 +1365,7 @@ smoke-siop: (build-amd64 "--features qemu,multiprocessor")
         --send-after '# ' --send 'dd if=/dev/rsd1c of=/dev/null bs=64k count=16\n' \
         --send-after '# ' --send 'echo m13-raw-$((40+2)) | dd of=/dev/rsd1c bs=512 seek=131000 conv=sync 2>/dev/null; dd if=/dev/rsd1c bs=512 skip=131000 count=1 2>/dev/null\n' \
         --send-after '# ' --send 'mount_cd9660 /dev/cd0c /mnt && cat /mnt/m10c-iso.txt && umount /mnt\n' \
-        --expect "siop0 at pci0 dev " --expect "vendor 0x1000 product 0x0012 rev 0x00: " \
+        --expect "siop0 at pci0 dev " --expect "vendor 0x1000 product 0x0012 rev 0x00: apic 0 int " \
         --expect "using 8K of on-board RAM" \
         --expect "scsibus1 at siop0: 16 targets, initiator 7" \
         --expect "sd1 at scsibus1 targ 0 lun 0: <QEMU, QEMU HARDDISK, " \
@@ -1503,10 +1515,18 @@ ntfs_steps := disk_login + " " + \
 # the verdict (`tsc: cpu0/cpuN: sync test passed`, `... failed` or `... not run`; QEMU's TCG
 # passes it), and on both archs every CPU dispatches its own clock interrupts with an uptime
 # that never goes back on it (`selftest: clockintr on 4 cpus ok`, plus the `uptime went
-# backwards` reject) and the init stand-in's time checks pass. Part of `smoke`.
+# backwards` reject) and the init stand-in's time checks pass. Since M13 the amd64 processors
+# come from ACPI's MADT (`acpimadt0`, which attaches them and `ioapic0`), no longer from the
+# bootloader's list, and a `selftest=vio` boot whose virtio-net offers multiqueue
+# (`--vio-mq`: `mq=on`; QEMU's user network has one queue pair) takes vio(4)'s intrmap(9)
+# path: the configuration, control and queue-pair interrupts on their own MSI-X vectors,
+# which the driver establishes itself (`virtio0: msix`, not virtio_pci's `msix per-VQ`),
+# and the frame still comes back through the queue's interrupt. Part of `smoke`.
 smoke-mp: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none \
-        --expect "bsd: 4 processors" --expect "cpu0 at mainbus0: apid 0 (boot processor)" \
+        --expect "bsd: 4 processors" --expect "acpimadt0 at acpi0 addr 0xfee00000: PC-AT compat" \
+        --expect "cpu0 at mainbus0: apid 0 (boot processor)" \
+        --expect "ioapic0 at mainbus0: apid 0 pa 0xfec00000, version 20, 24 pins" \
         --expect "cpu3 at mainbus0: apid 3 (application processor)" \
         --expect "x86_ipi_selftest: X86_IPI_NOP taken by 3 cpus, tlb shootdowns acknowledged" \
         --expect "tsc: cpu0/cpu1: sync test" --expect "tsc: cpu0/cpu2: sync test" \
@@ -1520,6 +1540,10 @@ smoke-mp: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feature
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none \
         --cmdline "selftest=mpstress" --expect "selftest: mpstress pool ok (4 cpus" \
         --expect "selftest: mpstress pmemrange ok (4 cpus" --expect "selftest: mpstress uvm ok (4 cpus"
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none \
+        --vio-mq --cmdline "selftest=vio" --reject "virtio0: msix per-VQ" \
+        --expect "vio0 at virtio0: 1 queue, address 52:54:00:12:34:56" --expect "virtio0: msix" \
+        --expect "selftest: vio up ok" --expect "selftest: vio rx ok"
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none \
         --expect "bsd: 4 processors" --expect "cpu0 at mainbus0 mpidr 0: ARM Cortex-A72" \
         --expect "cpu3 at mainbus0 mpidr 3: ARM Cortex-A72" \
@@ -1602,10 +1626,14 @@ build-up:
 # M11e: the one uniprocessor boot `smoke` keeps (the user's decision of 2026-10-03), per arch,
 # to catch a dependency on MULTIPROCESSOR in the default kernel: the kernel built without the
 # feature, kept as `bsd.up`, boots on one processor without a ramdisk and the init stand-in
-# passes (`build-up` makes `bsd.up`). Part of `smoke`.
+# passes (`build-up` makes `bsd.up`). Since M13 amd64's processor comes from the MADT as the
+# boot processor (`apid 0 (boot processor)`, as OpenBSD's `bsd.sp` prints it), no longer as
+# the `(uniprocessor)` mainbus attached without tables. Part of `smoke`.
 smoke-up: build-up build-init-amd64 build-init-arm64
     cargo xtask smoke {{reject}} --arch amd64 --kernel target/{{amd64}}/debug/bsd.up --ramdisk none \
-        --expect "bsd: booted on amd64" --expect "cpu0 at mainbus0: (uniprocessor)" \
+        --expect "bsd: booted on amd64" --expect "acpimadt0 at acpi0 addr 0xfee00000: PC-AT compat" \
+        --expect "cpu0 at mainbus0: apid 0 (boot processor)" \
+        --expect "ioapic0 at mainbus0: apid 0 pa 0xfec00000, version 20, 24 pins" \
         --expect "selftest: malloc/pool stress ok" --expect "init: processes ok" \
         --expect "init: tcp ok" --expect "init: uptime monotonic ok" \
         --expect "init exited with status 0 (signal 0)"
@@ -1651,13 +1679,14 @@ audio_play := disk_login + " " + \
 # on arm64 the boot disk is sd1. Logs in as `smoke-login` does,
 # mounts the stick's FAT partition with mount_msdos(8) (`i`, spoofed from its MBR), reads
 # the note and checks the 1 MiB file's cksum(1) (made on the host, devices.rs), copies it,
-# remounts and compares the copy. Part of `smoke`.
+# remounts and compares the copy. xhci interrupts by MSI-X on both archs (amd64 since M13's
+# acpipci enables MSI on its bus). Part of `smoke`.
 smoke-usb: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-usb: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
         --usb {{disk_login}} {{replace(usb_session, "SD", "sd2")}} {{usb_check}} \
-        --expect 'xhci0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x000d rev 0x01: irq' \
+        --expect 'xhci0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x000d rev 0x01: msix' \
         --expect 'sd2 at scsibus2 targ 1 lun 0: <QEMU, QEMU HARDDISK, 2.5+>'
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --usb {{disk_login}} {{replace(usb_session, "SD", "sd2")}} {{usb_check}} \

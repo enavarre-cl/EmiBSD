@@ -434,7 +434,9 @@ pub fn cpu_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
             // XXX BP fpuinit(ci) is done earlier
             cpu_init(ci);
             let _ = unported!("cpu_init_mwait (mwait)");
-            // NIOAPIC > 0: ioapic_bsp_id = caa->cpu_apicid (ioapic.c is not ported).
+            // NIOAPIC > 0
+            crate::arch::amd64::amd64::ioapic::IOAPIC_BSP_ID
+                .store(caa.cpu_apicid, Ordering::Relaxed);
         }
         CPU_ROLE_AP => {
             // report on an AP

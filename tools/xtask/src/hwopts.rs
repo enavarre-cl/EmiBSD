@@ -155,11 +155,17 @@ fn opt_path<'a>(args: &[&'a str], opt: &str) -> Result<Option<&'a str>> {
 /// `--reboot`: this run's VMs restart on a guest reset (set once by `main`).
 static REBOOT: OnceLock<()> = OnceLock::new();
 
+/// `--vio-mq`: vio0's virtio-net offers multiqueue (`mq=on`, set once by `main`).
+static VIO_MQ: OnceLock<()> = OnceLock::new();
+
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
-/// `--reboot`).
+/// `--reboot`, `--vio-mq`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if args.contains(&"--reboot") {
         let _ = REBOOT.set(());
+    }
+    if args.contains(&"--vio-mq") {
+        let _ = VIO_MQ.set(());
     }
     if let Some(w) = args.windows(2).find(|w| w[0] == "--nvme") {
         let _ = NVME.set(boot::run_dir(root).join(w[1]));
@@ -183,6 +189,14 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
         let _ = LSI_CD.set(PathBuf::from(iso));
     }
     Ok(())
+}
+
+/// The extra properties of amd64's user-network NIC (`vio0`): with `--vio-mq`, `mq=on`, so
+/// the device offers `VIRTIO_NET_F_MQ` and vio(4) takes its multiqueue path (an intrmap and
+/// one MSI-X vector per queue pair, the configuration and control vectors apart). QEMU's
+/// user network has one queue pair, so the device reports one.
+pub(crate) fn vio0_props() -> &'static str {
+    if VIO_MQ.get().is_some() { ",mq=on" } else { "" }
 }
 
 /// Whether this run's VMs restart on a guest reset (`--reboot`): QEMU then runs without
