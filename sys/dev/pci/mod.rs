@@ -15,6 +15,11 @@ pub mod ahci_pci;
 pub mod auich;
 pub mod azalia;
 pub mod azalia_codec;
+pub mod gcu_reg;
+pub mod gcu_var;
+pub mod if_em_hw;
+pub mod if_em_osdep;
+pub mod if_em_soc;
 pub mod nvme_pci;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/pci/pci.c
 pub mod pci;

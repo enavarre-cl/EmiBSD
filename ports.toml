@@ -9027,3 +9027,95 @@ reason = "M14 A1: the part of the kernel header libsa reads, declared again in l
 [[extra]]
 rust = "sys/lib/libsa/testutil.rs"
 reason = "M14 A1: libsa host tests: a RAM disk over the makefs fixtures, a whole-file memfs, a test console and SaConf"
+
+[[file]]
+c = "sys/dev/mii/rgephyreg.h"
+rust = "sys/dev/mii/rgephyreg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a9beaba3b0586126f0935009dfaafe90c2614705"
+deps = []
+notes = "M13 (em(4) step 1): the whole header; register numbers u32 (the PHY access functions take a uint32_t address), register bits u16; RGEPHY_SR_SPEED/RGEPHY_F_SR_SPEED as const fns; licence BSD-4 (Bill Paul), kept whole; reference-backed test of every define. Only em(4)'s shared code uses it; rgephy(4) and mii(4) are not ported"
+
+[[file]]
+c = "sys/dev/pci/gcu_reg.h"
+rust = "sys/dev/pci/gcu_reg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "970f84b3b62416546c9aae2d6ee634e9c4df614c"
+deps = []
+notes = "M13 (em(4) step 1): license: Intel BSD-3 notice, kept whole (trailing blanks dropped); the whole header: MDIO_STATUS_REG/MDIO_COMMAND_REG (BusSize) and their fields (u32); reference-backed test of every define"
+
+[[file]]
+c = "sys/dev/pci/gcu_var.h"
+rust = "sys/dev/pci/gcu_var.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "91b8eff212d8b7eb12b4328b3845d5cfc86f021e"
+deps = ["sys/sys/device.h", "sys/kern/kern_lock.c"]
+notes = "M13 (em(4) step 1): the whole header: struct gcu_softc (GcuSoftc, repr(C), the device first, mdio_mtx a Mutex)"
+
+[[file]]
+c = "sys/dev/pci/gcu.c"
+rust = ""
+status = "skipped"
+notes = "deferred-driver: gcu(4), the EP80579 (Tolapai) Global Configuration Unit, is configured only by i386 GENERIC and QEMU has none; em(4) runs with NGCU 0 (if_em_soc.rs)"
+
+[[file]]
+c = "sys/dev/pci/if_em_osdep.h"
+rust = "sys/dev/pci/if_em_osdep.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a22c046c51b1f0115657231fc2648f25cc376abd"
+deps = ["sys/dev/pci/pcivar.h", "sys/sys/device.h"]
+notes = "M13 (em(4) step 1): license: Intel BSD-3 notice, kept whole; the whole header: struct em_osdep (EmOsdep: the mem/io/flash bus_space tags and handles, dev as Option<NonNull<Device>>, em_pa, the BAR bases and sizes, em_flashoffset), usec_delay/msec_delay/msec_delay_irq over delay(9), CMD_MEM_WRT_INVALIDATE, and every register macro as a lowercase function taking the full E1000_* constant (e1000_read_reg/e1000_write_reg with the 82542 translation, em_read_reg/em_write_reg, the _ARRAY, _ARRAY_BYTE/_WORD, _OFFSET and ICH flash variants, e1000_write_flush, em_io_read/em_io_write); DBG and DEBUG not defined: DEBUGFUNC/DEBUGOUT* are left out of the callers, EM_KASSERT and MSGOUT are used by no file"
+
+[[file]]
+c = "sys/dev/pci/if_em_soc.h"
+rust = "sys/dev/pci/if_em_soc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a7025fd01567f00a5dd64b3853c37a0b034a3d6c"
+deps = []
+notes = "M13 (em(4) step 1), in if_em_soc.rs with if_em_soc.c (same ISC notice, kept once): GCU_MAX_ATTEMPTS, GCU_CMD_DELAY, RTL8211_E_PHY_ID; the prototypes are if_em_soc.c's"
+
+[[file]]
+c = "sys/dev/pci/if_em_soc.c"
+rust = "sys/dev/pci/if_em_soc.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0737e3ea85735a2fe1174de8d1acdcedb754b152"
+deps = ["sys/dev/pci/if_em_soc.h", "sys/dev/pci/gcu_reg.h", "sys/dev/pci/gcu_var.h", "sys/dev/pci/gcu.c", "sys/kern/kern_lock.c", "sys/kern/subr_prf.c"]
+notes = "M13 (em(4) step 1): the whole file with NGCU 0 (gcu(4) not configured): em_lookup_gcu (None), em_attach_miibus (0), gcu_miibus_readreg/gcu_miibus_writereg (return at once without a GCU, as with the C's NULL hw->gcu; the MDIO command-and-poll both write out is gcu_mdio_command); DEVNAME(sc) is osdep.dev's name"
+
+[[file]]
+c = "sys/dev/pci/if_em_hw.h"
+rust = "sys/dev/pci/if_em_hw.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0a8313d2aee7be3ceddad3081681b16db7c3e91e"
+deps = ["sys/dev/pci/if_em_osdep.h", "sys/dev/pci/gcu_var.h"]
+notes = "M13 (em(4) step 1), in if_em_hw.rs with if_em_hw.c: license: Intel BSD-3 notice, kept whole (once: the .c's copy; the .h's differs only in trailing blanks); the whole header: 2,206 simple defines as typed consts (registers and MAC bits u32, PHY bits/EEPROM words/ID LED/SWFW masks u16, device ids u16, the status codes i32, sizes usize), the function-like macros as lowercase const fns (e1000_rdbal(n) ..., phy_reg, gg82563_reg, bm_phy_reg/_page/_num, the ICP and iNVM helpers, tbi_accept), E1000_RDBAL0/RDBAH0/RDLEN0 as e1000_rdbal0/...; the enums as Rust enums with the C's member names imported into the module (em_cable_length, em_gg_cable_length, em_igp_cable_length are u16 aliases with their members as consts: they are compared with and used as numbers), EmBusWidth::from_pcie_link_width; the descriptors (em_rx_desc, the extended and packet-split unions, em_tx_desc, em_context_desc, em_data_desc, e1000_adv_tx_context_desc) repr(C) with repr(C) unions of plain-integer structs and a safe getter per member; the register layouts; em_hw_stats; struct em_hw member for member (back a NonNull<EmOsdep>, gcu an Option<NonNull<GcuSoftc>>, eeprom_shadow_ram an Option<Box<[EmShadowRam]>>) plus pci_ops, the EmPciOps table of the if_em.c functions the shared code calls (EmHw::new(back, ops), unsafe: back must outlive and not be written under the shared code); the ich8 flash bit field unions and sfp_e1000_flags as a register word with get/set per field (ich8_hws_flash_regacc 32 bits wide); E1000_READ_REG_IO has no counterpart (its em_read_reg_io exists nowhere); reference-backed test of every define"
+
+[[file]]
+c = "sys/dev/pci/if_em_hw.c"
+rust = "sys/dev/pci/if_em_hw.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6b1d410640659dd42dc7059c4bb26b31af9528f7"
+deps = ["sys/dev/pci/if_em_hw.h", "sys/dev/pci/if_em_osdep.h", "sys/dev/pci/if_em_soc.c", "sys/dev/mii/rgephyreg.h", "sys/kern/subr_prf.c", "sys/kern/kern_lock.c"]
+notes = "M13 (em(4) step 1): license: Intel BSD-3 notice, kept whole; the whole file (12,004 lines, all 157 functions: MAC identification and media, reset and init, link setup for fiber/SerDes/copper and every PHY family (M88, IGP, GG82563, BM, 82577/8/9, I217, 82580, RTL8211, IFE), autonegotiation, flow control, MDIO/kumeran/I2C/HV/BM wakeup PHY access with the SW/FW semaphores, the EEPROM (microwire, SPI, EERD/EEWR, flash with the shadow RAM, ICH8/SPT flash cycles, i210 iNVM), checksums, MAC address, receive address/multicast/VLAN tables, LEDs, counters, bus info, manageability cookie, LPLU/EEE/K1/ULP and the PCH workarounds) and the IGP cable length tables. Deviations: an int32_t status is Result<_, i32> whose Err is the C's non-zero value unchanged (-E1000_ERR_*, E1000_BLK_PHY_RESET, E1000_DEFER_INIT, the bare -1 of em_valid_nvm_bank_detect_ich8lan); out parameters stay &mut; em_init_hw and em_initialize_hardware_bits take (hw, num_queues) instead of the softc (they read only sc->hw and sc->num_queues; queues are numbered from 0); the if_em.c callbacks (em_pci_set_mwi, em_pci_clear_mwi, em_read_pci_cfg, em_write_pci_cfg, em_read_pcie_cap_reg) are wrappers over hw.pci_ops; EEPROM read/write take slices and refuse one shorter than words; a shadow RAM shorter than E1000_SHADOW_RAM_WORDS reads as unmodified past its end (em_shadow_word) and refuses writes there; em_mc_addr_list_update takes a slice and stops at its end; em_hash_mc_addr/em_rar_set take &[u8; 6]; em_host_if_read_cookie returns nothing (the C's always succeeds) and the cookie goes through bytes (EmHostMngDhcpCookie::from_bytes/to_bytes); em_write_eeprom_spi skips the page-boundary test when page_size is 0 (the C divides by it); variables the C leaves uninitialised when a read fails start at 0; NULL checks on hw are gone; helpers that only regroup the C's code: em_clear_shadow_ram, em_read_clear (em_clear_hw_cntrs), em_lplu_restore_smart_speed/em_lplu_disable_smart_speed (D3/D0 LPLU), em_ich8_read_hsfsts/em_ich8_write_hsfsts/em_ich8_retry_after_error (flash cycles); DBG not defined (DEBUGOUT left out). Host tests (mac type table and semaphore flags, multicast hash, 82542 register translation, register macros, mng checksum and cookie, flash bit fields, bus width) and reference tests (every define, the cable tables). Nothing attaches yet: if_em.c is the next step"
+
+[[file]]
+c = "sys/dev/pci/if_em.h"
+rust = "sys/dev/pci/if_em.rs"
+status = "todo"
+deps = ["sys/dev/pci/if_em_hw.h", "sys/dev/pci/if_em_osdep.h", "sys/dev/pci/pcivar.h", "sys/net/if_media.h"]
+notes = "M13: em(4)'s softc and queues, in if_em.rs with if_em.c"
+
+[[file]]
+c = "sys/dev/pci/if_em.c"
+rust = "sys/dev/pci/if_em.rs"
+status = "todo"
+deps = ["sys/dev/pci/if_em.h", "sys/dev/pci/if_em_hw.c", "sys/dev/pci/if_em_soc.c", "sys/dev/pci/pci_map.c", "sys/dev/pci/pcidevs.h", "sys/net/if_ethersubr.c", "sys/net/ifq.c", "sys/kern/kern_timeout.c", "sys/kern/subr_autoconf.c"]
+notes = "M13: the em(4) driver proper; it fills the EmPciOps seam of if_em_hw.rs (em_pci_set_mwi, em_pci_clear_mwi, em_read_pci_cfg, em_write_pci_cfg, em_read_pcie_cap_reg) and passes sc->num_queues to em_init_hw"
