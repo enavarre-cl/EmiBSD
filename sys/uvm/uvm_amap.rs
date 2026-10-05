@@ -69,6 +69,7 @@ use crate::kern::subr_pool::{pool_get, pool_init, pool_put, pool_sethiwat};
 use crate::kern::subr_prf::panic;
 use crate::machine::intr::IPL_MPFLOOR;
 use crate::machine::pmap::pmap_page_protect;
+use crate::queue_adapter;
 use crate::sys::limits::INT_MAX;
 use crate::sys::malloc::{M_NOWAIT, M_UVMAMAP, M_WAITOK, M_ZERO};
 use crate::sys::mman::PROT_NONE;
@@ -84,7 +85,6 @@ use crate::uvm::uvm_page::{
 };
 use crate::uvm::uvm_param::atop;
 use crate::uvm::uvm_pdaemon::uvm_wait;
-use crate::queue_adapter;
 
 /// `AMAP_SHARED`: amap is shared.
 pub const AMAP_SHARED: i32 = 0x1;
