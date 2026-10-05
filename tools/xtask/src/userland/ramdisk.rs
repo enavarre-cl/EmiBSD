@@ -116,6 +116,9 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("audio0", 'c', 42, 0, 0o660, "_sndiop"),
     ("audioctl0", 'c', 42, 192, 0o660, "_sndiop"),
     ("usb0", 'c', 61, 0, 0o640, "wheel"),
+    // M13: `com4`, the first `com* at puc?` after amd64's four ISA lines (`smoke-puc`): the
+    // call-out node (`com`'s `COMDIALOUT`, minor bit 0x80), which opens without a carrier.
+    ("cua04", 'c', 8, 132, 0o600, "wheel"),
 ];
 
 /// The `sd` units the image has nodes for (module docs of `DEVICES`): M10f's four vioblk

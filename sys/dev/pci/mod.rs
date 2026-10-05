@@ -8,7 +8,8 @@
 //! pci?`), `siop_pci` (with `siop_pci_common`) the Symbios SCSI front-end (`siop* at
 //! pci?`) (M13); `xhci_pci` the xHCI front-end (`xhci* at
 //! pci?`), `auich` the Intel ICH AC'97 audio controller (`auich* at pci?`), `azalia` (with
-//! `azalia_codec`) the HD Audio controller (`azalia* at pci?`) (M12). The machine side
+//! `azalia_codec`) the HD Audio controller (`azalia* at pci?`) (M12); `puc` (with `pucvar`
+//! and `pucdata`) the "universal" communication card driver (`puc* at pci?`, M13). The machine side
 //! (configuration access, tags, interrupts) is `machine::pci_machdep`.
 
 pub mod ahci_pci;
@@ -30,6 +31,9 @@ pub mod pcidevs;
 pub mod pcireg;
 pub mod pcivar;
 pub mod ppbreg;
+pub mod puc;
+pub mod pucdata;
+pub mod pucvar;
 pub mod siop_pci;
 pub mod siop_pci_common;
 pub mod virtio_pci;

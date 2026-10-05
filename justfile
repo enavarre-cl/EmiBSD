@@ -85,7 +85,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
     "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-efiboot smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
-    "smoke-net-mp smoke-up smoke-audio smoke-usb"
+    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -1739,6 +1739,22 @@ usb_check := "--expect 'usb0 at xhci0: USB revision 3.0' --expect 'uhub0 at usb0
     "--expect 'ukbd0 at uhidev0' " + \
     "--expect 'emibsd m12: hello from a usb stick' --expect '4071711340 1048576 /mnt/BIG.BIN' " + \
     "--expect 'usb-42'"
+
+# M13: com(4) over puc(4), amd64 only: arm64's GENERIC has no puc(4). QEMU's `pci-serial`
+# (1b36:0002, a 16550 behind PCI, `--pci-serial`, hwopts.rs) is a file chardev: puc*
+# attaches (`ports: 16 com`: puc_print_ports counts the card's empty port slots as com, in
+# the C too) and com* below it takes the card's interrupt (INTx, acpiprt's routing) as
+# `com4` (com0 to com3 are the ISA lines, `/dev/cua04` is in the ramdisk). The session logs
+# in and writes a line to it, and `--expect-pci-serial` checks that the line reached the
+# host file. Part of `smoke`.
+smoke-puc: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-puc: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --pci-serial puc-amd64.txt --expect-pci-serial 'm13-puc-42' {{disk_login}} \
+        --send-after '# ' --send 'echo m13-puc-$((40+2)) >/dev/cua04 && echo puc-sent-$((40+2))\n' \
+        --expect 'puc0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x0002 rev 0x01: ports: 16 com' \
+        --expect 'com4 at puc0 port 0 apic 0 int 20: ns16550a, 16 byte fifo' --expect 'puc-sent-42'
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

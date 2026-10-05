@@ -916,6 +916,7 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
                 format!("status {expected_status}")
             }
         );
+        crate::hwopts::after_smoke()?;
         return crate::devices::after_smoke(&image);
     }
     println!("----- serial transcript ({}) -----", arch.name());

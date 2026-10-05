@@ -14,7 +14,7 @@
 //! `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?`, `ahci* at pci?`, `siop* at pci?`,
 //! `bios0 at mainbus0`, `acpi0 at bios0`, `acpitimer* at acpi?`, `acpihpet* at acpi?`,
 //! `ioapic* at mainbus?`, `acpimadt0 at acpi?`, `acpiprt* at acpi?` and `acpipci* at
-//! acpi?` (M13),
+//! acpi?` (M13), `puc* at pci?` and `com* at puc?` (M13; `com*` takes the units from 4),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -59,9 +59,11 @@ use crate::dev::pci::auich::{AUICH_CA, AUICH_CD};
 use crate::dev::pci::azalia::{AZALIA_CA, AZALIA_CD};
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
+use crate::dev::pci::puc::{PUC_CD, PUC_PCI_CA};
 use crate::dev::pci::siop_pci::SIOP_PCI_CA;
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
 use crate::dev::pci::xhci_pci::XHCI_PCI_CA;
+use crate::dev::puc::com_puc::COM_PUC_CA;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
 use crate::dev::pv::vioblk::{VIOBLK_CA, VIOBLK_CD};
 use crate::dev::pv::vioscsi::{VIOSCSI_CA, VIOSCSI_CD};
@@ -167,11 +169,18 @@ const PV_BIOS: &[i16] = &[30];
 /// `pv[]` for children of `acpi0` (`cfdata[31]`).
 const PV_ACPI: &[i16] = &[31];
 
-/// `cfdata[]`: 38 entries, 39 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `pv[]` for children of `puc*` (`cfdata[38]`).
+const PV_PUC: &[i16] = &[38];
+
+/// `loc[]` of an entry at `puc` with the default `port = -1` (`files.pci`: `device puc {[port =
+/// -1]}`).
+const LOC_PUC_UNK: &[i64] = &[-1];
+
+/// `cfdata[]`: 40 entries, 41 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    39
+    41
 } else {
-    38
+    40
 };
 
 /// `cfdata[]`.
@@ -593,7 +602,31 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 38: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 38: puc* at pci?
+    Cfdata::new(
+        &PUC_PCI_CA,
+        &PUC_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        0,
+        0,
+    ),
+    // 39: com* at puc?: the units from 4 on (com0 to com3 are the ISA lines above)
+    Cfdata::new(
+        &COM_PUC_CA,
+        &COM_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PUC_UNK,
+        0,
+        PV_PUC,
+        0,
+        4,
+    ),
+    // 40: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

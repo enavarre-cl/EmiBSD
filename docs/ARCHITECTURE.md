@@ -1233,6 +1233,12 @@ reason:
   `--lsi-cd ISO`, a read-only `scsi-cd` at target 1: being last, it takes the next PCI slot
   (`siop0 at pci0 dev 4` beside the NIC and the disk) and its `scsibus` attaches after
   vioblk's and before ahci's (dev 31), so its disk is `sd1` (`smoke-siop`).
+  `--pci-serial FILE` (`qemu`, `smoke`) adds QEMU's `pci-serial` (1b36:0002) last, its
+  line a file chardev in the run directory, and `--expect-pci-serial TEXT` checks the file once
+  the serial expectations passed (`smoke-puc`, amd64 only: arm64's GENERIC has no `puc*`; the
+  guest's `echo ... >/dev/cua04` reaches the host). For a future arm64 `puc*`: the card's
+  BAR is I/O space that EDK2 leaves unassigned and the kernel cannot place without extents,
+  and `com` shares `cdevsw` major 8 with the PL011 console (`pluartcnattach`'s KLUDGE).
 - `disklabel(8)` and `fdisk(8)` embed their manual page in a generated `manual.c` rendered
   with mandoc(1); the userland build takes their Makefiles' own `.ifdef NOMAN` branch
   (`NOMAN_PROGRAMS` in `tools/xtask/src/userland.rs`), so the embedded page reads

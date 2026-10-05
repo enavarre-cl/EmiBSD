@@ -26,6 +26,13 @@
 //!   `--lsi-cd ISO`, also a read-only `scsi-cd` at target 1 holding `ISO` (a relative path is
 //!   taken from the workspace root). amd64 only (arm64's GENERIC has no `siop`). It goes
 //!   after `--scsi-cd`, the last devices ([`add_devices`]), so no other PCI slot moves.
+//! - `--pci-serial FILE` (`qemu`, `smoke`, M13): a PCI serial card (`-device pci-serial`, QEMU's
+//!   16550 behind PCI, 1b36:0002, puc(4) with com(4) on top) whose line is a file chardev:
+//!   everything the guest sends to the card's UART is written to FILE in the run directory,
+//!   made afresh each run. `--expect-pci-serial TEXT` (repeatable, `smoke`) then requires FILE
+//!   to contain TEXT once the serial expectations passed ([`after_smoke`]). Both archs (the
+//!   card sits on the PCI bus q35 and arm64's `virt` have). It goes after `--scsi-cd` and
+//!   `--lsi`, the last devices ([`add_devices`]), so no other PCI slot moves.
 //! - `--reboot` (`qemu`, `smoke`, M13): QEMU runs without `-no-reboot`, so a guest reset
 //!   restarts the machine (EDK2, Limine and the kernel again; the EDK2 variable store is the
 //!   run's copy) instead of ending QEMU with status 0. `smoke-power` boots, runs `reboot`
@@ -152,6 +159,12 @@ fn opt_path<'a>(args: &[&'a str], opt: &str) -> Result<Option<&'a str>> {
     }
 }
 
+/// `--pci-serial FILE` (in the run directory) for every VM this run starts (set once by `main`).
+static PCI_SERIAL: OnceLock<PathBuf> = OnceLock::new();
+
+/// The `--expect-pci-serial TEXT` options of this run (set once by `main`).
+static PCI_SERIAL_EXPECT: OnceLock<Vec<String>> = OnceLock::new();
+
 /// `--reboot`: this run's VMs restart on a guest reset (set once by `main`).
 static REBOOT: OnceLock<()> = OnceLock::new();
 
@@ -159,7 +172,7 @@ static REBOOT: OnceLock<()> = OnceLock::new();
 static VIO_MQ: OnceLock<()> = OnceLock::new();
 
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
-/// `--reboot`, `--vio-mq`).
+/// `--pci-serial`, `--expect-pci-serial`, `--reboot`, `--vio-mq`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if args.contains(&"--reboot") {
         let _ = REBOOT.set(());
@@ -181,6 +194,20 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     }
     if let Some(file) = opt_path(args, "--lsi")? {
         let _ = LSI.set(boot::run_dir(root).join(file));
+    }
+    if let Some(file) = opt_path(args, "--pci-serial")? {
+        let _ = PCI_SERIAL.set(boot::run_dir(root).join(file));
+    }
+    let expect: Vec<String> = args
+        .windows(2)
+        .filter(|w| w[0] == "--expect-pci-serial")
+        .map(|w| w[1].to_string())
+        .collect();
+    if !expect.is_empty() {
+        if PCI_SERIAL.get().is_none() {
+            return Err("--expect-pci-serial: needs --pci-serial".into());
+        }
+        let _ = PCI_SERIAL_EXPECT.set(expect);
     }
     if let Some(iso) = opt_path(args, "--lsi-cd")? {
         if LSI.get().is_none() {
@@ -476,6 +503,44 @@ pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) -> Result<
         lsi_fresh(image)?;
         cmd.args(lsi_args(root, image, LSI_CD.get().map(PathBuf::as_path)));
     }
+    if let Some(file) = PCI_SERIAL.get() {
+        // QEMU truncates a file chardev when it opens it; a stale file would only matter if
+        // QEMU died before that.
+        let _ = fs::remove_file(file);
+        cmd.args(pci_serial_args(file));
+    }
+    Ok(())
+}
+
+/// The QEMU arguments of the `--pci-serial` card: a `pci-serial` device whose chardev is the
+/// file `file` (what the guest sends goes there, nothing is sent to the guest).
+fn pci_serial_args(file: &Path) -> Vec<String> {
+    vec![
+        "-chardev".into(),
+        format!("file,id=pcis0,path={}", file.display()),
+        "-device".into(),
+        "pci-serial,chardev=pcis0".into(),
+    ]
+}
+
+/// What a run must leave behind once its serial expectations passed: with
+/// `--expect-pci-serial`, each text in the file the card's UART wrote.
+pub(crate) fn after_smoke() -> Result<()> {
+    let (Some(file), Some(expect)) = (PCI_SERIAL.get(), PCI_SERIAL_EXPECT.get()) else {
+        return Ok(());
+    };
+    let bytes = fs::read(file).map_err(|e| format!("{}: {e}", file.display()))?;
+    let text = String::from_utf8_lossy(&bytes);
+    for want in expect {
+        if !text.contains(want.as_str()) {
+            return Err(format!(
+                "{}: the card's UART never sent {want:?} (it sent {text:?})",
+                file.display()
+            )
+            .into());
+        }
+        println!("xtask: {}: the card's UART sent {want:?}", file.display());
+    }
     Ok(())
 }
 
@@ -483,6 +548,13 @@ pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) -> Result<
 mod tests {
     use super::*;
     use crate::e2fs;
+
+    #[test]
+    fn pci_serial_is_a_file_chardev() {
+        let a = pci_serial_args(Path::new("/run/pcis.txt"));
+        assert_eq!(a[1], "file,id=pcis0,path=/run/pcis.txt");
+        assert_eq!(a[3], "pci-serial,chardev=pcis0");
+    }
 
     #[test]
     fn host_ms_is_expanded() {
