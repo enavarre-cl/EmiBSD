@@ -1458,34 +1458,50 @@ em_ping := "--expect 'PING 10.0.2.2 (10.0.2.2): 56 data bytes' " + \
 
 # M14: OpenBSD's efiboot boots the disk instead of Limine. `cargo xtask efiboot-disk` writes
 # the boot image as OpenBSD installs one (tools/xtask/src/efiboot.rs): an MBR with the
-# OpenBSD partition (its disklabel, `a` an ffs made by OpenBSD's makefs holding /bsd, the
-# smoke kernel, /etc/boot.conf and /etc/random.seed) and the EFI system partition holding
-# BOOTX64.EFI. EDK2 starts efiboot from the ESP; it prints its banner, probes the console,
-# the memory and the disks (efiboot's own names, in EFI block I/O order: the boot disk is
-# hd0, with its label; OVMF connects no other disk), runs boot.conf (`set timeout 0`, an
-# echo) and prompts. The smoke lists the ffs (`ls /`, `ls /etc`), prints the memory map
-# (`machine memory`) and the disks, and boots: loadfile reads the kernel's segments and
-# symbols through ufs and cread and prints their sizes (`...]=0x<size>`), and run_loadfile
-# its entry point; the run ends there (`--until-seen`): the kernel cannot be entered by
-# efiboot's 32-bit `start` path yet (M14 track A2: today's kernel links its physical
-# addresses at 0, so the move after ExitBootServices overwrites efiboot itself). amd64 only
-# (arm64's efiboot is M14 track A3). Part of `smoke`.
+# OpenBSD partition (its disklabel, DUID EFIBOOT0, `a` an ffs made by OpenBSD's makefs
+# holding the root `just userland` stages for the ramdisk, with /bsd, the MP smoke kernel,
+# /etc/boot.conf, /etc/random.seed, and an fstab whose root is /dev/sd1a) and the EFI system
+# partition holding BOOTX64.EFI. EDK2 starts efiboot from the ESP; it prints its banner,
+# probes the console, the memory and the disks (efiboot's own names, in EFI block I/O order:
+# the boot disk is hd0, with its label; OVMF connects no other disk), runs boot.conf (`set
+# timeout 0`, an echo) and prompts. The smoke lists the ffs (`ls /`, `ls /etc`), prints the
+# memory map (`machine memory`) and the disks, and boots: loadfile reads the kernel's
+# segments and symbols through ufs and cread (`...]=0x<size>`), run_loadfile moves it to its
+# physical address and enters locore0.S's 32-bit `start` at 0x1000000 (M14 track A2), which
+# builds the bootstrap page tables and calls the boot glue's bootarg entry: the kernel takes
+# its memory map, console, DUID and EFI tables from boot(8)'s bootarg list, starts the three
+# application processors itself (mptramp.S, INIT/SIPI, from the MADT), finds its root by the
+# DUID (sd1a: the boot image is on q35's AHCI port after the virtio disk), runs rc to login,
+# and the root login sees 4 CPUs and / on the disk. amd64 only (arm64's efiboot is M14
+# track A3). Part of `smoke`.
 smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") efiboot-amd64
-    @test -x target/userland/amd64/host/bin/makefs || \
-        { echo "smoke-efiboot: no makefs; run just userland first"; exit 1; }
-    cargo xtask efiboot-disk --arch amd64 --efi target/efiboot/amd64/BOOTX64.EFI --kernel target/{{amd64}}/debug/bsd
-    cargo xtask smoke --arch amd64 --until-seen \
+    @test -x target/userland/amd64/host/bin/makefs -a -f target/userland/amd64/ramdisk-root/etc/fstab || \
+        { echo "smoke-efiboot: no makefs or staged root; run just userland first"; exit 1; }
+    cargo xtask efiboot-disk --arch amd64 --efi target/efiboot/amd64/BOOTX64.EFI --kernel target/{{amd64}}/debug/bsd --root-dev sd1a
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --until-seen \
         --send-after 'boot> ' --send 'ls /\n' \
         --send-after 'boot> ' --send 'ls /etc\n' \
         --send-after 'boot> ' --send 'machine memory\n' \
         --send-after 'boot> ' --send 'machine diskinfo\n' \
         --send-after 'boot> ' --send 'boot\n' \
+        {{disk_login}} \
+        --send-after '# ' --send 'sysctl hw.ncpu\n' \
+        --send-after 'hw.ncpu=' --send 'mount\n' \
         --expect ">> EmiBSD/amd64 BOOTX64 3.71" --expect "probing: pc0" --expect "disk: hd0" \
         --expect "efiboot: boot.conf read" --expect "boot> " \
         --expect "drwxr-xr-x 0,0" --expect "-r-xr-xr-x 0,0" --expect "-rw-r--r-- 0,0" \
         --expect "Region 0: type 1 at 0x0 for " --expect "Total free memory: " \
         --expect "BlkSiz" \
-        --expect "booting hd0a:/bsd: " --expect "]=0x" --expect "entry point at 0x"
+        --expect "booting hd0a:/bsd: " --expect "]=0x" --expect "entry point at 0x1000000" \
+        --expect "bsd: booted on amd64 by boot(8) efiboot" --expect "bsd: boot(8) bootarg protocol, " \
+        --expect "bsd: 4 processors, boot processor hwid 0x0" --expect "EmiBSD 8.0 (GENERIC) #" \
+        --expect "cpu0 at mainbus0: apid 0 (boot processor)" \
+        --expect "cpu1 at mainbus0: apid 1 (application processor)" \
+        --expect "cpu3 at mainbus0: apid 3 (application processor)" \
+        --expect "x86_ipi_selftest: X86_IPI_NOP taken by 3 cpus, tlb shootdowns acknowledged" \
+        --expect "root on sd1a (454649424f4f5430.a) swap on sd1b dump on sd1b" \
+        --expect "rc: multi-user" --expect "login:" --expect "hw.ncpu=4" \
+        --expect "/dev/sd1a on / type ffs (local)"
 
 # M13: power off and reset through ACPI (dev/acpi/acpi.c, arch/amd64/amd64/acpi_machdep.c).
 # acpi0 at bios0 takes q35 over from the firmware. The first boot logs in and runs `halt -p`

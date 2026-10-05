@@ -16,6 +16,12 @@
 //!   EFI system partition (FAT, `EFI/BOOT/BOOTX64.EFI`). The FFS is made by OpenBSD's makefs,
 //!   the host build `cargo xtask userland` leaves (`userland/ramdisk.rs`); the label and the
 //!   MBR come from `hwopts.rs`, as `nvme-root`'s.
+//! - `... efiboot-disk ... --root-dev DEV` (M14 track A2): partition `a` is a whole root, the
+//!   tree `just userland` stages for the ramdisk (`target/userland/<arch>/ramdisk-root`, with
+//!   its ownership table `host/owners.txt`) plus the three files above, its `/etc/fstab`
+//!   naming `/dev/DEV` as `/` (diskmap(4) is not ported: the kernel's name for the disk,
+//!   `sd1a` on amd64 q35, where the boot image is on the AHCI port after the virtio disk).
+//!   boot(8) passes the label's DUID (`BOOTARG_BOOTDUID`), by which the kernel finds its root.
 
 use std::fs;
 use std::io::{Cursor, Write};
@@ -135,8 +141,52 @@ fn check_pe(image: &[u8]) -> std::result::Result<(), String> {
     Ok(())
 }
 
-/// Writes the FFS of partition `a`: `/bsd`, `/etc/boot.conf`, `/etc/random.seed`.
-fn make_ffs(root: &Path, arch: Arch, kernel: &Path, work: &Path) -> Result<Vec<u8>> {
+/// The bytes of the regular files under `dir` (symbolic links not followed).
+fn tree_bytes(dir: &Path) -> Result<u64> {
+    let mut total = 0;
+    for entry in fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+        let entry = entry?;
+        let meta = fs::symlink_metadata(entry.path())?;
+        if meta.is_dir() {
+            total += tree_bytes(&entry.path())?;
+        } else {
+            total += meta.len();
+        }
+    }
+    Ok(total)
+}
+
+/// The ramdisk's fstab with its root line (`/dev/rd0a /`) naming `/dev/<dev>` instead.
+fn root_fstab(fstab: &str, dev: &str) -> Result<String> {
+    if dev.is_empty() || !dev.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(format!("--root-dev {dev}: expected a device name such as sd1a").into());
+    }
+    let mut seen = false;
+    let lines: Vec<String> = fstab
+        .lines()
+        .map(|l| match l.strip_prefix("/dev/rd0a / ") {
+            Some(rest) => {
+                seen = true;
+                format!("/dev/{dev} / {rest}")
+            }
+            None => l.to_string(),
+        })
+        .collect();
+    if !seen {
+        return Err("the ramdisk's fstab has no `/dev/rd0a /` root line".into());
+    }
+    Ok(lines.join("\n") + "\n")
+}
+
+/// Writes the FFS of partition `a`: `/bsd`, `/etc/boot.conf`, `/etc/random.seed`, and with
+/// `root_dev` the whole ramdisk tree with an fstab whose root is `/dev/<root_dev>`.
+fn make_ffs(
+    root: &Path,
+    arch: Arch,
+    kernel: &Path,
+    work: &Path,
+    root_dev: Option<&str>,
+) -> Result<Vec<u8>> {
     let makefs = root.join(format!("target/userland/{}/host/bin/makefs", arch.name()));
     if !makefs.is_file() {
         return Err(format!(
@@ -147,6 +197,33 @@ fn make_ffs(root: &Path, arch: Arch, kernel: &Path, work: &Path) -> Result<Vec<u
     }
     let staging = work.join("efiboot-root");
     let _ = fs::remove_dir_all(&staging);
+    let mut owners_text = String::new();
+    if let Some(dev) = root_dev {
+        let tree = root.join(format!("target/userland/{}/ramdisk-root", arch.name()));
+        if !tree.join("etc/fstab").is_file() {
+            return Err(format!(
+                "{}: no staged root; run `just userland` first",
+                tree.display()
+            )
+            .into());
+        }
+        // cp -pR copies symbolic links as links and keeps the modes.
+        let status = Command::new("cp")
+            .arg("-pR")
+            .arg(&tree)
+            .arg(&staging)
+            .status()
+            .map_err(|e| format!("cp: {e}"))?;
+        if !status.success() {
+            return Err(format!("cp -pR {} failed", tree.display()).into());
+        }
+        let fstab = staging.join("etc/fstab");
+        let text = fs::read_to_string(&fstab).map_err(|e| format!("{}: {e}", fstab.display()))?;
+        fs::write(&fstab, root_fstab(&text, dev)?)?;
+        let table = root.join(format!("target/userland/{}/host/owners.txt", arch.name()));
+        owners_text =
+            fs::read_to_string(&table).map_err(|e| format!("{}: {e}", table.display()))?;
+    }
     fs::create_dir_all(staging.join("etc")).map_err(|e| format!("{}: {e}", staging.display()))?;
     fs::copy(kernel, staging.join("bsd")).map_err(|e| format!("{}: {e}", kernel.display()))?;
     fs::write(staging.join("etc/boot.conf"), BOOT_CONF)?;
@@ -156,19 +233,31 @@ fn make_ffs(root: &Path, arch: Arch, kernel: &Path, work: &Path) -> Result<Vec<u
         .collect();
     fs::write(staging.join("etc/random.seed"), seed)?;
     let owners = work.join("efiboot-owners.txt");
-    fs::write(
-        &owners,
+    owners_text.push_str(
         "0755 0 0 /etc\n0555 0 0 /bsd\n0644 0 0 /etc/boot.conf\n0600 0 0 /etc/random.seed\n",
-    )?;
+    );
+    fs::write(&owners, owners_text)?;
     // makefs's own estimate leaves no room for the indirect blocks of a big kernel: a tenth
-    // more and 4 MiB, in whole MiB.
+    // more and 4 MiB, in whole MiB; a root gets room to write besides (twice its size).
     const MIB: u64 = 1 << 20;
     let kernel_len = fs::metadata(kernel).map(|m| m.len()).unwrap_or(0);
-    let size = (kernel_len + kernel_len / 10 + 4 * MIB).div_ceil(MIB) * MIB;
+    let tree_len = if root_dev.is_some() {
+        tree_bytes(&staging)? - kernel_len
+    } else {
+        0
+    };
+    let size = (kernel_len + kernel_len / 10 + 2 * tree_len + 4 * MIB).div_ceil(MIB) * MIB;
     let image = work.join("efiboot-root.ffs");
     let _ = fs::remove_file(&image);
     let out = Command::new(&makefs)
-        .args(["-t", "ffs", "-o", "version=1,minfree=0", "-T", "1790985600"])
+        .args([
+            "-t",
+            "ffs",
+            "-o",
+            "version=1,minfree=0,density=4096",
+            "-T",
+            "1790985600",
+        ])
         .args(["-s", &size.to_string()])
         .env("EMIBSD_OWNERS", &owners)
         .env("EMIBSD_STAGING", &staging)
@@ -208,7 +297,13 @@ fn make_esp(arch: Arch, efi: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// `cargo xtask efiboot-disk`: the boot image of `smoke-efiboot` (module docs).
-pub(crate) fn efiboot_disk(root: &Path, arch: Arch, efi: &Path, kernel: &Path) -> Result<()> {
+pub(crate) fn efiboot_disk(
+    root: &Path,
+    arch: Arch,
+    efi: &Path,
+    kernel: &Path,
+    root_dev: Option<&str>,
+) -> Result<()> {
     let efi_bytes = fs::read(efi).map_err(|e| format!("{}: {e}", efi.display()))?;
     let path = boot::image_path(root, arch, None);
     let work = path
@@ -217,7 +312,7 @@ pub(crate) fn efiboot_disk(root: &Path, arch: Arch, efi: &Path, kernel: &Path) -
         .unwrap_or_else(|| root.join("target"));
     fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
 
-    let ffs = make_ffs(root, arch, kernel, &work)?;
+    let ffs = make_ffs(root, arch, kernel, &work, root_dev)?;
     let fs_sectors = (ffs.len() as u64).div_ceil(SECTOR);
     let esp_start = (OPENBSD_START + fs_sectors).div_ceil(ALIGN) * ALIGN;
     let total = esp_start + ESP_SECTORS;
@@ -248,10 +343,13 @@ pub(crate) fn efiboot_disk(root: &Path, arch: Arch, efi: &Path, kernel: &Path) -
     fs::write(&path, &disk).map_err(|e| format!("{}: {e}", path.display()))?;
     println!(
         "efiboot-disk: {} ({total} sectors; OpenBSD partition at {OPENBSD_START}: a = ffs of \
-         {fs_sectors} sectors with /bsd ({} KiB), /etc/boot.conf, /etc/random.seed; ESP at \
+         {fs_sectors} sectors with /bsd ({} KiB), /etc/boot.conf, /etc/random.seed{}; ESP at \
          {esp_start}: EFI/BOOT/{} ({} KiB))",
         path.display(),
         fs::metadata(kernel).map(|m| m.len() / 1024).unwrap_or(0),
+        root_dev.map_or(String::new(), |d| format!(
+            " and the ramdisk's root, fstab root /dev/{d}"
+        )),
         efi_name(arch),
         efi_bytes.len() / 1024
     );
@@ -261,6 +359,17 @@ pub(crate) fn efiboot_disk(root: &Path, arch: Arch, efi: &Path, kernel: &Path) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn root_fstab_renames_the_root_line_only() {
+        let fstab = "/dev/rd0a / ffs rw 1 1\n/dev/sd0a /mnt ffs rw,userquota,noauto 1 2\n";
+        assert_eq!(
+            root_fstab(fstab, "sd1a").unwrap(),
+            "/dev/sd1a / ffs rw 1 1\n/dev/sd0a /mnt ffs rw,userquota,noauto 1 2\n"
+        );
+        assert!(root_fstab("/dev/sd0a /mnt ffs rw 1 2\n", "sd1a").is_err());
+        assert!(root_fstab(fstab, "sd1a /x").is_err());
+    }
 
     #[test]
     fn pe_check_wants_signatures_and_a_whole_image() {

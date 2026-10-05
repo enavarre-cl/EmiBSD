@@ -376,6 +376,7 @@ fn run(args: &[String]) -> Result<()> {
                 arch,
                 Path::new(flag(rest, "--efi")?),
                 Path::new(flag(rest, "--kernel")?),
+                optional_flag(rest, "--root-dev"),
             )
         }
         ["nvme-root", rest @ ..] => {
