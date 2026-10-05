@@ -88,6 +88,42 @@ $ for i in 1 2 3 4 5 6 7 8; do echo $i >f$i; done && rm f3 f5 && echo new >g && 
 ! cd /
 $ rm -rf /mnt/fs && ls -1a /mnt
 
+## sparse
+! mkdir /mnt/sp
+! cd /mnt/sp
+$ dd if=/dev/zero of=sparse bs=64k seek=200 count=1 2>/dev/null && difftest stat sparse
+$ difftest truncate sparse 5000000 && difftest stat sparse && wc -c sparse
+$ dd if=/dev/zero of=dense bs=16k count=40 2>/dev/null && difftest stat dense
+$ dd if=sparse of=copy bs=64k 2>/dev/null && difftest stat copy && wc -c copy
+$ difftest truncate dense 200000 && difftest stat dense
+! cd /
+! rm -rf /mnt/sp
+
+## bigdir
+! mkdir /mnt/bd
+! cd /mnt/bd
+$ i=0; while [ $i -lt 300 ]; do : >file$i; i=$((i+1)); done; ls | wc -l; difftest stat .
+$ i=0; while [ $i -lt 300 ]; do [ $((i % 3)) -eq 0 ] && rm file$i; i=$((i+1)); done; ls | wc -l
+$ : >a-new-and-longer-name && mkdir sub && difftest stat . && difftest dirents .
+$ mkdir -p x/y z && mv x/y z/ && difftest stat x z z/y z/y/..
+! cd /
+$ rm -rf /mnt/bd && ls -1a /mnt
+
+# A memory file system: mfs, since OpenBSD's GENERIC kernel has no tmpfs (EmiBSD's has, M10c),
+# so tmpfs has nothing to be compared with.
+## mfs
+! mkdir /mnt/t
+$ mount_mfs -s 16384 swap /mnt/t && echo mounted
+! cd /mnt/t
+$ echo hello >a && ln a b && ln -s a c && mkdir d && difftest stat . a b c d
+$ mv a d/ && difftest stat d d/a b && cat d/a
+$ difftest truncate b 100000 && difftest stat b
+$ for i in 1 2 3 4 5; do : >f$i; done && rm f2 f4 && difftest dirents .
+$ rmdir d; rm -r d && ls -1a
+! cd /
+$ umount /mnt/t && echo unmounted
+! rmdir /mnt/t
+
 ## space
 $ df -k /mnt
 $ umount /mnt && echo unmounted
