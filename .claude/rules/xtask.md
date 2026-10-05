@@ -10,7 +10,7 @@ paths:
   from `CARGO_MANIFEST_DIR`, never from the current directory.
 - Subcommands: `image` (FAT ESP with Limine + `/bsd`), `qemu` (run), `smoke` (run, assert serial
   lines and exit code), `smoke2` (two VMs on a private link, `twovm.rs`), `smoke-all`
-  (`just smoke`'s recipes N at a time, each in `target/smoke/<recipe>`, `smokeall.rs`), `ports {check,status,drift,next}`, `unsafe-report` (M12+: `unsafe` per subsystem, `unsafereport.rs`), `diff-openbsd` (M12+: EmiBSD against a real OpenBSD VM, `diffopenbsd.rs`), `gen-syscalls`, `symbolize`, `ntfs-image` (M10d: our NTFS test volume, `ntfsgen.rs`, checked by macOS's NTFS driver), `nvme-root` (M13a: the labelled NVMe root disk of `smoke-nvme`; `hwopts.rs`, which also holds M13's QEMU device options such as `--nvme`), `userland`
+  (`just smoke`'s recipes N at a time, each in `target/smoke/<recipe>`, `smokeall.rs`), `ports {check,status,drift,next}`, `unsafe-report` (M12+: `unsafe` per subsystem, `unsafereport.rs`), `diff-openbsd` (M12+: EmiBSD against a real OpenBSD VM, `diffopenbsd.rs`), `gen-syscalls`, `symbolize`, `ntfs-image` (M10d: our NTFS test volume, `ntfsgen.rs`, checked by macOS's NTFS driver), `nvme-root` (M13a: the labelled root disk of `smoke-nvme` and `smoke-ahci`, `--root-dev sdNa` naming its fstab root when it is not `sd0a`; `hwopts.rs`, which also holds M13's QEMU device options: `--nvme`, `--ahci`, `--scsi-cd`), `userland`
   (M8: OpenBSD's libc and programs cross-compiled from the reference sources, `userland.rs` over
   the make-subset evaluator `bsdmake.rs`).
 - External tools (`qemu-system-*`, Limine binaries, EDK2 firmware) are located at runtime via

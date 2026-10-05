@@ -49,9 +49,8 @@
 //!
 //! ## Deviations
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
-//!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c`, `xhci_pci.c`, `auich.c`, `azalia.c` and
-//!   `azalia_codec.c`). The whole header, and `pcidevs_data.h` for
-//!   `azalia_codec.c`). The whole header, and `pcidevs_data.h` for
+//!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c`, `ahci_pci.c`, `xhci_pci.c`, `auich.c`,
+//!   `azalia.c` and `azalia_codec.c`). The whole header, and `pcidevs_data.h` for
 //!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
 //!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
@@ -316,6 +315,92 @@ pub const PCI_PRODUCT_NVIDIA_MCP89_HDA_2: u32 = 0x0d95;
 pub const PCI_PRODUCT_NVIDIA_MCP89_HDA_3: u32 = 0x0d96;
 /// `PCI_PRODUCT_NVIDIA_MCP89_HDA_4`: MCP89 HD Audio.
 pub const PCI_PRODUCT_NVIDIA_MCP89_HDA_4: u32 = 0x0d97;
+// ahci_pci.c
+
+/// `PCI_VENDOR_ATI`: ATI.
+pub const PCI_VENDOR_ATI: u32 = 0x1002;
+/// `PCI_VENDOR_VIATECH`: VIA.
+pub const PCI_VENDOR_VIATECH: u32 = 0x1106;
+/// `PCI_VENDOR_SAMSUNG2`: Samsung.
+pub const PCI_VENDOR_SAMSUNG2: u32 = 0x144d;
+/// `PCI_VENDOR_ASMEDIA`: ASMedia.
+pub const PCI_VENDOR_ASMEDIA: u32 = 0x1b21;
+/// `PCI_VENDOR_ZHAOXIN`: Zhaoxin.
+pub const PCI_VENDOR_ZHAOXIN: u32 = 0x1d17;
+/// `PCI_PRODUCT_AMD_HUDSON2_SATA_1`: Hudson-2 SATA.
+pub const PCI_PRODUCT_AMD_HUDSON2_SATA_1: u32 = 0x7800;
+/// `PCI_PRODUCT_AMD_HUDSON2_SATA_2`: Hudson-2 SATA.
+pub const PCI_PRODUCT_AMD_HUDSON2_SATA_2: u32 = 0x7801;
+/// `PCI_PRODUCT_AMD_HUDSON2_SATA_3`: Hudson-2 SATA.
+pub const PCI_PRODUCT_AMD_HUDSON2_SATA_3: u32 = 0x7802;
+/// `PCI_PRODUCT_AMD_HUDSON2_SATA_4`: Hudson-2 SATA.
+pub const PCI_PRODUCT_AMD_HUDSON2_SATA_4: u32 = 0x7803;
+/// `PCI_PRODUCT_AMD_HUDSON2_SATA_5`: Hudson-2 SATA.
+pub const PCI_PRODUCT_AMD_HUDSON2_SATA_5: u32 = 0x7804;
+/// `PCI_PRODUCT_AMD_HUDSON2_SATA_6`: Hudson-2 SATA.
+pub const PCI_PRODUCT_AMD_HUDSON2_SATA_6: u32 = 0x7805;
+/// `PCI_PRODUCT_ASMEDIA_ASM1061_SATA`: ASM1061 SATA.
+pub const PCI_PRODUCT_ASMEDIA_ASM1061_SATA: u32 = 0x0611;
+/// `PCI_PRODUCT_ATI_SB600_SATA`: SB600 SATA.
+pub const PCI_PRODUCT_ATI_SB600_SATA: u32 = 0x4380;
+/// `PCI_PRODUCT_ATI_SBX00_SATA_1`: SBx00 SATA.
+pub const PCI_PRODUCT_ATI_SBX00_SATA_1: u32 = 0x4390;
+/// `PCI_PRODUCT_ATI_SBX00_SATA_2`: SBx00 SATA.
+pub const PCI_PRODUCT_ATI_SBX00_SATA_2: u32 = 0x4391;
+/// `PCI_PRODUCT_ATI_SBX00_SATA_3`: SBx00 SATA.
+pub const PCI_PRODUCT_ATI_SBX00_SATA_3: u32 = 0x4392;
+/// `PCI_PRODUCT_ATI_SBX00_SATA_4`: SBx00 SATA.
+pub const PCI_PRODUCT_ATI_SBX00_SATA_4: u32 = 0x4393;
+/// `PCI_PRODUCT_ATI_SBX00_SATA_5`: SBx00 SATA.
+pub const PCI_PRODUCT_ATI_SBX00_SATA_5: u32 = 0x4394;
+/// `PCI_PRODUCT_ATI_SBX00_SATA_6`: SBx00 SATA.
+pub const PCI_PRODUCT_ATI_SBX00_SATA_6: u32 = 0x4395;
+/// `PCI_PRODUCT_INTEL_6SERIES_AHCI_1`: 6 Series AHCI.
+pub const PCI_PRODUCT_INTEL_6SERIES_AHCI_1: u32 = 0x1c02;
+/// `PCI_PRODUCT_INTEL_6SERIES_AHCI_2`: 6 Series AHCI.
+pub const PCI_PRODUCT_INTEL_6SERIES_AHCI_2: u32 = 0x1c03;
+/// `PCI_PRODUCT_INTEL_6321ESB_AHCI`: 6321ESB AHCI.
+pub const PCI_PRODUCT_INTEL_6321ESB_AHCI: u32 = 0x2681;
+/// `PCI_PRODUCT_INTEL_82801GR_AHCI`: 82801GR AHCI.
+pub const PCI_PRODUCT_INTEL_82801GR_AHCI: u32 = 0x27c1;
+/// `PCI_PRODUCT_INTEL_82801GBM_AHCI`: 82801GBM AHCI.
+pub const PCI_PRODUCT_INTEL_82801GBM_AHCI: u32 = 0x27c5;
+/// `PCI_PRODUCT_INTEL_82801H_AHCI_6P`: 82801H AHCI.
+pub const PCI_PRODUCT_INTEL_82801H_AHCI_6P: u32 = 0x2821;
+/// `PCI_PRODUCT_INTEL_82801H_AHCI_4P`: 82801H AHCI.
+pub const PCI_PRODUCT_INTEL_82801H_AHCI_4P: u32 = 0x2824;
+/// `PCI_PRODUCT_INTEL_82801HBM_AHCI`: 82801HBM AHCI.
+pub const PCI_PRODUCT_INTEL_82801HBM_AHCI: u32 = 0x2829;
+/// `PCI_PRODUCT_INTEL_82801I_AHCI_1`: 82801I AHCI.
+pub const PCI_PRODUCT_INTEL_82801I_AHCI_1: u32 = 0x2922;
+/// `PCI_PRODUCT_INTEL_82801I_AHCI_2`: 82801I AHCI.
+pub const PCI_PRODUCT_INTEL_82801I_AHCI_2: u32 = 0x2923;
+/// `PCI_PRODUCT_INTEL_82801I_AHCI_3`: 82801I AHCI.
+pub const PCI_PRODUCT_INTEL_82801I_AHCI_3: u32 = 0x2929;
+/// `PCI_PRODUCT_INTEL_82801JD_AHCI`: 82801JD AHCI.
+pub const PCI_PRODUCT_INTEL_82801JD_AHCI: u32 = 0x3a02;
+/// `PCI_PRODUCT_INTEL_82801JI_AHCI`: 82801JI AHCI.
+pub const PCI_PRODUCT_INTEL_82801JI_AHCI: u32 = 0x3a22;
+/// `PCI_PRODUCT_INTEL_3400_AHCI_1`: 3400 AHCI.
+pub const PCI_PRODUCT_INTEL_3400_AHCI_1: u32 = 0x3b22;
+/// `PCI_PRODUCT_INTEL_3400_AHCI_2`: 3400 AHCI.
+pub const PCI_PRODUCT_INTEL_3400_AHCI_2: u32 = 0x3b23;
+/// `PCI_PRODUCT_INTEL_3400_AHCI_3`: 3400 AHCI.
+pub const PCI_PRODUCT_INTEL_3400_AHCI_3: u32 = 0x3b29;
+/// `PCI_PRODUCT_INTEL_3400_AHCI_4`: 3400 AHCI.
+pub const PCI_PRODUCT_INTEL_3400_AHCI_4: u32 = 0x3b2f;
+/// `PCI_PRODUCT_INTEL_EP80579_AHCI`: EP80579 AHCI.
+pub const PCI_PRODUCT_INTEL_EP80579_AHCI: u32 = 0x5029;
+/// `PCI_PRODUCT_SAMSUNG2_S4LN053X01`: S4LN053X01.
+pub const PCI_PRODUCT_SAMSUNG2_S4LN053X01: u32 = 0x1600;
+/// `PCI_PRODUCT_SAMSUNG2_XP941`: XP941.
+pub const PCI_PRODUCT_SAMSUNG2_XP941: u32 = 0xa800;
+/// `PCI_PRODUCT_SAMSUNG2_SM951_AHCI`: SM951 AHCI.
+pub const PCI_PRODUCT_SAMSUNG2_SM951_AHCI: u32 = 0xa801;
+/// `PCI_PRODUCT_VIATECH_VT8251_SATA`: VT8251 SATA.
+pub const PCI_PRODUCT_VIATECH_VT8251_SATA: u32 = 0x3349;
+/// `PCI_PRODUCT_ZHAOXIN_STORX_AHCI`: StorX AHCI.
+pub const PCI_PRODUCT_ZHAOXIN_STORX_AHCI: u32 = 0x9083;
 
 #[cfg(test)]
 mod tests {
@@ -659,6 +744,135 @@ mod tests {
             (
                 "PCI_PRODUCT_NVIDIA_MCP89_HDA_4",
                 PCI_PRODUCT_NVIDIA_MCP89_HDA_4,
+            ),
+            ("PCI_VENDOR_ATI", PCI_VENDOR_ATI),
+            ("PCI_VENDOR_VIATECH", PCI_VENDOR_VIATECH),
+            ("PCI_VENDOR_SAMSUNG2", PCI_VENDOR_SAMSUNG2),
+            ("PCI_VENDOR_ASMEDIA", PCI_VENDOR_ASMEDIA),
+            ("PCI_VENDOR_ZHAOXIN", PCI_VENDOR_ZHAOXIN),
+            (
+                "PCI_PRODUCT_AMD_HUDSON2_SATA_1",
+                PCI_PRODUCT_AMD_HUDSON2_SATA_1,
+            ),
+            (
+                "PCI_PRODUCT_AMD_HUDSON2_SATA_2",
+                PCI_PRODUCT_AMD_HUDSON2_SATA_2,
+            ),
+            (
+                "PCI_PRODUCT_AMD_HUDSON2_SATA_3",
+                PCI_PRODUCT_AMD_HUDSON2_SATA_3,
+            ),
+            (
+                "PCI_PRODUCT_AMD_HUDSON2_SATA_4",
+                PCI_PRODUCT_AMD_HUDSON2_SATA_4,
+            ),
+            (
+                "PCI_PRODUCT_AMD_HUDSON2_SATA_5",
+                PCI_PRODUCT_AMD_HUDSON2_SATA_5,
+            ),
+            (
+                "PCI_PRODUCT_AMD_HUDSON2_SATA_6",
+                PCI_PRODUCT_AMD_HUDSON2_SATA_6,
+            ),
+            (
+                "PCI_PRODUCT_ASMEDIA_ASM1061_SATA",
+                PCI_PRODUCT_ASMEDIA_ASM1061_SATA,
+            ),
+            ("PCI_PRODUCT_ATI_SB600_SATA", PCI_PRODUCT_ATI_SB600_SATA),
+            ("PCI_PRODUCT_ATI_SBX00_SATA_1", PCI_PRODUCT_ATI_SBX00_SATA_1),
+            ("PCI_PRODUCT_ATI_SBX00_SATA_2", PCI_PRODUCT_ATI_SBX00_SATA_2),
+            ("PCI_PRODUCT_ATI_SBX00_SATA_3", PCI_PRODUCT_ATI_SBX00_SATA_3),
+            ("PCI_PRODUCT_ATI_SBX00_SATA_4", PCI_PRODUCT_ATI_SBX00_SATA_4),
+            ("PCI_PRODUCT_ATI_SBX00_SATA_5", PCI_PRODUCT_ATI_SBX00_SATA_5),
+            ("PCI_PRODUCT_ATI_SBX00_SATA_6", PCI_PRODUCT_ATI_SBX00_SATA_6),
+            (
+                "PCI_PRODUCT_INTEL_6SERIES_AHCI_1",
+                PCI_PRODUCT_INTEL_6SERIES_AHCI_1,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_6SERIES_AHCI_2",
+                PCI_PRODUCT_INTEL_6SERIES_AHCI_2,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_6321ESB_AHCI",
+                PCI_PRODUCT_INTEL_6321ESB_AHCI,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801GR_AHCI",
+                PCI_PRODUCT_INTEL_82801GR_AHCI,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801GBM_AHCI",
+                PCI_PRODUCT_INTEL_82801GBM_AHCI,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801H_AHCI_6P",
+                PCI_PRODUCT_INTEL_82801H_AHCI_6P,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801H_AHCI_4P",
+                PCI_PRODUCT_INTEL_82801H_AHCI_4P,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801HBM_AHCI",
+                PCI_PRODUCT_INTEL_82801HBM_AHCI,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801I_AHCI_1",
+                PCI_PRODUCT_INTEL_82801I_AHCI_1,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801I_AHCI_2",
+                PCI_PRODUCT_INTEL_82801I_AHCI_2,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801I_AHCI_3",
+                PCI_PRODUCT_INTEL_82801I_AHCI_3,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801JD_AHCI",
+                PCI_PRODUCT_INTEL_82801JD_AHCI,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801JI_AHCI",
+                PCI_PRODUCT_INTEL_82801JI_AHCI,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_3400_AHCI_1",
+                PCI_PRODUCT_INTEL_3400_AHCI_1,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_3400_AHCI_2",
+                PCI_PRODUCT_INTEL_3400_AHCI_2,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_3400_AHCI_3",
+                PCI_PRODUCT_INTEL_3400_AHCI_3,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_3400_AHCI_4",
+                PCI_PRODUCT_INTEL_3400_AHCI_4,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_EP80579_AHCI",
+                PCI_PRODUCT_INTEL_EP80579_AHCI,
+            ),
+            (
+                "PCI_PRODUCT_SAMSUNG2_S4LN053X01",
+                PCI_PRODUCT_SAMSUNG2_S4LN053X01,
+            ),
+            ("PCI_PRODUCT_SAMSUNG2_XP941", PCI_PRODUCT_SAMSUNG2_XP941),
+            (
+                "PCI_PRODUCT_SAMSUNG2_SM951_AHCI",
+                PCI_PRODUCT_SAMSUNG2_SM951_AHCI,
+            ),
+            (
+                "PCI_PRODUCT_VIATECH_VT8251_SATA",
+                PCI_PRODUCT_VIATECH_VT8251_SATA,
+            ),
+            (
+                "PCI_PRODUCT_ZHAOXIN_STORX_AHCI",
+                PCI_PRODUCT_ZHAOXIN_STORX_AHCI,
             ),
         ] {
             assert_eq!(

@@ -73,7 +73,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme " + \
+    "smoke-nvme smoke-ahci " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb"
 
@@ -343,7 +343,10 @@ internet_check := "--send-after login: --send 'root\\n' --send-after Password: -
 # paths (kern.proc, kern.proc_args, kern.file, vm.uvmexp, hw.diskstats, kern.intrcnt,
 # kern.pool, kern.malloc), df(1) and mount(8) over getfsstat(2), and sysctl(8)'s
 # kern.timecounter (amd64 runs on the TSC, arm64 on agtimer). Logs in as `smoke-login`
-# does; `echo diag-$((40+2))` marks the end. Part of `smoke`.
+# does; `echo diag-$((40+2))` marks the end. vmstat's disk columns are the first two disks
+# of hw.disknames: on both archs now sd0 (the virtio-blk disk) and sd1 (the boot image: on
+# arm64 a vioblk, on amd64 port 0 of q35's AHCI controller since ahci(4), M13; before it the
+# amd64 header read `sd0 rd0`). Part of `smoke`.
 smoke-diag: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-diag: no ramdisk image; run just userland first"; exit 1; }
@@ -363,7 +366,7 @@ smoke-diag: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featu
         --expect "rc: multi-user" --expect " /sbin/init" --expect " -ksh (ksh)" \
         --expect "root         1  " \
         --expect "USER     CMD          PID   FD MOUNT" --expect "root     ksh" \
-        --expect "rw    tty00" --expect "sr sd0 rd0  int" \
+        --expect "rw    tty00" --expect "sr sd0 sd1  int" \
         --expect "interrupt                       total     rate" --expect "/com0" \
         --expect "bytes per page" --expect "Memory statistics by bucket size" \
         --expect "Memory resource pool statistics" --expect "/dev/rd0a       " \
@@ -1268,6 +1271,47 @@ smoke-nvme: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
         --expect "Namespace 1" --expect "m13a-nvme-42" --expect "524288 bytes transferred" \
         --expect "4194304 bytes transferred" --expect "m13a-raw-42" --reject "mount -uw / failed"
 
+# M13: ahci(4) and atascsi. The disk `cargo xtask nvme-root` writes (as for smoke-nvme, with
+# its own DUID `ahci_duid` and an fstab naming /dev/sd2a: diskmap(4) is not ported, so fstab
+# names the unit) goes on the second port of q35's built-in AHCI controller (`--ahci`,
+# `ide.1`; the boot image is on port 0, which ahci now attaches too). PCI is probed by device
+# number, so the virtio-blk disk (dev 3) is sd0 and the controller (dev 31) gives sd1 (the
+# boot image, targ 0) and sd2 (the root, targ 1). The kernel boots WITHOUT the ramdisk module
+# and mounts its root from the disk whose label has the `bootduid=` DUID. MSI waits for
+# ACPI's mp_busses, so the controller runs on its INTx line through the i8259 (vmstat -i
+# counts its interrupts). The session logs in, `mount` shows sd2a on /, a file is written on
+# the root and read back, a large file goes through the buffer cache (NCQ, several commands
+# on the chip), and raw I/O past the file system reads back what it wrote. amd64 only for
+# now: arm64's `virt` joins with an `ahci* at pci?` once M12 gives it its PCI bus (the M13
+# exit criterion boots it from an AHCI disk there). Part of `smoke`.
+ahci_duid := "41484349524f4f54"
+
+smoke-ahci: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-ahci: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask nvme-root --arch amd64 --duid {{ahci_duid}} --out ahci-amd64.img --root-dev sd2a
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
+        --ahci ahci-amd64.img --cmdline "bootduid={{ahci_duid}}" --until-seen \
+        {{disk_login}} \
+        --send-after '# ' --send 'mount\n' \
+        --send-after '# ' --send 'echo m13-ahci-$((40+2)) >/m13ahci.txt && cat /m13ahci.txt\n' \
+        --send-after '# ' --send 'dd if=/dev/zero of=/big bs=64k count=128 && dd if=/big of=/dev/null bs=64k && rm /big\n' \
+        --send-after '# ' --send 'dd if=/dev/zero of=/dev/rsd2c bs=64k seek=1010 count=8 && dd if=/dev/rsd2c of=/dev/null bs=64k count=64\n' \
+        --send-after '# ' --send 'echo m13-ahci-raw-$((40+2)) | dd of=/dev/rsd2c bs=512 seek=130000 conv=sync 2>/dev/null; dd if=/dev/rsd2c bs=512 skip=130000 count=1 2>/dev/null\n' \
+        --send-after '# ' --send 'vmstat -i\n' \
+        --expect "ahci0 at pci0 dev 31 function 2 vendor 0x8086 product 0x2922 rev 0x02: irq " \
+        --expect ", AHCI 1.0" --expect "ahci0: port 0: 1.5Gb/s" --expect "ahci0: port 1: 1.5Gb/s" \
+        --expect "vioblk0 at virtio1" --expect "sd0 at scsibus0 targ 0 lun 0: <VirtIO, Block Device, >" \
+        --expect "scsibus1 at ahci0: 32 targets" \
+        --expect "sd1 at scsibus1 targ 0 lun 0: <ATA, QEMU HARDDISK, 2.5+> t10.ATA_QEMU_HARDDISK_QM00001_" \
+        --expect "sd2 at scsibus1 targ 1 lun 0: <ATA, QEMU HARDDISK, 2.5+> t10.ATA_QEMU_HARDDISK_QM00003_" \
+        --expect "sd2: " \
+        --expect "root on sd2a ({{ahci_duid}}.a) swap on sd2b dump on sd2b" \
+        --expect "rc: multi-user" --expect "/dev/sd2a on / type ffs (local)" \
+        --expect "m13-ahci-42" --expect "8388608 bytes transferred" \
+        --expect "524288 bytes transferred" --expect "4194304 bytes transferred" \
+        --expect "m13-ahci-raw-42" --expect "/ahci0" --reject "mount -uw / failed"
+
 # M10d: FUSE (sys/miscfs/fuse). Our own read-only file system, tools/fusehello (linked to
 # OpenBSD's libfuse, which opens /dev/fuse0 and mounts fusefs), is mounted on /fuse; mount(8)
 # must list it as `fuse`, its two files read back through the daemon (hello.txt and
@@ -1464,8 +1508,9 @@ audio_play := disk_login + " " + \
 
 # M12: USB. QEMU's `qemu-xhci` with a `usb-storage` stick and a `usb-kbd` (`--usb`,
 # devices.rs): xhci(4), uhub(4), uhidev(4) and ukbd(4) for the keyboard, umass(4) below a
-# scsibus, the stick as sd1 on amd64 (vioblk
-# is sd0) and sd2 on arm64 (the boot disk is sd1 there). Logs in as `smoke-login` does,
+# scsibus, the stick as sd2 on both archs: on amd64 vioblk is sd0 and the boot image on q35's
+# AHCI sd1 (M13; the hub is explored after autoconf, so the stick comes after ahci's disks),
+# on arm64 the boot disk is sd1. Logs in as `smoke-login` does,
 # mounts the stick's FAT partition with mount_msdos(8) (`i`, spoofed from its MBR), reads
 # the note and checks the 1 MiB file's cksum(1) (made on the host, devices.rs), copies it,
 # remounts and compares the copy. Part of `smoke`.
@@ -1473,9 +1518,9 @@ smoke-usb: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featur
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-usb: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
-        --usb {{disk_login}} {{replace(usb_session, "SD", "sd1")}} {{usb_check}} \
+        --usb {{disk_login}} {{replace(usb_session, "SD", "sd2")}} {{usb_check}} \
         --expect 'xhci0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x000d rev 0x01: irq' \
-        --expect 'sd1 at scsibus1 targ 1 lun 0: <QEMU, QEMU HARDDISK, 2.5+>'
+        --expect 'sd2 at scsibus2 targ 1 lun 0: <QEMU, QEMU HARDDISK, 2.5+>'
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --usb {{disk_login}} {{replace(usb_session, "SD", "sd2")}} {{usb_check}} \
         --expect 'xhci0 at pci0 dev 1 function 0 vendor 0x1b36 product 0x000d rev 0x01: msix' \

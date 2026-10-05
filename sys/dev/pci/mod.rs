@@ -4,11 +4,13 @@
 //! (`pci* at mainbus0`), `pci_map` the BAR decoding and mapping, `pci_subr` the attach-line
 //! descriptions and `pci_quirks` the multi/mono-function quirk table; `virtio_pci` (with
 //! `virtio_pcireg`) is the virtio transport (`virtio* at pci?`), `nvme_pci` the NVM
-//! Express front-end (`nvme* at pci?`) (M13); `xhci_pci` the xHCI front-end (`xhci* at
+//! Express front-end (`nvme* at pci?`), `ahci_pci` the AHCI SATA front-end (`ahci* at
+//! pci?`) (M13); `xhci_pci` the xHCI front-end (`xhci* at
 //! pci?`), `auich` the Intel ICH AC'97 audio controller (`auich* at pci?`), `azalia` (with
 //! `azalia_codec`) the HD Audio controller (`azalia* at pci?`) (M12). The machine side
 //! (configuration access, tags, interrupts) is `machine::pci_machdep`.
 
+pub mod ahci_pci;
 pub mod auich;
 pub mod azalia;
 pub mod azalia_codec;

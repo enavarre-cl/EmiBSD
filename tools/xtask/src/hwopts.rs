@@ -6,6 +6,12 @@
 //!   [`boot::run_dir`]). amd64 only: it sits on `q35`'s PCI bus, added right after the NICs
 //!   so that it comes before the persistent virtio-blk disks and its namespace is `sd0`;
 //!   arm64's `virt` has no PCI bus in the kernel until M12.
+//! - `--ahci FILE` (`qemu`, `smoke`): a SATA disk holding the raw image FILE (a relative
+//!   path is in the run directory) on the second port of q35's built-in AHCI controller
+//!   (`ich9-ahci` at 0:1f.2, `ide-hd` on `ide.1`; the boot image is on `ide.0`), ahci(4).
+//!   The controller's place on the bus does not change, so the disk is the unit after the
+//!   boot image's (`sd2` with the one persistent virtio-blk disk). amd64 only: arm64's
+//!   `virt` has no AHCI controller of its own, and no PCI bus in the kernel until M12.
 //! - `--scsi-cd ISO` (`qemu`, `smoke`, `smoke2`): a virtio SCSI host adapter with a CD-ROM
 //!   drive holding the file `ISO` (read-only, `media=cdrom`; a relative path is taken from the
 //!   workspace root): `virtio-scsi-pci` on amd64, `virtio-scsi-device` (virtio-mmio) on arm64,
@@ -22,8 +28,10 @@
 //!   the whole disk. The file system is the userland's ffs image
 //!   (`target/userland/<arch>/ramdisk.ffs`, made by OpenBSD's makefs, `userland/ramdisk.rs`)
 //!   copied whole, with one change: its `/etc/fstab` names the root `/dev/sd0a`, where the
-//!   ramdisk's names `/dev/rd0a` (rc(8)'s `mount -uw /` looks the root's device up there).
-//!   The two lines have the same length, so the file is rewritten in place in the copy. The
+//!   ramdisk's names `/dev/rd0a` (rc(8)'s `mount -uw /` looks the root's device up there;
+//!   `--root-dev sdNa` names another unit, for a disk that is not the first: `smoke-ahci`'s
+//!   is `sd2a`, as diskmap(4) and DUIDs in fstab are not ported). The two lines have the
+//!   same length, so the file is rewritten in place in the copy. The
 //!   label's DUID is `--duid` (16 hexadecimal digits, [`NVME_ROOT_DUID`] by default): the
 //!   kernel's command line names it with `bootduid=` (boot(8)'s `BOOTARG_BOOTDUID`), and
 //!   `setroot` mounts the root from the disk whose label has it.
@@ -67,16 +75,40 @@ const SBSIZE: u32 = 8192;
 const FSTAB_RD0A: &[u8] = b"/dev/rd0a / ffs rw 1 1\n";
 const FSTAB_SD0A: &[u8] = b"/dev/sd0a / ffs rw 1 1\n";
 
+/// The fstab root line naming `dev` (`sd0a` by default; `--root-dev`): four characters, a
+/// two-letter driver, a unit digit and a partition letter, so that the line keeps the
+/// ramdisk's length.
+fn fstab_root_line(dev: Option<&str>) -> Result<Vec<u8>> {
+    let Some(dev) = dev else {
+        return Ok(FSTAB_SD0A.to_vec());
+    };
+    let b = dev.as_bytes();
+    if b.len() != 4
+        || !b[..2].iter().all(u8::is_ascii_lowercase)
+        || !b[2].is_ascii_digit()
+        || !(b'a'..=b'p').contains(&b[3])
+    {
+        return Err(format!("--root-dev {dev}: expected a disk partition such as sd2a").into());
+    }
+    Ok(format!("/dev/{dev} / ffs rw 1 1\n").into_bytes())
+}
+
 /// `--nvme FILE` for every VM this run starts (set once by `main`).
 static NVME: OnceLock<PathBuf> = OnceLock::new();
+
+/// `--ahci FILE` for every VM this run starts (set once by `main`).
+static AHCI: OnceLock<PathBuf> = OnceLock::new();
 
 /// `--scsi-cd ISO` for every VM this run starts (set once by `main`).
 static SCSI_CD: OnceLock<PathBuf> = OnceLock::new();
 
-/// Records this run's device options (`--nvme`, `--scsi-cd`).
+/// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if let Some(w) = args.windows(2).find(|w| w[0] == "--nvme") {
         let _ = NVME.set(boot::run_dir(root).join(w[1]));
+    }
+    if let Some(w) = args.windows(2).find(|w| w[0] == "--ahci") {
+        let _ = AHCI.set(boot::run_dir(root).join(w[1]));
     }
     if let Some(i) = args.iter().position(|a| *a == "--scsi-cd") {
         let Some(iso) = args.get(i + 1) else {
@@ -88,8 +120,21 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
 }
 
 /// Adds the PCI storage controllers this run asked for to `cmd` (amd64's PCI bus: called
-/// after the NICs, before the virtio-blk disks).
+/// after the NICs, before the virtio-blk disks), and the `--ahci` disk.
 pub(crate) fn pci_storage(cmd: &mut Command, arch: Arch) -> Result<()> {
+    if let Some(image) = AHCI.get() {
+        if arch != Arch::Amd64 {
+            return Err("--ahci: amd64 only (q35's AHCI controller; arm64 waits for M12)".into());
+        }
+        if !image.is_file() {
+            return Err(format!(
+                "--ahci {}: no such image (cargo xtask nvme-root makes one)",
+                image.display()
+            )
+            .into());
+        }
+        cmd.args(ahci_args(image));
+    }
     let Some(image) = NVME.get() else {
         return Ok(());
     };
@@ -109,6 +154,16 @@ pub(crate) fn pci_storage(cmd: &mut Command, arch: Arch) -> Result<()> {
     ));
     cmd.args(["-device", "nvme,drive=nvm0,serial=EMIBSD0001"]);
     Ok(())
+}
+
+/// The QEMU arguments of the `--ahci` disk: `image` on port 1 of q35's AHCI controller.
+fn ahci_args(image: &Path) -> Vec<String> {
+    vec![
+        "-drive".into(),
+        format!("if=none,format=raw,file={},id=ahci1", image.display()),
+        "-device".into(),
+        "ide-hd,drive=ahci1,bus=ide.1".into(),
+    ]
 }
 
 /// The bytes of a DUID written as 16 hexadecimal digits.
@@ -184,8 +239,9 @@ fn disklabel(total: u64, fs: u64, duid: [u8; 8]) -> [u8; 512] {
     l
 }
 
-/// The file system with its root's fstab line naming `sd0a` (see the module docs).
-fn rewrite_fstab(fs: &mut [u8]) -> Result<()> {
+/// The file system with its root's fstab line naming `line` (`sd0a`'s by default, see the
+/// module docs).
+fn rewrite_fstab(fs: &mut [u8], line: &[u8]) -> Result<()> {
     let at: Vec<usize> = fs
         .windows(FSTAB_RD0A.len())
         .enumerate()
@@ -199,7 +255,10 @@ fn rewrite_fstab(fs: &mut [u8]) -> Result<()> {
         )
         .into());
     };
-    fs[i..i + FSTAB_SD0A.len()].copy_from_slice(FSTAB_SD0A);
+    if line.len() != FSTAB_RD0A.len() {
+        return Err("the fstab root line must keep the ramdisk's length".into());
+    }
+    fs[i..i + line.len()].copy_from_slice(line);
     Ok(())
 }
 
@@ -209,6 +268,7 @@ pub(crate) fn nvme_root(
     arch: Arch,
     duid: Option<&str>,
     out: Option<&str>,
+    root_dev: Option<&str>,
 ) -> Result<()> {
     let duid = parse_duid(duid.unwrap_or(NVME_ROOT_DUID))?;
     let Some(src) = boot::default_ramdisk(root, arch) else {
@@ -223,7 +283,7 @@ pub(crate) fn nvme_root(
     if !(fs.len() as u64).is_multiple_of(SECTOR) || fs.is_empty() {
         return Err(format!("{}: not a whole number of sectors", src.display()).into());
     }
-    rewrite_fstab(&mut fs)?;
+    rewrite_fstab(&mut fs, &fstab_root_line(root_dev)?)?;
 
     let fs_sectors = fs.len() as u64 / SECTOR;
     let total = (OPENBSD_START + fs_sectors).div_ceil(ALIGN) * ALIGN;
@@ -313,9 +373,17 @@ mod tests {
     fn fstab_root_line_is_rewritten_once() {
         let mut fs =
             b"xx/dev/rd0a / ffs rw 1 1\n/dev/sd0a /mnt ffs rw,userquota,noauto 1 2\n".to_vec();
-        rewrite_fstab(&mut fs).unwrap();
+        rewrite_fstab(&mut fs, FSTAB_SD0A).unwrap();
         assert!(fs.starts_with(b"xx/dev/sd0a / ffs rw 1 1\n"));
-        assert!(rewrite_fstab(&mut fs).is_err());
+        assert!(rewrite_fstab(&mut fs, FSTAB_SD0A).is_err());
+        let mut fs = b"/dev/rd0a / ffs rw 1 1\n".to_vec();
+        let line = fstab_root_line(Some("sd2a")).unwrap();
+        rewrite_fstab(&mut fs, &line).unwrap();
+        assert_eq!(fs, b"/dev/sd2a / ffs rw 1 1\n");
+        assert_eq!(fstab_root_line(None).unwrap(), FSTAB_SD0A);
+        for bad in ["sd10a", "sd2", "sd2z", "SD2a", "s2aa"] {
+            assert!(fstab_root_line(Some(bad)).is_err(), "{bad}");
+        }
         assert!(parse_duid("4e564d45524f4f5").is_err());
         assert!(parse_duid("4e564d45524f4fzz").is_err());
     }
@@ -331,6 +399,20 @@ mod tests {
         let b = scsi_cd_args(Path::new("/r"), Arch::Arm64, Path::new("/x/cd.iso"));
         assert!(b[1].contains("file=/x/cd.iso"));
         assert_eq!(b[3], "virtio-scsi-device,id=scsi0");
+    }
+
+    #[test]
+    fn ahci_disk_is_on_the_second_port() {
+        let args = ahci_args(Path::new("/r/target/smoke/x/ahci-amd64.img"));
+        assert_eq!(
+            args,
+            [
+                "-drive",
+                "if=none,format=raw,file=/r/target/smoke/x/ahci-amd64.img,id=ahci1",
+                "-device",
+                "ide-hd,drive=ahci1,bus=ide.1"
+            ]
+        );
     }
 
     #[test]

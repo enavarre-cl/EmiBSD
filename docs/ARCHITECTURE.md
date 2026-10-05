@@ -999,7 +999,10 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   and reused as is, so what a guest wrote survives the next boot; `--disk-fresh` (`qemu`,
   `smoke`, `smoke2`) recreates it. It is added after every NIC: on amd64 it is
   `virtio-blk-pci` on a later PCI slot (the NIC stays `virtio0`/`vio0`, dev 2; the boot
-  image is on q35's AHCI, which is not ported); on arm64 `virt` it takes the lowest
+  image is on port 0 of q35's AHCI controller, `ahci0` at dev 31 since M13: PCI is probed by
+  device number, so the virtio-blk disks come first and the boot image is the `sd` unit
+  after them, `sd1` with the one disk, its `scsibus` the one after theirs; softraid's
+  `scsibus` and volumes follow); on arm64 `virt` it takes the lowest
   virtio-mmio slot in use (slots go out top down, the kernel attaches bottom up), so it is
   the first block device found (`sd0`) and the boot disk (`virtio31`) the second (`sd1`).
   `--nvme FILE` (M13a, `qemu` and `smoke`; `hwopts.rs`, the home of M13's QEMU device
@@ -1014,7 +1017,11 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   after the NIC and the disk), and on arm64 the adapter takes the lowest virtio-mmio slot, so
   the kernel finds it first (`vioscsi0`, and its `scsibus0`) while the NIC and the disks keep
   the slots, hence the names, they have without it. `smoke-cd` mounts the ramdisk's makefs ISO
-  through it (`cd0`, `mount_cd9660 /dev/cd0c`).
+  through it (`cd0`, `mount_cd9660 /dev/cd0c`). `--ahci FILE` (`qemu`, `smoke`, amd64 only)
+  puts FILE on port 1 of q35's built-in AHCI controller (`ide-hd` on `ide.1`): `sd2` after the
+  virtio-blk disk (`sd0`) and the boot image (`sd1`, port 0). `smoke-ahci` boots from it a
+  disk `nvme-root --root-dev sd2a` writes (its fstab names the unit: diskmap(4) is not
+  ported, so fstab cannot name the DUID).
 - `disklabel(8)` and `fdisk(8)` embed their manual page in a generated `manual.c` rendered
   with mandoc(1); the userland build takes their Makefiles' own `.ifdef NOMAN` branch
   (`NOMAN_PROGRAMS` in `tools/xtask/src/userland.rs`), so the embedded page reads
