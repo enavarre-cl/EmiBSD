@@ -148,7 +148,12 @@
 //!   the CPU, which the C cannot have there, it is skipped).
 //! - `bios_efiinfo` (boot(8)'s `BOOTARG_EFIINFO`) is replaced by Limine: its `config_acpi`,
 //!   the RSDP's physical address, is `BIOS_EFIINFO_CONFIG_ACPI`, from Limine's RSDP request
-//!   (`BootInfo::rsdp`), for `bios_attach`.
+//!   (`BootInfo::rsdp`), for `bios_attach`. Its frame buffer fields (`fb_*`, M13: efifb(4))
+//!   come from Limine's framebuffer request (`BootInfo::framebuffer`): [`bios_efiinfo`] is a
+//!   `bios_efiinfo_t` with them (and `config_acpi`, `system_table`) set when the machine
+//!   booted through UEFI, the C's non-NULL `bios_efiinfo`; the colour masks are the
+//!   channels' sizes and shifts, the reserved mask the rest of the pixel, as efiboot copies
+//!   them from the GOP mode.
 //! - `KBCMDP` and `KBC_PULSE0` (`dev/ic/i8042reg.h`, not ported) and `IO_KBD`
 //!   (`dev/isa/isareg.h`) are local constants of `cpu_reset`, whose last resort faults
 //!   with `ud2` through the emptied IDT where the C divides by zero: either fault becomes
@@ -234,7 +239,9 @@ use crate::kern::subr_prf::splassert_fail;
 use crate::kern::subr_xxx::chrtoblk;
 use crate::kern::vfs_bio::bufinit;
 use crate::kprintf;
-use crate::machine::bootinfo::{BootInfo, EfiMemmap, MAX_MODULES, MemKind, MemMap, MemRegion};
+use crate::machine::bootinfo::{
+    BootFramebuffer, BootInfo, EfiMemmap, MAX_MODULES, MemKind, MemMap, MemRegion,
+};
 use crate::machine::copy::{copyin, copyin_obj, copyout, copyout_obj};
 use crate::machine::cpu::curproc;
 use crate::machine::db_machdep::{db_enter, db_machine_init};
@@ -325,7 +332,9 @@ pub static BOOTINFO_SIZE: AtomicI32 = AtomicI32::new(BOOTARGC_MAX as i32);
 pub static BIOS_DISKINFO: StaticCell<Option<(usize, usize)>> = StaticCell::new(None);
 /// `bios_cksumlen`: how many sectors boot(8) checksummed per disk.
 pub static BIOS_CKSUMLEN: AtomicU32 = AtomicU32::new(0);
-/// `bios_efiinfo`: the EFI tables, frame buffer and memory map boot(8) found.
+/// `bios_efiinfo`: the EFI tables, frame buffer and memory map boot(8) found, or under
+/// Limine what `init_x86_64` makes of its responses (the module's deviations); set once on
+/// the boot CPU, read after.
 pub static BIOS_EFIINFO: StaticCell<Option<BiosEfiinfo>> = StaticCell::new(None);
 /// `bios_ucode`: the CPU microcode update boot(8) loaded (`cpu_ucode_setup` is not ported).
 pub static BIOS_UCODE: StaticCell<Option<BiosUcode>> = StaticCell::new(None);
@@ -389,6 +398,13 @@ pub fn cpu_set_vendor(ci: &CpuInfo, level: u32, vendor: &[u8]) {
 /// The direct map covers at least this much, by the boot protocol's guarantee.
 const DIRECT_MAP_MIN_SIZE: usize = 4 << 30;
 
+/// `bios_efiinfo`: the EFI information boot(8) would pass (`None` is the C's NULL, a machine
+/// that did not boot through UEFI).
+pub fn bios_efiinfo() -> Option<BiosEfiinfo> {
+    // SAFETY: written once by `init_x86_64` before autoconfiguration, only read after.
+    unsafe { BIOS_EFIINFO.read() }
+}
+
 /// `init_x86_64`: the first C of the kernel, called from `locore` with the machine as the
 /// bootloader left it. Here: the direct map, the message buffer, the console, the pmap
 /// bootstrap, the physical memory and the `boot -d` hook.
@@ -416,6 +432,39 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
             va
         };
         BIOS_EFIINFO_CONFIG_ACPI.store(pa as u64, Ordering::Relaxed);
+    }
+
+    // bios_efiinfo: the EFI tables and the GOP frame buffer, when the machine booted
+    // through UEFI; under Limine only, as getbootinfo already set it from boot(8)'s
+    // BOOTARG_EFIINFO.
+    let from_boot8 = bios_efiinfo().is_some();
+    if let Some(st) = boot.efi_system_table.filter(|_| !from_boot8) {
+        let mut ei = BiosEfiinfo {
+            config_acpi: BIOS_EFIINFO_CONFIG_ACPI.load(Ordering::Relaxed),
+            system_table: st.as_usize() as u64,
+            ..BiosEfiinfo::default()
+        };
+        if let Some(fb) = boot.framebuffer {
+            let red = BootFramebuffer::mask(fb.red_size, fb.red_shift);
+            let green = BootFramebuffer::mask(fb.green_size, fb.green_shift);
+            let blue = BootFramebuffer::mask(fb.blue_size, fb.blue_shift);
+            let all = if fb.bpp >= 32 {
+                u32::MAX
+            } else {
+                (1u32 << fb.bpp) - 1
+            };
+            ei.fb_addr = fb.paddr.as_usize() as u64;
+            ei.fb_size = fb.size() as u64;
+            ei.fb_height = fb.height;
+            ei.fb_width = fb.width;
+            ei.fb_pixpsl = fb.pitch / u32::from(fb.bpp / 8).max(1);
+            ei.fb_red_mask = red;
+            ei.fb_green_mask = green;
+            ei.fb_blue_mask = blue;
+            ei.fb_reserved_mask = all & !(red | green | blue);
+        }
+        // SAFETY: the boot CPU, once, before anything reads it.
+        unsafe { BIOS_EFIINFO.write(Some(ei)) };
     }
 
     // MULTIPROCESSOR: the processors the bootloader found, for mainbus_attach (the C's
@@ -928,6 +977,8 @@ pub unsafe fn getbootinfo(first_avail: usize) -> Result<BootInfo, &'static str> 
         mp,
         howto: BOOTHOWTO.load(Ordering::Relaxed),
         duid,
+        // boot(8)'s frame buffer reaches efifb(4) through bios_efiinfo, as in C.
+        framebuffer: None,
     })
 }
 

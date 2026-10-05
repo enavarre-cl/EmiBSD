@@ -337,6 +337,7 @@ impl Pmap for Machine {
     const HAVE_PMAP_DIRECT: bool = true;
     const PMAP_STEAL_MEMORY: bool = true;
     const PMAP_WC: usize = include::pmap::PMAP_WC as usize;
+    const PMAP_NOCACHE: usize = include::pmap::PMAP_NOCACHE as usize;
     const PMAP_NOMMU: bool = false;
     const UVM_MD_CONSTRAINTS: &'static [&'static UvmConstraintRange] =
         &amd64::machdep::UVM_MD_CONSTRAINTS;
@@ -560,6 +561,10 @@ impl BusSpace for Machine {
         size: BusSize,
     ) -> Result<Self::Handle, Errno> {
         amd64::bus_space::bus_space_subregion(t, h, offset, size)
+    }
+
+    fn bus_space_vaddr(t: Self::Tag, h: Self::Handle) -> *mut u8 {
+        amd64::bus_space::bus_space_vaddr(t, h)
     }
 
     fn bus_space_read_1(t: Self::Tag, h: Self::Handle, offset: BusSize) -> u8 {

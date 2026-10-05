@@ -41,11 +41,11 @@
 //! nothing has attached it yet, the paravirtual bus, PCI, ISA, `vmm` and the EFI framebuffer.
 //!
 //! ## Deviations
-//! - Only the `cpu`, `bios`, `pci`, `isa` and `ioapic` children exist
+//! - Only the `cpu`, `bios`, `pci`, `isa`, `ioapic` and `efifb` children exist
 //!   (`sys/arch/amd64/conf/ioconf.rs`; `ioapic` attaches here through `acpimadt`); every
 //!   other child GENERIC configures is reported with `unported!` where the C would
 //!   probe or attach it: `ipmi_probe`, `pvbus_probe`,
-//!   `vmm_enabled`, `efifb`; so are `replacemds`, `setperf_setup` and `codepatch_disable`.
+//!   `vmm_enabled`; so are `replacemds`, `setperf_setup` and `codepatch_disable`.
 //!   No PCI-ISA bridge driver (`pcib`) exists, so `isa0` attaches here, as the C does when
 //!   none has.
 //!   Without a MADT (`acpimadt`) or MP tables the boot CPU attaches here, as `CPU_ROLE_SP`.
@@ -66,7 +66,7 @@
 //! - `pci0`'s attach arguments carry no extents (`sys/extent.h` is not ported, so
 //!   `pci_init_extents` is reported and `pciio_ex`, `pcimem_ex`, `pcibus_ex` are NULL).
 //! - `union mainbus_attach_args` has the members that exist (`mba_busname`, `mba_caa`,
-//!   `mba_pba`, `mba_iba`, `mba_bios`); the I/O APICs' `struct apic_attach_args` is handed
+//!   `mba_pba`, `mba_iba`, `mba_eaa`, `mba_bios`); the I/O APICs' `struct apic_attach_args` is handed
 //!   to `config_found` directly by `acpimadt` (`mp_attach_ioapic`); the others come with
 //!   their buses.
 //! - The `mp_*` globals (`NMPBIOS > 0 || NACPI > 0`) are atomics: `mp_busses`/`mp_nbusses`,
@@ -81,9 +81,12 @@ use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
 use crate::arch::amd64::amd64::bios::BiosAttachArgs;
 use crate::arch::amd64::amd64::bus_space::{X86_BUS_SPACE_IO, X86_BUS_SPACE_MEM};
+use crate::arch::amd64::amd64::efifb::{efifb_cb_found, efifb_cnremap};
 use crate::arch::amd64::amd64::lapic::lapic_boot_init;
+use crate::arch::amd64::amd64::machdep::bios_efiinfo;
 use crate::arch::amd64::include::cpu::{CPUF_PRESENT, cpu_info_primary};
 use crate::arch::amd64::include::cpuvar::{CPU_ROLE_SP, CpuAttachArgs};
+use crate::arch::amd64::include::efifbvar::EfifbAttachArgs;
 use crate::arch::amd64::include::i82489reg::LAPIC_BASE;
 use crate::arch::amd64::pci::pci_machdep::{PCI_BUS_DMA_TAG, pci_init_extents};
 use crate::dev::isa::isavar::IsabusAttachArgs;
@@ -108,6 +111,8 @@ pub union MainbusAttachArgs {
     pub mba_pba: PcibusAttachArgs,
     /// `mba_iba`.
     pub mba_iba: IsabusAttachArgs,
+    /// `mba_eaa` (`NEFIFB > 0`).
+    pub mba_eaa: EfifbAttachArgs,
     /// `mba_bios` (`NBIOS > 0`).
     pub mba_bios: ManuallyDrop<BiosAttachArgs>,
     // aaa_caa (ioapic), mba_iaa (ipmi), mba_pvba, mba_eaa (efifb): with their buses.
@@ -154,7 +159,7 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
     printf(format_args!("\n"));
 
     // NEFIFB > 0
-    let _ = unported!("efifb_cnremap (efifb0 at mainbus?)");
+    efifb_cnremap();
 
     // NBIOS > 0
     {
@@ -258,7 +263,12 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
     let _ = unported!("vmm_enabled (vmm0 at mainbus0)");
 
     // NEFIFB > 0
-    let _ = unported!("efifb0 at mainbus? (bios_efiinfo, efifb_cb_found)");
+    if bios_efiinfo().is_some() || efifb_cb_found() {
+        let mut mba = MainbusAttachArgs {
+            mba_eaa: EfifbAttachArgs { eaa_name: b"efifb" },
+        };
+        let _ = config_found(self_, ptr::from_mut(&mut mba).cast(), Some(mainbus_print));
+    }
 
     let _ = unported!("codepatch_disable (codepatch.c)");
 }
@@ -304,10 +314,18 @@ fn mainbus_attach_cpus(self_: &Device) {
 /// `mainbus_efifb_reattach` (`NEFIFB > 0`): attaches the EFI framebuffer again after a
 /// display driver gave it up.
 pub fn mainbus_efifb_reattach() {
-    if device_mainbus().is_none() {
+    let Some(self_) = device_mainbus() else {
         return;
+    };
+    // SAFETY: devices are never freed; mainbus0 lives for good.
+    let self_ = unsafe { self_.as_ref() };
+
+    if bios_efiinfo().is_some() || efifb_cb_found() {
+        let mut mba = MainbusAttachArgs {
+            mba_eaa: EfifbAttachArgs { eaa_name: b"efifb" },
+        };
+        let _ = config_found(self_, ptr::from_mut(&mut mba).cast(), Some(mainbus_print));
     }
-    let _ = unported!("efifb0 at mainbus? (bios_efiinfo, efifb_cb_found)");
 }
 
 /// `mainbus_print`: names a child that found no driver.

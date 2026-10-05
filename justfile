@@ -91,7 +91,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
     "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-efiboot smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
-    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc"
+    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -1901,6 +1901,26 @@ smoke-puc: (build-amd64 "--features qemu,multiprocessor")
         --send-after '# ' --send 'echo m13-puc-$((40+2)) >/dev/cua04 && echo puc-sent-$((40+2))\n' \
         --expect 'puc0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x0002 rev 0x01: ports: 16 com' \
         --expect 'com4 at puc0 port 0 apic 0 int 20: ns16550a, 16 byte fifo' --expect 'puc-sent-42'
+
+# M13: the frame buffer, both archs. The firmware's GOP (amd64: q35's standard VGA; arm64:
+# `-device ramfb`, `--fb`, hwopts.rs) reaches the kernel through Limine's framebuffer
+# request: efifb0 attaches at mainbus0 on amd64, simplefb0 on arm64 (at the
+# `/chosen/framebuffer` node the boot glue adds, as efiboot does, sys/stand/fdtfb.rs), each
+# with rasops on top. `selftest=fb` draws "EmiBSD M13" through the screen's emulops, as
+# wsdisplay will, and prints the text's box; `--screenshot-after` takes a QEMU `screendump`
+# then and checks that the box holds exactly the glyphs' pixels in the text's colour and
+# nothing but the background otherwise. Part of `smoke`.
+fb_check := "--screenshot-after 'selftest: fb text at' --expect-ramdisk --until-seen " + \
+    "--expect 'selftest: fb text at' --expect 'selftest: fb drew'"
+smoke-fb: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-fb: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=fb" {{fb_check}} \
+        --expect 'bsd: framebuffer 1280x800, 32 bpp' --expect 'efifb0 at mainbus0: 1280x800, 32bpp' \
+        --expect "selftest: fb drew 'EmiBSD M13' on efifb0"
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=fb" {{fb_check}} \
+        --expect 'bsd: framebuffer 800x600, 32 bpp' --expect 'simplefb0 at mainbus0: 800x600, 32bpp' \
+        --expect "selftest: fb drew 'EmiBSD M13' on simplefb0"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

@@ -641,6 +641,13 @@ pub fn main() -> ! {
 
     config_process_deferred_mountroot();
 
+    // The frame buffers have attached (arm64's simplefb waits for the root, as above):
+    // selftest=fb draws on the first one as wsdisplay would (M13).
+    #[cfg(feature = "qemu")]
+    if crate::kern::selftest::fb_requested() {
+        crate::kern::selftest::fb_check();
+    }
+
     // Okay, now we can let init(8) exec! It's off to userland!
     START_INIT_EXEC.store(1, Ordering::Relaxed);
     wakeup(ptr::from_ref(&START_INIT_EXEC));

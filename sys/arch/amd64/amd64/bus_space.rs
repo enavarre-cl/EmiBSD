@@ -39,8 +39,8 @@
 //! Status: `wip`. Milestone M2 ports the single-register accessors, `bus_space_map`/`unmap`
 //! for I/O space and `bus_space_subregion`; M7b (virtio's BARs) the memory space:
 //! `bus_space_map`/`bus_space_unmap` for it, `x86_mem_add_mapping`, `atdevbase` and the ISA
-//! hole. The multi/region/copy accessors, `bus_space_alloc`/`free`, `_bus_space_map`/`unmap`,
-//! `bus_space_vaddr`/`mmap`, the extent maps (`x86_bus_space_init`,
+//! hole; M13 (efifb) `bus_space_vaddr`. The multi/region/copy accessors,
+//! `bus_space_alloc`/`free`, `_bus_space_map`/`unmap`, `bus_space_mmap`, the extent maps (`x86_bus_space_init`,
 //! `x86_bus_space_mallocok`) and the SEV-ES variants arrive with the buses that need them.
 //!
 //! ## Deviations
@@ -265,6 +265,16 @@ pub fn bus_space_subregion(
     _size: BusSize,
 ) -> Result<BusSpaceHandle, Errno> {
     Ok(BusSpaceHandle(bsh.0 + offset))
+}
+
+/// `bus_space_vaddr`: the handle of a memory mapping is its kernel virtual address; I/O
+/// space has none.
+pub fn bus_space_vaddr(t: X86BusSpace, h: BusSpaceHandle) -> *mut u8 {
+    if t == X86_BUS_SPACE_MEM {
+        h.0 as *mut u8
+    } else {
+        core::ptr::null_mut()
+    }
 }
 
 /// `x86_bus_space_io_read_1`.

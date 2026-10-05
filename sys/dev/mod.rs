@@ -6,7 +6,8 @@
 //! `consfile` is the console-as-a-file stand-in until `/dev/console` exists (not OpenBSD
 //! code, `ports.toml` `[[extra]]`).
 //! ISA bus definitions amd64 still needs, `pci/` the PCI bus, `puc/` the port drivers of
-//! `puc(4)` (`com_puc`), `pv/` the paravirtual devices (`virtio(4)`).
+//! `puc(4)` (`com_puc`), `pv/` the paravirtual devices (`virtio(4)`), `rasops/` the raster
+//! operations frame buffers draw text with, `wsfont/` their fonts.
 
 pub mod acpi;
 pub mod ata;
@@ -30,6 +31,7 @@ pub mod ofw;
 pub mod pci;
 pub mod puc;
 pub mod pv;
+pub mod rasops;
 pub mod rd;
 pub mod rnd;
 pub mod softraid;
@@ -45,3 +47,4 @@ pub mod usb;
 pub mod vnd;
 pub mod vndioctl;
 pub mod wscons;
+pub mod wsfont;

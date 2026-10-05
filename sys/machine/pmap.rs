@@ -42,6 +42,9 @@ pub trait Pmap {
     /// `PMAP_WC`: the physical-address flag of a write-combining mapping (0 where the pmap
     /// has none, as `<uvm/uvm_pmap.h>` defaults it).
     const PMAP_WC: usize;
+    /// `PMAP_NOCACHE`: the physical-address flag of an uncached mapping (a frame buffer's
+    /// `mmap`, M13; 0 where the pmap has none).
+    const PMAP_NOCACHE: usize;
     /// No MMU behind the pmap: only the direct map is addressable (the `host` test double,
     /// whose "physical" pages are the test process's memory). `km_alloc` and `kmeminit` then
     /// serve every request through the direct map. False on every real machine.

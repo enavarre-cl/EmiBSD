@@ -45,6 +45,8 @@ pub mod id {
     pub const MODULE: [u64; 2] = [0x3e7e_2797_02be_32af, 0xca1c_4f3b_d128_0cee];
     /// EFI System Table feature.
     pub const EFI_SYSTEM_TABLE: [u64; 2] = [0x5ceb_a516_3eaa_f6d6, 0x0a69_8161_0cf6_5fcc];
+    /// Framebuffer feature (`LIMINE_FRAMEBUFFER_REQUEST_ID`).
+    pub const FRAMEBUFFER: [u64; 2] = [0x9d58_27dc_d881_dd75, 0xa314_8604_f6fa_b11b];
     /// EFI Memory Map feature.
     pub const EFI_MEMMAP: [u64; 2] = [0x7df6_2a43_1d68_72d5, 0xa4fc_dfb3_e573_06c8];
     #[cfg_attr(not(feature = "multiprocessor"), allow(dead_code))] // asked by the MP kernel only
@@ -337,6 +339,66 @@ pub struct DtbResponse {
     pub revision: u64,
     /// Virtual (HHDM) pointer to the device tree blob.
     pub dtb_ptr: *const c_void,
+}
+
+/// `LIMINE_FRAMEBUFFER_RGB`: the one memory model, pixels as masks of a word.
+pub const FRAMEBUFFER_RGB: u8 = 1;
+
+/// `struct limine_framebuffer` (response revision 0; the video mode list of revision 1
+/// follows and is not read).
+#[repr(C)]
+pub struct Framebuffer {
+    /// Virtual (HHDM) address of the frame buffer.
+    pub address: *mut c_void,
+    /// Width in pixels.
+    pub width: u64,
+    /// Height in pixels.
+    pub height: u64,
+    /// Bytes per scan line.
+    pub pitch: u64,
+    /// Bits per pixel.
+    pub bpp: u16,
+    /// [`FRAMEBUFFER_RGB`].
+    pub memory_model: u8,
+    /// Bits of red.
+    pub red_mask_size: u8,
+    /// The lowest bit of red.
+    pub red_mask_shift: u8,
+    /// Bits of green.
+    pub green_mask_size: u8,
+    /// The lowest bit of green.
+    pub green_mask_shift: u8,
+    /// Bits of blue.
+    pub blue_mask_size: u8,
+    /// The lowest bit of blue.
+    pub blue_mask_shift: u8,
+    unused: [u8; 7],
+    /// Size of the EDID blob.
+    pub edid_size: u64,
+    /// The monitor's EDID, if any.
+    pub edid: *mut c_void,
+}
+
+/// `struct limine_framebuffer_response`.
+#[repr(C)]
+pub struct FramebufferResponse {
+    /// Response revision.
+    pub revision: u64,
+    framebuffer_count: u64,
+    framebuffers: *const *const Framebuffer,
+}
+
+impl FramebufferResponse {
+    /// The frame buffers the bootloader set up (the firmware's GOP modes), first the one it
+    /// drew on.
+    pub fn framebuffers(&self) -> impl Iterator<Item = &Framebuffer> + '_ {
+        (0..self.framebuffer_count as usize).map(move |i| {
+            // SAFETY: `framebuffers` points to `framebuffer_count` non-null pointers, each to
+            // a valid structure in bootloader-reclaimable memory that stays untouched (see
+            // `Request::response`).
+            unsafe { &**self.framebuffers.add(i) }
+        })
+    }
 }
 
 /// `struct limine_executable_cmdline_response`.

@@ -910,6 +910,10 @@ pub unsafe fn getbootinfo(arg: usize) -> Result<BootInfo, &'static str> {
         mp: bootarg_mp(),
         howto,
         duid,
+        // efiboot's efi_framebuffer() already put the GOP frame buffer in the tree as
+        // /chosen/framebuffer, where simplefb finds it, as in C; the Limine entry's copy of
+        // that node (stand/fdtfb.rs) is not needed here.
+        framebuffer: None,
     })
 }
 

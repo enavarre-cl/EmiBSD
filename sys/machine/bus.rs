@@ -86,6 +86,10 @@ pub trait BusSpace {
         size: BusSize,
     ) -> Result<Self::Handle, Errno>;
 
+    /// `bus_space_vaddr`: the kernel virtual address of a mapping made with
+    /// `BUS_SPACE_MAP_LINEAR` (null for a space that has none, such as amd64's I/O ports).
+    fn bus_space_vaddr(t: Self::Tag, h: Self::Handle) -> *mut u8;
+
     /// `bus_space_read_1`.
     fn bus_space_read_1(t: Self::Tag, h: Self::Handle, offset: BusSize) -> u8;
     /// `bus_space_read_2`.
@@ -138,6 +142,11 @@ pub fn bus_space_subregion(
     size: BusSize,
 ) -> Result<BusSpaceHandle, Errno> {
     Machine::bus_space_subregion(t, h, offset, size)
+}
+
+/// `bus_space_vaddr(9)` on the selected machine.
+pub fn bus_space_vaddr(t: BusSpaceTag, h: BusSpaceHandle) -> *mut u8 {
+    Machine::bus_space_vaddr(t, h)
 }
 
 /// `bus_space_read_1(9)`.

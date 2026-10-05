@@ -152,6 +152,51 @@ pub struct EfiMemmap {
     pub desc_ver: u32,
 }
 
+/// The linear frame buffer the firmware set up (the UEFI GOP mode the bootloader left
+/// active): what OpenBSD's efiboot passes in `bios_efiinfo` (`fb_*`) on amd64 and as a
+/// `simple-framebuffer` node of `/chosen` on arm64.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BootFramebuffer {
+    /// Physical address of the first pixel.
+    pub paddr: Paddr,
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Bytes per scan line.
+    pub pitch: u32,
+    /// Bits per pixel.
+    pub bpp: u16,
+    /// Bits of red.
+    pub red_size: u8,
+    /// The lowest bit of red.
+    pub red_shift: u8,
+    /// Bits of green.
+    pub green_size: u8,
+    /// The lowest bit of green.
+    pub green_shift: u8,
+    /// Bits of blue.
+    pub blue_size: u8,
+    /// The lowest bit of blue.
+    pub blue_shift: u8,
+}
+
+impl BootFramebuffer {
+    /// The mask of a channel of `size` bits from bit `shift` (`fb_red_mask` and friends).
+    pub const fn mask(size: u8, shift: u8) -> u32 {
+        if size == 0 {
+            0
+        } else {
+            (u32::MAX >> (32 - size as u32)) << shift
+        }
+    }
+
+    /// Size in bytes: `height` lines of `pitch` bytes.
+    pub const fn size(&self) -> usize {
+        self.height as usize * self.pitch as usize
+    }
+}
+
 /// One processor the bootloader found, the boot processor included.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BootCpu {
@@ -234,6 +279,8 @@ pub struct BootInfo {
     pub efi_system_table: Option<Paddr>,
     /// The UEFI memory map, when the machine booted through UEFI.
     pub efi_memmap: Option<EfiMemmap>,
+    /// The firmware's linear frame buffer, when there is a display.
+    pub framebuffer: Option<BootFramebuffer>,
     /// The boot modules, in load order (`None` past the last).
     pub modules: [Option<BootModule>; MAX_MODULES],
     /// The processors, when the kernel is built `MULTIPROCESSOR` and the bootloader found them.
@@ -365,6 +412,7 @@ mod tests {
             memmap: MemMap::new(),
             efi_system_table: None,
             efi_memmap: None,
+            framebuffer: None,
             modules: [None; MAX_MODULES],
             mp: None,
             howto: 0,
@@ -374,6 +422,9 @@ mod tests {
             boot.kernel_virt_to_phys(Vaddr::new(0xffff_ffff_8001_2345)),
             Paddr::new(0x21_2345)
         );
+        assert_eq!(BootFramebuffer::mask(8, 16), 0x00ff_0000);
+        assert_eq!(BootFramebuffer::mask(5, 11), 0xf800);
+        assert_eq!(BootFramebuffer::mask(0, 3), 0);
         assert_eq!(
             boot.hhdm(Paddr::new(0x1000)),
             Vaddr::new(0xffff_8000_0000_1000)
@@ -415,6 +466,7 @@ mod tests {
             memmap: MemMap::new(),
             efi_system_table: None,
             efi_memmap: None,
+            framebuffer: None,
             modules: [None; MAX_MODULES],
             mp: None,
             howto: 0,

@@ -32,30 +32,38 @@
  */
 /* </LICENSES> */
 
-//! `<dev/wscons/wsconsio.h>`, the event and keyboard half: the wscons event structure and
-//! event types, and the keyboard ioctls of `wskbd(4)` with their argument structures.
+//! `<dev/wscons/wsconsio.h>`, the event, keyboard and display parts: the wscons event
+//! structure and event types, the keyboard ioctls of `wskbd(4)` and the display ioctls of
+//! `wsdisplay(4)`, with their argument structures.
 //!
 //! Upstream: sys/dev/wscons/wsconsio.h @ 3ce1f3f79392
 //!
 //! Ioctls are all in group 'W'; numbers 0 to 31 are the keyboard's (`WSKBDIO_*`), 32 to 63
-//! the mouse's, 64 to 95 the display's, 96 to 127 the mux's. This file carries the first
-//! group, which `hidkbd(4)`, `ukbd(4)` and `wskbd(4)` use, and the events every part shares.
+//! the mouse's, 64 to 95 the display's, 96 to 127 the mux's. This file carries the first and
+//! the third group, which `hidkbd(4)`, `ukbd(4)`, `wskbd(4)` and the frame buffers
+//! (`efifb(4)`, `simplefb`, rasops and wsfont, M13) use, and the events every part shares.
 //!
 //! ## Deviations
-//! - Status `wip`: the mouse (`WSMOUSEIO_*`, `WSMOUSE_TYPE_*`, `wsmouse_calibcoords`, ...),
-//!   display (`WSDISPLAYIO_*`, `wsdisplay_*`, fonts, cursors, colour maps) and mux
-//!   (`WSMUXIO_*`) sections of the header are not here: no ported code uses them yet (M13).
+//! - Status `wip`: the mouse (`WSMOUSEIO_*`, `WSMOUSE_TYPE_*`, `wsmouse_calibcoords`, ...)
+//!   and mux (`WSMUXIO_*`) sections of the header are not here: no ported code uses them yet
+//!   (M13). Of the display section only `WSDISPLAYIO_GPCIID` is missing: its argument,
+//!   `struct pcisel`, is `<dev/pci/pciio.h>`'s, not ported.
 //! - The function-like macros are the lowercase `const fn`s `is_motion_event`,
 //!   `is_button_event` and `is_ctrl_event`; the `_IO*` ioctl numbers are the `const fn`s of
 //!   `sys/sys/ioccom.rs`, so the argument type is part of the number, as `sizeof` is in C.
 //! - Pointers to user memory in the ioctl arguments (`wskbd_map_data.map`,
-//!   `wskbd_encoding_data.encodings`) are `usize`s, with the 4 bytes of padding the C compiler
-//!   leaves before them as a named `_pad0` (`vndioctl.rs`); the structures can then be read
-//!   and written as plain bytes ([`AbiPod`]).
+//!   `wskbd_encoding_data.encodings`, `wsdisplay_cmap`'s colour arrays, `wsdisplay_cursor`'s
+//!   image and mask) are `usize`s, with the 4 bytes of padding the C compiler leaves before
+//!   them as a named `_pad0` (`vndioctl.rs`); the structures can then be read and written as
+//!   plain bytes ([`AbiPod`]). `wsdisplay_font`'s `cookie` and `data` stay pointers: the
+//!   kernel's own fonts are statics that point at their glyphs (`dev/wsfont`), and the ioctls
+//!   that hand a font out clear both (`rasops_list_font`).
 //! - `u_int` is `u32`; the LED bits and the keyboard modes, which the C passes as `int`, are
 //!   `i32`.
 
+use core::ffi::c_void;
 use core::mem::size_of;
+use core::ptr;
 
 use crate::dev::wscons::wsksymvar::KbdT;
 use crate::machine::copy::AbiPod;
@@ -336,6 +344,587 @@ pub const WSKBDIO_GETMODE: u64 = _ior::<i32>(b'W', 20);
 /// `WSKBDIO_GETENCODINGS`: the layouts the keyboard offers.
 pub const WSKBDIO_GETENCODINGS: u64 = _iowr::<WskbdEncodingData>(b'W', 21);
 
+/*
+ * Display ioctls (64 - 95)
+ */
+
+/// `WSDISPLAYIO_GTYPE`: get the display type (`WSDISPLAY_TYPE_*`).
+pub const WSDISPLAYIO_GTYPE: u64 = _ior::<u32>(b'W', 64);
+/// `WSDISPLAY_TYPE_UNKNOWN`: unknown.
+pub const WSDISPLAY_TYPE_UNKNOWN: u32 = 0;
+/// `WSDISPLAY_TYPE_PM_MONO`: DEC [23]100 mono.
+pub const WSDISPLAY_TYPE_PM_MONO: u32 = 1;
+/// `WSDISPLAY_TYPE_PM_COLOR`: DEC [23]100 color.
+pub const WSDISPLAY_TYPE_PM_COLOR: u32 = 2;
+/// `WSDISPLAY_TYPE_CFB`: DEC TC CFB (CX).
+pub const WSDISPLAY_TYPE_CFB: u32 = 3;
+/// `WSDISPLAY_TYPE_XCFB`: DEC `maxine' onboard fb.
+pub const WSDISPLAY_TYPE_XCFB: u32 = 4;
+/// `WSDISPLAY_TYPE_MFB`: DEC TC MFB (MX).
+pub const WSDISPLAY_TYPE_MFB: u32 = 5;
+/// `WSDISPLAY_TYPE_SFB`: DEC TC SFB (HX).
+pub const WSDISPLAY_TYPE_SFB: u32 = 6;
+/// `WSDISPLAY_TYPE_ISAVGA`: (generic) ISA VGA.
+pub const WSDISPLAY_TYPE_ISAVGA: u32 = 7;
+/// `WSDISPLAY_TYPE_PCIVGA`: (generic) PCI VGA.
+pub const WSDISPLAY_TYPE_PCIVGA: u32 = 8;
+/// `WSDISPLAY_TYPE_TGA`: DEC PCI TGA.
+pub const WSDISPLAY_TYPE_TGA: u32 = 9;
+/// `WSDISPLAY_TYPE_SFBP`: DEC TC SFB+ (HX+).
+pub const WSDISPLAY_TYPE_SFBP: u32 = 10;
+/// `WSDISPLAY_TYPE_PCIMISC`: (generic) PCI misc. disp..
+pub const WSDISPLAY_TYPE_PCIMISC: u32 = 11;
+/// `WSDISPLAY_TYPE_NEXTMONO`: NeXT mono display.
+pub const WSDISPLAY_TYPE_NEXTMONO: u32 = 12;
+/// `WSDISPLAY_TYPE_PX`: DEC TC PX.
+pub const WSDISPLAY_TYPE_PX: u32 = 13;
+/// `WSDISPLAY_TYPE_PXG`: DEC TC PXG.
+pub const WSDISPLAY_TYPE_PXG: u32 = 14;
+/// `WSDISPLAY_TYPE_TX`: DEC TC TX.
+pub const WSDISPLAY_TYPE_TX: u32 = 15;
+/// `WSDISPLAY_TYPE_HPCFB`: Handheld/PalmSize PC.
+pub const WSDISPLAY_TYPE_HPCFB: u32 = 16;
+/// `WSDISPLAY_TYPE_VIDC`: Acorn/ARM VIDC.
+pub const WSDISPLAY_TYPE_VIDC: u32 = 17;
+/// `WSDISPLAY_TYPE_SPX`: DEC SPX (VS3100/VS4000).
+pub const WSDISPLAY_TYPE_SPX: u32 = 18;
+/// `WSDISPLAY_TYPE_GPX`: DEC GPX (uVAX/VS2K/VS3100).
+pub const WSDISPLAY_TYPE_GPX: u32 = 19;
+/// `WSDISPLAY_TYPE_LCG`: DEC LCG (VS4000).
+pub const WSDISPLAY_TYPE_LCG: u32 = 20;
+/// `WSDISPLAY_TYPE_VAX_MONO`: DEC VS2K/VS3100 mono.
+pub const WSDISPLAY_TYPE_VAX_MONO: u32 = 21;
+/// `WSDISPLAY_TYPE_SB_P9100`: Tadpole SPARCbook P9100.
+pub const WSDISPLAY_TYPE_SB_P9100: u32 = 22;
+/// `WSDISPLAY_TYPE_EGA`: (generic) EGA.
+pub const WSDISPLAY_TYPE_EGA: u32 = 23;
+/// `WSDISPLAY_TYPE_DCPVR`: Dreamcast PowerVR.
+pub const WSDISPLAY_TYPE_DCPVR: u32 = 24;
+/// `WSDISPLAY_TYPE_SUN24`: Sun 24 bit framebuffers.
+pub const WSDISPLAY_TYPE_SUN24: u32 = 25;
+/// `WSDISPLAY_TYPE_SUNBW`: Sun black and white fb.
+pub const WSDISPLAY_TYPE_SUNBW: u32 = 26;
+/// `WSDISPLAY_TYPE_STI`: HP STI framebuffers.
+pub const WSDISPLAY_TYPE_STI: u32 = 27;
+/// `WSDISPLAY_TYPE_SUNCG3`: Sun cgthree.
+pub const WSDISPLAY_TYPE_SUNCG3: u32 = 28;
+/// `WSDISPLAY_TYPE_SUNCG6`: Sun cgsix.
+pub const WSDISPLAY_TYPE_SUNCG6: u32 = 29;
+/// `WSDISPLAY_TYPE_SUNFFB`: Sun creator FFB.
+pub const WSDISPLAY_TYPE_SUNFFB: u32 = 30;
+/// `WSDISPLAY_TYPE_SUNCG14`: Sun cgfourteen.
+pub const WSDISPLAY_TYPE_SUNCG14: u32 = 31;
+/// `WSDISPLAY_TYPE_SUNCG2`: Sun cgtwo.
+pub const WSDISPLAY_TYPE_SUNCG2: u32 = 32;
+/// `WSDISPLAY_TYPE_SUNCG4`: Sun cgfour.
+pub const WSDISPLAY_TYPE_SUNCG4: u32 = 33;
+/// `WSDISPLAY_TYPE_SUNCG8`: Sun cgeight.
+pub const WSDISPLAY_TYPE_SUNCG8: u32 = 34;
+/// `WSDISPLAY_TYPE_SUNTCX`: Sun TCX.
+pub const WSDISPLAY_TYPE_SUNTCX: u32 = 35;
+/// `WSDISPLAY_TYPE_AGTEN`: AG10E.
+pub const WSDISPLAY_TYPE_AGTEN: u32 = 36;
+/// `WSDISPLAY_TYPE_XVIDEO`: Xvideo.
+pub const WSDISPLAY_TYPE_XVIDEO: u32 = 37;
+/// `WSDISPLAY_TYPE_SUNCG12`: Sun cgtwelve.
+pub const WSDISPLAY_TYPE_SUNCG12: u32 = 38;
+/// `WSDISPLAY_TYPE_MGX`: SMS MGX.
+pub const WSDISPLAY_TYPE_MGX: u32 = 39;
+/// `WSDISPLAY_TYPE_SB_P9000`: Tadpole SPARCbook P9000.
+pub const WSDISPLAY_TYPE_SB_P9000: u32 = 40;
+/// `WSDISPLAY_TYPE_RFLEX`: RasterFlex series.
+pub const WSDISPLAY_TYPE_RFLEX: u32 = 41;
+/// `WSDISPLAY_TYPE_LUNA`: OMRON Luna.
+pub const WSDISPLAY_TYPE_LUNA: u32 = 42;
+/// `WSDISPLAY_TYPE_DVBOX`: HP DaVinci.
+pub const WSDISPLAY_TYPE_DVBOX: u32 = 43;
+/// `WSDISPLAY_TYPE_GBOX`: HP Gatorbox.
+pub const WSDISPLAY_TYPE_GBOX: u32 = 44;
+/// `WSDISPLAY_TYPE_RBOX`: HP Renaissance.
+pub const WSDISPLAY_TYPE_RBOX: u32 = 45;
+/// `WSDISPLAY_TYPE_HYPERION`: HP Hyperion.
+pub const WSDISPLAY_TYPE_HYPERION: u32 = 46;
+/// `WSDISPLAY_TYPE_TOPCAT`: HP Topcat.
+pub const WSDISPLAY_TYPE_TOPCAT: u32 = 47;
+/// `WSDISPLAY_TYPE_PXALCD`: PXALCD (Zaurus).
+pub const WSDISPLAY_TYPE_PXALCD: u32 = 48;
+/// `WSDISPLAY_TYPE_MAC68K`: Generic mac68k framebuffer.
+pub const WSDISPLAY_TYPE_MAC68K: u32 = 49;
+/// `WSDISPLAY_TYPE_SUNLEO`: Sun ZX/Leo.
+pub const WSDISPLAY_TYPE_SUNLEO: u32 = 50;
+/// `WSDISPLAY_TYPE_TVRX`: HP TurboVRX.
+pub const WSDISPLAY_TYPE_TVRX: u32 = 51;
+/// `WSDISPLAY_TYPE_CFXGA`: CF VoyagerVGA.
+pub const WSDISPLAY_TYPE_CFXGA: u32 = 52;
+/// `WSDISPLAY_TYPE_LCSPX`: DEC LCSPX (VS4000).
+pub const WSDISPLAY_TYPE_LCSPX: u32 = 53;
+/// `WSDISPLAY_TYPE_GBE`: SGI GBE frame buffer.
+pub const WSDISPLAY_TYPE_GBE: u32 = 54;
+/// `WSDISPLAY_TYPE_LEGSS`: DEC LEGSS (VS35x0).
+pub const WSDISPLAY_TYPE_LEGSS: u32 = 55;
+/// `WSDISPLAY_TYPE_IFB`: Sun Expert3D{,-Lite}.
+pub const WSDISPLAY_TYPE_IFB: u32 = 56;
+/// `WSDISPLAY_TYPE_RAPTOR`: Tech Source Raptor.
+pub const WSDISPLAY_TYPE_RAPTOR: u32 = 57;
+/// `WSDISPLAY_TYPE_DL`: DisplayLink DL-120/DL-160.
+pub const WSDISPLAY_TYPE_DL: u32 = 58;
+/// `WSDISPLAY_TYPE_MACHFB`: Sun PGX/PGX64.
+pub const WSDISPLAY_TYPE_MACHFB: u32 = 59;
+/// `WSDISPLAY_TYPE_GFXP`: Sun PGX32.
+pub const WSDISPLAY_TYPE_GFXP: u32 = 60;
+/// `WSDISPLAY_TYPE_RADEONFB`: Sun XVR-100.
+pub const WSDISPLAY_TYPE_RADEONFB: u32 = 61;
+/// `WSDISPLAY_TYPE_SMFB`: SiliconMotion SM712.
+pub const WSDISPLAY_TYPE_SMFB: u32 = 62;
+/// `WSDISPLAY_TYPE_SISFB`: SiS 315 Pro.
+pub const WSDISPLAY_TYPE_SISFB: u32 = 63;
+/// `WSDISPLAY_TYPE_ODYSSEY`: SGI Odyssey.
+pub const WSDISPLAY_TYPE_ODYSSEY: u32 = 64;
+/// `WSDISPLAY_TYPE_IMPACT`: SGI Impact.
+pub const WSDISPLAY_TYPE_IMPACT: u32 = 65;
+/// `WSDISPLAY_TYPE_GRTWO`: SGI GR2.
+pub const WSDISPLAY_TYPE_GRTWO: u32 = 66;
+/// `WSDISPLAY_TYPE_NEWPORT`: SGI Newport.
+pub const WSDISPLAY_TYPE_NEWPORT: u32 = 67;
+/// `WSDISPLAY_TYPE_LIGHT`: SGI Light.
+pub const WSDISPLAY_TYPE_LIGHT: u32 = 68;
+/// `WSDISPLAY_TYPE_INTELDRM`: Intel KMS framebuffer.
+pub const WSDISPLAY_TYPE_INTELDRM: u32 = 69;
+/// `WSDISPLAY_TYPE_RADEONDRM`: ATI Radeon KMS framebuffer.
+pub const WSDISPLAY_TYPE_RADEONDRM: u32 = 70;
+/// `WSDISPLAY_TYPE_EFIFB`: EFI framebuffer.
+pub const WSDISPLAY_TYPE_EFIFB: u32 = 71;
+/// `WSDISPLAY_TYPE_KMS`: Generic KMS framebuffer.
+pub const WSDISPLAY_TYPE_KMS: u32 = 72;
+/// `WSDISPLAY_TYPE_ASTFB`: AST framebuffer.
+pub const WSDISPLAY_TYPE_ASTFB: u32 = 73;
+/// `WSDISPLAY_TYPE_VIOGPU`: VirtIO GPU.
+pub const WSDISPLAY_TYPE_VIOGPU: u32 = 74;
+
+/// `struct wsdisplay_fbinfo`: basic display information. Not applicable to all display
+/// types.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WsdisplayFbinfo {
+    /// `height`: height in pixels.
+    pub height: u32,
+    /// `width`: width in pixels.
+    pub width: u32,
+    /// `depth`: bits per pixel.
+    pub depth: u32,
+    /// `stride`: bytes per line.
+    pub stride: u32,
+    /// `offset`: first pixel offset (bytes).
+    pub offset: u32,
+    /// `cmsize`: color map size (entries).
+    pub cmsize: u32,
+}
+
+// SAFETY: six `u_int`s, no padding; any bytes are a valid value.
+unsafe impl AbiPod for WsdisplayFbinfo {}
+
+/// `WSDISPLAYIO_GINFO`.
+pub const WSDISPLAYIO_GINFO: u64 = _ior::<WsdisplayFbinfo>(b'W', 65);
+
+/// `struct wsdisplay_cmap`: colormap operations. Not applicable to all display types.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WsdisplayCmap {
+    /// `index`: first element (0 origin).
+    pub index: u32,
+    /// `count`: number of elements.
+    pub count: u32,
+    /// `red`: red color map elements (a user address).
+    pub red: usize,
+    /// `green`: green color map elements (a user address).
+    pub green: usize,
+    /// `blue`: blue color map elements (a user address).
+    pub blue: usize,
+}
+
+// SAFETY: two `u_int`s and three pointer-sized words, no padding; any bytes are valid.
+unsafe impl AbiPod for WsdisplayCmap {}
+
+/// `WSDISPLAYIO_GETCMAP`.
+pub const WSDISPLAYIO_GETCMAP: u64 = _iow::<WsdisplayCmap>(b'W', 66);
+/// `WSDISPLAYIO_PUTCMAP`.
+pub const WSDISPLAYIO_PUTCMAP: u64 = _iow::<WsdisplayCmap>(b'W', 67);
+
+/// `WSDISPLAYIO_GVIDEO`: video control. Not applicable to all display types.
+pub const WSDISPLAYIO_GVIDEO: u64 = _ior::<u32>(b'W', 68);
+/// `WSDISPLAYIO_SVIDEO`.
+pub const WSDISPLAYIO_SVIDEO: u64 = _iow::<u32>(b'W', 69);
+/// `WSDISPLAYIO_VIDEO_OFF`: video off.
+pub const WSDISPLAYIO_VIDEO_OFF: u32 = 0;
+/// `WSDISPLAYIO_VIDEO_ON`: video on.
+pub const WSDISPLAYIO_VIDEO_ON: u32 = 1;
+
+/// `struct wsdisplay_curpos`: cursor "position".
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WsdisplayCurpos {
+    /// `x`.
+    pub x: u32,
+    /// `y`.
+    pub y: u32,
+}
+
+// SAFETY: two `u_int`s, no padding; any bytes are a valid value.
+unsafe impl AbiPod for WsdisplayCurpos {}
+
+/// `struct wsdisplay_cursor`: cursor control. Not applicable to all display types.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WsdisplayCursor {
+    /// `which`: values to get/set (`WSDISPLAY_CURSOR_DO*`).
+    pub which: u32,
+    /// `enable`: enable/disable.
+    pub enable: u32,
+    /// `pos`: position.
+    pub pos: WsdisplayCurpos,
+    /// `hot`: hot spot.
+    pub hot: WsdisplayCurpos,
+    /// `cmap`: color map info.
+    pub cmap: WsdisplayCmap,
+    /// `size`: bit map size.
+    pub size: WsdisplayCurpos,
+    /// `image`: image data (a user address).
+    pub image: usize,
+    /// `mask`: mask data (a user address).
+    pub mask: usize,
+}
+
+// SAFETY: `u_int`s, the structures above and pointer-sized words, laid out without padding
+// (every member is a multiple of 8 bytes from the start); any bytes are a valid value.
+unsafe impl AbiPod for WsdisplayCursor {}
+
+/// `WSDISPLAY_CURSOR_DOCUR`: get/set enable.
+pub const WSDISPLAY_CURSOR_DOCUR: u32 = 0x01;
+/// `WSDISPLAY_CURSOR_DOPOS`: get/set pos.
+pub const WSDISPLAY_CURSOR_DOPOS: u32 = 0x02;
+/// `WSDISPLAY_CURSOR_DOHOT`: get/set hot spot.
+pub const WSDISPLAY_CURSOR_DOHOT: u32 = 0x04;
+/// `WSDISPLAY_CURSOR_DOCMAP`: get/set cmap.
+pub const WSDISPLAY_CURSOR_DOCMAP: u32 = 0x08;
+/// `WSDISPLAY_CURSOR_DOSHAPE`: get/set img/mask.
+pub const WSDISPLAY_CURSOR_DOSHAPE: u32 = 0x10;
+/// `WSDISPLAY_CURSOR_DOALL`: all of the above.
+pub const WSDISPLAY_CURSOR_DOALL: u32 = 0x1f;
+
+/// `WSDISPLAYIO_GCURPOS`: cursor control: get position.
+pub const WSDISPLAYIO_GCURPOS: u64 = _ior::<WsdisplayCurpos>(b'W', 70);
+/// `WSDISPLAYIO_SCURPOS`: cursor control: set position.
+pub const WSDISPLAYIO_SCURPOS: u64 = _iow::<WsdisplayCurpos>(b'W', 71);
+/// `WSDISPLAYIO_GCURMAX`: cursor control: get maximum size.
+pub const WSDISPLAYIO_GCURMAX: u64 = _ior::<WsdisplayCurpos>(b'W', 72);
+/// `WSDISPLAYIO_GCURSOR`: cursor control: get cursor attributes/shape.
+pub const WSDISPLAYIO_GCURSOR: u64 = _iowr::<WsdisplayCursor>(b'W', 73);
+/// `WSDISPLAYIO_SCURSOR`: cursor control: set cursor attributes/shape.
+pub const WSDISPLAYIO_SCURSOR: u64 = _iow::<WsdisplayCursor>(b'W', 74);
+
+/// `WSDISPLAYIO_GMODE`: display mode: emulation (text) vs. mapped (graphics) mode.
+pub const WSDISPLAYIO_GMODE: u64 = _ior::<u32>(b'W', 75);
+/// `WSDISPLAYIO_SMODE`.
+pub const WSDISPLAYIO_SMODE: u64 = _iow::<u32>(b'W', 76);
+/// `WSDISPLAYIO_MODE_EMUL`: emulation (text) mode.
+pub const WSDISPLAYIO_MODE_EMUL: u32 = 0;
+/// `WSDISPLAYIO_MODE_MAPPED`: mapped (graphics) mode.
+pub const WSDISPLAYIO_MODE_MAPPED: u32 = 1;
+/// `WSDISPLAYIO_MODE_DUMBFB`: mapped (graphics) fb mode.
+pub const WSDISPLAYIO_MODE_DUMBFB: u32 = 2;
+
+/// `struct wsdisplay_font`: a raster font, the kernel's (`wsfont(9)`'s list, a font a
+/// display uses) and the argument of the font ioctls.
+///
+/// The glyphs are `numchars` cells of `fontheight` rows of `stride` bytes, starting at
+/// `firstchar`; `cookie` and `data` are kernel pointers (the ioctls that hand a font out
+/// clear them).
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct WsdisplayFont {
+    /// `name`.
+    pub name: [u8; WSFONT_NAME_SIZE],
+    /// `index`.
+    pub index: i32,
+    /// `firstchar`.
+    pub firstchar: i32,
+    /// `numchars`.
+    pub numchars: i32,
+    /// `encoding`: `WSDISPLAY_FONTENC_*`.
+    pub encoding: i32,
+    /// `fontwidth`.
+    pub fontwidth: u32,
+    /// `fontheight`.
+    pub fontheight: u32,
+    /// `stride`.
+    pub stride: u32,
+    /// `bitorder`: `WSDISPLAY_FONTORDER_*`.
+    pub bitorder: i32,
+    /// `byteorder`: `WSDISPLAY_FONTORDER_*`.
+    pub byteorder: i32,
+    /// The four bytes the C compiler leaves before the pointers.
+    pub _pad0: u32,
+    /// `cookie`.
+    pub cookie: *mut c_void,
+    /// `data`: the glyphs.
+    pub data: *mut c_void,
+}
+
+impl WsdisplayFont {
+    /// A font with no glyphs and every field zero (`memset(font, 0, sizeof(*font))`).
+    pub const fn zeroed() -> Self {
+        Self {
+            name: [0; WSFONT_NAME_SIZE],
+            index: 0,
+            firstchar: 0,
+            numchars: 0,
+            encoding: 0,
+            fontwidth: 0,
+            fontheight: 0,
+            stride: 0,
+            bitorder: 0,
+            byteorder: 0,
+            _pad0: 0,
+            cookie: ptr::null_mut(),
+            data: ptr::null_mut(),
+        }
+    }
+
+    /// The font's name, up to its NUL.
+    pub fn name(&self) -> &[u8] {
+        let len = self
+            .name
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(self.name.len());
+        &self.name[..len]
+    }
+}
+
+// SAFETY: a font is plain data plus two pointers the kernel owns; whoever changes a font
+// (wsfont_lock's bit and byte reversal) does so with no lock held on it, as in C.
+unsafe impl Send for WsdisplayFont {}
+
+// SAFETY: integers, a byte array and two pointers, the padding named (`_pad0`); any bytes
+// are a valid value (the pointers are never dereferenced from an ioctl argument).
+unsafe impl AbiPod for WsdisplayFont {}
+
+/// `WSDISPLAY_MAXFONTCOUNT`.
+pub const WSDISPLAY_MAXFONTCOUNT: i32 = 8;
+/// `WSDISPLAY_FONTENC_ISO`.
+pub const WSDISPLAY_FONTENC_ISO: i32 = 0;
+/// `WSDISPLAY_FONTENC_IBM`.
+pub const WSDISPLAY_FONTENC_IBM: i32 = 1;
+/// `WSDISPLAY_MAXFONTSZ`.
+pub const WSDISPLAY_MAXFONTSZ: u32 = 512 * 1024;
+/// `WSDISPLAY_FONTORDER_KNOWN`: i.e, no need to convert.
+pub const WSDISPLAY_FONTORDER_KNOWN: i32 = 0;
+/// `WSDISPLAY_FONTORDER_L2R`.
+pub const WSDISPLAY_FONTORDER_L2R: i32 = 1;
+/// `WSDISPLAY_FONTORDER_R2L`.
+pub const WSDISPLAY_FONTORDER_R2L: i32 = 2;
+
+/// `WSDISPLAYIO_LDFONT`.
+pub const WSDISPLAYIO_LDFONT: u64 = _iow::<WsdisplayFont>(b'W', 77);
+/// `WSDISPLAYIO_LSFONT`.
+pub const WSDISPLAYIO_LSFONT: u64 = _iowr::<WsdisplayFont>(b'W', 78);
+/// `WSDISPLAYIO_DELFONT`.
+pub const WSDISPLAYIO_DELFONT: u64 = _iow::<WsdisplayFont>(b'W', 79);
+/// `WSDISPLAYIO_USEFONT`.
+pub const WSDISPLAYIO_USEFONT: u64 = _iow::<WsdisplayFont>(b'W', 80);
+
+/// `struct wsdisplay_burner`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WsdisplayBurner {
+    /// `off`.
+    pub off: u32,
+    /// `on`.
+    pub on: u32,
+    /// `flags`: `WSDISPLAY_BURN_*`.
+    pub flags: u32,
+}
+
+// SAFETY: three `u_int`s, no padding; any bytes are a valid value.
+unsafe impl AbiPod for WsdisplayBurner {}
+
+/// `WSDISPLAY_BURN_VBLANK`.
+pub const WSDISPLAY_BURN_VBLANK: u32 = 0x0001;
+/// `WSDISPLAY_BURN_KBD`.
+pub const WSDISPLAY_BURN_KBD: u32 = 0x0002;
+/// `WSDISPLAY_BURN_MOUSE`.
+pub const WSDISPLAY_BURN_MOUSE: u32 = 0x0004;
+/// `WSDISPLAY_BURN_OUTPUT`.
+pub const WSDISPLAY_BURN_OUTPUT: u32 = 0x0008;
+
+/// `WSDISPLAYIO_SBURNER`.
+pub const WSDISPLAYIO_SBURNER: u64 = _iow::<WsdisplayBurner>(b'W', 81);
+/// `WSDISPLAYIO_GBURNER`.
+pub const WSDISPLAYIO_GBURNER: u64 = _ior::<WsdisplayBurner>(b'W', 82);
+
+/// `struct wsdisplay_addscreendata` (the C marks these definitions very preliminary).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WsdisplayAddscreendata {
+    /// `idx`: screen index.
+    pub idx: i32,
+    /// `screentype`.
+    pub screentype: [u8; WSSCREEN_NAME_SIZE],
+    /// `emul`.
+    pub emul: [u8; WSEMUL_NAME_SIZE],
+}
+
+// SAFETY: an `int` and two byte arrays, 36 bytes without padding; any bytes are valid.
+unsafe impl AbiPod for WsdisplayAddscreendata {}
+
+/// `WSDISPLAYIO_ADDSCREEN`.
+pub const WSDISPLAYIO_ADDSCREEN: u64 = _iow::<WsdisplayAddscreendata>(b'W', 83);
+
+/// `struct wsdisplay_delscreendata`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WsdisplayDelscreendata {
+    /// `idx`: screen index.
+    pub idx: i32,
+    /// `flags`: `WSDISPLAY_DELSCR_*`.
+    pub flags: i32,
+}
+
+// SAFETY: two `int`s, no padding; any bytes are a valid value.
+unsafe impl AbiPod for WsdisplayDelscreendata {}
+
+/// `WSDISPLAY_DELSCR_FORCE`.
+pub const WSDISPLAY_DELSCR_FORCE: i32 = 0x01;
+/// `WSDISPLAY_DELSCR_QUIET`.
+pub const WSDISPLAY_DELSCR_QUIET: i32 = 0x02;
+
+/// `WSDISPLAYIO_DELSCREEN`.
+pub const WSDISPLAYIO_DELSCREEN: u64 = _iow::<WsdisplayDelscreendata>(b'W', 84);
+/// `WSDISPLAYIO_GETSCREEN`.
+pub const WSDISPLAYIO_GETSCREEN: u64 = _iowr::<WsdisplayAddscreendata>(b'W', 85);
+/// `WSDISPLAYIO_SETSCREEN`.
+pub const WSDISPLAYIO_SETSCREEN: u64 = _iow::<u32>(b'W', 86);
+
+/// `WSDISPLAYIO_LINEBYTES`: display information: number of bytes per row, may be same as
+/// pixels.
+pub const WSDISPLAYIO_LINEBYTES: u64 = _ior::<u32>(b'W', 95);
+
+/// `WSDISPLAYIO_WSMOUSED`: mouse console support.
+pub const WSDISPLAYIO_WSMOUSED: u64 = _iow::<WsconsEvent>(b'W', 88);
+
+/// `struct wsdisplay_param`: misc control. Not applicable to all display types.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WsdisplayParam {
+    /// `param`: `WSDISPLAYIO_PARAM_*`.
+    pub param: i32,
+    /// `min`.
+    pub min: i32,
+    /// `max`.
+    pub max: i32,
+    /// `curval`.
+    pub curval: i32,
+    /// `reserved`.
+    pub reserved: [i32; 4],
+}
+
+// SAFETY: eight `int`s, no padding; any bytes are a valid value.
+unsafe impl AbiPod for WsdisplayParam {}
+
+/// `WSDISPLAYIO_PARAM_BACKLIGHT`.
+pub const WSDISPLAYIO_PARAM_BACKLIGHT: i32 = 1;
+/// `WSDISPLAYIO_PARAM_BRIGHTNESS`.
+pub const WSDISPLAYIO_PARAM_BRIGHTNESS: i32 = 2;
+/// `WSDISPLAYIO_PARAM_CONTRAST`.
+pub const WSDISPLAYIO_PARAM_CONTRAST: i32 = 3;
+
+/// `WSDISPLAYIO_GETPARAM`.
+pub const WSDISPLAYIO_GETPARAM: u64 = _iowr::<WsdisplayParam>(b'W', 89);
+/// `WSDISPLAYIO_SETPARAM`.
+pub const WSDISPLAYIO_SETPARAM: u64 = _iowr::<WsdisplayParam>(b'W', 90);
+
+/// `WSDISPLAYIO_DEPTH_1`: graphical mode control.
+pub const WSDISPLAYIO_DEPTH_1: u32 = 0x1;
+/// `WSDISPLAYIO_DEPTH_4`.
+pub const WSDISPLAYIO_DEPTH_4: u32 = 0x2;
+/// `WSDISPLAYIO_DEPTH_8`.
+pub const WSDISPLAYIO_DEPTH_8: u32 = 0x4;
+/// `WSDISPLAYIO_DEPTH_15`.
+pub const WSDISPLAYIO_DEPTH_15: u32 = 0x8;
+/// `WSDISPLAYIO_DEPTH_16`.
+pub const WSDISPLAYIO_DEPTH_16: u32 = 0x10;
+/// `WSDISPLAYIO_DEPTH_24_24`.
+pub const WSDISPLAYIO_DEPTH_24_24: u32 = 0x20;
+/// `WSDISPLAYIO_DEPTH_24_32`.
+pub const WSDISPLAYIO_DEPTH_24_32: u32 = 0x40;
+/// `WSDISPLAYIO_DEPTH_24`.
+pub const WSDISPLAYIO_DEPTH_24: u32 = WSDISPLAYIO_DEPTH_24_24 | WSDISPLAYIO_DEPTH_24_32;
+/// `WSDISPLAYIO_DEPTH_30`.
+pub const WSDISPLAYIO_DEPTH_30: u32 = 0x80;
+
+/// `WSDISPLAYIO_GETSUPPORTEDDEPTH`.
+pub const WSDISPLAYIO_GETSUPPORTEDDEPTH: u64 = _ior::<u32>(b'W', 92);
+
+/// `struct wsdisplay_gfx_mode`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WsdisplayGfxMode {
+    /// `width`.
+    pub width: i32,
+    /// `height`.
+    pub height: i32,
+    /// `depth`.
+    pub depth: i32,
+}
+
+// SAFETY: three `int`s, no padding; any bytes are a valid value.
+unsafe impl AbiPod for WsdisplayGfxMode {}
+
+/// `WSDISPLAYIO_SETGFXMODE`.
+pub const WSDISPLAYIO_SETGFXMODE: u64 = _iow::<WsdisplayGfxMode>(b'W', 92);
+
+/// `struct wsdisplay_screentype`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WsdisplayScreentype {
+    /// `idx`.
+    pub idx: i32,
+    /// `nidx`.
+    pub nidx: i32,
+    /// `name`.
+    pub name: [u8; WSSCREEN_NAME_SIZE],
+    /// `ncols`.
+    pub ncols: i32,
+    /// `nrows`.
+    pub nrows: i32,
+    /// `fontwidth`.
+    pub fontwidth: i32,
+    /// `fontheight`.
+    pub fontheight: i32,
+}
+
+// SAFETY: `int`s and a byte array, 40 bytes without padding; any bytes are valid.
+unsafe impl AbiPod for WsdisplayScreentype {}
+
+/// `WSDISPLAYIO_GETSCREENTYPE`.
+pub const WSDISPLAYIO_GETSCREENTYPE: u64 = _iowr::<WsdisplayScreentype>(b'W', 93);
+
+/// `struct wsdisplay_emultype`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WsdisplayEmultype {
+    /// `idx`.
+    pub idx: i32,
+    /// `name`.
+    pub name: [u8; WSSCREEN_NAME_SIZE],
+}
+
+// SAFETY: an `int` and a byte array, 20 bytes without padding; any bytes are valid.
+unsafe impl AbiPod for WsdisplayEmultype {}
+
+/// `WSDISPLAYIO_GETEMULTYPE`.
+pub const WSDISPLAYIO_GETEMULTYPE: u64 = _iowr::<WsdisplayEmultype>(b'W', 94);
+
 const _: () = {
     assert!(size_of::<WsconsEvent>() == 24);
     assert!(size_of::<WskbdBellData>() == 16);
@@ -343,6 +932,18 @@ const _: () = {
     assert!(size_of::<WskbdMapData>() == 16);
     assert!(size_of::<WskbdBacklight>() == 12);
     assert!(size_of::<WskbdEncodingData>() == 16);
+    assert!(size_of::<WsdisplayFbinfo>() == 24);
+    assert!(size_of::<WsdisplayCmap>() == 32);
+    assert!(size_of::<WsdisplayCurpos>() == 8);
+    assert!(size_of::<WsdisplayCursor>() == 80);
+    assert!(size_of::<WsdisplayFont>() == 88);
+    assert!(size_of::<WsdisplayBurner>() == 12);
+    assert!(size_of::<WsdisplayAddscreendata>() == 36);
+    assert!(size_of::<WsdisplayDelscreendata>() == 8);
+    assert!(size_of::<WsdisplayParam>() == 32);
+    assert!(size_of::<WsdisplayGfxMode>() == 12);
+    assert!(size_of::<WsdisplayScreentype>() == 40);
+    assert!(size_of::<WsdisplayEmultype>() == 20);
 };
 
 #[cfg(test)]
@@ -360,6 +961,12 @@ mod tests {
         // _IOWR('W', 13, struct wskbd_map_data)
         assert_eq!(WSKBDIO_GETMAP, 0xc010_570d);
         assert_eq!(WSKBDIO_SETMODE, 0x8004_5713);
+        // _IOR('W', 65, struct wsdisplay_fbinfo), _IOW('W', 77, struct wsdisplay_font),
+        // _IOWR('W', 89, struct wsdisplay_param), _IOR('W', 95, u_int)
+        assert_eq!(WSDISPLAYIO_GINFO, 0x4018_5741);
+        assert_eq!(WSDISPLAYIO_LDFONT, 0x8058_574d);
+        assert_eq!(WSDISPLAYIO_GETPARAM, 0xc020_5759);
+        assert_eq!(WSDISPLAYIO_LINEBYTES, 0x4004_575f);
     }
 
     #[test]
@@ -371,7 +978,8 @@ mod tests {
         assert!(!is_ctrl_event(WSCONS_EVENT_SYNC));
     }
 
-    /// Every constant against `<dev/wscons/wsconsio.h>`, the first 220 lines.
+    /// Every constant against `<dev/wscons/wsconsio.h>`: the first 220 lines and the
+    /// display section.
     #[test]
     #[ignore = "needs OPENBSD_SRC"]
     fn constants_match_the_c_header() {
@@ -434,6 +1042,115 @@ mod tests {
             WSKBDIO_MAXMAPLEN,
             WSKBD_TRANSLATED,
             WSKBD_RAW,
+            WSDISPLAY_TYPE_UNKNOWN,
+            WSDISPLAY_TYPE_PM_MONO,
+            WSDISPLAY_TYPE_PM_COLOR,
+            WSDISPLAY_TYPE_CFB,
+            WSDISPLAY_TYPE_XCFB,
+            WSDISPLAY_TYPE_MFB,
+            WSDISPLAY_TYPE_SFB,
+            WSDISPLAY_TYPE_ISAVGA,
+            WSDISPLAY_TYPE_PCIVGA,
+            WSDISPLAY_TYPE_TGA,
+            WSDISPLAY_TYPE_SFBP,
+            WSDISPLAY_TYPE_PCIMISC,
+            WSDISPLAY_TYPE_NEXTMONO,
+            WSDISPLAY_TYPE_PX,
+            WSDISPLAY_TYPE_PXG,
+            WSDISPLAY_TYPE_TX,
+            WSDISPLAY_TYPE_HPCFB,
+            WSDISPLAY_TYPE_VIDC,
+            WSDISPLAY_TYPE_SPX,
+            WSDISPLAY_TYPE_GPX,
+            WSDISPLAY_TYPE_LCG,
+            WSDISPLAY_TYPE_VAX_MONO,
+            WSDISPLAY_TYPE_SB_P9100,
+            WSDISPLAY_TYPE_EGA,
+            WSDISPLAY_TYPE_DCPVR,
+            WSDISPLAY_TYPE_SUN24,
+            WSDISPLAY_TYPE_SUNBW,
+            WSDISPLAY_TYPE_STI,
+            WSDISPLAY_TYPE_SUNCG3,
+            WSDISPLAY_TYPE_SUNCG6,
+            WSDISPLAY_TYPE_SUNFFB,
+            WSDISPLAY_TYPE_SUNCG14,
+            WSDISPLAY_TYPE_SUNCG2,
+            WSDISPLAY_TYPE_SUNCG4,
+            WSDISPLAY_TYPE_SUNCG8,
+            WSDISPLAY_TYPE_SUNTCX,
+            WSDISPLAY_TYPE_AGTEN,
+            WSDISPLAY_TYPE_XVIDEO,
+            WSDISPLAY_TYPE_SUNCG12,
+            WSDISPLAY_TYPE_MGX,
+            WSDISPLAY_TYPE_SB_P9000,
+            WSDISPLAY_TYPE_RFLEX,
+            WSDISPLAY_TYPE_LUNA,
+            WSDISPLAY_TYPE_DVBOX,
+            WSDISPLAY_TYPE_GBOX,
+            WSDISPLAY_TYPE_RBOX,
+            WSDISPLAY_TYPE_HYPERION,
+            WSDISPLAY_TYPE_TOPCAT,
+            WSDISPLAY_TYPE_PXALCD,
+            WSDISPLAY_TYPE_MAC68K,
+            WSDISPLAY_TYPE_SUNLEO,
+            WSDISPLAY_TYPE_TVRX,
+            WSDISPLAY_TYPE_CFXGA,
+            WSDISPLAY_TYPE_LCSPX,
+            WSDISPLAY_TYPE_GBE,
+            WSDISPLAY_TYPE_LEGSS,
+            WSDISPLAY_TYPE_IFB,
+            WSDISPLAY_TYPE_RAPTOR,
+            WSDISPLAY_TYPE_DL,
+            WSDISPLAY_TYPE_MACHFB,
+            WSDISPLAY_TYPE_GFXP,
+            WSDISPLAY_TYPE_RADEONFB,
+            WSDISPLAY_TYPE_SMFB,
+            WSDISPLAY_TYPE_SISFB,
+            WSDISPLAY_TYPE_ODYSSEY,
+            WSDISPLAY_TYPE_IMPACT,
+            WSDISPLAY_TYPE_GRTWO,
+            WSDISPLAY_TYPE_NEWPORT,
+            WSDISPLAY_TYPE_LIGHT,
+            WSDISPLAY_TYPE_INTELDRM,
+            WSDISPLAY_TYPE_RADEONDRM,
+            WSDISPLAY_TYPE_EFIFB,
+            WSDISPLAY_TYPE_KMS,
+            WSDISPLAY_TYPE_ASTFB,
+            WSDISPLAY_TYPE_VIOGPU,
+            WSDISPLAYIO_VIDEO_OFF,
+            WSDISPLAYIO_VIDEO_ON,
+            WSDISPLAY_CURSOR_DOCUR,
+            WSDISPLAY_CURSOR_DOPOS,
+            WSDISPLAY_CURSOR_DOHOT,
+            WSDISPLAY_CURSOR_DOCMAP,
+            WSDISPLAY_CURSOR_DOSHAPE,
+            WSDISPLAY_CURSOR_DOALL,
+            WSDISPLAYIO_MODE_EMUL,
+            WSDISPLAYIO_MODE_MAPPED,
+            WSDISPLAYIO_MODE_DUMBFB,
+            WSDISPLAY_MAXFONTCOUNT,
+            WSDISPLAY_FONTENC_ISO,
+            WSDISPLAY_FONTENC_IBM,
+            WSDISPLAY_FONTORDER_KNOWN,
+            WSDISPLAY_FONTORDER_L2R,
+            WSDISPLAY_FONTORDER_R2L,
+            WSDISPLAY_BURN_VBLANK,
+            WSDISPLAY_BURN_KBD,
+            WSDISPLAY_BURN_MOUSE,
+            WSDISPLAY_BURN_OUTPUT,
+            WSDISPLAY_DELSCR_FORCE,
+            WSDISPLAY_DELSCR_QUIET,
+            WSDISPLAYIO_PARAM_BACKLIGHT,
+            WSDISPLAYIO_PARAM_BRIGHTNESS,
+            WSDISPLAYIO_PARAM_CONTRAST,
+            WSDISPLAYIO_DEPTH_1,
+            WSDISPLAYIO_DEPTH_4,
+            WSDISPLAYIO_DEPTH_8,
+            WSDISPLAYIO_DEPTH_15,
+            WSDISPLAYIO_DEPTH_16,
+            WSDISPLAYIO_DEPTH_24_24,
+            WSDISPLAYIO_DEPTH_24_32,
+            WSDISPLAYIO_DEPTH_30,
         );
     }
 }

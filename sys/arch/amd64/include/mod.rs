@@ -12,6 +12,7 @@ pub mod cpufunc;
 pub mod cpuvar;
 pub mod db_machdep;
 pub mod disklabel;
+pub mod efifbvar;
 pub mod exec;
 pub mod fpu;
 pub mod frame;

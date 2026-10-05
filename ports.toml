@@ -789,7 +789,7 @@ rust = "sys/arch/amd64/amd64/bus_space.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "57f925ff872e2203b0a1f355345ad520b927f1f3"
-notes = "M2: X86BusSpace enum tag (X86_BUS_SPACE_IO/MEM), BusSpaceHandle, bus_space_map/unmap for I/O space, bus_space_subregion, single-register io/mem accessors, bus_space_barrier; M7b: memory space: bus_space_map (the ISA hole, the direct map before pmap_init, x86_mem_add_mapping), x86_mem_add_mapping (km_alloc(kv_any, kp_none) + pmap_kenter_pa with PMAP_NOCACHE, PMAP_WC for prefetchable, cached for BUS_SPACE_MAP_CACHEABLE), bus_space_unmap (pmap_kremove + km_free), atdevbase (the direct map's address of IOM_BEGIN, locore0.S does not run); the extents (ioport_ex/iomem_ex, subr_extent.c) are comments at their sites; multi/region/copy accessors, alloc/free, _bus_space_map/unmap, vaddr/mmap, SEV-ES variants are not ported yet"
+notes = "M2: X86BusSpace enum tag (X86_BUS_SPACE_IO/MEM), BusSpaceHandle, bus_space_map/unmap for I/O space, bus_space_subregion, single-register io/mem accessors, bus_space_barrier; M7b: memory space: bus_space_map (the ISA hole, the direct map before pmap_init, x86_mem_add_mapping), x86_mem_add_mapping (km_alloc(kv_any, kp_none) + pmap_kenter_pa with PMAP_NOCACHE, PMAP_WC for prefetchable, cached for BUS_SPACE_MAP_CACHEABLE), bus_space_unmap (pmap_kremove + km_free), atdevbase (the direct map's address of IOM_BEGIN, locore0.S does not run); the extents (ioport_ex/iomem_ex, subr_extent.c) are comments at their sites; multi/region/copy accessors, alloc/free, _bus_space_map/unmap, vaddr/mmap, SEV-ES variants are not ported yet; M13 (rasops): bus_space_vaddr (the <machine/bus.h> macro: the handle for memory space, NULL for I/O), in the machine BusSpace contract on every arch"
 
 [[file]]
 c = "sys/arch/amd64/amd64/consinit.c"
@@ -824,7 +824,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "95ffefae93d5b98fae8403a5f8998d77ec55dca8"
 deps = ["sys/arch/amd64/amd64/consinit.c", "sys/arch/amd64/amd64/autoconf.c", "sys/arch/amd64/isa/clock.c", "sys/kern/subr_log.c", "sys/sys/reboot.h"]
-notes = "M2: init_x86_64 (message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all/cpu_reset reported unported; M14: vfs_shutdown is called, as the C does), delay (the DELAY macro over delay_func), cpureset_delay, lid_action, waittime; M3: the direct map, pmap_bootstrap, the memory clusters, cpu_startup's memory lines; M4: setgate/unsetgate/setregion/set_mem_segment/set_sys_segment, idt (a static page) and idt_allocmap, cpu_init_idt, idt_vec_alloc/alloc_range/set/free, x86_64_proc0_tss_ldt_init (ltr/lldt only, proc0's pcb reported), splassert_check, the GDT/TSS/IDT setup and cpu_init_msrs first thing in init_x86_64, which ends as the C does (intr_default_setup, softintr_init, splraise(IPL_IPI), intr_enable), cpu_enter_pages from cpu_startup; the bootinfo parsing, the ACPI/MP tables, cpu_init, dumpsys, sendsig/setregs, sysctl are M5 to M6; M5: startclocks in cpu_startup (rtcinit reported, M7), initclock_func/startclock_func (StaticCells with setters), cpu_initclocks, cpu_startclock, need_resched (aston reported, M5-b); M5-b1: proc0paddr (a static u-area; the boot stack stays Limine's), x86_64_proc0_tss_ldt_init sets ci_curpcb, pcb_fsbase, pcb_kstack, md_regs and (a deviation, for cpu_switchto) pcb_cr3 = %cr3; M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), aston, clear_resched, cpu_unidle (UP), cpu_idle_cycle_hlt/cpu_idle_cycle (cpu_idle_cycle_fcn is a direct call until acpicpu); cold moved to sys/systm.rs; M6-b2: reset_segs, setregs (MDP_IRET, pcb_fsbase, the user trap frame; initialize_thread_xstate is M6-c); kern_sig.c: sendsig, sys_sigreturn (through machine::MachineSignal), copyoutfpu, initialize_thread_xstate (reported: fpu.c), signotify (aston; cpu_kick is MULTIPROCESSOR), setregs calls initialize_thread_xstate; without fpu.c fpu_save_len is the fxsave size, cpu_use_xsaves is false, fpusave/fpureset/fpu_cleandata/xrstor_user are reported, so a handler shares the interrupted code's FPU state; the bootinfo parsing, the ACPI/MP tables, cpu_init, dumpsys, sendsig/setregs, sysctl are M5 to M6; cpu_startup prints version (conf/vers.rs) since kern_sysctl.c; M5: startclocks in cpu_startup (rtcinit reported, M7), initclock_func/startclock_func (StaticCells with setters), cpu_initclocks, cpu_startclock, need_resched (aston reported, M5-b); M5-b1: proc0paddr (a static u-area; the boot stack stays Limine's), x86_64_proc0_tss_ldt_init sets ci_curpcb, pcb_fsbase, pcb_kstack, md_regs and (a deviation, for cpu_switchto) pcb_cr3 = %cr3; M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), aston, clear_resched, cpu_unidle (UP), cpu_idle_cycle_hlt/cpu_idle_cycle (cpu_idle_cycle_fcn is a direct call until acpicpu); cold moved to sys/systm.rs; M6-b2: reset_segs, setregs (MDP_IRET, pcb_fsbase, the user trap frame; initialize_thread_xstate is M6-c); vfs stage 2: cpu_startup calls bufinit after the memory lines, as the C does; M8: cpu_startup makes exec_map (uvm_km_suballoc of 16 * NCARGS, VM_MAP_PAGEABLE); M8: copyin32 (alignment check, then copyin) behind machine::copy; M8: fpuinit from init_x86_64; initialize_thread_xstate (the non-XSAVES branch), sendsig fpusave and sys_sigreturn fpureset/fpu_cleandata/xrstor_user are real; fpu_save_len is fpu.c's; TSC: delay_func (StaticCell<fn(i32)>, delay_is_i8254), amd64_delay_quality, delay_init, delay_fini, cpu_set_vendor; init_x86_64 does locore0.S's CPUID probe (cpuid_level, cpu_vendor, cpu_id, cpu_*feature with CPUID_NXE) before cpu_set_vendor; the meltdown and SEV probes are not there; M10a: cpu_startup makes phys_map (uvm_km_suballoc of VM_PHYS_SIZE, flags 0) and stores it in uvm_extern's PHYS_MAP, as it does exec_map; M11a: the MULTIPROCESSOR parts: cpu_kick (X86_IPI_NOP to another CPU; no mwait, cpu_init_mwait is not ported), cpu_unidle's IPI, need_resched's cpu_kick (ci_want_resched is atomic), signotify's cpu_kick(p->p_cpu), boot's x86_broadcast_ipi(X86_IPI_HALT); init_x86_64 keeps BootInfo::mp in cpu.rs's BOOT_MP for mainbus_attach and mp_cpu_start (the C reads the ACPI/MP tables during autoconfiguration); map_tramps' MP trampoline pages and the avail_start floor are replaced-by-limine; M13: cpu_sysctl (through machine::cpu::cpu_sysctl, called by sys_sysctl for CTL_MACHDEP) is ported: consdev, chr2blk, cpuvendor, kbdreset (sysctl_securelevel_int), allowaperture (the #else: 0, APERTURE not configured), tscfreq, vmmode (cpu_sev_guestmode stays 0: the SEV probe is not ported), cpuid, cpufeature and the sysctl_bounded_arr table (hibernatedelay, lidaction, pwraction, xcrypt, invarianttsc, retpoline); bios_sysctl is EOPNOTSUPP as the C answers without bootapiver BAPIV_VECTOR (Limine passes no boot arguments: BIOS_DEV/BIOS_DISKINFO/BIOS_CKSUMLEN unreachable); forceukbd is compiled out as in C without pckbc (EOPNOTSUPP, pckbc not ported); amd64_has_xcrypt (identcpu.rs) stays 0 (via_nano_setup not ported) and need_retpoline (cpu.rs) stays 1 (no codepatch); kbd_reset and hibernate_delay are statics here; the CPU_* names and CTL_MACHDEP_NAMES are in include/cpu.rs; M14 (A2, the boot(8) entry): getbootinfo (the bootarg32 walk: BOOTARG_MEMMAP, DISKINFO (its record kept, bios_getdiskinfo not ported), APMINFO/PCIINFO ignored as in C, CKSUMLEN, CONSDEV (comcons* except comconsiot: consinit attaches in I/O space), BOOTMAC, DDB, BOOTDUID, BOOTSR (copied, then zeroed), EFIINFO, UCODE) behind machine::Cpu::getbootinfo, with init_x86_64's boot(8) half: the bootapiver and size checks, the EFI memory map relocated to first_avail, avail_start (MP trampolines), the bios_memmap flensing into a MemMap (the [IOM_END, KERNTEXTOFF) block only where boot(8) says free; memory above the 4 GB locore0 maps is reported, pmap_bootstrap's direct-map extension is not ported), pmap_direct_base without pmap_direct_rand; init_x86_64 calls pmap_prealloc_lowmem_ptps after a boot(8) boot; map_tramps (the MP half; the lo32 bounce page reported; nothing under Limine); the globals ssym, esym, bootdev, biosbasemem, bootapiver, bootinfo[], bootinfo_size, bios_cksumlen, bios_diskinfo, bios_efiinfo, bios_ucode, avail_start; the CPUs come from a MADT walk (cpu.rs mp_madt_cpus) since acpimadt.c is not ported"
+notes = "M2: init_x86_64 (message buffer, consinit, boot -d -> db_enter), boot (cold path; under feature qemu the key wait is the failure exit; resettodr/if_downall/uvm_shutdown/dumpsys/config_suspend_all/cpu_reset reported unported; M14: vfs_shutdown is called, as the C does), delay (the DELAY macro over delay_func), cpureset_delay, lid_action, waittime; M3: the direct map, pmap_bootstrap, the memory clusters, cpu_startup's memory lines; M4: setgate/unsetgate/setregion/set_mem_segment/set_sys_segment, idt (a static page) and idt_allocmap, cpu_init_idt, idt_vec_alloc/alloc_range/set/free, x86_64_proc0_tss_ldt_init (ltr/lldt only, proc0's pcb reported), splassert_check, the GDT/TSS/IDT setup and cpu_init_msrs first thing in init_x86_64, which ends as the C does (intr_default_setup, softintr_init, splraise(IPL_IPI), intr_enable), cpu_enter_pages from cpu_startup; the bootinfo parsing, the ACPI/MP tables, cpu_init, dumpsys, sendsig/setregs, sysctl are M5 to M6; M5: startclocks in cpu_startup (rtcinit reported, M7), initclock_func/startclock_func (StaticCells with setters), cpu_initclocks, cpu_startclock, need_resched (aston reported, M5-b); M5-b1: proc0paddr (a static u-area; the boot stack stays Limine's), x86_64_proc0_tss_ldt_init sets ci_curpcb, pcb_fsbase, pcb_kstack, md_regs and (a deviation, for cpu_switchto) pcb_cr3 = %cr3; M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), aston, clear_resched, cpu_unidle (UP), cpu_idle_cycle_hlt/cpu_idle_cycle (cpu_idle_cycle_fcn is a direct call until acpicpu); cold moved to sys/systm.rs; M6-b2: reset_segs, setregs (MDP_IRET, pcb_fsbase, the user trap frame; initialize_thread_xstate is M6-c); kern_sig.c: sendsig, sys_sigreturn (through machine::MachineSignal), copyoutfpu, initialize_thread_xstate (reported: fpu.c), signotify (aston; cpu_kick is MULTIPROCESSOR), setregs calls initialize_thread_xstate; without fpu.c fpu_save_len is the fxsave size, cpu_use_xsaves is false, fpusave/fpureset/fpu_cleandata/xrstor_user are reported, so a handler shares the interrupted code's FPU state; the bootinfo parsing, the ACPI/MP tables, cpu_init, dumpsys, sendsig/setregs, sysctl are M5 to M6; cpu_startup prints version (conf/vers.rs) since kern_sysctl.c; M5: startclocks in cpu_startup (rtcinit reported, M7), initclock_func/startclock_func (StaticCells with setters), cpu_initclocks, cpu_startclock, need_resched (aston reported, M5-b); M5-b1: proc0paddr (a static u-area; the boot stack stays Limine's), x86_64_proc0_tss_ldt_init sets ci_curpcb, pcb_fsbase, pcb_kstack, md_regs and (a deviation, for cpu_switchto) pcb_cr3 = %cr3; M5-b2: proc0 gets a full u-area (PROC0_UAREA, proc0paddr), aston, clear_resched, cpu_unidle (UP), cpu_idle_cycle_hlt/cpu_idle_cycle (cpu_idle_cycle_fcn is a direct call until acpicpu); cold moved to sys/systm.rs; M6-b2: reset_segs, setregs (MDP_IRET, pcb_fsbase, the user trap frame; initialize_thread_xstate is M6-c); vfs stage 2: cpu_startup calls bufinit after the memory lines, as the C does; M8: cpu_startup makes exec_map (uvm_km_suballoc of 16 * NCARGS, VM_MAP_PAGEABLE); M8: copyin32 (alignment check, then copyin) behind machine::copy; M8: fpuinit from init_x86_64; initialize_thread_xstate (the non-XSAVES branch), sendsig fpusave and sys_sigreturn fpureset/fpu_cleandata/xrstor_user are real; fpu_save_len is fpu.c's; TSC: delay_func (StaticCell<fn(i32)>, delay_is_i8254), amd64_delay_quality, delay_init, delay_fini, cpu_set_vendor; init_x86_64 does locore0.S's CPUID probe (cpuid_level, cpu_vendor, cpu_id, cpu_*feature with CPUID_NXE) before cpu_set_vendor; the meltdown and SEV probes are not there; M10a: cpu_startup makes phys_map (uvm_km_suballoc of VM_PHYS_SIZE, flags 0) and stores it in uvm_extern's PHYS_MAP, as it does exec_map; M11a: the MULTIPROCESSOR parts: cpu_kick (X86_IPI_NOP to another CPU; no mwait, cpu_init_mwait is not ported), cpu_unidle's IPI, need_resched's cpu_kick (ci_want_resched is atomic), signotify's cpu_kick(p->p_cpu), boot's x86_broadcast_ipi(X86_IPI_HALT); init_x86_64 keeps BootInfo::mp in cpu.rs's BOOT_MP for mainbus_attach and mp_cpu_start (the C reads the ACPI/MP tables during autoconfiguration); map_tramps' MP trampoline pages and the avail_start floor are replaced-by-limine; M13: cpu_sysctl (through machine::cpu::cpu_sysctl, called by sys_sysctl for CTL_MACHDEP) is ported: consdev, chr2blk, cpuvendor, kbdreset (sysctl_securelevel_int), allowaperture (the #else: 0, APERTURE not configured), tscfreq, vmmode (cpu_sev_guestmode stays 0: the SEV probe is not ported), cpuid, cpufeature and the sysctl_bounded_arr table (hibernatedelay, lidaction, pwraction, xcrypt, invarianttsc, retpoline); bios_sysctl is EOPNOTSUPP as the C answers without bootapiver BAPIV_VECTOR (Limine passes no boot arguments: BIOS_DEV/BIOS_DISKINFO/BIOS_CKSUMLEN unreachable); forceukbd is compiled out as in C without pckbc (EOPNOTSUPP, pckbc not ported); amd64_has_xcrypt (identcpu.rs) stays 0 (via_nano_setup not ported) and need_retpoline (cpu.rs) stays 1 (no codepatch); kbd_reset and hibernate_delay are statics here; the CPU_* names and CTL_MACHDEP_NAMES are in include/cpu.rs; M14 (A2, the boot(8) entry): getbootinfo (the bootarg32 walk: BOOTARG_MEMMAP, DISKINFO (its record kept, bios_getdiskinfo not ported), APMINFO/PCIINFO ignored as in C, CKSUMLEN, CONSDEV (comcons* except comconsiot: consinit attaches in I/O space), BOOTMAC, DDB, BOOTDUID, BOOTSR (copied, then zeroed), EFIINFO, UCODE) behind machine::Cpu::getbootinfo, with init_x86_64's boot(8) half: the bootapiver and size checks, the EFI memory map relocated to first_avail, avail_start (MP trampolines), the bios_memmap flensing into a MemMap (the [IOM_END, KERNTEXTOFF) block only where boot(8) says free; memory above the 4 GB locore0 maps is reported, pmap_bootstrap's direct-map extension is not ported), pmap_direct_base without pmap_direct_rand; init_x86_64 calls pmap_prealloc_lowmem_ptps after a boot(8) boot; map_tramps (the MP half; the lo32 bounce page reported; nothing under Limine); the globals ssym, esym, bootdev, biosbasemem, bootapiver, bootinfo[], bootinfo_size, bios_cksumlen, bios_diskinfo, bios_efiinfo, bios_ucode, avail_start; the CPUs come from a MADT walk (cpu.rs mp_madt_cpus) since acpimadt.c is not ported; M13 (rasops): bios_efiinfo() (reads BIOS_EFIINFO, which getbootinfo fills after a boot(8) boot and init_x86_64 under Limine when the machine booted through UEFI): config_acpi, system_table and the fb_* fields from Limine's framebuffer response (masks from the channel sizes and shifts, the reserved mask the rest of the pixel), for efifb(4)"
 
 [[file]]
 c = "sys/arch/amd64/isa/clock.c"
@@ -2986,7 +2986,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b62c6aa84d31d9d375165ec678f54e72f5a2115a"
 deps = ["sys/kern/subr_autoconf.c", "sys/arch/amd64/include/cpuvar.h", "sys/arch/amd64/amd64/cpu.c"]
-notes = "BSD-4-clause block (Demetriou, NetBSD), accepted at M2. M7b: mainbus_ca/mainbus_cd (CD_COCOVM), union mainbus_attach_args (mba_busname, mba_caa and, M7b, mba_pba; the other members come with their buses), isa_has_been_seen, mainbus_match, mainbus_attach (cpu0 attached as CPU_ROLE_SP when nothing set CPUF_PRESENT; M7b: pci0 at mainbus0 bus 0 with pci_bus_dma_tag, no extents, pba_domain from pci_ndomains, as without ACPI), mainbus_efifb_reattach, mainbus_print (M7b: the pci bus number); reported: efifb_cnremap, bios0 (acpi0, mpbios0), ipmi_probe, replacemds, setperf_setup, pvbus_probe, pci_init_extents (from pci_machdep.rs), vmm_enabled, efifb0, codepatch_disable; mp_busses/mp_intrs come with mpbios/acpi; M8: isa0 at mainbus0 (mba_iba: iba_iot/iba_memt/iba_ic) when no PCI bridge attached one (isa_has_been_seen); M11a: with MULTIPROCESSOR and no ACPI MADT (M13) or mpbios, mainbus_attach_cpus stands for acpimadt0's enumeration: one cpu per processor the bootloader found (BOOT_MP), the boot processor first as CPU_ROLE_BP, the others as CPU_ROLE_AP in the bootloader's order, cpu_apicid = the hardware ID, cpu_acpi_proc_id = the bootloader's processor number, cpu_func = mp_cpu_funcs (deviation, docs/ARCHITECTURE.md); one processor (or the UP kernel) attaches cpu0 as CPU_ROLE_SP as before; mp_setperf_init reported (mp_setperf.c); M13: the mp_* globals (mp_busses/mp_nbusses, mp_intrs/mp_nintrs, mp_isa_bus, mp_eisa_bus as atomics with slice/reference accessors; mp_verbose 0); without a MADT mainbus calls lapic_boot_init at LAPIC_BASE and only then the bootloader CPU stand-in (acpimadt attaches the processors otherwise); acpipci_attach_busses when acpi_haspci"
+notes = "BSD-4-clause block (Demetriou, NetBSD), accepted at M2. M7b: mainbus_ca/mainbus_cd (CD_COCOVM), union mainbus_attach_args (mba_busname, mba_caa and, M7b, mba_pba; the other members come with their buses), isa_has_been_seen, mainbus_match, mainbus_attach (cpu0 attached as CPU_ROLE_SP when nothing set CPUF_PRESENT; M7b: pci0 at mainbus0 bus 0 with pci_bus_dma_tag, no extents, pba_domain from pci_ndomains, as without ACPI), mainbus_efifb_reattach, mainbus_print (M7b: the pci bus number); reported: efifb_cnremap, bios0 (acpi0, mpbios0), ipmi_probe, replacemds, setperf_setup, pvbus_probe, pci_init_extents (from pci_machdep.rs), vmm_enabled, efifb0, codepatch_disable; mp_busses/mp_intrs come with mpbios/acpi; M8: isa0 at mainbus0 (mba_iba: iba_iot/iba_memt/iba_ic) when no PCI bridge attached one (isa_has_been_seen); M11a: with MULTIPROCESSOR and no ACPI MADT (M13) or mpbios, mainbus_attach_cpus stands for acpimadt0's enumeration: one cpu per processor the bootloader found (BOOT_MP), the boot processor first as CPU_ROLE_BP, the others as CPU_ROLE_AP in the bootloader's order, cpu_apicid = the hardware ID, cpu_acpi_proc_id = the bootloader's processor number, cpu_func = mp_cpu_funcs (deviation, docs/ARCHITECTURE.md); one processor (or the UP kernel) attaches cpu0 as CPU_ROLE_SP as before; mp_setperf_init reported (mp_setperf.c); M13: the mp_* globals (mp_busses/mp_nbusses, mp_intrs/mp_nintrs, mp_isa_bus, mp_eisa_bus as atomics with slice/reference accessors; mp_verbose 0); without a MADT mainbus calls lapic_boot_init at LAPIC_BASE and only then the bootloader CPU stand-in (acpimadt attaches the processors otherwise); acpipci_attach_busses when acpi_haspci; M13 (rasops): efifb_cnremap is called and efifb0 at mainbus? attaches (mba_eaa, EfifbAttachArgs) when bios_efiinfo is set (UEFI boot) or efifb_cb_found; mainbus_efifb_reattach does the same"
 
 [[file]]
 c = "sys/arch/amd64/include/cpuvar.h"
@@ -3013,12 +3013,12 @@ notes = "replaced-by-ioconf.rs: config(8) is not ported; what it would generate 
 [[file]]
 c = "sys/arch/amd64/conf/GENERIC"
 status = "skipped"
-notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root, cpu0 at mainbus? and pci* at mainbus0 (M7b), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it); M10f: pseudo-device bio 1 (bioattach after wgattach in pdevinit, as GENERIC lists it; dev/bio.rs); M11a: GENERIC.MP's cpu* at mainbus? (unit 1 on, FSTATE_STAR) as cfdata[14] with feature multiprocessor; M13a: nvme* at pci? (cfdata[14], dev/pci/nvme_pci.rs), whose scsibus is the scsibus* at scsi? entry (pv 5, 13, 14); GENERIC.MP's cpu* is now cfdata[15]; M12 (xhci): xhci* at pci? (cfdata[14]), usb* at xhci? (15), uhub* at usb? (16), uhub* at uhub? (17, locators port/configuration/interface/vendor/product/release = -1, parents [16, 17]); GENERIC.MP's cpu* moves to cfdata[18]; M12 (azalia): azalia* at pci? (cfdata[20]) and audio* at azalia? (cfdata[21], parents PV_AZALIA [20]); GENERIC.MP's cpu* is cfdata[22]; M13 (siop): siop* at pci? (cfdata[29], after ahci at 28; dev/pci/siop_pci.rs), its scsibus the scsibus* at scsi? entry (PV_VIOBLK gains 29); M13 (acpi): bios0 at mainbus0 (cfdata[30]) and acpi0 at bios0 (cfdata[31], parents PV_BIOS [30]); M13 (timers): acpitimer* at acpi? (cfdata[32]) and acpihpet* at acpi? (cfdata[33]), parents PV_ACPI [31]; M13 (madt): ioapic* at mainbus? (cfdata[34], PV_MAINBUS), acpimadt0 (cfdata[35]), acpiprt* (cfdata[36]) and acpipci* (cfdata[37]) at acpi? (PV_ACPI [31]); GENERIC.MP's cpu* is cfdata[38]; M13 (puc): puc* at pci? (cfdata[38], dev/pci/puc.rs) and com* at puc? (cfdata[39], parents PV_PUC [38], locator port = -1, units from 4 as com0..com3 are the ISA lines; dev/puc/com_puc.rs); GENERIC.MP's cpu* is now cfdata[40], NCFDATA 40/41; M13 (em): em* at pci? (cfdata[40], PV_PCI [2], dev/pci/if_em.rs); GENERIC.MP's cpu* is now cfdata[41], NCFDATA 41/42"
+notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root, cpu0 at mainbus? and pci* at mainbus0 (M7b), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it); M10f: pseudo-device bio 1 (bioattach after wgattach in pdevinit, as GENERIC lists it; dev/bio.rs); M11a: GENERIC.MP's cpu* at mainbus? (unit 1 on, FSTATE_STAR) as cfdata[14] with feature multiprocessor; M13a: nvme* at pci? (cfdata[14], dev/pci/nvme_pci.rs), whose scsibus is the scsibus* at scsi? entry (pv 5, 13, 14); GENERIC.MP's cpu* is now cfdata[15]; M12 (xhci): xhci* at pci? (cfdata[14]), usb* at xhci? (15), uhub* at usb? (16), uhub* at uhub? (17, locators port/configuration/interface/vendor/product/release = -1, parents [16, 17]); GENERIC.MP's cpu* moves to cfdata[18]; M12 (azalia): azalia* at pci? (cfdata[20]) and audio* at azalia? (cfdata[21], parents PV_AZALIA [20]); GENERIC.MP's cpu* is cfdata[22]; M13 (siop): siop* at pci? (cfdata[29], after ahci at 28; dev/pci/siop_pci.rs), its scsibus the scsibus* at scsi? entry (PV_VIOBLK gains 29); M13 (acpi): bios0 at mainbus0 (cfdata[30]) and acpi0 at bios0 (cfdata[31], parents PV_BIOS [30]); M13 (timers): acpitimer* at acpi? (cfdata[32]) and acpihpet* at acpi? (cfdata[33]), parents PV_ACPI [31]; M13 (madt): ioapic* at mainbus? (cfdata[34], PV_MAINBUS), acpimadt0 (cfdata[35]), acpiprt* (cfdata[36]) and acpipci* (cfdata[37]) at acpi? (PV_ACPI [31]); GENERIC.MP's cpu* is cfdata[38]; M13 (puc): puc* at pci? (cfdata[38], dev/pci/puc.rs) and com* at puc? (cfdata[39], parents PV_PUC [38], locator port = -1, units from 4 as com0..com3 are the ISA lines; dev/puc/com_puc.rs); GENERIC.MP's cpu* is now cfdata[40], NCFDATA 40/41; M13 (em): em* at pci? (cfdata[40], PV_PCI [2], dev/pci/if_em.rs); GENERIC.MP's cpu* is now cfdata[41], NCFDATA 41/42; M13 (rasops): efifb0 at mainbus? (cfdata[41], FSTATE_NOTFOUND, PV_MAINBUS; arch/amd64/amd64/efifb.rs); GENERIC.MP's cpu* is cfdata[42], NCFDATA 42/43; wsdisplay0 at efifb? waits for wsdisplay"
 
 [[file]]
 c = "sys/arch/arm64/conf/GENERIC"
 status = "skipped"
-notes = "replaced-by-ioconf.rs: sys/arch/arm64/conf/ioconf.rs lists mainbus0 at root, ampintc* at fdt? early 1 and agtimer* at fdt? (the fdt attribute from files.arm64, mainbus its only parent until simplebus), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it); M10f: pseudo-device bio 1 (bioattach after wgattach in pdevinit, as GENERIC lists it; dev/bio.rs); M11a: cpu0 at mainbus? (cpu.c) and, with MULTIPROCESSOR, GENERIC.MP's cpu* at mainbus?; ; M12: simplebus* at fdt?, ampintcmsi* at fdt? early 1, pciecam* at fdt?, pci* at pciecam? and virtio* at pci? (cfdata[12..16]; cpu0 and GENERIC.MP's cpu* move to cfdata[17] and [18]); the fdt attribute's parents are mainbus0, ampintc* and simplebus* (PV_FDT [0, 1, 12]), vio*/vioblk* at virtio? take both virtio entries (PV_VIRTIO [3, 16]); ; M12 (xhci): xhci* at pci? (cfdata[18]), usb* at xhci? (19), uhub* at usb? (20), uhub* at uhub? (21, locators = -1, parents [20, 21]); GENERIC.MP's cpu* moves to cfdata[22]; M12 (azalia): azalia* at pci? (cfdata[17]) and audio* at azalia? (cfdata[18], PV_AZALIA [17]); cpu0 is cfdata[19], xhci/usb/uhub 20-23, GENERIC.MP's cpu* 24; M13: ahci* at pci? flags 0x0000 (cfdata[30]) and nvme* at pci? (cfdata[31]), both parents of scsibus* (PV_VIOBLK [5, 11, 24, 27, 30, 31]); GENERIC.MP's cpu* moves to cfdata[32]; M13 (em): em* at pci? (cfdata[32], PV_PCI [15], dev/pci/if_em.rs); GENERIC.MP's cpu* is now cfdata[33], NCFDATA 33/34"
+notes = "replaced-by-ioconf.rs: sys/arch/arm64/conf/ioconf.rs lists mainbus0 at root, ampintc* at fdt? early 1 and agtimer* at fdt? (the fdt attribute from files.arm64, mainbus its only parent until simplebus), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it); M10f: pseudo-device bio 1 (bioattach after wgattach in pdevinit, as GENERIC lists it; dev/bio.rs); M11a: cpu0 at mainbus? (cpu.c) and, with MULTIPROCESSOR, GENERIC.MP's cpu* at mainbus?; ; M12: simplebus* at fdt?, ampintcmsi* at fdt? early 1, pciecam* at fdt?, pci* at pciecam? and virtio* at pci? (cfdata[12..16]; cpu0 and GENERIC.MP's cpu* move to cfdata[17] and [18]); the fdt attribute's parents are mainbus0, ampintc* and simplebus* (PV_FDT [0, 1, 12]), vio*/vioblk* at virtio? take both virtio entries (PV_VIRTIO [3, 16]); ; M12 (xhci): xhci* at pci? (cfdata[18]), usb* at xhci? (19), uhub* at usb? (20), uhub* at uhub? (21, locators = -1, parents [20, 21]); GENERIC.MP's cpu* moves to cfdata[22]; M12 (azalia): azalia* at pci? (cfdata[17]) and audio* at azalia? (cfdata[18], PV_AZALIA [17]); cpu0 is cfdata[19], xhci/usb/uhub 20-23, GENERIC.MP's cpu* 24; M13: ahci* at pci? flags 0x0000 (cfdata[30]) and nvme* at pci? (cfdata[31]), both parents of scsibus* (PV_VIOBLK [5, 11, 24, 27, 30, 31]); GENERIC.MP's cpu* moves to cfdata[32]; M13 (em): em* at pci? (cfdata[32], PV_PCI [15], dev/pci/if_em.rs); GENERIC.MP's cpu* is now cfdata[33], NCFDATA 33/34; M13 (rasops): simplefb* at fdt? (cfdata[33], PV_FDT, early 0; dev/fdt/simplefb.rs); GENERIC.MP's cpu* is cfdata[34], NCFDATA 34/35; wsdisplay* at simplefb? waits for wsdisplay"
 
 [[file]]
 c = "sys/sys/endian.h"
@@ -5153,7 +5153,7 @@ reason = "project helper: the Rust GlobalAlloc over malloc(9)/free(9), feature a
 
 [[extra]]
 rust = "sys/kern/selftest.rs"
-reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access, selftest=uart for the console echo (M4; since M8 it opens the console's tty through cdevsw and reads a line through the line discipline) and selftest=clock for hz clock interrupts plus a timeout (M5); mbuf_chains after mbinit (M7b); bus_dma_check, called by each cpu_configure after bus_dma_init with the machine's tag (M7b); selftest=vio: vio_check brings vio0 up through ifioctl, sends a hand-built ARP request and waits for a frame through the rx interrupt (M7b); the kernel ping to 10.0.2.2 (M7b); buffer_cache (mapped anonymous buffers after bufinit) and pager_map (a three-page cluster through uvm_pagermapin) after cpu_startup (vfs stage 2); M11b: clockintr_percpu (MULTIPROCESSOR: every running CPU checks 20 more uptimes in clockintr_dispatch, none behind)"
+reason = "project helper: boot-time self-tests under feature qemu, one line per subsystem for xtask smoke; selftest=trap asks for the deliberate bad access, selftest=uart for the console echo (M4; since M8 it opens the console's tty through cdevsw and reads a line through the line discipline) and selftest=clock for hz clock interrupts plus a timeout (M5); mbuf_chains after mbinit (M7b); bus_dma_check, called by each cpu_configure after bus_dma_init with the machine's tag (M7b); selftest=vio: vio_check brings vio0 up through ifioctl, sends a hand-built ARP request and waits for a frame through the rx interrupt (M7b); the kernel ping to 10.0.2.2 (M7b); buffer_cache (mapped anonymous buffers after bufinit) and pager_map (a three-page cluster through uvm_pagermapin) after cpu_startup (vfs stage 2); M11b: clockintr_percpu (MULTIPROCESSOR: every running CPU checks 20 more uptimes in clockintr_dispatch, none behind); M13: selftest=fb (fb_attached records the first frame buffer's wsemuldisplaydev_attach_args where efifb/simplefb would config_found wsdisplay; fb_check, after the deferred mountroot hooks, draws EmiBSD M13 through alloc_screen/show_screen and the screen's emulops and prints the text box and its glyph pixel count for xtask's --screenshot-after)"
 
 [[extra]]
 rust = "sys/reftest.rs"
@@ -7885,7 +7885,213 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "7893d60a926204d276cc10437685b8d6ca245811"
 deps = ["sys/dev/wscons/wsksymvar.h", "sys/sys/ioccom.h"]
-notes = "M12 hid: ported so far: struct wscons_event, every WSCONS_EVENT_*, IS_*_EVENT as const fns, the keyboard ioctls WSKBDIO_* (0 to 21) with WSKBD_TYPE_*, WSKBD_BELL_*, WSKBD_KEYREPEAT_*, WSKBD_LED_*, WSKBD_TRANSLATED/RAW and their argument structures as AbiPod types (host test of the ioctl numbers, reference-backed test of the constants); not ported (M13): the mouse (WSMOUSEIO_*), display (WSDISPLAYIO_*) and mux (WSMUXIO_*) sections; license: BSD-4-clause (advertising clause, Demetriou for the NetBSD Project), kept whole"
+notes = "M12 hid: ported so far: struct wscons_event, every WSCONS_EVENT_*, IS_*_EVENT as const fns, the keyboard ioctls WSKBDIO_* (0 to 21) with WSKBD_TYPE_*, WSKBD_BELL_*, WSKBD_KEYREPEAT_*, WSKBD_LED_*, WSKBD_TRANSLATED/RAW and their argument structures as AbiPod types (host test of the ioctl numbers, reference-backed test of the constants); not ported (M13): the mouse (WSMOUSEIO_*), display (WSDISPLAYIO_*) and mux (WSMUXIO_*) sections; license: BSD-4-clause (advertising clause, Demetriou for the NetBSD Project), kept whole; M13 (rasops): the display section: WSDISPLAYIO_GTYPE and every WSDISPLAY_TYPE_*, struct wsdisplay_fbinfo/cmap/curpos/cursor/font/burner/addscreendata/delscreendata/param/gfx_mode/screentype/emultype as AbiPod types (user pointers usize; wsdisplay_font's cookie and data stay kernel pointers), WSDISPLAYIO_* 65 to 95 with their constants (VIDEO_*, CURSOR_DO*, MODE_*, FONTENC_*, FONTORDER_*, MAXFONTCOUNT/MAXFONTSZ, BURN_*, DELSCR_*, PARAM_*, DEPTH_*); missing: WSDISPLAYIO_GPCIID (struct pcisel, pciio.h), the mouse and mux sections"
+
+[[file]]
+c = "sys/dev/rasops/rasops1.c"
+rust = "sys/dev/rasops/rasops1.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a3cd22df1497d3c3e6f9c479211902c1a05d3400"
+deps = ["sys/dev/rasops/rasops.c", "sys/dev/rasops/rasops_bitops.h", "sys/dev/rasops/rasops_masks.c"]
+notes = "M13 (ssdfb's depth in arm64 GENERIC): rasops1_init, rasops1_putchar; rasops1_putchar8/16 (big-endian only) ported behind RASOPS_SMALL/BIG_ENDIAN consts; erasecols/copycols/do_cursor from rasops_bitops with PIXEL_SHIFT 0; a shift by 32 or more gives 0 as MBR does; glyph rows read stride bytes at a time; volatile pixel stores"
+
+[[file]]
+c = "sys/dev/rasops/rasops4.c"
+rust = "sys/dev/rasops/rasops4.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "df8e150317bed4666d87faf983b18577a141923e"
+deps = ["sys/dev/rasops/rasops.c", "sys/dev/rasops/rasops_bitops.h", "sys/dev/rasops/rasops_masks.c"]
+notes = "M13 (no amd64/arm64 driver uses 4 bits): rasops4_init (panics on widths other than 8/12/16, as the C), rasops4_putchar (the C's EAGAIN stub), makestamp, putchar8/12/16 as one putchar_stamp; erasecols/copycols/do_cursor from rasops_bitops with PIXEL_SHIFT 2; the C's #ifdef notyet generic putchar (never compiled, placeholder body) is not ported; stamp/stamp_attr/stamp_mutex are atomics; the glyph row is read stride bytes at a time (at most 4) where the C reads 4; RASOPS_SMALL/RASOPS_CLIPPING/NRASOPS_BSWAP behind false consts; volatile pixel stores"
+
+[[file]]
+c = "sys/dev/rasops/rasops8.c"
+rust = "sys/dev/rasops/rasops8.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "04b9cc6785b450d701c500d7bf8eac470f3bd1fe"
+deps = ["sys/dev/rasops/rasops.c"]
+notes = "M13: rasops8_init, the generic putchar, makestamp and putchar8/12/16 as one putchar_stamp (same pixels); upstream bug kept: putchar16 painting a space does not advance rp (only the first line is cleared, the underline lands two lines up); stamp/stamp_attr/stamp_mutex are atomics; the glyph row is read stride bytes at a time (at most 4) where the C reads 4; RASOPS_SMALL/RASOPS_CLIPPING/NRASOPS_BSWAP behind false consts; volatile pixel stores"
+
+[[file]]
+c = "sys/dev/rasops/rasops15.c"
+rust = "sys/dev/rasops/rasops15.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "eaabd197bbcbea3a9fa4611d8d589e934e19b778"
+deps = ["sys/dev/rasops/rasops.c"]
+notes = "M13 (depths 15 and 16): rasops15_init, the generic putchar, makestamp and putchar8/12/16 as one putchar_stamp (same pixels); the uc == (u_int)-1 space test kept; stamp/stamp_attr/stamp_mutex are atomics; the glyph row is read stride bytes at a time (at most 4) where the C reads 4; RASOPS_SMALL/RASOPS_CLIPPING/NRASOPS_BSWAP behind false consts; volatile pixel stores"
+
+[[file]]
+c = "sys/dev/rasops/rasops24.c"
+rust = "sys/dev/rasops/rasops24.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "de60323d9666e053f20b6faa19e87efa345f5107"
+deps = ["sys/dev/rasops/rasops.c"]
+notes = "M13: rasops24_init, the generic putchar, makestamp and putchar8/12/16 as one putchar_stamp with the width as a parameter (same pixels; STAMP_READ offsets are stamp indices); upstream quirk kept: the fast paths' underline is stamp[13] on every word; the uc == (u_int)-1 space test kept; stamp/stamp_attr/stamp_mutex are atomics; the glyph row is read stride bytes at a time (at most 4) where the C reads 4; RASOPS_SMALL/RASOPS_CLIPPING/NRASOPS_BSWAP behind false consts; volatile pixel stores"
+
+[[file]]
+c = "sys/dev/rasops/rasops_masks.c"
+rust = "sys/dev/rasops/rasops_masks.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d45616c0315c6b554690984bb40f06e3d2ec0fec"
+deps = ["sys/dev/rasops/rasops_masks.h"]
+notes = "M13: rasops_lmask/rmask/pmask computed at compile time already in the target's byte order (checked against every entry of the C tables), so rasops_masks_init has nothing to do; pmask(x, 32) keeps the C's zero (it reads one past the row)"
+
+[[file]]
+c = "sys/dev/rasops/rasops_masks.h"
+rust = "sys/dev/rasops/rasops_masks.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ba9991f8c012381c32411d31281f81e69e3c6d20"
+notes = "M13: MBL/MBR/MBE/GETBITS/PUTBITS as functions (MBE is reverse_bits on little endian), the table declarations (rasops_masks.c's, same module)"
+
+[[file]]
+c = "sys/dev/rasops/rasops_bitops.h"
+rust = "sys/dev/rasops/rasops_bitops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "50d77494d1d64b314cb758ed0d5d7574523708ae"
+deps = ["sys/dev/rasops/rasops_masks.c"]
+notes = "M13: the template as generic functions over const PIXEL_SHIFT (erasecols, do_cursor, copycols), instantiated by rasops1 (0) and rasops4 (2); GETBITS/PUTBITS from rasops_masks.rs; row pointers advance with wrapping arithmetic (DELTA leaves them one row past the cell); suspected, unverified: at 1 and 4 bits per pixel, do_cursor over a cell spanning three 32-bit words and the two-word PUTBITS path (rasops_masks.h) may draw wrong; no QEMU display runs these depths (smoke-fb is 32 bpp), so neither is exercised beyond the host tests"
+
+[[file]]
+c = "sys/dev/wscons/wsdisplayvar.h"
+rust = "sys/dev/wscons/wsdisplayvar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c671013f66a105334d300ccf9990016e40825115"
+deps = ["sys/dev/wscons/wsconsio.h"]
+notes = "M13: WS_DEFAULT_FG/BG (non-sparc64), WSDISPLAY_MAXSCREEN, struct wsdisplay_emulops (Option<unsafe fn> over the void * cookie; Result<(), Errno>, pack_attr returns the attribute, unpack_attr a tuple), WSCOL_*/WSATTR_*, struct wsscreen_descr (textops a raw pointer into the driver's rasops_info), WSSCREEN_*, struct wsdisplay_charcell, struct wsdisplay_accessops (ioctl Ok(true)/Ok(false)/errno as wskbdvar's, mmap None for -1, getchar Option), struct wsscreen_list, struct wsemuldisplaydev_attach_args, the locator indices with wsemuldisplaydevcf_*/wsdisplaydevcf_mux as functions, struct wscons_syncops, WSDISPLAY_NULLSCREEN, ws_get_param/ws_set_param (StaticCells here until wsdisplay.c), WSDISPLAY_SCROLL_*, WSDISPLAY_DEFBURN*; the wsdisplay.c prototypes (wsdisplay_cnattach, wsemuldisplaydevprint, wsemuldisplaydevsubmatch, ...) are the next M13 step's; license: BSD-4-clause (advertising clause, Demetriou for the NetBSD Project), kept whole"
+
+[[file]]
+c = "sys/dev/wsfont/wsfont.c"
+rust = "sys/dev/wsfont/wsfont.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "62758efda075a596934c910cbbb5d6edb8a3b6a5"
+deps = ["sys/dev/wsfont/wsfont.h", "sys/dev/wsfont/spleen8x16.h", "sys/dev/wscons/wsconsio.h"]
+notes = "M13: the whole file for the default font set: struct font, fontlist, builtin_fonts (spleen8x16 4, spleen12x24 6, spleen16x32 7, spleen32x64 8: the FONT_* defaults on amd64/arm64), reverse (computed), wsfont_revbit/revbyte, wsfont_enum (a closure), wsfont_rotate_cw/ccw/internal and wsfont_rotate (NRASOPS_ROTATION, built on both archs), wsfont_init, wsfont_find0, wsfont_find (None for -1), wsfont_add (EEXIST/ENOSPC for -1), wsfont_lock (ENOENT/EBUSY for -1; returns the lock count and the font), wsfont_unlock, the IBM 437 maps (level-2 chars an enum of slices) and wsfont_map_unichar (None for -1); splhigh around the list as in C; the FONT_* options are not offered (their fonts are todo)"
+
+[[file]]
+c = "sys/dev/wsfont/wsfont.h"
+rust = "sys/dev/wsfont/wsfont.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9c66149aa2d44a6079de18ab64d99561dc093444"
+notes = "M13: WSFONT_BUILTIN/WSFONT_STATIC and the prototypes (wsfont.c's, same module)"
+
+[[file]]
+c = "sys/dev/wsfont/gallant12x22.h"
+rust = "sys/dev/wsfont/gallant12x22.rs"
+status = "todo"
+notes = "M13: built only with option FONT_GALLANT12X22, which amd64 and arm64 GENERIC do not set (wsfont.c's defaults are Spleen 8x16, 12x24, 16x32, 32x64); m13/rasops/gen/fontgen.py in the scratchpad generated the others"
+
+[[file]]
+c = "sys/dev/wsfont/spleen5x8.h"
+rust = "sys/dev/wsfont/spleen5x8.rs"
+status = "todo"
+notes = "M13: built only with option FONT_SPLEEN5X8, which amd64 and arm64 GENERIC do not set (wsfont.c's defaults are Spleen 8x16, 12x24, 16x32, 32x64); m13/rasops/gen/fontgen.py in the scratchpad generated the others"
+
+[[file]]
+c = "sys/dev/wsfont/spleen6x12.h"
+rust = "sys/dev/wsfont/spleen6x12.rs"
+status = "todo"
+notes = "M13: built only with option FONT_SPLEEN6X12, which amd64 and arm64 GENERIC do not set (wsfont.c's defaults are Spleen 8x16, 12x24, 16x32, 32x64); m13/rasops/gen/fontgen.py in the scratchpad generated the others"
+
+[[file]]
+c = "sys/dev/wsfont/spleen8x16-ibm.h"
+rust = "sys/dev/wsfont/spleen8x16_ibm.rs"
+status = "todo"
+notes = "M13: built only with option FONT_SPLEEN8X16_IBM, which amd64 and arm64 GENERIC do not set (wsfont.c's defaults are Spleen 8x16, 12x24, 16x32, 32x64); m13/rasops/gen/fontgen.py in the scratchpad generated the others"
+
+[[file]]
+c = "sys/dev/wsfont/spleen8x16.h"
+rust = "sys/dev/wsfont/spleen8x16.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "69fb1ed5df5aafc12eaf46e9bf2cca98121cae3f"
+notes = "M13: the Spleen 8x16 font and its glyphs, generated from the header (one row per line, the C's bit drawings kept as comments); StaticCells (wsfont_lock may reverse a font in place); one of the fonts GENERIC builds on amd64 and arm64 (not SMALL_KERNEL)"
+
+[[file]]
+c = "sys/dev/wsfont/spleen12x24.h"
+rust = "sys/dev/wsfont/spleen12x24.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a5d82d6a8d9d5d8bb626408b6ea6abdd3e30beb0"
+notes = "M13: the Spleen 12x24 font and its glyphs, generated from the header (one row per line, the C's bit drawings kept as comments); StaticCells (wsfont_lock may reverse a font in place); one of the fonts GENERIC builds on amd64 and arm64 (not SMALL_KERNEL)"
+
+[[file]]
+c = "sys/dev/wsfont/spleen16x32.h"
+rust = "sys/dev/wsfont/spleen16x32.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0506f36a33a7248289e281ce12b562ebbc5d03ed"
+notes = "M13: the Spleen 16x32 font and its glyphs, generated from the header (one row per line, the C's bit drawings kept as comments); StaticCells (wsfont_lock may reverse a font in place); one of the fonts GENERIC builds on amd64 and arm64 (not SMALL_KERNEL)"
+
+[[file]]
+c = "sys/dev/wsfont/spleen32x64.h"
+rust = "sys/dev/wsfont/spleen32x64.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ddb4eed089c118944ba5957b9b8385030318e3bd"
+notes = "M13: the Spleen 32x64 font and its glyphs, generated from the header (one row per line, the C's bit drawings kept as comments); StaticCells (wsfont_lock may reverse a font in place); one of the fonts GENERIC builds on amd64 and arm64 (not SMALL_KERNEL)"
+
+[[file]]
+c = "sys/dev/rasops/rasops.c"
+rust = "sys/dev/rasops/rasops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9e2adfd85cac806df52edc8dab76e8077bdd9265"
+deps = ["sys/dev/rasops/rasops.h", "sys/dev/wsfont/wsfont.c", "sys/dev/wscons/wsdisplayvar.h", "sys/dev/wscons/wsconsio.h", "sys/kern/kern_task.c", "sys/kern/kern_malloc.c"]
+notes = "M13: the whole file: rasops_cmap, struct rasops_screen, rasops_init (font choice by width, RI_VCONS and RI_WRONLY op tables), rasops_reconfig, rasops_mapchar, rasops_pack_cattr/mattr, rasops_copyrows/copycols, rasops_cursor, rasops_init_devcmap, rasops_unpack_attr, rasops_eraserows/erasecols, rasops_do_cursor, the rotation routines (NRASOPS_ROTATION, built on both archs), slow_bcopy and the RI_BSWAP paths behind NRASOPS_BSWAP = false, rasops_alloc/free/show_screen, rasops_doswitch (systq task), rasops_getchar, the vcons and wronly ops, rasops_add/use/load/list_font, rasops_scrollback, rasops_claim/check_framebuffer. Emulops are unsafe fns over the void * cookie (Result<(), Errno> for int errors, pack_attr returns the attribute), with same-named RasopsInfo methods calling the ri_* hooks; RASOPS_CLIPPING and DEBUG checks behind false consts; unrolled 8-word loops are one loop; frame buffer stores volatile; rasops_init takes &'static (task_add); -1 returns are Err(EINVAL)"
+
+[[file]]
+c = "sys/dev/rasops/rasops.h"
+rust = "sys/dev/rasops/rasops.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "db167a8d729892ca1158f2a453771cd13683baf8"
+deps = ["sys/dev/wscons/wsdisplayvar.h"]
+notes = "M13: the RI_* flags, struct rasops_info (every field a Cell, zero-valid; ri_real_ops kept as NRASOPS_ROTATION is on), the prototypes (rasops.c's, same module)"
+
+[[file]]
+c = "sys/dev/rasops/rasops32.c"
+rust = "sys/dev/rasops/rasops32.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ec189be00b1232e0e25f7db1ee2c4416b74b82ce"
+deps = ["sys/dev/rasops/rasops.c"]
+notes = "M13: rasops32_init, rasops32_putchar; the double-pixel special cases for widths 6/8/12/16/32 are the per-pixel default loop for every width (same pixels), the glyph row read stride bytes at a time; volatile pixel stores"
+
+[[file]]
+c = "sys/arch/amd64/amd64/efifb.c"
+rust = "sys/arch/amd64/amd64/efifb.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6896826041a4caca03d9f9125932d110b7dd5d68"
+deps = ["sys/dev/rasops/rasops.c", "sys/dev/wscons/wsdisplayvar.h", "sys/arch/amd64/include/efifbvar.h", "sys/arch/amd64/amd64/mainbus.c"]
+notes = "M13: the whole file: the coreboot structures, struct efifb/efifb_softc, efifb_ca/efifb_cd, efifb_std_descr/efifb_descrs/efifb_screen_list, efifb_accessops, efifb_match, efifb_attach (malloc'd struct efifb, bus_space_map LINEAR|PREFETCHABLE, rasops_init RI_VCONS; the console path), efifb_rasops_init, efifb_ioctl, efifb_mmap (PMAP_WC), efifb_alloc_screen, efifb_cnattach, efifb_efiinfo_init, efifb_cnattach_common, efifb_cnremap (called by mainbus), efifb_is_console/efifb_is_primary, efifb_detach/efifb_reattach, efifb_cb_cnattach/efifb_cb_found/cb_checksum/cb_find_fb, efifb_stolen, efifb_early_map/efifb_early_cleanup; efifb0 at mainbus? in amd64 ioconf.rs (cfdata[40]). bios_efiinfo is machdep.rs's, from Limine's framebuffer response; efifb_early_map is the bootloader's direct map (pmap_set_pml4_early/pmap_clear_pml4_early not ported, nothing to borrow or undo); efifb_attach stops with a message when rasops_init fails (the C would use a NULL font); cb_find_fb stops at a zero-sized record. Visible seams for the wsdisplay step: unported!(\"wsdisplay_cnattach (efifb0 console)\"), unported!(\"wsdisplay_cnattach (efifb console)\") and unported!(\"wsdisplay* at efifb? (wsemuldisplaydevprint, wsemuldisplaydevsubmatch)\"); under feature qemu the attach arguments go to selftest::fb_attached. efifb_cnattach/efifb_cb_cnattach are wscons_machdep.c's to call (not ported)"
+
+[[file]]
+c = "sys/arch/amd64/include/efifbvar.h"
+rust = "sys/arch/amd64/include/efifbvar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a9bb004a15d8ab08cabfee9711409253e28e8934"
+notes = "M13: struct efifb_attach_args (mainbus's mba_eaa); the prototypes are efifb.rs's"
+
+[[file]]
+c = "sys/dev/fdt/simplefb.c"
+rust = "sys/dev/fdt/simplefb.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1b407c8d20d88efca15aa6a03043cc7bd6be62bf"
+deps = ["sys/dev/rasops/rasops.c", "sys/dev/wscons/wsdisplayvar.h", "sys/dev/ofw/fdt.c", "sys/arch/arm64/dev/mainbus.c"]
+notes = "M13: the whole file: simplefb_formats, simplefb_match (rasops_check_framebuffer), simplefb_attach (bus_space_map LINEAR|PREFETCHABLE, rasops_init with RI_VCONS, the console keeps its contents), simplefb_activate, simplefb_init, simplefb_wsioctl, simplefb_wsmmap (PMAP_NOCACHE, new in the machine Pmap contract), simplefb_alloc_screen, simplefb_burn_screen/simplefb_burn_hook, simplefb_init_cons (ported, not called: arm64 consinit picks the frame buffer console only with wsdisplay); simplefb* at fdt? in arm64 ioconf.rs (cfdata[32]). Visible seams for the wsdisplay step: unported!(\"wsdisplay_cnattach (simplefb console)\") twice and unported!(\"wsdisplay* at simplefb? (wsemuldisplaydevprint, wsemuldisplaydevsubmatch)\") where config_found_sm would attach the child; under feature qemu the attach arguments go to selftest::fb_attached. SUSPEND's DVACT_WAKEUP redraw is reported (no suspend/resume). Under Limine the node comes from the boot glue (sys/stand/fdtfb.rs adds /chosen/framebuffer as efiboot's efi_framebuffer does; QEMU virt's tree has none)"
 
 [[file]]
 c = "sys/dev/wscons/wskbd.c"

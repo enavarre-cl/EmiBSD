@@ -15,9 +15,15 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use libkern::StaticCell;
+
 use crate::conf::param::HZ;
 use crate::dev::cons::cn_tab;
 use crate::dev::pv::if_vio::{VioCtrlState, vio_softc};
+use crate::dev::rasops::rasops::{RASOPS_CMAP, RasopsInfo};
+use crate::dev::wscons::wsdisplayvar::{
+    WSATTR_HILIT, WSATTR_WSCOLORS, WSCOL_BLUE, WSCOL_WHITE, WsemuldisplaydevAttachArgs,
+};
 use crate::kern::init_main::PROC0;
 use crate::kern::kern_clock::ticks;
 use crate::kern::kern_fork::NTHREADS;
@@ -65,6 +71,7 @@ use crate::net::if_::{
 };
 use crate::net::if_ethersubr::ETHERBROADCASTADDR;
 use crate::netinet::if_ether::ETHER_ADDR_LEN;
+use crate::sys::device::Device;
 use crate::sys::errno::Errno;
 use crate::sys::fcntl::{FNONBLOCK, FREAD, FWRITE};
 use crate::sys::malloc::{M_NOWAIT, M_TEMP, M_ZERO};
@@ -114,6 +121,30 @@ static TASKQ_REQUESTED: AtomicBool = AtomicBool::new(false);
 static VIO_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// `selftest=mpstress` was on the command line.
 static MPSTRESS_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// `selftest=fb` asks for [`fb_check`].
+static FB_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// The first frame buffer that attached (its device name and the attach arguments it would
+/// hand `wsdisplay`), for [`fb_check`].
+struct FbAttached {
+    /// The device's name (`efifb0`, `simplefb0`).
+    xname: [u8; 16],
+    /// What `config_found` would hand the `wsdisplay` child.
+    aa: Option<WsemuldisplaydevAttachArgs>,
+}
+
+// SAFETY: written once while cold by the frame buffer's attach, read by `fb_check` after
+// autoconfiguration; the pointers it holds are the driver's, which live for good.
+unsafe impl Send for FbAttached {}
+
+/// What [`fb_attached`] recorded.
+static FB_ATTACHED: StaticCell<FbAttached> = StaticCell::new(FbAttached {
+    xname: [0; 16],
+    aa: None,
+});
+
+/// The text [`fb_check`] draws.
+const FB_TEXT: &[u8] = b"EmiBSD M13";
 
 /// Reads the self-test requests off the kernel command line: `selftest=trap` asks for the
 /// fatal [`trap_bad_access`], which a plain boot must not run.
@@ -125,6 +156,7 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     const TASKQ: &[u8] = b"selftest=taskq";
     const VIO: &[u8] = b"selftest=vio";
     const MPSTRESS: &[u8] = b"selftest=mpstress";
+    const FB: &[u8] = b"selftest=fb";
     if cmdline.windows(TRAP.len()).any(|w| w == TRAP) {
         TRAP_REQUESTED.store(true, Ordering::Relaxed);
     }
@@ -146,6 +178,14 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     if cmdline.windows(MPSTRESS.len()).any(|w| w == MPSTRESS) {
         MPSTRESS_REQUESTED.store(true, Ordering::Relaxed);
     }
+    if cmdline.windows(FB.len()).any(|w| w == FB) {
+        FB_REQUESTED.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Whether the command line asked for [`fb_check`].
+pub fn fb_requested() -> bool {
+    FB_REQUESTED.load(Ordering::Relaxed)
 }
 
 /// Whether the command line asked for [`mpstress`].
@@ -2491,4 +2531,137 @@ pub fn mpstress() -> bool {
     }
 
     pool_passed && pmr_passed && !uvm_failed
+}
+
+/// Records the attach arguments of a frame buffer (efifb(4), simplefb) where it would
+/// `config_found` its `wsdisplay` child, which is not ported yet; the first one wins.
+pub fn fb_attached(dev: &Device, aa: &WsemuldisplaydevAttachArgs) {
+    // SAFETY: autoconfiguration runs on one CPU while cold; `fb_check` reads later.
+    let fb = unsafe { FB_ATTACHED.get_mut() };
+    if fb.aa.is_some() {
+        return;
+    }
+    let name = dev.xname().as_bytes();
+    let n = name.len().min(fb.xname.len() - 1);
+    fb.xname[..n].copy_from_slice(&name[..n]);
+    fb.aa = Some(*aa);
+}
+
+/// `selftest=fb`: draws [`FB_TEXT`] on the frame buffer that attached, as wsdisplay would:
+/// a screen from `alloc_screen`, made visible with `show_screen`, then the screen type's
+/// emulops (`mapchar`, `pack_attr`, `putchar`) on it, in bright white on blue at row 1,
+/// column 2. It prints where the text is in pixels and how many pixels are the foreground
+/// colour (the glyphs' set bits), so that `xtask` can check a screenshot
+/// (`--screenshot-after`, tools/xtask/src/hwopts.rs). The access cookie is the driver's
+/// `rasops_info` (efifb and simplefb both pass it), read for the grid's origin.
+pub fn fb_check() {
+    // SAFETY: written while cold by `fb_attached`, which is done.
+    let fb = unsafe { FB_ATTACHED.get() };
+    let Some(aa) = fb.aa else {
+        kprintf!("selftest: fb: no frame buffer attached\n");
+        return;
+    };
+    let xname = Str(&fb.xname);
+    let cookie = aa.accesscookie;
+    // SAFETY: the drivers' screen lists are statics or softc members that live for good.
+    let list = unsafe { &*aa.scrdata };
+    // SAFETY: as above.
+    let Some(&descr) = (unsafe { list.screens() }).first() else {
+        kprintf!("selftest: fb: {}: no screen type\n", xname);
+        return;
+    };
+    // SAFETY: as above.
+    let descr = unsafe { &*descr };
+    // SAFETY: `textops` is the driver's rasops_info's operation table.
+    let ops = unsafe { *descr.textops };
+    // SAFETY: efifb and simplefb pass their rasops_info as the access cookie.
+    let ri = unsafe { &*cookie.cast::<RasopsInfo>() };
+
+    let (Some(alloc_screen), Some(show_screen)) =
+        (aa.accessops.alloc_screen, aa.accessops.show_screen)
+    else {
+        kprintf!("selftest: fb: {}: no alloc_screen/show_screen\n", xname);
+        return;
+    };
+    let (Some(mapchar), Some(pack_attr), Some(putchar)) = (ops.mapchar, ops.pack_attr, ops.putchar)
+    else {
+        kprintf!("selftest: fb: {}: incomplete emulops\n", xname);
+        return;
+    };
+
+    let mut scr = ptr::null_mut();
+    let (mut curx, mut cury, mut defattr) = (0, 0, 0);
+    // SAFETY: the access cookie and a screen type of the driver's list, as wsdisplay pairs
+    // them; the screen is then the emulops' cookie.
+    let r = unsafe {
+        alloc_screen(cookie, descr, &mut scr, &mut curx, &mut cury, &mut defattr).and_then(|()| {
+            show_screen(cookie, scr, 0, None, ptr::null_mut())?;
+            pack_attr(scr, WSCOL_WHITE, WSCOL_BLUE, WSATTR_WSCOLORS | WSATTR_HILIT)
+        })
+    };
+    let attr = match r {
+        Ok(attr) => attr,
+        Err(e) => {
+            kprintf!("selftest: fb: {}: screen setup failed: {:?}\n", xname, e);
+            return;
+        }
+    };
+
+    let (row, col) = (1, 2);
+    let font = ri.font();
+    let (fw, fh) = (font.fontwidth as usize, font.fontheight as usize);
+    let stride = font.stride as usize;
+    let mut ink = 0u32;
+    for (i, &c) in FB_TEXT.iter().enumerate() {
+        let mut g = 0;
+        // SAFETY: the screen made above, with the emulops it was made for.
+        let drawn = unsafe {
+            let _ = mapchar(scr, i32::from(c), &mut g);
+            putchar(scr, row, col + i as i32, g, attr)
+        };
+        if let Err(e) = drawn {
+            kprintf!("selftest: fb: {}: putchar failed: {:?}\n", xname, e);
+            return;
+        }
+        if c != b' ' {
+            for line in ri
+                .glyph(g - font.firstchar as u32)
+                .chunks_exact(stride)
+                .take(fh)
+            {
+                for x in 0..fw {
+                    if line[x / 8] & (0x80 >> (x % 8)) != 0 {
+                        ink += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let fg = &RASOPS_CMAP[15 * 3..16 * 3];
+    let bg = &RASOPS_CMAP[WSCOL_BLUE as usize * 3..WSCOL_BLUE as usize * 3 + 3];
+    kprintf!(
+        "selftest: fb text at x={} y={} w={} h={} ink={} fg={:02x}{:02x}{:02x} bg={:02x}{:02x}{:02x}\n",
+        ri.ri_xorigin.get() as usize + col as usize * fw,
+        ri.ri_yorigin.get() as usize + row as usize * fh,
+        FB_TEXT.len() * fw,
+        fh,
+        ink,
+        fg[0],
+        fg[1],
+        fg[2],
+        bg[0],
+        bg[1],
+        bg[2]
+    );
+    kprintf!(
+        "selftest: fb drew '{}' on {} ({}x{}, {} bpp, {}x{} font)\n",
+        Str(FB_TEXT),
+        xname,
+        ri.ri_width.get(),
+        ri.ri_height.get(),
+        ri.ri_depth.get(),
+        fw,
+        fh
+    );
 }

@@ -51,6 +51,19 @@
 //!   kernel's network self-test configures as it does vio0) and no other device moves. On
 //!   arm64 it is a PCI device on `virt`'s PCIe bus, where vio0 is on virtio-mmio. Not with
 //!   `--vio-mq` (that is vio0's).
+//! - `--fb` (`qemu`, `smoke`, M13): a display for the firmware's GOP. amd64's `q35` has its
+//!   standard VGA (`-display none` only hides the window; OVMF's QemuVideoDxe drives it), so
+//!   nothing is added there; arm64's `virt` has no display, so `-device ramfb` is added
+//!   (ArmVirtQemu's QemuRamfbDxe gives a linear GOP frame buffer in guest RAM; a
+//!   `virtio-gpu` GOP is blit-only, which Limine cannot use). `ramfb` is not a PCI device,
+//!   so nothing on the buses moves.
+//! - `--screenshot-after LINE` (`smoke`, M13, implies `--fb`): QEMU gets a human monitor on a
+//!   Unix socket in the run directory (`monitor.sock`, instead of `-monitor none`); when a
+//!   serial line contains LINE, `screendump` writes `screen.ppm` there, and once the serial
+//!   expectations passed ([`after_smoke`]) the picture is checked against that line, which
+//!   must read `x=X y=Y w=W h=H ink=N fg=RRGGBB bg=RRGGBB` (the kernel's `selftest=fb`,
+//!   `kern/selftest.rs`): inside the box every pixel is `fg` or `bg`, exactly `N` are `fg`
+//!   (the set bits of the glyphs drawn), and the box lies inside the picture.
 //! - `{host-ms}` in a `smoke` `--send` text (M13, `smoke-clock`): replaced, as the text is
 //!   sent, by the host's wall clock in milliseconds since the Epoch ([`expand_send`]), so a
 //!   guest script can set its own clock readings beside the host's and compare the rates.
@@ -71,9 +84,12 @@
 //!   `setroot` mounts the root from the disk whose label has it.
 
 use std::fs;
+use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use crate::Result;
 use crate::boot::{self, Arch};
@@ -180,6 +196,15 @@ static PCI_SERIAL_EXPECT: OnceLock<Vec<String>> = OnceLock::new();
 /// `--reboot`: this run's VMs restart on a guest reset (set once by `main`).
 static REBOOT: OnceLock<()> = OnceLock::new();
 
+/// `--fb`: a display device for the firmware's GOP.
+static FB: OnceLock<()> = OnceLock::new();
+
+/// `--screenshot-after LINE` and the run directory the socket and the picture go in.
+static SCREENSHOT: OnceLock<(String, PathBuf)> = OnceLock::new();
+
+/// The serial line the screenshot was taken at, once it was.
+static SHOT_LINE: Mutex<Option<String>> = Mutex::new(None);
+
 /// `--vio-mq`: vio0's virtio-net offers multiqueue (`mq=on`, set once by `main`).
 static VIO_MQ: OnceLock<()> = OnceLock::new();
 
@@ -206,6 +231,13 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     }
     if args.contains(&"--vio-mq") {
         let _ = VIO_MQ.set(());
+    }
+    if args.contains(&"--fb") {
+        let _ = FB.set(());
+    }
+    if let Some(line) = opt_path(args, "--screenshot-after")? {
+        let _ = FB.set(());
+        let _ = SCREENSHOT.set((line.to_string(), boot::run_dir(root)));
     }
     if let Some(w) = args.windows(2).find(|w| w[0] == "--nvme") {
         let _ = NVME.set(boot::run_dir(root).join(w[1]));
@@ -542,6 +574,9 @@ fn lsi_fresh(image: &Path) -> Result<()> {
 /// Adds the devices that go last on the command line to `cmd` (`--scsi-cd`, then `--lsi`,
 /// see the module docs).
 pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) -> Result<()> {
+    if FB.get().is_some() && arch == Arch::Arm64 {
+        cmd.args(["-device", "ramfb"]);
+    }
     if let Some(iso) = SCSI_CD.get() {
         cmd.args(scsi_cd_args(root, arch, iso));
     }
@@ -572,9 +607,216 @@ fn pci_serial_args(file: &Path) -> Vec<String> {
     ]
 }
 
+/// QEMU's `-monitor` argument: a socket in the run directory with `--screenshot-after`,
+/// none otherwise.
+pub(crate) fn monitor_arg() -> String {
+    match SCREENSHOT.get() {
+        Some((_, dir)) => {
+            let sock = dir.join("monitor.sock");
+            let _ = fs::remove_file(&sock);
+            format!("unix:{},server=on,wait=off", sock.display())
+        }
+        None => "none".into(),
+    }
+}
+
+/// Whether a screenshot is still to be taken.
+pub(crate) fn screenshot_pending() -> bool {
+    SCREENSHOT.get().is_some() && SHOT_LINE.lock().map(|s| s.is_none()).unwrap_or(false)
+}
+
+/// Takes the screenshot once `serial` has the `--screenshot-after` line: QEMU's
+/// `screendump` into `screen.ppm` in the run directory, waited for.
+pub(crate) fn poll_screenshot(serial: &str) -> Result<()> {
+    let Some((after, dir)) = SCREENSHOT.get() else {
+        return Ok(());
+    };
+    if !screenshot_pending() {
+        return Ok(());
+    }
+    let Some(line) = serial.lines().find(|l| l.contains(after.as_str())) else {
+        return Ok(());
+    };
+    let ppm = dir.join("screen.ppm");
+    let _ = fs::remove_file(&ppm);
+    let sock = dir.join("monitor.sock");
+    let mut mon = UnixStream::connect(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
+    mon.set_read_timeout(Some(Duration::from_secs(10)))?;
+    // The greeting ends with the prompt; the command's reply with the next one.
+    read_prompt(&mut mon)?;
+    writeln!(mon, "screendump {}", ppm.display())?;
+    read_prompt(&mut mon)?;
+    let started = Instant::now();
+    while !ppm_complete(&ppm) {
+        if started.elapsed() > Duration::from_secs(10) {
+            return Err(format!("{}: screendump wrote no picture", ppm.display()).into());
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    println!("xtask: screendump {} (saw {after:?})", ppm.display());
+    if let Ok(mut s) = SHOT_LINE.lock() {
+        *s = Some(line.to_string());
+    }
+    Ok(())
+}
+
+/// Reads the monitor's output up to its `(qemu) ` prompt.
+fn read_prompt(mon: &mut UnixStream) -> Result<()> {
+    let mut got = Vec::new();
+    let mut buf = [0u8; 512];
+    while !got.ends_with(b"(qemu) ") {
+        let n = mon
+            .read(&mut buf)
+            .map_err(|e| format!("qemu monitor: {e}"))?;
+        if n == 0 {
+            return Err("qemu monitor: closed".into());
+        }
+        got.extend_from_slice(&buf[..n]);
+    }
+    Ok(())
+}
+
+/// Whether `path` is a whole binary PPM (its header says how big it is).
+fn ppm_complete(path: &Path) -> bool {
+    fs::read(path)
+        .ok()
+        .and_then(|b| {
+            parse_ppm(&b)
+                .ok()
+                .map(|p| p.rgb.len() == p.width * p.height * 3)
+        })
+        .unwrap_or(false)
+}
+
+/// A decoded binary (`P6`) PPM, 8 bits per channel.
+struct Ppm<'a> {
+    width: usize,
+    height: usize,
+    rgb: &'a [u8],
+}
+
+/// Decodes a `P6` PPM with a maximum value of 255, as QEMU's `screendump` writes it.
+fn parse_ppm(b: &[u8]) -> Result<Ppm<'_>> {
+    let mut fields = Vec::new();
+    let mut i = 0;
+    while fields.len() < 4 {
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if b.get(i) == Some(&b'#') {
+            while i < b.len() && b[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        let start = i;
+        while i < b.len() && !b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if start == i {
+            return Err("ppm: short header".into());
+        }
+        fields.push(String::from_utf8_lossy(&b[start..i]).into_owned());
+    }
+    i += 1; // the one whitespace byte before the pixels
+    if fields[0] != "P6" || fields[3] != "255" {
+        return Err(format!(
+            "ppm: {} with maximum {}, expected P6 and 255",
+            fields[0], fields[3]
+        )
+        .into());
+    }
+    let num = |s: &str| s.parse::<usize>().map_err(|e| format!("ppm: {s}: {e}"));
+    let (width, height) = (num(&fields[1])?, num(&fields[2])?);
+    let rgb = b.get(i..).unwrap_or(&[]);
+    Ok(Ppm {
+        width,
+        height,
+        rgb: &rgb[..rgb.len().min(width * height * 3)],
+    })
+}
+
+/// The `key=value` numbers of the kernel's `selftest: fb text at` line.
+fn fb_box(line: &str) -> Result<[usize; 5]> {
+    let get = |key: &str, radix: u32| -> Result<usize> {
+        let v = line
+            .split_whitespace()
+            .find_map(|w| w.strip_prefix(key).and_then(|w| w.strip_prefix('=')))
+            .ok_or_else(|| format!("{line:?}: no {key}="))?;
+        usize::from_str_radix(v, radix).map_err(|e| format!("{line:?}: {key}={v}: {e}").into())
+    };
+    Ok([
+        get("x", 10)?,
+        get("y", 10)?,
+        get("w", 10)?,
+        get("h", 10)?,
+        get("ink", 10)?,
+    ])
+}
+
+/// Checks a screenshot against the kernel's line (see the module documentation).
+fn check_screenshot(ppm: &Ppm<'_>, line: &str) -> Result<usize> {
+    let [x, y, w, h, ink] = fb_box(line)?;
+    let colour = |key: &str| -> Result<[u8; 3]> {
+        let v = line
+            .split_whitespace()
+            .find_map(|t| t.strip_prefix(key).and_then(|t| t.strip_prefix('=')))
+            .ok_or_else(|| format!("{line:?}: no {key}="))?;
+        let n = u32::from_str_radix(v, 16).map_err(|e| format!("{line:?}: {key}={v}: {e}"))?;
+        Ok([(n >> 16) as u8, (n >> 8) as u8, n as u8])
+    };
+    let (fg, bg) = (colour("fg")?, colour("bg")?);
+    if w == 0 || h == 0 || x + w > ppm.width || y + h > ppm.height {
+        return Err(format!(
+            "the text box {w}x{h} at {x},{y} is not inside the {}x{} screen",
+            ppm.width, ppm.height
+        )
+        .into());
+    }
+    let mut lit = 0;
+    for row in y..y + h {
+        for col in x..x + w {
+            let o = (row * ppm.width + col) * 3;
+            let px = [ppm.rgb[o], ppm.rgb[o + 1], ppm.rgb[o + 2]];
+            if px == fg {
+                lit += 1;
+            } else if px != bg {
+                return Err(format!(
+                    "pixel {col},{row} is {:02x}{:02x}{:02x}, neither the text's nor its background's",
+                    px[0], px[1], px[2]
+                )
+                .into());
+            }
+        }
+    }
+    if lit != ink {
+        return Err(format!("{lit} text pixels in the box, the glyphs have {ink}").into());
+    }
+    Ok(lit)
+}
+
 /// What a run must leave behind once its serial expectations passed: with
-/// `--expect-pci-serial`, each text in the file the card's UART wrote.
+/// `--expect-pci-serial`, each text in the file the card's UART wrote; with
+/// `--screenshot-after`, a screenshot that shows the kernel's text.
 pub(crate) fn after_smoke() -> Result<()> {
+    if let Some((after, dir)) = SCREENSHOT.get() {
+        let line = SHOT_LINE
+            .lock()
+            .ok()
+            .and_then(|s| s.clone())
+            .ok_or_else(|| format!("no screenshot: the serial line {after:?} never came"))?;
+        let ppm_path = dir.join("screen.ppm");
+        let bytes = fs::read(&ppm_path).map_err(|e| format!("{}: {e}", ppm_path.display()))?;
+        let ppm = parse_ppm(&bytes)?;
+        let lit =
+            check_screenshot(&ppm, &line).map_err(|e| format!("{}: {e}", ppm_path.display()))?;
+        println!(
+            "xtask: {}: {}x{} screen, the text box has its {lit} glyph pixels and nothing else",
+            ppm_path.display(),
+            ppm.width,
+            ppm.height
+        );
+    }
     let (Some(file), Some(expect)) = (PCI_SERIAL.get(), PCI_SERIAL_EXPECT.get()) else {
         return Ok(());
     };
@@ -596,6 +838,27 @@ pub(crate) fn after_smoke() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screenshot_check() {
+        // A 4x2 screen: the box is the first two pixels of the second line, one of them lit.
+        let mut b = b"P6\n# QEMU\n4 2\n255\n".to_vec();
+        let (fg, bg, other) = ([255, 255, 255], [0, 0, 127], [9, 9, 9]);
+        for px in [other, other, other, other, fg, bg, other, other] {
+            b.extend_from_slice(&px);
+        }
+        let ppm = parse_ppm(&b).expect("parses");
+        assert_eq!((ppm.width, ppm.height, ppm.rgb.len()), (4, 2, 24));
+        let line = "selftest: fb text at x=0 y=1 w=2 h=1 ink=1 fg=ffffff bg=00007f";
+        assert_eq!(check_screenshot(&ppm, line).expect("matches"), 1);
+        let wrong_ink = line.replace("ink=1", "ink=2");
+        assert!(check_screenshot(&ppm, &wrong_ink).is_err());
+        let stray = line.replace("w=2", "w=3");
+        assert!(check_screenshot(&ppm, &stray).is_err());
+        let outside = line.replace("x=0", "x=3");
+        assert!(check_screenshot(&ppm, &outside).is_err());
+        assert!(parse_ppm(b"P5\n1 1\n255\n\0").is_err());
+    }
     use crate::e2fs;
 
     #[test]

@@ -12,6 +12,8 @@
 //! `Machine::getbootinfo` (boot(8)'s `bootarg` list) and calls [`start_kernel`] too.
 
 mod bootarg;
+#[cfg(target_arch = "aarch64")]
+mod fdtfb;
 mod limine;
 
 use core::ptr::NonNull;
@@ -23,16 +25,16 @@ use bsd::kprintf;
 #[cfg(feature = "multiprocessor")]
 use bsd::machine::BootCpu;
 use bsd::machine::{
-    BootInfo, BootModule, BootMp, Cpu, EfiMemmap, Exit, ExitStatus, MAX_MODULES, Machine,
-    MachineInfo, MemKind, MemMap, MemRegion,
+    BootFramebuffer, BootInfo, BootModule, BootMp, Cpu, EfiMemmap, Exit, ExitStatus, MAX_MODULES,
+    Machine, MachineInfo, MemKind, MemMap, MemRegion,
 };
 use bsd::sys::types::{Paddr, Psize, Vaddr};
 
 use limine::{
     BaseRevision, BootloaderInfoResponse, DtbResponse, EfiMemmapResponse, EfiSystemTableResponse,
-    EntryPointRequest, ExecutableAddressResponse, ExecutableCmdlineResponse, HhdmResponse,
-    MemmapResponse, ModuleResponse, Request, RequestsEndMarker, RequestsStartMarker, RsdpResponse,
-    StackSizeRequest, id, memmap_type,
+    EntryPointRequest, ExecutableAddressResponse, ExecutableCmdlineResponse, FramebufferResponse,
+    HhdmResponse, MemmapResponse, ModuleResponse, Request, RequestsEndMarker, RequestsStartMarker,
+    RsdpResponse, StackSizeRequest, id, memmap_type,
 };
 
 /// Boot stack for the boot CPU: the protocol's minimum, more than OpenBSD's `USPACE`.
@@ -105,6 +107,11 @@ static DTB: Request<DtbResponse> = Request::new(id::DTB);
 #[used]
 #[unsafe(link_section = ".requests")]
 static EFI_SYSTEM_TABLE: Request<EfiSystemTableResponse> = Request::new(id::EFI_SYSTEM_TABLE);
+
+/// The frame buffer the firmware's GOP set up (M13: efifb(4), simplefb).
+#[used]
+#[unsafe(link_section = ".requests")]
+static FRAMEBUFFER: Request<FramebufferResponse> = Request::new(id::FRAMEBUFFER);
 
 #[used]
 #[unsafe(link_section = ".requests")]
@@ -190,6 +197,16 @@ unsafe fn start_kernel(boot: BootInfo, banner: fn(&BootInfo)) -> ! {
     }
     if !boot.cmdline.is_empty() {
         kprintf!("bootargs: {}\n", Str(boot.cmdline.to_bytes()));
+    }
+    if let Some(fb) = boot.framebuffer {
+        kprintf!(
+            "bsd: framebuffer {}x{}, {} bpp, {} bytes per line at {:#x}\n",
+            fb.width,
+            fb.height,
+            fb.bpp,
+            fb.pitch,
+            fb.paddr.as_usize()
+        );
     }
     if let Some(mp) = boot.mp {
         kprintf!(
@@ -279,6 +296,16 @@ fn gather() -> Result<BootInfo, BootError> {
         }
     }
 
+    let framebuffer = boot_framebuffer(hhdm.offset as usize);
+    let dtb = DTB
+        .response()
+        .and_then(|d| NonNull::new(d.dtb_ptr.cast_mut().cast::<u8>()));
+    #[cfg(target_arch = "aarch64")]
+    let dtb = match (dtb, framebuffer) {
+        (Some(dtb), Some(fb)) => Some(chosen_framebuffer(dtb, &fb).unwrap_or(dtb)),
+        _ => dtb,
+    };
+
     Ok(BootInfo {
         bootloader_name,
         bootloader_version,
@@ -287,9 +314,7 @@ fn gather() -> Result<BootInfo, BootError> {
         kernel_phys: Paddr::new(addr.physical_base as usize),
         kernel_virt: Vaddr::new(addr.virtual_base as usize),
         rsdp: RSDP.response().map(|r| Vaddr::new(r.address as usize)),
-        dtb: DTB
-            .response()
-            .and_then(|d| NonNull::new(d.dtb_ptr.cast_mut().cast::<u8>())),
+        dtb,
         memmap,
         efi_system_table: EFI_SYSTEM_TABLE.response().and_then(|r| {
             // A higher-half address for base revision 6 (a physical one for 3 and 4).
@@ -303,11 +328,68 @@ fn gather() -> Result<BootInfo, BootError> {
             desc_size: r.desc_size as u32,
             desc_ver: r.desc_version as u32,
         }),
+        framebuffer,
         modules,
         mp: boot_mp(),
         howto: 0,
         duid: None,
     })
+}
+
+/// The first RGB frame buffer of the framebuffer response, its address made physical.
+fn boot_framebuffer(hhdm_offset: usize) -> Option<BootFramebuffer> {
+    let fb = FRAMEBUFFER
+        .response()?
+        .framebuffers()
+        .find(|f| f.memory_model == limine::FRAMEBUFFER_RGB)?;
+    // A higher-half address for base revision 6.
+    let va = fb.address as usize;
+    let pa = if va >= hhdm_offset {
+        va - hhdm_offset
+    } else {
+        va
+    };
+    Some(BootFramebuffer {
+        paddr: Paddr::new(pa),
+        width: fb.width as u32,
+        height: fb.height as u32,
+        pitch: fb.pitch as u32,
+        bpp: fb.bpp,
+        red_size: fb.red_mask_size,
+        red_shift: fb.red_mask_shift,
+        green_size: fb.green_mask_size,
+        green_shift: fb.green_mask_shift,
+        blue_size: fb.blue_mask_size,
+        blue_shift: fb.blue_mask_shift,
+    })
+}
+
+/// The copy of the device tree with efiboot's `/chosen/framebuffer` node (`fdtfb.rs`).
+#[cfg(target_arch = "aarch64")]
+static FDT_COPY: libkern::StaticCell<[u8; FDT_COPY_SIZE]> =
+    libkern::StaticCell::new([0; FDT_COPY_SIZE]);
+
+/// Room for the device tree copy: QEMU's `virt` tree is about 8 KiB of structure and strings.
+#[cfg(target_arch = "aarch64")]
+const FDT_COPY_SIZE: usize = 256 * 1024;
+
+/// arm64: what efiboot's `efi_framebuffer()` does, a `simple-framebuffer` node for the GOP
+/// frame buffer in `/chosen`, in a copy of the tree (`fdtfb.rs`); `None` keeps the
+/// bootloader's tree.
+#[cfg(target_arch = "aarch64")]
+fn chosen_framebuffer(dtb: NonNull<u8>, fb: &BootFramebuffer) -> Option<NonNull<u8>> {
+    // SAFETY: the bootloader's tree starts with its 40-byte header (`fdt_check_head` reads
+    // the same bytes later); `totalsize` is the second big-endian word.
+    let total = unsafe {
+        let h = core::slice::from_raw_parts(dtb.as_ptr(), 8);
+        u32::from_be_bytes([h[4], h[5], h[6], h[7]]) as usize
+    };
+    // SAFETY: the tree is `totalsize` bytes of bootloader memory that stays untouched.
+    let src = unsafe { core::slice::from_raw_parts(dtb.as_ptr(), total) };
+    // SAFETY: `_start` runs once, on the boot CPU, before anything reads the copy.
+    let out = unsafe { FDT_COPY.get_mut() };
+    fdtfb::add_framebuffer(src, fb, out)?;
+    NonNull::new(out.as_mut_ptr())
 }
 
 /// The processors from the MP response, `None` without one (or without `MULTIPROCESSOR`).

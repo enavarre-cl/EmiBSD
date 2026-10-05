@@ -19,6 +19,7 @@ pub mod cpu;
 pub mod db_interface;
 pub mod db_trace;
 pub mod disksubr;
+pub mod efifb;
 pub mod fpu;
 #[cfg(feature = "multiprocessor")]
 pub mod gdt;

@@ -566,7 +566,9 @@ pub(crate) fn qemu_command(
     fs::copy(&vars_src, &vars).map_err(|e| format!("{}: {e}", vars.display()))?;
 
     let mut cmd = Command::new(arch.qemu());
-    cmd.args(["-m", "512M", "-display", "none", "-monitor", "none"]);
+    // M13 (hwopts.rs): `--screenshot-after` puts the monitor on a socket.
+    cmd.args(["-m", "512M", "-display", "none", "-monitor"]);
+    cmd.arg(crate::hwopts::monitor_arg());
     // M13 (hwopts.rs): `--reboot` lets a guest reset restart the machine.
     if !crate::hwopts::reboot() {
         cmd.arg("-no-reboot");
@@ -849,7 +851,14 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
                 next_send += 1;
             }
         }
-        if until_seen && next_send == sends.len() {
+        if crate::hwopts::screenshot_pending() {
+            let text = transcript
+                .lock()
+                .map(|t| String::from_utf8_lossy(&t).into_owned())
+                .unwrap_or_default();
+            crate::hwopts::poll_screenshot(&text)?;
+        }
+        if until_seen && next_send == sends.len() && !crate::hwopts::screenshot_pending() {
             let all = transcript
                 .lock()
                 .map(|t| {

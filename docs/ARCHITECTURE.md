@@ -1670,6 +1670,27 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   the `openbsd,sr-bootuuid` and `openbsd,sr-bootkey` properties. Here they stay zero
   (`replaced-by-limine`; comments mark both `machdep.rs` sites), so no crypto volume is
   unlocked at boot. It is unlocked afterwards with `bioctl -c C -p <passfile> -l <chunk>`.
+- Frame buffer under Limine (M13, the video console's first step). OpenBSD's loaders hand
+  the kernel the UEFI GOP frame buffer: amd64 boot(8)/efiboot in `bios_efiinfo`'s `fb_*`
+  fields (`BOOTARG_EFIINFO`), arm64 efiboot as a `simple-framebuffer` node `framebuffer`
+  under `/chosen` (`efi_framebuffer()`). Under Limine the kernel asks for Limine's
+  framebuffer response, which the boot glue turns into `BootInfo::framebuffer` (physical
+  address, geometry, channel sizes and shifts). On amd64 `init_x86_64` fills
+  `machdep.rs`'s `bios_efiinfo()` from it as efiboot fills `bios_efiinfo` from the GOP mode
+  (the reserved mask is the rest of the pixel), so `efifb(4)` is ported unchanged; its
+  early map is the bootloader's direct map, which covers the frame buffer
+  (`pmap_set_pml4_early` is not needed). On arm64 the glue builds a copy of the device tree
+  with the node efiboot would add (`sys/stand/fdtfb.rs`: same properties, same skip rules,
+  in a static buffer instead of efiboot's in-place edit), so `simplefb` and
+  `mainbus_attach_framebuffer` are ported unchanged; QEMU's `virt` tree, as EDK2 passes it
+  on, has no frame buffer node of its own (`ramfb` is set up through fw_cfg). The display
+  QEMU gives the GOP: q35's standard VGA on amd64 (present even with `-display none`;
+  1280x800 under OVMF), `-device ramfb` on arm64 (800x600 under ArmVirtQemu; a
+  `virtio-gpu` GOP is blit-only and Limine needs a linear frame buffer). `xtask`'s `--fb`
+  adds it, `--screenshot-after` checks a QEMU `screendump` against the kernel's
+  `selftest=fb` (`smoke-fb`). Until wsdisplay is ported, `wsdisplay_cnattach` and the
+  `wsdisplay` child of both drivers are `unported!`, and under feature `qemu` the attach
+  arguments go to the self-test instead.
 
 ## Testing architecture
 
