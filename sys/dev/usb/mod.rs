@@ -7,6 +7,10 @@
 //! drivers (`xhci`, `uhub`, `umass`, `uhidev`, ...) attach on top of it.
 
 pub mod uhub;
+pub mod umass;
+pub mod umass_quirks;
+pub mod umass_scsi;
+pub mod umassvar;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/usb/usb.c
 pub mod usb;
 pub mod usb_mem;

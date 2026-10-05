@@ -75,7 +75,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
     "smoke-nvme " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
-    "smoke-net-mp smoke-up smoke-audio"
+    "smoke-net-mp smoke-up smoke-audio smoke-usb"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -1461,6 +1461,36 @@ audio_play := disk_login + " " + \
     "--send-after '# ' --send 'audioctl -f /dev/audioctl0; mixerctl -f /dev/audioctl0\\n' " + \
     "--send-after '# ' --send 'aucat -i /root/tone.wav && echo tone-$((40+2))\\n' " + \
     "--expect 'rate=48000' --expect 'encoding=s16le' --expect 'tone-42'"
+
+# M12: USB. QEMU's `qemu-xhci` with a `usb-storage` stick and a `usb-kbd` (`--usb`,
+# devices.rs): xhci(4), uhub(4), umass(4) below a scsibus, the stick as sd1 on amd64 (vioblk
+# is sd0) and sd2 on arm64 (the boot disk is sd1 there). Logs in as `smoke-login` does,
+# mounts the stick's FAT partition with mount_msdos(8) (`i`, spoofed from its MBR), reads
+# the note and checks the 1 MiB file's cksum(1) (made on the host, devices.rs), copies it,
+# remounts and compares the copy. Part of `smoke`.
+smoke-usb: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-usb: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --usb {{disk_login}} {{replace(usb_session, "SD", "sd1")}} {{usb_check}} \
+        --expect 'xhci0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x000d rev 0x01: irq' \
+        --expect 'sd1 at scsibus1 targ 1 lun 0: <QEMU, QEMU HARDDISK, 2.5+>'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --usb {{disk_login}} {{replace(usb_session, "SD", "sd2")}} {{usb_check}} \
+        --expect 'xhci0 at pci0 dev 1 function 0 vendor 0x1b36 product 0x000d rev 0x01: msix' \
+        --expect 'sd2 at scsibus2 targ 1 lun 0: <QEMU, QEMU HARDDISK, 2.5+>'
+
+# `smoke-usb`'s session on the stick's disk `SD` (replaced per arch).
+usb_session := "--send-after '# ' --send 'mount_msdos /dev/SDi /mnt && cat /mnt/M12USB.TXT && " + \
+    "cksum /mnt/BIG.BIN && cp /mnt/BIG.BIN /mnt/COPY.BIN && umount /mnt && " + \
+    "mount_msdos /dev/SDi /mnt && cmp /mnt/BIG.BIN /mnt/COPY.BIN && echo usb-$((40+2))\\n'"
+
+# `smoke-usb`'s expectations, both archs.
+usb_check := "--expect 'usb0 at xhci0: USB revision 3.0' --expect 'uhub0 at usb0' " + \
+    "--expect 'umass0 at uhub0 port 1 configuration 1 interface 0 \"QEMU QEMU USB HARDDRIVE\"' " + \
+    "--expect 'umass0: using SCSI over Bulk-Only' " + \
+    "--expect 'emibsd m12: hello from a usb stick' --expect '4071711340 1048576 /mnt/BIG.BIN' " + \
+    "--expect 'usb-42'"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

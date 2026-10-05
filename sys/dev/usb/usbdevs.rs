@@ -49,7 +49,8 @@
 //! comments, in the header's order.
 //!
 //! ## Deviations
-//! - Partial: only the IDs some ported file names are present (`usb_quirks.c`'s table). The
+//! - Partial: only the IDs some ported file names are present (`usb_quirks.c`'s table, then
+//!   `umass_quirks.c`'s, appended as a block). The
 //!   whole header, and `usbdevs_data.h` for `option USBVERBOSE` (in GENERIC), wait for a
 //!   generator in `tools/xtask`, as `pcidevs.h` does; until then `usb_subr.c` names devices
 //!   as a kernel without the option does (`vendor 0x...`, `product 0x...`).
@@ -305,6 +306,187 @@ pub const USB_PRODUCT_YAMAHA_RTW65B: u16 = 0x4001;
 pub const USB_PRODUCT_YAMAHA_RTW65I: u16 = 0x4002;
 /// `USB_PRODUCT_YAMAHA_RTA55I`: NetVolante RTA55i.
 pub const USB_PRODUCT_YAMAHA_RTA55I: u16 = 0x4004;
+
+// The IDs `umass_quirks.c` names (umass(4), M12): appended as a block, vendors then
+// products, each in the header's order.
+/// `USB_VENDOR_MELCO`: Melco.
+pub const USB_VENDOR_MELCO: u16 = 0x0411;
+/// `USB_VENDOR_CREATIVE`: Creative Labs.
+pub const USB_VENDOR_CREATIVE: u16 = 0x041e;
+/// `USB_VENDOR_FUJIPHOTO`: Fuji Photo Film.
+pub const USB_VENDOR_FUJIPHOTO: u16 = 0x04cb;
+/// `USB_VENDOR_SCANLOGIC`: ScanLogic.
+pub const USB_VENDOR_SCANLOGIC: u16 = 0x04ce;
+/// `USB_VENDOR_SHUTTLE`: Shuttle Technology.
+pub const USB_VENDOR_SHUTTLE: u16 = 0x04e6;
+/// `USB_VENDOR_ATI`: ATI Technologies.
+pub const USB_VENDOR_ATI: u16 = 0x0528;
+/// `USB_VENDOR_SONY`: Sony.
+pub const USB_VENDOR_SONY: u16 = 0x054c;
+/// `USB_VENDOR_YEDATA`: Y-E Data.
+pub const USB_VENDOR_YEDATA: u16 = 0x057b;
+/// `USB_VENDOR_IOMEGA`: Iomega.
+pub const USB_VENDOR_IOMEGA: u16 = 0x059b;
+/// `USB_VENDOR_INSYSTEM`: In-System Design.
+pub const USB_VENDOR_INSYSTEM: u16 = 0x05ab;
+/// `USB_VENDOR_GENESYS`: Genesys Logic.
+pub const USB_VENDOR_GENESYS: u16 = 0x05e3;
+/// `USB_VENDOR_TEAC`: TEAC.
+pub const USB_VENDOR_TEAC: u16 = 0x0644;
+/// `USB_VENDOR_SIGMATEL`: Sigmatel.
+pub const USB_VENDOR_SIGMATEL: u16 = 0x066f;
+/// `USB_VENDOR_MINOLTA`: Minolta.
+pub const USB_VENDOR_MINOLTA: u16 = 0x0686;
+/// `USB_VENDOR_IMATION`: Imation.
+pub const USB_VENDOR_IMATION: u16 = 0x0718;
+/// `USB_VENDOR_DOMAIN`: Domain Technologies, Inc.
+pub const USB_VENDOR_DOMAIN: u16 = 0x071b;
+/// `USB_VENDOR_MICROTECH`: Microtech.
+pub const USB_VENDOR_MICROTECH: u16 = 0x07af;
+/// `USB_VENDOR_OLYMPUS`: Olympus.
+pub const USB_VENDOR_OLYMPUS: u16 = 0x07b4;
+/// `USB_VENDOR_ONSPEC`: OnSpec.
+pub const USB_VENDOR_ONSPEC: u16 = 0x07c4;
+/// `USB_VENDOR_SIIG`: SIIG.
+pub const USB_VENDOR_SIIG: u16 = 0x07cc;
+/// `USB_VENDOR_MSYSTEMS`: M-Systems.
+pub const USB_VENDOR_MSYSTEMS: u16 = 0x08ec;
+/// `USB_VENDOR_TRUMPION`: Trumpion Microelectronics.
+pub const USB_VENDOR_TRUMPION: u16 = 0x090a;
+/// `USB_VENDOR_YANO`: Yano.
+pub const USB_VENDOR_YANO: u16 = 0x094f;
+/// `USB_VENDOR_TREK`: Trek Technology.
+pub const USB_VENDOR_TREK: u16 = 0x0a16;
+/// `USB_VENDOR_NEODIO`: Neodio.
+pub const USB_VENDOR_NEODIO: u16 = 0x0aec;
+/// `USB_VENDOR_ERICSSON`: Ericsson.
+pub const USB_VENDOR_ERICSSON: u16 = 0x0bdb;
+/// `USB_VENDOR_DMI`: DMI.
+pub const USB_VENDOR_DMI: u16 = 0x0c0b;
+/// `USB_VENDOR_EASYDISK`: EasyDisk.
+pub const USB_VENDOR_EASYDISK: u16 = 0x0c76;
+/// `USB_VENDOR_PEN`: Pen Drive.
+pub const USB_VENDOR_PEN: u16 = 0x0d7d;
+/// `USB_VENDOR_OTI`: Ours Technology.
+pub const USB_VENDOR_OTI: u16 = 0x0ea0;
+/// `USB_VENDOR_PILOTECH`: Pilotech.
+pub const USB_VENDOR_PILOTECH: u16 = 0x0eaf;
+/// `USB_VENDOR_SUPERTOP`: SuperTop.
+pub const USB_VENDOR_SUPERTOP: u16 = 0x14cd;
+/// `USB_VENDOR_PQI`: PQI.
+pub const USB_VENDOR_PQI: u16 = 0x3538;
+/// `USB_VENDOR_IODATA2`: I-O Data.
+pub const USB_VENDOR_IODATA2: u16 = 0x40bb;
+/// `USB_VENDOR_IRIVER`: iRiver.
+pub const USB_VENDOR_IRIVER: u16 = 0x4102;
+/// `USB_PRODUCT_ATI2_205`: USB Cable 205.
+pub const USB_PRODUCT_ATI2_205: u16 = 0xa001;
+/// `USB_PRODUCT_CREATIVE_NOMAD`: Nomad.
+pub const USB_PRODUCT_CREATIVE_NOMAD: u16 = 0x4106;
+/// `USB_PRODUCT_DMI_SA2_0`: Storage Adapter.
+pub const USB_PRODUCT_DMI_SA2_0: u16 = 0xb001;
+/// `USB_PRODUCT_DOMAIN_ROCKCHIP`: RockChip Media Player.
+pub const USB_PRODUCT_DOMAIN_ROCKCHIP: u16 = 0x3203;
+/// `USB_PRODUCT_EASYDISK_EASYDISK`: Flash Disk.
+pub const USB_PRODUCT_EASYDISK_EASYDISK: u16 = 0x0005;
+/// `USB_PRODUCT_ERICSSON_F5521GW`: Mobile Broadband Module.
+pub const USB_PRODUCT_ERICSSON_F5521GW: u16 = 0x1911;
+/// `USB_PRODUCT_FUJIPHOTO_MASS0100`: Mass Storage.
+pub const USB_PRODUCT_FUJIPHOTO_MASS0100: u16 = 0x0100;
+/// `USB_PRODUCT_GENESYS_GL641USB`: GL641USB CompactFlash.
+pub const USB_PRODUCT_GENESYS_GL641USB: u16 = 0x0700;
+/// `USB_PRODUCT_HP_CDWRITERPLUS`: CD-Writer Plus.
+pub const USB_PRODUCT_HP_CDWRITERPLUS: u16 = 0x0107;
+/// `USB_PRODUCT_IMATION_FLASHGO`: Flash Go!.
+pub const USB_PRODUCT_IMATION_FLASHGO: u16 = 0xb000;
+/// `USB_PRODUCT_INSYSTEM_ATAPI`: ATAPI.
+pub const USB_PRODUCT_INSYSTEM_ATAPI: u16 = 0x0031;
+/// `USB_PRODUCT_INSYSTEM_IDEUSB2`: USB2 Storage.
+pub const USB_PRODUCT_INSYSTEM_IDEUSB2: u16 = 0x0060;
+/// `USB_PRODUCT_INSYSTEM_DRIVEV2_5`: Portable USB Harddrive V2.
+pub const USB_PRODUCT_INSYSTEM_DRIVEV2_5: u16 = 0x0351;
+/// `USB_PRODUCT_INSYSTEM_USBCABLE`: USB cable.
+pub const USB_PRODUCT_INSYSTEM_USBCABLE: u16 = 0x081a;
+/// `USB_PRODUCT_INSYSTEM_ADAPTERV2`: USB Storage Adapter V2.
+pub const USB_PRODUCT_INSYSTEM_ADAPTERV2: u16 = 0x5701;
+/// `USB_PRODUCT_IODATA2_USB2SC`: USB2.0-SCSI Bridge USB2-SC.
+pub const USB_PRODUCT_IODATA2_USB2SC: u16 = 0x0a09;
+/// `USB_PRODUCT_IOMEGA_ZIP100`: Zip 100.
+pub const USB_PRODUCT_IOMEGA_ZIP100: u16 = 0x0001;
+/// `USB_PRODUCT_IOMEGA_ZIP250`: Zip 250.
+pub const USB_PRODUCT_IOMEGA_ZIP250: u16 = 0x0030;
+/// `USB_PRODUCT_IOMEGA_ZIP250_2`: Zip 250.
+pub const USB_PRODUCT_IOMEGA_ZIP250_2: u16 = 0x0032;
+/// `USB_PRODUCT_IRIVER_IFP_1XX`: iFP-1xx.
+pub const USB_PRODUCT_IRIVER_IFP_1XX: u16 = 0x1101;
+/// `USB_PRODUCT_IRIVER_IFP_3XX`: iFP-3xx.
+pub const USB_PRODUCT_IRIVER_IFP_3XX: u16 = 0x1103;
+/// `USB_PRODUCT_MELCO_DUBPXXG`: USB-IDE Bridge: DUB-PxxG.
+pub const USB_PRODUCT_MELCO_DUBPXXG: u16 = 0x001c;
+/// `USB_PRODUCT_MICROTECH_DPCM`: CameraMate.
+pub const USB_PRODUCT_MICROTECH_DPCM: u16 = 0x0006;
+/// `USB_PRODUCT_MINOLTA_S304`: Dimage S304.
+pub const USB_PRODUCT_MINOLTA_S304: u16 = 0x4007;
+/// `USB_PRODUCT_MINOLTA_X`: Dimage X.
+pub const USB_PRODUCT_MINOLTA_X: u16 = 0x4009;
+/// `USB_PRODUCT_MINOLTA_DIMAGEA1`: Dimage A1.
+pub const USB_PRODUCT_MINOLTA_DIMAGEA1: u16 = 0x401a;
+/// `USB_PRODUCT_MSYSTEMS_DISKONKEY`: DiskOnKey.
+pub const USB_PRODUCT_MSYSTEMS_DISKONKEY: u16 = 0x0010;
+/// `USB_PRODUCT_MSYSTEMS_DISKONKEY2`: DiskOnKey.
+pub const USB_PRODUCT_MSYSTEMS_DISKONKEY2: u16 = 0x0011;
+/// `USB_PRODUCT_NEODIO_ND3050`: 6-in-1 Flash Device Controller.
+pub const USB_PRODUCT_NEODIO_ND3050: u16 = 0x3050;
+/// `USB_PRODUCT_NEODIO_ND5010`: Multi-format Flash Controller.
+pub const USB_PRODUCT_NEODIO_ND5010: u16 = 0x5010;
+/// `USB_PRODUCT_OLYMPUS_C1`: C-1.
+pub const USB_PRODUCT_OLYMPUS_C1: u16 = 0x0102;
+/// `USB_PRODUCT_OLYMPUS_C700`: C-700 Ultra Zoom.
+pub const USB_PRODUCT_OLYMPUS_C700: u16 = 0x0105;
+/// `USB_PRODUCT_ONSPEC_MD2`: disk.
+pub const USB_PRODUCT_ONSPEC_MD2: u16 = 0x0103;
+/// `USB_PRODUCT_ONSPEC_MD1II`: Datafab MD1-II PC-Card.
+pub const USB_PRODUCT_ONSPEC_MD1II: u16 = 0xb006;
+/// `USB_PRODUCT_OTI_SOLID`: Solid state disk.
+pub const USB_PRODUCT_OTI_SOLID: u16 = 0x6803;
+/// `USB_PRODUCT_PEN_USBREADER`: 6 in 1.
+pub const USB_PRODUCT_PEN_USBREADER: u16 = 0x0240;
+/// `USB_PRODUCT_PEN_MOBILEDRIVE`: 3 in 1.
+pub const USB_PRODUCT_PEN_MOBILEDRIVE: u16 = 0x0280;
+/// `USB_PRODUCT_PEN_USBDISK`: Disk.
+pub const USB_PRODUCT_PEN_USBDISK: u16 = 0x0d7d;
+/// `USB_PRODUCT_PILOTECH_CRW600`: CRW-600 6-in-1.
+pub const USB_PRODUCT_PILOTECH_CRW600: u16 = 0x0001;
+/// `USB_PRODUCT_PQI_TRAVELFLASH`: Travel Flash Drive.
+pub const USB_PRODUCT_PQI_TRAVELFLASH: u16 = 0x0001;
+/// `USB_PRODUCT_SCANLOGIC_SL11R`: SL11R-IDE.
+pub const USB_PRODUCT_SCANLOGIC_SL11R: u16 = 0x0002;
+/// `USB_PRODUCT_SHUTTLE_EUSB`: E-USB Bridge.
+pub const USB_PRODUCT_SHUTTLE_EUSB: u16 = 0x0001;
+/// `USB_PRODUCT_SHUTTLE_ZIOMMC`: eUSB MultiMediaCard.
+pub const USB_PRODUCT_SHUTTLE_ZIOMMC: u16 = 0x0006;
+/// `USB_PRODUCT_SIGMATEL_DNSSF7X`: Datum Networks SSF-7X Multi Players.
+pub const USB_PRODUCT_SIGMATEL_DNSSF7X: u16 = 0x8020;
+/// `USB_PRODUCT_SIIG_MULTICARDREADER`: MULTICARDREADER.
+pub const USB_PRODUCT_SIIG_MULTICARDREADER: u16 = 0x0201;
+/// `USB_PRODUCT_SONY_DSC`: DSC Cameras.
+pub const USB_PRODUCT_SONY_DSC: u16 = 0x0010;
+/// `USB_PRODUCT_SONY_DRIVEV2`: Harddrive V2.
+pub const USB_PRODUCT_SONY_DRIVEV2: u16 = 0x002b;
+/// `USB_PRODUCT_SONY_MSC`: MSC Memorystick.
+pub const USB_PRODUCT_SONY_MSC: u16 = 0x0032;
+/// `USB_PRODUCT_SUPERTOP_IDEBRIDGE`: SuperTop IDE Bridge.
+pub const USB_PRODUCT_SUPERTOP_IDEBRIDGE: u16 = 0x6600;
+/// `USB_PRODUCT_TEAC_FD05PUB`: FD-05PUB.
+pub const USB_PRODUCT_TEAC_FD05PUB: u16 = 0x0000;
+/// `USB_PRODUCT_TREK_THUMBDRIVE_8MB`: ThumbDrive 8MB.
+pub const USB_PRODUCT_TREK_THUMBDRIVE_8MB: u16 = 0x9988;
+/// `USB_PRODUCT_TRUMPION_XXX1100`: XXX 1100.
+pub const USB_PRODUCT_TRUMPION_XXX1100: u16 = 0x1100;
+/// `USB_PRODUCT_YANO_U640MO`: U640MO-03.
+pub const USB_PRODUCT_YANO_U640MO: u16 = 0x0101;
+/// `USB_PRODUCT_YEDATA_FLASHBUSTERU`: Flashbuster-U.
+pub const USB_PRODUCT_YEDATA_FLASHBUSTERU: u16 = 0x0000;
 
 #[cfg(test)]
 mod tests;

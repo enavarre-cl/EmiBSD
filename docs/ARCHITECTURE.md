@@ -972,7 +972,11 @@ OpenBSD's tools cannot pass unseen. xtask finds partition `a` as `readdoslabel` 
   it touches (`use_polling`, `dying`, `no_intrs`) are relaxed atomics. The TRB rings,
   contexts and tables live in DMA memory and are reached only through bounds-checked
   volatile accessors (`XhciTrbRef`, the `*_ctx_update` closures). uhub(4) drives both the
-  emulated root hub and external hubs.
+  emulated root hub and external hubs. umass(4) (`dev/usb/umass.c`, `umass_scsi.c`,
+  `umass_quirks.c`) attaches at `uhub?` and hangs a `scsibus` below it (`umass` is a parent of
+  the `scsi` attribute, as vioblk and softraid are), so a USB stick is an `sd(4)` disk. The
+  SCSI probe's commands are polled (`umass_polled_transfer` turns the state machine's
+  recursion into iteration); later I/O completes from the USB soft interrupt.
 - Audio (M12): audio(4) (`dev/audio.c`) is machine-independent; drivers reach it only
   through `AudioHwIf`, `audio_attach_mi` and `audio_pintr`/`audio_rintr`, called with
   `AUDIO_LOCK` held. azalia(4) attaches QEMU's `intel-hda` on both architectures (through
