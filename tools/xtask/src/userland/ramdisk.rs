@@ -44,7 +44,7 @@ use super::*;
 const MAKEFS_DIR: &str = "usr.sbin/makefs";
 
 /// The first word of a device-node placeholder file (see `COMPAT_C`).
-const DEVICE_MAGIC: &str = "emibsd-makefs-device";
+pub(super) const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 
 /// The device nodes the root needs before anything can run MAKEDEV: what `init(8)` opens
 /// (`/dev/console`), what a shell expects (`/dev/tty`, `/dev/null`), what `getty(8)`,
@@ -150,7 +150,7 @@ const VND_CHAR_MAJOR: u32 = 41;
 /// Every device node of the image, in the shape of `DEVICES`: its table plus the `sd` disk
 /// partitions (`MAKEDEV`'s `dodisk`: `a`..`p` of a kernel with `kern.maxpartitions` 16, at
 /// `UNITMULT` (`MAXPARTITIONSUNIT`) 64 minors per unit: `DISKUNIT` divides by 64).
-fn devices() -> Vec<(String, char, u32, u32, u32, &'static str)> {
+pub(super) fn devices() -> Vec<(String, char, u32, u32, u32, &'static str)> {
     let mut all: Vec<_> = DEVICES
         .iter()
         .map(|&(n, k, major, minor, mode, group)| (n.to_string(), k, major, minor, mode, group))
@@ -193,10 +193,11 @@ fn devices() -> Vec<(String, char, u32, u32, u32, &'static str)> {
 }
 
 /// `/dev/fd/N` exists for N below this (`MAKEDEV fd`).
-const FD_NODES: u32 = 64;
+pub(super) const FD_NODES: u32 = 64;
 
 /// `/dev/stdin` and friends, as `MAKEDEV` links them: (name, target).
-const DEV_LINKS: &[(&str, &str)] = &[("stdin", "fd/0"), ("stdout", "fd/1"), ("stderr", "fd/2")];
+pub(super) const DEV_LINKS: &[(&str, &str)] =
+    &[("stdin", "fd/0"), ("stdout", "fd/1"), ("stderr", "fd/2")];
 
 /// A user of `/etc/master.passwd`: (name, uid, gid, class, gecos, home, shell). OpenBSD's
 /// `root`, `daemon` and `nobody` (the lines of its stock `master.passwd`), and tcpdump(8)'s
@@ -299,7 +300,7 @@ fn user_id(name: &str) -> Option<u32> {
 }
 
 /// The id of group `name`.
-fn group_id(name: &str) -> Option<u32> {
+pub(super) fn group_id(name: &str) -> Option<u32> {
     GROUPS.iter().find(|g| g.0 == name).map(|g| g.1)
 }
 
@@ -326,7 +327,7 @@ impl Attr {
         })
     }
 
-    fn root(path: &str, gid: u32, mode: u32) -> Attr {
+    pub(super) fn root(path: &str, gid: u32, mode: u32) -> Attr {
         Attr {
             path: path.to_string(),
             uid: 0,
@@ -337,7 +338,7 @@ impl Attr {
 }
 
 /// makefs's ffs options: those of OpenBSD's `distrib/` ramdisks.
-const FS_OPTIONS: &str = "disklabel=rdroot,minfree=0,density=4096";
+pub(super) const FS_OPTIONS: &str = "disklabel=rdroot,minfree=0,density=4096";
 
 /// The disktab entry makefs reads for `disklabel=rdroot`, for an image of `sectors` 512-byte
 /// sectors: one track of one cylinder (so `d_secpercyl` = `d_nsectors` = the whole disk, as
@@ -777,6 +778,15 @@ emibsd_lstat(const char *path, struct stat *sb)
 
 /// Builds makefs and pwd_mkdb for this machine, stages `root/` plus `/etc`, `/dev` and the
 /// directories, and writes `ramdisk.ffs`.
+/// OpenBSD's makefs(8) built for this machine (with this module's host shims); the
+/// executable. The install media (`miniroot.rs`) makes its images with it too.
+pub(super) fn build_makefs(ctx: &Ctx<'_>) -> Result<PathBuf> {
+    if !ctx.src.join(MAKEFS_DIR).join("Makefile").is_file() {
+        return Err(format!("{MAKEFS_DIR}: not in the reference clone").into());
+    }
+    Ok(build_host_prog_with(ctx, MAKEFS_DIR, |mk, objdir| shim(ctx, mk, objdir))?.join("makefs"))
+}
+
 pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
     if !ctx.src.join(MAKEFS_DIR).join("Makefile").is_file() {
         println!("  {MAKEFS_DIR}: not in the reference clone; no ramdisk image");

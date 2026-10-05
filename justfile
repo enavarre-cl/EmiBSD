@@ -92,7 +92,7 @@ smoke: smoke-build
 
 # What the smoke recipes boot: the MULTIPROCESSOR kernels with `--features qemu`, the init
 # stand-ins, and `smoke-up`'s uniprocessor kernels (`build-up`).
-smoke-build: build-up (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64 efiboot-amd64
+smoke-build: build-up (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64 efiboot-amd64 build-bsdrd
 
 # `smoke-boot`, the first of `smokes` (it was `smoke`'s own body until the smokes ran in
 # parallel). Boots per arch, every one with a virtio network card on QEMU's user network: a
@@ -1980,5 +1980,64 @@ check-syscalls:
 
 drift:
     cargo xtask ports drift
+
+# --- the install media (M14c) ---------------------------------------------------------
+
+# `rd0`'s image size in sectors: the ramdisk of `bsd.rd` is built into the kernel
+# (`EMIBSD_MINIROOTSIZE`, feature `miniroot`: sys/dev/rd.rs, OpenBSD's `option MINIROOTSIZE`)
+# and `cargo xtask miniroot` pads its image to exactly this (userland/miniroot.rs,
+# `MINIROOT_SECTORS`: change both).
+miniroot_sectors := "65536"
+
+# The kernels the install media uses, each in a target directory of its own so the other
+# builds are not redone: `bsd.rd`'s (the MULTIPROCESSOR kernel with the ramdisk compiled in,
+# `rdsetroot` puts the miniroot in later) and `bsd`'s, the kernel the sets install (the same
+# `--features qemu,multiprocessor` kernel the smokes boot). docs/ARCHITECTURE.md, "The
+# install media". `smoke-build` builds them, so `smoke` and `ci` keep them compiling.
+build-bsdrd: build-bsdrd-amd64 build-bsdrd-arm64
+
+build-bsdrd-amd64:
+    EMIBSD_MINIROOTSIZE={{miniroot_sectors}} cargo build -p bsd --target {{amd64}} --features qemu,multiprocessor,miniroot --target-dir target/bsdrd
+
+build-bsdrd-arm64:
+    EMIBSD_MINIROOTSIZE={{miniroot_sectors}} cargo build -p bsd --target {{arm64}} --features qemu,multiprocessor,miniroot --target-dir target/bsdrd
+
+# The install media of one arch: the miniroot, `bsd.rd` and the signed sets, in
+# target/install/<arch> (`cargo xtask install-media`). Needs `just userland` and `just comp`.
+install-media-amd64: build-bsdrd-amd64 (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/comp/amd64/comp.ffs || { echo "install-media: no comp build; run just comp first"; exit 1; }
+    cargo xtask install-media --arch amd64 --rd-kernel target/bsdrd/{{amd64}}/debug/bsd --bsd target/{{amd64}}/debug/bsd
+
+install-media-arm64: build-bsdrd-arm64 (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/comp/arm64/comp.ffs || { echo "install-media: no comp build; run just comp first"; exit 1; }
+    cargo xtask install-media --arch arm64 --rd-kernel target/bsdrd/{{arm64}}/debug/bsd --bsd target/{{arm64}}/debug/bsd
+
+# M14c: OpenBSD's installer installs EmiBSD. Per arch (`cargo xtask install`,
+# tools/xtask/src/install.rs): boots `bsd.rd` (through Limine until efiboot boots it) with a
+# fresh 3 GiB disk (`sd0`), whose ramdisk holds `/auto_install.conf`; `install.sub`, unmodified,
+# starts autoinstall(8) by itself, partitions the disk (GPT with an EFI system partition,
+# `disklabel -T`), newfs, fetches `base80.tgz`, `comp80.tgz` and `bsd` over HTTP from this
+# machine, checks `SHA256.sig` with signify(1) against the test key in its `/etc/signify`,
+# extracts them, makes the device nodes, runs installboot(8) and says `CONGRATULATIONS!`; then
+# a second boot of the plain `bsd.rd` mounts the new disk and lists `/bsd`, `/usr/bin/cc`,
+# `/etc/rc`, `/usr/libexec/ld.so`, the EFI system partition and runs `fsck_ffs -n`. Not in
+# `smokes` (the extraction of the sets alone takes minutes under TCG; timings in
+# docs/ARCHITECTURE.md). Needs `just userland` and `just comp`.
+smoke-install: smoke-install-amd64 smoke-install-arm64
+
+smoke-install-amd64: install-media-amd64
+    EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install {{smp}} --arch amd64 --rd-kernel target/bsdrd/{{amd64}}/debug/bsd
+
+smoke-install-arm64: install-media-arm64
+    EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install {{smp}} --arch arm64 --rd-kernel target/bsdrd/{{arm64}}/debug/bsd
+
+# The last step of M14's criterion, for the coordinator to enable once efiboot boots the
+# kernel on both archs: the disk `smoke-install-<arch>` installed, booted through the loader
+# installboot(8) put on it, to `login:` on a fresh VM, then `cc hello.c && ./a.out` there.
+smoke-install-boot-amd64:
+    EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install-boot {{smp}} --arch amd64
+
+smoke-install-boot-arm64:
+    EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install-boot {{smp}} --arch arm64
 
 ci: fmt clippy test build smoke check-ports check-syscalls

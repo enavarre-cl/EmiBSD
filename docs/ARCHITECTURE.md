@@ -539,6 +539,76 @@ unported `udv_attach`). `__thrsleep`/`__thrwakeup` (`kern_synch.c`) are still `s
 libc's `FILE` locks and libpthread's `_rthread_dl_lock` call them only when two threads
 contend.
 
+## The install media (M14c)
+
+OpenBSD's installer is run unmodified: `distrib/miniroot/install.sub`, the arch's `install.md`,
+`dot.profile`, over a `bsd.rd` and signed sets that this build makes. Commands (all in
+`tools/xtask/src/install.rs`; recipes in the justfile, "the install media"):
+
+- `cargo xtask miniroot|sets|install-media --arch A`, `just install-media-<arch>`: the
+  miniroot, `bsd.rd` and the sets in `target/install/<arch>`. Needs `just userland` and
+  `just comp`.
+- `just smoke-install-<arch>` (`cargo xtask install`): the install run; not in `smokes`.
+- `just smoke-install-boot-<arch>` (`cargo xtask install-boot`): the disk the install made,
+  booted through the loader installboot(8) put on it; for the coordinator to enable once
+  efiboot boots the kernel.
+
+**bsd.rd.** OpenBSD's RAMDISK_CD kernel is a smaller GENERIC with `option MINIROOTSIZE`
+and `rdsetroot(8)` patches the file system into it. Here the kernel is our GENERIC MP kernel
+with cargo feature `miniroot` (`sys/dev/rd.rs`): `rd_root_image[ROOTBYTES]` and `rd_root_size`
+are compiled in under the C names, `ROOTBYTES` is `$EMIBSD_MINIROOTSIZE` sectors (the
+justfile's `miniroot_sectors`, 65536 = 32 MiB, the miniroot is padded to it so one kernel
+serves every run), and `rdattach` roots on `rd0a` itself. `cargo xtask rdsetroot`
+(`rdsetroot.rs`) is `usr.sbin/rdsetroot` over our ELF; `bsd.rd` is that kernel with its debug
+information stripped. Deviation: the Limine module `ramdisk.ffs` path stays and wins. The
+kernel is built in `target/bsdrd` (in `smoke-build` only).
+
+**The miniroot** (`userland/miniroot.rs`) is built from the arch's list
+(`distrib/amd64/ramdisk_cd/list`, `distrib/arm64/ramdisk/list`) with `list2sh.awk`'s meaning
+(`COPY SCRIPT LINK SYMLINK MKDIR REMOVE SPECIAL TZ TERMCAP`), the directories of
+`mtree.conf`, and `install.sub`, `install.md`, `dot.profile`, `group`, `master.passwd`
+(`pwd_mkdb`), `protocols`, `services`, `/dev/MAKEDEV`. Deviations: no crunchgen `instbin`
+(each name is the static program `userland` built, from the normal Makefiles; `distrib/special`'s
+-DSMALL -Oz variants are not used, except `init`, which must be `-DDEFAULT_STATE=single_user`
+without `DEBUGSHELL`/`SECURE`, and `more`); `/dev` from the smoke ramdisk's node table; `usr/mdec/mbr` a 512-byte
+stub; no firmware, termcap or Raspberry Pi files; `/etc/signify/openbsd-80-base.pub` is a test
+key (`userland/signify.rs`: OpenBSD's signify built for macOS with shims, key pair made once
+in `target/install/test-signify`), never OpenBSD's. The entries not satisfied go to
+`miniroot.txt`.
+
+**The sets** (`userland/sets.rs`): `base80.tgz`, `comp80.tgz`, `bsd` (our MP kernel as built, debug
+info kept; only `bsd.rd` is stripped), `bsd.rd`, `INSTALL.<arch>` (host
+m4 on `distrib/notes/INSTALL`), `SHA256` and `SHA256.sig`. A set is its list
+(`distrib/sets/lists`) applied to the tree this build has: `userland`'s and `comp`'s roots,
+`etc/mtree/4.4BSD.dist`'s directories, the `etc` distribution of `etc/Makefile` (as a table,
+with `var/sysmerge/etc.tgz` that `install.sub` extracts after base), zoneinfo from OpenBSD's
+`zic` built for macOS, `usr/mdec` (efiboot; `BOOTIA32.EFI` is a zero sector because installboot
+copies it; arm64's `BOOTAA64.EFI` is a visible placeholder until track A3). Archives are
+written by xtask (ustar with OpenBSD's owner names and ids, hard links) and the host's gzip.
+What the lists name and the build lacks is printed and written to `MISSING-<set>.txt` with a
+reason: perl, cvs, texinfo and GNU `as`, `gdb`, `ld.bfd` and the binutils tools are GPL and not
+in the clone (the user's decision of 2026-10-05), and man pages, terminfo, locale, `usr/share/misc`,
+firmware, httpd/nsd/unbound files, the BIOS boot programs and the programs and libraries
+`userland` does not build are not built yet. Built files in no list are `EXTRA-<set>.txt`
+(our test programs). Every program is static, as in the rest of the userland.
+
+**The install run** (`install.rs`): a fresh 3 GiB disk is `sd0` (the install media's own disk
+is `sd1`), `bsd.rd` boots through Limine until efiboot boots it, its ramdisk holds
+`/auto_install.conf` (autoinstall(8): `.profile` starts the install after five seconds when
+that file exists, the way OpenBSD does when no DHCP server names a response file; static
+`10.0.2.15`, so dhcpleased is not needed), the sets come over HTTP from this machine
+(`10.0.2.2:PORT`, the server of `diff-openbsd`), the disk is GPT with an EFI system partition
+(`fdisk -gy`, so installboot(8) uses its EFI path and copies `BOOTX64.EFI`), partitioned by
+`disklabel -T` (a template), `newfs`, sets verified by signify. The run ends at
+`CONGRATULATIONS!` and the installer's reboot; a second boot of the plain `bsd.rd` mounts the
+disk read-only and lists `/bsd`, `/usr/bin/cc`, `/etc/rc`, `/usr/libexec/ld.so`, the EFI
+partition and runs `fsck_ffs -n`.
+
+Status (2026-10-05): the miniroot, `bsd.rd`, sets, signing and the QEMU plumbing work on both
+archs, `bsd.rd` boots to the installer's prompt. The run stops at `install.sub` itself: the
+kernel does not execute `#!` scripts yet (`exec_script.c`; a kernel agent has it), so
+`/upgrade` runs as `sh` and fails at `((`.
+
 ## Boot loaders (M14)
 
 OpenBSD's boot programs are ported as OpenBSD builds them (the user's decision of 2026-10-03,

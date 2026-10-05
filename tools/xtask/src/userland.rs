@@ -120,6 +120,11 @@ const UNSUPPORTED_FLAGS: &[(&str, &str)] = &[
          address slot after use; Apple clang rejects it",
     ),
     (
+        "-fno-ret-clean",
+        "OpenBSD-local clang option (distrib/special/Makefile.inc, M14c): the negation of \
+         -fret-clean, which Apple clang does not have either",
+    ),
+    (
         "-fno-ret-protector",
         "OpenBSD-local clang option (gnu/usr.bin/clang/Makefile.inc, M14): turns off the \
          return-address protector OpenBSD's clang adds by default, which Apple clang \
@@ -226,6 +231,21 @@ const VARIANTS: &[Variant] = &[
     // dynamic linking of its own (only its `dlopen` of a shared object would); chroot(8).
     Variant::statically("libexec/ld.so/ldd"),
     Variant::statically("usr.sbin/chroot"),
+    // M14c: the install media's programs of dynamic directories, and the daemons whose
+    // Makefiles end with `LDSTATIC=`.
+    Variant::statically("usr.bin/arch"),
+    Variant::statically("usr.bin/compress"),
+    Variant::statically("usr.bin/doas"),
+    Variant::statically("usr.bin/encrypt"),
+    Variant::statically("usr.bin/grep"),
+    Variant::statically("usr.bin/sed"),
+    Variant::statically("usr.bin/signify"),
+    Variant::statically("usr.bin/tee"),
+    Variant::statically("usr.sbin/installboot"),
+    Variant::statically("usr.sbin/pwd_mkdb"),
+    Variant::statically("sbin/dhcpleased"),
+    Variant::statically("sbin/resolvd"),
+    Variant::statically("sbin/slaacd"),
     Variant {
         dir: "usr.sbin/tcpdump",
         add_cflags: "",
@@ -394,7 +414,40 @@ const PROGRAMS: &[&str] = &[
     "libexec/ld.so/ldconfig",
     "libexec/ld.so/ldd",
     "usr.sbin/chroot",
+    // M14c: what the install media's list (`distrib/amd64/ramdisk_cd/list`) and the installed
+    // system's `/etc/rc` run, built from the normal Makefiles (not `distrib/special`'s
+    // -DSMALL ones, docs/ARCHITECTURE.md "The install media"). libz (`LIBRARIES`) is gzip's
+    // and grep's.
+    "bin/ed",
+    "bin/mt",
+    "bin/pax",
+    "bin/stty",
+    "bin/sync",
+    "sbin/dmesg",
+    "sbin/growfs",
+    "sbin/kbd",
+    "sbin/mknod",
+    "sbin/restore",
+    "sbin/dhcpleased",
+    "sbin/resolvd",
+    "sbin/slaacd",
+    "usr.bin/arch",
+    "usr.bin/compress",
+    "usr.bin/doas",
+    "usr.bin/encrypt",
+    "usr.bin/grep",
+    "usr.bin/sed",
+    "usr.bin/signify",
+    "usr.bin/tee",
+    "usr.sbin/installboot",
+    "usr.sbin/pwd_mkdb",
 ];
+
+/// Scripts that a Makefile's `afterinstall` rule installs next to the program: (directory, files).
+const AFTERINSTALL_SCRIPTS: &[(&str, &[&str])] = &[(
+    "usr.bin/compress",
+    &["zmore", "zdiff", "zforce", "gzexe", "znew"],
+)];
 
 /// EmiBSD's own test programs, built after `PROGRAMS` the same way (an OpenBSD-style Makefile,
 /// `build_prog`) from directories of this repository instead of the reference tree: paths
@@ -437,6 +490,8 @@ const LIBRARIES: &[&str] = &[
     "lib/libfuse",
     "lib/libevent",
     "lib/libsndio",
+    // M14c: gzip(1) and grep(1) of the install media and the base set.
+    "lib/libz",
 ];
 
 /// Flags added to host tools (built for macOS with the same clang) and why.
@@ -521,7 +576,7 @@ impl Tools {
 }
 
 /// Everything a build step needs.
-struct Ctx<'a> {
+pub(crate) struct Ctx<'a> {
     /// The workspace root (the home of `OWN_PROGRAMS`).
     root: PathBuf,
     src: PathBuf,
@@ -545,9 +600,9 @@ struct Ctx<'a> {
     lex: Mutex<Option<PathBuf>>,
 }
 
-/// `cargo xtask userland --arch A`.
-pub fn userland(root: &Path, arch: Arch) -> Result<()> {
-    let tools = Tools::locate()?;
+/// The build context of `userland` for `arch`: the reference sources, `target/userland/<arch>`
+/// as the output, `tools` as the compiler and linker.
+fn new_ctx<'a>(root: &Path, arch: Arch, tools: &'a Tools) -> Result<Ctx<'a>> {
     let src = fs::canonicalize(openbsd_src(root)?)?;
     let out = root.join("target").join("userland").join(arch.name());
     for p in [&src, &out] {
@@ -556,12 +611,12 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
         }
     }
     let sysroot = out.join("sysroot");
-    let ctx = Ctx {
+    Ok(Ctx {
         root: root.to_path_buf(),
         src,
         sysroot,
         m: Machine::of(arch),
-        tools: &tools,
+        tools,
         installed: Mutex::new(HashMap::new()),
         lower: Mutex::new(HashMap::new()),
         inputs: Mutex::new(BTreeSet::new()),
@@ -569,7 +624,32 @@ pub fn userland(root: &Path, arch: Arch) -> Result<()> {
         yacc: Mutex::new(None),
         lex: Mutex::new(None),
         out,
-    };
+    })
+}
+
+/// Runs `f` with the context of an already built `userland` (the install media and the sets
+/// of `cargo xtask miniroot`/`sets`, which only add the host tools and read the staged files).
+pub(crate) fn with_ctx<R>(
+    root: &Path,
+    arch: Arch,
+    f: impl FnOnce(&Ctx<'_>) -> Result<R>,
+) -> Result<R> {
+    let tools = Tools::locate()?;
+    let ctx = new_ctx(root, arch, &tools)?;
+    if !ctx.out.join("root").is_dir() {
+        return Err(format!(
+            "{}: no userland build; run `just userland` first",
+            ctx.out.join("root").display()
+        )
+        .into());
+    }
+    f(&ctx)
+}
+
+/// `cargo xtask userland --arch A`.
+pub fn userland(root: &Path, arch: Arch) -> Result<()> {
+    let tools = Tools::locate()?;
+    let ctx = new_ctx(root, arch, &tools)?;
     println!(
         "userland {}: OpenBSD sources {}, output {}",
         arch.name(),
@@ -991,7 +1071,7 @@ impl Job {
         for (cmd, ignore) in &self.commands {
             let mut sh = Command::new("/bin/sh");
             sh.arg("-c")
-                .arg(cmd)
+                .arg(format!("{ECHO_SHIM}{cmd}"))
                 .current_dir(&self.cwd)
                 .stdin(Stdio::null());
             if let Some(dir) = &self.path {
@@ -1037,6 +1117,11 @@ fn mtime(p: &Path) -> Option<SystemTime> {
 /// How many jobs `run_jobs` runs at once; 0 means one per CPU (the default of `userland`).
 /// `comp` (M14, `comp.rs`) sets it from `--jobs`: two other milestone agents may share the
 /// machine.
+/// macOS's `/bin/sh` has no `echo -n` (it prints the `-n`); OpenBSD's ksh does, and
+/// Makefiles use it (`distrib/special/more`'s `morehelp.h`). The rest of `echo` is left alone.
+const ECHO_SHIM: &str = "echo() { if [ \"$1\" = -n ]; then shift; printf '%s' \"$*\"; \
+                         else command echo \"$@\"; fi; }\n";
+
 static JOBS: AtomicUsize = AtomicUsize::new(0);
 
 /// Runs the jobs that are out of date, in parallel; returns how many ran. Every failure is
@@ -1682,6 +1767,19 @@ fn build_prog(ctx: &Ctx<'_>, dir: &str) -> Result<Linked> {
         return Err(format!("{dir}: unsupported LDADD word `{w}`").into());
     }
 
+    // Headers a Makefile makes by a rule and names as a dependency of an object (`more.o:
+    // morehelp.h` in `distrib/special/more`): made before the objects, as make would.
+    let mut made = BTreeSet::new();
+    for src in mk.words("SRCS")? {
+        let Some(stem) = src.strip_suffix(".c") else {
+            continue;
+        };
+        for dep in mk.sources_of(&format!("{stem}.o")) {
+            if dep.ends_with(".h") && mk.rule_for(&dep).is_some() {
+                libraries::make_target(ctx, &mk, &objdir, &dep, None, &mut made)?;
+            }
+        }
+    }
     let jobs = object_jobs(ctx, &mk, &objdir, &[])?;
     let ran = run_jobs(ctx, dir, &jobs)?;
 
@@ -1731,6 +1829,20 @@ fn build_prog(ctx: &Ctx<'_>, dir: &str) -> Result<Linked> {
         .arg("--strip-all")
         .arg(&exe)
         .arg(&installed))?;
+    // `afterinstall`: shell scripts a Makefile installs beside the program (the scripts of
+    // `usr.bin/compress`, which its LINKS name). Only `AFTERINSTALL_SCRIPTS`' files; the
+    // rule itself is not evaluated.
+    for (sdir, files) in AFTERINSTALL_SCRIPTS {
+        if *sdir != dir {
+            continue;
+        }
+        for f in *files {
+            let from = ctx.src.join(dir).join(f);
+            let to = rootdir.join(bindir.trim_start_matches('/')).join(f);
+            let _ = fs::remove_file(&to);
+            fs::copy(&from, &to).map_err(|e| format!("{dir}: install {f}: {e}"))?;
+        }
+    }
     // LINKS: pairs of (existing, new) absolute paths, hard links like install(1) makes.
     let links = mk.words("LINKS")?;
     for pair in links.chunks(2) {
@@ -2090,10 +2202,14 @@ fn licence_report(ctx: &Ctx<'_>) -> Result<()> {
 pub(crate) mod comp;
 mod images;
 mod libraries;
+pub(crate) mod miniroot;
 mod passwd;
 mod ramdisk;
+pub(crate) mod sets;
 mod shlib;
+mod signify;
 pub(crate) mod testca;
+mod zoneinfo;
 
 #[cfg(test)]
 mod tests;

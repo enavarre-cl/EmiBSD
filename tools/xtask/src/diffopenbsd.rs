@@ -41,9 +41,9 @@ use serde::Deserialize;
 use crate::Result;
 use crate::boot::{self, Arch};
 
-mod http;
+pub(crate) mod http;
 mod scenario;
-mod serial;
+pub(crate) mod serial;
 
 use serial::{Stop, Vm};
 

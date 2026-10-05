@@ -97,7 +97,9 @@ mod e2fs;
 mod efiboot;
 mod https;
 mod hwopts;
+mod install;
 mod ntfsgen;
+mod rdsetroot;
 mod smokeall;
 mod symbolize;
 mod syscalls;
@@ -357,6 +359,13 @@ fn run(args: &[String]) -> Result<()> {
             };
             userland::comp::comp(&root, arch, jobs)
         }
+        // M14c: OpenBSD's rdsetroot(8) for our kernel ELF (rdsetroot.rs).
+        ["rdsetroot", rest @ ..] => rdsetroot::rdsetroot(rest),
+        ["miniroot", rest @ ..] => install::miniroot(&root, rest),
+        ["sets", rest @ ..] => install::sets(&root, rest),
+        ["install-media", rest @ ..] => install::install_media(&root, rest),
+        ["install", rest @ ..] => install::install(&root, rest),
+        ["install-boot", rest @ ..] => install::install_boot(&root, rest),
         ["ntfs-image", out] => ntfsgen::ntfs_image(&root.join(out), false),
         ["ntfs-image", out, "--check"] => ntfsgen::ntfs_image(&root.join(out), true),
         // M14: efiboot's PE image and the disk smoke-efiboot boots (efiboot.rs).
