@@ -46,6 +46,10 @@
 //! ## Deviations
 //! - `READ_SPECIALREG`/`WRITE_SPECIALREG` are `macro_rules!` taking the register name as a
 //!   string literal: `asm!` needs the name at compile time, as the C's `__STRING(reg)` does.
+//! - `CNTKCTL_EVNTEN`, `CNTKCTL_EVNTDIR`, `CNTKCTL_EVNTI_SHIFT` and `CNTKCTL_EVNTI_MASK` are
+//!   not in the C header: they are `CNTKCTL_EL1`'s event stream fields (the ARM ARM puts them
+//!   where the header's `CNTHCTL_EVNT*` are for `CNTHCTL_EL2`), for the event stream
+//!   `agtimer.rs` enables (its deviations say why).
 
 /// `INSN_SIZE`: every A64 instruction is four bytes.
 pub const INSN_SIZE: usize = 4;
@@ -216,6 +220,14 @@ pub const CPACR_TTA: u64 = 0x1 << 28;
 
 /// `CNTKCTL_EL0VCTEN`: allow EL0 virtual counter access.
 pub const CNTKCTL_EL0VCTEN: u64 = 1 << 1;
+/// `CNTKCTL_EVNTEN`: enable the event stream (not in the C header; see the deviations).
+pub const CNTKCTL_EVNTEN: u64 = 1 << 2;
+/// `CNTKCTL_EVNTDIR`: the transition of the trigger bit that makes an event (0: 0 to 1).
+pub const CNTKCTL_EVNTDIR: u64 = 1 << 3;
+/// `CNTKCTL_EVNTI_SHIFT`: the virtual counter bit that triggers the event stream.
+pub const CNTKCTL_EVNTI_SHIFT: u64 = 4;
+/// `CNTKCTL_EVNTI_MASK`.
+pub const CNTKCTL_EVNTI_MASK: u64 = 0xf << CNTKCTL_EVNTI_SHIFT;
 
 /* CNTV_CTL_EL0 */
 

@@ -48,6 +48,16 @@
 //!   `SCTLR_EL1` and `ci_ttbr1`, then `ci_el1_stkend` as its stack) plus what `initarm` does
 //!   on the boot processor (`SPSel`, `VBAR_EL1`, the FPU trapped as `fpu_drop` leaves it),
 //!   then calls `cpu_init_secondary`.
+//! - Not in the C: `cpu_hatch_entry` turns on the processor's generic timer event stream
+//!   (`agtimer_evtstrm_enable`, a `wfe` wake-up every ~130 µs; `agtimer_startclock` keeps it
+//!   on) before `cpu_init_secondary` waits in `wfe` for `CPUF_IDENTIFY` and `CPUF_GO`. Those
+//!   waits otherwise end only on the boot processor's `sev` (the `ARM_IPI_NOP` it adds cannot
+//!   wake a processor whose GIC CPU interface `arm_intr_cpu_enable` has not enabled yet),
+//!   and QEMU's TCG (since it halts on `wfe`) can lose that `sev`: its `sev` helper kicks the
+//!   halted vCPU without the BQL, racing the vCPU thread's idle check, so the vCPU sleeps on
+//!   until an interrupt or a timer wakes it. A boot then stalled forever in
+//!   `cpu_boot_secondary` (M11e). The event stream is QEMU's timer-driven, reliable wake-up
+//!   and bounds every such lost event; Linux keeps it on for the same reason.
 //! - `psci.c` is not ported, so `psci* at fdt?` is not in the configuration and `NPSCI` is
 //!   0, as `config(8)` would make it: the `NPSCI > 0` paths (`cpu_flush_bp_psci`'s
 //!   `psci_flush_bp`, the firmware Spectre-BHB vectors, PSCI `CPU_OFF`/`CPU_SUSPEND` in
@@ -2444,6 +2454,10 @@ pub unsafe fn cpu_hatch_entry(arg: usize) -> ! {
             asm!("isb", options(nomem, nostack, preserves_flags));
         }
 
+        // Not in the C: the event stream bounds the `wfe` waits of `cpu_init_secondary`
+        // (see the module's deviations).
+        crate::arch::arm64::dev::agtimer::agtimer_evtstrm_enable();
+
         // SAFETY: `cpu_start_secondary` passed a `cpu_info` that lives forever, mapped now.
         let stkend = unsafe { (*ci).ci_el1_stkend.get() };
         let next: extern "C" fn(*const CpuInfo) -> ! = cpu_hatch_secondary;
@@ -3102,8 +3116,8 @@ mod selfcheck {
     /// After `CPUF_GO`: once the AP has read through the window, move it to the new page
     /// (`pmap_kremove` broadcasts the invalidation) and let the AP read again. There is no
     /// timeout: `cpu_boot_secondary` waits for `CPUF_RUNNING` without one anyway, and
-    /// remapping before the AP's first read (as a 10 s timeout once did on a host loaded by
-    /// other emulators) unmaps the window under it.
+    /// remapping before the AP's first read (as a 10 s timeout once did, while the AP slept
+    /// in `wfe` after QEMU lost its `sev`, before the event stream) unmaps the window under it.
     pub fn remap(w: &Window) {
         while STAGE.load(Ordering::Acquire) != 1 {
             delay(100);

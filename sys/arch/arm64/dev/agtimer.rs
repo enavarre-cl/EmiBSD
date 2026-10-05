@@ -37,6 +37,15 @@
 //!   `struct agtimer_softc` adds to the device, so `agtimer_ca`'s `ca_devsize` is a bare
 //!   `struct device`; mainbus attaches it from the device tree (`agtimer* at fdt?`).
 //!   `agtimer_intrclock`'s cookie stays null and the callbacks read the softc directly.
+//! - Not in the C: `agtimer_evtstrm_enable` turns on the timer's event stream
+//!   (`CNTKCTL_EL1.EVNTEN`, counter bit 12 at QEMU's 62.5 MHz: a `wfe` wake-up every
+//!   131 µs). Each application processor calls it first thing (`cpu_hatch_entry`), and
+//!   `agtimer_startclock` calls it again after the C's `CNTKCTL_EL1` write, which clears it.
+//!   QEMU's TCG can lose the `sev` that ends a `wfe` wait (its `sev` helper kicks the halted
+//!   vCPU without the BQL, racing the vCPU thread's idle check); with no interrupt pending,
+//!   the processor then sleeps forever. The event stream's wake-up comes from a QEMU timer
+//!   and is reliable, so every `wfe` loop goes on checking its condition. On hardware it
+//!   only costs a few spurious `wfe` returns; Linux keeps it on for the same reason.
 
 use core::arch::asm;
 use core::cell::Cell;
@@ -50,8 +59,9 @@ use crate::arch::arm64::arm64::intr::{
     arm_clock_register, arm_intr_establish_fdt_idx, arm_intr_route,
 };
 use crate::arch::arm64::include::armreg::{
-    CNTKCTL_EL0VCTEN, CNTV_CTL_ENABLE, CNTV_CTL_IMASK, CURRENTEL_EL_EL2, CURRENTEL_EL_MASK,
-    read_specialreg, write_specialreg,
+    CNTKCTL_EL0VCTEN, CNTKCTL_EVNTDIR, CNTKCTL_EVNTEN, CNTKCTL_EVNTI_MASK, CNTKCTL_EVNTI_SHIFT,
+    CNTV_CTL_ENABLE, CNTV_CTL_IMASK, CURRENTEL_EL_EL2, CURRENTEL_EL_MASK, read_specialreg,
+    write_specialreg,
 };
 use crate::arch::arm64::include::cpu::{cpu_is_primary, curcpu};
 use crate::arch::arm64::include::fdt::FdtAttachArgs;
@@ -425,6 +435,8 @@ pub fn agtimer_startclock() {
     // enable userland access to virtual counter
     // SAFETY: CNTKCTL_EL1 is the kernel's; granting EL0 the virtual counter is the C's intent.
     unsafe { write_specialreg!("cntkctl_el1", CNTKCTL_EL0VCTEN) };
+    // Not in the C: the write above clears the event stream; keep it on (see the deviations).
+    agtimer_evtstrm_enable();
 }
 
 /// `agtimer_init`: what `mainbus` does before the children attach: the counter's frequency
@@ -438,3 +450,34 @@ pub fn agtimer_init() {
         arm_clock_register(None, agtimer_delay, None, None);
     }
 }
+
+/// Not in the C: turns on this CPU's event stream, a `wfe` wake-up about every 100 µs, so
+/// that a `wfe` loop never depends on one `sev` alone (see the module's deviations). Reads
+/// the counter frequency itself: an application processor calls it from its first kernel
+/// instructions, before `agtimer_attach` may have run.
+pub fn agtimer_evtstrm_enable() {
+    let reg = read_specialreg!("cntkctl_el1") & !(CNTKCTL_EVNTI_MASK | CNTKCTL_EVNTDIR);
+    let reg = reg | (agtimer_evtstrm_evnti(agtimer_get_freq()) << CNTKCTL_EVNTI_SHIFT);
+    // SAFETY: CNTKCTL_EL1 is the kernel's; the event stream only ends `wfe` waits early,
+    // and every `wfe` in the kernel sits in a loop that checks its condition again.
+    unsafe { write_specialreg!("cntkctl_el1", reg | CNTKCTL_EVNTEN) };
+}
+
+/// The event stream's trigger bit for a counter of `freq` Hz: the lowest counter bit whose
+/// 0-to-1 transitions (every `2 << n` ticks) are at least 100 µs apart.
+const fn agtimer_evtstrm_evnti(freq: u64) -> u64 {
+    let ticks = freq / 10_000;
+    let mut n = 0;
+    while n < 15 && (2u64 << n) < ticks {
+        n += 1;
+    }
+    n
+}
+
+// QEMU's 62.5 MHz counter: bit 12, an event every 131 µs; 24 MHz: bit 11, every 171 µs.
+const _: () = {
+    assert!(agtimer_evtstrm_evnti(62_500_000) == 12);
+    assert!(agtimer_evtstrm_evnti(24_000_000) == 11);
+    assert!(agtimer_evtstrm_evnti(0) == 0);
+    assert!(agtimer_evtstrm_evnti(u64::MAX) == 15);
+};
