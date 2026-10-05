@@ -4,7 +4,7 @@
 //! (`docs/ARCHITECTURE.md`, "Deviations"); `machine::autoconf` hands them to
 //! `subr_autoconf.rs`.
 //!
-//! GENERIC lines present: `vioscsi* at virtio?`, `cd* at scsibus?` (M13), `mainbus0 at root`, `ampintc* at fdt? early 1`, `agtimer* at fdt?`,
+//! GENERIC lines present: `mainbus0 at root`, `ampintc* at fdt? early 1`, `agtimer* at fdt?`,
 //! `virtio* at fdt?`, `vio* at virtio?`, `vioblk* at virtio?`, `scsibus* at scsi?`,
 //! `sd* at scsibus?`, `softraid0 at root` and `scsibus* at softraid?` (conf/GENERIC),
 //! `pluart* at fdt?`,
@@ -13,15 +13,16 @@
 //! xhci?`, `uhub* at usb?`, `uhub* at uhub?`, `umass* at uhub?` and `scsibus* at scsi?` below
 //! it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12), `cpu0 at mainbus?`
 //! and, with `MULTIPROCESSOR`, `GENERIC.MP`'s `cpu* at mainbus?`;
-//! `azalia* at pci?` and `audio* at azalia?` (M12);
+//! `azalia* at pci?` and `audio* at azalia?` (M12); `vioscsi* at virtio?` and `cd* at
+//! scsibus?` (M13);
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
 //! The `fdt` attribute (`files.arm64`: `define fdt {[early = 0]}`) is carried by `mainbus`,
 //! `simplebus` and `ampintc` (`device ampintc: fdt`, whose GICv2m frames `ampintcmsi`
 //! attach below it); `agintc`, which also carries it, is not ported. Every other GENERIC
-//! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*` and
-//! `vioblk*`, the devices at `pci?` but `virtio*`, `xhci*` and `azalia*`, the other host
+//! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*`,
+//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*` and `azalia*`, the other host
 //! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
 //! `umass*` and `uhidev*`, the devices at `uhidev?` but `ukbd*` (`wskbd* at ukbd?` waits
 //! for wskbd, M13), ...),
@@ -131,8 +132,7 @@ const LOC_UHIDBUS_UNK: &[i64] = &[-1];
 const PV_AZALIA: &[i16] = &[17];
 
 /// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`),
-/// `softraid0` (`cfdata[11]`) and `umass*` (`cfdata[24]`).
-/// M13: also `vioscsi*` (`cfdata[27]`).
+/// `softraid0` (`cfdata[11]`), `umass*` (`cfdata[24]`) and `vioscsi*` (`cfdata[27]`).
 const PV_VIOBLK: &[i16] = &[5, 11, 24, 27];
 
 /// `pv[]` for children of `scsibus*` (`cfdata[9]`).
@@ -249,7 +249,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 9: scsibus* at scsi? (vioblk, umass), and at softraid? (GENERIC's `scsibus* at
+    // 9: scsibus* at scsi? (vioblk, umass, vioscsi), and at softraid? (GENERIC's `scsibus* at
     // softraid?`)
     Cfdata::new(
         &SCSIBUS_CA,

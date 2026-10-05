@@ -4,13 +4,14 @@
 //! (`docs/ARCHITECTURE.md`, "Deviations"); `machine::autoconf` hands them to
 //! `subr_autoconf.rs`.
 //!
-//! GENERIC lines present: `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?` (M13), `mainbus0 at root`, `cpu0 at mainbus?` (and GENERIC.MP's
+//! GENERIC lines present: `mainbus0 at root`, `cpu0 at mainbus?` (and GENERIC.MP's
 //! `cpu* at mainbus?` with feature `multiprocessor`), `pci* at mainbus0`,
 //! `virtio* at pci?`, `vio* at virtio?`, `vioblk* at virtio?`, `auich* at pci?`,
 //! `audio* at auich?`, `azalia* at pci?`, `audio* at azalia?`, `scsibus* at scsi?`,
 //! `sd* at scsibus?`, `softraid0 at root` and `scsibus* at softraid?` (conf/GENERIC),
 //! `xhci* at pci?`, `usb* at xhci?`, `uhub* at usb?`, `uhub* at uhub?`, `umass* at uhub?`
 //! and `scsibus* at scsi?` below it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12),
+//! `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?` (M13),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -20,9 +21,10 @@
 //! `ipmi0` and `efifb0` at mainbus, and everything below them; `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`, `vga0`,
 //! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
-//! (`pchb*`, `ppb*`, `pcib*`, the network and storage drivers, ...), every other
+//! (`pchb*`, `ppb*`, `pcib*`, the network drivers and the storage drivers but nvme, ...), every
+//! other
 //! `audio*` (at `uaudio?`, ...), `pci*` at `ppb?` and
-//! `pchb?`, and every device at `virtio?` but `vio*` and `vioblk*`; `usb*` at `ehci?`, `uhci?`
+//! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; `usb*` at `ehci?`, `uhci?`
 //! and `ohci?`, every device at `uhub?` but `uhub*`, `umass*` and `uhidev*`, every device
 //! at `uhidev?` but `ukbd*` (`wskbd* at ukbd?` waits for wskbd, M13);
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
@@ -90,8 +92,8 @@ const LOC_PCI_UNK: &[i64] = &[-1, -1];
 const PV_VIRTIO: &[i16] = &[3];
 
 /// `pv[]` for children of the `scsi` attribute, carried by `vioblk*` (`cfdata[5]`),
-/// `softraid0` (`cfdata[13]`) and `umass*` (`cfdata[22]`).
-/// M13: also `nvme*` (`cfdata[25]`), `vioscsi*` (`cfdata[26]`).
+/// `softraid0` (`cfdata[13]`), `umass*` (`cfdata[22]`), `nvme*` (`cfdata[25]`) and `vioscsi*`
+/// (`cfdata[26]`).
 const PV_VIOBLK: &[i16] = &[5, 13, 22, 25, 26];
 
 /// `pv[]` for children of `scsibus*` (`cfdata[11]`).
@@ -273,7 +275,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 11: scsibus* at scsi? (vioblk, umass), and at softraid? (GENERIC's `scsibus* at
+    // 11: scsibus* at scsi? (vioblk, umass, nvme, vioscsi), and at softraid? (GENERIC's `scsibus* at
     // softraid?`)
     Cfdata::new(
         &SCSIBUS_CA,
