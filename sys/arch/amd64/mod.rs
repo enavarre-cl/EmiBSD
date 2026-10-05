@@ -1284,6 +1284,22 @@ impl crate::machine::fdt::Fdt for Machine {
         None
     }
 
+    /// No secure monitor: `PSCI_NOT_SUPPORTED` (-1); only `psci(4)` calls it.
+    fn smc_call(_a0: u64, _a1: u64, _a2: u64, _a3: u64) -> u64 {
+        u64::MAX
+    }
+
+    /// No hypervisor conduit: `PSCI_NOT_SUPPORTED` (-1).
+    fn hvc_call(_a0: u64, _a1: u64, _a2: u64, _a3: u64) -> u64 {
+        u64::MAX
+    }
+
+    /// No device-tree driver registers a reset function here (amd64 uses ACPI's `CPURESETFN`).
+    fn set_cpuresetfn(_f: fn()) {}
+
+    /// No device-tree driver registers a power-off function here.
+    fn set_powerdownfn(_f: fn()) {}
+
     unsafe fn fdt_intr_disestablish(_cookie: NonNull<c_void>) {}
 }
 

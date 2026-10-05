@@ -106,6 +106,41 @@ pub trait Fdt {
     ///
     /// `cookie` came from `fdt_intr_establish*` and is not used afterwards.
     unsafe fn fdt_intr_disestablish(cookie: NonNull<c_void>);
+
+    /// `smc_call(a0, a1, a2, a3)` (`<machine/cpufunc.h>`, `support.S`): an SMCCC call to
+    /// the secure monitor; the value `x0` comes back with. A machine without the
+    /// instruction answers `PSCI_NOT_SUPPORTED` (-1).
+    fn smc_call(a0: u64, a1: u64, a2: u64, a3: u64) -> u64;
+
+    /// `hvc_call(a0, a1, a2, a3)`: as `smc_call`, to the hypervisor.
+    fn hvc_call(a0: u64, a1: u64, a2: u64, a3: u64) -> u64;
+
+    /// `cpuresetfn = f` (`extern void (*cpuresetfn)(void)` in `machdep.c`): the function
+    /// `boot(9)` calls to reset the machine. Only a driver that attaches registers one.
+    fn set_cpuresetfn(f: fn());
+
+    /// `powerdownfn = f`: the function `boot(9)` calls to power the machine off.
+    fn set_powerdownfn(f: fn());
+}
+
+/// `smc_call` on the selected machine.
+pub fn smc_call(a0: u64, a1: u64, a2: u64, a3: u64) -> u64 {
+    Machine::smc_call(a0, a1, a2, a3)
+}
+
+/// `hvc_call` on the selected machine.
+pub fn hvc_call(a0: u64, a1: u64, a2: u64, a3: u64) -> u64 {
+    Machine::hvc_call(a0, a1, a2, a3)
+}
+
+/// `cpuresetfn = f` on the selected machine.
+pub fn set_cpuresetfn(f: fn()) {
+    Machine::set_cpuresetfn(f)
+}
+
+/// `powerdownfn = f` on the selected machine.
+pub fn set_powerdownfn(f: fn()) {
+    Machine::set_powerdownfn(f)
 }
 
 /// `fdt_find_cons` on the selected machine.

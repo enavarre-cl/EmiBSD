@@ -58,12 +58,13 @@
 //!   until an interrupt or a timer wakes it. A boot then stalled forever in
 //!   `cpu_boot_secondary` (M11e). The event stream is QEMU's timer-driven, reliable wake-up
 //!   and bounds every such lost event; Linux keeps it on for the same reason.
-//! - `psci.c` is not ported, so `psci* at fdt?` is not in the configuration and `NPSCI` is
-//!   0, as `config(8)` would make it: the `NPSCI > 0` paths (`cpu_flush_bp_psci`'s
-//!   `psci_flush_bp`, the firmware Spectre-BHB vectors, PSCI `CPU_OFF`/`CPU_SUSPEND` in
-//!   `cpu_halt`) are compiled out as in C. The unconditional PSCI/SMCCC calls are reported:
-//!   `smccc_enable_arch_workaround_2` (Spectre-V4), `psci_features` (`cpu_psci_init`, only
-//!   with `cpu-idle-states`) and `psci_cpu_suspend` (`cpu_psci_idle_cycle`).
+//! - `psci* at fdt?` is configured (M13), so `NPSCI` is 1: `cpu_flush_bp_psci`'s
+//!   `psci_flush_bp`, `smccc_enable_arch_workaround_2` (Spectre-V4) and PSCI
+//!   `CPU_OFF`/`CPU_SUSPEND` in `cpu_halt` are the C's. The firmware Spectre-BHB vectors
+//!   (`smccc_needs_arch_workaround_3`, `trampoline_vectors_psci_{hvc,smc}`) wait for
+//!   `trampoline.S`; `psci_features` (`cpu_psci_init`, only with `cpu-idle-states`) and
+//!   `psci_cpu_suspend` (`cpu_psci_idle_cycle`) stay reported: no idle state is ever picked.
+//!   `cpu_start_secondary` still starts the APs through Limine, never `psci_cpu_on`.
 //! - `trampoline.S` is not ported (`exception.rs`): `ci_trampoline_vectors` records which
 //!   `trampoline_vectors_*` table the C would pick, as a `TRAMPOLINE_VECTORS_*` number.
 //! - `codepatch_nop(CPTAG_REPEAT_TLBI)` has nothing to patch: the TLB invalidations never
@@ -103,6 +104,9 @@ use crate::arch::arm64::include::cpu::{CpuInfo, curcpu};
 use crate::arch::arm64::include::elf::*;
 use crate::arch::arm64::include::fdt::FdtAttachArgs;
 use crate::arch::arm64::include::vmparam::USER_SPACE_BITS;
+#[cfg(feature = "multiprocessor")]
+use crate::dev::fdt::psci::{psci_can_suspend, psci_cpu_off};
+use crate::dev::fdt::psci::{psci_flush_bp, smccc_enable_arch_workaround_2};
 use crate::dev::ofw::fdt::{
     OF_child, OF_getindex, OF_getnodebyphandle, OF_getprop, OF_getpropbool, OF_getpropint,
     OF_getpropint64, OF_getpropintarray, OF_getproplen, OF_is_compatible, OF_peer,
@@ -355,8 +359,8 @@ pub const fn cpu_rev(midr: u64) -> u64 {
     midr & 0xf
 }
 
-/// `NPSCI`: `psci* at fdt?` is not configured (see the module's deviations).
-const NPSCI: i32 = 0;
+/// `NPSCI`: `psci* at fdt?` is configured (see the module's deviations).
+const NPSCI: i32 = 1;
 /// `NKSTAT`: `pseudo-device kstat` is not configured.
 const NKSTAT: i32 = 0;
 
@@ -992,7 +996,7 @@ pub fn cpu_mitigate_spectre_v4(ci: &CpuInfo) {
     }
 
     // Enable firmware workaround if required.
-    let _ = unported!("smccc_enable_arch_workaround_2 (dev/fdt/psci.c)");
+    smccc_enable_arch_workaround_2();
 }
 
 /// `cpu_mitigate_cve_2025_10263`: enable mitigation for TLB invalidation vulnerabilities
@@ -2283,7 +2287,7 @@ pub fn cpu_flush_bp_noop() {}
 /// only: nothing here).
 pub fn cpu_flush_bp_psci() {
     if NPSCI > 0 {
-        let _ = unported!("psci_flush_bp (dev/fdt/psci.c)");
+        psci_flush_bp(&curcpu().ci_flush_bp);
     }
 }
 
@@ -2587,7 +2591,9 @@ pub fn cpu_halt() {
     ci.ci_flags
         .fetch_and(!(CPUF_RUNNING | CPUF_PRESENT | CPUF_GO), Ordering::AcqRel);
 
-    // NPSCI > 0: psci_cpu_off() when psci_can_suspend().
+    if NPSCI > 0 && psci_can_suspend() != 0 {
+        psci_cpu_off();
+    }
 
     // If we failed to turn ourselves off using PSCI, declare that we're still present and
     // spin in a low power state until we're told to wake up again by the primary CPU.
@@ -2601,7 +2607,11 @@ pub fn cpu_halt() {
 
     let mut _count = 0u64;
     while ci.ci_flags.load(Ordering::Acquire) & CPUF_GO == 0 {
-        // NPSCI > 0: psci_cpu_suspend(ci_psci_suspend_param) when set.
+        if NPSCI > 0 && ci.ci_psci_suspend_param.get() != 0 {
+            // psci_cpu_suspend(ci_psci_suspend_param, start_pa, ci_pa): the resume entry
+            // point is M14's (SUSPEND), so the state is dropped as on a failed call.
+            ci.ci_psci_suspend_param.set(0);
+        }
         cpu_suspend_cycle();
         _count += 1;
     }

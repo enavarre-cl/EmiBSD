@@ -1254,6 +1254,25 @@ impl crate::machine::fdt::Fdt for Machine {
             .map(NonNull::cast)
     }
 
+    fn smc_call(a0: u64, a1: u64, a2: u64, a3: u64) -> u64 {
+        arm64::cpufunc::smc_call(a0, a1, a2, a3)
+    }
+
+    fn hvc_call(a0: u64, a1: u64, a2: u64, a3: u64) -> u64 {
+        arm64::cpufunc::hvc_call(a0, a1, a2, a3)
+    }
+
+    fn set_cpuresetfn(f: fn()) {
+        // SAFETY: called by a driver's attach on the boot CPU during autoconfiguration, before
+        // any other CPU or `boot(9)` reads it.
+        unsafe { arm64::machdep::CPURESETFN.write(Some(f)) };
+    }
+
+    fn set_powerdownfn(f: fn()) {
+        // SAFETY: as for `set_cpuresetfn`.
+        unsafe { arm64::machdep::POWERDOWNFN.write(Some(f)) };
+    }
+
     unsafe fn fdt_intr_disestablish(cookie: NonNull<c_void>) {
         // SAFETY: the caller's guarantee: the cookie is a `MachineIntrHandle` from
         // `fdt_intr_establish*`.

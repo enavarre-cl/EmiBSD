@@ -14,7 +14,7 @@
 //! it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12), `cpu0 at mainbus?`
 //! and, with `MULTIPROCESSOR`, `GENERIC.MP`'s `cpu* at mainbus?`;
 //! `azalia* at pci?` and `audio* at azalia?` (M12); `vioscsi* at virtio?` and `cd* at
-//! scsibus?` (M13);
+//! scsibus?`, `psci* at fdt? early 1` (M13);
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
@@ -41,6 +41,7 @@ use crate::dev::bio::bioattach;
 use crate::dev::fdt::pciecam::{PCIECAM_CA, PCIECAM_CD};
 use crate::dev::fdt::plrtc::{PLRTC_CA, PLRTC_CD};
 use crate::dev::fdt::pluart_fdt::PLUART_FDT_CA;
+use crate::dev::fdt::psci::{PSCI_CA, PSCI_CD};
 use crate::dev::fdt::virtio_mmio::VIRTIO_MMIO_CA;
 use crate::dev::ic::pluart::PLUART_CD;
 use crate::dev::pci::azalia::{AZALIA_CA, AZALIA_CD};
@@ -144,9 +145,9 @@ const LOC_SCSIBUS_UNK: &[i64] = &[-1, -1];
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    30
+    31
 } else {
-    29
+    30
 };
 
 /// `cfdata[]`.
@@ -470,7 +471,19 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 29: cpu* at mainbus? (GENERIC.MP)
+    // 29: psci* at fdt? early 1
+    Cfdata::new(
+        &PSCI_CA,
+        &PSCI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_1,
+        0,
+        PV_FDT,
+        0,
+        0,
+    ),
+    // 30: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];

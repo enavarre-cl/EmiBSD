@@ -964,7 +964,11 @@ reason:
   `machine::acpi_machdep` answers as a machine without ACPI. The S3/hibernate machinery
   (`acpi_x86.c`, `acpi_wakecode.S`, `subr_suspend.c`) is not M13's and is reported where
   reached. `just smoke-power` checks `halt -p` (QEMU powers off, status 0) and `reboot` (QEMU
-  without `-no-reboot`, xtask `--reboot`, boots a second time).
+  without `-no-reboot`, xtask `--reboot`, boots a second time), on both archs: arm64 goes through
+  psci(4) (`dev/fdt/psci.c`, `psci0 at mainbus0`: SYSTEM_OFF and SYSTEM_RESET as `powerdownfn` and
+  `cpuresetfn`; `hvc_call`/`smc_call` are `asm!` in `arm64/cpufunc.rs`, reached through
+  `machine::fdt`). `just smoke-rtc` compares `date +%s` after boot with the host within 60 s
+  (amd64: mc146818 `rtcinit`; arm64: efi0 GetTime, EDK2 disables the pl031 node).
 - File descriptors (M7b): `kern_descrip.c`, `<sys/file.h>`, `<sys/filedesc.h>` and the
   read/write/ioctl paths of `sys_generic.c` are OpenBSD's: process 0 gets `fdinit()`,
   `fork1` copies or shares the table, `exec` runs `fdprepforexec`, `exit1` runs `fdfree`,

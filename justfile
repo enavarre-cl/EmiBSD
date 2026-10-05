@@ -83,7 +83,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-efiboot smoke-clock " + \
+    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-efiboot smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb"
 
@@ -1415,9 +1415,11 @@ smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") efiboot-amd64
 # and the S5 panic. The second boot runs QEMU without -no-reboot (`--reboot`, hwopts.rs):
 # `reboot` resets through cpu_reset's cpuresetfn, acpi_reset (the FADT's reset register,
 # 0xcf9 on q35), the firmware boots the kernel again, and the second session runs a command.
-# amd64 only: arm64 powers off through PSCI, a later step. Part of `smoke`.
-smoke-power: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
-    @test -f target/userland/amd64/ramdisk.ffs || \
+# arm64 does the same through psci(4) (dev/fdt/psci.c, `psci0 at mainbus0`): `halt -p` is
+# PSCI SYSTEM_OFF (powerdownfn = psci_powerdown) and `reboot` is SYSTEM_RESET
+# (cpuresetfn = psci_reset). Part of `smoke`.
+smoke-power: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-power: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --status 0 \
         {{disk_login}} --send-after '# ' --send 'sysctl machdep.lidaction machdep.pwraction machdep.tscfreq\n' \
@@ -1433,6 +1435,33 @@ smoke-power: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
         --send-after '# ' --send 'echo m13-power-$((40+2))\n' \
         --expect "acpi0 at bios0: ACPI 3.0" --expect "rebooting..." --expect "m13-power-42" \
         --reject "The operating system has halted"
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --status 0 \
+        {{disk_login}} --send-after '# ' --send 'halt -p\n' \
+        --expect "psci0 at mainbus0: PSCI 1." --expect "rc: multi-user" --expect "halt -p" \
+        --expect "Attempting to power down..." \
+        --reject "rebooting..." --reject "The operating system has halted"
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --reboot --until-seen \
+        {{disk_login}} --send-after '# ' --send 'reboot\n' \
+        --send-after 'login:' --send 'root\n' --send-after 'Password:' --send 'emibsd\n' \
+        --send-after '# ' --send 'echo m13-power-$((40+2))\n' \
+        --expect "psci0 at mainbus0: PSCI 1." --expect "rebooting..." --expect "m13-power-42" \
+        --reject "The operating system has halted"
+
+# M13: the date comes from the RTC. Each arch boots single user from the ramdisk (`-s`) and
+# ksh(1) compares `date +%s` right after boot with the host's clock ({host-ms}, hwopts.rs):
+# within 60 s. amd64's time is the mc146818 (`inittodr`, arch/amd64/isa/clock.c); arm64's is
+# efi0's GetTime (EDK2 disables the pl031 node, plrtc(4) does not attach). Part of `smoke`.
+smoke-rtc: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-rtc: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen {{rtc_steps}}
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen {{rtc_steps}}
+
+# `smoke-rtc`'s session.
+rtc_steps := "--send-after 'RETURN for sh:' --send '\\n' " + \
+    "--send-after '# ' --send 'h={host-ms}; g=$(date +%s); d=$((g - h/1000)); echo \"rtc: guest $g, host $((h/1000)), diff $d\"\\n' " + \
+    "--send-after '# ' --send '[ ${d#-} -le 60 ] && echo rtc-ok-$((40+2))\\n' " + \
+    "--expect 'rtc: guest ' --expect 'rtc-ok-42'"
 
 # M13 (acpitimer, acpihpet): the clock keeps the host's rate. Each arch boots single user
 # from the ramdisk (`-s`) and ksh(1) reads date(1) beside the host's clock before and after

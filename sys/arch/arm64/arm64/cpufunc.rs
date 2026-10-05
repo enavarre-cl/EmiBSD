@@ -51,6 +51,43 @@
 
 use core::arch::asm;
 
+/// `smc_call(a0, a1, a2, a3)`: `smc #0` with the SMCCC registers `x0`..`x3`; returns `x0`.
+/// The call may clobber `x0`..`x3` only (SMCCC), which is all the asm declares.
+pub fn smc_call(a0: u64, a1: u64, a2: u64, a3: u64) -> u64 {
+    let ret: u64;
+    // SAFETY: `smc` traps to the secure monitor at EL3; PSCI/SMCCC calls preserve every
+    // register but the argument/result ones (`x0`..`x3` are in/out here) and touch no kernel
+    // memory.
+    unsafe {
+        asm!(
+            "smc #0",
+            inout("x0") a0 => ret,
+            inout("x1") a1 => _,
+            inout("x2") a2 => _,
+            inout("x3") a3 => _,
+            options(nostack),
+        )
+    };
+    ret
+}
+
+/// `hvc_call(a0, a1, a2, a3)`: as [`smc_call`] with `hvc #0` (to EL2).
+pub fn hvc_call(a0: u64, a1: u64, a2: u64, a3: u64) -> u64 {
+    let ret: u64;
+    // SAFETY: as for `smc_call`; `hvc` enters the hypervisor (or the firmware at EL2).
+    unsafe {
+        asm!(
+            "hvc #0",
+            inout("x0") a0 => ret,
+            inout("x1") a1 => _,
+            inout("x2") a2 => _,
+            inout("x3") a3 => _,
+            options(nostack),
+        )
+    };
+    ret
+}
+
 /// `cpu_setttb(asid, pt0pa)`: switches `TTBR1_EL1`'s ASID and `TTBR0_EL1`.
 ///
 /// # Safety
