@@ -37,11 +37,11 @@
 //!   its higher-half direct map, which the kernel keeps (`pmap.rs`), so there is no
 //!   `pmap_set_pml4_early` slot to borrow and `efifb_early_cleanup` has nothing to undo
 //!   (`pmap_set_pml4_early`/`pmap_clear_pml4_early` are not ported).
-//! - wsdisplay is not ported yet (the next M13 console step): `wsdisplay_cnattach` and the
-//!   `config_found_sm` of the `wsdisplay` child (with `wsemuldisplaydevprint` and
-//!   `wsemuldisplaydevsubmatch`) are reported with `unported!` where the C calls them, and
-//!   the attach arguments are handed, under feature `qemu`, to the frame buffer self-test
-//!   (`kern/selftest.rs`, `selftest=fb`), which draws through them as wsdisplay will.
+//! - `efifb_cnattach` is `wscons_machdep.c`'s `wscn_video_init`'s, which is not ported: the
+//!   kernel's console is the serial line (`consinit.rs`), as OpenBSD's with a serial console
+//!   chosen by boot(8), so `wsdisplay0 at efifb0` attaches as a plain, non-console display.
+//!   Under feature `qemu` the attach arguments are also handed to the frame buffer self-test
+//!   (`kern/selftest.rs`, `selftest=fb`).
 //! - `ws_get_param`/`ws_set_param` are `wsdisplayvar.rs`'s cells; their `int` result is
 //!   0 (`Ok(true)`), -1 (`Ok(false)`, not ours) or an errno.
 //! - `efifb_attach` checks `rasops_init`'s result: the C ignores it and would dereference
@@ -84,11 +84,15 @@ use crate::dev::wscons::wsconsio::{
     WSDISPLAYIO_GETSUPPORTEDDEPTH, WSDISPLAYIO_GINFO, WSDISPLAYIO_GTYPE, WSDISPLAYIO_LINEBYTES,
     WSDISPLAYIO_SETPARAM, WSDISPLAYIO_SMODE, WsdisplayFbinfo, WsdisplayParam,
 };
+use crate::dev::wscons::wsdisplay::{
+    wsdisplay_cnattach, wsemuldisplaydevprint, wsemuldisplaydevsubmatch,
+};
 use crate::dev::wscons::wsdisplayvar::{
     WsParamFn, WsdisplayAccessops, WsdisplayCharcell, WsemuldisplaydevAttachArgs, WsscreenDescr,
     WsscreenList, ws_get_param, ws_set_param,
 };
 use crate::kern::kern_malloc::malloc;
+use crate::kern::subr_autoconf::config_found_sm;
 use crate::kern::subr_prf::{panic, printf};
 use crate::sys::device::{CfMatch, Cfattach, Cfdriver, DV_DULL, Device, Softc};
 use crate::sys::errno::Errno;
@@ -96,7 +100,6 @@ use crate::sys::ioctl::{ioctl_arg, ioctl_ret};
 use crate::sys::malloc::{M_DEVBUF, M_NOWAIT};
 use crate::sys::proc::Proc;
 use crate::sys::types::{Paddr, Psize};
-use crate::unported;
 
 /// `CB_TAG_VERSION`.
 #[allow(dead_code)] // the C defines it; the table walk does not use it
@@ -413,19 +416,28 @@ pub fn efifb_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_void)
     ));
 
     if console != 0 {
-        let _ccol = ri.ri_ccol.get();
-        let _crow = ri.ri_crow.get();
+        let ccol = ri.ri_ccol.get();
+        let crow = ri.ri_crow.get();
 
         let _ = efifb_rasops_init(fb, RI_VCONS);
 
         // SAFETY: with RI_VCONS the emulops take the active screen as their cookie.
-        let _defattr = unsafe { ri.ops_pack_attr(ri.ri_active.get().cast(), 0, 0, 0) };
-        // wsdisplay_cnattach(&efifb_std_descr, ri->ri_active, ccol, crow, defattr);
-        let _ = unported!("wsdisplay_cnattach (efifb0 console)");
+        let defattr = unsafe { ri.ops_pack_attr(ri.ri_active.get().cast(), 0, 0, 0) }.unwrap_or(0);
+        // SAFETY: the descriptor was filled by the console attach and is only read from now
+        // on; with RI_VCONS the active screen is the emulops' cookie, for good.
+        unsafe {
+            wsdisplay_cnattach(
+                EFIFB_STD_DESCR.get(),
+                ri.ri_active.get().cast(),
+                ccol,
+                crow,
+                defattr,
+            )
+        };
     }
 
     ri.ri_hw.set(ptr::from_ref(sc).cast_mut().cast());
-    let aa = WsemuldisplaydevAttachArgs {
+    let mut aa = WsemuldisplaydevAttachArgs {
         console,
         primary: 0,
         scrdata: EFIFB_SCREEN_LIST.as_ptr(),
@@ -434,12 +446,15 @@ pub fn efifb_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_void)
         defaultscreens: 0,
     };
 
-    // config_found_sm(self, &aa, wsemuldisplaydevprint, wsemuldisplaydevsubmatch);
-    let _ = unported!("wsdisplay* at efifb? (wsemuldisplaydevprint, wsemuldisplaydevsubmatch)");
     #[cfg(feature = "qemu")]
     crate::kern::selftest::fb_attached(self_, &aa);
-    #[cfg(not(feature = "qemu"))]
-    let _ = aa;
+
+    let _ = config_found_sm(
+        self_,
+        ptr::from_mut(&mut aa).cast(),
+        Some(wsemuldisplaydevprint),
+        Some(wsemuldisplaydevsubmatch),
+    );
 }
 
 /// `efifb_rasops_init`: the geometry and channel layout from coreboot's table or from
@@ -496,7 +511,7 @@ pub unsafe fn efifb_ioctl(
     cmd: u64,
     data: &mut [u8],
     _flag: i32,
-    _p: &Proc,
+    _p: Option<&Proc>,
 ) -> Result<bool, Errno> {
     // SAFETY: the caller's contract.
     let ri = unsafe { &*v.cast::<RasopsInfo>() };
@@ -633,9 +648,10 @@ fn efifb_cnattach_common() {
     // SAFETY: cold, the boot CPU: nothing else holds the descriptor.
     ri.fill_descr(unsafe { EFIFB_STD_DESCR.get_mut() });
 
-    let _defattr = ri.ri_pack_attr(0, 0, 0);
-    // wsdisplay_cnattach(&efifb_std_descr, ri, 0, 0, defattr);
-    let _ = unported!("wsdisplay_cnattach (efifb console)");
+    let defattr = ri.ri_pack_attr(0, 0, 0).unwrap_or(0);
+    // SAFETY: cold, the boot CPU: the descriptor was just filled and is only read from now
+    // on; the console's rasops_info is a static, the emulops' cookie for good.
+    unsafe { wsdisplay_cnattach(EFIFB_STD_DESCR.get(), ri.cookie(), 0, 0, defattr) };
 }
 
 /// `efifb_cnremap`: map the console frame buffer for good once `bus_space_map` works

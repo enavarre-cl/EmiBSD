@@ -15,7 +15,7 @@
 //! `bios0 at mainbus0`, `acpi0 at bios0`, `acpitimer* at acpi?`, `acpihpet* at acpi?`,
 //! `ioapic* at mainbus?`, `acpimadt0 at acpi?`, `acpiprt* at acpi?` and `acpipci* at
 //! acpi?` (M13), `puc* at pci?` and `com* at puc?` (M13; `com*` takes the units from 4),
-//! `em* at pci?` (M13), `efifb0 at mainbus?` (M13; its `wsdisplay0 at efifb?` waits for wsdisplay),
+//! `em* at pci?` (M13), `efifb0 at mainbus?` and `wsdisplay0 at efifb?` (M13),
 //! `re* at pci?`, `rlphy* at mii?`, `rgephy* at mii?` and `ukphy* at mii?` (M13),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
@@ -88,6 +88,7 @@ use crate::dev::usb::umass::{UMASS_CA, UMASS_CD};
 use crate::dev::usb::usb::{USB_CA, USB_CD};
 use crate::dev::usb::xhci::XHCI_CD;
 use crate::dev::vnd::{NVND, vndattach};
+use crate::dev::wscons::wsdisplay::{WSDISPLAY_CA, WSDISPLAY_CD};
 use crate::kern::tty_pty::ptyattach;
 #[cfg(feature = "fuse")]
 use crate::miscfs::fuse::fuse_device::{NFUSE, fuseattach};
@@ -194,11 +195,19 @@ const PV_MII: &[i16] = &[42];
 /// -1]}`).
 const LOC_MII_UNK: &[i64] = &[-1];
 
-/// `cfdata[]`: 46 entries, 47 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `pv[]` for children of `efifb0` (`cfdata[41]`).
+const PV_EFIFB: &[i16] = &[41];
+
+/// `loc[]` of an entry at `wsemuldisplaydev` with the defaults `console = -1, primary = -1,
+/// mux = 1` (`conf/files`: `define wsemuldisplaydev {[console = -1], [primary = -1], [mux =
+/// 1]}`).
+const LOC_WSEMULDISPLAYDEV_UNK: &[i64] = &[-1, -1, 1];
+
+/// `cfdata[]`: 47 entries, 48 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    47
+    48
 } else {
-    46
+    47
 };
 
 /// `cfdata[]`.
@@ -706,7 +715,19 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 46: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 46: wsdisplay0 at efifb?
+    Cfdata::new(
+        &WSDISPLAY_CA,
+        &WSDISPLAY_CD,
+        0,
+        FSTATE_NOTFOUND,
+        LOC_WSEMULDISPLAYDEV_UNK,
+        0,
+        PV_EFIFB,
+        0,
+        0,
+    ),
+    // 47: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

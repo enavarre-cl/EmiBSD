@@ -90,11 +90,9 @@
 //! - `wsemul_pick`, `wsemul_getname`, `wsemul_getchar` and `wsemul_utf8_translate` are
 //!   defined by their `.c` files' modules (`wsemulconf`, `wsemul_subr`) and not repeated
 //!   here.
-//! - Visible stubs until `wsdisplay.c` is ported (M13), which defines them; its port moves
-//!   the bodies to `wsdisplay.rs` and turns these into `pub use`s: [`wsdisplay_emulbell`]
-//!   and [`wsdisplay_emulinput`]. Both return at once for a NULL cookie, as the C does for
-//!   the console before its real attach; otherwise they print `unported: <name>` once and
-//!   drop the bell or the reply.
+//! - The callbacks into the display interface, `wsdisplay_emulbell` and
+//!   `wsdisplay_emulinput`, are defined by `wsdisplay.rs` and re-exported here, where the C
+//!   declares them.
 
 use core::ffi::c_void;
 use core::ptr;
@@ -104,7 +102,8 @@ use crate::dev::wscons::wsconsio::WSEMUL_NAME_SIZE;
 use crate::dev::wscons::wsdisplayvar::{WsdisplayEmulops, WsscreenDescr};
 use crate::dev::wscons::wsksymvar::{KbdT, KeysymT};
 use crate::sys::errno::Errno;
-use crate::unported;
+
+pub use crate::dev::wscons::wsdisplay::{wsdisplay_emulbell, wsdisplay_emulinput};
 
 /// The size of the buffer `translate` may fill: the vt100 emulation's `translatebuf`, four
 /// bytes with `HAVE_UTF8_SUPPORT` (a UTF-8 sequence), one without.
@@ -448,28 +447,6 @@ pub fn wsemulop(
         let _ = op();
         Ok(())
     }
-}
-
-/// `wsdisplay_emulbell`: callback from the emulation code to the display interface driver:
-/// ring the bell of screen `v` (the emulation's `cbcookie`). Not ported: wsdisplay.c (M13).
-pub fn wsdisplay_emulbell(v: *mut c_void) {
-    if v.is_null() {
-        // console, before real attach
-        return;
-    }
-    let _ = unported!("wsdisplay_emulbell (wsdisplay.c, M13)");
-}
-
-/// `wsdisplay_emulinput`: callback from the emulation code to the display interface
-/// driver: `data` (a terminal's answer, `DA`, `DSR`, ...) as input of screen `v`'s tty.
-/// Not ported: wsdisplay.c (M13).
-pub fn wsdisplay_emulinput(v: *mut c_void, data: &[u8]) {
-    let _ = data;
-    if v.is_null() {
-        // console, before real attach
-        return;
-    }
-    let _ = unported!("wsdisplay_emulinput (wsdisplay.c, M13)");
 }
 
 #[cfg(test)]

@@ -14,8 +14,8 @@
 //! it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12), `cpu0 at mainbus?`
 //! and, with `MULTIPROCESSOR`, `GENERIC.MP`'s `cpu* at mainbus?`;
 //! `azalia* at pci?` and `audio* at azalia?` (M12); `vioscsi* at virtio?` and `cd* at
-//! scsibus?`, `psci* at fdt? early 1`, `ahci* at pci?`, `nvme* at pci?`, `em* at pci?` and `simplefb* at
-//! fdt?` (M13; its `wsdisplay* at simplefb?` waits for wsdisplay);
+//! scsibus?`, `psci* at fdt? early 1`, `ahci* at pci?`, `nvme* at pci?`, `em* at pci?`, `simplefb* at
+//! fdt?` and `wsdisplay* at simplefb?` (M13);
 //! `re* at pci?`, `rgephy* at mii?`, `rlphy* at mii?` and `ukphy* at mii?` (M13);
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
@@ -75,6 +75,7 @@ use crate::dev::usb::umass::{UMASS_CA, UMASS_CD};
 use crate::dev::usb::usb::{USB_CA, USB_CD};
 use crate::dev::usb::xhci::XHCI_CD;
 use crate::dev::vnd::{NVND, vndattach};
+use crate::dev::wscons::wsdisplay::{WSDISPLAY_CA, WSDISPLAY_CD};
 use crate::kern::tty_pty::ptyattach;
 #[cfg(feature = "fuse")]
 use crate::miscfs::fuse::fuse_device::{NFUSE, fuseattach};
@@ -165,11 +166,19 @@ const PV_MII: &[i16] = &[34];
 /// -1]}`).
 const LOC_MII_UNK: &[i64] = &[-1];
 
+/// `pv[]` for children of `simplefb*` (`cfdata[33]`).
+const PV_SIMPLEFB: &[i16] = &[33];
+
+/// `loc[]` of an entry at `wsemuldisplaydev` with the defaults `console = -1, primary = -1,
+/// mux = 1` (`conf/files`: `define wsemuldisplaydev {[console = -1], [primary = -1], [mux =
+/// 1]}`).
+const LOC_WSEMULDISPLAYDEV_UNK: &[i64] = &[-1, -1, 1];
+
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    39
+    40
 } else {
-    38
+    39
 };
 
 /// `cfdata[]`.
@@ -591,7 +600,19 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 38: cpu* at mainbus? (GENERIC.MP)
+    // 38: wsdisplay* at simplefb?
+    Cfdata::new(
+        &WSDISPLAY_CA,
+        &WSDISPLAY_CD,
+        0,
+        FSTATE_STAR,
+        LOC_WSEMULDISPLAYDEV_UNK,
+        0,
+        PV_SIMPLEFB,
+        0,
+        0,
+    ),
+    // 39: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];

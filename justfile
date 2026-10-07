@@ -91,7 +91,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
     "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-efiboot smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
-    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb"
+    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -1932,10 +1932,11 @@ smoke-puc: (build-amd64 "--features qemu,multiprocessor")
 # `-device ramfb`, `--fb`, hwopts.rs) reaches the kernel through Limine's framebuffer
 # request: efifb0 attaches at mainbus0 on amd64, simplefb0 on arm64 (at the
 # `/chosen/framebuffer` node the boot glue adds, as efiboot does, sys/stand/fdtfb.rs), each
-# with rasops on top. `selftest=fb` draws "EmiBSD M13" through the screen's emulops, as
-# wsdisplay will, and prints the text's box; `--screenshot-after` takes a QEMU `screendump`
-# then and checks that the box holds exactly the glyphs' pixels in the text's colour and
-# nothing but the background otherwise. Part of `smoke`.
+# with rasops on top and wsdisplay0 on it (a plain display: the serial line stays the
+# console, as in OpenBSD with a serial console). `selftest=fb` draws "EmiBSD M13" through a
+# screen's emulops, as wsdisplay does, and prints the text's box; `--screenshot-after` takes a
+# QEMU `screendump` then and checks that the box holds exactly the glyphs' pixels in the
+# text's colour and nothing but the background otherwise. Part of `smoke`.
 fb_check := "--screenshot-after 'selftest: fb text at' --expect-ramdisk --until-seen " + \
     "--expect 'selftest: fb text at' --expect 'selftest: fb drew'"
 smoke-fb: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
@@ -1943,10 +1944,34 @@ smoke-fb: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feature
         { echo "smoke-fb: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=fb" {{fb_check}} \
         --expect 'bsd: framebuffer 1280x800, 32 bpp' --expect 'efifb0 at mainbus0: 1280x800, 32bpp' \
-        --expect "selftest: fb drew 'EmiBSD M13' on efifb0"
+        --expect 'wsdisplay0 at efifb0 mux 1' --expect "selftest: fb drew 'EmiBSD M13' on efifb0"
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=fb" {{fb_check}} \
         --expect 'bsd: framebuffer 800x600, 32 bpp' --expect 'simplefb0 at mainbus0: 800x600, 32bpp' \
-        --expect "selftest: fb drew 'EmiBSD M13' on simplefb0"
+        --expect 'wsdisplay0 at simplefb0 mux 1' --expect "selftest: fb drew 'EmiBSD M13' on simplefb0"
+
+# M13: wsdisplay(4), both archs. Booted with the frame buffer (`--fb` through
+# `--screenshot-after`), wsdisplay0 attaches at efifb0 (amd64) or simplefb0 (arm64) with its six
+# vt100 screens (WSDISPLAY_DEFAULTSCREENS=6), the serial line staying the console;
+# `selftest=wscons` prints where the screens' character grid lies. After login the shell
+# writes a line to /dev/ttyC0, screen 0's tty (the cdevsw 12 entry points, the line discipline,
+# wsdisplaystart and the vt100 emulation drawing through rasops); `--screen-text` then checks
+# the QEMU screendump for that text in the grid's first row. Part of `smoke`.
+wscons_line := 'x=wrote; echo hello wscons > /dev/ttyC0 && echo wscons-$x\n'
+smoke-wscons: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-wscons: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "selftest=wscons" \
+        --screenshot-after 'wscons-wrote' --screen-text '0:0:hello wscons' --expect-ramdisk --until-seen \
+        --expect 'efifb0 at mainbus0: 1280x800, 32bpp' --expect 'wsdisplay0 at efifb0 mux 1' \
+        --expect 'wsdisplay0: screen 0-5 added (std, vt100 emulation)' --expect 'selftest: wscons grid' \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send '{{wscons_line}}' --expect 'wscons-wrote'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "selftest=wscons" \
+        --screenshot-after 'wscons-wrote' --screen-text '0:0:hello wscons' --expect-ramdisk --until-seen \
+        --expect 'simplefb0 at mainbus0: 800x600, 32bpp' --expect 'wsdisplay0 at simplefb0 mux 1' \
+        --expect 'wsdisplay0: screen 0-5 added (std, vt100 emulation)' --expect 'selftest: wscons grid' \
+        --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
+        --send-after "# " --send '{{wscons_line}}' --expect 'wscons-wrote'
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

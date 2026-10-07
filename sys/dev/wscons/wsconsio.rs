@@ -44,9 +44,10 @@
 //! (`efifb(4)`, `simplefb`, rasops and wsfont, M13) use, and the events every part shares.
 //!
 //! ## Deviations
-//! - Status `wip`: the mouse (`WSMOUSEIO_*`, `WSMOUSE_TYPE_*`, `wsmouse_calibcoords`, ...)
-//!   and mux (`WSMUXIO_*`) sections of the header are not here: no ported code uses them yet
-//!   (M13). Of the display section only `WSDISPLAYIO_GPCIID` is missing: its argument,
+//! - Status `wip`: the mouse section (`WSMOUSEIO_*`, `WSMOUSE_TYPE_*`,
+//!   `wsmouse_calibcoords`, ...) of the header is not here: no ported code uses it yet (M13).
+//!   The mux section (`WSMUXIO_*`) is, for `wsdisplay.c`'s control device (M13). Of the
+//!   display section only `WSDISPLAYIO_GPCIID` is missing: its argument,
 //!   `struct pcisel`, is `<dev/pci/pciio.h>`'s, not ported.
 //! - The function-like macros are the lowercase `const fn`s `is_motion_event`,
 //!   `is_button_event` and `is_ctrl_event`; the `_IO*` ioctl numbers are the `const fn`s of
@@ -219,6 +220,10 @@ pub struct WsconsEvent {
     /// `time`: when it happened.
     pub time: Timespec,
 }
+
+// SAFETY: two `int`-sized fields and a `struct timespec` (two 64-bit integers), 24 bytes
+// without padding; any bytes are a valid value.
+unsafe impl AbiPod for WsconsEvent {}
 
 /// `struct wskbd_bell_data`: manipulate the keyboard bell.
 #[repr(C)]
@@ -925,7 +930,61 @@ unsafe impl AbiPod for WsdisplayEmultype {}
 /// `WSDISPLAYIO_GETEMULTYPE`.
 pub const WSDISPLAYIO_GETEMULTYPE: u64 = _iowr::<WsdisplayEmultype>(b'W', 94);
 
+// XXX NOT YET DEFINED
+// Mapping information retrieval.
+
+// Mux ioctls (96 - 127)
+
+/// `WSMUXIO_INJECTEVENT`.
+pub const WSMUXIO_INJECTEVENT: u64 = _iow::<WsconsEvent>(b'W', 96);
+
+/// `struct wsmux_device`: a device of a mux.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WsmuxDevice {
+    /// `type`: `WSMUX_*`.
+    pub type_: i32,
+    /// `idx`.
+    pub idx: i32,
+}
+
+// SAFETY: two `int`s, no padding; any bytes are a valid value.
+unsafe impl AbiPod for WsmuxDevice {}
+
+/// `WSMUX_MOUSE`.
+pub const WSMUX_MOUSE: i32 = 1;
+/// `WSMUX_KBD`.
+pub const WSMUX_KBD: i32 = 2;
+/// `WSMUX_MUX`.
+pub const WSMUX_MUX: i32 = 3;
+
+/// `WSMUXIO_ADD_DEVICE`.
+pub const WSMUXIO_ADD_DEVICE: u64 = _iow::<WsmuxDevice>(b'W', 97);
+/// `WSMUXIO_REMOVE_DEVICE`.
+pub const WSMUXIO_REMOVE_DEVICE: u64 = _iow::<WsmuxDevice>(b'W', 98);
+
+/// `WSMUX_MAXDEV`.
+pub const WSMUX_MAXDEV: usize = 32;
+
+/// `struct wsmux_device_list`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct WsmuxDeviceList {
+    /// `ndevices`.
+    pub ndevices: i32,
+    /// `devices`.
+    pub devices: [WsmuxDevice; WSMUX_MAXDEV],
+}
+
+// SAFETY: `int`s only, 260 bytes without padding; any bytes are a valid value.
+unsafe impl AbiPod for WsmuxDeviceList {}
+
+/// `WSMUXIO_LIST_DEVICES`.
+pub const WSMUXIO_LIST_DEVICES: u64 = _iowr::<WsmuxDeviceList>(b'W', 99);
+
 const _: () = {
+    assert!(size_of::<WsmuxDevice>() == 8);
+    assert!(size_of::<WsmuxDeviceList>() == 260);
     assert!(size_of::<WsconsEvent>() == 24);
     assert!(size_of::<WskbdBellData>() == 16);
     assert!(size_of::<WskbdKeyrepeatData>() == 12);
@@ -967,6 +1026,11 @@ mod tests {
         assert_eq!(WSDISPLAYIO_LDFONT, 0x8058_574d);
         assert_eq!(WSDISPLAYIO_GETPARAM, 0xc020_5759);
         assert_eq!(WSDISPLAYIO_LINEBYTES, 0x4004_575f);
+        // _IOW('W', 97, struct wsmux_device), _IOWR('W', 99, struct wsmux_device_list),
+        // _IOW('W', 96, struct wscons_event)
+        assert_eq!(WSMUXIO_ADD_DEVICE, 0x8008_5761);
+        assert_eq!(WSMUXIO_LIST_DEVICES, 0xc104_5763);
+        assert_eq!(WSMUXIO_INJECTEVENT, 0x8018_5760);
     }
 
     #[test]
@@ -1151,6 +1215,10 @@ mod tests {
             WSDISPLAYIO_DEPTH_24_24,
             WSDISPLAYIO_DEPTH_24_32,
             WSDISPLAYIO_DEPTH_30,
+            WSMUX_MOUSE,
+            WSMUX_KBD,
+            WSMUX_MUX,
+            WSMUX_MAXDEV,
         );
     }
 }

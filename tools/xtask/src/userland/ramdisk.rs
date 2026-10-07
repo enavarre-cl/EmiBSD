@@ -82,6 +82,9 @@ pub(super) const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 /// - `fd/N` is `filedesc` 22 (200 / 150), minor N, for N in `0..64` like MAKEDEV;
 ///   `stdin`, `stdout` and `stderr` link to `fd/0..2` (`DEV_LINKS`).
 ///
+/// - `wsdisplay` is major 12 (`cdev_wsdisplay_init`, M13; 189 / 139): `ttyC0`..`ttyCb`,
+///   minor = screen, and `ttyCcfg`, minor 255, the control device, mode 0600 (`MAKEDEV`'s
+///   `wscons`).
 /// - `audio` is major 42 (`cdev_audio_init`, M12; 220 / 170): `audio0` minor 0 and
 ///   `audioctl0` minor 192 (`AUDIO_DEV_AUDIOCTL`), mode 0660, group `_sndiop` (`MAKEDEV`'s
 ///   `audio*` entry); `usb` is major 61 (`cdev_usb_init`, 239 / 191): `usb0`, mode 0640
@@ -119,6 +122,21 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     // M13: `com4`, the first `com* at puc?` after amd64's four ISA lines (`smoke-puc`): the
     // call-out node (`com`'s `COMDIALOUT`, minor bit 0x80), which opens without a carrier.
     ("cua04", 'c', 8, 132, 0o600, "wheel"),
+    // M13: wsdisplay(4)'s screens and control device (`MAKEDEV`'s `wscons` and
+    // `tty[C-J]*`: `M ttyC$U c 12 $((16#$U)) 600`, `M ttyCcfg c 12 255 600`).
+    ("ttyC0", 'c', 12, 0, 0o600, "wheel"),
+    ("ttyC1", 'c', 12, 1, 0o600, "wheel"),
+    ("ttyC2", 'c', 12, 2, 0o600, "wheel"),
+    ("ttyC3", 'c', 12, 3, 0o600, "wheel"),
+    ("ttyC4", 'c', 12, 4, 0o600, "wheel"),
+    ("ttyC5", 'c', 12, 5, 0o600, "wheel"),
+    ("ttyC6", 'c', 12, 6, 0o600, "wheel"),
+    ("ttyC7", 'c', 12, 7, 0o600, "wheel"),
+    ("ttyC8", 'c', 12, 8, 0o600, "wheel"),
+    ("ttyC9", 'c', 12, 9, 0o600, "wheel"),
+    ("ttyCa", 'c', 12, 10, 0o600, "wheel"),
+    ("ttyCb", 'c', 12, 11, 0o600, "wheel"),
+    ("ttyCcfg", 'c', 12, 255, 0o600, "wheel"),
 ];
 
 /// The `sd` units the image has nodes for (module docs of `DEVICES`): M10f's four vioblk

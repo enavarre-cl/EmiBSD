@@ -67,6 +67,13 @@
 //!   must read `x=X y=Y w=W h=H ink=N fg=RRGGBB bg=RRGGBB` (the kernel's `selftest=fb`,
 //!   `kern/selftest.rs`): inside the box every pixel is `fg` or `bg`, exactly `N` are `fg`
 //!   (the set bits of the glyphs drawn), and the box lies inside the picture.
+//! - `--screen-text ROW:COL:TEXT` (`smoke`, M13, with `--screenshot-after`): the picture is
+//!   checked for TEXT on wsdisplay's character grid instead, at row ROW and column COL of the
+//!   grid the kernel's `selftest=wscons` line describes (`selftest: wscons grid x=X y=Y
+//!   cw=W ch=H cols=C rows=R`, `kern/selftest.rs`): every character cell of TEXT holds
+//!   exactly two colours, its background and the same text colour as the others, with some
+//!   text pixels for a character and none for a space, and the cell after TEXT is blank
+//!   ([`check_screen_text`]). `smoke-wscons` writes TEXT to `/dev/ttyC0` from the shell.
 //! - `{host-ms}` in a `smoke` `--send` text (M13, `smoke-clock`): replaced, as the text is
 //!   sent, by the host's wall clock in milliseconds since the Epoch ([`expand_send`]), so a
 //!   guest script can set its own clock readings beside the host's and compare the rates.
@@ -208,6 +215,15 @@ static SCREENSHOT: OnceLock<(String, PathBuf)> = OnceLock::new();
 /// The serial line the screenshot was taken at, once it was.
 static SHOT_LINE: Mutex<Option<String>> = Mutex::new(None);
 
+/// `--screen-text ROW:COL:TEXT`: the text the screenshot must show on wsdisplay's grid.
+static SCREEN_TEXT: OnceLock<(usize, usize, String)> = OnceLock::new();
+
+/// The start of the kernel's line that describes wsdisplay's character grid.
+const GRID_PREFIX: &str = "selftest: wscons grid";
+
+/// The kernel's grid line, kept when the screenshot is taken.
+static GRID_LINE: Mutex<Option<String>> = Mutex::new(None);
+
 /// `--vio-mq`: vio0's virtio-net offers multiqueue (`mq=on`, set once by `main`).
 static VIO_MQ: OnceLock<()> = OnceLock::new();
 
@@ -242,6 +258,12 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if let Some(line) = opt_path(args, "--screenshot-after")? {
         let _ = FB.set(());
         let _ = SCREENSHOT.set((line.to_string(), boot::run_dir(root)));
+    }
+    if let Some(spec) = opt_path(args, "--screen-text")? {
+        if SCREENSHOT.get().is_none() {
+            return Err("--screen-text: needs --screenshot-after".into());
+        }
+        let _ = SCREEN_TEXT.set(parse_screen_text(spec)?);
     }
     if let Some(w) = args.windows(2).find(|w| w[0] == "--nvme") {
         let _ = NVME.set(boot::run_dir(root).join(w[1]));
@@ -691,10 +713,137 @@ pub(crate) fn poll_screenshot(serial: &str) -> Result<()> {
         std::thread::sleep(Duration::from_millis(50));
     }
     println!("xtask: screendump {} (saw {after:?})", ppm.display());
+    if SCREEN_TEXT.get().is_some()
+        && let Some(grid) = serial.lines().find(|l| l.contains(GRID_PREFIX))
+        && let Ok(mut g) = GRID_LINE.lock()
+    {
+        *g = Some(grid.to_string());
+    }
     if let Ok(mut s) = SHOT_LINE.lock() {
         *s = Some(line.to_string());
     }
     Ok(())
+}
+
+/// `--screen-text`'s `ROW:COL:TEXT`.
+fn parse_screen_text(spec: &str) -> Result<(usize, usize, String)> {
+    let mut it = spec.splitn(3, ':');
+    let (Some(row), Some(col), Some(text)) = (it.next(), it.next(), it.next()) else {
+        return Err(format!("--screen-text {spec:?}: expected ROW:COL:TEXT").into());
+    };
+    let num = |v: &str| {
+        v.parse::<usize>()
+            .map_err(|e| format!("--screen-text {spec:?}: {v}: {e}"))
+    };
+    if text.is_empty() {
+        return Err(format!("--screen-text {spec:?}: empty text").into());
+    }
+    Ok((num(row)?, num(col)?, text.to_string()))
+}
+
+/// The `key=value` numbers of the kernel's `selftest: wscons grid` line: x, y, cw, ch, cols,
+/// rows.
+fn grid_of(line: &str) -> Result<[usize; 6]> {
+    let get = |key: &str| -> Result<usize> {
+        let v = line
+            .split_whitespace()
+            .find_map(|w| w.strip_prefix(key).and_then(|w| w.strip_prefix('=')))
+            .ok_or_else(|| format!("{line:?}: no {key}="))?;
+        v.parse::<usize>()
+            .map_err(|e| format!("{line:?}: {key}={v}: {e}").into())
+    };
+    Ok([
+        get("x")?,
+        get("y")?,
+        get("cw")?,
+        get("ch")?,
+        get("cols")?,
+        get("rows")?,
+    ])
+}
+
+/// A colour of a character cell and how many of its pixels have it.
+type ColourCount = ([u8; 3], usize);
+
+/// The colours of the character cell at (`row`, `col`) of the grid: its background (the
+/// commonest colour), the other colours and how many pixels have them.
+fn cell_colours(
+    ppm: &Ppm<'_>,
+    grid: &[usize; 6],
+    row: usize,
+    col: usize,
+) -> Result<([u8; 3], Vec<ColourCount>)> {
+    let [x0, y0, cw, ch, cols, rows] = *grid;
+    if row >= rows || col >= cols {
+        return Err(format!("cell {row},{col} is outside the {cols}x{rows} grid").into());
+    }
+    let (x, y) = (x0 + col * cw, y0 + row * ch);
+    if cw == 0 || ch == 0 || x + cw > ppm.width || y + ch > ppm.height {
+        return Err(format!(
+            "cell {row},{col} ({cw}x{ch} at {x},{y}) is not inside the {}x{} screen",
+            ppm.width, ppm.height
+        )
+        .into());
+    }
+    let mut counts: Vec<ColourCount> = Vec::new();
+    for py in y..y + ch {
+        for px in x..x + cw {
+            let o = (py * ppm.width + px) * 3;
+            let c = [ppm.rgb[o], ppm.rgb[o + 1], ppm.rgb[o + 2]];
+            match counts.iter_mut().find(|(k, _)| *k == c) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((c, 1)),
+            }
+        }
+    }
+    counts.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+    let bg = counts[0].0;
+    Ok((bg, counts.split_off(1)))
+}
+
+/// Checks a screenshot for `text` at (`row`, `col`) of the grid the kernel's `grid_line`
+/// describes (see the module documentation); returns the text pixels it found.
+fn check_screen_text(
+    ppm: &Ppm<'_>,
+    grid_line: &str,
+    row: usize,
+    col: usize,
+    text: &str,
+) -> Result<usize> {
+    let grid = grid_of(grid_line)?;
+    let mut fg: Option<[u8; 3]> = None;
+    let mut ink = 0;
+    for (i, c) in text.chars().enumerate() {
+        let (bg, others) = cell_colours(ppm, &grid, row, col + i)?;
+        if c == ' ' {
+            if !others.is_empty() {
+                return Err(format!("cell {row},{} should be blank", col + i).into());
+            }
+            continue;
+        }
+        let [(colour, n)] = others[..] else {
+            return Err(format!(
+                "cell {row},{} ({c:?}) has {} colours besides its background {:02x?}, expected 1",
+                col + i,
+                others.len(),
+                bg
+            )
+            .into());
+        };
+        if fg.is_some_and(|f| f != colour) {
+            return Err(format!("cell {row},{} ({c:?}) has another text colour", col + i).into());
+        }
+        fg = Some(colour);
+        ink += n;
+    }
+    let after = col + text.chars().count();
+    if after < grid[4] {
+        let (_, others) = cell_colours(ppm, &grid, row, after)?;
+        if !others.is_empty() {
+            return Err(format!("cell {row},{after} after the text is not blank").into());
+        }
+    }
+    Ok(ink)
 }
 
 /// Reads the monitor's output up to its `(qemu) ` prompt.
@@ -846,14 +995,32 @@ pub(crate) fn after_smoke() -> Result<()> {
         let ppm_path = dir.join("screen.ppm");
         let bytes = fs::read(&ppm_path).map_err(|e| format!("{}: {e}", ppm_path.display()))?;
         let ppm = parse_ppm(&bytes)?;
-        let lit =
-            check_screenshot(&ppm, &line).map_err(|e| format!("{}: {e}", ppm_path.display()))?;
-        println!(
-            "xtask: {}: {}x{} screen, the text box has its {lit} glyph pixels and nothing else",
-            ppm_path.display(),
-            ppm.width,
-            ppm.height
-        );
+        if let Some((row, col, text)) = SCREEN_TEXT.get() {
+            let grid = GRID_LINE
+                .lock()
+                .ok()
+                .and_then(|g| g.clone())
+                .ok_or_else(|| {
+                    format!("--screen-text: no {GRID_PREFIX:?} line before the screenshot")
+                })?;
+            let ink = check_screen_text(&ppm, &grid, *row, *col, text)
+                .map_err(|e| format!("{}: {e}", ppm_path.display()))?;
+            println!(
+                "xtask: {}: {}x{} screen shows {text:?} at row {row}, column {col} of wsdisplay's grid ({ink} text pixels)",
+                ppm_path.display(),
+                ppm.width,
+                ppm.height
+            );
+        } else {
+            let lit = check_screenshot(&ppm, &line)
+                .map_err(|e| format!("{}: {e}", ppm_path.display()))?;
+            println!(
+                "xtask: {}: {}x{} screen, the text box has its {lit} glyph pixels and nothing else",
+                ppm_path.display(),
+                ppm.width,
+                ppm.height
+            );
+        }
     }
     let (Some(file), Some(expect)) = (PCI_SERIAL.get(), PCI_SERIAL_EXPECT.get()) else {
         return Ok(());
@@ -901,6 +1068,41 @@ mod tests {
         ] {
             assert!(s.as_os_str().len() < SUN_PATH_MAX, "{}", s.display());
         }
+    }
+
+    #[test]
+    fn screen_text_check() {
+        // A 2x1 grid of 2x2 cells at 1,1 on a 6x4 screen: cell 0 has one text pixel, cell 1
+        // is blank.
+        let (w, h) = (6, 4);
+        let mut rgb = vec![0u8; w * h * 3];
+        let mut set = |x: usize, y: usize, c: [u8; 3]| {
+            let o = (y * w + x) * 3;
+            rgb[o..o + 3].copy_from_slice(&c);
+        };
+        set(1, 1, [0xaa, 0xaa, 0xaa]);
+        let ppm = Ppm {
+            width: w,
+            height: h,
+            rgb: &rgb,
+        };
+        let grid = "selftest: wscons grid x=1 y=1 cw=2 ch=2 cols=2 rows=1 on efifb0";
+        assert_eq!(check_screen_text(&ppm, grid, 0, 0, "h").expect("shows"), 1);
+        assert!(
+            check_screen_text(&ppm, grid, 0, 0, "hi").is_err(),
+            "cell 1 is blank"
+        );
+        assert!(check_screen_text(&ppm, grid, 0, 1, "x").is_err(), "no ink");
+        assert!(check_screen_text(&ppm, grid, 0, 1, " ").is_ok());
+        assert!(
+            check_screen_text(&ppm, grid, 1, 0, "h").is_err(),
+            "outside the grid"
+        );
+        assert_eq!(
+            parse_screen_text("0:2:a:b").expect("parses"),
+            (0, 2, "a:b".to_string())
+        );
+        assert!(parse_screen_text("0:x:a").is_err());
     }
 
     #[test]

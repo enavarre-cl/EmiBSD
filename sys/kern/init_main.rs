@@ -647,6 +647,11 @@ pub fn main() -> ! {
     if crate::kern::selftest::fb_requested() {
         crate::kern::selftest::fb_check();
     }
+    // selftest=wscons reports where wsdisplay's screens draw (M13).
+    #[cfg(feature = "qemu")]
+    if crate::kern::selftest::wscons_requested() {
+        crate::kern::selftest::wscons_grid();
+    }
 
     // Okay, now we can let init(8) exec! It's off to userland!
     START_INIT_EXEC.store(1, Ordering::Relaxed);

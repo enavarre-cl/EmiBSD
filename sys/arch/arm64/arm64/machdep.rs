@@ -97,6 +97,7 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
 use libkern::StaticCell;
 
 use crate::arch::arm64::arm64::autoconf::BOOTMAC;
+use crate::arch::arm64::arm64::bus_space::ARM64_BS_TAG;
 use crate::arch::arm64::arm64::cpu;
 #[cfg(feature = "multiprocessor")]
 use crate::arch::arm64::arm64::cpu::AP_TTBR1;
@@ -144,6 +145,7 @@ use crate::dev::fdt::pluart_fdt::pluart_init_cons;
 use crate::dev::fdt::psci::psci_cpu_on;
 #[cfg(feature = "multiprocessor")]
 use crate::dev::fdt::pscivar::PSCI_SUCCESS;
+use crate::dev::fdt::simplefb::simplefb_init_cons;
 #[cfg(feature = "multiprocessor")]
 use crate::dev::ofw::fdt::fdt_node_property_int;
 use crate::dev::ofw::fdt::{
@@ -1260,9 +1262,12 @@ pub fn consinit() {
         return;
     }
 
-    // amluart, cduart, com_fdt, exuart, imxuart, mvuart, qcuart and simplefb consoles:
-    // hardware QEMU virt does not have (deferred drivers).
+    // amluart, cduart, com_fdt, exuart, imxuart, mvuart and qcuart consoles: hardware QEMU
+    // virt does not have (deferred drivers).
     pluart_init_cons();
+    // The frame buffer is the console only when /chosen's stdout-path names it; QEMU's
+    // names the PL011, so this returns at once and the display attaches as a plain one.
+    simplefb_init_cons(&ARM64_BS_TAG);
 }
 
 /// `stdout_node`: the console's device tree node.

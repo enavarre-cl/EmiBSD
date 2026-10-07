@@ -123,6 +123,8 @@ static VIO_REQUESTED: AtomicBool = AtomicBool::new(false);
 static MPSTRESS_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// `selftest=fb` asks for [`fb_check`].
 static FB_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// `selftest=wscons` asks for [`wscons_grid`].
+static WSCONS_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// The first frame buffer that attached (its device name and the attach arguments it would
 /// hand `wsdisplay`), for [`fb_check`].
@@ -157,6 +159,7 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     const VIO: &[u8] = b"selftest=vio";
     const MPSTRESS: &[u8] = b"selftest=mpstress";
     const FB: &[u8] = b"selftest=fb";
+    const WSCONS: &[u8] = b"selftest=wscons";
     if cmdline.windows(TRAP.len()).any(|w| w == TRAP) {
         TRAP_REQUESTED.store(true, Ordering::Relaxed);
     }
@@ -181,11 +184,19 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     if cmdline.windows(FB.len()).any(|w| w == FB) {
         FB_REQUESTED.store(true, Ordering::Relaxed);
     }
+    if cmdline.windows(WSCONS.len()).any(|w| w == WSCONS) {
+        WSCONS_REQUESTED.store(true, Ordering::Relaxed);
+    }
 }
 
 /// Whether the command line asked for [`fb_check`].
 pub fn fb_requested() -> bool {
     FB_REQUESTED.load(Ordering::Relaxed)
+}
+
+/// Whether the command line asked for [`wscons_grid`].
+pub fn wscons_requested() -> bool {
+    WSCONS_REQUESTED.load(Ordering::Relaxed)
 }
 
 /// Whether the command line asked for [`mpstress`].
@@ -2671,5 +2682,31 @@ pub fn fb_check() {
         ri.ri_depth.get(),
         fw,
         fh
+    );
+}
+
+/// `selftest=wscons`: where the first frame buffer's `wsdisplay` screens draw, for a
+/// screenshot of text written to `/dev/ttyC0` (`just smoke-wscons`): the pixel origin of
+/// the character grid, the cell size and the grid's size, from the driver's `rasops_info`
+/// (the access cookie, as in [`fb_check`]). Draws nothing.
+pub fn wscons_grid() {
+    // SAFETY: written while cold by `fb_attached`, which is done.
+    let fb = unsafe { FB_ATTACHED.get() };
+    let Some(aa) = fb.aa else {
+        kprintf!("selftest: wscons: no frame buffer attached\n");
+        return;
+    };
+    // SAFETY: efifb and simplefb pass their rasops_info as the access cookie.
+    let ri = unsafe { &*aa.accesscookie.cast::<RasopsInfo>() };
+    let font = ri.font();
+    kprintf!(
+        "selftest: wscons grid x={} y={} cw={} ch={} cols={} rows={} on {}\n",
+        ri.ri_xorigin.get(),
+        ri.ri_yorigin.get(),
+        font.fontwidth,
+        font.fontheight,
+        ri.ri_cols.get(),
+        ri.ri_rows.get(),
+        Str(&fb.xname)
     );
 }

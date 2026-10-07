@@ -37,31 +37,22 @@
 //!
 //! Upstream: sys/dev/wscons/wscons_callbacks.h @ 3ce1f3f79392
 //!
-//! The header only declares functions; `wsdisplay.c` defines the `wsdisplay_*` ones and
-//! `wskbd.c` the `wskbd_*` ones. Neither driver is ported yet, so this module is the seam:
-//! each `wsdisplay_*` function here is a visible stub until the `wsdisplay.c` port defines
-//! it in `wsdisplay.rs` and replaces the stub with a `pub use`; the `wskbd_*` functions are
-//! re-exported from `wskbd.rs`, where `wskbd.c`'s other stubs are.
+//! The header only declares functions; `wsdisplay.c` defines the `wsdisplay_*` ones
+//! (`wsdisplay.rs`, re-exported here) and `wskbd.c` the `wskbd_*` ones, re-exported from
+//! `wskbd.rs`, where `wskbd.c`'s stubs are until its port (M13 keyboard step).
 //!
 //! ## Deviations
 //! - `struct wsevsrc` (defined by `<dev/wscons/wsmuxvar.h>`, not ported) is the
 //!   uninhabited [`Wsevsrc`], as `docs/C_TO_RUST.md` has it for a structure only declared
 //!   so far; the pointers to it are `Option<&Wsevsrc>`, `None` until `wsmux.c` exists.
-//! - Visible stubs, each printing `unported: <name>` once (wsdisplay.c, M13):
-//!   [`wsdisplay_set_console_kbd`], [`wsdisplay_kbdinput`], [`wsdisplay_rawkbdinput`],
-//!   [`wsdisplay_switch`] (`ENOSYS`), [`wsdisplay_reset`], [`wsdisplay_kbdholdscreen`],
-//!   [`wsdisplay_set_cons_kbd`], [`wsdisplay_unset_cons_kbd`], [`wsdisplay_set_kbd`]
-//!   (`ENOSYS`) and [`wsdisplay_param`] (`ENOSYS`).
 //! - The `int` results that are 0 or an errno are `Result<(), Errno>`; `wskbd_pickfree`
 //!   keeps its index or -1.
 
-use crate::dev::wscons::wsconsio::WsdisplayParam;
-use crate::dev::wscons::wsksymvar::{KbdT, KeysymT};
-use crate::sys::device::Device;
-use crate::sys::errno::Errno;
-use crate::sys::types::Dev;
-use crate::unported;
-
+pub use crate::dev::wscons::wsdisplay::{
+    wsdisplay_kbdholdscreen, wsdisplay_kbdinput, wsdisplay_param, wsdisplay_rawkbdinput,
+    wsdisplay_reset, wsdisplay_set_cons_kbd, wsdisplay_set_console_kbd, wsdisplay_set_kbd,
+    wsdisplay_switch, wsdisplay_unset_cons_kbd,
+};
 pub use crate::dev::wscons::wskbd::{wskbd_pickfree, wskbd_set_console_display, wskbd_set_display};
 
 /// `struct wsevsrc`: an event source of the wscons mux (`<dev/wscons/wsmuxvar.h>`), only
@@ -81,75 +72,6 @@ pub enum WsdisplayResetops {
 }
 
 pub use WsdisplayResetops::*;
-
-/// `wsdisplay_set_console_kbd`: calls to the display interface from the glue code: the
-/// console keyboard's event source. Not ported: wsdisplay.c (M13).
-pub fn wsdisplay_set_console_kbd(src: Option<&Wsevsrc>) {
-    let _ = src;
-    let _ = unported!("wsdisplay_set_console_kbd (wsdisplay.c, M13)");
-}
-
-/// `wsdisplay_kbdinput`: calls to the display interface from the keyboard interface: `ks`,
-/// keysyms in layout `layout`, for the focused screen's tty. Not ported: wsdisplay.c (M13).
-pub fn wsdisplay_kbdinput(v: &Device, layout: KbdT, ks: &[KeysymT]) {
-    let _ = (v, layout, ks);
-    let _ = unported!("wsdisplay_kbdinput (wsdisplay.c, M13)");
-}
-
-/// `wsdisplay_rawkbdinput`: raw scancodes for the focused screen's tty
-/// (`WSDISPLAY_COMPAT_RAWKBD`). Not ported: wsdisplay.c (M13).
-pub fn wsdisplay_rawkbdinput(v: &Device, buf: &[u8]) {
-    let _ = (v, buf);
-    let _ = unported!("wsdisplay_rawkbdinput (wsdisplay.c, M13)");
-}
-
-/// `wsdisplay_switch`: switch to screen `no`. Not ported: wsdisplay.c (M13).
-pub fn wsdisplay_switch(dev: &Device, no: i32, waitok: i32) -> Result<(), Errno> {
-    let _ = (dev, no, waitok);
-    Err(unported!("wsdisplay_switch (wsdisplay.c, M13)"))
-}
-
-/// `wsdisplay_reset`. Not ported: wsdisplay.c (M13).
-pub fn wsdisplay_reset(dev: &Device, op: WsdisplayResetops) {
-    let _ = (dev, op);
-    let _ = unported!("wsdisplay_reset (wsdisplay.c, M13)");
-}
-
-/// `wsdisplay_kbdholdscreen`: the keyboard's Hold Screen key. Not ported: wsdisplay.c (M13).
-pub fn wsdisplay_kbdholdscreen(v: &Device, hold: i32) {
-    let _ = (v, hold);
-    let _ = unported!("wsdisplay_kbdholdscreen (wsdisplay.c, M13)");
-}
-
-/// `wsdisplay_set_cons_kbd`: the console keyboard's polled `getc`, `pollc` and `bell`.
-/// Not ported: wsdisplay.c (M13).
-pub fn wsdisplay_set_cons_kbd(
-    get: fn(Dev) -> i32,
-    poll: fn(Dev, i32),
-    bell: Option<fn(Dev, u32, u32, u32)>,
-) {
-    let _ = (get, poll, bell);
-    let _ = unported!("wsdisplay_set_cons_kbd (wsdisplay.c, M13)");
-}
-
-/// `wsdisplay_unset_cons_kbd`. Not ported: wsdisplay.c (M13).
-pub fn wsdisplay_unset_cons_kbd() {
-    let _ = unported!("wsdisplay_unset_cons_kbd (wsdisplay.c, M13)");
-}
-
-/// `wsdisplay_set_kbd`: attach the keyboard event source `src` to display `dev`. Not
-/// ported: wsdisplay.c (M13).
-pub fn wsdisplay_set_kbd(dev: &Device, src: Option<&Wsevsrc>) -> Result<(), Errno> {
-    let _ = (dev, src);
-    Err(unported!("wsdisplay_set_kbd (wsdisplay.c, M13)"))
-}
-
-/// `wsdisplay_param`: the `WSDISPLAYIO_GETPARAM`/`SETPARAM` of display `dev`, from the
-/// keyboard's brightness keys. Not ported: wsdisplay.c (M13).
-pub fn wsdisplay_param(dev: &Device, cmd: u64, dp: &mut WsdisplayParam) -> Result<(), Errno> {
-    let _ = (dev, cmd, dp);
-    Err(unported!("wsdisplay_param (wsdisplay.c, M13)"))
-}
 
 #[cfg(test)]
 mod tests {

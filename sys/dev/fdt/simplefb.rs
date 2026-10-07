@@ -36,17 +36,13 @@
 //! fw_cfg), and neither does the tree EDK2 hands on.
 //!
 //! ## Deviations
-//! - wsdisplay is not ported yet (the next M13 console step): `wsdisplay_cnattach` and the
-//!   `config_found_sm` of the `wsdisplay` child (`wsemuldisplaydevprint`,
-//!   `wsemuldisplaydevsubmatch`) are reported with `unported!` where the C calls them, and
-//!   the attach arguments go, under feature `qemu`, to the frame buffer self-test
-//!   (`kern/selftest.rs`, `selftest=fb`).
+//! - Under feature `qemu` the attach arguments of the `wsdisplay` child also go to the frame
+//!   buffer self-test (`kern/selftest.rs`, `selftest=fb`).
 //! - `simplefb_activate`'s `SUSPEND` path (redraw after a hibernation wakeup, `sleep_mode`)
 //!   waits for suspend and resume, not ported: a `DVACT_WAKEUP` is reported with
 //!   `unported!`; the children are activated as in C.
 //! - `simplefb_init` returns the unknown format as `Err` (the C returns the format string,
-//!   NULL on success). `simplefb_init_cons` is ported but nothing calls it yet: arm64's
-//!   `consinit` picks the framebuffer console only with wsdisplay.
+//!   NULL on success).
 //! - `ws_get_param`/`ws_set_param` are `wsdisplayvar.rs`'s cells (as in `efifb.rs`).
 //! - The console's rasops descriptor, screen descriptor and backing store are statics
 //!   written while cold, under the kernel lock afterwards; a softc's descriptor list lives in
@@ -71,11 +67,14 @@ use crate::dev::wscons::wsconsio::{
     WSDISPLAYIO_LINEBYTES, WSDISPLAYIO_SETPARAM, WSDISPLAYIO_SMODE, WSDISPLAYIO_SVIDEO,
     WsdisplayFbinfo, WsdisplayParam,
 };
+use crate::dev::wscons::wsdisplay::{
+    wsdisplay_cnattach, wsemuldisplaydevprint, wsemuldisplaydevsubmatch,
+};
 use crate::dev::wscons::wsdisplayvar::{
     WsParamFn, WsdisplayAccessops, WsdisplayCharcell, WsemuldisplaydevAttachArgs, WsscreenDescr,
     WsscreenList, ws_get_param, ws_set_param,
 };
-use crate::kern::subr_autoconf::config_activate_children;
+use crate::kern::subr_autoconf::{config_activate_children, config_found_sm};
 use crate::kern::subr_prf::{Str, printf};
 use crate::machine::Machine;
 use crate::machine::bus::{BusSpace, BusSpaceHandle, BusSpaceTag, bus_space_map, bus_space_vaddr};
@@ -322,14 +321,21 @@ pub fn simplefb_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_voi
 
     if console != 0 {
         // SAFETY: with RI_VCONS the emulops take the active screen as their cookie.
-        let _defattr = unsafe { ri.ops_pack_attr(ri.ri_active.get().cast(), 0, 0, 0) };
-        // wsdisplay_cnattach(&sc->sc_wsd, ri->ri_active, simplefb_ri.ri_ccol,
-        //     simplefb_ri.ri_crow, defattr);
-        let _ = (SIMPLEFB_RI.0.ri_ccol.get(), SIMPLEFB_RI.0.ri_crow.get());
-        let _ = unported!("wsdisplay_cnattach (simplefb console)");
+        let defattr = unsafe { ri.ops_pack_attr(ri.ri_active.get().cast(), 0, 0, 0) }.unwrap_or(0);
+        // SAFETY: `sc_wsd` was filled above and is only read from now on, in a softc that
+        // lives for good; with RI_VCONS the active screen is the emulops' cookie.
+        unsafe {
+            wsdisplay_cnattach(
+                &*sc.sc_wsd.as_ptr(),
+                ri.ri_active.get().cast(),
+                SIMPLEFB_RI.0.ri_ccol.get(),
+                SIMPLEFB_RI.0.ri_crow.get(),
+                defattr,
+            )
+        };
     }
 
-    let waa = WsemuldisplaydevAttachArgs {
+    let mut waa = WsemuldisplaydevAttachArgs {
         console,
         primary: 0,
         scrdata: sc.sc_wsl.as_ptr(),
@@ -338,12 +344,15 @@ pub fn simplefb_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_voi
         defaultscreens: 0,
     };
 
-    // config_found_sm(self, &waa, wsemuldisplaydevprint, wsemuldisplaydevsubmatch);
-    let _ = unported!("wsdisplay* at simplefb? (wsemuldisplaydevprint, wsemuldisplaydevsubmatch)");
     #[cfg(feature = "qemu")]
     crate::kern::selftest::fb_attached(self_, &waa);
-    #[cfg(not(feature = "qemu"))]
-    let _ = waa;
+
+    let _ = config_found_sm(
+        self_,
+        ptr::from_mut(&mut waa).cast(),
+        Some(wsemuldisplaydevprint),
+        Some(wsemuldisplaydevsubmatch),
+    );
 }
 
 /// `simplefb_activate`.
@@ -396,7 +405,7 @@ pub unsafe fn simplefb_wsioctl(
     cmd: u64,
     data: &mut [u8],
     _flag: i32,
-    _p: &Proc,
+    _p: Option<&Proc>,
 ) -> Result<bool, Errno> {
     // SAFETY: the caller's contract.
     let ri = unsafe { &*v.cast::<RasopsInfo>() };
@@ -547,9 +556,10 @@ pub fn simplefb_init_cons(iot: BusSpaceTag) {
     // SAFETY: cold, the boot CPU: nothing else holds the descriptor.
     ri.fill_descr(unsafe { SIMPLEFB_WSD.get_mut() });
 
-    let _defattr = ri.ri_pack_attr(0, 0, 0);
-    // wsdisplay_cnattach(&simplefb_wsd, ri, 0, 0, defattr);
-    let _ = unported!("wsdisplay_cnattach (simplefb console)");
+    let defattr = ri.ri_pack_attr(0, 0, 0).unwrap_or(0);
+    // SAFETY: cold, the boot CPU: the descriptor was just filled and is only read from now
+    // on; the console's rasops_info is a static, the emulops' cookie for good.
+    unsafe { wsdisplay_cnattach(SIMPLEFB_WSD.get(), ri.cookie(), 0, 0, defattr) };
 
     // Allow USB keyboards to become the console input device.
     let _ = crate::dev::usb::ukbd::ukbd_cnattach();

@@ -63,12 +63,13 @@
 //! - `WS_DEFAULT_FG`/`WS_DEFAULT_BG` are the non-sparc64 values (white on black).
 //! - The prototypes of `wsdisplay_cnattach`, `wsemuldisplaydevprint`,
 //!   `wsemuldisplaydevsubmatch`, `wsdisplay_cnputc`, the `wsscreen_*_sync` and
-//!   `wsdisplay_*` functions belong to `wsdisplay.c`, not ported yet (the next M13 console
-//!   step). The `ws_get_param`/`ws_set_param` hooks it defines are here, as the
-//!   [`WS_GET_PARAM`]/[`WS_SET_PARAM`] cells the display drivers read; nothing sets them yet.
+//!   `wsdisplay_*` functions are `wsdisplay.c`'s, defined in `wsdisplay.rs`, with the opaque
+//!   `struct wsdisplay_softc` and `struct wsscreen`. The `ws_get_param`/`ws_set_param` hooks
+//!   `wsdisplay.c` defines are here, as the [`WS_GET_PARAM`]/[`WS_SET_PARAM`] cells the
+//!   display drivers and `wsdisplay.rs` read; nothing sets them yet.
 //! - The `wsemuldisplaydevcf_*` and `wsdisplaydevcf_mux` locator macros are functions of the
 //!   `cfdata`; a missing locator reads as the default of `sys/conf/files`'s
-//!   `define wsemuldisplaydev {[console = -1], [primary = -1], [mux = -1]}` and
+//!   `define wsemuldisplaydev {[console = -1], [primary = -1], [mux = 1]}` and
 //!   `define wsdisplaydev {[mux = 1]}`.
 
 use core::ffi::c_void;
@@ -267,13 +268,14 @@ pub struct WsdisplayCharcell {
     pub attr: u32,
 }
 
-/// `ioctl`: `Ok(true)` handled, `Ok(false)` not the driver's (the C's -1).
+/// `ioctl`: `Ok(true)` handled, `Ok(false)` not the driver's (the C's -1). The thread is
+/// `None` where wsdisplay passes NULL (the bell task, `wsdisplay_param`).
 pub type WsdisplayIoctlFn = unsafe fn(
     v: *mut c_void,
     cmd: u64,
     data: &mut [u8],
     flag: i32,
-    p: &Proc,
+    p: Option<&Proc>,
 ) -> Result<bool, Errno>;
 /// `mmap`: the physical address (with `PMAP_*` flags) of offset `off`, `None` for the C's -1.
 pub type WsdisplayMmapFn = unsafe fn(v: *mut c_void, off: i64, prot: i32) -> Option<Paddr>;
@@ -445,7 +447,7 @@ pub fn wsemuldisplaydevcf_primary(cf: &Cfdata) -> i64 {
 
 /// `wsemuldisplaydevcf_mux`.
 pub fn wsemuldisplaydevcf_mux(cf: &Cfdata) -> i64 {
-    cf.cf_loc.get(WSEMULDISPLAYDEVCF_MUX).copied().unwrap_or(-1)
+    cf.cf_loc.get(WSEMULDISPLAYDEVCF_MUX).copied().unwrap_or(1)
 }
 
 /// `wsdisplaydevcf_mux`.

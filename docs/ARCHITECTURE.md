@@ -1714,9 +1714,23 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   1280x800 under OVMF), `-device ramfb` on arm64 (800x600 under ArmVirtQemu; a
   `virtio-gpu` GOP is blit-only and Limine needs a linear frame buffer). `xtask`'s `--fb`
   adds it, `--screenshot-after` checks a QEMU `screendump` against the kernel's
-  `selftest=fb` (`smoke-fb`). Until wsdisplay is ported, `wsdisplay_cnattach` and the
-  `wsdisplay` child of both drivers are `unported!`, and under feature `qemu` the attach
-  arguments go to the self-test instead.
+  `selftest=fb` (`smoke-fb`). Under feature `qemu` the drivers also hand their
+  `wsdisplay` attach arguments to that self-test.
+- The frame buffer is a plain display, the serial line the console (M13, wsdisplay). OpenBSD
+  picks the console in `cninit` (amd64: `constab[]` with `wscnprobe` at `CN_MIDPRI` and
+  `comcnprobe` at `CN_HIGHPRI` when boot(8) says `set tty com0`) or in arm64's `consinit`
+  (`simplefb_init_cons` takes the frame buffer only when `/chosen`'s `stdout-path` names it).
+  With a serial console, OpenBSD attaches `wsdisplay0 at efifb0 mux 1` (or `at simplefb0`)
+  without `: console`, makes its six screens (`ttyC0`..`ttyC5`), and the kernel's messages
+  do not appear on it. EmiBSD's console is always the serial line, which every smoke reads,
+  so it behaves as OpenBSD with a serial console: amd64's `consinit` attaches com0 directly
+  (`cninit`, `constab[]` and `wscons_machdep.c` are not ported, so `efifb_cnattach` is never
+  called), arm64's calls `simplefb_init_cons` after `pluart_init_cons` as the C does, and it
+  returns at once because QEMU's `stdout-path` names the PL011. `wsdisplay_cnattach` and the
+  console paths of efifb/simplefb are ported and wait for a frame buffer console. A boot
+  without `--fb` has no frame buffer, so nothing attaches and nothing changes; with `--fb`
+  `just smoke-wscons` writes to `/dev/ttyC0` and checks the screendump (`--screen-text`,
+  with the grid `selftest=wscons` prints).
 
 ## Testing architecture
 

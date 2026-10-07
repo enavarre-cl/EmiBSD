@@ -42,6 +42,7 @@
 //!   writes the driver's initialiser with a count (`cdev_disk_init(NWD,wd)`): its entry points
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
+//!   `wsdisplay` (12, M13),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `cd` (6 block, 15 character), `vnd` (14 block,
 //!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14) and `fuse` (92, feature `fuse`). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
@@ -69,6 +70,10 @@ use crate::dev::usb::usb::{NUSB, usbclose, usbioctl, usbopen};
 use crate::dev::vnd::{
     NVND, vndclose, vnddump, vndioctl, vndopen, vndread, vndsize, vndstrategy, vndwrite,
 };
+use crate::dev::wscons::wsdisplay::{
+    wsdisplayclose, wsdisplayioctl, wsdisplaykqfilter, wsdisplaymmap, wsdisplayopen, wsdisplayread,
+    wsdisplaystop, wsdisplaytty, wsdisplaywrite,
+};
 use crate::kern::kern_descrip::filedescopen;
 use crate::kern::tty_pty::{
     NPTY, ptcclose, ptckqfilter, ptcopen, ptcread, ptcwrite, ptmclose, ptmioctl, ptmopen, ptsclose,
@@ -89,13 +94,16 @@ use crate::sys::conf::cdev_fuse_init;
 use crate::sys::conf::{
     Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_audio_init, cdev_bio_init, cdev_bpf_init,
     cdev_cn_init, cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_mm_init, cdev_notdef,
-    cdev_pf_init, cdev_ptc_init, cdev_ptm_init, cdev_tty_init, cdev_usb_init,
+    cdev_pf_init, cdev_ptc_init, cdev_ptm_init, cdev_tty_init, cdev_usb_init, cdev_wsdisplay_init,
 };
 use crate::sys::param::NODEV;
 use crate::sys::types::{Dev, major, makedev, minor};
 
 /// `NCOM`: `com* at fdt?` and `com* at acpi?` in GENERIC.
 pub const NCOM: i32 = 1;
+
+/// `NWSDISPLAY`: `wsdisplay* at simplefb?` in GENERIC (M13; its other lines wait for viogpu, the drm drivers, ssdfb and udl).
+pub const NWSDISPLAY: i32 = 1;
 
 /// An empty block slot.
 const fn bnotdef() -> Cell<Bdevsw> {
@@ -192,7 +200,19 @@ pub static CDEVSW: Devsw<Cdevsw, 101> = Devsw([
     cnotdef(), // 9: was floppy disk
     cnotdef(), // 10
     cnotdef(), // 11: Sony CD-ROM
-    cnotdef(), // 12: frame buffers, etc. (wsdisplay: not ported)
+    // 12: frame buffers, etc.
+    Cell::new(cdev_wsdisplay_init(
+        NWSDISPLAY,
+        wsdisplayopen,
+        wsdisplayclose,
+        wsdisplayread,
+        wsdisplaywrite,
+        wsdisplayioctl,
+        wsdisplaystop,
+        wsdisplaytty,
+        wsdisplaymmap,
+        wsdisplaykqfilter,
+    )),
     // 13: SCSI disk
     Cell::new(cdev_disk_init(
         NSD, sdopen, sdclose, sdread, sdwrite, sdioctl,
