@@ -259,9 +259,11 @@ Workarounds, each printed by the build (flags only; no source is edited):
 - A program whose Makefile sets `BINOWN`, `BINGRP` or `BINMODE` (`login_passwd`: root:auth,
   setuid 4555, in `/usr/libexec/auth`, where `lib/libc/gen/auth_subr.c`'s `_PATH_AUTHPROG`
   looks for BSD Auth styles) gets them in the image (below).
-- `ksh` is built like OpenBSD's install-media ksh: `-DSMALL`, no `-lcurses`: `libcurses`
-  is built (M9+, below), but the image has no terminfo database (`share/termtypes` is not
-  in the clone).
+- `ksh` is built by its own Makefile (`-lcurses`, no `-DSMALL`) since M14c, as OpenBSD's
+  base set has it: it sets `KSH_VERSION`, which `rc.subr` wants. There is no terminfo
+  database yet (`share/termtypes` needs tic(1)): `setupterm` fails quietly, and only
+  emacs mode's `clear-screen` needs it. Until M14c it was the install media's `-DSMALL`
+  build; that one is now `distrib/special/ksh`, built for the miniroot only (below).
 - macOS file systems ignore case: libc's `_exit.o` stub and `stdlib/_Exit.o` are built in
   separate directories (both are archive members).
 - `libcompiler_rt.a` is built from `gnu/lib/libcompiler_rt` over `gnu/llvm/compiler-rt`

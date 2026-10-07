@@ -171,16 +171,10 @@ impl Variant {
     }
 }
 
+// `bin/ksh` is built by its own Makefile (M14c: with `-lcurses`, without `-DSMALL`), as
+// OpenBSD's base set has it; the install media's `-DSMALL` ksh is `distrib/special/ksh`,
+// which `userland/miniroot.rs` builds for the miniroot only (`MINIROOT_ONLY`).
 const VARIANTS: &[Variant] = &[
-    Variant {
-        dir: "bin/ksh",
-        add_cflags: "-DSMALL",
-        drop_ldadd: &["-lcurses"],
-        static_link: false,
-        why: "built like OpenBSD's install-media ksh (-DSMALL, no -lcurses): libcurses is \
-              built (LIBRARIES), but the image has no terminfo database (share/termtypes is \
-              not in the reference clone)",
-    },
     Variant::statically("usr.bin/id"),
     Variant::statically("usr.bin/uname"),
     Variant::statically("libexec/getty"),

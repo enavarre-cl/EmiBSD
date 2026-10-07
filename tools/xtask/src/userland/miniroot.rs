@@ -18,9 +18,10 @@
 //!   (crunchgen) and `LINK`s every name to it; here each name is the program of that name
 //!   that `userland` built (static PIE, from the normal Makefiles, not `distrib/special`'s
 //!   `-DSMALL -Oz` ones), copied to the listed place. Bigger, same behaviour. `more` and
-//!   `less` are `distrib/special/more` (OpenBSD's tiny pager of the install media) and `doas`
-//!   is `distrib/special/doas` (the media's root-only one, no `doas.conf`), built here, not
-//!   part of `root/`.
+//!   `less` are `distrib/special/more` (OpenBSD's tiny pager of the install media), `doas`
+//!   is `distrib/special/doas` (the media's root-only one, no `doas.conf`) and `ksh`/`sh`
+//!   are `distrib/special/ksh` (the media's `-DSMALL` shell; base's is the full one), built
+//!   here, not part of `root/`.
 //! - `/dev` is made from the table of the smoke ramdisk (`ramdisk.rs`, `DEVICES`) instead of
 //!   running `MAKEDEV ramdisk` on a build host; `/dev/MAKEDEV` is OpenBSD's
 //!   (`etc/etc.<arch>/MAKEDEV`) so `install.sub` can make more (`make_dev`).
@@ -332,12 +333,17 @@ fn walk_files(dir: &Path, rel: &str, out: &mut Vec<(String, PathBuf)>) -> Result
 /// media runs the installer as its single-user shell, no questions asked); `more` is the
 /// media's small pager; `doas` is the media's own (a root-only `doas -u user command`
 /// without `/etc/doas.conf`, which `install.sub`'s `unpriv` runs `ftp` and `signify`
-/// through; base's `usr.bin/doas` refuses without a config). Their Makefiles install into
-/// `/usr/bin`, which is undone: they go to `target/userland/<arch>/miniroot-only/`.
-const MINIROOT_ONLY: &[(&str, &str)] = &[
-    ("distrib/special/more", "more"),
-    ("distrib/special/init", "init"),
-    ("distrib/special/doas", "doas"),
+/// through; base's `usr.bin/doas` refuses without a config); `ksh` is the media's shell,
+/// `-DSMALL` (no `KSH_VERSION`, no mail check, no persistent history, no curses), while
+/// base's `/bin/ksh` is `bin/ksh`'s full build. Their Makefiles install into `/usr/bin` or
+/// nowhere, which is undone: they go to `target/userland/<arch>/miniroot-only/`. A name
+/// here, and each name its Makefile's `LINKS` make (the third field), wins over the base
+/// program of that name (`Stage::program`), so the list's `ksh` and `sh` are this `ksh`.
+const MINIROOT_ONLY: &[(&str, &str, &[&str])] = &[
+    ("distrib/special/more", "more", &[]),
+    ("distrib/special/init", "init", &[]),
+    ("distrib/special/doas", "doas", &[]),
+    ("distrib/special/ksh", "ksh", &["rksh", "sh"]),
 ];
 
 /// Nodes `MAKEDEV ramdisk` makes that the smoke ramdisk's table (`ramdisk::devices`) lacks:
@@ -347,8 +353,9 @@ const MINIROOT_ONLY: &[(&str, &str)] = &[
 const MINIROOT_DEVICES: &[(&str, char, u32, u32, u32, &str)] =
     &[("diskmap", 'c', 90, 0, 0o640, "operator")];
 
-/// Builds `dir` of `MINIROOT_ONLY` for the miniroot only: its executable.
-fn build_only(ctx: &Ctx<'_>, dir: &str, name: &str) -> Result<Option<PathBuf>> {
+/// Builds `dir` of `MINIROOT_ONLY` for the miniroot only: its executable. `links` are the
+/// names its `LINKS` made beside it, removed from `root/` as the program is.
+fn build_only(ctx: &Ctx<'_>, dir: &str, name: &str, links: &[&str]) -> Result<Option<PathBuf>> {
     let installed = match build_prog(ctx, dir)? {
         Linked::Yes(_, _, installed) => installed,
         _ => return Ok(None),
@@ -358,9 +365,14 @@ fn build_only(ctx: &Ctx<'_>, dir: &str, name: &str) -> Result<Option<PathBuf>> {
     let to = keep.join(name);
     let _ = fs::remove_file(&to);
     fs::copy(&installed, &to).map_err(|e| format!("{}: {e}", to.display()))?;
-    // Their Makefiles name no BINDIR, so build_prog put them at the top of `root/`: not
-    // base's.
+    // Their Makefiles name no BINDIR, so build_prog put them (and their links) at the top
+    // of `root/`: not base's.
     let _ = fs::remove_file(&installed);
+    if let Some(dir) = installed.parent() {
+        for link in links {
+            let _ = fs::remove_file(dir.join(link));
+        }
+    }
     Ok(Some(to))
 }
 
@@ -402,8 +414,11 @@ pub(crate) fn build(ctx: &Ctx<'_>, arch: crate::boot::Arch, opts: &Options<'_>) 
         owners: read_owners(&ctx.out.join("host/owners.txt")),
         only: BTreeMap::new(),
     };
-    for (dir, name) in MINIROOT_ONLY {
-        if let Some(p) = build_only(ctx, dir, name)? {
+    for (dir, name, links) in MINIROOT_ONLY {
+        if let Some(p) = build_only(ctx, dir, name, links)? {
+            for link in *links {
+                stage.only.insert((*link).to_string(), p.clone());
+            }
             stage.only.insert((*name).to_string(), p);
         }
     }
