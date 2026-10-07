@@ -1155,12 +1155,20 @@ pub fn kthread_pingpong() {
     mtx_leave(&PINGPONG_MTX);
     let elapsed_us = nsecuptime().wrapping_sub(start_ns) / 1000;
 
-    // Give the two exits time to reach the reaper: a timed sleep (endtsleep wakes it). The
-    // reaper may already have taken them by now, so the count is compared with the one from
-    // before their creation, not with one read here.
+    // Give the two exits time to reach the reaper: timed sleeps (endtsleep wakes each), 50 ms
+    // at a time and at most 2 s in all, until the count is back. A loaded host (parallel
+    // smokes) once left the second exit unreaped after a single 50 ms sleep. The reaper may
+    // already have taken them by now, so the count is compared with the one from before
+    // their creation, not with one read here.
     let nthreads_before = NTHREADS.load(Ordering::Relaxed);
-    let _ = tsleep_nsec(ptr::addr_of!(PINGPONG_REAP), PWAIT, "reapwait", 50_000_000);
-    let nthreads_after = NTHREADS.load(Ordering::Relaxed);
+    let mut nthreads_after = nthreads_before;
+    for _ in 0..40 {
+        let _ = tsleep_nsec(ptr::addr_of!(PINGPONG_REAP), PWAIT, "reapwait", 50_000_000);
+        nthreads_after = NTHREADS.load(Ordering::Relaxed);
+        if nthreads_after <= nthreads_start {
+            break;
+        }
+    }
 
     let turns = PINGPONG_TURN.load(Ordering::Relaxed);
     let cpus = [
