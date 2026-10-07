@@ -63,7 +63,8 @@
 //!   cpus running` after `cpu_boot_secondary_processors`, then checks that every CPU
 //!   dispatches its clock interrupts with a monotonic uptime (M11b,
 //!   `selftest::clockintr_percpu`); `selftest=mpstress` starts them before the pool and
-//!   pmemrange stress on every CPU (M11a's exit test).
+//!   pmemrange stress on every CPU (M11a's exit test). The network self-test of every
+//!   `qemu` boot (`selftest::ping_gateway`) runs after the secondary processors boot (M13).
 //! - `main()` takes no `framep` (unused in C) and never returns, as the C's loop never does.
 //! - `start_init` execs the `init` Limine module (`stand` hands it over through
 //!   `set_init_module`) instead of trying the `initpaths` on a filesystem; `check_console`
@@ -619,13 +620,9 @@ pub fn main() -> ! {
         crate::kern::selftest::taskq_check();
         Machine::exit(ExitStatus::Success);
     }
-    // Kernel pages reused under a user pmap, then the network self-test of every default
-    // boot: the softnet thread, the timeouts and the interface's interrupts run from here on.
+    // Kernel pages reused under a user pmap.
     #[cfg(feature = "qemu")]
-    {
-        crate::kern::selftest::pmap_reuse();
-        crate::kern::selftest::ping_gateway();
-    }
+    crate::kern::selftest::pmap_reuse();
 
     // Boot the secondary processors.
     #[cfg(feature = "multiprocessor")]
@@ -635,6 +632,13 @@ pub fn main() -> ! {
         crate::kern::selftest::cpus_running();
         crate::kern::selftest::clockintr_percpu();
     }
+
+    // The network self-test of every default boot, once every CPU runs (M13): the softnet
+    // thread, the timeouts and the interface's interrupts run from here on, and a driver
+    // whose queue interrupts sit on the application processors (vmx(4) through intrmap(9))
+    // can pass intr_barrier, which waits for the handler's CPU to go through the scheduler.
+    #[cfg(feature = "qemu")]
+    crate::kern::selftest::ping_gateway();
 
     // Now that all CPUs partake in scheduling, start SMR thread.
     smr_startup_thread();

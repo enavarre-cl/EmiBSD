@@ -4,6 +4,13 @@
 //! `xtask smoke` asserts (`selftest: <what> ok`). They stand in for the user-space programs
 //! OpenBSD would run until there is a user space; they are compiled only with feature `qemu`
 //! (and need feature `alloc` for the allocator stress).
+//!
+//! The network self-test of every default boot ([`ping_gateway`], which also configures the
+//! first Ethernet interface) runs after `cpu_boot_secondary_processors` and the per-CPU
+//! checks (M13): OpenBSD configures its interfaces from netstart(8), with every processor
+//! running, and a driver whose queue interrupts sit on the application processors (vmx(4)
+//! through intrmap(9)) calls `intr_barrier` from its `init`, which waits for those CPUs to go
+//! through the scheduler. Its output lines are unchanged.
 
 use core::mem::size_of;
 use core::ptr::{self, NonNull};

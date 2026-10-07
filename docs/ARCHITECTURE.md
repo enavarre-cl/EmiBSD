@@ -1496,7 +1496,9 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   traffic, probably because its model writes back only advanced receive descriptors and
   em(4) programs legacy ones, as OpenBSD's does (not checked against QEMU's source).
   `--nic rtl8139` is QEMU's Realtek 8139C+ (PCI 10ec:8139 revision 0x20), which re(4)
-  drives; `smoke-re` pings the gateway through it on both archs, on INTx.
+  drives; `smoke-re` pings the gateway through it on both archs, on INTx. `--nic vmxnet3`
+  is QEMU's VMware VMXNET3 (PCI 15ad:07b0), which vmx(4) drives; `smoke-vmx` pings the
+  gateway through it on both archs, with 4 queues on MSI-X.
 - `em(4)` (M13): `dev/pci/if_em.c` is OpenBSD's whole driver over the shared code of
   `if_em_hw.c`. The C changes `sc->hw` only under the kernel lock and reads `mac_type` and
   the registers unlocked from its MP-safe paths (the send queue, the interrupt's ring work);
@@ -1519,6 +1521,18 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   into the C's later acknowledgement and leave the timer-only interrupt mask silent.
   `__STRICT_ALIGNMENT` became `MachineParam::STRICT_ALIGNMENT` (arm64 true), for
   `RE_ETHER_ALIGN`.
+- `vmx(4)` (M13): `dev/pci/if_vmx.c` and `if_vmxreg.h` whole, for QEMU's `vmxnet3`. As in
+  em(4) and re(4), the descriptors are read and written whole and volatile, the shared
+  structures member by member, and the transmit ring's producer and consumer (the send
+  queue's and the interrupt's) are atomics; each receive ring's fill state stays under its
+  mutex. QEMU offers 25 MSI-X vectors: vector 0 takes the device's events and intrmap(9)
+  gives each queue its own vector on its own CPU, 4 queues with `-smp 4` on both archs
+  (transmit spreads over them by flow id; QEMU receives on queue 0 only). `kstat(4)` is
+  compiled out (`NKSTAT` 0), `vlan(4)` is not configured (`NVLAN` 0). Its `init` calls
+  `intr_barrier` for each queue vector, which waits for that vector's CPU to go through the
+  scheduler; so the kernel's `qemu` network self-test (`selftest::ping_gateway`, which
+  configures the first Ethernet interface) runs after `cpu_boot_secondary_processors`, as
+  OpenBSD's netstart(8) runs with every processor up.
 - `disklabel(8)` and `fdisk(8)` embed their manual page in a generated `manual.c` rendered
   with mandoc(1); the userland build takes their Makefiles' own `.ifdef NOMAN` branch
   (`NOMAN_PROGRAMS` in `tools/xtask/src/userland.rs`), so the embedded page reads

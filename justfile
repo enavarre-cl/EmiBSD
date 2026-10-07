@@ -89,7 +89,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-efiboot smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons"
 
@@ -1496,6 +1496,33 @@ smoke-re: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feature
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
         --nic rtl8139 {{re_session}} {{em_ping}} \
         --expect "vendor 0x10ec product 0x8139 rev 0x20: RTL8139C+ (0x7480), irq, address 52:54:00:12:34:56"
+
+# M13: vmx(4) on QEMU's VMware VMXNET3 (`--nic vmxnet3`, PCI 15ad:07b0, revision 1), in vio0's
+# place on the user network. QEMU reports the interrupt type AUTO and offers 25 MSI-X vectors,
+# so vmx0 takes vector 0 for the device's events and, through intrmap(9), one vector per
+# queue on the CPU the map picks: 4 queues with `-smp 4` (min(24 spare vectors, 8, ncpus),
+# a power of two). The kernel's self-test gives vmx0 10.0.2.15/24 (after the application
+# processors boot, so intr_barrier can reach the queues' CPUs); logged in, ifconfig(8) shows
+# an active link and ping(8) gets the gateway's reply, which QEMU (one receive queue)
+# delivers on queue 0, and vmstat(8) counts queue 0's vector. Both archs: MSI-X through the
+# local APICs on amd64, through the GICv2m frames (`ampintcmsi`) on arm64. Part of `smoke`.
+smoke-vmx: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-vmx: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --nic vmxnet3 {{vmx_session}} {{em_ping}}
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --nic vmxnet3 {{vmx_session}} {{em_ping}}
+
+# `smoke-vmx`'s login and commands and the expectations both archs share.
+vmx_session := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' --send 'emibsd\\n' " + \
+    "--send-after '# ' --send 'ifconfig vmx0\\n' --send-after '# ' --send 'ping -c 1 10.0.2.2\\n' " + \
+    "--send-after 'packet loss' --send 'vmstat -i\\n' " + \
+    "--expect 'vmx0 at pci0 dev ' " + \
+    "--expect 'vendor 0x15ad product 0x07b0 rev 0x01: msix, 4 queues, address 52:54:00:12:34:56' " + \
+    "--expect 'selftest: ping 10.0.2.2: echo reply received' --expect 'rc: multi-user' " + \
+    "--expect 'vmx0: flags=' --expect 'media: Ethernet autoselect' --expect 'status: active' " + \
+    "--expect 'inet 10.0.2.15 netmask 0xffffff00' --expect '/vmx0:0 '"
 
 # `smoke-re`'s login and commands and the expectations both archs share.
 re_session := "--send-after 'login:' --send 'root\\n' --send-after 'Password:' --send 'emibsd\\n' " + \

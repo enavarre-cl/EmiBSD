@@ -47,7 +47,8 @@
 //! - `--nic MODEL` (`qemu`, `smoke`, M13): the NIC on QEMU's user network, the one that
 //!   is vio0 otherwise, is an Intel PRO/1000 of that model instead, for em(4): `e1000`
 //!   (82540EM), `e1000e` (82574L) or `igb` (82576); or `rtl8139`, QEMU's Realtek 8139C+,
-//!   for re(4) (`smoke-re`). It takes vio0's place on the command
+//!   for re(4) (`smoke-re`); or `vmxnet3`, QEMU's VMware VMXNET3, for vmx(4)
+//!   (`smoke-vmx`). It takes vio0's place on the command
 //!   line and its netdev (`n0`), so it is the only Ethernet interface (em0, which the
 //!   kernel's network self-test configures as it does vio0) and no other device moves. On
 //!   arm64 it is a PCI device on `virt`'s PCIe bus, where vio0 is on virtio-mmio. Not with
@@ -228,8 +229,8 @@ static GRID_LINE: Mutex<Option<String>> = Mutex::new(None);
 static VIO_MQ: OnceLock<()> = OnceLock::new();
 
 /// The models `--nic` takes: QEMU's emulated Intel PRO/1000 controllers, which em(4) drives,
-/// and its Realtek 8139C+, which re(4) drives.
-const NIC_MODELS: &[&str] = &["e1000", "e1000e", "igb", "rtl8139"];
+/// its Realtek 8139C+, which re(4) drives, and its VMware VMXNET3, which vmx(4) drives.
+const NIC_MODELS: &[&str] = &["e1000", "e1000e", "igb", "rtl8139", "vmxnet3"];
 
 /// `--nic MODEL`: the user-network NIC's model, in vio0's place (set once by `main`).
 static NIC: OnceLock<String> = OnceLock::new();
@@ -1263,6 +1264,11 @@ mod tests {
             user_nic_arg(None, Arch::Arm64, ""),
             "virtio-net-device,netdev=n0"
         );
+        assert_eq!(
+            user_nic_arg(Some("vmxnet3"), Arch::Arm64, ""),
+            "vmxnet3,netdev=n0"
+        );
+        assert!(set(Path::new("/r"), &["--nic", "vmxnet3"]).is_ok());
         assert!(set(Path::new("/r"), &["--nic", "ne2k_pci"]).is_err());
         assert!(set(Path::new("/r"), &["--nic"]).is_err());
         assert!(set(Path::new("/r"), &["--nic", "e1000", "--vio-mq"]).is_err());

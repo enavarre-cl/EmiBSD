@@ -1515,6 +1515,13 @@ pub const PCI_PRODUCT_TTTECH_MC322: u32 = 0x000a;
 /// `PCI_PRODUCT_USR2_USR997902`: USR997902.
 pub const PCI_PRODUCT_USR2_USR997902: u32 = 0x0116;
 
+// vmx(4) (M13): if_vmx.c's vmx_devices[].
+
+/// `PCI_VENDOR_VMWARE`: VMware.
+pub const PCI_VENDOR_VMWARE: u32 = 0x15ad;
+/// `PCI_PRODUCT_VMWARE_NET_3`: VMXNET3.
+pub const PCI_PRODUCT_VMWARE_NET_3: u32 = 0x07b0;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2917,6 +2924,8 @@ mod tests {
             ("PCI_PRODUCT_REALTEK_RT8169", PCI_PRODUCT_REALTEK_RT8169),
             ("PCI_PRODUCT_TTTECH_MC322", PCI_PRODUCT_TTTECH_MC322),
             ("PCI_PRODUCT_USR2_USR997902", PCI_PRODUCT_USR2_USR997902),
+            ("PCI_VENDOR_VMWARE", PCI_VENDOR_VMWARE),
+            ("PCI_PRODUCT_VMWARE_NET_3", PCI_PRODUCT_VMWARE_NET_3),
         ] {
             assert_eq!(
                 crate::reftest::int(&defs, name),

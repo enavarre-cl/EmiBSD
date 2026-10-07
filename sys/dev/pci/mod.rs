@@ -9,7 +9,8 @@
 //! pci?`) (M13); `xhci_pci` the xHCI front-end (`xhci* at
 //! pci?`), `auich` the Intel ICH AC'97 audio controller (`auich* at pci?`), `azalia` (with
 //! `azalia_codec`) the HD Audio controller (`azalia* at pci?`) (M12); `puc` (with `pucvar`
-//! and `pucdata`) the "universal" communication card driver (`puc* at pci?`, M13). The machine side
+//! and `pucdata`) the "universal" communication card driver (`puc* at pci?`, M13); `if_vmx` (with
+//! `if_vmxreg`) VMware's VMXNET3 NIC (`vmx* at pci?`, M13). The machine side
 //! (configuration access, tags, interrupts) is `machine::pci_machdep`.
 
 pub mod ahci_pci;
@@ -23,6 +24,8 @@ pub mod if_em_hw;
 pub mod if_em_osdep;
 pub mod if_em_soc;
 pub mod if_re_pci;
+pub mod if_vmx;
+pub mod if_vmxreg;
 pub mod nvme_pci;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/pci/pci.c
 pub mod pci;
