@@ -48,8 +48,8 @@
 //!   `SCTLR_EL1` and `ci_ttbr1`, then `ci_el1_stkend` as its stack) plus what `initarm` does
 //!   on the boot processor (`SPSel`, `VBAR_EL1`, the FPU trapped as `fpu_drop` leaves it),
 //!   then calls `cpu_init_secondary`. After a boot by boot(8) (M14) the `BootMp` is
-//!   `machdep.rs`'s: PSCI `CPU_ON` (`psci.c` is not ported: the call is made there, its
-//!   conduit and function ID from `/psci`) at `locore.S`'s `cpu_hatch_secondary`, which
+//!   `machdep.rs`'s: psci(4)'s `psci_cpu_on` (`dev/fdt/psci.rs`, attached before the
+//!   processors) at `locore.S`'s `cpu_hatch_secondary`, which
 //!   brings the MMU up on `locore0.S`'s identity map and the kernel's `TTBR1_EL1` and
 //!   enters `cpu_hatch_entry` on `ci_el1_stkend` (`locore.rs`, deviations).
 //! - Not in the C: `cpu_hatch_entry` turns on the processor's generic timer event stream

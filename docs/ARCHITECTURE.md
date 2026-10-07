@@ -799,12 +799,11 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   whose part after the symbols is usable). It maps those gigabytes in the direct map before
   handing them over; the device tree and the EFI map are read in place (loader data, never
   given to uvm).
-- Processors: under Limine its MP request; after boot(8) the `/cpus` nodes and PSCI
-  `CPU_ON` (`/psci`'s method, `hvc` on QEMU) at `locore.S`'s `cpu_hatch_secondary` with the
+- Processors: under Limine its MP request; after boot(8) the `/cpus` nodes and psci(4)'s
+  `psci_cpu_on` (`dev/fdt/psci.rs`, `hvc` on QEMU) at `locore.S`'s `cpu_hatch_secondary` with the
   `cpu_info` as context: it brings the MMU up on the identity map and the kernel's
   `TTBR1_EL1` (`cpu.rs`'s `AP_TTBR1`, cleaned to memory first) and enters
-  `cpu_hatch_entry` on the processor's kernel stack. `psci.c` is not ported; the call is
-  made by `machdep.rs`.
+  `cpu_hatch_entry` on the processor's kernel stack.
 
 ## Deviations from OpenBSD (deliberate)
 

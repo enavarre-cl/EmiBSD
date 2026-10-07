@@ -83,8 +83,7 @@
 //!   there (`bootarg_direct_map`, not in the C; memory it cannot reach, past 512 GB, is
 //!   listed as reserved). `openbsd,dma-constraint` is read but `dma_constraint` is a
 //!   constant (every address): a narrower one is reported by `initarm`. The processors come
-//!   from `/cpus` and start by PSCI `CPU_ON` (`bootarg_mp_start`: `psci.c`'s `psci_cpu_on`
-//!   is not ported; the call is made here, `hvc` or `smc` from `/psci`'s `method`).
+//!   from `/cpus` and start by psci(4)'s `psci_cpu_on` (`bootarg_mp_start`).
 //! - `cpu_info[]` holds `CiPtr`s; `cpu_idle_cycle_fcn` is a `StaticCell` written at attach
 //!   time; `BOOT_MP` (`MULTIPROCESSOR`) has no C counterpart: PSCI or a spin table in the C
 //!   (`cpu.rs`, deviations).
@@ -141,6 +140,10 @@ use crate::dev::efi::efi::{
     EfiRuntimeServicesCode, EfiRuntimeServicesData, EfiUnusableMemory,
 };
 use crate::dev::fdt::pluart_fdt::pluart_init_cons;
+#[cfg(feature = "multiprocessor")]
+use crate::dev::fdt::psci::psci_cpu_on;
+#[cfg(feature = "multiprocessor")]
+use crate::dev::fdt::pscivar::PSCI_SUCCESS;
 #[cfg(feature = "multiprocessor")]
 use crate::dev::ofw::fdt::fdt_node_property_int;
 use crate::dev::ofw::fdt::{
@@ -537,13 +540,6 @@ pub unsafe fn initarm(boot: &BootInfo) -> Result<(), &'static str> {
     Ok(())
 }
 
-/// `CPU_ON` (`dev/fdt/psci.c`): PSCI 0.2's 64-bit `CPU_ON` function ID.
-#[cfg(feature = "multiprocessor")]
-const PSCI_CPU_ON_64: u32 = 0xc400_0003;
-/// `PSCI_SUCCESS` (`dev/fdt/pscivar.h`).
-#[cfg(feature = "multiprocessor")]
-const PSCI_SUCCESS: u64 = 0;
-
 /// The most usable ranges `getbootinfo` collects (`memreg[VM_PHYSSEG_MAX]` in C).
 const NMEMREG: usize = VM_PHYSSEG_MAX;
 
@@ -571,13 +567,6 @@ static BOOTARG_CPUS: StaticCell<[u64; MAXCPUS as usize]> = StaticCell::new([0; M
 /// How many of [`BOOTARG_CPUS`] are filled.
 #[cfg(feature = "multiprocessor")]
 static BOOTARG_NCPUS: AtomicU32 = AtomicU32::new(0);
-/// PSCI's conduit from `/psci`'s `method`: `hvc` (true) or `smc`.
-#[cfg(feature = "multiprocessor")]
-static PSCI_HVC: AtomicBool = AtomicBool::new(true);
-/// PSCI's `CPU_ON` function ID (`psci.c`: the standard one from PSCI 0.2 on, else the
-/// node's `cpu_on`).
-#[cfg(feature = "multiprocessor")]
-static PSCI_CPU_ON: AtomicU32 = AtomicU32::new(0);
 
 unsafe extern "C" {
     /// `_start` (`locore0.S`): the first instruction of the kernel image.
@@ -992,19 +981,8 @@ fn bootarg_mp() -> Option<BootMp> {
         if psci.is_null() {
             return None;
         }
-        let method = fdt_node_property(psci, b"method").unwrap_or(&[]);
-        PSCI_HVC.store(method.starts_with(b"hvc"), Ordering::Relaxed);
-        let cpu_on = if fdt_is_compatible(psci, b"arm,psci-0.2")
-            || fdt_is_compatible(psci, b"arm,psci-1.0")
-        {
-            PSCI_CPU_ON_64
-        } else {
-            fdt_node_property_int(psci, b"cpu_on").map_or(0, |v| v as u32)
-        };
-        if cpu_on == 0 {
-            return None;
-        }
-        PSCI_CPU_ON.store(cpu_on, Ordering::Relaxed);
+        // psci(4) (`dev/fdt/psci.rs`) attaches before the processors (`mainbus_attach_psci`)
+        // and makes the CPU_ON call; without a `/psci` node there is no way to start them.
 
         let cpus = fdt_find_node(b"/cpus");
         if cpus.is_null() {
@@ -1061,7 +1039,7 @@ fn bootarg_mp_cpu(i: usize) -> BootCpu {
 
 /// [`BootMp::start`] under boot(8): PSCI `CPU_ON` of processor `i` at `locore.S`'s
 /// `cpu_hatch_secondary` (its physical address), with `arg` (its `cpu_info`) as the
-/// context (`cpu_start_secondary`'s `psci_cpu_on` in C; see the module's deviations).
+/// context (`cpu_start_secondary`'s `psci_cpu_on` in C).
 ///
 /// # Safety
 ///
@@ -1077,60 +1055,12 @@ unsafe fn bootarg_mp_start(i: usize, arg: usize) {
     cpu_dcache_wb_range(ptr::addr_of!(AP_TTBR1) as usize, size_of::<u64>());
     let entry = (cpu_hatch_secondary as *const () as usize as u64)
         .wrapping_add(KERN_DELTA.load(Ordering::Relaxed));
-    // SAFETY: the caller's guarantee: `mpidr` is a processor not started yet, and
-    // `entry`/`arg` are what `cpu_hatch_secondary` expects.
-    let ret = unsafe { psci_cpu_on(mpidr, entry, arg as u64) };
+    // `cpu_start_secondary`'s call: psci(4)'s `psci_cpu_on`, through the conduit its attach
+    // read from `/psci`.
+    let ret = psci_cpu_on(mpidr, entry, arg as u64);
     if ret != PSCI_SUCCESS {
-        kprintf!(" psci: CPU_ON {:#x} failed: {}", mpidr, ret as i64);
+        kprintf!(" psci: CPU_ON {:#x} failed: {}", mpidr, ret);
     }
-}
-
-/// `psci_cpu_on` (`dev/fdt/psci.c`, not ported here): PSCI `CPU_ON` of `mpidr` at the
-/// physical address `pc` with `context` in its `x0`, through `/psci`'s conduit; the PSCI
-/// status. One small function so boot(8)'s `BootMp` can switch to the driver's own once
-/// `psci.c` is in the tree.
-///
-/// # Safety
-///
-/// `mpidr` is a processor that is off, and `pc` is the physical address of code that can run
-/// with the MMU off and expects `context`.
-#[cfg(feature = "multiprocessor")]
-unsafe fn psci_cpu_on(mpidr: u64, pc: u64, context: u64) -> u64 {
-    let fid = u64::from(PSCI_CPU_ON.load(Ordering::Relaxed));
-    let ret: u64;
-    // SAFETY: a PSCI call (SMC Calling Convention): the firmware (QEMU's PSCI) starts the
-    // processor at `pc` with `context` in x0 and returns a status in x0; x1-x17 may be
-    // clobbered by an SMCCC 1.0 implementation, so they are declared clobbered.
-    unsafe {
-        if PSCI_HVC.load(Ordering::Relaxed) {
-            asm!(
-                "hvc #0",
-                inlateout("x0") fid => ret,
-                inlateout("x1") mpidr => _,
-                inlateout("x2") pc => _,
-                inlateout("x3") context => _,
-                lateout("x4") _, lateout("x5") _, lateout("x6") _, lateout("x7") _,
-                lateout("x8") _, lateout("x9") _, lateout("x10") _, lateout("x11") _,
-                lateout("x12") _, lateout("x13") _, lateout("x14") _, lateout("x15") _,
-                lateout("x16") _, lateout("x17") _,
-                options(nostack)
-            );
-        } else {
-            asm!(
-                "smc #0",
-                inlateout("x0") fid => ret,
-                inlateout("x1") mpidr => _,
-                inlateout("x2") pc => _,
-                inlateout("x3") context => _,
-                lateout("x4") _, lateout("x5") _, lateout("x6") _, lateout("x7") _,
-                lateout("x8") _, lateout("x9") _, lateout("x10") _, lateout("x11") _,
-                lateout("x12") _, lateout("x13") _, lateout("x14") _, lateout("x15") _,
-                lateout("x16") _, lateout("x17") _,
-                options(nostack)
-            );
-        }
-    }
-    ret
 }
 
 /// `collect_kernel_args`: make a local copy of the bootargs.

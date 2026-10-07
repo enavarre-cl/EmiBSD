@@ -34,8 +34,9 @@
 //! - `psci_flush_bp` takes the current CPU's `ci_flush_bp` cell as an argument instead of
 //!   reading `curcpu()->ci_flush_bp`: `ci_flush_bp` is an arm64 member of `struct cpu_info`
 //!   that `machine::CpuInfo` does not carry. `arm64/cpu.rs`'s `cpu_flush_bp_psci` passes it.
-//! - `psci_cpu_on` is ported but nothing calls it: EmiBSD's application processors are
-//!   started by Limine's MP protocol (`cpu_start_secondary` does not use PSCI `CPU_ON`).
+//! - Under Limine the application processors are started by Limine's MP protocol, not by
+//!   `psci_cpu_on`; after a boot by boot(8) (M14) arm64's `machdep.rs` starts them through
+//!   `psci_cpu_on`, as `cpu_start_secondary` does in C.
 //! - The softc's call function is a `fn(u64, u64, u64, u64) -> u64`; the results are
 //!   truncated to `i32`/`u32` as the C's return types do.
 //! - `psci_sc` is an `AtomicPtr` set by `psci_attach` (the softc lives as long as the device,
@@ -370,8 +371,8 @@ pub fn psci_cpu_off() -> i32 {
     psci_call(|sc| sc.sc_cpu_off.get(), 0, 0, 0)
 }
 
-/// `psci_cpu_on`: start the CPU `target_cpu` at `entry_point_address` (not used: Limine
-/// starts the application processors).
+/// `psci_cpu_on`: start the CPU `target_cpu` at `entry_point_address` (after a boot by
+/// boot(8); under Limine, Limine starts the application processors).
 pub fn psci_cpu_on(target_cpu: u64, entry_point_address: u64, context_id: u64) -> i32 {
     psci_call(
         |sc| sc.sc_cpu_on.get(),
