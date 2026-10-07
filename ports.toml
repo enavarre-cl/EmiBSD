@@ -7968,6 +7968,130 @@ deps = ["sys/dev/wscons/wsconsio.h"]
 notes = "M13: WS_DEFAULT_FG/BG (non-sparc64), WSDISPLAY_MAXSCREEN, struct wsdisplay_emulops (Option<unsafe fn> over the void * cookie; Result<(), Errno>, pack_attr returns the attribute, unpack_attr a tuple), WSCOL_*/WSATTR_*, struct wsscreen_descr (textops a raw pointer into the driver's rasops_info), WSSCREEN_*, struct wsdisplay_charcell, struct wsdisplay_accessops (ioctl Ok(true)/Ok(false)/errno as wskbdvar's, mmap None for -1, getchar Option), struct wsscreen_list, struct wsemuldisplaydev_attach_args, the locator indices with wsemuldisplaydevcf_*/wsdisplaydevcf_mux as functions, struct wscons_syncops, WSDISPLAY_NULLSCREEN, ws_get_param/ws_set_param (StaticCells here until wsdisplay.c), WSDISPLAY_SCROLL_*, WSDISPLAY_DEFBURN*; the wsdisplay.c prototypes (wsdisplay_cnattach, wsemuldisplaydevprint, wsemuldisplaydevsubmatch, ...) are the next M13 step's; license: BSD-4-clause (advertising clause, Demetriou for the NetBSD Project), kept whole"
 
 [[file]]
+c = "sys/dev/wscons/ascii.h"
+rust = "sys/dev/wscons/ascii.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "55fd11a1bfe74ee0b48d03a6ab98ab123b8e044c"
+notes = "M13 (wsemul): the ASCII_* control characters as u32 (the decoded character's type); no licence text in the original, only its $OpenBSD$/$NetBSD$ lines; reference-backed test of every constant"
+
+[[file]]
+c = "sys/dev/wscons/unicode.h"
+rust = "sys/dev/wscons/unicode.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0a61bf35556014fc2113570e7b0750d51efeda7a"
+notes = "M13 (wsemul): the private-use _e000U.._e00fU characters as u16 (the DEC tables' element type), names verbatim; no licence text in the original, only its $OpenBSD$/$NetBSD$ lines; reference-backed test of every constant"
+
+[[file]]
+c = "sys/dev/wscons/wscons_features.h"
+rust = "sys/dev/wscons/wscons_features.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1a9cd313366ce1675e875c96a2d9fd7dacc90da2"
+notes = "M13 (wsemul): the HAVE_* macros as bool consts, all true as in a kernel without SMALL_KERNEL (EmiBSD builds no SMALL_KERNEL); the code they guard tests them with a plain if, so both sides compile; reference-backed test that the header defines exactly these; license: public domain"
+
+[[file]]
+c = "sys/dev/wscons/wscons_callbacks.h"
+rust = "sys/dev/wscons/wscons_callbacks.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ddfd08d36e967d670337bc36a432f52522032b74"
+deps = ["sys/dev/wscons/wsconsio.h", "sys/dev/wscons/wsksymvar.h", "sys/sys/device.h"]
+notes = "M13 (wsemul): enum wsdisplay_resetops (WsdisplayResetops), struct wsevsrc as the uninhabited Wsevsrc (wsmuxvar.h not ported; pointers are Option<&Wsevsrc>, None); the declarations are the seam for wsdisplay.c: visible stubs (unported! once) wsdisplay_set_console_kbd, wsdisplay_kbdinput, wsdisplay_rawkbdinput, wsdisplay_switch (ENOSYS), wsdisplay_reset, wsdisplay_kbdholdscreen, wsdisplay_set_cons_kbd, wsdisplay_unset_cons_kbd, wsdisplay_set_kbd (ENOSYS), wsdisplay_param (ENOSYS), which the wsdisplay.c port moves to wsdisplay.rs and turns into pub uses; wskbd_set_console_display/wskbd_set_display/wskbd_pickfree re-exported from wskbd.rs (stubs there); license: BSD-4-clause (advertising clause, Demetriou for the NetBSD Project), kept whole"
+
+[[file]]
+c = "sys/dev/wscons/wsemulvar.h"
+rust = "sys/dev/wscons/wsemulvar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a0200db44b57639194dde1af1978f616ee619f55"
+deps = ["sys/dev/wscons/wscons_features.h", "sys/dev/wscons/wsconsio.h", "sys/dev/wscons/wsdisplayvar.h", "sys/dev/wscons/wsksymvar.h"]
+notes = "M13 (wsemul): enum wsemul_resetops, struct wsemul_ops (unsafe fns over the void * cookie; output takes a slice; attach takes Option<&WsscreenDescr> and console as bool; translate fills a caller buffer of WSEMUL_TRANSLATE_SIZE and returns the bytes instead of pointing into translatebuf), struct wsemul_inputstate, struct wsemul_abortstate with its anonymous enum (WsemulAbort), the static inline helpers, WSEMULOP as wsemulop(was, closure) with HAVE_RESTARTABLE_EMULOPS; BoundEmulops pairs emulops and emulcookie (a NULL emulop does nothing and succeeds, NULL pack_attr is ENODEV, NULL mapchar maps to itself); visible stubs until wsdisplay.c: wsdisplay_emulbell, wsdisplay_emulinput (return at once for a NULL cookie, as the C; otherwise unported! once and drop the bell or reply); the prototypes of wsemul_pick/getname/getchar/utf8_translate live in wsemulconf.rs and wsemul_subr.rs; license: two blocks kept whole: ISC (Vallat) and BSD-4-clause (advertising clause, Demetriou for the NetBSD Project)"
+
+[[file]]
+c = "sys/dev/wscons/wsemulconf.c"
+rust = "sys/dev/wscons/wsemulconf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "19545fa1dc7b8e87dae8c242811709a03e388cc1"
+deps = ["sys/dev/wscons/wsemulvar.h", "sys/dev/wscons/wsemul_vt100.c", "sys/dev/wscons/wsemul_dumb.c"]
+notes = "M13 (wsemul): wsemul_conf (a slice: vt100 unless feature wsemul_no_vt100, dumb with feature wsemul_dumb; WSEMUL_SUN has no feature, wsemul_sun.c is skipped), wsemul_pick (Option name as bytes, strncmp over WSEMUL_NAME_SIZE, None for NULL), wsemul_getname; WSEMUL_DEFAULT is a None const (option unset in GENERIC); license: BSD-4-clause (advertising clause, Demetriou for the NetBSD Project), kept whole"
+
+[[file]]
+c = "sys/dev/wscons/wsemul_subr.c"
+rust = "sys/dev/wscons/wsemul_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "95266a69a2e0897aa3d83d82c1deea7b118c6359"
+deps = ["sys/dev/wscons/wsemulvar.h", "sys/dev/wscons/wscons_features.h", "sys/dev/wscons/wsksymdef.h"]
+notes = "M13 (wsemul): wsemul_getchar (slice it advances; Err(EAGAIN)/Err(EILSEQ) for the C's numbers), cyrillic_to_koi8/unicode_to_latin2/unicode_to_latin7 (reference-backed test against the C tables), wsemul_local_translate, wsemul_utf8_translate (caller's 4-byte buffer, length as usize); host tests: UTF-8 decoding (split sequences, overlong, surrogates, past U+10FFFF), encoding, the layout-dependent 8-bit charsets; license: two blocks kept whole: ISC (Vallat) and BSD-2-clause (Robbins, citrus_utf8.c)"
+
+[[file]]
+c = "sys/dev/wscons/wsemul_dumb.c"
+rust = "sys/dev/wscons/wsemul_dumb.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "667e7a4b9a9d80f60e263b7b3aea2d6abe5f7ce8"
+deps = ["sys/dev/wscons/wsemulvar.h", "sys/dev/wscons/ascii.h", "sys/dev/wscons/wsdisplayvar.h"]
+notes = "M13 (wsemul): the whole file; compiled with option WSEMUL_DUMB only (not in amd64/arm64 GENERIC): wsemulconf offers it with feature wsemul_dumb, the module is compiled on every build for its host tests; console state a StaticCell, others a Box (M_WAITOK); attach computes crippled for a new screen as cnattach does (the C leaves it uninitialised) and returns NULL for a NULL type outside the console case; output skips the ABORT_FAILED_CURSOR byte only when there is one; host tests over a fake display: wrap and scroll, BS/HT/VT/FF/BEL, abort and resume of a failed putchar and a failed scroll, cursor failure, the crippled display, console attach, reset, detach; license: BSD-4-clause (advertising clause, Demetriou for the NetBSD Project), kept whole"
+
+[[file]]
+c = "sys/dev/wscons/wsemul_vt100var.h"
+rust = "sys/dev/wscons/wsemul_vt100var.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8bb46516d0f12ea144b9bb64cc6ce292dffafb0e"
+deps = ["sys/dev/wscons/wsemulvar.h", "sys/dev/wscons/wscons_features.h"]
+notes = "M13 (wsemul): VT100_EMUL_NARGS/ARG_CLAMP, VTFL_*, DCS_MAXLEN, DCSTYPE_TABRESTORE, WSEMUL_VT_ID1/ID2, struct wsemul_vt100_emuldata (emulops+emulcookie as BoundEmulops; chartab_G/savedchartab_G as Option<Vt100Chartab> naming the table; malloc'd arrays as Option<Vec>; console kept without DIAGNOSTIC; translatebuf is the caller's), ARG/DEF1_ARG/DEFx_ARG/ROWS_ABOVE/ROWS_BELOW/CHECK_DW/NCOLS/COLS_LEFT/COPYCOLS/ERASECOLS as methods with the C's u_int/int conversions; reference-backed test of the constants; license: BSD-2-clause (Drochner), kept whole"
+
+[[file]]
+c = "sys/dev/wscons/wsemul_vt100.c"
+rust = "sys/dev/wscons/wsemul_vt100.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6b7f4439ffd97489f5a2b642c2030b8f659e9ff1"
+deps = ["sys/dev/wscons/wsemul_vt100var.h", "sys/dev/wscons/wsemul_vt100_subr.c", "sys/dev/wscons/wsemul_vt100_chars.c", "sys/dev/wscons/wsemul_vt100_keys.c", "sys/dev/wscons/wsemul_subr.c", "sys/dev/wscons/ascii.h"]
+notes = "M13 (wsemul): the whole file: wsemul_vt100_ops, the console state (StaticCell), init/cnattach/attach (Box and Vec tables allocated fallibly as M_NOWAIT, None for NULL)/detach/resetop/reset/nextline, output_normal, output_c0c1, the 13 state handlers (vt100_output table), output with the abort/resume states and jump scroll, jump_scroll; handlers take (edp, kernel) and use kstate or instate as the C's instate pointer; WS_KERNEL_FG/BG/COLATTR/MONOATTR at their defaults; the CSI/DCS terminators skip the clamp of args[nargs] when nargs == VT100_EMUL_NARGS (the C reads past the array); the DIAGNOSTIC panics behind feature diagnostic; VT100_PRINTUNKNOWN/PRINTNOTIMPL print nothing; upstream quirk kept: a UTF-8 sequence left incomplete at the end of a write is not counted as processed; host tests over a fake display (wrap, jump scroll, controls, CSI moves, ED/EL/ECH, SGR and the replacements of a poor display, DECSTBM and origin mode, IL/DL/ICH/DCH/insert mode/SU/SD, DEC graphics/technical/NRC/single shift/GR, UTF-8, DA/DSR replies, tab stops with DCS restore and report, double width, DECALN, REP, OSC strings, console kernel output) and a test that fails each emulop of a long run in turn and checks the retried output draws the same screen; license: two blocks kept whole: ISC (Vallat) and BSD-2-clause (Drochner)"
+
+[[file]]
+c = "sys/dev/wscons/wsemul_vt100_subr.c"
+rust = "sys/dev/wscons/wsemul_vt100_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "573aa52ec79f9e7e60b93b735499200167398978"
+deps = ["sys/dev/wscons/wsemul_vt100var.h", "sys/dev/wscons/wsemulvar.h", "sys/dev/wscons/wsdisplayvar.h"]
+notes = "M13 (wsemul): the whole file: scrollup, scrolldown, ed, el, handle_csi (the A3/A2 switch as a match on (modif1, modif2, c); libkern's u_int min on the C's conversions), vt100_selectattribute ((attr, bkgdattr)), handle_dcs (tab restore), vt100_ansimode, vt100_decmode; snprintf of the DSR and tab stop reports into a 20-byte buffer cut at 19 bytes as snprintf; VT100_PRINTUNKNOWN/PRINTNOTIMPL/VT100_DEBUG print nothing; license: BSD-2-clause (Drochner), kept whole"
+
+[[file]]
+c = "sys/dev/wscons/wsemul_vt100_chars.c"
+rust = "sys/dev/wscons/wsemul_vt100_chars.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "919e53f760771c2c7984a4ce768757c1964042ff"
+deps = ["sys/dev/wscons/wsemul_vt100var.h", "sys/dev/wscons/unicode.h"]
+notes = "M13 (wsemul): decspcgr2uni, dectech2uni, nrcovlpos, nrctable (reference-backed test against the C tables), vt100_initchartables, vt100_setnrc (Err(ERANGE) for an unknown set); license: BSD-2-clause (Drochner), kept whole"
+
+[[file]]
+c = "sys/dev/wscons/wsemul_vt100_keys.c"
+rust = "sys/dev/wscons/wsemul_vt100_keys.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "ce824687b3ceec5e1510aee84b77389a7ec9de8f"
+deps = ["sys/dev/wscons/wsemul_vt100var.h", "sys/dev/wscons/wsemul_subr.c", "sys/dev/wscons/wsksymdef.h"]
+notes = "M13 (wsemul): vt100_fkeys, vt100_pfkeys, vt100_numpad, wsemul_vt100_translate (the caller's buffer instead of translatebuf; returns the bytes); host test of the sequences; license: BSD-2-clause (Drochner), kept whole"
+
+[[file]]
+c = "sys/dev/wscons/wsemul_sun.c"
+rust = ""
+status = "skipped"
+notes = "not-applicable: compiled only with option WSEMUL_SUN (files.wscons: wsdisplay & wsemul_sun), which only sparc64 configurations (GENERIC, RAMDISK*) set; amd64 and arm64 GENERIC and wscons_features.h do not enable it"
+
+[[extra]]
+rust = "sys/dev/wscons/testutil.rs"
+reason = "host test helper: a fake display (emulops drawing into a character grid, logging calls, failing one on request) and the wsdisplay_emulbell/wsdisplay_emulinput test doubles for the terminal emulations' tests"
+
+[[file]]
 c = "sys/dev/wsfont/wsfont.c"
 rust = "sys/dev/wsfont/wsfont.rs"
 status = "ported"
@@ -8100,7 +8224,7 @@ status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d99032b0adc758226bafcde60bbf620c6f7f3b8a"
 deps = ["sys/dev/wscons/wskbdvar.h", "sys/dev/wscons/wsksymvar.h"]
-notes = "M12 hid: ported: wskbddevprint only. Visible stubs (unported! prints `unported: <name>` once): wskbd_input, wskbd_rawinput, wskbd_cnattach, wskbd_cndetach (they drop the event or the registration); the driver itself (wskbd_match/attach/detach/activate, wskbdopen/read/ioctl, wskbd_translate, key repeat, the mux, wskbd_cngetc/cnpollc/cnbell) is M13; license: two blocks kept whole: BSD-4-clause (advertising clause, Demetriou for the NetBSD Project, keysym translator by Hannken-Illjes) and BSD-3-clause with the UC Berkeley/Lawrence Berkeley Laboratory advertising notice"
+notes = "M12 hid: ported: wskbddevprint only. Visible stubs (unported! prints `unported: <name>` once): wskbd_input, wskbd_rawinput, wskbd_cnattach, wskbd_cndetach (they drop the event or the registration); M13 (wsemul): also wskbd_pickfree (-1), wskbd_set_console_display (None) and wskbd_set_display (ENOSYS), the NWSDISPLAY > 0 calls wscons_callbacks.h declares (re-exported by wscons_callbacks.rs); the driver itself (wskbd_match/attach/detach/activate, wskbdopen/read/ioctl, wskbd_translate, key repeat, the mux, wskbd_cngetc/cnpollc/cnbell) is M13; license: two blocks kept whole: BSD-4-clause (advertising clause, Demetriou for the NetBSD Project, keysym translator by Hannken-Illjes) and BSD-3-clause with the UC Berkeley/Lawrence Berkeley Laboratory advertising notice"
 
 [[file]]
 c = "sys/dev/usb/xhcireg.h"

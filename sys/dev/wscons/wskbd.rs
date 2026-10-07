@@ -96,14 +96,19 @@
 //! - Visible stubs, each printing `unported: <name>` once: [`wskbd_input`],
 //!   [`wskbd_rawinput`], [`wskbd_cnattach`] and [`wskbd_cndetach`]. The keyboard events are
 //!   dropped, no console keyboard is registered.
+//! - Visible stubs of the `NWSDISPLAY > 0` calls `<dev/wscons/wscons_callbacks.h>` declares
+//!   (`dev/wscons/wscons_callbacks.rs` re-exports them): [`wskbd_pickfree`] (-1, none
+//!   free), [`wskbd_set_console_display`] (`None`) and [`wskbd_set_display`] (`ENOSYS`).
 
 use core::ffi::c_void;
 
+use crate::dev::wscons::wscons_callbacks::Wsevsrc;
 use crate::dev::wscons::wskbdvar::WskbdConsops;
 use crate::dev::wscons::wsksymvar::WskbdMapdata;
 use crate::kern::subr_prf::Str;
 use crate::kprintf;
 use crate::sys::device::{Device, UNCONF};
+use crate::sys::errno::Errno;
 use crate::unported;
 
 /// `wskbddevprint`: print function (for parent devices).
@@ -144,6 +149,31 @@ pub fn wskbd_input(kbddev: &Device, type_: u32, value: i32) {
 pub fn wskbd_rawinput(kbddev: &Device, buf: &[u8]) {
     let _ = (kbddev, buf);
     let _ = unported!("wskbd_rawinput (wskbd.c, M13)");
+}
+
+/// `wskbd_pickfree`: the index of a keyboard not yet bound to a display, -1 when none is.
+/// Not ported: M13; no keyboard is ever free.
+pub fn wskbd_pickfree() -> i32 {
+    let _ = unported!("wskbd_pickfree (wskbd.c, M13)");
+    -1
+}
+
+/// `wskbd_set_console_display`: bind the console keyboard to the console display; the
+/// keyboard's event source. Not ported: M13; there is no console keyboard.
+pub fn wskbd_set_console_display(
+    displaydv: &Device,
+    me: Option<&'static Wsevsrc>,
+) -> Option<&'static Wsevsrc> {
+    let _ = (displaydv, me);
+    let _ = unported!("wskbd_set_console_display (wskbd.c, M13)");
+    None
+}
+
+/// `wskbd_set_display`: bind keyboard `dv` to display `displaydv` (unbind for `None`).
+/// Not ported: M13.
+pub fn wskbd_set_display(dv: &Device, displaydv: Option<&Device>) -> Result<(), Errno> {
+    let _ = (dv, displaydv);
+    Err(unported!("wskbd_set_display (wskbd.c, M13)"))
 }
 
 #[cfg(test)]
