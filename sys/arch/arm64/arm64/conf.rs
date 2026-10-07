@@ -43,7 +43,7 @@
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `cd` (6 block, 15 character), `vnd` (14 block,
-//!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `pf` (73), `bio` (79), `ptm` (81) and `fuse` (92, feature `fuse`). `log` (7) waits for `subr_log.c`'s `logopen` ..
+//!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14) and `fuse` (92, feature `fuse`). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
 //!   boot (`machine::conf::cdevsw_set`); `nblkdev`/`nchrdev` are their lengths.
@@ -62,6 +62,7 @@ use crate::dev::audio::{
 };
 use crate::dev::bio::{NBIO, bioclose, bioioctl, bioopen};
 use crate::dev::cons::{cnclose, cnioctl, cnkqfilter, cnopen, cnread, cnstop, cnwrite};
+use crate::dev::diskmap::{diskmapclose, diskmapioctl, diskmapopen, diskmapread, diskmapwrite};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
 use crate::dev::rd::{NRD, rdclose, rddump, rdioctl, rdopen, rdread, rdsize, rdstrategy, rdwrite};
 use crate::dev::usb::usb::{NUSB, usbclose, usbioctl, usbopen};
@@ -302,7 +303,15 @@ pub static CDEVSW: Devsw<Cdevsw, 101> = Devsw([
     cnotdef(), // 87: drm (not ported)
     cnotdef(), // 88: GPIO interface (gpio: not ported)
     cnotdef(), // 89: vscsi (not ported)
-    cnotdef(), // 90: disk mapper (diskmap: not ported)
+    // 90: disk mapper
+    Cell::new(cdev_disk_init(
+        1,
+        diskmapopen,
+        diskmapclose,
+        diskmapread,
+        diskmapwrite,
+        diskmapioctl,
+    )),
     cnotdef(), // 91: pppx (not ported)
     #[cfg(feature = "fuse")]
     Cell::new(cdev_fuse_init(

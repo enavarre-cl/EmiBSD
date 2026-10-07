@@ -64,8 +64,9 @@
 //!   `pluart_fdt_attach`'s since M8 (`pluart* at fdt?`).
 //! - `boot`: under feature `qemu`, the wait for a key after "The operating system has halted"
 //!   is the emulator exit with the failure status, which `xtask smoke` checks after a panic.
-//!   `vfs_shutdown`, `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys` and
-//!   `config_suspend_all` are reported as unported when reached.
+//!   `resettodr`, `if_downall`, `uvm_shutdown`, `dumpsys` and `config_suspend_all` are
+//!   reported as unported when reached (`vfs_shutdown` is real since M14; with no thread on
+//!   the CPU, which the C cannot have there, it is skipped).
 //! - The UEFI system table and memory map come from the boot protocol (`BootInfo`) instead
 //!   of efiboot's `openbsd,uefi-*` properties in `/chosen`; the system table's address is
 //!   kept in `SYSTEM_TABLE` (a local in C) for `mainbus` and `efi_attach`, and the memory
@@ -1527,7 +1528,9 @@ pub fn boot(howto: i32) -> ! {
             BOOTHOWTO.store(howto, Ordering::Relaxed);
             if howto & RB_NOSYNC == 0 && WAITTIME.load(Ordering::Relaxed) < 0 {
                 WAITTIME.store(0, Ordering::Relaxed);
-                let _ = unported!("vfs_shutdown");
+                if let Some(p) = crate::machine::cpu::curproc() {
+                    crate::kern::vfs_subr::vfs_shutdown(p);
+                }
 
                 if howto & RB_TIMEBAD == 0 {
                     let _ = unported!("resettodr");
