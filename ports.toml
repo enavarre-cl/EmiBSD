@@ -3013,12 +3013,12 @@ notes = "replaced-by-ioconf.rs: config(8) is not ported; what it would generate 
 [[file]]
 c = "sys/arch/amd64/conf/GENERIC"
 status = "skipped"
-notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root, cpu0 at mainbus? and pci* at mainbus0 (M7b), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it); M10f: pseudo-device bio 1 (bioattach after wgattach in pdevinit, as GENERIC lists it; dev/bio.rs); M11a: GENERIC.MP's cpu* at mainbus? (unit 1 on, FSTATE_STAR) as cfdata[14] with feature multiprocessor; M13a: nvme* at pci? (cfdata[14], dev/pci/nvme_pci.rs), whose scsibus is the scsibus* at scsi? entry (pv 5, 13, 14); GENERIC.MP's cpu* is now cfdata[15]; M12 (xhci): xhci* at pci? (cfdata[14]), usb* at xhci? (15), uhub* at usb? (16), uhub* at uhub? (17, locators port/configuration/interface/vendor/product/release = -1, parents [16, 17]); GENERIC.MP's cpu* moves to cfdata[18]; M12 (azalia): azalia* at pci? (cfdata[20]) and audio* at azalia? (cfdata[21], parents PV_AZALIA [20]); GENERIC.MP's cpu* is cfdata[22]; M13 (siop): siop* at pci? (cfdata[29], after ahci at 28; dev/pci/siop_pci.rs), its scsibus the scsibus* at scsi? entry (PV_VIOBLK gains 29); M13 (acpi): bios0 at mainbus0 (cfdata[30]) and acpi0 at bios0 (cfdata[31], parents PV_BIOS [30]); M13 (timers): acpitimer* at acpi? (cfdata[32]) and acpihpet* at acpi? (cfdata[33]), parents PV_ACPI [31]; M13 (madt): ioapic* at mainbus? (cfdata[34], PV_MAINBUS), acpimadt0 (cfdata[35]), acpiprt* (cfdata[36]) and acpipci* (cfdata[37]) at acpi? (PV_ACPI [31]); GENERIC.MP's cpu* is cfdata[38]; M13 (puc): puc* at pci? (cfdata[38], dev/pci/puc.rs) and com* at puc? (cfdata[39], parents PV_PUC [38], locator port = -1, units from 4 as com0..com3 are the ISA lines; dev/puc/com_puc.rs); GENERIC.MP's cpu* is now cfdata[40], NCFDATA 40/41; M13 (em): em* at pci? (cfdata[40], PV_PCI [2], dev/pci/if_em.rs); GENERIC.MP's cpu* is now cfdata[41], NCFDATA 41/42; M13 (rasops): efifb0 at mainbus? (cfdata[41], FSTATE_NOTFOUND, PV_MAINBUS; arch/amd64/amd64/efifb.rs); GENERIC.MP's cpu* is cfdata[42], NCFDATA 42/43; wsdisplay0 at efifb? waits for wsdisplay"
+notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root, cpu0 at mainbus? and pci* at mainbus0 (M7b), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it); M10f: pseudo-device bio 1 (bioattach after wgattach in pdevinit, as GENERIC lists it; dev/bio.rs); M11a: GENERIC.MP's cpu* at mainbus? (unit 1 on, FSTATE_STAR) as cfdata[14] with feature multiprocessor; M13a: nvme* at pci? (cfdata[14], dev/pci/nvme_pci.rs), whose scsibus is the scsibus* at scsi? entry (pv 5, 13, 14); GENERIC.MP's cpu* is now cfdata[15]; M12 (xhci): xhci* at pci? (cfdata[14]), usb* at xhci? (15), uhub* at usb? (16), uhub* at uhub? (17, locators port/configuration/interface/vendor/product/release = -1, parents [16, 17]); GENERIC.MP's cpu* moves to cfdata[18]; M12 (azalia): azalia* at pci? (cfdata[20]) and audio* at azalia? (cfdata[21], parents PV_AZALIA [20]); GENERIC.MP's cpu* is cfdata[22]; M13 (siop): siop* at pci? (cfdata[29], after ahci at 28; dev/pci/siop_pci.rs), its scsibus the scsibus* at scsi? entry (PV_VIOBLK gains 29); M13 (acpi): bios0 at mainbus0 (cfdata[30]) and acpi0 at bios0 (cfdata[31], parents PV_BIOS [30]); M13 (timers): acpitimer* at acpi? (cfdata[32]) and acpihpet* at acpi? (cfdata[33]), parents PV_ACPI [31]; M13 (madt): ioapic* at mainbus? (cfdata[34], PV_MAINBUS), acpimadt0 (cfdata[35]), acpiprt* (cfdata[36]) and acpipci* (cfdata[37]) at acpi? (PV_ACPI [31]); GENERIC.MP's cpu* is cfdata[38]; M13 (puc): puc* at pci? (cfdata[38], dev/pci/puc.rs) and com* at puc? (cfdata[39], parents PV_PUC [38], locator port = -1, units from 4 as com0..com3 are the ISA lines; dev/puc/com_puc.rs); GENERIC.MP's cpu* is now cfdata[40], NCFDATA 40/41; M13 (em): em* at pci? (cfdata[40], PV_PCI [2], dev/pci/if_em.rs); GENERIC.MP's cpu* is now cfdata[41], NCFDATA 41/42; M13 (rasops): efifb0 at mainbus? (cfdata[41], FSTATE_NOTFOUND, PV_MAINBUS; arch/amd64/amd64/efifb.rs); GENERIC.MP's cpu* is cfdata[42], NCFDATA 42/43; wsdisplay0 at efifb? waits for wsdisplay; M13 (re): re* at pci? (cfdata[42], dev/pci/if_re_pci.rs), rlphy* at mii? (cfdata[43]), rgephy* at mii? (cfdata[44]) and ukphy* at mii? (cfdata[45]), the PHYs with loc phy -1 and PV_MII [42] (the mii attribute re* carries); cpu* is now cfdata[46], NCFDATA 46/47. rl* at pci? stays out: QEMU's rtl8139 is an 8139C+ (rev 0x20), which re(4) takes"
 
 [[file]]
 c = "sys/arch/arm64/conf/GENERIC"
 status = "skipped"
-notes = "replaced-by-ioconf.rs: sys/arch/arm64/conf/ioconf.rs lists mainbus0 at root, ampintc* at fdt? early 1 and agtimer* at fdt? (the fdt attribute from files.arm64, mainbus its only parent until simplebus), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it); M10f: pseudo-device bio 1 (bioattach after wgattach in pdevinit, as GENERIC lists it; dev/bio.rs); M11a: cpu0 at mainbus? (cpu.c) and, with MULTIPROCESSOR, GENERIC.MP's cpu* at mainbus?; ; M12: simplebus* at fdt?, ampintcmsi* at fdt? early 1, pciecam* at fdt?, pci* at pciecam? and virtio* at pci? (cfdata[12..16]; cpu0 and GENERIC.MP's cpu* move to cfdata[17] and [18]); the fdt attribute's parents are mainbus0, ampintc* and simplebus* (PV_FDT [0, 1, 12]), vio*/vioblk* at virtio? take both virtio entries (PV_VIRTIO [3, 16]); ; M12 (xhci): xhci* at pci? (cfdata[18]), usb* at xhci? (19), uhub* at usb? (20), uhub* at uhub? (21, locators = -1, parents [20, 21]); GENERIC.MP's cpu* moves to cfdata[22]; M12 (azalia): azalia* at pci? (cfdata[17]) and audio* at azalia? (cfdata[18], PV_AZALIA [17]); cpu0 is cfdata[19], xhci/usb/uhub 20-23, GENERIC.MP's cpu* 24; M13: ahci* at pci? flags 0x0000 (cfdata[30]) and nvme* at pci? (cfdata[31]), both parents of scsibus* (PV_VIOBLK [5, 11, 24, 27, 30, 31]); GENERIC.MP's cpu* moves to cfdata[32]; M13 (em): em* at pci? (cfdata[32], PV_PCI [15], dev/pci/if_em.rs); GENERIC.MP's cpu* is now cfdata[33], NCFDATA 33/34; M13 (rasops): simplefb* at fdt? (cfdata[33], PV_FDT, early 0; dev/fdt/simplefb.rs); GENERIC.MP's cpu* is cfdata[34], NCFDATA 34/35; wsdisplay* at simplefb? waits for wsdisplay"
+notes = "replaced-by-ioconf.rs: sys/arch/arm64/conf/ioconf.rs lists mainbus0 at root, ampintc* at fdt? early 1 and agtimer* at fdt? (the fdt attribute from files.arm64, mainbus its only parent until simplebus), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it); M10f: pseudo-device bio 1 (bioattach after wgattach in pdevinit, as GENERIC lists it; dev/bio.rs); M11a: cpu0 at mainbus? (cpu.c) and, with MULTIPROCESSOR, GENERIC.MP's cpu* at mainbus?; ; M12: simplebus* at fdt?, ampintcmsi* at fdt? early 1, pciecam* at fdt?, pci* at pciecam? and virtio* at pci? (cfdata[12..16]; cpu0 and GENERIC.MP's cpu* move to cfdata[17] and [18]); the fdt attribute's parents are mainbus0, ampintc* and simplebus* (PV_FDT [0, 1, 12]), vio*/vioblk* at virtio? take both virtio entries (PV_VIRTIO [3, 16]); ; M12 (xhci): xhci* at pci? (cfdata[18]), usb* at xhci? (19), uhub* at usb? (20), uhub* at uhub? (21, locators = -1, parents [20, 21]); GENERIC.MP's cpu* moves to cfdata[22]; M12 (azalia): azalia* at pci? (cfdata[17]) and audio* at azalia? (cfdata[18], PV_AZALIA [17]); cpu0 is cfdata[19], xhci/usb/uhub 20-23, GENERIC.MP's cpu* 24; M13: ahci* at pci? flags 0x0000 (cfdata[30]) and nvme* at pci? (cfdata[31]), both parents of scsibus* (PV_VIOBLK [5, 11, 24, 27, 30, 31]); GENERIC.MP's cpu* moves to cfdata[32]; M13 (em): em* at pci? (cfdata[32], PV_PCI [15], dev/pci/if_em.rs); GENERIC.MP's cpu* is now cfdata[33], NCFDATA 33/34; M13 (rasops): simplefb* at fdt? (cfdata[33], PV_FDT, early 0; dev/fdt/simplefb.rs); GENERIC.MP's cpu* is cfdata[34], NCFDATA 34/35; wsdisplay* at simplefb? waits for wsdisplay; M13 (re): re* at pci? (cfdata[34], dev/pci/if_re_pci.rs), rgephy* at mii? (cfdata[35]), rlphy* at mii? (cfdata[36]) and ukphy* at mii? (cfdata[37]), in GENERIC's order, loc phy -1, PV_MII [34]; cpu* is now cfdata[38], NCFDATA 38/39"
 
 [[file]]
 c = "sys/sys/endian.h"
@@ -4891,16 +4891,153 @@ rust = "sys/dev/pv/if_vio.rs"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8942b02857a15646768a8992e68678439fe5575e"
-deps = ["sys/dev/pv/virtio.c", "sys/net/if.c", "sys/net/ifq.c", "sys/net/if_ethersubr.c", "sys/net/if_media.h", "sys/kern/uipc_mbuf.c"]
-notes = "M7b: the whole driver: the if_vioreg.h part (VIRTIO_NET_CONFIG_*, VIRTIO_NET_F_*, CONFFLAG_QEMU_VLAN_BUG, virtio_net_feature_names (empty without VIRTIO_DEBUG), struct virtio_net_hdr (repr(C), copied to and from the DMA area as bytes), the control structures (guest_offloads and mac_tbl repr(C, packed), written unaligned), VIRTIO_NET_* control classes and commands) and the if_viovar.h part (enum vio_ctrl_state, struct vio_queue (repr(C, align(64)), one mallocarray for the dmamap and mbuf arrays as in C, bounds-checked slot accessors), struct vio_softc (repr(C): sc_dev, then the arpcom; Softc)); vio_match, vio_ca/vio_cd, vio_alloc_dmamem/free_dmamem, vio_alloc_mem, vio_dmamem_enqueue, vio_get_lladdr, vio_needs_reset, vio_attach (the feature renegotiation loop, MAC, header size, rx buffer offset, capabilities, hardmtu, tx/rx sizes, queues, control queue, DMA area, ifnet, if_attach + ether_ifattach + queues), vio_link_state, vio_queue_intr/config_intr/ctrl_intr, vio_config_change, vio_media_change/status, vio_set_offloads, vio_init, vio_stop, vio_cksum_update, vio_tx_offload (fills a local header), vio_start, vio_dump, vio_rxr_info, vio_ioctl (ether_ioctl for the rest), vio_add_rx_mbuf, vio_free_rx_mbuf, vio_populate_rx_mbufs, vio_rx_offload, vio_rxeof (the header copied out before m_adj), vio_rx_intr, vio_rxtick, vio_rx_drain, vio_tx_intr, vio_txtick, vio_tx_dequeue, vio_txeof, vio_encap (m_defrag on EFBIG), vio_tx_drain, vio_ctrl_start/submit/finish (tsleep_nsec, polling while cold), vio_ctrl_rx/mq/guest_offloads, vio_ctrl_wakeup, vio_ctrleof, vio_set_rx_filter, vio_iff. M13: sc_intrmap as in C (intrmap_create/intrmap_count with VIRTIO_NET_F_MQ, the queue pairs' MSI-X vectors i + 2 established on intrmap_cpu, the config and control vectors 0 and 1; smoke-mp's --vio-mq boot). Reported: ifmedia_init/add/set and ifmedia_ioctl (net/if_media.c; sc_media left out, SIOCGIFMEDIA/SIOCSIFMEDIA fail with ENOSYS), tcpstat_inc/tcpstat_add (netinet/tcp_var.h). Not configured: NVLAN; INET6 configured (VIRTIO_NET_HDR_GSO_TCPV6); M9+: NBPFILTER: vio_start taps each queued packet. th_sum/uh_sum offsets are constants (tcp.h/udp.h not ported). Host tests (header bytes, checksum fold, control area size, rx offset) and a reference-backed test of the defines in if_vio.c; selftest=vio boots on both machines;  M11e: the interrupt runs without the kernel lock (IPL_MPSAFE honoured) under viq_rxmtx/viq_txmtx as in C; the KERNEL_LOCK pairs of vio_config_change and vio_ctrleof are real."
+deps = ["sys/dev/pv/virtio.c", "sys/net/if.c", "sys/net/ifq.c", "sys/net/if_ethersubr.c", "sys/net/if_media.h", "sys/net/if_media.c", "sys/kern/uipc_mbuf.c"]
+notes = "M7b: the whole driver: the if_vioreg.h part (VIRTIO_NET_CONFIG_*, VIRTIO_NET_F_*, CONFFLAG_QEMU_VLAN_BUG, virtio_net_feature_names (empty without VIRTIO_DEBUG), struct virtio_net_hdr (repr(C), copied to and from the DMA area as bytes), the control structures (guest_offloads and mac_tbl repr(C, packed), written unaligned), VIRTIO_NET_* control classes and commands) and the if_viovar.h part (enum vio_ctrl_state, struct vio_queue (repr(C, align(64)), one mallocarray for the dmamap and mbuf arrays as in C, bounds-checked slot accessors), struct vio_softc (repr(C): sc_dev, then the arpcom; Softc)); vio_match, vio_ca/vio_cd, vio_alloc_dmamem/free_dmamem, vio_alloc_mem, vio_dmamem_enqueue, vio_get_lladdr, vio_needs_reset, vio_attach (the feature renegotiation loop, MAC, header size, rx buffer offset, capabilities, hardmtu, tx/rx sizes, queues, control queue, DMA area, ifnet, if_attach + ether_ifattach + queues), vio_link_state, vio_queue_intr/config_intr/ctrl_intr, vio_config_change, vio_media_change/status, vio_set_offloads, vio_init, vio_stop, vio_cksum_update, vio_tx_offload (fills a local header), vio_start, vio_dump, vio_rxr_info, vio_ioctl (ether_ioctl for the rest), vio_add_rx_mbuf, vio_free_rx_mbuf, vio_populate_rx_mbufs, vio_rx_offload, vio_rxeof (the header copied out before m_adj), vio_rx_intr, vio_rxtick, vio_rx_drain, vio_tx_intr, vio_txtick, vio_tx_dequeue, vio_txeof, vio_encap (m_defrag on EFBIG), vio_tx_drain, vio_ctrl_start/submit/finish (tsleep_nsec, polling while cold), vio_ctrl_rx/mq/guest_offloads, vio_ctrl_wakeup, vio_ctrleof, vio_set_rx_filter, vio_iff. M13: sc_intrmap as in C (intrmap_create/intrmap_count with VIRTIO_NET_F_MQ, the queue pairs' MSI-X vectors i + 2 established on intrmap_cpu, the config and control vectors 0 and 1; smoke-mp's --vio-mq boot). M13 (re): sc_media, ifmedia_init/add/set and ifmedia_ioctl as in C (net/if_media.c). Reported: tcpstat_inc/tcpstat_add (netinet/tcp_var.h). Not configured: NVLAN; INET6 configured (VIRTIO_NET_HDR_GSO_TCPV6); M9+: NBPFILTER: vio_start taps each queued packet. th_sum/uh_sum offsets are constants (tcp.h/udp.h not ported). Host tests (header bytes, checksum fold, control area size, rx offset) and a reference-backed test of the defines in if_vio.c; selftest=vio boots on both machines;  M11e: the interrupt runs without the kernel lock (IPL_MPSAFE honoured) under viq_rxmtx/viq_txmtx as in C; the KERNEL_LOCK pairs of vio_config_change and vio_ctrleof are real."
 
 [[file]]
 c = "sys/net/if_media.h"
 rust = "sys/net/if_media.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2db67cda16e783915842bbd7d755e4a981d8da11"
-notes = "BSD-4-clause block (Stone, Thorpe), accepted at M2. M7b: IFM_ETHER, IFM_AUTO, IFM_FDX, IFM_AVALID, IFM_ACTIVE (u64) for vio(4)'s media status; struct ifmedia, the media word tables and if_media.c's ifmedia_* are not ported (drivers report their calls); reference-backed test; M13 (em): IFM_10_T, IFM_100_TX, IFM_1000_SX, IFM_1000_LX, IFM_1000_T, IFM_ETH_MASTER, IFM_ETH_RXPAUSE, IFM_ETH_TXPAUSE, IFM_NONE, IFM_HDX, IFM_FLOW, IFM_NMASK, IFM_TMASK, IFM_IMASK, IFM_ISHIFT, IFM_GMASK, IFM_TYPE/IFM_SUBTYPE as ifm_type/ifm_subtype, for em(4)"
+notes = "BSD-4-clause block (Stone, Thorpe), accepted at M2. M7b: the first media words for vio(4); M13 (em): more words; M13 (re): the whole header but the description tables: every IFM_* word, mask and shift (u64; the shifts u32), IFM_1000_TX, IFM_ETH_FMASK, IFM_NMIN/NMAX, IFM_STATUS_VALID, IFM_INST_MAX/IFM_INST_ANY; IFM_TYPE/SUBTYPE/INST/OPTIONS/MODE/MAKEWORD/TYPE_MATCH as const fns; struct ifmedia_entry (IfmediaEntry, TAILQ via queue_adapter!), struct ifmedia (Ifmedia: Cells, all-zero valid, [M] members private behind ifm_cur()/for_each()/ifm_nwords()), ifm_change_cb_t/ifm_stat_cb_t, struct ifmedia_baudrate and IFM_BAUDRATE_DESCRIPTIONS (IFMEDIA_BAUDRATE_DESCRIPTIONS). Left out: the description tables (ifmedia_description, IFM_TYPE/SUBTYPE/MODE/OPTION/STATUS_DESCRIPTIONS, ifmedia_status_description, IFM_STATUS_DESC, IFM_STATUS_VALID_LIST): ifconfig(8) builds them from the C header and the kernel reads them only under IFMEDIA_DEBUG. Reference-backed tests of every define and of the baudrate table row by row"
+
+[[file]]
+c = "sys/net/if_media.c"
+rust = "sys/net/if_media.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "df2ce4f3c478647f1a66ae4e0bcf977d59dfcee2"
+deps = ["sys/net/if_media.h", "sys/kern/kern_malloc.c", "sys/kern/kern_lock.c"]
+notes = "M13 (re): BSD-4-clause blocks (NetBSD Foundation; Stone, Thorpe), kept whole; the whole file: ifmedia_mtx (IFMEDIA_MTX), ifmedia_init, ifmedia_add (malloc M_IFADDR, panics on failure as in C), ifmedia_set (the IFM_NONE fallback), ifmedia_ioctl (unsafe fn over the ioctl's data, with sys_ioctl's contract; SIOCSIFMEDIA restores the old entry when the driver's callback fails with anything but ENETRESET; SIOCGIFMEDIA's retry loop and E2BIG), ifmedia_match, ifmedia_get (its multiple-match message under feature diagnostic), ifmedia_delete_instance, ifmedia_baudrate_descriptions/ifmedia_baudrate. IFMEDIA_DEBUG not defined: ifmedia_debug, ifmedia_printword and the description tables are left out. Host tests (add/set/match/delete, the ioctls)"
+
+[[file]]
+c = "sys/dev/mii/mii.h"
+rust = "sys/dev/mii/mii.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "75b5415f969dc066c441725ed986c9db0dcc3b78"
+deps = []
+notes = "M13 (re): BSD-2 (NetBSD Foundation) block kept whole; the whole header: MII_NPHY, MII_COMMAND_*, every register and bit (i32, the int PHY_READ returns), BMCR_SPEED and BMSR_MEDIA_TO_ANAR as const fns; reference-backed test (the two multi-line masks checked by value)"
+
+[[file]]
+c = "sys/dev/mii/mii.c"
+rust = "sys/dev/mii/mii.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "77368036735e9d31b9f7c2a8d2d4d0a672a65798"
+deps = ["sys/dev/mii/mii.h", "sys/dev/mii/miivar.h", "sys/kern/subr_autoconf.c"]
+notes = "M13 (re): the whole file: mii_attach (config_found_sm on the mii attribute, locator phy, the child borrowed as its MiiSoftc head), mii_detach (keeps the C's offloc vs MII_PHY_ANY test), mii_print, mii_submatch, mii_mediachg (Result), mii_tick, mii_pollstat, mii_down"
+
+[[file]]
+c = "sys/dev/mii/miivar.h"
+rust = "sys/dev/mii/miivar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2349072bef24e1e93338ae12e754e8eca82a65ab"
+deps = ["sys/net/if_media.h", "sys/dev/mii/mii.h"]
+notes = "M13 (re): BSD-2 (NetBSD Foundation) block kept whole; the whole header: the request, flag, anegticks, locator and MII_MEDIA_* constants; struct mii_data (MiiData), mii_phy_funcs, mii_softc (MiiSoftc, repr(C), Softc), mii_attach_args, mii_phydesc (slices without terminator), mii_media; Cells, all-zero valid, under the kernel lock; the callbacks Option<fn> with methods of the same name; PHY_READ/PHY_WRITE/PHY_SERVICE/PHY_STATUS/PHY_RESET as MiiSoftc methods; MII_OUI/MII_MODEL/MII_REV const fns; mii_phy_probe; reference-backed test"
+
+[[file]]
+c = "sys/dev/mii/mii_physubr.c"
+rust = "sys/dev/mii/mii_physubr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "c5b23cca5a741c8e662575f642139754e6b5a43c"
+deps = ["sys/dev/mii/miivar.h", "sys/net/if_media.c", "sys/kern/kern_timeout.c"]
+notes = "M13 (re): the whole file: mii_media_table, mii_phy_setmedia (DIAGNOSTIC check under feature diagnostic), mii_phy_auto (waitfor bool; Result with EIO/EJUSTRETURN; the tsleep and timeout paths), mii_phy_auto_timeout, mii_phy_tick, mii_phy_reset, mii_phy_down, mii_phy_status, mii_phy_update, mii_phy_statusmsg (bool), mii_phy_add_media, mii_phy_delete_media, mii_phy_detach, mii_phy_match (Option), mii_phy_flowstatus, mii_anar; host tests"
+
+[[file]]
+c = "sys/dev/mii/miidevs.h"
+rust = "sys/dev/mii/miidevs.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+deps = []
+notes = "M13 (re): generated header; BSD-2 (NetBSD Foundation) block kept whole; partial: the OUIs and models rlphy(4) and rgephy(4) match (REALTEK, REALTEK2, xxREALTEK, ICPLUS; RTL8201L/E/F, RTL8169S, RTL8251, RTL8211FVD, IP101), u32 ids and &str names; reference-backed test"
+
+[[file]]
+c = "sys/dev/mii/ukphy.c"
+rust = "sys/dev/mii/ukphy.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "25186821a7517812dc953a816fe11c537291e25d"
+deps = ["sys/dev/mii/mii_physubr.c", "sys/dev/mii/ukphy_subr.c"]
+notes = "M13 (re): BSD-2 (NetBSD Foundation) and BSD-2 (Manuel Bouyer) blocks kept whole; the whole file: ukphy_ca/ukphy_cd, ukphy_funcs, ukphymatch, ukphyattach, ukphy_service (Result); ukphy* at mii? on both archs"
+
+[[file]]
+c = "sys/dev/mii/ukphy_subr.c"
+rust = "sys/dev/mii/ukphy_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a4c1abe69e0ad487d3f5ce0c313ff2f6388bc614"
+deps = ["sys/dev/mii/mii_physubr.c"]
+notes = "M13 (re): the whole file: ukphy_status"
+
+[[file]]
+c = "sys/dev/mii/rlphy.c"
+rust = "sys/dev/mii/rlphy.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "910aee13df9058c8b23e2884964159ae96633e9a"
+deps = ["sys/dev/mii/mii_physubr.c", "sys/dev/mii/miidevs.h", "sys/dev/ic/rtl81x9reg.h"]
+notes = "M13 (re): the whole file: rlphy_ca/rlphy_cd, rlphy_funcs, rlphys[], rlphymatch (5 for re/rl parents with zero IDs), rlphyattach, rlphy_service (Result), rlphy_status; rlphy* at mii? on both archs; takes QEMU's 8139C+ PHY (smoke-re: rlphy0 at re0 phy 0: RTL internal PHY)"
+
+[[file]]
+c = "sys/dev/mii/rgephy.c"
+rust = "sys/dev/mii/rgephy.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "54ee588ffe78c17e4007dbacecc2dda81de9eb1e"
+deps = ["sys/dev/mii/mii_physubr.c", "sys/dev/mii/miidevs.h", "sys/dev/mii/rgephyreg.h", "sys/dev/ic/rtl81x9reg.h"]
+notes = "M13 (re): license: BSD-4 (Bill Paul), kept whole; the whole file: rgephy_ca/rgephy_cd, rgephy_funcs, rgephys[], rgephymatch, rgephyattach, rgephy_service (Result; setit: as a match arm), rgephy_status, rgephy_mii_phy_auto, rgephy_loop, rgephy_init_rtl8211f, rgephy_load_dspcode (PHY_SETBIT/CLRBIT closures), rgephy_reset; rgephy* at mii? on both archs (no QEMU device has its PHY)"
+
+[[file]]
+c = "sys/dev/ic/rtl81x9reg.h"
+rust = "sys/dev/ic/rtl81x9reg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4ccd7de888f2f7a76a5f7864a429a21f06e5aef5"
+deps = ["sys/dev/mii/miivar.h"]
+notes = "M13 (re): license: BSD-4 (Bill Paul), kept whole; the whole header: every register, bit, revision, id and PCI constant (u32), the function-like macros as const fns or RlSoftc methods (CSR_* accessors, RL_TX/RX_LIST_SZ, RL_NEXT_*, RL_*DESCSYNC, RL_RX_DMAMEM_SZ, RL_TXPAD*, RL_CUR_*/RL_LAST_*, RL_INC as rl_inc), struct rl_chain_data, rl_desc (repr(C), whole volatile access), re_stats (repr(C, align(8)), the packed layout), rl_type, rl_mii_frame, rl_rxsoft, rl_txq, rl_list_data, rl_softc (RlSoftc: Cells; rl_flags and the tx indices atomics; rl_kstat left out, NKSTAT 0); __STRICT_ALIGNMENT as sys::param::STRICT_ALIGNMENT (new MachineParam constant); CSR_WRITE_RAW_4 via bus_space_write_4 of the native-order word; the rl_* prototypes belong to rtl81x9.c (not ported); reference-backed tests"
+
+[[file]]
+c = "sys/dev/ic/revar.h"
+rust = "sys/dev/ic/re.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6a141f2a5c09786711be2c5a41533512e48a3696"
+deps = []
+notes = "M13 (re): ISC; only the prototypes of re.c's exported functions (re_intr, re_attach, re_detach, re_reset, re_init, re_stop), which are re.rs's own; licence block kept in re.rs"
+
+[[file]]
+c = "sys/dev/ic/re.c"
+rust = "sys/dev/ic/re.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "3ffe3041284e797b8ee6e110dcf221fce1f6ecd7"
+deps = ["sys/dev/ic/revar.h", "sys/dev/ic/rtl81x9reg.h", "sys/dev/mii/mii.c", "sys/dev/mii/mii_physubr.c", "sys/net/if_media.c", "sys/net/if_ethersubr.c", "sys/net/ifq.c", "sys/kern/kern_timeout.c"]
+notes = "M13: license: BSD-4 (Bill Paul), kept whole; the whole file: re_cd, re_revisions[], re_set_bufaddr, the EEPROM (re_eeprom_putbyte, re_eeprom_getword returning the word, re_read_eeprom into &mut [u16]), re_gmii_readreg/writereg, re_miibus_readreg/writereg (8139C+ register mapping)/statchg, re_iff, re_reset, re_attach (revision switch as re_hwrev_flags; the DMA part re_attach_dma with the fail_* unwinding), re_detach, re_newbuf (unloads the map on a busy descriptor), re_tx_list_init, re_rx_list_init/fill, re_rxeof, re_txeof, re_tick, re_intr (IPL_MPSAFE; KERNEL_LOCK around re_init), re_encap (JUMBOV2 software checksum via in4_cksum/m_copyback instead of a stack mbuf), re_txstart, re_start, re_init (deviation: RL_ISR acknowledged before re_setup_intr, the C does it after; with the C order the 8139C+ simulated-moderation timer (0x400 ticks, about 31 us) expired before the acknowledgement, which cleared it, on about 1 arm64 QEMU boot in 3, and transmissions then waited for the watchdog; harmless: a status bit pending from before re_init carries no work (the chip was just stopped and the rings rebuilt); not our interrupt path: INTx, established at attach, re_init at splnet, and the cleared bit deasserts the line), re_ifmedia_upd/sts, re_ioctl, re_watchdog, re_stop, the interrupt moderation functions, re_set_jumbo, re_setup_intr, re_wol (SMALL_KERNEL not defined). Locking: rl_flags and the tx producer/consumer indices atomics; descriptors whole and volatile. Stubs: NKSTAT 0 (re_kstat_* and the RE_DTCCR registers compiled out), NVLAN 0 (constant), RE_DEBUG not defined. smoke-re: QEMU rtl8139 on both archs pings the gateway"
+
+[[file]]
+c = "sys/dev/pci/if_re_pci.c"
+rust = "sys/dev/pci/if_re_pci.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "621301418577314194528a6de2b6e17d68d1c147"
+deps = ["sys/dev/ic/re.c", "sys/dev/pci/pci_map.c", "sys/dev/pci/pcidevs.h"]
+notes = "M13: ISC; the whole file: struct re_pci_softc (repr(C), RlSoftc first), re_pci_devices[] (ids appended to pcidevs.rs), RE_LINKSYS_EG1032_SUBID, re_pci_ca, re_pci_probe (the RT8139 at revision 0x20 and the EG1032 test as re_pci_probe_quirk), re_pci_attach (BAR 64/32-bit mem or I/O, MSI or INTx, PCIe ASPM off, CFG2 MSI bit), re_pci_detach, re_pci_activate; re* at pci? on both archs (INTx on QEMU: the 8139C+ has no MSI)"
+
+[[file]]
+c = "sys/dev/ic/rtl81x9.c"
+rust = ""
+status = "skipped"
+notes = "deferred-driver: rl(4) (8129/8139 without C+). QEMU's rtl8139 is an 8139C+ (PCI 10ec:8139 revision 0x20, seen on a boot): re_pci_probe takes the RT8139 at revision 0x20 and rl_pci_match only at 0x10, so re(4) drives it and no QEMU device needs rl(4); amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/pci/if_rl_pci.c"
+rust = ""
+status = "skipped"
+notes = "deferred-driver: rl(4)'s PCI front-end (rl* at pci?, amd64 GENERIC only). QEMU's rtl8139 is an 8139C+ (revision 0x20), which re(4) takes; rl_pci_match takes the RT8139 only at revision 0x10"
 
 [[file]]
 c = "sys/arch/amd64/pci/pci_machdep.c"
@@ -9461,7 +9598,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a9beaba3b0586126f0935009dfaafe90c2614705"
 deps = []
-notes = "M13 (em(4) step 1): the whole header; register numbers u32 (the PHY access functions take a uint32_t address), register bits u16; RGEPHY_SR_SPEED/RGEPHY_F_SR_SPEED as const fns; licence BSD-4 (Bill Paul), kept whole; reference-backed test of every define. Only em(4)'s shared code uses it; rgephy(4) and mii(4) are not ported"
+notes = "M13 (em(4) step 1): the whole header; register numbers u32 (the PHY access functions take a uint32_t address), register bits u16; RGEPHY_SR_SPEED/RGEPHY_F_SR_SPEED as const fns; licence BSD-4 (Bill Paul), kept whole; reference-backed test of every define. em(4)'s shared code and, since M13 (re), rgephy(4) use it"
 
 [[file]]
 c = "sys/dev/pci/gcu_reg.h"
@@ -9539,7 +9676,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6e03a45effb42bfed6cc5539beb21e7d8dc354ff"
 deps = ["sys/dev/pci/if_em_hw.h", "sys/dev/pci/if_em_osdep.h", "sys/dev/pci/pcivar.h", "sys/net/if_media.h"]
-notes = "M13: license: Intel BSD-3 notice, kept whole (once in if_em.rs, the same text as if_em.c's, with both $OpenBSD$ and $FreeBSD$ lines); the whole header in if_em.rs: the tunables (EM_MAX_TXD_82543, EM_MAX_TXD, EM_MAX_RXD_82543, EM_MAX_RXD, MAX_INTS_PER_SEC, DEFAULT_ITR, EM_TIDV, EM_TADV, EM_RDTR, EM_RADV, EM_TX_TIMEOUT, EM_TX_OP_THRESHOLD as em_tx_op_threshold(sc), DO_AUTO_NEG, WAIT_FOR_AUTO_NEG_DEFAULT; EM_MASTER_SLAVE not defined), AUTONEG_ADV_DEFAULT, EM_MMBA, EM_FLASH, EM_ROUNDUP as em_roundup, the SmartSpeed, multicast, PCICFG_DESC_RING_STATUS/FLUSH_DESC_REQUIRED, EM_DBA_ALIGN, SPEED_MODE_BIT, DEBUG_INIT/IOCTL/HW (0: the *_DEBUGOUT macros are left out), EM_RXBUFFER_*, EM_MCLBYTES, EM_MAX_SCATTER, EM_TSO_SIZE, EM_TSO_SEG_SIZE and the 82547 FIFO constants; struct em_packet (EmPacket), em_dma_alloc (EmDmaAlloc), XSUM_CONTEXT_T, ADDRESS_LENGTH_PAIR/DESC_ARRAY, struct em_rx/em_tx/em_queue/em_softc (all-zero valid Cells and atomics; the tx head and tail, link_active, link_duplex and the 82547 FIFO members atomics; osdep and hw UnsafeCell<MaybeUninit> written by the attach; struct ifmedia not ported: media is its ifm_media word; kstat and kstat_mtx left out, NKSTAT 0); FOREACH_QUEUE as sc.queues(), DEVNAME as sc.devname(); boolean_t is bool; host tests and a reference-backed test of the defines"
+notes = "M13: license: Intel BSD-3 notice, kept whole (once in if_em.rs, the same text as if_em.c's, with both $OpenBSD$ and $FreeBSD$ lines); the whole header in if_em.rs: the tunables (EM_MAX_TXD_82543, EM_MAX_TXD, EM_MAX_RXD_82543, EM_MAX_RXD, MAX_INTS_PER_SEC, DEFAULT_ITR, EM_TIDV, EM_TADV, EM_RDTR, EM_RADV, EM_TX_TIMEOUT, EM_TX_OP_THRESHOLD as em_tx_op_threshold(sc), DO_AUTO_NEG, WAIT_FOR_AUTO_NEG_DEFAULT; EM_MASTER_SLAVE not defined), AUTONEG_ADV_DEFAULT, EM_MMBA, EM_FLASH, EM_ROUNDUP as em_roundup, the SmartSpeed, multicast, PCICFG_DESC_RING_STATUS/FLUSH_DESC_REQUIRED, EM_DBA_ALIGN, SPEED_MODE_BIT, DEBUG_INIT/IOCTL/HW (0: the *_DEBUGOUT macros are left out), EM_RXBUFFER_*, EM_MCLBYTES, EM_MAX_SCATTER, EM_TSO_SIZE, EM_TSO_SEG_SIZE and the 82547 FIFO constants; struct em_packet (EmPacket), em_dma_alloc (EmDmaAlloc), XSUM_CONTEXT_T, ADDRESS_LENGTH_PAIR/DESC_ARRAY, struct em_rx/em_tx/em_queue/em_softc (all-zero valid Cells and atomics; the tx head and tail, link_active, link_duplex and the 82547 FIFO members atomics; osdep and hw UnsafeCell<MaybeUninit> written by the attach; media is a struct ifmedia (M13, re); kstat and kstat_mtx left out, NKSTAT 0); FOREACH_QUEUE as sc.queues(), DEVNAME as sc.devname(); boolean_t is bool; host tests and a reference-backed test of the defines"
 
 [[file]]
 c = "sys/dev/pci/if_em.c"
@@ -9547,8 +9684,8 @@ rust = "sys/dev/pci/if_em.rs"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d44d304bdfa8ce28f97bb3ba8bb3d8bb5ae0869e"
-deps = ["sys/dev/pci/if_em.h", "sys/dev/pci/if_em_hw.c", "sys/dev/pci/if_em_soc.c", "sys/dev/pci/pci_map.c", "sys/dev/pci/pcidevs.h", "sys/net/if_ethersubr.c", "sys/net/ifq.c", "sys/kern/kern_timeout.c", "sys/kern/subr_autoconf.c"]
-notes = "M13: license: Intel BSD-3 notice, kept whole; the whole file: em_devices[] (198 ids, appended to pcidevs.rs), em_ca/em_cd, em_probe, em_defer_attach, em_attach, em_start, em_ioctl, em_watchdog, em_init, em_intr, em_media_status, em_media_change, em_flowstatus, em_encap (82544 PCI-X split, legacy and advanced data descriptors), the 82547 FIFO workaround (move_tail(_locked), fifo_workaround, update_fifo_head, tx_fifo_reset), em_iff, em_local_timer, em_update_link_status, em_stop, em_identify_hardware, em_legacy_irq_quirk_spt, em_allocate_pci_resources, em_free_pci_resources, em_hardware_init, em_setup_interface, em_detach, em_activate, em_smartspeed, em_dma_malloc/free, the transmit and receive structures, em_tso_setup, em_tx_ctx_setup, em_transmit_checksum_setup, em_txeof, em_get_buf, em_rxfill, em_rxrefill(_locked), em_rxeof, em_receive_checksum, em_enable_hw_vlans, em_enable/disable_intr, the EmPciOps seam (em_write_pci_cfg, em_read_pci_cfg, em_pci_set_mwi, em_pci_clear_mwi, em_read_pcie_cap_reg: -E1000_NOT_IMPLEMENTED), em_fill_descriptors, em_disable_aspm, em_flush_tx/rx_ring, em_flush_desc_rings, em_allocate_legacy, the MSI-X functions (SMALL_KERNEL not defined; em_enable_msix 0 as in C, an atomic), em_allocate_desc_rings, em_get_sffpage. Locking: sc->hw is a guard (em_hw()) under the kernel lock, as the C changes it; the MP-safe paths reach the registers through regs, a second em_hw with the same back and mac_type written once before the interrupt is established; TBI_ACCEPT's members are mirrored in atomics (tbi_accept_with, if_em_hw.rs). Descriptor rings: volatile whole-descriptor access. Stubs: ifmedia_init/add/set reported with unported! (after the attach line), SIOCGIFMEDIA/SIOCSIFMEDIA ENOSYS (ifmedia_ioctl, net/if_media.c not ported); NKSTAT 0 (em_kstat_*, em_tbi_adjust_stats compiled out, comments at the sites); NVLAN 0 (the VLAN code behind the constant NVLAN). em* at pci? in both GENERICs; smoke-em: e1000e on amd64 and arm64 and e1000 on amd64 answer ping, igb attaches and gets its link but passes no traffic in QEMU (its model writes back advanced rx descriptors only)"
+deps = ["sys/dev/pci/if_em.h", "sys/dev/pci/if_em_hw.c", "sys/dev/pci/if_em_soc.c", "sys/dev/pci/pci_map.c", "sys/dev/pci/pcidevs.h", "sys/net/if_ethersubr.c", "sys/net/if_media.c", "sys/net/ifq.c", "sys/kern/kern_timeout.c", "sys/kern/subr_autoconf.c"]
+notes = "M13: license: Intel BSD-3 notice, kept whole; the whole file: em_devices[] (198 ids, appended to pcidevs.rs), em_ca/em_cd, em_probe, em_defer_attach, em_attach, em_start, em_ioctl, em_watchdog, em_init, em_intr, em_media_status, em_media_change, em_flowstatus, em_encap (82544 PCI-X split, legacy and advanced data descriptors), the 82547 FIFO workaround (move_tail(_locked), fifo_workaround, update_fifo_head, tx_fifo_reset), em_iff, em_local_timer, em_update_link_status, em_stop, em_identify_hardware, em_legacy_irq_quirk_spt, em_allocate_pci_resources, em_free_pci_resources, em_hardware_init, em_setup_interface, em_detach, em_activate, em_smartspeed, em_dma_malloc/free, the transmit and receive structures, em_tso_setup, em_tx_ctx_setup, em_transmit_checksum_setup, em_txeof, em_get_buf, em_rxfill, em_rxrefill(_locked), em_rxeof, em_receive_checksum, em_enable_hw_vlans, em_enable/disable_intr, the EmPciOps seam (em_write_pci_cfg, em_read_pci_cfg, em_pci_set_mwi, em_pci_clear_mwi, em_read_pcie_cap_reg: -E1000_NOT_IMPLEMENTED), em_fill_descriptors, em_disable_aspm, em_flush_tx/rx_ring, em_flush_desc_rings, em_allocate_legacy, the MSI-X functions (SMALL_KERNEL not defined; em_enable_msix 0 as in C, an atomic), em_allocate_desc_rings, em_get_sffpage. Locking: sc->hw is a guard (em_hw()) under the kernel lock, as the C changes it; the MP-safe paths reach the registers through regs, a second em_hw with the same back and mac_type written once before the interrupt is established; TBI_ACCEPT's members are mirrored in atomics (tbi_accept_with, if_em_hw.rs). Descriptor rings: volatile whole-descriptor access. M13 (re): ifmedia_init/add/set and ifmedia_ioctl as in C (net/if_media.c ported; em_setup_interface adds the words em_media_words lists). Stubs: NKSTAT 0 (em_kstat_*, em_tbi_adjust_stats compiled out, comments at the sites); NVLAN 0 (the VLAN code behind the constant NVLAN). em* at pci? in both GENERICs; smoke-em: e1000e on amd64 and arm64 and e1000 on amd64 answer ping, igb attaches and gets its link but passes no traffic in QEMU (its model writes back advanced rx descriptors only)"
 
 # M14 A3 sub-task N: libsa's network stack. New rows (ports.toml had none for these files).
 # [[file]] rows go beside the other sys/lib/libsa rows (alphabetical), [[extra]] rows beside the

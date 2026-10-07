@@ -15,6 +15,8 @@ pub mod nvmeio;
 pub mod nvmereg;
 pub mod nvmevar;
 pub mod pluart;
+pub mod re;
+pub mod rtl81x9reg;
 pub mod siop;
 pub mod siop_common;
 pub mod siopreg;

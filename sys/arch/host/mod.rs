@@ -214,6 +214,7 @@ impl MachineParam for Machine {
     const ALIGNBYTES: usize = core::mem::size_of::<usize>() - 1;
     const STACKALIGNBYTES: usize = 15;
     const MAX_PAGE_SHIFT: usize = 12;
+    const STRICT_ALIGNMENT: bool = false;
 
     fn aligned_pointer<T>(_p: usize) -> bool {
         true

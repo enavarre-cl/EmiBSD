@@ -16,6 +16,7 @@
 //! `ioapic* at mainbus?`, `acpimadt0 at acpi?`, `acpiprt* at acpi?` and `acpipci* at
 //! acpi?` (M13), `puc* at pci?` and `com* at puc?` (M13; `com*` takes the units from 4),
 //! `em* at pci?` (M13), `efifb0 at mainbus?` (M13; its `wsdisplay0 at efifb?` waits for wsdisplay),
+//! `re* at pci?`, `rlphy* at mii?`, `rgephy* at mii?` and `ukphy* at mii?` (M13),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -26,7 +27,9 @@
 //! every other device at `acpi?` (`acpimcfg*`, `acpicpu*`, ...); `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`, `vga0`,
 //! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
-//! (`pchb*`, `ppb*`, `pcib*`, the network drivers but em and the storage drivers but nvme, ahci and siop, ...), every
+//! (`pchb*`, `ppb*`, `pcib*`, the network drivers but em and re (`rl* at pci?` among them: QEMU's rtl8139 is
+//! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci and siop, ...), every other
+//! device at `mii?` (the other PHY drivers), every
 //! other
 //! `audio*` (at `uaudio?`, ...), `pci*` at `ppb?` and
 //! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; `usb*` at `ehci?`, `uhci?`
@@ -53,13 +56,18 @@ use crate::dev::bio::bioattach;
 use crate::dev::ic::ahci::AHCI_CD;
 use crate::dev::ic::com::COM_CD;
 use crate::dev::ic::nvme::NVME_CD;
+use crate::dev::ic::re::RE_CD;
 use crate::dev::ic::siop::SIOP_CD;
 use crate::dev::isa::com_isa::COM_ISA_CA;
 use crate::dev::isa::isa::{ISA_CA, ISA_CD};
+use crate::dev::mii::rgephy::{RGEPHY_CA, RGEPHY_CD};
+use crate::dev::mii::rlphy::{RLPHY_CA, RLPHY_CD};
+use crate::dev::mii::ukphy::{UKPHY_CA, UKPHY_CD};
 use crate::dev::pci::ahci_pci::AHCI_PCI_CA;
 use crate::dev::pci::auich::{AUICH_CA, AUICH_CD};
 use crate::dev::pci::azalia::{AZALIA_CA, AZALIA_CD};
 use crate::dev::pci::if_em::{EM_CA, EM_CD};
+use crate::dev::pci::if_re_pci::RE_PCI_CA;
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
 use crate::dev::pci::puc::{PUC_CD, PUC_PCI_CA};
@@ -179,11 +187,18 @@ const PV_PUC: &[i16] = &[38];
 /// -1]}`).
 const LOC_PUC_UNK: &[i64] = &[-1];
 
-/// `cfdata[]`: 42 entries, 43 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `pv[]` for children of the `mii` attribute, carried by `re*` (`cfdata[42]`).
+const PV_MII: &[i16] = &[42];
+
+/// `loc[]` of an entry at `mii` with the default `phy = -1` (`conf/files`: `define mii {[phy =
+/// -1]}`).
+const LOC_MII_UNK: &[i64] = &[-1];
+
+/// `cfdata[]`: 46 entries, 47 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    43
+    47
 } else {
-    42
+    46
 };
 
 /// `cfdata[]`.
@@ -643,7 +658,55 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 42: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 42: re* at pci?
+    Cfdata::new(
+        &RE_PCI_CA,
+        &RE_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        0,
+        0,
+    ),
+    // 43: rlphy* at mii?
+    Cfdata::new(
+        &RLPHY_CA,
+        &RLPHY_CD,
+        0,
+        FSTATE_STAR,
+        LOC_MII_UNK,
+        0,
+        PV_MII,
+        0,
+        0,
+    ),
+    // 44: rgephy* at mii?
+    Cfdata::new(
+        &RGEPHY_CA,
+        &RGEPHY_CD,
+        0,
+        FSTATE_STAR,
+        LOC_MII_UNK,
+        0,
+        PV_MII,
+        0,
+        0,
+    ),
+    // 45: ukphy* at mii?
+    Cfdata::new(
+        &UKPHY_CA,
+        &UKPHY_CD,
+        0,
+        FSTATE_STAR,
+        LOC_MII_UNK,
+        0,
+        PV_MII,
+        0,
+        0,
+    ),
+    // 46: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

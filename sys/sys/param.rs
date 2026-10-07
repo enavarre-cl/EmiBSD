@@ -179,6 +179,8 @@ pub const MSGBUFSIZE: usize = <Machine as MachineParam>::MSGBUFSIZE;
 
 /// Rounding mask that aligns an address for every data type.
 pub const ALIGNBYTES: usize = <Machine as MachineParam>::ALIGNBYTES;
+/// `__STRICT_ALIGNMENT` (`<machine/endian.h>`): whether the CPU needs aligned data.
+pub const STRICT_ALIGNMENT: bool = <Machine as MachineParam>::STRICT_ALIGNMENT;
 
 /*
  * File system parameters and macros.

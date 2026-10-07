@@ -51,9 +51,8 @@
 //!   pointer to the same bytes.
 //! - The dmamap and mbuf arrays of a queue are one `mallocarray`, as in C; their slots are
 //!   `Cell<Option<&'static ...>>` reached through bounds-checked accessors.
-//! - Not ported, reported with `unported!` where called: `struct ifmedia` and `ifmedia_*`
-//!   (`net/if_media.c`: `sc_media` is left out; `SIOCGIFMEDIA`/`SIOCSIFMEDIA` fail with
-//!   `ENOSYS`). Since M13 `sc_intrmap` (`intrmap(9)`) is as in C: with `VIRTIO_NET_F_MQ`
+//! - Since M13 `sc_media` and the `ifmedia_*` calls are as in C (`net/if_media.c`), and
+//!   `sc_intrmap` (`intrmap(9)`) is as in C: with `VIRTIO_NET_F_MQ`
 //!   the queue pairs get their own MSI-X vectors (2 and on) on the CPUs the map picks, the
 //!   configuration and control queue interrupts vectors 0 and 1. Not configured
 //!   (comments at the sites): `NVLAN`. `NBPFILTER` is configured: `vio_start` taps each
@@ -87,6 +86,7 @@ use crate::dev::pv::virtiovar::{
     virtio_get_status, virtio_has_feature, virtio_intr_barrier, virtio_intr_establish,
     virtio_negotiate_features, virtio_read_device_config_1, virtio_read_device_config_2,
 };
+use crate::kassert;
 use crate::kern::init_main::NCPUS;
 use crate::kern::kern_intrmap::{Intrmap, intrmap_count, intrmap_cpu, intrmap_create};
 use crate::kern::kern_lock::{mtx_enter, mtx_init, mtx_leave};
@@ -115,7 +115,10 @@ use crate::net::if_::{
 use crate::net::if_ethersubr::{
     ether_extract_headers, ether_fakeaddr, ether_ifattach, ether_ioctl, ether_sprintf,
 };
-use crate::net::if_media::{IFM_ACTIVE, IFM_AUTO, IFM_AVALID, IFM_ETHER, IFM_FDX};
+use crate::net::if_media::{
+    IFM_ACTIVE, IFM_AUTO, IFM_AVALID, IFM_ETHER, IFM_FDX, Ifmedia, ifmedia_add, ifmedia_init,
+    ifmedia_ioctl, ifmedia_set,
+};
 use crate::net::if_var::{Ifnet, if_rxr_put};
 use crate::net::ifq::{
     Ifiqueue, Ifqueue, ifiq_input, ifq_barrier, ifq_clr_oactive, ifq_dequeue, ifq_init_maxlen,
@@ -140,7 +143,6 @@ use crate::sys::sockio::{
 };
 use crate::sys::systm::{COLD, INFSLP, kernel_lock, kernel_unlock};
 use crate::sys::timeout::Timeout;
-use crate::{kassert, unported};
 
 // if_vioreg.h:
 
@@ -757,7 +759,8 @@ pub struct VioSoftc {
 
     /// `sc_ac`.
     pub sc_ac: Arpcom,
-    // sc_media: struct ifmedia, net/if_media.c is not ported (see the deviations).
+    /// `sc_media`.
+    pub sc_media: Ifmedia,
     /// `sc_ifflags`.
     pub sc_ifflags: Cell<i16>,
 
@@ -851,8 +854,9 @@ impl VioSoftc {
     }
 }
 
-// SAFETY: `#[repr(C)]` with the device first; the arpcom and the timeouts are all-zero valid
-// (`netinet/if_ether.rs`, `sys/timeout.rs`), and every other member is a `Cell` of an
+// SAFETY: `#[repr(C)]` with the device first; the arpcom, the ifmedia and the timeouts are
+// all-zero valid (`netinet/if_ether.rs`, `net/if_media.rs`, `sys/timeout.rs`), and every
+// other member is a `Cell` of an
 // integer, a pointer, an `Option` or an enum whose zero is `FREE`.
 unsafe impl Softc for VioSoftc {}
 
@@ -1625,10 +1629,9 @@ pub fn vio_attach(parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
         ifp.if_ioctl.set(Some(vio_ioctl));
 
         ifq_init_maxlen(&ifp.if_snd, vsc.vq(1).vq_num.get() - 1);
-        // ifmedia_init(&sc->sc_media, 0, vio_media_change, vio_media_status);
-        // ifmedia_add(&sc->sc_media, IFM_ETHER | IFM_AUTO, 0, NULL);
-        // ifmedia_set(&sc->sc_media, IFM_ETHER | IFM_AUTO);
-        let _ = unported!("ifmedia_init, ifmedia_add, ifmedia_set (net/if_media.c)");
+        ifmedia_init(&sc.sc_media, 0, vio_media_change, vio_media_status);
+        ifmedia_add(&sc.sc_media, IFM_ETHER | IFM_AUTO, 0, ptr::null_mut());
+        ifmedia_set(&sc.sc_media, IFM_ETHER | IFM_AUTO);
         vsc.sc_config_change.set(Some(vio_config_change));
         let arg: *mut c_void = ptr::from_ref(sc).cast_mut().cast();
         timeout_set(&sc.sc_txtick, vio_txtick, arg);
@@ -2191,8 +2194,9 @@ pub unsafe fn vio_ioctl(ifp: &'static Ifnet, cmd: u64, data: *mut u8) -> Result<
             }
         }
         SIOCGIFMEDIA | SIOCSIFMEDIA => {
-            // ifmedia_ioctl(ifp, ifr, &sc->sc_media, cmd)
-            r = Err(unported!("ifmedia_ioctl (net/if_media.c)"));
+            // SAFETY: SIOCSIFMEDIA carries a `struct ifreq` and SIOCGIFMEDIA a `struct
+            // ifmediareq` (this function's contract).
+            r = unsafe { ifmedia_ioctl(ifp, data, &sc.sc_media, cmd) };
         }
         SIOCGIFRXR => {
             r = vio_rxr_info(sc, ifr.ifr_data() as usize);

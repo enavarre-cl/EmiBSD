@@ -22,6 +22,7 @@ pub mod if_em;
 pub mod if_em_hw;
 pub mod if_em_osdep;
 pub mod if_em_soc;
+pub mod if_re_pci;
 pub mod nvme_pci;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/pci/pci.c
 pub mod pci;

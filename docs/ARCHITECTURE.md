@@ -1495,14 +1495,30 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   archs and the 82540EM on amd64; QEMU's 82576 (`igb`) attaches and links up but passes no
   traffic, probably because its model writes back only advanced receive descriptors and
   em(4) programs legacy ones, as OpenBSD's does (not checked against QEMU's source).
+  `--nic rtl8139` is QEMU's Realtek 8139C+ (PCI 10ec:8139 revision 0x20), which re(4)
+  drives; `smoke-re` pings the gateway through it on both archs, on INTx.
 - `em(4)` (M13): `dev/pci/if_em.c` is OpenBSD's whole driver over the shared code of
   `if_em_hw.c`. The C changes `sc->hw` only under the kernel lock and reads `mac_type` and
   the registers unlocked from its MP-safe paths (the send queue, the interrupt's ring work);
   here `sc->hw` is handed out as a guard that asserts the kernel lock and refuses a second
   borrow, and the unlocked paths use a second, read-only `struct em_hw` holding the register
-  handles and `mac_type` (C_TO_RUST.md). `ifmedia` and `kstat(4)` are not there (reported,
-  or compiled out as with `NKSTAT` 0); `vlan(4)` is not configured (`NVLAN` 0). MSI-X stays
-  off as in C (`em_enable_msix`): the 82574L and 82576 run on MSI, the 82540EM on INTx.
+  handles and `mac_type` (C_TO_RUST.md). `kstat(4)` is compiled out (`NKSTAT` 0) and
+  `vlan(4)` is not configured (`NVLAN` 0). MSI-X stays off as in C (`em_enable_msix`): the
+  82574L and 82576 run on MSI, the 82540EM on INTx.
+- `ifmedia`, `mii(4)` and `re(4)` (M13): `net/if_media.c` keeps a driver's media list
+  (`struct ifmedia`, now in em, vio and re) and answers `SIOCGIFMEDIA`/`SIOCSIFMEDIA`.
+  `dev/mii/` is the MII layer: `mii_attach` probes the PHY addresses through the driver's
+  `mii_readreg` and attaches the PHY drivers at the `mii` attribute (locator `phy`;
+  `rlphy`, `rgephy`, `ukphy` are ported). re(4) (`dev/ic/re.c` with `dev/pci/if_re_pci.c`)
+  drives the Realtek 8139C+/8169/8168 family; QEMU's `rtl8139` is an 8139C+ at revision
+  0x20, which `re_pci_probe` takes (`rl_pci_match` takes the RT8139 only at revision 0x10,
+  so rl(4) stays deferred). As in em(4), the descriptors are read and written whole and
+  volatile, and what the MP-safe send queue and interrupt share (`rl_flags`, the transmit
+  producer and consumer) are atomics. One deviation fixes a race QEMU exposes: `re_init`
+  acknowledges `RL_ISR` before it starts the simulated-moderation timer, which can expire
+  into the C's later acknowledgement and leave the timer-only interrupt mask silent.
+  `__STRICT_ALIGNMENT` became `MachineParam::STRICT_ALIGNMENT` (arm64 true), for
+  `RE_ETHER_ALIGN`.
 - `disklabel(8)` and `fdisk(8)` embed their manual page in a generated `manual.c` rendered
   with mandoc(1); the userland build takes their Makefiles' own `.ifdef NOMAN` branch
   (`NOMAN_PROGRAMS` in `tools/xtask/src/userland.rs`), so the embedded page reads

@@ -50,6 +50,9 @@ pub trait MachineParam {
     const STACKALIGNBYTES: usize;
     /// `_MAX_PAGE_SHIFT`: the largest page shift the architecture can use.
     const MAX_PAGE_SHIFT: usize;
+    /// `__STRICT_ALIGNMENT` (`<machine/endian.h>`): the CPU does not fetch misaligned data
+    /// (drivers then shift received frames so the IP header is aligned).
+    const STRICT_ALIGNMENT: bool;
     /// `_ALIGNED_POINTER(p, t)`: whether a value of type `T` may be fetched from address `p`.
     /// This reflects possibility, not optimal alignment.
     fn aligned_pointer<T>(p: usize) -> bool;

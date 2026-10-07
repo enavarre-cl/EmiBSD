@@ -50,7 +50,7 @@
 //! ## Deviations
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
 //!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c`, `ahci_pci.c`, `xhci_pci.c`, `auich.c`,
-//!   `azalia.c`, `azalia_codec.c`, `siop_pci_common.c` and `if_em.c`). The whole header, and `pcidevs_data.h` for
+//!   `azalia.c`, `azalia_codec.c`, `siop_pci_common.c`, `if_em.c` and `if_re_pci.c`). The whole header, and `pcidevs_data.h` for
 //!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
 //!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
@@ -1472,6 +1472,49 @@ pub const PCI_PRODUCT_INTEL_EP80579_LAN_5: u32 = 0x5045;
 /// `PCI_PRODUCT_INTEL_EP80579_LAN_6`: EP80579 LAN.
 pub const PCI_PRODUCT_INTEL_EP80579_LAN_6: u32 = 0x5049;
 
+// re(4) (M13): if_re_pci.c's re_pci_devices[] and its RT8139 and EG1032 tests.
+
+/// `PCI_VENDOR_TTTECH`: TTTech.
+pub const PCI_VENDOR_TTTECH: u32 = 0x0357;
+/// `PCI_VENDOR_REALTEK`: Realtek.
+pub const PCI_VENDOR_REALTEK: u32 = 0x10ec;
+/// `PCI_VENDOR_DLINK`: D-Link.
+pub const PCI_VENDOR_DLINK: u32 = 0x1186;
+/// `PCI_VENDOR_COREGA`: Corega.
+pub const PCI_VENDOR_COREGA: u32 = 0x1259;
+/// `PCI_VENDOR_USR2`: US Robotics.
+pub const PCI_VENDOR_USR2: u32 = 0x16ec;
+/// `PCI_VENDOR_LINKSYS`: Linksys.
+pub const PCI_VENDOR_LINKSYS: u32 = 0x1737;
+/// `PCI_PRODUCT_COREGA_CGLAPCIGT`: CG-LAPCIGT.
+pub const PCI_PRODUCT_COREGA_CGLAPCIGT: u32 = 0xc107;
+/// `PCI_PRODUCT_DLINK_DGE528T`: DGE-528T.
+pub const PCI_PRODUCT_DLINK_DGE528T: u32 = 0x4300;
+/// `PCI_PRODUCT_DLINK_DGE530T_C1`: DGE-530T C1.
+pub const PCI_PRODUCT_DLINK_DGE530T_C1: u32 = 0x4302;
+/// `PCI_PRODUCT_LINKSYS_EG1032`: EG1032.
+pub const PCI_PRODUCT_LINKSYS_EG1032: u32 = 0x1032;
+/// `PCI_PRODUCT_REALTEK_E2500V2`: E2500.
+pub const PCI_PRODUCT_REALTEK_E2500V2: u32 = 0x2502;
+/// `PCI_PRODUCT_REALTEK_E2600`: E2600.
+pub const PCI_PRODUCT_REALTEK_E2600: u32 = 0x2600;
+/// `PCI_PRODUCT_REALTEK_RT8101E`: 8101E.
+pub const PCI_PRODUCT_REALTEK_RT8101E: u32 = 0x8136;
+/// `PCI_PRODUCT_REALTEK_RT8139`: 8139.
+pub const PCI_PRODUCT_REALTEK_RT8139: u32 = 0x8139;
+/// `PCI_PRODUCT_REALTEK_RT8168_2`: 8168.
+pub const PCI_PRODUCT_REALTEK_RT8168_2: u32 = 0x8161;
+/// `PCI_PRODUCT_REALTEK_RT8169SC`: 8169SC.
+pub const PCI_PRODUCT_REALTEK_RT8169SC: u32 = 0x8167;
+/// `PCI_PRODUCT_REALTEK_RT8168`: 8168.
+pub const PCI_PRODUCT_REALTEK_RT8168: u32 = 0x8168;
+/// `PCI_PRODUCT_REALTEK_RT8169`: 8169.
+pub const PCI_PRODUCT_REALTEK_RT8169: u32 = 0x8169;
+/// `PCI_PRODUCT_TTTECH_MC322`: MC322.
+pub const PCI_PRODUCT_TTTECH_MC322: u32 = 0x000a;
+/// `PCI_PRODUCT_USR2_USR997902`: USR997902.
+pub const PCI_PRODUCT_USR2_USR997902: u32 = 0x0116;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2854,6 +2897,26 @@ mod tests {
                 "PCI_PRODUCT_INTEL_EP80579_LAN_6",
                 PCI_PRODUCT_INTEL_EP80579_LAN_6,
             ),
+            ("PCI_VENDOR_TTTECH", PCI_VENDOR_TTTECH),
+            ("PCI_VENDOR_REALTEK", PCI_VENDOR_REALTEK),
+            ("PCI_VENDOR_DLINK", PCI_VENDOR_DLINK),
+            ("PCI_VENDOR_COREGA", PCI_VENDOR_COREGA),
+            ("PCI_VENDOR_USR2", PCI_VENDOR_USR2),
+            ("PCI_VENDOR_LINKSYS", PCI_VENDOR_LINKSYS),
+            ("PCI_PRODUCT_COREGA_CGLAPCIGT", PCI_PRODUCT_COREGA_CGLAPCIGT),
+            ("PCI_PRODUCT_DLINK_DGE528T", PCI_PRODUCT_DLINK_DGE528T),
+            ("PCI_PRODUCT_DLINK_DGE530T_C1", PCI_PRODUCT_DLINK_DGE530T_C1),
+            ("PCI_PRODUCT_LINKSYS_EG1032", PCI_PRODUCT_LINKSYS_EG1032),
+            ("PCI_PRODUCT_REALTEK_E2500V2", PCI_PRODUCT_REALTEK_E2500V2),
+            ("PCI_PRODUCT_REALTEK_E2600", PCI_PRODUCT_REALTEK_E2600),
+            ("PCI_PRODUCT_REALTEK_RT8101E", PCI_PRODUCT_REALTEK_RT8101E),
+            ("PCI_PRODUCT_REALTEK_RT8139", PCI_PRODUCT_REALTEK_RT8139),
+            ("PCI_PRODUCT_REALTEK_RT8168_2", PCI_PRODUCT_REALTEK_RT8168_2),
+            ("PCI_PRODUCT_REALTEK_RT8169SC", PCI_PRODUCT_REALTEK_RT8169SC),
+            ("PCI_PRODUCT_REALTEK_RT8168", PCI_PRODUCT_REALTEK_RT8168),
+            ("PCI_PRODUCT_REALTEK_RT8169", PCI_PRODUCT_REALTEK_RT8169),
+            ("PCI_PRODUCT_TTTECH_MC322", PCI_PRODUCT_TTTECH_MC322),
+            ("PCI_PRODUCT_USR2_USR997902", PCI_PRODUCT_USR2_USR997902),
         ] {
             assert_eq!(
                 crate::reftest::int(&defs, name),

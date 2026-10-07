@@ -102,6 +102,7 @@ impl MachineParam for super::super::Machine {
     const ALIGNBYTES: usize = _ALIGNBYTES;
     const STACKALIGNBYTES: usize = _STACKALIGNBYTES;
     const MAX_PAGE_SHIFT: usize = _MAX_PAGE_SHIFT;
+    const STRICT_ALIGNMENT: bool = false;
 
     fn aligned_pointer<T>(p: usize) -> bool {
         _aligned_pointer::<T>(p)

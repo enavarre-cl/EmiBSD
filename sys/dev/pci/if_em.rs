@@ -92,11 +92,7 @@ POSSIBILITY OF SUCH DAMAGE.
 //!   `hw.back` points at the osdep from the start: what runs on `hw` before the osdep is
 //!   written (`em_set_mac_type` and member assignments) does not reach it, as the C runs it
 //!   with `hw->back` still NULL.
-//! - `struct ifmedia` and `net/if_media.c` are not ported: `media` keeps only the current
-//!   media word (`ifm_media`, `IFM_ETHER | IFM_AUTO`, what `ifmedia_set` selects);
-//!   `ifmedia_init`, `ifmedia_add` and `ifmedia_set` report themselves with `unported!`,
-//!   and `SIOCGIFMEDIA`/`SIOCSIFMEDIA` (`ifmedia_ioctl`) fail with `ENOSYS`.
-//!   `em_media_status` and `em_media_change` are ported, for when it comes.
+//! - `em_setup_interface` adds the media words `em_media_words` lists, in the C's order.
 //! - `kstat(4)` is not configured (`NKSTAT` 0): `em_kstat_attach`, `em_kstat_read`,
 //!   `em_tbi_adjust_stats`, `enum em_stat` and `em_counters[]` are compiled out, as in such
 //!   a C kernel, with comments at the call sites; the softc's `kstat` and `kstat_mtx` are
@@ -144,6 +140,7 @@ use crate::dev::pci::pcireg::{
     pci_vendor,
 };
 use crate::dev::pci::pcivar::{PCI_FLAGS_MSI_ENABLED, PciAttachArgs, PciMatchid};
+use crate::kassert;
 use crate::kern::kern_malloc::{free, malloc, mallocarray};
 use crate::kern::kern_rwlock::{rw_enter, rw_exit, rw_init};
 use crate::kern::kern_timeout::{timeout_add, timeout_add_sec, timeout_del, timeout_set};
@@ -179,7 +176,8 @@ use crate::net::if_ethersubr::{
 use crate::net::if_media::{
     IFM_10_T, IFM_100_TX, IFM_1000_LX, IFM_1000_SX, IFM_1000_T, IFM_ACTIVE, IFM_AUTO, IFM_AVALID,
     IFM_ETH_MASTER, IFM_ETH_RXPAUSE, IFM_ETH_TXPAUSE, IFM_ETHER, IFM_FDX, IFM_FLOW, IFM_GMASK,
-    IFM_HDX, IFM_NONE, ifm_subtype, ifm_type,
+    IFM_HDX, IFM_IMASK, IFM_NONE, Ifmedia, ifm_subtype, ifm_type, ifmedia_add, ifmedia_init,
+    ifmedia_ioctl, ifmedia_set,
 };
 use crate::net::if_var::{Ifnet, if_rxr_inuse, if_rxr_needrefill, if_rxr_put};
 use crate::net::ifq::{
@@ -208,7 +206,6 @@ use crate::sys::sockio::{
 };
 use crate::sys::systm::{kernel_assert_locked, kernel_lock, kernel_unlock};
 use crate::sys::timeout::Timeout;
-use crate::{kassert, unported};
 
 /// `EM_DRIVER_VERSION`.
 pub const EM_DRIVER_VERSION: &str = "6.2.9";
@@ -603,8 +600,8 @@ pub struct EmSoftc {
     osdep: UnsafeCell<MaybeUninit<EmOsdep>>,
     /// Not in the C: whether `osdep` is written.
     osdep_init: AtomicBool,
-    /// `media`: `struct ifmedia` is not ported; its current media word (`ifm_media`).
-    pub media: Cell<u64>,
+    /// `media`.
+    pub media: Ifmedia,
     /// `io_rid`.
     pub io_rid: Cell<i32>,
     /// `legacy_irq`.
@@ -805,9 +802,9 @@ impl EmSoftc {
     }
 }
 
-// SAFETY: `#[repr(C)]` with the device first; the arpcom, the timeouts and the rwlock are
-// all-zero valid, `MaybeUninit` needs no valid bits, and every other member is a `Cell` or
-// an atomic of an integer, a pointer, an `Option` or a bool.
+// SAFETY: `#[repr(C)]` with the device first; the arpcom, the ifmedia, the timeouts and the
+// rwlock are all-zero valid, `MaybeUninit` needs no valid bits, and every other member is a
+// `Cell` or an atomic of an integer, a pointer, an `Option` or a bool.
 unsafe impl Softc for EmSoftc {}
 
 /// `em_ca`.
@@ -1150,7 +1147,6 @@ pub fn em_defer_attach(self_: &Device) {
     em_attach_miibus(self_);
 
     em_setup_interface(sc);
-    em_report_ifmedia();
 
     let _ = em_setup_link(&mut sc.em_hw());
 
@@ -1347,10 +1343,6 @@ pub fn em_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
             ", address {}\n",
             Str(&ether_sprintf(&sc.sc_ac.ac_enaddr.get()))
         ));
-        if !defer {
-            em_report_ifmedia();
-        }
-
         // Indicate SOL/IDER usage
         if em_check_phy_reset_block(&sc.em_hw()).is_err() {
             printf(format_args!(
@@ -1525,8 +1517,9 @@ pub unsafe fn em_ioctl(ifp: &'static Ifnet, command: u64, data: *mut u8) -> Resu
                     sc.devname()
                 ));
             } else {
-                // ifmedia_ioctl(ifp, ifr, &sc->media, command)
-                error = Err(unported!("ifmedia_ioctl (net/if_media.c)"));
+                // SAFETY: SIOCSIFMEDIA carries a `struct ifreq` and SIOCGIFMEDIA a `struct
+                // ifmediareq` (this function's contract).
+                error = unsafe { ifmedia_ioctl(ifp, data, &sc.media, command) };
             }
         }
         SIOCGIFRXR => {
@@ -1779,8 +1772,7 @@ pub fn em_intr(arg: *mut c_void) -> i32 {
 
 // Media Ioctl callback
 
-/// `em_media_status`: what `ifconfig` shows of the media (through `ifmedia_ioctl`, not
-/// ported).
+/// `em_media_status`: what `ifconfig` shows of the media (through `ifmedia_ioctl`).
 pub fn em_media_status(ifp: &'static Ifnet, ifmr: &mut Ifmediareq) {
     let sc = em_softc(ifp);
     let mut fiber_type = IFM_1000_SX;
@@ -1829,10 +1821,10 @@ pub fn em_media_status(ifp: &'static Ifnet, ifmr: &mut Ifmediareq) {
 }
 
 /// `em_media_change`: called when the user changes speed/duplex with `ifconfig media`
-/// (through `ifmedia_ioctl`, not ported).
+/// (through `ifmedia_ioctl`).
 pub fn em_media_change(ifp: &'static Ifnet) -> Result<(), Errno> {
     let sc = em_softc(ifp);
-    let ifm_media = sc.media.get();
+    let ifm_media = sc.media.ifm_media.get();
 
     if ifm_type(ifm_media) != IFM_ETHER {
         return Err(Errno::EINVAL);
@@ -2810,12 +2802,6 @@ pub fn em_media_words(
     (words, n)
 }
 
-/// Reports `em_setup_interface`'s `ifmedia_init`, `ifmedia_add` and `ifmedia_set`
-/// (`net/if_media.c` is not ported), after the attach line rather than inside it.
-fn em_report_ifmedia() {
-    let _ = unported!("ifmedia_init, ifmedia_add, ifmedia_set (net/if_media.c)");
-}
-
 /// `em_setup_interface`: sets up the network interface and attaches it.
 pub fn em_setup_interface(sc: &'static EmSoftc) {
     let ifp = sc.ifp();
@@ -2864,11 +2850,13 @@ pub fn em_setup_interface(sc: &'static EmSoftc) {
     ifp.if_capabilities.set(caps);
 
     // Specify the media types supported by this adapter and register callbacks to update
-    // media and link information: ifmedia_init(&sc->media, IFM_IMASK, em_media_change,
-    // em_media_status), one ifmedia_add per word, ifmedia_set(IFM_ETHER | IFM_AUTO). Not
-    // ported (net/if_media.c): em_report_ifmedia reports it once the attach line is done.
-    let (_words, _nwords) = em_media_words(media_type, mac_type, phy_type);
-    sc.media.set(IFM_ETHER | IFM_AUTO);
+    // media and link information
+    ifmedia_init(&sc.media, IFM_IMASK, em_media_change, em_media_status);
+    let (words, nwords) = em_media_words(media_type, mac_type, phy_type);
+    for &w in &words[..nwords] {
+        ifmedia_add(&sc.media, w, 0, ptr::null_mut());
+    }
+    ifmedia_set(&sc.media, IFM_ETHER | IFM_AUTO);
 
     if_attach(ifp);
     ether_ifattach(&sc.sc_ac);

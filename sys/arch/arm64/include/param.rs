@@ -109,6 +109,8 @@ impl MachineParam for super::super::Machine {
     const ALIGNBYTES: usize = _ALIGNBYTES;
     const STACKALIGNBYTES: usize = _STACKALIGNBYTES;
     const MAX_PAGE_SHIFT: usize = _MAX_PAGE_SHIFT;
+    // arm64's <machine/endian.h> defines __STRICT_ALIGNMENT.
+    const STRICT_ALIGNMENT: bool = true;
 
     fn aligned_pointer<T>(p: usize) -> bool {
         _aligned_pointer::<T>(p)
