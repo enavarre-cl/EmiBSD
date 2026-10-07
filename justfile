@@ -2081,11 +2081,11 @@ install-media-arm64: build-bsdrd-arm64 (build-arm64 "--features qemu,multiproces
     cargo xtask install-media --arch arm64 --rd-kernel target/bsdrd/{{arm64}}/debug/bsd --bsd target/{{arm64}}/debug/bsd
 
 # M14c: OpenBSD's installer installs EmiBSD. Per arch (`cargo xtask install`,
-# tools/xtask/src/install.rs): boots `bsd.rd` (amd64: by our efiboot, from a disk laid out as
-# OpenBSD's miniroot image; arm64: through Limine until track A3's efiboot boots the kernel)
-# with a fresh 3 GiB disk (`sd0`), whose ramdisk holds `/auto_install.conf`; `install.sub`,
-# unmodified, starts autoinstall(8) by itself, partitions the disk (GPT with an EFI system
-# partition, `disklabel -T`), newfs, fetches `bsd`, `bsd.mp`, `base80.tgz` and `comp80.tgz`
+# tools/xtask/src/install.rs): boots `bsd.rd` by our efiboot (BOOTX64.EFI, BOOTAA64.EFI),
+# from a disk laid out as OpenBSD's miniroot image, with a fresh 3 GiB disk (`sd0`), whose
+# ramdisk holds `/auto_install.conf`; `install.sub`, unmodified, starts autoinstall(8) by
+# itself, partitions the disk (amd64: GPT with an EFI system partition; arm64: MBR with a FAT
+# boot partition; then `disklabel -T`), newfs, fetches `bsd`, `bsd.mp`, `base80.tgz` and `comp80.tgz`
 # over HTTP from this machine, checks `SHA256.sig` with signify(1) against the test key in its
 # `/etc/signify`, extracts them, makes the device nodes, runs installboot(8) and says
 # `CONGRATULATIONS!`; then a second boot of the plain `bsd.rd` mounts the new disk and lists
@@ -2102,7 +2102,7 @@ smoke-install-arm64: install-media-arm64
     EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install {{smp}} --arch arm64 --rd-kernel target/bsdrd/{{arm64}}/debug/bsd
 
 # The last step of M14's criterion: the disk `smoke-install-<arch>` installed, booted through
-# the loader installboot(8) put on it (amd64's efiboot; arm64 waits for track A3) to `login:`
+# the loader installboot(8) put on it (efiboot, from /usr/mdec) to `login:`
 # on a fresh VM with OpenBSD's /etc/rc, then `cc hello.c && ./a.out` there prints
 # `hello from cc 42`. About a minute on amd64; not in `smokes`, because it needs the disk
 # `smoke-install-<arch>` made.

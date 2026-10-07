@@ -129,11 +129,14 @@ fn auto_install_conf(port: u16) -> String {
         ("Setup a user", "no".to_string()),
         ("What timezone are you in", "UTC".to_string()),
         ("Which disk is the root disk", "sd0".to_string()),
+        // amd64's md_prep_fdisk (a GPT with an EFI system partition, as on a UEFI PC).
         (
             "Use (W)hole disk MBR, whole disk (G)PT or (E)dit",
             "G".to_string(),
         ),
         ("An EFI/GPT disk may not boot. Proceed", "yes".to_string()),
+        // arm64's: an MBR with the FAT boot partition (`i`) and the OpenBSD one.
+        ("Use (W)hole disk or (E)dit the MBR", "whole".to_string()),
         (
             "URL to autopartitioning template for disklabel",
             format!("http://{server}/disklabel.tmpl"),
@@ -188,17 +191,14 @@ fn need(path: &Path, what: &str, recipe: &str) -> Result<()> {
     }
 }
 
-/// The efiboot that boots the install media, where it boots the kernel: amd64's
-/// `BOOTX64.EFI` (`just efiboot-amd64`). arm64's efiboot is track A3's; until it boots the
-/// kernel, arm64's media boot through Limine.
+/// The efiboot that boots the install media: amd64's `BOOTX64.EFI` (`just efiboot-amd64`),
+/// arm64's `BOOTAA64.EFI` (`just efiboot-arm64`). Without it the media boot through Limine.
 fn media_efiboot(root: &Path, arch: Arch) -> Option<PathBuf> {
-    match arch {
-        Arch::Amd64 => {
-            let efi = root.join("target/efiboot/amd64/BOOTX64.EFI");
-            efi.is_file().then_some(efi)
-        }
-        Arch::Arm64 => None,
-    }
+    let efi = match arch {
+        Arch::Amd64 => root.join("target/efiboot/amd64/BOOTX64.EFI"),
+        Arch::Arm64 => root.join("target/efiboot/arm64/BOOTAA64.EFI"),
+    };
+    efi.is_file().then_some(efi)
 }
 
 /// `boot> ` answered: efiboot's prompt waits (the media's `boot.conf` turns its timeout off),
@@ -356,17 +356,21 @@ fn check_disk(root: &Path, arch: Arch, bsd_rd: &Path, disks: &Disks<'_>, dir: &P
     vm.wait_for("(I)nstall, (U)pgrade, (A)utoinstall or (S)hell?", limit)?;
     vm.send("s\n")?;
     vm.wait_for("# ", limit)?;
-    let efi_part = match arch {
-        Arch::Amd64 => "i",
-        Arch::Arm64 => "i",
+    // The EFI system partition is `i` on both (amd64's GPT, arm64's MBR `C` partition).
+    // `/etc/boot.conf` is amd64's only: install.sub writes it when the console moves to com0
+    // (amd64's md_consoleinfo asks); arm64's install.md has the serial console already
+    // (`DEFCONS=y`, `CTTY=console`) and writes none.
+    let (efi_part, boot_conf) = match arch {
+        Arch::Amd64 => ("i", " /mnt/etc/boot.conf"),
+        Arch::Arm64 => ("i", ""),
     };
     // The ramdisk's /dev has no node for the new disk: install.sub makes them with MAKEDEV
     // as it needs them, and so does the check.
     let script = format!(
         "cd /dev && sh MAKEDEV sd0 && cd / && disklabel sd0 && \
          mount -r /dev/sd0a /mnt && ls -l /mnt/bsd /mnt/bsd.sp /mnt/usr/bin/cc /mnt/etc/rc \
-         /mnt/usr/libexec/ld.so /mnt/usr/lib/libc.so.104.0 /mnt/etc/fstab /mnt/etc/boot.conf && \
-         cat /mnt/etc/fstab /mnt/etc/boot.conf && echo check-root-$((40+2)); \
+         /mnt/usr/libexec/ld.so /mnt/usr/lib/libc.so.104.0 /mnt/etc/fstab{boot_conf} && \
+         cat /mnt/etc/fstab{boot_conf} && echo check-root-$((40+2)); \
          mount_msdos -o ro /dev/sd0{efi_part} /mnt2 && ls -lR /mnt2/efi && echo check-esp-$((40+2)); \
          umount /mnt2; umount /mnt; fsck_ffs -n /dev/rsd0a && echo check-fsck-$((40+2)); \
          echo check-$((6*7))-done\n"
@@ -381,6 +385,32 @@ fn check_disk(root: &Path, arch: Arch, bsd_rd: &Path, disks: &Disks<'_>, dir: &P
         }
     }
     Ok(())
+}
+
+/// Serial lines that mean the installed system will not reach `login:` (rc(8) falls to a
+/// single-user shell, or the kernel panics).
+const BOOT_FAILURES: &[&str] = &[
+    "Automatic file system check failed",
+    "Enter pathname of shell or RETURN for sh",
+    "panic: ",
+];
+
+/// [`Vm::wait_for`] that fails as soon as one of `fails` appears.
+fn wait_unless(vm: &mut Vm, pat: &str, fails: &[&str], limit: Duration) -> Result<()> {
+    let mark = vm.mark();
+    let started = Instant::now();
+    loop {
+        let step = Duration::from_secs(2);
+        match vm.wait_for(pat, step) {
+            Ok(()) => return Ok(()),
+            Err(e) if vm.exited() || started.elapsed() > limit => return Err(e),
+            Err(_) => {}
+        }
+        let text = vm.since(mark);
+        if let Some(f) = fails.iter().find(|f| text.contains(**f)) {
+            return Err(format!("{pat:?} never came: saw {f:?}").into());
+        }
+    }
 }
 
 /// `cargo xtask install-boot --arch A`: boots the installed disk through the boot loader
@@ -416,7 +446,13 @@ pub(crate) fn install_boot(root: &Path, args: &[&str]) -> Result<()> {
         install_dir(root, arch).join("boot.log"),
     )?;
     let limit = boot::time_limit(Duration::from_secs(900));
-    vm.wait_for("login:", limit)?;
+    wait_unless(&mut vm, "login:", BOOT_FAILURES, limit)?;
+    // rc.subr refuses a shell without `KSH_VERSION` (base's ksh is the full build since
+    // M14c; the -DSMALL one is the install media's). Daemons that are not built yet still
+    // say `(failed)`.
+    if vm.text().contains("wrong shell, use /bin/ksh") {
+        return Err(format!("install-boot {}: rc.d says \"wrong shell\"", arch.name()).into());
+    }
     vm.send("root\n")?;
     vm.wait_for("Password:", limit)?;
     vm.send("emibsd\n")?;

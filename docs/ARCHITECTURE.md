@@ -607,40 +607,49 @@ firmware, httpd/nsd/unbound files, the BIOS boot programs and the programs and l
 (our test programs). Every program is static, as in the rest of the userland.
 
 **The install run** (`install.rs`): a fresh 3 GiB disk is `sd0` (the install media's own disk
-is `sd1`). On amd64 `bsd.rd` is booted by our efiboot from a disk laid out as OpenBSD's
-`miniroot80.img` (`efiboot-disk`: the OpenBSD partition's FFS holding `/bsd`, which is
-`bsd.rd`, and the EFI system partition; the run answers `boot> `); arm64 boots it through
-Limine until track A3's efiboot boots the kernel. Its ramdisk holds
+is `sd1`; on arm64 `virt` the virtio-mmio slots are probed top-down, so the disk QEMU is
+given last is `sd0` there too). `bsd.rd` is booted by our efiboot (`BOOTX64.EFI`,
+`BOOTAA64.EFI`) from a disk laid out as OpenBSD's `miniroot80.img` (`efiboot-disk`: the
+OpenBSD partition's FFS holding `/bsd`, which is `bsd.rd`, and the EFI system partition; the
+run answers `boot> `). Its ramdisk holds
 `/auto_install.conf` (autoinstall(8): `.profile` starts the install after five seconds when
 that file exists, the way OpenBSD does when no DHCP server names a response file; static
 `10.0.2.15`, so dhcpleased is not needed), the sets come over HTTP from this machine
-(`10.0.2.2:PORT`, the server of `diff-openbsd`), the disk is GPT with an EFI system partition
-(`fdisk -gy`, so installboot(8) uses its EFI path and copies `BOOTX64.EFI`), partitioned by
+(`10.0.2.2:PORT`, the server of `diff-openbsd`), the disk is set up by the arch's
+`md_prep_fdisk`: on amd64 a GPT with an EFI system partition (`fdisk -gy`, answer `G`, so
+installboot(8) uses its EFI path and copies `BOOTX64.EFI`), on arm64 an MBR whose FAT
+partition (`fdisk -iy -b 32768@32768:C`, answer `whole`) `installboot -p` formats and
+installboot fills with `BOOTAA64.EFI` and `startup.nsh`; both are then partitioned by
 `disklabel -T` (a template: `/` 2400M first, so it is `a`, and 64M of swap), `newfs`, the
 sets (`-all bsd bsd.mp base* comp*`) verified by signify. The run ends at `CONGRATULATIONS!`
 and the installer's reboot (boot(9)'s `vfs_shutdown`: "syncing disks... done"); a second
 boot of the plain `bsd.rd` makes the disk's nodes (`MAKEDEV sd0`), prints its label, mounts
-it read-only and lists `/bsd`, `/bsd.sp`, `/usr/bin/cc`, `/etc/rc`, `/usr/libexec/ld.so`, the
-EFI system partition (`efi/BOOT/BOOTX64.EFI`, `efi/openbsd/BOOTX64.EFI`) and runs
-`fsck_ffs -n` (five phases, clean).
+it read-only and lists `/bsd`, `/bsd.sp`, `/usr/bin/cc`, `/etc/rc`, `/usr/libexec/ld.so`,
+amd64's `/etc/boot.conf` (arm64's installer writes none: its console is already the serial
+one), the EFI system partition (`efi/BOOT/BOOTX64.EFI` or `bootaa64.efi`, and the copy in
+`efi/openbsd/`) and runs `fsck_ffs -n` (five phases, clean).
 
-`install-boot` copies the installed disk into a fresh VM's boot image: OVMF starts
-`\EFI\BOOT\BOOTX64.EFI` from its ESP, efiboot reads the `boot.conf` the installer wrote
-(`stty com0 115200`, `set tty com0`), loads `/bsd` and boots it; the kernel finds its root by
+`install-boot` copies the installed disk into a fresh VM's boot image: the firmware (OVMF,
+EDK2 AArch64) starts `\EFI\BOOT\BOOTX64.EFI` (`BOOTAA64.EFI`) from its ESP, efiboot reads
+amd64's `boot.conf` the installer wrote (`stty com0 115200`, `set tty com0`), loads `/bsd`
+and boots it; the kernel finds its root by
 boot(8)'s DUID, `/etc/rc` from the base set runs (fsck, pf, the network, rc.firsttime) to
 `login:`, root logs in and `cc hello.c && ./a.out` prints `hello from cc 42` (the source is
 written with ksh's `print -r`: base has no printf(1) yet).
 
-Status (2026-10-05): amd64 passes both (`smoke-install-amd64` about 3.5 minutes with the media
-already made, the installer itself 2.5 to 3 minutes; `smoke-install-boot-amd64` about 1
-minute). What the installed system lacks shows in its `/etc/rc` run: the programs `userland`
-does not build (`sort`, `head`, `cut`, `mktemp`, `find`, `install`, `printf`, `swapctl`,
-`ttyflags`, `kvm_mkdb`, `dev_mkdb`, `savecore`, `ssh-keygen`, `openssl`, `mail`, ...); the
-rc.d daemons refuse to start (`wrong shell, use /bin/ksh`) because base's `/bin/ksh` is the
-`-DSMALL` build (`userland.rs` `VARIANTS`), which sets no `KSH_VERSION`; `/dev/random`
-(`random` is not a driver yet); `/dev/ttyC*` (wscons is not ported); installboot cannot add
-its UEFI boot entry (`/dev/efi`, efi(4), is not ported), so the firmware boots the ESP's
-fallback `\EFI\BOOT\BOOTX64.EFI`.
+Status (2026-10-05): both architectures pass both (`smoke-install-amd64` about 3 minutes with
+the media already made, the installer itself 2.5; arm64 about 4.5, the installer 4;
+`smoke-install-boot-<arch>` under a minute each). What the installed system lacks shows in
+its `/etc/rc` run: the programs `userland` does not build (`sort`, `head`, `cut`, `mktemp`,
+`find`, `install`, `printf`, `swapctl`, `ttyflags`, `kvm_mkdb`, `dev_mkdb`, `savecore`,
+`ssh-keygen`, `openssl`, `mail`, ...), so the rc.d daemons (`syslogd`, `pflogd`, `ntpd`,
+`smtpd`, `sndiod`, `cron`) say `(failed)`: rc.subr accepts base's `/bin/ksh`, the full build
+(`install-boot` fails on `wrong shell`); `/dev/random` (`random` is not a driver yet);
+`/dev/ttyC*` (wscons is not ported); installboot cannot add its UEFI boot entry (`/dev/efi`,
+efi(4), is not ported), so the firmware boots the ESP's fallback `\EFI\BOOT\BOOTX64.EFI`
+(`BOOTAA64.EFI`). On arm64 the installed kernel has `rd0` with no image; it once took the
+root disk's DUID from a stale buffer and `fsck` failed (`sys/dev/rd.rs`, deviations: an
+empty `rd0` reads no label now).
 
 ## Boot loaders (M14)
 
