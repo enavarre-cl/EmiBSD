@@ -35,7 +35,12 @@
 //!   bootloader loads it into "executable and modules" memory that is never reclaimed and maps
 //!   it writable in its direct map, so the C's writes to the image still work. Without a
 //!   module the image is empty (`rd_root_size` 0) and `rd0` still attaches, as the C always
-//!   attaches one; it then has no label to read.
+//!   attaches one; it then has no label to read: `rdgetdisklabel` returns the spoofed label
+//!   (initialised, DUID zero) without calling `readdisklabel` (M14c). The C never runs
+//!   with an empty image; there the read of sector 1 hits the end of the disk, ends with
+//!   no error and nothing transferred, and the label check looks at the stale contents of
+//!   the buffer, which on an installed arm64 system sometimes were the root disk's label,
+//!   so `rd0` got the root's DUID and opendev(3) refused the duplicate (`fsck` failed).
 //! - `MINIROOTSIZE` is the cargo feature `miniroot` (M14c, `bsd.rd`): the kernel then holds
 //!   the C's `rd_root_image[ROOTBYTES]` and `rd_root_size`, under those symbol names so that
 //!   `rdsetroot` (`cargo xtask rdsetroot`, `tools/xtask/src/rdsetroot.rs`) finds them
@@ -535,6 +540,13 @@ pub fn rdgetdisklabel(
                 *dl = incore;
             }
         }
+    }
+
+    // No image (see the module's deviations): there is no label to read, and a read of the
+    // empty disk ends at once with nothing transferred, which would leave readdisklabel
+    // looking at whatever its buffer held before (another disk's label, its DUID with it).
+    if rd_root_size == 0 {
+        return initdisklabel(lp);
     }
 
     // Call the generic disklabel extraction routine.
