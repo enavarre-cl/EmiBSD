@@ -24,7 +24,7 @@ Before coding, write down:
 
 Every ported file starts like this (`sys/lib/libkern/strlcpy.rs`). The `$OpenBSD$` line and the
 licence block are copied verbatim from the C file; the licence block sits between the
-`/* <LICENSES> */` and `/* </LICENSES> */` marker lines (nothing checks them yet; M14b makes
+`/* <LICENSES> */` and `/* </LICENSES> */` marker lines (nothing checks them yet; M15 (code and test layout) makes
 `cargo xtask ports check` validate them). A file whose C has several notices keeps all of them inside one pair of markers. To read a
 ported file, start at the closing marker (`sed -n '/<\/LICENSES>/,$p' <file>`).
 

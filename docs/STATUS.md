@@ -12,8 +12,8 @@ Done:
   3 expected (fifofs, core dumps, branding), on both archs.
 
 Next:
-- M13 (storage, firmware, console; nvme, vioscsi and cd are in), then M14, M15 (QEMU drivers,
-  added 2026-10-07), M16 (real hardware, vmm).
+- M13 (storage, firmware, console; nvme, vioscsi and cd are in), then M14, M15 (code and test
+  layout), M16 (QEMU drivers), M17 (real hardware, vmm).
 - M13 picks up M12's leftovers: wskbd and ukbdmap.c (the keyboard is silent until then).
 
 Unsafe (`cargo xtask unsafe-report`): kernel 5972 blocks, 723 fn, 578 impl, 22 trait, 129 other; tests 629 more.
@@ -24,6 +24,6 @@ Blockers:
 - Statistics counters the C bumps unlocked stay `Cell`s (docs/ARCHITECTURE.md, M11e).
 - arm64 configures azalia although its GENERIC does not (QEMU's HD Audio; ROADMAP M12).
 
-Decisions pending (the user's): the scope section (open until M13); the PC's CPU for vmm (M16);
-the Raspberry Pi 4 model; networking in M16; swtpm for M15's tpm(4); reporting QEMU's lost
+Decisions pending (the user's): the scope section (open until M13); the PC's CPU for vmm (M17);
+the Raspberry Pi 4 model; networking in M17; swtpm for M16's tpm(4); reporting QEMU's lost
 `sev` upstream.

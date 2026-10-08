@@ -74,4 +74,4 @@ Phase 2 starts, each one needs the user's decision and an edit to the file named
 | `ports.toml` maps each C path to its `.rs` and `ports check` validates paths and blobs | `ports-tracker.md`, `tools/xtask` | reorganised modules, or code diverged from the C, break that mapping and the drift checks |
 | Never change the reference pin without the user's explicit OK | `CLAUDE.md`, `reference-readonly.md` | not a conflict; it bounds the open question on absorbing newer OpenBSD commits |
 | A new crate needs the user's OK and an allowlist entry | `CLAUDE.md`, `rust-kernel.md` | not a conflict; safe abstractions that want a crate still go through it |
-| M14b (code and test layout) | `docs/ROADMAP.md` | it reshapes every file; it should land before `phase1-baseline` so the baseline is not moved under Phase 2 |
+| M15 (code and test layout; M14b until 2026-10-07) | `docs/ROADMAP.md` | it reshapes every file; it should land before `phase1-baseline` so the baseline is not moved under Phase 2 |

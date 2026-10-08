@@ -54,9 +54,10 @@ Status: M12+ (measurement and verification: unsafe-report, JOURNAL, diff-openbsd
 | M12 | Devices in QEMU: audio(4) with azalia and auich, USB with xhci, uhub, umass and ukbd; arm64's PCI bus | met |
 | M12+ | Measurement and verification: unsafe-report, JOURNAL, diff-openbsd against a real OpenBSD | met |
 | M13 | Storage, firmware and console | next |
-| M14, M14b | Installable; code and test layout | next |
-| M15 | QEMU drivers: IDE, floppy, PS/2, parallel, PC speaker, more USB, virtio, network, SCSI/RAID, UFS, SD, audio, IOMMUs, GPIO, GICv3 | next |
-| M16 | Real hardware and virtualisation (vmm, vmd; optional) | next |
+| M14 | Installable | next |
+| M15 | Code and test layout | next |
+| M16 | QEMU drivers: IDE, floppy, PS/2, parallel, PC speaker, more USB, virtio, network, SCSI/RAID, UFS, SD, audio, IOMMUs, GPIO, GICv3 | next |
+| M17 | Real hardware and virtualisation (vmm, vmd; optional) | next |
 
 Stage 2 of the diagnostic tools (ps, fstat, vmstat, df) is also met. Exit criteria and dates are
 in [docs/ROADMAP.md](docs/ROADMAP.md); the current state is in
