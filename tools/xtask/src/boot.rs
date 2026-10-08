@@ -624,12 +624,19 @@ pub(crate) fn qemu_command(
         }
         Arch::Arm64 => {
             // acpi=off: EDK2 then installs the device tree, which the arm64 kernel needs (M4).
-            cmd.args(["-M", "virt,acpi=off", "-cpu", "cortex-a72"]);
+            // `--acpi` (hwopts.rs): ACPI tables instead, and the disks on the PCI bus.
+            let acpi = crate::hwopts::acpi();
+            let (machine, blk) = if acpi {
+                ("virt,acpi=on", "virtio-blk-pci")
+            } else {
+                ("virt,acpi=off", "virtio-blk-device")
+            };
+            cmd.args(["-M", machine, "-cpu", "cortex-a72"]);
             cmd.arg("-drive").arg(format!(
                 "if=none,format=raw,file={},id=hd0",
                 image.display()
             ));
-            cmd.args(["-device", "virtio-blk-device,drive=hd0,bootindex=0"]);
+            cmd.args(["-device", &format!("{blk},drive=hd0,bootindex=0")]);
             // QEMU `virt` hands virtio-mmio slots out from the top down and the kernel
             // finds them bottom up, so the device added LAST is vio0: the link NIC goes
             // before the user-mode one.
@@ -647,7 +654,7 @@ pub(crate) fn qemu_command(
                     "if=none,format=raw,file={},id=sd{k}",
                     disk.display()
                 ));
-                cmd.args(["-device", &format!("virtio-blk-device,drive=sd{k}")]);
+                cmd.args(["-device", &format!("{blk},drive=sd{k}")]);
             }
             cmd.args(["-semihosting-config", "enable=on,target=native"]);
         }

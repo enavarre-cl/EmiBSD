@@ -254,8 +254,13 @@ const NIC_MODELS: &[&str] = &["e1000", "e1000e", "igb", "rtl8139", "vmxnet3"];
 /// `--nic MODEL`: the user-network NIC's model, in vio0's place (set once by `main`).
 static NIC: OnceLock<String> = OnceLock::new();
 
+/// `--acpi` (arm64): `virt` with its ACPI tables, so EDK2 hands the loader ACPI and no
+/// device tree, and the disks and the user NIC on `virt`'s PCI bus (`virtio-*-pci`), the
+/// only bus a tree made from the ACPI tables can reach (set once by `main`).
+static ACPI: OnceLock<()> = OnceLock::new();
+
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
-/// `--pci-serial`, `--expect-pci-serial`, `--reboot`, `--vio-mq`, `--nic`).
+/// `--pci-serial`, `--expect-pci-serial`, `--reboot`, `--vio-mq`, `--nic`, `--acpi`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if let Some(model) = opt_path(args, "--nic")? {
         if !NIC_MODELS.contains(&model) {
@@ -268,6 +273,9 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     }
     if args.contains(&"--reboot") {
         let _ = REBOOT.set(());
+    }
+    if args.contains(&"--acpi") {
+        let _ = ACPI.set(());
     }
     if args.contains(&"--vio-mq") {
         let _ = VIO_MQ.set(());
@@ -347,8 +355,14 @@ fn user_nic_arg(nic: Option<&str>, arch: Arch, props: &str) -> String {
     match (nic, arch) {
         (Some(model), _) => format!("{model},netdev=n0{props}"),
         (None, Arch::Amd64) => format!("virtio-net-pci,netdev=n0{props}{}", vio0_props()),
+        (None, Arch::Arm64) if acpi() => format!("virtio-net-pci,netdev=n0{props}"),
         (None, Arch::Arm64) => format!("virtio-net-device,netdev=n0{props}"),
     }
+}
+
+/// Whether this run's arm64 VMs boot `virt` with ACPI (`--acpi`).
+pub(crate) fn acpi() -> bool {
+    ACPI.get().is_some()
 }
 
 /// Whether this run's VMs restart on a guest reset (`--reboot`): QEMU then runs without
