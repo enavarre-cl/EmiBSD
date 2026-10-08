@@ -1430,7 +1430,15 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   through `interrupt-map` (`arm_intr_establish_fdt_imap`) and MSI/MSI-X through
   `msi-parent` to the GICv2m frame (`ampintcmsi`, attached below the GIC by
   `simplebus_attach` as in C; `arm_intr_establish_fdt_msi`), loading the doorbell into a
-  DMA map and programming the function with `arm64/pci_machdep.c`. The extents are absent
+  DMA map and programming the function with `arm64/pci_machdep.c`. On `virt,gic-version=3`
+  (M16f, `EMIBSD_GIC=3`, `smoke-gicv3`) the GIC is agintc(4) and the pcie node's `msi-map`
+  (ACPI: the IORT) names its ITS (`agintcmsi`), which translates each MSI into an LPI. The
+  ITS's tables and the LPI tables are uncached DMA memory, so `pmap_kenter_cache` cleans
+  the caches of those managed pages first (`cpu_idcache_wbinv_range`), as in C. agintc's
+  attach puts back the boot CPU's interrupt mask as it found it (ampintc's unmasks), so the
+  `qemu` self-tests that wait for an interrupt before the first context switch
+  (`selftest=uart`, `selftest=clock`) unmask it themselves through `machine::cpu::intr_enable`
+  (`intr_enable()`, new in the machine contract). The extents are absent
   there too, so BARs must be assigned by the firmware (EDK2 does). `virtio* at pci?` is
   configured on arm64 as in GENERIC. Memory BARs are mapped by amd64's `bus_space.c` memory half (`x86_mem_add_mapping`:
   `km_alloc(kv_any, kp_none)` and uncached `pmap_kenter_pa`, as the C does).

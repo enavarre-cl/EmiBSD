@@ -937,6 +937,16 @@ pub fn trap_bad_access() {
     kprintf!("selftest: trap FAILED: read {seen:#x} without a fault\n");
 }
 
+/// Unmasks interrupts on the boot CPU for a self-test that runs from `main` before the first
+/// context switch and waits for an interrupt: the CPU may still mask them there, since
+/// agintc(4)'s attach puts back the state it found, as in C (ampintc(4)'s enables them), and
+/// no thread trampoline has run yet (M16f).
+fn early_intr_enable() {
+    // SAFETY: `cpu_configure` has set up the interrupt controller, and `main` may be
+    // interrupted here (the level is `spl0`'s after `cpu_configure`).
+    unsafe { crate::machine::cpu::intr_enable() };
+}
+
 /// Opens the console's tty through the device switch, as `/dev/console` would, then reads
 /// it without blocking until the line discipline hands out a line (the receive interrupt
 /// fills `sc_ibuf`, the soft interrupt runs `ttyinput`) and echoes it: the M4 exit
@@ -956,6 +966,8 @@ pub fn uart_echo() {
         kprintf!("selftest: uart echo FAILED: open: {:?}\n", e);
         return;
     }
+    // The receive interrupt is the point of the test.
+    early_intr_enable();
     kprintf!("selftest: uart rx interrupt armed\n");
 
     let mut line = [0u8; 80];
@@ -1012,6 +1024,8 @@ fn clock_timeout_fired(_arg: *mut core::ffi::c_void) {
 /// timecounter saw about a second go by and that a `timeout(9)` armed for half a second fired:
 /// the M5 exit criterion "uptime ticks at hz".
 pub fn clock_check() {
+    // The clock interrupts are the point of the test.
+    early_intr_enable();
     let hz = HZ.load(Ordering::Relaxed);
     let start_ticks = ticks();
     let start_ns = nsecuptime();
