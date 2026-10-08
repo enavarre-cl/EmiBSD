@@ -51,6 +51,9 @@
 //! - [`init_static_msgbuf`] is ours: until `pmap` (M3) reserves physical pages that survive a
 //!   warm reboot, the message buffer is a static area in `.bss`, and both architectures hand it
 //!   to `initmsgbuf` from their early init.
+//! - `initmsgbuf`'s check and repair of the header is [`initmsgbuf_header`], which works on a
+//!   given overlay without installing it as `msgbufp`, so the host tests exercise it on a
+//!   private buffer: tests run in parallel and print through the global one.
 //! - `logsoftc` is reduced to its `sc_need_wakeup` flag, the only member `logwakeup` touches.
 //! - `initconsbuf` needs `malloc(9)` (M3) and reports the gap instead.
 //! - Nothing sets `syslogf` (that is `logioctl(LIOCSFD)`'s job, with the log device), so
@@ -155,6 +158,16 @@ pub unsafe fn initmsgbuf(buf: *mut u8, bufsize: usize) {
     // SAFETY: single writer, on the boot CPU, before any reader (see `msgbufp`).
     unsafe { MSGBUFP.write(Some(mbp)) };
 
+    initmsgbuf_header(mbp, bufsize);
+
+    // mark it as ready for use.
+    MSGBUFMAPPED.store(true, Ordering::Release);
+}
+
+/// The header half of [`initmsgbuf`]: keeps a sane header left by a previous boot, clears and
+/// initialises any other, and starts new output on a fresh line (see the module's
+/// deviations).
+fn initmsgbuf_header(mbp: &Msgbuf, bufsize: usize) {
     let new_bufs = (bufsize - Msgbuf::HEADER_SIZE) as i64;
     if mbp.magic() != MSG_MAGIC
         || mbp.bufs() != new_bufs
@@ -175,9 +188,6 @@ pub unsafe fn initmsgbuf(buf: *mut u8, bufsize: usize) {
     if mbp.bufx() > 0 && mbp.bufc()[(mbp.bufx() - 1) as usize].get() != b'\n' {
         msgbuf_putchar_locked(mbp, b'\n');
     }
-
-    // mark it as ready for use.
-    MSGBUFMAPPED.store(true, Ordering::Release);
 }
 
 /// Hands the static buffer area to [`initmsgbuf`] (see the module's deviations).
@@ -627,25 +637,38 @@ mod tests {
 
     #[test]
     fn initmsgbuf_keeps_a_sane_header_and_resets_a_bad_one() {
+        // A private buffer: the global one is shared with every other test, which may print
+        // while this one runs.
         let mut area = Area([0xff; 64]);
         let p = area.0.as_mut_ptr();
         // SAFETY: the area outlives the test and is used only through the overlay.
-        unsafe { initmsgbuf(p, 64) };
-        let mbp = msgbufp().unwrap();
+        let mbp = unsafe { Msgbuf::from_raw(p, 64) };
+        initmsgbuf_header(mbp, 64);
         assert_eq!(mbp.magic(), MSG_MAGIC);
         assert_eq!(mbp.bufs(), 24);
         assert_eq!(mbp.bufx(), 0);
-        assert!(msgbufmapped());
         msgbuf_putchar(mbp, b'a');
-        // SAFETY: as above; a second init over the same bytes sees a valid header.
-        unsafe { initmsgbuf(p, 64) };
-        let mbp = msgbufp().unwrap();
+        // A second init over the same bytes sees a valid header.
+        initmsgbuf_header(mbp, 64);
         assert_eq!(mbp.bufx(), 2, "a newline was appended after the kept 'a'");
         assert_eq!(mbp.bufc()[1].get(), b'\n');
-        // SAFETY: as above; too small an area is refused.
-        unsafe { initmsgbuf(p, 8) };
+        // A header that disagrees with the size is reset.
+        mbp.set_bufs(23);
+        initmsgbuf_header(mbp, 64);
+        assert_eq!((mbp.bufs(), mbp.bufx()), (24, 0));
+    }
+
+    #[test]
+    fn initmsgbuf_installs_the_static_buffer() {
+        // The global buffer: only what concurrent printing cannot change is checked (its
+        // size and that it is mapped), and the small area below is refused before anything
+        // is installed.
+        let mut area = Area([0; 64]);
+        // SAFETY: too small: initmsgbuf returns before touching or installing the area.
+        unsafe { initmsgbuf(area.0.as_mut_ptr(), 8) };
         logwakeup();
         init_static_msgbuf();
+        assert!(msgbufmapped());
         assert_eq!(
             msgbufp().unwrap().bufs(),
             (MSGBUFSIZE - Msgbuf::HEADER_SIZE) as i64
