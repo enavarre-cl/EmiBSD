@@ -35,7 +35,9 @@ Four tiers. Every change lands with the tier it belongs to.
    afresh from the tree, install to a fresh disk and boot the installed system; so it needs
    `just userland` and `just comp`. Two CPUs make the races rarer and nothing else checks the
    installer, so `ci-full` is mandatory before a milestone is marked met, and its result (rc
-   and wall time) goes in the milestone's closing commit.
+   and wall time) goes in the milestone's closing commit. A milestone split into lettered
+   sub-milestones (M16a..M16g, the user's decision of 2026-10-08) runs it once, at the
+   whole milestone's close; each sub-milestone closes with `just ci`.
    `just smoke` runs the recipes of the justfile's `smokes` list in parallel, `JOBS` at a time
    (default 4; `cargo xtask smoke-all`, docs/ARCHITECTURE.md "Parallel smokes"). So a smoke
    recipe: is added to `smokes`; builds nothing in its body (what it boots is built by its
