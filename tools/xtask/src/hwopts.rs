@@ -46,6 +46,18 @@
 //!   (the firmware numbers their buses). The images are in the run directory, 64 MiB of
 //!   zeroes made afresh each run ([`PPB_DISK_BYTES`]). They go after `--pci-serial`
 //!   ([`add_devices`]), so no other PCI slot moves.
+//! - `--machine pc` (`qemu`, `smoke`, M16e, `smoke-iic`): amd64's QEMU machine is i440fx's `pc`
+//!   (PIIX3 and PIIX4: the ISA bridge at 00:01.0, the IDE controller at 00:01.1, the power
+//!   management function with the SMBus at 00:01.3, the standard VGA at 00:02.0) instead of
+//!   `q35`, so piixpm(4) has hardware to attach to. The boot image is on an `ich9-ahci`
+//!   controller added after every other device ([`pc_boot_disk_args`]: q35 has one built in,
+//!   and the firmware reads `pc`'s PIIX3 IDE channel with programmed I/O, which is minutes for
+//!   the 170 MB Limine loads), so the kernel sees it as on q35 (`ahci0`, `sd1`); the PIIX3 IDE
+//!   controller is left free. The NICs, the NVMe controller and the virtio-blk disks are plain
+//!   PCI devices on the root bus, and `q35` stays the default. amd64 only (arm64 has only `virt`); `pc` has no
+//!   built-in AHCI controller and its PCI bus is not PCI Express, so `--ahci` and
+//!   `--pci-bridges` (a `pcie-root-port`) are refused with it. An IDE agent may use the same
+//!   option ([`amd64_machine`]).
 //! - `--reboot` (`qemu`, `smoke`, M13): QEMU runs without `-no-reboot`, so a guest reset
 //!   restarts the machine (EDK2, Limine and the kernel again; the EDK2 variable store is the
 //!   run's copy) instead of ending QEMU with status 0. `smoke-power` boots, runs `reboot`
@@ -261,6 +273,45 @@ static GRID_LINE: Mutex<Option<String>> = Mutex::new(None);
 /// `--vio-mq`: vio0's virtio-net offers multiqueue (`mq=on`, set once by `main`).
 static VIO_MQ: OnceLock<()> = OnceLock::new();
 
+/// `--machine pc`: amd64 VMs run on i440fx's `pc`, not `q35` (set once by `main`).
+static MACHINE_PC: OnceLock<()> = OnceLock::new();
+
+/// Whether this run's amd64 VMs are i440fx's `pc` (`--machine pc`).
+pub(crate) fn machine_pc() -> bool {
+    MACHINE_PC.get().is_some()
+}
+
+/// The QEMU machine of this run's amd64 VMs: `q35`, or `pc` with `--machine pc`.
+pub(crate) fn amd64_machine() -> &'static str {
+    if machine_pc() { "pc" } else { "q35" }
+}
+
+/// Reads `--machine` from `args`: whether it asks for `pc`. Only `pc` is a choice (`q35` is
+/// the default, so it is not named); it is amd64 only, and the options that need `q35`'s
+/// hardware are refused with it.
+fn machine_opt(args: &[&str]) -> Result<bool> {
+    let Some(machine) = opt_path(args, "--machine")? else {
+        return Ok(false);
+    };
+    if machine != "pc" {
+        return Err(format!("--machine {machine}: expected pc (q35 is the default)").into());
+    }
+    if opt_path(args, "--arch")? == Some("arm64") {
+        return Err("--machine pc: amd64 only (arm64 has only the virt machine)".into());
+    }
+    if args.contains(&"--ahci") {
+        return Err(
+            "--machine pc: not with --ahci (only q35 has a built-in AHCI controller)".into(),
+        );
+    }
+    if args.contains(&"--pci-bridges") {
+        return Err(
+            "--machine pc: not with --pci-bridges (pc's bus has no PCI Express root ports)".into(),
+        );
+    }
+    Ok(true)
+}
+
 /// The models `--nic` takes: QEMU's emulated Intel PRO/1000 controllers, which em(4) drives,
 /// its Realtek 8139C+, which re(4) drives, and its VMware VMXNET3, which vmx(4) drives.
 const NIC_MODELS: &[&str] = &["e1000", "e1000e", "igb", "rtl8139", "vmxnet3"];
@@ -275,8 +326,11 @@ static ACPI: OnceLock<()> = OnceLock::new();
 
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
 /// `--pci-serial`, `--expect-pci-serial`, `--pci-bridges`, `--reboot`, `--vio-mq`, `--nic`,
-/// `--acpi`).
+/// `--acpi`, `--machine`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
+    if machine_opt(args)? {
+        let _ = MACHINE_PC.set(());
+    }
     if let Some(model) = opt_path(args, "--nic")? {
         if !NIC_MODELS.contains(&model) {
             return Err(format!("--nic {model}: expected one of {}", NIC_MODELS.join(", ")).into());
@@ -676,7 +730,24 @@ pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) -> Result<
         }
         cmd.args(pci_bridges_args(&rp, &br));
     }
+    if machine_pc() {
+        cmd.args(pc_boot_disk_args());
+    }
     Ok(())
+}
+
+/// The QEMU arguments of `--machine pc`'s boot disk (the image the `-drive` with id `hd0`
+/// names): an `ich9-ahci` controller with it on port 0. `q35` has the AHCI controller built in
+/// (`ide.0`); `pc`'s PIIX3 IDE channel is read by the firmware with programmed I/O, which makes
+/// the boot of the 170 MB of kernel and ramdisk Limine loads from it take minutes. The
+/// controller goes last, so no other PCI slot moves.
+fn pc_boot_disk_args() -> Vec<String> {
+    vec![
+        "-device".into(),
+        "ich9-ahci,id=bootahci".into(),
+        "-device".into(),
+        "ide-hd,drive=hd0,bus=bootahci.0,bootindex=0".into(),
+    ]
 }
 
 /// Makes `image` afresh: `bytes` of zeroes (a sparse file).
@@ -1231,6 +1302,52 @@ pub(crate) fn after_smoke() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn machine_pc_boots_from_ahci_not_the_piix_ide_channel() {
+        let a = pc_boot_disk_args();
+        assert_eq!(
+            a,
+            [
+                "-device",
+                "ich9-ahci,id=bootahci",
+                "-device",
+                "ide-hd,drive=hd0,bus=bootahci.0,bootindex=0"
+            ]
+        );
+        assert!(!machine_pc());
+    }
+
+    #[test]
+    fn machine_pc_is_amd64_only_and_refuses_what_needs_q35() {
+        let a = |extra: &[&'static str]| {
+            let mut v = vec!["smoke", "--arch", "amd64", "--machine", "pc"];
+            v.extend_from_slice(extra);
+            machine_opt(&v)
+        };
+        assert!(matches!(a(&[]), Ok(true)));
+        assert!(matches!(
+            machine_opt(&["smoke", "--arch", "amd64"]),
+            Ok(false)
+        ));
+        let err = |r: Result<bool>| r.map(|_| ()).unwrap_err().to_string();
+        assert!(
+            err(machine_opt(&[
+                "smoke",
+                "--arch",
+                "arm64",
+                "--machine",
+                "pc"
+            ]))
+            .contains("amd64 only")
+        );
+        assert!(err(machine_opt(&["smoke", "--machine", "q35"])).contains("expected pc"));
+        assert!(err(machine_opt(&["smoke", "--machine"])).contains("expected a path"));
+        assert!(err(a(&["--ahci", "x.img"])).contains("--ahci"));
+        assert!(err(a(&["--pci-bridges"])).contains("--pci-bridges"));
+        // Without the option the machine is q35.
+        assert_eq!(amd64_machine(), "q35");
+    }
 
     #[test]
     fn monitor_sock_fits_sun_path() {

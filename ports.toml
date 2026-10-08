@@ -11297,7 +11297,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "1419196ccf1acfae91cf3fe16ec7a6e011da71ed"
 deps = ["sys/dev/pci/ichreg.h", "sys/dev/i2c/i2c.c"]
-notes = "M16e: the whole file: ichiic_ids[] (60), ichiic_match, ichiic_attach (SMBus disabled / SMI / interrupt / polling, rw lock, iic bus via config_found), acquire/release_bus, ichiic_i2c_exec (idle wait, polled or interrupt-driven completion with the 1 s tsleep, kill on timeout), ichiic_intr; cold and sc_poll paths both ported; buf is cleared when exec returns so a late interrupt cannot write into it; ichiic* at pci? and iic* at ichiic? in amd64's ioconf (amd64 GENERIC only); host tests (control byte, id table); smoke-iic q35"
+notes = "M16e: the whole file: ichiic_ids[] (60), ichiic_match, ichiic_attach (SMBus disabled / SMI / interrupt / polling, rw lock, iic bus via config_found), acquire/release_bus, ichiic_i2c_exec (idle wait, polled or interrupt-driven completion with the 1 s tsleep, kill on timeout), ichiic_intr; cold and sc_poll paths both ported; a host controller the firmware left disabled (EDK2 does; a BIOS enables it) is enabled before giving up with 'SMBus disabled' (deviation, as FreeBSD ichsmb and Linux i801 do); buf is cleared when exec returns so a late interrupt cannot write into it; ichiic* at pci? and iic* at ichiic? in amd64's ioconf (amd64 GENERIC only); host tests (control byte, id table); smoke-iic q35"
 
 [[file]]
 c = "sys/arch/arm64/dev/agintc.c"

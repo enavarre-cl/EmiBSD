@@ -1456,6 +1456,22 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   the `PCI_IO_START`/`PCI_MEM_START` bounds are `machine::pci_machdep` items (0 and ppb.c's
   defaults where the arch's header sets none). Memory BARs are mapped by amd64's `bus_space.c` memory half (`x86_mem_add_mapping`:
   `km_alloc(kv_any, kp_none)` and uncached `pmap_kenter_pa`, as the C does).
+- i2c and the SMBus controllers (M16e, `dev/i2c/`, `ichiic.c`, `piixpm.c`, amd64): the
+  `i2c_controller` is `I2cController`, a struct of `Cell<Option<fn>>` hooks taking the
+  controller's cookie (the softc is made zero-filled and filled in by the attach), `i2c_tag_t`
+  a `&'static` to it; `ic_exec`'s `(pointer, length)` pairs are slices. The scan's probe state
+  (`probe_ic`, `probe_addr`, `probe_val[]`, `skip_fc`: file statics in `i2c_scan.c`) is a
+  `Probe` passed down, which is what lets the host tests run the identification rules on fake
+  register files. Both controllers clear the transfer's buffer pointer when an exec call
+  returns, so a late interrupt after a timeout cannot write into a buffer that is gone. EDK2
+  leaves the ICH SMBus host controller disabled (a BIOS enables it), where `ichiic_attach`
+  only reports `SMBus disabled`; it enables it first, as FreeBSD's `ichsmb(4)` and Linux's
+  `i2c-i801` do, because otherwise the controller never answers under the firmware this kernel
+  boots from. QEMU's SPD EEPROMs are blank (the memory type, register 2, reads 0), so
+  `iic_probe_eeprom` names none and the scan prints nothing on either machine: `smoke-iic`
+  checks the attach lines and that no transfer fails. `--machine pc` (xtask, `hwopts.rs`) runs
+  i440fx's `pc` for piixpm(4), with the boot image on an `ich9-ahci` instead of the PIIX3 IDE
+  channel (EDK2 reads that one with programmed I/O, minutes for the boot files).
 - virtio (M7b): `dev/pv/virtio.c` and its headers are OpenBSD's, with both transports:
   `virtio_pci.c` (`virtio* at pci?`, amd64; QEMU's transitional virtio-net-pci attaches with
   the virtio 1.0 capabilities) and `virtio_mmio.c` (`virtio* at fdt?`, arm64; QEMU `virt`'s

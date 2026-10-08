@@ -600,12 +600,17 @@ pub(crate) fn qemu_command(
     let nic0 = vm.map_or(String::new(), |v| format!(",mac={}", v.user_mac));
     match arch {
         Arch::Amd64 => {
-            cmd.args(["-M", "q35", "-cpu", "qemu64"]);
+            // M16e (hwopts.rs): `--machine pc` runs i440fx's `pc` instead of `q35`.
+            cmd.args(["-M", crate::hwopts::amd64_machine(), "-cpu", "qemu64"]);
             cmd.arg("-drive").arg(format!(
                 "if=none,format=raw,file={},id=hd0",
                 image.display()
             ));
-            cmd.args(["-device", "ide-hd,drive=hd0,bus=ide.0,bootindex=0"]);
+            // M16e (hwopts.rs): on `--machine pc` the boot image goes on an AHCI controller
+            // added after every other device (`add_devices`), not on the PIIX3 IDE channel.
+            if !crate::hwopts::machine_pc() {
+                cmd.args(["-device", "ide-hd,drive=hd0,bus=ide.0,bootindex=0"]);
+            }
             cmd.args(["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]);
             // M13 (hwopts.rs): `--nic` puts an em(4) NIC in vio0's place.
             cmd.args(["-device", &crate::hwopts::user_nic(arch, &nic0)]);

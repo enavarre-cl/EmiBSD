@@ -31,6 +31,13 @@
 //! whose scan (`i2c_scan.rs`) identifies what answers.
 //!
 //! ## Deviations
+//! - A host controller the firmware left disabled (`ICH_SMB_HOSTC_HSTEN` clear in the host
+//!   configuration register) is enabled by the attach before it gives up with `SMBus
+//!   disabled`; the C only reports it. A BIOS enables the controller (SeaBIOS does on QEMU's
+//!   q35) but UEFI firmware (EDK2/OVMF, which this kernel boots from) does not, and without it
+//!   the controller never answers, so the scan cannot run. FreeBSD's ichsmb(4) and Linux's
+//!   i2c-i801 enable it the same way. Whether a real UEFI machine's disabled controller (a
+//!   vendor can disable it on purpose) should be enabled is for M17 to decide.
 //! - The attach arguments' `pa_iot` is not used: `pci_mapreg_map` returns the tag and handle.
 //! - `sc_i2c_xfer.error` is an atomic (the C's `volatile int`, written by the interrupt
 //!   handler); `buf` is cleared when an exec call returns, and the interrupt handler reads
@@ -92,7 +99,7 @@ use crate::machine::bus::{BusSpaceHandle, BusSpaceTag, bus_space_read_1, bus_spa
 use crate::machine::cpu::delay;
 use crate::machine::intr::IPL_BIO;
 use crate::machine::pci_machdep::{
-    pci_conf_read, pci_intr_establish, pci_intr_map, pci_intr_string,
+    pci_conf_read, pci_conf_write, pci_intr_establish, pci_intr_map, pci_intr_string,
 };
 use crate::sys::device::{CfMatch, Cfattach, Cfdriver, DV_DULL, Device, Softc};
 use crate::sys::param::PRIBIO;
@@ -279,7 +286,19 @@ pub fn ichiic_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void)
     let cookie = ptr::from_ref(sc).cast_mut().cast::<c_void>();
 
     // Read configuration
-    let conf = pci_conf_read(pa.pa_pc, pa.pa_tag, ICH_SMB_HOSTC);
+    let mut conf = pci_conf_read(pa.pa_pc, pa.pa_tag, ICH_SMB_HOSTC);
+
+    // Deviation (see the module docs): UEFI firmware leaves the host controller disabled, where
+    // a BIOS (SeaBIOS on QEMU's q35) enables it.
+    if conf & ICH_SMB_HOSTC_HSTEN == 0 {
+        pci_conf_write(
+            pa.pa_pc,
+            pa.pa_tag,
+            ICH_SMB_HOSTC,
+            conf | ICH_SMB_HOSTC_HSTEN,
+        );
+        conf = pci_conf_read(pa.pa_pc, pa.pa_tag, ICH_SMB_HOSTC);
+    }
 
     if conf & ICH_SMB_HOSTC_HSTEN == 0 {
         printf(format_args!(": SMBus disabled\n"));
