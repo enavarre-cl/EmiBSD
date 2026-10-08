@@ -773,6 +773,11 @@ impl PciMachdep for Machine {
     type PciIntrHandle = include::pci_machdep::PciIntrHandle;
 
     const PCI_MSI_PER_BRIDGE: bool = true;
+    const PCI_IO_START: u64 = include::pci_machdep::PCI_IO_START;
+    const PCI_IO_END: u64 = include::pci_machdep::PCI_IO_END;
+    const PCI_MEM_START: u64 = include::pci_machdep::PCI_MEM_START;
+    /// `ppb.c`'s default: amd64's `pci_machdep.h` sets no `PCI_MEM_END`.
+    const PCI_MEM_END: u64 = 0xffff_ffff;
 
     fn pci_attach_hook(parent: &Device, self_: &Device, pba: &PcibusAttachArgs) {
         pci::pci_machdep::pci_attach_hook(parent, self_, pba)
@@ -796,6 +801,11 @@ impl PciMachdep for Machine {
 
     fn pci_decompose_tag(pc: Self::PciChipsetTag, tag: Self::Pcitag) -> (i32, i32, i32) {
         pci::pci_machdep::pci_decompose_tag(pc, tag)
+    }
+
+    /// No device tree on amd64 (`__HAVE_FDT` is not defined).
+    fn pcitag_node(_tag: Self::Pcitag) -> i32 {
+        0
     }
 
     fn pci_conf_size(pc: Self::PciChipsetTag, tag: Self::Pcitag) -> i32 {

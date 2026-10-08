@@ -21,6 +21,7 @@
 //! `vmx* at pci?` (M13); `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13);
 //! arm64 ACPI (M14): `acpi0 at mainbus?` (the `acpi_fdt` attachment), `acpimcfg* at acpi?`,
 //! `acpiiort* at acpi?`, `acpipci* at acpi?`, `pci* at acpipci?` and `pluart* at acpi?`;
+//! `ppb* at pci?` and `pci* at ppb?` (M16e);
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
@@ -28,7 +29,7 @@
 //! `simplebus` and `ampintc` (`device ampintc: fdt`, whose GICv2m frames `ampintcmsi`
 //! attach below it); `agintc`, which also carries it, is not ported. Every other GENERIC
 //! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*`,
-//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `azalia*`, `ahci*`, `nvme*`
+//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `azalia*`, `ahci*`, `nvme*`, `ppb*`,
 //! `em*`, `re*` and `vmx*`, the PHYs at `mii?` but `rgephy*`, `rlphy*` and `ukphy*`, the other devices at `acpi?` (`acpiac*`, `acpibtn*`, `acpicpu*`, `ahci*`, `com*`, `xhci*`,
 //! ...) and `smmu* at acpiiort?`, `ahci*` at `fdt?`, the other host
 //! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
@@ -74,6 +75,7 @@ use crate::dev::pci::if_re_pci::RE_PCI_CA;
 use crate::dev::pci::if_vmx::{VMX_CA, VMX_CD};
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
+use crate::dev::pci::ppb::{PPB_CA, PPB_CD};
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
 use crate::dev::pci::xhci_pci::XHCI_PCI_CA;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
@@ -131,8 +133,12 @@ const PV_PCIECAM: &[i16] = &[14];
 /// {[bus = -1]}`).
 const LOC_PCIBUS_UNK: &[i64] = &[-1];
 
-/// `pv[]` for children of `pci*` (`cfdata[15]` at pciecam, `cfdata[46]` at acpipci).
-const PV_PCI: &[i16] = &[15, 46];
+/// `pv[]` for children of `pci*` (`cfdata[15]` at pciecam, `cfdata[46]` at acpipci,
+/// `cfdata[48]` at ppb).
+const PV_PCI: &[i16] = &[15, 46, 48];
+
+/// `pv[]` for children of `ppb*` (`cfdata[47]`) through the `pcibus` attribute.
+const PV_PPB: &[i16] = &[47];
 
 /// `pv[]` for children of `acpi0` (`cfdata[41]`).
 const PV_ACPI: &[i16] = &[41];
@@ -229,9 +235,9 @@ const NFREE: usize = 8;
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    48
+    50
 } else {
-    47
+    49
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -772,7 +778,31 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCIBUS,
         0,
     ),
-    // 47: cpu* at mainbus? (GENERIC.MP)
+    // 47: ppb* at pci?
+    Cfdata::new(
+        &PPB_CA,
+        &PPB_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 48: pci* at ppb?
+    Cfdata::new(
+        &PCI_CA,
+        &PCI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCIBUS_UNK,
+        0,
+        PV_PPB,
+        LN_PCIBUS,
+        0,
+    ),
+    // 49: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
     // The free slots.

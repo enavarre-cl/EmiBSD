@@ -1446,7 +1446,15 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   `simplebus_attach` as in C; `arm_intr_establish_fdt_msi`), loading the doorbell into a
   DMA map and programming the function with `arm64/pci_machdep.c`. The extents are absent
   there too, so BARs must be assigned by the firmware (EDK2 does). `virtio* at pci?` is
-  configured on arm64 as in GENERIC. Memory BARs are mapped by amd64's `bus_space.c` memory half (`x86_mem_add_mapping`:
+  configured on arm64 as in GENERIC. PCI-PCI bridges (M16e, `ppb.c`, both archs): with no
+  extents, a bridge needs its bus numbers and windows from the firmware too (EDK2 and OVMF
+  number QEMU's `pcie-root-port` and `pci-bridge`); `ppb_alloc_busrange` and
+  `ppb_alloc_resources` are ported over the extents they are given (`ParentExtents`), all
+  `None`. The bridge's four INTx handles reach the bus behind it as `pba_bridgeih`, a slice
+  of `Option`s: `None` is the C's unmapped handle (`line = -1` on amd64, `PCI_NONE` on arm64),
+  so generic code needs no arch encoding of failure. `PCITAG_NODE` (the FDT `bus-range`) and
+  the `PCI_IO_START`/`PCI_MEM_START` bounds are `machine::pci_machdep` items (0 and ppb.c's
+  defaults where the arch's header sets none). Memory BARs are mapped by amd64's `bus_space.c` memory half (`x86_mem_add_mapping`:
   `km_alloc(kv_any, kp_none)` and uncached `pmap_kenter_pa`, as the C does).
 - virtio (M7b): `dev/pv/virtio.c` and its headers are OpenBSD's, with both transports:
   `virtio_pci.c` (`virtio* at pci?`, amd64; QEMU's transitional virtio-net-pci attaches with

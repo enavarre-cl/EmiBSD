@@ -11306,8 +11306,10 @@ notes = "M16: smmu at acpi (IORT)"
 [[file]]
 c = "sys/dev/pci/ppb.c"
 rust = "sys/dev/pci/ppb.rs"
-status = "todo"
-notes = "M16: ppb(4) PCI-PCI bridges; criterion: devices behind QEMU's pcie-root-port and pci-bridge attach and work, both archs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "49edbc517b31f47efe6004e06b8c9c7965db78af"
+notes = "M16e: the whole file (ppbmatch, ppbattach with PCIe hot plug, ppbdetach, ppbactivate, ppb_alloc_busrange with the FDT bus-range, ppb_alloc_resources, ppb_intr, the hotplug tasks, ppbprint); ppb* at pci? and pci* at ppb? in both ioconfs; the parent's extents (pa_*ex) are NULL in this kernel (pci_init_extents unported, pcivar has no extent members), so ppb_alloc_busrange is never called and ppb_alloc_resources returns at its pa_memex test (both ported over a ParentExtents argument, all None); the bridge's own extents are made but cannot reach the child bus; sc_ih holds Option handles (pba_bridgeih is a slice of Option, None the C's line -1 / PCI_NONE); pins written into a copy of the attach args; ppb_hotplug_insert returns on a NULL sc_psc; new machine contract: pcitag_node, PCI_IO/MEM_START/END; host tests (match, window registers); smoke-ppb both archs (pcie-root-port and pci-bridge disks, xtask --pci-bridges)"
 
 [[file]]
 c = "sys/dev/ic/ufshcireg.h"

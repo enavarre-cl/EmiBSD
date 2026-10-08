@@ -50,7 +50,9 @@
 //!   they are always NULL, and every C test of them takes the NULL branch (commented where
 //!   it happens).
 //! - `pba_bridgetag`/`pa_bridgetag` are `Option<&'static Pcitag>` and the bridge's
-//!   interrupt handles (`pba_bridgeih`, an array of four) an `Option` of a slice.
+//!   interrupt handles (`pba_bridgeih`, an array of four) an `Option` of a slice of
+//!   `Option`s: `None` is a pin `pci_intr_map` could not map, which the C marks inside the
+//!   handle (`line = -1` on amd64, `ih_type = PCI_NONE` on arm64).
 //! - The locator macros (`cf->pcibuscf_bus`, `cf->pcicf_dev`, `cf->pcicf_function`) are
 //!   functions of the `cfdata`; a missing locator reads as its wildcard.
 //! - [`PciSoftc`] holds its members in `Cell`s (all-zero valid, `config_make_softc`
@@ -112,7 +114,7 @@ pub struct PcibusAttachArgs {
     /// we assume we are a root bus.
     pub pba_bridgetag: Option<&'static Pcitag>,
     /// `pba_bridgeih`: the parent bridge's interrupt handles.
-    pub pba_bridgeih: Option<&'static [PciIntrHandle]>,
+    pub pba_bridgeih: Option<&'static [Option<PciIntrHandle>]>,
     /// `pba_intrswiz`: how to swizzle pins (secondary busses only).
     pub pba_intrswiz: u32,
     /// `pba_intrtag`: intr. appears to come from here (secondary busses only).
@@ -150,7 +152,7 @@ pub struct PciAttachArgs {
     /// `pa_bridgetag`.
     pub pa_bridgetag: Option<&'static Pcitag>,
     /// `pa_bridgeih`.
-    pub pa_bridgeih: Option<&'static [PciIntrHandle]>,
+    pub pa_bridgeih: Option<&'static [Option<PciIntrHandle>]>,
     /// `pa_intrswiz`: how to swizzle pins if ppb.
     pub pa_intrswiz: u32,
     /// `pa_intrtag`: intr. appears to come from here.
@@ -223,7 +225,7 @@ pub struct PciSoftc {
     /// `sc_bridgetag`.
     pub sc_bridgetag: Cell<Option<&'static Pcitag>>,
     /// `sc_bridgeih`.
-    pub sc_bridgeih: Cell<Option<&'static [PciIntrHandle]>>,
+    pub sc_bridgeih: Cell<Option<&'static [Option<PciIntrHandle>]>>,
     /// `sc_intrswiz`.
     pub sc_intrswiz: Cell<u32>,
     /// `sc_intrtag`.

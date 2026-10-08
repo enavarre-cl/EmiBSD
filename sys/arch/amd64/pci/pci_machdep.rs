@@ -783,6 +783,7 @@ pub fn pci_intr_map(pa: &PciAttachArgs) -> Option<PciIntrHandle> {
             if let Some(bih) = pa
                 .pa_bridgeih
                 .and_then(|b| b.get((swizpin - 1) as usize))
+                .and_then(Option::as_ref)
                 .filter(|bih| bih.line != -1)
             {
                 ih.line = bih.line | line;
