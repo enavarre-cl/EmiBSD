@@ -1,5 +1,6 @@
 /* <CODE> */
-//! M12's QEMU devices: USB through `qemu-xhci` and audio through Intel HDA or AC97.
+//! M12's QEMU devices: USB through `qemu-xhci` and audio through Intel HDA or AC97, and M16b's
+//! USB pointers and smart card reader.
 //!
 //! `smoke` and `qemu` take, besides the flags every boot has:
 //! - `--usb`: a `qemu-xhci` controller with a `usb-storage` stick and a `usb-kbd` on its
@@ -8,6 +9,13 @@
 //!   0x0c, what `newfs_msdos` makes on a real stick) holding [`STICK_NOTE`] and [`STICK_BIG`],
 //!   the latter [`BIG_LEN`] bytes of a fixed pseudo-random sequence whose POSIX `cksum(1)` is
 //!   printed when the image is made. The kernel spoofs the partition as `i` (`spoofmbr`).
+//! - `--usb-mouse`, `--usb-tablet`, `--usb-wacom-tablet` and `--usb-ccid` (M16b; each repeats
+//!   nothing and combines with the others and with `--usb`): QEMU's `usb-mouse` (relative),
+//!   `usb-tablet` (absolute) and `usb-wacom-tablet` (a PenPartner) pointers and its `usb-ccid`
+//!   smart card reader on the `qemu-xhci` bus (`ums(4)`, `uwacom(4)`, `ugen(4)`); any of them
+//!   brings the controller, with the stick and the `usb-kbd` only if `--usb` is also given. The
+//!   pointers register with the guest in this order (`mouse_set N` in the monitor picks the
+//!   one `mouse_move` and `mouse_button` drive; `--monitor-after`, hwopts.rs).
 //! - `--audio hda` or `--audio ac97`: QEMU's `wav` audio backend writes what the guest plays
 //!   to `<image>.wav` (removed first), through `intel-hda` + `hda-output` (`azalia(4)`) or
 //!   `AC97` (`auich(4)`).
@@ -68,6 +76,14 @@ pub(crate) enum Audio {
 pub(crate) struct Devices {
     /// `--usb`.
     pub usb: bool,
+    /// `--usb-mouse`.
+    pub usb_mouse: bool,
+    /// `--usb-tablet`.
+    pub usb_tablet: bool,
+    /// `--usb-wacom-tablet`.
+    pub usb_wacom: bool,
+    /// `--usb-ccid`.
+    pub usb_ccid: bool,
     /// `--audio hda|ac97`.
     pub audio: Option<Audio>,
     /// `--expect-tone`.
@@ -78,7 +94,7 @@ pub(crate) struct Devices {
 
 static DEVICES: OnceLock<Devices> = OnceLock::new();
 
-/// Parses `--usb`, `--audio <hda|ac97>`, `--speakers` and `--expect-tone` and records them
+/// Parses `--usb`, `--usb-mouse`, `--usb-tablet`, `--usb-wacom-tablet`, `--usb-ccid`, `--audio <hda|ac97>`, `--speakers` and `--expect-tone` and records them
 /// for the run.
 pub(crate) fn set_from_args(args: &[&str]) -> Result<()> {
     let _ = DEVICES.set(parse(args)?);
@@ -108,6 +124,10 @@ fn parse(args: &[&str]) -> Result<Devices> {
     }
     Ok(Devices {
         usb: args.contains(&"--usb"),
+        usb_mouse: args.contains(&"--usb-mouse"),
+        usb_tablet: args.contains(&"--usb-tablet"),
+        usb_wacom: args.contains(&"--usb-wacom-tablet"),
+        usb_ccid: args.contains(&"--usb-ccid"),
         audio,
         expect_tone,
         speakers,
@@ -133,12 +153,14 @@ pub(crate) fn wav_path(image: &Path) -> PathBuf {
 pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
     let d = devices();
     let mut args = Vec::new();
+    let extras = d.usb_mouse || d.usb_tablet || d.usb_wacom || d.usb_ccid;
+    if d.usb || extras {
+        args.extend(["-device".to_string(), "qemu-xhci,id=xhci".to_string()]);
+    }
     if d.usb {
         let stick = stick_path(image);
         make_stick(&stick)?;
         args.extend([
-            "-device".to_string(),
-            "qemu-xhci,id=xhci".to_string(),
             "-drive".to_string(),
             format!("if=none,id=usbstick,format=raw,file={}", stick.display()),
             "-device".to_string(),
@@ -146,6 +168,16 @@ pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
             "-device".to_string(),
             "usb-kbd,bus=xhci.0".to_string(),
         ]);
+    }
+    for (on, dev) in [
+        (d.usb_mouse, "usb-mouse"),
+        (d.usb_tablet, "usb-tablet"),
+        (d.usb_wacom, "usb-wacom-tablet"),
+        (d.usb_ccid, "usb-ccid"),
+    ] {
+        if on {
+            args.extend(["-device".to_string(), format!("{dev},bus=xhci.0")]);
+        }
     }
     if let Some(audio) = d.audio {
         args.push("-audiodev".to_string());
@@ -365,6 +397,14 @@ mod tests {
         // `printf 123456789 | cksum` and `cksum </dev/null`.
         assert_eq!(posix_cksum(b"123456789"), 930_766_865);
         assert_eq!(posix_cksum(b""), 4_294_967_295);
+    }
+
+    #[test]
+    fn usb_pointer_options() {
+        let d = parse(&["--usb-mouse", "--usb-ccid"]).unwrap();
+        assert!(d.usb_mouse && d.usb_ccid && !d.usb_tablet && !d.usb_wacom && !d.usb);
+        let d = parse(&["--usb-tablet", "--usb-wacom-tablet", "--usb"]).unwrap();
+        assert!(d.usb_tablet && d.usb_wacom && d.usb && !d.usb_mouse);
     }
 
     #[test]

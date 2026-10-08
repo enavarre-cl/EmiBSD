@@ -120,7 +120,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-powerbtn"
+    "smoke-powerbtn smoke-mouse"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2263,6 +2263,40 @@ smoke-kbd: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featur
         --expect 'wsdisplay0 at efifb0 mux 1'
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{kbd_check}} \
         --expect 'wsdisplay0 at simplefb0 mux 1'
+
+# M16b: USB pointers, both archs. QEMU's `usb-mouse`, `usb-tablet` and `usb-wacom-tablet` on a
+# `qemu-xhci` (`--usb-mouse --usb-tablet --usb-wacom-tablet`, devices.rs): uhidev(4) takes each,
+# ums(4) attaches to all three (`uwacom(4)` matches only the four Wacom products of its table,
+# not QEMU's PenPartner, product 0x0000) and offers a wsmouse child on mux 0. After login the
+# shell reads two events (dd(1), 24 bytes each) from /dev/wsmouse0, 1 and 2 at once, and
+# QEMU's monitor (`--monitor-after`, hwopts.rs) injects the pointer events: `mouse_set N` picks
+# the device `info mice` numbers N, `mouse_move` moves the relative usb-mouse (a delta and the
+# sync event), `mouse_button` presses and releases the tablet's button (QEMU's monitor cannot
+# move an absolute device: the button is the event; the report becomes a button down and a
+# sync event). The PenPartner sends its reports without the report ID byte its descriptor
+# declares (QEMU's HID mode), so the first byte (the buttons) selects the report ID: with the
+# left button down it is 1, ums2's, and the move that follows makes it a report of three
+# bytes. wsmouse2 gets its two events from those. The monitor's numbering follows the
+# machine: on amd64 the PS/2 mouse is #2 and the HID ones #3, #4 and #5; arm64 has #1, #2
+# and #3.
+mouse_dd := 'for i in 0 1 2; do (n=$(dd if=/dev/wsmouse$i bs=24 count=2 2>/dev/null | wc -c); echo mouse$i-bytes-$((n))) & done; sleep 2; echo mouse-ready-$((40+2))\n'
+mouse_check := "--usb-mouse --usb-tablet --usb-wacom-tablet --expect-ramdisk --until-seen " + \
+    disk_login + " --send-after '# ' --send '" + mouse_dd + "' " + \
+    "--monitor-after 'mouse-ready-42' --monitor 'info mice' " + \
+    "--monitor-after 'mouse-ready-42' --monitor 'mouse_set MOUSE' --monitor-after 'mouse-ready-42' --monitor 'mouse_move 5 3' " + \
+    "--monitor-after 'mouse-ready-42' --monitor 'mouse_set TABLET' --monitor-after 'mouse-ready-42' --monitor 'mouse_button 1' --monitor-after 'mouse-ready-42' --monitor 'mouse_button 0' " + \
+    "--monitor-after 'mouse-ready-42' --monitor 'mouse_set WACOM' --monitor-after 'mouse-ready-42' --monitor 'mouse_button 1' --monitor-after 'mouse-ready-42' --monitor 'mouse_move 5 3' --monitor-after 'mouse-ready-42' --monitor 'mouse_button 0' " + \
+    "--expect 'ums0 at uhidev0: 5 buttons, Z dir' --expect 'wsmouse0 at ums0 mux 0' " + \
+    "--expect 'ums1 at uhidev1: 5 buttons, Z dir' --expect 'wsmouse1 at ums1 mux 0' " + \
+    "--expect 'ums2 at uhidev2 reportid 1: 3 buttons, Z dir' --expect 'wsmouse2 at ums2 mux 0' " + \
+    "--expect 'mouse0-bytes-48' --expect 'mouse1-bytes-48' --expect 'mouse2-bytes-48'"
+smoke-mouse: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-mouse: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd \
+        {{replace(replace(replace(mouse_check, "MOUSE", "3"), "TABLET", "4"), "WACOM", "5")}}
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd \
+        {{replace(replace(replace(mouse_check, "MOUSE", "1"), "TABLET", "2"), "WACOM", "3")}}
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

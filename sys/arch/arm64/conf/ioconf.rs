@@ -12,7 +12,8 @@
 //! `plrtc* at fdt?`, `efi0 at mainbus?`, `simplebus* at fdt?`, `ampintcmsi* at fdt? early
 //! 1`, `pciecam* at fdt?`, `pci* at pciecam?`, `virtio* at pci?`, `xhci* at pci?`, `usb* at
 //! xhci?`, `uhub* at usb?`, `uhub* at uhub?`, `umass* at uhub?` and `scsibus* at scsi?` below
-//! it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12), `cpu0 at mainbus?`
+//! it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12), `ums* at uhidev?`,
+//! `wsmouse* at ums? mux 0`, `uwacom* at uhidev?` and `wsmouse* at uwacom? mux 0` (M16b), `cpu0 at mainbus?`
 //! and, with `MULTIPROCESSOR`, `GENERIC.MP`'s `cpu* at mainbus?`;
 //! `azalia* at pci?` and `audio* at azalia?` (M12); `vioscsi* at virtio?` and `cd* at
 //! scsibus?`, `psci* at fdt? early 1`, `ahci* at pci?`, `nvme* at pci?`, `em* at pci?`, `simplefb* at
@@ -35,8 +36,8 @@
 //! `em*`, `re*` and `vmx*`, the PHYs at `mii?` but `rgephy*`, `rlphy*` and `ukphy*`, the other devices at `acpi?` (`acpiac*`, `acpibtn*`, `acpicpu*`, `ahci*`, `com*`, `xhci*`,
 //! ...), `ahci*` at `fdt?`, the other host
 //! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
-//! `umass*` and `uhidev*`, the devices at `uhidev?` but `ukbd*`, every `wskbd*` but the
-//! one at `ukbd?`, ...),
+//! `umass*`, `uhidev*` and `ugen*`, the devices at `uhidev?` but `ukbd*`, `ums*` and `uwacom*`, every `wskbd*`
+//! but the one at `ukbd?`, every `wsmouse*` but the ones at `ums?` and `uwacom?`, ...),
 //! as do the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s layout:
 //! attachment, driver, unit, state, locators, flags, parents (indices into `CFDATA`), the
 //! start of its locator names and the first unit a starred entry may take.
@@ -93,11 +94,14 @@ use crate::dev::usb::uhidev::{UHIDEV_CA, UHIDEV_CD};
 use crate::dev::usb::uhub::{UHUB_CA, UHUB_CD, UHUB_UHUB_CA};
 use crate::dev::usb::ukbd::{UKBD_CA, UKBD_CD};
 use crate::dev::usb::umass::{UMASS_CA, UMASS_CD};
+use crate::dev::usb::ums::{UMS_CA, UMS_CD};
 use crate::dev::usb::usb::{USB_CA, USB_CD};
+use crate::dev::usb::uwacom::{UWACOM_CA, UWACOM_CD};
 use crate::dev::usb::xhci::XHCI_CD;
 use crate::dev::vnd::{NVND, vndattach};
 use crate::dev::wscons::wsdisplay::{WSDISPLAY_CA, WSDISPLAY_CD};
 use crate::dev::wscons::wskbd::{WSKBD_CA, WSKBD_CD};
+use crate::dev::wscons::wsmouse::{WSMOUSE_CA, WSMOUSE_CD};
 use crate::dev::wscons::wsmux::wsmuxattach;
 use crate::kern::tty_pty::ptyattach;
 #[cfg(feature = "fuse")]
@@ -213,11 +217,21 @@ const PV_UKBD: &[i16] = &[26];
 /// {[console = -1], [mux = 1]}`), `mux 1`.
 const LOC_WSKBDDEV_MUX1: &[i64] = &[-1, 1];
 
+/// `pv[]` for children of `ums*` (`cfdata[53]`): the `wsmousedev` attribute.
+const PV_UMS: &[i16] = &[53];
+
+/// `pv[]` for children of `uwacom*` (`cfdata[55]`): the `wsmousedev` attribute.
+const PV_UWACOM: &[i16] = &[55];
+
+/// `loc[]` of `wsmouse* at ums? mux 0` and `wsmouse* at uwacom? mux 0`: `mux = 0` (`conf/files`:
+/// `define wsmousedev {[mux = 0]}`).
+const LOC_WSMOUSEDEV_MUX0: &[i64] = &[0];
+
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    54
+    58
 } else {
-    53
+    57
 };
 
 /// `cfdata[]`.
@@ -819,7 +833,55 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 53: cpu* at mainbus? (GENERIC.MP)
+    // 53: ums* at uhidev?
+    Cfdata::new(
+        &UMS_CA,
+        &UMS_CD,
+        0,
+        FSTATE_STAR,
+        LOC_UHIDBUS_UNK,
+        0,
+        PV_UHIDEV,
+        0,
+        0,
+    ),
+    // 54: wsmouse* at ums? mux 0
+    Cfdata::new(
+        &WSMOUSE_CA,
+        &WSMOUSE_CD,
+        0,
+        FSTATE_STAR,
+        LOC_WSMOUSEDEV_MUX0,
+        0,
+        PV_UMS,
+        0,
+        0,
+    ),
+    // 55: uwacom* at uhidev?
+    Cfdata::new(
+        &UWACOM_CA,
+        &UWACOM_CD,
+        0,
+        FSTATE_STAR,
+        LOC_UHIDBUS_UNK,
+        0,
+        PV_UHIDEV,
+        0,
+        0,
+    ),
+    // 56: wsmouse* at uwacom? mux 0
+    Cfdata::new(
+        &WSMOUSE_CA,
+        &WSMOUSE_CD,
+        0,
+        FSTATE_STAR,
+        LOC_WSMOUSEDEV_MUX0,
+        0,
+        PV_UWACOM,
+        0,
+        0,
+    ),
+    // 57: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];

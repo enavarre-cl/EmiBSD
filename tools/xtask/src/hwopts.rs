@@ -960,7 +960,15 @@ pub(crate) fn monitor_command(sock: &Path, cmd: &str) -> Result<()> {
     mon.set_read_timeout(Some(Duration::from_secs(10)))?;
     read_prompt(&mut mon)?;
     writeln!(mon, "{cmd}")?;
-    read_prompt(&mut mon)
+    let reply = read_prompt(&mut mon)?;
+    // What the monitor answered beyond the echo of the command and the prompt (`info mice`).
+    let text = String::from_utf8_lossy(&reply);
+    for line in text.lines().map(|l| l.trim_end_matches('\r').trim()) {
+        if !line.is_empty() && !line.contains('\u{1b}') && line != "(qemu)" {
+            println!("xtask: monitor> {line}");
+        }
+    }
+    Ok(())
 }
 
 /// Whether a screenshot is still to be taken.
@@ -1131,7 +1139,7 @@ fn check_screen_text(
 }
 
 /// Reads the monitor's output up to its `(qemu) ` prompt.
-fn read_prompt(mon: &mut UnixStream) -> Result<()> {
+fn read_prompt(mon: &mut UnixStream) -> Result<Vec<u8>> {
     let mut got = Vec::new();
     let mut buf = [0u8; 512];
     while !got.ends_with(b"(qemu) ") {
@@ -1143,7 +1151,7 @@ fn read_prompt(mon: &mut UnixStream) -> Result<()> {
         }
         got.extend_from_slice(&buf[..n]);
     }
-    Ok(())
+    Ok(got)
 }
 
 /// Whether `path` is a whole binary PPM (its header says how big it is).

@@ -18,6 +18,7 @@ pub mod umass;
 pub mod umass_quirks;
 pub mod umass_scsi;
 pub mod umassvar;
+pub mod ums;
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/usb/usb.c
 pub mod usb;
 pub mod usb_mem;
@@ -29,6 +30,7 @@ pub mod usbdi_util;
 pub mod usbdivar;
 pub mod usbhid;
 pub mod usbpcap;
+pub mod uwacom;
 pub mod xhci;
 pub mod xhcireg;
 pub mod xhcivar;
