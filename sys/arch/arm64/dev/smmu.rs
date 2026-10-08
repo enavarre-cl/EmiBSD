@@ -43,6 +43,13 @@
 //!   `smmu_remove` is empty there too).
 //! - `membar_producer()` is `fence(Release)` and `membar_sync()` `fence(SeqCst)`
 //!   (`docs/C_TO_RUST.md`).
+//! - SMMUv3 on an SMMU without the EL2 translation regime (`SMMU_IDR0.Hyp` clear, QEMU's
+//!   among them): the C always programs the EL2 regime (`CR2.E2H`, `STE.STRW = EL2`,
+//!   `TLBI_EL2_ALL/ASID/VA`), which such an SMMU does not have (QEMU ignores the EL2
+//!   invalidations, so an unloaded map's stale IOTLB entries sent the next load's DMA to
+//!   the old pages). There the C's commented-out non-hypervisor forms are used:
+//!   `STRW = NS-EL1`, no `E2H`, no `TLBI_EL2_ALL`, `TLBI_NH_ASID` and `TLBI_NH_VA`; with
+//!   `Hyp` set the C's forms are kept. `sc_has_hyp` (smmuvar.rs) records the bit.
 //! - The six SMMUv3 command functions share their queue insertion ([`smmu_v3_cmd_put`]),
 //!   which the C repeats in each; the commands, their order and the syncs are the C's.
 //! - Functions return `Result<_, Errno>`; `smmu_v2_attach`'s bare `return 1` (no
@@ -115,6 +122,9 @@ use crate::sys::queue::SimpleqEntry;
 use crate::sys::types::Vaddr;
 use crate::sys::uio::Uio;
 use crate::uvm::uvm_param::{round_page, trunc_page};
+
+/// `SMMU_IDR0.Hyp` (bit 9, not in smmureg.h): the SMMU has the EL2 translation regime.
+const SMMU_V3_IDR0_HYP: u32 = 1 << 9;
 
 /// `PTE_ATTR_DEV_NGNRNE` of the C's pte.h: index 0 of the SMMU context's MAIR.
 const SMMU_ATTR_DEV_NGNRNE: u64 = 0;
@@ -1854,6 +1864,9 @@ pub fn smmu_v3_attach(sc: &'static SmmuSoftc) -> Result<(), Errno> {
     if smmu_v3_idr0_st_level(reg) == SMMU_V3_IDR0_ST_LEVEL_2 {
         sc.v3.sc_2lvl_strtab.set(1);
     }
+    if reg & SMMU_V3_IDR0_HYP != 0 {
+        sc.v3.sc_has_hyp.set(1);
+    }
 
     reg = smmu_v3_read_4(sc, SMMU_V3_IDR1);
     sc.v3
@@ -1938,10 +1951,15 @@ pub fn smmu_v3_attach(sc: &'static SmmuSoftc) -> Result<(), Errno> {
             | smmu_v3_cr1_queue_oc(SMMU_V3_CR1_CACHE_WB)
             | smmu_v3_cr1_queue_ic(SMMU_V3_CR1_CACHE_WB),
     );
+    let e2h = if sc.v3.sc_has_hyp.get() != 0 {
+        SMMU_V3_CR2_E2H
+    } else {
+        0
+    };
     smmu_v3_write_4(
         sc,
         SMMU_V3_CR2,
-        SMMU_V3_CR2_PTM | SMMU_V3_CR2_RECINVSID | SMMU_V3_CR2_E2H,
+        SMMU_V3_CR2_PTM | SMMU_V3_CR2_RECINVSID | e2h,
     );
 
     let sidsize = sc.v3.sc_sidsize.get() as u32;
@@ -2001,7 +2019,9 @@ pub fn smmu_v3_attach(sc: &'static SmmuSoftc) -> Result<(), Errno> {
     let _ = smmu_v3_write_ack(sc, SMMU_V3_CR0, SMMU_V3_CR0ACK, SMMU_V3_CR0_CMDQEN);
 
     smmu_v3_cfgi_all(sc);
-    smmu_v3_tlbi_all(sc, SMMU_V3_CMD_TLBI_EL2_ALL);
+    if sc.v3.sc_has_hyp.get() != 0 {
+        smmu_v3_tlbi_all(sc, SMMU_V3_CMD_TLBI_EL2_ALL);
+    }
     smmu_v3_tlbi_all(sc, SMMU_V3_CMD_TLBI_NSNH_ALL);
 
     let evq = &sc.v3.sc_eventq;
@@ -2402,8 +2422,12 @@ fn smmu_v3_domain_create(dom: &'static SmmuDomain) -> Result<(), Errno> {
         | SMMU_V3_STE_1_S1COR_WBRA
         | SMMU_V3_STE_1_S1CSH_ISH
         | SMMU_V3_STE_1_EATS_TRANS
-        // the C's commented-out alternative: SMMU_V3_STE_1_STRW_NSEL1
-        | SMMU_V3_STE_1_STRW_EL2
+        // the C's commented-out alternative when the SMMU has no EL2 regime
+        | if sc.v3.sc_has_hyp.get() != 0 {
+            SMMU_V3_STE_1_STRW_EL2
+        } else {
+            SMMU_V3_STE_1_STRW_NSEL1
+        }
         | SMMU_V3_STE_1_S1DSS_SSID0;
     let ste0 = SMMU_V3_STE_0_V
         | SMMU_V3_STE_0_CFG_S1_TRANS
@@ -2545,28 +2569,36 @@ fn smmu_v3_tlbi_all(sc: &SmmuSoftc, op: u64) {
     smmu_v3_cmd_sync(sc, op, 0);
 }
 
-/// `smmu_v3_tlbi_asid(dom)`: invalidates the domain's ASID (the C's `TLBI_EL2_ASID`; its
-/// commented-out alternative is `TLBI_NH_ASID`).
+/// `smmu_v3_tlbi_asid(dom)`: invalidates the domain's ASID (the C's `TLBI_EL2_ASID`, or
+/// its commented-out `TLBI_NH_ASID` on an SMMU without the EL2 regime).
 fn smmu_v3_tlbi_asid(dom: &SmmuDomain) {
+    let op = if dom.sd_sc.v3.sc_has_hyp.get() != 0 {
+        SMMU_V3_CMD_TLBI_EL2_ASID
+    } else {
+        SMMU_V3_CMD_TLBI_NH_ASID
+    };
     smmu_v3_cmd_sync(
         dom.sd_sc,
-        SMMU_V3_CMD_TLBI_EL2_ASID | smmu_v3_cmd_tlbi_0_asid(u64::from(dom.v3.sd_asid.get())),
+        op | smmu_v3_cmd_tlbi_0_asid(u64::from(dom.v3.sd_asid.get())),
         0,
     );
 }
 
-/// `smmu_v3_tlbi_va(dom, va)`: invalidates `va` in the domain's ASID (`TLBI_EL2_VA`; the
-/// C's commented-out alternative is `TLBI_NH_VA`); the caller syncs
+/// `smmu_v3_tlbi_va(dom, va)`: invalidates `va` in the domain's ASID (`TLBI_EL2_VA`, or the
+/// C's commented-out `TLBI_NH_VA` on an SMMU without the EL2 regime); the caller syncs
 /// (`smmu_v3_tlb_sync_context`).
 fn smmu_v3_tlbi_va(dom: &SmmuDomain, va: usize) {
     let sc = dom.sd_sc;
+    let op = if sc.v3.sc_has_hyp.get() != 0 {
+        SMMU_V3_CMD_TLBI_EL2_VA
+    } else {
+        SMMU_V3_CMD_TLBI_NH_VA
+    };
 
     mtx_enter(&sc.v3.sc_cmdq_mtx);
     let _ = smmu_v3_cmd_put(
         sc,
-        SMMU_V3_CMD_TLBI_EL2_VA
-            | smmu_v3_cmd_tlbi_0_vmid(0)
-            | smmu_v3_cmd_tlbi_0_asid(u64::from(dom.v3.sd_asid.get())),
+        op | smmu_v3_cmd_tlbi_0_vmid(0) | smmu_v3_cmd_tlbi_0_asid(u64::from(dom.v3.sd_asid.get())),
         va as u64 | SMMU_V3_CMD_TLBI_1_LEAF,
     );
     // callee is responsible for smmu_v3_tlb_sync_context()

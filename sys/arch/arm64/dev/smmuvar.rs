@@ -42,6 +42,8 @@
 //! - `sd_exname` is the extent's name, kept as a leaked byte string (the extent keeps the
 //!   pointer, as in C).
 //! - The three per-version hooks are `Option<fn>`; errors are `Result<(), Errno>`.
+//! - `v3.sc_has_hyp` is not in the C: `SMMU_IDR0.Hyp`, which picks the EL2 or the
+//!   non-hypervisor translation regime (`smmu.rs`, deviations).
 
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -186,6 +188,9 @@ pub struct SmmuSoftcV3 {
     pub sc_strtab_l2: Cell<Option<&'static [Cell<Option<&'static SmmuDmamem>>]>>,
     /// `sc_next_asid`.
     pub sc_next_asid: Cell<u16>,
+    /// Not in the C: `SMMU_IDR0.Hyp`, whether the SMMU has the EL2 translation regime the C
+    /// always programs (`smmu.rs`, deviations).
+    pub sc_has_hyp: Cell<i32>,
 }
 
 /// `smmu_softc.sc_domain_create`.
