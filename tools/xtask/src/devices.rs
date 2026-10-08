@@ -1,5 +1,6 @@
 /* <CODE> */
-//! M12's QEMU devices: USB through `qemu-xhci` and audio through Intel HDA or AC97.
+//! M12's QEMU devices: USB through `qemu-xhci` (or, M16b, another host controller) and
+//! audio through Intel HDA or AC97.
 //!
 //! `smoke` and `qemu` take, besides the flags every boot has:
 //! - `--usb`: a `qemu-xhci` controller with a `usb-storage` stick and a `usb-kbd` on its
@@ -8,6 +9,12 @@
 //!   0x0c, what `newfs_msdos` makes on a real stick) holding [`STICK_NOTE`] and [`STICK_BIG`],
 //!   the latter [`BIG_LEN`] bytes of a fixed pseudo-random sequence whose POSIX `cksum(1)` is
 //!   printed when the image is made. The kernel spoofs the partition as `i` (`spoofmbr`).
+//! - `--usb-hc xhci|ehci` (implies `--usb`, M16b): the host controller [`UsbHc`] the
+//!   devices sit on, `xhci` by default. `ehci` is QEMU's `usb-ehci` (an ICH4 EHCI function,
+//!   `ehci(4)`) with the stick alone: QEMU refuses a full speed device such as `usb-kbd` on a
+//!   high speed EHCI port with no companion controller ("speed mismatch"), so the keyboard
+//!   stays off that bus. A controller is one arm of [`UsbHc`]'s matches (its QEMU device and
+//!   whether the keyboard fits on it).
 //! - `--audio hda` or `--audio ac97`: QEMU's `wav` audio backend writes what the guest plays
 //!   to `<image>.wav` (removed first), through `intel-hda` + `hda-output` (`azalia(4)`) or
 //!   `AC97` (`auich(4)`).
@@ -63,11 +70,54 @@ pub(crate) enum Audio {
     Ac97,
 }
 
+/// The USB host controller `--usb-hc` puts the devices on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum UsbHc {
+    /// `qemu-xhci`: `xhci(4)` (M12), the stick and the keyboard.
+    #[default]
+    Xhci,
+    /// `usb-ehci`: `ehci(4)` (M16b), the stick only (a full speed keyboard does not fit).
+    Ehci,
+}
+
+impl UsbHc {
+    /// The `--usb-hc` value.
+    fn parse(s: Option<&str>) -> Result<UsbHc> {
+        match s {
+            Some("xhci") => Ok(UsbHc::Xhci),
+            Some("ehci") => Ok(UsbHc::Ehci),
+            other => Err(format!("--usb-hc {other:?}: expected `xhci` or `ehci`").into()),
+        }
+    }
+
+    /// QEMU's controller device, with the id [`USB_HC_ID`] its bus is named after.
+    fn qemu_device(self) -> String {
+        let dev = match self {
+            UsbHc::Xhci => "qemu-xhci",
+            UsbHc::Ehci => "usb-ehci",
+        };
+        format!("{dev},id={USB_HC_ID}")
+    }
+
+    /// Whether QEMU's full speed `usb-kbd` can sit on the controller's root hub.
+    fn takes_full_speed(self) -> bool {
+        match self {
+            UsbHc::Xhci => true,
+            UsbHc::Ehci => false,
+        }
+    }
+}
+
+/// The QEMU id of the `--usb` host controller; its root hub's bus is `<id>.0`.
+const USB_HC_ID: &str = "usbhc";
+
 /// The M12 devices of this run (set once by `main`, read when QEMU's command line is made).
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Devices {
-    /// `--usb`.
+    /// `--usb` (or `--usb-hc`).
     pub usb: bool,
+    /// `--usb-hc xhci|ehci`.
+    pub usb_hc: UsbHc,
     /// `--audio hda|ac97`.
     pub audio: Option<Audio>,
     /// `--expect-tone`.
@@ -78,8 +128,8 @@ pub(crate) struct Devices {
 
 static DEVICES: OnceLock<Devices> = OnceLock::new();
 
-/// Parses `--usb`, `--audio <hda|ac97>`, `--speakers` and `--expect-tone` and records them
-/// for the run.
+/// Parses `--usb`, `--usb-hc <xhci|ehci>`, `--audio <hda|ac97>`, `--speakers` and
+/// `--expect-tone` and records them for the run.
 pub(crate) fn set_from_args(args: &[&str]) -> Result<()> {
     let _ = DEVICES.set(parse(args)?);
     Ok(())
@@ -106,8 +156,13 @@ fn parse(args: &[&str]) -> Result<Devices> {
     if speakers && expect_tone {
         return Err("--speakers records nothing for --expect-tone".into());
     }
+    let usb_hc = match args.iter().position(|a| *a == "--usb-hc") {
+        None => None,
+        Some(i) => Some(UsbHc::parse(args.get(i + 1).copied())?),
+    };
     Ok(Devices {
-        usb: args.contains(&"--usb"),
+        usb: args.contains(&"--usb") || usb_hc.is_some(),
+        usb_hc: usb_hc.unwrap_or_default(),
         audio,
         expect_tone,
         speakers,
@@ -138,14 +193,15 @@ pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
         make_stick(&stick)?;
         args.extend([
             "-device".to_string(),
-            "qemu-xhci,id=xhci".to_string(),
+            d.usb_hc.qemu_device(),
             "-drive".to_string(),
             format!("if=none,id=usbstick,format=raw,file={}", stick.display()),
             "-device".to_string(),
-            "usb-storage,bus=xhci.0,drive=usbstick".to_string(),
-            "-device".to_string(),
-            "usb-kbd,bus=xhci.0".to_string(),
+            format!("usb-storage,bus={USB_HC_ID}.0,drive=usbstick"),
         ]);
+        if d.usb_hc.takes_full_speed() {
+            args.extend(["-device".to_string(), format!("usb-kbd,bus={USB_HC_ID}.0")]);
+        }
     }
     if let Some(audio) = d.audio {
         args.push("-audiodev".to_string());
@@ -375,6 +431,22 @@ mod tests {
         assert!(!parse(&["--audio", "ac97"]).unwrap().speakers);
         assert!(parse(&["--speakers"]).is_err());
         assert!(parse(&["--audio", "hda", "--speakers", "--expect-tone"]).is_err());
+    }
+
+    #[test]
+    fn usb_hc_flag() {
+        let d = parse(&["--usb"]).unwrap();
+        assert!(d.usb);
+        assert_eq!(d.usb_hc, UsbHc::Xhci);
+        let d = parse(&["--usb-hc", "ehci"]).unwrap();
+        assert!(d.usb);
+        assert_eq!(d.usb_hc, UsbHc::Ehci);
+        assert_eq!(UsbHc::Ehci.qemu_device(), "usb-ehci,id=usbhc");
+        assert!(!UsbHc::Ehci.takes_full_speed());
+        assert!(UsbHc::Xhci.takes_full_speed());
+        assert!(parse(&["--usb-hc"]).is_err());
+        assert!(parse(&["--usb-hc", "fhci"]).is_err());
+        assert!(!parse(&[]).unwrap().usb);
     }
 
     #[test]
