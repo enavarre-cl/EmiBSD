@@ -11284,6 +11284,14 @@ status = "todo"
 notes = "M16: smmu(4), SMMUv2 and v3; criterion: virt,iommu=smmuv3 boots with PCI DMA through it and a disk mounted; arm64 only"
 
 [[file]]
+c = "sys/arch/arm64/dev/smmureg.h"
+rust = "sys/arch/arm64/dev/smmureg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2b87402d842dffccb04f70ed73ebf10505d12fa2"
+notes = "M16f: the whole header: SMMUv2 global register spaces 0 and 1, the context bank format, SMMUv3 registers, queue pointer macros, commands, CD and STE fields; offsets usize, 32-bit fields u32, 64-bit ones u64; function-like macros as lowercase const fns (SMMU_V3_Q_IDX/WRP take sq_size_log2), SMMU_IDR2_EXNUMSMRG (object-like in C over an x it does not take) a function; host tests for field encodings, test-ref checks every object-like define"
+
+[[file]]
 c = "sys/arch/arm64/dev/smmu_fdt.c"
 rust = "sys/arch/arm64/dev/smmu_fdt.rs"
 status = "todo"
