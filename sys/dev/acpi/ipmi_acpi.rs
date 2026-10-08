@@ -27,19 +27,16 @@
 //! Upstream: sys/dev/acpi/ipmi_acpi.c @ 3ce1f3f79392
 //!
 //! amd64's GENERIC has `ipmi0 at acpi? disable` (enabled with `boot -c`), arm64's `ipmi* at
-//! acpi?`. QEMU's `isa-ipmi-kcs` (amd64 `q35`) puts an `IPI0001` device in its DSDT.
+//! acpi?`. QEMU's `isa-ipmi-kcs` (amd64 `q35`) puts an `IPI0001` device in its DSDT, whose
+//! `_CRS` is `IO(Decode16, 0xca2, 0xca3, 1, 2)`: a range whose `_MAX` is the last port, where
+//! a fixed device's `_CRS` has `_MAX` equal to `_MIN`. The C takes `_MAX`, so there ipmi0
+//! maps 0xca3 and every command fails ("sendcmd fails", "no SDRs IPMI disabled"); this port
+//! does the same, as OpenBSD 8.0 does on the same machine (`smoke-ipmi`).
 //!
 //! ## Deviations
 //! - The softc's own members are `Cell`s (autoconfiguration hands out zeroed softcs);
 //!   `sc_iotype` is a byte (`b'i'`, `b'm'`, 0 for none).
 //! - `_IFT` and `_SRV` are truncated to `int` as the C's assignments do.
-//! - An I/O port descriptor whose `_MIN` and `_MAX` differ gives its `_MIN` as the address;
-//!   the C always takes `_MAX`. In a `_CRS` (the current settings) the ACPI specification
-//!   has `_MAX`, the highest base address, equal to `_MIN` for a fixed device, which is what
-//!   the C relies on, and what this port still does then. QEMU's `isa-ipmi-kcs` describes
-//!   its ports as `IO(Decode16, 0xca2, 0xca3, 1, 2)`, a range whose `_MAX` is the last port:
-//!   the C maps 0xca3 there and every command fails ("sendcmd fails", "no SDRs IPMI
-//!   disabled"). `ipmi_acpi_ioport_addr` holds the choice; the smoke (`smoke-ipmi`) needs it.
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
@@ -192,13 +189,6 @@ pub fn ipmi_acpi_attach(parent: Option<&Device>, self_: &Device, aux: *mut c_voi
     ipmi_attach_common(&sc.sc, &ia);
 }
 
-/// The address of an I/O port descriptor: `_MAX`, as the C reads it, unless it differs from
-/// `_MIN` (see the module's deviations).
-pub fn ipmi_acpi_ioport_addr(crs: &AcpiResource<'_>) -> BusSize {
-    let (min, max) = (crs.sr_ioport__min(), crs.sr_ioport__max());
-    BusSize::from(if min == max { max } else { min })
-}
-
 /// `ipmi_acpi_parse_crs(crsidx, crs, arg)`: the base from the first I/O port or fixed
 /// memory descriptor, the spacing from a second one; interrupts are skipped. -1 (and no
 /// usable resources) on anything else.
@@ -208,7 +198,7 @@ pub fn ipmi_acpi_parse_crs(crsidx: i32, crs: &AcpiResource<'_>, sc: &IpmiAcpiSof
     let (addr, iotype): (BusSize, u8) = match r#type {
         // Ignore for now.
         SR_IRQ => return 0,
-        SR_IOPORT => (ipmi_acpi_ioport_addr(crs), b'i'),
+        SR_IOPORT => (BusSize::from(crs.sr_ioport__max()), b'i'),
         LR_MEM32FIXED => (crs.lr_m32fixed__bas() as BusSize, b'm'),
         // Ignore for now.
         LR_EXTIRQ => return 0,
@@ -313,10 +303,10 @@ mod tests {
 
     #[test]
     fn one_io_descriptor_gives_the_base() {
-        // QEMU's isa-ipmi-kcs: a range of two ports; its minimum (see the deviations).
+        // QEMU's isa-ipmi-kcs: a range of two ports; the C takes its maximum (module docs).
         let (sc, rcs) = parse(&[io(0xca2, 0xca3, 2)]);
         assert_eq!(rcs, [0]);
-        assert_eq!((sc.sc_iobase.get(), sc.sc_iospacing.get()), (0xca2, 1));
+        assert_eq!((sc.sc_iobase.get(), sc.sc_iospacing.get()), (0xca3, 1));
 
         let (sc, rcs) = parse(&[io(0xca2, 0xca2, 2)]);
         assert_eq!(rcs, [0]);

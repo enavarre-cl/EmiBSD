@@ -11238,7 +11238,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "d108af49f54b163f3225ca127604c1099b1eff0e"
 deps = ["sys/dev/ipmi.c", "sys/dev/acpi/acpi.c"]
-notes = "M16e: the whole file: ipmi_acpi_softc (Cells), ipmi_acpi_ca, ipmi_acpi_hids (IPI0001), ipmi_acpi_match, ipmi_acpi_attach (_IFT, _SRV, _CRS through aml_parse_resource), ipmi_acpi_parse_crs (host-tested on I/O, Memory32Fixed and IRQ descriptors); deviation: an I/O descriptor whose _MIN and _MAX differ gives _MIN (ipmi_acpi_ioport_addr; the C always reads _MAX, which on QEMU's isa-ipmi-kcs IO(Decode16, 0xca2, 0xca3, 1, 2) maps 0xca3 and fails every command; identical on a fixed _CRS where _MIN == _MAX); ioconf: amd64 'ipmi0 at acpi? disable' (FSTATE_DNOTFOUND, enabled with boot -c), arm64 'ipmi* at acpi?'"
+notes = "M16e: the whole file: ipmi_acpi_softc (Cells), ipmi_acpi_ca, ipmi_acpi_hids (IPI0001), ipmi_acpi_match, ipmi_acpi_attach (_IFT, _SRV, _CRS through aml_parse_resource), ipmi_acpi_parse_crs (host-tested on I/O, Memory32Fixed and IRQ descriptors; an I/O descriptor gives its _MAX, as in C: on QEMU's isa-ipmi-kcs IO(Decode16, 0xca2, 0xca3, 1, 2) that is 0xca3 and every command fails, as on OpenBSD 8.0); ioconf: amd64 'ipmi0 at acpi? disable' (FSTATE_DNOTFOUND, enabled with boot -c), arm64 'ipmi* at acpi?'"
 
 [[file]]
 c = "sys/dev/fdt/ipmi_fdt.c"
