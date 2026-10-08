@@ -10094,3 +10094,1150 @@ notes = "M14 A3, arm64 efiboot (BOOTAA64.EFI, crate efiboot-arm64): prototypes o
 c = "sys/arch/arm64/stand/efiboot/Makefile"
 status = "skipped"
 notes = "replaced-by-cargo: the crate efiboot-arm64 (Cargo.toml, build.rs) and just efiboot-arm64 (cargo build + cargo xtask efiboot, llvm-objcopy -O binary); its CPPFLAGS options are BootMd options (MDRANDOM, FWRANDOM, HIBERNATE, BOOT_STTY)"
+
+# ---------------------------------------------------------------------------
+# M15: QEMU drivers not covered before (added by the user on 2026-10-07)
+# ---------------------------------------------------------------------------
+
+[[file]]
+c = "sys/dev/ata/atareg.h"
+rust = "sys/dev/ata/atareg.rs"
+status = "todo"
+notes = "M15: ATA register and IDENTIFY layouts for wdc(4)/wd(4); amd64 GENERIC only (pciide, wd)"
+
+[[file]]
+c = "sys/dev/ata/atavar.h"
+rust = "sys/dev/ata/atavar.rs"
+status = "todo"
+notes = "M15: ata_drive_datas and the ATA command structures shared by wdc and wd"
+
+[[file]]
+c = "sys/dev/ata/satareg.h"
+rust = "sys/dev/ata/satareg.rs"
+status = "todo"
+notes = "M15: SATA status/control registers pciide's SATA-in-IDE-mode chips read"
+
+[[file]]
+c = "sys/dev/ata/wdvar.h"
+rust = "sys/dev/ata/wdvar.rs"
+status = "todo"
+notes = "M15: wd(4)'s softc and wd_xfer"
+
+[[file]]
+c = "sys/dev/ata/ata.c"
+rust = "sys/dev/ata/ata.rs"
+status = "todo"
+deps = ["sys/dev/ata/atavar.h", "sys/dev/ata/atareg.h"]
+notes = "M15: ata_get_params and ata_set_mode for wd(4)"
+
+[[file]]
+c = "sys/dev/ic/wdcreg.h"
+rust = "sys/dev/ic/wdcreg.rs"
+status = "todo"
+notes = "M15: the IDE taskfile registers"
+
+[[file]]
+c = "sys/dev/ic/wdcvar.h"
+rust = "sys/dev/ic/wdcvar.rs"
+status = "todo"
+notes = "M15: wdc_softc, channel_softc and the xfer queue"
+
+[[file]]
+c = "sys/dev/ic/wdcevent.h"
+rust = "sys/dev/ic/wdcevent.rs"
+status = "todo"
+notes = "M15: the WDCDEBUG event trace ring; built only with WDC_DEBUG like the C"
+
+[[file]]
+c = "sys/dev/ic/wdc.c"
+rust = "sys/dev/ic/wdc.rs"
+status = "todo"
+deps = ["sys/dev/ic/wdcreg.h", "sys/dev/ic/wdcvar.h", "sys/dev/ata/atavar.h"]
+notes = "M15: the IDE channel core (probe, reset, PIO/DMA xfer queue) under pciide"
+
+[[file]]
+c = "sys/dev/ata/ata_wdc.c"
+rust = "sys/dev/ata/ata_wdc.rs"
+status = "todo"
+deps = ["sys/dev/ic/wdc.c", "sys/dev/ata/wdvar.h"]
+notes = "M15: wd(4)'s transfers through a wdc channel"
+
+[[file]]
+c = "sys/dev/ata/wd.c"
+rust = "sys/dev/ata/wd.rs"
+status = "todo"
+deps = ["sys/dev/ata/ata.c", "sys/dev/ata/ata_wdc.c"]
+notes = "M15: wd(4) ATA disks; criterion: a QEMU IDE disk (piix3-ide / -machine pc) mounted as wd0 on amd64"
+
+[[file]]
+c = "sys/dev/pci/pciidereg.h"
+rust = "sys/dev/pci/pciidereg.rs"
+status = "todo"
+notes = "M15: PCI IDE class registers (bus-master DMA, native/compat)"
+
+[[file]]
+c = "sys/dev/pci/pciidevar.h"
+rust = "sys/dev/pci/pciidevar.rs"
+status = "todo"
+notes = "M15: pciide_softc and pciide_channel"
+
+[[file]]
+c = "sys/dev/pci/pciide_acard_reg.h"
+rust = "sys/dev/pci/pciide_acard_reg.rs"
+status = "todo"
+notes = "M15: acard chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_acer_reg.h"
+rust = "sys/dev/pci/pciide_acer_reg.rs"
+status = "todo"
+notes = "M15: acer chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_amd_reg.h"
+rust = "sys/dev/pci/pciide_amd_reg.rs"
+status = "todo"
+notes = "M15: amd chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_apollo_reg.h"
+rust = "sys/dev/pci/pciide_apollo_reg.rs"
+status = "todo"
+notes = "M15: apollo chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_cmd_reg.h"
+rust = "sys/dev/pci/pciide_cmd_reg.rs"
+status = "todo"
+notes = "M15: cmd chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_cy693_reg.h"
+rust = "sys/dev/pci/pciide_cy693_reg.rs"
+status = "todo"
+notes = "M15: cy693 chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_hpt_reg.h"
+rust = "sys/dev/pci/pciide_hpt_reg.rs"
+status = "todo"
+notes = "M15: hpt chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_ite_reg.h"
+rust = "sys/dev/pci/pciide_ite_reg.rs"
+status = "todo"
+notes = "M15: ite chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_ixp_reg.h"
+rust = "sys/dev/pci/pciide_ixp_reg.rs"
+status = "todo"
+notes = "M15: ixp chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_jmicron_reg.h"
+rust = "sys/dev/pci/pciide_jmicron_reg.rs"
+status = "todo"
+notes = "M15: jmicron chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_natsemi_reg.h"
+rust = "sys/dev/pci/pciide_natsemi_reg.rs"
+status = "todo"
+notes = "M15: natsemi chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_nforce_reg.h"
+rust = "sys/dev/pci/pciide_nforce_reg.rs"
+status = "todo"
+notes = "M15: nforce chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_pdc202xx_reg.h"
+rust = "sys/dev/pci/pciide_pdc202xx_reg.rs"
+status = "todo"
+notes = "M15: pdc202xx chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_piix_reg.h"
+rust = "sys/dev/pci/pciide_piix_reg.rs"
+status = "todo"
+notes = "M15: piix chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_rdc_reg.h"
+rust = "sys/dev/pci/pciide_rdc_reg.rs"
+status = "todo"
+notes = "M15: rdc chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_sii3112_reg.h"
+rust = "sys/dev/pci/pciide_sii3112_reg.rs"
+status = "todo"
+notes = "M15: sii3112 chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_sis_reg.h"
+rust = "sys/dev/pci/pciide_sis_reg.rs"
+status = "todo"
+notes = "M15: sis chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/pciide_svwsata_reg.h"
+rust = "sys/dev/pci/pciide_svwsata_reg.rs"
+status = "todo"
+notes = "M15: svwsata chip registers for pciide.c's chip table, ported whole with it; QEMU exercises piix (PIIX3/PIIX4)"
+
+[[file]]
+c = "sys/dev/pci/cy82c693var.h"
+rust = "sys/dev/pci/cy82c693var.rs"
+status = "todo"
+notes = "M15: Cypress 82C693 glue types pciide.c's cy693 path names"
+
+[[file]]
+c = "sys/dev/pci/pciide.c"
+rust = "sys/dev/pci/pciide.rs"
+status = "todo"
+deps = ["sys/dev/ic/wdc.c", "sys/dev/pci/pciidereg.h", "sys/dev/pci/pciidevar.h", "sys/dev/pci/pciide_piix_reg.h"]
+notes = "M15 (9.1k lines, own subagent): pciide(4) with every chip of its table; QEMU's piix3-ide/piix4-ide exercise the PIIX path, compat and native modes, bus-master DMA; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/ic/i8042reg.h"
+rust = "sys/dev/ic/i8042reg.rs"
+status = "todo"
+notes = "M15: i8042 keyboard controller registers"
+
+[[file]]
+c = "sys/dev/ic/pckbcvar.h"
+rust = "sys/dev/ic/pckbcvar.rs"
+status = "todo"
+notes = "M15: pckbc_internal and the slot interface pckbd/pms attach to"
+
+[[file]]
+c = "sys/dev/ic/pckbc.c"
+rust = "sys/dev/ic/pckbc.rs"
+status = "todo"
+deps = ["sys/dev/ic/i8042reg.h", "sys/dev/ic/pckbcvar.h"]
+notes = "M15: pckbc(4), the i8042 on QEMU's q35 and pc; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/isa/pckbc_isa.c"
+rust = "sys/dev/isa/pckbc_isa.rs"
+status = "todo"
+deps = ["sys/dev/ic/pckbc.c", "sys/dev/isa/isa.c"]
+notes = "M15: pckbc at isa"
+
+[[file]]
+c = "sys/dev/pckbc/pckbdreg.h"
+rust = "sys/dev/pckbc/pckbdreg.rs"
+status = "todo"
+notes = "M15: PS/2 keyboard commands"
+
+[[file]]
+c = "sys/dev/pckbc/pckbdvar.h"
+rust = "sys/dev/pckbc/pckbdvar.rs"
+status = "todo"
+notes = "M15: pckbd console attach"
+
+[[file]]
+c = "sys/dev/pckbc/pckbd.c"
+rust = "sys/dev/pckbc/pckbd.rs"
+status = "todo"
+deps = ["sys/dev/ic/pckbc.c", "sys/dev/pckbc/pckbdreg.h", "sys/dev/pckbc/pckbdvar.h", "sys/dev/wscons/wskbd.c"]
+notes = "M15: pckbd(4) to wskbd(4) (M13); criterion: keys sent with QEMU's sendkey reach the shell on amd64"
+
+[[file]]
+c = "sys/dev/pckbc/pmsreg.h"
+rust = "sys/dev/pckbc/pmsreg.rs"
+status = "todo"
+notes = "M15: PS/2 mouse and touchpad commands"
+
+[[file]]
+c = "sys/dev/pckbc/pms.c"
+rust = "sys/dev/pckbc/pms.rs"
+status = "todo"
+deps = ["sys/dev/ic/pckbc.c", "sys/dev/pckbc/pmsreg.h"]
+notes = "M15: pms(4) to wsmouse(4) (M13), every protocol of its table; QEMU exercises the plain and IntelliMouse ones"
+
+[[file]]
+c = "sys/dev/hid/hidmsvar.h"
+rust = "sys/dev/hid/hidmsvar.rs"
+status = "todo"
+notes = "M15: hidms softc"
+
+[[file]]
+c = "sys/dev/hid/hidms.c"
+rust = "sys/dev/hid/hidms.rs"
+status = "todo"
+deps = ["sys/dev/hid/hidmsvar.h", "sys/dev/usb/uhidev.c"]
+notes = "M15: HID mouse and tablet reports to wsmouse(4) (M13), relative and absolute"
+
+[[file]]
+c = "sys/dev/usb/ums.c"
+rust = "sys/dev/usb/ums.rs"
+status = "todo"
+deps = ["sys/dev/hid/hidms.c"]
+notes = "M15: ums(4); criterion: QEMU usb-mouse and usb-tablet events reach wsmouse on both archs"
+
+[[file]]
+c = "sys/dev/usb/uhid.h"
+rust = "sys/dev/usb/uhid.rs"
+status = "todo"
+notes = "M15: uhid ioctl types"
+
+[[file]]
+c = "sys/dev/usb/uhid.c"
+rust = "sys/dev/usb/uhid.rs"
+status = "todo"
+deps = ["sys/dev/usb/uhid.h", "sys/dev/usb/uhidev.c"]
+notes = "M15: uhid(4), the generic /dev/uhid* for HID devices no driver claims"
+
+[[file]]
+c = "sys/dev/usb/ehcireg.h"
+rust = "sys/dev/usb/ehcireg.rs"
+status = "todo"
+notes = "M15: ehci registers and descriptors"
+
+[[file]]
+c = "sys/dev/usb/ehcivar.h"
+rust = "sys/dev/usb/ehcivar.rs"
+status = "todo"
+notes = "M15: ehci_softc"
+
+[[file]]
+c = "sys/dev/usb/ehci.c"
+rust = "sys/dev/usb/ehci.rs"
+status = "todo"
+deps = ["sys/dev/usb/ehcireg.h", "sys/dev/usb/ehcivar.h", "sys/dev/usb/usb.c"]
+notes = "M15: ehci(4); criterion: QEMU's usb-ehci / ich9-usb-ehci1 with the usb-storage stick mounted, both archs"
+
+[[file]]
+c = "sys/dev/pci/ehci_pci.c"
+rust = "sys/dev/pci/ehci_pci.rs"
+status = "todo"
+deps = ["sys/dev/usb/ehci.c"]
+notes = "M15: ehci at pci"
+
+[[file]]
+c = "sys/dev/usb/uhcireg.h"
+rust = "sys/dev/usb/uhcireg.rs"
+status = "todo"
+notes = "M15: uhci registers and descriptors"
+
+[[file]]
+c = "sys/dev/usb/uhcivar.h"
+rust = "sys/dev/usb/uhcivar.rs"
+status = "todo"
+notes = "M15: uhci_softc"
+
+[[file]]
+c = "sys/dev/usb/uhci.c"
+rust = "sys/dev/usb/uhci.rs"
+status = "todo"
+deps = ["sys/dev/usb/uhcireg.h", "sys/dev/usb/uhcivar.h", "sys/dev/usb/usb.c"]
+notes = "M15: uhci(4); criterion: QEMU's piix3-usb-uhci / ich9-usb-uhci1 with the usb-storage stick mounted, both archs"
+
+[[file]]
+c = "sys/dev/pci/uhci_pci.c"
+rust = "sys/dev/pci/uhci_pci.rs"
+status = "todo"
+deps = ["sys/dev/usb/uhci.c"]
+notes = "M15: uhci at pci"
+
+[[file]]
+c = "sys/dev/usb/ohcireg.h"
+rust = "sys/dev/usb/ohcireg.rs"
+status = "todo"
+notes = "M15: ohci registers and descriptors"
+
+[[file]]
+c = "sys/dev/usb/ohcivar.h"
+rust = "sys/dev/usb/ohcivar.rs"
+status = "todo"
+notes = "M15: ohci_softc"
+
+[[file]]
+c = "sys/dev/usb/ohci.c"
+rust = "sys/dev/usb/ohci.rs"
+status = "todo"
+deps = ["sys/dev/usb/ohcireg.h", "sys/dev/usb/ohcivar.h", "sys/dev/usb/usb.c"]
+notes = "M15: ohci(4); criterion: QEMU's pci-ohci with the usb-storage stick mounted, both archs"
+
+[[file]]
+c = "sys/dev/pci/ohci_pci.c"
+rust = "sys/dev/pci/ohci_pci.rs"
+status = "todo"
+deps = ["sys/dev/usb/ohci.c"]
+notes = "M15: ohci at pci"
+
+[[file]]
+c = "sys/dev/pv/viogpu.h"
+rust = "sys/dev/pv/viogpu.rs"
+status = "todo"
+notes = "M15: virtio-gpu protocol structures"
+
+[[file]]
+c = "sys/dev/pv/viogpu.c"
+rust = "sys/dev/pv/viogpu.rs"
+status = "todo"
+deps = ["sys/dev/pv/viogpu.h", "sys/dev/pv/virtio.c"]
+notes = "M15: viogpu(4) over rasops/wsdisplay (M13); arm64 GENERIC only (commented out in amd64's); criterion: console text on QEMU's virtio-gpu screenshot"
+
+[[file]]
+c = "sys/dev/pv/viomb.c"
+rust = "sys/dev/pv/viomb.rs"
+status = "todo"
+deps = ["sys/dev/pv/virtio.c"]
+notes = "M15: viomb(4) memory balloon; criterion: QEMU's balloon command inflates and deflates it, both archs"
+
+[[file]]
+c = "sys/dev/pv/viocon.c"
+rust = "sys/dev/pv/viocon.rs"
+status = "todo"
+deps = ["sys/dev/pv/virtio.c"]
+notes = "M15: viocon(4) virtio console; commented out in amd64 GENERIC and absent from arm64's, so built only with a cargo feature mirroring that config line (docs/ARCHITECTURE.md)"
+
+[[file]]
+c = "sys/dev/ic/am79900reg.h"
+rust = "sys/dev/ic/am79900reg.rs"
+status = "todo"
+notes = "M15: PCnet-PCI II descriptor layouts for pcn(4)"
+
+[[file]]
+c = "sys/dev/ic/lancereg.h"
+rust = "sys/dev/ic/lancereg.rs"
+status = "todo"
+notes = "M15: LANCE registers for pcn(4)"
+
+[[file]]
+c = "sys/dev/pci/if_pcn.c"
+rust = "sys/dev/pci/if_pcn.rs"
+status = "todo"
+deps = ["sys/dev/ic/am79900reg.h", "sys/dev/ic/lancereg.h"]
+notes = "M15: pcn(4); criterion: QEMU's pcnet pings 10.0.2.2; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/ic/fxpreg.h"
+rust = "sys/dev/ic/fxpreg.rs"
+status = "todo"
+notes = "M15: i8255x registers"
+
+[[file]]
+c = "sys/dev/ic/fxpvar.h"
+rust = "sys/dev/ic/fxpvar.rs"
+status = "todo"
+notes = "M15: fxp_softc"
+
+[[file]]
+c = "sys/dev/microcode/fxp/rcvbundl.h"
+rust = "sys/dev/microcode/fxp/rcvbundl.rs"
+status = "todo"
+notes = "M15: Intel receive-bundling microcode (Intel copyright, kept whole); fxp loads it as firmware with loadfirmware(9)"
+
+[[file]]
+c = "sys/dev/ic/fxp.c"
+rust = "sys/dev/ic/fxp.rs"
+status = "todo"
+deps = ["sys/dev/ic/fxpreg.h", "sys/dev/ic/fxpvar.h", "sys/dev/microcode/fxp/rcvbundl.h"]
+notes = "M15: fxp(4); criterion: QEMU's i82559er/i82557b pings 10.0.2.2; amd64 GENERIC only; the fxp-* firmware files come from dev/microcode/fxp/build.c in the userland build"
+
+[[file]]
+c = "sys/dev/pci/if_fxp_pci.c"
+rust = "sys/dev/pci/if_fxp_pci.rs"
+status = "todo"
+deps = ["sys/dev/ic/fxp.c"]
+notes = "M15: fxp at pci"
+
+[[file]]
+c = "sys/dev/ic/dp8390reg.h"
+rust = "sys/dev/ic/dp8390reg.rs"
+status = "todo"
+notes = "M15: NS DP8390 registers"
+
+[[file]]
+c = "sys/dev/ic/dp8390var.h"
+rust = "sys/dev/ic/dp8390var.rs"
+status = "todo"
+notes = "M15: dp8390_softc"
+
+[[file]]
+c = "sys/dev/ic/dp8390.c"
+rust = "sys/dev/ic/dp8390.rs"
+status = "todo"
+deps = ["sys/dev/ic/dp8390reg.h", "sys/dev/ic/dp8390var.h"]
+notes = "M15: the DP8390 core under ne(4)"
+
+[[file]]
+c = "sys/dev/ic/ne2000reg.h"
+rust = "sys/dev/ic/ne2000reg.rs"
+status = "todo"
+notes = "M15: NE2000 registers"
+
+[[file]]
+c = "sys/dev/ic/ne2000var.h"
+rust = "sys/dev/ic/ne2000var.rs"
+status = "todo"
+notes = "M15: ne2000_softc"
+
+[[file]]
+c = "sys/dev/ic/ax88190reg.h"
+rust = "sys/dev/ic/ax88190reg.rs"
+status = "todo"
+notes = "M15: AX88190 registers ne2000.c's ASIX path names"
+
+[[file]]
+c = "sys/dev/ic/rtl80x9reg.h"
+rust = "sys/dev/ic/rtl80x9reg.rs"
+status = "todo"
+notes = "M15: RTL8019/8029 registers for ne2000's Realtek path"
+
+[[file]]
+c = "sys/dev/ic/rtl80x9var.h"
+rust = "sys/dev/ic/rtl80x9var.rs"
+status = "todo"
+notes = "M15: RTL80x9 media helpers"
+
+[[file]]
+c = "sys/dev/ic/ne2000.c"
+rust = "sys/dev/ic/ne2000.rs"
+status = "todo"
+deps = ["sys/dev/ic/dp8390.c", "sys/dev/ic/ne2000reg.h", "sys/dev/ic/ne2000var.h"]
+notes = "M15: the NE2000 core"
+
+[[file]]
+c = "sys/dev/pci/if_ne_pci.c"
+rust = "sys/dev/pci/if_ne_pci.rs"
+status = "todo"
+deps = ["sys/dev/ic/ne2000.c"]
+notes = "M15: ne at pci; criterion: QEMU's ne2k_pci pings 10.0.2.2; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/usb/usbcdc.h"
+rust = "sys/dev/usb/usbcdc.rs"
+status = "todo"
+notes = "M15: USB CDC class descriptors"
+
+[[file]]
+c = "sys/dev/usb/if_cdcereg.h"
+rust = "sys/dev/usb/if_cdcereg.rs"
+status = "todo"
+notes = "M15: cdce softc"
+
+[[file]]
+c = "sys/dev/usb/if_cdce.c"
+rust = "sys/dev/usb/if_cdce.rs"
+status = "todo"
+deps = ["sys/dev/usb/usbcdc.h", "sys/dev/usb/if_cdcereg.h", "sys/dev/usb/usb.c"]
+notes = "M15: cdce(4); criterion: QEMU's usb-net pings 10.0.2.2, both archs"
+
+[[file]]
+c = "sys/dev/ic/mfireg.h"
+rust = "sys/dev/ic/mfireg.rs"
+status = "todo"
+notes = "M15: MegaRAID SAS firmware interface"
+
+[[file]]
+c = "sys/dev/ic/mfivar.h"
+rust = "sys/dev/ic/mfivar.rs"
+status = "todo"
+notes = "M15: mfi_softc"
+
+[[file]]
+c = "sys/dev/ic/mfi.c"
+rust = "sys/dev/ic/mfi.rs"
+status = "todo"
+deps = ["sys/dev/ic/mfireg.h", "sys/dev/ic/mfivar.h", "sys/scsi/scsiconf.c"]
+notes = "M15: mfi(4) with its bio(4) and sensor paths; criterion: QEMU's megasas disk mounted, both archs"
+
+[[file]]
+c = "sys/dev/pci/mfi_pci.c"
+rust = "sys/dev/pci/mfi_pci.rs"
+status = "todo"
+deps = ["sys/dev/ic/mfi.c"]
+notes = "M15: mfi at pci"
+
+[[file]]
+c = "sys/dev/pci/mfii.c"
+rust = "sys/dev/pci/mfii.rs"
+status = "todo"
+deps = ["sys/dev/ic/mfireg.h", "sys/scsi/scsiconf.c"]
+notes = "M15: mfii(4); criterion: QEMU's megasas-gen2 disk mounted, both archs"
+
+[[file]]
+c = "sys/dev/ic/mpireg.h"
+rust = "sys/dev/ic/mpireg.rs"
+status = "todo"
+notes = "M15: LSI Fusion-MPT registers"
+
+[[file]]
+c = "sys/dev/ic/mpivar.h"
+rust = "sys/dev/ic/mpivar.rs"
+status = "todo"
+notes = "M15: mpi_softc"
+
+[[file]]
+c = "sys/dev/ic/mpi.c"
+rust = "sys/dev/ic/mpi.rs"
+status = "todo"
+deps = ["sys/dev/ic/mpireg.h", "sys/dev/ic/mpivar.h", "sys/scsi/scsiconf.c"]
+notes = "M15: mpi(4); criterion: QEMU's mptsas1068 disk mounted, both archs"
+
+[[file]]
+c = "sys/dev/pci/mpi_pci.c"
+rust = "sys/dev/pci/mpi_pci.rs"
+status = "todo"
+deps = ["sys/dev/ic/mpi.c"]
+notes = "M15: mpi at pci"
+
+[[file]]
+c = "sys/dev/pci/mpiireg.h"
+rust = "sys/dev/pci/mpiireg.rs"
+status = "todo"
+notes = "M15: MPI-2 registers mfii.c reads"
+
+[[file]]
+c = "sys/dev/pci/vmwpvs.c"
+rust = "sys/dev/pci/vmwpvs.rs"
+status = "todo"
+deps = ["sys/scsi/scsiconf.c"]
+notes = "M15: vmwpvs(4); criterion: QEMU's pvscsi disk mounted; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/sdmmc/sdhcreg.h"
+rust = "sys/dev/sdmmc/sdhcreg.rs"
+status = "todo"
+notes = "M15: sdhcreg for the sdmmc(4) stack"
+
+[[file]]
+c = "sys/dev/sdmmc/sdhcvar.h"
+rust = "sys/dev/sdmmc/sdhcvar.rs"
+status = "todo"
+notes = "M15: sdhcvar for the sdmmc(4) stack"
+
+[[file]]
+c = "sys/dev/sdmmc/sdmmc_ioreg.h"
+rust = "sys/dev/sdmmc/sdmmc_ioreg.rs"
+status = "todo"
+notes = "M15: sdmmc_ioreg for the sdmmc(4) stack"
+
+[[file]]
+c = "sys/dev/sdmmc/sdmmc_scsi.h"
+rust = "sys/dev/sdmmc/sdmmc_scsi.rs"
+status = "todo"
+notes = "M15: sdmmc_scsi for the sdmmc(4) stack"
+
+[[file]]
+c = "sys/dev/sdmmc/sdmmcchip.h"
+rust = "sys/dev/sdmmc/sdmmcchip.rs"
+status = "todo"
+notes = "M15: sdmmcchip for the sdmmc(4) stack"
+
+[[file]]
+c = "sys/dev/sdmmc/sdmmcdevs.h"
+rust = "sys/dev/sdmmc/sdmmcdevs.rs"
+status = "todo"
+notes = "M15: sdmmcdevs for the sdmmc(4) stack"
+
+[[file]]
+c = "sys/dev/sdmmc/sdmmcreg.h"
+rust = "sys/dev/sdmmc/sdmmcreg.rs"
+status = "todo"
+notes = "M15: sdmmcreg for the sdmmc(4) stack"
+
+[[file]]
+c = "sys/dev/sdmmc/sdmmcvar.h"
+rust = "sys/dev/sdmmc/sdmmcvar.rs"
+status = "todo"
+notes = "M15: sdmmcvar for the sdmmc(4) stack"
+
+[[file]]
+c = "sys/dev/sdmmc/sdmmc.c"
+rust = "sys/dev/sdmmc/sdmmc.rs"
+status = "todo"
+deps = ["sys/dev/sdmmc/sdmmcvar.h", "sys/dev/sdmmc/sdmmcreg.h", "sys/dev/sdmmc/sdmmcchip.h"]
+notes = "M15: sdmmc(4) bus"
+
+[[file]]
+c = "sys/dev/sdmmc/sdmmc_mem.c"
+rust = "sys/dev/sdmmc/sdmmc_mem.rs"
+status = "todo"
+deps = ["sys/dev/sdmmc/sdmmc.c"]
+notes = "M15: SD/MMC memory cards"
+
+[[file]]
+c = "sys/dev/sdmmc/sdmmc_io.c"
+rust = "sys/dev/sdmmc/sdmmc_io.rs"
+status = "todo"
+deps = ["sys/dev/sdmmc/sdmmc.c", "sys/dev/sdmmc/sdmmc_ioreg.h"]
+notes = "M15: SDIO functions"
+
+[[file]]
+c = "sys/dev/sdmmc/sdmmc_cis.c"
+rust = "sys/dev/sdmmc/sdmmc_cis.rs"
+status = "todo"
+deps = ["sys/dev/sdmmc/sdmmc_io.c"]
+notes = "M15: SDIO CIS parsing"
+
+[[file]]
+c = "sys/dev/sdmmc/sdmmc_scsi.c"
+rust = "sys/dev/sdmmc/sdmmc_scsi.rs"
+status = "todo"
+deps = ["sys/dev/sdmmc/sdmmc_mem.c", "sys/dev/sdmmc/sdmmc_scsi.h", "sys/scsi/scsiconf.c"]
+notes = "M15: SD cards as scsibus disks"
+
+[[file]]
+c = "sys/dev/sdmmc/sdhc.c"
+rust = "sys/dev/sdmmc/sdhc.rs"
+status = "todo"
+deps = ["sys/dev/sdmmc/sdhcreg.h", "sys/dev/sdmmc/sdhcvar.h", "sys/dev/sdmmc/sdmmc.c"]
+notes = "M15: the SD host controller core"
+
+[[file]]
+c = "sys/dev/pci/sdhc_pci.c"
+rust = "sys/dev/pci/sdhc_pci.rs"
+status = "todo"
+deps = ["sys/dev/sdmmc/sdhc.c"]
+notes = "M15: sdhc at pci; criterion: QEMU's sdhci-pci with an sd-card mounted, both archs"
+
+[[file]]
+c = "sys/dev/midi.c"
+rust = "sys/dev/midi.rs"
+status = "todo"
+deps = ["sys/dev/midi_if.h"]
+notes = "M15: midi(4), which amd64 GENERIC attaches at eap; no QEMU device plays MIDI, so it is checked to attach only"
+
+[[file]]
+c = "sys/dev/midi_if.h"
+rust = "sys/dev/midi_if.rs"
+status = "todo"
+notes = "M15: the midi_hw_if interface"
+
+[[file]]
+c = "sys/dev/pci/eapreg.h"
+rust = "sys/dev/pci/eapreg.rs"
+status = "todo"
+notes = "M15: ES1370/ES1371 registers"
+
+[[file]]
+c = "sys/dev/pci/eap.c"
+rust = "sys/dev/pci/eap.rs"
+status = "todo"
+deps = ["sys/dev/pci/eapreg.h", "sys/dev/audio.c", "sys/dev/midi.c"]
+notes = "M15: eap(4); criterion: QEMU's ES1370 plays the tone (--expect-tone); amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/usb/uaudio.c"
+rust = "sys/dev/usb/uaudio.rs"
+status = "todo"
+deps = ["sys/dev/audio.c", "sys/dev/usb/usb.c"]
+notes = "M15: uaudio(4); criterion: QEMU's usb-audio plays the tone (--expect-tone), both archs"
+
+[[file]]
+c = "sys/dev/usb/ucomvar.h"
+rust = "sys/dev/usb/ucomvar.rs"
+status = "todo"
+notes = "M15: ucom attach arguments"
+
+[[file]]
+c = "sys/dev/usb/ucom.c"
+rust = "sys/dev/usb/ucom.rs"
+status = "todo"
+deps = ["sys/dev/usb/ucomvar.h", "sys/dev/usb/usb.c"]
+notes = "M15: ucom(4) ttys over USB serial"
+
+[[file]]
+c = "sys/dev/usb/uftdireg.h"
+rust = "sys/dev/usb/uftdireg.rs"
+status = "todo"
+notes = "M15: FTDI registers"
+
+[[file]]
+c = "sys/dev/usb/uftdi.c"
+rust = "sys/dev/usb/uftdi.rs"
+status = "todo"
+deps = ["sys/dev/usb/ucom.c", "sys/dev/usb/uftdireg.h"]
+notes = "M15: uftdi(4); criterion: a tty session through QEMU's usb-serial, both archs"
+
+[[file]]
+c = "sys/dev/acpi/tpm.c"
+rust = "sys/dev/acpi/tpm.rs"
+status = "todo"
+deps = ["sys/dev/acpi/acpi.c"]
+notes = "M15: tpm(4) at acpi; QEMU's tpm-tis needs swtpm on the host, a tool install that is the user's decision; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/ipmivar.h"
+rust = "sys/dev/ipmivar.rs"
+status = "todo"
+notes = "M15: ipmi softc and the KCS/SMIC/BT interfaces"
+
+[[file]]
+c = "sys/dev/ipmi.h"
+rust = "sys/dev/ipmi.rs"
+status = "todo"
+notes = "M15: ipmi(4) ioctl types"
+
+[[file]]
+c = "sys/dev/ipmi.c"
+rust = "sys/dev/ipmi.rs"
+status = "todo"
+deps = ["sys/dev/ipmivar.h", "sys/dev/ipmi.h"]
+notes = "M15: ipmi(4) with its sensors and watchdog; criterion: QEMU's isa-ipmi-kcs with ipmi-bmc-sim attaches and answers on amd64 (aarch64 QEMU has no IPMI device)"
+
+[[file]]
+c = "sys/dev/acpi/ipmi_acpi.c"
+rust = "sys/dev/acpi/ipmi_acpi.rs"
+status = "todo"
+deps = ["sys/dev/ipmi.c", "sys/dev/acpi/acpi.c"]
+notes = "M15: ipmi at acpi"
+
+[[file]]
+c = "sys/dev/acpi/acpidmar.h"
+rust = "sys/dev/acpi/acpidmar.rs"
+status = "todo"
+notes = "M15: DMAR table and VT-d registers"
+
+[[file]]
+c = "sys/dev/acpi/amd_iommu.h"
+rust = "sys/dev/acpi/amd_iommu.rs"
+status = "todo"
+notes = "M15: AMD-Vi registers acpidmar.c's IVRS path names"
+
+[[file]]
+c = "sys/dev/acpi/acpidmar.c"
+rust = "sys/dev/acpi/acpidmar.rs"
+status = "todo"
+deps = ["sys/dev/acpi/acpidmar.h", "sys/dev/acpi/amd_iommu.h", "sys/dev/acpi/acpi.c"]
+notes = "M15 (4k lines, own subagent): acpidmar(4); criterion: q35 with QEMU's intel-iommu boots with DMA remapped and a disk mounted; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/i2c/i2cvar.h"
+rust = "sys/dev/i2c/i2cvar.rs"
+status = "todo"
+notes = "M15: i2c_controller and iic attach arguments"
+
+[[file]]
+c = "sys/dev/i2c/i2c.c"
+rust = "sys/dev/i2c/i2c.rs"
+status = "todo"
+deps = ["sys/dev/i2c/i2cvar.h"]
+notes = "M15: iic(4) bus"
+
+[[file]]
+c = "sys/dev/i2c/i2c_scan.c"
+rust = "sys/dev/i2c/i2c_scan.rs"
+status = "todo"
+deps = ["sys/dev/i2c/i2c.c"]
+notes = "M15: iic_scan's probe table"
+
+[[file]]
+c = "sys/dev/pci/ichreg.h"
+rust = "sys/dev/pci/ichreg.rs"
+status = "todo"
+notes = "M15: ICH SMBus registers"
+
+[[file]]
+c = "sys/dev/pci/ichiic.c"
+rust = "sys/dev/pci/ichiic.rs"
+status = "todo"
+deps = ["sys/dev/pci/ichreg.h", "sys/dev/i2c/i2c.c"]
+notes = "M15: ichiic(4); criterion: q35's ICH9 SMBus attaches iic0 and the scan runs; amd64 GENERIC only"
+
+[[file]]
+c = "sys/arch/arm64/dev/agintc.c"
+rust = "sys/arch/arm64/dev/agintc.rs"
+status = "todo"
+notes = "M15: agintc(4) GICv3 with its LPI/ITS path; criterion: every arm64 smoke passes on virt,gic-version=3 with -smp 4; arm64 only"
+
+[[file]]
+c = "sys/dev/ofw/ofw_misc.c"
+rust = "sys/dev/ofw/ofw_misc.rs"
+status = "todo"
+notes = "M15: the iommu and regmap halves smmu_fdt needs; the rest stays for the boards that use it"
+
+[[file]]
+c = "sys/arch/arm64/dev/smmu.c"
+rust = "sys/arch/arm64/dev/smmu.rs"
+status = "todo"
+notes = "M15: smmu(4), SMMUv2 and v3; criterion: virt,iommu=smmuv3 boots with PCI DMA through it and a disk mounted; arm64 only"
+
+[[file]]
+c = "sys/arch/arm64/dev/smmu_fdt.c"
+rust = "sys/arch/arm64/dev/smmu_fdt.rs"
+status = "todo"
+deps = ["sys/arch/arm64/dev/smmu.c", "sys/dev/ofw/ofw_misc.c"]
+notes = "M15: smmu at fdt"
+
+[[file]]
+c = "sys/arch/arm64/dev/smmu_acpi.c"
+rust = "sys/arch/arm64/dev/smmu_acpi.rs"
+status = "todo"
+deps = ["sys/arch/arm64/dev/smmu.c"]
+notes = "M15: smmu at acpi (IORT)"
+
+[[file]]
+c = "sys/dev/pci/ppb.c"
+rust = "sys/dev/pci/ppb.rs"
+status = "todo"
+notes = "M15: ppb(4) PCI-PCI bridges; criterion: devices behind QEMU's pcie-root-port and pci-bridge attach and work, both archs"
+
+[[file]]
+c = "sys/dev/ic/ufshcireg.h"
+rust = "sys/dev/ic/ufshcireg.rs"
+status = "todo"
+notes = "M15: UFS host controller registers"
+
+[[file]]
+c = "sys/dev/ic/ufshcivar.h"
+rust = "sys/dev/ic/ufshcivar.rs"
+status = "todo"
+notes = "M15: ufshci_softc"
+
+[[file]]
+c = "sys/dev/ic/ufshci.c"
+rust = "sys/dev/ic/ufshci.rs"
+status = "todo"
+deps = ["sys/dev/ic/ufshcireg.h", "sys/dev/ic/ufshcivar.h", "sys/scsi/scsiconf.c"]
+notes = "M15: ufshci(4); criterion: QEMU's ufs with a ufs-lu disk mounted, both archs"
+
+[[file]]
+c = "sys/dev/pci/ufshci_pci.c"
+rust = "sys/dev/pci/ufshci_pci.rs"
+status = "todo"
+deps = ["sys/dev/ic/ufshci.c"]
+notes = "M15: ufshci at pci"
+
+[[file]]
+c = "sys/dev/ic/ncr53c9xreg.h"
+rust = "sys/dev/ic/ncr53c9xreg.rs"
+status = "todo"
+notes = "M15: NCR 53C9x registers"
+
+[[file]]
+c = "sys/dev/ic/ncr53c9xvar.h"
+rust = "sys/dev/ic/ncr53c9xvar.rs"
+status = "todo"
+notes = "M15: ncr53c9x_softc"
+
+[[file]]
+c = "sys/dev/ic/ncr53c9x.c"
+rust = "sys/dev/ic/ncr53c9x.rs"
+status = "todo"
+deps = ["sys/dev/ic/ncr53c9xreg.h", "sys/dev/ic/ncr53c9xvar.h", "sys/scsi/scsiconf.c"]
+notes = "M15: the NCR 53C9x SCSI core under pcscp(4)"
+
+[[file]]
+c = "sys/dev/pci/pcscpreg.h"
+rust = "sys/dev/pci/pcscpreg.rs"
+status = "todo"
+notes = "M15: Am53c974 DMA registers"
+
+[[file]]
+c = "sys/dev/pci/pcscp.c"
+rust = "sys/dev/pci/pcscp.rs"
+status = "todo"
+deps = ["sys/dev/ic/ncr53c9x.c", "sys/dev/pci/pcscpreg.h"]
+notes = "M15: pcscp(4); criterion: a disk on QEMU's am53c974 (and dc390) mounted; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/ic/dcreg.h"
+rust = "sys/dev/ic/dcreg.rs"
+status = "todo"
+notes = "M15: DEC 21x4x (tulip) registers"
+
+[[file]]
+c = "sys/dev/ic/dc.c"
+rust = "sys/dev/ic/dc.rs"
+status = "todo"
+deps = ["sys/dev/ic/dcreg.h"]
+notes = "M15: dc(4); criterion: QEMU's tulip pings 10.0.2.2; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/pci/if_dc_pci.c"
+rust = "sys/dev/pci/if_dc_pci.rs"
+status = "todo"
+deps = ["sys/dev/ic/dc.c"]
+notes = "M15: dc at pci"
+
+[[file]]
+c = "sys/dev/ic/lptreg.h"
+rust = "sys/dev/ic/lptreg.rs"
+status = "todo"
+notes = "M15: parallel port registers"
+
+[[file]]
+c = "sys/dev/ic/lptvar.h"
+rust = "sys/dev/ic/lptvar.rs"
+status = "todo"
+notes = "M15: lpt_softc"
+
+[[file]]
+c = "sys/dev/ic/lpt.c"
+rust = "sys/dev/ic/lpt.rs"
+status = "todo"
+deps = ["sys/dev/ic/lptreg.h", "sys/dev/ic/lptvar.h"]
+notes = "M15: lpt(4); criterion: bytes written to /dev/lpt0 reach QEMU's isa-parallel chardev file; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/isa/lpt_isa.c"
+rust = "sys/dev/isa/lpt_isa.rs"
+status = "todo"
+deps = ["sys/dev/ic/lpt.c", "sys/dev/isa/isa.c"]
+notes = "M15: lpt at isa"
+
+[[file]]
+c = "sys/dev/isa/isadmavar.h"
+rust = "sys/dev/isa/isadmavar.rs"
+status = "todo"
+notes = "M15: isa DMA interface fd(4) uses"
+
+[[file]]
+c = "sys/dev/isa/isadmareg.h"
+rust = "sys/dev/isa/isadmareg.rs"
+status = "todo"
+notes = "M15: 8237 DMA controller registers"
+
+[[file]]
+c = "sys/dev/isa/isadma.c"
+rust = "sys/dev/isa/isadma.rs"
+status = "todo"
+deps = ["sys/dev/isa/isadmavar.h", "sys/dev/isa/isadmareg.h", "sys/dev/isa/isa.c"]
+notes = "M15: ISA DMA for fd(4)"
+
+[[file]]
+c = "sys/dev/isa/fdreg.h"
+rust = "sys/dev/isa/fdreg.rs"
+status = "todo"
+notes = "M15: floppy controller registers"
+
+[[file]]
+c = "sys/dev/isa/fdlink.h"
+rust = "sys/dev/isa/fdlink.rs"
+status = "todo"
+notes = "M15: fdc/fd linkage"
+
+[[file]]
+c = "sys/dev/isa/fdc.c"
+rust = "sys/dev/isa/fdc.rs"
+status = "todo"
+deps = ["sys/dev/isa/fdreg.h", "sys/dev/isa/fdlink.h", "sys/dev/isa/isa.c"]
+notes = "M15: fdc(4); amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/isa/fd.c"
+rust = "sys/dev/isa/fd.rs"
+status = "todo"
+deps = ["sys/dev/isa/fdc.c", "sys/dev/isa/isadma.c"]
+notes = "M15: fd(4); criterion: a 1.44 MB image on QEMU's floppy read with mount_msdos; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/isa/pcppireg.h"
+rust = "sys/dev/isa/pcppireg.rs"
+status = "todo"
+notes = "M15: PC speaker port bits"
+
+[[file]]
+c = "sys/dev/isa/pcppivar.h"
+rust = "sys/dev/isa/pcppivar.rs"
+status = "todo"
+notes = "M15: pcppi_bell interface"
+
+[[file]]
+c = "sys/dev/isa/pcppi.c"
+rust = "sys/dev/isa/pcppi.rs"
+status = "todo"
+deps = ["sys/dev/isa/pcppireg.h", "sys/dev/isa/pcppivar.h", "sys/dev/isa/isa.c"]
+notes = "M15: pcppi(4), the PC speaker and the console bell; criterion: the wsdisplay bell is heard through -machine pcspk-audiodev (coreaudio, by ear in play-audio) and recorded (wav, --expect-tone) in smoke; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/isa/spkrio.h"
+rust = "sys/dev/isa/spkrio.rs"
+status = "todo"
+notes = "M15: spkr(4) ioctls"
+
+[[file]]
+c = "sys/dev/isa/spkr.c"
+rust = "sys/dev/isa/spkr.rs"
+status = "todo"
+deps = ["sys/dev/isa/pcppi.c", "sys/dev/isa/spkrio.h"]
+notes = "M15: spkr(4) plays a tune string on the PC speaker; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/usb/uwacom.c"
+rust = "sys/dev/usb/uwacom.rs"
+status = "todo"
+deps = ["sys/dev/hid/hidms.c"]
+notes = "M15: uwacom(4); criterion: QEMU's usb-wacom-tablet events reach wsmouse, both archs"
+
+[[file]]
+c = "sys/dev/usb/ugen.c"
+rust = "sys/dev/usb/ugen.rs"
+status = "todo"
+deps = ["sys/dev/usb/usb.c"]
+notes = "M15: ugen(4), /dev/ugen* for USB devices no driver claims; criterion: usbdevs and a control read on QEMU's usb-ccid, both archs"
+
+[[file]]
+c = "sys/dev/pci/piixreg.h"
+rust = "sys/dev/pci/piixreg.rs"
+status = "todo"
+notes = "M15: PIIX4 power management and SMBus registers"
+
+[[file]]
+c = "sys/dev/pci/piixpm.c"
+rust = "sys/dev/pci/piixpm.rs"
+status = "todo"
+deps = ["sys/dev/pci/piixreg.h", "sys/dev/i2c/i2c.c"]
+notes = "M15: piixpm(4) SMBus on -machine pc (the IDE smoke's machine); criterion: iic0 attaches and the scan runs; amd64 GENERIC only"
+
+[[file]]
+c = "sys/dev/pv/viornd.c"
+rust = "sys/dev/pv/viornd.rs"
+status = "todo"
+deps = ["sys/dev/pv/virtio.c"]
+notes = "M15: viornd(4); criterion: QEMU's virtio-rng feeds rnd(4) (enqueue counts grow), both archs; it also gives rnd(4) real entropy under QEMU"
+
+[[file]]
+c = "sys/sys/gpio.h"
+rust = "sys/sys/gpio.rs"
+status = "todo"
+notes = "M15: gpio(4) ioctl types"
+
+[[file]]
+c = "sys/dev/gpio/gpiovar.h"
+rust = "sys/dev/gpio/gpiovar.rs"
+status = "todo"
+notes = "M15: gpio bus attach arguments"
+
+[[file]]
+c = "sys/dev/gpio/gpio.c"
+rust = "sys/dev/gpio/gpio.rs"
+status = "todo"
+deps = ["sys/dev/gpio/gpiovar.h", "sys/sys/gpio.h"]
+notes = "M15: gpio(4) bus"
+
+[[file]]
+c = "sys/dev/ofw/ofw_gpio.h"
+rust = "sys/dev/ofw/ofw_gpio.rs"
+status = "todo"
+notes = "M15: the fdt gpio controller registry"
+
+[[file]]
+c = "sys/dev/ofw/ofw_pinctrl.h"
+rust = "sys/dev/ofw/ofw_pinctrl.rs"
+status = "todo"
+notes = "M15: the fdt pinctrl hooks gpiokeys names"
+
+[[file]]
+c = "sys/dev/fdt/plgpio.c"
+rust = "sys/dev/fdt/plgpio.rs"
+status = "todo"
+deps = ["sys/dev/ofw/ofw_gpio.h", "sys/dev/gpio/gpio.c"]
+notes = "M15: plgpio(4), arm64 virt's PL061; arm64 only"
+
+[[file]]
+c = "sys/dev/fdt/gpiokeys.c"
+rust = "sys/dev/fdt/gpiokeys.rs"
+status = "todo"
+deps = ["sys/dev/fdt/plgpio.c", "sys/dev/ofw/ofw_pinctrl.h"]
+notes = "M15: gpiokeys(4); criterion: QEMU's system_powerdown on arm64 virt (gpio-keys on the PL061) shuts the system down cleanly; arm64 only"
