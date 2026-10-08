@@ -2761,12 +2761,6 @@ pub fn agintc_msi_wait_cmd(sc: &AgintcMsiSoftc) {
 /// `agintc_msi_create_device_table`: with an indirect device table, the page of entries for
 /// `deviceid`'s group, allocated on first use.
 pub fn agintc_msi_create_device_table(sc: &AgintcMsiSoftc, deviceid: u32) -> Result<(), Errno> {
-    let Some(table) = sc.sc_dtt.get() else {
-        return Err(Errno::ENXIO);
-    };
-    let pgsz = sc.sc_dtt_pgsz.get();
-    let idx = deviceid as usize / (pgsz / usize::from(sc.sc_dte_sz.get()));
-
     // Out of bounds
     if deviceid > sc.sc_deviceid_max.get() {
         return Err(Errno::ENXIO);
@@ -2776,6 +2770,13 @@ pub fn agintc_msi_create_device_table(sc: &AgintcMsiSoftc, deviceid: u32) -> Res
     if !sc.sc_dtt_indirect.get() {
         return Ok(());
     }
+
+    // An indirect table was configured, so the ITS has a device table.
+    let Some(table) = sc.sc_dtt.get() else {
+        return Err(Errno::ENXIO);
+    };
+    let pgsz = sc.sc_dtt_pgsz.get();
+    let idx = deviceid as usize / (pgsz / usize::from(sc.sc_dte_sz.get()));
 
     // Table already allocated
     if table.get_u64(idx) != 0 {
