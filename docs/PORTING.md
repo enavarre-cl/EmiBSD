@@ -22,24 +22,30 @@ Before coding, write down:
 
 ## 3. Header template
 
-Every ported file starts like this. The two block comments are copied verbatim from the C file.
+Every ported file starts like this (`sys/lib/libkern/strlcpy.rs`). The `$OpenBSD$` line and the
+licence block are copied verbatim from the C file; the licence block sits between the
+`/* <LICENSES> */` and `/* </LICENSES> */` marker lines (nothing checks them yet; M14b makes
+`cargo xtask ports check` validate them). A file whose C has several notices keeps all of them inside one pair of markers. To read a
+ported file, start at the closing marker (`sed -n '/<\/LICENSES>/,$p' <file>`).
 
 ```rust
-/*	$OpenBSD: strlcpy.c,v 1.13 2015/08/20 22:32:41 deraadt Exp $	*/
-
+/*	$OpenBSD: strlcpy.c,v 1.9 2019/01/25 00:19:26 millert Exp $	*/
+/* <LICENSES> */
 /*
  * Copyright (c) 1998, 2015 Todd C. Miller <millert@openbsd.org>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * ...
  */
+/* </LICENSES> */
 
 //! `strlcpy(3)`: size-bounded string copy.
 //!
 //! Upstream: sys/lib/libkern/strlcpy.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - Operates on byte slices; the destination size is `dst.len()`, not a separate argument.
+//! - Operates on byte slices: the destination size is `dst.len()`, not a separate argument, and
+//!   `src` ends at its first NUL or at `src.len()`, whichever comes first.
 ```
 
 ## 4. Write
