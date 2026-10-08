@@ -224,7 +224,7 @@ pub fn _dmamap_create(
             _dm_maxsegsz: maxsegsz,
             _dm_boundary: boundary,
             _dm_flags: flags & !(BUS_DMA_WAITOK | BUS_DMA_NOWAIT) & !BUS_DMA_64BIT, // XXX
-            _dm_cookie: ptr::null_mut(),
+            _dm_cookie: Cell::new(ptr::null_mut()),
             _dm_pages: pages,
             _dm_pgva: 0,
             _dm_npages: npages as i32,

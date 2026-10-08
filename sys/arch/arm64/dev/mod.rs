@@ -17,5 +17,7 @@ pub mod efi_machdep;
 pub mod mainbus;
 pub mod pci_machdep;
 pub mod simplebus;
+pub mod smmu;
 pub mod smmureg;
+pub mod smmuvar;
 /* </CODE> */

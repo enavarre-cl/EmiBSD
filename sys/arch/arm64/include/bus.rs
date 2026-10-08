@@ -359,8 +359,9 @@ pub struct BusDmamap {
     pub _dm_boundary: BusSize,
     /// `_dm_flags`: misc. flags.
     pub _dm_flags: i32,
-    /// `_dm_cookie`: cookie for bus-specific functions.
-    pub _dm_cookie: *mut c_void,
+    /// `_dm_cookie`: cookie for bus-specific functions; a `Cell`, since an overriding tag
+    /// (smmu(4)) sets it on the map its parent tag created and handed out.
+    pub _dm_cookie: Cell<*mut c_void>,
     /// `_dm_pages`: replacement pages (`_dm_npages` of them after the segments; null when
     /// the map does not bounce).
     pub _dm_pages: *mut *const VmPage,

@@ -11280,8 +11280,19 @@ notes = "M16f: struct regmap (opaque in the header, defined in the .c) and struc
 [[file]]
 c = "sys/arch/arm64/dev/smmu.c"
 rust = "sys/arch/arm64/dev/smmu.rs"
-status = "todo"
-notes = "M16: smmu(4), SMMUv2 and v3; criterion: virt,iommu=smmuv3 boots with PCI DMA through it and a disk mounted; arm64 only"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6ae966d1bf426b4e889205347c9ba54e5735fa96"
+deps = ["sys/arch/arm64/dev/smmureg.h", "sys/arch/arm64/dev/smmuvar.h", "sys/kern/subr_extent.c"]
+notes = "M16f: the whole file: struct smmu_map_state, smmuvp0..3 (repr(C) arrays of AtomicU64 descriptors and AtomicPtr links, so smmu_vp_enter's unlocked check is atomic loads; zeroed pool items, never freed, as in C), smmu_cd, smmu_attach (the two pools malloc'd and leaked), smmu_v2_attach (QCOM SMR takeover and bypass quirk, MMU-500 SACR/ACTLR, the C's #if 1 paths: streams fault, unknown streams fault), smmu_v2_global_irq/context_irq, tlb_sync_global/context, the gr0/gr1/cb register accessors (two 32-bit halves on the AP806), smmu_device_map (Option<BusDmaTagT> in and out, the IORT contract; the tag a leaked copy with the seven map functions overridden), smmu_domain_lookup/create (a failed domain is dropped as the C frees it), smmu_v2_domain_create, smmu_reserve_region (clamped to the IOVA map), VP_IDX*/VP_Lx, smmu_set_l1/l2/l3, smmu_vp_lookup/enter, smmu_fill_pte, smmu_pte_update (the SMMU MAIR indices are this file's SMMU_ATTR_* with the C's pte.h values, since EmiBSD's PTE_ATTR_* follow its own MAIR_EL1), smmu_pte_remove, smmu_enter/map/unmap, smmu_v2_tlbi_va, smmu_remove (empty in C too), smmu_load_map/unload_map, smmu_dmamap_create (map state malloc'd with the map's wait flags, extent_alloc_with_descr with a 64 KB alignment and a guard page)/destroy/load/load_mbuf/load_uio/load_raw/unload, smmu_dmamem_alloc/free, smmu_v3_attach (the goto unwinding as smmu_v3_attach_unwind), smmu_v3_event_irq/priq_irq (one queue walk, smmu_v3_q_drain), smmu_v3_gerr_irq, the v3 register accessors and write_ack, smmu_v3_domain_create (CD, two-level or linear stream table, STE word 0 last), smmu_v3_sync, cfgi_all/cd/ste, tlbi_all/asid/va (the queue insertion they repeat is smmu_v3_cmd_put), tlb_sync_context; membar_producer/membar_sync are fence(Release)/fence(SeqCst); _dm_cookie of the arm64 bus_dmamap became a Cell for smmu_dmamap_create to set"
+
+[[file]]
+c = "sys/arch/arm64/dev/smmuvar.h"
+rust = "sys/arch/arm64/dev/smmuvar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cd087607ebe0cfa0a666ab69e6aa346a03e9c432"
+notes = "M16f: the whole header: struct smmu_dmamem, struct smmu_domain (the v2/v3 union as both members, sd_vp's union as two Cells, sd_exname a leaked byte string), struct smmu_cb (empty), struct smmu_cb_irq, struct smmu_smr, struct smmu_v3_queue, struct smmu_softc (repr(C), device first, all-zero valid: Cells, Option<&>, mutexes, an empty SIMPLEQ; the pools as Cell<Option<&'static Pool>> allocated at attach; sc_smr/sc_cb/sc_strtab_l2 leaked boxed slices; the hooks Option<fn>); the prototypes are smmu.c's"
 
 [[file]]
 c = "sys/arch/arm64/dev/smmureg.h"
