@@ -93,6 +93,9 @@ pub(super) const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 ///   `audioctl0` minor 192 (`AUDIO_DEV_AUDIOCTL`), mode 0660, group `_sndiop` (`MAKEDEV`'s
 ///   `audio*` entry); `usb` is major 61 (`cdev_usb_init`, 239 / 191): `usb0`, mode 0640
 ///   (`MAKEDEV`'s `usb*`).
+/// - `uhid` is major 62 (`cdev_usbdev_init(NUHID,uhid)`, M16b): `uhid0`..`uhid7`, minor =
+///   unit, mode 0600 (`MAKEDEV`'s `uhid*`); `ugen` is major 63 (`cdev_usbdev_init(NUGEN,ugen)`):
+///   `ugen0.00`..`ugen1.15`, minor `unit * 16 + endpoint`, mode 0600 (`MAKEDEV`'s `ugen*`).
 ///
 /// `/dev/random` (major 45) is left out: the kernel has no `random` driver yet.
 /// (name, kind, major, minor, mode, group)
@@ -123,6 +126,16 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("audio0", 'c', 42, 0, 0o660, "_sndiop"),
     ("audioctl0", 'c', 42, 192, 0o660, "_sndiop"),
     ("usb0", 'c', 61, 0, 0o640, "wheel"),
+    // M16b: `uhid` 62 (`MAKEDEV`'s `_mcdev(uhid, uhid*, uhid, {-major_uhid_c-}, 600)`, whose
+    // target lists units 0 to 7). `ugen` 63 is made by `devices()`.
+    ("uhid0", 'c', 62, 0, 0o600, "wheel"),
+    ("uhid1", 'c', 62, 1, 0o600, "wheel"),
+    ("uhid2", 'c', 62, 2, 0o600, "wheel"),
+    ("uhid3", 'c', 62, 3, 0o600, "wheel"),
+    ("uhid4", 'c', 62, 4, 0o600, "wheel"),
+    ("uhid5", 'c', 62, 5, 0o600, "wheel"),
+    ("uhid6", 'c', 62, 6, 0o600, "wheel"),
+    ("uhid7", 'c', 62, 7, 0o600, "wheel"),
     // M13: `com4`, the first `com* at puc?` after amd64's four ISA lines (`smoke-puc`): the
     // call-out node (`com`'s `COMDIALOUT`, minor bit 0x80), which opens without a carrier.
     ("cua04", 'c', 8, 132, 0o600, "wheel"),
@@ -180,6 +193,14 @@ const CD_CHAR_MAJOR: u32 = 15;
 /// `pseudo-device vnd 4`).
 const VND_UNITS: &[u32] = &[0, 1, 2, 3];
 
+/// The `ugen` units the image has nodes for (M16b): `MAKEDEV`'s `ugen*` makes sixteen nodes
+/// per unit, `ugen$U.00`..`ugen$U.15`, major 63, minor `unit * 16 + endpoint`, mode 0600.
+/// The first two of its eight units are enough for the machine's USB devices.
+const UGEN_UNITS: &[u32] = &[0, 1];
+
+/// `cdevsw[]` major of `ugen` (`cdev_usbdev_init(NUGEN,ugen)`, 63 on amd64 and arm64).
+const UGEN_CHAR_MAJOR: u32 = 63;
+
 /// `bdevsw[]` and `cdevsw[]` majors of `vnd` (14 and 41 on amd64 and arm64).
 const VND_BLOCK_MAJOR: u32 = 14;
 const VND_CHAR_MAJOR: u32 = 41;
@@ -205,6 +226,18 @@ pub(super) fn devices() -> Vec<(String, char, u32, u32, u32, &'static str)> {
                 .iter()
                 .map(|u| ("vnd", *u, VND_BLOCK_MAJOR, VND_CHAR_MAJOR)),
         );
+    for unit in UGEN_UNITS {
+        for endpoint in 0..16 {
+            all.push((
+                format!("ugen{unit}.{endpoint:02}"),
+                'c',
+                UGEN_CHAR_MAJOR,
+                unit * 16 + endpoint,
+                0o600,
+                "wheel",
+            ));
+        }
+    }
     for (name, unit, bmajor, cmajor) in disks {
         for (part, letter) in ('a'..='p').enumerate() {
             let minor = unit * UNITMULT + part as u32;

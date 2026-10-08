@@ -8,6 +8,8 @@
 //! drivers (`xhci`, `uhub`, `umass`, `uhidev`, ...) attach on top of it; `ukbdmap` holds the
 //! keyboard layouts of `ukbd`.
 
+pub mod ugen;
+pub mod uhid;
 pub mod uhid_rdesc;
 pub mod uhidev;
 pub mod uhub;

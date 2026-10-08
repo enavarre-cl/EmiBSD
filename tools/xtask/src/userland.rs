@@ -238,6 +238,8 @@ const VARIANTS: &[Variant] = &[
     Variant::statically("usr.bin/tee"),
     Variant::statically("usr.sbin/installboot"),
     Variant::statically("usr.sbin/pwd_mkdb"),
+    // M16b: usbdevs(8).
+    Variant::statically("usr.sbin/usbdevs"),
     Variant::statically("sbin/dhcpleased"),
     Variant::statically("sbin/resolvd"),
     Variant::statically("sbin/slaacd"),
@@ -436,6 +438,8 @@ const PROGRAMS: &[&str] = &[
     "usr.bin/tee",
     "usr.sbin/installboot",
     "usr.sbin/pwd_mkdb",
+    // M16b: usbdevs(8), the USB device tree over /dev/usb0's USB_DEVICEINFO.
+    "usr.sbin/usbdevs",
 ];
 
 /// Scripts that a Makefile's `afterinstall` rule installs next to the program: (directory, files).

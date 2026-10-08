@@ -120,7 +120,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-powerbtn smoke-mouse"
+    "smoke-powerbtn smoke-mouse smoke-ugen"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2278,7 +2278,8 @@ smoke-kbd: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featur
 # left button down it is 1, ums2's, and the move that follows makes it a report of three
 # bytes. wsmouse2 gets its two events from those. The monitor's numbering follows the
 # machine: on amd64 the PS/2 mouse is #2 and the HID ones #3, #4 and #5; arm64 has #1, #2
-# and #3.
+# and #3. The PenPartner's other report IDs (2, 3 and 99, vendor collections) are left to
+# uhid(4), which attaches to each (`uhid0` to `uhid2`).
 mouse_dd := 'for i in 0 1 2; do (n=$(dd if=/dev/wsmouse$i bs=24 count=2 2>/dev/null | wc -c); echo mouse$i-bytes-$((n))) & done; sleep 2; echo mouse-ready-$((40+2))\n'
 mouse_check := "--usb-mouse --usb-tablet --usb-wacom-tablet --expect-ramdisk --until-seen " + \
     disk_login + " --send-after '# ' --send '" + mouse_dd + "' " + \
@@ -2289,6 +2290,9 @@ mouse_check := "--usb-mouse --usb-tablet --usb-wacom-tablet --expect-ramdisk --u
     "--expect 'ums0 at uhidev0: 5 buttons, Z dir' --expect 'wsmouse0 at ums0 mux 0' " + \
     "--expect 'ums1 at uhidev1: 5 buttons, Z dir' --expect 'wsmouse1 at ums1 mux 0' " + \
     "--expect 'ums2 at uhidev2 reportid 1: 3 buttons, Z dir' --expect 'wsmouse2 at ums2 mux 0' " + \
+    "--expect 'uhid0 at uhidev2 reportid 2: input=7, output=0, feature=1' " + \
+    "--expect 'uhid1 at uhidev2 reportid 3: input=0, output=0, feature=1' " + \
+    "--expect 'uhid2 at uhidev2 reportid 99: input=7, output=0, feature=0' " + \
     "--expect 'mouse0-bytes-48' --expect 'mouse1-bytes-48' --expect 'mouse2-bytes-48'"
 smoke-mouse: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
@@ -2297,6 +2301,28 @@ smoke-mouse: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
         {{replace(replace(replace(mouse_check, "MOUSE", "3"), "TABLET", "4"), "WACOM", "5")}}
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd \
         {{replace(replace(replace(mouse_check, "MOUSE", "1"), "TABLET", "2"), "WACOM", "3")}}
+
+# M16b: ugen(4), both archs. QEMU's `usb-ccid` smart card reader (`--usb-ccid`, devices.rs) on a
+# `qemu-xhci`: no driver takes a CCID interface (class 0x0b), so usbd_probe_and_attach offers the
+# device to the generic fallback and ugen0 attaches. After login `usbdevs -v` (usbdevs(8), over
+# /dev/usb0's USB_DEVICEINFO) lists the reader with `driver: ugen0`; reading /dev/ugen0.00 (the
+# control endpoint) fails with ENODEV, as ugen_do_read says; and a CCID PC_to_RDR_GetSlotStatus
+# message (10 bytes: type 0x65, zeros) written to the bulk-out endpoint (/dev/ugen0.03) brings
+# the RDR_to_PC_SlotStatus (10 bytes) back from the bulk-in one (/dev/ugen0.02): ugenopen,
+# ugen_do_write, ugen_do_read, the synchronous bulk transfers (dd reads exactly 10 bytes: a
+# shorter transfer than asked is an error without USB_SET_SHORT_XFER, as in the C). The `ugen_clear_iface_eps:
+# clear endpoints failed!` lines are QEMU stalling CLEAR_FEATURE(ENDPOINT_HALT) on the CCID
+# interface, which ugenopen sends before it opens a pipe (the C prints them too). Part of `smoke`.
+ugen_session := 'usbdevs -v; dd if=/dev/ugen0.00 count=1 2>&1; echo -n "\\0145\\0\\0\\0\\0\\0\\0\\0\\0\\0" > /dev/ugen0.03; n=$(dd if=/dev/ugen0.02 bs=10 count=1 2>/dev/null | wc -c); echo ccid-$((n)); echo ugen-$((40+2))\n'
+ugen_check := "--usb-ccid --expect-ramdisk --until-seen " + disk_login + " --send-after '# ' --send '" + ugen_session + "' " + \
+    "--expect 'ugen0 at uhub0 port 5 \"QEMU QEMU USB CCID\" rev 1.10/0.00 addr 2' " + \
+    "--expect 'addr 02: 08e6:4433 QEMU, QEMU USB CCID' --expect 'driver: ugen0' " + \
+    "--expect 'dd: /dev/ugen0.00: Operation not supported by device' --expect 'ccid-10' --expect 'ugen-42'"
+smoke-ugen: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-ugen: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{ugen_check}}
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{ugen_check}}
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

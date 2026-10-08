@@ -10699,15 +10699,19 @@ notes = "M16b: the whole file: UmsSoftc (Uhidev head, Hidms, quirks), ums_access
 [[file]]
 c = "sys/dev/usb/uhid.h"
 rust = "sys/dev/usb/uhid.rs"
-status = "todo"
-notes = "M16: uhid ioctl types"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e54454612ac2fe3bbcfe2bea013d0a75b11ba51e"
+notes = "M16b: shares uhid.rs with uhid.c: struct uhid_softc (UhidSoftc: Uhidev head, sc_obuf, Clist sc_q, Selinfo sc_rsel, sc_state, sc_refcnt; all-zero valid), UHIDUNIT (uhidunit), UHID_CHUNK, UHID_BSIZE, UHID_ASLP; NUHID 1 (GENERIC); the prototypes are uhid.c's; license: NetBSD Foundation BSD-2-clause style notice, kept whole"
 
 [[file]]
 c = "sys/dev/usb/uhid.c"
 rust = "sys/dev/usb/uhid.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fc0ce5c910b6c460b1bf1c46859eb77097e87005"
 deps = ["sys/dev/usb/uhid.h", "sys/dev/usb/uhidev.c"]
-notes = "M16: uhid(4), the generic /dev/uhid* for HID devices no driver claims"
+notes = "M16b: the whole file: uhid_lookup, uhid_cd/ca, match (any report ID not claimed by a better driver), attach (input/output/feature sizes), detach (vdevgone, klist_invalidate), intr (b_to_q into the clist), uhidopen/uhid_do_open, uhidclose, uhid_do_read (sleep in 'uhidrea', chunks of 128), uhidread, uhid_do_write (zero padded output report through uhidev_set_report), uhidwrite, uhid_do_ioctl (FIOASYNC, USB_GET_DEVICEINFO, the report ioctls of uhidev_ioctl, ENOTTY), uhidioctl, uhidkqfilter with filt_uhidread. cdevsw 62 on both archs (cdev_usbdev_init(NUHID,uhid)), /dev/uhid0..7 in the ramdisk, 'uhid* at uhidev?' in both ioconfs. NFIDO and NUJOY are 0 (fido(4), ujoy(4) not ported: uhid_lookup knows only uhid_cd). 5 host tests (report queue, chunked reads, queue limit, read filter, minor); license: NetBSD Foundation BSD-2-clause style notice, kept whole"
 
 [[file]]
 c = "sys/dev/usb/ehcireg.h"
@@ -11527,9 +11531,11 @@ notes = "M16b: the whole file: UwacomSoftc, uwacom_devs (INTUOS_DRAW, ONE_S, ONE
 [[file]]
 c = "sys/dev/usb/ugen.c"
 rust = "sys/dev/usb/ugen.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "320c405d2b4bf6070735d320e06779bb6f9f2297"
 deps = ["sys/dev/usb/usb.c"]
-notes = "M16: ugen(4), /dev/ugen* for USB devices no driver claims; criterion: usbdevs and a control read on QEMU's usb-ccid, both archs"
+notes = "M16b: the whole file: UgenEndpoint/Isoreq/UgenSoftc (all-zero valid; sc_endpoints[16][2], 16 sc_is_open), ugen_cd/ca, match (usegeneric only), attach (config index 0 for a device nobody else uses, ugen_set_config), ugen_set_config, ugenopen (control endpoint; interrupt-in with usbd_open_pipe_intr into a clist; bulk; isochronous-in with six outstanding transfers), ugenclose/ugen_do_close, ugen_do_read (interrupt clist with the tsleep timeout, bulk synchronous, isochronous ring), ugenread, ugen_do_write (bulk, interrupt), ugenwrite, ugen_detach, ugenintr, ugen_isoc_rintr (the ring arithmetic is isoc_ring_put), ugen_set_interface, ugen_get_alt_index, ugen_do_ioctl (USB_SET_SHORT_XFER, USB_SET_TIMEOUT, the control endpoint's config/interface/descriptor/request/deviceinfo ioctls), ugenioctl, ugenkqfilter with its two filters, ugen_clear_iface_eps. cdevsw 63 on both archs (cdev_usbdev_init(NUGEN,ugen)), /dev/ugen0.00..ugen1.15 in the ramdisk (MAKEDEV: sixteen nodes per unit, minor unit*16+endpoint), 'ugen* at uhub?' in both ioconfs; usr.sbin/usbdevs in the ramdisk. Deviations: edesc is a copy (Option), the isochronous ring is offsets, the C's ring-wrap bug ibuf+(limit-cur) is cur-limit, the interrupt write chunk is clamped to the buffer, entry points answer ENXIO for a unit not attached. UGEN_DEBUG absent. smoke-ugen (both archs): QEMU's usb-ccid attaches as ugen0, usbdevs -v lists it with driver: ugen0, /dev/ugen0.00 reads fail with ENODEV, a CCID GetSlotStatus written to /dev/ugen0.03 is answered with 10 bytes on /dev/ugen0.02; QEMU stalls the CLEAR_FEATURE(ENDPOINT_HALT) ugen_clear_iface_eps sends, which prints its 'clear endpoints failed!' (the C does too). 4 host tests (minor decoding, isochronous ring appends, wraps and drops the oldest); license: NetBSD Foundation BSD-2-clause style notice, kept whole"
 
 [[file]]
 c = "sys/dev/pci/piixreg.h"

@@ -13,7 +13,8 @@
 //! `xhci* at pci?`, `usb* at xhci?`, `uhub* at usb?`, `uhub* at uhub?`, `umass* at uhub?`
 //! and `scsibus* at scsi?` below it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12),
 //! `ums* at uhidev?`, `wsmouse* at ums? mux 0`, `uwacom* at uhidev?` and `wsmouse* at uwacom?
-//! mux 0` (M16b), `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?`, `ahci* at pci?`, `siop* at pci?`,
+//! mux 0` (M16b), `uhid* at uhidev?` and `ugen* at uhub?` (M16b, the last of `uhub?`'s devices:
+//! `ugen` is the generic fallback), `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?`, `ahci* at pci?`, `siop* at pci?`,
 //! `bios0 at mainbus0`, `acpi0 at bios0`, `acpitimer* at acpi?`, `acpihpet* at acpi?`,
 //! `ioapic* at mainbus?`, `acpimadt0 at acpi?`, `acpiprt* at acpi?` and `acpipci* at
 //! acpi?` (M13), `puc* at pci?` and `com* at puc?` (M13; `com*` takes the units from 4),
@@ -37,8 +38,8 @@
 //! other
 //! `audio*` (at `uaudio?`, ...), `pci*` at `ppb?` and
 //! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; `usb*` at `ehci?`, `uhci?`
-//! and `ohci?`, every device at `uhub?` but `uhub*`, `umass*` and `uhidev*`, every device
-//! at `uhidev?` but `ukbd*`, `ums*` and `uwacom*`, every `wskbd*` but the one at `ukbd?`, every
+//! and `ohci?`, every device at `uhub?` but `uhub*`, `umass*`, `uhidev*` and `ugen*`, every device
+//! at `uhidev?` but `ukbd*`, `ums*`, `uwacom*` and `uhid*`, every `wskbd*` but the one at `ukbd?`, every
 //! `wsmouse*` but the ones at `ums?` and `uwacom?`;
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
 //! layout: attachment, driver, unit, state, locators, flags, parents (indices into
@@ -91,6 +92,8 @@ use crate::dev::pv::vioscsi::{VIOSCSI_CA, VIOSCSI_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
+use crate::dev::usb::ugen::{UGEN_CA, UGEN_CD};
+use crate::dev::usb::uhid::{UHID_CA, UHID_CD};
 use crate::dev::usb::uhidev::{UHIDEV_CA, UHIDEV_CD};
 use crate::dev::usb::uhub::{UHUB_CA, UHUB_CD, UHUB_UHUB_CA};
 use crate::dev::usb::ukbd::{UKBD_CA, UKBD_CD};
@@ -247,11 +250,11 @@ const PV_UWACOM: &[i16] = &[55];
 /// `define wsmousedev {[mux = 0]}`).
 const LOC_WSMOUSEDEV_MUX0: &[i64] = &[0];
 
-/// `cfdata[]`: 57 entries, 58 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 59 entries, 60 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    58
+    60
 } else {
-    57
+    59
 };
 
 /// `cfdata[]`.
@@ -891,7 +894,31 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 57: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 57: uhid* at uhidev?
+    Cfdata::new(
+        &UHID_CA,
+        &UHID_CD,
+        0,
+        FSTATE_STAR,
+        LOC_UHIDBUS_UNK,
+        0,
+        PV_UHIDEV,
+        0,
+        0,
+    ),
+    // 58: ugen* at uhub?
+    Cfdata::new(
+        &UGEN_CA,
+        &UGEN_CD,
+        0,
+        FSTATE_STAR,
+        LOC_UHUB_UNK,
+        0,
+        PV_UHUB,
+        0,
+        0,
+    ),
+    // 59: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
