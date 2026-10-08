@@ -110,12 +110,15 @@
 //!   handle's address.
 //! - `ipmilookup` returns the softc; like the C, `ipmiopen`, `ipmiclose` and `ipmiioctl`
 //!   never give back the device reference `device_lookup` took (`device_unref`).
-//! - `ipmi_probe` (amd64's mainbus): SMBIOS (`smbios_find_table`, the half of `bios.c` that
-//!   is not ported) is reported with `unported!` and treated as absent, so the probe goes on
-//!   to the `IPMI` signature scan of the BIOS area; `scan_sig` maps that area through
+//! - `ipmi_probe` (amd64's mainbus) exists where cfg `machine_x86` is set, as the C's
+//!   `#if defined(__amd64__) || defined(__i386__)` part: it reads SMBIOS's IPMI device
+//!   information with `bios.c`'s `smbios_find_table` through `machine::x86`. `struct
+//!   smbios_ipmi` and `SMBIOS_TYPE_IPMIDEV` (`<machine/smbiosvar.h>`) are declared here too,
+//!   because `ipmi_smbios_probe` and its host tests are built on every machine; the record is
+//!   read as this file's `SmbiosIpmi` (the same packed layout). Without SMBIOS the probe goes
+//!   on to the `IPMI` signature scan of the BIOS area; `scan_sig` maps that area through
 //!   `bus_space_map` of the attach arguments' memory tag instead of `ISA_HOLE_VADDR`, and
-//!   returns the signature's physical address. `struct smbios_ipmi` (`<machine/smbiosvar.h>`)
-//!   is declared here, as efiboot declares the parts of that header it reads.
+//!   returns the signature's physical address.
 //! - `ipmi_sensor_list` is a `Sync` wrapper over an `SlistHead`, touched by the sensor
 //!   thread only (and by autoconfiguration's thread before it runs); `ipmi_enabled` and
 //!   `maxsdrlen` are atomics.
@@ -154,6 +157,8 @@ use crate::machine::bus::{
 use crate::machine::copy::{copyin, copyout};
 use crate::machine::intr::IPL_MPFLOOR;
 use crate::machine::isa_machdep::{IST_EDGE, IST_LEVEL};
+#[cfg(machine_x86)]
+use crate::machine::x86::{Smbtable, smbios_find_table};
 use crate::sys::device::{CfMatch, Cfattach, Cfdriver, DV_DULL, DVACT_POWERDOWN, Device};
 use crate::sys::errno::Errno;
 use crate::sys::ioccom::{_ior, _iow, _iowr};
@@ -171,7 +176,7 @@ use crate::sys::systm::{COLD, INFSLP};
 use crate::sys::task::{SYSTQ, TASKQ_MPSAFE, Task};
 use crate::sys::time::{msec_to_nsec, sec_to_nsec};
 use crate::sys::types::{Dev, minor};
-use crate::{kassert, kprintf, unported};
+use crate::{kassert, kprintf};
 
 // ---- ipmi.h ----
 
@@ -2559,28 +2564,34 @@ pub fn ipmi_smbios_probe(pipmi: &SmbiosIpmi, ia: &mut IpmiAttachArgs) {
 
 /// `ipmi_probe(aux)` (amd64's mainbus): 1 when SMBIOS or a BIOS signature describes a BMC,
 /// with the attach arguments filled in.
+#[cfg(machine_x86)]
 pub fn ipmi_probe(ia: &mut IpmiAttachArgs) -> i32 {
-    // smbios_find_table(SMBIOS_TYPE_IPMIDEV, &tbl): see the module's deviations; no table is
-    // found, so ipmi_smbios_probe is not reached from here.
-    let _ = unported!("ipmi_probe: smbios_find_table (SMBIOS_TYPE_IPMIDEV; bios.c's SMBIOS half)");
+    let mut tbl = Smbtable::default();
+    if smbios_find_table(SMBIOS_TYPE_IPMIDEV, &mut tbl) != 0 {
+        // SAFETY: `smbios_find_table` points `tblhdr` at the formatted area of a type 38
+        // structure in the table bios0 mapped read-only for good; it is read as the C reads
+        // it (a record shorter than `struct smbios_ipmi` reads on into its strings).
+        let pipmi = unsafe { tbl.tblhdr.cast::<SmbiosIpmi>().read_unaligned() };
+        ipmi_smbios_probe(&pipmi, ia);
+    } else {
+        let Some(memt) = ia.iaa_memt else {
+            return 0;
+        };
+        // XXX hack to find Dell PowerEdge 8450
+        let Some(pa) = scan_sig(memt, 0xC0000, 0xFFFFF, 16, b"IPMI") else {
+            // no IPMI found
+            return 0;
+        };
 
-    let Some(memt) = ia.iaa_memt else {
-        return 0;
-    };
-    // XXX hack to find Dell PowerEdge 8450
-    let Some(pa) = scan_sig(memt, 0xC0000, 0xFFFFF, 16, b"IPMI") else {
-        // no IPMI found
-        return 0;
-    };
-
-    // we have an IPMI signature, fill in attach arg structure
-    // SAFETY: as in `scan_sig`: the BIOS area, read only.
-    let Ok(h) = (unsafe { bus_space_map(memt, pa, size_of::<DmdIpmi>(), 0) }) else {
-        return 0;
-    };
-    ia.iaa_if_type = i32::from(bus_space_read_1(memt, h, offset_of!(DmdIpmi, dmd_if_type)));
-    ia.iaa_if_rev = i32::from(bus_space_read_1(memt, h, offset_of!(DmdIpmi, dmd_if_rev)));
-    bus_space_unmap(memt, h, size_of::<DmdIpmi>());
+        // we have an IPMI signature, fill in attach arg structure
+        // SAFETY: as in `scan_sig`: the BIOS area, read only.
+        let Ok(h) = (unsafe { bus_space_map(memt, pa, size_of::<DmdIpmi>(), 0) }) else {
+            return 0;
+        };
+        ia.iaa_if_type = i32::from(bus_space_read_1(memt, h, offset_of!(DmdIpmi, dmd_if_type)));
+        ia.iaa_if_rev = i32::from(bus_space_read_1(memt, h, offset_of!(DmdIpmi, dmd_if_rev)));
+        bus_space_unmap(memt, h, size_of::<DmdIpmi>());
+    }
 
     1
 }

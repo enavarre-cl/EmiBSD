@@ -20,7 +20,12 @@
 //! itself into `struct cpu_info` (`ci_acpicpudev`, `ci_mwait`, `ci_feature_tpmflags`), idles
 //! with `sti; hlt`, `inb` or `monitor`/`mwait` (with `clflush`, `cpu_mwait_size`,
 //! `cpu_mwait_states`, `cpu_vendor`), and sets `cpuspeed` and `setperf_prio`.
+//!
+//! `dev/ipmi.c`'s x86 part (`ipmi_probe`, amd64's mainbus, M16e) reads SMBIOS's IPMI device
+//! information with `bios.c`'s `smbios_find_table` and `struct smbtable`
+//! (`<machine/smbiosvar.h>`).
 
+pub use crate::arch::current::amd64::bios::smbios_find_table;
 pub use crate::arch::current::amd64::bus_dma::{
     _bus_dmamap_create, _bus_dmamap_destroy, _bus_dmamap_load, _bus_dmamap_load_mbuf,
     _bus_dmamap_load_raw, _bus_dmamap_load_uio, _bus_dmamap_sync, _bus_dmamap_unload,
@@ -52,6 +57,7 @@ pub use crate::arch::current::include::pci_machdep::PciIntrHandle;
 pub use crate::arch::current::include::pic::{PIC_MSI, Pic};
 pub use crate::arch::current::include::pio::inb;
 pub use crate::arch::current::include::psl::PSL_I;
+pub use crate::arch::current::include::smbiosvar::Smbtable;
 pub use crate::arch::current::include::specialreg::TPM_ARAT;
 pub use crate::arch::current::pci::acpipci::acpipci_domain_to_seg;
 /* </CODE> */
