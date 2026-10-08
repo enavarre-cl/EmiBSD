@@ -9043,7 +9043,7 @@ c = "sys/dev/acpi/acpicpu_x86.c"
 rust = "sys/dev/acpi/acpicpu_x86.rs"
 status = "todo"
 deps = ["sys/dev/acpi/acpi.c"]
-notes = "M13 next: acpicpu(4) on x86 (C-states, _PSS)"
+notes = "M16 (QEMU drivers): acpicpu(4) on x86 (C-states, _PSS); M14 does not need it (deferred from M13 at its close)"
 
 [[file]]
 c = "sys/arch/amd64/pci/acpipci.c"
