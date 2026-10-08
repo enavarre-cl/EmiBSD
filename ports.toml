@@ -11510,8 +11510,10 @@ notes = "M16: viornd(4); criterion: QEMU's virtio-rng feeds rnd(4) (enqueue coun
 [[file]]
 c = "sys/sys/gpio.h"
 rust = "sys/sys/gpio.rs"
-status = "todo"
-notes = "M16: gpio(4) ioctl types"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "95ce9cd5d9c2bec56e6330dccad7aa68a76bc74a"
+notes = "M16f: the whole header: GPIO_PIN_* states and flags, GPIOPINMAXNAME, struct gpio_info, gpio_pin_op, gpio_pin_set, gpio_attach (repr(C), AbiPod, sizes asserted) and the GPIO* ioctl numbers; host test of the numbers and a reference-backed test of the defines"
 
 [[file]]
 c = "sys/dev/gpio/gpiovar.h"
