@@ -169,7 +169,9 @@ smoke-build: build-up (build-amd64 "--features qemu,multiprocessor") (build-arm6
 # configured` before; its `_OSC` answer follows the name) through which pci0 attaches with
 # MSI enabled, and every device interrupt goes through the I/O APIC or MSI(-X); the virtio
 # devices take one MSI-X vector per queue (`virtio0: msix per-VQ`, where they printed
-# `irq N` through the 8259 before), as OpenBSD/amd64 on QEMU does.
+# `irq N` through the 8259 before), as OpenBSD/amd64 on QEMU does. Since M16e bios0 reads the
+# SMBIOS tables (bios.c) and prints what OpenBSD 8.0 prints on q35/OVMF: the revision, a bare
+# type 0 line (OVMF's BIOS strings lie within 64 bytes of the table's end) and the system.
 smoke-boot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
@@ -178,7 +180,8 @@ smoke-boot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featu
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
         --expect "selftest: buffer cache ok" --expect "selftest: pager map ok" \
         --expect "selftest: bus_dma ok" --expect "mainbus0 at root" \
-        --expect "bios0 at mainbus0" --expect "acpi0 at bios0: ACPI 3.0" \
+        --expect "bios0 at mainbus0: SMBIOS rev. 2.8 @ 0x" \
+        --expect "bios0: QEMU Standard PC (Q35 + ICH9, 2009)" --expect "acpi0 at bios0: ACPI 3.0" \
         --expect "acpi0: sleep states S3 S4 S5" --expect "acpi0: tables DSDT FACP APIC HPET MCFG" \
         --expect "acpitimer0 at acpi0: 3579545 Hz, 24 bits" --expect "acpihpet0 at acpi0: 100000000 Hz" \
         --expect "acpimadt0 at acpi0 addr 0xfee00000: PC-AT compat" \
@@ -2398,24 +2401,31 @@ smoke-iic: (build-amd64 "--features qemu,multiprocessor")
 
 # M16e: ipmi(4), amd64 (aarch64 QEMU has no IPMI device). `--ipmi` (hwopts.rs) adds QEMU's
 # simulated BMC behind a KCS interface (`isa-ipmi-kcs`), which QEMU's DSDT describes as an
-# `IPI0001` device. GENERIC has `ipmi0 at acpi? disable`, so the kernel boots with `-c` and
-# UKC enables ipmi (both GENERIC entries; the one at mainbus finds nothing, its SMBIOS probe
-# being unported), as an OpenBSD user would. ipmi0 attaches at acpi0 from _IFT, _SRV and
-# _CRS (QEMU's I/O range is read from its _MIN, see ipmi_acpi.rs). Its thread reads the
-# BMC's SDR repository (`--ipmi`'s file: one temperature sensor, read through Get Sensor
-# Reading) into `hw.sensors.ipmi0`, and the session reads it with sysctl(8);
-# `kern.watchdog.period=30` goes through kern_watchdog.c to the BMC's Get and Set Watchdog
-# Timer commands, and `kern.watchdog` reads the period back. Part of `smoke`.
+# `IPI0001` device and its SMBIOS as an IPMI device information record (type 38). GENERIC has
+# `ipmi0 at acpi? disable` and `ipmi0 at mainbus? disable`, so the kernel boots with `-c` and
+# UKC enables both, as an OpenBSD user would. The run checks that EmiBSD does what OpenBSD 8.0
+# does on the same machine (`cargo xtask diff-openbsd --ipmi --ukc 'enable ipmi' probe`):
+# ipmi0 attaches at acpi0 (bios0's acpi0 comes before mainbus's ipmi probe) at `_CRS`'s
+# `_MAX`, 0xca3, where QEMU's range `IO(Decode16, 0xca2, 0xca3, 1, 2)` puts the data
+# register, so every command fails and the sensor thread gives up ("no SDRs IPMI disabled":
+# no hw.sensors.ipmi0); mainbus's probe finds the SMBIOS record (bios.c, which also sets
+# hw.vendor and hw.product), but the one ipmi0 is taken ("ipmi at mainbus0 not configured"). `kern.watchdog.period=30` is still accepted
+# (ipmi_watchdog's commands fail, it says "watchdog enabled"), as there. The KCS, SDR and
+# watchdog logic itself is checked by ipmi.rs's host tests on a simulated BMC. Part of `smoke`.
 ipmi_check := "--ipmi --cmdline '-c' --expect-ramdisk --until-seen " + \
     "--send-after 'UKC> ' --send '\\n' " + \
     "--send-after 'UKC> ' --send 'enable ipmi\\n' --send-after 'UKC> ' --send 'quit\\n' " + \
-    disk_login + " --send-after '# ' --send 'sysctl hw.sensors.ipmi0; " + \
+    disk_login + " --send-after '# ' --send 'sysctl hw.vendor hw.product; sysctl hw.sensors.ipmi0; " + \
     "sysctl kern.watchdog.period=30 && sysctl kern.watchdog && echo ipmi-$((40+2))\\n' " + \
     "--expect 'ipmi0 enabled' " + \
-    "--expect 'ipmi0 at acpi0: version 2.0 interface KCS iobase 0xca2/2 spacing 1' " + \
-    "--expect 'hw.sensors.ipmi0.temp0=0.00 degC (QEMU Temp), OK' " + \
-    "--expect 'ipmi0: watchdog enabled' --expect 'kern.watchdog.period=30' --expect 'ipmi-42' " + \
-    "--reject 'sendcmd fails' --reject 'no SDRs IPMI disabled'"
+    "--expect 'ipmi0 at acpi0: version 2.0 interface KCS iobase 0xca3/2 spacing 1' " + \
+    "--expect 'ipmi at mainbus0 not configured' " + \
+    "--expect 'hw.vendor=QEMU' --expect 'hw.product=Standard PC (Q35 + ICH9, 2009)' " + \
+    "--expect 'ipmi0: get header fails' --expect 'ipmi0: no SDRs IPMI disabled' " + \
+    "--expect 'sysctl: hw.sensors.ipmi0: sensor device not found: ipmi0' " + \
+    "--expect 'ipmi0: watchdog enabled' --expect 'kern.watchdog.period: 0 -> 30' " + \
+    "--expect 'kern.watchdog.period=30' --expect 'ipmi-42' " + \
+    "--reject 'hw.sensors.ipmi0.temp0'"
 
 smoke-ipmi: (build-amd64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs || \
