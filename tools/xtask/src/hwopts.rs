@@ -100,6 +100,21 @@
 //!   their DMA through the IOMMU (virtio_pci negotiates `VIRTIO_F_ACCESS_PLATFORM`); without
 //!   it QEMU's virtio devices bypass the IOMMU. Emulated devices (AHCI, NVMe, ...) always
 //!   go through it. Refused on arm64 (`virt`'s IOMMU is the SMMUv3, M16f).
+//! - `--tpm tis|crb` (`qemu`, `smoke`, M16e, amd64, `smoke-tpm`): a TPM 2.0 for tpm(4),
+//!   QEMU's `tpm-tis` (the TIS FIFO registers) or `tpm-crb` (the Command Response Buffer) at
+//!   0xfed40000, an ACPI `MSFT0101` device with a `TPM2` table, backed by the software TPM
+//!   `swtpm` (found in `$PATH` or under `brew --prefix swtpm`, docs/SETUP.md). Each run
+//!   starts its own `swtpm socket --tpm2 --flags startup-clear` with a fresh state directory
+//!   `tpm/` and its log `swtpm.log` in the run directory and its control socket beside them
+//!   (`swtpm.sock`, placed as the monitor socket is, to fit `sun_path`), waits for the
+//!   socket, and gives QEMU `-chardev socket` + `-tpmdev emulator` + `-device
+//!   tpm-tis|tpm-crb` ([`tpm_args`]). The TPM is not on a PCI bus, so nothing moves. swtpm
+//!   is stopped when the run ends, however it ends ([`Swtpm`]'s `Drop`: kill, wait, remove
+//!   the socket), and it also exits on its own when QEMU closes its control connection
+//!   (`terminate`), so no swtpm outlives a run. `startup-clear` has swtpm send
+//!   `TPM2_Startup(CLEAR)` once QEMU initialises it, so the TPM answers commands whatever the
+//!   firmware does. Refused on arm64 (its GENERIC has no tpm) and outside `qemu` and
+//!   `smoke`, which start swtpm.
 //! - `{host-ms}` in a `smoke` `--send` text (M13, `smoke-clock`): replaced, as the text is
 //!   sent, by the host's wall clock in milliseconds since the Epoch ([`expand_send`]), so a
 //!   guest script can set its own clock readings beside the host's and compare the rates.
@@ -123,7 +138,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -279,6 +294,19 @@ const IOMMU_MODELS: &[(&str, &str)] =
 /// `--iommu MODEL`: the QEMU device of the DMA remapping unit (amd64, set once by `main`).
 static IOMMU: OnceLock<&'static str> = OnceLock::new();
 
+/// The interfaces `--tpm` takes, and QEMU's device for each.
+const TPM_MODELS: &[(&str, &str)] = &[("tis", "tpm-tis"), ("crb", "tpm-crb")];
+
+/// `--tpm MODEL`: the QEMU device of the TPM and the run directory swtpm's files go in
+/// (amd64, set once by `main`).
+static TPM: OnceLock<(&'static str, PathBuf)> = OnceLock::new();
+
+/// The control socket of the swtpm this run started ([`start_swtpm`]), while it runs.
+static SWTPM_SOCK: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// How long [`start_swtpm`] waits for swtpm's control socket.
+const SWTPM_START_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// The models `--nic` takes: QEMU's emulated Intel PRO/1000 controllers, which em(4) drives,
 /// its Realtek 8139C+, which re(4) drives, and its VMware VMXNET3, which vmx(4) drives.
 const NIC_MODELS: &[&str] = &["e1000", "e1000e", "igb", "rtl8139", "vmxnet3"];
@@ -293,8 +321,20 @@ static ACPI: OnceLock<()> = OnceLock::new();
 
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
 /// `--pci-serial`, `--expect-pci-serial`, `--pci-bridges`, `--reboot`, `--vio-mq`, `--nic`,
-/// `--acpi`, `--iommu`).
+/// `--acpi`, `--iommu`, `--tpm`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
+    if let Some(model) = opt_path(args, "--tpm")? {
+        let Some(&(_, dev)) = TPM_MODELS.iter().find(|(m, _)| *m == model) else {
+            return Err(format!("--tpm {model}: expected tis or crb").into());
+        };
+        if args.windows(2).any(|w| w == ["--arch", "arm64"]) {
+            return Err("--tpm: amd64 only (arm64's GENERIC has no tpm)".into());
+        }
+        if !matches!(args.first(), Some(&("qemu" | "smoke"))) {
+            return Err("--tpm: only with `qemu` and `smoke`, which start swtpm".into());
+        }
+        let _ = TPM.set((dev, boot::run_dir(root)));
+    }
     if let Some(model) = opt_path(args, "--iommu")? {
         let Some(&(_, dev)) = IOMMU_MODELS.iter().find(|(m, _)| *m == model) else {
             return Err(format!("--iommu {model}: expected intel or amd").into());
@@ -728,7 +768,141 @@ pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) -> Result<
         }
         cmd.args(pci_bridges_args(&rp, &br));
     }
+    if let Some(&(dev, _)) = TPM.get() {
+        let sock = SWTPM_SOCK
+            .lock()
+            .ok()
+            .and_then(|s| s.clone())
+            .ok_or("--tpm: swtpm is not running (it is started by `qemu` and `smoke`)")?;
+        cmd.args(tpm_args(dev, &sock));
+    }
     Ok(())
+}
+
+/// The QEMU arguments of a `--tpm` device `dev` (`tpm-tis`, `tpm-crb`) whose backend is the
+/// swtpm listening on `sock`: the socket chardev, the `emulator` TPM backend over it, the
+/// device.
+fn tpm_args(dev: &str, sock: &Path) -> Vec<String> {
+    vec![
+        "-chardev".into(),
+        format!("socket,id=chrtpm,path={}", sock.display()),
+        "-tpmdev".into(),
+        "emulator,id=tpm0,chardev=chrtpm".into(),
+        "-device".into(),
+        format!("{dev},tpmdev=tpm0"),
+    ]
+}
+
+/// The `swtpm` program: in `$PATH`, or under `brew --prefix swtpm`.
+fn swtpm_path() -> Result<PathBuf> {
+    let in_path: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).map(|d| d.join("swtpm")).collect())
+        .unwrap_or_default();
+    if let Some(p) = in_path.into_iter().find(|p| p.is_file()) {
+        return Ok(p);
+    }
+    boot::brew_prefix("swtpm")
+        .map(|p| p.join("bin").join("swtpm"))
+        .filter(|p| p.is_file())
+        .ok_or_else(|| {
+            "swtpm not found in $PATH or under `brew --prefix swtpm`; install `swtpm` as in \
+             docs/SETUP.md"
+                .into()
+        })
+}
+
+/// A running `swtpm`, the backend of `--tpm`'s device. Dropping it stops swtpm (kill, then
+/// wait, so no zombie or orphan is left) and removes its control socket.
+pub(crate) struct Swtpm {
+    /// The swtpm process.
+    child: Child,
+    /// Its control socket.
+    sock: PathBuf,
+}
+
+impl Drop for Swtpm {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = fs::remove_file(&self.sock);
+        if let Ok(mut s) = SWTPM_SOCK.lock() {
+            *s = None;
+        }
+    }
+}
+
+/// With `--tpm`, starts this run's swtpm (see the module docs) and waits for its control
+/// socket; `None` without `--tpm`. The caller keeps the guard until QEMU has exited.
+pub(crate) fn start_swtpm() -> Result<Option<Swtpm>> {
+    let Some((_, dir)) = TPM.get() else {
+        return Ok(None);
+    };
+    let swtpm = swtpm_path()?;
+    let state = dir.join("tpm");
+    let _ = fs::remove_dir_all(&state);
+    fs::create_dir_all(&state).map_err(|e| format!("{}: {e}", state.display()))?;
+    let sock = unix_sock(dir, "swtpm.sock");
+    let _ = fs::remove_file(&sock);
+    let log_path = dir.join("swtpm.log");
+    let log = fs::File::create(&log_path).map_err(|e| format!("{}: {e}", log_path.display()))?;
+    let log2 = log
+        .try_clone()
+        .map_err(|e| format!("{}: {e}", log_path.display()))?;
+    let mut cmd = Command::new(&swtpm);
+    cmd.args(swtpm_args(&state, &sock))
+        .stdin(Stdio::null())
+        .stdout(log)
+        .stderr(log2);
+    println!("xtask: {}", boot::command_line(&cmd));
+    let child = cmd.spawn().map_err(|e| {
+        format!(
+            "{}: {e}; install `swtpm` as in docs/SETUP.md",
+            swtpm.display()
+        )
+    })?;
+    // From here on the guard stops swtpm on every path out.
+    let mut guard = Swtpm {
+        child,
+        sock: sock.clone(),
+    };
+    let started = Instant::now();
+    while !sock.exists() {
+        if let Some(status) = guard.child.try_wait()? {
+            let text = fs::read_to_string(&log_path).unwrap_or_default();
+            return Err(
+                format!("swtpm exited with {status} before its socket appeared: {text}").into(),
+            );
+        }
+        if started.elapsed() > SWTPM_START_TIMEOUT {
+            return Err(format!(
+                "swtpm: no control socket {} after {}s",
+                sock.display(),
+                SWTPM_START_TIMEOUT.as_secs()
+            )
+            .into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if let Ok(mut s) = SWTPM_SOCK.lock() {
+        *s = Some(sock);
+    }
+    Ok(Some(guard))
+}
+
+/// swtpm's arguments: a TPM 2.0 whose state is in `state`, controlled over the Unix socket
+/// `sock` (exiting when that connection is lost), that starts itself (`TPM2_Startup(CLEAR)`)
+/// once QEMU initialises it.
+fn swtpm_args(state: &Path, sock: &Path) -> Vec<String> {
+    vec![
+        "socket".into(),
+        "--tpm2".into(),
+        "--tpmstate".into(),
+        format!("dir={}", state.display()),
+        "--ctrl".into(),
+        format!("type=unixio,path={},terminate", sock.display()),
+        "--flags".into(),
+        "startup-clear".into(),
+    ]
 }
 
 /// Makes `image` afresh: `bytes` of zeroes (a sparse file).
@@ -800,18 +974,24 @@ const SUN_PATH_MAX: usize = 104;
 /// `sun_path` ([`SUN_PATH_MAX`]), which an absolute path into a deep checkout (a worktree
 /// under `.claude/worktrees/`, then `target/smoke/<recipe>/`) does not.
 fn monitor_sock(dir: &Path) -> PathBuf {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    monitor_sock_for(dir, &cwd, &std::env::temp_dir(), std::process::id())
+    unix_sock(dir, "monitor.sock")
 }
 
-/// [`monitor_sock`]'s choice, the first that fits `sun_path`: `monitor.sock` in `dir`
-/// relative to `cwd` (QEMU inherits xtask's current directory, so both ends resolve it
-/// alike), the same path absolute, or `emibsd-<hash of dir>-<pid>.sock` in `tmp` (removed
-/// by [`after_smoke`]).
-fn monitor_sock_for(dir: &Path, cwd: &Path, tmp: &Path, pid: u32) -> PathBuf {
+/// The Unix socket `name` of the run directory `dir` ([`unix_sock_for`]).
+fn unix_sock(dir: &Path, name: &str) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    unix_sock_for(dir, name, &cwd, &std::env::temp_dir(), std::process::id())
+}
+
+/// Where the socket `name` (`monitor.sock`, `swtpm.sock`) goes, the first that fits
+/// `sun_path`: `name` in `dir` relative to `cwd` (QEMU and swtpm inherit xtask's current
+/// directory, so every end resolves it alike), the same path absolute, or
+/// `emibsd-<hash of dir>-<pid>-<name>` in `tmp` (removed by [`after_smoke`] and
+/// [`Swtpm`]'s `Drop`).
+fn unix_sock_for(dir: &Path, name: &str, cwd: &Path, tmp: &Path, pid: u32) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let fits = |p: &Path| p.as_os_str().len() < SUN_PATH_MAX;
-    let sock = dir.join("monitor.sock");
+    let sock = dir.join(name);
     if let Ok(rel) = sock.strip_prefix(cwd)
         && !rel.as_os_str().is_empty()
         && fits(rel)
@@ -823,7 +1003,7 @@ fn monitor_sock_for(dir: &Path, cwd: &Path, tmp: &Path, pid: u32) -> PathBuf {
     }
     let mut h = std::collections::hash_map::DefaultHasher::new();
     dir.hash(&mut h);
-    tmp.join(format!("emibsd-{:08x}-{pid}.sock", h.finish() as u32))
+    tmp.join(format!("emibsd-{:08x}-{pid}-{name}", h.finish() as u32))
 }
 
 /// Whether the monitor still has work: a screenshot to take or keys to send.
@@ -1292,19 +1472,19 @@ mod tests {
         );
         // Inside the checkout: relative, whatever the checkout's depth.
         let dir = cwd.join("target/smoke/smoke-fb");
-        let sock = monitor_sock_for(&dir, cwd, tmp, 4242);
+        let sock = unix_sock_for(&dir, "monitor.sock", cwd, tmp, 4242);
         assert_eq!(sock, Path::new("target/smoke/smoke-fb/monitor.sock"));
         // A short absolute run directory elsewhere stays as it is.
-        let sock = monitor_sock_for(Path::new("/tmp/run"), cwd, tmp, 4242);
+        let sock = unix_sock_for(Path::new("/tmp/run"), "monitor.sock", cwd, tmp, 4242);
         assert_eq!(sock, Path::new("/tmp/run/monitor.sock"));
         // A long one outside the checkout falls back to the temporary directory.
         let long = Path::new("/elsewhere").join("d".repeat(120));
-        let sock = monitor_sock_for(&long, cwd, tmp, 4242);
+        let sock = unix_sock_for(&long, "monitor.sock", cwd, tmp, 4242);
         assert!(sock.starts_with(tmp), "{}", sock.display());
-        assert!(sock.to_string_lossy().ends_with("-4242.sock"));
+        assert!(sock.to_string_lossy().ends_with("-4242-monitor.sock"));
         for s in [
-            monitor_sock_for(&dir, cwd, tmp, 4242),
-            monitor_sock_for(&long, cwd, tmp, u32::MAX),
+            unix_sock_for(&dir, "monitor.sock", cwd, tmp, 4242),
+            unix_sock_for(&long, "swtpm.sock", cwd, tmp, u32::MAX),
         ] {
             assert!(s.as_os_str().len() < SUN_PATH_MAX, "{}", s.display());
         }
@@ -1547,6 +1727,52 @@ mod tests {
         assert!(set(Path::new("/r"), &["--nic", "ne2k_pci"]).is_err());
         assert!(set(Path::new("/r"), &["--nic"]).is_err());
         assert!(set(Path::new("/r"), &["--nic", "e1000", "--vio-mq"]).is_err());
+    }
+
+    #[test]
+    fn tpm_is_swtpm_behind_a_q35_device() {
+        let sock = Path::new("target/smoke/smoke-tpm/swtpm.sock");
+        assert_eq!(
+            tpm_args("tpm-tis", sock),
+            [
+                "-chardev",
+                "socket,id=chrtpm,path=target/smoke/smoke-tpm/swtpm.sock",
+                "-tpmdev",
+                "emulator,id=tpm0,chardev=chrtpm",
+                "-device",
+                "tpm-tis,tpmdev=tpm0",
+            ]
+        );
+        let args = swtpm_args(Path::new("/r/tpm"), sock);
+        assert_eq!(&args[..2], ["socket", "--tpm2"]);
+        assert!(args.contains(&"dir=/r/tpm".to_string()));
+        assert!(
+            args.contains(
+                &"type=unixio,path=target/smoke/smoke-tpm/swtpm.sock,terminate".to_string()
+            )
+        );
+        assert!(args.contains(&"startup-clear".to_string()));
+        assert!(set(Path::new("/r"), &["smoke", "--tpm", "tpm20"]).is_err());
+        assert!(set(Path::new("/r"), &["smoke", "--tpm"]).is_err());
+        assert!(
+            set(
+                Path::new("/r"),
+                &["smoke", "--arch", "arm64", "--tpm", "tis"]
+            )
+            .is_err()
+        );
+        assert!(
+            set(
+                Path::new("/r"),
+                &["smoke2", "--arch", "amd64", "--tpm", "tis"]
+            )
+            .is_err()
+        );
+        assert!(
+            TPM_MODELS
+                .iter()
+                .any(|&(m, d)| m == "crb" && d == "tpm-crb")
+        );
     }
 
     #[test]
