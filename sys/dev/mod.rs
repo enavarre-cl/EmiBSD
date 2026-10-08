@@ -4,6 +4,7 @@
 //! Only drivers for hardware QEMU exposes are ported; others are `skipped: deferred-driver`.
 //! `cons` is the console framework, `ic/` the chip drivers (`com(4)`, `pluart(4)`), `isa/` the
 //! ISA bus definitions amd64 still needs.
+//! `i2c/` is the I2C bus (`iic(4)`, M16e).
 //! `consfile` is the console-as-a-file stand-in until `/dev/console` exists (not OpenBSD
 //! code, `ports.toml` `[[extra]]`).
 //! ISA bus definitions amd64 still needs, `pci/` the PCI bus, `puc/` the port drivers of
@@ -23,6 +24,7 @@ pub mod diskmap;
 pub mod efi;
 pub mod fdt;
 pub mod hid;
+pub mod i2c;
 pub mod ic;
 pub mod isa;
 pub mod microcode;

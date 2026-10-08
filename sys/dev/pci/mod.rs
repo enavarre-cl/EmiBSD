@@ -11,7 +11,8 @@
 //! pci?`), `auich` the Intel ICH AC'97 audio controller (`auich* at pci?`), `azalia` (with
 //! `azalia_codec`) the HD Audio controller (`azalia* at pci?`) (M12); `puc` (with `pucvar`
 //! and `pucdata`) the "universal" communication card driver (`puc* at pci?`, M13); `if_vmx` (with
-//! `if_vmxreg`) VMware's VMXNET3 NIC (`vmx* at pci?`, M13). The machine side
+//! `if_vmxreg`) VMware's VMXNET3 NIC (`vmx* at pci?`, M13); `ichiic` (with `ichreg`) and `piixpm` (with
+//! `piixreg`) the ICH and PIIX4 SMBus controllers (`ichiic* at pci?`, `piixpm* at pci?`, M16e). The machine side
 //! (configuration access, tags, interrupts) is `machine::pci_machdep`.
 
 pub mod ahci_pci;
@@ -20,6 +21,8 @@ pub mod azalia;
 pub mod azalia_codec;
 pub mod gcu_reg;
 pub mod gcu_var;
+pub mod ichiic;
+pub mod ichreg;
 pub mod if_em;
 pub mod if_em_hw;
 pub mod if_em_osdep;
@@ -36,6 +39,8 @@ pub mod pci_subr;
 pub mod pcidevs;
 pub mod pcireg;
 pub mod pcivar;
+pub mod piixpm;
+pub mod piixreg;
 pub mod ppb;
 pub mod ppbreg;
 pub mod puc;
