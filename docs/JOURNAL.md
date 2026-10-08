@@ -760,3 +760,52 @@ landed before M12 met and are counted there.
 Effort: _(user)_
 
 Time: _(user)_
+
+## M14 Installable
+
+Boundary: the commit that marks M14 met ("docs: M14 met"). Range `a84d154..` that commit:
+7 commits, all M14's (the cherry-picked roadmap commit `0b9acd1` included). M14 ran beside
+M12+ and M13 from 2026-10-05, and 29 of its commits landed inside M13's range
+(`6836684..a84d154`), where M13's section counts them and their numbers; they are named here,
+not counted again: efiboot for amd64 (`4b3857b`) and arm64 (`5f07400`) with libsa and boot(8)'s
+common code, the kernel's boot(8) entries (`c5cd485`), the comp set (`ad453d6`), file-backed
+mmap(2) (`a184421`), ld.so and the shared libraries (`62ed876`), bsd.rd and the install media
+(`37cac2b`, `24be9f5`), exec_script.c (`98ac130`), diskmap(4) (`a1c9f4a`), and the install
+runs (`26816d5`, `8eed1a7`).
+
+- Went well: OpenBSD's `install.sub` ran unmodified, under autoinstall(8), and installed the
+  signed base and comp sets on both archs; the installed system boots through its own efiboot
+  and compiles with OpenBSD's clang (`26816d5`, `8eed1a7`). What it needed was kernel ports
+  (exec_script, diskmap, vfs_shutdown in boot()), not changes to the installer.
+- Went well: clang 22.1.6 and lld built unmodified from `gnu/llvm` by OpenBSD's own glue through
+  xtask's make evaluator (`ad453d6`), and ran in EmiBSD once file-backed mmap(2) was ported.
+- Went well: arm64 ACPI, brought into M14 at the user's request (2026-10-08, "no podemos dejar
+  la iso mala"), took the ~1,500 lines the investigation measured, plus extent(9) ported whole
+  (`62c4d82`, `a54fc51`); the arm64 install runs on `virt,acpi=on` too (`7cf3624`).
+- Failed: an rd(4) without an image read a stale buffer as its label and took another disk's
+  DUID, so the installed system's fsck failed now and then (`7965e92`); base's ksh had been
+  built with `-DSMALL` since M8, so rc.d refused to start daemons (`1f37efb`). A ci after a
+  rebase failed `smoke-softraid` reproducibly: the smoke itself used a new CRYPTO volume's
+  random sector 0 as fdisk's MBR template, exposed by rnd(4)'s constant seed (`53cabda`).
+- Failed: three pauses: an editor hang that stopped two agents, the host disk full (ENOSPC),
+  and the monthly spend limit (2026-10-05 to 2026-10-07); handoff notes and saved patches
+  carried every track over. Two independent ports of exec_script.c were written; the second's
+  tests and ksh smoke line were merged (`291708d`).
+- Left: the GPL parts of the sets (not in the clone), lldb, efi(4) (no UEFI boot entry: the
+  fallback path boots), efipxe untested, base programs not built (printf, sort, head, find,
+  ...), `__thrsleep`, rnd(4)'s constant seed, acpipci's extents not handed to the PCI bus.
+- Idioms: registration tables for what the C's boot programs take at link time (`SaConf`,
+  `BootMd`; `docs/C_TO_RUST.md`, `4b3857b`).
+- Rules: `boot-and-link.md` (Limine until boot(8) boots the kernel; the two `kernel.ld` differ;
+  how efiboot is built), `xtask.md` (efiboot, efiboot-disk, comp, rdsetroot, install, `--acpi`),
+  `rust-kernel.md` (the libsa, boot and efi crates).
+- Numbers (this section's range only): 7 commits; ported 967 → 975 (+8); tests 2355 → 2357 (`just test`, passed);
+  smoke recipes 57 → 60 (`smoke-acpi` in `smokes`; `smoke-install-arm64-acpi` and
+  `smoke-install-boot-arm64-acpi` outside); `diff-openbsd`: 102 steps, 99 equal, 3 expected, 0 unexpected, on both archs. The installer was regenerated
+  from the final tree: `smoke-install` rc=0 in 519 s (amd64 99 s, arm64 154 s, arm64 on ACPI 158 s; the installers 84, 145 and 149 s), `smoke-install-boot-amd64` 26 s, `-arm64` 28 s,
+  `-arm64-acpi` 28 s; `just jobs=3 ci` rc=0 (1072 s, 50 of 50 smokes), standing in for ci-full, since every smoke
+  already runs on `-smp 4`.
+
+Effort: _(user)_
+
+Time: _(user)_

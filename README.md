@@ -24,7 +24,8 @@
 
 ## Status
 
-Status: M13 (storage, firmware and console) met; M14 (installable) next.
+Status: M14 (installable: efiboot, bsd.rd, install.sub with the base and comp sets, cc on the
+installed system, arm64 ACPI) met; M15 (code and test layout) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -53,7 +54,7 @@ Status: M13 (storage, firmware and console) met; M14 (installable) next.
 | M12 | Devices in QEMU: audio(4) with azalia and auich, USB with xhci, uhub, umass and ukbd; arm64's PCI bus | met |
 | M12+ | Measurement and verification: unsafe-report, JOURNAL, diff-openbsd against a real OpenBSD | met |
 | M13 | Storage, firmware and console: NVMe and AHCI roots, ACPI on amd64, PSCI, the RTC, em/re/vmx, the frame buffer with wsdisplay and the USB keyboard | met |
-| M14 | Installable | next |
+| M14 | Installable: our efiboot on both archs, bsd.rd, install.sub with the base and comp sets (clang, lld), the installed disk booting to `login:` with `cc` working; arm64 ACPI | met |
 | M15 | Code and test layout | next |
 | M16 | QEMU drivers: IDE, floppy, PS/2, parallel, PC speaker, more USB, virtio, network, SCSI/RAID, UFS, SD, audio, IOMMUs, GPIO, GICv3 | next |
 | M17 | Real hardware and virtualisation (vmm, vmd; optional) | next |
@@ -132,6 +133,18 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
   through wskbd(4) and wsmux(4) (`smoke-kbd`). vga(4) is in and, as on OpenBSD under
   OVMF, attaches nowhere (`smoke-vga`).
 
+- Our efiboot, OpenBSD's boot(8) for UEFI (BOOTX64.EFI, BOOTAA64.EFI), boots the MP kernel
+  from an OpenBSD disk to `login:` beside Limine (`smoke-efiboot`); on arm64 `virt,acpi=on`
+  it builds the device tree from the ACPI tables and the kernel attaches acpi0, acpipci(4)
+  and pluart(4) at acpi, its root on a PCI disk (`smoke-acpi`).
+
+Outside `just smoke`, because they take minutes under TCG (the user requires them at every
+milestone close): `just smoke-install` boots `bsd.rd` through our efiboot and lets OpenBSD's
+`install.sub`, under autoinstall(8), install the signed `base80` and `comp80` sets onto a
+fresh disk (amd64, arm64, and arm64 on ACPI); `just smoke-install-boot-<arch>` boots that
+disk on a fresh VM through the efiboot installboot(8) put on it, OpenBSD's `/etc/rc` runs,
+and `cc hello.c && ./a.out` prints its line with OpenBSD's clang (`just comp` builds it).
+
 Between two VMs on a private link (`cargo xtask smoke2`):
 
 - ping across the link (`smoke-link`); a wg(4) tunnel, with a pf rule on `wg0` (`smoke-wg`).
@@ -164,6 +177,22 @@ Welcome to EmiBSD 8.0: OpenBSD's init(8) and ksh(1) on an ffs ramdisk root.
 EmiBSD  8.0 GENERIC#221 amd64
 ```
 
+And from `smoke-install-boot-amd64`, the system `install.sub` installed, booted by its own
+efiboot (trimmed; the smoke types the source with ksh's `print -r`, then `cc hello.c && ./a.out`):
+```
+>> EmiBSD/amd64 BOOTX64 3.71
+bsd: booted on amd64 by boot(8) efiboot
+EmiBSD 8.0 (GENERIC) #445: Thu Oct  8 03:07:29 UTC 2026
+root on sd1a (f71160858c5a8c8b.a) swap on sd1b dump on sd1b
+Automatic boot in progress: starting file system checks.
+EmiBSD/amd64 (emibsd.emibsd.test) (tty00)
+login: root
+emibsd# uname -a; mount; echo up-$((6*7))
+EmiBSD emibsd.emibsd.test 8.0 GENERIC#445 amd64
+/dev/sd1a on / type ffs (local, wxallowed)
+up-42
+hello from cc 42
+```
 And from `smoke-net`, another boot (trimmed):
 
 ```
@@ -317,7 +346,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 200 | 139 | 967 | 37 | 1343 |
+| 200 | 139 | 975 | 37 | 1351 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).
