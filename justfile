@@ -105,7 +105,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-ukc smoke-ppb"
+    "smoke-ukc smoke-ppb smoke-dmar"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2184,6 +2184,48 @@ smoke-ppb: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featur
         --expect 'virtio33 at pci2 dev 1 function 0 vendor 0x1af4 product 0x1001 rev 0x00' \
         --expect 'sd2 at scsibus2 targ 0 lun 0' --expect 'sd3 at scsibus3 targ 0 lun 0' \
         --expect 'ppb-sd2-42' --expect 'ppb-sd3-42'
+
+# M16e: acpidmar(4), amd64 only (GENERIC has `acpidmar0 at acpi? disable`, arm64 none). The
+# kernel boots with `-c`, and at `UKC> ` acpidmar is enabled the OpenBSD way (`enable
+# acpidmar`, `quit`). QEMU's q35 then has a DMA remapping unit (`--iommu`, hwopts.rs): first
+# intel-iommu (VT-d: acpidmar0 takes the DMAR table, maps its DRHD, pre-creates a domain for
+# each device of its scope, maps the ISA bridge's first 16 MB 1:1 and turns translation on at
+# the first DMA load), then amd-iommu with dma-remap=on (AMD-Vi: the IVRS table, the unit's own
+# PCI MSI, the shared device table). The root is the NVMe disk of `smoke-nvme`, made afresh
+# for each run; every PCI device, the NVMe controller and the virtio devices (iommu_platform)
+# included, does its DMA through I/O virtual addresses the IOMMU translates, so the mount, a
+# file written and read back and 8 MB through the file system prove the remapping. Part of
+# `smoke`.
+dmar_check := "--ramdisk none --expect-ramdisk --nvme nvme-amd64.img " + \
+    "--cmdline 'bootduid=" + nvme_duid + " -c' --until-seen " + \
+    "--send-after 'UKC> ' --send 'enable acpidmar\\n' --send-after 'UKC> ' --send 'quit\\n' " + \
+    disk_login + " " + \
+    "--send-after '# ' --send 'mount\\n' " + \
+    "--send-after '# ' --send 'echo dmar-$((40+2)) >/dmar.txt && cat /dmar.txt\\n' " + \
+    "--send-after '# ' --send 'dd if=/dev/zero of=/big bs=64k count=128 && dd if=/big of=/dev/null bs=64k && rm /big\\n' " + \
+    "--expect 'User Kernel Config' --expect 'acpidmar0 enabled' --expect 'Continuing...' " + \
+    "--expect 'dmar: 0000:00:1f.0 mapping ISA' " + \
+    "--expect 'nvme0: QEMU NVMe Ctrl, firmware ' " + \
+    "--expect 'root on sd0a (" + nvme_duid + ".a) swap on sd0b dump on sd0b' " + \
+    "--expect 'rc: multi-user' --expect '/dev/sd0a on / type ffs (local)' " + \
+    "--expect 'dmar-42' --expect '8388608 bytes transferred' " + \
+    "--reject 'IOMMU Error' --reject 'iommu init failed' --reject 'no domain' " + \
+    "--reject 'mount -uw / failed'"
+
+smoke-dmar: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-dmar: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask nvme-root --arch amd64 --duid {{nvme_duid}}
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --iommu intel {{dmar_check}} \
+        --expect 'acpidmar0 at acpi0: hardware width: 48, intr_remap:1 x2apic_opt_out:0' \
+        --expect 'DRHD: segment:0000 base:00000000fed90000 flags:00' \
+        --expect '0000:00:03.0 iommu:1 did:fffc' --expect '  map: 0000:00:1f.0 iommu:1 did:fffa' \
+        --expect 'nvme0 at pci0 dev 3 function 0 vendor 0x1b36 product 0x0010 rev 0x02: msix, NVMe 1.4'
+    cargo xtask nvme-root --arch amd64 --duid {{nvme_duid}}
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --iommu amd {{dmar_check}} \
+        --expect 'acpidmar0 at acpi0: AMD iommu1 at 0xfed80000' --expect 'amd iommu intr: 0x' \
+        --expect 'vendor 0x1022 product 0x1419 (class system subclass IOMMU, rev 0x00) at pci0 dev 2 function 0 not configured' \
+        --expect 'nvme0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x0010 rev 0x02: msix, NVMe 1.4'
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
