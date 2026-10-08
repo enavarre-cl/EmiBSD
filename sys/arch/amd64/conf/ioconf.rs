@@ -21,7 +21,7 @@
 //! `vmx* at pci?` (M13), `vga0 at isa?`, `vga* at pci?` and `wsdisplay0 at vga? console 1` (M13),
 //! `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13), `acpimcfg* at acpi?` (M14),
 //! `ppb* at pci?` and `pci* at ppb?` (M16e),
-//! `acpidmar0 at acpi? disable` (M16e), `tpm* at acpi?` (M16e),
+//! `acpidmar0 at acpi? disable` (M16e), `tpm* at acpi?` (M16e), `acpicpu* at acpi?` (M16e),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -29,7 +29,7 @@
 //! loop`, `pseudo-device wg`, `pseudo-device pfsync`, `pseudo-device pflow`.
 //! GENERIC lines left out until their drivers exist: `vmm0`, `pvbus0` and `ipmi0`
 //! at mainbus, and everything below them; `efi0` and `mpbios0` at bios0, and
-//! every other device at `acpi?` (`acpicpu*`, `acpiec*`, ...); `isa0` at `pcib?`,
+//! every other device at `acpi?` (`acpiec*`, `acpitz*`, ...); `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`,
 //! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
 //! (`pchb*`, `pcib*`, the network drivers but em, re and vmx (`rl* at pci?` among them: QEMU's rtl8139 is
@@ -54,6 +54,7 @@ use crate::arch::amd64::amd64::ioapic::{IOAPIC_CA, IOAPIC_CD};
 use crate::arch::amd64::amd64::mainbus::{MAINBUS_CA, MAINBUS_CD};
 use crate::arch::amd64::pci::acpipci::{ACPIPCI_CA, ACPIPCI_CD};
 use crate::dev::acpi::acpi::ACPI_CD;
+use crate::dev::acpi::acpicpu_x86::{ACPICPU_CA, ACPICPU_CD};
 use crate::dev::acpi::acpidmar::{ACPIDMAR_CA, ACPIDMAR_CD};
 use crate::dev::acpi::acpihpet::{ACPIHPET_CA, ACPIHPET_CD};
 use crate::dev::acpi::acpimadt::{ACPIMADT_CA, ACPIMADT_CD};
@@ -268,11 +269,11 @@ const LN_WSKBDDEV: i32 = 34;
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 57 entries, 58 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 58 entries, 59 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    58
+    59
 } else {
-    57
+    58
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -914,7 +915,19 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
     ),
     // 56: tpm* at acpi? (M16e)
     Cfdata::new(&TPM_CA, &TPM_CD, 0, FSTATE_STAR, &[], 0, PV_ACPI, 0, 0),
-    // 57: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 57: acpicpu* at acpi? (M16e)
+    Cfdata::new(
+        &ACPICPU_CA,
+        &ACPICPU_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_ACPI,
+        0,
+        0,
+    ),
+    // 58: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

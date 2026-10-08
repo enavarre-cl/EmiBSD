@@ -132,8 +132,11 @@
 //! - `init_x86_64` keeps the bootloader's processors (`BootInfo::mp`) in `cpu.rs`'s
 //!   `BOOT_MP` (`MULTIPROCESSOR`), where the C's `acpimadt`/`mpbios` read the firmware's
 //!   tables during autoconfiguration (`mainbus_attach`).
-//! - `cpu_kick`/`cpu_unidle` always send `X86_IPI_NOP`: `cpu_init_mwait` is not ported, so
-//!   `cpu_mwait_size` is 0 and no CPU idles in `mwait`.
+//! - `cpu_idle_cycle_fcn` and `cpu_suspend_cycle_fcn` are `StaticCell`s written while cold
+//!   on the boot CPU (`cpu_init_mwait` from `cpu_attach`, `acpicpu_attach`), before any idle
+//!   loop runs: the application processors wait for `CPUF_GO` until
+//!   `cpu_boot_secondary_processors`, and the boot CPU does not idle during
+//!   autoconfiguration (M16e; until then `cpu_idle_cycle` called `cpu_idle_cycle_hlt`).
 //! - `init_x86_64` does `locore0.S`'s CPUID probe (`cpuid_level`, `cpu_vendor`, `cpu_id`,
 //!   `cpu_ebxfeature`, `cpu_ecxfeature`, `cpu_feature` with `CPUID_NXE`) before
 //!   `cpu_set_vendor`: there is no `locore0.S`. The meltdown and SEV probes are not there.
@@ -281,6 +284,16 @@ use crate::machine::ExitStatus;
 /// `cpureset_delay`: milliseconds to wait before resetting, from the `CPURESET_DELAY` option
 /// (0 when not configured).
 pub static CPURESET_DELAY: AtomicI32 = AtomicI32::new(0);
+/// `cpu_idle_cycle_fcn`: how the idle loop waits: `cpu_idle_cycle_hlt`, `cpu.c`'s
+/// `cpu_idle_mwait_cycle` when the CPU has `mwait`, or acpicpu(4)'s `acpicpu_idle`. Written
+/// while cold (see the module's deviations).
+pub static CPU_IDLE_CYCLE_FCN: StaticCell<fn()> = StaticCell::new(cpu_idle_cycle_hlt);
+/// `cpu_suspend_cycle_fcn`: how a halted or suspended CPU waits (acpicpu(4)'s
+/// `acpicpu_suspend`), `None` for `hlt`. Written while cold, as `CPU_IDLE_CYCLE_FCN`.
+pub static CPU_SUSPEND_CYCLE_FCN: StaticCell<Option<fn()>> = StaticCell::new(None);
+/// `setperf_prio`: the priority of the `cpu_setperf` implementation installed (acpicpu's is
+/// 30), for concurrent handlers.
+pub static SETPERF_PRIO: AtomicI32 = AtomicI32::new(0);
 /// `lid_action`: what closing the lid does (`machdep.lidaction`).
 pub static LID_ACTION: AtomicI32 = AtomicI32::new(1);
 /// `pwr_action`: what the power button does: 0 nothing, 1 power down, 2 suspend
@@ -1638,12 +1651,25 @@ pub fn cpu_kick(_ci: &CpuInfo) {
     #[cfg(feature = "multiprocessor")]
     // only need to kick other CPUs
     if !ptr::eq(_ci, curcpu()) {
-        // cpu_mwait_size > 0 (MWAIT_IN_IDLE / MWAIT_KEEP_IDLING): cpu_init_mwait is not
-        // ported, so there is no mwait and an IPI is needed.
-        crate::arch::amd64::amd64::ipi::x86_send_ipi(
-            _ci,
-            crate::arch::amd64::include::intrdefs::X86_IPI_NOP,
-        );
+        use crate::arch::amd64::amd64::cpu::CPU_MWAIT_SIZE;
+        use crate::arch::amd64::include::cpu::{MWAIT_IN_IDLE, MWAIT_KEEP_IDLING};
+        if CPU_MWAIT_SIZE.load(Ordering::Relaxed) > 0 {
+            // If not idling, then send an IPI, else just clear the "keep idling" bit.
+            if _ci.ci_mwait.load(Ordering::SeqCst) & MWAIT_IN_IDLE == 0 {
+                crate::arch::amd64::amd64::ipi::x86_send_ipi(
+                    _ci,
+                    crate::arch::amd64::include::intrdefs::X86_IPI_NOP,
+                );
+            } else {
+                _ci.ci_mwait.fetch_and(!MWAIT_KEEP_IDLING, Ordering::SeqCst);
+            }
+        } else {
+            // no mwait, so need an IPI
+            crate::arch::amd64::amd64::ipi::x86_send_ipi(
+                _ci,
+                crate::arch::amd64::include::intrdefs::X86_IPI_NOP,
+            );
+        }
     }
 }
 
@@ -1858,16 +1884,29 @@ pub fn clear_resched(ci: &CpuInfo) {
     ci.ci_want_resched.store(0, Ordering::SeqCst);
 }
 
-/// `cpu_unidle(ci)`: with `MULTIPROCESSOR` an IPI to wake another CPU's idle loop (no
-/// `mwait`: `cpu_init_mwait` is not ported, so `MWAIT_ONLY` is never set); on one CPU the
-/// idle loop sees the run queue itself.
+/// `cpu_unidle(ci)`: with `MULTIPROCESSOR`, wakes another CPU's idle loop: when the CPU
+/// idles in `mwait` only (`MWAIT_ONLY`), by clearing its "keep idling" bit, which the
+/// monitor sees; otherwise with an IPI. On one CPU the idle loop sees the run queue itself.
 pub fn cpu_unidle(_ci: &CpuInfo) {
     #[cfg(feature = "multiprocessor")]
-    if !ptr::eq(_ci, curcpu()) {
-        crate::arch::amd64::amd64::ipi::x86_send_ipi(
-            _ci,
-            crate::arch::amd64::include::intrdefs::X86_IPI_NOP,
-        );
+    {
+        use crate::arch::amd64::amd64::cpu::CPU_MWAIT_SIZE;
+        use crate::arch::amd64::include::cpu::{MWAIT_KEEP_IDLING, MWAIT_ONLY};
+        if CPU_MWAIT_SIZE.load(Ordering::Relaxed) > 0
+            && _ci.ci_mwait.load(Ordering::SeqCst) & MWAIT_ONLY != 0
+        {
+            // Just clear the "keep idling" bit; if it wasn't idling then we didn't need to
+            // do anything anyway.
+            _ci.ci_mwait.fetch_and(!MWAIT_KEEP_IDLING, Ordering::SeqCst);
+            return;
+        }
+
+        if !ptr::eq(_ci, curcpu()) {
+            crate::arch::amd64::amd64::ipi::x86_send_ipi(
+                _ci,
+                crate::arch::amd64::include::intrdefs::X86_IPI_NOP,
+            );
+        }
     }
 }
 
@@ -1878,10 +1917,12 @@ pub fn cpu_idle_cycle_hlt() {
     unsafe { asm!("sti", "hlt", options(nomem, nostack)) };
 }
 
-/// `cpu_idle_cycle()`: `(*cpu_idle_cycle_fcn)()`, the `hlt` loop until a driver (acpicpu)
-/// installs `mwait`.
+/// `cpu_idle_cycle()`: `(*cpu_idle_cycle_fcn)()`.
 pub fn cpu_idle_cycle() {
-    cpu_idle_cycle_hlt();
+    // SAFETY: written only while cold on the boot CPU, before any idle loop runs (see the
+    // module's deviations).
+    let f = unsafe { CPU_IDLE_CYCLE_FCN.read() };
+    f();
 }
 
 /// `setgate`: fills an interrupt or trap gate for `func` with `ist`, `type_`, `dpl` and the

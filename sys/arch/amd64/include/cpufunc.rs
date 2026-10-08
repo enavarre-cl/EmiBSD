@@ -267,6 +267,57 @@ pub fn clflush(addr: u64) {
     unsafe { asm!("clflush [{}]", in(reg) addr, options(nostack, preserves_flags)) };
 }
 
+/// `monitor(addr, extensions, hints)`: arms the monitor on the cache line of `addr`, which a
+/// following [`mwait`] waits on.
+#[inline]
+pub fn monitor(addr: *const u32, extensions: u64, hints: u32) {
+    // SAFETY: `monitor` only arms address-range monitoring; it reads no memory and changes
+    // no flags. An address that is not write-back memory makes the monitor ineffective, not
+    // unsafe.
+    unsafe {
+        asm!(
+            "monitor",
+            in("rax") addr,
+            in("rcx") extensions,
+            in("edx") hints,
+            options(nostack, preserves_flags, readonly),
+        )
+    };
+}
+
+/// `mwait(extensions, hints)`: waits, in the C-state `hints` names, for a write to the
+/// monitored line or an interrupt; then, as the C does, refills the return stack buffer with
+/// 16 harmless entries (eight rounds of two calls whose return addresses are dropped) so that
+/// no `ret` after the wait is predicted from entries another thread left.
+#[inline]
+pub fn mwait(extensions: u64, hints: u32) {
+    // SAFETY: `mwait` waits and changes nothing; the stuffing pushes 16 return addresses
+    // below `%rsp` (the kernel has no red zone) and pops them with the final `add`, leaving
+    // the stack as it was; `%rcx` (the loop counter) is declared clobbered, and `loop` and
+    // `add` change the flags, which are not preserved.
+    unsafe {
+        asm!(
+            "mwait",
+            "mov rcx, 8",
+            ".align 16, 0x90",
+            "3: call 5f",
+            "4: pause",
+            "lfence",
+            "call 4b",
+            ".align 16, 0xcc",
+            "5: call 7f",
+            "6: pause",
+            "lfence",
+            "call 6b",
+            ".align 16, 0xcc",
+            "7: loop 3b",
+            "add rsp, 16*8",
+            inout("rcx") extensions => _,
+            in("eax") hints,
+        )
+    };
+}
+
 /// `mfence`: orders every earlier load and store before every later one.
 #[inline]
 pub fn mfence() {

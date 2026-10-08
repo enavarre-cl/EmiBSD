@@ -10,7 +10,8 @@
 //! is the record the boot glue hands over), all re-exported here. `pci_chipset` (cfg
 //! `machine_pci_chipset`, arm64 only) is not a contract but the machine items the device-tree
 //! PCI host bridges use directly, as their C does; it is reached by its path, as is `x86`
-//! (cfg `machine_x86`, amd64 only), the x86 items `dev/acpi/acpidmar.c` uses directly. The selected
+//! (cfg `machine_x86`, amd64 only), the x86 items `dev/acpi/acpidmar.c` and
+//! `dev/acpi/acpicpu_x86.c` use directly. The selected
 //! architecture is re-exported as [`Machine`]; the block at the
 //! bottom proves at compile time that it implements every trait. Adding a trait method therefore
 //! means implementing it for amd64, arm64 and the host test double in the same commit.

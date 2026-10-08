@@ -14,6 +14,12 @@
 //! items of the selected machine, so the driver never names an architecture; it exists, like
 //! the driver's items, only where the cfg is set (as `machine::pci_chipset` for arm64's
 //! device-tree PCI bridges).
+//!
+//! `dev/acpi/acpicpu_x86.c` (acpicpu(4) on x86, M16e) is the other such driver: it sets the
+//! machine's idle and suspend waits (`cpu_idle_cycle_fcn`, `cpu_suspend_cycle_fcn`), links
+//! itself into `struct cpu_info` (`ci_acpicpudev`, `ci_mwait`, `ci_feature_tpmflags`), idles
+//! with `sti; hlt`, `inb` or `monitor`/`mwait` (with `clflush`, `cpu_mwait_size`,
+//! `cpu_mwait_states`, `cpu_vendor`), and sets `cpuspeed` and `setperf_prio`.
 
 pub use crate::arch::current::amd64::bus_dma::{
     _bus_dmamap_create, _bus_dmamap_destroy, _bus_dmamap_load, _bus_dmamap_load_mbuf,
@@ -22,18 +28,30 @@ pub use crate::arch::current::amd64::bus_dma::{
     _bus_dmamem_mmap, _bus_dmamem_unmap,
 };
 pub use crate::arch::current::amd64::bus_space::{bus_space_read_8, bus_space_write_8};
+pub use crate::arch::current::amd64::cpu::{CPU_MWAIT_SIZE, CPU_MWAIT_STATES, CPU_VENDOR};
+pub use crate::arch::current::amd64::identcpu::CPUSPEED;
 pub use crate::arch::current::amd64::intr::intr_establish;
 pub use crate::arch::current::amd64::ioapic::ioapic_edge_stubs_table;
-pub use crate::arch::current::amd64::machdep::bios_memmap;
+pub use crate::arch::current::amd64::machdep::{
+    CPU_IDLE_CYCLE_FCN, CPU_SUSPEND_CYCLE_FCN, SETPERF_PRIO, bios_memmap, cpu_idle_cycle_hlt,
+};
 pub use crate::arch::current::amd64::pmap::{pmap_direct_map, pmap_flush_cache};
 pub use crate::arch::current::include::biosvar::{BIOS_MAP_END, BIOS_MAP_RES, BiosMemmap};
 pub use crate::arch::current::include::bus::{
     BUS_DMA_24BIT, BusDmaSegment, BusDmaTag, BusDmaTagT, BusDmamap, BusDmamapT,
 };
-pub use crate::arch::current::include::cpu::CpuInfo;
+pub use crate::arch::current::include::cpu::{
+    CpuInfo, MWAIT_IDLING, MWAIT_ONLY, cpu_info_primary, cpu_is_primary,
+};
+pub use crate::arch::current::include::cpufunc::{
+    clflush, intr_enable, monitor, mwait, read_rflags,
+};
 pub use crate::arch::current::include::i82093var::APIC_INT_VIA_MSG;
 pub use crate::arch::current::include::intrdefs::IST_PULSE;
 pub use crate::arch::current::include::pci_machdep::PciIntrHandle;
 pub use crate::arch::current::include::pic::{PIC_MSI, Pic};
+pub use crate::arch::current::include::pio::inb;
+pub use crate::arch::current::include::psl::PSL_I;
+pub use crate::arch::current::include::specialreg::TPM_ARAT;
 pub use crate::arch::current::pci::acpipci::acpipci_domain_to_seg;
 /* </CODE> */

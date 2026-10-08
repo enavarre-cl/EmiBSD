@@ -40,9 +40,10 @@
 //!
 //! ## Deviations
 //! - acpi0's children are matched against the `cfdata` table, as in C. `acpitimer` and
-//!   `acpihpet` are ported (M13); the other table drivers (`acpimadt`, `acpimcfg`, ...),
-//!   `acpiprt`, `acpiec`, `acpicpu`, `acpitz` and the devices found by `_HID` print "not
-//!   configured" (or nothing, for the quiet ones), as an OpenBSD kernel without them does.
+//!   `acpihpet` are ported (M13), `acpicpu` on amd64 (M16e, `acpicpu_x86.rs`); the drivers
+//!   that are not (`acpiec`, `acpitz`, ...) and the devices found by `_HID` with no driver
+//!   print "not configured" (or nothing, for the quiet ones), as an OpenBSD kernel without
+//!   them does.
 //! - `pool acpiwqpool` and the `SIMPLEQ` of tasks are a `VecDeque` of `struct acpi_taskq`
 //!   values (their `next` link is unused); a failed allocation prints "unable to create
 //!   task" as `pool_get(PR_NOWAIT)` failing does. The PCI lists (`acpi_pcidevs`,

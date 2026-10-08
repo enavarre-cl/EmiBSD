@@ -78,11 +78,13 @@
 //! (its `cpu_info_full`, idle pcb, `sched_init_cpu`, `ncpus`, `cpu_info_list`),
 //! `cpu_boot_secondary_processors`, `cpu_start_secondary`, `cpu_boot_secondary`,
 //! `cpu_hatch`, `cpu_init`'s `CPUF_RUNNING` and `wbinvd_on_all_cpus`. `patinit`, the
-//! MDS/`cpu_fix_msrs` work, `cpu_init_mwait` and `cpu_debug_dump` (ddb, M11c) come later.
+//! MDS/`cpu_fix_msrs` work and `cpu_debug_dump` (ddb, M11c) come later. M16e ports
+//! `cpu_init_mwait` and `cpu_idle_mwait_cycle` (with `cpu_mwait_size`/`cpu_mwait_states`),
+//! for acpicpu(4)'s idle states.
 //!
 //! ## Deviations
 //! - `cpu_attach` reports what it cannot do yet: `cpu_fix_msrs`,
-//!   `mem_range_attach` (`MTRR`), `cpu_init_mwait` and `cpu_init_vmm`. Without
+//!   `mem_range_attach` (`MTRR`) and `cpu_init_vmm`. Without
 //!   `MULTIPROCESSOR` an application processor (never attached: mainbus attaches the boot
 //!   CPU alone) is reported instead of getting a `km_alloc`ed `cpu_info_full`. `cpu_ca` has
 //!   no `cpu_activate` (suspend/resume): `config_suspend` walks the CPU's children instead.
@@ -136,12 +138,13 @@ use crate::arch::amd64::amd64::intr::cpu_intr_init;
 use crate::arch::amd64::amd64::lapic::{lapic_calibrate_timer, lapic_enable};
 use crate::arch::amd64::amd64::locore::Xsyscall;
 use crate::arch::amd64::include::cpu::{
-    CPUF_BSP, CPUF_PRESENT, CPUF_PRIMARY, CPUF_SP, CpuInfo, MAXCPUS, cpu_info_primary,
+    CPUF_BSP, CPUF_PRESENT, CPUF_PRIMARY, CPUF_SP, CpuInfo, CpuVendor, MAXCPUS, MWAIT_IDLING,
+    MWAIT_ONLY, cpu_info_primary, curcpu,
 };
 use crate::arch::amd64::include::cpu_full::{
     CpuInfoFull, DBLFLT_STACK_WORDS, NMI_STACK_WORDS, TRAMP_STACK_WORDS,
 };
-use crate::arch::amd64::include::cpufunc::{lcr4, rcr4, rdmsr, wrmsr};
+use crate::arch::amd64::include::cpufunc::{lcr4, monitor, mwait, rcr4, rdmsr, read_rflags, wrmsr};
 use crate::arch::amd64::include::cpuvar::{CPU_ROLE_AP, CPU_ROLE_BP, CPU_ROLE_SP, CpuAttachArgs};
 use crate::arch::amd64::include::fpu::{
     INITIAL_MXCSR, INITIAL_NPXCW, Savefpu, fpu_cleandata, fpureset, fpusave, xrstor_user,
@@ -151,12 +154,13 @@ use crate::arch::amd64::include::intrdefs::IPL_NONE;
 use crate::arch::amd64::include::psl::{PSL_AC, PSL_C, PSL_D, PSL_I, PSL_NT, PSL_T};
 use crate::arch::amd64::include::segments::{GCODE_SEL, GUDATA_SEL, SEL_KPL, SEL_UPL, gsel};
 use crate::arch::amd64::include::specialreg::{
-    CR4_DEFAULT, EFER_SCE, MSR_CSTAR, MSR_EFER, MSR_FSBASE, MSR_GSBASE, MSR_KERNELGSBASE,
-    MSR_LSTAR, MSR_SFMASK, MSR_STAR,
+    CPUIDECX_MWAIT, CR4_DEFAULT, EFER_SCE, MSR_CSTAR, MSR_EFER, MSR_FSBASE, MSR_GSBASE,
+    MSR_KERNELGSBASE, MSR_LSTAR, MSR_SFMASK, MSR_STAR, cpuid,
 };
 use crate::arch::amd64::include::tss::X86_64Tss;
 use crate::kern::subr_prf::{Str, panic, printf};
 use crate::sys::device::{CD_COCOVM, CfMatch, Cfattach, Cfdriver, DV_DULL, Device, Softc};
+use crate::sys::sched::cpu_is_idle;
 use crate::unported;
 
 #[cfg(all(feature = "multiprocessor", feature = "qemu"))]
@@ -176,7 +180,7 @@ use {
     crate::arch::amd64::amd64::tsc::{tsc_test_sync_ap, tsc_test_sync_bp},
     crate::arch::amd64::include::cpu::{
         CPUF_AP, CPUF_GO, CPUF_IDENTIFIED, CPUF_IDENTIFY, CPUF_RUNNING, cpu_is_primary,
-        cpu_start_cleanup, cpu_startup_ci, curcpu,
+        cpu_start_cleanup, cpu_startup_ci,
     },
     crate::arch::amd64::include::cpufunc::{
         intr_disable, intr_enable, intr_restore, lcr0, lcr3, lcr8, lldt, wbinvd,
@@ -187,7 +191,7 @@ use {
     crate::arch::amd64::include::pcb::Pcb,
     crate::arch::amd64::include::segments::{GDT_SIZE, RegionDescriptor},
     crate::arch::amd64::include::specialreg::{
-        APICBASE_ENABLE_X2APIC, CPUID_NXE, CR0_DEFAULT, CR4_PGE, EFER_NXE, MSR_APICBASE, cpuid,
+        APICBASE_ENABLE_X2APIC, CPUID_NXE, CR0_DEFAULT, CR4_PGE, EFER_NXE, MSR_APICBASE,
     },
     crate::dev::rnd::arc4random,
     crate::kern::init_main::NCPUS,
@@ -234,6 +238,11 @@ pub static CPU_ECXFEATURE: AtomicU32 = AtomicU32::new(0);
 pub static CPU_FEATURE: AtomicU32 = AtomicU32::new(0);
 /// `ecpu_ecxfeature`: cpuid(0x80000001).ecx.
 pub static ECPU_ECXFEATURE: AtomicU32 = AtomicU32::new(0);
+/// `cpu_mwait_size`: the largest monitor line size, 0 when `mwait` is not used.
+pub static CPU_MWAIT_SIZE: AtomicU32 = AtomicU32::new(0);
+/// `cpu_mwait_states`: cpuid(5).edx, the number of `mwait` sub-states of each C-state, four
+/// bits each.
+pub static CPU_MWAIT_STATES: AtomicU32 = AtomicU32::new(0);
 
 /// `cpu_ca`.
 pub static CPU_CA: Cfattach = Cfattach {
@@ -332,6 +341,121 @@ pub fn cpu_match(_parent: Option<&Device>, match_: &CfMatch, aux: *mut c_void) -
     // XXX We don't support MP with SEV-ES, yet: see the module's deviations.
 
     1
+}
+
+/// `cpu_idle_mwait_cycle`: `cpu_idle_cycle_fcn` on a CPU with `mwait`: waits in `mwait`
+/// on `ci_mwait`, which `cpu_kick` and `cpu_unidle` clear to wake it without an IPI.
+pub fn cpu_idle_mwait_cycle() {
+    let ci = curcpu();
+
+    if read_rflags() & PSL_I == 0 {
+        panic(format_args!("idle with interrupts blocked!"));
+    }
+
+    // something already queued?
+    if !cpu_is_idle(ci) {
+        return;
+    }
+
+    // About to idle; setting the MWAIT_IN_IDLE bit tells cpu_unidle() that it can't be a
+    // no-op and tells cpu_kick() that it doesn't need to use an IPI. We also set the
+    // MWAIT_KEEP_IDLING bit: those routines clear it to stop the mwait. Once they're set,
+    // we do a final check of the queue, in case another cpu called setrunqueue() and added
+    // something to the queue and called cpu_unidle() between the check in sched_idle() and
+    // here.
+    ci.ci_mwait
+        .fetch_or(MWAIT_IDLING | MWAIT_ONLY, Ordering::SeqCst);
+    if cpu_is_idle(ci) {
+        monitor(ci.ci_mwait.as_ptr(), 0, 0);
+        if ci.ci_mwait.load(Ordering::SeqCst) & MWAIT_IDLING == MWAIT_IDLING {
+            mwait(0, 0);
+        }
+    }
+
+    // done idling; let cpu_kick() know that an IPI is required
+    ci.ci_mwait.fetch_and(!MWAIT_IDLING, Ordering::SeqCst);
+}
+
+/// What `cpu_init_mwait` makes of cpuid(5) (`smallest`, `largest`, `extensions`,
+/// `states`): the line to print after the device name, `cpu_mwait_states`, and
+/// `cpu_mwait_size` (0 when the sizes are bogus).
+pub fn cpu_mwait_info(
+    smallest: u32,
+    largest: u32,
+    extensions: u32,
+    states: u32,
+) -> (alloc::string::String, u32, u32) {
+    use core::fmt::Write;
+    let (smallest, largest) = (smallest & 0xffff, largest & 0xffff);
+    let mut states = states;
+    let mut line = alloc::string::String::new();
+    let _ = write!(line, ": mwait min={smallest}, max={largest}");
+    if extensions & 0x1 != 0 {
+        if states > 0 {
+            let mut c_substates = states;
+            let _ = write!(line, ", C-substates={}", 0xf & c_substates);
+            loop {
+                c_substates >>= 4;
+                if c_substates == 0 {
+                    break;
+                }
+                let _ = write!(line, ".{}", 0xf & c_substates);
+            }
+        }
+        if extensions & 0x2 != 0 {
+            line.push_str(", IBE");
+        }
+    } else {
+        // substates not supported, forge the default: just C1
+        states = 1 << 4;
+    }
+
+    // paranoia: check the values
+    let int = size_of::<i32>() as u32;
+    let size = if smallest < int || largest < smallest || largest & (int - 1) != 0 {
+        line.push_str(" (bogus)");
+        0
+    } else {
+        largest
+    };
+    (line, states, size)
+}
+
+/// `cpu_init_mwait(sc, ci)`: when the CPU has `monitor`/`mwait`, reads its monitor line
+/// sizes and C-sub-states (cpuid 5), prints them, and makes `cpu_idle_mwait_cycle` the idle
+/// loop's wait (acpicpu may install its own later).
+pub fn cpu_init_mwait(sc: &Device, ci: &CpuInfo) {
+    if CPU_ECXFEATURE.load(Ordering::Relaxed) & CPUIDECX_MWAIT == 0 || ci.ci_cpuid_level.get() < 0x5
+    {
+        return;
+    }
+
+    // get the monitor granularity
+    let (smallest, largest, extensions, mut states) = cpuid(0x5);
+
+    // mask out states C6/C7 in 31:24 for CHT45 errata
+    if ci.ci_vendor.get() == CpuVendor::CPUV_INTEL
+        && ci.ci_family.get() == 0x06
+        && ci.ci_model.get() == 0x4c
+    {
+        states &= 0x00ff_ffff;
+    }
+
+    let (line, states, size) = cpu_mwait_info(smallest, largest, extensions, states);
+    CPU_MWAIT_STATES.store(states, Ordering::Relaxed);
+    if size != 0 {
+        CPU_MWAIT_SIZE.store(size, Ordering::Relaxed);
+    }
+    printf(format_args!("{}{}\n", sc.xname(), line));
+
+    // enable use of mwait; may be overridden by acpicpu later
+    if CPU_MWAIT_SIZE.load(Ordering::Relaxed) > 0 {
+        // SAFETY: cpu_attach runs while cold on the boot CPU, before any idle loop
+        // (machdep.rs, the module's deviations).
+        unsafe {
+            crate::arch::amd64::amd64::machdep::CPU_IDLE_CYCLE_FCN.write(cpu_idle_mwait_cycle)
+        };
+    }
 }
 
 /// `cpu_attach`: fills in the boot CPU's `cpu_info` and brings it up for its role.
@@ -454,7 +578,7 @@ pub fn cpu_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
             let _ = unported!("cpu_fix_msrs, mem_range_attach (cpu.c, mtrr.c)");
             // XXX SP fpuinit(ci) is done earlier
             cpu_init(ci);
-            let _ = unported!("cpu_init_mwait (mwait)");
+            cpu_init_mwait(self_, ci);
         }
         CPU_ROLE_BP => {
             printf(format_args!("apid {} (boot processor)\n", caa.cpu_apicid));
@@ -468,10 +592,10 @@ pub fn cpu_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) {
             lapic_calibrate_timer(ci);
             // XXX BP fpuinit(ci) is done earlier
             cpu_init(ci);
-            let _ = unported!("cpu_init_mwait (mwait)");
             // NIOAPIC > 0
             crate::arch::amd64::amd64::ioapic::IOAPIC_BSP_ID
                 .store(caa.cpu_apicid, Ordering::Relaxed);
+            cpu_init_mwait(self_, ci);
         }
         CPU_ROLE_AP => {
             // report on an AP

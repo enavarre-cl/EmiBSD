@@ -65,6 +65,8 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
+use libkern::StaticCell;
+
 use crate::kassert;
 use crate::kern::kern_clock::{STATHZ, hardclock_period};
 use crate::kern::kern_clockintr::{clockintr_advance, clockintr_cancel, clockrequest_advance};
@@ -106,6 +108,11 @@ pub static ROUNDROBIN_PERIOD: AtomicU64 = AtomicU64::new(0);
 
 /// `sched_lock`: initialised by `SCHED_LOCK_INIT()` in `main`.
 pub static SCHED_LOCK: Mutex = Mutex::new(IPL_NONE);
+
+/// `cpu_setperf`: the machine's CPU performance setter, `None` until a driver installs one
+/// (acpicpu(4)'s `acpicpu_setperf`, M16e). Written while cold by the attaching driver;
+/// `hw.setperf` and the perfpolicy timeout that call it are not ported (see above).
+pub static CPU_SETPERF: StaticCell<Option<fn(i32)>> = StaticCell::new(None);
 
 /// `cexp[3]`: constants for averages over 1, 5, and 15 minutes when sampling at 5 second
 /// intervals.
@@ -587,8 +594,8 @@ pub fn schedclock(p: &Proc) {
     sched_unlock();
 }
 
-// cpu_setperf, perflevel, perfpolicy_on_ac, perfpolicy_on_battery, setperf_auto,
-// sysctl_hwsetperf, sysctl_hwperfpolicy: CPU throttling (sysctl and hw_power, M7).
+// perflevel, perfpolicy_on_ac, perfpolicy_on_battery, setperf_auto, sysctl_hwsetperf,
+// sysctl_hwperfpolicy: CPU throttling (sysctl and hw_power, M7).
 
 /// `scheduler_start`: start the scheduler's periodic timeouts.
 pub fn scheduler_start() {
