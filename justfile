@@ -104,7 +104,8 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
     "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
-    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd"
+    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
+    "smoke-powerbtn"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -1696,6 +1697,26 @@ smoke-power: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
         --send-after '# ' --send 'echo m13-power-$((40+2))\n' \
         --expect "psci0 at mainbus0: PSCI 1." --expect "rebooting..." --expect "m13-power-42" \
         --reject "The operating system has halted"
+
+# M16f: QEMU's power key on arm64 `virt` (dev/fdt/plgpio.c, gpiokeys.c, dev/ofw/ofw_gpio.c).
+# The key is the `gpio-keys` node on the PL061: plgpio(4) registers the controller, gpiokeys(4)
+# attaches the key ("GPIO Key Poweroff"). plgpio has no interrupts, so gpiokeys polls the key
+# once a second through gpiokeys_update_key, which acts only on a lid switch: QEMU's
+# `system_powerdown` (sent on the monitor, `--monitor`, hwopts.rs) changes nothing, and the
+# session goes on. That is what OpenBSD 8.0 does on the same machine (`cargo xtask
+# diff-openbsd --arch arm64 powerbtn`: plgpio0 and gpiokeys0 attach, the console stays silent
+# and the VM still runs a minute later), so the port keeps it (the user's option A of
+# 2026-10-08). arm64 only (amd64's power button is ACPI's). Part of `smoke`.
+smoke-powerbtn: (build-arm64 "--features qemu,multiprocessor") build-init-arm64
+    @test -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-powerbtn: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        {{disk_login}} --send-after '# ' --send 'echo m16f-armed-$((40+1))\n' \
+        --monitor-after 'm16f-armed-41' --monitor 'system_powerdown' \
+        --send-after 'm16f-armed-41' --send 'sleep 5; echo m16f-still-up-$((40+2))\n' \
+        --expect "plgpio0 at mainbus0" --expect 'gpiokeys0 at mainbus0: "GPIO Key Poweroff"' \
+        --expect "rc: multi-user" --expect "m16f-armed-41" --expect "m16f-still-up-42" \
+        --reject "syncing disks" --reject "Attempting to power down" --reject "The operating system has halted"
 
 # M13: the date comes from the RTC. Each arch boots single user from the ramdisk (`-s`) and
 # ksh(1) compares `date +%s` right after boot with the host's clock ({host-ms}, hwopts.rs):

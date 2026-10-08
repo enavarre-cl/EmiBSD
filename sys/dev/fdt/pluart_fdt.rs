@@ -24,10 +24,10 @@
 //! Upstream: sys/dev/fdt/pluart_fdt.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `clock_enable_all`, `clock_get_frequency` (`ofw_clock.c`) and `pinctrl_byname`
-//!   (`ofw_pinctrl.c`) are not ported: they are reported, and `sc_clkfreq` stays 0, so
-//!   `pluart_param` keeps the baud rate the firmware programmed (as the C does for a UART
-//!   without a known clock).
+//! - `clock_enable_all` and `clock_get_frequency` (`ofw_clock.c`) are not ported: they are
+//!   reported, and `sc_clkfreq` stays 0, so `pluart_param` keeps the baud rate the firmware
+//!   programmed (as the C does for a UART without a known clock). `pinctrl_byname` is
+//!   `ofw_pinctrl.c`'s (M16f); QEMU's `virt` has no pin controller, so it finds nothing.
 //! - The attach arguments are the machine's `struct fdt_attach_args`
 //!   (`machine::fdt::FdtAttachArgs`).
 
@@ -38,6 +38,7 @@ use crate::dev::ic::pluart::{
     COM_HW_SBSA, PluartSoftc, pluart_attach_common, pluart_intr, pluartcnattach,
 };
 use crate::dev::ofw::fdt::{FdtReg, OF_getpropint, OF_is_compatible, fdt_get_reg};
+use crate::dev::ofw::ofw_pinctrl::pinctrl_byname;
 use crate::kern::subr_prf::{panic, printf};
 use crate::machine::bus::bus_space_map;
 use crate::machine::fdt::{
@@ -131,8 +132,7 @@ pub fn pluart_fdt_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_v
         Err(_) => panic(format_args!("pluartattach: bus_space_map failed!")),
     }
 
-    // pinctrl_byname(faa->fa_node, "default"): ofw_pinctrl.c (not ported).
-    let _ = unported!("pluart_fdt_attach: pinctrl_byname (ofw_pinctrl.c)");
+    pinctrl_byname(faa.fa_node, b"default");
 
     pluart_attach_common(sc, stdout_node() == faa.fa_node);
 }

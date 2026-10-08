@@ -22,6 +22,7 @@ pub mod consfile;
 pub mod diskmap;
 pub mod efi;
 pub mod fdt;
+pub mod gpio;
 pub mod hid;
 pub mod ic;
 pub mod isa;

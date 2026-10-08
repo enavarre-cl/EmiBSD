@@ -65,6 +65,7 @@ use crate::dev::audio::{
 use crate::dev::bio::{NBIO, bioclose, bioioctl, bioopen};
 use crate::dev::cons::{cnclose, cnioctl, cnkqfilter, cnopen, cnread, cnstop, cnwrite};
 use crate::dev::diskmap::{diskmapclose, diskmapioctl, diskmapopen, diskmapread, diskmapwrite};
+use crate::dev::gpio::gpio::{NGPIO, gpioclose, gpioioctl, gpioopen};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
 use crate::dev::rd::{NRD, rdclose, rddump, rdioctl, rdopen, rdread, rdsize, rdstrategy, rdwrite};
 use crate::dev::usb::usb::{NUSB, usbclose, usbioctl, usbopen};
@@ -103,9 +104,9 @@ use crate::scsi::sd::{NSD, sdclose, sddump, sdioctl, sdopen, sdread, sdsize, sds
 use crate::sys::conf::cdev_fuse_init;
 use crate::sys::conf::{
     Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_audio_init, cdev_bio_init, cdev_bpf_init,
-    cdev_cn_init, cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_mm_init, cdev_mouse_init,
-    cdev_notdef, cdev_pf_init, cdev_ptc_init, cdev_ptm_init, cdev_tty_init, cdev_usb_init,
-    cdev_wsdisplay_init,
+    cdev_cn_init, cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_gpio_init, cdev_mm_init,
+    cdev_mouse_init, cdev_notdef, cdev_pf_init, cdev_ptc_init, cdev_ptm_init, cdev_tty_init,
+    cdev_usb_init, cdev_wsdisplay_init,
 };
 use crate::sys::param::NODEV;
 use crate::sys::types::{Dev, major, makedev, minor};
@@ -357,7 +358,7 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     cnotdef(), // 85: NVRAM interface (nvram: not ported)
     cnotdef(), // 86
     cnotdef(), // 87: drm (not ported)
-    cnotdef(), // 88: gpio (not ported)
+    Cell::new(cdev_gpio_init(NGPIO, gpioopen, gpioclose, gpioioctl)), // 88: gpio
     cnotdef(), // 89: vscsi (not ported)
     // 90: disk mapper
     Cell::new(cdev_disk_init(

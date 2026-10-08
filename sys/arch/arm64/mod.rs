@@ -1296,6 +1296,10 @@ impl crate::machine::fdt::Fdt for Machine {
         unsafe { arm64::machdep::POWERDOWNFN.write(Some(f)) };
     }
 
+    fn lid_action() -> i32 {
+        arm64::machdep::LID_ACTION.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
     unsafe fn fdt_intr_disestablish(cookie: NonNull<c_void>) {
         // SAFETY: the caller's guarantee: the cookie is a `MachineIntrHandle` from
         // `fdt_intr_establish*`.

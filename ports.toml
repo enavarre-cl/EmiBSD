@@ -944,7 +944,7 @@ c = "sys/dev/fdt/pluart_fdt.c"
 rust = "sys/dev/fdt/pluart_fdt.rs"
 status = "wip"
 deps = ["sys/dev/ic/pluart.c"]
-notes = "M4: pluart_init_cons (fdt_find_cons + fdt_get_reg + pluartcnattach); M8: pluart_fdt_ca, pluart_fdt_match, pluart_fdt_attach (pluart* at fdt? in ioconf.rs; the machine's fdt_attach_args, fdt_intr_establish through machine::fdt); clock_enable_all/clock_get_frequency (ofw_clock.c) and pinctrl_byname (ofw_pinctrl.c) are reported, sc_clkfreq stays 0 so pluart_param keeps the firmware's baud rate"
+notes = "M4: pluart_init_cons (fdt_find_cons + fdt_get_reg + pluartcnattach); M8: pluart_fdt_ca, pluart_fdt_match, pluart_fdt_attach (pluart* at fdt? in ioconf.rs; the machine's fdt_attach_args, fdt_intr_establish through machine::fdt); clock_enable_all/clock_get_frequency (ofw_clock.c) are reported, sc_clkfreq stays 0 so pluart_param keeps the firmware's baud rate; M16f: pinctrl_byname is ofw_pinctrl.c's"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c4c173a7fc6f53adda9c7413d8e219da30c83f1e"
 
@@ -11518,38 +11518,69 @@ notes = "M16f: the whole header: GPIO_PIN_* states and flags, GPIOPINMAXNAME, st
 [[file]]
 c = "sys/dev/gpio/gpiovar.h"
 rust = "sys/dev/gpio/gpiovar.rs"
-status = "todo"
-notes = "M16: gpio bus attach arguments"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e6df1e7d083d69dbd215c3b187ba426326788e6a"
+deps = ["sys/sys/gpio.h"]
+notes = "M16f: the whole header: struct gpio_chipset_tag (Option<fn> methods, the gpiobus_pin_read/write/ctl macros as methods), gpio_pin_t (Cell members), struct gpiobus_attach_args ('static tag and pins), struct gpio_attach_args, struct gpio_pinmap (the child's slot slice), struct gpio_dev and struct gpio_name (list elements); the prototypes are gpio.c's"
 
 [[file]]
 c = "sys/dev/gpio/gpio.c"
 rust = "sys/dev/gpio/gpio.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "51b2d3ace3b532638d442feaaed39de0963dd260"
 deps = ["sys/dev/gpio/gpiovar.h", "sys/sys/gpio.h"]
-notes = "M16: gpio(4) bus"
+notes = "M16f: the whole file: struct gpio_softc (Cells, list heads of Box'd gpio_dev/gpio_name), gpio_ca/gpio_cd, gpio_match, gpio_submatch, gpio_attach, gpio_detach (vdevgone of the major whose d_open is gpioopen), gpio_search, gpio_print, gpiobus_print, gpio_pin_map (Err(EINVAL) for the C's 1; a mask with more pins than map slots fails), gpio_pin_unmap/read/write/ctl/caps, gpio_npins, gpioopen, gpioclose, gpio_pinbyname, gpio_ioctl (every GPIO* command, securelevel, FWRITE), gpioioctl; NGPIO 1 and cdevsw[88] on both archs (cdev_gpio_init); deviation: GPIOATTACH prints through gpioattach_print (the requested driver's name) where the C passes gpiobus_print over a gpio_attach_args; nothing attaches gpio* on QEMU (its arm64 GENERIC parents bcmgpio/sxipio are not ported, plgpio attaches no bus); host tests over a fake controller (pin maps, info/read/write/toggle, set/rename/unset, securelevel)"
 
 [[file]]
 c = "sys/dev/ofw/ofw_gpio.h"
 rust = "sys/dev/ofw/ofw_gpio.rs"
-status = "todo"
-notes = "M16: the fdt gpio controller registry"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "027dfc484d851ad1d71ce8b281409702b62aa5f6"
+notes = "M16f: the whole header, in ofw_gpio.rs with the .c: GPIO_ACTIVE_*, GPIO_PUSH_PULL, GPIO_SINGLE_ENDED, GPIO_LINE_OPEN_*, GPIO_OPEN_DRAIN/SOURCE, GPIO_CONFIG_*, struct gpio_controller (Cell members, Option<fn> methods taking the cells after the phandle as a slice); reference-backed test of the defines"
+
+[[file]]
+c = "sys/dev/ofw/ofw_gpio.c"
+rust = "sys/dev/ofw/ofw_gpio.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "929a87aea84af1da63a74679596ff8e89abcdf2c"
+deps = ["sys/dev/ofw/ofw_gpio.h", "sys/dev/ofw/fdt.c"]
+notes = "M16f: the whole file: gpio_controllers (static behind a Sync wrapper: registered while autoconfiguring, read after), gpio_controller_register (with the GPIO hogs), gpio_controller_config_pin/get_pin/set_pin, gpio_controller_next_pin (the rest of the slice, None for an unknown phandle), gpio_controller_intr_establish, gpio_controller_intr_disestablish (machine::fdt::fdt_intr_disestablish); a gpios property too short for a controller's cells stops instead of reading past it; host test of the dispatch by phandle"
 
 [[file]]
 c = "sys/dev/ofw/ofw_pinctrl.h"
 rust = "sys/dev/ofw/ofw_pinctrl.rs"
-status = "todo"
-notes = "M16: the fdt pinctrl hooks gpiokeys names"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4a940d4c955f504162894cbbbea24fe9f91a4848"
+notes = "M16f: the prototypes, in ofw_pinctrl.rs with the .c"
+
+[[file]]
+c = "sys/dev/ofw/ofw_pinctrl.c"
+rust = "sys/dev/ofw/ofw_pinctrl.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f186b8afbc5293f38e8ca4ed080ff7d301af262e"
+deps = ["sys/dev/ofw/ofw_pinctrl.h", "sys/dev/ofw/fdt.c"]
+notes = "M16f: the whole file: struct pinctrl (Box'd, never freed), pinctrls (static behind a Sync wrapper), pinctrl_register, pinctrl_register_child, pinctrl_byphandle, pinctrl_byid (snprintf into a 32-byte buffer), pinctrl_byname; no pin controller is ported (QEMU virt has none), so the lookups return -1; pluart_fdt and gpiokeys call pinctrl_byname; host tests"
 
 [[file]]
 c = "sys/dev/fdt/plgpio.c"
 rust = "sys/dev/fdt/plgpio.rs"
-status = "todo"
-deps = ["sys/dev/ofw/ofw_gpio.h", "sys/dev/gpio/gpio.c"]
-notes = "M16: plgpio(4), arm64 virt's PL061; arm64 only"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f69a13846de831d9a69171d5df67ccbbe7bdcdcb"
+deps = ["sys/dev/ofw/ofw_gpio.c"]
+notes = "M16f: the whole file: GPIODATA/GPIODIR, HREAD1/HWRITE1/HSET1/HCLR1 as methods, struct plgpio_softc (Cell<Option<..>> tag and handle, the embedded gpio_controller), plgpio_ca/cd, plgpio_match (arm,pl061), plgpio_attach, plgpio_config_pin, plgpio_get_pin, plgpio_set_pin; as in the C no interrupts (no gc_intr_establish): OpenBSD 8.0 on QEMU virt attaches plgpio0 and gpiokeys0 and ignores system_powerdown (cargo xtask diff-openbsd powerbtn, M16f), and so does this port; plgpio* at fdt? early 1 in arm64's ioconf; host tests of the register math"
 
 [[file]]
 c = "sys/dev/fdt/gpiokeys.c"
 rust = "sys/dev/fdt/gpiokeys.rs"
-status = "todo"
-deps = ["sys/dev/fdt/plgpio.c", "sys/dev/ofw/ofw_pinctrl.h"]
-notes = "M16: gpiokeys(4); criterion: QEMU's system_powerdown on arm64 virt (gpio-keys on the PL061) shuts the system down cleanly; arm64 only"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "22eeec377160a22ff2b89ba675bccb179f467969"
+deps = ["sys/dev/ofw/ofw_gpio.c", "sys/dev/ofw/ofw_pinctrl.c", "sys/kern/kern_sensors.c"]
+notes = "M16f: the whole file: GPIOKEYS_EV_*, GPIOKEYS_SW_LID, GPIOKEYS_KEY_POWER, struct gpiokeys_key (Box'd, gpios cells as a 'static slice), struct gpiokeys_softc, gpiokeys_ca/cd, gpiokeys_match, gpiokeys_attach (labels, the lid sensor, the power key, interrupts or the 1 s sensor task, sensordev_install), gpiokeys_update_key (lid sensor and machdep.lidaction through machine::fdt::lid_action, simplefb_burn_hook), gpiokeys_power_button (powerbutton_event on release), gpiokeys_intr; option SUSPEND waits for kern/subr_suspend.c: cpu_suspended reads 0, device_register_wakeup and request_sleep are unported! stubs; gpiokeys* at fdt? in arm64's ioconf. QEMU virt: gpiokeys0 attaches to the PL061's power key, which has no interrupt and is polled through gpiokeys_update_key, which ignores KEY_POWER: system_powerdown does nothing, exactly as on OpenBSD 8.0 (the M16f criterion, after the user's option A of 2026-10-08); host tests"

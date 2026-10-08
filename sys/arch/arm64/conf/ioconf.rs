@@ -21,6 +21,7 @@
 //! `vmx* at pci?` (M13); `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13);
 //! arm64 ACPI (M14): `acpi0 at mainbus?` (the `acpi_fdt` attachment), `acpimcfg* at acpi?`,
 //! `acpiiort* at acpi?`, `acpipci* at acpi?`, `pci* at acpipci?` and `pluart* at acpi?`;
+//! `plgpio* at fdt? early 1` and `gpiokeys* at fdt?` (M16f);
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
@@ -52,7 +53,9 @@ use crate::dev::acpi::acpimcfg::{ACPIMCFG_CA, ACPIMCFG_CD};
 use crate::dev::acpi::pluart_acpi::PLUART_ACPI_CA;
 use crate::dev::audio::{AUDIO_CA, AUDIO_CD};
 use crate::dev::bio::bioattach;
+use crate::dev::fdt::gpiokeys::{GPIOKEYS_CA, GPIOKEYS_CD};
 use crate::dev::fdt::pciecam::{PCIECAM_CA, PCIECAM_CD};
+use crate::dev::fdt::plgpio::{PLGPIO_CA, PLGPIO_CD};
 use crate::dev::fdt::plrtc::{PLRTC_CA, PLRTC_CD};
 use crate::dev::fdt::pluart_fdt::PLUART_FDT_CA;
 use crate::dev::fdt::psci::{PSCI_CA, PSCI_CD};
@@ -203,9 +206,9 @@ const LOC_WSKBDDEV_MUX1: &[i64] = &[-1, 1];
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    48
+    50
 } else {
-    47
+    49
 };
 
 /// `cfdata[]`.
@@ -735,7 +738,31 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 47: cpu* at mainbus? (GENERIC.MP)
+    // 47: plgpio* at fdt? early 1
+    Cfdata::new(
+        &PLGPIO_CA,
+        &PLGPIO_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_1,
+        0,
+        PV_FDT,
+        0,
+        0,
+    ),
+    // 48: gpiokeys* at fdt?
+    Cfdata::new(
+        &GPIOKEYS_CA,
+        &GPIOKEYS_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_0,
+        0,
+        PV_FDT,
+        0,
+        0,
+    ),
+    // 49: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];
