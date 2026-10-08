@@ -82,6 +82,13 @@
 //!   `ret`, ...) is typed with the monitor's `sendkey` on the guest's keyboard (with `--usb`,
 //!   the `usb-kbd` on `qemu-xhci`), one every [`SENDKEY_GAP`] ([`parse_sendkeys`],
 //!   [`poll_sendkey`]). The run fails if a LINE never came.
+//! - `--gic N` (`qemu`, `smoke`, `smoke2`, M16f; arm64): the version of `virt`'s interrupt
+//!   controller, `2` (QEMU's default, ampintc(4) with its GICv2m MSI frame) or `3` (agintc(4)
+//!   with its ITS, `gic-version=3`). Without the option the environment's `EMIBSD_GIC` (`2`
+//!   or `3`) decides, so `EMIBSD_GIC=3 just smoke` puts every arm64 boot on GICv3; amd64
+//!   ignores both ([`virt_machine`]).
+//! - `--iommu smmuv3` (`qemu`, `smoke`, M16f; arm64): `virt` with its SMMUv3 in front of the
+//!   PCIe bus (`iommu=smmuv3`), smmu(4); the virtio-mmio devices do not go through it.
 //! - `{host-ms}` in a `smoke` `--send` text (M13, `smoke-clock`): replaced, as the text is
 //!   sent, by the host's wall clock in milliseconds since the Epoch ([`expand_send`]), so a
 //!   guest script can set its own clock readings beside the host's and compare the rates.
@@ -260,8 +267,24 @@ static NIC: OnceLock<String> = OnceLock::new();
 /// only bus a tree made from the ACPI tables can reach (set once by `main`).
 static ACPI: OnceLock<()> = OnceLock::new();
 
+/// `--gic N` or `EMIBSD_GIC` (arm64): `virt`'s GIC version, 2 or 3 (set once by `main`).
+static GIC: OnceLock<u8> = OnceLock::new();
+
+/// `--iommu smmuv3` (arm64): `virt` with its SMMUv3 (set once by `main`).
+static IOMMU: OnceLock<()> = OnceLock::new();
+
+/// The GIC version a `--gic` value or `EMIBSD_GIC` names: `2` or `3`.
+fn parse_gic(v: &str, what: &str) -> Result<u8> {
+    match v {
+        "2" => Ok(2),
+        "3" => Ok(3),
+        _ => Err(format!("{what} {v}: expected 2 or 3").into()),
+    }
+}
+
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
-/// `--pci-serial`, `--expect-pci-serial`, `--reboot`, `--vio-mq`, `--nic`, `--acpi`).
+/// `--pci-serial`, `--expect-pci-serial`, `--reboot`, `--vio-mq`, `--nic`, `--acpi`, `--gic`,
+/// `--iommu`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if let Some(model) = opt_path(args, "--nic")? {
         if !NIC_MODELS.contains(&model) {
@@ -277,6 +300,23 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     }
     if args.contains(&"--acpi") {
         let _ = ACPI.set(());
+    }
+    match opt_path(args, "--gic")? {
+        Some(v) => {
+            let _ = GIC.set(parse_gic(v, "--gic")?);
+        }
+        None => match std::env::var("EMIBSD_GIC") {
+            Ok(v) if !v.is_empty() => {
+                let _ = GIC.set(parse_gic(&v, "EMIBSD_GIC")?);
+            }
+            _ => {}
+        },
+    }
+    if let Some(v) = opt_path(args, "--iommu")? {
+        if v != "smmuv3" {
+            return Err(format!("--iommu {v}: expected smmuv3").into());
+        }
+        let _ = IOMMU.set(());
     }
     if args.contains(&"--vio-mq") {
         let _ = VIO_MQ.set(());
@@ -364,6 +404,33 @@ fn user_nic_arg(nic: Option<&str>, arch: Arch, props: &str) -> String {
 /// Whether this run's arm64 VMs boot `virt` with ACPI (`--acpi`).
 pub(crate) fn acpi() -> bool {
     ACPI.get().is_some()
+}
+
+/// The `-M` argument of an arm64 VM: `virt` with ACPI (`--acpi`) or without (EDK2 then
+/// installs the device tree), its GIC version (`--gic`, `EMIBSD_GIC`) and its SMMUv3
+/// (`--iommu smmuv3`).
+pub(crate) fn virt_machine() -> String {
+    virt_machine_arg(
+        acpi(),
+        GIC.get().copied().unwrap_or(2),
+        IOMMU.get().is_some(),
+    )
+}
+
+/// [`virt_machine`] for the given ACPI, GIC version and SMMU choices.
+fn virt_machine_arg(acpi: bool, gic: u8, smmu: bool) -> String {
+    let mut m = String::from(if acpi {
+        "virt,acpi=on"
+    } else {
+        "virt,acpi=off"
+    });
+    if gic == 3 {
+        m.push_str(",gic-version=3");
+    }
+    if smmu {
+        m.push_str(",iommu=smmuv3");
+    }
+    m
 }
 
 /// Whether this run's VMs restart on a guest reset (`--reboot`): QEMU then runs without
@@ -1183,6 +1250,22 @@ pub(crate) fn after_smoke() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn virt_machine_names_gic_and_smmu() {
+        assert_eq!(virt_machine_arg(false, 2, false), "virt,acpi=off");
+        assert_eq!(virt_machine_arg(true, 2, false), "virt,acpi=on");
+        assert_eq!(
+            virt_machine_arg(false, 3, false),
+            "virt,acpi=off,gic-version=3"
+        );
+        assert_eq!(
+            virt_machine_arg(false, 3, true),
+            "virt,acpi=off,gic-version=3,iommu=smmuv3"
+        );
+        assert_eq!(parse_gic("3", "--gic").ok(), Some(3));
+        assert!(parse_gic("4", "--gic").is_err());
+    }
 
     #[test]
     fn monitor_sock_fits_sun_path() {
