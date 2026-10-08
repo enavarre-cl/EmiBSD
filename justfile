@@ -105,7 +105,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-ukc smoke-ppb smoke-dmar smoke-iic"
+    "smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2250,6 +2250,32 @@ smoke-iic: (build-amd64 "--features qemu,multiprocessor")
         --reject 'SMBus disabled' --reject 'abort failed' --reject ': exec: op' \
         --expect 'piixpm0 at pci0 dev 1 function 3 vendor 0x8086 product 0x7113 rev 0x03: apic 0 int 9' \
         --expect 'iic0 at piixpm0' --expect 'iic-42'
+
+# M16e: ipmi(4), amd64 (aarch64 QEMU has no IPMI device). `--ipmi` (hwopts.rs) adds QEMU's
+# simulated BMC behind a KCS interface (`isa-ipmi-kcs`), which QEMU's DSDT describes as an
+# `IPI0001` device. GENERIC has `ipmi0 at acpi? disable`, so the kernel boots with `-c` and
+# UKC enables ipmi (both GENERIC entries; the one at mainbus finds nothing, its SMBIOS probe
+# being unported), as an OpenBSD user would. ipmi0 attaches at acpi0 from _IFT, _SRV and
+# _CRS (QEMU's I/O range is read from its _MIN, see ipmi_acpi.rs). Its thread reads the
+# BMC's SDR repository (`--ipmi`'s file: one temperature sensor, read through Get Sensor
+# Reading) into `hw.sensors.ipmi0`, and the session reads it with sysctl(8);
+# `kern.watchdog.period=30` goes through kern_watchdog.c to the BMC's Get and Set Watchdog
+# Timer commands, and `kern.watchdog` reads the period back. Part of `smoke`.
+ipmi_check := "--ipmi --cmdline '-c' --expect-ramdisk --until-seen " + \
+    "--send-after 'UKC> ' --send '\\n' " + \
+    "--send-after 'UKC> ' --send 'enable ipmi\\n' --send-after 'UKC> ' --send 'quit\\n' " + \
+    disk_login + " --send-after '# ' --send 'sysctl hw.sensors.ipmi0; " + \
+    "sysctl kern.watchdog.period=30 && sysctl kern.watchdog && echo ipmi-$((40+2))\\n' " + \
+    "--expect 'ipmi0 enabled' " + \
+    "--expect 'ipmi0 at acpi0: version 2.0 interface KCS iobase 0xca2/2 spacing 1' " + \
+    "--expect 'hw.sensors.ipmi0.temp0=0.00 degC (QEMU Temp), OK' " + \
+    "--expect 'ipmi0: watchdog enabled' --expect 'kern.watchdog.period=30' --expect 'ipmi-42' " + \
+    "--reject 'sendcmd fails' --reject 'no SDRs IPMI disabled'"
+
+smoke-ipmi: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-ipmi: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{ipmi_check}}
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

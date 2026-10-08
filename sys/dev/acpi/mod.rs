@@ -20,5 +20,6 @@ pub mod acpivar;
 pub mod amd_iommu;
 pub mod amltypes;
 pub mod dsdt;
+pub mod ipmi_acpi;
 pub mod pluart_acpi;
 /* </CODE> */

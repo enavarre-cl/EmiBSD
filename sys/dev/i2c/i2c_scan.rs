@@ -40,14 +40,12 @@
 //!   instead of `(struct device *self, u_int8_t addr)`: `self` is unused by them and the
 //!   `Probe` carries the address.
 //! - `ignore_addrs[MAX_IGNORE]` is an array of atomics.
-//! - `#if NIPMI > 0`: `ipmi_enabled`, which `ipmi.c` sets, is [`IPMI_ENABLED`] here until
-//!   `ipmi(4)` is ported (nothing sets it yet, so the sensors are always scanned).
 //! - `I2C_DEBUG` (undefined in the C) and the `#if 0` ds1624/ds1631/ds1721 probe are not
 //!   configured; `I2C_VERBOSE` (defined) is, and its `#ifndef` branch is not.
 
 use core::ffi::c_void;
 use core::ptr;
-use core::sync::atomic::{AtomicI32, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, Ordering};
 
 use crate::dev::i2c::i2c::iic_print;
 use crate::dev::i2c::i2c_exec::iic_exec;
@@ -55,6 +53,7 @@ use crate::dev::i2c::i2c_io::{I2C_OP_READ_WITH_STOP, I2cAddr};
 use crate::dev::i2c::i2cvar::{
     I2cAttachArgs, I2cTag, I2cbusAttachArgs, iic_acquire_bus, iic_release_bus,
 };
+use crate::dev::ipmi::IPMI_ENABLED;
 use crate::kern::subr_autoconf::config_found;
 use crate::kern::subr_prf::printf;
 use crate::sys::device::Device;
@@ -65,9 +64,6 @@ const MAX_IGNORE: usize = 8;
 /// `ignore_addrs[MAX_IGNORE]`: addresses a driver claimed while the scan runs; the scan skips
 /// them. 0 is a free slot.
 static IGNORE_ADDRS: [AtomicU8; MAX_IGNORE] = [const { AtomicU8::new(0) }; MAX_IGNORE];
-
-/// `ipmi_enabled` (`ipmi.c`): set when `ipmi0` attached; the scan then leaves the sensors alone.
-pub static IPMI_ENABLED: AtomicI32 = AtomicI32::new(0);
 
 /// `struct iicprobelist`: an inclusive range of addresses.
 struct IicProbeList {
