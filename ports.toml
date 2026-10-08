@@ -10776,28 +10776,36 @@ notes = "M16: uhci at pci"
 [[file]]
 c = "sys/dev/usb/ohcireg.h"
 rust = "sys/dev/usb/ohcireg.rs"
-status = "todo"
-notes = "M16: ohci registers and descriptors"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "00f86a0e4faa333d001e10aebf950f60bef26c7b"
+notes = "M16b: license: BSD-2 (NetBSD). Registers, HCCA, ED/TD/ITD layouts (size-checked), condition codes; macros as const fns; DMA members as Cell with volatile little-endian accessors (ohci_get/ohci_set, 16-bit for the ITD offsets/PSWs)"
 
 [[file]]
 c = "sys/dev/usb/ohcivar.h"
 rust = "sys/dev/usb/ohcivar.rs"
-status = "todo"
-notes = "M16: ohci_softc"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a4b3e21422272806d8369b17c27c12721b02b641"
+notes = "M16b: license: BSD-2 (NetBSD). Soft ED/TD/ITD (hash list entries), ohci_softc, ohci_xfer; OREAD/OWRITE (with OBARR, defined in ohci.c) beside the softc; chunk element sizes from the Rust structures; isdone under feature diagnostic"
 
 [[file]]
 c = "sys/dev/usb/ohci.c"
 rust = "sys/dev/usb/ohci.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1411fb493ca44550e21f323a80e37b8122f85220"
 deps = ["sys/dev/usb/ohcireg.h", "sys/dev/usb/ohcivar.h", "sys/dev/usb/usb.c"]
-notes = "M16: ohci(4); criterion: QEMU's pci-ohci with the usb-storage stick mounted, both archs"
+notes = "M16b: license: BSD-2 (NetBSD). The whole driver: activate (suspend/resume/powerdown), detach, soft ED/TD/ITD allocation with the done-queue hash, TD chains (one page crossing per TD, forced short packet), checkrev, SMM handover, init (HCCA, control/bulk/isoc heads, 63-ED interrupt tree, reset, frame interval, port power), allocx/freex (static pool), the hard interrupt (done head, WDH, RHSC with the 1 s re-enable timeout, overrun ratecheck, UE), done-list reversal, the soft interrupt (TD and ITD completion, halt recovery), intr repeat, root hub emulation (descriptors, standard and hub requests, port reset), poll, control requests, add/rem ED, timeouts (abort task), open, setaddr (pipe re-open), close, abort, control, bulk, interrupt (bandwidth-balanced tree slot) and isochronous (ITDs, enter/abort) transfers. Not ported: OHCI_DEBUG (DPRINTF, ohci_dump_*, ohci_cc_strs), #if 0 ohci_free_std_chain. DIAGNOSTIC under feature diagnostic. Deviations in the file: checked casts (bus methods, UsbdPipe::hc, hcpriv by pipe type), pool static, setaddr errno mapping, ohci_pipe unions split, std chain returns its last TD, panics/early returns where the C uses NULL or uninitialised pointers, a zero wMaxPacketSize panics, ohci_arm_timeout shared"
 
 [[file]]
 c = "sys/dev/pci/ohci_pci.c"
 rust = "sys/dev/pci/ohci_pci.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9f076e1edcf4a0f52929bc1cbdbfd0801b0c1668"
 deps = ["sys/dev/usb/ohci.c"]
-notes = "M16: ohci at pci"
+notes = "M16b: license: BSD-2 (NetBSD). Match by class, attach (BAR 0, quiet the controller, INTx at IPL_USB, vendor string, checkrev + handover, config_defer to ohci_init and usb), detach. Deviations: no PCIVERBOSE vendor names (the C's fallback string), sc_size cleared when the failure paths unmap"
 
 [[file]]
 c = "sys/dev/pv/viogpu.h"
