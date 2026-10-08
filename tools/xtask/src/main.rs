@@ -98,6 +98,7 @@ mod efiboot;
 mod https;
 mod hwopts;
 mod install;
+mod layout;
 mod ntfsgen;
 mod rdsetroot;
 mod smokeall;
@@ -155,6 +156,9 @@ struct Entry {
     upstream_commit: String,
     #[serde(default)]
     upstream_blob: String,
+    /// `"none"`: the C file carries no licence text, so its port has no `<LICENSES>` zone.
+    #[serde(default)]
+    license: String,
     #[serde(default)]
     deps: Vec<String>,
     #[serde(default)]
@@ -516,7 +520,7 @@ fn is_structural(rel: &str) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
     matches!(
         name,
-        "mod.rs" | "lib.rs" | "main.rs" | "build.rs" | "tests.rs"
+        "mod.rs" | "lib.rs" | "main.rs" | "build.rs"
     ) || rel.starts_with("sys/machine/")
         || rel.starts_with("sys/arch/host/")
         || rel.starts_with("sys/stand/")
@@ -650,6 +654,7 @@ fn ports_check(root: &Path) -> Result<()> {
             "{rel}: not tracked in ports.toml (add a [[file]] entry, or an [[extra]] with a reason)"
         ));
     }
+    check_layout(root, &ports, &mut errors)?;
     for x in &ports.extras {
         let rust = &x.rust;
         if !root.join(rust).is_file() {
@@ -680,6 +685,64 @@ fn ports_check(root: &Path) -> Result<()> {
     } else {
         Err(format!("{nerr} error(s) in {PORTS_FILE}").into())
     }
+}
+
+/// The zone markers of every `.rs` under `sys/` and `tools/` (layout.rs), with the licence
+/// policy of `ports.toml`: a file that is the port of a C file keeps its notice in a
+/// `<LICENSES>` zone (unless its entries say `license = "none"`), any other file has none.
+fn check_layout(root: &Path, ports: &Ports, errors: &mut Vec<String>) -> Result<()> {
+    use layout::Licenses;
+
+    let mut policy: HashMap<&str, Licenses> = HashMap::new();
+    let mut none: HashSet<&str> = HashSet::new();
+    for e in &ports.files {
+        if e.rust.is_empty() {
+            continue;
+        }
+        if e.license == "none" {
+            none.insert(e.rust.as_str());
+        }
+        if !matches!(e.license.as_str(), "" | "none") {
+            let c = &e.c;
+            errors.push(format!(
+                "[[file]] c = \"{c}\": license must be \"none\" or absent, not \"{}\"",
+                e.license
+            ));
+        }
+        let wants = e.status != Status::Todo && e.status != Status::Skipped && e.license != "none";
+        let slot = policy.entry(e.rust.as_str()).or_insert(Licenses::Allowed);
+        if wants {
+            *slot = Licenses::Required;
+        }
+    }
+    let mut files = Vec::new();
+    for tree in ["sys", "tools"] {
+        walk_rs(&root.join(tree), &mut files)?;
+    }
+    files.sort();
+    for f in &files {
+        let rel = f
+            .strip_prefix(root)
+            .unwrap_or(f)
+            .to_string_lossy()
+            .replace('\\', "/");
+        if rel.ends_with("/tests.rs") {
+            errors.push(format!(
+                "{rel}: tests live inline in the file of the module they test (`mod tests` in <TESTS>)"
+            ));
+            continue;
+        }
+        let lic = policy.get(rel.as_str()).copied().unwrap_or(Licenses::Forbidden);
+        let src = fs::read_to_string(f).map_err(|e| format!("{rel}: {e}"))?;
+        let found = layout::check(&rel, &src, lic);
+        if none.contains(rel.as_str()) && src.lines().any(|l| l == "/* <LICENSES> */") {
+            errors.push(format!(
+                "{rel}: has a <LICENSES> zone but its ports.toml entry says license = \"none\""
+            ));
+        }
+        errors.extend(found);
+    }
+    Ok(())
 }
 
 fn ports_status(root: &Path, write: bool) -> Result<()> {

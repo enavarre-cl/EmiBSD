@@ -693,11 +693,18 @@ pub fn generate(root: &Path) -> Result<Vec<(&'static str, String)>> {
     names.push_str("];\n");
 
     Ok(vec![
-        ("sys/sys/syscall.rs", rustfmt(root, &numbers)?),
-        ("sys/sys/syscallargs.rs", rustfmt(root, &args)?),
-        ("sys/kern/init_sysent.rs", rustfmt(root, &sysent)?),
-        ("sys/kern/syscalls.rs", rustfmt(root, &names)?),
+        ("sys/sys/syscall.rs", rustfmt(root, &zoned(&numbers))?),
+        ("sys/sys/syscallargs.rs", rustfmt(root, &zoned(&args))?),
+        ("sys/kern/init_sysent.rs", rustfmt(root, &zoned(&sysent))?),
+        ("sys/kern/syscalls.rs", rustfmt(root, &zoned(&names))?),
     ])
+}
+
+/// The generated source in the zones of `layout.rs`: the `$OpenBSD$` id line (the C files
+/// carry no notice, `license = "none"` in ports.toml), then everything else in `<CODE>`.
+fn zoned(src: &str) -> String {
+    let (id, rest) = src.split_once('\n').unwrap_or((src, ""));
+    format!("{id}\n\n/* <CODE> */\n{}\n/* </CODE> */\n", rest.trim())
 }
 
 /// Formats generated source with the workspace's `rustfmt.toml`, so `just fmt` and
