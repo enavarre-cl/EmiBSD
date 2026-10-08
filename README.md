@@ -24,9 +24,9 @@
 
 ## Status
 
-Status: M16f (arm64 platform: GICv3 with its ITS, the SMMU, GPIO and the power key) met; the
-rest of M16 (M16a..M16e, M16g: storage, USB, network, console/virtio/legacy, platform, install
-images) under way.
+Status: M16e (platform drivers: PCI bridges, the IOMMUs, SMBus, IPMI, the TPM, acpicpu) and
+M16f (arm64 platform: GICv3 with its ITS, the SMMU, GPIO and the power key) met; the rest of M16
+(M16a..M16d, M16g: storage, USB, network, console/virtio/legacy, install images) under way.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -58,7 +58,8 @@ images) under way.
 | M14 | Installable: our efiboot on both archs, bsd.rd, install.sub with the base and comp sets (clang, lld), the installed disk booting to `login:` with `cc` working; arm64 ACPI | met |
 | M15 | Code and test layout: LICENSES, CODE and TESTS zones in every `.rs` under `sys/` and `tools/`, the 324 `tests.rs` inline, validated by `ports check` | met |
 | M16f | arm64 platform: agintc(4) (GICv3, LPIs, the ITS), smmu(4) (SMMUv2 and v3), gpio(4), plgpio(4) and gpiokeys(4); every arm64 smoke on `gic-version=3` | met |
-| M16a..M16e, M16g | QEMU drivers, the other six parts: storage, USB, network, console/virtio/legacy devices, platform, install images | next |
+| M16e | Platform drivers: UKC (`boot -c`), ppb(4), acpidmar(4) (VT-d and AMD-Vi), iic(4) with ichiic(4) and piixpm(4), ipmi(4) with the watchdog and SMBIOS, tpm(4) on swtpm, acpicpu(4) | met |
+| M16a..M16d, M16g | QEMU drivers, the other five parts: storage, USB, network, console/virtio/legacy devices, install images | next |
 | M17 | Real hardware and virtualisation (vmm, vmd; optional) | next |
 
 Stage 2 of the diagnostic tools (ps, fstat, vmstat, df) is also met. Exit criteria and dates are
@@ -147,6 +148,18 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
   translates (`smoke-smmu`).
 - QEMU's power key on the PL061: plgpio(4) and gpiokeys(4) attach, and `system_powerdown`
   is ignored, as on OpenBSD 8.0 (`smoke-powerbtn`).
+- `boot -c`: UKC enables and disables devices before autoconfiguration (`smoke-ukc`), as
+  the smokes of the devices GENERIC disables use it.
+- ppb(4): a virtio disk behind a `pcie-root-port` and one behind a `pci-bridge` are labelled,
+  formatted, mounted and read back, on both archs (`smoke-ppb`).
+- acpidmar(4) on q35's `intel-iommu` and `amd-iommu`: the NVMe root mounts with every PCI
+  device's DMA remapped (`smoke-dmar`).
+- iic(4): piixpm(4) on `-machine pc` scans its SMBus; on q35 ichiic(4) finds the SMBus
+  disabled by OVMF and stops, as OpenBSD 8.0 does (`smoke-iic`).
+- ipmi(4) on QEMU's simulated BMC, and bios0 reading SMBIOS (`hw.vendor=QEMU`): the same
+  lines as OpenBSD 8.0 on the same machine, the watchdog set through the BMC (`smoke-ipmi`).
+- tpm(4) on QEMU's tpm-tis and tpm-crb backed by swtpm: TPM2_SelfTest answers `rc 0x0`
+  (`smoke-tpm`); acpicpu(4) idles every CPU (`smoke-clock`).
 
 Outside `just smoke`, because they take minutes under TCG (the user requires them at every
 milestone close): `just smoke-install` boots `bsd.rd` through our efiboot and lets OpenBSD's
@@ -356,7 +369,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 188 | 141 | 990 | 37 | 1356 |
+| 171 | 140 | 1015 | 37 | 1363 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).
