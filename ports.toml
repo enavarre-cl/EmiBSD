@@ -236,7 +236,6 @@ notes = "write_volatile per byte instead of memset + weak hook"
 [[file]]
 c = "sys/lib/libkern/libkern.h"
 rust = "sys/lib/libkern/lib.rs"
-license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "fb5d691f624b79718475c9624f9bf32a4a7f4ba7"
