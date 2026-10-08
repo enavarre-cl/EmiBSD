@@ -1904,6 +1904,25 @@ audio_play := disk_login + " " + \
     "--send-after '# ' --send 'aucat -i /root/tone.wav && echo tone-$((40+2))\\n' " + \
     "--expect 'rate=48000' --expect 'encoding=s16le' --expect 'tone-42'"
 
+# `smoke-audio`'s three tones, played live on the Mac's speakers through QEMU's `coreaudio`
+# backend (`--speakers`, devices.rs) instead of being recorded: azalia(4) on amd64 and arm64,
+# then auich(4) on amd64. Checked by ear, so not part of `smoke`. Each boot waits a second
+# after aucat(1) so the host's buffer drains before the run stops.
+play-audio: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "play-audio: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --audio hda --speakers {{audio_live}} --expect 'audio0 at azalia0'
+    cargo xtask smoke {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --audio hda --speakers {{audio_live}} --expect 'audio0 at azalia0'
+    cargo xtask smoke {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --audio ac97 --speakers {{audio_live}} --expect 'audio0 at auich0'
+
+# `play-audio`'s session: the tone, then a second for the host's buffer.
+audio_live := disk_login + " " + \
+    "--send-after '# ' --send 'aucat -i /root/tone.wav && sleep 1 && echo tone-$((40+2))\\n' " + \
+    "--expect 'tone-42'"
+
 # M12: USB. QEMU's `qemu-xhci` with a `usb-storage` stick and a `usb-kbd` (`--usb`,
 # devices.rs): xhci(4), uhub(4), uhidev(4) and ukbd(4) for the keyboard, umass(4) below a
 # scsibus, the stick as sd2 on both archs: on amd64 vioblk is sd0 and the boot image on q35's

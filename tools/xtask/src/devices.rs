@@ -10,6 +10,9 @@
 //! - `--audio hda` or `--audio ac97`: QEMU's `wav` audio backend writes what the guest plays
 //!   to `<image>.wav` (removed first), through `intel-hda` + `hda-output` (`azalia(4)`) or
 //!   `AC97` (`auich(4)`).
+//! - `--speakers` (with `--audio`): QEMU's `coreaudio` backend instead of `wav`, so what the
+//!   guest plays comes out of the Mac's speakers; nothing is recorded, so it excludes
+//!   `--expect-tone` (`just play-audio`, by ear, outside `smoke`).
 //! - `--expect-tone`: after a successful run, the WAV file must hold a tone: at least a
 //!   tenth of a second of samples louder than [`TONE_THRESHOLD`]. QEMU writes the WAV header's
 //!   sizes only on a clean exit, so the data chunk runs to the end of the file whatever the
@@ -68,12 +71,21 @@ pub(crate) struct Devices {
     pub audio: Option<Audio>,
     /// `--expect-tone`.
     pub expect_tone: bool,
+    /// `--speakers`.
+    pub speakers: bool,
 }
 
 static DEVICES: OnceLock<Devices> = OnceLock::new();
 
-/// Parses `--usb`, `--audio <hda|ac97>` and `--expect-tone` and records them for the run.
+/// Parses `--usb`, `--audio <hda|ac97>`, `--speakers` and `--expect-tone` and records them
+/// for the run.
 pub(crate) fn set_from_args(args: &[&str]) -> Result<()> {
+    let _ = DEVICES.set(parse(args)?);
+    Ok(())
+}
+
+/// [`set_from_args`]'s parser.
+fn parse(args: &[&str]) -> Result<Devices> {
     let audio = match args.iter().position(|a| *a == "--audio") {
         None => None,
         Some(i) => match args.get(i + 1).copied() {
@@ -86,12 +98,19 @@ pub(crate) fn set_from_args(args: &[&str]) -> Result<()> {
     if expect_tone && audio.is_none() {
         return Err("--expect-tone needs --audio".into());
     }
-    let _ = DEVICES.set(Devices {
+    let speakers = args.contains(&"--speakers");
+    if speakers && audio.is_none() {
+        return Err("--speakers needs --audio".into());
+    }
+    if speakers && expect_tone {
+        return Err("--speakers records nothing for --expect-tone".into());
+    }
+    Ok(Devices {
         usb: args.contains(&"--usb"),
         audio,
         expect_tone,
-    });
-    Ok(())
+        speakers,
+    })
 }
 
 fn devices() -> Devices {
@@ -128,12 +147,16 @@ pub(crate) fn qemu_args(image: &Path) -> Result<Vec<String>> {
         ]);
     }
     if let Some(audio) = d.audio {
-        let wav = wav_path(image);
-        if wav.exists() {
-            fs::remove_file(&wav).map_err(|e| format!("{}: {e}", wav.display()))?;
-        }
         args.push("-audiodev".to_string());
-        args.push(format!("wav,id=snd0,path={}", wav.display()));
+        if d.speakers {
+            args.push("coreaudio,id=snd0".to_string());
+        } else {
+            let wav = wav_path(image);
+            if wav.exists() {
+                fs::remove_file(&wav).map_err(|e| format!("{}: {e}", wav.display()))?;
+            }
+            args.push(format!("wav,id=snd0,path={}", wav.display()));
+        }
         match audio {
             Audio::Hda => args.extend(
                 [
@@ -339,6 +362,16 @@ mod tests {
         // `printf 123456789 | cksum` and `cksum </dev/null`.
         assert_eq!(posix_cksum(b"123456789"), 930_766_865);
         assert_eq!(posix_cksum(b""), 4_294_967_295);
+    }
+
+    #[test]
+    fn speakers_flag() {
+        let d = parse(&["--audio", "hda", "--speakers"]).unwrap();
+        assert!(d.speakers && !d.expect_tone);
+        assert_eq!(d.audio, Some(Audio::Hda));
+        assert!(!parse(&["--audio", "ac97"]).unwrap().speakers);
+        assert!(parse(&["--speakers"]).is_err());
+        assert!(parse(&["--audio", "hda", "--speakers", "--expect-tone"]).is_err());
     }
 
     #[test]
