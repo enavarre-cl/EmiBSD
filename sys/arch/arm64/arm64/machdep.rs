@@ -898,6 +898,9 @@ pub unsafe fn getbootinfo(arg: usize) -> Result<BootInfo, &'static str> {
         dtb: NonNull::new(fdt.cast_mut()),
         memmap,
         efi_system_table: (system_table != 0).then(|| Paddr::new(system_table as usize)),
+        // efiboot's SMBIOS table is the kernel's smbios(4) business (efi0's smbios0, not
+        // ported): nothing reads it from here.
+        smbios: None,
         efi_memmap,
         modules: [None; MAX_MODULES],
         mp: bootarg_mp(),

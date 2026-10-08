@@ -35,7 +35,7 @@ use limine::{
     BaseRevision, BootloaderInfoResponse, DtbResponse, EfiMemmapResponse, EfiSystemTableResponse,
     EntryPointRequest, ExecutableAddressResponse, ExecutableCmdlineResponse, FramebufferResponse,
     HhdmResponse, MemmapResponse, ModuleResponse, Request, RequestsEndMarker, RequestsStartMarker,
-    RsdpResponse, StackSizeRequest, id, memmap_type,
+    RsdpResponse, SmbiosResponse, StackSizeRequest, id, memmap_type,
 };
 
 /// Boot stack for the boot CPU: the protocol's minimum, more than OpenBSD's `USPACE`.
@@ -108,6 +108,12 @@ static DTB: Request<DtbResponse> = Request::new(id::DTB);
 #[used]
 #[unsafe(link_section = ".requests")]
 static EFI_SYSTEM_TABLE: Request<EfiSystemTableResponse> = Request::new(id::EFI_SYSTEM_TABLE);
+
+/// The SMBIOS entry point (M16e: amd64's bios0, as efiboot's `SMBIOS_TABLE_GUID`
+/// configuration table in `bios_efiinfo->config_smbios`).
+#[used]
+#[unsafe(link_section = ".requests")]
+static SMBIOS: Request<SmbiosResponse> = Request::new(id::SMBIOS);
 
 /// The frame buffer the firmware's GOP set up (M13: efifb(4), simplefb).
 #[used]
@@ -320,6 +326,14 @@ fn gather() -> Result<BootInfo, BootError> {
         efi_system_table: EFI_SYSTEM_TABLE.response().and_then(|r| {
             // A higher-half address for base revision 6 (a physical one for 3 and 4).
             let addr = r.address as usize;
+            let offset = hhdm.offset as usize;
+            let pa = if addr >= offset { addr - offset } else { addr };
+            (pa != 0).then(|| Paddr::new(pa))
+        }),
+        smbios: SMBIOS.response().and_then(|r| {
+            // The 32-bit entry point, the one efiboot passes (SMBIOS_TABLE_GUID); physical
+            // since base revision 3, made so if it ever comes as a higher-half address.
+            let addr = r.entry_32 as usize;
             let offset = hhdm.offset as usize;
             let pa = if addr >= offset { addr - offset } else { addr };
             (pa != 0).then(|| Paddr::new(pa))

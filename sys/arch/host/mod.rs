@@ -70,6 +70,24 @@ pub mod include {
     }
 }
 
+/// amd64's `bios.c` with the `<machine/biosvar.h>` and `<machine/smbiosvar.h>` it reads,
+/// compiled for their host tests only and in the same module layout (`include/`, `amd64/`),
+/// so that bios.rs reaches its headers by the same relative paths: the SMBIOS structure-table
+/// walk and its strings are plain logic, and bios0's attach, which reaches the machine, is
+/// built for `target_os = "none"` only (docs/ARCHITECTURE.md, "Host tests of arch code").
+#[cfg(test)]
+#[path = "../amd64"]
+#[allow(dead_code)] // compiled for its tests: what reads the table on amd64 is not here
+mod amd64_bios {
+    pub mod include {
+        pub mod biosvar;
+        pub mod smbiosvar;
+    }
+    pub mod amd64 {
+        pub mod bios;
+    }
+}
+
 /// The host implementation of the machine interface.
 pub struct Machine;
 

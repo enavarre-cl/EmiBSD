@@ -1254,7 +1254,12 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
 - ACPI (M13, amd64): `acpi0 at bios0 at mainbus0`, as in GENERIC. bios0 (`bios.c`) gets the
   RSDP from Limine's RSDP request (`BootInfo::rsdp`, kept by `init_x86_64` as
   `BIOS_EFIINFO_CONFIG_ACPI`, the C's `bios_efiinfo->config_acpi`), so `acpi_probe` finds it
-  as on an EFI boot; bios.c's SMBIOS half is not ported yet. acpi0 copies the tables, loads
+  as on an EFI boot. Its SMBIOS half (M16e) takes the SMBIOS 2 entry point from Limine's
+  SMBIOS request (`BootInfo::smbios`, `bios_efiinfo->config_smbios`; after a boot by boot(8)
+  efiboot's `SMBIOS_TABLE_GUID` table), maps the structure table and sets `hw.vendor`,
+  `hw.product`, `hw.version` (`QEMU`, `Standard PC (Q35 + ICH9, 2009)`, `pc-q35-11.1` on
+  q35, as on OpenBSD 8.0 there); ipmi(4)'s mainbus probe reads its IPMI record (type 38)
+  with `smbios_find_table`. acpi0 copies the tables, loads
   the DSDT and the SSDTs into the AML interpreter at boot, and owns power: `boot(RB_HALT |
   RB_POWERDOWN)` enters S5 (`acpi_powerdown`), `cpu_reset` tries `cpuresetfn` (`acpi_reset`,
   the FADT's reset register) before the keyboard controller and the triple fault. acpi0's
@@ -1887,6 +1892,19 @@ Misc Device"`), and `-boot menu=on,splash-time=0` sets the boot manager's timeou
 `etc/boot-menu-wait`. ArmVirtQemu otherwise waits its platform default: about 5 s of every
 arm64 boot (firmware start to `BdsDxe: starting` went from 5.5 s to 0.5 s). OVMF's default is
 already 0, so amd64 boots gain nothing measurable there.
+
+### Host tests of arch code
+
+`sys/arch/amd64` and `sys/arch/arm64` are compiled for their bare targets only, so the tests
+in their files do not run under `just test`. Where an arch file holds plain logic worth
+testing that has no machine-independent home in OpenBSD, the host double compiles that file
+for its tests (M16e: amd64's `bios.c`, the SMBIOS structure-table walk and its strings, which
+OpenBSD writes again in arm64's `dev/smbios.c`): `sys/arch/host/mod.rs` has a `#[cfg(test)]`
+module whose `#[path]` is `../amd64`, holding the file and the self-contained headers it reads
+in their own layout (`include/biosvar.rs`, `include/smbiosvar.rs`, `amd64/bios.rs`), so the
+file reaches its headers by relative paths (`super::super::include`) in both builds. What
+reaches the machine (bios0's attach, its mappings, `bios_efiinfo`) is `#[cfg(target_os =
+"none")]` in the file. This adds no logic to the host double, which only names the files.
 
 ### Parallel smokes
 

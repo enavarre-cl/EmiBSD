@@ -152,7 +152,9 @@
 //!   the CPU, which the C cannot have there, it is skipped).
 //! - `bios_efiinfo` (boot(8)'s `BOOTARG_EFIINFO`) is replaced by Limine: its `config_acpi`,
 //!   the RSDP's physical address, is `BIOS_EFIINFO_CONFIG_ACPI`, from Limine's RSDP request
-//!   (`BootInfo::rsdp`), for `bios_attach`. Its frame buffer fields (`fb_*`, M13: efifb(4))
+//!   (`BootInfo::rsdp`), for `bios_attach`; its `config_smbios`, the SMBIOS 2 entry point,
+//!   from Limine's SMBIOS request (`BootInfo::smbios`, the same `SMBIOS_TABLE_GUID` table
+//!   efiboot takes). Its frame buffer fields (`fb_*`, M13: efifb(4))
 //!   come from Limine's framebuffer request (`BootInfo::framebuffer`): [`bios_efiinfo`] is a
 //!   `bios_efiinfo_t` with them (and `config_acpi`, `system_table`) set when the machine
 //!   booted through UEFI, the C's non-NULL `bios_efiinfo`; the colour masks are the
@@ -458,6 +460,7 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
     if let Some(st) = boot.efi_system_table.filter(|_| !from_boot8) {
         let mut ei = BiosEfiinfo {
             config_acpi: BIOS_EFIINFO_CONFIG_ACPI.load(Ordering::Relaxed),
+            config_smbios: boot.smbios.map_or(0, |pa| pa.as_usize() as u64),
             system_table: st.as_usize() as u64,
             ..BiosEfiinfo::default()
         };
@@ -1007,6 +1010,10 @@ pub unsafe fn getbootinfo(first_avail: usize) -> Result<BootInfo, &'static str> 
         memmap,
         efi_system_table: efiinfo
             .map(|ei| ei.system_table as usize)
+            .filter(|&pa| pa != 0)
+            .map(Paddr::new),
+        smbios: efiinfo
+            .map(|ei| ei.config_smbios as usize)
             .filter(|&pa| pa != 0)
             .map(Paddr::new),
         efi_memmap,

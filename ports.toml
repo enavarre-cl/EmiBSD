@@ -8964,10 +8964,20 @@ notes = "M13: acpi_checksum over a byte slice; ACPI_DEBUG's trace compiled out. 
 [[file]]
 c = "sys/arch/amd64/amd64/bios.c"
 rust = "sys/arch/amd64/amd64/bios.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
-deps = ["sys/arch/amd64/include/biosvar.h"]
-notes = "M13: bios_ca/bios_cd, bios_match (only one), bios_attach (acpi0 with ba_acpipbase from Limine's RSDP, machdep.rs BIOS_EFIINFO_CONFIG_ACPI), bios_print; bios0 attaches at mainbus0. Left (reported in bios_attach): the SMBIOS half (smbios_find, smbios_find_table, smbios_get_string, fixstring, smbios_info, smbios_entry, smbiosvar.h; hw.vendor/hw.product stay unset) and the Soekris comBIOS scan; efi0 (efi_machdep.c) and mpbios0 (mpbios.c) not ported"
+upstream_blob = "3b0fa203b9b1b0b89fe7efa0d0d0a2a56e8a2d08"
+deps = ["sys/arch/amd64/include/biosvar.h", "sys/arch/amd64/include/smbiosvar.h"]
+notes = "M13: bios_ca/bios_cd, bios_match (only one), bios_attach (acpi0 with ba_acpipbase from Limine's RSDP, machdep.rs BIOS_EFIINFO_CONFIG_ACPI), bios_print; bios0 attaches at mainbus0. M16e: the SMBIOS half: smbios_entry, smbios_uninfo, the smbios_bios_*/smbios_board_* strings, smbios_find (a slice in, a copy of the entry point out), the entry point from bios_efiinfo->config_smbios (Limine's SMBIOS request, BootInfo::smbios) else the BIOS area every 16 bytes, both read through a cacheable bus_space_map instead of PMAP_DIRECT_MAP/ISA_HOLE_VADDR (Limine's direct map need not cover them), the table mapped as in C (km_alloc + pmap_kenter_pa PROT_READ), the SMBIOS rev. line and the type 0 line, smbios_find_table, smbios_get_string (bounded by the table's end), fixstring, smbios_info (strings gathered by smbios_info_strings, then hw_vendor/hw_prod/hw_ver/hw_serial/hw_uuid, enqueue_randomness the rnd.rs stub), the Soekris comBIOS scan; host tests (entry point, table walk with cookies, strings and the 64-byte end rule, fixstring, the QEMU table and the board fallback, UUID, Soekris) through arch/host's #[cfg(test)] #[path] module; efi0 (efi_machdep.c) and mpbios0 (mpbios.c) are those files' gaps, reported with unported! where bios_attach would attach them"
+
+[[file]]
+c = "sys/arch/amd64/include/smbiosvar.h"
+rust = "sys/arch/amd64/include/smbiosvar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cfb58bf873849f349363a9ce2f75022cf54356ad"
+deps = []
+notes = "M16e: the whole header: SMBIOS_START/END, the UUID flags and representation, smbios_entry (raw table address, Send), smbhdr, smb3hdr, smbtblhdr, smbtable (the C's pointers), every SMBIOS_TYPE_*, smbios_struct_bios, smbios_sys, smbios_board, smbios_enclosure, smbios_cpu (SMBIOS_CPUST_*), smbios_ipmi (packed, sizes asserted); the two prototypes are bios.rs's; self-contained (core only), compiled on the host for the tests; reference-backed test of the constants"
 
 [[file]]
 c = "sys/dev/acpi/acpimadt.c"
@@ -9657,7 +9667,7 @@ rust = "sys/arch/amd64/include/biosvar.rs"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b0c71ea0350ef33a290394f3d8e712c8ad200d65"
-notes = "M14 A1: the boot argument structures (packed, as_bytes) and BIOS constants; self-contained so efiboot includes it by path and the kernel's bootarg entry (A2) can too; BIOS_regs, bios_attach_args and the kernel externs are the kernel's to add; M13: struct bios_attach_args is in sys/arch/amd64/amd64/bios.rs (this module is shared by path with efiboot, so it stays free of kernel types): ba_name first, as amd64 attach args start with the name; of the ba_apmp/ba_acpipbase union only ba_acpipbase; bios_efiinfo->config_acpi is machdep.rs's BIOS_EFIINFO_CONFIG_ACPI (Limine's RSDP)"
+notes = "M14 A1: the boot argument structures (packed, as_bytes) and BIOS constants; self-contained so efiboot includes it by path and the kernel's bootarg entry (A2) can too; BIOS_regs, bios_attach_args and the kernel externs are the kernel's to add; M13: struct bios_attach_args is in sys/arch/amd64/amd64/bios.rs (this module is shared by path with efiboot, so it stays free of kernel types): ba_name first, as amd64 attach args start with the name; of the ba_apmp/ba_acpipbase union only ba_acpipbase; bios_efiinfo->config_acpi is machdep.rs's BIOS_EFIINFO_CONFIG_ACPI (Limine's RSDP); M16e: BIOS32_MAKESIG (const fn bios32_makesig) and SMBIOS_SIGNATURE for bios.c"
 
 [[file]]
 c = "sys/lib/libsa/aes_xts.c"

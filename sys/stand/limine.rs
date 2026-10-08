@@ -46,6 +46,8 @@ pub mod id {
     pub const MODULE: [u64; 2] = [0x3e7e_2797_02be_32af, 0xca1c_4f3b_d128_0cee];
     /// EFI System Table feature.
     pub const EFI_SYSTEM_TABLE: [u64; 2] = [0x5ceb_a516_3eaa_f6d6, 0x0a69_8161_0cf6_5fcc];
+    /// SMBIOS feature (`LIMINE_SMBIOS_REQUEST_ID`).
+    pub const SMBIOS: [u64; 2] = [0x9e90_46f1_1e09_5391, 0xaa4a_520f_efbd_e5ee];
     /// Framebuffer feature (`LIMINE_FRAMEBUFFER_REQUEST_ID`).
     pub const FRAMEBUFFER: [u64; 2] = [0x9d58_27dc_d881_dd75, 0xa314_8604_f6fa_b11b];
     /// EFI Memory Map feature.
@@ -426,6 +428,17 @@ pub struct EfiSystemTableResponse {
     pub revision: u64,
     /// Address of the EFI system table: virtual (HHDM) for base revision 6.
     pub address: *const c_void,
+}
+
+/// `struct limine_smbios_response`.
+#[repr(C)]
+pub struct SmbiosResponse {
+    /// Response revision.
+    pub revision: u64,
+    /// Physical address of the 32-bit (SMBIOS 2, `_SM_`) entry point, null if there is none.
+    pub entry_32: *const c_void,
+    /// Physical address of the 64-bit (SMBIOS 3, `_SM3_`) entry point, null if there is none.
+    pub entry_64: *const c_void,
 }
 
 /// `struct limine_efi_memmap_response`.
