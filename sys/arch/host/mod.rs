@@ -499,6 +499,10 @@ impl Cpu for Machine {
 
     unsafe fn intr_restore(_s: u64) {}
 
+    fn kbd_reset() -> Option<&'static core::sync::atomic::AtomicI32> {
+        None
+    }
+
     fn cpu_boot_secondary_processors() {}
 
     /// The host has no application processors to enter.

@@ -18,6 +18,7 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::sync::atomic::AtomicI32;
 
 use crate::machine::Machine;
 use crate::machine::bootinfo::BootInfo;
@@ -320,6 +321,12 @@ pub trait Cpu {
         0
     }
 
+    /// `kbd_reset` (`machdep.kbdreset`, `extern int kbd_reset` of i386 and amd64): what
+    /// wskbd's `KS_Cmd_KbdReset` reads (1: signal init(8) with `SIGUSR1`, 2: enter ddb) and
+    /// clears; `None` where the machine has no such variable (wskbd compiles the case only
+    /// `#if defined(__i386__) || defined(__amd64__)`).
+    fn kbd_reset() -> Option<&'static AtomicI32>;
+
     /// `cpu_boot_secondary_processors()` (`MULTIPROCESSOR`): `main` calls it once the
     /// scheduler and the idle threads exist; lets every attached application processor run
     /// (`CPUF_GO`) and waits until each reports `CPUF_RUNNING`. Without `MULTIPROCESSOR`
@@ -363,6 +370,11 @@ pub const CPU_ID_AA64ISAR1: Option<i32> = <Machine as Cpu>::CPU_ID_AA64ISAR1;
 /// `curcpu()` on the selected machine.
 pub fn curcpu() -> &'static CpuInfo {
     Machine::curcpu()
+}
+
+/// `kbd_reset` on the selected machine (`None` but on amd64).
+pub fn kbd_reset() -> Option<&'static AtomicI32> {
+    Machine::kbd_reset()
 }
 
 /// `child_return` on the selected machine.

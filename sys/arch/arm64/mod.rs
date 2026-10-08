@@ -300,6 +300,10 @@ impl Cpu for Machine {
         unsafe { include::cpu::intr_restore(s) }
     }
 
+    fn kbd_reset() -> Option<&'static core::sync::atomic::AtomicI32> {
+        None
+    }
+
     fn cpu_boot_secondary_processors() {
         arm64::cpu::cpu_boot_secondary_processors()
     }

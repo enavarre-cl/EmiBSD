@@ -297,6 +297,10 @@ impl Cpu for Machine {
         unsafe { include::cpufunc::intr_restore(s) }
     }
 
+    fn kbd_reset() -> Option<&'static core::sync::atomic::AtomicI32> {
+        Some(&amd64::machdep::KBD_RESET)
+    }
+
     fn cpu_boot_secondary_processors() {
         amd64::cpu::cpu_boot_secondary_processors()
     }
