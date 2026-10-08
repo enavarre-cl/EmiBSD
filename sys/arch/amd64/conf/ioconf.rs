@@ -13,7 +13,8 @@
 //! `xhci* at pci?`, `usb* at xhci?`, `uhub* at usb?`, `uhub* at uhub?`, `umass* at uhub?`
 //! and `scsibus* at scsi?` below it, `uhidev* at uhub?`, `ukbd* at uhidev?` (M12),
 //! `ums* at uhidev?`, `wsmouse* at ums? mux 0`, `uwacom* at uhidev?` and `wsmouse* at uwacom?
-//! mux 0` (M16b), `uhid* at uhidev?` and `ugen* at uhub?` (M16b, the last of `uhub?`'s devices:
+//! mux 0` (M16b), `uhid* at uhidev?`, `uaudio* at uhub?` and `audio* at uaudio?` (M16b) and `ugen* at uhub?`
+//! (M16b, the last of `uhub?`'s devices:
 //! `ugen` is the generic fallback), `nvme* at pci?`, `vioscsi* at virtio?`, `cd* at scsibus?`, `ahci* at pci?`, `siop* at pci?`,
 //! `bios0 at mainbus0`, `acpi0 at bios0`, `acpitimer* at acpi?`, `acpihpet* at acpi?`,
 //! `ioapic* at mainbus?`, `acpimadt0 at acpi?`, `acpiprt* at acpi?` and `acpipci* at
@@ -37,9 +38,9 @@
 //! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci and siop, ...), every other
 //! device at `mii?` (the other PHY drivers), every
 //! other
-//! `audio*` (at `uaudio?`, ...), `pci*` at `ppb?` and
+//! `audio*` (at `eap?`, `envy?`, ...), `pci*` at `ppb?` and
 //! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; `usb*` at `uhci?`
-//! and `ohci?`, every device at `uhub?` but `uhub*`, `umass*`, `uhidev*` and `ugen*`, every device
+//! and `ohci?`, every device at `uhub?` but `uhub*`, `umass*`, `uhidev*`, `uaudio*` and `ugen*`, every device
 //! at `uhidev?` but `ukbd*`, `ums*`, `uwacom*` and `uhid*`, every `wskbd*` but the one at `ukbd?`, every
 //! `wsmouse*` but the ones at `ums?` and `uwacom?`;
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
@@ -95,6 +96,7 @@ use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
 use crate::dev::usb::ehci::EHCI_CD;
+use crate::dev::usb::uaudio::{UAUDIO_CA, UAUDIO_CD};
 use crate::dev::usb::ugen::{UGEN_CA, UGEN_CD};
 use crate::dev::usb::uhid::{UHID_CA, UHID_CD};
 use crate::dev::usb::uhidev::{UHIDEV_CA, UHIDEV_CD};
@@ -169,9 +171,9 @@ const LOC_COM2: &[i64] = &[0x3e8, 0, -1, 0, 5, -1, -1];
 const LOC_COM3: &[i64] = &[0x2e8, 0, -1, 0, 9, -1, -1];
 
 /// `pv[]` for children of the `usbus` attribute, carried by `xhci*` (`cfdata[14]`) and
-/// `ehci*` (`cfdata[59]`): `usb* at xhci?` and `usb* at ehci?` are one entry, as config(8)
+/// `ehci*` (`cfdata[60]`): `usb* at xhci?` and `usb* at ehci?` are one entry, as config(8)
 /// merges them.
-const PV_USBUS: &[i16] = &[14, 59];
+const PV_USBUS: &[i16] = &[14, 60];
 
 /// `pv[]` for children of `usb*` (`cfdata[15]`).
 const PV_USB: &[i16] = &[15];
@@ -195,8 +197,10 @@ const LOC_UHIDBUS_UNK: &[i64] = &[-1];
 /// `pv[]` for children of `auich*` (`cfdata[18]`).
 const PV_AUICH: &[i16] = &[18];
 
-/// `pv[]` for children of the `audio` attribute, carried by `azalia*` (`cfdata[20]`).
-const PV_AZALIA: &[i16] = &[20];
+/// `pv[]` for children of the `audio` attribute, carried by `azalia*` (`cfdata[20]`) and
+/// `uaudio*` (`cfdata[58]`): `config(8)` merges `audio* at azalia?` and `audio* at
+/// uaudio?` into one entry.
+const PV_AZALIA: &[i16] = &[20, 58];
 
 /// `pv[]` for children of `bios0` (`cfdata[30]`).
 const PV_BIOS: &[i16] = &[30];
@@ -255,11 +259,11 @@ const PV_UWACOM: &[i16] = &[55];
 /// `define wsmousedev {[mux = 0]}`).
 const LOC_WSMOUSEDEV_MUX0: &[i64] = &[0];
 
-/// `cfdata[]`: 60 entries, 61 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 61 entries, 62 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    61
+    62
 } else {
-    60
+    61
 };
 
 /// `cfdata[]`.
@@ -477,7 +481,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 21: audio* at azalia?
+    // 21: audio* at azalia?, audio* at uaudio?
     Cfdata::new(
         &AUDIO_CA,
         &AUDIO_CD,
@@ -911,7 +915,19 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 58: ugen* at uhub?
+    // 58: uaudio* at uhub?
+    Cfdata::new(
+        &UAUDIO_CA,
+        &UAUDIO_CD,
+        0,
+        FSTATE_STAR,
+        LOC_UHUB_UNK,
+        0,
+        PV_UHUB,
+        0,
+        0,
+    ),
+    // 59: ugen* at uhub?
     Cfdata::new(
         &UGEN_CA,
         &UGEN_CD,
@@ -923,7 +939,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 59: ehci* at pci?
+    // 60: ehci* at pci?
     Cfdata::new(
         &EHCI_PCI_CA,
         &EHCI_CD,
@@ -935,7 +951,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 60: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 61: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

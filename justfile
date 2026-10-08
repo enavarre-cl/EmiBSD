@@ -120,7 +120,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-powerbtn smoke-mouse smoke-ugen smoke-ehci"
+    "smoke-powerbtn smoke-mouse smoke-ugen smoke-ehci smoke-uaudio"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2357,6 +2357,26 @@ smoke-ugen: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featu
         { echo "smoke-ugen: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{ugen_check}}
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{ugen_check}}
+
+# M16b: uaudio(4). QEMU's `usb-audio` (a UAC 1.0 full-speed speaker: a USB-streaming input
+# terminal, a feature unit with mute and volume, a speaker; 16-bit stereo at 48 kHz on an
+# isochronous OUT endpoint) on the qemu-xhci bus (`--audio usb`, devices.rs) attaches as
+# uaudio0, which parses its descriptors into the `outputs.dac` controls, and audio0 attaches
+# below it. Then `smoke-audio`'s session: audioctl(8) and mixerctl(8) on /dev/audioctl0 and
+# aucat(1) playing /root/tone.wav through /dev/audio0, over xhci(4)'s isochronous transfers,
+# with `--expect-tone` checking QEMU's `wav` file holds the tone. Both archs. Part of `smoke`.
+smoke-uaudio: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-uaudio: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{uaudio_check}}
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{uaudio_check}}
+
+# `smoke-uaudio`'s expectations, the same on both archs.
+uaudio_check := "--expect-ramdisk --until-seen --audio usb --expect-tone " + audio_play + " " + \
+    "--expect 'uaudio0 at uhub0 port 5 configuration 1 interface 1 \"QEMU QEMU USB Audio\" rev 1.00/0.00 addr 2' " + \
+    "--expect 'uaudio0: class v1, full-speed, sync, channels: 2 play, 0 rec, 3 ctls' " + \
+    "--expect 'audio0 at uaudio0' --expect 'name=USB Audio' " + \
+    "--expect 'outputs.dac=240,240' --expect 'outputs.dac_mute=off'"
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

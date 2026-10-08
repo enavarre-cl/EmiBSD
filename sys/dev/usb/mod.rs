@@ -11,6 +11,7 @@
 pub mod ehci;
 pub mod ehcireg;
 pub mod ehcivar;
+pub mod uaudio;
 pub mod ugen;
 pub mod uhid;
 pub mod uhid_rdesc;
