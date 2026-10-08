@@ -11189,9 +11189,11 @@ notes = "M16: uftdi(4); criterion: a tty session through QEMU's usb-serial, both
 [[file]]
 c = "sys/dev/acpi/tpm.c"
 rust = "sys/dev/acpi/tpm.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9bd79fe2fe111e876b1c6923b578846551f4794b"
 deps = ["sys/dev/acpi/acpi.c"]
-notes = "M16: tpm(4) at acpi; QEMU's tpm-tis needs swtpm on the host, a tool install that is the user's decision; amd64 GENERIC only"
+notes = "M16e: tpm(4) at acpi, TIS and CRB, locality 0, interrupts off (polled); tpm_suspend/tpm_resume ported, no trigger: nothing suspends (subr_suspend.c, the S3 path of acpi_x86.c unported); waitfor_status fails ETIMEDOUT where the C returns the status byte; selftest=tpm (feature qemu, test plumbing) sends TPM2_SelfTest through the driver; amd64 GENERIC only; smoke-tpm under swtpm (tis and crb)"
 
 [[file]]
 c = "sys/dev/ipmivar.h"

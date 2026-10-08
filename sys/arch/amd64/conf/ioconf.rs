@@ -21,7 +21,7 @@
 //! `vmx* at pci?` (M13), `vga0 at isa?`, `vga* at pci?` and `wsdisplay0 at vga? console 1` (M13),
 //! `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13), `acpimcfg* at acpi?` (M14),
 //! `ppb* at pci?` and `pci* at ppb?` (M16e),
-//! `acpidmar0 at acpi? disable` (M16e),
+//! `acpidmar0 at acpi? disable` (M16e), `tpm* at acpi?` (M16e),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -60,6 +60,7 @@ use crate::dev::acpi::acpimadt::{ACPIMADT_CA, ACPIMADT_CD};
 use crate::dev::acpi::acpimcfg::{ACPIMCFG_CA, ACPIMCFG_CD};
 use crate::dev::acpi::acpiprt::{ACPIPRT_CA, ACPIPRT_CD};
 use crate::dev::acpi::acpitimer::{ACPITIMER_CA, ACPITIMER_CD};
+use crate::dev::acpi::tpm::{TPM_CA, TPM_CD};
 use crate::dev::audio::{AUDIO_CA, AUDIO_CD};
 use crate::dev::bio::bioattach;
 use crate::dev::ic::ahci::AHCI_CD;
@@ -267,11 +268,11 @@ const LN_WSKBDDEV: i32 = 34;
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 56 entries, 57 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 57 entries, 58 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    57
+    58
 } else {
-    56
+    57
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -911,7 +912,9 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 56: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 56: tpm* at acpi? (M16e)
+    Cfdata::new(&TPM_CA, &TPM_CD, 0, FSTATE_STAR, &[], 0, PV_ACPI, 0, 0),
+    // 57: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

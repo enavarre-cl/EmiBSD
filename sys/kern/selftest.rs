@@ -133,6 +133,8 @@ static MPSTRESS_REQUESTED: AtomicBool = AtomicBool::new(false);
 static FB_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// `selftest=wscons` asks for [`wscons_grid`].
 static WSCONS_REQUESTED: AtomicBool = AtomicBool::new(false);
+/// `selftest=tpm` asks for `tpm_selftest` (`dev/acpi/tpm.rs`).
+static TPM_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 /// The first frame buffer that attached (its device name and the attach arguments it would
 /// hand `wsdisplay`), for [`fb_check`].
@@ -168,6 +170,7 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     const MPSTRESS: &[u8] = b"selftest=mpstress";
     const FB: &[u8] = b"selftest=fb";
     const WSCONS: &[u8] = b"selftest=wscons";
+    const TPM: &[u8] = b"selftest=tpm";
     if cmdline.windows(TRAP.len()).any(|w| w == TRAP) {
         TRAP_REQUESTED.store(true, Ordering::Relaxed);
     }
@@ -195,6 +198,9 @@ pub fn parse_bootargs(cmdline: &[u8]) {
     if cmdline.windows(WSCONS.len()).any(|w| w == WSCONS) {
         WSCONS_REQUESTED.store(true, Ordering::Relaxed);
     }
+    if cmdline.windows(TPM.len()).any(|w| w == TPM) {
+        TPM_REQUESTED.store(true, Ordering::Relaxed);
+    }
 }
 
 /// Whether the command line asked for [`fb_check`].
@@ -205,6 +211,13 @@ pub fn fb_requested() -> bool {
 /// Whether the command line asked for [`wscons_grid`].
 pub fn wscons_requested() -> bool {
     WSCONS_REQUESTED.load(Ordering::Relaxed)
+}
+
+/// Whether the command line asked for `tpm_selftest` (`dev/acpi/tpm.rs`, M16e): a
+/// `TPM2_SelfTest` sent through tpm0's own command path, whose response code `smoke-tpm`
+/// checks.
+pub fn tpm_requested() -> bool {
+    TPM_REQUESTED.load(Ordering::Relaxed)
 }
 
 /// Whether the command line asked for [`mpstress`].

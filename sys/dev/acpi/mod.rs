@@ -3,7 +3,7 @@
 //! core (`acpi`, acpi0), the table checksum (`acpiutil`), the timers (`acpitimer`,
 //! `acpihpet`), the MADT (`acpimadt`) and the PCI interrupt routing (`acpiprt`). M14 adds
 //! the MCFG (`acpimcfg`) and arm64's console UART (`pluart_acpi`). M16e adds the DMA remapping
-//! units (`acpidmar`, with `amd_iommu`).
+//! units (`acpidmar`, with `amd_iommu`) and the TPM (`tpm`).
 
 #[allow(clippy::module_inception)] // OpenBSD's layout: sys/dev/acpi/acpi.c
 pub mod acpi;
@@ -21,4 +21,5 @@ pub mod amd_iommu;
 pub mod amltypes;
 pub mod dsdt;
 pub mod pluart_acpi;
+pub mod tpm;
 /* </CODE> */

@@ -657,6 +657,11 @@ pub fn main() -> ! {
     if crate::kern::selftest::wscons_requested() {
         crate::kern::selftest::wscons_grid();
     }
+    // selftest=tpm sends tpm0 a TPM2_SelfTest through the driver's command path (M16e).
+    #[cfg(feature = "qemu")]
+    if crate::kern::selftest::tpm_requested() {
+        crate::dev::acpi::tpm::tpm_selftest();
+    }
 
     // Okay, now we can let init(8) exec! It's off to userland!
     START_INIT_EXEC.store(1, Ordering::Relaxed);
