@@ -812,6 +812,33 @@ fn monitor_sock_for(dir: &Path, cwd: &Path, tmp: &Path, pid: u32) -> PathBuf {
     tmp.join(format!("emibsd-{:08x}-{pid}.sock", h.finish() as u32))
 }
 
+/// A Unix socket `name` for the run directory `dir`, placed as [`monitor_sock_for`] places
+/// the monitor's: relative to the current directory, absolute, or hashed into the temporary
+/// directory, whichever fits `sun_path` first.
+pub(crate) fn run_sock(dir: &Path, name: &str) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let fits = |p: &Path| p.as_os_str().len() < SUN_PATH_MAX;
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let sock = dir.join(name);
+    if let Ok(rel) = sock.strip_prefix(&cwd)
+        && !rel.as_os_str().is_empty()
+        && fits(rel)
+    {
+        return rel.to_path_buf();
+    }
+    if fits(&sock) {
+        return sock;
+    }
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    dir.hash(&mut h);
+    name.hash(&mut h);
+    std::env::temp_dir().join(format!(
+        "emibsd-{:08x}-{}-{name}",
+        h.finish() as u32,
+        std::process::id()
+    ))
+}
+
 /// Whether the monitor still has work: a screenshot to take, keys or commands to send.
 pub(crate) fn monitor_pending() -> bool {
     screenshot_pending() || sendkey_pending() || next_monitor_cmd().is_some()
@@ -827,7 +854,11 @@ pub(crate) fn poll_monitor(serial: &str) -> Result<()> {
 
 /// The `AFTER LINE CMD TEXT` pairs of `args` (`--monitor-after LINE --monitor CMD`), in
 /// order.
-fn parse_pairs(args: &[&str], after_opt: &str, what_opt: &str) -> Result<Vec<(String, String)>> {
+pub(crate) fn parse_pairs(
+    args: &[&str],
+    after_opt: &str,
+    what_opt: &str,
+) -> Result<Vec<(String, String)>> {
     let mut pairs = Vec::new();
     let mut after: Option<&str> = None;
     let mut i = 0;

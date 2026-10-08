@@ -870,6 +870,13 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
                 next_send += 1;
             }
         }
+        if crate::devices::usb_serial_pending() {
+            let text = transcript
+                .lock()
+                .map(|t| String::from_utf8_lossy(&t).into_owned())
+                .unwrap_or_default();
+            crate::devices::poll_usb_serial(&text, &image)?;
+        }
         if crate::hwopts::monitor_pending() {
             let text = transcript
                 .lock()
@@ -877,7 +884,11 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
                 .unwrap_or_default();
             crate::hwopts::poll_monitor(&text)?;
         }
-        if until_seen && next_send == sends.len() && !crate::hwopts::monitor_pending() {
+        if until_seen
+            && next_send == sends.len()
+            && !crate::hwopts::monitor_pending()
+            && !crate::devices::usb_serial_pending()
+        {
             let all = transcript
                 .lock()
                 .map(|t| {

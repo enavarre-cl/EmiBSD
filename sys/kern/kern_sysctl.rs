@@ -78,7 +78,7 @@
 //!   `ENOENT`. `resettodr` after a new `kern.utc_offset` is reported and skipped.
 //! - Options this kernel does not configure are compiled out as in C: `DEBUG_SYSCTL`
 //!   (`debug_sysctl`, `CTL_DEBUG` is `EOPNOTSUPP`), `SYSVMSG`/`SYSVSEM`/`SYSVSHM`
-//!   (`sysctl_sysvipc`), `NAUDIO`/`NVIDEO`/`NDT`/`NUCOM` (0), `GPROF`, `WITNESS`,
+//!   (`sysctl_sysvipc`), `NAUDIO`/`NVIDEO`/`NDT` (0; `NUCOM` is configured: `hw.ucomnames` is `sysctl_ucominit`), `GPROF`, `WITNESS`,
 //!   `PTRACE` (`kern.global_ptrace`), `KTRACE` (the trace members of `kinfo_proc` stay
 //!   zero). `SMALL_KERNEL` is not set.
 //! - The kernel lock is taken at the C's sites (M11e), and `log_mtx` around the message
@@ -122,6 +122,7 @@ use crate::conf::param::{FSCALE, MAXFILES, MAXPROCESS, MAXTHREAD, NMBCLUST, UTC_
 use crate::conf::vers::{OSRELEASE, OSTYPE, OSVERSION, VERSION};
 use crate::dev::audio::{AUDIO_KBDCONTROL_ENABLE, AUDIO_RECORD_ENABLE};
 use crate::dev::cons::cn_tab;
+use crate::dev::usb::ucom::sysctl_ucominit;
 use crate::kern::init_main::{NCPUS, NCPUSFOUND};
 use crate::kern::kern_clock::sysctl_clockrate;
 use crate::kern::kern_descrip::{NUMFILES, fd_getfile, fd_iterfile};
@@ -1017,8 +1018,8 @@ fn hw_sysctl_locked(
         )),
         HW_ALLOWPOWERDOWN => sysctl_securelevel_int(oldp, oldlenp, newp, newlen, &ALLOWPOWERDOWN),
         HW_UCOMNAMES => {
-            // NUCOM is 0: sysctl_ucominit is not called.
-            sysctl_rdstring(oldp, oldlenp, newp, b"")
+            let names = sysctl_ucominit();
+            sysctl_rdstring(oldp, oldlenp, newp, names.as_bytes())
         }
         HW_SMT => sysctl_hwsmt(oldp, oldlenp, newp, newlen),
         HW_BLOCKCPU => sysctl_hwblockcpu(oldp, oldlenp, newp, newlen),

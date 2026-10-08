@@ -11172,28 +11172,37 @@ notes = "M16: uaudio(4); criterion: QEMU's usb-audio plays the tone (--expect-to
 [[file]]
 c = "sys/dev/usb/ucomvar.h"
 rust = "sys/dev/usb/ucomvar.rs"
-status = "todo"
-notes = "M16: ucom attach arguments"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "700c7230466f8c4c7bb66ff0fd1b1d5dae22e7d0"
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M16b: UcomMethods (Option fn pointers: get_status with two &mut u8, param/ioctl/open Result, read advancing a slice, write answering the packet length), UcomAttachArgs, UCOM_SET_*, UMCR_*, ULSR_*, UMSR_*; reference-backed test"
 
 [[file]]
 c = "sys/dev/usb/ucom.c"
 rust = "sys/dev/usb/ucom.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "228456b86b6378fdfb8a9b5d16c15e1795f58f34"
 deps = ["sys/dev/usb/ucomvar.h", "sys/dev/usb/usb.c"]
-notes = "M16: ucom(4) ttys over USB serial"
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M16b: the whole file: UcomSoftc, ucom_cd/ca (DV_TTY), ucom_attach (tty via ttymalloc, usb location), ucom_detach (vdevgone of tty and call-out nodes, ttyfree), ucomopen/ucom_do_open (pipes, xfers, unwind labels, termios defaults, carrier wait), ucomclose, ucomread/write/tty/ioctl, ucom_do_ioctl, tiocm_to_ucom, ucom_to_tiocm, ucom_status_change, ucomparam, ucomstart (contiguous run of the output queue), ucomstop, ucomwritecb, ucomstartread, ucomreadcb, ucom_cleanup, sysctl_ucominit (hw.ucomnames, wired into kern_sysctl.rs), ucomprint, ucomsubmatch. cdevsw 66 on both archs (cdev_tty_init(NUCOM,ucom)), /dev/ttyU0-3 and cuaU0-3 (group dialer) in the ramdisk, ucom* at uftdi? in both ioconfs. Deviations: UCOM_DEBUG absent, ucomparam works on a copy of the termios, fail_3 frees the input xfer only for bulk ports, hw.ucomnames is built per call (no ucom_change cache), sc_error is only EIO. 3 host tests"
 
 [[file]]
 c = "sys/dev/usb/uftdireg.h"
 rust = "sys/dev/usb/uftdireg.rs"
-status = "todo"
-notes = "M16: FTDI registers"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e02ba823e62688d78debb3f90ca95fa8dd8dc793"
+license = "none"
+notes = "M16b: the FTDI_SIO requests, port identifiers, uftdi_type (UftdiType), the baud constants ftdi_sio_b* (the C names), data/modem/flow control values, the status masks and the FTDI_GET_MSR/GET_LSR/OUT_TAG macros as const fns; the C header has no licence text; host tests and a reference-backed test"
 
 [[file]]
 c = "sys/dev/usb/uftdi.c"
 rust = "sys/dev/usb/uftdi.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b3187618510f4062e409dc73088b21c14b4f1952"
 deps = ["sys/dev/usb/ucom.c", "sys/dev/usb/uftdireg.h"]
-notes = "M16: uftdi(4); criterion: a tty session through QEMU's usb-serial, both archs"
+notes = "license: NetBSD Foundation BSD-2 notice, kept whole. M16b: the whole file: UftdiSoftc, uftdi_devs[] (628 entries), uftdi_cd/ca, uftdi_methods, uftdi_match (configuration 1, not the OpenRD JTAG interface), uftdi_attach (chip type from bcdDevice, bulk endpoints, ucom child through config_found_sm with ucomprint/ucomsubmatch), uftdi_detach, uftdi_open, uftdi_read (status bytes), uftdi_write (SIO length tag), uftdi_set, uftdi_param, uftdi_get_status, uftdi_break, uftdi_8u232am_getrate and uftdi_2232h_getrate (Option). Deviations: UFTDI_DEBUG absent, getrate answers Option and refuses speed <= 0 (the C divides by zero), uftdi_read does not wrap the count of a short packet. 3 host tests. Part of smoke-ucom (QEMU usb-serial, both archs)"
 
 [[file]]
 c = "sys/dev/acpi/tpm.c"
