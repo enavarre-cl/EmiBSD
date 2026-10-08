@@ -209,7 +209,7 @@ fn dash(tag: Option<&str>) -> String {
 }
 
 /// `brew --prefix <formula>`, if Homebrew is installed and knows the formula.
-fn brew_prefix(formula: &str) -> Option<PathBuf> {
+pub(crate) fn brew_prefix(formula: &str) -> Option<PathBuf> {
     let out = Command::new("brew")
         .args(["--prefix", formula])
         .output()
@@ -600,12 +600,19 @@ pub(crate) fn qemu_command(
     let nic0 = vm.map_or(String::new(), |v| format!(",mac={}", v.user_mac));
     match arch {
         Arch::Amd64 => {
-            cmd.args(["-M", "q35", "-cpu", "qemu64"]);
+            // M16e (hwopts.rs): `--machine pc` runs i440fx's `pc` instead of `q35`.
+            cmd.args(["-M", crate::hwopts::amd64_machine(), "-cpu", "qemu64"]);
+            // M16e (hwopts.rs): `--iommu`, before every PCI device.
+            cmd.args(crate::hwopts::iommu_args());
             cmd.arg("-drive").arg(format!(
                 "if=none,format=raw,file={},id=hd0",
                 image.display()
             ));
-            cmd.args(["-device", "ide-hd,drive=hd0,bus=ide.0,bootindex=0"]);
+            // M16e (hwopts.rs): on `--machine pc` the boot image goes on an AHCI controller
+            // added after every other device (`add_devices`), not on the PIIX3 IDE channel.
+            if !crate::hwopts::machine_pc() {
+                cmd.args(["-device", "ide-hd,drive=hd0,bus=ide.0,bootindex=0"]);
+            }
             cmd.args(["-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]);
             // M13 (hwopts.rs): `--nic` puts an em(4) NIC in vio0's place.
             cmd.args(["-device", &crate::hwopts::user_nic(arch, &nic0)]);
@@ -613,7 +620,11 @@ pub(crate) fn qemu_command(
                 cmd.args(["-netdev", &v.netdev()]);
                 cmd.args([
                     "-device",
-                    &format!("virtio-net-pci,netdev=n1,mac={}", v.link_mac),
+                    &format!(
+                        "virtio-net-pci,netdev=n1,mac={}{}",
+                        v.link_mac,
+                        crate::hwopts::virtio_pci_props()
+                    ),
                 ]);
             }
             // M13 (hwopts.rs): NVMe and the other PCI storage, before the virtio-blk disks.
@@ -623,7 +634,13 @@ pub(crate) fn qemu_command(
                     "if=none,format=raw,file={},id=sd{k}",
                     disk.display()
                 ));
-                cmd.args(["-device", &format!("virtio-blk-pci,drive=sd{k}")]);
+                cmd.args([
+                    "-device",
+                    &format!(
+                        "virtio-blk-pci,drive=sd{k}{}",
+                        crate::hwopts::virtio_pci_props()
+                    ),
+                ]);
             }
         }
         Arch::Arm64 => {
@@ -732,6 +749,8 @@ pub fn qemu(
             p
         }
     };
+    // M16e (hwopts.rs): `--tpm`'s swtpm, stopped when this returns, after QEMU.
+    let _swtpm = crate::hwopts::start_swtpm()?;
     let mut cmd = qemu_command(root, arch, &image, "mon:stdio", None, disks)?;
     println!("xtask: {}", command_line(&cmd));
     let status = cmd.status().map_err(|e| spawn_error(arch, &e))?;
@@ -811,6 +830,8 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
     };
     let expected_status = status;
     let limit = time_limit(SMOKE_TIMEOUT);
+    // M16e (hwopts.rs): `--tpm`'s swtpm, stopped when this returns, after QEMU.
+    let _swtpm = crate::hwopts::start_swtpm()?;
     let mut cmd = qemu_command(root, arch, &image, "stdio", None, &disks)?;
     cmd.stdin(if !sends.is_empty() {
         Stdio::piped()

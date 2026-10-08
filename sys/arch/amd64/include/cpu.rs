@@ -58,7 +58,9 @@
 //!   first thing; an application processor's `cpu_hatch` does it first thing too).
 //! - The fields other CPUs write are atomics (`[a]`): `ci_flags`, `ci_ipis`,
 //!   `ci_want_resched` (`need_resched` from another CPU) and `ci_proc_pmap` (read by the TLB
-//!   shootdown of another CPU, `pmap_is_active`). The `[o]` fields stay `Cell`s: only their
+//!   shootdown of another CPU, `pmap_is_active`), and `ci_mwait` (`[a]`, M16e). `ci_acpicpudev`
+//!   (`[I]`, set by acpicpu(4) while cold) is an `AtomicPtr` too: every CPU's idle loop reads
+//!   it. The `[o]` fields stay `Cell`s: only their
 //!   own CPU touches them. The `[I]` fields (`ci_next`, `ci_cpuid`, `ci_apicid`, `ci_func`,
 //!   ...) are written by the boot CPU in `cpu_attach` before the CPU is started; the release
 //!   of `CPUF_GO` (`cpu_boot_secondary`) and the acquire on `ci_flags` order them.
@@ -175,7 +177,9 @@ pub struct CpuInfo {
     pub ci_feature_eflags: Cell<u32>,
     /// \[I\] `CPUID(7).ebx` (for the SMAP check in the trap handler).
     pub ci_feature_sefflags_ebx: Cell<u32>,
-    // ci_feature_sefflags_ecx .. ci_feature_tpmflags: the rest of identifycpu.
+    // ci_feature_sefflags_ecx .. ci_feature_amdsev_edx: the rest of identifycpu.
+    /// \[I\] cpuid(6).eax (`TPM_*`).
+    pub ci_feature_tpmflags: Cell<u32>,
     /// \[I\] cpuid(0x80000000).eax, the highest extended function.
     pub ci_pnfeatset: Cell<u32>,
     /// \[I\] cpuid(0x80000001).eax.
@@ -197,7 +201,11 @@ pub struct CpuInfo {
     // ci_cputype .. ci_pkg_id (topology): M4-b/M5.
     /// \[I\] `ci_func`: how `cpu_start_secondary` starts this CPU (`MULTIPROCESSOR`).
     pub ci_func: Cell<Option<&'static CpuFunctions>>,
-    // cpu_setup, ci_acpicpudev, ci_mwait (acpi, mwait): M4-b/M5.
+    // cpu_setup: M4-b/M5.
+    /// \[I\] the acpicpu(4) device of this CPU, set by `acpicpu_attach` while cold.
+    pub ci_acpicpudev: AtomicPtr<Device>,
+    /// \[a\] `MWAIT_*`: written by this CPU's idle loop and by the CPUs waking it.
+    pub ci_mwait: AtomicU32,
     /// \[a\] the scheduler asks for a reschedule; another CPU's `need_resched` sets it.
     pub ci_want_resched: AtomicI32,
     /// \[o\] the TSS.
@@ -256,6 +264,7 @@ impl CpuInfo {
             ci_feature_flags: Cell::new(0),
             ci_feature_eflags: Cell::new(0),
             ci_feature_sefflags_ebx: Cell::new(0),
+            ci_feature_tpmflags: Cell::new(0),
             ci_pnfeatset: Cell::new(0),
             ci_efeature_eax: Cell::new(0),
             ci_efeature_ecx: Cell::new(0),
@@ -266,6 +275,8 @@ impl CpuInfo {
             ci_cflushsz: Cell::new(0),
             ci_inatomic: Cell::new(0),
             ci_func: Cell::new(None),
+            ci_acpicpudev: AtomicPtr::new(ptr::null_mut()),
+            ci_mwait: AtomicU32::new(0),
             ci_want_resched: AtomicI32::new(0),
             ci_tss: Cell::new(ptr::null()),
             ci_gdt: Cell::new(ptr::null()),
@@ -281,6 +292,15 @@ impl Default for CpuInfo {
         Self::new()
     }
 }
+
+/// `MWAIT_IN_IDLE`: don't need IPI to wake.
+pub const MWAIT_IN_IDLE: u32 = 0x1;
+/// `MWAIT_KEEP_IDLING`: cleared by other cpus to wake me.
+pub const MWAIT_KEEP_IDLING: u32 = 0x2;
+/// `MWAIT_ONLY`: set if all idle states use mwait.
+pub const MWAIT_ONLY: u32 = 0x4;
+/// `MWAIT_IDLING`.
+pub const MWAIT_IDLING: u32 = MWAIT_IN_IDLE | MWAIT_KEEP_IDLING;
 
 /// `ci_PAGEALIGN`: the offset of the first field hidden from user space.
 pub const CI_PAGEALIGN: usize = core::mem::offset_of!(CpuInfo, ci_dev);

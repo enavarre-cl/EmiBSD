@@ -40,6 +40,7 @@ pub mod psl;
 pub mod pte;
 pub mod segments;
 pub mod signal;
+pub mod smbiosvar;
 pub mod specialreg;
 pub mod tcb;
 pub mod timetc;

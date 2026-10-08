@@ -39,6 +39,36 @@
 //!   to contain TEXT once the serial expectations passed ([`after_smoke`]). Both archs (the
 //!   card sits on the PCI bus q35 and arm64's `virt` have). It goes after `--scsi-cd` and
 //!   `--lsi`, the last devices ([`add_devices`]), so no other PCI slot moves.
+//! - `--pci-bridges` (`qemu`, `smoke`, M16e, `smoke-ppb`): two PCI-PCI bridges, each with a
+//!   virtio-blk disk behind it, for ppb(4): a PCI Express root port (`pcie-root-port`) with
+//!   the disk `ppb-rp.img` on its secondary bus, and a conventional `pci-bridge` with the disk
+//!   `ppb-br.img` in its slot 1, both bridges on the root bus of q35 and of arm64's `virt`
+//!   (the firmware numbers their buses). The images are in the run directory, 64 MiB of
+//!   zeroes made afresh each run ([`PPB_DISK_BYTES`]). They go after `--pci-serial`
+//!   ([`add_devices`]), so no other PCI slot moves.
+//! - `--machine pc` (`qemu`, `smoke`, M16e, `smoke-iic`): amd64's QEMU machine is i440fx's `pc`
+//!   (PIIX3 and PIIX4: the ISA bridge at 00:01.0, the IDE controller at 00:01.1, the power
+//!   management function with the SMBus at 00:01.3, the standard VGA at 00:02.0) instead of
+//!   `q35`, so piixpm(4) has hardware to attach to. The boot image is on an `ich9-ahci`
+//!   controller added after every other device ([`pc_boot_disk_args`]: q35 has one built in,
+//!   and the firmware reads `pc`'s PIIX3 IDE channel with programmed I/O, which is minutes for
+//!   the 170 MB Limine loads), so the kernel sees it as on q35 (`ahci0`, `sd1`); the PIIX3 IDE
+//!   controller is left free. The NICs, the NVMe controller and the virtio-blk disks are plain
+//!   PCI devices on the root bus, and `q35` stays the default. amd64 only (arm64 has only `virt`); `pc` has no
+//!   built-in AHCI controller and its PCI bus is not PCI Express, so `--ahci` and
+//!   `--pci-bridges` (a `pcie-root-port`) are refused with it. An IDE agent may use the same
+//!   option ([`amd64_machine`]).
+//! - `--ipmi` (`qemu`, `smoke`, M16e, `smoke-ipmi`, amd64 only): a baseboard management
+//!   controller for ipmi(4): QEMU's simulated BMC (`ipmi-bmc-sim`) behind a KCS system
+//!   interface on q35's ISA bus (`isa-ipmi-kcs`, I/O ports 0xca2-0xca3). QEMU describes it to
+//!   the guest in its DSDT (an `IPI0001` device with `_IFT` 1, `_SRV` 0x200 and the I/O
+//!   ports in `_CRS`) and in SMBIOS (type 38). The BMC's SDR repository is the file
+//!   `ipmi-sdr.bin` in the run directory, written each run ([`IPMI_SDRS`]): one compact
+//!   sensor record, a temperature sensor named `QEMU Temp`, which the simulator also makes a
+//!   sensor of (scanning on, reading 0), so a driver that reaches the BMC exports it as
+//!   `hw.sensors.ipmi0.temp0`. ipmi(4) does not, OpenBSD 8.0's as EmiBSD's: it maps `_CRS`'s
+//!   `_MAX`, 0xca3, and every command fails (`smoke-ipmi`). ISA devices take no PCI slot, so
+//!   nothing on the bus moves.
 //! - `--reboot` (`qemu`, `smoke`, M13): QEMU runs without `-no-reboot`, so a guest reset
 //!   restarts the machine (EDK2, Limine and the kernel again; the EDK2 variable store is the
 //!   run's copy) instead of ending QEMU with status 0. `smoke-power` boots, runs `reboot`
@@ -82,6 +112,17 @@
 //!   `ret`, ...) is typed with the monitor's `sendkey` on the guest's keyboard (with `--usb`,
 //!   the `usb-kbd` on `qemu-xhci`), one every [`SENDKEY_GAP`] ([`parse_sendkeys`],
 //!   [`poll_sendkey`]). The run fails if a LINE never came.
+//! - `--iommu intel|amd` (`qemu`, `smoke`, M16e, amd64): a DMA remapping unit on `q35`,
+//!   QEMU's `intel-iommu` (VT-d, with an ACPI `DMAR` table) or `amd-iommu` (AMD-Vi, an `IVRS`
+//!   table and the unit's own PCI function) with `dma-remap=on` (without it QEMU's AMD-Vi
+//!   lets every device's DMA through untranslated, so the I/O virtual addresses the guest
+//!   programs land on the wrong memory), added right after `-M q35` ahead of every PCI
+//!   device. acpidmar(4) then gives each PCI device a domain, so the guest programs I/O virtual
+//!   addresses: the virtio devices (vio0, the virtio-blk disks) get `disable-legacy=on,
+//!   iommu_platform=on` ([`virtio_pci_props`]), so that they are modern-only and translate
+//!   their DMA through the IOMMU (virtio_pci negotiates `VIRTIO_F_ACCESS_PLATFORM`); without
+//!   it QEMU's virtio devices bypass the IOMMU. Emulated devices (AHCI, NVMe, ...) always
+//!   go through it. On arm64 the one model is `smmuv3` (M16f, below).
 //! - `--gic N` (`qemu`, `smoke`, `smoke2`, M16f; arm64): the version of `virt`'s interrupt
 //!   controller, `2` (QEMU's default, ampintc(4) with its GICv2m MSI frame) or `3` (agintc(4)
 //!   with its ITS, `gic-version=3`). Without the option the environment's `EMIBSD_GIC` (`2`
@@ -93,6 +134,21 @@
 //!   pairs in order): QEMU gets the human monitor socket as for `--screenshot-after`; when a
 //!   serial line contains LINE, the monitor command CMD (`system_powerdown`, ...) is sent
 //!   ([`poll_monitor_cmds`]). The run fails if a LINE never came.
+//! - `--tpm tis|crb` (`qemu`, `smoke`, M16e, amd64, `smoke-tpm`): a TPM 2.0 for tpm(4),
+//!   QEMU's `tpm-tis` (the TIS FIFO registers) or `tpm-crb` (the Command Response Buffer) at
+//!   0xfed40000, an ACPI `MSFT0101` device with a `TPM2` table, backed by the software TPM
+//!   `swtpm` (found in `$PATH` or under `brew --prefix swtpm`, docs/SETUP.md). Each run
+//!   starts its own `swtpm socket --tpm2 --flags startup-clear` with a fresh state directory
+//!   `tpm/` and its log `swtpm.log` in the run directory and its control socket beside them
+//!   (`swtpm.sock`, placed as the monitor socket is, to fit `sun_path`), waits for the
+//!   socket, and gives QEMU `-chardev socket` + `-tpmdev emulator` + `-device
+//!   tpm-tis|tpm-crb` ([`tpm_args`]). The TPM is not on a PCI bus, so nothing moves. swtpm
+//!   is stopped when the run ends, however it ends ([`Swtpm`]'s `Drop`: kill, wait, remove
+//!   the socket), and it also exits on its own when QEMU closes its control connection
+//!   (`terminate`), so no swtpm outlives a run. `startup-clear` has swtpm send
+//!   `TPM2_Startup(CLEAR)` once QEMU initialises it, so the TPM answers commands whatever the
+//!   firmware does. Refused on arm64 (its GENERIC has no tpm) and outside `qemu` and
+//!   `smoke`, which start swtpm.
 //! - `{host-ms}` in a `smoke` `--send` text (M13, `smoke-clock`): replaced, as the text is
 //!   sent, by the host's wall clock in milliseconds since the Epoch ([`expand_send`]), so a
 //!   guest script can set its own clock readings beside the host's and compare the rates.
@@ -116,7 +172,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -216,6 +272,48 @@ fn opt_path<'a>(args: &[&'a str], opt: &str) -> Result<Option<&'a str>> {
     }
 }
 
+/// The size of each `--pci-bridges` disk: 64 MiB, as `--disk-fresh`'s.
+pub(crate) const PPB_DISK_BYTES: u64 = 64 << 20;
+
+/// `--pci-bridges`: the run directory its two disks go in (set once by `main`).
+static PCI_BRIDGES: OnceLock<PathBuf> = OnceLock::new();
+
+/// `--ipmi`: the run directory the BMC's SDR file goes in (set once by `main`).
+static IPMI: OnceLock<PathBuf> = OnceLock::new();
+
+/// `--ipmi`'s SDR repository: one IPMI 2.0 compact sensor record (type 2, 32 bytes and the
+/// name). QEMU's `ipmi-bmc-sim` renumbers the records it loads and makes a sensor of every
+/// compact one, indexed by its sensor number.
+pub(crate) const IPMI_SDRS: &[u8] = &[
+    0x00, 0x00, // record ID (QEMU assigns its own)
+    0x51, // SDR version 1.5
+    0x02, // record type: compact sensor
+    36,   // bytes after this header
+    0x20, // sensor owner: the BMC
+    0x00, // owner LUN
+    0x02, // sensor number
+    0x07, // entity: system board
+    0x01, // entity instance
+    0x40, // sensor initialization: scanning on
+    0x00, // sensor capabilities
+    0x01, // sensor type: temperature
+    0x01, // event/reading type: threshold
+    0x00, 0x00, // assertion event mask
+    0x00, 0x00, // deassertion event mask
+    0x00, 0x00, // discrete reading mask
+    0x00, // units 1: unsigned
+    0x01, // units 2: degrees C
+    0x00, // units 3
+    0x01, // record sharing: one sensor
+    0x00, // instance modifier
+    0x00, // positive hysteresis
+    0x00, // negative hysteresis
+    0x00, 0x00, 0x00, // reserved
+    0x00, // OEM
+    0xc9, // ID string: 8-bit ASCII, 9 bytes
+    b'Q', b'E', b'M', b'U', b' ', b'T', b'e', b'm', b'p',
+];
+
 /// `--pci-serial FILE` (in the run directory) for every VM this run starts (set once by `main`).
 static PCI_SERIAL: OnceLock<PathBuf> = OnceLock::new();
 
@@ -269,6 +367,78 @@ static GRID_LINE: Mutex<Option<String>> = Mutex::new(None);
 /// `--vio-mq`: vio0's virtio-net offers multiqueue (`mq=on`, set once by `main`).
 static VIO_MQ: OnceLock<()> = OnceLock::new();
 
+/// The IOMMUs `--iommu` takes: the model, its arch, and QEMU's `-device` for it (amd64's
+/// are q35 devices; arm64's SMMUv3 is a `virt` machine property, [`virt_machine`]).
+const IOMMU_MODELS: &[(&str, Arch, &str)] = &[
+    ("intel", Arch::Amd64, "intel-iommu"),
+    ("amd", Arch::Amd64, "amd-iommu,dma-remap=on"),
+    ("smmuv3", Arch::Arm64, ""),
+];
+
+/// `--iommu MODEL`: the IOMMU model, an entry of [`IOMMU_MODELS`] (set once by `main`).
+static IOMMU: OnceLock<&'static str> = OnceLock::new();
+
+/// The q35 `-device` of the `--iommu` unit, when it is amd64's (`intel`, `amd`).
+fn q35_iommu_dev() -> Option<&'static str> {
+    let model = IOMMU.get()?;
+    IOMMU_MODELS
+        .iter()
+        .find(|(m, arch, _)| m == model && *arch == Arch::Amd64)
+        .map(|&(_, _, dev)| dev)
+}
+
+/// `--machine pc`: amd64 VMs run on i440fx's `pc`, not `q35` (set once by `main`).
+static MACHINE_PC: OnceLock<()> = OnceLock::new();
+
+/// Whether this run's amd64 VMs are i440fx's `pc` (`--machine pc`).
+pub(crate) fn machine_pc() -> bool {
+    MACHINE_PC.get().is_some()
+}
+
+/// The QEMU machine of this run's amd64 VMs: `q35`, or `pc` with `--machine pc`.
+pub(crate) fn amd64_machine() -> &'static str {
+    if machine_pc() { "pc" } else { "q35" }
+}
+
+/// Reads `--machine` from `args`: whether it asks for `pc`. Only `pc` is a choice (`q35` is
+/// the default, so it is not named); it is amd64 only, and the options that need `q35`'s
+/// hardware are refused with it.
+fn machine_opt(args: &[&str]) -> Result<bool> {
+    let Some(machine) = opt_path(args, "--machine")? else {
+        return Ok(false);
+    };
+    if machine != "pc" {
+        return Err(format!("--machine {machine}: expected pc (q35 is the default)").into());
+    }
+    if opt_path(args, "--arch")? == Some("arm64") {
+        return Err("--machine pc: amd64 only (arm64 has only the virt machine)".into());
+    }
+    if args.contains(&"--ahci") {
+        return Err(
+            "--machine pc: not with --ahci (only q35 has a built-in AHCI controller)".into(),
+        );
+    }
+    if args.contains(&"--pci-bridges") {
+        return Err(
+            "--machine pc: not with --pci-bridges (pc's bus has no PCI Express root ports)".into(),
+        );
+    }
+    Ok(true)
+}
+
+/// The interfaces `--tpm` takes, and QEMU's device for each.
+const TPM_MODELS: &[(&str, &str)] = &[("tis", "tpm-tis"), ("crb", "tpm-crb")];
+
+/// `--tpm MODEL`: the QEMU device of the TPM and the run directory swtpm's files go in
+/// (amd64, set once by `main`).
+static TPM: OnceLock<(&'static str, PathBuf)> = OnceLock::new();
+
+/// The control socket of the swtpm this run started ([`start_swtpm`]), while it runs.
+static SWTPM_SOCK: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+/// How long [`start_swtpm`] waits for swtpm's control socket.
+const SWTPM_START_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// The models `--nic` takes: QEMU's emulated Intel PRO/1000 controllers, which em(4) drives,
 /// its Realtek 8139C+, which re(4) drives, and its VMware VMXNET3, which vmx(4) drives.
 const NIC_MODELS: &[&str] = &["e1000", "e1000e", "igb", "rtl8139", "vmxnet3"];
@@ -284,9 +454,6 @@ static ACPI: OnceLock<()> = OnceLock::new();
 /// `--gic N` or `EMIBSD_GIC` (arm64): `virt`'s GIC version, 2 or 3 (set once by `main`).
 static GIC: OnceLock<u8> = OnceLock::new();
 
-/// `--iommu smmuv3` (arm64): `virt` with its SMMUv3 (set once by `main`).
-static IOMMU: OnceLock<()> = OnceLock::new();
-
 /// The GIC version a `--gic` value or `EMIBSD_GIC` names: `2` or `3`.
 fn parse_gic(v: &str, what: &str) -> Result<u8> {
     match v {
@@ -297,9 +464,42 @@ fn parse_gic(v: &str, what: &str) -> Result<u8> {
 }
 
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
-/// `--pci-serial`, `--expect-pci-serial`, `--reboot`, `--vio-mq`, `--nic`, `--acpi`, `--gic`,
-/// `--iommu`).
+/// `--pci-serial`, `--expect-pci-serial`, `--pci-bridges`, `--ipmi`, `--reboot`, `--vio-mq`,
+/// `--nic`, `--acpi`, `--gic`, `--iommu`, `--machine`, `--tpm`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
+    if let Some(model) = opt_path(args, "--tpm")? {
+        let Some(&(_, dev)) = TPM_MODELS.iter().find(|(m, _)| *m == model) else {
+            return Err(format!("--tpm {model}: expected tis or crb").into());
+        };
+        if args.windows(2).any(|w| w == ["--arch", "arm64"]) {
+            return Err("--tpm: amd64 only (arm64's GENERIC has no tpm)".into());
+        }
+        if !matches!(args.first(), Some(&("qemu" | "smoke"))) {
+            return Err("--tpm: only with `qemu` and `smoke`, which start swtpm".into());
+        }
+        let _ = TPM.set((dev, boot::run_dir(root)));
+    }
+    if let Some(model) = opt_path(args, "--iommu")? {
+        let Some(&(name, arch, _)) = IOMMU_MODELS.iter().find(|(m, _, _)| *m == model) else {
+            return Err(
+                format!("--iommu {model}: expected intel, amd (amd64) or smmuv3 (arm64)").into(),
+            );
+        };
+        let other = match arch {
+            Arch::Amd64 => "arm64",
+            Arch::Arm64 => "amd64",
+        };
+        if args.windows(2).any(|w| w == ["--arch", other]) {
+            return Err(format!("--iommu {name}: not on {other}").into());
+        }
+        if arch == Arch::Amd64 && args.contains(&"--machine") {
+            return Err("--iommu: not with --machine (QEMU's IOMMUs need q35)".into());
+        }
+        let _ = IOMMU.set(name);
+    }
+    if machine_opt(args)? {
+        let _ = MACHINE_PC.set(());
+    }
     if let Some(model) = opt_path(args, "--nic")? {
         if !NIC_MODELS.contains(&model) {
             return Err(format!("--nic {model}: expected one of {}", NIC_MODELS.join(", ")).into());
@@ -311,6 +511,12 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     }
     if args.contains(&"--reboot") {
         let _ = REBOOT.set(());
+    }
+    if args.contains(&"--pci-bridges") {
+        let _ = PCI_BRIDGES.set(boot::run_dir(root));
+    }
+    if args.contains(&"--ipmi") {
+        let _ = IPMI.set(boot::run_dir(root));
     }
     if args.contains(&"--acpi") {
         let _ = ACPI.set(());
@@ -325,12 +531,6 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
             }
             _ => {}
         },
-    }
-    if let Some(v) = opt_path(args, "--iommu")? {
-        if v != "smmuv3" {
-            return Err(format!("--iommu {v}: expected smmuv3").into());
-        }
-        let _ = IOMMU.set(());
     }
     if args.contains(&"--vio-mq") {
         let _ = VIO_MQ.set(());
@@ -402,6 +602,27 @@ pub(crate) fn vio0_props() -> &'static str {
     if VIO_MQ.get().is_some() { ",mq=on" } else { "" }
 }
 
+/// The QEMU arguments of the `--iommu` unit (none without one); on `q35`, before every PCI
+/// device.
+pub(crate) fn iommu_args() -> Vec<String> {
+    iommu_args_for(q35_iommu_dev())
+}
+
+/// [`iommu_args`] for the device `dev`.
+fn iommu_args_for(dev: Option<&str>) -> Vec<String> {
+    dev.map_or_else(Vec::new, |d| vec!["-device".to_string(), d.to_string()])
+}
+
+/// The extra properties of amd64's `virtio-*-pci` devices: with `--iommu`, modern-only and
+/// behind the IOMMU (`disable-legacy=on,iommu_platform=on`).
+pub(crate) fn virtio_pci_props() -> &'static str {
+    if q35_iommu_dev().is_some() {
+        ",disable-legacy=on,iommu_platform=on"
+    } else {
+        ""
+    }
+}
+
 /// The `-device` argument of the NIC on QEMU's user network (netdev `n0`, `props` its MAC
 /// when there is one): vio0, a `virtio-net-pci` on amd64 (with `--vio-mq`'s properties) and a
 /// `virtio-net-device` on arm64, or the `--nic` model.
@@ -413,7 +634,11 @@ pub(crate) fn user_nic(arch: Arch, props: &str) -> String {
 fn user_nic_arg(nic: Option<&str>, arch: Arch, props: &str) -> String {
     match (nic, arch) {
         (Some(model), _) => format!("{model},netdev=n0{props}"),
-        (None, Arch::Amd64) => format!("virtio-net-pci,netdev=n0{props}{}", vio0_props()),
+        (None, Arch::Amd64) => format!(
+            "virtio-net-pci,netdev=n0{props}{}{}",
+            vio0_props(),
+            virtio_pci_props()
+        ),
         (None, Arch::Arm64) if acpi() => format!("virtio-net-pci,netdev=n0{props}"),
         (None, Arch::Arm64) => format!("virtio-net-device,netdev=n0{props}"),
     }
@@ -431,7 +656,7 @@ pub(crate) fn virt_machine() -> String {
     virt_machine_arg(
         acpi(),
         GIC.get().copied().unwrap_or(2),
-        IOMMU.get().is_some(),
+        IOMMU.get() == Some(&"smmuv3"),
     )
 }
 
@@ -712,13 +937,7 @@ fn lsi_args(root: &Path, image: &Path, cd: Option<&Path>) -> Vec<String> {
 
 /// Makes the `--lsi` disk afresh: `LSI_DISK_BYTES` zeroed bytes at `image`.
 fn lsi_fresh(image: &Path) -> Result<()> {
-    if let Some(dir) = image.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    let f = fs::File::create(image).map_err(|e| format!("{}: {e}", image.display()))?;
-    f.set_len(LSI_DISK_BYTES)
-        .map_err(|e| format!("{}: {e}", image.display()))?;
-    Ok(())
+    zeroed_disk(image, LSI_DISK_BYTES)
 }
 
 /// Adds the devices that go last on the command line to `cmd` (`--scsi-cd`, then `--lsi`,
@@ -743,7 +962,215 @@ pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) -> Result<
         let _ = fs::remove_file(file);
         cmd.args(pci_serial_args(file));
     }
+    if let Some(dir) = PCI_BRIDGES.get() {
+        let (rp, br) = (dir.join("ppb-rp.img"), dir.join("ppb-br.img"));
+        for image in [&rp, &br] {
+            zeroed_disk(image, PPB_DISK_BYTES)?;
+        }
+        cmd.args(pci_bridges_args(&rp, &br));
+    }
+    if let Some(dir) = IPMI.get() {
+        if arch != Arch::Amd64 {
+            return Err("--ipmi: amd64 only (QEMU's isa-ipmi-kcs needs an ISA bus)".into());
+        }
+        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let sdr = dir.join("ipmi-sdr.bin");
+        fs::write(&sdr, IPMI_SDRS).map_err(|e| format!("{}: {e}", sdr.display()))?;
+        cmd.args(ipmi_args(&sdr));
+    }
+    if let Some(&(dev, _)) = TPM.get() {
+        let sock = SWTPM_SOCK
+            .lock()
+            .ok()
+            .and_then(|s| s.clone())
+            .ok_or("--tpm: swtpm is not running (it is started by `qemu` and `smoke`)")?;
+        cmd.args(tpm_args(dev, &sock));
+    }
+    if machine_pc() {
+        cmd.args(pc_boot_disk_args());
+    }
     Ok(())
+}
+
+/// The QEMU arguments of `--ipmi`: the simulated BMC with the SDR file `sdr`, behind a KCS
+/// interface on the ISA bus.
+fn ipmi_args(sdr: &Path) -> Vec<String> {
+    vec![
+        "-device".into(),
+        format!("ipmi-bmc-sim,id=bmc0,sdrfile={}", sdr.display()),
+        "-device".into(),
+        "isa-ipmi-kcs,bmc=bmc0".into(),
+    ]
+}
+
+/// The QEMU arguments of `--machine pc`'s boot disk (the image the `-drive` with id `hd0`
+/// names): an `ich9-ahci` controller with it on port 0. `q35` has the AHCI controller built in
+/// (`ide.0`); `pc`'s PIIX3 IDE channel is read by the firmware with programmed I/O, which makes
+/// the boot of the 170 MB of kernel and ramdisk Limine loads from it take minutes. The
+/// controller goes last, so no other PCI slot moves.
+fn pc_boot_disk_args() -> Vec<String> {
+    vec![
+        "-device".into(),
+        "ich9-ahci,id=bootahci".into(),
+        "-device".into(),
+        "ide-hd,drive=hd0,bus=bootahci.0,bootindex=0".into(),
+    ]
+}
+
+/// The QEMU arguments of a `--tpm` device `dev` (`tpm-tis`, `tpm-crb`) whose backend is the
+/// swtpm listening on `sock`: the socket chardev, the `emulator` TPM backend over it, the
+/// device.
+fn tpm_args(dev: &str, sock: &Path) -> Vec<String> {
+    vec![
+        "-chardev".into(),
+        format!("socket,id=chrtpm,path={}", sock.display()),
+        "-tpmdev".into(),
+        "emulator,id=tpm0,chardev=chrtpm".into(),
+        "-device".into(),
+        format!("{dev},tpmdev=tpm0"),
+    ]
+}
+
+/// The `swtpm` program: in `$PATH`, or under `brew --prefix swtpm`.
+fn swtpm_path() -> Result<PathBuf> {
+    let in_path: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|p| std::env::split_paths(&p).map(|d| d.join("swtpm")).collect())
+        .unwrap_or_default();
+    if let Some(p) = in_path.into_iter().find(|p| p.is_file()) {
+        return Ok(p);
+    }
+    boot::brew_prefix("swtpm")
+        .map(|p| p.join("bin").join("swtpm"))
+        .filter(|p| p.is_file())
+        .ok_or_else(|| {
+            "swtpm not found in $PATH or under `brew --prefix swtpm`; install `swtpm` as in \
+             docs/SETUP.md"
+                .into()
+        })
+}
+
+/// A running `swtpm`, the backend of `--tpm`'s device. Dropping it stops swtpm (kill, then
+/// wait, so no zombie or orphan is left) and removes its control socket.
+pub(crate) struct Swtpm {
+    /// The swtpm process.
+    child: Child,
+    /// Its control socket.
+    sock: PathBuf,
+}
+
+impl Drop for Swtpm {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = fs::remove_file(&self.sock);
+        if let Ok(mut s) = SWTPM_SOCK.lock() {
+            *s = None;
+        }
+    }
+}
+
+/// With `--tpm`, starts this run's swtpm (see the module docs) and waits for its control
+/// socket; `None` without `--tpm`. The caller keeps the guard until QEMU has exited.
+pub(crate) fn start_swtpm() -> Result<Option<Swtpm>> {
+    let Some((_, dir)) = TPM.get() else {
+        return Ok(None);
+    };
+    let swtpm = swtpm_path()?;
+    let state = dir.join("tpm");
+    let _ = fs::remove_dir_all(&state);
+    fs::create_dir_all(&state).map_err(|e| format!("{}: {e}", state.display()))?;
+    let sock = unix_sock(dir, "swtpm.sock");
+    let _ = fs::remove_file(&sock);
+    let log_path = dir.join("swtpm.log");
+    let log = fs::File::create(&log_path).map_err(|e| format!("{}: {e}", log_path.display()))?;
+    let log2 = log
+        .try_clone()
+        .map_err(|e| format!("{}: {e}", log_path.display()))?;
+    let mut cmd = Command::new(&swtpm);
+    cmd.args(swtpm_args(&state, &sock))
+        .stdin(Stdio::null())
+        .stdout(log)
+        .stderr(log2);
+    println!("xtask: {}", boot::command_line(&cmd));
+    let child = cmd.spawn().map_err(|e| {
+        format!(
+            "{}: {e}; install `swtpm` as in docs/SETUP.md",
+            swtpm.display()
+        )
+    })?;
+    // From here on the guard stops swtpm on every path out.
+    let mut guard = Swtpm {
+        child,
+        sock: sock.clone(),
+    };
+    let started = Instant::now();
+    while !sock.exists() {
+        if let Some(status) = guard.child.try_wait()? {
+            let text = fs::read_to_string(&log_path).unwrap_or_default();
+            return Err(
+                format!("swtpm exited with {status} before its socket appeared: {text}").into(),
+            );
+        }
+        if started.elapsed() > SWTPM_START_TIMEOUT {
+            return Err(format!(
+                "swtpm: no control socket {} after {}s",
+                sock.display(),
+                SWTPM_START_TIMEOUT.as_secs()
+            )
+            .into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if let Ok(mut s) = SWTPM_SOCK.lock() {
+        *s = Some(sock);
+    }
+    Ok(Some(guard))
+}
+
+/// swtpm's arguments: a TPM 2.0 whose state is in `state`, controlled over the Unix socket
+/// `sock` (exiting when that connection is lost), that starts itself (`TPM2_Startup(CLEAR)`)
+/// once QEMU initialises it.
+fn swtpm_args(state: &Path, sock: &Path) -> Vec<String> {
+    vec![
+        "socket".into(),
+        "--tpm2".into(),
+        "--tpmstate".into(),
+        format!("dir={}", state.display()),
+        "--ctrl".into(),
+        format!("type=unixio,path={},terminate", sock.display()),
+        "--flags".into(),
+        "startup-clear".into(),
+    ]
+}
+
+/// Makes `image` afresh: `bytes` of zeroes (a sparse file).
+fn zeroed_disk(image: &Path, bytes: u64) -> Result<()> {
+    if let Some(dir) = image.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let f = fs::File::create(image).map_err(|e| format!("{}: {e}", image.display()))?;
+    f.set_len(bytes)
+        .map_err(|e| format!("{}: {e}", image.display()))?;
+    Ok(())
+}
+
+/// The QEMU arguments of `--pci-bridges`: a `pcie-root-port` with a virtio-blk disk holding
+/// `rp` behind it, and a `pci-bridge` with one holding `br` in its slot 1.
+fn pci_bridges_args(rp: &Path, br: &Path) -> Vec<String> {
+    vec![
+        "-device".into(),
+        "pcie-root-port,id=ppbrp,chassis=1,slot=1".into(),
+        "-drive".into(),
+        format!("if=none,format=raw,file={},id=ppbrp0", rp.display()),
+        "-device".into(),
+        "virtio-blk-pci,drive=ppbrp0,bus=ppbrp".into(),
+        "-device".into(),
+        "pci-bridge,id=ppbbr,chassis_nr=2".into(),
+        "-drive".into(),
+        format!("if=none,format=raw,file={},id=ppbbr0", br.display()),
+        "-device".into(),
+        "virtio-blk-pci,drive=ppbbr0,bus=ppbbr,addr=1".into(),
+    ]
 }
 
 /// The QEMU arguments of the `--pci-serial` card: a `pci-serial` device whose chardev is the
@@ -786,18 +1213,24 @@ const SUN_PATH_MAX: usize = 104;
 /// `sun_path` ([`SUN_PATH_MAX`]), which an absolute path into a deep checkout (a worktree
 /// under `.claude/worktrees/`, then `target/smoke/<recipe>/`) does not.
 fn monitor_sock(dir: &Path) -> PathBuf {
-    let cwd = std::env::current_dir().unwrap_or_default();
-    monitor_sock_for(dir, &cwd, &std::env::temp_dir(), std::process::id())
+    unix_sock(dir, "monitor.sock")
 }
 
-/// [`monitor_sock`]'s choice, the first that fits `sun_path`: `monitor.sock` in `dir`
-/// relative to `cwd` (QEMU inherits xtask's current directory, so both ends resolve it
-/// alike), the same path absolute, or `emibsd-<hash of dir>-<pid>.sock` in `tmp` (removed
-/// by [`after_smoke`]).
-fn monitor_sock_for(dir: &Path, cwd: &Path, tmp: &Path, pid: u32) -> PathBuf {
+/// The Unix socket `name` of the run directory `dir` ([`unix_sock_for`]).
+fn unix_sock(dir: &Path, name: &str) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_default();
+    unix_sock_for(dir, name, &cwd, &std::env::temp_dir(), std::process::id())
+}
+
+/// Where the socket `name` (`monitor.sock`, `swtpm.sock`) goes, the first that fits
+/// `sun_path`: `name` in `dir` relative to `cwd` (QEMU and swtpm inherit xtask's current
+/// directory, so every end resolves it alike), the same path absolute, or
+/// `emibsd-<hash of dir>-<pid>-<name>` in `tmp` (removed by [`after_smoke`] and
+/// [`Swtpm`]'s `Drop`).
+fn unix_sock_for(dir: &Path, name: &str, cwd: &Path, tmp: &Path, pid: u32) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let fits = |p: &Path| p.as_os_str().len() < SUN_PATH_MAX;
-    let sock = dir.join("monitor.sock");
+    let sock = dir.join(name);
     if let Ok(rel) = sock.strip_prefix(cwd)
         && !rel.as_os_str().is_empty()
         && fits(rel)
@@ -809,7 +1242,7 @@ fn monitor_sock_for(dir: &Path, cwd: &Path, tmp: &Path, pid: u32) -> PathBuf {
     }
     let mut h = std::collections::hash_map::DefaultHasher::new();
     dir.hash(&mut h);
-    tmp.join(format!("emibsd-{:08x}-{pid}.sock", h.finish() as u32))
+    tmp.join(format!("emibsd-{:08x}-{pid}-{name}", h.finish() as u32))
 }
 
 /// Whether the monitor still has work: a screenshot to take, keys or commands to send.
@@ -1347,6 +1780,52 @@ mod tests {
     use super::*;
 
     #[test]
+    fn machine_pc_boots_from_ahci_not_the_piix_ide_channel() {
+        let a = pc_boot_disk_args();
+        assert_eq!(
+            a,
+            [
+                "-device",
+                "ich9-ahci,id=bootahci",
+                "-device",
+                "ide-hd,drive=hd0,bus=bootahci.0,bootindex=0"
+            ]
+        );
+        assert!(!machine_pc());
+    }
+
+    #[test]
+    fn machine_pc_is_amd64_only_and_refuses_what_needs_q35() {
+        let a = |extra: &[&'static str]| {
+            let mut v = vec!["smoke", "--arch", "amd64", "--machine", "pc"];
+            v.extend_from_slice(extra);
+            machine_opt(&v)
+        };
+        assert!(matches!(a(&[]), Ok(true)));
+        assert!(matches!(
+            machine_opt(&["smoke", "--arch", "amd64"]),
+            Ok(false)
+        ));
+        let err = |r: Result<bool>| r.map(|_| ()).unwrap_err().to_string();
+        assert!(
+            err(machine_opt(&[
+                "smoke",
+                "--arch",
+                "arm64",
+                "--machine",
+                "pc"
+            ]))
+            .contains("amd64 only")
+        );
+        assert!(err(machine_opt(&["smoke", "--machine", "q35"])).contains("expected pc"));
+        assert!(err(machine_opt(&["smoke", "--machine"])).contains("expected a path"));
+        assert!(err(a(&["--ahci", "x.img"])).contains("--ahci"));
+        assert!(err(a(&["--pci-bridges"])).contains("--pci-bridges"));
+        // Without the option the machine is q35.
+        assert_eq!(amd64_machine(), "q35");
+    }
+
+    #[test]
     fn monitor_pairs_parse_in_order() {
         let args = [
             "--monitor-after",
@@ -1396,19 +1875,19 @@ mod tests {
         );
         // Inside the checkout: relative, whatever the checkout's depth.
         let dir = cwd.join("target/smoke/smoke-fb");
-        let sock = monitor_sock_for(&dir, cwd, tmp, 4242);
+        let sock = unix_sock_for(&dir, "monitor.sock", cwd, tmp, 4242);
         assert_eq!(sock, Path::new("target/smoke/smoke-fb/monitor.sock"));
         // A short absolute run directory elsewhere stays as it is.
-        let sock = monitor_sock_for(Path::new("/tmp/run"), cwd, tmp, 4242);
+        let sock = unix_sock_for(Path::new("/tmp/run"), "monitor.sock", cwd, tmp, 4242);
         assert_eq!(sock, Path::new("/tmp/run/monitor.sock"));
         // A long one outside the checkout falls back to the temporary directory.
         let long = Path::new("/elsewhere").join("d".repeat(120));
-        let sock = monitor_sock_for(&long, cwd, tmp, 4242);
+        let sock = unix_sock_for(&long, "monitor.sock", cwd, tmp, 4242);
         assert!(sock.starts_with(tmp), "{}", sock.display());
-        assert!(sock.to_string_lossy().ends_with("-4242.sock"));
+        assert!(sock.to_string_lossy().ends_with("-4242-monitor.sock"));
         for s in [
-            monitor_sock_for(&dir, cwd, tmp, 4242),
-            monitor_sock_for(&long, cwd, tmp, u32::MAX),
+            unix_sock_for(&dir, "monitor.sock", cwd, tmp, 4242),
+            unix_sock_for(&long, "swtpm.sock", cwd, tmp, u32::MAX),
         ] {
             assert!(s.as_os_str().len() < SUN_PATH_MAX, "{}", s.display());
         }
@@ -1501,6 +1980,27 @@ mod tests {
         let a = pci_serial_args(Path::new("/run/pcis.txt"));
         assert_eq!(a[1], "file,id=pcis0,path=/run/pcis.txt");
         assert_eq!(a[3], "pci-serial,chardev=pcis0");
+    }
+
+    #[test]
+    fn pci_bridges_put_a_disk_behind_each_bridge() {
+        let a = pci_bridges_args(Path::new("/run/ppb-rp.img"), Path::new("/run/ppb-br.img"));
+        assert_eq!(a[1], "pcie-root-port,id=ppbrp,chassis=1,slot=1");
+        assert_eq!(a[3], "if=none,format=raw,file=/run/ppb-rp.img,id=ppbrp0");
+        assert_eq!(a[5], "virtio-blk-pci,drive=ppbrp0,bus=ppbrp");
+        assert_eq!(a[7], "pci-bridge,id=ppbbr,chassis_nr=2");
+        assert_eq!(a[9], "if=none,format=raw,file=/run/ppb-br.img,id=ppbbr0");
+        assert_eq!(a[11], "virtio-blk-pci,drive=ppbbr0,bus=ppbbr,addr=1");
+    }
+
+    #[test]
+    fn ipmi_is_a_simulated_bmc_on_kcs() {
+        let a = ipmi_args(Path::new("/run/ipmi-sdr.bin"));
+        assert_eq!(a[1], "ipmi-bmc-sim,id=bmc0,sdrfile=/run/ipmi-sdr.bin");
+        assert_eq!(a[3], "isa-ipmi-kcs,bmc=bmc0");
+        // The record's length byte counts what follows the 5-byte header.
+        assert_eq!(usize::from(IPMI_SDRS[4]) + 5, IPMI_SDRS.len());
+        assert_eq!(IPMI_SDRS[31] & 0x1f, 9);
     }
 
     #[test]
@@ -1640,6 +2140,72 @@ mod tests {
         assert!(set(Path::new("/r"), &["--nic", "ne2k_pci"]).is_err());
         assert!(set(Path::new("/r"), &["--nic"]).is_err());
         assert!(set(Path::new("/r"), &["--nic", "e1000", "--vio-mq"]).is_err());
+    }
+
+    #[test]
+    fn tpm_is_swtpm_behind_a_q35_device() {
+        let sock = Path::new("target/smoke/smoke-tpm/swtpm.sock");
+        assert_eq!(
+            tpm_args("tpm-tis", sock),
+            [
+                "-chardev",
+                "socket,id=chrtpm,path=target/smoke/smoke-tpm/swtpm.sock",
+                "-tpmdev",
+                "emulator,id=tpm0,chardev=chrtpm",
+                "-device",
+                "tpm-tis,tpmdev=tpm0",
+            ]
+        );
+        let args = swtpm_args(Path::new("/r/tpm"), sock);
+        assert_eq!(&args[..2], ["socket", "--tpm2"]);
+        assert!(args.contains(&"dir=/r/tpm".to_string()));
+        assert!(
+            args.contains(
+                &"type=unixio,path=target/smoke/smoke-tpm/swtpm.sock,terminate".to_string()
+            )
+        );
+        assert!(args.contains(&"startup-clear".to_string()));
+        assert!(set(Path::new("/r"), &["smoke", "--tpm", "tpm20"]).is_err());
+        assert!(set(Path::new("/r"), &["smoke", "--tpm"]).is_err());
+        assert!(
+            set(
+                Path::new("/r"),
+                &["smoke", "--arch", "arm64", "--tpm", "tis"]
+            )
+            .is_err()
+        );
+        assert!(
+            set(
+                Path::new("/r"),
+                &["smoke2", "--arch", "amd64", "--tpm", "tis"]
+            )
+            .is_err()
+        );
+        assert!(
+            TPM_MODELS
+                .iter()
+                .any(|&(m, d)| m == "crb" && d == "tpm-crb")
+        );
+    }
+
+    #[test]
+    fn iommu_is_a_q35_device() {
+        assert_eq!(iommu_args_for(None), Vec::<String>::new());
+        assert_eq!(iommu_args_for(Some("amd-iommu")), ["-device", "amd-iommu"]);
+        assert!(set(Path::new("/r"), &["--iommu", "via"]).is_err());
+        assert!(set(Path::new("/r"), &["--iommu"]).is_err());
+        assert!(set(Path::new("/r"), &["--arch", "arm64", "--iommu", "intel"]).is_err());
+        assert!(set(Path::new("/r"), &["--arch", "amd64", "--iommu", "smmuv3"]).is_err());
+        assert!(
+            IOMMU_MODELS
+                .iter()
+                .any(|&(m, a, d)| m == "smmuv3" && a == Arch::Arm64 && d.is_empty())
+        );
+        assert!(
+            IOMMU_MODELS
+                .iter()
+                .any(|&(m, _, d)| m == "intel" && d == "intel-iommu")
+        );
     }
 
     #[test]

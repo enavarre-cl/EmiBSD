@@ -76,6 +76,14 @@ pub const BIOS_MAP_ACPI: u32 = 0x03;
 /// `BIOS_MAP_NVS`: ACPI NVS memory.
 pub const BIOS_MAP_NVS: u32 = 0x04;
 
+/// `BIOS32_MAKESIG(a, b, c, d)`: a four-character signature as the little-endian word it
+/// reads as.
+pub const fn bios32_makesig(a: u8, b: u8, c: u8, d: u8) -> u32 {
+    (a as u32) | ((b as u32) << 8) | ((c as u32) << 16) | ((d as u32) << 24)
+}
+/// `SMBIOS_SIGNATURE`: `_SM_`, the anchor of the SMBIOS 2 entry point.
+pub const SMBIOS_SIGNATURE: u32 = bios32_makesig(b'_', b'S', b'M', b'_');
+
 /// `BIOS_DEV`, `BIOS_DISKINFO`, `BIOS_CKSUMLEN`, `BIOS_MAXID`: the `CTL_BIOS` sysctl ids.
 pub const BIOS_DEV: i32 = 1;
 /// `BIOS_DISKINFO`.

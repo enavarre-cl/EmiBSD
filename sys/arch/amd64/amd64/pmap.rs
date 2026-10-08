@@ -111,8 +111,7 @@
 //!   their "not available" values until CPU identification (M4); PCID is off.
 //! - `pmap_steal_memory`'s `vm_physmem[]` bookkeeping is `uvm_page_physsteal`
 //!   (`uvm/uvm_page.rs`), shared with arm64 and the host double; the direct-map half is here.
-//! - `pagezero` (`locore.S`) is `ptr::write_bytes`; `pmap_flush_cache` waits for `cpu_info`
-//!   (`ci_cflushsz`, M5).
+//! - `pagezero` (`locore.S`) is `ptr::write_bytes`.
 //! - `pmap_virtual_space` is not in the C (amd64 has `PMAP_STEAL_MEMORY`); the trait needs one
 //!   and it reports the range `pmap_steal_memory` reports.
 //! - User pmaps (M6): `pmap_create`/`pmap_destroy`/`pmap_enter`/`pmap_remove` walk the
@@ -153,7 +152,7 @@ use crate::arch::amd64::include::cpu::{
     CpuInfo, MAXCPUS, cpu_busy_cycle, cpu_info_primary, cpu_is_running,
 };
 use crate::arch::amd64::include::cpufunc::{
-    invlpg, lcr3, rcr3, rdmsr, tlbflush, wbinvd_on_all_cpus,
+    clflush, invlpg, lcr3, mfence, rcr3, rdmsr, tlbflush, wbinvd_on_all_cpus,
 };
 #[cfg(feature = "multiprocessor")]
 use crate::arch::amd64::include::i82489var::{
@@ -639,6 +638,25 @@ fn pagezero(va: Vaddr) {
 /// `pmap_zero_page`: zero a page.
 pub fn pmap_zero_page(pg: &VmPage) {
     pagezero(pmap_map_direct(pg));
+}
+
+/// `pmap_flush_cache(addr, len)`: flush the cache for a virtual address range: `clflush`
+/// each line between two `mfence`s, or `wbinvd` on every CPU when the CPU has no `clflush`
+/// (`ci_cflushsz` 0).
+pub fn pmap_flush_cache(addr: Vaddr, len: Vsize) {
+    let sz = curcpu().ci_cflushsz.get() as usize;
+    if sz == 0 {
+        wbinvd_on_all_cpus();
+        return;
+    }
+
+    // all cpus that have clflush also have mfence.
+    mfence();
+    let start = addr.as_usize();
+    for i in (start..start + len.as_usize()).step_by(sz) {
+        clflush(i as u64);
+    }
+    mfence();
 }
 
 /// `pmap_copy_page`: copy a page.

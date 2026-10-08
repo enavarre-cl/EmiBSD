@@ -45,7 +45,7 @@
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
 //!   `wsdisplay` (12, M13), `wskbd` (67, M13), `wsmouse` (68, M13), `wsmux` (69, M13),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `cd` (6 block, 15 character), `vnd` (14 block,
-//!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `uhid` (62, M16b), `ugen` (63, M16b), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14) and `fuse` (92, feature `fuse`). `log` (7) waits for `subr_log.c`'s `logopen` ..
+//!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `uhid` (62, M16b), `ugen` (63, M16b), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14), `fuse` (92, feature `fuse`) and `ipmi` (96, M16e). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
 //! - The tables are [`Devsw`]s of `Cell`s so that a console driver can take over a slot at
 //!   boot (`machine::conf::cdevsw_set`); `nblkdev`/`nchrdev` are their lengths.
@@ -67,6 +67,7 @@ use crate::dev::cons::{cnclose, cnioctl, cnkqfilter, cnopen, cnread, cnstop, cnw
 use crate::dev::diskmap::{diskmapclose, diskmapioctl, diskmapopen, diskmapread, diskmapwrite};
 use crate::dev::gpio::gpio::{NGPIO, gpioclose, gpioioctl, gpioopen};
 use crate::dev::ic::com::{comclose, comioctl, comopen, comread, comstop, comtty, comwrite};
+use crate::dev::ipmi::{NIPMI, ipmiclose, ipmiioctl, ipmiopen};
 use crate::dev::rd::{NRD, rdclose, rddump, rdioctl, rdopen, rdread, rdsize, rdstrategy, rdwrite};
 use crate::dev::usb::ugen::{
     NUGEN, ugenclose, ugenioctl, ugenkqfilter, ugenopen, ugenread, ugenwrite,
@@ -110,9 +111,9 @@ use crate::scsi::sd::{NSD, sdclose, sddump, sdioctl, sdopen, sdread, sdsize, sds
 use crate::sys::conf::cdev_fuse_init;
 use crate::sys::conf::{
     Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_audio_init, cdev_bio_init, cdev_bpf_init,
-    cdev_cn_init, cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_gpio_init, cdev_mm_init,
-    cdev_mouse_init, cdev_notdef, cdev_pf_init, cdev_ptc_init, cdev_ptm_init, cdev_tty_init,
-    cdev_usb_init, cdev_usbdev_init, cdev_wsdisplay_init,
+    cdev_cn_init, cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_gpio_init, cdev_ipmi_init,
+    cdev_mm_init, cdev_mouse_init, cdev_notdef, cdev_pf_init, cdev_ptc_init, cdev_ptm_init,
+    cdev_tty_init, cdev_usb_init, cdev_usbdev_init, cdev_wsdisplay_init,
 };
 use crate::sys::param::NODEV;
 use crate::sys::types::{Dev, major, makedev, minor};
@@ -408,7 +409,7 @@ pub static CDEVSW: Devsw<Cdevsw, 102> = Devsw([
     cnotdef(), // 93: Ethernet network tunnel (tap: not ported)
     cnotdef(), // 94: virtio console (viocon: not ported)
     cnotdef(), // 95: pvbus(4) control interface (not ported)
-    cnotdef(), // 96: ipmi (not ported)
+    Cell::new(cdev_ipmi_init(NIPMI, ipmiopen, ipmiclose, ipmiioctl)), // 96: ipmi
     cnotdef(), // 97: was switch(4)
     cnotdef(), // 98: FIDO/U2F security keys (fido: not ported)
     cnotdef(), // 99: PPP Access Concentrator (pppac: not ported)

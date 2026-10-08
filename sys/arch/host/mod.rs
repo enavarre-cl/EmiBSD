@@ -70,6 +70,24 @@ pub mod include {
     }
 }
 
+/// amd64's `bios.c` with the `<machine/biosvar.h>` and `<machine/smbiosvar.h>` it reads,
+/// compiled for their host tests only and in the same module layout (`include/`, `amd64/`),
+/// so that bios.rs reaches its headers by the same relative paths: the SMBIOS structure-table
+/// walk and its strings are plain logic, and bios0's attach, which reaches the machine, is
+/// built for `target_os = "none"` only (docs/ARCHITECTURE.md, "Host tests of arch code").
+#[cfg(test)]
+#[path = "../amd64"]
+#[allow(dead_code)] // compiled for its tests: what reads the table on amd64 is not here
+mod amd64_bios {
+    pub mod include {
+        pub mod biosvar;
+        pub mod smbiosvar;
+    }
+    pub mod amd64 {
+        pub mod bios;
+    }
+}
+
 /// The host implementation of the machine interface.
 pub struct Machine;
 
@@ -970,6 +988,10 @@ impl PciMachdep for Machine {
     type PciIntrHandle = HostPciIntrHandle;
 
     const PCI_MSI_PER_BRIDGE: bool = false;
+    const PCI_IO_START: u64 = 0;
+    const PCI_IO_END: u64 = 0xffff_ffff;
+    const PCI_MEM_START: u64 = 0;
+    const PCI_MEM_END: u64 = 0xffff_ffff;
 
     fn pci_attach_hook(_parent: &Device, _self: &Device, _pba: &PcibusAttachArgs) {}
 
@@ -1001,6 +1023,10 @@ impl PciMachdep for Machine {
 
     fn pci_decompose_tag(_pc: HostPciChipset, tag: HostPcitag) -> (i32, i32, i32) {
         (tag.bus, tag.device, tag.function)
+    }
+
+    fn pcitag_node(_tag: HostPcitag) -> i32 {
+        0
     }
 
     fn pci_conf_size(_pc: HostPciChipset, _tag: HostPcitag) -> i32 {
@@ -1214,6 +1240,18 @@ impl Autoconf for Machine {
     fn cfroots() -> &'static [i16] {
         // SAFETY: as above.
         unsafe { HOST_IOCONF.read().1 }
+    }
+
+    /// No `ioconf.c` tables to edit on the host: the tests make their own.
+    unsafe fn ioconf_mut() -> crate::machine::autoconf::IoconfTables<'static> {
+        crate::machine::autoconf::IoconfTables {
+            cfdata: &mut [],
+            cfroots: &mut [],
+            pdevinit: &mut [],
+            pdevnames: &[],
+            locnames: &[],
+            locnamp: &[],
+        }
     }
 
     fn mainbus_cd() -> &'static Cfdriver {

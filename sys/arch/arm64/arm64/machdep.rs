@@ -898,6 +898,9 @@ pub unsafe fn getbootinfo(arg: usize) -> Result<BootInfo, &'static str> {
         dtb: NonNull::new(fdt.cast_mut()),
         memmap,
         efi_system_table: (system_table != 0).then(|| Paddr::new(system_table as usize)),
+        // efiboot's SMBIOS table is the kernel's smbios(4) business (efi0's smbios0, not
+        // ported): nothing reads it from here.
+        smbios: None,
         efi_memmap,
         modules: [None; MAX_MODULES],
         mp: bootarg_mp(),
@@ -1251,7 +1254,16 @@ pub fn cpu_startup() {
     curpcb.pcb_flags.set(0);
     curpcb.pcb_tf.set(PROC0TF.as_ptr());
 
-    // sched_blockcpu = CPUTYP_L: __HAVE_CPU_TOPOLOGY (M5-b2). boothowto & RB_CONFIG,
+    // sched_blockcpu = CPUTYP_L: __HAVE_CPU_TOPOLOGY (M5-b2).
+
+    if crate::kern::init_main::BOOTHOWTO.load(Ordering::Relaxed) & crate::sys::reboot::RB_CONFIG
+        != 0
+    {
+        #[cfg(feature = "boot_config")]
+        crate::kern::subr_userconf::user_config();
+        #[cfg(not(feature = "boot_config"))]
+        kprintf!("kernel does not support -c; continuing..\n");
+    }
     // HIBERNATE: not configured.
 }
 

@@ -199,6 +199,17 @@ module is `#[cfg(machine_pci_chipset)]`, and it reaches the machine items throug
 same cfg. Generic code still never names an architecture; the alternative, a dozen contract
 methods with fake amd64 and host implementations, would make the driver unlike its C and the
 fakes untestable anyway. The price: such a driver has no host tests, like arch code.
+M16e adds the x86 counterpart, cfg `machine_x86` (amd64 only) with `sys/machine/x86.rs`, for
+`dev/acpi/acpidmar.c` (the VT-d and AMD-Vi IOMMUs), which builds its own `struct pic` and
+`struct bus_dma_tag` over the `_bus_dma*` functions, walks page tables through the direct map
+with `pmap_flush_cache`, reads `bios_memmap` and builds an MSI `pci_intr_handle_t`. There the
+driver's items carry the cfg one by one, so the header part of the file (registers, table
+entries, source ids, the device scope parser) still compiles on every target and keeps its
+host tests. `dev/acpi/acpicpu_x86.c` (acpicpu(4), M16e) is written against it the same way: it
+sets the machine's `cpu_idle_cycle_fcn` and `cpu_suspend_cycle_fcn`, links itself into
+`struct cpu_info` (`ci_acpicpudev`, `ci_mwait`) and idles with `hlt`, `inb` or
+`monitor`/`mwait`; its `_CST`/`_PSS` parsing and its choice of an idle state are plain
+functions with host tests.
 
 ## Dependencies
 
@@ -1226,10 +1237,29 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   `lapic_calibrate_timer`) and mainbus maps the LAPIC at its architectural base (with ACPI,
   `acpimadt` does both from the MADT, M13). Adding a driver means its
   `cfattach`/`cfdriver` and one `Cfdata` row in each `ioconf.rs` that has it in GENERIC.
+- UKC, `boot -c` (M16e): `kern/subr_userconf.c` edits `ioconf.c`'s tables before
+  autoconfiguration, so they cannot be immutable statics. Each `ioconf.rs` keeps `CFDATA`,
+  `CFROOTS` and `PDEVINIT` in `StaticCell`s: `cpu_startup` (both archs, as the C's machdep.c)
+  calls `user_config` when `boothowto` has `RB_CONFIG`, which takes them once through
+  `machine::autoconf::ioconf_mut` before anything reads them; afterwards `cfdata()` hands out
+  shared slices as before. `cfdata[]` ends in `config(8)`'s eight free slots
+  (`Cfdata::free()`, whose `cf_attach` is `CFATTACH_NULL`, the C's NULL) for UKC's `add`, and
+  `machine::autoconf::ioconf_cfdata` cuts them off as the C's loops stop at a NULL
+  `cf_attach`. The tables also carry `LOCNAMES`, `LOCNAMP` (one run per locator attribute,
+  the compression `mkioconf.c`'s XXX asks for) and `PDEVNAMES`, and every entry its
+  `cf_locnames`; an entry with locators and `cf_locnames` 0 prints none of them in UKC (and
+  fails a `kassert!` under `diagnostic`). `cf_loc` and `cf_parents` stay `&'static` slices of
+  constants: UKC's `change` and `add` replace them with `malloc`ed copies instead of writing
+  into them. The option is the default cargo feature `boot_config` (`option BOOT_CONFIG`).
 - ACPI (M13, amd64): `acpi0 at bios0 at mainbus0`, as in GENERIC. bios0 (`bios.c`) gets the
   RSDP from Limine's RSDP request (`BootInfo::rsdp`, kept by `init_x86_64` as
   `BIOS_EFIINFO_CONFIG_ACPI`, the C's `bios_efiinfo->config_acpi`), so `acpi_probe` finds it
-  as on an EFI boot; bios.c's SMBIOS half is not ported yet. acpi0 copies the tables, loads
+  as on an EFI boot. Its SMBIOS half (M16e) takes the SMBIOS 2 entry point from Limine's
+  SMBIOS request (`BootInfo::smbios`, `bios_efiinfo->config_smbios`; after a boot by boot(8)
+  efiboot's `SMBIOS_TABLE_GUID` table), maps the structure table and sets `hw.vendor`,
+  `hw.product`, `hw.version` (`QEMU`, `Standard PC (Q35 + ICH9, 2009)`, `pc-q35-11.1` on
+  q35, as on OpenBSD 8.0 there); ipmi(4)'s mainbus probe reads its IPMI record (type 38)
+  with `smbios_find_table`. acpi0 copies the tables, loads
   the DSDT and the SSDTs into the AML interpreter at boot, and owns power: `boot(RB_HALT |
   RB_POWERDOWN)` enters S5 (`acpi_powerdown`), `cpu_reset` tries `cpuresetfn` (`acpi_reset`,
   the FADT's reset register) before the keyboard controller and the triple fault. acpi0's
@@ -1440,8 +1470,34 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   (`selftest=uart`, `selftest=clock`) unmask it themselves through `machine::cpu::intr_enable`
   (`intr_enable()`, new in the machine contract). The extents are absent
   there too, so BARs must be assigned by the firmware (EDK2 does). `virtio* at pci?` is
-  configured on arm64 as in GENERIC. Memory BARs are mapped by amd64's `bus_space.c` memory half (`x86_mem_add_mapping`:
+  configured on arm64 as in GENERIC. PCI-PCI bridges (M16e, `ppb.c`, both archs): with no
+  extents, a bridge needs its bus numbers and windows from the firmware too (EDK2 and OVMF
+  number QEMU's `pcie-root-port` and `pci-bridge`); `ppb_alloc_busrange` and
+  `ppb_alloc_resources` are ported over the extents they are given (`ParentExtents`), all
+  `None`. The bridge's four INTx handles reach the bus behind it as `pba_bridgeih`, a slice
+  of `Option`s: `None` is the C's unmapped handle (`line = -1` on amd64, `PCI_NONE` on arm64),
+  so generic code needs no arch encoding of failure. `PCITAG_NODE` (the FDT `bus-range`) and
+  the `PCI_IO_START`/`PCI_MEM_START` bounds are `machine::pci_machdep` items (0 and ppb.c's
+  defaults where the arch's header sets none). Memory BARs are mapped by amd64's `bus_space.c` memory half (`x86_mem_add_mapping`:
   `km_alloc(kv_any, kp_none)` and uncached `pmap_kenter_pa`, as the C does).
+- i2c and the SMBus controllers (M16e, `dev/i2c/`, `ichiic.c`, `piixpm.c`, amd64): the
+  `i2c_controller` is `I2cController`, a struct of `Cell<Option<fn>>` hooks taking the
+  controller's cookie (the softc is made zero-filled and filled in by the attach), `i2c_tag_t`
+  a `&'static` to it; `ic_exec`'s `(pointer, length)` pairs are slices. The scan's probe state
+  (`probe_ic`, `probe_addr`, `probe_val[]`, `skip_fc`: file statics in `i2c_scan.c`) is a
+  `Probe` passed down, which is what lets the host tests run the identification rules on fake
+  register files. Both controllers clear the transfer's buffer pointer when an exec call
+  returns, so a late interrupt after a timeout cannot write into a buffer that is gone. EDK2
+  leaves the ICH SMBus host controller disabled (a BIOS enables it), and `ichiic_attach` does
+  what the C does: it prints `SMBus disabled` and stops, as OpenBSD 8.0 does on the same
+  q35/OVMF machine (`ichiic0 at pci0 dev 31 function 3 "Intel 82801I SMBus" rev 0x02: SMBus
+  disabled`, `cargo xtask diff-openbsd probe`; the user's decision of 2026-10-08, after a
+  first port that enabled it). On `--machine pc` piixpm(4) finds its controller enabled and
+  runs the scan. QEMU's SPD EEPROMs are blank (the memory type, register 2, reads 0), so
+  `iic_probe_eeprom` names none and the scan prints nothing: `smoke-iic` checks the attach
+  lines and that no transfer fails. `--machine pc` (xtask, `hwopts.rs`) runs
+  i440fx's `pc` for piixpm(4), with the boot image on an `ich9-ahci` instead of the PIIX3 IDE
+  channel (EDK2 reads that one with programmed I/O, minutes for the boot files).
 - virtio (M7b): `dev/pv/virtio.c` and its headers are OpenBSD's, with both transports:
   `virtio_pci.c` (`virtio* at pci?`, amd64; QEMU's transitional virtio-net-pci attaches with
   the virtio 1.0 capabilities) and `virtio_mmio.c` (`virtio* at fdt?`, arm64; QEMU `virt`'s
@@ -1847,6 +1903,19 @@ Misc Device"`), and `-boot menu=on,splash-time=0` sets the boot manager's timeou
 `etc/boot-menu-wait`. ArmVirtQemu otherwise waits its platform default: about 5 s of every
 arm64 boot (firmware start to `BdsDxe: starting` went from 5.5 s to 0.5 s). OVMF's default is
 already 0, so amd64 boots gain nothing measurable there.
+
+### Host tests of arch code
+
+`sys/arch/amd64` and `sys/arch/arm64` are compiled for their bare targets only, so the tests
+in their files do not run under `just test`. Where an arch file holds plain logic worth
+testing that has no machine-independent home in OpenBSD, the host double compiles that file
+for its tests (M16e: amd64's `bios.c`, the SMBIOS structure-table walk and its strings, which
+OpenBSD writes again in arm64's `dev/smbios.c`): `sys/arch/host/mod.rs` has a `#[cfg(test)]`
+module whose `#[path]` is `../amd64`, holding the file and the self-contained headers it reads
+in their own layout (`include/biosvar.rs`, `include/smbiosvar.rs`, `amd64/bios.rs`), so the
+file reaches its headers by relative paths (`super::super::include`) in both builds. What
+reaches the machine (bios0's attach, its mappings, `bios_efiinfo`) is `#[cfg(target_os =
+"none")]` in the file. This adds no logic to the host double, which only names the files.
 
 ### Parallel smokes
 

@@ -44,6 +44,7 @@ pub mod kern_tc;
 pub mod kern_time;
 pub mod kern_timeout;
 pub mod kern_unveil;
+pub mod kern_watchdog;
 pub mod kern_xxx;
 #[cfg(feature = "alloc")]
 pub mod rust_alloc;
@@ -61,6 +62,8 @@ pub mod subr_pool;
 pub mod subr_prf;
 pub mod subr_prof;
 pub mod subr_tree;
+#[cfg(feature = "boot_config")]
+pub mod subr_userconf;
 pub mod subr_xxx;
 pub mod sys_futex;
 pub mod sys_generic;

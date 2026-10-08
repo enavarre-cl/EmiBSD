@@ -103,8 +103,8 @@
 //!   direct map is `locore0.S`'s 4 GB, memory above it reported, pmap_bootstrap's extension
 //!   not ported), relocates the EFI memory map to `first_avail`, and lists the CPUs from the
 //!   MADT (acpimadt.c is not ported). `BOOTARG_CONSDEV` sets the `com(4)` console variables
-//!   but `comconsiot` (consinit attaches in I/O space). `bios_diskinfo` is kept as its
-//!   record's place in `bootinfo[]`; `bootdev` is recorded (dkcsum.c is not ported, the root
+//!   but `comconsiot` (consinit attaches in I/O space). `bios_diskinfo` and `bios_memmap` are
+//!   kept as their records' places in `bootinfo[]` (under Limine both are empty); `bootdev` is recorded (dkcsum.c is not ported, the root
 //!   is found by the DUID). `map_tramps` and `pmap_prealloc_lowmem_ptps` run after a boot by
 //!   boot(8) only.
 //! - Under Limine, long mode, paging and the direct map are set up before `init_x86_64` runs, so the
@@ -132,8 +132,11 @@
 //! - `init_x86_64` keeps the bootloader's processors (`BootInfo::mp`) in `cpu.rs`'s
 //!   `BOOT_MP` (`MULTIPROCESSOR`), where the C's `acpimadt`/`mpbios` read the firmware's
 //!   tables during autoconfiguration (`mainbus_attach`).
-//! - `cpu_kick`/`cpu_unidle` always send `X86_IPI_NOP`: `cpu_init_mwait` is not ported, so
-//!   `cpu_mwait_size` is 0 and no CPU idles in `mwait`.
+//! - `cpu_idle_cycle_fcn` and `cpu_suspend_cycle_fcn` are `StaticCell`s written while cold
+//!   on the boot CPU (`cpu_init_mwait` from `cpu_attach`, `acpicpu_attach`), before any idle
+//!   loop runs: the application processors wait for `CPUF_GO` until
+//!   `cpu_boot_secondary_processors`, and the boot CPU does not idle during
+//!   autoconfiguration (M16e; until then `cpu_idle_cycle` called `cpu_idle_cycle_hlt`).
 //! - `init_x86_64` does `locore0.S`'s CPUID probe (`cpuid_level`, `cpu_vendor`, `cpu_id`,
 //!   `cpu_ebxfeature`, `cpu_ecxfeature`, `cpu_feature` with `CPUID_NXE`) before
 //!   `cpu_set_vendor`: there is no `locore0.S`. The meltdown and SEV probes are not there.
@@ -149,7 +152,9 @@
 //!   the CPU, which the C cannot have there, it is skipped).
 //! - `bios_efiinfo` (boot(8)'s `BOOTARG_EFIINFO`) is replaced by Limine: its `config_acpi`,
 //!   the RSDP's physical address, is `BIOS_EFIINFO_CONFIG_ACPI`, from Limine's RSDP request
-//!   (`BootInfo::rsdp`), for `bios_attach`. Its frame buffer fields (`fb_*`, M13: efifb(4))
+//!   (`BootInfo::rsdp`), for `bios_attach`; its `config_smbios`, the SMBIOS 2 entry point,
+//!   from Limine's SMBIOS request (`BootInfo::smbios`, the same `SMBIOS_TABLE_GUID` table
+//!   efiboot takes). Its frame buffer fields (`fb_*`, M13: efifb(4))
 //!   come from Limine's framebuffer request (`BootInfo::framebuffer`): [`bios_efiinfo`] is a
 //!   `bios_efiinfo_t` with them (and `config_acpi`, `system_table`) set when the machine
 //!   booted through UEFI, the C's non-NULL `bios_efiinfo`; the colour masks are the
@@ -281,6 +286,16 @@ use crate::machine::ExitStatus;
 /// `cpureset_delay`: milliseconds to wait before resetting, from the `CPURESET_DELAY` option
 /// (0 when not configured).
 pub static CPURESET_DELAY: AtomicI32 = AtomicI32::new(0);
+/// `cpu_idle_cycle_fcn`: how the idle loop waits: `cpu_idle_cycle_hlt`, `cpu.c`'s
+/// `cpu_idle_mwait_cycle` when the CPU has `mwait`, or acpicpu(4)'s `acpicpu_idle`. Written
+/// while cold (see the module's deviations).
+pub static CPU_IDLE_CYCLE_FCN: StaticCell<fn()> = StaticCell::new(cpu_idle_cycle_hlt);
+/// `cpu_suspend_cycle_fcn`: how a halted or suspended CPU waits (acpicpu(4)'s
+/// `acpicpu_suspend`), `None` for `hlt`. Written while cold, as `CPU_IDLE_CYCLE_FCN`.
+pub static CPU_SUSPEND_CYCLE_FCN: StaticCell<Option<fn()>> = StaticCell::new(None);
+/// `setperf_prio`: the priority of the `cpu_setperf` implementation installed (acpicpu's is
+/// 30), for concurrent handlers.
+pub static SETPERF_PRIO: AtomicI32 = AtomicI32::new(0);
 /// `lid_action`: what closing the lid does (`machdep.lidaction`).
 pub static LID_ACTION: AtomicI32 = AtomicI32::new(1);
 /// `pwr_action`: what the power button does: 0 nothing, 1 power down, 2 suspend
@@ -331,6 +346,9 @@ pub static BOOTINFO_SIZE: AtomicI32 = AtomicI32::new(BOOTARGC_MAX as i32);
 /// `bios_diskinfo`: boot(8)'s disks, as the range of their record in `bootinfo[]` (for
 /// `bios_getdiskinfo` and `dkcsum.c`, not ported).
 pub static BIOS_DISKINFO: StaticCell<Option<(usize, usize)>> = StaticCell::new(None);
+/// `bios_memmap`: boot(8)'s memory map, as the range of its record in `bootinfo[]` (for
+/// [`bios_memmap`]); `None` under Limine, which passes no boot arguments.
+pub static BIOS_MEMMAP: StaticCell<Option<(usize, usize)>> = StaticCell::new(None);
 /// `bios_cksumlen`: how many sectors boot(8) checksummed per disk.
 pub static BIOS_CKSUMLEN: AtomicU32 = AtomicU32::new(0);
 /// `bios_efiinfo`: the EFI tables, frame buffer and memory map boot(8) found, or under
@@ -442,6 +460,7 @@ pub unsafe fn init_x86_64(boot: &BootInfo) -> Result<(), &'static str> {
     if let Some(st) = boot.efi_system_table.filter(|_| !from_boot8) {
         let mut ei = BiosEfiinfo {
             config_acpi: BIOS_EFIINFO_CONFIG_ACPI.load(Ordering::Relaxed),
+            config_smbios: boot.smbios.map_or(0, |pa| pa.as_usize() as u64),
             system_table: st.as_usize() as u64,
             ..BiosEfiinfo::default()
         };
@@ -773,6 +792,22 @@ pub fn copyin32(uaddr: usize) -> Result<u32, Errno> {
     Ok(u32::from_ne_bytes(word))
 }
 
+/// `bios_memmap[]`: the entries of boot(8)'s memory map up to `BIOS_MAP_END`, as the C's
+/// array the kernel keeps pointing into `bootinfo[]` (`acpidmar(4)` walks it for reserved
+/// regions). Empty under Limine (the module's deviations).
+pub fn bios_memmap() -> impl Iterator<Item = BiosMemmap> {
+    // SAFETY: written once by `getbootinfo` on the boot CPU before anything runs; read only.
+    let range = unsafe { *BIOS_MEMMAP.get() };
+    // SAFETY: as above; `bootinfo[]` is only changed in place by `getbootinfo`.
+    let bootinfo: &'static [u8] = unsafe { &BOOTINFO.get().0 };
+    let arg = range.map_or(&[][..], |(start, end)| &bootinfo[start..end]);
+    arg.as_chunks::<{ size_of::<BiosMemmap>() }>()
+        .0
+        .iter()
+        .map_while(|c| bootarg_read::<BiosMemmap>(c.as_slice()))
+        .take_while(|bmp| bmp.r#type != BIOS_MAP_END)
+}
+
 /// Reads a boot argument of type `T` (a `#[repr(C, packed)]` structure of `biosvar.rs`) from
 /// the start of `arg`; `None` when the record is too short.
 fn bootarg_read<T: Copy>(arg: &[u8]) -> Option<T> {
@@ -840,7 +875,11 @@ pub unsafe fn getbootinfo(first_avail: usize) -> Result<BootInfo, &'static str> 
         let (start, end) = (q + BOOTARG32_HDR, q + ba_size as usize);
         let arg = &bootinfo[start..end];
         match ba_type {
-            BOOTARG_MEMMAP => memmap_arg = Some((start, end)),
+            BOOTARG_MEMMAP => {
+                memmap_arg = Some((start, end));
+                // SAFETY: the boot CPU alone, before anything reads it.
+                unsafe { BIOS_MEMMAP.write(Some((start, end))) };
+            }
             BOOTARG_DISKINFO => {
                 // SAFETY: the boot CPU alone, before anything reads it.
                 unsafe { BIOS_DISKINFO.write(Some((start, end))) };
@@ -971,6 +1010,10 @@ pub unsafe fn getbootinfo(first_avail: usize) -> Result<BootInfo, &'static str> 
         memmap,
         efi_system_table: efiinfo
             .map(|ei| ei.system_table as usize)
+            .filter(|&pa| pa != 0)
+            .map(Paddr::new),
+        smbios: efiinfo
+            .map(|ei| ei.config_smbios as usize)
             .filter(|&pa| pa != 0)
             .map(Paddr::new),
         efi_memmap,
@@ -1323,6 +1366,17 @@ pub fn cpu_startup() {
 
     bufinit();
 
+    // sched_blockcpu = CPUTYP_SMT | CPUTYP_L: __HAVE_CPU_TOPOLOGY (M5-b2).
+
+    if crate::kern::init_main::BOOTHOWTO.load(Ordering::Relaxed) & crate::sys::reboot::RB_CONFIG
+        != 0
+    {
+        #[cfg(feature = "boot_config")]
+        crate::kern::subr_userconf::user_config();
+        #[cfg(not(feature = "boot_config"))]
+        kprintf!("kernel does not support -c; continuing..\n");
+    }
+
     // cpu_boot_mode, the ISA DMA bounce pages, the microcode and TSX setup,
     // enter_shared_special_pages (the u-k maps): M4-b and M6.
 
@@ -1604,12 +1658,25 @@ pub fn cpu_kick(_ci: &CpuInfo) {
     #[cfg(feature = "multiprocessor")]
     // only need to kick other CPUs
     if !ptr::eq(_ci, curcpu()) {
-        // cpu_mwait_size > 0 (MWAIT_IN_IDLE / MWAIT_KEEP_IDLING): cpu_init_mwait is not
-        // ported, so there is no mwait and an IPI is needed.
-        crate::arch::amd64::amd64::ipi::x86_send_ipi(
-            _ci,
-            crate::arch::amd64::include::intrdefs::X86_IPI_NOP,
-        );
+        use crate::arch::amd64::amd64::cpu::CPU_MWAIT_SIZE;
+        use crate::arch::amd64::include::cpu::{MWAIT_IN_IDLE, MWAIT_KEEP_IDLING};
+        if CPU_MWAIT_SIZE.load(Ordering::Relaxed) > 0 {
+            // If not idling, then send an IPI, else just clear the "keep idling" bit.
+            if _ci.ci_mwait.load(Ordering::SeqCst) & MWAIT_IN_IDLE == 0 {
+                crate::arch::amd64::amd64::ipi::x86_send_ipi(
+                    _ci,
+                    crate::arch::amd64::include::intrdefs::X86_IPI_NOP,
+                );
+            } else {
+                _ci.ci_mwait.fetch_and(!MWAIT_KEEP_IDLING, Ordering::SeqCst);
+            }
+        } else {
+            // no mwait, so need an IPI
+            crate::arch::amd64::amd64::ipi::x86_send_ipi(
+                _ci,
+                crate::arch::amd64::include::intrdefs::X86_IPI_NOP,
+            );
+        }
     }
 }
 
@@ -1824,16 +1891,29 @@ pub fn clear_resched(ci: &CpuInfo) {
     ci.ci_want_resched.store(0, Ordering::SeqCst);
 }
 
-/// `cpu_unidle(ci)`: with `MULTIPROCESSOR` an IPI to wake another CPU's idle loop (no
-/// `mwait`: `cpu_init_mwait` is not ported, so `MWAIT_ONLY` is never set); on one CPU the
-/// idle loop sees the run queue itself.
+/// `cpu_unidle(ci)`: with `MULTIPROCESSOR`, wakes another CPU's idle loop: when the CPU
+/// idles in `mwait` only (`MWAIT_ONLY`), by clearing its "keep idling" bit, which the
+/// monitor sees; otherwise with an IPI. On one CPU the idle loop sees the run queue itself.
 pub fn cpu_unidle(_ci: &CpuInfo) {
     #[cfg(feature = "multiprocessor")]
-    if !ptr::eq(_ci, curcpu()) {
-        crate::arch::amd64::amd64::ipi::x86_send_ipi(
-            _ci,
-            crate::arch::amd64::include::intrdefs::X86_IPI_NOP,
-        );
+    {
+        use crate::arch::amd64::amd64::cpu::CPU_MWAIT_SIZE;
+        use crate::arch::amd64::include::cpu::{MWAIT_KEEP_IDLING, MWAIT_ONLY};
+        if CPU_MWAIT_SIZE.load(Ordering::Relaxed) > 0
+            && _ci.ci_mwait.load(Ordering::SeqCst) & MWAIT_ONLY != 0
+        {
+            // Just clear the "keep idling" bit; if it wasn't idling then we didn't need to
+            // do anything anyway.
+            _ci.ci_mwait.fetch_and(!MWAIT_KEEP_IDLING, Ordering::SeqCst);
+            return;
+        }
+
+        if !ptr::eq(_ci, curcpu()) {
+            crate::arch::amd64::amd64::ipi::x86_send_ipi(
+                _ci,
+                crate::arch::amd64::include::intrdefs::X86_IPI_NOP,
+            );
+        }
     }
 }
 
@@ -1844,10 +1924,12 @@ pub fn cpu_idle_cycle_hlt() {
     unsafe { asm!("sti", "hlt", options(nomem, nostack)) };
 }
 
-/// `cpu_idle_cycle()`: `(*cpu_idle_cycle_fcn)()`, the `hlt` loop until a driver (acpicpu)
-/// installs `mwait`.
+/// `cpu_idle_cycle()`: `(*cpu_idle_cycle_fcn)()`.
 pub fn cpu_idle_cycle() {
-    cpu_idle_cycle_hlt();
+    // SAFETY: written only while cold on the boot CPU, before any idle loop runs (see the
+    // module's deviations).
+    let f = unsafe { CPU_IDLE_CYCLE_FCN.read() };
+    f();
 }
 
 /// `setgate`: fills an interrupt or trap gate for `func` with `ist`, `type_`, `dpl` and the

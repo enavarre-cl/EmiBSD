@@ -85,6 +85,15 @@ pub trait PciMachdep {
     /// || defined(__amd64__)` there.
     const PCI_MSI_PER_BRIDGE: bool;
 
+    /// `PCI_IO_START`: where a bridge's I/O window may begin (`ppb.c` defaults it to 0).
+    const PCI_IO_START: u64;
+    /// `PCI_IO_END`: where it must end (`ppb.c`'s default: `0xffffffff`).
+    const PCI_IO_END: u64;
+    /// `PCI_MEM_START`: where a bridge's memory window may begin (`ppb.c`'s default: 0).
+    const PCI_MEM_START: u64;
+    /// `PCI_MEM_END`: where it must end (`ppb.c`'s default: `0xffffffff`).
+    const PCI_MEM_END: u64;
+
     /// `pci_attach_hook(parent, self, pba)`: the machine's look at a PCI bus being attached.
     fn pci_attach_hook(parent: &Device, self_: &Device, pba: &PcibusAttachArgs);
 
@@ -108,6 +117,10 @@ pub trait PciMachdep {
 
     /// `pci_decompose_tag(pc, tag, &bus, &device, &function)`.
     fn pci_decompose_tag(pc: Self::PciChipsetTag, tag: Self::Pcitag) -> (i32, i32, i32);
+
+    /// `PCITAG_NODE(tag)` (`__HAVE_FDT`): the device-tree node of the function, 0 when it has
+    /// none or the machine has no device tree.
+    fn pcitag_node(tag: Self::Pcitag) -> i32;
 
     /// `pci_conf_size(pc, tag)`: the size of the function's configuration space.
     fn pci_conf_size(pc: Self::PciChipsetTag, tag: Self::Pcitag) -> i32;
@@ -188,6 +201,15 @@ pub trait PciMachdep {
     unsafe fn pci_intr_disestablish(pc: Self::PciChipsetTag, cookie: NonNull<c_void>);
 }
 
+/// `PCI_IO_START` on the selected machine.
+pub const PCI_IO_START: u64 = <Machine as PciMachdep>::PCI_IO_START;
+/// `PCI_IO_END` on the selected machine.
+pub const PCI_IO_END: u64 = <Machine as PciMachdep>::PCI_IO_END;
+/// `PCI_MEM_START` on the selected machine.
+pub const PCI_MEM_START: u64 = <Machine as PciMachdep>::PCI_MEM_START;
+/// `PCI_MEM_END` on the selected machine.
+pub const PCI_MEM_END: u64 = <Machine as PciMachdep>::PCI_MEM_END;
+
 /// `pci_attach_hook` on the selected machine.
 pub fn pci_attach_hook(parent: &Device, self_: &Device, pba: &PcibusAttachArgs) {
     Machine::pci_attach_hook(parent, self_, pba)
@@ -216,6 +238,11 @@ pub fn pci_make_tag(pc: PciChipsetTag, bus: i32, device: i32, function: i32) -> 
 /// `pci_decompose_tag` on the selected machine: `(bus, device, function)`.
 pub fn pci_decompose_tag(pc: PciChipsetTag, tag: Pcitag) -> (i32, i32, i32) {
     Machine::pci_decompose_tag(pc, tag)
+}
+
+/// `PCITAG_NODE` on the selected machine.
+pub fn pcitag_node(tag: Pcitag) -> i32 {
+    Machine::pcitag_node(tag)
 }
 
 /// `pci_conf_size` on the selected machine.

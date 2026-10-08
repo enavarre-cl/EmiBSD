@@ -778,6 +778,11 @@ impl PciMachdep for Machine {
     type PciIntrHandle = include::pci_machdep::PciIntrHandle;
 
     const PCI_MSI_PER_BRIDGE: bool = true;
+    const PCI_IO_START: u64 = include::pci_machdep::PCI_IO_START;
+    const PCI_IO_END: u64 = include::pci_machdep::PCI_IO_END;
+    const PCI_MEM_START: u64 = include::pci_machdep::PCI_MEM_START;
+    /// `ppb.c`'s default: amd64's `pci_machdep.h` sets no `PCI_MEM_END`.
+    const PCI_MEM_END: u64 = 0xffff_ffff;
 
     fn pci_attach_hook(parent: &Device, self_: &Device, pba: &PcibusAttachArgs) {
         pci::pci_machdep::pci_attach_hook(parent, self_, pba)
@@ -801,6 +806,11 @@ impl PciMachdep for Machine {
 
     fn pci_decompose_tag(pc: Self::PciChipsetTag, tag: Self::Pcitag) -> (i32, i32, i32) {
         pci::pci_machdep::pci_decompose_tag(pc, tag)
+    }
+
+    /// No device tree on amd64 (`__HAVE_FDT` is not defined).
+    fn pcitag_node(_tag: Self::Pcitag) -> i32 {
+        0
     }
 
     fn pci_conf_size(pc: Self::PciChipsetTag, tag: Self::Pcitag) -> i32 {
@@ -1346,11 +1356,29 @@ impl crate::machine::fdt::Fdt for Machine {
 /// `autoconf.c` hook.
 impl crate::machine::autoconf::Autoconf for Machine {
     fn cfdata() -> &'static [crate::sys::device::Cfdata] {
-        &conf::ioconf::CFDATA
+        // SAFETY: `user_config`, the one writer (through `ioconf_mut`), runs in `cpu_startup`
+        // before anything reads the tables, and its borrow ends there.
+        crate::machine::autoconf::ioconf_cfdata(unsafe { conf::ioconf::CFDATA.get() })
     }
 
     fn cfroots() -> &'static [i16] {
-        &conf::ioconf::CFROOTS
+        // SAFETY: as for `cfdata`.
+        unsafe { conf::ioconf::CFROOTS.get() }
+    }
+
+    unsafe fn ioconf_mut() -> crate::machine::autoconf::IoconfTables<'static> {
+        // SAFETY: the caller's contract: no other reference to the tables exists yet, and
+        // this one is dropped before anybody else reads them.
+        unsafe {
+            crate::machine::autoconf::IoconfTables {
+                cfdata: conf::ioconf::CFDATA.get_mut(),
+                cfroots: conf::ioconf::CFROOTS.get_mut(),
+                pdevinit: conf::ioconf::PDEVINIT.get_mut(),
+                pdevnames: &conf::ioconf::PDEVNAMES,
+                locnames: &conf::ioconf::LOCNAMES,
+                locnamp: &conf::ioconf::LOCNAMP,
+            }
+        }
     }
 
     fn mainbus_cd() -> &'static crate::sys::device::Cfdriver {
@@ -1362,7 +1390,8 @@ impl crate::machine::autoconf::Autoconf for Machine {
     }
 
     fn pdevinit() -> &'static [crate::sys::device::Pdevinit] {
-        &conf::ioconf::PDEVINIT
+        // SAFETY: as for `cfdata`.
+        unsafe { conf::ioconf::PDEVINIT.get() }
     }
 
     fn nam2blk() -> &'static [crate::sys::device::Nam2blk] {

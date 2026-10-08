@@ -9,6 +9,18 @@ Four tiers. Every change lands with the tier it belongs to.
    `tests.rs`; `rust-kernel.md`, file layout). `cargo xtask ports check` rejects a `tests.rs`, a
    `mod tests` outside `<TESTS>` and a `<TESTS>` zone without one.
    Table-driven tests for C-compatible behaviour (`strlcpy` return values, `crc32` vectors).
+   The host tests share one process, and `setup_real_memory` (under
+   `uvm_pmemrange::tests::LOCK`) gives each test fresh kernel memory, leaking the old one. So a
+   global that test code touches and that holds kernel memory or pool items gets a
+   `*_test_reset` called from `setup_real_memory` (or from the subsystem's shared setup), which
+   forgets the old state without freeing it: freeing into, or growing from, an earlier test's
+   memory or a pool initialised again since crashes a later test, and a panic inside
+   `config_attach` or under a kernel lock then hangs the rest of the run (rule of
+   2026-10-08, after the M16e close found it). Known resets: `rn_test_reset` (radix),
+   `wsmux_test_reset` (the mux table), `autoconf_test_reset` (`autoconf_attdet`),
+   `pf_osfp_test_reset` (the fingerprint list), `kmemstats_test_reset`; in `setup_net`,
+   `pfi_test_reset`, `bpf_test_reset`, `enc_reset` and the interface lists; the server cache
+   by `nfsrv_initcache` in the nfs tests' setup.
 2. **Reference-backed tests**: `just test-ref`. Marked `#[ignore]`; they read `$OPENBSD_SRC`
    (set by the recipe to `reference/openbsd-src`) and cross-check constants against the C headers
    (`errno.h`, `param.h`, syscall numbers). They parse simple `#define` lines, nothing more.

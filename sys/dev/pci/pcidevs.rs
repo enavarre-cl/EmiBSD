@@ -52,9 +52,9 @@
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
 //!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c`, `ahci_pci.c`, `xhci_pci.c`, `auich.c`,
 //!   `azalia.c`, `azalia_codec.c`, `siop_pci_common.c`, `if_em.c`, `if_re_pci.c`,
-//!   `if_vmx.c`, `vga_pci.c`, `ehci_pci.c` and arm64's `acpipci.c`). The whole header, and
-//!   `pcidevs_data.h` for `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner
-//!   of `gen-syscalls` (`docs/ARCHITECTURE.md`).
+//!   `if_vmx.c`, `vga_pci.c`, `ppb.c`, `ehci_pci.c` and arm64's `acpipci.c`). The whole header, and `pcidevs_data.h` for
+//!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
+//!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
 
 /// `PCI_VENDOR_OPENBSD`: OpenBSD.
@@ -323,6 +323,158 @@ pub const PCI_PRODUCT_NVIDIA_MCP89_HDA_3: u32 = 0x0d96;
 pub const PCI_PRODUCT_NVIDIA_MCP89_HDA_4: u32 = 0x0d97;
 // ahci_pci.c
 
+/// `PCI_PRODUCT_INTEL_3400_SMB`: 3400 SMBus.
+pub const PCI_PRODUCT_INTEL_3400_SMB: u32 = 0x3b30;
+/// `PCI_PRODUCT_INTEL_6SERIES_SMB`: 6 Series SMBus.
+pub const PCI_PRODUCT_INTEL_6SERIES_SMB: u32 = 0x1c22;
+/// `PCI_PRODUCT_INTEL_6300ESB_SMB`: 6300ESB SMBus.
+pub const PCI_PRODUCT_INTEL_6300ESB_SMB: u32 = 0x25a4;
+/// `PCI_PRODUCT_INTEL_6321ESB_SMB`: 6321ESB SMBus.
+pub const PCI_PRODUCT_INTEL_6321ESB_SMB: u32 = 0x269b;
+/// `PCI_PRODUCT_INTEL_7SERIES_SMB`: 7 Series SMBus.
+pub const PCI_PRODUCT_INTEL_7SERIES_SMB: u32 = 0x1e22;
+/// `PCI_PRODUCT_INTEL_8SERIES_SMB`: 8 Series SMBus.
+pub const PCI_PRODUCT_INTEL_8SERIES_SMB: u32 = 0x8c22;
+/// `PCI_PRODUCT_INTEL_8SERIES_LP_SMB`: 8 Series SMBus.
+pub const PCI_PRODUCT_INTEL_8SERIES_LP_SMB: u32 = 0x9c22;
+/// `PCI_PRODUCT_INTEL_9SERIES_SMB`: 9 Series SMBus.
+pub const PCI_PRODUCT_INTEL_9SERIES_SMB: u32 = 0x8ca2;
+/// `PCI_PRODUCT_INTEL_9SERIES_LP_SMB`: 9 Series SMBus.
+pub const PCI_PRODUCT_INTEL_9SERIES_LP_SMB: u32 = 0x9ca2;
+/// `PCI_PRODUCT_INTEL_82801AA_SMB`: 82801AA SMBus.
+pub const PCI_PRODUCT_INTEL_82801AA_SMB: u32 = 0x2413;
+/// `PCI_PRODUCT_INTEL_82801AB_SMB`: 82801AB SMBus.
+pub const PCI_PRODUCT_INTEL_82801AB_SMB: u32 = 0x2423;
+/// `PCI_PRODUCT_INTEL_82801BA_SMB`: 82801BA SMBus.
+pub const PCI_PRODUCT_INTEL_82801BA_SMB: u32 = 0x2443;
+/// `PCI_PRODUCT_INTEL_82801CA_SMB`: 82801CA/CAM SMBus.
+pub const PCI_PRODUCT_INTEL_82801CA_SMB: u32 = 0x2483;
+/// `PCI_PRODUCT_INTEL_82801DB_SMB`: 82801DB SMBus.
+pub const PCI_PRODUCT_INTEL_82801DB_SMB: u32 = 0x24c3;
+/// `PCI_PRODUCT_INTEL_82801E_SMB`: 82801E SMBus.
+pub const PCI_PRODUCT_INTEL_82801E_SMB: u32 = 0x2453;
+/// `PCI_PRODUCT_INTEL_82801EB_SMB`: 82801EB/ER SMBus.
+pub const PCI_PRODUCT_INTEL_82801EB_SMB: u32 = 0x24d3;
+/// `PCI_PRODUCT_INTEL_82801FB_SMB`: 82801FB SMBus.
+pub const PCI_PRODUCT_INTEL_82801FB_SMB: u32 = 0x266a;
+/// `PCI_PRODUCT_INTEL_82801GB_SMB`: 82801GB SMBus.
+pub const PCI_PRODUCT_INTEL_82801GB_SMB: u32 = 0x27da;
+/// `PCI_PRODUCT_INTEL_82801H_SMB`: 82801H SMBus.
+pub const PCI_PRODUCT_INTEL_82801H_SMB: u32 = 0x283e;
+/// `PCI_PRODUCT_INTEL_82801I_SMB`: 82801I SMBus.
+pub const PCI_PRODUCT_INTEL_82801I_SMB: u32 = 0x2930;
+/// `PCI_PRODUCT_INTEL_82801JD_SMB`: 82801JD SMBus.
+pub const PCI_PRODUCT_INTEL_82801JD_SMB: u32 = 0x3a60;
+/// `PCI_PRODUCT_INTEL_82801JI_SMB`: 82801JI SMBus.
+pub const PCI_PRODUCT_INTEL_82801JI_SMB: u32 = 0x3a30;
+/// `PCI_PRODUCT_INTEL_APOLLOLAKE_SMB`: Apollo Lake SMBus.
+pub const PCI_PRODUCT_INTEL_APOLLOLAKE_SMB: u32 = 0x5ad4;
+/// `PCI_PRODUCT_INTEL_ATOMC2000_PCU_SMB`: Atom C2000 PCU SMBus.
+pub const PCI_PRODUCT_INTEL_ATOMC2000_PCU_SMB: u32 = 0x1f3c;
+/// `PCI_PRODUCT_INTEL_C3000_SMB_2`: C3000 SMBus.
+pub const PCI_PRODUCT_INTEL_C3000_SMB_2: u32 = 0x19df;
+/// `PCI_PRODUCT_INTEL_BAYTRAIL_SMB`: Bay Trail SMBus.
+pub const PCI_PRODUCT_INTEL_BAYTRAIL_SMB: u32 = 0x0f12;
+/// `PCI_PRODUCT_INTEL_BRASWELL_SMB`: Braswell SMBus.
+pub const PCI_PRODUCT_INTEL_BRASWELL_SMB: u32 = 0x2292;
+/// `PCI_PRODUCT_INTEL_C600_SMB`: C600 SMBus.
+pub const PCI_PRODUCT_INTEL_C600_SMB: u32 = 0x1d22;
+/// `PCI_PRODUCT_INTEL_C600_SMB_IDF_1`: C600 SMBus.
+pub const PCI_PRODUCT_INTEL_C600_SMB_IDF_1: u32 = 0x1d70;
+/// `PCI_PRODUCT_INTEL_C600_SMB_IDF_2`: C600 SMBus.
+pub const PCI_PRODUCT_INTEL_C600_SMB_IDF_2: u32 = 0x1d71;
+/// `PCI_PRODUCT_INTEL_C600_SMB_IDF_3`: C600 SMBus.
+pub const PCI_PRODUCT_INTEL_C600_SMB_IDF_3: u32 = 0x1d72;
+/// `PCI_PRODUCT_INTEL_C610_SMB`: C610 SMBus.
+pub const PCI_PRODUCT_INTEL_C610_SMB: u32 = 0x8d22;
+/// `PCI_PRODUCT_INTEL_C610_MS_SMB_1`: C610 MS SMBus.
+pub const PCI_PRODUCT_INTEL_C610_MS_SMB_1: u32 = 0x8d7d;
+/// `PCI_PRODUCT_INTEL_C610_MS_SMB_2`: C610 MS SMBus.
+pub const PCI_PRODUCT_INTEL_C610_MS_SMB_2: u32 = 0x8d7e;
+/// `PCI_PRODUCT_INTEL_C610_MS_SMB_3`: C610 MS SMBus.
+pub const PCI_PRODUCT_INTEL_C610_MS_SMB_3: u32 = 0x8d7f;
+/// `PCI_PRODUCT_INTEL_C620_SMB`: C620 SMBus.
+pub const PCI_PRODUCT_INTEL_C620_SMB: u32 = 0xa1a3;
+/// `PCI_PRODUCT_INTEL_C740_SMB`: C740 SMBus.
+pub const PCI_PRODUCT_INTEL_C740_SMB: u32 = 0x1bc9;
+/// `PCI_PRODUCT_INTEL_DH8900_SMB`: DH8900 SMBus.
+pub const PCI_PRODUCT_INTEL_DH8900_SMB: u32 = 0x2330;
+/// `PCI_PRODUCT_INTEL_EP80579_SMBUS`: EP80579 SMBus.
+pub const PCI_PRODUCT_INTEL_EP80579_SMBUS: u32 = 0x5032;
+/// `PCI_PRODUCT_INTEL_GLK_SMB`: Gemini Lake SMBus.
+pub const PCI_PRODUCT_INTEL_GLK_SMB: u32 = 0x31d4;
+/// `PCI_PRODUCT_INTEL_100SERIES_SMB`: 100 Series SMBus.
+pub const PCI_PRODUCT_INTEL_100SERIES_SMB: u32 = 0xa123;
+/// `PCI_PRODUCT_INTEL_100SERIES_LP_SMB`: 100 Series SMBus.
+pub const PCI_PRODUCT_INTEL_100SERIES_LP_SMB: u32 = 0x9d23;
+/// `PCI_PRODUCT_INTEL_200SERIES_SMB`: 200 Series SMBus.
+pub const PCI_PRODUCT_INTEL_200SERIES_SMB: u32 = 0xa2a3;
+/// `PCI_PRODUCT_INTEL_300SERIES_SMB`: 300 Series SMBus.
+pub const PCI_PRODUCT_INTEL_300SERIES_SMB: u32 = 0xa323;
+/// `PCI_PRODUCT_INTEL_300SERIES_U_SMB`: 300 Series SMBus.
+pub const PCI_PRODUCT_INTEL_300SERIES_U_SMB: u32 = 0x9da3;
+/// `PCI_PRODUCT_INTEL_400SERIES_SMB`: 400 Series SMBus.
+pub const PCI_PRODUCT_INTEL_400SERIES_SMB: u32 = 0x06a3;
+/// `PCI_PRODUCT_INTEL_400SERIES_LP_SMB`: 400 Series SMBus.
+pub const PCI_PRODUCT_INTEL_400SERIES_LP_SMB: u32 = 0x02a3;
+/// `PCI_PRODUCT_INTEL_400SERIES_V_SMB`: 400 Series SMBus.
+pub const PCI_PRODUCT_INTEL_400SERIES_V_SMB: u32 = 0xa3a3;
+/// `PCI_PRODUCT_INTEL_495SERIES_LP_SMB`: 495 Series SMBus.
+pub const PCI_PRODUCT_INTEL_495SERIES_LP_SMB: u32 = 0x34a3;
+/// `PCI_PRODUCT_INTEL_500SERIES_SMB`: 500 Series SMBus.
+pub const PCI_PRODUCT_INTEL_500SERIES_SMB: u32 = 0x43a3;
+/// `PCI_PRODUCT_INTEL_500SERIES_LP_SMB`: 500 Series SMBus.
+pub const PCI_PRODUCT_INTEL_500SERIES_LP_SMB: u32 = 0xa0a3;
+/// `PCI_PRODUCT_INTEL_600SERIES_SMB`: 600 Series SMBus.
+pub const PCI_PRODUCT_INTEL_600SERIES_SMB: u32 = 0x7aa3;
+/// `PCI_PRODUCT_INTEL_600SERIES_LP_SMB`: 600 Series SMBus.
+pub const PCI_PRODUCT_INTEL_600SERIES_LP_SMB: u32 = 0x51a3;
+/// `PCI_PRODUCT_INTEL_700SERIES_SMB`: 700 Series SMBus.
+pub const PCI_PRODUCT_INTEL_700SERIES_SMB: u32 = 0x7a23;
+/// `PCI_PRODUCT_INTEL_JSL_SMB`: Jasper Lake SMBus.
+pub const PCI_PRODUCT_INTEL_JSL_SMB: u32 = 0x4da3;
+/// `PCI_PRODUCT_INTEL_EHL_SMB`: Elkhart Lake SMBus.
+pub const PCI_PRODUCT_INTEL_EHL_SMB: u32 = 0x4b23;
+/// `PCI_PRODUCT_INTEL_ADL_N_SMB`: ADL-N SMBus.
+pub const PCI_PRODUCT_INTEL_ADL_N_SMB: u32 = 0x54a3;
+/// `PCI_PRODUCT_INTEL_MTL_SMB`: Core Ultra SMBus.
+pub const PCI_PRODUCT_INTEL_MTL_SMB: u32 = 0x7e22;
+/// `PCI_PRODUCT_INTEL_LNL_SMB`: Core Ultra SMBus.
+pub const PCI_PRODUCT_INTEL_LNL_SMB: u32 = 0xa822;
+/// `PCI_PRODUCT_INTEL_ARL_U_SMB`: Core Ultra SMBus.
+pub const PCI_PRODUCT_INTEL_ARL_U_SMB: u32 = 0x7722;
+/// `PCI_PRODUCT_AMD_HUDSON2_SMB`: Hudson-2 SMBus.
+pub const PCI_PRODUCT_AMD_HUDSON2_SMB: u32 = 0x780b;
+/// `PCI_PRODUCT_AMD_KERNCZ_SMB`: FCH SMBus.
+pub const PCI_PRODUCT_AMD_KERNCZ_SMB: u32 = 0x790b;
+/// `PCI_PRODUCT_ATI_SB200_SMB`: SB200 SMBus.
+pub const PCI_PRODUCT_ATI_SB200_SMB: u32 = 0x4353;
+/// `PCI_PRODUCT_ATI_SB300_SMB`: SB300 SMBus.
+pub const PCI_PRODUCT_ATI_SB300_SMB: u32 = 0x4363;
+/// `PCI_PRODUCT_ATI_SB400_SMB`: SB400 SMBus.
+pub const PCI_PRODUCT_ATI_SB400_SMB: u32 = 0x4372;
+/// `PCI_PRODUCT_ATI_SBX00_SMB`: SBx00 SMBus.
+pub const PCI_PRODUCT_ATI_SBX00_SMB: u32 = 0x4385;
+/// `PCI_PRODUCT_INTEL_82371AB_PM`: 82371AB Power.
+pub const PCI_PRODUCT_INTEL_82371AB_PM: u32 = 0x7113;
+/// `PCI_PRODUCT_INTEL_82440MX_PM`: 82440MX Power.
+pub const PCI_PRODUCT_INTEL_82440MX_PM: u32 = 0x719b;
+/// `PCI_VENDOR_RCC`: ServerWorks.
+pub const PCI_VENDOR_RCC: u32 = 0x1166;
+/// `PCI_PRODUCT_RCC_CSB5`: CSB5.
+pub const PCI_PRODUCT_RCC_CSB5: u32 = 0x0201;
+/// `PCI_PRODUCT_RCC_CSB6`: CSB6.
+pub const PCI_PRODUCT_RCC_CSB6: u32 = 0x0203;
+/// `PCI_PRODUCT_RCC_HT_1000`: HT-1000.
+pub const PCI_PRODUCT_RCC_HT_1000: u32 = 0x0205;
+/// `PCI_PRODUCT_RCC_HT_1100`: HT-1100.
+pub const PCI_PRODUCT_RCC_HT_1100: u32 = 0x0408;
+/// `PCI_PRODUCT_RCC_OSB4`: OSB4.
+pub const PCI_PRODUCT_RCC_OSB4: u32 = 0x0200;
+/// `PCI_VENDOR_SMSC`: SMSC.
+pub const PCI_VENDOR_SMSC: u32 = 0x1055;
+/// `PCI_PRODUCT_SMSC_VICTORY66_PM`: Victory66 Power.
+pub const PCI_PRODUCT_SMSC_VICTORY66_PM: u32 = 0x9463;
 /// `PCI_VENDOR_ATI`: ATI.
 pub const PCI_VENDOR_ATI: u32 = 0x1002;
 /// `PCI_VENDOR_VIATECH`: VIA.
@@ -1539,11 +1691,20 @@ pub const PCI_PRODUCT_INTEL_GMA600_8: u32 = 0x4108;
 pub const PCI_PRODUCT_INTEL_MDFLD_IGD_0: u32 = 0x0130;
 /// `PCI_PRODUCT_INTEL_GMA3600_0`: GMA 3600.
 pub const PCI_PRODUCT_INTEL_GMA3600_0: u32 = 0x0be0;
+/// `PCI_VENDOR_SUN`: Sun.
+pub const PCI_VENDOR_SUN: u32 = 0x108e;
+/// `PCI_PRODUCT_SUN_SIMBA`: Simba.
+pub const PCI_PRODUCT_SUN_SIMBA: u32 = 0x5000;
+/// `PCI_PRODUCT_INTEL_82801BAM_HPB`: 82801BAM Hub-to-PCI.
+pub const PCI_PRODUCT_INTEL_82801BAM_HPB: u32 = 0x2448;
+/// `PCI_PRODUCT_INTEL_82801BA_HPB`: 82801BA Hub-to-PCI.
+pub const PCI_PRODUCT_INTEL_82801BA_HPB: u32 = 0x244e;
+/// `PCI_PRODUCT_VIATECH_VT82C586_PWR`: VT82C586 Power.
+pub const PCI_PRODUCT_VIATECH_VT82C586_PWR: u32 = 0x3040;
 
-// ehci_pci.c (M16b): the ATI SB600/SB700 and VIA VT6202 quirks.
+// ehci_pci.c (M16b): the ATI SB600/SB700 and VIA VT6202 quirks (`PCI_PRODUCT_ATI_SBX00_SMB`
+// came with piixpm.c, M16e).
 
-/// `PCI_PRODUCT_ATI_SBX00_SMB`: SBx00 SMBus.
-pub const PCI_PRODUCT_ATI_SBX00_SMB: u32 = 0x4385;
 /// `PCI_PRODUCT_ATI_SB600_EHCI`: SB600 USB2.
 pub const PCI_PRODUCT_ATI_SB600_EHCI: u32 = 0x4386;
 /// `PCI_PRODUCT_ATI_SB700_EHCI`: SB700 USB2.
@@ -1563,6 +1724,20 @@ mod tests {
         let defs = crate::reftest::defines("sys/dev/pci/pcidevs.h");
         for (name, value) in [
             ("PCI_VENDOR_OPENBSD", PCI_VENDOR_OPENBSD),
+            ("PCI_VENDOR_SUN", PCI_VENDOR_SUN),
+            ("PCI_PRODUCT_SUN_SIMBA", PCI_PRODUCT_SUN_SIMBA),
+            (
+                "PCI_PRODUCT_INTEL_82801BAM_HPB",
+                PCI_PRODUCT_INTEL_82801BAM_HPB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801BA_HPB",
+                PCI_PRODUCT_INTEL_82801BA_HPB,
+            ),
+            (
+                "PCI_PRODUCT_VIATECH_VT82C586_PWR",
+                PCI_PRODUCT_VIATECH_VT82C586_PWR,
+            ),
             ("PCI_VENDOR_CIRRUS", PCI_VENDOR_CIRRUS),
             ("PCI_VENDOR_QUMRANET", PCI_VENDOR_QUMRANET),
             ("PCI_VENDOR_QUALCOMM", PCI_VENDOR_QUALCOMM),
@@ -2440,6 +2615,231 @@ mod tests {
             ("PCI_PRODUCT_XIRCOM_MODEM_56K", PCI_PRODUCT_XIRCOM_MODEM_56K),
             ("PCI_PRODUCT_XIRCOM_MODEM56", PCI_PRODUCT_XIRCOM_MODEM56),
             ("PCI_PRODUCT_XIRCOM_CBEM56G", PCI_PRODUCT_XIRCOM_CBEM56G),
+        ] {
+            assert_eq!(
+                crate::reftest::int(&defs, name),
+                Some(i64::from(value)),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "needs OPENBSD_SRC (just test-ref)"]
+    fn smbus_ids_match_the_generated_header() {
+        let defs = crate::reftest::defines("sys/dev/pci/pcidevs.h");
+        for (name, value) in [
+            ("PCI_PRODUCT_INTEL_3400_SMB", PCI_PRODUCT_INTEL_3400_SMB),
+            (
+                "PCI_PRODUCT_INTEL_6SERIES_SMB",
+                PCI_PRODUCT_INTEL_6SERIES_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_6300ESB_SMB",
+                PCI_PRODUCT_INTEL_6300ESB_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_6321ESB_SMB",
+                PCI_PRODUCT_INTEL_6321ESB_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_7SERIES_SMB",
+                PCI_PRODUCT_INTEL_7SERIES_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_8SERIES_SMB",
+                PCI_PRODUCT_INTEL_8SERIES_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_8SERIES_LP_SMB",
+                PCI_PRODUCT_INTEL_8SERIES_LP_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_9SERIES_SMB",
+                PCI_PRODUCT_INTEL_9SERIES_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_9SERIES_LP_SMB",
+                PCI_PRODUCT_INTEL_9SERIES_LP_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801AA_SMB",
+                PCI_PRODUCT_INTEL_82801AA_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801AB_SMB",
+                PCI_PRODUCT_INTEL_82801AB_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801BA_SMB",
+                PCI_PRODUCT_INTEL_82801BA_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801CA_SMB",
+                PCI_PRODUCT_INTEL_82801CA_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801DB_SMB",
+                PCI_PRODUCT_INTEL_82801DB_SMB,
+            ),
+            ("PCI_PRODUCT_INTEL_82801E_SMB", PCI_PRODUCT_INTEL_82801E_SMB),
+            (
+                "PCI_PRODUCT_INTEL_82801EB_SMB",
+                PCI_PRODUCT_INTEL_82801EB_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801FB_SMB",
+                PCI_PRODUCT_INTEL_82801FB_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801GB_SMB",
+                PCI_PRODUCT_INTEL_82801GB_SMB,
+            ),
+            ("PCI_PRODUCT_INTEL_82801H_SMB", PCI_PRODUCT_INTEL_82801H_SMB),
+            ("PCI_PRODUCT_INTEL_82801I_SMB", PCI_PRODUCT_INTEL_82801I_SMB),
+            (
+                "PCI_PRODUCT_INTEL_82801JD_SMB",
+                PCI_PRODUCT_INTEL_82801JD_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801JI_SMB",
+                PCI_PRODUCT_INTEL_82801JI_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_APOLLOLAKE_SMB",
+                PCI_PRODUCT_INTEL_APOLLOLAKE_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_ATOMC2000_PCU_SMB",
+                PCI_PRODUCT_INTEL_ATOMC2000_PCU_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_C3000_SMB_2",
+                PCI_PRODUCT_INTEL_C3000_SMB_2,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_BAYTRAIL_SMB",
+                PCI_PRODUCT_INTEL_BAYTRAIL_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_BRASWELL_SMB",
+                PCI_PRODUCT_INTEL_BRASWELL_SMB,
+            ),
+            ("PCI_PRODUCT_INTEL_C600_SMB", PCI_PRODUCT_INTEL_C600_SMB),
+            (
+                "PCI_PRODUCT_INTEL_C600_SMB_IDF_1",
+                PCI_PRODUCT_INTEL_C600_SMB_IDF_1,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_C600_SMB_IDF_2",
+                PCI_PRODUCT_INTEL_C600_SMB_IDF_2,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_C600_SMB_IDF_3",
+                PCI_PRODUCT_INTEL_C600_SMB_IDF_3,
+            ),
+            ("PCI_PRODUCT_INTEL_C610_SMB", PCI_PRODUCT_INTEL_C610_SMB),
+            (
+                "PCI_PRODUCT_INTEL_C610_MS_SMB_1",
+                PCI_PRODUCT_INTEL_C610_MS_SMB_1,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_C610_MS_SMB_2",
+                PCI_PRODUCT_INTEL_C610_MS_SMB_2,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_C610_MS_SMB_3",
+                PCI_PRODUCT_INTEL_C610_MS_SMB_3,
+            ),
+            ("PCI_PRODUCT_INTEL_C620_SMB", PCI_PRODUCT_INTEL_C620_SMB),
+            ("PCI_PRODUCT_INTEL_C740_SMB", PCI_PRODUCT_INTEL_C740_SMB),
+            ("PCI_PRODUCT_INTEL_DH8900_SMB", PCI_PRODUCT_INTEL_DH8900_SMB),
+            (
+                "PCI_PRODUCT_INTEL_EP80579_SMBUS",
+                PCI_PRODUCT_INTEL_EP80579_SMBUS,
+            ),
+            ("PCI_PRODUCT_INTEL_GLK_SMB", PCI_PRODUCT_INTEL_GLK_SMB),
+            (
+                "PCI_PRODUCT_INTEL_100SERIES_SMB",
+                PCI_PRODUCT_INTEL_100SERIES_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_100SERIES_LP_SMB",
+                PCI_PRODUCT_INTEL_100SERIES_LP_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_200SERIES_SMB",
+                PCI_PRODUCT_INTEL_200SERIES_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_300SERIES_SMB",
+                PCI_PRODUCT_INTEL_300SERIES_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_300SERIES_U_SMB",
+                PCI_PRODUCT_INTEL_300SERIES_U_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_400SERIES_SMB",
+                PCI_PRODUCT_INTEL_400SERIES_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_400SERIES_LP_SMB",
+                PCI_PRODUCT_INTEL_400SERIES_LP_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_400SERIES_V_SMB",
+                PCI_PRODUCT_INTEL_400SERIES_V_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_495SERIES_LP_SMB",
+                PCI_PRODUCT_INTEL_495SERIES_LP_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_500SERIES_SMB",
+                PCI_PRODUCT_INTEL_500SERIES_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_500SERIES_LP_SMB",
+                PCI_PRODUCT_INTEL_500SERIES_LP_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_600SERIES_SMB",
+                PCI_PRODUCT_INTEL_600SERIES_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_600SERIES_LP_SMB",
+                PCI_PRODUCT_INTEL_600SERIES_LP_SMB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_700SERIES_SMB",
+                PCI_PRODUCT_INTEL_700SERIES_SMB,
+            ),
+            ("PCI_PRODUCT_INTEL_JSL_SMB", PCI_PRODUCT_INTEL_JSL_SMB),
+            ("PCI_PRODUCT_INTEL_EHL_SMB", PCI_PRODUCT_INTEL_EHL_SMB),
+            ("PCI_PRODUCT_INTEL_ADL_N_SMB", PCI_PRODUCT_INTEL_ADL_N_SMB),
+            ("PCI_PRODUCT_INTEL_MTL_SMB", PCI_PRODUCT_INTEL_MTL_SMB),
+            ("PCI_PRODUCT_INTEL_LNL_SMB", PCI_PRODUCT_INTEL_LNL_SMB),
+            ("PCI_PRODUCT_INTEL_ARL_U_SMB", PCI_PRODUCT_INTEL_ARL_U_SMB),
+            ("PCI_PRODUCT_AMD_HUDSON2_SMB", PCI_PRODUCT_AMD_HUDSON2_SMB),
+            ("PCI_PRODUCT_AMD_KERNCZ_SMB", PCI_PRODUCT_AMD_KERNCZ_SMB),
+            ("PCI_PRODUCT_ATI_SB200_SMB", PCI_PRODUCT_ATI_SB200_SMB),
+            ("PCI_PRODUCT_ATI_SB300_SMB", PCI_PRODUCT_ATI_SB300_SMB),
+            ("PCI_PRODUCT_ATI_SB400_SMB", PCI_PRODUCT_ATI_SB400_SMB),
+            ("PCI_PRODUCT_ATI_SBX00_SMB", PCI_PRODUCT_ATI_SBX00_SMB),
+            ("PCI_PRODUCT_INTEL_82371AB_PM", PCI_PRODUCT_INTEL_82371AB_PM),
+            ("PCI_PRODUCT_INTEL_82440MX_PM", PCI_PRODUCT_INTEL_82440MX_PM),
+            ("PCI_VENDOR_RCC", PCI_VENDOR_RCC),
+            ("PCI_PRODUCT_RCC_CSB5", PCI_PRODUCT_RCC_CSB5),
+            ("PCI_PRODUCT_RCC_CSB6", PCI_PRODUCT_RCC_CSB6),
+            ("PCI_PRODUCT_RCC_HT_1000", PCI_PRODUCT_RCC_HT_1000),
+            ("PCI_PRODUCT_RCC_HT_1100", PCI_PRODUCT_RCC_HT_1100),
+            ("PCI_PRODUCT_RCC_OSB4", PCI_PRODUCT_RCC_OSB4),
+            ("PCI_VENDOR_SMSC", PCI_VENDOR_SMSC),
+            (
+                "PCI_PRODUCT_SMSC_VICTORY66_PM",
+                PCI_PRODUCT_SMSC_VICTORY66_PM,
+            ),
         ] {
             assert_eq!(
                 crate::reftest::int(&defs, name),

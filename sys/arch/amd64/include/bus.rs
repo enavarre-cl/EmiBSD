@@ -87,7 +87,8 @@
 //!   followed in the same allocation by `_dm_segcnt` segments and `_dm_npages` page pointers,
 //!   which [`BusDmamap::dm_segs`] and `_dm_pages` reach through pointers taken from the
 //!   allocation (a Rust struct cannot end in an unsized array of `Cell`s). The members the
-//!   load, unload and sync functions change after creation are `Cell`s.
+//!   load, unload and sync functions change after creation are `Cell`s, and so is
+//!   `_dm_cookie`, which a tag's own create function sets on the map the common one made.
 //! - `vaddr_t` members that hold `-1` for "none" (`_ds_va`, `_ds_bounce_va`) are `usize` with
 //!   `usize::MAX`.
 
@@ -267,8 +268,9 @@ pub struct BusDmamap {
     pub _dm_maxsegsz: BusSize,
     /// `_dm_boundary`: don't cross this.
     pub _dm_boundary: BusSize,
-    /// `_dm_cookie`: cookie for bus-specific functions.
-    pub _dm_cookie: *mut c_void,
+    /// `_dm_cookie`: cookie for bus-specific functions (a `Cell`: a tag's create function
+    /// sets it after `_bus_dmamap_create` handed the map out, acpidmar's `dmar_dmamap_create`).
+    pub _dm_cookie: Cell<*mut c_void>,
     /// `_dm_pages`: replacement pages (`_dm_npages` of them after the segments; null when
     /// the map does not bounce).
     pub _dm_pages: *mut *const VmPage,

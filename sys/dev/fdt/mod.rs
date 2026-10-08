@@ -8,8 +8,10 @@
 //! `files.arm64` lists: it is compiled where cfg `machine_pci_chipset` is set (`sys/build.rs`);
 //! `plgpio` is the PL061 GPIO controller (`plgpio* at fdt? early 1`) and `gpiokeys` the keys
 //! on GPIO pins (`gpiokeys* at fdt?`, M16f).
+//! `ipmi_fdt` is ipmi(4) on an `ipmi-kcs` node (`ipmi* at fdt?`, M16e).
 
 pub mod gpiokeys;
+pub mod ipmi_fdt;
 #[cfg(machine_pci_chipset)]
 pub mod pciecam;
 pub mod plgpio;

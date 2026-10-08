@@ -905,3 +905,69 @@ coordinator's (xtask options, the GPIO cluster, the power-key probe), smmu's and
 Effort: _(user)_
 
 Time: _(user)_
+
+## M16e Platform drivers
+
+Boundary: the commit that marks M16e met ("docs: M16e met"). Range `12e9da2..` that commit
+(12e9da2 is M16f's close on main, merged into the M16e branch at 5df827b; the M16e work itself
+started on 50a816b): 25 commits (with this one; `git rev-list --count --no-merges 12e9da2..`) besides 5 merges, `git diff --shortstat 12e9da2 HEAD`:
+87 files changed, 27174 insertions(+), 327 deletions(-) before this commit. Six subagents in harness worktrees, at most two at a time beside the long
+acpidmar one, merged into the coordinator's branch.
+
+- Went well: UKC first. GENERIC disables `acpidmar0` and both `ipmi0` lines, so instead of
+  enabling them in our ioconf (a deviation) subr_userconf.c was ported before anything else,
+  and every smoke of a disabled device boots `-c` and types `enable ...` at `UKC> ` as an
+  OpenBSD user would. It made `cfdata[]` mutable (a `StaticCell`, eight free slots, locator
+  names), which every later ioconf addition followed.
+- Went well: real OpenBSD 8.0 as the referee, a second time after M16f's power key. The
+  first ports had made ichiic enable an SMBus OVMF left disabled and ipmi_acpi take `_MIN`
+  where the C takes `_MAX`, so the smokes "worked". The user chose faithfulness ("A en
+  ambos"); a new `cargo xtask diff-openbsd ... probe` boots the OpenBSD snapshot with the
+  same QEMU devices and UKC, and it prints exactly what the faithful port prints:
+  `ichiic0 ... SMBus disabled`; `ipmi0 at acpi0 ... iobase 0xca3/2`, `sendcmd fails`,
+  `no SDRs IPMI disabled`, `ipmi at mainbus0 not configured`, the watchdog period still set.
+  The SMBIOS half of bios.c came with it (hw.vendor, hw.product, ipmi's mainbus probe).
+- Went well: swtpm per run. xtask starts one swtpm in the run directory, waits for its socket
+  and kills it on any exit (`Drop`), so parallel smokes never share a TPM; TPM2_SelfTest
+  through the driver's own command path is answered by swtpm (`rc 0x0`) on TIS and CRB.
+- Failed: the first two subagents were launched into hand-made `git worktree add` worktrees
+  and the harness blocked their writes; the main session relaunched them with
+  `isolation: "worktree"`. Rule kept in the handoff: subagents only in harness worktrees.
+- Failed: parallel ioconf work. Each agent appended at the same `cfdata[]` index (55 three
+  times), and the M16f merge renumbered arm64 again; every merge was a hand renumbering of
+  indices, `pv[]` arrays and `NCFDATA`. Two options named `--iommu` (M16e's `intel|amd`,
+  M16f's `smmuv3`) merged without a textual conflict into two statics of the same name;
+  they became one table of (model, arch, device).
+- Failed: the first final `just ci` hung in `just test` for 40 minutes (subr_autoconf, subr_disk
+  and unveil tests "running for over 60 seconds"). Not M16e's code: under CPU load (four test
+  binaries at once) 30 to 40% of full `cargo test -p bsd` runs failed on main 12e9da2 too.
+  The cause was global state that outlives `setup_real_memory`, which leaks each test's kernel
+  memory and hands the next a fresh block: wsmux's mux table was grown (freeing the old table)
+  inside wsmouse's attach, the panic unwound out of `config_attach` with `autoconf_attdet`
+  raised, and every later `config_detach` slept for ever; the nfs server cache, pf_osfp's
+  fingerprint list (items of pools `pfattach` initialises again; the panic left `pf_lock` held,
+  hence M16b's "enter write deadlock") and the dirhash key gave the other flakes (M16f's
+  "mbufpl: page header missing"). Fixed by `*_test_reset`s called from `setup_real_memory`
+  (2fd4e5f): 100 loaded runs, no failure; the rule went into `testing.md`. Open: one
+  `no idleproc set on CPU0` kernel panic in about 80 loaded runs (one host CPU and run queue
+  for every test thread).
+- Failed: diff-openbsd at first refused to run in the worktree (no `target/openbsd`; the
+  mirror had moved on, so the fetch's hashes no longer matched). Cloned from the main
+  checkout with `cp -Rc` (APFS clones, no extra space).
+- Idioms: `cfdata[]` in a `StaticCell` edited only by UKC before autoconfiguration (C_TO_RUST);
+  cfg `machine_x86` for the x86 machine items acpidmar names (`sys/machine/x86.rs`); bios.rs's
+  SMBIOS code host-tested through a `#[cfg(test)] #[path = "../amd64"]` module in
+  `arch/host` (ARCHITECTURE, "Host tests of arch code"), accepted for now and a candidate fix
+  for the known gap that arm64-only tests are never compiled on the host.
+- Rules: `testing.md` (tier 1: a test-touched global holding kernel memory or pool items gets a
+  `*_test_reset` from `setup_real_memory`); `xtask.md` (`--pci-bridges`, `--iommu`, `--machine pc`, `--ipmi`, `--tpm`,
+  `diff-openbsd ... probe`); docs/SETUP.md gains swtpm (installed with the user's OK on
+  2026-10-08).
+- Numbers: ported 990 → 1015 (`cargo xtask ports status`, totals
+  171 todo, 140 wip, 1015 ported, 37 skipped, 1363 entries; M16f closed at 188/141/990/37/1356); tests bsd 2289 → 2399 (`--list`, ignored included; `just test` passed); smoke recipes 53 → 59 (smoke-ukc, smoke-ppb,
+  smoke-dmar, smoke-iic, smoke-ipmi, smoke-tpm); unsafe-report kernel 7718 → 7951 blocks. `just jobs=3 ci` rc=0 in
+  21m09s (59 of 59 smokes in 15m08s); `just diff-openbsd` rc=0, 102 steps, 99 equal, 3 expected, 0 unexpected, on both archs.
+
+Effort: _(user)_
+
+Time: _(user)_

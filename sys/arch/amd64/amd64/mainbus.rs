@@ -42,10 +42,10 @@
 //! nothing has attached it yet, the paravirtual bus, PCI, ISA, `vmm` and the EFI framebuffer.
 //!
 //! ## Deviations
-//! - Only the `cpu`, `bios`, `pci`, `isa`, `ioapic` and `efifb` children exist
+//! - Only the `cpu`, `bios`, `ipmi` (M16e), `pci`, `isa`, `ioapic` and `efifb` children exist
 //!   (`sys/arch/amd64/conf/ioconf.rs`; `ioapic` attaches here through `acpimadt`); every
 //!   other child GENERIC configures is reported with `unported!` where the C would
-//!   probe or attach it: `ipmi_probe`, `pvbus_probe`,
+//!   probe or attach it: `pvbus_probe`,
 //!   `vmm_enabled`; so are `replacemds`, `setperf_setup` and `codepatch_disable`.
 //!   No PCI-ISA bridge driver (`pcib`) exists, so `isa0` attaches here, as the C does when
 //!   none has.
@@ -67,7 +67,7 @@
 //! - `pci0`'s attach arguments carry no extents (`sys/extent.h` is not ported, so
 //!   `pci_init_extents` is reported and `pciio_ex`, `pcimem_ex`, `pcibus_ex` are NULL).
 //! - `union mainbus_attach_args` has the members that exist (`mba_busname`, `mba_caa`,
-//!   `mba_pba`, `mba_iba`, `mba_eaa`, `mba_bios`); the I/O APICs' `struct apic_attach_args` is handed
+//!   `mba_pba`, `mba_iba`, `mba_eaa`, `mba_bios`, `mba_iaa`); the I/O APICs' `struct apic_attach_args` is handed
 //!   to `config_found` directly by `acpimadt` (`mp_attach_ioapic`); the others come with
 //!   their buses.
 //! - The `mp_*` globals (`NMPBIOS > 0 || NACPI > 0`) are atomics: `mp_busses`/`mp_nbusses`,
@@ -90,6 +90,8 @@ use crate::arch::amd64::include::cpuvar::{CPU_ROLE_SP, CpuAttachArgs};
 use crate::arch::amd64::include::efifbvar::EfifbAttachArgs;
 use crate::arch::amd64::include::i82489reg::LAPIC_BASE;
 use crate::arch::amd64::pci::pci_machdep::{PCI_BUS_DMA_TAG, pci_init_extents};
+use crate::dev::ipmi::ipmi_probe;
+use crate::dev::ipmivar::IpmiAttachArgs;
 use crate::dev::isa::isavar::IsabusAttachArgs;
 use crate::dev::pci::pci::PCI_NDOMAINS;
 use crate::dev::pci::pcivar::PcibusAttachArgs;
@@ -116,7 +118,9 @@ pub union MainbusAttachArgs {
     pub mba_eaa: EfifbAttachArgs,
     /// `mba_bios` (`NBIOS > 0`).
     pub mba_bios: ManuallyDrop<BiosAttachArgs>,
-    // aaa_caa (ioapic), mba_iaa (ipmi), mba_pvba, mba_eaa (efifb): with their buses.
+    /// `mba_iaa` (`NIPMI > 0`, M16e).
+    pub mba_iaa: IpmiAttachArgs,
+    // aaa_caa (ioapic), mba_pvba: with their buses.
 }
 
 /// `mainbus_ca`.
@@ -177,7 +181,20 @@ pub fn mainbus_attach(_parent: Option<&Device>, self_: &Device, _aux: *mut c_voi
     }
 
     // NIPMI > 0
-    let _ = unported!("ipmi_probe (ipmi0 at mainbus?)");
+    {
+        let mut mba = MainbusAttachArgs {
+            mba_iaa: IpmiAttachArgs {
+                iaa_name: b"ipmi",
+                iaa_iot: Some(X86_BUS_SPACE_IO),
+                iaa_memt: Some(X86_BUS_SPACE_MEM),
+                ..IpmiAttachArgs::zeroed()
+            },
+        };
+        // SAFETY: `mba_iaa` was just written.
+        if ipmi_probe(unsafe { &mut mba.mba_iaa }) != 0 {
+            let _ = config_found(self_, ptr::from_mut(&mut mba).cast(), Some(mainbus_print));
+        }
+    }
 
     if mp_busses().is_none() {
         // No acpimadt0 (or mpbios0): find the LAPIC as they would (see the module's

@@ -63,7 +63,7 @@
 //!   differs from the previous CPU" state goes with the feature printing, reported.
 //! - Reported as unported when `identifycpu` reaches them: the feature-flag printing
 //!   (`pcpuid*`, `print_perf_cpuid`, `pbitdiff`), leaf 7's `%ecx`/`%edx` and sub-leaf 2,
-//!   leaf 6 (`ci_feature_tpmflags`), leaf 0xd sub-leaf 1, the speculation-control and SEV
+//!   leaf 6's `%ecx` (leaf 6's `%eax` is `ci_feature_tpmflags`, M16e), leaf 0xd sub-leaf 1, the speculation-control and SEV
 //!   leaves, `replacemeltdown`, `x86_print_cacheinfo` (`cacheinfo.c`), `setperf_setup`
 //!   (`k8_powernow_init`, `k1x_init`, `est_init`), `has_rdrand`/`has_rdseed`,
 //!   `replacesmap`, the sensors (`intelcore_update_sensor`, `via_update_sensor`,
@@ -89,8 +89,8 @@ use crate::arch::amd64::include::cpufunc::{rdmsr, rdtsc, wrmsr};
 use crate::arch::amd64::include::specialreg::{
     CPUID_NXE, CPUID_TSC, CPUIDEAX_VERID, CPUIDECX_HV, CPUIDEDX_ITSC, MSR_BIOS_SIGN,
     MSR_PATCH_LEVEL, MSR_PERF_FIXED_CTR_CTRL, MSR_PERF_FIXED_CTR_FC_1, MSR_PERF_FIXED_CTR_FC_MASK,
-    MSR_PERF_FIXED_CTR1, MSR_PERF_GLOBAL_CTR1_EN, MSR_PERF_GLOBAL_CTRL, cpuid, cpuid_leaf,
-    cpuidedx_num_fc, msr_perf_fixed_ctr_fc,
+    MSR_PERF_FIXED_CTR1, MSR_PERF_GLOBAL_CTR1_EN, MSR_PERF_GLOBAL_CTRL, TPM_ARAT, cpuid,
+    cpuid_leaf, cpuidedx_num_fc, msr_perf_fixed_ctr_fc,
 };
 use crate::kern::kern_sysctl::CPU_CPUSPEED;
 use crate::kern::subr_prf::{Str, printf};
@@ -376,12 +376,22 @@ pub fn identifycpu(ci: &CpuInfo) {
         }
     }
 
-    // cpuid 6, 0xd, 0x80000008 and 0x8000001f and the feature flag lines (pcpuid) would
-    // print here, before the newline; reported after it.
+    if ci.ci_cpuid_level.get() >= 0x06 {
+        // %ecx (curcpu_tpm_ecxflags) only feeds the feature printing (pcpuid2), reported.
+        let (tpmflags, _, _, _) = cpuid(0x06);
+        ci.ci_feature_tpmflags.set(tpmflags);
+    }
+    if ci.ci_vendor.get() == CpuVendor::CPUV_AMD && ci.ci_family.get() >= 0x12 {
+        ci.ci_feature_tpmflags
+            .set(ci.ci_feature_tpmflags.get() | TPM_ARAT);
+    }
+
+    // cpuid 0xd, 0x80000008 and 0x8000001f and the feature flag lines (pcpuid) would print
+    // here, before the newline; reported after it.
     printf(format_args!("\n"));
 
     let _ = unported!(
-        "identifycpu: cpuid 6/0xd/0x80000008/0x8000001f, pcpuid, replacemeltdown, \
+        "identifycpu: cpuid 0xd/0x80000008/0x8000001f, pcpuid, replacemeltdown, \
          x86_print_cacheinfo, setperf_setup"
     );
 

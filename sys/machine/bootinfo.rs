@@ -278,6 +278,9 @@ pub struct BootInfo {
     /// Physical address of the UEFI system table, when the machine booted through UEFI (what
     /// OpenBSD's efiboot passes as `openbsd,uefi-system-table`).
     pub efi_system_table: Option<Paddr>,
+    /// Physical address of the SMBIOS 2 (`_SM_`) entry point, when the firmware has one (what
+    /// OpenBSD's amd64 efiboot passes as `bios_efiinfo->config_smbios`).
+    pub smbios: Option<Paddr>,
     /// The UEFI memory map, when the machine booted through UEFI.
     pub efi_memmap: Option<EfiMemmap>,
     /// The firmware's linear frame buffer, when there is a display.
@@ -414,6 +417,7 @@ mod tests {
             dtb: None,
             memmap: MemMap::new(),
             efi_system_table: None,
+            smbios: None,
             efi_memmap: None,
             framebuffer: None,
             modules: [None; MAX_MODULES],
@@ -468,6 +472,7 @@ mod tests {
             dtb: None,
             memmap: MemMap::new(),
             efi_system_table: None,
+            smbios: None,
             efi_memmap: None,
             framebuffer: None,
             modules: [None; MAX_MODULES],

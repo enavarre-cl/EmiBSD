@@ -120,7 +120,8 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-powerbtn smoke-mouse smoke-ugen smoke-ehci smoke-uaudio"
+    "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm " + \
+    "smoke-mouse smoke-ugen smoke-ehci smoke-uaudio"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -169,7 +170,9 @@ smoke-build: build-up (build-amd64 "--features qemu,multiprocessor") (build-arm6
 # configured` before; its `_OSC` answer follows the name) through which pci0 attaches with
 # MSI enabled, and every device interrupt goes through the I/O APIC or MSI(-X); the virtio
 # devices take one MSI-X vector per queue (`virtio0: msix per-VQ`, where they printed
-# `irq N` through the 8259 before), as OpenBSD/amd64 on QEMU does.
+# `irq N` through the 8259 before), as OpenBSD/amd64 on QEMU does. Since M16e bios0 reads the
+# SMBIOS tables (bios.c) and prints what OpenBSD 8.0 prints on q35/OVMF: the revision, a bare
+# type 0 line (OVMF's BIOS strings lie within 64 bytes of the table's end) and the system.
 smoke-boot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor") build-init-amd64 build-init-arm64
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --ramdisk none --expect-ramdisk \
         --expect "bsd: booted on amd64" --expect "The Regents of the University of California" \
@@ -178,7 +181,8 @@ smoke-boot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featu
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
         --expect "selftest: buffer cache ok" --expect "selftest: pager map ok" \
         --expect "selftest: bus_dma ok" --expect "mainbus0 at root" \
-        --expect "bios0 at mainbus0" --expect "acpi0 at bios0: ACPI 3.0" \
+        --expect "bios0 at mainbus0: SMBIOS rev. 2.8 @ 0x" \
+        --expect "bios0: QEMU Standard PC (Q35 + ICH9, 2009)" --expect "acpi0 at bios0: ACPI 3.0" \
         --expect "acpi0: sleep states S3 S4 S5" --expect "acpi0: tables DSDT FACP APIC HPET MCFG" \
         --expect "acpitimer0 at acpi0: 3579545 Hz, 24 bits" --expect "acpihpet0 at acpi0: 100000000 Hz" \
         --expect "acpimadt0 at acpi0 addr 0xfee00000: PC-AT compat" \
@@ -1864,13 +1868,16 @@ rtc_steps := "--send-after 'RETURN for sh:' --send '\\n' " + \
 # acpihpet0 and the TSC's calibration line (`tsc: calibrated against acpihpet0: <N> Hz`, or,
 # when every round is disturbed, the failure line: the TSC then keeps quality -1000, as in
 # OpenBSD, and acpihpet0 is the timecounter). `sysctl kern.timecounter` is printed. Run it
-# while the host is busy (`just smoke` does) to see the load case. Part of `smoke`.
+# while the host is busy (`just smoke` does) to see the load case. M16e: amd64 also expects
+# acpicpu0 (acpicpu(4), dev/acpi/acpicpu_x86.c): QEMU's CPUs are ACPI0007 devices with no _CST
+# or _PSS, so each keeps the C1 `hlt` fallback, and every CPU's idle loop runs acpicpu_idle
+# (the 45 s sleep is mostly idle time). Part of `smoke`.
 smoke-clock: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-clock: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
         --expect "acpitimer0 at acpi0: 3579545 Hz, 24 bits" --expect "acpihpet0 at acpi0: 100000000 Hz" \
-        --expect "tsc: calibrat" {{clock_steps}}
+        --expect "tsc: calibrat" --expect "acpicpu0 at acpi0: C1(@1 halt!)" {{clock_steps}}
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
         {{clock_steps}}
 
@@ -2377,6 +2384,187 @@ uaudio_check := "--expect-ramdisk --until-seen --audio usb --expect-tone " + aud
     "--expect 'uaudio0: class v1, full-speed, sync, channels: 2 play, 0 rec, 3 ctls' " + \
     "--expect 'audio0 at uaudio0' --expect 'name=USB Audio' " + \
     "--expect 'outputs.dac=240,240' --expect 'outputs.dac_mute=off'"
+# M16e: UKC (`boot -c`, kern/subr_userconf.c), both archs. The kernel boots with `-c`
+# (RB_CONFIG), so cpu_startup stops at the `UKC>` prompt before autoconfiguration; the session
+# finds vio(4)'s cfdata entry, disables it and quits. It starts with an empty line, as
+# smoke-ddb does: QEMU's PL011 with its FIFO off (pluartcnattach, as in C) takes a whole burst
+# of input into its one-byte holding register before the first poll, so the first line sent
+# reads back as its last byte repeated. The boot goes on to `login:` without
+# vio0 (its attach line never appears, `--reject`), and `ifconfig vio0` after logging in
+# finds no such interface. Part of `smoke`.
+ukc_check := "--cmdline '-c' --expect-ramdisk --until-seen " + \
+    "--send-after 'UKC> ' --send '\\n' " + \
+    "--send-after 'UKC> ' --send 'find vio\\n' --send-after 'UKC> ' --send 'disable vio\\n' " + \
+    "--send-after 'UKC> ' --send 'quit\\n' " + disk_login + " " + \
+    "--send-after '# ' --send 'ifconfig vio0 || echo ukc-$((40+2))\\n' " + \
+    "--expect 'User Kernel Config' --expect 'vio* disabled' --expect 'Continuing...' " + \
+    "--expect 'rc: multi-user' --expect 'ukc-42' --reject 'vio0 at virtio'"
+
+smoke-ukc: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-ukc: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{ukc_check}} \
+        --expect '  4 vio* at virtio* flags 0x0'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{ukc_check}} \
+        --expect '  4 vio* at virtio*|virtio* flags 0x0'
+
+# M16e: ppb(4), both archs. `--pci-bridges` (hwopts.rs) puts a virtio-blk disk behind a PCI
+# Express root port (`pcie-root-port`, QEMU's 1b36:000c) and another in slot 1 of a
+# conventional `pci-bridge` (1b36:0001), both on the root bus; the firmware numbers their
+# secondary buses. ppb0 and ppb1 attach with `pci1` and `pci2` behind them (the root port has
+# a slot, so its hot-plug interrupt is established: INTx on amd64, where QEMU's root port has
+# MSI-X but no MSI; `irq` on arm64's pciecam), and vioblk(4) attaches on each. The session
+# labels both disks, makes a file system on each, writes a file and reads it back from a
+# read-only mount. The disks are sd1 and sd2 on amd64 (sd0 is the persistent disk at pci0)
+# and sd2 and sd3 on arm64 (the virtio-mmio disks come first). Part of `smoke`.
+ppb_io_head := "--pci-bridges --expect-ramdisk --until-seen " + disk_login + " " + \
+    "--send-after '# ' --send 'for d in "
+ppb_io_tail := "; do fdisk -iy -f /dev/r${d}c $d >/dev/null && disklabel -w -A $d && " + \
+    "newfs ${d}a >/dev/null 2>&1 && mount /dev/${d}a /mnt && echo ppb-$d-$((40+2)) >/mnt/f && " + \
+    "umount /mnt && mount -r /dev/${d}a /mnt && cat /mnt/f && umount /mnt; done\\n' " + \
+    "--expect 'pci1 at ppb0 bus 1' --expect 'pci2 at ppb1 bus 2' " + \
+    "--reject 'not configured by system firmware'"
+
+smoke-ppb: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-ppb: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd \
+        {{ppb_io_head}}sd1 sd2{{ppb_io_tail}} \
+        --expect 'ppb0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x000c rev 0x00: apic 0 int 20' \
+        --expect 'virtio2 at pci1 dev 0 function 0 vendor 0x1af4 product 0x1042 rev 0x01' \
+        --expect 'ppb1 at pci0 dev 5 function 0 vendor 0x1b36 product 0x0001 rev 0x00' \
+        --expect 'virtio3 at pci2 dev 1 function 0 vendor 0x1af4 product 0x1001 rev 0x00' \
+        --expect 'sd1 at scsibus1 targ 0 lun 0' --expect 'sd2 at scsibus2 targ 0 lun 0' \
+        --expect 'ppb-sd1-42' --expect 'ppb-sd2-42'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd \
+        {{ppb_io_head}}sd2 sd3{{ppb_io_tail}} \
+        --expect 'ppb0 at pci0 dev 1 function 0 vendor 0x1b36 product 0x000c rev 0x00: irq' \
+        --expect 'virtio32 at pci1 dev 0 function 0 vendor 0x1af4 product 0x1042 rev 0x01' \
+        --expect 'ppb1 at pci0 dev 2 function 0 vendor 0x1b36 product 0x0001 rev 0x00' \
+        --expect 'virtio33 at pci2 dev 1 function 0 vendor 0x1af4 product 0x1001 rev 0x00' \
+        --expect 'sd2 at scsibus2 targ 0 lun 0' --expect 'sd3 at scsibus3 targ 0 lun 0' \
+        --expect 'ppb-sd2-42' --expect 'ppb-sd3-42'
+
+# M16e: acpidmar(4), amd64 only (GENERIC has `acpidmar0 at acpi? disable`, arm64 none). The
+# kernel boots with `-c`, and at `UKC> ` acpidmar is enabled the OpenBSD way (`enable
+# acpidmar`, `quit`). QEMU's q35 then has a DMA remapping unit (`--iommu`, hwopts.rs): first
+# intel-iommu (VT-d: acpidmar0 takes the DMAR table, maps its DRHD, pre-creates a domain for
+# each device of its scope, maps the ISA bridge's first 16 MB 1:1 and turns translation on at
+# the first DMA load), then amd-iommu with dma-remap=on (AMD-Vi: the IVRS table, the unit's own
+# PCI MSI, the shared device table). The root is the NVMe disk of `smoke-nvme`, made afresh
+# for each run; every PCI device, the NVMe controller and the virtio devices (iommu_platform)
+# included, does its DMA through I/O virtual addresses the IOMMU translates, so the mount, a
+# file written and read back and 8 MB through the file system prove the remapping. Part of
+# `smoke`.
+dmar_check := "--ramdisk none --expect-ramdisk --nvme nvme-amd64.img " + \
+    "--cmdline 'bootduid=" + nvme_duid + " -c' --until-seen " + \
+    "--send-after 'UKC> ' --send 'enable acpidmar\\n' --send-after 'UKC> ' --send 'quit\\n' " + \
+    disk_login + " " + \
+    "--send-after '# ' --send 'mount\\n' " + \
+    "--send-after '# ' --send 'echo dmar-$((40+2)) >/dmar.txt && cat /dmar.txt\\n' " + \
+    "--send-after '# ' --send 'dd if=/dev/zero of=/big bs=64k count=128 && dd if=/big of=/dev/null bs=64k && rm /big\\n' " + \
+    "--expect 'User Kernel Config' --expect 'acpidmar0 enabled' --expect 'Continuing...' " + \
+    "--expect 'dmar: 0000:00:1f.0 mapping ISA' " + \
+    "--expect 'nvme0: QEMU NVMe Ctrl, firmware ' " + \
+    "--expect 'root on sd0a (" + nvme_duid + ".a) swap on sd0b dump on sd0b' " + \
+    "--expect 'rc: multi-user' --expect '/dev/sd0a on / type ffs (local)' " + \
+    "--expect 'dmar-42' --expect '8388608 bytes transferred' " + \
+    "--reject 'IOMMU Error' --reject 'iommu init failed' --reject 'no domain' " + \
+    "--reject 'mount -uw / failed'"
+
+smoke-dmar: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-dmar: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask nvme-root --arch amd64 --duid {{nvme_duid}}
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --iommu intel {{dmar_check}} \
+        --expect 'acpidmar0 at acpi0: hardware width: 48, intr_remap:1 x2apic_opt_out:0' \
+        --expect 'DRHD: segment:0000 base:00000000fed90000 flags:00' \
+        --expect '0000:00:03.0 iommu:1 did:fffc' --expect '  map: 0000:00:1f.0 iommu:1 did:fffa' \
+        --expect 'nvme0 at pci0 dev 3 function 0 vendor 0x1b36 product 0x0010 rev 0x02: msix, NVMe 1.4'
+    cargo xtask nvme-root --arch amd64 --duid {{nvme_duid}}
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --iommu amd {{dmar_check}} \
+        --expect 'acpidmar0 at acpi0: AMD iommu1 at 0xfed80000' --expect 'amd iommu intr: 0x' \
+        --expect 'vendor 0x1022 product 0x1419 (class system subclass IOMMU, rev 0x00) at pci0 dev 2 function 0 not configured' \
+        --expect 'nvme0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x0010 rev 0x02: msix, NVMe 1.4'
+
+# M16e: the iic(4) bus and its scan, amd64 only (arm64's GENERIC has no SMBus controller). Two
+# runs. On q35, ichiic(4) matches the ICH9 SMBus (00:1f.3), whose host controller EDK2 leaves
+# disabled (a BIOS enables it): the attach prints `SMBus disabled` and stops, as the C does and
+# as OpenBSD 8.0 does on the same machine (`cargo xtask diff-openbsd probe`: 'ichiic0 at pci0
+# dev 31 function 3 "Intel 82801I SMBus" rev 0x02: SMBus disabled'), so no iic0 there. On
+# `--machine pc` (hwopts.rs; i440fx, the boot image on an ich9-ahci), piixpm(4) attaches to the
+# PIIX4 power management function (00:01.3), interrupt 9 (the SCI), and iic0 below it, whose
+# scan gets an acknowledgement from the eight SPD EEPROMs QEMU puts on the SMBus (0x50 to
+# 0x57); QEMU's are blank (register 2, the memory type, reads 0), so iic_probe_eeprom names
+# none and, as in OpenBSD, nothing is printed for them; nothing else answers. A timeout or a
+# failed abort of a transfer would print a line (`exec: op`, `abort failed`) and fails the run.
+# Part of `smoke`.
+smoke-iic: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-iic: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        {{disk_login}} --send-after '# ' --send 'echo iic-$((40+2))\n' \
+        --reject 'iic0 at ichiic0' \
+        --expect 'ichiic0 at pci0 dev 31 function 3 vendor 0x8086 product 0x2930 rev 0x02: SMBus disabled' \
+        --expect 'iic-42'
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --machine pc --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        {{disk_login}} --send-after '# ' --send 'echo iic-$((40+2))\n' \
+        --reject 'SMBus disabled' --reject 'abort failed' --reject ': exec: op' \
+        --expect 'piixpm0 at pci0 dev 1 function 3 vendor 0x8086 product 0x7113 rev 0x03: apic 0 int 9' \
+        --expect 'iic0 at piixpm0' --expect 'iic-42'
+
+# M16e: ipmi(4), amd64 (aarch64 QEMU has no IPMI device). `--ipmi` (hwopts.rs) adds QEMU's
+# simulated BMC behind a KCS interface (`isa-ipmi-kcs`), which QEMU's DSDT describes as an
+# `IPI0001` device and its SMBIOS as an IPMI device information record (type 38). GENERIC has
+# `ipmi0 at acpi? disable` and `ipmi0 at mainbus? disable`, so the kernel boots with `-c` and
+# UKC enables both, as an OpenBSD user would. The run checks that EmiBSD does what OpenBSD 8.0
+# does on the same machine (`cargo xtask diff-openbsd --ipmi --ukc 'enable ipmi' probe`):
+# ipmi0 attaches at acpi0 (bios0's acpi0 comes before mainbus's ipmi probe) at `_CRS`'s
+# `_MAX`, 0xca3, where QEMU's range `IO(Decode16, 0xca2, 0xca3, 1, 2)` puts the data
+# register, so every command fails and the sensor thread gives up ("no SDRs IPMI disabled":
+# no hw.sensors.ipmi0); mainbus's probe finds the SMBIOS record (bios.c, which also sets
+# hw.vendor and hw.product), but the one ipmi0 is taken ("ipmi at mainbus0 not configured"). `kern.watchdog.period=30` is still accepted
+# (ipmi_watchdog's commands fail, it says "watchdog enabled"), as there. The KCS, SDR and
+# watchdog logic itself is checked by ipmi.rs's host tests on a simulated BMC. Part of `smoke`.
+ipmi_check := "--ipmi --cmdline '-c' --expect-ramdisk --until-seen " + \
+    "--send-after 'UKC> ' --send '\\n' " + \
+    "--send-after 'UKC> ' --send 'enable ipmi\\n' --send-after 'UKC> ' --send 'quit\\n' " + \
+    disk_login + " --send-after '# ' --send 'sysctl hw.vendor hw.product; sysctl hw.sensors.ipmi0; " + \
+    "sysctl kern.watchdog.period=30 && sysctl kern.watchdog && echo ipmi-$((40+2))\\n' " + \
+    "--expect 'ipmi0 enabled' " + \
+    "--expect 'ipmi0 at acpi0: version 2.0 interface KCS iobase 0xca3/2 spacing 1' " + \
+    "--expect 'ipmi at mainbus0 not configured' " + \
+    "--expect 'hw.vendor=QEMU' --expect 'hw.product=Standard PC (Q35 + ICH9, 2009)' " + \
+    "--expect 'ipmi0: get header fails' --expect 'ipmi0: no SDRs IPMI disabled' " + \
+    "--expect 'sysctl: hw.sensors.ipmi0: sensor device not found: ipmi0' " + \
+    "--expect 'ipmi0: watchdog enabled' --expect 'kern.watchdog.period: 0 -> 30' " + \
+    "--expect 'kern.watchdog.period=30' --expect 'ipmi-42' " + \
+    "--reject 'hw.sensors.ipmi0.temp0'"
+
+smoke-ipmi: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-ipmi: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{ipmi_check}}
+
+# M16e: tpm(4), amd64 only (arm64's GENERIC has no tpm). `--tpm tis|crb` (hwopts.rs) starts a
+# swtpm of the run's own (docs/SETUP.md) and puts QEMU's tpm-tis, then tpm-crb, on q35 with it
+# as the backend: a MSFT0101 device at 0xfed40000 and a TPM2 table naming the interface. tpm0
+# attaches through the TIS FIFO, then through the Command Response Buffer (the C never reads
+# TPM_ID there, hence device 0). `selftest=tpm` (kern/selftest.rs) then sends TPM2_SelfTest
+# through the driver's own write and read functions, the path tpm_suspend uses, and prints the
+# response header: rc 0x0 comes from swtpm (QEMU answers TPM_RC_FAILURE when its backend fails).
+# swtpm is stopped after each run (`pgrep swtpm` finds none). Part of `smoke`.
+tpm_check := "--cmdline 'selftest=tpm' --expect-ramdisk --until-seen " + \
+    "--expect 'selftest: tpm: tpm0: TPM2_SelfTest answered 10 bytes, rc 0x0' " + \
+    "--reject 'TPM2_SelfTest failed' --reject 'tpm0: command failed' --reject 'not enabled'"
+
+smoke-tpm: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-tpm: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --tpm tis {{tpm_check}} \
+        --expect 'tpm0 at acpi0 TPM_ 2.0 (TIS) addr 0xfed40000/0x5000, device 0x00011014 rev 0x1'
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --tpm crb {{tpm_check}} \
+        --expect 'tpm0 at acpi0 TPM_ 2.0 (CRB) addr 0xfed40000/0x1000, device 0x00000000 rev 0x0'
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
