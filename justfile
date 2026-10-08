@@ -102,7 +102,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
     "smoke-powerbtn"
@@ -1421,6 +1421,55 @@ smoke-ahci: (build-amd64 "--features qemu,multiprocessor") build-init-amd64 (bui
         --expect "m13-ahci-42" --expect "8388608 bytes transferred" \
         --expect "524288 bytes transferred" --expect "4194304 bytes transferred" \
         --expect "m13-ahci-raw-42" --expect "/ahci0" --reject "mount -uw / failed"
+
+# M16f: smmu(4). arm64 only. `virt,iommu=smmuv3` (`--iommu smmuv3`, hwopts.rs) puts QEMU's
+# SMMUv3 in front of the PCIe bus; its device-tree node attaches smmu0 at mainbus0 before
+# pciecam, and pciecam's `iommu-map` hands every PCI function the DMA tag of its stream's
+# domain. The NVMe root disk of `smoke-nvme` (its own image, `smmu-arm64.img`) is mounted
+# through it: with the SMMU enabled, DMA that bypasses the stream's domain aborts (checked
+# once by handing the PCI functions their untranslated tags: nvme0 could not even identify
+# and smmu0 printed `smmu0: event 0x800000010 ...` for stream 8), so a root mounted
+# from nvme0, a file written and read back and raw dd through the namespace show the NVMe
+# DMA (queues, PRP lists, data, and the MSI-X doorbell loaded into the function's tag) going
+# through the SMMU's page tables; `--reject 'smmu0: '` fails the run on any event, global
+# error or command queue error. The second boot is `virt,acpi=on` with the SMMUv3 in the
+# IORT: at the pin smmu_acpi matches only SMMUv2 nodes, so no smmu attaches, the SMMU stays
+# disabled (bypass) and the virtio PCI disk must still work. Part of `smoke`.
+smmu_duid := "534d4d55524f4f54"
+
+smoke-smmu: (build-arm64 "--features qemu,multiprocessor") build-init-arm64 efiboot-arm64
+    @test -f target/userland/arm64/ramdisk.ffs -a -x target/userland/arm64/host/bin/makefs || \
+        { echo "smoke-smmu: no ramdisk image or makefs; run just userland first"; exit 1; }
+    cargo xtask nvme-root --arch arm64 --duid {{smmu_duid}} --out smmu-arm64.img --root-dev sd2a
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --expect-ramdisk \
+        --iommu smmuv3 --nvme smmu-arm64.img --cmdline "bootduid={{smmu_duid}}" --until-seen \
+        {{disk_login}} \
+        --send-after '# ' --send 'mount\n' \
+        --send-after '# ' --send 'echo m16f-smmu-$((40+2)) >/m16f.txt && cat /m16f.txt\n' \
+        --send-after '# ' --send 'dd if=/dev/zero of=/dev/rsd2c bs=64k seek=1010 count=8 && dd if=/dev/rsd2c of=/dev/null bs=64k count=64\n' \
+        --send-after '# ' --send 'echo m16f-raw-$((40+2)) | dd of=/dev/rsd2c bs=512 seek=130000 conv=sync 2>/dev/null; dd if=/dev/rsd2c bs=512 skip=130000 count=1 2>/dev/null\n' \
+        --send-after '# ' --send 'vmstat -i\n' \
+        --expect "smmu0 at mainbus0" \
+        --expect "nvme0 at pci0 dev 1 function 0 vendor 0x1b36 product 0x0010 rev 0x02: msix, NVMe 1.4" \
+        --expect "scsibus2 at nvme0: 257 targets, initiator 0" \
+        --expect "sd2 at scsibus2 targ 1 lun 0: <NVMe, QEMU NVMe Ctrl, " \
+        --expect "root on sd2a ({{smmu_duid}}.a) swap on sd2b dump on sd2b" \
+        --expect "rc: multi-user" --expect "/dev/sd2a on / type ffs (local)" \
+        --expect "m16f-smmu-42" --expect "524288 bytes transferred" \
+        --expect "4194304 bytes transferred" --expect "m16f-raw-42" --expect "/nvme0" \
+        --reject "smmu0: " --reject "mount -uw / failed"
+    cargo xtask efiboot-disk --arch arm64 --efi target/efiboot/arm64/BOOTAA64.EFI --kernel target/{{arm64}}/debug/bsd --root-dev sd0a
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --acpi --iommu smmuv3 --until-seen \
+        --send-after 'boot> ' --send 'boot\n' \
+        {{disk_login}} \
+        --send-after '# ' --send 'mount\n' \
+        --send-after '/ type ffs' --send 'echo m16f-acpi-$((40+2)) >/m16f.txt && cat /m16f.txt\n' \
+        --expect "acpi0: tables DSDT FACP APIC PPTT GTDT MCFG SPCR DBG2 IORT" \
+        --expect "acpiiort0 at acpi0" --expect "acpipci0 at acpi0 PCI0" \
+        --expect "sd0 at scsibus0 targ 0 lun 0: <VirtIO, Block Device, >" \
+        --expect "root on sd0a (454649424f4f5430.a) swap on sd0b dump on sd0b" \
+        --expect "rc: multi-user" --expect "/dev/sd0a on / type ffs (local)" \
+        --expect "m16f-acpi-42" --reject "smmu0"
 
 # M13: siop(4) on QEMU's LSI 53C895A (`--lsi`, `tools/xtask/src/hwopts.rs`: the adapter
 # after every other device, a fresh zeroed 64 MiB `scsi-hd` at target 0 and, with

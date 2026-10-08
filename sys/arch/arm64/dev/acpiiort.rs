@@ -49,8 +49,9 @@
 //!
 //! The table is read where acpi0 copied it (`q_table`), in bounds: [`iort_read`] reads a
 //! node, a mapping or a node's data by offset, and gives `None` past the table where the C
-//! would read past it. `smmu* at acpiiort?` (`smmu_acpi.c`) is not ported, so no SMMU
-//! registers and every map hands the tag back, as on a machine without one (QEMU `virt`).
+//! would read past it. `smmu* at acpiiort?` (`smmu_acpi.rs`, M16f) registers the SMMUv2
+//! nodes it matches; at the pin it matches no SMMUv3 node, so on QEMU `virt` every map hands
+//! the tag back.
 //!
 //! ## Deviations
 //! - The `SIMPLEQ_FOREACH` over `acpi_softc->sc_tables` looking for `IORT_SIG` is
