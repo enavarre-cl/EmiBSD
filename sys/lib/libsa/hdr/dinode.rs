@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<ufs/ufs/dinode.h>` for libsa: the FFS1 and FFS2 on-disk inodes.
 
 use super::types::Ufsino;
@@ -115,3 +116,4 @@ pub struct Ufs2Dinode {
 
 const _: () = assert!(core::mem::size_of::<Ufs1Dinode>() == 128);
 const _: () = assert!(core::mem::size_of::<Ufs2Dinode>() == 256);
+/* </CODE> */

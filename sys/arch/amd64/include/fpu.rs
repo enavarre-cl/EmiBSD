@@ -1,6 +1,7 @@
 /*	$OpenBSD: fpu.h,v 1.20 2024/04/14 09:59:04 kettenis Exp $	*/
 /*	$NetBSD: fpu.h,v 1.1 2003/04/26 18:39:40 fvdl Exp $	*/
 
+/* <CODE> */
 //! amd64 `<machine/fpu.h>`: the floating-point/"extended state" save area.
 //!
 //! Upstream: sys/arch/amd64/include/fpu.h @ 3ce1f3f79392
@@ -189,3 +190,4 @@ const _: () = {
     assert!(core::mem::size_of::<XstateHdr>() == 64);
     assert!(core::mem::align_of::<Savefpu>() == 64);
 };
+/* </CODE> */

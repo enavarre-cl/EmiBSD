@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! BOOTAA64.EFI's first bytes and first instructions: the PE32+ header the firmware reads
 //! and `_start`, which clears the bss, relocates the image and calls `efi_main`
 //! (`start.S`).
@@ -47,3 +48,4 @@
 use core::arch::global_asm;
 
 global_asm!(include_str!("start.S"));
+/* </CODE> */

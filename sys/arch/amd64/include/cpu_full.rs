@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/cpu_full.h>`: the layout of the full per-CPU information.
 //!
 //! Upstream: sys/arch/amd64/include/cpu_full.h @ 3ce1f3f79392
@@ -99,3 +100,4 @@ const _: () = {
     assert!((core::mem::offset_of!(CpuInfoFull, cif_cpu) + CI_PAGEALIGN).is_multiple_of(PAGE_SIZE));
     assert!(size_of::<CpuInfoFull>().is_multiple_of(PAGE_SIZE));
 };
+/* </CODE> */

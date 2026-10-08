@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Directory operations: `ufs_lookup` (convert a component of a pathname into a locked
 //! vnode, and find where a new entry would go), and the routines that check, add, remove and
 //! rewrite directory entries (`ufs_direnter`, `ufs_dirremove`, `ufs_dirrewrite`), test a
@@ -1059,3 +1060,4 @@ pub fn ufs_checkpath(source: &Inode, target: &Inode, cred: *const Ucred) -> Resu
     }
     error
 }
+/* </CODE> */

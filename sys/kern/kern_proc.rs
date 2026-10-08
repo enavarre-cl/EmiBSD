@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The process lists and hash tables: `kern/kern_proc.c`.
 //!
 //! Upstream: sys/kern/kern_proc.c @ 3ce1f3f79392
@@ -611,3 +612,4 @@ fn orphanpg(pg: &Pgrp) {
 }
 
 // proc_printit, db_kill_cmd, db_stop_cmd, db_show_all_procs: the real ddb. pgrpdump: DEBUG.
+/* </CODE> */

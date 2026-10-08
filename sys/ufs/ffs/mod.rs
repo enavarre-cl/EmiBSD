@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The fast file system: OpenBSD `sys/ufs/ffs/`.
 //!
 //! Headers (types): `fs`, `ffs_extern`. Files (functions): `ffs_alloc`, `ffs_balloc`,
@@ -13,3 +14,4 @@ pub mod ffs_tables;
 pub mod ffs_vfsops;
 pub mod ffs_vnops;
 pub mod fs;
+/* </CODE> */

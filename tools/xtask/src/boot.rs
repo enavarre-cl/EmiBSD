@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Boot images and QEMU: `xtask image`, `xtask qemu`, `xtask smoke`.
 //!
 //! The image is a raw disk with one MBR partition holding a FAT file system: Limine's UEFI
@@ -1033,7 +1034,9 @@ pub(crate) fn slurp_into(mut r: impl Read, into: &Mutex<Vec<u8>>) {
         }
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1141,3 +1144,4 @@ mod tests {
         assert!(s[..446].iter().all(|&b| b == 0));
     }
 }
+/* </TESTS> */

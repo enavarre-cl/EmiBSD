@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The ARM generic interrupt controller, version 2: `arch/arm64/dev/ampintc.c`. This driver
 //! implements the interrupt controller as specified in DDI0407E_cortex_a9_mpcore_r2p0_trm
 //! with the IHI0048A_gic_architecture_spec_v1_0 underlying specification.
@@ -1323,3 +1324,4 @@ pub fn ampintc_ipi_count() -> u64 {
 pub fn ampintc_attached() -> bool {
     ATTACHED.load(Ordering::Relaxed)
 }
+/* </CODE> */

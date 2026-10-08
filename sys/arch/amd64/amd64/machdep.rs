@@ -66,6 +66,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 machine-dependent setup and shutdown: `arch/amd64/amd64/machdep.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/machdep.c @ 3ce1f3f79392
@@ -2111,3 +2112,4 @@ pub fn cpu_sysctl(
         _ => sysctl_bounded_arr(&CPUCTL_VARS, name, oldp, oldlenp, newp, newlen),
     }
 }
+/* </CODE> */

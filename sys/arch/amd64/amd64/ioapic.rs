@@ -65,6 +65,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The I/O APIC (Intel 82093AA): `arch/amd64/amd64/ioapic.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/ioapic.c @ 3ce1f3f79392
@@ -602,3 +603,4 @@ pub fn ioapic_dump() {
         }
     }
 }
+/* </CODE> */

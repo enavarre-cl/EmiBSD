@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The `DLT_USBPCAP` capture headers `usb_tap` prepends: `<dev/usb/usbpcap.h>`.
 //!
 //! Upstream: sys/dev/usb/usbpcap.h @ 3ce1f3f79392
@@ -138,7 +139,9 @@ const _: () = {
     assert!(size_of::<UsbpcapIsoHdr>() == 27 + 12 + 12);
     assert!(size_of::<UsbpcapIsoHdrFull>() == 27 + 12 + 12 * _USBPCAP_MAX_ISOFRAMES);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,3 +158,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "USBPCAP_", &ours);
     }
 }
+/* </TESTS> */

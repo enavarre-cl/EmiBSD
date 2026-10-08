@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! kqueue(2) on NFS files: the filters (`nfs_kqfilter`, `filt_nfsread`, `filt_nfswrite`,
 //! `filt_nfsvnode`, `filt_nfsdetach`) and the poller thread `nfs_kqpoll`, which notices
 //! changes made on the server to the watched files (`nfs_kqwatch`, `nfs_kqunwatch`).
@@ -457,7 +458,9 @@ pub fn nfs_kqwatch(vp: &'static Vnode) -> Result<(), Errno> {
 }
 
 const _: () = assert!(!core::mem::needs_drop::<Kevq>());
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -485,3 +488,4 @@ mod tests {
         assert!(kn.has_flags(EV_EOF) && !kn.has_flags(EV_ONESHOT));
     }
 }
+/* </TESTS> */

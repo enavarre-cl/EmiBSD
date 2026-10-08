@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `close()`: release an open file, its file system state first, then its device.
 //!
 //! Upstream: sys/lib/libsa/close.c @ 3ce1f3f79392
@@ -102,3 +103,4 @@ pub fn oclose(fd: usize) -> Result<(), Errno> {
     f.f_fsdata = None;
     err1.and(err2).inspect_err(|&e| set_errno(e))
 }
+/* </CODE> */

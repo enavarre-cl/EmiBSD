@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/audio_if.h>`: the interface between audio(4) and the hardware drivers.
 //!
 //! Upstream: sys/dev/audio_if.h @ 3ce1f3f79392
@@ -315,7 +316,9 @@ pub const AUDIODEV_TYPE_OPL: i32 = 2;
 pub const AUDIODEV_TYPE_MPU: i32 = 3;
 /// `AUDIODEV_TYPE_RADIO`.
 pub const AUDIODEV_TYPE_RADIO: i32 = 4;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,3 +344,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "AUDIO", &ours);
     }
 }
+/* </TESTS> */

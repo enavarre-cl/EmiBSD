@@ -34,6 +34,7 @@
 */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The decoding tables of deflate's fixed codes (RFC 1951, section 3.2.6), as zlib's
 //! `makefixed()` generates them into `inffixed.h`.
 //!
@@ -50,7 +51,7 @@
 //! them with `op` 64, the plain invalid-code marker, whatever `inflate_table` builds there.
 //!
 //! ## Deviations
-//! - None: `inflate_table` rebuilds both tables exactly (`inftrees/tests.rs` checks it), which
+//! - None: `inflate_table` rebuilds both tables exactly (`inftrees.rs` checks it), which
 //!   is what `makefixed()` does. `BUILDFIXED` (building them at run time) is not defined in
 //!   the kernel build, so these tables are what the kernel uses.
 
@@ -164,3 +165,4 @@ pub(crate) static distfix: [Code; 32] = [
     c(16, 5, 4), c(24, 5, 769), c(20, 5, 49), c(28, 5, 12289), c(18, 5, 13), c(26, 5, 3073),
     c(22, 5, 193), c(64, 5, 0),
 ];
+/* </CODE> */

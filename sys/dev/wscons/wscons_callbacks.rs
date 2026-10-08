@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wscons_callbacks.h>`: the calls between the wscons glue, the display
 //! interface (`wsdisplay.c`) and the keyboard interface (`wskbd.c`).
 //!
@@ -67,7 +68,9 @@ pub enum WsdisplayResetops {
 }
 
 pub use WsdisplayResetops::*;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,3 +81,4 @@ mod tests {
         assert_eq!(WSDISPLAY_RESETCLOSE as i32, 1);
     }
 }
+/* </TESTS> */

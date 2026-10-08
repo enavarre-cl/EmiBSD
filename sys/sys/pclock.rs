@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/pclock.h>`: the producer/consumer generation lock, a seqlock. The functions live in
 //! `kern/kern_lock.rs`.
 //!
@@ -46,3 +47,4 @@ impl Default for PcLock {
         Self::new()
     }
 }
+/* </CODE> */

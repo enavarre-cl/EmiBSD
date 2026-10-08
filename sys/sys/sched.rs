@@ -67,6 +67,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/sched.h>`: the per-CPU scheduler state and the CPU-state statistics.
 //!
 //! Upstream: sys/sys/sched.h @ 3ce1f3f79392
@@ -271,19 +272,6 @@ pub const CPUTYP_E: i32 = 0x04;
 /// `CPUTYP_L`: Lethargic, Low Power Efficiency core.
 pub const CPUTYP_L: i32 = 0x08;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn estcpulim_clamps() {
-        assert_eq!(estcpulim(0), 0);
-        assert_eq!(estcpulim(35), 35);
-        assert_eq!(estcpulim(36), 36);
-        assert_eq!(estcpulim(1000), 36);
-    }
-}
-
 /// `cpu_is_idle(ci)`: nothing is queued on `ci`.
 pub fn cpu_is_idle(ci: &crate::machine::cpu::CpuInfo) -> bool {
     <crate::machine::Machine as crate::machine::cpu::Cpu>::ci_schedstate(ci)
@@ -314,3 +302,19 @@ pub fn sched_pause(func: fn()) {
         func();
     }
 }
+/* </CODE> */
+
+/* <TESTS> */
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn estcpulim_clamps() {
+        assert_eq!(estcpulim(0), 0);
+        assert_eq!(estcpulim(35), 35);
+        assert_eq!(estcpulim(36), 36);
+        assert_eq!(estcpulim(1000), 36);
+    }
+}
+/* </TESTS> */

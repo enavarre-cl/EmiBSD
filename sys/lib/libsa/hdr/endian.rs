@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<sys/endian.h>` for libsa: the network byte order conversions the network code uses.
 
 /// `htons(x)`: a 16-bit value in network (big-endian) order.
@@ -19,3 +20,4 @@ pub const fn htonl(x: u32) -> u32 {
 pub const fn ntohl(x: u32) -> u32 {
     u32::from_be(x)
 }
+/* </CODE> */

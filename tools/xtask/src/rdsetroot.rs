@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `cargo xtask rdsetroot [-d] [-s] [-x] KERNEL [FS]`: OpenBSD's `rdsetroot(8)`
 //! (`usr.sbin/rdsetroot/rdsetroot.c`, ISC) for an ELF64 little-endian kernel, the tool that puts
 //! a miniroot file system into the `rd_root_image` array of a RAMDISK kernel (`bsd.rd`).
@@ -221,7 +222,9 @@ pub(crate) fn rdsetroot(args: &[&str]) -> Result<()> {
 const USAGE: &str = "usage: cargo xtask rdsetroot [-d] KERNEL [FS]\n       \
                      cargo xtask rdsetroot -s KERNEL\n       \
                      cargo xtask rdsetroot -x KERNEL [FS]";
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,3 +320,4 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
+/* </TESTS> */

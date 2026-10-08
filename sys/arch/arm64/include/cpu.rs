@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/cpu.h>`: per-CPU state and the interrupt-mask helpers.
 //!
 //! Upstream: sys/arch/arm64/include/cpu.h @ 3ce1f3f79392
@@ -492,7 +493,9 @@ pub fn clkf_intr(_frame: &Clockframe) -> bool {
 pub fn clkf_pc(frame: &Clockframe) -> usize {
     frame.tf_elr as usize
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,3 +540,4 @@ mod tests {
         assert_eq!(names[0], None);
     }
 }
+/* </TESTS> */

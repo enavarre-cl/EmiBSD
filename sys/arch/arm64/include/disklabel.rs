@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/disklabel.h>`: where the disk label sits and how many partitions it may
 //! describe.
 //!
@@ -31,3 +32,4 @@ pub const LABELSECTOR: u64 = 1;
 pub const LABELOFFSET: usize = 0;
 /// `MAXPARTITIONS`: number of partitions.
 pub const MAXPARTITIONS: usize = 16;
+/* </CODE> */

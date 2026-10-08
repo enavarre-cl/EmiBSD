@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Time-related system calls and the interval timers: `kern/kern_time.c`.
 //!
 //! Upstream: sys/kern/kern_time.c @ 3ce1f3f79392
@@ -961,7 +962,9 @@ const _: () = {
     // The interval timers are indexed by ITIMER_REAL..=ITIMER_PROF.
     assert!(ITIMER_REAL == 0 && ITIMER_PROF == 2);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1013,3 +1016,4 @@ mod tests {
         assert_eq!(itimerfix(&mut big), Err(Errno::EINVAL));
     }
 }
+/* </TESTS> */

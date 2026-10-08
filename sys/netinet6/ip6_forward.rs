@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! IPv6 forwarding: `netinet6/ip6_forward.c`.
 //!
 //! Upstream: sys/netinet6/ip6_forward.c @ 3ce1f3f79392
@@ -475,3 +476,4 @@ pub fn ip6_forward(m: &'static Mbuf, ro: Option<&Route>, flags: i32) {
 
 // The stack copy holds the headers of a TCP segment (the C's CTASSERT on `icmp_buf`).
 const _: () = assert!(size_of::<Ip6Hdr>() + size_of::<Tcphdr>() + MAX_TCPOPTLEN <= MHLEN);
+/* </CODE> */

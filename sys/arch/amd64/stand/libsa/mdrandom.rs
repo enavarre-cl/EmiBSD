@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `mdrandom()`: mix the time stamp counter and the CPU's RDRAND and RDSEED into the seed.
 //!
 //! Upstream: sys/arch/amd64/stand/libsa/mdrandom.c @ 3ce1f3f79392
@@ -85,3 +86,4 @@ pub fn mdrandom(buf: &mut [u8]) -> i32 {
     }
     0
 }
+/* </CODE> */

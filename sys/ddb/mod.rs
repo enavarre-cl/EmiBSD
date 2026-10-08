@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The in-kernel debugger: OpenBSD `sys/ddb/`.
 //!
 //! Started life as "ddb-lite" at M2 (panic backtrace through `db_output`); M11c brings the
@@ -14,3 +15,4 @@ pub mod db_trap;
 pub mod db_usrreq;
 pub mod db_var;
 pub mod db_variables;
+/* </CODE> */

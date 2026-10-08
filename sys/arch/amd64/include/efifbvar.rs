@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<machine/efifbvar.h>`: the attach arguments of `efifb(4)`.
 //!
 //! Upstream: sys/arch/amd64/include/efifbvar.h @ 3ce1f3f79392
@@ -34,3 +35,4 @@ pub struct EfifbAttachArgs {
     /// `eaa_name`: `"efifb"`.
     pub eaa_name: &'static [u8],
 }
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/param.h>` and the alignment rules of `<machine/_types.h>` as traits.
 //!
 //! Each architecture implements them in `arch/<arch>/include/{param,_types}.rs`; `sys::param`
@@ -57,3 +58,4 @@ pub trait MachineParam {
     /// This reflects possibility, not optimal alignment.
     fn aligned_pointer<T>(p: usize) -> bool;
 }
+/* </CODE> */

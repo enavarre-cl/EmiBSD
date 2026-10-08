@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ufs/ufs/dir.h>`: the on-disk directory format. A directory consists of some number of
 //! blocks of `DIRBLKSIZ` bytes, where `DIRBLKSIZ` is chosen such that it can be transferred
 //! to disk in a single atomic operation (e.g. 512 bytes on most machines).
@@ -279,7 +280,9 @@ const _: () = {
     assert!(dirsiz(2) == 12);
     assert!(dirsiz(4) == 16);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,3 +347,4 @@ mod tests {
         assert_eq!(d_name(&t.to_bytes(), 12, 2), b"..");
     }
 }
+/* </TESTS> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<dev/cons.h>` for libsa: `struct consdev`, a console the boot program may use, and its
 //! priorities.
 
@@ -70,3 +71,4 @@ impl ConsDev {
         self.cn_pri.store(pri, Ordering::Relaxed);
     }
 }
+/* </CODE> */

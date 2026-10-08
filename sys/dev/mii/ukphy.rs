@@ -56,6 +56,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `dev/mii/ukphy.c`: driver for generic unknown PHYs (`ukphy* at mii?`), which matches any
 //! PHY at the lowest priority.
 //!
@@ -208,3 +209,4 @@ pub fn ukphy_service(sc: &'static MiiSoftc, mii: &'static MiiData, cmd: i32) -> 
     mii_phy_update(sc, cmd);
     Ok(())
 }
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The UFS layer: OpenBSD `sys/ufs/ufs/`.
 //!
 //! Headers (types): `dinode`, `dir`, `dirhash`, `inode`, `quota`, `ufsmount`, `ufs_extern`.
@@ -22,3 +23,4 @@ pub mod ufs_quota;
 pub mod ufs_vfsops;
 pub mod ufs_vnops;
 pub mod ufsmount;
+/* </CODE> */

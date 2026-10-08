@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `xtask symbolize`: turns the addresses of a kernel stack trace into symbol names.
 //!
 //! `ddb`'s trace prints return addresses as numbers until the kernel carries its own symbol
@@ -625,7 +626,9 @@ pub fn symbolize(kernel: &Path) -> Result<()> {
     }
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -722,3 +725,4 @@ mod tests {
         assert_eq!(t.annotate("no addresses"), "no addresses");
     }
 }
+/* </TESTS> */

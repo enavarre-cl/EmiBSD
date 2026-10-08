@@ -6,6 +6,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `explicit_bzero(3)`: zero a buffer in a way the compiler cannot remove.
 //!
 //! Upstream: sys/lib/libkern/explicit_bzero.c @ 3ce1f3f79392
@@ -27,7 +28,9 @@ pub fn explicit_bzero(buf: &mut [u8]) {
         unsafe { core::ptr::write_volatile(b, 0) };
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,3 +49,4 @@ mod tests {
         assert_eq!(partial, [0xff, 0xff, 0, 0, 0, 0xff, 0xff, 0xff]);
     }
 }
+/* </TESTS> */

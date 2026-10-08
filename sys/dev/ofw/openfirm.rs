@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/ofw/openfirm.h>`: the OpenFirmware interface, which `dev/ofw/fdt.c` implements over
 //! the device tree blob on this architecture.
 //!
@@ -48,3 +49,4 @@ pub use crate::dev::ofw::fdt::{
     OF_getpropbool, OF_getpropint, OF_getpropint64, OF_getpropint64array, OF_getpropintarray,
     OF_getproplen, OF_is_compatible, OF_is_enabled, OF_parent, OF_peer, OFMAXPARAM,
 };
+/* </CODE> */

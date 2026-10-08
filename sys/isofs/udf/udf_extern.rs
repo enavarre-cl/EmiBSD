@@ -6,6 +6,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<isofs/udf/udf_extern.h>`: the prototypes of the UDF functions and its memory pools,
 //! for the other UDF files.
 //!
@@ -27,3 +28,4 @@ pub use crate::isofs::udf::udf_vnops::{
     udf_lock, udf_lookup, udf_open, udf_pathconf, udf_print, udf_read, udf_readatoffset,
     udf_readdir, udf_readlink, udf_reclaim, udf_strategy, udf_transname, udf_unlock,
 };
+/* </CODE> */

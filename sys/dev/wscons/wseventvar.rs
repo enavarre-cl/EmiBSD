@@ -72,6 +72,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wseventvar.h>`: the internal `wscons_event` queue interface for the keyboard
 //! and mouse drivers.
 //!
@@ -229,7 +230,9 @@ pub fn wsevent_wakeup(ev: &Wseventvar) {
         pgsigio(&ev.ws_sigio, SIGIO, false);
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,3 +254,4 @@ mod tests {
         let _ = assert_defines!(defs; WSEVENT_QSIZE, PWSEVENT);
     }
 }
+/* </TESTS> */

@@ -41,6 +41,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The standalone console: pick the best console of `constab[]` and do character I/O on it.
 //!
 //! Upstream: sys/lib/libsa/cons.c @ 3ce1f3f79392
@@ -131,3 +132,4 @@ pub fn cnischar() -> i32 {
         None => 0,
     }
 }
+/* </CODE> */

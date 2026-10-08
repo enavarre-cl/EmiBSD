@@ -26,6 +26,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `ctime()`: a time as `Thu Jan  1 00:00:00 1970\n`, for boot(8)'s `time` command.
 //!
 //! Upstream: sys/lib/libsa/ctime.c @ 3ce1f3f79392
@@ -120,7 +121,9 @@ pub fn ctime(clock: Time) -> Ctime {
     );
     out
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,3 +144,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

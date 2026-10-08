@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/apicvar.h>`: what a local or I/O APIC is attached with.
 //!
 //! Upstream: sys/arch/amd64/include/apicvar.h @ 3ce1f3f79392
@@ -65,3 +66,4 @@ pub struct ApicAttachArgs {
     /// `apic_vecbase`: the first global interrupt, -1 when the table gives none.
     pub apic_vecbase: i32,
 }
+/* </CODE> */

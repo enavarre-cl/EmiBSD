@@ -35,6 +35,7 @@
 */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Compress a memory buffer in one call: `compress`, `compress2` and `compressBound`.
 //!
 //! Upstream: sys/lib/libz/compress.c @ 3ce1f3f79392
@@ -137,7 +138,9 @@ pub fn compressBound(sourceLen: u64) -> u64 {
     };
     u64::try_from(compressBound_z(len)).unwrap_or(u64::MAX)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,3 +184,4 @@ mod tests {
         assert_eq!(compressBound(1 << 20), (1 << 20) + 256 + 64 + 13);
     }
 }
+/* </TESTS> */

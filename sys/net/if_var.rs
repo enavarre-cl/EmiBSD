@@ -34,6 +34,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The kernel's network interface: `<net/if_var.h>`, `struct ifnet` and its addresses.
 //!
 //! Upstream: sys/net/if_var.h @ 3ce1f3f79392
@@ -750,7 +751,9 @@ pub fn if_rxr_inuse(r: &IfRxring) -> u32 {
 pub fn if_rxr_cwm(r: &IfRxring) -> u32 {
     r.rxr_cwm
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -768,3 +771,4 @@ mod tests {
         assert_eq!(IFC_NCOUNTERS, 12);
     }
 }
+/* </TESTS> */

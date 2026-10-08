@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! IPv6 implementation variables: statistics, the reassembly queues, the multicast and
 //! packet options, the `ip6_output` flags: `<netinet6/ip6_var.h>`.
 //!
@@ -439,7 +440,9 @@ pub fn mtod_ip6_store(m: &Mbuf, ip6: &Ip6Hdr) {
 
 // The counters are the statistics' words.
 const _: () = assert!(size_of::<Ip6stat>() == IP6S_NCOUNTERS * size_of::<u64>());
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,3 +489,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "IP6PO_", &po);
     }
 }
+/* </TESTS> */

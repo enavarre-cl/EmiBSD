@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/ic/nvmevar.h>`: the nvme(4) driver's state: DMA memory, command control blocks,
 //! queues, the controller operations and the softc shared by the bus front-ends
 //! (`nvme_pci`, and `aplns` on Apple silicon).
@@ -413,3 +414,4 @@ pub fn nvme_barrier(sc: &NvmeSoftc, r: BusSize, l: BusSize, f: u32) {
     let (t, h) = sc.regs();
     bus_space_barrier(t, h, r, l, f)
 }
+/* </CODE> */

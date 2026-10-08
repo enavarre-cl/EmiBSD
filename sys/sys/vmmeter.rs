@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/vmmeter.h>`: system wide statistics counters. Look in `uvm/uvm_extern.rs` for the
 //! UVM equivalent.
 //!
@@ -122,3 +123,4 @@ impl Default for Forkstat {
         Self::new()
     }
 }
+/* </CODE> */

@@ -22,6 +22,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The IPsec security policy database (SPD): `netinet/ip_spd.c`. One radix tree of
 //! [`IpsecPolicy`]s per routing domain, keyed by `struct sockaddr_encap` (the flow: direction,
 //! addresses, protocol and ports), the policy lookup for a packet (`ipsp_spd_lookup`), which
@@ -1099,3 +1100,4 @@ pub(crate) fn spd_reset() {
 }
 
 const _: () = assert!(offset_of_sen_type() == 2);
+/* </CODE> */

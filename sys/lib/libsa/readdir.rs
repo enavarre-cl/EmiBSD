@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `opendir()`, `readdir()`, `closedir()`: the names in a directory, for boot(8)'s `ls`.
 //!
 //! Upstream: sys/lib/libsa/readdir.c @ 3ce1f3f79392
@@ -94,3 +95,4 @@ pub fn readdir(fd: usize, dest: &mut [u8]) -> Result<(), Errno> {
 pub fn closedir(fd: usize) {
     let _ = oclose(fd);
 }
+/* </CODE> */

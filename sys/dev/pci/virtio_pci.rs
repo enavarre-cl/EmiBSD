@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The virtio PCI transport: `virtio* at pci?`, modern (virtio 1.0, capabilities in
 //! configuration space, memory BARs) and legacy (virtio 0.9, one I/O BAR).
 //!
@@ -1452,3 +1453,4 @@ pub fn virtio_pci_kick(vsc: &VirtioSoftc, idx: u16) {
     let (iot, ioh) = region(&sc.sc_notify_iot, &sc.sc_notify_ioh);
     bus_space_write_2(iot, ioh, offset, idx);
 }
+/* </CODE> */

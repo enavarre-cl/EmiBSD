@@ -3,6 +3,7 @@
 /* Public Domain */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/efi/efi.h>`: the UEFI tables, memory map and runtime services the kernel uses.
 //!
 //! Upstream: sys/dev/efi/efi.h @ 3ce1f3f79392
@@ -421,7 +422,9 @@ pub const EFI_SECURITY_VIOLATION: EfiStatus = EFIERR(26);
 pub fn efi_guidcmp(a: &EfiGuid, b: &EfiGuid) -> bool {
     a == b
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -471,3 +474,4 @@ mod tests {
         assert!(!efi_guidcmp(&SMBIOS_TABLE_GUID, &SMBIOS3_TABLE_GUID));
     }
 }
+/* </TESTS> */

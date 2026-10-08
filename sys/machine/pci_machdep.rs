@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/pci_machdep.h>` as a trait: what machine-independent PCI code (`dev/pci/pci.c`,
 //! `pci_map.c`, the drivers) asks of the machine: the chipset, tag and interrupt handle
 //! types, configuration space access, and interrupt mapping and establishment.
@@ -337,3 +338,4 @@ pub unsafe fn pci_intr_disestablish(pc: PciChipsetTag, cookie: NonNull<c_void>) 
     // SAFETY: forwarded.
     unsafe { Machine::pci_intr_disestablish(pc, cookie) }
 }
+/* </CODE> */

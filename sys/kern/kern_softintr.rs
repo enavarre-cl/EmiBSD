@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Machine-independent soft interrupts: `kern/kern_softintr.c` (`__USE_MI_SOFTINTR`).
 //!
 //! Upstream: sys/kern/kern_softintr.c @ 3ce1f3f79392
@@ -240,3 +241,4 @@ pub fn softintr_schedule(sih: NonNull<SoftintrHand>) {
     }
     mtx_leave(&SOFTINTR_LOCK);
 }
+/* </CODE> */

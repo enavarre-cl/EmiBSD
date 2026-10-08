@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Kernel-wide types and constants: OpenBSD `sys/sys/*.h`.
 //!
 //! Each header becomes one module here (`errno.h` → `errno.rs`, `proc.h` → `proc.rs`). Functions
@@ -110,3 +111,4 @@ pub mod uuid;
 pub mod vmmeter;
 pub mod vnode;
 pub mod wait;
+/* </CODE> */

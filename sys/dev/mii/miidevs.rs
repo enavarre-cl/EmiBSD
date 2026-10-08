@@ -39,6 +39,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/mii/miidevs.h>`: the MII OUIs and PHY models, the subset the ported PHY drivers
 //! name (rlphy(4), rgephy(4)).
 //!
@@ -88,7 +89,9 @@ pub const MII_STR_xxREALTEK_RTL8169S: &str = "RTL8169S/8110S/8211";
 pub const MII_MODEL_REALTEK_RTL8201L: u32 = 0x0020;
 /// `MII_STR_REALTEK_RTL8201L`.
 pub const MII_STR_REALTEK_RTL8201L: &str = "RTL8201L";
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -115,3 +118,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

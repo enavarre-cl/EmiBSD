@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Address Resolution Protocol: `<net/if_arp.h>`.
 //!
 //! Upstream: sys/net/if_arp.h @ 3ce1f3f79392
@@ -92,7 +93,9 @@ pub struct Arphdr {
 
 // Size of the C structure.
 const _: () = assert!(size_of::<Arphdr>() == 8);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,3 +110,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "ARP", &ours);
     }
 }
+/* </TESTS> */

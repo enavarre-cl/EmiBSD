@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `errno` and the do-nothing device routines.
 //!
 //! Upstream: sys/lib/libsa/dev.c @ 3ce1f3f79392
@@ -72,3 +73,4 @@ pub fn nullsys() {}
 pub fn noioctl(_f: &mut OpenFile, _cmd: u64, _data: *mut c_void) -> Result<(), Errno> {
     Err(Errno::EINVAL)
 }
+/* </CODE> */

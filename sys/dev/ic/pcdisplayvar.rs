@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/ic/pcdisplayvar.h>`: the state the PC text displays (`vga(4)`, `pcdisplay`) share:
 //! a screen ([`Pcdisplayscreen`]: its type, cursor, display offset and backing store) and
 //! the bus handles of the adapter ([`PcdisplayHandle`]), with the 6845 accessors.
@@ -186,7 +187,9 @@ macro_rules! pcdisplay_6845_write {
     };
 }
 pub(crate) use pcdisplay_6845_write;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,3 +201,4 @@ mod tests {
         assert_eq!(scr.active.get(), 0);
     }
 }
+/* </TESTS> */

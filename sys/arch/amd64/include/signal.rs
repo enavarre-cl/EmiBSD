@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/signal.h>`: `sig_atomic_t` and `struct sigcontext`.
 //!
 //! Upstream: sys/arch/amd64/include/signal.h @ 3ce1f3f79392
@@ -126,3 +127,4 @@ const _: () = {
     assert!(size_of::<Sigcontext>() == 26 * 8 + 8 + 4 + 4 + 8);
     assert!(core::mem::offset_of!(Sigcontext, sc_mask) == 26 * 8 + 12);
 };
+/* </CODE> */

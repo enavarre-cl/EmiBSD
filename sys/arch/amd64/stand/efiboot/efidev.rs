@@ -61,6 +61,7 @@
 /* efidev.c */
 /* </LICENSES> */
 
+/* <CODE> */
 //! efiboot's disks: EFI block I/O for libsa (`efiopen`, `efistrategy`), the search for the
 //! OpenBSD partition (MBR, extended partitions, GPT) and its disklabel, an imaginary label
 //! for ISO 9660 media, `machine diskinfo`, and files on the EFI system partition (`esp:`).
@@ -940,3 +941,4 @@ pub fn espstrategy(
 ) -> Result<(), Errno> {
     Err(Errno::EOPNOTSUPP)
 }
+/* </CODE> */

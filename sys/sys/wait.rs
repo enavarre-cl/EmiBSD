@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/wait.h>`: the status words and options of `wait4(2)` and `waitid(2)`.
 //!
 //! Upstream: sys/sys/wait.h @ 3ce1f3f79392
@@ -134,7 +135,9 @@ pub const P_PID: Idtype = 2;
 pub const WAIT_ANY: i32 = -1;
 /// `WAIT_MYPGRP`: any process in my process group.
 pub const WAIT_MYPGRP: i32 = 0;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,3 +154,4 @@ mod tests {
         assert!(wifcontinued(_WCONTINUED));
     }
 }
+/* </TESTS> */

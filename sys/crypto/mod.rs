@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `sys/crypto`: the kernel's cryptographic primitives and the crypto framework (`crypto(9)`).
 
 pub mod aes;
@@ -41,3 +42,4 @@ pub fn wipe<T: Default>(x: &mut T) {
     *x = T::default();
     core::hint::black_box(&*x);
 }
+/* </CODE> */

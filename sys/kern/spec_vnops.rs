@@ -49,6 +49,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The vnode operations of special files (`spec_vops`): device vnodes, which pass open,
 //! close, read, write and ioctl to the device's driver through the device switch
 //! (`cdevsw[]`, `bdevsw[]`), the hash of device vnodes (`speclisth`) and the cloning of
@@ -732,3 +733,4 @@ pub fn spec_open_clone(ap: &mut VopOpenArgs<'_>) -> Result<(), Errno> {
 
     Ok(()) // device cloned
 }
+/* </CODE> */

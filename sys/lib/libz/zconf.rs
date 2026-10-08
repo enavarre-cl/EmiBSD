@@ -35,6 +35,7 @@
 */
 /* </LICENSES> */
 
+/* <CODE> */
 //! zlib's build configuration: the limits of `windowBits` and `memLevel`.
 //!
 //! Upstream: sys/lib/libz/zconf.h @ 3ce1f3f79392
@@ -57,3 +58,4 @@ pub const MAX_MEM_LEVEL: i32 = 9;
 /// `MAX_WBITS`: maximum value for `windowBits` in `deflateInit2` and `inflateInit2` (a 32K
 /// LZ77 window). Inflate needs `1 << windowBits` bytes, 32K, plus about 7 kilobytes.
 pub const MAX_WBITS: i32 = 15;
+/* </CODE> */

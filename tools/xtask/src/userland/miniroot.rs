@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The install media's miniroot (M14c): the ffs image `bsd.rd` boots from, built from
 //! OpenBSD's own recipe, `distrib/<arch>/ramdisk_cd/list` (amd64) or
 //! `distrib/arm64/ramdisk/list` (arm64), as `distrib/miniroot/list2sh.awk` interprets it.
@@ -806,7 +807,9 @@ fn special(
     }
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -895,3 +898,4 @@ mod tests {
         assert_eq!(normalize(Path::new("../x")), None);
     }
 }
+/* </TESTS> */

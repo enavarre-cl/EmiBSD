@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `cargo xtask gen-syscalls [--check]`: what `sys/kern/makesyscalls.sh` does for the C tree,
 //! for the Rust tree. Reads `reference/openbsd-src/sys/kern/syscalls.master` and writes
 //!
@@ -778,7 +779,9 @@ pub fn gen_syscalls(root: &Path, check: bool) -> Result<()> {
     }
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -845,3 +848,4 @@ mod tests {
         assert_eq!(field("fd"), "fd");
     }
 }
+/* </TESTS> */

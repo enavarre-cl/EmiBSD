@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Indirect driver for controlling tty (`/dev/tty`): `kern/tty_tty.c`.
 //!
 //! Upstream: sys/kern/tty_tty.c @ 3ce1f3f79392
@@ -185,3 +186,4 @@ pub fn cttykqfilter(dev: Dev, kn: &Knote) -> Result<(), Errno> {
     };
     VOP_KQFILTER(ttyvp, FREAD | FWRITE, kn)
 }
+/* </CODE> */

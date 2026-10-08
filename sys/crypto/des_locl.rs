@@ -49,6 +49,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The private header of the DES code (Eric Young's libdes, as in OpenBSD's `lib/des`): the
 //! types of a key and of a key schedule, the byte/word helpers, and the permutation and round
 //! macros `ecb_enc.c`, `ecb3_enc.c` and `set_key.c` share.
@@ -149,3 +150,4 @@ pub fn fp(l: &mut u32, r: &mut u32) {
     perm_op(r, l, 16, 0x0000ffff);
     perm_op(l, r, 4, 0x0f0f0f0f);
 }
+/* </CODE> */

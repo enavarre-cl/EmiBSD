@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The NTFS file system: OpenBSD `sys/ntfs/` (`option NTFS`, feature `ntfs`), read-only.
 //!
 //! Headers (types): `ntfs` (`ntfs.h`, the on-disk structures and the mount), `ntfs_inode`
@@ -17,3 +18,4 @@ pub mod ntfs_subr;
 pub mod ntfs_vfsops;
 pub mod ntfs_vnops;
 pub mod ntfsmount;
+/* </CODE> */

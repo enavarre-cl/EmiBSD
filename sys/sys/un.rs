@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Definitions for UNIX IPC domain: `<sys/un.h>`.
 //!
 //! Upstream: sys/sys/un.h @ 3ce1f3f79392
@@ -67,3 +68,4 @@ const _: () = {
     assert!(size_of::<SockaddrUn>() == 106);
     assert!(SockaddrUn::PATH_OFFSET == 2);
 };
+/* </CODE> */

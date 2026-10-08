@@ -26,6 +26,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/elf.h>`: the ELF definitions for the AArch64 architecture, here the
 //! `AT_HWCAP`/`AT_HWCAP2` bits `cpu_identify_cleanup` (`arm64/cpu.rs`) computes.
 //!
@@ -196,3 +197,4 @@ pub const HWCAP2_SME_F16F16: u64 = 0x0000040000000000;
 pub const HWCAP2_MOPS: u64 = 0x0000080000000000;
 /// `HWCAP2_HBC`.
 pub const HWCAP2_HBC: u64 = 0x0000100000000000;
+/* </CODE> */

@@ -25,6 +25,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Different parameters, structures and functions of the debugger: `<ddb/db_var.h>`.
 //!
 //! Upstream: sys/ddb/db_var.h @ 3ce1f3f79392
@@ -79,7 +80,9 @@ pub const CTL_DDB_NAMES: [Ctlname; DBCTL_MAXID] = [
     Ctlname::new(b"profile", CTLTYPE_INT),
     Ctlname::new(b"suspend", CTLTYPE_INT),
 ];
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,3 +114,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

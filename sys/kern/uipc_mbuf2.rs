@@ -63,6 +63,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `m_pulldown` and the packet tags: `kern/uipc_mbuf2.c`.
 //!
 //! Upstream: sys/kern/uipc_mbuf2.c @ 3ce1f3f79392
@@ -431,3 +432,4 @@ pub fn m_tag_first(m: &Mbuf) -> Option<&MTag> {
 pub fn m_tag_next<'a>(_m: &'a Mbuf, t: &'a MTag) -> Option<&'a MTag> {
     SlistHead::<MTagList>::next(t)
 }
+/* </CODE> */

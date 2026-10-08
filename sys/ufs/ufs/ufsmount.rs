@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ufs/ufs/ufsmount.h>`: the UFS specific mount structure data (`struct ufsmount`), hung
 //! from a UFS mount's `mnt_data`.
 //!
@@ -229,3 +230,4 @@ pub fn blkptrtodb(ump: &Ufsmount, b: Daddr) -> Daddr {
 pub fn is_sequential(ump: &Ufsmount, a: Daddr, b: Daddr) -> bool {
     b == a + ump.um_seqinc.get() as Daddr
 }
+/* </CODE> */

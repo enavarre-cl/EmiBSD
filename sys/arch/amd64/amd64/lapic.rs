@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The local APIC: `arch/amd64/amd64/lapic.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/lapic.c @ 3ce1f3f79392
@@ -720,3 +721,4 @@ fn lapic_hwunmask(_pic: &Pic, pin: i32) {
 
 /// `lapic_setup`: nothing to route.
 fn lapic_setup(_pic: &Pic, _ci: &CpuInfo, _pin: i32, _idtvec: i32, _type: i32) {}
+/* </CODE> */

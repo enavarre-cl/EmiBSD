@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `ast.c`: transform cpu ast to `mi_ast`.
 //!
 //! Upstream: sys/arch/arm64/arm64/ast.c @ 3ce1f3f79392
@@ -50,3 +51,4 @@ pub extern "C" fn ast(tf: &mut Trapframe) {
     mi_ast(p, ci.ci_want_resched.load(Ordering::Relaxed) != 0);
     userret(p);
 }
+/* </CODE> */

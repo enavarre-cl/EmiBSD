@@ -98,6 +98,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The TCP/IP protocol family: the protocol switch `inetsw[]`, `ip_protox[]` and
 //! `inetdomain`.
 //!
@@ -334,3 +335,4 @@ pub static INETDOMAIN: Domain = Domain {
     dom_rtoffset: offset_of!(SockaddrIn, sin_addr) as u32,
     dom_maxplen: 32,
 };
+/* </CODE> */

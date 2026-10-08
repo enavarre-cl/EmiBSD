@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! File system initialisation: the configured file system types (`vfsconflist[]`), `vfsinit`
 //! (the `namei` buffer pool, the vnode table, the name cache, each type's `vfs_init`), the
 //! root vnode and the lookups by type name and number.
@@ -228,3 +229,4 @@ pub fn vfs_byname(name: &[u8]) -> Option<&'static Vfsconf> {
 pub fn vfs_bytypenum(typenum: i32) -> Option<&'static Vfsconf> {
     VFSCONFLIST.iter().find(|vfsp| vfsp.vfc_typenum == typenum)
 }
+/* </CODE> */

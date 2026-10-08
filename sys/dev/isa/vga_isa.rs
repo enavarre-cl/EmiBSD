@@ -57,6 +57,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `vga(4)` at `isa`: the VGA at its fixed ISA addresses (I/O 0x3b0-0x3df, memory
 //! 0xa0000-0xbffff), driven by `vga.c`; and `<dev/isa/vga_isavar.h>`, whose one prototype
 //! is [`vga_isa_cnattach`].
@@ -151,3 +152,4 @@ pub fn vga_isa_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void
 pub fn vga_isa_cnattach(iot: BusSpaceTag, memt: BusSpaceTag) -> Result<(), Errno> {
     vga_cnattach(iot, memt, WSDISPLAY_TYPE_ISAVGA as i32, true)
 }
+/* </CODE> */

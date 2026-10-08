@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The NFS client's nodes: the per-mount tree of nfsnodes by file handle (`nfs_ninit`),
 //! finding or making the node and vnode of a file handle (`nfs_nget`), and the vnode
 //! operations `nfs_inactive` (remove a silly-renamed file on last close) and `nfs_reclaim`
@@ -288,7 +289,9 @@ pub fn nfs_reclaim(ap: &mut VopReclaimArgs<'_>) -> Result<(), Errno> {
 }
 
 const _: () = assert!(!core::mem::needs_drop::<NfsNode>());
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,3 +337,4 @@ mod tests {
         assert!(unsafe { tree.insert(dup) }.is_some());
     }
 }
+/* </TESTS> */

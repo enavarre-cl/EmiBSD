@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! acpimcfg(4): the MCFG table, the PCI Express configuration space windows (ECAM) of the
 //! PCI segments: `dev/acpi/acpimcfg.c`. Each entry goes to the machine's `pci_mcfg_init`.
 //!
@@ -103,3 +104,4 @@ pub fn acpimcfg_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_voi
         addr += size_of::<AcpiMcfgEntry>();
     }
 }
+/* </CODE> */

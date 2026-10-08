@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Global variables for the kernel: `<sys/kernel.h>`.
 //!
 //! Upstream: sys/sys/kernel.h @ 3ce1f3f79392
@@ -50,3 +51,4 @@
 /// `HZ`: the default system clock frequency, in ticks per second, when the kernel
 /// configuration does not set one.
 pub const HZ: i32 = 100;
+/* </CODE> */

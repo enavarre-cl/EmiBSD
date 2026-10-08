@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/pcb.h>`: the process control block.
 //!
 //! Upstream: sys/arch/arm64/include/pcb.h @ 3ce1f3f79392
@@ -108,3 +109,4 @@ const _: () = {
     assert!(core::mem::offset_of!(Pcb, pcb_sp) < 256);
     assert!(core::mem::offset_of!(Pcb, pcb_tcb) < 256 || true);
 };
+/* </CODE> */

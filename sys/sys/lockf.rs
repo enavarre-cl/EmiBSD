@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/lockf.h>`: the interface of the advisory record locks, `lf_init`, `lf_advlock` and
 //! `lf_purgelocks`, over an opaque `struct lockf_state`.
 //!
@@ -48,3 +49,4 @@
 //!   is [`LockfStateSlot`], a `Cell` holding `Option<&'static LockfState>`.
 
 pub use crate::kern::vfs_lockf::{LockfState, LockfStateSlot, lf_advlock, lf_init, lf_purgelocks};
+/* </CODE> */

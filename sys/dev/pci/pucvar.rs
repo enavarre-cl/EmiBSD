@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! PCI "universal" communications card software structures: `dev/pci/pucvar.h`.
 //!
 //! Upstream: sys/dev/pci/pucvar.h @ 3ce1f3f79392
@@ -271,7 +272,9 @@ pub struct PucSoftc {
 // bool, a raw pointer, or an `Option` of a reference, handle, tag, non-null pointer or function
 // pointer, all valid as zero bits (the `Option`s are `None`).
 unsafe impl Softc for PucSoftc {}
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,3 +305,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

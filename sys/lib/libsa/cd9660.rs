@@ -73,6 +73,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Stand-alone ISO 9660 file reading package: find the directory through the path table,
 //! the file in the directory, and read its extent.
 //!
@@ -385,3 +386,4 @@ pub fn cd9660_stat(f: &mut OpenFile, sb: &mut Stat) -> Result<(), Errno> {
 pub fn cd9660_readdir(_f: &mut OpenFile, _name: Option<&mut [u8]>) -> Result<(), Errno> {
     Err(Errno::EROFS)
 }
+/* </CODE> */

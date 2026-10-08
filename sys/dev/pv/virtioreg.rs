@@ -64,6 +64,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/pv/virtioreg.h>`: the virtio registers and ring layout, from the "Virtio PCI Card
 //! Specification v0.8.6 DRAFT" Appendix A.
 //!
@@ -263,7 +264,9 @@ const _: () = {
     assert!(size_of::<VringUsedElem>() == 8);
     assert!(size_of::<VringUsed>() == 4);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -299,3 +302,4 @@ mod tests {
         assert_eq!(VIRTIO_F_RING_RESET.trailing_zeros(), 40);
     }
 }
+/* </TESTS> */

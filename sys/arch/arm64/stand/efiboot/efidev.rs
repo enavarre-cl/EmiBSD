@@ -58,6 +58,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! efiboot's disks: EFI block I/O for libsa (`efiopen`, `efistrategy`), the search for the
 //! OpenBSD partition (MBR, extended partitions, GPT) and its disklabel, an imaginary label
 //! for ISO 9660 media, files on the EFI system partition (`esp0a:`), and the hibernation
@@ -832,3 +833,4 @@ pub fn bootdev_has_hibernate() -> bool {
     // SAFETY: bootdev_dip points into the disk list (efiopen or efi_diskprobe set it).
     unsafe { ((*dip).flags & DISKINFO_FLAG_HIBVALID) != 0 }
 }
+/* </CODE> */

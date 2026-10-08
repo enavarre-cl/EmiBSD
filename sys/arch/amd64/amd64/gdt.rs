@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Per-CPU global descriptor tables: `arch/amd64/amd64/gdt.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/gdt.c @ 3ce1f3f79392
@@ -89,3 +90,4 @@ pub unsafe fn gdt_init_cpu(ci: &CpuInfo) {
         ltr(gsyssel(GPROC0_SEL, SEL_KPL));
     }
 }
+/* </CODE> */

@@ -30,6 +30,7 @@
 */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The interface of zlib: the stream (`z_stream`), the gzip header (`gz_header`) and the
 //! constants every caller passes or tests (`Z_OK`, `Z_FINISH`, `Z_DEFAULT_COMPRESSION`, ...).
 //!
@@ -328,3 +329,4 @@ pub fn inflateBackInit(strm: &mut ZStream<'_>, windowBits: i32, window: Vec<u8>)
         size_of::<ZStream<'_>>() as i32,
     )
 }
+/* </CODE> */

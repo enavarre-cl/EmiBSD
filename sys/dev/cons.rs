@@ -44,6 +44,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The console framework: `<dev/cons.h>` (the `struct consdev` contract and the `CN_*`
 //! priorities) and `dev/cons.c` (the polled entry points `cngetc`, `cnputc`, `cnpollc`,
 //! `cnbell` on top of `cn_tab`).
@@ -327,7 +328,9 @@ pub fn cnbell(pitch: u32, period: u32, volume: u32) {
         bell(cp.cn_dev.get(), pitch, period, volume);
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,3 +382,4 @@ mod tests {
         cnbell(1, 2, 3);
     }
 }
+/* </TESTS> */

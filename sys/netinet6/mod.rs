@@ -1,3 +1,4 @@
+/* <CODE> */
 //! IPv6: OpenBSD `sys/netinet6/`.
 //!
 //! Headers become modules as in `sys/sys` (`in6_var.h` → `in6_var.rs`); a `.c` file with a
@@ -32,3 +33,4 @@ pub mod nd6_rtr;
 pub mod raw_ip6;
 pub mod route6;
 pub mod udp6_output;
+/* </CODE> */

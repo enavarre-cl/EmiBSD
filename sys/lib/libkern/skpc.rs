@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `skpc`: skip the leading bytes of a string that equal a given byte.
 //!
 //! Upstream: sys/lib/libkern/skpc.c @ 3ce1f3f79392
@@ -52,7 +53,9 @@ pub fn skpc(mask: u8, cp: &[u8]) -> usize {
         None => 0,
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,3 +68,4 @@ mod tests {
         assert_eq!(skpc(0, &[1, 0]), 2);
     }
 }
+/* </TESTS> */

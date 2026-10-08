@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Virtual File System System Calls: mounting (`mount`, `unmount`, `dounmount`, `sync`,
 //! `quotactl`, `statfs`, `fstatfs`, `getfsstat`), the current and root directories (`chdir`,
 //! `fchdir`, `chroot`, `__realpath`), opening (`open`, `openat`, `__pledge_open`, the file
@@ -3113,3 +3114,4 @@ pub fn sys_pwritev(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Result<
     unsafe { crate::kern::sys_generic::iovec_free(iov, iovcnt) };
     error
 }
+/* </CODE> */

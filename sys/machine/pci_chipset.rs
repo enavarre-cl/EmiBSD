@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The machine items a device-tree PCI host bridge driver is written against, on the machines
 //! whose `<machine/pci_machdep.h>` is a `struct machine_pci_chipset` table (cfg
 //! `machine_pci_chipset`, emitted by `sys/build.rs` for arm64).
@@ -24,3 +25,4 @@ pub use crate::arch::current::include::intr::{InterruptController, MachineIntrHa
 pub use crate::arch::current::include::pci_machdep::{
     MachinePciChipset, PCI_INTX, PCI_MSI, PCI_MSIX, PCI_NONE, PciIntrHandle,
 };
+/* </CODE> */

@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! FUSE file handles: `FUSE_OPEN`/`FUSE_OPENDIR` and `FUSE_RELEASE`/`FUSE_RELEASEDIR` for a
 //! node's handle of one kind, and the handle a read or write uses.
 //!
@@ -133,3 +134,4 @@ pub fn fusefs_fd_get(ip: &FusefsNode, r#type: FufhType) -> u64 {
 
     ip.fufh(t).fh_id
 }
+/* </CODE> */

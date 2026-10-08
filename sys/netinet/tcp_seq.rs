@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! TCP sequence number comparisons: `<netinet/tcp_seq.h>`.
 //!
 //! Upstream: sys/netinet/tcp_seq.h @ 3ce1f3f79392
@@ -100,7 +101,9 @@ pub fn tcp_sendseqinit(tp: &Tcpcb) {
     tp.snd_nxt.set(iss);
     tp.snd_una.set(iss);
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,3 +128,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "TCP_", &ours);
     }
 }
+/* </TESTS> */

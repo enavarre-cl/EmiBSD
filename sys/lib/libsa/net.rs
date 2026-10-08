@@ -81,6 +81,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `net.h` and `net.c`: the standalone network code's interface (its sizes, the packet
 //! buffer convention, the timeouts), `sendrecv()`, which sends a request and waits for its
 //! answer with exponential backoff, and the address conversions.
@@ -438,7 +439,9 @@ pub fn getsecs() -> Time {
 }
 
 const _: () = assert!(PACKET_HEADER == 48);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,3 +476,4 @@ mod tests {
         assert_eq!(ip_convertaddr(b"192.168.0.1x"), 0);
     }
 }
+/* </TESTS> */

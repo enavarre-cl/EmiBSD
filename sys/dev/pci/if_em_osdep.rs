@@ -35,6 +35,7 @@ POSSIBILITY OF SUCH DAMAGE.
 ***************************************************************************/
 /* </LICENSES> */
 
+/* <CODE> */
 //! The OS layer of em(4)'s shared code (`<dev/pci/if_em_osdep.h>`): the delays, the register
 //! access macros over `bus_space(9)`, and `struct em_osdep`, the part of the softc that holds
 //! the register mappings and the PCI attach arguments.
@@ -348,3 +349,4 @@ pub fn em_io_write(hw: &EmHw, port: u64, value: u32) {
         value,
     );
 }
+/* </CODE> */

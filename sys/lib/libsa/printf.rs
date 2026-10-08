@@ -56,6 +56,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `printf()` on the console, and `twiddle()`, the spinning progress mark.
 //!
 //! Upstream: sys/lib/libsa/printf.c @ 3ce1f3f79392
@@ -137,3 +138,4 @@ pub fn twiddle() {
         putchar(i32::from(b'\x08'));
     }
 }
+/* </CODE> */

@@ -42,6 +42,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The fast file system's allocator: blocks and fragments (`ffs_alloc`, `ffs_realloccg`,
 //! `ffs_blkfree`), inodes (`ffs_inode_alloc`, `ffs_freefile`), the placement policies
 //! (`ffs_dirpref`, `ffs1_blkpref`, `ffs2_blkpref`) and the cylinder group searches under
@@ -1496,3 +1497,4 @@ pub fn ffs_clusteracct(fs: &Fs, cgp: &mut CgBuf<'_>, blkno: Daddr, cnt: i32) {
     let cgx = cgp.cg().cg_cgx.get();
     fs.set_maxcluster(cgx, i);
 }
+/* </CODE> */

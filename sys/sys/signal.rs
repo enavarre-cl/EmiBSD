@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/signal.h>`: the signal numbers, `sigset_t`, `struct sigaction`, the `SA_*` and
 //! `SIG_*` values and `struct sigaltstack`.
 //!
@@ -268,7 +269,9 @@ const _: () = {
     assert!(size_of::<Sigaltstack>() == 24);
     assert!(size_of::<Sigvec>() == 16);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -313,3 +316,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

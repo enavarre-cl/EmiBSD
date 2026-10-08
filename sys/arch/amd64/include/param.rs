@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/param.h>`: machine type and page geometry.
 //!
 //! Upstream: sys/arch/amd64/include/param.h @ 3ce1f3f79392
@@ -108,3 +109,4 @@ impl MachineParam for super::super::Machine {
         _aligned_pointer::<T>(p)
     }
 }
+/* </CODE> */

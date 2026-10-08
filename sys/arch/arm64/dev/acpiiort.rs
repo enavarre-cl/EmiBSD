@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The IORT (I/O Remapping Table) on arm64: `arch/arm64/dev/acpiiort.c` and its header
 //! `acpiiort.h`. acpiiort0 attaches to the IORT table and offers each of its nodes to the
 //! IOMMU drivers (`smmu* at acpiiort?`); those register themselves here, and the PCI host
@@ -357,3 +358,4 @@ pub fn acpiiort_device_map(root: &AmlNodeRef, dmat: Option<BusDmaTag>) -> Option
 
     dmat
 }
+/* </CODE> */

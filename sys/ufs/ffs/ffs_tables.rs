@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The bit-pattern tables of the fast file system's fragment allocator: `around[]` and
 //! `inside[]`, which identify a run of free fragments in the block map as `(map & around) ==
 //! inside`, and `fragtbl[]`, which tells for a block map byte whether a free run of a given
@@ -127,7 +128,9 @@ pub static FRAGTBL: [Option<&[u8; 256]>; MAXFRAG + 1] = [
     None,
     Some(&FRAGTBL8),
 ];
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use std::vec::Vec;
@@ -170,3 +173,4 @@ mod tests {
         assert!(FRAGTBL[3].is_none() && FRAGTBL[8].is_some());
     }
 }
+/* </TESTS> */

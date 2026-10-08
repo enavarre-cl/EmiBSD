@@ -2,6 +2,7 @@
 /* Public Domain */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The PSCI function ids and return values `psci(4)` shares with its callers:
 //! `dev/fdt/pscivar.h`. The functions it declares live in [`super::psci`].
 //!
@@ -45,3 +46,4 @@ pub const PSCI_FEATURE_POWER_STATE_EXT: u32 = 1 << 1;
 pub const PSCI_POWER_STATE_POWERDOWN: u32 = 1 << 16;
 /// `PSCI_POWER_STATE_EXT_POWERDOWN`.
 pub const PSCI_POWER_STATE_EXT_POWERDOWN: u32 = 1 << 30;
+/* </CODE> */

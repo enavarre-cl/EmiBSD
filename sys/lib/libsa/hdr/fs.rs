@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<ufs/ffs/fs.h>` for libsa: the super-block (`struct fs`) and the address macros the
 //! standalone FFS reader uses.
 
@@ -252,3 +253,4 @@ const _: () = {
     assert!(core::mem::offset_of!(Fs, fs_magic) == 1372);
     assert!(core::mem::size_of::<Fs>() == 1384);
 };
+/* </CODE> */

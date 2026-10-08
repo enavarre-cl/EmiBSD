@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/pmap.h>` and the machine-dependent half of `<uvm/uvm_pmap.h>` as a trait: the
 //! physical map, what `uvm` asks the MMU code to do.
 //!
@@ -363,3 +364,4 @@ pub fn pmap_map_direct(pg: &VmPage) -> Vaddr {
 pub fn pmap_unmap_direct(va: Vaddr) -> Option<&'static VmPage> {
     Machine::pmap_unmap_direct(va)
 }
+/* </CODE> */

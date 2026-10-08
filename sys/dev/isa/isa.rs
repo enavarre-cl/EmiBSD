@@ -56,6 +56,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The ISA bus: `dev/isa/isa.c`.
 //!
 //! Upstream: sys/dev/isa/isa.c @ 3ce1f3f79392
@@ -394,3 +395,4 @@ pub fn isa_intr_typename(type_: i32) -> &'static str {
         _ => panic(format_args!("isa_intr_typename: invalid type {type_}")),
     }
 }
+/* </CODE> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Terminal attributes: `<sys/termios.h>`, as the kernel sees it.
 //!
 //! Upstream: sys/sys/termios.h @ 3ce1f3f79392
@@ -359,7 +360,9 @@ pub const fn cceq(val: Cc, c: Cc) -> bool {
         false
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,3 +481,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/selinfo.h>`: used to maintain information about processes that wish to be notified
 //! when I/O becomes possible (`select(2)`, `poll(2)` or `kevent(2)` on one of a driver's
 //! objects).
@@ -58,3 +59,4 @@ impl Selinfo {
         }
     }
 }
+/* </CODE> */

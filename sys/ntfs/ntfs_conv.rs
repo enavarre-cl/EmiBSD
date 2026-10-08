@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! File name recode stuff: the UTF-8 hooks a mount uses to decode the names it is asked for
 //! into UTF-16 (`ntm_wget`), to encode the names it returns (`ntm_wput`), and to compare two
 //! wide characters (`ntm_wcmp`).
@@ -130,7 +131,9 @@ pub fn ntfs_utf8_wcmp(wc1: Wchar, wc2: Wchar) -> i32 {
         i32::from(wc1) - i32::from(wc2)
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,3 +182,4 @@ mod tests {
         assert!(ntfs_utf8_wcmp(0x41, 0x20ac) < 0);
     }
 }
+/* </TESTS> */

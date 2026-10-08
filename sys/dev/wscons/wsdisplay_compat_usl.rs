@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `wsdisplay(4)`'s USL compatibility (`option WSDISPLAY_COMPAT_USL`): the System V
 //! virtual terminal ioctls (`VT_*`) and the PC console's keyboard and mode ioctls (`KD*`),
 //! for X servers and other programs written for them. A process that takes a screen with
@@ -676,7 +677,9 @@ pub fn wsdisplay_usl_ioctl2(
 
     Ok(true)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -693,3 +696,4 @@ mod tests {
         assert_eq!(WSCOMPAT_USL_SYNCTIMEOUT_SECS, 5);
     }
 }
+/* </TESTS> */

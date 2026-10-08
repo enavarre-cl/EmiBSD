@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The IPv6 protocol switch `inet6sw[]`, `ip6_protox[]` and `inet6domain`, and the IPv6
 //! configuration variables: `netinet6/in6_proto.c`.
 //!
@@ -345,7 +346,9 @@ pub static ICMP6_REDIRTIMEOUT: AtomicI32 = AtomicI32::new(10 * 60);
 pub static ICMP6ERRPPSLIM: AtomicI32 = AtomicI32::new(100);
 /// \[a\] `ip6_mtudisc_timeout`: mtu discovery.
 pub static IP6_MTUDISC_TIMEOUT: AtomicI32 = AtomicI32::new(IPMTUDISCTIMEOUT);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,3 +371,4 @@ mod tests {
         assert!(icmp6.is_some_and(|pr| pr.pr_type == SOCK_RAW as i16 && pr.pr_usrreqs.is_some()));
     }
 }
+/* </TESTS> */

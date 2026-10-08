@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! UDF helpers: CS0 names to Unicode, the disk label a UDF medium is given
 //! (`udf_disklabelspoof`, called by each arch's `readdisklabel`), and the virtual allocation
 //! table (VAT) of write-once media.
@@ -370,7 +371,9 @@ pub(crate) fn udf_vat_free(ump: &Umount) {
         size_of::<Unode>(),
     );
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,3 +407,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

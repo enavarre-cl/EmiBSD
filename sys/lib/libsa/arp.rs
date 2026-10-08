@@ -41,6 +41,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! ARP for the standalone network code: ask who has an address (with a small cache of the
 //! answers) and answer the requests for our own.
 //!
@@ -292,3 +293,4 @@ pub fn arp_reply(d: &mut IoDesc, pkt: &mut [u8], off: usize) {
     // No need to get fancy here. If the send fails, the requestor will just ask again.
     let _ = sendether(d, frame, off, &arp.arp_tha, ETHERTYPE_ARP);
 }
+/* </CODE> */

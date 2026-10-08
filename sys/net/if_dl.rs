@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The link-level socket address: `<net/if_dl.h>`.
 //!
 //! Upstream: sys/net/if_dl.h @ 3ce1f3f79392
@@ -115,7 +116,9 @@ pub const fn sdltosa(sdl: *mut SockaddrDl) -> *mut Sockaddr {
 
 // LP64 size of the C structure.
 const _: () = assert!(size_of::<SockaddrDl>() == 32);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,3 +138,4 @@ mod tests {
         assert_eq!(sdltosa(p).cast::<SockaddrDl>(), p);
     }
 }
+/* </TESTS> */

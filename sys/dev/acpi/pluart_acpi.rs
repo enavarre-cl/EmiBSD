@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The PL011 on ACPI (`ARMH0011`, the SBSA UART of arm64 servers and QEMU `virt` with
 //! `acpi=on`): `dev/acpi/pluart_acpi.c`. It maps the registers `_CRS` gives, establishes the
 //! interrupt through `acpi_intr_establish` and attaches the generic `pluart(4)`, as the
@@ -170,3 +171,4 @@ pub fn pluart_acpi_is_console(sc: &PluartAcpiSoftc) -> bool {
 
     false
 }
+/* </CODE> */

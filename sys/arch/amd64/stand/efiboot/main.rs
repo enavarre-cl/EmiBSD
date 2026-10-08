@@ -1,3 +1,4 @@
+/* <CODE> */
 //! BOOTX64.EFI: amd64's UEFI boot loader, OpenBSD's efiboot (`sys/arch/amd64/stand/efiboot`).
 //!
 //! The firmware enters `_start` (`start_amd64.S`), which relocates the image
@@ -51,3 +52,4 @@ static ALLOCATOR: libsa::sa_alloc::SaAlloc = libsa::sa_alloc::SaAlloc;
 fn panic(info: &PanicInfo) -> ! {
     libsa::exit::panic(format_args!("{}", info.message()))
 }
+/* </CODE> */

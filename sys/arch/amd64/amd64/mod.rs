@@ -1,3 +1,4 @@
+/* <CODE> */
 //! amd64 machine-dependent sources: OpenBSD `sys/arch/amd64/amd64/*.c` and `*.S`.
 //!
 //! `machdep` (boot, delay, the early init, the descriptor tables), `cpu` (the per-CPU pages
@@ -47,3 +48,4 @@ pub mod trap;
 pub mod tsc;
 pub mod vector;
 pub mod vm_machdep;
+/* </CODE> */

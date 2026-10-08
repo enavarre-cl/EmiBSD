@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Freestanding kernel C library: OpenBSD `sys/lib/libkern` and its header `libkern.h`.
 //!
 //! Upstream: sys/lib/libkern/libkern.h @ 3ce1f3f79392
@@ -45,3 +46,4 @@ pub use strlcpy::strlcpy;
 pub use strncasecmp::strncasecmp;
 pub use strnlen::strnlen;
 pub use timingsafe_bcmp::timingsafe_bcmp;
+/* </CODE> */

@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `dev/mii/rlphy.c`: driver for the internal PHY found on RTL8139 based nics (`rlphy* at
 //! mii?`), based on drivers for the 'exphy' (Internal 3Com phys) and 'nsphy' (National
 //! Semiconductor DP83840).
@@ -316,3 +317,4 @@ pub fn rlphy_status(sc: &'static MiiSoftc) {
         mii.mii_media_active.set(mii.cur_media());
     }
 }
+/* </CODE> */

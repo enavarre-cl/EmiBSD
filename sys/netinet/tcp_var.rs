@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Kernel variables for TCP: `<netinet/tcp_var.h>`.
 //!
 //! Upstream: sys/netinet/tcp_var.h @ 3ce1f3f79392
@@ -1318,7 +1319,9 @@ const _: () = {
     assert!(core::mem::offset_of!(Tcpstat, tcps_sc_added) == 352);
     assert!(core::mem::size_of::<Tcpstat>() == 592);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use std::boxed::Box;
@@ -1343,3 +1346,4 @@ mod tests {
         assert_eq!(TcpstatCounters::TcpsInbadlro as usize, 106);
     }
 }
+/* </TESTS> */

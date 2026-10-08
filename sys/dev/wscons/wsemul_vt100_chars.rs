@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The vt100 emulation's character sets: ISO Latin-1 supplemental, DEC special graphics,
 //! DEC technical and the national replacement sets, mapped to the font's glyphs.
 //!
@@ -211,7 +212,9 @@ pub fn vt100_setnrc(edp: &mut WsemulVt100Emuldata, nrc: i32) -> Result<(), Errno
 
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,3 +259,4 @@ mod tests {
         assert_eq!(table("nrctable"), NRCTABLE.concat());
     }
 }
+/* </TESTS> */

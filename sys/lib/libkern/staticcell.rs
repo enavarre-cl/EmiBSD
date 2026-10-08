@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `StaticCell<T>`: a `static` whose contents the kernel mutates in place.
 //!
 //! Not an OpenBSD file. C spells these `static struct foo bar;` and mutates them under a lock or
@@ -71,7 +72,9 @@ impl<T> StaticCell<T> {
         unsafe { *self.0.get() = value }
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,3 +93,4 @@ mod tests {
         assert_eq!(CELL.as_ptr() as usize % core::mem::align_of::<[u8; 4]>(), 0);
     }
 }
+/* </TESTS> */

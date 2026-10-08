@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Block mapping: `bmap` converts the logical block number of a file to its physical block
 //! number on the disk. The conversion is done by using the logical block number to index
 //! into the array of block pointers described by the dinode.
@@ -373,3 +374,4 @@ pub fn ufs_getlbns(
     }
     Ok(())
 }
+/* </CODE> */

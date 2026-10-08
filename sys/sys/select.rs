@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/select.h>`: the `fd_set` bit masks of `select(2)`.
 //!
 //! Upstream: sys/sys/select.h @ 3ce1f3f79392
@@ -94,7 +95,9 @@ pub fn fd_clr(fd: usize, p: &mut [FdMask]) {
 pub fn fd_isset(fd: usize, p: &[FdMask]) -> bool {
     p[fd / NFDBITS] & (1 << (fd % NFDBITS)) != 0
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,3 +114,4 @@ mod tests {
         assert_eq!(howmany(33, NFDBITS), 2);
     }
 }
+/* </TESTS> */

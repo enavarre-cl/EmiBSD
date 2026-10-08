@@ -30,6 +30,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Interface to new debugger: `arch/amd64/amd64/db_interface.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/db_interface.c @ 3ce1f3f79392
@@ -564,3 +565,4 @@ pub fn db_machine_init() {
 pub fn db_enter() {
     breakpoint();
 }
+/* </CODE> */

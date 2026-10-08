@@ -34,6 +34,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Network boot: find the PXE interface the firmware booted us through, and read files
 //! from its TFTP server (`tftp0a:` names): whole, through the PXE base code's MTFTP when
 //! the firmware has one, else block by block with libsa's TFTP client over the `efinet`
@@ -647,3 +648,4 @@ fn efinet_end(_nif: &mut Netif) {
     // SAFETY: the firmware's Simple Network Protocol.
     unsafe { ((*net).Shutdown)(net) };
 }
+/* </CODE> */

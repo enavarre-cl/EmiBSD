@@ -88,6 +88,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The standalone dynamic memory allocator: a best-fit free list over a heap that only grows.
 //!
 //! Upstream: sys/lib/libsa/alloc.c @ 3ce1f3f79392
@@ -316,7 +317,9 @@ unsafe impl GlobalAlloc for SaAlloc {
         }
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -349,3 +352,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

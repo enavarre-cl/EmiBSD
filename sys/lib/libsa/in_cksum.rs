@@ -37,6 +37,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `in_cksum()`: the Internet checksum of the IP and UDP headers.
 //!
 //! Upstream: sys/lib/libsa/in_cksum.c @ 3ce1f3f79392
@@ -73,7 +74,9 @@ pub fn in_cksum(p: &[u8]) -> u16 {
     sum += sum >> 16; // add potential last carry
     !ntohs(sum as u16)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,3 +103,4 @@ mod tests {
         assert_eq!(in_cksum(&[]), 0xffff);
     }
 }
+/* </TESTS> */

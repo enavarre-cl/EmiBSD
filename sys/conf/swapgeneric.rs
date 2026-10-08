@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The root and swap configuration `config(8)` generates for a kernel: `swapgeneric.c` for
 //! `config bsd swap generic` (GENERIC), and, as a deviation, the values its `swapbsd.c` would
 //! hold for `config bsd root on rd0a swap on rd0b` (arm64's RAMDISK line; amd64's adds
@@ -90,3 +91,4 @@ pub unsafe fn swapconf_rdroot() {
     // SAFETY: the caller guarantees the boot CPU is the only accessor.
     unsafe { MOUNTROOT.write(Some(crate::kern::subr_disk::dk_mountroot)) };
 }
+/* </CODE> */

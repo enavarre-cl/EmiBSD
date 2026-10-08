@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The USB stack: OpenBSD `sys/dev/usb/`.
 //!
 //! The machine-independent core (M12): the wire definitions and the bus driver (`usb`), the
@@ -31,3 +32,4 @@ pub mod usbpcap;
 pub mod xhci;
 pub mod xhcireg;
 pub mod xhcivar;
+/* </CODE> */

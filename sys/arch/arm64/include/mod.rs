@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Header ports: OpenBSD `sys/arch/arm64/include/*.h`.
 //!
 //! Constants, `#[repr(C)]` hardware structs and inline accessors only; never state.
@@ -30,3 +31,4 @@ pub mod simplebusvar;
 pub mod tcb;
 pub mod timetc;
 pub mod vmparam;
+/* </CODE> */

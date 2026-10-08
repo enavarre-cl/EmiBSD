@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/proc.h>`, `<machine/pcb.h>` and `proc0paddr` as a trait: the machine-dependent
 //! parts of a thread.
 //!
@@ -32,3 +33,4 @@ pub type Pcb = <Machine as MachineProc>::Pcb;
 
 // The initialisers are used as `<Machine as MachineProc>::MDPROC_INIT`/`PCB_INIT`: a free
 // `const` of a type with interior mutability would trip `declare_interior_mutable_const`.
+/* </CODE> */

@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/efiser.h 163898 2006-11-02 02:42:48Z marcel $ */
-
 /* <LICENSES> */
 /*++
 
@@ -25,6 +24,7 @@ Revision History
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI serial I/O protocol.
 //!
 //! Upstream: sys/stand/efi/include/efiser.h @ 3ce1f3f79392
@@ -184,3 +184,4 @@ pub struct SerialIoInterface {
 
 const _: () = assert!(core::mem::size_of::<SerialIoMode>() == 32);
 const _: () = assert!(core::mem::size_of::<SerialIoInterface>() == 64);
+/* </CODE> */

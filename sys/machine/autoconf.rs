@@ -1,3 +1,4 @@
+/* <CODE> */
 //! What machine-independent autoconfiguration needs from the machine: the tables
 //! `config(8)` generates into `ioconf.c` and the hooks each `arch/<arch>/<arch>/autoconf.c`
 //! defines.
@@ -75,3 +76,4 @@ pub fn diskconf() {
 pub fn nam2blk() -> &'static [Nam2blk] {
     Machine::nam2blk()
 }
+/* </CODE> */

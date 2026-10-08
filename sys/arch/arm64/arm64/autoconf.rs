@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Setup the system to run on the current machine: `arch/arm64/arm64/autoconf.c`.
 //!
 //! Upstream: sys/arch/arm64/arm64/autoconf.c @ 3ce1f3f79392
@@ -141,3 +142,4 @@ pub fn cpu_configure() {
 
 /// `device_register`: nothing to note on arm64.
 pub fn device_register(_dev: &Device, _aux: *mut c_void) {}
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `--https-server DIR:PORT:MODE` for `cargo xtask smoke` and `smoke2` (M9+): TLS servers on
 //! this machine for the guest's ftp(1) and nc(1), started before the VM boots and killed
 //! when the run ends (`Servers` kills them when dropped).
@@ -212,7 +213,9 @@ fn wait_listening(port: u16) -> Result<()> {
     )
     .into())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,3 +297,4 @@ mod tests {
         assert!(!out.contains("hello over https"), "{out}{err}");
     }
 }
+/* </TESTS> */

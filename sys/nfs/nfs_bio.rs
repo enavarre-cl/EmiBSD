@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The NFS client's block I/O through the buffer cache: `nfs_bioread` (the read side of
 //! `nfs_read`/`nfs_readlink`, with read-ahead), `nfs_write` (`vop_write`), the cache block
 //! helpers `nfs_getcacheblk` and `nfs_vinvalbuf`, `nfs_asyncio` (hand a buffer to the
@@ -847,7 +848,9 @@ pub fn nfs_doio(bp: &'static Buf, p: Option<&Proc>) -> Result<(), Errno> {
     splx(s);
     error
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -897,3 +900,4 @@ mod tests {
         assert_eq!(nfs_shortread(8192, 192, 1 << 20, 0), (192, 8192));
     }
 }
+/* </TESTS> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `ioctl(2)` command encoding: `<sys/ioccom.h>`.
 //!
 //! Upstream: sys/sys/ioccom.h @ 3ce1f3f79392
@@ -110,7 +111,9 @@ pub const fn _iow<T>(g: u8, n: u8) -> u64 {
 pub const fn _iowr<T>(g: u8, n: u8) -> u64 {
     _ioc(IOC_INOUT, g, n, size_of::<T>())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,3 +141,4 @@ mod tests {
         assert_eq!(defs["IOCPARM_MAX"], "PAGE_SIZE");
     }
 }
+/* </TESTS> */

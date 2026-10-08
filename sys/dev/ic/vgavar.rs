@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/ic/vgavar.h>`: the state of a VGA: its bus handles ([`VgaHandle`]), its screens
 //! ([`Vgascreen`]) and the configuration that holds them ([`VgaConfig`]), with the accessors
 //! of the VGA's indexed register files.
@@ -428,7 +429,9 @@ macro_rules! vga_6845_write {
     };
 }
 pub(crate) use vga_6845_write;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,3 +444,4 @@ mod tests {
         assert_eq!(scr.pcs.active.get(), 0);
     }
 }
+/* </TESTS> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `stat()`: the status of a file by name.
 //!
 //! Upstream: sys/lib/libsa/stat.c @ 3ce1f3f79392
@@ -53,3 +54,4 @@ pub fn stat(path: &[u8], sb: &mut Stat) -> Result<(), Errno> {
     let _ = oclose(fd);
     rv
 }
+/* </CODE> */

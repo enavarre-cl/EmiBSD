@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The file operations of sockets: `kern/sys_socket.c`.
 //!
 //! Upstream: sys/kern/sys_socket.c @ 3ce1f3f79392
@@ -246,3 +247,4 @@ pub fn soo_close(fp: &File, _p: Option<&Proc>) -> Result<(), Errno> {
     fp.f_data.set(ptr::null_mut());
     error
 }
+/* </CODE> */

@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `strnlen(3)`: bounded string length.
 //!
 //! Upstream: sys/lib/libkern/strnlen.c @ 3ce1f3f79392
@@ -30,7 +31,9 @@ pub fn strnlen(s: &[u8], maxlen: usize) -> usize {
     let limit = maxlen.min(s.len());
     s[..limit].iter().position(|&b| b == 0).unwrap_or(limit)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,3 +56,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

@@ -65,6 +65,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/pcb.h>`: the process control block.
 //!
 //! Upstream: sys/arch/amd64/include/pcb.h @ 3ce1f3f79392
@@ -148,3 +149,4 @@ const _: () = {
     assert!(core::mem::offset_of!(Pcb, pcb_savefpu) == 0);
     assert!(core::mem::align_of::<Pcb>() == 64);
 };
+/* </CODE> */

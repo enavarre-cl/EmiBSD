@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/eficonsctl.h 272105 2014-09-25 13:31:08Z emaste $ */
-
 /* <LICENSES> */
 /*-
  * Copyright (c) 2004 - 2010, Intel Corporation. All rights reserved.
@@ -33,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI console control protocol (the Apple and Intel text/graphics screen switch).
 //!
 //! Upstream: sys/stand/efi/include/eficonsctl.h @ 3ce1f3f79392
@@ -110,3 +110,4 @@ pub struct EfiConsoleControlProtocol {
 }
 
 const _: () = assert!(core::mem::size_of::<EfiConsoleControlProtocol>() == 24);
+/* </CODE> */

@@ -35,6 +35,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! ext2fs helpers: the directory block of an offset (`ext2fs_bufatoff`, through the extent
 //! tree when the inode has one) and the vnode set-up of a new inode (`ext2fs_vinit`).
 //!
@@ -145,3 +146,4 @@ pub fn ext2fs_vinit(mp: &'static Mount, vp: &'static Vnode) -> Result<&'static V
 
     Ok(vp)
 }
+/* </CODE> */

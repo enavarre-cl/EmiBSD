@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `timingsafe_bcmp(3)`: constant-time byte comparison.
 //!
 //! Upstream: sys/lib/libkern/timingsafe_bcmp.c @ 3ce1f3f79392
@@ -37,7 +38,9 @@ pub fn timingsafe_bcmp(b1: &[u8], b2: &[u8]) -> bool {
     }
     (ret != 0) | (b1.len() != b2.len())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,3 +64,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

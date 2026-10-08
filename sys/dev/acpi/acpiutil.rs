@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `dev/acpi/acpiutil.c`: the checksum of the firmware tables.
 //!
 //! Upstream: sys/dev/acpi/acpiutil.c @ 3ce1f3f79392
@@ -31,7 +32,9 @@ pub fn acpi_checksum(v: &[u8]) -> u32 {
 
     u32::from(s)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -44,3 +47,4 @@ mod tests {
         assert_eq!(acpi_checksum(&[0xff, 0x02]), 1);
     }
 }
+/* </TESTS> */

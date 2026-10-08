@@ -63,6 +63,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Kernel memory allocation and management: `uvm/uvm_km.c`.
 //!
 //! Upstream: sys/uvm/uvm_km.c @ 3ce1f3f79392
@@ -673,3 +674,4 @@ pub fn km_free(v: NonNull<u8>, sz: usize, kv: &KmemVaMode, kp: &KmemPaMode) {
         wakeup(ptr::from_ref(map));
     }
 }
+/* </CODE> */

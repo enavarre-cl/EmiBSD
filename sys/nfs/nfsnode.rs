@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<nfs/nfsnode.h>`: the NFS client's node (`struct nfsnode`, the NFS equivalent of ufs's
 //! inode), the silly rename record, the conversions between nodes and vnodes, and the
 //! nfsiod buffer queue.
@@ -343,7 +344,9 @@ pub fn NFSTOV(np: &NfsNode) -> &'static Vnode {
         None => panic(format_args!("NFSTOV: nfsnode {:p} has no vnode", np)),
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,3 +366,4 @@ mod tests {
         assert!(!crate::nfs::nfs::nfs_cmpfh(&a, &[1, 2, 3]));
     }
 }
+/* </TESTS> */

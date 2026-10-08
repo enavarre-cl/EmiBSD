@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `consinit()`: `arch/amd64/amd64/consinit.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/consinit.c @ 3ce1f3f79392
@@ -70,3 +71,4 @@ pub fn consinit() {
     // `cninit` does when no constab entry probes; there is nowhere to report it.
     let _ = attached;
 }
+/* </CODE> */

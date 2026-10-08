@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<sys/uuid.h>` for libsa: `struct uuid`.
 
 /// `_UUID_NODE_LEN`.
@@ -22,3 +23,4 @@ pub struct Uuid {
 }
 
 const _: () = assert!(core::mem::size_of::<Uuid>() == 16);
+/* </CODE> */

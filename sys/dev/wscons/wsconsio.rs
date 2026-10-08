@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wsconsio.h>`, the event, keyboard and display parts: the wscons event
 //! structure and event types, the keyboard ioctls of `wskbd(4)` and the display ioctls of
 //! `wsdisplay(4)`, with their argument structures.
@@ -1280,7 +1281,9 @@ const _: () = {
     assert!(size_of::<WsmouseParam>() == 8);
     assert!(size_of::<WsmouseParameters>() == 16);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1610,3 +1613,4 @@ mod tests {
         assert_eq!(c, ours);
     }
 }
+/* </TESTS> */

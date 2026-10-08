@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `cargo xtask comp --arch A [--jobs N]` (M14): OpenBSD's compiler, clang and lld from
 //! `gnu/llvm` (LLVM 22, Apache-2.0 WITH LLVM-exception, compiled unmodified), built for
 //! EmiBSD by OpenBSD's own build glue (`gnu/usr.bin/clang`, `gnu/lib/libcxx`,
@@ -1209,7 +1210,9 @@ fn newest_mtime(dir: &Path) -> Result<Option<SystemTime>> {
     }
     Ok(newest)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1247,3 +1250,4 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+/* </TESTS> */

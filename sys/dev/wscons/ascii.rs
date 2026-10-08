@@ -3,6 +3,7 @@
 /* <LICENSES> */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/ascii.h>`: the ASCII control characters the terminal emulations act on.
 //!
 //! Upstream: sys/dev/wscons/ascii.h @ 3ce1f3f79392
@@ -39,7 +40,9 @@ pub const ASCII_CAN: u32 = 0x18;
 pub const ASCII_SUB: u32 = 0x1a;
 /// `ASCII_ESC`: escape.
 pub const ASCII_ESC: u32 = 0x1b;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,3 +58,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

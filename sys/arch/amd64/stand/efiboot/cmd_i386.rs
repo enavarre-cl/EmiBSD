@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! efiboot's `machine` commands: `comaddr`, `diskinfo`, `memory`, `video`, `gop`, `exit`,
 //! `poweroff`, `fwsetup` (and `idle` with softraid).
 //!
@@ -232,3 +233,4 @@ fn Xcomaddr(cmd: &mut CmdState) -> i32 {
 
     0
 }
+/* </CODE> */

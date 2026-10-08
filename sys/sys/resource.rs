@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/resource.h>`: priorities, resource usage and limits.
 //!
 //! Upstream: sys/sys/resource.h @ 3ce1f3f79392
@@ -233,3 +234,4 @@ pub struct Loadavg {
     /// `fscale`.
     pub fscale: i64,
 }
+/* </CODE> */

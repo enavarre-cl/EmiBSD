@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The SCSI midlayer: OpenBSD `sys/scsi/`.
 //!
 //! `scsi_all` holds the command and data formats every SCSI device shares, `scsiconf` the
@@ -17,3 +18,4 @@ pub mod scsi_message;
 pub mod scsiconf;
 pub mod sd;
 pub mod sdvar;
+/* </CODE> */

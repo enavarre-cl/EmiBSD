@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<machine/mpbiosvar.h>`: where the application processors' real-mode trampoline lives.
 //!
 //! Upstream: sys/arch/amd64/include/mpbiosvar.h @ 3ce1f3f79392
@@ -49,3 +50,4 @@ use crate::arch::amd64::include::param::PAGE_SIZE;
 pub const MP_TRAMPOLINE: usize = 16 * PAGE_SIZE;
 /// `MP_TRAMP_DATA`: the page of the trampoline's data and stack.
 pub const MP_TRAMP_DATA: usize = 17 * PAGE_SIZE;
+/* </CODE> */

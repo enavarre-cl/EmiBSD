@@ -42,6 +42,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Block allocation: `balloc` defines the structure of file system storage by allocating
 //! the physical blocks on a device given the inode and the logical block number in a file,
 //! growing the last fragment into a block and building the indirect blocks on the way.
@@ -903,3 +904,4 @@ pub fn ffs_balloc(
     }
     ffs1_balloc(ip, off, size, cred, flags, bpp)
 }
+/* </CODE> */

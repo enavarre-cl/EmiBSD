@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `/usr/share/zoneinfo` for the base set (M14c): OpenBSD's own `usr.sbin/zic` built for this
 //! machine and run as `share/zoneinfo/Makefile`'s `posix_only` target runs it
 //! (`zic -d DIR -L /dev/null africa antarctica asia australasia europe northamerica
@@ -189,3 +190,4 @@ pub(super) fn tzlist(dir: &Path) -> Result<String> {
     lines.sort();
     Ok(lines.iter().map(|l| format!("{l}\n")).collect())
 }
+/* </CODE> */

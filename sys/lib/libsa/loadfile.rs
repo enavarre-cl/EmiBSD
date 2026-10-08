@@ -101,6 +101,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `loadfile()`: open a kernel, recognise its ELF class and load it (see `loadfile_elf.rs`),
 //! leaving the positions of what it loaded in `marks`.
 //!
@@ -246,3 +247,4 @@ pub unsafe fn loadfile(
         }
     }
 }
+/* </CODE> */

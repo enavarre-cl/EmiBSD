@@ -65,6 +65,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 trap handling: `arch/amd64/amd64/trap.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/trap.c @ 3ce1f3f79392
@@ -651,7 +652,9 @@ const _: () = {
         core::mem::offset_of!(Trapframe, tf_r9) == core::mem::offset_of!(Trapframe, tf_rdi) + 40
     );
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -671,3 +674,4 @@ mod tests {
         assert_eq!(pgex2access(PGEX_W | PGEX_I), PROT_WRITE);
     }
 }
+/* </TESTS> */

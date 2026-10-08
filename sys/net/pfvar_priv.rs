@@ -34,6 +34,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<net/pfvar_priv.h>`: pf's kernel-private types: states, state keys, the limiters, the
 //! packet descriptor and the locks.
 //!
@@ -1225,3 +1226,4 @@ const _: () = {
     assert!(size_of::<NdNeighborSolicit>() <= size_of::<Icmp>());
     assert!(size_of::<PfPdescHdr>() == size_of::<Icmp>());
 };
+/* </CODE> */

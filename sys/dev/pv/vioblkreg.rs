@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/pv/vioblkreg.h>`: the virtio block device's configuration registers, feature bits,
 //! request types and status codes, and the request header.
 //!
@@ -144,7 +145,9 @@ pub struct VirtioBlkReqHdr {
 }
 
 const _: () = assert!(size_of::<VirtioBlkReqHdr>() == 16);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,3 +174,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "VIRTIO_BLK_", &names);
     }
 }
+/* </TESTS> */

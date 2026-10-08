@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/proc.h>`: description of a process.
 //!
 //! These structures contain the information needed to manage a thread of control, known in
@@ -1276,7 +1277,9 @@ pub fn refreshcreds(p: &Proc) {
 
 /// A `Timeval`-typed helper the resource code shares: the zero interval.
 pub const ZERO_TIMEVAL: Timeval = Timeval::new(0, 0);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1295,3 +1298,4 @@ mod tests {
         assert_eq!(cpuset_asize(33), 2);
     }
 }
+/* </TESTS> */

@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ufs/ufs/quota.h>`: definitions for disk quotas imposed on the average user (big brother
 //! finally hits UNIX): the quota file format (`struct dqblk`), the `quotactl(2)` commands, and
 //! the interface the UFS code calls on every allocation and ownership change.
@@ -253,7 +254,9 @@ pub fn ufs_quotactl(
 /// `ufs_quota_init`: nothing to initialise without `QUOTA`.
 #[cfg(not(feature = "quota"))]
 pub fn ufs_quota_init() {}
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,3 +280,4 @@ mod tests {
         assert_eq!(size_of::<Dqblk>(), 32);
     }
 }
+/* </TESTS> */

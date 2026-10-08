@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/efi.h 264095 2014-04-04 00:16:46Z emaste $ */
-
 /* <LICENSES> */
 /*++
 
@@ -27,6 +26,7 @@ Revision History
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! The public EFI header: includes every other header of the set.
 //!
 //! Upstream: sys/stand/efi/include/efi.h @ 3ce1f3f79392
@@ -79,7 +79,9 @@ pub const EFI_FIRMWARE_MINOR_REVISION: u32 = 62;
 /// `EFI_FIRMWARE_REVISION`.
 pub const EFI_FIRMWARE_REVISION: u32 =
     (EFI_FIRMWARE_MAJOR_REVISION << 16) | EFI_FIRMWARE_MINOR_REVISION;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,3 +99,4 @@ mod tests {
         assert_eq!(SCAN_ESC, 0x17);
     }
 }
+/* </TESTS> */

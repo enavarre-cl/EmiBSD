@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Init the vm system: `uvm/uvm_init.c`. All global vars are stored in `struct uvm` to make
 //! them easier to spot.
 //!
@@ -159,3 +160,4 @@ pub fn uvm_init_percpu() {
     // move to per-CPU memory.
     uvm_anon_init_percpu();
 }
+/* </CODE> */

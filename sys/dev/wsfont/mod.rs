@@ -1,3 +1,4 @@
+/* <CODE> */
 //! wsfont, the raster font list: OpenBSD `sys/dev/wsfont/`.
 //!
 //! `wsfont` is `wsfont.c` and `<dev/wsfont/wsfont.h>`; the font modules are the font
@@ -9,3 +10,4 @@ pub mod spleen32x64;
 pub mod spleen8x16;
 #[allow(clippy::module_inception)] // wsfont.c, the file, in the wsfont directory
 pub mod wsfont;
+/* </CODE> */

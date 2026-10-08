@@ -37,6 +37,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 interrupt sources and `spl(9)`: `arch/amd64/amd64/intr.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/intr.c @ 3ce1f3f79392
@@ -929,3 +930,4 @@ pub extern "C" fn dosoftint(si_level: i32) {
     softintr_dispatch(si_level);
     ci.ci_handled_intr_level.set(floor);
 }
+/* </CODE> */

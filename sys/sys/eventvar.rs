@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/eventvar.h>`: `struct kqueue`, the kernel side of a `kqueue(2)` descriptor (and of a
 //! thread's `select(2)`/`poll(2)` queue, `p_kq`).
 //!
@@ -193,3 +194,4 @@ queue_adapter!(
     /// `kq_next`.
     pub KqList: Kqueue, kq_next => ListEntry<Kqueue>
 );
+/* </CODE> */

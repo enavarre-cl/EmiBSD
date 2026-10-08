@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/clock_subr.h>`: the time-of-day clock chip interface.
 //!
 //! Upstream: sys/dev/clock_subr.h @ 3ce1f3f79392
@@ -86,3 +87,4 @@ pub fn todr_wenable(ct: &TodrChipHandle, v: i32) {
         let _ = setwen(ct, v);
     }
 }
+/* </CODE> */

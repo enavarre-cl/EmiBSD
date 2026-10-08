@@ -37,6 +37,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/tss.h>`: the task state segment.
 //!
 //! Upstream: sys/arch/amd64/include/tss.h @ 3ce1f3f79392
@@ -94,3 +95,4 @@ impl Default for X86_64Tss {
 }
 
 const _: () = assert!(size_of::<X86_64Tss>() == 104);
+/* </CODE> */

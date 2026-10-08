@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! IPv6 interface addresses, interface statistics, the address `ioctl` requests and the
 //! multicast records: `<netinet6/in6_var.h>`.
 //!
@@ -655,7 +656,9 @@ const _: () = {
     assert!(size_of::<In6Ifreq>() == IFNAMSIZ + 34 * 8);
     assert!(size_of::<In6Aliasreq>() == 128);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -687,3 +690,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "IN6_IFF_", &iff);
     }
 }
+/* </TESTS> */

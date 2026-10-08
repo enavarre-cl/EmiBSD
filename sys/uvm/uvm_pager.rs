@@ -67,6 +67,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<uvm/uvm_pager.h>`: the pager operations every memory object implements, and
 //! `uvm_pager.c`: generic functions used to assist the pagers.
 //!
@@ -815,3 +816,4 @@ pub fn uvm_pager_dropcluster(
 
 // uvm_aio_biodone, uvm_swap_dropcluster, uvm_aio_aiodone: the async (swap) pageout, which
 // needs uvm_swap.c (M7): not here yet.
+/* </CODE> */

@@ -26,6 +26,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wskbdraw.h>`: US keyboard XT scancodes, the raw codes `wskbd(4)`'s keyboard
 //! drivers hand to `wsdisplay(4)` in raw mode (`WSDISPLAY_COMPAT_RAWKBD`); the names match
 //! `KS_xxx` symbols whenever possible.
@@ -293,7 +294,9 @@ pub const RAWKEY_L8: u8 = 0x90;
 pub const RAWKEY_L9: u8 = 0x91;
 /// `RAWKEY_L10`: Cut
 pub const RAWKEY_L10: u8 = 0x92;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,3 +344,4 @@ mod tests {
         assert_complete(&defs, "RAWKEY_", &ours);
     }
 }
+/* </TESTS> */

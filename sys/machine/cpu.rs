@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/cpu.h>`, `<machine/cpufunc.h>`, `boot(9)` and `delay(9)` as traits.
 //!
 //! Milestone M0 needs only the earliest setup, a way to park the CPU and a way to leave the
@@ -499,3 +500,4 @@ pub trait Exit {
     /// [`ExitStatus::qemu_status`], which `xtask smoke` checks; without it the CPU is halted.
     fn exit(status: ExitStatus) -> !;
 }
+/* </CODE> */

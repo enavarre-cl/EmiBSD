@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Commands to run the stopped kernel: `ddb/db_run.c` and `<ddb/db_run.h>`.
 //!
 //! Upstream: sys/ddb/db_run.c @ 3ce1f3f79392
@@ -306,3 +307,4 @@ pub fn db_continue_cmd(_addr: DbExpr, _have_addr: bool, _count: DbExpr, modif: &
     DB_CMD_LOOP_DONE.store(true, Ordering::Relaxed);
     Ok(())
 }
+/* </CODE> */

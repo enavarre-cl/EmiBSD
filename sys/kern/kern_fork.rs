@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Creating processes and threads: `kern/kern_fork.c`.
 //!
 //! Upstream: sys/kern/kern_fork.c @ 3ce1f3f79392
@@ -840,3 +841,4 @@ pub fn proc_trampoline_mi() {
     spc.spc_runtime.set(nanouptime());
     kernel_lock(); // KERNEL_LOCK()
 }
+/* </CODE> */

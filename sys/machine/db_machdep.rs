@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/db_machdep.h>` and `db_trace.c` as a trait: what `ddb(4)` needs from the machine.
 //!
 //! Milestone M2 ("ddb-lite") needs only a stack trace from the current frame, which
@@ -163,3 +164,4 @@ pub fn inst_return(ins: DbExpr) -> bool {
 pub fn inst_call(ins: DbExpr) -> bool {
     Machine::inst_call(ins)
 }
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The libraries of `LIBRARIES` (M9+): LibreSSL's `libcrypto`, `libssl` and `libtls`, and
 //! `libcurses` and `libedit`. They are built by `build_lib` like libc; what is new about
 //! them is here, and is driven by their own Makefiles, not by lists of files:
@@ -161,7 +162,9 @@ pub(super) fn library_includes(ctx: &Ctx<'_>, dir: &str) -> Result<Vec<bool>> {
     }
     Ok(written)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,3 +223,4 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+/* </TESTS> */

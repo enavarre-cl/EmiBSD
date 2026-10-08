@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `strlcat(3)`: size-bounded string concatenation.
 //!
 //! Upstream: sys/lib/libkern/strlcat.c @ 3ce1f3f79392
@@ -45,7 +46,9 @@ pub fn strlcat(dst: &mut [u8], src: &[u8]) -> usize {
     dst[dlen + n] = 0;
     dlen + srclen
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,3 +85,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

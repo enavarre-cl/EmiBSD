@@ -41,6 +41,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<isofs/udf/ecma167-udf.h>`: the descriptors of ECMA-167 rev. 3 and of the OSTA UDF
 //! profile (up to UDF 2.50) as they are on the medium: tags, extents and allocation
 //! descriptors, the volume and logical volume descriptors, partition maps, the file set
@@ -1627,7 +1628,9 @@ const _: () = {
     assert!(offset_of!(FileEntry, l_ea) == 168);
     assert!(offset_of!(ExtfileEntry, l_ea) == 208);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1657,3 +1660,4 @@ mod tests {
         assert_eq!({ t.tag_loc }, u32::from_le_bytes([12, 13, 14, 15]));
     }
 }
+/* </TESTS> */

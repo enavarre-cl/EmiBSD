@@ -6,6 +6,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<scsi/scsi_debug.h>`: the per-link debugging bits (`SDEV_DB1` .. `SDEV_DB4`, in the
 //! `flags` word of the `scsi_link`) and the `SC_DEBUG` macros that test them.
 //!
@@ -51,7 +52,9 @@ macro_rules! sc_debugn {
 macro_rules! sc_debug_sense {
     ($($arg:tt)*) => {};
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use std::assert_eq;
@@ -79,3 +82,4 @@ mod tests {
         sc_debug_sense!(xs);
     }
 }
+/* </TESTS> */

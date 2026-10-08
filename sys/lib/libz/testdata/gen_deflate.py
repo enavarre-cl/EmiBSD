@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the deflate test vectors of sys/lib/libz/deflate/tests.rs.
+"""Generate the deflate test vectors of sys/lib/libz/deflate.rs.
 
 Run from anywhere with the macOS system Python (zlib 1.2.12):
 
@@ -59,7 +59,7 @@ def lcg(seed):
 
 
 def make_inputs():
-    """The inputs, built exactly as deflate/tests.rs builds them."""
+    """The inputs, built exactly as deflate.rs builds them."""
     text = open(os.path.join(HERE, "deflate_text.txt"), "rb").read()
     rep = b"0123456789abcdef" * 1500 + b"z" * 7000 + b"hello, world. " * 900
     g = lcg(1)

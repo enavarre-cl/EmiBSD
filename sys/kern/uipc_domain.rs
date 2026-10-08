@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The communication domains: `domains[]`, `domaininit`, the protocol lookups and the
 //! `net.*` sysctl tree.
 //!
@@ -311,7 +312,9 @@ pub fn pffasttimo(arg: *mut c_void) {
     }
     timeout_add_msec(to, 200);
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -338,3 +341,4 @@ mod tests {
         assert!(pffindtype(i32::from(AF_INET), SOCK_DGRAM).is_some());
     }
 }
+/* </TESTS> */

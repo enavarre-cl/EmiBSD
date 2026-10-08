@@ -35,6 +35,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/signal.h>`: `sig_atomic_t` and `struct sigcontext`.
 //!
 //! Upstream: sys/arch/arm64/include/signal.h @ 3ce1f3f79392
@@ -81,3 +82,4 @@ const _: () = {
     assert!(size_of::<Sigcontext>() == 8 + 4 * 8 + 30 * 8 + 8);
     assert!(core::mem::offset_of!(Sigcontext, sc_cookie) == 8 + 34 * 8);
 };
+/* </CODE> */

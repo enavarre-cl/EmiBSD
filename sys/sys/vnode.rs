@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/vnode.h>`: the vnode, the focus of all file activity in UNIX. There is a unique vnode
 //! allocated for each active file, each current directory, each mounted-on file, text file,
 //! and the root. Also the vnode types and tags, `struct vattr`, the `IO_*` and `V*` flags,
@@ -1175,7 +1176,9 @@ impl Vops {
         vop_kqfilter: None,
     };
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1204,3 +1207,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

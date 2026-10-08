@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Structure per communications domain: `<sys/domain.h>`.
 //!
 //! Upstream: sys/sys/domain.h @ 3ce1f3f79392
@@ -84,3 +85,4 @@ pub struct Domain {
     /// `dom_maxplen`: maximum prefix length, in bits.
     pub dom_maxplen: u32,
 }
+/* </CODE> */

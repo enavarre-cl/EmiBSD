@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! boot(8)'s variables (`set howto`, `device`, `tty`, `image`, `timeout`, `db_console`), the
 //! boot flags parser and the environment (`env`).
 //!
@@ -286,3 +287,4 @@ pub fn Xenv(cmd: &mut CmdState) -> i32 {
     }
     0
 }
+/* </CODE> */

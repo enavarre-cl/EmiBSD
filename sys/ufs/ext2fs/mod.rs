@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The second extended file system: OpenBSD `sys/ufs/ext2fs/`, compiled with feature `ext2fs`
 //! (`option EXT2FS`), on the UFS layer (`ufs/ufs`).
 //!
@@ -31,3 +32,4 @@ pub mod ext2fs_readwrite;
 pub mod ext2fs_subr;
 pub mod ext2fs_vfsops;
 pub mod ext2fs_vnops;
+/* </CODE> */

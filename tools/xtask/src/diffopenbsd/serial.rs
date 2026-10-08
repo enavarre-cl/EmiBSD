@@ -1,3 +1,4 @@
+/* <CODE> */
 //! A VM driven over its serial console: QEMU with the serial port on stdio, a reader thread
 //! collecting the transcript, and send/expect on top (the smoke machinery's `send_paced`
 //! and `slurp_into`, `boot.rs`).
@@ -230,3 +231,4 @@ impl Drop for Vm {
         let _ = fs::write(&self.log, self.text());
     }
 }
+/* </CODE> */

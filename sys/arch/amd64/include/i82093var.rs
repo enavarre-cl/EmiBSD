@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/i82093var.h>`: the I/O APIC's software state and the encoding of an
 //! interrupt handle's `line`.
 //!
@@ -189,3 +190,4 @@ pub const fn apic_irq_islegacy(x: i32) -> bool {
 pub const fn apic_irq_legacy_irq(x: i32) -> i32 {
     x & 0xff
 }
+/* </CODE> */

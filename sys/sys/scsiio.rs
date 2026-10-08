@@ -3,6 +3,7 @@
 /* <LICENSES> */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/scsiio.h>`: the ioctls of the SCSI midlayer: raw commands (`SCIOCCOMMAND`), the
 //! debug level (`SCIOCDEBUG`), a device's bus address (`SCIOCIDENTIFY`), and the bus probe
 //! and detach requests of bio(4) (`SBIOCPROBE`, `SBIOCDETACH`).
@@ -209,7 +210,9 @@ const _: () = {
     assert!(size_of::<SbiocDevice>() == 16);
     assert!(offset_of!(SbiocDevice, sd_lun) == 12);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,3 +242,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "SC_DB_", &ours);
     }
 }
+/* </TESTS> */

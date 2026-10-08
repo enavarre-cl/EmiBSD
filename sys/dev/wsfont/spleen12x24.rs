@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The Spleen 12x24 font, `<dev/wsfont/spleen12x24.h>`: a built-in font of `wsfont(9)`.
 //!
 //! Upstream: sys/dev/wsfont/spleen12x24.h @ 3ce1f3f79392
@@ -5668,3 +5669,4 @@ static SPLEEN12X24_DATA: StaticCell<[u8; SPLEEN12X24_DATA_LEN]> = StaticCell::ne
     0x00, 0xc0, // ........**......
     0x7f, 0x80, // .********.......
 ]);
+/* </CODE> */

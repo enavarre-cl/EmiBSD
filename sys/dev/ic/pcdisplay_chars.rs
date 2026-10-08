@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `pcdisplay_mapchar`: the glyph of a Unicode character in the IBM PC's code page 437, the
 //! font a VGA's character generator holds after the firmware loaded it.
 //!
@@ -971,7 +972,9 @@ pub fn pcdisplay_mapchar(uni: i32, index: &mut u32) -> i32 {
     *index = u32::from(NOTPRINTABLE);
     0
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -995,3 +998,4 @@ mod tests {
         assert_eq!(map(0x0085), (u32::from(CONTROL), 5));
     }
 }
+/* </TESTS> */

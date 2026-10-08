@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `consinit(9)`: the machine-dependent half of the console framework.
 //!
 //! `<dev/cons.h>` and `dev/cons.c` (ported as `dev/cons.rs`) are generic: `cn_tab`, `cnputc`,
@@ -19,3 +20,4 @@ pub trait Console {
 pub fn consinit() {
     Machine::consinit()
 }
+/* </CODE> */

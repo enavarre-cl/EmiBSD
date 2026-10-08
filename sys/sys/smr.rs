@@ -48,6 +48,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/smr.h>`: safe memory reclamation, see `smr_call(9)`. Readers walk shared data
 //! inside a read section (`smr_read_enter`/`smr_read_leave`) without locks; writers unlink an
 //! object under their lock and hand its destruction to `smr_call`, which runs it once every
@@ -355,7 +356,9 @@ fn smr_depth() -> u32 {
     use crate::machine::cpu::{Cpu, curcpu};
     Machine::ci_schedstate(curcpu()).spc_smrdepth.get()
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,3 +427,4 @@ mod tests {
         assert!(head.first_locked().is_some_and(|e| e.v == 1));
     }
 }
+/* </TESTS> */

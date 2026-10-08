@@ -30,6 +30,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! xhci(4) at pci: maps the xHCI registers (BAR 0), establishes the interrupt (MSI-X, then
 //! MSI, then INTx, at `IPL_USB | IPL_MPSAFE`), takes the controller from the BIOS and hands
 //! it to the machine-independent driver (`dev/usb/xhci.rs`).
@@ -364,3 +365,4 @@ pub fn xhci_pci_takecontroller(psc: &XhciPciSoftc, silent: bool) {
         xecp += (xhci_xecp_next(eec) << 2) as usize;
     }
 }
+/* </CODE> */

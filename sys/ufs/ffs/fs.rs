@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ufs/ffs/fs.h>`: the layout of a fast file system: the super-block (`struct fs`), the
 //! cylinder group block (`struct cg`, and the old `struct ocg`), the cylinder group summaries
 //! (`struct csum`), and the macros that turn inode numbers, logical blocks and fragments into
@@ -990,3 +991,4 @@ const _: () = {
     assert!(offset_of!(Cg, cg_ffs2_time) == 136);
     assert!(size_of::<Cg>() == 168);
 };
+/* </CODE> */

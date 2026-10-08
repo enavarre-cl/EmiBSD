@@ -49,6 +49,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The denode cache and the life of a denode: `msdosfs_init` (the hash table), `deget` (find
 //! or make the denode of a directory entry, with its vnode), `deupdat` (write the times and
 //! size back to the entry), `detrunc` and `deextend` (change a file's length), `reinsert`
@@ -684,3 +685,4 @@ pub fn msdosfs_inactive(ap: &mut VopInactiveArgs<'_>) -> Result<(), Errno> {
 }
 
 const _: () = assert!(!core::mem::needs_drop::<Denode>());
+/* </CODE> */

@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/systm.h>`: the kernel's global declarations.
 //!
 //! Upstream: sys/sys/systm.h @ 3ce1f3f79392
@@ -267,3 +268,4 @@ pub fn net_assert_locked_exclusive(func: &str) {
     #[cfg(not(feature = "diagnostic"))]
     let _ = func;
 }
+/* </CODE> */

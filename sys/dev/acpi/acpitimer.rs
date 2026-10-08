@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! acpitimer(4): `dev/acpi/acpitimer.c`, the ACPI power management timer. The FADT names a
 //! free-running counter at 3.579545 MHz, 24 bits wide (32 with `FADT_TMR_VAL_EXT`), in I/O
 //! space (or wherever `X_PM_TMR_BLK` says). acpitimer0 registers it as a timecounter of
@@ -211,7 +212,9 @@ pub fn acpitimer_read(sc: &AcpitimerSoftc) -> u32 {
 
     u2
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -233,3 +236,4 @@ mod tests {
         assert_eq!(ACPI_TIMECOUNTER.tc_counter_mask.get(), 0x00ff_ffff);
     }
 }
+/* </TESTS> */

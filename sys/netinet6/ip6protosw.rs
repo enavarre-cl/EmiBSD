@@ -63,6 +63,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Protocol switch table for IPv6: the argument of the IPv6 `pr_ctlinput`s:
 //! `<netinet6/ip6protosw.h>`. All other definitions refer to `<sys/protosw.h>`.
 //!
@@ -140,3 +141,4 @@ impl Default for Ip6ctlparam {
         Self::new()
     }
 }
+/* </CODE> */

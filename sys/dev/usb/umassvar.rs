@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/usb/umassvar.h>`: the umass(4) softc, the Bulk-Only and CBI wire structures, and
 //! the transfer states.
 //!
@@ -521,7 +522,9 @@ const _: () = {
     assert!(size_of::<UmassBbbCsw>() == UMASS_BBB_CSW_SIZE as usize);
     assert!(size_of::<UmassCbiSbl>() == 2);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,3 +556,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

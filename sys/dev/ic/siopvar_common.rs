@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/ic/siopvar_common.h>`: the structures and routines siop(4) shares with esiop: the
 //! transfer tables the SCRIPTS processor reads (`struct siop_common_xfer`), the command and
 //! per-target state the driver keeps, the adapter's common softc and its feature bits.
@@ -556,3 +557,4 @@ const _: () = {
     assert!(offset_of!(SiopCommonXfer, data) == A_t_data as usize);
     assert!(size_of::<SiopCommonXfer>() == 108 + 8 * SIOP_NSG);
 };
+/* </CODE> */

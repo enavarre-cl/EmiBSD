@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Boot glue: the kernel's two entries, Limine's and OpenBSD boot(8)'s (M14), both ending in
 //! [`start_kernel`].
 //!
@@ -470,3 +471,4 @@ fn mem_kind(raw: u64) -> MemKind {
         other => MemKind::Unknown(other),
     }
 }
+/* </CODE> */

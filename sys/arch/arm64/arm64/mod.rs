@@ -1,3 +1,4 @@
+/* <CODE> */
 //! arm64 machine-dependent sources: OpenBSD `sys/arch/arm64/arm64/*.c` and `*.S`.
 //!
 //! `machdep` (boot, the early init, `consinit`), `exception` (the vector table) and `trap`,
@@ -33,3 +34,4 @@ pub mod sig_machdep;
 pub mod syscall;
 pub mod trap;
 pub mod vm_machdep;
+/* </CODE> */

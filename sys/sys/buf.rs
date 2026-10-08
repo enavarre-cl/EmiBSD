@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/buf.h>`: the buffer header that describes an I/O operation in the kernel (`struct
 //! buf`), its `B_*` flags, the disk queues (`struct bufq`) and the 2Q cache's queues
 //! (`struct bufcache`), and the interface of the buffer cache (`vfs_bio.c`,
@@ -503,3 +504,4 @@ pub const BCACHE_MIN: i64 = RESERVE_PAGES * 2;
 pub fn unclean_pages() -> i64 {
     BCSTATS.numbufpages.load(Ordering::Relaxed) - BCSTATS.numcleanpages.load(Ordering::Relaxed)
 }
+/* </CODE> */

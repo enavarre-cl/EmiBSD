@@ -34,6 +34,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Network boot: find the PXE interface the firmware booted us through and read files from
 //! its TFTP server (`tftp:` names), whole, through the PXE base code's MTFTP.
 //!
@@ -373,3 +374,4 @@ pub fn tftpstrategy(
 ) -> Result<(), Errno> {
     Err(Errno::EOPNOTSUPP)
 }
+/* </CODE> */

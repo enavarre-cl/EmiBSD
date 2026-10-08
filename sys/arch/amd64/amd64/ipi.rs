@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Sending and taking inter-processor interrupts: `arch/amd64/amd64/ipi.c`
 //! (`MULTIPROCESSOR`).
 //!
@@ -204,3 +205,4 @@ pub fn x86_ipi_selftest() {
         "x86_ipi_selftest: X86_IPI_NOP taken by {answered} cpus, tlb shootdowns acknowledged\n"
     ));
 }
+/* </CODE> */

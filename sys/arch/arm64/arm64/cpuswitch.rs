@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The context switch of `arch/arm64/arm64/cpuswitch.S`, pulled in from the `.S` file next
 //! to this module (the file keeps OpenBSD's licence block and layout; `{NAME}` placeholders
 //! are what `assym.h` provides in C).
@@ -71,3 +72,4 @@ pub unsafe extern "C" fn proc_trampoline_run(func: *const (), arg: *mut c_void) 
     let func: fn(*mut c_void) = unsafe { core::mem::transmute::<*const (), fn(*mut c_void)>(func) };
     func(arg);
 }
+/* </CODE> */

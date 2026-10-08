@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The Rust global allocator over `malloc(9)`/`free(9)`: a project helper, not OpenBSD code.
 //!
 //! With it, `alloc::vec::Vec`, `alloc::boxed::Box` and friends work in kernel code: every
@@ -54,3 +55,4 @@ unsafe impl GlobalAlloc for KernelAllocator {
 #[cfg(target_os = "none")]
 #[global_allocator]
 static GLOBAL: KernelAllocator = KernelAllocator;
+/* </CODE> */

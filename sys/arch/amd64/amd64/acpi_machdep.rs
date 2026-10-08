@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The amd64 half of acpi(4): `arch/amd64/amd64/acpi_machdep.c`. acpi0 at bios0
 //! (`acpi_match`, `acpi_attach`, `acpi_probe` and its RSDP scan), the physical mappings of
 //! the firmware tables (`acpi_map`/`acpi_unmap`), the register mappings of the AML
@@ -431,3 +432,4 @@ pub fn resume_mp() {
 pub fn acpi_iommu_device_map(_node: &AmlNodeRef, dmat: Option<BusDmaTag>) -> Option<BusDmaTag> {
     dmat
 }
+/* </CODE> */

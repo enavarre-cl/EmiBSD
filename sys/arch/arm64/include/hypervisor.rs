@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/hypervisor.h>`: the EL2 registers' bit definitions.
 //!
 //! Upstream: sys/arch/arm64/include/hypervisor.h @ 3ce1f3f79392
@@ -51,7 +52,9 @@ pub const HCR_E2H: u64 = 0x0000_0004_0000_0000;
 pub const HCR_APK: u64 = 0x0000_0100_0000_0000;
 /// `HCR_API`: do not trap the pointer authentication instructions.
 pub const HCR_API: u64 = 0x0000_0200_0000_0000;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,3 +77,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

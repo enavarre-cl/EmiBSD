@@ -19,6 +19,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `ahci(4)`: the Advanced Host Controller Interface for Serial ATA, presented to the system
 //! through atascsi as a SCSI adapter whose targets are the controller's ports (`scsibus* at
 //! scsi?`, `sd* at scsibus?`, `cd* at scsibus?`).
@@ -3364,7 +3365,9 @@ pub fn ahci_pmp_identify(ap: &'static AhciPort) -> Result<i32, Errno> {
 
 // HIBERNATE: not configured (ahci_hibernate_io_start, ahci_hibernate_io_poll,
 // ahci_hibernate_load_prdt, ahci_hibernate_io).
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3409,3 +3412,4 @@ mod tests {
         assert_eq!((fis.command, fis.device, fis.sector_count), (0xe4, 0x4f, 0));
     }
 }
+/* </TESTS> */

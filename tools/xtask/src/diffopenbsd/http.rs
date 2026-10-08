@@ -1,3 +1,4 @@
+/* <CODE> */
 //! A tiny HTTP/1.0 file server on this machine for the guests (`diff-openbsd`): it serves
 //! one directory, `GET` only, on `127.0.0.1:<port>`, which a guest on QEMU's user network
 //! reaches as `10.0.2.2:<port>` (see `https.rs`). The installer fetches `install.conf` and the
@@ -113,3 +114,4 @@ fn handle(mut s: TcpStream, dir: &Path) -> std::io::Result<()> {
     }
     s.flush()
 }
+/* </CODE> */

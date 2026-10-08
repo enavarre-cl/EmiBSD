@@ -35,6 +35,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `putchar()`: one character to the console, with tab expansion and erase handling.
 //!
 //! Upstream: sys/lib/libsa/putchar.c @ 3ce1f3f79392
@@ -83,3 +84,4 @@ fn backspace() {
         PCH_POS.fetch_sub(1, Ordering::Relaxed);
     }
 }
+/* </CODE> */

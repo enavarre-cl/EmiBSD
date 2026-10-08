@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The trap and fault vector routines of `arch/amd64/amd64/vector.S`, pulled in from the
 //! `.S` file next to this module (the file keeps OpenBSD's licence blocks and layout; `{NAME}`
 //! placeholders are what `assym.h` and the headers provide in C).
@@ -209,3 +210,4 @@ unsafe extern "C" {
     /// `Xipi_invlrange`: the "fast" range shootdown IPI (`LAPIC_IPI_INVLRANGE`).
     pub fn Xipi_invlrange();
 }
+/* </CODE> */

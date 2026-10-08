@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ufs/ufs/inode.h>`: the in-core inode. The inode is used to describe each active (or
 //! recently active) file in the UFS filesystem. It is composed of two types of information.
 //! The first part is the information that is needed only while the file is active (such as
@@ -954,7 +955,9 @@ pub fn set_dinode2_at(b: &mut [u8], i: usize, d: &Ufs2Dinode) {
     // SAFETY: as in `set_dinode1_at`.
     unsafe { ptr::write_unaligned(s.as_mut_ptr().cast::<Ufs2Dinode>(), *d) };
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1001,3 +1004,4 @@ mod tests {
         assert_eq!(size_of::<Ufid>(), 12);
     }
 }
+/* </TESTS> */

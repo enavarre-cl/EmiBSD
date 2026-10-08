@@ -47,6 +47,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wsemulvar.h>`: the interface between `wsdisplay(4)` and its terminal
 //! emulations (`vt100`, `dumb`, `sun`).
 //!
@@ -448,7 +449,9 @@ pub fn wsemulop(
         Ok(())
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -491,3 +494,4 @@ mod tests {
         assert_eq!(WsemulOps::name_of(b"vt100")[..6], *b"vt100\0");
     }
 }
+/* </TESTS> */

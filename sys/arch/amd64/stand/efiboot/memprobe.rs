@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The memory map the kernel gets: printing it (`machine memory`), editing it (`+`, `-`,
 //! `=`) and passing it (`BOOTARG_MEMMAP`).
 //!
@@ -215,3 +216,4 @@ pub fn mem_pass() {
     }
     addbootarg(BOOTARG_MEMMAP, &bytes);
 }
+/* </CODE> */

@@ -236,6 +236,7 @@ notes = "write_volatile per byte instead of memset + weak hook"
 [[file]]
 c = "sys/lib/libkern/libkern.h"
 rust = "sys/lib/libkern/lib.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "fb5d691f624b79718475c9624f9bf32a4a7f4ba7"
@@ -1210,6 +1211,7 @@ notes = "PLACEHOLDER: arc4random/arc4random_buf/arc4random_uniform over SplitMix
 [[file]]
 c = "sys/arch/amd64/include/intrdefs.h"
 rust = "sys/arch/amd64/include/intrdefs.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2965bf099461c7327b41556dba3da7af879bf5f4"
@@ -1248,6 +1250,7 @@ notes = "pmap_statistics and the PMAP_* flags; the pmap(9) prototypes are the ma
 [[file]]
 c = "sys/uvm/uvmexp.h"
 rust = "sys/uvm/uvmexp.rs"
+license = "none"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "306d5eebc089484d07dee16d23beaa0c0bed7672"
@@ -1603,6 +1606,7 @@ notes = "M4: trap_type[], trap_types, fault (writes ci_panicbuf), pgex2access, k
 [[file]]
 c = "sys/arch/amd64/amd64/locore.S"
 rust = "sys/arch/amd64/amd64/locore.rs"
+license = "none"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2c19fbf0a3095ed1ff256cc877e5efbb6a3bca37"
@@ -1611,6 +1615,7 @@ notes = "M4: lgdt and intr_fast_exit, in locore.S (AT&T syntax, included by glob
 [[file]]
 c = "sys/arch/amd64/amd64/mptramp.S"
 rust = "sys/arch/amd64/amd64/mptramp.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "96247c8e890bc893ffefa84b5f9920d672ef1417"
@@ -1620,6 +1625,7 @@ notes = "BSD-2-clause (NetBSD Foundation) and BSD-3-clause blocks. M14 (A2), fil
 [[file]]
 c = "sys/arch/amd64/amd64/locore0.S"
 rust = "sys/arch/amd64/amd64/locore0.rs"
+license = "none"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ea95244505a62d0c8a5eddec0f9b8ab000798a9c"
@@ -1637,6 +1643,7 @@ notes = "BSD-2-clause (NetBSD Foundation). M14 (A2): MP_TRAMPOLINE, MP_TRAMP_DAT
 [[file]]
 c = "sys/arch/amd64/amd64/vector.S"
 rust = "sys/arch/amd64/amd64/vector.rs"
+license = "none"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "ff7be54de500ccfe3068f58cecddc5939ffd90d3"
@@ -1671,6 +1678,7 @@ notes = "M4: db_regs_t, PC_REGS/SET_PC_REGS, BKPT_*, db_clear/set_single_step, I
 [[file]]
 c = "sys/arch/arm64/arm64/exception.S"
 rust = "sys/arch/arm64/arm64/exception.rs"
+license = "none"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "101de9ef803750f678185be4be2f7ab97077c642"
@@ -1770,6 +1778,7 @@ notes = "M4: struct intrstub/intrsource/intrhand (repr(C) with Cells: the stubs 
 [[file]]
 c = "sys/arch/amd64/include/pic.h"
 rust = "sys/arch/amd64/include/pic.rs"
+license = "none"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c5b29937decb9af070cbfab408c95774f8893d76"
@@ -1786,6 +1795,7 @@ notes = "IRQ_SLAVE, ICU_OFFSET, ICU_LEN, IRQ_BIT/IRQ_BYTE; the i8259_asm_* macro
 [[file]]
 c = "sys/arch/amd64/include/mutex.h"
 rust = "sys/arch/amd64/include/mutex.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b5b66f12fb0e3ac54829b019b60177853d9cf9ef"
@@ -1802,6 +1812,7 @@ notes = "license: public domain, kept whole; __USE_MI_MPLOCK"
 [[file]]
 c = "sys/arch/arm64/include/mutex.h"
 rust = "sys/arch/arm64/include/mutex.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "212d863cd4420f5c4ae6cde485d38f7f26f3c0f0"
@@ -2270,6 +2281,7 @@ notes = "kern_prot.c: the kernel half: __aarch64_set_tcb (msr tpidr_el0), TCB_GE
 [[file]]
 c = "sys/arch/amd64/include/fpu.h"
 rust = "sys/arch/amd64/include/fpu.rs"
+license = "none"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "f468815ff76c636be7475be70822fecdba06ca38"
@@ -2528,6 +2540,7 @@ notes = "M5-b2: enodev, enxio, eopnotsupp, nullop, assertwaitok (SMR_ASSERT_NONC
 [[file]]
 c = "sys/arch/arm64/arm64/cpuswitch.S"
 rust = "sys/arch/arm64/arm64/cpuswitch.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "6b849af48cf3f896ae687673f076b96fa37a03d8"
@@ -2555,6 +2568,7 @@ notes = "kern_sig.c: process_frame, sendsig (the sigframe built and copied out i
 [[file]]
 c = "sys/arch/arm64/arm64/locore.S"
 rust = "sys/arch/arm64/arm64/locore.rs"
+license = "none"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e152f14712f309732038b85e5772983bf029cc91"
@@ -2571,6 +2585,7 @@ notes = "pin_check (SIGABRT through sigabort, the message by printf: no uprintf 
 [[file]]
 c = "sys/sys/syscall.h"
 rust = "sys/sys/syscall.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e152f14712f309732038b85e5772983bf029cc91"
@@ -2579,6 +2594,7 @@ notes = "pin_check (SIGABRT through sigabort, the message by printf: no uprintf 
 [[file]]
 c = "sys/sys/syscallargs.h"
 rust = "sys/sys/syscallargs.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e152f14712f309732038b85e5772983bf029cc91"
@@ -2587,6 +2603,7 @@ notes = "pin_check (SIGABRT through sigabort, the message by printf: no uprintf 
 [[file]]
 c = "sys/kern/init_sysent.c"
 rust = "sys/kern/init_sysent.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e152f14712f309732038b85e5772983bf029cc91"
@@ -2595,6 +2612,7 @@ notes = "pin_check (SIGABRT through sigabort, the message by printf: no uprintf 
 [[file]]
 c = "sys/kern/syscalls.c"
 rust = "sys/kern/syscalls.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e152f14712f309732038b85e5772983bf029cc91"
@@ -2619,6 +2637,7 @@ notes = "pin_check (SIGABRT through sigabort, the message by printf: no uprintf 
 [[file]]
 c = "sys/arch/amd64/amd64/copy.S"
 rust = "sys/arch/amd64/amd64/copy.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e152f14712f309732038b85e5772983bf029cc91"
@@ -2627,6 +2646,7 @@ notes = "pin_check (SIGABRT through sigabort, the message by printf: no uprintf 
 [[file]]
 c = "sys/arch/amd64/include/frameasm.h"
 rust = "sys/arch/amd64/amd64/locore.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e152f14712f309732038b85e5772983bf029cc91"
@@ -2635,6 +2655,7 @@ notes = "pin_check (SIGABRT through sigabort, the message by printf: no uprintf 
 [[file]]
 c = "sys/arch/arm64/arm64/copy.S"
 rust = "sys/arch/arm64/arm64/copy.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e152f14712f309732038b85e5772983bf029cc91"
@@ -2643,6 +2664,7 @@ notes = "pin_check (SIGABRT through sigabort, the message by printf: no uprintf 
 [[file]]
 c = "sys/arch/arm64/arm64/copystr.S"
 rust = "sys/arch/arm64/arm64/copystr.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e152f14712f309732038b85e5772983bf029cc91"
@@ -8394,6 +8416,7 @@ notes = "M13 (wsdisplay, option WSDISPLAY_COMPAT_USL, cargo feature wsdisplay_co
 [[file]]
 c = "sys/dev/wscons/wsdisplay_usl_io.h"
 rust = "sys/dev/wscons/wsdisplay_usl_io.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a6a6b9fad483ee2cd1eee862905451d0395a6af1"
@@ -10166,6 +10189,7 @@ reason = "M14 A3: the part of the kernel header libsa reads, declared again in l
 [[file]]
 c = "sys/arch/arm64/arm64/locore0.S"
 rust = "sys/arch/arm64/arm64/locore0.rs"
+license = "none"
 status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "2a83c37b852d0d1e41b06dfba46596fb3697e9a1"

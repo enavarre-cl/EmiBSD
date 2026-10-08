@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! UDP protocol header, per RFC 768, September, 1981: `<netinet/udp.h>`.
 //!
 //! Upstream: sys/netinet/udp.h @ 3ce1f3f79392
@@ -55,3 +56,4 @@ pub struct Udphdr {
 
 // The wire layout.
 const _: () = assert!(size_of::<Udphdr>() == 8);
+/* </CODE> */

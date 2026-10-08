@@ -1,3 +1,4 @@
+/* <CODE> */
 //! HID class support: OpenBSD `sys/dev/hid/`.
 //!
 //! `hid` is the report descriptor parser with `<dev/hid/hid.h>`; `hidkbd` is the keyboard
@@ -7,3 +8,4 @@
 #[allow(clippy::module_inception)] // OpenBSD's layout: dev/hid/hid.c
 pub mod hid;
 pub mod hidkbd;
+/* </CODE> */

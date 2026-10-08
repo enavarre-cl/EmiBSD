@@ -65,6 +65,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! USB DMA memory allocation: `<dev/usb/usb_mem.h>` and `dev/usb/usb_mem.c`.
 //!
 //! Upstream: sys/dev/usb/usb_mem.h @ 3ce1f3f79392, sys/dev/usb/usb_mem.c @ 3ce1f3f79392
@@ -439,7 +440,9 @@ pub fn usb_syncmem(p: &UsbDma, offset: BusAddr, len: BusSize, ops: i32) {
     let b = p.block();
     bus_dmamap_sync(b.tag, b.map, p.offs.get() as usize + offset, len, ops);
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,3 +464,4 @@ mod tests {
         assert_eq!(usb_mem_round(8, 128), Some(4096));
     }
 }
+/* </TESTS> */

@@ -67,6 +67,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Resident memory system definitions and page ops: `<uvm/uvm_page.h>` and `uvm/uvm_page.c`.
 //!
 //! Upstream: sys/uvm/uvm_page.h @ 3ce1f3f79392
@@ -1480,3 +1481,4 @@ pub fn uvm_page_test_reset() {
     UVMEXP.free.store(0, Ordering::Relaxed);
     UVMEXP.zeropages.store(0, Ordering::Relaxed);
 }
+/* </CODE> */

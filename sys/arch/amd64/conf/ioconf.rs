@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The amd64 kernel's autoconfiguration tables: what `config(8)` writes into `ioconf.c` from
 //! `arch/amd64/conf/GENERIC`, for the devices whose drivers are ported. Not an OpenBSD file:
 //! `ioconf.c` is generated, and `config(8)` is replaced here by these hand-written tables
@@ -903,3 +904,4 @@ pub static PDEVINIT: [Pdevinit; 13 + cfg!(feature = "fuse") as usize] = [
         pdev_count: 1,
     },
 ];
+/* </CODE> */

@@ -21,6 +21,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The TSC timecounter: `arch/amd64/amd64/tsc.c`. Finds the TSC's frequency (cpuid leaf 0x15
 //! on Intel, the P0 state MSR on AMD family 17h/19h, or a measurement handed in by
 //! `identifycpu` and recalibrated against a better timecounter), registers the `tsc`
@@ -722,7 +723,9 @@ mod mp {
 
     const _: () = assert!(size_of::<TscTestStatus>() == 128);
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -741,3 +744,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

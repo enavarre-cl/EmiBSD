@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The Spleen 16x32 font, `<dev/wsfont/spleen16x32.h>`: a built-in font of `wsfont(9)`.
 //!
 //! Upstream: sys/dev/wsfont/spleen16x32.h @ 3ce1f3f79392
@@ -7460,3 +7461,4 @@ static SPLEEN16X32_DATA: StaticCell<[u8; SPLEEN16X32_DATA_LEN]> = StaticCell::ne
     0x3f, 0xf8, // ..***********...
     0x3f, 0xf0, // ..**********....
 ]);
+/* </CODE> */

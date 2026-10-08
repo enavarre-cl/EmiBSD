@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `fusefs_lookup` (`vop_lookup`): looks a name up in a FUSE directory by asking the daemon
 //! (`FUSE_LOOKUP`); `.` and `..` are answered in the kernel.
 //!
@@ -241,3 +242,4 @@ pub fn fusefs_lookup(ap: &mut VopLookupArgs<'_>) -> Result<(), Errno> {
     }
     Err(error)
 }
+/* </CODE> */

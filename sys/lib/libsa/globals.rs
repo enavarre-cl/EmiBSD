@@ -9,6 +9,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The standalone network code's global variables (`net.h`'s `extern`s): the addresses
 //! the boot protocol learns and the names it is given.
 //!
@@ -67,3 +68,4 @@ const fn rootpath_init() -> [u8; FNAME_SIZE] {
     p[0] = b'/';
     p
 }
+/* </CODE> */

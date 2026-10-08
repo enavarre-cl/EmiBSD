@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `dkcksum()`: the checksum of a disk label.
 //!
 //! Upstream: sys/lib/libsa/dkcksum.c @ 3ce1f3f79392
@@ -53,7 +54,9 @@ pub fn dkcksum(lp: &Disklabel) -> u16 {
         .iter()
         .fold(0, |sum, w| sum ^ u16::from_ne_bytes(*w))
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,3 +85,4 @@ mod tests {
         assert_eq!(getdisklabel(&[0u8; 512], &mut got), Err("no disk label"));
     }
 }
+/* </TESTS> */

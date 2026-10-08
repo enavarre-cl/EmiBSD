@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/specdev.h>`: the information maintained about special devices (`struct specinfo`),
 //! the hash of device vnodes (`speclisth`) and the cloning-device helpers.
 //!
@@ -122,3 +123,4 @@ pub const fn spechash(rdev: Dev) -> usize {
 }
 
 const _: () = assert!(SPECHSZ & (SPECHSZ - 1) == 0);
+/* </CODE> */

@@ -19,6 +19,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/ic/ahcivar.h>`: the `ahci(4)` driver's state: DMA memory, command control blocks,
 //! ports and the softc shared by the bus front-ends (`ahci_pci`; `ahci_fdt` and `ahci_acpi`
 //! are not ported).
@@ -466,3 +467,4 @@ pub fn ahci_port_start(ap: &AhciPort, fre_only: bool) -> Result<(), Errno> {
         None => panic(format_args!("{}: no sc_port_start", ap.portname())),
     }
 }
+/* </CODE> */

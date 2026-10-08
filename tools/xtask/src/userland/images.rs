@@ -1,3 +1,4 @@
+/* <CODE> */
 //! M10c's test images, staged into the ramdisk's `/root/images` before the ramdisk is made.
 //!
 //! `just smoke-fs` attaches each one to a vnd(4) with vnconfig(8), mounts it and reads its
@@ -113,3 +114,4 @@ fn make_udf(src: &Path, to: &Path) -> Result<()> {
         .arg(src))?;
     fs::rename(&iso, to).map_err(|e| format!("{} -> {}: {e}", iso.display(), to.display()).into())
 }
+/* </CODE> */

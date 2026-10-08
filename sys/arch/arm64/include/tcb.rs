@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/tcb.h>`: the thread control block, which user space reaches through
 //! `TPIDR_EL0`.
 //!
@@ -58,3 +59,4 @@ pub fn tcb_set(p: &Proc, addr: usize) {
     p.pcb().pcb_tcb.set(ptr::with_exposed_provenance_mut(addr));
     __aarch64_set_tcb(addr);
 }
+/* </CODE> */

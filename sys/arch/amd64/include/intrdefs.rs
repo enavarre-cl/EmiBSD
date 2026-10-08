@@ -1,6 +1,7 @@
 /*	$OpenBSD: intrdefs.h,v 1.25 2025/11/10 12:34:52 dlg Exp $	*/
 /*	$NetBSD: intrdefs.h,v 1.2 2003/05/04 22:01:56 fvdl Exp $	*/
 
+/* <CODE> */
 //! amd64 `<machine/intrdefs.h>`: interrupt priority levels and interrupt source numbers.
 //!
 //! Upstream: sys/arch/amd64/include/intrdefs.h @ 3ce1f3f79392
@@ -126,7 +127,9 @@ pub const X86_NIPI: usize = 13;
 
 /// `IREENT_MAGIC`: what `tf_err` holds in a frame faked up by `Xrecurse_*`/`Xresume_*`.
 pub const IREENT_MAGIC: i64 = 0x1804_1969;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,3 +174,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

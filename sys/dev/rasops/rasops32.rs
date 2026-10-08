@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! 32-bit-per-pixel raster operations: `dev/rasops/rasops32.c` (`rasops32` in GENERIC).
 //!
 //! Upstream: sys/dev/rasops/rasops32.c @ 3ce1f3f79392
@@ -151,7 +152,9 @@ pub unsafe fn rasops32_putchar(
 
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,3 +186,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

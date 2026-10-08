@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Host test double for the terminal emulations (`wsemul_dumb`, `wsemul_vt100`). Not an
 //! OpenBSD file.
 //!
@@ -319,3 +320,4 @@ pub(crate) fn wsdisplay_emulinput(v: *mut c_void, data: &[u8]) {
     // SAFETY: as in `wsdisplay_emulbell`.
     unsafe { scr(v) }.input.extend_from_slice(data);
 }
+/* </CODE> */

@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `getcwd(3)` in the kernel: the path from a directory up to the root, found through the
 //! name cache's reverse map (`vfs_getcwd_getcache`) or, failing that, by looking `..` up and
 //! scanning it for the child's file number (`vfs_getcwd_scandir`). Shared by
@@ -508,7 +509,9 @@ pub fn sys___getcwd(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Resul
 
     error
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use core::sync::atomic::Ordering;
@@ -565,3 +568,4 @@ mod tests {
         assert!(!any_locked());
     }
 }
+/* </TESTS> */

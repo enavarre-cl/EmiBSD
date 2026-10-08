@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The efficient memory file system: OpenBSD `sys/tmpfs/` (`option TMPFS`, feature `tmpfs`).
 //!
 //! Headers (types): `tmpfs` (`tmpfs.h`), `tmpfs_vnops` (`tmpfs_vnops.h`, with
@@ -14,3 +15,4 @@ pub mod tmpfs_specops;
 pub mod tmpfs_subr;
 pub mod tmpfs_vfsops;
 pub mod tmpfs_vnops;
+/* </CODE> */

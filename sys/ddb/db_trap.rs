@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Trap entry point to kernel debugger: `ddb/db_trap.c`.
 //!
 //! Upstream: sys/ddb/db_trap.c @ 3ce1f3f79392
@@ -107,3 +108,4 @@ pub fn db_trap(type_: i32, code: i32) {
 
     db_restart_at_pc(watchpt);
 }
+/* </CODE> */

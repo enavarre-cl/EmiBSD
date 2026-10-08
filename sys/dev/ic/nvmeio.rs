@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/ic/nvmeio.h>`: the NVMe passthrough ioctl (`NVME_PASSTHROUGH_CMD`), through a
 //! namespace's `sd(4)` raw device or bio(4).
 //!
@@ -119,7 +120,9 @@ const _: () = {
     assert!(size_of::<NvmePtCmd>() == 760);
     assert!(size_of::<NvmePtStatus>() == 20);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,3 +151,4 @@ mod tests {
         assert_eq!(b[16], 5);
     }
 }
+/* </TESTS> */

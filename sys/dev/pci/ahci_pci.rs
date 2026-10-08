@@ -19,6 +19,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `ahci* at pci?`: the PCI front-end of ahci(4): the controller quirks by vendor and
 //! product, the interrupt (MSI, else INTx), the register BAR, and `ahci_attach`.
 //!
@@ -650,7 +651,9 @@ pub fn ahci_pci_activate(self_: &Device, act: i32) -> Result<(), Errno> {
     let psc: &'static AhciPciSoftc = unsafe { &*ptr::from_ref(self_.softc::<AhciPciSoftc>()) };
     ahci_activate(&psc.psc_ahci.sc_dev, act)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,3 +673,4 @@ mod tests {
         assert!(ahci_lookup_device(0x3349_1106).is_some_and(|ad| ad.ad_match.is_some()));
     }
 }
+/* </TESTS> */

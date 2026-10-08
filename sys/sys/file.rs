@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/file.h>`: the kernel descriptor table entry, `struct file`, with its operations
 //! vector `struct fileops`, the `DTYPE_*` descriptor types, the `FIF_*` internal flags and
 //! the reference macros `FREF`/`FRELE`.
@@ -233,3 +234,4 @@ pub fn foffset(fp: &File) -> Off {
     mtx_leave(&fp.f_mtx);
     offset
 }
+/* </CODE> */

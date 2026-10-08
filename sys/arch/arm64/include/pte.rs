@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/pte.h>`: the translation table descriptors.
 //!
 //! Upstream: sys/arch/arm64/include/pte.h @ 3ce1f3f79392
@@ -224,7 +225,9 @@ pub const Ln_TABLE_MASK: usize = (1 << 12) - 1;
 
 /// `PTE_RPGN`: the output address bits of a descriptor.
 pub const PTE_RPGN: u64 = ((1 << 48) - 1) & !(PAGE_MASK as u64);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,3 +265,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

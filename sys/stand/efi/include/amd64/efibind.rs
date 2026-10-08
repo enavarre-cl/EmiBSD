@@ -1,5 +1,8 @@
+/* <LICENSES> */
 /* Public Domain. */
+/* </LICENSES> */
 
+/* <CODE> */
 //! Basic scalar types and the `EFIERR` macro for amd64.
 //!
 //! Upstream: sys/stand/efi/include/amd64/efibind.h @ 3ce1f3f79392
@@ -53,7 +56,9 @@ pub const fn efierr(x: UINTN) -> UINTN {
 
 const _: () = assert!(core::mem::size_of::<UINTN>() == 8);
 const _: () = assert!(core::mem::size_of::<INTN>() == 8);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,3 +69,4 @@ mod tests {
         assert_eq!(efierr(0), 1usize << 63);
     }
 }
+/* </TESTS> */

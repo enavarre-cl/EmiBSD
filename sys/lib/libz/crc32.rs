@@ -39,6 +39,7 @@
 */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The plain CRC-32 (polynomial `0xedb88320`, reflected), as zlib's `crc32()` computes it.
 //!
 //! Upstream: sys/lib/libz/crc32.c @ 3ce1f3f79392
@@ -106,7 +107,9 @@ pub fn crc32(crc: u32, buf: &[u8]) -> u32 {
     }
     !crc
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,3 +151,4 @@ mod tests {
         assert_eq!(crc32(0xdead_beef, b""), 0xdead_beef);
     }
 }
+/* </TESTS> */

@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/timetc.h>`: the `tc_user` values of the timecounters userland may read
 //! directly.
 //!
@@ -28,3 +29,4 @@
 pub const TC_TSC_LFENCE: i32 = 1;
 /// `TC_TSC_RDTSCP`: the TSC, read with `rdtscp`.
 pub const TC_TSC_RDTSCP: i32 = 2;
+/* </CODE> */

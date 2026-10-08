@@ -49,6 +49,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<msdosfs/fat.h>`: the special cluster numbers, the FAT entry masks, the tests for the FAT
 //! width of a file system and the `fatentry`/`extendfile` flags.
 //!
@@ -123,7 +124,9 @@ pub fn fat32(pmp: &Msdosfsmount) -> bool {
 pub fn msdosfseof(pmp: &Msdosfsmount, cn: u32) -> bool {
     ((cn | !pmp.pm_fatmask.get()) & CLUST_EOFS) == CLUST_EOFS
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,3 +172,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

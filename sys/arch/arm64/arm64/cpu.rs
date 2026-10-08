@@ -1,5 +1,4 @@
 /*	$OpenBSD: cpu.c,v 1.154 2026/09/09 22:15:49 tobhe Exp $	*/
-
 /* <LICENSES> */
 /*
  * Copyright (c) 2016 Dale Rahn <drahn@dalerahn.com>
@@ -19,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 CPU identification, attachment and the application processors:
 //! `arch/arm64/arm64/cpu.c`.
 //!
@@ -3207,3 +3207,4 @@ mod selfcheck {
         );
     }
 }
+/* </CODE> */

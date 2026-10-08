@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The USB stack's internal structures: `<dev/usb/usbdivar.h>`, what the host controller
 //! drivers and the stack share (`struct usbd_bus`, `usbd_device`, `usbd_interface`,
 //! `usbd_pipe`, `usbd_xfer` and the method tables).
@@ -859,3 +860,4 @@ pub const USBTAP_DIR_IN: u8 = 1;
 pub const UHUB_UNK_CONFIGURATION: i32 = -1;
 /// `UHUB_UNK_INTERFACE`.
 pub const UHUB_UNK_INTERFACE: i32 = -1;
+/* </CODE> */

@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/efiapi.h 278234 2015-02-05 07:19:30Z rpaulo $ */
-
 /* <LICENSES> */
 /*++
 
@@ -28,6 +27,7 @@ Revision History
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI API: the boot services, runtime services and system tables, and the loaded image.
 //!
 //! Upstream: sys/stand/efi/include/efiapi.h @ 3ce1f3f79392
@@ -932,7 +932,9 @@ const _: () = assert!(core::mem::size_of::<EfiSystemTable>() == 120);
 const _: () = assert!(core::mem::size_of::<EfiSystemResourceTable>() == 16);
 const _: () = assert!(core::mem::size_of::<EfiSystemResourceEntry>() == 40);
 const _: () = assert!(EFI_SYSTEM_TABLE_REVISION == 0x0001_000a);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -950,3 +952,4 @@ mod tests {
         assert_eq!(EFI_BOOT_SERVICES_REVISION, EFI_RUNTIME_SERVICES_REVISION);
     }
 }
+/* </TESTS> */

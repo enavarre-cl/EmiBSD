@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Bit masks for the sub-byte depths: `dev/rasops/rasops_masks.c` and `rasops_masks.h`.
 //!
 //! Upstream: sys/dev/rasops/rasops_masks.c @ 3ce1f3f79392
@@ -225,7 +226,9 @@ pub(crate) unsafe fn putbits(sw: u32, x: u32, w: u32, dp: *mut u8) {
         };
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,3 +267,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

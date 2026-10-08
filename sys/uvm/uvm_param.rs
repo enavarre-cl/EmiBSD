@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Machine independent virtual memory parameters: `<uvm/uvm_param.h>`.
 //!
 //! Upstream: sys/uvm/uvm_param.h @ 3ce1f3f79392
@@ -148,7 +149,9 @@ impl Vsize {
         atop(self.0)
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,3 +170,4 @@ mod tests {
         assert!(VM_KERNEL_SPACE_SIZE > 0);
     }
 }
+/* </TESTS> */

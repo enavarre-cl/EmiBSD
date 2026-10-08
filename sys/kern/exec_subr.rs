@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `exec_subr.c`: the vmcmds that build an address space, and the stack setup.
 //!
 //! Upstream: sys/kern/exec_subr.c @ 3ce1f3f79392
@@ -452,3 +453,4 @@ pub fn exec_setup_stack(_p: &Proc, epp: &mut ExecPackage<'_>) -> Result<(), Errn
 
     Ok(())
 }
+/* </CODE> */

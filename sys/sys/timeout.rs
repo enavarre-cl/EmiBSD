@@ -26,6 +26,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/timeout.h>`: `timeout(9)`, the timer wheel's entries. The functions live in
 //! `kern/kern_timeout.rs`.
 //!
@@ -240,3 +241,4 @@ pub const KCLOCK_MAX: i32 = 1;
 const _: () = {
     assert!(core::mem::offset_of!(Timeout, to_list) == 0);
 };
+/* </CODE> */

@@ -35,6 +35,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `netif.h` and `netif.c`: the generic network interface layer. A program supplies its
 //! interface drivers; `netif_open()` picks the best interface for a hint, probes and
 //! attaches it to a free socket, and the Ethernet layer sends and receives frames through
@@ -376,3 +377,4 @@ pub fn netif_close(sock: usize) -> Result<(), Errno> {
 
     Ok(())
 }
+/* </CODE> */

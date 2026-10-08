@@ -1,3 +1,4 @@
+/* <CODE> */
 //! arm64-only drivers: OpenBSD `sys/arch/arm64/dev/`.
 //!
 //! `mainbus` is the root bus (M7b), `ampintc` the GICv2 interrupt controller (M4), `agtimer`
@@ -14,3 +15,4 @@ pub mod efi_machdep;
 pub mod mainbus;
 pub mod pci_machdep;
 pub mod simplebus;
+/* </CODE> */

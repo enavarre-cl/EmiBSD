@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The console as an open file: a stand-in, not OpenBSD code, until `/dev/console` exists.
 //!
 //! In OpenBSD the first process gets its descriptors 0, 1 and 2 from `init(8)`, which opens
@@ -236,3 +237,4 @@ pub fn consfile_attach(p: &Proc) -> Result<(), Errno> {
     let _ = frele(fp, p);
     error
 }
+/* </CODE> */

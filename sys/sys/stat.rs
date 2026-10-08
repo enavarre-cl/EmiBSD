@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/stat.h>`: `struct stat` (what `fstat(2)` returns), the `S_I*` mode bits and file
 //! types, and the file flags (`UF_*`, `SF_*`).
 //!
@@ -271,7 +272,9 @@ const _: () = {
     assert!(offset_of!(Stat, st_gen) == 104);
     assert!(offset_of!(Stat, __st_birthtim) == 112);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -311,3 +314,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

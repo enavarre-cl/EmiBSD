@@ -66,6 +66,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Helpers for USB drivers: `<dev/usb/usbdi_util.h>` and `dev/usb/usbdi_util.c`, the
 //! standard and hub/HID class requests as synchronous control transfers.
 //!
@@ -303,3 +304,4 @@ pub fn usb_detach_wait(dv: &Device) {
 pub fn usb_detach_wakeup(dv: &Device) {
     wakeup(ptr::from_ref(dv));
 }
+/* </CODE> */

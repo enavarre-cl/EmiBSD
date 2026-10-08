@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/sigio.h>`: the registration of a process or process group to receive `SIGIO`/
 //! `SIGURG` for a file.
 //!
@@ -135,3 +136,4 @@ pub type Sigiolst = ListHead<SigioPgsigio>;
 pub fn sigio_init(sir: &SigioRef) {
     sir.sir_sigio.set(ptr::null());
 }
+/* </CODE> */

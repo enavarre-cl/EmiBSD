@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/pci_machdep.h>`: machine-specific definitions for PCI autoconfiguration.
 //!
 //! Upstream: sys/arch/amd64/include/pci_machdep.h @ 3ce1f3f79392
@@ -86,3 +87,4 @@ pub const PCI_IO_END: u64 = 0xffff;
 
 /// `PCI_MEM_START`: avoid the DOS Compatibility Memory area.
 pub const PCI_MEM_START: u64 = 0x10_0000;
+/* </CODE> */

@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `libsa.h` of amd64's boot programs: the probe list type and what efiboot's files share;
 //! and the `CPUID` macros of `<machine/specialreg.h>` they use.
 //!
@@ -67,3 +68,4 @@ pub fn cpuid_leaf(code: u32, leaf: u32) -> (u32, u32, u32, u32) {
 pub fn cpuid(code: u32) -> (u32, u32, u32, u32) {
     cpuid_leaf(code, 0)
 }
+/* </CODE> */

@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The xHCI driver's structures: `<dev/usb/xhcivar.h>`, the softc the bus front-ends
 //! (`xhci_pci`) embed, the rings and the device contexts.
 //!
@@ -579,7 +580,9 @@ pub fn xdread4(sc: &XhciSoftc, a: BusSize) -> u32 {
 pub fn xdwrite4(sc: &XhciSoftc, a: BusSize, x: u32) {
     xwrite4(sc, sc.sc_door_off.load(Ordering::Relaxed) + a, x)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -592,3 +595,4 @@ mod tests {
         assert_eq!(XHCI_CMD_TIMEOUT, 500_000_000);
     }
 }
+/* </TESTS> */

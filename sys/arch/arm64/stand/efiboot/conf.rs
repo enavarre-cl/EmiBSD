@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! efiboot's configuration: its version, and the tables libsa works through: the file
 //! systems, the devices, the consoles and the network interface drivers.
 //!
@@ -248,3 +249,4 @@ fn srclose(f: &mut OpenFile) -> Result<(), Errno> {
 fn srioctl(_f: &mut OpenFile, _cmd: u64, _data: *mut c_void) -> Result<(), Errno> {
     Ok(())
 }
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The kernel's entry from OpenBSD's own boot loader (boot(8)/efiboot, M14), beside Limine's.
 //!
 //! The machine's entry code runs first: on amd64 `locore0.S`'s `start`, which boot(8) enters
@@ -37,3 +38,4 @@ fn bootarg_banner(boot: &BootInfo) {
         boot.memmap.usable_bytes() >> 20
     );
 }
+/* </CODE> */

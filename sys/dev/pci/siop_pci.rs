@@ -26,6 +26,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `siop* at pci?`: the PCI front-end of siop(4) ("SYM53c8xx PCI-SCSI I/O Processors
 //! driver: PCI front-end"): matches the Symbios chips `siop_pci_common` knows and attaches
 //! the adapter.
@@ -96,3 +97,4 @@ pub fn siop_pci_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_voi
 
     siop_attach(&sc.siop);
 }
+/* </CODE> */

@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `fpu.c`: the floating point and SVE state of a thread.
 //!
 //! Upstream: sys/arch/arm64/arm64/fpu.c @ 3ce1f3f79392
@@ -250,3 +251,4 @@ pub fn sve_save(_p: &Proc) {
 pub fn sve_load(_p: &Proc) {
     let _ = unported!("sve_load: the SVE register block");
 }
+/* </CODE> */

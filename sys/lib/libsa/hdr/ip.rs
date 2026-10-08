@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<netinet/ip.h>` for libsa: the IP header, naked of options.
 
 use super::in_::{InAddr, net_bytes};
@@ -58,3 +59,4 @@ impl Ip {
 net_bytes!(Ip);
 
 const _: () = assert!(core::mem::size_of::<Ip>() == 20);
+/* </CODE> */

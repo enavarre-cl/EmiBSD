@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The vt100 emulation's commands: scrolling, erasing, the `CSI` sequences, attributes, the
 //! `DCS` strings and the ANSI and DEC modes.
 //!
@@ -809,7 +810,9 @@ pub fn vt100_decmode(edp: &mut WsemulVt100Emuldata, nr: i32, op: i32) -> Result<
 
     rc
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -824,3 +827,4 @@ mod tests {
         assert_eq!(b.bytes(), b"\x1b[1234567890;123456");
     }
 }
+/* </TESTS> */

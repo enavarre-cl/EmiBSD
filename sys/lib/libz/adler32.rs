@@ -35,6 +35,7 @@
 */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The Adler-32 checksum (RFC 1950, section 8.2): the check value of a zlib stream.
 //!
 //! Upstream: sys/lib/libz/adler32.c @ 3ce1f3f79392
@@ -143,7 +144,9 @@ pub fn adler32_combine(adler1: u32, adler2: u32, len2: i64) -> u32 {
     }
     sum1 | (sum2 << 16)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,3 +214,4 @@ mod tests {
         assert_eq!(adler32_combine(1, 1, -1), 0xffff_ffff);
     }
 }
+/* </TESTS> */

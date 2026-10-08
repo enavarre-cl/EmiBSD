@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64's disk label I/O: `arch/arm64/arm64/disksubr.c` (`readdisklabel`,
 //! `writedisklabel`), reached through `machine::disklabel`.
 //!
@@ -134,3 +135,4 @@ pub fn writedisklabel(dev: Dev, strat: DevTypeStrategy, lp: &mut Disklabel) -> R
     DISK_CHANGE.store(1, Ordering::Relaxed);
     result
 }
+/* </CODE> */

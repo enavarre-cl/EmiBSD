@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/tty.h>`: the terminal: `struct clist` (the character queues), `struct tty`, the
 //! `TS_*` state bits, the character classes, `struct ptmget` for `/dev/ptm` and the
 //! `KERN_TTY_*` sysctl names.
@@ -636,7 +637,9 @@ unsafe impl Sync for TtylistHead {}
 
 const _: () = assert!(size_of::<Itty>() == 40);
 const _: () = assert!(size_of::<Ptmget>() == 40);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -679,3 +682,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

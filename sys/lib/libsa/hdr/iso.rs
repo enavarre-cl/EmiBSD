@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<isofs/cd9660/iso.h>` for libsa: the ISO 9660 volume descriptor and directory record
 //! fields the standalone reader uses, and the `isonum_7xx` decoders.
 //!
@@ -78,3 +79,4 @@ pub const fn isonum_732(p: &[u8]) -> u32 {
 pub const fn isonum_733(p: &[u8]) -> u32 {
     p[0] as u32 | ((p[1] as u32) << 8) | ((p[2] as u32) << 16) | ((p[3] as u32) << 24)
 }
+/* </CODE> */

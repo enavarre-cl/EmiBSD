@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<ufs/ufs/dir.h>` for libsa: the on-disk directory entry, `struct direct`.
 
 /// `MAXNAMLEN`: the longest file name.
@@ -38,3 +39,4 @@ impl<'a> Direct<'a> {
         })
     }
 }
+/* </CODE> */

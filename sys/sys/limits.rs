@@ -26,6 +26,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/limits.h>`: common definitions for limits.h.
 //!
 //! Upstream: sys/sys/limits.h @ 3ce1f3f79392
@@ -97,3 +98,4 @@ pub const SIZE_MAX: usize = ULONG_MAX as usize;
 const _: () = {
     assert!(size_of::<usize>() == 8);
 };
+/* </CODE> */

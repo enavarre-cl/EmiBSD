@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The amd64 root bus: `arch/amd64/amd64/mainbus.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/mainbus.c @ 3ce1f3f79392
@@ -396,3 +397,4 @@ pub fn mp_set_intrs(intrs: &'static [MpIntrMap]) {
         Ordering::Release,
     );
 }
+/* </CODE> */

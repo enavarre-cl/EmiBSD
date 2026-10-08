@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The user/kernel copy routines of `arch/amd64/amd64/copy.S`, pulled in from the `.S` file
 //! next to this module (the file keeps OpenBSD's licence block and layout; `{NAME}`
 //! placeholders are what `assym.h` provides in C), with the safe Rust entry points the
@@ -96,3 +97,4 @@ pub unsafe fn kcopy(src: *const u8, dst: *mut u8, len: usize) -> Result<(), Errn
     // SAFETY: the caller's guarantee; a fault on either side lands in `copy_fault`.
     errno(unsafe { sym::kcopy(src, dst, len) })
 }
+/* </CODE> */

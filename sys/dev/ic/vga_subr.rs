@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The VGA's character generator and screen geometry: loading a font into one of the eight
 //! font slots of plane 2 (`vga_loadchars`), choosing the slots the two halves of a
 //! 512-character set come from (`vga_setfontset`), and programming the 6845 and the
@@ -143,3 +144,4 @@ pub fn vga_setscreentype(vh: &VgaHandle, type_: &WsscreenDescr) {
         vga_attr_write!(vh, colplen, 0x07);
     }
 }
+/* </CODE> */

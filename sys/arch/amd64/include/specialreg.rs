@@ -34,6 +34,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/specialreg.h>`: control registers, MSRs and CPUID bits.
 //!
 //! Upstream: sys/arch/amd64/include/specialreg.h @ 3ce1f3f79392
@@ -234,7 +235,9 @@ pub const EFER_NXE: u64 = 0x0000_0800;
 
 /// `CR4_DEFAULT`: the `CR4` bits every CPU runs with.
 pub const CR4_DEFAULT: u64 = CR4_PAE | CR4_PGE | CR4_PSE | CR4_OSFXSR | CR4_OSXMMEXCPT;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,3 +298,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

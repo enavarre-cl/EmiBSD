@@ -16,6 +16,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/pci/virtio_pcireg.h>`: the virtio PCI registers, the 0.9 I/O BAR layout and the
 //! 1.0 capabilities.
 //!
@@ -192,7 +193,9 @@ const _: () = {
     assert!(offset_of!(VirtioPciCommonCfg, queue_used) == 48);
     assert!(size_of::<VirtioPciCommonCfg>() == 56);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,3 +229,4 @@ mod tests {
         assert_eq!(cap.length, 0x1000);
     }
 }
+/* </TESTS> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/filedesc.h>`: the per-process descriptor table, `struct filedesc`, and its initial
 //! allocation `struct filedesc0`.
 //!
@@ -352,3 +353,4 @@ const _: () = {
     assert!(ndloslots(NDFILE) == NDENTRIES);
     assert!(core::mem::offset_of!(Filedesc0, fd_fd) == 0);
 };
+/* </CODE> */

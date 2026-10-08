@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Programmed I/O: the x86 `in` and `out` instructions, `<machine/pio.h>`.
 //!
 //! Upstream: sys/arch/amd64/include/pio.h @ 3ce1f3f79392
@@ -245,3 +246,4 @@ pub unsafe fn outsl(port: u16, buf: &[u32]) {
         );
     }
 }
+/* </CODE> */

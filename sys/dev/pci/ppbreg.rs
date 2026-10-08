@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/pci/ppbreg.h>`: PCI-PCI bridge chip register definitions and macros, from the "PCI
 //! to PCI Bridge Architecture Specification, Revision 1.0, April 5, 1994" (XXX much is
 //! missing).
@@ -142,7 +143,9 @@ pub const PPB_BC_SECONDARY_DISCARD_TIMEOUT: u32 = 1 << (9 + PPB_BC_BITBASE);
 pub const PPB_BC_DISCARD_TIMER_STATUS: u32 = 1 << (10 + PPB_BC_BITBASE);
 /// `PPB_BC_DISCARD_TIMER_SERR_ENABLE` (PCI 2.2).
 pub const PPB_BC_DISCARD_TIMER_SERR_ENABLE: u32 = 1 << (11 + PPB_BC_BITBASE);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,3 +183,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

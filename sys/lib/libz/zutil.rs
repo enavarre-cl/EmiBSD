@@ -40,6 +40,7 @@
 */
 /* </LICENSES> */
 
+/* <CODE> */
 //! zlib's internal interface: the error messages, the common constants of deflate and inflate,
 //! the build knobs of the kernel's zlib, and the utility functions of `zutil.c`
 //! (`zlibVersion`, `zlibCompileFlags`, `zError`).
@@ -183,7 +184,9 @@ pub fn zlibCompileFlags() -> u64 {
 pub fn zError(err: i32) -> &'static str {
     ERR_MSG(err)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,3 +217,4 @@ mod tests {
         assert_eq!(zlibCompileFlags(), 1 | 2 << 2 | 2 << 4 | 2 << 6 | 1 << 17);
     }
 }
+/* </TESTS> */

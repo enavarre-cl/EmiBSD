@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Priorities and facilities of the system log: `<sys/syslog.h>`, as the kernel sees it.
 //!
 //! Upstream: sys/sys/syslog.h @ 3ce1f3f79392
@@ -163,7 +164,9 @@ pub const fn log_mask(pri: i32) -> i32 {
 pub const fn log_upto(pri: i32) -> i32 {
     (1 << (pri + 1)) - 1
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,3 +225,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

@@ -43,6 +43,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `vm_machdep.c`: the machine-dependent part of creating and tearing down threads.
 //!
 //! Upstream: sys/arch/amd64/amd64/vm_machdep.c @ 3ce1f3f79392
@@ -245,3 +246,4 @@ pub fn tcb_set(p: &Proc, tcb: usize) {
     reset_segs();
     p.pcb().pcb_fsbase.set(tcb as u64);
 }
+/* </CODE> */

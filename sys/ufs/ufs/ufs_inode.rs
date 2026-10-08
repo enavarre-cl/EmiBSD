@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The end of an inode's life: `ufs_inactive` (the last reference went: free a removed file's
 //! blocks and inode, write the times back) and `ufs_reclaim` (the vnode is being reused:
 //! unhash the inode and drop what hangs from it).
@@ -146,3 +147,4 @@ pub fn ufs_reclaim(vp: &'static Vnode) -> Result<(), Errno> {
     let _ = ufs_quota_delete(ip);
     Ok(())
 }
+/* </CODE> */

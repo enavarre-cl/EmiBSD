@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Kernel structure per socket and per socket buffer: `<sys/socketvar.h>`.
 //!
 //! Upstream: sys/sys/socketvar.h @ 3ce1f3f79392
@@ -611,7 +612,9 @@ pub fn sb_empty_fixup(sb: &Sockbuf) {
         sb.sb_lastrecord.set(None);
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,3 +635,4 @@ mod tests {
         assert_complete(&defs, "SBL_", &sbl);
     }
 }
+/* </TESTS> */

@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! BOOTX64.EFI's first bytes and first instructions: the PE32+ header the firmware reads
 //! and `_start`, which relocates the image and calls `efi_main` (`start_amd64.S`).
 //!
@@ -77,3 +78,4 @@
 use core::arch::global_asm;
 
 global_asm!(include_str!("start_amd64.S"), options(att_syntax));
+/* </CODE> */

@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Machine-specific functions for PCI autoconfiguration: `arch/amd64/pci/pci_machdep.c`.
 //!
 //! Upstream: sys/arch/amd64/pci/pci_machdep.c @ 3ce1f3f79392
@@ -968,3 +969,4 @@ pub fn pci_set_powerstate_md(pc: PciChipsetTag, tag: Pcitag, state: i32, pre: i3
     // NACPI > 0
     crate::dev::acpi::acpi::acpi_pci_set_powerstate(pc, tag, state, pre);
 }
+/* </CODE> */

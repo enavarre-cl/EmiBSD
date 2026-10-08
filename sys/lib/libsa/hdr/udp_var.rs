@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<netinet/udp_var.h>` for libsa: the UDP header with the IP overlay in front, which the
 //! UDP checksum covers.
 
@@ -19,3 +20,4 @@ pub struct Udpiphdr {
 net_bytes!(Udpiphdr);
 
 const _: () = assert!(core::mem::size_of::<Udpiphdr>() == 28);
+/* </CODE> */

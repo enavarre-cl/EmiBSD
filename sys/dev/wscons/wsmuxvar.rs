@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wsmuxvar.h>`: a wscons event source (`wskbd`, `wsmouse` or `wsmux`), the
 //! methods a mux calls on its sources, and the mux's own softc.
 //!
@@ -265,7 +266,9 @@ pub fn wsevsrc_set_display(me: &Wsevsrc, arg: Option<&Device>) -> Result<(), Err
         None => Err(Errno::ENODEV),
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,3 +280,4 @@ mod tests {
         assert_eq!(WSMOUSEDEVCF_MUX, 0);
     }
 }
+/* </TESTS> */

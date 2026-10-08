@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/efigop.h 264095 2014-04-04 00:16:46Z emaste $ */
-
 /* <LICENSES> */
 /*++
 
@@ -27,6 +26,7 @@ Revision History
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI graphics output protocol (GOP).
 //!
 //! Upstream: sys/stand/efi/include/efigop.h @ 3ce1f3f79392
@@ -189,3 +189,4 @@ const _: () = assert!(core::mem::size_of::<EfiGraphicsOutputModeInformation>() =
 const _: () = assert!(core::mem::size_of::<EfiGraphicsOutputProtocolMode>() == 40);
 const _: () = assert!(core::mem::size_of::<EfiGraphicsOutputBltPixel>() == 4);
 const _: () = assert!(core::mem::size_of::<EfiGraphicsOutput>() == 32);
+/* </CODE> */

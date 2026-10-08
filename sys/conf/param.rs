@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Tunable kernel parameters that `config(8)` lets a kernel configuration override:
 //! `sys/conf/param.c`.
 //!
@@ -103,3 +104,4 @@ pub const BUFPAGES: i64 = 0;
 /// `bufpages`: max number of pages for buffers' data.
 #[allow(non_upper_case_globals)] // BUFPAGES is the default of the same name
 pub static bufpages: AtomicI64 = AtomicI64::new(BUFPAGES);
+/* </CODE> */

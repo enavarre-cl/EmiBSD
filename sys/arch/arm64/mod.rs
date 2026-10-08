@@ -1,3 +1,4 @@
+/* <CODE> */
 //! arm64 (aarch64) machine-dependent code: OpenBSD `sys/arch/arm64/`.
 //!
 //! Layout follows OpenBSD: `arm64/` for `.c`/`.S` ports (`locore`, `machdep`, `pmap`, `trap`),
@@ -1488,3 +1489,4 @@ impl MachineSignal for Machine {
         arm64::locore::sigfill_bytes()
     }
 }
+/* </CODE> */

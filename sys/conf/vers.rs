@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The system's identity: what `conf/newvers.sh` writes into the generated `vers.c` of every
 //! OpenBSD kernel build (`ostype`, `osrelease`, `osversion`, `sccs`, `version`), and what
 //! `kern.ostype`, `kern.osrelease`, `kern.osversion`, `kern.version` and the boot banner
@@ -144,7 +145,9 @@ const _: () = {
     // `const char version[512]` in C.
     assert!(VERSION.len() < 512);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,3 +164,4 @@ mod tests {
         assert!(!VERSION.contains('\0'));
     }
 }
+/* </TESTS> */

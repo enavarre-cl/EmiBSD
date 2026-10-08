@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `getdisklabel()`: find and check the disk label in a sector.
 //!
 //! Upstream: sys/lib/libsa/disklabel.c @ 3ce1f3f79392
@@ -83,3 +84,4 @@ pub fn getdisklabel(buf: &[u8], lp: &mut Disklabel) -> Result<(), &'static str> 
         None => Ok(()),
     }
 }
+/* </CODE> */

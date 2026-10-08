@@ -22,6 +22,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/pipe.h>`: the per-direction pipe structure, `struct pipe`, its circular buffer
 //! `struct pipebuf`, the buffer sizes and the `PIPE_*` state bits.
 //!
@@ -187,7 +188,9 @@ impl Default for Pipe {
         Self::new()
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,3 +215,4 @@ mod tests {
         assert!(!p.has_state(PIPE_WANTR | PIPE_LOCK));
     }
 }
+/* </TESTS> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `fchmod()`: change the mode of an open file (boot(8) marks a used random seed and a
 //! booted `/bsd.upgrade`).
 //!
@@ -72,3 +73,4 @@ pub fn fchmod(fd: usize, m: Mode) -> Result<(), Errno> {
 
     chmod(f, m).inspect_err(|&e| set_errno(e))
 }
+/* </CODE> */

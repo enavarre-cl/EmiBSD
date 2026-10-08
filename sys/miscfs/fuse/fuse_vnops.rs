@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The FUSE vnode operations (`fusefs_vops`): each one becomes a request to the daemon
 //! (`fb_setup`, `fb_queue`), and the kqueue filters.
 //!
@@ -1769,3 +1770,4 @@ pub fn fusefs_fsync(ap: &mut VopFsyncArgs<'_>) -> Result<(), Errno> {
 
     error
 }
+/* </CODE> */

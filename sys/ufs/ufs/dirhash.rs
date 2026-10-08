@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ufs/ufs/dirhash.h>`: the hash of a large directory. For fast operations on large
 //! directories, we maintain a hash that maps the file name to the offset of the directory
 //! entry within the directory file.
@@ -260,7 +261,9 @@ const _: () = {
     assert!(DH_NFSTATS == 67);
     assert!(DH_NBLKOFF == 256);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,3 +284,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

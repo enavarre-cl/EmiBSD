@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/efinet.h 163898 2006-11-02 02:42:48Z marcel $ */
-
 /* <LICENSES> */
 /*++
 Copyright (c)  1999 - 2002 Intel Corporation. All rights reserved
@@ -21,6 +20,7 @@ Revision History
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI simple network protocol (SNP).
 //!
 //! Upstream: sys/stand/efi/include/efinet.h @ 3ce1f3f79392
@@ -317,3 +317,4 @@ pub struct EfiSimpleNetwork {
 const _: () = assert!(core::mem::size_of::<EfiNetworkStatistics>() == 176);
 const _: () = assert!(core::mem::size_of::<EfiSimpleNetworkMode>() == 656);
 const _: () = assert!(core::mem::size_of::<EfiSimpleNetwork>() == 128);
+/* </CODE> */

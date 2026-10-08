@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/bus.h>` as a trait: the `bus_space(9)` methods a machine-independent driver uses to
 //! reach its registers.
 //!
@@ -694,3 +695,4 @@ pub fn bus_dma_public_members(map: &BusDmamap) -> (BusSize, i32, BusAddr, BusSiz
         first.ds_len,
     )
 }
+/* </CODE> */

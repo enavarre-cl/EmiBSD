@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `dev/mii/ukphy_subr.c`: subroutines shared by the ukphy driver and other PHY drivers.
 //!
 //! Upstream: sys/dev/mii/ukphy_subr.c @ 3ce1f3f79392
@@ -129,3 +130,4 @@ pub fn ukphy_status(phy: &'static MiiSoftc) {
         mii.mii_media_active.set(mii.cur_media());
     }
 }
+/* </CODE> */

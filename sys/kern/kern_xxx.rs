@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Odds and ends: `kern/kern_xxx.c`.
 //!
 //! Upstream: sys/kern/kern_xxx.c @ 3ce1f3f79392
@@ -220,3 +221,4 @@ pub fn scdebug_ret(p: &Proc, code: Register, error: i32, retval: &[Register; 2])
     }
     let _ = printf(format_args!("\n"));
 }
+/* </CODE> */

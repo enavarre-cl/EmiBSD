@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Paravirtual devices: OpenBSD `sys/dev/pv/`.
 //!
 //! `virtioreg` and `virtiovar` are the virtio headers, `virtio` the core the transports
@@ -14,3 +15,4 @@ pub mod vioscsireg;
 pub mod virtio;
 pub mod virtioreg;
 pub mod virtiovar;
+/* </CODE> */

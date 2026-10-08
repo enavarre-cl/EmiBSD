@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! PCI autoconfiguration support functions: `dev/pci/pci_subr.c`.
 //!
 //! Upstream: sys/dev/pci/pci_subr.c @ 3ce1f3f79392
@@ -405,7 +406,9 @@ pub fn pci_devinfo(id_reg: Pcireg, class_reg: Pcireg, showclass: bool, cp: &mut 
         append(cp, format_args!(" rev 0x{:02x}", revision));
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,3 +452,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

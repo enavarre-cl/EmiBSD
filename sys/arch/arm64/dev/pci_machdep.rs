@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The arm64 PCI functions every host bridge shares: `arch/arm64/dev/pci_machdep.c`. MSI and
 //! MSI-X are programmed here in the function's capability and table (the address and data
 //! come from the bridge's MSI controller), and the `_pci_intr_map_msi*` functions are what
@@ -246,3 +247,4 @@ pub fn _pci_intr_map_msix(pa: &PciAttachArgs, vec: i32) -> Option<PciIntrHandle>
         ih_dmat: pa.pa_dmat,
     })
 }
+/* </CODE> */

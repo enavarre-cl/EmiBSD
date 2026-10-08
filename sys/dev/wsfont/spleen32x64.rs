@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The Spleen 32x64 font, `<dev/wsfont/spleen32x64.h>`: a built-in font of `wsfont(9)`.
 //!
 //! Upstream: sys/dev/wsfont/spleen32x64.h @ 3ce1f3f79392
@@ -14628,3 +14629,4 @@ static SPLEEN32X64_DATA: StaticCell<[u8; SPLEEN32X64_DATA_LEN]> = StaticCell::ne
     0x0f, 0xff, 0xff, 0x80, // ....*********************.......
     0x0f, 0xff, 0xfe, 0x00, // ....*******************.........
 ]);
+/* </CODE> */

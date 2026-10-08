@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<sys/disklabel.h>` (and amd64's `<machine/disklabel.h>`) for libsa and the boot programs:
 //! `struct disklabel`, the `DL_*` accessors, and the MBR and GPT layouts the boot loaders read
 //! to find the OpenBSD partition.
@@ -382,3 +383,4 @@ const _: () = assert!(core::mem::size_of::<Partition>() == 16);
 const _: () = assert!(core::mem::size_of::<Disklabel>() == 148 + 16 * MAXPARTITIONSUNIT);
 const _: () = assert!(core::mem::size_of::<DosPartition>() == 16);
 const _: () = assert!(core::mem::size_of::<GptPartition>() == 128);
+/* </CODE> */

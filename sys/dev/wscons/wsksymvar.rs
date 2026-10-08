@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wsksymvar.h>`: the keymap types of wscons: a keysym, a keyboard layout code,
 //! one entry of a keymap, and the table that describes a keyboard's layouts.
 //!
@@ -117,7 +118,9 @@ impl WskbdMapdata {
         self.layout.store(l, Ordering::Relaxed);
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,3 +145,4 @@ mod tests {
         assert_eq!(core::mem::size_of::<WsconsKeymap>(), 10);
     }
 }
+/* </TESTS> */

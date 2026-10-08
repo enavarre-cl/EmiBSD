@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/ic/vgareg.h>`: the VGA's indexed register files beyond the 6845: the attribute
 //! controller, the timing sequencer and the graphics data controller, and the DAC ports.
 //!
@@ -126,7 +127,9 @@ pub const VGA_DAC_READ: usize = 0x07;
 pub const VGA_DAC_WRITE: usize = 0x08;
 /// `VGA_DAC_DATA`: palette data register.
 pub const VGA_DAC_DATA: usize = 0x09;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use core::mem::{offset_of, size_of};
@@ -156,3 +159,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "VGA_", &names);
     }
 }
+/* </TESTS> */

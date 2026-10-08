@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/ttycom.h>`: the tty `ioctl(2)` commands, `struct winsize` and `struct tstamps`, the
 //! modem bits and the line discipline numbers.
 //!
@@ -257,7 +258,9 @@ pub const NMEADISC: i32 = 7;
 pub const MSTSDISC: i32 = 8;
 /// EndRun time format discipline.
 pub const ENDRUNDISC: i32 = 9;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,3 +325,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

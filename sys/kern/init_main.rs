@@ -39,6 +39,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! System startup: `kern/init_main.c`. Initialize the world, create process 0, mount root
 //! filesystem, and fork to create init and pagedaemon. Most of the hard work is done in the
 //! lower-level initialization routines including `startup()`, which does memory initialization
@@ -855,3 +856,4 @@ pub fn start_init(arg: *mut c_void) {
     kprintf!("init: not found\n");
     panic(format_args!("no init"));
 }
+/* </CODE> */

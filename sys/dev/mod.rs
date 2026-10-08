@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Device drivers: OpenBSD `sys/dev/`.
 //!
 //! Only drivers for hardware QEMU exposes are ported; others are `skipped: deferred-driver`.
@@ -48,3 +49,4 @@ pub mod vnd;
 pub mod vndioctl;
 pub mod wscons;
 pub mod wsfont;
+/* </CODE> */

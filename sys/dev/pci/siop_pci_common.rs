@@ -51,6 +51,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The code the siop and esiop PCI front-ends share (`<dev/pci/siop_pci_common.h>` and
 //! `siop_pci_common.c`): the table of the Symbios chips the drivers know, with each one's
 //! features, burst, offset and clock; the common attach, which maps the registers (memory
@@ -676,7 +677,9 @@ pub fn siop_pci_reset(sc: &SiopCommonSoftc) {
     }
     sc.write_1(SIOP_DMODE, dmode);
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -711,3 +714,4 @@ mod tests {
         assert!(siop_lookup_product(0x0030_1000, 0).is_none());
     }
 }
+/* </TESTS> */

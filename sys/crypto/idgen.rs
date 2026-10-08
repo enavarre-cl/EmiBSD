@@ -18,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! IDGEN32: non-repeating identifiers covering an almost maximal 32-bit range. A 31-bit
 //! counter, started at a random offset, goes through a keyed 31-bit Feistel permutation
 //! (IDGEN32 is based on Greg Rose's public domain SKIP32); the top bit flips at every rekey
@@ -175,7 +176,9 @@ pub fn idgen32(ctx: &mut Idgen32Ctx) -> u32 {
         }
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,3 +218,4 @@ mod tests {
         assert_eq!(ctx.id32_counter, 1);
     }
 }
+/* </TESTS> */

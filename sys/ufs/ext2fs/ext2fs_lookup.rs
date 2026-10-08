@@ -52,6 +52,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! ext2fs directories: reading them as `struct dirent`s (`ext2fs_readdir`), looking a name up
 //! and finding where a new entry would go (`ext2fs_lookup`, `ext2fs_search_dirblock`), and
 //! the routines that check, add, remove and rewrite directory entries (`ext2fs_dirbadentry`,
@@ -65,7 +66,7 @@
 //! terminating NUL of its name, so the on-disk entries cannot be handed out as `struct dirent`s
 //! and are converted one by one (`ext2fs_dirconv2ffs`); the directory block is the file
 //! system block (`e2fs_bsize`), not `DIRBLKSIZ`. The host tests of these functions go through
-//! the vnode operations, in `ext2fs_vnops/tests.rs`.
+//! the vnode operations, in `ext2fs_vnops.rs`.
 //!
 //! ## Deviations
 //! - A `struct ext2fs_direct *` into a directory block is an offset into the block's bytes,
@@ -1071,3 +1072,4 @@ const _: () = {
     // The entry `ext2fs_readdir` converts fits the `struct dirent` it copies out.
     assert!(dirent_recsize(255) <= size_of::<Dirent>());
 };
+/* </CODE> */

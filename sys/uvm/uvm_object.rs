@@ -30,6 +30,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The UVM memory object interface: `<uvm/uvm_object.h>`, and `uvm_object.c`: operate with
 //! memory objects.
 //!
@@ -415,7 +416,9 @@ pub fn uvm_obj_free(uobj: &UvmObject) {
     }
     uvm_pglistfree(&pgl);
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,3 +434,4 @@ mod tests {
         assert_eq!(refs.get(), UVM_OBJ_KERN);
     }
 }
+/* </TESTS> */

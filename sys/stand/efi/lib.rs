@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The UEFI types and protocols of OpenBSD's `sys/stand/efi/include`, shared by the
 //! `efiboot` boot loaders (amd64's BOOTX64.EFI, arm64's BOOTAA64.EFI).
 //!
@@ -10,3 +11,4 @@
 #![no_std]
 
 pub mod include;
+/* </CODE> */

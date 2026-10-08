@@ -34,6 +34,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! efiboot's UEFI glue: the entry point, the EFI disks, the memory map, the consoles (EFI
 //! text console, EFI serial I/O, legacy COM ports), the boot arguments made from EFI tables,
 //! the clock and the EFI `machine` commands.
@@ -1616,3 +1617,4 @@ pub fn Xfwsetup_efi(_cmd: &mut CmdState) -> i32 {
         core::hint::spin_loop();
     }
 }
+/* </CODE> */

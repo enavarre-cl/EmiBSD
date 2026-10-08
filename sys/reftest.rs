@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Helpers for reference-backed tests (`just test-ref`).
 //!
 //! They read a header from the C tree at `$OPENBSD_SRC` and collect its `#define NAME VALUE`
@@ -217,7 +218,9 @@ pub(crate) fn assert_complete(defs: &BTreeMap<String, String>, prefix: &str, our
         assert!(ours.contains(&name.as_str()), "{name} is not ported");
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,3 +290,4 @@ mod tests {
         assert_eq!(int(&d, "MISSING"), None);
     }
 }
+/* </TESTS> */

@@ -35,6 +35,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `dev/mii/rgephy.c`: driver for the Realtek 8169S/8110S internal 10/100/1000 PHY and its
 //! successors (RTL8211F, RTL8251) (`rgephy* at mii?`).
 //!
@@ -569,3 +570,4 @@ pub fn rgephy_reset(sc: &'static MiiSoftc) {
     delay(1000);
     rgephy_load_dspcode(sc);
 }
+/* </CODE> */

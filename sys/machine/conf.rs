@@ -1,3 +1,4 @@
+/* <CODE> */
 //! What the device switch needs from the machine: each architecture's `conf.c`.
 //!
 //! OpenBSD's `<sys/conf.h>` declares `bdevsw[]`, `cdevsw[]`, `nblkdev`, `nchrdev`,
@@ -143,3 +144,4 @@ pub fn iszerodev(dev: Dev) -> bool {
 pub fn getnulldev() -> Dev {
     Machine::getnulldev()
 }
+/* </CODE> */

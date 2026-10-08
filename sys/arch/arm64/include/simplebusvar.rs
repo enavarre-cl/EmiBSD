@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/simplebusvar.h>`: the softc of a `simple-bus` node, which the interrupt
 //! controllers that have children (`ampintc`'s GICv2m frames) embed first.
 //!
@@ -101,3 +102,4 @@ impl SimplebusSoftc {
 // SAFETY: `#[repr(C)]` with the device first; every other member is a `Cell` of an integer,
 // a raw pointer or an `Option` of a reference, or `MaybeUninit`: all valid as zero bits.
 unsafe impl Softc for SimplebusSoftc {}
+/* </CODE> */

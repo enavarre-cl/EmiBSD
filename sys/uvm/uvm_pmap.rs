@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Machine address mapping definitions, the machine-independent section: `<uvm/uvm_pmap.h>`.
 //! The machine-dependent section is the `machine::Pmap` contract (`sys/machine/pmap.rs`).
 //!
@@ -150,7 +151,9 @@ pub const fn pmap_prefer_align() -> usize {
 pub const fn pmap_prefer_offset(_off: Voff) -> usize {
     0
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,3 +167,4 @@ mod tests {
         assert_eq!((st.resident_count.get(), st.wired_count.get()), (3, -1));
     }
 }
+/* </TESTS> */

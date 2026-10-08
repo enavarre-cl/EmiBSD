@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The user/kernel string copies of `arch/arm64/arm64/copystr.S`, pulled in from the `.S`
 //! file next to this module (the file keeps OpenBSD's licence block and layout; `{NAME}`
 //! placeholders are what `assym.h` provides in C).
@@ -50,3 +51,4 @@ pub fn copyoutstr(kbuf: &[u8], uaddr: usize) -> Result<usize, Errno> {
     errno(unsafe { sym::copyoutstr(kbuf.as_ptr(), uaddr as *mut u8, kbuf.len(), &mut done) })?;
     Ok(done)
 }
+/* </CODE> */

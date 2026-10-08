@@ -2,6 +2,7 @@
 /* <LICENSES> */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `disk.h` of arm64's efiboot: `struct diskinfo`, everything efiboot knows of a disk.
 //!
 //! Upstream: sys/arch/arm64/stand/efiboot/disk.h @ 3ce1f3f79392
@@ -62,3 +63,4 @@ pub struct DiskInfo {
 // SAFETY: efiboot runs on one CPU without threads; the EFI pointers inside are only used
 // from it, before ExitBootServices.
 unsafe impl Send for DiskInfo {}
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! ACPI: OpenBSD `sys/dev/acpi/`. M13 brings the headers, the AML interpreter (`dsdt`), the
 //! core (`acpi`, acpi0), the table checksum (`acpiutil`), the timers (`acpitimer`,
 //! `acpihpet`), the MADT (`acpimadt`) and the PCI interrupt routing (`acpiprt`). M14 adds
@@ -17,3 +18,4 @@ pub mod acpivar;
 pub mod amltypes;
 pub mod dsdt;
 pub mod pluart_acpi;
+/* </CODE> */

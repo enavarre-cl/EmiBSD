@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/exec.h>` as a trait: what the ELF loader needs to know about the architecture's
 //! executables.
 //!
@@ -23,3 +24,4 @@ pub trait MachineExec {
     /// `__HAVE_CPU_HWCAP2`: the same for `hwcap2` and `AUX_hwcap2`.
     const HAVE_CPU_HWCAP2: bool;
 }
+/* </CODE> */

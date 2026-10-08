@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wsmouseinput.h>`: wsmouse input processing, the private header of
 //! `wsmouse.c` and `wstpad.c`.
 //!
@@ -491,7 +492,9 @@ pub fn devname(input: &WsmouseInput) -> &str {
         None => "wsmouse?",
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,3 +530,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

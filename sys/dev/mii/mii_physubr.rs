@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `dev/mii/mii_physubr.c`: subroutines common to all PHYs (media setting,
 //! autonegotiation, the tick, reset, status reporting and the generic media list).
 //!
@@ -620,7 +621,9 @@ pub fn mii_anar(media: u64) -> i32 {
         _ => 0,
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -670,3 +673,4 @@ mod tests {
         assert!(mii_phy_match(&ma, &T).is_none());
     }
 }
+/* </TESTS> */

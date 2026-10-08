@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `nvme* at pci?`: the PCI front-end of nvme(4): maps the register BAR, establishes the
 //! interrupt (MSI-X, else MSI, else INTx) and attaches the controller.
 //!
@@ -202,7 +203,9 @@ pub fn nvme_pci_activate(self_: &Device, act: i32) -> Result<(), Errno> {
 
     nvme_activate(&psc.psc_nvme, act)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -219,3 +222,4 @@ mod tests {
         assert!(!nvme_pci_is_nvme(0x0180_0000, 0x2004_106b));
     }
 }
+/* </TESTS> */

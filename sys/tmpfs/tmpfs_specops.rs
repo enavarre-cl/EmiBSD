@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! tmpfs vnode interface for special devices: the operations of a block or character
 //! device node stored in a tmpfs file system (`tmpfs_specvops`), which keep the node's
 //! times and leave the device work to `spec_vnops`.
@@ -114,3 +115,4 @@ pub fn tmpfs_spec_write(ap: &mut VopWriteArgs<'_, '_>) -> Result<(), Errno> {
     tmpfs_update(VP_TO_TMPFS_NODE(vp), TMPFS_NODE_MODIFIED);
     spec_write(ap)
 }
+/* </CODE> */

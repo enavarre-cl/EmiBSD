@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 interrupt dispatch and the clock hooks: `arch/arm64/arm64/intr.c`.
 //!
 //! Upstream: sys/arch/arm64/arm64/intr.c @ 3ce1f3f79392
@@ -1207,3 +1208,4 @@ pub fn arm_send_ipi(ci: &CpuInfo, id: i32) {
 pub fn arm_no_send_ipi(_ci: &CpuInfo, _id: i32) {
     panic(format_args!("arm_send_ipi() called: no ipi function"));
 }
+/* </CODE> */

@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/intrmap.h>`: spreading a device's interrupts (its rings) over the CPUs. The
 //! functions and the opaque `struct intrmap` live in `kern/kern_intrmap.rs`.
 //!
@@ -24,3 +25,4 @@
 
 /// `INTRMAP_POWEROF2`: round the number of interrupts down to a power of two.
 pub const INTRMAP_POWEROF2: u32 = 1 << 0;
+/* </CODE> */

@@ -18,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The NAT64 address mappings of RFC 6052 (`inet_nat64`, IPv6 to IPv4 and an IPv4 address
 //! into an IPv6 prefix) and their NAT46 counterparts (`inet_nat46`), which pf's `af-to`
 //! uses.
@@ -212,7 +213,9 @@ pub fn inet_nat46_inet6(
 
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,3 +266,4 @@ mod tests {
         assert!(inet_nat46(i32::from(AF_INET), &src, &mut d, &pfx, 33).is_err());
     }
 }
+/* </TESTS> */

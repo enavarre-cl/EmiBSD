@@ -3,6 +3,7 @@
 /* <LICENSES> */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/mpconfig.h>`: definitions originally from the mpbios code, but now used
 //! for ACPI MP config as well.
 //!
@@ -20,3 +21,4 @@
 //!   `mp_isa_bus`, `mp_eisa_bus`) are defined, as in C, by `amd64/mainbus.rs`.
 
 pub use crate::machine::mpconfig::{MpBus, MpIntrMap};
+/* </CODE> */

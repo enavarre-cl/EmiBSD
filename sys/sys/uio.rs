@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/uio.h>`: scatter/gather I/O descriptions: `struct iovec`, the `uio_rw` and
 //! `uio_seg` enums and the kernel's `struct uio`.
 //!
@@ -151,3 +152,4 @@ impl Uio<'_> {
 }
 
 const _: () = assert!(size_of::<Iovec>() == 2 * size_of::<usize>());
+/* </CODE> */

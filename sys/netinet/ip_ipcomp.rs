@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! IP payload compression protocol (IPComp), see RFC 2393: `<netinet/ip_ipcomp.h>` (the
 //! statistics, the header, the sysctl names) and the transform of `netinet/ip_ipcomp.c`, which
 //! `xformsw[]` names: `ipcomp_init` sets up a TDB with a deflate session of the crypto
@@ -627,3 +628,4 @@ const _: () = {
     assert!(size_of::<Ipcompstat>() == IpcompCounters::IpcompsNcounters as usize * 8);
     assert!(size_of::<Ipcomp>() == IPCOMP_HLENGTH);
 };
+/* </CODE> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The fast file system's vnode operations: the tables for files (`ffs_vops`) and for the
 //! special files that live on it (`ffs_specvops`), and the operations that are FFS's own:
 //! reading and writing a file through the buffer cache (`ffs_read`, `ffs_write`), flushing
@@ -523,3 +524,4 @@ pub fn ffs_reclaim(ap: &mut VopReclaimArgs<'_>) -> Result<(), Errno> {
 
     Ok(())
 }
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! What the boot glue hands to the machine and the kernel: a bootloader-neutral view of the
 //! loaded image and of physical memory.
 //!
@@ -367,7 +368,9 @@ impl BootInfo {
         Some(duid)
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,3 +500,4 @@ mod tests {
         assert_eq!(boot.boothowto(), RB_KDB | RB_SINGLE);
     }
 }
+/* </TESTS> */

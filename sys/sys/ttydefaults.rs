@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! System wide defaults for terminal state: `<sys/ttydefaults.h>`.
 //!
 //! Upstream: sys/sys/ttydefaults.h @ 3ce1f3f79392
@@ -137,7 +138,9 @@ pub const TTYDEFCHARS: [Cc; NCCS] = [
     CSTATUS,
     _POSIX_VDISABLE,
 ];
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,3 +162,4 @@ mod tests {
         assert_eq!(TTYDEF_SPEED, 9600);
     }
 }
+/* </TESTS> */

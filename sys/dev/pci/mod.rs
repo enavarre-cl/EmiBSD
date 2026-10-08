@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The PCI bus: OpenBSD `sys/dev/pci/`.
 //!
 //! `pcireg`, `pcivar`, `ppbreg` and `pcidevs` are the headers; `pci` the bus driver
@@ -46,3 +47,4 @@ pub mod vga_pcivar;
 pub mod virtio_pci;
 pub mod virtio_pcireg;
 pub mod xhci_pci;
+/* </CODE> */

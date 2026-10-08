@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! acpihpet(4): `dev/acpi/acpihpet.c`, the High Precision Event Timer the ACPI `HPET` table
 //! describes. acpihpet0 maps its registers, starts the main counter, checks that it counts
 //! and that its period is sane, and registers the low 32 bits of the counter as a
@@ -379,7 +380,9 @@ pub fn acpihpet_gettime(tc: &Timecounter) -> u32 {
         bus_space_read_4(iot, ioh, HPET_MAIN_COUNTER)
     })
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -402,3 +405,4 @@ mod tests {
         assert_eq!(acpihpet_gettime(&HPET_TIMECOUNTER), 0);
     }
 }
+/* </TESTS> */

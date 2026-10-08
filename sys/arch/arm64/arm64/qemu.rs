@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Arm semihosting under QEMU (feature `qemu`): `SYS_EXIT` ends the emulator with the status
 //! given in the parameter block. Not an OpenBSD file.
 
@@ -30,3 +31,4 @@ pub fn exit(status: ExitStatus) -> ! {
     }
     Machine::halt()
 }
+/* </CODE> */

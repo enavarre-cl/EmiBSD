@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `fstat()`: the status of an open file.
 //!
 //! Upstream: sys/lib/libsa/fstat.c @ 3ce1f3f79392
@@ -71,3 +72,4 @@ pub fn fstat(fd: usize, sb: &mut Stat) -> Result<(), Errno> {
     set_errno((ops.stat)(f, sb).err().unwrap_or(Errno(0)));
     Ok(())
 }
+/* </CODE> */

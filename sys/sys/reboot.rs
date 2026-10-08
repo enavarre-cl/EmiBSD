@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Arguments to `reboot(2)`, `boot(9)` and the boot loader: `<sys/reboot.h>`.
 //!
 //! Upstream: sys/sys/reboot.h @ 3ce1f3f79392
@@ -157,7 +158,9 @@ pub const fn makebootdev(ty: u32, adaptor: u32, controller: u32, unit: u32, part
         | (partition << B_PARTITIONSHIFT)
         | B_DEVMAGIC
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,3 +219,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

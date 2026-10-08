@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/pci/pcivar.h>`: definitions for PCI autoconfiguration, the types and functions
 //! used for PCI configuration. Some of this information is machine-specific, and is provided
 //! by `<machine/pci_machdep.h>` (`machine::pci_machdep`).
@@ -267,7 +268,9 @@ pub fn pcicf_function(cf: &Cfdata) -> i32 {
 
 /// `PCI_UNK_FUNCTION`: wildcarded 'function'.
 pub const PCI_UNK_FUNCTION: i32 = -1;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,3 +299,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

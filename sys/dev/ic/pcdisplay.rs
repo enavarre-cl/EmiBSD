@@ -3,6 +3,7 @@
 /* <LICENSES> */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/ic/pcdisplay.h>`: IBM PC display definitions, the colour and monochrome attribute
 //! bits of a text-mode character cell.
 //!
@@ -85,7 +86,9 @@ pub const FG_INTENSE: u32 = 0x08;
 
 /// `BG_INTENSE`.
 pub const BG_INTENSE: u32 = 0x10;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,3 +109,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "BG_", &names);
     }
 }
+/* </TESTS> */

@@ -102,6 +102,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The loopback interface, `lo(4)`: `net/if_loop.c`, a driver for protocol testing and
 //! timing. `lo0` is attached at boot (`loopattach`, a pseudo-device in `pdevinit[]`); more
 //! loopbacks are cloned (`ifconfig lo1 create`), one per routing domain.
@@ -338,3 +339,4 @@ pub unsafe fn loioctl(ifp: &'static Ifnet, cmd: u64, data: *mut u8) -> Result<()
         _ => Err(Errno::ENOTTY),
     }
 }
+/* </CODE> */

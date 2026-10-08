@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! bios0: `arch/amd64/amd64/bios.c`, the firmware's node below mainbus. It reads the
 //! SMBIOS tables (the machine's vendor and product) and attaches the firmware's other
 //! interfaces: `efi0`, `acpi0` and `mpbios0`.
@@ -134,3 +135,4 @@ pub fn bios_print(aux: *mut c_void, pnp: Option<&[u8]>) -> i32 {
     }
     UNCONF
 }
+/* </CODE> */

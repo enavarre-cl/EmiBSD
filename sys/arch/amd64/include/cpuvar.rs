@@ -65,6 +65,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/cpuvar.h>`: how a CPU is attached (`struct cpu_attach_args`).
 //!
 //! Upstream: sys/arch/amd64/include/cpuvar.h @ 3ce1f3f79392
@@ -111,7 +112,9 @@ pub struct CpuAttachArgs {
     /// `cpu_func`.
     pub cpu_func: Option<&'static CpuFunctions>,
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -133,3 +136,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

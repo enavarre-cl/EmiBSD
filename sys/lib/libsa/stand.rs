@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `stand.h`: the standalone library's interface: the file system and device switches, the
 //! open file table entry, and what the program that links libsa must define.
 //!
@@ -329,3 +330,4 @@ pub const fn isspace(c: u8) -> bool {
 pub const fn isdigit(c: u8) -> bool {
     c.is_ascii_digit()
 }
+/* </CODE> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Profiling support: `kern/subr_prof.c`.
 //!
 //! Upstream: sys/kern/subr_prof.c @ 3ce1f3f79392
@@ -113,3 +114,4 @@ pub fn sys_profil(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<
         "sys_profil: struct uprof and startprofclock (subr_prof.c, kern_clock.c)"
     ))
 }
+/* </CODE> */

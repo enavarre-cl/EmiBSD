@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The UDF file system: OpenBSD `sys/isofs/udf/` (`option UDF`, feature `udf`), read-only.
 //!
 //! Headers (types): `ecma167_udf` (`ecma167-udf.h`, the on-disk descriptors of ECMA-167 and
@@ -15,3 +16,4 @@ pub mod udf_extern;
 pub mod udf_subr;
 pub mod udf_vfsops;
 pub mod udf_vnops;
+/* </CODE> */

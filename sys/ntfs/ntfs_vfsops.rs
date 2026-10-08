@@ -59,6 +59,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! NTFS file-system-type operations: mount (the boot file, the system vnodes of `$MFT`, the
 //! root and `$Bitmap`, the upper-case table, the free cluster count, the attribute
 //! definitions of `$AttrDef`), unmount, root, `statfs`, `vget` (an attribute of an MFT record
@@ -876,3 +877,4 @@ pub fn ntfs_vget(mp: &'static Mount, ino: Ino) -> Result<&'static Vnode, Errno> 
 
 // `struct ntfid` must fit in a `struct fid`.
 const _: () = assert!(Ntfid::SIZE <= crate::sys::mount::MAXFIDSZ + 4);
+/* </CODE> */

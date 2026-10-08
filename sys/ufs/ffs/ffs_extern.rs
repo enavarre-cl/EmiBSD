@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ufs/ffs/ffs_extern.h>`: the `CTL_VFS` names of the fast file system (`FFS_*`,
 //! `FFS_NAMES`), and the prototypes, operation tables and pools of `ufs/ffs`.
 //!
@@ -118,7 +119,9 @@ pub use crate::ufs::ffs::ffs_vfsops::{
 pub use crate::ufs::ffs::ffs_vnops::{
     FFS_SPECVOPS, FFS_VOPS, ffs_fsync, ffs_read, ffs_reclaim, ffs_write,
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -141,3 +144,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

@@ -69,6 +69,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/frame.h>`: the stack frames the kernel walks and builds.
 //!
 //! Upstream: sys/arch/amd64/include/frame.h @ 3ce1f3f79392
@@ -250,3 +251,4 @@ const _: () = {
     assert!(size_of::<IretqFrame>() == 5 * 8);
     assert!(size_of::<Switchframe>() == 7 * 8);
 };
+/* </CODE> */

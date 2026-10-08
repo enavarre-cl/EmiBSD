@@ -19,6 +19,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `pluart(4)`: the ARM PrimeCell PL011 UART, `dev/ic/pluart.c`, with the declarations of
 //! `<dev/ic/pluartvar.h>`.
 //!
@@ -1124,7 +1125,9 @@ pub fn pluartcnputc(_dev: Dev, c: i32) {
 
 /// `pluartcnpollc`: nothing to switch; the console is always polled.
 pub fn pluartcnpollc(_dev: Dev, _on: bool) {}
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1140,3 +1143,4 @@ mod tests {
         assert_eq!(PLUARTDEV.d_type, crate::sys::conf::D_TTY);
     }
 }
+/* </TESTS> */

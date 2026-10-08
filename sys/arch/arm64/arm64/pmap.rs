@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 physical map: `arch/arm64/arm64/pmap.c`.
 //!
 //! Upstream: sys/arch/arm64/arm64/pmap.c @ 3ce1f3f79392
@@ -2158,3 +2159,4 @@ pub fn pmap_proc_iflush(pr: &Process, va: Vaddr, len: Vsize) {
         va += clen;
     }
 }
+/* </CODE> */

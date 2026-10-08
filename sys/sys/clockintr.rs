@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/clockintr.h>`: schedulable clock interrupts and the per-CPU queue that dispatches
 //! them. The functions live in `kern/kern_clockintr.rs`.
 //!
@@ -262,3 +263,4 @@ pub const CQ_STATE_MASK: u32 = 0x0000_000f;
 pub const CL_BARRIER: u32 = 0x0000_0001;
 /// `CL_FLAG_MASK`.
 pub const CL_FLAG_MASK: u32 = 0x0000_0001;
+/* </CODE> */

@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `strncasecmp(3)`: compare at most `n` bytes of two strings, ignoring ASCII case.
 //!
 //! Upstream: sys/lib/libkern/strncasecmp.c @ 3ce1f3f79392
@@ -66,7 +67,9 @@ pub fn strncasecmp(s1: &[u8], s2: &[u8], n: usize) -> i32 {
 
     0
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -94,3 +97,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

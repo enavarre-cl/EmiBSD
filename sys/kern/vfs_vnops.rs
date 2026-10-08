@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Common code for vnode operations: `vn_open` (permission checks and `VOP_OPEN` or
 //! `VOP_CREATE`), `vn_close`, `vn_rdwr`, `vn_stat`, `vn_lock`, `vn_writechk`, `vn_fsizechk`,
 //! `vn_isunder`, and the file table's vnode operations (`vnops`: `vn_read`, `vn_write`,
@@ -719,7 +720,9 @@ pub fn vn_seek(fp: &File, offset: &mut Off, whence: i32, p: &Proc) -> Result<(),
 pub fn vn_isunder(lvp: &'static Vnode, rvp: &'static Vnode, p: &Proc) -> bool {
     vfs_getcwd_common(lvp, Some(rvp), None, MAXPATHLEN as i32 / 2, 0, p).is_ok()
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -760,3 +763,4 @@ mod tests {
         assert!(!any_locked());
     }
 }
+/* </TESTS> */

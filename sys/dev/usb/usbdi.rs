@@ -66,6 +66,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The USB driver interface: `<dev/usb/usbdi.h>` (what a USB device driver sees: status
 //! codes, request flags, `struct usb_attach_arg`, `usb_task`, match levels) and
 //! `dev/usb/usbdi.c` (pipes, transfers, synchronous requests).
@@ -1566,3 +1567,4 @@ pub fn usbd_str(p: &mut UsbStringDescriptor, l: i32, s: &[u8]) -> i32 {
     }
     (2 * i + 2) as i32
 }
+/* </CODE> */

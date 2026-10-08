@@ -30,6 +30,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/uuid.h>`: a DCE 1.1 compatible source representation of UUIDs.
 //!
 //! Upstream: sys/sys/uuid.h @ 3ce1f3f79392
@@ -105,7 +106,9 @@ impl Uuid {
 }
 
 const _: () = assert!(size_of::<Uuid>() == 16);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,3 +133,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/mii/miivar.h>`: Media Independent Interface autoconfiguration definitions, the
 //! interface between a network interface driver and the MII layer (`struct mii_data`), a PHY
 //! driver's softc head (`struct mii_softc`), the attach arguments and the PHY tables. It
@@ -449,7 +450,9 @@ pub const fn mii_model(id2: i32) -> i32 {
 pub const fn mii_rev(id2: i32) -> i32 {
     id2 & IDR2_REV
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,3 +480,4 @@ mod tests {
         assert_eq!(mii_rev(0x8201), 1);
     }
 }
+/* </TESTS> */

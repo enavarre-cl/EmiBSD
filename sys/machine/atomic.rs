@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/atomic.h>` as a trait: the memory barriers machine-independent code names.
 //!
 //! The atomic operations themselves are `core::sync::atomic` (`docs/C_TO_RUST.md`); what the
@@ -38,3 +39,4 @@ pub fn virtio_membar_consumer() {
 pub fn virtio_membar_sync() {
     Machine::virtio_membar_sync()
 }
+/* </CODE> */

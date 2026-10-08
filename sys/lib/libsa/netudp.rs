@@ -41,6 +41,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! UDP over IP over Ethernet for the standalone network code: send a datagram (the IP and
 //! UDP headers and their checksums in front of the data) and receive one for our socket.
 //!
@@ -259,3 +260,4 @@ pub fn readudp(d: &mut IoDesc, pkt: &mut [u8], off: usize, tleft: Time) -> Resul
     // `n` may be the UDP length plus the IP header, shorter than both headers
     n.checked_sub(IP_SIZE + UH_SIZE).map_or_else(fail, Ok)
 }
+/* </CODE> */

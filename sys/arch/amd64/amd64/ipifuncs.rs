@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Interprocessor interrupt handlers: `arch/amd64/amd64/ipifuncs.c` (`MULTIPROCESSOR`).
 //!
 //! Upstream: sys/arch/amd64/amd64/ipifuncs.c @ 3ce1f3f79392
@@ -121,3 +122,4 @@ pub fn x86_64_ipi_xcall(_ci: &CpuInfo) {
     // x86_atomic_setbits_u64(&ci->ci_ipending, 1UL << SIR_XCALL): no Xxcallintr source.
     let _ = unported!("x86_64_ipi_xcall (kern_xcall.c)");
 }
+/* </CODE> */

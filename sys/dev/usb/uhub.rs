@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! uhub(4): the USB hub driver, for root hubs (`uhub* at usb?`) and external hubs
 //! (`uhub* at uhub?`).
 //!
@@ -746,3 +747,4 @@ fn uhub_port_connect(sc: &'static UhubSoftc, port: i32, status: u16) -> bool {
 
     true
 }
+/* </CODE> */

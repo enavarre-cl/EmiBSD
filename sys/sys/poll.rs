@@ -26,6 +26,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/poll.h>`: `struct pollfd` and the `POLL*` event bits of `poll(2)`.
 //!
 //! Upstream: sys/sys/poll.h @ 3ce1f3f79392
@@ -82,3 +83,4 @@ pub const INFTIM: i32 = -1;
 const _: () = {
     assert!(size_of::<Pollfd>() == 8);
 };
+/* </CODE> */

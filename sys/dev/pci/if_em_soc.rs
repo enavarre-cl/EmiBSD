@@ -18,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! em(4) on the EP80579 (Tolapai) SoC (`<dev/pci/if_em_soc.h>` and `if_em_soc.c`): finding
 //! the GCU (the unit that owns the MDIO bus of the SoC's MACs) and the PHY register access
 //! through it.
@@ -173,3 +174,4 @@ pub fn gcu_miibus_writereg(hw: &EmHw, phy: i32, reg: i32, val: i32) {
         ));
     }
 }
+/* </CODE> */

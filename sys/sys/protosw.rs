@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Protocol switch table: `<sys/protosw.h>`.
 //!
 //! Upstream: sys/sys/protosw.h @ 3ce1f3f79392
@@ -560,7 +561,9 @@ pub fn pru_connect2(so1: &'static Socket, so2: &'static Socket) -> Result<(), Er
         None => Err(Errno::EOPNOTSUPP),
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,3 +594,4 @@ mod tests {
         assert_complete(&defs, "PRCO_", &prco);
     }
 }
+/* </TESTS> */

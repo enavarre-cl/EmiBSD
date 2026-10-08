@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Column operations for the depths below 8 bits: `dev/rasops/rasops_bitops.h`.
 //!
 //! Upstream: sys/dev/rasops/rasops_bitops.h @ 3ce1f3f79392
@@ -389,7 +390,9 @@ pub(crate) unsafe fn copycols<const PIXEL_SHIFT: u32>(
 
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,3 +432,4 @@ mod tests {
         assert_eq!(word(0, 1), old & !in1);
     }
 }
+/* </TESTS> */

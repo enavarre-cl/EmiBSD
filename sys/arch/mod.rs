@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Machine-dependent code, one directory per architecture: OpenBSD `sys/arch/<arch>/`.
 //!
 //! Exactly one implementation is compiled in and re-exported as `current`. Nothing outside
@@ -16,3 +17,4 @@ pub use self::amd64 as current;
 pub use self::arm64 as current;
 #[cfg(not(target_os = "none"))]
 pub use self::host as current;
+/* </CODE> */

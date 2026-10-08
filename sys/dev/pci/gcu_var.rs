@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The softc of gcu(4), the EP80579 (Tolapai) Global Configuration Unit
 //! (`<dev/pci/gcu_var.h>`).
 //!
@@ -50,3 +51,4 @@ pub struct GcuSoftc {
     /// `mdio_mtx`: serialises the MDIO command and status registers.
     pub mdio_mtx: Mutex,
 }
+/* </CODE> */

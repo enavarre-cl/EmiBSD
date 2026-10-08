@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/mpbiosreg.h>`: the Intel MultiProcessor Specification's table formats,
 //! whose interrupt-entry flags the ACPI MADT and `_PRT` reuse.
 //!
@@ -86,7 +87,9 @@ pub const fn mps_int(p: i32, t: i32) -> i32 {
 
 /// `MPS_ALL_APICS`: an interrupt entry for every (local or I/O) APIC.
 pub const MPS_ALL_APICS: i32 = 0xff;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,3 +116,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

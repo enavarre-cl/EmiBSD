@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `fusefs.h`: the FUSE file system's sysctl identifiers, its per-mount structure and the
 //! operations a daemon turned out not to implement.
 //!
@@ -127,3 +128,4 @@ pub fn VFSTOFUSEFS(mp: &Mount) -> &'static FusefsMnt {
     // mount busy or a vnode of it.
     unsafe { &*fmp.cast::<FusefsMnt>() }
 }
+/* </CODE> */

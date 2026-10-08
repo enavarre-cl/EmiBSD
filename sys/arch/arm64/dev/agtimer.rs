@@ -18,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The ARM generic timer: `arch/arm64/dev/agtimer.c`. The virtual counter (`CNTVCT_EL0`) is
 //! the timecounter and the virtual timer (`CNTV_TVAL_EL0`) the interrupt clock, through the
 //! PPI the device tree names.
@@ -481,3 +482,4 @@ const _: () = {
     assert!(agtimer_evtstrm_evnti(0) == 0);
     assert!(agtimer_evtstrm_evnti(u64::MAX) == 15);
 };
+/* </CODE> */

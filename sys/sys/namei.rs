@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/namei.h>`: the encapsulation of `namei` parameters (`struct nameidata` and the
 //! `struct componentname` it hands to `VOP_LOOKUP`), the namei operations and flags, and the
 //! name cache's `struct namecache` and statistics.
@@ -453,7 +454,9 @@ pub const UNVEIL_USERSET: u8 = 0x10;
 pub const UNVEIL_PLEDGEOPEN: u8 = 0x20;
 /// `UNVEIL_MASK`.
 pub const UNVEIL_MASK: u8 = 0x0f;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,3 +495,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

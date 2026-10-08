@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<tmpfs/tmpfs.h>`: the in-memory representation of tmpfs: the inode (`struct tmpfs_node`),
 //! the directory entry (`struct tmpfs_dirent`), the mount (`struct tmpfs_mount`), the NFS file
 //! handle (`struct tmpfs_fid`), their constants and the conversions from the VFS structures.
@@ -543,7 +544,9 @@ const _: () = {
     assert!(TmpfsFid::SIZE == 16);
     assert!(TmpfsFid::SIZE <= size_of::<Fid>());
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,3 +575,4 @@ mod tests {
         assert_eq!(TmpfsFid::from_fid(&fid), tfh);
     }
 }
+/* </TESTS> */

@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/pool.h>`: the pool(9) resource allocator's types.
 //!
 //! Upstream: sys/sys/pool.h @ 3ce1f3f79392
@@ -508,7 +509,9 @@ pub struct PoolRequest {
     /// The item, once served.
     pub pr_item: Cell<Option<NonNull<u8>>>,
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,3 +575,4 @@ mod tests {
         assert_eq!(u64::from_ne_bytes(kpcc[48..56].try_into().expect("8")), 10);
     }
 }
+/* </TESTS> */

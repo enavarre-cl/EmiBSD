@@ -35,6 +35,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! ext2fs block allocation for a file: `ext2fs_buf_alloc` defines the structure of file
 //! system storage by allocating the physical blocks on a device given the inode and the
 //! logical block number in a file, indirect blocks included.
@@ -324,3 +325,4 @@ pub fn ext2fs_buf_alloc(
     }
     Err(error)
 }
+/* </CODE> */

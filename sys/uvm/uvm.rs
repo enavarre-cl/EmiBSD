@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The `uvm` structure, vm global state collected in one structure for ease of reference:
 //! `<uvm/uvm.h>`.
 //!
@@ -183,3 +184,4 @@ pub fn uvm_et_iswc(e: &VmMapEntry) -> bool {
 pub fn uvm_et_isconceal(e: &VmMapEntry) -> bool {
     e.etype.get() & UVM_ET_CONCEAL != 0
 }
+/* </CODE> */

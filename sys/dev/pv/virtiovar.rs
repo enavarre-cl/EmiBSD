@@ -64,6 +64,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/pv/virtiovar.h>`: the virtio core's types, shared by the transports
 //! (`virtio_pci`, `virtio_mmio`) and the device drivers (`vio`).
 //!
@@ -661,7 +662,9 @@ pub fn virtio_device_reset(sc: &VirtioSoftc) {
 pub fn virtio_has_feature(sc: &VirtioSoftc, fbit: u64) -> bool {
     sc.sc_active_features.get() & fbit != 0
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -683,3 +686,4 @@ mod tests {
         assert_eq!(sc_child.get().addr(), 1);
     }
 }
+/* </TESTS> */

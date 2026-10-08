@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/eficon.h 163898 2006-11-02 02:42:48Z marcel $ */
-
 /* <LICENSES> */
 /*++
 
@@ -27,6 +26,7 @@ Revision History
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI console protocols: simple text output and simple text input.
 //!
 //! Upstream: sys/stand/efi/include/eficon.h @ 3ce1f3f79392
@@ -402,7 +402,9 @@ const _: () = assert!(core::mem::size_of::<SimpleTextOutputMode>() == 24);
 const _: () = assert!(core::mem::size_of::<SimpleTextOutputInterface>() == 80);
 const _: () = assert!(core::mem::size_of::<EfiInputKey>() == 4);
 const _: () = assert!(core::mem::size_of::<SimpleInputInterface>() == 24);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,3 +424,4 @@ mod tests {
         assert_eq!(BOXDRAW_VERTICAL_HORIZONTAL_DOUBLE, 0x256a);
     }
 }
+/* </TESTS> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `snprintf()`: format into a buffer.
 //!
 //! Upstream: sys/lib/libsa/snprintf.c @ 3ce1f3f79392
@@ -86,7 +87,9 @@ pub fn vsnprintf(buf: &mut [u8], args: fmt::Arguments<'_>) -> usize {
     }
     pos
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     #[test]
@@ -100,3 +103,4 @@ mod tests {
         assert_eq!(crate::snprintf!(&mut [], "x"), 1);
     }
 }
+/* </TESTS> */

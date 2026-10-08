@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Scenario files, the shell scripts made from them, the transcripts they leave, and the
 //! comparison of two transcripts (`diff-openbsd`).
 //!
@@ -544,3 +545,4 @@ fn side_by_side(o: &[String], e: &[String]) -> String {
     }
     s
 }
+/* </CODE> */

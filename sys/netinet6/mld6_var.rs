@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Multicast Listener Discovery, implementation-specific definitions: the listening states
 //! and the report a membership change asks for: `<netinet6/mld6_var.h>`.
 //!
@@ -70,7 +71,9 @@ pub struct Mld6Pktinfo {
 pub fn mld_random_delay(x: u32) -> u32 {
     arc4random_uniform(x) + 1
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,3 +85,4 @@ mod tests {
         crate::reftest::assert_defines!(defs; MLD_OTHERLISTENER, MLD_IREPORTEDLAST);
     }
 }
+/* </TESTS> */

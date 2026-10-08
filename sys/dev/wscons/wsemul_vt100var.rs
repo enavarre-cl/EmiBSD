@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wsemul_vt100var.h>`: the state of the vt100 terminal emulation, and the
 //! helper macros its files share.
 //!
@@ -389,7 +390,9 @@ impl WsemulVt100Emuldata {
 // (under its tty, the console's output at spltty), so the state is used by one thread at a
 // time wherever it lives.
 unsafe impl Send for WsemulVt100Emuldata {}
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,3 +431,4 @@ mod tests {
         assert_eq!(defs["WSEMUL_VT_ID2"], "\"\\033[>24;20;0c\"");
     }
 }
+/* </TESTS> */

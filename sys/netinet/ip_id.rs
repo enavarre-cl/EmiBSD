@@ -20,6 +20,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Random IP sequence number generator: `ip_randomid`.
 //!
 //! Upstream: sys/netinet/ip_id.c @ 3ce1f3f79392
@@ -74,7 +75,9 @@ pub fn ip_randomid_init() {
         IP_SHUFFLE[i2].store(i as u16, Ordering::Relaxed);
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,3 +102,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

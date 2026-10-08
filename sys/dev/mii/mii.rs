@@ -61,6 +61,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/mii/mii.h>` and `dev/mii/mii.c`: the registers common to all PHYs, and the MII bus
 //! layer, which glues MII-capable network interface drivers to shareable PHY drivers. This
 //! exports an interface compatible with BSD/OS 3.0's, plus some NetBSD extensions.
@@ -630,7 +631,9 @@ pub fn mii_down(mii: &'static MiiData) {
         let _ = child.phy_service(mii, MII_DOWN);
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,3 +658,4 @@ mod tests {
         assert_eq!(bmcr_speed(BMCR_S100 | BMCR_FDX | BMCR_AUTOEN), BMCR_S100);
     }
 }
+/* </TESTS> */

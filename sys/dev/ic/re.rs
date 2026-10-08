@@ -51,6 +51,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! re(4): the Realtek 8139C+/8169/8169S/8110S/8168/8101 driver, bus-independent part
 //! (`dev/ic/re.c`, with the prototypes of `<dev/ic/revar.h>`). `if_re_pci.rs` attaches it.
 //!
@@ -2546,7 +2547,9 @@ pub fn re_wol(ifp: &'static Ifnet, enable: bool) -> Result<(), Errno> {
 // NKSTAT > 0: RE_DTCCR_CMD, RE_DTCCR_LO, RE_DTCCR_HI, struct re_kstats, re_kstats_tpl,
 // struct re_kstat_softc, re_kstat_read, re_kstat_copy, re_kstat_attach and
 // re_kstat_detach; kstat(4) is not configured.
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2590,3 +2593,4 @@ mod tests {
         assert_eq!(name(0x1234), None);
     }
 }
+/* </TESTS> */

@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/pv/vioscsireg.h>`: the virtio SCSI host adapter's configuration registers, feature
 //! bits, response status values, task attributes and the request and response headers.
 //!
@@ -156,7 +157,9 @@ const _: () = {
     assert!(size_of::<VirtioScsiReqHdr>() == 51);
     assert!(size_of::<VirtioScsiResHdr>() == 108);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,3 +185,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "VIRTIO_SCSI_", &names);
     }
 }
+/* </TESTS> */

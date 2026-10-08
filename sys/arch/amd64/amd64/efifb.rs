@@ -18,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The EFI frame buffer: `arch/amd64/amd64/efifb.c`, `efifb(4)`.
 //!
 //! Upstream: sys/arch/amd64/amd64/efifb.c @ 3ce1f3f79392
@@ -868,3 +869,4 @@ fn efifb_early_map(pa: Paddr) -> usize {
 fn efifb_early_cleanup() {}
 
 const _: () = assert!(size_of::<CbHeader>() == 24);
+/* </CODE> */

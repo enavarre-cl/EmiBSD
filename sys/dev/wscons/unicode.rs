@@ -3,6 +3,7 @@
 /* <LICENSES> */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/unicode.h>`: some private character definitions for stuff not found in the
 //! Unicode database, for communication between terminal emulation and graphics driver.
 //!
@@ -39,7 +40,9 @@ pub const _e00dU: u16 = 0xe00d;
 pub const _e00eU: u16 = 0xe00e;
 /// `_e00fU`: mirrored not sign?
 pub const _e00fU: u16 = 0xe00f;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -55,3 +58,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

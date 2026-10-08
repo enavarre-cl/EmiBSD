@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `random()`: pseudo-random number generator for randomizing the profiling clock. The
 //! result is uniform on [0, 2^31 - 1].
 //!
@@ -62,7 +63,9 @@ pub fn random(ci_randseed: &Cell<u32>) -> u32 {
     ci_randseed.set(t as u32);
     t as u32
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -87,3 +90,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

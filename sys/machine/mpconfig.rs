@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/mpconfig.h>` as a trait: the interrupt configuration the firmware describes
 //! (the MP specification's tables, or ACPI's MADT and `_PRT`), and what the x86 drivers of
 //! `sys/dev/acpi` (`acpimadt`, `acpiprt`) need from the machine to record it.
@@ -348,3 +349,4 @@ pub fn mp_set_intrs(intrs: &'static [MpIntrMap]) {
 pub fn mp_busses() -> Option<&'static [MpBus]> {
     Machine::mp_busses()
 }
+/* </CODE> */

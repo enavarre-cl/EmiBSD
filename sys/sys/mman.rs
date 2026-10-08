@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Memory mapping flags: `<sys/mman.h>`.
 //!
 //! Upstream: sys/sys/mman.h @ 3ce1f3f79392
@@ -138,7 +139,9 @@ pub const MAP_INHERIT_COPY: i32 = 1;
 pub const MAP_INHERIT_NONE: i32 = 2;
 /// Zero in child.
 pub const MAP_INHERIT_ZERO: i32 = 3;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,3 +181,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

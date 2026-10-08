@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The non-volatile RAM of the PC's RTC: `arch/amd64/isa/nvram.h`.
 //!
 //! Upstream: sys/arch/amd64/isa/nvram.h @ 3ce1f3f79392
@@ -126,7 +127,9 @@ pub const NVRAM_PEXTHI: u32 = MC_NVRAM_START + 35;
 
 /// NVRAM byte 36: current century. (please increment in Dec99!) (RTC offset 0x32).
 pub const NVRAM_CENTURY: u32 = MC_NVRAM_START + 36;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,3 +177,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

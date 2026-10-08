@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Anonymous memory management: `<uvm/uvm_anon.h>` and `uvm_anon.c` (uvm anon ops).
 //!
 //! Upstream: sys/uvm/uvm_anon.h @ 3ce1f3f79392
@@ -299,7 +300,9 @@ pub fn uvm_anon_release(anon: &VmAnon) {
     // Note: extra reference is held for PG_RELEASED case.
     rw_obj_free(lock);
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,3 +334,4 @@ mod tests {
         rw_obj_free(lock);
     }
 }
+/* </TESTS> */

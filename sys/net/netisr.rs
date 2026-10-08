@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Network software interrupt bits: `<net/netisr.h>`.
 //!
 //! Upstream: sys/net/netisr.h @ 3ce1f3f79392
@@ -78,7 +79,9 @@ pub fn schednetisr(anisr: i32) {
         let _ = task_add(tq, &IF_INPUT_TASK_LOCKED);
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -92,3 +95,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "NETISR_", &ours);
     }
 }
+/* </TESTS> */

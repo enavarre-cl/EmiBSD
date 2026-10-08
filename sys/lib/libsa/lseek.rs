@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `lseek()`: move the offset of a file, or of a raw device.
 //!
 //! Upstream: sys/lib/libsa/lseek.c @ 3ce1f3f79392
@@ -107,3 +108,4 @@ pub fn olseek(fd: usize, offset: Off, whence: i32) -> Result<Off, Errno> {
     };
     (ops.seek)(f, offset, whence).inspect_err(|&e| set_errno(e))
 }
+/* </CODE> */

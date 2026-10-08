@@ -1,3 +1,4 @@
+/* <CODE> */
 //! libsa: the standalone library OpenBSD's boot programs link (`sys/lib/libsa`).
 //!
 //! The device and file system switches, the open file table, the console, `printf`, the
@@ -70,3 +71,4 @@ pub mod ufs2;
 
 #[cfg(test)]
 pub(crate) mod testutil;
+/* </CODE> */

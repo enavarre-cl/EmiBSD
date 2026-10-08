@@ -41,6 +41,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The memory special file (`/dev/mem`, `/dev/kmem`, `/dev/null`, `/dev/zero`):
 //! `arch/amd64/amd64/mem.c`.
 //!
@@ -210,3 +211,4 @@ pub fn mmioctl(_dev: Dev, cmd: u64, _data: &mut [u8], _flags: i32, _p: &Proc) ->
     // MTRR: not configured.
     Err(Errno::ENOTTY)
 }
+/* </CODE> */

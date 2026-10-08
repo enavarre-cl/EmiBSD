@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/trap.h>`: trap type values, also known in `trap.c` for name strings.
 //!
 //! Upstream: sys/arch/amd64/include/trap.h @ 3ce1f3f79392
@@ -86,7 +87,9 @@ pub const T_VE: i32 = 20;
 pub const T_CP: i32 = 21;
 /// `T_VC`: VMM communication exception.
 pub const T_VC: i32 = 29;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,3 +115,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

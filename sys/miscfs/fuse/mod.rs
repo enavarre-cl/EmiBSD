@@ -1,3 +1,4 @@
+/* <CODE> */
 //! FUSE, the userland file system interface: OpenBSD `sys/miscfs/fuse/` (`option FUSE` and
 //! `pseudo-device fuse`, feature `fuse`).
 //!
@@ -16,3 +17,4 @@ pub mod fuse_vnops;
 pub mod fusebuf;
 pub mod fusefs;
 pub mod fusefs_node;
+/* </CODE> */

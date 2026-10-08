@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `heap.h`: libsa's allocator gets efiboot's heap: it starts at the pages
 //! `efi_heap_init` allocated and its top may not pass `HEAP_LIMIT`.
 //!
@@ -43,3 +44,4 @@ pub unsafe fn heap_init() {
         libsa::sa_alloc::heap_init(HEAP.load(Ordering::Relaxed) as usize, HEAP_LIMIT as usize)
     };
 }
+/* </CODE> */

@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<nfs/rpcv2.h>`: definitions for Sun RPC version 2, from "RPC: Remote Procedure Call
 //! Protocol Specification" (RFC 1057): the message, authentication and reply constants and the
 //! MOUNT program's numbers.
@@ -128,7 +129,9 @@ pub const RPCMNT_NAMELEN: usize = 255;
 pub const RPCMNT_PATHLEN: usize = 1024;
 /// `RPCPROG_NFS`.
 pub const RPCPROG_NFS: u32 = 100003;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,3 +185,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

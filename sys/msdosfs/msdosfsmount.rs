@@ -49,6 +49,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<msdosfs/msdosfsmount.h>`: the mount control block of a msdos file system (`struct
 //! msdosfsmount`), hung from the mount's `mnt_data`, the `MSDOSFSMNT_*` flags and the macros
 //! that convert between byte offsets, blocks and clusters.
@@ -435,7 +436,9 @@ pub fn detobn(pmp: &Msdosfsmount, dirclu: u32, dirofs: u32) -> u32 {
 pub fn fsi_size(pmp: &Msdosfsmount) -> i32 {
     1024 << (pmp.pm_BlkPerSec.get() >> 2)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,3 +486,4 @@ mod tests {
         assert_eq!(fsi_size(&pmp), 4096);
     }
 }
+/* </TESTS> */

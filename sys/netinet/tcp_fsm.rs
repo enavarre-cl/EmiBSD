@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! TCP FSM state definitions, per RFC 793, September 1981: `<netinet/tcp_fsm.h>`.
 //!
 //! Upstream: sys/netinet/tcp_fsm.h @ 3ce1f3f79392
@@ -127,7 +128,9 @@ pub static TCPSTATES: [&[u8]; TCP_NSTATES] = [
     b"FIN_WAIT_2",
     b"TIME_WAIT",
 ];
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -157,3 +160,4 @@ mod tests {
         crate::reftest::assert_defines!(defs; TCP_NSTATES);
     }
 }
+/* </TESTS> */

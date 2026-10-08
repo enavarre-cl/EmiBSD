@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/filio.h>`: generic file-descriptor ioctl's.
 //!
 //! Upstream: sys/sys/filio.h @ 3ce1f3f79392
@@ -58,7 +59,9 @@ pub const FIOASYNC: u64 = _iow::<i32>(b'f', 125);
 pub const FIOSETOWN: u64 = _iow::<i32>(b'f', 124);
 /// `FIOGETOWN`: get owner.
 pub const FIOGETOWN: u64 = _ior::<i32>(b'f', 123);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,3 +78,4 @@ mod tests {
         assert_eq!(FIOGETOWN, 0x4004_667b);
     }
 }
+/* </TESTS> */

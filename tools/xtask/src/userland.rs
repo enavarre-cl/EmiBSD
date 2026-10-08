@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `cargo xtask userland --arch A`: cross-compiles OpenBSD's own userland C, unmodified, from
 //! the reference clone (milestone M8, decided by the user on 2026-10-03).
 //!
@@ -2205,6 +2206,210 @@ mod shlib;
 mod signify;
 pub(crate) mod testca;
 mod zoneinfo;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
-mod tests;
+mod tests {
+    use super::*;
+
+    #[test]
+    fn licence_families_are_recognised() {
+        let isc = "Permission to use, copy, modify, and distribute this software for any\n\
+               * purpose with or without fee is hereby granted";
+        assert_eq!(licence_families(isc), vec!["ISC"]);
+        let bsd3 = "Redistribution and use in source and binary forms ...\n\
+                * 3. Neither the name of the University nor";
+        assert_eq!(licence_families(bsd3), vec!["BSD-3-Clause"]);
+        let bsd4 = "Redistribution and use in source and binary forms\n\
+                * 3. All advertising materials mentioning features";
+        assert_eq!(licence_families(bsd4), vec!["BSD-4-Clause"]);
+        assert_eq!(
+            licence_families("This file is in the public domain."),
+            vec!["public domain"]
+        );
+        assert_eq!(licence_families("int x;"), vec!["no licence text"]);
+        let llvm = "// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception";
+        assert_eq!(
+            licence_families(llvm),
+            vec!["Apache-2.0 WITH LLVM-exception"]
+        );
+        let lucent = "Copyright (C) 1998 by Lucent Technologies\n\
+                  Permission to use, copy, modify, and distribute this software and\n\
+                  its documentation for any purpose and without fee is hereby";
+        assert_eq!(licence_families(lucent), vec!["Lucent (gdtoa)"]);
+        let birgmeier = "Copyright (c) 1993 Martin Birgmeier\n\
+                     * You may redistribute unmodified or modified versions";
+        assert_eq!(licence_families(birgmeier), vec!["Birgmeier (rand48)"]);
+        let unicode = "Copyright (c) 1991-2015 Unicode, Inc. All rights reserved.\n\
+                   * Permission is hereby granted, free of charge, to any person";
+        assert_eq!(
+            licence_families(unicode),
+            vec!["Unicode (data files and software)"]
+        );
+        let sunpro = "Developed at SunPro, a Sun Microsystems, Inc. business.\n\
+                  * Permission to use, copy, modify, and distribute this\n\
+                  * software is freely granted, provided that this notice";
+        assert_eq!(licence_families(sunpro), vec!["SunPro (fdlibm)"]);
+        let bootp = "Copyright 1988 by Carnegie Mellon.\n\
+                 * Permission to use, copy, modify, and distribute this program for any\n\
+                 * permission, and notice be given in supporting documentation that copying\n\
+                 * and distribution is by permission of Carnegie Mellon and Stanford\n\
+                 * University.  Carnegie Mellon makes no representations about the";
+        assert_eq!(licence_families(bootp), vec!["CMU/Stanford (BOOTP)"]);
+    }
+
+    #[test]
+    fn libressl_licences_are_named() {
+        let dual = "Copyright (c) 1998-2005 The OpenSSL Project. Redistribution and use in source \
+                and binary forms ... All advertising materials mentioning ... This product \
+                includes software developed by the OpenSSL Project for use in the OpenSSL \
+                Toolkit. ... Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com)";
+        assert_eq!(licence_families(dual), vec!["OpenSSL", "SSLeay"]);
+        let by_name = "Copyright (c) 2008 The OpenSSL Project. All rights reserved.\n * Rights for \
+                   redistribution and usage ... according to the OpenSSL license.";
+        assert_eq!(licence_families(by_name), vec!["OpenSSL"]);
+        let eay = "Copyright (C) 1995-1998 Eric Young (eay@cryptsoft.com) Redistribution and use \
+               in source and binary forms ... All advertising materials mentioning";
+        assert_eq!(licence_families(eay), vec!["SSLeay"]);
+    }
+
+    #[test]
+    fn compiler_builtins() {
+        for s in [
+            "__multf3",
+            "__extenddftf2",
+            "__fixtfsi",
+            "__udivti3",
+            "__emutls_get_address",
+        ] {
+            assert!(is_compiler_builtin(s), "{s}");
+        }
+        for s in ["_exit", "main", "__start", "__libc_init"] {
+            assert!(!is_compiler_builtin(s), "{s}");
+        }
+    }
+
+    #[test]
+    fn depfiles_and_locals() {
+        let d = "x.o: /a/x.c /a/b.h \\\n  /a/c.h\n\n/a/b.h:\n";
+        assert_eq!(
+            parse_depfile(d),
+            vec![
+                PathBuf::from("/a/x.c"),
+                PathBuf::from("/a/b.h"),
+                PathBuf::from("/a/c.h")
+            ]
+        );
+        let l = locals("___realpath.o", &[PathBuf::from("/s/helper.c")]);
+        assert_eq!(l["@"], "___realpath.o");
+        assert_eq!(l[".PREFIX"], "___realpath");
+        assert_eq!(l[">"], "/s/helper.c");
+    }
+
+    #[test]
+    fn y_c_rule_runs_yacc_d_with_the_target_as_output() -> Result<()> {
+        let predefined = [
+            ("YACC", "/out/host/bin/yacc".to_string()),
+            ("YACC.y", "${YACC} -d ${YFLAGS}".to_string()),
+            ("YFLAGS", String::new()),
+        ];
+        let mk = Make::new(Path::new("/nonexistent"), &predefined, &[]);
+        let rule: Vec<String> = RULE_Y_C.iter().map(|c| c.to_string()).collect();
+        let job = Job::from_rule(
+            &mk,
+            &rule,
+            "parse.c",
+            vec![PathBuf::from("/src/parse.y")],
+            Path::new("/obj"),
+        )?;
+        let cmds: Vec<&str> = job.commands.iter().map(|(c, _)| c.as_str()).collect();
+        assert_eq!(
+            cmds.iter()
+                .map(|c| c.split_whitespace().collect::<Vec<_>>().join(" "))
+                .collect::<Vec<_>>(),
+            ["/out/host/bin/yacc -d -o parse.c /src/parse.y"]
+        );
+        assert_eq!(job.target, PathBuf::from("/obj/parse.c"));
+        Ok(())
+    }
+
+    #[test]
+    fn l_c_rule_runs_lex_with_lflags_and_the_target_as_output() -> Result<()> {
+        let predefined = [
+            ("LEX", "/out/host/bin/lex".to_string()),
+            ("LEX.l", "${LEX} ${LFLAGS}".to_string()),
+            ("LFLAGS", "-Ppcap_yy".to_string()),
+        ];
+        let mk = Make::new(Path::new("/nonexistent"), &predefined, &[]);
+        let rule: Vec<String> = RULE_L_C.iter().map(|c| c.to_string()).collect();
+        let job = Job::from_rule(
+            &mk,
+            &rule,
+            "scanner.c",
+            vec![PathBuf::from("/src/scanner.l")],
+            Path::new("/obj"),
+        )?;
+        let cmds: Vec<String> = job
+            .commands
+            .iter()
+            .map(|(c, _)| c.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect();
+        assert_eq!(
+            cmds,
+            ["/out/host/bin/lex -Ppcap_yy -o scanner.c /src/scanner.l"]
+        );
+        assert_eq!(job.target, PathBuf::from("/obj/scanner.c"));
+        Ok(())
+    }
+
+    /// Evaluates the real `lib/libc` Makefiles for amd64: `cargo test -p xtask -- --ignored`
+    /// with `$OPENBSD_SRC` naming the reference clone.
+    #[test]
+    #[ignore]
+    fn libc_makefile_evaluates() {
+        let src = PathBuf::from(std::env::var("OPENBSD_SRC").expect("OPENBSD_SRC"));
+        let curdir = src.join("lib/libc");
+        let predefined = [
+            ("MACHINE", "amd64".to_string()),
+            ("MACHINE_ARCH", "amd64".to_string()),
+            ("MACHINE_CPU", "amd64".to_string()),
+            ("CFLAGS", "-O2".to_string()),
+        ];
+        let sys_mk = [
+            ("bsd.own.mk", BSD_OWN_MK),
+            ("bsd.prog.mk", BSD_PROG_MK),
+            ("bsd.lib.mk", BSD_PROG_MK),
+        ];
+        let mut mk = Make::new(&curdir, &predefined, &sys_mk);
+        mk.read(&curdir.join("Makefile")).unwrap();
+        let words = |v: &str| mk.words(v).unwrap();
+        assert!(words("ASM").contains(&"access.o".to_string()));
+        assert!(words("HIDDEN").contains(&"read.o".to_string()));
+        assert!(words("PSEUDO_NOERR").contains(&"_exit.o".to_string()));
+        assert!(words("SRCS").contains(&"w_read.c".to_string()));
+        assert!(words("SRCS").contains(&"md5hl.c".to_string()));
+        assert!(words("CFLAGS").contains(&"-fret-clean".to_string()));
+        assert!(words("CFLAGS").contains(&"-DYP".to_string()));
+        assert!(mk.search("_atomic_lock.c").is_some());
+        assert!(mk.rule_for("md5hl.c").is_some());
+        assert!(mk.rule_for("access.o").is_some());
+    }
+
+    #[test]
+    fn own_programs_have_a_makefile_and_their_source() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        for dir in OWN_PROGRAMS {
+            assert!(!PROGRAMS.contains(dir), "{dir} is in both lists");
+            let makefile = fs::read_to_string(root.join(dir).join("Makefile")).unwrap();
+            let prog = makefile
+                .lines()
+                .find_map(|l| l.strip_prefix("PROG="))
+                .unwrap()
+                .trim();
+            assert!(root.join(dir).join(format!("{prog}.c")).is_file(), "{dir}");
+            assert!(makefile.contains("LDSTATIC=\t-static"), "{dir}");
+        }
+    }
+}
+/* </TESTS> */

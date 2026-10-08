@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<isofs/cd9660/cd9660_extern.h>`: definitions used in the kernel for cd9660 file system
 //! support: the CD-ROM format type, the per-mount data (`struct iso_mnt`) and the block
 //! arithmetic macros.
@@ -152,3 +153,4 @@ pub fn lblkno(imp: &IsoMnt, loc: i64) -> i64 {
 pub fn blksize(imp: &IsoMnt) -> i32 {
     imp.logical_block_size
 }
+/* </CODE> */

@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/conf.h>`: the device driver entry switches (`struct bdevsw`, `struct cdevsw`), the
 //! `cdev_*_init`/`bdev_*_init` initialisers each architecture's `conf.c` builds its tables
 //! with, and the line discipline switch (`struct linesw`).
@@ -1208,7 +1209,9 @@ pub const fn cdev_dt_init(
     sw.d_flags = D_CLONE;
     sw
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1278,3 +1281,4 @@ mod tests {
         assert_eq!((b.d_close)(NODEV, 0, 0, None), Err(Errno::ENODEV));
     }
 }
+/* </TESTS> */

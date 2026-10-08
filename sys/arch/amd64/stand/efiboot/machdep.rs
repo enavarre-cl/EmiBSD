@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `machdep()`: run the probes (console, memory, disks), then under OpenBSD's vmm(4) switch
 //! the console to `com0` at 115200 baud; and `check_skip_conf()`.
 //!
@@ -85,3 +86,4 @@ pub fn machdep() {
 pub fn check_skip_conf() -> bool {
     (efi_cons_getshifts(0) & 0x04) != 0
 }
+/* </CODE> */

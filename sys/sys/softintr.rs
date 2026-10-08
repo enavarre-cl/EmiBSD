@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/softintr.h>`: the machine-independent soft interrupt levels (`__USE_MI_SOFTINTR`,
 //! which both architectures define).
 //!
@@ -32,3 +33,4 @@ pub const SOFTINTR_NET: i32 = 1;
 pub const SOFTINTR_TTY: i32 = 2;
 /// `NSOFTINTR`: how many soft interrupt levels there are.
 pub const NSOFTINTR: usize = 3;
+/* </CODE> */

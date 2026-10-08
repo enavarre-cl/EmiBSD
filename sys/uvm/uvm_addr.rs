@@ -18,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `uvm_addr.h` / `uvm_addr.c`: address selection logic.
 //!
 //! Upstream: sys/uvm/uvm_addr.h @ 3ce1f3f79392
@@ -1326,7 +1327,9 @@ tree_adapter!(
     /// (`dfree.rbtree`), ordered by `uvm_mapent_fspace_cmp`.
     pub UaddrFreeRbtree: VmMapEntry, rbtree => RbtEntry, uvm_mapent_fspace_cmp
 );
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use std::{assert, assert_eq};
@@ -1395,3 +1398,4 @@ mod tests {
         assert_eq!(uvm_mapent_fspace_cmp(&a, &a), core::cmp::Ordering::Equal);
     }
 }
+/* </TESTS> */

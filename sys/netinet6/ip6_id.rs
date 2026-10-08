@@ -82,6 +82,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Random IPv6 flow labels: `netinet6/ip6_id.c`. A linear congruential generator walks a
 //! cycle modulo `ru_m`; each step is mapped through `g^x mod n` (a generator of the prime
 //! `n`) and xored with a seed, so the 20-bit labels do not repeat within `ru_max` draws.
@@ -289,7 +290,9 @@ pub fn ip6_randomflowlabel() -> u32 {
     mtx_leave(&RANDOMTAB_MTX);
     id & 0xfffff
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,3 +331,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

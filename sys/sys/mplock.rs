@@ -1,5 +1,4 @@
 /*	$OpenBSD: mplock.h,v 1.14 2024/07/03 01:36:50 jsg Exp $	*/
-
 /* <LICENSES> */
 /*
  * Copyright (c) 2004 Niklas Hallqvist.  All rights reserved.
@@ -26,6 +25,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/mplock.h>`: the machine-independent ticket lock behind the kernel lock.
 //!
 //! Upstream: sys/sys/mplock.h @ 3ce1f3f79392
@@ -94,3 +94,4 @@ impl Default for MpLock {
         Self::new()
     }
 }
+/* </CODE> */

@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/cpu.h>`: definitions unique to x86-64 cpu support.
 //!
 //! Upstream: sys/arch/amd64/include/cpu.h @ 3ce1f3f79392
@@ -493,7 +494,9 @@ pub fn clkf_pc(frame: &Clockframe) -> usize {
 pub fn clkf_intr(_frame: &Clockframe) -> bool {
     curcpu().ci_idepth.get() > 1
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -542,3 +545,4 @@ mod tests {
         assert_eq!(names[11], None);
     }
 }
+/* </TESTS> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<sys/types.h>` for libsa: the scalar types and the `dev_t` macros.
 
 /// `dev_t`: a device number.
@@ -37,3 +38,4 @@ pub const fn minor(x: Dev) -> u32 {
 pub const fn makedev(x: u32, y: u32) -> Dev {
     (((x & 0xff) << 8) | (y & 0xff) | ((y & 0x00ff_ff00) << 8)) as Dev
 }
+/* </CODE> */

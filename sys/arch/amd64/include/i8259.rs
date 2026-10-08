@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/i8259.h>`: the legacy 8259A interrupt controllers.
 //!
 //! Upstream: sys/arch/amd64/include/i8259.h @ 3ce1f3f79392
@@ -60,7 +61,9 @@ pub const fn irq_bit(num: i32) -> u8 {
 pub const fn irq_byte(num: i32) -> i32 {
     num >> 3
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,3 +77,4 @@ mod tests {
         assert_eq!(ICU_OFFSET + ICU_LEN, 48);
     }
 }
+/* </TESTS> */

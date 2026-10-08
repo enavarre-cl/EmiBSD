@@ -58,6 +58,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The external interface of `uvm`: `<uvm/uvm_extern.h>`.
 //!
 //! Upstream: sys/uvm/uvm_extern.h @ 3ce1f3f79392
@@ -423,7 +424,9 @@ pub type UvmCoredumpWalkCb = fn(
     nsegment: i32,
     cookie: *mut core::ffi::c_void,
 ) -> Result<(), Errno>;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,3 +448,4 @@ mod tests {
         assert_ne!(f & UVM_FLAG_FIXED, 0);
     }
 }
+/* </TESTS> */

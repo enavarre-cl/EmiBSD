@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/proc.h>`: machine-dependent part of the proc structure for arm64.
 //!
 //! Upstream: sys/arch/arm64/include/proc.h @ 3ce1f3f79392
@@ -60,3 +61,4 @@ impl Default for Mdproc {
         Self::new()
     }
 }
+/* </CODE> */

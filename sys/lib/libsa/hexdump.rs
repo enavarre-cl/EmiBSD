@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `hexdump()`: bytes in hex and ASCII, sixteen per line, for boot(8)'s `hexdump` command.
 //!
 //! Upstream: sys/lib/libsa/hexdump.c @ 3ce1f3f79392
@@ -52,3 +53,4 @@ pub fn hexdump(mem: &[u8]) {
     }
     printf!("{:08x}\n", base + mem.len());
 }
+/* </CODE> */

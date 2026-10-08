@@ -1,3 +1,4 @@
+/* <CODE> */
 //! M12's QEMU devices: USB through `qemu-xhci` and audio through Intel HDA or AC97.
 //!
 //! `smoke` and `qemu` take, besides the flags every boot has:
@@ -352,7 +353,9 @@ fn stick_mbr(start: u32, sectors: u32) -> [u8; 512] {
     sector[511] = 0xaa;
     sector
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,3 +425,4 @@ mod tests {
         assert_eq!(&s[510..], &[0x55, 0xaa]);
     }
 }
+/* </TESTS> */

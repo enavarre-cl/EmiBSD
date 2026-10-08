@@ -30,6 +30,7 @@
 /* We want the disk type names from disklabel.h */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The disk probe: name the EFI disks (`hd0`..., `cd0`), checksum their first blocks for
 //! the kernel to match them, pass `BOOTARG_DISKINFO`, and find hibernation signatures.
 //!
@@ -314,3 +315,4 @@ pub fn check_hibernate(dip: &mut DiskInfo) {
         dip.bios_info.flags |= BDI_HIBVALID; // Hibernate present
     }
 }
+/* </CODE> */

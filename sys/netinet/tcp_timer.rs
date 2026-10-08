@@ -66,6 +66,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! TCP timers: `<netinet/tcp_timer.h>` (the timers, their constants and the arm/disarm
 //! helpers) and `netinet/tcp_timer.c` (the timer callouts).
 //!
@@ -718,7 +719,9 @@ pub fn tcp_timer_2msl(arg: *mut c_void) {
     };
     tcp_timer_leave(inp, so);
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -739,3 +742,4 @@ mod tests {
         assert_eq!(TCP_KEEPINTVL_SEC.load(Ordering::Relaxed), 75);
     }
 }
+/* </TESTS> */

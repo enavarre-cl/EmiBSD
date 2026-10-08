@@ -40,6 +40,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! ext2fs block mapping: `ext2fs_bmap` converts the logical block number of a file to its
 //! physical block number on the disk, through the inode's block pointers and indirect blocks
 //! (`ext2fs_bmaparray`) or through its ext4 extent tree (`ext4_bmapext`).
@@ -297,3 +298,4 @@ pub fn ext2fs_bmaparray(
     *bnp = if daddr == 0 { -1 } else { daddr };
     Ok(())
 }
+/* </CODE> */

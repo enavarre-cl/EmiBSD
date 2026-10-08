@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The open file table and `open()`, which finds the device and then the file system.
 //!
 //! Upstream: sys/lib/libsa/open.c @ 3ce1f3f79392
@@ -162,3 +163,4 @@ fn open_failed(f: &mut OpenFile, error: Errno) -> Errno {
     set_errno(error);
     error
 }
+/* </CODE> */

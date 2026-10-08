@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/refcnt.h>`: reference counts. The functions live in `kern/kern_synch.rs`.
 //!
 //! Upstream: sys/sys/refcnt.h @ 3ce1f3f79392
@@ -75,3 +76,4 @@ pub const DT_REFCNT_IDX_SOCKET: i32 = 6;
 pub const DT_REFCNT_IDX_SYNCACHE: i32 = 7;
 /// `DT_REFCNT_IDX_TDB`.
 pub const DT_REFCNT_IDX_TDB: i32 = 8;
+/* </CODE> */

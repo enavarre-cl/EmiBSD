@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/db_machdep.h>`: machine-dependent defines for new kernel debugger.
 //!
 //! Upstream: sys/arch/amd64/include/db_machdep.h @ 3ce1f3f79392
@@ -137,7 +138,9 @@ pub const DDB_STATE_NOT_RUNNING: i32 = 0;
 pub const DDB_STATE_RUNNING: i32 = 1;
 /// `DDB_STATE_EXITING`: the ddb CPU is leaving; the others resume.
 pub const DDB_STATE_EXITING: i32 = 2;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,3 +167,4 @@ mod tests {
         assert!(inst_return(0x12c3) && inst_trap_return(0xcf) && !inst_return(0xcf));
     }
 }
+/* </TESTS> */

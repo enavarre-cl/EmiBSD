@@ -35,6 +35,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ufs/ext2fs/ext2fs_extern.h>`: the prototypes of the functions of `ufs/ext2fs`, the pools
 //! and operation tables they share, and `IS_EXT2_VNODE`.
 //!
@@ -92,3 +93,4 @@ pub use crate::ufs::ext2fs::ext2fs_vnops::{
 pub fn is_ext2_vnode(vp: &Vnode) -> bool {
     vp.v_tag.get() == VT_EXT2FS
 }
+/* </CODE> */

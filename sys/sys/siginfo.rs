@@ -26,6 +26,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/siginfo.h>`: `union sigval`, `siginfo_t` and the signal codes.
 //!
 //! Upstream: sys/sys/siginfo.h @ 3ce1f3f79392
@@ -335,7 +336,9 @@ const _: () = {
     assert!(core::mem::offset_of!(Siginfo, data) == 16);
     assert!(size_of::<Sigval>() == size_of::<usize>());
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,3 +382,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

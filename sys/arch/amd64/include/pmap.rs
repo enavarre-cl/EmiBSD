@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/pmap.h>`: the physical map's types and constants.
 //!
 //! Upstream: sys/arch/amd64/include/pmap.h @ 3ce1f3f79392
@@ -499,7 +500,9 @@ pub fn pmap_resident_count(pmap: &Pmap) -> i64 {
 pub fn pmap_wired_count(pmap: &Pmap) -> i64 {
     pmap.pm_stats.wired_count.get()
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -564,3 +567,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

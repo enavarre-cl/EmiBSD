@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The line discipline switch: `kern/tty_conf.c`.
 //!
 //! Upstream: sys/kern/tty_conf.c @ 3ce1f3f79392
@@ -150,3 +151,4 @@ pub fn nullioctl(
 ) -> Result<bool, Errno> {
     Ok(false)
 }
+/* </CODE> */

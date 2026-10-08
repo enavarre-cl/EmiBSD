@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/mutex.h>`: the mutex. A mutex is owned by a cpu, non-recursive, spinning, and not
 //! providing mutual exclusion between processes, only cpus.
 //!
@@ -148,7 +149,9 @@ impl Default for DbMutex {
         Self::new()
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -162,3 +165,4 @@ mod tests {
         assert!(!mtx_owned(&m));
     }
 }
+/* </TESTS> */

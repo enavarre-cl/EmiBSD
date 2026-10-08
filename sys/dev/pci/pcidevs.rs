@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/pci/pcidevs.h>`: PCI vendor and product IDs, the subset the ported code names.
 //!
 //! Upstream: sys/dev/pci/pcidevs.h @ 3ce1f3f79392
@@ -1538,7 +1539,9 @@ pub const PCI_PRODUCT_INTEL_GMA600_8: u32 = 0x4108;
 pub const PCI_PRODUCT_INTEL_MDFLD_IGD_0: u32 = 0x0130;
 /// `PCI_PRODUCT_INTEL_GMA3600_0`: GMA 3600.
 pub const PCI_PRODUCT_INTEL_GMA3600_0: u32 = 0x0be0;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2966,3 +2969,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

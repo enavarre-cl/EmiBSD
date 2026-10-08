@@ -35,6 +35,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The registers of the EP80579 (Tolapai) Global Configuration Unit, the device that owns
 //! the MDIO bus of the SoC's integrated em(4) MACs (`<dev/pci/gcu_reg.h>`).
 //!
@@ -81,7 +82,9 @@ pub const MDIO_COMMAND_WRITE_DATA_OFFSET: u32 = 0;
 pub const MDIO_COMMAND_PHY_ADDR_MAX: u32 = 2;
 /// `MDIO_COMMAND_PHY_REG_MAX`: total registers available on the M88 Phy used on truxton.
 pub const MDIO_COMMAND_PHY_REG_MAX: u32 = 31;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,3 +99,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "MDIO_", &ours);
     }
 }
+/* </TESTS> */

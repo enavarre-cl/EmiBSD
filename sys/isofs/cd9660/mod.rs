@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The ISO 9660 file system: OpenBSD `sys/isofs/cd9660/`.
 //!
 //! Headers (types): `iso` (the on-disc structures), `iso_rrip` (the Rock Ridge analysis),
@@ -15,3 +16,4 @@ pub mod cd9660_vfsops;
 pub mod cd9660_vnops;
 pub mod iso;
 pub mod iso_rrip;
+/* </CODE> */

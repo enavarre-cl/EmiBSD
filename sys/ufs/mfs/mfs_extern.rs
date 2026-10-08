@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ufs/mfs/mfs_extern.h>`: the prototypes and the operation table of `ufs/mfs`.
 //!
 //! Upstream: sys/ufs/mfs/mfs_extern.h @ 3ce1f3f79392
@@ -46,3 +47,4 @@ pub use crate::ufs::mfs::mfs_vnops::{
     MFS_VOPS, mfs_close, mfs_doio, mfs_inactive, mfs_ioctl, mfs_open, mfs_print, mfs_reclaim,
     mfs_strategy,
 };
+/* </CODE> */

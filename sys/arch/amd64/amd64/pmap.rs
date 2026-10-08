@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 physical map: `arch/amd64/amd64/pmap.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/pmap.c @ 3ce1f3f79392
@@ -2346,3 +2347,4 @@ pub fn pmap_remove_holes(_vm: &Vmspace) {}
 
 /// `pmap_proc_iflush`: nothing on amd64: the instruction cache is coherent.
 pub fn pmap_proc_iflush(_pr: &Process, _va: Vaddr, _len: Vsize) {}
+/* </CODE> */

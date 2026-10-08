@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! IP implementation variables: statistics, the header overlay, `ip_output` flags, the
 //! multicast options and the reassembly queues: `<netinet/ip_var.h>`.
 //!
@@ -394,7 +395,9 @@ const _: () = {
     assert!(size_of::<Ipoption>() == 44);
     assert!(size_of::<Ipoffnxt>() == 8);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,3 +427,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "IP_", &[&ip[..], &["IP_ALLOWBROADCAST"]].concat());
     }
 }
+/* </TESTS> */

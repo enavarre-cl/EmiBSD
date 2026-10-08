@@ -25,6 +25,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/bus.h>`: the bus access methods as a table of functions.
 //!
 //! Upstream: sys/arch/arm64/include/bus.h @ 3ce1f3f79392
@@ -398,3 +399,4 @@ impl BusDmamap {
         unsafe { &**self._dm_pages.add(i) }
     }
 }
+/* </CODE> */

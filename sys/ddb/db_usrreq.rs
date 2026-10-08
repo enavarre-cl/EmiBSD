@@ -25,6 +25,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The `ddb` sysctl node and its tunables: `ddb/db_usrreq.c`.
 //!
 //! Upstream: sys/ddb/db_usrreq.c @ 3ce1f3f79392
@@ -182,7 +183,9 @@ pub fn ddb_sysctl(
         _ => sysctl_bounded_arr(&DDB_VARS, name, oldp, oldlenp, newp, newlen),
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,3 +219,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

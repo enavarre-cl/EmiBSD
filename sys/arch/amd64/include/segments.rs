@@ -39,6 +39,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/segments.h>`: 386 Segmentation Data Structures and definitions (William F.
 //! Jolitz, 6/20/1989), adapted for NetBSD/amd64 by fvdl@wasabisystems.com.
 //!
@@ -353,7 +354,9 @@ pub const fn valid_user_csel(s: u16) -> bool {
 pub const fn valid_user_dsel(s: u16) -> bool {
     s == gsel(GUDATA_SEL, SEL_UPL)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,3 +424,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

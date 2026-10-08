@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/exec_script.h>`: the magic and the header size of interpreted (`#!`) scripts.
 //!
 //! Upstream: sys/sys/exec_script.h @ 3ce1f3f79392
@@ -51,7 +52,9 @@ pub const EXEC_SCRIPT_MAGICLEN: usize = 2;
 /// `EXEC_SCRIPT_HDRSZ`: the header the exec switch reads for a script: the magic, a space,
 /// the interpreter line (`MAXINTERP`) and its newline.
 pub const EXEC_SCRIPT_HDRSZ: usize = EXEC_SCRIPT_MAGICLEN + 1 + MAXINTERP + 1;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,3 +78,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

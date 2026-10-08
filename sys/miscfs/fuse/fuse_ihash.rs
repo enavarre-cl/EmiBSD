@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The FUSE inode hash: the in-core nodes of every FUSE mount, found by mount and inode
 //! number (`fuse_ihashget`), so that a file has one vnode however it is reached.
 //!
@@ -208,7 +209,9 @@ pub fn fuse_ihashrem(ip: &FusefsNode) {
     ip.i_hashed.set(false);
     // XXXLOCKING unlock hash list?
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use std::assert;
@@ -255,3 +258,4 @@ mod tests {
         }));
     }
 }
+/* </TESTS> */

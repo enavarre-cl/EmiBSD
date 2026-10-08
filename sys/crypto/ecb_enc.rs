@@ -49,6 +49,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The DES block transform: the 16 rounds of one DES encryption or decryption on a block
 //! already put through the initial permutation, as `des_ecb3_encrypt` calls it.
 //!
@@ -91,7 +92,9 @@ pub fn des_encrypt2(data: &mut [u32; 2], ks: &DesKeySchedule, encrypt: bool) {
     data[0] = l;
     data[1] = r;
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,3 +113,4 @@ mod tests {
         assert_eq!(data, orig);
     }
 }
+/* </TESTS> */

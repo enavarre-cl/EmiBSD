@@ -34,6 +34,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/ata/pmreg.h>`: the SATA port multiplier registers (the PSCR and GSCR numbers and
 //! their bits), read and written by `ahci(4)` through READ/WRITE PORT MULTIPLIER commands.
 //!
@@ -187,7 +188,9 @@ pub const SATA_PMREG_EEENA: i32 = 33;
 pub const SATA_PMP_MAX_PORTS: i32 = 16;
 /// `SATA_PMP_CONTROL_PORT`.
 pub const SATA_PMP_CONTROL_PORT: i32 = 0x0f;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,3 +229,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/signal.h>` and the machine-dependent half of signal delivery as a trait: the
 //! `struct sigcontext` a handler sees, `sendsig` (`<sys/signalvar.h>`'s machine-dependent
 //! function), `sys_sigreturn` and the signal trampoline (`sigcode`) that `exec` maps into
@@ -73,3 +74,4 @@ pub fn sendsig(
 ) -> Result<(), Errno> {
     Machine::sendsig(catcher, sig, mask, ksip, info, onstack)
 }
+/* </CODE> */

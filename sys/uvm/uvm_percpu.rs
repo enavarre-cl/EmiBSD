@@ -1,5 +1,4 @@
 /*	$OpenBSD: uvm_percpu.h,v 1.3 2024/05/01 12:54:27 mpi Exp $	*/
-
 /* <LICENSES> */
 /*
  * Copyright (c) 2024 Martin Pieuchot <mpi@openbsd.org>
@@ -18,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The per-CPU cache of physical pages: `<uvm/uvm_percpu.h>`.
 //!
 //! Upstream: sys/uvm/uvm_percpu.h @ 3ce1f3f79392
@@ -93,3 +93,4 @@ impl Default for UvmPmrCache {
 // not preemptive, so a thread cannot move to another CPU between finding its cache and
 // leaving `splbio`.
 unsafe impl Sync for UvmPmrCache {}
+/* </CODE> */

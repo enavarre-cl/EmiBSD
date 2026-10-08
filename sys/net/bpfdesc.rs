@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<net/bpfdesc.h>`: the kernel's `bpf(4)` structures, the descriptor of an open
 //! `/dev/bpf` (`struct bpf_d`) and the tap of an attached interface (`struct bpf_if`).
 //!
@@ -292,3 +293,4 @@ crate::queue_adapter!(
     /// `TAILQ_HEAD(, bpf_if)` through `bif_next`: `bpf_iflist`.
     pub BpfIfList: BpfIf, bif_next => TailqEntry<BpfIf>
 );
+/* </CODE> */

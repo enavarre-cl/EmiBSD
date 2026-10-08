@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! PCI quirk data table and lookup function: `dev/pci/pci_quirks.c`.
 //!
 //! Upstream: sys/dev/pci/pci_quirks.c @ 3ce1f3f79392
@@ -69,7 +70,9 @@ pub fn pci_lookup_quirkdata(vendor: u32, product: u32) -> Option<&'static PciQui
         .iter()
         .find(|q| q.vendor == vendor && q.product == product)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,3 +86,4 @@ mod tests {
         assert!(pci_lookup_quirkdata(PCI_VENDOR_INTEL, 0x29c0).is_none());
     }
 }
+/* </TESTS> */

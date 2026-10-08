@@ -42,6 +42,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `uvm_mmap.c`: system call interface into VM system, plus kernel vm_mmap function.
 //!
 //! Upstream: sys/uvm/uvm_mmap.c @ 3ce1f3f79392
@@ -1236,7 +1237,9 @@ pub fn sys_kbind(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Result<(
 
     error
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1251,3 +1254,4 @@ mod tests {
         assert_eq!(align_addr(0, usize::MAX - 10), Err(Errno::EINVAL));
     }
 }
+/* </TESTS> */

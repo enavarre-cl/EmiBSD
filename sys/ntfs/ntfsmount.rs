@@ -30,6 +30,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ntfs/ntfsmount.h>`: the NTFS mount options (`ntfs_args.flag`, kept in `ntm_flag`).
 //!
 //! Upstream: sys/ntfs/ntfsmount.h @ 3ce1f3f79392
@@ -40,3 +41,4 @@
 pub const NTFS_MFLAG_CASEINS: u64 = 0x0000_0001;
 /// `NTFS_MFLAG_ALLNAMES`: list the DOS names too.
 pub const NTFS_MFLAG_ALLNAMES: u64 = 0x0000_0002;
+/* </CODE> */

@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The FUSE request buffers: `fb_setup` makes a fusebuf for an operation, `fb_queue` hands
 //! it to the daemon and waits for the reply, `fb_delete` frees it.
 //!
@@ -177,3 +178,4 @@ pub fn fb_delete(fbuf: impl Into<Option<&'static Fusebuf>>) {
         pool_put(&FUSEFS_FBUF_POOL, NonNull::from(fbuf).cast());
     }
 }
+/* </CODE> */

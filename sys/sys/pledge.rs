@@ -18,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/pledge.h>`: the `pledge(2)` request bits (`PLEDGE_*`), which `namei` also carries
 //! in `ni_pledge` to say what a lookup is for, and the `pledgenames[]` table.
 //!
@@ -145,7 +146,9 @@ pub static PLEDGENAMES: &[(u64, &[u8])] = &[
     (PLEDGE_DRM, b"drm"),
     (PLEDGE_VMM, b"vmm"),
 ];
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,3 +183,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

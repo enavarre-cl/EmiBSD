@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/pmap.h>`: the physical map's types and constants.
 //!
 //! Upstream: sys/arch/arm64/include/pmap.h @ 3ce1f3f79392
@@ -187,3 +188,4 @@ pub const VM_MDPAGE_INIT: VmPageMd = VmPageMd {
     pv_mtx: Mutex::new(IPL_VM),
     pv_list: ListHead::new(),
 };
+/* </CODE> */

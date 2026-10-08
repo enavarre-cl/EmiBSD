@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Sleep and wakeup: `kern/kern_synch.c`.
 //!
 //! Upstream: sys/kern/kern_synch.c @ 3ce1f3f79392
@@ -776,3 +777,4 @@ pub fn cond_wait(c: &Cond, wmesg: &'static str) {
         let _ = sleep_finish(INFSLP, wait != 0);
     }
 }
+/* </CODE> */

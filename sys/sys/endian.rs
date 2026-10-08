@@ -49,6 +49,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Byte order: `<sys/endian.h>` together with `<sys/_endian.h>`.
 //!
 //! Upstream: sys/sys/endian.h @ 3ce1f3f79392
@@ -328,7 +329,9 @@ pub fn htolem32(p: &mut [u8; 4], v: u32) {
 pub fn htolem64(p: &mut [u8; 8], v: u64) {
     *p = v.to_le_bytes();
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,3 +371,4 @@ mod tests {
         assert_eq!(_PDP_ENDIAN, 3412);
     }
 }
+/* </TESTS> */

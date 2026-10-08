@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Simple generic bus access primitives: `arch/arm64/arm64/bus_space.c`.
 //!
 //! Upstream: sys/arch/arm64/arm64/bus_space.c @ 3ce1f3f79392
@@ -261,3 +262,4 @@ pub fn generic_space_mmap(
 ) -> Option<Paddr> {
     Some(Paddr::new(addr.wrapping_add(off as usize)))
 }
+/* </CODE> */

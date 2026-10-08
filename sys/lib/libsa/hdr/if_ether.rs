@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<netinet/if_ether.h>` for libsa: the Ethernet header, the Ethernet ARP packet and the
 //! lengths `efipxe.c` sizes its buffers with.
 
@@ -75,3 +76,4 @@ net_bytes!(EtherHeader, EtherArp);
 
 const _: () = assert!(core::mem::size_of::<EtherHeader>() == ETHER_HDR_LEN);
 const _: () = assert!(core::mem::size_of::<EtherArp>() == 28);
+/* </CODE> */

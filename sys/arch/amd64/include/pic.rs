@@ -1,6 +1,7 @@
 /*	$OpenBSD: pic.h,v 1.8 2024/01/19 18:38:16 kettenis Exp $	*/
 /*	$NetBSD: pic.h,v 1.1 2003/02/26 21:26:11 fvdl Exp $	*/
 
+/* <CODE> */
 //! amd64 `<machine/pic.h>`: structure common to all PIC softcs.
 //!
 //! Upstream: sys/arch/amd64/include/pic.h @ 3ce1f3f79392
@@ -55,3 +56,4 @@ pub const PIC_LAPIC: i32 = 2;
 pub const PIC_MSI: i32 = 3;
 /// `PIC_SOFT`.
 pub const PIC_SOFT: i32 = 4;
+/* </CODE> */

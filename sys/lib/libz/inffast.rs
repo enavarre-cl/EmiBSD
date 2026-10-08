@@ -40,6 +40,7 @@
 */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Fast decoding: `inflate_fast` decodes literals and length/distance pairs of a block
 //! without checking for input or output at each step, while there is enough of both.
 //!
@@ -322,3 +323,4 @@ pub(crate) fn inflate_fast(
         strm.msg = msg;
     }
 }
+/* </CODE> */

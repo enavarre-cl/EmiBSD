@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The firmware's frame buffer on the device tree: `dev/fdt/simplefb.c`, `simplefb`.
 //!
 //! Upstream: sys/dev/fdt/simplefb.c @ 3ce1f3f79392
@@ -564,3 +565,4 @@ pub fn simplefb_init_cons(iot: BusSpaceTag) {
     // Allow USB keyboards to become the console input device.
     let _ = crate::dev::usb::ukbd::ukbd_cnattach();
 }
+/* </CODE> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The kernel message buffer that `dmesg(8)` reads: `<sys/msgbuf.h>`.
 //!
 //! Upstream: sys/sys/msgbuf.h @ 3ce1f3f79392
@@ -165,7 +166,9 @@ impl Msgbuf {
         }
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,3 +198,4 @@ mod tests {
         assert_eq!(i64::from_ne_bytes(area.0[24..32].try_into().unwrap()), 88);
     }
 }
+/* </TESTS> */

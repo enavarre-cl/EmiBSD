@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Bus-independent chip drivers: OpenBSD `sys/dev/ic/`.
 
 pub mod ac97;
@@ -31,3 +32,4 @@ pub mod vga;
 pub mod vga_subr;
 pub mod vgareg;
 pub mod vgavar;
+/* </CODE> */

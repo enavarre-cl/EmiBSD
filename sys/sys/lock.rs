@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/lock.h>`: the `LK_*` flags of `vn_lock(9)` and `VOP_LOCK(9)`, which are the
 //! `rwlock(9)` operation flags plus `LK_DRAIN` and `LK_RETRY`.
 //!
@@ -65,3 +66,4 @@ pub const LK_RWFLAGS: i32 = RW_WRITE | RW_READ | RW_NOSLEEP | RW_RECURSEFAIL | R
 pub const LK_DRAIN: i32 = 0x1000;
 /// `LK_RETRY`: `vn_lock`: retry until locked.
 pub const LK_RETRY: i32 = 0x2000;
+/* </CODE> */

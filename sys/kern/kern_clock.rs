@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Clock handling routines: `kern/kern_clock.c`.
 //!
 //! This code is written to operate with two timers that run independently of each other.
@@ -338,7 +339,9 @@ pub fn sysctl_clockrate(where_: usize, sizep: &mut usize, newp: usize) -> Result
     };
     sysctl_rdstruct(where_, sizep, newp, clkinfo.as_bytes())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,3 +362,4 @@ mod tests {
         assert_eq!(tstohz(&Timespec::new(0, 999_999_999)), 101);
     }
 }
+/* </TESTS> */

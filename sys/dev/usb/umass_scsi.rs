@@ -64,6 +64,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! umass(4)'s SCSI adapter: `<dev/usb/umass_scsi.h>` and `dev/usb/umass_scsi.c`.
 //!
 //! Upstream: sys/dev/usb/umass_scsi.h @ 3ce1f3f79392, sys/dev/usb/umass_scsi.c @ 3ce1f3f79392
@@ -572,7 +573,9 @@ pub unsafe fn umass_io_put(cookie: *mut c_void, _io: ScsiIo) {
     scbus.sc_open.set(0);
     splx(s);
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -598,3 +601,4 @@ mod tests {
         assert!(unsafe { umass_io_get(cookie) }.is_some());
     }
 }
+/* </TESTS> */

@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `fusefs_node.h`: the in-core node of a FUSE file (`struct fusefs_node`), its file handles
 //! and the `ITOV`/`VTOI` conversions.
 //!
@@ -197,3 +198,4 @@ pub fn VTOI(vp: &Vnode) -> &'static FusefsNode {
     // vnode (a reference or its lock), so it is not reclaimed meanwhile.
     unsafe { &*ip.cast::<FusefsNode>() }
 }
+/* </CODE> */

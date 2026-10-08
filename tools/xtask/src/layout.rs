@@ -42,15 +42,18 @@ const TESTS: usize = 2;
 /// The zone a marker line opens (`Some((zone, true))`) or closes (`Some((zone, false))`).
 fn marker(line: &str) -> Option<(usize, bool)> {
     let t = line.trim_end();
-    NAMES.iter().position(|n| t == format!("/* <{n}> */")).map_or_else(
-        || {
-            NAMES
-                .iter()
-                .position(|n| t == format!("/* </{n}> */"))
-                .map(|z| (z, false))
-        },
-        |z| Some((z, true)),
-    )
+    NAMES
+        .iter()
+        .position(|n| t == format!("/* <{n}> */"))
+        .map_or_else(
+            || {
+                NAMES
+                    .iter()
+                    .position(|n| t == format!("/* </{n}> */"))
+                    .map(|z| (z, false))
+            },
+            |z| Some((z, true)),
+        )
 }
 
 /// Does `line` declare the module `tests` (`mod tests {`, `pub(crate) mod tests;`)?
@@ -102,7 +105,9 @@ pub(crate) fn check(rel: &str, src: &str, lic: Licenses) -> Vec<String> {
                     seen[z].1.get_or_insert(n);
                     cur = None;
                 } else {
-                    errs.push(format!("{rel}:{n}: </{name}> closes a zone that is not open"));
+                    errs.push(format!(
+                        "{rel}:{n}: </{name}> closes a zone that is not open"
+                    ));
                 }
             }
             None => match cur {
@@ -154,12 +159,16 @@ pub(crate) fn check(rel: &str, src: &str, lic: Licenses) -> Vec<String> {
     }
     for l in &content[CODE] {
         if l.trim() == "#[test]" {
-            errs.push(format!("{rel}: a #[test] in the <CODE> zone (tests go in <TESTS>)"));
+            errs.push(format!(
+                "{rel}: a #[test] in the <CODE> zone (tests go in <TESTS>)"
+            ));
             break;
         }
     }
     if content[CODE].iter().any(|l| declares_tests_mod(l)) {
-        errs.push(format!("{rel}: `mod tests` in the <CODE> zone (it goes in <TESTS>)"));
+        errs.push(format!(
+            "{rel}: `mod tests` in the <CODE> zone (it goes in <TESTS>)"
+        ));
     }
     if seen[TESTS].0.is_some() && !content[TESTS].iter().any(|l| declares_tests_mod(l)) {
         errs.push(format!("{rel}: a <TESTS> zone without a `mod tests`"));
@@ -204,7 +213,13 @@ mod tests {
 
     #[test]
     fn code_and_tests_are_fine() {
-        let s = with_tests(&["mod tests {", "    #[test]", "    fn t() {}", "}", "/* </TESTS> */"]);
+        let s = with_tests(&[
+            "mod tests {",
+            "    #[test]",
+            "    fn t() {}",
+            "}",
+            "/* </TESTS> */",
+        ]);
         assert_eq!(check("a.rs", &s, Licenses::Forbidden), Vec::<String>::new());
     }
 
@@ -251,7 +266,10 @@ mod tests {
     #[test]
     fn code_is_required() {
         let e = check("a.rs", "fn f() {}\n", Licenses::Forbidden);
-        assert!(e.iter().any(|m| m.contains("text outside the zones")), "{e:?}");
+        assert!(
+            e.iter().any(|m| m.contains("text outside the zones")),
+            "{e:?}"
+        );
         assert!(e.iter().any(|m| m.contains("no <CODE> zone")), "{e:?}");
     }
 
@@ -269,8 +287,17 @@ mod tests {
     #[test]
     fn zones_open_and_close_once_in_order() {
         // CODE twice
-        let s = file(&["/* <CODE> */", "/* </CODE> */", "/* <CODE> */", "/* </CODE> */"]);
-        assert!(check("a.rs", &s, Licenses::Forbidden).iter().any(|m| m.contains("twice")));
+        let s = file(&[
+            "/* <CODE> */",
+            "/* </CODE> */",
+            "/* <CODE> */",
+            "/* </CODE> */",
+        ]);
+        assert!(
+            check("a.rs", &s, Licenses::Forbidden)
+                .iter()
+                .any(|m| m.contains("twice"))
+        );
         // TESTS before CODE
         let s = file(&[
             "/* <TESTS> */",
@@ -279,49 +306,120 @@ mod tests {
             "/* <CODE> */",
             "/* </CODE> */",
         ]);
-        assert!(check("a.rs", &s, Licenses::Forbidden).iter().any(|m| m.contains("out of order")));
+        assert!(
+            check("a.rs", &s, Licenses::Forbidden)
+                .iter()
+                .any(|m| m.contains("out of order"))
+        );
         // LICENSES after CODE
-        let s = file(&["/* <CODE> */", "/* </CODE> */", "/* <LICENSES> */", "/* </LICENSES> */"]);
-        assert!(check("a.rs", &s, Licenses::Allowed).iter().any(|m| m.contains("out of order")));
+        let s = file(&[
+            "/* <CODE> */",
+            "/* </CODE> */",
+            "/* <LICENSES> */",
+            "/* </LICENSES> */",
+        ]);
+        assert!(
+            check("a.rs", &s, Licenses::Allowed)
+                .iter()
+                .any(|m| m.contains("out of order"))
+        );
     }
 
     #[test]
     fn unclosed_nested_and_stray_markers() {
         let s = file(&["/* <CODE> */", "fn f() {}"]);
-        assert!(check("a.rs", &s, Licenses::Forbidden).iter().any(|m| m.contains("never closed")));
-        let s = file(&["/* <CODE> */", "/* <TESTS> */", "/* </TESTS> */", "/* </CODE> */"]);
-        assert!(check("a.rs", &s, Licenses::Forbidden).iter().any(|m| m.contains("inside")));
+        assert!(
+            check("a.rs", &s, Licenses::Forbidden)
+                .iter()
+                .any(|m| m.contains("never closed"))
+        );
+        let s = file(&[
+            "/* <CODE> */",
+            "/* <TESTS> */",
+            "/* </TESTS> */",
+            "/* </CODE> */",
+        ]);
+        assert!(
+            check("a.rs", &s, Licenses::Forbidden)
+                .iter()
+                .any(|m| m.contains("inside"))
+        );
         let s = file(&["/* <CODE> */", "/* </CODE> */", "/* </CODE> */"]);
-        assert!(check("a.rs", &s, Licenses::Forbidden).iter().any(|m| m.contains("not open")));
+        assert!(
+            check("a.rs", &s, Licenses::Forbidden)
+                .iter()
+                .any(|m| m.contains("not open"))
+        );
         let s = file(&["/* </CODE> */"]);
-        assert!(check("a.rs", &s, Licenses::Forbidden).iter().any(|m| m.contains("not open")));
+        assert!(
+            check("a.rs", &s, Licenses::Forbidden)
+                .iter()
+                .any(|m| m.contains("not open"))
+        );
     }
 
     #[test]
     fn tests_belong_in_the_tests_zone() {
-        let s = file(&["/* <CODE> */", "#[cfg(test)]", "mod tests {", "}", "/* </CODE> */"]);
+        let s = file(&[
+            "/* <CODE> */",
+            "#[cfg(test)]",
+            "mod tests {",
+            "}",
+            "/* </CODE> */",
+        ]);
         let e = check("a.rs", &s, Licenses::Forbidden);
-        assert!(e.iter().any(|m| m.contains("`mod tests` in the <CODE> zone")), "{e:?}");
-        let s = file(&["/* <CODE> */", "#[cfg(test)]", "mod tests;", "/* </CODE> */"]);
+        assert!(
+            e.iter()
+                .any(|m| m.contains("`mod tests` in the <CODE> zone")),
+            "{e:?}"
+        );
+        let s = file(&[
+            "/* <CODE> */",
+            "#[cfg(test)]",
+            "mod tests;",
+            "/* </CODE> */",
+        ]);
         assert!(!check("a.rs", &s, Licenses::Forbidden).is_empty());
         let s = file(&["/* <CODE> */", "#[test]", "fn t() {}", "/* </CODE> */"]);
         let e = check("a.rs", &s, Licenses::Forbidden);
         assert!(e.iter().any(|m| m.contains("#[test]")), "{e:?}");
         // an indented `mod tests` (a nested module) or a helper named like it is not flagged
-        let s = file(&["/* <CODE> */", "    mod tests_helper {}", "mod testsuite {}", "/* </CODE> */"]);
-        assert!(check("a.rs", &s, Licenses::Forbidden).iter().all(|m| !m.contains("mod tests")));
+        let s = file(&[
+            "/* <CODE> */",
+            "    mod tests_helper {}",
+            "mod testsuite {}",
+            "/* </CODE> */",
+        ]);
+        assert!(
+            check("a.rs", &s, Licenses::Forbidden)
+                .iter()
+                .all(|m| !m.contains("mod tests"))
+        );
     }
 
     #[test]
     fn a_tests_zone_needs_a_tests_module() {
-        let s = file(&["/* <CODE> */", "/* </CODE> */", "/* <TESTS> */", "fn helper() {}", "/* </TESTS> */"]);
+        let s = file(&[
+            "/* <CODE> */",
+            "/* </CODE> */",
+            "/* <TESTS> */",
+            "fn helper() {}",
+            "/* </TESTS> */",
+        ]);
         let e = check("a.rs", &s, Licenses::Forbidden);
-        assert!(e.iter().any(|m| m.contains("without a `mod tests`")), "{e:?}");
+        assert!(
+            e.iter().any(|m| m.contains("without a `mod tests`")),
+            "{e:?}"
+        );
     }
 
     #[test]
     fn markers_inside_a_line_are_not_markers() {
-        let s = file(&["/* <CODE> */", "let a = \"/* <TESTS> */\";", "/* </CODE> */"]);
+        let s = file(&[
+            "/* <CODE> */",
+            "let a = \"/* <TESTS> */\";",
+            "/* </CODE> */",
+        ]);
         assert!(check("a.rs", &s, Licenses::Forbidden).is_empty());
     }
 

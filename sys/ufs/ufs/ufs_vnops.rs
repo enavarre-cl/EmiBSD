@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The vnode operations the UFS file systems share: create, link, rename, remove, mkdir,
 //! rmdir, symlink, readdir, readlink, attributes and permissions, the inode lock, the
 //! strategy that maps a file's logical blocks to the disk, pathconf, advisory locks, and the
@@ -1848,7 +1849,9 @@ pub fn filt_ufsvnode(kn: &Knote, hint: i64) -> bool {
     }
     kn.kn_fflags().get() != 0
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1870,3 +1873,4 @@ mod tests {
         assert!(kn.has_flags(EV_EOF) && kn.has_flags(EV_ONESHOT));
     }
 }
+/* </TESTS> */

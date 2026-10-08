@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<machine/biosvar.h>`: the boot arguments amd64's boot programs hand the kernel (memory
 //! map, disks, console, EFI information...), and the BIOS constants beside them.
 //!
@@ -321,3 +322,4 @@ const _: () = {
     assert!(core::mem::size_of::<BiosEfiinfo>() == 100);
     assert!(core::mem::size_of::<BiosUcode>() == 16);
 };
+/* </CODE> */

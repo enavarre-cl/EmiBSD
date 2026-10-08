@@ -64,6 +64,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/bus.h>`: the `bus_dma(9)` types and flags.
 //!
 //! Upstream: sys/arch/amd64/include/bus.h @ 3ce1f3f79392
@@ -306,3 +307,4 @@ impl BusDmamap {
         unsafe { &**self._dm_pages.add(i) }
     }
 }
+/* </CODE> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/ucred.h>`: credentials.
 //!
 //! Upstream: sys/sys/ucred.h @ 3ce1f3f79392
@@ -122,3 +123,4 @@ pub struct Xucred {
     /// `cr_groups`: groups.
     pub cr_groups: [Gid; NGROUPS_MAX],
 }
+/* </CODE> */

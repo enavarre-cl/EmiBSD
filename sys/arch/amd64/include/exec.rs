@@ -5,6 +5,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/exec.h>`: the ELF target parameters.
 //!
 //! Upstream: sys/arch/amd64/include/exec.h @ 3ce1f3f79392
@@ -24,3 +25,4 @@ pub const ELF_TARG_CLASS: u8 = ELFCLASS64;
 pub const ELF_TARG_DATA: u8 = ELFDATA2LSB;
 /// `ELF_TARG_MACH`.
 pub const ELF_TARG_MACH: u16 = EM_AMD64;
+/* </CODE> */

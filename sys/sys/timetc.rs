@@ -22,6 +22,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/timetc.h>`: the timecounter interface between the hardware which implements a
 //! timecounter and the MI code which uses this to keep track of time.
 //!
@@ -155,3 +156,4 @@ pub struct Timekeep {
 
 /// `TK_VERSION`.
 pub const TK_VERSION: u32 = 0;
+/* </CODE> */

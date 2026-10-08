@@ -1,3 +1,4 @@
+/* <CODE> */
 //! BOOTAA64.EFI: arm64's UEFI boot loader, OpenBSD's efiboot (`sys/arch/arm64/stand/efiboot`).
 //!
 //! The firmware enters `_start` (`start.S`), which clears the bss, relocates the image
@@ -45,3 +46,4 @@ static ALLOCATOR: libsa::sa_alloc::SaAlloc = libsa::sa_alloc::SaAlloc;
 fn panic(info: &core::panic::PanicInfo) -> ! {
     libsa::exit::panic(format_args!("{}", info.message()))
 }
+/* </CODE> */

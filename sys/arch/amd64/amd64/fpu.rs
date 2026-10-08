@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The amd64 floating-point/"extended state" unit: `arch/amd64/amd64/fpu.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/fpu.c @ 3ce1f3f79392
@@ -161,7 +162,9 @@ pub fn fpu_kernel_enter() {
 pub fn fpu_kernel_exit() {
     fpureset();
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,3 +178,4 @@ mod tests {
         assert_eq!(x86fpflags_to_siginfo(1 << 6), FPE_FLTINV);
     }
 }
+/* </TESTS> */

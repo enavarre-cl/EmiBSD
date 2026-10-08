@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The socket system calls: `kern/uipc_syscalls.c`.
 //!
 //! Upstream: sys/kern/uipc_syscalls.c @ 3ce1f3f79392
@@ -1879,3 +1880,4 @@ pub fn sys_ypconnect(p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Resul
     retval[0] = fd as Register;
     Ok(())
 }
+/* </CODE> */

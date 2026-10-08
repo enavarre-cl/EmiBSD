@@ -49,6 +49,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<msdosfs/direntry.h>`: the structure of a DOS directory entry (`struct direntry`), the
 //! Win95 long name entry (`struct winentry`) and the bit layout of the DOS time and date
 //! fields.
@@ -222,7 +223,9 @@ const _: () = {
     assert!(core::mem::offset_of!(Winentry, weReserved2) == 26);
     assert!(core::mem::offset_of!(Winentry, wePart3) == 28);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,3 +277,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! ARM Power State Coordination Interface on the device tree: `dev/fdt/psci.c`.
 //!
 //! The firmware interface that powers the machine off (`SYSTEM_OFF`), resets it
@@ -410,7 +411,9 @@ pub fn psci_can_suspend() -> i32 {
 pub fn psci_method() -> i32 {
     psci_sc().map_or(PSCI_METHOD_NONE, |sc| sc.sc_method.get())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -429,3 +432,4 @@ mod tests {
         assert_eq!(smccc_needs_arch_workaround_3(), 0);
     }
 }
+/* </TESTS> */

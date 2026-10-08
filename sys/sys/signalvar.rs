@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/signalvar.h>`: kernel signal definitions and data structures, not exported to user
 //! programs.
 //!
@@ -199,7 +200,9 @@ pub struct Sigctx {
     /// `sig_stop`.
     pub sig_stop: bool,
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,3 +243,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

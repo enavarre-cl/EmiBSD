@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! ISA bus conventions: `<dev/isa/isareg.h>`.
 //!
 //! Upstream: sys/dev/isa/isareg.h @ 3ce1f3f79392
@@ -70,7 +71,9 @@ pub const IOM_BEGIN: usize = 0x0a0000;
 pub const IOM_END: usize = 0x100000;
 /// `IOM_SIZE`.
 pub const IOM_SIZE: usize = IOM_END - IOM_BEGIN;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -100,3 +103,4 @@ mod tests {
         assert_eq!(crate::reftest::int(&defs, "IO_DMA2"), Some(IO_DMA2 as i64));
     }
 }
+/* </TESTS> */

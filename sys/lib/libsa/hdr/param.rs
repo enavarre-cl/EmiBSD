@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<sys/param.h>` and `<sys/syslimits.h>` for libsa: the sizes and the rounding macros.
 
 /// `NBBY`: bits per byte.
@@ -29,3 +30,4 @@ pub const fn roundup(x: u64, y: u64) -> u64 {
 pub const fn howmany(x: u64, y: u64) -> u64 {
     x.div_ceil(y)
 }
+/* </CODE> */

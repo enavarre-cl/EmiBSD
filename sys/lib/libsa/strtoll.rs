@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `strtoll()`: a string to a `long long`.
 //!
 //! Upstream: sys/lib/libsa/strtoll.c @ 3ce1f3f79392
@@ -52,7 +53,9 @@ use crate::strtol::strtonum;
 pub fn strtoll(nptr: &[u8], base: i32) -> (i64, usize) {
     strtonum(nptr, base, isspace)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,3 +67,4 @@ mod tests {
         assert_eq!(strtoll(b"64M", 0), (64, 2));
     }
 }
+/* </TESTS> */

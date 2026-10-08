@@ -63,6 +63,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `vga(4)` at `pci`: a VGA-class PCI function whose I/O and memory decoding the firmware
 //! left on and that answers at the legacy VGA addresses (or is the console), driven by
 //! `vga.c`.
@@ -499,7 +500,9 @@ pub fn vga_restore_state(sc: &VgaPciSoftc) {
         );
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -532,3 +535,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

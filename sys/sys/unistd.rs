@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/unistd.h>`: the POSIX constants the kernel shares with userland, and the parameter
 //! blocks of `__tfork(2)` and `kbind(2)`.
 //!
@@ -156,7 +157,9 @@ pub const _PC_SYMLINK_MAX: i32 = 19;
 pub const _PC_SYNC_IO: i32 = 20;
 /// `_PC_TIMESTAMP_RESOLUTION`.
 pub const _PC_TIMESTAMP_RESOLUTION: i32 = 21;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,3 +194,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

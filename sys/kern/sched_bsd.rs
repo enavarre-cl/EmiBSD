@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The 4.4BSD scheduler: `kern/sched_bsd.c`.
 //!
 //! Upstream: sys/kern/sched_bsd.c @ 3ce1f3f79392
@@ -596,7 +597,9 @@ pub fn scheduler_start() {
 
     // perfpolicy_dynamic() -> timeout_add_msec(&setperf_to, 200): CPU throttling (M7).
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,3 +631,4 @@ mod tests {
         AVERUNNABLE.ldavg[0].store(0, Ordering::Relaxed);
     }
 }
+/* </TESTS> */

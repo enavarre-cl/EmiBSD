@@ -39,6 +39,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Process accounting: `kern/kern_acct.c`.
 //!
 //! Upstream: sys/kern/kern_acct.c @ 3ce1f3f79392
@@ -400,7 +401,9 @@ const _: () = {
     // The record is written as its bytes: no padding.
     assert!(size_of::<Acct>() == 64);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -416,3 +419,4 @@ mod tests {
         assert_eq!(u64::from(c & MAXFRACT as u16), 12800 >> 3);
     }
 }
+/* </TESTS> */

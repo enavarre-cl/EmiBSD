@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Machine-independent kernel core: OpenBSD `sys/kern/*.c`.
 //!
 //! Scheduler, processes, synchronisation, VFS glue, syscalls, `printf(9)`/`panic(9)`.
@@ -93,3 +94,4 @@ pub mod vfs_sync;
 pub mod vfs_syscalls;
 pub mod vfs_vnops;
 pub mod vfs_vops;
+/* </CODE> */

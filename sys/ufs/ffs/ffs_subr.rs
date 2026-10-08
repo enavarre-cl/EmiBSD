@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Fast file system helpers: the directory block of an offset (`ffs_bufatoff`), the
 //! fragment and block map operations the allocator and `fsck` share (`ffs_fragacct`,
 //! `ffs_isblock`, `ffs_clrblock`, `ffs_setblock`, `ffs_isfreeblock`), and the vnode set-up
@@ -204,7 +205,9 @@ pub fn ffs_vinit(mntp: &'static Mount, vp: &'static Vnode) -> Result<&'static Vn
     ip.i_modrev.set(modrev);
     Ok(vp)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,3 +235,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

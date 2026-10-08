@@ -37,6 +37,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/pte.h>`: the MMU's page-table entries.
 //!
 //! Upstream: sys/arch/amd64/include/pte.h @ 3ce1f3f79392
@@ -162,7 +163,9 @@ pub const PG_UCMINUS: u64 = PG_N;
 pub const fn x86_round_pdr(x: usize) -> usize {
     (x + (NBPD_L2 - 1)) & !(NBPD_L2 - 1)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,3 +211,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

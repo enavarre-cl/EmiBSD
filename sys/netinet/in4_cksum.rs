@@ -63,6 +63,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The Internet checksum of an IPv4 payload, with or without the pseudo header:
 //! `in4_cksum`.
 //!
@@ -125,3 +126,4 @@ pub fn in4_cksum(m: &Mbuf, nxt: u8, off: i32, len: i32) -> u16 {
     }
     cksum_fold(sum)
 }
+/* </CODE> */

@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `read()`: read from a file through its file system, or from a raw device at its offset.
 //!
 //! Upstream: sys/lib/libsa/read.c @ 3ce1f3f79392
@@ -114,3 +115,4 @@ pub fn oread(fd: usize, dest: &mut [u8]) -> Result<usize, Errno> {
     res?;
     Ok(dest.len() - resid)
 }
+/* </CODE> */

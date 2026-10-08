@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Printf and character output for the debugger: `ddb/db_output.c` and `<ddb/db_output.h>`.
 //!
 //! Upstream: sys/ddb/db_output.c @ 3ce1f3f79392
@@ -294,7 +295,9 @@ pub fn db_resize(cols: i32, rows: i32) {
     DB_MAX_WIDTH_VAR.store(cols, Ordering::Relaxed);
     DB_MAX_LINE_VAR.store(rows, Ordering::Relaxed);
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,3 +346,4 @@ mod tests {
         DB_RADIX.store(16, Ordering::Relaxed);
     }
 }
+/* </TESTS> */

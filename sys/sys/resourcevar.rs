@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/resourcevar.h>`: the kernel's shareable process resource limits.
 //!
 //! Upstream: sys/sys/resourcevar.h @ 3ce1f3f79392
@@ -100,3 +101,4 @@ pub fn lim_cur(which: usize) -> Rlim {
     lim_read_leave(limit);
     val
 }
+/* </CODE> */

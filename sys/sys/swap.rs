@@ -30,6 +30,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/swap.h>`: the `swapctl(2)` commands and the `struct swapent` it fills.
 //!
 //! Upstream: sys/sys/swap.h @ 3ce1f3f79392
@@ -84,7 +85,9 @@ pub struct Swapent {
 }
 
 const _: () = assert!(size_of::<Swapent>() == 20 + PATH_MAX);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,3 +116,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

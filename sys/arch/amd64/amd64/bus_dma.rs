@@ -87,6 +87,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `bus_dma(9)`: the common DMA map and DMA memory functions every amd64 bus tag uses,
 //! `arch/amd64/amd64/bus_dma.c`.
 //!
@@ -1154,3 +1155,4 @@ pub fn _bus_dmamem_alloc_range(
 
     Ok(curseg + 1)
 }
+/* </CODE> */

@@ -66,6 +66,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The spl loops of `arch/amd64/amd64/spl.S`, pulled in from the `.S` file next to this
 //! module (the file keeps OpenBSD's licence blocks and layout; `NAME` between braces is what
 //! `assym.h` provides in C).
@@ -114,3 +115,4 @@ unsafe extern "C" {
     /// Call with interrupts disabled, from kernel context, with `nlevel` a valid IPL.
     pub fn Xspllower(nlevel: i32);
 }
+/* </CODE> */

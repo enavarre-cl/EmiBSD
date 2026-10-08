@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Setup the system to run on the current machine: `arch/amd64/amd64/autoconf.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/autoconf.c @ 3ce1f3f79392
@@ -221,3 +222,4 @@ pub fn cpu_configure() {
 pub fn device_register(_dev: &Device, _aux: *mut c_void) {}
 
 // diskconf: setroot, dumpconf and the boot device come with disks (dkcsumattach, parsedisk).
+/* </CODE> */

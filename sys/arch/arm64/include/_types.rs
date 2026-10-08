@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/_types.h>`: alignment rules and the `label_t` register save area.
 //!
 //! Upstream: sys/arch/arm64/include/_types.h @ 3ce1f3f79392
@@ -75,3 +76,4 @@ pub const fn _align(p: usize) -> usize {
 pub const fn _aligned_pointer<T>(p: usize) -> bool {
     p & core::mem::size_of::<T>().wrapping_sub(1) == 0
 }
+/* </CODE> */

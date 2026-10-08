@@ -37,6 +37,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<netinet/igmp_var.h>`: Internet Group Management Protocol (IGMP), implementation-specific
 //! definitions: the statistics, the sysctl names and the report a membership change asks
 //! for. Written by Steve Deering, Stanford, May 1988. Modified by Rosen Sharma, Stanford,
@@ -143,3 +144,4 @@ pub fn igmp_random_delay(x: u32) -> u32 {
 
 // The counters are the structure's words (`CTASSERT` in `igmp_sysctl_igmpstat`).
 const _: () = assert!(size_of::<Igmpstat>() == IGPS_NCOUNTERS * size_of::<u64>());
+/* </CODE> */

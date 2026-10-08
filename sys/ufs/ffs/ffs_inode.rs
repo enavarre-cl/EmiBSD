@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Writing an inode back to its block (`ffs_update`) and truncating a file (`ffs_truncate`,
 //! with `ffs_indirtrunc` freeing the blocks under an indirect block).
 //!
@@ -565,3 +566,4 @@ pub fn ffs_indirtrunc(
     *countp = blocksreleased;
     allerror
 }
+/* </CODE> */

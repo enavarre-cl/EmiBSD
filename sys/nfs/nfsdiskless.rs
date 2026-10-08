@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<nfs/nfsdiskless.h>`: the structure that must be initialized for a diskless NFS client.
 //! It is used by `nfs_mountroot()` to set up the root and swap vnodes plus do a partial
 //! `ifconfig(8)` and `route(8)` so that the critical net interface can communicate with the
@@ -153,3 +154,4 @@ impl Default for NfsDiskless {
         Self::new()
     }
 }
+/* </CODE> */

@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `run_loadfile()`: hand the loaded kernel its boot arguments, leave the boot services,
 //! move the kernel to its physical address and enter it in 32-bit protected mode through
 //! `run_i386`; and the CPU microcode it may load first.
@@ -349,3 +350,4 @@ fn protect_writeable(addr: u64, len: u64) {
         asm!("mov cr3, {}", in(reg) cr3, options(nostack, preserves_flags));
     }
 }
+/* </CODE> */

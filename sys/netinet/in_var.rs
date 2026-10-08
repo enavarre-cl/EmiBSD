@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Internet interface addresses and multicast records: `<netinet/in_var.h>`.
 //!
 //! Upstream: sys/netinet/in_var.h @ 3ce1f3f79392
@@ -243,3 +244,4 @@ pub fn ifmatoinm(ifma: &Ifmaddr) -> &InMulti {
 
 // LP64 size of the user-visible structure.
 const _: () = assert!(size_of::<InAliasreq>() == 64);
+/* </CODE> */

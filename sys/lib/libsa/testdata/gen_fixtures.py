@@ -3,7 +3,7 @@
 made by OpenBSD's makefs (the host build `cargo xtask userland` leaves), zlib-compressed.
 
 Run from anywhere: python3 sys/lib/libsa/testdata/gen_fixtures.py (after `just userland`).
-The tests (`sys/lib/libsa/ufs/tests.rs`) read the images; regenerate them only when the
+The tests (`sys/lib/libsa/ufs.rs`) read the images; regenerate them only when the
 staged tree below changes.
 """
 import gzip, os, subprocess, tempfile, zlib

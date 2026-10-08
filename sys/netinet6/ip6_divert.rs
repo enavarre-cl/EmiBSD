@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Divert sockets for IPv6: `netinet6/ip6_divert.c` (prototypes in
 //! `<netinet/ip_divert.h>`, `netinet/ip_divert.rs`). A pf rule with `divert-packet port N`
 //! hands the IPv6 packets it matches to the `IPPROTO_DIVERT` raw socket of the inet6 domain
@@ -360,3 +361,4 @@ pub fn divert6_send(
     };
     divert6_output(inp, m, nam, control)
 }
+/* </CODE> */

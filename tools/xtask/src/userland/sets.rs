@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The install sets (M14c): `base<rev>.tgz` and `comp<rev>.tgz` (`80` for 8.0), `bsd`,
 //! `bsd.mp` (the same MULTIPROCESSOR kernel: no uniprocessor `bsd` is built for the sets),
 //! `bsd.rd`, `SHA256` and `SHA256.sig`, in `target/install/<arch>/sets/`.
@@ -1375,7 +1376,9 @@ pub(crate) fn build(
     );
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1493,3 +1496,4 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+/* </TESTS> */

@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! efiboot's configuration: its version, the probes `machdep()` runs, and the tables libsa
 //! works through: the file systems, the devices and the consoles.
 //!
@@ -204,3 +205,4 @@ pub static BOOT_MD: BootMd = BootMd {
         cnspeed,
     }),
 };
+/* </CODE> */

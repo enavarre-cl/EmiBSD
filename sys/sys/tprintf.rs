@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/tprintf.h>`: the handle `tprintf(9)` sends a message to a process's controlling
 //! terminal through.
 //!
@@ -51,3 +52,4 @@ use crate::sys::proc::Session;
 /// `tpr_t`: a `tprintf_open` handle, the session whose controlling terminal gets the message,
 /// or `None` (the C's NULL) when the process cannot be printed to.
 pub type Tpr = Option<&'static Session>;
+/* </CODE> */

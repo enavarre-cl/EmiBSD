@@ -69,6 +69,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! efiboot's UEFI glue: the entry point, the consoles, the EFI disks, the memory map, the
 //! device tree handed to the kernel (the firmware's, one named by SMBIOS or `machine dtb`,
 //! or one made from the ACPI tables), its `/chosen` boot arguments, the clock, the device
@@ -1792,7 +1793,9 @@ pub fn Xpoweroff_efi(_cmd: &mut CmdState) -> i32 {
     unsafe { (rs().ResetSystem)(EfiResetShutdown, EFI_SUCCESS, 0, ptr::null_mut()) };
     0
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1815,3 +1818,4 @@ mod tests {
         assert_eq!(devopen_args(b"tftp0"), (0, 0));
     }
 }
+/* </TESTS> */

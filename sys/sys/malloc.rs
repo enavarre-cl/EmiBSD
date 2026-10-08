@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/malloc.h>`: the kernel memory allocator's flags, types and bookkeeping structures.
 //!
 //! Upstream: sys/sys/malloc.h @ 3ce1f3f79392
@@ -588,7 +589,9 @@ pub const MINALLOCSIZE: usize = 1 << MINBUCKET;
 pub const MAXALLOCSAVE: usize = 2 * PAGE_SIZE;
 /// `MALLOC_MAX`.
 pub const MALLOC_MAX: usize = 65535 * PAGE_SIZE;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -642,3 +645,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `xtask smoke2`: two EmiBSD VMs of the same arch, booted concurrently on a private link.
 //!
 //! M9b (WireGuard) and M9c (IPsec ESP) need a tunnel between two machines. Each VM keeps its
@@ -482,7 +483,9 @@ fn kill_all(vms: &mut [Vm]) {
         let _ = vm.child.wait();
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -647,3 +650,4 @@ mod tests {
         assert_ne!(x, 0);
     }
 }
+/* </TESTS> */

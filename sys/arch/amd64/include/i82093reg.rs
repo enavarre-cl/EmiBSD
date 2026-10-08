@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/i82093reg.h>`: the Intel 82093AA I/O APIC's registers.
 //!
 //! Upstream: sys/arch/amd64/include/i82093reg.h @ 3ce1f3f79392
@@ -142,7 +143,9 @@ pub const IMCR_REGISTER: u8 = 0x70;
 pub const IMCR_PIC: u8 = 0x00;
 /// `IMCR_APIC`.
 pub const IMCR_APIC: u8 = 0x01;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,3 +186,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

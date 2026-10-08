@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! efiboot's devices: `devopen()` (the first device of `devsw[]` that claims the name), the
 //! boot device's name (`devboot`), and the console names (`ttyname`, `ttydev`, `cnspeed`).
 //!
@@ -163,3 +164,4 @@ pub fn cnspeed(dev: Dev, sp: i32) -> i32 {
     // pc0 and anything else
     9600
 }
+/* </CODE> */

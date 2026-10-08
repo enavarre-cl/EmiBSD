@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! A simple ELF relocator: apply the image's own `RELATIVE` relocations at the address the
 //! firmware loaded it, before anything uses a pointer (`_start` calls it first).
 //!
@@ -91,3 +92,4 @@ pub unsafe extern "C" fn self_reloc(baseaddr: u64, dynamic: *const Elf64Dyn) {
         }
     }
 }
+/* </CODE> */

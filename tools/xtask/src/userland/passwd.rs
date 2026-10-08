@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The password files of the ramdisk's `/etc`: `pwd.db` and `spwd.db` from `master.passwd`,
 //! and the root password's bcrypt hash.
 //!
@@ -298,7 +299,9 @@ pub(super) fn make_databases(pwd_mkdb: &Path, etc: &Path) -> Result<()> {
     }
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,3 +320,4 @@ mod tests {
         assert!(c.contains("bcrypt_newhash(argv[1], 8,"));
     }
 }
+/* </TESTS> */

@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/evcount.h>`: event counters, the interrupt counts `vmstat -i` shows.
 //!
 //! Upstream: sys/sys/evcount.h @ 3ce1f3f79392
@@ -98,3 +99,4 @@ queue_adapter!(
 const _: () = {
     assert!(core::mem::offset_of!(Evcount, ec_count) == 0);
 };
+/* </CODE> */

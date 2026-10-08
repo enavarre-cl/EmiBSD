@@ -1,3 +1,4 @@
+/* <CODE> */
 //! wscons, the workstation console: OpenBSD `sys/dev/wscons/`: the keyboard (`wskbd(4)`), the
 //! display (`wsdisplay(4)`) with its terminal emulations, the mux (`wsmux(4)`) between them,
 //! the mouse (`wsmouse(4)`) with its touchpad processing, and the event queues.
@@ -57,3 +58,4 @@ pub mod wsmousevar;
 pub mod wsmux;
 pub mod wsmuxvar;
 pub mod wstpad;
+/* </CODE> */

@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<isofs/udf/udf.h>`: the in-core UDF node (`struct unode`), the mounted volume
 //! (`struct umount`), the directory stream the lookups and `readdir` walk
 //! (`struct udf_dirstream`), and the block reading helpers.
@@ -435,3 +436,4 @@ pub fn udf_getid(icb: &LongAd) -> Udfino {
 
 /// `unicode_t`.
 pub type Unicode = u16;
+/* </CODE> */

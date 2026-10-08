@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Definitions of protocols supported in the UNIX domain: `kern/uipc_proto.c`.
 //!
 //! Upstream: sys/kern/uipc_proto.c @ 3ce1f3f79392
@@ -89,3 +90,4 @@ pub static UNIXDOMAIN: Domain = Domain {
     dom_rtoffset: 0,
     dom_maxplen: 0,
 };
+/* </CODE> */

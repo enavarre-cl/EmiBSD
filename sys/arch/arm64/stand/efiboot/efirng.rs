@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `fwrandom()`: mix the firmware's random number generator (`EFI_RNG_PROTOCOL`) into the
 //! seed.
 //!
@@ -93,3 +94,4 @@ pub fn fwrandom(buf: &mut [u8]) -> i32 {
 
     0
 }
+/* </CODE> */

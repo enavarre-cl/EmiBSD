@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! acpipci(4) on amd64: the PCI host bridges ACPI describes, `arch/amd64/pci/acpipci.c`.
 //!
 //! Upstream: sys/arch/amd64/pci/acpipci.c @ 3ce1f3f79392
@@ -409,3 +410,4 @@ pub fn acpipci_osc(_sc: &AcpipciSoftc, acpi: &AcpiSoftc, node: &AmlNodeRef) {
         }
     }
 }
+/* </CODE> */

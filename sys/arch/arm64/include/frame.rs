@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/frame.h>`: the stack frames the kernel walks and builds.
 //!
 //! Upstream: sys/arch/arm64/include/frame.h @ 3ce1f3f79392
@@ -145,3 +146,4 @@ const _: () = {
     assert!(core::mem::offset_of!(Sigframe, sf_sc) == 8);
     assert!(size_of::<Sigframe>() == 8 + size_of::<Sigcontext>() + size_of::<Siginfo>());
 };
+/* </CODE> */

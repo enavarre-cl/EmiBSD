@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `scanc(9)`: scan a byte string for the first byte whose class, looked up in a table,
 //! shares a bit with a mask.
 //!
@@ -52,7 +53,9 @@ pub fn scanc(cp: &[u8], table: &[u8; 256], mask: u8) -> usize {
         .unwrap_or(cp.len());
     cp.len() - skipped
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,3 +79,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The kernel image. The boot path lives in `stand/` (Limine protocol hand-off).
 
 #![cfg_attr(target_os = "none", no_std)]
@@ -14,3 +15,4 @@ fn main() {
     );
     std::process::exit(2);
 }
+/* </CODE> */

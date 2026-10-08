@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `arch/amd64/amd64/apic.c`: the redirection entry dump shared by the local and I/O APIC
 //! code (`mp_verbose`, ddb's `ioapic_dump`).
 //!
@@ -51,3 +52,4 @@ pub fn apic_format_redir(where1: &str, where2: &str, idx: i32, redirhi: u32, red
 
     kprintf!("\n");
 }
+/* </CODE> */

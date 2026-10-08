@@ -34,6 +34,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! RC4, which boot(8) keys with the random seed and `loadfile` uses to fill the kernel's
 //! `PT_OPENBSD_RANDOMIZE` segment.
 //!
@@ -126,7 +127,9 @@ pub fn rc4_skip(ctx: &mut Rc4Ctx, len: u32) {
         ctx.step();
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -149,3 +152,4 @@ mod tests {
         assert_eq!(rest, ks[4..]);
     }
 }
+/* </TESTS> */

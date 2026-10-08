@@ -37,6 +37,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The generic vnode operations file systems share: `vop_generic_revoke` (revoke a vnode and
 //! its aliases), `vop_generic_badop` (an operation that must never be called),
 //! `vop_generic_bmap` (the identity block map), `vop_generic_bwrite`, `vop_generic_abortop`
@@ -188,3 +189,4 @@ pub fn vop_generic_lookup(ap: &mut VopLookupArgs<'_>) -> Result<(), Errno> {
     *ap.a_vpp = None;
     Err(Errno::ENOTDIR)
 }
+/* </CODE> */

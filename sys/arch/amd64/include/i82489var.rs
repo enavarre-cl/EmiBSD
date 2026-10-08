@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/i82489var.h>`: software definitions belonging to Local APIC driver.
 //!
 //! Upstream: sys/arch/amd64/include/i82489var.h @ 3ce1f3f79392
@@ -66,3 +67,4 @@ pub const LAPIC_XEN_VECTOR: i32 = 0x70;
 
 /// `LAPIC_HYPERV_VECTOR`: vector used for Hyper-V Interrupts.
 pub const LAPIC_HYPERV_VECTOR: i32 = 0x71;
+/* </CODE> */

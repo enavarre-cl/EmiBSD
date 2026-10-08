@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The UNIX file system: OpenBSD `sys/ufs/`.
 //!
 //! `ufs` is the layer the UFS-like file systems share (inodes, directories, the vnode
@@ -13,3 +14,4 @@ pub mod ffs;
 pub mod mfs;
 #[allow(clippy::module_inception)] // OpenBSD's sys/ufs/ufs
 pub mod ufs;
+/* </CODE> */

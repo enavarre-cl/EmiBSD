@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/efiprot.h 163898 2006-11-02 02:42:48Z marcel $ */
-
 /* <LICENSES> */
 /*++
 
@@ -27,6 +26,7 @@ Revision History
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI protocol interfaces: device path, block I/O, disk I/O, simple file system, file,
 //! load file, device I/O and unicode collation.
 //!
@@ -631,7 +631,9 @@ const _: () = assert!(core::mem::size_of::<EfiFileInfo>() == 88);
 const _: () = assert!(SIZE_OF_EFI_FILE_INFO == 80);
 const _: () = assert!(SIZE_OF_EFI_FILE_SYSTEM_INFO == 36);
 const _: () = assert!(core::mem::size_of::<EfiDeviceIoInterface>() == 96);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,3 +650,4 @@ mod tests {
         assert_eq!(SIZE_OF_EFI_FILE_SYSTEM_VOLUME_LABEL_INFO, 0);
     }
 }
+/* </TESTS> */

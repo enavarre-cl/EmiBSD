@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! UDP kernel structures and variables: `<netinet/udp_var.h>`.
 //!
 //! Upstream: sys/netinet/udp_var.h @ 3ce1f3f79392
@@ -164,7 +165,9 @@ pub fn udpstat_inc(c: UdpstatCounters) {
 // The wire layout, and the counters are the structure's words.
 const _: () = assert!(size_of::<Udpiphdr>() == 28);
 const _: () = assert!(size_of::<Udpstat>() == UDPS_NCOUNTERS * size_of::<u64>());
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -180,3 +183,4 @@ mod tests {
         assert_complete(&defs, "UDPCTL_", &[&ctl[..], &["UDPCTL_NAMES"]].concat());
     }
 }
+/* </TESTS> */

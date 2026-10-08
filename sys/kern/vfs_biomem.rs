@@ -18,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The memory behind the buffer cache: each buffer's pages live in its own (or its cluster's)
 //! `uvm_object`, and a `MAXPHYS` slot of a kernel virtual arena maps them while the buffer is
 //! busy; idle buffers keep their mapping on an LRU (`buf_valist`) until a busy one needs the
@@ -391,3 +392,4 @@ pub fn buf_free_pages(bp: &'static Buf) {
     // XXX refactor to do this without splbio later
     uvm_obj_free(uobj);
 }
+/* </CODE> */

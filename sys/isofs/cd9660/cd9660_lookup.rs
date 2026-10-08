@@ -40,6 +40,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Directory lookup on ISO 9660: `cd9660_lookup` (convert a component of a pathname into a
 //! locked vnode, by a linear scan of the directory's records) and `cd9660_bufatoff` (the
 //! buffer of a directory block).
@@ -451,3 +452,4 @@ pub fn cd9660_bufatoff(ip: &IsoNode, offset: Off) -> Result<(&'static Buf, usize
     }
     Ok((bp, blkoff(imp, offset) as usize))
 }
+/* </CODE> */

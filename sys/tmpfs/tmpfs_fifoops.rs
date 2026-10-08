@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! tmpfs vnode interface for named pipes: the operations of a fifo stored in a tmpfs file
 //! system (`tmpfs_fifovops`), which keep the node's times and leave the pipe to fifofs.
 //!
@@ -123,3 +124,4 @@ pub fn tmpfs_fifo_write(ap: &mut VopWriteArgs<'_, '_>) -> Result<(), Errno> {
 pub fn tmpfs_fifo_fsync(_ap: &mut VopFsyncArgs<'_>) -> Result<(), Errno> {
     Ok(())
 }
+/* </CODE> */

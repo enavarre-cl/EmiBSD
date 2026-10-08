@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `closeall()`: close every open file.
 //!
 //! Upstream: sys/lib/libsa/closeall.c @ 3ce1f3f79392
@@ -80,3 +81,4 @@ pub fn closeall() {
         }
     }
 }
+/* </CODE> */

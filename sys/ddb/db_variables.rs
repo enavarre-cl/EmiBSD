@@ -58,6 +58,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Debugger variables: `ddb/db_variables.c` and `<ddb/db_variables.h>`.
 //!
 //! Upstream: sys/ddb/db_variables.c @ 3ce1f3f79392
@@ -267,7 +268,9 @@ pub fn db_var_rw_int(var: &DbVariable, expr: &mut DbExpr, mode: i32) -> i32 {
     }
     0
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,3 +295,4 @@ mod tests {
         assert!(db_set_cmd(0, false, -1, b"").is_err());
     }
 }
+/* </TESTS> */

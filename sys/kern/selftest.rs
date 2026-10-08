@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Boot-time self-tests under feature `qemu`: a project helper, not OpenBSD code.
 //!
 //! Each test exercises a subsystem right after `main()` brought it up and prints one line that
@@ -2717,3 +2718,4 @@ pub fn wscons_grid() {
         Str(&fb.xname)
     );
 }
+/* </CODE> */

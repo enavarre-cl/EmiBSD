@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/disklabel.h>` and the machine's `disksubr.c` as a trait.
 //!
 //! Each architecture defines where its disk label sits (`LABELSECTOR`, `LABELOFFSET`) and how
@@ -51,3 +52,4 @@ pub fn readdisklabel(
 pub fn writedisklabel(dev: Dev, strat: DevTypeStrategy, lp: &mut Disklabel) -> Result<(), Errno> {
     Machine::writedisklabel(dev, strat, lp)
 }
+/* </CODE> */

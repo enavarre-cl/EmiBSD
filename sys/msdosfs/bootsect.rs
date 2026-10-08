@@ -18,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<msdosfs/bootsect.h>`: the format of a boot sector. This is the first sector on a DOS
 //! floppy disk or the first sector of a partition on a hard disk. But, it is not the first
 //! sector of a partitioned hard disk.
@@ -183,7 +184,9 @@ const _: () = {
     assert!(Bootsector710::SIZE == 512);
     assert!(Bootsector::SIZE == 512);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -202,3 +205,4 @@ mod tests {
         assert_eq!(core::mem::offset_of!(Bootsector710, bsExt), 64);
     }
 }
+/* </TESTS> */

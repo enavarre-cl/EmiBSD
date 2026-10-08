@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The terminal emulations compiled into the kernel, and their lookup by name.
 //!
 //! Upstream: sys/dev/wscons/wsemulconf.c @ 3ce1f3f79392
@@ -94,7 +95,9 @@ pub fn wsemul_getname(idx: i32) -> Option<&'static [u8]> {
     let idx = usize::try_from(idx).ok()?;
     WSEMUL_CONF.get(idx).map(|ops| ops.name())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,3 +122,4 @@ mod tests {
         assert_eq!(wsemul_getname(WSEMUL_CONF.len() as i32), None);
     }
 }
+/* </TESTS> */

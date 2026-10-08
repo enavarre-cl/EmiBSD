@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<nfs/xdr_subs.h>`: conversion to and from the XDR representation used by NFS, as defined
 //! by "XDR: External Data Representation Standard" (RFC 1014).
 //!
@@ -139,7 +140,9 @@ pub fn xdr_get<T: AbiPod>(b: &[u8]) -> T {
         v.assume_init()
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,3 +173,4 @@ mod tests {
         assert_eq!(xdr_bytes(&t), [1, 2, 3, 4, 0, 0, 0, 0]);
     }
 }
+/* </TESTS> */

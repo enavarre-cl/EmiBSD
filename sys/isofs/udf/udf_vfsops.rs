@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! UDF file-system-type operations: mount (the anchor, the volume descriptor sequence, the
 //! partition maps, the file set descriptor and the root's file entry), unmount, root,
 //! `statfs`, `vget` (a file entry into a vnode), file handles, and `udf_checktag`.
@@ -1101,3 +1102,4 @@ pub fn udf_find_partmaps(ump: &Umount, lvd: &LogvolDesc, maps: &[u8]) -> Result<
 
     Ok(())
 }
+/* </CODE> */

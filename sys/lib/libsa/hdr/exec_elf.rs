@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<sys/exec_elf.h>` (and amd64's `<machine/reloc.h>`) for libsa: the ELF headers
 //! `loadfile` reads and the dynamic section `self_reloc` walks, in both classes.
 
@@ -233,3 +234,4 @@ const _: () = assert!(core::mem::size_of::<Elf64Shdr>() == 64);
 const _: () = assert!(core::mem::size_of::<Elf32Phdr>() == 32);
 const _: () = assert!(core::mem::size_of::<Elf64Phdr>() == 56);
 const _: () = assert!(core::mem::size_of::<Elf64Rela>() == 24);
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! rasops, raster operations for frame buffer consoles: OpenBSD `sys/dev/rasops/`.
 //!
 //! `rasops` is `rasops.c` and `<dev/rasops/rasops.h>`, the depth-independent part; the
@@ -15,3 +16,4 @@ pub mod rasops4;
 pub mod rasops8;
 pub mod rasops_bitops;
 pub mod rasops_masks;
+/* </CODE> */

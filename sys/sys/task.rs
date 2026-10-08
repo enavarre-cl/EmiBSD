@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/task.h>`: `task_add(9)`, the work items a task queue runs in a thread. The functions
 //! and `struct taskq` live in `kern/kern_task.rs`.
 //!
@@ -106,3 +107,4 @@ queue_adapter!(
 pub fn task_pending(t: &Task) -> bool {
     t.t_flags.load(Ordering::Relaxed) & TASK_ONQUEUE != 0
 }
+/* </CODE> */

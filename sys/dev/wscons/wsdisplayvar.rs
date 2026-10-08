@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wsdisplayvar.h>`: the interface between display drivers and
 //! `wsdisplay(4)`.
 //!
@@ -505,7 +506,9 @@ pub const WSDISPLAY_SCROLL_RESET: i32 = 2;
 pub const WSDISPLAY_DEFBURNOUT_MSEC: i32 = 0;
 /// `WSDISPLAY_DEFBURNIN_MSEC`: milliseconds.
 pub const WSDISPLAY_DEFBURNIN_MSEC: i32 = 250;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,3 +556,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

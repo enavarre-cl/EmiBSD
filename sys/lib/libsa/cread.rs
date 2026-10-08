@@ -41,6 +41,7 @@ compression parts stripped from zlib:gzio.c
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Support for compressed boot files (read only): `open()`, `close()`, `read()` and `lseek()`
 //! that inflate a gzip file transparently and pass any other file through.
 //!
@@ -505,3 +506,4 @@ pub fn lseek(fd: usize, offset: Off, whence: i32) -> Result<Off, Errno> {
         }
     }
 }
+/* </CODE> */

@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Register definitions for the Intel 8253 Programmable Interval Timer: `<dev/ic/i8253reg.h>`.
 //!
 //! Upstream: sys/dev/ic/i8253reg.h @ 3ce1f3f79392
@@ -95,7 +96,9 @@ pub const TIMER_MSB: u8 = 0x20;
 pub const TIMER_16BIT: u8 = 0x30;
 /// Count in BCD.
 pub const TIMER_BCD: u8 = 0x01;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,3 +130,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

@@ -35,6 +35,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `getchar()`: one character from the console, echoed if printable.
 //!
 //! Upstream: sys/lib/libsa/getchar.c @ 3ce1f3f79392
@@ -59,3 +60,4 @@ pub fn getchar() -> i32 {
 
     c
 }
+/* </CODE> */

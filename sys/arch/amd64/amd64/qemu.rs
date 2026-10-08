@@ -1,3 +1,4 @@
+/* <CODE> */
 //! QEMU's `isa-debug-exit` device (feature `qemu`): writing `v` to its port ends the emulator
 //! with exit status `(v << 1) | 1`. Not an OpenBSD file.
 
@@ -17,3 +18,4 @@ pub fn exit(status: ExitStatus) -> ! {
     unsafe { outb(ISA_DEBUG_EXIT_PORT, v as u8) };
     Machine::halt()
 }
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Build script: what `conf/newvers.sh` and the kernel Makefile do around the compiler.
 //!
 //! - Every build: the facts `conf/vers.rs` puts into the `version` string, as
@@ -150,3 +151,4 @@ fn main() {
     println!("cargo:rustc-link-arg-bins=-T{ld}");
     println!("cargo:rerun-if-changed={ld}");
 }
+/* </CODE> */

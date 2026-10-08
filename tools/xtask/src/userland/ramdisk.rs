@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Step 5 of `cargo xtask userland`: the ffs ramdisk image, `target/userland/<arch>/ramdisk.ffs`.
 //!
 //! The image is made by OpenBSD's own makefs(8) (`usr.sbin/makefs`, in the reference clone
@@ -1114,7 +1115,9 @@ fn copy_tree(from: &Path, to: &Path, seen: &mut HashMap<(u64, u64), PathBuf>) ->
     }
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1334,3 +1337,4 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
+/* </TESTS> */

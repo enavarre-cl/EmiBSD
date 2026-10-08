@@ -1,3 +1,4 @@
+/* <CODE> */
 //! What arm64's efiboot does with the UEFI GOP frame buffer (`efi_framebuffer()` in
 //! `sys/arch/arm64/stand/efiboot/efiboot.c`), done by the Limine glue: a copy of the device
 //! tree with a `simple-framebuffer` node `framebuffer` under `/chosen`, so that `simplefb`
@@ -279,3 +280,4 @@ pub fn add_framebuffer(dtb: &[u8], fb: &BootFramebuffer, out: &mut [u8]) -> Opti
 
     Some(total)
 }
+/* </CODE> */

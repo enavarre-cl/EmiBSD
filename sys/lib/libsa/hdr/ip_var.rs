@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<netinet/ip_var.h>` for libsa: the overlay of the IP header the UDP checksum covers.
 
 use super::in_::{InAddr, net_bytes};
@@ -21,3 +22,4 @@ pub struct Ipovly {
 net_bytes!(Ipovly);
 
 const _: () = assert!(core::mem::size_of::<Ipovly>() == 20);
+/* </CODE> */

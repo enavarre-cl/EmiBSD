@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! SipHash, a family of pseudorandom functions (keyed hashes) optimised for speed on short
 //! messages, returning a 64-bit value: `SipHash24_*` for the fast and reasonably strong
 //! version, `SipHash48_*` for the strong one. The kernel uses it to spread keys over hash
@@ -294,7 +295,9 @@ pub fn SipHash48_Final(dst: &mut [u8; SIPHASH_DIGEST_LENGTH], ctx: &mut SiphashC
 pub fn SipHash48(key: &SiphashKey, src: &[u8]) -> u64 {
     SipHash(key, 4, 8, src)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,3 +347,4 @@ mod tests {
         assert_eq!(u64::from_le_bytes(d), SipHash48(&key, &msg));
     }
 }
+/* </TESTS> */

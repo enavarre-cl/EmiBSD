@@ -55,6 +55,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The boot arguments: the list of typed records (`bootarg_t`) a boot program collects and
 //! copies out for the kernel, which walks them until `BOOTARG_END`.
 //!
@@ -203,7 +204,9 @@ pub fn makebootargs32(v: &mut [u8]) -> usize {
     v[q..q + 4].copy_from_slice(&BOOTARG_END.to_ne_bytes());
     l
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,3 +232,4 @@ mod tests {
         assert_eq!(w[68..72], (-1i32).to_ne_bytes());
     }
 }
+/* </TESTS> */

@@ -66,6 +66,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Per-device workarounds: `<dev/usb/usb_quirks.h>` and `dev/usb/usb_quirks.c`.
 //!
 //! Upstream: sys/dev/usb/usb_quirks.h @ 3ce1f3f79392, sys/dev/usb/usb_quirks.c @ 3ce1f3f79392
@@ -624,7 +625,9 @@ fn usbd_find_quirk_in(
 
     &USBD_NO_QUIRK
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -698,3 +701,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "UQ_", &ours);
     }
 }
+/* </TESTS> */

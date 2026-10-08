@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `cargo xtask e2fsck --arch A [--disk-set NAME] [--cat PATH=TEXT]...`: the host half of M10d's
 //! ext2fs exit criterion. The guest made an ext2 file system with OpenBSD's newfs_ext2fs(8)
 //! on partition `a` of `sd0` (`just smoke-ext2fs`); here e2fsprogs, an independent
@@ -210,7 +211,9 @@ pub fn e2fsck(root: &Path, arch: Arch, set: Option<&str>, cats: &[&str]) -> Resu
     println!("e2fsck {}: ok", arch.name());
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -327,3 +330,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

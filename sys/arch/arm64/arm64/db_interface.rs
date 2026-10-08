@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Interface to new debugger: `arch/arm64/arm64/db_interface.c`.
 //!
 //! Upstream: sys/arch/arm64/arm64/db_interface.c @ 3ce1f3f79392
@@ -519,3 +520,4 @@ pub fn db_machine_init() {
         ci.ci_ddb_paused.store(CI_DDB_RUNNING, Ordering::Relaxed);
     }
 }
+/* </CODE> */

@@ -18,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The PL011 on the device tree: `dev/fdt/pluart_fdt.c`.
 //!
 //! Upstream: sys/dev/fdt/pluart_fdt.c @ 3ce1f3f79392
@@ -135,3 +136,4 @@ pub fn pluart_fdt_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_v
 
     pluart_attach_common(sc, stdout_node() == faa.fa_node);
 }
+/* </CODE> */

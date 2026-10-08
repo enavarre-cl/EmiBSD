@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The arm64 half of acpi(4): `arch/arm64/arm64/acpi_machdep.c`. acpi0 attaches to the
 //! device tree node efiboot makes from the UEFI configuration table (`openbsd,acpi-5.0`,
 //! its `reg` the RSDP); the firmware tables are mapped with `km_alloc` and
@@ -270,3 +271,4 @@ pub unsafe fn acpi_intr_disestablish(cookie: NonNull<c_void>) {
 pub fn acpi_iommu_device_map(node: &AmlNodeRef, dmat: Option<BusDmaTag>) -> Option<BusDmaTag> {
     acpiiort_device_map(node, dmat)
 }
+/* </CODE> */

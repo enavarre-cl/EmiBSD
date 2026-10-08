@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Router advertisements and solicitations seen by a host, and route flushing:
 //! `netinet6/nd6_rtr.c`.
 //!
@@ -247,3 +248,4 @@ fn rt6_deleteroute(rt: &Rtentry, gate: &In6Addr, _id: u32) -> Result<(), Errno> 
 
     Err(Errno::EEXIST)
 }
+/* </CODE> */

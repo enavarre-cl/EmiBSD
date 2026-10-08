@@ -45,6 +45,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/disk.h>`: disk device structures (`struct disk`, `struct diskstats`) and the global
 //! list of disks.
 //!
@@ -287,7 +288,9 @@ pub struct DisklistHead(pub TailqHead<DiskList>);
 
 // SAFETY: the list changes under the kernel lock (`disk_attach`, `disk_detach`); one CPU here.
 unsafe impl Sync for DisklistHead {}
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,3 +325,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

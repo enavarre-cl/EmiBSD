@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The MS-DOS FAT file system: OpenBSD `sys/msdosfs/` (feature `msdosfs`, `option MSDOSFS`).
 //!
 //! Headers (types): `bootsect`, `bpb`, `denode`, `direntry`, `fat`, `msdosfsmount`. Files
@@ -16,3 +17,4 @@ pub mod msdosfs_lookup;
 pub mod msdosfs_vfsops;
 pub mod msdosfs_vnops;
 pub mod msdosfsmount;
+/* </CODE> */

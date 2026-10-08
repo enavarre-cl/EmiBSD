@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `cd9660_bmap`: the logical to physical block mapping of an ISO 9660 file, which is one
 //! contiguous extent on the disc.
 //!
@@ -87,7 +88,9 @@ pub fn cd9660_bmap(ap: &mut VopBmapArgs<'_>) -> Result<(), Errno> {
 
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,3 +129,4 @@ mod tests {
         assert_eq!(bmap(vp, 0).2, 31);
     }
 }
+/* </TESTS> */

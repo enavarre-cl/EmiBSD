@@ -47,6 +47,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `kern_rwlock.c`: the read/write lock, and the allocated, reference-counted rwlocks
 //! (`rw_obj_*`, the NetBSD Foundation block).
 //!
@@ -750,7 +751,9 @@ pub fn rw_obj_free(lock: &'static Rwlock) -> bool {
     pool_put(&RWLOCK_OBJ_POOL, NonNull::from(mo).cast::<u8>());
     true
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -792,3 +795,4 @@ mod tests {
         assert_eq!(rrw_status(&l), 0);
     }
 }
+/* </TESTS> */

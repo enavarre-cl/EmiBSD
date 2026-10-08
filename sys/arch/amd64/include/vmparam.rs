@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/vmparam.h>`: the virtual address space layout.
 //!
 //! Upstream: sys/arch/amd64/include/vmparam.h @ 3ce1f3f79392
@@ -90,7 +91,9 @@ pub const VM_PHYSSEG_MAX: usize = 16;
 pub const VM_PHYSSEG_STRAT: i32 = VM_PSTRAT_BIGFIRST;
 /// `VM_PHYSSEG_NOADD`: can't add RAM after `vm_mem_init`.
 pub const VM_PHYSSEG_NOADD: bool = true;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,3 +116,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

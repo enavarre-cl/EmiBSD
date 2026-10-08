@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `dev/pci/if_re_pci.c`: the PCI front-end of re(4) (`re* at pci?`): PCI/CardBus front-end
 //! for the Realtek 8169 and the 8139C+.
 //!
@@ -306,7 +307,9 @@ pub fn re_pci_activate(self_: &Device, act: i32) -> Result<(), Errno> {
     }
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,3 +324,4 @@ mod tests {
         assert!(!re_pci_probe_quirk(eg, 0, 0));
     }
 }
+/* </TESTS> */

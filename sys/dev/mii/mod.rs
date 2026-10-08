@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Media-independent interface PHYs: OpenBSD `sys/dev/mii/`.
 //!
 //! The mii(4) layer (`mii.c`, `mii_physubr.c`, `<dev/mii/mii.h>`, `<dev/mii/miivar.h>`), the
@@ -14,3 +15,4 @@ pub mod rgephyreg;
 pub mod rlphy;
 pub mod ukphy;
 pub mod ukphy_subr;
+/* </CODE> */

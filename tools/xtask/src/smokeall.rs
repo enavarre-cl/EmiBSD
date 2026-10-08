@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `xtask smoke-all`: the justfile's smoke recipes, several at a time.
 //!
 //! ```text
@@ -283,7 +284,9 @@ fn remove_boot_files(dir: &Path) {
         }
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,3 +368,4 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 }
+/* </TESTS> */

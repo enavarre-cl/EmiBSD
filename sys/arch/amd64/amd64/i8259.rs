@@ -71,6 +71,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The legacy 8259A interrupt controllers: `arch/amd64/amd64/i8259.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/i8259.c @ 3ce1f3f79392
@@ -230,3 +231,4 @@ fn i8259_setup(_pic: &Pic, ci: &CpuInfo, _pin: i32, _idtvec: i32, _type: i32) {
         i8259_reinit_irqs();
     }
 }
+/* </CODE> */

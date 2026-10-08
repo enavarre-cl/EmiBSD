@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/reg.h>`: the register sets `ptrace(2)` and the pcb use.
 //!
 //! Upstream: sys/arch/arm64/include/reg.h @ 3ce1f3f79392
@@ -63,3 +64,4 @@ impl Fpreg {
         }
     }
 }
+/* </CODE> */

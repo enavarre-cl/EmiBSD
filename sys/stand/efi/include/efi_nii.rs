@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/efi_nii.h 163898 2006-11-02 02:42:48Z marcel $ */
-
 /* <LICENSES> */
 /*++
 Copyright (c)  1999 - 2002 Intel Corporation. All rights reserved
@@ -25,6 +24,7 @@ Revision history:
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI network interface identifier protocol (NII).
 //!
 //! Upstream: sys/stand/efi/include/efi_nii.h @ 3ce1f3f79392
@@ -96,3 +96,4 @@ pub struct EfiNetworkInterfaceIdentifierInterface {
 }
 
 const _: () = assert!(core::mem::size_of::<EfiNetworkInterfaceIdentifierInterface>() == 40);
+/* </CODE> */

@@ -19,6 +19,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Kernel lock and mutexes: `kern/kern_lock.c`.
 //!
 //! Upstream: sys/kern/kern_lock.c @ 3ce1f3f79392
@@ -770,7 +771,9 @@ pub fn pc_cons_leave(pcl: &PcLock, genp: &mut u32) -> bool {
     *genp = generation;
     true
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,3 +830,4 @@ mod tests {
         assert_eq!(m.mtx_wantipl.get(), 5);
     }
 }
+/* </TESTS> */

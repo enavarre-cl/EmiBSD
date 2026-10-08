@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<sys/reboot.h>` for libsa and the boot programs: the `boothowto` flags and the
 //! `bootdev` encoding.
 
@@ -73,3 +74,4 @@ pub const fn makebootdev(ty: u32, adaptor: u32, controller: u32, unit: u32, part
         | (partition << B_PARTITIONSHIFT)
         | B_DEVMAGIC
 }
+/* </CODE> */

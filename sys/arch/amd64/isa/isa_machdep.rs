@@ -68,6 +68,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 ISA machine-dependent code: `arch/amd64/isa/isa_machdep.c`.
 //!
 //! Upstream: sys/arch/amd64/isa/isa_machdep.c @ 3ce1f3f79392
@@ -240,7 +241,9 @@ pub fn isa_attach_hook() {
         panic(format_args!("isaattach: ISA bus already seen!"));
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,3 +259,4 @@ mod tests {
         assert_eq!(isa_intr_alloc(core::ptr::null(), 0x18, IST_EDGE), Some(3));
     }
 }
+/* </TESTS> */

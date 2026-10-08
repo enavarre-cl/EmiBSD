@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The inode hash: the in-core inodes of every UFS mount, found by device and inode number
 //! (`ufs_ihashget`), so that a file has one vnode however it is reached.
 //!
@@ -216,3 +217,4 @@ pub fn ufs_ihashrem(ip: &Inode) {
     }
     // XXXLOCKING unlock hash list?
 }
+/* </CODE> */

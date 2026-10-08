@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The vt100 emulation's keyboard: the byte sequences of the function, editing, cursor and
 //! keypad keys, and of the characters (UTF-8 or the layout's 8-bit charset).
 //!
@@ -193,7 +194,9 @@ pub unsafe fn wsemul_vt100_translate(
         _ => &buf[..0],
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,3 +231,4 @@ mod tests {
         assert_eq!(tr(VTFL_APPLKEYPAD, KS_Shift_L), b"");
     }
 }
+/* </TESTS> */

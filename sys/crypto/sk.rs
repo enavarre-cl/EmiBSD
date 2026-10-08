@@ -49,6 +49,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The tables `des_set_key` builds the key schedule from (`des_skb[8][64]`: the PC2
 //! permutation split by the six-bit groups of the rotated key halves).
 //!
@@ -156,3 +157,4 @@ pub static DES_SKB: [[u32; 64]; 8] = [
         0x04042822,
     ],
 ];
+/* </CODE> */

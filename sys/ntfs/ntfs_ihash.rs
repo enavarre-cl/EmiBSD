@@ -63,6 +63,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The ntnode hash: the in-core MFT records of every NTFS mount, found by device and record
 //! number (`ntfs_nthashlookup`), so that a record has one ntnode however it is reached.
 //!
@@ -218,3 +219,4 @@ pub fn ntfs_nthashrem(ip: &Ntnode) {
     }
     // XXXLOCKING unlock hash list?
 }
+/* </CODE> */

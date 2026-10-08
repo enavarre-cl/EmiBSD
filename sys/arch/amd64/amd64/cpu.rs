@@ -65,6 +65,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 CPU attachment and per-CPU setup: `arch/amd64/amd64/cpu.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/cpu.c @ 3ce1f3f79392
@@ -1201,3 +1202,4 @@ pub unsafe fn cpu_hatch_entry(arg: usize) -> ! {
 pub unsafe fn cpu_hatch_entry(_arg: usize) -> ! {
     <crate::machine::Machine as crate::machine::cpu::Cpu>::halt()
 }
+/* </CODE> */

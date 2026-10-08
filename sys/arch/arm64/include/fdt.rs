@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/fdt.h>`: the device-tree attach arguments and the `fdt_intr_*` names.
 //!
 //! Upstream: sys/arch/arm64/include/fdt.h @ 3ce1f3f79392
@@ -66,3 +67,4 @@ pub struct FdtAttachArgs<'a> {
     /// `fa_scells`.
     pub fa_scells: i32,
 }
+/* </CODE> */

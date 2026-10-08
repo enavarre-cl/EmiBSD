@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Kernel thread handling: `kern/kern_kthread.c`.
 //!
 //! Upstream: sys/kern/kern_kthread.c @ 3ce1f3f79392
@@ -192,3 +193,4 @@ pub fn kthread_run_deferred_queue() {
     }
     let _ = ptr::null::<KthreadQ>();
 }
+/* </CODE> */

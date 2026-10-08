@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The virtio MMIO transport: `virtio* at fdt?`, the `virtio,mmio` nodes of a device tree
 //! (QEMU `virt` has 32 of them), legacy (version 1) and modern (version 2) register layouts.
 //!
@@ -630,7 +631,9 @@ pub fn virtio_mmio_intr_establish(
 ) -> Result<(), Errno> {
     Err(Errno::ENXIO)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -641,3 +644,4 @@ mod tests {
         assert_eq!(VIRTIO_MMIO_MAGIC, 0x7472_6976);
     }
 }
+/* </TESTS> */

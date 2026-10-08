@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `uvm_swap.c`: the swap system.
 //!
 //! Upstream: sys/uvm/uvm_swap.c @ 3ce1f3f79392
@@ -60,3 +61,4 @@ pub fn uvm_swapisfull() -> bool {
     kassert!(swpgonly <= swpages);
     swpgonly >= swpages * 99 / 100
 }
+/* </CODE> */

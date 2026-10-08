@@ -65,6 +65,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! ECN consideration on tunnel ingress/egress operation
 //! (<http://www.aciri.org/floyd/papers/draft-ipsec-ecn-00.txt>): `<netinet/ip_ecn.h>` and
 //! `netinet/ip_ecn.c`.
@@ -179,7 +180,9 @@ pub fn ip_tos_patch(ip: &mut Ip, tos: u8) {
         .wrapping_sub(u32::from(new));
     ip.ip_sum = x.wrapping_add(x >> 16) as u16;
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,3 +237,4 @@ mod tests {
         assert_eq!(in_cksum_buf(&ip), 0);
     }
 }
+/* </TESTS> */

@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 stack traces for `ddb(4)`: `arch/arm64/arm64/db_trace.c`.
 //!
 //! Upstream: sys/arch/arm64/arm64/db_trace.c @ 3ce1f3f79392
@@ -145,3 +146,4 @@ pub fn db_stack_trace_print(addr: usize, have_addr: bool, count: usize, modif: &
         count -= 1;
     }
 }
+/* </CODE> */

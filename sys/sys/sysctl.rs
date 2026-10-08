@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Definitions for the `sysctl(2)` call: `<sys/sysctl.h>`. The name of an object is a sequence of
 //! integers, read like a path: the meaning of each component depends on its place in the
 //! hierarchy. The top-level, `kern` and `hw` identifiers are here; the others are in their
@@ -1342,7 +1343,9 @@ const _: () = {
     assert!(CTL_KERN_NAMES.len() == KERN_AUTOCONF_SERIAL as usize + 1);
     assert!(CTL_HW_NAMES.len() == HW_BLOCKCPU as usize + 1);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1436,3 +1439,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

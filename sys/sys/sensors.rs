@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/sensors.h>`: hardware sensors (`hw.sensors`): the user-visible `struct sensor` and
 //! `struct sensordev` that `sysctl(2)` copies out, and the kernel's `struct ksensor` and
 //! `struct ksensordev` that drivers attach. The functions live in `kern/kern_sensors.rs`.
@@ -349,7 +350,9 @@ const _: () = {
     assert!(core::mem::size_of::<Sensordev>() == 4 + 16 + 4 * SENSOR_MAX_TYPES + 4);
     assert!(SENSOR_MAX_TYPES == 23);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,3 +373,4 @@ mod tests {
         assert_eq!(core::mem::size_of::<Sensordev>(), 116);
     }
 }
+/* </TESTS> */

@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `com(4)` on the ISA bus: `dev/isa/com_isa.c`.
 //!
 //! Upstream: sys/dev/isa/com_isa.c @ 3ce1f3f79392
@@ -178,3 +179,4 @@ pub fn com_isa_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void
         sc.sc_ih.set(ih.map_or(ptr::null_mut(), |ih| ih.as_ptr()));
     }
 }
+/* </CODE> */

@@ -69,6 +69,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `PF_KEY` message validation: `net/pfkeyv2_parsemessage.c`. Checks a message from userland
 //! (lengths, types, which extensions each message may and must carry, the contents of each
 //! extension) and fills `headers[]` with a pointer per extension; also the tables of the
@@ -1082,3 +1083,4 @@ fn parse_extension(sadb_msg: &SadbMsg, t: u16, ext: &[u8]) -> Result<(), Errno> 
 }
 
 const _: () = assert!(offset_of!(SadbExt, sadb_ext_type) == 2);
+/* </CODE> */

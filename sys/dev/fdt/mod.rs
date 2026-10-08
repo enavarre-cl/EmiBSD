@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Device-tree attachments of the generic drivers: OpenBSD `sys/dev/fdt/`.
 //!
 //! `pluart_fdt` finds the console PL011 (M4); the rest attach with autoconfiguration:
@@ -14,3 +15,4 @@ pub mod psci;
 pub mod pscivar;
 pub mod simplefb;
 pub mod virtio_mmio;
+/* </CODE> */

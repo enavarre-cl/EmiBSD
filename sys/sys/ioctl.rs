@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/ioctl.h>`: the `ioctl(2)` commands, which the header gathers from `<sys/ttycom.h>`,
 //! `<sys/filio.h>` and `<sys/sockio.h>`.
 //!
@@ -83,7 +84,9 @@ pub fn ioctl_ret<T: AbiPod>(data: &mut [u8], v: &T) {
         };
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,3 +110,4 @@ mod tests {
         assert_eq!(short, [1, 1]);
     }
 }
+/* </TESTS> */

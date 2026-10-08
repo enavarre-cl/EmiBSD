@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Network interfaces, routing and the link layer: OpenBSD `sys/net/`.
 //!
 //! Headers become modules as in `sys/sys` (`if_types.h` → `if_types.rs`), and a `.c` file
@@ -47,3 +48,4 @@ pub mod rtsock;
 pub mod toeplitz;
 pub mod wg_cookie;
 pub mod wg_noise;
+/* </CODE> */

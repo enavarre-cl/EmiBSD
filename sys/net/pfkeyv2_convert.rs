@@ -93,6 +93,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Conversions between `PF_KEY` extensions and the kernel's IPsec state:
 //! `net/pfkeyv2_convert.c`. The `import_*` functions set a TDB (or a flow, an
 //! `ipsecinit`) up from a message's extensions; the `export_*` functions write a TDB's state
@@ -1266,3 +1267,4 @@ pub unsafe fn export_counter(p: &mut *mut u8, tdb: &Tdb) {
     // SAFETY: the caller's contract.
     unsafe { put_adv(p, scnt) };
 }
+/* </CODE> */

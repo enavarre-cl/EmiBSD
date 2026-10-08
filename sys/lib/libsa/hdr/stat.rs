@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<sys/stat.h>` for libsa: the mode bits and `struct stat`, as far as the standalone file
 //! systems fill it.
 
@@ -56,3 +57,4 @@ pub struct Stat {
     /// `st_size`: file size, in bytes.
     pub st_size: Off,
 }
+/* </CODE> */

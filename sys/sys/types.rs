@@ -71,6 +71,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Kernel-wide scalar types: `<sys/types.h>` together with `<sys/_types.h>`.
 //!
 //! Upstream: sys/sys/types.h @ 3ce1f3f79392
@@ -293,7 +294,9 @@ pub const fn minor(dev: Dev) -> u32 {
 pub const fn makedev(major: u32, minor: u32) -> Dev {
     (((major & 0xff) << 8) | (minor & 0xff) | ((minor & 0x00ff_ff00) << 8)) as Dev
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -342,3 +345,4 @@ mod tests {
         assert_eq!(Vaddr::default(), Vaddr(0));
     }
 }
+/* </TESTS> */

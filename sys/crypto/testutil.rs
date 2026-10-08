@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Host test helpers for `sys/crypto`: the known-answer vectors are written as hex strings,
 //! and the reference-backed tests read the constant tables of the C files.
 
@@ -74,3 +75,4 @@ pub(crate) fn serial() -> MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
     LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
+/* </CODE> */

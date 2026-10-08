@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/exec_elf.h>`: the ELF ABI header file, formerly known as "elf_abi.h".
 //!
 //! Upstream: sys/sys/exec_elf.h @ 3ce1f3f79392
@@ -355,3 +356,4 @@ const _: () = {
     assert!(size_of::<Aux64Info>() == 16);
     assert!(ELF_AUX_WORDS == 24);
 };
+/* </CODE> */

@@ -1,5 +1,6 @@
 /*	$OpenBSD: uvmexp.h,v 1.27 2026/03/08 17:06:10 deraadt Exp $	*/
 
+/* <CODE> */
 //! The exported VM statistics: `<uvm/uvmexp.h>` (which carries no licence block of its own
 //! upstream; it was split out of `uvm_extern.h`).
 //!
@@ -353,3 +354,4 @@ const _: () = {
     // `struct uvmexp` is 86 `int`s.
     assert!(core::mem::size_of::<UvmexpCopy>() == 86 * 4);
 };
+/* </CODE> */

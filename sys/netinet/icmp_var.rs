@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Variables related to this implementation of the internet control message protocol:
 //! `<netinet/icmp_var.h>`.
 //!
@@ -174,7 +175,9 @@ pub fn icmpstat_inc_hist(hist: IcmpstatCounters, type_: u8) {
 
 // The counters are the structure's words.
 const _: () = assert!(size_of::<Icmpstat>() == ICPS_NCOUNTERS * size_of::<u64>());
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,3 +214,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

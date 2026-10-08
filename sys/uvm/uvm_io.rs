@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `uvm_io.c`: uvm i/o ops, reading another address space through `kernel_map`.
 //!
 //! Upstream: sys/uvm/uvm_io.c @ 3ce1f3f79392
@@ -130,3 +131,4 @@ pub fn uvm_io(map: &VmMap, uio: &mut Uio<'_>, flags: i32) -> Result<(), Errno> {
 
     Ok(())
 }
+/* </CODE> */

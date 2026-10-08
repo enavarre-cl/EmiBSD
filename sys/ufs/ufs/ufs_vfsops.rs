@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The file-system-type operations the UFS file systems share: `ufs_start`, `ufs_root`,
 //! `ufs_check_export`, `ufs_init` and the generic half of `fhtovp`.
 //!
@@ -125,3 +126,4 @@ pub fn ufs_fhtovp(mp: &'static Mount, ufhp: &Ufid) -> Result<&'static Vnode, Err
     }
     Ok(nvp)
 }
+/* </CODE> */

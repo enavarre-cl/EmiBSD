@@ -97,6 +97,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The ISA bus's shared definitions: `<dev/isa/isavar.h>`.
 //!
 //! Upstream: sys/dev/isa/isavar.h @ 3ce1f3f79392
@@ -400,7 +401,9 @@ pub fn cf_drq2(cf: &Cfdata) -> i64 {
 }
 
 // ISABUS_DMA_32BIT (BUS_DMA_BUS1): NISADMA > 0.
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -424,3 +427,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

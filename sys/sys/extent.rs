@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/extent.h>`: the general purpose extent manager's types and flags (`extent(9)`).
 //!
 //! Upstream: sys/sys/extent.h @ 3ce1f3f79392
@@ -173,3 +174,4 @@ pub const EX_NOBOUNDARY: u64 = 0;
 pub const fn extent_fixed_storage_size(nregions: usize) -> usize {
     align(size_of::<ExtentFixed>()) + align(size_of::<ExtentRegion>()) * nregions
 }
+/* </CODE> */

@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Safe memory reclamation: `kern/kern_smr.c`, see `smr_call(9)`. A CPU passes a quiescent
 //! state each time it switches threads or idles (`smr_idle`); the SMR thread runs the
 //! deferred calls once a grace period has made every CPU pass one (`smr_grace_wait`).
@@ -346,7 +347,9 @@ pub fn smr_barrier_impl(expedite: bool) {
     cond_wait(&c, "smrbar");
     // TRACEPOINT(smr, barrier_exit, ...): dt(4), not configured.
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,3 +383,4 @@ mod tests {
         assert_eq!(spc.spc_smrgp.load(Ordering::Relaxed), 5);
     }
 }
+/* </TESTS> */

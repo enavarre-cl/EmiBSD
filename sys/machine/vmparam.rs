@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/vmparam.h>` as a trait: the virtual address space layout and the physical segment
 //! policy of each architecture.
 //!
@@ -41,3 +42,4 @@ pub trait VmParam {
     /// `VM_MIN_STACK_ADDRESS`: the lowest address the stack may be placed at.
     const VM_MIN_STACK_ADDRESS: usize;
 }
+/* </CODE> */

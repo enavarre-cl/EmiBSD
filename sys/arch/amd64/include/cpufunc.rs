@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/cpufunc.h>`: access to the x86 instructions the kernel needs.
 //!
 //! Upstream: sys/arch/amd64/include/cpufunc.h @ 3ce1f3f79392
@@ -334,3 +335,4 @@ pub unsafe fn lcr8(val: u64) {
     // SAFETY: the caller's guarantee.
     unsafe { asm!("mov cr8, {}", in(reg) val, options(nomem, nostack, preserves_flags)) };
 }
+/* </CODE> */

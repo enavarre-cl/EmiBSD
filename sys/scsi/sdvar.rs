@@ -47,6 +47,8 @@
  * Ported to run under 386BSD by Julian Elischer (julian@dialix.oz.au) Sept 1992
  */
 /* </LICENSES> */
+
+/* <CODE> */
 //! The softc of sd(4), the SCSI disk driver (`sd.rs`).
 //!
 //! Upstream: sys/scsi/sdvar.h @ 3ce1f3f79392
@@ -162,3 +164,4 @@ impl SdSoftc {
 // and a free mutex; `scsiconf.rs`), and the other members are `Cell`s of an integer, an
 // `Option` of a reference or a structure of integers.
 unsafe impl Softc for SdSoftc {}
+/* </CODE> */

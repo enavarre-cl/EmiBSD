@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `xtask`: host-side developer tooling for EmiBSD.
 //!
 //! Invoked through the cargo alias in `.cargo/config.toml`:
@@ -518,10 +519,8 @@ fn is_rust_path_under_sys(p: &str) -> bool {
 /// Files that are structure, not ports: never need a `ports.toml` entry.
 fn is_structural(rel: &str) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel);
-    matches!(
-        name,
-        "mod.rs" | "lib.rs" | "main.rs" | "build.rs"
-    ) || rel.starts_with("sys/machine/")
+    matches!(name, "mod.rs" | "lib.rs" | "main.rs" | "build.rs")
+        || rel.starts_with("sys/machine/")
         || rel.starts_with("sys/arch/host/")
         || rel.starts_with("sys/stand/")
 }
@@ -732,7 +731,10 @@ fn check_layout(root: &Path, ports: &Ports, errors: &mut Vec<String>) -> Result<
             ));
             continue;
         }
-        let lic = policy.get(rel.as_str()).copied().unwrap_or(Licenses::Forbidden);
+        let lic = policy
+            .get(rel.as_str())
+            .copied()
+            .unwrap_or(Licenses::Forbidden);
         let src = fs::read_to_string(f).map_err(|e| format!("{rel}: {e}"))?;
         let found = layout::check(&rel, &src, lic);
         if none.contains(rel.as_str()) && src.lines().any(|l| l == "/* <LICENSES> */") {
@@ -890,7 +892,9 @@ fn git(repo: &Path, args: &[&str]) -> Result<String> {
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -937,3 +941,4 @@ mod tests {
         assert!(flags(&["--arch", "amd64"], "--reject").is_empty());
     }
 }
+/* </TESTS> */

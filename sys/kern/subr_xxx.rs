@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Miscellaneous trivial functions, including many that are often inline-expanded or done
 //! in assembler: `kern/subr_xxx.c`.
 //!
@@ -132,7 +133,9 @@ pub fn assertwaitok() {
     #[cfg(not(feature = "diagnostic"))]
     let _ = Machine::curcpu_mutex_level;
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,3 +161,4 @@ mod tests {
         assert_eq!(enxio(), Err(Errno::ENXIO));
     }
 }
+/* </TESTS> */

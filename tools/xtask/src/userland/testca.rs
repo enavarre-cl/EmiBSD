@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The ramdisk's TLS trust (M9+): `/etc/ssl/cert.pem`, LibreSSL's default CA bundle
 //! (`lib/libcrypto/cert.pem`, what OpenBSD's `distribution` target installs), and
 //! `/etc/ssl/emibsd-test-ca.pem`, the certificate of a test CA made here once, so that
@@ -212,3 +213,4 @@ pub(super) fn ssl_files(ctx: &Ctx<'_>) -> Result<Vec<(&'static str, PathBuf)>> {
         ("emibsd-test-ca.pem", ca.join("ca.pem")),
     ])
 }
+/* </CODE> */

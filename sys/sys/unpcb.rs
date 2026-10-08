@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Protocol control block for an active instance of a UNIX internal protocol:
 //! `<sys/unpcb.h>`.
 //!
@@ -205,7 +206,9 @@ pub struct Fdpass {
     /// `flags`.
     pub flags: i32,
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,3 +223,4 @@ mod tests {
         assert_complete(&defs, "UNP_", &unp);
     }
 }
+/* </TESTS> */

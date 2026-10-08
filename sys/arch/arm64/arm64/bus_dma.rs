@@ -56,6 +56,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `bus_dma(9)`: the common DMA map and DMA memory functions every arm64 bus tag uses,
 //! `arch/arm64/arm64/bus_dma.c`.
 //!
@@ -1094,3 +1095,4 @@ pub fn _dmamem_alloc_range(
 
     Ok(curseg + 1)
 }
+/* </CODE> */

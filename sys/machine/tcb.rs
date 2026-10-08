@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/tcb.h>` as a trait: the kernel side of the thread control block, the per-thread
 //! pointer through which user space reaches its thread-local storage (`FS.base` on amd64,
 //! `TPIDR_EL0` on arm64).
@@ -39,3 +40,4 @@ pub fn tcb_set(p: &Proc, addr: usize) {
 pub fn tcb_invalid(addr: usize) -> bool {
     Machine::tcb_invalid(addr)
 }
+/* </CODE> */

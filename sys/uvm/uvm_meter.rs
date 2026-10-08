@@ -37,6 +37,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! UVM's statistics and its sysctl tree (`CTL_VM`): `uvm/uvm_meter.c`.
 //!
 //! Upstream: sys/uvm/uvm_meter.c @ 3ce1f3f79392
@@ -391,7 +392,9 @@ pub fn uvmexp_print(pr: PrFn) {
         UVM.kernel_object.get()
     ));
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -420,3 +423,4 @@ mod tests {
         assert!(uvmexp_read().fltanget > before);
     }
 }
+/* </TESTS> */

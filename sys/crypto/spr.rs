@@ -49,6 +49,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The combined S-box and P-permutation tables of the DES round function
 //! (`des_SPtrans[8][64]`), rotated one bit to the right so that the initial rotation of the
 //! data is done outside the round loop.
@@ -157,3 +158,4 @@ pub static DES_SPTRANS: [[u32; 64]; 8] = [
         0x00208020,
     ],
 ];
+/* </CODE> */

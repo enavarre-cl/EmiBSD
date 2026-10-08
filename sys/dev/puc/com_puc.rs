@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `com(4)` on `puc(4)`: `dev/puc/com_puc.c`.
 //!
 //! Upstream: sys/dev/puc/com_puc.c @ 3ce1f3f79392
@@ -124,7 +125,9 @@ pub fn com_puc_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void
 pub fn com_puc_detach(self_: &Device, flags: i32) -> Result<(), Errno> {
     com_detach(self_, flags)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,3 +147,4 @@ mod tests {
         assert!(puc_is_com(PUC_PORT_COM) && !puc_is_com(PUC_PORT_LPT));
     }
 }
+/* </TESTS> */

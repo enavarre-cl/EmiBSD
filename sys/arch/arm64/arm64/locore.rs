@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `arch/arm64/arm64/locore.S`, pulled in from the `.S` file next to this module (the file
 //! keeps OpenBSD's licence block and layout; `{NAME}` placeholders are what `assym.h`,
 //! `<machine/armreg.h>`, `<machine/hypervisor.h>` and `<sys/syscall.h>` provide in C).
@@ -191,3 +192,4 @@ unsafe extern "C" fn cpu_hatch_bootarg(ci: *const CpuInfo) -> ! {
     // processor (`cpu_start_secondary`), as `cpu_hatch_entry` requires.
     unsafe { cpu_hatch_entry(ci as usize) }
 }
+/* </CODE> */

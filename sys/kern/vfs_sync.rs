@@ -37,6 +37,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The syncer daemon (`update`): a wheel of `SYNCER_MAXDELAY` worklists of vnodes with dirty
 //! buffers, one turned per second, each vnode's `VOP_FSYNC(MNT_LAZY)` run when its slot comes
 //! up; and the syncer vnode each writable mount gets, whose lazy `fsync` syncs the mount.
@@ -383,7 +384,9 @@ pub fn sync_print(_ap: &mut VopPrintArgs) -> Result<(), Errno> {
 
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use std::assert;
@@ -421,3 +424,4 @@ mod tests {
         assert!(!on_slot(base + max - 2, vp));
     }
 }
+/* </TESTS> */

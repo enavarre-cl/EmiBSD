@@ -41,6 +41,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The Ethernet layer of the standalone network code: send a packet with an Ethernet
 //! header in front, receive one addressed to us or to the broadcast address.
 //!
@@ -148,7 +149,9 @@ pub fn ether_sprintf(ap: &[u8; 6]) -> NetStr<17> {
     }
     NetStr::new(etherbuf, 0)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,3 +162,4 @@ mod tests {
         assert_eq!(s.as_bytes(), b"52:54:00:12:34:af");
     }
 }
+/* </TESTS> */

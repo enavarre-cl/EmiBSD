@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The kernel's 32-bit entry from boot(8) (efiboot): `arch/amd64/amd64/locore0.S`, pulled in
 //! from the `.S` file next to this module (the file keeps OpenBSD's licence blocks and layout;
 //! `{NAME}` placeholders are what `assym.h` and the headers provide in C).
@@ -184,3 +185,4 @@ const _: () = {
     // The bootstrap tables are mapped through the same level-1 pages as the image.
     assert!(TABLESIZE.is_multiple_of(NBPG));
 };
+/* </CODE> */

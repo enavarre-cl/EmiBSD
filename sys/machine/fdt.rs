@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/fdt.h>` as a trait: what the device-tree drivers need from the machine.
 //!
 //! On OpenBSD arm64 `<machine/fdt.h>` declares `fdt_find_cons`, `stdout_node`, `stdout_speed`
@@ -250,3 +251,4 @@ pub fn fdt_attach_args_public_members(
         fa.fa_scells,
     )
 }
+/* </CODE> */

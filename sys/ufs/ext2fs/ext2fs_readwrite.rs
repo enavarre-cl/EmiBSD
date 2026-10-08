@@ -35,6 +35,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! ext2fs file reading and writing through the buffer cache: `ext2fs_read` (by the block
 //! pointers, `ext2_ind_read`, or by the extent tree, `ext4_ext_read`) and `ext2fs_write`.
 //!
@@ -430,3 +431,4 @@ pub fn ext2fs_write(ap: &mut VopWriteArgs<'_, '_>) -> Result<(), Errno> {
     uio.uio_resid = (uio.uio_resid as isize + overrun) as usize;
     error
 }
+/* </CODE> */

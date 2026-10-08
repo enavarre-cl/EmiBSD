@@ -94,6 +94,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Stand-alone file reading package for FFS2 (`struct ufs2_dinode`).
 //!
 //! Upstream: sys/lib/libsa/ufs2.c @ 3ce1f3f79392, sys/lib/libsa/ufs2.h @ 3ce1f3f79392
@@ -204,3 +205,4 @@ pub fn ufs2_readdir(f: &mut OpenFile, name: Option<&mut [u8]>) -> Result<(), Err
 pub fn ufs2_fchmod(f: &mut OpenFile, mode: Mode) -> Result<(), Errno> {
     Ufs::<Ufs2Dinode>::fchmod(f, mode)
 }
+/* </CODE> */

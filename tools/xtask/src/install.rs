@@ -1,3 +1,4 @@
+/* <CODE> */
 //! M14c: the install media and the install run (`cargo xtask miniroot`, `sets`,
 //! `install-media`, `install`, `install-boot`). See docs/ARCHITECTURE.md, "The install media".
 //!
@@ -545,7 +546,9 @@ pub(crate) fn install_boot(root: &Path, args: &[&str]) -> Result<()> {
     println!("xtask: install-boot {}: ok", arch.name());
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,3 +566,4 @@ mod tests {
         assert_eq!(other_sd("sd1"), "sd0");
     }
 }
+/* </TESTS> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The operations of a dead vnode (`dead_vops`): what `vclean` leaves behind when it revokes
 //! a vnode from its file system. Opens fail as if the device did not exist, reads return
 //! EOF (ttys) or `EIO`, most other operations `EBADF`, and the operations that may race with
@@ -232,3 +233,4 @@ pub fn chkvnlock(vp: &'static Vnode) -> bool {
     mtx_leave(&VNODE_MTX);
     locked
 }
+/* </CODE> */

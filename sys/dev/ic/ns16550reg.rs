@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! NS16550 (and above) UART registers: `<dev/ic/ns16550reg.h>`.
 //!
 //! Upstream: sys/dev/ic/ns16550reg.h @ 3ce1f3f79392
@@ -77,3 +78,4 @@ pub const COM_SCRATCH: BusSize = 7;
 pub const COM_USR: BusSize = 31;
 /// Component parameter register (R).
 pub const COM_CPR: BusSize = 61;
+/* </CODE> */

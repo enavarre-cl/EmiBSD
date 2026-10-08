@@ -57,6 +57,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The `com(4)` driver's private header: `<dev/ic/comvar.h>`, what `com.c` shares with its bus
 //! front-ends (`com_isa`, `com_pci`, `com_acpi`, `com_fdt`, `commulti`).
 //!
@@ -259,7 +260,9 @@ pub struct ComSoftc {
 // pointer, an `Option` of a reference, handle or function, or a `Timeout`, all of which are
 // valid all-zero (the `Option`s are `None`, the tag an arbitrary but valid space).
 unsafe impl Softc for ComSoftc {}
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,3 +304,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

@@ -42,6 +42,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `uvm_unix.c`: traditional sbrk/grow interface to vm.
 //!
 //! Upstream: sys/uvm/uvm_unix.c @ 3ce1f3f79392
@@ -408,3 +409,4 @@ pub fn uvm_coredump_walkmap(
 
     error
 }
+/* </CODE> */

@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/ic/mc6845reg.h>`: the registers of the Motorola 6845 CRT controller, as the PC
 //! display adapters (MDA, CGA, EGA, VGA) carry it.
 //!
@@ -102,7 +103,9 @@ pub struct RegMc6845 {
 pub const MC6845_INDEX: usize = 4;
 /// `MC6845_DATA`: the data port.
 pub const MC6845_DATA: usize = 5;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use core::mem::{offset_of, size_of};
@@ -127,3 +130,4 @@ mod tests {
         crate::reftest::assert_defines!(defs; MC6845_INDEX, MC6845_DATA);
     }
 }
+/* </TESTS> */

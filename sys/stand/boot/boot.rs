@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! boot(8)'s main loop: probe the machine, print the banner, run `/etc/boot.conf`, prompt
 //! `boot>`, seed the random generator, load the kernel and start it.
 //!
@@ -318,3 +319,4 @@ pub fn loadrandom(cmd: &CmdState, name: &[u8], buf: &mut [u8]) -> i32 {
     let _ = close(fd);
     error
 }
+/* </CODE> */

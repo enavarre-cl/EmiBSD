@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! efi(4) on arm64: the UEFI runtime services, mapped into a pmap of their own, and the
 //! time-of-day clock they provide (`GetTime`/`SetTime`). Under QEMU with EDK2 this is the
 //! machine's clock: the firmware keeps the PL031 for itself and disables its device-tree node,
@@ -561,3 +562,4 @@ pub fn efi_settime(handle: &TodrChipHandle, tv: &mut Timeval) -> Result<(), Errn
     }
     Ok(())
 }
+/* </CODE> */

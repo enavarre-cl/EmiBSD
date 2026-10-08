@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/efipxebc.h 163898 2006-11-02 02:42:48Z marcel $ */
-
 /* <LICENSES> */
 /*++
 
@@ -27,6 +26,7 @@ Revision History
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI PXE base code protocol.
 //!
 //! Upstream: sys/stand/efi/include/efipxebc.h @ 3ce1f3f79392
@@ -656,3 +656,4 @@ const _: () = assert!(core::mem::size_of::<EfiPxeBaseCodeDiscoverInfo>() == 44);
 const _: () = assert!(core::mem::size_of::<EfiPxeBaseCodeMtftpInfo>() == 24);
 const _: () = assert!(core::mem::size_of::<EfiPxeBaseCodeMode>() == 10424);
 const _: () = assert!(core::mem::size_of::<EfiPxeBaseCode>() == 112);
+/* </CODE> */

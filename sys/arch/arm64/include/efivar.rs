@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/efivar.h>`: the efi(4) softc.
 //!
 //! Upstream: sys/arch/arm64/include/efivar.h @ 3ce1f3f79392
@@ -60,3 +61,4 @@ pub struct EfiSoftc {
 // SAFETY: `#[repr(C)]` with the `struct device` first; the other fields are `Cell`s of raw
 // pointers and an integer, all valid as zero.
 unsafe impl Softc for EfiSoftc {}
+/* </CODE> */

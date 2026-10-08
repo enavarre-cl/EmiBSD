@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `syscall.c`: the `svc` system call entry and the child's first return.
 //!
 //! Upstream: sys/arch/arm64/arm64/syscall.c @ 3ce1f3f79392
@@ -110,3 +111,4 @@ pub fn child_return(arg: *mut c_void) {
 
     mi_child_return(p);
 }
+/* </CODE> */

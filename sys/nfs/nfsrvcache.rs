@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<nfs/nfsrvcache.h>`: definitions for the server recent request cache.
 //!
 //! Upstream: sys/nfs/nfsrvcache.h @ 3ce1f3f79392
@@ -171,7 +172,9 @@ queue_adapter!(
     /// `LIST_HEAD(nfsrvhash, nfsrvcache)`: a hash chain of the cache, through `rc_hash`.
     pub RcHash: NfsrvCache, rc_hash => ListEntry<NfsrvCache>
 );
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,3 +204,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

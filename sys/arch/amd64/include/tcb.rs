@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/tcb.h>`: the thread control block, which user space reaches through the
 //! `%fs` segment base.
 //!
@@ -36,3 +37,4 @@
 pub const fn tcb_invalid(addr: usize) -> bool {
     addr > 0x0000_7fff_ffff_ffff
 }
+/* </CODE> */

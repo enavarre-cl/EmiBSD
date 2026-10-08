@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Resource limits and usage: `kern/kern_resource.c`.
 //!
 //! Upstream: sys/kern/kern_resource.c @ 3ce1f3f79392
@@ -853,3 +854,4 @@ fn curproc_ref() -> &'static Proc {
         None => crate::kern::subr_prf::panic(format_args!("kern_resource: no curproc")),
     }
 }
+/* </CODE> */

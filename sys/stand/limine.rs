@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The Limine boot protocol, base revision 6: the subset of features this kernel asks for.
 //!
 //! Written from the protocol specification, `PROTOCOL.md` and `include/limine.h` of
@@ -690,3 +691,4 @@ impl ModuleResponse {
         })
     }
 }
+/* </CODE> */

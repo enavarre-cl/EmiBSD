@@ -18,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<msdosfs/bpb.h>`: the BIOS Parameter Block (BPB) of DOS 3.3, 5.0 and 7.10 (FAT32), in
 //! core and as it lies on the disk, the FAT32 FSInfo block, and the little-endian accessors
 //! `getushort`/`getulong`/`putushort`/`putulong`.
@@ -369,7 +370,9 @@ const _: () = {
     assert!(core::mem::offset_of!(Fsinfo, fsinfree) == 488);
     assert!(core::mem::offset_of!(Fsinfo, fsisig3) == 508);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -397,3 +400,4 @@ mod tests {
         assert_eq!(sector[11 + 5], 2);
     }
 }
+/* </TESTS> */

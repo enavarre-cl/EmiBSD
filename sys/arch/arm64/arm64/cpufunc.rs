@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 TLB and cache maintenance: `arch/arm64/arm64/cpufunc_asm.S`.
 //!
 //! Upstream: sys/arch/arm64/arm64/cpufunc_asm.S @ 3ce1f3f79392
@@ -259,3 +260,4 @@ pub fn cpu_icache_sync_range(va: usize, len: usize) {
     // SAFETY: barriers.
     unsafe { asm!("dsb ish", "isb", options(nostack, preserves_flags)) };
 }
+/* </CODE> */

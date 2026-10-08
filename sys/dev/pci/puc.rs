@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `puc*`: the PCI "universal" communication card driver, which glues `com(4)` and `lpt(4)`
 //! ports to PCI through the bridge chips that are often larger than the devices behind them
 //! (`puc* at pci?`, `com* at puc?`).
@@ -496,7 +497,9 @@ pub fn puc_pci_xr17v35x_intr(arg: *mut c_void) -> i32 {
 
     1
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -540,3 +543,4 @@ mod tests {
         assert_eq!(puc_port_type_name(1), Some("lpt"));
     }
 }
+/* </TESTS> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/armreg.h>`: the system registers' bit definitions.
 //!
 //! Upstream: sys/arch/arm64/include/armreg.h @ 3ce1f3f79392
@@ -1443,7 +1444,9 @@ pub const SCTLR_BT0: u64 = 0x0000_0008_0000_0000;
 pub const SCTLR_BT1: u64 = 0x0000_0010_0000_0000;
 /// `SCTLR_EPAN`: enhanced PAN.
 pub const SCTLR_EPAN: u64 = 0x0200_0000_0000_0000;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1481,3 +1484,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

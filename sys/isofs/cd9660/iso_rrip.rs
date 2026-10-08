@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<isofs/cd9660/iso_rrip.h>`: the Rock Ridge analysis flags (`ISO_SUSP_*`, which System
 //! Use Sharing Protocol entries an analysis still looks for or found) and the analysis state
 //! (`ISO_RRIP_ANALYZE`).
@@ -134,7 +135,9 @@ impl<'a> IsoRripAnalyze<'a> {
         }
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,3 +170,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

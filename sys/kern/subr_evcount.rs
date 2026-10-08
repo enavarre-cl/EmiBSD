@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Event counters: `kern/subr_evcount.c`.
 //!
 //! Upstream: sys/kern/subr_evcount.c @ 3ce1f3f79392
@@ -225,7 +226,9 @@ pub fn evcount_sysctl(
         _ => Err(Errno::EOPNOTSUPP),
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,3 +275,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/efidef.h 279038 2015-02-20 01:40:55Z imp $ */
-
 /* <LICENSES> */
 /*++
 
@@ -28,6 +27,7 @@ Revision History
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI base definitions: GUID, time, network addresses, memory types and the memory descriptor.
 //!
 //! Upstream: sys/stand/efi/include/efidef.h @ 3ce1f3f79392
@@ -275,7 +275,9 @@ const _: () = assert!(core::mem::size_of::<EfiIpv4Address>() == 4);
 const _: () = assert!(core::mem::size_of::<EfiIpv6Address>() == 16);
 const _: () = assert!(core::mem::size_of::<EfiMacAddress>() == 32);
 const _: () = assert!(core::mem::size_of::<EfiMemoryDescriptor>() == 40);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,3 +297,4 @@ mod tests {
         assert_eq!((g.Data1, g.Data2, g.Data3, g.Data4[7]), (1, 2, 3, 11));
     }
 }
+/* </TESTS> */

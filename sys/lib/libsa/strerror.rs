@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `strerror()`: the message of an error number.
 //!
 //! Upstream: sys/lib/libsa/strerror.c @ 3ce1f3f79392
@@ -80,7 +81,9 @@ pub fn strerror(err: Errno) -> StrError {
         Errno(code) => return StrError::Unknown(code),
     })
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,3 +99,4 @@ mod tests {
         assert_eq!(strerror(Errno(42)).to_string(), "Unknown error: code 42");
     }
 }
+/* </TESTS> */

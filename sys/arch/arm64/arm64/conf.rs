@@ -30,6 +30,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64's device switch tables: `arch/arm64/arm64/conf.c`.
 //!
 //! Upstream: sys/arch/arm64/arm64/conf.c @ 3ce1f3f79392
@@ -465,3 +466,4 @@ pub fn iszerodev(dev: Dev) -> bool {
 pub fn getnulldev() -> Dev {
     makedev(MEM_NO, 2)
 }
+/* </CODE> */

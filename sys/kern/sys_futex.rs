@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `futex(2)`: `kern/sys_futex.c`.
 //!
 //! Upstream: sys/kern/sys_futex.c @ 3ce1f3f79392
@@ -522,3 +523,4 @@ fn futex_wake(
     retval[0] = count as Register;
     Ok(())
 }
+/* </CODE> */

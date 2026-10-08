@@ -30,6 +30,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/_time.h>`: the clock ids, `struct itimerspec` and the `__CLOCK_*` encoding of a
 //! thread's CPU clock.
 //!
@@ -97,7 +98,9 @@ impl Itimerspec {
 pub const TIMER_RELTIME: i32 = 0x0;
 /// `TIMER_ABSTIME`: absolute timer.
 pub const TIMER_ABSTIME: i32 = 0x1;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,3 +112,4 @@ mod tests {
         assert_eq!(clock_ptid(c), 100_123);
     }
 }
+/* </TESTS> */

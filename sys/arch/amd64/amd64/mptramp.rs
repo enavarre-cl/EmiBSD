@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The application processors' real-mode trampoline (`MULTIPROCESSOR`):
 //! `arch/amd64/amd64/mptramp.S`, pulled in from the `.S` file next to this module (the file
 //! keeps OpenBSD's licence blocks and layout; `{NAME}` placeholders are what `assym.h` and
@@ -91,3 +92,4 @@ unsafe extern "C" {
     /// `MP_TRAMP_DATA`, valid only while that page is mapped.
     pub static mp_pdirpa: [u8; 0];
 }
+/* </CODE> */

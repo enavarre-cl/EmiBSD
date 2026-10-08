@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/intr.h>`: interrupt priority levels and the interrupt framework.
 //!
 //! Upstream: sys/arch/arm64/include/intr.h @ 3ce1f3f79392
@@ -85,38 +86,6 @@ pub const IPL_FLAGMASK: i32 = 0xf00;
 pub const IPL_MPSAFE: i32 = 0x100;
 /// `IPL_WAKEUP`: 'wakeup' interrupt.
 pub const IPL_WAKEUP: i32 = 0x200;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    #[ignore = "needs OPENBSD_SRC (just test-ref)"]
-    fn values_match_the_c_header() {
-        let defs = crate::reftest::defines("sys/arch/arm64/include/intr.h");
-        let ours: &[(&str, i64)] = &[
-            ("IPL_NONE", i64::from(IPL_NONE)),
-            ("IPL_SOFTCLOCK", i64::from(IPL_SOFTCLOCK)),
-            ("IPL_SOFTNET", i64::from(IPL_SOFTNET)),
-            ("IPL_SOFTTTY", i64::from(IPL_SOFTTTY)),
-            ("IPL_BIO", i64::from(IPL_BIO)),
-            ("IPL_NET", i64::from(IPL_NET)),
-            ("IPL_TTY", i64::from(IPL_TTY)),
-            ("IPL_VM", i64::from(IPL_VM)),
-            ("IPL_AUDIO", i64::from(IPL_AUDIO)),
-            ("IPL_CLOCK", i64::from(IPL_CLOCK)),
-            ("IPL_HIGH", i64::from(IPL_HIGH)),
-            ("IPL_IPI", i64::from(IPL_IPI)),
-            ("IPL_IRQMASK", i64::from(IPL_IRQMASK)),
-            ("IPL_FLAGMASK", i64::from(IPL_FLAGMASK)),
-            ("IPL_MPSAFE", i64::from(IPL_MPSAFE)),
-            ("IPL_WAKEUP", i64::from(IPL_WAKEUP)),
-        ];
-        for (name, value) in ours {
-            assert_eq!(crate::reftest::int(&defs, name), Some(*value), "{name}");
-        }
-    }
-}
 
 /// `IST_NONE`: none.
 pub const IST_NONE: i32 = 0;
@@ -235,3 +204,38 @@ pub struct InterruptController {
     /// `ic_gic_its_id`.
     pub ic_gic_its_id: core::cell::Cell<u32>,
 }
+/* </CODE> */
+
+/* <TESTS> */
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "needs OPENBSD_SRC (just test-ref)"]
+    fn values_match_the_c_header() {
+        let defs = crate::reftest::defines("sys/arch/arm64/include/intr.h");
+        let ours: &[(&str, i64)] = &[
+            ("IPL_NONE", i64::from(IPL_NONE)),
+            ("IPL_SOFTCLOCK", i64::from(IPL_SOFTCLOCK)),
+            ("IPL_SOFTNET", i64::from(IPL_SOFTNET)),
+            ("IPL_SOFTTTY", i64::from(IPL_SOFTTTY)),
+            ("IPL_BIO", i64::from(IPL_BIO)),
+            ("IPL_NET", i64::from(IPL_NET)),
+            ("IPL_TTY", i64::from(IPL_TTY)),
+            ("IPL_VM", i64::from(IPL_VM)),
+            ("IPL_AUDIO", i64::from(IPL_AUDIO)),
+            ("IPL_CLOCK", i64::from(IPL_CLOCK)),
+            ("IPL_HIGH", i64::from(IPL_HIGH)),
+            ("IPL_IPI", i64::from(IPL_IPI)),
+            ("IPL_IRQMASK", i64::from(IPL_IRQMASK)),
+            ("IPL_FLAGMASK", i64::from(IPL_FLAGMASK)),
+            ("IPL_MPSAFE", i64::from(IPL_MPSAFE)),
+            ("IPL_WAKEUP", i64::from(IPL_WAKEUP)),
+        ];
+        for (name, value) in ours {
+            assert_eq!(crate::reftest::int(&defs, name), Some(*value), "{name}");
+        }
+    }
+}
+/* </TESTS> */

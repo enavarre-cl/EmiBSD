@@ -1,3 +1,4 @@
+/* <CODE> */
 //! signify(1) for this machine, and the install media's test key (M14c).
 //!
 //! The install sets are signed (`SHA256.sig`) and the installer checks the signature with the
@@ -238,7 +239,9 @@ pub(super) fn verify(signify: &Path, public: &Path, sig: &Path, out: &Path) -> R
         .arg("-m")
         .arg(out))
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,3 +254,4 @@ mod tests {
         assert_eq!(HELPERS, ["SHA256", "SHA512", "SHA512_256"]);
     }
 }
+/* </TESTS> */

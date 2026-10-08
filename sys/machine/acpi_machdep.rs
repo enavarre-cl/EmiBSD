@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The machine-dependent half of `<dev/acpi/acpivar.h>` as a trait: what each architecture's
 //! `acpi_machdep.c` defines for `acpi(4)` (`dev/acpi/acpi.c`, `dsdt.c` and the ACPI
 //! drivers) to call.
@@ -284,7 +285,9 @@ pub unsafe fn acpi_glk_cas(lock: *mut u32, acquire: bool) -> i32 {
         }
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,3 +310,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

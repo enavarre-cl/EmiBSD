@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/mount.h>`: the mounted file system (`struct mount`), the operations a file system
 //! type provides (`struct vfsops`, called through the `VFS_*` macros), its configuration
 //! entry (`struct vfsconf`), `struct statfs` and the `MNT_*` flags, file handles, the
@@ -1187,7 +1188,9 @@ const _: () = {
     assert!(core::mem::offset_of!(FusefsArgs, fd) == 8);
     assert!(core::mem::offset_of!(FusefsArgs, allow_other) == 16);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1291,3 +1294,4 @@ mod tests {
         assert!(NfsArgs::from_bytes(&bytes[..NfsArgs::SIZE - 1]).is_none());
     }
 }
+/* </TESTS> */

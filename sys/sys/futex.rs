@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/futex.h>`: the operations and flags of `futex(2)`.
 //!
 //! Upstream: sys/sys/futex.h @ 3ce1f3f79392
@@ -41,3 +42,4 @@ pub const FUTEX_WAIT_PRIVATE: i32 = FUTEX_WAIT | FUTEX_PRIVATE_FLAG;
 pub const FUTEX_WAKE_PRIVATE: i32 = FUTEX_WAKE | FUTEX_PRIVATE_FLAG;
 /// `FUTEX_REQUEUE_PRIVATE`.
 pub const FUTEX_REQUEUE_PRIVATE: i32 = FUTEX_REQUEUE | FUTEX_PRIVATE_FLAG;
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! zlib as the kernel uses it: OpenBSD `sys/lib/libz`.
 //!
 //! Upstream: sys/lib/libz @ 3ce1f3f79392
@@ -52,3 +53,4 @@ pub use inflate::{
 pub use zconf::{MAX_MEM_LEVEL, MAX_WBITS};
 pub use zlib::*;
 pub use zutil::{zError, zlibCompileFlags, zlibVersion};
+/* </CODE> */

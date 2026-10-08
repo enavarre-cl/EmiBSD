@@ -1,3 +1,4 @@
+/* <CODE> */
 //! M14: OpenBSD's efiboot as the boot loader (`sys/arch/amd64/stand/efiboot`).
 //!
 //! - `cargo xtask efiboot --arch amd64 --elf FILE [--out FILE]`: the PE32+ image
@@ -355,7 +356,9 @@ pub(crate) fn efiboot_disk(
     );
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -386,3 +389,4 @@ mod tests {
         assert!(check_pe(&img).is_err());
     }
 }
+/* </TESTS> */

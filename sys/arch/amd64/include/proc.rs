@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/proc.h>`: machine-dependent part of the proc structure for amd64.
 //!
 //! Upstream: sys/arch/amd64/include/proc.h @ 3ce1f3f79392
@@ -77,3 +78,4 @@ impl Default for Mdproc {
 
 /// `MDP_IRET`: return via iret, not sysret (iret can restore r11 and rcx).
 pub const MDP_IRET: i32 = 0x0002;
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/isa_machdep.h>` as a trait: what the ISA bus (`dev/isa/isa.c`) and its drivers
 //! (`com_isa.c`) need from the machine.
 //!
@@ -80,3 +81,4 @@ pub fn isa_intr_establish(
 ) -> Option<NonNull<c_void>> {
     Machine::isa_intr_establish(ic, irq, type_, level, ih_fun, ih_arg, ih_what)
 }
+/* </CODE> */

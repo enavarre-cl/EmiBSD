@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 exception handling: `arch/arm64/arm64/trap.c`.
 //!
 //! Upstream: sys/arch/arm64/arm64/trap.c @ 3ce1f3f79392
@@ -496,7 +497,9 @@ pub fn dumpregs(frame: &Trapframe) {
     printf(format_args!("pc: 0x{:016x}\n", frame.tf_elr));
     printf(format_args!("spsr: 0x{:016x}\n", frame.tf_spsr));
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,3 +513,4 @@ mod tests {
         assert_eq!(accesstype(ISS_DATA_WNR | ISS_DATA_CM, false), PROT_READ);
     }
 }
+/* </TESTS> */

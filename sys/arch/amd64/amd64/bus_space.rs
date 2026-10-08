@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `bus_space(9)`: port I/O and memory space, `arch/amd64/amd64/bus_space.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/bus_space.c @ 3ce1f3f79392
@@ -512,3 +513,4 @@ pub fn bus_space_barrier(
         }
     }
 }
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Host test double for the machine interface. Not an OpenBSD architecture.
 //!
 //! Compiled whenever `target_os != "none"` so that `cargo test` runs on macOS/Linux and the
@@ -1755,3 +1756,4 @@ impl UserCopy for Machine {
         Ok(())
     }
 }
+/* </CODE> */

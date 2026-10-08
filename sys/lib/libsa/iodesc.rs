@@ -40,6 +40,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `iodesc.h`: the I/O descriptor of a network socket of the standalone network code: the
 //! two ends' addresses and ports, the transaction id and the interface it uses.
 //!
@@ -86,3 +87,4 @@ impl IoDesc {
         }
     }
 }
+/* </CODE> */

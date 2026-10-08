@@ -43,6 +43,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `vm_machdep.c`: the machine-dependent part of creating and tearing down threads.
 //!
 //! Upstream: sys/arch/arm64/arm64/vm_machdep.c @ 3ce1f3f79392
@@ -210,3 +211,4 @@ pub fn vunmapbuf(bp: &Buf, len: usize) {
     bp.b_data.set(bp.b_saveaddr.get().cast());
     bp.b_saveaddr.set(ptr::null_mut());
 }
+/* </CODE> */

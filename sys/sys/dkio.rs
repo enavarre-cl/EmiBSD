@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/dkio.h>`: disk-specific ioctls.
 //!
 //! Upstream: sys/sys/dkio.h @ 3ce1f3f79392
@@ -111,7 +112,9 @@ pub const DIOCMAP: u64 = _iowr::<DkDiskmap>(b'd', 119);
 
 /// `DIOCCACHESYNC`: sync cache (force?).
 pub const DIOCCACHESYNC: u64 = _iow::<i32>(b'd', 120);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,3 +131,4 @@ mod tests {
         assert_eq!((DIOCGPART >> 16) & 0x1fff, 16);
     }
 }
+/* </TESTS> */

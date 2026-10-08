@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/pci_machdep.h>`: machine-specific PCI structure and type definitions.
 //!
 //! Upstream: sys/arch/arm64/include/pci_machdep.h @ 3ce1f3f79392
@@ -148,3 +149,4 @@ pub struct MachinePciChipset {
 // SAFETY: a chipset is filled once by its host bridge's attach and only read afterwards;
 // the cookies are only used by the bridge's own functions.
 unsafe impl Sync for MachinePciChipset {}
+/* </CODE> */

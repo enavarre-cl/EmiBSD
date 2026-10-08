@@ -37,6 +37,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! CPU identification: `arch/amd64/amd64/identcpu.c`, the part the TSC timecounter needs.
 //!
 //! Upstream: sys/arch/amd64/amd64/identcpu.c @ 3ce1f3f79392
@@ -388,7 +389,9 @@ pub fn identifycpu(ci: &CpuInfo) {
 
     let _ = unported!("identifycpu: cpu_topology, cpu_check_vmm_cap, the cpu sensors");
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,3 +416,4 @@ mod tests {
         assert_eq!(model(b"    ")[0], 0);
     }
 }
+/* </TESTS> */

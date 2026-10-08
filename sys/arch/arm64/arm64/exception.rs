@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The exception entry code of `arch/arm64/arm64/exception.S`, pulled in from the `.S` file
 //! next to this module (the file keeps OpenBSD's licence block and layout; `{NAME}`
 //! placeholders are what `assym.h` provides in C).
@@ -49,3 +50,4 @@ unsafe extern "C" {
 pub fn exception_vectors_addr() -> u64 {
     core::ptr::addr_of!(exception_vectors) as u64
 }
+/* </CODE> */

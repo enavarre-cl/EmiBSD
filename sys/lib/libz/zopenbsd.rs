@@ -1,5 +1,4 @@
 /*	$OpenBSD: zopenbsd.c,v 1.10 2021/07/22 16:40:20 tb Exp $ */
-
 /* <LICENSES> */
 /*
  * Copyright (c) 2011 Theo de Raadt <deraadt@openbsd.org>
@@ -18,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Space allocation and freeing routines for use by zlib routines in the kernel.
 //!
 //! Upstream: sys/lib/libz/zopenbsd.c @ 3ce1f3f79392
@@ -75,7 +75,9 @@ pub fn zcalloc_box<T>(value: T) -> Option<Box<T>> {
 pub fn zcfree<T>(ptr: T) {
     drop(ptr);
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -101,3 +103,4 @@ mod tests {
         assert!(zcalloc::<u64>(usize::MAX / 4).is_none());
     }
 }
+/* </TESTS> */

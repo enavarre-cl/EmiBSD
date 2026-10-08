@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ufs/ufs/ufs_extern.h>`: the prototypes of the UFS layer's functions, which the file
 //! systems on it (`ffs`, `mfs`, `ext2fs`) call and put in their operation tables.
 //!
@@ -64,3 +65,4 @@ pub use crate::ufs::ufs::ufs_vnops::{
     ufs_pathconf, ufs_print, ufs_readdir, ufs_readlink, ufs_remove, ufs_rename, ufs_rmdir,
     ufs_setattr, ufs_strategy, ufs_symlink, ufs_unlock, ufsspec_close, ufsspec_read, ufsspec_write,
 };
+/* </CODE> */

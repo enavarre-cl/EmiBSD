@@ -57,6 +57,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Register bits of the `com(4)` UARTs: `<dev/ic/comreg.h>`, which includes
 //! `<dev/ic/ns16550reg.h>` (re-exported here, as the include does).
 //!
@@ -314,7 +315,9 @@ pub const UART_EXAR_DVID: BusSize = 0x8d;
 
 /// WARNING: Serial console is assumed to be at COM1 address.
 pub const CONADDR: BusAddr = 0x3f8;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,3 +382,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

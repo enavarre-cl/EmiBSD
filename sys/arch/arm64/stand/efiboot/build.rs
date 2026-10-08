@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Build script: hands `ldscript.arm64` to the linker, bare-metal only, with the flags of
 //! efiboot's Makefile that lld needs here (`-Bsymbolic`, no packed relocations) and no RELRO
 //! segment (the script puts the relocated read-only data in the one `.data`). The aarch64
@@ -27,3 +28,4 @@ fn main() {
     println!("cargo:rerun-if-changed={ld}");
     println!("cargo:rerun-if-changed={manifest_dir}/start.S");
 }
+/* </CODE> */

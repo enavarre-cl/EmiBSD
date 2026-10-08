@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The generic PCIe host bridge with an ECAM configuration space (`pci-host-ecam-generic`,
 //! QEMU `virt`'s): `dev/fdt/pciecam.c`. It maps the ECAM region, translates the bus's
 //! memory and I/O addresses through the node's `ranges` with a bus space of its own, routes
@@ -768,3 +769,4 @@ pub fn pciecam_bs_mmap(
 
     None
 }
+/* </CODE> */

@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/timetc.h>`: the `tc_user` values of the timecounters userland may read
 //! directly.
 //!
@@ -28,3 +29,4 @@
 pub const TC_AGTIMER: i32 = 1;
 /// `TC_AGTIMER_SUN50I`: the same, read around the Allwinner A64 erratum.
 pub const TC_AGTIMER_SUN50I: i32 = 2;
+/* </CODE> */

@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/fcntl.h>`: the definitions for `open(2)` and `fcntl(2)` described by POSIX, and the
 //! related kernel definitions: the `O_*` open flags and their kernel `F*` twins, the
 //! `fcntl` commands, `FD_CLOEXEC`/`FD_CLOFORK`, the record-locking types and `struct flock`,
@@ -271,7 +272,9 @@ const _: () = {
     assert!(core::mem::offset_of!(Flock, l_pid) == 16);
     assert!(core::mem::offset_of!(Flock, l_whence) == 22);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -323,3 +326,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

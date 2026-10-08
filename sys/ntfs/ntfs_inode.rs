@@ -30,6 +30,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ntfs/ntfs_inode.h>`: the in-core MFT record (`struct ntnode`, one per file record, with
 //! its attributes), the per-attribute node a vnode hangs from (`struct fnode`), and the file
 //! handle (`struct ntfid`).
@@ -344,3 +345,4 @@ impl Ntfid {
 pub fn valist(ip: &'static Ntnode) -> impl Iterator<Item = &'static Ntvattr> {
     ip.i_valist.iter()
 }
+/* </CODE> */

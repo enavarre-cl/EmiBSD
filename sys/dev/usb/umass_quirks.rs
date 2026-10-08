@@ -62,6 +62,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! umass(4) quirks: `<dev/usb/umass_quirks.h>` (`struct umass_quirk`) and
 //! `dev/usb/umass_quirks.c` (the table of devices that need a wire or command protocol, a
 //! match level, an init or a fixup of their own, and `umass_lookup`).
@@ -889,7 +890,9 @@ pub fn umass_fixup_yedata(sc: &'static UmassSoftc) {
         sc.sc_wire.set(UMASS_WPROTO_CBI_I);
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -928,3 +931,4 @@ mod tests {
         assert!(umass_lookup(USB_VENDOR_SONY, 0xffff).is_none());
     }
 }
+/* </TESTS> */

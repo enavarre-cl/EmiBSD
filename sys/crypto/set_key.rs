@@ -57,6 +57,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The DES key schedule (`des_set_key`), the odd-parity and weak-key checks, the one
 //! used by `des3_setkey` in `xform.c`.
 //!
@@ -188,7 +189,9 @@ pub fn des_set_key(key: &DesCblock, schedule: &mut DesKeySchedule) -> Result<(),
     }
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,3 +257,4 @@ mod tests {
         assert!(a.iter().any(|w| *w != 0));
     }
 }
+/* </TESTS> */

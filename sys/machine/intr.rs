@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<machine/intr.h>` as a trait: the interrupt priority levels and `spl(9)`.
 //!
 //! Milestone M3 needs the `IPL_*` numbers that pools and mutexes carry around; M4 adds
@@ -204,3 +205,4 @@ pub const IPL_MPFLOOR: i32 = <Machine as Intr>::IPL_MPFLOOR;
 pub const IPL_MPSAFE: i32 = <Machine as Intr>::IPL_MPSAFE;
 /// `IPL_WAKEUP` on the selected machine.
 pub const IPL_WAKEUP: i32 = <Machine as Intr>::IPL_WAKEUP;
+/* </CODE> */

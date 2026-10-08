@@ -28,6 +28,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 stack traces for `ddb(4)`: `arch/amd64/amd64/db_trace.c`.
 //!
 //! Upstream: sys/arch/amd64/amd64/db_trace.c @ 3ce1f3f79392
@@ -262,3 +263,4 @@ pub fn db_stack_trace_print(addr: usize, have_addr: bool, count: usize, modif: &
         count as i32
     ));
 }
+/* </CODE> */

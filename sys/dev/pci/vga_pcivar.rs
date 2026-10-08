@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/pci/vga_pcivar.h>`: the softc of `vga(4)` at `pci`, the test for a VGA-class
 //! function, and the BAR bookkeeping the frame buffer drivers built on it use.
 //!
@@ -133,7 +134,9 @@ pub const fn device_is_vga_pci(class: Pcireg) -> bool {
         || (pci_class(class) == PCI_CLASS_PREHISTORIC
             && pci_subclass(class) == PCI_SUBCLASS_PREHISTORIC_VGA)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,3 +150,4 @@ mod tests {
         assert!(!device_is_vga_pci(0x0200_0000)); // network
     }
 }
+/* </TESTS> */

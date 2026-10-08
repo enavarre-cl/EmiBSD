@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The `copyin(9)` family: the `<sys/systm.h>` prototypes `copyin`, `copyout`,
 //! `copyinstr`, `copyoutstr` and `kcopy`, implemented by each architecture's `copy.S`
 //! (`copystr.S` on arm64) with `pcb_onfault` catching the faults.
@@ -116,3 +117,4 @@ pub unsafe fn kcopy(src: *const u8, dst: *mut u8, len: usize) -> Result<(), Errn
     // SAFETY: forwarded.
     unsafe { Machine::kcopy(src, dst, len) }
 }
+/* </CODE> */

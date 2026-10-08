@@ -34,6 +34,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `run_i386`: the trampoline that leaves 64-bit mode for 32-bit protected mode without
 //! paging and calls the kernel's 32-bit `start` with its arguments on a stack of its own
 //! (`run_i386.S`); efiboot copies it to the heap and calls the copy.
@@ -64,3 +65,4 @@ pub fn run_i386_size() -> u32 {
     // SAFETY: a 32-bit constant the assembly defines.
     unsafe { RUN_I386_SIZE }
 }
+/* </CODE> */

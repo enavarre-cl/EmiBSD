@@ -63,6 +63,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The page daemon: `uvm/uvm_pdaemon.c`.
 //!
 //! Upstream: sys/uvm/uvm_pdaemon.c @ 3ce1f3f79392
@@ -114,3 +115,4 @@ pub fn uvmpd_tune() {
 
     UVMEXP.wiredmax.store(npages / 3, Ordering::Relaxed);
 }
+/* </CODE> */

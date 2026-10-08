@@ -1,6 +1,5 @@
 /*	$OpenBSD: bootconfig.h,v 1.4 2023/12/05 05:27:26 jsg Exp $	*/
 /*	$NetBSD: bootconfig.h,v 1.2 2001/06/21 22:08:28 chris Exp $	*/
-
 /* <LICENSES> */
 /*-
  * Copyright (c) 2013 Andrew Turner <andrew@freebsd.org>
@@ -31,6 +30,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 `<machine/bootconfig.h>`: what `locore0.S` hands the kernel's first C.
 //!
 //! Upstream: sys/arch/arm64/include/bootconfig.h @ 3ce1f3f79392
@@ -67,3 +67,4 @@ pub struct Arm64Bootparams {
 const _: () = {
     assert!(core::mem::size_of::<Arm64Bootparams>() == 56);
 };
+/* </CODE> */

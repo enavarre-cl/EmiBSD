@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/acct.h>`: accounting structures. These use a `comp_t` type which is a 3 bits base 8
 //! exponent, 13 bit fraction ``floating point'' number. Units are 1/`AHZ` seconds.
 //!
@@ -103,3 +104,4 @@ pub const ABTCFI: u32 = 0x0000_0400;
 /// `AHZ`: 1/AHZ is the granularity of the data encoded in the `comp_t` fields. This is not
 /// necessarily equal to hz.
 pub const AHZ: u32 = 64;
+/* </CODE> */

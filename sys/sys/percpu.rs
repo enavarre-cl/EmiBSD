@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/percpu.h>`: per-CPU memory (`struct cpumem`) and per-CPU counters.
 //!
 //! Upstream: sys/sys/percpu.h @ 3ce1f3f79392
@@ -333,3 +334,4 @@ pub fn counters_pkt(cm: CpumemPtr, c: usize, b: usize, v: u64) {
     counters[b].fetch_add(v, Ordering::Relaxed);
     counters_leave(&mut r, cm);
 }
+/* </CODE> */

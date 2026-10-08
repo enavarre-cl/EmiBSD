@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The Internet protocols: OpenBSD `sys/netinet/`.
 //!
 //! Headers become modules as in `sys/sys` (`ip_icmp.h` → `ip_icmp.rs`). `in.h` is `in_.rs`
@@ -47,3 +48,4 @@ pub mod tcp_var;
 pub mod udp;
 pub mod udp_usrreq;
 pub mod udp_var;
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Kernel configuration data: OpenBSD `sys/conf/`.
 //!
 //! `config(8)`, the Makefiles and `newvers.sh` are replaced by Cargo features and `xtask`
@@ -8,3 +9,4 @@
 pub mod param;
 pub mod swapgeneric;
 pub mod vers;
+/* </CODE> */

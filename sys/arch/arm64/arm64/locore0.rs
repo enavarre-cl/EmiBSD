@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The kernel's entry from boot(8) (efiboot): `arch/arm64/arm64/locore0.S`, pulled in from
 //! the `.S` file next to this module (the file keeps OpenBSD's licence block and layout;
 //! `{NAME}` placeholders are what `assym.h` and the headers provide in C).
@@ -78,3 +79,4 @@ global_asm!(
     L1_BLOCK = const L1_BLOCK,
     L2_BLOCK = const L2_BLOCK,
 );
+/* </CODE> */

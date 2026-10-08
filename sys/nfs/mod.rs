@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The Network File System: OpenBSD `sys/nfs/` (`option NFSCLIENT`, feature `nfsclient`;
 //! `option NFSSERVER`, feature `nfsserver`).
 //!
@@ -43,3 +44,4 @@ pub mod nfsproto;
 pub mod nfsrvcache;
 pub mod rpcv2;
 pub mod xdr_subs;
+/* </CODE> */

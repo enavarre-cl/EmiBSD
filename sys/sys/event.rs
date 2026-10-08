@@ -29,6 +29,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/event.h>`: `kqueue(2)`'s `struct kevent`, filters, flags and notes, and the kernel
 //! half: `struct klist`, `struct knote`, `struct filterops`, `struct klistops`, `struct
 //! kqueue_scan_state` and the inline helpers `knote_modify`, `knote_process` and
@@ -684,3 +685,4 @@ pub fn klist_empty(klist: &Klist) -> bool {
 const _: () = {
     assert!(size_of::<Kevent>() == 32);
 };
+/* </CODE> */

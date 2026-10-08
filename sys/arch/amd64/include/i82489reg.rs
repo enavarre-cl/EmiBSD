@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/i82489reg.h>`: the local APIC's registers.
 //!
 //! Upstream: sys/arch/amd64/include/i82489reg.h @ 3ce1f3f79392
@@ -204,7 +205,9 @@ pub const MSR_X2APIC_BASE: u32 = 0x800;
 pub const MSR_X2APIC_ID: u32 = MSR_X2APIC_BASE + 0x02;
 /// `X2APIC_ID_MASK`.
 pub const X2APIC_ID_MASK: u32 = 0xff;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,3 +245,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

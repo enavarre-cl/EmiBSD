@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<nfs/nfs_var.h>`: the prototypes of the NFS files and two internal utility macros.
 //!
 //! Upstream: sys/nfs/nfs_var.h @ 3ce1f3f79392
@@ -55,7 +56,9 @@ pub fn mb_offset(m: &Mbuf) -> *mut u8 {
 pub const fn nfsm_padlen(s: usize) -> usize {
     nfsm_rndup(s) - s
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,3 +71,4 @@ mod tests {
         assert_eq!(nfsm_padlen(7), 1);
     }
 }
+/* </TESTS> */

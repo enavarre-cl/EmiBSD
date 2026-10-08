@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Shared libraries and the run-time link-editor (M14): what a plain `cc hello.c` on
 //! EmiBSD links against and runs with, as on OpenBSD, where `cc` makes a dynamic PIE
 //! (`-dynamic-linker /usr/libexec/ld.so`, `-lc` found as `libc.so.M.m`).
@@ -278,7 +279,9 @@ fn build_ldso(ctx: &Ctx<'_>) -> Result<()> {
     );
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,3 +317,4 @@ mod tests {
         assert_eq!(dynamic_reloc_types(text), ["R_X86_64_RELATIVE"]);
     }
 }
+/* </TESTS> */

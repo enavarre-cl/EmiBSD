@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<netinet/in.h>` for libsa: `struct in_addr`, the addresses and protocol numbers the
 //! network code uses. The module is `in_` as in the kernel (`in` is a Rust keyword).
 //!
@@ -70,3 +71,4 @@ pub struct InAddr {
 net_bytes!(InAddr);
 
 const _: () = assert!(core::mem::size_of::<InAddr>() == 4);
+/* </CODE> */

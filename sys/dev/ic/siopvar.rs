@@ -27,6 +27,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/ic/siopvar.h>`: structure and definitions for the siop driver: the DMA memory
 //! wrapper, the per-command SCRIPTS area (`struct siop_xfer`), the command blocks and their
 //! queues, the per-tag, per-lun and per-target state, the lun switches in the script RAM and
@@ -319,3 +320,4 @@ const _: () = {
     assert!(core::mem::offset_of!(SiopXfer, siop_tables) == 0);
     assert!(core::mem::offset_of!(SiopTarget, target_c) == 0);
 };
+/* </CODE> */

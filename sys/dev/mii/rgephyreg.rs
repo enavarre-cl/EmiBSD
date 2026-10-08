@@ -35,6 +35,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Realtek RTL8169S/8110S and RTL8211 gigabit PHY registers (`<dev/mii/rgephyreg.h>`).
 //!
 //! Upstream: sys/dev/mii/rgephyreg.h @ 3ce1f3f79392
@@ -172,7 +173,9 @@ pub const RGEPHY_MIICR1_TXDLY_EN: u16 = 0x0100;
 pub const RGEPHY_MIICR2: u32 = 0x15;
 /// `RGEPHY_MIICR2_RXDLY_EN`.
 pub const RGEPHY_MIICR2_RXDLY_EN: u16 = 0x0008;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,3 +199,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

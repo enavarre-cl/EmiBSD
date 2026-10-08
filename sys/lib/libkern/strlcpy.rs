@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `strlcpy(3)`: size-bounded string copy.
 //!
 //! Upstream: sys/lib/libkern/strlcpy.c @ 3ce1f3f79392
@@ -39,7 +40,9 @@ pub fn strlcpy(dst: &mut [u8], src: &[u8]) -> usize {
     }
     srclen
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -75,3 +78,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

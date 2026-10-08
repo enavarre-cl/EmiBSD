@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The machine-dependent interface: OpenBSD `<machine/*.h>` and `cpufunc.h` as traits.
 //!
 //! Generic code reaches architecture code ONLY through this module. One module per OpenBSD header
@@ -98,7 +99,9 @@ const _: () = {
     }
     assert_impl::<Machine>();
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -127,3 +130,4 @@ mod tests {
         assert_eq!(ExitStatus::Failure.qemu_status() % 2, 1);
     }
 }
+/* </TESTS> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ufs/mfs/mfsnode.h>`: the control data of the memory based file system.
 //!
 //! Upstream: sys/ufs/mfs/mfsnode.h @ 3ce1f3f79392
@@ -115,3 +116,4 @@ pub fn mfstov(mfsp: &Mfsnode) -> &'static Vnode {
         None => panic(format_args!("MFSTOV: mfsnode has no vnode")),
     }
 }
+/* </CODE> */

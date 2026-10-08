@@ -40,6 +40,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/vndioctl.h>`: the ioctls of vnd(4), the vnode disk: configure a unit over a file
 //! (`VNDIOCSET`), unconfigure it (`VNDIOCCLR`) and ask what a unit covers (`VNDIOCGET`), as
 //! vnconfig(8) and mount_vnd(8) issue them on `/dev/rvndNc`.
@@ -150,7 +151,9 @@ const _: () = {
     assert!(offset_of!(VndUser, vnu_dev) == 1028);
     assert!(offset_of!(VndUser, vnu_ino) == 1032);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,3 +207,4 @@ mod tests {
         assert_eq!(seen, ours.len());
     }
 }
+/* </TESTS> */

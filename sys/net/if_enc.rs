@@ -34,6 +34,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The encapsulating interface, `enc(4)`: `<net/if_enc.h>` and `net/if_enc.c`. `enc0` is
 //! made at boot (`encattach`, a pseudo-device of GENERIC: option IPSEC needs it); more are
 //! cloned. Each routing domain has a default enc interface, which IPsec traffic is accounted
@@ -411,3 +412,4 @@ pub(crate) fn enc_reset() {
 
 // LP64 sizes of the C structures.
 const _: () = assert!(size_of::<Enchdr>() == ENC_HDRLEN);
+/* </CODE> */

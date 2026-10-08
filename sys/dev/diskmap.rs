@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! diskmap(4): the disk mapper, `/dev/diskmap`. opendev(3) opens it and hands it a disk's
 //! name or its disklabel UID (`DIOCMAP`); the device swaps the caller's descriptor for one
 //! open on the disk's real device node.
@@ -176,7 +177,9 @@ pub fn diskmapread(_dev: Dev, _uio: &mut Uio<'_>, _flag: i32) -> Result<(), Errn
 pub fn diskmapwrite(_dev: Dev, _uio: &mut Uio<'_>, _flag: i32) -> Result<(), Errno> {
     Err(Errno::ENXIO)
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,3 +200,4 @@ mod tests {
         assert_eq!(size_of::<DkDiskmap>(), 16);
     }
 }
+/* </TESTS> */

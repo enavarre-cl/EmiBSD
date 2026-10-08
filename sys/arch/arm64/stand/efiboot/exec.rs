@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `run_loadfile()`: hand the loaded kernel its arguments in the device tree's `/chosen`,
 //! leave the boot services, clean the caches over the kernel and the tree, and enter the
 //! kernel at its entry point with `x0` = the end of the loaded image (`marks[MARK_END]`),
@@ -159,3 +160,4 @@ pub fn run_loadfile(cmd: &mut CmdState, marks: &mut [u64; MARK_MAX], howto: i32)
         );
     }
 }
+/* </CODE> */

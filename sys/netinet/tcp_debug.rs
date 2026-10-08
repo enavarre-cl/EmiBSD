@@ -102,6 +102,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! TCP debugging: `<netinet/tcp_debug.h>` (the trace record and the header overlay) and
 //! `netinet/tcp_debug.c` (`tcp_trace`).
 //!
@@ -479,7 +480,9 @@ pub fn tcp_trace(
 
 const _: () = assert!(size_of::<Tcpiphdr>() == 40);
 const _: () = assert!(size_of::<Tcpipv6hdr>() == 60);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use std::boxed::Box;
@@ -506,3 +509,4 @@ mod tests {
         assert_eq!(td.td_ti.ti_i.ih_len, 12);
     }
 }
+/* </TESTS> */

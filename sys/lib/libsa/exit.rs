@@ -30,6 +30,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `panic()` and `exit()`: close what is open, say why, and return to the firmware.
 //!
 //! Upstream: sys/lib/libsa/exit.c @ 3ce1f3f79392
@@ -63,3 +64,4 @@ pub fn panic(args: fmt::Arguments<'_>) -> ! {
 pub fn exit() -> ! {
     panic(format_args!("exit"))
 }
+/* </CODE> */

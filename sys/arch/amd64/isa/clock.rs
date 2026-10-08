@@ -83,6 +83,7 @@ WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Primitive clock interrupt routines: `arch/amd64/isa/clock.c`.
 //!
 //! Upstream: sys/arch/amd64/isa/clock.c @ 3ce1f3f79392
@@ -610,7 +611,9 @@ pub fn i8254_get_timecount(_tc: &Timecounter) -> u32 {
 
     count
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -634,3 +637,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

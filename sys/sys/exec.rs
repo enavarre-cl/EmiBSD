@@ -40,6 +40,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/exec.h>`: the exec package, the vmcmds that build an address space and
 //! `ps_strings`.
 //!
@@ -381,3 +382,4 @@ pub const EXEC_PROFILE: u32 = 0x0080;
 const _: () = {
     assert!(size_of::<PsStrings>() == 32);
 };
+/* </CODE> */

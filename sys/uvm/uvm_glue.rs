@@ -63,6 +63,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `uvm_glue.c`: glue functions between UVM and the rest of the kernel.
 //!
 //! Upstream: sys/uvm/uvm_glue.c @ 3ce1f3f79392
@@ -382,3 +383,4 @@ pub fn uvm_init_limits(limit0: &Plimit) {
         None,
     );
 }
+/* </CODE> */

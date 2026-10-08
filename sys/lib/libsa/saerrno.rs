@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `saerrno.h`: the error numbers of the standalone library, `<sys/errno.h>`'s and the
 //! special standalone ones (`EADAPT` .. `EHER`).
 //!
@@ -118,3 +119,4 @@ impl Errno {
     /// `ESALAST`: the last standalone error.
     pub const ESALAST: Self = Self(Self::ELAST.0 + 9);
 }
+/* </CODE> */

@@ -59,6 +59,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `com(4)`: the NS16450/NS16550 serial port driver, based on the HP dca driver.
 //!
 //! Upstream: sys/dev/ic/com.c @ 3ce1f3f79392
@@ -1804,7 +1805,9 @@ pub fn comcn_write_reg(reg: BusSize, value: u8) {
         bus_space_write_1(iot, ioh, reg, value);
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1831,3 +1834,4 @@ mod tests {
         assert_eq!(tiocm_xxx2mcr(TIOCM_DTR | TIOCM_RTS), MCR_DTR | MCR_RTS);
     }
 }
+/* </TESTS> */

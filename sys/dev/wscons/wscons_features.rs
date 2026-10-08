@@ -3,6 +3,7 @@
 /* public domain */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wscons_features.h>`: the logic used to enable several optional features of
 //! the wscons framework.
 //!
@@ -43,7 +44,9 @@ pub const HAVE_UTF8_SUPPORT: bool = true;
 pub const HAVE_RESTARTABLE_EMULOPS: bool = true;
 /// `HAVE_DOUBLE_WIDTH_HEIGHT`.
 pub const HAVE_DOUBLE_WIDTH_HEIGHT: bool = true;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,3 +77,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

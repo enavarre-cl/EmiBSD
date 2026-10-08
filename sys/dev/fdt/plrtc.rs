@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The ARM PrimeCell PL031 real-time clock on the device tree: `dev/fdt/plrtc.c`.
 //!
 //! Upstream: sys/dev/fdt/plrtc.c @ 3ce1f3f79392
@@ -169,3 +170,4 @@ pub fn plrtc_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_void) 
 
     printf(format_args!("\n"));
 }
+/* </CODE> */

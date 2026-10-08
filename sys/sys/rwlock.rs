@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/rwlock.h>`: multiple readers, single writer lock.
 //!
 //! Upstream: sys/sys/rwlock.h @ 3ce1f3f79392
@@ -181,3 +182,4 @@ pub fn rw_lock_held(rwl: &Rwlock) -> bool {
 
     status == RW_READ || status == RW_WRITE
 }
+/* </CODE> */

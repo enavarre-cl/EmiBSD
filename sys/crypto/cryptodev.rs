@@ -50,6 +50,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<crypto/cryptodev.h>`: the structures of the kernel crypto framework (`crypto(9)`): a
 //! session is described by a chain of [`Cryptoini`]s, a request by a [`Cryptop`] with one
 //! [`Cryptodesc`] per operation, a driver by its [`Cryptocap`]. The functions are in
@@ -368,3 +369,4 @@ pub struct Cryptocap {
     /// `cc_freesession`.
     pub cc_freesession: Option<CcFreesession>,
 }
+/* </CODE> */

@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The USB HID class's requests and descriptor: `<dev/usb/usbhid.h>`.
 //!
 //! Upstream: sys/dev/usb/usbhid.h @ 3ce1f3f79392
@@ -121,7 +122,9 @@ const _: () = {
     assert!(size_of::<UsbHidDescriptor>() == usb_hid_descriptor_size(0));
     assert!(align_of::<UsbHidDescriptor>() == 1);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,3 +143,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "UHID_", &ours);
     }
 }
+/* </TESTS> */

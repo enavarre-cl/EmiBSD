@@ -63,6 +63,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! arm64 signal delivery: `arch/arm64/arm64/sig_machdep.c`.
 //!
 //! Upstream: sys/arch/arm64/arm64/sig_machdep.c @ 3ce1f3f79392
@@ -236,3 +237,4 @@ pub fn sys_sigreturn(p: &Proc, v: &SysArgs, _retval: &mut [Register; 2]) -> Resu
 
     Err(Errno::EJUSTRETURN)
 }
+/* </CODE> */

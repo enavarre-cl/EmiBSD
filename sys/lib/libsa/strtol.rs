@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `strtol()`: a string to a `long`.
 //!
 //! Upstream: sys/lib/libsa/strtol.c @ 3ce1f3f79392
@@ -128,7 +129,9 @@ pub(crate) fn strtonum(nptr: &[u8], base: i32, skip: fn(u8) -> bool) -> (i64, us
     }
     (acc, if any != 0 { s - 1 } else { 0 })
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,3 +147,4 @@ mod tests {
         assert_eq!(strtol(b"-99999999999999999999", 10), (i64::MIN, 21));
     }
 }
+/* </TESTS> */

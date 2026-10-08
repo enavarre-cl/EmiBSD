@@ -41,6 +41,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Random number generation for the kernel: `dev/rnd.c`.
 //!
 //! Upstream: sys/dev/rnd.c @ 3ce1f3f79392
@@ -151,7 +152,9 @@ pub fn sys_getentropy(_p: &Proc, v: &SysArgs, retval: &mut [Register; 2]) -> Res
     retval[0] = 0;
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,3 +178,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

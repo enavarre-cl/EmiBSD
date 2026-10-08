@@ -18,6 +18,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The arm64 root bus: `arch/arm64/dev/mainbus.c`. Mainbus takes care of FDT and non-FDT
 //! machines: it starts the interrupt controllers and the generic timer's delay, then offers
 //! every node of the device tree to the drivers that attach at `fdt` (PSCI first, the CPUs,
@@ -657,3 +658,4 @@ pub fn mainbus_attach_resvmem(self_: &Device) {
         node = OF_peer(node);
     }
 }
+/* </CODE> */

@@ -1,3 +1,4 @@
+/* <CODE> */
 //! M13's QEMU device options, and the disk images they attach (`docs/ARCHITECTURE.md`,
 //! "Parallel smokes" for where the files go).
 //!
@@ -1176,7 +1177,9 @@ pub(crate) fn after_smoke() -> Result<()> {
     }
     Ok(())
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1441,3 +1444,4 @@ mod tests {
         assert!(set(Path::new("/r"), &["--arch", "arm64"]).is_ok());
     }
 }
+/* </TESTS> */

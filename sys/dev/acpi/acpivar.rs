@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/acpi/acpivar.h>`: the state `acpi(4)` keeps (`struct acpi_softc`), the arguments it
 //! attaches its children with, its table and task queues, and the register indices of the
 //! fixed hardware.
@@ -469,7 +470,9 @@ pub fn acpi_softc() -> Option<&'static AcpiSoftc> {
     // the softc is fully set up and never frees (acpi0 does not detach).
     unsafe { p.as_ref() }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -502,3 +505,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

@@ -44,6 +44,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The `VOP_*` wrappers: each packs its arguments into the `struct vop_*_args` of
 //! `<sys/vnode.h>` and calls the vnode's operation, or answers `EOPNOTSUPP` when the file
 //! system left the slot NULL.
@@ -810,3 +811,4 @@ pub fn VOP_BWRITE(bp: &'static Buf) -> Result<(), Errno> {
         None => Err(Errno::EOPNOTSUPP),
     }
 }
+/* </CODE> */

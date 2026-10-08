@@ -1,3 +1,4 @@
+/* <CODE> */
 //! boot(8)'s machine-independent part (`sys/stand/boot`): the main loop, the `boot>` prompt
 //! and `boot.conf`, the commands and variables, and the boot arguments handed to the kernel.
 //!
@@ -15,3 +16,4 @@ pub mod boot;
 pub mod bootarg;
 pub mod cmd;
 pub mod vars;
+/* </CODE> */

@@ -32,6 +32,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wskbdvar.h>`: the interface between keyboard drivers and `wskbd(4)`.
 //!
 //! Upstream: sys/dev/wscons/wskbdvar.h @ 3ce1f3f79392
@@ -140,3 +141,4 @@ pub fn wskbddevcf_console(cf: &Cfdata) -> i64 {
 pub fn wskbddevcf_mux(cf: &Cfdata) -> i64 {
     cf.cf_loc.get(WSKBDDEVCF_MUX).copied().unwrap_or(1)
 }
+/* </CODE> */

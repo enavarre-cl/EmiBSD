@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! acpipci(4) on arm64: the PCI host bridges ACPI describes (`PNP0A08`),
 //! `arch/arm64/dev/acpipci.c`. The configuration space is the ECAM window the MCFG table
 //! names (`pci_mcfg_init`, called by `acpimcfg`; `pci_lookup_segment` finds it); the bridge's
@@ -1221,3 +1222,4 @@ pub fn acpipci_iort_map_msi(
 
     rid
 }
+/* </CODE> */

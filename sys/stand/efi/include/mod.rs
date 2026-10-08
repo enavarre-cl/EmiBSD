@@ -1,3 +1,4 @@
+/* <CODE> */
 //! The UEFI headers of `sys/stand/efi/include`, one module per header.
 //!
 //! Upstream: sys/stand/efi/include/
@@ -21,3 +22,4 @@ pub mod efinet;
 pub mod efiprot;
 pub mod efipxebc;
 pub mod efiser;
+/* </CODE> */

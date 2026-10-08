@@ -38,6 +38,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Process exit: `kern/kern_exit.c`.
 //!
 //! Upstream: sys/kern/kern_exit.c @ 3ce1f3f79392
@@ -977,3 +978,4 @@ pub fn process_zap(pr: &Process) {
 
     proc_free(p);
 }
+/* </CODE> */

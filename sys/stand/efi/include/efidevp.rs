@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/efidevp.h 312314 2017-01-16 20:57:01Z tsoome $ */
-
 /* <LICENSES> */
 /*++
 
@@ -27,6 +26,7 @@ Revision History
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI device path structures (UEFI specification, section C).
 //!
 //! Upstream: sys/stand/efi/include/efidevp.h @ 3ce1f3f79392
@@ -893,7 +893,9 @@ const _: () = assert!(size_of::<MacAddrDevicePath>() == 37);
 const _: () = assert!(size_of::<UartDevicePath>() == 24);
 const _: () = assert!(size_of::<HarddriveDevicePath>() == 42 + 6);
 const _: () = assert!(SIZE_OF_FILEPATH_DEVICE_PATH == 4);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -971,3 +973,4 @@ mod tests {
         assert_eq!(eisa_id_to_num(0x0a03_41d0), 0x0a03);
     }
 }
+/* </TESTS> */

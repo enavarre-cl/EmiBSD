@@ -3,6 +3,7 @@
 /* <LICENSES> */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/ataio.h>`: the ATA pass-through ioctls (`ATAIOCCOMMAND`, `ATAIOGETTRACE`), which
 //! `scsi_ioctl.c` turns into SCSI ATA PASS-THROUGH(12) commands.
 //!
@@ -119,7 +120,9 @@ const _: () = {
     assert!(offset_of!(Atagettrace, buf) == 8);
     assert!(offset_of!(Atagettrace, bytes_left) == 20);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,3 +146,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "ATACMD_", &ours);
     }
 }
+/* </TESTS> */

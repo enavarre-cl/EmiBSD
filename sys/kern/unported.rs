@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Visible stubs for subsystems that are not ported yet (`.claude/rules/scope-and-stubs.md`).
 //! Not an OpenBSD file.
 //!
@@ -30,7 +31,9 @@ macro_rules! unported {
         $crate::kern::unported::unported($name, &ONCE)
     }};
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -41,3 +44,4 @@ mod tests {
         assert_eq!(unported!("test gap"), Errno::ENOSYS);
     }
 }
+/* </TESTS> */

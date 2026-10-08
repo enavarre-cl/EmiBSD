@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<netinet/udp.h>` for libsa: the UDP header.
 
 use super::in_::net_bytes;
@@ -19,3 +20,4 @@ pub struct Udphdr {
 net_bytes!(Udphdr);
 
 const _: () = assert!(core::mem::size_of::<Udphdr>() == 8);
+/* </CODE> */

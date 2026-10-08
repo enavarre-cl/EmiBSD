@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/dirent.h>`: `struct dirent`, the format of the directory entries `getdents(2)`
 //! returns, the `DT_*` file types and the record-size macros.
 //!
@@ -149,7 +150,9 @@ const _: () = {
     assert!(Dirent::NAME_OFFSET == 24);
     assert!(size_of::<Dirent>() == 280);
 };
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,3 +192,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

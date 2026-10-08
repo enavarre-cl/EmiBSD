@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/psl.h>`: the processor status longword (`RFLAGS`).
 //!
 //! Upstream: sys/arch/amd64/include/psl.h @ 3ce1f3f79392
@@ -87,7 +88,9 @@ pub const PSL_USERSTATIC: u64 =
     PSL_MBO | PSL_MBZ | PSL_I | PSL_IOPL | PSL_NT | PSL_VM | PSL_VIF | PSL_VIP;
 /// `PSL_USER`: the flags user context may set.
 pub const PSL_USER: u64 = PSL_C | PSL_MBO | PSL_PF | PSL_AF | PSL_Z | PSL_N | PSL_V;
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,3 +114,4 @@ mod tests {
         }
     }
 }
+/* </TESTS> */

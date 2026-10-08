@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `<net/if_arp.h>` for libsa (through `<netinet/if_ether.h>`): the fixed part of an ARP
 //! packet and the values `arp.c` checks.
 
@@ -30,3 +31,4 @@ pub struct Arphdr {
 net_bytes!(Arphdr);
 
 const _: () = assert!(core::mem::size_of::<Arphdr>() == 8);
+/* </CODE> */

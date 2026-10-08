@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<sys/user.h>`: per process structure containing data that isn't needed in core when the
 //! process isn't running (esp. when swapped out). This structure may or may not be at the
 //! same kernel address in all processes.
@@ -103,3 +104,4 @@ const _: () = {
     assert!(PAGE_SIZE == 4096);
     assert!(size_of::<Uarea>() == USPACE);
 };
+/* </CODE> */

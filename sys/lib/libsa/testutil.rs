@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Host-test helpers (not an OpenBSD file): a RAM disk device over the test images in
 //! `testdata/`, the [`SaConf`] the tests register, and a console that records what libsa
 //! prints. Tests that use libsa's global state (the open file table, the console) hold
@@ -278,3 +279,4 @@ pub fn output() -> std::string::String {
     let out = OUTPUT.lock().unwrap_or_else(|e| e.into_inner());
     std::string::String::from_utf8_lossy(&out).into_owned()
 }
+/* </CODE> */

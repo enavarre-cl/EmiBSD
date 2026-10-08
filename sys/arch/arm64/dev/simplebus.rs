@@ -17,6 +17,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! The device tree's `simple-bus`: `arch/arm64/dev/simplebus.c`. Simplebus is a generic bus
 //! with no special casings: it offers each child node to the drivers that attach at `fdt`, in
 //! the three `early` passes mainbus makes, with a bus space and a DMA tag that translate the
@@ -702,3 +703,4 @@ pub unsafe fn simplebus_dmamap_load_raw(
     simplebus_dma_translate(sc, dmaranges, map, 0..map.dm_nsegs.get() as usize);
     Ok(())
 }
+/* </CODE> */

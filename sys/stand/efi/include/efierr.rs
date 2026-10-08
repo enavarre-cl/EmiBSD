@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/efierr.h 163898 2006-11-02 02:42:48Z marcel $ */
-
 /* <LICENSES> */
 /*++
 
@@ -28,6 +27,7 @@ Revision History
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI status codes.
 //!
 //! Upstream: sys/stand/efi/include/efierr.h @ 3ce1f3f79392
@@ -110,7 +110,9 @@ pub const EFI_WARN_DELETE_FAILURE: EfiStatus = efiwarn(2);
 pub const EFI_WARN_WRITE_FAILURE: EfiStatus = efiwarn(3);
 /// `EFI_WARN_BUFFER_TOO_SMALL`.
 pub const EFI_WARN_BUFFER_TOO_SMALL: EfiStatus = efiwarn(4);
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,3 +126,4 @@ mod tests {
         assert_eq!(EFI_NOT_FOUND, 0x8000_0000_0000_000e);
     }
 }
+/* </TESTS> */

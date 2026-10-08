@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! amd64 `<machine/intr.h>`: the interrupt sources, handler chains and `spl` helpers.
 //!
 //! Upstream: sys/arch/amd64/include/intr.h @ 3ce1f3f79392
@@ -219,3 +220,4 @@ const _: () = {
     assert!(size_of::<Intrstub>() == 24);
     assert!(core::mem::offset_of!(Intrhand, ih_count) % 8 == 0);
 };
+/* </CODE> */

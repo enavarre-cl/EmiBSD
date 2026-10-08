@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Miscellaneous internetwork definitions for the kernel: `<netinet/in_systm.h>`.
 //!
 //! Upstream: sys/netinet/in_systm.h @ 3ce1f3f79392
@@ -52,3 +53,4 @@ pub type NShort = u16;
 pub type NLong = u32;
 /// `n_time`: ms since 00:00 GMT, in network byte order.
 pub type NTime = u32;
+/* </CODE> */

@@ -31,6 +31,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<dev/wscons/wsksymdef.h>`: the keysyms of wscons and the keyboard layout codes.
 //!
 //! Upstream: sys/dev/wscons/wsksymdef.h @ 3ce1f3f79392
@@ -1373,7 +1374,9 @@ pub const KB_VARTAB: [(u32, &str); 9] = [
     (KB_APPLE, "apple"),
     (KB_COLEMAK, "colemak"),
 ];
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2035,3 +2038,4 @@ mod tests {
         crate::reftest::assert_complete(&defs, "K", &names);
     }
 }
+/* </TESTS> */

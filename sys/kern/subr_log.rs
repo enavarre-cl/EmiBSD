@@ -33,6 +33,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! Error log buffer for kernel printf's: `kern/subr_log.c`.
 //!
 //! Upstream: sys/kern/subr_log.c @ 3ce1f3f79392
@@ -599,7 +600,9 @@ pub fn dosendsyslog(p: &Proc, buf: SyslogBuf, nbyte: usize, flags: i32) -> Resul
         },
     }
 }
+/* </CODE> */
 
+/* <TESTS> */
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,3 +678,4 @@ mod tests {
         );
     }
 }
+/* </TESTS> */

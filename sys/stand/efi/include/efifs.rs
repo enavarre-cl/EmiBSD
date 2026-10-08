@@ -1,5 +1,4 @@
 /* $FreeBSD: head/sys/boot/efi/include/efifs.h 163898 2006-11-02 02:42:48Z marcel $ */
-
 /* <LICENSES> */
 /*++
 
@@ -27,6 +26,7 @@ Revision History
 --*/
 /* </LICENSES> */
 
+/* <CODE> */
 //! EFI native file system: partition header, file header and logical block address lists.
 //!
 //! Upstream: sys/stand/efi/include/efifs.h @ 3ce1f3f79392
@@ -190,3 +190,4 @@ pub unsafe fn efi_lbal_rl(a: *const EfiLbal) -> *mut EfiRl {
 
 const _: () = assert!(size_of::<EfiPartitionHeader>() == 24 + 8 + 6 * 8);
 const _: () = assert!(size_of::<EfiRl>() == 16);
+/* </CODE> */

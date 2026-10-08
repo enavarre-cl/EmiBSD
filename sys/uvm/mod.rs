@@ -1,3 +1,4 @@
+/* <CODE> */
 //! Virtual memory: OpenBSD `sys/uvm/*.c`.
 //!
 //! Physical page management, kernel memory, maps, faults, the pager interface. Headers become
@@ -30,3 +31,4 @@ pub mod uvm_swap;
 pub mod uvm_unix;
 pub mod uvm_vnode;
 pub mod uvmexp;
+/* </CODE> */

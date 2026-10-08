@@ -36,6 +36,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<nfs/nfsmount.h>`: the NFS mount structure, one allocated on every NFS mount, holding
 //! the NFS specific information for the mount, and `VFSTONFS`.
 //!
@@ -191,3 +192,4 @@ pub fn VFSTONFS(mp: &Mount) -> &'static NfsMount {
     // the caller holds the mount busy or a vnode of it.
     unsafe { &*data.cast::<NfsMount>() }
 }
+/* </CODE> */

@@ -30,6 +30,7 @@
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `<ntfs/ntfs.h>`: the on-disk structures of NTFS (the boot file, MFT file records and their
 //! fixup header, attribute headers, `$FILE_NAME`, `$INDEX_ROOT`, `$INDEX_ALLOCATION` buffers
 //! and their index entries, `$ATTRIBUTE_LIST` entries, `$AttrDef` records), the mounted
@@ -897,3 +898,4 @@ const _: () = {
     assert!(offset_of!(Bootfile, bf_mftrecsz) == 64);
     assert!(size_of::<Bootfile>() == 73);
 };
+/* </CODE> */

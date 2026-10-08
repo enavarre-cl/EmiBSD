@@ -1,3 +1,4 @@
+/* <CODE> */
 //! `bsd`: the OpenBSD kernel, re-implemented in Rust.
 //!
 //! The module tree mirrors `reference/openbsd-src/sys/` one directory at a time:
@@ -52,3 +53,4 @@ pub(crate) mod reftest;
 fn panic(info: &core::panic::PanicInfo) -> ! {
     kern::subr_prf::panic(format_args!("{}", info.message()))
 }
+/* </CODE> */
