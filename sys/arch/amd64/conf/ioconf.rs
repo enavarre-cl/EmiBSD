@@ -22,6 +22,7 @@
 //! `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13), `acpimcfg* at acpi?` (M14),
 //! `ppb* at pci?` and `pci* at ppb?` (M16e),
 //! `acpidmar0 at acpi? disable` (M16e),
+//! `piixpm* at pci?`, `iic* at piixpm?`, `ichiic* at pci?` and `iic* at ichiic?` (M16e),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -29,7 +30,9 @@
 //! loop`, `pseudo-device wg`, `pseudo-device pfsync`, `pseudo-device pflow`.
 //! GENERIC lines left out until their drivers exist: `vmm0`, `pvbus0` and `ipmi0`
 //! at mainbus, and everything below them; `efi0` and `mpbios0` at bios0, and
-//! every other device at `acpi?` (`acpicpu*`, `acpiec*`, ...); `isa0` at `pcib?`,
+//! every other device at `acpi?` (`acpicpu*`, `acpiec*`, ...); every device at `iic?` (`spdmem*`,
+//! `lm*`, ... are not ported: the scan prints what it finds as not configured), the other
+//! `iic*` parents (`viapm?`, `amdiic?`, ...); `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`,
 //! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
 //! (`pchb*`, `pcib*`, the network drivers but em, re and vmx (`rl* at pci?` among them: QEMU's rtl8139 is
@@ -62,6 +65,7 @@ use crate::dev::acpi::acpiprt::{ACPIPRT_CA, ACPIPRT_CD};
 use crate::dev::acpi::acpitimer::{ACPITIMER_CA, ACPITIMER_CD};
 use crate::dev::audio::{AUDIO_CA, AUDIO_CD};
 use crate::dev::bio::bioattach;
+use crate::dev::i2c::i2c::{IIC_CA, IIC_CD};
 use crate::dev::ic::ahci::AHCI_CD;
 use crate::dev::ic::com::COM_CD;
 use crate::dev::ic::nvme::NVME_CD;
@@ -77,11 +81,13 @@ use crate::dev::mii::ukphy::{UKPHY_CA, UKPHY_CD};
 use crate::dev::pci::ahci_pci::AHCI_PCI_CA;
 use crate::dev::pci::auich::{AUICH_CA, AUICH_CD};
 use crate::dev::pci::azalia::{AZALIA_CA, AZALIA_CD};
+use crate::dev::pci::ichiic::{ICHIIC_CA, ICHIIC_CD};
 use crate::dev::pci::if_em::{EM_CA, EM_CD};
 use crate::dev::pci::if_re_pci::RE_PCI_CA;
 use crate::dev::pci::if_vmx::{VMX_CA, VMX_CD};
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
+use crate::dev::pci::piixpm::{PIIXPM_CA, PIIXPM_CD};
 use crate::dev::pci::ppb::{PPB_CA, PPB_CD};
 use crate::dev::pci::puc::{PUC_CD, PUC_PCI_CA};
 use crate::dev::pci::siop_pci::SIOP_PCI_CA;
@@ -133,6 +139,12 @@ const PV_PCI: &[i16] = &[2, 54];
 
 /// `pv[]` for children of `ppb*` (`cfdata[53]`) through the `pcibus` attribute.
 const PV_PPB: &[i16] = &[53];
+
+/// `pv[]` for the `iic*` at `piixpm?` (`cfdata[56]`) through the `i2cbus` attribute.
+const PV_PIIXPM: &[i16] = &[56];
+
+/// `pv[]` for the `iic*` at `ichiic?` (`cfdata[58]`) through the `i2cbus` attribute.
+const PV_ICHIIC: &[i16] = &[58];
 
 /// `loc[]` of an entry at `pci` with the defaults `dev = -1, function = -1` (`conf/files`:
 /// `device pci {[dev = -1], [function = -1]}`).
@@ -267,11 +279,11 @@ const LN_WSKBDDEV: i32 = 34;
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 56 entries, 57 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 60 entries, 61 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    57
+    61
 } else {
-    56
+    60
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -911,7 +923,35 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 56: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 56: piixpm* at pci?
+    Cfdata::new(
+        &PIIXPM_CA,
+        &PIIXPM_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 57: iic* at piixpm?
+    Cfdata::new(&IIC_CA, &IIC_CD, 0, FSTATE_STAR, &[], 0, PV_PIIXPM, 0, 0),
+    // 58: ichiic* at pci?
+    Cfdata::new(
+        &ICHIIC_CA,
+        &ICHIIC_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 59: iic* at ichiic?
+    Cfdata::new(&IIC_CA, &IIC_CD, 0, FSTATE_STAR, &[], 0, PV_ICHIIC, 0, 0),
+    // 60: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

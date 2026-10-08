@@ -105,7 +105,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-ukc smoke-ppb smoke-dmar"
+    "smoke-ukc smoke-ppb smoke-dmar smoke-iic"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2226,6 +2226,30 @@ smoke-dmar: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
         --expect 'acpidmar0 at acpi0: AMD iommu1 at 0xfed80000' --expect 'amd iommu intr: 0x' \
         --expect 'vendor 0x1022 product 0x1419 (class system subclass IOMMU, rev 0x00) at pci0 dev 2 function 0 not configured' \
         --expect 'nvme0 at pci0 dev 4 function 0 vendor 0x1b36 product 0x0010 rev 0x02: msix, NVMe 1.4'
+
+# M16e: the iic(4) bus and its scan, amd64 only (arm64's GENERIC has no SMBus controller). Two
+# runs. On q35, ichiic(4) attaches to the ICH9 SMBus (00:1f.3; EDK2 leaves its host controller
+# disabled, as UEFI firmware does, so the attach enables it, ichiic.rs "Deviations") with its
+# interrupt on I/O APIC pin 16, and iic0 below it. On `--machine pc` (hwopts.rs; i440fx, the
+# boot image on an ich9-ahci), piixpm(4) attaches to the PIIX4 power management function
+# (00:01.3), interrupt 9 (the SCI), and iic0 below it. The scan runs on both: it gets an
+# acknowledgement from the eight SPD EEPROMs QEMU puts on each SMBus (0x50 to 0x57), but QEMU's
+# are blank (register 2, the memory type, reads 0), so iic_probe_eeprom names none and, as in
+# OpenBSD, nothing is printed for them; nothing else answers. A timeout or a failed abort of a
+# transfer would print a line (`exec: op`, `abort failed`) and fails the run. Part of `smoke`.
+smoke-iic: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-iic: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        {{disk_login}} --send-after '# ' --send 'echo iic-$((40+2))\n' \
+        --reject 'SMBus disabled' --reject 'abort failed' --reject ': exec: op' \
+        --expect 'ichiic0 at pci0 dev 31 function 3 vendor 0x8086 product 0x2930 rev 0x02: apic 0 int 16' \
+        --expect 'iic0 at ichiic0' --expect 'iic-42'
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --machine pc --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        {{disk_login}} --send-after '# ' --send 'echo iic-$((40+2))\n' \
+        --reject 'SMBus disabled' --reject 'abort failed' --reject ': exec: op' \
+        --expect 'piixpm0 at pci0 dev 1 function 3 vendor 0x8086 product 0x7113 rev 0x03: apic 0 int 9' \
+        --expect 'iic0 at piixpm0' --expect 'iic-42'
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
