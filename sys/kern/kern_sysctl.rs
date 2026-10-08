@@ -70,7 +70,7 @@
 //!   ([`SysctlPlain`]). `int *valp` is `&AtomicI32`, the C's atomic operations on it are the
 //!   atomic's; a C local passed by address is an `AtomicI32` read back with `into_inner`.
 //! - Every node whose subsystem is not ported reports itself with `unported!` and fails with
-//!   `ENOSYS`: `watchdog` (`kern_watchdog.c`), `clockintr`, `proc_vmmap` after its checks
+//!   `ENOSYS`: `clockintr`, `proc_vmmap` after its checks
 //!   (`fill_vmmap`); `hw.model` (`cpu_model`, `identcpu.c`/arm64 `cpu.c`),
 //!   `setperf`/`perfpolicy` (`sched_bsd.c`). The top-level `machdep` tree is the machine's
 //!   `cpu_sysctl` (`machine::cpu::cpu_sysctl`). `kern.proc_cwd` of a process
@@ -144,6 +144,7 @@ use crate::kern::kern_sig::NOSUIDCOREDUMP;
 use crate::kern::kern_synch::{refcnt_rele_wake, refcnt_take};
 use crate::kern::kern_tc::{microboottime, nanoboottime, nanotime, sysctl_tc, tc_setrealtimeclock};
 use crate::kern::kern_timeout::timeout_sysctl;
+use crate::kern::kern_watchdog::sysctl_wdog;
 use crate::kern::sched_bsd;
 use crate::kern::subr_autoconf::AUTOCONF_SERIAL;
 use crate::kern::subr_disk::{DISK_CHANGE, DISK_COUNT, DISKLIST, duid_format, duid_iszero};
@@ -565,7 +566,7 @@ fn kern_sysctl_dirs_locked(
         }
         KERN_PROC_VMMAP => sysctl_proc_vmmap(name, oldp, oldlenp, p),
         KERN_INTRCNT => sysctl_intrcnt(name, oldp, oldlenp),
-        KERN_WATCHDOG => Err(unported!("kern.watchdog: sysctl_wdog (kern_watchdog.c)")),
+        KERN_WATCHDOG => sysctl_wdog(name, oldp, oldlenp, newp, newlen),
         KERN_EVCOUNT => evcount_sysctl(name, oldp, oldlenp, newp, newlen),
         KERN_CLOCKINTR => Err(unported!(
             "kern.clockintr: sysctl_clockintr (kern_clockintr.c)"
