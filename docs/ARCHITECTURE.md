@@ -1472,6 +1472,17 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   uhidev(4) and ukbd(4) attach for USB keyboards over the HID parser (`dev/hid/hid.c`) and
   hidkbd; the keyboard's interrupt pipe opens only when a `wskbd` child enables it (M13), so
   until then the keyboard attaches but is silent, as on an OpenBSD kernel without `wskbd`.
+  ehci(4) (M16b, `dev/usb/ehci.c`, `dev/pci/ehci_pci.c`) is the second host controller:
+  `usb*` takes both `xhci` and `ehci` as parents (one cfdata entry, as config(8) merges its
+  lines). Its soft QHs, qTDs and iTDs/siTDs are carved from DMA chunks that are never freed,
+  so they are `&'static`, the hardware descriptor first as `#[repr(C)]` `Cell<u32>`s read and
+  written volatile (`ehci_get`/`ehci_set`, the siop idiom). In QEMU two behaviours stop the
+  faithful port short of a mounted stick, left to the user: on amd64 `ehci_init` raises INTx
+  while the I/O APIC pin is still masked and edge-triggered (`ioapic_addroute` leaves pins to
+  `ioapic_enable` while cold, as in C) and QEMU's I/O APIC drops masked edges, so the level
+  that never falls is never delivered; on arm64 `ehci_pci_attach`'s 16-bit
+  `EOWRITE2(EHCI_USBINTR, 0)` is refused by QEMU's EHCI (4-byte operational registers) as a
+  synchronous external abort.
 - Audio (M12): audio(4) (`dev/audio.c`) is machine-independent; drivers reach it only
   through `AudioHwIf`, `audio_attach_mi` and `audio_pintr`/`audio_rintr`, called with
   `AUDIO_LOCK` held. azalia(4) attaches QEMU's `intel-hda` on both architectures (through

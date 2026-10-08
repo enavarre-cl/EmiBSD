@@ -2158,6 +2158,40 @@ usb_check := "--expect 'usb0 at xhci0: USB revision 3.0' --expect 'uhub0 at usb0
     "--expect 'emibsd m12: hello from a usb stick' --expect '4071711340 1048576 /mnt/BIG.BIN' " + \
     "--expect 'usb-42'"
 
+# M16b: ehci(4). The M12 stick alone on QEMU's `usb-ehci` (an ICH4 EHCI function, 8086:24cd,
+# `--usb-hc ehci`, devices.rs: a full speed usb-kbd does not fit on an EHCI with no companion
+# controller): ehci(4) at pci with its INTx interrupt, usb(4) and the emulated root hub,
+# umass(4) at high speed below a scsibus, the stick as sd2 on both archs, as in `smoke-usb`.
+# Logs in, then `smoke-usb`'s session: mount_msdos(8), the note, the 1 MiB file's cksum(1), a
+# copy, a remount and cmp(1).
+# NOT in `smokes` yet: the faithful port meets two QEMU behaviours that the C meets too, left
+# to the user (M16b report): on amd64 ehci_init raises INTx (port change) while the I/O APIC
+# pin is still masked and edge-triggered (ioapic_addroute leaves the pin to ioapic_enable while
+# cold, as in C), QEMU's I/O APIC drops masked edges, and the level never falls, so no
+# interrupt is ever delivered ("uhub0: device problem, disabling port 1"); on arm64
+# ehci_pci_attach's EOWRITE2(EHCI_USBINTR, 0) is a 16-bit write QEMU's EHCI operational
+# registers refuse (4-byte accesses only), a synchronous external abort ("panic: uvm_fault
+# failed ... far ...028" in generic_space_write_2). With both sidestepped by hand (status
+# acked once, the write skipped) every line below was seen on both archs.
+smoke-ehci: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-ehci: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --usb-hc ehci {{disk_login}} {{replace(usb_session, "SD", "sd2")}} {{ehci_check}} \
+        --expect 'ehci0 at pci0 dev 4 function 0 vendor 0x8086 product 0x24cd rev 0x10: apic 0 int 23'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        --usb-hc ehci {{disk_login}} {{replace(usb_session, "SD", "sd2")}} {{ehci_check}} \
+        --expect 'ehci0 at pci0 dev 1 function 0 vendor 0x8086 product 0x24cd rev 0x10'
+
+# `smoke-ehci`'s expectations, both archs.
+ehci_check := "--expect 'usb0 at ehci0: USB revision 2.0' " + \
+    "--expect 'uhub0 at usb0 configuration 1 interface 0 \"vendor 0x8086 EHCI root hub\" rev 2.00/1.00 addr 1' " + \
+    "--expect 'umass0 at uhub0 port 1 configuration 1 interface 0 \"QEMU QEMU USB HARDDRIVE\" rev 2.00/0.00 addr 2' " + \
+    "--expect 'umass0: using SCSI over Bulk-Only' " + \
+    "--expect 'sd2 at scsibus2 targ 1 lun 0: <QEMU, QEMU HARDDISK, 2.5+>' " + \
+    "--expect 'emibsd m12: hello from a usb stick' --expect '4071711340 1048576 /mnt/BIG.BIN' " + \
+    "--expect 'usb-42'"
+
 # M13: com(4) over puc(4), amd64 only: arm64's GENERIC has no puc(4). QEMU's `pci-serial`
 # (1b36:0002, a 16550 behind PCI, `--pci-serial`, hwopts.rs) is a file chardev: puc*
 # attaches (`ports: 16 com`: puc_print_ports counts the card's empty port slots as com, in

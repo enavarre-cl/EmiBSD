@@ -10716,28 +10716,36 @@ notes = "M16b: the whole file: uhid_lookup, uhid_cd/ca, match (any report ID not
 [[file]]
 c = "sys/dev/usb/ehcireg.h"
 rust = "sys/dev/usb/ehcireg.rs"
-status = "todo"
-notes = "M16: ehci registers and descriptors"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "10c50a5cd4e8ac5da40e1af222e4a3c60fa53c4f"
+notes = "M16b: every PCI config, capability and operational register, bit and field macro (lower-case const fn: ehci_portsc(n), ehci_qtd_get_bytes(x), ...); struct ehci_itd/sitd/qtd/qh/fstn as #[repr(C)] structures of Cell<u32> with their C sizes pinned (92/36/52/68/8), every member access one volatile load/store with the letoh32/htole32 conversion (ehci_get/ehci_set); host tests of the macros and a reference-backed test (assert_complete over EHCI_ and PCI_)"
 
 [[file]]
 c = "sys/dev/usb/ehcivar.h"
 rust = "sys/dev/usb/ehcivar.rs"
-status = "todo"
-notes = "M16: ehci_softc"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8fd2c89e8daeab1eaa022646ac67704c3a3e5741"
+notes = "M16b: ehci_soft_qtd/qh/itd (carved from DMA chunks, handed around as &'static, the hardware part first), ehci_xfer (UsbdHcXfer), ehci_soft_islot, ehci_softc (sc_offs, sc_flags, sc_eintrs atomics for the IPL_MPSAFE interrupt; bounds-checked sc_flist and sc_softitds accessors), the EREAD/EOWRITE accessors as functions, EHCI_IQHIDX/EHCI_ILEV_IVAL. Deviations: the unions are split into members (itd/sitd is the itd storage with a sitd() view; u.frame_list and u.free_list; _TD.sqtd and _TD.itd); the *_SIZE/*_CHUNK constants round the Rust sizes"
 
 [[file]]
 c = "sys/dev/usb/ehci.c"
 rust = "sys/dev/usb/ehci.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1e8a1368534d36753f5b3ca75f6b49e14f738411"
 deps = ["sys/dev/usb/ehcireg.h", "sys/dev/usb/ehcivar.h", "sys/dev/usb/usb.c"]
-notes = "M16: ehci(4); criterion: QEMU's usb-ehci / ich9-usb-ehci1 with the usb-storage stick mounted, both archs"
+notes = "M16b: license: ISC + BSD-2 (NetBSD). The whole driver: init (frame list, interrupt QH tree, async head), the hard (IPL_MPSAFE through the front-end) and soft interrupts, port change, setaddr (pipe re-open), qh/itd checks and idone, detach/activate/reset, allocx/freex (static pool), clear toggle, open (async, interrupt tree, isochronous), add/rem qh, set_qh_qtd, the async advance doorbell (ehci_sync_hc), itd chain unlink/free, the root hub emulation (descriptors, device qualifier, standard and hub requests, port reset and disown), soft qh/qtd/itd allocation, qTD chains, close, abort and timeouts (abort task, ABORTING/ABORTWAIT), the dropped-interrupt timeout, control, bulk, interrupt (repeat) and isochronous transfers through iTDs (high speed) and siTDs (split, full speed behind a TT). Not ported: EHCI_DEBUG (DPRINTF, ehci_dump_*). DIAGNOSTIC blocks under feature diagnostic. Deviations in the file: checked casts (ehci_softc by the bus methods, UsbdPipe::hc/UsbdXfer::hc), pool static, ehci_init returns USBD_NOMEM for the C's ENOMEM, setaddr/activate errno mapping (EPERM for 1, ERESTART for -1), ehci_pipe's union split, sqtd chain returns (first, last), TAILQ_REMOVE only of a linked xfer, the device qualifier copy bounded by its 10 bytes, ehci_arm_timeout shared by the start functions. QEMU (usb-ehci, smoke-ehci, not in smokes): ehci0, usb0 and uhub0 attach on both archs; the stick enumerates and mounts only with two QEMU gaps sidestepped by hand (see ehci_pci.c's row and the justfile): amd64 never gets the INTx raised during cold, arm64 aborts on the C's 16-bit EOWRITE2"
 
 [[file]]
 c = "sys/dev/pci/ehci_pci.c"
 rust = "sys/dev/pci/ehci_pci.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "b6e9f1a2e9d7ee897598e0ee3a7e8b1cda1da27e"
 deps = ["sys/dev/usb/ehci.c"]
-notes = "M16: ehci at pci"
+notes = "M16b: match, attach (BAR 0, the ATI SB600/SB700 and VIA VT6202 quirks with their pcidevs IDs, INTx at IPL_USB|IPL_MPSAFE, USB revision, vendor string, dropped-interrupt workaround, BIOS handoff, ehci_init, usb at ehci), activate, detach, takecontroller, ehci_sb700_match. Not ported: ehci_pci_givecontroller (#if 0 in C), EHCI_DEBUG. Deviations: pci_find_device gets a scratch copy of the attach args for the C's NULL; vendor string is the C's fallback (no PCIVERBOSE names). Gap for the user: on arm64 virt the C's EOWRITE2(EHCI_USBINTR, 0) is a 16-bit write that QEMU's EHCI operational registers refuse (4-byte accesses only): synchronous external abort, panic in generic_space_write_2 at attach; on amd64 q35 ehci_init raises INTx while the I/O APIC pin is masked/edge (ioapic_cold, as in C) and QEMU drops it, so no interrupt is ever delivered (uhub0: device problem)"
 
 [[file]]
 c = "sys/dev/usb/uhcireg.h"
