@@ -55,9 +55,8 @@
 //! ## Deviations
 //! - The kernel configuration is GENERIC's (`pseudo-device wsmux 2`, `NWSDISPLAY > 0`,
 //!   `NWSKBD > 0`, option `WSDISPLAY_COMPAT_RAWKBD` as the cargo feature
-//!   `wsdisplay_compat_rawkbd`). GENERIC also has `NWSMOUSE > 0`, but `wsmouse.c` is not
-//!   ported: `WSMUXIO_ADD_DEVICE` of a `WSMUX_MOUSE` answers the visible stub
-//!   `unported!("wsmouse_add_mux")` (`ENOSYS`) where a kernel without wsmouse says `EINVAL`.
+//!   `wsdisplay_compat_rawkbd`) and `NWSMOUSE > 0` (`WSMUXIO_ADD_DEVICE` of a
+//!   `WSMUX_MOUSE` is `wsmouse_add_mux`).
 //! - `nwsmux` and `wsmuxdevs`, the table of muxes `wsmux_getmux` grows, are one
 //!   `StaticCell` changed under the kernel lock (the C has no other lock either); a mux,
 //!   once created, is never freed, so its softc is `&'static`.
@@ -83,6 +82,7 @@ use crate::dev::wscons::wsevent::{wsevent_fini, wsevent_init, wsevent_kqfilter, 
 use crate::dev::wscons::wseventvar::{WSEVENT_QSIZE, Wseventvar, wsevent_wakeup};
 use crate::dev::wscons::wskbd::wskbd_add_mux;
 use crate::dev::wscons::wsksymdef::{KB_DEFAULT, KB_NOENCODING, KB_NONE};
+use crate::dev::wscons::wsmouse::wsmouse_add_mux;
 use crate::dev::wscons::wsmuxvar::{
     Wsevsrc, WsmuxSoftc, Wssrcops, wsevsrc_close, wsevsrc_display_ioctl, wsevsrc_ioctl,
     wsevsrc_open, wsevsrc_set_display,
@@ -108,7 +108,6 @@ use crate::sys::rwlock::{RWL_DUPOK, Rwlock};
 use crate::sys::ttycom::{TIOCGPGRP, TIOCSPGRP};
 use crate::sys::types::{Dev, minor};
 use crate::sys::uio::Uio;
-use crate::unported;
 
 /// `NWSMUX`: `pseudo-device wsmux` is configured (`needs-flag`; GENERIC's count, 2, is the
 /// `pdevinit[]` entry's).
@@ -419,8 +418,7 @@ pub fn wsmux_do_ioctl(
                 return Err(Errno::ENXIO);
             }
             return match d.type_ {
-                // NWSMOUSE > 0 in GENERIC, but wsmouse.c is not ported.
-                WSMUX_MOUSE => Err(unported!("wsmouse_add_mux (wsmouse.c)")),
+                WSMUX_MOUSE => wsmouse_add_mux(d.idx, sc),
                 WSMUX_KBD => wskbd_add_mux(d.idx, sc),
                 WSMUX_MUX => wsmux_add_mux(d.idx, sc),
                 _ => Err(Errno::EINVAL),

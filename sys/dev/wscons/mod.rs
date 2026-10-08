@@ -1,6 +1,6 @@
 //! wscons, the workstation console: OpenBSD `sys/dev/wscons/`: the keyboard (`wskbd(4)`), the
 //! display (`wsdisplay(4)`) with its terminal emulations, the mux (`wsmux(4)`) between them,
-//! and the event queues; the mouse (`wsmouse.c`, `wstpad.c`) is not ported.
+//! the mouse (`wsmouse(4)`) with its touchpad processing, and the event queues.
 //!
 //! `wsconsio` holds the event, keyboard and display ioctl definitions of
 //! `<dev/wscons/wsconsio.h>`, `wsksymdef` the keysyms and layout codes, `wsksymvar` the keymap
@@ -8,8 +8,10 @@
 //! keyboard driver itself, `wskbdutil` its keymap and compose helpers, `wskbdraw` the XT
 //! scancodes of raw mode, and `wsdisplayvar` the interface between display drivers and
 //! `wsdisplay(4)`. `wsmux` and `wsmuxvar` are the mux and the event sources it merges,
-//! `wsevent` and `wseventvar` the event queue a reader of `/dev/wskbd*` or `/dev/wsmux*`
-//! gets.
+//! `wsevent` and `wseventvar` the event queue a reader of `/dev/wskbd*`, `/dev/wsmouse*` or
+//! `/dev/wsmux*` gets. `wsmousevar` is the interface between mouse drivers and
+//! `wsmouse(4)`, `wsmouse` the mouse driver itself, `wsmouseinput` its input state and
+//! `wstpad` the touchpad processing (tapping, scrolling, soft buttons) of its compat mode.
 //!
 //! `wsdisplay` is `wsdisplay(4)` itself (virtual screens, their ttys `ttyC*`, the console
 //! output, screen switching, the `wsmoused(8)` selection), `wsdisplay_compat_usl` its USL
@@ -49,5 +51,9 @@ pub mod wskbdutil;
 pub mod wskbdvar;
 pub mod wsksymdef;
 pub mod wsksymvar;
+pub mod wsmouse;
+pub mod wsmouseinput;
+pub mod wsmousevar;
 pub mod wsmux;
 pub mod wsmuxvar;
+pub mod wstpad;

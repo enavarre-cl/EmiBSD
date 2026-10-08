@@ -104,11 +104,7 @@ fn add_device_by_type() {
     let add = |type_, idx| dev_ioctl(m, WSMUXIO_ADD_DEVICE, type_, idx, FWRITE);
     assert_eq!(add(WSMUX_KBD, -1), Err(Errno::ENXIO));
     assert_eq!(add(WSMUX_KBD, 7), Err(Errno::ENXIO), "no such keyboard");
-    assert_eq!(
-        add(WSMUX_MOUSE, 0),
-        Err(Errno::ENOSYS),
-        "wsmouse is not ported"
-    );
+    assert_eq!(add(WSMUX_MOUSE, 31), Err(Errno::ENXIO), "no such mouse");
     assert_eq!(add(9, 0), Err(Errno::EINVAL));
     assert_eq!(
         dev_ioctl(m, WSMUXIO_ADD_DEVICE, WSMUX_MUX, 15, FREAD),

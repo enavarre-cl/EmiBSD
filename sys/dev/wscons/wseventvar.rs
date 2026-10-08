@@ -163,6 +163,19 @@ impl Wseventvar {
         unsafe { self.ws_q.get().add(idx as usize).write(e) };
     }
 
+    /// `ev->ws_q[idx]`.
+    ///
+    /// # Safety
+    ///
+    /// The queue is open and `idx < WSEVENT_QSIZE`; no writer touches that slot meanwhile
+    /// (the reader's own slots, or slots a writer filled and has not published yet).
+    pub unsafe fn q_read(&self, idx: u32) -> WsconsEvent {
+        debug_assert!(idx < WSEVENT_QSIZE);
+        // SAFETY: the caller's contract: an open ring of `WSEVENT_QSIZE` initialised
+        // (`M_ZERO`ed, plain data) events and a slot nobody writes now.
+        unsafe { self.ws_q.get().add(idx as usize).read() }
+    }
+
     /// The bytes of the `n` events of the ring from `idx` (`(caddr_t)&ev->ws_q[idx]` and the
     /// length `uiomove` gets).
     ///

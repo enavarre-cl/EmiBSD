@@ -85,6 +85,7 @@ pub(super) const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 /// - `wsdisplay` is major 12 (`cdev_wsdisplay_init`, M13; 189 / 139): `ttyC0`..`ttyCb`,
 ///   minor = screen, and `ttyCcfg`, minor 255, the control device, mode 0600 (`MAKEDEV`'s
 ///   `wscons`); `wskbd` is major 67 (`cdev_mouse_init`, M13): `wskbd0`..`wskbd3`, minor =
+///   unit; `wsmouse` is major 68 (`cdev_mouse_init`, M13): `wsmouse0`..`wsmouse3`, minor =
 ///   unit; `wsmux` is major 69: `wsmouse` (mux 0) and `wskbd` (mux 1), the nodes of
 ///   `MAKEDEV`'s `wsmux` target (it makes no `/dev/wsmux`), all mode 0600.
 /// - `audio` is major 42 (`cdev_audio_init`, M12; 220 / 170): `audio0` minor 0 and
@@ -146,6 +147,12 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("wskbd1", 'c', 67, 1, 0o600, "wheel"),
     ("wskbd2", 'c', 67, 2, 0o600, "wheel"),
     ("wskbd3", 'c', 67, 3, 0o600, "wheel"),
+    // M13: wsmouse(4)'s mice (`MAKEDEV`'s `wscons`: `wsmouse[0-9]*` is
+    // `M wsmouse$U c 68 $U 600`).
+    ("wsmouse0", 'c', 68, 0, 0o600, "wheel"),
+    ("wsmouse1", 'c', 68, 1, 0o600, "wheel"),
+    ("wsmouse2", 'c', 68, 2, 0o600, "wheel"),
+    ("wsmouse3", 'c', 68, 3, 0o600, "wheel"),
     ("wsmouse", 'c', 69, 0, 0o600, "wheel"),
     ("wskbd", 'c', 69, 1, 0o600, "wheel"),
 ];

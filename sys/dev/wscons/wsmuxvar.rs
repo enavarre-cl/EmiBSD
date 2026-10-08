@@ -59,8 +59,7 @@
 //!   tests for NULL, are `Option`s.
 //! - The `wsevsrc_*` macros are functions of the same names.
 //! - The prototypes at the end of the header belong to `wsmux.c` (`wsmux.rs`), `wskbd.c`
-//!   (`wskbd_add_mux`, `wskbd.rs`) and `wsmouse.c` (`wsmouse_add_mux`, not ported: no
-//!   `wsmouse` is configured here).
+//!   (`wskbd_add_mux`, `wskbd.rs`) and `wsmouse.c` (`wsmouse_add_mux`, `wsmouse.rs`).
 
 use core::cell::Cell;
 use core::ptr::{self, NonNull};

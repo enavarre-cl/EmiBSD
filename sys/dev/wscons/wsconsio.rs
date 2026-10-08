@@ -39,23 +39,22 @@
 //! Upstream: sys/dev/wscons/wsconsio.h @ 3ce1f3f79392
 //!
 //! Ioctls are all in group 'W'; numbers 0 to 31 are the keyboard's (`WSKBDIO_*`), 32 to 63
-//! the mouse's, 64 to 95 the display's, 96 to 127 the mux's. This file carries the first and
-//! the third group, which `hidkbd(4)`, `ukbd(4)`, `wskbd(4)` and the frame buffers
+//! the mouse's, 64 to 95 the display's, 96 to 127 the mux's. This file carries all four,
+//! which `hidkbd(4)`, `ukbd(4)`, `wskbd(4)`, `wsmouse(4)`, `wsmux(4)` and the frame buffers
 //! (`efifb(4)`, `simplefb`, rasops and wsfont, M13) use, and the events every part shares.
 //!
 //! ## Deviations
-//! - Status `wip`: the mouse section (`WSMOUSEIO_*`, `WSMOUSE_TYPE_*`,
-//!   `wsmouse_calibcoords`, ...) of the header is not here: no ported code uses it yet (M13).
-//!   The mux section (`WSMUXIO_*`) is, for `wsdisplay.c`'s control device (M13). Of the
-//!   display section only `WSDISPLAYIO_GPCIID` is missing: its argument,
-//!   `struct pcisel`, is `<dev/pci/pciio.h>`'s, not ported.
+//! - Status `wip`: of the display section only `WSDISPLAYIO_GPCIID` is missing: its
+//!   argument, `struct pcisel`, is `<dev/pci/pciio.h>`'s, not ported.
+//! - `enum wsmousecfg` is the `WSMOUSECFG_*` `i32` constants (the type of
+//!   `wsmouse_param.key`); `WSMOUSECFG_MAX` is computed from them as in C.
 //! - The function-like macros are the lowercase `const fn`s `is_motion_event`,
 //!   `is_button_event` and `is_ctrl_event`; the `_IO*` ioctl numbers are the `const fn`s of
 //!   `sys/sys/ioccom.rs`, so the argument type is part of the number, as `sizeof` is in C.
 //! - Pointers to user memory in the ioctl arguments (`wskbd_map_data.map`,
 //!   `wskbd_encoding_data.encodings`, `wsdisplay_cmap`'s colour arrays, `wsdisplay_cursor`'s
-//!   image and mask) are `usize`s, with the 4 bytes of padding the C compiler leaves before
-//!   them as a named `_pad0` (`vndioctl.rs`); the structures can then be read and written as
+//!   image and mask, `wsmouse_parameters.params`) are `usize`s, with the 4 bytes of padding
+//!   the C compiler leaves next to them as a named `_pad0` (`vndioctl.rs`); the structures can then be read and written as
 //!   plain bytes ([`AbiPod`]). `wsdisplay_font`'s `cookie` and `data` stay pointers: the
 //!   kernel's own fonts are statics that point at their glyphs (`dev/wsfont`), and the ioctls
 //!   that hand a font out clear both (`rasops_list_font`).
@@ -348,6 +347,280 @@ pub const WSKBDIO_SETMODE: u64 = _iow::<i32>(b'W', 19);
 pub const WSKBDIO_GETMODE: u64 = _ior::<i32>(b'W', 20);
 /// `WSKBDIO_GETENCODINGS`: the layouts the keyboard offers.
 pub const WSKBDIO_GETENCODINGS: u64 = _iowr::<WskbdEncodingData>(b'W', 21);
+
+/*
+ * Mouse ioctls (32 - 63)
+ */
+
+/// `WSMOUSEIO_GTYPE`: get mouse type (`WSMOUSE_TYPE_*`).
+pub const WSMOUSEIO_GTYPE: u64 = _ior::<u32>(b'W', 32);
+/// `WSMOUSE_TYPE_VSXXX`: DEC serial.
+pub const WSMOUSE_TYPE_VSXXX: u32 = 1;
+/// `WSMOUSE_TYPE_PS2`: PS/2-compatible.
+pub const WSMOUSE_TYPE_PS2: u32 = 2;
+/// `WSMOUSE_TYPE_USB`: USB mouse.
+pub const WSMOUSE_TYPE_USB: u32 = 3;
+/// `WSMOUSE_TYPE_LMS`: Logitech busmouse.
+pub const WSMOUSE_TYPE_LMS: u32 = 4;
+/// `WSMOUSE_TYPE_MMS`: Microsoft InPort mouse.
+pub const WSMOUSE_TYPE_MMS: u32 = 5;
+/// `WSMOUSE_TYPE_TPANEL`: Generic Touch Panel.
+pub const WSMOUSE_TYPE_TPANEL: u32 = 6;
+/// `WSMOUSE_TYPE_NEXT`: NeXT mouse.
+pub const WSMOUSE_TYPE_NEXT: u32 = 7;
+/// `WSMOUSE_TYPE_ARCHIMEDES`: Archimedes mouse.
+pub const WSMOUSE_TYPE_ARCHIMEDES: u32 = 8;
+/// `WSMOUSE_TYPE_ADB`: ADB.
+pub const WSMOUSE_TYPE_ADB: u32 = 9;
+/// `WSMOUSE_TYPE_HIL`: HP HIL.
+pub const WSMOUSE_TYPE_HIL: u32 = 10;
+/// `WSMOUSE_TYPE_LUNA`: OMRON Luna.
+pub const WSMOUSE_TYPE_LUNA: u32 = 11;
+/// `WSMOUSE_TYPE_DOMAIN`: Apollo Domain.
+pub const WSMOUSE_TYPE_DOMAIN: u32 = 12;
+/// `WSMOUSE_TYPE_BLUETOOTH`: Bluetooth mouse.
+pub const WSMOUSE_TYPE_BLUETOOTH: u32 = 13;
+/// `WSMOUSE_TYPE_SUN`: SUN serial mouse.
+pub const WSMOUSE_TYPE_SUN: u32 = 14;
+/// `WSMOUSE_TYPE_SYNAPTICS`: Synaptics touchpad.
+pub const WSMOUSE_TYPE_SYNAPTICS: u32 = 15;
+/// `WSMOUSE_TYPE_ALPS`: ALPS touchpad.
+pub const WSMOUSE_TYPE_ALPS: u32 = 16;
+/// `WSMOUSE_TYPE_SGI`: SGI serial mouse.
+pub const WSMOUSE_TYPE_SGI: u32 = 17;
+/// `WSMOUSE_TYPE_ELANTECH`: Elantech touchpad.
+pub const WSMOUSE_TYPE_ELANTECH: u32 = 18;
+/// `WSMOUSE_TYPE_SYNAP_SBTN`: Synaptics soft buttons.
+pub const WSMOUSE_TYPE_SYNAP_SBTN: u32 = 19;
+/// `WSMOUSE_TYPE_TOUCHPAD`: Generic touchpad.
+pub const WSMOUSE_TYPE_TOUCHPAD: u32 = 20;
+
+/// `WSMOUSEIO_SRES`: set resolution. Not applicable to all mouse types.
+pub const WSMOUSEIO_SRES: u64 = _iow::<u32>(b'W', 33);
+/// `WSMOUSE_RES_MIN`.
+pub const WSMOUSE_RES_MIN: u32 = 0;
+/// `WSMOUSE_RES_DEFAULT`.
+pub const WSMOUSE_RES_DEFAULT: u32 = 75;
+/// `WSMOUSE_RES_MAX`.
+pub const WSMOUSE_RES_MAX: u32 = 100;
+
+/// `WSMOUSE_CALIBCOORDS_MAX`: the most calibration samples.
+pub const WSMOUSE_CALIBCOORDS_MAX: usize = 16;
+/// `WSMOUSE_CALIBCOORDS_RESET`: the `samplelen` of raw mode.
+pub const WSMOUSE_CALIBCOORDS_RESET: i32 = -1;
+
+/// `struct wsmouse_calibcoord`: one calibration sample.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WsmouseCalibcoord {
+    /// `rawx`: raw coordinate.
+    pub rawx: i32,
+    /// `rawy`.
+    pub rawy: i32,
+    /// `x`: translated coordinate.
+    pub x: i32,
+    /// `y`.
+    pub y: i32,
+}
+
+// SAFETY: `#[repr(C)]`, four `int`s, no padding: every pattern is a valid value.
+unsafe impl AbiPod for WsmouseCalibcoord {}
+
+/// `struct wsmouse_calibcoords`: set/get sample coordinates for calibration.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WsmouseCalibcoords {
+    /// `minx`: minimum value of X.
+    pub minx: i32,
+    /// `miny`: minimum value of Y.
+    pub miny: i32,
+    /// `maxx`: maximum value of X.
+    pub maxx: i32,
+    /// `maxy`: maximum value of Y.
+    pub maxy: i32,
+    /// `swapxy`: swap X/Y axis.
+    pub swapxy: i32,
+    /// `resx`: X resolution.
+    pub resx: i32,
+    /// `resy`: Y resolution.
+    pub resy: i32,
+    /// `samplelen`: number of samples available or `WSMOUSE_CALIBCOORDS_RESET` for raw
+    /// mode.
+    pub samplelen: i32,
+    /// `samples`: sample coordinates.
+    pub samples: [WsmouseCalibcoord; WSMOUSE_CALIBCOORDS_MAX],
+}
+
+// SAFETY: `#[repr(C)]`, `int`s only, no padding (size checked below).
+unsafe impl AbiPod for WsmouseCalibcoords {}
+
+/// `WSMOUSEIO_SCALIBCOORDS`.
+pub const WSMOUSEIO_SCALIBCOORDS: u64 = _iow::<WsmouseCalibcoords>(b'W', 36);
+/// `WSMOUSEIO_GCALIBCOORDS`.
+pub const WSMOUSEIO_GCALIBCOORDS: u64 = _ior::<WsmouseCalibcoords>(b'W', 37);
+
+/// `WSMOUSEIO_SETMODE`: `WSMOUSE_COMPAT` or `WSMOUSE_NATIVE`.
+pub const WSMOUSEIO_SETMODE: u64 = _iow::<i32>(b'W', 38);
+/// `WSMOUSE_COMPAT`.
+pub const WSMOUSE_COMPAT: i32 = 0;
+/// `WSMOUSE_NATIVE`.
+pub const WSMOUSE_NATIVE: i32 = 1;
+
+// Keys of the configuration parameters in WSMOUSEIO_GETPARAMS/WSMOUSEIO_SETPARAMS calls
+// (`enum wsmousecfg`). Arbitrary subsets can be passed, provided that all keys are valid and
+// that the number of key/value pairs doesn't exceed WSMOUSECFG_MAX.
+//
+// The keys are divided into various groups, which end with marker entries of the form
+// WSMOUSECFG__*.
+
+// Coordinate handling.
+/// `WSMOUSECFG_DX_SCALE`: Xscale factor in [*.12] fixed-point format.
+pub const WSMOUSECFG_DX_SCALE: i32 = 0;
+/// `WSMOUSECFG_DY_SCALE`: Yscale factor in [*.12] fixed-point format.
+pub const WSMOUSECFG_DY_SCALE: i32 = 1;
+/// `WSMOUSECFG_PRESSURE_LO`: pressure limits defining start of touch.
+pub const WSMOUSECFG_PRESSURE_LO: i32 = 2;
+/// `WSMOUSECFG_PRESSURE_HI`: pressure limits defining end of touch.
+pub const WSMOUSECFG_PRESSURE_HI: i32 = 3;
+/// `WSMOUSECFG_TRKMAXDIST`: max distance to pair points for MT contact.
+pub const WSMOUSECFG_TRKMAXDIST: i32 = 4;
+/// `WSMOUSECFG_SWAPXY`: swap X- and Y-axis.
+pub const WSMOUSECFG_SWAPXY: i32 = 5;
+/// `WSMOUSECFG_X_INV`: map absolute coordinate X to (INV - X).
+pub const WSMOUSECFG_X_INV: i32 = 6;
+/// `WSMOUSECFG_Y_INV`: map absolute coordinate Y to (INV - Y).
+pub const WSMOUSECFG_Y_INV: i32 = 7;
+/// `WSMOUSECFG_REVERSE_SCROLLING`: reverse scroll directions.
+pub const WSMOUSECFG_REVERSE_SCROLLING: i32 = 8;
+/// `WSMOUSECFG__FILTERS`: the end of the group.
+pub const WSMOUSECFG__FILTERS: i32 = 9;
+
+// Coordinate handling, applying only in WSMOUSE_COMPAT mode.
+/// `WSMOUSECFG_DX_MAX`: ignore X deltas greater than this limit.
+pub const WSMOUSECFG_DX_MAX: i32 = 32;
+/// `WSMOUSECFG_DY_MAX`: ignore Y deltas greater than this limit.
+pub const WSMOUSECFG_DY_MAX: i32 = 33;
+/// `WSMOUSECFG_X_HYSTERESIS`: retard value for X coordinates.
+pub const WSMOUSECFG_X_HYSTERESIS: i32 = 34;
+/// `WSMOUSECFG_Y_HYSTERESIS`: retard value for Y coordinates.
+pub const WSMOUSECFG_Y_HYSTERESIS: i32 = 35;
+/// `WSMOUSECFG_DECELERATION`: threshold (distance) for deceleration.
+pub const WSMOUSECFG_DECELERATION: i32 = 36;
+/// `WSMOUSECFG_STRONG_HYSTERESIS`: FALSE and read-only, the feature is not supported
+/// anymore.
+pub const WSMOUSECFG_STRONG_HYSTERESIS: i32 = 37;
+/// `WSMOUSECFG_SMOOTHING`: smoothing factor (0-7).
+pub const WSMOUSECFG_SMOOTHING: i32 = 38;
+/// `WSMOUSECFG__TPFILTERS`: the end of the group.
+pub const WSMOUSECFG__TPFILTERS: i32 = 39;
+
+// Touchpad features.
+/// `WSMOUSECFG_SOFTBUTTONS`: 2 soft-buttons at the bottom edge.
+pub const WSMOUSECFG_SOFTBUTTONS: i32 = 64;
+/// `WSMOUSECFG_SOFTMBTN`: add a middle-button area.
+pub const WSMOUSECFG_SOFTMBTN: i32 = 65;
+/// `WSMOUSECFG_TOPBUTTONS`: 3 soft-buttons at the top edge.
+pub const WSMOUSECFG_TOPBUTTONS: i32 = 66;
+/// `WSMOUSECFG_TWOFINGERSCROLL`: enable two-finger scrolling.
+pub const WSMOUSECFG_TWOFINGERSCROLL: i32 = 67;
+/// `WSMOUSECFG_EDGESCROLL`: enable edge scrolling.
+pub const WSMOUSECFG_EDGESCROLL: i32 = 68;
+/// `WSMOUSECFG_HORIZSCROLL`: enable horizontal edge scrolling.
+pub const WSMOUSECFG_HORIZSCROLL: i32 = 69;
+/// `WSMOUSECFG_SWAPSIDES`: invert soft-button/scroll areas.
+pub const WSMOUSECFG_SWAPSIDES: i32 = 70;
+/// `WSMOUSECFG_DISABLE`: disable all output except for clicks in the top-button area.
+pub const WSMOUSECFG_DISABLE: i32 = 71;
+/// `WSMOUSECFG_MTBUTTONS`: multi-touch buttons.
+pub const WSMOUSECFG_MTBUTTONS: i32 = 72;
+/// `WSMOUSECFG__TPFEATURES`: the end of the group.
+pub const WSMOUSECFG__TPFEATURES: i32 = 73;
+
+// Touchpad options.
+/// `WSMOUSECFG_LEFT_EDGE`: ratio: left edge / total width.
+pub const WSMOUSECFG_LEFT_EDGE: i32 = 128;
+/// `WSMOUSECFG_RIGHT_EDGE`: ratio: right edge / total width.
+pub const WSMOUSECFG_RIGHT_EDGE: i32 = 129;
+/// `WSMOUSECFG_TOP_EDGE`: ratio: top edge / total height.
+pub const WSMOUSECFG_TOP_EDGE: i32 = 130;
+/// `WSMOUSECFG_BOTTOM_EDGE`: ratio: bottom edge / total height.
+pub const WSMOUSECFG_BOTTOM_EDGE: i32 = 131;
+/// `WSMOUSECFG_CENTERWIDTH`: ratio: center width / total width.
+pub const WSMOUSECFG_CENTERWIDTH: i32 = 132;
+/// `WSMOUSECFG_HORIZSCROLLDIST`: distance mapped to a scroll event.
+pub const WSMOUSECFG_HORIZSCROLLDIST: i32 = 133;
+/// `WSMOUSECFG_VERTSCROLLDIST`: distance mapped to a scroll event.
+pub const WSMOUSECFG_VERTSCROLLDIST: i32 = 134;
+/// `WSMOUSECFG_F2WIDTH`: width limit for single touches.
+pub const WSMOUSECFG_F2WIDTH: i32 = 135;
+/// `WSMOUSECFG_F2PRESSURE`: pressure limit for single touches.
+pub const WSMOUSECFG_F2PRESSURE: i32 = 136;
+/// `WSMOUSECFG_TAP_MAXTIME`: max. duration of tap contacts (ms).
+pub const WSMOUSECFG_TAP_MAXTIME: i32 = 137;
+/// `WSMOUSECFG_TAP_CLICKTIME`: time between the end of a tap and the button-up-event (ms).
+pub const WSMOUSECFG_TAP_CLICKTIME: i32 = 138;
+/// `WSMOUSECFG_TAP_LOCKTIME`: time between a tap-and-drag action and the button-up-event
+/// (ms).
+pub const WSMOUSECFG_TAP_LOCKTIME: i32 = 139;
+/// `WSMOUSECFG_TAP_ONE_BTNMAP`: one-finger tap button mapping.
+pub const WSMOUSECFG_TAP_ONE_BTNMAP: i32 = 140;
+/// `WSMOUSECFG_TAP_TWO_BTNMAP`: two-finger tap button mapping.
+pub const WSMOUSECFG_TAP_TWO_BTNMAP: i32 = 141;
+/// `WSMOUSECFG_TAP_THREE_BTNMAP`: three-finger tap button mapping.
+pub const WSMOUSECFG_TAP_THREE_BTNMAP: i32 = 142;
+/// `WSMOUSECFG_MTBTN_MAXDIST`: MTBUTTONS: distance limit for two-finger clicks.
+pub const WSMOUSECFG_MTBTN_MAXDIST: i32 = 143;
+/// `WSMOUSECFG__TPSETUP`: the end of the group.
+pub const WSMOUSECFG__TPSETUP: i32 = 144;
+
+// Enable/Disable debug output.
+/// `WSMOUSECFG_LOG_INPUT`.
+pub const WSMOUSECFG_LOG_INPUT: i32 = 256;
+/// `WSMOUSECFG_LOG_EVENTS`.
+pub const WSMOUSECFG_LOG_EVENTS: i32 = 257;
+/// `WSMOUSECFG__DEBUG`: the end of the group.
+pub const WSMOUSECFG__DEBUG: i32 = 258;
+
+/// `WSMOUSECFG_MAX`: the number of keys, the most pairs one call may pass.
+pub const WSMOUSECFG_MAX: u32 = ((WSMOUSECFG__FILTERS - WSMOUSECFG_DX_SCALE)
+    + (WSMOUSECFG__TPFILTERS - WSMOUSECFG_DX_MAX)
+    + (WSMOUSECFG__TPFEATURES - WSMOUSECFG_SOFTBUTTONS)
+    + (WSMOUSECFG__TPSETUP - WSMOUSECFG_LEFT_EDGE)
+    + (WSMOUSECFG__DEBUG - WSMOUSECFG_LOG_INPUT)) as u32;
+
+/// `struct wsmouse_param`: a key (`WSMOUSECFG_*`) and its value.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WsmouseParam {
+    /// `key`: `enum wsmousecfg`.
+    pub key: i32,
+    /// `value`.
+    pub value: i32,
+}
+
+// SAFETY: `#[repr(C)]`, two `int`s, no padding: every pattern is a valid value.
+unsafe impl AbiPod for WsmouseParam {}
+
+/// `struct wsmouse_parameters`: the argument of `WSMOUSEIO_GETPARAMS` and
+/// `WSMOUSEIO_SETPARAMS`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WsmouseParameters {
+    /// `params`: a user address of `nparams` `struct wsmouse_param`s.
+    pub params: usize,
+    /// `nparams`.
+    pub nparams: u32,
+    /// The four bytes of padding the C compiler puts after `nparams`.
+    pub _pad0: [u8; 4],
+}
+
+// SAFETY: `#[repr(C)]`, integers only, the padding a named field (size checked below).
+unsafe impl AbiPod for WsmouseParameters {}
+
+/// `WSMOUSEIO_GETPARAMS`.
+pub const WSMOUSEIO_GETPARAMS: u64 = _iow::<WsmouseParameters>(b'W', 39);
+/// `WSMOUSEIO_SETPARAMS`.
+pub const WSMOUSEIO_SETPARAMS: u64 = _iow::<WsmouseParameters>(b'W', 40);
 
 /*
  * Display ioctls (64 - 95)
@@ -1003,6 +1276,9 @@ const _: () = {
     assert!(size_of::<WsdisplayGfxMode>() == 12);
     assert!(size_of::<WsdisplayScreentype>() == 40);
     assert!(size_of::<WsdisplayEmultype>() == 20);
+    assert!(size_of::<WsmouseCalibcoords>() == 288);
+    assert!(size_of::<WsmouseParam>() == 8);
+    assert!(size_of::<WsmouseParameters>() == 16);
 };
 
 #[cfg(test)]
@@ -1031,6 +1307,13 @@ mod tests {
         assert_eq!(WSMUXIO_ADD_DEVICE, 0x8008_5761);
         assert_eq!(WSMUXIO_LIST_DEVICES, 0xc104_5763);
         assert_eq!(WSMUXIO_INJECTEVENT, 0x8018_5760);
+        // _IOR('W', 32, u_int), _IOW('W', 36, struct wsmouse_calibcoords),
+        // _IOW('W', 39/40, struct wsmouse_parameters)
+        assert_eq!(WSMOUSEIO_GTYPE, 0x4004_5720);
+        assert_eq!(WSMOUSEIO_SCALIBCOORDS, 0x8120_5724);
+        assert_eq!(WSMOUSEIO_GETPARAMS, 0x8010_5727);
+        assert_eq!(WSMOUSEIO_SETPARAMS, 0x8010_5728);
+        assert_eq!(WSMOUSECFG_MAX, 9 + 7 + 9 + 16 + 2);
     }
 
     #[test]
@@ -1219,6 +1502,111 @@ mod tests {
             WSMUX_KBD,
             WSMUX_MUX,
             WSMUX_MAXDEV,
+            WSMOUSE_TYPE_VSXXX,
+            WSMOUSE_TYPE_PS2,
+            WSMOUSE_TYPE_USB,
+            WSMOUSE_TYPE_LMS,
+            WSMOUSE_TYPE_MMS,
+            WSMOUSE_TYPE_TPANEL,
+            WSMOUSE_TYPE_NEXT,
+            WSMOUSE_TYPE_ARCHIMEDES,
+            WSMOUSE_TYPE_ADB,
+            WSMOUSE_TYPE_HIL,
+            WSMOUSE_TYPE_LUNA,
+            WSMOUSE_TYPE_DOMAIN,
+            WSMOUSE_TYPE_BLUETOOTH,
+            WSMOUSE_TYPE_SUN,
+            WSMOUSE_TYPE_SYNAPTICS,
+            WSMOUSE_TYPE_ALPS,
+            WSMOUSE_TYPE_SGI,
+            WSMOUSE_TYPE_ELANTECH,
+            WSMOUSE_TYPE_SYNAP_SBTN,
+            WSMOUSE_TYPE_TOUCHPAD,
+            WSMOUSE_RES_MIN,
+            WSMOUSE_RES_DEFAULT,
+            WSMOUSE_RES_MAX,
+            WSMOUSE_CALIBCOORDS_MAX,
+            WSMOUSE_CALIBCOORDS_RESET,
+            WSMOUSE_COMPAT,
+            WSMOUSE_NATIVE,
         );
+    }
+
+    /// `enum wsmousecfg` against the header: every enumerator in order, its value counted
+    /// as the C compiler does (an explicit `= N`, or one more than the one before).
+    #[test]
+    #[ignore = "needs OPENBSD_SRC"]
+    fn wsmousecfg_matches_the_c_enum() {
+        use std::string::ToString;
+        let path = crate::reftest::openbsd_src().join("sys/dev/wscons/wsconsio.h");
+        let text = std::fs::read_to_string(path).unwrap();
+        let start = text.find("enum wsmousecfg {").unwrap();
+        let body = &text[start..start + text[start..].find("};").unwrap()];
+        let (mut c, mut next) = (std::vec::Vec::new(), 0i64);
+        for line in body.lines().skip(1) {
+            let line = line.split("/*").next().unwrap().trim();
+            let name = line.split([',', ' ', '=']).next().unwrap();
+            if name.starts_with("WSMOUSECFG_") {
+                if let Some((_, v)) = line.split_once('=') {
+                    next = crate::reftest::parse_int(v.trim().trim_end_matches(',')).unwrap();
+                }
+                c.push((name.to_string(), next));
+                next += 1;
+            }
+        }
+        macro_rules! ours {
+            ($($n:ident),*) => { [$((stringify!($n).to_string(), i64::from($n))),*] };
+        }
+        let ours = ours!(
+            WSMOUSECFG_DX_SCALE,
+            WSMOUSECFG_DY_SCALE,
+            WSMOUSECFG_PRESSURE_LO,
+            WSMOUSECFG_PRESSURE_HI,
+            WSMOUSECFG_TRKMAXDIST,
+            WSMOUSECFG_SWAPXY,
+            WSMOUSECFG_X_INV,
+            WSMOUSECFG_Y_INV,
+            WSMOUSECFG_REVERSE_SCROLLING,
+            WSMOUSECFG__FILTERS,
+            WSMOUSECFG_DX_MAX,
+            WSMOUSECFG_DY_MAX,
+            WSMOUSECFG_X_HYSTERESIS,
+            WSMOUSECFG_Y_HYSTERESIS,
+            WSMOUSECFG_DECELERATION,
+            WSMOUSECFG_STRONG_HYSTERESIS,
+            WSMOUSECFG_SMOOTHING,
+            WSMOUSECFG__TPFILTERS,
+            WSMOUSECFG_SOFTBUTTONS,
+            WSMOUSECFG_SOFTMBTN,
+            WSMOUSECFG_TOPBUTTONS,
+            WSMOUSECFG_TWOFINGERSCROLL,
+            WSMOUSECFG_EDGESCROLL,
+            WSMOUSECFG_HORIZSCROLL,
+            WSMOUSECFG_SWAPSIDES,
+            WSMOUSECFG_DISABLE,
+            WSMOUSECFG_MTBUTTONS,
+            WSMOUSECFG__TPFEATURES,
+            WSMOUSECFG_LEFT_EDGE,
+            WSMOUSECFG_RIGHT_EDGE,
+            WSMOUSECFG_TOP_EDGE,
+            WSMOUSECFG_BOTTOM_EDGE,
+            WSMOUSECFG_CENTERWIDTH,
+            WSMOUSECFG_HORIZSCROLLDIST,
+            WSMOUSECFG_VERTSCROLLDIST,
+            WSMOUSECFG_F2WIDTH,
+            WSMOUSECFG_F2PRESSURE,
+            WSMOUSECFG_TAP_MAXTIME,
+            WSMOUSECFG_TAP_CLICKTIME,
+            WSMOUSECFG_TAP_LOCKTIME,
+            WSMOUSECFG_TAP_ONE_BTNMAP,
+            WSMOUSECFG_TAP_TWO_BTNMAP,
+            WSMOUSECFG_TAP_THREE_BTNMAP,
+            WSMOUSECFG_MTBTN_MAXDIST,
+            WSMOUSECFG__TPSETUP,
+            WSMOUSECFG_LOG_INPUT,
+            WSMOUSECFG_LOG_EVENTS,
+            WSMOUSECFG__DEBUG
+        );
+        assert_eq!(c, ours);
     }
 }

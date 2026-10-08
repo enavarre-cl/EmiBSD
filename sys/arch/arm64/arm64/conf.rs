@@ -42,7 +42,7 @@
 //!   writes the driver's initialiser with a count (`cdev_disk_init(NWD,wd)`): its entry points
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
-//!   `wsdisplay` (12, M13), `wskbd` (67, M13), `wsmux` (69, M13),
+//!   `wsdisplay` (12, M13), `wskbd` (67, M13), `wsmouse` (68, M13), `wsmux` (69, M13),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `cd` (6 block, 15 character), `vnd` (14 block,
 //!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14) and `fuse` (92, feature `fuse`). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
@@ -76,6 +76,9 @@ use crate::dev::wscons::wsdisplay::{
 };
 use crate::dev::wscons::wskbd::{
     NWSKBD, wskbdclose, wskbdioctl, wskbdkqfilter, wskbdopen, wskbdread,
+};
+use crate::dev::wscons::wsmouse::{
+    NWSMOUSE, wsmouseclose, wsmouseioctl, wsmousekqfilter, wsmouseopen, wsmouseread,
 };
 use crate::dev::wscons::wsmux::{
     NWSMUX, wsmuxclose, wsmuxioctl, wsmuxkqfilter, wsmuxopen, wsmuxread,
@@ -315,7 +318,15 @@ pub static CDEVSW: Devsw<Cdevsw, 101> = Devsw([
         wskbdioctl,
         wskbdkqfilter,
     )),
-    cnotdef(), // 68: mice (wsmouse: not ported)
+    // 68: mice
+    Cell::new(cdev_mouse_init(
+        NWSMOUSE,
+        wsmouseopen,
+        wsmouseclose,
+        wsmouseread,
+        wsmouseioctl,
+        wsmousekqfilter,
+    )),
     // 69: ws multiplexor
     Cell::new(cdev_mouse_init(
         NWSMUX,
