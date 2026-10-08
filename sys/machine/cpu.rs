@@ -306,6 +306,14 @@ pub trait Cpu {
     /// has not switched threads.
     unsafe fn intr_restore(s: u64);
 
+    /// `intr_enable()` (`<machine/cpufunc.h>`, arm64 `<machine/cpu.h>`): unmasks interrupts
+    /// on this CPU.
+    ///
+    /// # Safety
+    ///
+    /// The interrupt controller is set up and the caller's code may be interrupted here.
+    unsafe fn intr_enable();
+
     /// `ci->ci_cputype` (`__HAVE_CPU_TOPOLOGY`): the `CPUTYP_*` bits (`<sys/sched.h>`) of
     /// `ci`, which `sched_blockcpu` (`hw.smt`, `hw.blockcpu`) matches. The default, 0, is a
     /// CPU of no known type: what a machine reports until it ports its topology probe
@@ -477,6 +485,17 @@ pub fn intr_disable() -> u64 {
 pub unsafe fn intr_restore(s: u64) {
     // SAFETY: forwarded.
     unsafe { Machine::intr_restore(s) }
+}
+
+/// `intr_enable()` on the selected machine.
+///
+/// # Safety
+///
+/// As for [`Cpu::intr_enable`].
+#[inline]
+pub unsafe fn intr_enable() {
+    // SAFETY: forwarded.
+    unsafe { Machine::intr_enable() }
 }
 
 /// `cpu_boot_secondary_processors()` on the selected machine.

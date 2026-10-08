@@ -298,6 +298,11 @@ impl Cpu for Machine {
         unsafe { include::cpufunc::intr_restore(s) }
     }
 
+    unsafe fn intr_enable() {
+        // SAFETY: forwarded: the caller's guarantee.
+        unsafe { include::cpufunc::intr_enable() }
+    }
+
     fn kbd_reset() -> Option<&'static core::sync::atomic::AtomicI32> {
         Some(&amd64::machdep::KBD_RESET)
     }

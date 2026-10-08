@@ -1081,7 +1081,7 @@ rust = "sys/arch/arm64/arm64/cpufunc.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a1039819b9826ff32ea67aad0cb0c1b1236d6436"
-notes = "TLB invalidations and cpu_setttb as asm! blocks (no RETGUARD, no CPTAG_REPEAT_TLBI codepatch until M4); M6-b2: cpu_icache_sync_range (line sizes from CTR_EL0); M7b: cpu_dcache_wb_range, cpu_dcache_wbinv_range, cpu_dcache_inv_range (unsafe: it discards dirty lines) for bus_dma, the cache_handle_range macro as dcache_range! with dcache_line_size read from CTR_EL0; cpu_idcache_wbinv_range when a caller needs it"
+notes = "TLB invalidations and cpu_setttb as asm! blocks (no RETGUARD, no CPTAG_REPEAT_TLBI codepatch until M4); M6-b2: cpu_icache_sync_range (line sizes from CTR_EL0); M7b: cpu_dcache_wb_range, cpu_dcache_wbinv_range, cpu_dcache_inv_range (unsafe: it discards dirty lines) for bus_dma, the cache_handle_range macro as dcache_range! with dcache_line_size read from CTR_EL0; M16f: cpu_idcache_wbinv_range (idcache_line_size from CTR_EL0), called by pmap_kenter_cache for non-cacheable mappings of managed pages (agintc's tables)"
 
 [[file]]
 c = "sys/arch/amd64/include/pmap.h"
@@ -11257,8 +11257,10 @@ notes = "M16: ichiic(4); criterion: q35's ICH9 SMBus attaches iic0 and the scan 
 [[file]]
 c = "sys/arch/arm64/dev/agintc.c"
 rust = "sys/arch/arm64/dev/agintc.rs"
-status = "todo"
-notes = "M16: agintc(4) GICv3 with its LPI/ITS path; criterion: every arm64 smoke passes on virt,gic-version=3 with -smp 4; arm64 only"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "37064c42f7392439c5a1393a397f8797ed2156f2"
+notes = "M16f: the whole file: GICD/GICR/ICC registers (ICC_* through s3_* system register names), agintc_match/attach (redistributor regions walked by GICR_TYPER, sc_cpuremap from the CPUs' MPIDR, LPI prop/pend tables, the PMR shift and RK3399 NSACR probes, IPI SGI probe at the local redistributor), activate/restore, mbiinit and establish_mbi, cpuinit, set_priority, setipl, enable/disable_wakeup, intr_enable/disable/config, calc_mask/calc_irq, splx/spllower/splraise, iack/eoi, route_irq/route (GICD_IROUTER), intr_barrier, run_handler, irq_handler (SGI/PPI/SPI queues and LPIs), intr_establish_fdt/establish/disestablish/set_wakeup, d_wait_rwp/r_wait_rwp, ipi_ddb/halt/handler/send_ipi (ICC_SGI1R), the ITS (agintcmsi* at fdt? early 1: msi_match with the ACPI Oryon quirk, msi_attach with command queue, flat or indirect device table, collection table, one MAPC per CPU; send_cmd/wait_cmd, create_device_table, create/find_device, discard, inv, establish_msi (MAPTI + SYNC), disestablish_msi, barrier_msi), dmamem_alloc/free (uncached, BUS_DMA_NOCACHE). Deviations: one static softc AGINTC (sc_ic an UnsafeCell written once at attach; sc_ncells dropped, unused in C); cpuremap/ipi_reason/ipi_num/ipi_irq atomics; ITS commands written as four volatile double words; send_ipi brackets the ICC_SGI1R write with dsb ish/isb; attach's unmap path restores the interrupt state; msi_create_device fails without an ITT and establish_msi treats event IDs past 31 as taken; local ffs/fls; agintc_ipi_count/agintc_attached (feature qemu self-check) are not in the C. Host tests (register offsets, priorities, PROPBASER, SGI1R target, redistributor frames, ITS command words, device table layout). QEMU virt,gic-version=3 (just smoke-gicv3, EMIBSD_GIC=3): MP boot with IPIs and TLB shootdowns, MSI-X through the ITS (device tree msi-map and ACPI IORT)"
 
 [[file]]
 c = "sys/dev/ofw/ofw_misc.c"

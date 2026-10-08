@@ -500,6 +500,8 @@ impl Cpu for Machine {
 
     unsafe fn intr_restore(_s: u64) {}
 
+    unsafe fn intr_enable() {}
+
     fn kbd_reset() -> Option<&'static core::sync::atomic::AtomicI32> {
         None
     }

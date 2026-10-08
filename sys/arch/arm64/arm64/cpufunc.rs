@@ -41,8 +41,9 @@
 //! M6 adds `cpu_icache_sync_range`, which reads the line sizes from `CTR_EL0` itself (the
 //! C takes them from `cpu.c`'s probe). M7b adds `cpu_dcache_wb_range`,
 //! `cpu_dcache_wbinv_range` and `cpu_dcache_inv_range` for `bus_dma`, which read
-//! `dcache_line_size` from `CTR_EL0` the same way; `cpu_idcache_wbinv_range` follows when a
-//! caller needs it.
+//! `dcache_line_size` from `CTR_EL0` the same way. M16f adds `cpu_idcache_wbinv_range`, for
+//! `pmap_kenter_cache`'s non-cacheable mappings of managed pages (agintc's LPI and ITS
+//! tables), with `idcache_line_size` from `CTR_EL0` too.
 //!
 //! ## Deviations
 //! - Each routine is an `asm!` block instead of a `.S` entry: they are a few instructions each
@@ -256,6 +257,36 @@ pub fn cpu_icache_sync_range(va: usize, len: usize) {
         // SAFETY: as above.
         unsafe { asm!("ic ivau, {}", in(reg) addr, options(nostack, preserves_flags)) };
         addr += iline;
+    }
+    // SAFETY: barriers.
+    unsafe { asm!("dsb ish", "isb", options(nostack, preserves_flags)) };
+}
+
+/// `cpu_idcache_wbinv_range(va, len)`: writes back and invalidates the data cache lines of
+/// `[va, va+len)` (`dc civac`), then invalidates its instruction cache lines (`ic ivau`),
+/// stepping by `idcache_line_size`, the smaller of the two line sizes (`CTR_EL0`); for a
+/// managed page about to be mapped non-cacheable.
+pub fn cpu_idcache_wbinv_range(va: usize, len: usize) {
+    let ctr: u64;
+    // SAFETY: `ctr_el0` is readable at EL1 and the read has no side effect.
+    unsafe { asm!("mrs {}, ctr_el0", out(reg) ctr, options(nomem, nostack, preserves_flags)) };
+    let line = (4usize << ((ctr >> 16) & 0xf)).min(4usize << (ctr & 0xf));
+    let end = va + len;
+
+    let mut addr = va & !(line - 1);
+    while addr < end {
+        // SAFETY: cache maintenance by address on a mapped range the caller owns; dirty lines
+        // are written back, not discarded.
+        unsafe { asm!("dc civac, {}", in(reg) addr, options(nostack, preserves_flags)) };
+        addr += line;
+    }
+    // SAFETY: a barrier.
+    unsafe { asm!("dsb ish", options(nostack, preserves_flags)) };
+    let mut addr = va & !(line - 1);
+    while addr < end {
+        // SAFETY: as above.
+        unsafe { asm!("ic ivau, {}", in(reg) addr, options(nostack, preserves_flags)) };
+        addr += line;
     }
     // SAFETY: barriers.
     unsafe { asm!("dsb ish", "isb", options(nostack, preserves_flags)) };

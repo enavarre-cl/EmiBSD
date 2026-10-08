@@ -21,14 +21,15 @@
 //! `vmx* at pci?` (M13); `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13);
 //! arm64 ACPI (M14): `acpi0 at mainbus?` (the `acpi_fdt` attachment), `acpimcfg* at acpi?`,
 //! `acpiiort* at acpi?`, `acpipci* at acpi?`, `pci* at acpipci?` and `pluart* at acpi?`;
-//! M16f: `smmu* at acpiiort?`, `smmu* at fdt?`, `plgpio* at fdt? early 1` and `gpiokeys* at
-//! fdt?`;
+//! M16f: `smmu* at acpiiort?`, `smmu* at fdt?`, `plgpio* at fdt? early 1`, `gpiokeys* at
+//! fdt?`, `agintc* at fdt? early 1` and `agintcmsi* at fdt? early 1`;
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
 //! The `fdt` attribute (`files.arm64`: `define fdt {[early = 0]}`) is carried by `mainbus`,
-//! `simplebus` and `ampintc` (`device ampintc: fdt`, whose GICv2m frames `ampintcmsi`
-//! attach below it); `agintc`, which also carries it, is not ported. Every other GENERIC
+//! `simplebus`, `ampintc` (`device ampintc: fdt`, whose GICv2m frames `ampintcmsi`
+//! attach below it) and `agintc` (`device agintc: fdt`, whose ITS `agintcmsi` attaches
+//! below it). Every other GENERIC
 //! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*`,
 //! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `azalia*`, `ahci*`, `nvme*`
 //! `em*`, `re*` and `vmx*`, the PHYs at `mii?` but `rgephy*`, `rlphy*` and `ukphy*`, the other devices at `acpi?` (`acpiac*`, `acpibtn*`, `acpicpu*`, `ahci*`, `com*`, `xhci*`,
@@ -44,6 +45,7 @@ use crate::arch::arm64::arm64::acpi_machdep::ACPI_FDT_CA;
 use crate::arch::arm64::arm64::cpu::{CPU_CA, CPU_CD};
 use crate::arch::arm64::dev::acpiiort::{ACPIIORT_CA, ACPIIORT_CD};
 use crate::arch::arm64::dev::acpipci::{ACPIPCI_CA, ACPIPCI_CD};
+use crate::arch::arm64::dev::agintc::{AGINTC_CA, AGINTC_CD, AGINTCMSI_CA, AGINTCMSI_CD};
 use crate::arch::arm64::dev::agtimer::{AGTIMER_CA, AGTIMER_CD};
 use crate::arch::arm64::dev::ampintc::{AMPINTC_CA, AMPINTC_CD, AMPINTCMSI_CA, AMPINTCMSI_CD};
 use crate::arch::arm64::dev::efi_machdep::{EFI_CA, EFI_CD};
@@ -114,8 +116,8 @@ use crate::scsi::sd::{SD_CA, SD_CD};
 use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR, Pdevinit};
 
 /// `pv[]` for children of the `fdt` attribute: `mainbus0` (`cfdata[0]`), `ampintc*`
-/// (`cfdata[1]`) and `simplebus*` (`cfdata[12]`).
-const PV_FDT: &[i16] = &[0, 1, 12];
+/// (`cfdata[1]`), `simplebus*` (`cfdata[12]`) and `agintc*` (`cfdata[51]`).
+const PV_FDT: &[i16] = &[0, 1, 12, 51];
 
 /// `pv[]` for children of `mainbus0` (`cfdata[0]`) through `mainbus` itself.
 const PV_MAINBUS: &[i16] = &[0];
@@ -213,9 +215,9 @@ const LOC_WSKBDDEV_MUX1: &[i64] = &[-1, 1];
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    52
+    54
 } else {
-    51
+    53
 };
 
 /// `cfdata[]`.
@@ -793,7 +795,31 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 51: cpu* at mainbus? (GENERIC.MP)
+    // 51: agintc* at fdt? early 1
+    Cfdata::new(
+        &AGINTC_CA,
+        &AGINTC_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_1,
+        0,
+        PV_FDT,
+        0,
+        0,
+    ),
+    // 52: agintcmsi* at fdt? early 1
+    Cfdata::new(
+        &AGINTCMSI_CA,
+        &AGINTCMSI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_1,
+        0,
+        PV_FDT,
+        0,
+        0,
+    ),
+    // 53: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];

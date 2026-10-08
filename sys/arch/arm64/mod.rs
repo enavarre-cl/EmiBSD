@@ -301,6 +301,11 @@ impl Cpu for Machine {
         unsafe { include::cpu::intr_restore(s) }
     }
 
+    unsafe fn intr_enable() {
+        // SAFETY: forwarded: the caller's guarantee.
+        unsafe { include::cpu::intr_enable() }
+    }
+
     fn kbd_reset() -> Option<&'static core::sync::atomic::AtomicI32> {
         None
     }
