@@ -107,7 +107,7 @@
 //! `WSMOUSEIO_SETPARAMS` read and change the filters ([`wsmouse_get_params`],
 //! [`wsmouse_set_params`]).
 //!
-//! In M13 no driver attaches a wsmouse (`ums(4)`, `pms(4)` and the others are M15); the
+//! In M13 no driver attaches a wsmouse (`ums(4)`, `pms(4)` and the others are M16); the
 //! driver interface is proven by host tests over a fake mouse.
 //!
 //! ## Deviations
@@ -195,7 +195,7 @@ use crate::sys::uio::Uio;
 use crate::sys::vnode::VCHR;
 
 /// `NWSMOUSE`: `wsmouse* at ...` is configured (`needs-flag`; GENERIC has it, though no
-/// parent attaches one before M15).
+/// parent attaches one before M16).
 pub const NWSMOUSE: i32 = 1;
 
 /// `struct wsmouse_softc`.

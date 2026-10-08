@@ -52,7 +52,7 @@
 //!
 //! Upstream: sys/dev/wscons/wsmousevar.h @ 3ce1f3f79392
 //!
-//! A mouse driver (`ums(4)`, `pms(4)`, a touchpad driver; M15) attaches a `wsmouse` child
+//! A mouse driver (`ums(4)`, `pms(4)`, a touchpad driver; M16) attaches a `wsmouse` child
 //! with a [`WsmousedevAttachArgs`]: its [`WsmouseAccessops`] and the cookie they are called
 //! with. It reports input through the functions of `wsmouse.rs`: button states
 //! (`wsmouse_buttons`), relative motion (`wsmouse_motion`), absolute coordinates

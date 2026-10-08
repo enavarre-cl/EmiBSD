@@ -1,5 +1,5 @@
 //! Host tests of the mouse: a fake driver reports through the interface `ums(4)` will use
-//! (M15), and the events that reach the queue are checked: buttons, motion and scrolling,
+//! (M16), and the events that reach the queue are checked: buttons, motion and scrolling,
 //! the filters (scale with remainder, inversion, swapped axes, reversed scrolling),
 //! absolute positions and touches, the queue overflow and `RESYNC`, multitouch pointer
 //! control, slot tracking (`wsmouse_mtframe` over `wsmouse_matching`), the parameter ioctls,
