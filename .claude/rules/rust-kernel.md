@@ -38,23 +38,33 @@ paths:
   `spin`, `uart_16550`, `fdt`, `linked_list_allocator`, `buddy_system_allocator`, or any crate that
   replaces code OpenBSD has. Porting that code is the project.
 - Every `pub` item has a doc comment (`missing_docs` is warn; `just clippy` uses `-D warnings`).
-- File layout, top to bottom, one blank line between sections, empty sections omitted:
-  1. the `/* $OpenBSD ... */` line(s), then the license block(s) wrapped in `/* <LICENSES> */`
-     and `/* </LICENSES> */` on lines of their own (ported files; the markers only mark, the
-     licence text stays verbatim). Read a ported file from the closing marker on:
-     `sed -n '/<\/LICENSES>/,$p' file`;
-  2. `//!` docs: summary, `Upstream:`, prose, `## Deviations`;
-  3. `mod` declarations (crate roots and `mod.rs` only), then `use` lines as rustfmt orders them;
-  4. constants: `const`, constant-only `pub mod` blocks (`memmap_type`), and `macro_rules!` that
+- File layout (M15): every `.rs` under `sys/` and `tools/` is split into zones, each opened and
+  closed by a comment line of its own, in this order, and nothing else sits outside them but
+  blank lines and the leading `/* $OpenBSD ... */` id lines (or a generated-file banner):
+  - `/* <LICENSES> */` ... `/* </LICENSES> */`: ported files only. The `/* $OpenBSD ... */`
+    line(s) stay above the opening marker; the license block(s) are inside (the markers only
+    mark, the licence text stays verbatim). A C file with no licence text has no zone
+    (`license = "none"` in `ports.toml`);
+  - `/* <CODE> */` ... `/* </CODE> */`: everything that is not a licence or a test, in the
+    section order below, one blank line between sections, empty sections omitted;
+  - `/* <TESTS> */` ... `/* </TESTS> */`: only in files that have tests: the inline
+    `#[cfg(test)] mod tests { .. }`, at the end, however long it is. `use super::*;` sees the
+    parent's private items. No `<name>/tests.rs` exists; `cargo xtask ports check` validates
+    the markers, their order and the licence/test rules (`ports-tracker.md`).
+  Read the code of a file with `sed -n '/<CODE>/,/<\/CODE>/p' file.rs`, its tests with
+  `sed -n '/<TESTS>/,/<\/TESTS>/p'`. Section order inside CODE:
+  1. `//!` docs: summary, `Upstream:`, prose, `## Deviations`; inner attributes (`#![..]`);
+  2. `mod` declarations (crate roots and `mod.rs` only), then `use` lines as rustfmt orders them;
+  3. constants: `const`, constant-only `pub mod` blocks (`memmap_type`), and `macro_rules!` that
      define constants or types, placed just before their first use;
-  5. types: `struct`, `enum`, `type`, each followed by its inherent `impl` blocks and `unsafe impl`
+  4. types: `struct`, `enum`, `type`, each followed by its inherent `impl` blocks and `unsafe impl`
      marker traits;
-  6. `static`s;
-  7. traits;
-  8. free functions and trait `impl`s, in the order of the C file;
-  9. compile-time checks (`const _: () = { assert!(..) };`);
-  10. `#[cfg(test)] mod tests`: inline when it is 50 lines or shorter, otherwise `mod tests;` with
-      the body in `<name>/tests.rs` (`use super::*;` sees the parent's private items either way).
+  5. `static`s;
+  6. traits;
+  7. free functions and trait `impl`s, in the order of the C file;
+  8. compile-time checks (`const _: () = { assert!(..) };`);
+  9. `#[cfg(test)]` helpers other tests share (`pub(crate) fn foo_reset()`, `mod testutil;`):
+     in CODE, not in TESTS.
   Within a section keep the C file's order; the OpenBSD header/implementation split is the
   interface/implementation split (types in `sys/sys/<header>.rs`, functions in the `.c`'s module,
   traits in `sys/machine/<header>.rs`).

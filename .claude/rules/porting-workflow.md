@@ -17,12 +17,15 @@ Applies to every port of a C file from `reference/openbsd-src/sys/` into `sys/`.
 - Re-express semantics in idiomatic Rust; do not transliterate. `docs/C_TO_RUST.md` is the idiom
   table. A new idiom decision is a new row there, in the same commit.
 - Header of every ported file: original `$OpenBSD$` line, full original copyright/license block
-  between `/* <LICENSES> */` and `/* </LICENSES> */`, then `//!` docs with
-  `Upstream: <c path> @ <12-hex>` and a `## Deviations` list. When reading a ported file, start
-  at the closing marker (`sed -n '/<\/LICENSES>/,$p' file`); the licence text never changes.
-- Logic that can run on the host gets `#[cfg(test)] mod tests` in the same file, or in
-  `<name>/tests.rs` once longer than 50 lines; constants that mirror C headers get a
-  reference-backed `#[ignore]` test (see `testing.md`).
+  between `/* <LICENSES> */` and `/* </LICENSES> */`, then, inside `/* <CODE> */` ...
+  `/* </CODE> */`, the `//!` docs with `Upstream: <c path> @ <12-hex>` and a `## Deviations`
+  list. When reading a ported file, read the code zone (`sed -n '/<CODE>/,/<\/CODE>/p' file`);
+  the licence text never changes. A C file with no licence text gets no LICENSES zone and
+  `license = "none"` on its `ports.toml` entry.
+- Logic that can run on the host gets an inline `#[cfg(test)] mod tests { .. }` inside the
+  `/* <TESTS> */` ... `/* </TESTS> */` zone at the end of the same file, however long it is
+  (no `tests.rs`); constants that mirror C headers get a reference-backed `#[ignore]` test
+  (see `testing.md`).
 - Mark the entry `wip` when starting; `ported` only when `just ci` is green. Fill
   `upstream_commit` (= `[meta].pinned`) and `upstream_blob`
   (`git -C reference/openbsd-src rev-parse HEAD:<c path>`).

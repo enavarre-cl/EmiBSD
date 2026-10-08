@@ -40,6 +40,21 @@ No `src/` directory (`[lib] path = "lib.rs"`), so C and Rust paths differ only b
 Types live where the **header** is; functions live where the **`.c`** is. Rust allows inherent
 `impl` blocks in any module of the defining crate, which is exactly the header/implementation split.
 
+### Zones in a file (M15)
+
+Every `.rs` under `sys/` and `tools/` (not `init/`) is split into zones by comment lines of their
+own: `/* <LICENSES> */`, `/* <CODE> */`, `/* <TESTS> */`, each with its closing marker, in that
+order (`.claude/rules/rust-kernel.md` has the layout, `tools/xtask/src/layout.rs` the validator
+that `cargo xtask ports check` runs). The reason is reading cost: a ported file is mostly licence
+text on top and tests at the bottom, and an agent that wants the code reads
+`sed -n '/<CODE>/,/<\/CODE>/p' file.rs`. The tests are inline in the same file, however long:
+the former `<name>/tests.rs` files (324 of them) became `#[cfg(test)] mod tests { .. }` in the
+TESTS zone, so the module path of every test (`crate::x::tests::name`) is unchanged and one file
+holds a module and its tests. Two exceptions are written down: the 23 ports whose C file has no
+licence text (or is generated) have no LICENSES zone and `license = "none"` in `ports.toml`, and
+the test helpers other modules share (`mod testutil;`, `fn foo_reset()` under `#[cfg(test)]`)
+stay in CODE, since they are code for other files' tests. `init/` (a stand-in) is outside.
+
 ## The `machine` contract
 
 `sys/machine/<header>.rs` holds the traits standing in for `<machine/*.h>` and `cpufunc.h`, one
@@ -669,7 +684,7 @@ M14; track A1 did amd64's efiboot): three crates and one binary.
   through `.PATH`. The kernel headers libsa includes (`<ufs/ffs/fs.h>`, `<sys/disklabel.h>`,
   `<sys/exec_elf.h>`...) are ported in the kernel crate, tied to kernel types; libsa cannot
   link the kernel, so `sys/lib/libsa/hdr/` declares the parts it reads again, one file per
-  header, and `hdr/tests.rs` checks their layouts against the kernel's (a dev-dependency on
+  header, and the TESTS zone of `hdr/mod.rs` checks their layouts against the kernel's (a dev-dependency on
   `bsd`). The module for `alloc.c` is `sa_alloc` (`alloc` is Rust's crate). Host tests run
   the FFS1, FFS2 and ISO 9660 readers on images OpenBSD's makefs made
   (`testdata/gen_fixtures.py`), and `loadfile` on a hand-made ELF.
@@ -1307,7 +1322,7 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   `pledge` and `unveil` (`kern_pledge.c`, `kern_unveil.c`) are reported for a pledged
   process or an unveiled vnode, which none can be yet; the unveil hooks of `namei` return
   at their `ps_uvpaths == NULL` test. The host tests mount `testfs`
-  (`kern/vfs_subr/tests.rs`), a fixed in-memory tree with a real lock discipline, to drive
+  (the TESTS zone of `kern/vfs_subr.rs`), a fixed in-memory tree with a real lock discipline, to drive
   `namei`, the name cache, `getcwd` and the vnode life cycle.
 - VFS stage 2 (M7+): the buffer cache (`vfs_bio.c`, `vfs_biomem.c`, `kern_bufq.c`,
   `<sys/buf.h>`), the syncer (`vfs_sync.c`) and advisory record locks (`vfs_lockf.c`,
@@ -1361,7 +1376,7 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   and is skipped), `option UFS_DIRHASH` (directories are searched linearly), `option
   FIFO` (`fifofs`; a fifo on an FFS is refused with `EOPNOTSUPP`), the knotes of
   `kern_event.c` (`VN_KNOTE`, `ufs_kqfilter`), `disk_map` and `inittodr`. The host tests
-  build FFS1 and FFS2 images with a `newfs`-like helper (`ffs_vfsops/tests.rs`), mount them
+  build FFS1 and FFS2 images with a `newfs`-like helper (the TESTS zone of `ffs_vfsops.rs`), mount them
   on a block device vnode whose strategy reads a `Vec`, use them through the system calls,
   and check the counters of the unmounted image as `fsck` would.
 - The system's identity (the user's decision, 2026-10-03): the system is **EmiBSD**, release
@@ -1687,7 +1702,7 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   `bpf(4)` is not configured, so `pflog0` exists and counts but `pflog_packet` taps nothing.
   Divert sockets (`netinet/ip_divert.c`) are not ported: `divert-packet` rules report
   themselves and drop the packet. The ABI structures pf shares with pfctl(8) keep the C
-  layout to the byte; `net/pfvar/tests.rs` checks their sizes and offsets against clang's.
+  layout to the byte; the TESTS zone of `net/pfvar.rs` checks their sizes and offsets against clang's.
 
 - amd64's TSC under QEMU (the user's decision of 2026-10-04). OpenBSD registers the TSC
   timecounter only with `CPUF_CONST_TSC` and `CPUF_INVAR_TSC`, which on AMD both come from

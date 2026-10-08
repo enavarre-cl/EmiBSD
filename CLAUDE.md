@@ -71,8 +71,10 @@ Tool installation lives in `docs/SETUP.md` and needs the user's explicit go-ahea
 4. Port leaf dependencies first. Set the entry to `wip`.
 5. Write `sys/<same path>.rs`: license header, `//!` doc with an `Upstream:` line, idiomatic Rust
    that preserves semantics (`docs/C_TO_RUST.md` is the idiom table).
-6. Host-testable logic gets `#[cfg(test)] mod tests` in the same file, or in `<name>/tests.rs`
-   once the tests pass 50 lines. Section order inside a file: `.claude/rules/rust-kernel.md`.
+6. Host-testable logic gets an inline `#[cfg(test)] mod tests` in the file's `<TESTS>` zone, at
+   the end (never a `<name>/tests.rs`). Every `.rs` is split into `<LICENSES>`, `<CODE>` and
+   `<TESTS>` zones (`cargo xtask ports check` validates them); read the code with
+   `sed -n '/<CODE>/,/<\/CODE>/p' file.rs`. Section order inside CODE: `.claude/rules/rust-kernel.md`.
 7. `just ci` green → `status = "ported"`, fill `upstream_commit` and `upstream_blob`.
 8. One commit per file or coherent cluster; trailer `Upstream: <c path>@<12-hex>`.
 

@@ -24,9 +24,13 @@ Before coding, write down:
 
 Every ported file starts like this (`sys/lib/libkern/strlcpy.rs`). The `$OpenBSD$` line and the
 licence block are copied verbatim from the C file; the licence block sits between the
-`/* <LICENSES> */` and `/* </LICENSES> */` marker lines (nothing checks them yet; M15 (code and test layout) makes
-`cargo xtask ports check` validate them). A file whose C has several notices keeps all of them inside one pair of markers. To read a
-ported file, start at the closing marker (`sed -n '/<\/LICENSES>/,$p' <file>`).
+`/* <LICENSES> */` and `/* </LICENSES> */` marker lines. Everything else is inside
+`/* <CODE> */` ... `/* </CODE> */`, and the tests, inline, in `/* <TESTS> */` ... `/* </TESTS> */`
+at the end (only in files that have tests). `cargo xtask ports check` validates the markers, their
+order, that `<LICENSES>` is only in ports and `<TESTS>` only where there is a `mod tests`. A file
+whose C has several notices keeps all of them inside one pair of markers; a C file with no
+licence text gets no `<LICENSES>` zone and `license = "none"` on its `ports.toml` entry. To read a
+ported file, read its code zone (`sed -n '/<CODE>/,/<\/CODE>/p' <file>`).
 
 ```rust
 /*	$OpenBSD: strlcpy.c,v 1.9 2019/01/25 00:19:26 millert Exp $	*/
@@ -39,6 +43,7 @@ ported file, start at the closing marker (`sed -n '/<\/LICENSES>/,$p' <file>`).
  */
 /* </LICENSES> */
 
+/* <CODE> */
 //! `strlcpy(3)`: size-bounded string copy.
 //!
 //! Upstream: sys/lib/libkern/strlcpy.c @ 3ce1f3f79392
@@ -46,6 +51,19 @@ ported file, start at the closing marker (`sed -n '/<\/LICENSES>/,$p' <file>`).
 //! ## Deviations
 //! - Operates on byte slices: the destination size is `dst.len()`, not a separate argument, and
 //!   `src` ends at its first NUL or at `src.len()`, whichever comes first.
+
+use crate::strnlen;
+
+// ... the port ...
+/* </CODE> */
+
+/* <TESTS> */
+#[cfg(test)]
+mod tests {
+    use super::*;
+    // ... the tests ...
+}
+/* </TESTS> */
 ```
 
 ## 4. Write
@@ -57,8 +75,8 @@ When something the file needs is not ported yet, stub it visibly
 
 ## 5. Test
 
-- Pure logic: `#[cfg(test)] mod tests` in the same file (or `<name>/tests.rs` once longer than
-  50 lines), runs with `just test`.
+- Pure logic: an inline `#[cfg(test)] mod tests` in the `<TESTS>` zone of the same file (never
+  a `tests.rs`), runs with `just test`.
 - Constants mirrored from C headers: `#[ignore]` reference-backed test, runs with `just test-ref`.
 - Boot, console, trap behaviour: smoke expectation in `tools/xtask`, runs with `just smoke`.
 
@@ -104,9 +122,10 @@ baseline ([PHASE2.md](PHASE2.md)); `--write` puts the totals on the `Unsafe` lin
   `#[unsafe(no_mangle)]` attributes and `unsafe fn(..)` pointer types.
 - What does not: an `unsafe` inside a comment, a string or a raw string (a small lexer skips
   them), and `r#unsafe`.
-- Test code is a column of its own: `tests.rs` files, files declared by a test-only `mod`,
-  and the item after a test-only `#[cfg]` (`test`, `all(.., test)`; `any(test, feature = "x")`
-  also builds into a kernel and counts as kernel code).
+- Test code is a column of its own: the item after a test-only `#[cfg]` (the inline
+  `mod tests` of the `<TESTS>` zone), files declared by a test-only `mod` (`testutil.rs`) (`test`, `all(.., test)`; `any(test, feature = "x")`
+  also builds into a kernel and counts as kernel code). Moving the tests inline (M15) changed
+  no total: only the "tests files" column shrank, to the files a test-only `mod` declares.
 - Subsystems: the first directory under `sys/` (`kern`, `uvm`, `net`, `netinet`, `ufs` with
   ffs/mfs/ext2fs, `isofs`, ...); `arch/<a>` and `lib/<l>` by two; `dev/<d>` for the bus and
   chip directories that hold a `mod.rs` (`pci`, `pv`, `ic`, `isa`, `fdt`, `ofw`, `efi`), and
