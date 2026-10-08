@@ -267,7 +267,7 @@ pub fn _bus_dmamap_create(
             _dm_segcnt: nsegs as i32,
             _dm_maxsegsz: maxsegsz,
             _dm_boundary: boundary,
-            _dm_cookie: ptr::null_mut(),
+            _dm_cookie: Cell::new(ptr::null_mut()),
             _dm_pages: pages,
             _dm_pgva: 0,
             _dm_npages: npages as i32,

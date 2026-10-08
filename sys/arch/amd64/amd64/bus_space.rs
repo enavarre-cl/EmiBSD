@@ -320,6 +320,11 @@ pub fn x86_bus_space_io_read_4(h: BusSpaceHandle, o: BusSize) -> u32 {
     unsafe { inl((h.0 + o) as u16) }
 }
 
+/// `x86_bus_space_io_read_8`: there are no 64-bit ports.
+pub fn x86_bus_space_io_read_8(_h: BusSpaceHandle, _o: BusSize) -> u64 {
+    crate::kern::subr_prf::panic(format_args!("bus_space_read_8: invalid bus space tag"));
+}
+
 /// `x86_bus_space_io_write_1`.
 pub fn x86_bus_space_io_write_1(h: BusSpaceHandle, o: BusSize, v: u8) {
     // SAFETY: as for `x86_bus_space_io_read_1`.
@@ -336,6 +341,11 @@ pub fn x86_bus_space_io_write_2(h: BusSpaceHandle, o: BusSize, v: u16) {
 pub fn x86_bus_space_io_write_4(h: BusSpaceHandle, o: BusSize, v: u32) {
     // SAFETY: as for `x86_bus_space_io_read_1`.
     unsafe { outl((h.0 + o) as u16, v) }
+}
+
+/// `x86_bus_space_io_write_8`: there are no 64-bit ports.
+pub fn x86_bus_space_io_write_8(_h: BusSpaceHandle, _o: BusSize, _v: u64) {
+    crate::kern::subr_prf::panic(format_args!("bus_space_write_8: invalid bus space tag"));
 }
 
 /// `x86_bus_space_mem_read_1`.
@@ -356,6 +366,12 @@ pub fn x86_bus_space_mem_read_4(h: BusSpaceHandle, o: BusSize) -> u32 {
     unsafe { ptr::read_volatile((h.0 + o) as *const u32) }
 }
 
+/// `x86_bus_space_mem_read_8`.
+pub fn x86_bus_space_mem_read_8(h: BusSpaceHandle, o: BusSize) -> u64 {
+    // SAFETY: as for `x86_bus_space_mem_read_1`.
+    unsafe { ptr::read_volatile((h.0 + o) as *const u64) }
+}
+
 /// `x86_bus_space_mem_write_1`.
 pub fn x86_bus_space_mem_write_1(h: BusSpaceHandle, o: BusSize, v: u8) {
     // SAFETY: as for `x86_bus_space_mem_read_1`.
@@ -372,6 +388,12 @@ pub fn x86_bus_space_mem_write_2(h: BusSpaceHandle, o: BusSize, v: u16) {
 pub fn x86_bus_space_mem_write_4(h: BusSpaceHandle, o: BusSize, v: u32) {
     // SAFETY: as for `x86_bus_space_mem_read_1`.
     unsafe { ptr::write_volatile((h.0 + o) as *mut u32, v) }
+}
+
+/// `x86_bus_space_mem_write_8`.
+pub fn x86_bus_space_mem_write_8(h: BusSpaceHandle, o: BusSize, v: u64) {
+    // SAFETY: as for `x86_bus_space_mem_read_1`.
+    unsafe { ptr::write_volatile((h.0 + o) as *mut u64, v) }
 }
 
 /// `bus_space_read_1`: dispatches on the space.
@@ -398,6 +420,14 @@ pub fn bus_space_read_4(t: X86BusSpace, h: BusSpaceHandle, o: BusSize) -> u32 {
     }
 }
 
+/// `bus_space_read_8`: memory space only.
+pub fn bus_space_read_8(t: X86BusSpace, h: BusSpaceHandle, o: BusSize) -> u64 {
+    match t {
+        X86BusSpace::Io => x86_bus_space_io_read_8(h, o),
+        X86BusSpace::Mem => x86_bus_space_mem_read_8(h, o),
+    }
+}
+
 /// `bus_space_write_1`.
 pub fn bus_space_write_1(t: X86BusSpace, h: BusSpaceHandle, o: BusSize, v: u8) {
     match t {
@@ -419,6 +449,14 @@ pub fn bus_space_write_4(t: X86BusSpace, h: BusSpaceHandle, o: BusSize, v: u32) 
     match t {
         X86BusSpace::Io => x86_bus_space_io_write_4(h, o, v),
         X86BusSpace::Mem => x86_bus_space_mem_write_4(h, o, v),
+    }
+}
+
+/// `bus_space_write_8`: memory space only.
+pub fn bus_space_write_8(t: X86BusSpace, h: BusSpaceHandle, o: BusSize, v: u64) {
+    match t {
+        X86BusSpace::Io => x86_bus_space_io_write_8(h, o, v),
+        X86BusSpace::Mem => x86_bus_space_mem_write_8(h, o, v),
     }
 }
 

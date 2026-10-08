@@ -199,6 +199,13 @@ module is `#[cfg(machine_pci_chipset)]`, and it reaches the machine items throug
 same cfg. Generic code still never names an architecture; the alternative, a dozen contract
 methods with fake amd64 and host implementations, would make the driver unlike its C and the
 fakes untestable anyway. The price: such a driver has no host tests, like arch code.
+M16e adds the x86 counterpart, cfg `machine_x86` (amd64 only) with `sys/machine/x86.rs`, for
+`dev/acpi/acpidmar.c` (the VT-d and AMD-Vi IOMMUs), which builds its own `struct pic` and
+`struct bus_dma_tag` over the `_bus_dma*` functions, walks page tables through the direct map
+with `pmap_flush_cache`, reads `bios_memmap` and builds an MSI `pci_intr_handle_t`. There the
+driver's items carry the cfg one by one, so the header part of the file (registers, table
+entries, source ids, the device scope parser) still compiles on every target and keeps its
+host tests.
 
 ## Dependencies
 

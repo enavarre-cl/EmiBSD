@@ -84,9 +84,9 @@
 //! - ECAM: `pci_mcfg_init` records the window; `pci_mcfg_map_bus` maps it through
 //!   `bus_space_map` and panics as the C does when the map fails; no caller sets a window
 //!   until ACPI's MCFG table is read (`acpimcfg`).
-//! - `pci_init_extents` (extents and `bios_memmap`) and `acpidmar_pci_hook` belong to
-//!   unported files (`subr_extent.c`, `acpidmar.c`); `pci_init_extents` is reported, the
-//!   hook is a comment. Since M13
+//! - `pci_init_extents` (extents and `bios_memmap`) is reported. `pci_probe_device_hook`
+//!   calls acpidmar(4)'s `acpidmar_pci_hook` (M16e), which does nothing unless acpidmar0
+//!   attached (GENERIC has it `disable`d). Since M13
 //!   `pci_dev_postattach`, `pci_min_powerstate` and `pci_set_powerstate_md` take their
 //!   `NACPI > 0` bodies (acpi(4)'s `acpi_pci_match`, `acpi_pci_min_powerstate`,
 //!   `acpi_pci_set_powerstate`).
@@ -942,9 +942,11 @@ pub fn pci_init_extents() {
     let _ = unported!("pci_init_extents (subr_extent.c, bios_memmap)");
 }
 
-/// `pci_probe_device_hook`: `NACPIDMAR > 0` would let the IOMMU see the device.
-pub fn pci_probe_device_hook(_pc: PciChipsetTag, _pa: &mut PciAttachArgs) -> i32 {
-    // NACPIDMAR > 0: acpidmar_pci_hook(pc, pa) (dev/acpi/acpidmar.c, not ported).
+/// `pci_probe_device_hook`: lets the IOMMU (acpidmar(4)) see the device and give it its
+/// domain's DMA tag (`NACPIDMAR > 0`).
+pub fn pci_probe_device_hook(pc: PciChipsetTag, pa: &mut PciAttachArgs) -> i32 {
+    // NACPIDMAR > 0
+    crate::dev::acpi::acpidmar::acpidmar_pci_hook(pc, pa);
     0
 }
 

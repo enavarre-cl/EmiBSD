@@ -103,8 +103,8 @@
 //!   direct map is `locore0.S`'s 4 GB, memory above it reported, pmap_bootstrap's extension
 //!   not ported), relocates the EFI memory map to `first_avail`, and lists the CPUs from the
 //!   MADT (acpimadt.c is not ported). `BOOTARG_CONSDEV` sets the `com(4)` console variables
-//!   but `comconsiot` (consinit attaches in I/O space). `bios_diskinfo` is kept as its
-//!   record's place in `bootinfo[]`; `bootdev` is recorded (dkcsum.c is not ported, the root
+//!   but `comconsiot` (consinit attaches in I/O space). `bios_diskinfo` and `bios_memmap` are
+//!   kept as their records' places in `bootinfo[]` (under Limine both are empty); `bootdev` is recorded (dkcsum.c is not ported, the root
 //!   is found by the DUID). `map_tramps` and `pmap_prealloc_lowmem_ptps` run after a boot by
 //!   boot(8) only.
 //! - Under Limine, long mode, paging and the direct map are set up before `init_x86_64` runs, so the
@@ -331,6 +331,9 @@ pub static BOOTINFO_SIZE: AtomicI32 = AtomicI32::new(BOOTARGC_MAX as i32);
 /// `bios_diskinfo`: boot(8)'s disks, as the range of their record in `bootinfo[]` (for
 /// `bios_getdiskinfo` and `dkcsum.c`, not ported).
 pub static BIOS_DISKINFO: StaticCell<Option<(usize, usize)>> = StaticCell::new(None);
+/// `bios_memmap`: boot(8)'s memory map, as the range of its record in `bootinfo[]` (for
+/// [`bios_memmap`]); `None` under Limine, which passes no boot arguments.
+pub static BIOS_MEMMAP: StaticCell<Option<(usize, usize)>> = StaticCell::new(None);
 /// `bios_cksumlen`: how many sectors boot(8) checksummed per disk.
 pub static BIOS_CKSUMLEN: AtomicU32 = AtomicU32::new(0);
 /// `bios_efiinfo`: the EFI tables, frame buffer and memory map boot(8) found, or under
@@ -773,6 +776,22 @@ pub fn copyin32(uaddr: usize) -> Result<u32, Errno> {
     Ok(u32::from_ne_bytes(word))
 }
 
+/// `bios_memmap[]`: the entries of boot(8)'s memory map up to `BIOS_MAP_END`, as the C's
+/// array the kernel keeps pointing into `bootinfo[]` (`acpidmar(4)` walks it for reserved
+/// regions). Empty under Limine (the module's deviations).
+pub fn bios_memmap() -> impl Iterator<Item = BiosMemmap> {
+    // SAFETY: written once by `getbootinfo` on the boot CPU before anything runs; read only.
+    let range = unsafe { *BIOS_MEMMAP.get() };
+    // SAFETY: as above; `bootinfo[]` is only changed in place by `getbootinfo`.
+    let bootinfo: &'static [u8] = unsafe { &BOOTINFO.get().0 };
+    let arg = range.map_or(&[][..], |(start, end)| &bootinfo[start..end]);
+    arg.as_chunks::<{ size_of::<BiosMemmap>() }>()
+        .0
+        .iter()
+        .map_while(|c| bootarg_read::<BiosMemmap>(c.as_slice()))
+        .take_while(|bmp| bmp.r#type != BIOS_MAP_END)
+}
+
 /// Reads a boot argument of type `T` (a `#[repr(C, packed)]` structure of `biosvar.rs`) from
 /// the start of `arg`; `None` when the record is too short.
 fn bootarg_read<T: Copy>(arg: &[u8]) -> Option<T> {
@@ -840,7 +859,11 @@ pub unsafe fn getbootinfo(first_avail: usize) -> Result<BootInfo, &'static str> 
         let (start, end) = (q + BOOTARG32_HDR, q + ba_size as usize);
         let arg = &bootinfo[start..end];
         match ba_type {
-            BOOTARG_MEMMAP => memmap_arg = Some((start, end)),
+            BOOTARG_MEMMAP => {
+                memmap_arg = Some((start, end));
+                // SAFETY: the boot CPU alone, before anything reads it.
+                unsafe { BIOS_MEMMAP.write(Some((start, end))) };
+            }
             BOOTARG_DISKINFO => {
                 // SAFETY: the boot CPU alone, before anything reads it.
                 unsafe { BIOS_DISKINFO.write(Some((start, end))) };

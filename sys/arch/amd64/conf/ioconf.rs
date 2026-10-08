@@ -20,6 +20,7 @@
 //! `re* at pci?`, `rlphy* at mii?`, `rgephy* at mii?` and `ukphy* at mii?` (M13),
 //! `vmx* at pci?` (M13), `vga0 at isa?`, `vga* at pci?` and `wsdisplay0 at vga? console 1` (M13),
 //! `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13), `acpimcfg* at acpi?` (M14),
+//! `acpidmar0 at acpi? disable` (M16e),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -50,6 +51,7 @@ use crate::arch::amd64::amd64::ioapic::{IOAPIC_CA, IOAPIC_CD};
 use crate::arch::amd64::amd64::mainbus::{MAINBUS_CA, MAINBUS_CD};
 use crate::arch::amd64::pci::acpipci::{ACPIPCI_CA, ACPIPCI_CD};
 use crate::dev::acpi::acpi::ACPI_CD;
+use crate::dev::acpi::acpidmar::{ACPIDMAR_CA, ACPIDMAR_CD};
 use crate::dev::acpi::acpihpet::{ACPIHPET_CA, ACPIHPET_CD};
 use crate::dev::acpi::acpimadt::{ACPIMADT_CA, ACPIMADT_CD};
 use crate::dev::acpi::acpimcfg::{ACPIMCFG_CA, ACPIMCFG_CD};
@@ -232,11 +234,11 @@ const PV_UKBD: &[i16] = &[24];
 /// {[console = -1], [mux = 1]}`), `mux 1`.
 const LOC_WSKBDDEV_MUX1: &[i64] = &[-1, 1];
 
-/// `cfdata[]`: 53 entries, 54 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 54 entries, 55 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    54
+    55
 } else {
-    53
+    54
 };
 
 /// `cfdata[]`.
@@ -828,7 +830,20 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 53: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 53: acpidmar0 at acpi? disable (M16e): FSTATE_DNOTFOUND, as config(8) writes a
+    // disabled unit; `boot -c` (UKC `enable acpidmar`) turns it on.
+    Cfdata::new(
+        &ACPIDMAR_CA,
+        &ACPIDMAR_CD,
+        0,
+        FSTATE_DNOTFOUND,
+        &[],
+        0,
+        PV_ACPI,
+        0,
+        0,
+    ),
+    // 54: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

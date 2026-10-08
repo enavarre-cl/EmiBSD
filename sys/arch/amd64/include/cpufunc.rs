@@ -257,6 +257,23 @@ pub fn wbinvd_on_all_cpus() -> i32 {
 #[cfg(feature = "multiprocessor")]
 pub use crate::arch::amd64::amd64::cpu::wbinvd_on_all_cpus;
 
+/// `clflush(addr)`: writes the cache line holding `addr` back and invalidates it in every
+/// cache of the coherence domain.
+#[inline]
+pub fn clflush(addr: u64) {
+    // SAFETY: `clflush` only writes a line back and drops it from the caches; the data stays
+    // the same, so it may name any mapped address. Like the C's `"+m"` operand it is not
+    // `nomem`: it must not be moved across the accesses to that line.
+    unsafe { asm!("clflush [{}]", in(reg) addr, options(nostack, preserves_flags)) };
+}
+
+/// `mfence`: orders every earlier load and store before every later one.
+#[inline]
+pub fn mfence() {
+    // SAFETY: a fence changes no state; memory is a clobber (not `nomem`), as the C's.
+    unsafe { asm!("mfence", options(nostack, preserves_flags)) };
+}
+
 /// `rcr2`: reads `CR2`, the faulting address of the last page fault.
 #[inline]
 pub fn rcr2() -> u64 {
