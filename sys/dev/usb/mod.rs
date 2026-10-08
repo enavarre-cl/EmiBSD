@@ -5,9 +5,12 @@
 //! driver interface (`usbdi`, `usbdi_util`), the shared structures (`usbdivar`), device
 //! enumeration (`usb_subr`), DMA memory (`usb_mem`), quirks, IDs (`usbdevs`), the HID class
 //! definitions (`usbhid`) and the capture headers (`usbpcap`). Host controller and device
-//! drivers (`xhci`, `uhub`, `umass`, `uhidev`, ...) attach on top of it; `ukbdmap` holds the
+//! drivers (`xhci`, `ehci`, `uhub`, `umass`, `uhidev`, ...) attach on top of it; `ukbdmap` holds the
 //! keyboard layouts of `ukbd`.
 
+pub mod ehci;
+pub mod ehcireg;
+pub mod ehcivar;
 pub mod uhid_rdesc;
 pub mod uhidev;
 pub mod uhub;

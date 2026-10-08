@@ -52,9 +52,9 @@
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
 //!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c`, `ahci_pci.c`, `xhci_pci.c`, `auich.c`,
 //!   `azalia.c`, `azalia_codec.c`, `siop_pci_common.c`, `if_em.c`, `if_re_pci.c`,
-//!   `if_vmx.c`, `vga_pci.c` and arm64's `acpipci.c`). The whole header, and `pcidevs_data.h` for
-//!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
-//!   (`docs/ARCHITECTURE.md`).
+//!   `if_vmx.c`, `vga_pci.c`, `ehci_pci.c` and arm64's `acpipci.c`). The whole header, and
+//!   `pcidevs_data.h` for `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner
+//!   of `gen-syscalls` (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
 
 /// `PCI_VENDOR_OPENBSD`: OpenBSD.
@@ -1539,6 +1539,17 @@ pub const PCI_PRODUCT_INTEL_GMA600_8: u32 = 0x4108;
 pub const PCI_PRODUCT_INTEL_MDFLD_IGD_0: u32 = 0x0130;
 /// `PCI_PRODUCT_INTEL_GMA3600_0`: GMA 3600.
 pub const PCI_PRODUCT_INTEL_GMA3600_0: u32 = 0x0be0;
+
+// ehci_pci.c (M16b): the ATI SB600/SB700 and VIA VT6202 quirks.
+
+/// `PCI_PRODUCT_ATI_SBX00_SMB`: SBx00 SMBus.
+pub const PCI_PRODUCT_ATI_SBX00_SMB: u32 = 0x4385;
+/// `PCI_PRODUCT_ATI_SB600_EHCI`: SB600 USB2.
+pub const PCI_PRODUCT_ATI_SB600_EHCI: u32 = 0x4386;
+/// `PCI_PRODUCT_ATI_SB700_EHCI`: SB700 USB2.
+pub const PCI_PRODUCT_ATI_SB700_EHCI: u32 = 0x4396;
+/// `PCI_PRODUCT_VIATECH_VT6202`: VT6202 USB.
+pub const PCI_PRODUCT_VIATECH_VT6202: u32 = 0x3104;
 /* </CODE> */
 
 /* <TESTS> */
@@ -2960,6 +2971,10 @@ mod tests {
                 PCI_PRODUCT_INTEL_MDFLD_IGD_0,
             ),
             ("PCI_PRODUCT_INTEL_GMA3600_0", PCI_PRODUCT_INTEL_GMA3600_0),
+            ("PCI_PRODUCT_ATI_SBX00_SMB", PCI_PRODUCT_ATI_SBX00_SMB),
+            ("PCI_PRODUCT_ATI_SB600_EHCI", PCI_PRODUCT_ATI_SB600_EHCI),
+            ("PCI_PRODUCT_ATI_SB700_EHCI", PCI_PRODUCT_ATI_SB700_EHCI),
+            ("PCI_PRODUCT_VIATECH_VT6202", PCI_PRODUCT_VIATECH_VT6202),
         ] {
             assert_eq!(
                 crate::reftest::int(&defs, name),

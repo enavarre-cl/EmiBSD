@@ -10706,26 +10706,30 @@ notes = "M16: uhid(4), the generic /dev/uhid* for HID devices no driver claims"
 [[file]]
 c = "sys/dev/usb/ehcireg.h"
 rust = "sys/dev/usb/ehcireg.rs"
-status = "todo"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 notes = "M16: ehci registers and descriptors"
 
 [[file]]
 c = "sys/dev/usb/ehcivar.h"
 rust = "sys/dev/usb/ehcivar.rs"
-status = "todo"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 notes = "M16: ehci_softc"
 
 [[file]]
 c = "sys/dev/usb/ehci.c"
 rust = "sys/dev/usb/ehci.rs"
-status = "todo"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 deps = ["sys/dev/usb/ehcireg.h", "sys/dev/usb/ehcivar.h", "sys/dev/usb/usb.c"]
 notes = "M16: ehci(4); criterion: QEMU's usb-ehci / ich9-usb-ehci1 with the usb-storage stick mounted, both archs"
 
 [[file]]
 c = "sys/dev/pci/ehci_pci.c"
 rust = "sys/dev/pci/ehci_pci.rs"
-status = "todo"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 deps = ["sys/dev/usb/ehci.c"]
 notes = "M16: ehci at pci"
 
