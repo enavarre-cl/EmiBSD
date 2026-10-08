@@ -120,7 +120,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-powerbtn smoke-mouse smoke-ugen"
+    "smoke-powerbtn smoke-mouse smoke-ugen smoke-cdce"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2357,6 +2357,26 @@ smoke-ugen: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featu
         { echo "smoke-ugen: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{ugen_check}}
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{ugen_check}}
+
+# M16b: cdce(4), both archs. QEMU's `usb-net` (`--usb-net`, devices.rs) on a `qemu-xhci`, as the
+# user network's NIC in vio0's place. It offers two configurations, RNDIS first and CDC Ethernet
+# second; usbd_probe_and_attach tries each configuration in turn (nothing takes the RNDIS one:
+# urndis(4) is not in this tree), and cdce0 attaches to the second, with the address the
+# Ethernet descriptor's string gives. After login ifconfig(8) gives cdce0 10.0.2.15/24 (the
+# kernel's self-test configures vio0 only), brings it up (SIOCSIFADDR runs cdce_init: the
+# interrupt pipe, the bulk pipes, the receive transfer) and ping(8) gets the gateway's reply
+# through cdce_start/cdce_txeof and cdce_rxeof. Part of `smoke`.
+cdce_session := "--send-after '# ' --send 'ifconfig cdce0 inet 10.0.2.15 netmask 255.255.255.0 up && ifconfig cdce0\\n' " + \
+    "--send-after '# ' --send 'ping -c 1 10.0.2.2\\n'"
+cdce_check := "--usb-net --expect-ramdisk --until-seen " + disk_login + " " + cdce_session + " " + \
+    "--expect 'cdce0 at uhub0 port 5 configuration 1 interface 0 \"QEMU RNDIS/QEMU USB Network Device\" rev 2.00/0.00 addr 2' " + \
+    "--expect 'cdce0: address 52:54:00:12:34:56' --expect 'cdce0: flags=' " + \
+    "--expect 'inet 10.0.2.15 netmask 0xffffff00' " + em_ping
+smoke-cdce: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-cdce: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{cdce_check}}
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{cdce_check}}
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
