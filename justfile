@@ -1724,13 +1724,16 @@ rtc_steps := "--send-after 'RETURN for sh:' --send '\\n' " + \
 # acpihpet0 and the TSC's calibration line (`tsc: calibrated against acpihpet0: <N> Hz`, or,
 # when every round is disturbed, the failure line: the TSC then keeps quality -1000, as in
 # OpenBSD, and acpihpet0 is the timecounter). `sysctl kern.timecounter` is printed. Run it
-# while the host is busy (`just smoke` does) to see the load case. Part of `smoke`.
+# while the host is busy (`just smoke` does) to see the load case. M16e: amd64 also expects
+# acpicpu0 (acpicpu(4), dev/acpi/acpicpu_x86.c): QEMU's CPUs are ACPI0007 devices with no _CST
+# or _PSS, so each keeps the C1 `hlt` fallback, and every CPU's idle loop runs acpicpu_idle
+# (the 45 s sleep is mostly idle time). Part of `smoke`.
 smoke-clock: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-clock: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
         --expect "acpitimer0 at acpi0: 3579545 Hz, 24 bits" --expect "acpihpet0 at acpi0: 100000000 Hz" \
-        --expect "tsc: calibrat" {{clock_steps}}
+        --expect "tsc: calibrat" --expect "acpicpu0 at acpi0: C1(@1 halt!)" {{clock_steps}}
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
         {{clock_steps}}
 
