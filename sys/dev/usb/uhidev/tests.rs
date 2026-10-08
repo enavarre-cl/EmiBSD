@@ -181,7 +181,7 @@ fn the_generic_hid_ioctls() {
     // USB_GET_REPORT_ID
     let mut data = [0u8; 4];
     assert_eq!(
-        uhidev_ioctl(scd, USB_GET_REPORT_ID, &mut data, 0, p),
+        uhidev_ioctl(scd, USB_GET_REPORT_ID, &mut data, 0, Some(p)),
         Ok(true)
     );
     assert_eq!(ioctl_arg::<i32>(&data), 3);
@@ -189,7 +189,7 @@ fn the_generic_hid_ioctls() {
     // USB_GET_REPORT_DESC: the size and the bytes.
     let mut data = std::vec![0u8; size_of::<UsbCtlReportDesc>()];
     assert_eq!(
-        uhidev_ioctl(scd, USB_GET_REPORT_DESC, &mut data, 0, p),
+        uhidev_ioctl(scd, USB_GET_REPORT_DESC, &mut data, 0, Some(p)),
         Ok(true)
     );
     let rd = ioctl_arg::<UsbCtlReportDesc>(&data);
@@ -204,16 +204,16 @@ fn the_generic_hid_ioctls() {
         re
     });
     assert_eq!(
-        uhidev_ioctl(scd, USB_GET_REPORT, &mut data, 0, p),
+        uhidev_ioctl(scd, USB_GET_REPORT, &mut data, 0, Some(p)),
         Err(Errno::EINVAL)
     );
     assert_eq!(
-        uhidev_ioctl(scd, USB_SET_REPORT, &mut data, 0, p),
+        uhidev_ioctl(scd, USB_SET_REPORT, &mut data, 0, Some(p)),
         Err(Errno::EINVAL)
     );
 
     // Not a HID ioctl: the caller goes on (the C's -1).
-    assert_eq!(uhidev_ioctl(scd, 0x1234, &mut [], 0, p), Ok(false));
+    assert_eq!(uhidev_ioctl(scd, 0x1234, &mut [], 0, Some(p)), Ok(false));
 }
 
 #[test]

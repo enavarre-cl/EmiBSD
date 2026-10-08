@@ -1,13 +1,15 @@
-//! wscons, the workstation console: OpenBSD `sys/dev/wscons/`. The keyboard half
-//! `hidkbd(4)` needs, the display interface the frame buffers fill, `wsdisplay(4)` and the
-//! terminal emulations are here; the rest (`wskbd.c`, the mux, `wsevent.c`, the mouse) is
-//! milestone M13's keyboard step.
+//! wscons, the workstation console: OpenBSD `sys/dev/wscons/`: the keyboard (`wskbd(4)`), the
+//! display (`wsdisplay(4)`) with its terminal emulations, the mux (`wsmux(4)`) between them,
+//! and the event queues; the mouse (`wsmouse.c`, `wstpad.c`) is not ported.
 //!
 //! `wsconsio` holds the event, keyboard and display ioctl definitions of
 //! `<dev/wscons/wsconsio.h>`, `wsksymdef` the keysyms and layout codes, `wsksymvar` the keymap
 //! types, `wskbdvar` the interface between keyboard drivers and `wskbd(4)`, `wskbd` the
-//! callbacks keyboard drivers call (stubs until M13, apart from `wskbddevprint`), and
-//! `wsdisplayvar` the interface between display drivers and `wsdisplay(4)`.
+//! keyboard driver itself, `wskbdutil` its keymap and compose helpers, `wskbdraw` the XT
+//! scancodes of raw mode, and `wsdisplayvar` the interface between display drivers and
+//! `wsdisplay(4)`. `wsmux` and `wsmuxvar` are the mux and the event sources it merges,
+//! `wsevent` and `wseventvar` the event queue a reader of `/dev/wskbd*` or `/dev/wsmux*`
+//! gets.
 //!
 //! `wsdisplay` is `wsdisplay(4)` itself (virtual screens, their ttys `ttyC*`, the console
 //! output, screen switching, the `wsmoused(8)` selection), `wsdisplay_compat_usl` its USL
@@ -39,7 +41,13 @@ pub mod wsemul_vt100_subr;
 pub mod wsemul_vt100var;
 pub mod wsemulconf;
 pub mod wsemulvar;
+pub mod wsevent;
+pub mod wseventvar;
 pub mod wskbd;
+pub mod wskbdraw;
+pub mod wskbdutil;
 pub mod wskbdvar;
 pub mod wsksymdef;
 pub mod wsksymvar;
+pub mod wsmux;
+pub mod wsmuxvar;

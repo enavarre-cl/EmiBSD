@@ -91,7 +91,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
     "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
-    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga"
+    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2036,6 +2036,33 @@ smoke-vga: (build-amd64 "--features qemu,multiprocessor")
         --expect 'isa0 at mainbus0' --expect 'com0 at isa0 port 0x3f8/8 irq 4: ns16550a, 16 byte fifo' \
         --expect 'efifb0 at mainbus0: 1280x800, 32bpp' --expect 'wsdisplay0 at efifb0 mux 1' \
         --expect 'wsdisplay0: screen 0-5 added (std, vt100 emulation)' --expect 'login:'
+
+# M13: the keyboard half of wscons, both archs. Booted with the frame buffer (`--fb`) and
+# M12's `qemu-xhci` with its `usb-kbd` (`--usb`): ukbd0 offers a wskbd child, `wskbd0 at
+# ukbd0 mux 1` joins mux 1, the one wsdisplay0 reads, and connects to wsdisplay0 (the serial
+# line stays the console, so the USB keyboard is not the console keyboard, as in OpenBSD).
+# After login the shell opens /dev/ttyC0, screen 0's tty, prints a trigger and reads a line
+# from it; QEMU's monitor then types `h`, `i` and Return on the USB keyboard (`--sendkey-after`,
+# hwopts.rs): ukbd, hidkbd, wskbd_input, wskbd_translate (the US keymap of ukbdmap.rs),
+# wsdisplay_kbdinput and the tty's line discipline bring "hi" to the reader, which echoes it
+# on the serial line. Then dd(1) reads two events from /dev/wskbd0 (which takes the keyboard
+# out of the mux into event mode, wsevent.c) while `a` is typed: a key down and a key up,
+# 48 bytes. Part of `smoke`.
+kbd_tty := 'exec 3</dev/ttyC0; echo kbd-ready-$((40+2)); read line <&3; echo "kbd-got-[$line]"\n'
+kbd_ev := '(sleep 2; echo ev-ready-$((40+2))) & n=$(dd if=/dev/wskbd0 bs=24 count=2 2>/dev/null | wc -c); echo ev-bytes-$((n))\n'
+kbd_check := "--fb --usb --expect-ramdisk --until-seen " + \
+    "--sendkey-after 'kbd-ready-42' --sendkeys 'h i ret' --sendkey-after 'ev-ready-42' --sendkeys 'a' " + \
+    disk_login + " --send-after '# ' --send '" + kbd_tty + "' --send-after 'kbd-got-[hi]' --send '" + kbd_ev + "' " + \
+    "--expect 'ukbd0 at uhidev0' --expect 'wskbd0 at ukbd0 mux 1' " + \
+    "--expect 'wskbd0: connecting to wsdisplay0' --expect 'kbd-got-[hi]' " + \
+    "--expect 'wskbd0: disconnecting from wsdisplay0' --expect 'ev-bytes-48'"
+smoke-kbd: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-kbd: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{kbd_check}} \
+        --expect 'wsdisplay0 at efifb0 mux 1'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{kbd_check}} \
+        --expect 'wsdisplay0 at simplefb0 mux 1'
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

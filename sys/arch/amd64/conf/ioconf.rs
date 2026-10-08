@@ -18,6 +18,7 @@
 //! `em* at pci?` (M13), `efifb0 at mainbus?` and `wsdisplay0 at efifb?` (M13),
 //! `re* at pci?`, `rlphy* at mii?`, `rgephy* at mii?` and `ukphy* at mii?` (M13),
 //! `vmx* at pci?` (M13), `vga0 at isa?`, `vga* at pci?` and `wsdisplay0 at vga? console 1` (M13),
+//! `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -35,7 +36,7 @@
 //! `audio*` (at `uaudio?`, ...), `pci*` at `ppb?` and
 //! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; `usb*` at `ehci?`, `uhci?`
 //! and `ohci?`, every device at `uhub?` but `uhub*`, `umass*` and `uhidev*`, every device
-//! at `uhidev?` but `ukbd*` (`wskbd* at ukbd?` waits for wskbd, M13);
+//! at `uhidev?` but `ukbd*`, every `wskbd*` but the one at `ukbd?`;
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
 //! layout: attachment, driver, unit, state, locators, flags, parents (indices into
 //! `CFDATA`), the start of its locator names and the first unit a starred entry may take.
@@ -94,6 +95,8 @@ use crate::dev::usb::usb::{USB_CA, USB_CD};
 use crate::dev::usb::xhci::XHCI_CD;
 use crate::dev::vnd::{NVND, vndattach};
 use crate::dev::wscons::wsdisplay::{WSDISPLAY_CA, WSDISPLAY_CD};
+use crate::dev::wscons::wskbd::{WSKBD_CA, WSKBD_CD};
+use crate::dev::wscons::wsmux::wsmuxattach;
 use crate::kern::tty_pty::ptyattach;
 #[cfg(feature = "fuse")]
 use crate::miscfs::fuse::fuse_device::{NFUSE, fuseattach};
@@ -220,11 +223,18 @@ const PV_VGA: &[i16] = &[48, 49];
 /// `loc[]` of `wsdisplay0 at vga? console 1`: console 1, primary -1, mux 1.
 const LOC_WSEMULDISPLAYDEV_CONSOLE: &[i64] = &[1, -1, 1];
 
-/// `cfdata[]`: 51 entries, 52 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `pv[]` for children of `ukbd*` (`cfdata[24]`): the `wskbddev` attribute.
+const PV_UKBD: &[i16] = &[24];
+
+/// `loc[]` of `wskbd* at ukbd? mux 1`: `console = -1` (`conf/files`: `define wskbddev
+/// {[console = -1], [mux = 1]}`), `mux 1`.
+const LOC_WSKBDDEV_MUX1: &[i64] = &[-1, 1];
+
+/// `cfdata[]`: 52 entries, 53 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    52
+    53
 } else {
-    51
+    52
 };
 
 /// `cfdata[]`.
@@ -792,7 +802,19 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 51: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 51: wskbd* at ukbd? mux 1
+    Cfdata::new(
+        &WSKBD_CA,
+        &WSKBD_CD,
+        0,
+        FSTATE_STAR,
+        LOC_WSKBDDEV_MUX1,
+        0,
+        PV_UKBD,
+        0,
+        0,
+    ),
+    // 52: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
@@ -805,10 +827,11 @@ pub static CFROOTS: [i16; 2] = [0, 13];
 /// ported, in `ioconf.c`'s order (`pseudo-device pf`, `pseudo-device pflog`, `pseudo-device
 /// pfsync`, `pseudo-device pflow`, `pseudo-device enc`, `pseudo-device pty 16`, `pseudo-device
 /// vnd 4`, `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device
-/// bio 1`, `pseudo-device fuse` under feature `fuse`; all but pty and vnd with a count of 1), then `pseudo-device rd 1`, which is not in
+/// bio 1`, `pseudo-device fuse` under feature `fuse`; all but pty and vnd with a count of 1), then
+/// the machine GENERIC's `pseudo-device wsmux 2` (M13), then `pseudo-device rd 1`, which is not in
 /// GENERIC but in the RAMDISK kernels (`arch/amd64/conf/RAMDISK*`): this kernel boots its root
 /// from rd0a (M8).
-pub static PDEVINIT: [Pdevinit; 12 + cfg!(feature = "fuse") as usize] = [
+pub static PDEVINIT: [Pdevinit; 13 + cfg!(feature = "fuse") as usize] = [
     Pdevinit {
         pdev_attach: pfattach,
         pdev_count: 1,
@@ -857,6 +880,10 @@ pub static PDEVINIT: [Pdevinit; 12 + cfg!(feature = "fuse") as usize] = [
     Pdevinit {
         pdev_attach: fuseattach,
         pdev_count: NFUSE,
+    },
+    Pdevinit {
+        pdev_attach: wsmuxattach,
+        pdev_count: 2,
     },
     Pdevinit {
         pdev_attach: rdattach,

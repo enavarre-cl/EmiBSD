@@ -92,13 +92,10 @@
 //! the console keyboard) through `uhidev_open`.
 //!
 //! ## Deviations
-//! - `ukbdmap.c` (the generated keyboard layout tables, 1,252 lines) is not ported: nothing
-//!   reads them until `wskbd(4)` (M13); `hidkbd.rs`'s `UKBD_KEYMAPDATA` has an empty table.
-//!   `wskbd* at ukbd?` is not in ioconf, so `hidkbd_attach_wskbd`'s `config_found` finds no
-//!   child, as on an OpenBSD kernel without `wskbd`: nobody calls `ukbd_enable`, the
-//!   interrupt pipe stays closed and no report is read until M13. `wskbd_cnattach` (called
-//!   for a console keyboard, which only `ukbd_cnattach` from the console framework makes) is
-//!   a visible stub.
+//! - The keyboard layouts (`ukbdmap.c`) are `ukbdmap.rs`'s, read through `hidkbd.rs`'s
+//!   `UKBD_KEYMAPDATA`. With a serial console nothing calls `ukbd_cnattach`
+//!   (`hidkbd_is_console` stays 0), so no USB keyboard is the console keyboard, as in
+//!   OpenBSD; `wskbd* at ukbd? mux 1` joins it to the mux of `wsdisplay0`.
 //! - `UKBD_DEBUG` is not in GENERIC: the `DPRINTF`s are absent. `UKBD_LAYOUT` is not set: the
 //!   default layout is `KB_US | KB_DEFAULT`.
 //! - `__loongson__`'s `ukbd_gdium_munge` and its Fn translation table are not carried (the
@@ -559,7 +556,7 @@ pub fn ukbd_ioctl(
     cmd: u64,
     data: &mut [u8],
     flag: i32,
-    p: &Proc,
+    p: Option<&Proc>,
 ) -> Result<bool, Errno> {
     let sc = ukbd_cookie(v);
     let kbd = &sc.sc_kbd;

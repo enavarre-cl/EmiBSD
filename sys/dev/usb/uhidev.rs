@@ -1390,7 +1390,7 @@ pub fn uhidev_ioctl(
     cmd: u64,
     data: &mut [u8],
     flag: i32,
-    p: &Proc,
+    p: Option<&Proc>,
 ) -> Result<bool, Errno> {
     let _ = (flag, p);
     match cmd {

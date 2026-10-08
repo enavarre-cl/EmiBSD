@@ -244,10 +244,15 @@ fn events_reach_wskbd_when_a_child_is_attached() {
     // no child: decoded, then dropped (the C's `sc_wskbddev == NULL`)
     hidkbd_input(&kbd, &mut [0, 0, 4, 0, 0, 0, 0, 0]);
     assert_eq!(kbd.sc_odata.get().keycode[0], 4);
-    // with a child the events go to the visible stubs, cooked and raw, without a crash
-    kbd.sc_wskbddev.set(Some(NonNull::from(fake_device())));
+    // with a child (a keyboard open in event mode) the events reach its queue: 4 up, 5 down
+    let wsk = crate::dev::wscons::wskbd::tests::keyboard(crate::dev::wscons::wsksymdef::KB_US);
+    let evar = &wsk.sc_base.me_evar;
+    crate::dev::wscons::wsevent::wsevent_init(evar).unwrap();
+    crate::dev::wscons::wskbd::wskbd_do_open(wsk, evar).unwrap();
+    kbd.sc_wskbddev.set(Some(NonNull::from(&wsk.sc_base.me_dv)));
     hidkbd_input(&kbd, &mut [0, 0, 5, 0, 0, 0, 0, 0]);
     assert_eq!(kbd.sc_odata.get().keycode[0], 5);
+    assert_eq!(evar.ws_put.get(), 2);
     kbd.sc_rawkbd.set(1);
     hidkbd_input(&kbd, &mut [0, 0, 0, 0, 0, 0, 0, 0]);
     assert_eq!(kbd.sc_odata.get().keycode[0], 0);
@@ -345,20 +350,20 @@ fn ioctls_leds_mode_and_bell() {
 
     kbd.sc_leds.set(WSKBD_LED_NUM);
     assert_eq!(
-        hidkbd_ioctl(&kbd, WSKBDIO_GETLEDS, &mut data, 0, p),
+        hidkbd_ioctl(&kbd, WSKBDIO_GETLEDS, &mut data, 0, Some(p)),
         Ok(true)
     );
     assert_eq!(ioctl_arg::<i32>(&data), WSKBD_LED_NUM);
 
     ioctl_ret(&mut data, &WSKBD_RAW);
     assert_eq!(
-        hidkbd_ioctl(&kbd, WSKBDIO_SETMODE, &mut data, 0, p),
+        hidkbd_ioctl(&kbd, WSKBDIO_SETMODE, &mut data, 0, Some(p)),
         Ok(true)
     );
     assert_eq!(kbd.sc_rawkbd.get(), 1);
     ioctl_ret(&mut data, &0i32);
     assert_eq!(
-        hidkbd_ioctl(&kbd, WSKBDIO_SETMODE, &mut data, 0, p),
+        hidkbd_ioctl(&kbd, WSKBDIO_SETMODE, &mut data, 0, Some(p)),
         Ok(true)
     );
     assert_eq!(kbd.sc_rawkbd.get(), 0);
@@ -374,21 +379,21 @@ fn ioctls_leds_mode_and_bell() {
         },
     );
     assert_eq!(
-        hidkbd_ioctl(&kbd, WSKBDIO_COMPLEXBELL, &mut data, 0, p),
+        hidkbd_ioctl(&kbd, WSKBDIO_COMPLEXBELL, &mut data, 0, Some(p)),
         Ok(true)
     );
     let before = BELLS.load(Ordering::Relaxed);
     hidkbd_hookup_bell(test_bell, 0x1234 as *mut c_void);
     hidkbd_hookup_bell(other_bell, ptr::null_mut());
     assert_eq!(
-        hidkbd_ioctl(&kbd, WSKBDIO_COMPLEXBELL, &mut data, 0, p),
+        hidkbd_ioctl(&kbd, WSKBDIO_COMPLEXBELL, &mut data, 0, Some(p)),
         Ok(true)
     );
     assert_eq!(BELLS.load(Ordering::Relaxed), before + 1);
 
     // not ours: wskbd goes on
     assert_eq!(
-        hidkbd_ioctl(&kbd, _io(b'W', 99), &mut data, 0, p),
+        hidkbd_ioctl(&kbd, _io(b'W', 99), &mut data, 0, Some(p)),
         Ok(false)
     );
 }
@@ -577,9 +582,10 @@ fn odd_descriptors_are_parsed_like_the_c_does() {
 }
 
 #[test]
-fn the_keymap_data_starts_empty_and_takes_the_layout() {
+fn the_keymap_data_has_the_usb_layouts_and_takes_the_layout() {
     use crate::dev::wscons::wsksymdef::KB_US;
-    assert!(UKBD_KEYMAPDATA.keydesc.is_empty());
+    assert_eq!(UKBD_KEYMAPDATA.keydesc.len(), UKBD_KEYDESCTAB.len());
+    assert_eq!(UKBD_KEYMAPDATA.keydesc[0].name, KB_US);
     UKBD_KEYMAPDATA.set_layout(KB_US);
     assert_eq!(UKBD_KEYMAPDATA.layout(), KB_US);
 }

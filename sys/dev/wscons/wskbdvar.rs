@@ -48,7 +48,8 @@
 //!   untyped pointer (`*mut c_void`), as in `sys/sys/device.rs`. `ioctl` takes the kernel
 //!   copy of the argument as a byte slice, and returns `Ok(true)` where the C returns 0,
 //!   `Ok(false)` where it returns -1 (not the driver's ioctl, `wskbd` goes on), or the
-//!   errno (the convention of `ttioctl` in `kern/tty.rs`). `getc`'s two out-parameters are
+//!   errno (the convention of `ttioctl` in `kern/tty.rs`); its `struct proc *` is an
+//!   `Option<&Proc>`, as a mux passes NULL (`wsmux.c`). `getc`'s two out-parameters are
 //!   `&mut`s.
 //! - `wskbd_consops`' `debugger` member is an `Option`, as a console keyboard may have none.
 //! - The `wskbddevcf_console` and `wskbddevcf_mux` locator macros are functions of the
@@ -66,8 +67,13 @@ use crate::sys::errno::Errno;
 use crate::sys::proc::Proc;
 
 /// The type of `wskbd_accessops`' `ioctl`: `Ok(true)` handled, `Ok(false)` not the driver's.
-pub type WskbdIoctlFn =
-    fn(v: *mut c_void, cmd: u64, data: &mut [u8], flag: i32, p: &Proc) -> Result<bool, Errno>;
+pub type WskbdIoctlFn = fn(
+    v: *mut c_void,
+    cmd: u64,
+    data: &mut [u8],
+    flag: i32,
+    p: Option<&Proc>,
+) -> Result<bool, Errno>;
 
 /// `struct wskbd_accessops`: keyboard access functions (must be provided by all keyboards).
 ///

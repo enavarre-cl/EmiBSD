@@ -63,13 +63,8 @@
 //! - `apple_fn_trans` is the table of the `#else` branch of `#ifdef __macppc__` (the one
 //!   every architecture but macppc uses); the macppc branch is not carried, nor are the
 //!   `#ifdef notyet` entries of the Apple tables, which the C never compiles.
-//! - `ukbd_keydesctab` (`extern`, the generated keymap tables of `ukbdmap.c`, which belongs
-//!   to `ukbd(4)` and wscons, M13) is not carried: [`UKBD_KEYMAPDATA`], `ukbd_keymapdata`,
-//!   holds an empty table of layouts until `wskbd` needs one.
-//! - `hidkbd_attach_wskbd`'s `config_found` finds nothing while no `wskbd* at ukbd?` line is
-//!   in the machine's `ioconf.rs` (M13): `sc_wskbddev` stays `None`, as on an OpenBSD kernel
-//!   configured without `wskbd`, and the callbacks into `wskbd.rs` (visible stubs) are never
-//!   reached. That is the C's path, not a stub.
+//! - `ukbd_keydesctab` (`extern`) is `dev/usb/ukbdmap.rs`'s [`UKBD_KEYDESCTAB`], the
+//!   layouts of [`UKBD_KEYMAPDATA`] (`ukbd_keymapdata`).
 //! - `struct hidkbd` is `#[repr(C)]`-free but all-zero valid (every member a `Cell`, or an
 //!   array of them), as a member of a `config_make_softc` softc must be ([`Hidkbd::new`] makes
 //!   the same zeroes for a standalone one). `sc_var` is a `Cell<*mut HidkbdVariable>` beside
@@ -109,6 +104,7 @@ use crate::dev::hid::hid::{
     hid_get_usage, hid_get_usage_page, hid_input, hid_locate, hid_output, hid_start_parse,
     hid_usage2,
 };
+use crate::dev::usb::ukbdmap::UKBD_KEYDESCTAB;
 use crate::dev::wscons::wsconsio::{
     WSCONS_EVENT_KEY_DOWN, WSCONS_EVENT_KEY_UP, WSKBD_LED_CAPS, WSKBD_LED_COMPOSE, WSKBD_LED_NUM,
     WSKBD_LED_SCROLL, WSKBD_RAW, WSKBDIO_COMPLEXBELL, WSKBDIO_GETLEDS, WSKBDIO_SETMODE,
@@ -464,7 +460,7 @@ struct BellHook {
 static HIDKBD_BELL: StaticCell<Option<BellHook>> = StaticCell::new(None);
 
 /// `ukbd_keymapdata`: the keyboard's table of layouts and the one in force.
-pub static UKBD_KEYMAPDATA: WskbdMapdata = WskbdMapdata::new(&[], 0);
+pub static UKBD_KEYMAPDATA: WskbdMapdata = WskbdMapdata::new(&UKBD_KEYDESCTAB, 0);
 
 /// `hidkbd_attach`: parse the report descriptor `desc` of report `id` and set the keyboard
 /// up; `Err(ENXIO)` when the descriptor has no usable keys (after printing why).
@@ -867,7 +863,7 @@ pub fn hidkbd_ioctl(
     cmd: u64,
     data: &mut [u8],
     flag: i32,
-    p: &Proc,
+    p: Option<&Proc>,
 ) -> Result<bool, Errno> {
     let _ = (flag, p);
     match cmd {

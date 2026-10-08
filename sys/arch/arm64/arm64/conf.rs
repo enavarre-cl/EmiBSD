@@ -42,7 +42,7 @@
 //!   writes the driver's initialiser with a count (`cdev_disk_init(NWD,wd)`): its entry points
 //!   answer `ENODEV` instead of the `ENXIO` a count of 0 would give, and `d_type` is 0. The
 //!   drivers present are `cn` (0), `ctty` (1), `mm` (2), `pts`/`ptc` (5, 6), `com` (8),
-//!   `wsdisplay` (12, M13),
+//!   `wsdisplay` (12, M13), `wskbd` (67, M13), `wsmux` (69, M13),
 //!   `filedesc` (22), `bpf` (23), `sd` (4 block, 13 character), `cd` (6 block, 15 character), `vnd` (14 block,
 //!   41 character), `rd` (17 block, 47 character), `audio` (42, M12), `usb` (61, M12), `pf` (73), `bio` (79), `ptm` (81), `diskmap` (90, M14) and `fuse` (92, feature `fuse`). `log` (7) waits for `subr_log.c`'s `logopen` ..
 //!   `logkqfilter`, `random` (45) for `rnd.c`.
@@ -74,6 +74,12 @@ use crate::dev::wscons::wsdisplay::{
     wsdisplayclose, wsdisplayioctl, wsdisplaykqfilter, wsdisplaymmap, wsdisplayopen, wsdisplayread,
     wsdisplaystop, wsdisplaytty, wsdisplaywrite,
 };
+use crate::dev::wscons::wskbd::{
+    NWSKBD, wskbdclose, wskbdioctl, wskbdkqfilter, wskbdopen, wskbdread,
+};
+use crate::dev::wscons::wsmux::{
+    NWSMUX, wsmuxclose, wsmuxioctl, wsmuxkqfilter, wsmuxopen, wsmuxread,
+};
 use crate::kern::kern_descrip::filedescopen;
 use crate::kern::tty_pty::{
     NPTY, ptcclose, ptckqfilter, ptcopen, ptcread, ptcwrite, ptmclose, ptmioctl, ptmopen, ptsclose,
@@ -93,8 +99,9 @@ use crate::scsi::sd::{NSD, sdclose, sddump, sdioctl, sdopen, sdread, sdsize, sds
 use crate::sys::conf::cdev_fuse_init;
 use crate::sys::conf::{
     Bdevsw, Cdevsw, bdev_disk_init, bdev_notdef, cdev_audio_init, cdev_bio_init, cdev_bpf_init,
-    cdev_cn_init, cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_mm_init, cdev_notdef,
-    cdev_pf_init, cdev_ptc_init, cdev_ptm_init, cdev_tty_init, cdev_usb_init, cdev_wsdisplay_init,
+    cdev_cn_init, cdev_ctty_init, cdev_disk_init, cdev_fd_init, cdev_mm_init, cdev_mouse_init,
+    cdev_notdef, cdev_pf_init, cdev_ptc_init, cdev_ptm_init, cdev_tty_init, cdev_usb_init,
+    cdev_wsdisplay_init,
 };
 use crate::sys::param::NODEV;
 use crate::sys::types::{Dev, major, makedev, minor};
@@ -299,9 +306,25 @@ pub static CDEVSW: Devsw<Cdevsw, 101> = Devsw([
     cnotdef(), // 64: USB printers (ulpt: not ported)
     cnotdef(), // 65: urio
     cnotdef(), // 66: USB tty (ucom: not ported)
-    cnotdef(), // 67: keyboards (wskbd: not ported)
+    // 67: keyboards
+    Cell::new(cdev_mouse_init(
+        NWSKBD,
+        wskbdopen,
+        wskbdclose,
+        wskbdread,
+        wskbdioctl,
+        wskbdkqfilter,
+    )),
     cnotdef(), // 68: mice (wsmouse: not ported)
-    cnotdef(), // 69: ws multiplexor (wsmux: not ported)
+    // 69: ws multiplexor
+    Cell::new(cdev_mouse_init(
+        NWSMUX,
+        wsmuxopen,
+        wsmuxclose,
+        wsmuxread,
+        wsmuxioctl,
+        wsmuxkqfilter,
+    )),
     cnotdef(), // 70: /dev/openprom (openprom: not ported)
     cnotdef(), // 71: EFI (efi: not ported)
     cnotdef(), // 72: PCI user (USER_PCICONF not configured)

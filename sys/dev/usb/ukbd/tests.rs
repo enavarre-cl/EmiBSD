@@ -124,26 +124,38 @@ fn the_access_ioctls() {
 
     // The keyboard type is USB.
     let mut data = [0u8; 4];
-    assert_eq!(ukbd_ioctl(v, WSKBDIO_GTYPE, &mut data, 0, p), Ok(true));
+    assert_eq!(
+        ukbd_ioctl(v, WSKBDIO_GTYPE, &mut data, 0, Some(p)),
+        Ok(true)
+    );
     assert_eq!(ioctl_arg::<i32>(&data), WSKBD_TYPE_USB as i32);
 
     // Setting the LEDs of a keyboard that is not attached is a no-op that succeeds.
     ioctl_ret(&mut data, &WSKBD_LED_NUM);
-    assert_eq!(ukbd_ioctl(v, WSKBDIO_SETLEDS, &mut data, 0, p), Ok(true));
+    assert_eq!(
+        ukbd_ioctl(v, WSKBDIO_SETLEDS, &mut data, 0, Some(p)),
+        Ok(true)
+    );
     assert_eq!(sc.sc_kbd.sc_leds.get(), 0);
 
     // uhidev's: the report ID of the child.
     sc.sc_hdev.sc_report_id.set(7);
-    assert_eq!(ukbd_ioctl(v, USB_GET_REPORT_ID, &mut data, 0, p), Ok(true));
+    assert_eq!(
+        ukbd_ioctl(v, USB_GET_REPORT_ID, &mut data, 0, Some(p)),
+        Ok(true)
+    );
     assert_eq!(ioctl_arg::<i32>(&data), 7);
 
     // hidkbd's: the LEDs it last set.
     sc.sc_kbd.sc_leds.set(WSKBD_LED_CAPS);
-    assert_eq!(ukbd_ioctl(v, WSKBDIO_GETLEDS, &mut data, 0, p), Ok(true));
+    assert_eq!(
+        ukbd_ioctl(v, WSKBDIO_GETLEDS, &mut data, 0, Some(p)),
+        Ok(true)
+    );
     assert_eq!(ioctl_arg::<i32>(&data), WSKBD_LED_CAPS);
 
     // Nobody's.
-    assert_eq!(ukbd_ioctl(v, 0x1234, &mut data, 0, p), Ok(false));
+    assert_eq!(ukbd_ioctl(v, 0x1234, &mut data, 0, Some(p)), Ok(false));
 }
 
 #[test]

@@ -94,13 +94,11 @@
 //!   code (the non-mux keyboard binding in `wsdisplay_attach`) is not compiled, as in C.
 //!   [`wsdisplay_set_kbd`], which C compiles only without wsmux, is kept for the
 //!   `wscons_callbacks.h` interface. The `HAVE_*` features are `wscons_features.rs`'s.
-//! - Not ported yet (M13 keyboard step): `wsmux.c` and `wsevent.c`. `wsmux_getmux`,
-//!   `wsmux_create`, `wsmux_set_display` and `wsmux_attach_sc` are reported with
-//!   `unported!`, so `sc_input` stays `None`: the event source type ([`Wsevsrc`]) is
-//!   uninhabited until then, and every `wsevsrc_*` call is the empty `match` of a `None`.
-//!   `wsdisplay_attach` still prints the ` mux N` its locator names, as the C does before it
-//!   looks the mux up. wskbd's `wskbd_set_console_display` and `wskbd_pickfree` are
-//!   `wskbd.rs`'s stubs.
+//! - `sc_input`, the mux the display reads its keyboards from (`wsmux_getmux` of its `mux`
+//!   locator, or a `dmux` of its own), is an `Option<&'static Wsevsrc>`: muxes are never
+//!   freed. Its casts to `struct wsmux_softc *` are `WsmuxSoftc::of_evsrc`.
+//! - `wsdisplay_update_rawkbd` returns `ENOTTY` where the C returns the -1 of a display
+//!   ioctl no keyboard took (its callers turn a -1 into `ENOTTY` too).
 //! - `struct wsdisplay_softc`, `struct wsscreen` and `struct wsscreen_internal` keep the C's
 //!   members in `Cell`s (the softc is zeroed by `config_make_softc`; screens are `malloc`ed
 //!   and written once); the C's pointers between them are `NonNull`s and raw pointers, live
@@ -183,6 +181,8 @@ use crate::dev::wscons::wsemulvar::{
     WsemulOps, WsemulResetops,
 };
 use crate::dev::wscons::wsksymvar::{KbdT, KeysymT};
+use crate::dev::wscons::wsmux::{wsmux_attach_sc, wsmux_create, wsmux_getmux, wsmux_set_display};
+use crate::dev::wscons::wsmuxvar::{WsmuxSoftc, wsevsrc_display_ioctl, wsevsrc_ioctl};
 use crate::kern::kern_malloc::{free, malloc};
 use crate::kern::kern_prot::suser;
 use crate::kern::kern_synch::{tsleep_nsec, wakeup};
@@ -220,7 +220,6 @@ use crate::sys::ttydefaults::{
 };
 use crate::sys::types::{Dev, Paddr, major, makedev, minor};
 use crate::sys::vnode::VCHR;
-use crate::unported;
 
 /// `SCR_OPEN`: is it open?
 const SCR_OPEN: i32 = 1;
@@ -1149,12 +1148,19 @@ pub fn wsdisplay_detach(self_: &Device, flags: i32) -> Result<(), Errno> {
         timeout_del(&sc.sc_burner);
     }
 
-    // NWSKBD > 0, NWSMUX > 0: if we are the display of the mux we are attached to,
-    // disconnect all input devices from us (wsmux_set_display). XXX If we created a
-    // standalone mux (dmux), we should destroy it there, but there is currently no support
-    // for this in wsmux.
+    // NWSKBD > 0, NWSMUX > 0
     if let Some(inp) = sc.sc_input.get() {
-        match *inp {}
+        // If we are the display of the mux we are attached to, disconnect all input devices
+        // from us.
+        if inp.me_dispdv.get() == Some(NonNull::from(&sc.sc_dv)) {
+            // SAFETY: `sc_input` is a mux (`wsmux_getmux` or `wsmux_create` in
+            // `wsdisplay_attach`).
+            wsmux_set_display(unsafe { WsmuxSoftc::of_evsrc(inp) }, None)?;
+        }
+
+        // XXX
+        // If we created a standalone mux (dmux), we should destroy it there, but there is
+        // currently no support for this in wsmux.
     }
 
     if let Some(tq) = sc.sc_taskq.get() {
@@ -1208,6 +1214,17 @@ pub fn wsdisplay_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_vo
     // NWSKBD > 0, NWSMUX > 0: the keyboard mux this display reads, the one its `mux`
     // locator names, or a "dmux" of its own.
     let kbdmux = wsemuldisplaydevcf_mux(sc.sc_dv.cfdata());
+    let mux = if kbdmux >= 0 {
+        wsmux_getmux(kbdmux as i32)
+    } else {
+        wsmux_create(b"dmux", sc.sc_dv.dv_unit.get())
+    };
+    // XXX panic()ing isn't nice, but attach cannot fail
+    let Some(mux) = mux else {
+        panic(format_args!("wsdisplay_common_attach: no memory"));
+    };
+    sc.sc_input.set(Some(&mux.sc_base));
+
     if kbdmux >= 0 {
         printf(format_args!(" mux {kbdmux}"));
     }
@@ -1242,7 +1259,7 @@ pub fn wsdisplay_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_vo
 
         // NWSKBD > 0
         if let Some(kme) = wskbd_set_console_display(&sc.sc_dv, sc.sc_input.get()) {
-            match *kme {}
+            printf(format_args!(", using {}", kme.me_dv.xname()));
         }
 
         sc.sc_focusidx.set(0);
@@ -1251,10 +1268,11 @@ pub fn wsdisplay_attach(_parent: Option<&Device>, self_: &Device, aux: *mut c_vo
     }
     printf(format_args!("\n"));
 
-    // NWSKBD > 0 && NWSMUX > 0: wsmux_getmux(kbdmux) or wsmux_create("dmux", unit) for
-    // `sc_input`, then, if this mux did not have a display device yet, volunteer for the
-    // job (wsmux_set_display).
-    let _ = unported!("wsmux_getmux, wsmux_create, wsmux_set_display (wsdisplay_attach)");
+    // NWSKBD > 0 && NWSMUX > 0: if this mux did not have a display device yet, volunteer
+    // for the job.
+    if mux.displaydv().is_none() {
+        let _ = wsmux_set_display(mux, Some(&sc.sc_dv));
+    }
 
     sc.sc_accessops.set(Some(ap.accessops));
     sc.sc_accesscookie.set(ap.accesscookie);
@@ -1617,8 +1635,11 @@ pub fn wsdisplay_internal_ioctl(
         }
     }
     if let Some(inp) = sc.sc_input.get() {
-        // wsevsrc_display_ioctl(inp, cmd, data, flag, p)
-        match *inp {}
+        // An error, or an ioctl a component took, ends here; the C's -1 (`Ok(false)`) goes
+        // on.
+        if wsevsrc_display_ioctl(inp, cmd, data, flag, p)? {
+            return Ok(true);
+        }
     }
 
     let burner_cmd = HAVE_BURNER_SUPPORT && matches!(cmd, WSDISPLAYIO_SVIDEO | WSDISPLAYIO_SBURNER);
@@ -1950,8 +1971,7 @@ pub fn wsdisplay_cfg_ioctl(
             let Some(inp) = sc.sc_input.get() else {
                 return Err(Errno::ENXIO);
             };
-            // wsevsrc_ioctl(inp, cmd, data, flag, p)
-            match *inp {}
+            wsevsrc_ioctl(inp, cmd, data, flag, p)
         }
 
         _ => Err(Errno::EINVAL),
@@ -2222,7 +2242,7 @@ fn wsdisplay_update_rawkbd(sc: &WsdisplaySoftc, scr: Option<&Wsscreen>) -> Resul
         return Ok(());
     }
 
-    let _data = if raw != 0 {
+    let data = if raw != 0 {
         WSKBD_RAW
     } else {
         WSKBD_TRANSLATED
@@ -2231,8 +2251,19 @@ fn wsdisplay_update_rawkbd(sc: &WsdisplaySoftc, scr: Option<&Wsscreen>) -> Resul
         splx(s);
         return Err(Errno::ENXIO);
     };
-    // wsevsrc_display_ioctl(inp, WSKBDIO_SETMODE, &data, FWRITE, 0); then sc_rawkbd = raw
-    match *inp {}
+    let mut buf = data.to_ne_bytes();
+    // The C keeps the mode when the display ioctl returns 0. Its -1 (no keyboard took the
+    // mode) is returned as is; here it is `ENOTTY`, the errno for a -1 nobody expects.
+    let error = match wsevsrc_display_ioctl(inp, WSKBDIO_SETMODE, &mut buf, FWRITE, None) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(Errno::ENOTTY),
+        Err(e) => Err(e),
+    };
+    if error.is_ok() {
+        sc.sc_rawkbd.set(raw);
+    }
+    splx(s);
+    error
 }
 
 /// `wsswitch_cb1`: `wsdisplay_switch1` as a completion callback.
@@ -2662,13 +2693,24 @@ pub fn wsdisplay_kbdholdscreen(dev: &Device, hold: i32) {
 /// `wsdisplay_set_console_kbd`: the console keyboard's event source joins the console
 /// display's mux (`NWSKBD > 0`).
 pub fn wsdisplay_set_console_kbd(src: Option<&Wsevsrc>) {
-    // The event source is uninhabited until wsmux.c: with one, the C sets
-    // `src->me_dispdv` to the console display (after wsmux_attach_sc), or to NULL without
-    // a console display.
     let Some(src) = src else {
         return;
     };
-    match *src {}
+    let Some(cd) = console_device() else {
+        src.me_dispdv.set(None);
+        return;
+    };
+    // NWSMUX > 0
+    // SAFETY: the console display's `sc_input` is a mux (`wsdisplay_attach`).
+    let mux = cd
+        .sc_input
+        .get()
+        .map(|m| unsafe { WsmuxSoftc::of_evsrc(m) });
+    if wsmux_attach_sc(mux, src).is_err() {
+        src.me_dispdv.set(None);
+        return;
+    }
+    src.me_dispdv.set(Some(NonNull::from(&cd.sc_dv)));
 }
 
 /// `wsdisplay_set_kbd`: attach the keyboard event source `kbd` to display `disp` (C compiles

@@ -75,6 +75,12 @@
 //!   exactly two colours, its background and the same text colour as the others, with some
 //!   text pixels for a character and none for a space, and the cell after TEXT is blank
 //!   ([`check_screen_text`]). `smoke-wscons` writes TEXT to `/dev/ttyC0` from the shell.
+//! - `--sendkey-after LINE --sendkeys KEYS` (`smoke`, M13, `smoke-kbd`; repeatable, the pairs
+//!   in order): QEMU gets the human monitor socket as for `--screenshot-after`; when a serial
+//!   line contains LINE, each of the space-separated KEYS (QEMU key names: `h`, `shift-a`,
+//!   `ret`, ...) is typed with the monitor's `sendkey` on the guest's keyboard (with `--usb`,
+//!   the `usb-kbd` on `qemu-xhci`), one every [`SENDKEY_GAP`] ([`parse_sendkeys`],
+//!   [`poll_sendkey`]). The run fails if a LINE never came.
 //! - `{host-ms}` in a `smoke` `--send` text (M13, `smoke-clock`): replaced, as the text is
 //!   sent, by the host's wall clock in milliseconds since the Epoch ([`expand_send`]), so a
 //!   guest script can set its own clock readings beside the host's and compare the rates.
@@ -219,6 +225,19 @@ static SHOT_LINE: Mutex<Option<String>> = Mutex::new(None);
 /// `--screen-text ROW:COL:TEXT`: the text the screenshot must show on wsdisplay's grid.
 static SCREEN_TEXT: OnceLock<(usize, usize, String)> = OnceLock::new();
 
+/// A `--sendkey-after LINE --sendkeys KEYS` pair: the line, and the keys split at spaces.
+type Sendkeys = (String, Vec<String>);
+
+/// The `--sendkey-after`/`--sendkeys` pairs, in order, and the run directory the monitor
+/// socket goes in.
+static SENDKEY: OnceLock<(Vec<Sendkeys>, PathBuf)> = OnceLock::new();
+
+/// How many pairs were typed.
+static SENT_KEYS: Mutex<usize> = Mutex::new(0);
+
+/// The pause between two keys: QEMU holds each key down 100 ms by default.
+const SENDKEY_GAP: Duration = Duration::from_millis(250);
+
 /// The start of the kernel's line that describes wsdisplay's character grid.
 const GRID_PREFIX: &str = "selftest: wscons grid";
 
@@ -259,6 +278,10 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if let Some(line) = opt_path(args, "--screenshot-after")? {
         let _ = FB.set(());
         let _ = SCREENSHOT.set((line.to_string(), boot::run_dir(root)));
+    }
+    let pairs = parse_sendkeys(args)?;
+    if !pairs.is_empty() {
+        let _ = SENDKEY.set((pairs, boot::run_dir(root)));
     }
     if let Some(spec) = opt_path(args, "--screen-text")? {
         if SCREENSHOT.get().is_none() {
@@ -634,11 +657,19 @@ fn pci_serial_args(file: &Path) -> Vec<String> {
     ]
 }
 
-/// QEMU's `-monitor` argument: a socket in the run directory with `--screenshot-after`,
-/// none otherwise.
+/// The run directory of the monitor socket, when an option drives QEMU's monitor.
+fn monitor_dir() -> Option<&'static PathBuf> {
+    SCREENSHOT
+        .get()
+        .map(|(_, dir)| dir)
+        .or_else(|| SENDKEY.get().map(|(_, dir)| dir))
+}
+
+/// QEMU's `-monitor` argument: a socket in the run directory with `--screenshot-after` or
+/// `--sendkey-after`, none otherwise.
 pub(crate) fn monitor_arg() -> String {
-    match SCREENSHOT.get() {
-        Some((_, dir)) => {
+    match monitor_dir() {
+        Some(dir) => {
             let sock = monitor_sock(dir);
             let _ = fs::remove_file(&sock);
             format!("unix:{},server=on,wait=off", sock.display())
@@ -678,6 +709,89 @@ fn monitor_sock_for(dir: &Path, cwd: &Path, tmp: &Path, pid: u32) -> PathBuf {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     dir.hash(&mut h);
     tmp.join(format!("emibsd-{:08x}-{pid}.sock", h.finish() as u32))
+}
+
+/// Whether the monitor still has work: a screenshot to take or keys to send.
+pub(crate) fn monitor_pending() -> bool {
+    screenshot_pending() || sendkey_pending()
+}
+
+/// Drives the monitor once `serial` has the lines it waits for: [`poll_sendkey`], then
+/// [`poll_screenshot`].
+pub(crate) fn poll_monitor(serial: &str) -> Result<()> {
+    poll_sendkey(serial)?;
+    poll_screenshot(serial)
+}
+
+/// The `--sendkey-after LINE --sendkeys KEYS` pairs of `args`, in order.
+fn parse_sendkeys(args: &[&str]) -> Result<Vec<Sendkeys>> {
+    let mut pairs = Vec::new();
+    let mut after: Option<&str> = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i] {
+            "--sendkey-after" => {
+                if after.is_some() {
+                    return Err("--sendkey-after: the previous one has no --sendkeys".into());
+                }
+                after = Some(args.get(i + 1).ok_or("--sendkey-after: expected a line")?);
+                i += 1;
+            }
+            "--sendkeys" => {
+                let line = after.take().ok_or("--sendkeys: needs --sendkey-after")?;
+                let keys = args.get(i + 1).ok_or("--sendkeys: expected keys")?;
+                let keys: Vec<String> = keys.split_whitespace().map(str::to_string).collect();
+                if keys.is_empty() {
+                    return Err("--sendkeys: no keys".into());
+                }
+                pairs.push((line.to_string(), keys));
+                i += 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    if after.is_some() {
+        return Err("--sendkey-after: needs --sendkeys".into());
+    }
+    Ok(pairs)
+}
+
+/// The next pair to type, if any is left.
+fn next_sendkeys() -> Option<&'static Sendkeys> {
+    let (pairs, _) = SENDKEY.get()?;
+    let sent = SENT_KEYS.lock().map(|s| *s).ok()?;
+    pairs.get(sent)
+}
+
+/// Whether keys are still to be sent.
+fn sendkey_pending() -> bool {
+    next_sendkeys().is_some()
+}
+
+/// Types the next `--sendkeys` once `serial` has its `--sendkey-after` line: one monitor
+/// `sendkey` per key, [`SENDKEY_GAP`] apart.
+fn poll_sendkey(serial: &str) -> Result<()> {
+    let (Some((after, keys)), Some((_, dir))) = (next_sendkeys(), SENDKEY.get()) else {
+        return Ok(());
+    };
+    if !serial.contains(after.as_str()) {
+        return Ok(());
+    }
+    let sock = monitor_sock(dir);
+    let mut mon = UnixStream::connect(&sock).map_err(|e| format!("{}: {e}", sock.display()))?;
+    mon.set_read_timeout(Some(Duration::from_secs(10)))?;
+    read_prompt(&mut mon)?;
+    for key in keys {
+        writeln!(mon, "sendkey {key}")?;
+        read_prompt(&mut mon)?;
+        std::thread::sleep(SENDKEY_GAP);
+    }
+    println!("xtask: sendkey {} (saw {after:?})", keys.join(" "));
+    if let Ok(mut s) = SENT_KEYS.lock() {
+        *s += 1;
+    }
+    Ok(())
 }
 
 /// Whether a screenshot is still to be taken.
@@ -986,6 +1100,14 @@ fn check_screenshot(ppm: &Ppm<'_>, line: &str) -> Result<usize> {
 /// `--expect-pci-serial`, each text in the file the card's UART wrote; with
 /// `--screenshot-after`, a screenshot that shows the kernel's text.
 pub(crate) fn after_smoke() -> Result<()> {
+    if let Some((_, dir)) = SENDKEY.get() {
+        if SCREENSHOT.get().is_none() {
+            let _ = fs::remove_file(monitor_sock(dir));
+        }
+        if let Some((after, _)) = next_sendkeys() {
+            return Err(format!("no keys sent: the serial line {after:?} never came").into());
+        }
+    }
     if let Some((after, dir)) = SCREENSHOT.get() {
         let _ = fs::remove_file(monitor_sock(dir));
         let line = SHOT_LINE
@@ -1127,6 +1249,31 @@ mod tests {
         assert!(parse_ppm(b"P5\n1 1\n255\n\0").is_err());
     }
     use crate::e2fs;
+
+    #[test]
+    fn sendkeys_pairs_in_order() {
+        let args = [
+            "--sendkey-after",
+            "a-42",
+            "--sendkeys",
+            "h i ret",
+            "--expect",
+            "x",
+            "--sendkey-after",
+            "b-42",
+            "--sendkeys",
+            "a",
+        ];
+        let pairs = parse_sendkeys(&args).expect("parses");
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0].0, "a-42");
+        assert_eq!(pairs[0].1, ["h", "i", "ret"]);
+        assert_eq!(pairs[1].1, ["a"]);
+        assert!(parse_sendkeys(&["--sendkeys", "a"]).is_err());
+        assert!(parse_sendkeys(&["--sendkey-after", "x"]).is_err());
+        assert!(parse_sendkeys(&["--sendkey-after", "x", "--sendkeys", " "]).is_err());
+        assert!(parse_sendkeys(&[]).expect("none").is_empty());
+    }
 
     #[test]
     fn pci_serial_is_a_file_chardev() {

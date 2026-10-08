@@ -4,12 +4,15 @@
 //! driver interface (`usbdi`, `usbdi_util`), the shared structures (`usbdivar`), device
 //! enumeration (`usb_subr`), DMA memory (`usb_mem`), quirks, IDs (`usbdevs`), the HID class
 //! definitions (`usbhid`) and the capture headers (`usbpcap`). Host controller and device
-//! drivers (`xhci`, `uhub`, `umass`, `uhidev`, ...) attach on top of it.
+//! drivers (`xhci`, `uhub`, `umass`, `uhidev`, ...) attach on top of it; `ukbdmap` holds the
+//! keyboard layouts of `ukbd`.
 
 pub mod uhid_rdesc;
 pub mod uhidev;
 pub mod uhub;
 pub mod ukbd;
+#[rustfmt::skip] // generated from the C, licence block verbatim (a trailing blank included)
+pub mod ukbdmap;
 pub mod umass;
 pub mod umass_quirks;
 pub mod umass_scsi;

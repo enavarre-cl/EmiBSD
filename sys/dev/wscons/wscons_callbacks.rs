@@ -38,13 +38,12 @@
 //! Upstream: sys/dev/wscons/wscons_callbacks.h @ 3ce1f3f79392
 //!
 //! The header only declares functions; `wsdisplay.c` defines the `wsdisplay_*` ones
-//! (`wsdisplay.rs`, re-exported here) and `wskbd.c` the `wskbd_*` ones, re-exported from
-//! `wskbd.rs`, where `wskbd.c`'s stubs are until its port (M13 keyboard step).
+//! (`wsdisplay.rs`) and `wskbd.c` the `wskbd_*` ones (`wskbd.rs`), all re-exported here.
 //!
 //! ## Deviations
-//! - `struct wsevsrc` (defined by `<dev/wscons/wsmuxvar.h>`, not ported) is the
-//!   uninhabited [`Wsevsrc`], as `docs/C_TO_RUST.md` has it for a structure only declared
-//!   so far; the pointers to it are `Option<&Wsevsrc>`, `None` until `wsmux.c` exists.
+//! - `struct wsevsrc`, which the header only declares, is `<dev/wscons/wsmuxvar.h>`'s
+//!   [`Wsevsrc`] (`wsmuxvar.rs`), re-exported here; the pointers to it are
+//!   `Option<&Wsevsrc>`.
 //! - The `int` results that are 0 or an errno are `Result<(), Errno>`; `wskbd_pickfree`
 //!   keeps its index or -1.
 
@@ -54,11 +53,7 @@ pub use crate::dev::wscons::wsdisplay::{
     wsdisplay_switch, wsdisplay_unset_cons_kbd,
 };
 pub use crate::dev::wscons::wskbd::{wskbd_pickfree, wskbd_set_console_display, wskbd_set_display};
-
-/// `struct wsevsrc`: an event source of the wscons mux (`<dev/wscons/wsmuxvar.h>`), only
-/// declared here. Uninhabited until `wsmux.c` is ported: no value of it exists, so every
-/// `Option<&Wsevsrc>` is `None`.
-pub enum Wsevsrc {}
+pub use crate::dev::wscons::wsmuxvar::Wsevsrc;
 
 /// `enum wsdisplay_resetops`: what `wsdisplay_reset` resets.
 #[repr(i32)]

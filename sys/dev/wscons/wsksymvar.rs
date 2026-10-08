@@ -49,8 +49,8 @@
 //! - `wskbd_mapdata.layout` is an `AtomicU32`: a driver changes it at attach (`hidkbd` writes
 //!   `ukbd_keymapdata.layout`) through a shared `static`.
 //! - The prototypes at the end of the header (`wskbd_get_mapentry`, `wskbd_init_keymap`,
-//!   `wskbd_load_keymap`, `wskbd_compose_value`) belong to `wskbdutil.c`, which is not ported
-//!   (M13); they are not declared here.
+//!   `wskbd_load_keymap`, `wskbd_compose_value`) belong to `wskbdutil.c`; they are
+//!   `wskbdutil.rs`'s.
 
 use core::sync::atomic::{AtomicU32, Ordering};
 

@@ -84,7 +84,9 @@ pub(super) const DEVICE_MAGIC: &str = "emibsd-makefs-device";
 ///
 /// - `wsdisplay` is major 12 (`cdev_wsdisplay_init`, M13; 189 / 139): `ttyC0`..`ttyCb`,
 ///   minor = screen, and `ttyCcfg`, minor 255, the control device, mode 0600 (`MAKEDEV`'s
-///   `wscons`).
+///   `wscons`); `wskbd` is major 67 (`cdev_mouse_init`, M13): `wskbd0`..`wskbd3`, minor =
+///   unit; `wsmux` is major 69: `wsmouse` (mux 0) and `wskbd` (mux 1), the nodes of
+///   `MAKEDEV`'s `wsmux` target (it makes no `/dev/wsmux`), all mode 0600.
 /// - `audio` is major 42 (`cdev_audio_init`, M12; 220 / 170): `audio0` minor 0 and
 ///   `audioctl0` minor 192 (`AUDIO_DEV_AUDIOCTL`), mode 0660, group `_sndiop` (`MAKEDEV`'s
 ///   `audio*` entry); `usb` is major 61 (`cdev_usb_init`, 239 / 191): `usb0`, mode 0640
@@ -137,6 +139,15 @@ const DEVICES: &[(&str, char, u32, u32, u32, &str)] = &[
     ("ttyCa", 'c', 12, 10, 0o600, "wheel"),
     ("ttyCb", 'c', 12, 11, 0o600, "wheel"),
     ("ttyCcfg", 'c', 12, 255, 0o600, "wheel"),
+    // M13: wskbd(4)'s keyboards and wsmux(4)'s muxes (`MAKEDEV`'s `wscons`: `wskbd[0-9]*` is
+    // `M wskbd$U c 67 $U 600`; `wsmux|wsmouse|wskbd` is `M wsmouse c 69 0 600` and
+    // `M wskbd c 69 1 600`, the mouse and keyboard muxes).
+    ("wskbd0", 'c', 67, 0, 0o600, "wheel"),
+    ("wskbd1", 'c', 67, 1, 0o600, "wheel"),
+    ("wskbd2", 'c', 67, 2, 0o600, "wheel"),
+    ("wskbd3", 'c', 67, 3, 0o600, "wheel"),
+    ("wsmouse", 'c', 69, 0, 0o600, "wheel"),
+    ("wskbd", 'c', 69, 1, 0o600, "wheel"),
 ];
 
 /// The `sd` units the image has nodes for (module docs of `DEVICES`): M10f's four vioblk
