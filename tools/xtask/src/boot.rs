@@ -301,6 +301,9 @@ pub fn image_tagged(
 ) -> Result<PathBuf> {
     let kernel_bytes = read(kernel)?;
     let init_bytes = init.map(read).transpose()?;
+    if let Some(r) = ramdisk {
+        crate::userland::check_ramdisk_devices(r)?;
+    }
     let ramdisk_bytes = ramdisk.map(read).transpose()?;
     let efi_path = limine_file(arch.limine_efi())?;
     let efi = read(&efi_path)?;

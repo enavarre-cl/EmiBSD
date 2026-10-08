@@ -228,6 +228,43 @@ pub(super) fn devices() -> Vec<(String, char, u32, u32, u32, &'static str)> {
     all
 }
 
+/// The placeholder file of a device node in the staging tree (`COMPAT_C` reads it back).
+fn device_line(kind: char, major: u32, minor: u32, mode: u32) -> String {
+    format!("{DEVICE_MAGIC} {kind} {major} {minor} {mode:o}\n")
+}
+
+/// Fails when `image` predates the current [`devices`] table: the staging tree makefs read
+/// (`ramdisk-root/` beside the image) lacks a node of today's table, or has it with another
+/// major, minor or mode. Such an image still boots, but whatever opens the missing node gets
+/// `ENOENT` far from the cause: `smoke-kbd`'s dd(1) of `/dev/wskbd0` read nothing (M15, a
+/// ramdisk made between M13's wsdisplay and wskbd ports). An image without a staging tree
+/// beside it was not made by `cargo xtask userland` and is not checked.
+pub(crate) fn check_devices(image: &Path) -> Result<()> {
+    let Some(dev) = image.parent().map(|d| d.join("ramdisk-root").join("dev")) else {
+        return Ok(());
+    };
+    if !dev.is_dir() {
+        return Ok(());
+    }
+    let stale: Vec<String> = devices()
+        .into_iter()
+        .filter(|(name, kind, major, minor, mode, _)| {
+            fs::read_to_string(dev.join(name)).ok()
+                != Some(device_line(*kind, *major, *minor, *mode))
+        })
+        .map(|(name, ..)| format!("/dev/{name}"))
+        .collect();
+    if stale.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{}: made before the device table changed ({} missing or different); run `just userland`",
+        image.display(),
+        stale.join(" ")
+    )
+    .into())
+}
+
 /// `/dev/fd/N` exists for N below this (`MAKEDEV fd`).
 pub(super) const FD_NODES: u32 = 64;
 
@@ -866,11 +903,8 @@ pub(super) fn build_ramdisk(ctx: &Ctx<'_>) -> Result<()> {
     fs::create_dir_all(dev.join("fd")).map_err(|e| format!("{}: {e}", dev.display()))?;
     let device = |name: &str, kind: char, major: u32, minor: u32, mode: u32| -> Result<()> {
         let p = dev.join(name);
-        fs::write(
-            &p,
-            format!("{DEVICE_MAGIC} {kind} {major} {minor} {mode:o}\n"),
-        )
-        .map_err(|e| format!("{}: {e}", p.display()).into())
+        fs::write(&p, device_line(kind, major, minor, mode))
+            .map_err(|e| format!("{}: {e}", p.display()).into())
     };
     for (name, kind, major, minor, mode, _) in devices() {
         device(&name, kind, major, minor, mode)?;
@@ -1273,5 +1307,30 @@ mod tests {
         assert!(RC.contains("mount -uw /"));
         assert!(RC.contains("echo 'rc: multi-user'"));
         assert!(RC.trim_end().ends_with("exit 0"));
+    }
+
+    #[test]
+    fn check_devices_wants_every_node_of_the_table() {
+        let dir = std::env::temp_dir().join(format!("emibsd-ramdisk-devs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let image = dir.join("ramdisk.ffs");
+        fs::create_dir_all(&dir).expect("mkdir");
+        // No staging tree beside the image: not ours, not checked.
+        assert!(check_devices(&image).is_ok());
+
+        let dev = dir.join("ramdisk-root/dev");
+        fs::create_dir_all(&dev).expect("mkdir dev");
+        for (name, kind, major, minor, mode, _) in devices() {
+            fs::write(dev.join(&name), device_line(kind, major, minor, mode)).expect("node");
+        }
+        assert!(check_devices(&image).is_ok());
+
+        // An image made before a node joined the table, and one with an old minor.
+        fs::remove_file(dev.join("wskbd0")).expect("rm");
+        fs::write(dev.join("wsmouse1"), device_line('c', 68, 0, 0o600)).expect("node");
+        let err = check_devices(&image).expect_err("stale").to_string();
+        assert!(err.contains("/dev/wskbd0 /dev/wsmouse1 missing"), "{err}");
+        assert!(err.contains("just userland"), "{err}");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

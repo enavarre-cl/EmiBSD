@@ -2199,6 +2199,7 @@ mod libraries;
 pub(crate) mod miniroot;
 mod passwd;
 mod ramdisk;
+pub(crate) use ramdisk::check_devices as check_ramdisk_devices;
 pub(crate) mod sets;
 mod shlib;
 mod signify;
