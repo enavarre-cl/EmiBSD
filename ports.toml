@@ -11149,9 +11149,10 @@ notes = "M16: eap(4); criterion: QEMU's ES1370 plays the tone (--expect-tone); a
 [[file]]
 c = "sys/dev/usb/uaudio.c"
 rust = "sys/dev/usb/uaudio.rs"
-status = "todo"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 deps = ["sys/dev/audio.c", "sys/dev/usb/usb.c"]
-notes = "M16: uaudio(4); criterion: QEMU's usb-audio plays the tone (--expect-tone), both archs"
+notes = "M16b: wip: the whole file ported (UAC 1.0 and 2.0 descriptor parser, mixer, rates, play and record streams, audio_hw_if); ioconf, xtask and smoke-uaudio to follow"
 
 [[file]]
 c = "sys/dev/usb/ucomvar.h"
