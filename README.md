@@ -24,8 +24,9 @@
 
 ## Status
 
-Status: M14 (installable: efiboot, bsd.rd, install.sub with the base and comp sets, cc on the
-installed system, arm64 ACPI) met; M15 (code and test layout) next.
+Status: M15 (code and test layout: LICENSES, CODE and TESTS zones in every `.rs`, tests inline,
+validated by `ports check`) met; M16a..M16g (QEMU drivers: storage, USB, network,
+console/virtio/legacy, platform, arm64 platform, install images) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -55,8 +56,8 @@ installed system, arm64 ACPI) met; M15 (code and test layout) next.
 | M12+ | Measurement and verification: unsafe-report, JOURNAL, diff-openbsd against a real OpenBSD | met |
 | M13 | Storage, firmware and console: NVMe and AHCI roots, ACPI on amd64, PSCI, the RTC, em/re/vmx, the frame buffer with wsdisplay and the USB keyboard | met |
 | M14 | Installable: our efiboot on both archs, bsd.rd, install.sub with the base and comp sets (clang, lld), the installed disk booting to `login:` with `cc` working; arm64 ACPI | met |
-| M15 | Code and test layout | next |
-| M16 | QEMU drivers: IDE, floppy, PS/2, parallel, PC speaker, more USB, virtio, network, SCSI/RAID, UFS, SD, audio, IOMMUs, GPIO, GICv3 | next |
+| M15 | Code and test layout: LICENSES, CODE and TESTS zones in every `.rs` under `sys/` and `tools/`, the 324 `tests.rs` inline, validated by `ports check` | met |
+| M16a..M16g | QEMU drivers in seven parts: storage, USB, network, console/virtio/legacy devices, platform, arm64 platform, install images | next |
 | M17 | Real hardware and virtualisation (vmm, vmd; optional) | next |
 
 Stage 2 of the diagnostic tools (ps, fstat, vmstat, df) is also met. Exit criteria and dates are

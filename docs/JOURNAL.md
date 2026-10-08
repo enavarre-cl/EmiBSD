@@ -809,3 +809,45 @@ runs (`26816d5`, `8eed1a7`).
 Effort: _(user)_
 
 Time: _(user)_
+
+
+## M15 Code and test layout
+
+Boundary: the commit that marks M15 met ("docs: M15 met"). Range `a28b01c..` that commit
+(a28b01c is main's smoke-kbd fix the branch was rebased onto): 7 commits, 1471 files changed
+(`git diff --shortstat a28b01c HEAD`). The user's approval of M16a..M16g came in the same
+range (one docs commit).
+
+- Went well: the migration was one script (`migrate.py`, a brace-and-string lexer to find the
+  inline `mod tests` blocks, then `cargo fmt`) over 1133 files, and the first compile after it
+  passed. The checks that mattered were measured, not assumed: the sorted
+  `cargo test -- --list` of every crate is identical before and after, and `unsafe-report`
+  gave the same totals.
+- Went well: the validator found the real exceptions at once: 23 ports have no licence text
+  (headers, generated files, `.S` ports whose notice stays in the `.S`), and it exposed one
+  genuine gap, `libkern/lib.rs`, which had never carried `libkern.h`'s BSD-3 notice (fixed in
+  its own commit).
+- Failed: the first M15 `just ci` was red on `smoke-kbd`. It was not the migration: it failed
+  alone on main too, because the checked-out `target/userland` ramdisk was stale (built before
+  `/dev/wskbd*` existed). Fixed on main by a28b01c (xtask refuses a ramdisk whose staging
+  `/dev` differs from the device table); after the rebase `just userland` and `ci` were green.
+- Failed: `just test-ref` had failed for libkern and libz with a relative `OPENBSD_SRC`
+  (cargo runs each crate's tests from the crate's directory); the recipe passes an absolute path.
+  A `ci2` run was killed by a session restart (not a test failure) and rerun.
+- Failed: my first two commits were mis-split (a `git rm` still staged when I amended commit 1
+  put the deletions in it); rebuilt from a temporary branch before anything was shared.
+- Idioms: none for the kernel. `include_str!`/`include_bytes!` paths are relative to the file,
+  so moving libz's three tests inline turned `"../testdata/"` into `"testdata/"`.
+- Rules: `rust-kernel.md` (file layout is three zones, no `tests.rs`), `testing.md`,
+  `porting-workflow.md`, `ports-tracker.md` (`license = "none"`, what `ports check` validates),
+  `xtask.md`, CLAUDE.md step 6. Reading rule: `sed -n '/<CODE>/,/<\/CODE>/p' file.rs`.
+- Numbers: 7 commits; ported 975 → 975, `ports.toml` 1351 entries (no change); tests 2357 → 2370
+  (`just test`, passed; +13, layout's); `tests.rs` files 324 → 0
+  (`git ls-files | grep -c '/tests\.rs$'`); `unsafe-report` totals unchanged (the "tests files"
+  column 323 → 4); smoke recipes 50 (no change). `just jobs=3 ci` rc=0 in 24m13s (50 of 50
+  smokes), `just userland` rc=0, `just comp` rc=0 in 50m53s, `just jobs=3 ci-full` rc=0 in
+  33m34s (50 of 50 smokes on `-smp 4` in 15m08s, then the six install recipes).
+
+Effort: _(user)_
+
+Time: _(user)_
