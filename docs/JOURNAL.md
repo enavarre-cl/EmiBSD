@@ -706,3 +706,57 @@ them M14's `e252e18` (the wider reference clone), which M12+ was rebased onto.
 Effort: _(user)_
 
 Time: _(user)_
+
+## M13 Storage, firmware and console
+
+Boundary: the commit that marks M13 met ("docs: M13 met"). Range `6836684..` that commit: 57
+commits. M13's own are 28; the other 29 are M14's, which ran in parallel and landed first
+(efiboot for both archs, boot(8)'s kernel entries, the comp set, ld.so and shared libraries,
+bsd.rd and the install media, exec_script, diskmap), and the roadmap's renumbering (M15 code
+and test layout, M16 QEMU drivers, M17 real hardware). M13's first ports (nvme, vioscsi, cd)
+landed before M12 met and are counted there.
+
+- Went well: ACPI on amd64 in four steps (`e7e9f0b`, `ded4fec`, `4cd101c`, `4d45228`): the AML
+  interpreter runs q35's DSDT, the MADT replaces the hardcoded tables, MSI and MSI-X work, and
+  vio(4) takes its multiqueue MSI-X path through intrmap. acpitimer and acpihpet ended the
+  TSC's slow clock under load, a STATUS blocker since M11.
+- Went well: the console chain end to end, one subagent per step, each with host tests over a
+  fake display or keyboard first: rasops and the fonts, the vt100 emulation, wsdisplay, then
+  wskbd, wsmux and the USB keymaps; `smoke-kbd` types "hi" on QEMU's USB keyboard into a reader
+  of `/dev/ttyC0` (`d38aae7`, `1b269c7`, `f0214ef`, `5c91e85`).
+- Went well: four network drivers ping on both archs; vmx(4) runs four MSI-X queues
+  (`ec05d15`, `8ccfcc5`, `6848a8f`). QEMU's rtl8139 reports revision 0x20, so OpenBSD's driver
+  for it is re(4), not rl(4); a boot showed it before anything was ported.
+- Failed: the host disk filled up (ENOSPC) on 2026-10-05 with agent worktrees' `target/`
+  directories; finished worktrees are deleted after each integration since then. A spend limit
+  paused the work from 2026-10-05 to 2026-10-07; the handoff notes and saved patches let every
+  agent resume.
+- Failed: CI flakes under parallel smokes: the kthread self-test's single 50 ms reap wait
+  (`ef5fe6d`), a host test that swapped the global message buffer while others printed
+  (`f4ec85f`), and a monitor socket path longer than macOS's 104-byte `sun_path` in a deep
+  worktree (`20f5568`).
+- Found: Limine's direct map leaves OVMF's VGA window out, so the first probe of the legacy
+  text memory faulted (`474a727`). re(4)'s acknowledgement of RL_ISR after starting the
+  simulated moderation timer lost the timer's interrupt on about one arm64 boot in three; it
+  is acknowledged first now, a documented deviation (`8ccfcc5`). vmx(4)'s `intr_barrier`
+  waited forever when the network self-test configured it before the APs ran; the self-test
+  moved after `cpu_boot_secondary_processors`, and `kern_sched.c` stayed as the C has it
+  (`6848a8f`).
+- Left: arm64's ACPI (M14, with efiboot's tables), acpicpu(4), a frame buffer console
+  (`wscons_machdep.c`, `cninit`), igb traffic in QEMU, and the mouse and PS/2 drivers, now M16,
+  so wsmouse(4) is tested on the host only.
+- Idioms: `docs/C_TO_RUST.md` gained 28 rows in the range: tables of function pointers over an
+  opaque cookie (wsdisplayvar), a guard that asserts the kernel lock around em's shared state,
+  structures cast to and from a common header (wsevsrc), a compile-time sort, generated tables
+  kept byte for byte under `#[rustfmt::skip]`.
+- Rules: `xtask.md` gained the M13 QEMU options (`--nic`, `--fb`, `--screenshot-after`,
+  `--screen-text`, `--sendkey-after`); `boot-and-link.md` and `rust-kernel.md` changed with
+  M14's boot loaders.
+- Numbers: 57 commits in the range (28 of them M13's); ported 709 → 967 (+258, M14's
+  included); tests 2164 → 2355 (+191); smoke recipes 38 → 58 (M14's included);
+  `diff-openbsd`: 102 steps, 99 equal, 3 expected, on both archs. ci-full: not yet a recipe;
+  `just ci` runs every smoke on `-smp 4` under the current rule, rc=0, 49 of 49 smokes.
+
+Effort: _(user)_
+
+Time: _(user)_

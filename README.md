@@ -24,8 +24,7 @@
 
 ## Status
 
-Status: M12+ (measurement and verification: unsafe-report, JOURNAL, diff-openbsd) met; M13
-(storage, firmware and console) under way.
+Status: M13 (storage, firmware and console) met; M14 (installable) next.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -53,7 +52,7 @@ Status: M12+ (measurement and verification: unsafe-report, JOURNAL, diff-openbsd
 | M11e | The MP audit: every `MULTIPROCESSOR` site, MPSAFE flags and `SY_NOLOCK` honoured, unlocked page faults; every smoke runs on four CPUs | met |
 | M12 | Devices in QEMU: audio(4) with azalia and auich, USB with xhci, uhub, umass and ukbd; arm64's PCI bus | met |
 | M12+ | Measurement and verification: unsafe-report, JOURNAL, diff-openbsd against a real OpenBSD | met |
-| M13 | Storage, firmware and console | next |
+| M13 | Storage, firmware and console: NVMe and AHCI roots, ACPI on amd64, PSCI, the RTC, em/re/vmx, the frame buffer with wsdisplay and the USB keyboard | met |
 | M14 | Installable | next |
 | M15 | Code and test layout | next |
 | M16 | QEMU drivers: IDE, floppy, PS/2, parallel, PC speaker, more USB, virtio, network, SCSI/RAID, UFS, SD, audio, IOMMUs, GPIO, GICv3 | next |
@@ -115,6 +114,23 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
 - USB: xhci(4) and uhub(4) enumerate QEMU's stick and keyboard; umass(4) makes the stick an
   sd(4) disk whose FAT partition mount_msdos(8) mounts, reads, writes and compares after a
   remount; uhidev(4) and ukbd(4) attach the keyboard (`smoke-usb`).
+- Root on an NVMe namespace and on an AHCI disk, both archs (`virt`'s AHCI controller on its
+  PCIe bus), mounted by the label's DUID without a ramdisk (`smoke-nvme`, `smoke-ahci`);
+  cd(4) on vioscsi(4) mounting an ISO with mount_cd9660(8) (`smoke-cd`); siop(4) on QEMU's
+  LSI 53C895A, amd64 (`smoke-siop`).
+- ACPI on amd64: the AML interpreter, CPUs and I/O APICs from the MADT, PCI routing, MSI and
+  MSI-X (vio(4)'s multiqueue path through intrmap(9), `smoke-mp`), acpitimer and acpihpet
+  (`smoke-clock`).
+- `halt -p` powers off and `reboot` restarts QEMU, through ACPI on amd64 and PSCI on arm64
+  (`smoke-power`); the date from the RTC within a minute of the host (`smoke-rtc`); com(4)
+  on QEMU's pci-serial through puc(4), amd64 (`smoke-puc`).
+- em(4) on QEMU's e1000e (both archs) and e1000 (amd64), re(4) on rtl8139 and vmx(4) on
+  vmxnet3 with four MSI-X queues ping QEMU's gateway (`smoke-em`, `smoke-re`, `smoke-vmx`).
+- The frame buffer (efifb(4), simplefb) with wsdisplay(4) and the vt100 emulation: text
+  written to `/dev/ttyC0` is read back from a QEMU screendump (`smoke-fb`, `smoke-wscons`);
+  keys typed on QEMU's USB keyboard reach a reader of `/dev/ttyC0` and `/dev/wskbd0`
+  through wskbd(4) and wsmux(4) (`smoke-kbd`). vga(4) is in and, as on OpenBSD under
+  OVMF, attaches nowhere (`smoke-vga`).
 
 Between two VMs on a private link (`cargo xtask smoke2`):
 
@@ -301,7 +317,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 5 | 138 | 709 | 16 | 868 |
+| 200 | 139 | 967 | 37 | 1343 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).
