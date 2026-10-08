@@ -65,8 +65,10 @@
 //!   ports in `_CRS`) and in SMBIOS (type 38). The BMC's SDR repository is the file
 //!   `ipmi-sdr.bin` in the run directory, written each run ([`IPMI_SDRS`]): one compact
 //!   sensor record, a temperature sensor named `QEMU Temp`, which the simulator also makes a
-//!   sensor of (scanning on, reading 0), so ipmi(4) exports it as `hw.sensors.ipmi0.temp0`.
-//!   ISA devices take no PCI slot, so nothing on the bus moves.
+//!   sensor of (scanning on, reading 0), so a driver that reaches the BMC exports it as
+//!   `hw.sensors.ipmi0.temp0`. ipmi(4) does not, OpenBSD 8.0's as EmiBSD's: it maps `_CRS`'s
+//!   `_MAX`, 0xca3, and every command fails (`smoke-ipmi`). ISA devices take no PCI slot, so
+//!   nothing on the bus moves.
 //! - `--reboot` (`qemu`, `smoke`, M13): QEMU runs without `-no-reboot`, so a guest reset
 //!   restarts the machine (EDK2, Limine and the kernel again; the EDK2 variable store is the
 //!   run's copy) instead of ending QEMU with status 0. `smoke-power` boots, runs `reboot`
