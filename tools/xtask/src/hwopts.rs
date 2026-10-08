@@ -89,6 +89,10 @@
 //!   ignores both ([`virt_machine`]).
 //! - `--iommu smmuv3` (`qemu`, `smoke`, M16f; arm64): `virt` with its SMMUv3 in front of the
 //!   PCIe bus (`iommu=smmuv3`), smmu(4); the virtio-mmio devices do not go through it.
+//! - `--monitor-after LINE --monitor CMD` (`smoke`, M16f, `smoke-powerbtn`; repeatable, the
+//!   pairs in order): QEMU gets the human monitor socket as for `--screenshot-after`; when a
+//!   serial line contains LINE, the monitor command CMD (`system_powerdown`, ...) is sent
+//!   ([`poll_monitor_cmds`]). The run fails if a LINE never came.
 //! - `{host-ms}` in a `smoke` `--send` text (M13, `smoke-clock`): replaced, as the text is
 //!   sent, by the host's wall clock in milliseconds since the Epoch ([`expand_send`]), so a
 //!   guest script can set its own clock readings beside the host's and compare the rates.
@@ -243,6 +247,16 @@ static SENDKEY: OnceLock<(Vec<Sendkeys>, PathBuf)> = OnceLock::new();
 /// How many pairs were typed.
 static SENT_KEYS: Mutex<usize> = Mutex::new(0);
 
+/// A `--monitor-after LINE --monitor CMD` pair.
+type MonitorCmd = (String, String);
+
+/// The `--monitor-after`/`--monitor` pairs, in order, and the run directory the monitor
+/// socket goes in.
+static MONITOR_CMDS: OnceLock<(Vec<MonitorCmd>, PathBuf)> = OnceLock::new();
+
+/// How many monitor commands were sent.
+static SENT_CMDS: Mutex<usize> = Mutex::new(0);
+
 /// The pause between two keys: QEMU holds each key down 100 ms by default.
 const SENDKEY_GAP: Duration = Duration::from_millis(250);
 
@@ -331,6 +345,10 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     let pairs = parse_sendkeys(args)?;
     if !pairs.is_empty() {
         let _ = SENDKEY.set((pairs, boot::run_dir(root)));
+    }
+    let cmds = parse_pairs(args, "--monitor-after", "--monitor")?;
+    if !cmds.is_empty() {
+        let _ = MONITOR_CMDS.set((cmds, boot::run_dir(root)));
     }
     if let Some(spec) = opt_path(args, "--screen-text")? {
         if SCREENSHOT.get().is_none() {
@@ -745,10 +763,11 @@ fn monitor_dir() -> Option<&'static PathBuf> {
         .get()
         .map(|(_, dir)| dir)
         .or_else(|| SENDKEY.get().map(|(_, dir)| dir))
+        .or_else(|| MONITOR_CMDS.get().map(|(_, dir)| dir))
 }
 
-/// QEMU's `-monitor` argument: a socket in the run directory with `--screenshot-after` or
-/// `--sendkey-after`, none otherwise.
+/// QEMU's `-monitor` argument: a socket in the run directory with `--screenshot-after`,
+/// `--sendkey-after` or `--monitor-after`, none otherwise.
 pub(crate) fn monitor_arg() -> String {
     match monitor_dir() {
         Some(dir) => {
@@ -793,16 +812,74 @@ fn monitor_sock_for(dir: &Path, cwd: &Path, tmp: &Path, pid: u32) -> PathBuf {
     tmp.join(format!("emibsd-{:08x}-{pid}.sock", h.finish() as u32))
 }
 
-/// Whether the monitor still has work: a screenshot to take or keys to send.
+/// Whether the monitor still has work: a screenshot to take, keys or commands to send.
 pub(crate) fn monitor_pending() -> bool {
-    screenshot_pending() || sendkey_pending()
+    screenshot_pending() || sendkey_pending() || next_monitor_cmd().is_some()
 }
 
-/// Drives the monitor once `serial` has the lines it waits for: [`poll_sendkey`], then
-/// [`poll_screenshot`].
+/// Drives the monitor once `serial` has the lines it waits for: [`poll_sendkey`],
+/// [`poll_monitor_cmds`], then [`poll_screenshot`].
 pub(crate) fn poll_monitor(serial: &str) -> Result<()> {
     poll_sendkey(serial)?;
+    poll_monitor_cmds(serial)?;
     poll_screenshot(serial)
+}
+
+/// The `AFTER LINE CMD TEXT` pairs of `args` (`--monitor-after LINE --monitor CMD`), in
+/// order.
+fn parse_pairs(args: &[&str], after_opt: &str, what_opt: &str) -> Result<Vec<(String, String)>> {
+    let mut pairs = Vec::new();
+    let mut after: Option<&str> = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == after_opt {
+            if after.is_some() {
+                return Err(format!("{after_opt}: the previous one has no {what_opt}").into());
+            }
+            after = Some(
+                args.get(i + 1)
+                    .ok_or_else(|| format!("{after_opt}: expected a line"))?,
+            );
+            i += 1;
+        } else if args[i] == what_opt {
+            let line = after
+                .take()
+                .ok_or_else(|| format!("{what_opt}: needs {after_opt}"))?;
+            let what = args
+                .get(i + 1)
+                .ok_or_else(|| format!("{what_opt}: expected a value"))?;
+            pairs.push((line.to_string(), what.to_string()));
+            i += 1;
+        }
+        i += 1;
+    }
+    if after.is_some() {
+        return Err(format!("{after_opt}: needs {what_opt}").into());
+    }
+    Ok(pairs)
+}
+
+/// The next `--monitor` command to send, if any is left.
+fn next_monitor_cmd() -> Option<&'static MonitorCmd> {
+    let (cmds, _) = MONITOR_CMDS.get()?;
+    let sent = SENT_CMDS.lock().map(|s| *s).ok()?;
+    cmds.get(sent)
+}
+
+/// Sends the next `--monitor` command once `serial` has its `--monitor-after` line.
+fn poll_monitor_cmds(serial: &str) -> Result<()> {
+    let (Some((after, cmd)), Some((_, dir))) = (next_monitor_cmd(), MONITOR_CMDS.get()) else {
+        return Ok(());
+    };
+    if !serial.contains(after.as_str()) {
+        return Ok(());
+    }
+    monitor_command(&monitor_sock(dir), cmd)?;
+    println!("xtask: monitor {cmd} (saw {after:?})");
+    if let Ok(mut s) = SENT_CMDS.lock() {
+        *s += 1;
+    }
+    Ok(())
 }
 
 /// The `--sendkey-after LINE --sendkeys KEYS` pairs of `args`, in order.
@@ -1260,6 +1337,32 @@ pub(crate) fn after_smoke() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn monitor_pairs_parse_in_order() {
+        let args = [
+            "--monitor-after",
+            "login:",
+            "--monitor",
+            "system_powerdown",
+            "--expect",
+            "x",
+            "--monitor-after",
+            "# ",
+            "--monitor",
+            "info status",
+        ];
+        let p = parse_pairs(&args, "--monitor-after", "--monitor").unwrap();
+        assert_eq!(
+            p,
+            vec![
+                ("login:".to_string(), "system_powerdown".to_string()),
+                ("# ".to_string(), "info status".to_string())
+            ]
+        );
+        assert!(parse_pairs(&["--monitor", "x"], "--monitor-after", "--monitor").is_err());
+        assert!(parse_pairs(&["--monitor-after", "x"], "--monitor-after", "--monitor").is_err());
+    }
 
     #[test]
     fn virt_machine_names_gic_and_smmu() {
