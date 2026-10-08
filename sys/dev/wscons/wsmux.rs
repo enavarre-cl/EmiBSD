@@ -791,6 +791,18 @@ pub fn wsmux_depth(sc: &WsmuxSoftc) -> i32 {
 
     maxdepth + 1
 }
+
+/// Host tests: the mux table back to empty after `setup_real_memory`, as the old table and
+/// its muxes are in the previous test's memory (growing it would `free` the old table there).
+/// The muxes themselves are forgotten, never freed, as in the kernel.
+#[cfg(test)]
+pub(crate) fn wsmux_test_reset() {
+    // SAFETY: called by `setup_real_memory` under its lock, which every test that reaches the
+    // mux table holds, so no reference to the table is alive.
+    let t = unsafe { WSMUXDEVS.get_mut() };
+    t.nwsmux = 0;
+    t.devs = ptr::null_mut();
+}
 /* </CODE> */
 
 /* <TESTS> */
