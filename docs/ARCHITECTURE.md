@@ -1804,6 +1804,12 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   for pages that are mapped there and maps the others like any device memory. Without the
   `ioport_ex` extent a second probe of claimed ports does not fail: where a PCI VGA does
   attach, `vga0 at isa?` would attach too (OpenBSD's ISA probe fails there).
+- smmu(4) on an SMMUv3 without EL2 support (`SMMU_IDR0.Hyp` clear, QEMU's
+  `virt,iommu=smmuv3`) uses the non-secure EL1 regime: `STRW` NS-EL1, no `CR2.E2H`, and
+  `TLBI_NH_ASID`/`TLBI_NH_VA` instead of `TLBI_EL2_*`, the forms `smmu.c` keeps commented
+  out; with `Hyp` set the C's EL2 forms stay (M16f; `v3.sc_has_hyp` is not in the C). QEMU
+  ignores the EL2 invalidations, so a map's IOTLB entries outlived its unload and the next
+  load of the same IOVA read the old pages: the NVMe root's disklabel came back wrong.
 
 ## Testing architecture
 
