@@ -8949,6 +8949,24 @@ deps = ["sys/dev/acpi/acpi.c", "sys/dev/acpi/acpimadt.c"]
 notes = "M13: the whole file: struct acpiprt_irq, struct acpiprt_map and acpiprt_map_list (a Vec in an AmlGlobal), struct acpiprt_softc, acpiprt_ca/acpiprt_cd, acpiprt_match, acpiprt_attach, acpiprt_getirq, acpiprt_pri[], acpiprt_chooseirq, acpiprt_prt_add (link devices through _CRS/_PRS; NIOAPIC > 0: an mp_intr_map on mp_busses[bus] and the I/O APIC pin through machine::mpconfig; else the line registers), acpiprt_getpcibus, acpiprt_route_interrupt (_SRS with an edited copy of _CRS; called by amd64's pci_intr_establish_cpu). Deviations: acpiprt_irq starts zeroed; a name without a value, a bus past mp_nbusses or a pin past the I/O APIC's are skipped; ACPI_DEBUG not configured. Host tests: acpiprt/tests.rs (_CRS and _PRS interrupt choice)"
 
 [[file]]
+c = "sys/sys/extent.h"
+rust = "sys/sys/extent.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5a1395a16678cccb8a05a7cb567a479d9b863511"
+deps = ["sys/sys/queue.h"]
+notes = "license: NetBSD Foundation BSD-2-clause notice, kept whole. M14: the whole header: struct extent_region (ExtentRegion, repr(C) of Cells + ListEntry, ExtentRegionList adapter), ER_ALLOC/ER_DISCARD, struct extent (ex_name a &'static [u8], ExtentList adapter for ex_link), struct extent_fixed, EXF_* and EXF_BITS, EX_* flags, EX_NOALIGN/EX_NOBOUNDARY (u64), EXTENT_FIXED_STORAGE_SIZE as extent_fixed_storage_size; u_long is u64; the prototypes and the extent_alloc/extent_alloc_with_descr macros are subr_extent.rs functions"
+
+[[file]]
+c = "sys/kern/subr_extent.c"
+rust = "sys/kern/subr_extent.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "49ab339ba9e207dd038618d4953a71c5f660a5e1"
+deps = ["sys/sys/extent.h", "sys/kern/subr_pool.c", "sys/kern/kern_malloc.c", "sys/kern/kern_synch.c"]
+notes = "license: NetBSD Foundation BSD-2-clause notice, kept whole. M14 (arm64 ACPI, the user's instruction: whole, no stub): extent_align, LE_OV, ext_list and extent_register (DIAGNOSTIC || DDB: compiled, GENERIC has DDB), ex_region_pl and extent_pool_init, extent_print_all, extent_create (malloc'd or fixed storage, EX_FILLED, EX_NOCOALESCE), extent_destroy (unsafe), extent_insert_and_optimize (coalescing), extent_do_alloc_region (EX_WAITSPACE sleeps, EX_CONFLICTOK's four cases, EINVAL outside the extent without DIAGNOSTIC), extent_alloc_region, extent_alloc_region_with_descr (unsafe), extent_do_alloc (best fit / EX_FAST first fit, alignment, skew, boundary; the twice-written boundary check is one helper), extent_alloc_subregion, extent_alloc_subregion_with_descr (unsafe), extent_alloc/extent_alloc_with_descr (the macros), extent_free (cases 1-4, 1a-3a, the region-not-found panic), extent_alloc_region_descriptor (fixed freelist, EX_MALLOCOK, pool), extent_free_region_descriptor (FLWANTED wakeups), extent_print, extent_print1 (%b of EXF_BITS); deviations: Result<u64, Errno> for the int and *result; a fixed extent's storage is a &'static mut [u8] aligned up for struct extent_fixed (too small panics even without DIAGNOSTIC); DIAGNOSTIC checks under feature diagnostic; callers: arm64 acpipci (its bus/io/mem extents from _CRS); not yet: amd64 acpipci/pci_machdep/bus_space extents, pcivar's pba_*ex, ddb 'show extents' (db_command.rs still stubs it). Host tests (subr_extent/tests.rs, one test over setup_real_memory): helpers, filled extents with freed windows, placed allocations and coalescing, EX_CONFLICTOK, best and first fit, alignment/skew/subregion, boundary, the free cases, NOCOALESCE with caller descriptors, fixed storage (aligned up, ENOMEM, EX_MALLOCOK), the extent list"
+
+[[file]]
 c = "sys/dev/acpi/acpitimer.c"
 rust = "sys/dev/acpi/acpitimer.rs"
 status = "ported"

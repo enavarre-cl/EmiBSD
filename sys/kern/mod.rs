@@ -53,6 +53,7 @@ pub mod spec_vnops;
 pub mod subr_autoconf;
 pub mod subr_disk;
 pub mod subr_evcount;
+pub mod subr_extent;
 pub mod subr_log;
 pub mod subr_percpu;
 pub mod subr_pool;
