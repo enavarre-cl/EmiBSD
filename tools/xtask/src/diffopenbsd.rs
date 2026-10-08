@@ -4,6 +4,7 @@
 //!
 //! ```text
 //! cargo xtask diff-openbsd [--arch A]... [--smp N] [fetch | install | run | powerbtn]
+//! cargo xtask diff-openbsd --arch A [--ipmi] [--ukc CMD]... [--sh CMD] probe
 //! ```
 //!
 //! - `fetch`: the OpenBSD -current snapshot recorded in `tools/xtask/openbsd-snapshot.toml`
@@ -30,6 +31,12 @@
 //!   `system_powerdown` and reports whether OpenBSD powered off within a minute
 //!   (`<run dir>/<arch>/openbsd-powerbtn.log`). It is how M16f checked what OpenBSD 8.0
 //!   does with QEMU's power key before porting gpiokeys(4).
+//! - `probe` (M16e): boots the installed OpenBSD alone (`-snapshot`) with the smokes' device
+//!   options (`hwopts.rs`; `--ipmi` so far), logs in and runs `dmesg` and the shell command
+//!   `--sh` gives (`<run dir>/<arch>/openbsd-probe.log`). Each `--ukc CMD` makes it boot
+//!   with `boot -c` at efiboot's `boot>` prompt and send CMD at `UKC>`, then `quit`, as an
+//!   OpenBSD user enables a GENERIC line marked `disable`. It is how M16e checked what
+//!   OpenBSD 8.0 does with ichiic(4) under OVMF and with ipmi(4) on QEMU's simulated BMC.
 //!
 //! The OpenBSD binaries are test fixtures under `target/` only: never committed, never
 //! redistributed. Per-run files (logs, scripts, reports, the OpenBSD VM's variable store) go
@@ -91,6 +98,8 @@ pub(crate) fn diff_openbsd(root: &Path, args: &[&str]) -> Result<()> {
     let mut arches = Vec::new();
     let mut what = "run";
     let mut kernel_dir = None;
+    let mut ukc = Vec::new();
+    let mut sh = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match *a {
@@ -99,7 +108,11 @@ pub(crate) fn diff_openbsd(root: &Path, args: &[&str]) -> Result<()> {
                 it.next();
             }
             "--kernel-dir" => kernel_dir = Some(*it.next().ok_or("--kernel-dir needs a value")?),
-            "fetch" | "install" | "run" | "powerbtn" => what = a,
+            "--ukc" => ukc.push(*it.next().ok_or("--ukc needs a value")?),
+            "--sh" => sh = Some(*it.next().ok_or("--sh needs a value")?),
+            // A device option: `hwopts::set` (main) has recorded it; `probe` adds the device.
+            "--ipmi" => {}
+            "fetch" | "install" | "run" | "powerbtn" | "probe" => what = a,
             other => return Err(format!("diff-openbsd: unknown argument {other:?}").into()),
         }
     }
@@ -123,6 +136,10 @@ pub(crate) fn diff_openbsd(root: &Path, args: &[&str]) -> Result<()> {
         }
         if what == "powerbtn" {
             powerbtn(root, arch)?;
+            continue;
+        }
+        if what == "probe" {
+            probe(root, arch, &ukc, sh)?;
             continue;
         }
         let started = Instant::now();
@@ -262,7 +279,7 @@ enum Boot<'a> {
     /// From the installed disk under `-snapshot`, with a scratch disk.
     Run(&'a Path),
     /// From the installed disk under `-snapshot`, alone, with QEMU's monitor on the Unix
-    /// socket given (`powerbtn`).
+    /// socket given (`powerbtn`, `probe`).
     Probe(&'a Path),
 }
 
@@ -516,6 +533,45 @@ fn powerbtn(root: &Path, arch: Arch) -> Result<()> {
             "OpenBSD still running after 60 s"
         },
         after.trim()
+    );
+    Ok(())
+}
+
+/// `probe`: the installed OpenBSD's `dmesg` and the output of `sh`, with the device options
+/// `hwopts` recorded, after the UKC commands `ukc` (none: a plain boot).
+fn probe(root: &Path, arch: Arch, ukc: &[&str], sh: Option<&str>) -> Result<()> {
+    let work = work_dir(root, arch)?;
+    let sock = std::env::temp_dir().join(format!("emibsd-obsd-{}.sock", std::process::id()));
+    let _ = fs::remove_file(&sock);
+    let mut cmd = openbsd_qemu(root, arch, &Boot::Probe(&sock))?;
+    crate::hwopts::add_devices(&mut cmd, root, arch)?;
+    let log = work.join("openbsd-probe.log");
+    let mut vm = Vm::spawn(&format!("openbsd-{}-probe", arch.name()), cmd, log.clone())?;
+    if !ukc.is_empty() {
+        // efiboot waits five seconds at its prompt (boot.conf sets the serial console).
+        vm.wait_for("boot>", boot::time_limit(Duration::from_secs(300)))?;
+        vm.send("boot -c\n")?;
+        for c in ukc.iter().copied().chain(["quit"]) {
+            vm.wait_for("UKC> ", boot::time_limit(Duration::from_secs(300)))?;
+            vm.send(&format!("{c}\n"))?;
+        }
+    }
+    login(&mut vm, boot::time_limit(Duration::from_secs(900)))?;
+    let mark = vm.mark();
+    vm.send(&format!(
+        "dmesg; {} 2>&1; echo @@PROBED\n",
+        sh.unwrap_or("true")
+    ))?;
+    vm.wait_for("@@PROBED\r\n", boot::time_limit(Duration::from_secs(300)))?;
+    vm.wait_for("# ", Duration::from_secs(60))?;
+    let out = vm.since(mark);
+    let _ = fs::write(&log, vm.text());
+    let _ = fs::remove_file(&sock);
+    println!(
+        "xtask: openbsd-{} probe ({}):\n{}",
+        arch.name(),
+        log.display(),
+        out.trim()
     );
     Ok(())
 }
