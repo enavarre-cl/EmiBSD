@@ -6,3 +6,4 @@ pub mod com_isa;
 pub mod isa;
 pub mod isareg;
 pub mod isavar;
+pub mod vga_isa;

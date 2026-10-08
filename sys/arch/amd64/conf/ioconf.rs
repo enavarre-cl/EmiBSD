@@ -17,7 +17,7 @@
 //! acpi?` (M13), `puc* at pci?` and `com* at puc?` (M13; `com*` takes the units from 4),
 //! `em* at pci?` (M13), `efifb0 at mainbus?` and `wsdisplay0 at efifb?` (M13),
 //! `re* at pci?`, `rlphy* at mii?`, `rgephy* at mii?` and `ukphy* at mii?` (M13),
-//! `vmx* at pci?` (M13),
+//! `vmx* at pci?` (M13), `vga0 at isa?`, `vga* at pci?` and `wsdisplay0 at vga? console 1` (M13),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -26,7 +26,7 @@
 //! GENERIC lines left out until their drivers exist: `vmm0`, `pvbus0` and `ipmi0`
 //! at mainbus, and everything below them; `efi0` and `mpbios0` at bios0, and
 //! every other device at `acpi?` (`acpimcfg*`, `acpicpu*`, ...); `isa0` at `pcib?`,
-//! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`, `vga0`,
+//! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`,
 //! `pcppi0`, `lpt0`, `fdc0`, `wdc*`, the sensors, ...); every other device at `pci?`
 //! (`pchb*`, `ppb*`, `pcib*`, the network drivers but em, re and vmx (`rl* at pci?` among them: QEMU's rtl8139 is
 //! an 8139C+, which re(4) takes) and the storage drivers but nvme, ahci and siop, ...), every other
@@ -59,8 +59,10 @@ use crate::dev::ic::com::COM_CD;
 use crate::dev::ic::nvme::NVME_CD;
 use crate::dev::ic::re::RE_CD;
 use crate::dev::ic::siop::SIOP_CD;
+use crate::dev::ic::vga::VGA_CD;
 use crate::dev::isa::com_isa::COM_ISA_CA;
 use crate::dev::isa::isa::{ISA_CA, ISA_CD};
+use crate::dev::isa::vga_isa::VGA_ISA_CA;
 use crate::dev::mii::rgephy::{RGEPHY_CA, RGEPHY_CD};
 use crate::dev::mii::rlphy::{RLPHY_CA, RLPHY_CD};
 use crate::dev::mii::ukphy::{UKPHY_CA, UKPHY_CD};
@@ -74,6 +76,7 @@ use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
 use crate::dev::pci::puc::{PUC_CD, PUC_PCI_CA};
 use crate::dev::pci::siop_pci::SIOP_PCI_CA;
+use crate::dev::pci::vga_pci::VGA_PCI_CA;
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
 use crate::dev::pci::xhci_pci::XHCI_PCI_CA;
 use crate::dev::puc::com_puc::COM_PUC_CA;
@@ -205,11 +208,23 @@ const PV_EFIFB: &[i16] = &[41];
 /// 1]}`).
 const LOC_WSEMULDISPLAYDEV_UNK: &[i64] = &[-1, -1, 1];
 
-/// `cfdata[]`: 48 entries, 49 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `loc[]` of `vga0 at isa?`: port, size, iomem, iomsiz, irq, drq, drq2 at their
+/// defaults (`dev/isa/files.isa`: `device isa {[port = -1], [size = 0], [iomem = -1],
+/// [iomsiz = 0], [irq = -1], [drq = -1], [drq2 = -1]}`).
+const LOC_VGA_ISA: &[i64] = &[-1, 0, -1, 0, -1, -1, -1];
+
+/// `pv[]` for children of the `vga` device, `vga0 at isa?` (`cfdata[48]`) and `vga* at
+/// pci?` (`cfdata[49]`).
+const PV_VGA: &[i16] = &[48, 49];
+
+/// `loc[]` of `wsdisplay0 at vga? console 1`: console 1, primary -1, mux 1.
+const LOC_WSEMULDISPLAYDEV_CONSOLE: &[i64] = &[1, -1, 1];
+
+/// `cfdata[]`: 51 entries, 52 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    49
+    52
 } else {
-    48
+    51
 };
 
 /// `cfdata[]`.
@@ -741,7 +756,43 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 48: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 48: vga0 at isa?
+    Cfdata::new(
+        &VGA_ISA_CA,
+        &VGA_CD,
+        0,
+        FSTATE_NOTFOUND,
+        LOC_VGA_ISA,
+        0,
+        PV_ISA,
+        0,
+        0,
+    ),
+    // 49: vga* at pci?: the units from 1 on (vga0 is the ISA line above)
+    Cfdata::new(
+        &VGA_PCI_CA,
+        &VGA_CD,
+        1,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        0,
+        1,
+    ),
+    // 50: wsdisplay0 at vga? console 1
+    Cfdata::new(
+        &WSDISPLAY_CA,
+        &WSDISPLAY_CD,
+        0,
+        FSTATE_NOTFOUND,
+        LOC_WSEMULDISPLAYDEV_CONSOLE,
+        0,
+        PV_VGA,
+        0,
+        0,
+    ),
+    // 51: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

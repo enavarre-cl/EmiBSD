@@ -41,6 +41,8 @@ pub mod pucdata;
 pub mod pucvar;
 pub mod siop_pci;
 pub mod siop_pci_common;
+pub mod vga_pci;
+pub mod vga_pcivar;
 pub mod virtio_pci;
 pub mod virtio_pcireg;
 pub mod xhci_pci;

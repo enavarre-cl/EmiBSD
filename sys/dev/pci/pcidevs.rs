@@ -50,7 +50,8 @@
 //! ## Deviations
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
 //!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c`, `ahci_pci.c`, `xhci_pci.c`, `auich.c`,
-//!   `azalia.c`, `azalia_codec.c`, `siop_pci_common.c`, `if_em.c` and `if_re_pci.c`). The whole header, and `pcidevs_data.h` for
+//!   `azalia.c`, `azalia_codec.c`, `siop_pci_common.c`, `if_em.c`, `if_re_pci.c`,
+//!   `if_vmx.c` and `vga_pci.c`). The whole header, and `pcidevs_data.h` for
 //!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
 //!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
@@ -1521,6 +1522,18 @@ pub const PCI_PRODUCT_USR2_USR997902: u32 = 0x0116;
 pub const PCI_VENDOR_VMWARE: u32 = 0x15ad;
 /// `PCI_PRODUCT_VMWARE_NET_3`: VMXNET3.
 pub const PCI_PRODUCT_VMWARE_NET_3: u32 = 0x07b0;
+/// `PCI_PRODUCT_INTEL_US15W_IGD`: US15W Video.
+pub const PCI_PRODUCT_INTEL_US15W_IGD: u32 = 0x8108;
+/// `PCI_PRODUCT_INTEL_US15L_IGD`: US15L/UL11L Video.
+pub const PCI_PRODUCT_INTEL_US15L_IGD: u32 = 0x8109;
+/// `PCI_PRODUCT_INTEL_GMA600_0`: GMA 600.
+pub const PCI_PRODUCT_INTEL_GMA600_0: u32 = 0x4100;
+/// `PCI_PRODUCT_INTEL_GMA600_8`: GMA 600.
+pub const PCI_PRODUCT_INTEL_GMA600_8: u32 = 0x4108;
+/// `PCI_PRODUCT_INTEL_MDFLD_IGD_0`: Medfield Video.
+pub const PCI_PRODUCT_INTEL_MDFLD_IGD_0: u32 = 0x0130;
+/// `PCI_PRODUCT_INTEL_GMA3600_0`: GMA 3600.
+pub const PCI_PRODUCT_INTEL_GMA3600_0: u32 = 0x0be0;
 
 #[cfg(test)]
 mod tests {
@@ -2926,6 +2939,15 @@ mod tests {
             ("PCI_PRODUCT_USR2_USR997902", PCI_PRODUCT_USR2_USR997902),
             ("PCI_VENDOR_VMWARE", PCI_VENDOR_VMWARE),
             ("PCI_PRODUCT_VMWARE_NET_3", PCI_PRODUCT_VMWARE_NET_3),
+            ("PCI_PRODUCT_INTEL_US15W_IGD", PCI_PRODUCT_INTEL_US15W_IGD),
+            ("PCI_PRODUCT_INTEL_US15L_IGD", PCI_PRODUCT_INTEL_US15L_IGD),
+            ("PCI_PRODUCT_INTEL_GMA600_0", PCI_PRODUCT_INTEL_GMA600_0),
+            ("PCI_PRODUCT_INTEL_GMA600_8", PCI_PRODUCT_INTEL_GMA600_8),
+            (
+                "PCI_PRODUCT_INTEL_MDFLD_IGD_0",
+                PCI_PRODUCT_INTEL_MDFLD_IGD_0,
+            ),
+            ("PCI_PRODUCT_INTEL_GMA3600_0", PCI_PRODUCT_INTEL_GMA3600_0),
         ] {
             assert_eq!(
                 crate::reftest::int(&defs, name),

@@ -1745,6 +1745,20 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   without `--fb` has no frame buffer, so nothing attaches and nothing changes; with `--fb`
   `just smoke-wscons` writes to `/dev/ttyC0` and checks the screendump (`--screen-text`,
   with the grid `selftest=wscons` prints).
+- vga(4) under UEFI (M13). `vga0 at isa?`, `vga* at pci?` and `wsdisplay0 at vga? console 1`
+  are in amd64's ioconf, as in GENERIC (arm64's GENERIC has no vga). On the smokes' q35 with
+  OVMF the std VGA is in the graphics mode OVMF set for the GOP: its I/O and memory decoding
+  are on (command register 0x7), but the legacy text memory at 0xb8000 reads back 0xffff, so
+  `vga_common_probe` fails at both buses and the device stays "not configured", which is what
+  an OpenBSD 8.0 snapshot prints on the same machine (`just diff-openbsd`'s VM: `"Bochs VGA"
+  rev 0x02 at pci0 dev 1 function 0 not configured`, no vga line, `efifb0` takes the
+  display); `smoke-vga` checks it. Text mode would need a BIOS boot (SeaBIOS), which EmiBSD
+  does not have. The probe maps the ISA hole: Limine's direct map (base revision 3) covers
+  only its memory map's regions and leaves the VGA window out, so amd64's `bus_space_map`
+  takes the hole shortcut (`atdevbase`, which `locore0.S` maps after a boot by boot(8)) only
+  for pages that are mapped there and maps the others like any device memory. Without the
+  `ioport_ex` extent a second probe of claimed ports does not fail: where a PCI VGA does
+  attach, `vga0 at isa?` would attach too (OpenBSD's ISA probe fails there).
 
 ## Testing architecture
 

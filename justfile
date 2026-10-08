@@ -91,7 +91,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
     "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
-    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons"
+    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2018,6 +2018,24 @@ smoke-wscons: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--fea
         --expect 'wsdisplay0: screen 0-5 added (std, vt100 emulation)' --expect 'selftest: wscons grid' \
         --send-after "login:" --send 'root\n' --send-after "Password:" --send 'emibsd\n' \
         --send-after "# " --send '{{wscons_line}}' --expect 'wscons-wrote'
+
+# M13: vga(4) (vga0 at isa?, vga* at pci?, wsdisplay0 at vga? console 1), amd64 only: arm64
+# GENERIC has no vga. QEMU's q35 brings its std VGA (PCI 1234:1111) by default, and OVMF has set
+# it to a graphics mode for the GOP, so its legacy text memory at 0xb8000 reads back 0xffff and
+# vga_common_probe fails at both buses: the VGA stays "not configured" and efifb0 takes the
+# display, exactly as in an OpenBSD 8.0 snapshot's dmesg on the same machine (`just
+# diff-openbsd`: '"Bochs VGA" rev 0x02 at pci0 dev 1 function 0 not configured', no vga line).
+# The probe maps the legacy window, which Limine's direct map leaves out (bus_space.rs's
+# isa_hole_mapped); a regression there panics this boot.
+smoke-vga: (build-amd64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-vga: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --expect-ramdisk --until-seen \
+        --reject 'vga0 at' --reject 'vga1 at' --reject 'wsdisplay at vga' --reject 'unported: vga_post_init' \
+        --expect 'vendor 0x1234 product 0x1111 (class display subclass VGA, rev 0x02) at pci0 dev 1 function 0 not configured' \
+        --expect 'isa0 at mainbus0' --expect 'com0 at isa0 port 0x3f8/8 irq 4: ns16550a, 16 byte fifo' \
+        --expect 'efifb0 at mainbus0: 1280x800, 32bpp' --expect 'wsdisplay0 at efifb0 mux 1' \
+        --expect 'wsdisplay0: screen 0-5 added (std, vt100 emulation)' --expect 'login:'
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

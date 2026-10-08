@@ -3013,7 +3013,7 @@ notes = "replaced-by-ioconf.rs: config(8) is not ported; what it would generate 
 [[file]]
 c = "sys/arch/amd64/conf/GENERIC"
 status = "skipped"
-notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root, cpu0 at mainbus? and pci* at mainbus0 (M7b), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it); M10f: pseudo-device bio 1 (bioattach after wgattach in pdevinit, as GENERIC lists it; dev/bio.rs); M11a: GENERIC.MP's cpu* at mainbus? (unit 1 on, FSTATE_STAR) as cfdata[14] with feature multiprocessor; M13a: nvme* at pci? (cfdata[14], dev/pci/nvme_pci.rs), whose scsibus is the scsibus* at scsi? entry (pv 5, 13, 14); GENERIC.MP's cpu* is now cfdata[15]; M12 (xhci): xhci* at pci? (cfdata[14]), usb* at xhci? (15), uhub* at usb? (16), uhub* at uhub? (17, locators port/configuration/interface/vendor/product/release = -1, parents [16, 17]); GENERIC.MP's cpu* moves to cfdata[18]; M12 (azalia): azalia* at pci? (cfdata[20]) and audio* at azalia? (cfdata[21], parents PV_AZALIA [20]); GENERIC.MP's cpu* is cfdata[22]; M13 (siop): siop* at pci? (cfdata[29], after ahci at 28; dev/pci/siop_pci.rs), its scsibus the scsibus* at scsi? entry (PV_VIOBLK gains 29); M13 (acpi): bios0 at mainbus0 (cfdata[30]) and acpi0 at bios0 (cfdata[31], parents PV_BIOS [30]); M13 (timers): acpitimer* at acpi? (cfdata[32]) and acpihpet* at acpi? (cfdata[33]), parents PV_ACPI [31]; M13 (madt): ioapic* at mainbus? (cfdata[34], PV_MAINBUS), acpimadt0 (cfdata[35]), acpiprt* (cfdata[36]) and acpipci* (cfdata[37]) at acpi? (PV_ACPI [31]); GENERIC.MP's cpu* is cfdata[38]; M13 (puc): puc* at pci? (cfdata[38], dev/pci/puc.rs) and com* at puc? (cfdata[39], parents PV_PUC [38], locator port = -1, units from 4 as com0..com3 are the ISA lines; dev/puc/com_puc.rs); GENERIC.MP's cpu* is now cfdata[40], NCFDATA 40/41; M13 (em): em* at pci? (cfdata[40], PV_PCI [2], dev/pci/if_em.rs); GENERIC.MP's cpu* is now cfdata[41], NCFDATA 41/42; M13 (rasops): efifb0 at mainbus? (cfdata[41], FSTATE_NOTFOUND, PV_MAINBUS; arch/amd64/amd64/efifb.rs); GENERIC.MP's cpu* is cfdata[42], NCFDATA 42/43; wsdisplay0 at efifb? waits for wsdisplay; M13 (re): re* at pci? (cfdata[42], dev/pci/if_re_pci.rs), rlphy* at mii? (cfdata[43]), rgephy* at mii? (cfdata[44]) and ukphy* at mii? (cfdata[45]), the PHYs with loc phy -1 and PV_MII [42] (the mii attribute re* carries); cpu* is now cfdata[46], NCFDATA 46/47. rl* at pci? stays out: QEMU's rtl8139 is an 8139C+ (rev 0x20), which re(4) takes; M13 (wsdisplay): wsdisplay0 at efifb? as cfdata[46] (locators console -1, primary -1, mux 1; parent efifb0, cfdata[41]), MP cpu* moves to cfdata[47], NCFDATA 47/48; options WSDISPLAY_COMPAT_USL and WSDISPLAY_COMPAT_RAWKBD are cargo features (default), WSDISPLAY_DEFAULTSCREENS=6 is wsdisplay.rs's WSDISPLAY_DEFAULTSCREENS; wsdisplay0 at vga? console 1 and the drm/udl lines wait for their drivers; M13 (vmx): vmx* at pci? (cfdata[47], PV_PCI, dev/pci/if_vmx.rs); cpu* is now cfdata[48], NCFDATA 48/49"
+notes = "replaced-by-ioconf.rs: sys/arch/amd64/conf/ioconf.rs lists mainbus0 at root, cpu0 at mainbus? and pci* at mainbus0 (M7b), the GENERIC lines whose drivers exist; the rest join as their drivers are ported; M9c: pseudo-device enc 1 (encattach after pflogattach in pdevinit, as GENERIC lists it); M10c: pseudo-device vnd 4 (vndattach after ptyattach in pdevinit, as conf/GENERIC lists it); M10f: pseudo-device bio 1 (bioattach after wgattach in pdevinit, as GENERIC lists it; dev/bio.rs); M11a: GENERIC.MP's cpu* at mainbus? (unit 1 on, FSTATE_STAR) as cfdata[14] with feature multiprocessor; M13a: nvme* at pci? (cfdata[14], dev/pci/nvme_pci.rs), whose scsibus is the scsibus* at scsi? entry (pv 5, 13, 14); GENERIC.MP's cpu* is now cfdata[15]; M12 (xhci): xhci* at pci? (cfdata[14]), usb* at xhci? (15), uhub* at usb? (16), uhub* at uhub? (17, locators port/configuration/interface/vendor/product/release = -1, parents [16, 17]); GENERIC.MP's cpu* moves to cfdata[18]; M12 (azalia): azalia* at pci? (cfdata[20]) and audio* at azalia? (cfdata[21], parents PV_AZALIA [20]); GENERIC.MP's cpu* is cfdata[22]; M13 (siop): siop* at pci? (cfdata[29], after ahci at 28; dev/pci/siop_pci.rs), its scsibus the scsibus* at scsi? entry (PV_VIOBLK gains 29); M13 (acpi): bios0 at mainbus0 (cfdata[30]) and acpi0 at bios0 (cfdata[31], parents PV_BIOS [30]); M13 (timers): acpitimer* at acpi? (cfdata[32]) and acpihpet* at acpi? (cfdata[33]), parents PV_ACPI [31]; M13 (madt): ioapic* at mainbus? (cfdata[34], PV_MAINBUS), acpimadt0 (cfdata[35]), acpiprt* (cfdata[36]) and acpipci* (cfdata[37]) at acpi? (PV_ACPI [31]); GENERIC.MP's cpu* is cfdata[38]; M13 (puc): puc* at pci? (cfdata[38], dev/pci/puc.rs) and com* at puc? (cfdata[39], parents PV_PUC [38], locator port = -1, units from 4 as com0..com3 are the ISA lines; dev/puc/com_puc.rs); GENERIC.MP's cpu* is now cfdata[40], NCFDATA 40/41; M13 (em): em* at pci? (cfdata[40], PV_PCI [2], dev/pci/if_em.rs); GENERIC.MP's cpu* is now cfdata[41], NCFDATA 41/42; M13 (rasops): efifb0 at mainbus? (cfdata[41], FSTATE_NOTFOUND, PV_MAINBUS; arch/amd64/amd64/efifb.rs); GENERIC.MP's cpu* is cfdata[42], NCFDATA 42/43; wsdisplay0 at efifb? waits for wsdisplay; M13 (re): re* at pci? (cfdata[42], dev/pci/if_re_pci.rs), rlphy* at mii? (cfdata[43]), rgephy* at mii? (cfdata[44]) and ukphy* at mii? (cfdata[45]), the PHYs with loc phy -1 and PV_MII [42] (the mii attribute re* carries); cpu* is now cfdata[46], NCFDATA 46/47. rl* at pci? stays out: QEMU's rtl8139 is an 8139C+ (rev 0x20), which re(4) takes; M13 (wsdisplay): wsdisplay0 at efifb? as cfdata[46] (locators console -1, primary -1, mux 1; parent efifb0, cfdata[41]), MP cpu* moves to cfdata[47], NCFDATA 47/48; options WSDISPLAY_COMPAT_USL and WSDISPLAY_COMPAT_RAWKBD are cargo features (default), WSDISPLAY_DEFAULTSCREENS=6 is wsdisplay.rs's WSDISPLAY_DEFAULTSCREENS; wsdisplay0 at vga? console 1 and the drm/udl lines wait for their drivers; M13 (vmx): vmx* at pci? (cfdata[47], PV_PCI, dev/pci/if_vmx.rs); cpu* is now cfdata[48], NCFDATA 48/49; M13 (vga): vga0 at isa? (cfdata[48], locators port -1, size 0, iomem -1, iomsiz 0, irq/drq/drq2 -1; PV_ISA), vga* at pci? (cfdata[49], FSTATE_STAR, units from 1) and wsdisplay0 at vga? console 1 (cfdata[50], locators console 1, primary -1, mux 1; parents PV_VGA [48, 49]); cpu* is now cfdata[51], NCFDATA 51/52"
 
 [[file]]
 c = "sys/arch/arm64/conf/GENERIC"
@@ -4718,7 +4718,7 @@ rust = "sys/dev/pci/pcidevs.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "8f85c9d2744407eba39360fa2892e4bd178abdd8"
-notes = "generated by devlist2h.awk from sys/dev/pci/pcidevs (BSD-4-clause, Demetriou, accepted at M2; 350 vendors, 9600 products, 640 KB). M7b: only the IDs ported code names (PCI_VENDOR_OPENBSD/CIRRUS/AMD/QUMRANET/INTEL/INVALID, the three AMD xHCI products pci_set_powerstate knows, PCI_PRODUCT_CIRRUS_CL_PD6729, PCI_PRODUCT_INTEL_82371FB_ISA, PCI_PRODUCT_OPENBSD_CONTROL for virtio_pci), as u32, added by hand; the rest waits for a devlist2h-like generator in tools/xtask; reference-backed test; M13a: PCI_VENDOR_APPLE and PCI_PRODUCT_APPLE_NVME1/2/3 (nvme_pci.c); M12: PCI_VENDOR_FRESCO, PCI_PRODUCT_FRESCO_FL1000, PCI_PRODUCT_FRESCO_FL1400 (xhci_pci's MSI quirk); M12 auich: the AC97 controllers auich.c names (PCI_VENDOR_SIS, PCI_VENDOR_NVIDIA and the 22 PCI_PRODUCT_*_ACA/AC97 IDs of Intel, SiS, NVIDIA and AMD); M12 (azalia): PCI_VENDOR_DELL and PCI_VENDOR_HP (azalia_codec.c's subsystem checks) and the 79 HD Audio controller products azalia.c names (ATI SB450/SBx00, AMD 15h/17h/Hudson-2, NVIDIA MCP51..MCP89, Intel 82801FB..PTL), in the reference-backed test; M13 (ahci): PCI_VENDOR_ATI/ASMEDIA/SAMSUNG2/VIATECH/ZHAOXIN and the 37 products of ahci_pci.c's ahci_devices[]; M13 (siop): PCI_VENDOR_SYMBIOS and the 14 PCI_PRODUCT_SYMBIOS_* products siop_pci_common.c names, in the reference-backed test; M13 (puc): the 213 vendors and products pucdata.c and puc.c name (PCI_VENDOR_EXAR, PCI_PRODUCT_EXAR_XR17V352/354, Red Hat's three PCI_PRODUCT_REDHAT_SERIAL*, ...; their own reference-backed test); M13 (em): the 198 Intel ids of if_em.c's em_devices[], in its order, with a reference-backed test; M13 (vmx): PCI_VENDOR_VMWARE and PCI_PRODUCT_VMWARE_NET_3 (if_vmx.c's vmx_devices[]), in the reference-backed test"
+notes = "generated by devlist2h.awk from sys/dev/pci/pcidevs (BSD-4-clause, Demetriou, accepted at M2; 350 vendors, 9600 products, 640 KB). M7b: only the IDs ported code names (PCI_VENDOR_OPENBSD/CIRRUS/AMD/QUMRANET/INTEL/INVALID, the three AMD xHCI products pci_set_powerstate knows, PCI_PRODUCT_CIRRUS_CL_PD6729, PCI_PRODUCT_INTEL_82371FB_ISA, PCI_PRODUCT_OPENBSD_CONTROL for virtio_pci), as u32, added by hand; the rest waits for a devlist2h-like generator in tools/xtask; reference-backed test; M13a: PCI_VENDOR_APPLE and PCI_PRODUCT_APPLE_NVME1/2/3 (nvme_pci.c); M12: PCI_VENDOR_FRESCO, PCI_PRODUCT_FRESCO_FL1000, PCI_PRODUCT_FRESCO_FL1400 (xhci_pci's MSI quirk); M12 auich: the AC97 controllers auich.c names (PCI_VENDOR_SIS, PCI_VENDOR_NVIDIA and the 22 PCI_PRODUCT_*_ACA/AC97 IDs of Intel, SiS, NVIDIA and AMD); M12 (azalia): PCI_VENDOR_DELL and PCI_VENDOR_HP (azalia_codec.c's subsystem checks) and the 79 HD Audio controller products azalia.c names (ATI SB450/SBx00, AMD 15h/17h/Hudson-2, NVIDIA MCP51..MCP89, Intel 82801FB..PTL), in the reference-backed test; M13 (ahci): PCI_VENDOR_ATI/ASMEDIA/SAMSUNG2/VIATECH/ZHAOXIN and the 37 products of ahci_pci.c's ahci_devices[]; M13 (siop): PCI_VENDOR_SYMBIOS and the 14 PCI_PRODUCT_SYMBIOS_* products siop_pci_common.c names, in the reference-backed test; M13 (puc): the 213 vendors and products pucdata.c and puc.c name (PCI_VENDOR_EXAR, PCI_PRODUCT_EXAR_XR17V352/354, Red Hat's three PCI_PRODUCT_REDHAT_SERIAL*, ...; their own reference-backed test); M13 (em): the 198 Intel ids of if_em.c's em_devices[], in its order, with a reference-backed test; M13 (vmx): PCI_VENDOR_VMWARE and PCI_PRODUCT_VMWARE_NET_3 (if_vmx.c's vmx_devices[]), in the reference-backed test; M13 (vga): PCI_PRODUCT_INTEL_US15W_IGD, US15L_IGD, GMA600_0, GMA600_8, MDFLD_IGD_0, GMA3600_0 (vga_pci.c's vga_devs[]), in the reference-backed test"
 
 [[file]]
 c = "sys/dev/pci/pcidevs_data.h"
@@ -5044,6 +5044,129 @@ upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a64ed09bebcb143805309cef7affd482b55aecd0"
 deps = ["sys/dev/pci/if_vmxreg.h", "sys/dev/pci/pci_map.c", "sys/dev/pci/pcidevs.h", "sys/kern/kern_intrmap.c", "sys/net/toeplitz.c", "sys/net/if_media.c", "sys/net/ifq.c", "sys/net/if_ethersubr.c", "sys/kern/kern_timeout.c"]
 notes = "M13: ISC; the whole file: vmx_devices[] (VMware ids appended to pcidevs.rs), vmx_ca/vmx_cd, vmxnet3_match, vmxnet3_attach (MSI-X with intrmap(9) queue vectors, else MSI, else INTx; 4 queues on QEMU with -smp 4), vmxnet3_dma_init (queue-shared, rings, multicast table, driver-shared, RSS with stoeplitz_to_key), alloc_txring/rxring, txinit/rxinit, rxfill(_tick), txstop/rxstop, link_state, the interrupt enables, intr_intx/intr/intr_event/intr_queue, evintr, txintr, rxintr, iff, rx_offload (checksums, LRO), stop, reset, vmxnet4_set_features, init, vmx_rxr_info, ioctl, vmx_load_mbuf, tx_offload (checksum, TSO), start, watchdog, media_status/change, dma_allocmem, vmx_dmamem_alloc; descriptors read and written whole and volatile, prod/cons atomics; deviations: rxstop unloads before freeing, if_rxr_livelocked under the ring mutex, attach stops when MSI-X vector 0 cannot be mapped, dma_init fails when the RSS area cannot be allocated, a never-freed copy of each queue's intrname for intr_establish; stubs: NKSTAT 0 (vmx_kstat_* compiled out), NVLAN 0 (the vlan blocks behind a const), vmx_dmamem_free is #ifdef notyet as in C; vmx* at pci? on both archs, smoke-vmx"
+
+[[file]]
+c = "sys/dev/ic/mc6845reg.h"
+rust = "sys/dev/ic/mc6845reg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "72da6036d8adc1c77967d539d3b54dc4040954d5"
+deps = []
+notes = "M13 (vga): the whole header: struct reg_mc6845 as the repr(C) RegMc6845 of u8 fields (the C's char), whose offset_of! values are the register indices the pcdisplay_6845_* macros take; MC6845_INDEX/MC6845_DATA; host test of the offsets, test-ref of the defines"
+
+[[file]]
+c = "sys/dev/ic/pcdisplay.h"
+rust = "sys/dev/ic/pcdisplay.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "bb0729037b123dc414d36c99ab18fe608f18832b"
+deps = []
+notes = "license: none (no licence text; its $OpenBSD$/$NetBSD$ lines kept); M13 (vga): every FG_*/BG_* attribute define as u32; test-ref with assert_complete"
+
+[[file]]
+c = "sys/dev/ic/pcdisplayvar.h"
+rust = "sys/dev/ic/pcdisplayvar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d91c57aa617c7dbec843def6fd0bd24a99172424"
+deps = ["sys/dev/ic/mc6845reg.h", "sys/dev/wscons/wsdisplayvar.h"]
+notes = "M13 (vga): struct pcdisplayscreen (repr(C), Cells; cursortmp always present, PCDISPLAY_SOFTCURSOR is a const in pcdisplay_subr.rs), struct pcdisplay_handle, _pcdisplay_6845_read/_write and the pcdisplay_6845_read!/write! macros over offset_of!(RegMc6845, reg); the backing store is read through Pcdisplayscreen::mem(), a slice of ncols*nrows Cell<u16> (cells outside it are ignored, the C would write past it); the prototypes are pcdisplay_subr.rs's and pcdisplay_chars.rs's functions"
+
+[[file]]
+c = "sys/dev/ic/pcdisplay_subr.c"
+rust = "sys/dev/ic/pcdisplay_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e8bdd13b6347e579f3d23829578430278622cb21"
+deps = ["sys/dev/ic/pcdisplayvar.h", "sys/dev/wscons/wsdisplayvar.h"]
+notes = "license: Carnegie Mellon notice, kept whole; M13 (vga): the whole file: pcdisplay_cursor_reset, pcdisplay_cursor_init, pcdisplay_cursor, pcdisplay_putchar, pcdisplay_getchar (returns the cell), pcdisplay_copycols, pcdisplay_erasecols, pcdisplay_copyrows, pcdisplay_eraserows, as the unsafe emulops of wsdisplayvar.rs over the screen cookie, at spltty(); option PCDISPLAY_SOFTCURSOR (no GENERIC sets it) is the const PCDISPLAY_SOFTCURSOR = false with both paths compiled; bcopy in the backing store is an overlapping move; bus_space_copy_2/set_region_2 from the machine contract; host tests over a fake text buffer (the backing store; the host bus space is a no-op)"
+
+[[file]]
+c = "sys/dev/ic/pcdisplay_chars.c"
+rust = "sys/dev/ic/pcdisplay_chars.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e13d1aa1c224dabc3281848917eff1c034221922"
+deps = ["sys/dev/wscons/unicode.h"]
+notes = "M13 (vga): the whole file: isomappings[128], unimappings[] (108) and replacements[] (61) entry for entry, CONTROL/NOTPRINTABLE, pcdisplay_mapchar (the unused emulops cookie is not a parameter); host test"
+
+[[file]]
+c = "sys/dev/ic/vgareg.h"
+rust = "sys/dev/ic/vgareg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4e5dc27275407a262e020aab5e6257eefa343579"
+deps = []
+notes = "M13 (vga): the whole header: struct reg_vgaattr, reg_vgats, reg_vgagdc as repr(C, packed) RegVgaattr/RegVgats/RegVgagdc (field offsets are the register indices, sizes what vga_pci saves), VGA_ATC_*, VGA_TS_*, VGA_GDC_*, VGA_DAC_*; host test of the offsets, test-ref with assert_complete"
+
+[[file]]
+c = "sys/dev/ic/vgavar.h"
+rust = "sys/dev/ic/vgavar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "a3b52ccd48679496b657870baa011c668d46d8f2"
+deps = ["sys/dev/ic/pcdisplayvar.h", "sys/dev/ic/vgareg.h", "sys/sys/queue.h", "sys/sys/timeout.h"]
+notes = "license: Carnegie Mellon notice, kept whole; M13 (vga): struct vga_handle (plain data set by vga_init; vh_iot/vh_memt/vh_ioh_6845/vh_memh are methods), struct vgascreen (repr(C), pcs first, Cells, LIST_ENTRY through queue_adapter VgascreenList), struct vga_config (Cells, palette as 768 Cell<u8>, the switch Timeout), VGA_MAXFONT, vga_raw_read/write, vga_enable, _vga_attr/_ts/_gdc read/write, and the vga_attr/ts/gdc/6845 read!/write! macros over offset_of!; struct vgafont is vga.rs's Vgafont; the __alpha__ custom_* members are not compiled (no alpha port); the prototypes are vga.rs's, vga_subr.rs's and vga_pci.rs's functions"
+
+[[file]]
+c = "sys/dev/ic/vga_subr.c"
+rust = "sys/dev/ic/vga_subr.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1b9d14e809ca2e38e0a24ffa0dac1e4fc8e1ada4"
+deps = ["sys/dev/ic/vgavar.h", "sys/dev/ic/pcdisplay_subr.c"]
+notes = "M13 (vga): the whole file: fontram, textram, vga_loadchars (the glyphs as a byte slice; a shorter slice loads only what it holds), vga_setfontset (slot indices masked to 0..7, the C's tables are 8 long), vga_setscreentype (hardware cursor lines: PCDISPLAY_SOFTCURSOR is false); register sequences only, nothing observable on the host (its bus space is a no-op)"
+
+[[file]]
+c = "sys/dev/ic/vga.c"
+rust = "sys/dev/ic/vga.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "0866e92fda8dbe0e2c91dfeb53ff242424e51fd1"
+deps = ["sys/dev/ic/vgavar.h", "sys/dev/ic/vga_subr.c", "sys/dev/ic/pcdisplay_subr.c", "sys/dev/ic/pcdisplay_chars.c", "sys/dev/ic/pcdisplay.h", "sys/dev/wscons/wsdisplay.c", "sys/dev/pci/vga_pci.c", "sys/kern/kern_timeout.c"]
+notes = "license: BSD-3 block (Yokota, Schmidt; its one Latin-1 byte written in UTF-8) and Carnegie Mellon notice, kept whole; M13 (vga): the whole file but the __alpha__ code: struct vgafont (Vgafont, without the notyet members), vga_builtinfont, vgaconsole/vga_console_type/vga_console_attached (atomics), vga_console_screen and vga_console_vc (statics; the latter Option until vga_cnattach), vga_emulops, fgansitopc/bgansitopc/pctoansi, the nine 80x25/40/50 screen descriptors and both lists, vga_accessops, vga_common_probe, vga_selectfont, vga_init_screen, vga_init (returns the configuration), vga_common_attach, vga_extended_attach (aa.primary 0 where the C leaves it uninitialised), vga_cnattach, vga_is_console, vga_ioctl, vga_mmap, vga_alloc_screen (ENOMEM on a failed M_WAITOK), vga_free_screen (clears the freed backing-store pointer), vga_setfont, vga_show_screen, vga_doswitch (timeout), vga_load_font, vga_list_font, vga_scrollback, vga_pack_attr, vga_unpack_attr, vga_copyrows, _vga_mapchar, vga_mapchar, vga_putchar, vga_burner, vga_getchar (None without an active screen), vga_save_palette, vga_restore_palette, vga_restore_fonts, vga_cd; VGAFONTDEBUG is a false const; nothing calls vga_cnattach (wscons_machdep.c's wscn_video_init is not ported; the console is the serial line); on the smokes' q35/OVMF machine vga_common_probe fails as OpenBSD's does (no vga attaches, smoke-vga); host tests (attributes, fonts and mapping, screens and backing store, scrollback, font load/list, ioctls)"
+
+[[file]]
+c = "sys/dev/pci/vga_pcivar.h"
+rust = "sys/dev/pci/vga_pcivar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fedf1cf1a58e95d2ed7cd5dd9ee792e155f279e0"
+deps = ["sys/dev/ic/vgavar.h", "sys/dev/pci/pcireg.h"]
+notes = "license: Carnegie Mellon notice, kept whole; M13 (vga): DEVICE_IS_VGA_PCI (device_is_vga_pci), VGA_PCI_MAX_BARS, struct vga_pci_bar, struct vga_pci_softc (repr(C); the NACPI save areas as byte-array Cells, X86EMU's sc_posth an opaque pointer; without pa, which vga_pci.c never reads and which is not valid all-zero, and without the i386 VESAFB members); vga_aperture_needed's prototype is RAMDISK_HOOKS-only (vga_pci_common.c, skipped); host test"
+
+[[file]]
+c = "sys/dev/pci/vga_pci.c"
+rust = "sys/dev/pci/vga_pci.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "5c6f3082c0ced23dc4a1f7ca3eb8f43995ff4191"
+deps = ["sys/dev/pci/vga_pcivar.h", "sys/dev/ic/vga.c", "sys/dev/pci/pcidevs.h", "sys/dev/pci/pci.c"]
+notes = "license: BSD-4 block (Wasabi Systems, advertising clause) and Carnegie Mellon notice, kept whole; M13 (vga): the whole file: vga_pci_ca, vga_pci_match (VGA class, IO+MEM decoding, console or vga_common_probe), vga_pci_attach (bus master, vga_devs[] re-POST table with the six Intel GMA ids added to pcidevs.rs), vga_pci_activate, vga_pci_cnattach, vga_pci_ioctl (ws_get_param/ws_set_param), vga_save_state/vga_restore_state (always compiled: NACPI > 0 as amd64 GENERIC; run only on suspend/resume, which EmiBSD does not do yet); stubs: option X86EMU's vga_post_init at attach and vga_post_call on resume (arch/amd64/pci/vga_post.c over dev/x86emu, not ported) are unported!; RAMDISK_HOOKS ('aperture needed') is not configured by any EmiBSD kernel; vga* at pci? on amd64 (arm64 GENERIC has no vga); on q35/OVMF the std VGA does not answer the probe and stays 'not configured' as in OpenBSD's dmesg; host tests"
+
+[[file]]
+c = "sys/dev/pci/vga_pci_common.c"
+rust = ""
+status = "skipped"
+notes = "not-applicable: the whole file is #ifdef RAMDISK_HOOKS (bsd.rd's option; vga_aperture_needed over the drm i915/radeon/amdgpu device lists), which no EmiBSD kernel configures; vga_pci.rs's 'aperture needed' message is compiled out with it"
+
+[[file]]
+c = "sys/dev/isa/vga_isa.c"
+rust = "sys/dev/isa/vga_isa.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "fcc9166df8b3e54a0921a441a333617723f953b5"
+deps = ["sys/dev/ic/vga.c", "sys/dev/isa/isa.c"]
+notes = "license: Carnegie Mellon notice, kept whole (with vga_isavar.h's); M13 (vga): the whole file: struct vga_isa_softc, vga_isa_ca, vga_isa_match (locator checks, console or vga_common_probe, claims 0x3b0/0x30 and 0xa0000/128K, returns 2), vga_isa_attach, vga_isa_cnattach; vga0 at isa? on amd64; deviation: without subr_extent.c's ioport_ex a map never fails on claimed ports, so where a PCI VGA attaches (a BIOS boot, not EmiBSD's) this probe would attach a second vga, where OpenBSD's fails; on q35/OVMF the probe fails as OpenBSD's does"
+
+[[file]]
+c = "sys/dev/isa/vga_isavar.h"
+rust = "sys/dev/isa/vga_isa.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6b84fbbac793a9c6df10c50f84cd230271f59276"
+deps = []
+notes = "license: Carnegie Mellon notice, kept whole in vga_isa.rs; M13 (vga): its one prototype, vga_isa_cnattach, is vga_isa.rs's function"
 
 [[file]]
 c = "sys/dev/ic/rtl81x9.c"
