@@ -4,7 +4,8 @@
 //!
 //! ```text
 //! cargo xtask diff-openbsd [--arch A]... [--smp N] [fetch | install | run | powerbtn]
-//! cargo xtask diff-openbsd --arch A [--ipmi] [--ukc CMD]... [--sh CMD] probe
+//! cargo xtask diff-openbsd --arch A [--ipmi] [--usb] [--usb-hc xhci|ehci] [--ukc CMD]...
+//!                           [--sh CMD] probe
 //! ```
 //!
 //! - `fetch`: the OpenBSD -current snapshot recorded in `tools/xtask/openbsd-snapshot.toml`
@@ -32,11 +33,13 @@
 //!   (`<run dir>/<arch>/openbsd-powerbtn.log`). It is how M16f checked what OpenBSD 8.0
 //!   does with QEMU's power key before porting gpiokeys(4).
 //! - `probe` (M16e): boots the installed OpenBSD alone (`-snapshot`) with the smokes' device
-//!   options (`hwopts.rs`; `--ipmi` so far), logs in and runs `dmesg` and the shell command
+//!   options (`hwopts.rs`: `--ipmi` so far; `devices.rs`: `--usb` and `--usb-hc xhci|ehci`,
+//!   the M12 stick on that controller, `openbsd-probe.usb` in the work directory), logs in and runs `dmesg` and the shell command
 //!   `--sh` gives (`<run dir>/<arch>/openbsd-probe.log`). Each `--ukc CMD` makes it boot
 //!   with `boot -c` at efiboot's `boot>` prompt and send CMD at `UKC>`, then `quit`, as an
 //!   OpenBSD user enables a GENERIC line marked `disable`. It is how M16e checked what
-//!   OpenBSD 8.0 does with ichiic(4) under OVMF and with ipmi(4) on QEMU's simulated BMC.
+//!   OpenBSD 8.0 does with ichiic(4) under OVMF and with ipmi(4) on QEMU's simulated BMC,
+//!   and M16b what it does with ehci(4) on QEMU's `usb-ehci`.
 //!
 //! The OpenBSD binaries are test fixtures under `target/` only: never committed, never
 //! redistributed. Per-run files (logs, scripts, reports, the OpenBSD VM's variable store) go
@@ -110,8 +113,12 @@ pub(crate) fn diff_openbsd(root: &Path, args: &[&str]) -> Result<()> {
             "--kernel-dir" => kernel_dir = Some(*it.next().ok_or("--kernel-dir needs a value")?),
             "--ukc" => ukc.push(*it.next().ok_or("--ukc needs a value")?),
             "--sh" => sh = Some(*it.next().ok_or("--sh needs a value")?),
-            // A device option: `hwopts::set` (main) has recorded it; `probe` adds the device.
-            "--ipmi" => {}
+            // A device option: `hwopts::set` or `devices::set_from_args` (main) has recorded
+            // it; `probe` adds the device.
+            "--ipmi" | "--usb" => {}
+            "--usb-hc" => {
+                it.next();
+            }
             "fetch" | "install" | "run" | "powerbtn" | "probe" => what = a,
             other => return Err(format!("diff-openbsd: unknown argument {other:?}").into()),
         }
@@ -545,6 +552,8 @@ fn probe(root: &Path, arch: Arch, ukc: &[&str], sh: Option<&str>) -> Result<()> 
     let _ = fs::remove_file(&sock);
     let mut cmd = openbsd_qemu(root, arch, &Boot::Probe(&sock))?;
     crate::hwopts::add_devices(&mut cmd, root, arch)?;
+    // The USB devices of `devices.rs` (the stick is `openbsd-probe.usb` in the work directory).
+    cmd.args(crate::devices::qemu_args(&work.join("openbsd-probe.img"))?);
     let log = work.join("openbsd-probe.log");
     let mut vm = Vm::spawn(&format!("openbsd-{}-probe", arch.name()), cmd, log.clone())?;
     if !ukc.is_empty() {
