@@ -21,12 +21,14 @@
 //! `vmx* at pci?` (M13), `vga0 at isa?`, `vga* at pci?` and `wsdisplay0 at vga? console 1` (M13),
 //! `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13), `acpimcfg* at acpi?` (M14),
 //! `ppb* at pci?` and `pci* at ppb?` (M16e),
+//! `ipmi0 at acpi? disable` and `ipmi0 at mainbus? disable` (M16e; `boot -c`'s `enable ipmi`
+//! turns them on),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
 //! `pseudo-device pty 16`, `pseudo-device vnd 4`, `pseudo-device bpfilter`, `pseudo-device
 //! loop`, `pseudo-device wg`, `pseudo-device pfsync`, `pseudo-device pflow`.
-//! GENERIC lines left out until their drivers exist: `vmm0`, `pvbus0` and `ipmi0`
+//! GENERIC lines left out until their drivers exist: `vmm0` and `pvbus0`
 //! at mainbus, and everything below them; `efi0` and `mpbios0` at bios0, and
 //! every other device at `acpi?` (`acpicpu*`, `acpiec*`, ...); `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`,
@@ -58,6 +60,7 @@ use crate::dev::acpi::acpimadt::{ACPIMADT_CA, ACPIMADT_CD};
 use crate::dev::acpi::acpimcfg::{ACPIMCFG_CA, ACPIMCFG_CD};
 use crate::dev::acpi::acpiprt::{ACPIPRT_CA, ACPIPRT_CD};
 use crate::dev::acpi::acpitimer::{ACPITIMER_CA, ACPITIMER_CD};
+use crate::dev::acpi::ipmi_acpi::IPMI_ACPI_CA;
 use crate::dev::audio::{AUDIO_CA, AUDIO_CD};
 use crate::dev::bio::bioattach;
 use crate::dev::ic::ahci::AHCI_CD;
@@ -66,6 +69,7 @@ use crate::dev::ic::nvme::NVME_CD;
 use crate::dev::ic::re::RE_CD;
 use crate::dev::ic::siop::SIOP_CD;
 use crate::dev::ic::vga::VGA_CD;
+use crate::dev::ipmi::{IPMI_CA, IPMI_CD};
 use crate::dev::isa::com_isa::COM_ISA_CA;
 use crate::dev::isa::isa::{ISA_CA, ISA_CD};
 use crate::dev::isa::vga_isa::VGA_ISA_CA;
@@ -265,11 +269,11 @@ const LN_WSKBDDEV: i32 = 34;
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 55 entries, 56 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 57 entries, 58 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    56
+    58
 } else {
-    55
+    57
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -896,7 +900,31 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCIBUS,
         0,
     ),
-    // 55: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 55: ipmi0 at acpi? disable
+    Cfdata::new(
+        &IPMI_ACPI_CA,
+        &IPMI_CD,
+        0,
+        FSTATE_DNOTFOUND,
+        &[],
+        0,
+        PV_ACPI,
+        0,
+        0,
+    ),
+    // 56: ipmi0 at mainbus? disable
+    Cfdata::new(
+        &IPMI_CA,
+        &IPMI_CD,
+        0,
+        FSTATE_DNOTFOUND,
+        &[],
+        0,
+        PV_MAINBUS,
+        0,
+        0,
+    ),
+    // 57: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

@@ -11205,28 +11205,45 @@ notes = "M16: tpm(4) at acpi; QEMU's tpm-tis needs swtpm on the host, a tool ins
 [[file]]
 c = "sys/dev/ipmivar.h"
 rust = "sys/dev/ipmivar.rs"
-status = "todo"
-notes = "M16: ipmi softc and the KCS/SMIC/BT interfaces"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "60a57073f0d08ffdabf0129c489a6286deef5f96"
+notes = "M16e: the whole header: IPMI_IF_* and NREGS, ipmi_iowait (no unused v), ipmi_attach_args (repr(C), iaa_name first for mainbus_print), ipmi_if generic over the IpmiBmc trait (not in the C: register access, transfer buffer, interface, sensordev, cmd_wait; host tests run the state machines on a simulated BMC), ipmi_cmd without c_sc (c_data Option<&mut [u8]>, c_ccode i32), IpmiXfer (sc_buf, sc_btseq) in a RefCell, ipmi_ioctl state in an UnsafeCell under its rwlock, ipmi_softc, ipmi_thread (AtomicI32 running), the WDOG/MSG/NETFN/command constants, sdrhdr/sdrtype1/sdrtype2 repr(C, packed) without name[1], read zero-filled from a record (SDRTYPE1_NAME/SDRTYPE2_NAME offsets); host tests of the record offsets"
 
 [[file]]
 c = "sys/dev/ipmi.h"
 rust = "sys/dev/ipmi.rs"
-status = "todo"
-notes = "M16: ipmi(4) ioctl types"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "81d6aa344984cceba5a6ace79e4d3a1041295f6b"
+notes = "M16e: license: BSD-2 (IronPort, FreeBSD), kept whole in ipmi.rs's LICENSES zone (no $OpenBSD$ line); the whole header in ipmi.rs: constants, IPMICTL_* ioctls (_IOWR/_IOW/_IOR, host-tested against the C numbers), ipmi_msg/ipmi_req/ipmi_recv (repr(C), user pointers as usize), ipmi_cmdspec, ipmi_addr, ipmi_system_interface_addr, ipmi_ipmb_addr"
 
 [[file]]
 c = "sys/dev/ipmi.c"
 rust = "sys/dev/ipmi.rs"
-status = "todo"
-deps = ["sys/dev/ipmivar.h", "sys/dev/ipmi.h"]
-notes = "M16: ipmi(4) with its sensors and watchdog; criterion: QEMU's isa-ipmi-kcs with ipmi-bmc-sim attaches and answers on amd64 (aarch64 QEMU has no IPMI device)"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "1e4dad88ae3486bf4fd28746ed8d09bcdca44b53"
+deps = ["sys/dev/ipmivar.h", "sys/dev/ipmi.h", "sys/kern/kern_watchdog.c"]
+notes = "M16e: the whole file: kcs_if/smic_if/bt_if (associated consts of IpmiIf<S>, statics for the softc), ipmi_get_if, bmc_read/bmc_write (IpmiBmc for IpmiSoftc), bmc_io_wait, the BT (bt_read/write/sendmsg/recvmsg/reset/probe; the C's DATARCV offset quirk kept and host-tested), SMIC (smic_wait, write_cmd_data, read_data, sendmsg, recvmsg bounded by sc_buf, reset, probe) and KCS (kcs_wait, write_cmd/data, read_data, sendmsg, recvmsg, reset, probe) state machines, dumpb, bt_buildmsg/cmn_buildmsg, ipmi_sendcmd/recvcmd (bounded copies; IPMB #if 0 path is -1), ipmi_cmd/poll/wait/wait_cb (msleep on a done flag under a mutex instead of the C's racy tsleep), get_sdr_partial/get_sdr (explicit little-endian), getbits (0 past the end), ipmi_sensor_name, ipow, signextend, ipmi_convert, ipmi_sensor_status, read_sensor, ipmi_sensor_type, add_sdr_sensor, add_child_sensors, ipmi_refresh_sensors, ipmi_map_regs/unmap_regs, ipmi_poll_thread/create_thread (sensordev hw.sensors.ipmiN), ipmi_attach_common (stops on an unknown type or unmapped registers where the C dereferences NULL), ipmi_activate (wdog_shutdown), ipmilookup/open/close/ioctl (/dev/ipmi major 96 on both archs; device_unref never called, as in C), ipmi_watchdog/tickle/set (kern.watchdog through kern_watchdog.c), amd64 part: ipmi_ca, ipmi_match (Get Device ID with a temporary softc), ipmi_attach, scan_sig (bus_space_map of iaa_memt instead of ISA_HOLE_VADDR), ipmi_smbios_probe (struct smbios_ipmi declared locally), ipmi_probe (smbios_find_table reported with unported!: bios.c's SMBIOS half; then the BIOS signature scan) wired into amd64 mainbus_attach (mba_iaa); IPMI_DEBUG not configured; ipmi_enabled is IPMI_ENABLED (AtomicI32), maxsdrlen MAXSDRLEN; NIPMI 1; host tests: KCS, SMIC and BT on a simulated BMC, the SDR repository to sensors, sign extension, conversion, names in every encoding, sensor types and statuses, SMBIOS records; smoke-ipmi (amd64, QEMU ipmi-bmc-sim + isa-ipmi-kcs)"
 
 [[file]]
 c = "sys/dev/acpi/ipmi_acpi.c"
 rust = "sys/dev/acpi/ipmi_acpi.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "d108af49f54b163f3225ca127604c1099b1eff0e"
 deps = ["sys/dev/ipmi.c", "sys/dev/acpi/acpi.c"]
-notes = "M16: ipmi at acpi"
+notes = "M16e: the whole file: ipmi_acpi_softc (Cells), ipmi_acpi_ca, ipmi_acpi_hids (IPI0001), ipmi_acpi_match, ipmi_acpi_attach (_IFT, _SRV, _CRS through aml_parse_resource), ipmi_acpi_parse_crs (host-tested on I/O, Memory32Fixed and IRQ descriptors); deviation: an I/O descriptor whose _MIN and _MAX differ gives _MIN (ipmi_acpi_ioport_addr; the C always reads _MAX, which on QEMU's isa-ipmi-kcs IO(Decode16, 0xca2, 0xca3, 1, 2) maps 0xca3 and fails every command; identical on a fixed _CRS where _MIN == _MAX); ioconf: amd64 'ipmi0 at acpi? disable' (FSTATE_DNOTFOUND, enabled with boot -c), arm64 'ipmi* at acpi?'"
+
+[[file]]
+c = "sys/dev/fdt/ipmi_fdt.c"
+rust = "sys/dev/fdt/ipmi_fdt.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e74b8f8428d448de4ccdfb3e86b09e50ff6f553b"
+deps = ["sys/dev/ipmi.c", "sys/dev/ofw/fdt.c"]
+notes = "M16e: the whole file: ipmi_fdt_ca, ipmi_fdt_match (ipmi-kcs), ipmi_fdt_attach (KCS 2.0 in memory space, reg-size, reg-spacing); arm64 ioconf 'ipmi* at fdt?'; QEMU's virt has no ipmi-kcs node, so it is build-checked only"
 
 [[file]]
 c = "sys/dev/acpi/acpidmar.h"

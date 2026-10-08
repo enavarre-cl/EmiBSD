@@ -17,5 +17,6 @@ pub mod acpiutil;
 pub mod acpivar;
 pub mod amltypes;
 pub mod dsdt;
+pub mod ipmi_acpi;
 pub mod pluart_acpi;
 /* </CODE> */

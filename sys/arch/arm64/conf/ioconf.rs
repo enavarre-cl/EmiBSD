@@ -21,7 +21,9 @@
 //! `vmx* at pci?` (M13); `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13);
 //! arm64 ACPI (M14): `acpi0 at mainbus?` (the `acpi_fdt` attachment), `acpimcfg* at acpi?`,
 //! `acpiiort* at acpi?`, `acpipci* at acpi?`, `pci* at acpipci?` and `pluart* at acpi?`;
-//! `ppb* at pci?` and `pci* at ppb?` (M16e);
+//! `ppb* at pci?` and `pci* at ppb?` (M16e); `ipmi* at acpi?` and `ipmi* at fdt?` (M16e;
+//! QEMU's `virt` has no IPMI device; `ipmi* at iic?` waits for `ipmi_i2c.c`, SSIF, and the
+//! iic(4) stack);
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
@@ -52,9 +54,11 @@ use crate::arch::arm64::dev::mainbus::{MAINBUS_CA, MAINBUS_CD};
 use crate::arch::arm64::dev::simplebus::{SIMPLEBUS_CA, SIMPLEBUS_CD};
 use crate::dev::acpi::acpi::ACPI_CD;
 use crate::dev::acpi::acpimcfg::{ACPIMCFG_CA, ACPIMCFG_CD};
+use crate::dev::acpi::ipmi_acpi::IPMI_ACPI_CA;
 use crate::dev::acpi::pluart_acpi::PLUART_ACPI_CA;
 use crate::dev::audio::{AUDIO_CA, AUDIO_CD};
 use crate::dev::bio::bioattach;
+use crate::dev::fdt::ipmi_fdt::IPMI_FDT_CA;
 use crate::dev::fdt::pciecam::{PCIECAM_CA, PCIECAM_CD};
 use crate::dev::fdt::plrtc::{PLRTC_CA, PLRTC_CD};
 use crate::dev::fdt::pluart_fdt::PLUART_FDT_CA;
@@ -65,6 +69,7 @@ use crate::dev::ic::ahci::AHCI_CD;
 use crate::dev::ic::nvme::NVME_CD;
 use crate::dev::ic::pluart::PLUART_CD;
 use crate::dev::ic::re::RE_CD;
+use crate::dev::ipmi::IPMI_CD;
 use crate::dev::mii::rgephy::{RGEPHY_CA, RGEPHY_CD};
 use crate::dev::mii::rlphy::{RLPHY_CA, RLPHY_CD};
 use crate::dev::mii::ukphy::{UKPHY_CA, UKPHY_CD};
@@ -235,9 +240,9 @@ const NFREE: usize = 8;
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    50
+    52
 } else {
-    49
+    51
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -802,7 +807,31 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCIBUS,
         0,
     ),
-    // 49: cpu* at mainbus? (GENERIC.MP)
+    // 49: ipmi* at acpi?
+    Cfdata::new(
+        &IPMI_ACPI_CA,
+        &IPMI_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_ACPI,
+        0,
+        0,
+    ),
+    // 50: ipmi* at fdt?
+    Cfdata::new(
+        &IPMI_FDT_CA,
+        &IPMI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_0,
+        0,
+        PV_FDT,
+        LN_FDT,
+        0,
+    ),
+    // 51: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
     // The free slots.

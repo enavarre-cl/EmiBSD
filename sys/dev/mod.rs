@@ -24,6 +24,8 @@ pub mod efi;
 pub mod fdt;
 pub mod hid;
 pub mod ic;
+pub mod ipmi;
+pub mod ipmivar;
 pub mod isa;
 pub mod microcode;
 pub mod mii;
