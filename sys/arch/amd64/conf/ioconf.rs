@@ -25,6 +25,7 @@
 //! `piixpm* at pci?`, `iic* at piixpm?`, `ichiic* at pci?` and `iic* at ichiic?` (M16e),
 //! `ipmi0 at acpi? disable` and `ipmi0 at mainbus? disable` (M16e; `boot -c`'s `enable ipmi`
 //! turns them on),
+//! `tpm* at acpi?` (M16e), `acpicpu* at acpi?` (M16e),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -32,7 +33,7 @@
 //! loop`, `pseudo-device wg`, `pseudo-device pfsync`, `pseudo-device pflow`.
 //! GENERIC lines left out until their drivers exist: `vmm0` and `pvbus0`
 //! at mainbus, and everything below them; `efi0` and `mpbios0` at bios0, and
-//! every other device at `acpi?` (`acpicpu*`, `acpiec*`, ...); every device at `iic?` (`spdmem*`,
+//! every other device at `acpi?` (`acpiec*`, `acpitz*`, ...); every device at `iic?` (`spdmem*`,
 //! `lm*`, ... are not ported: the scan prints what it finds as not configured), the other
 //! `iic*` parents (`viapm?`, `amdiic?`, ...); `isa0` at `pcib?`,
 //! `amdpcib?` and `tcpcib?`, and every other device at `isa?` (`isadma0`, `pckbc0`,
@@ -59,6 +60,7 @@ use crate::arch::amd64::amd64::ioapic::{IOAPIC_CA, IOAPIC_CD};
 use crate::arch::amd64::amd64::mainbus::{MAINBUS_CA, MAINBUS_CD};
 use crate::arch::amd64::pci::acpipci::{ACPIPCI_CA, ACPIPCI_CD};
 use crate::dev::acpi::acpi::ACPI_CD;
+use crate::dev::acpi::acpicpu_x86::{ACPICPU_CA, ACPICPU_CD};
 use crate::dev::acpi::acpidmar::{ACPIDMAR_CA, ACPIDMAR_CD};
 use crate::dev::acpi::acpihpet::{ACPIHPET_CA, ACPIHPET_CD};
 use crate::dev::acpi::acpimadt::{ACPIMADT_CA, ACPIMADT_CD};
@@ -66,6 +68,7 @@ use crate::dev::acpi::acpimcfg::{ACPIMCFG_CA, ACPIMCFG_CD};
 use crate::dev::acpi::acpiprt::{ACPIPRT_CA, ACPIPRT_CD};
 use crate::dev::acpi::acpitimer::{ACPITIMER_CA, ACPITIMER_CD};
 use crate::dev::acpi::ipmi_acpi::IPMI_ACPI_CA;
+use crate::dev::acpi::tpm::{TPM_CA, TPM_CD};
 use crate::dev::audio::{AUDIO_CA, AUDIO_CD};
 use crate::dev::bio::bioattach;
 use crate::dev::i2c::i2c::{IIC_CA, IIC_CD};
@@ -283,11 +286,11 @@ const LN_WSKBDDEV: i32 = 34;
 /// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
 const NFREE: usize = 8;
 
-/// `cfdata[]`: 62 entries, 63 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 64 entries, 65 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    63
+    65
 } else {
-    62
+    64
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -979,7 +982,21 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 62: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 62: tpm* at acpi? (M16e)
+    Cfdata::new(&TPM_CA, &TPM_CD, 0, FSTATE_STAR, &[], 0, PV_ACPI, 0, 0),
+    // 63: acpicpu* at acpi? (M16e)
+    Cfdata::new(
+        &ACPICPU_CA,
+        &ACPICPU_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_ACPI,
+        0,
+        0,
+    ),
+    // 64: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),

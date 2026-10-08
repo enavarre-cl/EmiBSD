@@ -209,7 +209,7 @@ fn dash(tag: Option<&str>) -> String {
 }
 
 /// `brew --prefix <formula>`, if Homebrew is installed and knows the formula.
-fn brew_prefix(formula: &str) -> Option<PathBuf> {
+pub(crate) fn brew_prefix(formula: &str) -> Option<PathBuf> {
     let out = Command::new("brew")
         .args(["--prefix", formula])
         .output()
@@ -749,6 +749,8 @@ pub fn qemu(
             p
         }
     };
+    // M16e (hwopts.rs): `--tpm`'s swtpm, stopped when this returns, after QEMU.
+    let _swtpm = crate::hwopts::start_swtpm()?;
     let mut cmd = qemu_command(root, arch, &image, "mon:stdio", None, disks)?;
     println!("xtask: {}", command_line(&cmd));
     let status = cmd.status().map_err(|e| spawn_error(arch, &e))?;
@@ -828,6 +830,8 @@ pub fn smoke(root: &Path, arch: Arch, opts: &SmokeOptions<'_>) -> Result<()> {
     };
     let expected_status = status;
     let limit = time_limit(SMOKE_TIMEOUT);
+    // M16e (hwopts.rs): `--tpm`'s swtpm, stopped when this returns, after QEMU.
+    let _swtpm = crate::hwopts::start_swtpm()?;
     let mut cmd = qemu_command(root, arch, &image, "stdio", None, &disks)?;
     cmd.stdin(if !sends.is_empty() {
         Stdio::piped()

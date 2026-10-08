@@ -49,8 +49,8 @@
 //!   the C posts `SIR_XCALL`, whose `Xxcallintr` source does not exist here, so the stub
 //!   posts nothing). `NVMM` and `NPCTR` are not configured: their entries are `None`, as the
 //!   C's `NULL`. `x86_ipi_db` is `db_interface.rs`'s, as in the C (M11c).
-//! - `x86_64_ipi_halt` spins on `hlt`: `cpu_suspend_cycle_fcn` (option `SUSPEND`) is not
-//!   configured.
+//! - `x86_64_ipi_halt` waits in `cpu_suspend_cycle_fcn` when acpicpu(4) installed one
+//!   (`acpicpu_suspend`, M16e), as the C does, and on `hlt` otherwise.
 
 use core::arch::asm;
 use core::sync::atomic::Ordering;
@@ -96,9 +96,12 @@ pub fn x86_64_ipi_halt(ci: &CpuInfo) {
     wbinvd();
 
     loop {
-        // cpu_suspend_cycle_fcn: option SUSPEND, not configured.
-        // SAFETY: with interrupts disabled `hlt` parks the CPU; nothing else is touched.
-        unsafe { asm!("hlt", options(nomem, nostack, preserves_flags)) };
+        // SAFETY: written only while cold (machdep.rs, the module's deviations).
+        match unsafe { crate::arch::amd64::amd64::machdep::CPU_SUSPEND_CYCLE_FCN.read() } {
+            Some(f) => f(),
+            // SAFETY: with interrupts disabled `hlt` parks the CPU; nothing else is touched.
+            None => unsafe { asm!("hlt", options(nomem, nostack, preserves_flags)) },
+        }
     }
 }
 

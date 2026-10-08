@@ -205,7 +205,11 @@ M16e adds the x86 counterpart, cfg `machine_x86` (amd64 only) with `sys/machine/
 with `pmap_flush_cache`, reads `bios_memmap` and builds an MSI `pci_intr_handle_t`. There the
 driver's items carry the cfg one by one, so the header part of the file (registers, table
 entries, source ids, the device scope parser) still compiles on every target and keeps its
-host tests.
+host tests. `dev/acpi/acpicpu_x86.c` (acpicpu(4), M16e) is written against it the same way: it
+sets the machine's `cpu_idle_cycle_fcn` and `cpu_suspend_cycle_fcn`, links itself into
+`struct cpu_info` (`ci_acpicpudev`, `ci_mwait`) and idles with `hlt`, `inb` or
+`monitor`/`mwait`; its `_CST`/`_PSS` parsing and its choice of an idle state are plain
+functions with host tests.
 
 ## Dependencies
 

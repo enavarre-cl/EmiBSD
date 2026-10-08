@@ -120,7 +120,7 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi"
+    "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi smoke-tpm"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -1864,13 +1864,16 @@ rtc_steps := "--send-after 'RETURN for sh:' --send '\\n' " + \
 # acpihpet0 and the TSC's calibration line (`tsc: calibrated against acpihpet0: <N> Hz`, or,
 # when every round is disturbed, the failure line: the TSC then keeps quality -1000, as in
 # OpenBSD, and acpihpet0 is the timecounter). `sysctl kern.timecounter` is printed. Run it
-# while the host is busy (`just smoke` does) to see the load case. Part of `smoke`.
+# while the host is busy (`just smoke` does) to see the load case. M16e: amd64 also expects
+# acpicpu0 (acpicpu(4), dev/acpi/acpicpu_x86.c): QEMU's CPUs are ACPI0007 devices with no _CST
+# or _PSS, so each keeps the C1 `hlt` fallback, and every CPU's idle loop runs acpicpu_idle
+# (the 45 s sleep is mostly idle time). Part of `smoke`.
 smoke-clock: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
         { echo "smoke-clock: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
         --expect "acpitimer0 at acpi0: 3579545 Hz, 24 bits" --expect "acpihpet0 at acpi0: 100000000 Hz" \
-        --expect "tsc: calibrat" {{clock_steps}}
+        --expect "tsc: calibrat" --expect "acpicpu0 at acpi0: C1(@1 halt!)" {{clock_steps}}
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --cmdline "-s" --expect-ramdisk --until-seen \
         {{clock_steps}}
 
@@ -2416,6 +2419,26 @@ smoke-ipmi: (build-amd64 "--features qemu,multiprocessor")
     @test -f target/userland/amd64/ramdisk.ffs || \
         { echo "smoke-ipmi: no ramdisk image; run just userland first"; exit 1; }
     cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{ipmi_check}}
+
+# M16e: tpm(4), amd64 only (arm64's GENERIC has no tpm). `--tpm tis|crb` (hwopts.rs) starts a
+# swtpm of the run's own (docs/SETUP.md) and puts QEMU's tpm-tis, then tpm-crb, on q35 with it
+# as the backend: a MSFT0101 device at 0xfed40000 and a TPM2 table naming the interface. tpm0
+# attaches through the TIS FIFO, then through the Command Response Buffer (the C never reads
+# TPM_ID there, hence device 0). `selftest=tpm` (kern/selftest.rs) then sends TPM2_SelfTest
+# through the driver's own write and read functions, the path tpm_suspend uses, and prints the
+# response header: rc 0x0 comes from swtpm (QEMU answers TPM_RC_FAILURE when its backend fails).
+# swtpm is stopped after each run (`pgrep swtpm` finds none). Part of `smoke`.
+tpm_check := "--cmdline 'selftest=tpm' --expect-ramdisk --until-seen " + \
+    "--expect 'selftest: tpm: tpm0: TPM2_SelfTest answered 10 bytes, rc 0x0' " + \
+    "--reject 'TPM2_SelfTest failed' --reject 'tpm0: command failed' --reject 'not enabled'"
+
+smoke-tpm: (build-amd64 "--features qemu,multiprocessor") build-init-amd64
+    @test -f target/userland/amd64/ramdisk.ffs || \
+        { echo "smoke-tpm: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --tpm tis {{tpm_check}} \
+        --expect 'tpm0 at acpi0 TPM_ 2.0 (TIS) addr 0xfed40000/0x5000, device 0x00011014 rev 0x1'
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd --tpm crb {{tpm_check}} \
+        --expect 'tpm0 at acpi0 TPM_ 2.0 (CRB) addr 0xfed40000/0x1000, device 0x00000000 rev 0x0'
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:

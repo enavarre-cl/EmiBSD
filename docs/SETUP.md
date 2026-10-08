@@ -174,6 +174,24 @@ image (`target/disk-<arch>-ext2fs.img`): e2fsck runs with `-n`, and they reach t
 partition through e2fsprogs' `image?offset=BYTES` syntax, the offset found from the image's
 MBR and OpenBSD disklabel, so nothing is copied or written.
 
+## swtpm (M16e)
+
+`just smoke-tpm` checks tpm(4) against a TPM 2.0 that QEMU emulates (`tpm-tis`, `tpm-crb`) with
+`swtpm` as its backend: the software TPM that implements the TPM's commands, which QEMU reaches
+over a Unix socket (`-tpmdev emulator`). Without it QEMU's TPM devices have nothing behind
+their registers. Installed with the user's OK on 2026-10-08:
+
+```sh
+brew install swtpm
+```
+
+xtask finds `swtpm` in `PATH`, or under `brew --prefix swtpm`; when it is missing, `--tpm`
+fails with an `xtask: swtpm not found ...` line naming the formula. Each run starts its own
+`swtpm socket --tpm2` with a fresh state directory and its control socket in the run directory,
+and stops it when the run ends, also on failure or timeout (`tools/xtask/src/hwopts.rs`); swtpm
+also exits by itself when QEMU closes its control connection, so `pgrep swtpm` finds nothing
+after a run. Only `just smoke-tpm` needs it.
+
 ## NTFS check (M10d)
 
 `just userland` for amd64 makes `/root/images/ntfs.img` with our own generator and checks it
