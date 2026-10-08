@@ -89,7 +89,7 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd"
 
@@ -1604,6 +1604,46 @@ smoke-efiboot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--fe
         --expect "root on sd1a (454649424f4f5430.a) swap on sd1b dump on sd1b" \
         --expect "rc: multi-user" --expect "login:" --expect "hw.ncpu=4" \
         --expect "/dev/sd1a on / type ffs (local)"
+
+# M14: arm64 on ACPI (sys/arch/arm64/arm64/acpi_machdep.c, dev/acpi/acpimcfg.c,
+# arch/arm64/dev/acpipci.c and acpiiort.c, dev/acpi/pluart_acpi.c). QEMU `virt,acpi=on`
+# (`--acpi`, hwopts.rs) with the efiboot disk and the NIC as PCI virtio functions: EDK2 hands
+# efiboot the ACPI tables and no device tree, so efiboot's efiacpi builds the tree from them
+# (the GIC, the timer, PSCI, the CPUs and an `openbsd,acpi-5.0` node naming the RSDP), and the
+# kernel attaches acpi0 there: acpimcfg maps the ECAM window, acpipci0 the PCI host bridge
+# (`_CRS` windows, MSI through the GICv2m frame), pluart0 at acpi0 becomes the console by the
+# SPCR, and the root is found on the PCI disk by its DUID. The root login sees 4 CPUs and
+# pings the host through vio0 (virtio-net-pci, MSI-X). arm64 only: amd64 boots on ACPI in
+# every smoke already. Part of `smoke`.
+smoke-acpi: (build-arm64 "--features qemu,multiprocessor") efiboot-arm64
+    @test -x target/userland/arm64/host/bin/makefs -a -f target/userland/arm64/ramdisk-root/etc/fstab || \
+        { echo "smoke-acpi: no arm64 makefs or staged root; run just userland first"; exit 1; }
+    cargo xtask efiboot-disk --arch arm64 --efi target/efiboot/arm64/BOOTAA64.EFI --kernel target/{{arm64}}/debug/bsd --root-dev sd0a
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --acpi --until-seen \
+        --send-after 'boot> ' --send 'boot\n' \
+        {{disk_login}} \
+        --send-after '# ' --send 'sysctl hw.ncpu\n' \
+        --send-after 'hw.ncpu=' --send 'mount\n' \
+        --send-after '/ type ffs' --send 'ping -c 1 10.0.2.2\n' \
+        --expect ">> EmiBSD/arm64 BOOTAA64 1.26" --expect "efiboot: boot.conf read" \
+        --expect "booting sd0a:/bsd: " --expect "FACP APIC PPTT GTDT MCFG SPCR DBG2 IORT" \
+        --expect "bsd: booted on arm64 by boot(8) efiboot" --expect "bsd: 4 processors, boot processor hwid 0x0" \
+        --expect "mainbus0 at root: ACPI" --expect "ampintc0 at mainbus0 nirq 288, ncpu 4" \
+        --expect "ampintcmsi0 at ampintc0: nspi 64" --expect "agtimer0 at mainbus0: 62500 kHz" \
+        --expect "acpi0 at mainbus0: ACPI 6.3" --expect "acpi0: tables DSDT FACP APIC PPTT GTDT MCFG SPCR DBG2 IORT" \
+        --expect "acpimcfg0 at acpi0" --expect "acpimcfg0: addr 0x4010000000, bus 0-255" \
+        --expect "acpiiort0 at acpi0" \
+        --expect "pluart0 at acpi0 COM0 addr 0x9000000/0x1000 irq 33" --expect "pluart0: console" \
+        --expect "acpipci0 at acpi0 PCI0" --expect "pci0 at acpipci0" \
+        --expect "virtio0 at pci0 dev 1 function 0 vendor 0x1af4 product 0x1001" \
+        --expect "sd0 at scsibus0 targ 0 lun 0: <VirtIO, Block Device, >" \
+        --expect "vio0 at virtio1: 1 queue, address 52:54:00:12:34:56" --expect "virtio1: msix per-VQ" \
+        --expect "root on sd0a (454649424f4f5430.a) swap on sd0b dump on sd0b" \
+        --expect "cpu: 3 of 3 application processors running" \
+        --expect "selftest: ping 10.0.2.2: echo reply received" \
+        --expect "rc: multi-user" --expect "(tty00)" --expect "login:" --expect "hw.ncpu=4" \
+        --expect "/dev/sd0a on / type ffs (local)" \
+        --expect "1 packets transmitted, 1 packets received, 0.0% packet loss"
 
 # M13: power off and reset through ACPI (dev/acpi/acpi.c, arch/amd64/amd64/acpi_machdep.c).
 # acpi0 at bios0 takes q35 over from the firmware. The first boot logs in and runs `halt -p`

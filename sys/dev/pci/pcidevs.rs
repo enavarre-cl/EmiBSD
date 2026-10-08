@@ -51,7 +51,7 @@
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
 //!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c`, `ahci_pci.c`, `xhci_pci.c`, `auich.c`,
 //!   `azalia.c`, `azalia_codec.c`, `siop_pci_common.c`, `if_em.c`, `if_re_pci.c`,
-//!   `if_vmx.c` and `vga_pci.c`). The whole header, and `pcidevs_data.h` for
+//!   `if_vmx.c`, `vga_pci.c` and arm64's `acpipci.c`). The whole header, and `pcidevs_data.h` for
 //!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
 //!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
@@ -70,6 +70,10 @@ pub const PCI_VENDOR_SIS: u32 = 0x1039;
 pub const PCI_VENDOR_NVIDIA: u32 = 0x10de;
 /// `PCI_VENDOR_QUMRANET`: Qumranet.
 pub const PCI_VENDOR_QUMRANET: u32 = 0x1af4;
+/// `PCI_VENDOR_QUALCOMM`: Qualcomm.
+pub const PCI_VENDOR_QUALCOMM: u32 = 0x17cb;
+/// `PCI_PRODUCT_QUALCOMM_SC8280XP_PCIE`: SC8280XP PCIe.
+pub const PCI_PRODUCT_QUALCOMM_SC8280XP_PCIE: u32 = 0x010e;
 /// `PCI_VENDOR_FRESCO`: Fresco Logic.
 pub const PCI_VENDOR_FRESCO: u32 = 0x1b73;
 /// `PCI_VENDOR_INTEL`: Intel.
@@ -1547,6 +1551,11 @@ mod tests {
             ("PCI_VENDOR_OPENBSD", PCI_VENDOR_OPENBSD),
             ("PCI_VENDOR_CIRRUS", PCI_VENDOR_CIRRUS),
             ("PCI_VENDOR_QUMRANET", PCI_VENDOR_QUMRANET),
+            ("PCI_VENDOR_QUALCOMM", PCI_VENDOR_QUALCOMM),
+            (
+                "PCI_PRODUCT_QUALCOMM_SC8280XP_PCIE",
+                PCI_PRODUCT_QUALCOMM_SC8280XP_PCIE,
+            ),
             ("PCI_PRODUCT_OPENBSD_CONTROL", PCI_PRODUCT_OPENBSD_CONTROL),
             ("PCI_VENDOR_APPLE", PCI_VENDOR_APPLE),
             ("PCI_PRODUCT_APPLE_NVME1", PCI_PRODUCT_APPLE_NVME1),

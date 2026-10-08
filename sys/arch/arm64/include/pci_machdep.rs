@@ -42,9 +42,9 @@
 //! ## Deviations
 //! - The chipset's members are Rust `fn` pointers; the interrupt mapping functions return
 //!   `Option` (the C's 1 is `None`) and `pc_intr_string` returns its text by value.
-//! - `pci_mcfg_init` and `pci_lookup_segment`, which the header declares and
-//!   `arm64/dev/acpipci.c` defines (ACPI's MCFG table), are not ported: this kernel boots
-//!   arm64 from the device tree (`acpi=off`), where no caller exists.
+//! - `pci_mcfg_init` and `pci_lookup_segment`, which the header declares, are
+//!   `arm64/dev/acpipci.rs`'s (ACPI's MCFG table, M14), reached through the
+//!   `machine::pci_machdep` contract.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;

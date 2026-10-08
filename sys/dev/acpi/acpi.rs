@@ -278,7 +278,7 @@ pub fn fadt(sc: &AcpiSoftc) -> &'static AcpiFadt {
 }
 
 /// The bytes of a table `acpi_maptable` copied, `hdr.length` of them.
-fn q_table_bytes(entry: &AcpiQ) -> &'static [u8] {
+pub fn q_table_bytes(entry: &AcpiQ) -> &'static [u8] {
     let hdr = entry.q_table.cast_const().cast::<u8>();
     // SAFETY: `q_table` is the start of a copy at least as long as its header says (and
     // than a header), never freed.

@@ -787,10 +787,12 @@ impl PciMachdep for Machine {
         (pc.pc_bus_maxdevs)(pc.pc_conf_v, busno)
     }
 
-    fn pci_lookup_segment(_segment: i32, _bus: i32) -> Option<Self::PciChipsetTag> {
-        let _ =
-            crate::unported!("pci_lookup_segment (arm64/dev/acpipci.c, with arm64 ACPI in M14)");
-        None
+    fn pci_lookup_segment(segment: i32, bus: i32) -> Option<Self::PciChipsetTag> {
+        Some(dev::acpipci::pci_lookup_segment(segment, bus))
+    }
+
+    fn pci_mcfg_init(iot: BusSpaceTag, addr: BusAddr, segment: i32, min_bus: i32, max_bus: i32) {
+        dev::acpipci::pci_mcfg_init(iot, addr, segment, min_bus, max_bus)
     }
 
     fn pci_make_tag(pc: Self::PciChipsetTag, bus: i32, device: i32, function: i32) -> Self::Pcitag {
@@ -1040,78 +1042,71 @@ impl crate::machine::isa_machdep::IsaMachdep for Machine {
     }
 }
 
-// arm64's acpi_machdep.c (arch/arm64/dev) comes with M14's EFI ACPI boot (efiacpi.c): until
-// then acpi0 never attaches on arm64, and the methods answer as a machine without ACPI,
-// reporting the gap where a caller could reach it.
+// arm64's acpi_machdep.c (arch/arm64/arm64/acpi_machdep.rs, M14): acpi0 at the device tree
+// node efiboot makes from the UEFI configuration table.
 impl crate::machine::acpi_machdep::AcpiMachdep for Machine {
     const ACPI_PRT: bool = false;
     const ACPI_SECTWO: bool = true;
 
-    fn acpi_map(_pa: Paddr, _len: usize) -> Result<crate::dev::acpi::acpivar::AcpiMemMap, Errno> {
-        Err(crate::unported!("acpi_map (arm64 acpi_machdep.c, M14)"))
+    fn acpi_map(pa: Paddr, len: usize) -> Result<crate::dev::acpi::acpivar::AcpiMemMap, Errno> {
+        arm64::acpi_machdep::acpi_map(pa, len)
     }
 
-    fn acpi_unmap(_handle: &crate::dev::acpi::acpivar::AcpiMemMap) {
-        let _ = crate::unported!("acpi_unmap (arm64 acpi_machdep.c, M14)");
+    fn acpi_unmap(handle: &crate::dev::acpi::acpivar::AcpiMemMap) {
+        arm64::acpi_machdep::acpi_unmap(handle)
     }
 
     unsafe fn acpi_bus_space_map(
-        _t: BusSpaceTag,
-        _addr: BusAddr,
-        _size: BusSize,
-        _flags: i32,
+        t: BusSpaceTag,
+        addr: BusAddr,
+        size: BusSize,
+        flags: i32,
     ) -> Result<BusSpaceHandle, Errno> {
-        Err(crate::unported!(
-            "acpi_bus_space_map (arm64 acpi_machdep.c, M14)"
-        ))
+        // SAFETY: the caller's guarantee, forwarded.
+        unsafe { arm64::acpi_machdep::acpi_bus_space_map(t, addr, size, flags) }
     }
 
-    fn acpi_bus_space_unmap(_t: BusSpaceTag, _bsh: BusSpaceHandle, _size: BusSize) {
-        let _ = crate::unported!("acpi_bus_space_unmap (arm64 acpi_machdep.c, M14)");
+    fn acpi_bus_space_unmap(t: BusSpaceTag, bsh: BusSpaceHandle, size: BusSize) {
+        arm64::acpi_machdep::acpi_bus_space_unmap(t, bsh, size)
     }
 
     fn acpi_intr_establish(
-        _irq: i32,
-        _flags: i32,
-        _level: i32,
-        _handler: fn(*mut c_void) -> i32,
-        _arg: *mut c_void,
-        _what: &'static str,
+        irq: i32,
+        flags: i32,
+        level: i32,
+        handler: fn(*mut c_void) -> i32,
+        arg: *mut c_void,
+        what: &'static str,
     ) -> Option<core::ptr::NonNull<c_void>> {
-        let _ = crate::unported!("acpi_intr_establish (arm64 acpi_machdep.c, M14)");
-        None
+        arm64::acpi_machdep::acpi_intr_establish(irq, flags, level, handler, arg, what)
     }
 
-    unsafe fn acpi_intr_disestablish(_cookie: core::ptr::NonNull<c_void>) {
-        let _ = crate::unported!("acpi_intr_disestablish (arm64 acpi_machdep.c, M14)");
+    unsafe fn acpi_intr_disestablish(cookie: core::ptr::NonNull<c_void>) {
+        // SAFETY: the caller's guarantee, forwarded.
+        unsafe { arm64::acpi_machdep::acpi_intr_disestablish(cookie) }
     }
 
-    fn acpi_attach_machdep(_sc: &'static crate::dev::acpi::acpivar::AcpiSoftc) {
-        let _ = crate::unported!("acpi_attach_machdep (arm64 acpi_machdep.c, M14)");
+    fn acpi_attach_machdep(sc: &'static crate::dev::acpi::acpivar::AcpiSoftc) {
+        arm64::acpi_machdep::acpi_attach_machdep(sc)
     }
 
     unsafe fn acpi_acquire_glk(lock: *mut u32) -> i32 {
-        // SAFETY: the caller's guarantee, forwarded (arm64's acpi_machdep.c has the same
-        // compare and swap).
-        unsafe { crate::machine::acpi_machdep::acpi_glk_cas(lock, true) }
+        arm64::acpi_machdep::acpi_acquire_glk(lock)
     }
 
     unsafe fn acpi_release_glk(lock: *mut u32) -> i32 {
-        // SAFETY: as above.
-        unsafe { crate::machine::acpi_machdep::acpi_glk_cas(lock, false) }
+        arm64::acpi_machdep::acpi_release_glk(lock)
     }
 
     fn acpi_iommu_device_map(
-        _node: &crate::dev::acpi::amltypes::AmlNodeRef,
+        node: &crate::dev::acpi::amltypes::AmlNodeRef,
         dmat: Option<crate::machine::bus::BusDmaTag>,
     ) -> Option<crate::machine::bus::BusDmaTag> {
-        // acpiiort_device_map (acpiiort.c, M14).
-        dmat
+        arm64::acpi_machdep::acpi_iommu_device_map(node, dmat)
     }
 
     fn pwr_action() -> i32 {
-        // arm64's acpi_machdep.c: int pwr_action = 1.
-        1
+        arm64::acpi_machdep::PWR_ACTION
     }
 
     fn ci_acpi_proc_id(ci: &CpuInfo) -> u32 {

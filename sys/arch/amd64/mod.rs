@@ -785,6 +785,10 @@ impl PciMachdep for Machine {
         Some(pci::pci_machdep::pci_lookup_segment(segment, bus))
     }
 
+    fn pci_mcfg_init(iot: BusSpaceTag, addr: BusAddr, segment: i32, min_bus: i32, max_bus: i32) {
+        pci::pci_machdep::pci_mcfg_init(iot, addr, segment, min_bus, max_bus)
+    }
+
     fn pci_make_tag(pc: Self::PciChipsetTag, bus: i32, device: i32, function: i32) -> Self::Pcitag {
         pci::pci_machdep::pci_make_tag(pc, bus, device, function)
     }

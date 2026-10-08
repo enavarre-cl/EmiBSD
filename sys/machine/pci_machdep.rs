@@ -21,7 +21,7 @@ use core::ptr::NonNull;
 use crate::dev::pci::pcivar::{PciAttachArgs, PcibusAttachArgs, Pcireg};
 use crate::kern::subr_prf::{Str, snprintf};
 use crate::machine::Machine;
-use crate::machine::bus::{BusSpaceHandle, BusSpaceTag};
+use crate::machine::bus::{BusAddr, BusSpaceHandle, BusSpaceTag};
 use crate::machine::cpu::CpuInfo;
 use crate::sys::device::Device;
 use crate::sys::errno::Errno;
@@ -95,6 +95,12 @@ pub trait PciMachdep {
     /// configuration access can go through (arm64 without that segment); amd64's NULL is
     /// its one chipset, so amd64 answers `Some`.
     fn pci_lookup_segment(segment: i32, bus: i32) -> Option<Self::PciChipsetTag>;
+
+    /// `pci_mcfg_init(iot, addr, segment, min_bus, max_bus)`: the ECAM window at `addr` of
+    /// buses `min_bus..=max_bus` of PCI segment `segment`, from the ACPI MCFG table
+    /// (`acpimcfg`). amd64 records segment 0's for extended configuration space; arm64 maps
+    /// it and makes the segment's chipset.
+    fn pci_mcfg_init(iot: BusSpaceTag, addr: BusAddr, segment: i32, min_bus: i32, max_bus: i32);
 
     /// `pci_make_tag(pc, bus, device, function)`.
     fn pci_make_tag(pc: Self::PciChipsetTag, bus: i32, device: i32, function: i32) -> Self::Pcitag;
@@ -194,6 +200,11 @@ pub fn pci_bus_maxdevs(pc: PciChipsetTag, busno: i32) -> i32 {
 /// `pci_lookup_segment` on the selected machine.
 pub fn pci_lookup_segment(segment: i32, bus: i32) -> Option<PciChipsetTag> {
     Machine::pci_lookup_segment(segment, bus)
+}
+
+/// `pci_mcfg_init` on the selected machine.
+pub fn pci_mcfg_init(iot: BusSpaceTag, addr: BusAddr, segment: i32, min_bus: i32, max_bus: i32) {
+    Machine::pci_mcfg_init(iot, addr, segment, min_bus, max_bus)
 }
 
 /// `pci_make_tag` on the selected machine.

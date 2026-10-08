@@ -2,11 +2,11 @@
 //! `acpi_machdep.c` defines for `acpi(4)` (`dev/acpi/acpi.c`, `dsdt.c` and the ACPI
 //! drivers) to call.
 //!
-//! amd64 implements it (`arch/amd64/amd64/acpi_machdep.c`, acpi0 at bios0). arm64's
-//! `acpi_machdep.c` (`arch/arm64/dev`) comes with M14's EFI ACPI boot; until then arm64
-//! never attaches acpi0, and its methods are visible stubs that answer as a machine
-//! without ACPI. The host double answers the same way, with the global lock's compare and
-//! swap kept so the interpreter's tests see a working lock.
+//! amd64 implements it (`arch/amd64/amd64/acpi_machdep.c`, acpi0 at bios0), and arm64
+//! since M14 (`arch/arm64/arm64/acpi_machdep.c`, acpi0 at the device tree node efiboot
+//! makes from the UEFI ACPI tables; no global lock). The host double answers as a machine
+//! without ACPI, with the global lock's compare and swap kept so the interpreter's tests see
+//! a working lock.
 //!
 //! Two members are not functions in C: `pwr_action` (the global the power button
 //! consults, defined by amd64's `machdep.c` and arm64's `acpi_machdep.c`) and

@@ -804,6 +804,22 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   `cpu_info` as context: it brings the MMU up on the identity map and the kernel's
   `TTBR1_EL1` (`cpu.rs`'s `AP_TTBR1`, cleaned to memory first) and enters
   `cpu_hatch_entry` on the processor's kernel stack.
+- ACPI (M14, the user's decision of 2026-10-08: the install media must boot an ACPI
+  machine too): on `virt,acpi=on` EDK2 hands efiboot ACPI tables and no device tree, and
+  efiboot's `efiacpi` builds one from them (the GIC and its MSI frame, the generic timer,
+  PSCI, the CPUs from the MADT, the SPCR's UART as `/serial`, left disabled, and an
+  `openbsd,acpi-5.0` node whose `reg` is the RSDP). The kernel attaches what that tree
+  names as on `acpi=off`, then acpi0 at the ACPI node (`arm64/acpi_machdep.rs`'s
+  `acpi_fdt` attachment, as `files.arm64` has it): `acpimcfg` maps the ECAM window
+  (`pci_mcfg_init`, a `machine::pci_machdep` method that amd64 implements too),
+  `acpiiort` reads the IORT, `acpipci` attaches the `PNP0A08` host bridge with bus spaces
+  that translate its `_CRS` windows and MSI through the GICv2m frame (the requester ID
+  mapped by the IORT), and `pluart` attaches at acpi0 (`ARMH0011`) and is the console when
+  the SPCR names its address. Interrupts that ACPI describes go to the controller with
+  phandle 1, which efiacpi gives the GIC. The PCI virtio disk then holds the root, found by
+  its DUID. `just smoke-acpi` boots this way; the extents acpipci fills (`subr_extent.rs`)
+  are not handed to the PCI bus yet (`pcivar.rs` has no extent members), so a BAR the
+  firmware left unassigned would not be placed (EDK2 assigns them all).
 
 ## Deviations from OpenBSD (deliberate)
 

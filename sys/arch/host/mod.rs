@@ -978,6 +978,16 @@ impl PciMachdep for Machine {
         Some(HostPciChipset)
     }
 
+    fn pci_mcfg_init(
+        _iot: crate::machine::bus::BusSpaceTag,
+        _addr: BusAddr,
+        _segment: i32,
+        _min_bus: i32,
+        _max_bus: i32,
+    ) {
+        // The host double's configuration space is HostPcitag-addressed: no window to keep.
+    }
+
     fn pci_make_tag(_pc: HostPciChipset, bus: i32, device: i32, function: i32) -> HostPcitag {
         HostPcitag {
             bus,
