@@ -1483,12 +1483,14 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   `Probe` passed down, which is what lets the host tests run the identification rules on fake
   register files. Both controllers clear the transfer's buffer pointer when an exec call
   returns, so a late interrupt after a timeout cannot write into a buffer that is gone. EDK2
-  leaves the ICH SMBus host controller disabled (a BIOS enables it), where `ichiic_attach`
-  only reports `SMBus disabled`; it enables it first, as FreeBSD's `ichsmb(4)` and Linux's
-  `i2c-i801` do, because otherwise the controller never answers under the firmware this kernel
-  boots from. QEMU's SPD EEPROMs are blank (the memory type, register 2, reads 0), so
-  `iic_probe_eeprom` names none and the scan prints nothing on either machine: `smoke-iic`
-  checks the attach lines and that no transfer fails. `--machine pc` (xtask, `hwopts.rs`) runs
+  leaves the ICH SMBus host controller disabled (a BIOS enables it), and `ichiic_attach` does
+  what the C does: it prints `SMBus disabled` and stops, as OpenBSD 8.0 does on the same
+  q35/OVMF machine (`ichiic0 at pci0 dev 31 function 3 "Intel 82801I SMBus" rev 0x02: SMBus
+  disabled`, `cargo xtask diff-openbsd probe`; the user's decision of 2026-10-08, after a
+  first port that enabled it). On `--machine pc` piixpm(4) finds its controller enabled and
+  runs the scan. QEMU's SPD EEPROMs are blank (the memory type, register 2, reads 0), so
+  `iic_probe_eeprom` names none and the scan prints nothing: `smoke-iic` checks the attach
+  lines and that no transfer fails. `--machine pc` (xtask, `hwopts.rs`) runs
   i440fx's `pc` for piixpm(4), with the boot image on an `ich9-ahci` instead of the PIIX3 IDE
   channel (EDK2 reads that one with programmed I/O, minutes for the boot files).
 - virtio (M7b): `dev/pv/virtio.c` and its headers are OpenBSD's, with both transports:
