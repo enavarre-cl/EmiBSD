@@ -14,6 +14,11 @@
 //! serial console until the installer says `CONGRATULATIONS!` and reboots. A second boot of
 //! the plain `bsd.rd` then mounts the new disk read-only and lists what the installer put on
 //! it. `install-boot` boots that disk through the loader the installer put on it (efiboot).
+//!
+//! With `--acpi` (arm64, `hwopts.rs`) both run on `virt,acpi=on`, the disks on the PCI bus:
+//! the media's disk is then probed first and is `sd0`, the fresh disk `sd1` ([`target_sd`]).
+//! Their logs and the answering `bsd.rd` go to `target/install/arm64/acpi`
+//! ([`work_dir`]), so the two arm64 runs keep theirs apart.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -31,6 +36,50 @@ const TARGET_DISK_BYTES: u64 = 3 << 30;
 /// `target/install/<arch>`: everything the install run uses.
 pub(crate) fn install_dir(root: &Path, arch: Arch) -> PathBuf {
     root.join("target").join("install").join(arch.name())
+}
+
+/// Where a run keeps its logs and the `bsd.rd` with the answers: [`install_dir`], or its
+/// `acpi` subdirectory for an `--acpi` run (arm64), so the two arm64 runs keep theirs apart.
+fn work_dir(root: &Path, arch: Arch) -> PathBuf {
+    let dir = install_dir(root, arch);
+    if acpi_run(arch) {
+        dir.join("acpi")
+    } else {
+        dir
+    }
+}
+
+/// Whether this is an arm64 run on `virt,acpi=on` (`--acpi`).
+fn acpi_run(arch: Arch) -> bool {
+    arch == Arch::Arm64 && crate::hwopts::acpi()
+}
+
+/// The fresh disk's unit, the one the system is installed on. `sd0` (the install media's
+/// own disk is `sd1`): amd64 probes the virtio-blk PCI functions in the order QEMU is given
+/// them, the media last, and arm64 `virt` without ACPI hands virtio-mmio slots out top-down
+/// to a kernel that finds them bottom-up, so the disk given last is `sd0`. With `--acpi` the
+/// arm64 disks are PCI functions too, probed in slot order: the media's disk, given first,
+/// is `sd0`, the fresh disk `sd1`. The answers are written before the boot, so the run then
+/// checks the kernel's attach line ([`target_attach`]) against this.
+fn target_sd(arch: Arch) -> &'static str {
+    if acpi_run(arch) { "sd1" } else { "sd0" }
+}
+
+/// The kernel's attach line for the 3 GiB fresh disk at `unit`: `sd1: 3072MB, ...`.
+fn target_attach(unit: &str) -> String {
+    format!("{unit}: {}MB,", TARGET_DISK_BYTES >> 20)
+}
+
+/// The other unit of the two (`sd0` <-> `sd1`): the fresh disk attached there means the
+/// order [`target_sd`] assumes is wrong, and the installer would wipe the media's disk.
+fn other_sd(unit: &str) -> &'static str {
+    if unit == "sd0" { "sd1" } else { "sd0" }
+}
+
+/// The recipe that runs `what` for `arch` (`smoke-install-arm64-acpi` for an `--acpi` run).
+fn recipe(what: &str, arch: Arch) -> String {
+    let acpi = if acpi_run(arch) { "-acpi" } else { "" };
+    format!("{what}-{}{acpi}", arch.name())
 }
 
 /// The value after `name`, if present.
@@ -109,7 +158,7 @@ pub(crate) fn install_media(root: &Path, args: &[&str]) -> Result<()> {
 
 /// The answers of the autoinstall run (`install.sub`'s questions, in the order it asks them;
 /// a question matches an answer by the text before its `?`). `port` is the HTTP server's.
-fn auto_install_conf(port: u16) -> String {
+fn auto_install_conf(port: u16, root_disk: &str) -> String {
     let server = format!("10.0.2.2:{port}");
     let answers = [
         ("System hostname", "emibsd".to_string()),
@@ -128,7 +177,7 @@ fn auto_install_conf(port: u16) -> String {
         ("Which speed should com0 use", "115200".to_string()),
         ("Setup a user", "no".to_string()),
         ("What timezone are you in", "UTC".to_string()),
-        ("Which disk is the root disk", "sd0".to_string()),
+        ("Which disk is the root disk", root_disk.to_string()),
         // amd64's md_prep_fdisk (a GPT with an EFI system partition, as on a UEFI PC).
         (
             "Use (W)hole disk MBR, whole disk (G)PT or (E)dit",
@@ -229,6 +278,9 @@ pub(crate) fn install(root: &Path, args: &[&str]) -> Result<()> {
     let arch = arch_of(args)?;
     let rd_kernel = PathBuf::from(opt(args, "--rd-kernel").ok_or("missing `--rd-kernel FILE`")?);
     let dir = install_dir(root, arch);
+    let work = work_dir(root, arch);
+    fs::create_dir_all(&work).map_err(|e| format!("{}: {e}", work.display()))?;
+    let sd = target_sd(arch);
     let sets = crate::userland::sets::sets_dir(root, arch);
     need(
         &sets.join("SHA256.sig"),
@@ -251,21 +303,21 @@ pub(crate) fn install(root: &Path, args: &[&str]) -> Result<()> {
         need(
             &target_disk(root, arch),
             "installed disk",
-            &format!("smoke-install-{}", arch.name()),
+            &recipe("smoke-install", arch),
         )?;
-        return check_disk(root, arch, &sets.join("bsd.rd"), &disks, &dir);
+        return check_disk(root, arch, &sets.join("bsd.rd"), &disks, &work);
     }
 
     // The server, the answers, and the install kernel whose ramdisk holds them.
     fs::write(dir.join("disklabel.tmpl"), DISKLABEL_TEMPLATE)
         .map_err(|e| format!("{}: {e}", dir.display()))?;
     let server = Server::start(&dir)?;
-    let conf = auto_install_conf(server.port);
-    let auto = dir.join("bsd.rd.auto");
+    let conf = auto_install_conf(server.port, sd);
+    let auto = work.join("bsd.rd.auto");
     crate::userland::with_ctx(root, arch, |ctx| {
         use crate::userland::{miniroot, sets};
         let pubkey = sets::test_pubkey(ctx)?;
-        let image = dir.join("miniroot-auto.ffs");
+        let image = work.join("miniroot-auto.ffs");
         miniroot::build(
             ctx,
             arch,
@@ -278,7 +330,7 @@ pub(crate) fn install(root: &Path, args: &[&str]) -> Result<()> {
         miniroot::make_bsd_rd(ctx, &rd_kernel, &image, &auto)
     })?;
 
-    // The fresh disk: sd0 on both architectures (the install media's own disk is sd1).
+    // The fresh disk: `sd` (sd0, or sd1 on arm64 with ACPI; the media's disk is the other).
     let disk = target_disk(root, arch);
     let _ = fs::remove_file(&disk);
     if let Some(parent) = disk.parent() {
@@ -292,16 +344,32 @@ pub(crate) fn install(root: &Path, args: &[&str]) -> Result<()> {
     // Run 1: the installer.
     let (image, prompts) = boot_media(root, arch, &auto)?;
     let cmd = boot::qemu_command(root, arch, &image, "stdio", None, &disks)?;
-    let log = dir.join("install.log");
+    let log = work.join("install.log");
     let mut vm = Vm::spawn(&format!("install-{}", arch.name()), cmd, log.clone())?;
+    // The fresh disk at the other unit: stop before the installer wipes the media's disk.
+    let wrong = target_attach(other_sd(sd));
+    let mut failures = FAILURES.to_vec();
+    failures.push(&wrong);
     vm.respond(
         prompts,
-        FAILURES,
+        &failures,
         &[Stop::Exited],
         boot::time_limit(Duration::from_secs(3600)),
     )?;
     let transcript = vm.text();
     drop(vm);
+    // The fresh disk attached as `sd`, and the installer's root disk is it.
+    let root_disk = transcript.lines().any(|l| {
+        l.starts_with("Which disk is the root disk?") && l.trim_end().ends_with(&format!(" {sd}"))
+    });
+    if !transcript.contains(&target_attach(sd)) || !root_disk {
+        return Err(format!(
+            "install {}: the fresh disk is not {sd}, or not the root disk (log: {})",
+            arch.name(),
+            log.display()
+        )
+        .into());
+    }
     for line in [
         "Starting non-interactive mode in 5 seconds",
         "Performing non-interactive install",
@@ -327,7 +395,7 @@ pub(crate) fn install(root: &Path, args: &[&str]) -> Result<()> {
     );
 
     // Run 2: look at what it made, from the plain bsd.rd.
-    check_disk(root, arch, &sets.join("bsd.rd"), &disks, &dir)?;
+    check_disk(root, arch, &sets.join("bsd.rd"), &disks, &work)?;
     println!(
         "xtask: install {}: ok in {:.0}s ({})",
         arch.name(),
@@ -354,6 +422,15 @@ fn check_disk(root: &Path, arch: Arch, bsd_rd: &Path, disks: &Disks<'_>, dir: &P
         vm.send(answer)?;
     }
     vm.wait_for("(I)nstall, (U)pgrade, (A)utoinstall or (S)hell?", limit)?;
+    let sd = target_sd(arch);
+    if !vm.text().contains(&target_attach(sd)) {
+        return Err(format!(
+            "install {}: the installed disk did not attach as {sd} (log: {})",
+            arch.name(),
+            dir.join("check.log").display()
+        )
+        .into());
+    }
     vm.send("s\n")?;
     vm.wait_for("# ", limit)?;
     // The EFI system partition is `i` on both (amd64's GPT, arm64's MBR `C` partition).
@@ -367,12 +444,12 @@ fn check_disk(root: &Path, arch: Arch, bsd_rd: &Path, disks: &Disks<'_>, dir: &P
     // The ramdisk's /dev has no node for the new disk: install.sub makes them with MAKEDEV
     // as it needs them, and so does the check.
     let script = format!(
-        "cd /dev && sh MAKEDEV sd0 && cd / && disklabel sd0 && \
-         mount -r /dev/sd0a /mnt && ls -l /mnt/bsd /mnt/bsd.sp /mnt/usr/bin/cc /mnt/etc/rc \
+        "cd /dev && sh MAKEDEV {sd} && cd / && disklabel {sd} && \
+         mount -r /dev/{sd}a /mnt && ls -l /mnt/bsd /mnt/bsd.sp /mnt/usr/bin/cc /mnt/etc/rc \
          /mnt/usr/libexec/ld.so /mnt/usr/lib/libc.so.104.0 /mnt/etc/fstab{boot_conf} && \
          cat /mnt/etc/fstab{boot_conf} && echo check-root-$((40+2)); \
-         mount_msdos -o ro /dev/sd0{efi_part} /mnt2 && ls -lR /mnt2/efi && echo check-esp-$((40+2)); \
-         umount /mnt2; umount /mnt; fsck_ffs -n /dev/rsd0a && echo check-fsck-$((40+2)); \
+         mount_msdos -o ro /dev/{sd}{efi_part} /mnt2 && ls -lR /mnt2/efi && echo check-esp-$((40+2)); \
+         umount /mnt2; umount /mnt; fsck_ffs -n /dev/r{sd}a && echo check-fsck-$((40+2)); \
          echo check-$((6*7))-done\n"
     );
     vm.send(&script)?;
@@ -416,15 +493,11 @@ fn wait_unless(vm: &mut Vm, pat: &str, fails: &[&str], limit: Duration) -> Resul
 /// `cargo xtask install-boot --arch A`: boots the installed disk through the boot loader
 /// the installer put on it, to `login:`, logs in and compiles and runs a program with the
 /// installed `cc`. The disk is the boot disk of the VM (the loader finds the root by the
-/// disk's DUID, as on OpenBSD).
+/// disk's DUID, as on OpenBSD; with `--acpi` it is `sd0` there, the fresh one `sd1`).
 pub(crate) fn install_boot(root: &Path, args: &[&str]) -> Result<()> {
     let arch = arch_of(args)?;
     let disk = target_disk(root, arch);
-    need(
-        &disk,
-        "installed disk",
-        &format!("smoke-install-{}", arch.name()),
-    )?;
+    need(&disk, "installed disk", &recipe("smoke-install", arch))?;
     let boot_image = boot::image_path(root, arch, None);
     let _ = fs::remove_file(&boot_image);
     fs::copy(&disk, &boot_image).map_err(|e| format!("{}: {e}", boot_image.display()))?;
@@ -443,7 +516,7 @@ pub(crate) fn install_boot(root: &Path, args: &[&str]) -> Result<()> {
     let mut vm = Vm::spawn(
         &format!("boot-{}", arch.name()),
         cmd,
-        install_dir(root, arch).join("boot.log"),
+        work_dir(root, arch).join("boot.log"),
     )?;
     let limit = boot::time_limit(Duration::from_secs(900));
     wait_unless(&mut vm, "login:", BOOT_FAILURES, limit)?;
@@ -471,4 +544,22 @@ pub(crate) fn install_boot(root: &Path, args: &[&str]) -> Result<()> {
     )?;
     println!("xtask: install-boot {}: ok", arch.name());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn root_disk_answer_and_attach_line() {
+        let conf = auto_install_conf(8080, "sd1");
+        assert!(conf.contains("Which disk is the root disk = sd1\n"));
+        assert!(conf.contains("HTTP Server = 10.0.2.2:8080\n"));
+        // The kernel's line for the fresh disk (sd(4)'s attach, as the install log shows it).
+        let line = "sd1: 3072MB, 512 bytes/sector, 6291456 sectors";
+        assert!(line.starts_with(&target_attach("sd1")));
+        assert!(!line.starts_with(&target_attach("sd0")));
+        assert_eq!(other_sd("sd0"), "sd1");
+        assert_eq!(other_sd("sd1"), "sd0");
+    }
 }

@@ -2275,7 +2275,7 @@ install-media-arm64: build-bsdrd-arm64 (build-arm64 "--features qemu,multiproces
 # `fsck_ffs -n`. Not in `smokes`: about 3.5 minutes on amd64 once the media are made (the
 # installer alone 2.5 to 3, most of it extracting the sets under TCG), and making the media
 # takes minutes more (docs/ARCHITECTURE.md). Needs `just userland` and `just comp`.
-smoke-install: smoke-install-amd64 smoke-install-arm64
+smoke-install: smoke-install-amd64 smoke-install-arm64 smoke-install-arm64-acpi
 
 smoke-install-amd64: install-media-amd64
     EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install {{smp}} --arch amd64 --rd-kernel target/bsdrd/{{amd64}}/debug/bsd
@@ -2293,5 +2293,19 @@ smoke-install-boot-amd64:
 
 smoke-install-boot-arm64:
     EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install-boot {{smp}} --arch arm64
+
+# The same two arm64 runs on `virt,acpi=on` (`--acpi`, as `smoke-acpi`): the installer's VM,
+# the check boot and the installed system's VM get ACPI tables and no device tree, the disks
+# and vio0 on the PCI bus. The media's disk is then `sd0` and the fresh disk `sd1` (install.rs,
+# `target_sd`). Own run directory (`target/smoke/smoke-install-acpi`) and logs
+# (`target/install/arm64/acpi/`), so the acpi=off disk and logs stay; the two arm64 install runs
+# share the miniroot's staging and run one after the other. Not in `smokes`: the install about
+# 2.5 minutes once the media are made (the installer 2.5, 3.5 with the media), the boot half a
+# minute (2026-10-08).
+smoke-install-arm64-acpi: install-media-arm64
+    EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install-acpi} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install {{smp}} --arch arm64 --acpi --rd-kernel target/bsdrd/{{arm64}}/debug/bsd
+
+smoke-install-boot-arm64-acpi:
+    EMIBSD_RUN_DIR=${EMIBSD_RUN_DIR:-target/smoke/smoke-install-acpi} EMIBSD_TIMEOUT_SCALE=${EMIBSD_TIMEOUT_SCALE:-5} cargo xtask install-boot {{smp}} --arch arm64 --acpi
 
 ci: fmt clippy test build smoke check-ports check-syscalls

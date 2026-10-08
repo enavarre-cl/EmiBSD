@@ -637,6 +637,12 @@ boot(8)'s DUID, `/etc/rc` from the base set runs (fsck, pf, the network, rc.firs
 `login:`, root logs in and `cc hello.c && ./a.out` prints `hello from cc 42` (the source is
 written with ksh's `print -r`: base has no printf(1) yet).
 
+On an ACPI arm64 machine (`just smoke-install-arm64-acpi`, `smoke-install-boot-arm64-acpi`:
+both runs with `--acpi`, QEMU `virt,acpi=on`, the disks and vio0 on PCI) the same media install
+and boot; there the media's disk is probed first and is `sd0`, so the answers name the fresh
+disk `sd1` (`install.rs`, `target_sd`, checked against the kernel's `sd1: 3072MB` line), with
+the run's disks in `target/smoke/smoke-install-acpi` and its logs in `target/install/arm64/acpi`.
+
 Status (2026-10-05): both architectures pass both (`smoke-install-amd64` about 3 minutes with
 the media already made, the installer itself 2.5; arm64 about 4.5, the installer 4;
 `smoke-install-boot-<arch>` under a minute each). What the installed system lacks shows in
