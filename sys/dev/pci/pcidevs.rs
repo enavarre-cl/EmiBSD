@@ -52,7 +52,7 @@
 //! - Partial: only the IDs some ported file names are present (`pci.c`'s `pci_set_powerstate`,
 //!   `pci_quirks.c`, `virtio_pci.c`, `nvme_pci.c`, `ahci_pci.c`, `xhci_pci.c`, `auich.c`,
 //!   `azalia.c`, `azalia_codec.c`, `siop_pci_common.c`, `if_em.c`, `if_re_pci.c`,
-//!   `if_vmx.c`, `vga_pci.c` and arm64's `acpipci.c`). The whole header, and `pcidevs_data.h` for
+//!   `if_vmx.c`, `vga_pci.c`, `ppb.c` and arm64's `acpipci.c`). The whole header, and `pcidevs_data.h` for
 //!   `PCIVERBOSE`, wait for a generator in `tools/xtask` in the manner of `gen-syscalls`
 //!   (`docs/ARCHITECTURE.md`).
 //! - The IDs are `u32`, the type `pci_vendor`/`pci_product` return.
@@ -1539,6 +1539,16 @@ pub const PCI_PRODUCT_INTEL_GMA600_8: u32 = 0x4108;
 pub const PCI_PRODUCT_INTEL_MDFLD_IGD_0: u32 = 0x0130;
 /// `PCI_PRODUCT_INTEL_GMA3600_0`: GMA 3600.
 pub const PCI_PRODUCT_INTEL_GMA3600_0: u32 = 0x0be0;
+/// `PCI_VENDOR_SUN`: Sun.
+pub const PCI_VENDOR_SUN: u32 = 0x108e;
+/// `PCI_PRODUCT_SUN_SIMBA`: Simba.
+pub const PCI_PRODUCT_SUN_SIMBA: u32 = 0x5000;
+/// `PCI_PRODUCT_INTEL_82801BAM_HPB`: 82801BAM Hub-to-PCI.
+pub const PCI_PRODUCT_INTEL_82801BAM_HPB: u32 = 0x2448;
+/// `PCI_PRODUCT_INTEL_82801BA_HPB`: 82801BA Hub-to-PCI.
+pub const PCI_PRODUCT_INTEL_82801BA_HPB: u32 = 0x244e;
+/// `PCI_PRODUCT_VIATECH_VT82C586_PWR`: VT82C586 Power.
+pub const PCI_PRODUCT_VIATECH_VT82C586_PWR: u32 = 0x3040;
 /* </CODE> */
 
 /* <TESTS> */
@@ -1552,6 +1562,20 @@ mod tests {
         let defs = crate::reftest::defines("sys/dev/pci/pcidevs.h");
         for (name, value) in [
             ("PCI_VENDOR_OPENBSD", PCI_VENDOR_OPENBSD),
+            ("PCI_VENDOR_SUN", PCI_VENDOR_SUN),
+            ("PCI_PRODUCT_SUN_SIMBA", PCI_PRODUCT_SUN_SIMBA),
+            (
+                "PCI_PRODUCT_INTEL_82801BAM_HPB",
+                PCI_PRODUCT_INTEL_82801BAM_HPB,
+            ),
+            (
+                "PCI_PRODUCT_INTEL_82801BA_HPB",
+                PCI_PRODUCT_INTEL_82801BA_HPB,
+            ),
+            (
+                "PCI_PRODUCT_VIATECH_VT82C586_PWR",
+                PCI_PRODUCT_VIATECH_VT82C586_PWR,
+            ),
             ("PCI_VENDOR_CIRRUS", PCI_VENDOR_CIRRUS),
             ("PCI_VENDOR_QUMRANET", PCI_VENDOR_QUMRANET),
             ("PCI_VENDOR_QUALCOMM", PCI_VENDOR_QUALCOMM),

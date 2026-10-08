@@ -1233,6 +1233,20 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   `lapic_calibrate_timer`) and mainbus maps the LAPIC at its architectural base (with ACPI,
   `acpimadt` does both from the MADT, M13). Adding a driver means its
   `cfattach`/`cfdriver` and one `Cfdata` row in each `ioconf.rs` that has it in GENERIC.
+- UKC, `boot -c` (M16e): `kern/subr_userconf.c` edits `ioconf.c`'s tables before
+  autoconfiguration, so they cannot be immutable statics. Each `ioconf.rs` keeps `CFDATA`,
+  `CFROOTS` and `PDEVINIT` in `StaticCell`s: `cpu_startup` (both archs, as the C's machdep.c)
+  calls `user_config` when `boothowto` has `RB_CONFIG`, which takes them once through
+  `machine::autoconf::ioconf_mut` before anything reads them; afterwards `cfdata()` hands out
+  shared slices as before. `cfdata[]` ends in `config(8)`'s eight free slots
+  (`Cfdata::free()`, whose `cf_attach` is `CFATTACH_NULL`, the C's NULL) for UKC's `add`, and
+  `machine::autoconf::ioconf_cfdata` cuts them off as the C's loops stop at a NULL
+  `cf_attach`. The tables also carry `LOCNAMES`, `LOCNAMP` (one run per locator attribute,
+  the compression `mkioconf.c`'s XXX asks for) and `PDEVNAMES`, and every entry its
+  `cf_locnames`; an entry with locators and `cf_locnames` 0 prints none of them in UKC (and
+  fails a `kassert!` under `diagnostic`). `cf_loc` and `cf_parents` stay `&'static` slices of
+  constants: UKC's `change` and `add` replace them with `malloc`ed copies instead of writing
+  into them. The option is the default cargo feature `boot_config` (`option BOOT_CONFIG`).
 - ACPI (M13, amd64): `acpi0 at bios0 at mainbus0`, as in GENERIC. bios0 (`bios.c`) gets the
   RSDP from Limine's RSDP request (`BootInfo::rsdp`, kept by `init_x86_64` as
   `BIOS_EFIINFO_CONFIG_ACPI`, the C's `bios_efiinfo->config_acpi`), so `acpi_probe` finds it
@@ -1439,7 +1453,15 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   `simplebus_attach` as in C; `arm_intr_establish_fdt_msi`), loading the doorbell into a
   DMA map and programming the function with `arm64/pci_machdep.c`. The extents are absent
   there too, so BARs must be assigned by the firmware (EDK2 does). `virtio* at pci?` is
-  configured on arm64 as in GENERIC. Memory BARs are mapped by amd64's `bus_space.c` memory half (`x86_mem_add_mapping`:
+  configured on arm64 as in GENERIC. PCI-PCI bridges (M16e, `ppb.c`, both archs): with no
+  extents, a bridge needs its bus numbers and windows from the firmware too (EDK2 and OVMF
+  number QEMU's `pcie-root-port` and `pci-bridge`); `ppb_alloc_busrange` and
+  `ppb_alloc_resources` are ported over the extents they are given (`ParentExtents`), all
+  `None`. The bridge's four INTx handles reach the bus behind it as `pba_bridgeih`, a slice
+  of `Option`s: `None` is the C's unmapped handle (`line = -1` on amd64, `PCI_NONE` on arm64),
+  so generic code needs no arch encoding of failure. `PCITAG_NODE` (the FDT `bus-range`) and
+  the `PCI_IO_START`/`PCI_MEM_START` bounds are `machine::pci_machdep` items (0 and ppb.c's
+  defaults where the arch's header sets none). Memory BARs are mapped by amd64's `bus_space.c` memory half (`x86_mem_add_mapping`:
   `km_alloc(kv_any, kp_none)` and uncached `pmap_kenter_pa`, as the C does).
 - virtio (M7b): `dev/pv/virtio.c` and its headers are OpenBSD's, with both transports:
   `virtio_pci.c` (`virtio* at pci?`, amd64; QEMU's transitional virtio-net-pci attaches with

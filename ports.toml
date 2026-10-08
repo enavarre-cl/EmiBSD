@@ -3000,6 +3000,15 @@ upstream_blob = "5120a3729e5f853f793e4aa7b68a0e20eb6c4503"
 deps = ["sys/sys/device.h", "sys/kern/kern_malloc.c", "sys/kern/kern_synch.c", "sys/kern/kern_lock.c"]
 notes = "M7b: the whole file: autoconf_verbose, struct matchinfo, mapply, config_init, config_search, config_scan, config_rootsearch, msgs[], config_found_sm (and the config_found macro), config_rootfound, config_attach, config_make_softc, config_detach, config_deactivate, config_defer, config_mountroot, config_process_deferred_children/_mountroot, config_pending_incr/decr, config_detach_children, config_suspend, config_suspend_all, config_activate_children, device_lookup, device_mainbus, device_mpath, device_ref/unref, alldevs, config_pending, autoconf_attdet(_mtx), autoconf_serial (an AtomicI32, the C's int, since kern_sysctl.c reports it); cfdata[]/cfroots[]/mainbus_cd/device_register come from machine::autoconf (hand-written ioconf.rs); config_attach tells a softc match from a cfdata match by the CfMatch variant; NonNull<Device> where the C may free (config_detach and device_unref are unsafe); hotplug_device_attach/detach reported when not cold (GENERIC has hotplug(4), dev/hotplug.c is not ported); NMPATH 0 (mpath(4) is in no ioconf.rs, device_mpath is None); rootvp is always NULL (no VFS), so config_mountroot always queues; the C's store to the terminating cfdata entry in config_detach is not made; host tests over a test ioconf (root and starred child, indirect parent, not-configured print, detach and unit reuse, device_lookup, config_defer/config_mountroot, suspend failure and resume)"
 
+
+[[file]]
+c = "sys/kern/subr_userconf.c"
+rust = "sys/kern/subr_userconf.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9e20e11c52274f26fb73faadf33f218a686238aa"
+deps = ["sys/sys/device.h", "sys/kern/subr_autoconf.c", "sys/lib/libkern/getsn.c", "sys/dev/cons.c"]
+notes = "M16e: the whole file (UKC, boot -c: add, base, change, ddb, disable, enable, exit, find, help, list, lines, quit, show, verbose, the history), behind feature boot_config (option BOOT_CONFIG, default); called from both cpu_startups on RB_CONFIG as machdep.c does; the userconf_* globals are a Userconf over machine::autoconf::IoconfTables (ioconf.rs tables in StaticCells, eight Cfdata::free slots, LOCNAMES/LOCNAMP per attribute, PDEVNAMES) and a UkcCons console; change edits a malloc copy of the constant cf_loc, add renumbers parent vectors in copies (out of memory before anything moves); negative devnos are Unknown devno; host tests for every command; smoke-ukc both archs"
 [[file]]
 c = "sys/arch/amd64/amd64/mainbus.c"
 rust = "sys/arch/amd64/amd64/mainbus.rs"
@@ -3991,6 +4000,14 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "b7274f2bee404ab3067740fb8c8b75770bcb22eb"
 notes = "ffs: skpc over a slice; table-driven test"
+
+[[file]]
+c = "sys/lib/libkern/getsn.c"
+rust = "sys/lib/libkern/getsn.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4342c1024a6f1a846d412117434508c97d3f5373"
+notes = "M16e: getsn over a slice; the console (cngetc, the echo's printf) is a GetsnCons argument since libkern is a leaf; a zero-length buffer stores nothing; table-driven tests (echo, backspace/DEL, ^U, tab, bell, full buffer)"
 
 [[file]]
 c = "sys/crypto/siphash.h"
@@ -11296,8 +11313,10 @@ notes = "M16: smmu at acpi (IORT)"
 [[file]]
 c = "sys/dev/pci/ppb.c"
 rust = "sys/dev/pci/ppb.rs"
-status = "todo"
-notes = "M16: ppb(4) PCI-PCI bridges; criterion: devices behind QEMU's pcie-root-port and pci-bridge attach and work, both archs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "49edbc517b31f47efe6004e06b8c9c7965db78af"
+notes = "M16e: the whole file (ppbmatch, ppbattach with PCIe hot plug, ppbdetach, ppbactivate, ppb_alloc_busrange with the FDT bus-range, ppb_alloc_resources, ppb_intr, the hotplug tasks, ppbprint); ppb* at pci? and pci* at ppb? in both ioconfs; the parent's extents (pa_*ex) are NULL in this kernel (pci_init_extents unported, pcivar has no extent members), so ppb_alloc_busrange is never called and ppb_alloc_resources returns at its pa_memex test (both ported over a ParentExtents argument, all None); the bridge's own extents are made but cannot reach the child bus; sc_ih holds Option handles (pba_bridgeih is a slice of Option, None the C's line -1 / PCI_NONE); pins written into a copy of the attach args; ppb_hotplug_insert returns on a NULL sc_psc; new machine contract: pcitag_node, PCI_IO/MEM_START/END; host tests (match, window registers); smoke-ppb both archs (pcie-root-port and pci-bridge disks, xtask --pci-bridges)"
 
 [[file]]
 c = "sys/dev/ic/ufshcireg.h"

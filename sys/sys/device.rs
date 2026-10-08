@@ -68,7 +68,9 @@
 //!   or, below an indirect (`CD_INDIRECT`) parent, a preallocated softc, is the enum
 //!   [`CfMatch`].
 //! - `cfdata[]` and `cfroots[]` are slices without the C's terminating entry (a NULL
-//!   `cf_driver`, a `-1` root); `cf_parents` and `cf_loc` are slices too.
+//!   `cf_driver`, a `-1` root); `cf_parents` and `cf_loc` are slices too. `config(8)`'s free
+//!   `{0}` slots are [`Cfdata::free`] entries, whose attachment and driver are the statics
+//!   [`CFATTACH_NULL`] and [`CFDRIVER_NULL`] instead of NULL.
 //! - `cd_devs` holds `Option<NonNull<Device>>` slots (the C's `void *`), read through
 //!   [`Cfdriver::cd_dev`]; `dv_ref` is atomic, as `atomic_inc_int` makes it in C.
 //! - Fields autoconfiguration changes after boot (`cf_unit`, `cf_fstate`, `cd_devs`,
@@ -303,6 +305,35 @@ impl Cfdata {
             cf_starunit1,
         }
     }
+
+    /// `{0}`: a free slot, of the eight `config(8)` writes at the end of `cfdata[]` for UKC's
+    /// `add` (`boot -c`, `kern/subr_userconf.c`). Its attachment is [`CFATTACH_NULL`], the C's
+    /// NULL `cf_attach`.
+    pub const fn free() -> Self {
+        Self::new(&CFATTACH_NULL, &CFDRIVER_NULL, 0, 0, &[], 0, &[], 0, 0)
+    }
+
+    /// `cf_attach == NULL`: a free slot, where the C's walks of `cfdata[]` stop.
+    pub fn is_free(&self) -> bool {
+        core::ptr::eq(self.cf_attach, &CFATTACH_NULL)
+    }
+}
+
+/// `cfdata[i+1] = cfdata[i]`: UKC's `add` moves and copies whole entries.
+impl Clone for Cfdata {
+    fn clone(&self) -> Self {
+        Self::new(
+            self.cf_attach,
+            self.cf_driver,
+            self.cf_unit.get(),
+            self.cf_fstate.get(),
+            self.cf_loc,
+            self.cf_flags,
+            self.cf_parents,
+            self.cf_locnames,
+            self.cf_starunit1,
+        )
+    }
 }
 
 // SAFETY: `cf_unit` and `cf_fstate` change under the kernel lock (`config_attach`,
@@ -457,6 +488,20 @@ pub struct Nam2blk {
     /// `maj`.
     pub maj: i32,
 }
+
+/// The attachment of a free `cfdata[]` slot ([`Cfdata::free`]): the C's NULL `cf_attach`.
+/// Nothing attaches through it: every walk of `cfdata[]` ends before the first free slot
+/// (`machine::autoconf::ioconf_cfdata`).
+pub static CFATTACH_NULL: Cfattach = Cfattach {
+    ca_devsize: 0,
+    ca_match: None,
+    ca_attach: |_, _, _| {},
+    ca_detach: None,
+    ca_activate: None,
+};
+
+/// The driver of a free `cfdata[]` slot: the C's NULL `cf_driver`, with an empty name.
+pub static CFDRIVER_NULL: Cfdriver = Cfdriver::new(b"", DV_DULL, 0);
 /* </CODE> */
 
 /* <TESTS> */

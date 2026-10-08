@@ -968,6 +968,10 @@ impl PciMachdep for Machine {
     type PciIntrHandle = HostPciIntrHandle;
 
     const PCI_MSI_PER_BRIDGE: bool = false;
+    const PCI_IO_START: u64 = 0;
+    const PCI_IO_END: u64 = 0xffff_ffff;
+    const PCI_MEM_START: u64 = 0;
+    const PCI_MEM_END: u64 = 0xffff_ffff;
 
     fn pci_attach_hook(_parent: &Device, _self: &Device, _pba: &PcibusAttachArgs) {}
 
@@ -999,6 +1003,10 @@ impl PciMachdep for Machine {
 
     fn pci_decompose_tag(_pc: HostPciChipset, tag: HostPcitag) -> (i32, i32, i32) {
         (tag.bus, tag.device, tag.function)
+    }
+
+    fn pcitag_node(_tag: HostPcitag) -> i32 {
+        0
     }
 
     fn pci_conf_size(_pc: HostPciChipset, _tag: HostPcitag) -> i32 {
@@ -1212,6 +1220,18 @@ impl Autoconf for Machine {
     fn cfroots() -> &'static [i16] {
         // SAFETY: as above.
         unsafe { HOST_IOCONF.read().1 }
+    }
+
+    /// No `ioconf.c` tables to edit on the host: the tests make their own.
+    unsafe fn ioconf_mut() -> crate::machine::autoconf::IoconfTables<'static> {
+        crate::machine::autoconf::IoconfTables {
+            cfdata: &mut [],
+            cfroots: &mut [],
+            pdevinit: &mut [],
+            pdevnames: &[],
+            locnames: &[],
+            locnamp: &[],
+        }
     }
 
     fn mainbus_cd() -> &'static Cfdriver {

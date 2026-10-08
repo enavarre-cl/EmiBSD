@@ -39,6 +39,13 @@
 //!   to contain TEXT once the serial expectations passed ([`after_smoke`]). Both archs (the
 //!   card sits on the PCI bus q35 and arm64's `virt` have). It goes after `--scsi-cd` and
 //!   `--lsi`, the last devices ([`add_devices`]), so no other PCI slot moves.
+//! - `--pci-bridges` (`qemu`, `smoke`, M16e, `smoke-ppb`): two PCI-PCI bridges, each with a
+//!   virtio-blk disk behind it, for ppb(4): a PCI Express root port (`pcie-root-port`) with
+//!   the disk `ppb-rp.img` on its secondary bus, and a conventional `pci-bridge` with the disk
+//!   `ppb-br.img` in its slot 1, both bridges on the root bus of q35 and of arm64's `virt`
+//!   (the firmware numbers their buses). The images are in the run directory, 64 MiB of
+//!   zeroes made afresh each run ([`PPB_DISK_BYTES`]). They go after `--pci-serial`
+//!   ([`add_devices`]), so no other PCI slot moves.
 //! - `--reboot` (`qemu`, `smoke`, M13): QEMU runs without `-no-reboot`, so a guest reset
 //!   restarts the machine (EDK2, Limine and the kernel again; the EDK2 variable store is the
 //!   run's copy) instead of ending QEMU with status 0. `smoke-power` boots, runs `reboot`
@@ -216,6 +223,12 @@ fn opt_path<'a>(args: &[&'a str], opt: &str) -> Result<Option<&'a str>> {
     }
 }
 
+/// The size of each `--pci-bridges` disk: 64 MiB, as `--disk-fresh`'s.
+pub(crate) const PPB_DISK_BYTES: u64 = 64 << 20;
+
+/// `--pci-bridges`: the run directory its two disks go in (set once by `main`).
+static PCI_BRIDGES: OnceLock<PathBuf> = OnceLock::new();
+
 /// `--pci-serial FILE` (in the run directory) for every VM this run starts (set once by `main`).
 static PCI_SERIAL: OnceLock<PathBuf> = OnceLock::new();
 
@@ -279,8 +292,8 @@ static NIC: OnceLock<String> = OnceLock::new();
 static ACPI: OnceLock<()> = OnceLock::new();
 
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
-/// `--pci-serial`, `--expect-pci-serial`, `--reboot`, `--vio-mq`, `--nic`, `--acpi`,
-/// `--iommu`).
+/// `--pci-serial`, `--expect-pci-serial`, `--pci-bridges`, `--reboot`, `--vio-mq`, `--nic`,
+/// `--acpi`, `--iommu`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if let Some(model) = opt_path(args, "--iommu")? {
         let Some(&(_, dev)) = IOMMU_MODELS.iter().find(|(m, _)| *m == model) else {
@@ -302,6 +315,9 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     }
     if args.contains(&"--reboot") {
         let _ = REBOOT.set(());
+    }
+    if args.contains(&"--pci-bridges") {
+        let _ = PCI_BRIDGES.set(boot::run_dir(root));
     }
     if args.contains(&"--acpi") {
         let _ = ACPI.set(());
@@ -680,13 +696,7 @@ fn lsi_args(root: &Path, image: &Path, cd: Option<&Path>) -> Vec<String> {
 
 /// Makes the `--lsi` disk afresh: `LSI_DISK_BYTES` zeroed bytes at `image`.
 fn lsi_fresh(image: &Path) -> Result<()> {
-    if let Some(dir) = image.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    }
-    let f = fs::File::create(image).map_err(|e| format!("{}: {e}", image.display()))?;
-    f.set_len(LSI_DISK_BYTES)
-        .map_err(|e| format!("{}: {e}", image.display()))?;
-    Ok(())
+    zeroed_disk(image, LSI_DISK_BYTES)
 }
 
 /// Adds the devices that go last on the command line to `cmd` (`--scsi-cd`, then `--lsi`,
@@ -711,7 +721,44 @@ pub(crate) fn add_devices(cmd: &mut Command, root: &Path, arch: Arch) -> Result<
         let _ = fs::remove_file(file);
         cmd.args(pci_serial_args(file));
     }
+    if let Some(dir) = PCI_BRIDGES.get() {
+        let (rp, br) = (dir.join("ppb-rp.img"), dir.join("ppb-br.img"));
+        for image in [&rp, &br] {
+            zeroed_disk(image, PPB_DISK_BYTES)?;
+        }
+        cmd.args(pci_bridges_args(&rp, &br));
+    }
     Ok(())
+}
+
+/// Makes `image` afresh: `bytes` of zeroes (a sparse file).
+fn zeroed_disk(image: &Path, bytes: u64) -> Result<()> {
+    if let Some(dir) = image.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let f = fs::File::create(image).map_err(|e| format!("{}: {e}", image.display()))?;
+    f.set_len(bytes)
+        .map_err(|e| format!("{}: {e}", image.display()))?;
+    Ok(())
+}
+
+/// The QEMU arguments of `--pci-bridges`: a `pcie-root-port` with a virtio-blk disk holding
+/// `rp` behind it, and a `pci-bridge` with one holding `br` in its slot 1.
+fn pci_bridges_args(rp: &Path, br: &Path) -> Vec<String> {
+    vec![
+        "-device".into(),
+        "pcie-root-port,id=ppbrp,chassis=1,slot=1".into(),
+        "-drive".into(),
+        format!("if=none,format=raw,file={},id=ppbrp0", rp.display()),
+        "-device".into(),
+        "virtio-blk-pci,drive=ppbrp0,bus=ppbrp".into(),
+        "-device".into(),
+        "pci-bridge,id=ppbbr,chassis_nr=2".into(),
+        "-drive".into(),
+        format!("if=none,format=raw,file={},id=ppbbr0", br.display()),
+        "-device".into(),
+        "virtio-blk-pci,drive=ppbbr0,bus=ppbbr,addr=1".into(),
+    ]
 }
 
 /// The QEMU arguments of the `--pci-serial` card: a `pci-serial` device whose chardev is the
@@ -1350,6 +1397,17 @@ mod tests {
         let a = pci_serial_args(Path::new("/run/pcis.txt"));
         assert_eq!(a[1], "file,id=pcis0,path=/run/pcis.txt");
         assert_eq!(a[3], "pci-serial,chardev=pcis0");
+    }
+
+    #[test]
+    fn pci_bridges_put_a_disk_behind_each_bridge() {
+        let a = pci_bridges_args(Path::new("/run/ppb-rp.img"), Path::new("/run/ppb-br.img"));
+        assert_eq!(a[1], "pcie-root-port,id=ppbrp,chassis=1,slot=1");
+        assert_eq!(a[3], "if=none,format=raw,file=/run/ppb-rp.img,id=ppbrp0");
+        assert_eq!(a[5], "virtio-blk-pci,drive=ppbrp0,bus=ppbrp");
+        assert_eq!(a[7], "pci-bridge,id=ppbbr,chassis_nr=2");
+        assert_eq!(a[9], "if=none,format=raw,file=/run/ppb-br.img,id=ppbbr0");
+        assert_eq!(a[11], "virtio-blk-pci,drive=ppbbr0,bus=ppbbr,addr=1");
     }
 
     #[test]

@@ -21,6 +21,7 @@
 //! `vmx* at pci?` (M13); `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13);
 //! arm64 ACPI (M14): `acpi0 at mainbus?` (the `acpi_fdt` attachment), `acpimcfg* at acpi?`,
 //! `acpiiort* at acpi?`, `acpipci* at acpi?`, `pci* at acpipci?` and `pluart* at acpi?`;
+//! `ppb* at pci?` and `pci* at ppb?` (M16e);
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
@@ -28,7 +29,7 @@
 //! `simplebus` and `ampintc` (`device ampintc: fdt`, whose GICv2m frames `ampintcmsi`
 //! attach below it); `agintc`, which also carries it, is not ported. Every other GENERIC
 //! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*`,
-//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `azalia*`, `ahci*`, `nvme*`
+//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `azalia*`, `ahci*`, `nvme*`, `ppb*`,
 //! `em*`, `re*` and `vmx*`, the PHYs at `mii?` but `rgephy*`, `rlphy*` and `ukphy*`, the other devices at `acpi?` (`acpiac*`, `acpibtn*`, `acpicpu*`, `ahci*`, `com*`, `xhci*`,
 //! ...) and `smmu* at acpiiort?`, `ahci*` at `fdt?`, the other host
 //! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
@@ -37,6 +38,8 @@
 //! as do the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s layout:
 //! attachment, driver, unit, state, locators, flags, parents (indices into `CFDATA`), the
 //! start of its locator names and the first unit a starred entry may take.
+
+use libkern::StaticCell;
 
 use crate::arch::arm64::arm64::acpi_machdep::ACPI_FDT_CA;
 use crate::arch::arm64::arm64::cpu::{CPU_CA, CPU_CD};
@@ -72,6 +75,7 @@ use crate::dev::pci::if_re_pci::RE_PCI_CA;
 use crate::dev::pci::if_vmx::{VMX_CA, VMX_CD};
 use crate::dev::pci::nvme_pci::NVME_PCI_CA;
 use crate::dev::pci::pci::{PCI_CA, PCI_CD};
+use crate::dev::pci::ppb::{PPB_CA, PPB_CD};
 use crate::dev::pci::virtio_pci::VIRTIO_PCI_CA;
 use crate::dev::pci::xhci_pci::XHCI_PCI_CA;
 use crate::dev::pv::if_vio::{VIO_CA, VIO_CD};
@@ -129,8 +133,12 @@ const PV_PCIECAM: &[i16] = &[14];
 /// {[bus = -1]}`).
 const LOC_PCIBUS_UNK: &[i64] = &[-1];
 
-/// `pv[]` for children of `pci*` (`cfdata[15]` at pciecam, `cfdata[46]` at acpipci).
-const PV_PCI: &[i16] = &[15, 46];
+/// `pv[]` for children of `pci*` (`cfdata[15]` at pciecam, `cfdata[46]` at acpipci,
+/// `cfdata[48]` at ppb).
+const PV_PCI: &[i16] = &[15, 46, 48];
+
+/// `pv[]` for children of `ppb*` (`cfdata[47]`) through the `pcibus` attribute.
+const PV_PPB: &[i16] = &[47];
 
 /// `pv[]` for children of `acpi0` (`cfdata[41]`).
 const PV_ACPI: &[i16] = &[41];
@@ -201,15 +209,40 @@ const PV_UKBD: &[i16] = &[26];
 /// {[console = -1], [mux = 1]}`), `mux 1`.
 const LOC_WSKBDDEV_MUX1: &[i64] = &[-1, 1];
 
+// `cf_locnames`: where an entry's run of locator names starts in `LOCNAMP`; an entry without
+// locators has 0, the empty run at `LOCNAMP[0]`.
+/// `cf_locnames` of an entry at `fdt`: `early`.
+const LN_FDT: i32 = 1;
+/// `cf_locnames` of an entry at `scsibus`: `target`, `lun`.
+const LN_SCSIBUS: i32 = 3;
+/// `cf_locnames` of an entry at `pcibus`: `bus`.
+const LN_PCIBUS: i32 = 6;
+/// `cf_locnames` of an entry at `pci`: `dev`, `function`.
+const LN_PCI: i32 = 8;
+/// `cf_locnames` of an entry at `uhub`: `port`, `configuration`, `interface`, `vendor`, `product`, `release`.
+const LN_UHUB: i32 = 11;
+/// `cf_locnames` of an entry at `uhidbus`: `reportid`.
+const LN_UHIDBUS: i32 = 18;
+/// `cf_locnames` of an entry at `mii`: `phy`.
+const LN_MII: i32 = 20;
+/// `cf_locnames` of an entry at `wsemuldisplaydev`: `console`, `primary`, `mux`.
+const LN_WSEMULDISPLAYDEV: i32 = 22;
+/// `cf_locnames` of an entry at `wskbddev`: `console`, `mux`.
+const LN_WSKBDDEV: i32 = 26;
+
+/// `{0}`: the free slots `config(8)` leaves at the end of `cfdata[]` for UKC's `add`.
+const NFREE: usize = 8;
+
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    48
+    50
 } else {
-    47
+    49
 };
 
-/// `cfdata[]`.
-pub static CFDATA: [Cfdata; NCFDATA] = [
+/// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
+/// (`machine::autoconf::ioconf_mut`).
+pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
     // 0: mainbus0 at root
     Cfdata::new(
         &MAINBUS_CA,
@@ -231,7 +264,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_EARLY_1,
         0,
         PV_FDT,
-        0,
+        LN_FDT,
         0,
     ),
     // 2: agtimer* at fdt?
@@ -243,7 +276,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_EARLY_0,
         0,
         PV_FDT,
-        0,
+        LN_FDT,
         0,
     ),
     // 3: virtio* at fdt?
@@ -255,7 +288,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_EARLY_0,
         0,
         PV_FDT,
-        0,
+        LN_FDT,
         0,
     ),
     // 4: vio* at virtio?
@@ -281,7 +314,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_EARLY_0,
         0,
         PV_FDT,
-        0,
+        LN_FDT,
         0,
     ),
     // 7: plrtc* at fdt?
@@ -293,7 +326,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_EARLY_0,
         0,
         PV_FDT,
-        0,
+        LN_FDT,
         0,
     ),
     // 8: efi0 at mainbus?
@@ -330,7 +363,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_SCSIBUS_UNK,
         0,
         PV_SCSIBUS,
-        0,
+        LN_SCSIBUS,
         0,
     ),
     // 11: softraid0 at root
@@ -354,7 +387,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_EARLY_0,
         0,
         PV_FDT,
-        0,
+        LN_FDT,
         0,
     ),
     // 13: ampintcmsi* at fdt? early 1
@@ -366,7 +399,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_EARLY_1,
         0,
         PV_FDT,
-        0,
+        LN_FDT,
         0,
     ),
     // 14: pciecam* at fdt?
@@ -378,7 +411,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_EARLY_0,
         0,
         PV_FDT,
-        0,
+        LN_FDT,
         0,
     ),
     // 15: pci* at pciecam?
@@ -390,7 +423,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_PCIBUS_UNK,
         0,
         PV_PCIECAM,
-        0,
+        LN_PCIBUS,
         0,
     ),
     // 16: virtio* at pci?
@@ -402,7 +435,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_PCI_UNK,
         0,
         PV_PCI,
-        0,
+        LN_PCI,
         0,
     ),
     // 17: azalia* at pci?
@@ -414,7 +447,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_PCI_UNK,
         0,
         PV_PCI,
-        0,
+        LN_PCI,
         0,
     ),
     // 18: audio* at azalia?
@@ -450,7 +483,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_PCI_UNK,
         0,
         PV_PCI,
-        0,
+        LN_PCI,
         0,
     ),
     // 21: usb* at xhci?
@@ -466,7 +499,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_UHUB_UNK,
         0,
         PV_UHUB,
-        0,
+        LN_UHUB,
         0,
     ),
     // 24: umass* at uhub?
@@ -478,7 +511,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_UHUB_UNK,
         0,
         PV_UHUB,
-        0,
+        LN_UHUB,
         0,
     ),
     // 25: uhidev* at uhub?
@@ -490,7 +523,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_UHUB_UNK,
         0,
         PV_UHUB,
-        0,
+        LN_UHUB,
         0,
     ),
     // 26: ukbd* at uhidev?
@@ -502,7 +535,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_UHIDBUS_UNK,
         0,
         PV_UHIDEV,
-        0,
+        LN_UHIDBUS,
         0,
     ),
     // 27: vioscsi* at virtio?
@@ -526,7 +559,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_SCSIBUS_UNK,
         0,
         PV_SCSIBUS,
-        0,
+        LN_SCSIBUS,
         0,
     ),
     // 29: psci* at fdt? early 1
@@ -538,7 +571,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_EARLY_1,
         0,
         PV_FDT,
-        0,
+        LN_FDT,
         0,
     ),
     // 30: ahci* at pci? flags 0x0000
@@ -550,7 +583,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_PCI_UNK,
         0,
         PV_PCI,
-        0,
+        LN_PCI,
         0,
     ),
     // 31: nvme* at pci?
@@ -562,11 +595,21 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_PCI_UNK,
         0,
         PV_PCI,
-        0,
+        LN_PCI,
         0,
     ),
     // 32: em* at pci?
-    Cfdata::new(&EM_CA, &EM_CD, 0, FSTATE_STAR, LOC_PCI_UNK, 0, PV_PCI, 0, 0),
+    Cfdata::new(
+        &EM_CA,
+        &EM_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
     // 33: simplefb* at fdt?
     Cfdata::new(
         &SIMPLEFB_CA,
@@ -576,7 +619,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_EARLY_0,
         0,
         PV_FDT,
-        0,
+        LN_FDT,
         0,
     ),
     // 34: re* at pci?
@@ -588,7 +631,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_PCI_UNK,
         0,
         PV_PCI,
-        0,
+        LN_PCI,
         0,
     ),
     // 35: rgephy* at mii?
@@ -600,7 +643,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_MII_UNK,
         0,
         PV_MII,
-        0,
+        LN_MII,
         0,
     ),
     // 36: rlphy* at mii?
@@ -612,7 +655,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_MII_UNK,
         0,
         PV_MII,
-        0,
+        LN_MII,
         0,
     ),
     // 37: ukphy* at mii?
@@ -624,7 +667,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_MII_UNK,
         0,
         PV_MII,
-        0,
+        LN_MII,
         0,
     ),
     // 38: wsdisplay* at simplefb?
@@ -636,7 +679,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_WSEMULDISPLAYDEV_UNK,
         0,
         PV_SIMPLEFB,
-        0,
+        LN_WSEMULDISPLAYDEV,
         0,
     ),
     // 39: vmx* at pci?
@@ -648,7 +691,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_PCI_UNK,
         0,
         PV_PCI,
-        0,
+        LN_PCI,
         0,
     ),
     // 40: wskbd* at ukbd? mux 1
@@ -660,7 +703,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_WSKBDDEV_MUX1,
         0,
         PV_UKBD,
-        0,
+        LN_WSKBDDEV,
         0,
     ),
     // 41: acpi0 at mainbus? (attach acpi at fdt with acpi_fdt)
@@ -672,7 +715,7 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_EARLY_0,
         0,
         PV_MAINBUS,
-        0,
+        LN_FDT,
         0,
     ),
     // 42: acpimcfg* at acpi?
@@ -732,16 +775,52 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         LOC_PCIBUS_UNK,
         0,
         PV_ACPIPCI,
-        0,
+        LN_PCIBUS,
         0,
     ),
-    // 47: cpu* at mainbus? (GENERIC.MP)
+    // 47: ppb* at pci?
+    Cfdata::new(
+        &PPB_CA,
+        &PPB_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        LN_PCI,
+        0,
+    ),
+    // 48: pci* at ppb?
+    Cfdata::new(
+        &PCI_CA,
+        &PCI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCIBUS_UNK,
+        0,
+        PV_PPB,
+        LN_PCIBUS,
+        0,
+    ),
+    // 49: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
-];
+    // The free slots.
+    Cfdata::free(),
+    Cfdata::free(),
+    Cfdata::free(),
+    Cfdata::free(),
+    Cfdata::free(),
+    Cfdata::free(),
+    Cfdata::free(),
+    Cfdata::free(),
+]);
 
 /// `cfroots[]`: `mainbus0`, `softraid0`.
-pub static CFROOTS: [i16; 2] = [0, 11];
+pub static CFROOTS: StaticCell<[i16; 2]> = StaticCell::new([0, 11]);
+
+/// The number of `pdevinit[]` entries.
+const NPDEVINIT: usize = 13 + cfg!(feature = "fuse") as usize;
 
 /// `pdevinit[]`: the pseudo-devices of the MI `conf/GENERIC` whose attach functions are
 /// ported, in `ioconf.c`'s order (`pseudo-device pf`, `pseudo-device pflog`, `pseudo-device
@@ -751,7 +830,7 @@ pub static CFROOTS: [i16; 2] = [0, 11];
 /// the machine GENERIC's `pseudo-device wsmux 2` (M13), then `pseudo-device rd 1`, which is not in
 /// GENERIC but in the RAMDISK kernels (`arch/arm64/conf/RAMDISK*`): this kernel boots its root
 /// from rd0a (M8).
-pub static PDEVINIT: [Pdevinit; 13 + cfg!(feature = "fuse") as usize] = [
+pub static PDEVINIT: StaticCell<[Pdevinit; NPDEVINIT]> = StaticCell::new([
     Pdevinit {
         pdev_attach: pfattach,
         pdev_count: 1,
@@ -809,5 +888,52 @@ pub static PDEVINIT: [Pdevinit; 13 + cfg!(feature = "fuse") as usize] = [
         pdev_attach: rdattach,
         pdev_count: 1,
     },
+]);
+
+/// `pdevnames[]`: the pseudo-devices' names, in `PDEVINIT`'s order.
+pub static PDEVNAMES: [&[u8]; NPDEVINIT] = [
+    b"pf",
+    b"pflog",
+    b"pfsync",
+    b"pflow",
+    b"enc",
+    b"pty",
+    b"vnd",
+    b"bpfilter",
+    b"loop",
+    b"wg",
+    b"bio",
+    #[cfg(feature = "fuse")]
+    b"fuse",
+    b"wsmux",
+    b"rd",
+];
+
+/// `locnames[]`: every locator name of the entries above, once.
+pub static LOCNAMES: [&[u8]; 17] = [
+    b"early",
+    b"target",
+    b"lun",
+    b"bus",
+    b"dev",
+    b"function",
+    b"port",
+    b"configuration",
+    b"interface",
+    b"vendor",
+    b"product",
+    b"release",
+    b"reportid",
+    b"phy",
+    b"console",
+    b"primary",
+    b"mux",
+];
+
+/// `locnamp[]`: one run of indices into `LOCNAMES` per locator attribute, each ended by `-1`
+/// (`config(8)` writes one per parent device; `mkioconf.c`'s XXX asks for this compression).
+pub static LOCNAMP: [i16; 29] = [
+    -1, 0, -1, 1, 2, -1, 3, -1, 4, 5, -1, 6, 7, 8, 9, 10, 11, -1, 12, -1, 13, -1, 14, 15, 16, -1,
+    14, 16, -1,
 ];
 /* </CODE> */

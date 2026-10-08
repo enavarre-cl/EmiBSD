@@ -698,7 +698,7 @@ pub fn acpipci_intr_swizzle(pa: &PciAttachArgs) -> Option<PciIntrHandle> {
         }
     }
 
-    let ih = bridgeih.get((swizpin - 1) as usize)?;
+    let ih = bridgeih.get((swizpin - 1) as usize)?.as_ref()?;
     if ih.ih_type == PCI_NONE {
         return None;
     }

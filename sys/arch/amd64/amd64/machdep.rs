@@ -1346,6 +1346,17 @@ pub fn cpu_startup() {
 
     bufinit();
 
+    // sched_blockcpu = CPUTYP_SMT | CPUTYP_L: __HAVE_CPU_TOPOLOGY (M5-b2).
+
+    if crate::kern::init_main::BOOTHOWTO.load(Ordering::Relaxed) & crate::sys::reboot::RB_CONFIG
+        != 0
+    {
+        #[cfg(feature = "boot_config")]
+        crate::kern::subr_userconf::user_config();
+        #[cfg(not(feature = "boot_config"))]
+        kprintf!("kernel does not support -c; continuing..\n");
+    }
+
     // cpu_boot_mode, the ISA DMA bounce pages, the microcode and TSX setup,
     // enter_shared_special_pages (the u-k maps): M4-b and M6.
 

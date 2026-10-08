@@ -36,6 +36,7 @@ pub mod pci_subr;
 pub mod pcidevs;
 pub mod pcireg;
 pub mod pcivar;
+pub mod ppb;
 pub mod ppbreg;
 pub mod puc;
 pub mod pucdata;
