@@ -591,6 +591,17 @@ impl BusSpace for Machine {
         amd64::bus_space::bus_space_write_4(t, h, offset, value)
     }
 
+    fn bus_space_copy_2(
+        t: Self::Tag,
+        h1: Self::Handle,
+        o1: BusSize,
+        h2: Self::Handle,
+        o2: BusSize,
+        count: usize,
+    ) {
+        amd64::bus_space::bus_space_copy_2(t, h1, o1, h2, o2, count)
+    }
+
     fn bus_space_barrier(
         t: Self::Tag,
         h: Self::Handle,

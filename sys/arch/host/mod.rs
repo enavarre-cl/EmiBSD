@@ -803,6 +803,16 @@ impl BusSpace for Machine {
 
     fn bus_space_write_4(_t: Self::Tag, _h: Self::Handle, _offset: BusSize, _value: u32) {}
 
+    fn bus_space_copy_2(
+        _t: Self::Tag,
+        _h1: Self::Handle,
+        _o1: BusSize,
+        _h2: Self::Handle,
+        _o2: BusSize,
+        _count: usize,
+    ) {
+    }
+
     fn bus_space_barrier(
         _t: Self::Tag,
         _h: Self::Handle,

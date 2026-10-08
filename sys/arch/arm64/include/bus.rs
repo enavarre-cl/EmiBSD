@@ -140,6 +140,29 @@ pub fn bus_space_mmap(t: &'static BusSpace, a: BusAddr, o: Off, p: i32, f: i32) 
     (t._space_mmap)(t, a, o, p, f)
 }
 
+/// `bus_space_copy_2`: `c` 16-bit locations from `h1 + o1` to `h2 + o2`, always forward
+/// (overlapping ranges with the destination after the source are not a move), through the
+/// handles' virtual addresses whatever the tag, as the C's inline function does.
+pub fn bus_space_copy_2(
+    _t: &'static BusSpace,
+    h1: BusSpaceHandle,
+    o1: BusSize,
+    h2: BusSpaceHandle,
+    o2: BusSize,
+    c: usize,
+) {
+    let (s, d) = (h1.0 + o1, h2.0 + o2);
+    for i in 0..c {
+        // SAFETY: both handles come from `_space_map`/`_space_subregion`, which mapped the
+        // device ranges at these virtual addresses; the caller's offsets and count stay in
+        // its mappings, as in C.
+        unsafe {
+            let v = core::ptr::read_volatile((s + 2 * i) as *const u16);
+            core::ptr::write_volatile((d + 2 * i) as *mut u16, v);
+        }
+    }
+}
+
 /// `bus_space_barrier`: a full system barrier (`dsb sy`), whatever the flags.
 pub fn bus_space_barrier(
     _t: &'static BusSpace,

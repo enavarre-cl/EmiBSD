@@ -24,6 +24,7 @@
 //! until `bus_dmamap_unload`, because `bus_dmamap_sync` may copy to and from it (bounce
 //! buffers) or clean the caches over it; that is the C's contract too.
 
+use core::cell::Cell;
 use core::ptr::NonNull;
 
 use crate::machine::Machine;
@@ -102,6 +103,18 @@ pub trait BusSpace {
     fn bus_space_write_2(t: Self::Tag, h: Self::Handle, offset: BusSize, value: u16);
     /// `bus_space_write_4`.
     fn bus_space_write_4(t: Self::Tag, h: Self::Handle, offset: BusSize, value: u32);
+
+    /// `bus_space_copy_2`: copies `count` 2-byte locations from `o1` of `h1` to `o2` of `h2`
+    /// (the architecture decides how overlapping ranges are handled: amd64 copies as a move,
+    /// arm64 always forward, as their C does).
+    fn bus_space_copy_2(
+        t: Self::Tag,
+        h1: Self::Handle,
+        o1: BusSize,
+        h2: Self::Handle,
+        o2: BusSize,
+        count: usize,
+    );
 
     /// `bus_space_barrier`: orders accesses to `[offset, offset + length)` of `h` according to
     /// `flags` ([`BUS_SPACE_BARRIER_READ`], [`BUS_SPACE_BARRIER_WRITE`]).
@@ -207,6 +220,61 @@ pub fn bus_space_set_region_4(
     for i in 0..count {
         bus_space_write_4(t, h, offset + i * 4, value);
     }
+}
+
+/// `bus_space_read_region_2(9)`: reads consecutive 2-byte locations from `offset` into
+/// `values`, one [`bus_space_read_2`] per address, as every architecture's region read does
+/// (amd64's `x86_bus_space_{io,mem}_read_region_2`, arm64's inline one). The C's `u_int16_t *`
+/// buffer is a slice of cells, which a backing store shared with other code already is; a
+/// caller with a `&mut [u16]` passes `Cell::from_mut(buf).as_slice_of_cells()`.
+pub fn bus_space_read_region_2(
+    t: BusSpaceTag,
+    h: BusSpaceHandle,
+    offset: BusSize,
+    values: &[Cell<u16>],
+) {
+    for (i, v) in values.iter().enumerate() {
+        v.set(bus_space_read_2(t, h, offset + i * 2));
+    }
+}
+
+/// `bus_space_write_region_2(9)`: writes `values` to consecutive 2-byte locations from
+/// `offset`, as [`bus_space_read_region_2`] reads them.
+pub fn bus_space_write_region_2(
+    t: BusSpaceTag,
+    h: BusSpaceHandle,
+    offset: BusSize,
+    values: &[Cell<u16>],
+) {
+    for (i, v) in values.iter().enumerate() {
+        bus_space_write_2(t, h, offset + i * 2, v.get());
+    }
+}
+
+/// `bus_space_set_region_2(9)`: writes `value` to `count` consecutive 2-byte locations from
+/// `offset`, as [`bus_space_set_region_4`] does.
+pub fn bus_space_set_region_2(
+    t: BusSpaceTag,
+    h: BusSpaceHandle,
+    offset: BusSize,
+    value: u16,
+    count: usize,
+) {
+    for i in 0..count {
+        bus_space_write_2(t, h, offset + i * 2, value);
+    }
+}
+
+/// `bus_space_copy_2(9)` on the selected machine.
+pub fn bus_space_copy_2(
+    t: BusSpaceTag,
+    h1: BusSpaceHandle,
+    o1: BusSize,
+    h2: BusSpaceHandle,
+    o2: BusSize,
+    count: usize,
+) {
+    Machine::bus_space_copy_2(t, h1, o1, h2, o2, count)
 }
 
 /// `bus_space_barrier(9)`.

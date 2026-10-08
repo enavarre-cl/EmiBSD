@@ -39,7 +39,8 @@
 //! Status: `wip`. Milestone M2 ports the single-register accessors, `bus_space_map`/`unmap`
 //! for I/O space and `bus_space_subregion`; M7b (virtio's BARs) the memory space:
 //! `bus_space_map`/`bus_space_unmap` for it, `x86_mem_add_mapping`, `atdevbase` and the ISA
-//! hole; M13 (efifb) `bus_space_vaddr`. The multi/region/copy accessors,
+//! hole; M13 (efifb) `bus_space_vaddr`; M13 (vga) `bus_space_copy_2`. The multi/region accessors
+//! and the other copy widths,
 //! `bus_space_alloc`/`free`, `_bus_space_map`/`unmap`, `bus_space_mmap`, the extent maps (`x86_bus_space_init`,
 //! `x86_bus_space_mallocok`) and the SEV-ES variants arrive with the buses that need them.
 //!
@@ -54,17 +55,23 @@
 //!   at their sites.
 //! - `atdevbase`, the kernel virtual address of the ISA hole, is written by the C's
 //!   `locore0.S`, which maps the hole after the kernel; the bootloader's direct map covers it
-//!   here, so [`atdevbase`] is the direct-map address of `IOM_BEGIN`.
+//!   here, so [`atdevbase`] is the direct-map address of `IOM_BEGIN`. Limine's direct map
+//!   (base revision 3) only covers its memory map's regions, though, and OVMF's leaves the
+//!   VGA window (0xa0000-0xbffff) out: `bus_space_map` takes the ISA-hole shortcut only for
+//!   pages mapped there ([`isa_hole_mapped`]) and maps the others like any device memory,
+//!   uncached; their handles are outside the hole, so `bus_space_unmap` unmaps them as such
+//!   (M13, vga(4)'s probe of the legacy text memory).
 
 use core::arch::asm;
 use core::ptr;
 
 use crate::arch::amd64::amd64::pmap::{
-    pmap_direct_map, pmap_direct_mapped, pmap_direct_unmap, pmap_extract, pmap_initialized,
-    pmap_kenter_pa, pmap_kernel, pmap_kremove,
+    pmap_direct_map, pmap_direct_mapped, pmap_direct_unmap, pmap_extract, pmap_find_pte_direct,
+    pmap_initialized, pmap_kenter_pa, pmap_kernel, pmap_kremove,
 };
 use crate::arch::amd64::include::pio::{inb, inl, inw, outb, outl, outw};
 use crate::arch::amd64::include::pmap::{PMAP_NOCACHE, PMAP_WC};
+use crate::arch::amd64::include::pte::PG_V;
 use crate::dev::isa::isareg::{IOM_BEGIN, IOM_END};
 use crate::machine::bus::{BUS_SPACE_BARRIER_READ, BUS_SPACE_BARRIER_WRITE, BusAddr, BusSize};
 use crate::machine::pmap::pmap_update;
@@ -112,6 +119,22 @@ fn isa_hole_vaddr(p: BusAddr) -> usize {
     p - IOM_BEGIN + atdevbase()
 }
 
+/// Whether the pages of `[bpa, bpa + size)` in the ISA hole are mapped at their
+/// `ISA_HOLE_VADDR`: `locore0.S` maps the whole hole after a boot by boot(8), but Limine's
+/// direct map (base revision 3) covers only the regions of its memory map, which on OVMF
+/// leaves out the VGA window at 0xa0000 (see the module's deviations).
+fn isa_hole_mapped(bpa: BusAddr, size: BusSize) -> bool {
+    let first = bpa & !PGOFSET;
+    (first..bpa + size).step_by(PAGE_SIZE).all(|pa| {
+        let (_, table, index) = pmap_find_pte_direct(pmap_kernel(), isa_hole_vaddr(pa));
+        // SAFETY: `pmap_find_pte_direct` returns the direct-map address of a page-table page
+        // of the kernel pmap and an index into it (below 512); reading the entry has no side
+        // effect.
+        let e = unsafe { ptr::read_volatile((table as *const u64).add(index)) };
+        e & PG_V != 0
+    })
+}
+
 /// `ISA_PHYSADDR(v)`: the physical address of a kernel virtual address in the ISA hole.
 fn isa_physaddr(v: usize) -> BusAddr {
     v.wrapping_sub(atdevbase()).wrapping_add(IOM_BEGIN)
@@ -144,7 +167,7 @@ pub unsafe fn bus_space_map(
         return Ok(BusSpaceHandle(bpa));
     }
 
-    if bpa >= IOM_BEGIN && bpa + size <= IOM_END {
+    if bpa >= IOM_BEGIN && bpa + size <= IOM_END && isa_hole_mapped(bpa, size) {
         return Ok(BusSpaceHandle(isa_hole_vaddr(bpa)));
     }
 
@@ -395,6 +418,77 @@ pub fn bus_space_write_4(t: X86BusSpace, h: BusSpaceHandle, o: BusSize, v: u32) 
     match t {
         X86BusSpace::Io => x86_bus_space_io_write_4(h, o, v),
         X86BusSpace::Mem => x86_bus_space_mem_write_4(h, o, v),
+    }
+}
+
+/// `x86_bus_space_io_copy_2`: `c` 16-bit ports from `h1 + o1` to `h2 + o2`, forward when
+/// the source is at or after the destination, backwards otherwise, so overlapping ranges
+/// copy as a move.
+pub fn x86_bus_space_io_copy_2(
+    h1: BusSpaceHandle,
+    o1: BusSize,
+    h2: BusSpaceHandle,
+    o2: BusSize,
+    c: usize,
+) {
+    let (addr1, addr2) = (h1.0 + o1, h2.0 + o2);
+
+    if addr1 >= addr2 {
+        // src after dest: copy forward
+        for i in 0..c {
+            x86_bus_space_io_write_2(BusSpaceHandle(addr2), 2 * i, {
+                x86_bus_space_io_read_2(BusSpaceHandle(addr1), 2 * i)
+            });
+        }
+    } else {
+        // dest after src: copy backwards
+        for i in (0..c).rev() {
+            x86_bus_space_io_write_2(BusSpaceHandle(addr2), 2 * i, {
+                x86_bus_space_io_read_2(BusSpaceHandle(addr1), 2 * i)
+            });
+        }
+    }
+}
+
+/// `x86_bus_space_mem_copy_2`: as [`x86_bus_space_io_copy_2`], in memory space.
+pub fn x86_bus_space_mem_copy_2(
+    h1: BusSpaceHandle,
+    o1: BusSize,
+    h2: BusSpaceHandle,
+    o2: BusSize,
+    c: usize,
+) {
+    let (addr1, addr2) = (h1.0 + o1, h2.0 + o2);
+
+    if addr1 >= addr2 {
+        // src after dest: copy forward
+        for i in 0..c {
+            x86_bus_space_mem_write_2(BusSpaceHandle(addr2), 2 * i, {
+                x86_bus_space_mem_read_2(BusSpaceHandle(addr1), 2 * i)
+            });
+        }
+    } else {
+        // dest after src: copy backwards
+        for i in (0..c).rev() {
+            x86_bus_space_mem_write_2(BusSpaceHandle(addr2), 2 * i, {
+                x86_bus_space_mem_read_2(BusSpaceHandle(addr1), 2 * i)
+            });
+        }
+    }
+}
+
+/// `bus_space_copy_2`: dispatches on the space.
+pub fn bus_space_copy_2(
+    t: X86BusSpace,
+    h1: BusSpaceHandle,
+    o1: BusSize,
+    h2: BusSpaceHandle,
+    o2: BusSize,
+    c: usize,
+) {
+    match t {
+        X86BusSpace::Io => x86_bus_space_io_copy_2(h1, o1, h2, o2, c),
+        X86BusSpace::Mem => x86_bus_space_mem_copy_2(h1, o1, h2, o2, c),
     }
 }
 
