@@ -11,6 +11,8 @@
 pub mod ehci;
 pub mod ehcireg;
 pub mod ehcivar;
+pub mod if_cdce;
+pub mod if_cdcereg;
 pub mod ugen;
 pub mod uhid;
 pub mod uhid_rdesc;
@@ -29,6 +31,7 @@ pub mod usb;
 pub mod usb_mem;
 pub mod usb_quirks;
 pub mod usb_subr;
+pub mod usbcdc;
 pub mod usbdevs;
 pub mod usbdi;
 pub mod usbdi_util;
