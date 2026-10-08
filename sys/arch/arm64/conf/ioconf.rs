@@ -21,6 +21,7 @@
 //! `vmx* at pci?` (M13); `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13);
 //! arm64 ACPI (M14): `acpi0 at mainbus?` (the `acpi_fdt` attachment), `acpimcfg* at acpi?`,
 //! `acpiiort* at acpi?`, `acpipci* at acpi?`, `pci* at acpipci?` and `pluart* at acpi?`;
+//! M16f: `smmu* at acpiiort?` and `smmu* at fdt?`;
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
@@ -30,7 +31,7 @@
 //! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*`,
 //! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `azalia*`, `ahci*`, `nvme*`
 //! `em*`, `re*` and `vmx*`, the PHYs at `mii?` but `rgephy*`, `rlphy*` and `ukphy*`, the other devices at `acpi?` (`acpiac*`, `acpibtn*`, `acpicpu*`, `ahci*`, `com*`, `xhci*`,
-//! ...) and `smmu* at acpiiort?`, `ahci*` at `fdt?`, the other host
+//! ...), `ahci*` at `fdt?`, the other host
 //! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
 //! `umass*` and `uhidev*`, the devices at `uhidev?` but `ukbd*`, every `wskbd*` but the
 //! one at `ukbd?`, ...),
@@ -47,6 +48,9 @@ use crate::arch::arm64::dev::ampintc::{AMPINTC_CA, AMPINTC_CD, AMPINTCMSI_CA, AM
 use crate::arch::arm64::dev::efi_machdep::{EFI_CA, EFI_CD};
 use crate::arch::arm64::dev::mainbus::{MAINBUS_CA, MAINBUS_CD};
 use crate::arch::arm64::dev::simplebus::{SIMPLEBUS_CA, SIMPLEBUS_CD};
+use crate::arch::arm64::dev::smmu::SMMU_CD;
+use crate::arch::arm64::dev::smmu_acpi::SMMU_ACPI_CA;
+use crate::arch::arm64::dev::smmu_fdt::SMMU_FDT_CA;
 use crate::dev::acpi::acpi::ACPI_CD;
 use crate::dev::acpi::acpimcfg::{ACPIMCFG_CA, ACPIMCFG_CD};
 use crate::dev::acpi::pluart_acpi::PLUART_ACPI_CA;
@@ -138,6 +142,9 @@ const PV_ACPI: &[i16] = &[41];
 /// `pv[]` for children of `acpipci*` (`cfdata[44]`) through the `pcibus` attribute.
 const PV_ACPIPCI: &[i16] = &[44];
 
+/// `pv[]` for children of `acpiiort*` (`cfdata[43]`).
+const PV_ACPIIORT: &[i16] = &[43];
+
 /// `loc[]` of an entry at `pci` with the defaults `dev = -1, function = -1` (`conf/files`:
 /// `device pci {[dev = -1], [function = -1]}`).
 const LOC_PCI_UNK: &[i64] = &[-1, -1];
@@ -203,9 +210,9 @@ const LOC_WSKBDDEV_MUX1: &[i64] = &[-1, 1];
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    48
+    50
 } else {
-    47
+    49
 };
 
 /// `cfdata[]`.
@@ -735,7 +742,31 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 47: cpu* at mainbus? (GENERIC.MP)
+    // 47: smmu* at acpiiort?
+    Cfdata::new(
+        &SMMU_ACPI_CA,
+        &SMMU_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_ACPIIORT,
+        0,
+        0,
+    ),
+    // 48: smmu* at fdt?
+    Cfdata::new(
+        &SMMU_FDT_CA,
+        &SMMU_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_0,
+        0,
+        PV_FDT,
+        0,
+        0,
+    ),
+    // 49: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];

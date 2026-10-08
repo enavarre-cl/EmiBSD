@@ -18,6 +18,8 @@ pub mod mainbus;
 pub mod pci_machdep;
 pub mod simplebus;
 pub mod smmu;
+pub mod smmu_acpi;
+pub mod smmu_fdt;
 pub mod smmureg;
 pub mod smmuvar;
 /* </CODE> */

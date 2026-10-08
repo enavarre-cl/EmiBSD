@@ -36,9 +36,6 @@
 //!   are left out and `pba_ioex`, `pba_memex`, `pba_pmemex` stay NULL (C_TO_RUST,
 //!   "a member pointing into a subsystem that is not ported"): a BAR the firmware left
 //!   unassigned cannot be placed, as on amd64.
-//! - `iommu_device_map_pci` and `iommu_reserve_region_pci` (`ofw_misc.c`) are reported; the
-//!   function keeps the bus's DMA tag, which is what the C gets when no IOMMU claims the
-//!   requester ID (QEMU `virt` has no `iommu-map`).
 //! - The softc's `sc_bus` and `sc_pc` are `MaybeUninit` behind an `UnsafeCell` (the softc is
 //!   zeroed memory, which is no valid table of functions), written once by the attach before
 //!   the bus attaches; the softc lives as long as the kernel (no detach), so the tags handed
@@ -59,6 +56,7 @@ use core::ptr::{self, NonNull};
 use core::slice;
 use core::sync::atomic::Ordering;
 
+use crate::dev::ofw::ofw_misc::{iommu_device_map_pci, iommu_reserve_region_pci};
 use crate::dev::ofw::openfirm::{
     OF_getpropint, OF_getpropintarray, OF_getproplen, OF_is_compatible,
 };
@@ -90,7 +88,6 @@ use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_DEVBUF, M_TEMP, M_WAITOK};
 use crate::sys::queue::ListEntry;
 use crate::sys::types::{Off, Paddr};
-use crate::unported;
 
 // Assembling ECAM Configuration Address
 
@@ -514,18 +511,19 @@ pub fn pciecam_conf_write(v: *mut c_void, tag: Pcitag, reg: i32, data: Pcireg) {
 pub fn pciecam_probe_device_hook(v: *mut c_void, pa: &mut PciAttachArgs) -> i32 {
     let sc = softc_of(v);
 
-    let _rid = pci_requester_id(pa.pa_pc, pa.pa_tag);
-    // pa->pa_dmat = iommu_device_map_pci(sc->sc_node, rid, pa->pa_dmat): ofw_misc.c, which
-    // hands back the tag unchanged when no IOMMU claims the requester ID.
-    let _ = unported!("iommu_device_map_pci (ofw_misc.c)");
+    let rid = u32::from(pci_requester_id(pa.pa_pc, pa.pa_tag));
+    pa.pa_dmat = iommu_device_map_pci(sc.sc_node.get(), rid, pa.pa_dmat);
 
     for r in sc.pciranges() {
         if r.flags >> 24 == 0 {
             continue;
         }
-        // iommu_reserve_region_pci(sc->sc_node, rid, r.pci_base, r.size): ofw_misc.c, a
-        // no-op without an IOMMU.
-        let _ = unported!("iommu_reserve_region_pci (ofw_misc.c)");
+        iommu_reserve_region_pci(
+            sc.sc_node.get(),
+            rid,
+            r.pci_base as BusAddr,
+            r.size as BusSize,
+        );
     }
 
     0
