@@ -1251,7 +1251,16 @@ pub fn cpu_startup() {
     curpcb.pcb_flags.set(0);
     curpcb.pcb_tf.set(PROC0TF.as_ptr());
 
-    // sched_blockcpu = CPUTYP_L: __HAVE_CPU_TOPOLOGY (M5-b2). boothowto & RB_CONFIG,
+    // sched_blockcpu = CPUTYP_L: __HAVE_CPU_TOPOLOGY (M5-b2).
+
+    if crate::kern::init_main::BOOTHOWTO.load(Ordering::Relaxed) & crate::sys::reboot::RB_CONFIG
+        != 0
+    {
+        #[cfg(feature = "boot_config")]
+        crate::kern::subr_userconf::user_config();
+        #[cfg(not(feature = "boot_config"))]
+        kprintf!("kernel does not support -c; continuing..\n");
+    }
     // HIBERNATE: not configured.
 }
 

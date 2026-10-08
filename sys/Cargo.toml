@@ -20,8 +20,9 @@ bench = false
 doc = false
 
 [features]
-default = ["alloc", "ffs", "ffs2", "kmemstats", "inet6", "quota", "ufs_dirhash", "mfs", "tmpfs", "msdosfs", "cd9660", "udf", "nfsclient", "nfsserver", "fuse", "ntfs", "ext2fs", "wsdisplay_compat_usl", "wsdisplay_compat_rawkbd"]
+default = ["alloc", "boot_config", "ffs", "ffs2", "kmemstats", "inet6", "quota", "ufs_dirhash", "mfs", "tmpfs", "msdosfs", "cd9660", "udf", "nfsclient", "nfsserver", "fuse", "ntfs", "ext2fs", "wsdisplay_compat_usl", "wsdisplay_compat_rawkbd"]
 alloc = []        # enables `extern crate alloc` and the GlobalAlloc over malloc(9)
+boot_config = ["alloc"] # OpenBSD `option BOOT_CONFIG` -> `boot -c`, the UKC> prompt (kern/subr_userconf.c); default (both GENERICs have it)
 diagnostic = []   # OpenBSD `option DIAGNOSTIC` -> kassert! active
 debug = []        # OpenBSD `option DEBUG`      -> kdassert! active
 kmemstats = []    # OpenBSD `option KMEMSTATS`  -> malloc(9) statistics; default (GENERIC has it)

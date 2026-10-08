@@ -60,6 +60,7 @@ extern crate std;
 
 pub mod crc32c;
 pub mod explicit_bzero;
+pub mod getsn;
 pub mod random;
 pub mod scanc;
 pub mod skpc;
@@ -72,6 +73,7 @@ pub mod timingsafe_bcmp;
 
 pub use crc32c::crc32c;
 pub use explicit_bzero::explicit_bzero;
+pub use getsn::{GetsnCons, getsn};
 pub use random::random;
 pub use scanc::scanc;
 pub use skpc::skpc;

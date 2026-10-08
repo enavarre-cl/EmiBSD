@@ -8,11 +8,35 @@
 //! calls `device_register()` (each machine's `autoconf.c`). Here `config(8)` is not ported:
 //! each architecture writes its `ioconf` by hand in `sys/arch/<arch>/conf/ioconf.rs`, listing
 //! the GENERIC entries whose drivers exist (`docs/ARCHITECTURE.md`, "Deviations").
+//!
+//! `boot -c` (`kern/subr_userconf.c`, UKC) edits those tables before autoconfiguration reads
+//! them: the machine keeps them in `StaticCell`s, hands them to `user_config` once through
+//! [`Autoconf::ioconf_mut`] and only then to everybody else. As `config(8)` does, `cfdata[]`
+//! ends in free slots ([`Cfdata::free`]) for UKC's `add`; [`ioconf_cfdata`] cuts them off, as
+//! the C's loops stop at the first entry without an attachment.
 
 use core::ffi::c_void;
 
 use crate::machine::Machine;
 use crate::sys::device::{Cfdata, Cfdriver, Device, Nam2blk, Pdevinit};
+
+/// The `ioconf.c` tables as UKC (`user_config`) edits them: the whole of `cfdata[]` with its
+/// free slots, `cfroots[]`, `pdevinit[]`, and the names `config(8)` writes beside them.
+pub struct IoconfTables<'a> {
+    /// `cfdata[]`, free slots included.
+    pub cfdata: &'a mut [Cfdata],
+    /// `cfroots[]` (no terminating `-1`).
+    pub cfroots: &'a mut [i16],
+    /// `pdevinit[]` (no terminating entry).
+    pub pdevinit: &'a mut [Pdevinit],
+    /// `pdevnames[]`: the pseudo-devices' names, in `pdevinit[]`'s order.
+    pub pdevnames: &'a [&'a [u8]],
+    /// `locnames[]`: every locator name, once.
+    pub locnames: &'a [&'a [u8]],
+    /// `locnamp[]`: runs of indices into `locnames[]`, each ended by `-1`; an entry's
+    /// `cf_locnames` is the start of its run.
+    pub locnamp: &'a [i16],
+}
 
 /// The machine's autoconfiguration tables and hooks.
 pub trait Autoconf {
@@ -22,6 +46,15 @@ pub trait Autoconf {
 
     /// `cfroots[]`: the indices in `cfdata[]` of the root devices (no terminating `-1`).
     fn cfroots() -> &'static [i16];
+
+    /// The tables for `user_config` to edit.
+    ///
+    /// # Safety
+    ///
+    /// Called once, by `user_config` on the boot CPU in `cpu_startup`, before anything has
+    /// read `cfdata`, `cfroots` or `pdevinit`; the tables it returns are dropped before
+    /// autoconfiguration starts.
+    unsafe fn ioconf_mut() -> IoconfTables<'static>;
 
     /// `mainbus_cd`: the root bus's driver, which `device_mainbus()` reads.
     fn mainbus_cd() -> &'static Cfdriver;
@@ -45,6 +78,26 @@ pub trait Autoconf {
 /// `cfdata` on the selected machine.
 pub fn cfdata() -> &'static [Cfdata] {
     Machine::cfdata()
+}
+
+/// `cfdata[]` up to its first free slot: the entries the kernel configuration has, as the C's
+/// loops (`for (cf = cfdata; cf->cf_driver; cf++)`) see them.
+pub fn ioconf_cfdata(table: &[Cfdata]) -> &[Cfdata] {
+    let n = table
+        .iter()
+        .position(Cfdata::is_free)
+        .unwrap_or(table.len());
+    &table[..n]
+}
+
+/// The tables `user_config` edits, on the selected machine.
+///
+/// # Safety
+///
+/// As for [`Autoconf::ioconf_mut`].
+pub unsafe fn ioconf_mut() -> IoconfTables<'static> {
+    // SAFETY: the caller's contract is the trait method's.
+    unsafe { Machine::ioconf_mut() }
 }
 
 /// `cfroots` on the selected machine.

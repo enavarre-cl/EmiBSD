@@ -1214,6 +1214,18 @@ impl Autoconf for Machine {
         unsafe { HOST_IOCONF.read().1 }
     }
 
+    /// No `ioconf.c` tables to edit on the host: the tests make their own.
+    unsafe fn ioconf_mut() -> crate::machine::autoconf::IoconfTables<'static> {
+        crate::machine::autoconf::IoconfTables {
+            cfdata: &mut [],
+            cfroots: &mut [],
+            pdevinit: &mut [],
+            pdevnames: &[],
+            locnames: &[],
+            locnamp: &[],
+        }
+    }
+
     fn mainbus_cd() -> &'static Cfdriver {
         &HOST_MAINBUS_CD
     }
