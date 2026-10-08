@@ -876,6 +876,16 @@ fn poll_sendkey(serial: &str) -> Result<()> {
     Ok(())
 }
 
+/// Sends one human-monitor command `cmd` on the monitor socket `sock` and waits for its
+/// prompt (`system_powerdown`, ...).
+pub(crate) fn monitor_command(sock: &Path, cmd: &str) -> Result<()> {
+    let mut mon = UnixStream::connect(sock).map_err(|e| format!("{}: {e}", sock.display()))?;
+    mon.set_read_timeout(Some(Duration::from_secs(10)))?;
+    read_prompt(&mut mon)?;
+    writeln!(mon, "{cmd}")?;
+    read_prompt(&mut mon)
+}
+
 /// Whether a screenshot is still to be taken.
 pub(crate) fn screenshot_pending() -> bool {
     SCREENSHOT.get().is_some() && SHOT_LINE.lock().map(|s| s.is_none()).unwrap_or(false)
