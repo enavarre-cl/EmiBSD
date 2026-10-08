@@ -23,6 +23,7 @@
 //! `acpiiort* at acpi?`, `acpipci* at acpi?`, `pci* at acpipci?` and `pluart* at acpi?`;
 //! M16f: `smmu* at acpiiort?`, `smmu* at fdt?`, `plgpio* at fdt? early 1`, `gpiokeys* at
 //! fdt?`, `agintc* at fdt? early 1` and `agintcmsi* at fdt? early 1`;
+//! M16b: `ehci* at pci?` and `usb* at ehci?`;
 //! `pseudo-device pf`, `pseudo-device pflog`, `pseudo-device pty 16`, `pseudo-device vnd 4`,
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
@@ -31,9 +32,9 @@
 //! attach below it) and `agintc` (`device agintc: fdt`, whose ITS `agintcmsi` attaches
 //! below it). Every other GENERIC
 //! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*`,
-//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `azalia*`, `ahci*`, `nvme*`
+//! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `ehci*`, `azalia*`, `ahci*`, `nvme*`
 //! `em*`, `re*` and `vmx*`, the PHYs at `mii?` but `rgephy*`, `rlphy*` and `ukphy*`, the other devices at `acpi?` (`acpiac*`, `acpibtn*`, `acpicpu*`, `ahci*`, `com*`, `xhci*`,
-//! ...), `ahci*` at `fdt?`, the other host
+//! ...), `ahci*` at `fdt?`, `ehci*` at `acpi?` and `fdt?`, the other host
 //! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
 //! `umass*` and `uhidev*`, the devices at `uhidev?` but `ukbd*`, every `wskbd*` but the
 //! one at `ukbd?`, ...),
@@ -76,6 +77,7 @@ use crate::dev::mii::rlphy::{RLPHY_CA, RLPHY_CD};
 use crate::dev::mii::ukphy::{UKPHY_CA, UKPHY_CD};
 use crate::dev::pci::ahci_pci::AHCI_PCI_CA;
 use crate::dev::pci::azalia::{AZALIA_CA, AZALIA_CD};
+use crate::dev::pci::ehci_pci::EHCI_PCI_CA;
 use crate::dev::pci::if_em::{EM_CA, EM_CD};
 use crate::dev::pci::if_re_pci::RE_PCI_CA;
 use crate::dev::pci::if_vmx::{VMX_CA, VMX_CD};
@@ -89,6 +91,7 @@ use crate::dev::pv::vioscsi::{VIOSCSI_CA, VIOSCSI_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
+use crate::dev::usb::ehci::EHCI_CD;
 use crate::dev::usb::uhidev::{UHIDEV_CA, UHIDEV_CD};
 use crate::dev::usb::uhub::{UHUB_CA, UHUB_CD, UHUB_UHUB_CA};
 use crate::dev::usb::ukbd::{UKBD_CA, UKBD_CD};
@@ -154,8 +157,10 @@ const PV_ACPIIORT: &[i16] = &[43];
 /// `device pci {[dev = -1], [function = -1]}`).
 const LOC_PCI_UNK: &[i64] = &[-1, -1];
 
-/// `pv[]` for children of the `usbus` attribute, carried by `xhci*` (`cfdata[20]`).
-const PV_XHCI: &[i16] = &[20];
+/// `pv[]` for children of the `usbus` attribute, carried by `xhci*` (`cfdata[20]`) and
+/// `ehci*` (`cfdata[53]`): `usb* at xhci?` and `usb* at ehci?` are one entry, as config(8)
+/// merges them.
+const PV_USBUS: &[i16] = &[20, 53];
 
 /// `pv[]` for children of `usb*` (`cfdata[21]`).
 const PV_USB: &[i16] = &[21];
@@ -215,9 +220,9 @@ const LOC_WSKBDDEV_MUX1: &[i64] = &[-1, 1];
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    54
+    55
 } else {
-    53
+    54
 };
 
 /// `cfdata[]`.
@@ -465,8 +470,8 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 21: usb* at xhci?
-    Cfdata::new(&USB_CA, &USB_CD, 0, FSTATE_STAR, &[], 0, PV_XHCI, 0, 0),
+    // 21: usb* at xhci?, usb* at ehci?
+    Cfdata::new(&USB_CA, &USB_CD, 0, FSTATE_STAR, &[], 0, PV_USBUS, 0, 0),
     // 22: uhub* at usb?
     Cfdata::new(&UHUB_CA, &UHUB_CD, 0, FSTATE_STAR, &[], 0, PV_USB, 0, 0),
     // 23: uhub* at uhub?
@@ -819,7 +824,19 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 53: cpu* at mainbus? (GENERIC.MP)
+    // 53: ehci* at pci?
+    Cfdata::new(
+        &EHCI_PCI_CA,
+        &EHCI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        0,
+        0,
+    ),
+    // 54: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
 ];

@@ -20,6 +20,7 @@
 //! `re* at pci?`, `rlphy* at mii?`, `rgephy* at mii?` and `ukphy* at mii?` (M13),
 //! `vmx* at pci?` (M13), `vga0 at isa?`, `vga* at pci?` and `wsdisplay0 at vga? console 1` (M13),
 //! `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13), `acpimcfg* at acpi?` (M14),
+//! `ehci* at pci?` and `usb* at ehci?` (M16b),
 //! `isa0 at mainbus0`,
 //! `com0 at isa? port 0x3f8 irq 4`, `com1 at isa? port 0x2f8 irq 3`, `com2 at isa? port 0x3e8
 //! irq 5`, `com3 at isa? disable port 0x2e8 irq 9`; `pseudo-device pf`, `pseudo-device pflog`,
@@ -35,7 +36,7 @@
 //! device at `mii?` (the other PHY drivers), every
 //! other
 //! `audio*` (at `uaudio?`, ...), `pci*` at `ppb?` and
-//! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; `usb*` at `ehci?`, `uhci?`
+//! `pchb?`, and every device at `virtio?` but `vio*`, `vioblk*` and `vioscsi*`; `usb*` at `uhci?`
 //! and `ohci?`, every device at `uhub?` but `uhub*`, `umass*` and `uhidev*`, every device
 //! at `uhidev?` but `ukbd*`, every `wskbd*` but the one at `ukbd?`;
 //! `mpath0 at root`; the other pseudo-devices (`pdevinit[]`). Each entry keeps `config(8)`'s
@@ -72,6 +73,7 @@ use crate::dev::mii::ukphy::{UKPHY_CA, UKPHY_CD};
 use crate::dev::pci::ahci_pci::AHCI_PCI_CA;
 use crate::dev::pci::auich::{AUICH_CA, AUICH_CD};
 use crate::dev::pci::azalia::{AZALIA_CA, AZALIA_CD};
+use crate::dev::pci::ehci_pci::EHCI_PCI_CA;
 use crate::dev::pci::if_em::{EM_CA, EM_CD};
 use crate::dev::pci::if_re_pci::RE_PCI_CA;
 use crate::dev::pci::if_vmx::{VMX_CA, VMX_CD};
@@ -89,6 +91,7 @@ use crate::dev::pv::vioscsi::{VIOSCSI_CA, VIOSCSI_CD};
 use crate::dev::pv::virtio::VIRTIO_CD;
 use crate::dev::rd::rdattach;
 use crate::dev::softraid::{SOFTRAID_CA, SOFTRAID_CD};
+use crate::dev::usb::ehci::EHCI_CD;
 use crate::dev::usb::uhidev::{UHIDEV_CA, UHIDEV_CD};
 use crate::dev::usb::uhub::{UHUB_CA, UHUB_CD, UHUB_UHUB_CA};
 use crate::dev::usb::ukbd::{UKBD_CA, UKBD_CD};
@@ -157,8 +160,10 @@ const LOC_COM2: &[i64] = &[0x3e8, 0, -1, 0, 5, -1, -1];
 /// `loc[]` of `com3 at isa? disable port 0x2e8 irq 9`.
 const LOC_COM3: &[i64] = &[0x2e8, 0, -1, 0, 9, -1, -1];
 
-/// `pv[]` for children of the `usbus` attribute, carried by `xhci*` (`cfdata[14]`).
-const PV_XHCI: &[i16] = &[14];
+/// `pv[]` for children of the `usbus` attribute, carried by `xhci*` (`cfdata[14]`) and
+/// `ehci*` (`cfdata[53]`): `usb* at xhci?` and `usb* at ehci?` are one entry, as config(8)
+/// merges them.
+const PV_USBUS: &[i16] = &[14, 53];
 
 /// `pv[]` for children of `usb*` (`cfdata[15]`).
 const PV_USB: &[i16] = &[15];
@@ -232,11 +237,11 @@ const PV_UKBD: &[i16] = &[24];
 /// {[console = -1], [mux = 1]}`), `mux 1`.
 const LOC_WSKBDDEV_MUX1: &[i64] = &[-1, 1];
 
-/// `cfdata[]`: 53 entries, 54 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
+/// `cfdata[]`: 54 entries, 55 with `MULTIPROCESSOR` (GENERIC.MP's `cpu* at mainbus?`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    54
+    55
 } else {
-    53
+    54
 };
 
 /// `cfdata[]`.
@@ -412,8 +417,8 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 15: usb* at xhci?
-    Cfdata::new(&USB_CA, &USB_CD, 0, FSTATE_STAR, &[], 0, PV_XHCI, 0, 0),
+    // 15: usb* at xhci?, usb* at ehci?
+    Cfdata::new(&USB_CA, &USB_CD, 0, FSTATE_STAR, &[], 0, PV_USBUS, 0, 0),
     // 16: uhub* at usb?
     Cfdata::new(&UHUB_CA, &UHUB_CD, 0, FSTATE_STAR, &[], 0, PV_USB, 0, 0),
     // 17: uhub* at uhub?
@@ -828,7 +833,19 @@ pub static CFDATA: [Cfdata; NCFDATA] = [
         0,
         0,
     ),
-    // 53: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
+    // 53: ehci* at pci?
+    Cfdata::new(
+        &EHCI_PCI_CA,
+        &EHCI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_PCI_UNK,
+        0,
+        PV_PCI,
+        0,
+        0,
+    ),
+    // 54: cpu* at mainbus? (GENERIC.MP, MULTIPROCESSOR): the application processors, unit 1
     // on (cpu0 takes unit 0).
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
