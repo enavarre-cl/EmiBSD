@@ -1226,6 +1226,20 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   `lapic_calibrate_timer`) and mainbus maps the LAPIC at its architectural base (with ACPI,
   `acpimadt` does both from the MADT, M13). Adding a driver means its
   `cfattach`/`cfdriver` and one `Cfdata` row in each `ioconf.rs` that has it in GENERIC.
+- UKC, `boot -c` (M16e): `kern/subr_userconf.c` edits `ioconf.c`'s tables before
+  autoconfiguration, so they cannot be immutable statics. Each `ioconf.rs` keeps `CFDATA`,
+  `CFROOTS` and `PDEVINIT` in `StaticCell`s: `cpu_startup` (both archs, as the C's machdep.c)
+  calls `user_config` when `boothowto` has `RB_CONFIG`, which takes them once through
+  `machine::autoconf::ioconf_mut` before anything reads them; afterwards `cfdata()` hands out
+  shared slices as before. `cfdata[]` ends in `config(8)`'s eight free slots
+  (`Cfdata::free()`, whose `cf_attach` is `CFATTACH_NULL`, the C's NULL) for UKC's `add`, and
+  `machine::autoconf::ioconf_cfdata` cuts them off as the C's loops stop at a NULL
+  `cf_attach`. The tables also carry `LOCNAMES`, `LOCNAMP` (one run per locator attribute,
+  the compression `mkioconf.c`'s XXX asks for) and `PDEVNAMES`, and every entry its
+  `cf_locnames`; an entry with locators and `cf_locnames` 0 prints none of them in UKC (and
+  fails a `kassert!` under `diagnostic`). `cf_loc` and `cf_parents` stay `&'static` slices of
+  constants: UKC's `change` and `add` replace them with `malloc`ed copies instead of writing
+  into them. The option is the default cargo feature `boot_config` (`option BOOT_CONFIG`).
 - ACPI (M13, amd64): `acpi0 at bios0 at mainbus0`, as in GENERIC. bios0 (`bios.c`) gets the
   RSDP from Limine's RSDP request (`BootInfo::rsdp`, kept by `init_x86_64` as
   `BIOS_EFIINFO_CONFIG_ACPI`, the C's `bios_efiinfo->config_acpi`), so `acpi_probe` finds it

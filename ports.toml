@@ -3004,10 +3004,11 @@ notes = "M7b: the whole file: autoconf_verbose, struct matchinfo, mapply, config
 [[file]]
 c = "sys/kern/subr_userconf.c"
 rust = "sys/kern/subr_userconf.rs"
-status = "wip"
+status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "9e20e11c52274f26fb73faadf33f218a686238aa"
 deps = ["sys/sys/device.h", "sys/kern/subr_autoconf.c", "sys/lib/libkern/getsn.c", "sys/dev/cons.c"]
-notes = "M16e: UKC (boot -c), in progress"
+notes = "M16e: the whole file (UKC, boot -c: add, base, change, ddb, disable, enable, exit, find, help, list, lines, quit, show, verbose, the history), behind feature boot_config (option BOOT_CONFIG, default); called from both cpu_startups on RB_CONFIG as machdep.c does; the userconf_* globals are a Userconf over machine::autoconf::IoconfTables (ioconf.rs tables in StaticCells, eight Cfdata::free slots, LOCNAMES/LOCNAMP per attribute, PDEVNAMES) and a UkcCons console; change edits a malloc copy of the constant cf_loc, add renumbers parent vectors in copies (out of memory before anything moves); negative devnos are Unknown devno; host tests for every command; smoke-ukc both archs"
 [[file]]
 c = "sys/arch/amd64/amd64/mainbus.c"
 rust = "sys/arch/amd64/amd64/mainbus.rs"

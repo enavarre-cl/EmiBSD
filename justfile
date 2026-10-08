@@ -104,7 +104,8 @@ smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag s
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
     "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
-    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd"
+    "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
+    "smoke-ukc"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -2122,6 +2123,30 @@ smoke-kbd: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featur
         --expect 'wsdisplay0 at efifb0 mux 1'
     cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{kbd_check}} \
         --expect 'wsdisplay0 at simplefb0 mux 1'
+
+# M16e: UKC (`boot -c`, kern/subr_userconf.c), both archs. The kernel boots with `-c`
+# (RB_CONFIG), so cpu_startup stops at the `UKC>` prompt before autoconfiguration; the session
+# finds vio(4)'s cfdata entry, disables it and quits. It starts with an empty line, as
+# smoke-ddb does: QEMU's PL011 with its FIFO off (pluartcnattach, as in C) takes a whole burst
+# of input into its one-byte holding register before the first poll, so the first line sent
+# reads back as its last byte repeated. The boot goes on to `login:` without
+# vio0 (its attach line never appears, `--reject`), and `ifconfig vio0` after logging in
+# finds no such interface. Part of `smoke`.
+ukc_check := "--cmdline '-c' --expect-ramdisk --until-seen " + \
+    "--send-after 'UKC> ' --send '\\n' " + \
+    "--send-after 'UKC> ' --send 'find vio\\n' --send-after 'UKC> ' --send 'disable vio\\n' " + \
+    "--send-after 'UKC> ' --send 'quit\\n' " + disk_login + " " + \
+    "--send-after '# ' --send 'ifconfig vio0 || echo ukc-$((40+2))\\n' " + \
+    "--expect 'User Kernel Config' --expect 'vio* disabled' --expect 'Continuing...' " + \
+    "--expect 'rc: multi-user' --expect 'ukc-42' --reject 'vio0 at virtio'"
+
+smoke-ukc: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--features qemu,multiprocessor")
+    @test -f target/userland/amd64/ramdisk.ffs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-ukc: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch amd64 --kernel target/{{amd64}}/debug/bsd {{ukc_check}} \
+        --expect '  4 vio* at virtio* flags 0x0'
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd {{ukc_check}} \
+        --expect '  4 vio* at virtio*|virtio* flags 0x0'
 
 # annotate a stack trace (paste it on stdin) with the debug kernel's symbols
 symbolize arch:
