@@ -6,11 +6,15 @@
 //! `psci` (with `pscivar`) is PSCI, `psci* at fdt? early 1` (M13); `simplefb` the
 //! firmware's frame buffer, `simplefb* at fdt?` (M13); `pciecam` is the generic ECAM PCIe host bridge (`pciecam* at fdt?`, M12), which
 //! `files.arm64` lists: it is compiled where cfg `machine_pci_chipset` is set (`sys/build.rs`);
+//! `plgpio` is the PL061 GPIO controller (`plgpio* at fdt? early 1`) and `gpiokeys` the keys
+//! on GPIO pins (`gpiokeys* at fdt?`, M16f).
 //! `ipmi_fdt` is ipmi(4) on an `ipmi-kcs` node (`ipmi* at fdt?`, M16e).
 
+pub mod gpiokeys;
 pub mod ipmi_fdt;
 #[cfg(machine_pci_chipset)]
 pub mod pciecam;
+pub mod plgpio;
 pub mod plrtc;
 pub mod pluart_fdt;
 pub mod psci;

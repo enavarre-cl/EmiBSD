@@ -122,6 +122,10 @@ pub trait Fdt {
 
     /// `powerdownfn = f`: the function `boot(9)` calls to power the machine off.
     fn set_powerdownfn(f: fn());
+
+    /// `lid_action` (`extern int lid_action`, `machdep.c`): what closing the lid does
+    /// (`machdep.lidaction`), which `gpiokeys` reads for a lid switch.
+    fn lid_action() -> i32;
 }
 
 /// `smc_call` on the selected machine.
@@ -142,6 +146,11 @@ pub fn set_cpuresetfn(f: fn()) {
 /// `powerdownfn = f` on the selected machine.
 pub fn set_powerdownfn(f: fn()) {
     Machine::set_powerdownfn(f)
+}
+
+/// `lid_action` on the selected machine.
+pub fn lid_action() -> i32 {
+    Machine::lid_action()
 }
 
 /// `fdt_find_cons` on the selected machine.

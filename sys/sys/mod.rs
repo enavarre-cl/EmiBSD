@@ -35,6 +35,7 @@ pub mod filio;
 #[cfg(feature = "fuse")]
 pub mod fusebuf;
 pub mod futex;
+pub mod gpio;
 pub mod intrmap;
 pub mod ioccom;
 pub mod ioctl;

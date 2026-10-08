@@ -1451,7 +1451,15 @@ The same arm64 kernel ELF boots from Limine and from arm64's efiboot.
   through `interrupt-map` (`arm_intr_establish_fdt_imap`) and MSI/MSI-X through
   `msi-parent` to the GICv2m frame (`ampintcmsi`, attached below the GIC by
   `simplebus_attach` as in C; `arm_intr_establish_fdt_msi`), loading the doorbell into a
-  DMA map and programming the function with `arm64/pci_machdep.c`. The extents are absent
+  DMA map and programming the function with `arm64/pci_machdep.c`. On `virt,gic-version=3`
+  (M16f, `EMIBSD_GIC=3`, `smoke-gicv3`) the GIC is agintc(4) and the pcie node's `msi-map`
+  (ACPI: the IORT) names its ITS (`agintcmsi`), which translates each MSI into an LPI. The
+  ITS's tables and the LPI tables are uncached DMA memory, so `pmap_kenter_cache` cleans
+  the caches of those managed pages first (`cpu_idcache_wbinv_range`), as in C. agintc's
+  attach puts back the boot CPU's interrupt mask as it found it (ampintc's unmasks), so the
+  `qemu` self-tests that wait for an interrupt before the first context switch
+  (`selftest=uart`, `selftest=clock`) unmask it themselves through `machine::cpu::intr_enable`
+  (`intr_enable()`, new in the machine contract). The extents are absent
   there too, so BARs must be assigned by the firmware (EDK2 does). `virtio* at pci?` is
   configured on arm64 as in GENERIC. PCI-PCI bridges (M16e, `ppb.c`, both archs): with no
   extents, a bridge needs its bus numbers and windows from the firmware too (EDK2 and OVMF
@@ -1841,6 +1849,12 @@ Every file-level deviation is in that file's `//! ## Deviations` list and in `po
   for pages that are mapped there and maps the others like any device memory. Without the
   `ioport_ex` extent a second probe of claimed ports does not fail: where a PCI VGA does
   attach, `vga0 at isa?` would attach too (OpenBSD's ISA probe fails there).
+- smmu(4) on an SMMUv3 without EL2 support (`SMMU_IDR0.Hyp` clear, QEMU's
+  `virt,iommu=smmuv3`) uses the non-secure EL1 regime: `STRW` NS-EL1, no `CR2.E2H`, and
+  `TLBI_NH_ASID`/`TLBI_NH_VA` instead of `TLBI_EL2_*`, the forms `smmu.c` keeps commented
+  out; with `Hyp` set the C's EL2 forms stay (M16f; `v3.sc_has_hyp` is not in the C). QEMU
+  ignores the EL2 invalidations, so a map's IOTLB entries outlived its unload and the next
+  load of the same IOVA read the old pages: the NVMe root's disklabel came back wrong.
 
 ## Testing architecture
 

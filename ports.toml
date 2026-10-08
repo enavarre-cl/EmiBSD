@@ -944,7 +944,7 @@ c = "sys/dev/fdt/pluart_fdt.c"
 rust = "sys/dev/fdt/pluart_fdt.rs"
 status = "wip"
 deps = ["sys/dev/ic/pluart.c"]
-notes = "M4: pluart_init_cons (fdt_find_cons + fdt_get_reg + pluartcnattach); M8: pluart_fdt_ca, pluart_fdt_match, pluart_fdt_attach (pluart* at fdt? in ioconf.rs; the machine's fdt_attach_args, fdt_intr_establish through machine::fdt); clock_enable_all/clock_get_frequency (ofw_clock.c) and pinctrl_byname (ofw_pinctrl.c) are reported, sc_clkfreq stays 0 so pluart_param keeps the firmware's baud rate"
+notes = "M4: pluart_init_cons (fdt_find_cons + fdt_get_reg + pluartcnattach); M8: pluart_fdt_ca, pluart_fdt_match, pluart_fdt_attach (pluart* at fdt? in ioconf.rs; the machine's fdt_attach_args, fdt_intr_establish through machine::fdt); clock_enable_all/clock_get_frequency (ofw_clock.c) are reported, sc_clkfreq stays 0 so pluart_param keeps the firmware's baud rate; M16f: pinctrl_byname is ofw_pinctrl.c's"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "c4c173a7fc6f53adda9c7413d8e219da30c83f1e"
 
@@ -1081,7 +1081,7 @@ rust = "sys/arch/arm64/arm64/cpufunc.rs"
 status = "wip"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "a1039819b9826ff32ea67aad0cb0c1b1236d6436"
-notes = "TLB invalidations and cpu_setttb as asm! blocks (no RETGUARD, no CPTAG_REPEAT_TLBI codepatch until M4); M6-b2: cpu_icache_sync_range (line sizes from CTR_EL0); M7b: cpu_dcache_wb_range, cpu_dcache_wbinv_range, cpu_dcache_inv_range (unsafe: it discards dirty lines) for bus_dma, the cache_handle_range macro as dcache_range! with dcache_line_size read from CTR_EL0; cpu_idcache_wbinv_range when a caller needs it"
+notes = "TLB invalidations and cpu_setttb as asm! blocks (no RETGUARD, no CPTAG_REPEAT_TLBI codepatch until M4); M6-b2: cpu_icache_sync_range (line sizes from CTR_EL0); M7b: cpu_dcache_wb_range, cpu_dcache_wbinv_range, cpu_dcache_inv_range (unsafe: it discards dirty lines) for bus_dma, the cache_handle_range macro as dcache_range! with dcache_line_size read from CTR_EL0; M16f: cpu_idcache_wbinv_range (idcache_line_size from CTR_EL0), called by pmap_kenter_cache for non-cacheable mappings of managed pages (agintc's tables)"
 
 [[file]]
 c = "sys/arch/amd64/include/pmap.h"
@@ -3033,7 +3033,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "525d03139430f1237e6c74a063c5b56ba6656d5a"
 deps = ["sys/kern/subr_autoconf.c", "sys/dev/ofw/fdt.c", "sys/arch/arm64/include/fdt.h", "sys/arch/arm64/arm64/intr.c", "sys/arch/arm64/dev/agtimer.c"]
-notes = "M7b: struct mainbus_softc (repr(C), no sc_dmat), mainbus_ca/mainbus_cd, mainbus_match, mainbus_attach (arm_intr_init_fdt, agtimer_init, the model line, psci, efi, the CPUs, /firmware, /reserved-memory, ranges, apm, the three early passes, the framebuffer deferred to mountroot), mainbus_print, mainbus_attach_node (fa_reg/fa_intr malloc'd as in C), mainbus_match_status, mainbus_attach_cpus (ncpusfound), mainbus_match_primary/secondary, mainbus_attach_psci/efi/apm/framebuffer/firmware/resvmem; reported: mainbus_dma_tag/dma-coherent/iommu_device_map (bus_dma, M7), thermal_init; hw_prod and hw_serial are kept (malloc'd copies in kern_sysctl.c's statics) since kern_sysctl.c; efi/apm args carry mainbus's bus tag (FdtAttachArgs has no null tag); a missing early locator reads as 0; a zero-cell reg line is skipped instead of dividing by zero; M7b: mainbus_dma_tag (a plain static, not placed in .rodata by hand), sc_dmat, fa_dmat, the dma-coherent copy of the tag (malloc'd, never freed, as in C); reported: iommu_device_map (ofw_misc.c; the node keeps its tag), hw_prod, hw_serial, thermal_init; efi/apm args carry mainbus's bus space and DMA tags (FdtAttachArgs has no null tag); a missing early locator reads as 0; a zero-cell reg line is skipped instead of dividing by zero; efi(4): mainbus_attach_efi tests the boot protocol's UEFI system table (machdep SYSTEM_TABLE) instead of /chosen openbsd,uefi-system-table"
+notes = "M7b: struct mainbus_softc (repr(C), no sc_dmat), mainbus_ca/mainbus_cd, mainbus_match, mainbus_attach (arm_intr_init_fdt, agtimer_init, the model line, psci, efi, the CPUs, /firmware, /reserved-memory, ranges, apm, the three early passes, the framebuffer deferred to mountroot), mainbus_print, mainbus_attach_node (fa_reg/fa_intr malloc'd as in C), mainbus_match_status, mainbus_attach_cpus (ncpusfound), mainbus_match_primary/secondary, mainbus_attach_psci/efi/apm/framebuffer/firmware/resvmem; reported: mainbus_dma_tag/dma-coherent/iommu_device_map (bus_dma, M7), thermal_init; hw_prod and hw_serial are kept (malloc'd copies in kern_sysctl.c's statics) since kern_sysctl.c; efi/apm args carry mainbus's bus tag (FdtAttachArgs has no null tag); a missing early locator reads as 0; a zero-cell reg line is skipped instead of dividing by zero; M7b: mainbus_dma_tag (a plain static, not placed in .rodata by hand), sc_dmat, fa_dmat, the dma-coherent copy of the tag (malloc'd, never freed, as in C); M16f: iommu_device_map (ofw_misc.rs) gives each node the tag of the IOMMU its iommus property names; reported: hw_prod, hw_serial, thermal_init; efi/apm args carry mainbus's bus space and DMA tags (FdtAttachArgs has no null tag); a missing early locator reads as 0; a zero-cell reg line is skipped instead of dividing by zero; efi(4): mainbus_attach_efi tests the boot protocol's UEFI system table (machdep SYSTEM_TABLE) instead of /chosen openbsd,uefi-system-table"
 
 [[file]]
 c = "sys/conf/files"
@@ -7927,7 +7927,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "60b16e0ca3c6dcec29a417e69f62c6af40e6d865"
 deps = ["sys/arch/arm64/include/pci_machdep.h", "sys/arch/arm64/dev/pci_machdep.c", "sys/arch/arm64/arm64/intr.c", "sys/arch/arm64/include/fdt.h", "sys/arch/arm64/arm64/bus_space.c", "sys/dev/pci/pci.c", "sys/dev/ofw/fdt.c"]
-notes = "M12: the whole file: PCIE_* ECAM offsets, struct pciecam_range/softc (repr(C); sc_bus and sc_pc MaybeUninit in UnsafeCell, written once by the attach)/intr_handle (machine_intr_handle first), pciecam_ic (ic_barrier only, a wrapper calling intr_barrier on the cookie), pciecam_ca/cd, match (pci-host-ecam-generic, snps,dw-pcie-ecam), attach (ranges parsed, ECAM mapped, bus space copied with pciecam_bs_map/_mmap, chipset filled with the _pci_intr_map_msi* of arm64/pci_machdep.c, PCI_FLAGS_MSI_ENABLED from msi-map/msi-parent), attach_hook, bus_maxdevs (dw quirk), make_tag (64-bit, no sign extension), decompose_tag, conf_size/read/write, probe_device_hook, intr_map (ih_dmat set to pa_dmat, which the C leaves unset), intr_string, intr_establish (MSI/MSI-X through fdt_intr_establish_msi_cpu with the doorbell loaded raw into a dmamap and pci_msi_enable/pci_msix_enable; INTx through fdt_intr_establish_imap_cpu), intr_disestablish, bs_map, bs_mmap (None for -1); not ported: the extents (sys/extent.h: sc_ioex/sc_memex left out, pba_*ex NULL), reported: iommu_device_map_pci and iommu_reserve_region_pci (ofw_misc.c; the tag stays the bus's); compiled only under cfg machine_pci_chipset (sys/build.rs, arm64: files.arm64 lists the file) and reaching the machine through sys/machine/pci_chipset.rs; QEMU virt: xHCI and HDA not configured at pci0, virtio-net-pci attaches with msix per-VQ (GICv2m) or irq (interrupt-map) and pings"
+notes = "M12: the whole file: PCIE_* ECAM offsets, struct pciecam_range/softc (repr(C); sc_bus and sc_pc MaybeUninit in UnsafeCell, written once by the attach)/intr_handle (machine_intr_handle first), pciecam_ic (ic_barrier only, a wrapper calling intr_barrier on the cookie), pciecam_ca/cd, match (pci-host-ecam-generic, snps,dw-pcie-ecam), attach (ranges parsed, ECAM mapped, bus space copied with pciecam_bs_map/_mmap, chipset filled with the _pci_intr_map_msi* of arm64/pci_machdep.c, PCI_FLAGS_MSI_ENABLED from msi-map/msi-parent), attach_hook, bus_maxdevs (dw quirk), make_tag (64-bit, no sign extension), decompose_tag, conf_size/read/write, probe_device_hook, intr_map (ih_dmat set to pa_dmat, which the C leaves unset), intr_string, intr_establish (MSI/MSI-X through fdt_intr_establish_msi_cpu with the doorbell loaded raw into a dmamap and pci_msi_enable/pci_msix_enable; INTx through fdt_intr_establish_imap_cpu), intr_disestablish, bs_map, bs_mmap (None for -1); not ported: the extents (sys/extent.h: sc_ioex/sc_memex left out, pba_*ex NULL), M16f: iommu_device_map_pci and iommu_reserve_region_pci (ofw_misc.rs): the function gets the tag of the SMMU its requester ID maps to in iommu-map, with the bridge windows reserved in its IOVA space (MSI doorbells reach the SMMU tag through the raw load of intr_establish); compiled only under cfg machine_pci_chipset (sys/build.rs, arm64: files.arm64 lists the file) and reaching the machine through sys/machine/pci_chipset.rs; QEMU virt: xHCI and HDA not configured at pci0, virtio-net-pci attaches with msix per-VQ (GICv2m) or irq (interrupt-map) and pings"
 
 [[file]]
 c = "sys/arch/arm64/dev/pci_machdep.c"
@@ -7945,7 +7945,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "e2c3fd37326fc9ef60d8d2a9dc5089d5fd5d02cc"
 deps = ["sys/arch/arm64/include/simplebusvar.h", "sys/arch/arm64/include/fdt.h", "sys/arch/arm64/include/bus.h", "sys/dev/ofw/fdt.c", "sys/kern/subr_autoconf.c"]
-notes = "M12: the whole file: simplebus_ca/cd, match (simple-bus, qcom,geni-se-qup), attach (bus space copied with simplebus_bs_map/_mmap, DMA tag copied with simplebus_dmamap_load_buffer/_raw, ranges, dma-ranges and the bcm2709 dma-ranges fallback, three early passes), submatch, print, attach_node (fa_reg/fa_intr malloc'd as in C, dma-coherent copy of the tag), bs_map, bs_mmap (None for -1 and for the C's EINVAL-as-paddr_t), dmamap_load_buffer, dmamap_load_raw (the C's rlen not reset between segments kept); reported: iommu_device_map (ofw_misc.c, as mainbus); ampintc_attach calls simplebus_attach for the GIC's children (the GICv2m frames); simplebus* at fdt? attaches QEMU virt's platform-bus"
+notes = "M12: the whole file: simplebus_ca/cd, match (simple-bus, qcom,geni-se-qup), attach (bus space copied with simplebus_bs_map/_mmap, DMA tag copied with simplebus_dmamap_load_buffer/_raw, ranges, dma-ranges and the bcm2709 dma-ranges fallback, three early passes), submatch, print, attach_node (fa_reg/fa_intr malloc'd as in C, dma-coherent copy of the tag), bs_map, bs_mmap (None for -1 and for the C's EINVAL-as-paddr_t), dmamap_load_buffer, dmamap_load_raw (the C's rlen not reset between segments kept); M16f: iommu_device_map (ofw_misc.rs), as mainbus; ampintc_attach calls simplebus_attach for the GIC's children (the GICv2m frames); simplebus* at fdt? attaches QEMU virt's platform-bus"
 
 [[file]]
 c = "sys/arch/arm64/include/simplebusvar.h"
@@ -9048,7 +9048,7 @@ status = "ported"
 upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
 upstream_blob = "04c47e42ddd9df1679f0fa4c9eeaf2ae40f57b4a"
 deps = ["sys/arch/arm64/dev/acpiiort.h", "sys/dev/acpi/acpi.c", "sys/dev/acpi/dsdt.c"]
-notes = "M14: the whole file: acpiiort_smmu_list (SIMPLEQ, Sync wrapper), acpiiort_ca/acpiiort_cd, acpiiort_match (IORT table), acpiiort_attach (config_found per IORT node for smmu* at acpiiort?), acpiiort_smmu_register (unsafe), acpiiort_smmu_map, acpiiort_smmu_reserve_region, acpiiort_device_map (named component by aml_searchname, single or sole mapping, SMMU node); the IORT is read in bounds by offset (iort_read over an IortPlain marker trait, iort_mapping, acpiiort_table shared with acpipci); rid starts at 0. smmu_acpi.c is not ported, so no SMMU registers and every map hands the tag back (QEMU virt has none). smoke-acpi: 'acpiiort0 at acpi0'"
+notes = "M14: the whole file: acpiiort_smmu_list (SIMPLEQ, Sync wrapper), acpiiort_ca/acpiiort_cd, acpiiort_match (IORT table), acpiiort_attach (config_found per IORT node for smmu* at acpiiort?), acpiiort_smmu_register (unsafe), acpiiort_smmu_map, acpiiort_smmu_reserve_region, acpiiort_device_map (named component by aml_searchname, single or sole mapping, SMMU node); the IORT is read in bounds by offset (iort_read over an IortPlain marker trait, iort_mapping, acpiiort_table shared with acpipci); rid starts at 0. M16f: smmu_acpi.c registers the SMMUv2 nodes it matches (at the pin it matches no SMMUv3 node, so QEMU virt,iommu=smmuv3 with ACPI keeps every tag). smoke-acpi: 'acpiiort0 at acpi0'"
 
 [[file]]
 c = "sys/arch/arm64/dev/acpipci.c"
@@ -11335,34 +11335,70 @@ notes = "M16e: the whole file: ichiic_ids[] (60), ichiic_match, ichiic_attach (S
 [[file]]
 c = "sys/arch/arm64/dev/agintc.c"
 rust = "sys/arch/arm64/dev/agintc.rs"
-status = "todo"
-notes = "M16: agintc(4) GICv3 with its LPI/ITS path; criterion: every arm64 smoke passes on virt,gic-version=3 with -smp 4; arm64 only"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "37064c42f7392439c5a1393a397f8797ed2156f2"
+notes = "M16f: the whole file: GICD/GICR/ICC registers (ICC_* through s3_* system register names), agintc_match/attach (redistributor regions walked by GICR_TYPER, sc_cpuremap from the CPUs' MPIDR, LPI prop/pend tables, the PMR shift and RK3399 NSACR probes, IPI SGI probe at the local redistributor), activate/restore, mbiinit and establish_mbi, cpuinit, set_priority, setipl, enable/disable_wakeup, intr_enable/disable/config, calc_mask/calc_irq, splx/spllower/splraise, iack/eoi, route_irq/route (GICD_IROUTER), intr_barrier, run_handler, irq_handler (SGI/PPI/SPI queues and LPIs), intr_establish_fdt/establish/disestablish/set_wakeup, d_wait_rwp/r_wait_rwp, ipi_ddb/halt/handler/send_ipi (ICC_SGI1R), the ITS (agintcmsi* at fdt? early 1: msi_match with the ACPI Oryon quirk, msi_attach with command queue, flat or indirect device table, collection table, one MAPC per CPU; send_cmd/wait_cmd, create_device_table, create/find_device, discard, inv, establish_msi (MAPTI + SYNC), disestablish_msi, barrier_msi), dmamem_alloc/free (uncached, BUS_DMA_NOCACHE). Deviations: one static softc AGINTC (sc_ic an UnsafeCell written once at attach; sc_ncells dropped, unused in C); cpuremap/ipi_reason/ipi_num/ipi_irq atomics; ITS commands written as four volatile double words; send_ipi brackets the ICC_SGI1R write with dsb ish/isb; attach's unmap path restores the interrupt state; msi_create_device fails without an ITT and establish_msi treats event IDs past 31 as taken; local ffs/fls; agintc_ipi_count/agintc_attached (feature qemu self-check) are not in the C. Host tests (register offsets, priorities, PROPBASER, SGI1R target, redistributor frames, ITS command words, device table layout). QEMU virt,gic-version=3 (just smoke-gicv3, EMIBSD_GIC=3): MP boot with IPIs and TLB shootdowns, MSI-X through the ITS (device tree msi-map and ACPI IORT)"
 
 [[file]]
 c = "sys/dev/ofw/ofw_misc.c"
 rust = "sys/dev/ofw/ofw_misc.rs"
-status = "todo"
-notes = "M16: the iommu and regmap halves smmu_fdt needs; the rest stays for the boards that use it"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "64372ef6592ff9d69c7183a4427baf74a33d54f3"
+deps = ["sys/dev/ofw/ofw_misc.h", "sys/dev/ofw/fdt.c"]
+notes = "M16f: register maps (regmap_register, regmap_bycompatible/bynode/byphandle, regmap_read_4/write_4; malloc'd regmaps leaked, never freed as in C) and the IOMMU half (iommu_devices, iommu_device_register (unsafe: the element is in no list), iommu_device_do_map, iommu_device_lookup_idx/lookup/lookup_pci returning Option<(phandle, cells)> instead of 0/1 and out parameters, with the property walks as pure iommus_lookup/iommu_map_lookup (host tests: widths, truncation, unknown phandle, rid ranges, iommu-map-mask), iommu_device_map_idx/map, iommu_device_mirror_idx (id_mirror an Option: smmu_fdt registers none and the C would call NULL), iommu_device_map_pci, iommu_device_do_reserve, iommu_reserve_region_pci); at most two IOMMU cells copied (the C's KASSERT bound). Left for the boards that use them (nothing calls them on QEMU virt): the interface, PHY, I2C, SFP, PWM, NVMEM, device port/endpoint/DAI, MII, mailbox and hwlock frameworks"
+
+[[file]]
+c = "sys/dev/ofw/ofw_misc.h"
+rust = "sys/dev/ofw/ofw_misc.rs"
+status = "wip"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "05162078c81459dfcb016f535d2f9d5131ae4c39"
+notes = "M16f: struct regmap (opaque in the header, defined in the .c) and struct iommu_device (id_map/id_reserve fn pointers taking the cells as a slice, id_mirror an Option, id_phandle a Cell set at register), in ofw_misc.rs with the .c (same name and directory); the other frameworks' types wait with their functions"
 
 [[file]]
 c = "sys/arch/arm64/dev/smmu.c"
 rust = "sys/arch/arm64/dev/smmu.rs"
-status = "todo"
-notes = "M16: smmu(4), SMMUv2 and v3; criterion: virt,iommu=smmuv3 boots with PCI DMA through it and a disk mounted; arm64 only"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "6ae966d1bf426b4e889205347c9ba54e5735fa96"
+deps = ["sys/arch/arm64/dev/smmureg.h", "sys/arch/arm64/dev/smmuvar.h", "sys/kern/subr_extent.c"]
+notes = "M16f: the whole file: struct smmu_map_state, smmuvp0..3 (repr(C) arrays of AtomicU64 descriptors and AtomicPtr links, so smmu_vp_enter's unlocked check is atomic loads; zeroed pool items, never freed, as in C), smmu_cd, smmu_attach (the two pools malloc'd and leaked), smmu_v2_attach (QCOM SMR takeover and bypass quirk, MMU-500 SACR/ACTLR, the C's #if 1 paths: streams fault, unknown streams fault), smmu_v2_global_irq/context_irq, tlb_sync_global/context, the gr0/gr1/cb register accessors (two 32-bit halves on the AP806), smmu_device_map (Option<BusDmaTagT> in and out, the IORT contract; the tag a leaked copy with the seven map functions overridden), smmu_domain_lookup/create (a failed domain is dropped as the C frees it), smmu_v2_domain_create, smmu_reserve_region (clamped to the IOVA map), VP_IDX*/VP_Lx, smmu_set_l1/l2/l3, smmu_vp_lookup/enter, smmu_fill_pte, smmu_pte_update (the SMMU MAIR indices are this file's SMMU_ATTR_* with the C's pte.h values, since EmiBSD's PTE_ATTR_* follow its own MAIR_EL1), smmu_pte_remove, smmu_enter/map/unmap, smmu_v2_tlbi_va, smmu_remove (empty in C too), smmu_load_map/unload_map, smmu_dmamap_create (map state malloc'd with the map's wait flags, extent_alloc_with_descr with a 64 KB alignment and a guard page)/destroy/load/load_mbuf/load_uio/load_raw/unload, smmu_dmamem_alloc/free, smmu_v3_attach (the goto unwinding as smmu_v3_attach_unwind), smmu_v3_event_irq/priq_irq (one queue walk, smmu_v3_q_drain), smmu_v3_gerr_irq, the v3 register accessors and write_ack, smmu_v3_domain_create (CD, two-level or linear stream table, STE word 0 last), smmu_v3_sync, cfgi_all/cd/ste, tlbi_all/asid/va (the queue insertion they repeat is smmu_v3_cmd_put), tlb_sync_context; deviation: on an SMMUv3 without the EL2 regime (IDR0.Hyp clear, QEMU) the C's commented-out NS-EL1 forms (STRW NS-EL1, no CR2.E2H, no TLBI_EL2_ALL, TLBI_NH_ASID/NH_VA) replace the EL2 ones QEMU ignores (stale IOTLB entries misdirected the next load's DMA), recorded in v3.sc_has_hyp; smoke-smmu: virt,iommu=smmuv3 mounts the NVMe root through the SMMU (a negative control without the domain tags gets smmu0 events and no disk); membar_producer/membar_sync are fence(Release)/fence(SeqCst); _dm_cookie of the arm64 bus_dmamap became a Cell for smmu_dmamap_create to set"
+
+[[file]]
+c = "sys/arch/arm64/dev/smmuvar.h"
+rust = "sys/arch/arm64/dev/smmuvar.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "cd087607ebe0cfa0a666ab69e6aa346a03e9c432"
+notes = "M16f: the whole header: struct smmu_dmamem, struct smmu_domain (the v2/v3 union as both members, sd_vp's union as two Cells, sd_exname a leaked byte string), struct smmu_cb (empty), struct smmu_cb_irq, struct smmu_smr, struct smmu_v3_queue, struct smmu_softc (repr(C), device first, all-zero valid: Cells, Option<&>, mutexes, an empty SIMPLEQ; the pools as Cell<Option<&'static Pool>> allocated at attach; sc_smr/sc_cb/sc_strtab_l2 leaked boxed slices; the hooks Option<fn>; v3.sc_has_hyp added, SMMU_IDR0.Hyp, see smmu.c); the prototypes are smmu.c's"
+
+[[file]]
+c = "sys/arch/arm64/dev/smmureg.h"
+rust = "sys/arch/arm64/dev/smmureg.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "2b87402d842dffccb04f70ed73ebf10505d12fa2"
+notes = "M16f: the whole header: SMMUv2 global register spaces 0 and 1, the context bank format, SMMUv3 registers, queue pointer macros, commands, CD and STE fields; offsets usize, 32-bit fields u32, 64-bit ones u64; function-like macros as lowercase const fns (SMMU_V3_Q_IDX/WRP take sq_size_log2), SMMU_IDR2_EXNUMSMRG (object-like in C over an x it does not take) a function; host tests for field encodings, test-ref checks every object-like define"
 
 [[file]]
 c = "sys/arch/arm64/dev/smmu_fdt.c"
 rust = "sys/arch/arm64/dev/smmu_fdt.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "8d39131a02269292e519277baa86ab96cc44f0ee"
 deps = ["sys/arch/arm64/dev/smmu.c", "sys/dev/ofw/ofw_misc.c"]
-notes = "M16: smmu at fdt"
+notes = "M16f: the whole file: struct smmu_v3_fdt_softc (handles as Cell<*mut c_void>; the empty v2 softc and the union dropped), struct smmu_fdt_softc (repr(C), smmu softc first, sc_id an UnsafeCell<MaybeUninit<IommuDevice>> written once by the attach), smmu_fdt_ca, match (arm,mmu-500, arm,smmu-v2, arm,smmu-v3), attach (maps reg 0, v2 or v3 attach, registers the IOMMU with id_mirror None as the C leaves it unset), smmu_v2_fdt_attach (MMU-500/AP806/QCOM quirks, dma-coherent, #global-interrupts then one context interrupt per index until establish fails), smmu_v3_fdt_attach (eventq, gerror and priq interrupts by interrupt-names), smmu_fdt_map, smmu_fdt_reserve; smmu* at fdt? in ioconf"
 
 [[file]]
 c = "sys/arch/arm64/dev/smmu_acpi.c"
 rust = "sys/arch/arm64/dev/smmu_acpi.rs"
-status = "todo"
-deps = ["sys/arch/arm64/dev/smmu.c"]
-notes = "M16: smmu at acpi (IORT)"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "543ccc4a4fc5ea480845641e6e51d16f089f4707"
+deps = ["sys/arch/arm64/dev/smmu.c", "sys/arch/arm64/dev/acpiiort.c"]
+notes = "M16f: the whole file: struct smmu_v2_acpi_softc/smmu_v3_acpi_softc (both present, the union as a struct), struct smmu_acpi_softc (repr(C), smmu softc first), smmu_acpi_ca, match (ACPI_IORT_SMMU only, as at the pin: an SMMUv3 node, QEMU virt,acpi=on,iommu=smmuv3, is not matched and its devices keep their tags), attach (acpiiort_smmu_register with smmu_device_map/smmu_reserve_region), smmu_v2_acpi_attach (models, coherency, QCOM check, global and context interrupts), smmu_acpi_foundqcom (aml_find_node from a clone of sc_root), smmu_v3_acpi_attach (fixed 0x20000 span, COHACC override as a leaked coherent copy of the tag, event/gerr/pri interrupts and the 'couldn't establish' report); the node data and interrupt records are read in bounds from acpi0's IORT copy with acpiiort.rs's iort_read (IortPlain for the four SMMU structs) where the C follows offsets unchecked; smmu* at acpiiort? in ioconf"
 
 [[file]]
 c = "sys/dev/pci/ppb.c"
@@ -11594,44 +11630,77 @@ notes = "M16: viornd(4); criterion: QEMU's virtio-rng feeds rnd(4) (enqueue coun
 [[file]]
 c = "sys/sys/gpio.h"
 rust = "sys/sys/gpio.rs"
-status = "todo"
-notes = "M16: gpio(4) ioctl types"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "95ce9cd5d9c2bec56e6330dccad7aa68a76bc74a"
+notes = "M16f: the whole header: GPIO_PIN_* states and flags, GPIOPINMAXNAME, struct gpio_info, gpio_pin_op, gpio_pin_set, gpio_attach (repr(C), AbiPod, sizes asserted) and the GPIO* ioctl numbers; host test of the numbers and a reference-backed test of the defines"
 
 [[file]]
 c = "sys/dev/gpio/gpiovar.h"
 rust = "sys/dev/gpio/gpiovar.rs"
-status = "todo"
-notes = "M16: gpio bus attach arguments"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "e6df1e7d083d69dbd215c3b187ba426326788e6a"
+deps = ["sys/sys/gpio.h"]
+notes = "M16f: the whole header: struct gpio_chipset_tag (Option<fn> methods, the gpiobus_pin_read/write/ctl macros as methods), gpio_pin_t (Cell members), struct gpiobus_attach_args ('static tag and pins), struct gpio_attach_args, struct gpio_pinmap (the child's slot slice), struct gpio_dev and struct gpio_name (list elements); the prototypes are gpio.c's"
 
 [[file]]
 c = "sys/dev/gpio/gpio.c"
 rust = "sys/dev/gpio/gpio.rs"
-status = "todo"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "51b2d3ace3b532638d442feaaed39de0963dd260"
 deps = ["sys/dev/gpio/gpiovar.h", "sys/sys/gpio.h"]
-notes = "M16: gpio(4) bus"
+notes = "M16f: the whole file: struct gpio_softc (Cells, list heads of Box'd gpio_dev/gpio_name), gpio_ca/gpio_cd, gpio_match, gpio_submatch, gpio_attach, gpio_detach (vdevgone of the major whose d_open is gpioopen), gpio_search, gpio_print, gpiobus_print, gpio_pin_map (Err(EINVAL) for the C's 1; a mask with more pins than map slots fails), gpio_pin_unmap/read/write/ctl/caps, gpio_npins, gpioopen, gpioclose, gpio_pinbyname, gpio_ioctl (every GPIO* command, securelevel, FWRITE), gpioioctl; NGPIO 1 and cdevsw[88] on both archs (cdev_gpio_init); deviation: GPIOATTACH prints through gpioattach_print (the requested driver's name) where the C passes gpiobus_print over a gpio_attach_args; nothing attaches gpio* on QEMU (its arm64 GENERIC parents bcmgpio/sxipio are not ported, plgpio attaches no bus); host tests over a fake controller (pin maps, info/read/write/toggle, set/rename/unset, securelevel)"
 
 [[file]]
 c = "sys/dev/ofw/ofw_gpio.h"
 rust = "sys/dev/ofw/ofw_gpio.rs"
-status = "todo"
-notes = "M16: the fdt gpio controller registry"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "027dfc484d851ad1d71ce8b281409702b62aa5f6"
+notes = "M16f: the whole header, in ofw_gpio.rs with the .c: GPIO_ACTIVE_*, GPIO_PUSH_PULL, GPIO_SINGLE_ENDED, GPIO_LINE_OPEN_*, GPIO_OPEN_DRAIN/SOURCE, GPIO_CONFIG_*, struct gpio_controller (Cell members, Option<fn> methods taking the cells after the phandle as a slice); reference-backed test of the defines"
+
+[[file]]
+c = "sys/dev/ofw/ofw_gpio.c"
+rust = "sys/dev/ofw/ofw_gpio.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "929a87aea84af1da63a74679596ff8e89abcdf2c"
+deps = ["sys/dev/ofw/ofw_gpio.h", "sys/dev/ofw/fdt.c"]
+notes = "M16f: the whole file: gpio_controllers (static behind a Sync wrapper: registered while autoconfiguring, read after), gpio_controller_register (with the GPIO hogs), gpio_controller_config_pin/get_pin/set_pin, gpio_controller_next_pin (the rest of the slice, None for an unknown phandle), gpio_controller_intr_establish, gpio_controller_intr_disestablish (machine::fdt::fdt_intr_disestablish); a gpios property too short for a controller's cells stops instead of reading past it; host test of the dispatch by phandle"
 
 [[file]]
 c = "sys/dev/ofw/ofw_pinctrl.h"
 rust = "sys/dev/ofw/ofw_pinctrl.rs"
-status = "todo"
-notes = "M16: the fdt pinctrl hooks gpiokeys names"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "4a940d4c955f504162894cbbbea24fe9f91a4848"
+notes = "M16f: the prototypes, in ofw_pinctrl.rs with the .c"
+
+[[file]]
+c = "sys/dev/ofw/ofw_pinctrl.c"
+rust = "sys/dev/ofw/ofw_pinctrl.rs"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f186b8afbc5293f38e8ca4ed080ff7d301af262e"
+deps = ["sys/dev/ofw/ofw_pinctrl.h", "sys/dev/ofw/fdt.c"]
+notes = "M16f: the whole file: struct pinctrl (Box'd, never freed), pinctrls (static behind a Sync wrapper), pinctrl_register, pinctrl_register_child, pinctrl_byphandle, pinctrl_byid (snprintf into a 32-byte buffer), pinctrl_byname; no pin controller is ported (QEMU virt has none), so the lookups return -1; pluart_fdt and gpiokeys call pinctrl_byname; host tests"
 
 [[file]]
 c = "sys/dev/fdt/plgpio.c"
 rust = "sys/dev/fdt/plgpio.rs"
-status = "todo"
-deps = ["sys/dev/ofw/ofw_gpio.h", "sys/dev/gpio/gpio.c"]
-notes = "M16: plgpio(4), arm64 virt's PL061; arm64 only"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "f69a13846de831d9a69171d5df67ccbbe7bdcdcb"
+deps = ["sys/dev/ofw/ofw_gpio.c"]
+notes = "M16f: the whole file: GPIODATA/GPIODIR, HREAD1/HWRITE1/HSET1/HCLR1 as methods, struct plgpio_softc (Cell<Option<..>> tag and handle, the embedded gpio_controller), plgpio_ca/cd, plgpio_match (arm,pl061), plgpio_attach, plgpio_config_pin, plgpio_get_pin, plgpio_set_pin; as in the C no interrupts (no gc_intr_establish): OpenBSD 8.0 on QEMU virt attaches plgpio0 and gpiokeys0 and ignores system_powerdown (cargo xtask diff-openbsd powerbtn, M16f), and so does this port; plgpio* at fdt? early 1 in arm64's ioconf; host tests of the register math"
 
 [[file]]
 c = "sys/dev/fdt/gpiokeys.c"
 rust = "sys/dev/fdt/gpiokeys.rs"
-status = "todo"
-deps = ["sys/dev/fdt/plgpio.c", "sys/dev/ofw/ofw_pinctrl.h"]
-notes = "M16: gpiokeys(4); criterion: QEMU's system_powerdown on arm64 virt (gpio-keys on the PL061) shuts the system down cleanly; arm64 only"
+status = "ported"
+upstream_commit = "3ce1f3f79392ae4d60ce67bea5835d517caaa2ca"
+upstream_blob = "22eeec377160a22ff2b89ba675bccb179f467969"
+deps = ["sys/dev/ofw/ofw_gpio.c", "sys/dev/ofw/ofw_pinctrl.c", "sys/kern/kern_sensors.c"]
+notes = "M16f: the whole file: GPIOKEYS_EV_*, GPIOKEYS_SW_LID, GPIOKEYS_KEY_POWER, struct gpiokeys_key (Box'd, gpios cells as a 'static slice), struct gpiokeys_softc, gpiokeys_ca/cd, gpiokeys_match, gpiokeys_attach (labels, the lid sensor, the power key, interrupts or the 1 s sensor task, sensordev_install), gpiokeys_update_key (lid sensor and machdep.lidaction through machine::fdt::lid_action, simplefb_burn_hook), gpiokeys_power_button (powerbutton_event on release), gpiokeys_intr; option SUSPEND waits for kern/subr_suspend.c: cpu_suspended reads 0, device_register_wakeup and request_sleep are unported! stubs; gpiokeys* at fdt? in arm64's ioconf. QEMU virt: gpiokeys0 attaches to the PL061's power key, which has no interrupt and is polled through gpiokeys_update_key, which ignores KEY_POWER: system_powerdown does nothing, exactly as on OpenBSD 8.0 (the M16f criterion, after the user's option A of 2026-10-08); host tests"

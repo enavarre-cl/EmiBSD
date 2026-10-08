@@ -500,6 +500,8 @@ impl Cpu for Machine {
 
     unsafe fn intr_restore(_s: u64) {}
 
+    unsafe fn intr_enable() {}
+
     fn kbd_reset() -> Option<&'static core::sync::atomic::AtomicI32> {
         None
     }
@@ -1666,6 +1668,11 @@ impl crate::machine::fdt::Fdt for Machine {
 
     /// No device-tree driver registers a power-off function here.
     fn set_powerdownfn(_f: fn()) {}
+
+    /// `lid_action`'s default in both `machdep.c`s: suspend.
+    fn lid_action() -> i32 {
+        1
+    }
 
     unsafe fn fdt_intr_disestablish(_cookie: NonNull<c_void>) {}
 }

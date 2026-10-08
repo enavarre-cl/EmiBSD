@@ -21,6 +21,8 @@
 //! `vmx* at pci?` (M13); `wskbd* at ukbd? mux 1` and `pseudo-device wsmux 2` (M13);
 //! arm64 ACPI (M14): `acpi0 at mainbus?` (the `acpi_fdt` attachment), `acpimcfg* at acpi?`,
 //! `acpiiort* at acpi?`, `acpipci* at acpi?`, `pci* at acpipci?` and `pluart* at acpi?`;
+//! M16f: `smmu* at acpiiort?`, `smmu* at fdt?`, `plgpio* at fdt? early 1`, `gpiokeys* at
+//! fdt?`, `agintc* at fdt? early 1` and `agintcmsi* at fdt? early 1`;
 //! `ppb* at pci?` and `pci* at ppb?` (M16e); `ipmi* at acpi?` and `ipmi* at fdt?` (M16e;
 //! QEMU's `virt` has no IPMI device; `ipmi* at iic?` waits for `ipmi_i2c.c`, SSIF, and the
 //! iic(4) stack);
@@ -28,12 +30,13 @@
 //! `pseudo-device bpfilter`, `pseudo-device loop`, `pseudo-device wg`, `pseudo-device pfsync`,
 //! `pseudo-device pflow`.
 //! The `fdt` attribute (`files.arm64`: `define fdt {[early = 0]}`) is carried by `mainbus`,
-//! `simplebus` and `ampintc` (`device ampintc: fdt`, whose GICv2m frames `ampintcmsi`
-//! attach below it); `agintc`, which also carries it, is not ported. Every other GENERIC
+//! `simplebus`, `ampintc` (`device ampintc: fdt`, whose GICv2m frames `ampintcmsi`
+//! attach below it) and `agintc` (`device agintc: fdt`, whose ITS `agintcmsi` attaches
+//! below it). Every other GENERIC
 //! line waits for its driver (`smbios0 at efi?`, the devices at `virtio?` but `vio*`,
 //! `vioblk*` and `vioscsi*`, the devices at `pci?` but `virtio*`, `xhci*`, `azalia*`, `ahci*`, `nvme*`, `ppb*`,
 //! `em*`, `re*` and `vmx*`, the PHYs at `mii?` but `rgephy*`, `rlphy*` and `ukphy*`, the other devices at `acpi?` (`acpiac*`, `acpibtn*`, `acpicpu*`, `ahci*`, `com*`, `xhci*`,
-//! ...) and `smmu* at acpiiort?`, `ahci*` at `fdt?`, the other host
+//! ...), `ahci*` at `fdt?`, the other host
 //! bridges, `usb*` at the other host controllers, the devices at `uhub?` but `uhub*`,
 //! `umass*` and `uhidev*`, the devices at `uhidev?` but `ukbd*`, every `wskbd*` but the
 //! one at `ukbd?`, ...),
@@ -47,19 +50,25 @@ use crate::arch::arm64::arm64::acpi_machdep::ACPI_FDT_CA;
 use crate::arch::arm64::arm64::cpu::{CPU_CA, CPU_CD};
 use crate::arch::arm64::dev::acpiiort::{ACPIIORT_CA, ACPIIORT_CD};
 use crate::arch::arm64::dev::acpipci::{ACPIPCI_CA, ACPIPCI_CD};
+use crate::arch::arm64::dev::agintc::{AGINTC_CA, AGINTC_CD, AGINTCMSI_CA, AGINTCMSI_CD};
 use crate::arch::arm64::dev::agtimer::{AGTIMER_CA, AGTIMER_CD};
 use crate::arch::arm64::dev::ampintc::{AMPINTC_CA, AMPINTC_CD, AMPINTCMSI_CA, AMPINTCMSI_CD};
 use crate::arch::arm64::dev::efi_machdep::{EFI_CA, EFI_CD};
 use crate::arch::arm64::dev::mainbus::{MAINBUS_CA, MAINBUS_CD};
 use crate::arch::arm64::dev::simplebus::{SIMPLEBUS_CA, SIMPLEBUS_CD};
+use crate::arch::arm64::dev::smmu::SMMU_CD;
+use crate::arch::arm64::dev::smmu_acpi::SMMU_ACPI_CA;
+use crate::arch::arm64::dev::smmu_fdt::SMMU_FDT_CA;
 use crate::dev::acpi::acpi::ACPI_CD;
 use crate::dev::acpi::acpimcfg::{ACPIMCFG_CA, ACPIMCFG_CD};
 use crate::dev::acpi::ipmi_acpi::IPMI_ACPI_CA;
 use crate::dev::acpi::pluart_acpi::PLUART_ACPI_CA;
 use crate::dev::audio::{AUDIO_CA, AUDIO_CD};
 use crate::dev::bio::bioattach;
+use crate::dev::fdt::gpiokeys::{GPIOKEYS_CA, GPIOKEYS_CD};
 use crate::dev::fdt::ipmi_fdt::IPMI_FDT_CA;
 use crate::dev::fdt::pciecam::{PCIECAM_CA, PCIECAM_CD};
+use crate::dev::fdt::plgpio::{PLGPIO_CA, PLGPIO_CD};
 use crate::dev::fdt::plrtc::{PLRTC_CA, PLRTC_CD};
 use crate::dev::fdt::pluart_fdt::PLUART_FDT_CA;
 use crate::dev::fdt::psci::{PSCI_CA, PSCI_CD};
@@ -116,8 +125,8 @@ use crate::scsi::sd::{SD_CA, SD_CD};
 use crate::sys::device::{Cfdata, FSTATE_NOTFOUND, FSTATE_STAR, Pdevinit};
 
 /// `pv[]` for children of the `fdt` attribute: `mainbus0` (`cfdata[0]`), `ampintc*`
-/// (`cfdata[1]`) and `simplebus*` (`cfdata[12]`).
-const PV_FDT: &[i16] = &[0, 1, 12];
+/// (`cfdata[1]`), `simplebus*` (`cfdata[12]`) and `agintc*` (`cfdata[51]`).
+const PV_FDT: &[i16] = &[0, 1, 12, 51];
 
 /// `pv[]` for children of `mainbus0` (`cfdata[0]`) through `mainbus` itself.
 const PV_MAINBUS: &[i16] = &[0];
@@ -139,17 +148,20 @@ const PV_PCIECAM: &[i16] = &[14];
 const LOC_PCIBUS_UNK: &[i64] = &[-1];
 
 /// `pv[]` for children of `pci*` (`cfdata[15]` at pciecam, `cfdata[46]` at acpipci,
-/// `cfdata[48]` at ppb).
-const PV_PCI: &[i16] = &[15, 46, 48];
+/// `cfdata[54]` at ppb).
+const PV_PCI: &[i16] = &[15, 46, 54];
 
-/// `pv[]` for children of `ppb*` (`cfdata[47]`) through the `pcibus` attribute.
-const PV_PPB: &[i16] = &[47];
+/// `pv[]` for children of `ppb*` (`cfdata[53]`) through the `pcibus` attribute.
+const PV_PPB: &[i16] = &[53];
 
 /// `pv[]` for children of `acpi0` (`cfdata[41]`).
 const PV_ACPI: &[i16] = &[41];
 
 /// `pv[]` for children of `acpipci*` (`cfdata[44]`) through the `pcibus` attribute.
 const PV_ACPIPCI: &[i16] = &[44];
+
+/// `pv[]` for children of `acpiiort*` (`cfdata[43]`).
+const PV_ACPIIORT: &[i16] = &[43];
 
 /// `loc[]` of an entry at `pci` with the defaults `dev = -1, function = -1` (`conf/files`:
 /// `device pci {[dev = -1], [function = -1]}`).
@@ -240,9 +252,9 @@ const NFREE: usize = 8;
 
 /// How many `cfdata[]` entries: `cpu*` comes with `MULTIPROCESSOR` (`GENERIC.MP`).
 const NCFDATA: usize = if cfg!(feature = "multiprocessor") {
-    52
+    58
 } else {
-    51
+    57
 };
 
 /// `cfdata[]`, edited by UKC (`boot -c`) before autoconfiguration reads it
@@ -783,7 +795,79 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCIBUS,
         0,
     ),
-    // 47: ppb* at pci?
+    // 47: smmu* at acpiiort?
+    Cfdata::new(
+        &SMMU_ACPI_CA,
+        &SMMU_CD,
+        0,
+        FSTATE_STAR,
+        &[],
+        0,
+        PV_ACPIIORT,
+        0,
+        0,
+    ),
+    // 48: smmu* at fdt?
+    Cfdata::new(
+        &SMMU_FDT_CA,
+        &SMMU_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_0,
+        0,
+        PV_FDT,
+        LN_FDT,
+        0,
+    ),
+    // 49: plgpio* at fdt? early 1
+    Cfdata::new(
+        &PLGPIO_CA,
+        &PLGPIO_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_1,
+        0,
+        PV_FDT,
+        LN_FDT,
+        0,
+    ),
+    // 50: gpiokeys* at fdt?
+    Cfdata::new(
+        &GPIOKEYS_CA,
+        &GPIOKEYS_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_0,
+        0,
+        PV_FDT,
+        LN_FDT,
+        0,
+    ),
+    // 51: agintc* at fdt? early 1
+    Cfdata::new(
+        &AGINTC_CA,
+        &AGINTC_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_1,
+        0,
+        PV_FDT,
+        LN_FDT,
+        0,
+    ),
+    // 52: agintcmsi* at fdt? early 1
+    Cfdata::new(
+        &AGINTCMSI_CA,
+        &AGINTCMSI_CD,
+        0,
+        FSTATE_STAR,
+        LOC_EARLY_1,
+        0,
+        PV_FDT,
+        LN_FDT,
+        0,
+    ),
+    // 53: ppb* at pci?
     Cfdata::new(
         &PPB_CA,
         &PPB_CD,
@@ -795,7 +879,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCI,
         0,
     ),
-    // 48: pci* at ppb?
+    // 54: pci* at ppb?
     Cfdata::new(
         &PCI_CA,
         &PCI_CD,
@@ -807,7 +891,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_PCIBUS,
         0,
     ),
-    // 49: ipmi* at acpi?
+    // 55: ipmi* at acpi?
     Cfdata::new(
         &IPMI_ACPI_CA,
         &IPMI_CD,
@@ -819,7 +903,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         0,
         0,
     ),
-    // 50: ipmi* at fdt?
+    // 56: ipmi* at fdt?
     Cfdata::new(
         &IPMI_FDT_CA,
         &IPMI_CD,
@@ -831,7 +915,7 @@ pub static CFDATA: StaticCell<[Cfdata; NCFDATA + NFREE]> = StaticCell::new([
         LN_FDT,
         0,
     ),
-    // 51: cpu* at mainbus? (GENERIC.MP)
+    // 57: cpu* at mainbus? (GENERIC.MP)
     #[cfg(feature = "multiprocessor")]
     Cfdata::new(&CPU_CA, &CPU_CD, 1, FSTATE_STAR, &[], 0, PV_MAINBUS, 0, 1),
     // The free slots.

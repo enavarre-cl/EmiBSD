@@ -29,8 +29,6 @@
 //! Upstream: sys/arch/arm64/dev/mainbus.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `iommu_device_map` (`ofw_misc.c`) is reported; without it every node keeps mainbus's
-//!   tag or its `dma-coherent` copy, which is what the C gets when no IOMMU claims the node.
 //! - `mainbus_dma_tag` is not placed in `.rodata` by hand: a Rust `static` without interior
 //!   mutability already is read-only.
 //! - `thermal_init` (`ofw_thermal.c`) is reported.
@@ -65,6 +63,7 @@ use crate::arch::arm64::include::armreg::{MPIDR_AFF, read_specialreg};
 use crate::arch::arm64::include::bus::{self, BUS_DMA_COHERENT};
 use crate::arch::arm64::include::fdt::FdtAttachArgs;
 use crate::dev::ofw::fdt::FdtReg;
+use crate::dev::ofw::ofw_misc::iommu_device_map;
 use crate::dev::ofw::openfirm::{
     OF_child, OF_finddevice, OF_getprop, OF_getpropint, OF_getpropintarray, OF_getproplen,
     OF_is_compatible, OF_is_enabled, OF_peer,
@@ -402,9 +401,7 @@ pub fn mainbus_attach_node(self_: &Device, node: i32, submatch: Option<CfmatchT>
         }
     }
 
-    // iommu_device_map(fa.fa_node, fa.fa_dmat): ofw_misc.c, which hands back the tag
-    // unchanged when no IOMMU claims the node.
-    let _ = unported!("iommu_device_map (ofw_misc.c)");
+    let dmat = iommu_device_map(node, dmat);
 
     let print: Option<CfprintT> = if submatch.is_none() && sc.sc_early.get() == 0 {
         Some(mainbus_print)

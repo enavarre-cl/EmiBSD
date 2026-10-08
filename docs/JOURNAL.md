@@ -851,3 +851,57 @@ range (one docs commit).
 Effort: _(user)_
 
 Time: _(user)_
+
+## M16f arm64 platform
+
+Boundary: the commit that marks M16f met ("docs: M16f met"). Range `50a816b..` that commit:
+19 commits, 17 without the two merges (`git rev-list --count`, `--no-merges`); de4c077 is
+e1995f3 cherry-picked by the agintc agent, the same change twice. 46 files changed before the
+docs commit (`git diff --shortstat 50a816b 6f6a0bd`: +11966, -120). Three branches: the
+coordinator's (xtask options, the GPIO cluster, the power-key probe), smmu's and agintc's
+(each its own Opus subagent), merged with `--no-ff`.
+
+- Went well: the power-key question was settled by measurement, not argument. Reading the C
+  showed that plgpio(4) has no interrupt and gpiokeys(4) polls a key without one through a
+  function that ignores the power key, so a faithful port could not meet "system_powerdown
+  shuts the system down". A small xtask helper (`diff-openbsd powerbtn`) booted the real
+  OpenBSD 8.0 arm64 snapshot on the same `virt` and showed it does nothing either; the user
+  chose option A (stay faithful, change the criterion), and `smoke-powerbtn` checks EmiBSD
+  behaves the same.
+- Went well: smmu's negative control. Handing the PCI functions their untranslated tags made
+  nvme0 fail and smmu0 log fault events for the stream, so `smoke-smmu` passing means the DMA
+  really is translated.
+- Failed: on QEMU the SMMUv3 port first read stale pages (the NVMe root's disklabel came back
+  wrong). QEMU's SMMUv3 has no EL2 (`IDR0.Hyp` clear) and ignores the EL2 invalidations the C
+  issues; the driver now uses the C's own commented-out NS-EL1 forms in that case
+  (docs/ARCHITECTURE.md, Deviations).
+- Failed: after the editor restarted mid-milestone, a tool rejection told the agents to stop
+  and wait for the user; the agintc agent's retry, on the coordinator's relayed "carry on",
+  was denied as an auto-mode bypass. Work waited until the user answered in their own words
+  and authorised a new agintc agent; nothing was routed around the denial.
+- Failed: on GICv3 the kernel's early self-tests (`selftest=uart`, `clock`) waited for
+  interrupts that agintc leaves masked after attach, as the C does; `machine::intr_enable`
+  (new contract method, all three machines) lets those tests unmask them.
+- Failed once each (reruns passed): `nfs_syscalls::server_socket_list_bookkeeping`
+  (`pr_find_pagehead: mbufpl: page header missing`, `just test`) and amd64's half of
+  `smoke-mp` in the GICv3 run (`init: uptime monotonic ok` cut short at QEMU's exit). Neither
+  touches M16f code; both are recorded as flakes in STATUS.
+- Gap found: `#[cfg(test)]` code in arm64-only files (`smmureg.rs`, `pte.rs`, ...) is never
+  compiled by `just test`, which builds for the host only.
+- Idioms: a device-tree property's `uint32_t *cells` walked by a controller is a slice
+  (`ofw_gpio`'s `gpio_controller_next_pin` returns the rest of it); registries the C keeps
+  as unlocked `LIST_HEAD`s are `static`s behind a `Sync` wrapper, as `acpiiort` did.
+- Rules: none changed. Merging three branches that each appended `cfdata[]` entries
+  renumbered the arm64 ioconf twice (smmu 47-48, plgpio 49, gpiokeys 50, agintc 51-52,
+  `cpu*` 53, `PV_FDT` [0, 1, 12, 51]).
+- Numbers: ported 975 → 990, `ports.toml` 1351 → 1356 entries (`cargo xtask ports status`);
+  `just test` 2370 → 2391 passed; smoke recipes 50 → 53 (`smoke-smmu`, `smoke-gicv3`,
+  `smoke-powerbtn`). `EMIBSD_GIC=3 just jobs=3 smoke`: 52 of 53 in 14m58s (amd64's
+  `smoke-mp` half above), then `EMIBSD_GIC=3 just smoke-mp` rc=0. `just jobs=3 ci` rc=0 in
+  19m34s (53 of 53 smokes in 13m07s). `just diff-openbsd` rc=0: 102 steps, 99 equal, 3 expected, 0 unexpected, on both archs.
+  `unsafe-report`: kernel 7547 → 7718 blocks, 984 → 997 fn, 701 → 724 impl, 25 → 26 trait,
+  322 other; tests 790 → 798 more.
+
+Effort: _(user)_
+
+Time: _(user)_

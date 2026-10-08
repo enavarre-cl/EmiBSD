@@ -34,7 +34,9 @@
 //! map, unmap, subregion and vaddr, the `BUS_SPACE_MAP_*` flags and `bus_space_barrier`. The
 //! raw-multi accessors arrive with the drivers that use them. M12 adds `bus_private` and
 //! `_space_mmap` (`bus_space_mmap`), for the bridges that translate a child bus's addresses
-//! (`simplebus`, `pciecam`).
+//! (`simplebus`, `pciecam`). M16f adds the `bus_space_read_8`/`bus_space_write_8` macros as
+//! free functions, for `agintc.c` (the machine contract has no 8-byte accessor: amd64's
+//! drivers split such registers in two).
 //! M7b adds `bus_dma`: the `BUS_DMA_*` and `BUS_DMASYNC_*` flags, `bus_dma_segment_t`,
 //! `struct bus_dma_tag` and `struct bus_dmamap`; their functions are `arm64/bus_dma.rs`.
 //!
@@ -133,6 +135,16 @@ impl PartialEq for BusSpace {
     fn eq(&self, other: &Self) -> bool {
         core::ptr::eq(self, other)
     }
+}
+
+/// `bus_space_read_8(t, h, o)`: the 8-byte register at `o` of `h`, through the tag.
+pub fn bus_space_read_8(t: &'static BusSpace, h: BusSpaceHandle, o: BusSize) -> u64 {
+    (t._space_read_8)(t, h, o)
+}
+
+/// `bus_space_write_8(t, h, o, v)`: writes `v` to the 8-byte register at `o` of `h`.
+pub fn bus_space_write_8(t: &'static BusSpace, h: BusSpaceHandle, o: BusSize, v: u64) {
+    (t._space_write_8)(t, h, o, v)
 }
 
 /// `bus_space_mmap(t, a, o, p, f)`: the physical address of byte `o` of the bus address
@@ -359,8 +371,9 @@ pub struct BusDmamap {
     pub _dm_boundary: BusSize,
     /// `_dm_flags`: misc. flags.
     pub _dm_flags: i32,
-    /// `_dm_cookie`: cookie for bus-specific functions.
-    pub _dm_cookie: *mut c_void,
+    /// `_dm_cookie`: cookie for bus-specific functions; a `Cell`, since an overriding tag
+    /// (smmu(4)) sets it on the map its parent tag created and handed out.
+    pub _dm_cookie: Cell<*mut c_void>,
     /// `_dm_pages`: replacement pages (`_dm_npages` of them after the segments; null when
     /// the map does not bounce).
     pub _dm_pages: *mut *const VmPage,

@@ -28,9 +28,6 @@
 //! Upstream: sys/arch/arm64/dev/simplebus.c @ 3ce1f3f79392
 //!
 //! ## Deviations
-//! - `iommu_device_map` (`ofw_misc.c`) is reported, as in mainbus; without it every child
-//!   keeps the bus's DMA tag (or its `dma-coherent` copy), which is what the C gets when no
-//!   IOMMU claims the node.
 //! - `struct fdt_attach_args` takes slices for `fa_reg` and `fa_intr`.
 //! - `simplebus_bs_mmap` returns `None` for the C's `-1`, and for its `EINVAL` (a `paddr_t`
 //!   holding an errno when `ranges` is malformed), which no caller could tell from an address.
@@ -48,6 +45,7 @@ use crate::arch::arm64::include::bus::{
 use crate::arch::arm64::include::fdt::FdtAttachArgs;
 use crate::arch::arm64::include::simplebusvar::SimplebusSoftc;
 use crate::dev::ofw::fdt::FdtReg;
+use crate::dev::ofw::ofw_misc::iommu_device_map;
 use crate::dev::ofw::openfirm::{
     OF_child, OF_getprop, OF_getpropint, OF_getpropintarray, OF_getproplen, OF_is_compatible,
     OF_is_enabled, OF_parent, OF_peer,
@@ -61,7 +59,6 @@ use crate::sys::errno::Errno;
 use crate::sys::malloc::{M_DEVBUF, M_TEMP, M_WAITOK, M_ZERO};
 use crate::sys::proc::Proc;
 use crate::sys::types::{Off, Paddr};
-use crate::unported;
 
 /// `simplebus_ca`.
 pub static SIMPLEBUS_CA: Cfattach = Cfattach {
@@ -367,9 +364,7 @@ pub fn simplebus_attach_node(self_: &Device, node: i32) {
         }
     }
 
-    // iommu_device_map(fa.fa_node, fa.fa_dmat): ofw_misc.c, which hands back the tag
-    // unchanged when no IOMMU claims the node.
-    let _ = unported!("iommu_device_map (ofw_misc.c)");
+    let dmat = iommu_device_map(node, dmat);
 
     let print: Option<CfprintT> = if sc.sc_early.get() != 0 {
         None

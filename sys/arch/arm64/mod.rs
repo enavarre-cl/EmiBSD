@@ -301,6 +301,11 @@ impl Cpu for Machine {
         unsafe { include::cpu::intr_restore(s) }
     }
 
+    unsafe fn intr_enable() {
+        // SAFETY: forwarded: the caller's guarantee.
+        unsafe { include::cpu::intr_enable() }
+    }
+
     fn kbd_reset() -> Option<&'static core::sync::atomic::AtomicI32> {
         None
     }
@@ -1303,6 +1308,10 @@ impl crate::machine::fdt::Fdt for Machine {
     fn set_powerdownfn(f: fn()) {
         // SAFETY: as for `set_cpuresetfn`.
         unsafe { arm64::machdep::POWERDOWNFN.write(Some(f)) };
+    }
+
+    fn lid_action() -> i32 {
+        arm64::machdep::LID_ACTION.load(core::sync::atomic::Ordering::Relaxed)
     }
 
     unsafe fn fdt_intr_disestablish(cookie: NonNull<c_void>) {

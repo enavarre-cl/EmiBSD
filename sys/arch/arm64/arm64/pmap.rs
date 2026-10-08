@@ -64,8 +64,9 @@
 //! - `pmap_init`: the TTBR0 switch to `pm_pt0pa` and the pools wait for the page tables to
 //!   map devices (`initarm`'s bootstrap device map lives in TTBR0). Reported as unported.
 //! - `splvm` in `pmap_kremove_pg` waits for `spl(9)` (M4); `pmap_remove_pv` (managed pages)
-//!   and `cpu_idcache_wbinv_range` (non-cacheable mappings of managed pages) are reported
-//!   when reached; kernel mappings made here are never managed, so nothing is dropped.
+//!   is reported when reached; kernel mappings made here are never managed, so nothing is
+//!   dropped. (`cpu_idcache_wbinv_range`, for non-cacheable mappings of managed pages, is
+//!   called as in C since M16f.)
 //! - User pmaps (M6): `pmap_create`/`pmap_pinit`/`pmap_destroy`/`pmap_release`,
 //!   `pmap_vp_destroy`, `pmap_enter`/`pmap_remove`/`pmap_remove_pted`, the pv lists
 //!   (`pmap_enter_pv`/`pmap_remove_pv`), `pmap_activate`/`pmap_deactivate`/`pmap_setttb`
@@ -92,8 +93,8 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use crate::arch::arm64::arm64::cpufunc::{
-    cpu_icache_sync_range, cpu_setttb, cpu_tlb_flush, cpu_tlb_flush_all_asid, cpu_tlb_flush_asid,
-    cpu_tlb_flush_asid_all,
+    cpu_icache_sync_range, cpu_idcache_wbinv_range, cpu_setttb, cpu_tlb_flush,
+    cpu_tlb_flush_all_asid, cpu_tlb_flush_asid, cpu_tlb_flush_asid_all,
 };
 use crate::arch::arm64::include::cpu::curcpu;
 use crate::arch::arm64::include::param::{PAGE_MASK, PAGE_SHIFT, PAGE_SIZE};
@@ -1217,7 +1218,7 @@ fn _pmap_kenter_pa(va: usize, pa: usize, prot: VmProt, flags: i32, cache: i32) {
 
     let pg = PHYS_TO_VM_PAGE(Paddr::new((pted.pted_pte.get() & PTE_RPGN) as usize));
     if pg.is_some() && (cache == PMAP_CACHE_CI || cache == PMAP_CACHE_DEV_NGNRNE) {
-        let _ = unported!("cpu_idcache_wbinv_range (M4)");
+        cpu_idcache_wbinv_range(va & !PAGE_MASK, PAGE_SIZE);
     }
 }
 

@@ -3058,6 +3058,7 @@ mod selfcheck {
     use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
     use super::*;
+    use crate::arch::arm64::dev::agintc::{agintc_attached, agintc_ipi_count};
     use crate::arch::arm64::dev::ampintc::ampintc_ipi_count;
     use crate::machine::pmap::{pmap_extract, pmap_kenter_pa, pmap_kernel, pmap_kremove};
     use crate::sys::mman::{PROT_READ, PROT_WRITE};
@@ -3168,6 +3169,16 @@ mod selfcheck {
         __mp_acquire_count(&KERNEL_LOCK, hold);
     }
 
+    /// The IPI handler's count of whichever GIC attached: agintc(4) on a GICv3 (M16f),
+    /// ampintc(4) otherwise.
+    fn ipi_count() -> u64 {
+        if agintc_attached() {
+            agintc_ipi_count()
+        } else {
+            ampintc_ipi_count()
+        }
+    }
+
     /// [`ipis`] without the kernel lock.
     fn ipis_unlocked() {
         let mut aps = 0;
@@ -3186,14 +3197,14 @@ mod selfcheck {
             if flags & CPUF_RUNNING != 0 {
                 running += 1;
             }
-            let before = ampintc_ipi_count();
+            let before = ipi_count();
             arm_send_ipi(c, ARM_IPI_NOP);
             let mut timeout = 1000;
-            while ampintc_ipi_count() == before && timeout > 0 {
+            while ipi_count() == before && timeout > 0 {
                 delay(1000);
                 timeout -= 1;
             }
-            if ampintc_ipi_count() != before {
+            if ipi_count() != before {
                 ipi_ok += 1;
             }
         }

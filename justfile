@@ -33,6 +33,21 @@ smp := if ncpu == "2" { "--smp 2" } else if ncpu == "4" { "--smp 4" } else { \
 smp4 := "--smp 4"
 aps := if ncpu == "4" { "3" } else { "1" }
 
+# M16f: the interrupt controller of arm64's `virt`. `gic` 2 (the default, QEMU's) is the GICv2
+# with its GICv2m MSI frame, ampintc(4) and ampintcmsi; `EMIBSD_GIC=3` (or `just gic=3
+# <recipe>`; exported, so `smoke-all`'s recipes and xtask's `--gic` default see it) boots
+# every arm64 smoke on `virt,gic-version=3`: agintc(4) and its ITS, agintcmsi. The
+# expectations that name the GIC follow it: `gic_attach` (the GIC's attach line on the device
+# tree), `gic_acpi_attach` and `gic_msi_attach` (`smoke-acpi`'s GIC and MSI controller).
+# `smoke-gicv3` boots GICv3 whatever `gic` says.
+gic := env("EMIBSD_GIC", "2")
+export EMIBSD_GIC := gic
+gic_attach := if gic == "2" { "ampintc0 at mainbus0 nirq " } else if gic == "3" { \
+    "agintc0 at mainbus0 shift " } else { error("EMIBSD_GIC (gic) must be 2 or 3, not '" + gic + "'") }
+gic_acpi_attach := if gic == "3" { "agintc0 at mainbus0 shift 4:4 nirq 288 nredist " + ncpu } else { \
+    "ampintc0 at mainbus0 nirq 288, ncpu " + ncpu }
+gic_msi_attach := if gic == "3" { "agintcmsi0 at agintc0" } else { "ampintcmsi0 at ampintc0: nspi 64" }
+
 default:
     @just --list
 
@@ -102,10 +117,10 @@ jobs := env("JOBS", "4")
 smokes := "smoke-boot smoke-shell smoke-login smoke-net smoke-route smoke-diag smoke-link " + \
     "smoke-wg smoke-pf smoke-ipsec smoke-esp smoke-pfsync smoke-ipcomp smoke-https smoke-tcp " + \
     "smoke-divert smoke-tcpdump smoke-inet6 smoke-disk smoke-ufsopts smoke-fs smoke-cd smoke-softraid " + \
-    "smoke-nvme smoke-ahci smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-clock smoke-rtc " + \
+    "smoke-nvme smoke-ahci smoke-smmu smoke-power smoke-siop smoke-em smoke-re smoke-vmx smoke-efiboot smoke-acpi smoke-gicv3 smoke-clock smoke-rtc " + \
     "smoke-nfs smoke-ext2fs smoke-fuse smoke-ntfs smoke-tcpbench smoke-mp smoke-ddbmp " + \
     "smoke-net-mp smoke-up smoke-audio smoke-usb smoke-puc smoke-fb smoke-wscons smoke-vga smoke-kbd " + \
-    "smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi"
+    "smoke-powerbtn smoke-ukc smoke-ppb smoke-dmar smoke-iic smoke-ipmi"
 
 smoke: smoke-build
     cargo xtask smoke-all -j {{jobs}} --just {{quote(just_executable())}} {{smokes}}
@@ -217,7 +232,7 @@ smoke-boot: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--featu
         --expect "real mem  = " --expect "avail mem = " --expect "selftest: pmap kernel mapping ok" \
         --expect "selftest: malloc/pool stress ok" --expect "selftest: mbufs ok" \
         --expect "selftest: buffer cache ok" --expect "selftest: pager map ok" \
-        --expect "mainbus0 at root" --expect "ampintc0 at mainbus0 nirq " \
+        --expect "mainbus0 at root" --expect "{{gic_attach}}" \
         --expect "agtimer0 at mainbus0: " --expect "selftest: bus_dma ok" \
         --expect "efi0 at mainbus0: UEFI 2." --expect "efi0: EDK II rev 0x" \
         --expect "virtio0 at mainbus0: Virtio Unknown (0) Device" \
@@ -1422,6 +1437,55 @@ smoke-ahci: (build-amd64 "--features qemu,multiprocessor") build-init-amd64 (bui
         --expect "524288 bytes transferred" --expect "4194304 bytes transferred" \
         --expect "m13-ahci-raw-42" --expect "/ahci0" --reject "mount -uw / failed"
 
+# M16f: smmu(4). arm64 only. `virt,iommu=smmuv3` (`--iommu smmuv3`, hwopts.rs) puts QEMU's
+# SMMUv3 in front of the PCIe bus; its device-tree node attaches smmu0 at mainbus0 before
+# pciecam, and pciecam's `iommu-map` hands every PCI function the DMA tag of its stream's
+# domain. The NVMe root disk of `smoke-nvme` (its own image, `smmu-arm64.img`) is mounted
+# through it: with the SMMU enabled, DMA that bypasses the stream's domain aborts (checked
+# once by handing the PCI functions their untranslated tags: nvme0 could not even identify
+# and smmu0 printed `smmu0: event 0x800000010 ...` for stream 8), so a root mounted
+# from nvme0, a file written and read back and raw dd through the namespace show the NVMe
+# DMA (queues, PRP lists, data, and the MSI-X doorbell loaded into the function's tag) going
+# through the SMMU's page tables; `--reject 'smmu0: '` fails the run on any event, global
+# error or command queue error. The second boot is `virt,acpi=on` with the SMMUv3 in the
+# IORT: at the pin smmu_acpi matches only SMMUv2 nodes, so no smmu attaches, the SMMU stays
+# disabled (bypass) and the virtio PCI disk must still work. Part of `smoke`.
+smmu_duid := "534d4d55524f4f54"
+
+smoke-smmu: (build-arm64 "--features qemu,multiprocessor") build-init-arm64 efiboot-arm64
+    @test -f target/userland/arm64/ramdisk.ffs -a -x target/userland/arm64/host/bin/makefs || \
+        { echo "smoke-smmu: no ramdisk image or makefs; run just userland first"; exit 1; }
+    cargo xtask nvme-root --arch arm64 --duid {{smmu_duid}} --out smmu-arm64.img --root-dev sd2a
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --expect-ramdisk \
+        --iommu smmuv3 --nvme smmu-arm64.img --cmdline "bootduid={{smmu_duid}}" --until-seen \
+        {{disk_login}} \
+        --send-after '# ' --send 'mount\n' \
+        --send-after '# ' --send 'echo m16f-smmu-$((40+2)) >/m16f.txt && cat /m16f.txt\n' \
+        --send-after '# ' --send 'dd if=/dev/zero of=/dev/rsd2c bs=64k seek=1010 count=8 && dd if=/dev/rsd2c of=/dev/null bs=64k count=64\n' \
+        --send-after '# ' --send 'echo m16f-raw-$((40+2)) | dd of=/dev/rsd2c bs=512 seek=130000 conv=sync 2>/dev/null; dd if=/dev/rsd2c bs=512 skip=130000 count=1 2>/dev/null\n' \
+        --send-after '# ' --send 'vmstat -i\n' \
+        --expect "smmu0 at mainbus0" \
+        --expect "nvme0 at pci0 dev 1 function 0 vendor 0x1b36 product 0x0010 rev 0x02: msix, NVMe 1.4" \
+        --expect "scsibus2 at nvme0: 257 targets, initiator 0" \
+        --expect "sd2 at scsibus2 targ 1 lun 0: <NVMe, QEMU NVMe Ctrl, " \
+        --expect "root on sd2a ({{smmu_duid}}.a) swap on sd2b dump on sd2b" \
+        --expect "rc: multi-user" --expect "/dev/sd2a on / type ffs (local)" \
+        --expect "m16f-smmu-42" --expect "524288 bytes transferred" \
+        --expect "4194304 bytes transferred" --expect "m16f-raw-42" --expect "/nvme0" \
+        --reject "smmu0: " --reject "mount -uw / failed"
+    cargo xtask efiboot-disk --arch arm64 --efi target/efiboot/arm64/BOOTAA64.EFI --kernel target/{{arm64}}/debug/bsd --root-dev sd0a
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --acpi --iommu smmuv3 --until-seen \
+        --send-after 'boot> ' --send 'boot\n' \
+        {{disk_login}} \
+        --send-after '# ' --send 'mount\n' \
+        --send-after '/ type ffs' --send 'echo m16f-acpi-$((40+2)) >/m16f.txt && cat /m16f.txt\n' \
+        --expect "acpi0: tables DSDT FACP APIC PPTT GTDT MCFG SPCR DBG2 IORT" \
+        --expect "acpiiort0 at acpi0" --expect "acpipci0 at acpi0 PCI0" \
+        --expect "sd0 at scsibus0 targ 0 lun 0: <VirtIO, Block Device, >" \
+        --expect "root on sd0a (454649424f4f5430.a) swap on sd0b dump on sd0b" \
+        --expect "rc: multi-user" --expect "/dev/sd0a on / type ffs (local)" \
+        --expect "m16f-acpi-42" --reject "smmu0"
+
 # M13: siop(4) on QEMU's LSI 53C895A (`--lsi`, `tools/xtask/src/hwopts.rs`: the adapter
 # after every other device, a fresh zeroed 64 MiB `scsi-hd` at target 0 and, with
 # `--lsi-cd`, the ramdisk's ISO as a `scsi-cd` at target 1). The kernel must attach siop0
@@ -1640,8 +1704,8 @@ smoke-acpi: (build-arm64 "--features qemu,multiprocessor") efiboot-arm64
         --expect ">> EmiBSD/arm64 BOOTAA64 1.26" --expect "efiboot: boot.conf read" \
         --expect "booting sd0a:/bsd: " --expect "FACP APIC PPTT GTDT MCFG SPCR DBG2 IORT" \
         --expect "bsd: booted on arm64 by boot(8) efiboot" --expect "bsd: {{ncpu}} processors, boot processor hwid 0x0" \
-        --expect "mainbus0 at root: ACPI" --expect "ampintc0 at mainbus0 nirq 288, ncpu {{ncpu}}" \
-        --expect "ampintcmsi0 at ampintc0: nspi 64" --expect "agtimer0 at mainbus0: 62500 kHz" \
+        --expect "mainbus0 at root: ACPI" --expect "{{gic_acpi_attach}}" \
+        --expect "{{gic_msi_attach}}" --expect "agtimer0 at mainbus0: 62500 kHz" \
         --expect "acpi0 at mainbus0: ACPI 6.3" --expect "acpi0: tables DSDT FACP APIC PPTT GTDT MCFG SPCR DBG2 IORT" \
         --expect "acpimcfg0 at acpi0" --expect "acpimcfg0: addr 0x4010000000, bus 0-255" \
         --expect "acpiiort0 at acpi0" \
@@ -1656,6 +1720,62 @@ smoke-acpi: (build-arm64 "--features qemu,multiprocessor") efiboot-arm64
         --expect "rc: multi-user" --expect "(tty00)" --expect "login:" --expect "hw.ncpu={{ncpu}}" \
         --expect "/dev/sd0a on / type ffs (local)" \
         --expect "1 packets transmitted, 1 packets received, 0.0% packet loss"
+
+# M16f: agintc(4), the GICv3 (arch/arm64/dev/agintc.c), on `virt,gic-version=3` (`--gic 3`,
+# whatever `gic` says), three boots on `ncpu` processors. The device tree's self-test boot:
+# agintc0 finds one redistributor per CPU, takes SGI 0 for the IPIs (` ipi 0`), its ITS
+# attaches below it (agintcmsi0), every application processor hatches, sees the TLB
+# shootdown and takes an `ARM_IPI_NOP` through ICC_SGI1R, and each CPU runs its own clock
+# interrupts (a PPI at its redistributor). Then `smoke-nvme`'s arm64 boot: the NVMe root on
+# `virt`'s PCI bus interrupts by MSI-X through the ITS (the pcie node's `msi-map`: MAPD,
+# MAPTI, an LPI from 8192, which `vmstat -i` counts) and the session logs in and does I/O.
+# Then ACPI's (`--acpi`, booted by efiboot, whose efiacpi builds the GIC, its redistributors
+# and the ITS from the MADT): the disk and the NIC are virtio-pci functions with one MSI-X
+# vector per queue through the ITS (the IORT names it by its `openbsd,gic-its-id`), the
+# root on the PCI disk logs in and pings the host. Part of `smoke`.
+smoke-gicv3: (build-arm64 "--features qemu,multiprocessor") build-init-arm64 efiboot-arm64
+    @test -x target/userland/arm64/host/bin/makefs -a -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-gicv3: no arm64 userland; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --gic 3 --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none \
+        --expect "bsd: {{ncpu}} processors" \
+        --expect "agintc0 at mainbus0 shift 4:4 nirq 288 nredist {{ncpu}} ipi 0" \
+        --expect "agintcmsi0 at agintc0" --expect "cpu{{aps}} at mainbus0 mpidr {{aps}}: ARM Cortex-A72" \
+        --expect "cpu: {{aps}} of {{aps}} application processors running, tlb shootdown seen by {{aps}}, ipi nop seen by {{aps}}" \
+        --expect "selftest: {{ncpu}} cpus running" \
+        --expect "selftest: clockintr on {{ncpu}} cpus ok, uptime monotonic on each" \
+        --expect "selftest: ping 10.0.2.2: echo reply received" \
+        --expect "init exited with status 0 (signal 0)" --reject "ampintc0" --reject "unported: cpu_idcache"
+    cargo xtask nvme-root --arch arm64 --duid {{nvme_duid}} --root-dev sd2a
+    cargo xtask smoke {{reject}} {{smp}} --gic 3 --arch arm64 --kernel target/{{arm64}}/debug/bsd --ramdisk none --expect-ramdisk \
+        --nvme nvme-arm64.img --cmdline "bootduid={{nvme_duid}}" --until-seen \
+        {{disk_login}} \
+        --send-after '# ' --send 'sysctl hw.ncpu\n' \
+        --send-after 'hw.ncpu=' --send 'echo m16f-its-$((40+2)) >/m16f.txt && cat /m16f.txt\n' \
+        --send-after '# ' --send 'dd if=/dev/rsd2c of=/dev/null bs=64k count=64\n' \
+        --send-after '# ' --send 'vmstat -i\n' \
+        --expect "agintc0 at mainbus0 shift 4:4 nirq 288 nredist {{ncpu}} ipi 0" \
+        --expect "agintcmsi0 at agintc0" \
+        --expect "nvme0 at pci0 dev 1 function 0 vendor 0x1b36 product 0x0010 rev 0x02: msix, NVMe 1.4" \
+        --expect "root on sd2a ({{nvme_duid}}.a) swap on sd2b dump on sd2b" \
+        --expect "rc: multi-user" --expect "login:" --expect "hw.ncpu={{ncpu}}" --expect "m16f-its-42" \
+        --expect "4194304 bytes transferred" --expect "irq8192/nvme0" \
+        --reject "mount -uw / failed" --reject "command queue timeout"
+    cargo xtask efiboot-disk --arch arm64 --efi target/efiboot/arm64/BOOTAA64.EFI --kernel target/{{arm64}}/debug/bsd --root-dev sd0a
+    cargo xtask smoke {{reject}} {{smp}} --gic 3 --arch arm64 --acpi --until-seen \
+        --send-after 'boot> ' --send 'boot\n' \
+        {{disk_login}} \
+        --send-after '# ' --send 'sysctl hw.ncpu\n' \
+        --send-after 'hw.ncpu=' --send 'ping -c 1 10.0.2.2\n' \
+        --send-after 'packet loss' --send 'vmstat -i\n' \
+        --expect "bsd: booted on arm64 by boot(8) efiboot" --expect "mainbus0 at root: ACPI" \
+        --expect "agintc0 at mainbus0 shift 4:4 nirq 288 nredist {{ncpu}} ipi 0" \
+        --expect "agintcmsi0 at agintc0" --expect "acpipci0 at acpi0 PCI0" \
+        --expect "virtio0 at pci0 dev 1 function 0 vendor 0x1af4 product 0x1001" \
+        --expect "vio0 at virtio1: 1 queue, address 52:54:00:12:34:56" --expect "virtio1: msix per-VQ" \
+        --expect "cpu: {{aps}} of {{aps}} application processors running, tlb shootdown seen by {{aps}}, ipi nop seen by {{aps}}" \
+        --expect "rc: multi-user" --expect "login:" --expect "hw.ncpu={{ncpu}}" \
+        --expect "1 packets transmitted, 1 packets received, 0.0% packet loss" --expect "irq8193/vioblk0:" --expect "irq8195/vio0:1" \
+        --reject "command queue timeout"
 
 # M13: power off and reset through ACPI (dev/acpi/acpi.c, arch/amd64/amd64/acpi_machdep.c).
 # acpi0 at bios0 takes q35 over from the firmware. The first boot logs in and runs `halt -p`
@@ -1697,6 +1817,26 @@ smoke-power: (build-amd64 "--features qemu,multiprocessor") (build-arm64 "--feat
         --send-after '# ' --send 'echo m13-power-$((40+2))\n' \
         --expect "psci0 at mainbus0: PSCI 1." --expect "rebooting..." --expect "m13-power-42" \
         --reject "The operating system has halted"
+
+# M16f: QEMU's power key on arm64 `virt` (dev/fdt/plgpio.c, gpiokeys.c, dev/ofw/ofw_gpio.c).
+# The key is the `gpio-keys` node on the PL061: plgpio(4) registers the controller, gpiokeys(4)
+# attaches the key ("GPIO Key Poweroff"). plgpio has no interrupts, so gpiokeys polls the key
+# once a second through gpiokeys_update_key, which acts only on a lid switch: QEMU's
+# `system_powerdown` (sent on the monitor, `--monitor`, hwopts.rs) changes nothing, and the
+# session goes on. That is what OpenBSD 8.0 does on the same machine (`cargo xtask
+# diff-openbsd --arch arm64 powerbtn`: plgpio0 and gpiokeys0 attach, the console stays silent
+# and the VM still runs a minute later), so the port keeps it (the user's option A of
+# 2026-10-08). arm64 only (amd64's power button is ACPI's). Part of `smoke`.
+smoke-powerbtn: (build-arm64 "--features qemu,multiprocessor") build-init-arm64
+    @test -f target/userland/arm64/ramdisk.ffs || \
+        { echo "smoke-powerbtn: no ramdisk image; run just userland first"; exit 1; }
+    cargo xtask smoke {{reject}} {{smp}} --arch arm64 --kernel target/{{arm64}}/debug/bsd --expect-ramdisk --until-seen \
+        {{disk_login}} --send-after '# ' --send 'echo m16f-armed-$((40+1))\n' \
+        --monitor-after 'm16f-armed-41' --monitor 'system_powerdown' \
+        --send-after 'm16f-armed-41' --send 'sleep 5; echo m16f-still-up-$((40+2))\n' \
+        --expect "plgpio0 at mainbus0" --expect 'gpiokeys0 at mainbus0: "GPIO Key Poweroff"' \
+        --expect "rc: multi-user" --expect "m16f-armed-41" --expect "m16f-still-up-42" \
+        --reject "syncing disks" --reject "Attempting to power down" --reject "The operating system has halted"
 
 # M13: the date comes from the RTC. Each arch boots single user from the ramdisk (`-s`) and
 # ksh(1) compares `date +%s` right after boot with the host's clock ({host-ms}, hwopts.rs):

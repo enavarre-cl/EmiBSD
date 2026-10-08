@@ -24,9 +24,9 @@
 
 ## Status
 
-Status: M15 (code and test layout: LICENSES, CODE and TESTS zones in every `.rs`, tests inline,
-validated by `ports check`) met; M16a..M16g (QEMU drivers: storage, USB, network,
-console/virtio/legacy, platform, arm64 platform, install images) next.
+Status: M16f (arm64 platform: GICv3 with its ITS, the SMMU, GPIO and the power key) met; the
+rest of M16 (M16a..M16e, M16g: storage, USB, network, console/virtio/legacy, platform, install
+images) under way.
 
 | Milestone | Scope | State |
 |---|---|---|
@@ -57,7 +57,8 @@ console/virtio/legacy, platform, arm64 platform, install images) next.
 | M13 | Storage, firmware and console: NVMe and AHCI roots, ACPI on amd64, PSCI, the RTC, em/re/vmx, the frame buffer with wsdisplay and the USB keyboard | met |
 | M14 | Installable: our efiboot on both archs, bsd.rd, install.sub with the base and comp sets (clang, lld), the installed disk booting to `login:` with `cc` working; arm64 ACPI | met |
 | M15 | Code and test layout: LICENSES, CODE and TESTS zones in every `.rs` under `sys/` and `tools/`, the 324 `tests.rs` inline, validated by `ports check` | met |
-| M16a..M16g | QEMU drivers in seven parts: storage, USB, network, console/virtio/legacy devices, platform, arm64 platform, install images | next |
+| M16f | arm64 platform: agintc(4) (GICv3, LPIs, the ITS), smmu(4) (SMMUv2 and v3), gpio(4), plgpio(4) and gpiokeys(4); every arm64 smoke on `gic-version=3` | met |
+| M16a..M16e, M16g | QEMU drivers, the other six parts: storage, USB, network, console/virtio/legacy devices, platform, install images | next |
 | M17 | Real hardware and virtualisation (vmm, vmd; optional) | next |
 
 Stage 2 of the diagnostic tools (ps, fstat, vmstat, df) is also met. Exit criteria and dates are
@@ -139,6 +140,13 @@ On one VM, with OpenBSD's own binaries from the ramdisk:
   from an OpenBSD disk to `login:` beside Limine (`smoke-efiboot`); on arm64 `virt,acpi=on`
   it builds the device tree from the ACPI tables and the kernel attaches acpi0, acpipci(4)
   and pluart(4) at acpi, its root on a PCI disk (`smoke-acpi`).
+- arm64 on QEMU's GICv3 (`virt,gic-version=3`): agintc(4) with its redistributors, IPIs on
+  every CPU and MSI-X through the ITS for an NVMe root and, on ACPI, virtio-pci
+  (`smoke-gicv3`); `EMIBSD_GIC=3 just smoke` puts every arm64 boot on it.
+- smmu(4) on `virt,iommu=smmuv3`: the root on an NVMe namespace whose DMA the SMMUv3
+  translates (`smoke-smmu`).
+- QEMU's power key on the PL061: plgpio(4) and gpiokeys(4) attach, and `system_powerdown`
+  is ignored, as on OpenBSD 8.0 (`smoke-powerbtn`).
 
 Outside `just smoke`, because they take minutes under TCG (the user requires them at every
 milestone close): `just smoke-install` boots `bsd.rd` through our efiboot and lets OpenBSD's
@@ -348,7 +356,7 @@ From `cargo xtask ports status` at the commit of this README:
 
 | todo | wip | ported | skipped | total |
 |---:|---:|---:|---:|---:|
-| 200 | 139 | 975 | 37 | 1351 |
+| 188 | 141 | 990 | 37 | 1356 |
 
 The tracker lists the files claimed by the milestones so far, not all of OpenBSD's `sys/`.
 `wip` files are in use with visible stubs. Per subsystem: [docs/PORTING.md](docs/PORTING.md).

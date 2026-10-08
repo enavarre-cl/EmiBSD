@@ -3,7 +3,7 @@
 //! compared step by step (exit statuses, outputs, errno names, file contents).
 //!
 //! ```text
-//! cargo xtask diff-openbsd [--arch A]... [--smp N] [fetch | install | run]
+//! cargo xtask diff-openbsd [--arch A]... [--smp N] [fetch | install | run | powerbtn]
 //! ```
 //!
 //! - `fetch`: the OpenBSD -current snapshot recorded in `tools/xtask/openbsd-snapshot.toml`
@@ -24,6 +24,12 @@
 //!   server. The two transcripts are cut into steps, normalized, compared, and checked
 //!   against the expected differences (`tools/xtask/diff-openbsd/expected.toml`). Any other
 //!   difference, or an expected one that no longer happens, fails the run.
+//! - `powerbtn` (M16f): boots the installed OpenBSD alone (`-snapshot`) with QEMU's monitor
+//!   on a socket, logs in, prints what the kernel attached for the power key (on arm64
+//!   `virt,acpi=off`, the `gpio-keys` node on the PL061), sends the monitor's
+//!   `system_powerdown` and reports whether OpenBSD powered off within a minute
+//!   (`<run dir>/<arch>/openbsd-powerbtn.log`). It is how M16f checked what OpenBSD 8.0
+//!   does with QEMU's power key before porting gpiokeys(4).
 //!
 //! The OpenBSD binaries are test fixtures under `target/` only: never committed, never
 //! redistributed. Per-run files (logs, scripts, reports, the OpenBSD VM's variable store) go
@@ -93,7 +99,7 @@ pub(crate) fn diff_openbsd(root: &Path, args: &[&str]) -> Result<()> {
                 it.next();
             }
             "--kernel-dir" => kernel_dir = Some(*it.next().ok_or("--kernel-dir needs a value")?),
-            "fetch" | "install" | "run" => what = a,
+            "fetch" | "install" | "run" | "powerbtn" => what = a,
             other => return Err(format!("diff-openbsd: unknown argument {other:?}").into()),
         }
     }
@@ -113,6 +119,10 @@ pub(crate) fn diff_openbsd(root: &Path, args: &[&str]) -> Result<()> {
         }
         install(root, &snap, arch, a)?;
         if what == "install" {
+            continue;
+        }
+        if what == "powerbtn" {
+            powerbtn(root, arch)?;
             continue;
         }
         let started = Instant::now();
@@ -251,6 +261,9 @@ enum Boot<'a> {
     Prepare,
     /// From the installed disk under `-snapshot`, with a scratch disk.
     Run(&'a Path),
+    /// From the installed disk under `-snapshot`, alone, with QEMU's monitor on the Unix
+    /// socket given (`powerbtn`).
+    Probe(&'a Path),
 }
 
 /// QEMU for the OpenBSD VM. Disks: on amd64 PCI slots go up and the disk added first is
@@ -263,13 +276,17 @@ fn openbsd_qemu(root: &Path, arch: Arch, mode: &Boot<'_>) -> Result<Command> {
     let vars = work_dir(root, arch)?.join("openbsd-vars.fd");
     fs::copy(&vars_src, &vars).map_err(|e| format!("{}: {e}", vars.display()))?;
     let mut cmd = Command::new(arch.qemu());
+    let monitor = match mode {
+        Boot::Probe(sock) => format!("unix:{},server=on,wait=off", sock.display()),
+        _ => "none".to_string(),
+    };
     cmd.args([
         "-m",
         "1024",
         "-display",
         "none",
         "-monitor",
-        "none",
+        &monitor,
         "-no-reboot",
     ]);
     cmd.args(["-serial", "stdio", "-boot", "menu=on,splash-time=0"]);
@@ -304,7 +321,7 @@ fn openbsd_qemu(root: &Path, arch: Arch, mode: &Boot<'_>) -> Result<Command> {
     cmd.args(["-device", &format!("{net},netdev=n0")]);
     let (second, second_opts, boot_second) = match mode {
         Boot::Install(img) => (Some(*img), ",snapshot=on", true),
-        Boot::Prepare => (None, "", false),
+        Boot::Prepare | Boot::Probe(_) => (None, "", false),
         Boot::Run(scratch) => (Some(*scratch), "", false),
     };
     let root_disk = [
@@ -341,7 +358,7 @@ fn openbsd_qemu(root: &Path, arch: Arch, mode: &Boot<'_>) -> Result<Command> {
             cmd.args(&root_disk);
         }
     }
-    if matches!(mode, Boot::Run(_)) {
+    if matches!(mode, Boot::Run(_) | Boot::Probe(_)) {
         cmd.arg("-snapshot");
     }
     Ok(cmd)
@@ -461,6 +478,44 @@ fn install(root: &Path, snap: &Snapshot, arch: Arch, a: &ArchSnapshot) -> Result
         arch.name(),
         started.elapsed().as_secs_f32(),
         disk.display()
+    );
+    Ok(())
+}
+
+/// `powerbtn`: what the installed OpenBSD does when QEMU's power key is pressed.
+fn powerbtn(root: &Path, arch: Arch) -> Result<()> {
+    let work = work_dir(root, arch)?;
+    let sock = std::env::temp_dir().join(format!("emibsd-obsd-{}.sock", std::process::id()));
+    let _ = fs::remove_file(&sock);
+    let cmd = openbsd_qemu(root, arch, &Boot::Probe(&sock))?;
+    let mut vm = Vm::spawn(
+        &format!("openbsd-{}-powerbtn", arch.name()),
+        cmd,
+        work.join("openbsd-powerbtn.log"),
+    )?;
+    login(&mut vm, boot::time_limit(Duration::from_secs(900)))?;
+    vm.send(
+        "dmesg | grep -i -e gpio -e pl061 -e acpibtn -e power; \
+         sysctl hw.sensors machdep.pwraction 2>&1; echo @@PROBED\n",
+    )?;
+    vm.wait_for("@@PROBED\r\n", Duration::from_secs(120))?;
+    vm.wait_for("# ", Duration::from_secs(60))?;
+    thread::sleep(Duration::from_secs(2));
+    let mark = vm.mark();
+    crate::hwopts::monitor_command(&sock, "system_powerdown")?;
+    println!("xtask: openbsd-{}: system_powerdown sent", arch.name());
+    let off = vm.wait_exit(Duration::from_secs(60)).is_ok();
+    let after = vm.since(mark);
+    let _ = fs::remove_file(&sock);
+    println!(
+        "xtask: openbsd-{} powerbtn: {}; console after system_powerdown:\n{}",
+        arch.name(),
+        if off {
+            "OpenBSD powered off"
+        } else {
+            "OpenBSD still running after 60 s"
+        },
+        after.trim()
     );
     Ok(())
 }

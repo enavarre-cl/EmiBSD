@@ -120,7 +120,18 @@
 //!   iommu_platform=on` ([`virtio_pci_props`]), so that they are modern-only and translate
 //!   their DMA through the IOMMU (virtio_pci negotiates `VIRTIO_F_ACCESS_PLATFORM`); without
 //!   it QEMU's virtio devices bypass the IOMMU. Emulated devices (AHCI, NVMe, ...) always
-//!   go through it. Refused on arm64 (`virt`'s IOMMU is the SMMUv3, M16f).
+//!   go through it. On arm64 the one model is `smmuv3` (M16f, below).
+//! - `--gic N` (`qemu`, `smoke`, `smoke2`, M16f; arm64): the version of `virt`'s interrupt
+//!   controller, `2` (QEMU's default, ampintc(4) with its GICv2m MSI frame) or `3` (agintc(4)
+//!   with its ITS, `gic-version=3`). Without the option the environment's `EMIBSD_GIC` (`2`
+//!   or `3`) decides, so `EMIBSD_GIC=3 just smoke` puts every arm64 boot on GICv3; amd64
+//!   ignores both ([`virt_machine`]).
+//! - `--iommu smmuv3` (`qemu`, `smoke`, M16f; arm64): `virt` with its SMMUv3 in front of the
+//!   PCIe bus (`iommu=smmuv3`), smmu(4); the virtio-mmio devices do not go through it.
+//! - `--monitor-after LINE --monitor CMD` (`smoke`, M16f, `smoke-powerbtn`; repeatable, the
+//!   pairs in order): QEMU gets the human monitor socket as for `--screenshot-after`; when a
+//!   serial line contains LINE, the monitor command CMD (`system_powerdown`, ...) is sent
+//!   ([`poll_monitor_cmds`]). The run fails if a LINE never came.
 //! - `{host-ms}` in a `smoke` `--send` text (M13, `smoke-clock`): replaced, as the text is
 //!   sent, by the host's wall clock in milliseconds since the Epoch ([`expand_send`]), so a
 //!   guest script can set its own clock readings beside the host's and compare the rates.
@@ -317,6 +328,16 @@ static SENDKEY: OnceLock<(Vec<Sendkeys>, PathBuf)> = OnceLock::new();
 /// How many pairs were typed.
 static SENT_KEYS: Mutex<usize> = Mutex::new(0);
 
+/// A `--monitor-after LINE --monitor CMD` pair.
+type MonitorCmd = (String, String);
+
+/// The `--monitor-after`/`--monitor` pairs, in order, and the run directory the monitor
+/// socket goes in.
+static MONITOR_CMDS: OnceLock<(Vec<MonitorCmd>, PathBuf)> = OnceLock::new();
+
+/// How many monitor commands were sent.
+static SENT_CMDS: Mutex<usize> = Mutex::new(0);
+
 /// The pause between two keys: QEMU holds each key down 100 ms by default.
 const SENDKEY_GAP: Duration = Duration::from_millis(250);
 
@@ -329,12 +350,25 @@ static GRID_LINE: Mutex<Option<String>> = Mutex::new(None);
 /// `--vio-mq`: vio0's virtio-net offers multiqueue (`mq=on`, set once by `main`).
 static VIO_MQ: OnceLock<()> = OnceLock::new();
 
-/// The IOMMUs `--iommu` takes, and QEMU's device for each.
-const IOMMU_MODELS: &[(&str, &str)] =
-    &[("intel", "intel-iommu"), ("amd", "amd-iommu,dma-remap=on")];
+/// The IOMMUs `--iommu` takes: the model, its arch, and QEMU's `-device` for it (amd64's
+/// are q35 devices; arm64's SMMUv3 is a `virt` machine property, [`virt_machine`]).
+const IOMMU_MODELS: &[(&str, Arch, &str)] = &[
+    ("intel", Arch::Amd64, "intel-iommu"),
+    ("amd", Arch::Amd64, "amd-iommu,dma-remap=on"),
+    ("smmuv3", Arch::Arm64, ""),
+];
 
-/// `--iommu MODEL`: the QEMU device of the DMA remapping unit (amd64, set once by `main`).
+/// `--iommu MODEL`: the IOMMU model, an entry of [`IOMMU_MODELS`] (set once by `main`).
 static IOMMU: OnceLock<&'static str> = OnceLock::new();
+
+/// The q35 `-device` of the `--iommu` unit, when it is amd64's (`intel`, `amd`).
+fn q35_iommu_dev() -> Option<&'static str> {
+    let model = IOMMU.get()?;
+    IOMMU_MODELS
+        .iter()
+        .find(|(m, arch, _)| m == model && *arch == Arch::Amd64)
+        .map(|&(_, _, dev)| dev)
+}
 
 /// `--machine pc`: amd64 VMs run on i440fx's `pc`, not `q35` (set once by `main`).
 static MACHINE_PC: OnceLock<()> = OnceLock::new();
@@ -387,21 +421,39 @@ static NIC: OnceLock<String> = OnceLock::new();
 /// only bus a tree made from the ACPI tables can reach (set once by `main`).
 static ACPI: OnceLock<()> = OnceLock::new();
 
+/// `--gic N` or `EMIBSD_GIC` (arm64): `virt`'s GIC version, 2 or 3 (set once by `main`).
+static GIC: OnceLock<u8> = OnceLock::new();
+
+/// The GIC version a `--gic` value or `EMIBSD_GIC` names: `2` or `3`.
+fn parse_gic(v: &str, what: &str) -> Result<u8> {
+    match v {
+        "2" => Ok(2),
+        "3" => Ok(3),
+        _ => Err(format!("{what} {v}: expected 2 or 3").into()),
+    }
+}
+
 /// Records this run's device options (`--nvme`, `--ahci`, `--scsi-cd`, `--lsi`, `--lsi-cd`,
 /// `--pci-serial`, `--expect-pci-serial`, `--pci-bridges`, `--ipmi`, `--reboot`, `--vio-mq`,
-/// `--nic`, `--acpi`, `--iommu`, `--machine`).
+/// `--nic`, `--acpi`, `--gic`, `--iommu`, `--machine`).
 pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if let Some(model) = opt_path(args, "--iommu")? {
-        let Some(&(_, dev)) = IOMMU_MODELS.iter().find(|(m, _)| *m == model) else {
-            return Err(format!("--iommu {model}: expected intel or amd").into());
+        let Some(&(name, arch, _)) = IOMMU_MODELS.iter().find(|(m, _, _)| *m == model) else {
+            return Err(
+                format!("--iommu {model}: expected intel, amd (amd64) or smmuv3 (arm64)").into(),
+            );
         };
-        if args.windows(2).any(|w| w == ["--arch", "arm64"]) {
-            return Err("--iommu: amd64 only (q35)".into());
+        let other = match arch {
+            Arch::Amd64 => "arm64",
+            Arch::Arm64 => "amd64",
+        };
+        if args.windows(2).any(|w| w == ["--arch", other]) {
+            return Err(format!("--iommu {name}: not on {other}").into());
         }
-        if args.contains(&"--machine") {
+        if arch == Arch::Amd64 && args.contains(&"--machine") {
             return Err("--iommu: not with --machine (QEMU's IOMMUs need q35)".into());
         }
-        let _ = IOMMU.set(dev);
+        let _ = IOMMU.set(name);
     }
     if machine_opt(args)? {
         let _ = MACHINE_PC.set(());
@@ -427,6 +479,17 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     if args.contains(&"--acpi") {
         let _ = ACPI.set(());
     }
+    match opt_path(args, "--gic")? {
+        Some(v) => {
+            let _ = GIC.set(parse_gic(v, "--gic")?);
+        }
+        None => match std::env::var("EMIBSD_GIC") {
+            Ok(v) if !v.is_empty() => {
+                let _ = GIC.set(parse_gic(&v, "EMIBSD_GIC")?);
+            }
+            _ => {}
+        },
+    }
     if args.contains(&"--vio-mq") {
         let _ = VIO_MQ.set(());
     }
@@ -440,6 +503,10 @@ pub(crate) fn set(root: &Path, args: &[&str]) -> Result<()> {
     let pairs = parse_sendkeys(args)?;
     if !pairs.is_empty() {
         let _ = SENDKEY.set((pairs, boot::run_dir(root)));
+    }
+    let cmds = parse_pairs(args, "--monitor-after", "--monitor")?;
+    if !cmds.is_empty() {
+        let _ = MONITOR_CMDS.set((cmds, boot::run_dir(root)));
     }
     if let Some(spec) = opt_path(args, "--screen-text")? {
         if SCREENSHOT.get().is_none() {
@@ -496,7 +563,7 @@ pub(crate) fn vio0_props() -> &'static str {
 /// The QEMU arguments of the `--iommu` unit (none without one); on `q35`, before every PCI
 /// device.
 pub(crate) fn iommu_args() -> Vec<String> {
-    iommu_args_for(IOMMU.get().copied())
+    iommu_args_for(q35_iommu_dev())
 }
 
 /// [`iommu_args`] for the device `dev`.
@@ -507,7 +574,7 @@ fn iommu_args_for(dev: Option<&str>) -> Vec<String> {
 /// The extra properties of amd64's `virtio-*-pci` devices: with `--iommu`, modern-only and
 /// behind the IOMMU (`disable-legacy=on,iommu_platform=on`).
 pub(crate) fn virtio_pci_props() -> &'static str {
-    if IOMMU.get().is_some() {
+    if q35_iommu_dev().is_some() {
         ",disable-legacy=on,iommu_platform=on"
     } else {
         ""
@@ -538,6 +605,33 @@ fn user_nic_arg(nic: Option<&str>, arch: Arch, props: &str) -> String {
 /// Whether this run's arm64 VMs boot `virt` with ACPI (`--acpi`).
 pub(crate) fn acpi() -> bool {
     ACPI.get().is_some()
+}
+
+/// The `-M` argument of an arm64 VM: `virt` with ACPI (`--acpi`) or without (EDK2 then
+/// installs the device tree), its GIC version (`--gic`, `EMIBSD_GIC`) and its SMMUv3
+/// (`--iommu smmuv3`).
+pub(crate) fn virt_machine() -> String {
+    virt_machine_arg(
+        acpi(),
+        GIC.get().copied().unwrap_or(2),
+        IOMMU.get() == Some(&"smmuv3"),
+    )
+}
+
+/// [`virt_machine`] for the given ACPI, GIC version and SMMU choices.
+fn virt_machine_arg(acpi: bool, gic: u8, smmu: bool) -> String {
+    let mut m = String::from(if acpi {
+        "virt,acpi=on"
+    } else {
+        "virt,acpi=off"
+    });
+    if gic == 3 {
+        m.push_str(",gic-version=3");
+    }
+    if smmu {
+        m.push_str(",iommu=smmuv3");
+    }
+    m
 }
 
 /// Whether this run's VMs restart on a guest reset (`--reboot`): QEMU then runs without
@@ -920,10 +1014,11 @@ fn monitor_dir() -> Option<&'static PathBuf> {
         .get()
         .map(|(_, dir)| dir)
         .or_else(|| SENDKEY.get().map(|(_, dir)| dir))
+        .or_else(|| MONITOR_CMDS.get().map(|(_, dir)| dir))
 }
 
-/// QEMU's `-monitor` argument: a socket in the run directory with `--screenshot-after` or
-/// `--sendkey-after`, none otherwise.
+/// QEMU's `-monitor` argument: a socket in the run directory with `--screenshot-after`,
+/// `--sendkey-after` or `--monitor-after`, none otherwise.
 pub(crate) fn monitor_arg() -> String {
     match monitor_dir() {
         Some(dir) => {
@@ -968,16 +1063,74 @@ fn monitor_sock_for(dir: &Path, cwd: &Path, tmp: &Path, pid: u32) -> PathBuf {
     tmp.join(format!("emibsd-{:08x}-{pid}.sock", h.finish() as u32))
 }
 
-/// Whether the monitor still has work: a screenshot to take or keys to send.
+/// Whether the monitor still has work: a screenshot to take, keys or commands to send.
 pub(crate) fn monitor_pending() -> bool {
-    screenshot_pending() || sendkey_pending()
+    screenshot_pending() || sendkey_pending() || next_monitor_cmd().is_some()
 }
 
-/// Drives the monitor once `serial` has the lines it waits for: [`poll_sendkey`], then
-/// [`poll_screenshot`].
+/// Drives the monitor once `serial` has the lines it waits for: [`poll_sendkey`],
+/// [`poll_monitor_cmds`], then [`poll_screenshot`].
 pub(crate) fn poll_monitor(serial: &str) -> Result<()> {
     poll_sendkey(serial)?;
+    poll_monitor_cmds(serial)?;
     poll_screenshot(serial)
+}
+
+/// The `AFTER LINE CMD TEXT` pairs of `args` (`--monitor-after LINE --monitor CMD`), in
+/// order.
+fn parse_pairs(args: &[&str], after_opt: &str, what_opt: &str) -> Result<Vec<(String, String)>> {
+    let mut pairs = Vec::new();
+    let mut after: Option<&str> = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == after_opt {
+            if after.is_some() {
+                return Err(format!("{after_opt}: the previous one has no {what_opt}").into());
+            }
+            after = Some(
+                args.get(i + 1)
+                    .ok_or_else(|| format!("{after_opt}: expected a line"))?,
+            );
+            i += 1;
+        } else if args[i] == what_opt {
+            let line = after
+                .take()
+                .ok_or_else(|| format!("{what_opt}: needs {after_opt}"))?;
+            let what = args
+                .get(i + 1)
+                .ok_or_else(|| format!("{what_opt}: expected a value"))?;
+            pairs.push((line.to_string(), what.to_string()));
+            i += 1;
+        }
+        i += 1;
+    }
+    if after.is_some() {
+        return Err(format!("{after_opt}: needs {what_opt}").into());
+    }
+    Ok(pairs)
+}
+
+/// The next `--monitor` command to send, if any is left.
+fn next_monitor_cmd() -> Option<&'static MonitorCmd> {
+    let (cmds, _) = MONITOR_CMDS.get()?;
+    let sent = SENT_CMDS.lock().map(|s| *s).ok()?;
+    cmds.get(sent)
+}
+
+/// Sends the next `--monitor` command once `serial` has its `--monitor-after` line.
+fn poll_monitor_cmds(serial: &str) -> Result<()> {
+    let (Some((after, cmd)), Some((_, dir))) = (next_monitor_cmd(), MONITOR_CMDS.get()) else {
+        return Ok(());
+    };
+    if !serial.contains(after.as_str()) {
+        return Ok(());
+    }
+    monitor_command(&monitor_sock(dir), cmd)?;
+    println!("xtask: monitor {cmd} (saw {after:?})");
+    if let Ok(mut s) = SENT_CMDS.lock() {
+        *s += 1;
+    }
+    Ok(())
 }
 
 /// The `--sendkey-after LINE --sendkeys KEYS` pairs of `args`, in order.
@@ -1049,6 +1202,16 @@ fn poll_sendkey(serial: &str) -> Result<()> {
         *s += 1;
     }
     Ok(())
+}
+
+/// Sends one human-monitor command `cmd` on the monitor socket `sock` and waits for its
+/// prompt (`system_powerdown`, ...).
+pub(crate) fn monitor_command(sock: &Path, cmd: &str) -> Result<()> {
+    let mut mon = UnixStream::connect(sock).map_err(|e| format!("{}: {e}", sock.display()))?;
+    mon.set_read_timeout(Some(Duration::from_secs(10)))?;
+    read_prompt(&mut mon)?;
+    writeln!(mon, "{cmd}")?;
+    read_prompt(&mut mon)
 }
 
 /// Whether a screenshot is still to be taken.
@@ -1473,6 +1636,48 @@ mod tests {
     }
 
     #[test]
+    fn monitor_pairs_parse_in_order() {
+        let args = [
+            "--monitor-after",
+            "login:",
+            "--monitor",
+            "system_powerdown",
+            "--expect",
+            "x",
+            "--monitor-after",
+            "# ",
+            "--monitor",
+            "info status",
+        ];
+        let p = parse_pairs(&args, "--monitor-after", "--monitor").unwrap();
+        assert_eq!(
+            p,
+            vec![
+                ("login:".to_string(), "system_powerdown".to_string()),
+                ("# ".to_string(), "info status".to_string())
+            ]
+        );
+        assert!(parse_pairs(&["--monitor", "x"], "--monitor-after", "--monitor").is_err());
+        assert!(parse_pairs(&["--monitor-after", "x"], "--monitor-after", "--monitor").is_err());
+    }
+
+    #[test]
+    fn virt_machine_names_gic_and_smmu() {
+        assert_eq!(virt_machine_arg(false, 2, false), "virt,acpi=off");
+        assert_eq!(virt_machine_arg(true, 2, false), "virt,acpi=on");
+        assert_eq!(
+            virt_machine_arg(false, 3, false),
+            "virt,acpi=off,gic-version=3"
+        );
+        assert_eq!(
+            virt_machine_arg(false, 3, true),
+            "virt,acpi=off,gic-version=3,iommu=smmuv3"
+        );
+        assert_eq!(parse_gic("3", "--gic").ok(), Some(3));
+        assert!(parse_gic("4", "--gic").is_err());
+    }
+
+    #[test]
     fn monitor_sock_fits_sun_path() {
         let tmp = Path::new("/var/folders/xy/abcdefghijklmnopqrstuvwxyz0123/T");
         let cwd = Path::new(
@@ -1754,10 +1959,16 @@ mod tests {
         assert!(set(Path::new("/r"), &["--iommu", "via"]).is_err());
         assert!(set(Path::new("/r"), &["--iommu"]).is_err());
         assert!(set(Path::new("/r"), &["--arch", "arm64", "--iommu", "intel"]).is_err());
+        assert!(set(Path::new("/r"), &["--arch", "amd64", "--iommu", "smmuv3"]).is_err());
         assert!(
             IOMMU_MODELS
                 .iter()
-                .any(|&(m, d)| m == "intel" && d == "intel-iommu")
+                .any(|&(m, a, d)| m == "smmuv3" && a == Arch::Arm64 && d.is_empty())
+        );
+        assert!(
+            IOMMU_MODELS
+                .iter()
+                .any(|&(m, _, d)| m == "intel" && d == "intel-iommu")
         );
     }
 

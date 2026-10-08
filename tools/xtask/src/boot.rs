@@ -647,12 +647,14 @@ pub(crate) fn qemu_command(
             // acpi=off: EDK2 then installs the device tree, which the arm64 kernel needs (M4).
             // `--acpi` (hwopts.rs): ACPI tables instead, and the disks on the PCI bus.
             let acpi = crate::hwopts::acpi();
-            let (machine, blk) = if acpi {
-                ("virt,acpi=on", "virtio-blk-pci")
+            // M16f: `--gic 3` (or `EMIBSD_GIC=3`) and `--iommu smmuv3` (hwopts.rs).
+            let machine = crate::hwopts::virt_machine();
+            let blk = if acpi {
+                "virtio-blk-pci"
             } else {
-                ("virt,acpi=off", "virtio-blk-device")
+                "virtio-blk-device"
             };
-            cmd.args(["-M", machine, "-cpu", "cortex-a72"]);
+            cmd.args(["-M", &machine, "-cpu", "cortex-a72"]);
             cmd.arg("-drive").arg(format!(
                 "if=none,format=raw,file={},id=hd0",
                 image.display()
