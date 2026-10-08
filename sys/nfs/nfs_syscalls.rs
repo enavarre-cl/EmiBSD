@@ -1086,6 +1086,11 @@ mod tests {
     #[test]
     fn server_socket_list_bookkeeping() {
         let _g = setup();
+        // The server cache is global and `setup` replaced the memory under it: entries another
+        // test left there (nfs_srvcache's) belong to the old memory, and `nfsrv_init(1)` below
+        // frees whatever the cache holds. Start from an empty cache in this test's memory.
+        crate::nfs::nfs_srvcache::NUMNFSRVCACHE.store(0, Relaxed);
+        crate::nfs::nfs_srvcache::nfsrv_initcache();
         nfsrv_init(0);
 
         // The datagram socket is always the first on the list.

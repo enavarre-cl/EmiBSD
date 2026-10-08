@@ -1117,6 +1117,14 @@ pub unsafe fn device_unref(dv: NonNull<Device>) {
         free(dv.cast(), M_DEVBUF, ca.ca_devsize);
     }
 }
+
+/// Host tests: no attach in progress after `setup_real_memory`. A test that panicked inside
+/// `config_attach` leaves `autoconf_attdet` raised, and every later `config_detach` would
+/// sleep on it for ever: the failure is reported by that test, not as a hung test run.
+#[cfg(test)]
+pub(crate) fn autoconf_test_reset() {
+    AUTOCONF_ATTDET.store(0, Ordering::Relaxed);
+}
 /* </CODE> */
 
 /* <TESTS> */

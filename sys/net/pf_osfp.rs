@@ -721,6 +721,14 @@ pub fn pf_osfp_validate() -> Option<&'static PfOsFingerprint> {
     }
     None
 }
+
+/// Host tests: the fingerprint list back to empty after `setup_real_memory`. Its entries are
+/// in the previous test's memory and came from pools that `pfattach` (other tests) may have
+/// initialised again since, so they are forgotten, never put back.
+#[cfg(test)]
+pub(crate) fn pf_osfp_test_reset() {
+    PF_OSFP_LIST.init();
+}
 /* </CODE> */
 
 /* <TESTS> */
@@ -729,7 +737,7 @@ mod tests {
     // Host tests for OS fingerprinting: adding fingerprints, matching a crafted SYN (from its
     // headers and through a packet descriptor), reading them back by number, and flushing.
 
-    use std::sync::{MutexGuard, Once};
+    use std::sync::MutexGuard;
     use std::vec::Vec;
 
     use super::*;
@@ -738,13 +746,12 @@ mod tests {
     use crate::net::pfvar::{PF_OSFP_WSIZE_MSS, pf_osfp_pack};
     use crate::netinet::tcp::TCPOPT_SACK_PERMITTED as SACKOK;
 
-    /// The mbuf test lock (the fingerprint list and `pf_lock` are global), pools initialised
-    /// once, the list empty.
+    /// The mbuf test lock (the fingerprint list and `pf_lock` are global), the pools
+    /// initialised in this test's memory (`pfattach`, in other tests, initialises them too),
+    /// the list empty (`setup_real_memory` forgot the old one).
     fn setup() -> MutexGuard<'static, ()> {
-        static ONCE: Once = Once::new();
         let g = crate::kern::uipc_mbuf::tests::setup();
-        ONCE.call_once(pf_osfp_initialize);
-        pf_osfp_flush();
+        pf_osfp_initialize();
         g
     }
 
